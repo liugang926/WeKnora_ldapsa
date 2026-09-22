@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -735,7 +736,7 @@ func containsFold(query string, values ...string) bool {
 	return false
 }
 
-func (s *directoryRuntimeService) QueryUsers(ctx context.Context, query string, limit int) (*types.DirectoryObjectSearchResult, error) {
+func (s *directoryRuntimeService) QueryUsers(ctx context.Context, query string, limit, offset int) (*types.DirectoryObjectSearchResult, error) {
 	snapshot, _, err := s.liveSnapshot(ctx)
 	if err != nil {
 		return nil, err
@@ -768,14 +769,12 @@ func (s *directoryRuntimeService) QueryUsers(ctx context.Context, query string, 
 		items = append(items, summary)
 	}
 	total := len(items)
-	limit = normalizeSearchLimit(limit)
-	if total > limit {
-		items = items[:limit]
-	}
-	return &types.DirectoryObjectSearchResult{Items: items, Total: total, Truncated: total > limit}, nil
+	sort.Slice(items, func(i, j int) bool { return directoryObjectLess(items[i], items[j]) })
+	items, more := directoryPage(items, limit, offset)
+	return &types.DirectoryObjectSearchResult{Items: items, Total: total, Truncated: more}, nil
 }
 
-func (s *directoryRuntimeService) QueryGroups(ctx context.Context, query string, limit int) (*types.DirectoryGroupSearchResult, error) {
+func (s *directoryRuntimeService) QueryGroups(ctx context.Context, query string, limit, offset int) (*types.DirectoryGroupSearchResult, error) {
 	snapshot, _, err := s.liveSnapshot(ctx)
 	if err != nil {
 		return nil, err
@@ -783,6 +782,9 @@ func (s *directoryRuntimeService) QueryGroups(ctx context.Context, query string,
 	direct, effective, parents := map[string]int{}, map[string]int{}, map[string]int{}
 	directSeen, effectiveSeen := map[string]struct{}{}, map[string]struct{}{}
 	for _, member := range snapshot.DirectMemberships {
+		if member.Source != ldapdirectory.MembershipDirect {
+			continue
+		}
 		key := member.UserGUID + "\x00" + member.GroupGUID
 		if _, ok := directSeen[key]; !ok {
 			directSeen[key] = struct{}{}
@@ -814,11 +816,11 @@ func (s *directoryRuntimeService) QueryGroups(ctx context.Context, query string,
 		})
 	}
 	total := len(items)
-	limit = normalizeSearchLimit(limit)
-	if total > limit {
-		items = items[:limit]
-	}
-	return &types.DirectoryGroupSearchResult{Items: items, Total: total, Truncated: total > limit}, nil
+	sort.Slice(items, func(i, j int) bool {
+		return directoryObjectLess(items[i].DirectoryObjectSummary, items[j].DirectoryObjectSummary)
+	})
+	items, more := directoryPage(items, limit, offset)
+	return &types.DirectoryGroupSearchResult{Items: items, Total: total, Truncated: more}, nil
 }
 
 func convertDirectorySnapshot(snapshot *ldapdirectory.Snapshot, started time.Time) (*types.DirectorySnapshot, []string, error) {

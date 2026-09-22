@@ -37,6 +37,7 @@ func (h *DirectoryHandler) RegisterAdminRoutes(group *gin.RouterGroup) {
 	group.POST("/directory/test", h.TestConnection)
 	group.GET("/directory/users", h.QueryUsers)
 	group.GET("/directory/groups", h.QueryGroups)
+	group.GET("/directory/groups/:object_guid/members", h.QueryGroupMembers)
 	group.POST("/directory/sync/preview", h.PreviewSync)
 	group.POST("/directory/sync", h.ManualSync)
 	group.GET("/directory/sync/runs", h.ListSyncRuns)
@@ -91,7 +92,7 @@ func (h *DirectoryHandler) TestConnection(c *gin.Context) {
 }
 
 func (h *DirectoryHandler) QueryUsers(c *gin.Context) {
-	result, err := h.runtime.QueryUsers(c.Request.Context(), c.Query("q"), directoryQueryLimit(c))
+	result, err := h.runtime.QueryUsers(c.Request.Context(), c.Query("q"), directoryQueryLimit(c), directoryQueryOffset(c))
 	if err != nil {
 		directoryHTTPError(c, err)
 		return
@@ -100,12 +101,29 @@ func (h *DirectoryHandler) QueryUsers(c *gin.Context) {
 }
 
 func (h *DirectoryHandler) QueryGroups(c *gin.Context) {
-	result, err := h.runtime.QueryGroups(c.Request.Context(), c.Query("q"), directoryQueryLimit(c))
+	result, err := h.runtime.QueryGroups(c.Request.Context(), c.Query("q"), directoryQueryLimit(c), directoryQueryOffset(c))
 	if err != nil {
 		directoryHTTPError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, result)
+}
+
+func (h *DirectoryHandler) QueryGroupMembers(c *gin.Context) {
+	result, err := h.runtime.QueryGroupMembers(c.Request.Context(), c.Param("object_guid"), c.Query("q"), directoryQueryLimit(c), directoryQueryOffset(c))
+	if err != nil {
+		directoryHTTPError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, result)
+}
+
+func directoryQueryOffset(c *gin.Context) int {
+	offset, err := strconv.Atoi(c.DefaultQuery("offset", "0"))
+	if err != nil || offset < 0 {
+		return 0
+	}
+	return offset
 }
 
 func (h *DirectoryHandler) PreviewSync(c *gin.Context) {

@@ -2,6 +2,28 @@ import { directoryAccessLocale } from './directoryAccessLocale'
 
 export default {
   ...directoryAccessLocale,
+  directoryAdmin: {
+    ...directoryAccessLocale.directoryAdmin,
+    title: '目录服务',
+    tabs: { configuration: '目录配置', diagnostics: '用户与分组', sync: '同步', runs: '执行记录' },
+    diagnostics: {
+      ...directoryAccessLocale.directoryAdmin.diagnostics,
+      title: '用户与分组查询', description: '查询目录用户、分组及有效成员关系。', users: '用户', groups: '分组',
+      disabled: '已禁用', empty: '没有匹配的目录对象。', searchFailed: '目录查询失败。',
+    },
+    browse: {
+      search: '搜索姓名、账号、邮箱或组名；留空查看全部', memberSearch: '搜索成员姓名、账号或邮箱', total: '共 {count} 条',
+      name: '姓名', groupName: '组名称', searchButton: '搜索', account: '登录账号', email: '邮箱', status: '状态', enabled: '已启用',
+      direct: '直接用户数', effective: '有效用户数', details: '成员与继承来源', parents: '所属父组', children: '包含子组',
+      origins: '成员来源与继承路径', depth: '{count} 层继承',
+      originHint: '包含直接、主组和嵌套成员；每个来源展示一条最短组路径。组成员关系不自动授予空间权限，禁用用户无法登录。',
+      unresolved: '{count} 个直接成员对象不在选定用户/组范围内（例如计算机或外部安全主体），不会获得授权。',
+    },
+  },
+  groupAccess: {
+    ...directoryAccessLocale.groupAccess,
+    sources: { direct: '直接成员', nested: '嵌套继承', primary: '主组成员' },
+  },
   localBrowser: {
     pipOpen: "弹出悬浮窗",
     pipReturn: "返回对话小窗",

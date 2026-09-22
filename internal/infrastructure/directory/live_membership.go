@@ -15,6 +15,7 @@ var liveGroupIdentityAttributes = []string{
 	"distinguishedName",
 	"sAMAccountName",
 	"name",
+	"cn",
 	"displayName",
 	"mail",
 }

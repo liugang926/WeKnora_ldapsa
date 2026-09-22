@@ -179,31 +179,7 @@
         <t-alert v-if="testResult" :theme="testResult.ok ? 'success' : 'error'"
           :message="testResult.message || (testResult.ok ? t('directoryAdmin.messages.testSuccess') : t('directoryAdmin.messages.testFailed'))" />
 
-        <div class="directory-search-bar">
-          <t-radio-group v-model="searchKind">
-            <t-radio-button value="users">{{ t('directoryAdmin.diagnostics.users') }}</t-radio-button>
-            <t-radio-button value="groups">{{ t('directoryAdmin.diagnostics.groups') }}</t-radio-button>
-          </t-radio-group>
-          <t-input v-model="searchQuery" clearable :placeholder="t('directoryAdmin.diagnostics.searchPlaceholder')"
-            @enter="runSearch">
-            <template #prefix-icon><t-icon name="search" /></template>
-          </t-input>
-          <t-button theme="primary" :loading="searching" @click="runSearch">{{ t('common.search') }}</t-button>
-        </div>
-        <t-alert v-if="searchWarning" theme="warning" :message="searchWarning" />
-        <div v-if="searchResults.length" class="directory-results">
-          <div v-for="item in searchResults" :key="item.object_guid" class="directory-result-row">
-            <div>
-              <strong>{{ item.display_name || item.account_name || item.dn }}</strong>
-              <span>{{ item.email || item.user_principal_name || item.dn }}</span>
-            </div>
-            <div class="result-identifiers">
-              <code>{{ item.sid || item.object_guid }}</code>
-              <t-tag v-if="item.disabled" theme="danger" size="small">{{ t('directoryAdmin.diagnostics.disabled') }}</t-tag>
-            </div>
-          </div>
-        </div>
-        <t-empty v-else-if="searchedOnce && !searching" :description="t('directoryAdmin.diagnostics.empty')" />
+        <DirectoryBrowser v-if="activeTab === 'diagnostics' && config?.enabled" />
       </div>
 
       <div v-show="activeTab === 'sync'" class="directory-panel">
@@ -265,19 +241,17 @@
 import { computed, onMounted, ref } from 'vue'
 import { MessagePlugin } from 'tdesign-vue-next'
 import { useI18n } from 'vue-i18n'
+import DirectoryBrowser from './DirectoryBrowser.vue'
 import {
   getDirectoryConfig,
   getDirectoryStatus,
   listDirectorySyncRuns,
   previewDirectorySync,
-  searchDirectoryGroups,
-  searchDirectoryUsers,
   startDirectorySync,
   testDirectoryConnection,
   updateDirectoryConfig,
   type DirectoryConfig,
   type DirectoryHealth,
-  type DirectoryObjectSummary,
   type DirectoryRunStatus,
   type DirectorySyncPreview,
   type DirectorySyncRun,
@@ -294,7 +268,6 @@ const activeTab = ref('configuration')
 const loading = ref(false)
 const saving = ref(false)
 const testing = ref(false)
-const searching = ref(false)
 const previewing = ref(false)
 const syncing = ref(false)
 const config = ref<DirectoryConfig | null>(null)
@@ -302,11 +275,6 @@ const health = ref<DirectoryHealth | null>(null)
 const serverText = ref('')
 const replacementPassword = ref('')
 const testResult = ref<DirectoryTestResult | null>(null)
-const searchKind = ref<'users' | 'groups'>('users')
-const searchQuery = ref('')
-const searchResults = ref<DirectoryObjectSummary[]>([])
-const searchWarning = ref('')
-const searchedOnce = ref(false)
 const preview = ref<DirectorySyncPreview | null>(null)
 const runs = ref<DirectorySyncRun[]>([])
 
@@ -464,24 +432,6 @@ async function runConnectionTest() {
   }
 }
 
-async function runSearch() {
-  if (!searchQuery.value.trim()) return
-  searching.value = true
-  searchedOnce.value = true
-  searchWarning.value = ''
-  try {
-    const result = searchKind.value === 'users'
-      ? await searchDirectoryUsers(searchQuery.value)
-      : await searchDirectoryGroups(searchQuery.value)
-    searchResults.value = result.items || []
-    searchWarning.value = result.warning || (result.truncated ? t('directoryAdmin.diagnostics.truncated') : '')
-  } catch (error: any) {
-    searchResults.value = []
-    MessagePlugin.error(error?.message || t('directoryAdmin.diagnostics.searchFailed'))
-  } finally {
-    searching.value = false
-  }
-}
 
 async function loadPreview() {
   previewing.value = true

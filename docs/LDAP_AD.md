@@ -25,6 +25,38 @@ and the SQLite test/lite migration sequence. Compatibility validation targets
 the Go and Node versions pinned by that baseline plus the repository's Docker
 build.
 
+## Directory browser
+
+System administrators can open **Directory services → Users & groups** (the
+Diagnostics tab in English). Name, login account, email and UPN are separate
+columns. Empty searches list all in-scope objects; searches match name,
+account, UPN, email or DN, case-insensitively. Users and groups support
+20/50/100-row pages with deterministic name/account/GUID ordering. LDAP
+changes between requests can change page contents; this is a live browser,
+not a historical snapshot viewer.
+
+The administrator-only `GET /api/v1/system/admin/directory/users` and
+`/groups` endpoints accept `q`, `limit` (default 20, maximum 100), and
+`offset` (default 0), returning the filtered `total` alongside the page.
+`GET /api/v1/system/admin/directory/groups/:object_guid/members` supports
+the same parameters and returns distinct effective users, all membership
+origins, one deterministic shortest path per origin, direct parent/child
+groups, and a count of unresolved direct member objects. Parent and child
+groups can be opened from the detail panel. Disabled users remain visible
+for inspection but cannot authenticate. Listing does not grant permissions.
+
+Display names fall back through `displayName`, `name`, `cn`, then
+`sAMAccountName`; no email or name is used to link identities. A successful
+sync refreshes these names without a schema migration. Missing AD email
+attributes render as a dash, rather than reusing UPN as an email address.
+
+Regression coverage includes name fallback, Chinese/case-insensitive search,
+stable and bounded pagination, direct/primary/nested membership origins,
+shortest paths, missing groups, failed directory queries, and disabled
+directory access. The local deployment was additionally checked against a
+real AD for full user/group pagination and group-origin inspection; this is
+not a replacement for the full lifecycle/failover acceptance checklist.
+
 ## Security model
 
 Whole-domain searches include the optional AD domain-scope control

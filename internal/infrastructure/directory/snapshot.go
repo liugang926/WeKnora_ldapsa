@@ -19,6 +19,8 @@ var userAttributes = []string{
 	"sAMAccountName",
 	"userPrincipalName",
 	"displayName",
+	"name",
+	"cn",
 	"mail",
 	"userAccountControl",
 	"primaryGroupID",
@@ -31,6 +33,7 @@ var groupAttributes = []string{
 	"sAMAccountName",
 	"name",
 	"displayName",
+	"cn",
 	"mail",
 	"member",
 }
@@ -225,7 +228,7 @@ func parseUserEntry(entry *ldap.Entry) (User, error) {
 		DN:                dn,
 		SAMAccountName:    sam,
 		UserPrincipalName: upn,
-		DisplayName:       strings.TrimSpace(entry.GetAttributeValue("displayName")),
+		DisplayName:       directoryDisplayName(entry),
 		Email:             strings.TrimSpace(entry.GetAttributeValue("mail")),
 		Enabled:           uac&2 == 0,
 		PrimaryGroupRID:   uint32(primaryGroupID),
@@ -261,13 +264,7 @@ func parseGroupIdentityEntry(entry *ldap.Entry) (Group, error) {
 	if err != nil {
 		return Group{}, err
 	}
-	displayName := strings.TrimSpace(entry.GetAttributeValue("displayName"))
-	if displayName == "" {
-		displayName = strings.TrimSpace(entry.GetAttributeValue("name"))
-	}
-	if displayName == "" {
-		displayName = strings.TrimSpace(entry.GetAttributeValue("sAMAccountName"))
-	}
+	displayName := directoryDisplayName(entry)
 	return Group{
 		ObjectGUID:     guid,
 		SID:            sid,

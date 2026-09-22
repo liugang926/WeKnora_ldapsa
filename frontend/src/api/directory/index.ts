@@ -100,6 +100,32 @@ export interface DirectorySearchResult<T> {
   warning?: string
 }
 
+export interface DirectoryMembershipOrigin {
+  source: 'direct' | 'primary' | 'nested'
+  origin_source: 'direct' | 'primary'
+  depth: number
+  path: DirectoryObjectSummary[]
+}
+
+export interface DirectoryGroupMember extends DirectoryObjectSummary {
+  origins: DirectoryMembershipOrigin[]
+}
+
+export interface DirectoryGroupMembersResult {
+  group: DirectoryObjectSummary
+  items: DirectoryGroupMember[]
+  total: number
+  parent_groups: DirectoryObjectSummary[]
+  child_groups: DirectoryObjectSummary[]
+  unresolved_member_count: number
+}
+
+export async function getDirectoryGroupMembers(guid: string, query = '', limit = 20, offset = 0): Promise<DirectoryGroupMembersResult> {
+  return unwrapDirectoryAccessResponse<DirectoryGroupMembersResult>(
+    await get(`/api/v1/system/admin/directory/groups/${encodeURIComponent(guid)}/members?${buildDirectorySearchQuery(query, limit, offset)}`),
+  )
+}
+
 export interface DirectorySyncPreview {
   users: { create: number; update: number; disable: number; unchanged: number }
   groups: { create: number; update: number; remove: number; unchanged: number }
@@ -144,15 +170,15 @@ export async function testDirectoryConnection(
   return unwrapDirectoryAccessResponse<DirectoryTestResult>(await post('/api/v1/system/admin/directory/test', payload))
 }
 
-export async function searchDirectoryUsers(query: string): Promise<DirectorySearchResult<DirectoryObjectSummary>> {
-  const qs = buildDirectorySearchQuery(query)
+export async function searchDirectoryUsers(query: string, limit = 20, offset = 0): Promise<DirectorySearchResult<DirectoryObjectSummary>> {
+  const qs = buildDirectorySearchQuery(query, limit, offset)
   return unwrapDirectoryAccessResponse<DirectorySearchResult<DirectoryObjectSummary>>(
     await get(`/api/v1/system/admin/directory/users?${qs}`),
   )
 }
 
-export async function searchDirectoryGroups(query: string): Promise<DirectorySearchResult<DirectoryGroupSummary>> {
-  const qs = buildDirectorySearchQuery(query)
+export async function searchDirectoryGroups(query: string, limit = 20, offset = 0): Promise<DirectorySearchResult<DirectoryGroupSummary>> {
+  const qs = buildDirectorySearchQuery(query, limit, offset)
   return unwrapDirectoryAccessResponse<DirectorySearchResult<DirectoryGroupSummary>>(
     await get(`/api/v1/system/admin/directory/groups?${qs}`),
   )

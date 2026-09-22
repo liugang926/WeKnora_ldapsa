@@ -129,6 +129,28 @@ type DirectoryChangeCounts struct {
 	Unchanged int `json:"unchanged"`
 }
 
+type DirectoryMembershipOrigin struct {
+	Source       string `json:"source"`
+	OriginSource string `json:"origin_source"`
+	Depth        int    `json:"depth"`
+	// One shortest path per origin, in member-group to parent-group order.
+	Path []DirectoryObjectSummary `json:"path"`
+}
+
+type DirectoryGroupMember struct {
+	DirectoryObjectSummary
+	Origins []DirectoryMembershipOrigin `json:"origins"`
+}
+
+type DirectoryGroupMembersResult struct {
+	Group                 DirectoryObjectSummary   `json:"group"`
+	Items                 []DirectoryGroupMember   `json:"items"`
+	Total                 int                      `json:"total"`
+	ParentGroups          []DirectoryObjectSummary `json:"parent_groups"`
+	ChildGroups           []DirectoryObjectSummary `json:"child_groups"`
+	UnresolvedMemberCount int                      `json:"unresolved_member_count"`
+}
+
 type DirectorySyncPreview struct {
 	Users       DirectoryChangeCounts `json:"users"`
 	Groups      DirectoryChangeCounts `json:"groups"`

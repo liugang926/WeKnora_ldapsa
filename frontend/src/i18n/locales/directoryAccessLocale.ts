@@ -36,6 +36,15 @@ export const directoryAccessLocale = {
       searchPlaceholder: 'Search by account, UPN, display name, or group', disabled: 'Disabled', truncated: 'Results were truncated by the configured limit.',
       empty: 'No matching directory objects.', searchFailed: 'Directory search failed.',
     },
+    browse: {
+      search: 'Search name, account, email, or group; leave empty to show all',
+      memberSearch: 'Search member name, account, or email', total: '{count} results',
+      name: 'Name', groupName: 'Group name', searchButton: 'Search', account: 'Login account', email: 'Email', status: 'Status', enabled: 'Enabled',
+      direct: 'Direct users', effective: 'Effective users', details: 'Members & origins',
+      parents: 'Parent groups', children: 'Child groups', origins: 'Membership origins', depth: '{count} levels',
+      originHint: 'Includes direct, primary-group and nested membership. Each origin shows one shortest group path. Membership alone does not grant workspace access; disabled users cannot sign in.',
+      unresolved: '{count} direct member objects are outside the selected user/group scope (for example computers or foreign principals). They do not grant access.',
+    },
     sync: {
       title: 'Directory snapshot', description: 'Preview changes before starting an exclusive synchronization.', incomplete: 'The preview is incomplete and will not be applied.',
       users: 'Users', groups: 'Groups', memberships: 'Memberships', emptyPreview: 'Run a preview to inspect changes.', previewFailed: 'Sync preview failed.',
