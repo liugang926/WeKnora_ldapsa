@@ -82,6 +82,14 @@ func TestAuthenticateEscapesFilterAndBindsResolvedDN(t *testing.T) {
 		{username: "CN=svc,DC=example,DC=test", password: "service-secret"},
 	}, connection.bindCalls)
 	require.Len(t, connection.searchRequests, 4)
+	for _, request := range connection.searchRequests {
+		control := ldap.FindControl(request.Controls, domainScopeControlOID)
+		require.NotNil(t, control, "all login and membership searches must stay in one domain")
+		stringControl, ok := control.(*ldap.ControlString)
+		require.True(t, ok)
+		require.False(t, stringControl.Criticality, "non-AD test servers may ignore domain scope")
+		require.Empty(t, stringControl.ControlValue)
+	}
 	filter := connection.searchRequests[0].Filter
 	require.NotContains(t, filter, identifier)
 	require.Contains(t, filter, ldap.EscapeFilter(identifier))
@@ -295,6 +303,10 @@ func TestSearchPagedRequiresCompleteProgressingPages(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, entries, 2)
 		require.Len(t, connection.searchRequests, 2)
+		for _, request := range connection.searchRequests {
+			require.NotNil(t, ldap.FindControl(request.Controls, domainScopeControlOID))
+			require.NotNil(t, ldap.FindControl(request.Controls, ldap.ControlTypePaging))
+		}
 		secondControl := ldap.FindControl(connection.searchRequests[1].Controls, ldap.ControlTypePaging)
 		require.Equal(t, []byte("next"), secondControl.(*ldap.ControlPaging).Cookie)
 	})

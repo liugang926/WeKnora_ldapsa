@@ -27,6 +27,19 @@ build.
 
 ## Security model
 
+Whole-domain searches include the optional AD domain-scope control
+`1.2.840.113556.1.4.1339`, keeping queries within the configured naming
+context instead of receiving continuation referrals to other partitions.
+This applies to login, paged snapshots, and ranged membership queries.
+Unexpected referrals and incomplete paging still fail closed; credentials
+are never forwarded to referral URLs. Non-AD servers may ignore the control.
+See [Microsoft's domain-scope specification](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-adts/ba5f20c6-7753-417c-b93d-e66e722458ed).
+
+UPN login requires the account's `userPrincipalName` attribute to match the
+entered identifier. AD may accept an implicit UPN for a direct Bind even when
+that attribute is unset; in that case use `sAMAccountName` for application
+login. Successful authentication does not automatically grant a workspace role.
+
 - A read-only service account searches for the login object. On the selected
   controller connection, the application binds as the returned user DN to
   verify the password, then re-binds the service account before querying live

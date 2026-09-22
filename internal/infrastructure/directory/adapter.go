@@ -15,6 +15,16 @@ import (
 
 const maximumPageSize = 10_000
 
+// Domain scope keeps AD searches in the configured naming context, excluding
+// continuation references to other partitions (for example DNS application
+// partitions). Non-AD servers may ignore this optional control; unexpected
+// referrals are still rejected by the completeness checks below.
+const domainScopeControlOID = "1.2.840.113556.1.4.1339"
+
+func domainSearchControls(controls ...ldap.Control) []ldap.Control {
+	return append(controls, ldap.NewControlString(domainScopeControlOID, false, ""))
+}
+
 type ldapConnection interface {
 	Bind(username, password string) error
 	Search(searchRequest *ldap.SearchRequest) (*ldap.SearchResult, error)
@@ -238,7 +248,7 @@ func (a *Adapter) authenticateOnConnection(
 		false,
 		filter,
 		userAttributes,
-		nil,
+		domainSearchControls(),
 	)
 	searchResult, err := conn.Search(request)
 	if err != nil {

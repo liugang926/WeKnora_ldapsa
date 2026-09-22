@@ -148,7 +148,7 @@ func (a *Adapter) searchPaged(
 			false,
 			filter,
 			attributes,
-			[]ldap.Control{paging},
+			domainSearchControls(paging),
 		)
 		result, err := conn.Search(request)
 		if err != nil {
@@ -529,7 +529,7 @@ func (a *Adapter) readAllMembers(
 			false,
 			"(objectClass=*)",
 			[]string{attribute},
-			nil,
+			domainSearchControls(),
 		)
 		result, err := conn.Search(request)
 		if err != nil {
