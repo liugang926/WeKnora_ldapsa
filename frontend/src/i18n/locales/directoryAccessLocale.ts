@@ -46,6 +46,7 @@ export const directoryAccessLocale = {
       unresolved: '{count} direct member objects are outside the selected user/group scope (for example computers or foreign principals). They do not grant access.',
     },
     catalog: {
+      choose: 'Select AD users or groups',
       title: 'Synced AD users and groups', hint: 'All synchronized objects are searchable here. Being listed does not grant workspace access.',
       disabled: 'Directory synchronization is disabled.', synced: 'Synced', select: 'Add to workspace', linked: 'Group linked',
       sync: 'Auto-sync every {minutes} minutes · Last success: {time}', stale: 'Directory synchronization is unavailable or stale. Browsing the saved snapshot is allowed; additions are paused.',

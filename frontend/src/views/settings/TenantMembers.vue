@@ -212,6 +212,10 @@
                         : $t('tenantInvitation.confirmInviteTitle')
                     }}
                   </div>
+                  <t-button v-if="directoryEnabled && addDialogStep === 'form'" block variant="outline"
+                    @click="invitePopupVisible = false; directoryPickerVisible = true">
+                    {{ $t('directoryAdmin.catalog.choose') }}
+                  </t-button>
                   <t-form v-if="addDialogStep === 'form'" ref="addFormRef" :data="addForm" :rules="addFormRules"
                     :label-width="80" class="member-invite-form">
                     <t-form-item :label="$t('tenantMember.add.emailLabel')" name="email">
@@ -377,7 +381,12 @@
 
     </div>
 
-    <TenantDirectoryCatalog v-if="canViewAudit" :tenant-id="activeTenantId" :can-add-user="canManage" @changed="directoryMembersChanged" />
+    <t-dialog v-model:visible="directoryPickerVisible" :header="$t('directoryAdmin.catalog.choose')"
+      width="900px" :footer="false" destroy-on-close>
+      <TenantDirectoryCatalog v-if="directoryPickerVisible && canManage" :tenant-id="activeTenantId" :can-add-user="canManage"
+        @changed="directoryMembersChanged(); directoryPickerVisible = false" />
+    </t-dialog>
+    <TenantDirectoryCatalog v-if="canViewAudit" :key="directoryRevision" :tenant-id="activeTenantId" :can-add-user="canManage" @available="directoryEnabled = $event" @changed="directoryMembersChanged" />
     <TenantGroups v-if="canViewAudit" :key="directoryRevision" :tenant-id="activeTenantId" :can-manage="canViewAudit" />
 
     <!-- Audit log drawer. Only rendered for Admin+ because the backend
@@ -524,6 +533,8 @@ import TenantGroups from './TenantGroups.vue'
 import TenantDirectoryCatalog from './TenantDirectoryCatalog.vue'
 
 const directoryRevision = ref(0)
+const directoryEnabled = ref(false)
+const directoryPickerVisible = ref(false)
 function directoryMembersChanged() { directoryRevision.value++; void loadMembers() }
 import { copyWithToast } from '@/utils/clipboard'
 import { useAuthStore } from '@/stores/auth'

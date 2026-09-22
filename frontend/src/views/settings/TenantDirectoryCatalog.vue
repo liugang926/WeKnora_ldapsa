@@ -40,7 +40,7 @@ import { MessagePlugin } from 'tdesign-vue-next'
 import { getTenantDirectoryCatalog, addTenantDirectoryMember, type DirectoryCandidate, type DirectoryCatalog } from '@/api/tenant/directory'
 import { addTenantDirectoryGroup, listTenantDirectoryGroups, type DirectoryTenantRole } from '@/api/tenant/groups'
 const props = defineProps<{ tenantId: number; canAddUser: boolean }>()
-const emit = defineEmits<{ changed: [] }>()
+const emit = defineEmits<{ changed: []; available: [enabled: boolean] }>()
 const { t } = useI18n()
 const kind = ref<'users'|'groups'>('users')
 const query = ref(''), applied = ref(''), error = ref('')
@@ -73,6 +73,7 @@ async function load() {
     ])
     if (request !== generation) return
     data.value = catalog; linkedGroups.value = linked.groups.map(group => group.directory_group_id)
+    emit('available', catalog.enabled)
   } catch (e: any) { if (request === generation) { error.value = e?.message || t('directoryAdmin.diagnostics.searchFailed'); data.value = null } }
   finally { if (request === generation) loading.value = false }
 }
@@ -90,7 +91,7 @@ async function add() {
   } catch(e: any) { MessagePlugin.error(e?.message || t('directoryGroups.addFailed')) }
   finally { saving.value=false }
 }
-watch(() => props.tenantId, () => { data.value=null; query.value=''; reset() }, {immediate:true})
+watch(() => props.tenantId, () => { emit('available', false); data.value=null; query.value=''; reset() }, {immediate:true})
 </script>
 
 <style scoped>
