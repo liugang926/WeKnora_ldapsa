@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/Tencent/WeKnora/internal/application/access"
@@ -54,6 +55,14 @@ func (s *knowledgeService) reparseTaskScope(
 	}
 	if kb == nil || kb.ID != kbID || kb.TenantID != payload.TenantID {
 		return ctx, nil, fmt.Errorf("reparse task KB binding changed: %w", asynq.SkipRetry)
+	}
+	if err := s.revalidateBackgroundKBAccess(
+		ctx, kb.TenantID, kb.ID, types.ResourceActionEdit,
+	); err != nil {
+		if errors.Is(err, ErrResourceAccessDenied) {
+			return ctx, nil, fmt.Errorf("reparse authorization revoked: %v: %w", err, asynq.SkipRetry)
+		}
+		return ctx, nil, err
 	}
 	ctx, err = access.WithKBTaskWrite(ctx, kb, payload.TenantID)
 	return ctx, ids, err

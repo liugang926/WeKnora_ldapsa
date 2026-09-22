@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -32,6 +33,7 @@ type OrganizationHandler struct {
 	kbService     interfaces.KnowledgeBaseService
 	knowledgeRepo interfaces.KnowledgeRepository
 	chunkRepo     interfaces.ChunkRepository
+	groupAccess   interfaces.GroupAccessService
 }
 
 // NewOrganizationHandler creates a new organization handler
@@ -57,6 +59,64 @@ func NewOrganizationHandler(
 		knowledgeRepo:      knowledgeRepo,
 		chunkRepo:          chunkRepo,
 	}
+}
+
+// ConfigureOrganizationGroupAccess installs the directory-group resource
+// authorization overlay without changing NewOrganizationHandler's public
+// constructor. Keeping this optional preserves the legacy organization/share
+// behaviour for deployments that do not wire the directory module.
+func ConfigureOrganizationGroupAccess(h *OrganizationHandler, groupAccess interfaces.GroupAccessService) {
+	if h != nil {
+		h.groupAccess = groupAccess
+	}
+}
+
+// mayListGroupResource applies the group-resource overlay to list rows. A nil
+// service means the optional module was not wired, while an authorization
+// lookup failure is deliberately fail-closed so a transient directory/store
+// error cannot disclose restricted resource metadata.
+func (h *OrganizationHandler) mayListGroupResource(
+	ctx context.Context,
+	tenantID uint64,
+	resourceType types.ResourceType,
+	resourceID string,
+	action types.ResourceAction,
+) bool {
+	if h.groupAccess == nil {
+		return true
+	}
+	permission, err := h.groupAccess.EffectivePermission(
+		ctx, tenantID, resourceType, resourceID, action, time.Now().UTC(),
+	)
+	if err != nil {
+		logger.Warnf(ctx, "Cannot verify directory group access for shared %s %s: %v", resourceType, resourceID, err)
+		return false
+	}
+	return permission.Allowed
+}
+
+func (h *OrganizationHandler) mayListSharedKnowledgeBase(ctx context.Context, sourceTenantID uint64, kb *types.KnowledgeBase, kbID string) bool {
+	if kb != nil {
+		kbID = kb.ID
+		if kb.TenantID != 0 {
+			sourceTenantID = kb.TenantID
+		}
+	}
+	return h.mayListGroupResource(
+		ctx, sourceTenantID, types.GroupResourceTypeKnowledgeBase, kbID, types.ResourceActionRead,
+	)
+}
+
+func (h *OrganizationHandler) mayListSharedAgent(ctx context.Context, sourceTenantID uint64, agent *types.CustomAgent, agentID string) bool {
+	if agent != nil {
+		agentID = agent.ID
+		if agent.TenantID != 0 {
+			sourceTenantID = agent.TenantID
+		}
+	}
+	return h.mayListGroupResource(
+		ctx, sourceTenantID, types.GroupResourceTypeAgent, agentID, types.ResourceActionUse,
+	)
 }
 
 // CreateOrganization creates a new organization
@@ -1296,6 +1356,9 @@ func (h *OrganizationHandler) ListOrgShares(c *gin.Context) {
 		if !apiKeyMaySeeKB(ctx, s.KnowledgeBaseID) {
 			continue
 		}
+		if !h.mayListSharedKnowledgeBase(ctx, s.SourceTenantID, s.KnowledgeBase, s.KnowledgeBaseID) {
+			continue
+		}
 		// Effective permission for current user = min(share permission, my role in org)
 		effectivePerm := s.Permission
 		if !myRoleInOrg.HasPermission(s.Permission) {
@@ -1369,7 +1432,13 @@ func (h *OrganizationHandler) ListSharedKnowledgeBases(c *gin.Context) {
 	// metadata (share_id, organization_id, etc.) is preserved as-is.
 	rows := make([]map[string]interface{}, 0, len(sharedKBs))
 	for _, info := range sharedKBs {
-		if info.KnowledgeBase != nil && !apiKeyMaySeeKB(ctx, info.KnowledgeBase.ID) {
+		if info == nil || info.KnowledgeBase == nil {
+			continue
+		}
+		if !apiKeyMaySeeKB(ctx, info.KnowledgeBase.ID) {
+			continue
+		}
+		if !h.mayListSharedKnowledgeBase(ctx, info.SourceTenantID, info.KnowledgeBase, info.KnowledgeBase.ID) {
 			continue
 		}
 		rows = append(rows, sharedKBRow(info, nil))
@@ -1519,6 +1588,9 @@ func (h *OrganizationHandler) ListOrgAgentShares(c *gin.Context) {
 	}
 	response := make([]types.AgentShareResponse, 0, len(shares))
 	for _, s := range shares {
+		if !h.mayListSharedAgent(ctx, s.SourceTenantID, s.Agent, s.AgentID) {
+			continue
+		}
 		effectivePerm := s.Permission
 		if !myRoleInOrg.HasPermission(s.Permission) {
 			effectivePerm = myRoleInOrg
@@ -1586,7 +1658,16 @@ func (h *OrganizationHandler) ListSharedAgents(c *gin.Context) {
 		c.Error(apperrors.NewInternalServerError("Failed to list shared agents"))
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"success": true, "data": list, "total": len(list)})
+	filtered := make([]*types.SharedAgentInfo, 0, len(list))
+	for _, item := range list {
+		if item == nil || item.Agent == nil {
+			continue
+		}
+		if h.mayListSharedAgent(ctx, item.SourceTenantID, item.Agent, item.Agent.ID) {
+			filtered = append(filtered, item)
+		}
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": filtered, "total": len(filtered)})
 }
 
 // listSpaceKnowledgeBasesInOrganization returns merged list of direct shared KBs and agent-carried KBs in the org (for list and count).
@@ -1596,12 +1677,19 @@ func (h *OrganizationHandler) listSpaceKnowledgeBasesInOrganization(ctx context.
 		return nil, err
 	}
 
+	filteredDirect := make([]*types.OrganizationSharedKnowledgeBaseItem, 0, len(directList))
 	directKbIDs := make(map[string]bool)
 	for _, item := range directList {
-		if item.KnowledgeBase != nil && item.KnowledgeBase.ID != "" {
-			directKbIDs[item.KnowledgeBase.ID] = true
+		if item == nil || item.KnowledgeBase == nil || item.KnowledgeBase.ID == "" {
+			continue
 		}
+		if !h.mayListSharedKnowledgeBase(ctx, item.SourceTenantID, item.KnowledgeBase, item.KnowledgeBase.ID) {
+			continue
+		}
+		directKbIDs[item.KnowledgeBase.ID] = true
+		filteredDirect = append(filteredDirect, item)
 	}
+	directList = filteredDirect
 
 	agentList, err := h.agentShareService.ListSharedAgentsInOrganization(ctx, orgID, tenantID, callerTenantRole)
 	if err != nil {
@@ -1626,6 +1714,9 @@ func (h *OrganizationHandler) listSpaceKnowledgeBasesInOrganization(ctx context.
 			continue
 		}
 		agent := agentItem.Agent
+		if !h.mayListSharedAgent(ctx, agentItem.SourceTenantID, agent, agent.ID) {
+			continue
+		}
 		mode := agent.Config.KBSelectionMode
 		if mode == "none" {
 			continue
@@ -1671,6 +1762,9 @@ func (h *OrganizationHandler) listSpaceKnowledgeBasesInOrganization(ctx context.
 				continue
 			}
 			if kb.TenantID != sourceTenantID {
+				continue
+			}
+			if !h.mayListSharedKnowledgeBase(ctx, sourceTenantID, kb, kb.ID) {
 				continue
 			}
 			directKbIDs[kbID] = true
@@ -1787,7 +1881,16 @@ func (h *OrganizationHandler) ListOrganizationSharedAgents(c *gin.Context) {
 		c.Error(apperrors.NewInternalServerError("Failed to list shared agents"))
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"success": true, "data": list, "total": len(list)})
+	filtered := make([]*types.OrganizationSharedAgentItem, 0, len(list))
+	for _, item := range list {
+		if item == nil || item.Agent == nil {
+			continue
+		}
+		if h.mayListSharedAgent(ctx, item.SourceTenantID, item.Agent, item.Agent.ID) {
+			filtered = append(filtered, item)
+		}
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": filtered, "total": len(filtered)})
 }
 
 // SetSharedAgentDisabledByMeRequest is the body for POST /shared-agents/disabled

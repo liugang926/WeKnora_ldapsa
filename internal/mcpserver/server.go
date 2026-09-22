@@ -49,6 +49,7 @@ type Server struct {
 	sessionService   interfaces.SessionService
 	messageService   interfaces.MessageService
 	agentService     interfaces.CustomAgentService
+	groupAccess      interfaces.GroupAccessService
 	kbShareService   interfaces.KBShareService
 	tenantService    interfaces.TenantService
 	endpointRepo     interfaces.MCPEndpointRepository
@@ -60,6 +61,17 @@ type Server struct {
 
 	mcp     *server.MCPServer
 	handler http.Handler
+}
+
+// ConfigureGroupAccess installs the directory-group resource authorization
+// overlay without changing NewServer's constructor contract.  Keeping this
+// optional preserves deployments that have the directory module disabled;
+// when installed, every MCP resource lookup is checked before use.
+func ConfigureGroupAccess(s *Server, groupAccess interfaces.GroupAccessService) {
+	if s == nil {
+		return
+	}
+	s.groupAccess = groupAccess
 }
 
 // NewServer builds the MCP server and its Streamable HTTP transport.

@@ -33,8 +33,60 @@ type KnowledgeHandler struct {
 	kbService         interfaces.KnowledgeBaseService
 	kbShareService    interfaces.KBShareService
 	agentShareService interfaces.AgentShareService
+	groupAccess       interfaces.GroupAccessService
 	asynqClient       interfaces.TaskEnqueuer
 	spanRepo          repository.KnowledgeSpanRepository
+}
+
+// ConfigureKnowledgeHandlerGroupAccess attaches the optional directory-group
+// policy overlay without changing NewKnowledgeHandler's public constructor.
+func ConfigureKnowledgeHandlerGroupAccess(h *KnowledgeHandler, groupAccess interfaces.GroupAccessService) {
+	if h != nil {
+		h.groupAccess = groupAccess
+	}
+}
+
+func (h *KnowledgeHandler) authorizeKBGroupAccess(
+	ctx context.Context,
+	kb *types.KnowledgeBase,
+	action types.ResourceAction,
+) error {
+	if h.groupAccess == nil {
+		return nil
+	}
+	if kb == nil || kb.ID == "" || kb.TenantID == 0 {
+		return errors.NewNotFoundError("knowledge base not found")
+	}
+	permission, err := h.groupAccess.EffectivePermission(
+		ctx, kb.TenantID, types.GroupResourceTypeKnowledgeBase, kb.ID, action, time.Now().UTC(),
+	)
+	if err != nil {
+		logger.ErrorWithFields(ctx, err, map[string]interface{}{"kb_id": secutils.SanitizeForLog(kb.ID)})
+		return errors.NewServiceUnavailableError("cannot verify knowledge base group access")
+	}
+	if !permission.Allowed {
+		return errors.NewForbiddenError("Directory group permission required for this knowledge base")
+	}
+	return nil
+}
+
+func (h *KnowledgeHandler) authorizeAgentGroupUse(ctx context.Context, agent *types.CustomAgent) error {
+	if h.groupAccess == nil {
+		return nil
+	}
+	if agent == nil || agent.ID == "" || agent.TenantID == 0 {
+		return errors.NewNotFoundError("Agent not found")
+	}
+	permission, err := h.groupAccess.EffectivePermission(
+		ctx, agent.TenantID, types.GroupResourceTypeAgent, agent.ID, types.ResourceActionUse, time.Now().UTC(),
+	)
+	if err != nil {
+		return errors.NewServiceUnavailableError("cannot verify agent group access")
+	}
+	if !permission.Allowed {
+		return errors.NewForbiddenError("Directory group permission required for this agent")
+	}
+	return nil
 }
 
 // NewKnowledgeHandler creates a new knowledge handler instance
@@ -61,6 +113,25 @@ func NewKnowledgeHandler(
 // requireKBOwnershipOrAdmin enforces the same "KB creator OR Admin+" matrix
 // used by OwnedKBOrAdmin for routes whose KB id comes from the request body.
 func (h *KnowledgeHandler) requireKBOwnershipOrAdmin(c *gin.Context, kbID string) error {
+	if h.groupAccess != nil {
+		kb, err := h.kbService.GetKnowledgeBaseByIDOnly(c.Request.Context(), kbID)
+		if err != nil || kb == nil {
+			return errors.NewNotFoundError("knowledge base not found")
+		}
+		permission, err := h.groupAccess.EffectivePermission(
+			c.Request.Context(), kb.TenantID, types.GroupResourceTypeKnowledgeBase, kb.ID,
+			types.ResourceActionEdit, time.Now().UTC(),
+		)
+		if err != nil {
+			return errors.NewServiceUnavailableError("cannot verify knowledge base group access")
+		}
+		if permission.Mode == types.ResourceAccessRestricted {
+			if permission.Allowed {
+				return nil
+			}
+			return errors.NewForbiddenError("Directory group edit permission required for this knowledge base")
+		}
+	}
 	evalErr := middleware.EvaluateOwnershipOrRole(
 		c.Request.Context(),
 		h.cfg,
@@ -101,6 +172,9 @@ func (h *KnowledgeHandler) validateKnowledgeBaseAccessWithKBID(
 	if err != nil {
 		return nil, kbID, 0, "", err
 	}
+	if err := h.authorizeKBGroupAccess(c.Request.Context(), grant.KnowledgeBase, types.ResourceActionRead); err != nil {
+		return nil, kbID, 0, "", err
+	}
 	return grant.KnowledgeBase, kbID, grant.EffectiveTenantID, grant.Permission, nil
 }
 
@@ -121,6 +195,9 @@ func (h *KnowledgeHandler) validateKnowledgeBaseWriteAccessWithKBID(
 	}
 	if err := access.RequireKBWrite(grant.Context(c.Request.Context()), grant.KnowledgeBase); err != nil {
 		return nil, kbID, 0, "", kbAccessHTTPError(err)
+	}
+	if err := h.authorizeKBGroupAccess(c.Request.Context(), grant.KnowledgeBase, types.ResourceActionEdit); err != nil {
+		return nil, kbID, 0, "", err
 	}
 	return grant.KnowledgeBase, kbID, grant.EffectiveTenantID, grant.Permission, nil
 }
@@ -149,6 +226,13 @@ func (h *KnowledgeHandler) resolveKnowledgeAndValidateKBAccess(
 		if grant.EffectiveTenantID != knowledge.TenantID {
 			return nil, ctx, errors.NewForbiddenError("Permission denied to access this knowledge")
 		}
+		action := types.ResourceActionRead
+		if requiredPermission != types.OrgRoleViewer {
+			action = types.ResourceActionEdit
+		}
+		if err := h.authorizeKBGroupAccess(ctx, grant.KnowledgeBase, action); err != nil {
+			return nil, ctx, err
+		}
 		return knowledge, grant.Context(ctx), nil
 	}
 	kb := &types.KnowledgeBase{ID: knowledge.KnowledgeBaseID, TenantID: knowledge.TenantID}
@@ -158,6 +242,13 @@ func (h *KnowledgeHandler) resolveKnowledgeAndValidateKBAccess(
 	}
 	if err != nil {
 		return nil, ctx, kbAccessHTTPError(err)
+	}
+	action := types.ResourceActionRead
+	if requiredPermission != types.OrgRoleViewer {
+		action = types.ResourceActionEdit
+	}
+	if err := h.authorizeKBGroupAccess(ctx, grant.KnowledgeBase, action); err != nil {
+		return nil, ctx, err
 	}
 	return knowledge, grant.Context(ctx), nil
 }
@@ -1603,6 +1694,10 @@ func (h *KnowledgeHandler) GetKnowledgeBatch(c *gin.Context) {
 			_ = c.Error(err)
 			return
 		}
+		if err := h.authorizeAgentGroupUse(ctx, agent); err != nil {
+			_ = c.Error(err)
+			return
+		}
 		ctx = access.WithSharedAgent(ctx, agent)
 		scope := types.NewSharedAgentKBScope(agent)
 		agentScope = &scope
@@ -1666,6 +1761,32 @@ func (h *KnowledgeHandler) GetKnowledgeBatch(c *gin.Context) {
 	}
 	if allowedKBSet != nil {
 		knowledges = filterKnowledgesByKBAllowSet(knowledges, allowedKBSet)
+	}
+	if h.groupAccess != nil {
+		allowed := make([]*types.Knowledge, 0, len(knowledges))
+		decisions := make(map[string]bool)
+		for _, knowledge := range knowledges {
+			if knowledge == nil {
+				continue
+			}
+			allowedKB, known := decisions[knowledge.KnowledgeBaseID]
+			if !known {
+				permission, permissionErr := h.groupAccess.EffectivePermission(
+					c.Request.Context(), knowledge.TenantID, types.GroupResourceTypeKnowledgeBase,
+					knowledge.KnowledgeBaseID, types.ResourceActionRead, time.Now().UTC(),
+				)
+				if permissionErr != nil {
+					_ = c.Error(errors.NewServiceUnavailableError("cannot verify knowledge base group access"))
+					return
+				}
+				allowedKB = permission.Allowed
+				decisions[knowledge.KnowledgeBaseID] = allowedKB
+			}
+			if allowedKB {
+				allowed = append(allowed, knowledge)
+			}
+		}
+		knowledges = allowed
 	}
 
 	logger.Infof(ctx, "Batch knowledge retrieval successful, requested count: %d, returned count: %d",
@@ -2178,6 +2299,10 @@ func (h *KnowledgeHandler) SearchKnowledge(c *gin.Context) {
 	if agentID != "" {
 		agent, err := resolveSharedAgentForRequest(c, agentID, h.agentShareService)
 		if err != nil {
+			_ = c.Error(err)
+			return
+		}
+		if err := h.authorizeAgentGroupUse(ctx, agent); err != nil {
 			_ = c.Error(err)
 			return
 		}

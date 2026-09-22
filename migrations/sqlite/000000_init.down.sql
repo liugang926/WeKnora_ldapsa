@@ -1,3 +1,17 @@
+-- Keep the consolidated Lite baseline reversible when it is used directly.
+-- The same tables are removed by migration 000028 when rolling back an
+-- upgraded database; IF EXISTS makes both rollback paths safe.
+DROP TABLE IF EXISTS directory_permission_versions;
+DROP TABLE IF EXISTS resource_group_grants;
+DROP TABLE IF EXISTS resource_access_policies;
+DROP TABLE IF EXISTS tenant_group_role_grants;
+DROP TABLE IF EXISTS directory_sync_runs;
+DROP TABLE IF EXISTS directory_group_memberships;
+DROP TABLE IF EXISTS directory_group_edges;
+DROP TABLE IF EXISTS directory_groups;
+DROP TABLE IF EXISTS directory_identities;
+DROP TABLE IF EXISTS directories;
+
 DROP TABLE IF EXISTS tenant_invitations;
 DROP TABLE IF EXISTS tenant_api_keys;
 DROP TABLE IF EXISTS wiki_page_revisions;

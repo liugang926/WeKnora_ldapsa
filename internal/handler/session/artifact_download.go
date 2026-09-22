@@ -214,6 +214,21 @@ func (h *Handler) DownloadMessageArtifact(c *gin.Context) {
 		_ = c.Error(errors.NewNotFoundError("artifact not accessible"))
 		return
 	}
+	if h.groupAccess != nil && h.resourceCatalog != nil {
+		kbIDs, lookupErr := h.resourceCatalog.ListKnowledgeBaseIDs(ctx, file.OwnerTenantID, artifact.URL)
+		if lookupErr != nil {
+			_ = c.Error(errors.NewServiceUnavailableError("cannot verify artifact knowledge base access"))
+			return
+		}
+		for _, kbID := range kbIDs {
+			if authorizeErr := h.groupAccess.Authorize(
+				ctx, file.OwnerTenantID, types.GroupResourceTypeKnowledgeBase, kbID, types.ResourceActionRead,
+			); authorizeErr != nil {
+				_ = c.Error(errors.NewForbiddenError("Directory group permission required for this artifact"))
+				return
+			}
+		}
+	}
 	fileService, ctx, ok := h.resolveArtifactFileService(
 		ctx, file.OwnerTenantID, file.Path, file.StorageBackendID, "artifact download",
 	)

@@ -725,7 +725,7 @@ func (s *knowledgeService) ProcessKnowledgeListDelete(ctx context.Context, t *as
 	if len(ids) == 0 {
 		return nil
 	}
-	ctx = types.WithExecutionTenant(ctx, payload.TenantID)
+	ctx = backgroundTaskAuthorizationContext(ctx, payload.TenantID, payload.Initiator)
 	kbID := payload.KnowledgeBaseID
 	if kbID == "" {
 		// Pre-upgrade tasks were admitted by single-KB endpoints but omitted
@@ -744,6 +744,14 @@ func (s *knowledgeService) ProcessKnowledgeListDelete(ctx context.Context, t *as
 			}
 			kbID = row.KnowledgeBaseID
 		}
+	}
+	if err := s.revalidateBackgroundKBAccess(
+		ctx, payload.TenantID, kbID, types.ResourceActionEdit,
+	); err != nil {
+		if errors.Is(err, ErrResourceAccessDenied) {
+			return fmt.Errorf("delete authorization revoked: %v: %w", err, asynq.SkipRetry)
+		}
+		return err
 	}
 	bindings := make(map[string]string, len(ids))
 	for _, id := range ids {

@@ -176,6 +176,10 @@ func (c *fakeCatalog) Bind(_ context.Context, ref, ownerType, ownerID, relation 
 }
 func (c *fakeCatalog) MarkDeleted(context.Context, string) error { return nil }
 
+func (c *fakeCatalog) ListKnowledgeBaseIDs(context.Context, uint64, string) ([]string, error) {
+	return nil, nil
+}
+
 func (c *fakeCatalog) Release(_ context.Context, ref, ownerType, ownerID string) (int64, error) {
 	c.releases = append(c.releases, ref+"|"+ownerType+"|"+ownerID)
 	if c.releaseErr != nil {
@@ -193,6 +197,10 @@ func (c *fakeCatalog) CreateAccessGrant(context.Context, string, time.Duration) 
 
 func (c *fakeCatalog) ResolveAccessGrant(context.Context, string) (*types.StoredResource, error) {
 	return nil, nil
+}
+
+func (c *fakeCatalog) RevokeAccessGrantsByKnowledgeBase(context.Context, uint64, string) (int64, error) {
+	return 0, nil
 }
 
 // -----------------------------------------------------------------------------

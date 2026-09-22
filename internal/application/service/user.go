@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -68,6 +69,15 @@ var (
 	// one so callers can reject no-op rotations that would still revoke
 	// every session.
 	ErrSamePassword = errors.New("new password must differ from current password")
+
+	// ErrDirectoryManagedCredential prevents a user that is linked to an
+	// LDAP/AD identity from bypassing directory authentication with the local
+	// password hash. Directory credentials are accepted only by /auth/ldap/login.
+	ErrDirectoryManagedCredential = errors.New("credentials are managed by the configured directory")
+	// ErrDirectoryAccessSuspended is returned when a linked directory identity
+	// is disabled, outside the configured scope, or backed by a stale/disabled
+	// directory snapshot. It is deliberately checked for every token use.
+	ErrDirectoryAccessSuspended = errors.New("directory identity access is suspended")
 )
 
 // Machine-readable change-password failure reasons for HTTP details fields.
@@ -104,6 +114,8 @@ type userService struct {
 	memberService    interfaces.TenantMemberService
 	config           *config.Config
 	systemSettingSvc interfaces.SystemSettingService
+	directoryRepo    interfaces.DirectoryRepository
+	groupAccess      interfaces.GroupAccessService
 }
 
 // NewUserService creates a new user service instance
@@ -114,6 +126,8 @@ func NewUserService(
 	tenantService interfaces.TenantService,
 	memberService interfaces.TenantMemberService,
 	systemSettingSvc interfaces.SystemSettingService,
+	directoryRepo interfaces.DirectoryRepository,
+	groupAccess interfaces.GroupAccessService,
 ) interfaces.UserService {
 	return &userService{
 		userRepo:         userRepo,
@@ -122,7 +136,56 @@ func NewUserService(
 		memberService:    memberService,
 		config:           configInfo,
 		systemSettingSvc: systemSettingSvc,
+		directoryRepo:    directoryRepo,
+		groupAccess:      groupAccess,
 	}
+}
+
+func (s *userService) directoryIdentities(ctx context.Context, userID string) ([]*types.DirectoryIdentity, error) {
+	if s.directoryRepo == nil || strings.TrimSpace(userID) == "" {
+		return nil, nil
+	}
+	return s.directoryRepo.GetIdentityByUserID(ctx, userID)
+}
+
+func (s *userService) rejectDirectoryManagedPassword(ctx context.Context, userID string) error {
+	identities, err := s.directoryIdentities(ctx, userID)
+	if err != nil {
+		// Fail closed: a directory database failure must not silently turn a
+		// managed account back into a local-password account.
+		return fmt.Errorf("check directory identity: %w", err)
+	}
+	if len(identities) > 0 {
+		return ErrDirectoryManagedCredential
+	}
+	return nil
+}
+
+func (s *userService) validateUserSessionEligibility(ctx context.Context, user *types.User) error {
+	if user == nil || !user.IsActive {
+		return errors.New("user account is disabled")
+	}
+	identities, err := s.directoryIdentities(ctx, user.ID)
+	if err != nil {
+		return fmt.Errorf("check directory identity: %w", err)
+	}
+	if len(identities) == 0 {
+		return nil
+	}
+	now := time.Now().UTC()
+	for _, identity := range identities {
+		if identity == nil || identity.Status != types.DirectoryObjectActive {
+			continue
+		}
+		directory, getErr := s.directoryRepo.Get(ctx, identity.DirectoryID)
+		if getErr != nil {
+			return fmt.Errorf("load directory state: %w", getErr)
+		}
+		if directory != nil && directory.IsFresh(now) {
+			return nil
+		}
+	}
+	return ErrDirectoryAccessSuspended
 }
 
 func (s *userService) complexPasswordEnabled(ctx context.Context) bool {
@@ -253,6 +316,10 @@ func (s *userService) Login(ctx context.Context, req *types.LoginRequest) (*type
 			Message: "Account is disabled",
 		}, nil
 	}
+	if err := s.rejectDirectoryManagedPassword(ctx, user.ID); err != nil {
+		logger.Warnf(ctx, "Local password login rejected for directory-managed user %s: %v", user.ID, err)
+		return nil, err
+	}
 
 	// Verify password
 	err = bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.Password))
@@ -334,35 +401,53 @@ func (s *userService) buildMembershipsForUser(
 	if user == nil {
 		return []types.Membership{}
 	}
-	// Only synthesise a membership from User.TenantID when the membership
-	// service is entirely unavailable (partial DI graphs / legacy tests).
-	// Once ListByUser is reachable, an empty or fully-filtered result is
-	// authoritative: inventing a row from a stale users.tenant_id is what
-	// kept removed workspaces visible in the space switcher (#2586).
-	if s.memberService == nil {
-		return synthFallbackMembership(user, activeTenant)
+	roleByTenant := make(map[uint64]types.TenantRole)
+	if s.memberService != nil {
+		rows, err := s.memberService.ListByUser(ctx, user.ID)
+		if err != nil {
+			logger.Warnf(ctx, "Failed to list direct memberships for user %s: %v", user.ID, err)
+		} else {
+			for _, member := range rows {
+				if member != nil && member.TenantID > 0 && member.Status == types.TenantMemberStatusActive {
+					roleByTenant[member.TenantID] = member.Role
+				}
+			}
+		}
+	} else if user.TenantID > 0 {
+		// Partial test/legacy graphs retain the historical least-privilege
+		// fallback. Production always has TenantMemberService.
+		roleByTenant[user.TenantID] = types.TenantRoleViewer
 	}
-	rows, err := s.memberService.ListByUser(ctx, user.ID)
-	if err != nil {
-		logger.Warnf(ctx, "Failed to list memberships for user %s: %v", user.ID, err)
+	if s.groupAccess != nil {
+		roles, err := s.groupAccess.ListEffectiveTenantRoles(ctx, user.ID, time.Now().UTC())
+		if err != nil {
+			logger.Warnf(ctx, "Failed to list directory group memberships for user %s: %v", user.ID, err)
+		} else {
+			for _, effective := range roles {
+				if !effective.Member || effective.TenantID == 0 || !effective.Role.IsValid() {
+					continue
+				}
+				if current, exists := roleByTenant[effective.TenantID]; !exists || effective.Role.Level() > current.Level() {
+					roleByTenant[effective.TenantID] = effective.Role
+				}
+			}
+		}
+	}
+	if len(roleByTenant) == 0 {
 		return []types.Membership{}
 	}
-	if len(rows) == 0 {
-		return []types.Membership{}
-	}
-	// 收集需要批量查询名称的 tenant id（跳过 activeTenant 因为它已经在手）。
-	needsLookup := make([]uint64, 0, len(rows))
-	for _, m := range rows {
-		if m == nil || m.Status != types.TenantMemberStatusActive {
-			continue
+
+	tenantIDs := make([]uint64, 0, len(roleByTenant))
+	needsLookup := make([]uint64, 0, len(roleByTenant))
+	for tenantID := range roleByTenant {
+		tenantIDs = append(tenantIDs, tenantID)
+		if activeTenant == nil || tenantID != activeTenant.ID {
+			needsLookup = append(needsLookup, tenantID)
 		}
-		if activeTenant != nil && m.TenantID == activeTenant.ID {
-			continue
-		}
-		needsLookup = append(needsLookup, m.TenantID)
 	}
+	sort.Slice(tenantIDs, func(i, j int) bool { return tenantIDs[i] < tenantIDs[j] })
 	tenantByID := map[uint64]*types.Tenant{}
-	if len(needsLookup) > 0 {
+	if len(needsLookup) > 0 && s.tenantService != nil {
 		if found, terr := s.tenantService.GetTenantsByIDs(ctx, needsLookup); terr == nil {
 			tenantByID = found
 		} else {
@@ -371,15 +456,12 @@ func (s *userService) buildMembershipsForUser(
 		}
 	}
 
-	out := make([]types.Membership, 0, len(rows))
-	for _, m := range rows {
-		if m == nil || m.Status != types.TenantMemberStatusActive {
-			continue
-		}
+	out := make([]types.Membership, 0, len(tenantIDs))
+	for _, tenantID := range tenantIDs {
 		name := ""
-		if activeTenant != nil && m.TenantID == activeTenant.ID {
+		if activeTenant != nil && tenantID == activeTenant.ID {
 			name = activeTenant.Name
-		} else if t, ok := tenantByID[m.TenantID]; ok && t != nil {
+		} else if t, ok := tenantByID[tenantID]; ok && t != nil {
 			name = t.Name
 		}
 		// Drop memberships whose tenant row is gone (deleted tenant or
@@ -388,9 +470,9 @@ func (s *userService) buildMembershipsForUser(
 			continue
 		}
 		out = append(out, types.Membership{
-			TenantID:   m.TenantID,
+			TenantID:   tenantID,
 			TenantName: name,
-			Role:       m.Role,
+			Role:       roleByTenant[tenantID],
 		})
 	}
 	return out
@@ -677,6 +759,9 @@ func (s *userService) ChangePassword(ctx context.Context, userID, oldPassword, n
 	if err != nil {
 		return err
 	}
+	if err := s.rejectDirectoryManagedPassword(ctx, userID); err != nil {
+		return err
+	}
 
 	// Verify old password before policy checks so callers with a wrong
 	// current credential get a clear failure instead of a policy error.
@@ -725,6 +810,9 @@ func (s *userService) AdminResetPassword(ctx context.Context, userID, newPasswor
 
 	user, err := s.userRepo.GetUserByID(ctx, userID)
 	if err != nil {
+		return err
+	}
+	if err := s.rejectDirectoryManagedPassword(ctx, userID); err != nil {
 		return err
 	}
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
@@ -848,6 +936,9 @@ func (s *userService) ValidatePassword(ctx context.Context, userID string, passw
 	if err != nil {
 		return err
 	}
+	if err := s.rejectDirectoryManagedPassword(ctx, userID); err != nil {
+		return err
+	}
 
 	return bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password))
 }
@@ -904,17 +995,11 @@ func (s *userService) resolveLoginTenantID(ctx context.Context, user *types.User
 		}
 	}
 
-	// Membership (or cross-tenant superuser) must still be valid. Mirrors
-	// the gate in SwitchTenant so the two entry points stay consistent.
+	// Direct or fresh directory-group membership (or a cross-tenant
+	// superuser) must still be valid. Mirrors SwitchTenant and middleware.
 	if !user.CanAccessAllTenants {
-		if s.memberService == nil {
-			logger.Warnf(ctx,
-				"resolveLoginTenantID: member service unavailable; falling back to home for user %s",
-				user.ID)
-			return user.TenantID
-		}
-		member, err := s.memberService.GetMembership(ctx, user.ID, preferred)
-		if err != nil || member == nil || member.Status != types.TenantMemberStatusActive {
+		_, member, err := s.effectiveTenantMembership(ctx, user.ID, preferred)
+		if err != nil || !member {
 			logger.Warnf(ctx,
 				"resolveLoginTenantID: user %s no longer has active membership in tenant %d, "+
 					"clearing preference and falling back to home (err=%v)",
@@ -949,11 +1034,11 @@ func (s *userService) homeOrFirstMembershipTenant(ctx context.Context, user *typ
 	if user.TenantID == 0 {
 		return s.resolveFirstMembershipTenant(ctx, user)
 	}
-	if user.CanAccessAllTenants || s.memberService == nil {
+	if user.CanAccessAllTenants || (s.memberService == nil && s.groupAccess == nil) {
 		return user.TenantID
 	}
-	member, err := s.memberService.GetMembership(ctx, user.ID, user.TenantID)
-	if err == nil && member != nil && member.Status == types.TenantMemberStatusActive {
+	_, member, err := s.effectiveTenantMembership(ctx, user.ID, user.TenantID)
+	if err == nil && member {
 		return user.TenantID
 	}
 	logger.Warnf(ctx,
@@ -994,7 +1079,29 @@ func (s *userService) clearStaleHomeTenant(ctx context.Context, user *types.User
 // as home is best-effort: even if the repair write fails, the freshly issued
 // token can still be scoped to the membership and the next login retries.
 func (s *userService) resolveFirstMembershipTenant(ctx context.Context, user *types.User) uint64 {
-	if user == nil || s.memberService == nil {
+	if user == nil {
+		return 0
+	}
+	if s.groupAccess != nil {
+		roles, err := s.groupAccess.ListEffectiveTenantRoles(ctx, user.ID, time.Now().UTC())
+		if err != nil {
+			logger.Warnf(ctx, "resolveLoginTenantID: failed to list effective memberships for user %s: %v", user.ID, err)
+			return 0
+		}
+		for _, role := range roles {
+			if !role.Member || role.TenantID == 0 {
+				continue
+			}
+			if s.tenantService != nil {
+				if _, err := s.tenantService.GetTenantByID(ctx, role.TenantID); err != nil {
+					continue
+				}
+			}
+			return role.TenantID
+		}
+		return 0
+	}
+	if s.memberService == nil {
 		return 0
 	}
 	members, err := s.memberService.ListByUser(ctx, user.ID)
@@ -1025,6 +1132,28 @@ func (s *userService) resolveFirstMembershipTenant(ctx context.Context, user *ty
 		return member.TenantID
 	}
 	return 0
+}
+
+func (s *userService) effectiveTenantMembership(
+	ctx context.Context,
+	userID string,
+	tenantID uint64,
+) (types.TenantRole, bool, error) {
+	if s.groupAccess != nil {
+		effective, err := s.groupAccess.EffectiveTenantRole(ctx, userID, tenantID, time.Now().UTC())
+		return effective.Role, effective.Member, err
+	}
+	if s.memberService == nil {
+		return "", false, errors.New("workspace membership service unavailable")
+	}
+	member, err := s.memberService.GetMembership(ctx, userID, tenantID)
+	if err != nil {
+		return "", false, err
+	}
+	if member == nil || member.Status != types.TenantMemberStatusActive {
+		return "", false, nil
+	}
+	return member.Role, true, nil
 }
 
 // clearLastActiveTenantPreference is the best-effort cleanup half of
@@ -1141,14 +1270,11 @@ func (s *userService) SwitchTenant(
 	// Verify membership unless the caller is a cross-tenant superuser
 	// switching outside their home tenant.
 	if !user.CanAccessAllTenants || targetTenantID == user.TenantID {
-		if s.memberService == nil {
-			return nil, errors.New("workspace membership service unavailable")
-		}
-		member, err := s.memberService.GetMembership(ctx, user.ID, targetTenantID)
+		_, member, err := s.effectiveTenantMembership(ctx, user.ID, targetTenantID)
 		if err != nil {
 			return nil, fmt.Errorf("lookup membership: %w", err)
 		}
-		if member == nil || member.Status != types.TenantMemberStatusActive {
+		if !member {
 			return nil, ErrMembershipNotFound
 		}
 	}
@@ -1259,6 +1385,9 @@ func (s *userService) ValidateToken(ctx context.Context, tokenString string) (*t
 
 	user, err := s.userRepo.GetUserByID(ctx, userID)
 	if err != nil {
+		return nil, 0, err
+	}
+	if err := s.validateUserSessionEligibility(ctx, user); err != nil {
 		return nil, 0, err
 	}
 
@@ -1414,6 +1543,9 @@ func (s *userService) RefreshToken(
 	if err != nil {
 		return "", "", err
 	}
+	if err := s.validateUserSessionEligibility(ctx, user); err != nil {
+		return "", "", err
+	}
 
 	// Revoke old refresh token
 	tokenRecord.IsRevoked = true
@@ -1464,6 +1596,13 @@ func (s *userService) SearchUsers(ctx context.Context, query string, limit int) 
 		return []*types.User{}, nil
 	}
 	return s.userRepo.SearchUsers(ctx, query, limit)
+}
+
+func (s *userService) FindUserByEmailOrUsernameFold(
+	ctx context.Context,
+	email, username string,
+) (*types.User, error) {
+	return s.userRepo.FindUserByEmailOrUsernameFold(ctx, email, username)
 }
 
 type oidcDiscoveryDocument struct {

@@ -171,6 +171,13 @@ helm install weknora ./helm \
 | `app.resources` | Resource limits | See values.yaml |
 | `app.env` | Environment variables | See values.yaml |
 | `app.extraEnv` | Additional env vars | `[]` |
+| `app.directory.enabled` | Enable LDAP/AD authentication and synchronization | `false` |
+| `app.directory.managementSource` | `file` (deployment-owned/read-only UI) or `database` (UI-owned/encrypted) | `file` |
+| `app.directory.urls` | Ordered LDAPS or StartTLS domain-controller URLs | `[]` |
+| `app.directory.tlsMode` | Verified transport: `ldaps` or `starttls` | `ldaps` |
+| `app.directory.caSecretName` | Existing Secret containing the enterprise CA | `""` |
+| `app.directory.bindPasswordSecretName` | Existing Secret mounted as a read-only bind-password file | `""` |
+| `secrets.ldapBindPassword` | Bind password fallback when no password-file Secret is selected | `""` |
 
 ### Frontend
 

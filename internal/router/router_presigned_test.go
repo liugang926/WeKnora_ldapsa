@@ -2,6 +2,7 @@ package router
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -100,7 +101,7 @@ func setupPresignedTestServer(t *testing.T) (engine *gin.Engine, baseDir string,
 	}
 
 	engine = gin.New()
-	handler := presignedFileHandler(stubTS, baseDir)
+	handler := presignedFileHandler(stubTS, baseDir, nil, nil, nil)
 	engine.GET("/api/v1/files/presigned", handler)
 	engine.HEAD("/api/v1/files/presigned", handler)
 
@@ -236,5 +237,50 @@ func TestPresignedFile_MissingFile_404(t *testing.T) {
 	engine.ServeHTTP(w, req)
 	if got, want := w.Code, http.StatusNotFound; got != want {
 		t.Fatalf("status = %d, want %d", got, want)
+	}
+}
+
+func TestPresignedFile_RestrictedKnowledgeBase_403BeforeStorage(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	t.Setenv("SYSTEM_SIGNING_KEY", "")
+	t.Setenv("SYSTEM_AES_KEY", "weknora-test-aes-key-32bytes!!!")
+	const path = "local://1/restricted.png"
+
+	engine := gin.New()
+	handler := presignedFileHandler(
+		&stubTenantService{get: func(context.Context, uint64) (*types.Tenant, error) {
+			t.Fatal("tenant lookup must not run after group-policy denial")
+			return nil, nil
+		}},
+		t.TempDir(),
+		nil,
+		&stubResourceCatalog{kbIDs: func(_ context.Context, tenantID uint64, reference string) ([]string, error) {
+			if tenantID != 1 || reference != path {
+				t.Fatalf("unexpected resource lookup tenant=%d reference=%q", tenantID, reference)
+			}
+			return []string{"kb-restricted"}, nil
+		}},
+		&stubResourceGroupAuthorizer{authorize: func(
+			_ context.Context, _ uint64, _ types.ResourceType, _ string, _ types.ResourceAction,
+		) error {
+			return errors.New("verifiable user required")
+		}},
+	)
+	engine.GET("/api/v1/files/presigned", handler)
+
+	signed, err := secutils.SignFileURL("https://weknora.example.com", path, 1, time.Hour)
+	if err != nil {
+		t.Fatalf("SignFileURL: %v", err)
+	}
+	u, err := url.Parse(signed)
+	if err != nil {
+		t.Fatalf("parse signed URL: %v", err)
+	}
+	w := httptest.NewRecorder()
+	engine.ServeHTTP(w, httptest.NewRequest(
+		http.MethodGet, "/api/v1/files/presigned?"+u.RawQuery, nil,
+	))
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("status=%d, want %d", w.Code, http.StatusForbidden)
 	}
 }

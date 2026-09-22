@@ -48,6 +48,15 @@ type (
 	messageFileLookup        = access.MessageFileLookup
 	sharedAgentFileLookup    = access.SharedAgentFileLookup
 	messageKBShareAuthorizer = access.MessageKBShareAuthorizer
+	resourceGroupAuthorizer  interface {
+		Authorize(
+			ctx context.Context,
+			tenantID uint64,
+			resourceType types.ResourceType,
+			resourceID string,
+			action types.ResourceAction,
+		) error
+	}
 )
 
 // localStorageBaseDir resolves LOCAL_STORAGE_BASE_DIR with the container
@@ -122,6 +131,40 @@ func resolveCatalogResource(
 	return resolvedPath, true, true
 }
 
+// authorizeResourceKnowledgeBases overlays KB group policy on every raw file
+// surface. Authenticated web users may satisfy a restricted policy; anonymous,
+// embed, IM and other machine principals cannot. A resource with multiple KB
+// owners must satisfy all of them because the locator has no owner provenance.
+func authorizeResourceKnowledgeBases(
+	ctx context.Context,
+	catalog interfaces.ResourceCatalog,
+	authorizer resourceGroupAuthorizer,
+	tenantID uint64,
+	referenceOrPath string,
+) error {
+	// Optional dependencies preserve the pre-module behaviour in deployments
+	// where directory/group access is not wired.
+	if catalog == nil || authorizer == nil {
+		return nil
+	}
+	kbIDs, err := catalog.ListKnowledgeBaseIDs(ctx, tenantID, referenceOrPath)
+	if err != nil {
+		return err
+	}
+	for _, kbID := range kbIDs {
+		if err := authorizer.Authorize(
+			ctx,
+			tenantID,
+			types.GroupResourceTypeKnowledgeBase,
+			kbID,
+			types.ResourceActionRead,
+		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // resolveFileService picks the file service for (tenant, backendID, provider)
 // — via the storage resolver when wired, else directly from the tenant's
 // storage config. No fallback; used by the presigned surfaces where a
@@ -163,7 +206,17 @@ func newFileServeHandler(
 	storageResolver interfaces.StorageBackendResolver,
 	resourceCatalogs ...interfaces.ResourceCatalog,
 ) gin.HandlerFunc {
-	resourceCatalog := firstResourceCatalog(resourceCatalogs)
+	return newFileServeHandlerWithGroupAccess(
+		globalFileService, storageResolver, firstResourceCatalog(resourceCatalogs), nil,
+	)
+}
+
+func newFileServeHandlerWithGroupAccess(
+	globalFileService interfaces.FileService,
+	storageResolver interfaces.StorageBackendResolver,
+	resourceCatalog interfaces.ResourceCatalog,
+	groupAccess resourceGroupAuthorizer,
+) gin.HandlerFunc {
 	absDir := localStorageAbsDir()
 	if info, err := os.Stat(absDir); err != nil || !info.IsDir() {
 		if err := os.MkdirAll(absDir, 0o755); err != nil {
@@ -180,6 +233,14 @@ func newFileServeHandler(
 		tenant, _ := c.Request.Context().Value(types.TenantInfoContextKey).(*types.Tenant)
 		if tenant == nil {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized: workspace context missing"})
+			return
+		}
+		if err := authorizeResourceKnowledgeBases(
+			c.Request.Context(), resourceCatalog, groupAccess, tenant.ID, filePath,
+		); err != nil {
+			logger.Warnf(c.Request.Context(), "[Router] /files denied by KB group policy: tenant_id=%d path=%q err=%v",
+				tenant.ID, filePath, err)
+			c.Status(http.StatusForbidden)
 			return
 		}
 		filePath, resourceResolved, ok := resolveCatalogResource(c, resourceCatalog, filePath, tenant.ID)
@@ -240,6 +301,7 @@ func serveFilesWithResources(
 	globalFileService interfaces.FileService,
 	storageResolver interfaces.StorageBackendResolver,
 	resourceCatalog interfaces.ResourceCatalog,
+	groupAccess ...resourceGroupAuthorizer,
 ) {
 	logger.Infof(context.Background(), "[Router] Serving files from /files")
 	// /files sits outside the /api/v1 APIKeyGate, so it carries its own
@@ -248,10 +310,14 @@ func serveFilesWithResources(
 	// keys pass, since the handler still enforces same-tenant paths
 	// (ValidateStoragePathTenant). Embed routes use their own
 	// /embed/.../files handler.
+	var authorizer resourceGroupAuthorizer
+	if len(groupAccess) > 0 {
+		authorizer = groupAccess[0]
+	}
 	r.GET(
 		"/files",
 		middleware.AllowFileServeAPIKey(),
-		newFileServeHandler(globalFileService, storageResolver, resourceCatalog),
+		newFileServeHandlerWithGroupAccess(globalFileService, storageResolver, resourceCatalog, authorizer),
 	)
 }
 
@@ -263,6 +329,7 @@ func serveResourceGrants(
 	tenantService interfaces.TenantService,
 	globalFileService interfaces.FileService,
 	storageResolver interfaces.StorageBackendResolver,
+	groupAccess resourceGroupAuthorizer,
 ) {
 	if resourceCatalog == nil || tenantService == nil {
 		return
@@ -272,6 +339,13 @@ func serveResourceGrants(
 		resource, err := resourceCatalog.ResolveAccessGrant(ctx, c.Param("token"))
 		if err != nil || resource == nil {
 			c.Status(http.StatusNotFound)
+			return
+		}
+		if err := authorizeResourceKnowledgeBases(
+			ctx, resourceCatalog, groupAccess, resource.TenantID, resource.PhysicalPath,
+		); err != nil {
+			logger.Warnf(ctx, "[Router] resource grant denied by KB group policy: resource_id=%s err=%v", resource.ID, err)
+			c.Status(http.StatusForbidden)
 			return
 		}
 		tenant, err := tenantService.GetTenantByID(ctx, resource.TenantID)
@@ -401,7 +475,12 @@ func newMessageScopedFileServeHandler(
 	storageResolver interfaces.StorageBackendResolver,
 	resourceCatalog interfaces.ResourceCatalog,
 	kbShareAuth messageKBShareAuthorizer,
+	groupAccess ...resourceGroupAuthorizer,
 ) gin.HandlerFunc {
+	var authorizer resourceGroupAuthorizer
+	if len(groupAccess) > 0 {
+		authorizer = groupAccess[0]
+	}
 	return func(c *gin.Context) {
 		reference, ok := requireFilePathQuery(c)
 		if !ok {
@@ -410,6 +489,14 @@ func newMessageScopedFileServeHandler(
 		file, err := access.ResolveMessageFile(c.Request.Context(), c.Param("id"), c.Param("message_id"), reference,
 			messageService, agentShareService, resourceCatalog, kbShareAuth)
 		if fileAccessError(c, err) {
+			return
+		}
+		if err := authorizeResourceKnowledgeBases(
+			c.Request.Context(), resourceCatalog, authorizer, file.OwnerTenantID, reference,
+		); err != nil {
+			logger.Warnf(c.Request.Context(), "message file denied by KB group policy: owner_tenant_id=%d err=%v",
+				file.OwnerTenantID, err)
+			c.Status(http.StatusForbidden)
 			return
 		}
 		serveAuthorizedFile(c, file, tenantService, globalFileService, storageResolver, "message files")
@@ -494,7 +581,12 @@ func serveMessageScopedFiles(
 	kbShareService interfaces.KBShareService,
 	kbService interfaces.KnowledgeBaseService,
 	knowledgeService interfaces.KnowledgeService,
+	groupAccess ...resourceGroupAuthorizer,
 ) {
+	var authorizer resourceGroupAuthorizer
+	if len(groupAccess) > 0 {
+		authorizer = groupAccess[0]
+	}
 	g.apiKeyRoute(
 		r,
 		http.MethodGet,
@@ -513,6 +605,7 @@ func serveMessageScopedFiles(
 				KBs:        kbService,
 				Knowledges: knowledgeService,
 			},
+			authorizer,
 		),
 	)
 }
@@ -531,8 +624,16 @@ func serveMessageScopedFiles(
 // Without this it is otherwise impossible to tell whether a "broken image" is
 // caused by an expired signature, a stale URL cached by the platform, the
 // platform's IP being blocked, or the URL simply never reaching us.
-func servePresignedFiles(r *gin.Engine, tenantService interfaces.TenantService, storageResolver interfaces.StorageBackendResolver) {
-	handler := presignedFileHandler(tenantService, localStorageAbsDir(), storageResolver)
+func servePresignedFiles(
+	r *gin.Engine,
+	tenantService interfaces.TenantService,
+	storageResolver interfaces.StorageBackendResolver,
+	resourceCatalog interfaces.ResourceCatalog,
+	groupAccess resourceGroupAuthorizer,
+) {
+	handler := presignedFileHandler(
+		tenantService, localStorageAbsDir(), storageResolver, resourceCatalog, groupAccess,
+	)
 	r.GET("/api/v1/files/presigned", handler)
 	r.HEAD("/api/v1/files/presigned", handler)
 }
@@ -541,11 +642,13 @@ func servePresignedFiles(r *gin.Engine, tenantService interfaces.TenantService, 
 // For HEAD requests it returns the same status + headers but does not stream
 // the body — this is enough for IM platforms to validate the URL while saving
 // us a full read of the backing object.
-func presignedFileHandler(tenantService interfaces.TenantService, absDir string, resolvers ...interfaces.StorageBackendResolver) gin.HandlerFunc {
-	var storageResolver interfaces.StorageBackendResolver
-	if len(resolvers) > 0 {
-		storageResolver = resolvers[0]
-	}
+func presignedFileHandler(
+	tenantService interfaces.TenantService,
+	absDir string,
+	storageResolver interfaces.StorageBackendResolver,
+	resourceCatalog interfaces.ResourceCatalog,
+	groupAccess resourceGroupAuthorizer,
+) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		ctx := c.Request.Context()
 		clientIP := c.ClientIP()
@@ -583,6 +686,14 @@ func presignedFileHandler(tenantService interfaces.TenantService, absDir string,
 			logger.Warnf(ctx, "[Router] /files/presigned sig invalid or expired: client_ip=%s ua=%q tenant_id=%d file_path=%q expires=%s",
 				clientIP, userAgent, tenantID, filePath, expiresStr)
 			c.JSON(http.StatusForbidden, gin.H{"error": "invalid or expired signature"})
+			return
+		}
+		if err := authorizeResourceKnowledgeBases(
+			ctx, resourceCatalog, groupAccess, tenantID, filePath,
+		); err != nil {
+			logger.Warnf(ctx, "[Router] /files/presigned denied by KB group policy: tenant_id=%d file_path=%q err=%v",
+				tenantID, filePath, err)
+			c.Status(http.StatusForbidden)
 			return
 		}
 

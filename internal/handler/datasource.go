@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/Tencent/WeKnora/internal/datasource"
 	"github.com/Tencent/WeKnora/internal/handler/dto"
@@ -14,8 +15,9 @@ import (
 
 // DataSourceHandler handles HTTP requests for data source management
 type DataSourceHandler struct {
-	service   interfaces.DataSourceService
-	kbService interfaces.KnowledgeBaseService
+	service     interfaces.DataSourceService
+	kbService   interfaces.KnowledgeBaseService
+	groupAccess interfaces.GroupAccessService
 }
 
 // NewDataSourceHandler creates a new data source handler
@@ -26,6 +28,14 @@ func NewDataSourceHandler(
 	return &DataSourceHandler{
 		service:   service,
 		kbService: kbService,
+	}
+}
+
+// ConfigureDataSourceGroupAccess installs the resource-policy overlay without
+// changing the public constructor used by existing deployments and tests.
+func ConfigureDataSourceGroupAccess(h *DataSourceHandler, groupAccess interfaces.GroupAccessService) {
+	if h != nil {
+		h.groupAccess = groupAccess
 	}
 }
 
@@ -41,6 +51,7 @@ func (h *DataSourceHandler) getOwnedKnowledgeBase(
 	ctx context.Context,
 	tenantID uint64,
 	kbID string,
+	action types.ResourceAction,
 ) (*types.KnowledgeBase, int, string) {
 	if kbID == "" {
 		return nil, http.StatusBadRequest, "kb_id is required"
@@ -57,6 +68,22 @@ func (h *DataSourceHandler) getOwnedKnowledgeBase(
 	if err := types.AuthorizeTenantAPIKeyKnowledgeBases(ctx, kbID); err != nil {
 		return nil, http.StatusForbidden, err.Error()
 	}
+	if h.groupAccess != nil {
+		permission, err := h.groupAccess.EffectivePermission(
+			ctx,
+			kb.TenantID,
+			types.GroupResourceTypeKnowledgeBase,
+			kb.ID,
+			action,
+			time.Now().UTC(),
+		)
+		if err != nil {
+			return nil, http.StatusServiceUnavailable, "cannot verify knowledge base access right now"
+		}
+		if !permission.Allowed {
+			return nil, http.StatusForbidden, "directory group permission required for this knowledge base"
+		}
+	}
 
 	return kb, http.StatusOK, ""
 }
@@ -65,13 +92,14 @@ func (h *DataSourceHandler) getOwnedDataSource(
 	ctx context.Context,
 	tenantID uint64,
 	id string,
+	action types.ResourceAction,
 ) (*types.DataSource, int, string) {
 	ds, err := h.service.GetDataSource(ctx, id)
 	if err != nil {
 		return nil, http.StatusNotFound, "data source not found"
 	}
 
-	if _, status, msg := h.getOwnedKnowledgeBase(ctx, tenantID, ds.KnowledgeBaseID); status != http.StatusOK {
+	if _, status, msg := h.getOwnedKnowledgeBase(ctx, tenantID, ds.KnowledgeBaseID, action); status != http.StatusOK {
 		return nil, status, msg
 	}
 
@@ -104,7 +132,7 @@ func (h *DataSourceHandler) CreateDataSource(c *gin.Context) {
 		return
 	}
 
-	if _, status, msg := h.getOwnedKnowledgeBase(ctx, tenantID, req.KnowledgeBaseID); status != http.StatusOK {
+	if _, status, msg := h.getOwnedKnowledgeBase(ctx, tenantID, req.KnowledgeBaseID, types.ResourceActionEdit); status != http.StatusOK {
 		c.JSON(status, gin.H{"error": msg})
 		return
 	}
@@ -140,7 +168,7 @@ func (h *DataSourceHandler) GetDataSource(c *gin.Context) {
 
 	id := c.Param("id")
 
-	ds, status, msg := h.getOwnedDataSource(ctx, tenantID, id)
+	ds, status, msg := h.getOwnedDataSource(ctx, tenantID, id, types.ResourceActionRead)
 	if status != http.StatusOK {
 		c.JSON(status, gin.H{"error": msg})
 		return
@@ -169,7 +197,7 @@ func (h *DataSourceHandler) ListDataSources(c *gin.Context) {
 	}
 
 	kbID := c.Query("kb_id")
-	if _, status, msg := h.getOwnedKnowledgeBase(ctx, tenantID, kbID); status != http.StatusOK {
+	if _, status, msg := h.getOwnedKnowledgeBase(ctx, tenantID, kbID, types.ResourceActionRead); status != http.StatusOK {
 		c.JSON(status, gin.H{"error": msg})
 		return
 	}
@@ -212,7 +240,7 @@ func (h *DataSourceHandler) UpdateDataSource(c *gin.Context) {
 		return
 	}
 
-	existing, status, msg := h.getOwnedDataSource(ctx, tenantID, id)
+	existing, status, msg := h.getOwnedDataSource(ctx, tenantID, id, types.ResourceActionEdit)
 	if status != http.StatusOK {
 		c.JSON(status, gin.H{"error": msg})
 		return
@@ -248,7 +276,7 @@ func (h *DataSourceHandler) DeleteDataSource(c *gin.Context) {
 
 	id := c.Param("id")
 
-	if _, status, msg := h.getOwnedDataSource(ctx, tenantID, id); status != http.StatusOK {
+	if _, status, msg := h.getOwnedDataSource(ctx, tenantID, id, types.ResourceActionEdit); status != http.StatusOK {
 		c.JSON(status, gin.H{"error": msg})
 		return
 	}
@@ -279,7 +307,7 @@ func (h *DataSourceHandler) ValidateConnection(c *gin.Context) {
 
 	id := c.Param("id")
 
-	if _, status, msg := h.getOwnedDataSource(ctx, tenantID, id); status != http.StatusOK {
+	if _, status, msg := h.getOwnedDataSource(ctx, tenantID, id, types.ResourceActionEdit); status != http.StatusOK {
 		c.JSON(status, gin.H{"error": msg})
 		return
 	}
@@ -351,7 +379,7 @@ func (h *DataSourceHandler) ListAvailableResources(c *gin.Context) {
 	id := c.Param("id")
 	parentID := c.Query("parent_id")
 
-	if _, status, msg := h.getOwnedDataSource(ctx, tenantID, id); status != http.StatusOK {
+	if _, status, msg := h.getOwnedDataSource(ctx, tenantID, id, types.ResourceActionEdit); status != http.StatusOK {
 		c.JSON(status, gin.H{"error": msg})
 		return
 	}
@@ -388,7 +416,7 @@ func (h *DataSourceHandler) ResolveResourceAncestors(c *gin.Context) {
 
 	id := c.Param("id")
 
-	if _, status, msg := h.getOwnedDataSource(ctx, tenantID, id); status != http.StatusOK {
+	if _, status, msg := h.getOwnedDataSource(ctx, tenantID, id, types.ResourceActionEdit); status != http.StatusOK {
 		c.JSON(status, gin.H{"error": msg})
 		return
 	}
@@ -434,7 +462,7 @@ func (h *DataSourceHandler) ManualSync(c *gin.Context) {
 
 	id := c.Param("id")
 
-	if _, status, msg := h.getOwnedDataSource(ctx, tenantID, id); status != http.StatusOK {
+	if _, status, msg := h.getOwnedDataSource(ctx, tenantID, id, types.ResourceActionEdit); status != http.StatusOK {
 		c.JSON(status, gin.H{"error": msg})
 		return
 	}
@@ -466,7 +494,7 @@ func (h *DataSourceHandler) PauseDataSource(c *gin.Context) {
 
 	id := c.Param("id")
 
-	if _, status, msg := h.getOwnedDataSource(ctx, tenantID, id); status != http.StatusOK {
+	if _, status, msg := h.getOwnedDataSource(ctx, tenantID, id, types.ResourceActionEdit); status != http.StatusOK {
 		c.JSON(status, gin.H{"error": msg})
 		return
 	}
@@ -497,7 +525,7 @@ func (h *DataSourceHandler) ResumeDataSource(c *gin.Context) {
 
 	id := c.Param("id")
 
-	if _, status, msg := h.getOwnedDataSource(ctx, tenantID, id); status != http.StatusOK {
+	if _, status, msg := h.getOwnedDataSource(ctx, tenantID, id, types.ResourceActionRead); status != http.StatusOK {
 		c.JSON(status, gin.H{"error": msg})
 		return
 	}
@@ -531,7 +559,7 @@ func (h *DataSourceHandler) GetSyncLogs(c *gin.Context) {
 
 	id := c.Param("id")
 
-	if _, status, msg := h.getOwnedDataSource(ctx, tenantID, id); status != http.StatusOK {
+	if _, status, msg := h.getOwnedDataSource(ctx, tenantID, id, types.ResourceActionRead); status != http.StatusOK {
 		c.JSON(status, gin.H{"error": msg})
 		return
 	}
@@ -591,7 +619,7 @@ func (h *DataSourceHandler) GetSyncLog(c *gin.Context) {
 		return
 	}
 
-	if _, status, msg := h.getOwnedDataSource(ctx, tenantID, log.DataSourceID); status != http.StatusOK {
+	if _, status, msg := h.getOwnedDataSource(ctx, tenantID, log.DataSourceID, types.ResourceActionRead); status != http.StatusOK {
 		c.JSON(status, gin.H{"error": msg})
 		return
 	}

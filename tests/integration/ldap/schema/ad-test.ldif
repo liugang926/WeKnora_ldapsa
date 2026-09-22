@@ -1,0 +1,11 @@
+dn: cn=adtest,cn=schema,cn=config
+objectClass: olcSchemaConfig
+cn: adtest
+olcAttributeTypes: ( 1.3.6.1.4.1.4203.666.11.9.1 NAME 'objectGUID' DESC 'AD-compatible immutable object GUID for integration tests' EQUALITY octetStringMatch SYNTAX 1.3.6.1.4.1.1466.115.121.1.40 SINGLE-VALUE )
+olcAttributeTypes: ( 1.3.6.1.4.1.4203.666.11.9.2 NAME 'objectSid' DESC 'AD-compatible binary security identifier for integration tests' EQUALITY octetStringMatch SYNTAX 1.3.6.1.4.1.1466.115.121.1.40 SINGLE-VALUE )
+olcAttributeTypes: ( 1.3.6.1.4.1.4203.666.11.9.3 NAME 'sAMAccountName' DESC 'AD-compatible account name for integration tests' EQUALITY caseIgnoreMatch SUBSTR caseIgnoreSubstringsMatch SYNTAX 1.3.6.1.4.1.1466.115.121.1.15 SINGLE-VALUE )
+olcAttributeTypes: ( 1.3.6.1.4.1.4203.666.11.9.4 NAME 'userPrincipalName' DESC 'AD-compatible UPN for integration tests' EQUALITY caseIgnoreMatch SUBSTR caseIgnoreSubstringsMatch SYNTAX 1.3.6.1.4.1.1466.115.121.1.15 SINGLE-VALUE )
+olcAttributeTypes: ( 1.3.6.1.4.1.4203.666.11.9.5 NAME 'userAccountControl' DESC 'AD-compatible account flags for integration tests' EQUALITY integerMatch ORDERING integerOrderingMatch SYNTAX 1.3.6.1.4.1.1466.115.121.1.27 SINGLE-VALUE )
+olcAttributeTypes: ( 1.3.6.1.4.1.4203.666.11.9.6 NAME 'primaryGroupID' DESC 'AD-compatible primary group RID for integration tests' EQUALITY integerMatch ORDERING integerOrderingMatch SYNTAX 1.3.6.1.4.1.1466.115.121.1.27 SINGLE-VALUE )
+olcObjectClasses: ( 1.3.6.1.4.1.4203.666.11.9.20 NAME 'adTestUser' DESC 'Auxiliary AD user projection for integration tests' SUP top AUXILIARY MUST ( objectGUID $ objectSid $ sAMAccountName $ userPrincipalName $ userAccountControl $ primaryGroupID ) )
+olcObjectClasses: ( 1.3.6.1.4.1.4203.666.11.9.21 NAME 'adTestGroup' DESC 'Auxiliary AD group projection for integration tests' SUP top AUXILIARY MUST ( objectGUID $ objectSid ) MAY ( sAMAccountName $ displayName $ mail ) )

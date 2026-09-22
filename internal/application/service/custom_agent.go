@@ -44,6 +44,7 @@ type customAgentService struct {
 	tagRepo        interfaces.KnowledgeTagRepository
 	knowledgeRepo  interfaces.KnowledgeRepository
 	agentShareRepo interfaces.AgentShareRepository
+	groupAccess    interfaces.GroupAccessService
 }
 
 // NewCustomAgentService creates a new custom agent service
@@ -66,6 +67,16 @@ func NewCustomAgentService(
 		tagRepo:        tagRepo,
 		knowledgeRepo:  knowledgeRepo,
 		agentShareRepo: agentShareRepo,
+	}
+}
+
+// ConfigureCustomAgentGroupAccess attaches the optional directory-group
+// policy overlay without widening the long-standing constructor. Suggested
+// questions resolve documents and tags outside the ordinary HTTP KB routes,
+// so they must apply the same policy before reading candidate content.
+func ConfigureCustomAgentGroupAccess(customAgents interfaces.CustomAgentService, groupAccess interfaces.GroupAccessService) {
+	if impl, ok := customAgents.(*customAgentService); ok {
+		impl.groupAccess = groupAccess
 	}
 }
 
@@ -1149,9 +1160,23 @@ func (s *customAgentService) readableSuggestionKnowledgeIDs(ctx context.Context,
 			continue
 		}
 		ok, err := permissions.Check(knowledge.KnowledgeBaseID, knowledge.TenantID, types.OrgRoleViewer)
-		if err == nil && ok {
-			readable = append(readable, id)
+		if err != nil || !ok {
+			continue
 		}
+		if s.groupAccess != nil {
+			permission, accessErr := s.groupAccess.EffectivePermission(
+				ctx,
+				knowledge.TenantID,
+				types.GroupResourceTypeKnowledgeBase,
+				knowledge.KnowledgeBaseID,
+				types.ResourceActionRead,
+				time.Now().UTC(),
+			)
+			if accessErr != nil || !permission.Allowed {
+				continue
+			}
+		}
+		readable = append(readable, id)
 	}
 	return readable
 }
@@ -1183,6 +1208,12 @@ func (s *customAgentService) groupKBIDsByEffectiveTenant(
 		logger.ErrorWithFields(ctx, err, map[string]interface{}{
 			"kb_ids": kbIDs,
 		})
+		if s.groupAccess != nil {
+			// A policy-enabled deployment must fail closed: falling back to the
+			// caller tenant would let a repository outage skip the restricted
+			// mode check and query chunks directly.
+			return out
+		}
 		// Fall back to caller's tenant so at least in-tenant KBs are queryable;
 		// chunk repo filtering will drop anything that doesn't match.
 		out[callerTenantID] = append(out[callerTenantID], kbIDs...)
@@ -1203,6 +1234,19 @@ func (s *customAgentService) groupKBIDsByEffectiveTenant(
 		ok, err := permissions.Check(kbID, kb.TenantID, types.OrgRoleViewer)
 		if err != nil || !ok {
 			continue
+		}
+		if s.groupAccess != nil {
+			permission, accessErr := s.groupAccess.EffectivePermission(
+				ctx,
+				kb.TenantID,
+				types.GroupResourceTypeKnowledgeBase,
+				kb.ID,
+				types.ResourceActionRead,
+				time.Now().UTC(),
+			)
+			if accessErr != nil || !permission.Allowed {
+				continue
+			}
 		}
 		out[kb.TenantID] = append(out[kb.TenantID], kbID)
 	}

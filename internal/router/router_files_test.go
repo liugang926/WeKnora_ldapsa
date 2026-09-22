@@ -2,6 +2,7 @@ package router
 
 import (
 	"context"
+	"errors"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -27,6 +28,7 @@ type stubResourceCatalog struct {
 	resource     *types.StoredResource
 	fileBindings *types.MessageFileBindings
 	bound        func(context.Context, uint64, string, string) (bool, error)
+	kbIDs        func(context.Context, uint64, string) ([]string, error)
 }
 
 type stubMessageFileLookup struct {
@@ -48,6 +50,23 @@ type stubSharedAgentFileLookup struct {
 		agentID string,
 		sourceTenantID ...uint64,
 	) (*types.CustomAgent, error)
+}
+
+type stubResourceGroupAuthorizer struct {
+	authorize func(context.Context, uint64, types.ResourceType, string, types.ResourceAction) error
+}
+
+func (s *stubResourceGroupAuthorizer) Authorize(
+	ctx context.Context,
+	tenantID uint64,
+	resourceType types.ResourceType,
+	resourceID string,
+	action types.ResourceAction,
+) error {
+	if s.authorize == nil {
+		return nil
+	}
+	return s.authorize(ctx, tenantID, resourceType, resourceID, action)
 }
 
 func (s *stubSharedAgentFileLookup) GetSharedAgentForTenant(
@@ -103,12 +122,27 @@ func (s *stubResourceCatalog) MarkDeleted(context.Context, string) error {
 	panic("unexpected MarkDeleted")
 }
 
+func (s *stubResourceCatalog) ListKnowledgeBaseIDs(
+	ctx context.Context, tenantID uint64, reference string,
+) ([]string, error) {
+	if s.kbIDs == nil {
+		return nil, nil
+	}
+	return s.kbIDs(ctx, tenantID, reference)
+}
+
 func (s *stubResourceCatalog) CreateAccessGrant(context.Context, string, time.Duration) (string, error) {
 	panic("unexpected CreateAccessGrant")
 }
 
 func (s *stubResourceCatalog) ResolveAccessGrant(context.Context, string) (*types.StoredResource, error) {
 	return s.resource, nil
+}
+
+func (s *stubResourceCatalog) RevokeAccessGrantsByKnowledgeBase(
+	context.Context, uint64, string,
+) (int64, error) {
+	return 0, nil
 }
 
 func (s *stubFileService) CheckConnectivity(ctx context.Context) error {
@@ -241,6 +275,7 @@ func TestResourceGrantServesShortPublicURL(t *testing.T) {
 			return io.NopCloser(strings.NewReader("image")), nil
 		}},
 		nil,
+		nil,
 	)
 
 	req := httptest.NewRequest(http.MethodGet, "/r/GrantTokenAbCdEfGhIjKlM", nil)
@@ -254,6 +289,49 @@ func TestResourceGrantServesShortPublicURL(t *testing.T) {
 	}
 	if got := recorder.Header().Get("Content-Disposition"); !strings.Contains(got, "a.png") {
 		t.Fatalf("Content-Disposition = %q, want original filename a.png", got)
+	}
+}
+
+func TestResourceGrantRejectsRestrictedKnowledgeBaseBeforeStorage(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	const physical = "local://42/exports/restricted.png"
+	engine := gin.New()
+	serveResourceGrants(
+		engine,
+		&stubResourceCatalog{
+			resource: &types.StoredResource{ID: "resource-1", TenantID: 42, PhysicalPath: physical},
+			kbIDs: func(_ context.Context, tenantID uint64, reference string) ([]string, error) {
+				if tenantID != 42 || reference != physical {
+					t.Fatalf("unexpected resource lookup tenant=%d reference=%q", tenantID, reference)
+				}
+				return []string{"kb-restricted"}, nil
+			},
+		},
+		&stubTenantService{get: func(context.Context, uint64) (*types.Tenant, error) {
+			t.Fatal("tenant lookup must not run after group-policy denial")
+			return nil, nil
+		}},
+		&stubFileService{getFile: func(context.Context, string) (io.ReadCloser, error) {
+			t.Fatal("restricted resource must not be opened")
+			return nil, nil
+		}},
+		nil,
+		&stubResourceGroupAuthorizer{authorize: func(
+			_ context.Context, tenantID uint64, resourceType types.ResourceType, resourceID string, action types.ResourceAction,
+		) error {
+			if tenantID != 42 || resourceType != types.GroupResourceTypeKnowledgeBase ||
+				resourceID != "kb-restricted" || action != types.ResourceActionRead {
+				t.Fatalf("unexpected authorization tenant=%d type=%s id=%s action=%s",
+					tenantID, resourceType, resourceID, action)
+			}
+			return errors.New("verifiable user required")
+		}},
+	)
+
+	w := httptest.NewRecorder()
+	engine.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/r/GrantTokenAbCdEfGhIjKlM", nil))
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("status=%d, want %d", w.Code, http.StatusForbidden)
 	}
 }
 

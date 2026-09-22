@@ -51,6 +51,7 @@ type Handler struct {
 	// handshake (browser WebSocket upgrades cannot send Authorization).
 	userService   interfaces.UserService
 	memberService interfaces.TenantMemberService
+	groupAccess   interfaces.GroupAccessService
 	// terminalService opens PTYs on the sandbox bound to a session. It also
 	// owns first-use provisioning: the WS handshake carries the chat page's
 	// selected agent so the sandbox is created with the same config a
@@ -103,6 +104,7 @@ func NewHandler(
 	rdb *redis.Client,
 	forkService *service.SessionForkService,
 	rewindService *service.SessionRewindService,
+	groupAccess interfaces.GroupAccessService,
 ) *Handler {
 	h := &Handler{
 		browserSkill:          browserSkill,
@@ -127,6 +129,7 @@ func NewHandler(
 		memoryService:         memoryService,
 		userService:           userService,
 		memberService:         memberService,
+		groupAccess:           groupAccess,
 		terminalService:       terminalService,
 		desktopService:        desktopService,
 		desktopTickets:        desktopTickets,

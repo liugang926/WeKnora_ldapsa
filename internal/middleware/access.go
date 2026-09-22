@@ -4,6 +4,7 @@ import (
 	"context"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Tencent/WeKnora/internal/config"
 	apperrors "github.com/Tencent/WeKnora/internal/errors"
@@ -80,15 +81,24 @@ func IsTenantAccessible(
 	targetTenantID uint64,
 	memberService interfaces.TenantMemberService,
 	cfg *config.Config,
+	groupAccess ...interfaces.GroupAccessService,
 ) bool {
 	if user == nil || targetTenantID == 0 {
 		return false
 	}
-	if user.TenantID == targetTenantID {
+	// When the group service is available even a home pointer must be backed
+	// by a current direct/group membership. Directory-only users may have a
+	// convenience home tenant without a tenant_members row, and that pointer
+	// must not survive group removal or snapshot staleness.
+	if user.TenantID == targetTenantID && (len(groupAccess) == 0 || groupAccess[0] == nil) {
 		return true
 	}
 	if cfg != nil && cfg.Tenant != nil && cfg.Tenant.EnableCrossTenantAccess && user.CanAccessAllTenants {
 		return true
+	}
+	if len(groupAccess) > 0 && groupAccess[0] != nil {
+		effective, err := groupAccess[0].EffectiveTenantRole(ctx, user.ID, targetTenantID, time.Now().UTC())
+		return err == nil && effective.Member
 	}
 	if memberService == nil {
 		return false

@@ -8,9 +8,10 @@ import (
 func TestTaskInitiatorRoundTrip(t *testing.T) {
 	requestCtx := context.WithValue(context.Background(), UserIDContextKey, "user-1")
 	requestCtx = context.WithValue(requestCtx, TenantRoleContextKey, TenantRoleAdmin)
+	requestCtx = context.WithValue(requestCtx, SystemAdminContextKey, true)
 
 	initiator := TaskInitiatorFromContext(requestCtx)
-	if initiator.UserID != "user-1" || initiator.Role != TenantRoleAdmin {
+	if initiator.UserID != "user-1" || initiator.Role != TenantRoleAdmin || !initiator.SystemAdmin {
 		t.Fatalf("TaskInitiatorFromContext() = %#v", initiator)
 	}
 
@@ -20,6 +21,9 @@ func TestTaskInitiatorRoundTrip(t *testing.T) {
 	}
 	if role := TenantRoleFromContext(workerCtx); role != TenantRoleAdmin {
 		t.Fatalf("restored role = %q", role)
+	}
+	if !IsSystemAdminFromContext(workerCtx) {
+		t.Fatal("system administrator flag was not restored")
 	}
 }
 

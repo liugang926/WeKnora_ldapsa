@@ -1,0 +1,10 @@
+DROP TABLE IF EXISTS directory_permission_versions;
+DROP TABLE IF EXISTS resource_group_grants;
+DROP TABLE IF EXISTS resource_access_policies;
+DROP TABLE IF EXISTS tenant_group_role_grants;
+DROP TABLE IF EXISTS directory_sync_runs;
+DROP TABLE IF EXISTS directory_group_memberships;
+DROP TABLE IF EXISTS directory_group_edges;
+DROP TABLE IF EXISTS directory_groups;
+DROP TABLE IF EXISTS directory_identities;
+DROP TABLE IF EXISTS directories;

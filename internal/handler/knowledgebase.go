@@ -45,6 +45,7 @@ type KnowledgeBaseHandler struct {
 	// default handle mode is available.
 	fileService     interfaces.FileService
 	storageResolver interfaces.StorageBackendResolver
+	groupAccess     interfaces.GroupAccessService
 }
 
 // NewKnowledgeBaseHandler creates a new knowledge base handler instance
@@ -60,6 +61,7 @@ func NewKnowledgeBaseHandler(
 	fileService interfaces.FileService,
 	storageResolver interfaces.StorageBackendResolver,
 	profileService interfaces.KnowledgeBaseProfileService,
+	groupAccess interfaces.GroupAccessService,
 ) *KnowledgeBaseHandler {
 	return &KnowledgeBaseHandler{
 		cfg:                cfg,
@@ -73,7 +75,34 @@ func NewKnowledgeBaseHandler(
 		userService:        userService,
 		fileService:        fileService,
 		storageResolver:    storageResolver,
+		groupAccess:        groupAccess,
 	}
+}
+
+func (h *KnowledgeBaseHandler) filterGroupAccessibleKBs(
+	ctx context.Context,
+	kbs []*types.KnowledgeBase,
+) []*types.KnowledgeBase {
+	if h.groupAccess == nil {
+		return kbs
+	}
+	filtered := make([]*types.KnowledgeBase, 0, len(kbs))
+	for _, kb := range kbs {
+		if kb == nil {
+			continue
+		}
+		permission, err := h.groupAccess.EffectivePermission(
+			ctx, kb.TenantID, types.GroupResourceTypeKnowledgeBase, kb.ID, types.ResourceActionRead, time.Now().UTC(),
+		)
+		if err != nil {
+			logger.Warnf(ctx, "Cannot verify directory group access for knowledge base %s: %v", kb.ID, err)
+			continue
+		}
+		if permission.Allowed {
+			filtered = append(filtered, kb)
+		}
+	}
+	return filtered
 }
 
 // resolveResourceRewriter builds the storage-reference rewriter for one response
@@ -535,6 +564,7 @@ func (h *KnowledgeBaseHandler) ListKnowledgeBases(c *gin.Context) {
 		}
 		kbs = filterKnowledgeBasesForSharedAgent(kbs, agent)
 		kbs = filterKnowledgeBasesForAPIKeyScope(ctx, kbs)
+		kbs = h.filterGroupAccessibleKBs(ctx, kbs)
 
 		c.JSON(http.StatusOK, gin.H{
 			"success": true,
@@ -577,6 +607,7 @@ func (h *KnowledgeBaseHandler) ListKnowledgeBases(c *gin.Context) {
 		kbs = filtered
 	}
 	kbs = filterKnowledgeBasesForAPIKeyScope(ctx, kbs)
+	kbs = h.filterGroupAccessibleKBs(ctx, kbs)
 
 	// Get share counts for all knowledge bases
 	if len(kbs) > 0 && h.kbShareService != nil {

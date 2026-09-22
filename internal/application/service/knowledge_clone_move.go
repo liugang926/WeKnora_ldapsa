@@ -449,7 +449,7 @@ func (s *knowledgeService) ProcessKBClone(ctx context.Context, t *asynq.Task) er
 	if payload.TenantID == 0 || payload.SourceID == "" || payload.TaskID == "" {
 		return fmt.Errorf("invalid clone task: %w", asynq.SkipRetry)
 	}
-	ctx = types.WithExecutionTenant(ctx, payload.TenantID)
+	ctx = backgroundTaskAuthorizationContext(ctx, payload.TenantID, payload.Initiator)
 	source, err := s.kbService.GetKnowledgeBaseByID(ctx, payload.SourceID)
 	if err != nil {
 		return err
@@ -474,6 +474,24 @@ func (s *knowledgeService) ProcessKBClone(ctx context.Context, t *asynq.Task) er
 	}
 	if source == nil || source.ID != payload.SourceID || target == nil || target.ID != payload.TargetID {
 		return fmt.Errorf("invalid clone binding: %w", asynq.SkipRetry)
+	}
+	if err := s.revalidateBackgroundKBAccess(
+		ctx, source.TenantID, source.ID, types.ResourceActionRead,
+	); err != nil {
+		if errors.Is(err, ErrResourceAccessDenied) {
+			return fmt.Errorf("clone source authorization revoked: %v: %w", err, asynq.SkipRetry)
+		}
+		return err
+	}
+	if !create {
+		if err := s.revalidateBackgroundKBAccess(
+			ctx, target.TenantID, target.ID, types.ResourceActionEdit,
+		); err != nil {
+			if errors.Is(err, ErrResourceAccessDenied) {
+				return fmt.Errorf("clone target authorization revoked: %v: %w", err, asynq.SkipRetry)
+			}
+			return err
+		}
 	}
 	ctx, err = access.WithKBTransferTask(
 		ctx,
@@ -1064,7 +1082,7 @@ func (s *knowledgeService) ProcessKnowledgeMove(ctx context.Context, t *asynq.Ta
 	}
 	ctx = payload.Initiator.Apply(ctx)
 	ctx = withKBActivityTask(ctx, payload.TaskID, kbActivityTrigger(ctx))
-	ctx = types.WithExecutionTenant(ctx, payload.TenantID)
+	ctx = backgroundTaskAuthorizationContext(ctx, payload.TenantID, payload.Initiator)
 	sourceKB, err := s.kbService.GetKnowledgeBaseByID(ctx, payload.SourceKBID)
 	if err != nil {
 		return err
@@ -1075,6 +1093,16 @@ func (s *knowledgeService) ProcessKnowledgeMove(ctx context.Context, t *asynq.Ta
 	}
 	if sourceKB == nil || sourceKB.ID != payload.SourceKBID || targetKB == nil || targetKB.ID != payload.TargetKBID {
 		return fmt.Errorf("invalid move binding: %w", asynq.SkipRetry)
+	}
+	for _, kb := range []*types.KnowledgeBase{sourceKB, targetKB} {
+		if err := s.revalidateBackgroundKBAccess(
+			ctx, kb.TenantID, kb.ID, types.ResourceActionEdit,
+		); err != nil {
+			if errors.Is(err, ErrResourceAccessDenied) {
+				return fmt.Errorf("move authorization revoked for knowledge base %s: %v: %w", kb.ID, err, asynq.SkipRetry)
+			}
+			return err
+		}
 	}
 	ctx, err = access.WithKBTransferTask(
 		ctx,

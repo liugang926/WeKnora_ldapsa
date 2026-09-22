@@ -9,6 +9,11 @@ export interface LoginRequest {
   password: string
 }
 
+export interface LDAPLoginRequest {
+  identifier: string
+  password: string
+}
+
 export interface LoginResponse {
   success: boolean
   message?: string
@@ -220,6 +225,15 @@ export async function login(data: LoginRequest): Promise<LoginResponse> {
   }
 }
 
+/** Authenticate against the configured LDAP/AD directory. */
+export async function ldapLogin(data: LDAPLoginRequest): Promise<LoginResponse> {
+  try {
+    return await post('/api/v1/auth/ldap/login', data) as unknown as LoginResponse
+  } catch (error: any) {
+    return { success: false, message: error.message || t('error.auth.loginFailed') }
+  }
+}
+
 /**
  * 获取 OIDC 登录跳转地址
  */
@@ -264,6 +278,8 @@ export interface AuthConfigResponse {
   success: boolean
   registration_mode: 'self_serve' | 'invite_only' | string
   complex_password_enabled: boolean
+  ldap_enabled: boolean
+  ldap_provider_display_name?: string
 }
 
 export async function getAuthConfig(): Promise<AuthConfigResponse> {
@@ -271,7 +287,12 @@ export async function getAuthConfig(): Promise<AuthConfigResponse> {
     const response = await get('/api/v1/auth/config')
     return response as unknown as AuthConfigResponse
   } catch {
-    return { success: false, registration_mode: 'self_serve', complex_password_enabled: false }
+    return {
+      success: false,
+      registration_mode: 'self_serve',
+      complex_password_enabled: false,
+      ldap_enabled: false,
+    }
   }
 }
 

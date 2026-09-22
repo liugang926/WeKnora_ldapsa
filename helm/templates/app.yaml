@@ -106,6 +106,68 @@ spec:
                 secretKeyRef:
                   name: {{ include "weknora.secretName" . }}
                   key: SYSTEM_AES_KEY
+            {{- if .Values.app.directory.enabled }}
+            # Optional LDAP / Active Directory module. TLS certificate
+            # verification is mandatory in both LDAPS and StartTLS modes.
+            - name: LDAP_ENABLED
+              value: "true"
+            - name: LDAP_CONFIG_SOURCE
+              value: {{ .Values.app.directory.managementSource | quote }}
+            - name: LDAP_DIRECTORY_ID
+              value: {{ .Values.app.directory.id | quote }}
+            - name: LDAP_PROVIDER_DISPLAY_NAME
+              value: {{ .Values.app.directory.providerDisplayName | quote }}
+            - name: LDAP_URLS
+              value: {{ join "," .Values.app.directory.urls | quote }}
+            - name: LDAP_TLS_MODE
+              value: {{ .Values.app.directory.tlsMode | quote }}
+            - name: LDAP_SERVER_NAMES
+              value: {{ join "," .Values.app.directory.serverNames | quote }}
+            - name: LDAP_BIND_DN
+              value: {{ .Values.app.directory.bindDN | quote }}
+            {{- if eq .Values.app.directory.managementSource "file" }}
+            {{- if .Values.app.directory.bindPasswordSecretName }}
+            - name: LDAP_BIND_PASSWORD_FILE
+              value: /run/weknora/ldap-bind-password/password
+            {{- else }}
+            - name: LDAP_BIND_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "weknora.secretName" . }}
+                  key: LDAP_BIND_PASSWORD
+            {{- end }}
+            {{- end }}
+            - name: LDAP_BASE_DN
+              value: {{ .Values.app.directory.baseDN | quote }}
+            - name: LDAP_USER_BASE_DN
+              value: {{ .Values.app.directory.userBaseDN | quote }}
+            - name: LDAP_GROUP_BASE_DN
+              value: {{ .Values.app.directory.groupBaseDN | quote }}
+            - name: LDAP_USER_FILTER
+              value: {{ .Values.app.directory.userFilter | quote }}
+            - name: LDAP_GROUP_FILTER
+              value: {{ .Values.app.directory.groupFilter | quote }}
+            - name: LDAP_LOGIN_FILTER
+              value: {{ .Values.app.directory.loginFilter | quote }}
+            - name: LDAP_ALLOWED_LOGIN_FILTER
+              value: {{ .Values.app.directory.allowedLoginFilter | quote }}
+            - name: LDAP_CONNECT_TIMEOUT
+              value: {{ .Values.app.directory.connectTimeout | quote }}
+            - name: LDAP_QUERY_TIMEOUT
+              value: {{ .Values.app.directory.queryTimeout | quote }}
+            - name: LDAP_PAGE_SIZE
+              value: {{ .Values.app.directory.pageSize | quote }}
+            - name: LDAP_RESULT_LIMIT
+              value: {{ .Values.app.directory.resultLimit | quote }}
+            - name: LDAP_SYNC_INTERVAL
+              value: {{ .Values.app.directory.syncInterval | quote }}
+            - name: LDAP_STALE_AFTER
+              value: {{ .Values.app.directory.staleAfter | quote }}
+            {{- if and (eq .Values.app.directory.managementSource "file") .Values.app.directory.caSecretName }}
+            - name: LDAP_CA_FILE
+              value: /run/weknora/ldap-ca/ca.crt
+            {{- end }}
+            {{- end }}
             # Retrieval & Storage
             - name: RETRIEVE_DRIVER
               value: {{ .Values.app.env.RETRIEVE_DRIVER | quote }}
@@ -152,6 +214,16 @@ spec:
           volumeMounts:
             - name: data-files
               mountPath: /data/files
+            {{- if and .Values.app.directory.enabled (eq .Values.app.directory.managementSource "file") .Values.app.directory.caSecretName }}
+            - name: ldap-ca
+              mountPath: /run/weknora/ldap-ca
+              readOnly: true
+            {{- end }}
+            {{- if and .Values.app.directory.enabled (eq .Values.app.directory.managementSource "file") .Values.app.directory.bindPasswordSecretName }}
+            - name: ldap-bind-password
+              mountPath: /run/weknora/ldap-bind-password
+              readOnly: true
+            {{- end }}
           resources:
             {{- toYaml .Values.app.resources | nindent 12 }}
           {{- with .Values.app.livenessProbe }}
@@ -170,6 +242,22 @@ spec:
           {{- else }}
           emptyDir: {}
           {{- end }}
+        {{- if and .Values.app.directory.enabled (eq .Values.app.directory.managementSource "file") .Values.app.directory.caSecretName }}
+        - name: ldap-ca
+          secret:
+            secretName: {{ .Values.app.directory.caSecretName | quote }}
+            items:
+              - key: {{ .Values.app.directory.caSecretKey | quote }}
+                path: ca.crt
+        {{- end }}
+        {{- if and .Values.app.directory.enabled (eq .Values.app.directory.managementSource "file") .Values.app.directory.bindPasswordSecretName }}
+        - name: ldap-bind-password
+          secret:
+            secretName: {{ .Values.app.directory.bindPasswordSecretName | quote }}
+            items:
+              - key: {{ .Values.app.directory.bindPasswordSecretKey | quote }}
+                path: password
+        {{- end }}
       {{- with .Values.app.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

@@ -50,6 +50,10 @@ func (c *resolvingCatalog) Release(context.Context, string, string, string) (int
 
 func (c *resolvingCatalog) MarkDeleted(context.Context, string) error { return nil }
 
+func (c *resolvingCatalog) ListKnowledgeBaseIDs(context.Context, uint64, string) ([]string, error) {
+	return nil, nil
+}
+
 func (c *resolvingCatalog) CreateAccessGrant(
 	context.Context, string, time.Duration,
 ) (string, error) {
@@ -60,6 +64,12 @@ func (c *resolvingCatalog) ResolveAccessGrant(
 	context.Context, string,
 ) (*types.StoredResource, error) {
 	return nil, errors.New("unused")
+}
+
+func (c *resolvingCatalog) RevokeAccessGrantsByKnowledgeBase(
+	context.Context, uint64, string,
+) (int64, error) {
+	return 0, errors.New("unused")
 }
 
 func contentRef(char string) string {

@@ -29,6 +29,16 @@ var versionedSQLiteTables = []string{
 	"fork_snapshot_leases",
 	"mcp_endpoints",
 	"message_artifacts",
+	"directories",
+	"directory_identities",
+	"directory_groups",
+	"directory_group_edges",
+	"directory_group_memberships",
+	"directory_sync_runs",
+	"tenant_group_role_grants",
+	"resource_access_policies",
+	"resource_group_grants",
+	"directory_permission_versions",
 }
 
 // versionedSQLiteColumns maps each existing table to the columns that the
@@ -45,14 +55,15 @@ var versionedSQLiteColumns = map[string][]string{
 		"parent_session_id", "forked_from_message_id", "fork_bootstrap", // 000097
 		"sandbox_config_tenant_id", // 000108
 	},
-	"tenant_invitations": {"token", "accepted_count"},        // 000054
-	"embed_channels":     {"allow_memory"},                   // 000060
-	"mcp_oauth_tokens":   {"principal_type", "principal_id"}, // 000064
-	"mcp_tool_approvals": {"enabled"},                        // 000091
-	"message_artifacts":  {"deleted_at"},                     // 000107
+	"tenant_invitations": {"token", "accepted_count"},                       // 000054
+	"embed_channels":     {"allow_memory"},                                  // 000060
+	"mcp_oauth_tokens":   {"principal_type", "principal_id"},                // 000064
+	"mcp_tool_approvals": {"enabled"},                                       // 000091
+	"message_artifacts":  {"deleted_at"},                                    // 000107
+	"directories":        {"config_version", "security_config_fingerprint"}, // 000109 / SQLite 000028
 }
 
-const expectedSQLiteMigrationVersion = 27
+const expectedSQLiteMigrationVersion = 28
 
 func TestSQLiteMigrationsCreateVersionedSchema(t *testing.T) {
 	repoRoot := sqliteRepoRoot(t)

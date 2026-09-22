@@ -1,4 +1,7 @@
+import { directoryAccessLocale } from './directoryAccessLocale'
+
 export default {
+  ...directoryAccessLocale,
   localBrowser: {
     pipOpen: "Открыть плавающее окно",
     pipReturn: "Вернуть предпросмотр в чат",

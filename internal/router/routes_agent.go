@@ -1,6 +1,7 @@
 package router
 
 import (
+	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/embedpolicy"
 	"github.com/Tencent/WeKnora/internal/handler"
 	"github.com/Tencent/WeKnora/internal/middleware"
+	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 )
 
@@ -39,17 +41,18 @@ func RegisterCustomAgentRoutes(r *gin.RouterGroup, agentHandler *handler.CustomA
 		// List all agents (including built-in) — Viewer+
 		agentsRead.GET("", g.Viewer(), agentHandler.ListAgents)
 		// Get agent by ID — Viewer+
-		agentsRead.GET("/:id", g.Viewer(), agentHandler.GetAgent)
+		agentsRead.GET("/:id", g.Viewer(), g.AgentAccess("id", types.ResourceActionUse), agentHandler.GetAgent)
 		// Update agent — creator OR Admin+
-		agentsWrite.PUT("/:id", g.OwnedAgentOrAdmin(), agentHandler.UpdateAgent)
+		agentsWrite.PUT("/:id", g.EditableAgentOrAdmin(), g.AgentAccess("id", types.ResourceActionEdit), agentHandler.UpdateAgent)
 		// Delete agent — creator OR Admin+
-		agentsWrite.DELETE("/:id", g.OwnedAgentOrAdmin(), agentHandler.DeleteAgent)
+		agentsWrite.DELETE("/:id", g.OwnedAgentOrAdmin(), g.AgentAccess("id", types.ResourceActionManage), agentHandler.DeleteAgent)
 		// Copy agent — Contributor+ (copy is owned by the caller)
-		agentsWrite.POST("/:id/copy", g.Contributor(), agentHandler.CopyAgent)
+		agentsWrite.POST("/:id/copy", g.Contributor(), g.AgentAccess("id", types.ResourceActionUse), agentHandler.CopyAgent)
 	}
 	// Registered outside the group to avoid Gin route conflict with /agents/:id/shares in organization routes
 	g.apiKeyRoute(r, http.MethodGet, "/agents/:id/suggested-questions",
-		apiKeyReadAgents(apiKeyManageAgents(apiKeyChat(apiKeyFullAccess()))), g.Viewer(), agentHandler.GetSuggestedQuestions)
+		apiKeyReadAgents(apiKeyManageAgents(apiKeyChat(apiKeyFullAccess()))), g.Viewer(),
+		g.AgentAccess("id", types.ResourceActionUse), agentHandler.GetSuggestedQuestions)
 }
 
 // RegisterUserFavoriteRoutes wires the per-user starred-resource endpoints.
@@ -226,6 +229,8 @@ func RegisterEmbedPublicRoutes(
 	redisClient *redis.Client,
 	fileService interfaces.FileService,
 	storageResolver interfaces.StorageBackendResolver,
+	groupAccess interfaces.GroupAccessService,
+	chunkService interfaces.ChunkService,
 	resourceCatalogs ...interfaces.ResourceCatalog,
 ) {
 	if embedHandler == nil || embedService == nil {
@@ -234,12 +239,36 @@ func RegisterEmbedPublicRoutes(
 	// Nginx uses this read-only subrequest to put the channel CSP on embed.html.
 	// No token is required: framing policy must be available before JS bootstrap.
 	r.GET("/api/v1/embed-frame-policy", embedFramePolicyHandler(embedService))
-	embed := r.Group("/api/v1/embed/:channel_id", middleware.EmbedAuth(embedService, tenantService, redisClient))
+	embed := r.Group(
+		"/api/v1/embed/:channel_id",
+		middleware.EmbedAuth(embedService, tenantService, redisClient),
+		middleware.RequireGroupResourceAccess(
+			types.GroupResourceTypeAgent,
+			types.ResourceActionUse,
+			func(c *gin.Context) (string, error) {
+				channel, ok := middleware.EmbedChannelFromContext(c.Request.Context())
+				if !ok || channel == nil {
+					return "", fmt.Errorf("embed channel authorization context missing")
+				}
+				return channel.AgentID, nil
+			},
+			groupAccess,
+		),
+	)
 	{
 		embed.POST("/exchange", embedHandler.ExchangeEmbedSession)
 		embed.GET("/config", embedHandler.GetEmbedConfig)
 		embed.GET("/suggested-questions", embedHandler.GetEmbedSuggestedQuestions)
-		embed.GET("/chunks/:chunk_id", embedHandler.GetEmbedChunk)
+		embed.GET(
+			"/chunks/:chunk_id",
+			middleware.RequireGroupResourceAccess(
+				types.GroupResourceTypeKnowledgeBase,
+				types.ResourceActionRead,
+				middleware.KBIDFromChunkIDParam("chunk_id", chunkService),
+				groupAccess,
+			),
+			embedHandler.GetEmbedChunk,
+		)
 		embed.POST("/sessions", embedHandler.CreateEmbedSession)
 		embed.POST("/knowledge-chat/:session_id", embedHandler.EmbedKnowledgeChat)
 		embed.POST("/agent-chat/:session_id", embedHandler.EmbedAgentChat)
@@ -257,7 +286,9 @@ func RegisterEmbedPublicRoutes(
 		// Serve images embedded in bot replies (e.g. chart exports). EmbedAuth
 		// injects the channel's tenant, and the handler enforces that the
 		// requested path belongs to that tenant.
-		embed.GET("/files", newFileServeHandler(fileService, storageResolver, resourceCatalogs...))
+		embed.GET("/files", newFileServeHandlerWithGroupAccess(
+			fileService, storageResolver, firstResourceCatalog(resourceCatalogs), groupAccess,
+		))
 	}
 }
 

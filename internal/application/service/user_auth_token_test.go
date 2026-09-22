@@ -11,6 +11,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/Tencent/WeKnora/internal/types"
+	"github.com/Tencent/WeKnora/internal/types/interfaces"
 )
 
 func init() {
@@ -54,6 +55,20 @@ type stubUserRepoForAuth struct {
 	updateCalls int
 }
 
+type stubDirectoryRepoForAuth struct {
+	interfaces.DirectoryRepository
+	identities []*types.DirectoryIdentity
+	directory  *types.Directory
+}
+
+func (s *stubDirectoryRepoForAuth) GetIdentityByUserID(context.Context, string) ([]*types.DirectoryIdentity, error) {
+	return s.identities, nil
+}
+
+func (s *stubDirectoryRepoForAuth) Get(context.Context, string) (*types.Directory, error) {
+	return s.directory, nil
+}
+
 func (s *stubUserRepoForAuth) CreateUser(context.Context, *types.User) error { return nil }
 func (s *stubUserRepoForAuth) GetUserByID(_ context.Context, id string) (*types.User, error) {
 	user, ok := s.users[id]
@@ -89,6 +104,9 @@ func (s *stubUserRepoForAuth) RevokeSystemAdmin(context.Context, string, string)
 	return nil, nil
 }
 func (s *stubUserRepoForAuth) SearchUsers(context.Context, string, int) ([]*types.User, error) {
+	return nil, nil
+}
+func (s *stubUserRepoForAuth) FindUserByEmailOrUsernameFold(context.Context, string, string) (*types.User, error) {
 	return nil, nil
 }
 
@@ -209,6 +227,49 @@ func TestLogoutRevokesAllUserTokens(t *testing.T) {
 		t.Fatalf("RevokeTokensByUserID calls = %v, want [user-1]", tokenRepo.revokedUserIDs)
 	}
 }
+
+func TestDirectorySessionPausesWhenStaleAndRecoversAfterFreshSync(t *testing.T) {
+	ctx := context.Background()
+	tokenRepo := &stubAuthTokenRepo{tokens: map[string]*types.AuthToken{}}
+	svc := newAuthTestUserService(tokenRepo)
+	svc.userRepo.(*stubUserRepoForAuth).users["user-1"].IsActive = true
+
+	identity := &types.DirectoryIdentity{
+		ID: "identity-1", DirectoryID: "corp-ad", UserID: ptrString("user-1"), Status: types.DirectoryObjectActive,
+	}
+	freshAt := time.Now().UTC()
+	directory := &types.Directory{ID: "corp-ad", Enabled: true, LastSuccessfulSyncAt: &freshAt, StaleAfterSeconds: 900}
+	svc.directoryRepo = &stubDirectoryRepoForAuth{identities: []*types.DirectoryIdentity{identity}, directory: directory}
+
+	accessJWT := signTestJWT(jwt.MapClaims{
+		"user_id": "user-1", "type": "access", "tenant_id": float64(1), "exp": time.Now().Add(time.Hour).Unix(),
+	})
+	tokenRepo.tokens[accessJWT] = &types.AuthToken{
+		ID: "access-1", UserID: "user-1", Token: accessJWT, TokenType: "access_token", ExpiresAt: time.Now().Add(time.Hour),
+	}
+	if _, _, err := svc.ValidateToken(ctx, accessJWT); err != nil {
+		t.Fatalf("fresh directory session rejected: %v", err)
+	}
+
+	staleAt := time.Now().UTC().Add(-16 * time.Minute)
+	directory.LastSuccessfulSyncAt = &staleAt
+	if _, _, err := svc.ValidateToken(ctx, accessJWT); !errors.Is(err, ErrDirectoryAccessSuspended) {
+		t.Fatalf("stale directory session err = %v, want ErrDirectoryAccessSuspended", err)
+	}
+
+	recoveredAt := time.Now().UTC()
+	directory.LastSuccessfulSyncAt = &recoveredAt
+	if _, _, err := svc.ValidateToken(ctx, accessJWT); err != nil {
+		t.Fatalf("session did not recover after fresh sync: %v", err)
+	}
+
+	identity.Status = types.DirectoryObjectOutOfScope
+	if _, _, err := svc.ValidateToken(ctx, accessJWT); !errors.Is(err, ErrDirectoryAccessSuspended) {
+		t.Fatalf("out-of-scope directory session err = %v, want ErrDirectoryAccessSuspended", err)
+	}
+}
+
+func ptrString(value string) *string { return &value }
 
 func TestAdminResetPasswordHashesPasswordAndRevokesSessions(t *testing.T) {
 	ctx := context.Background()

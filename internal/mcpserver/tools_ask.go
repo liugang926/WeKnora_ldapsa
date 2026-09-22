@@ -118,6 +118,15 @@ func (s *Server) resolveAskAgent(ctx context.Context, ep *types.MCPEndpoint) (*t
 	if !types.MCPEndpointAgentAllowed(agent, ep.TenantID) {
 		return nil, fmt.Errorf("the agent configured on this endpoint (%q) is not available", agentID)
 	}
+	allowed, err := s.groupResourceAllowed(
+		ctx, ep.TenantID, types.GroupResourceTypeAgent, agent.ID, types.ResourceActionUse,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("check group access for agent %q: %w", agentID, err)
+	}
+	if !allowed {
+		return nil, fmt.Errorf("this endpoint is not allowed to use agent %q", agentID)
+	}
 	return agent, nil
 }
 

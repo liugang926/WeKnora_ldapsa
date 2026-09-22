@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/Tencent/WeKnora/internal/application/access"
 	"github.com/Tencent/WeKnora/internal/types"
@@ -34,6 +35,7 @@ func (r *suggestionTagRepo) GetByIDs(_ context.Context, tenantID uint64, ids []s
 type suggestionKnowledgeRepo struct {
 	interfaces.KnowledgeRepository
 	idsByTenantAndKB map[uint64]map[string][]string
+	byID             map[string]*types.Knowledge
 }
 
 func (r *suggestionKnowledgeRepo) ListIDsByTagIDs(
@@ -43,6 +45,13 @@ func (r *suggestionKnowledgeRepo) ListIDsByTagIDs(
 	_ []string,
 ) ([]string, error) {
 	return append([]string(nil), r.idsByTenantAndKB[tenantID][kbID]...), nil
+}
+
+func (r *suggestionKnowledgeRepo) GetKnowledgeByIDOnly(_ context.Context, id string) (*types.Knowledge, error) {
+	if knowledge := r.byID[id]; knowledge != nil {
+		return knowledge, nil
+	}
+	return nil, errors.New("not found")
 }
 
 type suggestionKBService struct {
@@ -66,6 +75,24 @@ func (s *suggestionKBService) GetKnowledgeBasesByIDsOnly(
 type suggestionKBShareService struct {
 	interfaces.KBShareService
 	allowed map[string]bool
+}
+
+type suggestionGroupAccess struct {
+	interfaces.GroupAccessService
+	allowed map[string]bool
+	calls   []string
+}
+
+func (s *suggestionGroupAccess) EffectivePermission(
+	_ context.Context,
+	_ uint64,
+	resourceType types.ResourceType,
+	resourceID string,
+	action types.ResourceAction,
+	_ time.Time,
+) (types.EffectiveResourcePermission, error) {
+	s.calls = append(s.calls, string(resourceType)+":"+resourceID+":"+string(action))
+	return types.EffectiveResourcePermission{Allowed: s.allowed[resourceID]}, nil
 }
 
 func (s *suggestionKBShareService) CheckTenantKBPermission(
@@ -106,6 +133,40 @@ func TestResolveSuggestionTagScopes_UsesSourceTenantForSharedKB(t *testing.T) {
 	assert.Equal(t, []string{"doc-in-tag"}, resolved.KnowledgeIDs)
 	assert.Equal(t, []string{tagID}, resolved.TagIDsByTenant[sourceTenant])
 	assert.Empty(t, resolved.TagIDsByTenant[callerTenant])
+}
+
+func TestSuggestionScopesApplyKnowledgeBaseGroupPolicy(t *testing.T) {
+	access := &suggestionGroupAccess{allowed: map[string]bool{"allowed": true}}
+	svc := &customAgentService{
+		kbService: &suggestionKBService{kbs: map[string]*types.KnowledgeBase{
+			"allowed": {ID: "allowed", TenantID: 1},
+			"denied":  {ID: "denied", TenantID: 1},
+		}},
+		groupAccess: access,
+	}
+	ctx := context.WithValue(context.Background(), types.TenantIDContextKey, uint64(1))
+
+	grouped := svc.groupKBIDsByEffectiveTenant(ctx, []string{"allowed", "denied"})
+	require.Equal(t, []string{"allowed"}, grouped[1])
+	require.ElementsMatch(t, []string{
+		"knowledge_base:allowed:read",
+		"knowledge_base:denied:read",
+	}, access.calls)
+}
+
+func TestSuggestionKnowledgeIDsApplyKnowledgeBaseGroupPolicy(t *testing.T) {
+	access := &suggestionGroupAccess{allowed: map[string]bool{"kb-allowed": true}}
+	svc := &customAgentService{
+		knowledgeRepo: &suggestionKnowledgeRepo{byID: map[string]*types.Knowledge{
+			"doc-allowed": {ID: "doc-allowed", TenantID: 1, KnowledgeBaseID: "kb-allowed"},
+			"doc-denied":  {ID: "doc-denied", TenantID: 1, KnowledgeBaseID: "kb-denied"},
+		}},
+		groupAccess: access,
+	}
+	ctx := context.WithValue(context.Background(), types.TenantIDContextKey, uint64(1))
+
+	readable := svc.readableSuggestionKnowledgeIDs(ctx, []string{"doc-allowed", "doc-denied"})
+	require.Equal(t, []string{"doc-allowed"}, readable)
 }
 
 func TestMergeHybridStarterSuggestions_ReservesKnowledgeSlots(t *testing.T) {

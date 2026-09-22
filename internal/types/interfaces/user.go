@@ -84,6 +84,9 @@ type UserService interface {
 	GetCurrentUser(ctx context.Context) (*types.User, error)
 	// SearchUsers searches users by username or email
 	SearchUsers(ctx context.Context, query string, limit int) ([]*types.User, error)
+	// FindUserByEmailOrUsernameFold finds an exact, case-insensitive email or
+	// username collision. Inactive users still count; soft-deleted users do not.
+	FindUserByEmailOrUsernameFold(ctx context.Context, email, username string) (*types.User, error)
 	// ListSystemAdmins lists users with IsSystemAdmin=true.
 	// Returns the page of admins plus the total count (for pagination UI);
 	// callers pass offset/limit to page through results. Used by the
@@ -136,6 +139,9 @@ type UserRepository interface {
 	RevokeSystemAdmin(ctx context.Context, userID, actorID string) (*types.User, error)
 	// SearchUsers searches users by username or email
 	SearchUsers(ctx context.Context, query string, limit int) ([]*types.User, error)
+	// FindUserByEmailOrUsernameFold finds an exact, case-insensitive email or
+	// username collision. Inactive users still count; soft-deleted users do not.
+	FindUserByEmailOrUsernameFold(ctx context.Context, email, username string) (*types.User, error)
 }
 
 // AuthTokenRepository defines the auth token repository interface

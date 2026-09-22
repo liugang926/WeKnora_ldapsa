@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Tencent/WeKnora/internal/application/service"
 	"github.com/Tencent/WeKnora/internal/errors"
@@ -37,6 +38,7 @@ type CustomAgentHandler struct {
 	// sandboxConfigs validates an agent's sandbox backend selection. Optional —
 	// nil in partially-wired unit tests, where the selection is left unchecked.
 	sandboxConfigs sandboxConfigLookup
+	groupAccess    interfaces.GroupAccessService
 }
 
 // NewCustomAgentHandler creates a new custom agent handler instance
@@ -46,6 +48,7 @@ func NewCustomAgentHandler(
 	disabledRepo interfaces.TenantDisabledSharedAgentRepository,
 	userService interfaces.UserService,
 	sandboxConfigs *service.TenantSandboxConfigService,
+	groupAccess interfaces.GroupAccessService,
 ) *CustomAgentHandler {
 	return &CustomAgentHandler{
 		service:        service,
@@ -53,6 +56,7 @@ func NewCustomAgentHandler(
 		disabledRepo:   disabledRepo,
 		userService:    userService,
 		sandboxConfigs: sandboxConfigs,
+		groupAccess:    groupAccess,
 	}
 }
 
@@ -277,6 +281,25 @@ func (h *CustomAgentHandler) ListAgents(c *gin.Context) {
 		logger.Errorf(ctx, "Tenant ID has unexpected type %T in context", tenantIDVal)
 		c.Error(errors.NewInternalServerError("Invalid workspace context type"))
 		return
+	}
+	if h.groupAccess != nil {
+		allowed := make([]*types.CustomAgent, 0, len(agents))
+		for _, agent := range agents {
+			if agent == nil {
+				continue
+			}
+			permission, accessErr := h.groupAccess.EffectivePermission(
+				ctx, agent.TenantID, types.GroupResourceTypeAgent, agent.ID, types.ResourceActionUse, time.Now().UTC(),
+			)
+			if accessErr != nil {
+				logger.Warnf(ctx, "Cannot verify directory group access for agent %s: %v", agent.ID, accessErr)
+				continue
+			}
+			if permission.Allowed {
+				allowed = append(allowed, agent)
+			}
+		}
+		agents = allowed
 	}
 	disabledOwnIDs, err := h.disabledRepo.ListDisabledOwnAgentIDs(ctx, tenantID)
 	if err != nil {

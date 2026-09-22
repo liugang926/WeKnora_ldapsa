@@ -445,6 +445,12 @@
         <DataSourceSettings :kb-id="activeKbId" @count="dsCount = $event" />
       </div>
 
+      <!-- 目录组访问控制（仅编辑模式；所有判断仍由后端统一执行） -->
+      <div v-if="editorMode === 'edit' && activeKbId && currentSection === 'access'" class="section">
+        <ResourceGroupAccessSettings resource-type="knowledge_base" :resource-id="activeKbId"
+          :tenant-id="Number(kbTenantId || authStore.currentTenantId || 0)" :read-only="!canShareKB" />
+      </div>
+
       <!-- 共享设置（仅编辑模式） -->
       <div v-if="editorMode === 'edit' && activeKbId && currentSection === 'share'" class="section">
         <KBShareSettings :kb-id="activeKbId" :can-share="canShareKB" />
@@ -521,6 +527,7 @@ import KBAdvancedSettings from './settings/KBAdvancedSettings.vue'
 import ModelSelector from '@/components/ModelSelector.vue'
 import GraphSettings from './settings/GraphSettings.vue'
 import KBShareSettings from './settings/KBShareSettings.vue'
+import ResourceGroupAccessSettings from '@/components/ResourceGroupAccessSettings.vue'
 import DataSourceSettings from './settings/DataSourceSettings.vue'
 import KnowledgeBaseActivitySettings from './settings/KnowledgeBaseActivitySettings.vue'
 import { useI18n } from 'vue-i18n'
@@ -654,7 +661,7 @@ const DEFAULT_CHUNKING_PRESET = {
 
 // 这些分区的操作在点击时即时生效（共享 / 数据源 / 活动记录），不经过底部「保存」，
 // 因此底部只显示「关闭」并提示，避免用户以为需要再点保存或以为「取消」能撤销。
-const INSTANT_SECTIONS = new Set(['datasource', 'share', 'activity'])
+const INSTANT_SECTIONS = new Set(['datasource', 'access', 'share', 'activity'])
 const isInstantSection = computed(() => INSTANT_SECTIONS.has(currentSection.value))
 
 const navItems = computed(() => {
@@ -683,6 +690,7 @@ const navItems = computed(() => {
     }
   }
   if (editorMode.value === 'edit' && activeKbId.value && !authStore.isLiteMode) {
+    items.push({ key: 'access', icon: 'lock-on', label: t('groupAccess.title') })
     items.push({ key: 'share', icon: 'share', label: t('knowledgeEditor.sidebar.share') })
   }
   if (canViewActivity.value) {
@@ -715,7 +723,7 @@ const navGroups = computed(() => {
     {
       key: 'integration',
       label: t('knowledgeEditor.navGroups.integration'),
-      items: pickItems(['share']),
+      items: pickItems(['access', 'share']),
     },
     {
       key: 'management',

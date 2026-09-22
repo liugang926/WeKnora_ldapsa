@@ -3,8 +3,10 @@ package mcpserver
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Tencent/WeKnora/internal/application/access"
 	"github.com/Tencent/WeKnora/internal/types"
@@ -52,7 +54,46 @@ func mcpCallContext(tenantID uint64, ep *types.MCPEndpoint) context.Context {
 	ctx := context.WithValue(context.Background(), types.TenantIDContextKey, tenantID)
 	ctx = context.WithValue(ctx, types.MCPEndpointContextKey, ep)
 	ctx = types.WithTenantAPIKeyScope(ctx, types.MCPEndpointScope(ep))
-	return types.WithCaller(ctx, types.Caller{TenantID: tenantID, UserID: "mcp-" + ep.ID, Role: types.TenantRoleViewer})
+	ctx = types.WithCaller(ctx, types.Caller{TenantID: tenantID, UserID: "mcp-" + ep.ID, Role: types.TenantRoleViewer})
+	return types.WithPrincipal(ctx, types.MCPEndpointPrincipal(tenantID, ep.ID))
+}
+
+type groupAccessCall struct {
+	tenantID     uint64
+	resourceType types.ResourceType
+	resourceID   string
+	action       types.ResourceAction
+}
+
+type stubGroupAccessService struct {
+	interfaces.GroupAccessService
+	allowed map[string]bool
+	err     error
+	calls   []groupAccessCall
+}
+
+func groupAccessKey(tenantID uint64, resourceType types.ResourceType, resourceID string, action types.ResourceAction) string {
+	return fmt.Sprintf("%d/%s/%s/%s", tenantID, resourceType, resourceID, action)
+}
+
+func (s *stubGroupAccessService) EffectivePermission(
+	_ context.Context,
+	tenantID uint64,
+	resourceType types.ResourceType,
+	resourceID string,
+	action types.ResourceAction,
+	_ time.Time,
+) (types.EffectiveResourcePermission, error) {
+	s.calls = append(s.calls, groupAccessCall{
+		tenantID: tenantID, resourceType: resourceType, resourceID: resourceID, action: action,
+	})
+	if s.err != nil {
+		return types.EffectiveResourcePermission{}, s.err
+	}
+	return types.EffectiveResourcePermission{
+		Allowed: s.allowed[groupAccessKey(tenantID, resourceType, resourceID, action)],
+		Action:  action,
+	}, nil
 }
 
 func newScopeTestServer(kbs ...*types.KnowledgeBase) *Server {
@@ -103,6 +144,48 @@ func TestSelectKnowledgeBasesMatchesIDOrName(t *testing.T) {
 	_, err = srv.selectKnowledgeBases(ctx, ep, []string{"kb-3"})
 	if err == nil || !strings.Contains(err.Error(), "outside") {
 		t.Fatalf("foreign knowledge base must be rejected, got %v", err)
+	}
+}
+
+func TestAllowedKnowledgeBasesAppliesGroupReadPolicy(t *testing.T) {
+	srv := newScopeTestServer(
+		&types.KnowledgeBase{ID: "kb-inherit", TenantID: 1, Name: "Inherited"},
+		&types.KnowledgeBase{ID: "kb-restricted", TenantID: 1, Name: "Restricted"},
+	)
+	groups := &stubGroupAccessService{allowed: map[string]bool{
+		groupAccessKey(1, types.GroupResourceTypeKnowledgeBase, "kb-inherit", types.ResourceActionRead): true,
+	}}
+	ConfigureGroupAccess(srv, groups)
+	ep := &types.MCPEndpoint{ID: "ep", TenantID: 1}
+
+	kbs, err := srv.allowedKnowledgeBases(mcpCallContext(1, ep), ep)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := knowledgeBaseIDs(kbs); len(got) != 1 || got[0] != "kb-inherit" {
+		t.Fatalf("group-filtered knowledge bases = %v", got)
+	}
+	if len(groups.calls) != 2 {
+		t.Fatalf("group checks = %d, want 2", len(groups.calls))
+	}
+	for _, call := range groups.calls {
+		if call.resourceType != types.GroupResourceTypeKnowledgeBase || call.action != types.ResourceActionRead {
+			t.Fatalf("unexpected group access check: %+v", call)
+		}
+	}
+}
+
+func TestAllowedKnowledgeBasesFailsClosedOnGroupStoreError(t *testing.T) {
+	srv := newScopeTestServer(&types.KnowledgeBase{ID: "kb-1", TenantID: 1})
+	ConfigureGroupAccess(srv, &stubGroupAccessService{err: errors.New("directory store unavailable")})
+	for _, ep := range []*types.MCPEndpoint{
+		{ID: "unrestricted", TenantID: 1},
+		{ID: "restricted", TenantID: 1, KnowledgeBaseIDs: types.StringArray{"kb-1"}},
+	} {
+		kbs, err := srv.allowedKnowledgeBases(mcpCallContext(1, ep), ep)
+		if err == nil || !strings.Contains(err.Error(), "directory store unavailable") {
+			t.Fatalf("endpoint %s: expected storage failure, got kbs=%v err=%v", ep.ID, kbs, err)
+		}
 	}
 }
 
@@ -177,6 +260,26 @@ func TestScopedKBContextEnablesWritesOnlyForAuthorizedKnowledgeBases(t *testing.
 	}
 	if err := access.RequireKBWrite(roScoped, own); err == nil {
 		t.Fatal("an endpoint without ingest tools must lack the ingest capability and be refused")
+	}
+}
+
+func TestScopedKBContextRequiresGroupEditForWrites(t *testing.T) {
+	kb := &types.KnowledgeBase{ID: "kb-1", TenantID: 1}
+	srv := newScopeTestServer(kb)
+	groups := &stubGroupAccessService{allowed: map[string]bool{
+		groupAccessKey(1, types.GroupResourceTypeKnowledgeBase, kb.ID, types.ResourceActionRead): true,
+	}}
+	ConfigureGroupAccess(srv, groups)
+	ep := &types.MCPEndpoint{
+		ID: "ep", TenantID: 1, Tools: types.StringArray{types.MCPEndpointToolAddDocument},
+	}
+
+	if _, err := srv.scopedKBContext(mcpCallContext(1, ep), kb, types.OrgRoleEditor); err == nil ||
+		!strings.Contains(err.Error(), "not allowed to write") {
+		t.Fatalf("write without group edit permission must be denied, got %v", err)
+	}
+	if len(groups.calls) != 1 || groups.calls[0].action != types.ResourceActionEdit {
+		t.Fatalf("write must check group edit permission, calls=%+v", groups.calls)
 	}
 }
 
@@ -263,6 +366,33 @@ func TestResolveAskAgentUsesEndpointAgentOnly(t *testing.T) {
 		if err == nil {
 			t.Fatalf("agent %q must be refused", bad)
 		}
+	}
+}
+
+func TestResolveAskAgentRequiresGroupUsePermission(t *testing.T) {
+	agents := &stubAgentService{agents: map[string]*types.CustomAgent{
+		"agent-own": {ID: "agent-own", TenantID: 1},
+	}}
+	srv := &Server{agentService: agents}
+	groups := &stubGroupAccessService{allowed: map[string]bool{}}
+	ConfigureGroupAccess(srv, groups)
+	ep := &types.MCPEndpoint{ID: "ep", TenantID: 1, DefaultAgentID: "agent-own"}
+
+	if _, err := srv.resolveAskAgent(mcpCallContext(1, ep), ep); err == nil ||
+		!strings.Contains(err.Error(), "not allowed to use agent") {
+		t.Fatalf("restricted agent must be denied to MCP endpoint, got %v", err)
+	}
+	if len(groups.calls) != 1 || groups.calls[0] != (groupAccessCall{
+		tenantID: 1, resourceType: types.GroupResourceTypeAgent,
+		resourceID: "agent-own", action: types.ResourceActionUse,
+	}) {
+		t.Fatalf("unexpected agent group check: %+v", groups.calls)
+	}
+
+	groups.err = errors.New("directory store unavailable")
+	if _, err := srv.resolveAskAgent(mcpCallContext(1, ep), ep); err == nil ||
+		!strings.Contains(err.Error(), "directory store unavailable") {
+		t.Fatalf("group store failure must fail ask closed, got %v", err)
 	}
 }
 

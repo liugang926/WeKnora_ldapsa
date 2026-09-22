@@ -1,0 +1,124 @@
+dn: dc=example,dc=test
+objectClass: top
+objectClass: domain
+dc: example
+
+dn: ou=service,dc=example,dc=test
+objectClass: top
+objectClass: organizationalUnit
+ou: service
+
+dn: ou=people,dc=example,dc=test
+objectClass: top
+objectClass: organizationalUnit
+ou: people
+
+dn: ou=groups,dc=example,dc=test
+objectClass: top
+objectClass: organizationalUnit
+ou: groups
+
+dn: cn=directory-reader,ou=service,dc=example,dc=test
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+cn: directory-reader
+sn: reader
+uid: directory-reader
+userPassword: ServicePass!123
+
+dn: cn=Alice Example,ou=people,dc=example,dc=test
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+objectClass: adTestUser
+cn: Alice Example
+sn: Example
+givenName: Alice
+displayName: Alice Example
+mail: alice@example.test
+uid: alice
+sAMAccountName: alice
+userPrincipalName: alice@example.test
+userPassword: AlicePass!123
+objectGUID:: ERERESIiMzNERFVVVVVVVQ==
+objectSid:: AQUAAAAAAAUVAAAA6AMAANAHAAC4CwAATAQAAA==
+userAccountControl: 512
+primaryGroupID: 513
+
+dn: cn=Bob Example,ou=people,dc=example,dc=test
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+objectClass: adTestUser
+cn: Bob Example
+sn: Example
+givenName: Bob
+displayName: Bob Example
+mail: bob@example.test
+uid: bob
+sAMAccountName: bob
+userPrincipalName: bob@example.test
+userPassword: BobPass!123
+objectGUID:: qqqqqru7zMzd3e7u7u7u7g==
+objectSid:: AQUAAAAAAAUVAAAA6AMAANAHAAC4CwAATQQAAA==
+userAccountControl: 512
+primaryGroupID: 513
+
+dn: cn=Charlie Disabled,ou=people,dc=example,dc=test
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+objectClass: adTestUser
+cn: Charlie Disabled
+sn: Disabled
+givenName: Charlie
+displayName: Charlie Disabled
+mail: charlie@example.test
+uid: charlie
+sAMAccountName: charlie
+userPrincipalName: charlie@example.test
+userPassword: CharliePass!123
+objectGUID:: zMzMzN3d7u7//wAAAAAAAQ==
+objectSid:: AQUAAAAAAAUVAAAA6AMAANAHAAC4CwAATgQAAA==
+userAccountControl: 514
+primaryGroupID: 513
+
+dn: cn=Domain Users,ou=groups,dc=example,dc=test
+objectClass: top
+objectClass: groupOfUniqueNames
+objectClass: adTestGroup
+cn: Domain Users
+displayName: Domain Users
+sAMAccountName: Domain Users
+uniqueMember: cn=directory-reader,ou=service,dc=example,dc=test
+objectGUID:: EAAAAAAAAAAAAAAAAAAFEw==
+objectSid:: AQUAAAAAAAUVAAAA6AMAANAHAAC4CwAAAQIAAA==
+
+dn: cn=Engineering,ou=groups,dc=example,dc=test
+objectClass: top
+objectClass: groupOfNames
+objectClass: adTestGroup
+cn: Engineering
+displayName: Engineering
+sAMAccountName: Engineering
+member: cn=Alice Example,ou=people,dc=example,dc=test
+member: cn=Platform,ou=groups,dc=example,dc=test
+objectGUID:: IAAAAAAAAAAAAAAAAAAgAA==
+objectSid:: AQUAAAAAAAUVAAAA6AMAANAHAAC4CwAA0AcAAA==
+
+dn: cn=Platform,ou=groups,dc=example,dc=test
+objectClass: top
+objectClass: groupOfNames
+objectClass: adTestGroup
+cn: Platform
+displayName: Platform
+sAMAccountName: Platform
+member: cn=Bob Example,ou=people,dc=example,dc=test
+member: cn=Charlie Disabled,ou=people,dc=example,dc=test
+objectGUID:: MAAAAAAAAAAAAAAAAAAgAQ==
+objectSid:: AQUAAAAAAAUVAAAA6AMAANAHAAC4CwAA0QcAAA==

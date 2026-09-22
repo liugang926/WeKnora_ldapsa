@@ -123,6 +123,7 @@ type sessionService struct {
 	webSearchStateRepo    interfaces.WebSearchStateService       // Service for web search state
 	webSearchProviderRepo interfaces.WebSearchProviderRepository // Repository for web search provider entities
 	kbShareService        interfaces.KBShareService              // Service for KB sharing operations
+	groupAccess           interfaces.GroupAccessService          // Directory-group resource policy overlay
 	suggestionRepo        interfaces.MessageSuggestionRepository
 	sandboxMgr            sandbox.Manager // Default sandbox backend; used to reclaim per-session MicroVMs on delete
 	sandboxResolver       sandbox.TenantSandboxResolver
@@ -139,6 +140,17 @@ type sessionService struct {
 	// from sandboxResolver/sandboxMgr.
 	forkSnapshots ForkSnapshotDeleter
 	busyGate      *SessionBusyGate
+}
+
+// ConfigureSessionGroupAccess attaches the optional directory-group policy
+// overlay without expanding NewSessionService's already-large constructor.
+// Keeping this as a separate dig invoke also preserves lightweight unit tests
+// that instantiate sessionService directly. A nil service retains the legacy
+// workspace/share authorization behaviour when the LDAP module is disabled.
+func ConfigureSessionGroupAccess(session interfaces.SessionService, groupAccess interfaces.GroupAccessService) {
+	if impl, ok := session.(*sessionService); ok {
+		impl.groupAccess = groupAccess
+	}
 }
 
 // NewSessionService creates a new session service instance with all required dependencies

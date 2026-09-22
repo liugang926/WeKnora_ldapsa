@@ -114,3 +114,36 @@ extract:
 tenant:
   # Enable cross-tenant access (can be enabled for intranet environments)
   enable_cross_tenant_access: false
+
+# Optional LDAP / Active Directory authentication and group synchronisation.
+# Disabled by default; enabling it does not disable local or OIDC login.
+directory:
+  enabled: false
+  # file: YAML/environment is authoritative and read-only in the admin UI.
+  # database: system administrators manage the encrypted connection in the UI.
+  management_source: file
+  id: default-ad
+  provider_display_name: Corporate directory
+  # Every endpoint must use either verified LDAPS or LDAP upgraded with StartTLS.
+  # Multiple entries are tried in order for transport/service-search failures.
+  servers: []
+  # - url: ldaps://dc1.example.com:636
+  #   tls_mode: ldaps
+  #   server_name: dc1.example.com
+  bind_dn: ""
+  bind_password: ""
+  bind_password_file: ""
+  base_dn: ""
+  user_base_dn: ""
+  group_base_dn: ""
+  user_filter: "(&(objectCategory=person)(objectClass=user))"
+  group_filter: "(objectCategory=group)"
+  login_filter: "(&(objectCategory=person)(objectClass=user)(|(sAMAccountName={login})(userPrincipalName={login})))"
+  allowed_login_filter: ""
+  ca_file: ""
+  connect_timeout: 5s
+  query_timeout: 10s
+  page_size: 500
+  result_limit: 10000
+  sync_interval: 5m
+  stale_after: 15m

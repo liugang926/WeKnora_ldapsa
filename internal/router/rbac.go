@@ -140,6 +140,7 @@ type rbacGuards struct {
 	chunkService      middleware.ChunkLookup
 	kbShareService    interfaces.KBShareService
 	agentShareService interfaces.AgentShareService
+	groupAccess       interfaces.GroupAccessService
 
 	// apiKeyAuthorizer is the single source of truth for which routes an
 	// X-API-Key principal may call. Routes opt in via the apiKeyGroup
@@ -162,6 +163,7 @@ func newRBACGuards(
 	chunkService interfaces.ChunkService,
 	kbShareService interfaces.KBShareService,
 	agentShareService interfaces.AgentShareService,
+	groupAccess interfaces.GroupAccessService,
 ) *rbacGuards {
 	g := &rbacGuards{cfg: cfg, apiKeyAuthorizer: middleware.NewAPIKeyRouteAuthorizer()}
 	if kbHandler != nil {
@@ -186,6 +188,7 @@ func newRBACGuards(
 	g.chunkService = chunkService
 	g.kbShareService = kbShareService
 	g.agentShareService = agentShareService
+	g.groupAccess = groupAccess
 	return g
 }
 
@@ -449,6 +452,13 @@ func (g *rbacGuards) OwnedKBOrAdmin() gin.HandlerFunc {
 	return middleware.RequireOwnershipOrRole(types.TenantRoleAdmin, g.kbCreator, g.cfg)
 }
 
+func (g *rbacGuards) EditableKBOrAdmin() gin.HandlerFunc {
+	return middleware.RequireOwnershipOrRoleWithGroupEdit(
+		types.TenantRoleAdmin, g.kbCreator, g.cfg,
+		types.GroupResourceTypeKnowledgeBase, middleware.KBIDFromParam("id"), g.groupAccess,
+	)
+}
+
 // OwnedKBOrAdminFromKbIDParam is the same matrix as OwnedKBOrAdmin but
 // addresses the KB via :kbId (used by /initialization/* routes). KB
 // configuration changes — picking the embedding/parser/storage
@@ -458,11 +468,27 @@ func (g *rbacGuards) OwnedKBOrAdminFromKbIDParam() gin.HandlerFunc {
 	return middleware.RequireOwnershipOrRole(types.TenantRoleAdmin, g.kbCreatorFromKbIDParam, g.cfg)
 }
 
+func (g *rbacGuards) EditableKBOrAdminFromKbIDParam() gin.HandlerFunc {
+	return middleware.RequireOwnershipOrRoleWithGroupEdit(
+		types.TenantRoleAdmin, g.kbCreatorFromKbIDParam, g.cfg,
+		types.GroupResourceTypeKnowledgeBase, middleware.KBIDFromParam("kbId"), g.groupAccess,
+	)
+}
+
 // OwnedAgentOrAdmin: same shape as OwnedKBOrAdmin but for CustomAgent.
 // Built-in agents (IsBuiltin=true) are tenant-owned; their creator
 // lookup returns "" and only Admin+ may mutate them.
 func (g *rbacGuards) OwnedAgentOrAdmin() gin.HandlerFunc {
 	return middleware.RequireOwnershipOrRole(types.TenantRoleAdmin, g.agentCreator, g.cfg)
+}
+
+func (g *rbacGuards) EditableAgentOrAdmin() gin.HandlerFunc {
+	return middleware.RequireOwnershipOrRoleWithGroupEdit(
+		types.TenantRoleAdmin, g.agentCreator, g.cfg,
+		types.GroupResourceTypeAgent,
+		func(c *gin.Context) (string, error) { return c.Param("id"), nil },
+		g.groupAccess,
+	)
 }
 
 // OwnedKnowledgeKBOrAdmin: per-knowledge mutations (update / delete /
@@ -471,6 +497,14 @@ func (g *rbacGuards) OwnedAgentOrAdmin() gin.HandlerFunc {
 // rule as OwnedKBOrAdmin, just one chain hop deeper. PR 5 (#1303).
 func (g *rbacGuards) OwnedKnowledgeKBOrAdmin() gin.HandlerFunc {
 	return middleware.RequireOwnershipOrRole(types.TenantRoleAdmin, g.knowledgeKBCreator, g.cfg)
+}
+
+func (g *rbacGuards) EditableKnowledgeKBOrAdmin() gin.HandlerFunc {
+	return middleware.RequireOwnershipOrRoleWithGroupEdit(
+		types.TenantRoleAdmin, g.knowledgeKBCreator, g.cfg,
+		types.GroupResourceTypeKnowledgeBase,
+		middleware.KBIDFromKnowledgeIDParam("id", g.knowledgeService), g.groupAccess,
+	)
 }
 
 // OwnedChunkKBOrAdmin: chunk mutations addressed via :knowledge_id.
@@ -484,6 +518,14 @@ func (g *rbacGuards) OwnedChunkKBOrAdmin() gin.HandlerFunc {
 	return middleware.RequireOwnershipOrRole(types.TenantRoleAdmin, g.chunkKBCreator, g.cfg)
 }
 
+func (g *rbacGuards) EditableChunkKBOrAdmin() gin.HandlerFunc {
+	return middleware.RequireOwnershipOrRoleWithGroupEdit(
+		types.TenantRoleAdmin, g.chunkKBCreator, g.cfg,
+		types.GroupResourceTypeKnowledgeBase,
+		middleware.KBIDFromKnowledgeIDParam("knowledge_id", g.knowledgeService), g.groupAccess,
+	)
+}
+
 // OwnedChunkKBOrAdminFromChunkID: chunk mutations addressed via :id
 // (the chunk's own id, no knowledge id in the URL). Used by
 // chunks.DELETE("/by-id/:id/questions"). Same OwnedKBOrAdmin matrix
@@ -494,11 +536,26 @@ func (g *rbacGuards) OwnedChunkKBOrAdminFromChunkID() gin.HandlerFunc {
 	return middleware.RequireOwnershipOrRole(types.TenantRoleAdmin, g.chunkKBCreatorFromID, g.cfg)
 }
 
+func (g *rbacGuards) EditableChunkKBOrAdminFromChunkID() gin.HandlerFunc {
+	return middleware.RequireOwnershipOrRoleWithGroupEdit(
+		types.TenantRoleAdmin, g.chunkKBCreatorFromID, g.cfg,
+		types.GroupResourceTypeKnowledgeBase,
+		middleware.KBIDFromChunkIDParam("id", g.chunkService), g.groupAccess,
+	)
+}
+
 // OwnedWikiKBOrAdmin: wiki page CRUD and maintenance ops. Wiki routes
 // use :kb_id directly so the lookup is a single hop into the KB
 // service — no knowledge chain. Same matrix as OwnedKBOrAdmin.
 func (g *rbacGuards) OwnedWikiKBOrAdmin() gin.HandlerFunc {
 	return middleware.RequireOwnershipOrRole(types.TenantRoleAdmin, g.wikiKBCreator, g.cfg)
+}
+
+func (g *rbacGuards) EditableWikiKBOrAdmin() gin.HandlerFunc {
+	return middleware.RequireOwnershipOrRoleWithGroupEdit(
+		types.TenantRoleAdmin, g.wikiKBCreator, g.cfg,
+		types.GroupResourceTypeKnowledgeBase, middleware.KBIDFromParam("kb_id"), g.groupAccess,
+	)
 }
 
 // Tenant-access guards. Distinct from the role guards above: these
@@ -561,6 +618,7 @@ func (g *rbacGuards) KBAccessRead(param string) gin.HandlerFunc {
 		g.kbShareService,
 		g.agentShareService,
 		g.cfg,
+		g.groupAccess,
 	)
 }
 
@@ -575,6 +633,7 @@ func (g *rbacGuards) KBAccessWrite(param string) gin.HandlerFunc {
 		g.kbShareService,
 		g.agentShareService,
 		g.cfg,
+		g.groupAccess,
 	)
 }
 
@@ -590,6 +649,7 @@ func (g *rbacGuards) KBAccessReadFromKnowledgeIDParam(param string) gin.HandlerF
 		g.kbShareService,
 		g.agentShareService,
 		g.cfg,
+		g.groupAccess,
 	)
 }
 
@@ -603,6 +663,7 @@ func (g *rbacGuards) KBAccessWriteFromKnowledgeIDParam(param string) gin.Handler
 		g.kbShareService,
 		g.agentShareService,
 		g.cfg,
+		g.groupAccess,
 	)
 }
 
@@ -617,6 +678,7 @@ func (g *rbacGuards) KBAccessReadFromChunkIDParam(param string) gin.HandlerFunc 
 		g.kbShareService,
 		g.agentShareService,
 		g.cfg,
+		g.groupAccess,
 	)
 }
 
@@ -631,5 +693,15 @@ func (g *rbacGuards) KBAccessWriteFromChunkIDParam(param string) gin.HandlerFunc
 		g.kbShareService,
 		g.agentShareService,
 		g.cfg,
+		g.groupAccess,
+	)
+}
+
+func (g *rbacGuards) AgentAccess(param string, action types.ResourceAction) gin.HandlerFunc {
+	return middleware.RequireGroupResourceAccess(
+		types.GroupResourceTypeAgent,
+		action,
+		func(c *gin.Context) (string, error) { return c.Param(param), nil },
+		g.groupAccess,
 	)
 }

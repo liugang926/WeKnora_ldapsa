@@ -1,4 +1,7 @@
+import { directoryAccessLocale } from './directoryAccessLocale'
+
 export default {
+  ...directoryAccessLocale,
   localBrowser: {
     pipOpen: "Pop out preview",
     pipReturn: "Return to conversation",

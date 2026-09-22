@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -42,6 +43,8 @@ type Limiter struct {
 	keyPrefix  string
 	window     time.Duration
 	instanceID string
+	sequence   atomic.Uint64
+	now        func() time.Time
 }
 
 // New constructs a limiter. keyPrefix should include a trailing delimiter
@@ -59,6 +62,7 @@ func New(redisClient *redis.Client, keyPrefix string, window time.Duration, inst
 		keyPrefix:  keyPrefix,
 		window:     window,
 		instanceID: instanceID,
+		now:        time.Now,
 	}
 }
 
@@ -78,9 +82,13 @@ func (l *Limiter) Allow(ctx context.Context, key string, max int) bool {
 
 func (l *Limiter) redisAllow(ctx context.Context, key string, max int) (bool, error) {
 	redisKey := l.keyPrefix + key
-	nowMs := time.Now().UnixMilli()
+	nowMs := l.now().UnixMilli()
 	windowMs := l.window.Milliseconds()
-	member := fmt.Sprintf("%s:%d", l.instanceID, nowMs)
+	// Redis ZSET members must be unique. Millisecond timestamps alone collapse
+	// bursts from one process into a single hit, allowing a login brute-force
+	// burst to evade the budget. The per-process sequence also avoids UUID work
+	// on every request while instanceID keeps members unique across processes.
+	member := fmt.Sprintf("%s:%d:%d", l.instanceID, nowMs, l.sequence.Add(1))
 
 	result, err := rateLimitScript.Run(ctx, l.redis,
 		[]string{redisKey},

@@ -3,6 +3,7 @@ package middleware
 import (
 	"context"
 	stderrors "errors"
+	"time"
 
 	"github.com/Tencent/WeKnora/internal/application/access"
 	apprepo "github.com/Tencent/WeKnora/internal/application/repository"
@@ -188,6 +189,7 @@ func RequireKBAccess(
 	kbShareService interfaces.KBShareService,
 	agentShareService interfaces.AgentShareService,
 	cfg *config.Config,
+	groupAccess ...interfaces.GroupAccessService,
 ) gin.HandlerFunc {
 	warnOnNilConfig(cfg)
 	return func(c *gin.Context) {
@@ -230,6 +232,34 @@ func RequireKBAccess(
 			_ = c.Error(apperrors.NewServiceUnavailableError("cannot verify KB access right now"))
 			c.Abort()
 			return
+		}
+
+		if len(groupAccess) > 0 && groupAccess[0] != nil {
+			action := types.ResourceActionRead
+			if requiredPermission == types.OrgRoleEditor {
+				action = types.ResourceActionEdit
+			} else if requiredPermission == types.OrgRoleAdmin {
+				action = types.ResourceActionManage
+			}
+			permission, permissionErr := groupAccess[0].EffectivePermission(
+				ctx,
+				grant.KnowledgeBase.TenantID,
+				types.GroupResourceTypeKnowledgeBase,
+				grant.KnowledgeBase.ID,
+				action,
+				time.Now().UTC(),
+			)
+			if permissionErr != nil {
+				logger.ErrorWithFields(ctx, permissionErr, nil)
+				_ = c.Error(apperrors.NewServiceUnavailableError("cannot verify KB group access right now"))
+				c.Abort()
+				return
+			}
+			if !permission.Allowed {
+				_ = c.Error(apperrors.NewForbiddenError("Directory group permission required for this knowledge base"))
+				c.Abort()
+				return
+			}
 		}
 
 		// Stash the resolution and rewrite the request to carry the

@@ -2,6 +2,7 @@ package handler
 
 import (
 	"net/http"
+	"time"
 
 	"github.com/Tencent/WeKnora/internal/errors"
 	"github.com/Tencent/WeKnora/internal/logger"
@@ -14,11 +15,26 @@ import (
 // EvaluationHandler handles evaluation related HTTP requests
 type EvaluationHandler struct {
 	evaluationService interfaces.EvaluationService // Service for evaluation operations
+	groupAccess       interfaces.GroupAccessService
+	kbService         interfaces.KnowledgeBaseService
 }
 
 // NewEvaluationHandler creates a new EvaluationHandler instance
 func NewEvaluationHandler(evaluationService interfaces.EvaluationService) *EvaluationHandler {
 	return &EvaluationHandler{evaluationService: evaluationService}
+}
+
+// ConfigureEvaluationGroupAccess installs the KB policy overlay while keeping
+// the existing constructor stable for downstream compositions.
+func ConfigureEvaluationGroupAccess(
+	h *EvaluationHandler,
+	groupAccess interfaces.GroupAccessService,
+	kbService interfaces.KnowledgeBaseService,
+) {
+	if h != nil {
+		h.groupAccess = groupAccess
+		h.kbService = kbService
+	}
 }
 
 // EvaluationRequest contains parameters for evaluation request
@@ -58,6 +74,44 @@ func (e *EvaluationHandler) Evaluation(c *gin.Context) {
 		logger.Error(ctx, "Failed to get tenant ID")
 		c.Error(errors.NewUnauthorizedError("Unauthorized"))
 		return
+	}
+	if request.KnowledgeBaseID != "" && e.groupAccess != nil {
+		tenantIDValue, ok := tenantID.(uint64)
+		if !ok || tenantIDValue == 0 {
+			logger.Error(ctx, "Invalid tenant ID in evaluation authorization context")
+			c.Error(errors.NewUnauthorizedError("Unauthorized"))
+			return
+		}
+		if e.kbService == nil {
+			c.Error(errors.NewServiceUnavailableError("Cannot verify knowledge base ownership right now"))
+			return
+		}
+		kb, kbErr := e.kbService.GetKnowledgeBaseByIDOnly(ctx, request.KnowledgeBaseID)
+		if kbErr != nil || kb == nil {
+			c.Error(errors.NewNotFoundError("Knowledge base not found"))
+			return
+		}
+		if kb.TenantID != tenantIDValue {
+			c.Error(errors.NewForbiddenError("Knowledge base belongs to another workspace"))
+			return
+		}
+		permission, accessErr := e.groupAccess.EffectivePermission(
+			ctx,
+			kb.TenantID,
+			types.GroupResourceTypeKnowledgeBase,
+			request.KnowledgeBaseID,
+			types.ResourceActionRead,
+			time.Now().UTC(),
+		)
+		if accessErr != nil {
+			logger.Errorf(ctx, "Failed to verify evaluation knowledge base access: %v", accessErr)
+			c.Error(errors.NewServiceUnavailableError("Cannot verify knowledge base access right now"))
+			return
+		}
+		if !permission.Allowed {
+			c.Error(errors.NewForbiddenError("Directory group permission required for this knowledge base"))
+			return
+		}
 	}
 
 	logger.Infof(ctx, "Executing evaluation, tenant: %v, dataset: %s, knowledge_base: %s, chat: %s, rerank: %s",

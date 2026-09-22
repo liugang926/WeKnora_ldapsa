@@ -44,6 +44,10 @@ func (s *stubKBServiceForDS) GetKnowledgeBaseByID(ctx context.Context, id string
 	return nil, nil
 }
 
+func (s *stubKBServiceForDS) GetKnowledgeBaseByIDOnly(ctx context.Context, id string) (*types.KnowledgeBase, error) {
+	return s.GetKnowledgeBaseByID(ctx, id)
+}
+
 func newDataSourceTestRouter(h *DataSourceHandler) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()

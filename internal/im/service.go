@@ -293,6 +293,7 @@ type Service struct {
 	messageService interfaces.MessageService
 	tenantService  interfaces.TenantService
 	agentService   interfaces.CustomAgentService
+	groupAccess    interfaces.GroupAccessService
 
 	// knowledgeService is used for saving IM file messages to knowledge bases.
 	knowledgeService interfaces.KnowledgeService
@@ -356,6 +357,36 @@ type Service struct {
 	stopOnce       sync.Once
 	subscriberOnce sync.Once
 	stopped        atomic.Bool
+}
+
+// ConfigureGroupAccess attaches the optional directory-group resource policy
+// overlay to the IM service. It is kept separate from NewService so existing
+// embedders and tests retain source compatibility while the application
+// container can enable the policy after constructing both services.
+//
+// A nil policy service preserves the pre-directory behaviour. When configured,
+// authorization errors are returned to the caller so IM processing fails
+// closed before a session is resolved or the agent is executed.
+func ConfigureGroupAccess(service *Service, groupAccess interfaces.GroupAccessService) {
+	if service != nil {
+		service.groupAccess = groupAccess
+	}
+}
+
+func (s *Service) authorizeIMAgentUse(ctx context.Context, tenantID uint64, agentID string) error {
+	if s.groupAccess == nil {
+		return nil
+	}
+	if err := s.groupAccess.Authorize(
+		ctx,
+		tenantID,
+		types.GroupResourceTypeAgent,
+		agentID,
+		types.ResourceActionUse,
+	); err != nil {
+		return fmt.Errorf("authorize IM agent use: %w", err)
+	}
+	return nil
 }
 
 // makeUserKey builds the canonical key used to identify a user's request
@@ -1764,6 +1795,9 @@ func (s *Service) HandleMessage(ctx context.Context, msg *IncomingMessage, chann
 	}
 	sessionCtx := context.WithValue(ctx, types.TenantInfoContextKey, tenant)
 	sessionCtx = withIMIdentity(sessionCtx, tenantID, channelID, msg)
+	if err := s.authorizeIMAgentUse(sessionCtx, tenantID, agentID); err != nil {
+		return err
+	}
 
 	// 2. Resolve or create a WeKnora session
 	channelSession, err := s.resolveSession(sessionCtx, msg, tenantID, agentID, channelID, channel.SessionMode)

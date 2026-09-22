@@ -36,8 +36,10 @@ type ResourceRepository interface {
 		tenantID uint64,
 		resourceID, messageID string,
 	) (*types.MessageFileBindings, error)
+	ListKnowledgeBaseIDsByResource(ctx context.Context, tenantID uint64, resourceID string) ([]string, error)
 	CreateGrant(ctx context.Context, grant *types.ResourceAccessGrant) error
 	GetValidGrant(ctx context.Context, tokenHash string, now time.Time) (*types.ResourceAccessGrant, error)
+	RevokeValidGrantsByKnowledgeBase(ctx context.Context, tenantID uint64, kbID string, now time.Time) (int64, error)
 	DeleteExpiredGrants(ctx context.Context, before time.Time) error
 }
 
@@ -69,8 +71,14 @@ type ResourceCatalog interface {
 	// treat as "delete as before" rather than as "keep forever".
 	Release(ctx context.Context, reference, ownerType, ownerID string) (remaining int64, err error)
 	MarkDeleted(ctx context.Context, reference string) error
+	// ListKnowledgeBaseIDs resolves either a resource:// reference or its
+	// registered physical path and returns every live KB that owns it.
+	ListKnowledgeBaseIDs(ctx context.Context, tenantID uint64, referenceOrPath string) ([]string, error)
 	CreateAccessGrant(ctx context.Context, reference string, ttl time.Duration) (string, error)
 	ResolveAccessGrant(ctx context.Context, token string) (*types.StoredResource, error)
+	// RevokeAccessGrantsByKnowledgeBase invalidates every still-live anonymous
+	// capability for resources owned by the KB.
+	RevokeAccessGrantsByKnowledgeBase(ctx context.Context, tenantID uint64, kbID string) (int64, error)
 }
 
 // KBResourceLookup verifies an explicit binding to a live knowledge document.

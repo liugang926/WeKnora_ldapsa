@@ -196,6 +196,30 @@ func (s *resourceCatalog) GetMessageFileBindings(
 	return s.repo.GetMessageFileBindings(ctx, tenantID, resource.ID, messageID)
 }
 
+// ListKnowledgeBaseIDs resolves a stable reference or a registered physical
+// path before consulting authoritative resource bindings.
+func (s *resourceCatalog) ListKnowledgeBaseIDs(
+	ctx context.Context, tenantID uint64, referenceOrPath string,
+) ([]string, error) {
+	physical, resource, err := s.ResolvePath(ctx, referenceOrPath)
+	if err != nil {
+		return nil, err
+	}
+	if resource == nil {
+		resource, err = s.repo.GetByTenantLocation(ctx, tenantID, resourceLocationHash(physical))
+		if err != nil {
+			return nil, err
+		}
+	}
+	if resource == nil {
+		return nil, nil
+	}
+	if resource.TenantID != tenantID {
+		return nil, fmt.Errorf("resource tenant does not match authorization tenant")
+	}
+	return s.repo.ListKnowledgeBaseIDsByResource(ctx, tenantID, resource.ID)
+}
+
 // Release implements interfaces.ResourceCatalog.
 //
 // Unbinding and counting are deliberately not a single transaction. A racing
@@ -229,6 +253,15 @@ func (s *resourceCatalog) MarkDeleted(ctx context.Context, reference string) err
 		return err
 	}
 	return s.repo.MarkDeleted(ctx, resource.ID)
+}
+
+func (s *resourceCatalog) RevokeAccessGrantsByKnowledgeBase(
+	ctx context.Context, tenantID uint64, kbID string,
+) (int64, error) {
+	if tenantID == 0 || strings.TrimSpace(kbID) == "" {
+		return 0, fmt.Errorf("resource grant revocation requires tenant and knowledge base")
+	}
+	return s.repo.RevokeValidGrantsByKnowledgeBase(ctx, tenantID, kbID, time.Now().UTC())
 }
 
 func (s *resourceCatalog) CreateAccessGrant(ctx context.Context, reference string, ttl time.Duration) (string, error) {

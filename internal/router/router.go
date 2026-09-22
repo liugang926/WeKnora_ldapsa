@@ -47,6 +47,7 @@ type RouterParams struct {
 	TenantService                interfaces.TenantService
 	TenantAPIKeyService          interfaces.TenantAPIKeyService
 	TenantMemberService          interfaces.TenantMemberService
+	GroupAccessService           interfaces.GroupAccessService
 	TenantMemberHandler          *handler.TenantMemberHandler
 	TenantInvitationHandler      *handler.TenantInvitationHandler
 	AuditLogHandler              *handler.AuditLogHandler
@@ -62,6 +63,8 @@ type RouterParams struct {
 	MeEnvVarHandler              *handler.MeEnvVarHandler
 	EvaluationHandler            *handler.EvaluationHandler
 	AuthHandler                  *handler.AuthHandler
+	DirectoryHandler             *handler.DirectoryHandler
+	GroupAccessHandler           *handler.GroupAccessHandler
 	InitializationHandler        *handler.InitializationHandler
 	SystemHandler                *handler.SystemHandler
 	MCPServiceHandler            *handler.MCPServiceHandler
@@ -179,6 +182,8 @@ func NewRouter(params RouterParams) *gin.Engine {
 		params.RedisClient,
 		params.FileService,
 		params.StorageBackendResolver,
+		params.GroupAccessService,
+		params.ChunkService,
 		params.ResourceCatalog,
 	)
 
@@ -188,7 +193,14 @@ func NewRouter(params RouterParams) *gin.Engine {
 
 	// Short-lived capability URLs for IM and other clients that cannot attach
 	// WeKnora authentication headers.
-	serveResourceGrants(r, params.ResourceCatalog, params.TenantService, params.FileService, params.StorageBackendResolver)
+	serveResourceGrants(
+		r,
+		params.ResourceCatalog,
+		params.TenantService,
+		params.FileService,
+		params.StorageBackendResolver,
+		params.GroupAccessService,
+	)
 
 	// Sandbox terminal WebSocket (self-authenticated via a short-lived
 	// query ticket — see RegisterSandboxTerminalRoutes; browsers cannot set
@@ -201,13 +213,19 @@ func NewRouter(params RouterParams) *gin.Engine {
 	r.POST("/api/v1/local-browser/internal", params.SessionHandler.BrowserSkillInternal)
 
 	// 认证中间件
-	r.Use(middleware.Auth(params.TenantService, params.UserService, params.TenantMemberService, params.TenantAPIKeyService, params.Config))
+	r.Use(middleware.Auth(params.TenantService, params.UserService, params.TenantMemberService, params.TenantAPIKeyService, params.Config, params.GroupAccessService))
 
 	// 文件服务：统一代理本地/MinIO/COS/TOS存储后端（需要认证）
-	serveFilesWithResources(r, params.FileService, params.StorageBackendResolver, params.ResourceCatalog)
+	serveFilesWithResources(r, params.FileService, params.StorageBackendResolver, params.ResourceCatalog, params.GroupAccessService)
 
 	// Presigned file access: no auth required, signature-verified.
-	servePresignedFiles(r, params.TenantService, params.StorageBackendResolver)
+	servePresignedFiles(
+		r,
+		params.TenantService,
+		params.StorageBackendResolver,
+		params.ResourceCatalog,
+		params.GroupAccessService,
+	)
 
 	// Diagnostic preview of presigned URLs (Admin only, behind auth middleware).
 	servePresignedPreview(r, params.Config, params.StorageBackendResolver, params.ResourceCatalog)
@@ -243,6 +261,7 @@ func NewRouter(params RouterParams) *gin.Engine {
 			params.ChunkService,
 			params.KBShareService,
 			params.AgentShareService,
+			params.GroupAccessService,
 		)
 
 		// API-key gate: single authority for X-API-Key principals. Runs
@@ -253,7 +272,16 @@ func NewRouter(params RouterParams) *gin.Engine {
 		v1.Use(rbacGuards.apiKeyAuthorizer.Middleware())
 
 		RegisterAuthRoutes(v1, params.AuthHandler, rbacGuards)
+		if params.DirectoryHandler != nil {
+			v1.POST("/auth/ldap/login", middleware.DirectoryAuthRateLimit(params.RedisClient), params.DirectoryHandler.LDAPLogin)
+		}
 		RegisterTenantRoutes(v1, params.TenantHandler, params.TenantMemberHandler, params.TenantInvitationHandler, params.AuditLogHandler, rbacGuards)
+		if params.GroupAccessHandler != nil {
+			tenantGroups := v1.Group("/tenants/:id/directory-groups", rbacGuards.PathTenantMatch(), rbacGuards.Admin())
+			params.GroupAccessHandler.RegisterTenantGroupRoutes(tenantGroups)
+			resourceGroups := v1.Group("/group-access", rbacGuards.Admin())
+			params.GroupAccessHandler.RegisterResourceGroupRoutes(resourceGroups)
+		}
 		RegisterMyInvitationRoutes(v1, params.TenantInvitationHandler)
 		RegisterKnowledgeBaseRoutes(v1, params.KBHandler, rbacGuards)
 		RegisterKnowledgeBaseActivityRoutes(v1, params.AuditLogHandler, rbacGuards)
@@ -286,6 +314,7 @@ func NewRouter(params RouterParams) *gin.Engine {
 			params.KBShareService,
 			params.KBService,
 			params.KnowledgeService,
+			params.GroupAccessService,
 		)
 		RegisterKnowledgeTagRoutes(v1, params.TagHandler, rbacGuards)
 		RegisterKnowledgeRoutes(v1, params.KnowledgeHandler, rbacGuards)
@@ -305,6 +334,10 @@ func NewRouter(params RouterParams) *gin.Engine {
 		params.SystemHandler.BindDeploymentCapabilities(deploymentCapabilitiesFromRouter(params))
 		RegisterSystemRoutes(v1, params.SystemHandler, rbacGuards)
 		RegisterSystemAdminRoutes(v1, params.SystemHandler, params.AuditLogHandler, rbacGuards)
+		if params.DirectoryHandler != nil {
+			directoryAdmin := v1.Group("/system/admin", rbacGuards.SystemAdmin())
+			params.DirectoryHandler.RegisterAdminRoutes(directoryAdmin)
+		}
 		RegisterMCPServiceRoutes(v1, params.MCPServiceHandler, params.MCPCredentialsHandler, params.MCPOAuthHandler, rbacGuards)
 		RegisterWebSearchRoutes(v1, params.WebSearchHandler, rbacGuards)
 		RegisterWebSearchProviderRoutes(v1, params.WebSearchProviderHandler, params.WebSearchCredentialsHandler, rbacGuards)

@@ -48,6 +48,10 @@ func (c *catalogStub) ResolvePath(_ context.Context, value string) (string, *typ
 func (c *catalogStub) Bind(context.Context, string, string, string, string) error { return nil }
 func (c *catalogStub) MarkDeleted(context.Context, string) error                  { return nil }
 
+func (c *catalogStub) ListKnowledgeBaseIDs(context.Context, uint64, string) ([]string, error) {
+	return nil, nil
+}
+
 func (c *catalogStub) Release(context.Context, string, string, string) (int64, error) {
 	return 0, nil
 }
@@ -57,6 +61,10 @@ func (c *catalogStub) CreateAccessGrant(context.Context, string, time.Duration) 
 
 func (c *catalogStub) ResolveAccessGrant(context.Context, string) (*types.StoredResource, error) {
 	return c.resource, nil
+}
+
+func (c *catalogStub) RevokeAccessGrantsByKnowledgeBase(context.Context, uint64, string) (int64, error) {
+	return 0, nil
 }
 
 type physicalFileStub struct {

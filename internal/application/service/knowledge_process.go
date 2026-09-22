@@ -4347,6 +4347,7 @@ func (s *knowledgeService) ProcessKnowledgeListReparse(ctx context.Context, t *a
 
 	logger.Infof(ctx, "Processing knowledge list reparse task for %d knowledge items", len(payload.KnowledgeIDs))
 
+	ctx = backgroundTaskAuthorizationContext(ctx, payload.TenantID, payload.Initiator)
 	ctx, ids, err := s.reparseTaskScope(ctx, payload)
 	if err != nil || len(ids) == 0 {
 		return err

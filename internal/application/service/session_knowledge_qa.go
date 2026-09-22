@@ -630,7 +630,71 @@ func (s *sessionService) buildSearchTargets(
 	logger.Infof(ctx, "Built %d search targets: %d full KB, %d partial/tag KB, kbTenantMap=%v",
 		len(targets), len(knowledgeBaseIDs), len(targets)-len(knowledgeBaseIDs), kbTenantMap)
 
-	return targets, nil
+	return s.filterReadableSearchTargets(ctx, targets)
+}
+
+// filterReadableSearchTargets applies the resource-policy overlay after all
+// explicit, tag-derived, document-derived and "all knowledge bases" targets
+// have been resolved. This is the final authorization boundary for RAG target
+// construction, so a route cannot bypass restricted mode by supplying a
+// document ID, tag or an agent whose knowledge-base list is dynamic.
+func (s *sessionService) filterReadableSearchTargets(ctx context.Context, targets types.SearchTargets) (types.SearchTargets, error) {
+	if s.groupAccess == nil || len(targets) == 0 {
+		return targets, nil
+	}
+	allowed := make(types.SearchTargets, 0, len(targets))
+	for _, target := range targets {
+		if target == nil || target.TenantID == 0 || target.KnowledgeBaseID == "" {
+			continue
+		}
+		permission, err := s.groupAccess.EffectivePermission(
+			ctx,
+			target.TenantID,
+			types.GroupResourceTypeKnowledgeBase,
+			target.KnowledgeBaseID,
+			types.ResourceActionRead,
+			time.Now().UTC(),
+		)
+		if err != nil {
+			return nil, fmt.Errorf("verify knowledge base %s group access: %w", target.KnowledgeBaseID, err)
+		}
+		if !permission.Allowed {
+			logger.Warnf(ctx, "Filtered unauthorized RAG target kb_id=%s tenant_id=%d reason=%s",
+				target.KnowledgeBaseID, target.TenantID, permission.Reason)
+			continue
+		}
+		allowed = append(allowed, target)
+	}
+	return allowed, nil
+}
+
+// revalidateSearchTargets makes revocation effective between pipeline stages.
+// In particular, a group removal that happens after target construction but
+// before retrieval cannot continue using a stale in-memory authorization.
+func (s *sessionService) revalidateSearchTargets(ctx context.Context, targets types.SearchTargets) error {
+	if s.groupAccess == nil {
+		return nil
+	}
+	for _, target := range targets {
+		if target == nil || target.TenantID == 0 || target.KnowledgeBaseID == "" {
+			continue
+		}
+		permission, err := s.groupAccess.EffectivePermission(
+			ctx,
+			target.TenantID,
+			types.GroupResourceTypeKnowledgeBase,
+			target.KnowledgeBaseID,
+			types.ResourceActionRead,
+			time.Now().UTC(),
+		)
+		if err != nil {
+			return fmt.Errorf("revalidate knowledge base %s group access: %w", target.KnowledgeBaseID, err)
+		}
+		if !permission.Allowed {
+			return fmt.Errorf("%w: knowledge base %s (%s)", ErrResourceAccessDenied, target.KnowledgeBaseID, permission.Reason)
+		}
+	}
+	return nil
 }
 
 func mergeTagScopesByKB(scopes []types.TagScope) map[string][]string {
@@ -705,6 +769,9 @@ func (s *sessionService) KnowledgeQAByEvent(ctx context.Context,
 	var understandProgress *chatpipeline.StageProgress
 	var understandStart time.Time
 	for _, eventType := range eventList {
+		if err := s.revalidateSearchTargets(ctx, chatManage.SearchTargets); err != nil {
+			return err
+		}
 		stageStart := time.Now()
 		// Wrap each pipeline stage in a Langfuse span so the trace timeline
 		// shows the gaps between LLM/embedding/rerank generations (the work

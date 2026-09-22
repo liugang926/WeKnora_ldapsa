@@ -112,6 +112,41 @@ app:
   # - name: OLLAMA_BASE_URL
   #   value: "http://ollama:11434"
 
+  # -- Optional LDAP / Active Directory authentication and group sync.
+  # Disabled by default. File-managed values are read-only in the admin UI.
+  directory:
+    enabled: false
+    managementSource: file
+    id: default-ad
+    providerDisplayName: Corporate directory
+    urls: []
+    # - ldaps://dc1.example.com:636
+    tlsMode: ldaps
+    serverNames: []
+    bindDN: ""
+    baseDN: ""
+    userBaseDN: ""
+    groupBaseDN: ""
+    userFilter: "(&(objectCategory=person)(objectClass=user))"
+    groupFilter: "(objectCategory=group)"
+    loginFilter: "(&(objectCategory=person)(objectClass=user)(|(sAMAccountName={login})(userPrincipalName={login})))"
+    allowedLoginFilter: ""
+    connectTimeout: 5s
+    queryTimeout: 10s
+    pageSize: 500
+    resultLimit: 10000
+    syncInterval: 5m
+    staleAfter: 15m
+    # Existing Secret containing the enterprise CA. When empty, system trust
+    # roots are used. The selected key is mounted read-only.
+    caSecretName: ""
+    caSecretKey: ca.crt
+    # Optional existing Secret mounted as a read-only password file. When set,
+    # this takes precedence over secrets.ldapBindPassword / LDAP_BIND_PASSWORD.
+    # Recommended for production file-managed deployments.
+    bindPasswordSecretName: ""
+    bindPasswordSecretKey: ldap-bind-password
+
   # -- Service configuration
   service:
     type: ClusterIP
@@ -414,9 +449,15 @@ secrets:
   # SYSTEM_AES_KEY exclusively. The Go app no longer reads TENANT_AES_KEY and
   # it has been removed from the Secret.
   systemAesKey: ""
+  # -- LDAP read-only service account password. Required only when
+  # app.directory.enabled=true, managementSource=file, and
+  # app.directory.bindPasswordSecretName is empty.
+  ldapBindPassword: ""
 
   # -- Use existing secret instead of creating one
-  # The secret must contain keys: DB_USER, DB_PASSWORD, DB_NAME, REDIS_USERNAME, REDIS_PASSWORD, JWT_SECRET, SYSTEM_AES_KEY
+  # The secret must contain keys: DB_USER, DB_PASSWORD, DB_NAME, REDIS_USERNAME,
+  # REDIS_PASSWORD, JWT_SECRET, SYSTEM_AES_KEY and (when file-managed LDAP is
+  # enabled without app.directory.bindPasswordSecretName) LDAP_BIND_PASSWORD.
   existingSecret: ""
 
 # -----------------------------------------------------------------------------

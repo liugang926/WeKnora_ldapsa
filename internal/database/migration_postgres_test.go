@@ -41,14 +41,19 @@ func TestPostgresMigrationsServeAgentHistory(t *testing.T) {
 	var version int
 	var dirty bool
 	require.NoError(t, db.QueryRow("SELECT version, dirty FROM schema_migrations").Scan(&version, &dirty))
-	require.Equal(t, latestVersionedMigration(t, root), version)
+	latest := latestVersionedMigration(t, root)
+	require.Equal(t, latest, version)
 	require.False(t, dirty)
 	requirePostgresIndexValid(t, db)
+	requirePostgresDirectoryConfigVersionSchema(t, db)
 
 	// Down and up again: DROP/CREATE INDEX CONCURRENTLY through golang-migrate.
+	// Move explicitly to 106 first: the latest migration is no longer 106, so
+	// Steps(-1) at HEAD would only roll back the LDAP migration.
 	m, err := migrate.New("file://migrations/versioned", dsn)
 	require.NoError(t, err)
 	t.Cleanup(func() { _, _ = m.Close() })
+	require.NoError(t, m.Migrate(106))
 	require.NoError(t, m.Steps(-1))
 	var indexes int
 	require.NoError(t, db.QueryRow(
@@ -56,6 +61,7 @@ func TestPostgresMigrationsServeAgentHistory(t *testing.T) {
 	require.Zero(t, indexes, "the down migration drops the index")
 	require.NoError(t, m.Steps(1))
 	requirePostgresIndexValid(t, db)
+	t.Cleanup(func() { _ = m.Migrate(uint(latest)) })
 
 	ctx := context.Background()
 	conn, err := db.Conn(ctx)
@@ -85,6 +91,28 @@ func TestPostgresMigrationsServeAgentHistory(t *testing.T) {
 		require.Contains(t, plan.String(), "idx_messages_session_created_id", "%s plan:\n%s", name, plan.String())
 		require.NotContains(t, plan.String(), "Sort", "%s must not sort:\n%s", name, plan.String())
 	}
+}
+
+func requirePostgresDirectoryConfigVersionSchema(t *testing.T, db *sql.DB) {
+	t.Helper()
+	var dataType, nullable, defaultValue string
+	require.NoError(t, db.QueryRow(`SELECT data_type, is_nullable, column_default
+		FROM information_schema.columns
+		WHERE table_schema = 'public' AND table_name = 'directories' AND column_name = 'config_version'`).
+		Scan(&dataType, &nullable, &defaultValue))
+	require.Equal(t, "bigint", dataType)
+	require.Equal(t, "NO", nullable)
+	require.Contains(t, defaultValue, "1")
+
+	var fingerprintLength int
+	var fingerprintNullable, fingerprintDefault string
+	require.NoError(t, db.QueryRow(`SELECT character_maximum_length, is_nullable, column_default
+		FROM information_schema.columns
+		WHERE table_schema = 'public' AND table_name = 'directories' AND column_name = 'security_config_fingerprint'`).
+		Scan(&fingerprintLength, &fingerprintNullable, &fingerprintDefault))
+	require.Equal(t, 64, fingerprintLength)
+	require.Equal(t, "NO", fingerprintNullable)
+	require.Contains(t, fingerprintDefault, "''")
 }
 
 func requirePostgresIndexValid(t *testing.T, db *sql.DB) {

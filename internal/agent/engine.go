@@ -78,6 +78,9 @@ type AgentEngine struct {
 	steerSink         types.SteerSink
 	allowSteerOverrun bool // one extra ReAct round after a loop-end inject past MaxIterations
 	steerOverruns     int  // how many times this turn has already used the extra round
+	// roundGuard revalidates authorization at each background ReAct boundary.
+	// It is intentionally request-local and is never persisted with the agent.
+	roundGuard func(context.Context) error
 }
 
 // maxSteerOverruns caps loop-end injects past MaxIterations. One extra round
@@ -621,6 +624,12 @@ loop:
 			}
 			return state, ctx.Err()
 		default:
+		}
+		if e.roundGuard != nil {
+			if err := e.roundGuard(ctx); err != nil {
+				logger.Warnf(ctx, "[Agent] Authorization revoked before round %d: %v", state.CurrentRound+1, err)
+				return state, fmt.Errorf("agent authorization guard at round %d: %w", state.CurrentRound+1, err)
+			}
 		}
 
 		// A slow startup, OAuth discovery or explicit refresh may have produced

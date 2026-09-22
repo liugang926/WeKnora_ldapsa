@@ -66,6 +66,53 @@ func TestResourceCatalogBindingAndAccessGrant(t *testing.T) {
 	require.Equal(t, uint64(9), resource.TenantID)
 }
 
+func TestResourceCatalogListsKBOwnersAndRevokesTheirLiveGrants(t *testing.T) {
+	t.Setenv("SYSTEM_SIGNING_KEY", "")
+	t.Setenv("SYSTEM_AES_KEY", "weknora-test-aes-key-32bytes!!!")
+	catalog, db := newResourceCatalogForTest(t)
+	require.NoError(t, db.AutoMigrate(&types.KnowledgeBase{}, &types.Knowledge{}))
+	ctx := context.Background()
+
+	for _, kbID := range []string{"kb-a", "kb-b"} {
+		require.NoError(t, db.Create(&types.KnowledgeBase{ID: kbID, TenantID: 9}).Error)
+		require.NoError(t, db.Create(&types.Knowledge{
+			ID: kbID + "-doc", TenantID: 9, KnowledgeBaseID: kbID, Type: "file",
+		}).Error)
+	}
+	const firstPath = "local://9/exports/shared.png"
+	firstRef, err := catalog.Register(ctx, 9, firstPath, interfaces.ResourceRegistration{})
+	require.NoError(t, err)
+	for _, docID := range []string{"kb-b-doc", "kb-a-doc"} {
+		require.NoError(t, catalog.Bind(
+			ctx, firstRef, types.ResourceOwnerKnowledge, docID, types.ResourceRelationAttachment,
+		))
+	}
+
+	for _, lookup := range []string{firstRef, firstPath} {
+		ids, err := catalog.ListKnowledgeBaseIDs(ctx, 9, lookup)
+		require.NoError(t, err)
+		require.Equal(t, []string{"kb-a", "kb-b"}, ids)
+	}
+
+	secondRef, err := catalog.Register(ctx, 9, "local://9/exports/other.png", interfaces.ResourceRegistration{})
+	require.NoError(t, err)
+	require.NoError(t, catalog.Bind(
+		ctx, secondRef, types.ResourceOwnerKnowledge, "kb-b-doc", types.ResourceRelationAttachment,
+	))
+	firstToken, err := catalog.CreateAccessGrant(ctx, firstRef, time.Hour)
+	require.NoError(t, err)
+	secondToken, err := catalog.CreateAccessGrant(ctx, secondRef, time.Hour)
+	require.NoError(t, err)
+
+	revoked, err := catalog.RevokeAccessGrantsByKnowledgeBase(ctx, 9, "kb-a")
+	require.NoError(t, err)
+	require.EqualValues(t, 1, revoked)
+	_, err = catalog.ResolveAccessGrant(ctx, firstToken)
+	require.Error(t, err)
+	_, err = catalog.ResolveAccessGrant(ctx, secondToken)
+	require.NoError(t, err, "a grant for an unrelated KB must remain live")
+}
+
 // The two-owner case that "save this answer to the knowledge base" creates:
 // one blob, claimed by both the assistant message and the new document.
 // Deleting either owner must leave the other's copy intact.

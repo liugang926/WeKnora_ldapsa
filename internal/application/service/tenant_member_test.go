@@ -305,6 +305,9 @@ func (r *cleanupUserRepo) RevokeSystemAdmin(context.Context, string, string) (*t
 func (r *cleanupUserRepo) SearchUsers(context.Context, string, int) ([]*types.User, error) {
 	return nil, nil
 }
+func (r *cleanupUserRepo) FindUserByEmailOrUsernameFold(context.Context, string, string) (*types.User, error) {
+	return nil, nil
+}
 
 type cleanupTokenRepo struct {
 	revoked []string

@@ -4,12 +4,15 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strings"
 	"sync"
+	"time"
 
 	"github.com/Tencent/WeKnora/internal/application/access"
 	"github.com/Tencent/WeKnora/internal/config"
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/types"
+	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	"github.com/gin-gonic/gin"
 )
 
@@ -245,6 +248,60 @@ func RequireOwnershipOrRole(min types.TenantRole, lookup CreatorLookup, cfg *con
 			})
 		}
 		c.Abort()
+	}
+}
+
+// RequireOwnershipOrRoleWithGroupEdit preserves the historical owner/role
+// decision for inherit-mode resources, while allowing an explicit group edit
+// grant to serve as the editor authority in restricted mode. A restricted
+// resource never falls through to the legacy ownership rule when the group
+// decision denies it. Top-level delete/ownership/authorization routes should
+// continue to use RequireOwnershipOrRole so group edit cannot become manage.
+func RequireOwnershipOrRoleWithGroupEdit(
+	min types.TenantRole,
+	lookup CreatorLookup,
+	cfg *config.Config,
+	resourceType types.ResourceType,
+	resolveResourceID GroupResourceIDResolver,
+	groupAccess interfaces.GroupAccessService,
+) gin.HandlerFunc {
+	fallback := RequireOwnershipOrRole(min, lookup, cfg)
+	return func(c *gin.Context) {
+		if groupAccess == nil {
+			fallback(c)
+			return
+		}
+		resourceID, err := resolveResourceID(c)
+		if err != nil {
+			_ = c.Error(err)
+			c.Abort()
+			return
+		}
+		tenantID, ok := types.TenantIDFromContext(c.Request.Context())
+		if !ok || tenantID == 0 || strings.TrimSpace(resourceID) == "" {
+			fallback(c)
+			return
+		}
+		permission, err := groupAccess.EffectivePermission(
+			c.Request.Context(), tenantID, resourceType, resourceID,
+			types.ResourceActionEdit, time.Now().UTC(),
+		)
+		if err != nil {
+			logger.Errorf(c.Request.Context(), "resource group edit authorization failed: %v", err)
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Service Unavailable: cannot verify resource group edit"})
+			c.Abort()
+			return
+		}
+		if permission.Mode == types.ResourceAccessRestricted {
+			if permission.Allowed {
+				c.Next()
+				return
+			}
+			c.JSON(http.StatusForbidden, gin.H{"error": "Forbidden: directory group edit grant required"})
+			c.Abort()
+			return
+		}
+		fallback(c)
 	}
 }
 

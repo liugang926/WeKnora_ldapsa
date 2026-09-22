@@ -67,6 +67,7 @@ type knowledgeService struct {
 	graphEngine     interfaces.RetrieveGraphRepository
 	redisClient     *redis.Client
 	kbShareService  interfaces.KBShareService
+	groupAccess     interfaces.GroupAccessService
 	imageResolver   *docparser.ImageResolver
 	taskPendingRepo interfaces.TaskPendingOpsRepository
 
@@ -82,6 +83,48 @@ type knowledgeService struct {
 	// which has a no-op fallback. See knowledge_span_tracker.go.
 	spanTracker SpanTracker
 	audit       interfaces.AuditLogService
+}
+
+// ConfigureKnowledgeGroupAccess attaches the optional directory-group
+// resource overlay without changing the long-standing constructor contract.
+// This keeps existing tests and alternate compositions source-compatible.
+func ConfigureKnowledgeGroupAccess(knowledge interfaces.KnowledgeService, groupAccess interfaces.GroupAccessService) {
+	if impl, ok := knowledge.(*knowledgeService); ok {
+		impl.groupAccess = groupAccess
+	}
+}
+
+func (s *knowledgeService) readableKnowledgeBase(ctx context.Context, tenantID uint64, kbID string) (bool, error) {
+	if s.groupAccess == nil {
+		return true, nil
+	}
+	permission, err := s.groupAccess.EffectivePermission(
+		ctx, tenantID, types.GroupResourceTypeKnowledgeBase, kbID, types.ResourceActionRead, time.Now().UTC(),
+	)
+	if err != nil {
+		return false, err
+	}
+	return permission.Allowed, nil
+}
+
+func (s *knowledgeService) filterReadableKnowledgeScopes(
+	ctx context.Context,
+	scopes []types.KnowledgeSearchScope,
+) ([]types.KnowledgeSearchScope, error) {
+	if s.groupAccess == nil {
+		return scopes, nil
+	}
+	allowed := make([]types.KnowledgeSearchScope, 0, len(scopes))
+	for _, scope := range scopes {
+		ok, err := s.readableKnowledgeBase(ctx, scope.TenantID, scope.KBID)
+		if err != nil {
+			return nil, fmt.Errorf("verify knowledge base %s group access: %w", scope.KBID, err)
+		}
+		if ok {
+			allowed = append(allowed, scope)
+		}
+	}
+	return allowed, nil
 }
 
 const (
@@ -828,18 +871,36 @@ func (s *knowledgeService) GetKnowledgeBatchWithSharedAccess(ctx context.Context
 	}
 	ownList := make([]*types.Knowledge, 0, len(rows))
 	foundSet := make(map[string]bool)
+	var permissionErr error
 	appendAllowed := func(k *types.Knowledge) {
 		if k == nil || foundSet[k.ID] {
 			return
 		}
 		allowed, err := permissions.Check(k.KnowledgeBaseID, k.TenantID, types.OrgRoleViewer)
-		if err == nil && allowed {
+		if err != nil {
+			// Share/API-key scope errors are authorization denials for this
+			// list operation. Preserve the established fail-closed filtering
+			// behavior instead of turning one inaccessible row into a batch
+			// failure.
+			return
+		}
+		if allowed {
+			allowed, err = s.readableKnowledgeBase(ctx, k.TenantID, k.KnowledgeBaseID)
+			if err != nil {
+				permissionErr = err
+				return
+			}
+		}
+		if allowed {
 			ownList = append(ownList, k)
 			foundSet[k.ID] = true
 		}
 	}
 	for _, k := range rows {
 		appendAllowed(k)
+		if permissionErr != nil {
+			return nil, fmt.Errorf("verify knowledge group access: %w", permissionErr)
+		}
 		if k != nil {
 			foundSet[k.ID] = true
 		}
@@ -854,6 +915,9 @@ func (s *knowledgeService) GetKnowledgeBatchWithSharedAccess(ctx context.Context
 		}
 		if err == nil {
 			appendAllowed(k)
+			if permissionErr != nil {
+				return nil, fmt.Errorf("verify knowledge group access: %w", permissionErr)
+			}
 		}
 		foundSet[id] = true
 	}
@@ -1111,11 +1175,26 @@ func (s *knowledgeService) SearchKnowledge(ctx context.Context, keyword string, 
 	if len(scopes) == 0 {
 		return nil, false, 0, nil
 	}
+	scopes, err = s.filterReadableKnowledgeScopes(ctx, scopes)
+	if err != nil {
+		return nil, false, 0, err
+	}
+	if len(scopes) == 0 {
+		return nil, false, 0, nil
+	}
 	return s.repo.SearchKnowledgeInScopes(ctx, scopes, keyword, offset, limit, fileTypes)
 }
 
 // SearchKnowledgeForScopes searches knowledge within the given scopes (e.g. for shared agent context).
 func (s *knowledgeService) SearchKnowledgeForScopes(ctx context.Context, scopes []types.KnowledgeSearchScope, keyword string, offset, limit int, fileTypes []string) ([]*types.Knowledge, bool, int64, error) {
+	if len(scopes) == 0 {
+		return nil, false, 0, nil
+	}
+	var err error
+	scopes, err = s.filterReadableKnowledgeScopes(ctx, scopes)
+	if err != nil {
+		return nil, false, 0, err
+	}
 	if len(scopes) == 0 {
 		return nil, false, 0, nil
 	}

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/Tencent/WeKnora/internal/agent"
 	"github.com/Tencent/WeKnora/internal/agent/tools"
@@ -40,6 +41,9 @@ func (s *sessionService) AgentQA(
 	if req.CustomAgent == nil {
 		logger.Warnf(ctx, "Custom agent not provided for session: %s", sessionID)
 		return errors.New("custom agent configuration is required for agent QA")
+	}
+	if err := s.revalidateAgentExecution(ctx, req.CustomAgent, nil); err != nil {
+		return err
 	}
 
 	// Resolve retrieval tenant using shared helper
@@ -222,6 +226,19 @@ func (s *sessionService) AgentQA(
 		logger.Errorf(ctx, "Failed to create agent engine: %v", err)
 		return err
 	}
+	if s.groupAccess != nil {
+		guarded, ok := engine.(interface {
+			SetRoundGuard(func(context.Context) error)
+		})
+		if !ok {
+			return errors.New("agent engine does not support authorization revalidation")
+		}
+		agent := req.CustomAgent
+		searchTargets := agentConfig.SearchTargets
+		guarded.SetRoundGuard(func(guardCtx context.Context) error {
+			return s.revalidateAgentExecution(guardCtx, agent, searchTargets)
+		})
+	}
 
 	// Recall long-term memory for this turn. Like the RAG path this is a
 	// no-model read, and an agent may opt out of it entirely.
@@ -302,6 +319,37 @@ func (s *sessionService) AgentQA(
 	}
 	// Return empty - events will be handled by Handler via EventBus subscription
 	return nil
+}
+
+// revalidateAgentExecution closes the gap between HTTP admission and the
+// background ReAct loop. Both the agent grant and every KB in its resolved
+// scope are checked again at each round boundary by AgentEngine's guard.
+func (s *sessionService) revalidateAgentExecution(
+	ctx context.Context,
+	agent *types.CustomAgent,
+	searchTargets types.SearchTargets,
+) error {
+	if s.groupAccess == nil {
+		return nil
+	}
+	if agent == nil || agent.ID == "" || agent.TenantID == 0 {
+		return fmt.Errorf("%w: agent authorization context missing", ErrResourceAccessDenied)
+	}
+	permission, err := s.groupAccess.EffectivePermission(
+		ctx,
+		agent.TenantID,
+		types.GroupResourceTypeAgent,
+		agent.ID,
+		types.ResourceActionUse,
+		time.Now().UTC(),
+	)
+	if err != nil {
+		return fmt.Errorf("revalidate agent %s group access: %w", agent.ID, err)
+	}
+	if !permission.Allowed {
+		return fmt.Errorf("%w: agent %s (%s)", ErrResourceAccessDenied, agent.ID, permission.Reason)
+	}
+	return s.revalidateSearchTargets(ctx, searchTargets)
 }
 
 // buildAgentConfig creates a runtime AgentConfig from the QARequest's custom agent configuration,

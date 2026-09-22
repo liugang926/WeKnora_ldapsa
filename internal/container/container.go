@@ -172,6 +172,8 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	must(container.Provide(repository.NewModelRepository))
 	must(container.Provide(repository.NewUserRepository))
 	must(container.Provide(repository.NewAuthTokenRepository))
+	must(container.Provide(repository.NewDirectoryRepository))
+	must(container.Provide(repository.NewGroupAccessRepository))
 	must(container.Provide(repository.NewSystemSettingRepository))
 	must(container.Provide(neo4jRepo.NewNeo4jRepository))
 	must(container.Provide(repository.NewMCPServiceRepository))
@@ -237,7 +239,10 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	must(container.Provide(service.NewModelService))
 	must(container.Provide(service.NewDatasetService))
 	must(container.Provide(service.NewEvaluationService))
+	must(container.Provide(service.NewDirectoryService))
+	must(container.Provide(service.NewGroupAccessService))
 	must(container.Provide(service.NewUserService))
+	must(container.Provide(service.NewDirectoryRuntimeService))
 	must(container.Provide(service.NewSystemSettingService))
 	must(container.Provide(func(
 		repo repository.TenantSandboxConfigRepository,
@@ -499,6 +504,16 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	// block above — starting the reaper any earlier panics.
 	must(container.Invoke(startTenantSkillReaper))
 	logger.Debugf(ctx, "[Container] Tenant skill reaper registered")
+	must(container.Invoke(service.ConfigureSessionGroupAccess))
+	logger.Debugf(ctx, "[Container] Session group-access overlay registered")
+	must(container.Invoke(service.ConfigureCustomAgentGroupAccess))
+	logger.Debugf(ctx, "[Container] Custom-agent group-access overlay registered")
+	must(container.Invoke(mcpserver.ConfigureGroupAccess))
+	logger.Debugf(ctx, "[Container] MCP group-access overlay registered")
+	must(container.Invoke(service.ConfigureKnowledgeGroupAccess))
+	logger.Debugf(ctx, "[Container] Knowledge group-access overlay registered")
+	must(container.Invoke(service.ConfigureGroupAccessDirectoryRuntime))
+	logger.Debugf(ctx, "[Container] Directory feature switch registered for group access")
 	must(container.Provide(func(
 		sessions interfaces.SessionRepository,
 		resolver sandbox.TenantSandboxResolver,
@@ -534,8 +549,22 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	}))
 	must(container.Provide(handler.NewMeEnvVarHandler))
 	must(container.Provide(handler.NewEvaluationHandler))
+	must(container.Invoke(handler.ConfigureEvaluationGroupAccess))
 	must(container.Provide(handler.NewInitializationHandler))
-	must(container.Provide(handler.NewAuthHandler))
+	must(container.Provide(func(
+		cfg *config.Config,
+		users interfaces.UserService,
+		tenants interfaces.TenantService,
+		settings interfaces.SystemSettingService,
+		invitations interfaces.TenantInvitationService,
+		directory interfaces.DirectoryRuntimeService,
+	) *handler.AuthHandler {
+		return handler.NewAuthHandler(cfg, users, tenants, settings, invitations, directory)
+	}))
+	must(container.Provide(handler.NewDirectoryHandler))
+	must(container.Provide(handler.NewGroupAccessHandler))
+	must(container.Invoke(handler.ConfigureGroupAccessResourceCatalog))
+	must(container.Invoke(handler.ConfigureKnowledgeHandlerGroupAccess))
 	must(container.Provide(handler.NewSystemHandler))
 	// Dig resolves exact types; adapt the registered service to the handler's
 	// narrower SharedAgentLookup interface at the composition boundary.
@@ -553,6 +582,7 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	must(container.Provide(handler.NewModelCredentialsHandler))
 	must(container.Provide(handler.NewWebSearchProviderCredentialsHandler))
 	must(container.Provide(handler.NewDataSourceCredentialsHandler))
+	must(container.Invoke(handler.ConfigureDataSourceCredentialsGroupAccess))
 	must(container.Provide(handler.NewWebSearchHandler))
 	must(container.Provide(handler.NewWebSearchProviderHandler))
 	must(container.Provide(handler.NewVectorStoreHandler))
@@ -565,21 +595,25 @@ func BuildContainer(container *dig.Container) *dig.Container {
 		return handler.NewSkillHandler(s, s, agents)
 	}))
 	must(container.Provide(handler.NewOrganizationHandler))
+	must(container.Invoke(handler.ConfigureOrganizationGroupAccess))
 	must(container.Provide(handler.NewMemoryHandler))
 
 	// Data source handler
 	must(container.Provide(handler.NewDataSourceHandler))
+	must(container.Invoke(handler.ConfigureDataSourceGroupAccess))
 	// Wiki page handler
 	must(container.Provide(handler.NewWikiPageHandler))
 	// IM integration
 	logger.Debugf(ctx, "[Container] Registering IM integration...")
 	must(container.Provide(imPkg.NewService))
+	must(container.Invoke(imPkg.ConfigureGroupAccess))
 	must(container.Invoke(registerIMService))
 	must(container.Provide(handler.NewIMHandler))
 	must(container.Provide(handler.NewEmbedChannelHandler))
 	must(container.Provide(handler.NewMCPEndpointHandler))
 	must(container.Provide(handler.NewWeKnoraCloudHandler))
 	logger.Debugf(ctx, "[Container] HTTP handlers registered")
+	must(container.Invoke(startDirectoryRuntime))
 
 	// Wire the chat package's local image resolver so multimodal chat can read
 	// local:// images that live under a tenant's configured storage PathPrefix
@@ -1863,6 +1897,20 @@ func startDataSourceScheduler(scheduler *datasource.Scheduler, cleaner interface
 
 	cleaner.RegisterWithName("DataSourceScheduler", func() error {
 		scheduler.Stop()
+		return nil
+	})
+}
+
+// startDirectoryRuntime starts the LDAP/AD synchronization loop. The runtime
+// is always registered so local/OIDC deployments keep a stable dependency
+// graph; with directory.enabled=false its loop remains dormant.
+func startDirectoryRuntime(runtime interfaces.DirectoryRuntimeService, cleaner interfaces.ResourceCleaner) {
+	if runtime == nil {
+		return
+	}
+	runtime.Start(context.Background())
+	cleaner.RegisterWithName("DirectoryRuntime", func() error {
+		runtime.Stop()
 		return nil
 	})
 }

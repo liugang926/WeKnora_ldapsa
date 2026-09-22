@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/Tencent/WeKnora/internal/config"
 	"github.com/Tencent/WeKnora/internal/types"
@@ -34,6 +35,31 @@ type tagTargetKnowledgeService struct {
 	interfaces.KnowledgeService
 	knowledges []*types.Knowledge
 	tagIDs     map[string][]string
+}
+
+type tagTargetGroupAccessService struct {
+	interfaces.GroupAccessService
+	allowed map[string]bool
+	err     error
+	calls   []string
+}
+
+func (s *tagTargetGroupAccessService) EffectivePermission(
+	_ context.Context,
+	_ uint64,
+	_ types.ResourceType,
+	resourceID string,
+	_ types.ResourceAction,
+	_ time.Time,
+) (types.EffectiveResourcePermission, error) {
+	s.calls = append(s.calls, resourceID)
+	if s.err != nil {
+		return types.EffectiveResourcePermission{}, s.err
+	}
+	return types.EffectiveResourcePermission{
+		Allowed: s.allowed[resourceID],
+		Reason:  "test_policy",
+	}, nil
 }
 
 func (s *tagTargetKnowledgeService) GetKnowledgeBatchWithSharedAccess(
@@ -188,6 +214,51 @@ func TestBuildSearchTargets_ExplicitKnowledgeScopeDisablesRecallThresholds(t *te
 	assert.Equal(t, types.SearchTargetTypeKnowledge, targets[0].Type)
 	assert.Equal(t, []string{"doc-1"}, targets[0].KnowledgeIDs)
 	assert.True(t, targets[0].DisableRecallThresholds)
+}
+
+func TestBuildSearchTargets_AppliesRestrictedPolicyAfterDocumentResolution(t *testing.T) {
+	svc := newTagTargetSessionService()
+	access := &tagTargetGroupAccessService{allowed: map[string]bool{"faq-kb": true}}
+	svc.groupAccess = access
+
+	targets, err := svc.buildSearchTargets(
+		tagTargetContext(),
+		100,
+		nil,
+		[]string{"doc-1"},
+		nil,
+	)
+
+	require.NoError(t, err)
+	assert.Empty(t, targets)
+	assert.Equal(t, []string{"doc-kb"}, access.calls)
+}
+
+func TestBuildSearchTargets_GroupAccessLookupFailureFailsClosed(t *testing.T) {
+	svc := newTagTargetSessionService()
+	svc.groupAccess = &tagTargetGroupAccessService{err: fmt.Errorf("policy store unavailable")}
+
+	_, err := svc.buildSearchTargets(
+		tagTargetContext(),
+		100,
+		[]string{"doc-kb"},
+		nil,
+		nil,
+	)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "policy store unavailable")
+}
+
+func TestRevalidateSearchTargets_DetectsMidPipelineRevocation(t *testing.T) {
+	svc := newTagTargetSessionService()
+	svc.groupAccess = &tagTargetGroupAccessService{allowed: map[string]bool{"doc-kb": false}}
+
+	err := svc.revalidateSearchTargets(tagTargetContext(), types.SearchTargets{{
+		Type: types.SearchTargetTypeKnowledgeBase, KnowledgeBaseID: "doc-kb", TenantID: 100,
+	}})
+
+	require.ErrorIs(t, err, ErrResourceAccessDenied)
 }
 
 func TestBuildSearchTargets_DocumentTagScopeIntersectsExplicitKnowledgeIDs(t *testing.T) {

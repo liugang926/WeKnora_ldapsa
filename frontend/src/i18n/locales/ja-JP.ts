@@ -1,4 +1,7 @@
+import { directoryAccessLocale } from './directoryAccessLocale'
+
 export default {
+  ...directoryAccessLocale,
   localBrowser: {
     pipOpen: "プレビューを別ウィンドウで表示",
     pipReturn: "会話内のプレビューに戻す",

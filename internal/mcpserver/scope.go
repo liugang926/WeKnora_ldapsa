@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/Tencent/WeKnora/internal/agent/tools"
 	"github.com/Tencent/WeKnora/internal/application/access"
@@ -18,12 +19,32 @@ import (
 // An unrestricted endpoint sees the workspace's own knowledge bases.
 func (s *Server) allowedKnowledgeBases(ctx context.Context, ep *types.MCPEndpoint) ([]*types.KnowledgeBase, error) {
 	if !ep.RestrictsKnowledgeBases() {
-		return s.kbService.ListKnowledgeBases(ctx)
+		kbs, err := s.kbService.ListKnowledgeBases(ctx)
+		if err != nil {
+			return nil, err
+		}
+		out := make([]*types.KnowledgeBase, 0, len(kbs))
+		for _, kb := range kbs {
+			allowed, err := s.groupResourceAllowed(
+				ctx, kb.TenantID, types.GroupResourceTypeKnowledgeBase, kb.ID, types.ResourceActionRead,
+			)
+			if err != nil {
+				return nil, fmt.Errorf("check group access for knowledge base %q: %w", kb.ID, err)
+			}
+			if allowed {
+				out = append(out, kb)
+			}
+		}
+		return out, nil
 	}
 	out := make([]*types.KnowledgeBase, 0, len(ep.KnowledgeBaseIDs))
 	for _, id := range ep.KnowledgeBaseIDs {
 		kb, err := s.authorizedKnowledgeBase(ctx, id, types.OrgRoleViewer)
 		if err != nil {
+			if !errors.Is(err, access.ErrForbidden) && !errors.Is(err, access.ErrUnauthorized) &&
+				!errors.Is(err, access.ErrNotFound) {
+				return nil, err
+			}
 			logger.Warnf(ctx, "[mcpserver] endpoint %s references unavailable knowledge base %s: %v",
 				ep.ID, id, err)
 			continue
@@ -46,7 +67,43 @@ func (s *Server) authorizedKnowledgeBase(
 	if _, err := s.resolveKB(ctx, kb, required); err != nil {
 		return nil, err
 	}
+	action := types.ResourceActionRead
+	if required != types.OrgRoleViewer {
+		action = types.ResourceActionEdit
+	}
+	allowed, err := s.groupResourceAllowed(
+		ctx, kb.TenantID, types.GroupResourceTypeKnowledgeBase, kb.ID, action,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("check group access for knowledge base %q: %w", kb.ID, err)
+	}
+	if !allowed {
+		return nil, access.ErrForbidden
+	}
 	return kb, nil
+}
+
+// groupResourceAllowed applies the optional directory-group authorization
+// overlay.  A missing overlay means the module is not wired and therefore
+// retains the legacy authorization behavior.  Once wired, repository errors
+// are returned so callers fail closed rather than treating them as inherit.
+func (s *Server) groupResourceAllowed(
+	ctx context.Context,
+	tenantID uint64,
+	resourceType types.ResourceType,
+	resourceID string,
+	action types.ResourceAction,
+) (bool, error) {
+	if s.groupAccess == nil {
+		return true, nil
+	}
+	permission, err := s.groupAccess.EffectivePermission(
+		ctx, tenantID, resourceType, resourceID, action, time.Now().UTC(),
+	)
+	if err != nil {
+		return false, err
+	}
+	return permission.Allowed, nil
 }
 
 func (s *Server) resolveKB(
@@ -71,6 +128,22 @@ func (s *Server) resolveKB(
 func (s *Server) scopedKBContext(
 	ctx context.Context, kb *types.KnowledgeBase, required types.OrgMemberRole,
 ) (context.Context, error) {
+	action := types.ResourceActionRead
+	if required != types.OrgRoleViewer {
+		action = types.ResourceActionEdit
+	}
+	allowed, groupErr := s.groupResourceAllowed(
+		ctx, kb.TenantID, types.GroupResourceTypeKnowledgeBase, kb.ID, action,
+	)
+	if groupErr != nil {
+		return ctx, fmt.Errorf("check group access for knowledge base %q: %w", kb.ID, groupErr)
+	}
+	if !allowed {
+		if action == types.ResourceActionRead {
+			return ctx, fmt.Errorf("this endpoint is not allowed to read knowledge base %q", kb.ID)
+		}
+		return ctx, fmt.Errorf("this endpoint is not allowed to write to knowledge base %q", kb.ID)
+	}
 	grant, err := s.resolveKB(ctx, kb, required)
 	if err != nil {
 		if errors.Is(err, access.ErrForbidden) || errors.Is(err, access.ErrUnauthorized) {

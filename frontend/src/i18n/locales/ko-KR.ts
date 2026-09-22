@@ -1,4 +1,7 @@
+import { directoryAccessLocale } from './directoryAccessLocale'
+
 export default {
+  ...directoryAccessLocale,
   localBrowser: {
     pipOpen: "미리보기 팝업 열기",
     pipReturn: "대화 내 미리보기로 돌아가기",

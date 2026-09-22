@@ -59,6 +59,11 @@ services:
       # Optional: model catalog overlay (extra vendors / model overrides).
       # Copy config/models.json.example to config/models.json, then
       # - ./config/models.json:/app/config/models.json:ro
+      # Optional LDAP/AD trust and service-account secrets. Keep these files
+      # outside the repository, mount them read-only, then set LDAP_CA_FILE /
+      # LDAP_BIND_PASSWORD_FILE to the container paths shown here.
+      # - /secure/weknora/ldap-ca.pem:/run/secrets/ldap-ca.pem:ro
+      # - /secure/weknora/ldap-bind-password:/run/secrets/ldap-bind-password:ro
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
       interval: 30s
@@ -370,6 +375,31 @@ services:
       - OIDC_AUTH_SCOPES=${OIDC_AUTH_SCOPES:-}
       - OIDC_USER_INFO_MAPPING_USER_NAME=${OIDC_USER_INFO_MAPPING_USER_NAME:-}
       - OIDC_USER_INFO_MAPPING_EMAIL=${OIDC_USER_INFO_MAPPING_EMAIL:-}
+      # ========== LDAP / Active Directory（可选，默认关闭）==========
+      - LDAP_ENABLED=${LDAP_ENABLED:-false}
+      - LDAP_CONFIG_SOURCE=${LDAP_CONFIG_SOURCE:-file}
+      - LDAP_DIRECTORY_ID=${LDAP_DIRECTORY_ID:-default-ad}
+      - LDAP_PROVIDER_DISPLAY_NAME=${LDAP_PROVIDER_DISPLAY_NAME:-}
+      - LDAP_URLS=${LDAP_URLS:-}
+      - LDAP_TLS_MODE=${LDAP_TLS_MODE:-ldaps}
+      - LDAP_SERVER_NAMES=${LDAP_SERVER_NAMES:-}
+      - LDAP_CA_FILE=${LDAP_CA_FILE:-}
+      - LDAP_BIND_DN=${LDAP_BIND_DN:-}
+      - LDAP_BIND_PASSWORD=${LDAP_BIND_PASSWORD:-}
+      - LDAP_BIND_PASSWORD_FILE=${LDAP_BIND_PASSWORD_FILE:-}
+      - LDAP_BASE_DN=${LDAP_BASE_DN:-}
+      - LDAP_USER_BASE_DN=${LDAP_USER_BASE_DN:-}
+      - LDAP_GROUP_BASE_DN=${LDAP_GROUP_BASE_DN:-}
+      - LDAP_USER_FILTER=${LDAP_USER_FILTER:-}
+      - LDAP_GROUP_FILTER=${LDAP_GROUP_FILTER:-}
+      - LDAP_LOGIN_FILTER=${LDAP_LOGIN_FILTER:-}
+      - LDAP_ALLOWED_LOGIN_FILTER=${LDAP_ALLOWED_LOGIN_FILTER:-}
+      - LDAP_CONNECT_TIMEOUT=${LDAP_CONNECT_TIMEOUT:-5s}
+      - LDAP_QUERY_TIMEOUT=${LDAP_QUERY_TIMEOUT:-10s}
+      - LDAP_PAGE_SIZE=${LDAP_PAGE_SIZE:-500}
+      - LDAP_RESULT_LIMIT=${LDAP_RESULT_LIMIT:-10000}
+      - LDAP_SYNC_INTERVAL=${LDAP_SYNC_INTERVAL:-5m}
+      - LDAP_STALE_AFTER=${LDAP_STALE_AFTER:-15m}
       # 飞书云文档解析模式 export：导出为docx，blocks：根据飞书云文档块解析为markdown。默认为:export
       - FEISHU_DOCX_PARSE_MODE=${FEISHU_DOCX_PARSE_MODE:-export}
     depends_on:

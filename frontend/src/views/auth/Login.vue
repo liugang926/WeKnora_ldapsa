@@ -199,11 +199,16 @@
           </div>
 
           <div class="form-content">
+            <t-radio-group v-if="ldapEnabled" v-model="loginMode" variant="default-filled" class="login-mode">
+              <t-radio-button value="local">{{ $t('directoryAdmin.login.local') }}</t-radio-button>
+              <t-radio-button value="ldap">{{ ldapProviderName || $t('directoryAdmin.login.directory') }}</t-radio-button>
+            </t-radio-group>
             <t-form ref="formRef" :data="formData" :rules="formRules" @submit="handleLogin" layout="vertical"
               label-align="top">
-              <t-form-item :label="$t('auth.email')" name="email">
-                <t-input v-model="formData.email" :placeholder="$t('auth.emailPlaceholder')" type="text"
-                  autocomplete="email" size="large" :disabled="loading" />
+              <t-form-item :label="loginMode === 'ldap' ? $t('directoryAdmin.login.identifier') : $t('auth.email')" name="email">
+                <t-input v-model="formData.email"
+                  :placeholder="loginMode === 'ldap' ? $t('directoryAdmin.login.identifierPlaceholder') : $t('auth.emailPlaceholder')"
+                  type="text" :autocomplete="loginMode === 'ldap' ? 'username' : 'email'" size="large" :disabled="loading" />
               </t-form-item>
 
               <t-form-item :label="$t('auth.password')" name="password">
@@ -353,6 +358,7 @@ import 'swiper/css/effect-fade'
 import 'swiper/css/pagination'
 import {
   login,
+  ldapLogin,
   register,
   getOIDCAuthorizationURL,
   getOIDCConfig,
@@ -416,6 +422,9 @@ const isRegisterMode = ref(false)
 const showLanguageMenu = ref(false)
 const oidcEnabled = ref(false)
 const oidcProviderName = ref('')
+const ldapEnabled = ref(false)
+const ldapProviderName = ref('')
+const loginMode = ref<'local' | 'ldap'>('local')
 // registrationEnabled defaults to true so that on first paint the Register
 // link is visible; the actual mode is fetched from /auth/config in onMounted.
 // In invite_only mode the link/card are hidden.
@@ -468,13 +477,15 @@ const registerData = reactive<{ [key: string]: any }>({
 // Login form validation rules
 const formRules = computed(() => ({
   email: [
-    { required: true, message: t('auth.emailRequired'), type: 'error' },
-    { email: true, message: t('auth.emailInvalid'), type: 'error' }
+    { required: true, message: loginMode.value === 'ldap' ? t('directoryAdmin.login.identifierRequired') : t('auth.emailRequired'), type: 'error' },
+    ...(loginMode.value === 'ldap' ? [] : [{ email: true, message: t('auth.emailInvalid'), type: 'error' }])
   ],
   password: [
     { required: true, message: t('auth.passwordRequired'), type: 'error' },
-    { min: 8, message: t('auth.passwordMinLength'), type: 'error' },
-    { max: 32, message: t('auth.passwordMaxLength'), type: 'error' }
+    ...(loginMode.value === 'ldap' ? [] : [
+      { min: 8, message: t('auth.passwordMinLength'), type: 'error' },
+      { max: 32, message: t('auth.passwordMaxLength'), type: 'error' },
+    ])
   ],
 }))
 
@@ -620,9 +631,15 @@ const loadAuthConfig = async () => {
     const response = await getAuthConfig()
     registrationEnabled.value = response.registration_mode !== 'invite_only'
     complexPasswordEnabled.value = response.complex_password_enabled
+    ldapEnabled.value = !!response.ldap_enabled
+    ldapProviderName.value = response.ldap_provider_display_name || ''
+    if (!ldapEnabled.value) loginMode.value = 'local'
   } catch {
     registrationEnabled.value = true
     complexPasswordEnabled.value = false
+    ldapEnabled.value = false
+    ldapProviderName.value = ''
+    loginMode.value = 'local'
   }
 }
 
@@ -677,10 +694,9 @@ const handleLogin = async () => {
 
     loading.value = true
 
-    const response = await login({
-      email: formData.email,
-      password: formData.password,
-    })
+    const response = loginMode.value === 'ldap'
+      ? await ldapLogin({ identifier: formData.email, password: formData.password })
+      : await login({ email: formData.email, password: formData.password })
 
     if (response.success) {
       if (inviteToken.value) {
@@ -804,6 +820,9 @@ onMounted(async () => {
     const cfg = await getAuthConfig()
     const inviteOnly = cfg.registration_mode === 'invite_only'
     registrationEnabled.value = !inviteOnly
+    complexPasswordEnabled.value = cfg.complex_password_enabled
+    ldapEnabled.value = !!cfg.ldap_enabled
+    ldapProviderName.value = cfg.ldap_provider_display_name || ''
     isRegisterMode.value = !inviteOnly
     loadOIDCConfig()
     return
@@ -1529,6 +1548,16 @@ onMounted(async () => {
 
   :deep(.t-form-item__control) {
     width: 100%;
+  }
+}
+
+.login-mode {
+  width: 100%;
+  margin-bottom: 18px;
+
+  :deep(.t-radio-button) {
+    flex: 1;
+    text-align: center;
   }
 }
 

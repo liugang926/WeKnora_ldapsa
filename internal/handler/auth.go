@@ -42,6 +42,7 @@ type AuthHandler struct {
 	tenantService    interfaces.TenantService
 	configInfo       *config.Config
 	systemSettingSvc interfaces.SystemSettingService
+	directoryRuntime interfaces.DirectoryRuntimeService
 	// invitationSvc is required for the share-link registration path
 	// (POST /auth/register-by-invite). When nil — e.g. legacy test
 	// fixtures — the share-link endpoints respond 503 rather than
@@ -65,6 +66,7 @@ func NewAuthHandler(configInfo *config.Config,
 	userService interfaces.UserService, tenantService interfaces.TenantService,
 	systemSettingSvc interfaces.SystemSettingService,
 	invitationSvc interfaces.TenantInvitationService,
+	directoryRuntime ...interfaces.DirectoryRuntimeService,
 ) *AuthHandler {
 	// Boot-time guard: a nil-or-empty Auth section silently disables the
 	// invite_only gate (see Register below). Emit a loud one-shot log
@@ -76,12 +78,17 @@ func NewAuthHandler(configInfo *config.Config,
 				"registration_mode enforcement is disabled. This is almost certainly a wiring bug.",
 			configInfo)
 	}
+	var directory interfaces.DirectoryRuntimeService
+	if len(directoryRuntime) > 0 {
+		directory = directoryRuntime[0]
+	}
 	return &AuthHandler{
 		configInfo:       configInfo,
 		userService:      userService,
 		tenantService:    tenantService,
 		systemSettingSvc: systemSettingSvc,
 		invitationSvc:    invitationSvc,
+		directoryRuntime: directory,
 	}
 }
 
@@ -837,10 +844,23 @@ func (h *AuthHandler) GetAuthConfig(c *gin.Context) {
 		h.configInfo,
 		h.systemSettingSvc,
 	)
+	ldapEnabled := false
+	ldapProviderDisplayName := ""
+	if h.directoryRuntime != nil {
+		if directoryConfig, err := h.directoryRuntime.GetConfig(c.Request.Context()); err == nil && directoryConfig != nil {
+			ldapEnabled = directoryConfig.Enabled
+			ldapProviderDisplayName = directoryConfig.DisplayName
+		}
+	} else if h.configInfo != nil && h.configInfo.Directory != nil {
+		ldapEnabled = h.configInfo.Directory.Enabled
+		ldapProviderDisplayName = h.configInfo.Directory.ProviderDisplayName
+	}
 	c.JSON(http.StatusOK, gin.H{
-		"success":                  true,
-		"registration_mode":        mode,
-		"complex_password_enabled": complexPasswordEnabled,
+		"success":                    true,
+		"registration_mode":          mode,
+		"complex_password_enabled":   complexPasswordEnabled,
+		"ldap_enabled":               ldapEnabled,
+		"ldap_provider_display_name": ldapProviderDisplayName,
 	})
 }
 

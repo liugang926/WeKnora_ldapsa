@@ -37,6 +37,7 @@ var noAuthAPI = map[string][]string{
 	"/health":                 {"GET"},
 	"/api/v1/auth/register":   {"POST"},
 	"/api/v1/auth/login":      {"POST"},
+	"/api/v1/auth/ldap/login": {"POST"},
 	"/api/v1/auth/auto-setup": {"POST"},
 	// Share-link surfaces accept a plaintext invite token from anonymous
 	// callers (an invitee who hasn't registered yet). They are registered
@@ -129,7 +130,12 @@ func Auth(
 	memberService interfaces.TenantMemberService,
 	apiKeyService interfaces.TenantAPIKeyService,
 	cfg *config.Config,
+	groupAccess ...interfaces.GroupAccessService,
 ) gin.HandlerFunc {
+	var groupSvc interfaces.GroupAccessService
+	if len(groupAccess) > 0 {
+		groupSvc = groupAccess[0]
+	}
 	return func(c *gin.Context) {
 		// ignore OPTIONS request
 		if c.Request.Method == http.MethodOptions {
@@ -149,7 +155,7 @@ func Auth(
 			bearerPresented = true
 			user, jwtTenantID, err := userService.ValidateToken(c.Request.Context(), token)
 			if err == nil && user != nil {
-				if authenticateJWTUser(c, tenantService, memberService, cfg, user, jwtTenantID) {
+				if authenticateJWTUser(c, tenantService, memberService, cfg, user, jwtTenantID, groupSvc) {
 					c.Next()
 				}
 				return
@@ -201,10 +207,11 @@ func authenticateJWTUser(
 	cfg *config.Config,
 	user *types.User,
 	jwtTenantID uint64,
+	groupAccess ...interfaces.GroupAccessService,
 ) bool {
 	ctx := c.Request.Context()
 
-	targetTenantID, tenant, crossTenantSwitch, ok := resolveTargetTenant(c, tenantService, memberService, cfg, user, jwtTenantID)
+	targetTenantID, tenant, crossTenantSwitch, ok := resolveTargetTenant(c, tenantService, memberService, cfg, user, jwtTenantID, groupAccess...)
 	if !ok {
 		return false
 	}
@@ -240,7 +247,7 @@ func authenticateJWTUser(
 	}
 
 	// 解析当前空间内的角色 (issue #1303)
-	role, ok := resolveTenantRole(ctx, memberService, user, targetTenantID, crossTenantSwitch, cfg)
+	role, ok := resolveTenantRole(ctx, memberService, user, targetTenantID, crossTenantSwitch, cfg, groupAccess...)
 	if !ok {
 		// 强制 RBAC 时，缺少 active membership 即拒绝；fail-open 路径已在
 		// resolveTenantRole 内部处理。
@@ -288,6 +295,7 @@ func resolveTargetTenant(
 	cfg *config.Config,
 	user *types.User,
 	jwtTenantID uint64,
+	groupAccess ...interfaces.GroupAccessService,
 ) (targetTenantID uint64, tenant *types.Tenant, crossTenantSwitch bool, ok bool) {
 	ctx := c.Request.Context()
 
@@ -311,7 +319,7 @@ func resolveTargetTenant(
 		}
 		// 检查用户是否有权限访问目标空间：自家空间、跨空间超管、或
 		// 有 active membership 行——三选一，由 IsTenantAccessible 统一判定。
-		if !IsTenantAccessible(ctx, user, parsedTenantID, memberService, cfg) {
+		if !IsTenantAccessible(ctx, user, parsedTenantID, memberService, cfg, groupAccess...) {
 			logger.Warnf(ctx, "User %s attempted to access tenant %d without permission", user.ID, parsedTenantID)
 			c.JSON(http.StatusForbidden, gin.H{
 				"error": "Forbidden: insufficient permissions to access target workspace",
@@ -332,7 +340,7 @@ func resolveTargetTenant(
 	}
 
 	if targetTenantID == 0 {
-		targetTenantID = resolveFirstMembershipTarget(ctx, user, memberService, tenantService)
+		targetTenantID = resolveFirstMembershipTarget(ctx, user, memberService, tenantService, groupAccess...)
 	}
 	return targetTenantID, nil, targetTenantID != user.TenantID, true
 }
@@ -347,8 +355,28 @@ func resolveFirstMembershipTarget(
 	user *types.User,
 	memberService interfaces.TenantMemberService,
 	tenantService interfaces.TenantService,
+	groupAccess ...interfaces.GroupAccessService,
 ) uint64 {
-	if user == nil || memberService == nil || tenantService == nil {
+	if user == nil || tenantService == nil {
+		return 0
+	}
+	if len(groupAccess) > 0 && groupAccess[0] != nil {
+		roles, err := groupAccess[0].ListEffectiveTenantRoles(ctx, user.ID, time.Now().UTC())
+		if err != nil {
+			logger.Warnf(ctx, "Failed to list effective memberships for tenantless user %s: %v", user.ID, err)
+			return 0
+		}
+		for _, role := range roles {
+			if !role.Member || role.TenantID == 0 {
+				continue
+			}
+			if tenant, err := tenantService.GetTenantByID(ctx, role.TenantID); err == nil && tenant != nil {
+				return role.TenantID
+			}
+		}
+		return 0
+	}
+	if memberService == nil {
 		return 0
 	}
 	members, err := memberService.ListByUser(ctx, user.ID)
@@ -756,7 +784,18 @@ func resolveTenantRole(
 	targetTenantID uint64,
 	crossTenantSwitch bool,
 	cfg *config.Config,
+	groupAccess ...interfaces.GroupAccessService,
 ) (types.TenantRole, bool) {
+	if len(groupAccess) > 0 && groupAccess[0] != nil {
+		effective, err := groupAccess[0].EffectiveTenantRole(ctx, user.ID, targetTenantID, time.Now().UTC())
+		if err == nil && effective.Member {
+			logger.Infof(ctx, "[auth] effective direct/group role=%s user=%s tenant=%d", effective.Role, user.ID, targetTenantID)
+			return effective.Role, true
+		}
+		if err != nil {
+			logger.Warnf(ctx, "effective directory-group role lookup failed user=%s tenant=%d: %v", user.ID, targetTenantID, err)
+		}
+	}
 	// 1. 正常成员关系
 	member, err := memberService.GetMembership(ctx, user.ID, targetTenantID)
 	if err == nil && member != nil && member.Status == types.TenantMemberStatusActive {

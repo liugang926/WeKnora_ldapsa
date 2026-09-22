@@ -2,6 +2,7 @@ package handler
 
 import (
 	"net/http"
+	"time"
 
 	"github.com/Tencent/WeKnora/internal/errors"
 	"github.com/Tencent/WeKnora/internal/handler/dto"
@@ -21,8 +22,9 @@ import (
 // expose a single logical field "credentials": GET returns whether anything
 // is stored, PUT replaces the whole map, DELETE wipes it.
 type DataSourceCredentialsHandler struct {
-	service   interfaces.DataSourceService
-	kbService interfaces.KnowledgeBaseService
+	service     interfaces.DataSourceService
+	kbService   interfaces.KnowledgeBaseService
+	groupAccess interfaces.GroupAccessService
 }
 
 func NewDataSourceCredentialsHandler(
@@ -30,6 +32,15 @@ func NewDataSourceCredentialsHandler(
 	kbService interfaces.KnowledgeBaseService,
 ) *DataSourceCredentialsHandler {
 	return &DataSourceCredentialsHandler{service: service, kbService: kbService}
+}
+
+// ConfigureDataSourceCredentialsGroupAccess installs the same KB policy used
+// by the parent data-source endpoints. This is essential for API keys: their
+// route capability must not turn into access to a restricted KB's connector.
+func ConfigureDataSourceCredentialsGroupAccess(h *DataSourceCredentialsHandler, groupAccess interfaces.GroupAccessService) {
+	if h != nil {
+		h.groupAccess = groupAccess
+	}
 }
 
 // ownDataSource is the same tenant-isolation check used in datasource.go,
@@ -51,6 +62,24 @@ func (h *DataSourceCredentialsHandler) ownDataSource(c *gin.Context) (*types.Dat
 	if err != nil || kb == nil || kb.TenantID != tenantID {
 		c.Error(errors.NewNotFoundError("data source not found"))
 		return nil, false
+	}
+	if h.groupAccess != nil {
+		permission, accessErr := h.groupAccess.EffectivePermission(
+			ctx,
+			kb.TenantID,
+			types.GroupResourceTypeKnowledgeBase,
+			kb.ID,
+			types.ResourceActionEdit,
+			time.Now().UTC(),
+		)
+		if accessErr != nil {
+			c.Error(errors.NewServiceUnavailableError("cannot verify knowledge base access right now"))
+			return nil, false
+		}
+		if !permission.Allowed {
+			c.Error(errors.NewForbiddenError("directory group permission required for this knowledge base"))
+			return nil, false
+		}
 	}
 	return ds, true
 }

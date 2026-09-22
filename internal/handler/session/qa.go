@@ -205,6 +205,13 @@ func (h *Handler) parseQARequest(c *gin.Context, logPrefix string) (*qaRequestCo
 	if err := types.AuthorizeTenantAPIKeyKnowledgeTargets(ctx, kbIDs, knowledgeIDs); err != nil {
 		return nil, nil, err
 	}
+	groupCheckedKBIDs := append([]string(nil), kbIDs...)
+	if customAgent != nil {
+		groupCheckedKBIDs = append(groupCheckedKBIDs, customAgent.Config.KnowledgeBases...)
+	}
+	if err := h.authorizeKnowledgeBaseGroupAccess(ctx, groupCheckedKBIDs); err != nil {
+		return nil, nil, err
+	}
 
 	// The built-in wiki fixer is invoked from a KB page, not from a tenant's
 	// regular agent picker. When the KB is shared, run it in the source tenant
@@ -586,6 +593,10 @@ func (h *Handler) resolveAgent(
 	if sourceTenantID == 0 {
 		agent, err := h.customAgentService.GetAgentByID(ctx, agentID)
 		if err == nil && agent != nil {
+			if !h.canUseAgent(ctx, agent) {
+				logger.Warnf(ctx, "Directory group access denied for agent %s", secutils.SanitizeForLog(agentID))
+				return nil, 0, false
+			}
 			logger.Infof(ctx, "Using own agent: ID=%s, Name=%s, AgentMode=%s",
 				agent.ID, agent.Name, agent.Config.AgentMode)
 			return agent, 0, false
@@ -601,6 +612,10 @@ func (h *Handler) resolveAgent(
 		agent, err := h.agentShareService.GetSharedAgentForTenant(
 			ctx, currentTenantID, callerTenantRole, agentID, sourceTenantID)
 		if err == nil && agent != nil {
+			if !h.canUseAgent(ctx, agent) {
+				logger.Warnf(ctx, "Directory group access denied for shared agent %s", secutils.SanitizeForLog(agentID))
+				return nil, 0, false
+			}
 			logger.Infof(ctx, "Using shared agent: ID=%s, Name=%s, IsBuiltin=%v, AgentMode=%s, effectiveTenantID=%d",
 				agent.ID, agent.Name, agent.IsBuiltin, agent.Config.AgentMode, agent.TenantID)
 			return agent, agent.TenantID, true
@@ -611,6 +626,52 @@ func (h *Handler) resolveAgent(
 	logger.Warnf(ctx, "Failed to get agent, agent ID: %s, source tenant: %d, own error: %v, share error: %v, "+
 		"using default config", secutils.SanitizeForLog(agentID), sourceTenantID, ownErr, shareErr)
 	return nil, 0, false
+}
+
+func (h *Handler) canUseAgent(ctx context.Context, agent *types.CustomAgent) bool {
+	if h.groupAccess == nil || agent == nil {
+		return agent != nil
+	}
+	permission, err := h.groupAccess.EffectivePermission(
+		ctx,
+		agent.TenantID,
+		types.GroupResourceTypeAgent,
+		agent.ID,
+		types.ResourceActionUse,
+		time.Now().UTC(),
+	)
+	return err == nil && permission.Allowed
+}
+
+func (h *Handler) authorizeKnowledgeBaseGroupAccess(ctx context.Context, ids []string) error {
+	if h.groupAccess == nil || len(ids) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		if _, exists := seen[id]; exists {
+			continue
+		}
+		seen[id] = struct{}{}
+		kb, err := h.knowledgebaseService.GetKnowledgeBaseByIDOnly(ctx, id)
+		if err != nil || kb == nil {
+			return errors.NewNotFoundError("Knowledge base not found")
+		}
+		permission, err := h.groupAccess.EffectivePermission(
+			ctx, kb.TenantID, types.GroupResourceTypeKnowledgeBase, kb.ID, types.ResourceActionRead, time.Now().UTC(),
+		)
+		if err != nil {
+			return errors.NewServiceUnavailableError("Cannot verify knowledge base group access")
+		}
+		if !permission.Allowed {
+			return errors.NewForbiddenError("Directory group permission required for this knowledge base")
+		}
+	}
+	return nil
 }
 
 // mergeKnowledgeTargets merges request KB/knowledge IDs with @mentioned items into deduplicated slices.

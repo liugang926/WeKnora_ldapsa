@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Tencent/WeKnora/internal/types"
+	"github.com/go-ldap/ldap/v3"
 	"github.com/go-viper/mapstructure/v2"
 	"github.com/spf13/viper"
 	"gopkg.in/yaml.v3"
@@ -24,6 +26,7 @@ type Config struct {
 	Auth            *AuthConfig            `yaml:"auth"             json:"auth"`
 	Audit           *AuditConfig           `yaml:"audit"            json:"audit"`
 	OIDCAuth        *OIDCAuthConfig        `yaml:"oidc_auth"        json:"oidc_auth"`
+	Directory       *DirectoryConfig       `yaml:"directory"        json:"directory"`
 	Models          []ModelConfig          `yaml:"models"           json:"models"`
 	VectorDatabase  *VectorDatabaseConfig  `yaml:"vector_database"  json:"vector_database"`
 	DocReader       *DocReaderConfig       `yaml:"docreader"        json:"docreader"`
@@ -328,6 +331,58 @@ type OIDCAuthConfig struct {
 	UserInfoMapping       *OIDCUserInfoMapping `yaml:"user_info_mapping"      json:"user_info_mapping"`
 }
 
+// DirectoryConfig controls the optional LDAP / Active Directory module.
+//
+// The module is deliberately disabled by default.  A deployment can manage
+// the connection in one of two places:
+//   - file: YAML / environment variables are authoritative and the admin UI
+//     exposes the fields read-only;
+//   - database: a system administrator stores the connection through the UI
+//     (the bind password is AES-GCM encrypted before it is persisted).
+//
+// Keeping that choice explicit prevents a value saved in the UI from silently
+// overriding a secret mounted by the operator.
+type DirectoryConfig struct {
+	Enabled             bool                    `yaml:"enabled" json:"enabled"`
+	ManagementSource    string                  `yaml:"management_source" json:"management_source"`
+	ID                  string                  `yaml:"id" json:"id"`
+	ProviderDisplayName string                  `yaml:"provider_display_name" json:"provider_display_name"`
+	Servers             []DirectoryServerConfig `yaml:"servers" json:"servers"`
+	BindDN              string                  `yaml:"bind_dn" json:"bind_dn"`
+	BindPassword        string                  `yaml:"bind_password" json:"-"`
+	BindPasswordFile    string                  `yaml:"bind_password_file" json:"-"`
+	BaseDN              string                  `yaml:"base_dn" json:"base_dn"`
+	UserBaseDN          string                  `yaml:"user_base_dn" json:"user_base_dn"`
+	GroupBaseDN         string                  `yaml:"group_base_dn" json:"group_base_dn"`
+	UserFilter          string                  `yaml:"user_filter" json:"user_filter"`
+	GroupFilter         string                  `yaml:"group_filter" json:"group_filter"`
+	LoginFilter         string                  `yaml:"login_filter" json:"login_filter"`
+	AllowedLoginFilter  string                  `yaml:"allowed_login_filter" json:"allowed_login_filter"`
+	CAFile              string                  `yaml:"ca_file" json:"ca_file"`
+	ConnectTimeout      time.Duration           `yaml:"connect_timeout" json:"connect_timeout"`
+	QueryTimeout        time.Duration           `yaml:"query_timeout" json:"query_timeout"`
+	PageSize            uint32                  `yaml:"page_size" json:"page_size"`
+	ResultLimit         int                     `yaml:"result_limit" json:"result_limit"`
+	SyncInterval        time.Duration           `yaml:"sync_interval" json:"sync_interval"`
+	StaleAfter          time.Duration           `yaml:"stale_after" json:"stale_after"`
+	// ConfiguredFromEnvironment is computed at load time and is not accepted
+	// from YAML.  The management API uses it to explain why fields are locked.
+	ConfiguredFromEnvironment bool `yaml:"-" json:"configured_from_environment"`
+}
+
+type DirectoryServerConfig struct {
+	URL        string `yaml:"url" json:"url"`
+	TLSMode    string `yaml:"tls_mode" json:"tls_mode"`
+	ServerName string `yaml:"server_name" json:"server_name"`
+}
+
+const (
+	DirectoryManagementFile     = "file"
+	DirectoryManagementDatabase = "database"
+	DirectoryTLSLDAPS           = "ldaps"
+	DirectoryTLSStartTLS        = "starttls"
+)
+
 // PromptTemplateI18n holds localized name and description for a prompt template.
 type PromptTemplateI18n struct {
 	Name        string `yaml:"name"        json:"name"`
@@ -588,6 +643,9 @@ func LoadConfig() (*Config, error) {
 
 	// Validate configuration values
 	applyOIDCEnvOverrides(&cfg)
+	if err := applyDirectoryEnvOverrides(&cfg); err != nil {
+		return nil, err
+	}
 	applyAgentEnvOverrides(&cfg)
 	applyKnowledgeBaseEnvOverrides(&cfg)
 	applyAuthAndTenantDefaults(&cfg)
@@ -633,6 +691,62 @@ func ValidateConfig(cfg *Config) error {
 		if strings.TrimSpace(cfg.OIDCAuth.DiscoveryURL) == "" &&
 			(strings.TrimSpace(cfg.OIDCAuth.AuthorizationEndpoint) == "" || strings.TrimSpace(cfg.OIDCAuth.TokenEndpoint) == "") {
 			errs = append(errs, "oidc_auth.discovery_url or both oidc_auth.authorization_endpoint and oidc_auth.token_endpoint are required when OIDC is enabled")
+		}
+	}
+
+	if cfg.Directory != nil && cfg.Directory.Enabled {
+		d := cfg.Directory
+		switch d.ManagementSource {
+		case DirectoryManagementFile:
+			if len(d.Servers) == 0 {
+				errs = append(errs, "directory.servers is required when the file-managed directory module is enabled")
+			}
+			if strings.TrimSpace(d.BindDN) == "" {
+				errs = append(errs, "directory.bind_dn is required when the file-managed directory module is enabled")
+			}
+			if d.BindPassword == "" {
+				errs = append(errs, "directory bind password is required when the file-managed directory module is enabled")
+			}
+			if strings.TrimSpace(d.BaseDN) == "" {
+				errs = append(errs, "directory.base_dn is required when the file-managed directory module is enabled")
+			}
+			if !strings.Contains(d.LoginFilter, "{login}") {
+				errs = append(errs, "directory.login_filter must contain {login}")
+			} else {
+				probe := strings.ReplaceAll(d.LoginFilter, "{login}", ldap.EscapeFilter("login-probe"))
+				if _, err := ldap.CompileFilter(probe); err != nil {
+					errs = append(errs, fmt.Sprintf("directory.login_filter is invalid: %v", err))
+				}
+			}
+		case DirectoryManagementDatabase:
+			// The persisted connection is validated when it is saved and loaded.
+		default:
+			errs = append(errs, fmt.Sprintf("directory.management_source must be %q or %q, got %q",
+				DirectoryManagementFile, DirectoryManagementDatabase, d.ManagementSource))
+		}
+		for i, server := range d.Servers {
+			urlValue := strings.TrimSpace(server.URL)
+			switch server.TLSMode {
+			case DirectoryTLSLDAPS:
+				if !strings.HasPrefix(strings.ToLower(urlValue), "ldaps://") {
+					errs = append(errs, fmt.Sprintf("directory.servers[%d].url must use ldaps:// for tls_mode=ldaps", i))
+				}
+			case DirectoryTLSStartTLS:
+				if !strings.HasPrefix(strings.ToLower(urlValue), "ldap://") {
+					errs = append(errs, fmt.Sprintf("directory.servers[%d].url must use ldap:// for tls_mode=starttls", i))
+				}
+			default:
+				errs = append(errs, fmt.Sprintf("directory.servers[%d].tls_mode must be ldaps or starttls", i))
+			}
+		}
+		if d.ConnectTimeout <= 0 || d.QueryTimeout <= 0 {
+			errs = append(errs, "directory connect_timeout and query_timeout must be positive")
+		}
+		if d.PageSize == 0 || d.ResultLimit <= 0 || int(d.PageSize) > d.ResultLimit {
+			errs = append(errs, "directory page_size must be positive and no greater than result_limit")
+		}
+		if d.SyncInterval <= 0 || d.StaleAfter <= 0 {
+			errs = append(errs, "directory sync_interval and stale_after must be positive")
 		}
 	}
 
@@ -757,6 +871,231 @@ func applyOIDCEnvOverrides(cfg *Config) {
 	if cfg.OIDCAuth.DiscoveryURL == "" && cfg.OIDCAuth.IssuerURL != "" {
 		cfg.OIDCAuth.DiscoveryURL = strings.TrimRight(cfg.OIDCAuth.IssuerURL, "/") + "/.well-known/openid-configuration"
 	}
+}
+
+// applyDirectoryEnvOverrides resolves the deploy-time LDAP/AD configuration.
+// Secret-file support is intentionally explicit instead of a generic Viper
+// hook: an accidentally unreadable password file must fail startup, not turn
+// into an empty-password bind or fall back to a plaintext value.
+func applyDirectoryEnvOverrides(cfg *Config) error {
+	if cfg.Directory == nil {
+		cfg.Directory = &DirectoryConfig{}
+	}
+	d := cfg.Directory
+	if strings.TrimSpace(d.ManagementSource) == "" {
+		d.ManagementSource = DirectoryManagementFile
+	}
+	if strings.TrimSpace(d.ID) == "" {
+		d.ID = "default-ad"
+	}
+	if strings.TrimSpace(d.ProviderDisplayName) == "" {
+		d.ProviderDisplayName = "Corporate directory"
+	}
+
+	envSeen := false
+	setString := func(name string, dst *string) {
+		if value, ok := os.LookupEnv(name); ok {
+			envSeen = true
+			*dst = strings.TrimSpace(value)
+		}
+	}
+	if value, ok := os.LookupEnv("LDAP_ENABLED"); ok {
+		envSeen = true
+		parsed, err := strconv.ParseBool(strings.TrimSpace(value))
+		if err != nil {
+			return fmt.Errorf("LDAP_ENABLED must be a boolean: %w", err)
+		}
+		d.Enabled = parsed
+	}
+	setString("LDAP_CONFIG_SOURCE", &d.ManagementSource)
+	setString("LDAP_DIRECTORY_ID", &d.ID)
+	setString("LDAP_PROVIDER_DISPLAY_NAME", &d.ProviderDisplayName)
+	setString("LDAP_BIND_DN", &d.BindDN)
+	// LDAP passwords are opaque octet strings. Preserve leading/trailing
+	// spaces from the environment instead of applying the whitespace
+	// normalization used for addresses, DNs, and filters.
+	if value, ok := os.LookupEnv("LDAP_BIND_PASSWORD"); ok {
+		envSeen = true
+		d.BindPassword = value
+	}
+	setString("LDAP_BIND_PASSWORD_FILE", &d.BindPasswordFile)
+	setString("LDAP_BASE_DN", &d.BaseDN)
+	setString("LDAP_USER_BASE_DN", &d.UserBaseDN)
+	setString("LDAP_GROUP_BASE_DN", &d.GroupBaseDN)
+	setString("LDAP_USER_FILTER", &d.UserFilter)
+	setString("LDAP_GROUP_FILTER", &d.GroupFilter)
+	setString("LDAP_LOGIN_FILTER", &d.LoginFilter)
+	setString("LDAP_ALLOWED_LOGIN_FILTER", &d.AllowedLoginFilter)
+	setString("LDAP_CA_FILE", &d.CAFile)
+
+	if value, ok := os.LookupEnv("LDAP_URLS"); ok {
+		envSeen = true
+		urls := splitNonEmpty(value)
+		tlsMode := strings.TrimSpace(os.Getenv("LDAP_TLS_MODE"))
+		if tlsMode == "" {
+			tlsMode = DirectoryTLSLDAPS
+		}
+		names := splitNonEmpty(os.Getenv("LDAP_SERVER_NAMES"))
+		d.Servers = make([]DirectoryServerConfig, 0, len(urls))
+		for i, urlValue := range urls {
+			serverName := ""
+			if i < len(names) {
+				serverName = names[i]
+			}
+			d.Servers = append(d.Servers, DirectoryServerConfig{
+				URL: urlValue, TLSMode: strings.ToLower(tlsMode), ServerName: serverName,
+			})
+		}
+	} else {
+		if value, ok := os.LookupEnv("LDAP_TLS_MODE"); ok {
+			envSeen = true
+			for i := range d.Servers {
+				d.Servers[i].TLSMode = strings.ToLower(strings.TrimSpace(value))
+			}
+		}
+	}
+
+	parseDurationEnv := func(name string, dst *time.Duration) error {
+		value, ok := os.LookupEnv(name)
+		if !ok {
+			return nil
+		}
+		envSeen = true
+		parsed, err := time.ParseDuration(strings.TrimSpace(value))
+		if err != nil || parsed <= 0 {
+			return fmt.Errorf("%s must be a positive Go duration", name)
+		}
+		*dst = parsed
+		return nil
+	}
+	if err := parseDurationEnv("LDAP_CONNECT_TIMEOUT", &d.ConnectTimeout); err != nil {
+		return err
+	}
+	if err := parseDurationEnv("LDAP_QUERY_TIMEOUT", &d.QueryTimeout); err != nil {
+		return err
+	}
+	if err := parseDurationEnv("LDAP_SYNC_INTERVAL", &d.SyncInterval); err != nil {
+		return err
+	}
+	if err := parseDurationEnv("LDAP_STALE_AFTER", &d.StaleAfter); err != nil {
+		return err
+	}
+	parseIntEnv := func(name string, apply func(int) error) error {
+		value, ok := os.LookupEnv(name)
+		if !ok {
+			return nil
+		}
+		envSeen = true
+		parsed, err := strconv.Atoi(strings.TrimSpace(value))
+		if err != nil {
+			return fmt.Errorf("%s must be an integer: %w", name, err)
+		}
+		return apply(parsed)
+	}
+	if err := parseIntEnv("LDAP_PAGE_SIZE", func(value int) error {
+		if value <= 0 {
+			return errors.New("LDAP_PAGE_SIZE must be positive")
+		}
+		d.PageSize = uint32(value)
+		return nil
+	}); err != nil {
+		return err
+	}
+	if err := parseIntEnv("LDAP_RESULT_LIMIT", func(value int) error {
+		if value <= 0 {
+			return errors.New("LDAP_RESULT_LIMIT must be positive")
+		}
+		d.ResultLimit = value
+		return nil
+	}); err != nil {
+		return err
+	}
+
+	if d.ConnectTimeout == 0 {
+		d.ConnectTimeout = 5 * time.Second
+	}
+	if d.QueryTimeout == 0 {
+		d.QueryTimeout = 10 * time.Second
+	}
+	if d.PageSize == 0 {
+		d.PageSize = 500
+	}
+	if d.ResultLimit == 0 {
+		d.ResultLimit = 10000
+	}
+	if d.SyncInterval == 0 {
+		d.SyncInterval = 5 * time.Minute
+	}
+	if d.StaleAfter == 0 {
+		d.StaleAfter = 15 * time.Minute
+	}
+	if d.UserBaseDN == "" {
+		d.UserBaseDN = d.BaseDN
+	}
+	if d.GroupBaseDN == "" {
+		d.GroupBaseDN = d.BaseDN
+	}
+	if d.UserFilter == "" {
+		d.UserFilter = "(&(objectCategory=person)(objectClass=user))"
+	}
+	if d.GroupFilter == "" {
+		d.GroupFilter = "(objectCategory=group)"
+	}
+	if d.LoginFilter == "" {
+		d.LoginFilter = "(&(objectCategory=person)(objectClass=user)(|(sAMAccountName={login})(userPrincipalName={login})))"
+	}
+	for i := range d.Servers {
+		if strings.TrimSpace(d.Servers[i].TLSMode) == "" {
+			if strings.HasPrefix(strings.ToLower(strings.TrimSpace(d.Servers[i].URL)), "ldap://") {
+				d.Servers[i].TLSMode = DirectoryTLSStartTLS
+			} else {
+				d.Servers[i].TLSMode = DirectoryTLSLDAPS
+			}
+		}
+	}
+
+	if d.BindPassword != "" && d.BindPasswordFile != "" {
+		return errors.New("configure only one of directory.bind_password/LDAP_BIND_PASSWORD and directory.bind_password_file/LDAP_BIND_PASSWORD_FILE")
+	}
+	if d.Enabled && d.ManagementSource == DirectoryManagementFile && d.BindPasswordFile != "" {
+		secret, err := readDirectorySecretFile(d.BindPasswordFile)
+		if err != nil {
+			return fmt.Errorf("read LDAP bind password file: %w", err)
+		}
+		d.BindPassword = secret
+	}
+	d.ConfiguredFromEnvironment = envSeen
+	return nil
+}
+
+func splitNonEmpty(value string) []string {
+	parts := strings.FieldsFunc(value, func(r rune) bool { return r == ',' || r == ';' || r == '\n' })
+	result := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if value := strings.TrimSpace(part); value != "" {
+			result = append(result, value)
+		}
+	}
+	return result
+}
+
+func readDirectorySecretFile(path string) (string, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return "", err
+	}
+	if !info.Mode().IsRegular() || info.Size() > 1024*1024 {
+		return "", errors.New("secret file must be a regular file no larger than 1 MiB")
+	}
+	contents, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	secret := strings.TrimRight(string(contents), "\r\n")
+	if secret == "" {
+		return "", errors.New("secret file is empty")
+	}
+	return secret, nil
 }
 
 func applyKnowledgeBaseEnvOverrides(cfg *Config) {

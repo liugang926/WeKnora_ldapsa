@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"errors"
+	"strings"
 
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
@@ -259,10 +260,10 @@ func (r *userRepository) RevokeSystemAdmin(ctx context.Context, userID, actorID 
 // SearchUsers searches users by username or email
 func (r *userRepository) SearchUsers(ctx context.Context, query string, limit int) ([]*types.User, error) {
 	var users []*types.User
-	searchPattern := "%" + query + "%"
+	searchPattern := "%" + escapeUserSearchLikePattern(strings.ToLower(query)) + "%"
 
 	dbQuery := r.db.WithContext(ctx).
-		Where("username ILIKE ? OR email ILIKE ?", searchPattern, searchPattern).
+		Where("(LOWER(username) LIKE ? ESCAPE '\\' OR LOWER(email) LIKE ? ESCAPE '\\')", searchPattern, searchPattern).
 		Where("is_active = ?", true).
 		Order("username ASC")
 
@@ -276,6 +277,45 @@ func (r *userRepository) SearchUsers(ctx context.Context, query string, limit in
 		return nil, err
 	}
 	return users, nil
+}
+
+// FindUserByEmailOrUsernameFold performs exact case-insensitive collision
+// detection for directory auto-provisioning. It intentionally does not filter
+// is_active: an inactive local account must still require explicit linking.
+func (r *userRepository) FindUserByEmailOrUsernameFold(
+	ctx context.Context,
+	email, username string,
+) (*types.User, error) {
+	query := r.db.WithContext(ctx)
+	conditions := make([]string, 0, 2)
+	args := make([]any, 0, 2)
+	if email = strings.TrimSpace(email); email != "" {
+		conditions = append(conditions, "LOWER(email) = LOWER(?)")
+		args = append(args, email)
+	}
+	if username = strings.TrimSpace(username); username != "" {
+		conditions = append(conditions, "LOWER(username) = LOWER(?)")
+		args = append(args, username)
+	}
+	if len(conditions) == 0 {
+		return nil, nil
+	}
+
+	var user types.User
+	if err := query.Where("("+strings.Join(conditions, " OR ")+")", args...).
+		Order("id ASC").First(&user).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &user, nil
+}
+
+func escapeUserSearchLikePattern(value string) string {
+	value = strings.ReplaceAll(value, `\`, `\\`)
+	value = strings.ReplaceAll(value, "%", `\%`)
+	return strings.ReplaceAll(value, "_", `\_`)
 }
 
 // authTokenRepository implements auth token repository interface
