@@ -5,6 +5,13 @@ export default {
   directoryAdmin: {
     ...directoryAccessLocale.directoryAdmin,
     title: '目录服务',
+    catalog: {
+      title: '已同步 AD 用户与分组', hint: '此处列出全部已同步对象，可搜索并选择。出现在列表中不代表已获得空间权限。',
+      disabled: '目录同步未启用。', synced: '已同步', select: '添加到空间', linked: '组已关联',
+      sync: '每 {minutes} 分钟自动同步 · 最近成功：{time}', stale: '目录同步异常或已过期，可查看已保存的目录列表，暂不能添加授权。',
+      userHint: '请选择空间角色。无需用户先登录，但该身份仍必须通过 AD 认证。',
+      groupHint: '所选角色适用于直接、嵌套及主组成员；不会授予 Owner 或系统管理员权限。', added: '空间授权已添加。',
+    },
     tabs: { configuration: '目录配置', diagnostics: '用户与分组', sync: '同步', runs: '执行记录' },
     diagnostics: {
       ...directoryAccessLocale.directoryAdmin.diagnostics,

@@ -57,6 +57,7 @@ type directoryRuntimeService struct {
 	directories interfaces.DirectoryService
 	repo        interfaces.DirectoryRepository
 	users       interfaces.UserService
+	members     interfaces.TenantMemberService
 	tenants     interfaces.TenantService
 	tokens      interfaces.AuthTokenRepository
 	audit       interfaces.AuditLogService
@@ -82,10 +83,13 @@ func NewDirectoryRuntimeService(
 	tenants interfaces.TenantService,
 	tokens interfaces.AuthTokenRepository,
 	audit interfaces.AuditLogService,
+	members interfaces.TenantMemberService,
 ) interfaces.DirectoryRuntimeService {
-	return newDirectoryRuntimeService(cfg, directories, repo, users, tenants, tokens, audit, func(c ldapdirectory.Config) (liveDirectoryAdapter, error) {
+	runtime := newDirectoryRuntimeService(cfg, directories, repo, users, tenants, tokens, audit, func(c ldapdirectory.Config) (liveDirectoryAdapter, error) {
 		return ldapdirectory.NewAdapter(c)
 	})
+	runtime.members = members
+	return runtime
 }
 
 func newDirectoryRuntimeService(

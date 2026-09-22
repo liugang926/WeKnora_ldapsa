@@ -377,7 +377,8 @@
 
     </div>
 
-    <TenantGroups :tenant-id="activeTenantId" :can-manage="canManage" />
+    <TenantDirectoryCatalog v-if="canViewAudit" :tenant-id="activeTenantId" :can-add-user="canManage" @changed="directoryMembersChanged" />
+    <TenantGroups v-if="canViewAudit" :key="directoryRevision" :tenant-id="activeTenantId" :can-manage="canViewAudit" />
 
     <!-- Audit log drawer. Only rendered for Admin+ because the backend
          route is g.Admin()-gated; rendering it for lower roles would
@@ -520,6 +521,10 @@ import { useI18n } from 'vue-i18n'
 import { MessagePlugin } from 'tdesign-vue-next'
 import SettingDrawer from '@/components/settings/SettingDrawer.vue'
 import TenantGroups from './TenantGroups.vue'
+import TenantDirectoryCatalog from './TenantDirectoryCatalog.vue'
+
+const directoryRevision = ref(0)
+function directoryMembersChanged() { directoryRevision.value++; void loadMembers() }
 import { copyWithToast } from '@/utils/clipboard'
 import { useAuthStore } from '@/stores/auth'
 import { AUDIT_ACTION_I18N_ROOTS } from '@/i18n/auditActionRegistry'

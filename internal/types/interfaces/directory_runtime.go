@@ -18,6 +18,8 @@ type DirectoryRuntimeService interface {
 	QueryUsers(ctx context.Context, query string, limit, offset int) (*types.DirectoryObjectSearchResult, error)
 	QueryGroups(ctx context.Context, query string, limit, offset int) (*types.DirectoryGroupSearchResult, error)
 	QueryGroupMembers(ctx context.Context, groupGUID, query string, limit, offset int) (*types.DirectoryGroupMembersResult, error)
+	Catalog(ctx context.Context, kind, query string, limit, offset int) (*types.DirectoryCatalogResult, error)
+	AddTenantDirectoryMember(ctx context.Context, tenantID uint64, objectGUID string, role types.TenantRole) (*types.TenantMember, error)
 	PreviewSync(ctx context.Context) (*types.DirectorySyncPreview, error)
 	ManualSync(ctx context.Context) (*types.DirectorySyncRunView, error)
 	ListSyncRuns(ctx context.Context, limit int) (*types.DirectorySyncRunsResponse, error)

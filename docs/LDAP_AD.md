@@ -27,6 +27,27 @@ build.
 
 ## Directory browser
 
+Workspace **Member management** also exposes **Synced AD users and groups**
+to Owner/Admin users. This catalog reads the last committed sync, includes
+users who have never logged in, supports name/account/email search and
+pagination, and shows the automatic sync interval and last successful run.
+It never auto-adds everyone to a workspace. Disabled identities are visible
+but cannot be selected; stale sync pauses additions, not snapshot inspection.
+
+`GET /api/v1/tenants/:id/directory/catalog/:kind` (`users` or `groups`)
+requires the tenant path-match and Admin guards. Selecting a user uses
+`POST /api/v1/tenants/:id/directory/members` with `object_guid` and `role`,
+protected by the same Owner guard as ordinary direct member additions.
+It safely provisions an AD-only user if needed, rejects local identity
+collisions, rechecks snapshot freshness, and uses the standard audited
+membership service. No session, local password, Owner role or system-admin
+privilege is issued by this operation. Selecting a group uses the existing
+Admin-protected group-role endpoint; direct/nested/primary memberships apply.
+
+Synchronization runs automatically (default 300 seconds) and can also be
+started manually from system administration. Synced visibility and workspace
+authorization are separate states.
+
 System administrators can open **Directory services → Users & groups** (the
 Diagnostics tab in English). Name, login account, email and UPN are separate
 columns. Empty searches list all in-scope objects; searches match name,

@@ -126,6 +126,40 @@ func directoryQueryOffset(c *gin.Context) int {
 	return offset
 }
 
+func (h *DirectoryHandler) TenantCatalog(c *gin.Context) {
+	result, err := h.runtime.Catalog(c.Request.Context(), c.Param("kind"), c.Query("q"), directoryQueryLimit(c), directoryQueryOffset(c))
+	if err != nil {
+		directoryHTTPError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, result)
+}
+
+func (h *DirectoryHandler) AddTenantDirectoryMember(c *gin.Context) {
+	tenantID, ok := parseTenantIDFromPath(c)
+	if !ok {
+		return
+	}
+	var request struct {
+		ObjectGUID string           `json:"object_guid" binding:"required"`
+		Role       types.TenantRole `json:"role" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.Error(apperrors.NewValidationError("object_guid and role are required"))
+		return
+	}
+	member, err := h.runtime.AddTenantDirectoryMember(c.Request.Context(), tenantID, request.ObjectGUID, request.Role)
+	if errors.Is(err, service.ErrMembershipAlreadyExists) || errors.Is(err, service.ErrDirectoryIdentityLinkRequired) {
+		c.Error(apperrors.NewConflictError(err.Error()))
+		return
+	}
+	if err != nil {
+		directoryHTTPError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": member})
+}
+
 func (h *DirectoryHandler) PreviewSync(c *gin.Context) {
 	result, err := h.runtime.PreviewSync(c.Request.Context())
 	if err != nil {
@@ -249,6 +283,7 @@ func directoryHTTPError(c *gin.Context, err error) {
 		errors.Is(err, service.ErrDirectoryEncryptionKey):
 		c.Error(apperrors.NewValidationError(err.Error()))
 	case errors.Is(err, service.ErrDirectoryDisabled),
+		errors.Is(err, service.ErrDirectoryUnavailable),
 		errors.Is(err, service.ErrDirectoryNotConfigured):
 		c.Error(apperrors.NewServiceUnavailableError(err.Error()))
 	case errors.Is(err, ldapdirectory.ErrInvalidServiceCredentials),

@@ -151,6 +151,20 @@ type DirectoryGroupMembersResult struct {
 	UnresolvedMemberCount int                      `json:"unresolved_member_count"`
 }
 
+type DirectoryCatalogItem struct {
+	DirectoryObjectSummary
+	DirectoryGroupID string `json:"directory_group_id,omitempty"`
+}
+
+type DirectoryCatalogResult struct {
+	Items               []DirectoryCatalogItem `json:"items"`
+	Total               int                    `json:"total"`
+	Enabled             bool                   `json:"enabled"`
+	Fresh               bool                   `json:"fresh"`
+	LastSuccessAt       *time.Time             `json:"last_success_at,omitempty"`
+	SyncIntervalSeconds int                    `json:"sync_interval_seconds"`
+}
+
 type DirectorySyncPreview struct {
 	Users       DirectoryChangeCounts `json:"users"`
 	Groups      DirectoryChangeCounts `json:"groups"`

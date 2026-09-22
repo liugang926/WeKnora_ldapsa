@@ -45,6 +45,13 @@ export const directoryAccessLocale = {
       originHint: 'Includes direct, primary-group and nested membership. Each origin shows one shortest group path. Membership alone does not grant workspace access; disabled users cannot sign in.',
       unresolved: '{count} direct member objects are outside the selected user/group scope (for example computers or foreign principals). They do not grant access.',
     },
+    catalog: {
+      title: 'Synced AD users and groups', hint: 'All synchronized objects are searchable here. Being listed does not grant workspace access.',
+      disabled: 'Directory synchronization is disabled.', synced: 'Synced', select: 'Add to workspace', linked: 'Group linked',
+      sync: 'Auto-sync every {minutes} minutes · Last success: {time}', stale: 'Directory synchronization is unavailable or stale. Browsing the saved snapshot is allowed; additions are paused.',
+      userHint: 'Choose a workspace role. No prior login is required; this identity must still authenticate through AD.',
+      groupHint: 'The selected role applies to direct, nested, and primary-group members. Owner and system-admin roles are never granted.', added: 'Workspace authorization added.',
+    },
     sync: {
       title: 'Directory snapshot', description: 'Preview changes before starting an exclusive synchronization.', incomplete: 'The preview is incomplete and will not be applied.',
       users: 'Users', groups: 'Groups', memberships: 'Memberships', emptyPreview: 'Run a preview to inspect changes.', previewFailed: 'Sync preview failed.',
