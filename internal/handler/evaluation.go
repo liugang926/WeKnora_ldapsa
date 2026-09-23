@@ -109,7 +109,7 @@ func (e *EvaluationHandler) Evaluation(c *gin.Context) {
 			return
 		}
 		if !permission.Allowed {
-			c.Error(errors.NewForbiddenError("Directory group permission required for this knowledge base"))
+			_ = c.Error(errors.NewForbiddenError("Directory group permission required for this knowledge base"))
 			return
 		}
 	}

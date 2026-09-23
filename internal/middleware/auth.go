@@ -211,7 +211,9 @@ func authenticateJWTUser(
 ) bool {
 	ctx := c.Request.Context()
 
-	targetTenantID, tenant, crossTenantSwitch, ok := resolveTargetTenant(c, tenantService, memberService, cfg, user, jwtTenantID, groupAccess...)
+	targetTenantID, tenant, crossTenantSwitch, ok := resolveTargetTenant(
+		c, tenantService, memberService, cfg, user, jwtTenantID, groupAccess...,
+	)
 	if !ok {
 		return false
 	}
@@ -789,11 +791,13 @@ func resolveTenantRole(
 	if len(groupAccess) > 0 && groupAccess[0] != nil {
 		effective, err := groupAccess[0].EffectiveTenantRole(ctx, user.ID, targetTenantID, time.Now().UTC())
 		if err == nil && effective.Member {
-			logger.Infof(ctx, "[auth] effective direct/group role=%s user=%s tenant=%d", effective.Role, user.ID, targetTenantID)
+			logger.Infof(ctx,
+				"[auth] effective direct/group role=%s user=%s tenant=%d", effective.Role, user.ID, targetTenantID)
 			return effective.Role, true
 		}
 		if err != nil {
-			logger.Warnf(ctx, "effective directory-group role lookup failed user=%s tenant=%d: %v", user.ID, targetTenantID, err)
+			logger.Warnf(ctx,
+				"effective directory-group role lookup failed user=%s tenant=%d: %v", user.ID, targetTenantID, err)
 		}
 	}
 	// 1. 正常成员关系

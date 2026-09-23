@@ -43,11 +43,26 @@ func RegisterCustomAgentRoutes(r *gin.RouterGroup, agentHandler *handler.CustomA
 		// Get agent by ID — Viewer+
 		agentsRead.GET("/:id", g.Viewer(), g.AgentAccess("id", types.ResourceActionUse), agentHandler.GetAgent)
 		// Update agent — creator OR Admin+
-		agentsWrite.PUT("/:id", g.EditableAgentOrAdmin(), g.AgentAccess("id", types.ResourceActionEdit), agentHandler.UpdateAgent)
+		agentsWrite.PUT(
+			"/:id",
+			g.EditableAgentOrAdmin(),
+			g.AgentAccess("id", types.ResourceActionEdit),
+			agentHandler.UpdateAgent,
+		)
 		// Delete agent — creator OR Admin+
-		agentsWrite.DELETE("/:id", g.OwnedAgentOrAdmin(), g.AgentAccess("id", types.ResourceActionManage), agentHandler.DeleteAgent)
+		agentsWrite.DELETE(
+			"/:id",
+			g.OwnedAgentOrAdmin(),
+			g.AgentAccess("id", types.ResourceActionManage),
+			agentHandler.DeleteAgent,
+		)
 		// Copy agent — Contributor+ (copy is owned by the caller)
-		agentsWrite.POST("/:id/copy", g.Contributor(), g.AgentAccess("id", types.ResourceActionUse), agentHandler.CopyAgent)
+		agentsWrite.POST(
+			"/:id/copy",
+			g.Contributor(),
+			g.AgentAccess("id", types.ResourceActionUse),
+			agentHandler.CopyAgent,
+		)
 	}
 	// Registered outside the group to avoid Gin route conflict with /agents/:id/shares in organization routes
 	g.apiKeyRoute(r, http.MethodGet, "/agents/:id/suggested-questions",
@@ -211,13 +226,34 @@ func RegisterOrganizationRoutes(r *gin.RouterGroup, orgHandler *handler.Organiza
 	}
 
 	// Shared knowledge bases route — Viewer+
-	g.apiKeyRoute(r, http.MethodGet, "/shared-knowledge-bases", apiKeyManageSpaces(apiKeyFullAccess()), g.Viewer(), orgHandler.ListSharedKnowledgeBases)
+	g.apiKeyRoute(
+		r,
+		http.MethodGet,
+		"/shared-knowledge-bases",
+		apiKeyManageSpaces(apiKeyFullAccess()),
+		g.Viewer(),
+		orgHandler.ListSharedKnowledgeBases,
+	)
 	// Shared agents route — Viewer+
-	g.apiKeyRoute(r, http.MethodGet, "/shared-agents", apiKeyManageSpaces(apiKeyFullAccess()), g.Viewer(), orgHandler.ListSharedAgents)
+	g.apiKeyRoute(
+		r,
+		http.MethodGet,
+		"/shared-agents",
+		apiKeyManageSpaces(apiKeyFullAccess()),
+		g.Viewer(),
+		orgHandler.ListSharedAgents,
+	)
 	// "Disable by me" 是空间级偏好（写到 tenant_disabled_shared_agents），
 	// 影响整个空间在会话下拉里看到的 agent 列表。任何 Viewer 改这个表就
 	// 等于替整个空间做决定 — 必须 Admin+ 才允许调整。
-	g.apiKeyRoute(r, http.MethodPost, "/shared-agents/disabled", apiKeyManageSpaces(apiKeyFullAccess()), g.Admin(), orgHandler.SetSharedAgentDisabledByMe)
+	g.apiKeyRoute(
+		r,
+		http.MethodPost,
+		"/shared-agents/disabled",
+		apiKeyManageSpaces(apiKeyFullAccess()),
+		g.Admin(),
+		orgHandler.SetSharedAgentDisabledByMe,
+	)
 }
 
 // RegisterEmbedPublicRoutes registers anonymous embed endpoints secured by publish tokens.

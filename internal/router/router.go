@@ -213,10 +213,25 @@ func NewRouter(params RouterParams) *gin.Engine {
 	r.POST("/api/v1/local-browser/internal", params.SessionHandler.BrowserSkillInternal)
 
 	// 认证中间件
-	r.Use(middleware.Auth(params.TenantService, params.UserService, params.TenantMemberService, params.TenantAPIKeyService, params.Config, params.GroupAccessService))
+	r.Use(
+		middleware.Auth(
+			params.TenantService,
+			params.UserService,
+			params.TenantMemberService,
+			params.TenantAPIKeyService,
+			params.Config,
+			params.GroupAccessService,
+		),
+	)
 
 	// 文件服务：统一代理本地/MinIO/COS/TOS存储后端（需要认证）
-	serveFilesWithResources(r, params.FileService, params.StorageBackendResolver, params.ResourceCatalog, params.GroupAccessService)
+	serveFilesWithResources(
+		r,
+		params.FileService,
+		params.StorageBackendResolver,
+		params.ResourceCatalog,
+		params.GroupAccessService,
+	)
 
 	// Presigned file access: no auth required, signature-verified.
 	servePresignedFiles(
@@ -273,13 +288,28 @@ func NewRouter(params RouterParams) *gin.Engine {
 
 		RegisterAuthRoutes(v1, params.AuthHandler, rbacGuards)
 		if params.DirectoryHandler != nil {
-			v1.POST("/auth/ldap/login", middleware.DirectoryAuthRateLimit(params.RedisClient), params.DirectoryHandler.LDAPLogin)
+			v1.POST(
+				"/auth/ldap/login",
+				middleware.DirectoryAuthRateLimit(params.RedisClient),
+				params.DirectoryHandler.LDAPLogin,
+			)
 			catalog := v1.Group("/tenants/:id/directory", rbacGuards.PathTenantMatch())
 			catalog.GET("/catalog/:kind", rbacGuards.Admin(), params.DirectoryHandler.TenantCatalog)
-			catalog.GET("/groups/:object_guid/members", rbacGuards.Admin(), params.DirectoryHandler.TenantCatalogGroupMembers)
+			catalog.GET(
+				"/groups/:object_guid/members",
+				rbacGuards.Admin(),
+				params.DirectoryHandler.TenantCatalogGroupMembers,
+			)
 			catalog.POST("/members", rbacGuards.Owner(), params.DirectoryHandler.AddTenantDirectoryMember)
 		}
-		RegisterTenantRoutes(v1, params.TenantHandler, params.TenantMemberHandler, params.TenantInvitationHandler, params.AuditLogHandler, rbacGuards)
+		RegisterTenantRoutes(
+			v1,
+			params.TenantHandler,
+			params.TenantMemberHandler,
+			params.TenantInvitationHandler,
+			params.AuditLogHandler,
+			rbacGuards,
+		)
 		if params.GroupAccessHandler != nil {
 			tenantGroups := v1.Group("/tenants/:id/directory-groups", rbacGuards.PathTenantMatch(), rbacGuards.Admin())
 			params.GroupAccessHandler.RegisterTenantGroupRoutes(tenantGroups)
@@ -342,9 +372,20 @@ func NewRouter(params RouterParams) *gin.Engine {
 			directoryAdmin := v1.Group("/system/admin", rbacGuards.SystemAdmin())
 			params.DirectoryHandler.RegisterAdminRoutes(directoryAdmin)
 		}
-		RegisterMCPServiceRoutes(v1, params.MCPServiceHandler, params.MCPCredentialsHandler, params.MCPOAuthHandler, rbacGuards)
+		RegisterMCPServiceRoutes(
+			v1,
+			params.MCPServiceHandler,
+			params.MCPCredentialsHandler,
+			params.MCPOAuthHandler,
+			rbacGuards,
+		)
 		RegisterWebSearchRoutes(v1, params.WebSearchHandler, rbacGuards)
-		RegisterWebSearchProviderRoutes(v1, params.WebSearchProviderHandler, params.WebSearchCredentialsHandler, rbacGuards)
+		RegisterWebSearchProviderRoutes(
+			v1,
+			params.WebSearchProviderHandler,
+			params.WebSearchCredentialsHandler,
+			rbacGuards,
+		)
 		RegisterVectorStoreRoutes(v1, params.VectorStoreHandler, rbacGuards)
 		RegisterStorageBackendRoutes(v1, params.StorageBackendHandler, rbacGuards)
 		RegisterCustomAgentRoutes(v1, params.CustomAgentHandler, rbacGuards)

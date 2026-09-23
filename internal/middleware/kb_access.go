@@ -236,9 +236,10 @@ func RequireKBAccess(
 
 		if len(groupAccess) > 0 && groupAccess[0] != nil {
 			action := types.ResourceActionRead
-			if requiredPermission == types.OrgRoleEditor {
+			switch requiredPermission {
+			case types.OrgRoleEditor:
 				action = types.ResourceActionEdit
-			} else if requiredPermission == types.OrgRoleAdmin {
+			case types.OrgRoleAdmin:
 				action = types.ResourceActionManage
 			}
 			permission, permissionErr := groupAccess[0].EffectivePermission(

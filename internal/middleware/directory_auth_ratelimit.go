@@ -24,13 +24,13 @@ func DirectoryAuthRateLimit(redisClient *redis.Client) gin.HandlerFunc {
 	return directoryAuthRateLimit(limiter, directoryAuthRateLimitMax)
 }
 
-func directoryAuthRateLimit(limiter *ratelimit.Limiter, max int) gin.HandlerFunc {
+func directoryAuthRateLimit(limiter *ratelimit.Limiter, maxAttempts int) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		ip := c.ClientIP()
 		if ip == "" {
 			ip = "_unknown_"
 		}
-		if !limiter.Allow(c.Request.Context(), ip, max) {
+		if !limiter.Allow(c.Request.Context(), ip, maxAttempts) {
 			_ = c.Error(&apperrors.AppError{
 				Code:     apperrors.ErrTooManyRequests,
 				Message:  "too many directory login attempts; please retry shortly",

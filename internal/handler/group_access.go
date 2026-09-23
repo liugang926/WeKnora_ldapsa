@@ -250,19 +250,19 @@ func (h *GroupAccessHandler) AddTenantDirectoryGroup(c *gin.Context) {
 	}
 	var request tenantGroupMutationRequest
 	if err := c.ShouldBindJSON(&request); err != nil {
-		c.Error(
+		_ = c.Error(
 			apperrors.NewValidationError("directory_id, directory_group_id and role are required").
 				WithDetails(err.Error()),
 		)
 		return
 	}
 	if !validDirectoryRole(request.Role) {
-		c.Error(apperrors.NewValidationError("role must be viewer, contributor or admin"))
+		_ = c.Error(apperrors.NewValidationError("role must be viewer, contributor or admin"))
 		return
 	}
 	if strings.TrimSpace(request.DirectoryID) == "" ||
 		strings.TrimSpace(request.DirectoryGroupID) == "" {
-		c.Error(apperrors.NewValidationError("directory_id and directory_group_id are required"))
+		_ = c.Error(apperrors.NewValidationError("directory_id and directory_group_id are required"))
 		return
 	}
 	ctx := c.Request.Context()
@@ -309,7 +309,7 @@ func (h *GroupAccessHandler) UpdateTenantDirectoryGroup(c *gin.Context) {
 	}
 	var request tenantGroupRoleRequest
 	if err := c.ShouldBindJSON(&request); err != nil || !validDirectoryRole(request.Role) {
-		c.Error(apperrors.NewValidationError("role must be viewer, contributor or admin"))
+		_ = c.Error(apperrors.NewValidationError("role must be viewer, contributor or admin"))
 		return
 	}
 	ctx := c.Request.Context()
@@ -445,7 +445,7 @@ func (h *GroupAccessHandler) UpdateResourceGroupAccess(c *gin.Context) {
 	}
 	var request resourceAccessUpdateRequest
 	if err := c.ShouldBindJSON(&request); err != nil {
-		c.Error(
+		_ = c.Error(
 			apperrors.NewValidationError("mode and grants are required").WithDetails(err.Error()),
 		)
 		return
@@ -537,7 +537,7 @@ func (h *GroupAccessHandler) PreviewResourceGroupAccess(c *gin.Context) {
 	}
 	var request resourceAccessUpdateRequest
 	if err := c.ShouldBindJSON(&request); err != nil {
-		c.Error(
+		_ = c.Error(
 			apperrors.NewValidationError("mode and grants are required").WithDetails(err.Error()),
 		)
 		return
@@ -870,7 +870,7 @@ func (h *GroupAccessHandler) resolveResource(
 	resourceType := types.ResourceType(strings.TrimSpace(c.Param("resource_type")))
 	resourceID := strings.TrimSpace(c.Param("resource_id"))
 	if !resourceType.IsValid() || resourceID == "" {
-		c.Error(
+		_ = c.Error(
 			apperrors.NewValidationError(
 				"resource_type must be knowledge_base or agent and resource_id is required",
 			),
@@ -880,7 +880,7 @@ func (h *GroupAccessHandler) resolveResource(
 	ctx := c.Request.Context()
 	tenantID, exists := types.TenantIDFromContext(ctx)
 	if !exists || tenantID == 0 {
-		c.Error(apperrors.NewForbiddenError("an active workspace is required"))
+		_ = c.Error(apperrors.NewForbiddenError("an active workspace is required"))
 		return "", "", 0, false
 	}
 	var err error
@@ -892,7 +892,7 @@ func (h *GroupAccessHandler) resolveResource(
 	}
 	if err != nil {
 		// Scope mismatches are intentionally indistinguishable from absence.
-		c.Error(apperrors.NewNotFoundError("resource not found in the active workspace"))
+		_ = c.Error(apperrors.NewNotFoundError("resource not found in the active workspace"))
 		return "", "", 0, false
 	}
 	return resourceType, resourceID, tenantID, true
@@ -906,7 +906,7 @@ func (h *GroupAccessHandler) pathTenant(c *gin.Context) (uint64, bool) {
 	ctx := c.Request.Context()
 	activeTenantID, exists := types.TenantIDFromContext(ctx)
 	if (!exists || activeTenantID != tenantID) && !types.IsSystemAdminFromContext(ctx) {
-		c.Error(apperrors.NewForbiddenError("workspace path does not match the active workspace"))
+		_ = c.Error(apperrors.NewForbiddenError("workspace path does not match the active workspace"))
 		return 0, false
 	}
 	return tenantID, true
@@ -1179,9 +1179,9 @@ func (h *GroupAccessHandler) emitAudit(
 func (h *GroupAccessHandler) groupLookupError(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, errGroupNotFound):
-		c.Error(apperrors.NewNotFoundError("directory group not found"))
+		_ = c.Error(apperrors.NewNotFoundError("directory group not found"))
 	case errors.Is(err, errGroupInactive):
-		c.Error(
+		_ = c.Error(
 			apperrors.NewConflictError("directory group is inactive or its directory is disabled"),
 		)
 	default:
@@ -1192,9 +1192,9 @@ func (h *GroupAccessHandler) groupLookupError(c *gin.Context, err error) {
 func (h *GroupAccessHandler) grantLookupError(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, errGrantNotFound):
-		c.Error(apperrors.NewNotFoundError("group grant not found"))
+		_ = c.Error(apperrors.NewNotFoundError("group grant not found"))
 	case errors.Is(err, errDirectoryGrantLocked):
-		c.Error(
+		_ = c.Error(
 			apperrors.NewConflictError("directory-derived grants are managed by synchronization"),
 		)
 	default:
@@ -1205,19 +1205,19 @@ func (h *GroupAccessHandler) grantLookupError(c *gin.Context, err error) {
 func (h *GroupAccessHandler) resourceRequestError(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, errGroupNotFound):
-		c.Error(apperrors.NewNotFoundError("directory group not found"))
+		_ = c.Error(apperrors.NewNotFoundError("directory group not found"))
 	case errors.Is(err, errGroupInactive):
-		c.Error(
+		_ = c.Error(
 			apperrors.NewConflictError("directory group is inactive or its directory is disabled"),
 		)
 	case errors.Is(err, errDuplicateGrant):
-		c.Error(apperrors.NewValidationError("a directory group may appear only once"))
+		_ = c.Error(apperrors.NewValidationError("a directory group may appear only once"))
 	default:
-		c.Error(apperrors.NewValidationError(err.Error()))
+		_ = c.Error(apperrors.NewValidationError(err.Error()))
 	}
 }
 
 func (h *GroupAccessHandler) internalError(c *gin.Context, operation string, err error) {
 	logger.ErrorWithFields(c.Request.Context(), err, map[string]interface{}{"operation": operation})
-	c.Error(apperrors.NewInternalServerError(operation + " failed").WithDetails(err.Error()))
+	_ = c.Error(apperrors.NewInternalServerError(operation + " failed").WithDetails(err.Error()))
 }

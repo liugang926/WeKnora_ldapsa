@@ -149,11 +149,22 @@ func (s *stubFileService) CheckConnectivity(ctx context.Context) error {
 	return nil
 }
 
-func (s *stubFileService) SaveFile(ctx context.Context, file *multipart.FileHeader, tenantID uint64, knowledgeID string) (string, error) {
+func (s *stubFileService) SaveFile(
+	_ context.Context,
+	_ *multipart.FileHeader,
+	_ uint64,
+	_ string,
+) (string, error) {
 	panic("unexpected call to SaveFile")
 }
 
-func (s *stubFileService) SaveBytes(ctx context.Context, data []byte, tenantID uint64, fileName string, temp bool) (string, error) {
+func (s *stubFileService) SaveBytes(
+	_ context.Context,
+	_ []byte,
+	_ uint64,
+	_ string,
+	_ bool,
+) (string, error) {
 	panic("unexpected call to SaveBytes")
 }
 
@@ -172,7 +183,12 @@ func (s *stubFileService) DeleteFile(ctx context.Context, filePath string) error
 	panic("unexpected call to DeleteFile")
 }
 
-func (s *stubFileService) CopyFile(ctx context.Context, srcPath string, tenantID uint64, knowledgeID string) (string, error) {
+func (s *stubFileService) CopyFile(
+	_ context.Context,
+	_ string,
+	_ uint64,
+	_ string,
+) (string, error) {
 	panic("unexpected call to CopyFile")
 }
 
@@ -215,10 +231,15 @@ func TestServeFilesResolvesShortResourceReference(t *testing.T) {
 
 	engine := gin.New()
 	var requestedPath string
-	serveFilesWithResources(engine, &stubFileService{getFile: func(_ context.Context, path string) (io.ReadCloser, error) {
-		requestedPath = path
-		return io.NopCloser(strings.NewReader("image")), nil
-	}}, nil, &stubResourceCatalog{resource: &types.StoredResource{TenantID: 42, PhysicalPath: physical}})
+	serveFilesWithResources(
+		engine,
+		&stubFileService{getFile: func(_ context.Context, path string) (io.ReadCloser, error) {
+			requestedPath = path
+			return io.NopCloser(strings.NewReader("image")), nil
+		}},
+		nil,
+		&stubResourceCatalog{resource: &types.StoredResource{TenantID: 42, PhysicalPath: physical}},
+	)
 
 	req := httptest.NewRequest(http.MethodGet, "/files?file_path="+url.QueryEscape(ref), nil)
 	req = req.WithContext(context.WithValue(req.Context(), types.TenantInfoContextKey, &types.Tenant{ID: 42}))
@@ -317,7 +338,8 @@ func TestResourceGrantRejectsRestrictedKnowledgeBaseBeforeStorage(t *testing.T) 
 		}},
 		nil,
 		&stubResourceGroupAuthorizer{authorize: func(
-			_ context.Context, tenantID uint64, resourceType types.ResourceType, resourceID string, action types.ResourceAction,
+			_ context.Context, tenantID uint64, resourceType types.ResourceType,
+			resourceID string, action types.ResourceAction,
 		) error {
 			if tenantID != 42 || resourceType != types.GroupResourceTypeKnowledgeBase ||
 				resourceID != "kb-restricted" || action != types.ResourceActionRead {
@@ -370,7 +392,11 @@ func TestServeFilesRejectsCrossTenantPath(t *testing.T) {
 		},
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/files?file_path="+url.QueryEscape("local://7/knowledge/secret.pdf"), nil)
+	req := httptest.NewRequest(
+		http.MethodGet,
+		"/files?file_path="+url.QueryEscape("local://7/knowledge/secret.pdf"),
+		nil,
+	)
 	req = req.WithContext(context.WithValue(req.Context(), types.TenantInfoContextKey, &types.Tenant{ID: 42}))
 
 	recorder := httptest.NewRecorder()
@@ -696,8 +722,14 @@ func TestMessageScopedFilesServesSharedAgentResource(t *testing.T) {
 			agentID string,
 			sourceTenantID ...uint64,
 		) (*types.CustomAgent, error) {
-			if tenantID != callerTenantID || agentID != "agent-1" || len(sourceTenantID) != 1 || sourceTenantID[0] != ownerTenantID {
-				t.Fatalf("unexpected shared-agent lookup tenant=%d agent=%s source=%v", tenantID, agentID, sourceTenantID)
+			if tenantID != callerTenantID || agentID != "agent-1" || len(sourceTenantID) != 1 ||
+				sourceTenantID[0] != ownerTenantID {
+				t.Fatalf(
+					"unexpected shared-agent lookup tenant=%d agent=%s source=%v",
+					tenantID,
+					agentID,
+					sourceTenantID,
+				)
 			}
 			if revoked {
 				return nil, nil

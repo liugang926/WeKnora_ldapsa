@@ -258,14 +258,14 @@ func RequireOwnershipOrRole(min types.TenantRole, lookup CreatorLookup, cfg *con
 // decision denies it. Top-level delete/ownership/authorization routes should
 // continue to use RequireOwnershipOrRole so group edit cannot become manage.
 func RequireOwnershipOrRoleWithGroupEdit(
-	min types.TenantRole,
+	minimumRole types.TenantRole,
 	lookup CreatorLookup,
 	cfg *config.Config,
 	resourceType types.ResourceType,
 	resolveResourceID GroupResourceIDResolver,
 	groupAccess interfaces.GroupAccessService,
 ) gin.HandlerFunc {
-	fallback := RequireOwnershipOrRole(min, lookup, cfg)
+	fallback := RequireOwnershipOrRole(minimumRole, lookup, cfg)
 	return func(c *gin.Context) {
 		if groupAccess == nil {
 			fallback(c)
@@ -288,7 +288,8 @@ func RequireOwnershipOrRoleWithGroupEdit(
 		)
 		if err != nil {
 			logger.Errorf(c.Request.Context(), "resource group edit authorization failed: %v", err)
-			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Service Unavailable: cannot verify resource group edit"})
+			c.JSON(http.StatusServiceUnavailable,
+				gin.H{"error": "Service Unavailable: cannot verify resource group edit"})
 			c.Abort()
 			return
 		}
