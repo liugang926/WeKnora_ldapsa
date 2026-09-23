@@ -39,13 +39,20 @@ const (
 
 // EvaluationTask contains information about an evaluation task
 type EvaluationTask struct {
-	ID        string `json:"id"`         // Unique task ID
-	TenantID  uint64 `json:"tenant_id"`  // Tenant/Organization ID
-	DatasetID string `json:"dataset_id"` // Dataset ID for evaluation
+	ID                       string `json:"id"`                       // Unique task ID
+	TenantID                 uint64 `json:"tenant_id"`                // Tenant/Organization ID
+	DatasetID                string `json:"dataset_id"`               // Dataset ID for evaluation
+	DatasetSHA256            string `json:"dataset_sha256,omitempty"` // Exact QA fixture snapshot
+	ReferenceKnowledgeBaseID string `json:"reference_knowledge_base_id,omitempty"`
+	EmbeddingModelID         string `json:"embedding_model_id,omitempty"`
+	ChatModelID              string `json:"chat_model_id,omitempty"`
+	RerankModelID            string `json:"rerank_model_id,omitempty"`
+	BuildRevision            string `json:"build_revision,omitempty"`
 
-	StartTime time.Time        `json:"start_time"`        // Task start time
-	Status    EvaluationStatue `json:"status"`            // Current task status
-	ErrMsg    string           `json:"err_msg,omitempty"` // Error message if failed
+	StartTime time.Time        `json:"start_time"`           // Task start time
+	UpdatedAt time.Time        `json:"updated_at,omitempty"` // Last durable progress update
+	Status    EvaluationStatue `json:"status"`               // Current task status
+	ErrMsg    string           `json:"err_msg,omitempty"`    // Error message if failed
 
 	Total    int `json:"total,omitempty"`    // Total items to evaluate
 	Finished int `json:"finished,omitempty"` // Completed items count
@@ -53,9 +60,26 @@ type EvaluationTask struct {
 
 // EvaluationDetail contains detailed evaluation information
 type EvaluationDetail struct {
-	Task   *EvaluationTask `json:"task"`             // Evaluation task info
-	Params *ChatManage     `json:"params"`           // Evaluation parameters
-	Metric *MetricResult   `json:"metric,omitempty"` // Evaluation metrics
+	Task   *EvaluationTask         `json:"task"`             // Evaluation task info
+	Params *ChatManage             `json:"params"`           // Evaluation parameters
+	Metric *MetricResult           `json:"metric,omitempty"` // Evaluation metrics
+	Cases  []*EvaluationCaseResult `json:"cases,omitempty"`  // Per-question review evidence
+}
+
+// EvaluationCaseResult preserves enough provenance for a human to judge
+// citation accuracy and evidence faithfulness. Passage text stays in the
+// separately controlled fixture, not in this row or application logs.
+type EvaluationCaseResult struct {
+	QuestionID          int    `json:"question_id"`
+	Question            string `json:"question"`
+	ReferenceAnswer     string `json:"reference_answer"`
+	GeneratedAnswer     string `json:"generated_answer"`
+	RelevantPassageIDs  []int  `json:"relevant_passage_ids"`
+	RetrievedPassageIDs []int  `json:"retrieved_passage_ids"`
+	RerankedPassageIDs  []int  `json:"reranked_passage_ids"`
+	LatencyMs           int64  `json:"latency_ms"`
+	PromptTokens        int64  `json:"prompt_tokens"`
+	CompletionTokens    int64  `json:"completion_tokens"`
 }
 
 // String returns JSON representation of EvaluationTask
@@ -77,6 +101,16 @@ type MetricInput struct {
 type MetricResult struct {
 	RetrievalMetrics  RetrievalMetrics  `json:"retrieval_metrics"`  // Retrieval performance metrics
 	GenerationMetrics GenerationMetrics `json:"generation_metrics"` // Text generation quality metrics
+	ExecutionMetrics  ExecutionMetrics  `json:"execution_metrics"`
+}
+
+// ExecutionMetrics records measured latency and usage. Currency costs remain
+// unset until a versioned provider tariff is configured; tokens are not money.
+type ExecutionMetrics struct {
+	LatencyP50Ms     int64 `json:"latency_p50_ms"`
+	LatencyP95Ms     int64 `json:"latency_p95_ms"`
+	PromptTokens     int64 `json:"prompt_tokens"`
+	CompletionTokens int64 `json:"completion_tokens"`
 }
 
 // RetrievalMetrics contains metrics for retrieval evaluation

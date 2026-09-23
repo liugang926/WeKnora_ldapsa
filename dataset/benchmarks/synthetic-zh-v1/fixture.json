@@ -1,0 +1,46 @@
+{
+  "id": "synthetic-zh-v1",
+  "classification": "fully synthetic; no enterprise or AD data",
+  "documents": [
+    {"id": 101, "scope": "all", "text": "虚构的海星公司员工手册：差旅报销须在行程结束后十五个自然日内提交。"},
+    {"id": 102, "scope": "all", "text": "虚构的海星公司财务规则：差旅单据需附电子发票和行程单；纸质收据不能代替电子发票。"},
+    {"id": 103, "scope": "all", "text": "虚构的海星公司办公指南：访客应由接待人预约，并在一楼前台领取临时通行证。"},
+    {"id": 104, "scope": "all", "text": "虚构的海星公司信息安全指南：遗失工作电脑后，应在一小时内向服务台报告。"},
+    {"id": 105, "scope": "all", "text": "虚构的海星公司服务台指南：收到电脑遗失报告后，服务台冻结设备令牌并记录工单编号。"},
+    {"id": 106, "scope": "all", "text": "虚构的海星公司人事规则：新员工入职首日领取门禁卡，离职当日交还门禁卡。"},
+    {"id": 107, "scope": "all", "text": "虚构的海星公司会议室规则：超过十人的会议须提前两个工作日预订大会议室。"},
+    {"id": 108, "scope": "all", "text": "虚构的海星公司办公指南：会议室取消预约应在开始前两小时完成。"},
+    {"id": 109, "scope": "operations", "text": "虚构的海星公司运维手册：生产变更须经过值班负责人批准，并保留回滚计划。"},
+    {"id": 110, "scope": "operations", "text": "虚构的海星公司运维手册：生产变更完成后，执行人应在三十分钟内登记验证结果。"},
+    {"id": 111, "scope": "finance", "text": "虚构的海星公司预算规则：季度预算调整须由财务负责人审批。"},
+    {"id": 112, "scope": "finance", "text": "虚构的海星公司预算规则：获批的季度预算调整在下一个月的第一天生效。"},
+    {"id": 113, "scope": "all", "text": "虚构的海星公司设备规则：显示器借用期限为十四天，可申请延期一次。"},
+    {"id": 114, "scope": "all", "text": "虚构的海星公司设备规则：归还显示器时应一并归还电源线。"},
+    {"id": 115, "scope": "operations", "text": "虚构的海星公司运维手册：故障演练只能使用模拟数据，不得复制生产客户数据。"},
+    {"id": 116, "scope": "all", "text": "虚构的海星公司健康活动：每周三下午开放瑜伽教室，预约请联系活动管理员。"}
+  ],
+  "cases": [
+    {"id": 1, "category": "zh", "question": "差旅结束后多久要提交报销？", "answer": "十五个自然日内。", "evidence": [101]},
+    {"id": 2, "category": "cross_document", "question": "差旅报销的期限和必须附上的材料分别是什么？", "answer": "行程结束后十五个自然日内提交，并附电子发票和行程单。", "evidence": [101, 102]},
+    {"id": 3, "category": "zh", "question": "访客如何取得临时通行证？", "answer": "由接待人预约后，在一楼前台领取。", "evidence": [103]},
+    {"id": 4, "category": "cross_document", "question": "工作电脑遗失后，员工和服务台分别要做什么？", "answer": "员工一小时内报告服务台；服务台冻结设备令牌并记录工单编号。", "evidence": [104, 105]},
+    {"id": 5, "category": "zh", "question": "十多人会议需要提前多久订大会议室？", "answer": "提前两个工作日。", "evidence": [107]},
+    {"id": 6, "category": "cross_document", "question": "会议室预订和取消分别有哪些时间要求？", "answer": "超过十人的会议提前两个工作日预订；取消须在会议开始前两小时完成。", "evidence": [107, 108]},
+    {"id": 7, "category": "permission_allowed", "persona": "operations_direct", "question": "生产变更需谁批准，完成后多久登记验证结果？", "answer": "值班负责人批准，完成后三十分钟内登记验证结果。", "evidence": [109, 110]},
+    {"id": 8, "category": "permission_denied", "persona": "employee", "question": "生产变更需谁批准？", "answer": "", "evidence": [], "must_not_access": [109]},
+    {"id": 9, "category": "permission_allowed", "persona": "operations_nested", "question": "故障演练能否复制生产客户数据？", "answer": "不能；只能使用模拟数据。", "evidence": [115]},
+    {"id": 10, "category": "permission_allowed", "persona": "finance_direct", "question": "季度预算调整由谁审批，何时生效？", "answer": "财务负责人审批，在下一个月第一天生效。", "evidence": [111, 112]},
+    {"id": 11, "category": "permission_denied", "persona": "employee", "question": "季度预算调整何时生效？", "answer": "", "evidence": [], "must_not_access": [111, 112]},
+    {"id": 12, "category": "no_answer", "question": "公司停车费每小时是多少？", "answer": "", "evidence": []},
+    {"id": 13, "category": "no_answer", "question": "访客是否可以使用员工门禁卡？", "answer": "", "evidence": []},
+    {"id": 14, "category": "cross_document", "question": "显示器可借多久，归还时还需要什么？", "answer": "借用十四天，可申请延期一次；归还时还要归还电源线。", "evidence": [113, 114]},
+    {"id": 15, "category": "zh", "question": "新员工何时领取门禁卡？", "answer": "入职首日。", "evidence": [106]},
+    {"id": 16, "category": "zh", "question": "每周三下午开放什么活动场地？", "answer": "瑜伽教室。", "evidence": [116]}
+  ],
+  "personas": {
+    "employee": ["all"],
+    "operations_direct": ["all", "operations"],
+    "operations_nested": ["all", "operations"],
+    "finance_direct": ["all", "finance"]
+  }
+}

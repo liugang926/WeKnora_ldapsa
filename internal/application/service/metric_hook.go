@@ -86,6 +86,7 @@ func (m *MetricList) Avg() *types.MetricResult {
 type HookMetric struct {
 	qaPairMetricList []*qaPairMetric // Per-QA pair metrics
 	metricResults    *MetricList     // Aggregated results
+	allPassages      []string        // Entire indexed corpus, not only this query's relevant passages
 	mu               *sync.RWMutex   // Thread safety
 }
 
@@ -98,10 +99,11 @@ type qaPairMetric struct {
 }
 
 // NewHookMetric creates a new HookMetric with given capacity
-func NewHookMetric(capacity int) *HookMetric {
+func NewHookMetric(capacity int, corpus []string) *HookMetric {
 	return &HookMetric{
 		metricResults:    &MetricList{},
 		qaPairMetricList: make([]*qaPairMetric, capacity),
+		allPassages:      corpus,
 		mu:               &sync.RWMutex{},
 	}
 }
@@ -139,32 +141,12 @@ func (h *HookMetric) recordFinish(index int) {
 		retrievalSource = h.qaPairMetricList[index].searchResult
 	}
 
-	// Map retrieved chunks back to original passage IDs via content matching.
-	// ChunkIndex is the chunk's ordinal position in the knowledge base, which
-	// does NOT correspond to the dataset's passage IDs. Instead, we match each
-	// retrieved chunk's content against the ground truth passages to determine
-	// which passage it came from.
+	// Map chunks against the entire indexed corpus. Matching only the current
+	// query's relevant passages silently discarded false positives and made
+	// precision appear perfect. Unknown or ambiguous chunks are counted as
+	// non-relevant hits instead of being omitted.
 	qaPair := h.qaPairMetricList[index].qaPair
-	retrievalIDs := make([]int, 0, len(retrievalSource))
-	seen := make(map[int]struct{})
-	for _, r := range retrievalSource {
-		if r.Content == "" {
-			continue
-		}
-		for i, passage := range qaPair.Passages {
-			if passage == "" {
-				continue
-			}
-			if strings.Contains(passage, r.Content) || strings.Contains(r.Content, passage) {
-				pid := qaPair.PIDs[i]
-				if _, ok := seen[pid]; !ok {
-					seen[pid] = struct{}{}
-					retrievalIDs = append(retrievalIDs, pid)
-				}
-				break
-			}
-		}
-	}
+	retrievalIDs := matchRetrievedPassageIDs(h.allPassages, retrievalSource)
 
 	// Get generated text if available
 	generatedTexts := ""
@@ -184,6 +166,34 @@ func (h *HookMetric) recordFinish(index int) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.metricResults.Append(metricInput)
+}
+
+func matchRetrievedPassageIDs(corpus []string, results []*types.SearchResult) []int {
+	retrievalIDs := make([]int, 0, len(results))
+	seen := make(map[int]struct{})
+	for resultIndex, r := range results {
+		matchedID := -1 - resultIndex
+		matches := 0
+		for i, passage := range corpus {
+			if passage == "" {
+				continue
+			}
+			if r != nil && r.Content != "" &&
+				(strings.Contains(passage, r.Content) || strings.Contains(r.Content, passage)) {
+				matches++
+				matchedID = i
+			}
+		}
+		if matches != 1 {
+			matchedID = -1 - resultIndex
+		}
+		if _, ok := seen[matchedID]; ok {
+			continue
+		}
+		seen[matchedID] = struct{}{}
+		retrievalIDs = append(retrievalIDs, matchedID)
+	}
+	return retrievalIDs
 }
 
 // MetricResult returns the averaged metric results

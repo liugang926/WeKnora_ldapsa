@@ -39,10 +39,11 @@ func ConfigureEvaluationGroupAccess(
 
 // EvaluationRequest contains parameters for evaluation request
 type EvaluationRequest struct {
-	DatasetID       string `json:"dataset_id"`        // ID of dataset to evaluate
-	KnowledgeBaseID string `json:"knowledge_base_id"` // ID of knowledge base to use
-	ChatModelID     string `json:"chat_id"`           // ID of chat model to use
-	RerankModelID   string `json:"rerank_id"`         // ID of rerank model to use
+	DatasetID        string `json:"dataset_id"`        // ID of dataset to evaluate
+	KnowledgeBaseID  string `json:"knowledge_base_id"` // ID of knowledge base to use
+	ChatModelID      string `json:"chat_id"`           // ID of chat model to use
+	RerankModelID    string `json:"rerank_id"`         // ID of rerank model to use
+	EmbeddingModelID string `json:"embedding_id"`      // Explicit embedding model for an isolated evaluation KB
 }
 
 // Evaluation godoc
@@ -127,6 +128,7 @@ func (e *EvaluationHandler) Evaluation(c *gin.Context) {
 		secutils.SanitizeForLog(request.KnowledgeBaseID),
 		secutils.SanitizeForLog(request.ChatModelID),
 		secutils.SanitizeForLog(request.RerankModelID),
+		secutils.SanitizeForLog(request.EmbeddingModelID),
 	)
 	if err != nil {
 		logger.ErrorWithFields(ctx, err, nil)
@@ -143,7 +145,7 @@ func (e *EvaluationHandler) Evaluation(c *gin.Context) {
 
 // GetEvaluationRequest contains parameters for getting evaluation result
 type GetEvaluationRequest struct {
-	TaskID string `form:"task_id" binding:"required"` // ID of evaluation task
+	TaskID string `form:"task_id"` // Omit to list recent runs for this tenant
 }
 
 // GetEvaluationResult godoc
@@ -167,6 +169,17 @@ func (e *EvaluationHandler) GetEvaluationResult(c *gin.Context) {
 	if err := c.ShouldBind(&request); err != nil {
 		logger.Error(ctx, "Failed to parse request parameters", err)
 		c.Error(errors.NewBadRequestError("Invalid request parameters").WithDetails(err.Error()))
+		return
+	}
+
+	if request.TaskID == "" {
+		results, err := e.evaluationService.ListEvaluationResults(ctx, 20)
+		if err != nil {
+			logger.ErrorWithFields(ctx, err, nil)
+			_ = c.Error(errors.NewInternalServerError("Evaluation history unavailable"))
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"success": true, "data": results})
 		return
 	}
 

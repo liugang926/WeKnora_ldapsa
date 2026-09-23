@@ -9,3 +9,10 @@ type QAPair struct {
 	AID      int      // Answer ID
 	Answer   string   // Answer text
 }
+
+// EvaluationDataset keeps the complete, densely indexed corpus. A passage
+// without a positive qrel is still a retrieval distractor and must be indexed.
+type EvaluationDataset struct {
+	QAPairs []*QAPair
+	Corpus  []string
+}
