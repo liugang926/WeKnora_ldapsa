@@ -108,8 +108,6 @@ FROM debian:12.12-slim
 WORKDIR /app
 
 ARG APK_MIRROR_ARG
-ARG COMMIT_ID_ARG
-ENV WEKNORA_BUILD_COMMIT=${COMMIT_ID_ARG}
 
 # Pairing derives the gateway URL from the user's page origin by default.
 ENV BROWSERSKILL_BINARY=/opt/weknora/browserskill/bsk \
@@ -170,6 +168,11 @@ COPY --from=builder /app/scripts/docker-entrypoint.sh ./scripts/docker-entrypoin
 
 # Make scripts executable
 RUN chmod +x ./scripts/*.sh
+
+# Keep the build revision available to persisted evaluation runs. Setting it
+# last avoids rebuilding the expensive runtime dependency layers for each SHA.
+ARG COMMIT_ID_ARG
+ENV WEKNORA_BUILD_COMMIT=${COMMIT_ID_ARG}
 
 # Expose ports
 EXPOSE 8080
