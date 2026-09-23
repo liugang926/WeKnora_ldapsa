@@ -47,6 +47,7 @@ export const directoryAccessLocale = {
     },
     catalog: {
       choose: 'Select AD users or groups',
+      emailInvite: 'Invite by email',
       title: 'Synced AD users and groups', hint: 'All synchronized objects are searchable here. Being listed does not grant workspace access.',
       disabled: 'Directory synchronization is disabled.', synced: 'Synced', select: 'Add to workspace', linked: 'Group linked',
       sync: 'Auto-sync every {minutes} minutes · Last success: {time}', stale: 'Directory synchronization is unavailable or stale. Browsing the saved snapshot is allowed; additions are paused.',

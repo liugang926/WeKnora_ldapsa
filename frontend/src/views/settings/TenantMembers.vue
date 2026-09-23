@@ -197,59 +197,11 @@
                 <template #prefix-icon><t-icon name="search" /></template>
               </t-input>
             </div>
-            <t-popup v-if="canManage" v-model="invitePopupVisible" trigger="click" placement="bottom-end"
-              destroy-on-close overlay-class-name="wk-popover member-invite-popup-overlay">
-              <t-button theme="primary" variant="outline" shape="square" size="small" class="members-list-add-btn"
-                :title="$t('tenantMember.add.button')" :aria-label="$t('tenantMember.add.button')">
-                <template #icon><t-icon name="user-add" /></template>
-              </t-button>
-              <template #content>
-                <div class="member-invite-popup-inner" @click.stop>
-                  <div class="member-invite-popup-title">
-                    {{
-                      addDialogStep === 'form'
-                        ? $t('tenantMember.add.dialogTitle')
-                        : $t('tenantInvitation.confirmInviteTitle')
-                    }}
-                  </div>
-                  <t-button v-if="directoryEnabled && addDialogStep === 'form'" block variant="outline"
-                    @click="invitePopupVisible = false; directoryPickerVisible = true">
-                    {{ $t('directoryAdmin.catalog.choose') }}
-                  </t-button>
-                  <t-form v-if="addDialogStep === 'form'" ref="addFormRef" :data="addForm" :rules="addFormRules"
-                    :label-width="80" class="member-invite-form">
-                    <t-form-item :label="$t('tenantMember.add.emailLabel')" name="email">
-                      <t-input v-model="addForm.email" :placeholder="$t('tenantMember.add.emailPlaceholder')"
-                        clearable />
-                    </t-form-item>
-                    <t-form-item :label="$t('tenantMember.add.roleLabel')" name="role">
-                      <t-select v-model="addForm.role" :options="roleOptions" :popup-props="roleSelectPopupProps" />
-                    </t-form-item>
-                  </t-form>
-                  <div v-else class="invite-confirm-body">
-                    {{ $t('tenantInvitation.confirmInviteBody', {
-                      email: addConfirmEmail,
-                      role: addConfirmRoleLabel,
-                    }) }}
-                  </div>
-                  <div class="invite-popup-footer">
-                    <t-button v-if="addDialogStep === 'form'" variant="outline" :disabled="adding"
-                      @click="invitePopupVisible = false">
-                      {{ $t('common.cancel') }}
-                    </t-button>
-                    <t-button v-else variant="outline" :disabled="adding" @click="goBackToForm">
-                      {{ $t('common.back') }}
-                    </t-button>
-                    <t-button theme="primary" :loading="adding" @click="submitAdd">
-                      {{ dialogConfirmLabel }}
-                    </t-button>
-                  </div>
-                </div>
-              </template>
-            </t-popup>
-            <!-- Share-link generator. Sits next to the invite-by-email
-                 popup so the two flows live side-by-side: "I know who"
-                 (email input) vs "I don't" (one link, group chat). -->
+            <t-button v-if="canManage" theme="primary" variant="outline" shape="square" size="small" class="members-list-add-btn"
+              :title="$t('tenantMember.add.button')" :aria-label="$t('tenantMember.add.button')" @click="invitePopupVisible = true">
+              <template #icon><t-icon name="user-add" /></template>
+            </t-button>
+            <!-- Share-link generator stays beside the member action. -->
             <t-popup v-if="canManage" v-model="shareLinkPopupVisible" trigger="click" placement="bottom-end"
               destroy-on-close overlay-class-name="wk-popover member-invite-popup-overlay">
               <t-button theme="default" variant="outline" shape="square" size="small" class="members-list-add-btn"
@@ -381,10 +333,38 @@
 
     </div>
 
-    <t-dialog v-model:visible="directoryPickerVisible" :header="$t('directoryAdmin.catalog.choose')"
-      width="900px" :footer="false" destroy-on-close>
-      <TenantDirectoryCatalog v-if="directoryPickerVisible && canManage" :tenant-id="activeTenantId" :can-add-user="canManage"
-        @changed="directoryMembersChanged(); directoryPickerVisible = false" />
+    <t-dialog v-model:visible="invitePopupVisible"
+      :header="addMode === 'email' && addDialogStep === 'confirm' ? $t('tenantInvitation.confirmInviteTitle') : $t('tenantMember.add.dialogTitle')"
+      :width="addMode === 'directory' ? 'min(960px, calc(100vw - 32px))' : 'min(480px, calc(100vw - 32px))'"
+      placement="center" class="member-add-dialog" :footer="false" destroy-on-close>
+      <t-radio-group v-if="directoryEnabled && addDialogStep === 'form'" v-model="addMode" class="member-add-mode">
+        <t-radio-button value="directory">{{ $t('directoryAdmin.catalog.choose') }}</t-radio-button>
+        <t-radio-button value="email">{{ $t('directoryAdmin.catalog.emailInvite') }}</t-radio-button>
+      </t-radio-group>
+      <TenantDirectoryCatalog v-if="addMode === 'directory' && directoryEnabled && canManage" compact
+        :tenant-id="activeTenantId" :can-add-user="canManage"
+        @changed="directoryMembersChanged(); invitePopupVisible = false" />
+      <div v-else class="member-add-email-content">
+        <t-form v-if="addDialogStep === 'form'" ref="addFormRef" :data="addForm" :rules="addFormRules"
+          :label-width="80" class="member-invite-form">
+          <t-form-item :label="$t('tenantMember.add.emailLabel')" name="email">
+            <t-input v-model="addForm.email" :placeholder="$t('tenantMember.add.emailPlaceholder')" clearable />
+          </t-form-item>
+          <t-form-item :label="$t('tenantMember.add.roleLabel')" name="role">
+            <t-select v-model="addForm.role" :options="roleOptions" :popup-props="roleSelectPopupProps" />
+          </t-form-item>
+        </t-form>
+        <div v-else class="invite-confirm-body">
+          {{ $t('tenantInvitation.confirmInviteBody', { email: addConfirmEmail, role: addConfirmRoleLabel }) }}
+        </div>
+        <div class="invite-popup-footer">
+          <t-button v-if="addDialogStep === 'form'" variant="outline" :disabled="adding" @click="invitePopupVisible = false">
+            {{ $t('common.cancel') }}
+          </t-button>
+          <t-button v-else variant="outline" :disabled="adding" @click="goBackToForm">{{ $t('common.back') }}</t-button>
+          <t-button theme="primary" :loading="adding" @click="submitAdd">{{ dialogConfirmLabel }}</t-button>
+        </div>
+      </div>
     </t-dialog>
     <TenantDirectoryCatalog v-if="canViewAudit" :key="directoryRevision" :tenant-id="activeTenantId" :can-add-user="canManage" @available="directoryEnabled = $event" @changed="directoryMembersChanged" />
     <TenantGroups v-if="canViewAudit" :key="directoryRevision" :tenant-id="activeTenantId" :can-manage="canViewAudit" />
@@ -534,7 +514,7 @@ import TenantDirectoryCatalog from './TenantDirectoryCatalog.vue'
 
 const directoryRevision = ref(0)
 const directoryEnabled = ref(false)
-const directoryPickerVisible = ref(false)
+const addMode = ref<'directory' | 'email'>('email')
 function directoryMembersChanged() { directoryRevision.value++; void loadMembers() }
 import { copyWithToast } from '@/utils/clipboard'
 import { useAuthStore } from '@/stores/auth'
@@ -579,7 +559,7 @@ const members = ref<TenantMember[]>([])
 const loading = ref(false)
 const error = ref('')
 const adding = ref(false)
-/** 邀请流程：锚在列表头「+」按钮旁的弹出层（非居中模态）。 */
+/** The dialog keeps directory selection and email invitation legible. */
 const invitePopupVisible = ref(false)
 // share-link generator state (separate popup next to the email
 // invite). shareLinkResult is non-null after a successful create —
@@ -1263,10 +1243,12 @@ onUnmounted(() => detachAuditInfiniteScroll())
 
 watch(invitePopupVisible, (open) => {
   if (!open) return
+  addMode.value = directoryEnabled.value ? 'directory' : 'email'
   addForm.email = ''
   addForm.role = 'contributor'
   addDialogStep.value = 'form'
 })
+watch(addMode, () => { addDialogStep.value = 'form' })
 
 // Share-link popup: re-init on every open so the operator never sees
 // the previous result on a fresh click.
@@ -1958,6 +1940,9 @@ watch(
   max-width: 100%;
 }
 
+.member-add-mode { margin-bottom: 16px; }
+.member-add-email-content { padding-top: 4px; }
+
 .member-invite-popup-title {
   font-size: var(--app-text-lg);
   font-weight: 600;
@@ -2336,6 +2321,12 @@ watch(
 </style>
 
 <style lang="less">
+.member-add-dialog .t-dialog__body {
+  max-height: calc(100dvh - 190px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
 /* 权限说明弹出层（t-popup 挂到 body，须全局样式） */
 .permissions-popup-overlay {
   z-index: 3050 !important;

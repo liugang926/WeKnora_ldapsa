@@ -1,7 +1,7 @@
 <template>
-  <section class="catalog">
-    <h3>{{ t('directoryAdmin.catalog.title') }}</h3>
-    <p>{{ t('directoryAdmin.catalog.hint') }}</p>
+  <section :class="['catalog', { 'catalog--compact': compact }]">
+    <h3 v-if="!compact">{{ t('directoryAdmin.catalog.title') }}</h3>
+    <p v-if="!compact">{{ t('directoryAdmin.catalog.hint') }}</p>
     <t-alert v-if="error" theme="error" :message="error" />
     <t-alert v-if="data && !data.enabled" theme="info" :message="t('directoryAdmin.catalog.disabled')" />
     <template v-if="data?.enabled">
@@ -12,17 +12,19 @@
         <t-input v-model="query" clearable :placeholder="t('directoryAdmin.browse.search')" @enter="reset" @clear="clear" />
         <t-button :loading="loading" @click="reset">{{ t('directoryAdmin.browse.searchButton') }}</t-button>
       </div>
-      <t-table row-key="object_guid" :columns="columns" :data="data.items" :loading="loading">
+      <t-table row-key="object_guid" :columns="columns" :data="data.items" :loading="loading" :size="compact ? 'small' : 'medium'">
         <template #email="{ row }">{{ row.email || '—' }}</template>
         <template #status="{ row }">{{ row.disabled ? t('directoryAdmin.diagnostics.disabled') : t('directoryAdmin.catalog.synced') }}</template>
         <template #action="{ row }">
-          <t-button v-if="kind === 'groups'" variant="text" @click="preview(row)">{{ t('directoryAdmin.browse.details') }}</t-button>
-          <t-button variant="text" theme="primary" :disabled="row.disabled || !data.fresh || (kind === 'users' && !canAddUser) || isLinked(row)" @click="select(row)">
-            {{ isLinked(row) ? t('directoryAdmin.catalog.linked') : t('directoryAdmin.catalog.select') }}
-          </t-button>
+          <div class="catalog-actions">
+            <t-button v-if="kind === 'groups'" variant="text" @click="preview(row)">{{ t('directoryAdmin.browse.details') }}</t-button>
+            <t-button variant="text" theme="primary" :disabled="row.disabled || !data.fresh || (kind === 'users' && !canAddUser) || isLinked(row)" @click="select(row)">
+              {{ isLinked(row) ? t('directoryAdmin.catalog.linked') : t('directoryAdmin.catalog.select') }}
+            </t-button>
+          </div>
         </template>
       </t-table>
-      <t-pagination v-model="page" v-model:page-size="pageSize" :total="data.total" :page-size-options="[20,50,100]" @change="paginate" />
+      <t-pagination v-model="page" v-model:page-size="pageSize" :total="data.total" :page-size-options="compact ? [5,20,50,100] : [20,50,100]" :size="compact ? 'small' : 'medium'" @change="paginate" />
     </template>
     <t-dialog v-model:visible="confirmVisible" :header="t('directoryAdmin.catalog.select')" :confirm-btn="{ content: t('common.confirm'), loading: saving }" :cancel-btn="t('common.cancel')" @confirm="add">
       <p>{{ selected?.display_name }} · {{ selected?.account_name }}</p>
@@ -76,12 +78,12 @@ import { MessagePlugin } from 'tdesign-vue-next'
 import { getTenantDirectoryCatalog, getTenantDirectoryGroupMembers, addTenantDirectoryMember, type DirectoryCandidate, type DirectoryCatalog } from '@/api/tenant/directory'
 import type { DirectoryGroupMembersResult, DirectoryObjectSummary } from '@/api/directory'
 import { addTenantDirectoryGroup, listTenantDirectoryGroups, type DirectoryTenantRole } from '@/api/tenant/groups'
-const props = defineProps<{ tenantId: number; canAddUser: boolean }>()
+const props = defineProps<{ tenantId: number; canAddUser: boolean; compact?: boolean }>()
 const emit = defineEmits<{ changed: []; available: [enabled: boolean] }>()
 const { t } = useI18n()
 const kind = ref<'users'|'groups'>('users')
 const query = ref(''), applied = ref(''), error = ref('')
-const page = ref(1), pageSize = ref(20)
+const page = ref(1), pageSize = ref(props.compact ? 5 : 20)
 const data = ref<DirectoryCatalog | null>(null)
 const loading = ref(false), saving = ref(false), confirmVisible = ref(false)
 const selected = ref<DirectoryCandidate | null>(null)
@@ -165,8 +167,13 @@ watch(() => props.tenantId, () => { previewGeneration++; previewVisible.value=fa
 
 <style scoped>
 .catalog { margin: 24px 0; padding-top: 24px; border-top: 1px solid var(--td-component-border); }
+.catalog--compact { margin: 0; padding: 0; border: 0; }
 .catalog p { color: var(--td-text-color-secondary); margin: 10px 0; }
+.catalog--compact p { margin: 8px 0; }
 .toolbar { display:flex; align-items:center; gap:12px; margin:16px 0; flex-wrap:wrap; }
+.catalog--compact .toolbar { margin: 12px 0; }
+.catalog-actions { display:flex; align-items:center; gap:4px; white-space:nowrap; }
+.catalog-actions :deep(.t-button) { flex:none; }
 .toolbar :deep(.t-input__wrap) { flex:1; min-width:200px; }
 :deep(.t-pagination) { margin-top:16px; }
 .relations, .origin { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin:8px 0; }

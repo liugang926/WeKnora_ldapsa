@@ -7,6 +7,7 @@ export default {
     title: '目录服务',
     catalog: {
       choose: '选择 AD 用户或分组',
+      emailInvite: '邮箱邀请',
       title: '已同步 AD 用户与分组', hint: '此处列出全部已同步对象，可搜索并选择。出现在列表中不代表已获得空间权限。',
       disabled: '目录同步未启用。', synced: '已同步', select: '添加到空间', linked: '组已关联',
       sync: '每 {minutes} 分钟自动同步 · 最近成功：{time}', stale: '目录同步异常或已过期，可查看已保存的目录列表，暂不能添加授权。',
