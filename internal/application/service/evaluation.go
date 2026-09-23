@@ -156,6 +156,7 @@ func (e *EvaluationService) EvaluationResult(ctx context.Context, taskID string)
 	return detail, nil
 }
 
+// ListEvaluationResults returns recent results for the current tenant.
 func (e *EvaluationService) ListEvaluationResults(ctx context.Context, limit int) ([]*types.EvaluationDetail, error) {
 	return e.runRepository.List(ctx, types.MustTenantIDFromContext(ctx), limit)
 }
@@ -176,7 +177,7 @@ func (e *EvaluationService) Evaluation(ctx context.Context,
 	tenantID := types.MustTenantIDFromContext(ctx)
 	logger.Infof(ctx, "Tenant ID: %d", tenantID)
 	referenceKnowledgeBaseID := knowledgeBaseID
-	selectedEmbeddingModelID := embeddingModelID
+	var selectedEmbeddingModelID string
 	createdKBID := ""
 	started := false
 	defer func() {
@@ -395,7 +396,7 @@ func (e *EvaluationService) Evaluation(ctx context.Context,
 		}); err != nil {
 			logger.Errorf(newCtx, "Failed to persist evaluation running state: %v", err)
 			if cleanupErr := e.knowledgeBaseService.DeleteKnowledgeBase(newCtx, knowledgeBaseID); cleanupErr != nil {
-				logger.Errorf(newCtx, "Failed to clean up evaluation knowledge base after startup error: %v", cleanupErr)
+				logger.Errorf(newCtx, "Failed to clean up evaluation knowledge base: %v", cleanupErr)
 			}
 			return
 		}
@@ -450,7 +451,9 @@ func (e *EvaluationService) EvalDataset(ctx context.Context, detail *types.Evalu
 		return err
 	}
 	if len(dataset.QAPairs) > maxQuestions {
-		return fmt.Errorf("evaluation dataset has %d questions; configured limit is %d", len(dataset.QAPairs), maxQuestions)
+		return fmt.Errorf(
+			"evaluation dataset has %d questions; configured limit is %d", len(dataset.QAPairs), maxQuestions,
+		)
 	}
 	datasetJSON, err := json.Marshal(dataset)
 	if err != nil {
