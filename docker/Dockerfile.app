@@ -108,6 +108,8 @@ FROM debian:12.12-slim
 WORKDIR /app
 
 ARG APK_MIRROR_ARG
+ARG COMMIT_ID_ARG
+ENV WEKNORA_BUILD_COMMIT=${COMMIT_ID_ARG}
 
 # Pairing derives the gateway URL from the user's page origin by default.
 ENV BROWSERSKILL_BINARY=/opt/weknora/browserskill/bsk \

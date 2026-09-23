@@ -501,7 +501,7 @@ func (e *EvaluationService) EvalDataset(ctx context.Context, detail *types.Evalu
 	var promptTokens, completionTokens int64
 	var mu sync.Mutex
 	var g errgroup.Group
-	metricHook := NewHookMetric(len(dataset.QAPairs), passages)
+	metricHook := NewHookMetric(len(dataset.QAPairs), passages, knowledge.ID)
 
 	// Set worker limit based on available CPUs
 	g.SetLimit(max(runtime.GOMAXPROCS(0)-1, 1))
@@ -549,8 +549,8 @@ func (e *EvaluationService) EvalDataset(ctx context.Context, detail *types.Evalu
 				Question:            qaPair.Question,
 				ReferenceAnswer:     qaPair.Answer,
 				RelevantPassageIDs:  slices.Clone(qaPair.PIDs),
-				RetrievedPassageIDs: matchRetrievedPassageIDs(passages, chatManage.SearchResult),
-				RerankedPassageIDs:  matchRetrievedPassageIDs(passages, chatManage.RerankResult),
+				RetrievedPassageIDs: matchRetrievedPassageIDs(passages, chatManage.SearchResult, knowledge.ID),
+				RerankedPassageIDs:  matchRetrievedPassageIDs(passages, chatManage.RerankResult, knowledge.ID),
 				LatencyMs:           time.Since(startedAt).Milliseconds(),
 			}
 			if chatManage.ChatResponse != nil {

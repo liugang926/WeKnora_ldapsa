@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"strings"
 	"sync"
 
 	"github.com/Tencent/WeKnora/internal/application/service/metric"
@@ -87,6 +86,7 @@ type HookMetric struct {
 	qaPairMetricList []*qaPairMetric // Per-QA pair metrics
 	metricResults    *MetricList     // Aggregated results
 	allPassages      []string        // Entire indexed corpus, not only this query's relevant passages
+	knowledgeID      string          // The temporary evaluation knowledge that owns every corpus passage
 	mu               *sync.RWMutex   // Thread safety
 }
 
@@ -99,11 +99,12 @@ type qaPairMetric struct {
 }
 
 // NewHookMetric creates a new HookMetric with given capacity
-func NewHookMetric(capacity int, corpus []string) *HookMetric {
+func NewHookMetric(capacity int, corpus []string, knowledgeID string) *HookMetric {
 	return &HookMetric{
 		metricResults:    &MetricList{},
 		qaPairMetricList: make([]*qaPairMetric, capacity),
 		allPassages:      corpus,
+		knowledgeID:      knowledgeID,
 		mu:               &sync.RWMutex{},
 	}
 }
@@ -141,12 +142,12 @@ func (h *HookMetric) recordFinish(index int) {
 		retrievalSource = h.qaPairMetricList[index].searchResult
 	}
 
-	// Map chunks against the entire indexed corpus. Matching only the current
-	// query's relevant passages silently discarded false positives and made
-	// precision appear perfect. Unknown or ambiguous chunks are counted as
-	// non-relevant hits instead of being omitted.
+	// Map chunks against the entire indexed corpus using the stable chunk index
+	// assigned when the temporary knowledge was created. Search and rerank may
+	// enrich or reformat Content, so text matching is not reliable. Unknown or
+	// foreign chunks remain non-relevant hits instead of being omitted.
 	qaPair := h.qaPairMetricList[index].qaPair
-	retrievalIDs := matchRetrievedPassageIDs(h.allPassages, retrievalSource)
+	retrievalIDs := matchRetrievedPassageIDs(h.allPassages, retrievalSource, h.knowledgeID)
 
 	// Get generated text if available
 	generatedTexts := ""
@@ -168,24 +169,15 @@ func (h *HookMetric) recordFinish(index int) {
 	h.metricResults.Append(metricInput)
 }
 
-func matchRetrievedPassageIDs(corpus []string, results []*types.SearchResult) []int {
+func matchRetrievedPassageIDs(corpus []string, results []*types.SearchResult, knowledgeID string) []int {
 	retrievalIDs := make([]int, 0, len(results))
 	seen := make(map[int]struct{})
 	for resultIndex, r := range results {
 		matchedID := -1 - resultIndex
-		matches := 0
-		for i, passage := range corpus {
-			if passage == "" {
-				continue
-			}
-			if r != nil && r.Content != "" &&
-				(strings.Contains(passage, r.Content) || strings.Contains(r.Content, passage)) {
-				matches++
-				matchedID = i
-			}
-		}
-		if matches != 1 {
-			matchedID = -1 - resultIndex
+		if r != nil && knowledgeID != "" && r.KnowledgeID == knowledgeID &&
+			r.ChunkIndex >= 0 && r.ChunkIndex < len(corpus) &&
+			(r.ChunkType == "" || r.ChunkType == string(types.ChunkTypeText)) {
+			matchedID = r.ChunkIndex
 		}
 		if _, ok := seen[matchedID]; ok {
 			continue
