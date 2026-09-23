@@ -1,0 +1,75 @@
+services:
+  openldap:
+    image: bitnamilegacy/openldap:2.6.10-debian-12-r4@sha256:966fd39ed25813890e9bd57dac56def163bbcfe64967e0bae59ab018d505bd93
+    hostname: openldap
+    environment:
+      LDAP_ROOT: dc=example,dc=test
+      LDAP_ADMIN_USERNAME: admin
+      LDAP_ADMIN_PASSWORD: AdminPass!123
+      LDAP_CONFIG_ADMIN_ENABLED: "no"
+      LDAP_SKIP_DEFAULT_TREE: "yes"
+      LDAP_ALLOW_ANON_BINDING: "no"
+      LDAP_CUSTOM_SCHEMA_FILE: /schema/ad-test.ldif
+      LDAP_CUSTOM_LDIF_DIR: /ldifs
+      LDAP_ENABLE_TLS: "yes"
+      LDAP_REQUIRE_TLS: "no"
+      LDAP_PORT_NUMBER: "1389"
+      LDAP_LDAPS_PORT_NUMBER: "1636"
+      LDAP_TLS_CERT_FILE: /certs/server.crt
+      LDAP_TLS_KEY_FILE: /certs/server.key
+      LDAP_TLS_CA_FILE: /certs/ca.crt
+      LDAP_LOGLEVEL: "256"
+    ports:
+      - "${LDAP_IT_LDAP_PORT:-11389}:1389"
+      - "${LDAP_IT_LDAPS_PORT:-11636}:1636"
+    volumes:
+      - ./.generated/certs:/certs:ro
+      - ./schema/ad-test.ldif:/schema/ad-test.ldif:ro
+      - ./ldif:/ldifs:ro
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          /opt/bitnami/openldap/bin/ldapsearch -x
+          -H ldap://127.0.0.1:1389
+          -D 'cn=directory-reader,ou=service,dc=example,dc=test'
+          -w 'ServicePass!123'
+          -b 'dc=example,dc=test' -s base '(objectClass=*)' dn >/dev/null
+      interval: 2s
+      timeout: 5s
+      retries: 30
+      start_period: 5s
+
+  test:
+    image: golang:1.26-bookworm@sha256:a688600ca24f8a4d3ca77f95b0dd40704a9fc787c826660eb7ba0b641b8b175d
+    working_dir: /workspace
+    depends_on:
+      openldap:
+        condition: service_healthy
+    environment:
+      LDAP_IT_LDAPS_URL: ldaps://openldap:1636
+      LDAP_IT_STARTTLS_URL: ldap://openldap:1389
+      LDAP_IT_SERVER_NAME: openldap
+      LDAP_IT_CA_FILE: /fixture-certs/ca.crt
+      LDAP_IT_BIND_DN: cn=directory-reader,ou=service,dc=example,dc=test
+      LDAP_IT_BIND_PASSWORD: ServicePass!123
+      HTTP_PROXY: "${HTTP_PROXY:-}"
+      HTTPS_PROXY: "${HTTPS_PROXY:-}"
+      NO_PROXY: "${NO_PROXY:-localhost,127.0.0.1,openldap}"
+    volumes:
+      - ../../..:/workspace
+      - ./.generated/certs:/fixture-certs:ro
+      - go-mod-cache:/go/pkg/mod
+      - go-build-cache:/root/.cache/go-build
+    command:
+      - go
+      - test
+      - -tags=integration
+      - -count=1
+      - -timeout=3m
+      - -v
+      - ./tests/integration/ldap
+
+volumes:
+  go-mod-cache:
+  go-build-cache:

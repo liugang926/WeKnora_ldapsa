@@ -1,0 +1,291 @@
+{{/*
+Copyright 2025 Tencent
+SPDX-License-Identifier: MIT
+
+WeKnora Backend API Server Deployment and Service.
+*/}}
+{{- if .Values.app.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "weknora.fullname" . }}-app
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "weknora.componentLabels" (dict "component" "app" "context" .) | nindent 4 }}
+spec:
+  replicas: {{ .Values.app.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "weknora.componentSelectorLabels" (dict "component" "app" "context" .) | nindent 6 }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        {{- include "weknora.componentSelectorLabels" (dict "component" "app" "context" .) | nindent 8 }}
+    spec:
+      {{- include "weknora.imagePullSecrets" . | nindent 6 }}
+      serviceAccountName: {{ include "weknora.serviceAccountName" . }}
+      {{- with .Values.app.podSecurityContext | default .Values.global.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: app
+          image: {{ include "weknora.app.image" . }}
+          imagePullPolicy: {{ .Values.app.image.pullPolicy }}
+          {{- with .Values.app.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          ports:
+            - containerPort: 8080
+              name: http
+              protocol: TCP
+          env:
+            # Application settings
+            - name: GIN_MODE
+              value: {{ .Values.app.env.GIN_MODE | quote }}
+            - name: TZ
+              value: {{ .Values.app.env.TZ | quote }}
+            - name: MAX_FILE_SIZE_MB
+              value: {{ .Values.global.maxFileSizeMB | quote }}
+            # Database configuration
+            - name: DB_DRIVER
+              value: "postgres"
+            - name: DB_HOST
+              value: "postgres"
+            - name: DB_PORT
+              value: "5432"
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "weknora.secretName" . }}
+                  key: DB_USER
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "weknora.secretName" . }}
+                  key: DB_PASSWORD
+            - name: DB_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "weknora.secretName" . }}
+                  key: DB_NAME
+            # Redis configuration
+            - name: REDIS_ADDR
+              value: "redis:6379"
+            - name: REDIS_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "weknora.secretName" . }}
+                  key: REDIS_USERNAME
+                  optional: true
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "weknora.secretName" . }}
+                  key: REDIS_PASSWORD
+            - name: REDIS_DB
+              value: "0"
+            - name: REDIS_PREFIX
+              value: "stream:"
+            - name: STREAM_MANAGER_TYPE
+              value: {{ .Values.app.env.STREAM_MANAGER_TYPE | quote }}
+            # Security
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "weknora.secretName" . }}
+                  key: JWT_SECRET
+            - name: SYSTEM_AES_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "weknora.secretName" . }}
+                  key: SYSTEM_AES_KEY
+            {{- if .Values.app.directory.enabled }}
+            # Optional LDAP / Active Directory module. TLS certificate
+            # verification is mandatory in both LDAPS and StartTLS modes.
+            - name: LDAP_ENABLED
+              value: "true"
+            - name: LDAP_CONFIG_SOURCE
+              value: {{ .Values.app.directory.managementSource | quote }}
+            - name: LDAP_DIRECTORY_ID
+              value: {{ .Values.app.directory.id | quote }}
+            - name: LDAP_PROVIDER_DISPLAY_NAME
+              value: {{ .Values.app.directory.providerDisplayName | quote }}
+            - name: LDAP_URLS
+              value: {{ join "," .Values.app.directory.urls | quote }}
+            - name: LDAP_TLS_MODE
+              value: {{ .Values.app.directory.tlsMode | quote }}
+            - name: LDAP_SERVER_NAMES
+              value: {{ join "," .Values.app.directory.serverNames | quote }}
+            - name: LDAP_BIND_DN
+              value: {{ .Values.app.directory.bindDN | quote }}
+            {{- if eq .Values.app.directory.managementSource "file" }}
+            {{- if .Values.app.directory.bindPasswordSecretName }}
+            - name: LDAP_BIND_PASSWORD_FILE
+              value: /run/weknora/ldap-bind-password/password
+            {{- else }}
+            - name: LDAP_BIND_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "weknora.secretName" . }}
+                  key: LDAP_BIND_PASSWORD
+            {{- end }}
+            {{- end }}
+            - name: LDAP_BASE_DN
+              value: {{ .Values.app.directory.baseDN | quote }}
+            - name: LDAP_USER_BASE_DN
+              value: {{ .Values.app.directory.userBaseDN | quote }}
+            - name: LDAP_GROUP_BASE_DN
+              value: {{ .Values.app.directory.groupBaseDN | quote }}
+            - name: LDAP_USER_FILTER
+              value: {{ .Values.app.directory.userFilter | quote }}
+            - name: LDAP_GROUP_FILTER
+              value: {{ .Values.app.directory.groupFilter | quote }}
+            - name: LDAP_LOGIN_FILTER
+              value: {{ .Values.app.directory.loginFilter | quote }}
+            - name: LDAP_ALLOWED_LOGIN_FILTER
+              value: {{ .Values.app.directory.allowedLoginFilter | quote }}
+            - name: LDAP_CONNECT_TIMEOUT
+              value: {{ .Values.app.directory.connectTimeout | quote }}
+            - name: LDAP_QUERY_TIMEOUT
+              value: {{ .Values.app.directory.queryTimeout | quote }}
+            - name: LDAP_PAGE_SIZE
+              value: {{ .Values.app.directory.pageSize | quote }}
+            - name: LDAP_RESULT_LIMIT
+              value: {{ .Values.app.directory.resultLimit | quote }}
+            - name: LDAP_SYNC_INTERVAL
+              value: {{ .Values.app.directory.syncInterval | quote }}
+            - name: LDAP_STALE_AFTER
+              value: {{ .Values.app.directory.staleAfter | quote }}
+            {{- if and (eq .Values.app.directory.managementSource "file") .Values.app.directory.caSecretName }}
+            - name: LDAP_CA_FILE
+              value: /run/weknora/ldap-ca/ca.crt
+            {{- end }}
+            {{- end }}
+            # Retrieval & Storage
+            - name: RETRIEVE_DRIVER
+              value: {{ .Values.app.env.RETRIEVE_DRIVER | quote }}
+            - name: STORAGE_TYPE
+              value: {{ .Values.app.env.STORAGE_TYPE | quote }}
+            - name: LOCAL_STORAGE_BASE_DIR
+              value: {{ .Values.app.env.LOCAL_STORAGE_BASE_DIR | quote }}
+            # Document reader
+            - name: DOCREADER_ADDR
+              value: "docreader:50051"
+            # Processing
+            - name: AUTO_RECOVER_DIRTY
+              value: {{ .Values.app.env.AUTO_RECOVER_DIRTY | quote }}
+            - name: CONCURRENCY_POOL_SIZE
+              value: {{ .Values.app.env.CONCURRENCY_POOL_SIZE | quote }}
+            # Docker sandbox is off unless the deployer opts in. A workspace
+            # admin who can save a Docker config can create containers on
+            # whatever Engine API this process can reach (often host root).
+            - name: WEKNORA_SANDBOX_DOCKER_ENABLED
+              value: {{ .Values.app.env.WEKNORA_SANDBOX_DOCKER_ENABLED | default "false" | quote }}
+            {{- if .Values.neo4j.enabled }}
+            # Neo4j configuration (for GraphRAG)
+            # NEO4J_ENABLE 是知识图谱的唯一开关（Go 代码认它，不认 ENABLE_GRAPH_RAG）。
+            # neo4j.enabled=true 时自动注入，无需用户单独设置。
+            - name: NEO4J_ENABLE
+              value: "true"
+            - name: NEO4J_URI
+              value: "bolt://neo4j:7687"
+            - name: NEO4J_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "weknora.secretName" . }}
+                  key: NEO4J_USERNAME
+            - name: NEO4J_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "weknora.secretName" . }}
+                  key: NEO4J_PASSWORD
+            {{- end }}
+            {{- with .Values.app.extraEnv }}
+            # Additional environment variables
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          volumeMounts:
+            - name: data-files
+              mountPath: /data/files
+            {{- if and .Values.app.directory.enabled (eq .Values.app.directory.managementSource "file") .Values.app.directory.caSecretName }}
+            - name: ldap-ca
+              mountPath: /run/weknora/ldap-ca
+              readOnly: true
+            {{- end }}
+            {{- if and .Values.app.directory.enabled (eq .Values.app.directory.managementSource "file") .Values.app.directory.bindPasswordSecretName }}
+            - name: ldap-bind-password
+              mountPath: /run/weknora/ldap-bind-password
+              readOnly: true
+            {{- end }}
+          resources:
+            {{- toYaml .Values.app.resources | nindent 12 }}
+          {{- with .Values.app.livenessProbe }}
+          livenessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.app.readinessProbe }}
+          readinessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      volumes:
+        - name: data-files
+          {{- if .Values.dataFiles.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ .Values.dataFiles.persistence.existingClaim | default (printf "%s-data-files" (include "weknora.fullname" .)) }}
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+        {{- if and .Values.app.directory.enabled (eq .Values.app.directory.managementSource "file") .Values.app.directory.caSecretName }}
+        - name: ldap-ca
+          secret:
+            secretName: {{ .Values.app.directory.caSecretName | quote }}
+            items:
+              - key: {{ .Values.app.directory.caSecretKey | quote }}
+                path: ca.crt
+        {{- end }}
+        {{- if and .Values.app.directory.enabled (eq .Values.app.directory.managementSource "file") .Values.app.directory.bindPasswordSecretName }}
+        - name: ldap-bind-password
+          secret:
+            secretName: {{ .Values.app.directory.bindPasswordSecretName | quote }}
+            items:
+              - key: {{ .Values.app.directory.bindPasswordSecretKey | quote }}
+                path: password
+        {{- end }}
+      {{- with .Values.app.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.app.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.app.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  # Service name must be "app" - frontend nginx config hardcodes this
+  name: app
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "weknora.componentLabels" (dict "component" "app" "context" .) | nindent 4 }}
+spec:
+  type: {{ .Values.app.service.type }}
+  selector:
+    {{- include "weknora.componentSelectorLabels" (dict "component" "app" "context" .) | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.app.service.port }}
+      targetPort: http
+      protocol: TCP
+{{- end }}
