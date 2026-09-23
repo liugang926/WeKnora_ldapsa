@@ -112,4 +112,8 @@ jobs:
           # Deliberately off: see the note at the top of this file. The same
           # filtering is done below, from git.
           only-new-issues: false
-          args: --new-from-merge-base=${{ github.event.pull_request.base.sha }}
+          # This bootstrap PR preserves the submission repository's license-only
+          # initial commit as its base while importing the reviewed upstream
+          # tree. Lint changes since that upstream commit, not the inherited
+          # upstream backlog. Later PRs use their own target branch as usual.
+          args: --new-from-merge-base=${{ github.event.pull_request.base.sha == '17fec2327c93681574cd69503df09228c3286d46' && '33c0333ec9474a6d090bab346e1d631a842bafaf' || github.event.pull_request.base.sha }}
