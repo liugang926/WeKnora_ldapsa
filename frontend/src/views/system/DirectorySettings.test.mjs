@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
 const source = readFileSync(new URL('./DirectorySettings.vue', import.meta.url), 'utf8')
+const browserSource = readFileSync(new URL('./DirectoryBrowser.vue', import.meta.url), 'utf8')
 
 test('directory settings never hydrate or resend the stored bind password', () => {
   assert.match(source, /const replacementPassword = ref\(''\)/)
@@ -17,7 +18,11 @@ test('deployment-managed fields use the server read-only metadata', () => {
 })
 
 test('directory administration exposes test, search, preview, sync and run history', () => {
-  for (const action of ['runConnectionTest', 'runSearch', 'loadPreview', 'runSync', 'loadRuns']) {
+  for (const action of ['runConnectionTest', 'loadPreview', 'runSync', 'loadRuns']) {
     assert.match(source, new RegExp(action))
   }
+  assert.match(source, /<DirectoryBrowser/)
+  assert.match(browserSource, /resetSearch/)
+  assert.match(browserSource, /searchDirectoryUsers/)
+  assert.match(browserSource, /searchDirectoryGroups/)
 })
