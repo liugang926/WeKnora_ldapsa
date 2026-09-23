@@ -408,6 +408,15 @@ func (r *directoryRepository) ListGroupMemberships(ctx context.Context, groupID 
 	return rows, nil
 }
 
+func (r *directoryRepository) ListDirectoryMemberships(ctx context.Context, directoryID string) ([]*types.DirectoryGroupMembership, error) {
+	var rows []*types.DirectoryGroupMembership
+	if err := r.db.WithContext(ctx).Where("directory_id = ?", directoryID).
+		Order("group_id ASC, identity_id ASC").Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	return rows, nil
+}
+
 func syncLeaseExpiryExpression(db *gorm.DB, ttl time.Duration) clause.Expr {
 	seconds := int64(ttl / time.Second)
 	if seconds < 1 {

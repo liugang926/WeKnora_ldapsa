@@ -28,6 +28,7 @@ type DirectoryRepository interface {
 	ListGroups(ctx context.Context, directoryID, query string, offset, limit int) ([]*types.DirectoryGroup, error)
 	ListGroupEdges(ctx context.Context, directoryID string) ([]*types.DirectoryGroupEdge, error)
 	ListGroupMemberships(ctx context.Context, groupID string) ([]*types.DirectoryGroupMembership, error)
+	ListDirectoryMemberships(ctx context.Context, directoryID string) ([]*types.DirectoryGroupMembership, error)
 	// Sync leases serialize network collection across application processes.
 	// Leases expire automatically after ttl so a crashed worker cannot block
 	// synchronization forever. Renew/Release succeed only for the same owner.

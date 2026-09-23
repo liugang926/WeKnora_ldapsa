@@ -135,6 +135,15 @@ func (h *DirectoryHandler) TenantCatalog(c *gin.Context) {
 	c.JSON(http.StatusOK, result)
 }
 
+func (h *DirectoryHandler) TenantCatalogGroupMembers(c *gin.Context) {
+	result, err := h.runtime.CatalogGroupMembers(c.Request.Context(), c.Param("object_guid"), c.Query("q"), directoryQueryLimit(c), directoryQueryOffset(c))
+	if err != nil {
+		directoryHTTPError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, result)
+}
+
 func (h *DirectoryHandler) AddTenantDirectoryMember(c *gin.Context) {
 	tenantID, ok := parseTenantIDFromPath(c)
 	if !ok {

@@ -74,6 +74,123 @@ func (s *directoryRuntimeService) Catalog(ctx context.Context, kind, query strin
 	return result, nil
 }
 
+// CatalogGroupMembers explains the effective access of a synchronized group
+// using the committed snapshot, so workspace managers can preview it without
+// a live AD connection or system-administrator privileges.
+func (s *directoryRuntimeService) CatalogGroupMembers(ctx context.Context, groupGUID, query string, limit, offset int) (*types.DirectoryGroupMembersResult, error) {
+	if strings.TrimSpace(groupGUID) == "" {
+		return nil, ErrInvalidDirectoryConfig
+	}
+	directory, err := s.persistedDirectory(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if !directory.Enabled || directory.SnapshotVersion == 0 {
+		return nil, ErrDirectoryDisabled
+	}
+	identities, err := s.listAllIdentities(ctx, directory.ID)
+	if err != nil {
+		return nil, err
+	}
+	groups, err := s.listAllGroups(ctx, directory.ID)
+	if err != nil {
+		return nil, err
+	}
+	edges, err := s.repo.ListGroupEdges(ctx, directory.ID)
+	if err != nil {
+		return nil, err
+	}
+	memberships, err := s.repo.ListDirectoryMemberships(ctx, directory.ID)
+	if err != nil {
+		return nil, err
+	}
+	snapshot := &ldapdirectory.Snapshot{DirectoryID: directory.ID}
+	userGUIDs, groupGUIDs := []string{}, []string{}
+	userByID, groupByID := map[string]string{}, map[string]string{}
+	for _, identity := range identities {
+		if identity.SnapshotVersion != directory.SnapshotVersion {
+			continue
+		}
+		userByID[identity.ID] = identity.ObjectGUID
+		userGUIDs = append(userGUIDs, identity.ObjectGUID)
+		snapshot.Users = append(snapshot.Users, ldapdirectory.User{ObjectGUID: identity.ObjectGUID, SID: identity.ObjectSID,
+			DN: identity.DN, DisplayName: identity.DisplayName, SAMAccountName: identity.SAMAccountName,
+			UserPrincipalName: identity.UPN, Email: identity.Email, Enabled: identity.Status == types.DirectoryObjectActive})
+	}
+	for _, group := range groups {
+		if group.SnapshotVersion != directory.SnapshotVersion {
+			continue
+		}
+		groupByID[group.ID] = group.ObjectGUID
+		groupGUIDs = append(groupGUIDs, group.ObjectGUID)
+		snapshot.Groups = append(snapshot.Groups, ldapdirectory.Group{ObjectGUID: group.ObjectGUID, SID: group.ObjectSID,
+			DN: group.DN, DisplayName: group.DisplayName, SAMAccountName: group.SAMAccountName, Email: group.Email})
+	}
+	if !containsString(groupGUIDs, groupGUID) {
+		return nil, ErrDirectoryIdentityUnavailable
+	}
+	for _, edge := range edges {
+		if edge.SnapshotVersion != directory.SnapshotVersion {
+			continue
+		}
+		parent, parentOK := groupByID[edge.ParentGroupID]
+		child, childOK := groupByID[edge.ChildGroupID]
+		if !parentOK || !childOK {
+			return nil, ErrDirectoryUnavailable
+		}
+		snapshot.GroupMemberships = append(snapshot.GroupMemberships, ldapdirectory.GroupMembership{ParentGroupGUID: parent, MemberGroupGUID: child})
+	}
+	stored := map[string]bool{}
+	for _, member := range memberships {
+		if member.SnapshotVersion != directory.SnapshotVersion {
+			continue
+		}
+		group, groupOK := groupByID[member.GroupID]
+		user, userOK := userByID[member.IdentityID]
+		if !groupOK || !userOK {
+			return nil, ErrDirectoryUnavailable
+		}
+		if group == groupGUID {
+			stored[user] = true
+		}
+		if member.Direct {
+			source := ldapdirectory.MembershipDirect
+			if member.Primary {
+				source = ldapdirectory.MembershipPrimary
+			}
+			snapshot.DirectMemberships = append(snapshot.DirectMemberships, ldapdirectory.UserGroupMembership{
+				UserGUID: user, GroupGUID: group, Source: source})
+		}
+	}
+	snapshot.EffectiveMemberships, err = ldapdirectory.ComputeEffectiveMemberships(userGUIDs, groupGUIDs,
+		snapshot.DirectMemberships, snapshot.GroupMemberships)
+	if err != nil {
+		return nil, ErrDirectoryUnavailable
+	}
+	computed := map[string]bool{}
+	for _, member := range snapshot.EffectiveMemberships {
+		if member.GroupGUID == groupGUID {
+			computed[member.UserGUID] = true
+		}
+	}
+	if len(stored) != len(computed) {
+		return nil, ErrDirectoryUnavailable
+	}
+	for user := range stored {
+		if !computed[user] {
+			return nil, ErrDirectoryUnavailable
+		}
+	}
+	current, err := s.repo.Get(ctx, directory.ID)
+	if err != nil {
+		return nil, err
+	}
+	if current.SnapshotVersion != directory.SnapshotVersion || current.ConfigVersion != directory.ConfigVersion {
+		return nil, ErrDirectoryUnavailable
+	}
+	return directoryGroupMembers(snapshot, groupGUID, query, limit, offset)
+}
+
 // The route requires Owner (same as ordinary direct member additions). It
 // creates an AD-only linked identity without requiring a prior user login.
 func (s *directoryRuntimeService) AddTenantDirectoryMember(ctx context.Context, tenantID uint64, objectGUID string, role types.TenantRole) (*types.TenantMember, error) {

@@ -276,6 +276,7 @@ func NewRouter(params RouterParams) *gin.Engine {
 			v1.POST("/auth/ldap/login", middleware.DirectoryAuthRateLimit(params.RedisClient), params.DirectoryHandler.LDAPLogin)
 			catalog := v1.Group("/tenants/:id/directory", rbacGuards.PathTenantMatch())
 			catalog.GET("/catalog/:kind", rbacGuards.Admin(), params.DirectoryHandler.TenantCatalog)
+			catalog.GET("/groups/:object_guid/members", rbacGuards.Admin(), params.DirectoryHandler.TenantCatalogGroupMembers)
 			catalog.POST("/members", rbacGuards.Owner(), params.DirectoryHandler.AddTenantDirectoryMember)
 		}
 		RegisterTenantRoutes(v1, params.TenantHandler, params.TenantMemberHandler, params.TenantInvitationHandler, params.AuditLogHandler, rbacGuards)

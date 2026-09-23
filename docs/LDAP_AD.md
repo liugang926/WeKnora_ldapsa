@@ -43,6 +43,14 @@ collisions, rechecks snapshot freshness, and uses the standard audited
 membership service. No session, local password, Owner role or system-admin
 privilege is issued by this operation. Selecting a group uses the existing
 Admin-protected group-role endpoint; direct/nested/primary memberships apply.
+The group picker also offers **Members & origins** before assigning a role.
+`GET /api/v1/tenants/:id/directory/groups/:object_guid/members` requires
+tenant path-match and Admin authorization, and reads the committed snapshot
+without connecting to AD. It supports search and pagination, shows distinct
+effective members, direct/primary/nested origins, inherited group paths and
+parent/child groups. A stale snapshot remains inspectable, while granting
+access stays paused until a successful sync. The preview verifies that its
+reconstructed membership set matches the stored authorization snapshot.
 
 Synchronization runs automatically (default 300 seconds) and can also be
 started manually from system administration. Synced visibility and workspace

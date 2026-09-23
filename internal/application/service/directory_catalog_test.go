@@ -12,11 +12,64 @@ import (
 
 type catalogRepo struct {
 	*runtimeDirectoryRepo
-	groups []*types.DirectoryGroup
+	groups      []*types.DirectoryGroup
+	edges       []*types.DirectoryGroupEdge
+	memberships []*types.DirectoryGroupMembership
 }
 
 func (r *catalogRepo) ListGroups(context.Context, string, string, int, int) ([]*types.DirectoryGroup, error) {
 	return r.groups, nil
+}
+
+func (r *catalogRepo) ListGroupEdges(context.Context, string) ([]*types.DirectoryGroupEdge, error) {
+	return r.edges, nil
+}
+
+func (r *catalogRepo) ListDirectoryMemberships(context.Context, string) ([]*types.DirectoryGroupMembership, error) {
+	return r.memberships, nil
+}
+
+func TestDirectoryCatalogGroupMembersShowsNestedAndPrimaryFromSavedSnapshot(t *testing.T) {
+	runtime, users, repo := liveLoginRuntimeFixture(t, nil, nil)
+	repo.identities = []*types.DirectoryIdentity{
+		{ID: "u1-id", ObjectGUID: "u1", DisplayName: "张三", SAMAccountName: "zhangsan", Status: types.DirectoryObjectActive, SnapshotVersion: 7},
+		{ID: "u2-id", ObjectGUID: "u2", DisplayName: "李四", SAMAccountName: "lisi", Status: types.DirectoryObjectDisabled, SnapshotVersion: 7},
+	}
+	runtime.repo = &catalogRepo{runtimeDirectoryRepo: repo,
+		groups: []*types.DirectoryGroup{
+			{ID: "root-id", ObjectGUID: "root", DisplayName: "研发中心", Status: types.DirectoryObjectActive, SnapshotVersion: 7},
+			{ID: "leaf-id", ObjectGUID: "leaf", DisplayName: "应用组", Status: types.DirectoryObjectActive, SnapshotVersion: 7},
+		},
+		edges: []*types.DirectoryGroupEdge{{ParentGroupID: "root-id", ChildGroupID: "leaf-id", SnapshotVersion: 7}},
+		memberships: []*types.DirectoryGroupMembership{
+			{GroupID: "root-id", IdentityID: "u1-id", Direct: true, Source: types.DirectoryMembershipDirect, SnapshotVersion: 7},
+			{GroupID: "leaf-id", IdentityID: "u2-id", Direct: true, Primary: true, Source: types.DirectoryMembershipPrimary, SnapshotVersion: 7},
+			{GroupID: "root-id", IdentityID: "u2-id", Depth: 1, Source: types.DirectoryMembershipNested, SnapshotVersion: 7},
+		},
+	}
+	result, err := runtime.CatalogGroupMembers(context.Background(), "root", "", 1, 1)
+	require.NoError(t, err)
+	require.Equal(t, 2, result.Total)
+	require.Len(t, result.Items, 1)
+	require.Equal(t, "李四", result.Items[0].DisplayName)
+	require.True(t, result.Items[0].Disabled)
+	require.Equal(t, "nested", result.Items[0].Origins[0].Source)
+	require.Equal(t, "primary", result.Items[0].Origins[0].OriginSource)
+	require.Equal(t, []string{"leaf", "root"}, []string{result.Items[0].Origins[0].Path[0].ObjectGUID, result.Items[0].Origins[0].Path[1].ObjectGUID})
+	result, err = runtime.CatalogGroupMembers(context.Background(), "root", "张三", 20, 0)
+	require.NoError(t, err)
+	require.Equal(t, 1, result.Total)
+	require.Equal(t, "direct", result.Items[0].Origins[0].Source)
+	old := runtime.now().Add(-time.Hour)
+	repo.directory.LastSuccessfulSyncAt = &old
+	_, err = runtime.CatalogGroupMembers(context.Background(), "root", "", 20, 0)
+	require.NoError(t, err, "the saved snapshot must remain inspectable while access is paused")
+	require.Zero(t, users.registerCalls)
+	require.Zero(t, users.generateCalls)
+	broken := runtime.repo.(*catalogRepo)
+	broken.memberships = broken.memberships[:2]
+	_, err = runtime.CatalogGroupMembers(context.Background(), "root", "", 20, 0)
+	require.ErrorIs(t, err, ErrDirectoryUnavailable, "a mismatched stored closure must not produce a misleading preview")
 }
 
 type catalogMembers struct {
