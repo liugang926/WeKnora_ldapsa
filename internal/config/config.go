@@ -370,6 +370,7 @@ type DirectoryConfig struct {
 	ConfiguredFromEnvironment bool `yaml:"-" json:"configured_from_environment"`
 }
 
+// DirectoryServerConfig identifies one ordered LDAP domain controller.
 type DirectoryServerConfig struct {
 	URL        string `yaml:"url" json:"url"`
 	TLSMode    string `yaml:"tls_mode" json:"tls_mode"`
@@ -377,10 +378,14 @@ type DirectoryServerConfig struct {
 }
 
 const (
-	DirectoryManagementFile     = "file"
+	// DirectoryManagementFile makes deployment-file settings authoritative.
+	DirectoryManagementFile = "file"
+	// DirectoryManagementDatabase stores UI-managed settings in the database.
 	DirectoryManagementDatabase = "database"
-	DirectoryTLSLDAPS           = "ldaps"
-	DirectoryTLSStartTLS        = "starttls"
+	// DirectoryTLSLDAPS enables implicit TLS.
+	DirectoryTLSLDAPS = "ldaps"
+	// DirectoryTLSStartTLS upgrades an LDAP connection to TLS.
+	DirectoryTLSStartTLS = "starttls"
 )
 
 // PromptTemplateI18n holds localized name and description for a prompt template.
@@ -705,7 +710,8 @@ func ValidateConfig(cfg *Config) error {
 				errs = append(errs, "directory.bind_dn is required when the file-managed directory module is enabled")
 			}
 			if d.BindPassword == "" {
-				errs = append(errs, "directory bind password is required when the file-managed directory module is enabled")
+				errs = append(errs,
+					"directory bind password is required when the file-managed directory module is enabled")
 			}
 			if strings.TrimSpace(d.BaseDN) == "" {
 				errs = append(errs, "directory.base_dn is required when the file-managed directory module is enabled")
@@ -729,11 +735,13 @@ func ValidateConfig(cfg *Config) error {
 			switch server.TLSMode {
 			case DirectoryTLSLDAPS:
 				if !strings.HasPrefix(strings.ToLower(urlValue), "ldaps://") {
-					errs = append(errs, fmt.Sprintf("directory.servers[%d].url must use ldaps:// for tls_mode=ldaps", i))
+					errs = append(errs, fmt.Sprintf(
+						"directory.servers[%d].url must use ldaps:// for tls_mode=ldaps", i))
 				}
 			case DirectoryTLSStartTLS:
 				if !strings.HasPrefix(strings.ToLower(urlValue), "ldap://") {
-					errs = append(errs, fmt.Sprintf("directory.servers[%d].url must use ldap:// for tls_mode=starttls", i))
+					errs = append(errs, fmt.Sprintf(
+						"directory.servers[%d].url must use ldap:// for tls_mode=starttls", i))
 				}
 			default:
 				errs = append(errs, fmt.Sprintf("directory.servers[%d].tls_mode must be ldaps or starttls", i))
@@ -1042,7 +1050,8 @@ func applyDirectoryEnvOverrides(cfg *Config) error {
 		d.GroupFilter = "(objectCategory=group)"
 	}
 	if d.LoginFilter == "" {
-		d.LoginFilter = "(&(objectCategory=person)(objectClass=user)(|(sAMAccountName={login})(userPrincipalName={login})))"
+		d.LoginFilter = "(&(objectCategory=person)(objectClass=user)" +
+			"(|(sAMAccountName={login})(userPrincipalName={login})))"
 	}
 	for i := range d.Servers {
 		if strings.TrimSpace(d.Servers[i].TLSMode) == "" {
@@ -1055,7 +1064,10 @@ func applyDirectoryEnvOverrides(cfg *Config) error {
 	}
 
 	if d.BindPassword != "" && d.BindPasswordFile != "" {
-		return errors.New("configure only one of directory.bind_password/LDAP_BIND_PASSWORD and directory.bind_password_file/LDAP_BIND_PASSWORD_FILE")
+		return errors.New(
+			"configure only one of directory.bind_password/LDAP_BIND_PASSWORD and " +
+				"directory.bind_password_file/LDAP_BIND_PASSWORD_FILE",
+		)
 	}
 	if d.Enabled && d.ManagementSource == DirectoryManagementFile && d.BindPasswordFile != "" {
 		secret, err := readDirectorySecretFile(d.BindPasswordFile)

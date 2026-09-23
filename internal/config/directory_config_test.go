@@ -68,7 +68,8 @@ func TestDirectoryPasswordFileAndEnvironment(t *testing.T) {
 }
 
 func TestDirectorySecretFileRejectsNonRegularFiles(t *testing.T) {
-	if _, err := readDirectorySecretFile("/dev/null"); err == nil || !strings.Contains(err.Error(), "regular file") {
+	if _, err := readDirectorySecretFile("/dev/null"); err == nil ||
+		!strings.Contains(err.Error(), "regular file") {
 		t.Fatalf("expected device file rejection, got %v", err)
 	}
 }
@@ -121,18 +122,22 @@ func TestDirectoryRejectsUnsafeLoginFilterTemplate(t *testing.T) {
 	base := &DirectoryConfig{
 		Enabled: true, ManagementSource: DirectoryManagementFile,
 		BindDN: "cn=svc,dc=example,dc=test", BindPassword: "secret", BaseDN: "dc=example,dc=test",
-		Servers:        []DirectoryServerConfig{{URL: "ldaps://dc.example.test:636", TLSMode: DirectoryTLSLDAPS}},
+		Servers: []DirectoryServerConfig{
+			{URL: "ldaps://dc.example.test:636", TLSMode: DirectoryTLSLDAPS},
+		},
 		ConnectTimeout: time.Second, QueryTimeout: time.Second, PageSize: 10, ResultLimit: 20,
 		SyncInterval: time.Minute, StaleAfter: time.Minute,
 	}
 	missing := *base
 	missing.LoginFilter = "(sAMAccountName=alice)"
-	if err := ValidateConfig(&Config{Directory: &missing}); err == nil || !strings.Contains(err.Error(), "must contain {login}") {
+	if err := ValidateConfig(&Config{Directory: &missing}); err == nil ||
+		!strings.Contains(err.Error(), "must contain {login}") {
 		t.Fatalf("expected missing placeholder rejection, got %v", err)
 	}
 	invalid := *base
 	invalid.LoginFilter = "(&(sAMAccountName={login})"
-	if err := ValidateConfig(&Config{Directory: &invalid}); err == nil || !strings.Contains(err.Error(), "login_filter is invalid") {
+	if err := ValidateConfig(&Config{Directory: &invalid}); err == nil ||
+		!strings.Contains(err.Error(), "login_filter is invalid") {
 		t.Fatalf("expected invalid filter rejection, got %v", err)
 	}
 }

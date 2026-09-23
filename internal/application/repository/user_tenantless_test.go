@@ -11,7 +11,10 @@ import (
 )
 
 func TestUserRepositoryTenantlessCreateAndUpdateKeepNullTenantID(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open("file:user_tenantless?mode=memory&cache=shared"), &gorm.Config{})
+	db, err := gorm.Open(
+		sqlite.Open("file:user_tenantless?mode=memory&cache=shared"),
+		&gorm.Config{},
+	)
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}
@@ -49,7 +52,10 @@ func TestUserRepositoryTenantlessCreateAndUpdateKeepNullTenantID(t *testing.T) {
 }
 
 func TestUserRepositoryFindUserByEmailOrUsernameFoldIsExactAndIncludesInactive(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open("file:user_fold_lookup?mode=memory&cache=shared"), &gorm.Config{})
+	db, err := gorm.Open(
+		sqlite.Open("file:user_fold_lookup?mode=memory&cache=shared"),
+		&gorm.Config{},
+	)
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}
@@ -58,8 +64,20 @@ func TestUserRepositoryFindUserByEmailOrUsernameFoldIsExactAndIncludesInactive(t
 	}
 	repo := NewUserRepository(db)
 	users := []*types.User{
-		{ID: "inactive", Username: "Alice.Local", Email: "Alice@Example.COM", PasswordHash: "hash", IsActive: true},
-		{ID: "wildcard", Username: "percent%user", Email: "underscore_user@example.com", PasswordHash: "hash", IsActive: true},
+		{
+			ID:           "inactive",
+			Username:     "Alice.Local",
+			Email:        "Alice@Example.COM",
+			PasswordHash: "hash",
+			IsActive:     true,
+		},
+		{
+			ID:           "wildcard",
+			Username:     "percent%user",
+			Email:        "underscore_user@example.com",
+			PasswordHash: "hash",
+			IsActive:     true,
+		},
 	}
 	for _, user := range users {
 		if err := repo.CreateUser(context.Background(), user); err != nil {
@@ -70,11 +88,19 @@ func TestUserRepositoryFindUserByEmailOrUsernameFoldIsExactAndIncludesInactive(t
 		t.Fatalf("deactivate: %v", err)
 	}
 
-	got, err := repo.FindUserByEmailOrUsernameFold(context.Background(), "alice@example.com", "unused")
+	got, err := repo.FindUserByEmailOrUsernameFold(
+		context.Background(),
+		"alice@example.com",
+		"unused",
+	)
 	if err != nil || got == nil || got.ID != "inactive" {
 		t.Fatalf("case-fold inactive email lookup = %#v, %v", got, err)
 	}
-	got, err = repo.FindUserByEmailOrUsernameFold(context.Background(), "unused@example.com", "ALICE.LOCAL")
+	got, err = repo.FindUserByEmailOrUsernameFold(
+		context.Background(),
+		"unused@example.com",
+		"ALICE.LOCAL",
+	)
 	if err != nil || got == nil || got.ID != "inactive" {
 		t.Fatalf("case-fold username lookup = %#v, %v", got, err)
 	}
@@ -86,14 +112,20 @@ func TestUserRepositoryFindUserByEmailOrUsernameFoldIsExactAndIncludesInactive(t
 	if err := db.Delete(&types.User{}, "id = ?", "inactive").Error; err != nil {
 		t.Fatalf("soft delete: %v", err)
 	}
-	got, err = repo.FindUserByEmailOrUsernameFold(context.Background(), "alice@example.com", "alice.local")
+	got, err = repo.FindUserByEmailOrUsernameFold(
+		context.Background(),
+		"alice@example.com",
+		"alice.local",
+	)
 	if err != nil || got != nil {
 		t.Fatalf("soft-deleted user must be excluded: %#v, %v", got, err)
 	}
 }
 
 func TestUserRepositorySearchUsersIsSQLitePortableAndEscapesWildcards(t *testing.T) {
-	dsn := "file:user_search_escape_" + time.Now().Format("150405.000000000") + "?mode=memory&cache=shared"
+	dsn := "file:user_search_escape_" + time.Now().
+		Format("150405.000000000") +
+		"?mode=memory&cache=shared"
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
@@ -103,8 +135,14 @@ func TestUserRepositorySearchUsersIsSQLitePortableAndEscapesWildcards(t *testing
 	}
 	repo := NewUserRepository(db)
 	for _, user := range []*types.User{
-		{ID: "literal-percent", Username: "percent%user", Email: "percent@example.com", PasswordHash: "hash", IsActive: true},
-		{ID: "literal-underscore", Username: "underscore_user", Email: "under@example.com", PasswordHash: "hash", IsActive: true},
+		{
+			ID: "literal-percent", Username: "percent%user", Email: "percent@example.com",
+			PasswordHash: "hash", IsActive: true,
+		},
+		{
+			ID: "literal-underscore", Username: "underscore_user", Email: "under@example.com",
+			PasswordHash: "hash", IsActive: true,
+		},
 		{ID: "plain", Username: "percentXuser", Email: "plain@example.com", PasswordHash: "hash", IsActive: true},
 	} {
 		if err := repo.CreateUser(context.Background(), user); err != nil {

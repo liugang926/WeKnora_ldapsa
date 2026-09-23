@@ -95,7 +95,12 @@ func (h *OrganizationHandler) mayListGroupResource(
 	return permission.Allowed
 }
 
-func (h *OrganizationHandler) mayListSharedKnowledgeBase(ctx context.Context, sourceTenantID uint64, kb *types.KnowledgeBase, kbID string) bool {
+func (h *OrganizationHandler) mayListSharedKnowledgeBase(
+	ctx context.Context,
+	sourceTenantID uint64,
+	kb *types.KnowledgeBase,
+	kbID string,
+) bool {
 	if kb != nil {
 		kbID = kb.ID
 		if kb.TenantID != 0 {
@@ -107,7 +112,12 @@ func (h *OrganizationHandler) mayListSharedKnowledgeBase(ctx context.Context, so
 	)
 }
 
-func (h *OrganizationHandler) mayListSharedAgent(ctx context.Context, sourceTenantID uint64, agent *types.CustomAgent, agentID string) bool {
+func (h *OrganizationHandler) mayListSharedAgent(
+	ctx context.Context,
+	sourceTenantID uint64,
+	agent *types.CustomAgent,
+	agentID string,
+) bool {
 	if agent != nil {
 		agentID = agent.ID
 		if agent.TenantID != 0 {

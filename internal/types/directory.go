@@ -10,10 +10,13 @@ import (
 type DirectoryProtocol string
 
 const (
+	// DirectoryProtocolLDAP identifies a generic LDAP directory.
 	DirectoryProtocolLDAP DirectoryProtocol = "ldap"
-	DirectoryProtocolAD   DirectoryProtocol = "active_directory"
+	// DirectoryProtocolAD enables Active Directory-specific semantics.
+	DirectoryProtocolAD DirectoryProtocol = "active_directory"
 )
 
+// IsValid reports whether the directory protocol is supported.
 func (p DirectoryProtocol) IsValid() bool {
 	return p == DirectoryProtocolLDAP || p == DirectoryProtocolAD
 }
@@ -23,47 +26,66 @@ func (p DirectoryProtocol) IsValid() bool {
 type DirectoryTLSMode string
 
 const (
-	DirectoryTLSLDAPS    DirectoryTLSMode = "ldaps"
+	// DirectoryTLSLDAPS uses implicit TLS.
+	DirectoryTLSLDAPS DirectoryTLSMode = "ldaps"
+	// DirectoryTLSStartTLS upgrades an LDAP connection to TLS.
 	DirectoryTLSStartTLS DirectoryTLSMode = "starttls"
 )
 
+// IsValid reports whether the encrypted directory transport is supported.
 func (m DirectoryTLSMode) IsValid() bool {
 	return m == DirectoryTLSLDAPS || m == DirectoryTLSStartTLS
 }
 
+// DirectoryConfigSource identifies the authority that manages connection settings.
 type DirectoryConfigSource string
 
 const (
+	// DirectoryConfigSourceDatabase stores UI-managed configuration in the database.
 	DirectoryConfigSourceDatabase DirectoryConfigSource = "database"
 	// DirectoryConfigSourceUI is a source-compatible name for callers that
 	// describe the same database-managed mode from the management UI.
-	DirectoryConfigSourceUI   DirectoryConfigSource = DirectoryConfigSourceDatabase
+	DirectoryConfigSourceUI DirectoryConfigSource = DirectoryConfigSourceDatabase
+	// DirectoryConfigSourceFile makes deployment-file settings read-only in the UI.
 	DirectoryConfigSourceFile DirectoryConfigSource = "file"
 )
 
+// DirectoryObjectStatus tracks whether an identity or group belongs to the active snapshot.
 type DirectoryObjectStatus string
 
 const (
-	DirectoryObjectActive     DirectoryObjectStatus = "active"
-	DirectoryObjectDisabled   DirectoryObjectStatus = "disabled"
+	// DirectoryObjectActive is available for login and group authorization.
+	DirectoryObjectActive DirectoryObjectStatus = "active"
+	// DirectoryObjectDisabled cannot authenticate.
+	DirectoryObjectDisabled DirectoryObjectStatus = "disabled"
+	// DirectoryObjectOutOfScope was absent from the latest complete snapshot.
 	DirectoryObjectOutOfScope DirectoryObjectStatus = "out_of_scope"
-	DirectoryObjectConflict   DirectoryObjectStatus = "conflict"
+	// DirectoryObjectConflict requires administrator resolution.
+	DirectoryObjectConflict DirectoryObjectStatus = "conflict"
 )
 
+// DirectorySyncStatus records the state of a synchronization attempt.
 type DirectorySyncStatus string
 
 const (
+	// DirectorySyncRunning indicates an active synchronization.
 	DirectorySyncRunning DirectorySyncStatus = "running"
+	// DirectorySyncSuccess indicates a complete applied snapshot.
 	DirectorySyncSuccess DirectorySyncStatus = "success"
-	DirectorySyncFailed  DirectorySyncStatus = "failed"
+	// DirectorySyncFailed indicates a failed snapshot attempt.
+	DirectorySyncFailed DirectorySyncStatus = "failed"
 )
 
+// DirectorySyncTrigger identifies why synchronization started.
 type DirectorySyncTrigger string
 
 const (
-	DirectorySyncTriggerManual    DirectorySyncTrigger = "manual"
+	// DirectorySyncTriggerManual starts from an administrator action.
+	DirectorySyncTriggerManual DirectorySyncTrigger = "manual"
+	// DirectorySyncTriggerScheduled starts from the background timer.
 	DirectorySyncTriggerScheduled DirectorySyncTrigger = "scheduled"
-	DirectorySyncTriggerLogin     DirectorySyncTrigger = "login"
+	// DirectorySyncTriggerLogin starts from an authentication-time refresh.
+	DirectorySyncTriggerLogin DirectorySyncTrigger = "login"
 )
 
 // Directory stores non-secret connection settings alongside an encrypted
@@ -75,20 +97,20 @@ type Directory struct {
 	Name                      string                `json:"name" gorm:"type:varchar(128);not null"`
 	Protocol                  DirectoryProtocol     `json:"protocol" gorm:"type:varchar(32);not null"`
 	Enabled                   bool                  `json:"enabled" gorm:"not null;default:false;index"`
-	ConfigSource              DirectoryConfigSource `json:"config_source" gorm:"type:varchar(16);not null;default:'database'"`
+	ConfigSource              DirectoryConfigSource `json:"config_source" gorm:"type:varchar(16);not null;default:'database'"` //nolint:lll // struct tag
 	TLSMode                   DirectoryTLSMode      `json:"tls_mode" gorm:"type:varchar(16);not null"`
 	ServerURLs                StringArray           `json:"server_urls" gorm:"type:jsonb;not null;default:'[]'"`
-	ServerNames               StringArray           `json:"server_names,omitempty" gorm:"type:jsonb;not null;default:'[]'"`
+	ServerNames               StringArray           `json:"server_names,omitempty" gorm:"type:jsonb;not null;default:'[]'"` //nolint:lll // struct tag
 	BaseDN                    string                `json:"base_dn" gorm:"type:text;not null"`
 	UserBaseDN                string                `json:"user_base_dn" gorm:"type:text;not null"`
 	GroupBaseDN               string                `json:"group_base_dn" gorm:"type:text;not null"`
 	UserFilter                string                `json:"user_filter" gorm:"type:text;not null"`
 	GroupFilter               string                `json:"group_filter" gorm:"type:text;not null"`
-	AllowedLoginFilter        string                `json:"allowed_login_filter,omitempty" gorm:"type:text;not null;default:''"`
+	AllowedLoginFilter        string                `json:"allowed_login_filter,omitempty" gorm:"type:text;not null;default:''"` //nolint:lll // struct tag
 	ServiceAccountDN          string                `json:"service_account_dn" gorm:"type:text;not null"`
 	PasswordCiphertext        string                `json:"-" gorm:"column:password_ciphertext;type:text;not null"`
 	EnterpriseCAPEM           string                `json:"-" gorm:"column:enterprise_ca_pem;type:text"`
-	SecurityConfigFingerprint string                `json:"-" gorm:"column:security_config_fingerprint;type:varchar(64);not null;default:''"`
+	SecurityConfigFingerprint string                `json:"-" gorm:"column:security_config_fingerprint;type:varchar(64);not null;default:''"` //nolint:lll // struct tag
 	ConnectTimeoutSeconds     int                   `json:"connect_timeout_seconds" gorm:"not null;default:5"`
 	QueryTimeoutSeconds       int                   `json:"query_timeout_seconds" gorm:"not null;default:10"`
 	PageSize                  int                   `json:"page_size" gorm:"not null;default:500"`
@@ -106,10 +128,13 @@ type Directory struct {
 	UpdatedAt                 time.Time             `json:"updated_at"`
 }
 
+// TableName names the directory configuration table.
 func (Directory) TableName() string { return "directories" }
 
+// IsFileManaged reports whether deployment files own this configuration.
 func (d Directory) IsFileManaged() bool { return d.ConfigSource == DirectoryConfigSourceFile }
 
+// IsFresh reports whether the last complete snapshot remains within the stale window.
 func (d Directory) IsFresh(now time.Time) bool {
 	if !d.Enabled || d.LastSuccessfulSyncAt == nil {
 		return false
@@ -134,7 +159,7 @@ type DirectoryIdentity struct {
 	UPN             string                `json:"upn,omitempty" gorm:"type:varchar(320);index"`
 	DisplayName     string                `json:"display_name,omitempty" gorm:"type:varchar(512)"`
 	Email           string                `json:"email,omitempty" gorm:"type:varchar(320)"`
-	PrimaryGroupSID string                `json:"primary_group_sid,omitempty" gorm:"column:primary_group_sid;type:varchar(256)"`
+	PrimaryGroupSID string                `json:"primary_group_sid,omitempty" gorm:"column:primary_group_sid;type:varchar(256)"` //nolint:lll // struct tag
 	UserID          *string               `json:"user_id,omitempty" gorm:"type:varchar(36);index"`
 	Status          DirectoryObjectStatus `json:"status" gorm:"type:varchar(24);not null;default:'active';index"`
 	DisabledReason  string                `json:"disabled_reason,omitempty" gorm:"type:text"`
@@ -144,8 +169,10 @@ type DirectoryIdentity struct {
 	UpdatedAt       time.Time             `json:"updated_at"`
 }
 
+// TableName names the directory identities table.
 func (DirectoryIdentity) TableName() string { return "directory_identities" }
 
+// DirectoryGroup stores a stable AD group identity and its latest attributes.
 type DirectoryGroup struct {
 	ID              string                `json:"id" gorm:"type:varchar(36);primaryKey"`
 	DirectoryID     string                `json:"directory_id" gorm:"type:varchar(36);not null;index"`
@@ -162,6 +189,7 @@ type DirectoryGroup struct {
 	UpdatedAt       time.Time             `json:"updated_at"`
 }
 
+// TableName names the directory groups table.
 func (DirectoryGroup) TableName() string { return "directory_groups" }
 
 // DirectoryGroupEdge preserves the directory hierarchy. ParentGroupID is the
@@ -175,13 +203,18 @@ type DirectoryGroupEdge struct {
 	CreatedAt       time.Time `json:"created_at"`
 }
 
+// TableName names the group hierarchy table.
 func (DirectoryGroupEdge) TableName() string { return "directory_group_edges" }
 
+// DirectoryMembershipSource records the provenance of a group membership.
 type DirectoryMembershipSource string
 
 const (
-	DirectoryMembershipDirect  DirectoryMembershipSource = "direct"
-	DirectoryMembershipNested  DirectoryMembershipSource = "nested"
+	// DirectoryMembershipDirect is a direct member edge.
+	DirectoryMembershipDirect DirectoryMembershipSource = "direct"
+	// DirectoryMembershipNested is inherited from a child group.
+	DirectoryMembershipNested DirectoryMembershipSource = "nested"
+	// DirectoryMembershipPrimary is an AD primary-group edge.
 	DirectoryMembershipPrimary DirectoryMembershipSource = "primary_group"
 )
 
@@ -200,6 +233,7 @@ type DirectoryGroupMembership struct {
 	CreatedAt       time.Time                 `json:"created_at"`
 }
 
+// TableName names the effective membership table.
 func (DirectoryGroupMembership) TableName() string { return "directory_group_memberships" }
 
 // DirectoryLoginSnapshot is a transactionally consistent view of the latest
@@ -211,6 +245,7 @@ type DirectoryLoginSnapshot struct {
 	EffectiveGroupObjectGUIDs []string
 }
 
+// DirectorySyncRun records one synchronization attempt and its outcome.
 type DirectorySyncRun struct {
 	ID              string               `json:"id" gorm:"type:varchar(36);primaryKey"`
 	DirectoryID     string               `json:"directory_id" gorm:"type:varchar(36);not null;index"`
@@ -227,8 +262,10 @@ type DirectorySyncRun struct {
 	CreatedAt       time.Time            `json:"created_at"`
 }
 
+// TableName names the directory synchronization runs table.
 func (DirectorySyncRun) TableName() string { return "directory_sync_runs" }
 
+// DirectoryIdentitySnapshot is adapter-neutral input to atomic persistence.
 // The snapshot types are adapter-neutral input to the atomic persistence
 // boundary. LDAP/AD adapters may collect pages/fail over independently, but
 // ApplySnapshot accepts only a complete, validated result.
@@ -244,6 +281,7 @@ type DirectoryIdentitySnapshot struct {
 	Enabled         bool
 }
 
+// DirectoryGroupSnapshot carries one group in a complete directory snapshot.
 type DirectoryGroupSnapshot struct {
 	ObjectGUID     string
 	ObjectSID      string
@@ -253,11 +291,13 @@ type DirectoryGroupSnapshot struct {
 	Email          string
 }
 
+// DirectoryGroupEdgeSnapshot carries one nested-group relationship.
 type DirectoryGroupEdgeSnapshot struct {
 	ParentGroupObjectGUID string
 	ChildGroupObjectGUID  string
 }
 
+// DirectoryMembershipSnapshot carries a user-to-group membership.
 type DirectoryMembershipSnapshot struct {
 	GroupObjectGUID string
 	UserObjectGUID  string
@@ -267,6 +307,7 @@ type DirectoryMembershipSnapshot struct {
 	Source          DirectoryMembershipSource
 }
 
+// DirectorySnapshot contains a complete, validated synchronization result.
 type DirectorySnapshot struct {
 	DirectoryID           string
 	ExpectedConfigVersion uint64
@@ -284,6 +325,7 @@ type DirectorySnapshot struct {
 	Trigger     DirectorySyncTrigger
 }
 
+// DirectorySnapshotResult reports the applied run and affected workspaces.
 type DirectorySnapshotResult struct {
 	SyncRun         *DirectorySyncRun `json:"sync_run"`
 	AffectedTenants map[uint64]uint64 `json:"affected_tenant_versions"`

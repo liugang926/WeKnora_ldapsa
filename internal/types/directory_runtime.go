@@ -64,6 +64,7 @@ type DirectoryAdminConfigUpdate struct {
 	StaleAfterSeconds     int                    `json:"stale_after_seconds"`
 }
 
+// DirectoryHealth reports availability and freshness of the directory module.
 type DirectoryHealth struct {
 	Enabled             bool       `json:"enabled"`
 	Available           bool       `json:"available"`
@@ -77,6 +78,7 @@ type DirectoryHealth struct {
 	NextSyncAt          *time.Time `json:"next_sync_at,omitempty"`
 }
 
+// DirectoryTestResult reports a redacted connection-test outcome.
 type DirectoryTestResult struct {
 	OK        bool   `json:"ok"`
 	Server    string `json:"server,omitempty"`
@@ -84,6 +86,7 @@ type DirectoryTestResult struct {
 	Message   string `json:"message,omitempty"`
 }
 
+// DirectoryObjectSummary identifies a selectable directory user or group.
 type DirectoryObjectSummary struct {
 	DirectoryID       string `json:"directory_id"`
 	IdentityID        string `json:"identity_id,omitempty"`
@@ -99,6 +102,7 @@ type DirectoryObjectSummary struct {
 	Status            string `json:"status,omitempty"`
 }
 
+// DirectoryGroupSummary includes group hierarchy and member counts.
 type DirectoryGroupSummary struct {
 	DirectoryObjectSummary
 	DirectMemberCount    int `json:"direct_member_count,omitempty"`
@@ -106,6 +110,7 @@ type DirectoryGroupSummary struct {
 	ParentGroupCount     int `json:"parent_group_count,omitempty"`
 }
 
+// DirectoryObjectSearchResult pages directory user search results.
 type DirectoryObjectSearchResult struct {
 	Items     []DirectoryObjectSummary `json:"items"`
 	Total     int                      `json:"total"`
@@ -113,6 +118,7 @@ type DirectoryObjectSearchResult struct {
 	Warning   string                   `json:"warning,omitempty"`
 }
 
+// DirectoryGroupSearchResult pages directory group search results.
 type DirectoryGroupSearchResult struct {
 	Items     []DirectoryGroupSummary `json:"items"`
 	Total     int                     `json:"total"`
@@ -120,6 +126,7 @@ type DirectoryGroupSearchResult struct {
 	Warning   string                  `json:"warning,omitempty"`
 }
 
+// DirectoryChangeCounts summarizes changes in a synchronization preview.
 type DirectoryChangeCounts struct {
 	Create    int `json:"create"`
 	Update    int `json:"update"`
@@ -129,6 +136,7 @@ type DirectoryChangeCounts struct {
 	Unchanged int `json:"unchanged"`
 }
 
+// DirectoryMembershipOrigin explains a direct, primary, or nested group path.
 type DirectoryMembershipOrigin struct {
 	Source       string `json:"source"`
 	OriginSource string `json:"origin_source"`
@@ -137,11 +145,13 @@ type DirectoryMembershipOrigin struct {
 	Path []DirectoryObjectSummary `json:"path"`
 }
 
+// DirectoryGroupMember includes an effective member and its provenance.
 type DirectoryGroupMember struct {
 	DirectoryObjectSummary
 	Origins []DirectoryMembershipOrigin `json:"origins"`
 }
 
+// DirectoryGroupMembersResult includes effective members and adjacent groups.
 type DirectoryGroupMembersResult struct {
 	Group                 DirectoryObjectSummary   `json:"group"`
 	Items                 []DirectoryGroupMember   `json:"items"`
@@ -151,11 +161,13 @@ type DirectoryGroupMembersResult struct {
 	UnresolvedMemberCount int                      `json:"unresolved_member_count"`
 }
 
+// DirectoryCatalogItem is a selectable user or group from the committed snapshot.
 type DirectoryCatalogItem struct {
 	DirectoryObjectSummary
 	DirectoryGroupID string `json:"directory_group_id,omitempty"`
 }
 
+// DirectoryCatalogResult pages objects visible to workspace managers.
 type DirectoryCatalogResult struct {
 	Items               []DirectoryCatalogItem `json:"items"`
 	Total               int                    `json:"total"`
@@ -165,6 +177,7 @@ type DirectoryCatalogResult struct {
 	SyncIntervalSeconds int                    `json:"sync_interval_seconds"`
 }
 
+// DirectorySyncPreview describes a proposed snapshot without applying it.
 type DirectorySyncPreview struct {
 	Users       DirectoryChangeCounts `json:"users"`
 	Groups      DirectoryChangeCounts `json:"groups"`
@@ -188,24 +201,32 @@ type DirectorySyncRunView struct {
 	Warnings        []string   `json:"warnings,omitempty"`
 }
 
+// DirectorySyncRunsResponse pages the administrator synchronization history.
 type DirectorySyncRunsResponse struct {
 	Runs  []DirectorySyncRunView `json:"runs"`
 	Total int                    `json:"total"`
 }
 
+// DirectoryLoginRequest carries a username and password for LDAP bind.
 type DirectoryLoginRequest struct {
 	Identifier string `json:"identifier" binding:"required"`
 	Password   string `json:"password" binding:"required"`
 }
 
+// DirectoryIdentityLinkRequest identifies an explicit local-account link.
 type DirectoryIdentityLinkRequest struct {
 	UserID string `json:"user_id" binding:"required"`
 }
 
 const (
-	AuditActionDirectoryConfigChanged    AuditAction = "directory.config_changed"
-	AuditActionDirectorySyncCompleted    AuditAction = "directory.sync_completed"
-	AuditActionDirectorySyncFailed       AuditAction = "directory.sync_failed"
-	AuditActionDirectoryIdentityLinked   AuditAction = "directory.identity_linked"
+	// AuditActionDirectoryConfigChanged records a connection configuration change.
+	AuditActionDirectoryConfigChanged AuditAction = "directory.config_changed"
+	// AuditActionDirectorySyncCompleted records a successful synchronization.
+	AuditActionDirectorySyncCompleted AuditAction = "directory.sync_completed"
+	// AuditActionDirectorySyncFailed records a failed synchronization.
+	AuditActionDirectorySyncFailed AuditAction = "directory.sync_failed"
+	// AuditActionDirectoryIdentityLinked records an explicit account link.
+	AuditActionDirectoryIdentityLinked AuditAction = "directory.identity_linked"
+	// AuditActionDirectoryIdentityUnlinked records a removed account link.
 	AuditActionDirectoryIdentityUnlinked AuditAction = "directory.identity_unlinked"
 )

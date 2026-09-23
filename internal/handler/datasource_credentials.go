@@ -37,7 +37,10 @@ func NewDataSourceCredentialsHandler(
 // ConfigureDataSourceCredentialsGroupAccess installs the same KB policy used
 // by the parent data-source endpoints. This is essential for API keys: their
 // route capability must not turn into access to a restricted KB's connector.
-func ConfigureDataSourceCredentialsGroupAccess(h *DataSourceCredentialsHandler, groupAccess interfaces.GroupAccessService) {
+func ConfigureDataSourceCredentialsGroupAccess(
+	h *DataSourceCredentialsHandler,
+	groupAccess interfaces.GroupAccessService,
+) {
 	if h != nil {
 		h.groupAccess = groupAccess
 	}
@@ -73,11 +76,17 @@ func (h *DataSourceCredentialsHandler) ownDataSource(c *gin.Context) (*types.Dat
 			time.Now().UTC(),
 		)
 		if accessErr != nil {
-			_ = c.Error(errors.NewServiceUnavailableError("cannot verify knowledge base access right now"))
+			_ = c.Error(
+				errors.NewServiceUnavailableError("cannot verify knowledge base access right now"),
+			)
 			return nil, false
 		}
 		if !permission.Allowed {
-			_ = c.Error(errors.NewForbiddenError("directory group permission required for this knowledge base"))
+			_ = c.Error(
+				errors.NewForbiddenError(
+					"directory group permission required for this knowledge base",
+				),
+			)
 			return nil, false
 		}
 	}
@@ -100,10 +109,15 @@ func (h *DataSourceCredentialsHandler) Put(c *gin.Context) {
 	}
 	if len(req.Credentials) == 0 {
 		c.Error(errors.NewBadRequestError(
-			"credentials map must be non-empty; to remove credentials use DELETE /credentials/credentials"))
+			"credentials map must be non-empty; to remove credentials use DELETE /credentials/credentials",
+		))
 		return
 	}
-	updated, err := h.service.UpdateDataSourceCredentials(c.Request.Context(), ds.ID, req.Credentials)
+	updated, err := h.service.UpdateDataSourceCredentials(
+		c.Request.Context(),
+		ds.ID,
+		req.Credentials,
+	)
 	if err != nil {
 		logger.ErrorWithFields(c.Request.Context(), err, map[string]interface{}{
 			"data_source_id": secutils.SanitizeForLog(ds.ID),
@@ -130,7 +144,11 @@ func (h *DataSourceCredentialsHandler) DeleteField(c *gin.Context) {
 	}
 	field := c.Param("field")
 	if field != "credentials" {
-		c.Error(errors.NewBadRequestError("unknown credential field: " + secutils.SanitizeForLog(field)))
+		_ = c.Error(
+			errors.NewBadRequestError(
+				"unknown credential field: " + secutils.SanitizeForLog(field),
+			),
+		)
 		return
 	}
 	if err := h.service.ClearDataSourceCredentials(c.Request.Context(), ds.ID); err != nil {

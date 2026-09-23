@@ -79,20 +79,20 @@ func (e *EvaluationHandler) Evaluation(c *gin.Context) {
 		tenantIDValue, ok := tenantID.(uint64)
 		if !ok || tenantIDValue == 0 {
 			logger.Error(ctx, "Invalid tenant ID in evaluation authorization context")
-			c.Error(errors.NewUnauthorizedError("Unauthorized"))
+			_ = c.Error(errors.NewUnauthorizedError("Unauthorized"))
 			return
 		}
 		if e.kbService == nil {
-			c.Error(errors.NewServiceUnavailableError("Cannot verify knowledge base ownership right now"))
+			_ = c.Error(errors.NewServiceUnavailableError("Cannot verify knowledge base ownership right now"))
 			return
 		}
 		kb, kbErr := e.kbService.GetKnowledgeBaseByIDOnly(ctx, request.KnowledgeBaseID)
 		if kbErr != nil || kb == nil {
-			c.Error(errors.NewNotFoundError("Knowledge base not found"))
+			_ = c.Error(errors.NewNotFoundError("Knowledge base not found"))
 			return
 		}
 		if kb.TenantID != tenantIDValue {
-			c.Error(errors.NewForbiddenError("Knowledge base belongs to another workspace"))
+			_ = c.Error(errors.NewForbiddenError("Knowledge base belongs to another workspace"))
 			return
 		}
 		permission, accessErr := e.groupAccess.EffectivePermission(
@@ -105,7 +105,7 @@ func (e *EvaluationHandler) Evaluation(c *gin.Context) {
 		)
 		if accessErr != nil {
 			logger.Errorf(ctx, "Failed to verify evaluation knowledge base access: %v", accessErr)
-			c.Error(errors.NewServiceUnavailableError("Cannot verify knowledge base access right now"))
+			_ = c.Error(errors.NewServiceUnavailableError("Cannot verify knowledge base access right now"))
 			return
 		}
 		if !permission.Allowed {

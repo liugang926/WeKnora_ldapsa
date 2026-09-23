@@ -21,7 +21,11 @@ type directoryLoginRuntimeStub struct {
 	err error
 }
 
-func (s *directoryLoginRuntimeStub) Login(context.Context, string, string) (*types.LoginResponse, error) {
+func (s *directoryLoginRuntimeStub) Login(
+	context.Context,
+	string,
+	string,
+) (*types.LoginResponse, error) {
 	return nil, s.err
 }
 
@@ -34,26 +38,65 @@ func TestLDAPLoginMapsDirectoryOperationalFailuresToServiceUnavailable(t *testin
 	}{
 		{
 			name: "all controllers unavailable",
-			err: &ldapdirectory.FailoverError{Operation: "authentication", Attempts: []ldapdirectory.ControllerAttempt{{
-				ControllerURL: "ldaps://dc.example.test", Err: errors.New("connection refused"),
-			}}},
+			err: &ldapdirectory.FailoverError{
+				Operation: "authentication",
+				Attempts: []ldapdirectory.ControllerAttempt{{
+					ControllerURL: "ldaps://dc.example.test", Err: errors.New("connection refused"),
+				}},
+			},
 			httpCode: http.StatusServiceUnavailable,
 		},
-		{name: "incomplete membership page", err: ldapdirectory.ErrIncompleteResults, httpCode: http.StatusServiceUnavailable},
-		{name: "invalid live group", err: ldapdirectory.ErrInvalidDirectoryObject, httpCode: http.StatusServiceUnavailable},
-		{name: "membership mismatch", err: service.ErrDirectoryMembershipMismatch, httpCode: http.StatusServiceUnavailable},
-		{name: "wrong password", err: ldapdirectory.ErrInvalidCredentials, httpCode: http.StatusUnauthorized},
-		{name: "unknown user", err: ldapdirectory.ErrUserNotFound, httpCode: http.StatusUnauthorized},
-		{name: "ambiguous user", err: ldapdirectory.ErrAmbiguousUser, httpCode: http.StatusUnauthorized},
-		{name: "disabled user", err: ldapdirectory.ErrUserDisabled, httpCode: http.StatusUnauthorized},
-		{name: "database unavailable", err: errors.New("database down"), httpCode: http.StatusServiceUnavailable},
+		{
+			name:     "incomplete membership page",
+			err:      ldapdirectory.ErrIncompleteResults,
+			httpCode: http.StatusServiceUnavailable,
+		},
+		{
+			name:     "invalid live group",
+			err:      ldapdirectory.ErrInvalidDirectoryObject,
+			httpCode: http.StatusServiceUnavailable,
+		},
+		{
+			name:     "membership mismatch",
+			err:      service.ErrDirectoryMembershipMismatch,
+			httpCode: http.StatusServiceUnavailable,
+		},
+		{
+			name:     "wrong password",
+			err:      ldapdirectory.ErrInvalidCredentials,
+			httpCode: http.StatusUnauthorized,
+		},
+		{
+			name:     "unknown user",
+			err:      ldapdirectory.ErrUserNotFound,
+			httpCode: http.StatusUnauthorized,
+		},
+		{
+			name:     "ambiguous user",
+			err:      ldapdirectory.ErrAmbiguousUser,
+			httpCode: http.StatusUnauthorized,
+		},
+		{
+			name:     "disabled user",
+			err:      ldapdirectory.ErrUserDisabled,
+			httpCode: http.StatusUnauthorized,
+		},
+		{
+			name:     "database unavailable",
+			err:      errors.New("database down"),
+			httpCode: http.StatusServiceUnavailable,
+		},
 		{name: "deadline", err: context.DeadlineExceeded, httpCode: http.StatusServiceUnavailable},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			recorder := httptest.NewRecorder()
 			ctx, _ := gin.CreateTestContext(recorder)
-			ctx.Request = httptest.NewRequest(http.MethodPost, "/api/v1/auth/ldap", bytes.NewBufferString(`{"identifier":"alice","password":"secret"}`))
+			ctx.Request = httptest.NewRequest(
+				http.MethodPost,
+				"/api/v1/auth/ldap",
+				bytes.NewBufferString(`{"identifier":"alice","password":"secret"}`),
+			)
 			ctx.Request.Header.Set("Content-Type", "application/json")
 			NewDirectoryHandler(&directoryLoginRuntimeStub{err: test.err}).LDAPLogin(ctx)
 			if len(ctx.Errors) != 1 {
@@ -66,8 +109,12 @@ func TestLDAPLoginMapsDirectoryOperationalFailuresToServiceUnavailable(t *testin
 			if appErr.HTTPCode != test.httpCode {
 				t.Fatalf("HTTP status mapping = %d, want %d", appErr.HTTPCode, test.httpCode)
 			}
-			if test.httpCode == http.StatusUnauthorized && appErr.Message != "Directory login failed" {
-				t.Fatalf("authentication failures must be indistinguishable, got %q", appErr.Message)
+			if test.httpCode == http.StatusUnauthorized &&
+				appErr.Message != "Directory login failed" {
+				t.Fatalf(
+					"authentication failures must be indistinguishable, got %q",
+					appErr.Message,
+				)
 			}
 		})
 	}

@@ -23,6 +23,7 @@ type DirectoryHandler struct {
 	runtime interfaces.DirectoryRuntimeService
 }
 
+// NewDirectoryHandler exposes directory administration and login routes.
 func NewDirectoryHandler(runtime interfaces.DirectoryRuntimeService) *DirectoryHandler {
 	return &DirectoryHandler{runtime: runtime}
 }
@@ -45,6 +46,7 @@ func (h *DirectoryHandler) RegisterAdminRoutes(group *gin.RouterGroup) {
 	group.DELETE("/directory/identities/:object_guid/link", h.UnlinkIdentity)
 }
 
+// GetConfig returns the redacted directory configuration.
 func (h *DirectoryHandler) GetConfig(c *gin.Context) {
 	result, err := h.runtime.GetConfig(c.Request.Context())
 	if err != nil {
@@ -54,10 +56,14 @@ func (h *DirectoryHandler) GetConfig(c *gin.Context) {
 	c.JSON(http.StatusOK, result)
 }
 
+// UpdateConfig saves UI-managed directory settings.
 func (h *DirectoryHandler) UpdateConfig(c *gin.Context) {
 	var request types.DirectoryAdminConfigUpdate
 	if err := c.ShouldBindJSON(&request); err != nil {
-		_ = c.Error(apperrors.NewValidationError("Invalid directory configuration").WithDetails(err.Error()))
+		_ = c.Error(
+			apperrors.NewValidationError("Invalid directory configuration").
+				WithDetails(err.Error()),
+		)
 		return
 	}
 	result, err := h.runtime.UpdateConfig(c.Request.Context(), &request)
@@ -68,6 +74,7 @@ func (h *DirectoryHandler) UpdateConfig(c *gin.Context) {
 	c.JSON(http.StatusOK, result)
 }
 
+// GetStatus returns the latest directory synchronization state.
 func (h *DirectoryHandler) GetStatus(c *gin.Context) {
 	result, err := h.runtime.GetStatus(c.Request.Context())
 	if err != nil {
@@ -77,10 +84,14 @@ func (h *DirectoryHandler) GetStatus(c *gin.Context) {
 	c.JSON(http.StatusOK, result)
 }
 
+// TestConnection verifies connectivity and a paged directory search.
 func (h *DirectoryHandler) TestConnection(c *gin.Context) {
 	var request types.DirectoryAdminConfigUpdate
 	if err := c.ShouldBindJSON(&request); err != nil {
-		_ = c.Error(apperrors.NewValidationError("Invalid directory test configuration").WithDetails(err.Error()))
+		_ = c.Error(
+			apperrors.NewValidationError("Invalid directory test configuration").
+				WithDetails(err.Error()),
+		)
 		return
 	}
 	result, err := h.runtime.TestConnection(c.Request.Context(), &request)
@@ -91,8 +102,14 @@ func (h *DirectoryHandler) TestConnection(c *gin.Context) {
 	c.JSON(http.StatusOK, result)
 }
 
+// QueryUsers searches the committed directory user catalog.
 func (h *DirectoryHandler) QueryUsers(c *gin.Context) {
-	result, err := h.runtime.QueryUsers(c.Request.Context(), c.Query("q"), directoryQueryLimit(c), directoryQueryOffset(c))
+	result, err := h.runtime.QueryUsers(
+		c.Request.Context(),
+		c.Query("q"),
+		directoryQueryLimit(c),
+		directoryQueryOffset(c),
+	)
 	if err != nil {
 		directoryHTTPError(c, err)
 		return
@@ -100,8 +117,14 @@ func (h *DirectoryHandler) QueryUsers(c *gin.Context) {
 	c.JSON(http.StatusOK, result)
 }
 
+// QueryGroups searches the committed directory group catalog.
 func (h *DirectoryHandler) QueryGroups(c *gin.Context) {
-	result, err := h.runtime.QueryGroups(c.Request.Context(), c.Query("q"), directoryQueryLimit(c), directoryQueryOffset(c))
+	result, err := h.runtime.QueryGroups(
+		c.Request.Context(),
+		c.Query("q"),
+		directoryQueryLimit(c),
+		directoryQueryOffset(c),
+	)
 	if err != nil {
 		directoryHTTPError(c, err)
 		return
@@ -109,8 +132,15 @@ func (h *DirectoryHandler) QueryGroups(c *gin.Context) {
 	c.JSON(http.StatusOK, result)
 }
 
+// QueryGroupMembers returns direct and inherited members of a group.
 func (h *DirectoryHandler) QueryGroupMembers(c *gin.Context) {
-	result, err := h.runtime.QueryGroupMembers(c.Request.Context(), c.Param("object_guid"), c.Query("q"), directoryQueryLimit(c), directoryQueryOffset(c))
+	result, err := h.runtime.QueryGroupMembers(
+		c.Request.Context(),
+		c.Param("object_guid"),
+		c.Query("q"),
+		directoryQueryLimit(c),
+		directoryQueryOffset(c),
+	)
 	if err != nil {
 		directoryHTTPError(c, err)
 		return
@@ -126,8 +156,15 @@ func directoryQueryOffset(c *gin.Context) int {
 	return offset
 }
 
+// TenantCatalog exposes selectable directory objects to workspace managers.
 func (h *DirectoryHandler) TenantCatalog(c *gin.Context) {
-	result, err := h.runtime.Catalog(c.Request.Context(), c.Param("kind"), c.Query("q"), directoryQueryLimit(c), directoryQueryOffset(c))
+	result, err := h.runtime.Catalog(
+		c.Request.Context(),
+		c.Param("kind"),
+		c.Query("q"),
+		directoryQueryLimit(c),
+		directoryQueryOffset(c),
+	)
 	if err != nil {
 		directoryHTTPError(c, err)
 		return
@@ -135,8 +172,15 @@ func (h *DirectoryHandler) TenantCatalog(c *gin.Context) {
 	c.JSON(http.StatusOK, result)
 }
 
+// TenantCatalogGroupMembers previews a selectable group's effective members.
 func (h *DirectoryHandler) TenantCatalogGroupMembers(c *gin.Context) {
-	result, err := h.runtime.CatalogGroupMembers(c.Request.Context(), c.Param("object_guid"), c.Query("q"), directoryQueryLimit(c), directoryQueryOffset(c))
+	result, err := h.runtime.CatalogGroupMembers(
+		c.Request.Context(),
+		c.Param("object_guid"),
+		c.Query("q"),
+		directoryQueryLimit(c),
+		directoryQueryOffset(c),
+	)
 	if err != nil {
 		directoryHTTPError(c, err)
 		return
@@ -144,6 +188,7 @@ func (h *DirectoryHandler) TenantCatalogGroupMembers(c *gin.Context) {
 	c.JSON(http.StatusOK, result)
 }
 
+// AddTenantDirectoryMember links an AD account to a workspace member.
 func (h *DirectoryHandler) AddTenantDirectoryMember(c *gin.Context) {
 	tenantID, ok := parseTenantIDFromPath(c)
 	if !ok {
@@ -157,8 +202,14 @@ func (h *DirectoryHandler) AddTenantDirectoryMember(c *gin.Context) {
 		_ = c.Error(apperrors.NewValidationError("object_guid and role are required"))
 		return
 	}
-	member, err := h.runtime.AddTenantDirectoryMember(c.Request.Context(), tenantID, request.ObjectGUID, request.Role)
-	if errors.Is(err, service.ErrMembershipAlreadyExists) || errors.Is(err, service.ErrDirectoryIdentityLinkRequired) {
+	member, err := h.runtime.AddTenantDirectoryMember(
+		c.Request.Context(),
+		tenantID,
+		request.ObjectGUID,
+		request.Role,
+	)
+	if errors.Is(err, service.ErrMembershipAlreadyExists) ||
+		errors.Is(err, service.ErrDirectoryIdentityLinkRequired) {
 		_ = c.Error(apperrors.NewConflictError(err.Error()))
 		return
 	}
@@ -169,6 +220,7 @@ func (h *DirectoryHandler) AddTenantDirectoryMember(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": member})
 }
 
+// PreviewSync reports pending directory changes without applying them.
 func (h *DirectoryHandler) PreviewSync(c *gin.Context) {
 	result, err := h.runtime.PreviewSync(c.Request.Context())
 	if err != nil {
@@ -178,6 +230,7 @@ func (h *DirectoryHandler) PreviewSync(c *gin.Context) {
 	c.JSON(http.StatusOK, result)
 }
 
+// ManualSync runs a complete directory synchronization.
 func (h *DirectoryHandler) ManualSync(c *gin.Context) {
 	result, err := h.runtime.ManualSync(c.Request.Context())
 	if err != nil {
@@ -187,6 +240,7 @@ func (h *DirectoryHandler) ManualSync(c *gin.Context) {
 	c.JSON(http.StatusOK, result)
 }
 
+// ListSyncRuns returns directory synchronization history.
 func (h *DirectoryHandler) ListSyncRuns(c *gin.Context) {
 	result, err := h.runtime.ListSyncRuns(c.Request.Context(), directoryQueryLimit(c))
 	if err != nil {
@@ -196,6 +250,7 @@ func (h *DirectoryHandler) ListSyncRuns(c *gin.Context) {
 	c.JSON(http.StatusOK, result)
 }
 
+// LinkIdentity explicitly associates a directory identity with a local user.
 func (h *DirectoryHandler) LinkIdentity(c *gin.Context) {
 	var request types.DirectoryIdentityLinkRequest
 	if err := c.ShouldBindJSON(&request); err != nil {
@@ -209,6 +264,7 @@ func (h *DirectoryHandler) LinkIdentity(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
+// UnlinkIdentity removes an explicit directory-to-user association.
 func (h *DirectoryHandler) UnlinkIdentity(c *gin.Context) {
 	if err := h.runtime.UnlinkIdentity(c.Request.Context(), c.Param("object_guid")); err != nil {
 		directoryHTTPError(c, err)
@@ -245,7 +301,11 @@ func (h *DirectoryHandler) LDAPLogin(c *gin.Context) {
 	if err != nil {
 		switch {
 		case errors.Is(err, service.ErrDirectoryIdentityLinkRequired):
-			_ = c.Error(apperrors.NewConflictError("Directory identity conflicts with an existing account; ask an administrator to link it"))
+			_ = c.Error(
+				apperrors.NewConflictError(
+					"Directory identity conflicts with an existing account; ask an administrator to link it",
+				),
+			)
 		case errors.Is(err, service.ErrDirectoryDisabled),
 			errors.Is(err, service.ErrDirectoryUnavailable),
 			errors.Is(err, service.ErrDirectoryMembershipMismatch),
@@ -257,16 +317,28 @@ func (h *DirectoryHandler) LDAPLogin(c *gin.Context) {
 			errors.Is(err, ldapdirectory.ErrInvalidDirectoryObject),
 			errors.Is(err, ldapdirectory.ErrDuplicateDirectoryObject),
 			isDirectoryFailoverError(err):
-			_ = c.Error(apperrors.NewServiceUnavailableError("Directory authentication is temporarily unavailable"))
+			_ = c.Error(
+				apperrors.NewServiceUnavailableError(
+					"Directory authentication is temporarily unavailable",
+				),
+			)
 		case errors.Is(err, service.ErrDirectoryIdentityUnavailable):
-			_ = c.Error(apperrors.NewForbiddenError("Directory account is disabled or outside the allowed login scope"))
+			_ = c.Error(
+				apperrors.NewForbiddenError(
+					"Directory account is disabled or outside the allowed login scope",
+				),
+			)
 		case errors.Is(err, ldapdirectory.ErrInvalidCredentials),
 			errors.Is(err, ldapdirectory.ErrUserNotFound),
 			errors.Is(err, ldapdirectory.ErrAmbiguousUser),
 			errors.Is(err, ldapdirectory.ErrUserDisabled):
 			_ = c.Error(apperrors.NewUnauthorizedError("Directory login failed"))
 		default:
-			_ = c.Error(apperrors.NewServiceUnavailableError("Directory authentication is temporarily unavailable"))
+			_ = c.Error(
+				apperrors.NewServiceUnavailableError(
+					"Directory authentication is temporarily unavailable",
+				),
+			)
 		}
 		return
 	}
@@ -281,11 +353,19 @@ func isDirectoryFailoverError(err error) bool {
 func directoryHTTPError(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, service.ErrDirectoryFileManaged):
-		_ = c.Error(apperrors.NewConflictError("Directory configuration is managed by deployment files and is read-only"))
+		_ = c.Error(
+			apperrors.NewConflictError(
+				"Directory configuration is managed by deployment files and is read-only",
+			),
+		)
 	case errors.Is(err, service.ErrDirectoryIdentityAlreadyLinked):
-		_ = c.Error(apperrors.NewConflictError("Directory identity is already linked to a different user"))
+		_ = c.Error(
+			apperrors.NewConflictError("Directory identity is already linked to a different user"),
+		)
 	case errors.Is(err, service.ErrDirectoryIdentityUnavailable):
-		_ = c.Error(apperrors.NewNotFoundError("Directory identity was not found in the active snapshot"))
+		_ = c.Error(
+			apperrors.NewNotFoundError("Directory identity was not found in the active snapshot"),
+		)
 	case errors.Is(err, service.ErrDirectorySyncInProgress):
 		_ = c.Error(apperrors.NewConflictError("A directory synchronization is already running"))
 	case errors.Is(err, service.ErrInvalidDirectoryConfig),
@@ -298,8 +378,13 @@ func directoryHTTPError(c *gin.Context, err error) {
 	case errors.Is(err, ldapdirectory.ErrInvalidServiceCredentials),
 		errors.Is(err, ldapdirectory.ErrIncompleteResults),
 		errors.Is(err, ldapdirectory.ErrMembershipCycle):
-		_ = c.Error(apperrors.NewServiceUnavailableError("Directory operation failed").WithDetails(err.Error()))
+		_ = c.Error(
+			apperrors.NewServiceUnavailableError("Directory operation failed").
+				WithDetails(err.Error()),
+		)
 	default:
-		_ = c.Error(apperrors.NewInternalServerError("Directory operation failed").WithDetails(err.Error()))
+		_ = c.Error(
+			apperrors.NewInternalServerError("Directory operation failed").WithDetails(err.Error()),
+		)
 	}
 }

@@ -41,12 +41,16 @@ type GroupAccessHandler struct {
 // ConfigureGroupAccessResourceCatalog enables revocation of outstanding file
 // capabilities when a knowledge-base policy changes. It is kept separate from
 // the constructor so focused handler tests can remain lightweight.
-func ConfigureGroupAccessResourceCatalog(h *GroupAccessHandler, resources interfaces.ResourceCatalog) {
+func ConfigureGroupAccessResourceCatalog(
+	h *GroupAccessHandler,
+	resources interfaces.ResourceCatalog,
+) {
 	if h != nil {
 		h.resources = resources
 	}
 }
 
+// NewGroupAccessHandler exposes workspace and resource group grants.
 func NewGroupAccessHandler(
 	directories interfaces.DirectoryRepository,
 	groups interfaces.GroupAccessRepository,
@@ -117,13 +121,14 @@ type tenantDirectoryGroupCandidate struct {
 type tenantGroupMutationRequest struct {
 	DirectoryID      string           `json:"directory_id"`
 	DirectoryGroupID string           `json:"directory_group_id"`
-	Role             types.TenantRole `json:"role" binding:"required"`
+	Role             types.TenantRole `json:"role"               binding:"required"`
 }
 
 type tenantGroupRoleRequest struct {
 	Role types.TenantRole `json:"role" binding:"required"`
 }
 
+// ListTenantDirectoryGroups lists groups available to a workspace.
 func (h *GroupAccessHandler) ListTenantDirectoryGroups(c *gin.Context) {
 	tenantID, ok := h.pathTenant(c)
 	if !ok {
@@ -131,7 +136,7 @@ func (h *GroupAccessHandler) ListTenantDirectoryGroups(c *gin.Context) {
 	}
 	ctx := c.Request.Context()
 	if parseBoolQuery(c.Query("available")) {
-		h.listAvailableTenantGroups(c, ctx, tenantID)
+		h.listAvailableTenantGroups(ctx, c, tenantID)
 		return
 	}
 
@@ -159,10 +164,17 @@ func (h *GroupAccessHandler) ListTenantDirectoryGroups(c *gin.Context) {
 		}
 		views = append(views, h.tenantGroupView(ctx, grant, directory, group))
 	}
-	c.JSON(http.StatusOK, gin.H{"success": true, "data": gin.H{"groups": views, "total": len(views)}})
+	c.JSON(
+		http.StatusOK,
+		gin.H{"success": true, "data": gin.H{"groups": views, "total": len(views)}},
+	)
 }
 
-func (h *GroupAccessHandler) listAvailableTenantGroups(c *gin.Context, ctx context.Context, tenantID uint64) {
+func (h *GroupAccessHandler) listAvailableTenantGroups(
+	ctx context.Context,
+	c *gin.Context,
+	tenantID uint64,
+) {
 	limit := boundedQueryLimit(c, 30)
 	query := strings.TrimSpace(c.Query("q"))
 	grants, err := h.groups.ListTenantGroupRoleGrants(ctx, tenantID)
@@ -219,13 +231,18 @@ searchDirectories:
 		if candidates[i].DisplayName == candidates[j].DisplayName {
 			return candidates[i].DirectoryGroupID < candidates[j].DirectoryGroupID
 		}
-		return strings.ToLower(candidates[i].DisplayName) < strings.ToLower(candidates[j].DisplayName)
+		return strings.ToLower(
+			candidates[i].DisplayName,
+		) < strings.ToLower(
+			candidates[j].DisplayName,
+		)
 	})
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": gin.H{
 		"groups": candidates, "total": len(candidates), "truncated": truncated,
 	}})
 }
 
+// AddTenantDirectoryGroup associates an AD group with a workspace role.
 func (h *GroupAccessHandler) AddTenantDirectoryGroup(c *gin.Context) {
 	tenantID, ok := h.pathTenant(c)
 	if !ok {
@@ -233,19 +250,28 @@ func (h *GroupAccessHandler) AddTenantDirectoryGroup(c *gin.Context) {
 	}
 	var request tenantGroupMutationRequest
 	if err := c.ShouldBindJSON(&request); err != nil {
-		c.Error(apperrors.NewValidationError("directory_id, directory_group_id and role are required").WithDetails(err.Error()))
+		c.Error(
+			apperrors.NewValidationError("directory_id, directory_group_id and role are required").
+				WithDetails(err.Error()),
+		)
 		return
 	}
 	if !validDirectoryRole(request.Role) {
 		c.Error(apperrors.NewValidationError("role must be viewer, contributor or admin"))
 		return
 	}
-	if strings.TrimSpace(request.DirectoryID) == "" || strings.TrimSpace(request.DirectoryGroupID) == "" {
+	if strings.TrimSpace(request.DirectoryID) == "" ||
+		strings.TrimSpace(request.DirectoryGroupID) == "" {
 		c.Error(apperrors.NewValidationError("directory_id and directory_group_id are required"))
 		return
 	}
 	ctx := c.Request.Context()
-	group, directory, err := h.findGroup(ctx, strings.TrimSpace(request.DirectoryID), strings.TrimSpace(request.DirectoryGroupID), true)
+	group, directory, err := h.findGroup(
+		ctx,
+		strings.TrimSpace(request.DirectoryID),
+		strings.TrimSpace(request.DirectoryGroupID),
+		true,
+	)
 	if err != nil {
 		h.groupLookupError(c, err)
 		return
@@ -259,12 +285,23 @@ func (h *GroupAccessHandler) AddTenantDirectoryGroup(c *gin.Context) {
 		h.internalError(c, "add workspace directory group", err)
 		return
 	}
-	h.emitAudit(ctx, tenantID, types.AuditAction("directory.tenant_group_grant_changed"), "tenant_group_role_grant", grant.ID, map[string]any{
-		"operation": "created", "directory_id": directory.ID, "directory_group_id": group.ID, "role": request.Role,
-	})
-	c.JSON(http.StatusCreated, gin.H{"success": true, "data": h.tenantGroupView(ctx, grant, directory, group)})
+	h.emitAudit(
+		ctx,
+		tenantID,
+		types.AuditAction("directory.tenant_group_grant_changed"),
+		"tenant_group_role_grant",
+		grant.ID,
+		map[string]any{
+			"operation": "created", "directory_id": directory.ID, "directory_group_id": group.ID, "role": request.Role,
+		},
+	)
+	c.JSON(
+		http.StatusCreated,
+		gin.H{"success": true, "data": h.tenantGroupView(ctx, grant, directory, group)},
+	)
 }
 
+// UpdateTenantDirectoryGroup changes a workspace group role.
 func (h *GroupAccessHandler) UpdateTenantDirectoryGroup(c *gin.Context) {
 	tenantID, ok := h.pathTenant(c)
 	if !ok {
@@ -295,13 +332,24 @@ func (h *GroupAccessHandler) UpdateTenantDirectoryGroup(c *gin.Context) {
 		h.internalError(c, "update workspace directory group", err)
 		return
 	}
-	h.emitAudit(ctx, tenantID, types.AuditAction("directory.tenant_group_grant_changed"), "tenant_group_role_grant", grant.ID, map[string]any{
-		"operation": "updated", "directory_id": directory.ID, "directory_group_id": group.ID,
-		"old_role": oldRole, "new_role": request.Role,
-	})
-	c.JSON(http.StatusOK, gin.H{"success": true, "data": h.tenantGroupView(ctx, grant, directory, group)})
+	h.emitAudit(
+		ctx,
+		tenantID,
+		types.AuditAction("directory.tenant_group_grant_changed"),
+		"tenant_group_role_grant",
+		grant.ID,
+		map[string]any{
+			"operation": "updated", "directory_id": directory.ID, "directory_group_id": group.ID,
+			"old_role": oldRole, "new_role": request.Role,
+		},
+	)
+	c.JSON(
+		http.StatusOK,
+		gin.H{"success": true, "data": h.tenantGroupView(ctx, grant, directory, group)},
+	)
 }
 
+// DeleteTenantDirectoryGroup removes a manual workspace group grant.
 func (h *GroupAccessHandler) DeleteTenantDirectoryGroup(c *gin.Context) {
 	tenantID, ok := h.pathTenant(c)
 	if !ok {
@@ -313,24 +361,32 @@ func (h *GroupAccessHandler) DeleteTenantDirectoryGroup(c *gin.Context) {
 		h.grantLookupError(c, err)
 		return
 	}
-	if err := h.access.DeleteTenantGroupRoleGrant(ctx, tenantID, grant.DirectoryGroupID, types.GrantOriginManual); err != nil {
+	err = h.access.DeleteTenantGroupRoleGrant(ctx, tenantID, grant.DirectoryGroupID, types.GrantOriginManual)
+	if err != nil {
 		h.internalError(c, "delete workspace directory group", err)
 		return
 	}
-	h.emitAudit(ctx, tenantID, types.AuditAction("directory.tenant_group_grant_changed"), "tenant_group_role_grant", grant.ID, map[string]any{
-		"operation": "deleted", "directory_group_id": grant.DirectoryGroupID, "role": grant.Role,
-	})
+	h.emitAudit(
+		ctx,
+		tenantID,
+		types.AuditAction("directory.tenant_group_grant_changed"),
+		"tenant_group_role_grant",
+		grant.ID,
+		map[string]any{
+			"operation": "deleted", "directory_group_id": grant.DirectoryGroupID, "role": grant.Role,
+		},
+	)
 	c.Status(http.StatusNoContent)
 }
 
 type resourceGrantRequest struct {
 	DirectoryID      string                   `json:"directory_id"`
 	DirectoryGroupID string                   `json:"directory_group_id" binding:"required"`
-	Permission       types.ResourcePermission `json:"permission" binding:"required"`
+	Permission       types.ResourcePermission `json:"permission"         binding:"required"`
 }
 
 type resourceAccessUpdateRequest struct {
-	Mode   types.ResourceAccessMode `json:"mode" binding:"required"`
+	Mode   types.ResourceAccessMode `json:"mode"   binding:"required"`
 	Grants []resourceGrantRequest   `json:"grants"`
 }
 
@@ -367,6 +423,7 @@ type resourceAccessImpactView struct {
 	Warnings           []string `json:"warnings,omitempty"`
 }
 
+// GetResourceGroupAccess returns a resource's access mode and grants.
 func (h *GroupAccessHandler) GetResourceGroupAccess(c *gin.Context) {
 	resourceType, resourceID, tenantID, ok := h.resolveResource(c)
 	if !ok {
@@ -380,6 +437,7 @@ func (h *GroupAccessHandler) GetResourceGroupAccess(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": view})
 }
 
+// UpdateResourceGroupAccess replaces a resource's manual group grants.
 func (h *GroupAccessHandler) UpdateResourceGroupAccess(c *gin.Context) {
 	resourceType, resourceID, tenantID, ok := h.resolveResource(c)
 	if !ok {
@@ -387,7 +445,9 @@ func (h *GroupAccessHandler) UpdateResourceGroupAccess(c *gin.Context) {
 	}
 	var request resourceAccessUpdateRequest
 	if err := c.ShouldBindJSON(&request); err != nil {
-		c.Error(apperrors.NewValidationError("mode and grants are required").WithDetails(err.Error()))
+		c.Error(
+			apperrors.NewValidationError("mode and grants are required").WithDetails(err.Error()),
+		)
 		return
 	}
 	ctx := c.Request.Context()
@@ -413,7 +473,11 @@ func (h *GroupAccessHandler) UpdateResourceGroupAccess(c *gin.Context) {
 		if _, keep := desired[resourceGrantKey(grant.DirectoryGroupID, grant.Permission)]; keep {
 			continue
 		}
-		if err := h.access.DeleteResourceGroupGrant(ctx, tenantID, resourceType, resourceID, grant.DirectoryGroupID, grant.Permission, types.GrantOriginManual); err != nil {
+		err := h.access.DeleteResourceGroupGrant(
+			ctx, tenantID, resourceType, resourceID,
+			grant.DirectoryGroupID, grant.Permission, types.GrantOriginManual,
+		)
+		if err != nil {
 			h.internalError(c, "delete resource group grant", err)
 			return
 		}
@@ -447,9 +511,16 @@ func (h *GroupAccessHandler) UpdateResourceGroupAccess(c *gin.Context) {
 			logger.Errorf(ctx, "revoke knowledge base access grants after policy update: %v", err)
 		}
 	}
-	h.emitAudit(ctx, tenantID, types.AuditAction("directory.resource_group_access_changed"), string(resourceType), resourceID, map[string]any{
-		"mode": request.Mode, "manual_grant_count": len(validated),
-	})
+	h.emitAudit(
+		ctx,
+		tenantID,
+		types.AuditAction("directory.resource_group_access_changed"),
+		string(resourceType),
+		resourceID,
+		map[string]any{
+			"mode": request.Mode, "manual_grant_count": len(validated),
+		},
+	)
 	view, err := h.buildResourceAccessView(ctx, tenantID, resourceType, resourceID)
 	if err != nil {
 		h.internalError(c, "read updated resource group access", err)
@@ -458,6 +529,7 @@ func (h *GroupAccessHandler) UpdateResourceGroupAccess(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": view})
 }
 
+// PreviewResourceGroupAccess estimates the effect of an access-mode change.
 func (h *GroupAccessHandler) PreviewResourceGroupAccess(c *gin.Context) {
 	resourceType, resourceID, tenantID, ok := h.resolveResource(c)
 	if !ok {
@@ -465,7 +537,9 @@ func (h *GroupAccessHandler) PreviewResourceGroupAccess(c *gin.Context) {
 	}
 	var request resourceAccessUpdateRequest
 	if err := c.ShouldBindJSON(&request); err != nil {
-		c.Error(apperrors.NewValidationError("mode and grants are required").WithDetails(err.Error()))
+		c.Error(
+			apperrors.NewValidationError("mode and grants are required").WithDetails(err.Error()),
+		)
 		return
 	}
 	ctx := c.Request.Context()
@@ -474,7 +548,14 @@ func (h *GroupAccessHandler) PreviewResourceGroupAccess(c *gin.Context) {
 		h.resourceRequestError(c, err)
 		return
 	}
-	impact, err := h.previewResourceAccess(ctx, tenantID, resourceType, resourceID, request.Mode, validated)
+	impact, err := h.previewResourceAccess(
+		ctx,
+		tenantID,
+		resourceType,
+		resourceID,
+		request.Mode,
+		validated,
+	)
 	if err != nil {
 		h.internalError(c, "preview resource group access", err)
 		return
@@ -509,8 +590,11 @@ func (h *GroupAccessHandler) validateResourceGrantRequest(
 	for _, item := range request.Grants {
 		item.DirectoryID = strings.TrimSpace(item.DirectoryID)
 		item.DirectoryGroupID = strings.TrimSpace(item.DirectoryGroupID)
-		if item.DirectoryID == "" || item.DirectoryGroupID == "" || !item.Permission.ValidFor(resourceType) {
-			return nil, errors.New("each group must identify a directory and have a valid permission for the resource type")
+		if item.DirectoryID == "" || item.DirectoryGroupID == "" ||
+			!item.Permission.ValidFor(resourceType) {
+			return nil, errors.New(
+				"each group must identify a directory and have a valid permission for the resource type",
+			)
 		}
 		if _, duplicate := seenGroups[item.DirectoryGroupID]; duplicate {
 			return nil, errDuplicateGrant
@@ -520,7 +604,10 @@ func (h *GroupAccessHandler) validateResourceGrantRequest(
 		if err != nil {
 			return nil, err
 		}
-		validated = append(validated, validatedResourceGrant{request: item, directory: directory, group: group})
+		validated = append(
+			validated,
+			validatedResourceGrant{request: item, directory: directory, group: group},
+		)
 	}
 	return validated, nil
 }
@@ -560,12 +647,16 @@ func (h *GroupAccessHandler) buildResourceAccessView(
 		if lookupErr != nil || group == nil || directory == nil {
 			grantViews = append(grantViews, resourceGroupView{
 				ID: grant.ID, DirectoryGroupID: grant.DirectoryGroupID, DisplayName: grant.DirectoryGroupID,
-				Permission: grant.Permission, Origin: grant.Origin, WorkspaceRole: workspaceRoles[grant.DirectoryGroupID],
+				Permission: grant.Permission, Origin: grant.Origin,
+				WorkspaceRole: workspaceRoles[grant.DirectoryGroupID],
 			})
 			continue
 		}
 		selectedGroups[group.ID] = struct{}{}
-		grantViews = append(grantViews, h.resourceGroupView(ctx, directory, group, grant, workspaceRoles[group.ID]))
+		grantViews = append(
+			grantViews,
+			h.resourceGroupView(ctx, directory, group, grant, workspaceRoles[group.ID]),
+		)
 	}
 
 	available := make([]resourceGroupView, 0)
@@ -578,7 +669,13 @@ func (h *GroupAccessHandler) buildResourceAccessView(
 			continue
 		}
 		for offset := 0; len(available) < groupListLimit; offset += groupLookupPageSize {
-			groups, err := h.directories.ListGroups(ctx, directory.ID, "", offset, groupLookupPageSize)
+			groups, err := h.directories.ListGroups(
+				ctx,
+				directory.ID,
+				"",
+				offset,
+				groupLookupPageSize,
+			)
 			if err != nil {
 				return nil, err
 			}
@@ -589,7 +686,10 @@ func (h *GroupAccessHandler) buildResourceAccessView(
 				if _, selected := selectedGroups[group.ID]; selected {
 					continue
 				}
-				available = append(available, h.resourceGroupView(ctx, directory, group, nil, workspaceRoles[group.ID]))
+				available = append(
+					available,
+					h.resourceGroupView(ctx, directory, group, nil, workspaceRoles[group.ID]),
+				)
 				if len(available) == groupListLimit {
 					break
 				}
@@ -638,7 +738,11 @@ func (h *GroupAccessHandler) previewResourceAccess(
 		group, directory, lookupErr := h.findGroup(ctx, "", grant.DirectoryGroupID, true)
 		if lookupErr == nil {
 			proposed = append(proposed, validatedResourceGrant{
-				request:   resourceGrantRequest{DirectoryID: directory.ID, DirectoryGroupID: group.ID, Permission: grant.Permission},
+				request: resourceGrantRequest{
+					DirectoryID:      directory.ID,
+					DirectoryGroupID: group.ID,
+					Permission:       grant.Permission,
+				},
 				directory: directory, group: group,
 			})
 		}
@@ -661,9 +765,22 @@ func (h *GroupAccessHandler) previewResourceAccess(
 		if !role.Member {
 			continue
 		}
-		userCtx := types.WithCaller(context.Background(), types.Caller{TenantID: tenantID, UserID: userID, Role: role.Role})
-		userCtx = types.WithPrincipal(userCtx, types.Principal{Type: types.PrincipalWebUser, ID: userID})
-		current, err := h.access.EffectivePermission(userCtx, tenantID, resourceType, resourceID, action, now)
+		userCtx := types.WithCaller(
+			context.Background(),
+			types.Caller{TenantID: tenantID, UserID: userID, Role: role.Role},
+		)
+		userCtx = types.WithPrincipal(
+			userCtx,
+			types.Principal{Type: types.PrincipalWebUser, ID: userID},
+		)
+		current, err := h.access.EffectivePermission(
+			userCtx,
+			tenantID,
+			resourceType,
+			resourceID,
+			action,
+			now,
+		)
 		if err != nil {
 			return nil, err
 		}
@@ -689,7 +806,10 @@ func (h *GroupAccessHandler) previewResourceAccess(
 		}
 	}
 	if proposedMode == types.ResourceAccessRestricted && len(proposed) == 0 {
-		impact.Warnings = append(impact.Warnings, "No directory groups are selected; only workspace owners and administrators will retain access.")
+		impact.Warnings = append(
+			impact.Warnings,
+			"No directory groups are selected; only workspace owners and administrators will retain access.",
+		)
 	}
 	tenantGrants, err := h.groups.ListTenantGroupRoleGrants(ctx, tenantID)
 	if err != nil {
@@ -698,7 +818,12 @@ func (h *GroupAccessHandler) previewResourceAccess(
 	workspaceRoles := effectiveWorkspaceGrantRoles(tenantGrants)
 	for _, grant := range proposed {
 		if workspaceRoles[grant.group.ID] == nil {
-			impact.Warnings = append(impact.Warnings, "Directory group "+grant.group.DisplayName+" is not associated with this workspace; only users who are already workspace members through another path can benefit from this resource grant.")
+			impact.Warnings = append(
+				impact.Warnings,
+				"Directory group "+grant.group.DisplayName+
+					" is not associated with this workspace; only existing workspace members"+
+					" can benefit from this resource grant.",
+			)
 		}
 	}
 	return impact, nil
@@ -729,7 +854,9 @@ func (h *GroupAccessHandler) proposedAllowedUsers(
 			if err != nil {
 				return nil, err
 			}
-			if identity != nil && identity.Status == types.DirectoryObjectActive && identity.UserID != nil && *identity.UserID != "" {
+			if identity != nil && identity.Status == types.DirectoryObjectActive &&
+				identity.UserID != nil &&
+				*identity.UserID != "" {
 				allowed[*identity.UserID] = struct{}{}
 			}
 		}
@@ -737,11 +864,17 @@ func (h *GroupAccessHandler) proposedAllowedUsers(
 	return allowed, nil
 }
 
-func (h *GroupAccessHandler) resolveResource(c *gin.Context) (types.ResourceType, string, uint64, bool) {
+func (h *GroupAccessHandler) resolveResource(
+	c *gin.Context,
+) (types.ResourceType, string, uint64, bool) {
 	resourceType := types.ResourceType(strings.TrimSpace(c.Param("resource_type")))
 	resourceID := strings.TrimSpace(c.Param("resource_id"))
 	if !resourceType.IsValid() || resourceID == "" {
-		c.Error(apperrors.NewValidationError("resource_type must be knowledge_base or agent and resource_id is required"))
+		c.Error(
+			apperrors.NewValidationError(
+				"resource_type must be knowledge_base or agent and resource_id is required",
+			),
+		)
 		return "", "", 0, false
 	}
 	ctx := c.Request.Context()
@@ -779,7 +912,11 @@ func (h *GroupAccessHandler) pathTenant(c *gin.Context) (uint64, bool) {
 	return tenantID, true
 }
 
-func (h *GroupAccessHandler) manualTenantGrantByID(ctx context.Context, tenantID uint64, grantID string) (*types.TenantGroupRoleGrant, error) {
+func (h *GroupAccessHandler) manualTenantGrantByID(
+	ctx context.Context,
+	tenantID uint64,
+	grantID string,
+) (*types.TenantGroupRoleGrant, error) {
 	grantID = strings.TrimSpace(grantID)
 	if grantID == "" {
 		return nil, errGrantNotFound
@@ -832,13 +969,20 @@ func (h *GroupAccessHandler) findGroup(
 			continue
 		}
 		for offset := 0; ; offset += groupLookupPageSize {
-			groups, err := h.directories.ListGroups(ctx, directory.ID, "", offset, groupLookupPageSize)
+			groups, err := h.directories.ListGroups(
+				ctx,
+				directory.ID,
+				"",
+				offset,
+				groupLookupPageSize,
+			)
 			if err != nil {
 				return nil, nil, err
 			}
 			for _, group := range groups {
 				if group != nil && group.ID == groupID {
-					if requireActive && (!directory.Enabled || group.Status != types.DirectoryObjectActive) {
+					if requireActive &&
+						(!directory.Enabled || group.Status != types.DirectoryObjectActive) {
 						return nil, nil, errGroupInactive
 					}
 					return group, directory, nil
@@ -909,7 +1053,10 @@ func (h *GroupAccessHandler) resourceGroupView(
 	return view
 }
 
-func (h *GroupAccessHandler) membershipCounts(ctx context.Context, groupID string) (int, int, []string) {
+func (h *GroupAccessHandler) membershipCounts(
+	ctx context.Context,
+	groupID string,
+) (int, int, []string) {
 	memberships, err := h.directories.ListGroupMemberships(ctx, groupID)
 	if err != nil {
 		return 0, 0, nil
@@ -966,7 +1113,9 @@ func (h *GroupAccessHandler) nestedGroupCount(ctx context.Context, directoryID, 
 	return count
 }
 
-func effectiveWorkspaceGrantRoles(grants []*types.TenantGroupRoleGrant) map[string]*types.TenantRole {
+func effectiveWorkspaceGrantRoles(
+	grants []*types.TenantGroupRoleGrant,
+) map[string]*types.TenantRole {
 	roles := make(map[string]*types.TenantRole)
 	for _, grant := range grants {
 		if grant == nil || !validDirectoryRole(grant.Role) {
@@ -1032,7 +1181,9 @@ func (h *GroupAccessHandler) groupLookupError(c *gin.Context, err error) {
 	case errors.Is(err, errGroupNotFound):
 		c.Error(apperrors.NewNotFoundError("directory group not found"))
 	case errors.Is(err, errGroupInactive):
-		c.Error(apperrors.NewConflictError("directory group is inactive or its directory is disabled"))
+		c.Error(
+			apperrors.NewConflictError("directory group is inactive or its directory is disabled"),
+		)
 	default:
 		h.internalError(c, "look up directory group", err)
 	}
@@ -1043,7 +1194,9 @@ func (h *GroupAccessHandler) grantLookupError(c *gin.Context, err error) {
 	case errors.Is(err, errGrantNotFound):
 		c.Error(apperrors.NewNotFoundError("group grant not found"))
 	case errors.Is(err, errDirectoryGrantLocked):
-		c.Error(apperrors.NewConflictError("directory-derived grants are managed by synchronization"))
+		c.Error(
+			apperrors.NewConflictError("directory-derived grants are managed by synchronization"),
+		)
 	default:
 		h.internalError(c, "look up group grant", err)
 	}
@@ -1054,7 +1207,9 @@ func (h *GroupAccessHandler) resourceRequestError(c *gin.Context, err error) {
 	case errors.Is(err, errGroupNotFound):
 		c.Error(apperrors.NewNotFoundError("directory group not found"))
 	case errors.Is(err, errGroupInactive):
-		c.Error(apperrors.NewConflictError("directory group is inactive or its directory is disabled"))
+		c.Error(
+			apperrors.NewConflictError("directory group is inactive or its directory is disabled"),
+		)
 	case errors.Is(err, errDuplicateGrant):
 		c.Error(apperrors.NewValidationError("a directory group may appear only once"))
 	default:

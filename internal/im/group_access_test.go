@@ -83,7 +83,11 @@ func TestAuthorizeIMAgentUse(t *testing.T) {
 		}
 		if !probe.principalOK || probe.principal.Type != types.PrincipalIMUser ||
 			probe.principal.ID != "42:channel-1:feishu:external-user-1" {
-			t.Fatalf("Authorize() principal = %#v (ok=%v), want verified IM principal", probe.principal, probe.principalOK)
+			t.Fatalf(
+				"Authorize() principal = %#v (ok=%v), want verified IM principal",
+				probe.principal,
+				probe.principalOK,
+			)
 		}
 	})
 
@@ -91,7 +95,10 @@ func TestAuthorizeIMAgentUse(t *testing.T) {
 		name string
 		err  error
 	}{
-		{name: "restricted policy denies machine principal", err: errors.New("resource access denied: verifiable_user_required")},
+		{
+			name: "restricted policy denies machine principal",
+			err:  errors.New("resource access denied: verifiable_user_required"),
+		},
 		{name: "policy lookup failure fails closed", err: errors.New("policy store unavailable")},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -144,6 +151,10 @@ func TestHandleMessageChecksAgentAccessBeforeResolvingSession(t *testing.T) {
 		t.Fatalf("Authorize() calls = %d, want 1", probe.calls)
 	}
 	if !probe.principalOK || probe.principal.Type != types.PrincipalIMUser {
-		t.Fatalf("Authorize() principal = %#v (ok=%v), want IM principal", probe.principal, probe.principalOK)
+		t.Fatalf(
+			"Authorize() principal = %#v (ok=%v), want IM principal",
+			probe.principal,
+			probe.principalOK,
+		)
 	}
 }

@@ -847,7 +847,8 @@ func (h *AuthHandler) GetAuthConfig(c *gin.Context) {
 	ldapEnabled := false
 	ldapProviderDisplayName := ""
 	if h.directoryRuntime != nil {
-		if directoryConfig, err := h.directoryRuntime.GetConfig(c.Request.Context()); err == nil && directoryConfig != nil {
+		directoryConfig, err := h.directoryRuntime.GetConfig(c.Request.Context())
+		if err == nil && directoryConfig != nil {
 			ldapEnabled = directoryConfig.Enabled
 			ldapProviderDisplayName = directoryConfig.DisplayName
 		}

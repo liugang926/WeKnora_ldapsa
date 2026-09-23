@@ -17,7 +17,11 @@ type directoryBrowseStub struct {
 	limit, offset int
 }
 
-func (s *directoryBrowseStub) QueryGroupMembers(_ context.Context, guid, query string, limit, offset int) (*types.DirectoryGroupMembersResult, error) {
+func (s *directoryBrowseStub) QueryGroupMembers(
+	_ context.Context,
+	guid, query string,
+	limit, offset int,
+) (*types.DirectoryGroupMembersResult, error) {
 	s.guid, s.query, s.limit, s.offset = guid, query, limit, offset
 	return &types.DirectoryGroupMembersResult{Items: []types.DirectoryGroupMember{}}, nil
 }
@@ -38,7 +42,14 @@ func TestDirectoryGroupMembersHTTPPagination(t *testing.T) {
 		r := gin.New()
 		h.RegisterAdminRoutes(r.Group("/system/admin"))
 		response := httptest.NewRecorder()
-		r.ServeHTTP(response, httptest.NewRequest("GET", "/system/admin/directory/groups/group-guid/members"+tc.query, nil))
+		r.ServeHTTP(
+			response,
+			httptest.NewRequest(
+				"GET",
+				"/system/admin/directory/groups/group-guid/members"+tc.query,
+				nil,
+			),
+		)
 		require.Equal(t, 200, response.Code)
 		require.Equal(t, "group-guid", stub.guid)
 		require.Equal(t, tc.limit, stub.limit)

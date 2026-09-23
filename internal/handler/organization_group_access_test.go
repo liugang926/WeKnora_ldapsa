@@ -53,7 +53,10 @@ func (organizationGroupOrgStub) GetTenantMember(
 	return &types.OrganizationTenantMember{Role: types.OrgRoleViewer}, nil
 }
 
-func (organizationGroupOrgStub) GetOrganization(context.Context, string) (*types.Organization, error) {
+func (organizationGroupOrgStub) GetOrganization(
+	context.Context,
+	string,
+) (*types.Organization, error) {
 	return &types.Organization{ID: "org-1", Name: "Organization"}, nil
 }
 
@@ -64,7 +67,10 @@ type organizationGroupShareStub struct {
 	inOrg  []*types.OrganizationSharedKnowledgeBaseItem
 }
 
-func (s organizationGroupShareStub) ListSharesByOrganization(context.Context, string) ([]*types.KnowledgeBaseShare, error) {
+func (s organizationGroupShareStub) ListSharesByOrganization(
+	context.Context,
+	string,
+) ([]*types.KnowledgeBaseShare, error) {
 	return s.shares, nil
 }
 
@@ -87,7 +93,10 @@ type organizationGroupAgentShareStub struct {
 	inOrg  []*types.OrganizationSharedAgentItem
 }
 
-func (s organizationGroupAgentShareStub) ListSharesByOrganization(context.Context, string) ([]*types.AgentShare, error) {
+func (s organizationGroupAgentShareStub) ListSharesByOrganization(
+	context.Context,
+	string,
+) ([]*types.AgentShare, error) {
 	return s.shares, nil
 }
 
@@ -114,7 +123,10 @@ type organizationGroupKBStub struct {
 	byID map[string]*types.KnowledgeBase
 }
 
-func (s organizationGroupKBStub) GetKnowledgeBaseByIDOnly(_ context.Context, id string) (*types.KnowledgeBase, error) {
+func (s organizationGroupKBStub) GetKnowledgeBaseByIDOnly(
+	_ context.Context,
+	id string,
+) (*types.KnowledgeBase, error) {
 	kb := s.byID[id]
 	if kb == nil {
 		return nil, errors.New("not found")
@@ -147,13 +159,31 @@ func TestOrganizationSharedListsApplyGroupResourceAccess(t *testing.T) {
 
 	access := &organizationGroupAccessStub{
 		allowed: map[string]bool{"kb-allowed": true, "agent-allowed": true},
-		fail:    map[string]error{"kb-error": errors.New("directory unavailable"), "agent-error": errors.New("directory unavailable")},
+		fail: map[string]error{
+			"kb-error":    errors.New("directory unavailable"),
+			"agent-error": errors.New("directory unavailable"),
+		},
 	}
 	shareService := organizationGroupShareStub{
 		shares: []*types.KnowledgeBaseShare{
-			{ID: "share-allowed", KnowledgeBaseID: "kb-allowed", SourceTenantID: 42, Permission: types.OrgRoleViewer},
-			{ID: "share-denied", KnowledgeBaseID: "kb-denied", SourceTenantID: 42, Permission: types.OrgRoleViewer},
-			{ID: "share-error", KnowledgeBaseID: "kb-error", SourceTenantID: 42, Permission: types.OrgRoleViewer},
+			{
+				ID:              "share-allowed",
+				KnowledgeBaseID: "kb-allowed",
+				SourceTenantID:  42,
+				Permission:      types.OrgRoleViewer,
+			},
+			{
+				ID:              "share-denied",
+				KnowledgeBaseID: "kb-denied",
+				SourceTenantID:  42,
+				Permission:      types.OrgRoleViewer,
+			},
+			{
+				ID:              "share-error",
+				KnowledgeBaseID: "kb-error",
+				SourceTenantID:  42,
+				Permission:      types.OrgRoleViewer,
+			},
 		},
 		shared: []*types.SharedKnowledgeBaseInfo{
 			{KnowledgeBase: kb("kb-allowed", "Allowed KB"), SourceTenantID: 42},
@@ -161,16 +191,46 @@ func TestOrganizationSharedListsApplyGroupResourceAccess(t *testing.T) {
 			{KnowledgeBase: kb("kb-error", "Error KB"), SourceTenantID: 42},
 		},
 		inOrg: []*types.OrganizationSharedKnowledgeBaseItem{
-			{SharedKnowledgeBaseInfo: types.SharedKnowledgeBaseInfo{KnowledgeBase: kb("kb-allowed", "Allowed KB"), SourceTenantID: 42}},
-			{SharedKnowledgeBaseInfo: types.SharedKnowledgeBaseInfo{KnowledgeBase: kb("kb-denied", "Denied KB"), SourceTenantID: 42}},
-			{SharedKnowledgeBaseInfo: types.SharedKnowledgeBaseInfo{KnowledgeBase: kb("kb-error", "Error KB"), SourceTenantID: 42}},
+			{
+				SharedKnowledgeBaseInfo: types.SharedKnowledgeBaseInfo{
+					KnowledgeBase:  kb("kb-allowed", "Allowed KB"),
+					SourceTenantID: 42,
+				},
+			},
+			{
+				SharedKnowledgeBaseInfo: types.SharedKnowledgeBaseInfo{
+					KnowledgeBase:  kb("kb-denied", "Denied KB"),
+					SourceTenantID: 42,
+				},
+			},
+			{
+				SharedKnowledgeBaseInfo: types.SharedKnowledgeBaseInfo{
+					KnowledgeBase:  kb("kb-error", "Error KB"),
+					SourceTenantID: 42,
+				},
+			},
 		},
 	}
 	agentShareService := organizationGroupAgentShareStub{
 		shares: []*types.AgentShare{
-			{ID: "agent-share-allowed", AgentID: "agent-allowed", SourceTenantID: 42, Agent: agent("agent-allowed", "Allowed Agent")},
-			{ID: "agent-share-denied", AgentID: "agent-denied", SourceTenantID: 42, Agent: agent("agent-denied", "Denied Agent")},
-			{ID: "agent-share-error", AgentID: "agent-error", SourceTenantID: 42, Agent: agent("agent-error", "Error Agent")},
+			{
+				ID:             "agent-share-allowed",
+				AgentID:        "agent-allowed",
+				SourceTenantID: 42,
+				Agent:          agent("agent-allowed", "Allowed Agent"),
+			},
+			{
+				ID:             "agent-share-denied",
+				AgentID:        "agent-denied",
+				SourceTenantID: 42,
+				Agent:          agent("agent-denied", "Denied Agent"),
+			},
+			{
+				ID:             "agent-share-error",
+				AgentID:        "agent-error",
+				SourceTenantID: 42,
+				Agent:          agent("agent-error", "Error Agent"),
+			},
 		},
 		shared: []*types.SharedAgentInfo{
 			{Agent: agent("agent-allowed", "Allowed Agent"), SourceTenantID: 42},
@@ -178,9 +238,24 @@ func TestOrganizationSharedListsApplyGroupResourceAccess(t *testing.T) {
 			{Agent: agent("agent-error", "Error Agent"), SourceTenantID: 42},
 		},
 		inOrg: []*types.OrganizationSharedAgentItem{
-			{SharedAgentInfo: types.SharedAgentInfo{Agent: agent("agent-allowed", "Allowed Agent"), SourceTenantID: 42}},
-			{SharedAgentInfo: types.SharedAgentInfo{Agent: agent("agent-denied", "Denied Agent"), SourceTenantID: 42}},
-			{SharedAgentInfo: types.SharedAgentInfo{Agent: agent("agent-error", "Error Agent"), SourceTenantID: 42}},
+			{
+				SharedAgentInfo: types.SharedAgentInfo{
+					Agent:          agent("agent-allowed", "Allowed Agent"),
+					SourceTenantID: 42,
+				},
+			},
+			{
+				SharedAgentInfo: types.SharedAgentInfo{
+					Agent:          agent("agent-denied", "Denied Agent"),
+					SourceTenantID: 42,
+				},
+			},
+			{
+				SharedAgentInfo: types.SharedAgentInfo{
+					Agent:          agent("agent-error", "Error Agent"),
+					SourceTenantID: 42,
+				},
+			},
 		},
 	}
 	h := &OrganizationHandler{
@@ -195,12 +270,42 @@ func TestOrganizationSharedListsApplyGroupResourceAccess(t *testing.T) {
 		allowed string
 		denied  []string
 	}{
-		{name: "ListOrgShares", invoke: h.ListOrgShares, allowed: "share-allowed", denied: []string{"share-denied", "share-error"}},
-		{name: "ListSharedKnowledgeBases", invoke: h.ListSharedKnowledgeBases, allowed: "Allowed KB", denied: []string{"Denied KB", "Error KB"}},
-		{name: "ListOrganizationSharedKnowledgeBases", invoke: h.ListOrganizationSharedKnowledgeBases, allowed: "Allowed KB", denied: []string{"Denied KB", "Error KB"}},
-		{name: "ListOrgAgentShares", invoke: h.ListOrgAgentShares, allowed: "Allowed Agent", denied: []string{"Denied Agent", "Error Agent"}},
-		{name: "ListSharedAgents", invoke: h.ListSharedAgents, allowed: "Allowed Agent", denied: []string{"Denied Agent", "Error Agent"}},
-		{name: "ListOrganizationSharedAgents", invoke: h.ListOrganizationSharedAgents, allowed: "Allowed Agent", denied: []string{"Denied Agent", "Error Agent"}},
+		{
+			name:    "ListOrgShares",
+			invoke:  h.ListOrgShares,
+			allowed: "share-allowed",
+			denied:  []string{"share-denied", "share-error"},
+		},
+		{
+			name:    "ListSharedKnowledgeBases",
+			invoke:  h.ListSharedKnowledgeBases,
+			allowed: "Allowed KB",
+			denied:  []string{"Denied KB", "Error KB"},
+		},
+		{
+			name:    "ListOrganizationSharedKnowledgeBases",
+			invoke:  h.ListOrganizationSharedKnowledgeBases,
+			allowed: "Allowed KB",
+			denied:  []string{"Denied KB", "Error KB"},
+		},
+		{
+			name:    "ListOrgAgentShares",
+			invoke:  h.ListOrgAgentShares,
+			allowed: "Allowed Agent",
+			denied:  []string{"Denied Agent", "Error Agent"},
+		},
+		{
+			name:    "ListSharedAgents",
+			invoke:  h.ListSharedAgents,
+			allowed: "Allowed Agent",
+			denied:  []string{"Denied Agent", "Error Agent"},
+		},
+		{
+			name:    "ListOrganizationSharedAgents",
+			invoke:  h.ListOrganizationSharedAgents,
+			allowed: "Allowed Agent",
+			denied:  []string{"Denied Agent", "Error Agent"},
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -232,7 +337,10 @@ func TestOrganizationAgentCarriedKnowledgeBasesRequireAgentAndKBAccess(t *testin
 		return &types.OrganizationSharedAgentItem{SharedAgentInfo: types.SharedAgentInfo{
 			Agent: &types.CustomAgent{
 				ID: id, Name: id, TenantID: 42,
-				Config: types.CustomAgentConfig{KBSelectionMode: "selected", KnowledgeBases: []string{kbID}},
+				Config: types.CustomAgentConfig{
+					KBSelectionMode: "selected",
+					KnowledgeBases:  []string{kbID},
+				},
 			},
 			SourceTenantID: 42,
 		}}
@@ -246,15 +354,21 @@ func TestOrganizationAgentCarriedKnowledgeBasesRequireAgentAndKBAccess(t *testin
 	h := &OrganizationHandler{
 		orgService:   organizationGroupOrgStub{},
 		shareService: organizationGroupShareStub{},
-		agentShareService: organizationGroupAgentShareStub{inOrg: []*types.OrganizationSharedAgentItem{
-			agent("agent-allowed", "kb-allowed"),
-			agent("agent-denied", "kb-behind-denied-agent"),
-			agent("agent-allowed", "kb-denied"),
-		}},
+		agentShareService: organizationGroupAgentShareStub{
+			inOrg: []*types.OrganizationSharedAgentItem{
+				agent("agent-allowed", "kb-allowed"),
+				agent("agent-denied", "kb-behind-denied-agent"),
+				agent("agent-allowed", "kb-denied"),
+			},
+		},
 		kbService: organizationGroupKBStub{byID: map[string]*types.KnowledgeBase{
-			"kb-allowed":             {ID: "kb-allowed", Name: "Visible Carried KB", TenantID: 42},
-			"kb-behind-denied-agent": {ID: "kb-behind-denied-agent", Name: "Denied Agent KB", TenantID: 42},
-			"kb-denied":              {ID: "kb-denied", Name: "Denied KB", TenantID: 42},
+			"kb-allowed": {ID: "kb-allowed", Name: "Visible Carried KB", TenantID: 42},
+			"kb-behind-denied-agent": {
+				ID:       "kb-behind-denied-agent",
+				Name:     "Denied Agent KB",
+				TenantID: 42,
+			},
+			"kb-denied": {ID: "kb-denied", Name: "Denied KB", TenantID: 42},
 		}},
 	}
 	ConfigureOrganizationGroupAccess(h, access)

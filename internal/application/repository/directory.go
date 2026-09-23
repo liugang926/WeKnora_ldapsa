@@ -20,9 +20,17 @@ type directoryRepository struct {
 	db *gorm.DB
 }
 
-var ErrDirectoryConfigVersionChanged = errors.New("directory configuration changed during synchronization")
-var ErrDirectoryIdentityLinkConflict = errors.New("directory identity link conflicts with an existing link")
+// ErrDirectoryConfigVersionChanged prevents applying a stale synchronization result.
+var ErrDirectoryConfigVersionChanged = errors.New(
+	"directory configuration changed during synchronization",
+)
 
+// ErrDirectoryIdentityLinkConflict prevents conflicting account associations.
+var ErrDirectoryIdentityLinkConflict = errors.New(
+	"directory identity link conflicts with an existing link",
+)
+
+// NewDirectoryRepository persists directory snapshots and identities.
 func NewDirectoryRepository(db *gorm.DB) interfaces.DirectoryRepository {
 	return &directoryRepository{db: db}
 }
@@ -37,8 +45,10 @@ func (r *directoryRepository) Create(ctx context.Context, directory *types.Direc
 func (r *directoryRepository) Update(ctx context.Context, directory *types.Directory) error {
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var current types.Directory
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", directory.ID).First(&current).Error; err != nil {
-			return err
+		lookupErr := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("id = ?", directory.ID).First(&current).Error
+		if lookupErr != nil {
+			return lookupErr
 		}
 		tenantIDs, err := directoryAffectedTenantIDs(tx, directory.ID)
 		if err != nil {
@@ -53,7 +63,8 @@ func (r *directoryRepository) Update(ctx context.Context, directory *types.Direc
 				"security_config_fingerprint",
 				"connect_timeout_seconds", "query_timeout_seconds", "page_size", "result_limit",
 				"sync_interval_seconds", "stale_after_seconds", "updated_at",
-			).Updates(directory)
+			).
+			Updates(directory)
 		if res.Error != nil {
 			return res.Error
 		}
@@ -97,12 +108,14 @@ func directorySessionSecurityChanged(current, next *types.Directory) bool {
 	return current.Enabled != next.Enabled || current.Protocol != next.Protocol || current.TLSMode != next.TLSMode ||
 		strings.Join(current.ServerURLs, "\x00") != strings.Join(next.ServerURLs, "\x00") ||
 		strings.Join(current.ServerNames, "\x00") != strings.Join(next.ServerNames, "\x00") ||
-		current.BaseDN != next.BaseDN || current.UserBaseDN != next.UserBaseDN || current.GroupBaseDN != next.GroupBaseDN ||
+		current.BaseDN != next.BaseDN || current.UserBaseDN != next.UserBaseDN ||
+		current.GroupBaseDN != next.GroupBaseDN ||
 		current.UserFilter != next.UserFilter || current.GroupFilter != next.GroupFilter ||
 		current.AllowedLoginFilter != next.AllowedLoginFilter || current.ServiceAccountDN != next.ServiceAccountDN ||
 		current.PasswordCiphertext != next.PasswordCiphertext || current.EnterpriseCAPEM != next.EnterpriseCAPEM ||
 		current.SecurityConfigFingerprint != next.SecurityConfigFingerprint ||
-		current.PageSize != next.PageSize || current.ResultLimit != next.ResultLimit
+		current.PageSize != next.PageSize ||
+		current.ResultLimit != next.ResultLimit
 }
 
 // revokeDirectoryTokens is deliberately part of the same transaction as the
@@ -127,12 +140,14 @@ func directoryRequiresFreshSnapshot(current, next *types.Directory) bool {
 	return !current.Enabled || current.Protocol != next.Protocol || current.TLSMode != next.TLSMode ||
 		strings.Join(current.ServerURLs, "\x00") != strings.Join(next.ServerURLs, "\x00") ||
 		strings.Join(current.ServerNames, "\x00") != strings.Join(next.ServerNames, "\x00") ||
-		current.BaseDN != next.BaseDN || current.UserBaseDN != next.UserBaseDN || current.GroupBaseDN != next.GroupBaseDN ||
+		current.BaseDN != next.BaseDN || current.UserBaseDN != next.UserBaseDN ||
+		current.GroupBaseDN != next.GroupBaseDN ||
 		current.UserFilter != next.UserFilter || current.GroupFilter != next.GroupFilter ||
 		current.AllowedLoginFilter != next.AllowedLoginFilter || current.ServiceAccountDN != next.ServiceAccountDN ||
 		current.PasswordCiphertext != next.PasswordCiphertext || current.EnterpriseCAPEM != next.EnterpriseCAPEM ||
 		current.SecurityConfigFingerprint != next.SecurityConfigFingerprint ||
-		current.PageSize != next.PageSize || current.ResultLimit != next.ResultLimit
+		current.PageSize != next.PageSize ||
+		current.ResultLimit != next.ResultLimit
 }
 
 func (r *directoryRepository) Get(ctx context.Context, id string) (*types.Directory, error) {
@@ -176,7 +191,10 @@ func (r *directoryRepository) Delete(ctx context.Context, id string) error {
 	})
 }
 
-func (r *directoryRepository) GetIdentity(ctx context.Context, id string) (*types.DirectoryIdentity, error) {
+func (r *directoryRepository) GetIdentity(
+	ctx context.Context,
+	id string,
+) (*types.DirectoryIdentity, error) {
 	var identity types.DirectoryIdentity
 	if err := r.db.WithContext(ctx).Where("id = ?", id).First(&identity).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -187,7 +205,10 @@ func (r *directoryRepository) GetIdentity(ctx context.Context, id string) (*type
 	return &identity, nil
 }
 
-func (r *directoryRepository) GetIdentityByObjectGUID(ctx context.Context, directoryID, objectGUID string) (*types.DirectoryIdentity, error) {
+func (r *directoryRepository) GetIdentityByObjectGUID(
+	ctx context.Context,
+	directoryID, objectGUID string,
+) (*types.DirectoryIdentity, error) {
 	var identity types.DirectoryIdentity
 	if err := r.db.WithContext(ctx).
 		Where("directory_id = ? AND object_guid = ?", directoryID, objectGUID).
@@ -211,12 +232,14 @@ func (r *directoryRepository) GetLoginSnapshot(
 	var result *types.DirectoryLoginSnapshot
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var directory types.Directory
-		if err := tx.Clauses(clause.Locking{Strength: "SHARE"}).Where("id = ?", directoryID).First(&directory).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
+		lookupErr := tx.Clauses(clause.Locking{Strength: "SHARE"}).
+			Where("id = ?", directoryID).First(&directory).Error
+		if lookupErr != nil {
+			if errors.Is(lookupErr, gorm.ErrRecordNotFound) {
 				result = nil
 				return nil
 			}
-			return err
+			return lookupErr
 		}
 
 		var identity types.DirectoryIdentity
@@ -237,8 +260,10 @@ func (r *directoryRepository) GetLoginSnapshot(
 			Select("DISTINCT g.object_guid AS object_guid").
 			Joins("JOIN directory_groups AS g ON g.id = gm.group_id AND g.directory_id = gm.directory_id").
 			Where(
-				"gm.directory_id = ? AND gm.identity_id = ? AND gm.snapshot_version = ? AND g.snapshot_version = ? AND g.status = ?",
-				directory.ID, identity.ID, directory.SnapshotVersion, directory.SnapshotVersion, types.DirectoryObjectActive,
+				"gm.directory_id = ? AND gm.identity_id = ? AND gm.snapshot_version = ?"+
+					" AND g.snapshot_version = ? AND g.status = ?",
+				directory.ID, identity.ID, directory.SnapshotVersion,
+				directory.SnapshotVersion, types.DirectoryObjectActive,
 			).
 			Order("g.object_guid ASC").Scan(&rows).Error; err != nil {
 			return err
@@ -258,7 +283,10 @@ func (r *directoryRepository) GetLoginSnapshot(
 	return result, err
 }
 
-func (r *directoryRepository) GetIdentityByUserID(ctx context.Context, userID string) ([]*types.DirectoryIdentity, error) {
+func (r *directoryRepository) GetIdentityByUserID(
+	ctx context.Context,
+	userID string,
+) ([]*types.DirectoryIdentity, error) {
 	var identities []*types.DirectoryIdentity
 	if err := r.db.WithContext(ctx).
 		Where("user_id = ?", userID).
@@ -295,8 +323,10 @@ func (r *directoryRepository) LinkIdentity(ctx context.Context, identityID, user
 		}
 		if update.RowsAffected != 1 {
 			var current types.DirectoryIdentity
-			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", identityID).First(&current).Error; err != nil {
-				return err
+			lookupErr := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+				Where("id = ?", identityID).First(&current).Error
+			if lookupErr != nil {
+				return lookupErr
 			}
 			if current.UserID != nil && *current.UserID == userID {
 				return nil
@@ -326,7 +356,8 @@ func isDirectoryIdentityUniqueViolation(err error) bool {
 	}
 	var sqliteErr sqlite3.Error
 	return errors.As(err, &sqliteErr) &&
-		(sqliteErr.ExtendedCode == sqlite3.ErrConstraintUnique || sqliteErr.ExtendedCode == sqlite3.ErrConstraintPrimaryKey)
+		(sqliteErr.ExtendedCode == sqlite3.ErrConstraintUnique ||
+			sqliteErr.ExtendedCode == sqlite3.ErrConstraintPrimaryKey)
 }
 
 func (r *directoryRepository) UnlinkIdentity(ctx context.Context, identityID string) error {
@@ -356,7 +387,11 @@ func (r *directoryRepository) UnlinkIdentity(ctx context.Context, identityID str
 	})
 }
 
-func (r *directoryRepository) ListIdentities(ctx context.Context, directoryID string, offset, limit int) ([]*types.DirectoryIdentity, error) {
+func (r *directoryRepository) ListIdentities(
+	ctx context.Context,
+	directoryID string,
+	offset, limit int,
+) ([]*types.DirectoryIdentity, error) {
 	var rows []*types.DirectoryIdentity
 	if err := r.db.WithContext(ctx).Where("directory_id = ?", directoryID).
 		Order("display_name ASC, object_guid ASC").Offset(offset).Limit(normalizeDirectoryLimit(limit)).
@@ -366,7 +401,11 @@ func (r *directoryRepository) ListIdentities(ctx context.Context, directoryID st
 	return rows, nil
 }
 
-func (r *directoryRepository) ListGroups(ctx context.Context, directoryID, query string, offset, limit int) ([]*types.DirectoryGroup, error) {
+func (r *directoryRepository) ListGroups(
+	ctx context.Context,
+	directoryID, query string,
+	offset, limit int,
+) ([]*types.DirectoryGroup, error) {
 	var rows []*types.DirectoryGroup
 	db := r.db.WithContext(ctx).Where("directory_id = ?", directoryID)
 	if query = strings.TrimSpace(query); query != "" {
@@ -390,7 +429,10 @@ func normalizeDirectoryLimit(limit int) int {
 	return limit
 }
 
-func (r *directoryRepository) ListGroupEdges(ctx context.Context, directoryID string) ([]*types.DirectoryGroupEdge, error) {
+func (r *directoryRepository) ListGroupEdges(
+	ctx context.Context,
+	directoryID string,
+) ([]*types.DirectoryGroupEdge, error) {
 	var rows []*types.DirectoryGroupEdge
 	if err := r.db.WithContext(ctx).Where("directory_id = ?", directoryID).
 		Order("parent_group_id ASC, child_group_id ASC").Find(&rows).Error; err != nil {
@@ -399,7 +441,10 @@ func (r *directoryRepository) ListGroupEdges(ctx context.Context, directoryID st
 	return rows, nil
 }
 
-func (r *directoryRepository) ListGroupMemberships(ctx context.Context, groupID string) ([]*types.DirectoryGroupMembership, error) {
+func (r *directoryRepository) ListGroupMemberships(
+	ctx context.Context,
+	groupID string,
+) ([]*types.DirectoryGroupMembership, error) {
 	var rows []*types.DirectoryGroupMembership
 	if err := r.db.WithContext(ctx).Where("group_id = ?", groupID).
 		Order("identity_id ASC, depth ASC").Find(&rows).Error; err != nil {
@@ -408,7 +453,10 @@ func (r *directoryRepository) ListGroupMemberships(ctx context.Context, groupID 
 	return rows, nil
 }
 
-func (r *directoryRepository) ListDirectoryMemberships(ctx context.Context, directoryID string) ([]*types.DirectoryGroupMembership, error) {
+func (r *directoryRepository) ListDirectoryMemberships(
+	ctx context.Context,
+	directoryID string,
+) ([]*types.DirectoryGroupMembership, error) {
 	var rows []*types.DirectoryGroupMembership
 	if err := r.db.WithContext(ctx).Where("directory_id = ?", directoryID).
 		Order("group_id ASC, identity_id ASC").Find(&rows).Error; err != nil {
@@ -422,10 +470,10 @@ func syncLeaseExpiryExpression(db *gorm.DB, ttl time.Duration) clause.Expr {
 	if seconds < 1 {
 		seconds = 1
 	}
-	if db.Dialector.Name() == "postgres" {
+	if db.Name() == "postgres" {
 		return gorm.Expr(fmt.Sprintf("CURRENT_TIMESTAMP + INTERVAL '%d seconds'", seconds))
 	}
-	if db.Dialector.Name() == "sqlite" {
+	if db.Name() == "sqlite" {
 		return gorm.Expr("datetime(CURRENT_TIMESTAMP, ?)", fmt.Sprintf("+%d seconds", seconds))
 	}
 	return gorm.Expr("?", time.Now().UTC().Add(time.Duration(seconds)*time.Second))
@@ -441,7 +489,8 @@ func (r *directoryRepository) TryAcquireSyncLease(
 	}
 	result := r.db.WithContext(ctx).Model(&types.Directory{}).
 		Where("id = ?", directoryID).
-		Where("sync_lease_owner = '' OR sync_lease_owner IS NULL OR sync_lease_expires_at IS NULL OR sync_lease_expires_at <= CURRENT_TIMESTAMP").
+		Where("sync_lease_owner = '' OR sync_lease_owner IS NULL OR" +
+			" sync_lease_expires_at IS NULL OR sync_lease_expires_at <= CURRENT_TIMESTAMP").
 		Updates(map[string]any{
 			"sync_lease_owner":      owner,
 			"sync_lease_expires_at": syncLeaseExpiryExpression(r.db, ttl),
@@ -469,7 +518,10 @@ func (r *directoryRepository) RenewSyncLease(
 	return result.RowsAffected == 1, nil
 }
 
-func (r *directoryRepository) ReleaseSyncLease(ctx context.Context, directoryID, owner string) error {
+func (r *directoryRepository) ReleaseSyncLease(
+	ctx context.Context,
+	directoryID, owner string,
+) error {
 	if strings.TrimSpace(directoryID) == "" || strings.TrimSpace(owner) == "" {
 		return nil
 	}
@@ -478,7 +530,10 @@ func (r *directoryRepository) ReleaseSyncLease(ctx context.Context, directoryID,
 		Updates(map[string]any{"sync_lease_owner": "", "sync_lease_expires_at": nil}).Error
 }
 
-func (r *directoryRepository) ApplySnapshot(ctx context.Context, snapshot *types.DirectorySnapshot) (*types.DirectorySnapshotResult, error) {
+func (r *directoryRepository) ApplySnapshot(
+	ctx context.Context,
+	snapshot *types.DirectorySnapshot,
+) (*types.DirectorySnapshotResult, error) {
 	var result *types.DirectorySnapshotResult
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var directory types.Directory
@@ -486,8 +541,14 @@ func (r *directoryRepository) ApplySnapshot(ctx context.Context, snapshot *types
 			Where("id = ?", snapshot.DirectoryID).First(&directory).Error; err != nil {
 			return err
 		}
-		if snapshot.ExpectedConfigVersion != 0 && directory.ConfigVersion != snapshot.ExpectedConfigVersion {
-			return fmt.Errorf("%w: expected %d, current %d", ErrDirectoryConfigVersionChanged, snapshot.ExpectedConfigVersion, directory.ConfigVersion)
+		if snapshot.ExpectedConfigVersion != 0 &&
+			directory.ConfigVersion != snapshot.ExpectedConfigVersion {
+			return fmt.Errorf(
+				"%w: expected %d, current %d",
+				ErrDirectoryConfigVersionChanged,
+				snapshot.ExpectedConfigVersion,
+				directory.ConfigVersion,
+			)
 		}
 		now := time.Now().UTC()
 		version := directory.SnapshotVersion + 1
@@ -495,7 +556,11 @@ func (r *directoryRepository) ApplySnapshot(ctx context.Context, snapshot *types
 		// Mark first, then reactivate objects present in the complete snapshot.
 		// Any failure rolls the transaction back, preserving the prior snapshot.
 		if err := tx.Model(&types.DirectoryIdentity{}).Where("directory_id = ?", directory.ID).
-			Updates(map[string]any{"status": types.DirectoryObjectOutOfScope, "disabled_reason": "not present in latest complete snapshot", "updated_at": now}).Error; err != nil {
+			Updates(map[string]any{
+				"status":          types.DirectoryObjectOutOfScope,
+				"disabled_reason": "not present in latest complete snapshot",
+				"updated_at":      now,
+			}).Error; err != nil {
 			return err
 		}
 		for _, input := range snapshot.Identities {
@@ -567,7 +632,8 @@ func (r *directoryRepository) ApplySnapshot(ctx context.Context, snapshot *types
 		if err := tx.Where("directory_id = ?", directory.ID).Delete(&types.DirectoryGroupEdge{}).Error; err != nil {
 			return err
 		}
-		if err := tx.Where("directory_id = ?", directory.ID).Delete(&types.DirectoryGroupMembership{}).Error; err != nil {
+		if err := tx.Where("directory_id = ?", directory.ID).
+			Delete(&types.DirectoryGroupMembership{}).Error; err != nil {
 			return err
 		}
 		edges := make([]types.DirectoryGroupEdge, 0, len(snapshot.GroupEdges))
@@ -681,13 +747,20 @@ func bumpPermissionVersion(tx *gorm.DB, tenantID uint64) (uint64, error) {
 	return row.Version, nil
 }
 
-func (r *directoryRepository) RecordSyncFailure(ctx context.Context, directoryID, code, message string, startedAt time.Time, expectedSnapshotVersion, expectedConfigVersion uint64, trigger types.DirectorySyncTrigger) (*types.DirectorySyncRun, error) {
+func (r *directoryRepository) RecordSyncFailure(
+	ctx context.Context,
+	directoryID, code, message string,
+	startedAt time.Time,
+	expectedSnapshotVersion, expectedConfigVersion uint64,
+	trigger types.DirectorySyncTrigger,
+) (*types.DirectorySyncRun, error) {
 	now := time.Now().UTC()
 	if startedAt.IsZero() {
 		startedAt = now
 	}
 	completed := now
-	if trigger != types.DirectorySyncTriggerScheduled && trigger != types.DirectorySyncTriggerLogin {
+	if trigger != types.DirectorySyncTriggerScheduled &&
+		trigger != types.DirectorySyncTriggerLogin {
 		trigger = types.DirectorySyncTriggerManual
 	}
 	run := &types.DirectorySyncRun{
@@ -697,7 +770,8 @@ func (r *directoryRepository) RecordSyncFailure(ctx context.Context, directoryID
 	}
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		res := tx.Model(&types.Directory{}).
-			Where("id = ? AND snapshot_version = ? AND config_version = ?", directoryID, expectedSnapshotVersion, expectedConfigVersion).
+			Where("id = ? AND snapshot_version = ? AND config_version = ?",
+				directoryID, expectedSnapshotVersion, expectedConfigVersion).
 			Where("last_successful_sync_at IS NULL OR last_successful_sync_at <= ?", startedAt).
 			Where("last_sync_attempt_at IS NULL OR last_sync_attempt_at <= ?", startedAt).
 			Updates(map[string]any{"last_sync_attempt_at": now, "last_sync_error": message, "updated_at": now})
@@ -723,7 +797,11 @@ func (r *directoryRepository) RecordSyncFailure(ctx context.Context, directoryID
 	return run, nil
 }
 
-func (r *directoryRepository) ListSyncRuns(ctx context.Context, directoryID string, offset, limit int) ([]*types.DirectorySyncRun, error) {
+func (r *directoryRepository) ListSyncRuns(
+	ctx context.Context,
+	directoryID string,
+	offset, limit int,
+) ([]*types.DirectorySyncRun, error) {
 	var rows []*types.DirectorySyncRun
 	if err := r.db.WithContext(ctx).Where("directory_id = ?", directoryID).
 		Order("started_at DESC, id DESC").Offset(offset).Limit(normalizeDirectoryLimit(limit)).

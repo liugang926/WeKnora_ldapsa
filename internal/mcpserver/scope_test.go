@@ -18,7 +18,10 @@ type stubKBService struct {
 	kbs map[string]*types.KnowledgeBase
 }
 
-func (s *stubKBService) GetKnowledgeBaseByIDOnly(_ context.Context, id string) (*types.KnowledgeBase, error) {
+func (s *stubKBService) GetKnowledgeBaseByIDOnly(
+	_ context.Context,
+	id string,
+) (*types.KnowledgeBase, error) {
 	kb, ok := s.kbs[id]
 	if !ok {
 		return nil, errors.New("not found")
@@ -54,7 +57,10 @@ func mcpCallContext(tenantID uint64, ep *types.MCPEndpoint) context.Context {
 	ctx := context.WithValue(context.Background(), types.TenantIDContextKey, tenantID)
 	ctx = context.WithValue(ctx, types.MCPEndpointContextKey, ep)
 	ctx = types.WithTenantAPIKeyScope(ctx, types.MCPEndpointScope(ep))
-	ctx = types.WithCaller(ctx, types.Caller{TenantID: tenantID, UserID: "mcp-" + ep.ID, Role: types.TenantRoleViewer})
+	ctx = types.WithCaller(
+		ctx,
+		types.Caller{TenantID: tenantID, UserID: "mcp-" + ep.ID, Role: types.TenantRoleViewer},
+	)
 	return types.WithPrincipal(ctx, types.MCPEndpointPrincipal(tenantID, ep.ID))
 }
 
@@ -72,7 +78,12 @@ type stubGroupAccessService struct {
 	calls   []groupAccessCall
 }
 
-func groupAccessKey(tenantID uint64, resourceType types.ResourceType, resourceID string, action types.ResourceAction) string {
+func groupAccessKey(
+	tenantID uint64,
+	resourceType types.ResourceType,
+	resourceID string,
+	action types.ResourceAction,
+) string {
 	return fmt.Sprintf("%d/%s/%s/%s", tenantID, resourceType, resourceID, action)
 }
 
@@ -132,7 +143,11 @@ func TestSelectKnowledgeBasesMatchesIDOrName(t *testing.T) {
 
 	all, err := srv.selectKnowledgeBases(ctx, ep, nil)
 	if err != nil || len(all) != 2 {
-		t.Fatalf("unrestricted endpoint must see its workspace only: %v %v", knowledgeBaseIDs(all), err)
+		t.Fatalf(
+			"unrestricted endpoint must see its workspace only: %v %v",
+			knowledgeBaseIDs(all),
+			err,
+		)
 	}
 	picked, err := srv.selectKnowledgeBases(ctx, ep, []string{"product docs", "kb-2", "kb-2"})
 	if err != nil {
@@ -169,7 +184,8 @@ func TestAllowedKnowledgeBasesAppliesGroupReadPolicy(t *testing.T) {
 		t.Fatalf("group checks = %d, want 2", len(groups.calls))
 	}
 	for _, call := range groups.calls {
-		if call.resourceType != types.GroupResourceTypeKnowledgeBase || call.action != types.ResourceActionRead {
+		if call.resourceType != types.GroupResourceTypeKnowledgeBase ||
+			call.action != types.ResourceActionRead {
 			t.Fatalf("unexpected group access check: %+v", call)
 		}
 	}
@@ -177,7 +193,10 @@ func TestAllowedKnowledgeBasesAppliesGroupReadPolicy(t *testing.T) {
 
 func TestAllowedKnowledgeBasesFailsClosedOnGroupStoreError(t *testing.T) {
 	srv := newScopeTestServer(&types.KnowledgeBase{ID: "kb-1", TenantID: 1})
-	ConfigureGroupAccess(srv, &stubGroupAccessService{err: errors.New("directory store unavailable")})
+	ConfigureGroupAccess(
+		srv,
+		&stubGroupAccessService{err: errors.New("directory store unavailable")},
+	)
 	for _, ep := range []*types.MCPEndpoint{
 		{ID: "unrestricted", TenantID: 1},
 		{ID: "restricted", TenantID: 1, KnowledgeBaseIDs: types.StringArray{"kb-1"}},
@@ -219,7 +238,10 @@ type stubKnowledgeService struct {
 	docs map[string]*types.Knowledge
 }
 
-func (s *stubKnowledgeService) GetKnowledgeByIDOnly(_ context.Context, id string) (*types.Knowledge, error) {
+func (s *stubKnowledgeService) GetKnowledgeByIDOnly(
+	_ context.Context,
+	id string,
+) (*types.Knowledge, error) {
 	k, ok := s.docs[id]
 	if !ok {
 		return nil, errors.New("not found")
@@ -231,7 +253,11 @@ func TestScopedKBContextEnablesWritesOnlyForAuthorizedKnowledgeBases(t *testing.
 	own := &types.KnowledgeBase{ID: "kb-own", TenantID: 1}
 	foreign := &types.KnowledgeBase{ID: "kb-foreign", TenantID: 2}
 	srv := newScopeTestServer(own, foreign)
-	ep := &types.MCPEndpoint{ID: "ep", TenantID: 1, Tools: types.StringArray{types.MCPEndpointToolAddDocument}}
+	ep := &types.MCPEndpoint{
+		ID:       "ep",
+		TenantID: 1,
+		Tools:    types.StringArray{types.MCPEndpointToolAddDocument},
+	}
 	ctx := mcpCallContext(1, ep)
 
 	if err := access.RequireKBWrite(ctx, own); err == nil {
@@ -286,8 +312,12 @@ func TestScopedKBContextRequiresGroupEditForWrites(t *testing.T) {
 func TestSharedKnowledgeBaseRunsUnderOwnerTenant(t *testing.T) {
 	shared := &types.KnowledgeBase{ID: "kb-shared", TenantID: 2, Name: "Shared"}
 	srv := newScopeTestServer(shared)
-	srv.kbShareService = &stubKBShareService{shared: map[string]types.OrgMemberRole{"kb-shared": types.OrgRoleEditor}}
-	srv.tenantService = &stubTenantService{tenants: map[uint64]*types.Tenant{2: {ID: 2, Name: "Owner"}}}
+	srv.kbShareService = &stubKBShareService{
+		shared: map[string]types.OrgMemberRole{"kb-shared": types.OrgRoleEditor},
+	}
+	srv.tenantService = &stubTenantService{
+		tenants: map[uint64]*types.Tenant{2: {ID: 2, Name: "Owner"}},
+	}
 	srv.knowledgeService = &stubKnowledgeService{docs: map[string]*types.Knowledge{
 		"doc-shared": {ID: "doc-shared", TenantID: 2, KnowledgeBaseID: "kb-shared"},
 		"doc-spoof":  {ID: "doc-spoof", TenantID: 1, KnowledgeBaseID: "kb-shared"},
@@ -296,7 +326,11 @@ func TestSharedKnowledgeBaseRunsUnderOwnerTenant(t *testing.T) {
 		ID: "ep", TenantID: 1, KnowledgeBaseIDs: types.StringArray{"kb-shared"},
 		Tools: types.StringArray{types.MCPEndpointToolUpdateDocument},
 	}
-	ctx := context.WithValue(mcpCallContext(1, ep), types.TenantInfoContextKey, &types.Tenant{ID: 1, Name: "Caller"})
+	ctx := context.WithValue(
+		mcpCallContext(1, ep),
+		types.TenantInfoContextKey,
+		&types.Tenant{ID: 1, Name: "Caller"},
+	)
 
 	// The shared knowledge base is visible through the organization share.
 	kbs, err := srv.allowedKnowledgeBases(ctx, ep)
@@ -333,7 +367,9 @@ func TestSharedKnowledgeBaseRunsUnderOwnerTenant(t *testing.T) {
 	}
 
 	// A viewer share must not mint a write grant.
-	srv.kbShareService = &stubKBShareService{shared: map[string]types.OrgMemberRole{"kb-shared": types.OrgRoleViewer}}
+	srv.kbShareService = &stubKBShareService{
+		shared: map[string]types.OrgMemberRole{"kb-shared": types.OrgRoleViewer},
+	}
 	if _, err := srv.scopedKBContext(ctx, kb, types.OrgRoleEditor); err == nil {
 		t.Fatal("viewer share must not allow writes")
 	}

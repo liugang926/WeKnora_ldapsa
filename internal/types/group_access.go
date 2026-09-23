@@ -2,43 +2,59 @@ package types
 
 import "time"
 
+// GrantOrigin distinguishes manual grants from directory-managed grants.
 type GrantOrigin string
 
 const (
-	GrantOriginManual    GrantOrigin = "manual"
+	// GrantOriginManual is managed by a workspace administrator.
+	GrantOriginManual GrantOrigin = "manual"
+	// GrantOriginDirectory is managed by directory synchronization.
 	GrantOriginDirectory GrantOrigin = "directory"
 )
 
+// ResourceType identifies a resource that supports group-level access.
 type ResourceType string
 
 const (
+	// GroupResourceTypeKnowledgeBase identifies a knowledge base.
 	GroupResourceTypeKnowledgeBase ResourceType = "knowledge_base"
-	GroupResourceTypeAgent         ResourceType = "agent"
+	// GroupResourceTypeAgent identifies a custom agent.
+	GroupResourceTypeAgent ResourceType = "agent"
 )
 
+// IsValid reports whether group access supports this resource type.
 func (t ResourceType) IsValid() bool {
 	return t == GroupResourceTypeKnowledgeBase || t == GroupResourceTypeAgent
 }
 
+// ResourceAccessMode selects inherited or group-restricted access.
 type ResourceAccessMode string
 
 const (
-	ResourceAccessInherit    ResourceAccessMode = "inherit"
+	// ResourceAccessInherit uses the workspace access rules.
+	ResourceAccessInherit ResourceAccessMode = "inherit"
+	// ResourceAccessRestricted requires an explicit resource group grant.
 	ResourceAccessRestricted ResourceAccessMode = "restricted"
 )
 
+// IsValid reports whether the resource access mode is supported.
 func (m ResourceAccessMode) IsValid() bool {
 	return m == ResourceAccessInherit || m == ResourceAccessRestricted
 }
 
+// ResourcePermission is the level granted to a directory group.
 type ResourcePermission string
 
 const (
+	// ResourcePermissionRead permits knowledge-base reads.
 	ResourcePermissionRead ResourcePermission = "read"
+	// ResourcePermissionEdit permits resource editing.
 	ResourcePermissionEdit ResourcePermission = "edit"
-	ResourcePermissionUse  ResourcePermission = "use"
+	// ResourcePermissionUse permits agent execution.
+	ResourcePermissionUse ResourcePermission = "use"
 )
 
+// ValidFor reports whether the permission applies to the resource type.
 func (p ResourcePermission) ValidFor(resourceType ResourceType) bool {
 	switch resourceType {
 	case GroupResourceTypeKnowledgeBase:
@@ -50,15 +66,21 @@ func (p ResourcePermission) ValidFor(resourceType ResourceType) bool {
 	}
 }
 
+// ResourceAction is the operation checked at the authorization boundary.
 type ResourceAction string
 
 const (
-	ResourceActionRead   ResourceAction = "read"
-	ResourceActionUse    ResourceAction = "use"
-	ResourceActionEdit   ResourceAction = "edit"
+	// ResourceActionRead reads knowledge-base content.
+	ResourceActionRead ResourceAction = "read"
+	// ResourceActionUse executes an agent.
+	ResourceActionUse ResourceAction = "use"
+	// ResourceActionEdit edits a resource.
+	ResourceActionEdit ResourceAction = "edit"
+	// ResourceActionManage changes grants or ownership.
 	ResourceActionManage ResourceAction = "manage"
 )
 
+// ValidFor reports whether the action applies to the resource type.
 func (a ResourceAction) ValidFor(resourceType ResourceType) bool {
 	switch resourceType {
 	case GroupResourceTypeKnowledgeBase:
@@ -70,6 +92,7 @@ func (a ResourceAction) ValidFor(resourceType ResourceType) bool {
 	}
 }
 
+// TenantGroupRoleGrant maps one directory group to a workspace role.
 type TenantGroupRoleGrant struct {
 	ID               string      `json:"id" gorm:"type:varchar(36);primaryKey"`
 	TenantID         uint64      `json:"tenant_id" gorm:"not null;index"`
@@ -81,8 +104,10 @@ type TenantGroupRoleGrant struct {
 	UpdatedAt        time.Time   `json:"updated_at"`
 }
 
+// TableName names the workspace group grant table.
 func (TenantGroupRoleGrant) TableName() string { return "tenant_group_role_grants" }
 
+// ResourceAccessPolicy records a resource's inherited or restricted mode.
 type ResourceAccessPolicy struct {
 	ID           string             `json:"id" gorm:"type:varchar(36);primaryKey"`
 	TenantID     uint64             `json:"tenant_id" gorm:"not null;index"`
@@ -94,8 +119,10 @@ type ResourceAccessPolicy struct {
 	UpdatedAt    time.Time          `json:"updated_at"`
 }
 
+// TableName names the resource access policy table.
 func (ResourceAccessPolicy) TableName() string { return "resource_access_policies" }
 
+// ResourceGroupGrant maps a directory group to a resource permission.
 type ResourceGroupGrant struct {
 	ID               string             `json:"id" gorm:"type:varchar(36);primaryKey"`
 	TenantID         uint64             `json:"tenant_id" gorm:"not null;index"`
@@ -109,6 +136,7 @@ type ResourceGroupGrant struct {
 	UpdatedAt        time.Time          `json:"updated_at"`
 }
 
+// TableName names the resource group grant table.
 func (ResourceGroupGrant) TableName() string { return "resource_group_grants" }
 
 // PermissionVersion is a tenant-scoped monotonic invalidation token. Every
@@ -120,8 +148,10 @@ type PermissionVersion struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+// TableName names the tenant permission version table.
 func (PermissionVersion) TableName() string { return "directory_permission_versions" }
 
+// GroupRoleMatch explains a workspace role derived from an AD group.
 type GroupRoleMatch struct {
 	DirectoryID          string                    `json:"directory_id"`
 	DirectoryGroupID     string                    `json:"directory_group_id"`
@@ -134,6 +164,7 @@ type GroupRoleMatch struct {
 	StaleAfterSeconds    int                       `json:"-"`
 }
 
+// Fresh reports whether this group's directory snapshot remains valid.
 func (m GroupRoleMatch) Fresh(now time.Time) bool {
 	if !m.DirectoryEnabled || m.LastSuccessfulSyncAt == nil {
 		return false
@@ -145,6 +176,7 @@ func (m GroupRoleMatch) Fresh(now time.Time) bool {
 	return !now.After(m.LastSuccessfulSyncAt.Add(time.Duration(seconds) * time.Second))
 }
 
+// ResourceGroupMatch explains a resource grant derived from an AD group.
 type ResourceGroupMatch struct {
 	DirectoryID          string                    `json:"directory_id"`
 	DirectoryGroupID     string                    `json:"directory_group_id"`
@@ -157,6 +189,7 @@ type ResourceGroupMatch struct {
 	StaleAfterSeconds    int                       `json:"-"`
 }
 
+// Fresh reports whether this group's directory snapshot remains valid.
 func (m ResourceGroupMatch) Fresh(now time.Time) bool {
 	return GroupRoleMatch{
 		DirectoryEnabled: m.DirectoryEnabled, LastSuccessfulSyncAt: m.LastSuccessfulSyncAt,
@@ -164,6 +197,7 @@ func (m ResourceGroupMatch) Fresh(now time.Time) bool {
 	}.Fresh(now)
 }
 
+// EffectiveTenantRole combines direct and group-derived workspace membership.
 type EffectiveTenantRole struct {
 	TenantID     uint64           `json:"tenant_id"`
 	Member       bool             `json:"member"`
@@ -172,6 +206,7 @@ type EffectiveTenantRole struct {
 	GroupMatches []GroupRoleMatch `json:"group_matches,omitempty"`
 }
 
+// EffectiveResourcePermission reports a resource authorization decision.
 type EffectiveResourcePermission struct {
 	Allowed       bool                 `json:"allowed"`
 	Mode          ResourceAccessMode   `json:"mode"`
@@ -181,6 +216,7 @@ type EffectiveResourcePermission struct {
 	Reason        string               `json:"reason"`
 }
 
+// ResourceAccessImpactPreview estimates access changes before a policy update.
 type ResourceAccessImpactPreview struct {
 	TenantID              uint64             `json:"tenant_id"`
 	ResourceType          ResourceType       `json:"resource_type"`

@@ -16,11 +16,16 @@ type groupAccessRepository struct {
 	db *gorm.DB
 }
 
+// NewGroupAccessRepository persists group grants and resource policies.
 func NewGroupAccessRepository(db *gorm.DB) interfaces.GroupAccessRepository {
 	return &groupAccessRepository{db: db}
 }
 
-func (r *groupAccessRepository) GetDirectTenantRole(ctx context.Context, userID string, tenantID uint64) (*types.TenantRole, error) {
+func (r *groupAccessRepository) GetDirectTenantRole(
+	ctx context.Context,
+	userID string,
+	tenantID uint64,
+) (*types.TenantRole, error) {
 	var member types.TenantMember
 	err := r.db.WithContext(ctx).
 		Where("user_id = ? AND tenant_id = ? AND status = ?", userID, tenantID, types.TenantMemberStatusActive).
@@ -35,7 +40,11 @@ func (r *groupAccessRepository) GetDirectTenantRole(ctx context.Context, userID 
 	return &role, nil
 }
 
-func (r *groupAccessRepository) ListGroupRoleMatches(ctx context.Context, userID string, tenantID uint64) ([]types.GroupRoleMatch, error) {
+func (r *groupAccessRepository) ListGroupRoleMatches(
+	ctx context.Context,
+	userID string,
+	tenantID uint64,
+) ([]types.GroupRoleMatch, error) {
 	var rows []types.GroupRoleMatch
 	err := r.db.WithContext(ctx).Raw(`
 		SELECT d.id AS directory_id,
@@ -64,7 +73,11 @@ func (r *groupAccessRepository) ListGroupRoleMatches(ctx context.Context, userID
 // ListEffectiveTenantRoles returns direct and group-only memberships. Tenant
 // IDs are selected first and sorted in SQL, then each role is merged with the
 // same freshness/maximum-role rules used by request authorization.
-func (r *groupAccessRepository) ListEffectiveTenantRoles(ctx context.Context, userID string, now time.Time) ([]types.EffectiveTenantRole, error) {
+func (r *groupAccessRepository) ListEffectiveTenantRoles(
+	ctx context.Context,
+	userID string,
+	now time.Time,
+) ([]types.EffectiveTenantRole, error) {
 	var candidates []struct{ TenantID uint64 }
 	err := r.db.WithContext(ctx).Raw(`
 		SELECT DISTINCT tenant_id
@@ -149,7 +162,10 @@ func (r *groupAccessRepository) ListResourceGroupMatches(
 	return rows, nil
 }
 
-func (r *groupAccessRepository) ListTenantUserIDs(ctx context.Context, tenantID uint64) ([]string, error) {
+func (r *groupAccessRepository) ListTenantUserIDs(
+	ctx context.Context,
+	tenantID uint64,
+) ([]string, error) {
 	var rows []struct{ UserID string }
 	err := r.db.WithContext(ctx).Raw(`
 		SELECT DISTINCT user_id
@@ -176,7 +192,10 @@ func (r *groupAccessRepository) ListTenantUserIDs(ctx context.Context, tenantID 
 	return ids, nil
 }
 
-func (r *groupAccessRepository) UpsertTenantGroupRoleGrant(ctx context.Context, grant *types.TenantGroupRoleGrant) (uint64, error) {
+func (r *groupAccessRepository) UpsertTenantGroupRoleGrant(
+	ctx context.Context,
+	grant *types.TenantGroupRoleGrant,
+) (uint64, error) {
 	var version uint64
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if grant.ID == "" {
@@ -198,7 +217,12 @@ func (r *groupAccessRepository) UpsertTenantGroupRoleGrant(ctx context.Context, 
 	return version, err
 }
 
-func (r *groupAccessRepository) DeleteTenantGroupRoleGrant(ctx context.Context, tenantID uint64, directoryGroupID string, origin types.GrantOrigin) (uint64, error) {
+func (r *groupAccessRepository) DeleteTenantGroupRoleGrant(
+	ctx context.Context,
+	tenantID uint64,
+	directoryGroupID string,
+	origin types.GrantOrigin,
+) (uint64, error) {
 	return r.deleteAndBump(ctx, tenantID, func(tx *gorm.DB) (*gorm.DB, error) {
 		res := tx.Where("tenant_id = ? AND directory_group_id = ? AND origin = ?", tenantID, directoryGroupID, origin).
 			Delete(&types.TenantGroupRoleGrant{})
@@ -206,7 +230,10 @@ func (r *groupAccessRepository) DeleteTenantGroupRoleGrant(ctx context.Context, 
 	})
 }
 
-func (r *groupAccessRepository) ListTenantGroupRoleGrants(ctx context.Context, tenantID uint64) ([]*types.TenantGroupRoleGrant, error) {
+func (r *groupAccessRepository) ListTenantGroupRoleGrants(
+	ctx context.Context,
+	tenantID uint64,
+) ([]*types.TenantGroupRoleGrant, error) {
 	var rows []*types.TenantGroupRoleGrant
 	if err := r.db.WithContext(ctx).Where("tenant_id = ?", tenantID).
 		Order("directory_group_id ASC, origin ASC").Find(&rows).Error; err != nil {
@@ -215,7 +242,12 @@ func (r *groupAccessRepository) ListTenantGroupRoleGrants(ctx context.Context, t
 	return rows, nil
 }
 
-func (r *groupAccessRepository) GetResourceAccessPolicy(ctx context.Context, tenantID uint64, resourceType types.ResourceType, resourceID string) (*types.ResourceAccessPolicy, error) {
+func (r *groupAccessRepository) GetResourceAccessPolicy(
+	ctx context.Context,
+	tenantID uint64,
+	resourceType types.ResourceType,
+	resourceID string,
+) (*types.ResourceAccessPolicy, error) {
 	var policy types.ResourceAccessPolicy
 	err := r.db.WithContext(ctx).
 		Where("tenant_id = ? AND resource_type = ? AND resource_id = ?", tenantID, resourceType, resourceID).
@@ -229,7 +261,10 @@ func (r *groupAccessRepository) GetResourceAccessPolicy(ctx context.Context, ten
 	return &policy, nil
 }
 
-func (r *groupAccessRepository) UpsertResourceAccessPolicy(ctx context.Context, policy *types.ResourceAccessPolicy) (uint64, error) {
+func (r *groupAccessRepository) UpsertResourceAccessPolicy(
+	ctx context.Context,
+	policy *types.ResourceAccessPolicy,
+) (uint64, error) {
 	var version uint64
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if policy.ID == "" {
@@ -248,7 +283,10 @@ func (r *groupAccessRepository) UpsertResourceAccessPolicy(ctx context.Context, 
 	return version, err
 }
 
-func (r *groupAccessRepository) UpsertResourceGroupGrant(ctx context.Context, grant *types.ResourceGroupGrant) (uint64, error) {
+func (r *groupAccessRepository) UpsertResourceGroupGrant(
+	ctx context.Context,
+	grant *types.ResourceGroupGrant,
+) (uint64, error) {
 	var version uint64
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if grant.ID == "" {
@@ -259,8 +297,12 @@ func (r *groupAccessRepository) UpsertResourceGroupGrant(ctx context.Context, gr
 		}
 		if err := tx.Clauses(clause.OnConflict{
 			Columns: []clause.Column{
-				{Name: "tenant_id"}, {Name: "resource_type"}, {Name: "resource_id"},
-				{Name: "directory_group_id"}, {Name: "permission"}, {Name: "origin"},
+				{Name: "tenant_id"},
+				{Name: "resource_type"},
+				{Name: "resource_id"},
+				{Name: "directory_group_id"},
+				{Name: "permission"},
+				{Name: "origin"},
 			},
 			DoUpdates: clause.AssignmentColumns([]string{"created_by", "updated_at"}),
 		}).Create(grant).Error; err != nil {
@@ -283,8 +325,14 @@ func (r *groupAccessRepository) DeleteResourceGroupGrant(
 ) (uint64, error) {
 	return r.deleteAndBump(ctx, tenantID, func(tx *gorm.DB) (*gorm.DB, error) {
 		res := tx.Where(
-			"tenant_id = ? AND resource_type = ? AND resource_id = ? AND directory_group_id = ? AND permission = ? AND origin = ?",
-			tenantID, resourceType, resourceID, directoryGroupID, permission, origin,
+			"tenant_id = ? AND resource_type = ? AND resource_id = ?"+
+				" AND directory_group_id = ? AND permission = ? AND origin = ?",
+			tenantID,
+			resourceType,
+			resourceID,
+			directoryGroupID,
+			permission,
+			origin,
 		).Delete(&types.ResourceGroupGrant{})
 		return res, res.Error
 	})
@@ -312,7 +360,12 @@ func (r *groupAccessRepository) deleteAndBump(
 	return version, err
 }
 
-func (r *groupAccessRepository) ListResourceGroupGrants(ctx context.Context, tenantID uint64, resourceType types.ResourceType, resourceID string) ([]*types.ResourceGroupGrant, error) {
+func (r *groupAccessRepository) ListResourceGroupGrants(
+	ctx context.Context,
+	tenantID uint64,
+	resourceType types.ResourceType,
+	resourceID string,
+) ([]*types.ResourceGroupGrant, error) {
 	var rows []*types.ResourceGroupGrant
 	if err := r.db.WithContext(ctx).
 		Where("tenant_id = ? AND resource_type = ? AND resource_id = ?", tenantID, resourceType, resourceID).
@@ -322,7 +375,12 @@ func (r *groupAccessRepository) ListResourceGroupGrants(ctx context.Context, ten
 	return rows, nil
 }
 
-func (r *groupAccessRepository) ListMissingTenantGroupLinks(ctx context.Context, tenantID uint64, resourceType types.ResourceType, resourceID string) ([]string, error) {
+func (r *groupAccessRepository) ListMissingTenantGroupLinks(
+	ctx context.Context,
+	tenantID uint64,
+	resourceType types.ResourceType,
+	resourceID string,
+) ([]string, error) {
 	var rows []struct{ DirectoryGroupID string }
 	err := r.db.WithContext(ctx).Raw(`
 		SELECT DISTINCT rg.directory_group_id
@@ -357,7 +415,10 @@ func permissionVersion(tx *gorm.DB, tenantID uint64) (uint64, error) {
 	return row.Version, nil
 }
 
-func (r *groupAccessRepository) GetPermissionVersion(ctx context.Context, tenantID uint64) (uint64, error) {
+func (r *groupAccessRepository) GetPermissionVersion(
+	ctx context.Context,
+	tenantID uint64,
+) (uint64, error) {
 	return permissionVersion(r.db.WithContext(ctx), tenantID)
 }
 

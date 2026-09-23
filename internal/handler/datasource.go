@@ -132,7 +132,8 @@ func (h *DataSourceHandler) CreateDataSource(c *gin.Context) {
 		return
 	}
 
-	if _, status, msg := h.getOwnedKnowledgeBase(ctx, tenantID, req.KnowledgeBaseID, types.ResourceActionEdit); status != http.StatusOK {
+	_, status, msg := h.getOwnedKnowledgeBase(ctx, tenantID, req.KnowledgeBaseID, types.ResourceActionEdit)
+	if status != http.StatusOK {
 		c.JSON(status, gin.H{"error": msg})
 		return
 	}
@@ -197,7 +198,8 @@ func (h *DataSourceHandler) ListDataSources(c *gin.Context) {
 	}
 
 	kbID := c.Query("kb_id")
-	if _, status, msg := h.getOwnedKnowledgeBase(ctx, tenantID, kbID, types.ResourceActionRead); status != http.StatusOK {
+	_, status, msg := h.getOwnedKnowledgeBase(ctx, tenantID, kbID, types.ResourceActionRead)
+	if status != http.StatusOK {
 		c.JSON(status, gin.H{"error": msg})
 		return
 	}
@@ -619,7 +621,8 @@ func (h *DataSourceHandler) GetSyncLog(c *gin.Context) {
 		return
 	}
 
-	if _, status, msg := h.getOwnedDataSource(ctx, tenantID, log.DataSourceID, types.ResourceActionRead); status != http.StatusOK {
+	_, status, msg := h.getOwnedDataSource(ctx, tenantID, log.DataSourceID, types.ResourceActionRead)
+	if status != http.StatusOK {
 		c.JSON(status, gin.H{"error": msg})
 		return
 	}
