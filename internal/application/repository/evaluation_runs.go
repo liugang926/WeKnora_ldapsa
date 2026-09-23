@@ -55,7 +55,9 @@ func (r *EvaluationRunRepository) Save(ctx context.Context, detail *types.Evalua
 }
 
 // Get loads one evaluation run owned by the given tenant.
-func (r *EvaluationRunRepository) Get(ctx context.Context, tenantID uint64, taskID string) (*types.EvaluationDetail, error) {
+func (r *EvaluationRunRepository) Get(
+	ctx context.Context, tenantID uint64, taskID string,
+) (*types.EvaluationDetail, error) {
 	if tenantID == 0 || taskID == "" {
 		return nil, gorm.ErrRecordNotFound
 	}
@@ -68,7 +70,9 @@ func (r *EvaluationRunRepository) Get(ctx context.Context, tenantID uint64, task
 }
 
 // List returns the most recent evaluation runs owned by the given tenant.
-func (r *EvaluationRunRepository) List(ctx context.Context, tenantID uint64, limit int) ([]*types.EvaluationDetail, error) {
+func (r *EvaluationRunRepository) List(
+	ctx context.Context, tenantID uint64, limit int,
+) ([]*types.EvaluationDetail, error) {
 	if tenantID == 0 {
 		return nil, gorm.ErrRecordNotFound
 	}
