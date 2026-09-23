@@ -236,6 +236,7 @@ func TestDirectorySessionPausesWhenStaleAndRecoversAfterFreshSync(t *testing.T) 
 
 	identity := &types.DirectoryIdentity{
 		ID: "identity-1", DirectoryID: "corp-ad", UserID: ptrString("user-1"), Status: types.DirectoryObjectActive,
+		DisplayName: "  张三  ",
 	}
 	freshAt := time.Now().UTC()
 	directory := &types.Directory{ID: "corp-ad", Enabled: true, LastSuccessfulSyncAt: &freshAt, StaleAfterSeconds: 900}
@@ -247,8 +248,17 @@ func TestDirectorySessionPausesWhenStaleAndRecoversAfterFreshSync(t *testing.T) 
 	tokenRepo.tokens[accessJWT] = &types.AuthToken{
 		ID: "access-1", UserID: "user-1", Token: accessJWT, TokenType: "access_token", ExpiresAt: time.Now().Add(time.Hour),
 	}
-	if _, _, err := svc.ValidateToken(ctx, accessJWT); err != nil {
+	user, _, err := svc.ValidateToken(ctx, accessJWT)
+	if err != nil {
 		t.Fatalf("fresh directory session rejected: %v", err)
+	}
+	if user.DisplayName != "张三" || user.ToUserInfo().DisplayName != "张三" {
+		t.Fatalf("directory display name not projected into current user: %q", user.DisplayName)
+	}
+	identity.DisplayName = "李四"
+	user, _, err = svc.ValidateToken(ctx, accessJWT)
+	if err != nil || user.DisplayName != "李四" {
+		t.Fatalf("directory rename not reflected after sync: user=%+v err=%v", user, err)
 	}
 
 	staleAt := time.Now().UTC().Add(-16 * time.Minute)

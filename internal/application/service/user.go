@@ -165,6 +165,10 @@ func (s *userService) validateUserSessionEligibility(ctx context.Context, user *
 	if user == nil || !user.IsActive {
 		return errors.New("user account is disabled")
 	}
+	// The user row has no directory-owned name column. Re-project the name
+	// from the current identity on every authenticated request so AD renames
+	// appear after sync without mutating the account's stable username.
+	user.DisplayName = ""
 	identities, err := s.directoryIdentities(ctx, user.ID)
 	if err != nil {
 		return fmt.Errorf("check directory identity: %w", err)
@@ -182,6 +186,7 @@ func (s *userService) validateUserSessionEligibility(ctx context.Context, user *
 			return fmt.Errorf("load directory state: %w", getErr)
 		}
 		if directory != nil && directory.IsFresh(now) {
+			user.DisplayName = strings.TrimSpace(identity.DisplayName)
 			return nil
 		}
 	}

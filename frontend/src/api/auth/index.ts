@@ -20,6 +20,7 @@ export interface LoginResponse {
   user?: {
     id: string
     username: string
+    display_name?: string
     email: string
     avatar?: string
     tenant_id: number
@@ -113,6 +114,7 @@ export interface UserPreferences {
 export interface UserInfo {
   id: string
   username: string
+  display_name?: string
   email: string
   avatar?: string
   tenant_id: string
@@ -153,6 +155,7 @@ export function userInfoFromApi(
   return {
     id: u?.id || '',
     username: u?.username || '',
+    display_name: typeof u?.display_name === 'string' ? u.display_name.trim() : '',
     email: u?.email || '',
     avatar: u?.avatar,
     tenant_id: String(tid) || '',

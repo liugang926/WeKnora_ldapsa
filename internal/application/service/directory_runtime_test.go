@@ -328,14 +328,18 @@ func TestDirectoryRuntimeLoginRejectsRecentFailedSyncBeforeNetwork(t *testing.T)
 }
 
 func TestDirectoryRuntimeLoginRequiresExactLiveGroupSetBeforeIssuingToken(t *testing.T) {
-	runtime, users, _ := liveLoginRuntimeFixture(t,
+	runtime, users, repo := liveLoginRuntimeFixture(t,
 		[]string{"GROUP-B", "group-a"}, []string{"group-a", "group-b"})
+	repo.loginSnapshot.Identity.DisplayName = "Alice Directory"
 	result, err := runtime.Login(context.Background(), "alice", "secret")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if result.Token != "access" || users.generateCalls != 1 {
 		t.Fatalf("matching live groups did not issue exactly one token: result=%+v calls=%d", result, users.generateCalls)
+	}
+	if result.User.DisplayName != "Alice Directory" || result.User.Username != "alice" {
+		t.Fatalf("LDAP login should show directory name without changing account username: %+v", result.User)
 	}
 }
 

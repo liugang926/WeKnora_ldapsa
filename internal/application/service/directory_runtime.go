@@ -1318,6 +1318,7 @@ membershipsVerified:
 		s.revokeGeneratedDirectoryTokens(ctx, user.ID)
 		return nil, ErrDirectoryMembershipMismatch
 	}
+	user.DisplayName = strings.TrimSpace(postIdentity.DisplayName)
 	memberships := s.users.BuildLoginMemberships(ctx, user, nil)
 	activeTenantID := user.TenantID
 	if pref := user.Preferences.LastActiveTenantID; pref != nil && membershipContains(memberships, *pref) {

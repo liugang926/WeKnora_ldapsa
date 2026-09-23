@@ -8,20 +8,20 @@
       </div>
       <template v-if="!uiStore.sidebarCollapsed">
         <div class="user-info">
-          <!-- 多空间 / superuser：首行空间名，次行 username · 角色。单空间：昵称 + 邮箱。 -->
+          <!-- 多空间 / superuser：首行空间名，次行显示名称 · 角色。单空间：显示名称 + 账号。 -->
           <template v-if="showTenantIdentityLine">
             <div class="user-tenant-name" :title="activeTenantName">{{ activeTenantName }}</div>
             <div class="user-tenant-meta">
-              <span v-if="userName && userName !== activeTenantName" class="user-tenant-meta-name">{{ userName }}</span>
-              <span v-if="(userName && userName !== activeTenantName) && currentRoleLabel"
+              <span v-if="userName" class="user-tenant-meta-name" :title="userAccountName">{{ userName }}</span>
+              <span v-if="userName && currentRoleLabel"
                 class="user-tenant-meta-sep">·</span>
               <t-icon v-if="currentRoleIcon" :name="currentRoleIcon" size="12px" class="user-tenant-meta-icon" />
               <span v-if="currentRoleLabel" class="user-tenant-meta-role">{{ currentRoleLabel }}</span>
             </div>
           </template>
           <template v-else>
-            <div class="user-name">{{ userName }}</div>
-            <div class="user-email">{{ userEmail }}</div>
+            <div class="user-name" :title="userAccountName">{{ userName }}</div>
+            <div v-if="userSecondary" class="user-email">{{ userSecondary }}</div>
           </template>
         </div>
         <t-icon :name="menuVisible ? 'chevron-up' : 'chevron-down'" class="dropdown-icon" />
@@ -41,7 +41,7 @@
           </div>
           <div class="dropdown-user-meta">
             <div class="dropdown-user-name-row">
-              <span class="dropdown-user-name">{{ userName }}</span>
+              <span class="dropdown-user-name" :title="userAccountName">{{ userName }}</span>
               <t-tooltip :content="$t('newUserGuide.reopen')" placement="top">
                 <button type="button" class="dropdown-guide-btn" :aria-label="$t('newUserGuide.reopen')"
                   @click.stop="reopenGuide">
@@ -49,7 +49,7 @@
                 </button>
               </t-tooltip>
             </div>
-            <span v-if="userEmail" class="dropdown-user-email">{{ userEmail }}</span>
+            <span v-if="userSecondary" class="dropdown-user-email">{{ userSecondary }}</span>
           </div>
         </div>
 
@@ -274,16 +274,17 @@ const tenantSubmenuOpen = ref(false)
 const tenantSubmenuStyle = ref<Record<string, string>>({})
 let tenantSubmenuHideTimer: ReturnType<typeof setTimeout> | null = null
 
-// 用户信息
-const userInfo = ref({
-  username: t('common.defaultUser'),
-  email: 'user@example.com',
-  avatar: ''
-})
-
-const userName = computed(() => userInfo.value.username)
-const userEmail = computed(() => userInfo.value.email)
-const userAvatar = computed(() => userInfo.value.avatar)
+// A directory identity's display name is independent from its stable login
+// username. Keep both in the session store so sync-time renames show up after
+// /auth/me refresh, while the account identifier remains available below it.
+const userName = computed(() => authStore.user?.display_name || authStore.user?.username || t('common.defaultUser'))
+const userAccountName = computed(() => authStore.user?.username || '')
+const userSecondary = computed(() =>
+  authStore.user?.display_name && authStore.user.display_name !== authStore.user.username
+    ? authStore.user.username
+    : authStore.user?.email || '',
+)
+const userAvatar = computed(() => authStore.user?.avatar || '')
 
 // 用户名首字母（用于无头像时显示）
 const userInitial = computed(() => {
@@ -541,11 +542,6 @@ const loadUserInfo = async () => {
     const response = await getCurrentUser()
     if (response.success && response.data && response.data.user) {
       const user = response.data.user
-      userInfo.value = {
-        username: user.username || t('common.info'),
-        email: user.email || 'user@example.com',
-        avatar: user.avatar || ''
-      }
       // 同时更新 authStore 中的用户信息，确保包含 can_access_all_tenants /
       // is_system_admin 等所有字段。MUST 走 userInfoFromApi 工厂——历史
       // 上这里手写字段白名单，每加一个 user 字段都要在 5 个 setUser 调用

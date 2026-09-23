@@ -88,6 +88,10 @@ type User struct {
 	ID string `json:"id"         gorm:"type:varchar(36);primaryKey"`
 	// Username of the user
 	Username string `json:"username"   gorm:"type:varchar(100);uniqueIndex;not null"`
+	// DisplayName is projected from a linked directory identity for responses.
+	// It is not stored on the local user: directory renames must take effect
+	// without changing the stable WeKnora username or login identity.
+	DisplayName string `json:"display_name,omitempty" gorm:"-"`
 	// Email address of the user
 	Email string `json:"email"      gorm:"type:varchar(255);uniqueIndex;not null"`
 	// Hashed password of the user
@@ -260,6 +264,7 @@ type RegisterResponse struct {
 type UserInfo struct {
 	ID                  string          `json:"id"`
 	Username            string          `json:"username"`
+	DisplayName         string          `json:"display_name,omitempty"`
 	Email               string          `json:"email"`
 	Avatar              string          `json:"avatar"`
 	TenantID            uint64          `json:"tenant_id"`
@@ -276,6 +281,7 @@ func (u *User) ToUserInfo() *UserInfo {
 	return &UserInfo{
 		ID:                  u.ID,
 		Username:            u.Username,
+		DisplayName:         u.DisplayName,
 		Email:               u.Email,
 		Avatar:              u.Avatar,
 		TenantID:            u.TenantID,
