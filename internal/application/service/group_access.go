@@ -13,9 +13,12 @@ import (
 )
 
 var (
-	ErrInvalidGroupGrant     = errors.New("invalid directory group grant")
+	// ErrInvalidGroupGrant rejects a malformed group authorization.
+	ErrInvalidGroupGrant = errors.New("invalid directory group grant")
+	// ErrInvalidResourcePolicy rejects a malformed resource access mode.
 	ErrInvalidResourcePolicy = errors.New("invalid resource access policy")
-	ErrResourceAccessDenied  = errors.New("resource access denied")
+	// ErrResourceAccessDenied reports a resource-level authorization failure.
+	ErrResourceAccessDenied = errors.New("resource access denied")
 )
 
 type groupAccessService struct {
@@ -25,11 +28,16 @@ type groupAccessService struct {
 	now              func() time.Time
 }
 
+// NewGroupAccessService constructs the group and resource authorization service.
 func NewGroupAccessService(repo interfaces.GroupAccessRepository) interfaces.GroupAccessService {
 	return NewGroupAccessServiceWithInvalidator(repo, nil)
 }
 
-func NewGroupAccessServiceWithInvalidator(repo interfaces.GroupAccessRepository, invalidator interfaces.PermissionInvalidator) interfaces.GroupAccessService {
+// NewGroupAccessServiceWithInvalidator also invalidates cached grants.
+func NewGroupAccessServiceWithInvalidator(
+	repo interfaces.GroupAccessRepository,
+	invalidator interfaces.PermissionInvalidator,
+) interfaces.GroupAccessService {
 	return &groupAccessService{repo: repo, invalidator: invalidator, now: time.Now}
 }
 
@@ -37,7 +45,10 @@ func NewGroupAccessServiceWithInvalidator(repo interfaces.GroupAccessRepository,
 // top-level switch for every group-derived permission. Existing policies stay
 // persisted while the module is off, but authorization reverts to the legacy
 // workspace/share behaviour until the directory is enabled again.
-func ConfigureGroupAccessDirectoryRuntime(groupAccess interfaces.GroupAccessService, runtime interfaces.DirectoryRuntimeService) {
+func ConfigureGroupAccessDirectoryRuntime(
+	groupAccess interfaces.GroupAccessService,
+	runtime interfaces.DirectoryRuntimeService,
+) {
 	if impl, ok := groupAccess.(*groupAccessService); ok {
 		impl.directoryRuntime = runtime
 	}
@@ -51,7 +62,12 @@ func (s *groupAccessService) directoryModuleDisabled(ctx context.Context) bool {
 	return err == nil && health != nil && !health.Enabled
 }
 
-func (s *groupAccessService) EffectiveTenantRole(ctx context.Context, userID string, tenantID uint64, now time.Time) (types.EffectiveTenantRole, error) {
+func (s *groupAccessService) EffectiveTenantRole(
+	ctx context.Context,
+	userID string,
+	tenantID uint64,
+	now time.Time,
+) (types.EffectiveTenantRole, error) {
 	result := types.EffectiveTenantRole{TenantID: tenantID}
 	if strings.TrimSpace(userID) == "" || tenantID == 0 {
 		return result, nil
@@ -87,7 +103,11 @@ func (s *groupAccessService) EffectiveTenantRole(ctx context.Context, userID str
 	return result, nil
 }
 
-func (s *groupAccessService) ListEffectiveTenantRoles(ctx context.Context, userID string, now time.Time) ([]types.EffectiveTenantRole, error) {
+func (s *groupAccessService) ListEffectiveTenantRoles(
+	ctx context.Context,
+	userID string,
+	now time.Time,
+) ([]types.EffectiveTenantRole, error) {
 	roles, err := s.repo.ListEffectiveTenantRoles(ctx, strings.TrimSpace(userID), now)
 	if err != nil {
 		return nil, err
@@ -112,10 +132,16 @@ func (s *groupAccessService) ListEffectiveTenantRoles(ctx context.Context, userI
 	return roles, nil
 }
 
-func (s *groupAccessService) UpsertTenantGroupRoleGrant(ctx context.Context, grant *types.TenantGroupRoleGrant) error {
+func (s *groupAccessService) UpsertTenantGroupRoleGrant(
+	ctx context.Context,
+	grant *types.TenantGroupRoleGrant,
+) error {
 	if grant == nil || grant.TenantID == 0 || strings.TrimSpace(grant.DirectoryGroupID) == "" ||
 		!grant.Role.IsValid() || grant.Role == types.TenantRoleOwner {
-		return fmt.Errorf("%w: tenant, group and viewer/contributor/admin role are required", ErrInvalidGroupGrant)
+		return fmt.Errorf(
+			"%w: tenant, group and viewer/contributor/admin role are required",
+			ErrInvalidGroupGrant,
+		)
 	}
 	if grant.Origin == "" {
 		grant.Origin = types.GrantOriginManual
@@ -130,7 +156,12 @@ func (s *groupAccessService) UpsertTenantGroupRoleGrant(ctx context.Context, gra
 	return err
 }
 
-func (s *groupAccessService) DeleteTenantGroupRoleGrant(ctx context.Context, tenantID uint64, groupID string, origin types.GrantOrigin) error {
+func (s *groupAccessService) DeleteTenantGroupRoleGrant(
+	ctx context.Context,
+	tenantID uint64,
+	groupID string,
+	origin types.GrantOrigin,
+) error {
 	if tenantID == 0 || strings.TrimSpace(groupID) == "" {
 		return ErrInvalidGroupGrant
 	}
@@ -141,7 +172,10 @@ func (s *groupAccessService) DeleteTenantGroupRoleGrant(ctx context.Context, ten
 	return err
 }
 
-func (s *groupAccessService) SetResourceAccessPolicy(ctx context.Context, policy *types.ResourceAccessPolicy) error {
+func (s *groupAccessService) SetResourceAccessPolicy(
+	ctx context.Context,
+	policy *types.ResourceAccessPolicy,
+) error {
 	if policy == nil || policy.TenantID == 0 || strings.TrimSpace(policy.ResourceID) == "" ||
 		!policy.ResourceType.IsValid() || !policy.Mode.IsValid() {
 		return ErrInvalidResourcePolicy
@@ -153,7 +187,10 @@ func (s *groupAccessService) SetResourceAccessPolicy(ctx context.Context, policy
 	return err
 }
 
-func (s *groupAccessService) UpsertResourceGroupGrant(ctx context.Context, grant *types.ResourceGroupGrant) error {
+func (s *groupAccessService) UpsertResourceGroupGrant(
+	ctx context.Context,
+	grant *types.ResourceGroupGrant,
+) error {
 	if grant == nil || grant.TenantID == 0 || strings.TrimSpace(grant.ResourceID) == "" ||
 		strings.TrimSpace(grant.DirectoryGroupID) == "" || !grant.ResourceType.IsValid() ||
 		!grant.Permission.ValidFor(grant.ResourceType) {
@@ -184,7 +221,15 @@ func (s *groupAccessService) DeleteResourceGroupGrant(
 		!resourceType.IsValid() || !permission.ValidFor(resourceType) {
 		return ErrInvalidGroupGrant
 	}
-	version, err := s.repo.DeleteResourceGroupGrant(ctx, tenantID, resourceType, resourceID, groupID, permission, origin)
+	version, err := s.repo.DeleteResourceGroupGrant(
+		ctx,
+		tenantID,
+		resourceType,
+		resourceID,
+		groupID,
+		permission,
+		origin,
+	)
 	if err == nil {
 		s.invalidate(ctx, tenantID, version)
 	}
@@ -236,7 +281,9 @@ func (s *groupAccessService) effectivePermissionWithMode(
 	now time.Time,
 ) (types.EffectiveResourcePermission, error) {
 	result := types.EffectiveResourcePermission{Mode: mode, Action: action}
-	if tenantID == 0 || strings.TrimSpace(resourceID) == "" || !resourceType.IsValid() || !action.ValidFor(resourceType) || !mode.IsValid() {
+	if tenantID == 0 || strings.TrimSpace(resourceID) == "" || !resourceType.IsValid() ||
+		!action.ValidFor(resourceType) ||
+		!mode.IsValid() {
 		return result, ErrInvalidResourcePolicy
 	}
 	if mode == types.ResourceAccessInherit {
@@ -251,7 +298,8 @@ func (s *groupAccessService) effectivePermissionWithMode(
 		return result, nil
 	}
 	principal, ok := types.PrincipalFromContext(ctx)
-	if !ok || principal.Type != types.PrincipalWebUser || strings.TrimSpace(principal.ID) == "" || types.IsSyntheticUserID(principal.ID) {
+	if !ok || principal.Type != types.PrincipalWebUser || strings.TrimSpace(principal.ID) == "" ||
+		types.IsSyntheticUserID(principal.ID) {
 		result.Reason = "verifiable_user_required"
 		return result, nil
 	}
@@ -281,7 +329,13 @@ func (s *groupAccessService) effectivePermissionWithMode(
 		result.Reason = "management_requires_owner_or_admin"
 		return result, nil
 	}
-	matches, err := s.repo.ListResourceGroupMatches(ctx, caller.UserID, tenantID, resourceType, resourceID)
+	matches, err := s.repo.ListResourceGroupMatches(
+		ctx,
+		caller.UserID,
+		tenantID,
+		resourceType,
+		resourceID,
+	)
 	if err != nil {
 		return result, err
 	}
@@ -302,18 +356,37 @@ func (s *groupAccessService) effectivePermissionWithMode(
 	return result, nil
 }
 
-func permissionSatisfies(resourceType types.ResourceType, permission types.ResourcePermission, action types.ResourceAction) bool {
+func permissionSatisfies(
+	resourceType types.ResourceType,
+	permission types.ResourcePermission,
+	action types.ResourceAction,
+) bool {
 	if permission == types.ResourcePermissionEdit {
 		return action == types.ResourceActionEdit ||
 			(resourceType == types.GroupResourceTypeKnowledgeBase && action == types.ResourceActionRead) ||
 			(resourceType == types.GroupResourceTypeAgent && action == types.ResourceActionUse)
 	}
-	return (resourceType == types.GroupResourceTypeKnowledgeBase && permission == types.ResourcePermissionRead && action == types.ResourceActionRead) ||
-		(resourceType == types.GroupResourceTypeAgent && permission == types.ResourcePermissionUse && action == types.ResourceActionUse)
+	return (resourceType == types.GroupResourceTypeKnowledgeBase &&
+		permission == types.ResourcePermissionRead && action == types.ResourceActionRead) ||
+		(resourceType == types.GroupResourceTypeAgent &&
+			permission == types.ResourcePermissionUse && action == types.ResourceActionUse)
 }
 
-func (s *groupAccessService) Authorize(ctx context.Context, tenantID uint64, resourceType types.ResourceType, resourceID string, action types.ResourceAction) error {
-	permission, err := s.EffectivePermission(ctx, tenantID, resourceType, resourceID, action, s.now().UTC())
+func (s *groupAccessService) Authorize(
+	ctx context.Context,
+	tenantID uint64,
+	resourceType types.ResourceType,
+	resourceID string,
+	action types.ResourceAction,
+) error {
+	permission, err := s.EffectivePermission(
+		ctx,
+		tenantID,
+		resourceType,
+		resourceID,
+		action,
+		s.now().UTC(),
+	)
 	if err != nil {
 		return err
 	}
@@ -331,7 +404,8 @@ func (s *groupAccessService) PreviewModeChange(
 	proposed types.ResourceAccessMode,
 	now time.Time,
 ) (*types.ResourceAccessImpactPreview, error) {
-	if !proposed.IsValid() || !resourceType.IsValid() || tenantID == 0 || strings.TrimSpace(resourceID) == "" {
+	if !proposed.IsValid() || !resourceType.IsValid() || tenantID == 0 ||
+		strings.TrimSpace(resourceID) == "" {
 		return nil, ErrInvalidResourcePolicy
 	}
 	current := types.ResourceAccessInherit
@@ -372,13 +446,35 @@ func (s *groupAccessService) PreviewModeChange(
 		preview.WorkspaceUserCount++
 		// Do not inherit the administrator/API-key principal that requested the
 		// preview; evaluate each affected human as that human.
-		userCtx := types.WithCaller(context.Background(), types.Caller{TenantID: tenantID, UserID: userID, Role: role.Role})
-		userCtx = types.WithPrincipal(userCtx, types.Principal{Type: types.PrincipalWebUser, ID: userID})
-		currentPermission, err := s.effectivePermissionWithMode(userCtx, tenantID, resourceType, resourceID, action, current, now)
+		userCtx := types.WithCaller(
+			context.Background(),
+			types.Caller{TenantID: tenantID, UserID: userID, Role: role.Role},
+		)
+		userCtx = types.WithPrincipal(
+			userCtx,
+			types.Principal{Type: types.PrincipalWebUser, ID: userID},
+		)
+		currentPermission, err := s.effectivePermissionWithMode(
+			userCtx,
+			tenantID,
+			resourceType,
+			resourceID,
+			action,
+			current,
+			now,
+		)
 		if err != nil {
 			return nil, err
 		}
-		proposedPermission, err := s.effectivePermissionWithMode(userCtx, tenantID, resourceType, resourceID, action, proposed, now)
+		proposedPermission, err := s.effectivePermissionWithMode(
+			userCtx,
+			tenantID,
+			resourceType,
+			resourceID,
+			action,
+			proposed,
+			now,
+		)
 		if err != nil {
 			return nil, err
 		}

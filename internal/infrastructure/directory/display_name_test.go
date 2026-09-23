@@ -1,9 +1,10 @@
 package directory
 
 import (
+	"testing"
+
 	"github.com/go-ldap/ldap/v3"
 	"github.com/stretchr/testify/require"
-	"testing"
 )
 
 func TestDirectoryDisplayNameFallback(t *testing.T) {
@@ -20,7 +21,10 @@ func TestDirectoryDisplayNameFallback(t *testing.T) {
 					attribute.Values = []string{tc.display}
 				}
 			}
-			entry.Attributes = append(entry.Attributes, &ldap.EntryAttribute{Name: "name", Values: []string{tc.name}}, &ldap.EntryAttribute{Name: "cn", Values: []string{tc.cn}})
+			entry.Attributes = append(entry.Attributes,
+				&ldap.EntryAttribute{Name: "name", Values: []string{tc.name}},
+				&ldap.EntryAttribute{Name: "cn", Values: []string{tc.cn}},
+			)
 			user, err := parseUserEntry(entry)
 			require.NoError(t, err)
 			require.Equal(t, tc.want, user.DisplayName)

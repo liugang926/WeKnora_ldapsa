@@ -1099,7 +1099,9 @@ func (s *knowledgeService) ProcessKnowledgeMove(ctx context.Context, t *asynq.Ta
 			ctx, kb.TenantID, kb.ID, types.ResourceActionEdit,
 		); err != nil {
 			if errors.Is(err, ErrResourceAccessDenied) {
-				return fmt.Errorf("move authorization revoked for knowledge base %s: %v: %w", kb.ID, err, asynq.SkipRetry)
+				return fmt.Errorf(
+					"move authorization revoked for knowledge base %s: %v: %w", kb.ID, err, asynq.SkipRetry,
+				)
 			}
 			return err
 		}

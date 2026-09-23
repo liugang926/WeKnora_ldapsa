@@ -73,11 +73,11 @@ func (h *DataSourceCredentialsHandler) ownDataSource(c *gin.Context) (*types.Dat
 			time.Now().UTC(),
 		)
 		if accessErr != nil {
-			c.Error(errors.NewServiceUnavailableError("cannot verify knowledge base access right now"))
+			_ = c.Error(errors.NewServiceUnavailableError("cannot verify knowledge base access right now"))
 			return nil, false
 		}
 		if !permission.Allowed {
-			c.Error(errors.NewForbiddenError("directory group permission required for this knowledge base"))
+			_ = c.Error(errors.NewForbiddenError("directory group permission required for this knowledge base"))
 			return nil, false
 		}
 	}

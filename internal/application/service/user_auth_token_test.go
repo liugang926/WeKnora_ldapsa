@@ -31,6 +31,7 @@ func (s *stubAuthTokenRepo) GetTokenByValue(_ context.Context, tokenValue string
 	}
 	return token, nil
 }
+
 func (s *stubAuthTokenRepo) GetTokenByID(_ context.Context, id string) (*types.AuthToken, error) {
 	for _, token := range s.tokens {
 		if token != nil && token.ID == id {
@@ -39,6 +40,7 @@ func (s *stubAuthTokenRepo) GetTokenByID(_ context.Context, id string) (*types.A
 	}
 	return nil, errors.New("token not found")
 }
+
 func (s *stubAuthTokenRepo) GetTokensByUserID(context.Context, string) ([]*types.AuthToken, error) {
 	return nil, nil
 }
@@ -77,18 +79,23 @@ func (s *stubUserRepoForAuth) GetUserByID(_ context.Context, id string) (*types.
 	}
 	return user, nil
 }
+
 func (s *stubUserRepoForAuth) GetUsersByIDs(context.Context, []string) (map[string]*types.User, error) {
 	return nil, nil
 }
+
 func (s *stubUserRepoForAuth) GetUserByEmail(context.Context, string) (*types.User, error) {
 	return nil, nil
 }
+
 func (s *stubUserRepoForAuth) GetUserByUsername(context.Context, string) (*types.User, error) {
 	return nil, nil
 }
+
 func (s *stubUserRepoForAuth) GetUserByTenantID(context.Context, uint64) (*types.User, error) {
 	return nil, nil
 }
+
 func (s *stubUserRepoForAuth) UpdateUser(context.Context, *types.User) error {
 	s.updateCalls++
 	return nil
@@ -97,15 +104,19 @@ func (s *stubUserRepoForAuth) DeleteUser(context.Context, string) error { return
 func (s *stubUserRepoForAuth) ListUsers(context.Context, int, int) ([]*types.User, error) {
 	return nil, nil
 }
+
 func (s *stubUserRepoForAuth) ListSystemAdmins(context.Context, int, int) ([]*types.User, int64, error) {
 	return nil, 0, nil
 }
+
 func (s *stubUserRepoForAuth) RevokeSystemAdmin(context.Context, string, string) (*types.User, error) {
 	return nil, nil
 }
+
 func (s *stubUserRepoForAuth) SearchUsers(context.Context, string, int) ([]*types.User, error) {
 	return nil, nil
 }
+
 func (s *stubUserRepoForAuth) FindUserByEmailOrUsernameFold(context.Context, string, string) (*types.User, error) {
 	return nil, nil
 }
@@ -240,13 +251,16 @@ func TestDirectorySessionPausesWhenStaleAndRecoversAfterFreshSync(t *testing.T) 
 	}
 	freshAt := time.Now().UTC()
 	directory := &types.Directory{ID: "corp-ad", Enabled: true, LastSuccessfulSyncAt: &freshAt, StaleAfterSeconds: 900}
-	svc.directoryRepo = &stubDirectoryRepoForAuth{identities: []*types.DirectoryIdentity{identity}, directory: directory}
+	svc.directoryRepo = &stubDirectoryRepoForAuth{
+		identities: []*types.DirectoryIdentity{identity}, directory: directory,
+	}
 
 	accessJWT := signTestJWT(jwt.MapClaims{
 		"user_id": "user-1", "type": "access", "tenant_id": float64(1), "exp": time.Now().Add(time.Hour).Unix(),
 	})
 	tokenRepo.tokens[accessJWT] = &types.AuthToken{
-		ID: "access-1", UserID: "user-1", Token: accessJWT, TokenType: "access_token", ExpiresAt: time.Now().Add(time.Hour),
+		ID: "access-1", UserID: "user-1", Token: accessJWT,
+		TokenType: "access_token", ExpiresAt: time.Now().Add(time.Hour),
 	}
 	user, _, err := svc.ValidateToken(ctx, accessJWT)
 	if err != nil {

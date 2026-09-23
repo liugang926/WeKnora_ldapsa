@@ -57,7 +57,7 @@ func (h *DirectoryHandler) GetConfig(c *gin.Context) {
 func (h *DirectoryHandler) UpdateConfig(c *gin.Context) {
 	var request types.DirectoryAdminConfigUpdate
 	if err := c.ShouldBindJSON(&request); err != nil {
-		c.Error(apperrors.NewValidationError("Invalid directory configuration").WithDetails(err.Error()))
+		_ = c.Error(apperrors.NewValidationError("Invalid directory configuration").WithDetails(err.Error()))
 		return
 	}
 	result, err := h.runtime.UpdateConfig(c.Request.Context(), &request)
@@ -80,7 +80,7 @@ func (h *DirectoryHandler) GetStatus(c *gin.Context) {
 func (h *DirectoryHandler) TestConnection(c *gin.Context) {
 	var request types.DirectoryAdminConfigUpdate
 	if err := c.ShouldBindJSON(&request); err != nil {
-		c.Error(apperrors.NewValidationError("Invalid directory test configuration").WithDetails(err.Error()))
+		_ = c.Error(apperrors.NewValidationError("Invalid directory test configuration").WithDetails(err.Error()))
 		return
 	}
 	result, err := h.runtime.TestConnection(c.Request.Context(), &request)
@@ -154,12 +154,12 @@ func (h *DirectoryHandler) AddTenantDirectoryMember(c *gin.Context) {
 		Role       types.TenantRole `json:"role" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&request); err != nil {
-		c.Error(apperrors.NewValidationError("object_guid and role are required"))
+		_ = c.Error(apperrors.NewValidationError("object_guid and role are required"))
 		return
 	}
 	member, err := h.runtime.AddTenantDirectoryMember(c.Request.Context(), tenantID, request.ObjectGUID, request.Role)
 	if errors.Is(err, service.ErrMembershipAlreadyExists) || errors.Is(err, service.ErrDirectoryIdentityLinkRequired) {
-		c.Error(apperrors.NewConflictError(err.Error()))
+		_ = c.Error(apperrors.NewConflictError(err.Error()))
 		return
 	}
 	if err != nil {
@@ -199,7 +199,7 @@ func (h *DirectoryHandler) ListSyncRuns(c *gin.Context) {
 func (h *DirectoryHandler) LinkIdentity(c *gin.Context) {
 	var request types.DirectoryIdentityLinkRequest
 	if err := c.ShouldBindJSON(&request); err != nil {
-		c.Error(apperrors.NewValidationError("user_id is required"))
+		_ = c.Error(apperrors.NewValidationError("user_id is required"))
 		return
 	}
 	if err := h.runtime.LinkIdentity(c.Request.Context(), c.Param("object_guid"), request.UserID); err != nil {
@@ -234,18 +234,18 @@ func directoryQueryLimit(c *gin.Context) int {
 func (h *DirectoryHandler) LDAPLogin(c *gin.Context) {
 	var request types.DirectoryLoginRequest
 	if err := c.ShouldBindJSON(&request); err != nil {
-		c.Error(apperrors.NewValidationError("Identifier and password are required"))
+		_ = c.Error(apperrors.NewValidationError("Identifier and password are required"))
 		return
 	}
 	if strings.TrimSpace(request.Identifier) == "" || request.Password == "" {
-		c.Error(apperrors.NewValidationError("Identifier and password are required"))
+		_ = c.Error(apperrors.NewValidationError("Identifier and password are required"))
 		return
 	}
 	result, err := h.runtime.Login(c.Request.Context(), request.Identifier, request.Password)
 	if err != nil {
 		switch {
 		case errors.Is(err, service.ErrDirectoryIdentityLinkRequired):
-			c.Error(apperrors.NewConflictError("Directory identity conflicts with an existing account; ask an administrator to link it"))
+			_ = c.Error(apperrors.NewConflictError("Directory identity conflicts with an existing account; ask an administrator to link it"))
 		case errors.Is(err, service.ErrDirectoryDisabled),
 			errors.Is(err, service.ErrDirectoryUnavailable),
 			errors.Is(err, service.ErrDirectoryMembershipMismatch),
@@ -257,16 +257,16 @@ func (h *DirectoryHandler) LDAPLogin(c *gin.Context) {
 			errors.Is(err, ldapdirectory.ErrInvalidDirectoryObject),
 			errors.Is(err, ldapdirectory.ErrDuplicateDirectoryObject),
 			isDirectoryFailoverError(err):
-			c.Error(apperrors.NewServiceUnavailableError("Directory authentication is temporarily unavailable"))
+			_ = c.Error(apperrors.NewServiceUnavailableError("Directory authentication is temporarily unavailable"))
 		case errors.Is(err, service.ErrDirectoryIdentityUnavailable):
-			c.Error(apperrors.NewForbiddenError("Directory account is disabled or outside the allowed login scope"))
+			_ = c.Error(apperrors.NewForbiddenError("Directory account is disabled or outside the allowed login scope"))
 		case errors.Is(err, ldapdirectory.ErrInvalidCredentials),
 			errors.Is(err, ldapdirectory.ErrUserNotFound),
 			errors.Is(err, ldapdirectory.ErrAmbiguousUser),
 			errors.Is(err, ldapdirectory.ErrUserDisabled):
-			c.Error(apperrors.NewUnauthorizedError("Directory login failed"))
+			_ = c.Error(apperrors.NewUnauthorizedError("Directory login failed"))
 		default:
-			c.Error(apperrors.NewServiceUnavailableError("Directory authentication is temporarily unavailable"))
+			_ = c.Error(apperrors.NewServiceUnavailableError("Directory authentication is temporarily unavailable"))
 		}
 		return
 	}
@@ -281,25 +281,25 @@ func isDirectoryFailoverError(err error) bool {
 func directoryHTTPError(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, service.ErrDirectoryFileManaged):
-		c.Error(apperrors.NewConflictError("Directory configuration is managed by deployment files and is read-only"))
+		_ = c.Error(apperrors.NewConflictError("Directory configuration is managed by deployment files and is read-only"))
 	case errors.Is(err, service.ErrDirectoryIdentityAlreadyLinked):
-		c.Error(apperrors.NewConflictError("Directory identity is already linked to a different user"))
+		_ = c.Error(apperrors.NewConflictError("Directory identity is already linked to a different user"))
 	case errors.Is(err, service.ErrDirectoryIdentityUnavailable):
-		c.Error(apperrors.NewNotFoundError("Directory identity was not found in the active snapshot"))
+		_ = c.Error(apperrors.NewNotFoundError("Directory identity was not found in the active snapshot"))
 	case errors.Is(err, service.ErrDirectorySyncInProgress):
-		c.Error(apperrors.NewConflictError("A directory synchronization is already running"))
+		_ = c.Error(apperrors.NewConflictError("A directory synchronization is already running"))
 	case errors.Is(err, service.ErrInvalidDirectoryConfig),
 		errors.Is(err, service.ErrDirectoryEncryptionKey):
-		c.Error(apperrors.NewValidationError(err.Error()))
+		_ = c.Error(apperrors.NewValidationError(err.Error()))
 	case errors.Is(err, service.ErrDirectoryDisabled),
 		errors.Is(err, service.ErrDirectoryUnavailable),
 		errors.Is(err, service.ErrDirectoryNotConfigured):
-		c.Error(apperrors.NewServiceUnavailableError(err.Error()))
+		_ = c.Error(apperrors.NewServiceUnavailableError(err.Error()))
 	case errors.Is(err, ldapdirectory.ErrInvalidServiceCredentials),
 		errors.Is(err, ldapdirectory.ErrIncompleteResults),
 		errors.Is(err, ldapdirectory.ErrMembershipCycle):
-		c.Error(apperrors.NewServiceUnavailableError("Directory operation failed").WithDetails(err.Error()))
+		_ = c.Error(apperrors.NewServiceUnavailableError("Directory operation failed").WithDetails(err.Error()))
 	default:
-		c.Error(apperrors.NewInternalServerError("Directory operation failed").WithDetails(err.Error()))
+		_ = c.Error(apperrors.NewInternalServerError("Directory operation failed").WithDetails(err.Error()))
 	}
 }

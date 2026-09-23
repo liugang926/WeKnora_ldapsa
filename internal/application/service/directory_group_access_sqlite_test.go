@@ -18,9 +18,16 @@ import (
 	"gorm.io/gorm"
 )
 
-func setupDirectoryAccessSQLite(t *testing.T) (*gorm.DB, interfaces.DirectoryService, interfaces.GroupAccessService) {
+func setupDirectoryAccessSQLite(
+	t *testing.T,
+) (*gorm.DB, interfaces.DirectoryService, interfaces.GroupAccessService) {
 	t.Helper()
-	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared&_foreign_keys=on&_busy_timeout=5000"), &gorm.Config{})
+	db, err := gorm.Open(
+		sqlite.Open(
+			"file:"+t.Name()+"?mode=memory&cache=shared&_foreign_keys=on&_busy_timeout=5000",
+		),
+		&gorm.Config{},
+	)
 	require.NoError(t, err)
 	// Match the application's SQLite pool configuration. SQLite permits only
 	// one writer; a multi-connection shared-memory test can otherwise return
@@ -30,14 +37,25 @@ func setupDirectoryAccessSQLite(t *testing.T) (*gorm.DB, interfaces.DirectorySer
 	require.NoError(t, err)
 	sqlDB.SetMaxOpenConns(1)
 	t.Cleanup(func() { _ = sqlDB.Close() })
-	migrationPath := filepath.Join("..", "..", "..", "migrations", "sqlite", "000028_directory_group_access.up.sql")
+	migrationPath := filepath.Join(
+		"..",
+		"..",
+		"..",
+		"migrations",
+		"sqlite",
+		"000028_directory_group_access.up.sql",
+	)
 	ddl, err := os.ReadFile(migrationPath)
 	require.NoError(t, err)
 	require.NoError(t, db.Exec(string(ddl)).Error)
 	require.NoError(t, db.AutoMigrate(&types.TenantMember{}, &types.AuthToken{}))
 	directoryRepo := apprepo.NewDirectoryRepository(db)
 	groupRepo := apprepo.NewGroupAccessRepository(db)
-	return db, appservice.NewDirectoryService(directoryRepo), appservice.NewGroupAccessService(groupRepo)
+	return db, appservice.NewDirectoryService(
+			directoryRepo,
+		), appservice.NewGroupAccessService(
+			groupRepo,
+		)
 }
 
 func TestDirectoryLinkIdentityConcurrentNeverOverwritesSQLite(t *testing.T) {
@@ -46,7 +64,12 @@ func TestDirectoryLinkIdentityConcurrentNeverOverwritesSQLite(t *testing.T) {
 	_, err := directorySvc.ApplySnapshot(context.Background(), testDirectorySnapshot(directory.ID))
 	require.NoError(t, err)
 	var identity types.DirectoryIdentity
-	require.NoError(t, db.Where("directory_id = ? AND object_guid = ?", directory.ID, "user-guid").First(&identity).Error)
+	require.NoError(
+		t,
+		db.Where("directory_id = ? AND object_guid = ?", directory.ID, "user-guid").
+			First(&identity).
+			Error,
+	)
 
 	services := []interfaces.DirectoryService{
 		appservice.NewDirectoryService(apprepo.NewDirectoryRepository(db)),
@@ -86,12 +109,19 @@ func TestDirectoryLinkIdentityConcurrentNeverOverwritesSQLite(t *testing.T) {
 
 	// Repeating the winning link is idempotent; the losing user can never
 	// replace it, including from a fresh service/repository instance.
-	require.NoError(t, services[0].LinkIdentity(context.Background(), identity.ID, *identity.UserID))
+	require.NoError(
+		t,
+		services[0].LinkIdentity(context.Background(), identity.ID, *identity.UserID),
+	)
 	loser := users[0]
 	if loser == *identity.UserID {
 		loser = users[1]
 	}
-	require.ErrorIs(t, services[1].LinkIdentity(context.Background(), identity.ID, loser), appservice.ErrDirectoryIdentityAlreadyLinked)
+	require.ErrorIs(
+		t,
+		services[1].LinkIdentity(context.Background(), identity.ID, loser),
+		appservice.ErrDirectoryIdentityAlreadyLinked,
+	)
 }
 
 func TestDirectoryLinkIdentityConcurrentUniqueUserConflictSQLite(t *testing.T) {
@@ -168,13 +198,34 @@ func testDirectorySnapshot(directoryID string) *types.DirectorySnapshot {
 			Email: "alice@example.test", PrimaryGroupSID: "S-1-5-21-513", Enabled: true,
 		}},
 		Groups: []types.DirectoryGroupSnapshot{
-			{ObjectGUID: "leaf-guid", ObjectSID: "S-1-5-21-2001", DN: "cn=Leaf,dc=example,dc=test", SAMAccountName: "leaf", DisplayName: "Leaf", Email: "leaf@example.test"},
-			{ObjectGUID: "parent-guid", ObjectSID: "S-1-5-21-2002", DN: "cn=Parent,dc=example,dc=test", DisplayName: "Parent"},
-			{ObjectGUID: "primary-guid", ObjectSID: "S-1-5-21-513", DN: "cn=Domain Users,dc=example,dc=test", DisplayName: "Domain Users"},
+			{
+				ObjectGUID:     "leaf-guid",
+				ObjectSID:      "S-1-5-21-2001",
+				DN:             "cn=Leaf,dc=example,dc=test",
+				SAMAccountName: "leaf",
+				DisplayName:    "Leaf",
+				Email:          "leaf@example.test",
+			},
+			{
+				ObjectGUID:  "parent-guid",
+				ObjectSID:   "S-1-5-21-2002",
+				DN:          "cn=Parent,dc=example,dc=test",
+				DisplayName: "Parent",
+			},
+			{
+				ObjectGUID:  "primary-guid",
+				ObjectSID:   "S-1-5-21-513",
+				DN:          "cn=Domain Users,dc=example,dc=test",
+				DisplayName: "Domain Users",
+			},
 		},
-		GroupEdges:  []types.DirectoryGroupEdgeSnapshot{{ParentGroupObjectGUID: "parent-guid", ChildGroupObjectGUID: "leaf-guid"}},
-		Memberships: []types.DirectoryMembershipSnapshot{{GroupObjectGUID: "leaf-guid", UserObjectGUID: "user-guid"}},
-		StartedAt:   time.Now().UTC().Add(-time.Second),
+		GroupEdges: []types.DirectoryGroupEdgeSnapshot{
+			{ParentGroupObjectGUID: "parent-guid", ChildGroupObjectGUID: "leaf-guid"},
+		},
+		Memberships: []types.DirectoryMembershipSnapshot{
+			{GroupObjectGUID: "leaf-guid", UserObjectGUID: "user-guid"},
+		},
+		StartedAt: time.Now().UTC().Add(-time.Second),
 	}
 }
 
@@ -187,7 +238,10 @@ func TestDirectorySnapshotRenameAndOUMoveKeepStableRowsSQLite(t *testing.T) {
 
 	var originalIdentity types.DirectoryIdentity
 	require.NoError(t, db.Where("object_guid = ?", "user-guid").First(&originalIdentity).Error)
-	require.NoError(t, directorySvc.LinkIdentity(context.Background(), originalIdentity.ID, "user-1"))
+	require.NoError(
+		t,
+		directorySvc.LinkIdentity(context.Background(), originalIdentity.ID, "user-1"),
+	)
 	var originalGroup types.DirectoryGroup
 	require.NoError(t, db.Where("object_guid = ?", "leaf-guid").First(&originalGroup).Error)
 	require.Equal(t, "leaf", originalGroup.SAMAccountName)
@@ -206,7 +260,12 @@ func TestDirectorySnapshotRenameAndOUMoveKeepStableRowsSQLite(t *testing.T) {
 
 	var identities []types.DirectoryIdentity
 	require.NoError(t, db.Where("directory_id = ?", directory.ID).Find(&identities).Error)
-	require.Len(t, identities, 1, "same objectGUID must not create a second identity after rename/OU move")
+	require.Len(
+		t,
+		identities,
+		1,
+		"same objectGUID must not create a second identity after rename/OU move",
+	)
 	require.Equal(t, originalIdentity.ID, identities[0].ID)
 	require.Equal(t, "cn=Alice Renamed,ou=Moved,dc=example,dc=test", identities[0].DN)
 	require.NotNil(t, identities[0].UserID, "explicit account link must survive attribute updates")
@@ -219,7 +278,9 @@ func TestDirectorySnapshotRenameAndOUMoveKeepStableRowsSQLite(t *testing.T) {
 	require.Equal(t, "leaf-renamed@example.test", movedGroup.Email)
 }
 
-func TestDirectorySnapshotMarksDisabledAndMissingIdentitiesWithoutEmptyFailureRevocationSQLite(t *testing.T) {
+func TestDirectorySnapshotMarksDisabledAndMissingIdentitiesWithoutEmptyFailureRevocationSQLite(
+	t *testing.T,
+) {
 	db, directorySvc, _ := setupDirectoryAccessSQLite(t)
 	directory := createTestDirectory(t, directorySvc)
 	_, err := directorySvc.ApplySnapshot(context.Background(), testDirectorySnapshot(directory.ID))
@@ -246,7 +307,12 @@ func TestDirectorySnapshotMarksDisabledAndMissingIdentitiesWithoutEmptyFailureRe
 	_, err = directorySvc.ApplySnapshot(context.Background(), incomplete)
 	require.ErrorIs(t, err, appservice.ErrIncompleteDirectorySync)
 	require.NoError(t, db.Where("object_guid = ?", "user-guid").First(&identity).Error)
-	require.Equal(t, types.DirectoryObjectOutOfScope, identity.Status, "failed snapshot must preserve prior identity state")
+	require.Equal(
+		t,
+		types.DirectoryObjectOutOfScope,
+		identity.Status,
+		"failed snapshot must preserve prior identity state",
+	)
 }
 
 func TestDirectorySnapshotRevokesSuspendedIdentityTokensAtomicallySQLite(t *testing.T) {
@@ -256,7 +322,10 @@ func TestDirectorySnapshotRevokesSuspendedIdentityTokensAtomicallySQLite(t *test
 	require.NoError(t, err)
 	var identity types.DirectoryIdentity
 	require.NoError(t, db.Where("object_guid = ?", "user-guid").First(&identity).Error)
-	require.NoError(t, directorySvc.LinkIdentity(context.Background(), identity.ID, "directory-user"))
+	require.NoError(
+		t,
+		directorySvc.LinkIdentity(context.Background(), identity.ID, "directory-user"),
+	)
 	require.NoError(t, db.Omit("tenant_id").Create(&types.User{
 		ID: "directory-user", Username: "directory-user", Email: "directory-user@example.test",
 		PasswordHash: "hash", IsActive: true,
@@ -299,7 +368,10 @@ func TestDirectorySecurityConfigChangeRevokesLinkedTokensSQLite(t *testing.T) {
 	require.NoError(t, err)
 	var identity types.DirectoryIdentity
 	require.NoError(t, db.Where("object_guid = ?", "user-guid").First(&identity).Error)
-	require.NoError(t, directorySvc.LinkIdentity(context.Background(), identity.ID, "directory-user"))
+	require.NoError(
+		t,
+		directorySvc.LinkIdentity(context.Background(), identity.ID, "directory-user"),
+	)
 	require.NoError(t, db.Omit("tenant_id").Create(&types.User{
 		ID: "directory-user", Username: "directory-user", Email: "directory-user@example.test",
 		PasswordHash: "hash", IsActive: true,
@@ -336,9 +408,21 @@ func TestDirectorySecurityConfigChangeRequiresFreshSnapshotSQLite(t *testing.T) 
 	changed, err := directorySvc.Get(context.Background(), directory.ID)
 	require.NoError(t, err)
 	require.Equal(t, directory.ConfigVersion+1, changed.ConfigVersion)
-	require.NotNil(t, changed.LastSuccessfulSyncAt, "last complete snapshot must remain available during grace period")
-	require.Nil(t, changed.LastSyncAttemptAt, "scheduler must consider the changed configuration immediately due")
-	require.NotEmpty(t, changed.LastSyncError, "new LDAP logins must wait for a snapshot under the new scope")
+	require.NotNil(
+		t,
+		changed.LastSuccessfulSyncAt,
+		"last complete snapshot must remain available during grace period",
+	)
+	require.Nil(
+		t,
+		changed.LastSyncAttemptAt,
+		"scheduler must consider the changed configuration immediately due",
+	)
+	require.NotEmpty(
+		t,
+		changed.LastSyncError,
+		"new LDAP logins must wait for a snapshot under the new scope",
+	)
 }
 
 func TestDirectoryRejectsSnapshotCollectedUnderOlderConfigurationSQLite(t *testing.T) {
@@ -364,7 +448,10 @@ func TestDirectoryRejectsSnapshotCollectedUnderOlderConfigurationSQLite(t *testi
 func TestLateSyncFailureCannotOverwriteNewerSuccessSQLite(t *testing.T) {
 	_, directorySvc, _ := setupDirectoryAccessSQLite(t)
 	directory := createTestDirectory(t, directorySvc)
-	first, err := directorySvc.ApplySnapshot(context.Background(), testDirectorySnapshot(directory.ID))
+	first, err := directorySvc.ApplySnapshot(
+		context.Background(),
+		testDirectorySnapshot(directory.ID),
+	)
 	require.NoError(t, err)
 	failedStarted := time.Now().UTC().Add(-time.Minute)
 	_, err = directorySvc.ApplySnapshot(context.Background(), testDirectorySnapshot(directory.ID))
@@ -379,7 +466,11 @@ func TestLateSyncFailureCannotOverwriteNewerSuccessSQLite(t *testing.T) {
 	reloaded, err := directorySvc.Get(context.Background(), directory.ID)
 	require.NoError(t, err)
 	require.Equal(t, uint64(2), reloaded.SnapshotVersion)
-	require.Empty(t, reloaded.LastSyncError, "late failure must not poison a newer successful snapshot")
+	require.Empty(
+		t,
+		reloaded.LastSyncError,
+		"late failure must not poison a newer successful snapshot",
+	)
 	runs, err := directorySvc.ListSyncRuns(context.Background(), directory.ID, 0, 10)
 	require.NoError(t, err)
 	foundFailure := false
@@ -395,7 +486,10 @@ func TestDirectorySnapshotNestedPrimaryAndFailureIsAtomicSQLite(t *testing.T) {
 	db, directorySvc, _ := setupDirectoryAccessSQLite(t)
 	directory := createTestDirectory(t, directorySvc)
 
-	result, err := directorySvc.ApplySnapshot(context.Background(), testDirectorySnapshot(directory.ID))
+	result, err := directorySvc.ApplySnapshot(
+		context.Background(),
+		testDirectorySnapshot(directory.ID),
+	)
 	require.NoError(t, err)
 	require.Equal(t, uint64(1), result.SyncRun.SnapshotVersion)
 	require.Equal(t, 3, result.SyncRun.MembershipCount)
@@ -412,14 +506,24 @@ func TestDirectorySnapshotNestedPrimaryAndFailureIsAtomicSQLite(t *testing.T) {
 	require.True(t, sources[types.DirectoryMembershipPrimary])
 
 	cycle := testDirectorySnapshot(directory.ID)
-	cycle.GroupEdges = append(cycle.GroupEdges,
-		types.DirectoryGroupEdgeSnapshot{ParentGroupObjectGUID: "leaf-guid", ChildGroupObjectGUID: "parent-guid"})
+	cycle.GroupEdges = append(
+		cycle.GroupEdges,
+		types.DirectoryGroupEdgeSnapshot{
+			ParentGroupObjectGUID: "leaf-guid",
+			ChildGroupObjectGUID:  "parent-guid",
+		},
+	)
 	_, err = directorySvc.ApplySnapshot(context.Background(), cycle)
 	require.ErrorIs(t, err, appservice.ErrDirectoryGroupCycle)
 
 	reloaded, err := directorySvc.Get(context.Background(), directory.ID)
 	require.NoError(t, err)
-	require.Equal(t, uint64(1), reloaded.SnapshotVersion, "failed snapshots must not replace the last successful version")
+	require.Equal(
+		t,
+		uint64(1),
+		reloaded.SnapshotVersion,
+		"failed snapshots must not replace the last successful version",
+	)
 	var count int64
 	require.NoError(t, db.Model(&types.DirectoryGroupMembership{}).Count(&count).Error)
 	require.Equal(t, int64(3), count, "failed snapshots must not revoke memberships")
@@ -437,7 +541,11 @@ func TestDirectoryLoginSnapshotUsesOnlyCurrentActiveSnapshotSQLite(t *testing.T)
 	require.NotNil(t, view)
 	require.NotNil(t, view.Identity)
 	require.Equal(t, uint64(1), view.Directory.SnapshotVersion)
-	require.ElementsMatch(t, []string{"leaf-guid", "parent-guid", "primary-guid"}, view.EffectiveGroupObjectGUIDs)
+	require.ElementsMatch(
+		t,
+		[]string{"leaf-guid", "parent-guid", "primary-guid"},
+		view.EffectiveGroupObjectGUIDs,
+	)
 
 	var identity types.DirectoryIdentity
 	require.NoError(t, db.Where("object_guid = ?", "user-guid").First(&identity).Error)
@@ -453,8 +561,12 @@ func TestDirectoryLoginSnapshotUsesOnlyCurrentActiveSnapshotSQLite(t *testing.T)
 	}).Error)
 	view, err = repo.GetLoginSnapshot(context.Background(), directory.ID, "user-guid")
 	require.NoError(t, err)
-	require.ElementsMatch(t, []string{"leaf-guid", "parent-guid", "primary-guid"}, view.EffectiveGroupObjectGUIDs,
-		"stale membership rows must not enter the login view")
+	require.ElementsMatch(
+		t,
+		[]string{"leaf-guid", "parent-guid", "primary-guid"},
+		view.EffectiveGroupObjectGUIDs,
+		"stale membership rows must not enter the login view",
+	)
 
 	require.NoError(t, db.Model(&types.DirectoryIdentity{}).Where("id = ?", identity.ID).
 		Update("status", types.DirectoryObjectOutOfScope).Error)
@@ -481,45 +593,108 @@ func TestGroupRoleRestrictedAuthorizationAndMembershipListingSQLite(t *testing.T
 		UserID: "user-1", TenantID: 9, Role: types.TenantRoleViewer,
 		Status: types.TenantMemberStatusActive, JoinedAt: time.Now().UTC(),
 	}).Error)
-	require.NoError(t, groupSvc.UpsertTenantGroupRoleGrant(context.Background(), &types.TenantGroupRoleGrant{
-		TenantID: 9, DirectoryGroupID: parent.ID, Role: types.TenantRoleContributor,
-	}))
+	require.NoError(
+		t,
+		groupSvc.UpsertTenantGroupRoleGrant(context.Background(), &types.TenantGroupRoleGrant{
+			TenantID: 9, DirectoryGroupID: parent.ID, Role: types.TenantRoleContributor,
+		}),
+	)
 	// Tenant 5 has no tenant_members row: it exists solely through the group
 	// grant and must still appear in login membership enumeration.
-	require.NoError(t, groupSvc.UpsertTenantGroupRoleGrant(context.Background(), &types.TenantGroupRoleGrant{
-		TenantID: 5, DirectoryGroupID: parent.ID, Role: types.TenantRoleViewer,
-	}))
+	require.NoError(
+		t,
+		groupSvc.UpsertTenantGroupRoleGrant(context.Background(), &types.TenantGroupRoleGrant{
+			TenantID: 5, DirectoryGroupID: parent.ID, Role: types.TenantRoleViewer,
+		}),
+	)
 
-	effective, err := groupSvc.EffectiveTenantRole(context.Background(), "user-1", 9, time.Now().UTC())
+	effective, err := groupSvc.EffectiveTenantRole(
+		context.Background(),
+		"user-1",
+		9,
+		time.Now().UTC(),
+	)
 	require.NoError(t, err)
 	require.True(t, effective.Member)
-	require.Equal(t, types.TenantRoleContributor, effective.Role, "highest direct/group role must win")
+	require.Equal(
+		t,
+		types.TenantRoleContributor,
+		effective.Role,
+		"highest direct/group role must win",
+	)
 	require.NotEmpty(t, effective.GroupMatches)
 
-	roles, err := groupSvc.ListEffectiveTenantRoles(context.Background(), "user-1", time.Now().UTC())
+	roles, err := groupSvc.ListEffectiveTenantRoles(
+		context.Background(),
+		"user-1",
+		time.Now().UTC(),
+	)
 	require.NoError(t, err)
 	require.Len(t, roles, 2)
 	require.Equal(t, uint64(5), roles[0].TenantID)
 	require.Equal(t, types.TenantRoleViewer, roles[0].Role)
 	require.Equal(t, uint64(9), roles[1].TenantID)
 
-	require.NoError(t, groupSvc.SetResourceAccessPolicy(context.Background(), &types.ResourceAccessPolicy{
-		TenantID: 9, ResourceType: types.GroupResourceTypeKnowledgeBase, ResourceID: "kb-1", Mode: types.ResourceAccessRestricted,
-	}))
-	require.NoError(t, groupSvc.UpsertResourceGroupGrant(context.Background(), &types.ResourceGroupGrant{
-		TenantID: 9, ResourceType: types.GroupResourceTypeKnowledgeBase, ResourceID: "kb-1",
-		DirectoryGroupID: leaf.ID, Permission: types.ResourcePermissionRead,
-	}))
+	require.NoError(
+		t,
+		groupSvc.SetResourceAccessPolicy(context.Background(), &types.ResourceAccessPolicy{
+			TenantID: 9, ResourceType: types.GroupResourceTypeKnowledgeBase,
+			ResourceID: "kb-1", Mode: types.ResourceAccessRestricted,
+		}),
+	)
+	require.NoError(
+		t,
+		groupSvc.UpsertResourceGroupGrant(context.Background(), &types.ResourceGroupGrant{
+			TenantID: 9, ResourceType: types.GroupResourceTypeKnowledgeBase, ResourceID: "kb-1",
+			DirectoryGroupID: leaf.ID, Permission: types.ResourcePermissionRead,
+		}),
+	)
 
-	userCtx := types.WithCaller(context.Background(), types.Caller{TenantID: 9, UserID: "user-1", Role: types.TenantRoleContributor})
-	userCtx = types.WithPrincipal(userCtx, types.Principal{Type: types.PrincipalWebUser, ID: "user-1"})
-	require.NoError(t, groupSvc.Authorize(userCtx, 9, types.GroupResourceTypeKnowledgeBase, "kb-1", types.ResourceActionRead))
-	require.ErrorIs(t, groupSvc.Authorize(userCtx, 9, types.GroupResourceTypeKnowledgeBase, "kb-1", types.ResourceActionEdit), appservice.ErrResourceAccessDenied)
+	userCtx := types.WithCaller(
+		context.Background(),
+		types.Caller{TenantID: 9, UserID: "user-1", Role: types.TenantRoleContributor},
+	)
+	userCtx = types.WithPrincipal(
+		userCtx,
+		types.Principal{Type: types.PrincipalWebUser, ID: "user-1"},
+	)
+	require.NoError(
+		t,
+		groupSvc.Authorize(
+			userCtx,
+			9,
+			types.GroupResourceTypeKnowledgeBase,
+			"kb-1",
+			types.ResourceActionRead,
+		),
+	)
+	require.ErrorIs(
+		t,
+		groupSvc.Authorize(
+			userCtx,
+			9,
+			types.GroupResourceTypeKnowledgeBase,
+			"kb-1",
+			types.ResourceActionEdit,
+		),
+		appservice.ErrResourceAccessDenied,
+	)
 
 	apiCtx := types.WithTenantAPIKeyScope(userCtx, types.TenantAPIKeyScope{FullAccess: true})
-	require.ErrorIs(t, groupSvc.Authorize(apiCtx, 9, types.GroupResourceTypeKnowledgeBase, "kb-1", types.ResourceActionRead), appservice.ErrResourceAccessDenied)
+	require.ErrorIs(
+		t,
+		groupSvc.Authorize(
+			apiCtx,
+			9,
+			types.GroupResourceTypeKnowledgeBase,
+			"kb-1",
+			types.ResourceActionRead,
+		),
+		appservice.ErrResourceAccessDenied,
+	)
 
-	version, err := apprepo.NewGroupAccessRepository(db).GetPermissionVersion(context.Background(), 9)
+	version, err := apprepo.NewGroupAccessRepository(db).
+		GetPermissionVersion(context.Background(), 9)
 	require.NoError(t, err)
 	require.GreaterOrEqual(t, version, uint64(3))
 }
@@ -531,27 +706,39 @@ func TestDirectoryRunSyncLocksFetchAndApply(t *testing.T) {
 	release := make(chan struct{})
 	done := make(chan error, 1)
 	go func() {
-		_, err := directorySvc.RunSync(context.Background(), directory.ID, func(context.Context) (*types.DirectorySnapshot, error) {
-			close(started)
-			<-release
-			return testDirectorySnapshot(directory.ID), nil
-		})
+		_, err := directorySvc.RunSync(
+			context.Background(),
+			directory.ID,
+			func(context.Context) (*types.DirectorySnapshot, error) {
+				close(started)
+				<-release
+				return testDirectorySnapshot(directory.ID), nil
+			},
+		)
 		done <- err
 	}()
 	<-started
 	// A separately constructed service has a separate process-local mutex;
 	// the database lease must still reject the overlapping collection.
 	otherProcess := appservice.NewDirectoryService(apprepo.NewDirectoryRepository(db))
-	_, err := otherProcess.RunSync(context.Background(), directory.ID, func(context.Context) (*types.DirectorySnapshot, error) {
-		return nil, errors.New("must not run")
-	})
+	_, err := otherProcess.RunSync(
+		context.Background(),
+		directory.ID,
+		func(context.Context) (*types.DirectorySnapshot, error) {
+			return nil, errors.New("must not run")
+		},
+	)
 	require.ErrorIs(t, err, appservice.ErrDirectorySyncInProgress)
 	close(release)
 	require.NoError(t, <-done)
 
-	_, err = otherProcess.RunSync(context.Background(), directory.ID, func(context.Context) (*types.DirectorySnapshot, error) {
-		return testDirectorySnapshot(directory.ID), nil
-	})
+	_, err = otherProcess.RunSync(
+		context.Background(),
+		directory.ID,
+		func(context.Context) (*types.DirectorySnapshot, error) {
+			return testDirectorySnapshot(directory.ID), nil
+		},
+	)
 	require.NoError(t, err, "released lease must permit the next process")
 }
 
@@ -559,15 +746,24 @@ func TestDirectoryRunSyncRecoversExpiredDatabaseLease(t *testing.T) {
 	db, directorySvc, _ := setupDirectoryAccessSQLite(t)
 	directory := createTestDirectory(t, directorySvc)
 	repo := apprepo.NewDirectoryRepository(db)
-	acquired, err := repo.TryAcquireSyncLease(context.Background(), directory.ID, "crashed-worker", time.Minute)
+	acquired, err := repo.TryAcquireSyncLease(
+		context.Background(),
+		directory.ID,
+		"crashed-worker",
+		time.Minute,
+	)
 	require.NoError(t, err)
 	require.True(t, acquired)
 	require.NoError(t, db.Model(&types.Directory{}).Where("id = ?", directory.ID).
 		Update("sync_lease_expires_at", time.Now().UTC().Add(-time.Minute)).Error)
 
 	recoveredProcess := appservice.NewDirectoryService(apprepo.NewDirectoryRepository(db))
-	_, err = recoveredProcess.RunSync(context.Background(), directory.ID, func(context.Context) (*types.DirectorySnapshot, error) {
-		return testDirectorySnapshot(directory.ID), nil
-	})
+	_, err = recoveredProcess.RunSync(
+		context.Background(),
+		directory.ID,
+		func(context.Context) (*types.DirectorySnapshot, error) {
+			return testDirectorySnapshot(directory.ID), nil
+		},
+	)
 	require.NoError(t, err, "expired crash lease must be reclaimable")
 }

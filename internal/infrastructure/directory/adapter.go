@@ -1,3 +1,4 @@
+// Package directory provides certificate-verified LDAP authentication and AD snapshots.
 package directory
 
 import (
@@ -92,7 +93,8 @@ func validateConfig(config Config) error {
 		if err != nil || parsed.Hostname() == "" {
 			return fmt.Errorf("invalid directory controller URL %q", controller.URL)
 		}
-		if parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || (parsed.Path != "" && parsed.Path != "/") {
+		if parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" ||
+			(parsed.Path != "" && parsed.Path != "/") {
 			return fmt.Errorf("controller %q must not contain credentials, query, fragment, or base DN", controller.URL)
 		}
 		switch controller.TLSMode {
@@ -127,7 +129,7 @@ func (c *productionConnection) Search(request *ldap.SearchRequest) (*ldap.Search
 }
 
 func (c *productionConnection) Close() {
-	c.conn.Close()
+	_ = c.conn.Close()
 }
 
 func defaultDialConnection(
@@ -162,14 +164,14 @@ func defaultDialConnection(
 		select {
 		case startTLSErr = <-result:
 		case <-ctx.Done():
-			conn.Close()
+			_ = conn.Close()
 			return nil, ctx.Err()
 		case <-timer.C:
-			conn.Close()
+			_ = conn.Close()
 			return nil, fmt.Errorf("StartTLS negotiation exceeded connection timeout %s", config.ConnectTimeout)
 		}
 		if startTLSErr != nil {
-			conn.Close()
+			_ = conn.Close()
 			return nil, startTLSErr
 		}
 	}

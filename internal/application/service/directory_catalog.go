@@ -11,7 +11,11 @@ import (
 
 // Catalog only reads the last committed synchronization snapshot. Browsing
 // does not bind to AD, provision users, or grant access to the workspace.
-func (s *directoryRuntimeService) Catalog(ctx context.Context, kind, query string, limit, offset int) (*types.DirectoryCatalogResult, error) {
+func (s *directoryRuntimeService) Catalog(
+	ctx context.Context,
+	kind, query string,
+	limit, offset int,
+) (*types.DirectoryCatalogResult, error) {
 	if kind != "users" && kind != "groups" {
 		return nil, ErrInvalidDirectoryConfig
 	}
@@ -19,9 +23,12 @@ func (s *directoryRuntimeService) Catalog(ctx context.Context, kind, query strin
 	if err != nil {
 		return nil, err
 	}
-	result := &types.DirectoryCatalogResult{Items: []types.DirectoryCatalogItem{}, Enabled: directory.Enabled,
-		Fresh:         directory.Enabled && directory.IsFresh(s.now().UTC()) && directory.LastSyncError == "",
-		LastSuccessAt: directory.LastSuccessfulSyncAt, SyncIntervalSeconds: directory.SyncIntervalSeconds}
+	result := &types.DirectoryCatalogResult{
+		Items: []types.DirectoryCatalogItem{}, Enabled: directory.Enabled,
+		Fresh: directory.Enabled && directory.IsFresh(s.now().UTC()) &&
+			directory.LastSyncError == "",
+		LastSuccessAt: directory.LastSuccessfulSyncAt, SyncIntervalSeconds: directory.SyncIntervalSeconds,
+	}
 	if !directory.Enabled || directory.SnapshotVersion == 0 {
 		return result, nil
 	}
@@ -31,13 +38,23 @@ func (s *directoryRuntimeService) Catalog(ctx context.Context, kind, query strin
 			return nil, err
 		}
 		for _, user := range identities {
-			if user.SnapshotVersion != directory.SnapshotVersion || !containsFold(query, user.DisplayName, user.SAMAccountName, user.UPN, user.Email, user.DN) {
+			if user.SnapshotVersion != directory.SnapshotVersion ||
+				!containsFold(
+					query,
+					user.DisplayName,
+					user.SAMAccountName,
+					user.UPN,
+					user.Email,
+					user.DN,
+				) {
 				continue
 			}
 			item := types.DirectoryCatalogItem{DirectoryObjectSummary: types.DirectoryObjectSummary{
 				DirectoryID: directory.ID, IdentityID: user.ID, ObjectGUID: user.ObjectGUID, DN: user.DN,
-				DisplayName: user.DisplayName, AccountName: user.SAMAccountName, Email: user.Email, UserPrincipalName: user.UPN,
-				Disabled: user.Status != types.DirectoryObjectActive, Status: string(user.Status)}}
+				DisplayName: user.DisplayName, AccountName: user.SAMAccountName,
+				Email: user.Email, UserPrincipalName: user.UPN,
+				Disabled: user.Status != types.DirectoryObjectActive, Status: string(user.Status),
+			}}
 			if user.UserID != nil {
 				item.LinkedUserID = *user.UserID
 			}
@@ -49,13 +66,18 @@ func (s *directoryRuntimeService) Catalog(ctx context.Context, kind, query strin
 			return nil, err
 		}
 		for _, group := range groups {
-			if group.SnapshotVersion != directory.SnapshotVersion || !containsFold(query, group.DisplayName, group.SAMAccountName, group.Email, group.DN) {
+			if group.SnapshotVersion != directory.SnapshotVersion ||
+				!containsFold(query, group.DisplayName, group.SAMAccountName, group.Email, group.DN) {
 				continue
 			}
-			result.Items = append(result.Items, types.DirectoryCatalogItem{DirectoryGroupID: group.ID,
-				DirectoryObjectSummary: types.DirectoryObjectSummary{DirectoryID: directory.ID, ObjectGUID: group.ObjectGUID,
+			result.Items = append(result.Items, types.DirectoryCatalogItem{
+				DirectoryGroupID: group.ID,
+				DirectoryObjectSummary: types.DirectoryObjectSummary{
+					DirectoryID: directory.ID, ObjectGUID: group.ObjectGUID,
 					DN: group.DN, DisplayName: group.DisplayName, AccountName: group.SAMAccountName, Email: group.Email,
-					Disabled: group.Status != types.DirectoryObjectActive, Status: string(group.Status)}})
+					Disabled: group.Status != types.DirectoryObjectActive, Status: string(group.Status),
+				},
+			})
 		}
 	}
 	// Detect a concurrent snapshot replacement instead of returning mixed pages.
@@ -63,11 +85,15 @@ func (s *directoryRuntimeService) Catalog(ctx context.Context, kind, query strin
 	if err != nil {
 		return nil, err
 	}
-	if current.SnapshotVersion != directory.SnapshotVersion || current.ConfigVersion != directory.ConfigVersion {
+	if current.SnapshotVersion != directory.SnapshotVersion ||
+		current.ConfigVersion != directory.ConfigVersion {
 		return nil, ErrDirectoryUnavailable
 	}
 	sort.Slice(result.Items, func(i, j int) bool {
-		return directoryObjectLess(result.Items[i].DirectoryObjectSummary, result.Items[j].DirectoryObjectSummary)
+		return directoryObjectLess(
+			result.Items[i].DirectoryObjectSummary,
+			result.Items[j].DirectoryObjectSummary,
+		)
 	})
 	result.Total = len(result.Items)
 	result.Items, _ = directoryPage(result.Items, limit, offset)
@@ -77,7 +103,11 @@ func (s *directoryRuntimeService) Catalog(ctx context.Context, kind, query strin
 // CatalogGroupMembers explains the effective access of a synchronized group
 // using the committed snapshot, so workspace managers can preview it without
 // a live AD connection or system-administrator privileges.
-func (s *directoryRuntimeService) CatalogGroupMembers(ctx context.Context, groupGUID, query string, limit, offset int) (*types.DirectoryGroupMembersResult, error) {
+func (s *directoryRuntimeService) CatalogGroupMembers(
+	ctx context.Context,
+	groupGUID, query string,
+	limit, offset int,
+) (*types.DirectoryGroupMembersResult, error) {
 	if strings.TrimSpace(groupGUID) == "" {
 		return nil, ErrInvalidDirectoryConfig
 	}
@@ -113,9 +143,15 @@ func (s *directoryRuntimeService) CatalogGroupMembers(ctx context.Context, group
 		}
 		userByID[identity.ID] = identity.ObjectGUID
 		userGUIDs = append(userGUIDs, identity.ObjectGUID)
-		snapshot.Users = append(snapshot.Users, ldapdirectory.User{ObjectGUID: identity.ObjectGUID, SID: identity.ObjectSID,
-			DN: identity.DN, DisplayName: identity.DisplayName, SAMAccountName: identity.SAMAccountName,
-			UserPrincipalName: identity.UPN, Email: identity.Email, Enabled: identity.Status == types.DirectoryObjectActive})
+		snapshot.Users = append(
+			snapshot.Users,
+			ldapdirectory.User{
+				ObjectGUID: identity.ObjectGUID, SID: identity.ObjectSID,
+				DN: identity.DN, DisplayName: identity.DisplayName, SAMAccountName: identity.SAMAccountName,
+				UserPrincipalName: identity.UPN, Email: identity.Email,
+				Enabled: identity.Status == types.DirectoryObjectActive,
+			},
+		)
 	}
 	for _, group := range groups {
 		if group.SnapshotVersion != directory.SnapshotVersion {
@@ -123,8 +159,13 @@ func (s *directoryRuntimeService) CatalogGroupMembers(ctx context.Context, group
 		}
 		groupByID[group.ID] = group.ObjectGUID
 		groupGUIDs = append(groupGUIDs, group.ObjectGUID)
-		snapshot.Groups = append(snapshot.Groups, ldapdirectory.Group{ObjectGUID: group.ObjectGUID, SID: group.ObjectSID,
-			DN: group.DN, DisplayName: group.DisplayName, SAMAccountName: group.SAMAccountName, Email: group.Email})
+		snapshot.Groups = append(
+			snapshot.Groups,
+			ldapdirectory.Group{
+				ObjectGUID: group.ObjectGUID, SID: group.ObjectSID,
+				DN: group.DN, DisplayName: group.DisplayName, SAMAccountName: group.SAMAccountName, Email: group.Email,
+			},
+		)
 	}
 	if !containsString(groupGUIDs, groupGUID) {
 		return nil, ErrDirectoryIdentityUnavailable
@@ -138,7 +179,10 @@ func (s *directoryRuntimeService) CatalogGroupMembers(ctx context.Context, group
 		if !parentOK || !childOK {
 			return nil, ErrDirectoryUnavailable
 		}
-		snapshot.GroupMemberships = append(snapshot.GroupMemberships, ldapdirectory.GroupMembership{ParentGroupGUID: parent, MemberGroupGUID: child})
+		snapshot.GroupMemberships = append(
+			snapshot.GroupMemberships,
+			ldapdirectory.GroupMembership{ParentGroupGUID: parent, MemberGroupGUID: child},
+		)
 	}
 	stored := map[string]bool{}
 	for _, member := range memberships {
@@ -158,12 +202,20 @@ func (s *directoryRuntimeService) CatalogGroupMembers(ctx context.Context, group
 			if member.Primary {
 				source = ldapdirectory.MembershipPrimary
 			}
-			snapshot.DirectMemberships = append(snapshot.DirectMemberships, ldapdirectory.UserGroupMembership{
-				UserGUID: user, GroupGUID: group, Source: source})
+			snapshot.DirectMemberships = append(
+				snapshot.DirectMemberships,
+				ldapdirectory.UserGroupMembership{
+					UserGUID: user, GroupGUID: group, Source: source,
+				},
+			)
 		}
 	}
-	snapshot.EffectiveMemberships, err = ldapdirectory.ComputeEffectiveMemberships(userGUIDs, groupGUIDs,
-		snapshot.DirectMemberships, snapshot.GroupMemberships)
+	snapshot.EffectiveMemberships, err = ldapdirectory.ComputeEffectiveMemberships(
+		userGUIDs,
+		groupGUIDs,
+		snapshot.DirectMemberships,
+		snapshot.GroupMemberships,
+	)
 	if err != nil {
 		return nil, ErrDirectoryUnavailable
 	}
@@ -185,7 +237,8 @@ func (s *directoryRuntimeService) CatalogGroupMembers(ctx context.Context, group
 	if err != nil {
 		return nil, err
 	}
-	if current.SnapshotVersion != directory.SnapshotVersion || current.ConfigVersion != directory.ConfigVersion {
+	if current.SnapshotVersion != directory.SnapshotVersion ||
+		current.ConfigVersion != directory.ConfigVersion {
 		return nil, ErrDirectoryUnavailable
 	}
 	return directoryGroupMembers(snapshot, groupGUID, query, limit, offset)
@@ -193,8 +246,14 @@ func (s *directoryRuntimeService) CatalogGroupMembers(ctx context.Context, group
 
 // The route requires Owner (same as ordinary direct member additions). It
 // creates an AD-only linked identity without requiring a prior user login.
-func (s *directoryRuntimeService) AddTenantDirectoryMember(ctx context.Context, tenantID uint64, objectGUID string, role types.TenantRole) (*types.TenantMember, error) {
-	if tenantID == 0 || strings.TrimSpace(objectGUID) == "" || (role != types.TenantRoleViewer && role != types.TenantRoleContributor && role != types.TenantRoleAdmin) {
+func (s *directoryRuntimeService) AddTenantDirectoryMember(
+	ctx context.Context,
+	tenantID uint64,
+	objectGUID string,
+	role types.TenantRole,
+) (*types.TenantMember, error) {
+	if tenantID == 0 || strings.TrimSpace(objectGUID) == "" ||
+		(role != types.TenantRoleViewer && role != types.TenantRoleContributor && role != types.TenantRoleAdmin) {
 		return nil, ErrInvalidDirectoryConfig
 	}
 	if s.members == nil {
@@ -212,8 +271,10 @@ func (s *directoryRuntimeService) AddTenantDirectoryMember(ctx context.Context, 
 	if err != nil {
 		return nil, err
 	}
-	user, err := s.resolveDirectoryUser(ctx, identity, ldapdirectory.User{ObjectGUID: identity.ObjectGUID,
-		SAMAccountName: identity.SAMAccountName, DisplayName: identity.DisplayName, Email: identity.Email})
+	user, err := s.resolveDirectoryUser(ctx, identity, ldapdirectory.User{
+		ObjectGUID:     identity.ObjectGUID,
+		SAMAccountName: identity.SAMAccountName, DisplayName: identity.DisplayName, Email: identity.Email,
+	})
 	if err != nil {
 		return nil, err
 	}

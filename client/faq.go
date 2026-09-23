@@ -412,8 +412,8 @@ type FAQImportProgress struct {
 	FailedCount      int               `json:"failed_count"`
 	SkippedCount     int               `json:"skipped_count,omitempty"`
 	FailedEntries    []FAQFailedEntry  `json:"failed_entries,omitempty"`
-	SuccessEntries   []FAQSuccessEntry `json:"success_entries,omitempty"`    // Successfully imported entries (when count is small)
-	FailedEntriesURL string            `json:"failed_entries_url,omitempty"` // CSV download URL when too many failures
+	SuccessEntries   []FAQSuccessEntry `json:"success_entries,omitempty"`    // Entries when count is small
+	FailedEntriesURL string            `json:"failed_entries_url,omitempty"` // CSV URL for excess failures
 	Message          string            `json:"message"`
 	Error            string            `json:"error,omitempty"`
 	CreatedAt        int64             `json:"created_at"`

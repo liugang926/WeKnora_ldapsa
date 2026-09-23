@@ -46,7 +46,11 @@ func TestBackgroundTaskAuthorizationRestoresVerifiableHuman(t *testing.T) {
 	err := svc.revalidateBackgroundKBAccess(ctx, 7, "kb-1", types.ResourceActionEdit)
 
 	require.NoError(t, err)
-	require.Equal(t, types.Principal{Type: types.PrincipalWebUser, ID: "user-1"}, access.seenPrincipal)
+	require.Equal(
+		t,
+		types.Principal{Type: types.PrincipalWebUser, ID: "user-1"},
+		access.seenPrincipal,
+	)
 	require.Equal(t, types.Caller{
 		TenantID: 7,
 		UserID:   "user-1",
@@ -99,9 +103,12 @@ func TestUserTriggeredKnowledgeWorkersRevalidateGroupAccess(t *testing.T) {
 		f := transferFixture(t, access.KBTransferClone)
 		groupAccess := &tagTargetGroupAccessService{allowed: map[string]bool{}}
 		f.svc.groupAccess = groupAccess
-		err := f.svc.ProcessKBClone(context.Background(), marshalTask(t, types.TypeKBClone, types.KBClonePayload{
-			TenantID: 7, TaskID: "clone-task", SourceID: "kb", TargetID: "other", Initiator: initiator,
-		}))
+		err := f.svc.ProcessKBClone(
+			context.Background(),
+			marshalTask(t, types.TypeKBClone, types.KBClonePayload{
+				TenantID: 7, TaskID: "clone-task", SourceID: "kb", TargetID: "other", Initiator: initiator,
+			}),
+		)
 		require.ErrorIs(t, err, asynq.SkipRetry)
 		require.Equal(t, []string{"kb"}, groupAccess.calls)
 	})
@@ -110,10 +117,13 @@ func TestUserTriggeredKnowledgeWorkersRevalidateGroupAccess(t *testing.T) {
 		f := transferFixture(t, access.KBTransferMove)
 		groupAccess := &tagTargetGroupAccessService{allowed: map[string]bool{}}
 		f.svc.groupAccess = groupAccess
-		err := f.svc.ProcessKnowledgeMove(context.Background(), marshalTask(t, types.TypeKnowledgeMove, types.KnowledgeMovePayload{
-			TenantID: 7, TaskID: "move-task", SourceKBID: "kb", TargetKBID: "other",
-			KnowledgeIDs: []string{"doc"}, Mode: "reuse_vectors", Initiator: initiator,
-		}))
+		err := f.svc.ProcessKnowledgeMove(
+			context.Background(),
+			marshalTask(t, types.TypeKnowledgeMove, types.KnowledgeMovePayload{
+				TenantID: 7, TaskID: "move-task", SourceKBID: "kb", TargetKBID: "other",
+				KnowledgeIDs: []string{"doc"}, Mode: "reuse_vectors", Initiator: initiator,
+			}),
+		)
 		require.ErrorIs(t, err, asynq.SkipRetry)
 		require.Equal(t, []string{"kb"}, groupAccess.calls)
 	})
@@ -123,9 +133,12 @@ func TestUserTriggeredKnowledgeWorkersRevalidateGroupAccess(t *testing.T) {
 		groupAccess := &tagTargetGroupAccessService{allowed: map[string]bool{}}
 		f.svc.groupAccess = groupAccess
 		f.repo.writes = 0
-		err := f.svc.ProcessKnowledgeListDelete(context.Background(), marshalTask(t, types.TypeKnowledgeListDelete, types.KnowledgeListDeletePayload{
-			TenantID: 7, KnowledgeBaseID: "kb", KnowledgeIDs: []string{"doc"}, Initiator: initiator,
-		}))
+		err := f.svc.ProcessKnowledgeListDelete(
+			context.Background(),
+			marshalTask(t, types.TypeKnowledgeListDelete, types.KnowledgeListDeletePayload{
+				TenantID: 7, KnowledgeBaseID: "kb", KnowledgeIDs: []string{"doc"}, Initiator: initiator,
+			}),
+		)
 		require.ErrorIs(t, err, asynq.SkipRetry)
 		require.Zero(t, f.repo.writes)
 		require.Equal(t, []string{"kb"}, groupAccess.calls)
@@ -136,9 +149,12 @@ func TestUserTriggeredKnowledgeWorkersRevalidateGroupAccess(t *testing.T) {
 		groupAccess := &tagTargetGroupAccessService{allowed: map[string]bool{}}
 		f.svc.groupAccess = groupAccess
 		f.repo.writes = 0
-		err := f.svc.ProcessKnowledgeListReparse(context.Background(), marshalTask(t, types.TypeKnowledgeListReparse, types.KnowledgeListReparsePayload{
-			TenantID: 7, KnowledgeBaseID: "kb", KnowledgeIDs: []string{"doc"}, Initiator: initiator,
-		}))
+		err := f.svc.ProcessKnowledgeListReparse(
+			context.Background(),
+			marshalTask(t, types.TypeKnowledgeListReparse, types.KnowledgeListReparsePayload{
+				TenantID: 7, KnowledgeBaseID: "kb", KnowledgeIDs: []string{"doc"}, Initiator: initiator,
+			}),
+		)
 		require.ErrorIs(t, err, asynq.SkipRetry)
 		require.Zero(t, f.repo.writes)
 		require.Equal(t, []string{"kb"}, groupAccess.calls)

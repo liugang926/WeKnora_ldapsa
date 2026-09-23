@@ -72,10 +72,15 @@ func (a *Adapter) collectEffectiveGroupObjectGUIDs(
 	}
 	collector.responseEntries += len(primaryEntries)
 	if collector.responseEntries > a.config.ResultLimit {
-		return nil, fmt.Errorf("%w: aggregate live group result limit %d exceeded", ErrIncompleteResults, a.config.ResultLimit)
+		return nil, fmt.Errorf(
+			"%w: aggregate live group result limit %d exceeded", ErrIncompleteResults, a.config.ResultLimit,
+		)
 	}
 	if len(primaryEntries) != 1 {
-		return nil, fmt.Errorf("%w: primary group %q matched %d selected-scope groups", ErrIncompleteResults, primarySID, len(primaryEntries))
+		return nil, fmt.Errorf(
+			"%w: primary group %q matched %d selected-scope groups",
+			ErrIncompleteResults, primarySID, len(primaryEntries),
+		)
 	}
 	primaryGroup, err := parseGroupIdentityEntry(primaryEntries[0])
 	if err != nil {
@@ -106,7 +111,10 @@ func (a *Adapter) collectEffectiveGroupObjectGUIDs(
 			edge := GroupMembership{MemberGroupGUID: child.ObjectGUID, ParentGroupGUID: stored.ObjectGUID}
 			edgeKey := strings.ToLower(edge.MemberGroupGUID) + "\x00" + strings.ToLower(edge.ParentGroupGUID)
 			if _, duplicate := collector.edges[edgeKey]; duplicate {
-				return nil, fmt.Errorf("%w: duplicate live group edge %q -> %q", ErrInvalidMembershipGraph, child.ObjectGUID, stored.ObjectGUID)
+				return nil, fmt.Errorf(
+					"%w: duplicate live group edge %q -> %q",
+					ErrInvalidMembershipGraph, child.ObjectGUID, stored.ObjectGUID,
+				)
 			}
 			collector.edges[edgeKey] = edge
 			if added {
@@ -183,13 +191,17 @@ type liveMembershipCollector struct {
 
 func (c *liveMembershipCollector) groupsContaining(ctx context.Context, memberDN string) ([]Group, error) {
 	filter := fmt.Sprintf("(&%s(member=%s))", c.adapter.config.GroupFilter, ldap.EscapeFilter(memberDN))
-	entries, err := c.adapter.searchPaged(ctx, c.conn, c.adapter.config.GroupBaseDN, filter, liveGroupIdentityAttributes)
+	entries, err := c.adapter.searchPaged(
+		ctx, c.conn, c.adapter.config.GroupBaseDN, filter, liveGroupIdentityAttributes,
+	)
 	if err != nil {
 		return nil, err
 	}
 	c.responseEntries += len(entries)
 	if c.responseEntries > c.adapter.config.ResultLimit {
-		return nil, fmt.Errorf("%w: aggregate live group result limit %d exceeded", ErrIncompleteResults, c.adapter.config.ResultLimit)
+		return nil, fmt.Errorf(
+			"%w: aggregate live group result limit %d exceeded", ErrIncompleteResults, c.adapter.config.ResultLimit,
+		)
 	}
 	result := make([]Group, 0, len(entries))
 	seen := make(map[string]struct{}, len(entries))
@@ -200,7 +212,9 @@ func (c *liveMembershipCollector) groupsContaining(ctx context.Context, memberDN
 		}
 		key := strings.ToLower(group.ObjectGUID)
 		if _, duplicate := seen[key]; duplicate {
-			return nil, fmt.Errorf("%w: membership query repeated group %q", ErrDuplicateDirectoryObject, group.ObjectGUID)
+			return nil, fmt.Errorf(
+				"%w: membership query repeated group %q", ErrDuplicateDirectoryObject, group.ObjectGUID,
+			)
 		}
 		seen[key] = struct{}{}
 		result = append(result, group)
@@ -214,18 +228,27 @@ func (c *liveMembershipCollector) addGroup(group Group) (Group, bool, error) {
 	dnKey := normalizeDN(group.DN)
 	if existing, ok := c.groupsByGUID[guidKey]; ok {
 		if !strings.EqualFold(existing.SID, group.SID) || normalizeDN(existing.DN) != dnKey {
-			return Group{}, false, fmt.Errorf("%w: live group %q changed identity attributes", ErrDuplicateDirectoryObject, group.ObjectGUID)
+			return Group{}, false, fmt.Errorf(
+				"%w: live group %q changed identity attributes", ErrDuplicateDirectoryObject, group.ObjectGUID,
+			)
 		}
 		return existing, false, nil
 	}
 	if owner, ok := c.guidBySID[sidKey]; ok {
-		return Group{}, false, fmt.Errorf("%w: objectSid %q is shared by groups %q and %q", ErrDuplicateDirectoryObject, group.SID, owner, group.ObjectGUID)
+		return Group{}, false, fmt.Errorf(
+			"%w: objectSid %q is shared by groups %q and %q",
+			ErrDuplicateDirectoryObject, group.SID, owner, group.ObjectGUID,
+		)
 	}
 	if owner, ok := c.guidByDN[dnKey]; ok {
-		return Group{}, false, fmt.Errorf("%w: DN %q is shared by groups %q and %q", ErrDuplicateDirectoryObject, group.DN, owner, group.ObjectGUID)
+		return Group{}, false, fmt.Errorf(
+			"%w: DN %q is shared by groups %q and %q", ErrDuplicateDirectoryObject, group.DN, owner, group.ObjectGUID,
+		)
 	}
 	if len(c.groupsByGUID) >= c.adapter.config.ResultLimit {
-		return Group{}, false, fmt.Errorf("%w: live group result limit %d exceeded", ErrIncompleteResults, c.adapter.config.ResultLimit)
+		return Group{}, false, fmt.Errorf(
+			"%w: live group result limit %d exceeded", ErrIncompleteResults, c.adapter.config.ResultLimit,
+		)
 	}
 	c.groupsByGUID[guidKey] = group
 	c.guidBySID[sidKey] = group.ObjectGUID

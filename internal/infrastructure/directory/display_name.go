@@ -1,8 +1,9 @@
 package directory
 
 import (
-	"github.com/go-ldap/ldap/v3"
 	"strings"
+
+	"github.com/go-ldap/ldap/v3"
 )
 
 // A display name is presentation data, never an identity/linking key.

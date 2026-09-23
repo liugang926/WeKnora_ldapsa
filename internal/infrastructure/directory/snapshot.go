@@ -113,7 +113,9 @@ func (a *Adapter) syncOnConnection(
 		if err != nil {
 			return nil, err
 		}
-		if err := recordIdentity(guids, sids, dns, group.group.ObjectGUID, group.group.SID, group.group.DN, "group"); err != nil {
+		if err := recordIdentity(
+			guids, sids, dns, group.group.ObjectGUID, group.group.SID, group.group.DN, "group",
+		); err != nil {
 			return nil, err
 		}
 		groups = append(groups, group)
@@ -356,7 +358,9 @@ func recordIdentity(
 	}
 	for _, check := range checks {
 		if prior, exists := check.index[check.key]; exists {
-			return fmt.Errorf("%w: %s %q is shared by %s and %s", ErrDuplicateDirectoryObject, check.name, check.key, prior, kind)
+			return fmt.Errorf(
+				"%w: %s %q is shared by %s and %s", ErrDuplicateDirectoryObject, check.name, check.key, prior, kind,
+			)
 		}
 		check.index[check.key] = kind
 	}
@@ -400,10 +404,14 @@ func buildSnapshot(
 		for _, memberDN := range parsed.members {
 			normalized := normalizeDN(memberDN)
 			if normalized == "" {
-				return nil, fmt.Errorf("%w: group %q has an empty member DN", ErrInvalidDirectoryObject, parsed.group.DN)
+				return nil, fmt.Errorf(
+					"%w: group %q has an empty member DN", ErrInvalidDirectoryObject, parsed.group.DN,
+				)
 			}
 			if _, duplicate := seenMembers[normalized]; duplicate {
-				return nil, fmt.Errorf("%w: group %q repeats member %q", ErrDuplicateDirectoryObject, parsed.group.DN, memberDN)
+				return nil, fmt.Errorf(
+					"%w: group %q repeats member %q", ErrDuplicateDirectoryObject, parsed.group.DN, memberDN,
+				)
 			}
 			seenMembers[normalized] = struct{}{}
 			if user, ok := userByDN[normalized]; ok {
@@ -431,7 +439,10 @@ func buildSnapshot(
 		}
 		group, ok := groupBySID[strings.ToUpper(primarySID)]
 		if !ok {
-			return nil, fmt.Errorf("%w: primary group %q for user %q is outside the group snapshot", ErrIncompleteResults, primarySID, user.DN)
+			return nil, fmt.Errorf(
+				"%w: primary group %q for user %q is outside the group snapshot",
+				ErrIncompleteResults, primarySID, user.DN,
+			)
 		}
 		seeds = append(seeds, UserGroupMembership{
 			UserGUID: user.ObjectGUID, GroupGUID: group.ObjectGUID, Source: MembershipPrimary,

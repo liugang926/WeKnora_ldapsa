@@ -22,16 +22,29 @@ type disabledDirectoryGroupRepo struct {
 	interfaces.GroupAccessRepository
 }
 
-func (disabledDirectoryGroupRepo) GetDirectTenantRole(context.Context, string, uint64) (*types.TenantRole, error) {
+func (disabledDirectoryGroupRepo) GetDirectTenantRole(
+	context.Context,
+	string,
+	uint64,
+) (*types.TenantRole, error) {
 	role := types.TenantRoleViewer
 	return &role, nil
 }
 
-func (disabledDirectoryGroupRepo) ListGroupRoleMatches(context.Context, string, uint64) ([]types.GroupRoleMatch, error) {
+func (disabledDirectoryGroupRepo) ListGroupRoleMatches(
+	context.Context,
+	string,
+	uint64,
+) ([]types.GroupRoleMatch, error) {
 	panic("group memberships must not be read while the directory module is disabled")
 }
 
-func (disabledDirectoryGroupRepo) GetResourceAccessPolicy(context.Context, uint64, types.ResourceType, string) (*types.ResourceAccessPolicy, error) {
+func (disabledDirectoryGroupRepo) GetResourceAccessPolicy(
+	context.Context,
+	uint64,
+	types.ResourceType,
+	string,
+) (*types.ResourceAccessPolicy, error) {
 	panic("resource policies must not be read while the directory module is disabled")
 }
 
@@ -40,7 +53,12 @@ func TestGroupAccessDirectoryDisabledRestoresLegacyAuthorization(t *testing.T) {
 	ConfigureGroupAccessDirectoryRuntime(access, disabledDirectoryRuntime{})
 
 	permission, err := access.EffectivePermission(
-		context.Background(), 7, types.GroupResourceTypeKnowledgeBase, "kb-1", types.ResourceActionRead, time.Now(),
+		context.Background(),
+		7,
+		types.GroupResourceTypeKnowledgeBase,
+		"kb-1",
+		types.ResourceActionRead,
+		time.Now(),
 	)
 	require.NoError(t, err)
 	require.True(t, permission.Allowed)

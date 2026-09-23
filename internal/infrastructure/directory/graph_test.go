@@ -19,9 +19,18 @@ func TestComputeEffectiveMembershipsNestedAndPrimary(t *testing.T) {
 	)
 	require.NoError(t, err)
 	require.Equal(t, []EffectiveMembership{
-		{UserGUID: "user-1", GroupGUID: "direct", Source: MembershipDirect, OriginSource: MembershipDirect, OriginGroupGUID: "direct", Depth: 0},
-		{UserGUID: "user-1", GroupGUID: "parent", Source: MembershipNested, OriginSource: MembershipDirect, OriginGroupGUID: "direct", Depth: 1},
-		{UserGUID: "user-1", GroupGUID: "primary", Source: MembershipPrimary, OriginSource: MembershipPrimary, OriginGroupGUID: "primary", Depth: 0},
+		{
+			UserGUID: "user-1", GroupGUID: "direct", Source: MembershipDirect,
+			OriginSource: MembershipDirect, OriginGroupGUID: "direct", Depth: 0,
+		},
+		{
+			UserGUID: "user-1", GroupGUID: "parent", Source: MembershipNested,
+			OriginSource: MembershipDirect, OriginGroupGUID: "direct", Depth: 1,
+		},
+		{
+			UserGUID: "user-1", GroupGUID: "primary", Source: MembershipPrimary,
+			OriginSource: MembershipPrimary, OriginGroupGUID: "primary", Depth: 0,
+		},
 	}, effective)
 }
 
@@ -80,8 +89,20 @@ func TestComputeEffectiveMembershipsRejectsAbnormalGraph(t *testing.T) {
 		edges  []GroupMembership
 	}{
 		{"duplicate IDs", []string{"u", "u"}, []string{"g"}, nil, nil},
-		{"unknown user", []string{"u"}, []string{"g"}, []UserGroupMembership{{UserGUID: "missing", GroupGUID: "g", Source: MembershipDirect}}, nil},
-		{"unknown group", []string{"u"}, []string{"g"}, nil, []GroupMembership{{MemberGroupGUID: "g", ParentGroupGUID: "missing"}}},
+		{
+			"unknown user",
+			[]string{"u"},
+			[]string{"g"},
+			[]UserGroupMembership{{UserGUID: "missing", GroupGUID: "g", Source: MembershipDirect}},
+			nil,
+		},
+		{
+			"unknown group",
+			[]string{"u"},
+			[]string{"g"},
+			nil,
+			[]GroupMembership{{MemberGroupGUID: "g", ParentGroupGUID: "missing"}},
+		},
 		{"duplicate seed", []string{"u"}, []string{"g"}, []UserGroupMembership{
 			{UserGUID: "u", GroupGUID: "g", Source: MembershipDirect},
 			{UserGUID: "u", GroupGUID: "g", Source: MembershipDirect},

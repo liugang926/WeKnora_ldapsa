@@ -23,14 +23,32 @@ import (
 )
 
 var (
-	ErrDirectoryDisabled              = errors.New("directory authentication is disabled")
-	ErrDirectoryNotConfigured         = errors.New("directory authentication is not configured")
-	ErrDirectoryUnavailable           = errors.New("directory is unavailable")
-	ErrDirectoryIdentityUnavailable   = errors.New("directory identity is not active in the latest complete snapshot")
-	ErrDirectoryMembershipMismatch    = errors.New("live directory group memberships do not match the latest complete snapshot")
-	ErrDirectoryIdentityLinkRequired  = errors.New("directory identity conflicts with an existing local account; an administrator must link it explicitly")
-	ErrDirectoryIdentityAlreadyLinked = errors.New("directory identity is already linked to a different user")
-	ErrDirectoryEncryptionKey         = errors.New("SYSTEM_AES_KEY must contain exactly 32 bytes before a UI-managed directory credential can be saved")
+	// ErrDirectoryDisabled indicates that directory authentication is switched off.
+	ErrDirectoryDisabled = errors.New("directory authentication is disabled")
+	// ErrDirectoryNotConfigured indicates that no directory has been configured.
+	ErrDirectoryNotConfigured = errors.New("directory authentication is not configured")
+	// ErrDirectoryUnavailable indicates an outage or stale directory snapshot.
+	ErrDirectoryUnavailable = errors.New("directory is unavailable")
+	// ErrDirectoryIdentityUnavailable indicates an identity outside the active snapshot.
+	ErrDirectoryIdentityUnavailable = errors.New(
+		"directory identity is not active in the latest complete snapshot",
+	)
+	// ErrDirectoryMembershipMismatch indicates that live groups differ from the snapshot.
+	ErrDirectoryMembershipMismatch = errors.New(
+		"live directory group memberships do not match the latest complete snapshot",
+	)
+	// ErrDirectoryIdentityLinkRequired prevents implicit local account merging.
+	ErrDirectoryIdentityLinkRequired = errors.New(
+		"directory identity conflicts with an existing local account; an administrator must link it explicitly",
+	)
+	// ErrDirectoryIdentityAlreadyLinked prevents linking two users to one identity.
+	ErrDirectoryIdentityAlreadyLinked = errors.New(
+		"directory identity is already linked to a different user",
+	)
+	// ErrDirectoryEncryptionKey indicates an invalid key for UI-managed secrets.
+	ErrDirectoryEncryptionKey = errors.New(
+		"SYSTEM_AES_KEY must contain exactly 32 bytes before a UI-managed directory credential can be saved",
+	)
 )
 
 const (
@@ -75,6 +93,7 @@ type directoryRuntimeService struct {
 	wg                  sync.WaitGroup
 }
 
+// NewDirectoryRuntimeService wires LDAP authentication, sync and administration.
 func NewDirectoryRuntimeService(
 	cfg *config.Config,
 	directories interfaces.DirectoryService,
@@ -85,9 +104,18 @@ func NewDirectoryRuntimeService(
 	audit interfaces.AuditLogService,
 	members interfaces.TenantMemberService,
 ) interfaces.DirectoryRuntimeService {
-	runtime := newDirectoryRuntimeService(cfg, directories, repo, users, tenants, tokens, audit, func(c ldapdirectory.Config) (liveDirectoryAdapter, error) {
-		return ldapdirectory.NewAdapter(c)
-	})
+	runtime := newDirectoryRuntimeService(
+		cfg,
+		directories,
+		repo,
+		users,
+		tenants,
+		tokens,
+		audit,
+		func(c ldapdirectory.Config) (liveDirectoryAdapter, error) {
+			return ldapdirectory.NewAdapter(c)
+		},
+	)
 	runtime.members = members
 	return runtime
 }
@@ -133,7 +161,9 @@ func (s *directoryRuntimeService) fileManaged() bool {
 	return s.deploymentConfig().ManagementSource != config.DirectoryManagementDatabase
 }
 
-func (s *directoryRuntimeService) GetConfig(ctx context.Context) (*types.DirectoryAdminConfig, error) {
+func (s *directoryRuntimeService) GetConfig(
+	ctx context.Context,
+) (*types.DirectoryAdminConfig, error) {
 	if s.fileManaged() {
 		return adminConfigFromDeployment(s.deploymentConfig()), nil
 	}
@@ -160,7 +190,10 @@ func adminConfigFromDeployment(deployment *config.DirectoryConfig) *types.Direct
 	servers := make([]types.DirectoryAdminServer, 0, len(deployment.Servers))
 	transport := types.DirectoryTLSLDAPS
 	for _, server := range deployment.Servers {
-		servers = append(servers, types.DirectoryAdminServer{Address: server.URL, ServerName: server.ServerName})
+		servers = append(
+			servers,
+			types.DirectoryAdminServer{Address: server.URL, ServerName: server.ServerName},
+		)
 		if server.TLSMode == config.DirectoryTLSStartTLS {
 			transport = types.DirectoryTLSStartTLS
 		}
@@ -178,11 +211,35 @@ func adminConfigFromDeployment(deployment *config.DirectoryConfig) *types.Direct
 		LoginAttributes:       []string{"sAMAccountName", "userPrincipalName"},
 		ConnectTimeoutSeconds: durationSeconds(deployment.ConnectTimeout, 5),
 		QueryTimeoutSeconds:   durationSeconds(deployment.QueryTimeout, 10),
-		ResultLimit:           defaultInt(deployment.ResultLimit, 10000), PageSize: defaultInt(int(deployment.PageSize), 500),
+		ResultLimit: defaultInt(
+			deployment.ResultLimit,
+			10000,
+		), PageSize: defaultInt(int(deployment.PageSize), 500),
 		SyncIntervalSeconds: durationSeconds(deployment.SyncInterval, 300),
 		StaleAfterSeconds:   durationSeconds(deployment.StaleAfter, 900),
 		HasBindPassword:     deployment.BindPassword != "", Source: source,
-		ReadOnlyFields:     []string{"enabled", "display_name", "servers", "transport", "ca_file", "base_dn", "user_base_dn", "group_base_dn", "bind_dn", "bind_password", "user_filter", "group_filter", "allowed_login_filter", "login_attributes", "connect_timeout_seconds", "query_timeout_seconds", "result_limit", "page_size", "sync_interval_seconds", "stale_after_seconds"},
+		ReadOnlyFields: []string{
+			"enabled",
+			"display_name",
+			"servers",
+			"transport",
+			"ca_file",
+			"base_dn",
+			"user_base_dn",
+			"group_base_dn",
+			"bind_dn",
+			"bind_password",
+			"user_filter",
+			"group_filter",
+			"allowed_login_filter",
+			"login_attributes",
+			"connect_timeout_seconds",
+			"query_timeout_seconds",
+			"result_limit",
+			"page_size",
+			"sync_interval_seconds",
+			"stale_after_seconds",
+		},
 		BindPasswordSource: source, CASource: source,
 	}
 }
@@ -194,7 +251,10 @@ func adminConfigFromDirectory(directory *types.Directory) *types.DirectoryAdminC
 		if i < len(directory.ServerNames) {
 			serverName = directory.ServerNames[i]
 		}
-		servers = append(servers, types.DirectoryAdminServer{Address: address, ServerName: serverName})
+		servers = append(
+			servers,
+			types.DirectoryAdminServer{Address: address, ServerName: serverName},
+		)
 	}
 	caSource := ""
 	if directory.EnterpriseCAPEM != "" {
@@ -228,7 +288,10 @@ func defaultInt(value, fallback int) int {
 	return value
 }
 
-func (s *directoryRuntimeService) UpdateConfig(ctx context.Context, update *types.DirectoryAdminConfigUpdate) (*types.DirectoryAdminConfig, error) {
+func (s *directoryRuntimeService) UpdateConfig(
+	ctx context.Context,
+	update *types.DirectoryAdminConfigUpdate,
+) (*types.DirectoryAdminConfig, error) {
 	if s.fileManaged() {
 		return nil, ErrDirectoryFileManaged
 	}
@@ -260,7 +323,10 @@ func (s *directoryRuntimeService) UpdateConfig(ctx context.Context, update *type
 		directory.PasswordCiphertext = existing.PasswordCiphertext
 	}
 	if directory.Enabled && directory.PasswordCiphertext == "" {
-		return nil, fmt.Errorf("%w: bind password is required when enabled", ErrInvalidDirectoryConfig)
+		return nil, fmt.Errorf(
+			"%w: bind password is required when enabled",
+			ErrInvalidDirectoryConfig,
+		)
 	}
 	if existing == nil {
 		if _, err = s.directories.Create(ctx, directory); err != nil {
@@ -284,14 +350,35 @@ func (s *directoryRuntimeService) UpdateConfig(ctx context.Context, update *type
 	if existing != nil && directoryAuthenticationSettingsChanged(existing, directory) {
 		s.revokeDirectorySessions(ctx, directory.ID)
 	}
-	s.emitAudit(ctx, types.AuditActionDirectoryConfigChanged, directory.ID, "directory", "", map[string]any{
-		"enabled": directory.Enabled, "source": directorySourceDatabase,
-		"changed_fields": []string{"enabled", "display_name", "servers", "transport", "ca", "search_scope", "service_account", "limits", "sync_policy"},
-	})
+	s.emitAudit(
+		ctx,
+		types.AuditActionDirectoryConfigChanged,
+		directory.ID,
+		"directory",
+		"",
+		map[string]any{
+			"enabled": directory.Enabled, "source": directorySourceDatabase,
+			"changed_fields": []string{
+				"enabled",
+				"display_name",
+				"servers",
+				"transport",
+				"ca",
+				"search_scope",
+				"service_account",
+				"limits",
+				"sync_policy",
+			},
+		},
+	)
 	return s.GetConfig(ctx)
 }
 
-func directoryFromAdminUpdate(id string, update *types.DirectoryAdminConfigUpdate, existing *types.Directory) (*types.Directory, error) {
+func directoryFromAdminUpdate(
+	id string,
+	update *types.DirectoryAdminConfigUpdate,
+	existing *types.Directory,
+) (*types.Directory, error) {
 	if update.Transport == "" {
 		update.Transport = types.DirectoryTLSLDAPS
 	}
@@ -319,8 +406,12 @@ func directoryFromAdminUpdate(id string, update *types.DirectoryAdminConfigUpdat
 		ID: id, Name: strings.TrimSpace(update.DisplayName), Protocol: types.DirectoryProtocolAD,
 		Enabled: update.Enabled, ConfigSource: types.DirectoryConfigSourceUI,
 		TLSMode: update.Transport, ServerURLs: urls, ServerNames: serverNames, BaseDN: strings.TrimSpace(update.BaseDN),
-		UserBaseDN: strings.TrimSpace(update.UserBaseDN), GroupBaseDN: strings.TrimSpace(update.GroupBaseDN),
-		UserFilter: strings.TrimSpace(update.UserFilter), GroupFilter: strings.TrimSpace(update.GroupFilter),
+		UserBaseDN: strings.TrimSpace(
+			update.UserBaseDN,
+		), GroupBaseDN: strings.TrimSpace(update.GroupBaseDN),
+		UserFilter: strings.TrimSpace(
+			update.UserFilter,
+		), GroupFilter: strings.TrimSpace(update.GroupFilter),
 		AllowedLoginFilter: strings.TrimSpace(update.AllowedLoginFilter),
 		ServiceAccountDN:   strings.TrimSpace(update.BindDN), EnterpriseCAPEM: caPEM,
 		ConnectTimeoutSeconds: update.ConnectTimeoutSeconds, QueryTimeoutSeconds: update.QueryTimeoutSeconds,
@@ -356,7 +447,9 @@ func readLimitedFile(path string, limit int64) ([]byte, error) {
 	return os.ReadFile(path)
 }
 
-func (s *directoryRuntimeService) persistedDirectory(ctx context.Context) (*types.Directory, error) {
+func (s *directoryRuntimeService) persistedDirectory(
+	ctx context.Context,
+) (*types.Directory, error) {
 	if s.fileManaged() {
 		return s.ensureFileDirectory(ctx)
 	}
@@ -370,7 +463,9 @@ func (s *directoryRuntimeService) persistedDirectory(ctx context.Context) (*type
 	return directory, nil
 }
 
-func (s *directoryRuntimeService) ensureFileDirectory(ctx context.Context) (*types.Directory, error) {
+func (s *directoryRuntimeService) ensureFileDirectory(
+	ctx context.Context,
+) (*types.Directory, error) {
 	deployment := s.deploymentConfig()
 	desired, err := directoryFromDeployment(deployment)
 	if err != nil {
@@ -414,12 +509,14 @@ func directoryAuthenticationSettingsChanged(current, next *types.Directory) bool
 	return current.Enabled != next.Enabled || current.Protocol != next.Protocol || current.TLSMode != next.TLSMode ||
 		strings.Join(current.ServerURLs, "\x00") != strings.Join(next.ServerURLs, "\x00") ||
 		strings.Join(current.ServerNames, "\x00") != strings.Join(next.ServerNames, "\x00") ||
-		current.BaseDN != next.BaseDN || current.UserBaseDN != next.UserBaseDN || current.GroupBaseDN != next.GroupBaseDN ||
+		current.BaseDN != next.BaseDN || current.UserBaseDN != next.UserBaseDN ||
+		current.GroupBaseDN != next.GroupBaseDN ||
 		current.UserFilter != next.UserFilter || current.GroupFilter != next.GroupFilter ||
 		current.AllowedLoginFilter != next.AllowedLoginFilter || current.ServiceAccountDN != next.ServiceAccountDN ||
 		current.PasswordCiphertext != next.PasswordCiphertext || current.EnterpriseCAPEM != next.EnterpriseCAPEM ||
 		current.SecurityConfigFingerprint != next.SecurityConfigFingerprint ||
-		current.PageSize != next.PageSize || current.ResultLimit != next.ResultLimit
+		current.PageSize != next.PageSize ||
+		current.ResultLimit != next.ResultLimit
 }
 
 func directoryFromDeployment(deployment *config.DirectoryConfig) (*types.Directory, error) {
@@ -438,16 +535,25 @@ func directoryFromDeployment(deployment *config.DirectoryConfig) (*types.Directo
 		return nil, err
 	}
 	return &types.Directory{
-		ID: strings.TrimSpace(deployment.ID), Name: strings.TrimSpace(deployment.ProviderDisplayName),
+		ID: strings.TrimSpace(
+			deployment.ID,
+		), Name: strings.TrimSpace(deployment.ProviderDisplayName),
 		Protocol: types.DirectoryProtocolAD, Enabled: deployment.Enabled, ConfigSource: types.DirectoryConfigSourceFile,
-		TLSMode: mode, ServerURLs: urls, ServerNames: serverNames, BaseDN: deployment.BaseDN, UserBaseDN: deployment.UserBaseDN,
+		TLSMode: mode, ServerURLs: urls, ServerNames: serverNames,
+		BaseDN: deployment.BaseDN, UserBaseDN: deployment.UserBaseDN,
 		GroupBaseDN: deployment.GroupBaseDN, UserFilter: deployment.UserFilter, GroupFilter: deployment.GroupFilter,
 		AllowedLoginFilter: deployment.AllowedLoginFilter, ServiceAccountDN: deployment.BindDN,
 		SecurityConfigFingerprint: fingerprint,
 		ConnectTimeoutSeconds:     durationSeconds(deployment.ConnectTimeout, 5),
 		QueryTimeoutSeconds:       durationSeconds(deployment.QueryTimeout, 10),
-		PageSize:                  defaultInt(int(deployment.PageSize), 500), ResultLimit: defaultInt(deployment.ResultLimit, 10000),
-		SyncIntervalSeconds: durationSeconds(deployment.SyncInterval, 300), StaleAfterSeconds: durationSeconds(deployment.StaleAfter, 900),
+		PageSize: defaultInt(
+			int(deployment.PageSize),
+			500,
+		), ResultLimit: defaultInt(deployment.ResultLimit, 10000),
+		SyncIntervalSeconds: durationSeconds(
+			deployment.SyncInterval,
+			300,
+		), StaleAfterSeconds: durationSeconds(deployment.StaleAfter, 900),
 	}, nil
 }
 
@@ -497,11 +603,19 @@ func directorySecurityConfigFingerprint(deployment *config.DirectoryConfig) (str
 		Enabled: deployment.Enabled, Servers: servers,
 		BindDN: strings.TrimSpace(deployment.BindDN), BindPassword: deployment.BindPassword,
 		CAFile: strings.TrimSpace(deployment.CAFile), CAPEM: caPEM,
-		BaseDN: strings.TrimSpace(deployment.BaseDN), UserBaseDN: strings.TrimSpace(deployment.UserBaseDN),
-		GroupBaseDN: strings.TrimSpace(deployment.GroupBaseDN), UserFilter: strings.TrimSpace(deployment.UserFilter),
-		GroupFilter: strings.TrimSpace(deployment.GroupFilter), LoginFilter: strings.TrimSpace(deployment.LoginFilter),
+		BaseDN: strings.TrimSpace(
+			deployment.BaseDN,
+		), UserBaseDN: strings.TrimSpace(deployment.UserBaseDN),
+		GroupBaseDN: strings.TrimSpace(
+			deployment.GroupBaseDN,
+		), UserFilter: strings.TrimSpace(deployment.UserFilter),
+		GroupFilter: strings.TrimSpace(
+			deployment.GroupFilter,
+		), LoginFilter: strings.TrimSpace(deployment.LoginFilter),
 		AllowedLoginFilter: strings.TrimSpace(deployment.AllowedLoginFilter),
-		ConnectTimeout:     int64(deployment.ConnectTimeout), QueryTimeout: int64(deployment.QueryTimeout),
+		ConnectTimeout: int64(
+			deployment.ConnectTimeout,
+		), QueryTimeout: int64(deployment.QueryTimeout),
 		PageSize: deployment.PageSize, ResultLimit: deployment.ResultLimit,
 	}
 	encoded, err := json.Marshal(payload)
@@ -526,14 +640,20 @@ func sameDirectorySettings(a, b *types.Directory) bool {
 		a.TLSMode == b.TLSMode && strings.Join(a.ServerURLs, "\x00") == strings.Join(b.ServerURLs, "\x00") &&
 		strings.Join(a.ServerNames, "\x00") == strings.Join(b.ServerNames, "\x00") &&
 		a.BaseDN == b.BaseDN && a.UserBaseDN == b.UserBaseDN && a.GroupBaseDN == b.GroupBaseDN &&
-		a.UserFilter == b.UserFilter && a.GroupFilter == b.GroupFilter && a.AllowedLoginFilter == b.AllowedLoginFilter &&
+		a.UserFilter == b.UserFilter && a.GroupFilter == b.GroupFilter &&
+		a.AllowedLoginFilter == b.AllowedLoginFilter &&
 		a.SecurityConfigFingerprint == b.SecurityConfigFingerprint &&
 		a.ServiceAccountDN == b.ServiceAccountDN && a.ConnectTimeoutSeconds == b.ConnectTimeoutSeconds &&
 		a.QueryTimeoutSeconds == b.QueryTimeoutSeconds && a.PageSize == b.PageSize && a.ResultLimit == b.ResultLimit &&
-		a.SyncIntervalSeconds == b.SyncIntervalSeconds && a.StaleAfterSeconds == b.StaleAfterSeconds
+		a.SyncIntervalSeconds == b.SyncIntervalSeconds &&
+		a.StaleAfterSeconds == b.StaleAfterSeconds
 }
 
-func (s *directoryRuntimeService) adapterFor(ctx context.Context, directory *types.Directory, replacementSecret string) (liveDirectoryAdapter, error) {
+func (s *directoryRuntimeService) adapterFor(
+	_ context.Context,
+	directory *types.Directory,
+	replacementSecret string,
+) (liveDirectoryAdapter, error) {
 	if directory == nil {
 		return nil, ErrDirectoryNotConfigured
 	}
@@ -542,7 +662,8 @@ func (s *directoryRuntimeService) adapterFor(ctx context.Context, directory *typ
 		if directory.IsFileManaged() {
 			bindPassword = s.deploymentConfig().BindPassword
 		} else {
-			if directory.PasswordCiphertext != "" && !strings.HasPrefix(directory.PasswordCiphertext, secutils.EncPrefix) {
+			if directory.PasswordCiphertext != "" &&
+				!strings.HasPrefix(directory.PasswordCiphertext, secutils.EncPrefix) {
 				return nil, fmt.Errorf("%w: database bind credential is not encrypted", ErrInvalidDirectoryConfig)
 			}
 			var err error
@@ -554,7 +675,10 @@ func (s *directoryRuntimeService) adapterFor(ctx context.Context, directory *typ
 	}
 	controllers := make([]ldapdirectory.Controller, 0, len(directory.ServerURLs))
 	for i, address := range directory.ServerURLs {
-		controller := ldapdirectory.Controller{URL: address, TLSMode: ldapdirectory.TLSMode(directory.TLSMode)}
+		controller := ldapdirectory.Controller{
+			URL:     address,
+			TLSMode: ldapdirectory.TLSMode(directory.TLSMode),
+		}
 		if i < len(directory.ServerNames) {
 			controller.ServerName = directory.ServerNames[i]
 		}
@@ -640,14 +764,19 @@ func (s *directoryRuntimeService) GetStatus(ctx context.Context) (*types.Directo
 			base = directory.LastSuccessfulSyncAt
 		}
 		if base != nil {
-			next := base.Add(time.Duration(defaultInt(directory.SyncIntervalSeconds, 300)) * time.Second)
+			next := base.Add(
+				time.Duration(defaultInt(directory.SyncIntervalSeconds, 300)) * time.Second,
+			)
 			status.NextSyncAt = &next
 		}
 	}
 	return status, nil
 }
 
-func (s *directoryRuntimeService) TestConnection(ctx context.Context, candidate *types.DirectoryAdminConfigUpdate) (*types.DirectoryTestResult, error) {
+func (s *directoryRuntimeService) TestConnection(
+	ctx context.Context,
+	candidate *types.DirectoryAdminConfigUpdate,
+) (*types.DirectoryTestResult, error) {
 	directory, replacement, err := s.testCandidate(ctx, candidate)
 	if err != nil {
 		return nil, err
@@ -663,10 +792,18 @@ func (s *directoryRuntimeService) TestConnection(ctx context.Context, candidate 
 		return &types.DirectoryTestResult{OK: false, LatencyMS: latency, Message: err.Error()}, nil
 	}
 	s.setActiveServer(snapshot.ControllerURL)
-	return &types.DirectoryTestResult{OK: true, Server: snapshot.ControllerURL, LatencyMS: latency, Message: "Connection and paged search succeeded"}, nil
+	return &types.DirectoryTestResult{
+		OK:        true,
+		Server:    snapshot.ControllerURL,
+		LatencyMS: latency,
+		Message:   "Connection and paged search succeeded",
+	}, nil
 }
 
-func (s *directoryRuntimeService) testCandidate(ctx context.Context, candidate *types.DirectoryAdminConfigUpdate) (*types.Directory, string, error) {
+func (s *directoryRuntimeService) testCandidate(
+	ctx context.Context,
+	candidate *types.DirectoryAdminConfigUpdate,
+) (*types.Directory, string, error) {
 	current, err := s.persistedDirectory(ctx)
 	if err != nil && !errors.Is(err, ErrDirectoryNotConfigured) {
 		return nil, "", err
@@ -697,7 +834,9 @@ func (s *directoryRuntimeService) testCandidate(ctx context.Context, candidate *
 	return directory, replacement, nil
 }
 
-func (s *directoryRuntimeService) liveSnapshot(ctx context.Context) (*ldapdirectory.Snapshot, *types.Directory, error) {
+func (s *directoryRuntimeService) liveSnapshot(
+	ctx context.Context,
+) (*ldapdirectory.Snapshot, *types.Directory, error) {
 	directory, err := s.persistedDirectory(ctx)
 	if err != nil {
 		return nil, nil, err
@@ -740,7 +879,11 @@ func containsFold(query string, values ...string) bool {
 	return false
 }
 
-func (s *directoryRuntimeService) QueryUsers(ctx context.Context, query string, limit, offset int) (*types.DirectoryObjectSearchResult, error) {
+func (s *directoryRuntimeService) QueryUsers(
+	ctx context.Context,
+	query string,
+	limit, offset int,
+) (*types.DirectoryObjectSearchResult, error) {
 	snapshot, _, err := s.liveSnapshot(ctx)
 	if err != nil {
 		return nil, err
@@ -755,7 +898,14 @@ func (s *directoryRuntimeService) QueryUsers(ctx context.Context, query string, 
 	}
 	items := make([]types.DirectoryObjectSummary, 0)
 	for _, user := range snapshot.Users {
-		if !containsFold(query, user.SAMAccountName, user.UserPrincipalName, user.DisplayName, user.Email, user.DN) {
+		if !containsFold(
+			query,
+			user.SAMAccountName,
+			user.UserPrincipalName,
+			user.DisplayName,
+			user.Email,
+			user.DN,
+		) {
 			continue
 		}
 		summary := types.DirectoryObjectSummary{
@@ -778,7 +928,11 @@ func (s *directoryRuntimeService) QueryUsers(ctx context.Context, query string, 
 	return &types.DirectoryObjectSearchResult{Items: items, Total: total, Truncated: more}, nil
 }
 
-func (s *directoryRuntimeService) QueryGroups(ctx context.Context, query string, limit, offset int) (*types.DirectoryGroupSearchResult, error) {
+func (s *directoryRuntimeService) QueryGroups(
+	ctx context.Context,
+	query string,
+	limit, offset int,
+) (*types.DirectoryGroupSearchResult, error) {
 	snapshot, _, err := s.liveSnapshot(ctx)
 	if err != nil {
 		return nil, err
@@ -827,7 +981,10 @@ func (s *directoryRuntimeService) QueryGroups(ctx context.Context, query string,
 	return &types.DirectoryGroupSearchResult{Items: items, Total: total, Truncated: more}, nil
 }
 
-func convertDirectorySnapshot(snapshot *ldapdirectory.Snapshot, started time.Time) (*types.DirectorySnapshot, []string, error) {
+func convertDirectorySnapshot(
+	snapshot *ldapdirectory.Snapshot,
+	started time.Time,
+) (*types.DirectorySnapshot, []string, error) {
 	if snapshot == nil {
 		return nil, nil, ErrIncompleteDirectorySync
 	}
@@ -873,12 +1030,20 @@ func convertDirectorySnapshot(snapshot *ldapdirectory.Snapshot, started time.Tim
 	}
 	warnings := make([]string, 0)
 	if len(snapshot.UnresolvedMembers) > 0 {
-		warnings = append(warnings, fmt.Sprintf("%d group members were outside the selected user/group scopes", len(snapshot.UnresolvedMembers)))
+		warnings = append(
+			warnings,
+			fmt.Sprintf(
+				"%d group members were outside the selected user/group scopes",
+				len(snapshot.UnresolvedMembers),
+			),
+		)
 	}
 	return result, warnings, nil
 }
 
-func (s *directoryRuntimeService) PreviewSync(ctx context.Context) (*types.DirectorySyncPreview, error) {
+func (s *directoryRuntimeService) PreviewSync(
+	ctx context.Context,
+) (*types.DirectorySyncPreview, error) {
 	started := s.now().UTC()
 	snapshot, _, err := s.liveSnapshot(ctx)
 	if err != nil {
@@ -901,7 +1066,10 @@ func (s *directoryRuntimeService) PreviewSync(ctx context.Context) (*types.Direc
 	return preview, nil
 }
 
-func (s *directoryRuntimeService) compareSnapshot(ctx context.Context, snapshot *types.DirectorySnapshot) (*types.DirectorySyncPreview, error) {
+func (s *directoryRuntimeService) compareSnapshot(
+	ctx context.Context,
+	snapshot *types.DirectorySnapshot,
+) (*types.DirectorySyncPreview, error) {
 	identities, err := s.listAllIdentities(ctx, snapshot.DirectoryID)
 	if err != nil {
 		return nil, err
@@ -986,7 +1154,10 @@ func (s *directoryRuntimeService) compareSnapshot(ctx context.Context, snapshot 
 	return preview, nil
 }
 
-func identityChanged(existing *types.DirectoryIdentity, incoming types.DirectoryIdentitySnapshot) bool {
+func identityChanged(
+	existing *types.DirectoryIdentity,
+	incoming types.DirectoryIdentitySnapshot,
+) bool {
 	expectedStatus := types.DirectoryObjectActive
 	if !incoming.Enabled {
 		expectedStatus = types.DirectoryObjectDisabled
@@ -1003,7 +1174,10 @@ func groupChanged(existing *types.DirectoryGroup, incoming types.DirectoryGroupS
 		existing.Email != incoming.Email || existing.Status != types.DirectoryObjectActive
 }
 
-func (s *directoryRuntimeService) listAllIdentities(ctx context.Context, directoryID string) ([]*types.DirectoryIdentity, error) {
+func (s *directoryRuntimeService) listAllIdentities(
+	ctx context.Context,
+	directoryID string,
+) ([]*types.DirectoryIdentity, error) {
 	result := make([]*types.DirectoryIdentity, 0)
 	for offset := 0; ; offset += 1000 {
 		page, err := s.repo.ListIdentities(ctx, directoryID, offset, 1000)
@@ -1017,7 +1191,10 @@ func (s *directoryRuntimeService) listAllIdentities(ctx context.Context, directo
 	}
 }
 
-func (s *directoryRuntimeService) listAllGroups(ctx context.Context, directoryID string) ([]*types.DirectoryGroup, error) {
+func (s *directoryRuntimeService) listAllGroups(
+	ctx context.Context,
+	directoryID string,
+) ([]*types.DirectoryGroup, error) {
 	result := make([]*types.DirectoryGroup, 0)
 	for offset := 0; ; offset += 1000 {
 		page, err := s.repo.ListGroups(ctx, directoryID, "", offset, 1000)
@@ -1031,11 +1208,16 @@ func (s *directoryRuntimeService) listAllGroups(ctx context.Context, directoryID
 	}
 }
 
-func (s *directoryRuntimeService) ManualSync(ctx context.Context) (*types.DirectorySyncRunView, error) {
+func (s *directoryRuntimeService) ManualSync(
+	ctx context.Context,
+) (*types.DirectorySyncRunView, error) {
 	return s.runSync(ctx, directoryManualTrigger)
 }
 
-func (s *directoryRuntimeService) runSync(ctx context.Context, trigger string) (*types.DirectorySyncRunView, error) {
+func (s *directoryRuntimeService) runSync(
+	ctx context.Context,
+	trigger string,
+) (*types.DirectorySyncRunView, error) {
 	directory, err := s.persistedDirectory(ctx)
 	if err != nil {
 		return nil, err
@@ -1052,19 +1234,23 @@ func (s *directoryRuntimeService) runSync(ctx context.Context, trigger string) (
 	s.setSyncing(true)
 	defer s.setSyncing(false)
 	var raw *ldapdirectory.Snapshot
-	result, err := s.directories.RunSync(ctx, directory.ID, func(fetchCtx context.Context) (*types.DirectorySnapshot, error) {
-		var fetchErr error
-		raw, fetchErr = adapter.Sync(fetchCtx)
-		if fetchErr != nil {
-			return nil, fetchErr
-		}
-		converted, _, convertErr := convertDirectorySnapshot(raw, started)
-		if converted != nil {
-			converted.Trigger = types.DirectorySyncTrigger(trigger)
-			converted.ExpectedConfigVersion = directory.ConfigVersion
-		}
-		return converted, convertErr
-	})
+	result, err := s.directories.RunSync(
+		ctx,
+		directory.ID,
+		func(fetchCtx context.Context) (*types.DirectorySnapshot, error) {
+			var fetchErr error
+			raw, fetchErr = adapter.Sync(fetchCtx)
+			if fetchErr != nil {
+				return nil, fetchErr
+			}
+			converted, _, convertErr := convertDirectorySnapshot(raw, started)
+			if converted != nil {
+				converted.Trigger = types.DirectorySyncTrigger(trigger)
+				converted.ExpectedConfigVersion = directory.ConfigVersion
+			}
+			return converted, convertErr
+		},
+	)
 	if err != nil {
 		if !errors.Is(err, ErrDirectorySyncInProgress) {
 			s.recordDirectorySyncFailure(ctx, directory, trigger, started, err)
@@ -1076,10 +1262,17 @@ func (s *directoryRuntimeService) runSync(ctx context.Context, trigger string) (
 		s.setActiveServer(raw.ControllerURL)
 	}
 	s.revokeSuspendedIdentitySessions(ctx, directory.ID)
-	s.emitAudit(ctx, types.AuditActionDirectorySyncCompleted, directory.ID, "directory", "", map[string]any{
-		"trigger": trigger, "users_seen": result.SyncRun.UserCount, "groups_seen": result.SyncRun.GroupCount,
-		"memberships_seen": result.SyncRun.MembershipCount, "snapshot_version": result.SyncRun.SnapshotVersion,
-	})
+	s.emitAudit(
+		ctx,
+		types.AuditActionDirectorySyncCompleted,
+		directory.ID,
+		"directory",
+		"",
+		map[string]any{
+			"trigger": trigger, "users_seen": result.SyncRun.UserCount, "groups_seen": result.SyncRun.GroupCount,
+			"memberships_seen": result.SyncRun.MembershipCount, "snapshot_version": result.SyncRun.SnapshotVersion,
+		},
+	)
 	return syncRunView(result.SyncRun, trigger), nil
 }
 
@@ -1101,9 +1294,16 @@ func (s *directoryRuntimeService) recordDirectorySyncFailure(
 		)
 	}
 	s.recordFailure()
-	s.emitAudit(failureCtx, types.AuditActionDirectorySyncFailed, directory.ID, "directory", "", map[string]any{
-		"trigger": trigger, "error_code": directorySyncErrorCode(syncErr),
-	})
+	s.emitAudit(
+		failureCtx,
+		types.AuditActionDirectorySyncFailed,
+		directory.ID,
+		"directory",
+		"",
+		map[string]any{
+			"trigger": trigger, "error_code": directorySyncErrorCode(syncErr),
+		},
+	)
 }
 
 func directorySyncErrorCode(err error) string {
@@ -1136,13 +1336,19 @@ func syncRunView(run *types.DirectorySyncRun, trigger string) *types.DirectorySy
 	}
 }
 
-func (s *directoryRuntimeService) ListSyncRuns(ctx context.Context, limit int) (*types.DirectorySyncRunsResponse, error) {
+func (s *directoryRuntimeService) ListSyncRuns(
+	ctx context.Context,
+	limit int,
+) (*types.DirectorySyncRunsResponse, error) {
 	limit = normalizeSearchLimit(limit)
 	runs, err := s.directories.ListSyncRuns(ctx, s.directoryID(), 0, limit)
 	if err != nil {
 		return nil, err
 	}
-	result := &types.DirectorySyncRunsResponse{Runs: make([]types.DirectorySyncRunView, 0, len(runs)), Total: len(runs)}
+	result := &types.DirectorySyncRunsResponse{
+		Runs:  make([]types.DirectorySyncRunView, 0, len(runs)),
+		Total: len(runs),
+	}
 	for _, run := range runs {
 		view := syncRunView(run, directoryManualTrigger)
 		if view != nil {
@@ -1152,7 +1358,10 @@ func (s *directoryRuntimeService) ListSyncRuns(ctx context.Context, limit int) (
 	return result, nil
 }
 
-func (s *directoryRuntimeService) LinkIdentity(ctx context.Context, objectGUID, userID string) error {
+func (s *directoryRuntimeService) LinkIdentity(
+	ctx context.Context,
+	objectGUID, userID string,
+) error {
 	objectGUID = strings.TrimSpace(objectGUID)
 	userID = strings.TrimSpace(userID)
 	if objectGUID == "" || userID == "" {
@@ -1188,9 +1397,16 @@ func (s *directoryRuntimeService) LinkIdentity(ctx context.Context, objectGUID, 
 	if s.tokens != nil {
 		_ = s.tokens.RevokeTokensByUserID(ctx, userID)
 	}
-	s.emitAudit(ctx, types.AuditActionDirectoryIdentityLinked, identity.ID, "directory_identity", userID, map[string]any{
-		"directory_id": identity.DirectoryID, "object_guid": identity.ObjectGUID, "link_mode": "administrator",
-	})
+	s.emitAudit(
+		ctx,
+		types.AuditActionDirectoryIdentityLinked,
+		identity.ID,
+		"directory_identity",
+		userID,
+		map[string]any{
+			"directory_id": identity.DirectoryID, "object_guid": identity.ObjectGUID, "link_mode": "administrator",
+		},
+	)
 	return nil
 }
 
@@ -1220,13 +1436,23 @@ func (s *directoryRuntimeService) UnlinkIdentity(ctx context.Context, objectGUID
 	if s.tokens != nil {
 		_ = s.tokens.RevokeTokensByUserID(ctx, userID)
 	}
-	s.emitAudit(ctx, types.AuditActionDirectoryIdentityUnlinked, identity.ID, "directory_identity", userID, map[string]any{
-		"directory_id": identity.DirectoryID, "object_guid": identity.ObjectGUID,
-	})
+	s.emitAudit(
+		ctx,
+		types.AuditActionDirectoryIdentityUnlinked,
+		identity.ID,
+		"directory_identity",
+		userID,
+		map[string]any{
+			"directory_id": identity.DirectoryID, "object_guid": identity.ObjectGUID,
+		},
+	)
 	return nil
 }
 
-func (s *directoryRuntimeService) Login(ctx context.Context, identifier, password string) (*types.LoginResponse, error) {
+func (s *directoryRuntimeService) Login(
+	ctx context.Context,
+	identifier, password string,
+) (*types.LoginResponse, error) {
 	identifier = strings.TrimSpace(identifier)
 	if identifier == "" || password == "" {
 		return nil, ldapdirectory.ErrEmptyPassword
@@ -1266,14 +1492,21 @@ func (s *directoryRuntimeService) Login(ctx context.Context, identifier, passwor
 	if err != nil {
 		return nil, err
 	}
-	if !sameDirectoryGroupSet(authenticated.EffectiveGroupObjectGUIDs, loginSnapshot.EffectiveGroupObjectGUIDs) {
+	if !sameDirectoryGroupSet(
+		authenticated.EffectiveGroupObjectGUIDs,
+		loginSnapshot.EffectiveGroupObjectGUIDs,
+	) {
 		// Never patch memberships from a login-time partial view. Attempt one
 		// complete, lease-protected synchronization, then compare against the
 		// newly applied atomic snapshot. Any failure or remaining difference is
 		// fail-closed and no token has been issued yet.
 		if s.directories != nil && directoryLoginSyncDue(directory, s.now().UTC()) {
 			if _, syncErr := s.runSync(ctx, directoryLoginTrigger); syncErr == nil {
-				loginSnapshot, err = s.repo.GetLoginSnapshot(ctx, directory.ID, authenticated.User.ObjectGUID)
+				loginSnapshot, err = s.repo.GetLoginSnapshot(
+					ctx,
+					directory.ID,
+					authenticated.User.ObjectGUID,
+				)
 				if err != nil {
 					return nil, err
 				}
@@ -1281,7 +1514,10 @@ func (s *directoryRuntimeService) Login(ctx context.Context, identifier, passwor
 				if err != nil {
 					return nil, err
 				}
-				if sameDirectoryGroupSet(authenticated.EffectiveGroupObjectGUIDs, loginSnapshot.EffectiveGroupObjectGUIDs) {
+				if sameDirectoryGroupSet(
+					authenticated.EffectiveGroupObjectGUIDs,
+					loginSnapshot.EffectiveGroupObjectGUIDs,
+				) {
 					goto membershipsVerified
 				}
 			}
@@ -1301,7 +1537,11 @@ membershipsVerified:
 	if err != nil {
 		return nil, err
 	}
-	postSnapshot, postErr := s.repo.GetLoginSnapshot(ctx, directory.ID, authenticated.User.ObjectGUID)
+	postSnapshot, postErr := s.repo.GetLoginSnapshot(
+		ctx,
+		directory.ID,
+		authenticated.User.ObjectGUID,
+	)
 	if postErr != nil {
 		s.revokeGeneratedDirectoryTokens(ctx, user.ID)
 		return nil, fmt.Errorf("%w: post-login snapshot read failed", ErrDirectoryUnavailable)
@@ -1314,14 +1554,18 @@ membershipsVerified:
 		}
 		return nil, ErrDirectoryIdentityUnavailable
 	}
-	if !sameDirectoryGroupSet(authenticated.EffectiveGroupObjectGUIDs, postSnapshot.EffectiveGroupObjectGUIDs) {
+	if !sameDirectoryGroupSet(
+		authenticated.EffectiveGroupObjectGUIDs,
+		postSnapshot.EffectiveGroupObjectGUIDs,
+	) {
 		s.revokeGeneratedDirectoryTokens(ctx, user.ID)
 		return nil, ErrDirectoryMembershipMismatch
 	}
 	user.DisplayName = strings.TrimSpace(postIdentity.DisplayName)
 	memberships := s.users.BuildLoginMemberships(ctx, user, nil)
 	activeTenantID := user.TenantID
-	if pref := user.Preferences.LastActiveTenantID; pref != nil && membershipContains(memberships, *pref) {
+	if pref := user.Preferences.LastActiveTenantID; pref != nil &&
+		membershipContains(memberships, *pref) {
 		activeTenantID = *pref
 	}
 	if activeTenantID == 0 && len(memberships) > 0 {
@@ -1339,16 +1583,23 @@ membershipsVerified:
 }
 
 func directoryLoginSyncDue(directory *types.Directory, now time.Time) bool {
-	return directory != nil && (directory.LastSyncAttemptAt == nil || !now.Before(directory.LastSyncAttemptAt.Add(directoryLoginSyncCooldown)))
+	return directory != nil &&
+		(directory.LastSyncAttemptAt == nil || !now.Before(directory.LastSyncAttemptAt.Add(directoryLoginSyncCooldown)))
 }
 
-func (s *directoryRuntimeService) revokeGeneratedDirectoryTokens(ctx context.Context, userID string) {
+func (s *directoryRuntimeService) revokeGeneratedDirectoryTokens(
+	ctx context.Context,
+	userID string,
+) {
 	if s.tokens != nil && strings.TrimSpace(userID) != "" {
 		_ = s.tokens.RevokeTokensByUserID(ctx, userID)
 	}
 }
 
-func (s *directoryRuntimeService) validateLoginSnapshot(snapshot *types.DirectoryLoginSnapshot, expectedConfigVersion uint64) (*types.DirectoryIdentity, error) {
+func (s *directoryRuntimeService) validateLoginSnapshot(
+	snapshot *types.DirectoryLoginSnapshot,
+	expectedConfigVersion uint64,
+) (*types.DirectoryIdentity, error) {
 	if snapshot == nil || snapshot.Directory == nil || snapshot.Directory.ID != s.directoryID() {
 		return nil, ErrDirectoryUnavailable
 	}
@@ -1356,7 +1607,8 @@ func (s *directoryRuntimeService) validateLoginSnapshot(snapshot *types.Director
 	if directory.ConfigVersion != expectedConfigVersion {
 		return nil, ErrDirectoryUnavailable
 	}
-	if !directory.Enabled || !directory.IsFresh(s.now().UTC()) || strings.TrimSpace(directory.LastSyncError) != "" {
+	if !directory.Enabled || !directory.IsFresh(s.now().UTC()) ||
+		strings.TrimSpace(directory.LastSyncError) != "" {
 		return nil, ErrDirectoryUnavailable
 	}
 	if snapshot.Identity == nil || snapshot.Identity.Status != types.DirectoryObjectActive ||
@@ -1454,20 +1706,31 @@ func (s *directoryRuntimeService) resolveDirectoryUser(
 			if readErr != nil {
 				return nil, readErr
 			}
-			if refreshed != nil && refreshed.UserID != nil && strings.TrimSpace(*refreshed.UserID) != "" {
+			if refreshed != nil && refreshed.UserID != nil &&
+				strings.TrimSpace(*refreshed.UserID) != "" {
 				return s.users.GetUserByID(ctx, *refreshed.UserID)
 			}
 			return nil, ErrDirectoryIdentityLinkRequired
 		}
 		return nil, fmt.Errorf("link directory identity: %w", err)
 	}
-	s.emitAudit(ctx, types.AuditActionDirectoryIdentityLinked, identity.ID, "directory_identity", user.ID, map[string]any{
-		"directory_id": identity.DirectoryID, "object_guid": identity.ObjectGUID, "link_mode": "automatic_new_user",
-	})
+	s.emitAudit(
+		ctx,
+		types.AuditActionDirectoryIdentityLinked,
+		identity.ID,
+		"directory_identity",
+		user.ID,
+		map[string]any{
+			"directory_id": identity.DirectoryID, "object_guid": identity.ObjectGUID, "link_mode": "automatic_new_user",
+		},
+	)
 	return user, nil
 }
 
-func (s *directoryRuntimeService) directoryIdentityConflicts(ctx context.Context, email, username string) (bool, error) {
+func (s *directoryRuntimeService) directoryIdentityConflicts(
+	ctx context.Context,
+	email, username string,
+) (bool, error) {
 	collision, err := s.users.FindUserByEmailOrUsernameFold(ctx, email, username)
 	if err != nil {
 		return false, err
@@ -1525,7 +1788,10 @@ func randomDirectoryPlaceholderPassword() (string, error) {
 	return "Aa1!" + base64.RawURLEncoding.EncodeToString(randomBytes), nil
 }
 
-func (s *directoryRuntimeService) revokeSuspendedIdentitySessions(ctx context.Context, directoryID string) {
+func (s *directoryRuntimeService) revokeSuspendedIdentitySessions(
+	ctx context.Context,
+	directoryID string,
+) {
 	if s.tokens == nil {
 		return
 	}
@@ -1534,7 +1800,8 @@ func (s *directoryRuntimeService) revokeSuspendedIdentitySessions(ctx context.Co
 		return
 	}
 	for _, identity := range identities {
-		if identity.Status == types.DirectoryObjectActive || identity.UserID == nil || *identity.UserID == "" {
+		if identity.Status == types.DirectoryObjectActive || identity.UserID == nil ||
+			*identity.UserID == "" {
 			continue
 		}
 		_ = s.tokens.RevokeTokensByUserID(ctx, *identity.UserID)

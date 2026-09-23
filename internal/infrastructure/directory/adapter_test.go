@@ -68,7 +68,9 @@ func TestAuthenticateRejectsEmptyPasswordBeforeConnecting(t *testing.T) {
 }
 
 func TestAuthenticateEscapesFilterAndBindsResolvedDN(t *testing.T) {
-	connection := &fakeLDAPConnection{searchResponses: successfulAuthenticationResponses(testUserEntry("alice", 1107, 513), 513)}
+	connection := &fakeLDAPConnection{
+		searchResponses: successfulAuthenticationResponses(testUserEntry("alice", 1107, 513), 513),
+	}
 	adapter := testAdapter(t, "ldaps://dc1.example.test:636")
 	adapter.dial = singleConnectionDialer(connection)
 
@@ -99,7 +101,9 @@ func TestAuthenticateEscapesFilterAndBindsResolvedDN(t *testing.T) {
 }
 
 func TestAuthenticateCustomLoginFilterIsEscapedAndScoped(t *testing.T) {
-	connection := &fakeLDAPConnection{searchResponses: successfulAuthenticationResponses(testUserEntry("alice", 1107, 513), 513)}
+	connection := &fakeLDAPConnection{
+		searchResponses: successfulAuthenticationResponses(testUserEntry("alice", 1107, 513), 513),
+	}
 	adapter := testAdapter(t, "ldaps://dc1.example.test:636")
 	adapter.config.UserFilter = "(&(objectClass=user)(department=engineering))"
 	adapter.config.LoginFilter = "(|(employeeID={login})(userPrincipalName={login}))"
@@ -113,7 +117,9 @@ func TestAuthenticateCustomLoginFilterIsEscapedAndScoped(t *testing.T) {
 	require.Contains(t, filter, adapter.config.UserFilter)
 	require.NotContains(t, filter, identifier)
 	require.Equal(t,
-		"(&(&(objectClass=user)(department=engineering))(|(employeeID="+ldap.EscapeFilter(identifier)+")(userPrincipalName="+ldap.EscapeFilter(identifier)+")))",
+		"(&(&(objectClass=user)(department=engineering))"+
+			"(|(employeeID="+ldap.EscapeFilter(identifier)+")"+
+			"(userPrincipalName="+ldap.EscapeFilter(identifier)+")))",
 		filter,
 	)
 }
@@ -162,7 +168,9 @@ func TestAuthenticateInvalidCredentialsDoesNotTryAnotherController(t *testing.T)
 }
 
 func TestAuthenticateFailsOverOperationalFailureInOrder(t *testing.T) {
-	connection := &fakeLDAPConnection{searchResponses: successfulAuthenticationResponses(testUserEntry("alice", 1107, 513), 513)}
+	connection := &fakeLDAPConnection{
+		searchResponses: successfulAuthenticationResponses(testUserEntry("alice", 1107, 513), 513),
+	}
 	adapter := testAdapter(t, "ldaps://dc1.example.test:636", "ldaps://dc2.example.test:636")
 	var order []string
 	adapter.dial = func(_ context.Context, controller Controller, _ *tls.Config, _ Config) (ldapConnection, error) {
@@ -213,7 +221,8 @@ func TestAuthenticateVerifiesDirectPrimaryAndNestedGroupsOnSameController(t *tes
 	}, connection.bindCalls)
 	require.Contains(t, connection.searchRequests[1].Filter, "(objectClass=group)")
 	require.Contains(t, connection.searchRequests[1].Filter, "(member="+ldap.EscapeFilter(user.DN)+")")
-	require.Contains(t, connection.searchRequests[2].Filter, "(objectSid="+escapeBinaryFilterValue(testSIDBytes(513))+")")
+	require.Contains(t, connection.searchRequests[2].Filter,
+		"(objectSid="+escapeBinaryFilterValue(testSIDBytes(513))+")")
 }
 
 func TestAuthenticateLiveMembershipCycleFailsClosed(t *testing.T) {
@@ -263,8 +272,12 @@ func TestAuthenticateRetriesCompleteFlowAfterLiveMembershipOperationalFailure(t 
 
 func TestAuthenticateInvalidServiceRebindIsTerminal(t *testing.T) {
 	connection := &fakeLDAPConnection{
-		bindErrors:      []error{nil, nil, ldap.NewError(ldap.LDAPResultInvalidCredentials, errors.New("service password changed"))},
-		searchResponses: []fakeSearchResponse{{result: &ldap.SearchResult{Entries: []*ldap.Entry{testUserEntry("alice", 1107, 513)}}}},
+		bindErrors: []error{
+			nil, nil, ldap.NewError(ldap.LDAPResultInvalidCredentials, errors.New("service password changed")),
+		},
+		searchResponses: []fakeSearchResponse{{
+			result: &ldap.SearchResult{Entries: []*ldap.Entry{testUserEntry("alice", 1107, 513)}},
+		}},
 	}
 	adapter := testAdapter(t, "ldaps://dc1.example.test:636", "ldaps://dc2.example.test:636")
 	dials := 0
@@ -299,7 +312,9 @@ func TestSearchPagedRequiresCompleteProgressingPages(t *testing.T) {
 		}}
 		adapter := testAdapter(t, "ldaps://dc.example.test")
 		adapter.config.PageSize = 1
-		entries, err := adapter.searchPaged(context.Background(), connection, "DC=example,DC=test", "(objectClass=*)", []string{"dn"})
+		entries, err := adapter.searchPaged(
+			context.Background(), connection, "DC=example,DC=test", "(objectClass=*)", []string{"dn"},
+		)
 		require.NoError(t, err)
 		require.Len(t, entries, 2)
 		require.Len(t, connection.searchRequests, 2)
@@ -343,7 +358,7 @@ func TestSearchPagedRequiresCompleteProgressingPages(t *testing.T) {
 func TestStartTLSNegotiationHonorsConnectionTimeout(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
-	defer listener.Close()
+	defer func() { _ = listener.Close() }()
 	accepted := make(chan net.Conn, 1)
 	go func() {
 		conn, acceptErr := listener.Accept()
@@ -368,17 +383,30 @@ func TestStartTLSNegotiationHonorsConnectionTimeout(t *testing.T) {
 
 func TestBuildSnapshotIncludesDirectNestedAndPrimaryMembership(t *testing.T) {
 	user := User{
-		ObjectGUID: "user", SID: "S-1-5-21-1-2-3-1107", DN: "CN=Alice,OU=Users,DC=example,DC=test", PrimaryGroupRID: 513,
+		ObjectGUID: "user", SID: "S-1-5-21-1-2-3-1107",
+		DN: "CN=Alice,OU=Users,DC=example,DC=test", PrimaryGroupRID: 513,
 	}
 	groups := []parsedGroup{
-		{group: Group{ObjectGUID: "domain-users", SID: "S-1-5-21-1-2-3-513", DN: "CN=Domain Users,OU=Groups,DC=example,DC=test"}},
-		{group: Group{ObjectGUID: "engineering", SID: "S-1-5-21-1-2-3-2001", DN: "CN=Engineering,OU=Groups,DC=example,DC=test"}, members: []string{user.DN}},
-		{group: Group{ObjectGUID: "staff", SID: "S-1-5-21-1-2-3-2002", DN: "CN=Staff,OU=Groups,DC=example,DC=test"}, members: []string{"CN=Engineering,OU=Groups,DC=example,DC=test"}},
+		{group: Group{
+			ObjectGUID: "domain-users", SID: "S-1-5-21-1-2-3-513",
+			DN: "CN=Domain Users,OU=Groups,DC=example,DC=test",
+		}},
+		{group: Group{
+			ObjectGUID: "engineering", SID: "S-1-5-21-1-2-3-2001",
+			DN: "CN=Engineering,OU=Groups,DC=example,DC=test",
+		}, members: []string{user.DN}},
+		{group: Group{
+			ObjectGUID: "staff", SID: "S-1-5-21-1-2-3-2002",
+			DN: "CN=Staff,OU=Groups,DC=example,DC=test",
+		}, members: []string{"CN=Engineering,OU=Groups,DC=example,DC=test"}},
 	}
 	snapshot, err := buildSnapshot("directory", "ldaps://dc", time.Unix(100, 0), []User{user}, groups)
 	require.NoError(t, err)
 	require.Len(t, snapshot.DirectMemberships, 2)
-	require.Equal(t, []GroupMembership{{MemberGroupGUID: "engineering", ParentGroupGUID: "staff"}}, snapshot.GroupMemberships)
+	require.Equal(t,
+		[]GroupMembership{{MemberGroupGUID: "engineering", ParentGroupGUID: "staff"}},
+		snapshot.GroupMemberships,
+	)
 	require.Len(t, snapshot.EffectiveMemberships, 3)
 	require.Equal(t, time.Unix(100, 0).UTC(), snapshot.CompletedAt)
 }
@@ -401,20 +429,24 @@ func TestReadAllMembersContinuesADRangesAndRejectsGap(t *testing.T) {
 	entry := &ldap.Entry{DN: "CN=Large,DC=x", Attributes: []*ldap.EntryAttribute{
 		{Name: "member;range=0-1", Values: []string{"CN=A,DC=x", "CN=B,DC=x"}},
 	}}
-	connection := &fakeLDAPConnection{searchResponses: []fakeSearchResponse{{result: &ldap.SearchResult{Entries: []*ldap.Entry{{
-		DN:         "CN=Large,DC=x",
-		Attributes: []*ldap.EntryAttribute{{Name: "member;range=2-*", Values: []string{"CN=C,DC=x"}}},
-	}}}}}}
+	connection := &fakeLDAPConnection{searchResponses: []fakeSearchResponse{{
+		result: &ldap.SearchResult{Entries: []*ldap.Entry{{
+			DN:         "CN=Large,DC=x",
+			Attributes: []*ldap.EntryAttribute{{Name: "member;range=2-*", Values: []string{"CN=C,DC=x"}}},
+		}}},
+	}}}
 	adapter := testAdapter(t, "ldaps://dc.example.test")
 	members, err := adapter.readAllMembers(context.Background(), connection, entry)
 	require.NoError(t, err)
 	require.Equal(t, []string{"CN=A,DC=x", "CN=B,DC=x", "CN=C,DC=x"}, members)
 	require.Equal(t, []string{"member;range=2-*"}, connection.searchRequests[0].Attributes)
 
-	gapConnection := &fakeLDAPConnection{searchResponses: []fakeSearchResponse{{result: &ldap.SearchResult{Entries: []*ldap.Entry{{
-		DN:         "CN=Large,DC=x",
-		Attributes: []*ldap.EntryAttribute{{Name: "member;range=3-*", Values: []string{"CN=C,DC=x"}}},
-	}}}}}}
+	gapConnection := &fakeLDAPConnection{searchResponses: []fakeSearchResponse{{
+		result: &ldap.SearchResult{Entries: []*ldap.Entry{{
+			DN:         "CN=Large,DC=x",
+			Attributes: []*ldap.EntryAttribute{{Name: "member;range=3-*", Values: []string{"CN=C,DC=x"}}},
+		}}},
+	}}}
 	_, err = adapter.readAllMembers(context.Background(), gapConnection, entry)
 	require.ErrorIs(t, err, ErrIncompleteResults)
 }

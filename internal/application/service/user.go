@@ -432,7 +432,8 @@ func (s *userService) buildMembershipsForUser(
 				if !effective.Member || effective.TenantID == 0 || !effective.Role.IsValid() {
 					continue
 				}
-				if current, exists := roleByTenant[effective.TenantID]; !exists || effective.Role.Level() > current.Level() {
+				current, exists := roleByTenant[effective.TenantID]
+				if !exists || effective.Role.Level() > current.Level() {
 					roleByTenant[effective.TenantID] = effective.Role
 				}
 			}
@@ -1090,7 +1091,8 @@ func (s *userService) resolveFirstMembershipTenant(ctx context.Context, user *ty
 	if s.groupAccess != nil {
 		roles, err := s.groupAccess.ListEffectiveTenantRoles(ctx, user.ID, time.Now().UTC())
 		if err != nil {
-			logger.Warnf(ctx, "resolveLoginTenantID: failed to list effective memberships for user %s: %v", user.ID, err)
+			logger.Warnf(ctx,
+				"resolveLoginTenantID: failed to list effective memberships for user %s: %v", user.ID, err)
 			return 0
 		}
 		for _, role := range roles {

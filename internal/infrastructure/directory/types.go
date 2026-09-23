@@ -11,7 +11,9 @@ import (
 type TLSMode string
 
 const (
-	TLSModeLDAPS    TLSMode = "ldaps"
+	// TLSModeLDAPS establishes TLS before sending LDAP requests.
+	TLSModeLDAPS TLSMode = "ldaps"
+	// TLSModeStartTLS upgrades an LDAP connection before authentication.
 	TLSModeStartTLS TLSMode = "starttls"
 )
 
@@ -129,9 +131,12 @@ type Group struct {
 type MembershipSource string
 
 const (
-	MembershipDirect  MembershipSource = "direct"
+	// MembershipDirect denotes an explicit user-to-group edge.
+	MembershipDirect MembershipSource = "direct"
+	// MembershipPrimary denotes an AD primary-group edge.
 	MembershipPrimary MembershipSource = "primary"
-	MembershipNested  MembershipSource = "nested"
+	// MembershipNested denotes membership inherited through a child group.
+	MembershipNested MembershipSource = "nested"
 )
 
 // UserGroupMembership is a seed edge obtained directly from AD.

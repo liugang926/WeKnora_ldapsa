@@ -14,8 +14,20 @@ func browseFixture() *ldapdirectory.Snapshot {
 	return &ldapdirectory.Snapshot{
 		DirectoryID: "corp-ad",
 		Users: []ldapdirectory.User{
-			{ObjectGUID: "u2", DisplayName: "李四", SAMAccountName: "lisi", Email: "li@example.test", Enabled: true},
-			{ObjectGUID: "u1", DisplayName: "张三", SAMAccountName: "zhangsan", UserPrincipalName: "zs@example.test", Enabled: true},
+			{
+				ObjectGUID:     "u2",
+				DisplayName:    "李四",
+				SAMAccountName: "lisi",
+				Email:          "li@example.test",
+				Enabled:        true,
+			},
+			{
+				ObjectGUID:        "u1",
+				DisplayName:       "张三",
+				SAMAccountName:    "zhangsan",
+				UserPrincipalName: "zs@example.test",
+				Enabled:           true,
+			},
 			{ObjectGUID: "u3", DisplayName: "王五", SAMAccountName: "wangwu", Enabled: false},
 		},
 		Groups: []ldapdirectory.Group{
@@ -23,18 +35,49 @@ func browseFixture() *ldapdirectory.Snapshot {
 			{ObjectGUID: "child", DisplayName: "平台组", SAMAccountName: "Platform"},
 			{ObjectGUID: "leaf", DisplayName: "应用组", SAMAccountName: "Apps"},
 		},
-		GroupMemberships: []ldapdirectory.GroupMembership{{MemberGroupGUID: "child", ParentGroupGUID: "root"}, {MemberGroupGUID: "leaf", ParentGroupGUID: "child"}},
+		GroupMemberships: []ldapdirectory.GroupMembership{
+			{MemberGroupGUID: "child", ParentGroupGUID: "root"},
+			{MemberGroupGUID: "leaf", ParentGroupGUID: "child"},
+		},
 		DirectMemberships: []ldapdirectory.UserGroupMembership{
 			{UserGUID: "u1", GroupGUID: "root", Source: ldapdirectory.MembershipDirect},
 			{UserGUID: "u3", GroupGUID: "root", Source: ldapdirectory.MembershipPrimary},
 		},
 		EffectiveMemberships: []ldapdirectory.EffectiveMembership{
-			{UserGUID: "u1", GroupGUID: "root", OriginGroupGUID: "root", Source: ldapdirectory.MembershipDirect, OriginSource: ldapdirectory.MembershipDirect},
-			{UserGUID: "u1", GroupGUID: "root", OriginGroupGUID: "leaf", Source: ldapdirectory.MembershipNested, OriginSource: ldapdirectory.MembershipPrimary, Depth: 2},
-			{UserGUID: "u2", GroupGUID: "root", OriginGroupGUID: "child", Source: ldapdirectory.MembershipNested, OriginSource: ldapdirectory.MembershipDirect, Depth: 1},
-			{UserGUID: "u3", GroupGUID: "root", OriginGroupGUID: "root", Source: ldapdirectory.MembershipPrimary, OriginSource: ldapdirectory.MembershipPrimary},
+			{
+				UserGUID:        "u1",
+				GroupGUID:       "root",
+				OriginGroupGUID: "root",
+				Source:          ldapdirectory.MembershipDirect,
+				OriginSource:    ldapdirectory.MembershipDirect,
+			},
+			{
+				UserGUID:        "u1",
+				GroupGUID:       "root",
+				OriginGroupGUID: "leaf",
+				Source:          ldapdirectory.MembershipNested,
+				OriginSource:    ldapdirectory.MembershipPrimary,
+				Depth:           2,
+			},
+			{
+				UserGUID:        "u2",
+				GroupGUID:       "root",
+				OriginGroupGUID: "child",
+				Source:          ldapdirectory.MembershipNested,
+				OriginSource:    ldapdirectory.MembershipDirect,
+				Depth:           1,
+			},
+			{
+				UserGUID:        "u3",
+				GroupGUID:       "root",
+				OriginGroupGUID: "root",
+				Source:          ldapdirectory.MembershipPrimary,
+				OriginSource:    ldapdirectory.MembershipPrimary,
+			},
 		},
-		UnresolvedMembers: []ldapdirectory.UnresolvedMember{{ParentGroupGUID: "root", MemberDN: "CN=computer"}},
+		UnresolvedMembers: []ldapdirectory.UnresolvedMember{
+			{ParentGroupGUID: "root", MemberDN: "CN=computer"},
+		},
 	}
 }
 
@@ -135,7 +178,10 @@ func TestDirectoryPageBounds(t *testing.T) {
 
 func TestDirectoryGroupMembersShortestPathAndMissingOrigin(t *testing.T) {
 	snapshot := browseFixture()
-	snapshot.GroupMemberships = append(snapshot.GroupMemberships, ldapdirectory.GroupMembership{MemberGroupGUID: "leaf", ParentGroupGUID: "root"})
+	snapshot.GroupMemberships = append(
+		snapshot.GroupMemberships,
+		ldapdirectory.GroupMembership{MemberGroupGUID: "leaf", ParentGroupGUID: "root"},
+	)
 	result, err := directoryGroupMembers(snapshot, "root", "张三", 20, 0)
 	require.NoError(t, err)
 	require.Len(t, result.Items[0].Origins, 2)

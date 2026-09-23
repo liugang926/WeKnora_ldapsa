@@ -20,7 +20,11 @@ func (r *restrictedSystemAdminRepo) GetResourceAccessPolicy(
 	return &types.ResourceAccessPolicy{Mode: types.ResourceAccessRestricted}, nil
 }
 
-func (r *restrictedSystemAdminRepo) GetDirectTenantRole(_ context.Context, userID string, tenantID uint64) (*types.TenantRole, error) {
+func (r *restrictedSystemAdminRepo) GetDirectTenantRole(
+	_ context.Context,
+	userID string,
+	_ uint64,
+) (*types.TenantRole, error) {
 	role, ok := r.directRoles[userID]
 	if !ok {
 		return nil, nil
@@ -28,7 +32,11 @@ func (r *restrictedSystemAdminRepo) GetDirectTenantRole(_ context.Context, userI
 	return &role, nil
 }
 
-func (r *restrictedSystemAdminRepo) ListGroupRoleMatches(context.Context, string, uint64) ([]types.GroupRoleMatch, error) {
+func (r *restrictedSystemAdminRepo) ListGroupRoleMatches(
+	context.Context,
+	string,
+	uint64,
+) ([]types.GroupRoleMatch, error) {
 	return nil, nil
 }
 
@@ -59,11 +67,15 @@ func TestRestrictedResourceDoesNotLetSystemAdminBypassWorkspaceMembership(t *tes
 		},
 		{
 			name: "cross workspace caller", userID: "sys-cross", callerTenant: 8,
-			roles: map[string]types.TenantRole{"sys-cross": types.TenantRoleAdmin}, wantReason: "workspace_membership_required",
+			roles: map[string]types.TenantRole{
+				"sys-cross": types.TenantRoleAdmin,
+			}, wantReason: "workspace_membership_required",
 		},
 		{
 			name: "viewer without resource grant", userID: "sys-viewer", callerTenant: 7,
-			roles: map[string]types.TenantRole{"sys-viewer": types.TenantRoleViewer}, wantReason: "matching_group_grant_required",
+			roles: map[string]types.TenantRole{
+				"sys-viewer": types.TenantRoleViewer,
+			}, wantReason: "matching_group_grant_required",
 		},
 		{
 			name: "workspace admin", userID: "sys-workspace-admin", callerTenant: 7,

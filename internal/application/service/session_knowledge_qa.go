@@ -638,7 +638,10 @@ func (s *sessionService) buildSearchTargets(
 // have been resolved. This is the final authorization boundary for RAG target
 // construction, so a route cannot bypass restricted mode by supplying a
 // document ID, tag or an agent whose knowledge-base list is dynamic.
-func (s *sessionService) filterReadableSearchTargets(ctx context.Context, targets types.SearchTargets) (types.SearchTargets, error) {
+func (s *sessionService) filterReadableSearchTargets(
+	ctx context.Context,
+	targets types.SearchTargets,
+) (types.SearchTargets, error) {
 	if s.groupAccess == nil || len(targets) == 0 {
 		return targets, nil
 	}
@@ -691,7 +694,9 @@ func (s *sessionService) revalidateSearchTargets(ctx context.Context, targets ty
 			return fmt.Errorf("revalidate knowledge base %s group access: %w", target.KnowledgeBaseID, err)
 		}
 		if !permission.Allowed {
-			return fmt.Errorf("%w: knowledge base %s (%s)", ErrResourceAccessDenied, target.KnowledgeBaseID, permission.Reason)
+			return fmt.Errorf(
+				"%w: knowledge base %s (%s)", ErrResourceAccessDenied, target.KnowledgeBaseID, permission.Reason,
+			)
 		}
 	}
 	return nil

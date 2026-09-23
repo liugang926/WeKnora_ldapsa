@@ -16,13 +16,20 @@ import (
 )
 
 var (
-	ErrInvalidDirectoryConfig   = errors.New("invalid directory configuration")
-	ErrDirectoryFileManaged     = errors.New("directory configuration is file-managed")
-	ErrIncompleteDirectorySync  = errors.New("directory snapshot is incomplete")
+	// ErrInvalidDirectoryConfig rejects unsafe or incomplete directory settings.
+	ErrInvalidDirectoryConfig = errors.New("invalid directory configuration")
+	// ErrDirectoryFileManaged rejects UI writes to file-managed settings.
+	ErrDirectoryFileManaged = errors.New("directory configuration is file-managed")
+	// ErrIncompleteDirectorySync prevents a partial snapshot from replacing memberships.
+	ErrIncompleteDirectorySync = errors.New("directory snapshot is incomplete")
+	// ErrDirectorySnapshotInvalid identifies inconsistent snapshot data.
 	ErrDirectorySnapshotInvalid = errors.New("directory snapshot is invalid")
-	ErrDirectoryGroupCycle      = errors.New("directory group hierarchy contains a cycle")
-	ErrDirectorySyncInProgress  = errors.New("directory synchronization is already in progress")
-	ErrDirectorySyncLeaseLost   = errors.New("directory synchronization lease was lost")
+	// ErrDirectoryGroupCycle identifies a cycle in nested groups.
+	ErrDirectoryGroupCycle = errors.New("directory group hierarchy contains a cycle")
+	// ErrDirectorySyncInProgress indicates that another sync owns the lease.
+	ErrDirectorySyncInProgress = errors.New("directory synchronization is already in progress")
+	// ErrDirectorySyncLeaseLost indicates that a running sync lost its lease.
+	ErrDirectorySyncLeaseLost = errors.New("directory synchronization lease was lost")
 )
 
 const (
@@ -38,11 +45,16 @@ type directoryService struct {
 	running     map[string]struct{}
 }
 
+// NewDirectoryService constructs the atomic directory snapshot service.
 func NewDirectoryService(repo interfaces.DirectoryRepository) interfaces.DirectoryService {
 	return NewDirectoryServiceWithInvalidator(repo, nil)
 }
 
-func NewDirectoryServiceWithInvalidator(repo interfaces.DirectoryRepository, invalidator interfaces.PermissionInvalidator) interfaces.DirectoryService {
+// NewDirectoryServiceWithInvalidator also invalidates access after a snapshot change.
+func NewDirectoryServiceWithInvalidator(
+	repo interfaces.DirectoryRepository,
+	invalidator interfaces.PermissionInvalidator,
+) interfaces.DirectoryService {
 	return &directoryService{repo: repo, invalidator: invalidator, running: make(map[string]struct{})}
 }
 
@@ -121,7 +133,8 @@ func normalizeDirectory(directory *types.Directory) error {
 		if directory.TLSMode == types.DirectoryTLSLDAPS && !strings.HasPrefix(strings.ToLower(serverURL), "ldaps://") {
 			return fmt.Errorf("%w: LDAPS server URLs must use ldaps://", ErrInvalidDirectoryConfig)
 		}
-		if directory.TLSMode == types.DirectoryTLSStartTLS && !strings.HasPrefix(strings.ToLower(serverURL), "ldap://") {
+		if directory.TLSMode == types.DirectoryTLSStartTLS &&
+			!strings.HasPrefix(strings.ToLower(serverURL), "ldap://") {
 			return fmt.Errorf("%w: StartTLS server URLs must use ldap://", ErrInvalidDirectoryConfig)
 		}
 		directory.ServerURLs[i] = serverURL
@@ -156,7 +169,8 @@ func normalizeDirectory(directory *types.Directory) error {
 	if directory.ConfigSource == "ui" {
 		directory.ConfigSource = types.DirectoryConfigSourceDatabase
 	}
-	if directory.ConfigSource != types.DirectoryConfigSourceDatabase && directory.ConfigSource != types.DirectoryConfigSourceFile {
+	if directory.ConfigSource != types.DirectoryConfigSourceDatabase &&
+		directory.ConfigSource != types.DirectoryConfigSourceFile {
 		return fmt.Errorf("%w: config_source must be database or file", ErrInvalidDirectoryConfig)
 	}
 	return nil
@@ -201,7 +215,10 @@ func (s *directoryService) UnlinkIdentity(ctx context.Context, identityID string
 	return s.repo.UnlinkIdentity(ctx, identityID)
 }
 
-func (s *directoryService) ApplySnapshot(ctx context.Context, snapshot *types.DirectorySnapshot) (*types.DirectorySnapshotResult, error) {
+func (s *directoryService) ApplySnapshot(
+	ctx context.Context,
+	snapshot *types.DirectorySnapshot,
+) (*types.DirectorySnapshotResult, error) {
 	if snapshot == nil || strings.TrimSpace(snapshot.DirectoryID) == "" {
 		return nil, fmt.Errorf("%w: directory id is required", ErrDirectorySnapshotInvalid)
 	}
@@ -258,7 +275,12 @@ func (s *directoryService) RunSync(
 			case <-stopHeartbeat:
 				return
 			case <-ticker.C:
-				renewed, renewErr := s.repo.RenewSyncLease(leaseCtx, directoryID, leaseOwner, directorySyncLeaseDuration)
+				renewed, renewErr := s.repo.RenewSyncLease(
+					leaseCtx,
+					directoryID,
+					leaseOwner,
+					directorySyncLeaseDuration,
+				)
 				if renewErr != nil {
 					select {
 					case leaseLost <- fmt.Errorf("%w: renew failed: %v", ErrDirectorySyncLeaseLost, renewErr):
@@ -305,7 +327,12 @@ func (s *directoryService) RunSync(
 		snapshot.DirectoryID = directoryID
 	}
 	if snapshot.DirectoryID != directoryID {
-		return nil, fmt.Errorf("%w: fetched directory %q does not match %q", ErrDirectorySnapshotInvalid, snapshot.DirectoryID, directoryID)
+		return nil, fmt.Errorf(
+			"%w: fetched directory %q does not match %q",
+			ErrDirectorySnapshotInvalid,
+			snapshot.DirectoryID,
+			directoryID,
+		)
 	}
 	result, err := s.applySnapshotUnlocked(leaseCtx, snapshot)
 	if err != nil {
@@ -319,11 +346,15 @@ func (s *directoryService) RunSync(
 	return result, nil
 }
 
-func (s *directoryService) applySnapshotUnlocked(ctx context.Context, snapshot *types.DirectorySnapshot) (*types.DirectorySnapshotResult, error) {
+func (s *directoryService) applySnapshotUnlocked(
+	ctx context.Context,
+	snapshot *types.DirectorySnapshot,
+) (*types.DirectorySnapshotResult, error) {
 	if snapshot.Trigger == "" {
 		snapshot.Trigger = types.DirectorySyncTriggerManual
 	}
-	if snapshot.Trigger != types.DirectorySyncTriggerManual && snapshot.Trigger != types.DirectorySyncTriggerScheduled &&
+	if snapshot.Trigger != types.DirectorySyncTriggerManual &&
+		snapshot.Trigger != types.DirectorySyncTriggerScheduled &&
 		snapshot.Trigger != types.DirectorySyncTriggerLogin {
 		return nil, fmt.Errorf("%w: invalid sync trigger %q", ErrDirectorySnapshotInvalid, snapshot.Trigger)
 	}
@@ -343,7 +374,8 @@ func (s *directoryService) applySnapshotUnlocked(ctx context.Context, snapshot *
 	if snapshot.ExpectedConfigVersion == 0 {
 		snapshot.ExpectedConfigVersion = directory.ConfigVersion
 	}
-	if directory.ResultLimit > 0 && (len(snapshot.Identities) > directory.ResultLimit || len(snapshot.Groups) > directory.ResultLimit) {
+	if directory.ResultLimit > 0 &&
+		(len(snapshot.Identities) > directory.ResultLimit || len(snapshot.Groups) > directory.ResultLimit) {
 		return nil, fmt.Errorf("%w: result limit %d exceeded", ErrDirectorySnapshotInvalid, directory.ResultLimit)
 	}
 	normalized, err := normalizeDirectorySnapshot(snapshot)
@@ -391,7 +423,11 @@ func normalizeDirectorySnapshot(input *types.DirectorySnapshot) (*types.Director
 			return nil, fmt.Errorf("%w: identity has empty objectGUID", ErrDirectorySnapshotInvalid)
 		}
 		if _, exists := identities[identity.ObjectGUID]; exists {
-			return nil, fmt.Errorf("%w: duplicate identity objectGUID %q", ErrDirectorySnapshotInvalid, identity.ObjectGUID)
+			return nil, fmt.Errorf(
+				"%w: duplicate identity objectGUID %q",
+				ErrDirectorySnapshotInvalid,
+				identity.ObjectGUID,
+			)
 		}
 		identities[identity.ObjectGUID] = identity
 	}
@@ -416,7 +452,11 @@ func normalizeDirectorySnapshot(input *types.DirectorySnapshot) (*types.Director
 	edgeSeen := make(map[string]struct{}, len(input.GroupEdges))
 	for _, edge := range input.GroupEdges {
 		if _, ok := groups[edge.ParentGroupObjectGUID]; !ok {
-			return nil, fmt.Errorf("%w: unknown parent group %q", ErrDirectorySnapshotInvalid, edge.ParentGroupObjectGUID)
+			return nil, fmt.Errorf(
+				"%w: unknown parent group %q",
+				ErrDirectorySnapshotInvalid,
+				edge.ParentGroupObjectGUID,
+			)
 		}
 		if _, ok := groups[edge.ChildGroupObjectGUID]; !ok {
 			return nil, fmt.Errorf("%w: unknown child group %q", ErrDirectorySnapshotInvalid, edge.ChildGroupObjectGUID)
@@ -559,15 +599,34 @@ func hasDirectoryGroupCycle(groups map[string]types.DirectoryGroupSnapshot, chil
 	return false
 }
 
-func (s *directoryService) RecordSyncFailure(ctx context.Context, directoryID, code, message string, startedAt time.Time, expectedSnapshotVersion, expectedConfigVersion uint64, trigger types.DirectorySyncTrigger) (*types.DirectorySyncRun, error) {
+func (s *directoryService) RecordSyncFailure(
+	ctx context.Context,
+	directoryID, code, message string,
+	startedAt time.Time,
+	expectedSnapshotVersion, expectedConfigVersion uint64,
+	trigger types.DirectorySyncTrigger,
+) (*types.DirectorySyncRun, error) {
 	code = strings.TrimSpace(code)
 	message = strings.TrimSpace(message)
 	if len(message) > 2000 {
 		message = message[:2000]
 	}
-	return s.repo.RecordSyncFailure(ctx, directoryID, code, message, startedAt, expectedSnapshotVersion, expectedConfigVersion, trigger)
+	return s.repo.RecordSyncFailure(
+		ctx,
+		directoryID,
+		code,
+		message,
+		startedAt,
+		expectedSnapshotVersion,
+		expectedConfigVersion,
+		trigger,
+	)
 }
 
-func (s *directoryService) ListSyncRuns(ctx context.Context, directoryID string, offset, limit int) ([]*types.DirectorySyncRun, error) {
+func (s *directoryService) ListSyncRuns(
+	ctx context.Context,
+	directoryID string,
+	offset, limit int,
+) ([]*types.DirectorySyncRun, error) {
 	return s.repo.ListSyncRuns(ctx, directoryID, offset, limit)
 }
