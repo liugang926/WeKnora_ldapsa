@@ -52,3 +52,9 @@
 - `synthetic-enterprise-zh-v2` 的 42 段/70 题已通过生成器和题集 CI；在本机 BGE 检索夹具中，40 道有证据题 Recall@5=1.000。它并非企业脱敏数据或获准的真实题集。
 - 隔离应用栈曾用旧评估二进制与本机对话桩完成 70/70 并持久化，任务 ID `evaluation_10000_1790210571262_0d294d75_syntheticen`，但该次任务出现大量本机模型服务 `429`、Embedding 降级与 ReRank 回退；旧版聚合 Recall=0.571 还把 30 道无证据题计入分母。**该运行无效，不得用于模型效果结论**。下条记录了受控并发与指标口径 v2 的重跑。
 - 修复版隔离应用以提交 `677e642c0811ffa6a1a88ddc31f1f25a26f1ffe3` 的 Go 二进制（覆盖在旧测试镜像上，**不是完整 Dockerfile 构建**）重跑，任务 ID `evaluation_10000_1790211487513_6d5b8144_syntheticen`，数据集指纹 `a0f6a194a48351541a56f9bec44cfc6e2f93427541e376b052b3b34cc25fb6fc`。70/70 持久化，指标口径 v2、并发 2；40 道有证据题 Recall=1.000、Precision≈0.808、NDCG@10≈0.992，P50=345 ms、P95=500 ms。65 题有重排结果；另 5 题均无证据标注，重排阈值后为空。该运行时段的应用日志未见 429、Embedding 降级或 ReRank API 回退；重启后旧运行仍可读取。对话模型为本机确定性桩，生成质量和拒答仍**未验收**，也没有执行真实 AD 身份切换。正式镜像以 PR 的完整 AnyDoc amd64 CI 构建为准。
+
+## 2026-09-24 提交与运行环境复核
+
+- [RAG 草稿 PR #3](https://github.com/liugang926/WeKnora_ldapsa/pull/3) 的提交 `2fdda255ba284507f8910fba3dce613e0295601e` 已通过当次全部 7 项托管检查，包括 Go 格式/vet/测试/构建、golangci-lint、前端测试/类型检查/构建、多阶段 Docker 镜像和 [完整 AnyDoc amd64 应用镜像构建](https://github.com/liugang926/WeKnora_ldapsa/actions/runs/35946325953/job/107465094722)。这些检查证明该提交可构建；它们没有发布可部署镜像 digest，也不能代替企业题集与真实 AD 验收。
+- 共享本地 `18080` 环境运行的是另一份镜像，不是此 PR 的提交。该环境修复了到 DocReader 的 gRPC 代理误路由后，新增 PDF 能完成解析并生成 512 维向量；此结果仅证明本地部署链路可用，不计入 PR 的端到端验收。正式运行还须记录所部署镜像 digest，并在同一镜像上重跑批准题集。
+- Nextcloud 事件闭环由独立的 [Nextcloud 草稿 PR #1](https://github.com/liugang926/nextcloud/pull/1) 收口；隔离环境已验证事件应用水位、候选版本发布及删除后的零可见候选。物理清理、真实 AD 双账号撤权与生产负载仍未验收，不能据此宣称整套企业 RAG 已交付。
