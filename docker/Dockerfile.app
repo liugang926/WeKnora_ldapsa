@@ -1,17 +1,29 @@
 # Build extension and daemon from the same pinned source on the runtime architecture.
 FROM --platform=$TARGETPLATFORM node:24-bookworm-slim@sha256:ba849c60be29959425b8734d57b8b4b7d56f98edd9504c9af091d5281095a71e AS browserskill
 WORKDIR /build
-RUN apt-get update && \
+ARG APK_MIRROR_ARG
+RUN if [ -n "$APK_MIRROR_ARG" ]; then \
+        sed -i "s@deb.debian.org@${APK_MIRROR_ARG}@g" /etc/apt/sources.list.d/debian.sources; \
+    fi && \
+    apt-get update && \
     apt-get install -y --no-install-recommends git python3 ca-certificates curl build-essential cmake pkg-config && \
     rm -rf /var/lib/apt/lists/*
 ENV RUSTUP_HOME=/usr/local/rustup CARGO_HOME=/usr/local/cargo
 ENV PATH=/usr/local/cargo/bin:$PATH
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable
+ARG RUSTUP_DIST_SERVER_ARG
+ARG RUSTUP_UPDATE_ROOT_ARG
+RUN if [ -n "$RUSTUP_DIST_SERVER_ARG" ]; then export RUSTUP_DIST_SERVER="$RUSTUP_DIST_SERVER_ARG"; fi && \
+    if [ -n "$RUSTUP_UPDATE_ROOT_ARG" ]; then export RUSTUP_UPDATE_ROOT="$RUSTUP_UPDATE_ROOT_ARG"; fi && \
+    curl --proto '=https' --tlsv1.2 --retry 5 --retry-all-errors --retry-delay 2 -sSfL https://sh.rustup.rs -o /tmp/weknora-rustup-init.sh && \
+    sh /tmp/weknora-rustup-init.sh -y --profile minimal --default-toolchain stable && \
+    rm /tmp/weknora-rustup-init.sh
 COPY scripts/build_browserskill.sh scripts/browserskill-release.json ./scripts/
 COPY patches/browserskill ./patches/browserskill
 ARG TARGETOS
 ARG TARGETARCH
-RUN bash scripts/build_browserskill.sh /opt/weknora/browserskill "${TARGETOS}/${TARGETARCH}"
+ARG NPM_REGISTRY_ARG
+RUN if [ -n "$NPM_REGISTRY_ARG" ]; then export npm_config_registry="$NPM_REGISTRY_ARG"; fi && \
+    bash scripts/build_browserskill.sh /opt/weknora/browserskill "${TARGETOS}/${TARGETARCH}"
 
 # Build stage
 FROM golang:1.26-bookworm AS builder
@@ -23,6 +35,8 @@ ARG GOPRIVATE_ARG
 ARG GOPROXY_ARG
 ARG GOSUMDB_ARG=off
 ARG APK_MIRROR_ARG
+ARG RUSTUP_DIST_SERVER_ARG
+ARG RUSTUP_UPDATE_ROOT_ARG
 
 # 设置Go环境变量
 ENV GOPRIVATE=${GOPRIVATE_ARG}
@@ -71,8 +85,11 @@ ENV PATH=/usr/local/cargo/bin:$PATH
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
     if [ "$WITH_ANYDOC" = "1" ]; then \
-        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
-            | sh -s -- -y --profile minimal --default-toolchain stable && \
+        if [ -n "$RUSTUP_DIST_SERVER_ARG" ]; then export RUSTUP_DIST_SERVER="$RUSTUP_DIST_SERVER_ARG"; fi && \
+        if [ -n "$RUSTUP_UPDATE_ROOT_ARG" ]; then export RUSTUP_UPDATE_ROOT="$RUSTUP_UPDATE_ROOT_ARG"; fi && \
+        curl --proto '=https' --tlsv1.2 --retry 5 --retry-all-errors --retry-delay 2 -sSfL https://sh.rustup.rs -o /tmp/weknora-rustup-init.sh && \
+        sh /tmp/weknora-rustup-init.sh -y --profile minimal --default-toolchain stable && \
+        rm /tmp/weknora-rustup-init.sh && \
         ./scripts/build-anydoc-lib.sh; \
     fi
 
@@ -100,8 +117,12 @@ COPY --from=browserskill /opt/weknora/browserskill /opt/weknora/browserskill
 # Create a non-root user first
 RUN useradd -m -s /bin/bash appuser
 
-# First, install ca-certificates without mirror to ensure HTTPS works
-RUN apt-get update && \
+# Install CA certificates before HTTPS downloads. An optional Debian mirror
+# still applies here; otherwise the first apt step can fail behind a proxy.
+RUN if [ -n "$APK_MIRROR_ARG" ]; then \
+        sed -i "s@deb.debian.org@${APK_MIRROR_ARG}@g" /etc/apt/sources.list.d/debian.sources; \
+    fi && \
+    apt-get update && \
     apt-get install -y --no-install-recommends ca-certificates && \
     rm -rf /var/lib/apt/lists/*
 
@@ -109,22 +130,21 @@ RUN apt-get update && \
 RUN if [ -n "$APK_MIRROR_ARG" ]; then \
         sed -i "s@deb.debian.org@${APK_MIRROR_ARG}@g" /etc/apt/sources.list.d/debian.sources; \
     fi && \
-    apt-get update && \
-    apt-get install -y --no-install-recommends \
+    apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=180 update && \
+    apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=180 install -y --no-install-recommends \
         build-essential postgresql-client default-mysql-client tzdata sed curl bash vim wget \
         libsqlite3-0 \
         python3 python3-pip python3-dev libffi-dev libssl-dev \
         nodejs npm \
         gosu \
         ffmpeg && \
-    python3 -m pip install --break-system-packages --upgrade pip setuptools wheel && \
-    mkdir -p /home/appuser/.local/bin && \
-    curl -LsSf https://astral.sh/uv/install.sh | CARGO_HOME=/home/appuser/.cargo UV_INSTALL_DIR=/home/appuser/.local/bin sh && \
-    chown -R appuser:appuser /home/appuser && \
-    ln -sf /home/appuser/.local/bin/uvx /usr/local/bin/uvx && \
-    chmod +x /usr/local/bin/uvx && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
+
+RUN python3 -m pip install --break-system-packages --upgrade pip setuptools wheel uv==0.12.18 && \
+    mkdir -p /home/appuser/.local/bin && \
+    chown -R appuser:appuser /home/appuser && \
+    chmod +x /usr/local/bin/uvx
 
 # Create data directories and set permissions
 RUN mkdir -p /data/files && \
@@ -148,6 +168,11 @@ COPY --from=builder /app/scripts/docker-entrypoint.sh ./scripts/docker-entrypoin
 
 # Make scripts executable
 RUN chmod +x ./scripts/*.sh
+
+# Keep the build revision available to persisted evaluation runs. Setting it
+# last avoids rebuilding the expensive runtime dependency layers for each SHA.
+ARG COMMIT_ID_ARG
+ENV WEKNORA_BUILD_COMMIT=${COMMIT_ID_ARG}
 
 # Expose ports
 EXPOSE 8080

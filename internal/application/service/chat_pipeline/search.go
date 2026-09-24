@@ -120,7 +120,7 @@ func (p *PluginSearch) OnEvent(ctx context.Context,
 	}()
 
 	wg.Wait()
-	if kbSearchErr != nil && len(allResults) == 0 {
+	if kbSearchErr != nil && (len(allResults) == 0 || strictRetrieval(ctx)) {
 		pipelineError(ctx, "Search", "kb_search_failed", map[string]interface{}{
 			"error": kbSearchErr.Error(),
 		})
@@ -417,6 +417,12 @@ func (p *PluginSearch) searchByTargets(
 			if modelKey != "" {
 				emb, err := p.knowledgeBaseService.GetQueryEmbedding(ctx, targets[0].KnowledgeBaseID, queryText)
 				if err != nil {
+					if strictRetrieval(ctx) {
+						recordError(fmt.Errorf(
+							"query embedding failed for knowledge base %s: %w", targets[0].KnowledgeBaseID, err,
+						))
+						return
+					}
 					searchableTargets = make([]*types.SearchTarget, 0, len(targets))
 					for _, target := range targets {
 						kb := kbMap[target.KnowledgeBaseID]

@@ -10,10 +10,12 @@ import (
 type EvaluationService interface {
 	// Evaluation starts a new evaluation task
 	Evaluation(ctx context.Context, datasetID string, knowledgeBaseID string,
-		chatModelID string, rerankModelID string,
+		chatModelID string, rerankModelID string, embeddingModelID string,
 	) (*types.EvaluationDetail, error)
 	// EvaluationResult retrieves evaluation result by task ID
 	EvaluationResult(ctx context.Context, taskID string) (*types.EvaluationDetail, error)
+	// ListEvaluationResults returns the most recent runs for the current tenant.
+	ListEvaluationResults(ctx context.Context, limit int) ([]*types.EvaluationDetail, error)
 }
 
 // Metrics defines interface for computing evaluation metrics
@@ -31,5 +33,5 @@ type EvalHook interface {
 // DatasetService defines operations for dataset management
 type DatasetService interface {
 	// GetDatasetByID retrieves QA pairs from dataset by ID
-	GetDatasetByID(ctx context.Context, datasetID string) ([]*types.QAPair, error)
+	GetDatasetByID(ctx context.Context, datasetID string) (*types.EvaluationDataset, error)
 }

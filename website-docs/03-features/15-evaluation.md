@@ -2,24 +2,24 @@
 
 评估使用带标准答案的问答数据集，比较分块、模型和检索配置的效果。系统创建评估知识库并导入语料，逐题执行检索与生成，输出 Precision、Recall、NDCG、MRR、MAP、BLEU 和 ROUGE 等指标。
 
-::: tip 通过 API 使用
-评估暂时没有独立的界面入口，通过 `POST /api/v1/evaluation` 发起、`GET /api/v1/evaluation?task_id=...` 轮询结果；创建需要 Admin，查询需要 Viewer 权限。数据集是 Parquet 格式，格式要求见下文。
+::: tip 界面与 API
+空间管理员可在「设置 → RAG Evaluation」发起评估并比较同一数据集的历史运行。也可通过 `POST /api/v1/evaluation` 发起、`GET /api/v1/evaluation?task_id=...` 轮询结果；不带 `task_id` 的 GET 返回当前空间最近 20 次运行。创建和读取均需要 Admin 权限，因为逐题结果包含脱敏题目与生成答案。数据集由部署管理员以只读文件挂载，页面不会上传语料。
 :::
 
 比较配置时应固定数据集，每次调整一个变量，并对照同一组指标分析结果。
 
 ## 运行一次评估
 
-1. 准备符合下方格式的 Parquet 数据集，或使用内置 `default` 数据集。
-2. 选择参考知识库、对话模型和重排模型，通过 `POST /api/v1/evaluation` 创建任务。参考知识库用于复制配置，评估会使用单独的知识库。
+1. 准备符合下方格式、已脱敏且获准用于所选模型的 Parquet 数据集，或使用内置 `default` 样本。自定义数据集挂载于 `EVALUATION_DATASET_DIR/<dataset_id>/`；`dataset_id` 只允许字母、数字、下划线和短横线。默认每次最多 100 题，可由部署管理员设置 `EVALUATION_MAX_QUESTIONS`（1–10000）；这只是单次调用量上限，不是货币费用预算。
+2. 明确选择 Embedding、对话模型和重排模型，通过 `POST /api/v1/evaluation` 创建任务。可选参考知识库用于复制配置，评估会使用单独的知识库；指定参考知识库时，`embedding_id` 必须与其现有 Embedding 一致。
 3. 记录返回的任务 ID，通过 `GET /api/v1/evaluation?task_id=...` 查询状态和进度。
 4. 任务成功后比较检索与生成指标；失败时先检查任务错误，再调整配置并重新运行。
 
-创建任务需要 Admin 权限，查询结果需要 Viewer 权限；API Key 还需评估能力或 full-access。
+创建与查询任务均需要 Admin 权限；API Key 还需评估能力或 full-access。
 
 ## 数据集格式
 
-数据集服务（`internal/application/service/dataset.go`）从 `./dataset/samples/` 加载 5 个 **Parquet** 文件：
+数据集服务（`internal/application/service/dataset.go`）为 `default` 从 `EVALUATION_DEFAULT_DATASET_DIR`（未设置时 `./dataset/samples/`）加载；自定义 ID 从环境变量 `EVALUATION_DATASET_DIR` 指向的目录（未设置时为 `./dataset/benchmarks/`）下加载同名子目录中的 5 个 **Parquet** 文件：
 
 | 文件 | Schema | 含义 |
 | --- | --- | --- |
@@ -59,11 +59,11 @@ type QAPair struct {
 }
 ```
 
-自定义数据集只需按上述 Schema 生成同名 Parquet 文件。加载时服务会打印统计信息（问题数、语料数、平均相关段落数、答案覆盖率等）。
+自定义数据集需按上述 Schema 生成同名 Parquet 文件，由部署人员以只读目录挂载。完整语料都会被索引，包括没有关联 qrel 的干扰段落；稀疏 passage ID 会映射为稳定的连续 ID，避免大 ID 导致内存耗尽。空 qrel 可表示无答案问题，但当前聚合 Recall 对该类问题记 0，不能据此评价拒答质量。服务只记录题数与段落数，不把问题原文写入评估日志。
 
 ## 结果查询
 
-`GET /api/v1/evaluation?task_id=evaluation-{tenant}-{dataset}`，返回 `EvaluationDetail`：
+`GET /api/v1/evaluation?task_id=<返回的任务 ID>`，返回 `EvaluationDetail`：
 
 ```json
 {
@@ -94,7 +94,9 @@ type QAPair struct {
 
 任务运行期间可轮询该接口获取 `finished / total` 进度；`status = 3` 时 `err_msg` 携带失败原因。
 
-> **注意**：评估结果存储在**内存**（`evaluationMemoryStorage`：`map[string]*EvaluationDetail` + `sync.RWMutex`，见 `internal/application/service/evaluation.go`），服务重启后任务与结果会丢失，需重新发起评估。
+> **注意**：运行记录、参数、进度和指标现在写入 `evaluation_runs` 表，服务重启后可查询历史结果。正在运行的任务不具备跨进程续跑能力；若运行实例重启，应将旧任务视为中断并重新发起。每次运行记录数据集 SHA-256、模型 ID 与 `WEKNORA_BUILD_COMMIT`（若部署设置），便于判断两次结果是否可比。页面只对相同数据集指纹的成功运行做并排比较。
+
+> **真实基线门槛**：模拟 Embedding、缺失 ReRank 或仅有对话模型时，不应称为真实 RAG 效果验证。评估需使用获准处理该数据集的正式模型；页面会拒绝显式的模拟/低维 Embedding。权限类问题还须按不同 AD 身份分别运行端到端授权测试；此离线评估会创建临时知识库，不能替代真实权限测试。
 
 ## 指标清单
 
@@ -182,7 +184,7 @@ type EvaluationRequest struct {
 | `chat_id` | 否 | 缺省自动选择默认 Chat 模型 |
 | `rerank_id` | 否 | 缺省自动选择默认 Rerank 模型 |
 
-任务 ID 格式为 `evaluation-{tenantID}-{datasetID}`。任务对象（`internal/types/evaluation.go`）：
+任务 ID 是带时间戳和随机后缀的唯一值，不应自行拼接。任务对象（`internal/types/evaluation.go`）：
 
 ```go
 type EvaluationTask struct {
@@ -196,6 +198,10 @@ type EvaluationTask struct {
     Finished  int              `json:"finished,omitempty"` // 已完成数
 }
 ```
+
+请求可增加 `embedding_id` 指定评估知识库的 Embedding。结果附有 `dataset_sha256`、`embedding_model_id`、`chat_model_id`、`rerank_model_id`、`build_revision`，以及 P50/P95 延迟和对话 token 用量。金额成本需要配置并版本化模型计价后另行计算，不能把 token 数当作费用。
+
+BLEU/ROUGE 衡量文本重叠，**不代表**答案忠于检索证据，也不代表引用准确。建议基于脱敏问题、检索上下文和答案，使用 [Ragas](https://arxiv.org/abs/2309.15217) 的证据忠实度思路，并用 [ARES](https://arxiv.org/abs/2311.09476) 所强调的少量人工标注校准自动评审。当前界面明确将这两项标为尚未自动评分，不会伪造合格结论。
 
 任务状态枚举（注意源码中拼写为 `EvaluationStatue`）：
 
@@ -212,9 +218,9 @@ const (
 
 `internal/application/service/evaluation.go` 中，POST 接口**同步完成准备、异步执行评估**：
 
-1. **知识库准备**：新建（或按参考 KB 配置克隆）评估专用知识库，取默认 Embedding 与 LLM 模型；
+1. **知识库准备**：新建（或按参考 KB 配置克隆）评估专用知识库，优先使用显式指定的 Embedding；
 2. **参数装配**：从系统配置装配 `ChatManage` 评估参数——`VectorThreshold`、`KeywordThreshold`、`EmbeddingTopK`、`RerankTopK`、`RerankThreshold`、`MaxRounds`、`SummaryConfig`（MaxTokens / TopK / TopP / RepeatPenalty / Prompt / ContextTemplate 等）、`FallbackResponse`、改写提示词等；
-3. **任务注册**：以任务 ID 注册到内存存储，状态 `Pending`，立即返回响应；
+3. **任务注册**：以唯一任务 ID 写入数据库，状态 `Pending`，立即返回响应；
 4. **后台执行**（goroutine）：将数据集 corpus 灌入评估 KB → 并行评估每个 QA 对 → 汇聚指标 → 清理资源。
 
 并发度取 `max(GOMAXPROCS - 1, 1)`（errgroup 限流）：
@@ -259,7 +265,7 @@ type MetricInput struct {
 flowchart TD
     A["POST /api/v1/evaluation<br/>(dataset_id, knowledge_base_id, chat_id, rerank_id)"] --> B["创建评估专用知识库<br/>(新建或克隆参考 KB 配置)"]
     B --> C["装配 ChatManage 评估参数<br/>(阈值 / TopK / Summary 配置)"]
-    C --> D["注册任务到内存存储<br/>ID = evaluation-{tenant}-{dataset}, 状态 Pending"]
+    C --> D["持久化唯一任务 ID<br/>状态 Pending"]
     D --> E["立即返回任务信息"]
     D --> F["goroutine 后台执行, 状态 Running"]
     F --> G["加载 Parquet 数据集<br/>queries / corpus / qrels / answers / qas"]

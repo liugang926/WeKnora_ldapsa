@@ -147,6 +147,40 @@ func TestSearchEmbeddingFailureDegradesToKeywordSearch(t *testing.T) {
 	}
 }
 
+func TestSearchEmbeddingFailureFailsStrictEvaluation(t *testing.T) {
+	rootCause := errors.New("embedding rate limited")
+	svc := &degradingSearchKnowledgeBaseService{
+		embedErr: rootCause,
+		searchResult: []*types.SearchResult{
+			{ID: "chunk-1", Content: "关键词命中的内容", KnowledgeID: "k-1"},
+		},
+	}
+	plugin := &PluginSearch{knowledgeBaseService: svc}
+	chatManage := &types.ChatManage{
+		PipelineRequest: types.PipelineRequest{
+			SearchTargets: types.SearchTargets{{
+				Type:            types.SearchTargetTypeKnowledgeBase,
+				KnowledgeBaseID: "kb-1",
+			}},
+			EmbeddingTopK: 10,
+		},
+		PipelineState: types.PipelineState{RewriteQuery: "树状筛选器 新建入口"},
+	}
+
+	err := plugin.OnEvent(
+		WithStrictRetrieval(context.Background()), types.CHUNK_SEARCH, chatManage, func() *PluginError {
+			t.Fatal("strict evaluation must not continue after embedding failure")
+			return nil
+		},
+	)
+	if err == nil || err.ErrorType != ErrSearch.ErrorType || !errors.Is(err.Err, rootCause) {
+		t.Fatalf("expected root embedding error, got %#v", err)
+	}
+	if svc.gotParams != nil {
+		t.Fatalf("strict evaluation must not run keyword fallback, got %#v", svc.gotParams)
+	}
+}
+
 type vectorOnlySearchKnowledgeBaseService struct {
 	interfaces.KnowledgeBaseService
 	embedErr     error
@@ -255,6 +289,31 @@ func (s *partialSearchKnowledgeBaseService) HybridSearch(
 		return nil, s.rootCause
 	}
 	return []*types.SearchResult{{ID: "chunk-good", Content: "可用结果", KnowledgeID: "knowledge-good"}}, nil
+}
+
+func TestSearchPartialFailureFailsStrictEvaluation(t *testing.T) {
+	rootCause := errors.New("one knowledge base store unavailable")
+	plugin := &PluginSearch{knowledgeBaseService: &partialSearchKnowledgeBaseService{rootCause: rootCause}}
+	chatManage := &types.ChatManage{
+		PipelineRequest: types.PipelineRequest{
+			SearchTargets: types.SearchTargets{
+				{Type: types.SearchTargetTypeKnowledgeBase, KnowledgeBaseID: "kb-good"},
+				{Type: types.SearchTargetTypeKnowledgeBase, KnowledgeBaseID: "kb-bad"},
+			},
+			EmbeddingTopK: 10,
+		},
+		PipelineState: types.PipelineState{RewriteQuery: "测试问题"},
+	}
+
+	err := plugin.OnEvent(
+		WithStrictRetrieval(context.Background()), types.CHUNK_SEARCH, chatManage, func() *PluginError {
+			t.Fatal("strict evaluation must not continue with partial search results")
+			return nil
+		},
+	)
+	if err == nil || err.ErrorType != ErrSearch.ErrorType || !errors.Is(err.Err, rootCause) {
+		t.Fatalf("expected partial retrieval to fail with root cause, got %#v", err)
+	}
 }
 
 type stubWebSearchService struct {

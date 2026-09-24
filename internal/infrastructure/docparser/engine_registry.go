@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/Tencent/WeKnora/internal/infrastructure/docparser/anydoc"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 )
@@ -74,6 +75,16 @@ func NewReader(
 	}
 	if engine == "" && !isURL && IsSimpleFormat(fileType) {
 		return &SimpleFormatReader{}, nil
+	}
+	if engine == "" && !isURL && fileTypeOf(&types.ReadRequest{FileType: fileType}) == "pdf" && anydoc.Available() {
+		primary, err := remoteReader(deps)
+		if err != nil {
+			return nil, err
+		}
+		return &pdfTextRecoveryReader{
+			primary:   primary,
+			alternate: NewAnydocReader(map[string]string{"anydoc_extract_images": "false"}, nil),
+		}, nil
 	}
 	return remoteReader(deps)
 }

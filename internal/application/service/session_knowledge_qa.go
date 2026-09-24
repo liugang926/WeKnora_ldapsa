@@ -167,7 +167,6 @@ func (s *sessionService) KnowledgeQA(
 			UserMessageID: req.UserMessageID,
 		},
 	}
-
 	// Apply custom agent overrides (system prompt, temperature, retrieval params,
 	// rewrite, fallback, FAQ strategy, history turns)
 	s.applyAgentOverridesToChatManage(ctx, req.CustomAgent, chatManage)
@@ -186,6 +185,18 @@ func (s *sessionService) KnowledgeQA(
 	hasKB := types.HasKnowledgeRetrievalScope(searchTargets, knowledgeBaseIDs, knowledgeIDs)
 	needsRAG := hasKB || webSearchEnabled
 	hasHistory := chatManage.MaxRounds > 0
+	// Ordinary knowledge QA must resolve a reranker too. The search-only API
+	// already does this, but leaving the ID empty here silently skips the
+	// CHUNK_RERANK stage for the built-in quick-answer agent and plain sessions.
+	// An agent's explicit model, applied above, remains authoritative.
+	if needsRAG && chatManage.RerankModelID == "" {
+		// ModelService resolves visibility from the caller's context tenant.
+		// Anonymous share paths without one retain their previous no-rerank
+		// behaviour instead of probing another tenant's model registry.
+		if modelTenantID, ok := types.TenantIDFromContext(ctx); ok && modelTenantID != 0 {
+			chatManage.RerankModelID = s.resolveKnowledgeQARerankModelID(ctx, modelTenantID)
+		}
+	}
 
 	var pipeline []types.EventType
 	if !needsRAG {
@@ -959,19 +970,12 @@ func (s *sessionService) SearchKnowledge(ctx context.Context,
 		return nil, err
 	}
 
-	// Use rerank model from RetrievalConfig if set, otherwise auto-select the first available
+	// An explicit workspace choice wins. Otherwise use the visible default
+	// reranker instead of depending on the repository's unspecified row order.
 	if rc != nil && rc.RerankModelID != "" {
 		chatManage.RerankModelID = rc.RerankModelID
 	} else {
-		for _, model := range models {
-			if model == nil {
-				continue
-			}
-			if model.Type == types.ModelTypeRerank {
-				chatManage.RerankModelID = model.ID
-				break
-			}
-		}
+		chatManage.RerankModelID = selectDefaultRerankModelID(models)
 	}
 
 	// Use specific event list, only including retrieval-related events, not LLM summarization
