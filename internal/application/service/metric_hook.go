@@ -36,10 +36,18 @@ var metricCalculators = []struct {
 	scope    metricScope
 }{
 	// Retrieval Metrics
-	{metric.NewPrecisionMetric(), func(r *types.MetricResult) *float64 { return &r.RetrievalMetrics.Precision }, retrievalScope},
-	{metric.NewRecallMetric(), func(r *types.MetricResult) *float64 { return &r.RetrievalMetrics.Recall }, retrievalScope},
-	{metric.NewNDCGMetric(3), func(r *types.MetricResult) *float64 { return &r.RetrievalMetrics.NDCG3 }, retrievalScope},
-	{metric.NewNDCGMetric(10), func(r *types.MetricResult) *float64 { return &r.RetrievalMetrics.NDCG10 }, retrievalScope},
+	{metric.NewPrecisionMetric(), func(r *types.MetricResult) *float64 {
+		return &r.RetrievalMetrics.Precision
+	}, retrievalScope},
+	{metric.NewRecallMetric(), func(r *types.MetricResult) *float64 {
+		return &r.RetrievalMetrics.Recall
+	}, retrievalScope},
+	{metric.NewNDCGMetric(3), func(r *types.MetricResult) *float64 {
+		return &r.RetrievalMetrics.NDCG3
+	}, retrievalScope},
+	{metric.NewNDCGMetric(10), func(r *types.MetricResult) *float64 {
+		return &r.RetrievalMetrics.NDCG10
+	}, retrievalScope},
 	{metric.NewMRRMetric(), func(r *types.MetricResult) *float64 { return &r.RetrievalMetrics.MRR }, retrievalScope},
 	{metric.NewMAPMetric(), func(r *types.MetricResult) *float64 { return &r.RetrievalMetrics.MAP }, retrievalScope},
 

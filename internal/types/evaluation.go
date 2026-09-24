@@ -100,7 +100,7 @@ type MetricInput struct {
 
 // MetricResult contains evaluation metrics
 type MetricResult struct {
-	MetricVersion       int               `json:"metric_version,omitempty"`       // Aggregation semantics; legacy rows omit this
+	MetricVersion       int               `json:"metric_version,omitempty"`       // Legacy rows omit this
 	RetrievalEvaluated  int               `json:"retrieval_evaluated,omitempty"`  // Questions with relevance evidence
 	GenerationEvaluated int               `json:"generation_evaluated,omitempty"` // Questions with a reference answer
 	RetrievalMetrics    RetrievalMetrics  `json:"retrieval_metrics"`              // Retrieval performance metrics
