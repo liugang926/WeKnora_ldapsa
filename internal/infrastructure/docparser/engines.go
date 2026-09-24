@@ -51,7 +51,8 @@ func init() {
 // a few characters is therefore reported as parsed while its figures,
 // tables and layout are gone. The builtin parser classifies pages
 // individually and routes scanned ones through OCR/VLM, so it is the better
-// default for the one type anydoc cannot model.
+// primary parser. The default PDF reader separately probes anydoc's text
+// extraction only when builtin returns suspiciously little searchable text.
 func preferAnydocWhenAvailable(fileType string) string {
 	ft := strings.ToLower(strings.TrimPrefix(strings.TrimSpace(fileType), "."))
 	if IsSimpleFormat(ft) || ft == "pdf" {

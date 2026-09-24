@@ -59,3 +59,9 @@
 - [RAG 草稿 PR #3](https://github.com/liugang926/WeKnora_ldapsa/pull/3) 的提交 `2fdda255ba284507f8910fba3dce613e0295601e` 已通过当次全部 7 项托管检查，包括 Go 格式/vet/测试/构建、golangci-lint、前端测试/类型检查/构建、多阶段 Docker 镜像和 [完整 AnyDoc amd64 应用镜像构建](https://github.com/liugang926/WeKnora_ldapsa/actions/runs/35946325953/job/107465094722)。这些检查证明该提交可构建；它们没有发布可部署镜像 digest，也不能代替企业题集与真实 AD 验收。
 - 共享本地 `18080` 环境运行的是另一份镜像，不是此 PR 的提交。该环境修复了到 DocReader 的 gRPC 代理误路由后，新增 PDF 能完成解析并生成 512 维向量；此结果仅证明本地部署链路可用，不计入 PR 的端到端验收。正式运行还须记录所部署镜像 digest，并在同一镜像上重跑批准题集。
 - Nextcloud 事件闭环由独立的 [Nextcloud 草稿 PR #1](https://github.com/liugang926/nextcloud/pull/1) 收口；隔离环境已验证事件应用水位、候选版本发布及删除后的零可见候选。物理清理、真实 AD 双账号撤权与生产负载仍未验收，不能据此宣称整套企业 RAG 已交付。
+
+## 2026-09-24 PDF 正文与 ReRank 复核（合成文件）
+
+- 在提交 `ed5b31d08d34a4ed686a5606455776a6344beafa` 的本机完整 AnyDoc arm64 镜像 `sha256:8dd241a28c3abada6e20c9368fb867750bee3137558679983ac791cdcb319953` 上，隔离栈启用了独立 DocReader，未替换共享 `18080`。同一份完全虚构的中文采购 PDF 经默认 DocReader 路径显示 `completed`、1 个 ready chunk、1 条 512 维向量，但分块正文仅剩 `XH-CG-2026-01` 与 `PDF`，问“超过 500 元由谁审批”返回 0 条。**解析状态和向量维度不能证明正文正确**。
+- 将该文件在另一隔离知识库显式指定 `anydoc` PDF 引擎后，中文正文和 500 元审批条款完整入库，同一问题返回 1 条命中。随后普通 `knowledge-chat` 请求的应用流水显示 `CHUNK_RERANK` 调用内置本机 BGE 重排模型，1 个候选得分约 0.999，保留 1 条；SSE 返回 HTTP 200。对话模型为本机确定性桩，该结果只证明问答流程调用了 ReRank，**不证明答案质量**。
+- 因此 PR 增加默认 PDF 短文本保护：继续以 DocReader 为主，保留逐页 OCR 与图片；当提取的可检索字符过少时，尝试本机 AnyDoc 文本提取，仅在后者明显更完整时替换/补充正文。显式指定解析引擎不受影响。该修复须在新提交的完整镜像上复测，再决定是否迁移共享环境；既有缺正文的索引需要重新解析与向量化，不能仅切换模型。
