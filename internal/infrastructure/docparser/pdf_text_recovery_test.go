@@ -12,7 +12,9 @@ import (
 
 func TestPDFTextRecoveryUsesRicherLocalText(t *testing.T) {
 	primary := &stubDocReader{result: &types.ReadResult{MarkdownContent: "XH-CG-2026-01\nPDF"}}
-	alternate := &stubDocReader{result: &types.ReadResult{MarkdownContent: strings.Repeat("中文采购审批正文。", 12)}}
+	alternate := &stubDocReader{result: &types.ReadResult{
+		MarkdownContent: strings.Repeat("中文采购审批正文。", 12),
+	}}
 	reader := &pdfTextRecoveryReader{primary: primary, alternate: alternate}
 	req := &types.ReadRequest{FileContent: []byte("synthetic-pdf"), FileType: "pdf"}
 
@@ -58,7 +60,10 @@ func TestPDFTextRecoveryLeavesHealthyAndScannedResults(t *testing.T) {
 		wantAltCall bool
 	}{
 		{name: "healthy text", primaryText: strings.Repeat("中文正文", 40)},
-		{name: "scanned OCR with no text layer", primaryText: "OCR 短句", altErr: errors.New("no text layer"), wantAltCall: true},
+		{
+			name: "scanned OCR with no text layer", primaryText: "OCR 短句",
+			altErr: errors.New("no text layer"), wantAltCall: true,
+		},
 		{name: "alternate equally short", primaryText: "短句", altText: "另一短句", wantAltCall: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
