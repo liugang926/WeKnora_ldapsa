@@ -48,6 +48,7 @@ type EvaluationTask struct {
 	ChatModelID              string `json:"chat_model_id,omitempty"`
 	RerankModelID            string `json:"rerank_model_id,omitempty"`
 	BuildRevision            string `json:"build_revision,omitempty"`
+	Concurrency              int    `json:"concurrency,omitempty"` // Worker cap used for this run
 
 	StartTime time.Time        `json:"start_time"`           // Task start time
 	UpdatedAt time.Time        `json:"updated_at,omitempty"` // Last durable progress update
@@ -99,9 +100,12 @@ type MetricInput struct {
 
 // MetricResult contains evaluation metrics
 type MetricResult struct {
-	RetrievalMetrics  RetrievalMetrics  `json:"retrieval_metrics"`  // Retrieval performance metrics
-	GenerationMetrics GenerationMetrics `json:"generation_metrics"` // Text generation quality metrics
-	ExecutionMetrics  ExecutionMetrics  `json:"execution_metrics"`
+	MetricVersion       int               `json:"metric_version,omitempty"`       // Aggregation semantics; legacy rows omit this
+	RetrievalEvaluated  int               `json:"retrieval_evaluated,omitempty"`  // Questions with relevance evidence
+	GenerationEvaluated int               `json:"generation_evaluated,omitempty"` // Questions with a reference answer
+	RetrievalMetrics    RetrievalMetrics  `json:"retrieval_metrics"`              // Retrieval performance metrics
+	GenerationMetrics   GenerationMetrics `json:"generation_metrics"`             // Text generation quality metrics
+	ExecutionMetrics    ExecutionMetrics  `json:"execution_metrics"`
 }
 
 // ExecutionMetrics records measured latency and usage. Currency costs remain

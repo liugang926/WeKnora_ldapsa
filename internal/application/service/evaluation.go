@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"runtime"
 	"slices"
 	"strconv"
 	"sync"
@@ -455,6 +454,10 @@ func (e *EvaluationService) EvalDataset(ctx context.Context, detail *types.Evalu
 			"evaluation dataset has %d questions; configured limit is %d", len(dataset.QAPairs), maxQuestions,
 		)
 	}
+	workers, err := evaluationConcurrency()
+	if err != nil {
+		return err
+	}
 	datasetJSON, err := json.Marshal(dataset)
 	if err != nil {
 		return fmt.Errorf("fingerprint evaluation dataset: %w", err)
@@ -464,6 +467,7 @@ func (e *EvaluationService) EvalDataset(ctx context.Context, detail *types.Evalu
 	// Update total QA pairs count in task details
 	if err := e.persistUpdate(ctx, detail.Task.ID, func(params *types.EvaluationDetail) {
 		params.Task.Total = len(dataset.QAPairs)
+		params.Task.Concurrency = workers
 		params.Task.DatasetSHA256 = hex.EncodeToString(datasetDigest[:])
 		params.Cases = make([]*types.EvaluationCaseResult, len(dataset.QAPairs))
 		logger.Infof(ctx, "Updated task total to %d QA pairs", params.Task.Total)
@@ -503,9 +507,11 @@ func (e *EvaluationService) EvalDataset(ctx context.Context, detail *types.Evalu
 	var g errgroup.Group
 	metricHook := NewHookMetric(len(dataset.QAPairs), passages, knowledge.ID)
 
-	// Set worker limit based on available CPUs
-	g.SetLimit(max(runtime.GOMAXPROCS(0)-1, 1))
-	logger.Infof(ctx, "Starting evaluation with %d parallel workers", max(runtime.GOMAXPROCS(0)-1, 1))
+	// Bound model-service calls independently of the app CPU count. A small
+	// local inference bridge can otherwise return 429, while search and rerank
+	// silently fall back and make a completed evaluation misleading.
+	g.SetLimit(workers)
+	logger.Infof(ctx, "Starting evaluation with %d parallel workers", workers)
 
 	// Process each QA pair in parallel
 	for i, qaPair := range dataset.QAPairs {
@@ -614,6 +620,18 @@ func maxEvaluationQuestions() (int, error) {
 	parsed, err := strconv.Atoi(configured)
 	if err != nil || parsed < 1 || parsed > 10000 {
 		return 0, errors.New("EVALUATION_MAX_QUESTIONS must be between 1 and 10000")
+	}
+	return parsed, nil
+}
+
+func evaluationConcurrency() (int, error) {
+	configured := os.Getenv("EVALUATION_MAX_CONCURRENCY")
+	if configured == "" {
+		return 2, nil
+	}
+	parsed, err := strconv.Atoi(configured)
+	if err != nil || parsed < 1 || parsed > 64 {
+		return 0, errors.New("EVALUATION_MAX_CONCURRENCY must be between 1 and 64")
 	}
 	return parsed, nil
 }

@@ -91,3 +91,19 @@ func TestEvaluationQuestionLimit(t *testing.T) {
 		require.Error(t, err)
 	}
 }
+
+func TestEvaluationConcurrencyLimit(t *testing.T) {
+	t.Setenv("EVALUATION_MAX_CONCURRENCY", "")
+	workers, err := evaluationConcurrency()
+	require.NoError(t, err)
+	require.Equal(t, 2, workers)
+	t.Setenv("EVALUATION_MAX_CONCURRENCY", "4")
+	workers, err = evaluationConcurrency()
+	require.NoError(t, err)
+	require.Equal(t, 4, workers)
+	for _, invalid := range []string{"0", "65", "many"} {
+		t.Setenv("EVALUATION_MAX_CONCURRENCY", invalid)
+		_, err = evaluationConcurrency()
+		require.Error(t, err)
+	}
+}

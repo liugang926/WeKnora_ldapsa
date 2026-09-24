@@ -45,3 +45,26 @@ func TestEvaluationPassageMappingUsesChunkIdentity(t *testing.T) {
 	}
 	require.Equal(t, []int{1, 0, -4, -5}, matchRetrievedPassageIDs(corpus, results, "evaluation-knowledge"))
 }
+
+func TestEvaluationMetricsExcludeUnlabeledCasesFromReferenceAverages(t *testing.T) {
+	answerable := &types.MetricInput{
+		RetrievalGT: [][]int{{7}}, RetrievalIDs: []int{7},
+		GeneratedGT: "已批准", GeneratedTexts: "已批准",
+	}
+	unlabeled := &types.MetricInput{
+		RetrievalGT: [][]int{nil}, RetrievalIDs: []int{9},
+		GeneratedGT: "", GeneratedTexts: "不能从资料确认",
+	}
+	baseline := &MetricList{}
+	baseline.Append(answerable)
+	want := baseline.Avg()
+	mixed := &MetricList{}
+	mixed.Append(answerable)
+	mixed.Append(unlabeled)
+	got := mixed.Avg()
+	require.Equal(t, 2, got.MetricVersion)
+	require.Equal(t, 1, got.RetrievalEvaluated)
+	require.Equal(t, 1, got.GenerationEvaluated)
+	require.Equal(t, want.RetrievalMetrics, got.RetrievalMetrics)
+	require.Equal(t, want.GenerationMetrics, got.GenerationMetrics)
+}

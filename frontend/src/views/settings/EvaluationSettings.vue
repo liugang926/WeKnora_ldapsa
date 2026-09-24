@@ -53,9 +53,9 @@
               <td>{{ formatDate(run.task.start_time) }}</td>
               <td>{{ statusText(run.task.status) }} <span v-if="run.task.status === 1">({{ run.task.finished || 0 }}/{{ run.task.total || '?' }})</span></td>
               <td><span :title="run.task.dataset_sha256">{{ run.task.dataset_id }}</span></td>
-              <td>{{ metric(run.metric?.retrieval_metrics?.recall) }}</td>
+              <td>{{ metric(run.metric?.retrieval_evaluated === 0 ? undefined : run.metric?.retrieval_metrics?.recall) }} <small v-if="run.metric?.retrieval_evaluated != null">(n={{ run.metric.retrieval_evaluated }})</small></td>
               <td>{{ metric(run.metric?.retrieval_metrics?.ndcg10) }}</td>
-              <td>{{ metric(run.metric?.generation_metrics?.rougel) }}</td>
+              <td>{{ metric(run.metric?.generation_evaluated === 0 ? undefined : run.metric?.generation_metrics?.rougel) }} <small v-if="run.metric?.generation_evaluated != null">(n={{ run.metric.generation_evaluated }})</small></td>
               <td>{{ run.metric?.execution_metrics?.latency_p95_ms ?? '—' }} ms</td>
               <td>{{ tokenCount(run) }}</td>
               <td><button v-if="run.cases?.some(Boolean)" type="button" class="secondary" @click="selectedRunID = run.task.id">{{ copy.open }}</button></td>
@@ -101,8 +101,8 @@ import { listModels, type ModelConfig } from '@/api/model'
 
 interface CaseResult { question_id: number; question: string; reference_answer: string; generated_answer: string; relevant_passage_ids: number[]; retrieved_passage_ids: number[]; reranked_passage_ids: number[] }
 interface Run {
-  task: { id: string; dataset_id: string; dataset_sha256?: string; start_time: string; status: number; total?: number; finished?: number; err_msg?: string }
-  metric?: { retrieval_metrics?: { recall?: number; ndcg10?: number }; generation_metrics?: { rougel?: number }; execution_metrics?: { latency_p95_ms?: number; prompt_tokens?: number; completion_tokens?: number } }
+  task: { id: string; dataset_id: string; dataset_sha256?: string; concurrency?: number; start_time: string; status: number; total?: number; finished?: number; err_msg?: string }
+  metric?: { metric_version?: number; retrieval_evaluated?: number; generation_evaluated?: number; retrieval_metrics?: { recall?: number; ndcg10?: number }; generation_metrics?: { rougel?: number }; execution_metrics?: { latency_p95_ms?: number; prompt_tokens?: number; completion_tokens?: number } }
   cases?: Array<CaseResult | null>
 }
 
@@ -113,7 +113,7 @@ const copy = computed(() => String(locale.value).startsWith('zh') ? {
   mockWarning: '当前 Embedding 是模拟模型或维度过低，不能作为真实检索基线。',
   dataWarning: '仅上传已脱敏、获准用于所选模型的数据；此页面不会自动把受限 AD 文档送往外部模型。',
   start: '开始评估', starting: '提交中…', history: '历史运行', empty: '暂无评估记录。', time: '开始时间', status: '状态', tokens: 'Tokens',
-  compare: '版本对比', notComparable: '仅可比较相同数据集指纹、且均已成功的两次运行。',
+  compare: '版本对比', notComparable: '仅可比较相同数据集指纹、指标口径和并发设置，且均已成功的两次运行。',
   faithfulness: '证据忠实度与引用准确性尚未自动评分；BLEU/ROUGE 不能替代这两项人工或可信评审。',
   review: '逐题复核', open: '查看', caseNote: '负数表示未能唯一映射到语料的检索结果。请依据原始脱敏题集逐条核验引用、拒答和证据忠实度。',
   expected: '参考答案：', generated: '生成答案：', relevant: '相关证据 ID：', retrieved: '召回 ID：', reranked: '重排 ID：', noAnswer: '应拒答',
@@ -123,7 +123,7 @@ const copy = computed(() => String(locale.value).startsWith('zh') ? {
   mockWarning: 'This embedding is a mock or has too few dimensions for a real retrieval baseline.',
   dataWarning: 'Use only de-identified data approved for the selected models. Restricted AD documents are not exported automatically.',
   start: 'Start evaluation', starting: 'Submitting…', history: 'Run history', empty: 'No evaluation runs yet.', time: 'Started', status: 'Status', tokens: 'Tokens',
-  compare: 'Compare versions', notComparable: 'Both runs must succeed and use the same dataset fingerprint.',
+  compare: 'Compare versions', notComparable: 'Both runs must succeed and use the same dataset fingerprint, metric version, and concurrency.',
   faithfulness: 'Evidence faithfulness and citation accuracy are not yet auto-scored; BLEU/ROUGE cannot replace human or trusted judging.',
   review: 'Case review', open: 'Inspect', caseNote: 'Negative IDs are retrieval hits that could not be mapped uniquely to the corpus. Check citations, abstention and faithfulness against the approved fixture.',
   expected: 'Reference:', generated: 'Generated:', relevant: 'Relevant IDs:', retrieved: 'Retrieved IDs:', reranked: 'Reranked IDs:', noAnswer: 'Should abstain',
@@ -156,6 +156,8 @@ const selectedRun = computed(() => runs.value.find(r => r.task.id === selectedRu
 const selectedCases = computed(() => selectedRun.value?.cases?.filter((entry): entry is CaseResult => !!entry) || [])
 const comparable = computed(() => !!left.value && !!right.value && left.value.task.id !== right.value.task.id &&
   !!left.value.task.dataset_sha256 && left.value.task.dataset_sha256 === right.value.task.dataset_sha256 &&
+  (left.value.metric?.metric_version ?? 1) === (right.value.metric?.metric_version ?? 1) &&
+  (left.value.task.concurrency ?? 0) === (right.value.task.concurrency ?? 0) &&
   left.value.task.status === 2 && right.value.task.status === 2)
 const metric = (value?: number) => value == null ? '—' : value.toFixed(3)
 const formatDate = (value: string) => new Date(value).toLocaleString()

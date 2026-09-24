@@ -24,3 +24,5 @@ RAG_MODEL_TOKEN="$(tr -d '\n' < /private/path/rag-model-token)" \
 ```
 
 2026-09-24 在本机 M2 Pro/MPS 使用 `BAAI/bge-small-zh-v1.5`（512 维）和 `BAAI/bge-reranker-base` 的检索烟测：40 道有答案题的 Embedding Recall@5 为 1.000，ReRank Recall@1 为 0.762、Recall@3/5 为 1.000，NDCG@5 为 0.992；70 题检索链路 P50 为 64.2 ms、P95 为 181.4 ms，夹具预过滤后受限段落命中数为 0。这些数值不包含生成答案、拒答质量、引用忠实度、服务并发、索引更新或真实权限验证。该合成题集偏小且文档表述与问题接近，指标可能明显高估真实业务效果。
+
+应用内评估还应设置或记录 `EVALUATION_MAX_CONCURRENCY`，检查模型服务是否有 `429` 或检索/重排降级。旧版评估在一次 70 题并发运行中发生上述降级，虽显示任务成功，但不能作质量基线；需使用修正后的指标口径和受控并发重跑。应用内 Parquet 评估不加载这里的虚构 persona 元数据，不能据此判定权限拒绝通过。

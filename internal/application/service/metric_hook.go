@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"strings"
 	"sync"
 
 	"github.com/Tencent/WeKnora/internal/application/service/metric"
@@ -12,71 +13,112 @@ import (
 
 // MetricList stores and aggregates metric results
 type MetricList struct {
-	results []*types.MetricResult
+	results []metricObservation
 }
+
+type metricObservation struct {
+	result              *types.MetricResult
+	retrievalEvaluated  bool
+	generationEvaluated bool
+}
+
+type metricScope uint8
+
+const (
+	retrievalScope metricScope = iota
+	generationScope
+)
 
 // metricCalculators defines all metrics to be calculated
 var metricCalculators = []struct {
 	calc     interfaces.Metrics                 // Metric calculator implementation
 	getField func(*types.MetricResult) *float64 // Field accessor for result
+	scope    metricScope
 }{
 	// Retrieval Metrics
-	{metric.NewPrecisionMetric(), func(r *types.MetricResult) *float64 { return &r.RetrievalMetrics.Precision }},
-	{metric.NewRecallMetric(), func(r *types.MetricResult) *float64 { return &r.RetrievalMetrics.Recall }},
-	{metric.NewNDCGMetric(3), func(r *types.MetricResult) *float64 { return &r.RetrievalMetrics.NDCG3 }},
-	{metric.NewNDCGMetric(10), func(r *types.MetricResult) *float64 { return &r.RetrievalMetrics.NDCG10 }},
-	{metric.NewMRRMetric(), func(r *types.MetricResult) *float64 { return &r.RetrievalMetrics.MRR }},
-	{metric.NewMAPMetric(), func(r *types.MetricResult) *float64 { return &r.RetrievalMetrics.MAP }},
+	{metric.NewPrecisionMetric(), func(r *types.MetricResult) *float64 { return &r.RetrievalMetrics.Precision }, retrievalScope},
+	{metric.NewRecallMetric(), func(r *types.MetricResult) *float64 { return &r.RetrievalMetrics.Recall }, retrievalScope},
+	{metric.NewNDCGMetric(3), func(r *types.MetricResult) *float64 { return &r.RetrievalMetrics.NDCG3 }, retrievalScope},
+	{metric.NewNDCGMetric(10), func(r *types.MetricResult) *float64 { return &r.RetrievalMetrics.NDCG10 }, retrievalScope},
+	{metric.NewMRRMetric(), func(r *types.MetricResult) *float64 { return &r.RetrievalMetrics.MRR }, retrievalScope},
+	{metric.NewMAPMetric(), func(r *types.MetricResult) *float64 { return &r.RetrievalMetrics.MAP }, retrievalScope},
 
 	// Generation Metrics
 	{metric.NewBLEUMetric(true, metric.BLEU1Gram), func(r *types.MetricResult) *float64 {
 		return &r.GenerationMetrics.BLEU1
-	}},
+	}, generationScope},
 	{metric.NewBLEUMetric(true, metric.BLEU2Gram), func(r *types.MetricResult) *float64 {
 		return &r.GenerationMetrics.BLEU2
-	}},
+	}, generationScope},
 	{metric.NewBLEUMetric(true, metric.BLEU4Gram), func(r *types.MetricResult) *float64 {
 		return &r.GenerationMetrics.BLEU4
-	}},
+	}, generationScope},
 	{metric.NewRougeMetric(true, "rouge-1", "f"), func(r *types.MetricResult) *float64 {
 		return &r.GenerationMetrics.ROUGE1
-	}},
+	}, generationScope},
 	{metric.NewRougeMetric(true, "rouge-2", "f"), func(r *types.MetricResult) *float64 {
 		return &r.GenerationMetrics.ROUGE2
-	}},
+	}, generationScope},
 	{metric.NewRougeMetric(true, "rouge-l", "f"), func(r *types.MetricResult) *float64 {
 		return &r.GenerationMetrics.ROUGEL
-	}},
+	}, generationScope},
 }
 
 // Append calculates and stores metrics for given input
 func (m *MetricList) Append(metricInput *types.MetricInput) {
 	result := &types.MetricResult{}
+	retrievalEvaluated := false
+	for _, groundTruth := range metricInput.RetrievalGT {
+		if len(groundTruth) > 0 {
+			retrievalEvaluated = true
+			break
+		}
+	}
+	generationEvaluated := strings.TrimSpace(metricInput.GeneratedGT) != ""
 	// Calculate all configured metrics
 	for _, c := range metricCalculators {
+		if (c.scope == retrievalScope && !retrievalEvaluated) ||
+			(c.scope == generationScope && !generationEvaluated) {
+			continue
+		}
 		score := c.calc.Compute(metricInput)
 		*c.getField(result) = score
 	}
 	logger.Infof(context.Background(), "metric: %v", result)
-	m.results = append(m.results, result)
+	m.results = append(m.results, metricObservation{result, retrievalEvaluated, generationEvaluated})
 }
 
 // Avg calculates average of all stored metric results
 func (m *MetricList) Avg() *types.MetricResult {
 	if len(m.results) == 0 {
-		return &types.MetricResult{}
+		return &types.MetricResult{MetricVersion: 2}
 	}
 
-	avgResult := &types.MetricResult{}
-	count := float64(len(m.results))
+	avgResult := &types.MetricResult{MetricVersion: 2}
+	for _, observation := range m.results {
+		if observation.retrievalEvaluated {
+			avgResult.RetrievalEvaluated++
+		}
+		if observation.generationEvaluated {
+			avgResult.GenerationEvaluated++
+		}
+	}
 
 	// Calculate average for each metric
 	for _, config := range metricCalculators {
 		sum := 0.0
-		for _, r := range m.results {
-			sum += *config.getField(r)
+		count := 0
+		for _, observation := range m.results {
+			if (config.scope == retrievalScope && !observation.retrievalEvaluated) ||
+				(config.scope == generationScope && !observation.generationEvaluated) {
+				continue
+			}
+			sum += *config.getField(observation.result)
+			count++
 		}
-		*config.getField(avgResult) = sum / count
+		if count > 0 {
+			*config.getField(avgResult) = sum / float64(count)
+		}
 	}
 	return avgResult
 }
