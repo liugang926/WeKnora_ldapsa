@@ -418,7 +418,9 @@ func (p *PluginSearch) searchByTargets(
 				emb, err := p.knowledgeBaseService.GetQueryEmbedding(ctx, targets[0].KnowledgeBaseID, queryText)
 				if err != nil {
 					if strictRetrieval(ctx) {
-						recordError(fmt.Errorf("query embedding failed for knowledge base %s: %w", targets[0].KnowledgeBaseID, err))
+						recordError(fmt.Errorf(
+							"query embedding failed for knowledge base %s: %w", targets[0].KnowledgeBaseID, err,
+						))
 						return
 					}
 					searchableTargets = make([]*types.SearchTarget, 0, len(targets))

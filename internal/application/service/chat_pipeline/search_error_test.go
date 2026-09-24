@@ -167,10 +167,12 @@ func TestSearchEmbeddingFailureFailsStrictEvaluation(t *testing.T) {
 		PipelineState: types.PipelineState{RewriteQuery: "树状筛选器 新建入口"},
 	}
 
-	err := plugin.OnEvent(WithStrictRetrieval(context.Background()), types.CHUNK_SEARCH, chatManage, func() *PluginError {
-		t.Fatal("strict evaluation must not continue after embedding failure")
-		return nil
-	})
+	err := plugin.OnEvent(
+		WithStrictRetrieval(context.Background()), types.CHUNK_SEARCH, chatManage, func() *PluginError {
+			t.Fatal("strict evaluation must not continue after embedding failure")
+			return nil
+		},
+	)
 	if err == nil || err.ErrorType != ErrSearch.ErrorType || !errors.Is(err.Err, rootCause) {
 		t.Fatalf("expected root embedding error, got %#v", err)
 	}
@@ -303,10 +305,12 @@ func TestSearchPartialFailureFailsStrictEvaluation(t *testing.T) {
 		PipelineState: types.PipelineState{RewriteQuery: "测试问题"},
 	}
 
-	err := plugin.OnEvent(WithStrictRetrieval(context.Background()), types.CHUNK_SEARCH, chatManage, func() *PluginError {
-		t.Fatal("strict evaluation must not continue with partial search results")
-		return nil
-	})
+	err := plugin.OnEvent(
+		WithStrictRetrieval(context.Background()), types.CHUNK_SEARCH, chatManage, func() *PluginError {
+			t.Fatal("strict evaluation must not continue with partial search results")
+			return nil
+		},
+	)
 	if err == nil || err.ErrorType != ErrSearch.ErrorType || !errors.Is(err.Err, rootCause) {
 		t.Fatalf("expected partial retrieval to fail with root cause, got %#v", err)
 	}
