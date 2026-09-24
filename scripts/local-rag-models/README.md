@@ -21,7 +21,7 @@ RAG_MODEL_TOKEN_FILE=/private/path/rag-model-token \
 
 ## 完全虚构的题集
 
-`dataset/benchmarks/synthetic-zh-v1/fixture.json` 只有虚构公司制度，没有企业原文、真实账号或 AD 对象。运行以下命令生成 WeKnora 的 5 个 Parquet 文件并验证协议和检索：
+`dataset/benchmarks/synthetic-zh-v1/fixture.json` 是 16 题小样例；新增的 [`synthetic-enterprise-zh-v2`](../../dataset/benchmarks/synthetic-enterprise-zh-v2/README.md) 有 42 段、70 题，并用虚构组层级覆盖五类部门的直接/嵌套组。两者都只有虚构公司制度，没有企业原文、真实账号或 AD 对象。运行以下命令生成 WeKnora 的 5 个 Parquet 文件并验证协议和检索（将数据集路径替换为需要的版本）：
 
 ```sh
 /path/to/rag-venv/bin/python scripts/local-rag-models/generate_fixture.py dataset/benchmarks/synthetic-zh-v1/fixture.json

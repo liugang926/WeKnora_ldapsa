@@ -13,6 +13,8 @@ from pathlib import Path
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from fixture_access import persona_scopes
+
 
 def write_rows(path: Path, fields: list[tuple[str, pa.DataType]], rows: list[dict]) -> None:
     schema = pa.schema(fields)
@@ -33,7 +35,7 @@ def generate(manifest_path: Path) -> None:
         raise ValueError("blank passage")
     if any(not item["question"].strip() for item in cases):
         raise ValueError("blank question")
-    personas = manifest.get("personas", {})
+    personas = persona_scopes(manifest)
     scopes_by_id = {item["id"]: item["scope"] for item in documents}
     for case in cases:
         if not set(case["evidence"]).issubset(doc_ids):
@@ -41,7 +43,7 @@ def generate(manifest_path: Path) -> None:
         if case.get("persona") not in (None, *personas):
             raise ValueError(f"case {case['id']} has unknown persona")
         allowed_scopes = personas.get(case.get("persona"), personas.get("employee", []))
-        if case.get("category") == "permission_allowed" and any(
+        if case.get("category") not in ("permission_denied", "no_answer") and any(
             scopes_by_id[doc_id] not in allowed_scopes for doc_id in case["evidence"]
         ):
             raise ValueError(f"case {case['id']} evidence is not visible to persona")

@@ -62,6 +62,20 @@ func TestSyntheticChineseBenchmarkLoadsNoAnswerAndCrossDocumentCases(t *testing.
 	require.Empty(t, fixture.QAPairs[11].Answer)
 }
 
+func TestSyntheticEnterpriseBenchmarkLoadsAllCategories(t *testing.T) {
+	t.Setenv("EVALUATION_DATASET_DIR", filepath.Join("..", "..", "..", "dataset", "benchmarks"))
+	fixture, err := (&DatasetService{}).GetDatasetByID(context.Background(), "synthetic-enterprise-zh-v2")
+	require.NoError(t, err)
+	require.Len(t, fixture.Corpus, 42)
+	require.Len(t, fixture.QAPairs, 70)
+	require.Len(t, fixture.QAPairs[12].PIDs, 2) // cross-document
+	require.Empty(t, fixture.QAPairs[20].PIDs)  // no-answer
+	require.Empty(t, fixture.QAPairs[20].Answer)
+	require.Len(t, fixture.QAPairs[31].PIDs, 2) // nested-group permission-allowed
+	require.Empty(t, fixture.QAPairs[50].PIDs)  // permission-denied
+	require.Empty(t, fixture.QAPairs[50].Answer)
+}
+
 func TestEvaluationQuestionLimit(t *testing.T) {
 	t.Setenv("EVALUATION_MAX_QUESTIONS", "")
 	limit, err := maxEvaluationQuestions()

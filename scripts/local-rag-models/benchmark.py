@@ -16,6 +16,8 @@ import time
 import urllib.request
 from pathlib import Path
 
+from fixture_access import persona_scopes
+
 
 def post(base_url: str, path: str, token: str, payload: dict) -> dict:
     request = urllib.request.Request(
@@ -55,14 +57,21 @@ def run(manifest_path: Path, base_url: str, token: str) -> dict:
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     documents = manifest["documents"]
     cases = manifest["cases"]
-    personas = manifest["personas"]
+    personas = persona_scopes(manifest)
     embed_model = os.getenv("RAG_EMBEDDING_MODEL", "BAAI/bge-small-zh-v1.5")
     rank_model = os.getenv("RAG_RERANK_MODEL", "BAAI/bge-reranker-base")
     start = time.monotonic()
-    corpus_response = post(base_url, "/v1/embeddings", token,
-                           {"model": embed_model, "input": [doc["text"] for doc in documents]})
-    corpus_vectors = {documents[i]["id"]: item["embedding"]
-                      for i, item in enumerate(sorted(corpus_response["data"], key=lambda row: row["index"]))}
+    # The local model bridge accepts at most 32 inputs per call. Keep this
+    # benchmark portable to modest servers and verify every batch response.
+    corpus_vectors = {}
+    for offset in range(0, len(documents), 16):
+        batch = documents[offset:offset + 16]
+        response = post(base_url, "/v1/embeddings", token,
+                        {"model": embed_model, "input": [doc["text"] for doc in batch]})
+        rows = sorted(response["data"], key=lambda row: row["index"])
+        if [row["index"] for row in rows] != list(range(len(batch))):
+            raise ValueError("embedding response has missing or repeated rows")
+        corpus_vectors.update({doc["id"]: row["embedding"] for doc, row in zip(batch, rows)})
     dimensions = {len(vector) for vector in corpus_vectors.values()}
     if len(corpus_vectors) != len(documents) or dimensions != {512}:
         raise ValueError("embedding response has missing rows or unexpected dimensions")
