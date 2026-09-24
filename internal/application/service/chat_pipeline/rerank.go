@@ -128,6 +128,10 @@ func (p *PluginRerank) OnEvent(ctx context.Context,
 		rerankResp, rerankErr = p.rerank(ctx, chatManage, rerankModel, chatManage.RewriteQuery, passages, candidatesToRerank)
 
 		if rerankErr != nil {
+			if strictRetrieval(ctx) {
+				spanErr = rerankErr
+				return ErrRerank.WithError(rerankErr)
+			}
 			// Rerank API failed — fallback to original retrieval results so the
 			// pipeline can still return something useful to the caller.
 			pipelineWarn(ctx, "Rerank", "api_error_fallback", map[string]interface{}{
@@ -162,6 +166,10 @@ func (p *PluginRerank) OnEvent(ctx context.Context,
 			// Restore original threshold
 			chatManage.RerankThreshold = originalThreshold
 			if rerankErr != nil {
+				if strictRetrieval(ctx) {
+					spanErr = rerankErr
+					return ErrRerank.WithError(rerankErr)
+				}
 				pipelineWarn(ctx, "Rerank", "api_error_fallback", map[string]interface{}{
 					"error":         rerankErr.Error(),
 					"candidate_cnt": len(candidatesToRerank),

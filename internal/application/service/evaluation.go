@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/Tencent/WeKnora/internal/application/repository"
+	chatpipeline "github.com/Tencent/WeKnora/internal/application/service/chat_pipeline"
 	"github.com/Tencent/WeKnora/internal/config"
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/types"
@@ -536,7 +537,9 @@ func (e *EvaluationService) EvalDataset(ctx context.Context, detail *types.Evalu
 
 			// Execute knowledge QA pipeline
 			logger.Infof(ctx, "Running knowledge QA for pair %d", i)
-			qaErr := e.sessionService.KnowledgeQAByEvent(ctx, chatManage, types.Pipline["rag"])
+			qaErr := e.sessionService.KnowledgeQAByEvent(
+				chatpipeline.WithStrictRetrieval(ctx), chatManage, types.Pipline["rag"],
+			)
 			if qaErr != nil {
 				logger.Errorf(ctx, "Failed to process question %d: %v", i, qaErr)
 				return qaErr
