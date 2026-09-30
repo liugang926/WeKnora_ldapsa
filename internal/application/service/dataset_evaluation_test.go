@@ -197,10 +197,14 @@ func TestEvaluationRequiresExplicitModelsForNamedOrOperatorDefaultDataset(t *tes
 		embedding string
 		wantError bool
 	}{
-		{name: "named missing chat", datasetID: "approved-set", rerank: "rerank",
-			embedding: "embedding", wantError: true},
-		{name: "named missing rerank", datasetID: "approved-set", chat: "chat",
-			embedding: "embedding", wantError: true},
+		{
+			name: "named missing chat", datasetID: "approved-set",
+			rerank: "rerank", embedding: "embedding", wantError: true,
+		},
+		{
+			name: "named missing rerank", datasetID: "approved-set",
+			chat: "chat", embedding: "embedding", wantError: true,
+		},
 		{name: "named missing embedding", datasetID: "approved-set", chat: "chat", rerank: "rerank", wantError: true},
 		{name: "named all explicit", datasetID: "approved-set", chat: "chat", rerank: "rerank", embedding: "embedding"},
 		{name: "bundled default remains compatible", datasetID: "default"},
