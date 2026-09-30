@@ -92,8 +92,9 @@ type EvaluationDetail struct {
 }
 
 // EvaluationChatCostInput is a versioned operator-supplied chat API tariff.
-// Auxiliary chat calls, embedding, rerank, infrastructure, cache-specific
-// discounts and taxes are excluded: this is not an invoice or total RAG cost.
+// Auxiliary chat calls, retries outside the recorded final response, embedding,
+// rerank, infrastructure, cache-specific discounts and taxes are excluded:
+// this is not an invoice or total RAG cost.
 type EvaluationChatCostInput struct {
 	Currency         string  `json:"currency"`
 	TariffVersion    string  `json:"tariff_version"`

@@ -170,6 +170,7 @@ def price_synthetic_chat(base: str, token: str, task_id: str, detail: dict) -> f
         raise RuntimeError("synthetic chat usage coverage is incomplete: "
                            f"version={usage.get('usage_accounting_version')} "
                            f"responses={calls} reported={reported} "
+                           f"stub_requests={ChatStub.requests_seen} "
                            f"prompt_tokens={usage.get('prompt_tokens')} "
                            f"completion_tokens={usage.get('completion_tokens')}")
     expected = round((usage["prompt_tokens"] + 2 * usage["completion_tokens"]) / 1_000_000, 8)
@@ -259,7 +260,9 @@ def run_checks(base: str, project: str, spec: Path, dataset_id: str) -> dict:
         raise RuntimeError("evaluation result is absent from durable history")
     return {**before, "chat_stub_requests": ChatStub.requests_seen,
             "restored_after_restart": True, "synthetic_reviews_restored": len(judgments),
-            "synthetic_chat_cost_restored": True}
+            "synthetic_chat_cost_restored": True,
+            "final_answer_calls": (metric.get("execution_metrics") or {}).get("chat_responses"),
+            "usage_reported_calls": (metric.get("execution_metrics") or {}).get("usage_reported_responses")}
 
 
 def main() -> None:

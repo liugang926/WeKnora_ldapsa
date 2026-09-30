@@ -24,16 +24,19 @@ RAG_MODEL_TOKEN_FILE=/private/path/rag-model-token \
 模型服务启动后，可用 `smoke_candidate.py` 在**全新的一次性 Docker Compose 项目**里验证指定本地应用镜像。脚本先核对可选的源码/补丁镜像标签，再生成随机测试凭据并仅在环回地址发布 API；它使用虚构采购条款注册测试用户、创建知识库、完成解析和 512 维入库，通过应用模型调试接口验证 Embedding/ReRank，并关闭关键词召回执行纯向量检索。结束时只删除自己生成的容器、网络、临时数据库和令牌副本；不会触碰共享 `18080` 或其他 Compose 项目。令牌文件须为 `0600`，脚本不会输出明文令牌、密码或测试文本。
 
 ```sh
+APP_IMAGE=weknora-ldap-app:your-candidate-tag
+APP_REVISION=your-40-character-source-commit
 python3 scripts/local-rag-models/smoke_candidate.py \
-  --image weknora-ldap-app:nextcloud-rag-e5-anydoc \
+  --image "$APP_IMAGE" \
   --token-file /private/path/rag-model-token \
-  --expected-revision e5cc3e4491ee10fb85e0c2ad79f1e3329826d02e \
-  --expected-patch-sha a7d638ac36f2e64b5adf998cdd16a811c238de343a5ab8d001262fa8207c3961
+  --expected-revision "$APP_REVISION"
 ```
+
+把前两行替换为实际本机镜像标签及其构建源码提交；若镜像合入 Nextcloud 补丁，再加 `--expected-patch-sha` 指定镜像标签上的精确补丁 SHA-256。不要把历史示例提交号当成当前部署版本。
 
 该命令是**本机可选验收**，不在 GitHub CI 中调用本机模型服务。它不生成答案，也不测试引用、无答案拒答、真实 AD 权限或企业语料；这些仍需独立验收。服务地址固定为 Docker 主机的 `host.docker.internal:19090`，只应在已批准的本地测试机器上运行。
 
-若要同时验收评估结果持久化，可在同一候选镜像上运行 `smoke_evaluation_candidate.py`，参数与上例相同，只替换脚本名。默认使用仓库自带的 16 题虚构 Parquet 题集；增加 `--dataset-id synthetic-enterprise-zh-v2` 可跑 70 题虚构集，脚本不接受其他数据集 ID。它在独立环回 Compose 栈中使用正式 BGE Embedding/ReRank 和仅监听本机的确定性对话桩，检查题目全部完成、指标口径 v2、逐题记录、数据集指纹，并提交两条**仅供协议测试**的人工复核标签，确认重启后任务详情、历史和标签仍可读取。脚本会验证镜像提交与补丁标签，并在结束时删除自己创建的容器和卷；它不会使用共享 `18080` 环境，也不会将题集发送到外部对话模型。确定性对话桩及自动写入的测试标签**不能**用于引用准确、忠实度或无答案拒答验收。
+若要同时验收评估结果持久化，可在同一候选镜像上运行 `smoke_evaluation_candidate.py`，参数与上例相同，只替换脚本名。默认使用仓库自带的 16 题虚构 Parquet 题集；增加 `--dataset-id synthetic-enterprise-zh-v2` 可跑 70 题虚构集，脚本不接受其他数据集 ID。它在独立环回 Compose 栈中使用正式 BGE Embedding/ReRank 和仅监听本机的确定性对话桩，检查题目全部完成、指标口径 v2、逐题记录、数据集指纹，并提交两条**仅供协议测试**的人工复核标签及虚构价格表，确认重启后任务详情、历史、人工标签和最终答复费用估算仍可读取。固定拒答不发生对话模型调用，缺失模型用量的真实调用则不得估成零元。脚本会验证镜像提交与补丁标签，并在结束时删除自己创建的容器和卷；它不会使用共享 `18080` 环境，也不会将题集发送到外部对话模型。确定性对话桩、虚构价格及自动写入的测试标签**不能**用于引用准确、忠实度、无答案拒答或真实费用验收。
 
 ## 完全虚构的题集
 
