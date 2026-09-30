@@ -68,6 +68,7 @@ type EvaluationTask struct {
 	ReferenceKnowledgeBaseID string `json:"reference_knowledge_base_id,omitempty"`
 	EmbeddingModelID         string `json:"embedding_model_id,omitempty"`
 	ChatModelID              string `json:"chat_model_id,omitempty"`
+	IndexingChatModelID      string `json:"indexing_chat_model_id,omitempty"` // Temporary KB summarization model
 	RerankModelID            string `json:"rerank_model_id,omitempty"`
 	BuildRevision            string `json:"build_revision,omitempty"`
 	Concurrency              int    `json:"concurrency,omitempty"` // Worker cap used for this run

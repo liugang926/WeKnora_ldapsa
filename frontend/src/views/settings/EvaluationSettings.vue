@@ -147,7 +147,7 @@ import { comparableChatCost, estimatedChatCost, validChatCostInput,
 
 interface CaseResult extends ReviewCase { question: string; generated_answer: string; relevant_passage_ids: number[]; retrieved_passage_ids: number[]; reranked_passage_ids: number[]; review?: CaseReview }
 interface Run {
-  task: { id: string; dataset_id: string; dataset_sha256?: string; concurrency?: number; start_time: string; status: number; total?: number; finished?: number; err_msg?: string }
+  task: { id: string; dataset_id: string; dataset_sha256?: string; concurrency?: number; indexing_chat_model_id?: string; start_time: string; status: number; total?: number; finished?: number; err_msg?: string }
   metric?: { metric_version?: number; retrieval_evaluated?: number; generation_evaluated?: number; retrieval_metrics?: { recall?: number; ndcg10?: number }; generation_metrics?: { rougel?: number }; execution_metrics?: { latency_p95_ms?: number; prompt_tokens?: number; completion_tokens?: number } }
   cases?: Array<CaseResult | null>
   chat_cost?: ChatCost
@@ -159,9 +159,9 @@ const copy = computed(() => String(locale.value).startsWith('zh') ? {
   title: 'RAG 评估', subtitle: '持久化运行记录，并在相同数据集上比较检索配置。', refresh: '刷新',
   newRun: '新建评估', dataset: '数据集 ID', embedding: 'Embedding 模型', rerank: 'ReRank 模型', chat: '对话模型', choose: '请选择',
   mockWarning: '当前 Embedding 是模拟模型或维度过低，不能作为真实检索基线。',
-  dataWarning: '仅上传已脱敏、获准用于所选模型的数据；此页面不会自动把受限 AD 文档送往外部模型。',
+  dataWarning: '仅上传已脱敏、获准用于所选模型的数据；临时入库摘要也使用所选对话模型，可能接收整个题集。此页面不会自动把受限 AD 文档送往外部模型。',
   start: '开始评估', starting: '提交中…', history: '历史运行', empty: '暂无评估记录。', time: '开始时间', status: '状态', tokens: 'Tokens',
-  chatCost: '最终答复 API 费用估算', chatCostNote: '仅按已记录的最终答复 token 和手工录入的版本化价格估算；不含辅助 LLM 调用、上游重试、Embedding、ReRank、本机算力、缓存折扣或税费，可能低于实际费用。缺少用量回报时不显示金额。',
+  chatCost: '最终答复 API 费用估算', chatCostNote: '仅按已记录的最终答复 token 和手工录入的版本化价格估算；不含临时入库摘要、其他辅助 LLM 调用、上游重试、Embedding、ReRank、本机算力、缓存折扣或税费，可能低于实际费用。缺少用量回报时不显示金额。',
   currency: '币种（3 位大写字母）', tariffVersion: '价格表版本', inputPerMillion: '输入价／百万 token', outputPerMillion: '输出价／百万 token', saveCost: '保存价格快照', usageCoverage: '用量回报覆盖', tariffMismatch: '两次运行使用不同价格表版本，费用差额包含价格变化。',
   compare: '版本对比', notComparable: '仅可比较相同数据集指纹、指标口径和并发设置，且均已成功的两次运行。',
   faithfulness: '证据忠实度与引用准确性尚未自动评分；BLEU/ROUGE 不能替代这两项人工或可信评审。',
@@ -173,9 +173,9 @@ const copy = computed(() => String(locale.value).startsWith('zh') ? {
   title: 'RAG evaluation', subtitle: 'Persisted runs and comparisons on the same dataset.', refresh: 'Refresh',
   newRun: 'New run', dataset: 'Dataset ID', embedding: 'Embedding model', rerank: 'ReRank model', chat: 'Chat model', choose: 'Select',
   mockWarning: 'This embedding is a mock or has too few dimensions for a real retrieval baseline.',
-  dataWarning: 'Use only de-identified data approved for the selected models. Restricted AD documents are not exported automatically.',
+  dataWarning: 'Use only de-identified data approved for the selected models. Temporary indexing also uses the selected chat model to summarize the corpus. Restricted AD documents are not exported automatically.',
   start: 'Start evaluation', starting: 'Submitting…', history: 'Run history', empty: 'No evaluation runs yet.', time: 'Started', status: 'Status', tokens: 'Tokens',
-  chatCost: 'Estimated final-answer API cost', chatCostNote: 'Uses recorded final-answer tokens and an operator-entered versioned tariff only; excludes auxiliary LLM calls, upstream retries, Embedding, ReRank, local compute, cache discounts and taxes, so it may understate actual charges. No estimate is shown when usage is incomplete.',
+  chatCost: 'Estimated final-answer API cost', chatCostNote: 'Uses recorded final-answer tokens and an operator-entered versioned tariff only; excludes temporary indexing summaries, other auxiliary LLM calls, upstream retries, Embedding, ReRank, local compute, cache discounts and taxes, so it may understate actual charges. No estimate is shown when usage is incomplete.',
   currency: 'Currency (3 uppercase letters)', tariffVersion: 'Tariff version', inputPerMillion: 'Input price / million tokens', outputPerMillion: 'Output price / million tokens', saveCost: 'Save tariff snapshot', usageCoverage: 'Usage reports', tariffMismatch: 'The runs use different tariff versions; the cost delta includes a price change.',
   compare: 'Compare versions', notComparable: 'Both runs must succeed and use the same dataset fingerprint, metric version, and concurrency.',
   faithfulness: 'Evidence faithfulness and citation accuracy are not yet auto-scored; BLEU/ROUGE cannot replace human or trusted judging.',

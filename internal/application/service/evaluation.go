@@ -231,19 +231,37 @@ func (e *EvaluationService) Evaluation(ctx context.Context,
 			return nil, errors.New("invalid chat model for evaluation")
 		}
 	}
+	// The temporary knowledge base may summarize the evaluation corpus while
+	// indexing. Resolve the answer model before creating that KB so no model
+	// other than the operator-selected chat model receives the corpus.
+	if chatModelID == "" {
+		models, err := e.modelService.ListModels(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("list default chat models for evaluation: %w", err)
+		}
+		for _, model := range models {
+			if model != nil && model.Type == types.ModelTypeKnowledgeQA {
+				chatModelID = model.ID
+				break
+			}
+		}
+		if chatModelID == "" {
+			return nil, errors.New("no default chat model found")
+		}
+		logger.Infof(ctx, "Using default chat model: %s", chatModelID)
+	}
 
 	// Handle knowledge base creation if not provided
 	if knowledgeBaseID == "" {
 		logger.Info(ctx, "No knowledge base ID provided, creating new knowledge base")
 		// Create new knowledge base with default evaluation settings
-		// 获取默认的嵌入模型和LLM模型
+		// Resolve the embedding model if the caller did not select one.
 		models, err := e.modelService.ListModels(ctx)
 		if err != nil {
 			logger.Errorf(ctx, "Failed to list models: %v", err)
 			return nil, err
 		}
 
-		var llmModelID string
 		for _, model := range models {
 			if model == nil {
 				continue
@@ -251,21 +269,14 @@ func (e *EvaluationService) Evaluation(ctx context.Context,
 			if model.Type == types.ModelTypeEmbedding && embeddingModelID == "" {
 				embeddingModelID = model.ID
 			}
-			if model.Type == types.ModelTypeKnowledgeQA {
-				llmModelID = model.ID
-			}
 		}
 
-		if embeddingModelID == "" || llmModelID == "" {
-			return nil, fmt.Errorf("no default models found for evaluation")
+		if embeddingModelID == "" {
+			return nil, errors.New("no default embedding model found for evaluation")
 		}
 
-		kb, err := e.knowledgeBaseService.CreateKnowledgeBase(ctx, &types.KnowledgeBase{
-			Name:             "evaluation",
-			Description:      "evaluation",
-			EmbeddingModelID: embeddingModelID,
-			SummaryModelID:   llmModelID,
-		})
+		kb, err := e.knowledgeBaseService.CreateKnowledgeBase(ctx,
+			evaluationKnowledgeBase(embeddingModelID, chatModelID))
 		if err != nil {
 			logger.Errorf(ctx, "Failed to create knowledge base: %v", err)
 			return nil, err
@@ -286,12 +297,8 @@ func (e *EvaluationService) Evaluation(ctx context.Context,
 			return nil, errors.New("evaluation embedding model differs from reference knowledge base")
 		}
 
-		kb, err = e.knowledgeBaseService.CreateKnowledgeBase(ctx, &types.KnowledgeBase{
-			Name:             "evaluation",
-			Description:      "evaluation",
-			EmbeddingModelID: kb.EmbeddingModelID,
-			SummaryModelID:   kb.SummaryModelID,
-		})
+		kb, err = e.knowledgeBaseService.CreateKnowledgeBase(ctx,
+			evaluationKnowledgeBase(kb.EmbeddingModelID, chatModelID))
 		if err != nil {
 			logger.Errorf(ctx, "Failed to create knowledge base: %v", err)
 			return nil, err
@@ -329,26 +336,6 @@ func (e *EvaluationService) Evaluation(ctx context.Context,
 		}
 	}
 
-	if chatModelID == "" {
-		// 获取默认的LLM模型
-		models, err := e.modelService.ListModels(ctx)
-		if err == nil {
-			for _, model := range models {
-				if model == nil {
-					continue
-				}
-				if model.Type == types.ModelTypeKnowledgeQA {
-					chatModelID = model.ID
-					break
-				}
-			}
-		}
-		if chatModelID == "" {
-			return nil, fmt.Errorf("no default chat model found")
-		}
-		logger.Infof(ctx, "Using default chat model: %s", chatModelID)
-	}
-
 	// Create evaluation task with unique ID
 	logger.Info(ctx, "Creating evaluation task")
 	taskID := utils.GenerateTaskID("evaluation", tenantID, datasetID)
@@ -363,6 +350,7 @@ func (e *EvaluationService) Evaluation(ctx context.Context,
 			ReferenceKnowledgeBaseID: referenceKnowledgeBaseID,
 			EmbeddingModelID:         selectedEmbeddingModelID,
 			ChatModelID:              chatModelID,
+			IndexingChatModelID:      chatModelID,
 			RerankModelID:            rerankModelID,
 			BuildRevision:            os.Getenv("WEKNORA_BUILD_COMMIT"),
 			Status:                   types.EvaluationStatuePending,
@@ -450,6 +438,18 @@ func (e *EvaluationService) Evaluation(ctx context.Context,
 
 	logger.Infof(ctx, "Evaluation task created successfully, task ID: %s", taskID)
 	return detail, nil
+}
+
+// evaluationKnowledgeBase pins corpus summarization to the chosen answer
+// model. A reference KB's summary model must not silently receive the
+// evaluation corpus when the operator selected a different chat model.
+func evaluationKnowledgeBase(embeddingModelID, chatModelID string) *types.KnowledgeBase {
+	return &types.KnowledgeBase{
+		Name:             "evaluation",
+		Description:      "evaluation",
+		EmbeddingModelID: embeddingModelID,
+		SummaryModelID:   chatModelID,
+	}
 }
 
 // EvalDataset performs the actual evaluation of a dataset

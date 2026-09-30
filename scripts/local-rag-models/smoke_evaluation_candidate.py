@@ -223,6 +223,7 @@ def run_checks(base: str, project: str, spec: Path, dataset_id: str) -> dict:
     if task.get("total") != expected_total or task.get("finished") != expected_total \
             or not re.fullmatch(r"[0-9a-f]{64}", task.get("dataset_sha256") or "") \
             or task.get("embedding_model_id") != ids["BAAI/bge-small-zh-v1.5"] \
+            or task.get("indexing_chat_model_id") != ids["synthetic-evaluation-chat-stub"] \
             or task.get("rerank_model_id") != ids["BAAI/bge-reranker-base"] \
             or metric.get("metric_version") != 2 \
             or len(detail.get("cases") or []) != expected_total:

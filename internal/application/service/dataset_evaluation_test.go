@@ -181,6 +181,13 @@ func TestEvaluationExecutionMetricsPreserveUsageCoverage(t *testing.T) {
 	require.Equal(t, 2, metrics.UsageReportedResponses)
 }
 
+func TestEvaluationTemporaryKnowledgeBaseUsesSelectedChatModel(t *testing.T) {
+	kb := evaluationKnowledgeBase("embedding-selected", "chat-selected")
+	require.Equal(t, "embedding-selected", kb.EmbeddingModelID)
+	require.Equal(t, "chat-selected", kb.SummaryModelID)
+	require.NotEqual(t, "chat-unselected", kb.SummaryModelID)
+}
+
 func TestEvaluationFinalAnswerUsageExcludesFixedFallbackButRetainsMissingProviderUsage(t *testing.T) {
 	for _, tc := range []struct {
 		name       string
