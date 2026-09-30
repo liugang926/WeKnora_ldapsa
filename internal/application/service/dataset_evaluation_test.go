@@ -54,15 +54,27 @@ func TestDatasetFromRowsRejectsAmbiguousLabels(t *testing.T) {
 			"duplicate question", func(r *rows) { r.queries = append(r.queries, r.queries[0]) },
 			"duplicate evaluation question",
 		},
-		{"duplicate passage", func(r *rows) { r.corpus = append(r.corpus, r.corpus[0]) }, "duplicate evaluation passage"},
-		{"duplicate answer", func(r *rows) { r.answers = append(r.answers, r.answers[0]) }, "duplicate evaluation answer ID"},
+		{
+			"duplicate passage", func(r *rows) { r.corpus = append(r.corpus, r.corpus[0]) },
+			"duplicate evaluation passage",
+		},
+		{
+			"duplicate answer", func(r *rows) { r.answers = append(r.answers, r.answers[0]) },
+			"duplicate evaluation answer ID",
+		},
 		{"orphan evidence question", func(r *rows) { r.qrels[0].QID = 9 }, "evidence references missing question"},
 		{"orphan evidence passage", func(r *rows) { r.qrels[0].PID = 9 }, "references missing passage"},
-		{"duplicate evidence", func(r *rows) { r.qrels = append(r.qrels, r.qrels[0]) }, "duplicate evaluation evidence"},
+		{
+			"duplicate evidence", func(r *rows) { r.qrels = append(r.qrels, r.qrels[0]) },
+			"duplicate evaluation evidence",
+		},
 		{"orphan answer question", func(r *rows) { r.qas[0].QID = 9 }, "answer references missing question"},
 		{"orphan answer", func(r *rows) { r.qas[0].AID = 9 }, "references missing answer"},
 		{"blank linked answer", func(r *rows) { r.answers[0].Text = "  " }, "references blank answer"},
-		{"duplicate answer link", func(r *rows) { r.qas = append(r.qas, r.qas[0]) }, "duplicate evaluation answer link"},
+		{
+			"duplicate answer link", func(r *rows) { r.qas = append(r.qas, r.qas[0]) },
+			"duplicate evaluation answer link",
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
