@@ -73,8 +73,9 @@ def image_metadata(tag: str, expected_revision: str | None,
 
 
 def write_private(path: Path, contents: str) -> None:
-    path.write_text(contents, encoding="utf-8")
-    path.chmod(0o600)
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as private_file:
+        private_file.write(contents)
 
 
 def make_compose(scratch: Path, image: str, token: str) -> Path:
