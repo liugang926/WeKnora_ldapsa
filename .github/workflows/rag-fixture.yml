@@ -34,3 +34,4 @@ jobs:
         run: |
           python scripts/local-rag-models/smoke_candidate.py --help
           python scripts/local-rag-models/smoke_evaluation_candidate.py --help
+          python scripts/local-rag-models/preflight_dataset.py --help
