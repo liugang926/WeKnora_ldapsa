@@ -22,7 +22,11 @@ COPY patches/browserskill ./patches/browserskill
 ARG TARGETOS
 ARG TARGETARCH
 ARG NPM_REGISTRY_ARG
-RUN if [ -n "$NPM_REGISTRY_ARG" ]; then export npm_config_registry="$NPM_REGISTRY_ARG"; fi && \
+ARG CARGO_REGISTRY_MIRROR_ARG
+RUN if [ -n "$CARGO_REGISTRY_MIRROR_ARG" ]; then \
+        printf '[source.crates-io]\nreplace-with = "build-mirror"\n[source.build-mirror]\nregistry = "%s"\n' "$CARGO_REGISTRY_MIRROR_ARG" > "$CARGO_HOME/config.toml"; \
+    fi && \
+    if [ -n "$NPM_REGISTRY_ARG" ]; then export npm_config_registry="$NPM_REGISTRY_ARG"; fi && \
     bash scripts/build_browserskill.sh /opt/weknora/browserskill "${TARGETOS}/${TARGETARCH}"
 
 # Build stage
@@ -37,6 +41,7 @@ ARG GOSUMDB_ARG=off
 ARG APK_MIRROR_ARG
 ARG RUSTUP_DIST_SERVER_ARG
 ARG RUSTUP_UPDATE_ROOT_ARG
+ARG CARGO_REGISTRY_MIRROR_ARG
 
 # 设置Go环境变量
 ENV GOPRIVATE=${GOPRIVATE_ARG}
@@ -85,6 +90,9 @@ ENV PATH=/usr/local/cargo/bin:$PATH
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
     if [ "$WITH_ANYDOC" = "1" ]; then \
+        if [ -n "$CARGO_REGISTRY_MIRROR_ARG" ]; then \
+            printf '[source.crates-io]\nreplace-with = "build-mirror"\n[source.build-mirror]\nregistry = "%s"\n' "$CARGO_REGISTRY_MIRROR_ARG" > "$CARGO_HOME/config.toml"; \
+        fi && \
         if [ -n "$RUSTUP_DIST_SERVER_ARG" ]; then export RUSTUP_DIST_SERVER="$RUSTUP_DIST_SERVER_ARG"; fi && \
         if [ -n "$RUSTUP_UPDATE_ROOT_ARG" ]; then export RUSTUP_UPDATE_ROOT="$RUSTUP_UPDATE_ROOT_ARG"; fi && \
         curl --proto '=https' --tlsv1.2 --retry 5 --retry-all-errors --retry-delay 2 -sSfL https://sh.rustup.rs -o /tmp/weknora-rustup-init.sh && \
