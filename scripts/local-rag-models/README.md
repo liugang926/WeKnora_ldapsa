@@ -33,6 +33,8 @@ python3 scripts/local-rag-models/smoke_candidate.py \
 
 该命令是**本机可选验收**，不在 GitHub CI 中调用本机模型服务。它不生成答案，也不测试引用、无答案拒答、真实 AD 权限或企业语料；这些仍需独立验收。服务地址固定为 Docker 主机的 `host.docker.internal:19090`，只应在已批准的本地测试机器上运行。
 
+若要同时验收评估结果持久化，可在同一候选镜像上运行 `smoke_evaluation_candidate.py`，参数与上例相同，只替换脚本名。它在独立环回 Compose 栈中挂载仓库自带的 16 题虚构 Parquet 题集，使用正式 BGE Embedding/ReRank 和仅监听本机的确定性对话桩，检查 16/16 完成、指标口径 v2、逐题记录、数据集指纹，以及重启应用后任务详情和历史仍可读取。脚本会验证镜像提交与补丁标签，并在结束时删除自己创建的容器和卷；它不会使用共享 `18080` 环境，也不会将题集发送到外部对话模型。确定性对话桩的回答**不能**用于引用准确、忠实度或无答案拒答验收。
+
 ## 完全虚构的题集
 
 `dataset/benchmarks/synthetic-zh-v1/fixture.json` 是 16 题小样例；新增的 [`synthetic-enterprise-zh-v2`](../../dataset/benchmarks/synthetic-enterprise-zh-v2/README.md) 有 42 段、70 题，并用虚构组层级覆盖五类部门的直接/嵌套组。两者都只有虚构公司制度，没有企业原文、真实账号或 AD 对象。运行以下命令生成 WeKnora 的 5 个 Parquet 文件并验证协议和检索（将数据集路径替换为需要的版本）：
