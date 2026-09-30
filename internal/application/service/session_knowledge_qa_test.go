@@ -168,6 +168,7 @@ func TestHandleModelFallback_IncludesHistoryMessages(t *testing.T) {
 	}
 
 	svc.handleModelFallback(context.Background(), cm)
+	require.True(t, cm.FinalAnswerModelCalled, "model fallback must be counted even before its stream finishes")
 
 	// Corrected fallback shape: a system message carries the fallback
 	// instruction, history is replayed in the middle, and the turn ends on the

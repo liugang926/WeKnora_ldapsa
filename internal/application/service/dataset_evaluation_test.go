@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/stretchr/testify/require"
 )
 
@@ -178,4 +179,39 @@ func TestEvaluationExecutionMetricsPreserveUsageCoverage(t *testing.T) {
 	require.Equal(t, 1, metrics.UsageAccountingVersion)
 	require.Equal(t, 3, metrics.ChatResponses)
 	require.Equal(t, 2, metrics.UsageReportedResponses)
+}
+
+func TestEvaluationFinalAnswerUsageExcludesFixedFallbackButRetainsMissingProviderUsage(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		state      *types.ChatManage
+		called     bool
+		reported   bool
+		prompt     int64
+		completion int64
+	}{
+		{name: "nil state"},
+		{name: "fixed fallback", state: &types.ChatManage{PipelineState: types.PipelineState{
+			ChatResponse: &types.ChatResponse{Content: "no evidence"},
+		}}},
+		{name: "model fallback pending", state: &types.ChatManage{PipelineState: types.PipelineState{
+			FinalAnswerModelCalled: true,
+		}}, called: true},
+		{name: "provider omitted usage", state: &types.ChatManage{PipelineState: types.PipelineState{
+			FinalAnswerModelCalled: true, ChatResponse: &types.ChatResponse{Content: "answer"},
+		}}, called: true},
+		{name: "reported usage", state: &types.ChatManage{PipelineState: types.PipelineState{
+			FinalAnswerModelCalled: true, ChatResponse: &types.ChatResponse{
+				Content: "answer", Usage: types.TokenUsage{PromptTokens: 10, CompletionTokens: 8},
+			},
+		}}, called: true, reported: true, prompt: 10, completion: 8},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			called, reported, prompt, completion := evaluationFinalAnswerUsage(tc.state)
+			require.Equal(t, tc.called, called)
+			require.Equal(t, tc.reported, reported)
+			require.Equal(t, tc.prompt, prompt)
+			require.Equal(t, tc.completion, completion)
+		})
+	}
 }

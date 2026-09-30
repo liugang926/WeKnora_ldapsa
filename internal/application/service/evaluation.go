@@ -599,11 +599,12 @@ func (e *EvaluationService) EvalDataset(ctx context.Context, detail *types.Evalu
 			finished += 1
 			done := finished
 			latencies = append(latencies, time.Since(startedAt).Milliseconds())
-			if chatManage.ChatResponse != nil {
+			called, reported, prompt, completion := evaluationFinalAnswerUsage(chatManage)
+			if called {
 				chatResponses++
-				promptTokens += int64(chatManage.ChatResponse.Usage.PromptTokens)
-				completionTokens += int64(chatManage.ChatResponse.Usage.CompletionTokens)
-				if chatManage.ChatResponse.Usage.PromptTokens+chatManage.ChatResponse.Usage.CompletionTokens > 0 {
+				promptTokens += prompt
+				completionTokens += completion
+				if reported {
 					usageReportedResponses++
 				}
 			}
@@ -687,4 +688,18 @@ func evaluationExecutionMetrics(latencies []int64, promptTokens, completionToken
 	result.LatencyP50Ms = ordered[(len(ordered)-1)/2]
 	result.LatencyP95Ms = ordered[(95*len(ordered)+99)/100-1]
 	return result
+}
+
+// evaluationFinalAnswerUsage excludes fixed fallbacks (text without an LLM
+// call), while retaining actual calls with missing usage in the denominator.
+func evaluationFinalAnswerUsage(chatManage *types.ChatManage) (called, reported bool, prompt, completion int64) {
+	if chatManage == nil || !chatManage.FinalAnswerModelCalled {
+		return false, false, 0, 0
+	}
+	if chatManage.ChatResponse == nil {
+		return true, false, 0, 0
+	}
+	prompt = int64(chatManage.ChatResponse.Usage.PromptTokens)
+	completion = int64(chatManage.ChatResponse.Usage.CompletionTokens)
+	return true, prompt+completion > 0, prompt, completion
 }

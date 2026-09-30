@@ -1096,6 +1096,10 @@ func (s *sessionService) handleModelFallback(ctx context.Context, chatManage *ty
 		return
 	}
 
+	// The stream may complete after the caller returns. Mark the call now so
+	// evaluation never mistakes an unreported model fallback for a free fixed
+	// response.
+	chatManage.FinalAnswerModelCalled = true
 	// Start goroutine to consume stream and emit events
 	go s.consumeFallbackStream(ctx, chatManage, responseChan, modelContext)
 }

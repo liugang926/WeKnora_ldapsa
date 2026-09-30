@@ -167,7 +167,11 @@ def price_synthetic_chat(base: str, token: str, task_id: str, detail: dict) -> f
     reported = usage.get("usage_reported_responses")
     if usage.get("usage_accounting_version") != 1 or not isinstance(calls, int) \
             or calls < 1 or reported != calls:
-        raise RuntimeError("synthetic chat usage coverage is incomplete")
+        raise RuntimeError("synthetic chat usage coverage is incomplete: "
+                           f"version={usage.get('usage_accounting_version')} "
+                           f"responses={calls} reported={reported} "
+                           f"prompt_tokens={usage.get('prompt_tokens')} "
+                           f"completion_tokens={usage.get('completion_tokens')}")
     expected = round((usage["prompt_tokens"] + 2 * usage["completion_tokens"]) / 1_000_000, 8)
     priced = http_json(base, "PUT", f"/api/v1/evaluation/{task_id}/chat-cost", token=token,
                        body={"currency": "CNY", "tariff_version": "synthetic-v1",
