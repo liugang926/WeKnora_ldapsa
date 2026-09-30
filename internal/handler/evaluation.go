@@ -210,6 +210,10 @@ func (e *EvaluationHandler) Evaluation(c *gin.Context) {
 		secutils.SanitizeForLog(request.EmbeddingModelID),
 	)
 	if err != nil {
+		if stderrors.Is(err, types.ErrEvaluationExplicitModelsRequired) {
+			_ = c.Error(errors.NewBadRequestError("Select explicit embedding, rerank and chat models for this dataset"))
+			return
+		}
 		logger.ErrorWithFields(ctx, err, nil)
 		c.Error(errors.NewInternalServerError(err.Error()))
 		return

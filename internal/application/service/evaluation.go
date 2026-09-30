@@ -194,6 +194,9 @@ func (e *EvaluationService) SetEvaluationChatCost(
 func (e *EvaluationService) Evaluation(ctx context.Context,
 	datasetID string, knowledgeBaseID string, chatModelID string, rerankModelID string, embeddingModelID string,
 ) (*types.EvaluationDetail, error) {
+	if err := validateEvaluationModelSelection(datasetID, chatModelID, rerankModelID, embeddingModelID); err != nil {
+		return nil, err
+	}
 	logger.Info(ctx, "Start evaluation")
 	logger.Infof(ctx, "Dataset ID: %s, Knowledge Base ID: %s, Chat Model ID: %s, Rerank Model ID: %s",
 		datasetID, knowledgeBaseID, chatModelID, rerankModelID)
@@ -438,6 +441,18 @@ func (e *EvaluationService) Evaluation(ctx context.Context,
 
 	logger.Infof(ctx, "Evaluation task created successfully, task ID: %s", taskID)
 	return detail, nil
+}
+
+// The bundled default sample preserves the legacy API's optional model
+// selection. Every named dataset, or an operator-supplied replacement for the
+// default sample, must identify all data recipients before any KB is created.
+func validateEvaluationModelSelection(datasetID, chatModelID, rerankModelID, embeddingModelID string) error {
+	if (datasetID != "" && datasetID != "default") || os.Getenv("EVALUATION_DEFAULT_DATASET_DIR") != "" {
+		if chatModelID == "" || rerankModelID == "" || embeddingModelID == "" {
+			return types.ErrEvaluationExplicitModelsRequired
+		}
+	}
+	return nil
 }
 
 // evaluationKnowledgeBase pins corpus summarization to the chosen answer

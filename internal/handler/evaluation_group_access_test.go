@@ -16,13 +16,36 @@ import (
 type evaluationServiceStub struct {
 	interfaces.EvaluationService
 	called bool
+	err    error
 }
 
 func (s *evaluationServiceStub) Evaluation(
 	context.Context, string, string, string, string, string,
 ) (*types.EvaluationDetail, error) {
 	s.called = true
-	return &types.EvaluationDetail{}, nil
+	return &types.EvaluationDetail{}, s.err
+}
+
+func TestEvaluationReportsExplicitModelRequirementAsBadRequest(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	evaluations := &evaluationServiceStub{err: types.ErrEvaluationExplicitModelsRequired}
+	h := NewEvaluationHandler(evaluations)
+	r := gin.New()
+	r.Use(errorCapture())
+	r.Use(func(c *gin.Context) {
+		c.Set(types.TenantIDContextKey.String(), uint64(1))
+		c.Next()
+	})
+	r.POST("/evaluation", h.Evaluation)
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/evaluation",
+		bytes.NewBufferString(`{"dataset_id":"approved-set"}`))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+
+	require.True(t, evaluations.called)
+	require.Equal(t, http.StatusBadRequest, w.Code)
 }
 
 func TestEvaluationAppliesKnowledgeBaseGroupPolicy(t *testing.T) {

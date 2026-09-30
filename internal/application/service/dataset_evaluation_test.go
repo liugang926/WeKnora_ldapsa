@@ -188,6 +188,38 @@ func TestEvaluationTemporaryKnowledgeBaseUsesSelectedChatModel(t *testing.T) {
 	require.NotEqual(t, "chat-unselected", kb.SummaryModelID)
 }
 
+func TestEvaluationRequiresExplicitModelsForNamedOrOperatorDefaultDataset(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		datasetID string
+		chat      string
+		rerank    string
+		embedding string
+		wantError bool
+	}{
+		{name: "named missing chat", datasetID: "approved-set", rerank: "rerank", embedding: "embedding", wantError: true},
+		{name: "named missing rerank", datasetID: "approved-set", chat: "chat", embedding: "embedding", wantError: true},
+		{name: "named missing embedding", datasetID: "approved-set", chat: "chat", rerank: "rerank", wantError: true},
+		{name: "named all explicit", datasetID: "approved-set", chat: "chat", rerank: "rerank", embedding: "embedding"},
+		{name: "bundled default remains compatible", datasetID: "default"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateEvaluationModelSelection(tc.datasetID, tc.chat, tc.rerank, tc.embedding)
+			if tc.wantError {
+				require.ErrorIs(t, err, types.ErrEvaluationExplicitModelsRequired)
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
+	t.Setenv("EVALUATION_DEFAULT_DATASET_DIR", "/controlled/default")
+	require.ErrorIs(t, validateEvaluationModelSelection("default", "", "", ""),
+		types.ErrEvaluationExplicitModelsRequired)
+	service := &EvaluationService{}
+	_, err := service.Evaluation(context.Background(), "approved-set", "", "", "", "")
+	require.ErrorIs(t, err, types.ErrEvaluationExplicitModelsRequired)
+}
+
 func TestEvaluationFinalAnswerUsageExcludesFixedFallbackButRetainsMissingProviderUsage(t *testing.T) {
 	for _, tc := range []struct {
 		name       string

@@ -31,6 +31,10 @@ var ErrEvaluationChatCostNotReady = errors.New("evaluation chat cost is not read
 // ErrEvaluationChatCostConflict means a concurrent writer changed the run.
 var ErrEvaluationChatCostConflict = errors.New("evaluation chat cost changed concurrently")
 
+// ErrEvaluationExplicitModelsRequired prevents a named or operator-provided
+// dataset from being sent to whichever model happens to appear first.
+var ErrEvaluationExplicitModelsRequired = errors.New("explicit embedding, rerank and chat models required for evaluation dataset")
+
 // Jieba is a global instance of Chinese text segmentation tool
 var Jieba *gojieba.Jieba = newJieba()
 
