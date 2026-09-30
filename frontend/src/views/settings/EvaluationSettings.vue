@@ -46,7 +46,7 @@
         <table class="evaluation-table">
           <thead><tr>
             <th>{{ copy.time }}</th><th>{{ copy.status }}</th><th>{{ copy.dataset }}</th>
-            <th>Recall</th><th>NDCG@10</th><th>ROUGE-L</th><th>P95</th><th>{{ copy.tokens }}</th><th>{{ copy.review }}</th>
+            <th>Recall</th><th>NDCG@10</th><th>ROUGE-L</th><th>P95</th><th>{{ copy.tokens }}</th><th>{{ copy.reviewed }}</th><th>{{ copy.review }}</th>
           </tr></thead>
           <tbody>
             <tr v-for="run in runs" :key="run.task.id">
@@ -58,7 +58,8 @@
               <td>{{ metric(run.metric?.generation_evaluated === 0 ? undefined : run.metric?.generation_metrics?.rougel) }} <small v-if="run.metric?.generation_evaluated != null">(n={{ run.metric.generation_evaluated }})</small></td>
               <td>{{ run.metric?.execution_metrics?.latency_p95_ms ?? '—' }} ms</td>
               <td>{{ tokenCount(run) }}</td>
-              <td><button v-if="run.cases?.some(Boolean)" type="button" class="secondary" @click="selectedRunID = run.task.id">{{ copy.open }}</button></td>
+              <td>{{ manualCoverage(run) }}</td>
+              <td><button v-if="run.cases?.some(Boolean)" type="button" class="secondary" @click="openRun(run)">{{ copy.open }}</button></td>
             </tr>
           </tbody>
         </table>
@@ -75,6 +76,27 @@
         <p><strong>{{ copy.relevant }}</strong> {{ entry.relevant_passage_ids.join(', ') || '—' }}</p>
         <p><strong>{{ copy.retrieved }}</strong> {{ entry.retrieved_passage_ids.join(', ') || '—' }}</p>
         <p><strong>{{ copy.reranked }}</strong> {{ entry.reranked_passage_ids.join(', ') || '—' }}</p>
+        <div v-if="selectedRun.task.status === 2 && reviewDrafts[entry.question_id]" class="evaluation-review">
+          <label>{{ copy.faithfulnessLabel }}
+            <select v-model="reviewDrafts[entry.question_id].faithfulness" :disabled="!entry.reference_answer || savingReviewID === entry.question_id">
+              <option value="">{{ copy.choose }}</option><option value="pass">{{ copy.pass }}</option><option value="fail">{{ copy.fail }}</option><option value="not_applicable">{{ copy.notApplicable }}</option>
+            </select>
+          </label>
+          <label>{{ copy.citationLabel }}
+            <select v-model="reviewDrafts[entry.question_id].citation_accuracy" :disabled="!entry.reference_answer || savingReviewID === entry.question_id">
+              <option value="">{{ copy.choose }}</option><option value="pass">{{ copy.pass }}</option><option value="fail">{{ copy.fail }}</option><option value="not_applicable">{{ copy.notApplicable }}</option>
+            </select>
+          </label>
+          <label>{{ copy.abstentionLabel }}
+            <select v-model="reviewDrafts[entry.question_id].abstention" :disabled="!!entry.reference_answer || savingReviewID === entry.question_id">
+              <option value="">{{ copy.choose }}</option><option value="pass">{{ copy.pass }}</option><option value="fail">{{ copy.fail }}</option><option value="not_applicable">{{ copy.notApplicable }}</option>
+            </select>
+          </label>
+          <div class="evaluation-review-action">
+            <button type="button" class="secondary" :disabled="savingReviewID === entry.question_id || !validReview(entry)" @click="saveReview(entry)">{{ copy.saveReview }}</button>
+            <small v-if="entry.review">{{ copy.reviewedBy }} {{ entry.review.reviewed_by }} · {{ formatDate(entry.review.reviewed_at) }} <span v-if="entry.review_history?.length">({{ entry.review_history.length }} {{ copy.corrections }})</span></small>
+          </div>
+        </div>
       </details>
     </div>
 
@@ -96,10 +118,12 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { get, post } from '@/utils/request'
+import { get, post, put } from '@/utils/request'
 import { listModels, type ModelConfig } from '@/api/model'
+import { defaultReview, manualCoverage, manualRate, validReview as isValidReview,
+  type CaseReview, type ReviewCase, type ReviewInput } from './evaluationReview'
 
-interface CaseResult { question_id: number; question: string; reference_answer: string; generated_answer: string; relevant_passage_ids: number[]; retrieved_passage_ids: number[]; reranked_passage_ids: number[] }
+interface CaseResult extends ReviewCase { question: string; generated_answer: string; relevant_passage_ids: number[]; retrieved_passage_ids: number[]; reranked_passage_ids: number[]; review?: CaseReview }
 interface Run {
   task: { id: string; dataset_id: string; dataset_sha256?: string; concurrency?: number; start_time: string; status: number; total?: number; finished?: number; err_msg?: string }
   metric?: { metric_version?: number; retrieval_evaluated?: number; generation_evaluated?: number; retrieval_metrics?: { recall?: number; ndcg10?: number }; generation_metrics?: { rougel?: number }; execution_metrics?: { latency_p95_ms?: number; prompt_tokens?: number; completion_tokens?: number } }
@@ -115,8 +139,10 @@ const copy = computed(() => String(locale.value).startsWith('zh') ? {
   start: '开始评估', starting: '提交中…', history: '历史运行', empty: '暂无评估记录。', time: '开始时间', status: '状态', tokens: 'Tokens',
   compare: '版本对比', notComparable: '仅可比较相同数据集指纹、指标口径和并发设置，且均已成功的两次运行。',
   faithfulness: '证据忠实度与引用准确性尚未自动评分；BLEU/ROUGE 不能替代这两项人工或可信评审。',
-  review: '逐题复核', open: '查看', caseNote: '负数表示未能唯一映射到语料的检索结果。请依据原始脱敏题集逐条核验引用、拒答和证据忠实度。',
+  review: '逐题复核', reviewed: '人工复核', open: '查看', caseNote: '负数表示未能唯一映射到语料的检索结果。请依据原始脱敏题集逐条核验引用、拒答和证据忠实度。',
   expected: '参考答案：', generated: '生成答案：', relevant: '相关证据 ID：', retrieved: '召回 ID：', reranked: '重排 ID：', noAnswer: '应拒答',
+  faithfulnessLabel: '证据忠实度', citationLabel: '引用准确性', abstentionLabel: '无答案拒答', pass: '通过', fail: '失败', notApplicable: '不适用',
+  saveReview: '保存人工复核', reviewedBy: '复核人', corrections: '次修订',
 } : {
   title: 'RAG evaluation', subtitle: 'Persisted runs and comparisons on the same dataset.', refresh: 'Refresh',
   newRun: 'New run', dataset: 'Dataset ID', embedding: 'Embedding model', rerank: 'ReRank model', chat: 'Chat model', choose: 'Select',
@@ -125,8 +151,10 @@ const copy = computed(() => String(locale.value).startsWith('zh') ? {
   start: 'Start evaluation', starting: 'Submitting…', history: 'Run history', empty: 'No evaluation runs yet.', time: 'Started', status: 'Status', tokens: 'Tokens',
   compare: 'Compare versions', notComparable: 'Both runs must succeed and use the same dataset fingerprint, metric version, and concurrency.',
   faithfulness: 'Evidence faithfulness and citation accuracy are not yet auto-scored; BLEU/ROUGE cannot replace human or trusted judging.',
-  review: 'Case review', open: 'Inspect', caseNote: 'Negative IDs are retrieval hits that could not be mapped uniquely to the corpus. Check citations, abstention and faithfulness against the approved fixture.',
+  review: 'Case review', reviewed: 'Human review', open: 'Inspect', caseNote: 'Negative IDs are retrieval hits that could not be mapped uniquely to the corpus. Check citations, abstention and faithfulness against the approved fixture.',
   expected: 'Reference:', generated: 'Generated:', relevant: 'Relevant IDs:', retrieved: 'Retrieved IDs:', reranked: 'Reranked IDs:', noAnswer: 'Should abstain',
+  faithfulnessLabel: 'Faithfulness', citationLabel: 'Citation accuracy', abstentionLabel: 'No-answer abstention', pass: 'Pass', fail: 'Fail', notApplicable: 'N/A',
+  saveReview: 'Save human review', reviewedBy: 'Reviewed by', corrections: 'corrections',
 })
 
 const datasetID = ref('synthetic-zh-v1')
@@ -141,6 +169,8 @@ const error = ref('')
 const leftID = ref('')
 const rightID = ref('')
 const selectedRunID = ref('')
+const reviewDrafts = ref<Record<number, ReviewInput>>({})
+const savingReviewID = ref<number | null>(null)
 const embeddings = computed(() => models.value.filter(m => m.type === 'Embedding' && m.status === 'active'))
 const rerankers = computed(() => models.value.filter(m => m.type === 'Rerank' && m.status === 'active'))
 const chatModels = computed(() => models.value.filter(m => m.type === 'KnowledgeQA' && m.status === 'active'))
@@ -154,6 +184,7 @@ const left = computed(() => runs.value.find(r => r.task.id === leftID.value))
 const right = computed(() => runs.value.find(r => r.task.id === rightID.value))
 const selectedRun = computed(() => runs.value.find(r => r.task.id === selectedRunID.value))
 const selectedCases = computed(() => selectedRun.value?.cases?.filter((entry): entry is CaseResult => !!entry) || [])
+const validReview = (entry: CaseResult) => isValidReview(entry, reviewDrafts.value[entry.question_id])
 const comparable = computed(() => !!left.value && !!right.value && left.value.task.id !== right.value.task.id &&
   !!left.value.task.dataset_sha256 && left.value.task.dataset_sha256 === right.value.task.dataset_sha256 &&
   (left.value.metric?.metric_version ?? 1) === (right.value.metric?.metric_version ?? 1) &&
@@ -170,9 +201,33 @@ const comparison = computed(() => {
     ['NDCG@10', left.value.metric?.retrieval_metrics?.ndcg10, right.value.metric?.retrieval_metrics?.ndcg10],
     ['ROUGE-L', left.value.metric?.generation_metrics?.rougel, right.value.metric?.generation_metrics?.rougel],
     ['P95 ms', left.value.metric?.execution_metrics?.latency_p95_ms, right.value.metric?.execution_metrics?.latency_p95_ms],
+    ['Faithfulness (human)', manualRate(left.value, 'faithfulness'), manualRate(right.value, 'faithfulness')],
+    ['Citation accuracy (human)', manualRate(left.value, 'citation_accuracy'), manualRate(right.value, 'citation_accuracy')],
+    ['No-answer abstention (human)', manualRate(left.value, 'abstention'), manualRate(right.value, 'abstention')],
   ]
   return pairs.map(([label, a, b]) => ({ label, left: metric(a), right: metric(b), delta: a == null || b == null ? '—' : `${b - a >= 0 ? '+' : ''}${(b - a).toFixed(3)}` }))
 })
+
+function openRun(run: Run) {
+  selectedRunID.value = run.task.id
+  reviewDrafts.value = Object.fromEntries((run.cases || []).filter((entry): entry is CaseResult => !!entry)
+    .map(entry => [entry.question_id, defaultReview(entry)]))
+}
+
+async function saveReview(entry: CaseResult) {
+  if (!selectedRunID.value || !validReview(entry)) return
+  savingReviewID.value = entry.question_id
+  try {
+    const response = await put<{ success: boolean; data: Run }>(
+      `/api/v1/evaluation/${encodeURIComponent(selectedRunID.value)}/cases/${entry.question_id}/review`,
+      reviewDrafts.value[entry.question_id],
+    )
+    runs.value = runs.value.map(run => run.task.id === response.data.task.id ? response.data : run)
+    error.value = ''
+  } catch (cause) {
+    error.value = cause instanceof Error ? cause.message : String(cause)
+  } finally { savingReviewID.value = null }
+}
 
 async function refresh() {
   loading.value = true
@@ -229,5 +284,11 @@ onUnmounted(() => { if (poll) clearInterval(poll) })
 .evaluation-case { border-top: 1px solid var(--td-border-level-1-color); padding: 10px 0; }
 .evaluation-case summary { cursor: pointer; }
 .evaluation-case pre { white-space: pre-wrap; overflow-wrap: anywhere; background: var(--td-bg-color-secondarycontainer); padding: 10px; border-radius: var(--app-radius-sm); }
+.evaluation-review { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 12px; padding: 12px; border: 1px solid var(--td-border-level-1-color); border-radius: var(--app-radius-md); }
+.evaluation-review label { display: grid; gap: 5px; }
+.evaluation-review select { min-width: 0; padding: 7px; border: 1px solid var(--td-border-level-2-color); border-radius: var(--app-radius-sm); background: var(--td-bg-color-container); color: inherit; }
+.evaluation-review-action { grid-column: 1 / -1; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.evaluation-review-action small { color: var(--td-text-color-secondary); }
 @media (max-width: 720px) { .evaluation-form, .comparison-grid { grid-template-columns: 1fr; } .evaluation-heading { flex-wrap: wrap; } }
+@media (max-width: 720px) { .evaluation-review { grid-template-columns: 1fr; } }
 </style>

@@ -71,6 +71,23 @@ class EvaluationCandidateTest(unittest.TestCase):
         self.assertEqual(base, "http://127.0.0.1:47321")
         opened.assert_called_once_with(base + "/health", timeout=3)
 
+    def test_synthetic_review_checks_answered_and_no_answer_cases(self):
+        def save(_base, method, path, *, token, body):
+            self.assertEqual(method, "PUT")
+            self.assertEqual(token, "synthetic-jwt")
+            question_id = int(path.split("/")[-2])
+            return {"data": {"cases": [{"question_id": question_id, "review": body}]}}
+
+        detail = {"cases": [{"question_id": 1, "reference_answer": "fictional"},
+                            {"question_id": 2, "reference_answer": ""}]}
+        with mock.patch.object(evaluation, "http_json", side_effect=save) as http_call:
+            judgments = evaluation.review_synthetic_cases(
+                "http://127.0.0.1:1234", "synthetic-jwt", "task-1", detail)
+        self.assertEqual(len(judgments), 2)
+        self.assertEqual(judgments[1]["citation_accuracy"], "fail")
+        self.assertEqual(judgments[2]["abstention"], "fail")
+        self.assertEqual(http_call.call_count, 2)
+
 
 if __name__ == "__main__":
     unittest.main()

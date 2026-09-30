@@ -135,6 +135,31 @@ def wait_for_app_restart(project: str, spec: Path) -> str:
     raise RuntimeError("candidate app did not become healthy after restart")
 
 
+def review_synthetic_cases(base: str, token: str, task_id: str, detail: dict) -> dict[int, dict]:
+    """Exercise durable review writes; these are protocol labels, not QA acceptance."""
+    cases = [item for item in detail.get("cases") or [] if item]
+    answered = next((item for item in cases if item.get("reference_answer")), None)
+    no_answer = next((item for item in cases if not item.get("reference_answer")), None)
+    if not answered or not no_answer:
+        raise RuntimeError("synthetic fixture lacks answered or no-answer review cases")
+    judgments = {
+        answered["question_id"]: {"faithfulness": "fail", "citation_accuracy": "fail",
+                                  "abstention": "not_applicable"},
+        no_answer["question_id"]: {"faithfulness": "not_applicable",
+                                   "citation_accuracy": "not_applicable", "abstention": "fail"},
+    }
+    for question_id, labels in judgments.items():
+        updated = http_json(base, "PUT",
+                            f"/api/v1/evaluation/{task_id}/cases/{question_id}/review",
+                            token=token, body=labels)["data"]
+        match = next((item for item in updated.get("cases") or []
+                      if item and item.get("question_id") == question_id), None)
+        if not match or any(match.get("review", {}).get(key) != value
+                            for key, value in labels.items()):
+            raise RuntimeError("synthetic human-review API did not persist labels")
+    return judgments
+
+
 def run_checks(base: str, project: str, spec: Path, dataset_id: str) -> dict:
     expected_total = DATASET_TOTALS[dataset_id]
     suffix = secrets.token_hex(5)
@@ -176,6 +201,7 @@ def run_checks(base: str, project: str, spec: Path, dataset_id: str) -> dict:
         raise RuntimeError("durable evaluation has missing cases, model IDs, or metric version")
     if ChatStub.requests_seen < 1:
         raise RuntimeError("synthetic chat stub was not called")
+    judgments = review_synthetic_cases(base, token, task_id, detail)
     before = {"task_id": task_id, "dataset_id": dataset_id,
               "dataset_sha256": task["dataset_sha256"],
               "total": task["total"], "finished": task["finished"],
@@ -188,12 +214,18 @@ def run_checks(base: str, project: str, spec: Path, dataset_id: str) -> dict:
             or (restored.get("task") or {}).get("status") != 2 \
             or len(restored.get("cases") or []) != expected_total:
         raise RuntimeError("evaluation result was not preserved across app restart")
+    restored_by_id = {item["question_id"]: item for item in restored.get("cases") or [] if item}
+    for question_id, labels in judgments.items():
+        review = (restored_by_id.get(question_id) or {}).get("review") or {}
+        if any(review.get(key) != value for key, value in labels.items()) \
+                or not review.get("reviewed_by") or not review.get("reviewed_at"):
+            raise RuntimeError("synthetic human-review labels were not preserved across restart")
     history = http_json(base, "GET", "/api/v1/evaluation", token=token)["data"]
     if not isinstance(history, list) or not any((item.get("task") or {}).get("id") == task_id
                                                  for item in history):
         raise RuntimeError("evaluation result is absent from durable history")
     return {**before, "chat_stub_requests": ChatStub.requests_seen,
-            "restored_after_restart": True}
+            "restored_after_restart": True, "synthetic_reviews_restored": len(judgments)}
 
 
 def main() -> None:

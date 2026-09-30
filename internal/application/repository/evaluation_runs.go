@@ -95,6 +95,79 @@ func (r *EvaluationRunRepository) List(
 	return results, nil
 }
 
+// ReviewCase records an explicit human judgment in the durable run snapshot.
+// The optimistic compare-and-swap preserves concurrent reviews of different
+// questions without adding a migration that would race the Nextcloud branch's
+// pending migration versions.
+func (r *EvaluationRunRepository) ReviewCase(
+	ctx context.Context, tenantID uint64, taskID string, questionID int,
+	reviewerID string, input types.EvaluationCaseReviewInput,
+) (*types.EvaluationDetail, error) {
+	if tenantID == 0 || taskID == "" || reviewerID == "" || questionID < 0 {
+		return nil, types.ErrEvaluationReviewInvalid
+	}
+	for attempt := 0; attempt < 5; attempt++ {
+		var row evaluationRunRow
+		if err := r.db.WithContext(ctx).Table("evaluation_runs").
+			Where("tenant_id = ? AND task_id = ?", tenantID, taskID).Take(&row).Error; err != nil {
+			return nil, err
+		}
+		detail, err := decodeEvaluationRun(row)
+		if err != nil {
+			return nil, err
+		}
+		if detail.Task.Status != types.EvaluationStatueSuccess {
+			return nil, types.ErrEvaluationReviewNotReady
+		}
+		var target *types.EvaluationCaseResult
+		for _, result := range detail.Cases {
+			if result != nil && result.QuestionID == questionID {
+				target = result
+				break
+			}
+		}
+		if target == nil {
+			return nil, types.ErrEvaluationCaseNotFound
+		}
+		if !validEvaluationReview(input, target.ReferenceAnswer == "") {
+			return nil, types.ErrEvaluationReviewInvalid
+		}
+		if target.Review != nil {
+			target.ReviewHistory = append(target.ReviewHistory, *target.Review)
+		}
+		now := time.Now().UTC()
+		target.Review = &types.EvaluationCaseReview{
+			Faithfulness: input.Faithfulness, CitationAccuracy: input.CitationAccuracy,
+			Abstention: input.Abstention, ReviewedBy: reviewerID, ReviewedAt: now,
+		}
+		encoded, err := json.Marshal(detail)
+		if err != nil {
+			return nil, fmt.Errorf("encode reviewed evaluation run: %w", err)
+		}
+		updated := r.db.WithContext(ctx).Table("evaluation_runs").
+			Where("tenant_id = ? AND task_id = ? AND status = ? AND detail_json = ?",
+				tenantID, taskID, int(types.EvaluationStatueSuccess), row.DetailJSON).
+			Updates(map[string]any{"detail_json": string(encoded), "updated_at": now})
+		if updated.Error != nil {
+			return nil, updated.Error
+		}
+		if updated.RowsAffected == 1 {
+			return detail, nil
+		}
+	}
+	return nil, types.ErrEvaluationReviewConflict
+}
+
+func validEvaluationReview(input types.EvaluationCaseReviewInput, noAnswer bool) bool {
+	judged := func(value string) bool { return value == "pass" || value == "fail" }
+	if noAnswer {
+		return input.Faithfulness == "not_applicable" &&
+			input.CitationAccuracy == "not_applicable" && judged(input.Abstention)
+	}
+	return judged(input.Faithfulness) && judged(input.CitationAccuracy) &&
+		input.Abstention == "not_applicable"
+}
+
 func decodeEvaluationRun(row evaluationRunRow) (*types.EvaluationDetail, error) {
 	var detail types.EvaluationDetail
 	if err := json.Unmarshal([]byte(row.DetailJSON), &detail); err != nil {

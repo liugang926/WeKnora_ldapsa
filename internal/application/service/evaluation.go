@@ -161,6 +161,17 @@ func (e *EvaluationService) ListEvaluationResults(ctx context.Context, limit int
 	return e.runRepository.List(ctx, types.MustTenantIDFromContext(ctx), limit)
 }
 
+func (e *EvaluationService) ReviewEvaluationCase(
+	ctx context.Context, taskID string, questionID int, input types.EvaluationCaseReviewInput,
+) (*types.EvaluationDetail, error) {
+	reviewerID, ok := types.UserIDFromContext(ctx)
+	if !ok {
+		return nil, types.ErrEvaluationReviewInvalid
+	}
+	return e.runRepository.ReviewCase(ctx, types.MustTenantIDFromContext(ctx),
+		taskID, questionID, reviewerID, input)
+}
+
 // Evaluation starts a new evaluation task with given parameters
 // datasetID: ID of the dataset to evaluate against
 // knowledgeBaseID: ID of the knowledge base to use (empty to create new)

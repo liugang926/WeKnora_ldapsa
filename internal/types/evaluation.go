@@ -2,11 +2,19 @@ package types
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"time"
 
 	"github.com/yanyiwu/gojieba"
+)
+
+var (
+	ErrEvaluationReviewInvalid  = errors.New("invalid evaluation case review")
+	ErrEvaluationReviewNotReady = errors.New("evaluation run is not complete")
+	ErrEvaluationCaseNotFound   = errors.New("evaluation case not found")
+	ErrEvaluationReviewConflict = errors.New("evaluation review changed concurrently")
 )
 
 // Jieba is a global instance of Chinese text segmentation tool
@@ -71,16 +79,38 @@ type EvaluationDetail struct {
 // citation accuracy and evidence faithfulness. Passage text stays in the
 // separately controlled fixture, not in this row or application logs.
 type EvaluationCaseResult struct {
-	QuestionID          int    `json:"question_id"`
-	Question            string `json:"question"`
-	ReferenceAnswer     string `json:"reference_answer"`
-	GeneratedAnswer     string `json:"generated_answer"`
-	RelevantPassageIDs  []int  `json:"relevant_passage_ids"`
-	RetrievedPassageIDs []int  `json:"retrieved_passage_ids"`
-	RerankedPassageIDs  []int  `json:"reranked_passage_ids"`
-	LatencyMs           int64  `json:"latency_ms"`
-	PromptTokens        int64  `json:"prompt_tokens"`
-	CompletionTokens    int64  `json:"completion_tokens"`
+	QuestionID          int                    `json:"question_id"`
+	Question            string                 `json:"question"`
+	ReferenceAnswer     string                 `json:"reference_answer"`
+	GeneratedAnswer     string                 `json:"generated_answer"`
+	RelevantPassageIDs  []int                  `json:"relevant_passage_ids"`
+	RetrievedPassageIDs []int                  `json:"retrieved_passage_ids"`
+	RerankedPassageIDs  []int                  `json:"reranked_passage_ids"`
+	LatencyMs           int64                  `json:"latency_ms"`
+	PromptTokens        int64                  `json:"prompt_tokens"`
+	CompletionTokens    int64                  `json:"completion_tokens"`
+	Review              *EvaluationCaseReview  `json:"review,omitempty"`
+	ReviewHistory       []EvaluationCaseReview `json:"review_history,omitempty"`
+}
+
+// EvaluationCaseReview is a human judgment, not an LLM-derived metric. The
+// reviewer must compare the answer and citations against the controlled
+// evidence fixture; the application deliberately does not store that text.
+type EvaluationCaseReview struct {
+	Faithfulness     string    `json:"faithfulness"`
+	CitationAccuracy string    `json:"citation_accuracy"`
+	Abstention       string    `json:"abstention"`
+	ReviewedBy       string    `json:"reviewed_by"`
+	ReviewedAt       time.Time `json:"reviewed_at"`
+}
+
+// EvaluationCaseReviewInput contains only judgment labels. Free-form evidence
+// text is excluded so reviewers do not accidentally copy controlled content
+// into evaluation metadata or logs.
+type EvaluationCaseReviewInput struct {
+	Faithfulness     string `json:"faithfulness"`
+	CitationAccuracy string `json:"citation_accuracy"`
+	Abstention       string `json:"abstention"`
 }
 
 // String returns JSON representation of EvaluationTask

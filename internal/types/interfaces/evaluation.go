@@ -16,6 +16,9 @@ type EvaluationService interface {
 	EvaluationResult(ctx context.Context, taskID string) (*types.EvaluationDetail, error)
 	// ListEvaluationResults returns the most recent runs for the current tenant.
 	ListEvaluationResults(ctx context.Context, limit int) ([]*types.EvaluationDetail, error)
+	// ReviewEvaluationCase stores a human judgment for one completed case.
+	ReviewEvaluationCase(ctx context.Context, taskID string, questionID int,
+		input types.EvaluationCaseReviewInput) (*types.EvaluationDetail, error)
 }
 
 // Metrics defines interface for computing evaluation metrics

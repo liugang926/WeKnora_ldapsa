@@ -1,7 +1,9 @@
 package handler
 
 import (
+	stderrors "errors"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/Tencent/WeKnora/internal/errors"
@@ -10,6 +12,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	secutils "github.com/Tencent/WeKnora/internal/utils"
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 // EvaluationHandler handles evaluation related HTTP requests
@@ -17,6 +20,40 @@ type EvaluationHandler struct {
 	evaluationService interfaces.EvaluationService // Service for evaluation operations
 	groupAccess       interfaces.GroupAccessService
 	kbService         interfaces.KnowledgeBaseService
+}
+
+// ReviewEvaluationCase persists a human verdict for one completed evaluation
+// question. This route is intentionally JWT-only: an API key may run and read
+// evaluations, but cannot impersonate a named human reviewer.
+func (e *EvaluationHandler) ReviewEvaluationCase(c *gin.Context) {
+	taskID := c.Param("taskId")
+	questionID, err := strconv.Atoi(c.Param("questionId"))
+	if taskID == "" || err != nil || questionID < 0 {
+		_ = c.Error(errors.NewBadRequestError("Invalid evaluation case"))
+		return
+	}
+	var input types.EvaluationCaseReviewInput
+	if err := c.ShouldBindJSON(&input); err != nil {
+		_ = c.Error(errors.NewBadRequestError("Invalid review labels"))
+		return
+	}
+	detail, err := e.evaluationService.ReviewEvaluationCase(c.Request.Context(), taskID, questionID, input)
+	if err != nil {
+		switch {
+		case stderrors.Is(err, types.ErrEvaluationReviewInvalid):
+			_ = c.Error(errors.NewBadRequestError("Review labels do not match case type"))
+		case stderrors.Is(err, types.ErrEvaluationReviewNotReady),
+			stderrors.Is(err, types.ErrEvaluationReviewConflict):
+			_ = c.Error(errors.NewConflictError("Evaluation review is not ready; refresh and retry"))
+		case stderrors.Is(err, types.ErrEvaluationCaseNotFound), stderrors.Is(err, gorm.ErrRecordNotFound):
+			_ = c.Error(errors.NewNotFoundError("Evaluation case not found"))
+		default:
+			logger.Errorf(c.Request.Context(), "Failed to persist evaluation review: %v", err)
+			_ = c.Error(errors.NewInternalServerError("Evaluation review unavailable"))
+		}
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": detail})
 }
 
 // NewEvaluationHandler creates a new EvaluationHandler instance
