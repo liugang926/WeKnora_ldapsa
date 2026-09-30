@@ -122,6 +122,13 @@ func loadDatasetFromDir(datasetDir string) (dataset, error) {
 		return dataset{}, err
 	}
 
+	return datasetFromRows(queries, corpus, answers, qrels, qas)
+}
+
+// datasetFromRows rejects ambiguous IDs and orphan relations before maps can
+// silently overwrite benchmark labels. An approved external Parquet fixture
+// may be produced by a different tool than the bundled synthetic generator.
+func datasetFromRows(queries, corpus, answers []TextInfo, qrels []RelsInfo, qas []QaInfo) (dataset, error) {
 	res := dataset{
 		queries: make(map[int64]string),  // qid -> question text
 		corpus:  make(map[int64]string),  // pid -> passage text
@@ -130,18 +137,51 @@ func loadDatasetFromDir(datasetDir string) (dataset, error) {
 		qas:     make(map[int64]int64),   // qid -> aid
 	}
 	for _, qi := range queries {
+		if _, exists := res.queries[qi.ID]; exists {
+			return dataset{}, fmt.Errorf("duplicate evaluation question ID %d", qi.ID)
+		}
 		res.queries[qi.ID] = qi.Text
 	}
 	for _, ci := range corpus {
+		if _, exists := res.corpus[ci.ID]; exists {
+			return dataset{}, fmt.Errorf("duplicate evaluation passage ID %d", ci.ID)
+		}
 		res.corpus[ci.ID] = ci.Text
 	}
 	for _, ai := range answers {
+		if _, exists := res.answers[ai.ID]; exists {
+			return dataset{}, fmt.Errorf("duplicate evaluation answer ID %d", ai.ID)
+		}
 		res.answers[ai.ID] = ai.Text
 	}
+	seenQrels := make(map[RelsInfo]struct{}, len(qrels))
 	for _, ri := range qrels {
+		if _, exists := res.queries[ri.QID]; !exists {
+			return dataset{}, fmt.Errorf("evaluation evidence references missing question %d", ri.QID)
+		}
+		if _, exists := res.corpus[ri.PID]; !exists {
+			return dataset{}, fmt.Errorf("evaluation question %d references missing passage %d", ri.QID, ri.PID)
+		}
+		if _, exists := seenQrels[ri]; exists {
+			return dataset{}, fmt.Errorf("duplicate evaluation evidence link %d/%d", ri.QID, ri.PID)
+		}
+		seenQrels[ri] = struct{}{}
 		res.qrels[ri.QID] = append(res.qrels[ri.QID], ri.PID)
 	}
 	for _, qi := range qas {
+		if _, exists := res.queries[qi.QID]; !exists {
+			return dataset{}, fmt.Errorf("evaluation answer references missing question %d", qi.QID)
+		}
+		answer, exists := res.answers[qi.AID]
+		if !exists {
+			return dataset{}, fmt.Errorf("evaluation question %d references missing answer %d", qi.QID, qi.AID)
+		}
+		if strings.TrimSpace(answer) == "" {
+			return dataset{}, fmt.Errorf("evaluation question %d references blank answer %d", qi.QID, qi.AID)
+		}
+		if _, exists := res.qas[qi.QID]; exists {
+			return dataset{}, fmt.Errorf("duplicate evaluation answer link for question %d", qi.QID)
+		}
 		res.qas[qi.QID] = qi.AID
 	}
 	return res, nil

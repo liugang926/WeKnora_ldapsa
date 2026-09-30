@@ -70,13 +70,11 @@ func lookupEngine(name string) (EngineRegistration, bool) {
 func NewReader(
 	ctx context.Context, engine, fileType string, isURL bool, deps ReaderDeps,
 ) (interfaces.DocReader, error) {
-	if registration, ok := lookupEngine(engine); ok {
-		return registration.NewReader(ctx, deps)
-	}
-	if engine == "" && !isURL && IsSimpleFormat(fileType) {
-		return &SimpleFormatReader{}, nil
-	}
-	if engine == "" && !isURL && fileTypeOf(&types.ReadRequest{FileType: fileType}) == "pdf" && anydoc.Available() {
+	// A persisted "builtin" PDF rule is common for existing knowledge bases.
+	// Keep DocReader as the primary parser, but give it the same short-text
+	// recovery as the unset/default route when the local extractor is linked.
+	if !isURL && (engine == "" || engine == BuiltinEngineName) &&
+		fileTypeOf(&types.ReadRequest{FileType: fileType}) == "pdf" && anydoc.Available() {
 		primary, err := remoteReader(deps)
 		if err != nil {
 			return nil, err
@@ -85,6 +83,12 @@ func NewReader(
 			primary:   primary,
 			alternate: NewAnydocReader(map[string]string{"anydoc_extract_images": "false"}, nil),
 		}, nil
+	}
+	if registration, ok := lookupEngine(engine); ok {
+		return registration.NewReader(ctx, deps)
+	}
+	if engine == "" && !isURL && IsSimpleFormat(fileType) {
+		return &SimpleFormatReader{}, nil
 	}
 	return remoteReader(deps)
 }

@@ -28,6 +28,55 @@ func TestEvaluationFixtureIncludesUnreferencedPassagesAndStableDenseIDs(t *testi
 	require.Equal(t, fixture, second)
 }
 
+func TestDatasetFromRowsRejectsAmbiguousLabels(t *testing.T) {
+	type rows struct {
+		queries []TextInfo
+		corpus  []TextInfo
+		answers []TextInfo
+		qrels   []RelsInfo
+		qas     []QaInfo
+	}
+	base := func() rows {
+		return rows{
+			queries: []TextInfo{{ID: 1, Text: "问题"}},
+			corpus:  []TextInfo{{ID: 2, Text: "证据"}},
+			answers: []TextInfo{{ID: 3, Text: "答案"}},
+			qrels:   []RelsInfo{{QID: 1, PID: 2}},
+			qas:     []QaInfo{{QID: 1, AID: 3}},
+		}
+	}
+	tests := []struct {
+		name   string
+		mutate func(*rows)
+		want   string
+	}{
+		{
+			"duplicate question", func(r *rows) { r.queries = append(r.queries, r.queries[0]) },
+			"duplicate evaluation question",
+		},
+		{"duplicate passage", func(r *rows) { r.corpus = append(r.corpus, r.corpus[0]) }, "duplicate evaluation passage"},
+		{"duplicate answer", func(r *rows) { r.answers = append(r.answers, r.answers[0]) }, "duplicate evaluation answer ID"},
+		{"orphan evidence question", func(r *rows) { r.qrels[0].QID = 9 }, "evidence references missing question"},
+		{"orphan evidence passage", func(r *rows) { r.qrels[0].PID = 9 }, "references missing passage"},
+		{"duplicate evidence", func(r *rows) { r.qrels = append(r.qrels, r.qrels[0]) }, "duplicate evaluation evidence"},
+		{"orphan answer question", func(r *rows) { r.qas[0].QID = 9 }, "answer references missing question"},
+		{"orphan answer", func(r *rows) { r.qas[0].AID = 9 }, "references missing answer"},
+		{"blank linked answer", func(r *rows) { r.answers[0].Text = "  " }, "references blank answer"},
+		{"duplicate answer link", func(r *rows) { r.qas = append(r.qas, r.qas[0]) }, "duplicate evaluation answer link"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			r := base()
+			tc.mutate(&r)
+			_, err := datasetFromRows(r.queries, r.corpus, r.answers, r.qrels, r.qas)
+			require.ErrorContains(t, err, tc.want)
+		})
+	}
+	r := base()
+	_, err := datasetFromRows(r.queries, r.corpus, r.answers, r.qrels, r.qas)
+	require.NoError(t, err)
+}
+
 func TestEvaluationDatasetRejectsUnsafeID(t *testing.T) {
 	service := &DatasetService{}
 	for _, id := range []string{"../private", "../../etc/passwd", "a/b", "a\\b", ""} {

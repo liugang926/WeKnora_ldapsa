@@ -86,22 +86,24 @@ func TestPDFTextRecoveryLeavesHealthyAndScannedResults(t *testing.T) {
 	}
 }
 
-func TestDefaultPDFReaderRecoversOnlyWhenAnydocLinked(t *testing.T) {
+func TestBuiltinPDFReaderRecoversOnlyWhenAnydocLinked(t *testing.T) {
 	remote := &stubDocReader{}
-	reader, err := NewReader(context.Background(), "", "pdf", false, ReaderDeps{Remote: remote})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if anydoc.Available() {
-		if _, ok := reader.(*pdfTextRecoveryReader); !ok {
-			t.Fatalf("default PDF reader = %T, want recovery wrapper", reader)
+	for _, engine := range []string{"", BuiltinEngineName} {
+		reader, err := NewReader(context.Background(), engine, "pdf", false, ReaderDeps{Remote: remote})
+		if err != nil {
+			t.Fatal(err)
 		}
-	} else if reader != remote {
-		t.Fatalf("default PDF reader = %T, want remote without anydoc", reader)
+		if anydoc.Available() {
+			if _, ok := reader.(*pdfTextRecoveryReader); !ok {
+				t.Fatalf("PDF reader for %q = %T, want recovery wrapper", engine, reader)
+			}
+		} else if reader != remote {
+			t.Fatalf("PDF reader for %q = %T, want remote without anydoc", engine, reader)
+		}
 	}
 
-	explicit, err := NewReader(context.Background(), BuiltinEngineName, "pdf", false, ReaderDeps{Remote: remote})
-	if err != nil || explicit != remote {
-		t.Fatalf("explicit builtin PDF reader = %T, err = %v", explicit, err)
+	urlReader, err := NewReader(context.Background(), BuiltinEngineName, "pdf", true, ReaderDeps{Remote: remote})
+	if err != nil || urlReader != remote {
+		t.Fatalf("URL builtin PDF reader = %T, err = %v", urlReader, err)
 	}
 }
