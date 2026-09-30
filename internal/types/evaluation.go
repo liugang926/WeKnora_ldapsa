@@ -87,7 +87,7 @@ type EvaluationDetail struct {
 	Params          *ChatManage             `json:"params"`                      // Evaluation parameters
 	Metric          *MetricResult           `json:"metric,omitempty"`            // Evaluation metrics
 	Cases           []*EvaluationCaseResult `json:"cases,omitempty"`             // Per-question review evidence
-	ChatCost        *EvaluationChatCost     `json:"chat_cost,omitempty"`         // Operator tariff snapshot, not total RAG cost
+	ChatCost        *EvaluationChatCost     `json:"chat_cost,omitempty"`         // Operator tariff snapshot
 	ChatCostHistory []EvaluationChatCost    `json:"chat_cost_history,omitempty"` // Prior tariff estimates for audit
 }
 

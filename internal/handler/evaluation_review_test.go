@@ -80,12 +80,20 @@ func TestSetEvaluationChatCostValidatesRequestAndReturnsDetail(t *testing.T) {
 	}{
 		{`{bad`, http.StatusBadRequest},
 		{`{"currency":"CNY","tariff_version":"v2026-09-30","input_per_million":1}`, http.StatusBadRequest},
-		{`{"currency":"CNY","tariff_version":"v2026-09-30","input_per_million":0,"output_per_million":0}`, http.StatusOK},
+		{
+			`{"currency":"CNY","tariff_version":"v2026-09-30","input_per_million":0,"output_per_million":0}`,
+			http.StatusOK,
+		},
 		{`{"currency":"CNY","tariff_version":"wrong"}`, http.StatusBadRequest},
-		{`{"currency":"CNY","tariff_version":"v2026-09-30","input_per_million":1,"output_per_million":2}`, http.StatusOK},
+		{
+			`{"currency":"CNY","tariff_version":"v2026-09-30","input_per_million":1,"output_per_million":2}`,
+			http.StatusOK,
+		},
 	} {
 		w := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodPut, "/evaluation/evaluation-one/chat-cost", bytes.NewBufferString(tc.body))
+		req := httptest.NewRequest(
+			http.MethodPut, "/evaluation/evaluation-one/chat-cost", bytes.NewBufferString(tc.body),
+		)
 		req.Header.Set("Content-Type", "application/json")
 		r.ServeHTTP(w, req)
 		require.Equal(t, tc.want, w.Code, w.Body.String())

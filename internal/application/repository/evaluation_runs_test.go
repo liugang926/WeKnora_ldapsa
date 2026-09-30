@@ -135,8 +135,10 @@ func TestEvaluationChatCostIsAuditedTenantScopedAndRequiresCompleteUsage(t *test
 	repo := NewEvaluationRunRepository(db)
 	ctx := context.Background()
 	detail := &types.EvaluationDetail{
-		Task: &types.EvaluationTask{ID: "evaluation_7_cost", TenantID: 7,
-			DatasetID: "fictional", StartTime: time.Now().UTC(), Status: types.EvaluationStatueRunning},
+		Task: &types.EvaluationTask{
+			ID: "evaluation_7_cost", TenantID: 7,
+			DatasetID: "fictional", StartTime: time.Now().UTC(), Status: types.EvaluationStatueRunning,
+		},
 		Metric: &types.MetricResult{ExecutionMetrics: types.ExecutionMetrics{
 			UsageAccountingVersion: 1, ChatResponses: 2, UsageReportedResponses: 2,
 			PromptTokens: 1500, CompletionTokens: 200,
@@ -185,8 +187,10 @@ func TestEvaluationChatCostIsAuditedTenantScopedAndRequiresCompleteUsage(t *test
 	require.Equal(t, "pass", loaded.Cases[0].Review.Faithfulness)
 
 	legacy := &types.EvaluationDetail{
-		Task: &types.EvaluationTask{ID: "evaluation_7_legacy_cost", TenantID: 7,
-			DatasetID: "fictional", StartTime: time.Now().UTC(), Status: types.EvaluationStatueSuccess},
+		Task: &types.EvaluationTask{
+			ID: "evaluation_7_legacy_cost", TenantID: 7,
+			DatasetID: "fictional", StartTime: time.Now().UTC(), Status: types.EvaluationStatueSuccess,
+		},
 		Metric: &types.MetricResult{ExecutionMetrics: types.ExecutionMetrics{PromptTokens: 10}},
 	}
 	require.NoError(t, repo.Save(ctx, legacy))
@@ -195,8 +199,10 @@ func TestEvaluationChatCostIsAuditedTenantScopedAndRequiresCompleteUsage(t *test
 	require.Nil(t, unknown.ChatCost.EstimatedAmount, "legacy usage must not silently become a zero-cost estimate")
 
 	noCalls := &types.EvaluationDetail{
-		Task: &types.EvaluationTask{ID: "evaluation_7_empty_cost", TenantID: 7,
-			DatasetID: "fictional", StartTime: time.Now().UTC(), Status: types.EvaluationStatueSuccess},
+		Task: &types.EvaluationTask{
+			ID: "evaluation_7_empty_cost", TenantID: 7,
+			DatasetID: "fictional", StartTime: time.Now().UTC(), Status: types.EvaluationStatueSuccess,
+		},
 		Metric: &types.MetricResult{ExecutionMetrics: types.ExecutionMetrics{UsageAccountingVersion: 1}},
 	}
 	require.NoError(t, repo.Save(ctx, noCalls))
@@ -205,8 +211,10 @@ func TestEvaluationChatCostIsAuditedTenantScopedAndRequiresCompleteUsage(t *test
 	require.Nil(t, unknown.ChatCost.EstimatedAmount, "no chat response must not become a zero-cost estimate")
 
 	incomplete := &types.EvaluationDetail{
-		Task: &types.EvaluationTask{ID: "evaluation_7_incomplete_cost", TenantID: 7,
-			DatasetID: "fictional", StartTime: time.Now().UTC(), Status: types.EvaluationStatueSuccess},
+		Task: &types.EvaluationTask{
+			ID: "evaluation_7_incomplete_cost", TenantID: 7,
+			DatasetID: "fictional", StartTime: time.Now().UTC(), Status: types.EvaluationStatueSuccess,
+		},
 		Metric: &types.MetricResult{ExecutionMetrics: types.ExecutionMetrics{
 			UsageAccountingVersion: 1, ChatResponses: 2, UsageReportedResponses: 1,
 			PromptTokens: 100, CompletionTokens: 20,
