@@ -19,6 +19,20 @@ RAG_MODEL_TOKEN_FILE=/private/path/rag-model-token \
 
 模型配置的关键字段：`source: remote`、`provider: generic`、`base_url: http://host.docker.internal:19090/v1`，名称分别为 `BAAI/bge-small-zh-v1.5` 和 `BAAI/bge-reranker-base`；Embedding 维度为 `512`。本地测试部署的样例在 `../weknora-ldap-local/builtin_rag_models.yaml`（部署目录不在 Git 仓库中）。既有 3 维知识库不能原地切换到 512 维，应新建知识库或重新索引。已有生产资料不会自动送入本服务。
 
+## 候选应用镜像隔离烟测
+
+模型服务启动后，可用 `smoke_candidate.py` 在**全新的一次性 Docker Compose 项目**里验证指定本地应用镜像。脚本先核对可选的源码/补丁镜像标签，再生成随机测试凭据并仅在环回地址发布 API；它使用虚构采购条款注册测试用户、创建知识库、完成解析和 512 维入库，通过应用模型调试接口验证 Embedding/ReRank，并关闭关键词召回执行纯向量检索。结束时只删除自己生成的容器、网络、临时数据库和令牌副本；不会触碰共享 `18080` 或其他 Compose 项目。令牌文件须为 `0600`，脚本不会输出明文令牌、密码或测试文本。
+
+```sh
+python3 scripts/local-rag-models/smoke_candidate.py \
+  --image weknora-ldap-app:nextcloud-rag-e5-anydoc \
+  --token-file /private/path/rag-model-token \
+  --expected-revision e5cc3e4491ee10fb85e0c2ad79f1e3329826d02e \
+  --expected-patch-sha a7d638ac36f2e64b5adf998cdd16a811c238de343a5ab8d001262fa8207c3961
+```
+
+该命令是**本机可选验收**，不在 GitHub CI 中调用本机模型服务。它不生成答案，也不测试引用、无答案拒答、真实 AD 权限或企业语料；这些仍需独立验收。服务地址固定为 Docker 主机的 `host.docker.internal:19090`，只应在已批准的本地测试机器上运行。
+
 ## 完全虚构的题集
 
 `dataset/benchmarks/synthetic-zh-v1/fixture.json` 是 16 题小样例；新增的 [`synthetic-enterprise-zh-v2`](../../dataset/benchmarks/synthetic-enterprise-zh-v2/README.md) 有 42 段、70 题，并用虚构组层级覆盖五类部门的直接/嵌套组。两者都只有虚构公司制度，没有企业原文、真实账号或 AD 对象。运行以下命令生成 WeKnora 的 5 个 Parquet 文件并验证协议和检索（将数据集路径替换为需要的版本）：
