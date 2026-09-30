@@ -23,7 +23,7 @@ from smoke_candidate import (compose, docker, ensure_unused_project, http_json,
                              image_metadata, make_compose)
 
 
-DATASET_ID = "synthetic-zh-v1"
+DATASET_TOTALS = {"synthetic-zh-v1": 16, "synthetic-enterprise-zh-v2": 70}
 DATASET_DIR = Path(__file__).resolve().parents[2] / "dataset" / "benchmarks"
 CHAT_MODEL_ID = "builtin-local-synthetic-evaluation-chat"
 ANSWER = "这是完全虚构的评估流程测试回答。"
@@ -135,7 +135,8 @@ def wait_for_app_restart(project: str, spec: Path) -> str:
     raise RuntimeError("candidate app did not become healthy after restart")
 
 
-def run_checks(base: str, project: str, spec: Path) -> dict:
+def run_checks(base: str, project: str, spec: Path, dataset_id: str) -> dict:
+    expected_total = DATASET_TOTALS[dataset_id]
     suffix = secrets.token_hex(5)
     email = f"rag-eval-{suffix}@example.invalid"
     password = "A1" + secrets.token_hex(14)
@@ -155,7 +156,7 @@ def run_checks(base: str, project: str, spec: Path) -> dict:
     )):
         raise RuntimeError("synthetic evaluation models are missing")
     created = http_json(base, "POST", "/api/v1/evaluation", token=token, body={
-        "dataset_id": DATASET_ID,
+        "dataset_id": dataset_id,
         "embedding_id": ids["BAAI/bge-small-zh-v1.5"],
         "rerank_id": ids["BAAI/bge-reranker-base"],
         "chat_id": ids["synthetic-evaluation-chat-stub"],
@@ -166,15 +167,17 @@ def run_checks(base: str, project: str, spec: Path) -> dict:
     detail = wait_for_result(base, token, task_id)
     task = detail["task"]
     metric = detail.get("metric") or {}
-    if task.get("total") != 16 or task.get("finished") != 16 \
+    if task.get("total") != expected_total or task.get("finished") != expected_total \
             or not re.fullmatch(r"[0-9a-f]{64}", task.get("dataset_sha256") or "") \
             or task.get("embedding_model_id") != ids["BAAI/bge-small-zh-v1.5"] \
             or task.get("rerank_model_id") != ids["BAAI/bge-reranker-base"] \
-            or metric.get("metric_version") != 2 or len(detail.get("cases") or []) != 16:
+            or metric.get("metric_version") != 2 \
+            or len(detail.get("cases") or []) != expected_total:
         raise RuntimeError("durable evaluation has missing cases, model IDs, or metric version")
     if ChatStub.requests_seen < 1:
         raise RuntimeError("synthetic chat stub was not called")
-    before = {"task_id": task_id, "dataset_sha256": task["dataset_sha256"],
+    before = {"task_id": task_id, "dataset_id": dataset_id,
+              "dataset_sha256": task["dataset_sha256"],
               "total": task["total"], "finished": task["finished"],
               "metric_version": metric["metric_version"]}
     compose(project, spec, "restart", "app", timeout=90)
@@ -183,7 +186,7 @@ def run_checks(base: str, project: str, spec: Path) -> dict:
                          token=token, timeout=30)["data"]
     if (restored.get("task") or {}).get("dataset_sha256") != before["dataset_sha256"] \
             or (restored.get("task") or {}).get("status") != 2 \
-            or len(restored.get("cases") or []) != 16:
+            or len(restored.get("cases") or []) != expected_total:
         raise RuntimeError("evaluation result was not preserved across app restart")
     history = http_json(base, "GET", "/api/v1/evaluation", token=token)["data"]
     if not isinstance(history, list) or not any((item.get("task") or {}).get("id") == task_id
@@ -199,6 +202,8 @@ def main() -> None:
     parser.add_argument("--token-file", required=True, help="0600 local BGE bearer token file")
     parser.add_argument("--expected-revision", help="exact image source label")
     parser.add_argument("--expected-patch-sha", help="exact Nextcloud patch label")
+    parser.add_argument("--dataset-id", choices=tuple(DATASET_TOTALS),
+                        default="synthetic-zh-v1", help="committed fictional fixture only")
     args = parser.parse_args()
     token_file = Path(args.token_file).resolve(strict=True)
     if token_file.stat().st_mode & 0o077:
@@ -230,7 +235,7 @@ def main() -> None:
                 published = compose(project, spec, "port", "app", "8080")
                 if not re.fullmatch(r"127\.0\.0\.1:\d+", published):
                     raise RuntimeError("candidate app is not bound to loopback")
-                result = run_checks("http://" + published, project, spec)
+                result = run_checks("http://" + published, project, spec, args.dataset_id)
             finally:
                 if started:
                     compose(project, spec, "down", "--volumes", timeout=120)
