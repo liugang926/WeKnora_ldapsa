@@ -43,8 +43,11 @@ func TestReviewEvaluationCaseValidatesPathAndReturnsDurableDetail(t *testing.T) 
 	}{
 		{"/evaluation/evaluation-one/cases/nope/review", `{}`, http.StatusBadRequest},
 		{"/evaluation/evaluation-one/cases/1/review", `{bad`, http.StatusBadRequest},
-		{"/evaluation/evaluation-one/cases/1/review",
-			`{"faithfulness":"pass","citation_accuracy":"fail","abstention":"not_applicable"}`, http.StatusOK},
+		{
+			"/evaluation/evaluation-one/cases/1/review",
+			`{"faithfulness":"pass","citation_accuracy":"fail","abstention":"not_applicable"}`,
+			http.StatusOK,
+		},
 	} {
 		w := httptest.NewRecorder()
 		req := httptest.NewRequest(http.MethodPut, tc.path, bytes.NewBufferString(tc.body))

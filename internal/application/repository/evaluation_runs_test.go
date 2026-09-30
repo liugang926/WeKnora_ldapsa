@@ -67,15 +67,19 @@ func TestEvaluationCaseHumanReviewsPersistAndStayTenantScoped(t *testing.T) {
 	repo := NewEvaluationRunRepository(db)
 	ctx := context.Background()
 	detail := &types.EvaluationDetail{
-		Task: &types.EvaluationTask{ID: "evaluation_7_review", TenantID: 7, DatasetID: "fixture",
-			StartTime: time.Now().UTC(), Status: types.EvaluationStatueRunning},
+		Task: &types.EvaluationTask{
+			ID: "evaluation_7_review", TenantID: 7, DatasetID: "fixture",
+			StartTime: time.Now().UTC(), Status: types.EvaluationStatueRunning,
+		},
 		Cases: []*types.EvaluationCaseResult{
 			{QuestionID: 1, ReferenceAnswer: "fictional answer"},
 			{QuestionID: 2, ReferenceAnswer: ""},
 		},
 	}
 	require.NoError(t, repo.Save(ctx, detail))
-	answered := types.EvaluationCaseReviewInput{Faithfulness: "pass", CitationAccuracy: "fail", Abstention: "not_applicable"}
+	answered := types.EvaluationCaseReviewInput{
+		Faithfulness: "pass", CitationAccuracy: "fail", Abstention: "not_applicable",
+	}
 	_, err = repo.ReviewCase(ctx, 7, detail.Task.ID, 1, "reviewer-1", answered)
 	require.ErrorIs(t, err, types.ErrEvaluationReviewNotReady)
 	detail.Task.Status = types.EvaluationStatueSuccess

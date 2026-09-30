@@ -161,6 +161,7 @@ func (e *EvaluationService) ListEvaluationResults(ctx context.Context, limit int
 	return e.runRepository.List(ctx, types.MustTenantIDFromContext(ctx), limit)
 }
 
+// ReviewEvaluationCase stores a named review for a completed tenant-scoped run.
 func (e *EvaluationService) ReviewEvaluationCase(
 	ctx context.Context, taskID string, questionID int, input types.EvaluationCaseReviewInput,
 ) (*types.EvaluationDetail, error) {

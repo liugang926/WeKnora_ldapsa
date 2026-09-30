@@ -10,12 +10,17 @@ import (
 	"github.com/yanyiwu/gojieba"
 )
 
-var (
-	ErrEvaluationReviewInvalid  = errors.New("invalid evaluation case review")
-	ErrEvaluationReviewNotReady = errors.New("evaluation run is not complete")
-	ErrEvaluationCaseNotFound   = errors.New("evaluation case not found")
-	ErrEvaluationReviewConflict = errors.New("evaluation review changed concurrently")
-)
+// ErrEvaluationReviewInvalid means the judgment labels do not fit the case.
+var ErrEvaluationReviewInvalid = errors.New("invalid evaluation case review")
+
+// ErrEvaluationReviewNotReady means only completed runs may be reviewed.
+var ErrEvaluationReviewNotReady = errors.New("evaluation run is not complete")
+
+// ErrEvaluationCaseNotFound means the question is absent from the tenant's run.
+var ErrEvaluationCaseNotFound = errors.New("evaluation case not found")
+
+// ErrEvaluationReviewConflict means a concurrent writer changed the run.
+var ErrEvaluationReviewConflict = errors.New("evaluation review changed concurrently")
 
 // Jieba is a global instance of Chinese text segmentation tool
 var Jieba *gojieba.Jieba = newJieba()
