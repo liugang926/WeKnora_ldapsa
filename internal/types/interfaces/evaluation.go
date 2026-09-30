@@ -19,6 +19,10 @@ type EvaluationService interface {
 	// ReviewEvaluationCase stores a human judgment for one completed case.
 	ReviewEvaluationCase(ctx context.Context, taskID string, questionID int,
 		input types.EvaluationCaseReviewInput) (*types.EvaluationDetail, error)
+	// SetEvaluationChatCost records an operator tariff and estimated chat API
+	// charge for a completed run. It never represents total RAG cost.
+	SetEvaluationChatCost(ctx context.Context, taskID string,
+		input types.EvaluationChatCostInput) (*types.EvaluationDetail, error)
 }
 
 // Metrics defines interface for computing evaluation metrics

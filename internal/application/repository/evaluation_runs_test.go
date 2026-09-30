@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"math"
 	"testing"
 	"time"
 
@@ -118,4 +119,101 @@ func TestEvaluationCaseHumanReviewsPersistAndStayTenantScoped(t *testing.T) {
 	require.Equal(t, "pass", loaded.Cases[1].Review.Abstention)
 	_, err = restarted.Get(ctx, 8, detail.Task.ID)
 	require.ErrorIs(t, err, gorm.ErrRecordNotFound)
+}
+
+func TestEvaluationChatCostIsAuditedTenantScopedAndRequiresCompleteUsage(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:"+uuid.NewString()+"?mode=memory&cache=shared"), &gorm.Config{})
+	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
+	t.Cleanup(func() { _ = sqlDB.Close() })
+	require.NoError(t, db.Exec(`CREATE TABLE evaluation_runs (
+		task_id TEXT PRIMARY KEY, tenant_id INTEGER NOT NULL, dataset_id TEXT NOT NULL,
+		status INTEGER NOT NULL, detail_json TEXT NOT NULL, started_at DATETIME NOT NULL,
+		updated_at DATETIME NOT NULL)`).Error)
+	repo := NewEvaluationRunRepository(db)
+	ctx := context.Background()
+	detail := &types.EvaluationDetail{
+		Task: &types.EvaluationTask{ID: "evaluation_7_cost", TenantID: 7,
+			DatasetID: "fictional", StartTime: time.Now().UTC(), Status: types.EvaluationStatueRunning},
+		Metric: &types.MetricResult{ExecutionMetrics: types.ExecutionMetrics{
+			UsageAccountingVersion: 1, ChatResponses: 2, UsageReportedResponses: 2,
+			PromptTokens: 1500, CompletionTokens: 200,
+		}},
+		Cases: []*types.EvaluationCaseResult{{QuestionID: 1, ReferenceAnswer: "fictional answer"}},
+	}
+	require.NoError(t, repo.Save(ctx, detail))
+	input := types.EvaluationChatCostInput{
+		Currency: "CNY", TariffVersion: "v2026-09-30", InputPerMillion: 1, OutputPerMillion: 2,
+	}
+	_, err = repo.SetChatCost(ctx, 7, detail.Task.ID, "operator-1", input)
+	require.ErrorIs(t, err, types.ErrEvaluationChatCostNotReady)
+	detail.Task.Status = types.EvaluationStatueSuccess
+	require.NoError(t, repo.Save(ctx, detail))
+	_, err = repo.SetChatCost(ctx, 8, detail.Task.ID, "operator-1", input)
+	require.ErrorIs(t, err, gorm.ErrRecordNotFound)
+	_, err = repo.SetChatCost(ctx, 7, detail.Task.ID, "", input)
+	require.ErrorIs(t, err, types.ErrEvaluationChatCostInvalid)
+	invalid := input
+	invalid.TariffVersion = "contains spaces"
+	_, err = repo.SetChatCost(ctx, 7, detail.Task.ID, "operator-1", invalid)
+	require.ErrorIs(t, err, types.ErrEvaluationChatCostInvalid)
+	invalid = input
+	invalid.InputPerMillion = math.NaN()
+	_, err = repo.SetChatCost(ctx, 7, detail.Task.ID, "operator-1", invalid)
+	require.ErrorIs(t, err, types.ErrEvaluationChatCostInvalid)
+
+	priced, err := repo.SetChatCost(ctx, 7, detail.Task.ID, "operator-1", input)
+	require.NoError(t, err)
+	require.NotNil(t, priced.ChatCost.EstimatedAmount)
+	require.InDelta(t, 0.0019, *priced.ChatCost.EstimatedAmount, 0.00000001)
+	require.Equal(t, "operator-1", priced.ChatCost.SetBy)
+	_, err = repo.ReviewCase(ctx, 7, detail.Task.ID, 1, "reviewer-1", types.EvaluationCaseReviewInput{
+		Faithfulness: "pass", CitationAccuracy: "pass", Abstention: "not_applicable",
+	})
+	require.NoError(t, err)
+	input.TariffVersion = "v2026-10-01"
+	input.OutputPerMillion = 3
+	_, err = repo.SetChatCost(ctx, 7, detail.Task.ID, "operator-2", input)
+	require.NoError(t, err)
+	loaded, err := NewEvaluationRunRepository(db).Get(ctx, 7, detail.Task.ID)
+	require.NoError(t, err)
+	require.Equal(t, "v2026-10-01", loaded.ChatCost.TariffVersion)
+	require.Len(t, loaded.ChatCostHistory, 1)
+	require.Equal(t, "v2026-09-30", loaded.ChatCostHistory[0].TariffVersion)
+	require.Equal(t, "pass", loaded.Cases[0].Review.Faithfulness)
+
+	legacy := &types.EvaluationDetail{
+		Task: &types.EvaluationTask{ID: "evaluation_7_legacy_cost", TenantID: 7,
+			DatasetID: "fictional", StartTime: time.Now().UTC(), Status: types.EvaluationStatueSuccess},
+		Metric: &types.MetricResult{ExecutionMetrics: types.ExecutionMetrics{PromptTokens: 10}},
+	}
+	require.NoError(t, repo.Save(ctx, legacy))
+	unknown, err := repo.SetChatCost(ctx, 7, legacy.Task.ID, "operator-1", input)
+	require.NoError(t, err)
+	require.Nil(t, unknown.ChatCost.EstimatedAmount, "legacy usage must not silently become a zero-cost estimate")
+
+	noCalls := &types.EvaluationDetail{
+		Task: &types.EvaluationTask{ID: "evaluation_7_empty_cost", TenantID: 7,
+			DatasetID: "fictional", StartTime: time.Now().UTC(), Status: types.EvaluationStatueSuccess},
+		Metric: &types.MetricResult{ExecutionMetrics: types.ExecutionMetrics{UsageAccountingVersion: 1}},
+	}
+	require.NoError(t, repo.Save(ctx, noCalls))
+	unknown, err = repo.SetChatCost(ctx, 7, noCalls.Task.ID, "operator-1", input)
+	require.NoError(t, err)
+	require.Nil(t, unknown.ChatCost.EstimatedAmount, "no chat response must not become a zero-cost estimate")
+
+	incomplete := &types.EvaluationDetail{
+		Task: &types.EvaluationTask{ID: "evaluation_7_incomplete_cost", TenantID: 7,
+			DatasetID: "fictional", StartTime: time.Now().UTC(), Status: types.EvaluationStatueSuccess},
+		Metric: &types.MetricResult{ExecutionMetrics: types.ExecutionMetrics{
+			UsageAccountingVersion: 1, ChatResponses: 2, UsageReportedResponses: 1,
+			PromptTokens: 100, CompletionTokens: 20,
+		}},
+	}
+	require.NoError(t, repo.Save(ctx, incomplete))
+	unknown, err = repo.SetChatCost(ctx, 7, incomplete.Task.ID, "operator-1", input)
+	require.NoError(t, err)
+	require.Nil(t, unknown.ChatCost.EstimatedAmount, "incomplete usage must not be priced")
 }

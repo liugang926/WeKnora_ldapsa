@@ -93,6 +93,7 @@ func RegisterEvaluationRoutes(r *gin.RouterGroup, handler *handler.EvaluationHan
 	// A review must be attributed to a real signed-in administrator. Do not
 	// register an API-key policy for this route; the v1 key gate denies it.
 	r.PUT("/evaluation/:taskId/cases/:questionId/review", g.Admin(), handler.ReviewEvaluationCase)
+	r.PUT("/evaluation/:taskId/chat-cost", g.Admin(), handler.SetEvaluationChatCost)
 }
 
 func RegisterInitializationRoutes(r *gin.RouterGroup, handler *handler.InitializationHandler, g *rbacGuards) {

@@ -88,6 +88,26 @@ class EvaluationCandidateTest(unittest.TestCase):
         self.assertEqual(judgments[2]["abstention"], "fail")
         self.assertEqual(http_call.call_count, 2)
 
+    def test_synthetic_chat_tariff_requires_complete_usage_and_exact_snapshot(self):
+        detail = {"metric": {"execution_metrics": {
+            "usage_accounting_version": 1, "chat_responses": 2,
+            "usage_reported_responses": 2, "prompt_tokens": 1500,
+            "completion_tokens": 200,
+        }}}
+        response = {"data": {"chat_cost": {
+            "currency": "CNY", "tariff_version": "synthetic-v1",
+            "chat_responses": 2, "usage_reported_responses": 2,
+            "estimated_amount": 0.0019, "set_by": "admin",
+        }}}
+        with mock.patch.object(evaluation, "http_json", return_value=response) as call:
+            estimate = evaluation.price_synthetic_chat(
+                "http://127.0.0.1:1234", "synthetic-jwt", "task-1", detail)
+        self.assertEqual(estimate, 0.0019)
+        self.assertEqual(call.call_args.kwargs["body"]["tariff_version"], "synthetic-v1")
+        detail["metric"]["execution_metrics"]["usage_reported_responses"] = 1
+        with self.assertRaisesRegex(RuntimeError, "coverage is incomplete"):
+            evaluation.price_synthetic_chat("http://127.0.0.1:1234", "synthetic-jwt", "task-1", detail)
+
 
 if __name__ == "__main__":
     unittest.main()

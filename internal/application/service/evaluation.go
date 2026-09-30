@@ -173,6 +173,19 @@ func (e *EvaluationService) ReviewEvaluationCase(
 		taskID, questionID, reviewerID, input)
 }
 
+// SetEvaluationChatCost attaches a named administrator's tariff snapshot to a
+// completed tenant-owned run. Missing provider usage leaves the estimate unset.
+func (e *EvaluationService) SetEvaluationChatCost(
+	ctx context.Context, taskID string, input types.EvaluationChatCostInput,
+) (*types.EvaluationDetail, error) {
+	operatorID, ok := types.UserIDFromContext(ctx)
+	if !ok {
+		return nil, types.ErrEvaluationChatCostInvalid
+	}
+	return e.runRepository.SetChatCost(ctx, types.MustTenantIDFromContext(ctx),
+		taskID, operatorID, input)
+}
+
 // Evaluation starts a new evaluation task with given parameters
 // datasetID: ID of the dataset to evaluate against
 // knowledgeBaseID: ID of the knowledge base to use (empty to create new)
@@ -516,6 +529,7 @@ func (e *EvaluationService) EvalDataset(ctx context.Context, detail *types.Evalu
 	var finished int
 	var latencies []int64
 	var promptTokens, completionTokens int64
+	var chatResponses, usageReportedResponses int
 	var mu sync.Mutex
 	var g errgroup.Group
 	metricHook := NewHookMetric(len(dataset.QAPairs), passages, knowledge.ID)
@@ -586,10 +600,15 @@ func (e *EvaluationService) EvalDataset(ctx context.Context, detail *types.Evalu
 			done := finished
 			latencies = append(latencies, time.Since(startedAt).Milliseconds())
 			if chatManage.ChatResponse != nil {
+				chatResponses++
 				promptTokens += int64(chatManage.ChatResponse.Usage.PromptTokens)
 				completionTokens += int64(chatManage.ChatResponse.Usage.CompletionTokens)
+				if chatManage.ChatResponse.Usage.PromptTokens+chatManage.ChatResponse.Usage.CompletionTokens > 0 {
+					usageReportedResponses++
+				}
 			}
-			execution := evaluationExecutionMetrics(latencies, promptTokens, completionTokens)
+			execution := evaluationExecutionMetrics(latencies, promptTokens, completionTokens,
+				chatResponses, usageReportedResponses)
 			mu.Unlock()
 			metricResult := metricHook.MetricResult()
 			metricResult.ExecutionMetrics = execution
@@ -617,7 +636,8 @@ func (e *EvaluationService) EvalDataset(ctx context.Context, detail *types.Evalu
 	// Final update of evaluation metrics
 	if err := e.persistUpdate(ctx, detail.Task.ID, func(params *types.EvaluationDetail) {
 		params.Metric = metricHook.MetricResult()
-		params.Metric.ExecutionMetrics = evaluationExecutionMetrics(latencies, promptTokens, completionTokens)
+		params.Metric.ExecutionMetrics = evaluationExecutionMetrics(latencies, promptTokens, completionTokens,
+			chatResponses, usageReportedResponses)
 		params.Task.Finished = finished
 	}); err != nil {
 		return err
@@ -651,8 +671,14 @@ func evaluationConcurrency() (int, error) {
 	return parsed, nil
 }
 
-func evaluationExecutionMetrics(latencies []int64, promptTokens, completionTokens int64) types.ExecutionMetrics {
-	result := types.ExecutionMetrics{PromptTokens: promptTokens, CompletionTokens: completionTokens}
+func evaluationExecutionMetrics(latencies []int64, promptTokens, completionTokens int64,
+	chatResponses, usageReportedResponses int,
+) types.ExecutionMetrics {
+	result := types.ExecutionMetrics{
+		PromptTokens: promptTokens, CompletionTokens: completionTokens,
+		UsageAccountingVersion: 1, ChatResponses: chatResponses,
+		UsageReportedResponses: usageReportedResponses,
+	}
 	if len(latencies) == 0 {
 		return result
 	}

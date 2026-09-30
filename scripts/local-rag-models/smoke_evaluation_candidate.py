@@ -160,6 +160,29 @@ def review_synthetic_cases(base: str, token: str, task_id: str, detail: dict) ->
     return judgments
 
 
+def price_synthetic_chat(base: str, token: str, task_id: str, detail: dict) -> float:
+    """Exercise a fictional tariff; this does not estimate total RAG cost."""
+    usage = (detail.get("metric") or {}).get("execution_metrics") or {}
+    calls = usage.get("chat_responses")
+    reported = usage.get("usage_reported_responses")
+    if usage.get("usage_accounting_version") != 1 or not isinstance(calls, int) \
+            or calls < 1 or reported != calls:
+        raise RuntimeError("synthetic chat usage coverage is incomplete")
+    expected = round((usage["prompt_tokens"] + 2 * usage["completion_tokens"]) / 1_000_000, 8)
+    priced = http_json(base, "PUT", f"/api/v1/evaluation/{task_id}/chat-cost", token=token,
+                       body={"currency": "CNY", "tariff_version": "synthetic-v1",
+                             "input_per_million": 1, "output_per_million": 2})["data"]
+    snapshot = priced.get("chat_cost") or {}
+    if snapshot.get("currency") != "CNY" or snapshot.get("tariff_version") != "synthetic-v1" \
+            or snapshot.get("chat_responses") != calls \
+            or snapshot.get("usage_reported_responses") != calls \
+            or not isinstance(snapshot.get("estimated_amount"), (int, float)) \
+            or abs(snapshot["estimated_amount"] - expected) > 0.00000001 \
+            or not snapshot.get("set_by"):
+        raise RuntimeError("synthetic chat tariff did not persist a complete usage estimate")
+    return expected
+
+
 def run_checks(base: str, project: str, spec: Path, dataset_id: str) -> dict:
     expected_total = DATASET_TOTALS[dataset_id]
     suffix = secrets.token_hex(5)
@@ -202,6 +225,7 @@ def run_checks(base: str, project: str, spec: Path, dataset_id: str) -> dict:
     if ChatStub.requests_seen < 1:
         raise RuntimeError("synthetic chat stub was not called")
     judgments = review_synthetic_cases(base, token, task_id, detail)
+    chat_cost = price_synthetic_chat(base, token, task_id, detail)
     before = {"task_id": task_id, "dataset_id": dataset_id,
               "dataset_sha256": task["dataset_sha256"],
               "total": task["total"], "finished": task["finished"],
@@ -220,12 +244,18 @@ def run_checks(base: str, project: str, spec: Path, dataset_id: str) -> dict:
         if any(review.get(key) != value for key, value in labels.items()) \
                 or not review.get("reviewed_by") or not review.get("reviewed_at"):
             raise RuntimeError("synthetic human-review labels were not preserved across restart")
+    restored_cost = restored.get("chat_cost") or {}
+    if not isinstance(restored_cost.get("estimated_amount"), (int, float)) \
+            or abs(restored_cost["estimated_amount"] - chat_cost) > 0.00000001 \
+            or restored_cost.get("tariff_version") != "synthetic-v1":
+        raise RuntimeError("synthetic chat tariff was not preserved across restart")
     history = http_json(base, "GET", "/api/v1/evaluation", token=token)["data"]
     if not isinstance(history, list) or not any((item.get("task") or {}).get("id") == task_id
                                                  for item in history):
         raise RuntimeError("evaluation result is absent from durable history")
     return {**before, "chat_stub_requests": ChatStub.requests_seen,
-            "restored_after_restart": True, "synthetic_reviews_restored": len(judgments)}
+            "restored_after_restart": True, "synthetic_reviews_restored": len(judgments),
+            "synthetic_chat_cost_restored": True}
 
 
 def main() -> None:

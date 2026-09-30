@@ -46,7 +46,7 @@
         <table class="evaluation-table">
           <thead><tr>
             <th>{{ copy.time }}</th><th>{{ copy.status }}</th><th>{{ copy.dataset }}</th>
-            <th>Recall</th><th>NDCG@10</th><th>ROUGE-L</th><th>P95</th><th>{{ copy.tokens }}</th><th>{{ copy.reviewed }}</th><th>{{ copy.review }}</th>
+            <th>Recall</th><th>NDCG@10</th><th>ROUGE-L</th><th>P95</th><th>{{ copy.tokens }}</th><th>{{ copy.chatCost }}</th><th>{{ copy.reviewed }}</th><th>{{ copy.review }}</th>
           </tr></thead>
           <tbody>
             <tr v-for="run in runs" :key="run.task.id">
@@ -58,12 +58,31 @@
               <td>{{ metric(run.metric?.generation_evaluated === 0 ? undefined : run.metric?.generation_metrics?.rougel) }} <small v-if="run.metric?.generation_evaluated != null">(n={{ run.metric.generation_evaluated }})</small></td>
               <td>{{ run.metric?.execution_metrics?.latency_p95_ms ?? '—' }} ms</td>
               <td>{{ tokenCount(run) }}</td>
+              <td>{{ displayChatCost(run) }}</td>
               <td>{{ manualCoverage(run) }}</td>
-              <td><button v-if="run.cases?.some(Boolean)" type="button" class="secondary" @click="openRun(run)">{{ copy.open }}</button></td>
+              <td><button v-if="run.task.status === 2 || run.cases?.some(Boolean)" type="button" class="secondary" @click="openRun(run)">{{ copy.open }}</button></td>
             </tr>
           </tbody>
         </table>
       </div>
+    </div>
+
+    <div v-if="selectedRun && selectedRun.task.status === 2" class="evaluation-card">
+      <h3>{{ copy.chatCost }} · {{ selectedRun.task.dataset_id }}</h3>
+      <p class="evaluation-note">{{ copy.chatCostNote }}</p>
+      <div class="evaluation-form">
+        <label>{{ copy.currency }}<input v-model.trim="costDraft.currency" maxlength="3" placeholder="CNY" /></label>
+        <label>{{ copy.tariffVersion }}<input v-model.trim="costDraft.tariff_version" maxlength="64" placeholder="v2026-09-30" /></label>
+        <label>{{ copy.inputPerMillion }}<input v-model.number="costDraft.input_per_million" type="number" min="0" max="1000000" step="any" /></label>
+        <label>{{ copy.outputPerMillion }}<input v-model.number="costDraft.output_per_million" type="number" min="0" max="1000000" step="any" /></label>
+      </div>
+      <button type="button" class="secondary" :disabled="savingCost || !validChatCostInput(costDraft)" @click="saveChatCost">{{ copy.saveCost }}</button>
+      <p v-if="selectedRun.chat_cost" class="evaluation-note">
+        {{ copy.usageCoverage }}: {{ selectedRun.chat_cost.usage_reported_responses }}/{{ selectedRun.chat_cost.chat_responses }} ·
+        {{ copy.chatCost }}: {{ displayChatCost(selectedRun) }} ·
+        {{ copy.reviewedBy }} {{ selectedRun.chat_cost.set_by }} · {{ formatDate(selectedRun.chat_cost.set_at) }}
+        <span v-if="selectedRun.chat_cost_history?.length">({{ selectedRun.chat_cost_history.length }} {{ copy.corrections }})</span>
+      </p>
     </div>
 
     <div v-if="selectedRun && selectedCases.length" class="evaluation-card">
@@ -110,6 +129,7 @@
       <div v-if="comparable" class="comparison-grid">
         <div v-for="row in comparison" :key="row.label"><strong>{{ row.label }}</strong><span>{{ row.left }} → {{ row.right }}</span><small>{{ row.delta }}</small></div>
       </div>
+      <p v-if="comparable && left?.chat_cost && right?.chat_cost && left.chat_cost.tariff_version !== right.chat_cost.tariff_version" class="evaluation-warning">{{ copy.tariffMismatch }}</p>
       <p class="evaluation-note">{{ copy.faithfulness }}</p>
     </div>
   </div>
@@ -122,12 +142,16 @@ import { get, post, put } from '@/utils/request'
 import { listModels, type ModelConfig } from '@/api/model'
 import { defaultReview, manualCoverage, manualRate, validReview as isValidReview,
   type CaseReview, type ReviewCase, type ReviewInput } from './evaluationReview'
+import { comparableChatCost, estimatedChatCost, validChatCostInput,
+  type ChatCost, type ChatCostInput } from './evaluationCost'
 
 interface CaseResult extends ReviewCase { question: string; generated_answer: string; relevant_passage_ids: number[]; retrieved_passage_ids: number[]; reranked_passage_ids: number[]; review?: CaseReview }
 interface Run {
   task: { id: string; dataset_id: string; dataset_sha256?: string; concurrency?: number; start_time: string; status: number; total?: number; finished?: number; err_msg?: string }
   metric?: { metric_version?: number; retrieval_evaluated?: number; generation_evaluated?: number; retrieval_metrics?: { recall?: number; ndcg10?: number }; generation_metrics?: { rougel?: number }; execution_metrics?: { latency_p95_ms?: number; prompt_tokens?: number; completion_tokens?: number } }
   cases?: Array<CaseResult | null>
+  chat_cost?: ChatCost
+  chat_cost_history?: ChatCost[]
 }
 
 const { locale } = useI18n()
@@ -137,6 +161,8 @@ const copy = computed(() => String(locale.value).startsWith('zh') ? {
   mockWarning: '当前 Embedding 是模拟模型或维度过低，不能作为真实检索基线。',
   dataWarning: '仅上传已脱敏、获准用于所选模型的数据；此页面不会自动把受限 AD 文档送往外部模型。',
   start: '开始评估', starting: '提交中…', history: '历史运行', empty: '暂无评估记录。', time: '开始时间', status: '状态', tokens: 'Tokens',
+  chatCost: '最终答复 API 费用估算', chatCostNote: '仅按已记录的最终答复 token 和手工录入的版本化价格估算；不含辅助 LLM 调用、Embedding、ReRank、本机算力、缓存折扣或税费。缺少用量回报时不显示费用。',
+  currency: '币种（3 位大写字母）', tariffVersion: '价格表版本', inputPerMillion: '输入价／百万 token', outputPerMillion: '输出价／百万 token', saveCost: '保存价格快照', usageCoverage: '用量回报覆盖', tariffMismatch: '两次运行使用不同价格表版本，费用差额包含价格变化。',
   compare: '版本对比', notComparable: '仅可比较相同数据集指纹、指标口径和并发设置，且均已成功的两次运行。',
   faithfulness: '证据忠实度与引用准确性尚未自动评分；BLEU/ROUGE 不能替代这两项人工或可信评审。',
   review: '逐题复核', reviewed: '人工复核', open: '查看', caseNote: '负数表示未能唯一映射到语料的检索结果。请依据原始脱敏题集逐条核验引用、拒答和证据忠实度。',
@@ -149,6 +175,8 @@ const copy = computed(() => String(locale.value).startsWith('zh') ? {
   mockWarning: 'This embedding is a mock or has too few dimensions for a real retrieval baseline.',
   dataWarning: 'Use only de-identified data approved for the selected models. Restricted AD documents are not exported automatically.',
   start: 'Start evaluation', starting: 'Submitting…', history: 'Run history', empty: 'No evaluation runs yet.', time: 'Started', status: 'Status', tokens: 'Tokens',
+  chatCost: 'Estimated final-answer API cost', chatCostNote: 'Uses reported final-answer tokens and an operator-entered versioned tariff only; excludes auxiliary LLM calls, Embedding, ReRank, local compute, cache discounts and taxes. No estimate is shown when usage is incomplete.',
+  currency: 'Currency (3 uppercase letters)', tariffVersion: 'Tariff version', inputPerMillion: 'Input price / million tokens', outputPerMillion: 'Output price / million tokens', saveCost: 'Save tariff snapshot', usageCoverage: 'Usage reports', tariffMismatch: 'The runs use different tariff versions; the cost delta includes a price change.',
   compare: 'Compare versions', notComparable: 'Both runs must succeed and use the same dataset fingerprint, metric version, and concurrency.',
   faithfulness: 'Evidence faithfulness and citation accuracy are not yet auto-scored; BLEU/ROUGE cannot replace human or trusted judging.',
   review: 'Case review', reviewed: 'Human review', open: 'Inspect', caseNote: 'Negative IDs are retrieval hits that could not be mapped uniquely to the corpus. Check citations, abstention and faithfulness against the approved fixture.',
@@ -171,6 +199,8 @@ const rightID = ref('')
 const selectedRunID = ref('')
 const reviewDrafts = ref<Record<number, ReviewInput>>({})
 const savingReviewID = ref<number | null>(null)
+const savingCost = ref(false)
+const costDraft = ref<ChatCostInput>({ currency: 'CNY', tariff_version: '', input_per_million: 0, output_per_million: 0 })
 const embeddings = computed(() => models.value.filter(m => m.type === 'Embedding' && m.status === 'active'))
 const rerankers = computed(() => models.value.filter(m => m.type === 'Rerank' && m.status === 'active'))
 const chatModels = computed(() => models.value.filter(m => m.type === 'KnowledgeQA' && m.status === 'active'))
@@ -194,6 +224,10 @@ const metric = (value?: number) => value == null ? '—' : value.toFixed(3)
 const formatDate = (value: string) => new Date(value).toLocaleString()
 const statusText = (status: number) => ({ 0: 'Pending', 1: 'Running', 2: 'Success', 3: 'Failed' }[status] || 'Unknown')
 const tokenCount = (run: Run) => (run.metric?.execution_metrics?.prompt_tokens ?? 0) + (run.metric?.execution_metrics?.completion_tokens ?? 0)
+const displayChatCost = (run: Run) => {
+  const amount = estimatedChatCost(run)
+  return amount == null ? '—' : `${run.chat_cost?.currency} ${amount.toFixed(8)}`
+}
 const comparison = computed(() => {
   if (!left.value || !right.value || !comparable.value) return []
   const pairs: Array<[string, number | undefined, number | undefined]> = [
@@ -205,13 +239,38 @@ const comparison = computed(() => {
     ['Citation accuracy (human)', manualRate(left.value, 'citation_accuracy'), manualRate(right.value, 'citation_accuracy')],
     ['No-answer abstention (human)', manualRate(left.value, 'abstention'), manualRate(right.value, 'abstention')],
   ]
-  return pairs.map(([label, a, b]) => ({ label, left: metric(a), right: metric(b), delta: a == null || b == null ? '—' : `${b - a >= 0 ? '+' : ''}${(b - a).toFixed(3)}` }))
+  const rows = pairs.map(([label, a, b]) => ({ label, left: metric(a), right: metric(b), delta: a == null || b == null ? '—' : `${b - a >= 0 ? '+' : ''}${(b - a).toFixed(3)}` }))
+  if (comparableChatCost(left.value, right.value)) {
+    const before = estimatedChatCost(left.value)!
+    const after = estimatedChatCost(right.value)!
+    rows.push({ label: `${copy.value.chatCost} (${left.value.chat_cost!.currency})`, left: before.toFixed(8),
+      right: after.toFixed(8), delta: `${after - before >= 0 ? '+' : ''}${(after - before).toFixed(8)}` })
+  }
+  return rows
 })
 
 function openRun(run: Run) {
   selectedRunID.value = run.task.id
+  costDraft.value = run.chat_cost ? {
+    currency: run.chat_cost.currency, tariff_version: run.chat_cost.tariff_version,
+    input_per_million: run.chat_cost.input_per_million, output_per_million: run.chat_cost.output_per_million,
+  } : { currency: 'CNY', tariff_version: '', input_per_million: 0, output_per_million: 0 }
   reviewDrafts.value = Object.fromEntries((run.cases || []).filter((entry): entry is CaseResult => !!entry)
     .map(entry => [entry.question_id, defaultReview(entry)]))
+}
+
+async function saveChatCost() {
+  if (!selectedRunID.value || !validChatCostInput(costDraft.value)) return
+  savingCost.value = true
+  try {
+    const response = await put<{ success: boolean; data: Run }>(
+      `/api/v1/evaluation/${encodeURIComponent(selectedRunID.value)}/chat-cost`, costDraft.value,
+    )
+    runs.value = runs.value.map(run => run.task.id === response.data.task.id ? response.data : run)
+    error.value = ''
+  } catch (cause) {
+    error.value = cause instanceof Error ? cause.message : String(cause)
+  } finally { savingCost.value = false }
 }
 
 async function saveReview(entry: CaseResult) {

@@ -22,6 +22,15 @@ var ErrEvaluationCaseNotFound = errors.New("evaluation case not found")
 // ErrEvaluationReviewConflict means a concurrent writer changed the run.
 var ErrEvaluationReviewConflict = errors.New("evaluation review changed concurrently")
 
+// ErrEvaluationChatCostInvalid means the tariff metadata is incomplete or unsafe.
+var ErrEvaluationChatCostInvalid = errors.New("invalid evaluation chat tariff")
+
+// ErrEvaluationChatCostNotReady means only completed runs may be priced.
+var ErrEvaluationChatCostNotReady = errors.New("evaluation chat cost is not ready")
+
+// ErrEvaluationChatCostConflict means a concurrent writer changed the run.
+var ErrEvaluationChatCostConflict = errors.New("evaluation chat cost changed concurrently")
+
 // Jieba is a global instance of Chinese text segmentation tool
 var Jieba *gojieba.Jieba = newJieba()
 
@@ -74,10 +83,35 @@ type EvaluationTask struct {
 
 // EvaluationDetail contains detailed evaluation information
 type EvaluationDetail struct {
-	Task   *EvaluationTask         `json:"task"`             // Evaluation task info
-	Params *ChatManage             `json:"params"`           // Evaluation parameters
-	Metric *MetricResult           `json:"metric,omitempty"` // Evaluation metrics
-	Cases  []*EvaluationCaseResult `json:"cases,omitempty"`  // Per-question review evidence
+	Task            *EvaluationTask         `json:"task"`                        // Evaluation task info
+	Params          *ChatManage             `json:"params"`                      // Evaluation parameters
+	Metric          *MetricResult           `json:"metric,omitempty"`            // Evaluation metrics
+	Cases           []*EvaluationCaseResult `json:"cases,omitempty"`             // Per-question review evidence
+	ChatCost        *EvaluationChatCost     `json:"chat_cost,omitempty"`         // Operator tariff snapshot, not total RAG cost
+	ChatCostHistory []EvaluationChatCost    `json:"chat_cost_history,omitempty"` // Prior tariff estimates for audit
+}
+
+// EvaluationChatCostInput is a versioned operator-supplied chat API tariff.
+// Auxiliary chat calls, embedding, rerank, infrastructure, cache-specific
+// discounts and taxes are excluded: this is not an invoice or total RAG cost.
+type EvaluationChatCostInput struct {
+	Currency         string  `json:"currency"`
+	TariffVersion    string  `json:"tariff_version"`
+	InputPerMillion  float64 `json:"input_per_million"`
+	OutputPerMillion float64 `json:"output_per_million"`
+}
+
+// EvaluationChatCost snapshots the tariff and measured usage at review time.
+// EstimatedAmount is absent if any chat response lacked provider token usage.
+type EvaluationChatCost struct {
+	EvaluationChatCostInput
+	PromptTokens           int64     `json:"prompt_tokens"`
+	CompletionTokens       int64     `json:"completion_tokens"`
+	ChatResponses          int       `json:"chat_responses"`
+	UsageReportedResponses int       `json:"usage_reported_responses"`
+	EstimatedAmount        *float64  `json:"estimated_amount,omitempty"`
+	SetBy                  string    `json:"set_by"`
+	SetAt                  time.Time `json:"set_at"`
 }
 
 // EvaluationCaseResult preserves enough provenance for a human to judge
@@ -143,13 +177,16 @@ type MetricResult struct {
 	ExecutionMetrics    ExecutionMetrics  `json:"execution_metrics"`
 }
 
-// ExecutionMetrics records measured latency and usage. Currency costs remain
-// unset until a versioned provider tariff is configured; tokens are not money.
+// ExecutionMetrics records measured latency and usage. Currency costs require
+// a versioned operator tariff and complete provider-reported chat usage.
 type ExecutionMetrics struct {
-	LatencyP50Ms     int64 `json:"latency_p50_ms"`
-	LatencyP95Ms     int64 `json:"latency_p95_ms"`
-	PromptTokens     int64 `json:"prompt_tokens"`
-	CompletionTokens int64 `json:"completion_tokens"`
+	LatencyP50Ms           int64 `json:"latency_p50_ms"`
+	LatencyP95Ms           int64 `json:"latency_p95_ms"`
+	PromptTokens           int64 `json:"prompt_tokens"`
+	CompletionTokens       int64 `json:"completion_tokens"`
+	UsageAccountingVersion int   `json:"usage_accounting_version,omitempty"`
+	ChatResponses          int   `json:"chat_responses,omitempty"`
+	UsageReportedResponses int   `json:"usage_reported_responses,omitempty"`
 }
 
 // RetrievalMetrics contains metrics for retrieval evaluation

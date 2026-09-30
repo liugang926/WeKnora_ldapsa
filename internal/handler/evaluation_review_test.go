@@ -29,6 +29,16 @@ func (s *reviewEvaluationServiceStub) ReviewEvaluationCase(
 	return &types.EvaluationDetail{Task: &types.EvaluationTask{ID: taskID}}, nil
 }
 
+func (s *reviewEvaluationServiceStub) SetEvaluationChatCost(
+	_ context.Context, taskID string, input types.EvaluationChatCostInput,
+) (*types.EvaluationDetail, error) {
+	s.called = true
+	if taskID != "evaluation-one" || input.Currency != "CNY" || input.TariffVersion != "v2026-09-30" {
+		return nil, types.ErrEvaluationChatCostInvalid
+	}
+	return &types.EvaluationDetail{Task: &types.EvaluationTask{ID: taskID}}, nil
+}
+
 func TestReviewEvaluationCaseValidatesPathAndReturnsDurableDetail(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	svc := &reviewEvaluationServiceStub{}
@@ -51,6 +61,31 @@ func TestReviewEvaluationCaseValidatesPathAndReturnsDurableDetail(t *testing.T) 
 	} {
 		w := httptest.NewRecorder()
 		req := httptest.NewRequest(http.MethodPut, tc.path, bytes.NewBufferString(tc.body))
+		req.Header.Set("Content-Type", "application/json")
+		r.ServeHTTP(w, req)
+		require.Equal(t, tc.want, w.Code, w.Body.String())
+	}
+	require.True(t, svc.called)
+}
+
+func TestSetEvaluationChatCostValidatesRequestAndReturnsDetail(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	svc := &reviewEvaluationServiceStub{}
+	r := gin.New()
+	r.Use(errorCapture())
+	r.PUT("/evaluation/:taskId/chat-cost", NewEvaluationHandler(svc).SetEvaluationChatCost)
+	for _, tc := range []struct {
+		body string
+		want int
+	}{
+		{`{bad`, http.StatusBadRequest},
+		{`{"currency":"CNY","tariff_version":"v2026-09-30","input_per_million":1}`, http.StatusBadRequest},
+		{`{"currency":"CNY","tariff_version":"v2026-09-30","input_per_million":0,"output_per_million":0}`, http.StatusOK},
+		{`{"currency":"CNY","tariff_version":"wrong"}`, http.StatusBadRequest},
+		{`{"currency":"CNY","tariff_version":"v2026-09-30","input_per_million":1,"output_per_million":2}`, http.StatusOK},
+	} {
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPut, "/evaluation/evaluation-one/chat-cost", bytes.NewBufferString(tc.body))
 		req.Header.Set("Content-Type", "application/json")
 		r.ServeHTTP(w, req)
 		require.Equal(t, tc.want, w.Code, w.Body.String())

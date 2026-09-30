@@ -168,3 +168,14 @@ func TestEvaluationConcurrencyLimit(t *testing.T) {
 		require.Error(t, err)
 	}
 }
+
+func TestEvaluationExecutionMetricsPreserveUsageCoverage(t *testing.T) {
+	metrics := evaluationExecutionMetrics([]int64{20, 10, 30}, 150, 25, 3, 2)
+	require.Equal(t, int64(20), metrics.LatencyP50Ms)
+	require.Equal(t, int64(30), metrics.LatencyP95Ms)
+	require.Equal(t, int64(150), metrics.PromptTokens)
+	require.Equal(t, int64(25), metrics.CompletionTokens)
+	require.Equal(t, 1, metrics.UsageAccountingVersion)
+	require.Equal(t, 3, metrics.ChatResponses)
+	require.Equal(t, 2, metrics.UsageReportedResponses)
+}

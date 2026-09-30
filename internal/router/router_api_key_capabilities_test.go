@@ -343,6 +343,11 @@ func TestTenantInfrastructureRoutesDeclareSpecificCapabilities(t *testing.T) {
 	); ok {
 		t.Fatal("a named human evaluation review must not accept API-key principals")
 	}
+	if _, ok := g.ensureAPIKeyAuthorizer().Lookup(
+		http.MethodPut, "/api/v1/evaluation/:taskId/chat-cost",
+	); ok {
+		t.Fatal("a named evaluation tariff operator must not accept API-key principals")
+	}
 	RegisterSystemRoutes(v1, &handler.SystemHandler{}, g)
 	RegisterMCPServiceRoutes(v1, &handler.MCPServiceHandler{}, &handler.MCPCredentialsHandler{}, &handler.MCPOAuthHandler{}, g)
 	RegisterWebSearchProviderRoutes(v1, &handler.WebSearchProviderHandler{}, &handler.WebSearchProviderCredentialsHandler{}, g)

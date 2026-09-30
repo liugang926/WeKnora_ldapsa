@@ -56,6 +56,48 @@ func (e *EvaluationHandler) ReviewEvaluationCase(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": detail})
 }
 
+// SetEvaluationChatCost persists an operator tariff snapshot for a completed
+// run. It is JWT-only so an API key cannot impersonate a named operator.
+func (e *EvaluationHandler) SetEvaluationChatCost(c *gin.Context) {
+	taskID := c.Param("taskId")
+	if taskID == "" {
+		_ = c.Error(errors.NewBadRequestError("Invalid evaluation task"))
+		return
+	}
+	var request struct {
+		Currency         string   `json:"currency"`
+		TariffVersion    string   `json:"tariff_version"`
+		InputPerMillion  *float64 `json:"input_per_million"`
+		OutputPerMillion *float64 `json:"output_per_million"`
+	}
+	if err := c.ShouldBindJSON(&request); err != nil ||
+		request.InputPerMillion == nil || request.OutputPerMillion == nil {
+		_ = c.Error(errors.NewBadRequestError("Invalid chat tariff"))
+		return
+	}
+	input := types.EvaluationChatCostInput{
+		Currency: request.Currency, TariffVersion: request.TariffVersion,
+		InputPerMillion: *request.InputPerMillion, OutputPerMillion: *request.OutputPerMillion,
+	}
+	detail, err := e.evaluationService.SetEvaluationChatCost(c.Request.Context(), taskID, input)
+	if err != nil {
+		switch {
+		case stderrors.Is(err, types.ErrEvaluationChatCostInvalid):
+			_ = c.Error(errors.NewBadRequestError("Invalid chat tariff"))
+		case stderrors.Is(err, types.ErrEvaluationChatCostNotReady),
+			stderrors.Is(err, types.ErrEvaluationChatCostConflict):
+			_ = c.Error(errors.NewConflictError("Evaluation chat cost is not ready; refresh and retry"))
+		case stderrors.Is(err, gorm.ErrRecordNotFound):
+			_ = c.Error(errors.NewNotFoundError("Evaluation run not found"))
+		default:
+			logger.Errorf(c.Request.Context(), "Failed to persist evaluation chat tariff: %v", err)
+			_ = c.Error(errors.NewInternalServerError("Evaluation chat tariff unavailable"))
+		}
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": detail})
+}
+
 // NewEvaluationHandler creates a new EvaluationHandler instance
 func NewEvaluationHandler(evaluationService interfaces.EvaluationService) *EvaluationHandler {
 	return &EvaluationHandler{evaluationService: evaluationService}
