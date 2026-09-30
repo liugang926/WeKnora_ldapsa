@@ -26,11 +26,13 @@ from smoke_candidate import (compose, docker, ensure_unused_project, http_json,
 DATASET_TOTALS = {"synthetic-zh-v1": 16, "synthetic-enterprise-zh-v2": 70}
 DATASET_DIR = Path(__file__).resolve().parents[2] / "dataset" / "benchmarks"
 CHAT_MODEL_ID = "builtin-local-synthetic-evaluation-chat"
+UNSELECTED_CHAT_MODEL_ID = "builtin-local-synthetic-unselected-chat"
 ANSWER = "这是完全虚构的评估流程测试回答。"
 
 
 class ChatStub(BaseHTTPRequestHandler):
     requests_seen = 0
+    requests_by_model: dict[str, int] = {}
     request_lock = threading.Lock()
 
     def log_message(self, _format: str, *_args: object) -> None:
@@ -52,8 +54,14 @@ class ChatStub(BaseHTTPRequestHandler):
         if not isinstance(payload, dict):
             self.send_error(400)
             return
+        model_name = payload.get("model")
+        if not isinstance(model_name, str):
+            self.send_error(400)
+            return
         with self.request_lock:
             type(self).requests_seen += 1
+            type(self).requests_by_model[model_name] = \
+                type(self).requests_by_model.get(model_name, 0) + 1
         usage = {"prompt_tokens": 10, "completion_tokens": 8, "total_tokens": 18}
         if payload.get("stream"):
             packets = [
@@ -92,6 +100,14 @@ def configure_evaluation(spec_path: Path, stub_port: int) -> None:
     source: remote
     is_default: true
     name: synthetic-evaluation-chat-stub
+    parameters:
+      base_url: http://host.docker.internal:{stub_port}/v1
+      api_key: synthetic-only
+      provider: generic
+  - id: {UNSELECTED_CHAT_MODEL_ID}
+    type: KnowledgeQA
+    source: remote
+    name: synthetic-unselected-chat-sentinel
     parameters:
       base_url: http://host.docker.internal:{stub_port}/v1
       api_key: synthetic-only
@@ -205,11 +221,19 @@ def run_checks(base: str, project: str, spec: Path, dataset_id: str) -> dict:
     ids = {model.get("name"): model.get("id") for model in models}
     if not all(ids.get(name) for name in (
         "BAAI/bge-small-zh-v1.5", "BAAI/bge-reranker-base",
-        "synthetic-evaluation-chat-stub",
+        "synthetic-evaluation-chat-stub", "synthetic-unselected-chat-sentinel",
     )):
         raise RuntimeError("synthetic evaluation models are missing")
+    reference_kb = http_json(base, "POST", "/api/v1/knowledge-bases", token=token,
+                             body={"name": "Synthetic evaluation model-isolation sentinel",
+                                   "type": "document",
+                                   "embedding_model_id": ids["BAAI/bge-small-zh-v1.5"],
+                                   "summary_model_id": ids["synthetic-unselected-chat-sentinel"]})["data"]
+    if reference_kb.get("summary_model_id") != ids["synthetic-unselected-chat-sentinel"]:
+        raise RuntimeError("reference KB did not retain the unselected summary model")
     created = http_json(base, "POST", "/api/v1/evaluation", token=token, body={
         "dataset_id": dataset_id,
+        "knowledge_base_id": reference_kb["id"],
         "embedding_id": ids["BAAI/bge-small-zh-v1.5"],
         "rerank_id": ids["BAAI/bge-reranker-base"],
         "chat_id": ids["synthetic-evaluation-chat-stub"],
@@ -230,6 +254,11 @@ def run_checks(base: str, project: str, spec: Path, dataset_id: str) -> dict:
         raise RuntimeError("durable evaluation has missing cases, model IDs, or metric version")
     if ChatStub.requests_seen < 1:
         raise RuntimeError("synthetic chat stub was not called")
+    with ChatStub.request_lock:
+        unexpected_calls = ChatStub.requests_by_model.get("synthetic-unselected-chat-sentinel", 0)
+        selected_calls = ChatStub.requests_by_model.get("synthetic-evaluation-chat-stub", 0)
+    if unexpected_calls or selected_calls < 1:
+        raise RuntimeError("evaluation corpus was sent to an unselected chat model or selected model was unused")
     judgments = review_synthetic_cases(base, token, task_id, detail)
     chat_cost = price_synthetic_chat(base, token, task_id, detail)
     before = {"task_id": task_id, "dataset_id": dataset_id,
@@ -260,6 +289,8 @@ def run_checks(base: str, project: str, spec: Path, dataset_id: str) -> dict:
                                                  for item in history):
         raise RuntimeError("evaluation result is absent from durable history")
     return {**before, "chat_stub_requests": ChatStub.requests_seen,
+            "selected_chat_requests": selected_calls,
+            "unselected_chat_requests": unexpected_calls,
             "restored_after_restart": True, "synthetic_reviews_restored": len(judgments),
             "synthetic_chat_cost_restored": True,
             "final_answer_calls": (metric.get("execution_metrics") or {}).get("chat_responses"),
@@ -285,6 +316,7 @@ def main() -> None:
     project = "rag-eval-" + secrets.token_hex(5)
     ensure_unused_project(project)
     ChatStub.requests_seen = 0
+    ChatStub.requests_by_model = {}
     server = ThreadingHTTPServer(("127.0.0.1", 0), ChatStub)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
