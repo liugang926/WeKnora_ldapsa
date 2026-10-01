@@ -67,6 +67,7 @@ func (p *PluginChatCompletion) OnEvent(
 		})
 		return ErrModelCall.WithError(err)
 	}
+	chatManage.FinalAnswerModelCalled = true
 	modelContext.DecodeResponse(chatResponse)
 	if orphans := modelContext.OrphanResourceHandles(chatResponse.Content); len(orphans) > 0 {
 		pipelineWarn(ctx, "Completion", "orphan_resource_handles", map[string]interface{}{

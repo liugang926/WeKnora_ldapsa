@@ -51,6 +51,7 @@ type stubModelService struct {
 	chatModel       chat.Chat
 	modelsByID      map[string]*types.Model
 	availableModels []*types.Model
+	listErr         error
 }
 
 func TestEmitKnowledgeReferencesEventIgnoresCitationOutputSetting(t *testing.T) {
@@ -90,7 +91,7 @@ func (s *stubModelService) GetModelByID(_ context.Context, id string) (*types.Mo
 }
 
 func (s *stubModelService) ListModels(context.Context) ([]*types.Model, error) {
-	return s.availableModels, nil
+	return s.availableModels, s.listErr
 }
 
 func (s *stubModelService) UpdateModel(context.Context, *types.Model) error {
@@ -167,6 +168,7 @@ func TestHandleModelFallback_IncludesHistoryMessages(t *testing.T) {
 	}
 
 	svc.handleModelFallback(context.Background(), cm)
+	require.True(t, cm.FinalAnswerModelCalled, "model fallback must be counted even before its stream finishes")
 
 	// Corrected fallback shape: a system message carries the fallback
 	// instruction, history is replayed in the middle, and the turn ends on the

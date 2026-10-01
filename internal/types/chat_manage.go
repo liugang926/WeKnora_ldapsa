@@ -115,19 +115,22 @@ type PipelineState struct {
 	Intent       QueryIntent `json:"intent,omitempty"`
 	History      []*History  `json:"history,omitempty"`
 
-	SearchResult         []*SearchResult   `json:"-"`
-	RerankResult         []*SearchResult   `json:"-"`
-	MergeResult          []*SearchResult   `json:"-"`
-	Entity               []string          `json:"-"`
-	EntityKBIDs          []string          `json:"-"`
-	EntityKnowledge      map[string]string `json:"-"`
-	GraphResult          *GraphData        `json:"-"`
-	UserContent          string            `json:"-"`
-	RenderedContexts     string            `json:"-"`
-	ChatResponse         *ChatResponse     `json:"-"`
-	ImageDescription     string            `json:"-"`
-	QuotedContext        string            `json:"-"` // Quoted message text, injected at LLM prompt stage
-	SystemPromptOverride string            `json:"-"`
+	SearchResult     []*SearchResult   `json:"-"`
+	RerankResult     []*SearchResult   `json:"-"`
+	MergeResult      []*SearchResult   `json:"-"`
+	Entity           []string          `json:"-"`
+	EntityKBIDs      []string          `json:"-"`
+	EntityKnowledge  map[string]string `json:"-"`
+	GraphResult      *GraphData        `json:"-"`
+	UserContent      string            `json:"-"`
+	RenderedContexts string            `json:"-"`
+	ChatResponse     *ChatResponse     `json:"-"`
+	// FinalAnswerModelCalled distinguishes a real final-answer model call from
+	// a fixed fallback response, which has text but no provider usage.
+	FinalAnswerModelCalled bool   `json:"-"`
+	ImageDescription       string `json:"-"`
+	QuotedContext          string `json:"-"` // Quoted message text, injected at LLM prompt stage
+	SystemPromptOverride   string `json:"-"`
 	// MemoryPrompt is the long-term memory envelope appended to the system
 	// prompt for this turn, empty when memory is off or nothing matched.
 	MemoryPrompt string `json:"-"`
