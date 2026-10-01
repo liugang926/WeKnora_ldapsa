@@ -71,6 +71,17 @@ class EvaluationCandidateTest(unittest.TestCase):
         self.assertEqual(base, "http://127.0.0.1:47321")
         opened.assert_called_once_with(base + "/health", timeout=3)
 
+    def test_failed_task_reports_reason_without_tokens(self):
+        detail = {"data": {"task": {"status": 3,
+                                   "err_msg": "rerank failed with model-secret and user-secret"}}}
+        with mock.patch.object(evaluation, "http_json", return_value=detail):
+            with self.assertRaisesRegex(RuntimeError,
+                                        "rerank failed with \\[redacted\\] and \\[redacted\\]") as failure:
+                evaluation.wait_for_result("http://127.0.0.1:1234", "user-secret",
+                                           "task-1", "model-secret")
+        self.assertNotIn("user-secret", str(failure.exception))
+        self.assertNotIn("model-secret", str(failure.exception))
+
     def test_synthetic_review_checks_answered_and_no_answer_cases(self):
         def save(_base, method, path, *, token, body):
             self.assertEqual(method, "PUT")

@@ -115,7 +115,7 @@ def configure_evaluation(spec_path: Path, stub_port: int) -> None:
 """)
 
 
-def wait_for_result(base: str, token: str, task_id: str) -> dict:
+def wait_for_result(base: str, token: str, task_id: str, model_token: str) -> dict:
     deadline = time.monotonic() + 360
     while time.monotonic() < deadline:
         detail = http_json(base, "GET", f"/api/v1/evaluation?task_id={task_id}",
@@ -124,7 +124,11 @@ def wait_for_result(base: str, token: str, task_id: str) -> dict:
         if task.get("status") == 2:
             return detail
         if task.get("status") == 3:
-            raise RuntimeError("synthetic evaluation task failed")
+            message = str(task.get("err_msg") or "no failure detail")
+            for secret in (token, model_token):
+                if secret:
+                    message = message.replace(secret, "[redacted]")
+            raise RuntimeError(f"synthetic evaluation task failed: {message[:500]}")
         time.sleep(3)
     raise RuntimeError("synthetic evaluation task did not finish within 360 seconds")
 
@@ -204,7 +208,8 @@ def price_synthetic_chat(base: str, token: str, task_id: str, detail: dict) -> f
     return expected
 
 
-def run_checks(base: str, project: str, spec: Path, dataset_id: str) -> dict:
+def run_checks(base: str, project: str, spec: Path, dataset_id: str,
+               model_token: str) -> dict:
     expected_total = DATASET_TOTALS[dataset_id]
     suffix = secrets.token_hex(5)
     email = f"rag-eval-{suffix}@example.invalid"
@@ -241,7 +246,7 @@ def run_checks(base: str, project: str, spec: Path, dataset_id: str) -> dict:
     task_id = (created.get("task") or {}).get("id")
     if not isinstance(task_id, str) or not task_id:
         raise RuntimeError("evaluation did not return a task ID")
-    detail = wait_for_result(base, token, task_id)
+    detail = wait_for_result(base, token, task_id, model_token)
     task = detail["task"]
     metric = detail.get("metric") or {}
     if task.get("total") != expected_total or task.get("finished") != expected_total \
@@ -337,7 +342,8 @@ def main() -> None:
                 published = compose(project, spec, "port", "app", "8080")
                 if not re.fullmatch(r"127\.0\.0\.1:\d+", published):
                     raise RuntimeError("candidate app is not bound to loopback")
-                result = run_checks("http://" + published, project, spec, args.dataset_id)
+                result = run_checks("http://" + published, project, spec,
+                                    args.dataset_id, model_token)
             finally:
                 if started:
                     compose(project, spec, "down", "--volumes", timeout=120)
