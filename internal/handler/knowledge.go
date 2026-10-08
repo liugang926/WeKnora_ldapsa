@@ -39,6 +39,7 @@ type KnowledgeHandler struct {
 	askTargets        nextcloudAskTargetResolver
 	contentLeases     nextcloudHTTPReadLeaseStore
 	outputAuthorizer  *service.KnowledgeOutputAuthorizer
+	spanOutputAuthorizer *service.SpanOutputAuthorizer
 	leaseHeartbeat    time.Duration
 	leaseCheckpoint   time.Duration
 	publicationCheck  func(context.Context, *types.Knowledge) error // test seam; production uses publicationGuard
@@ -771,108 +772,13 @@ func (h *KnowledgeHandler) GetKnowledge(c *gin.Context) {
 // segments. Subspans (multimodal.image[i], generation.*) ride along under
 // each stage as children when present.
 func (h *KnowledgeHandler) GetKnowledgeSpans(c *gin.Context) {
-	ctx := c.Request.Context()
+	ServeOriginalKnowledgeSpans(h, c, h.spanOutputAuthorizer)
+}
 
-	id := secutils.SanitizeForLog(c.Param("id"))
-	if id == "" {
-		c.Error(errors.NewBadRequestError("Knowledge ID cannot be empty"))
-		return
-	}
-
-	knowledge, _, err := h.resolveKnowledgeAndValidateKBAccess(c, id, types.OrgRoleViewer)
-	if err != nil {
-		c.Error(err)
-		return
-	}
-	if err := h.checkPublication(ctx, knowledge); err != nil {
-		_ = c.Error(err)
-		return
-	}
-	leases, err := h.beginNextcloudRead(c, ctx, []*types.Knowledge{knowledge})
-	if err != nil {
-		_ = c.Error(err)
-		return
-	}
-	defer leases.Close()
-	ctx = leases.Context(ctx)
-
-	// Pick attempt: explicit ?attempt=N wins; otherwise pull the
-	// latest attempt from the spans table. Lite-mode / fresh installs
-	// with zero rows fall through to attempt=0, in which case we
-	// return a placeholder tree (5 pending stages, no root, no
-	// children) so the UI still renders.
-	requestedAttempt := 0
-	if v := strings.TrimSpace(c.Query("attempt")); v != "" {
-		if n, perr := strconv.Atoi(v); perr == nil && n > 0 {
-			requestedAttempt = n
-		}
-	}
-
-	rows := []types.KnowledgeProcessingSpan{}
-	currentAttempt := 0
-	latestAttempt := 0
-	if h.spanRepo != nil {
-		latest, lerr := h.spanRepo.LatestAttempt(ctx, knowledge.ID)
-		if lerr != nil {
-			logger.Warnf(ctx, "spans LatestAttempt failed for %s: %v", knowledge.ID, lerr)
-		} else {
-			latestAttempt = latest
-		}
-		if requestedAttempt > 0 {
-			currentAttempt = requestedAttempt
-		} else {
-			currentAttempt = latestAttempt
-		}
-		if currentAttempt > 0 {
-			rows, err = h.spanRepo.ListByAttempt(ctx, knowledge.ID, currentAttempt)
-			if err != nil {
-				logger.Warnf(ctx, "spans ListByAttempt failed kid=%s attempt=%d: %v",
-					knowledge.ID, currentAttempt, err)
-				rows = nil
-			}
-		}
-	}
-
-	// Build tree: index by SpanID, then attach to parents. Stages
-	// missing from the DB are synthesized as "pending" placeholders
-	// under a synthetic (or real, if present) root so the timeline
-	// always renders five segments. parse_status threads through so
-	// pre-tracker historical knowledge (no rows but parse_status is
-	// already terminal) renders as done/failed instead of pending —
-	// otherwise legacy completed documents would forever look like
-	// they're still waiting in the queue.
-	tree, currentStageName, lastErr := buildSpanTree(knowledge.ID, currentAttempt, rows, knowledge.ParseStatus)
-
-	resp := gin.H{
-		"knowledge_id":    knowledge.ID,
-		"attempt":         currentAttempt,
-		"latest_attempt":  latestAttempt,
-		"parse_status":    knowledge.ParseStatus,
-		"current_attempt": currentAttempt,
-		"current_stage":   currentStageName,
-		"trace":           tree,
-	}
-	if lastError := knowledgeSpansLastError(
-		currentAttempt,
-		latestAttempt,
-		knowledge.ParseStatus,
-		knowledge.ErrorMessage,
-		knowledge.UpdatedAt,
-		lastErr,
-	); lastError != nil {
-		resp["last_error"] = lastError
-	}
-	if err := h.verifyNextcloudRead(ctx, leases, []*types.Knowledge{knowledge}); err != nil {
-		_ = c.Error(err)
-		return
-	}
-	defer guardNextcloudResponseWrites(c, leases, func(checkCtx context.Context) error {
-		return h.checkPublication(checkCtx, knowledge)
-	})()
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"data":    resp,
-	})
+// ConfigureKnowledgeHandlerSpanOutputLineage installs the original attempt
+// authorizer in production. Unconfigured readers remain unavailable.
+func ConfigureKnowledgeHandlerSpanOutputLineage(h *KnowledgeHandler, authorizer *service.SpanOutputAuthorizer) {
+	if h != nil { h.spanOutputAuthorizer = authorizer }
 }
 
 // knowledgeSpansLastError builds the last_error payload for GetKnowledgeSpans.
