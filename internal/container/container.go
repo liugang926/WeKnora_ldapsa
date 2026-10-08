@@ -512,6 +512,10 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	must(container.Provide(func(db *gorm.DB, store *repository.KnowledgeInputProvenanceStore) interfaces.RAGChunkSnapshotReader {
 		return repository.NewRAGChunkSnapshotReader(db, store)
 	}))
+	must(container.Invoke(func(store *repository.KnowledgeInputProvenanceStore, groups interfaces.GroupAccessService, shares interfaces.KBShareService) {
+		repository.ConfigureKnowledgeInputActorGroupAccess(store, groups)
+		repository.ConfigureKnowledgeInputActorShares(store, shares)
+	}))
 	must(container.Invoke(service.ConfigureKnowledgeInputProvenance))
 	must(container.Invoke(service.ConfigureKnowledgeBaseInputProvenance))
 	must(container.Invoke(service.ConfigureMessageSourceLineage))
