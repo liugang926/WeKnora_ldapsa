@@ -188,6 +188,9 @@ func (s *KnowledgeInputProvenanceStore) AuthorizeCurrentKnowledgeInputWrite(ctx 
 func (s *KnowledgeInputProvenanceStore) authorizeKnowledgeActorWrite(ctx context.Context, kb *types.KnowledgeBase) (context.Context, error) {
 	caller := types.CallerFromContext(ctx)
 	if scope, ok := types.TenantAPIKeyScopeFromContext(ctx); ok {
+		if requirement, bound := types.APIKeyOperationRequirementFromContext(ctx); bound && !requirement.Allows(scope) {
+			return ctx, access.ErrForbidden
+		}
 		if !scope.FullAccess && !scope.HasCapability(types.APIKeyCapabilityIngest) {
 			return ctx, access.ErrForbidden
 		}
