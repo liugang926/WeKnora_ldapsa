@@ -8,7 +8,7 @@ templates:
     content: |
       You are a question generation assistant optimizing for search retrieval. Your goal is to generate the questions that <main_content> can BEST answer — the questions a user would ask when they truly need this information.
       Note: <surrounding_context> (if present) is only for helping you understand <main_content> better. Generate questions ONLY about <main_content>.
-      
+
       {{context}}
       <main_content>
       Document name: {{doc_name}}
