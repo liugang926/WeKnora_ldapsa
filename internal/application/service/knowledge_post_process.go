@@ -21,14 +21,21 @@ import (
 // KnowledgePostProcessService acts as an orchestrator for all post-processing tasks
 // after a document has been parsed and split into chunks (including multimodal OCR/Caption).
 type KnowledgePostProcessService struct {
-	knowledgeRepo interfaces.KnowledgeRepository
-	kbService     interfaces.KnowledgeBaseService
-	chunkService  interfaces.ChunkService
-	chunkRepo     interfaces.ChunkRepository
-	taskEnqueuer  interfaces.TaskEnqueuer
-	pendingRepo   interfaces.TaskPendingOpsRepository
-	redisClient   *redis.Client
-	spanTracker   SpanTracker
+	knowledgeRepo   interfaces.KnowledgeRepository
+	kbService       interfaces.KnowledgeBaseService
+	chunkService    interfaces.ChunkService
+	chunkRepo       interfaces.ChunkRepository
+	taskEnqueuer    interfaces.TaskEnqueuer
+	pendingRepo     interfaces.TaskPendingOpsRepository
+	redisClient     *redis.Client
+	spanTracker     SpanTracker
+	knowledgeInputs interfaces.KnowledgeBuildInputReader
+}
+
+func ConfigureKnowledgePostProcessInputProvenance(handler interfaces.TaskHandler, reader interfaces.KnowledgeBuildInputReader) {
+	if impl, ok := handler.(*KnowledgePostProcessService); ok {
+		impl.knowledgeInputs = reader
+	}
 }
 
 func NewKnowledgePostProcessService(

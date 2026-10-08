@@ -12,3 +12,9 @@ type KnowledgeBuildInputReader interface {
 	CaptureKnowledgeBuildInputs(context.Context, types.KnowledgeBuildInputCaptureRequest) (*types.KnowledgeBuildInputSnapshot, error)
 	RecheckKnowledgeBuildInputs(context.Context, *types.KnowledgeBuildInputProof) error
 }
+
+// KnowledgeInputWriter is an internal admitted producer boundary. The input
+// artifact is the actual sanitized text or upload bytes, never client proof.
+type KnowledgeInputWriter interface {
+	CreateKnowledgeWithInput(context.Context, *types.Knowledge, any) (*types.KnowledgeBuildInputProof, error)
+}
