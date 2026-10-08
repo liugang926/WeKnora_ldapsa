@@ -77,7 +77,7 @@ var versionedSQLiteColumns = map[string][]string{
 	"sync_logs":             {"recovery_version", "recovery_trigger", "queue_task_id", "worker_started_at", "worker_active", "worker_attempt_token"}, // SQLite 000050 / PostgreSQL 000131
 }
 
-const expectedSQLiteMigrationVersion = 59
+const expectedSQLiteMigrationVersion = 60
 
 func TestSQLiteNextcloudRevisionUpgradeFrom43PreservesUnknownHistory(t *testing.T) {
 	repoRoot := sqliteRepoRoot(t)

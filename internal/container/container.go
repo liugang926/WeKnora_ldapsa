@@ -508,6 +508,7 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	must(container.Provide(service.NewChunkOutputAuthorizer))
 	must(container.Provide(service.NewSpanOutputAuthorizer))
 	must(container.Provide(service.NewKnowledgeCollectionOutputAuthorizer))
+	must(container.Provide(service.NewTagOutputAuthorizer))
 	must(container.Provide(service.NewGraphOriginalInputVerifier))
 	must(container.Provide(service.NewKnowledgeGraphLineageReader))
 	must(container.Provide(func(db *gorm.DB, store *repository.KnowledgeInputProvenanceStore) interfaces.RAGChunkSnapshotReader {
@@ -639,6 +640,7 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	must(container.Invoke(handler.ConfigureChunkHandlerOutputLineage))
 	must(container.Invoke(handler.ConfigureKnowledgeHandlerSpanOutputLineage))
 	must(container.Invoke(handler.ConfigureKnowledgeHandlerCollectionOutput))
+	must(container.Invoke(handler.ConfigureTagHandlerOutputLineage))
 	must(container.Provide(handler.NewSystemHandler))
 	// Dig resolves exact types; adapt the registered service to the handler's
 	// narrower SharedAgentLookup interface at the composition boundary.
