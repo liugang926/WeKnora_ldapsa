@@ -64,6 +64,9 @@ func NewPluginSearchParallel(
 		knowledgeRepo: knowledgeRepository,
 	}
 
+	if reader, ok := knowledgeBaseService.(interfaces.KnowledgeGraphSnapshotReader); ok {
+		searchEntityPlugin.graphReader = reader
+	}
 	res := &PluginSearchParallel{
 		knowledgeBaseService: knowledgeBaseService,
 		knowledgeService:     knowledgeService,

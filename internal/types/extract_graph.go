@@ -10,28 +10,35 @@ type ChunkContext struct {
 
 // PromptTemplateStructured represents the prompt template structured
 type PromptTemplateStructured struct {
-	Description string      `json:"description"`
-	Tags        []string    `json:"tags"`
-	Examples    []GraphData `json:"examples"`
+	SourceOrigin *GraphPromptTemplateOrigin `json:"-" yaml:"-"`
+	Description  string                     `json:"description"`
+	Tags         []string                   `json:"tags"`
+	Examples     []GraphData                `json:"examples"`
 }
 
 type GraphNode struct {
-	Name       string   `json:"name,omitempty"`
-	Chunks     []string `json:"chunks,omitempty"`
-	Attributes []string `json:"attributes,omitempty"`
+	SourceReceipt *GraphSourceReceipt `json:"-"`
+	Name          string              `json:"name,omitempty"`
+	Chunks        []string            `json:"chunks,omitempty"`
+	Attributes    []string            `json:"attributes,omitempty"`
 }
 
 // GraphRelation represents the relation of the graph
 type GraphRelation struct {
-	Node1 string `json:"node1,omitempty"`
-	Node2 string `json:"node2,omitempty"`
-	Type  string `json:"type,omitempty"`
+	SourceReceipt *GraphSourceReceipt `json:"-"`
+	Node1         string              `json:"node1,omitempty"`
+	Node2         string              `json:"node2,omitempty"`
+	Type          string              `json:"type,omitempty"`
 }
 
 type GraphData struct {
-	Text     string           `json:"text,omitempty"`
-	Node     []*GraphNode     `json:"node,omitempty"`
-	Relation []*GraphRelation `json:"relation,omitempty"`
+	SourceReceipt *GraphSourceReceipt   `json:"-"`
+	WireDigest    string                `json:"-"`
+	InputReceipts []*GraphSourceReceipt `json:"-"`
+	SourceLineage *SourceLineage        `json:"-"`
+	Text          string                `json:"text,omitempty"`
+	Node          []*GraphNode          `json:"node,omitempty"`
+	Relation      []*GraphRelation      `json:"relation,omitempty"`
 }
 
 // NameSpace represents the name space of the knowledge base and knowledge

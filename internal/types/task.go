@@ -280,6 +280,7 @@ type MemoryExtractPayload struct {
 
 // ExtractChunkPayload represents the extract chunk task payload
 type ExtractChunkPayload struct {
+	OriginalInput *KnowledgeBuildInputProof `json:"original_input_proof,omitempty"`
 	TracingContext
 	TenantID uint64 `json:"tenant_id"`
 	ChunkID  string `json:"chunk_id"`

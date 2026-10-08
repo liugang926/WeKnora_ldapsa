@@ -96,18 +96,23 @@ func NewChunkExtractTask(
 	knowledgeID string,
 	attempt int,
 	chunkIndex int,
+	originalInputs ...*types.KnowledgeBuildInputProof,
 ) (bool, error) {
 	if strings.ToLower(os.Getenv("NEO4J_ENABLE")) != "true" {
 		logger.Warn(ctx, "NEO4J is not enabled, skip chunk extract task")
 		return false, nil
 	}
+	if len(originalInputs) != 1 || originalInputs[0] == nil || originalInputs[0].TenantID != tenantID || originalInputs[0].KnowledgeID != knowledgeID {
+		return false, types.ErrGraphSourceReceiptUnknown
+	}
 	taskPayload := types.ExtractChunkPayload{
-		TenantID:    tenantID,
-		ChunkID:     chunkID,
-		ModelID:     modelID,
-		KnowledgeID: knowledgeID,
-		Attempt:     attempt,
-		ChunkIndex:  chunkIndex,
+		OriginalInput: originalInputs[0],
+		TenantID:      tenantID,
+		ChunkID:       chunkID,
+		ModelID:       modelID,
+		KnowledgeID:   knowledgeID,
+		Attempt:       attempt,
+		ChunkIndex:    chunkIndex,
 	}
 	langfuse.InjectTracing(ctx, &taskPayload)
 	payload, err := json.Marshal(taskPayload)
@@ -180,12 +185,14 @@ func enqueueDataTableSummaryIfNeeded(
 
 // ChunkExtractService is a service for extracting chunks
 type ChunkExtractService struct {
-	template          *types.PromptTemplateStructured
-	modelService      interfaces.ModelService
-	knowledgeBaseRepo interfaces.KnowledgeBaseRepository
-	knowledgeRepo     interfaces.KnowledgeRepository
-	chunkRepo         interfaces.ChunkRepository
-	graphEngine       interfaces.RetrieveGraphRepository
+	buildInputs         interfaces.KnowledgeBuildInputReader
+	templateSourceCheck func(context.Context, *types.SourceLineage) error
+	template            *types.PromptTemplateStructured
+	modelService        interfaces.ModelService
+	knowledgeBaseRepo   interfaces.KnowledgeBaseRepository
+	knowledgeRepo       interfaces.KnowledgeRepository
+	chunkRepo           interfaces.ChunkRepository
+	graphEngine         interfaces.RetrieveGraphRepository
 	// spanTracker records this graph-extract task's subspan under the
 	// parent attempt's postprocess stage so the trace viewer shows real
 	// per-chunk graph extraction time rather than the upstream's enqueue.
@@ -201,9 +208,17 @@ func NewChunkExtractService(
 	chunkRepo interfaces.ChunkRepository,
 	graphEngine interfaces.RetrieveGraphRepository,
 	spanTracker SpanTracker,
+	buildInputs interfaces.KnowledgeBuildInputReader,
 ) interfaces.TaskHandler {
+	template := config.ExtractManager.ExtractGraph
+	if _, err := types.GraphPromptTemplateLineage(template); err != nil {
+		if bound, err := configpkgGraphTemplate(template); err == nil {
+			template = bound
+		}
+	}
 	return &ChunkExtractService{
-		template:          config.ExtractManager.ExtractGraph,
+		buildInputs:       buildInputs,
+		template:          template,
 		modelService:      modelService,
 		knowledgeBaseRepo: knowledgeBaseRepo,
 		knowledgeRepo:     knowledgeRepo,
@@ -221,7 +236,7 @@ func (s *ChunkExtractService) tracker() SpanTracker {
 }
 
 // Handle handles the chunk extraction task
-func (s *ChunkExtractService) Handle(ctx context.Context, t *asynq.Task) error {
+func (s *ChunkExtractService) Handle(ctx context.Context, t *asynq.Task) (returnErr error) {
 	var p types.ExtractChunkPayload
 	if err := json.Unmarshal(t.Payload(), &p); err != nil {
 		logger.Errorf(ctx, "failed to unmarshal task payload: %v", err)
@@ -230,7 +245,6 @@ func (s *ChunkExtractService) Handle(ctx context.Context, t *asynq.Task) error {
 	ctx = logger.WithRequestID(ctx, uuid.New().String())
 	ctx = logger.WithField(ctx, "extract", p.ChunkID)
 	ctx = context.WithValue(ctx, types.TenantIDContextKey, p.TenantID)
-
 	// A newer attempt (re-upload / edit / reparse) has superseded this one:
 	// skip before opening the span or registering the FinalizeSubtask defer.
 	// The chunk this task references was deleted by the new attempt's cleanup,
@@ -239,6 +253,31 @@ func (s *ChunkExtractService) Handle(ctx context.Context, t *asynq.Task) error {
 		logger.Infof(ctx, "graph extract: attempt %d superseded for %s, skipping stale enrichment",
 			p.Attempt, p.KnowledgeID)
 		return nil
+	}
+
+	mainFinalizeRegistered := false
+	defer func() {
+		if !mainFinalizeRegistered && returnErr != nil {
+			finalizeSubtaskDetached(ctx, s.knowledgeRepo, p.KnowledgeID, "graph_input_admission", returnErr, false, isFinalAsynqAttempt(ctx))
+		}
+	}()
+
+	if s.buildInputs == nil || p.OriginalInput == nil || p.OriginalInput.TenantID != p.TenantID || p.OriginalInput.KnowledgeID != p.KnowledgeID {
+		return types.ErrGraphSourceReceiptUnknown
+	}
+	snapshot, err := s.buildInputs.CaptureKnowledgeBuildInputs(ctx, types.KnowledgeBuildInputCaptureRequest{Projection: types.KnowledgeBuildProjectionGraph, TenantID: p.TenantID, KnowledgeBaseID: p.OriginalInput.KnowledgeBaseID, KnowledgeID: p.KnowledgeID, ChunkIDs: []string{p.ChunkID}, Expected: p.OriginalInput})
+	if err != nil {
+		return err
+	}
+	if snapshot == nil || snapshot.Proof == nil || snapshot.Knowledge == nil || snapshot.KnowledgeBase == nil || len(snapshot.Chunks) != 1 || snapshot.Chunks[0] == nil || snapshot.Chunks[0].ID != p.ChunkID {
+		return types.ErrGraphSourceReceiptUnknown
+	}
+	snapshot, err = freezeGraphBuildSnapshot(snapshot)
+	if err != nil {
+		return err
+	}
+	if err := recheckOriginalGraphProof(ctx, s.buildInputs, snapshot.Proof); err != nil {
+		return err
 	}
 
 	// Open a postprocess subspan keyed by chunk ordinal so the trace
@@ -261,6 +300,7 @@ func (s *ChunkExtractService) Handle(ctx context.Context, t *asynq.Task) error {
 	}
 	var handleErr error
 	graphOut := types.JSONMap{}
+	mainFinalizeRegistered = true
 	defer func() {
 		// Decrement the parent's enrichment counter on terminal exit so a
 		// completed (or terminally-failed) per-chunk extract releases its
@@ -295,35 +335,16 @@ func (s *ChunkExtractService) Handle(ctx context.Context, t *asynq.Task) error {
 		}
 	}
 
-	chunk, err := s.chunkRepo.GetChunkByID(ctx, p.TenantID, p.ChunkID)
+	chunk := snapshot.Chunks[0]
+	kb := snapshot.KnowledgeBase
+	processOverrides, err := snapshot.Knowledge.ProcessOverrides()
 	if err != nil {
-		logger.Errorf(ctx, "failed to get chunk: %v", err)
 		handleErr = err
 		return err
 	}
-	// Capture chunk content shape on output — lets traces answer "WHAT
-	// did the LLM call see?" without joining back to the chunk store.
-	// Preview is truncated to keep span rows reasonable.
-	if gSpan != nil {
-		graphOut["chunk_chars"] = len([]rune(chunk.Content))
-		graphOut["chunk_preview"] = previewText(chunk.Content, 200)
-	}
-	kb, err := s.knowledgeBaseRepo.GetKnowledgeBaseByID(ctx, chunk.KnowledgeBaseID)
-	if err != nil {
-		logger.Errorf(ctx, "failed to get knowledge base: %v", err)
-		handleErr = err
-		return err
-	}
-
-	var processOverrides *types.KnowledgeProcessOverrides
-	knowledgeID := p.KnowledgeID
-	if knowledgeID == "" {
-		knowledgeID = chunk.KnowledgeID
-	}
-	if knowledgeID != "" && s.knowledgeRepo != nil {
-		if k, kerr := s.knowledgeRepo.GetKnowledgeByIDOnly(ctx, knowledgeID); kerr == nil && k != nil {
-			processOverrides, _ = k.ProcessOverrides()
-		}
+	if p.ModelID != kb.SummaryModelID {
+		handleErr = types.ErrGraphSourceReceiptUnknown
+		return handleErr
 	}
 	extractCfg := ResolveProcessConfig(kb, processOverrides).ExtractConfig
 	if !extractCfg.Enabled {
@@ -351,28 +372,74 @@ func (s *ChunkExtractService) Handle(ctx context.Context, t *asynq.Task) error {
 			},
 		},
 	}
-	extractor := chatpipeline.NewExtractor(chatModel, template)
-	graph, err := extractor.Extract(ctx, chunk.Content)
+
+	templateLineage, err := types.GraphPromptTemplateLineage(s.template)
 	if err != nil {
 		handleErr = err
 		return err
 	}
-
-	chunk, err = s.chunkRepo.GetChunkByID(ctx, p.TenantID, p.ChunkID)
-	if err != nil {
-		logger.Warnf(ctx, "graph ignore chunk %s: %v", p.ChunkID, err)
-		graphOut["skipped"] = "chunk_disappeared"
+	check := func(checkCtx context.Context, lineage *types.SourceLineage) error {
+		if lineage.RequireComplete() != nil {
+			return types.ErrGraphSourceReceiptUnknown
+		}
+		if err := recheckOriginalGraphProof(checkCtx, s.buildInputs, snapshot.Proof); err != nil {
+			return err
+		}
+		if len(templateLineage.Sources) > 0 {
+			if s.templateSourceCheck == nil {
+				return types.ErrGraphSourceReceiptUnknown
+			}
+			return s.templateSourceCheck(checkCtx, lineage)
+		}
 		return nil
 	}
-
+	extractor := chatpipeline.NewExtractor(chatModel, template)
+	actualConfigDigest := types.GraphDigest(template)
+	graph, err := extractor.ExtractSourceLineage(ctx, chunk.Content, snapshot.Proof.SourceLineage, templateLineage, check)
+	if err != nil {
+		handleErr = err
+		return err
+	}
+	namespace := types.NameSpace{KnowledgeBase: chunk.KnowledgeBaseID, Knowledge: chunk.KnowledgeID}
+	base := &types.GraphSourceReceipt{OriginalInput: snapshot.Proof, Version: 1, TenantID: chunk.TenantID, KnowledgeBaseID: chunk.KnowledgeBaseID, KnowledgeID: chunk.KnowledgeID, BuildGeneration: snapshot.Proof.BuildGeneration, InputDigest: snapshot.Proof.InputDigest, ConfigDigest: actualConfigDigest, WireDigest: graph.WireDigest, SourceLineage: graph.SourceLineage}
 	for _, node := range graph.Node {
 		node.Chunks = []string{chunk.ID}
+		if node.Attributes == nil {
+			node.Attributes = []string{}
+		}
+		node.SourceReceipt, err = types.BindGraphSourceReceipt(base, types.GraphNodeBodyDigest(namespace, node))
+		if err != nil {
+			handleErr = err
+			return err
+		}
 	}
-	if err = s.graphEngine.AddGraph(ctx,
-		types.NameSpace{KnowledgeBase: chunk.KnowledgeBaseID, Knowledge: chunk.KnowledgeID},
-		[]*types.GraphData{graph},
-	); err != nil {
-		logger.Errorf(ctx, "failed to add graph: %v", err)
+	for _, edge := range graph.Relation {
+		edge.SourceReceipt, err = types.BindGraphSourceReceipt(base, types.GraphRelationBodyDigest(namespace, edge))
+		if err != nil {
+			handleErr = err
+			return err
+		}
+	}
+	graph.SourceReceipt, err = types.BindGraphSourceReceipt(base, types.GraphDataBodyDigest(namespace, graph))
+	if err != nil {
+		handleErr = err
+		return err
+	}
+	if err := check(ctx, graph.SourceLineage); err != nil {
+		handleErr = err
+		return err
+	}
+	writeCtx := types.WithGraphWriteAuthorization(ctx, func(ctx context.Context, receipt *types.GraphSourceReceipt) error {
+		if receipt.OriginalInput == nil || receipt.OriginalInput.AdmissionID != snapshot.Proof.AdmissionID || receipt.InputDigest != snapshot.Proof.InputDigest || receipt.WireDigest != graph.WireDigest || receipt.ConfigDigest != actualConfigDigest {
+			return types.ErrGraphSourceReceiptUnknown
+		}
+		return check(ctx, receipt.SourceLineage)
+	})
+	if err := s.graphEngine.AddGraph(writeCtx, namespace, []*types.GraphData{graph}); err != nil {
+		handleErr = err
+		return err
+	}
+	if err := check(ctx, graph.SourceLineage); err != nil {
 		handleErr = err
 		return err
 	}
@@ -916,4 +983,62 @@ func (s *DataTableSummaryService) buildSampleDataDescription(ctx context.Context
 	}
 
 	return builder.String()
+}
+
+func configpkgGraphTemplate(template *types.PromptTemplateStructured) (*types.PromptTemplateStructured, error) {
+	return config.BuiltInGraphTemplateOrigin(template, "graph")
+}
+
+// ConfigureChunkGraphTemplateAuthorizer is a trusted in-process binder for a
+// source-derived operator template. Independent exact code literals need no
+// additional source authorization; arbitrary custom YAML remains unknown.
+func ConfigureChunkGraphTemplateAuthorizer(handler interfaces.TaskHandler, check func(context.Context, *types.SourceLineage) error) {
+	if impl, ok := handler.(*ChunkExtractService); ok {
+		impl.templateSourceCheck = check
+	}
+}
+
+func freezeGraphBuildSnapshot(snapshot *types.KnowledgeBuildInputSnapshot) (*types.KnowledgeBuildInputSnapshot, error) {
+	if snapshot == nil {
+		return nil, types.ErrGraphSourceReceiptUnknown
+	}
+	out := &types.KnowledgeBuildInputSnapshot{}
+	clone := func(in, out any) error {
+		data, err := json.Marshal(in)
+		if err != nil {
+			return err
+		}
+		return json.Unmarshal(data, out)
+	}
+	out.Knowledge = &types.Knowledge{}
+	if err := clone(snapshot.Knowledge, out.Knowledge); err != nil {
+		return nil, err
+	}
+	out.KnowledgeBase = &types.KnowledgeBase{}
+	if err := clone(snapshot.KnowledgeBase, out.KnowledgeBase); err != nil {
+		return nil, err
+	}
+	out.Proof = &types.KnowledgeBuildInputProof{}
+	if err := clone(snapshot.Proof, out.Proof); err != nil {
+		return nil, err
+	}
+	if err := clone(snapshot.Chunks, &out.Chunks); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func recheckOriginalGraphProof(ctx context.Context, reader interfaces.KnowledgeBuildInputReader, proof *types.KnowledgeBuildInputProof) error {
+	if reader == nil || proof == nil {
+		return types.ErrGraphSourceReceiptUnknown
+	}
+	data, err := json.Marshal(proof)
+	if err != nil {
+		return err
+	}
+	var copy types.KnowledgeBuildInputProof
+	if err := json.Unmarshal(data, &copy); err != nil {
+		return err
+	}
+	return reader.RecheckKnowledgeBuildInputs(ctx, &copy)
 }

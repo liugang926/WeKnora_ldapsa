@@ -32,6 +32,7 @@ const kbTaskCleanupTimeout = 5 * time.Second
 // knowledgeBaseService implements the knowledge base service interface
 type knowledgeBaseService struct {
 	knowledgeInputWriter   interfaces.KnowledgeBaseInputWriter
+	graphLineageReader     *KnowledgeGraphLineageReader
 	repo                   interfaces.KnowledgeBaseRepository
 	kgRepo                 interfaces.KnowledgeRepository
 	chunkRepo              interfaces.ChunkRepository

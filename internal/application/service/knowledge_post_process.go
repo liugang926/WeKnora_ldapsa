@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/Tencent/WeKnora/internal/application/repository"
 	"sort"
 	"time"
 
@@ -96,6 +97,15 @@ func (s *KnowledgePostProcessService) Handle(ctx context.Context, task *asynq.Ta
 	logger.Infof(ctx, "[KnowledgePostProcess] Orchestrating post processing for knowledge: %s", payload.KnowledgeID)
 
 	ctx = types.WithExecutionTenant(ctx, payload.TenantID)
+	if payload.OriginalInput != nil {
+		if s.knowledgeInputs == nil {
+			return types.ErrGraphSourceReceiptUnknown
+		}
+		if err := s.knowledgeInputs.RecheckKnowledgeBuildInputs(ctx, payload.OriginalInput); err != nil {
+			return err
+		}
+		ctx = repository.WithKnowledgeBuildInputProof(ctx, s.knowledgeInputs, payload.OriginalInput)
+	}
 	if payload.Language != "" {
 		ctx = context.WithValue(ctx, types.LanguageContextKey, payload.Language)
 	}
@@ -422,8 +432,26 @@ func (s *KnowledgePostProcessService) Handle(ctx context.Context, task *asynq.Ta
 			"[KnowledgePostProcess] Spawning Graph RAG extract tasks for %d text/OCR chunks (of %d text-like)",
 			len(graphChunks), len(textChunks))
 		for i, chunk := range graphChunks {
+			var original *types.KnowledgeBuildInputProof
+			var captureErr error
+			if s.knowledgeInputs == nil {
+				captureErr = types.ErrGraphSourceReceiptUnknown
+			} else {
+				snapshot, err := s.knowledgeInputs.CaptureKnowledgeBuildInputs(ctx, types.KnowledgeBuildInputCaptureRequest{Projection: types.KnowledgeBuildProjectionGraph, TenantID: payload.TenantID, KnowledgeBaseID: kb.ID, KnowledgeID: payload.KnowledgeID, ChunkIDs: []string{chunk.ID}, Expected: repository.KnowledgeBuildInputProofFromContext(ctx)})
+				if err != nil {
+					captureErr = err
+				} else if snapshot == nil || snapshot.Proof == nil {
+					captureErr = types.ErrGraphSourceReceiptUnknown
+				} else {
+					original = snapshot.Proof
+				}
+			}
+			if captureErr != nil {
+				logger.Warn(ctx, "graph original input admission unavailable")
+				continue
+			}
 			ok, err := NewChunkExtractTask(ctx, s.taskEnqueuer, payload.TenantID, chunk.ID, kb.SummaryModelID,
-				payload.KnowledgeID, attempt, i)
+				payload.KnowledgeID, attempt, i, original)
 			if err != nil {
 				logger.Errorf(ctx, "[KnowledgePostProcess] Failed to create chunk extract task for %s: %v", chunk.ID, err)
 			}
@@ -573,7 +601,27 @@ func (s *KnowledgePostProcessService) enqueueSummaryGenerationTask(ctx context.C
 		return false
 	}
 
+	if s.knowledgeInputs == nil {
+		return false
+	}
+	actual, err := s.chunkRepo.ListChunksByKnowledgeIDAndTypes(ctx, payload.TenantID, payload.KnowledgeID, []types.ChunkType{types.ChunkTypeText, types.ChunkTypeImageOCR, types.ChunkTypeImageCaption})
+	if err != nil {
+		return false
+	}
+	ids := []string{}
+	for _, chunk := range actual {
+		if chunk == nil || chunk.TenantID != payload.TenantID || chunk.KnowledgeBaseID != payload.KnowledgeBaseID || chunk.KnowledgeID != payload.KnowledgeID {
+			return false
+		}
+		ids = append(ids, chunk.ID)
+	}
+	original, err := s.capturePostProcessBuildProof(ctx, payload, ids)
+	if err != nil {
+		return false
+	}
+
 	taskPayload := types.SummaryGenerationPayload{
+		OriginalInput:   original,
 		TenantID:        payload.TenantID,
 		KnowledgeBaseID: payload.KnowledgeBaseID,
 		KnowledgeID:     payload.KnowledgeID,
@@ -674,6 +722,20 @@ func (s *KnowledgePostProcessService) enqueueQuestionGenerationTasks(
 		if end < total {
 			taskPayload.NextChunkID = questionChunks[end].ID
 		}
+		inputs := append([]string{}, chunkIDs...)
+		if taskPayload.PrevChunkID != "" {
+			inputs = append(inputs, taskPayload.PrevChunkID)
+		}
+		if taskPayload.NextChunkID != "" {
+			inputs = append(inputs, taskPayload.NextChunkID)
+		}
+		original, captureErr := s.capturePostProcessBuildProof(ctx, payload, inputs)
+		if captureErr != nil {
+			batchIndex++
+			continue
+		}
+		taskPayload.OriginalInput = original
+
 		batchIndex++
 
 		langfuse.InjectTracing(ctx, &taskPayload)
@@ -739,4 +801,18 @@ func selectGraphChunks(chunks []*types.Chunk) []*types.Chunk {
 // extraction (or question generation) can find entities in it.
 func chunkHasExtractableText(content string) bool {
 	return extractRealText(docparser.StripMarkdownImages(content)) != ""
+}
+
+func (s *KnowledgePostProcessService) capturePostProcessBuildProof(ctx context.Context, payload types.KnowledgePostProcessPayload, ids []string) (*types.KnowledgeBuildInputProof, error) {
+	if s.knowledgeInputs == nil {
+		return nil, types.ErrSourceLineageUnknown
+	}
+	snapshot, err := s.knowledgeInputs.CaptureKnowledgeBuildInputs(ctx, types.KnowledgeBuildInputCaptureRequest{TenantID: payload.TenantID, KnowledgeBaseID: payload.KnowledgeBaseID, KnowledgeID: payload.KnowledgeID, ChunkIDs: ids, Expected: repository.KnowledgeBuildInputProofFromContext(ctx)})
+	if err != nil {
+		return nil, err
+	}
+	if snapshot == nil || snapshot.Proof == nil {
+		return nil, types.ErrSourceLineageUnknown
+	}
+	return snapshot.Proof, nil
 }

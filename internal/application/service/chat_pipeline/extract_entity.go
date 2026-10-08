@@ -43,6 +43,11 @@ func NewPluginExtractEntity(
 		knowledgeService:  knowledgeService,
 		knowledgeRepo:     knowledgeRepo,
 	}
+	if _, err := types.GraphPromptTemplateLineage(res.template); err != nil {
+		if bound, err := configpkgEntityTemplate(res.template); err == nil {
+			res.template = bound
+		}
+	}
 	eventManager.Register(res)
 	return res
 }
@@ -66,6 +71,9 @@ func (p *PluginExtractEntity) OnEvent(ctx context.Context,
 		return sourceLineagePluginError(turn.Check(ctx))
 	}
 
+	if types.RAGSourceLineageFromContext(ctx) != nil {
+		return p.onLineageExtractEntity(ctx, chatManage, next)
+	}
 	query := chatManage.Query
 
 	model, err := p.modelService.GetChatModel(ctx, chatManage.ChatModelID)
@@ -186,6 +194,9 @@ func NewExtractor(
 
 // Extract extracts entities from content
 func (e *Extractor) Extract(ctx context.Context, content string) (*types.GraphData, error) {
+	if types.RAGSourceLineageFromContext(ctx) != nil {
+		return nil, types.ErrGraphSourceReceiptUnknown
+	}
 	generator := NewQAPromptGenerator(e.formater, e.template)
 
 	// logger.Debugf(ctx, "chat system: %s", generator.System(ctx))
@@ -716,4 +727,8 @@ func (f *Formater) isValidLanguageTag(lang string, validTags map[FormatType]map[
 	}
 	_, exists := validSet[tag]
 	return exists
+}
+
+func configpkgEntityTemplate(template *types.PromptTemplateStructured) (*types.PromptTemplateStructured, error) {
+	return config.BuiltInGraphTemplateOrigin(template, "entity")
 }

@@ -36,6 +36,7 @@ type QueryKnowledgeGraphInput struct {
 
 // QueryKnowledgeGraphTool queries the knowledge graph for entities and relationships
 type QueryKnowledgeGraphTool struct {
+	graphReader interfaces.KnowledgeGraphSnapshotReader
 	BaseTool
 	knowledgeService      interfaces.KnowledgeBaseService
 	scopeKnowledgeService interfaces.KnowledgeService
@@ -62,6 +63,9 @@ func NewQueryKnowledgeGraphTool(
 		BaseTool:         queryKnowledgeGraphTool,
 		knowledgeService: knowledgeService,
 	}
+	if reader, ok := knowledgeService.(interfaces.KnowledgeGraphSnapshotReader); ok {
+		tool.graphReader = reader
+	}
 	// Presence of the variadic argument — not its length — enables the Agent
 	// authorization boundary, so an empty scope fails closed.
 	if len(searchTargets) > 0 {
@@ -73,6 +77,9 @@ func NewQueryKnowledgeGraphTool(
 
 // Execute performs the knowledge graph query with concurrent KB processing
 func (t *QueryKnowledgeGraphTool) Execute(ctx context.Context, args json.RawMessage) (*types.ToolResult, error) {
+	if types.RAGSourceLineageFromContext(ctx) != nil {
+		return t.ExecuteSourceLineage(ctx, args)
+	}
 	// Parse args from json.RawMessage
 	var input QueryKnowledgeGraphInput
 	if err := json.Unmarshal(args, &input); err != nil {
