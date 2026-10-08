@@ -56,6 +56,30 @@ func historyInputRequest(assistant *types.Message) types.CommittedHistoryKnowled
 	return types.CommittedHistoryKnowledgeInputRequest{TenantID: 7, KnowledgeBaseID: "kb", SessionID: assistant.SessionID, AssistantMessageID: assistant.ID}
 }
 
+func checkKnowledgeHistoryExecutionContextABA(t *testing.T, store *KnowledgeInputProvenanceStore, db *gorm.DB) {
+	t.Helper()
+	_, assistant := createHistoryInputParents(t, store, db)
+	input, err := store.CreateCommittedHistoryKnowledgeInput(historyInputAdmissionContext(), historyInputRequest(assistant))
+	require.NoError(t, err)
+	ctx := WithKnowledgeBuildInputProof(historyInputAdmissionContext(), store, input.Proof)
+	require.NoError(t, store.RecheckKnowledgeBuildInputs(ctx, input.Proof))
+	original := assistant.ExecutionContext
+	require.NoError(t, db.Model(&types.Message{}).Where("id = ?", assistant.ID).Update("execution_context", types.MessageExecutionContext{KnowledgeBaseIDs: []string{"changed-scope"}}).Error)
+	require.Error(t, store.RecheckKnowledgeBuildInputs(ctx, input.Proof))
+	require.NoError(t, db.Model(&types.Message{}).Where("id = ?", assistant.ID).Update("execution_context", original).Error)
+	require.Error(t, store.RecheckKnowledgeBuildInputs(ctx, input.Proof), "restored JSON cannot revive an original parent execution scope revision")
+}
+
+func TestKnowledgeHistoryExecutionContextABA(t *testing.T) {
+	store, db := knowledgeInputFixture(t)
+	checkKnowledgeHistoryExecutionContextABA(t, store, db)
+}
+
+func TestPostgresKnowledgeHistoryExecutionContextABA(t *testing.T) {
+	store, db := knowledgeInputPostgresFixture(t)
+	checkKnowledgeHistoryExecutionContextABA(t, store, db)
+}
+
 func TestKnowledgeHistoryActualCommittedPairAtomicLinkAndHydration(t *testing.T) {
 	store, db := knowledgeInputFixture(t)
 	user, assistant := createHistoryInputParents(t, store, db)
