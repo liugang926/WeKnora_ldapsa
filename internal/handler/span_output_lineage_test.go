@@ -23,6 +23,7 @@ func spanHTTPFixture(t *testing.T) (*KnowledgeHandler, *service.SpanOutputAuthor
 	require.NoError(t, err)
 	require.NoError(t, db.Exec(string(script)).Error)
 	store := repository.NewKnowledgeInputProvenanceStore(db)
+	repository.ConfigureKnowledgeInputActorGroupAccess(store, service.NewGroupAccessService(repository.NewGroupAccessRepository(db)))
 	actual, err := store.CaptureKnowledgeOutputInputs(context.Background(), types.KnowledgeBuildInputCaptureRequest{TenantID: k.TenantID, KnowledgeBaseID: k.KnowledgeBaseID, KnowledgeID: k.ID})
 	require.NoError(t, err)
 	ctx := repository.WithKnowledgeBuildInputProof(context.Background(), store, actual.Proof)
