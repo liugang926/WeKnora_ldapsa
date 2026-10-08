@@ -13,7 +13,7 @@ checkpoint field. Never serialize a checkpoint directly as a public response.
 
 Version 1 records `complete`/`unknown` plus controlled source identities,
 including effective source tenant, dedicated KB/data source, immutable pair,
-instance/binding/file, original knowledge and source-ledger revision, and opaque
+instance/binding/file, original knowledge and exact build-fence epoch, and opaque
 ETag. Constructors/codec/union reject duplicate JSON keys and invalid raw UTF-8,
 validate identities, retain different revisions,
 propagate unknown, produce deterministic independent sets and fail closed at
@@ -43,3 +43,8 @@ propagate summaries/forks, atomically save answer and sealed lineage, and apply
 mandatory authorization before model input, output, replay and derivatives.
 Until then, source-dependent indexing and physical derived GC remain subject
 to their existing safety gates; this foundation provides no coverage marker.
+
+The next source-only step supplies an unused
+[trusted resolver/authorizer](source-lineage-policy.md). Its build epoch is not
+the append-only observation sequence; same-content bookkeeping does not alter
+the generation. Complete producer/reader wiring remains required.

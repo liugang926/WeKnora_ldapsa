@@ -42,8 +42,10 @@ type SourceIdentity struct {
 	FileID          string `json:"file_id"`
 	ExternalID      string `json:"external_id"`
 	KnowledgeID     string `json:"knowledge_id"`
-	Revision        uint64 `json:"revision"`
-	ETag            string `json:"etag"`
+	// Revision is the exact open build-fence epoch, paired with KnowledgeID.
+	// It is not the append-only observation/audit sequence number.
+	Revision uint64 `json:"revision"`
+	ETag     string `json:"etag"`
 }
 
 func (s SourceIdentity) Validate() error {

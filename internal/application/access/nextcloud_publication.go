@@ -127,57 +127,12 @@ func (g *NextcloudPublicationGuard) CheckKnowledge(ctx context.Context, knowledg
 	}
 	config.Type = ds.Type
 
-	// A legacy worker context can carry UserIDContextKey without an authenticated
-	// request principal. This guard requires the caller captured by auth middleware.
-	caller, captured := ctx.Value(types.CallerContextKey).(types.Caller)
-	if !captured || caller.TenantID == 0 || strings.TrimSpace(caller.UserID) == "" ||
-		types.IsSyntheticUserID(caller.UserID) {
-		return fmt.Errorf("%w: authenticated human user required", ErrNextcloudPublicationDenied)
-	}
-	// A machine identity can have a user-shaped ID (embed-..., mcp-..., or an
-	// external API user). The principal, captured by the authentication
-	// middleware, must explicitly identify the same interactive web user.
-	// Do not use PrincipalFromContext here: its legacy UserID fallback would
-	// turn an uncaptured machine identity into a web principal.
-	principal, captured := ctx.Value(types.PrincipalContextKey).(types.Principal)
-	if !captured || principal.Type != types.PrincipalWebUser || principal.ID != caller.UserID {
-		return fmt.Errorf("%w: interactive web user required", ErrNextcloudPublicationDenied)
-	}
-	if _, machineScope := types.TenantAPIKeyScopeFromContext(ctx); machineScope {
-		return fmt.Errorf("%w: machine API key cannot read source publication", ErrNextcloudPublicationDenied)
-	}
-	if g.directories == nil || g.authorize == nil {
-		return ErrNextcloudPublicationUnavailable
-	}
-	identities, err := g.directories.GetIdentityByUserID(ctx, caller.UserID)
+	currentIdentity, err := g.currentDirectoryIdentity(ctx)
 	if err != nil {
-		return fmt.Errorf("%w: directory identity lookup failed: %v", ErrNextcloudPublicationUnavailable, err)
+		return err
 	}
-	if len(identities) != 1 || identities[0] == nil {
-		return fmt.Errorf("%w: exactly one linked directory identity is required", ErrNextcloudPublicationDenied)
-	}
-	identity := identities[0]
-	if identity.UserID == nil || *identity.UserID != caller.UserID ||
-		identity.Status != types.DirectoryObjectActive ||
-		identity.DirectoryID == "" || identity.ObjectGUID == "" {
-		return fmt.Errorf("%w: linked directory identity is inactive", ErrNextcloudPublicationDenied)
-	}
-	snapshot, err := g.directories.GetLoginSnapshot(ctx, identity.DirectoryID, identity.ObjectGUID)
-	if err != nil || snapshot == nil || snapshot.Directory == nil {
-		return fmt.Errorf("%w: directory snapshot lookup failed: %v", ErrNextcloudPublicationUnavailable, err)
-	}
-	directory := snapshot.Directory
-	currentIdentity := snapshot.Identity
-	if directory.ID != identity.DirectoryID || directory.Protocol != types.DirectoryProtocolAD ||
-		!directory.IsFresh(time.Now().UTC()) || strings.TrimSpace(directory.LastSyncError) != "" ||
-		directory.SnapshotVersion == 0 || identity.SnapshotVersion != directory.SnapshotVersion ||
-		currentIdentity == nil || currentIdentity.ID != identity.ID ||
-		currentIdentity.DirectoryID != identity.DirectoryID ||
-		currentIdentity.ObjectGUID != identity.ObjectGUID ||
-		currentIdentity.UserID == nil || *currentIdentity.UserID != caller.UserID ||
-		currentIdentity.Status != types.DirectoryObjectActive ||
-		currentIdentity.SnapshotVersion != directory.SnapshotVersion {
-		return fmt.Errorf("%w: directory snapshot is unavailable or stale", ErrNextcloudPublicationDenied)
+	if g.authorize == nil {
+		return ErrNextcloudPublicationUnavailable
 	}
 	decision, err := g.authorize(ctx, config, instanceID, bindingID,
 		currentIdentity.DirectoryID, currentIdentity.ObjectGUID, fileID)
@@ -193,6 +148,72 @@ func (g *NextcloudPublicationGuard) CheckKnowledge(ctx context.Context, knowledg
 		return fmt.Errorf("%w: source version changed", ErrNextcloudPublicationDenied)
 	}
 	return nil
+}
+
+// currentDirectoryIdentity validates only captured principal and local AD
+// identity/snapshot state. It makes no Nextcloud request and returns a copy so
+// a concurrent lookup update cannot change the checked binding in memory.
+func (g *NextcloudPublicationGuard) currentDirectoryIdentity(ctx context.Context) (*types.DirectoryIdentity, error) {
+	if ctx == nil {
+		return nil, ErrNextcloudPublicationDenied
+	}
+	// A legacy worker context can carry UserIDContextKey without an authenticated
+	// request principal. This guard requires the caller captured by auth middleware.
+	caller, captured := ctx.Value(types.CallerContextKey).(types.Caller)
+	if !captured || caller.TenantID == 0 || strings.TrimSpace(caller.UserID) == "" ||
+		types.IsSyntheticUserID(caller.UserID) {
+		return nil, fmt.Errorf("%w: authenticated human user required", ErrNextcloudPublicationDenied)
+	}
+	// A machine identity can have a user-shaped ID (embed-..., mcp-..., or an
+	// external API user). The principal, captured by the authentication
+	// middleware, must explicitly identify the same interactive web user.
+	// Do not use PrincipalFromContext here: its legacy UserID fallback would
+	// turn an uncaptured machine identity into a web principal.
+	principal, captured := ctx.Value(types.PrincipalContextKey).(types.Principal)
+	if !captured || principal.Type != types.PrincipalWebUser || principal.ID != caller.UserID {
+		return nil, fmt.Errorf("%w: interactive web user required", ErrNextcloudPublicationDenied)
+	}
+	if _, machineScope := types.TenantAPIKeyScopeFromContext(ctx); machineScope {
+		return nil, fmt.Errorf("%w: machine API key cannot read source publication", ErrNextcloudPublicationDenied)
+	}
+	if g == nil || g.directories == nil {
+		return nil, ErrNextcloudPublicationUnavailable
+	}
+	identities, err := g.directories.GetIdentityByUserID(ctx, caller.UserID)
+	if err != nil {
+		return nil, fmt.Errorf("%w: directory identity lookup failed: %v", ErrNextcloudPublicationUnavailable, err)
+	}
+	if len(identities) != 1 || identities[0] == nil {
+		return nil, fmt.Errorf("%w: exactly one linked directory identity is required", ErrNextcloudPublicationDenied)
+	}
+	identity := identities[0]
+	if identity.UserID == nil || *identity.UserID != caller.UserID ||
+		identity.Status != types.DirectoryObjectActive ||
+		identity.DirectoryID == "" || identity.ObjectGUID == "" {
+		return nil, fmt.Errorf("%w: linked directory identity is inactive", ErrNextcloudPublicationDenied)
+	}
+	snapshot, err := g.directories.GetLoginSnapshot(ctx, identity.DirectoryID, identity.ObjectGUID)
+	if err != nil || snapshot == nil || snapshot.Directory == nil {
+		return nil, fmt.Errorf("%w: directory snapshot lookup failed: %v", ErrNextcloudPublicationUnavailable, err)
+	}
+	directory := snapshot.Directory
+	currentIdentity := snapshot.Identity
+	if directory.ID != identity.DirectoryID || directory.Protocol != types.DirectoryProtocolAD ||
+		!directory.IsFresh(time.Now().UTC()) || strings.TrimSpace(directory.LastSyncError) != "" ||
+		directory.SnapshotVersion == 0 || identity.SnapshotVersion != directory.SnapshotVersion ||
+		currentIdentity == nil || currentIdentity.ID != identity.ID ||
+		currentIdentity.DirectoryID != identity.DirectoryID ||
+		currentIdentity.ObjectGUID != identity.ObjectGUID ||
+		currentIdentity.UserID == nil || *currentIdentity.UserID != caller.UserID ||
+		currentIdentity.Status != types.DirectoryObjectActive ||
+		currentIdentity.SnapshotVersion != directory.SnapshotVersion {
+		return nil, fmt.Errorf("%w: directory snapshot is unavailable or stale", ErrNextcloudPublicationDenied)
+	}
+
+	copy := *currentIdentity
+	userID := *currentIdentity.UserID
+	copy.UserID = &userID
+	return &copy, nil
 }
 
 func publicationMetadataString(metadata map[string]json.RawMessage, key string) (string, bool) {
