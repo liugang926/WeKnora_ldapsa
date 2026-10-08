@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/Tencent/WeKnora/internal/application/repository"
+	"github.com/Tencent/WeKnora/internal/config"
 	"sort"
 	"time"
 
@@ -22,15 +23,16 @@ import (
 // KnowledgePostProcessService acts as an orchestrator for all post-processing tasks
 // after a document has been parsed and split into chunks (including multimodal OCR/Caption).
 type KnowledgePostProcessService struct {
-	knowledgeRepo   interfaces.KnowledgeRepository
-	kbService       interfaces.KnowledgeBaseService
-	chunkService    interfaces.ChunkService
-	chunkRepo       interfaces.ChunkRepository
-	taskEnqueuer    interfaces.TaskEnqueuer
-	pendingRepo     interfaces.TaskPendingOpsRepository
-	redisClient     *redis.Client
-	spanTracker     SpanTracker
-	knowledgeInputs interfaces.KnowledgeBuildInputReader
+	knowledgeRepo    interfaces.KnowledgeRepository
+	kbService        interfaces.KnowledgeBaseService
+	chunkService     interfaces.ChunkService
+	chunkRepo        interfaces.ChunkRepository
+	taskEnqueuer     interfaces.TaskEnqueuer
+	pendingRepo      interfaces.TaskPendingOpsRepository
+	redisClient      *redis.Client
+	spanTracker      SpanTracker
+	knowledgeInputs  interfaces.KnowledgeBuildInputReader
+	enrichmentConfig *config.Config
 }
 
 func ConfigureKnowledgePostProcessInputProvenance(handler interfaces.TaskHandler, reader interfaces.KnowledgeBuildInputReader) {
@@ -620,6 +622,9 @@ func (s *KnowledgePostProcessService) enqueueSummaryGenerationTask(ctx context.C
 		return false
 	}
 
+	if _, err := config.KnowledgeEnrichmentPromptLineage(s.enrichmentConfig, "summary"); err != nil {
+		return false
+	}
 	if s.knowledgeInputs == nil {
 		return false
 	}
@@ -634,7 +639,7 @@ func (s *KnowledgePostProcessService) enqueueSummaryGenerationTask(ctx context.C
 		}
 		ids = append(ids, chunk.ID)
 	}
-	original, err := s.capturePostProcessBuildProof(ctx, payload, ids)
+	original, err := s.capturePostProcessEnrichmentProof(ctx, payload, ids)
 	if err != nil {
 		return false
 	}
@@ -646,6 +651,14 @@ func (s *KnowledgePostProcessService) enqueueSummaryGenerationTask(ctx context.C
 		KnowledgeID:     payload.KnowledgeID,
 		Language:        payload.Language,
 		Attempt:         attempt,
+	}
+	store, ok := s.knowledgeInputs.(knowledgeEnrichmentInputStore)
+	if !ok {
+		return false
+	}
+	taskPayload.ProducerInput, err = store.AdmitKnowledgeProducerInput(ctx, original, "summary", summaryProducerControls(s.enrichmentConfig, taskPayload))
+	if err != nil {
+		return false
 	}
 	langfuse.InjectTracing(ctx, &taskPayload)
 	payloadBytes, err := json.Marshal(taskPayload)
@@ -695,6 +708,9 @@ func (s *KnowledgePostProcessService) enqueueQuestionGenerationTasks(
 	attempt int,
 	questionChunks []*types.Chunk,
 ) int {
+	if _, err := config.KnowledgeEnrichmentPromptLineage(s.enrichmentConfig, "question"); err != nil {
+		return 0
+	}
 	if s.taskEnqueuer == nil || len(questionChunks) == 0 {
 		return 0
 	}
@@ -748,12 +764,22 @@ func (s *KnowledgePostProcessService) enqueueQuestionGenerationTasks(
 		if taskPayload.NextChunkID != "" {
 			inputs = append(inputs, taskPayload.NextChunkID)
 		}
-		original, captureErr := s.capturePostProcessBuildProof(ctx, payload, inputs)
+		original, captureErr := s.capturePostProcessEnrichmentProof(ctx, payload, inputs)
 		if captureErr != nil {
 			batchIndex++
 			continue
 		}
 		taskPayload.OriginalInput = original
+		store, ok := s.knowledgeInputs.(knowledgeEnrichmentInputStore)
+		if !ok {
+			batchIndex++
+			continue
+		}
+		taskPayload.ProducerInput, captureErr = store.AdmitKnowledgeProducerInput(ctx, original, "question", questionProducerControls(s.enrichmentConfig, taskPayload))
+		if captureErr != nil {
+			batchIndex++
+			continue
+		}
 
 		batchIndex++
 
@@ -832,6 +858,35 @@ func (s *KnowledgePostProcessService) capturePostProcessBuildProof(ctx context.C
 	}
 	if snapshot == nil || snapshot.Proof == nil {
 		return nil, types.ErrSourceLineageUnknown
+	}
+	return snapshot.Proof, nil
+}
+
+func (s *KnowledgePostProcessService) capturePostProcessEnrichmentProof(ctx context.Context, payload types.KnowledgePostProcessPayload, ids []string) (*types.KnowledgeBuildInputProof, error) {
+	store, ok := s.knowledgeInputs.(knowledgeEnrichmentInputStore)
+	if !ok {
+		return nil, types.ErrSourceLineageUnknown
+	}
+	// Capture every image child used to enrich the selected text/neighbor input.
+	rows, err := s.chunkRepo.ListChunksByKnowledgeID(ctx, payload.TenantID, payload.KnowledgeID)
+	if err != nil {
+		return nil, err
+	}
+	wanted := map[string]bool{}
+	for _, id := range ids {
+		wanted[id] = true
+	}
+	for _, row := range rows {
+		if row != nil && wanted[row.ParentChunkID] && (row.ChunkType == types.ChunkTypeImageOCR || row.ChunkType == types.ChunkTypeImageCaption) {
+			if !wanted[row.ID] {
+				ids = append(ids, row.ID)
+				wanted[row.ID] = true
+			}
+		}
+	}
+	snapshot, err := store.CaptureKnowledgeEnrichmentInputs(ctx, types.KnowledgeBuildInputCaptureRequest{TenantID: payload.TenantID, KnowledgeBaseID: payload.KnowledgeBaseID, KnowledgeID: payload.KnowledgeID, ChunkIDs: ids, Expected: repository.KnowledgeBuildInputProofFromContext(ctx)})
+	if err != nil {
+		return nil, err
 	}
 	return snapshot.Proof, nil
 }

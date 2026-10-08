@@ -100,3 +100,13 @@ func NextcloudBuildInputLease(ctx context.Context) (NextcloudContentLease, Nextc
 	}
 	return guard.lease, guard.scope, nil
 }
+
+func PrecheckKnowledgeBuildWrite(ctx context.Context) error {
+	if err := CheckNextcloudBuildLease(ctx); err != nil {
+		return err
+	}
+	if err := CheckKnowledgeProducerInput(ctx); err != nil {
+		return err
+	}
+	return CheckKnowledgeBuildInputs(ctx)
+}

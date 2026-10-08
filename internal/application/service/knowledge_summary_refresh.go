@@ -87,6 +87,7 @@ func enqueueSummaryRefresh(
 	kbReader summaryKnowledgeBaseReader,
 	tracker SpanTracker,
 	knowledge *types.Knowledge,
+	prepare ...func(context.Context, *types.SummaryGenerationPayload) error,
 ) error {
 	if knowledge == nil || knowledge.SummaryStatus == "" || knowledge.SummaryStatus == types.SummaryStatusNone {
 		return nil
@@ -121,6 +122,11 @@ func enqueueSummaryRefresh(
 		Attempt:         tracker.LatestAttempt(ctx, knowledge.ID),
 		Refresh:         true,
 	}
+	if len(prepare) > 0 && prepare[0] != nil {
+		if err := prepare[0](ctx, &payload); err != nil {
+			return err
+		}
+	}
 	langfuse.InjectTracing(ctx, &payload)
 	payloadBytes, err := json.Marshal(payload)
 	if err != nil {
@@ -147,5 +153,5 @@ func (s *knowledgeService) RequestKnowledgeSummaryRefresh(
 	if err != nil {
 		return err
 	}
-	return enqueueSummaryRefresh(ctx, s.repo, s.task, s.kbService, s.tracker(), knowledge)
+	return enqueueSummaryRefresh(ctx, s.repo, s.task, s.kbService, s.tracker(), knowledge, s.prepareSummaryGenerationPayload)
 }

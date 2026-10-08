@@ -16,3 +16,11 @@ func ConfigureKnowledgeBaseInputProvenance(base interfaces.KnowledgeBaseService,
 		impl.knowledgeInputWriter = writer
 	}
 }
+
+func ConfigureChunkSummaryInputProvenance(chunks interfaces.ChunkService, knowledge interfaces.KnowledgeService) {
+	if c, ok := chunks.(*chunkService); ok {
+		if k, ok := knowledge.(*knowledgeService); ok {
+			c.summaryInputPrepare = k.prepareSummaryGenerationPayload
+		}
+	}
+}

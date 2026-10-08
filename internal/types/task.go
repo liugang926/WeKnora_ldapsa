@@ -344,6 +344,7 @@ type FAQImportPayload struct {
 
 // QuestionGenerationPayload represents the question generation task payload
 type QuestionGenerationPayload struct {
+	ProducerInput *KnowledgeProducerInputProof `json:"_producer_input,omitempty"`
 	// OriginalInput is private job state emitted by trusted producer code.
 	OriginalInput *KnowledgeBuildInputProof `json:"_original_input,omitempty"`
 	TracingContext
@@ -390,6 +391,7 @@ type QuestionGenerationPayload struct {
 
 // SummaryGenerationPayload represents the summary generation task payload
 type SummaryGenerationPayload struct {
+	ProducerInput *KnowledgeProducerInputProof `json:"_producer_input,omitempty"`
 	// OriginalInput is private job state emitted by trusted producer code.
 	OriginalInput *KnowledgeBuildInputProof `json:"_original_input,omitempty"`
 	TracingContext
@@ -512,6 +514,8 @@ type ManualProcessPayload struct {
 
 // ImageMultimodalPayload represents the image multimodal processing task payload.
 type ImageMultimodalPayload struct {
+	ProducerInput *KnowledgeProducerInputProof `json:"_producer_input,omitempty"`
+	ImageDigest   string                       `json:"_image_digest,omitempty"`
 	// OriginalInput is private job state emitted by trusted producer code.
 	OriginalInput *KnowledgeBuildInputProof `json:"_original_input,omitempty"`
 	TracingContext

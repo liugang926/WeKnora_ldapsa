@@ -22,8 +22,37 @@ type knowledgeBuildActorSelector struct {
 }
 
 type knowledgeBuildActorContextKey struct{}
+type knowledgeBuildWritePurposeContextKey struct{}
 
 func (s *KnowledgeInputProvenanceStore) recheckKnowledgeWorkerActor(ctx context.Context, proof *types.KnowledgeBuildInputProof) error {
+	if marker, ok := ctx.Value(knowledgeCurrentProducerWriteKey{}).(knowledgeCurrentProducerWrite); ok {
+		if proof == nil || marker.tenant != proof.TenantID || marker.kb != proof.KnowledgeBaseID {
+			return ErrKnowledgeInputChanged
+		}
+		fresh, err := s.refreshKnowledgeCurrentProducerWrite(ctx, marker)
+		if err != nil {
+			return err
+		}
+		a, _ := types.PrincipalFromContext(ctx)
+		b, _ := types.PrincipalFromContext(fresh)
+		if a != b || types.CallerFromContext(ctx) != types.CallerFromContext(fresh) {
+			return ErrKnowledgeInputChanged
+		}
+		return nil
+	}
+
+	if producer, ok := ctx.Value(knowledgeProducerActorContextKey{}).(*types.KnowledgeProducerInputProof); ok {
+		fresh, err := s.RestoreKnowledgeProducerActor(ctx, proof, producer)
+		if err != nil {
+			return err
+		}
+		a, _ := types.PrincipalFromContext(ctx)
+		b, _ := types.PrincipalFromContext(fresh)
+		if a != b || types.CallerFromContext(ctx) != types.CallerFromContext(fresh) {
+			return ErrKnowledgeInputChanged
+		}
+		return nil
+	}
 	id, _ := ctx.Value(knowledgeBuildActorContextKey{}).(string)
 	if id == "" {
 		return nil
@@ -163,6 +192,7 @@ func (s *KnowledgeInputProvenanceStore) RestoreKnowledgeBuildActor(ctx context.C
 	if err != nil {
 		return ctx, err
 	}
+	fresh = context.WithValue(fresh, knowledgeBuildWritePurposeContextKey{}, cloneKnowledgeInputProof(proof))
 	return context.WithValue(fresh, knowledgeBuildActorContextKey{}, proof.AdmissionID), nil
 }
 

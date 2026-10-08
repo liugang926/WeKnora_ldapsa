@@ -95,6 +95,7 @@ type KnowledgeInputProvenanceStore struct {
 	messageVerifier         interfaces.MessageSourceLineageVerifier
 	actorGroups             interfaces.GroupAccessService
 	actorShares             access.KBShareLookup
+	originalInputSources    KnowledgeOriginalInputSourceVerifier
 }
 
 func NewKnowledgeInputProvenanceStore(db *gorm.DB) *KnowledgeInputProvenanceStore {
@@ -581,7 +582,7 @@ func (s *KnowledgeInputProvenanceStore) snapshot(ctx context.Context, request ty
 	if request.Projection == "" {
 		request.Projection = request.Expected.Projection
 	}
-	if request.Projection != "" && request.Projection != types.KnowledgeBuildProjectionGraph {
+	if request.Projection != "" && request.Projection != types.KnowledgeBuildProjectionGraph && request.Projection != types.KnowledgeBuildProjectionEnrichment {
 		return nil, ErrKnowledgeInputChanged
 	}
 	if request.Expected.BodyDigest != "" && request.Expected.Projection != request.Projection {
@@ -631,6 +632,11 @@ func (s *KnowledgeInputProvenanceStore) RecheckKnowledgeBuildInputs(ctx context.
 	if err != nil {
 		return err
 	}
+	if s.originalInputSources != nil {
+		if err := s.originalInputSources.CheckKnowledgeOriginalInputSources(ctx, proof); err != nil {
+			return err
+		}
+	}
 	return s.recheckKnowledgeWorkerActor(ctx, proof)
 }
 
@@ -655,13 +661,60 @@ func validateKnowledgeInputWrite(ctx context.Context, tx *gorm.DB, tenant uint64
 	if !ok {
 		return nil, ErrKnowledgeInputChanged
 	}
-	a, _, _, err := (&KnowledgeInputProvenanceStore{db: tx, messageVerifier: store.messageVerifier}).admissionInTx(tx, &k, guard.proof)
-	return a, err
+	authority := &KnowledgeInputProvenanceStore{db: tx, messageVerifier: store.messageVerifier, actorGroups: store.actorGroups, actorShares: store.actorShares}
+	if store.displayAuthorityFactory != nil {
+		authority = store.displayAuthorityFactory(tx)
+		if authority == nil {
+			return nil, ErrKnowledgeInputChanged
+		}
+	}
+	if err := authority.recheckKnowledgeWorkerActor(ctx, guard.proof); err != nil {
+		return nil, err
+	}
+	a, _, _, err := authority.admissionInTx(tx, &k, guard.proof)
+	if err != nil {
+		return nil, err
+	}
+	if guard.proof.BodyDigest != "" {
+		_, err = authority.captureKnowledgeBuildSnapshotInTx(tx, types.KnowledgeBuildInputCaptureRequest{Projection: guard.proof.Projection, TenantID: tenant, KnowledgeBaseID: kb, KnowledgeID: id, ChunkIDs: guard.proof.ChunkIDs, Expected: guard.proof}, true)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if producer, ok := ctx.Value(knowledgeProducerInputContextKey{}).(knowledgeProducerInputContext); ok {
+		if producer.input == nil {
+			return nil, ErrKnowledgeInputChanged
+		}
+		if err := authority.recheckKnowledgeProducerInputInTx(ctx, tx, guard.proof, producer.proof, producer.input()); err != nil {
+			return nil, err
+		}
+	}
+	// Live remote policy is checked immediately before opening this mutation
+	// transaction. SQL original inputs, current actor and local source epoch are
+	// checked here again and serialize with source retirement via its fence.
+	return a, nil
 }
 
 func sealKnowledgeInputChunks(ctx context.Context, tx *gorm.DB, chunks []*types.Chunk) error {
 	for _, c := range chunks {
-		a, err := validateKnowledgeInputWrite(ctx, tx, c.TenantID, c.KnowledgeBaseID, c.KnowledgeID)
+		guard, guarded := ctx.Value(knowledgeBuildInputKey{}).(knowledgeBuildInputContext)
+		if !guarded {
+			continue
+		}
+		if guard.proof == nil || guard.proof.TenantID != c.TenantID || guard.proof.KnowledgeBaseID != c.KnowledgeBaseID || guard.proof.KnowledgeID != c.KnowledgeID {
+			return ErrKnowledgeInputChanged
+		}
+		// The write was validated before SQL changed these rows. Re-sealing runs
+		// in that same transaction and cannot recapture a now-unsealed chunk.
+		var k types.Knowledge
+		if err := tx.Where("id = ? AND tenant_id = ? AND knowledge_base_id = ?", c.KnowledgeID, c.TenantID, c.KnowledgeBaseID).Take(&k).Error; err != nil {
+			return err
+		}
+		store, ok := guard.reader.(*KnowledgeInputProvenanceStore)
+		if !ok {
+			return ErrKnowledgeInputChanged
+		}
+		a, _, _, err := (&KnowledgeInputProvenanceStore{db: tx, messageVerifier: store.messageVerifier}).admissionInTx(tx, &k, guard.proof)
 		if err != nil {
 			return err
 		}
@@ -683,6 +736,9 @@ func (s *KnowledgeInputProvenanceStore) captureKnowledgeBuildSnapshotInTx(tx *go
 	var k types.Knowledge
 	if err := tx.Where("id = ? AND tenant_id = ? AND knowledge_base_id = ?", request.KnowledgeID, request.TenantID, request.KnowledgeBaseID).Take(&k).Error; err != nil {
 		return nil, err
+	}
+	if k.ParseStatus == types.ParseStatusCancelled || k.ParseStatus == types.ParseStatusDeleting {
+		return nil, ErrKnowledgeInputChanged
 	}
 	a, kb, lineage, err := s.admissionInTx(tx, &k, request.Expected)
 	if err != nil {
@@ -714,6 +770,12 @@ func (s *KnowledgeInputProvenanceStore) captureKnowledgeBuildSnapshotInTx(tx *go
 	sort.Strings(ids)
 	material := []string{a.AdmissionID, a.RootDigest, a.ConfigDigest}
 	kgDigest, _ := knowledgeMaterialDigest(&k)
+	if request.Projection == types.KnowledgeBuildProjectionEnrichment {
+		kgDigest, err = knowledgeEnrichmentDocumentDigest(&k)
+		if err != nil {
+			return nil, err
+		}
+	}
 	if request.Projection != types.KnowledgeBuildProjectionGraph {
 		material = append(material, kgDigest)
 	}
@@ -721,6 +783,9 @@ func (s *KnowledgeInputProvenanceStore) captureKnowledgeBuildSnapshotInTx(tx *go
 	sort.Slice(ordered, func(i, j int) bool { return ordered[i].ID < ordered[j].ID })
 	for _, c := range ordered {
 		digest, err := knowledgeChunkDigest(c)
+		if request.Projection == types.KnowledgeBuildProjectionEnrichment {
+			digest, err = knowledgeEnrichmentChunkDigest(c)
+		}
 		if request.Projection == types.KnowledgeBuildProjectionGraph {
 			digest, err = knowledgeGraphChunkDigest(c)
 		}
@@ -728,6 +793,9 @@ func (s *KnowledgeInputProvenanceStore) captureKnowledgeBuildSnapshotInTx(tx *go
 			return nil, err
 		}
 		revision, err := inputRowRevision(tx, "chunk", c.ID)
+		if request.Projection == types.KnowledgeBuildProjectionEnrichment {
+			revision, err = knowledgeEnrichmentRevision(tx, "chunk", c.ID)
+		}
 		if request.Projection == types.KnowledgeBuildProjectionGraph {
 			revision, err = knowledgeGraphChunkRevision(tx, c.ID)
 		}
@@ -737,6 +805,9 @@ func (s *KnowledgeInputProvenanceStore) captureKnowledgeBuildSnapshotInTx(tx *go
 		material = append(material, fmt.Sprintf("%s:%d:%s", c.ID, revision, digest))
 	}
 	kgRevision, err := inputRowRevision(tx, "knowledge", k.ID)
+	if request.Projection == types.KnowledgeBuildProjectionEnrichment {
+		kgRevision, err = knowledgeEnrichmentRevision(tx, "knowledge", k.ID)
+	}
 	if err != nil {
 		return nil, err
 	}

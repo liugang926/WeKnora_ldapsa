@@ -296,6 +296,11 @@ func finalizeSubtaskDetached(
 	if !willDrain {
 		return
 	}
+	if repository.KnowledgeBuildInputProofFromContext(ctx) != nil {
+		if err := requireActualKnowledgeBuildInput(ctx); err != nil {
+			return
+		}
+	}
 	dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), finalizeSubtaskDetachedTimeout)
 	defer cancel()
 	if _, _, err := repo.FinalizeSubtask(dctx, knowledgeID); err != nil {
@@ -852,7 +857,7 @@ func (s *knowledgeService) UpdateKnowledge(ctx context.Context, knowledge *types
 		return err
 	}
 	if metadataChanged && record.SummaryStatus != "" && record.SummaryStatus != types.SummaryStatusNone {
-		if err := enqueueSummaryRefresh(ctx, s.repo, s.task, s.kbService, s.tracker(), record); err != nil {
+		if err := enqueueSummaryRefresh(ctx, s.repo, s.task, s.kbService, s.tracker(), record, s.prepareSummaryGenerationPayload); err != nil {
 			logger.Warnf(ctx, "Metadata saved but summary refresh enqueue failed for %s: %v", record.ID, err)
 		} else {
 			logger.Infof(ctx, "Enqueued summary refresh after metadata update, knowledge ID: %s", record.ID)

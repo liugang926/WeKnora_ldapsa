@@ -23,6 +23,20 @@ func (r *knowledgeRepository) RefreshCurrentReadActor(ctx context.Context) (cont
 }
 
 func (s *KnowledgeInputProvenanceStore) RefreshCurrentReadActor(ctx context.Context) (context.Context, error) {
+	if marker, ok := ctx.Value(knowledgeCurrentProducerWriteKey{}).(knowledgeCurrentProducerWrite); ok {
+		return s.refreshKnowledgeCurrentProducerWrite(ctx, marker)
+	}
+	if producer, ok := ctx.Value(knowledgeProducerActorContextKey{}).(*types.KnowledgeProducerInputProof); ok {
+		return s.RestoreKnowledgeProducerActor(ctx, KnowledgeBuildInputProofFromContext(ctx), producer)
+	}
+	if original, ok := ctx.Value(knowledgeBuildWritePurposeContextKey{}).(*types.KnowledgeBuildInputProof); ok {
+		id, _ := ctx.Value(knowledgeBuildActorContextKey{}).(string)
+		if original == nil || id != original.AdmissionID {
+			return ctx, ErrKnowledgeInputChanged
+		}
+		return s.RestoreKnowledgeBuildActor(ctx, original)
+	}
+
 	actor, err := captureKnowledgeActorSelector(ctx, "")
 	if err != nil {
 		return ctx, err

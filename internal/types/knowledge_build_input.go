@@ -31,6 +31,18 @@ type KnowledgeBuildInputCaptureRequest struct {
 
 const KnowledgeBuildProjectionGraph = "graph_model_inputs"
 
+// Enrichment authenticates all document/model input fields while generated
+// summary and question outputs retain the same immutable original admission.
+const KnowledgeBuildProjectionEnrichment = "enrichment_model_inputs"
+
+// KnowledgeProducerInputProof refers to an immutable private receipt emitted
+// by the actual producer, never a digest accepted from an HTTP client.
+type KnowledgeProducerInputProof struct {
+	ID      string `json:"id"`
+	Purpose string `json:"purpose"`
+	Digest  string `json:"digest"`
+}
+
 // Snapshot includes actual persisted material/config used for model input.
 // Chunk metadata, titles and graph/config controls belong in its body digest.
 type KnowledgeBuildInputSnapshot struct {

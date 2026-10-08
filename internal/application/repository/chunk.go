@@ -53,6 +53,9 @@ const updateByIDsBatchSize = 5000
 // for every chunk doubled the insert volume and the TOAST footprint for no
 // benefit.
 func (r *chunkRepository) CreateChunks(ctx context.Context, chunks []*types.Chunk) error {
+	if err := PrecheckKnowledgeBuildWrite(ctx); err != nil {
+		return err
+	}
 	if len(chunks) == 0 {
 		return nil
 	}
@@ -397,6 +400,9 @@ func (r *chunkRepository) ListChunksByParentIDs(
 // except SeqID (auto-increment, must not be overwritten).
 // Make sure the chunk object is complete (e.g., fetched from DB) before calling this method.
 func (r *chunkRepository) UpdateChunk(ctx context.Context, chunk *types.Chunk) error {
+	if err := PrecheckKnowledgeBuildWrite(ctx); err != nil {
+		return err
+	}
 	_, ncGuarded := ctx.Value(nextcloudBuildContextKey{}).(nextcloudBuildContext)
 	_, inputGuarded := ctx.Value(knowledgeBuildInputKey{}).(knowledgeBuildInputContext)
 	if !ncGuarded && !inputGuarded {
@@ -554,6 +560,9 @@ func (r *chunkRepository) SaveChunks(ctx context.Context, chunks []*types.Chunk)
 // run one small UPDATE per row inside a single transaction, which is also
 // O(N) and keeps the statement well within their bind-parameter limits.
 func (r *chunkRepository) UpdateChunks(ctx context.Context, chunks []*types.Chunk) error {
+	if err := PrecheckKnowledgeBuildWrite(ctx); err != nil {
+		return err
+	}
 	if len(chunks) == 0 {
 		return nil
 	}

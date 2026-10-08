@@ -70,6 +70,9 @@ func requireActualKnowledgeBuildInput(ctx context.Context) error {
 	if err := repository.CheckNextcloudBuildLease(ctx); err != nil {
 		return err
 	}
+	if err := repository.CheckKnowledgeProducerInput(ctx); err != nil {
+		return err
+	}
 	if err := repository.CheckKnowledgeBuildInputs(ctx); err != nil {
 		return fmt.Errorf("original producer input: %w", err)
 	}
@@ -80,7 +83,7 @@ func (s *knowledgeService) resumeKnowledgeTaskInput(ctx context.Context, proof *
 	if s.knowledgeInputs == nil {
 		return ctx, nil
 	}
-	if proof == nil || proof.BodyDigest == "" || proof.Projection != "" {
+	if proof == nil || proof.BodyDigest == "" || (proof.Projection != "" && proof.Projection != types.KnowledgeBuildProjectionEnrichment) {
 		return ctx, types.ErrSourceLineageUnknown
 	}
 	var actorErr error
@@ -101,7 +104,7 @@ func (s *knowledgeService) captureKnowledgeTaskManifest(ctx context.Context) (*t
 		return nil, nil
 	}
 	proof := repository.KnowledgeBuildInputProofFromContext(ctx)
-	if proof == nil || proof.BodyDigest == "" || proof.Projection != "" {
+	if proof == nil || proof.BodyDigest == "" || (proof.Projection != "" && proof.Projection != types.KnowledgeBuildProjectionEnrichment) {
 		return nil, types.ErrSourceLineageUnknown
 	}
 	return s.knowledgeInputs.CaptureKnowledgeBuildInputs(ctx, types.KnowledgeBuildInputCaptureRequest{TenantID: proof.TenantID, KnowledgeBaseID: proof.KnowledgeBaseID, KnowledgeID: proof.KnowledgeID, ChunkIDs: proof.ChunkIDs, Expected: proof})

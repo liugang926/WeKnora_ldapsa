@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/Tencent/WeKnora/internal/config"
 	"io"
 	"sort"
 	"strings"
@@ -1020,6 +1021,11 @@ func sortChunksForSummary(chunks []*types.Chunk) []*types.Chunk {
 func (s *knowledgeService) getSummary(ctx context.Context,
 	summaryModel chat.Chat, knowledge *types.Knowledge, chunks []*types.Chunk,
 ) (*documentSummaryResult, error) {
+	if s.knowledgeInputs != nil {
+		if _, err := config.KnowledgeEnrichmentPromptLineage(s.config, "summary"); err != nil {
+			return nil, err
+		}
+	}
 	// Get knowledge info from the first chunk
 	if len(chunks) == 0 {
 		return nil, fmt.Errorf("no chunks provided for summary generation")
@@ -1238,7 +1244,9 @@ func (s *knowledgeService) ProcessSummaryGeneration(ctx context.Context, t *asyn
 		return nil // Don't retry on unmarshal error
 	}
 	var inputErr error
-	ctx, inputErr = s.resumeKnowledgeTaskInput(ctx, payload.OriginalInput)
+	if s.knowledgeInputs != nil {
+		ctx, inputErr = resumeKnowledgeEnrichment(ctx, s.knowledgeInputs, payload.OriginalInput, payload.ProducerInput, func() any { return summaryProducerControls(s.config, payload) })
+	}
 	if inputErr != nil {
 		return inputErr
 	}
@@ -1328,6 +1336,13 @@ func (s *knowledgeService) ProcessSummaryGeneration(ctx context.Context, t *asyn
 		summaryErr = err
 		return nil
 	}
+	actual, actualErr := s.captureKnowledgeTaskManifest(ctx)
+	if actualErr != nil {
+		return actualErr
+	}
+	if actual != nil {
+		kb = actual.KnowledgeBase
+	}
 	// Capture the resolved model id on the span output the moment we
 	// know it — debugging "summary stage took 60s" benefits hugely from
 	// seeing WHICH chat model was actually used (kb config drift, fall-
@@ -1360,6 +1375,10 @@ func (s *knowledgeService) ProcessSummaryGeneration(ctx context.Context, t *asyn
 		}
 	}
 
+	if actual != nil {
+		knowledge, kb = actual.Knowledge, actual.KnowledgeBase
+		profileKB = kb
+	}
 	// Update summary status to processing
 	knowledge.SummaryStatus = types.SummaryStatusProcessing
 	knowledge.UpdatedAt = time.Now()
@@ -1385,6 +1404,9 @@ func (s *knowledgeService) ProcessSummaryGeneration(ctx context.Context, t *asyn
 		return nil
 	}
 
+	if actual != nil {
+		chunks = actual.Chunks
+	}
 	// Filter text chunks only
 	textChunks := make([]*types.Chunk, 0)
 	for _, chunk := range chunks {
@@ -1634,7 +1656,9 @@ func (s *knowledgeService) ProcessQuestionGeneration(ctx context.Context, t *asy
 		return nil // Don't retry on unmarshal error
 	}
 	var inputErr error
-	ctx, inputErr = s.resumeKnowledgeTaskInput(ctx, payload.OriginalInput)
+	if s.knowledgeInputs != nil {
+		ctx, inputErr = resumeKnowledgeEnrichment(ctx, s.knowledgeInputs, payload.OriginalInput, payload.ProducerInput, func() any { return questionProducerControls(s.config, payload) })
+	}
 	if inputErr != nil {
 		return inputErr
 	}
@@ -1930,6 +1954,7 @@ func (s *knowledgeService) processQuestionGenerationForKnowledge(ctx context.Con
 	}
 
 	// Generate questions for each chunk with context
+	var pendingWrites []*types.Chunk
 	var indexInfoList []*types.IndexInfo
 	for i, chunk := range textChunks {
 		if strings.TrimSpace(chunk.Content) == "" {
@@ -1952,6 +1977,9 @@ func (s *knowledgeService) processQuestionGenerationForKnowledge(ctx context.Con
 			knowledge.Title, questionCount, customInstructions)
 		if err != nil {
 			llmCallFailed++
+			if checkErr := requireActualKnowledgeBuildInput(ctx); checkErr != nil {
+				return checkErr
+			}
 			logger.Warnf(ctx, "Failed to generate questions for chunk %s: %v", chunk.ID, err)
 			continue
 		}
@@ -1993,10 +2021,13 @@ func (s *knowledgeService) processQuestionGenerationForKnowledge(ctx context.Con
 		}
 
 		// Update chunk in database
-		if err := s.chunkRepo.UpdateChunk(ctx, chunk); err != nil {
-			chunkUpdateFailed++
-			logger.Warnf(ctx, "Failed to update chunk %s: %v", chunk.ID, err)
-			continue
+		if actual != nil {
+			pendingWrites = append(pendingWrites, chunk)
+		} else {
+			if err := s.chunkRepo.UpdateChunk(ctx, chunk); err != nil {
+				chunkUpdateFailed++
+				continue
+			}
 		}
 
 		// Create index entries for generated questions
@@ -2019,6 +2050,9 @@ func (s *knowledgeService) processQuestionGenerationForKnowledge(ctx context.Con
 	// Index generated questions
 	if len(indexInfoList) > 0 {
 		indexBatchAttempted = true
+		if err := requireActualKnowledgeBuildInput(ctx); err != nil {
+			return err
+		}
 		if err := retrieveEngine.BatchIndex(ctx, embeddingModel, indexInfoList); err != nil {
 			exitStatus = "index_questions_failed"
 			logger.Errorf(ctx, "Failed to index generated questions: %v", err)
@@ -2028,6 +2062,14 @@ func (s *knowledgeService) processQuestionGenerationForKnowledge(ctx context.Con
 		logger.Infof(ctx, "Successfully indexed %d generated questions for knowledge: %s", len(indexInfoList), payload.KnowledgeID)
 	}
 
+	if err := requireActualKnowledgeBuildInput(ctx); err != nil {
+		return err
+	}
+	if len(pendingWrites) > 0 {
+		if err := s.chunkRepo.UpdateChunks(ctx, pendingWrites); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -2181,6 +2223,13 @@ func (s *knowledgeService) processQuestionGenerationForChunks(ctx context.Contex
 		}
 	}
 
+	actual, actualErr := s.captureKnowledgeTaskManifest(ctx)
+	if actualErr != nil {
+		return actualErr
+	}
+	if actual != nil {
+		knowledge, kb = actual.Knowledge, actual.KnowledgeBase
+	}
 	chatModel, err := s.modelService.GetChatModel(ctx, kb.SummaryModelID)
 	if err != nil {
 		exitStatus = "get_chat_model_failed"
@@ -2228,10 +2277,7 @@ func (s *knowledgeService) processQuestionGenerationForChunks(ctx context.Contex
 	// neighbors so we can rebuild the same surrounding context the legacy
 	// loop used, all enriched with image OCR / caption info. A vanished
 	// chunk degrades gracefully (skipped / empty context).
-	actual, actualErr := s.captureKnowledgeTaskManifest(ctx)
-	if actualErr != nil {
-		return actualErr
-	}
+
 	captured := map[string]*types.Chunk{}
 	if actual != nil {
 		knowledge = actual.Knowledge
@@ -2313,6 +2359,9 @@ func (s *knowledgeService) processQuestionGenerationForChunks(ctx context.Contex
 			customInstructions)
 		if gerr != nil {
 			llmCallFailed++
+			if checkErr := requireActualKnowledgeBuildInput(ctx); checkErr != nil {
+				return checkErr
+			}
 			logger.Warnf(ctx, "Failed to generate questions for chunk %s: %v", chunk.ID, gerr)
 			continue
 		}
@@ -2391,10 +2440,8 @@ func (s *knowledgeService) processQuestionGenerationForChunks(ctx context.Contex
 		if err := requireActualKnowledgeBuildInput(ctx); err != nil {
 			return err
 		}
-		for _, row := range pendingWrites {
-			if err := s.chunkRepo.UpdateChunk(ctx, row); err != nil {
-				return err
-			}
+		if err := s.chunkRepo.UpdateChunks(ctx, pendingWrites); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -2405,6 +2452,11 @@ func (s *knowledgeService) generateQuestionsWithContext(ctx context.Context,
 	chatModel chat.Chat, content, prevContent, nextContent, docName string, questionCount int,
 	customInstructions string,
 ) ([]string, error) {
+	if s.knowledgeInputs != nil {
+		if _, err := config.KnowledgeEnrichmentPromptLineage(s.config, "question"); err != nil {
+			return nil, err
+		}
+	}
 	if content == "" || questionCount <= 0 {
 		return nil, nil
 	}
@@ -2489,6 +2541,11 @@ func (s *knowledgeService) generateQuestionsWithContext(ctx context.Context,
 func (s *knowledgeService) RegenerateChunkQuestions(
 	ctx context.Context, chunkID string,
 ) ([]types.GeneratedQuestion, error) {
+	if s.knowledgeInputs != nil {
+		if _, err := config.KnowledgeEnrichmentPromptLineage(s.config, "question"); err != nil {
+			return nil, err
+		}
+	}
 	tenantID := types.MustTenantIDFromContext(ctx)
 	chunk, err := s.chunkRepo.GetChunkByID(ctx, tenantID, chunkID)
 	if err != nil {
@@ -2505,6 +2562,30 @@ func (s *knowledgeService) RegenerateChunkQuestions(
 	if knowledge.KnowledgeBaseID != chunk.KnowledgeBaseID || chunk.TenantID != knowledge.TenantID {
 		return nil, werrors.NewForbiddenError("chunk does not belong to its knowledge document")
 	}
+	var actual *types.KnowledgeBuildInputSnapshot
+	if s.knowledgeInputs != nil {
+		rows, e := s.chunkRepo.ListChunksByKnowledgeID(ctx, tenantID, knowledge.ID)
+		if e != nil {
+			return nil, e
+		}
+		ctx, actual, e = s.captureFreshEnrichment(ctx, tenantID, kb.ID, knowledge.ID, enrichmentInputChunkIDs(rows))
+		if e != nil {
+			return nil, e
+		}
+		knowledge, kb = actual.Knowledge, actual.KnowledgeBase
+		found := false
+		for _, row := range actual.Chunks {
+			if row.ID == chunkID {
+				chunk = row
+				found = true
+				break
+			}
+		}
+		if !found {
+			return nil, types.ErrSourceLineageUnknown
+		}
+	}
+	generationRevision = chunk.ContentRevision
 	if kb.SummaryModelID == "" {
 		return nil, fmt.Errorf("summary model is required for question generation")
 	}
@@ -2516,7 +2597,21 @@ func (s *knowledgeService) RegenerateChunkQuestions(
 		if id == "" {
 			return ""
 		}
-		neighbor, getErr := s.chunkRepo.GetChunkByID(ctx, tenantID, id)
+		var neighbor *types.Chunk
+		var getErr error
+		if actual != nil {
+			for _, row := range actual.Chunks {
+				if row.ID == id {
+					neighbor = row
+					break
+				}
+			}
+			if neighbor == nil {
+				return ""
+			}
+		} else {
+			neighbor, getErr = s.chunkRepo.GetChunkByID(ctx, tenantID, id)
+		}
 		if getErr != nil || !sameChunkDocument(chunk, neighbor) {
 			return ""
 		}
@@ -2530,6 +2625,18 @@ func (s *knowledgeService) RegenerateChunkQuestions(
 	}
 	if count > 10 {
 		count = 10
+	}
+	if s.knowledgeInputs != nil {
+		p := types.QuestionGenerationPayload{TenantID: tenantID, KnowledgeBaseID: kb.ID, KnowledgeID: knowledge.ID, Language: types.LanguageFromContextOrDefault(ctx), ChunkID: chunkID, PrevChunkID: chunk.PreChunkID, NextChunkID: chunk.NextChunkID, QuestionCount: count}
+		store := s.knowledgeInputs.(knowledgeEnrichmentInputStore)
+		receipt, e := store.AdmitKnowledgeProducerInput(ctx, actual.Proof, "question", questionProducerControls(s.config, p))
+		if e != nil {
+			return nil, e
+		}
+		ctx, e = resumeKnowledgeEnrichment(ctx, s.knowledgeInputs, actual.Proof, receipt, func() any { return questionProducerControls(s.config, p) })
+		if e != nil {
+			return nil, e
+		}
 	}
 	questions, err := s.generateQuestionsWithContext(
 		ctx, chatModel, chunk.Content, resolveNeighbor(chunk.PreChunkID),
@@ -2574,6 +2681,11 @@ func (s *knowledgeService) RegenerateChunkQuestions(
 func (s *knowledgeService) RegenerateKnowledgeSummary(
 	ctx context.Context, knowledgeID string,
 ) (*types.Knowledge, error) {
+	if s.knowledgeInputs != nil {
+		if _, err := config.KnowledgeEnrichmentPromptLineage(s.config, "summary"); err != nil {
+			return nil, err
+		}
+	}
 	tenantID := types.MustTenantIDFromContext(ctx)
 	knowledge, err := s.repo.GetKnowledgeByID(ctx, tenantID, knowledgeID)
 	if err != nil {
@@ -2589,6 +2701,27 @@ func (s *knowledgeService) RegenerateKnowledgeSummary(
 	allChunks, err := s.chunkRepo.ListChunksByKnowledgeID(ctx, tenantID, knowledgeID)
 	if err != nil {
 		return nil, err
+	}
+	if s.knowledgeInputs != nil {
+		var actual *types.KnowledgeBuildInputSnapshot
+		if repository.KnowledgeProducerInputPresent(ctx) {
+			actual, err = s.captureKnowledgeTaskManifest(ctx)
+		} else {
+			ctx, actual, err = s.captureFreshEnrichment(ctx, tenantID, kb.ID, knowledgeID, enrichmentInputChunkIDs(allChunks))
+			if err == nil {
+				p := types.SummaryGenerationPayload{TenantID: tenantID, KnowledgeBaseID: kb.ID, KnowledgeID: knowledgeID, Language: types.LanguageFromContextOrDefault(ctx), Refresh: true}
+				store := s.knowledgeInputs.(knowledgeEnrichmentInputStore)
+				receipt, e := store.AdmitKnowledgeProducerInput(ctx, actual.Proof, "summary", summaryProducerControls(s.config, p))
+				if e != nil {
+					return nil, e
+				}
+				ctx, err = resumeKnowledgeEnrichment(ctx, s.knowledgeInputs, actual.Proof, receipt, func() any { return summaryProducerControls(s.config, p) })
+			}
+		}
+		if err != nil {
+			return nil, err
+		}
+		knowledge, kb, allChunks = actual.Knowledge, actual.KnowledgeBase, actual.Chunks
 	}
 	textChunks := make([]*types.Chunk, 0)
 	for _, chunk := range allChunks {
@@ -3215,6 +3348,9 @@ func (s *knowledgeService) updateChunkVector(ctx context.Context, kbID string, c
 		return err
 	}
 
+	if err := requireActualKnowledgeBuildInput(ctx); err != nil {
+		return err
+	}
 	// Delete old vector representation of the chunk
 	err = retrieveEngine.DeleteByChunkIDList(ctx, ids, embeddingModel.GetDimensions(), sourceKB.Type)
 	if err != nil {
@@ -3226,7 +3362,7 @@ func (s *knowledgeService) updateChunkVector(ctx context.Context, kbID string, c
 	if err != nil {
 		return err
 	}
-	return nil
+	return requireActualKnowledgeBuildInput(ctx)
 }
 
 func (s *knowledgeService) UpdateImageInfo(
@@ -4375,6 +4511,24 @@ func (s *knowledgeService) enqueueImageMultimodalTasks(
 			ImageIndex:      idx,
 		}
 
+		if s.knowledgeInputs != nil {
+			if img.ArtifactDigest == "" || chunkID == "" {
+				continue
+			}
+			buildCtx, actual, e := s.captureFreshEnrichment(ctx, knowledge.TenantID, kb.ID, knowledge.ID, []string{chunkID})
+			if e != nil {
+				logger.Warnf(ctx, "Image original input capture failed: %v", e)
+				continue
+			}
+			payload.OriginalInput = actual.Proof
+			payload.ImageDigest = img.ArtifactDigest
+			store := s.knowledgeInputs.(knowledgeEnrichmentInputStore)
+			payload.ProducerInput, e = store.AdmitKnowledgeProducerInput(buildCtx, actual.Proof, "image", imageProducerControls(payload))
+			if e != nil {
+				logger.Warnf(ctx, "Image artifact admission failed: %v", e)
+				continue
+			}
+		}
 		langfuse.InjectTracing(ctx, &payload)
 		payloadBytes, err := json.Marshal(payload)
 		if err != nil {

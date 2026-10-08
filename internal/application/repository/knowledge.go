@@ -334,6 +334,9 @@ func (r *knowledgeRepository) RenameKnowledgeFolderPath(
 
 // UpdateKnowledge updates knowledge
 func (r *knowledgeRepository) UpdateKnowledge(ctx context.Context, knowledge *types.Knowledge) error {
+	if err := PrecheckKnowledgeBuildWrite(ctx); err != nil {
+		return err
+	}
 	knowledge.ErrorMessage = common.CleanInvalidUTF8(knowledge.ErrorMessage)
 	omit := omitFieldsOnUpdate
 	// Legacy/unit-test schemas created before custom_metadata should continue
@@ -666,6 +669,9 @@ func (r *knowledgeRepository) UpdateKnowledgeColumns(
 	id string,
 	values map[string]interface{},
 ) error {
+	if err := PrecheckKnowledgeBuildWrite(ctx); err != nil {
+		return err
+	}
 	if len(values) == 0 {
 		return nil
 	}
@@ -676,6 +682,20 @@ func (r *knowledgeRepository) UpdateKnowledgeColumns(
 		case []byte:
 			values["error_message"] = common.CleanInvalidUTF8(string(v))
 		}
+	}
+	if guard, ok := ctx.Value(knowledgeBuildInputKey{}).(knowledgeBuildInputContext); ok {
+		if guard.proof == nil || guard.proof.KnowledgeID != id {
+			return ErrKnowledgeInputChanged
+		}
+		return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			if err := ValidateNextcloudBuildWrite(ctx, tx, guard.proof.TenantID, guard.proof.KnowledgeBaseID, id); err != nil {
+				return err
+			}
+			if _, err := validateKnowledgeInputWrite(ctx, tx, guard.proof.TenantID, guard.proof.KnowledgeBaseID, id); err != nil {
+				return err
+			}
+			return tx.Model(&types.Knowledge{}).Where("id = ? AND tenant_id = ? AND knowledge_base_id = ?", id, guard.proof.TenantID, guard.proof.KnowledgeBaseID).Updates(values).Error
+		})
 	}
 	_, hasMetadata := values["metadata"]
 	_, hasParseStatus := values["parse_status"]
@@ -761,9 +781,20 @@ func (r *knowledgeRepository) UpdateActiveDeletingKnowledgeColumns(
 func (r *knowledgeRepository) FinalizeSubtask(
 	ctx context.Context, id string,
 ) (int, bool, error) {
+	if err := PrecheckKnowledgeBuildWrite(ctx); err != nil {
+		return 0, false, err
+	}
 	now := time.Now()
 	var promoted bool
 	write := func(tx *gorm.DB) error {
+		if guard, ok := ctx.Value(knowledgeBuildInputKey{}).(knowledgeBuildInputContext); ok {
+			if guard.proof == nil || guard.proof.KnowledgeID != id {
+				return ErrKnowledgeInputChanged
+			}
+			if _, err := validateKnowledgeInputWrite(ctx, tx, guard.proof.TenantID, guard.proof.KnowledgeBaseID, id); err != nil {
+				return err
+			}
+		}
 		// 1) Atomic decrement, clamped at zero. The `pending_subtasks_count > 0`
 		//    guard is purely a safety net for accounting bugs — under normal
 		//    operation each subtask handler decrements at most once per task,
@@ -814,6 +845,8 @@ func (r *knowledgeRepository) FinalizeSubtask(
 			}
 			return write(tx)
 		})
+	} else if _, guarded := ctx.Value(knowledgeBuildInputKey{}).(knowledgeBuildInputContext); guarded {
+		writeErr = r.db.WithContext(ctx).Transaction(write)
 	} else {
 		writeErr = write(r.db.WithContext(ctx))
 	}

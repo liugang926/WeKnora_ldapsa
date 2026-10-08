@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"github.com/Tencent/WeKnora/internal/application/repository"
 	"os"
 	"strings"
 	"time"
@@ -265,6 +266,12 @@ func (s *ChunkExtractService) Handle(ctx context.Context, t *asynq.Task) (return
 	if s.buildInputs == nil || p.OriginalInput == nil || p.OriginalInput.TenantID != p.TenantID || p.OriginalInput.KnowledgeID != p.KnowledgeID {
 		return types.ErrGraphSourceReceiptUnknown
 	}
+	var actorErr error
+	ctx, actorErr = repository.RestoreKnowledgeBuildActorIfRequired(ctx, s.buildInputs, p.OriginalInput)
+	if actorErr != nil {
+		return actorErr
+	}
+	ctx = repository.WithKnowledgeBuildInputProof(ctx, s.buildInputs, p.OriginalInput)
 	snapshot, err := s.buildInputs.CaptureKnowledgeBuildInputs(ctx, types.KnowledgeBuildInputCaptureRequest{Projection: types.KnowledgeBuildProjectionGraph, TenantID: p.TenantID, KnowledgeBaseID: p.OriginalInput.KnowledgeBaseID, KnowledgeID: p.KnowledgeID, ChunkIDs: []string{p.ChunkID}, Expected: p.OriginalInput})
 	if err != nil {
 		return err
@@ -389,7 +396,9 @@ func (s *ChunkExtractService) Handle(ctx context.Context, t *asynq.Task) (return
 			if s.templateSourceCheck == nil {
 				return types.ErrGraphSourceReceiptUnknown
 			}
-			return s.templateSourceCheck(checkCtx, lineage)
+			// Original document inputs use their exact private build purpose above.
+			// Additional typed template inputs retain their own public source grants.
+			return s.templateSourceCheck(checkCtx, templateLineage)
 		}
 		return nil
 	}

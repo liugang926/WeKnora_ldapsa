@@ -19,23 +19,24 @@ import (
 
 // Config 应用程序总配置
 type Config struct {
-	Conversation    *ConversationConfig    `yaml:"conversation"     json:"conversation"`
-	Server          *ServerConfig          `yaml:"server"           json:"server"`
-	KnowledgeBase   *KnowledgeBaseConfig   `yaml:"knowledge_base"   json:"knowledge_base"`
-	Tenant          *TenantConfig          `yaml:"tenant"           json:"tenant"`
-	Auth            *AuthConfig            `yaml:"auth"             json:"auth"`
-	Audit           *AuditConfig           `yaml:"audit"            json:"audit"`
-	OIDCAuth        *OIDCAuthConfig        `yaml:"oidc_auth"        json:"oidc_auth"`
-	Directory       *DirectoryConfig       `yaml:"directory"        json:"directory"`
-	Models          []ModelConfig          `yaml:"models"           json:"models"`
-	VectorDatabase  *VectorDatabaseConfig  `yaml:"vector_database"  json:"vector_database"`
-	DocReader       *DocReaderConfig       `yaml:"docreader"        json:"docreader"`
-	StreamManager   *StreamManagerConfig   `yaml:"stream_manager"   json:"stream_manager"`
-	ExtractManager  *ExtractManagerConfig  `yaml:"extract"          json:"extract"`
-	WebSearch       *WebSearchConfig       `yaml:"web_search"       json:"web_search"`
-	PromptTemplates *PromptTemplatesConfig `yaml:"prompt_templates" json:"prompt_templates"`
-	IM              *IMConfig              `yaml:"im"               json:"im"`
-	Agent           *AgentConfig           `yaml:"agent"            json:"agent"`
+	enrichmentPromptLiterals map[string]string
+	Conversation             *ConversationConfig    `yaml:"conversation"     json:"conversation"`
+	Server                   *ServerConfig          `yaml:"server"           json:"server"`
+	KnowledgeBase            *KnowledgeBaseConfig   `yaml:"knowledge_base"   json:"knowledge_base"`
+	Tenant                   *TenantConfig          `yaml:"tenant"           json:"tenant"`
+	Auth                     *AuthConfig            `yaml:"auth"             json:"auth"`
+	Audit                    *AuditConfig           `yaml:"audit"            json:"audit"`
+	OIDCAuth                 *OIDCAuthConfig        `yaml:"oidc_auth"        json:"oidc_auth"`
+	Directory                *DirectoryConfig       `yaml:"directory"        json:"directory"`
+	Models                   []ModelConfig          `yaml:"models"           json:"models"`
+	VectorDatabase           *VectorDatabaseConfig  `yaml:"vector_database"  json:"vector_database"`
+	DocReader                *DocReaderConfig       `yaml:"docreader"        json:"docreader"`
+	StreamManager            *StreamManagerConfig   `yaml:"stream_manager"   json:"stream_manager"`
+	ExtractManager           *ExtractManagerConfig  `yaml:"extract"          json:"extract"`
+	WebSearch                *WebSearchConfig       `yaml:"web_search"       json:"web_search"`
+	PromptTemplates          *PromptTemplatesConfig `yaml:"prompt_templates" json:"prompt_templates"`
+	IM                       *IMConfig              `yaml:"im"               json:"im"`
+	Agent                    *AgentConfig           `yaml:"agent"            json:"agent"`
 	// FrontendBaseURL is the externally-visible origin of the SPA, used
 	// to compose absolute share-link URLs. Empty falls back to a host-
 	// relative URL ("/register?token=…") which the SPA then resolves
