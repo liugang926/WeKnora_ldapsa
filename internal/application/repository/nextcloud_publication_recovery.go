@@ -362,7 +362,7 @@ func (s *NextcloudPublicationRecoveryStore) captureInTx(tx *gorm.DB, a Nextcloud
 	inv := &NextcloudRecoveryInventory{SchemaVersion: 1, Anchor: a, Pairs: make([]NextcloudRecoveryPair, 0, len(pairs))}
 	states := make([]any, 0, len(pairs))
 	for _, p := range pairs {
-		if p.TenantID == 0 || p.TenantID > math.MaxInt64 || p.OperationID == "" || p.KnowledgeBaseID == "" || p.DataSourceID == "" || p.PublicationEpoch <= 0 || p.KeyID == "" || (p.State != "active" && p.State != "pending") {
+		if p.TenantID == 0 || p.TenantID > math.MaxInt64 || p.OperationID == "" || p.KnowledgeBaseID == "" || p.DataSourceID == "" || p.PublicationEpoch < 0 || p.KeyID == "" || (p.State != "active" && p.State != "pending") {
 			return nil, ErrNextcloudRecoveryDenied
 		}
 		var kb types.KnowledgeBase

@@ -77,28 +77,34 @@ func ioReadBounded(f *os.File) ([]byte, error) {
 	}
 	return data, nil
 }
-func writePrivate(path string, data []byte) error {
+func reservePrivate(path string) (*os.File, error) {
 	if !filepath.IsAbs(path) {
-		return errors.New("absolute private output required")
+		return nil, errors.New("absolute private output required")
 	}
 	dir := filepath.Dir(path)
 	resolved, e := filepath.EvalSymlinks(dir)
 	if e != nil || resolved != dir {
-		return errors.New("output directory symlink refused")
+		return nil, errors.New("output directory symlink refused")
 	}
 	info, e := os.Stat(dir)
 	if e != nil {
-		return e
+		return nil, e
 	}
 	stat, ok := info.Sys().(*syscall.Stat_t)
 	if !ok || int(stat.Uid) != os.Geteuid() || info.Mode().Perm() != 0700 {
-		return errors.New("private owned output directory required")
+		return nil, errors.New("private owned output directory required")
 	}
 	fd, e := syscall.Open(path, syscall.O_WRONLY|syscall.O_CREAT|syscall.O_EXCL|syscall.O_NOFOLLOW, 0600)
 	if e != nil {
+		return nil, e
+	}
+	return os.NewFile(uintptr(fd), path), nil
+}
+func writePrivate(path string, data []byte) error {
+	f, e := reservePrivate(path)
+	if e != nil {
 		return e
 	}
-	f := os.NewFile(uintptr(fd), path)
 	defer f.Close()
 	if _, e = f.Write(data); e != nil {
 		return e
@@ -106,7 +112,7 @@ func writePrivate(path string, data []byte) error {
 	return f.Sync()
 }
 func run() error {
-	mode := flag.String("mode", "", "capture, apply, or reconcile")
+	mode := flag.String("mode", "", "capture, apply, reconcile, or snapshot")
 	dbFile := flag.String("sqlite-db", "", "owned stopped SQLite database")
 	connectionFile := flag.String("postgres-connection-file", "", "private owner-only PostgreSQL DSN file")
 	planFile := flag.String("plan", "", "external signed journal replay plan")
@@ -125,6 +131,19 @@ func run() error {
 	if *output == "" {
 		return errors.New("private output file required")
 	}
+	// Reserve before opening the database or running a mutating maintenance
+	// operation. Existing files, directories and aliases are a hard refusal.
+	outputHandle, outputErr := reservePrivate(*output)
+	if outputErr != nil {
+		return outputErr
+	}
+	completedOutput := false
+	defer func() {
+		outputHandle.Close()
+		if !completedOutput {
+			_ = os.Remove(*output)
+		}
+	}()
 	if (*dbFile == "") == (*connectionFile == "") {
 		return errors.New("one owned DB required")
 	}
@@ -189,6 +208,16 @@ func run() error {
 		value, e = store.Apply(ctx, plan, inventory, *pin)
 	case "reconcile":
 		value, e = store.Reconcile(ctx, *receipt, *operation)
+	case "snapshot":
+		raw, er := privateFile(*inventoryFile)
+		if er != nil {
+			return er
+		}
+		inventory, er := repository.DecodeNextcloudRecoveryInventory(raw, *pin)
+		if er != nil {
+			return er
+		}
+		value, e = store.Snapshot(ctx, *receipt, inventory, *pin)
 	default:
 		return errors.New("capture, apply or reconcile mode required")
 	}
@@ -202,9 +231,13 @@ func run() error {
 	if *output == "" {
 		return errors.New("private output file required")
 	}
-	if e = writePrivate(*output, data); e != nil {
+	if _, e = outputHandle.Write(data); e != nil {
 		return e
 	}
+	if e = outputHandle.Sync(); e != nil {
+		return e
+	}
+	completedOutput = true
 	hash := sha256.Sum256(data)
 	fmt.Println("evidence_sha256=" + hex.EncodeToString(hash[:]))
 	return nil
