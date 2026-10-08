@@ -233,7 +233,14 @@ func TestKnowledgeInputLegacyConfigurationCannotBeAuthenticatedByHumanDocument(t
 	require.NoError(t, db.Model(&types.Knowledge{}).Where("id = ?", k.ID).Count(&count).Error)
 	require.Zero(t, count, "origin failure rolls back the child creation")
 	legacy.Name = "renamed"
-	require.Error(t, store.UpdateKnowledgeBaseWithInput(WithIndependentKnowledgeInput(context.Background()), legacy), "partial human edit cannot prove retained unknown examples")
+	require.NoError(t, store.UpdateKnowledgeBaseWithInput(WithIndependentKnowledgeInput(context.Background()), legacy), "unused display rename preserves unknown model configuration")
+	var configOrigins int64
+	require.NoError(t, db.Table("knowledge_config_input_origins").Where("knowledge_base_id = ?", legacy.ID).Count(&configOrigins).Error)
+	require.Zero(t, configOrigins, "display rename cannot mint an origin for retained unknown examples")
+	_, err = store.CreateKnowledgeWithInput(WithIndependentKnowledgeInput(context.Background()), k, "new human text after rename")
+	require.Error(t, err)
+	require.NoError(t, db.Model(&types.Knowledge{}).Where("id = ?", k.ID).Count(&count).Error)
+	require.Zero(t, count)
 	fresh := &types.KnowledgeBase{ID: "fresh-kb", TenantID: 7, Name: "human configuration", SummaryModelID: "explicit-model", ExtractConfig: &types.ExtractConfig{Text: "new explicitly authored example"}}
 	require.NoError(t, store.CreateKnowledgeBaseWithInput(WithIndependentKnowledgeInput(context.Background()), fresh))
 	k.ID = "human-on-fresh"
