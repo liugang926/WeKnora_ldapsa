@@ -550,6 +550,27 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	}))
 	must(container.Invoke(service.ConfigureDataSourceCapacityAdmission))
 	must(container.Invoke(service.ConfigureKnowledgeInputProvenance))
+	must(container.Invoke(service.ConfigureChunkSummaryInputProvenance))
+	must(container.Invoke(func(p struct {
+		dig.In
+		Handler interfaces.TaskHandler `name:"knowledgePostProcess"`
+		Store   *repository.KnowledgeInputProvenanceStore
+		Config  *config.Config
+	}) {
+		service.ConfigureKnowledgePostProcessInputProvenance(p.Handler, p.Store)
+		service.ConfigureKnowledgeEnrichmentRuntime(p.Handler, p.Config)
+	}))
+	must(container.Invoke(func(p struct {
+		dig.In
+		Handler interfaces.TaskHandler `name:"imageMultimodal"`
+		Store   *repository.KnowledgeInputProvenanceStore
+	}) {
+		service.ConfigureImageMultimodalInputProvenance(p.Handler, p.Store)
+	}))
+	must(container.Invoke(func(store *repository.KnowledgeInputProvenanceStore, guard *access.NextcloudSourceLineageGuard, sources interfaces.DataSourceRepository) {
+		repository.ConfigureKnowledgeOriginalInputSourceVerifier(store, service.NewKnowledgeOriginalInputSourceVerifier(store, guard, sources))
+	}))
+
 	must(container.Invoke(service.ConfigureKnowledgeBaseInputProvenance))
 	must(container.Invoke(service.ConfigureMessageSourceLineage))
 	must(container.Invoke(func(store *repository.KnowledgeInputProvenanceStore, messages interfaces.MessageService) {
