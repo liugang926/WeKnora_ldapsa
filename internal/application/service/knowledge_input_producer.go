@@ -63,26 +63,7 @@ func (s *knowledgeService) resumeKnowledgeInput(ctx context.Context, proof *type
 }
 
 func (s *knowledgeService) restoreKnowledgeTaskActor(ctx context.Context, proof *types.KnowledgeBuildInputProof) (context.Context, error) {
-	restorer, ok := s.knowledgeInputs.(interface {
-		RestoreKnowledgeBuildActor(context.Context, *types.KnowledgeBuildInputProof) (context.Context, error)
-	})
-	if !ok {
-		return ctx, nil
-	}
-	probe, ok := s.knowledgeInputs.(interface {
-		KnowledgeBuildActorRequired(context.Context, *types.KnowledgeBuildInputProof) (bool, error)
-	})
-	if !ok {
-		return ctx, types.ErrSourceLineageUnknown
-	}
-	required, err := probe.KnowledgeBuildActorRequired(ctx, proof)
-	if err != nil {
-		return ctx, err
-	}
-	if !required {
-		return ctx, nil
-	}
-	return restorer.RestoreKnowledgeBuildActor(ctx, proof)
+	return repository.RestoreKnowledgeBuildActorIfRequired(ctx, s.knowledgeInputs, proof)
 }
 
 func requireActualKnowledgeBuildInput(ctx context.Context) error {

@@ -1916,7 +1916,11 @@ func (s *knowledgeService) processQuestionGenerationForKnowledge(ctx context.Con
 		textChunkIDs[i] = c.ID
 	}
 	var imageInfoMap map[string]string
-    if actual!=nil {imageInfoMap=actualManifestImageInfo(actual,textChunkIDs)}else{imageInfoMap=searchutil.CollectImageInfoByChunkIDs(ctx,s.chunkRepo,payload.TenantID,textChunkIDs)}
+	if actual != nil {
+		imageInfoMap = actualManifestImageInfo(actual, textChunkIDs)
+	} else {
+		imageInfoMap = searchutil.CollectImageInfoByChunkIDs(ctx, s.chunkRepo, payload.TenantID, textChunkIDs)
+	}
 
 	enrichContent := func(chunk *types.Chunk) string {
 		if info, ok := imageInfoMap[chunk.ID]; ok && info != "" {
@@ -4048,6 +4052,7 @@ func (s *knowledgeService) convert(
 		"file_type": payload.FileType,
 		"is_url":    payload.URL != "",
 	}
+	startedWithOriginalInput := repository.KnowledgeBuildInputProofFromContext(ctx) != nil
 	if payload.URL != "" {
 		docInput["url"] = payload.URL
 	}
@@ -4159,6 +4164,13 @@ func (s *knowledgeService) convert(
 	}
 	if err := requireActualKnowledgeBuildInput(ctx); err != nil {
 		return nil, err
+	}
+	if !startedWithOriginalInput && repository.KnowledgeBuildInputProofFromContext(ctx) != nil {
+		// Source bytes were unavailable at the initial stage start. Begin a
+		// fresh run with the admitted original input before the real RPC;
+		// EndSpan must never certify the earlier unknown run retroactively.
+		docInput["parser_engine"] = req.ParserEngine
+		s.beginStage(ctx, knowledge.ID, types.StageDocReader, docInput)
 	}
 	result, err := s.callDocReaderWithTimeout(ctx, reader, req)
 	if err != nil {

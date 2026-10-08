@@ -12,6 +12,7 @@ import (
 	"reflect"
 	"sort"
 
+	"github.com/Tencent/WeKnora/internal/application/access"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	"github.com/google/uuid"
@@ -92,6 +93,7 @@ type KnowledgeInputProvenanceStore struct {
 	db              *gorm.DB
 	messageVerifier interfaces.MessageSourceLineageVerifier
 	actorGroups     interfaces.GroupAccessService
+	actorShares     access.KBShareLookup
 }
 
 func NewKnowledgeInputProvenanceStore(db *gorm.DB) *KnowledgeInputProvenanceStore {

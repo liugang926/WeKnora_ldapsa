@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Tencent/WeKnora/internal/application/access"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 )
@@ -82,6 +83,36 @@ func ConfigureKnowledgeInputActorGroupAccess(store *KnowledgeInputProvenanceStor
 	store.actorGroups = groups
 }
 
+func ConfigureKnowledgeInputActorShares(store *KnowledgeInputProvenanceStore, shares access.KBShareLookup) {
+	store.actorShares = shares
+}
+
+// RestoreKnowledgeBuildActorIfRequired is the trusted worker boundary. It
+// reloads the immutable actor selector for actor-bound original admissions;
+// ordinary and Nextcloud admissions keep their existing execution context.
+func RestoreKnowledgeBuildActorIfRequired(ctx context.Context, reader interfaces.KnowledgeBuildInputReader, proof *types.KnowledgeBuildInputProof) (context.Context, error) {
+	if reader == nil || proof == nil {
+		return ctx, types.ErrSourceLineageUnknown
+	}
+	probe, ok := reader.(interface {
+		KnowledgeBuildActorRequired(context.Context, *types.KnowledgeBuildInputProof) (bool, error)
+	})
+	if !ok {
+		return ctx, types.ErrSourceLineageUnknown
+	}
+	required, err := probe.KnowledgeBuildActorRequired(ctx, proof)
+	if err != nil || !required {
+		return ctx, err
+	}
+	restorer, ok := reader.(interface {
+		RestoreKnowledgeBuildActor(context.Context, *types.KnowledgeBuildInputProof) (context.Context, error)
+	})
+	if !ok {
+		return ctx, types.ErrSourceLineageUnknown
+	}
+	return restorer.RestoreKnowledgeBuildActor(ctx, proof)
+}
+
 func (s *KnowledgeInputProvenanceStore) KnowledgeBuildActorRequired(ctx context.Context, proof *types.KnowledgeBuildInputProof) (bool, error) {
 	if proof == nil {
 		return false, types.ErrSourceLineageUnknown
@@ -112,6 +143,79 @@ func (s *KnowledgeInputProvenanceStore) RestoreKnowledgeBuildActor(ctx context.C
 	if admission.BuildGeneration != proof.BuildGeneration || admission.InputDigest != proof.InputDigest {
 		return ctx, ErrKnowledgeInputChanged
 	}
+	fresh, err := s.restoreCurrentKnowledgeActor(ctx, actor, proof.TenantID)
+	if err != nil {
+		return ctx, err
+	}
+	var kb types.KnowledgeBase
+	if err := s.db.WithContext(fresh).Where("id = ? AND tenant_id = ?", proof.KnowledgeBaseID, proof.TenantID).Take(&kb).Error; err != nil {
+		return ctx, err
+	}
+	fresh, err = s.authorizeKnowledgeActorWrite(fresh, &kb)
+	if err != nil {
+		return ctx, err
+	}
+	return context.WithValue(fresh, knowledgeBuildActorContextKey{}, proof.AdmissionID), nil
+}
+
+// AuthorizeCurrentKnowledgeInputWrite checks a current authenticated request's
+// exact actor against a server-loaded KB. It never restores another admission's
+// actor. Bind this store and its group/share lookups to the writer transaction
+// when the authorized producer publishes a receipt in that transaction.
+func (s *KnowledgeInputProvenanceStore) AuthorizeCurrentKnowledgeInputWrite(ctx context.Context, kb *types.KnowledgeBase) (context.Context, error) {
+	if kb == nil || kb.ID == "" || kb.TenantID == 0 {
+		return ctx, ErrKnowledgeInputChanged
+	}
+	actor, err := captureKnowledgeActorSelector(ctx, "")
+	if err != nil {
+		return ctx, err
+	}
+	fresh, err := s.restoreCurrentKnowledgeActor(ctx, actor, kb.TenantID)
+	if err != nil {
+		return ctx, err
+	}
+	var actual types.KnowledgeBase
+	if err := s.db.WithContext(fresh).Where("id = ? AND tenant_id = ?", kb.ID, kb.TenantID).Take(&actual).Error; err != nil {
+		return ctx, err
+	}
+	return s.authorizeKnowledgeActorWrite(fresh, &actual)
+}
+
+func (s *KnowledgeInputProvenanceStore) authorizeKnowledgeActorWrite(ctx context.Context, kb *types.KnowledgeBase) (context.Context, error) {
+	caller := types.CallerFromContext(ctx)
+	if scope, ok := types.TenantAPIKeyScopeFromContext(ctx); ok {
+		if !scope.FullAccess && !scope.HasCapability(types.APIKeyCapabilityIngest) {
+			return ctx, access.ErrForbidden
+		}
+	} else if !caller.Role.HasPermission(types.TenantRoleContributor) {
+		return ctx, access.ErrForbidden
+	}
+	var shares access.KBShareLookup
+	if caller.UserID != "" {
+		shares = s.actorShares
+	}
+	grant, err := access.ResolveKB(ctx, access.KBRequest{Caller: caller}, kb, types.OrgRoleEditor, shares, nil)
+	if err != nil {
+		return ctx, err
+	}
+	if s.actorGroups == nil {
+		return ctx, types.ErrSourceLineageUnknown
+	}
+	permission, err := s.actorGroups.EffectivePermission(ctx, kb.TenantID, types.GroupResourceTypeKnowledgeBase, kb.ID, types.ResourceActionEdit, time.Now().UTC())
+	if err != nil {
+		return ctx, err
+	}
+	if !permission.Allowed {
+		return ctx, access.ErrForbidden
+	}
+	fresh := grant.Context(ctx)
+	if err := access.RequireKBWrite(fresh, kb); err != nil {
+		return ctx, err
+	}
+	return fresh, nil
+}
+
+func (s *KnowledgeInputProvenanceStore) restoreCurrentKnowledgeActor(ctx context.Context, actor knowledgeBuildActorSelector, executionTenant uint64) (context.Context, error) {
 	principal := types.Principal{Type: actor.PrincipalType, ID: actor.PrincipalID}
 	caller := types.Caller{TenantID: actor.CallerTenantID, UserID: actor.UserID, Role: types.TenantRoleViewer}
 	// Drop any cached request/task grants. They are not reconstructed authority.
@@ -180,8 +284,7 @@ func (s *KnowledgeInputProvenanceStore) RestoreKnowledgeBuildActor(ctx context.C
 	ctx = types.WithCaller(ctx, caller)
 	ctx = types.WithPrincipal(ctx, principal)
 	ctx = context.WithValue(ctx, types.TenantRoleContextKey, caller.Role)
-	ctx = types.WithExecutionTenant(ctx, proof.TenantID)
-	ctx = context.WithValue(ctx, knowledgeBuildActorContextKey{}, proof.AdmissionID)
+	ctx = types.WithExecutionTenant(ctx, executionTenant)
 	return ctx, nil
 }
 
