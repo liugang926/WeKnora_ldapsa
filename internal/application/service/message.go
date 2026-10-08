@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -14,9 +13,6 @@ import (
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 )
-
-// regThinkIndex matches <think>...</think> blocks for stripping from KB index content.
-var regThinkIndex = regexp.MustCompile(`(?s)<think>.*?</think>`)
 
 // messageService implements the MessageService interface for managing messaging operations
 // It handles creating, retrieving, updating, and deleting messages within sessions.
@@ -567,28 +563,36 @@ func (s *messageService) getRetrievalConfig(ctx context.Context) *types.Retrieva
 	return tenant.RetrievalConfig
 }
 
-// IndexMessageToKB indexes a message (Q&A pair) into the chat history knowledge base asynchronously.
-// It creates a Knowledge entry (passage) containing both the user query and assistant answer,
-// then links the message to the Knowledge entry via the knowledge_id field.
+// IndexMessageToKB admits actual committed parents into the configured history
+// KB. The writer atomically reloads the paired user and assistant, records their
+// original proof, creates the child and links the message before queueing it.
 // The KB ID is read from the tenant's ChatHistoryConfig — if not configured, indexing is skipped.
-func (s *messageService) IndexMessageToKB(ctx context.Context, userQuery string, assistantAnswer string, messageID string, sessionID string) {
-	// Strings from a caller are not provenance. Reload the atomic committed row
-	// before enqueuing any derivative; legacy and controlled answers stay out.
+func (s *messageService) IndexMessageToKB(ctx context.Context, _ string, _ string, messageID string, sessionID string) {
+	// Caller Q/A strings never enter this adapter. Controlled history remains
+	// closed until the inherited multi-parent producer/read closure is wired.
+	tenantID, ok := sessionTenantIDForLookup(ctx)
+	if !ok || tenantID == 0 || s.sessionRepo == nil || s.messageRepo == nil {
+		return
+	}
+	if _, err := s.sessionRepo.Get(ctx, tenantID, types.SessionOwnerIDFromContext(ctx), sessionID); err != nil {
+		return
+	}
 	committed, err := s.messageRepo.GetMessage(ctx, sessionID, messageID)
-	if err != nil || !types.SourceIndependentDerivativesAllowed(committed) || s.CheckMessagePublication(ctx, committed) != nil {
+	if err != nil || committed == nil || committed.ID != messageID || committed.SessionID != sessionID || committed.Role != "assistant" ||
+		!types.SourceIndependentDerivativesAllowed(committed) || s.CheckMessagePublication(ctx, committed) != nil {
 		return
 	}
-	assistantAnswer = committed.Content
-	// Strip thinking content (<think>...</think>) before indexing to avoid
-	// polluting the knowledge base with intermediate reasoning that would
-	// degrade retrieval quality.
-	assistantAnswer = regThinkIndex.ReplaceAllString(assistantAnswer, "")
-	assistantAnswer = strings.TrimSpace(assistantAnswer)
-
-	if strings.TrimSpace(userQuery) == "" && assistantAnswer == "" {
-		return
+	tenant, ok := types.TenantInfoFromContext(ctx)
+	if !ok || tenant.ID != tenantID {
+		if s.tenantService == nil {
+			return
+		}
+		tenant, err = s.tenantService.GetTenantByID(ctx, tenantID)
+		if err != nil || tenant == nil || tenant.ID != tenantID {
+			return
+		}
+		ctx = context.WithValue(ctx, types.TenantInfoContextKey, tenant)
 	}
-
 	cfg := s.getChatHistoryConfig(ctx)
 	if cfg == nil {
 		// Say why, otherwise an operator who enabled indexing in the UI sees
@@ -600,27 +604,41 @@ func (s *messageService) IndexMessageToKB(ctx context.Context, userQuery string,
 		return
 	}
 
-	logger.Infof(ctx, "Indexing message to chat history KB %s, message ID: %s, session ID: %s", cfg.KnowledgeBaseID, messageID, sessionID)
-
-	// Build passage content: combine Q&A for better semantic search
-	var passages []string
-	passage := fmt.Sprintf("[Session: %s]\nQ: %s\nA: %s", sessionID, userQuery, assistantAnswer)
-	passages = append(passages, passage)
-
-	// Use async (non-sync) passage creation so it doesn't block the response
-	knowledge, err := s.knowService.CreateKnowledgeFromPassage(ctx, cfg.KnowledgeBaseID, passages, "")
+	writer, capable := s.knowService.(interfaces.CommittedHistoryKnowledgeInputWriter)
+	if !capable || s.kbService == nil || s.sourceLineageGuard == nil {
+		return
+	}
+	kb, err := s.kbService.GetKnowledgeBaseByIDOnly(ctx, cfg.KnowledgeBaseID)
+	if err != nil || kb == nil || kb.ID != cfg.KnowledgeBaseID || kb.TenantID != tenantID {
+		return
+	}
+	caller := types.CallerFromContext(ctx)
+	// The configured history KB belongs to the session tenant. A shared Agent
+	// execution tenant/read grant cannot mint a history mutation for its owner.
+	if caller.TenantID != tenantID {
+		return
+	}
+	grant, err := access.ResolveKB(ctx, access.KBRequest{Caller: caller}, kb, types.OrgRoleEditor, nil, nil)
+	if err != nil {
+		return
+	}
+	empty, _ := types.NewCompleteSourceLineage()
+	if err := s.sourceLineageGuard.Check(ctx, empty, access.LineageReadScope{Targets: types.SearchTargets{
+		{Type: types.SearchTargetTypeKnowledgeBase, TenantID: kb.TenantID, KnowledgeBaseID: kb.ID},
+	}}); err != nil {
+		return
+	}
+	result, err := writer.CreateCommittedHistoryKnowledgeInput(grant.Context(ctx), types.CommittedHistoryKnowledgeInputRequest{
+		TenantID: tenantID, KnowledgeBaseID: kb.ID, SessionID: sessionID, AssistantMessageID: messageID,
+	})
 	if err != nil {
 		logger.Warnf(ctx, "Failed to index message to chat history KB: %v", err)
 		return
 	}
-
-	// Link the message to the knowledge entry
-	if err := s.messageRepo.UpdateMessageKnowledgeID(ctx, messageID, knowledge.ID); err != nil {
-		logger.Warnf(ctx, "Failed to update message knowledge_id: %v", err)
+	if result == nil || result.Knowledge == nil {
 		return
 	}
-
-	logger.Infof(ctx, "Message indexed to chat history KB: knowledge_id=%s, message_id=%s", knowledge.ID, messageID)
+	logger.Infof(ctx, "Message indexed to chat history KB: knowledge_id=%s, message_id=%s", result.Knowledge.ID, messageID)
 }
 
 // describeChatHistorySkip reports which chat-history precondition is missing,
