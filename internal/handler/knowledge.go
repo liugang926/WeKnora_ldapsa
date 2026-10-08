@@ -718,6 +718,13 @@ func (h *KnowledgeHandler) GetKnowledge(c *gin.Context) {
 		return
 	}
 
+	ctx, closeFAQRead, faqReadErr := h.beginFAQKnowledgePreRead(c, ctx, []string{id})
+	if faqReadErr != nil {
+		c.Error(faqReadErr)
+		return
+	}
+	defer closeFAQRead()
+
 	// Resolve knowledge and validate KB access (at least viewer)
 	knowledge, effCtx, err := h.resolveKnowledgeAndValidateKBAccess(c, id, types.OrgRoleViewer)
 	if err != nil {
@@ -1891,6 +1898,13 @@ func (h *KnowledgeHandler) GetKnowledgeBatch(c *gin.Context) {
 			return
 		}
 	}
+
+	ctx, closeFAQRead, faqReadErr := h.beginFAQKnowledgePreRead(c, ctx, req.IDs)
+	if faqReadErr != nil {
+		c.Error(faqReadErr)
+		return
+	}
+	defer closeFAQRead()
 
 	var knowledges []*types.Knowledge
 	var err error

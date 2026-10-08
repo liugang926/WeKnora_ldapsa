@@ -37,6 +37,9 @@ func (s *KnowledgeInputProvenanceStore) CaptureKnowledgeOutputInputs(ctx context
 	}
 	var original *types.KnowledgeBuildInputProof
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := s.checkFAQImportReadSetPlanInTx(tx); err != nil {
+			return err
+		}
 		var k types.Knowledge
 		if err := tx.Where("id = ? AND tenant_id = ? AND knowledge_base_id = ?",
 			request.KnowledgeID, request.TenantID, request.KnowledgeBaseID).Take(&k).Error; err != nil {

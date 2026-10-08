@@ -749,6 +749,9 @@ func sealKnowledgeInputChunks(ctx context.Context, tx *gorm.DB, chunks []*types.
 }
 
 func (s *KnowledgeInputProvenanceStore) captureKnowledgeBuildSnapshotInTx(tx *gorm.DB, request types.KnowledgeBuildInputCaptureRequest, recheck bool) (*types.KnowledgeBuildInputSnapshot, error) {
+	if err := s.checkFAQImportReadSetPlanInTx(tx); err != nil {
+		return nil, err
+	}
 	var k types.Knowledge
 	if err := tx.Where("id = ? AND tenant_id = ? AND knowledge_base_id = ?", request.KnowledgeID, request.TenantID, request.KnowledgeBaseID).Take(&k).Error; err != nil {
 		return nil, err

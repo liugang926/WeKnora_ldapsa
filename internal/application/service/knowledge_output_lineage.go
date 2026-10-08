@@ -410,3 +410,14 @@ func (g *KnowledgeOutputGuard) checkFAQResults(ctx context.Context) error {
 	}
 	return nil
 }
+
+func (a *KnowledgeOutputAuthorizer) FAQResultReadPlan(ctx context.Context, ids []string) (*types.FAQImportOutputReadSetPlan, error) {
+	if a == nil {
+		return nil, access.ErrNextcloudPublicationUnavailable
+	}
+	store, ok := a.reader.(*repository.KnowledgeInputProvenanceStore)
+	if !ok || store == nil {
+		return nil, types.ErrSourceLineageUnknown
+	}
+	return store.PeekFAQImportOutputReadSetPlan(ctx, nil, ids)
+}

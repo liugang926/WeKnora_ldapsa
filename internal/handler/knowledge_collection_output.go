@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/Tencent/WeKnora/internal/application/access"
+	"github.com/Tencent/WeKnora/internal/application/repository"
 	"github.com/Tencent/WeKnora/internal/application/service"
 	"github.com/Tencent/WeKnora/internal/errors"
 	"github.com/Tencent/WeKnora/internal/types"
@@ -83,15 +84,23 @@ func (h *KnowledgeHandler) respondKnowledgeCollection(c *gin.Context, ctx contex
 			fence.Close()
 		}
 	}()
-	for _, target := range scopes {
-		fence, err := acquireNextcloudHTTPKBReadLease(ctx, h.contentLeases, target.TenantID, target.KBID, h.leaseHeartbeat)
-		if err != nil {
-			_ = c.Error(err)
-			return
-		}
-		fences = append(fences, fence)
-		ctx = fence.Context(ctx)
+	plan, err := h.collectionOutputAuthorizer.FAQResultReadPlan(ctx, scopes)
+	if err != nil {
+		c.Error(knowledgeOutputHTTPError(err))
+		return
 	}
+	fence, err := acquireFAQReadPlanLeases(ctx, h.contentLeases, plan.Scopes, plan.SourceLineage, h.leaseHeartbeat)
+	if err != nil {
+		c.Error(err)
+		return
+	}
+	fences = append(fences, fence)
+	ctx, err = repository.WithFAQImportOutputReadSetPlan(fence.Context(ctx), plan)
+	if err != nil {
+		c.Error(knowledgeOutputHTTPError(err))
+		return
+	}
+
 	guard, err := h.collectionOutputAuthorizer.Begin(ctx, types.KnowledgeCollectionReadRequest{Scopes: scopes}, scope)
 	if err != nil {
 		_ = c.Error(knowledgeOutputHTTPError(err))

@@ -666,6 +666,9 @@ func (s *KnowledgeInputProvenanceStore) WriteFAQChunks(ctx context.Context, chun
 	}, knowledgeDisplayWriteOptions(s.db))
 }
 func (s *KnowledgeInputProvenanceStore) advanceFAQSessionInTx(tx *gorm.DB, session *faqInputSessionRow) error {
+	if err := s.advanceFAQReadPlanAfterOwnWriteInTx(tx, session); err != nil {
+		return err
+	}
 	snapshot, err := s.captureFAQInputsInTx(tx, types.FAQInputReadRequest{TenantID: session.TenantID, KnowledgeBaseID: session.KnowledgeBaseID, AllEntries: true})
 	if err != nil {
 		return err

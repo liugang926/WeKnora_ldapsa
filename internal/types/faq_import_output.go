@@ -27,4 +27,15 @@ type FAQImportOutputReadPlan struct {
 	HeadRevision   uint64
 	MetadataDigest string
 	Scopes         []KnowledgeSearchScope
+	SourceLineage  *SourceLineage
+}
+
+// A metadata-only plan for every actual FAQ result in scoped/explicit-ID outputs.
+type FAQImportOutputReadSetPlan struct {
+	KnowledgeScopes []KnowledgeSearchScope
+	KnowledgeIDs    []string
+	Plans           []*FAQImportOutputReadPlan
+	Scopes          []KnowledgeSearchScope
+	SourceLineage   *SourceLineage
+	MetadataDigest  string
 }

@@ -31,7 +31,7 @@ func (h *TagHandler) respondCommittedTag(c *gin.Context, ctx context.Context, re
 		_ = c.Error(knowledgeOutputHTTPError(err))
 		return
 	}
-	ctx, closeRead, err := beginCollectionHTTPRead(c, ctx, h.outputAuthorizer.ContentLeaseStore(), snapshot.Request.KnowledgeBaseID)
+	ctx, closeRead, err := beginFAQTagHTTPRead(c, ctx, h.outputAuthorizer, snapshot.Request.KnowledgeBaseID)
 	if err != nil {
 		_ = c.Error(err)
 		return
@@ -55,7 +55,7 @@ func (h *TagHandler) respondTagList(c *gin.Context, ctx context.Context, kb stri
 		_ = c.Error(errors.NewForbiddenError("Current tag scope is required"))
 		return
 	}
-	ctx, closeRead, err := beginCollectionHTTPRead(c, ctx, h.outputAuthorizer.ContentLeaseStore(), kb)
+	ctx, closeRead, err := beginFAQTagHTTPRead(c, ctx, h.outputAuthorizer, kb)
 	if err != nil {
 		_ = c.Error(err)
 		return

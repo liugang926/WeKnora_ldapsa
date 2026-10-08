@@ -57,8 +57,21 @@ capture transaction verifies the exact metadata again before reading config,
 tags, entry body, or parent chunks. A normal all-entry plan can cover a single
 entry read; a stale membership/head/receipt plan is rejected.
 
-The context plan does not itself prove lease acquisition. Root HTTP lease wiring
-owns that step. This module does not claim full GC reader coverage.
+The context plan does not itself prove lease acquisition. HTTP lease wiring now acquires every scope in stable order and upgrades each
+controlled source to its exact original generation while broad leases remain held.
+The capture transaction validates the actual durable lease IDs, owner, scope,
+epoch, expiry, and open fences. A metadata marker or fabricated lease struct
+cannot establish coverage. FAQ list/get/search/export/progress and FAQ tag
+statistics retain these leases through model work and actual response writes.
+Ordinary knowledge detail/batch resolve result identities before loading JSON,
+and ordinary collections pin a complete result read set before body capture.
+Source/current actor guards remain independent; permission revocation denies
+output even when physical fences and leases remain open.
+
+Only an actual own FAQ write recipe may advance its private request plan after
+an atomic admitted write. Foreign body/config/membership ABA and output-head
+changes cannot refresh an old plan. Other reader families and unbound internal
+writers still prevent claiming global GC protocol coverage.
 
 FAQ parent captures use production `displayAuthorityFactory(tx)` for all current
 actor, group and organization checks. The authority store must hold the same SQL

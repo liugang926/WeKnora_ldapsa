@@ -63,4 +63,5 @@ type FAQInputReadPlan struct {
 	Request        FAQInputReadRequest
 	MetadataDigest string
 	Scopes         []KnowledgeSearchScope
+	SourceLineage  *SourceLineage
 }

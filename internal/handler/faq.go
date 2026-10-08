@@ -116,7 +116,7 @@ func (h *FAQHandler) ListEntries(c *gin.Context) {
 		return
 	}
 
-	ctx, closeRead, leaseErr := beginCollectionHTTPRead(c, ctx, h.outputAuthorizer.ContentLeaseStore(), kbID)
+	ctx, closeRead, leaseErr := beginFAQHTTPRead(c, ctx, h.outputAuthorizer, kbID)
 	if leaseErr != nil {
 		_ = c.Error(leaseErr)
 		return
@@ -218,7 +218,7 @@ func (h *FAQHandler) CreateEntry(c *gin.Context) {
 	}
 	ctx := service.WithFAQOutputBoundary(c.Request.Context())
 	kbID := secutils.SanitizeForLog(c.Param("id"))
-	ctx, closeRead, leaseErr := beginCollectionHTTPRead(c, ctx, h.outputAuthorizer.ContentLeaseStore(), kbID)
+	ctx, closeRead, leaseErr := beginFAQHTTPRead(c, ctx, h.outputAuthorizer, kbID)
 	if leaseErr != nil {
 		_ = c.Error(leaseErr)
 		return
@@ -267,7 +267,7 @@ func (h *FAQHandler) UpdateEntry(c *gin.Context) {
 	}
 	ctx := service.WithFAQOutputBoundary(c.Request.Context())
 	kbID := secutils.SanitizeForLog(c.Param("id"))
-	ctx, closeRead, leaseErr := beginCollectionHTTPRead(c, ctx, h.outputAuthorizer.ContentLeaseStore(), kbID)
+	ctx, closeRead, leaseErr := beginFAQHTTPRead(c, ctx, h.outputAuthorizer, kbID)
 	if leaseErr != nil {
 		_ = c.Error(leaseErr)
 		return
@@ -445,7 +445,7 @@ func (h *FAQHandler) SearchFAQ(c *gin.Context) {
 	}
 	ctx := service.WithFAQOutputBoundary(c.Request.Context())
 	kbID := secutils.SanitizeForLog(c.Param("id"))
-	ctx, closeRead, leaseErr := beginCollectionHTTPRead(c, ctx, h.outputAuthorizer.ContentLeaseStore(), kbID)
+	ctx, closeRead, leaseErr := beginFAQHTTPRead(c, ctx, h.outputAuthorizer, kbID)
 	if leaseErr != nil {
 		_ = c.Error(leaseErr)
 		return
@@ -495,7 +495,7 @@ func (h *FAQHandler) ExportEntries(c *gin.Context) {
 	}
 	ctx := service.WithFAQOutputBoundary(c.Request.Context())
 	kbID := secutils.SanitizeForLog(c.Param("id"))
-	ctx, closeRead, leaseErr := beginCollectionHTTPRead(c, ctx, h.outputAuthorizer.ContentLeaseStore(), kbID)
+	ctx, closeRead, leaseErr := beginFAQHTTPRead(c, ctx, h.outputAuthorizer, kbID)
 	if leaseErr != nil {
 		_ = c.Error(leaseErr)
 		return
@@ -551,7 +551,7 @@ func (h *FAQHandler) GetEntry(c *gin.Context) {
 	}
 	ctx := service.WithFAQOutputBoundary(c.Request.Context())
 	kbID := secutils.SanitizeForLog(c.Param("id"))
-	ctx, closeRead, leaseErr := beginCollectionHTTPRead(c, ctx, h.outputAuthorizer.ContentLeaseStore(), kbID)
+	ctx, closeRead, leaseErr := beginFAQHTTPRead(c, ctx, h.outputAuthorizer, kbID)
 	if leaseErr != nil {
 		_ = c.Error(leaseErr)
 		return
@@ -597,6 +597,12 @@ func (h *FAQHandler) GetImportProgress(c *gin.Context) {
 		return
 	}
 
+	ctx, closeRead, leaseErr := beginFAQProgressHTTPRead(c, ctx, h.outputAuthorizer, taskID)
+	if leaseErr != nil {
+		c.Error(leaseErr)
+		return
+	}
+	defer closeRead()
 	progress, err := h.knowledgeService.GetFAQImportProgress(ctx, taskID)
 	if err != nil {
 		logger.ErrorWithFields(ctx, err, nil)
@@ -669,7 +675,7 @@ func (h *FAQHandler) AddSimilarQuestions(c *gin.Context) {
 	}
 	ctx := service.WithFAQOutputBoundary(c.Request.Context())
 	kbID := secutils.SanitizeForLog(c.Param("id"))
-	ctx, closeRead, leaseErr := beginCollectionHTTPRead(c, ctx, h.outputAuthorizer.ContentLeaseStore(), kbID)
+	ctx, closeRead, leaseErr := beginFAQHTTPRead(c, ctx, h.outputAuthorizer, kbID)
 	if leaseErr != nil {
 		_ = c.Error(leaseErr)
 		return

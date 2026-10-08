@@ -86,6 +86,9 @@ func (s *KnowledgeInputProvenanceStore) CaptureKnowledgeCollectionInputs(ctx con
 	}
 	result := &types.KnowledgeCollectionInputSnapshot{Scopes: []types.KnowledgeCollectionScopeCheckpoint{}, Candidates: []*types.KnowledgeCollectionCandidate{}}
 	err = s.collectionTransaction(ctx, func(tx *gorm.DB) error {
+		if err := s.checkFAQImportReadSetPlanInTx(tx); err != nil {
+			return err
+		}
 		var candidates []*types.Knowledge
 		for _, scope := range scopes {
 			var kb types.KnowledgeBase

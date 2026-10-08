@@ -5,12 +5,17 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"sync"
 
 	"github.com/Tencent/WeKnora/internal/types"
 	"gorm.io/gorm"
 )
 
 type faqInputReadPlanKey struct{}
+type faqInputReadPlanBinding struct {
+	sync.Mutex
+	Plan *types.FAQInputReadPlan
+}
 
 func WithFAQInputReadPlan(ctx context.Context, plan *types.FAQInputReadPlan) (context.Context, error) {
 	if plan == nil || plan.MetadataDigest == "" || len(plan.Scopes) == 0 {
@@ -24,7 +29,7 @@ func WithFAQInputReadPlan(ctx context.Context, plan *types.FAQInputReadPlan) (co
 	if err = json.Unmarshal(body, &actual); err != nil {
 		return ctx, err
 	}
-	return context.WithValue(ctx, faqInputReadPlanKey{}, &actual), nil
+	return context.WithValue(ctx, faqInputReadPlanKey{}, &faqInputReadPlanBinding{Plan: &actual}), nil
 }
 
 func (s *KnowledgeInputProvenanceStore) PeekFAQInputReadPlan(ctx context.Context, request types.FAQInputReadRequest) (*types.FAQInputReadPlan, error) {
@@ -37,11 +42,25 @@ func (s *KnowledgeInputProvenanceStore) PeekFAQInputReadPlan(ctx context.Context
 	return plan, err
 }
 
+func (s *KnowledgeInputProvenanceStore) PeekFAQTagReadPlan(ctx context.Context, tenant uint64, kb string) (*types.FAQInputReadPlan, error) {
+	var row struct{ Type string }
+	if err := s.db.WithContext(ctx).Table("knowledge_bases").Select("type").Where("tenant_id=? AND id=? AND deleted_at IS NULL", tenant, kb).Take(&row).Error; err != nil {
+		return nil, err
+	}
+	if row.Type != types.KnowledgeBaseTypeFAQ {
+		return nil, nil
+	}
+	return s.PeekFAQInputReadPlan(ctx, types.FAQInputReadRequest{TenantID: tenant, KnowledgeBaseID: kb, AllEntries: true})
+}
+
 func (s *KnowledgeInputProvenanceStore) checkFAQInputReadPlanInTx(tx *gorm.DB, request types.FAQInputReadRequest) error {
-	expected, ok := tx.Statement.Context.Value(faqInputReadPlanKey{}).(*types.FAQInputReadPlan)
+	binding, ok := tx.Statement.Context.Value(faqInputReadPlanKey{}).(*faqInputReadPlanBinding)
 	if !ok {
 		return nil
 	}
+	binding.Lock()
+	defer binding.Unlock()
+	expected := binding.Plan
 	if expected == nil || expected.Request.TenantID != request.TenantID || expected.Request.KnowledgeBaseID != request.KnowledgeBaseID {
 		return ErrKnowledgeInputChanged
 	}
@@ -55,6 +74,30 @@ func (s *KnowledgeInputProvenanceStore) checkFAQInputReadPlanInTx(tx *gorm.DB, r
 	if !faqInputEqual(actual, expected) {
 		return ErrKnowledgeInputChanged
 	}
+	return validateFAQReadLeaseCoverageInTx(tx, actual.Scopes, actual.SourceLineage)
+}
+
+// Only an actual own producer's atomic write recipe may advance its request's
+// plan. Foreign body/membership changes still fail the original pre-write check.
+func (s *KnowledgeInputProvenanceStore) advanceFAQReadPlanAfterOwnWriteInTx(tx *gorm.DB, session *faqInputSessionRow) error {
+	binding, ok := tx.Statement.Context.Value(faqInputReadPlanKey{}).(*faqInputReadPlanBinding)
+	if !ok {
+		return nil
+	}
+	active, ok := tx.Statement.Context.Value(faqInputSessionKey{}).(faqInputSession)
+	if !ok || active.Store != s || active.ID != session.ID {
+		return types.ErrSourceLineageUnknown
+	}
+	binding.Lock()
+	defer binding.Unlock()
+	actual, err := s.peekFAQInputReadPlanInTx(tx, binding.Plan.Request)
+	if err != nil {
+		return err
+	}
+	if err = validateFAQReadLeaseCoverageInTx(tx, actual.Scopes, actual.SourceLineage); err != nil {
+		return err
+	}
+	binding.Plan = actual
 	return nil
 }
 
@@ -66,6 +109,7 @@ func (s *KnowledgeInputProvenanceStore) peekFAQInputReadPlanInTx(tx *gorm.DB, re
 		return nil, types.ErrSourceLineageUnknown
 	}
 	scopes := map[string]types.KnowledgeSearchScope{}
+	var lineages []*types.SourceLineage
 	add := func(tenant uint64, kb string) error {
 		if tenant == 0 || kb == "" {
 			return types.ErrSourceLineageUnknown
@@ -81,6 +125,7 @@ func (s *KnowledgeInputProvenanceStore) peekFAQInputReadPlanInTx(tx *gorm.DB, re
 		if err := lineage.RequireComplete(); err != nil {
 			return err
 		}
+		lineages = append(lineages, &lineage)
 		for _, source := range lineage.Sources {
 			if err := add(source.TenantID, source.KnowledgeBaseID); err != nil {
 				return err
@@ -166,6 +211,7 @@ func (s *KnowledgeInputProvenanceStore) peekFAQInputReadPlanInTx(tx *gorm.DB, re
 			if err := add(parent.TenantID, parent.KnowledgeBaseID); err != nil {
 				return nil, err
 			}
+			lineages = append(lineages, parent.SourceLineage)
 			for _, source := range parent.SourceLineage.Sources {
 				if err := add(source.TenantID, source.KnowledgeBaseID); err != nil {
 					return nil, err
@@ -204,7 +250,11 @@ func (s *KnowledgeInputProvenanceStore) peekFAQInputReadPlanInTx(tx *gorm.DB, re
 	if err != nil {
 		return nil, err
 	}
-	plan := &types.FAQInputReadPlan{Request: request, MetadataDigest: digest}
+	lineage, err := types.UnionSourceLineage(lineages...)
+	if err != nil {
+		return nil, err
+	}
+	plan := &types.FAQInputReadPlan{Request: request, MetadataDigest: digest, SourceLineage: lineage}
 	keys := make([]string, 0, len(scopes))
 	for key := range scopes {
 		keys = append(keys, key)

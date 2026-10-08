@@ -94,6 +94,7 @@ func (s *KnowledgeInputProvenanceStore) peekFAQImportOutputReadPlanInTx(tx *gorm
 			return nil, err
 		}
 	}
+	lineages := []*types.SourceLineage{&lineage}
 	for _, original := range originals {
 		if original == nil || original.BodyDigest == "" || original.SourceLineage.RequireComplete() != nil {
 			return nil, types.ErrSourceLineageUnknown
@@ -101,6 +102,7 @@ func (s *KnowledgeInputProvenanceStore) peekFAQImportOutputReadPlanInTx(tx *gorm
 		if err := add(original.TenantID, original.KnowledgeBaseID); err != nil {
 			return nil, err
 		}
+		lineages = append(lineages, original.SourceLineage)
 		for _, source := range original.SourceLineage.Sources {
 			if err := add(source.TenantID, source.KnowledgeBaseID); err != nil {
 				return nil, err
@@ -115,7 +117,11 @@ func (s *KnowledgeInputProvenanceStore) peekFAQImportOutputReadPlanInTx(tx *gorm
 	actualRequest.KnowledgeBaseID = row.KnowledgeBaseID
 	actualRequest.KnowledgeID = row.KnowledgeID
 	actualRequest.TaskID = row.TaskID
-	plan := &types.FAQImportOutputReadPlan{Request: actualRequest, AdmissionID: row.ID, HeadRevision: row.Revision, MetadataDigest: digest}
+	complete, err := types.UnionSourceLineage(lineages...)
+	if err != nil {
+		return nil, err
+	}
+	plan := &types.FAQImportOutputReadPlan{Request: actualRequest, AdmissionID: row.ID, HeadRevision: row.Revision, MetadataDigest: digest, SourceLineage: complete}
 	keys := make([]string, 0, len(scopes))
 	for key := range scopes {
 		keys = append(keys, key)
@@ -272,15 +278,10 @@ func (s *KnowledgeInputProvenanceStore) PublishFAQImportResult(ctx context.Conte
 }
 
 func (s *KnowledgeInputProvenanceStore) captureFAQImportOutputInTx(tx *gorm.DB, req types.FAQImportOutputReadRequest) (*types.FAQImportOutputSnapshot, error) {
-	if expected, ok := tx.Statement.Context.Value(faqImportOutputReadPlanKey{}).(*types.FAQImportOutputReadPlan); ok {
-		actual, err := s.peekFAQImportOutputReadPlanInTx(tx, req)
-		if err != nil {
-			return nil, err
-		}
-		if !faqInputEqual(expected, actual) {
-			return nil, ErrKnowledgeInputChanged
-		}
+	if err := s.checkFAQImportOutputReadPlanInTx(tx, req); err != nil {
+		return nil, err
 	}
+
 	key, err := faqImportOutputKey(req)
 	if err != nil {
 		return nil, err

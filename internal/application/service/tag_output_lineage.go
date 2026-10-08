@@ -197,3 +197,14 @@ func (g *TagOutputGuard) Check(ctx context.Context, published any) error {
 	}
 	return body()
 }
+
+func (a *TagOutputAuthorizer) FAQReadPlan(ctx context.Context, tenant uint64, kb string) (*types.FAQInputReadPlan, error) {
+	if a == nil {
+		return nil, access.ErrNextcloudPublicationUnavailable
+	}
+	store, ok := a.reader.(*repository.KnowledgeInputProvenanceStore)
+	if !ok || store == nil {
+		return nil, types.ErrSourceLineageUnknown
+	}
+	return store.PeekFAQTagReadPlan(ctx, tenant, kb)
+}

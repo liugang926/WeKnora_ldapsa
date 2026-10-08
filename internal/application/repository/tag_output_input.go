@@ -82,6 +82,9 @@ func captureTagFields(tx *gorm.DB, tags []*types.KnowledgeTag) ([]*types.Knowled
 	return proofs, nil
 }
 func (s *KnowledgeInputProvenanceStore) captureTagOutputInTx(tx *gorm.DB, req types.TagOutputReadRequest) (*types.TagOutputInputSnapshot, error) {
+	if err := s.checkFAQInputReadPlanInTx(tx, types.FAQInputReadRequest{TenantID: req.TenantID, KnowledgeBaseID: req.KnowledgeBaseID, AllEntries: true}); err != nil {
+		return nil, err
+	}
 	if req.TenantID == 0 || req.KnowledgeBaseID == "" {
 		return nil, types.ErrSourceLineageUnknown
 	}

@@ -211,3 +211,14 @@ func (g *KnowledgeCollectionOutputGuard) Check(ctx context.Context, selection *t
 	}
 	return checkBody()
 }
+
+func (a *KnowledgeCollectionOutputAuthorizer) FAQResultReadPlan(ctx context.Context, scopes []types.KnowledgeSearchScope) (*types.FAQImportOutputReadSetPlan, error) {
+	if a == nil {
+		return nil, access.ErrNextcloudPublicationUnavailable
+	}
+	store, ok := a.reader.(*repository.KnowledgeInputProvenanceStore)
+	if !ok || store == nil {
+		return nil, types.ErrSourceLineageUnknown
+	}
+	return store.PeekFAQImportOutputReadSetPlan(ctx, scopes, nil)
+}
