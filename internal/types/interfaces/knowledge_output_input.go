@@ -14,3 +14,8 @@ type KnowledgeOutputInputReader interface {
 	RecheckKnowledgeBuildInputs(context.Context, *types.KnowledgeBuildInputProof) error
 	RecheckKnowledgeOutputInputs(context.Context, []*types.KnowledgeBuildInputProof) error
 }
+
+type KnowledgeOutputAuxiliaryInputReader interface {
+	CaptureKnowledgeOutputAuxiliary(context.Context, []*types.KnowledgeBuildInputProof, []types.KnowledgeOutputDisplaySelection) (*types.KnowledgeOutputAuxiliaryInputSnapshot, error)
+	RecheckKnowledgeOutputAuxiliary(context.Context, *types.KnowledgeOutputAuxiliaryInputSnapshot) error
+}

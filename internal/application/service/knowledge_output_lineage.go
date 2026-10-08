@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -27,8 +28,9 @@ func NewKnowledgeOutputAuthorizer(reader *repository.KnowledgeInputProvenanceSto
 }
 
 type knowledgeOutputEntry struct {
-	body  string
-	proof *types.KnowledgeBuildInputProof
+	body     string
+	baseBody string
+	proof    *types.KnowledgeBuildInputProof
 }
 
 type KnowledgeOutputGuard struct {
@@ -37,6 +39,7 @@ type KnowledgeOutputGuard struct {
 	proofs     []*types.KnowledgeBuildInputProof
 	lineage    *types.SourceLineage
 	scope      access.LineageReadScope
+	auxiliary  *types.KnowledgeOutputAuxiliaryInputSnapshot
 }
 
 type knowledgeOutputGuardContextKey struct{}
@@ -60,14 +63,76 @@ func knowledgeOutputKey(k *types.Knowledge) string {
 	return fmt.Sprintf("%d:%s:%s", k.TenantID, k.KnowledgeBaseID, k.ID)
 }
 
+func knowledgeOutputHasFAQResult(k *types.Knowledge) bool {
+	return k != nil && len(k.LastFAQImportResult) > 0 && !bytes.Equal(bytes.TrimSpace(k.LastFAQImportResult), []byte("null"))
+}
+
 func knowledgeOutputBody(k *types.Knowledge) (string, error) {
-	if k == nil || len(k.Tags) > 0 || k.KnowledgeBaseName != "" || k.ErrorMessage != "" || len(k.LastFAQImportResult) > 0 {
+	if k == nil || len(k.Tags) > 0 || k.KnowledgeBaseName != "" || k.ErrorMessage != "" || knowledgeOutputHasFAQResult(k) {
 		// Joined tag and KB display producers need their own original proof;
 		// the document's origin cannot certify unrelated generated strings.
 		return "", types.ErrSourceLineageUnknown
 	}
 	body, err := json.Marshal(k)
 	return string(body), err
+}
+
+func knowledgeOutputBaseBody(k *types.Knowledge) (string, error) {
+	if k == nil {
+		return "", types.ErrSourceLineageUnknown
+	}
+	base := *k
+	base.Tags = nil
+	base.KnowledgeBaseName = ""
+	return knowledgeOutputBody(&base)
+}
+
+func knowledgeOutputJoinedBody(k *types.Knowledge) (string, error) {
+	if k == nil || k.ErrorMessage != "" || knowledgeOutputHasFAQResult(k) {
+		return "", types.ErrSourceLineageUnknown
+	}
+	body, err := json.Marshal(k)
+	return string(body), err
+}
+
+func validateKnowledgeOutputDisplay(k *types.Knowledge, aux *types.KnowledgeCollectionAuxiliary) error {
+	if k == nil || aux == nil {
+		return types.ErrSourceLineageUnknown
+	}
+	if k.KnowledgeBaseName != "" && k.KnowledgeBaseName != aux.KnowledgeBaseNames[k.KnowledgeBaseID] {
+		return repository.ErrKnowledgeInputChanged
+	}
+	if len(k.Tags) == 0 {
+		return nil
+	}
+	expected := aux.Tags[k.ID]
+	if len(k.Tags) != len(expected) {
+		return repository.ErrKnowledgeInputChanged
+	}
+	actual := map[string]string{}
+	for _, tag := range k.Tags {
+		if tag == nil || actual[tag.ID] != "" {
+			return repository.ErrKnowledgeInputChanged
+		}
+		body, err := json.Marshal(tag)
+		if err != nil {
+			return err
+		}
+		actual[tag.ID] = string(body)
+	}
+	for _, tag := range expected {
+		if tag == nil {
+			return repository.ErrKnowledgeInputChanged
+		}
+		body, err := json.Marshal(tag)
+		if err != nil {
+			return err
+		}
+		if actual[tag.ID] != string(body) {
+			return repository.ErrKnowledgeInputChanged
+		}
+	}
+	return nil
 }
 
 func (a *KnowledgeOutputAuthorizer) Begin(ctx context.Context, rows []*types.Knowledge) (*KnowledgeOutputGuard, error) {
@@ -80,11 +145,12 @@ func (a *KnowledgeOutputAuthorizer) Begin(ctx context.Context, rows []*types.Kno
 	lineage, _ := types.NewCompleteSourceLineage()
 	g := &KnowledgeOutputGuard{authorizer: a, entries: map[string]knowledgeOutputEntry{}, lineage: lineage}
 	targets := map[string]bool{}
+	var displaySelections []types.KnowledgeOutputDisplaySelection
 	for _, row := range rows {
 		if row == nil {
 			return nil, access.ErrNextcloudPublicationDenied
 		}
-		supplied, err := knowledgeOutputBody(row)
+		supplied, err := knowledgeOutputJoinedBody(row)
 		if err != nil {
 			return nil, err
 		}
@@ -108,7 +174,11 @@ func (a *KnowledgeOutputAuthorizer) Begin(ctx context.Context, rows []*types.Kno
 		if err != nil {
 			return nil, err
 		}
-		if body != supplied {
+		base, err := knowledgeOutputBaseBody(row)
+		if err != nil {
+			return nil, err
+		}
+		if body != base {
 			return nil, repository.ErrKnowledgeInputChanged
 		}
 		// Detach mutable provider fields before current authorization callbacks.
@@ -120,8 +190,11 @@ func (a *KnowledgeOutputAuthorizer) Begin(ctx context.Context, rows []*types.Kno
 		if err := json.Unmarshal(encoded, proof); err != nil {
 			return nil, err
 		}
-		g.entries[key] = knowledgeOutputEntry{body: body, proof: proof}
+		g.entries[key] = knowledgeOutputEntry{body: supplied, baseBody: base, proof: proof}
 		g.proofs = append(g.proofs, proof)
+		if len(row.Tags) > 0 || row.KnowledgeBaseName != "" {
+			displaySelections = append(displaySelections, types.KnowledgeOutputDisplaySelection{TenantID: row.TenantID, KnowledgeBaseID: row.KnowledgeBaseID, KnowledgeID: row.ID, Tags: len(row.Tags) > 0, KnowledgeBaseName: row.KnowledgeBaseName != ""})
+		}
 		g.lineage, err = types.UnionSourceLineage(g.lineage, proof.SourceLineage)
 		if err != nil {
 			return nil, err
@@ -130,6 +203,50 @@ func (a *KnowledgeOutputAuthorizer) Begin(ctx context.Context, rows []*types.Kno
 		if !targets[target] {
 			targets[target] = true
 			g.scope.Targets = append(g.scope.Targets, &types.SearchTarget{Type: types.SearchTargetTypeKnowledgeBase, TenantID: row.TenantID, KnowledgeBaseID: row.KnowledgeBaseID})
+		}
+	}
+	if len(displaySelections) > 0 {
+		reader, ok := a.reader.(interfaces.KnowledgeOutputAuxiliaryInputReader)
+		if !ok {
+			return nil, types.ErrSourceLineageUnknown
+		}
+		proofs, err := cloneCollection(g.proofs)
+		if err != nil {
+			return nil, err
+		}
+		snapshot, err := reader.CaptureKnowledgeOutputAuxiliary(ctx, proofs, displaySelections)
+		if err != nil {
+			return nil, err
+		}
+		g.auxiliary, err = cloneCollection(snapshot)
+		if err != nil {
+			return nil, err
+		}
+		if g.auxiliary == nil || g.auxiliary.Auxiliary == nil {
+			return nil, types.ErrSourceLineageUnknown
+		}
+		for _, actual := range g.auxiliary.Knowledge {
+			base, err := knowledgeOutputBaseBody(actual)
+			if err != nil {
+				return nil, err
+			}
+			if entry, ok := g.entries[knowledgeOutputKey(actual)]; !ok || entry.baseBody != base {
+				return nil, repository.ErrKnowledgeInputChanged
+			}
+		}
+		for _, row := range rows {
+			if err := validateKnowledgeOutputDisplay(row, g.auxiliary.Auxiliary); err != nil {
+				return nil, err
+			}
+		}
+		for _, proof := range g.auxiliary.Auxiliary.Proofs {
+			if proof == nil {
+				return nil, types.ErrSourceLineageUnknown
+			}
+			g.lineage, err = types.UnionSourceLineage(g.lineage, proof.SourceLineage)
+			if err != nil {
+				return nil, err
+			}
 		}
 	}
 	if err := g.Check(ctx, rows); err != nil {
@@ -154,7 +271,7 @@ func (g *KnowledgeOutputGuard) Check(ctx context.Context, rows []*types.Knowledg
 			if !ok {
 				return repository.ErrKnowledgeInputChanged
 			}
-			body, err := knowledgeOutputBody(row)
+			body, err := knowledgeOutputJoinedBody(row)
 			if err != nil {
 				return err
 			}
@@ -183,6 +300,19 @@ func (g *KnowledgeOutputGuard) Check(ctx context.Context, rows []*types.Knowledg
 	if err := g.authorizer.checker.Check(ctx, lineage, scope); err != nil {
 		return err
 	}
+	if g.auxiliary != nil {
+		reader, ok := g.authorizer.reader.(interfaces.KnowledgeOutputAuxiliaryInputReader)
+		if !ok {
+			return types.ErrSourceLineageUnknown
+		}
+		auxiliary, err := cloneCollection(g.auxiliary)
+		if err != nil {
+			return err
+		}
+		if err := reader.RecheckKnowledgeOutputAuxiliary(ctx, auxiliary); err != nil {
+			return err
+		}
+	}
 	// Recheck all original receipts coherently after remote authorization.
 	proofBytes, err := json.Marshal(g.proofs)
 	if err != nil {
@@ -206,6 +336,29 @@ func (g *KnowledgeOutputGuard) Check(ctx context.Context, rows []*types.Knowledg
 	}
 	if err := g.authorizer.checker.Check(ctx, lineage, scope); err != nil {
 		return err
+	}
+	// The last remote decision is followed by a coherent recheck of every
+	// explicit original document and every actually consumed joined producer.
+	if g.auxiliary != nil {
+		reader, ok := g.authorizer.reader.(interfaces.KnowledgeOutputAuxiliaryInputReader)
+		if !ok {
+			return types.ErrSourceLineageUnknown
+		}
+		auxiliary, err := cloneCollection(g.auxiliary)
+		if err != nil {
+			return err
+		}
+		if err := reader.RecheckKnowledgeOutputAuxiliary(ctx, auxiliary); err != nil {
+			return err
+		}
+	} else {
+		proofs, err := cloneCollection(g.proofs)
+		if err != nil {
+			return err
+		}
+		if err := g.authorizer.reader.RecheckKnowledgeOutputInputs(ctx, proofs); err != nil {
+			return err
+		}
 	}
 	return checkBodies()
 }

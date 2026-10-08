@@ -1047,6 +1047,9 @@ func (h *KnowledgeHandler) ListKnowledge(c *gin.Context) {
 		effectiveTenantID,
 	)
 
+	if !h.requireKnowledgeCollectionOutput(c) {
+		return
+	}
 	if h.collectionOutputAuthorizer != nil {
 		h.respondKnowledgeCollection(c, ctx, []types.KnowledgeSearchScope{{TenantID: effectiveTenantID, KBID: kbID}}, types.KnowledgeCollectionSelectionRequest{Mode: "list", Filter: filter, Page: pagination}, access.LineageReadScope{})
 		return
@@ -1159,6 +1162,9 @@ func (h *KnowledgeHandler) ListKnowledgeFolders(c *gin.Context) {
 		return
 	}
 	ctx = types.WithExecutionTenant(c.Request.Context(), effectiveTenantID)
+	if !h.requireKnowledgeCollectionOutput(c) {
+		return
+	}
 	if h.collectionOutputAuthorizer != nil {
 		h.respondKnowledgeCollection(c, ctx, []types.KnowledgeSearchScope{{TenantID: effectiveTenantID, KBID: kbID}}, types.KnowledgeCollectionSelectionRequest{Mode: "folders"}, access.LineageReadScope{})
 		return
@@ -2491,6 +2497,9 @@ func (h *KnowledgeHandler) SearchKnowledge(c *gin.Context) {
 		}
 	}
 
+	if !h.requireKnowledgeCollectionOutput(c) {
+		return
+	}
 	if h.collectionOutputAuthorizer != nil {
 		h.searchKnowledgeCollection(c, ctx, keyword, offset, limit, fileTypes)
 		return

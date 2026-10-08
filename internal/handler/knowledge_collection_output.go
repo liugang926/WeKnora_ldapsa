@@ -17,6 +17,14 @@ func ConfigureKnowledgeHandlerCollectionOutput(h *KnowledgeHandler, authorizer *
 	}
 }
 
+func (h *KnowledgeHandler) requireKnowledgeCollectionOutput(c *gin.Context) bool {
+	if h == nil || h.collectionOutputAuthorizer == nil {
+		_ = c.Error(errors.NewServiceUnavailableError("Original knowledge collection verifier is unavailable"))
+		return false
+	}
+	return true
+}
+
 type knowledgeCollectionScopeResolver interface {
 	ResolveKnowledgeCollectionScopes(context.Context, []types.KnowledgeSearchScope) ([]types.KnowledgeSearchScope, error)
 }

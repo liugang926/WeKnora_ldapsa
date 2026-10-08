@@ -60,3 +60,18 @@ type KnowledgeCollectionSelection struct {
 	HasMore        bool
 	Page, PageSize int
 }
+
+// Metadata display selectors describe only fields the actual explicit-ID
+// response consumed. They cannot widen a document read to an entire KB.
+type KnowledgeOutputDisplaySelection struct {
+	TenantID                     uint64
+	KnowledgeBaseID, KnowledgeID string
+	Tags, KnowledgeBaseName      bool
+}
+
+type KnowledgeOutputAuxiliaryInputSnapshot struct {
+	Proofs     []*KnowledgeBuildInputProof
+	Selections []KnowledgeOutputDisplaySelection
+	Knowledge  []*Knowledge
+	Auxiliary  *KnowledgeCollectionAuxiliary
+}

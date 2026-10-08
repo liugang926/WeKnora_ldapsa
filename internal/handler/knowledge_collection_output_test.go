@@ -357,3 +357,14 @@ func TestKnowledgeCollectionHTTPAuthorizationPrecedesCallerPredicates(t *testing
 	require.Equal(t, http.StatusForbidden, w.Code, w.Body.String())
 	require.Zero(t, filteredQueries, "caller keyword evaluation cannot inspect unauthorised candidate metadata")
 }
+
+func TestKnowledgeCollectionHTTPMissingVerifierNeverUsesLegacyReaders(t *testing.T) {
+	for _, url := range []string{"/knowledge-bases/kb/knowledge?keyword=match", "/knowledge-bases/kb/knowledge/folders", "/knowledge/search?keyword=match"} {
+		h, _, _, _, _, _ := collectionHTTPFixture(t)
+		h.collectionOutputAuthorizer = nil
+		w := serveCollectionHTTP(h, url, false)
+		require.Equal(t, http.StatusServiceUnavailable, w.Code, w.Body.String())
+		require.NotContains(t, w.Body.String(), "original body")
+		require.NotContains(t, w.Body.String(), "match original")
+	}
+}

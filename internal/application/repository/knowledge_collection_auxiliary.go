@@ -12,6 +12,12 @@ import (
 // producer keeps its own original bounded lineage; the collection authorizer
 // checks current caller/source permission for every proof separately.
 func captureKnowledgeCollectionAuxiliary(tx *gorm.DB, scopes []types.KnowledgeSearchScope, candidates []*types.Knowledge) (*types.KnowledgeCollectionAuxiliary, error) {
+	return captureKnowledgeCollectionAuxiliaryWithNames(tx, scopes, candidates, nil)
+}
+
+// A nil name selector is the complete collection path. Explicit-ID metadata
+// uses a non-nil selector to verify only KB display names it actually consumed.
+func captureKnowledgeCollectionAuxiliaryWithNames(tx *gorm.DB, scopes []types.KnowledgeSearchScope, candidates []*types.Knowledge, consumeNames map[string]bool) (*types.KnowledgeCollectionAuxiliary, error) {
 	aux := &types.KnowledgeCollectionAuxiliary{Proofs: []*types.KnowledgeCollectionAuxiliaryProof{}, KnowledgeBaseNames: map[string]string{}, Tags: map[string][]*types.KnowledgeTag{}, Relations: []*types.KnowledgeTagRelation{}}
 	allowed := map[string]uint64{}
 	kbIDs := []string{}
@@ -82,6 +88,9 @@ func captureKnowledgeCollectionAuxiliary(tx *gorm.DB, scopes []types.KnowledgeSe
 	for _, kb := range kbs {
 		if allowed[kb.ID] != kb.TenantID {
 			return nil, ErrKnowledgeInputChanged
+		}
+		if consumeNames != nil && !consumeNames[kb.ID] {
+			continue
 		}
 		proof, err := readKnowledgeDisplayOrigin(tx, "kb-name", kb.ID, kb.TenantID, kb.ID, kb.Name)
 		if err != nil {
