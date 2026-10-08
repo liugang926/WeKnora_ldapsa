@@ -17,6 +17,7 @@ import (
 // Contains query-answer pairs and associated knowledge references
 // Used for tracking conversation context and history
 type History struct {
+	SourceLineage *SourceLineage `json:"-"` // Original saved dependency union; NULL is unknown.
 	Query               string     // User query text
 	Answer              string     // System response text
 	CreateAt            time.Time  // When this history entry was created

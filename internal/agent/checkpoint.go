@@ -22,10 +22,14 @@ func (e *AgentEngine) saveContextCheckpoint(ctx context.Context, cp *compaction.
 	if cp == nil || e.checkpointSink == nil {
 		return
 	}
+	if err := e.authorizeCompaction(ctx, cp.SourceLineage); err != nil {
+		return
+	}
 	err := e.checkpointSink.SaveContextCheckpoint(ctx, cp.TurnID, &types.ContextCheckpoint{
-		Summary:   cp.Summary,
-		CreatedAt: time.Now(),
-		Degraded:  cp.Degraded,
+		SourceLineage: cp.SourceLineage,
+		Summary:       cp.Summary,
+		CreatedAt:     time.Now(),
+		Degraded:      cp.Degraded,
 	})
 	if err != nil {
 		logger.Warnf(ctx, "[Agent][Round-%d] Failed to save context checkpoint on turn %s: %v",

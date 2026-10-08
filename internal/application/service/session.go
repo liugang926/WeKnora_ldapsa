@@ -111,6 +111,8 @@ func generateEventID(suffix string) string {
 // (see service.LoadAgentHistory and chat_pipeline history loading) — there is no
 // separate cross-turn cache layer.
 type sessionService struct {
+	lineageVerifier       interfaces.MessageSourceLineageVerifier
+	sourceLineageGuard    *access.NextcloudSourceLineageGuard
 	historyGuard          *access.NextcloudHistoryGuard
 	cfg                   *config.Config                         // Application configuration
 	sessionRepo           interfaces.SessionRepository           // Repository for session data
@@ -899,6 +901,18 @@ func (s *sessionService) GenerateTitle(ctx context.Context,
 	)
 
 	// Call model to generate title
+	// This adapter sends only the author's raw user Content and the configured
+	// static title prompt. It never consumes captions, attachments or answers.
+	titleLineage, _ := types.NewCompleteSourceLineage()
+	if s.sourceLineageGuard == nil {
+		return "", access.ErrNextcloudPublicationUnavailable
+	}
+	if err := s.sourceLineageGuard.Check(ctx, titleLineage, access.LineageReadScope{}); err != nil {
+		return "", err
+	}
+	for i := range chatMessages {
+		chatMessages[i].SourceLineage, _ = types.UnionSourceLineage(titleLineage)
+	}
 	thinking := false
 	response, err := chatModel.Chat(ctx, chatMessages, &chat.ChatOptions{
 		Temperature: 0.3,
@@ -910,6 +924,9 @@ func (s *sessionService) GenerateTitle(ctx context.Context,
 	}
 
 	// Process and store the generated title
+	if err := s.sourceLineageGuard.Check(ctx, titleLineage, access.LineageReadScope{}); err != nil {
+		return "", err
+	}
 	title, truncated := sanitizeGeneratedTitle(response.Content)
 	if truncated {
 		logger.Warnf(ctx,
@@ -949,7 +966,7 @@ func (s *sessionService) GenerateTitleAsync(
 	// as a child of the same trace as the originating chat request.
 	langfuseTrace := ctx.Value(types.LangfuseTraceContextKey)
 	go func() {
-		bgCtx := context.Background()
+		bgCtx := context.WithoutCancel(ctx) // Preserve captured caller/principal separately from effective tenant.
 		if tenantID != nil {
 			bgCtx = context.WithValue(bgCtx, types.TenantIDContextKey, tenantID)
 		}
@@ -987,9 +1004,11 @@ func (s *sessionService) GenerateTitleAsync(
 		// Emit title update event - BUG FIX: use bgCtx instead of ctx
 		// The original ctx is from the HTTP request and may be cancelled by the time we get here
 		if eventBus != nil {
+			titleLineage, _ := types.NewCompleteSourceLineage()
 			if err := eventBus.Emit(bgCtx, event.Event{
-				Type:      event.EventSessionTitle,
-				SessionID: session.ID,
+				SourceLineage: titleLineage,
+				Type:          event.EventSessionTitle,
+				SessionID:     session.ID,
 				Data: event.SessionTitleData{
 					SessionID: session.ID,
 					Title:     title,

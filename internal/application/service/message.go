@@ -23,14 +23,15 @@ var regThinkIndex = regexp.MustCompile(`(?s)<think>.*?</think>`)
 // It reads the chat history knowledge base configuration from the tenant's ChatHistoryConfig,
 // which is managed via the settings UI.
 type messageService struct {
-	messageRepo    interfaces.MessageRepository    // Repository for message storage operations
-	sessionRepo    interfaces.SessionRepository    // Repository for session validation
-	tenantService  interfaces.TenantService        // Service for tenant operations (read ChatHistoryConfig)
-	kbService      interfaces.KnowledgeBaseService // Service for knowledge base operations (search chat history KB)
-	knowService    interfaces.KnowledgeService     // Service for knowledge operations (index/delete passages)
-	modelService   interfaces.ModelService         // Service for model operations (rerank model)
-	suggestionRepo interfaces.MessageSuggestionRepository
-	historyGuard   *access.NextcloudHistoryGuard
+	sourceLineageGuard *access.NextcloudSourceLineageGuard
+	messageRepo        interfaces.MessageRepository    // Repository for message storage operations
+	sessionRepo        interfaces.SessionRepository    // Repository for session validation
+	tenantService      interfaces.TenantService        // Service for tenant operations (read ChatHistoryConfig)
+	kbService          interfaces.KnowledgeBaseService // Service for knowledge base operations (search chat history KB)
+	knowService        interfaces.KnowledgeService     // Service for knowledge operations (index/delete passages)
+	modelService       interfaces.ModelService         // Service for model operations (rerank model)
+	suggestionRepo     interfaces.MessageSuggestionRepository
+	historyGuard       *access.NextcloudHistoryGuard
 }
 
 // NewMessageService creates a new message service instance with the required repositories
@@ -60,14 +61,17 @@ func NewMessageService(messageRepo interfaces.MessageRepository,
 // assertion to SSE replay. It rechecks authorization as a stream advances,
 // since a file can be withdrawn after the first frame was sent.
 func (s *messageService) CheckMessagePublication(ctx context.Context, message *types.Message) error {
-	return s.historyGuard.CheckMessage(ctx, message)
+	if message == nil {
+		return access.ErrNextcloudPublicationUnavailable
+	}
+	if message.Role == "user" {
+		return nil
+	} // Read adapters retain raw user text only.
+	return s.checkTypedSourceLineage(ctx, message)
 }
 
 func (s *messageService) CheckLiveMessagePublication(ctx context.Context, message *types.Message) error {
-	if err := s.historyGuard.CheckLiveMessage(ctx, message); err != nil {
-		return err
-	}
-	return s.checkLiveKnowledgeGrants(ctx, message)
+	return s.checkTypedSourceLineage(ctx, message)
 }
 
 type liveKnowledgeGrantChecker interface {
@@ -163,7 +167,7 @@ func (s *messageService) filterHistoryMessages(ctx context.Context, messages []*
 		}
 		filtered = append(filtered, message)
 	}
-	return filtered, nil
+	return rawUserContentOnly(filtered), nil
 }
 
 // sessionTenantIDForLookup returns the tenant ID to use for session lookup.
@@ -192,6 +196,9 @@ func sessionUserIDForLookup(ctx context.Context) string {
 
 // CreateMessage creates a new message within an existing session
 func (s *messageService) CreateMessage(ctx context.Context, message *types.Message) (*types.Message, error) {
+	if message != nil && message.Role != "user" && message.SourceLineage == nil {
+		message.SourceLineage = types.UnknownSourceLineage()
+	}
 	logger.Info(ctx, "Start creating message")
 	logger.Infof(ctx, "Creating message for session ID: %s", message.SessionID)
 
@@ -243,7 +250,7 @@ func (s *messageService) GetMessage(ctx context.Context, sessionID string, messa
 	if err := s.CheckMessagePublication(ctx, message); err != nil {
 		return nil, err
 	}
-	return s.clarifyReadArtifactVersions(ctx, sessionID, []*types.Message{message})[0], nil
+	return rawUserContentOnly(s.clarifyReadArtifactVersions(ctx, sessionID, []*types.Message{message}))[0], nil
 }
 
 // GetMessageForControl is an owner-only metadata lookup used to stop or steer
@@ -409,6 +416,14 @@ func (s *messageService) GetMessagesBySessionBeforeTime(ctx context.Context,
 
 // UpdateMessage updates an existing message's content or metadata
 func (s *messageService) UpdateMessage(ctx context.Context, message *types.Message) error {
+	if message == nil {
+		return access.ErrNextcloudPublicationDenied
+	}
+	if message.Role != "user" && message.IsCompleted {
+		if err := s.checkTypedSourceLineage(ctx, message); err != nil {
+			return err
+		}
+	}
 	logger.Info(ctx, "Start updating message")
 	logger.Infof(ctx, "Updating message, ID: %s, session ID: %s", message.ID, message.SessionID)
 
@@ -554,6 +569,13 @@ func (s *messageService) getRetrievalConfig(ctx context.Context) *types.Retrieva
 // then links the message to the Knowledge entry via the knowledge_id field.
 // The KB ID is read from the tenant's ChatHistoryConfig — if not configured, indexing is skipped.
 func (s *messageService) IndexMessageToKB(ctx context.Context, userQuery string, assistantAnswer string, messageID string, sessionID string) {
+	// Strings from a caller are not provenance. Reload the atomic committed row
+	// before enqueuing any derivative; legacy and controlled answers stay out.
+	committed, err := s.messageRepo.GetMessage(ctx, sessionID, messageID)
+	if err != nil || !types.SourceIndependentDerivativesAllowed(committed) || s.CheckMessagePublication(ctx, committed) != nil {
+		return
+	}
+	assistantAnswer = committed.Content
 	// Strip thinking content (<think>...</think>) before indexing to avoid
 	// polluting the knowledge base with intermediate reasoning that would
 	// degrade retrieval quality.
@@ -701,7 +723,9 @@ func (s *messageService) GetSessionArtifacts(
 	if sessionID == "" {
 		return types.MessageArtifacts{}, nil
 	}
-	return s.messageRepo.GetSessionArtifacts(ctx, sessionID)
+	// Artifact producers do not yet persist independent lineage. Returning
+	// legacy artifact names/paths would expose generated fields before denial.
+	return types.MessageArtifacts{}, access.ErrNextcloudPublicationDenied
 }
 
 // artifactLibraryMaxPageSize caps one library page; the page renders a card
@@ -734,6 +758,13 @@ func (s *messageService) ListArtifactLibrary(
 		return nil, err
 	}
 	for _, item := range items {
+		message, err := s.messageRepo.GetMessage(ctx, item.SessionID, item.MessageID)
+		if err != nil {
+			return nil, err
+		}
+		if err := s.CheckMessagePublication(ctx, message); err != nil {
+			return nil, err
+		}
 		if handle, ok := types.ParseResourcePath(item.URL); ok {
 			item.Handle = types.BuildResourcePath(handle)
 		}
@@ -884,6 +915,9 @@ func (s *messageService) filterHistoricalSearchPairs(
 			continue
 		}
 		if _, denied := blocked[historicalSearchPairKey(item)]; !denied {
+			if item.Role == "user" {
+				item.MessageWithSession.Message = *rawUserContentOnly([]*types.Message{&item.MessageWithSession.Message})[0]
+			}
 			filtered = append(filtered, item)
 		}
 	}

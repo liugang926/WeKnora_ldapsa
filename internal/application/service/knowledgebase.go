@@ -56,6 +56,8 @@ type knowledgeBaseService struct {
 	searchPublicationCheck func(context.Context, *types.Knowledge) error // test seam; production uses publicationGuard
 	contentLeases          *repository.NextcloudContentLeaseStore
 	groupAccess            interfaces.GroupAccessService
+	ragChunkSnapshots      repository.RAGChunkSnapshotLookup
+	ragChunkLineageGuard   *access.NextcloudSourceLineageGuard
 }
 
 // ConfigureKnowledgeBaseGroupAccess gives RAG and Agent search the same live

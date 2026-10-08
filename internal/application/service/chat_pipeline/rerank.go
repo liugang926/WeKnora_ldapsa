@@ -3,7 +3,9 @@ package chatpipeline
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"github.com/Tencent/WeKnora/internal/application/access"
 	"math"
 	"regexp"
 	"strings"
@@ -128,6 +130,9 @@ func (p *PluginRerank) OnEvent(ctx context.Context,
 		rerankResp, rerankErr = p.rerank(ctx, chatManage, rerankModel, chatManage.RewriteQuery, passages, candidatesToRerank)
 
 		if rerankErr != nil {
+			if errors.Is(rerankErr, access.ErrNextcloudPublicationDenied) || errors.Is(rerankErr, access.ErrNextcloudPublicationUnavailable) || errors.Is(rerankErr, types.ErrSourceLineageUnknown) {
+				return sourceLineagePluginError(rerankErr)
+			}
 			// Rerank API failed — fallback to original retrieval results so the
 			// pipeline can still return something useful to the caller.
 			pipelineWarn(ctx, "Rerank", "api_error_fallback", map[string]interface{}{
@@ -340,7 +345,14 @@ func (p *PluginRerank) rerank(ctx context.Context,
 		return nil, nil
 	}
 	passages = cleanPassages
+	passages = append([]string(nil), passages...) // Detach actual model-input slice before authorization callbacks.
 	candidates = cleanCandidates
+	if err := CheckSourceLineageInputs(ctx, chatManage); err != nil {
+		return nil, err
+	}
+	if err := AccountResults(ctx, candidates); err != nil {
+		return nil, err
+	}
 
 	rerankResp, err := rerankModel.Rerank(ctx, query, passages)
 	if err != nil {

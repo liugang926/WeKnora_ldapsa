@@ -35,7 +35,8 @@ func (e *AgentEngine) streamFinalAnswerToEventBus(
 	// into user instructions during error recovery or iteration-limit synthesis.
 	messages := append([]chat.Message(nil), conversation...)
 	messages = append(messages, chat.Message{
-		Role: "user",
+		SourceLineage: independentAgentInput(),
+		Role:          "user",
 		Content: "Tool execution has ended for this run. Respond to the current task, including " +
 			"the latest user corrections and source restrictions in the conversation. Base claims on " +
 			"the evidence actually obtained; distinguish completed work from remaining work and explain " +
@@ -65,7 +66,7 @@ func (e *AgentEngine) streamFinalAnswerToEventBus(
 			}
 			if chunk.Content != "" {
 				logger.Debugf(ctx, "[Agent][FinalAnswer] Emitting answer chunk: %d chars", len(chunk.Content))
-				e.eventBus.Emit(ctx, event.Event{
+				e.emitEvent(ctx, event.Event{
 					ID:        answerID,
 					Type:      event.EventAgentFinalAnswer,
 					SessionID: sessionID,
@@ -90,7 +91,7 @@ func (e *AgentEngine) streamFinalAnswerToEventBus(
 	}
 
 	if !answerDoneEmitted {
-		e.eventBus.Emit(ctx, event.Event{
+		e.emitEvent(ctx, event.Event{
 			ID:        answerID,
 			Type:      event.EventAgentFinalAnswer,
 			SessionID: sessionID,
@@ -158,7 +159,7 @@ func (e *AgentEngine) emitCompletionEvent(
 		knowledgeRefsInterface = append(knowledgeRefsInterface, ref)
 	}
 
-	e.eventBus.Emit(ctx, event.Event{
+	e.emitEvent(ctx, event.Event{
 		ID:        generateEventID("complete"),
 		Type:      event.EventAgentComplete,
 		SessionID: sessionID,

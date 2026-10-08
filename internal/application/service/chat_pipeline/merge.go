@@ -13,6 +13,13 @@ import (
 type PluginMerge struct {
 	chunkRepo    interfaces.ChunkRepository
 	chunkService interfaces.ChunkService // for parent chunk resolution
+	ragChunks    interfaces.RAGChunkAugmentationReader
+}
+
+func ConfigurePluginMergeRAGChunkHydration(plugin *PluginMerge, reader interfaces.RAGChunkAugmentationReader) {
+	if plugin != nil {
+		plugin.ragChunks = reader
+	}
 }
 
 // NewPluginMerge creates and registers a new PluginMerge instance
@@ -220,6 +227,9 @@ func (p *PluginMerge) resolveParentChunks(
 	chatManage *types.ChatManage,
 	results []*types.SearchResult,
 ) []*types.SearchResult {
+	if p.ragChunks != nil || types.RAGSourceLineageFromContext(ctx) != nil || hasRAGInputReceipt(results) {
+		return p.resolveCapturedParents(ctx, results)
+	}
 	if len(results) == 0 || p.chunkRepo == nil {
 		return results
 	}

@@ -267,6 +267,13 @@ func (r *messageRepository) UpdateMessage(ctx context.Context, message *types.Me
 		).Updates(message).Error; err != nil {
 			return err
 		}
+		// Explicit generated fields include empty values and NULL lineage. The
+		// transaction must not pair a new body with a skipped old proof. Separate
+		// checkpoint updates retain their own lineage and are preserved here.
+		if err := tx.Model(&types.Message{}).Where("id = ? AND session_id = ?", message.ID, message.SessionID).
+			Select("content", "is_completed", "source_lineage", "agent_steps", "knowledge_references", "updated_at", "is_fallback").Updates(message).Error; err != nil {
+			return err
+		}
 		return writeMessageArtifacts(tx, message)
 	})
 }

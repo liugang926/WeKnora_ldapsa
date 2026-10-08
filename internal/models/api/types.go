@@ -84,12 +84,13 @@ const MessageKindCompactionSummary MessageKind = "compaction_summary"
 
 // Message 表示聊天消息
 type Message struct {
-	Role         string               `json:"role"`                    // 角色：system, user, assistant, tool
-	Content      string               `json:"content"`                 // 消息内容
-	MultiContent []MessageContentPart `json:"multi_content,omitempty"` // 多内容消息（文本+图片）
-	Name         string               `json:"name,omitempty"`          // Function/tool name (for tool role)
-	ToolCallID   string               `json:"tool_call_id,omitempty"`  // Tool call ID (for tool role)
-	ToolCalls    []ToolCall           `json:"tool_calls,omitempty"`    // Tool calls (for assistant role)
+	SourceLineage *types.SourceLineage `json:"-"`                       // Internal input dependency metadata; never sent to a provider.
+	Role          string               `json:"role"`                    // 角色：system, user, assistant, tool
+	Content       string               `json:"content"`                 // 消息内容
+	MultiContent  []MessageContentPart `json:"multi_content,omitempty"` // 多内容消息（文本+图片）
+	Name          string               `json:"name,omitempty"`          // Function/tool name (for tool role)
+	ToolCallID    string               `json:"tool_call_id,omitempty"`  // Tool call ID (for tool role)
+	ToolCalls     []ToolCall           `json:"tool_calls,omitempty"`    // Tool calls (for assistant role)
 	// Images are image URLs for multimodal input (current user message only).
 	Images []string `json:"images,omitempty"`
 	// ReasoningContent 是 assistant 推理类模型上一轮输出的思考内容。部分供应商

@@ -9,13 +9,15 @@ import (
 
 // StreamEvent represents a single event in the stream
 type StreamEvent struct {
-	ID        string                 `json:"id"`              // Unique event ID
-	Type      types.ResponseType     `json:"type"`            // Event type (thinking, tool_call, complete, etc.)
-	Content   string                 `json:"content"`         // Event content (chunk for streaming events)
-	Done      bool                   `json:"done"`            // Whether this event is done
-	Timestamp time.Time              `json:"timestamp"`       // When this event occurred
-	Data      map[string]interface{} `json:"data,omitempty"`  // Additional event data (references, metadata, etc.)
-	Usage     *types.TokenUsage      `json:"usage,omitempty"` // LLM token usage aggregated over the turn (complete events)
+	// Internal durable prefix proof. buildStreamResponse does not expose it.
+	SourceLineage *types.SourceLineage   `json:"source_lineage,omitempty"`
+	ID            string                 `json:"id"`              // Unique event ID
+	Type          types.ResponseType     `json:"type"`            // Event type (thinking, tool_call, complete, etc.)
+	Content       string                 `json:"content"`         // Event content (chunk for streaming events)
+	Done          bool                   `json:"done"`            // Whether this event is done
+	Timestamp     time.Time              `json:"timestamp"`       // When this event occurred
+	Data          map[string]interface{} `json:"data,omitempty"`  // Additional event data (references, metadata, etc.)
+	Usage         *types.TokenUsage      `json:"usage,omitempty"` // LLM token usage aggregated over the turn (complete events)
 }
 
 // StreamManager stream manager interface - minimal append-only design

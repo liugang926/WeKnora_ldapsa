@@ -90,6 +90,10 @@ func (p *PluginMemoryAffinity) OnEvent(
 	if len(affinity) == 0 {
 		return nil
 	}
+	if turn := types.RAGSourceLineageFromContext(ctx); turn != nil {
+		_ = turn.Add(types.UnknownSourceLineage())
+		return sourceLineagePluginError(turn.Check(ctx))
+	}
 
 	boosted := 0
 	for i := range chatManage.RerankResult {

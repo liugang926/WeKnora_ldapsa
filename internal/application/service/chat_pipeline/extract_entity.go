@@ -61,6 +61,10 @@ func (p *PluginExtractEntity) OnEvent(ctx context.Context,
 		logger.Debugf(ctx, "skipping extract entity, neo4j is disabled")
 		return next()
 	}
+	if turn := types.RAGSourceLineageFromContext(ctx); turn != nil {
+		_ = turn.Add(types.UnknownSourceLineage())
+		return sourceLineagePluginError(turn.Check(ctx))
+	}
 
 	query := chatManage.Query
 

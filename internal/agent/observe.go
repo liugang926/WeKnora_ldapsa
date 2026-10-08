@@ -145,10 +145,11 @@ func (e *AgentEngine) runCompaction(
 func (e *AgentEngine) emitContextCompacted(
 	ctx context.Context, result *compaction.Result, round int,
 ) {
-	_ = e.eventBus.Emit(ctx, event.Event{
-		ID:        generateEventID("compaction"),
-		Type:      event.EventContextCompacted,
-		SessionID: e.sessionID,
+	_ = e.emitEvent(ctx, event.Event{
+		SourceLineage: result.SourceLineage,
+		ID:            generateEventID("compaction"),
+		Type:          event.EventContextCompacted,
+		SessionID:     e.sessionID,
 		Data: event.ContextCompactedData{
 			Reason:         string(result.Reason),
 			Round:          round,
@@ -395,7 +396,7 @@ func (e *AgentEngine) analyzeResponse(
 		}
 
 		answerID := generateEventID("answer")
-		e.eventBus.Emit(ctx, event.Event{
+		e.emitEvent(ctx, event.Event{
 			ID:        answerID,
 			Type:      event.EventAgentFinalAnswer,
 			SessionID: sessionID,
@@ -404,7 +405,7 @@ func (e *AgentEngine) analyzeResponse(
 				Done:    false,
 			},
 		})
-		e.eventBus.Emit(ctx, event.Event{
+		e.emitEvent(ctx, event.Event{
 			ID:        answerID,
 			Type:      event.EventAgentFinalAnswer,
 			SessionID: sessionID,
@@ -466,7 +467,7 @@ func (e *AgentEngine) analyzeResponse(
 		} else {
 			answerID = generateEventID("answer")
 			if response.Content != "" {
-				e.eventBus.Emit(ctx, event.Event{
+				e.emitEvent(ctx, event.Event{
 					ID:        answerID,
 					Type:      event.EventAgentFinalAnswer,
 					SessionID: sessionID,
@@ -535,7 +536,7 @@ func (e *AgentEngine) analyzeResponse(
 		answerID := response.AnswerEventID
 		if !response.AnswerStreamed || answerID == "" {
 			answerID = generateEventID("answer")
-			_ = e.eventBus.Emit(ctx, event.Event{
+			_ = e.emitEvent(ctx, event.Event{
 				ID:        answerID,
 				Type:      event.EventAgentFinalAnswer,
 				SessionID: sessionID,
@@ -890,6 +891,9 @@ func mcpCatalogDescriptionLen(ts []chat.Tool) int {
 
 // buildToolsForLLM builds the tools list for LLM function calling
 func (e *AgentEngine) buildToolsForLLM() []chat.Tool {
+	if e.toolRegistry == nil {
+		return nil
+	}
 	functionDefs := e.toolRegistry.GetModelFunctionDefinitions()
 	tools := make([]chat.Tool, 0, len(functionDefs))
 	for _, def := range functionDefs {
@@ -921,6 +925,7 @@ func (e *AgentEngine) appendToolResults(
 	if step.Thought != "" || len(step.ToolCalls) > 0 || step.ReasoningContent != "" ||
 		step.ReasoningSignature != "" || len(step.ReasoningMetadata) > 0 {
 		assistantMsg := chat.Message{
+			SourceLineage:      e.SourceLineageSnapshot(),
 			Role:               "assistant",
 			Content:            step.Thought,
 			ReasoningContent:   step.ReasoningContent,
@@ -955,10 +960,11 @@ func (e *AgentEngine) appendToolResults(
 		resultContent := e.modelContext.ModelToolResultForTool(toolCall.Name, toolCall.Result)
 
 		toolMsg := chat.Message{
-			Role:       "tool",
-			Content:    resultContent,
-			ToolCallID: toolCall.ID,
-			Name:       toolCall.Name,
+			SourceLineage: toolResultLineage(toolCall.Result),
+			Role:          "tool",
+			Content:       resultContent,
+			ToolCallID:    toolCall.ID,
+			Name:          toolCall.Name,
 		}
 
 		messages = append(messages, toolMsg)
@@ -1002,11 +1008,12 @@ func redactHistoryKBResults(llmContext []chat.Message) []chat.Message {
 	for _, msg := range llmContext {
 		if msg.Role == "tool" && kbToolNames[msg.Name] {
 			redacted = append(redacted, chat.Message{
-				Role:       msg.Role,
-				Content:    "[Previous retrieval result omitted — knowledge base may have changed. Please perform a fresh search.]",
-				ToolCallID: msg.ToolCallID,
-				Name:       msg.Name,
-				TurnID:     msg.TurnID,
+				SourceLineage: msg.SourceLineage,
+				Role:          msg.Role,
+				Content:       "[Previous retrieval result omitted — knowledge base may have changed. Please perform a fresh search.]",
+				ToolCallID:    msg.ToolCallID,
+				Name:          msg.Name,
+				TurnID:        msg.TurnID,
 			})
 		} else {
 			redacted = append(redacted, msg)
@@ -1035,7 +1042,7 @@ func (e *AgentEngine) buildMessagesWithLLMContext(
 	imageURLs []string,
 ) []chat.Message {
 	messages := []chat.Message{
-		{Role: "system", Content: systemPrompt},
+		{Role: "system", Content: systemPrompt, SourceLineage: e.promptSourceLineage()},
 	}
 
 	if len(llmContext) > 0 {
@@ -1061,9 +1068,10 @@ func (e *AgentEngine) buildMessagesWithLLMContext(
 	// durable bound-KB/document IDs into the first model request before the
 	// request-local source registry had seen them.
 	userMsg := chat.Message{
-		Role:    "user",
-		Content: e.RenderUserTurnContent(sessionID, currentQuery),
-		Images:  imageURLs,
+		SourceLineage: e.currentUserSourceLineage(imageURLs),
+		Role:          "user",
+		Content:       e.RenderUserTurnContent(sessionID, currentQuery),
+		Images:        imageURLs,
 	}
 	messages = append(messages, userMsg)
 

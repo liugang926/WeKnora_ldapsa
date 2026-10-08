@@ -91,6 +91,7 @@ type ReadDocumentTool struct {
 	knowledgeService interfaces.KnowledgeService
 	chunkService     interfaces.ChunkService
 	searchTargets    types.SearchTargets
+	snapshotReader   interfaces.RAGChunkSnapshotReader
 }
 
 // NewReadDocumentTool creates a new read_document tool.
@@ -166,6 +167,21 @@ func (t *ReadDocumentTool) Execute(ctx context.Context, args json.RawMessage) (*
 	if err := guard.PinKnowledge(knowledge); err != nil {
 		return &types.ToolResult{Success: false, Error: err.Error()}, err
 	}
+	if capture := documentCaptureFromContext(ctx); capture != nil {
+		capture.guard = guard
+		snapshot, hydrateErr := t.hydrateDocumentInputs(ctx, knowledge, nil)
+		if hydrateErr != nil {
+			return nil, hydrateErr
+		}
+		knowledge = snapshot.Knowledge
+		if chunk != nil {
+			snapshot, hydrateErr = t.hydrateDocumentInputs(ctx, knowledge, []*types.Chunk{chunk})
+			if hydrateErr != nil {
+				return nil, hydrateErr
+			}
+			chunk = snapshot.Chunks[0]
+		}
+	}
 
 	var matchers []*regexp.Regexp
 	switch {
@@ -203,6 +219,9 @@ func (t *ReadDocumentTool) Execute(ctx context.Context, args json.RawMessage) (*
 	if err := finishAgentRead(ctx, t.knowledgeService, t.searchTargets, guard,
 		[]*types.Knowledge{knowledge}); err != nil {
 		return &types.ToolResult{Success: false, Error: err.Error()}, err
+	}
+	if capture := documentCaptureFromContext(ctx); capture != nil {
+		result.SourceLineage, _ = types.UnionSourceLineage(capture.lineage)
 	}
 	return result, nil
 }
@@ -261,7 +280,17 @@ func (t *ReadDocumentTool) listChunks(
 		nil, "", "", "", "", &enabled,
 	)
 	if err != nil {
+		if capture := documentCaptureFromContext(ctx); capture != nil {
+			capture.err = err
+		}
 		return nil, 0, fmt.Errorf("failed to list chunks: %w", err)
+	}
+	if documentCaptureFromContext(ctx) != nil && len(chunks) > 0 {
+		snapshot, err := t.hydrateDocumentInputs(ctx, knowledge, chunks)
+		if err != nil {
+			return nil, 0, err
+		}
+		chunks = snapshot.Chunks
 	}
 	return chunks, total, nil
 }
@@ -340,13 +369,16 @@ func (t *ReadDocumentTool) readPage(
 		}, nil
 	}
 	chunks = fitChunksToBudget(chunks, OutputBudget(ctx)*4/5)
-	enrichChunkImageInfo(ctx, t.chunkService.GetRepository(), t.tenantFor(knowledge), chunks)
+	if documentCaptureFromContext(ctx) == nil {
+		enrichChunkImageInfo(ctx, t.chunkService.GetRepository(), t.tenantFor(knowledge), chunks)
+	}
 
 	rows := make([]readChunkRow, 0, len(chunks))
 	for _, c := range chunks {
 		rows = append(rows, readChunkRow{chunk: c})
 	}
-	data := t.buildData(knowledge, total, rows)
+	display := documentProjection(ctx, knowledge)
+	data := t.buildData(display, total, rows)
 	data["offset"] = offset
 	data["page_size"] = limit
 	data["page"] = offset/limit + 1
@@ -355,7 +387,7 @@ func (t *ReadDocumentTool) readPage(
 	}
 	return &types.ToolResult{
 		Success: true,
-		Output:  t.buildOutput(knowledge, total, rows, ""),
+		Output:  t.buildOutput(display, total, rows, ""),
 		Data:    data,
 	}, nil
 }
@@ -379,6 +411,13 @@ func (t *ReadDocumentTool) readAroundChunk(
 				Success: false, Error: fmt.Sprintf("failed to list neighbouring chunks: %v", err),
 			}, err
 		}
+		if documentCaptureFromContext(ctx) != nil && len(neighbours) > 0 {
+			snapshot, err := t.hydrateDocumentInputs(ctx, knowledge, neighbours)
+			if err != nil {
+				return nil, err
+			}
+			neighbours = snapshot.Chunks
+		}
 		rows = rows[:0]
 		placed := false
 		for _, c := range neighbours {
@@ -400,9 +439,12 @@ func (t *ReadDocumentTool) readAroundChunk(
 	for _, r := range rows {
 		chunks = append(chunks, r.chunk)
 	}
-	enrichChunkImageInfo(ctx, t.chunkService.GetRepository(), t.tenantFor(knowledge), chunks)
+	if documentCaptureFromContext(ctx) == nil {
+		enrichChunkImageInfo(ctx, t.chunkService.GetRepository(), t.tenantFor(knowledge), chunks)
+	}
 
-	data := t.buildData(knowledge, total, rows)
+	display := documentProjection(ctx, knowledge)
+	data := t.buildData(display, total, rows)
 	data["single_chunk"] = len(rows) == 1
 	data["focus_chunk_id"] = focus.ID
 	if q := faqStandardQuestion(focus); q != "" {
@@ -411,7 +453,7 @@ func (t *ReadDocumentTool) readAroundChunk(
 	}
 	return &types.ToolResult{
 		Success: true,
-		Output:  t.buildOutput(knowledge, total, rows, ""),
+		Output:  t.buildOutput(display, total, rows, ""),
 		Data:    data,
 	}, nil
 }
@@ -453,7 +495,9 @@ scan:
 		if len(chunks) == 0 {
 			break
 		}
-		enrichChunkImageInfo(ctx, t.chunkService.GetRepository(), tenantID, chunks)
+		if documentCaptureFromContext(ctx) == nil {
+			enrichChunkImageInfo(ctx, t.chunkService.GetRepository(), tenantID, chunks)
+		}
 		for _, c := range chunks {
 			haystack := enrichChunkContent(c)
 			if q := faqStandardQuestion(c); q != "" {
@@ -486,13 +530,14 @@ scan:
 		page++
 	}
 
-	data := t.buildData(knowledge, total, rows)
+	display := documentProjection(ctx, knowledge)
+	data := t.buildData(display, total, rows)
 	data["query"] = query
 	data["match_count"] = matchCount
 	data["truncated"] = truncated
 	return &types.ToolResult{
 		Success: true,
-		Output:  t.buildOutput(knowledge, total, rows, query),
+		Output:  t.buildOutput(display, total, rows, query),
 		Data:    data,
 	}, nil
 }

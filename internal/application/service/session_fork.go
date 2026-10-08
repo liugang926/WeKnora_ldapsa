@@ -13,6 +13,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/Tencent/WeKnora/internal/application/access"
 	"strings"
 	"time"
 
@@ -128,9 +129,10 @@ type forkMessageStore interface {
 
 // SessionForkService implements the fork decision chain.
 type SessionForkService struct {
-	sessions forkSessionStore
-	messages forkMessageStore
-	sandbox  SessionForkSandboxPort
+	lineageVerifier interfaces.MessageSourceLineageVerifier
+	sessions        forkSessionStore
+	messages        forkMessageStore
+	sandbox         SessionForkSandboxPort
 }
 
 // NewSessionForkService wires the service. A nil sandbox port makes every fork
@@ -223,6 +225,17 @@ func (s *SessionForkService) Fork(
 		return nil, fmt.Errorf("session fork: load history: %w", err)
 	}
 	history = historyThroughForkPoint(history, forkPoint)
+	if s.lineageVerifier == nil {
+		return nil, access.ErrNextcloudPublicationUnavailable
+	}
+	for _, message := range history {
+		if message != nil && message.Role != "user" {
+			if err := s.lineageVerifier.CheckMessagePublication(ctx, message); err != nil {
+				return nil, err
+			}
+		}
+	}
+	history = rawUserContentOnly(history)
 
 	workCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), forkSnapshotTimeout)
 	defer cancel()
@@ -501,6 +514,14 @@ func copyMessagesInto(newSessionID string, history []*types.Message) []*types.Me
 	requestIDs := make(map[string]string, len(history))
 	for _, src := range history {
 		clone := *src
+		if src.SourceLineage != nil {
+			clone.SourceLineage, _ = types.UnionSourceLineage(src.SourceLineage)
+		}
+		if src.ContextCheckpoint != nil {
+			checkpoint := *src.ContextCheckpoint
+			checkpoint.SourceLineage, _ = types.UnionSourceLineage(src.ContextCheckpoint.SourceLineage)
+			clone.ContextCheckpoint = &checkpoint
+		}
 		clone.ID = uuid.New().String()
 		clone.SessionID = newSessionID
 		// The parent already indexed these into the chat-history knowledge

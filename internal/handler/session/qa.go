@@ -1242,6 +1242,12 @@ func (h *Handler) holdQATurn(ctx context.Context, reqCtx *qaRequestContext) (fun
 // It handles message creation, SSE setup, VLM analysis, service invocation, and error handling.
 func (h *Handler) executeQA(reqCtx *qaRequestContext, mode qaMode, generateTitle bool) {
 	ctx := reqCtx.ctx
+	if len(reqCtx.images) > 0 || len(reqCtx.attachments) > 0 || len(reqCtx.attachmentIDs) > 0 || reqCtx.questionOrigin != nil {
+		if reqCtx.c != nil && !reqCtx.skipSSE {
+			_ = reqCtx.c.Error(errors.NewForbiddenError("Input source lineage is not available"))
+		}
+		return
+	}
 	sessionID := reqCtx.sessionID
 
 	// Persist the input-bar state used for this request so reopening the
@@ -1978,11 +1984,11 @@ func (h *Handler) completeAssistantMessage(
 	// Asynchronously index the Q&A pair into the chat history knowledge base for vector search.
 	// Use WithoutCancel so the goroutine survives after the HTTP request context is done.
 	bgCtx := context.WithoutCancel(ctx)
-	if indexCtx, ok := h.sessionTenantInfoContext(bgCtx); ok {
+	if indexCtx, ok := h.sessionTenantInfoContext(bgCtx); ok && types.SourceIndependentDerivativesAllowed(assistantMessage) {
 		go h.messageService.IndexMessageToKB(
 			indexCtx, userQuery, assistantMessage.Content, assistantMessage.ID, assistantMessage.SessionID)
 	}
-	if userQuery != "" && h.suggestionService != nil {
+	if userQuery != "" && h.suggestionService != nil && types.SourceIndependentDerivativesAllowed(assistantMessage) {
 		go func() {
 			if _, err := h.suggestionService.EnsureFollowUps(
 				bgCtx, assistantMessage.SessionID, assistantMessage.ID, false,
@@ -1991,7 +1997,7 @@ func (h *Handler) completeAssistantMessage(
 			}
 		}()
 	}
-	if userQuery != "" {
+	if userQuery != "" && types.SourceIndependentDerivativesAllowed(assistantMessage) {
 		go h.recordTurnMemory(bgCtx, assistantMessage, userQuery, userMessageID)
 	}
 	return nil

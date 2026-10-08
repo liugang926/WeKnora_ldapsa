@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/Tencent/WeKnora/internal/agent/tools"
+	"github.com/Tencent/WeKnora/internal/application/access"
 	chatpipeline "github.com/Tencent/WeKnora/internal/application/service/chat_pipeline"
 	"github.com/Tencent/WeKnora/internal/common"
 	"github.com/Tencent/WeKnora/internal/event"
@@ -233,6 +234,14 @@ func (s *sessionService) KnowledgeQA(
 	// Propagate the session ID so stateful sandbox backends (CubeSandbox) can
 	// bind script execution to a per-session MicroVM instance.
 	ctx = types.WithSessionID(ctx, req.Session.ID)
+	lineageScope := access.LineageReadScope{Targets: searchTargets}
+	if req.CustomAgent != nil {
+		lineageScope.AgentID, lineageScope.AgentTenantID = req.CustomAgent.ID, req.CustomAgent.TenantID
+	}
+	ctx, err = s.eventManager.BeginSourceLineage(ctx, chatManage, lineageScope)
+	if err != nil {
+		return err
+	}
 	logger.Info(ctx, "Triggering question answering event")
 	setupSpan.Finish(map[string]interface{}{
 		"stages":             len(pipeline),
@@ -757,6 +766,13 @@ func intersectStrings(left []string, right []string) []string {
 func (s *sessionService) KnowledgeQAByEvent(ctx context.Context,
 	chatManage *types.ChatManage, eventList []types.EventType,
 ) error {
+	if types.RAGSourceLineageFromContext(ctx) == nil {
+		var err error
+		ctx, err = s.eventManager.BeginSourceLineage(ctx, chatManage, access.LineageReadScope{Targets: chatManage.SearchTargets})
+		if err != nil {
+			return err
+		}
+	}
 	logger.Info(ctx, "Start processing knowledge base question answering through events")
 	logger.Infof(ctx, "Knowledge base question answering parameters, session ID: %s, query: %s",
 		chatManage.SessionID, chatManage.Query)
@@ -774,6 +790,9 @@ func (s *sessionService) KnowledgeQAByEvent(ctx context.Context,
 	var understandProgress *chatpipeline.StageProgress
 	var understandStart time.Time
 	for _, eventType := range eventList {
+		if err := chatpipeline.CheckSourceLineageInputs(ctx, chatManage); err != nil {
+			return err
+		}
 		if err := s.revalidateSearchTargets(ctx, chatManage.SearchTargets); err != nil {
 			return err
 		}
@@ -814,9 +833,19 @@ func (s *sessionService) KnowledgeQAByEvent(ctx context.Context,
 		// emitted after the pipeline returned — by then the `complete` event had
 		// already closed the stream, so the frontend only saw citations on refresh.
 		if eventType == types.CHAT_COMPLETION_STREAM {
+			if err := chatpipeline.AccountResults(ctx, chatManage.MergeResult); err != nil {
+				return err
+			}
 			emitKnowledgeReferencesEvent(ctx, chatManage)
 		}
 		err := s.eventManager.Trigger(stageCtx, eventType, chatManage)
+		if err == nil || err == chatpipeline.ErrSearchNothing {
+			for _, outputs := range [][]*types.SearchResult{chatManage.SearchResult, chatManage.RerankResult, chatManage.MergeResult} {
+				if inputErr := chatpipeline.AccountResults(stageCtx, outputs); inputErr != nil {
+					return inputErr
+				}
+			}
+		}
 		if understandProgress != nil && eventType == types.QUERY_UNDERSTAND {
 			chatpipeline.EndQueryUnderstandProgress(stageCtx, chatManage, understandProgress, understandStart, err)
 			understandProgress = nil
@@ -869,6 +898,9 @@ func (s *sessionService) KnowledgeQAByEvent(ctx context.Context,
 				"strategy":    string(chatManage.FallbackStrategy),
 			})
 			s.handleFallbackResponse(ctx, chatManage)
+			if turn := types.RAGSourceLineageFromContext(ctx); turn != nil {
+				return turn.Check(ctx)
+			}
 			return nil
 		}
 
@@ -1035,6 +1067,11 @@ func (s *sessionService) handleFixedFallback(ctx context.Context, chatManage *ty
 
 // handleModelFallback handles model-based fallback response using streaming
 func (s *sessionService) handleModelFallback(ctx context.Context, chatManage *types.ChatManage) {
+	if turn := types.RAGSourceLineageFromContext(ctx); turn != nil {
+		// Document-listing metadata has no covered producer contract.
+		_ = turn.Add(types.UnknownSourceLineage())
+		return
+	}
 	// Check if FallbackPrompt is available
 	if chatManage.FallbackPrompt == "" {
 		logger.Warnf(ctx, "Fallback strategy is 'model' but FallbackPrompt is empty, falling back to fixed response")
@@ -1320,6 +1357,9 @@ func emitKnowledgeReferencesEvent(ctx context.Context, chatManage *types.ChatMan
 
 // emitFallbackAnswer emits fallback answer event
 func (s *sessionService) emitFallbackAnswer(ctx context.Context, chatManage *types.ChatManage, content string) {
+	if err := chatpipeline.CheckSourceLineageInputs(ctx, chatManage); err != nil {
+		return
+	}
 	if chatManage.EventBus == nil {
 		return
 	}

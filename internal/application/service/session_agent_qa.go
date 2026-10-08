@@ -11,6 +11,7 @@ import (
 
 	"github.com/Tencent/WeKnora/internal/agent"
 	"github.com/Tencent/WeKnora/internal/agent/tools"
+	"github.com/Tencent/WeKnora/internal/application/access"
 	"github.com/Tencent/WeKnora/internal/event"
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/models/chat"
@@ -27,6 +28,9 @@ func (s *sessionService) AgentQA(
 	req *types.QARequest,
 	eventBus *event.EventBus,
 ) error {
+	if len(req.ImageURLs) > 0 || req.ImageDescription != "" || req.QuotedContext != "" || len(req.Attachments) > 0 {
+		return access.ErrNextcloudPublicationDenied
+	}
 	sessionID := req.Session.ID
 	// Propagate the session ID so stateful sandbox backends (CubeSandbox) can
 	// bind script execution to a per-session MicroVM instance.
@@ -172,7 +176,7 @@ func (s *sessionService) AgentQA(
 	}
 	if historyAdmitted && agentConfig.MultiTurnEnabled {
 		budget := agent.HistoryTokenBudget(agentConfig)
-		llmContext, agentConfig.ContextTokenScale, err = LoadAgentHistory(ctx, s.messageRepo, sessionID, budget, agentConfig.RetainRetrievalHistory, s.historyGuard)
+		llmContext, agentConfig.ContextTokenScale, err = LoadAgentHistory(ctx, s.messageRepo, sessionID, budget, agentConfig.RetainRetrievalHistory, messageLineageHistoryAdmission{verifier: s.lineageVerifier})
 		if err != nil {
 			excludeHistoricalContext(err)
 		}
@@ -240,6 +244,19 @@ func (s *sessionService) AgentQA(
 		logger.Errorf(ctx, "Failed to create agent engine: %v", err)
 		return err
 	}
+	lineageEngine, ok := engine.(interface {
+		SetSourceLineageVerifier(func(context.Context, *types.SourceLineage) error)
+	})
+	if !ok || s.sourceLineageGuard == nil {
+		return access.ErrNextcloudPublicationUnavailable
+	}
+	lineageScope := access.LineageReadScope{Targets: agentConfig.SearchTargets, AgentID: req.CustomAgent.ID, AgentTenantID: req.CustomAgent.TenantID}
+	lineageEngine.SetSourceLineageVerifier(func(checkCtx context.Context, lineage *types.SourceLineage) error {
+		if err := s.revalidateAgentExecution(checkCtx, req.CustomAgent, agentConfig.SearchTargets); err != nil {
+			return err
+		}
+		return s.sourceLineageGuard.Check(checkCtx, lineage, lineageScope)
+	})
 	if s.groupAccess != nil {
 		guarded, ok := engine.(interface {
 			SetRoundGuard(func(context.Context) error)
@@ -260,6 +277,7 @@ func (s *sessionService) AgentQA(
 	if historyAdmitted && s.memoryService != nil {
 		recall := s.memoryService.Recall(memoryCtx, req.Query)
 		if recall.Prompt != "" {
+			return access.ErrNextcloudPublicationDenied
 			engine.SetMemoryPrompt(recall.Prompt)
 			used := types.UsedMemoriesFromItems(recall.Items)
 			if err := eventBus.Emit(ctx, event.Event{

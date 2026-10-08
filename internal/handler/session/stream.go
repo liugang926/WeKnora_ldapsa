@@ -263,6 +263,21 @@ func checkReplayPublication(
 		return access.ErrNextcloudPublicationUnavailable
 	}
 	copy := *message
+	if copy.SourceLineage.RequireComplete() != nil {
+		return access.ErrNextcloudPublicationDenied
+	}
+	for _, frame := range events {
+		if !liveBatchNeedsPublicationCheck([]interfaces.StreamEvent{frame}) {
+			continue
+		}
+		if frame.SourceLineage.RequireComplete() != nil {
+			return access.ErrNextcloudPublicationDenied
+		}
+		union, err := types.UnionSourceLineage(copy.SourceLineage, frame.SourceLineage)
+		if err != nil || len(union.Sources) != len(copy.SourceLineage.Sources) {
+			return access.ErrNextcloudPublicationDenied
+		}
+	}
 	copy.KnowledgeReferences = append(types.References(nil), message.KnowledgeReferences...)
 	for _, streamEvent := range events {
 		if streamEvent.Type == types.ResponseTypeReferences {
@@ -693,6 +708,23 @@ func checkLiveStreamPublication(
 		return access.ErrNextcloudPublicationUnavailable
 	}
 	copy := *message
+	for _, frame := range events {
+		if !liveBatchNeedsPublicationCheck([]interfaces.StreamEvent{frame}) {
+			continue
+		}
+		if frame.SourceLineage.RequireComplete() != nil {
+			return access.ErrNextcloudPublicationDenied
+		}
+		if copy.SourceLineage.RequireComplete() != nil {
+			copy.SourceLineage, _ = types.UnionSourceLineage(frame.SourceLineage)
+		} else {
+			var err error
+			copy.SourceLineage, err = types.UnionSourceLineage(copy.SourceLineage, frame.SourceLineage)
+			if err != nil {
+				return access.ErrNextcloudPublicationDenied
+			}
+		}
+	}
 	copy.KnowledgeReferences = append(types.References(nil), message.KnowledgeReferences...)
 	seen := make(map[string]struct{}, len(copy.KnowledgeReferences))
 	for _, ref := range copy.KnowledgeReferences {
@@ -735,6 +767,7 @@ func checkLiveStreamPublication(
 		return err
 	}
 	message.KnowledgeReferences = copy.KnowledgeReferences
+	message.SourceLineage = copy.SourceLineage
 	return nil
 }
 

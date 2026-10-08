@@ -66,9 +66,11 @@ func (e *AgentEngine) drainSteerMessages(
 			logger.Warnf(ctx, "[Agent] Steer persist failed for %s, leaving event pending", steerID)
 			continue
 		}
-		*messagesPtr = append(*messagesPtr, chat.Message{Role: "user", Content: types.SteerMessageContent(content)})
+		// PollSteer delivers raw human text. Mentioned items are persisted for
+		// display but are not resolved into model material on this path.
+		*messagesPtr = append(*messagesPtr, chat.Message{Role: "user", Content: types.SteerMessageContent(content), SourceLineage: independentAgentInput()})
 		state.PendingSteerMessages = append(state.PendingSteerMessages, userMessageID)
-		_ = e.eventBus.Emit(ctx, event.Event{
+		_ = e.emitEvent(ctx, event.Event{
 			ID:        generateEventID("injected"),
 			Type:      event.EventUserMessageInjected,
 			SessionID: sessionID,

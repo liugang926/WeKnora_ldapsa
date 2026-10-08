@@ -193,6 +193,35 @@ func (g *NextcloudReadGuard) PinKnowledge(k *types.Knowledge) error {
 	return nil
 }
 
+// ExactLease returns the original server-acquired generation token. It never
+// renews/re-pins a newer epoch to authenticate material already read. The
+// snapshot reader validates this token against durable rows; Verify remains
+// mandatory after hydration and at every subsequent read/output boundary.
+func (g *NextcloudReadGuard) ExactLease(k *types.Knowledge) (*types.RAGExactReadLease, error) {
+	scope, marked, err := NextcloudKnowledgeLeaseScope(k)
+	if err != nil || !marked {
+		return nil, err
+	}
+	if g == nil {
+		return nil, errors.New("Nextcloud knowledge has no read lease")
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if err := g.currentErrorLocked(); err != nil {
+		return nil, err
+	}
+	if !g.exact[scope] {
+		return nil, repository.ErrNextcloudContentLeaseDenied
+	}
+	for _, row := range g.rows {
+		if row.KnowledgeID == scope.KnowledgeID && row.TenantID == scope.TenantID && row.KnowledgeBaseID == scope.KnowledgeBaseID && row.Kind == repository.NextcloudContentReadLease {
+			return &types.RAGExactReadLease{ID: row.ID, TenantID: row.TenantID, KnowledgeBaseID: row.KnowledgeBaseID,
+				KnowledgeID: row.KnowledgeID, Kind: string(row.Kind), Epoch: row.Epoch, OwnerID: row.OwnerID, ExpiresAt: row.ExpiresAt}, nil
+		}
+	}
+	return nil, repository.ErrNextcloudContentLeaseDenied
+}
+
 func (g *NextcloudReadGuard) currentErrorLocked() error {
 	// The child context is also cancelled by failLocked and Close. Only the
 	// original request context can distinguish an external cancellation from

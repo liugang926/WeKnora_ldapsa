@@ -53,6 +53,9 @@ func (p *PluginLoadHistory) OnEvent(ctx context.Context,
 
 	historyList, err := loadAndProcessHistory(ctx, p.messageService, chatManage.SessionID, maxRounds, maxRounds*2+10)
 	if err != nil {
+		if types.RAGSourceLineageFromContext(ctx) != nil {
+			return sourceLineagePluginError(err)
+		}
 		pipelineWarn(ctx, "LoadHistory", "history_fetch", map[string]interface{}{
 			"session_id": chatManage.SessionID,
 			"error":      err.Error(),
@@ -61,6 +64,9 @@ func (p *PluginLoadHistory) OnEvent(ctx context.Context,
 	}
 
 	chatManage.History = historyList
+	if err := AccountHistory(ctx, historyList); err != nil {
+		return sourceLineagePluginError(err)
+	}
 
 	pipelineInfo(ctx, "LoadHistory", "output", map[string]interface{}{
 		"session_id":     chatManage.SessionID,

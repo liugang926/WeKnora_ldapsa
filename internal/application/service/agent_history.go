@@ -35,6 +35,10 @@ type AgentHistoryAdmission interface {
 	CheckAgentHistoryReplay(context.Context) error
 }
 
+type agentHistoryLineageAdmission interface {
+	CheckMessageSourceLineage(context.Context, *types.Message) error
+}
+
 // LoadAgentHistory rebuilds the multi-turn LLM context for an Agent-mode
 // session directly from the persistent messages table. The result is a
 // chronologically ordered list of chat.Message entries suitable for prepending
@@ -88,6 +92,10 @@ func LoadAgentHistory(
 	if err := admission.CheckAgentHistoryReplay(ctx); err != nil {
 		return nil, 0, err
 	}
+	lineageAdmission, ok := admission.(agentHistoryLineageAdmission)
+	if !ok {
+		return nil, 0, access.ErrNextcloudPublicationUnavailable
+	}
 	if tokenBudget <= 0 {
 		return []chat.Message{}, 0, nil
 	}
@@ -102,7 +110,11 @@ func LoadAgentHistory(
 	}
 	out := []chat.Message{}
 	if checkpoint != nil {
+		if err := lineageAdmission.CheckMessageSourceLineage(ctx, checkpoint); err != nil {
+			return nil, 0, err
+		}
 		out = append(out, compaction.SummaryMessage(checkpoint.ContextCheckpoint.Summary))
+		out[len(out)-1].SourceLineage, _ = types.UnionSourceLineage(checkpoint.ContextCheckpoint.SourceLineage)
 	}
 
 	var (
@@ -136,6 +148,13 @@ func LoadAgentHistory(
 			replay.budget = tokenBudget - used
 		}
 		for _, msg := range page {
+			if msg.Role != "user" {
+				if err := lineageAdmission.CheckMessageSourceLineage(ctx, msg); err != nil {
+					return nil, 0, err
+				}
+			} else {
+				msg = rawUserContentOnly([]*types.Message{msg})[0]
+			}
 			rows = append(rows, replay.track(msg))
 		}
 		reachedStart = len(page) < agentHistoryPageSize
@@ -327,6 +346,7 @@ func (r *historyReplay) messages(t *agentHistoryTurn) []chat.Message {
 		buildTurnBodyMessages(r.stored(t.assistant), users[1:])...)
 	for i := range msgs {
 		msgs[i].TurnID = id
+		msgs[i].SourceLineage, _ = types.UnionSourceLineage(r.stored(t.assistant).SourceLineage)
 	}
 	sent := agent.HistoryAsSent(msgs, r.retainRetrievalHistory)
 	tokens := 0
