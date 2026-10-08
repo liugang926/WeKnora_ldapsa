@@ -131,6 +131,32 @@ func (s *KnowledgeInputProvenanceStore) UpdateKnowledgeWithInput(ctx context.Con
 		if controlled {
 			return ErrKnowledgeInputChanged
 		}
+		// Updates retain fields that did not come from this new request. Their
+		// original dependency union cannot become independent due to the new
+		// human input marker. Unknown retained provenance remains closed.
+		var receipt knowledgeInputMaterialReceipt
+		if err := tx.Where("row_kind = 'knowledge' AND row_id = ?", old.ID).Take(&receipt).Error; err != nil {
+			return err
+		}
+		var previous knowledgeInputAdmission
+		if err := tx.Where("admission_id = ? AND tenant_id = ? AND knowledge_base_id = ? AND knowledge_id = ?", receipt.AdmissionID, old.TenantID, old.KnowledgeBaseID, old.ID).Take(&previous).Error; err != nil {
+			return err
+		}
+		if err := verifyKnowledgeInputMaterial(tx, &previous, &old, nil); err != nil {
+			return err
+		}
+		var retained types.SourceLineage
+		if err := json.Unmarshal([]byte(previous.SourceLineage), &retained); err != nil {
+			return err
+		}
+		if err := retained.RequireComplete(); err != nil {
+			return err
+		}
+		combined, err := types.UnionSourceLineage(origin.lineage, &retained)
+		if err != nil {
+			return err
+		}
+		origin.lineage = combined
 		var kb types.KnowledgeBase
 		if err := tx.Where("id = ? AND tenant_id = ?", k.KnowledgeBaseID, k.TenantID).Take(&kb).Error; err != nil {
 			return err
@@ -304,7 +330,7 @@ func (s *KnowledgeInputProvenanceStore) admitInTx(ctx context.Context, tx *gorm.
 		}
 		generation = uint64(lease.Epoch)
 	}
-	configRevision, err := inputRowRevision(tx, "config", kb.ID)
+	configRevision, err := knowledgeConfigurationControlRevision(tx, kb.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -411,7 +437,7 @@ func (s *KnowledgeInputProvenanceStore) admissionInTx(tx *gorm.DB, k *types.Know
 	if err := tx.Where("id = ? AND tenant_id = ?", k.KnowledgeBaseID, k.TenantID).Take(&kb).Error; err != nil {
 		return nil, nil, nil, err
 	}
-	revision, err := inputRowRevision(tx, "config", kb.ID)
+	revision, err := knowledgeConfigurationControlRevision(tx, kb.ID)
 	if err != nil {
 		return nil, nil, nil, err
 	}

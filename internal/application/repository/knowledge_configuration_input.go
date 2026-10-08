@@ -27,12 +27,23 @@ func knowledgeConfigurationOriginDigest(kb *types.KnowledgeBase) (string, error)
 		return "", err
 	}
 	return KnowledgeInputDigest(struct {
-		Tenant                              uint64
-		KB, Name, Description, Type, Config string
-	}{kb.TenantID, kb.ID, kb.Name, kb.Description, kb.Type, config})
+		Tenant           uint64
+		KB, Type, Config string
+	}{kb.TenantID, kb.ID, kb.Type, config})
 }
+func knowledgeConfigurationControlRevision(tx *gorm.DB, id string) (uint64, error) {
+	var row struct{ Revision uint64 }
+	if err := tx.Table("knowledge_configuration_control_versions").Where("knowledge_base_id = ?", id).Take(&row).Error; err != nil {
+		return 0, err
+	}
+	if row.Revision == 0 {
+		return 0, ErrKnowledgeInputChanged
+	}
+	return row.Revision, nil
+}
+
 func readKnowledgeConfigurationOrigin(tx *gorm.DB, kb *types.KnowledgeBase) (*types.SourceLineage, error) {
-	revision, err := inputRowRevision(tx, "config", kb.ID)
+	revision, err := knowledgeConfigurationControlRevision(tx, kb.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -70,7 +81,7 @@ func admitKnowledgeConfigurationOrigin(tx *gorm.DB, kb *types.KnowledgeBase, ori
 	if err != nil {
 		return err
 	}
-	revision, err := inputRowRevision(tx, "config", kb.ID)
+	revision, err := knowledgeConfigurationControlRevision(tx, kb.ID)
 	if err != nil {
 		return err
 	}

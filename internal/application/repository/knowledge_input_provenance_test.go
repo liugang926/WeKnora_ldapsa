@@ -24,6 +24,9 @@ func knowledgeInputFixture(t *testing.T) (*KnowledgeInputProvenanceStore, *gorm.
 	additional, err := os.ReadFile("../../../migrations/sqlite/000054_knowledge_configuration_history_inputs.up.sql")
 	require.NoError(t, err)
 	require.NoError(t, db.Exec(string(additional)).Error)
+	controls, err := os.ReadFile("../../../migrations/sqlite/000055_knowledge_actual_config_controls.up.sql")
+	require.NoError(t, err)
+	require.NoError(t, db.Exec(string(controls)).Error)
 	store := NewKnowledgeInputProvenanceStore(db)
 	require.NoError(t, store.ReplaceKnowledgeBaseConfigurationWithInput(WithIndependentKnowledgeInput(context.Background()), &types.KnowledgeBase{ID: "kb", TenantID: 7, Name: "source", EmbeddingModelID: "embed", SummaryModelID: "summary"}))
 	return store, db
@@ -204,6 +207,8 @@ func TestKnowledgeInputGraphProjectionSurvivesUnusedSummaryButBodyRollbackCloses
 	c.Metadata = types.JSON(`{"generated_questions":["new generated question"]}`)
 	require.NoError(t, NewChunkRepository(db).UpdateChunk(ctx, c))
 	require.NoError(t, store.RecheckKnowledgeBuildInputs(ctx, input.Proof), "unused generated display fields do not change actual graph model input")
+	require.NoError(t, db.Model(&types.KnowledgeBase{}).Where("id = 'kb'").Updates(map[string]any{"description": "generated description", "generated_profile": types.JSON(`{"gist":"generated profile"}`)}).Error)
+	require.NoError(t, store.RecheckKnowledgeBuildInputs(ctx, input.Proof), "unused KB description/profile cannot invalidate actual original graph controls")
 	full, err := store.CaptureKnowledgeBuildInputs(ctx, types.KnowledgeBuildInputCaptureRequest{TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: k.ID, ChunkIDs: []string{c.ID}})
 	require.NoError(t, err)
 	_, err = store.CaptureKnowledgeBuildInputs(ctx, types.KnowledgeBuildInputCaptureRequest{Projection: types.KnowledgeBuildProjectionGraph, TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: k.ID, ChunkIDs: []string{c.ID}, Expected: full.Proof})
@@ -233,4 +238,35 @@ func TestKnowledgeInputLegacyConfigurationCannotBeAuthenticatedByHumanDocument(t
 	proof, err := store.CreateKnowledgeWithInput(WithIndependentKnowledgeInput(context.Background()), k, "new human text")
 	require.NoError(t, err)
 	require.NoError(t, proof.SourceLineage.RequireComplete())
+}
+
+func TestKnowledgeInputPartialHumanUpdatePreservesRetainedDerivedDependencies(t *testing.T) {
+	for _, field := range []string{"title", "custom_metadata", "manual_content"} {
+		t.Run(field, func(t *testing.T) {
+			store, db := knowledgeInputFixture(t)
+			repo := NewKnowledgeRepository(db).(*knowledgeRepository)
+			_, source, err := repo.ResolveNextcloudSourceLineage(context.Background(), 7, "kb", "candidate")
+			require.NoError(t, err)
+			lineage, err := types.NewCompleteSourceLineage(source)
+			require.NoError(t, err)
+			ctx, err := WithDerivedKnowledgeInput(context.Background(), lineage)
+			require.NoError(t, err)
+			k := &types.Knowledge{ID: "retained", TenantID: 7, KnowledgeBaseID: "kb", Type: "manual", Source: "manual", Channel: "web", Title: "derived title", Description: "derived description", Profile: &types.KnowledgeProfile{Gist: "derived profile"}, CustomMetadata: types.JSON(`{"label":"derived custom metadata"}`), Metadata: types.JSON(`{"manual":{"content":"derived original body","version":1}}`), ParseStatus: types.ParseStatusCompleted, EnableStatus: "enabled"}
+			_, err = store.CreateKnowledgeWithInput(ctx, k, "derived original body")
+			require.NoError(t, err)
+			switch field {
+			case "title":
+				k.Title = "new human title"
+			case "custom_metadata":
+				k.CustomMetadata = types.JSON(`{"label":"human replacement"}`)
+			case "manual_content":
+				k.Metadata = types.JSON(`{"manual":{"content":"new human text","version":2}}`)
+			}
+			updated, err := store.UpdateKnowledgeWithInput(WithIndependentKnowledgeInput(context.Background()), k, "new human input")
+			require.NoError(t, err)
+			require.Equal(t, lineage, updated.SourceLineage, "retained body/Profile/metadata cannot become independent after a partial human edit")
+			require.NoError(t, NewNextcloudContentLeaseStore(db).RetireKnowledge(context.Background(), NextcloudContentScope{TenantID: source.TenantID, KnowledgeBaseID: source.KnowledgeBaseID, KnowledgeID: source.KnowledgeID, DataSourceID: source.DataSourceID, ExternalID: source.ExternalID}))
+			require.Error(t, store.RecheckKnowledgeBuildInputs(context.Background(), updated))
+		})
+	}
 }

@@ -28,6 +28,9 @@ func knowledgeInputPostgresFixture(t *testing.T) (*KnowledgeInputProvenanceStore
 	additional, err := os.ReadFile("../../../migrations/versioned/000135_knowledge_configuration_history_inputs.up.sql")
 	require.NoError(t, err)
 	require.NoError(t, migration.Exec(string(additional)).Error)
+	controls, err := os.ReadFile("../../../migrations/versioned/000136_knowledge_actual_config_controls.up.sql")
+	require.NoError(t, err)
+	require.NoError(t, migration.Exec(string(controls)).Error)
 	store := NewKnowledgeInputProvenanceStore(db)
 	require.NoError(t, store.ReplaceKnowledgeBaseConfigurationWithInput(WithIndependentKnowledgeInput(context.Background()), &types.KnowledgeBase{ID: "kb", TenantID: 7, Name: "source", EmbeddingModelID: "embed", SummaryModelID: "summary"}))
 	return store, db
@@ -97,4 +100,16 @@ func TestPostgresKnowledgeInputNextcloudOriginalBuildEpochAndSourceWithdrawal(t 
 	require.Error(t, store.RecheckKnowledgeBuildInputs(ctx, input.Proof))
 	_, err = store.CaptureKnowledgeBuildInputs(ctx, types.KnowledgeBuildInputCaptureRequest{TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: k.ID, ChunkIDs: []string{c.ID}, Expected: input.Proof})
 	require.Error(t, err)
+}
+
+func TestPostgresKnowledgeInputActualControlsIgnoreGeneratedKBDescription(t *testing.T) {
+	store, db := knowledgeInputPostgresFixture(t)
+	ctx, k, c, _ := createAdmittedManual(t, store, db)
+	input, err := store.CaptureKnowledgeBuildInputs(ctx, types.KnowledgeBuildInputCaptureRequest{Projection: types.KnowledgeBuildProjectionGraph, TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: k.ID, ChunkIDs: []string{c.ID}})
+	require.NoError(t, err)
+	require.NoError(t, db.Exec("UPDATE knowledge_bases SET description='generated description',generated_profile='{\"gist\":\"generated\"}' WHERE id='kb'").Error)
+	require.NoError(t, store.RecheckKnowledgeBuildInputs(ctx, input.Proof))
+	require.NoError(t, db.Exec("UPDATE knowledge_bases SET summary_model_id='changed' WHERE id='kb'").Error)
+	require.NoError(t, db.Exec("UPDATE knowledge_bases SET summary_model_id='summary' WHERE id='kb'").Error)
+	require.Error(t, store.RecheckKnowledgeBuildInputs(ctx, input.Proof), "control ABA cannot restore an original graph model input generation")
 }
