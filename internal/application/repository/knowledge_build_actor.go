@@ -54,10 +54,13 @@ func (s *KnowledgeInputProvenanceStore) recheckKnowledgeWorkerActor(ctx context.
 func (knowledgeBuildActorSelector) TableName() string { return "knowledge_input_actor_selectors" }
 
 func captureKnowledgeActorSelector(ctx context.Context, admissionID string) (knowledgeBuildActorSelector, error) {
-	caller := types.CallerFromContext(ctx)
-	principal, ok := types.PrincipalFromContext(ctx)
+	if ctx == nil {
+		return knowledgeBuildActorSelector{}, types.ErrSourceLineageUnknown
+	}
+	caller, capturedCaller := ctx.Value(types.CallerContextKey).(types.Caller)
+	principal, ok := ctx.Value(types.PrincipalContextKey).(types.Principal)
 	selector := knowledgeBuildActorSelector{AdmissionID: admissionID, CallerTenantID: caller.TenantID, UserID: caller.UserID, PrincipalType: principal.Type, PrincipalID: principal.ID}
-	if !ok || caller.TenantID == 0 {
+	if !capturedCaller || !ok || !principal.Valid() || principal != principal.Normalize() || caller.TenantID == 0 {
 		return selector, types.ErrSourceLineageUnknown
 	}
 	switch principal.Type {
