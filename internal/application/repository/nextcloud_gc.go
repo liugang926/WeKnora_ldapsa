@@ -81,8 +81,16 @@ type NextcloudGCStatus struct {
 }
 
 type NextcloudGCStore struct {
-	db           *gorm.DB
-	deleteObject func(context.Context, *types.StoredResource) (bool, error)
+	db                  *gorm.DB
+	deleteObject        func(context.Context, *types.StoredResource) (bool, error)
+	prepareDeleteObject func(context.Context, *types.StoredResource) (func(context.Context) (bool, error), error)
+}
+
+// Resolve database-backed provider configuration before the final transaction.
+// The returned operation performs physical IO only, avoiding a reentrant DB
+// lookup while a single-connection SQLite transaction holds its content fence.
+func (s *NextcloudGCStore) ConfigureLocalDeletePreparation(fn func(context.Context, *types.StoredResource) (func(context.Context) (bool, error), error)) {
+	s.prepareDeleteObject = fn
 }
 
 func NewNextcloudGCStore(db *gorm.DB) *NextcloudGCStore { return &NextcloudGCStore{db: db} }
@@ -138,6 +146,10 @@ func (s *NextcloudGCStore) InventoryRetired(ctx context.Context, now time.Time, 
 func (s *NextcloudGCStore) inventoryOne(ctx context.Context, source nextcloudGCSource, now time.Time) (bool, error) {
 	inserted := false
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if _, e := gcLockKBContent(tx, nextcloudGCJob{TenantID: source.TenantID, KnowledgeBaseID: source.KnowledgeBaseID}); e != nil {
+			return e
+		}
+
 		var version nextcloudSourceVersion
 		if err := nextcloudVersionQuery(tx.Clauses(clause.Locking{Strength: "UPDATE"}),
 			source.TenantID, source.KnowledgeBaseID, source.DataSourceID, source.ExternalID).
@@ -281,7 +293,7 @@ func (s *NextcloudGCStore) RunDue(ctx context.Context, now time.Time, limit int)
 					"attempts": gorm.Expr("attempts + 1")}).Error
 			return processed, errors.Join(err, recordErr)
 		}
-		if s.deleteObject != nil {
+		if s.deleteObject != nil || s.prepareDeleteObject != nil {
 			if err := s.runPhysical(ctx, id, now); err != nil {
 				return processed, err
 			}
@@ -292,7 +304,19 @@ func (s *NextcloudGCStore) RunDue(ctx context.Context, now time.Time, limit int)
 }
 
 func (s *NextcloudGCStore) runOne(ctx context.Context, id string, now time.Time) error {
+	var identity nextcloudGCJob
+	if e := s.db.WithContext(ctx).Select("id", "tenant_id", "knowledge_base_id", "knowledge_id", "datasource_id", "external_id").Where("id=?", id).Take(&identity).Error; e != nil {
+		if errors.Is(e, gorm.ErrRecordNotFound) {
+			return nil
+		}
+		return e
+	}
+
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if _, e := gcLockKBContent(tx, identity); e != nil {
+			return e
+		}
+
 		var job nextcloudGCJob
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", id).Take(&job).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {

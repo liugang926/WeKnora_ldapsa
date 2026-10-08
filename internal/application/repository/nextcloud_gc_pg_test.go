@@ -53,6 +53,7 @@ func TestPostgresNextcloudGCBindRaceSerializesOnResource(t *testing.T) {
 		&nextcloudGCJob{}, &nextcloudGCItem{}, &types.StoredResource{}, &types.ResourceBinding{},
 		&NextcloudIndexedWithdrawal{}))
 	now := time.Now().UTC()
+	gcObjectTestLeaseSchema(t, db)
 	ref := nextcloudGCTestLocalResource(t, db, strings.Repeat("p", 22), "old")
 	nextcloudGCTestSource(t, db, "old", ref, now.Add(-8*24*time.Hour))
 	store := NewNextcloudGCStore(db)

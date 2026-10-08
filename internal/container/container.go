@@ -2037,30 +2037,32 @@ func startNextcloudGC(
 	storage interfaces.StorageBackendResolver,
 	cleaner interfaces.ResourceCleaner,
 ) {
-	gc.ConfigureLocalDelete(func(ctx context.Context, resource *types.StoredResource) (bool, error) {
+	gc.ConfigureLocalDeletePreparation(func(ctx context.Context, resource *types.StoredResource) (func(context.Context) (bool, error), error) {
 		if resource == nil || resource.TenantID == 0 || resource.Provider != "local" ||
 			resource.State != types.ResourceStateDeleting || resource.StorageBackendID == "" {
-			return false, errors.New("Nextcloud GC resource is not a scoped local deletion claim")
+			return nil, errors.New("Nextcloud GC resource is not a scoped local deletion claim")
 		}
 		backendID, inner, ok := types.ParseStorageBackendPath(resource.PhysicalPath)
 		if !ok || backendID != resource.StorageBackendID ||
 			!strings.HasPrefix(inner, fmt.Sprintf("local://%d/", resource.TenantID)) {
-			return false, errors.New("Nextcloud GC local path does not match owner backend")
+			return nil, errors.New("Nextcloud GC local path does not match owner backend")
 		}
 		tenant, err := tenants.GetTenantByID(ctx, resource.TenantID)
 		if err != nil || tenant == nil {
-			return false, errors.New("Nextcloud GC resource tenant unavailable")
+			return nil, errors.New("Nextcloud GC resource tenant unavailable")
 		}
 		fileService, provider, err := storage.ResolveFileService(ctx, tenant,
 			resource.StorageBackendID, "local", strings.TrimSpace(os.Getenv("LOCAL_STORAGE_BASE_DIR")))
 		if err != nil || fileService == nil || provider != "local" {
-			return false, errors.New("Nextcloud GC local backend unavailable")
+			return nil, errors.New("Nextcloud GC local backend unavailable")
 		}
-		err = fileService.DeleteFile(ctx, resource.PhysicalPath)
-		if errors.Is(err, os.ErrNotExist) {
-			return false, nil // absent path is idempotent but proves no bytes released now
+		providerGC, ok := fileService.(interfaces.NextcloudPhysicalGCDeleter)
+		if !ok {
+			return nil, errors.New("Nextcloud GC secure local provider unavailable")
 		}
-		return err == nil, err
+		return func(ioCtx context.Context) (bool, error) {
+			return providerGC.DeleteNextcloudObject(ioCtx, resource.PhysicalPath)
+		}, nil
 	})
 	stop := make(chan struct{})
 	run := func() {

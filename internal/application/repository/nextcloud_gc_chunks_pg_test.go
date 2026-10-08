@@ -50,6 +50,7 @@ func nextcloudExactChunkPGDB(t *testing.T) *gorm.DB {
 	script, err := os.ReadFile("../../../migrations/versioned/000127_nextcloud_content_leases.up.sql")
 	require.NoError(t, err)
 	require.NoError(t, db.Exec(string(script)).Error)
+	gcObjectTestLeaseSchema(t, db)
 	return db
 }
 
