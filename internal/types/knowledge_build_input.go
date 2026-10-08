@@ -6,6 +6,7 @@ package types
 // It never authenticates cached text by obtaining a new current receipt.
 type KnowledgeBuildInputProof struct {
 	Version         int            `json:"version"`
+	Projection      string         `json:"projection,omitempty"`
 	TenantID        uint64         `json:"tenant_id"`
 	KnowledgeBaseID string         `json:"knowledge_base_id"`
 	KnowledgeID     string         `json:"knowledge_id"`
@@ -19,6 +20,7 @@ type KnowledgeBuildInputProof struct {
 }
 
 type KnowledgeBuildInputCaptureRequest struct {
+	Projection      string
 	TenantID        uint64
 	KnowledgeBaseID string
 	KnowledgeID     string
@@ -26,6 +28,8 @@ type KnowledgeBuildInputCaptureRequest struct {
 	// Expected is the original admitted task receipt, not a client claim.
 	Expected *KnowledgeBuildInputProof
 }
+
+const KnowledgeBuildProjectionGraph = "graph_model_inputs"
 
 // Snapshot includes actual persisted material/config used for model input.
 // Chunk metadata, titles and graph/config controls belong in its body digest.
