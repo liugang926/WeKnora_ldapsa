@@ -82,5 +82,9 @@ func TestNextcloudCapacityConcurrentReservationsAndObjectReceipt(t *testing.T) {
 	status, err := s.Status(ctx, 7, "kb", "backend", capMeasure(1000))
 	require.NoError(t, err)
 	require.Equal(t, int64(100), status.LogicalRetainedBytes)
+	require.Equal(t, int64(100), status.PendingBytes)
+	require.NoError(t, db.Model(&NextcloudCapacityReservation{}).Where("token=?", rows[0].Token).Update("committed_at_ms", time.Now().Add(-2*time.Second).UnixMilli()).Error)
+	status, err = s.Status(ctx, 7, "kb", "backend", capMeasure(1000))
+	require.NoError(t, err)
 	require.Zero(t, status.PendingBytes)
 }
