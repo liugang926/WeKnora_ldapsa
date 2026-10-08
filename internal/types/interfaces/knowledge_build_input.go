@@ -17,4 +17,5 @@ type KnowledgeBuildInputReader interface {
 // artifact is the actual sanitized text or upload bytes, never client proof.
 type KnowledgeInputWriter interface {
 	CreateKnowledgeWithInput(context.Context, *types.Knowledge, any) (*types.KnowledgeBuildInputProof, error)
+	UpdateKnowledgeWithInput(context.Context, *types.Knowledge, any) (*types.KnowledgeBuildInputProof, error)
 }

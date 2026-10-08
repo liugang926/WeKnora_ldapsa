@@ -90,7 +90,15 @@ func (r *chunkRepository) CreateChunks(ctx context.Context, chunks []*types.Chun
 		// Select("*") ensures zero-value fields (IsEnabled=false, Flags=0) are
 		// explicitly inserted, bypassing GORM's default value behavior.
 		// SeqID=0 is skipped by GORM automatically (autoIncrement tag).
-		return tx.Select("*").CreateInBatches(chunks, createChunksBatchSize).Error
+		for _, chunk := range chunks {
+			if _, err := validateKnowledgeInputWrite(ctx, tx, chunk.TenantID, chunk.KnowledgeBaseID, chunk.KnowledgeID); err != nil {
+				return err
+			}
+		}
+		if err := tx.Select("*").CreateInBatches(chunks, createChunksBatchSize).Error; err != nil {
+			return err
+		}
+		return sealKnowledgeInputChunks(ctx, tx, chunks)
 	})
 }
 
@@ -389,15 +397,22 @@ func (r *chunkRepository) ListChunksByParentIDs(
 // except SeqID (auto-increment, must not be overwritten).
 // Make sure the chunk object is complete (e.g., fetched from DB) before calling this method.
 func (r *chunkRepository) UpdateChunk(ctx context.Context, chunk *types.Chunk) error {
-	if _, guarded := ctx.Value(nextcloudBuildContextKey{}).(nextcloudBuildContext); !guarded {
+	_, ncGuarded := ctx.Value(nextcloudBuildContextKey{}).(nextcloudBuildContext)
+	_, inputGuarded := ctx.Value(knowledgeBuildInputKey{}).(knowledgeBuildInputContext)
+	if !ncGuarded && !inputGuarded {
 		return r.db.WithContext(ctx).Omit("SeqID").Save(chunk).Error
 	}
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := ValidateNextcloudBuildWrite(ctx, tx,
-			chunk.TenantID, chunk.KnowledgeBaseID, chunk.KnowledgeID); err != nil {
+		if err := ValidateNextcloudBuildWrite(ctx, tx, chunk.TenantID, chunk.KnowledgeBaseID, chunk.KnowledgeID); err != nil {
 			return err
 		}
-		return tx.Omit("SeqID").Save(chunk).Error
+		if _, err := validateKnowledgeInputWrite(ctx, tx, chunk.TenantID, chunk.KnowledgeBaseID, chunk.KnowledgeID); err != nil {
+			return err
+		}
+		if err := tx.Omit("SeqID").Save(chunk).Error; err != nil {
+			return err
+		}
+		return sealKnowledgeInputChunks(ctx, tx, []*types.Chunk{chunk})
 	})
 }
 
@@ -553,6 +568,11 @@ func (r *chunkRepository) UpdateChunks(ctx context.Context, chunks []*types.Chun
 			chunks[0].TenantID, chunks[0].KnowledgeBaseID, chunks[0].KnowledgeID); err != nil {
 			return err
 		}
+		for _, chunk := range chunks {
+			if _, err := validateKnowledgeInputWrite(ctx, tx, chunk.TenantID, chunk.KnowledgeBaseID, chunk.KnowledgeID); err != nil {
+				return err
+			}
+		}
 		for start := 0; start < len(chunks); start += updateChunksBatchSize {
 			end := start + updateChunksBatchSize
 			if end > len(chunks) {
@@ -570,7 +590,7 @@ func (r *chunkRepository) UpdateChunks(ctx context.Context, chunks []*types.Chun
 				return err
 			}
 		}
-		return nil
+		return sealKnowledgeInputChunks(ctx, tx, chunks)
 	})
 }
 

@@ -47,6 +47,12 @@ type nextcloudPublicationCandidate struct {
 func (r *knowledgeRepository) publicationCandidate(
 	tx *gorm.DB, candidateID string, lock bool,
 ) (nextcloudPublicationCandidate, bool, error) {
+	return r.publicationCandidateMode(tx, candidateID, lock, false)
+}
+
+// Build capture uses the same full persisted tuple/config/pair validation,
+// while permitting a leased staging/finalizing input before publication.
+func (r *knowledgeRepository) publicationCandidateMode(tx *gorm.DB, candidateID string, lock, allowBuilding bool) (nextcloudPublicationCandidate, bool, error) {
 	var result nextcloudPublicationCandidate
 	versionQuery := tx.Where("candidate_knowledge_id = ? AND state IN ?", candidateID,
 		[]string{"staging", "published"})
@@ -71,10 +77,10 @@ func (r *knowledgeRepository) publicationCandidate(
 	if err != nil {
 		return result, false, err
 	}
-	if candidate.ParseStatus != types.ParseStatusCompleted || candidate.EnableStatus != "enabled" {
+	if !allowBuilding && (candidate.ParseStatus != types.ParseStatusCompleted || candidate.EnableStatus != "enabled") {
 		return result, false, nil
 	}
-	if NextcloudTextChunkRequired(candidate.FileType) {
+	if !allowBuilding && NextcloudTextChunkRequired(candidate.FileType) {
 		hasText, err := nextcloudHasRetrievableTextChunk(tx, &candidate)
 		if err != nil {
 			return result, false, fmt.Errorf("read Nextcloud candidate text chunks: %w", err)

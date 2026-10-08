@@ -27,6 +27,10 @@ type OrdinaryRAGInputProofLookup interface {
 	ReadOrdinaryRAGInputLineage(context.Context, *gorm.DB, *types.Knowledge, *types.Chunk) (*types.SourceLineage, error)
 }
 
+type ControlledRAGInputProofLookup interface {
+	ReadControlledRAGInputLineage(context.Context, *gorm.DB, *types.Knowledge, *types.Chunk, *types.SourceLineage) (*types.SourceLineage, error)
+}
+
 type RAGChunkSnapshotLookup = interfaces.RAGChunkSnapshotReader
 
 type RAGChunkSnapshotReader struct {
@@ -144,6 +148,24 @@ func (r *RAGChunkSnapshotReader) HydrateRAGChunkSnapshots(ctx context.Context, r
 					}
 				}
 				lineage := sourceLineage
+				if controlled && r.ordinary != nil {
+					proof, ok := r.ordinary.(ControlledRAGInputProofLookup)
+					if !ok {
+						lineage = types.UnknownSourceLineage()
+					} else {
+						var err error
+						lineage, err = proof.ReadControlledRAGInputLineage(ctx, tx, &knowledge, chunk, sourceLineage)
+						if err != nil {
+							return err
+						}
+						if lineage == nil {
+							lineage = types.UnknownSourceLineage()
+						}
+						if err := lineage.Validate(); err != nil {
+							return err
+						}
+					}
+				}
 				if !controlled {
 					lineage = types.UnknownSourceLineage()
 					if r.ordinary != nil {

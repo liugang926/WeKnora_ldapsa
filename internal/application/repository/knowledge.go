@@ -339,6 +339,49 @@ func (r *knowledgeRepository) UpdateKnowledge(ctx context.Context, knowledge *ty
 	if knowledge.CustomMetadata == nil {
 		omit = append(append([]string{}, omitFieldsOnUpdate...), "custom_metadata")
 	}
+	if _, guarded := ctx.Value(knowledgeBuildInputKey{}).(knowledgeBuildInputContext); guarded {
+		err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			if err := ValidateNextcloudBuildWrite(ctx, tx, knowledge.TenantID, knowledge.KnowledgeBaseID, knowledge.ID); err != nil {
+				return err
+			}
+			admission, err := validateKnowledgeInputWrite(ctx, tx, knowledge.TenantID, knowledge.KnowledgeBaseID, knowledge.ID)
+			if err != nil {
+				return err
+			}
+			digest, err := knowledgeRootDigest(knowledge)
+			if err != nil {
+				return err
+			}
+			if admission == nil || digest != admission.RootDigest {
+				return ErrKnowledgeInputChanged
+			}
+			if knowledge.Channel == types.ConnectorTypeNextcloud {
+				if err := r.preserveNextcloudSourceFields(tx, knowledge); err != nil {
+					return err
+				}
+			}
+			if err := tx.Omit(omit...).Save(knowledge).Error; err != nil {
+				return err
+			}
+			if knowledge.Channel == types.ConnectorTypeNextcloud {
+				if err := r.enforceNextcloudVersionMetadata(tx, knowledge); err != nil {
+					return err
+				}
+			}
+			var actual types.Knowledge
+			if err := tx.Where("id = ? AND tenant_id = ? AND knowledge_base_id = ?", knowledge.ID, knowledge.TenantID, knowledge.KnowledgeBaseID).Take(&actual).Error; err != nil {
+				return err
+			}
+			return sealKnowledgeInputMaterial(tx, admission.AdmissionID, &actual, nil)
+		})
+		if err != nil {
+			return err
+		}
+		if knowledge.Channel == types.ConnectorTypeNextcloud && knowledge.ParseStatus == types.ParseStatusCompleted {
+			_, err = r.PublishNextcloudVersion(ctx, knowledge.ID)
+		}
+		return err
+	}
 	if knowledge.Channel != types.ConnectorTypeNextcloud {
 		return r.db.WithContext(ctx).Omit(omit...).Save(knowledge).Error
 	}
