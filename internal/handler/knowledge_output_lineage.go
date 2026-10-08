@@ -1,7 +1,9 @@
 package handler
 
 import (
+	"context"
 	stderrors "errors"
+	"io"
 
 	"github.com/Tencent/WeKnora/internal/application/access"
 	"github.com/Tencent/WeKnora/internal/application/repository"
@@ -10,6 +12,18 @@ import (
 	"github.com/Tencent/WeKnora/internal/types"
 	"gorm.io/gorm"
 )
+
+func bindKnowledgeOutputFile(ctx context.Context, knowledge *types.Knowledge, file io.ReadCloser) (io.ReadCloser, error) {
+	guard := service.KnowledgeOutputGuardFromContext(ctx)
+	if guard == nil {
+		return file, nil
+	}
+	snapshot, err := guard.BindFile(ctx, knowledge, file)
+	if err != nil {
+		return nil, knowledgeOutputHTTPError(err)
+	}
+	return snapshot, nil
+}
 
 // ConfigureKnowledgeHandlerOutputLineage attaches mandatory original material
 // checks to the production composition. It must be invoked with the actual

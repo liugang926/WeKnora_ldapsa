@@ -32,7 +32,7 @@ func (s *KnowledgeInputProvenanceStore) RecheckKnowledgeOutputInputs(ctx context
 	}
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		for _, proof := range proofs {
-			if proof == nil || proof.BodyDigest == "" || proof.SourceLineage.RequireComplete() != nil {
+			if proof == nil || proof.Projection != "" || proof.BodyDigest == "" || proof.SourceLineage.RequireComplete() != nil || len(proof.ChunkIDs) > 4096 {
 				return types.ErrSourceLineageUnknown
 			}
 			var k types.Knowledge

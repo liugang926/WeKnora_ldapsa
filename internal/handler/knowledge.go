@@ -1767,6 +1767,13 @@ func (h *KnowledgeHandler) DownloadKnowledgeFile(c *gin.Context) {
 	effCtx = leases.Context(effCtx)
 
 	file, filename, err := h.kgService.GetKnowledgeFile(effCtx, id)
+	if err == nil {
+		file, err = bindKnowledgeOutputFile(effCtx, knowledge, file)
+		if err != nil {
+			_ = c.Error(err)
+			return
+		}
+	}
 	if err != nil {
 		if leaseErr := leases.Err(); leaseErr != nil {
 			_ = c.Error(nextcloudHTTPLeaseError(leaseErr))
@@ -1849,6 +1856,13 @@ func (h *KnowledgeHandler) PreviewKnowledgeFile(c *gin.Context) {
 	effCtx = leases.Context(effCtx)
 
 	file, filename, err := h.kgService.GetKnowledgeFile(effCtx, id)
+	if err == nil {
+		file, err = bindKnowledgeOutputFile(effCtx, knowledge, file)
+		if err != nil {
+			_ = c.Error(err)
+			return
+		}
+	}
 	if err != nil {
 		if leaseErr := leases.Err(); leaseErr != nil {
 			_ = c.Error(nextcloudHTTPLeaseError(leaseErr))

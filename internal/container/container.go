@@ -507,6 +507,13 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	}))
 	must(container.Invoke(service.ConfigureKnowledgeInputProvenance))
 	must(container.Invoke(service.ConfigureMessageSourceLineage))
+	must(container.Invoke(func(store *repository.KnowledgeInputProvenanceStore, messages interfaces.MessageService) {
+		verifier, ok := messages.(interfaces.MessageSourceLineageVerifier)
+		if !ok {
+			panic("message service lacks original source lineage verification")
+		}
+		repository.ConfigureKnowledgeInputHistoryVerifier(store, verifier)
+	}))
 	must(container.Invoke(service.ConfigureKnowledgeBaseRAGChunkHydration))
 	must(container.Invoke(service.ConfigureAgentRAGChunkHydration))
 	must(container.Invoke(chatpipeline.NewPluginSearch))

@@ -16,7 +16,7 @@ import (
 // returns only actual rows still bound to that original immutable admission.
 // Nothing in the first lookup is published or used as model input.
 func (s *KnowledgeInputProvenanceStore) CaptureKnowledgeOutputInputs(ctx context.Context, request types.KnowledgeBuildInputCaptureRequest) (*types.KnowledgeBuildInputSnapshot, error) {
-	if ctx == nil || s == nil || s.db == nil || request.Expected != nil ||
+	if ctx == nil || s == nil || s.db == nil || request.Expected != nil || request.Projection != "" ||
 		request.TenantID == 0 || request.TenantID > math.MaxInt64 ||
 		request.KnowledgeBaseID == "" || request.KnowledgeID == "" {
 		return nil, types.ErrSourceLineageUnknown

@@ -2,10 +2,12 @@ package handler
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -13,16 +15,97 @@ import (
 	"github.com/Tencent/WeKnora/internal/application/repository"
 	"github.com/Tencent/WeKnora/internal/application/service"
 	"github.com/Tencent/WeKnora/internal/types"
+	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
 
-type outputHTTPKB struct{ row *types.KnowledgeBase }
+type outputHTTPKB struct {
+	interfaces.KnowledgeBaseService
+	row *types.KnowledgeBase
+}
 
 func (k outputHTTPKB) GetKnowledgeBaseByIDOnly(context.Context, string) (*types.KnowledgeBase, error) {
 	return k.row, nil
+}
+
+type outputHTTPFileReader struct {
+	reader *strings.Reader
+	closed bool
+	onRead func()
+}
+
+func (f *outputHTTPFileReader) Read(p []byte) (int, error) {
+	if f.onRead != nil {
+		f.onRead()
+		f.onRead = nil
+	}
+	return f.reader.Read(p)
+}
+func (f *outputHTTPFileReader) Close() error { f.closed = true; return nil }
+
+type outputHTTPFiles struct {
+	publicationHandlerKnowledge
+	input *outputHTTPFileReader
+}
+
+func (f outputHTTPFiles) GetKnowledgeFile(context.Context, string) (io.ReadCloser, string, error) {
+	return f.input, "authored.md", nil
+}
+
+func TestKnowledgeOutputFileActualHTTPBytesAndRevocation(t *testing.T) {
+	for _, route := range []string{"download", "preview"} {
+		for _, change := range []string{"exact_artifact", "range", "different_bytes", "withdraw_during_read"} {
+			t.Run(route+"/"+change, func(t *testing.T) {
+				temp := t.TempDir()
+				t.Setenv("TMPDIR", temp)
+				h, _, row, groups := outputHTTPFixture(t, true)
+				body := "owned-output-body"
+				if change == "different_bytes" {
+					body = "unaccounted-file-bytes"
+				}
+				input := &outputHTTPFileReader{reader: strings.NewReader(body)}
+				if change == "withdraw_during_read" {
+					input.onRead = func() { groups.allowed = false }
+				}
+				h.kgService = outputHTTPFiles{publicationHandlerKnowledge: publicationHandlerKnowledge{row: row}, input: input}
+				r := documentHandlerRouter()
+				r.Use(func(c *gin.Context) {
+					c.Request = c.Request.WithContext(context.WithValue(c.Request.Context(), types.PrincipalContextKey, types.Principal{Type: types.PrincipalWebUser, ID: "user"}))
+					c.Next()
+				})
+				if route == "download" {
+					r.GET("/knowledge/:id/file", h.DownloadKnowledgeFile)
+				} else {
+					r.GET("/knowledge/:id/file", h.PreviewKnowledgeFile)
+				}
+				request := httptest.NewRequest(http.MethodGet, "/knowledge/document/file", nil)
+				if change == "range" {
+					request.Header.Set("Range", "bytes=0-4")
+				}
+				w := httptest.NewRecorder()
+				r.ServeHTTP(w, request)
+				switch change {
+				case "exact_artifact":
+					require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+					require.Equal(t, "owned-output-body", w.Body.String())
+				case "range":
+					require.Equal(t, http.StatusPartialContent, w.Code, w.Body.String())
+					require.Equal(t, "owned", w.Body.String())
+				default:
+					require.Equal(t, http.StatusForbidden, w.Code, w.Body.String())
+					require.NotContains(t, w.Body.String(), "owned-output-body")
+					require.NotContains(t, w.Body.String(), "unaccounted-file-bytes")
+				}
+				require.True(t, input.closed)
+				leftover, err := filepath.Glob(filepath.Join(temp, "weknora-output-*"))
+				require.NoError(t, err)
+				require.Empty(t, leftover)
+			})
+		}
+	}
 }
 
 type outputHTTPGroups struct {
@@ -53,11 +136,17 @@ func outputHTTPFixture(t *testing.T, admitted bool) (*KnowledgeHandler, *gorm.DB
 	script, err := os.ReadFile("../../migrations/sqlite/000053_knowledge_input_provenance.up.sql")
 	require.NoError(t, err)
 	require.NoError(t, db.Exec(string(script)).Error)
+	db.Config.DisableForeignKeyConstraintWhenMigrating = true
+	require.NoError(t, db.AutoMigrate(&types.Session{}, &types.Message{}))
+	db.Config.DisableForeignKeyConstraintWhenMigrating = false
+	script, err = os.ReadFile("../../migrations/sqlite/000054_knowledge_configuration_history_inputs.up.sql")
+	require.NoError(t, err)
+	require.NoError(t, db.Exec(string(script)).Error)
 	kb := &types.KnowledgeBase{ID: "kb", TenantID: 7, Name: "human KB", Type: types.KnowledgeBaseTypeDocument}
-	require.NoError(t, db.Create(kb).Error)
 	k := &types.Knowledge{ID: "document", TenantID: 7, KnowledgeBaseID: kb.ID, Type: types.KnowledgeTypeManual,
 		Channel: "web", Source: "manual", Title: "owned-output-title", Metadata: types.JSON(`{"manual":{"content":"owned-output-body","version":1}}`), CustomMetadata: types.JSON(`{}`)}
 	store := repository.NewKnowledgeInputProvenanceStore(db)
+	require.NoError(t, store.CreateKnowledgeBaseWithInput(repository.WithIndependentKnowledgeInput(context.Background()), kb))
 	if admitted {
 		_, err = store.CreateKnowledgeWithInput(repository.WithIndependentKnowledgeInput(context.Background()), k, "owned-output-body")
 	} else {
@@ -66,8 +155,8 @@ func outputHTTPFixture(t *testing.T, admitted bool) (*KnowledgeHandler, *gorm.DB
 	require.NoError(t, err)
 	require.NoError(t, db.Where("id = ?", k.ID).Take(k).Error)
 	groups := &outputHTTPGroups{allowed: true}
-	guard := access.NewNextcloudSourceLineageGuard(nil, outputHTTPKB{kb}, nil, nil, groups, nil)
-	h := &KnowledgeHandler{kgService: publicationHandlerKnowledge{row: k}}
+	guard := access.NewNextcloudSourceLineageGuard(nil, outputHTTPKB{row: kb}, nil, nil, groups, nil)
+	h := &KnowledgeHandler{kgService: publicationHandlerKnowledge{row: k}, kbService: outputHTTPKB{row: kb}}
 	ConfigureKnowledgeHandlerOutputLineage(h, service.NewKnowledgeOutputAuthorizer(store, guard))
 	return h, db, k, groups
 }

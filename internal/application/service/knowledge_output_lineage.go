@@ -100,7 +100,7 @@ func (a *KnowledgeOutputAuthorizer) Begin(ctx context.Context, rows []*types.Kno
 			return nil, err
 		}
 		if actual == nil || actual.Proof == nil || actual.Proof.SourceLineage.RequireComplete() != nil ||
-			actual.Proof.Version != 1 || actual.Proof.TenantID != row.TenantID || actual.Proof.KnowledgeBaseID != row.KnowledgeBaseID ||
+			actual.Proof.Version != 1 || actual.Proof.Projection != "" || actual.Proof.TenantID != row.TenantID || actual.Proof.KnowledgeBaseID != row.KnowledgeBaseID ||
 			actual.Proof.KnowledgeID != row.ID || actual.Proof.AdmissionID == "" || actual.Proof.BuildGeneration == 0 || actual.Proof.BodyDigest == "" {
 			return nil, types.ErrSourceLineageUnknown
 		}
