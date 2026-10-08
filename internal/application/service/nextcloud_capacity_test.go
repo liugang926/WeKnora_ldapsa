@@ -23,6 +23,13 @@ type capacityMeasuredFile struct {
 	measurement types.StorageCapacity
 }
 
+func (f capacityMeasuredFile) SupportsLocalCapacityIntents() bool {
+	p, ok := f.FileService.(interfaces.LocalCapacityIntentProvider)
+	return ok && p.SupportsLocalCapacityIntents()
+}
+func (f capacityMeasuredFile) InspectCapacityIntent(ctx context.Context, o types.CapacityLocalObject, callback func(types.CapacityLocalObject) error) error {
+	return f.FileService.(interfaces.LocalCapacityIntentProvider).InspectCapacityIntent(ctx, o, callback)
+}
 func (f capacityMeasuredFile) MeasureStorageCapacity(context.Context) (types.StorageCapacity, error) {
 	return f.measurement, nil
 }
@@ -43,7 +50,11 @@ func (s *capacityIngestKnowledge) CreateKnowledgeFromFile(ctx context.Context, k
 	if requireErr != nil {
 		return nil, requireErr
 	}
-	_, err := s.fs.SaveFile(ctx, header, 7, row.ID)
+	path, err := s.fs.SaveFile(ctx, header, 7, row.ID)
+	if err == nil {
+		row.FilePath = path
+		err = s.db.Model(row).Update("file_path", path).Error
+	}
 	return row, err
 }
 func TestNextcloudCapacityActualIngestAndPausedNoSideEffects(t *testing.T) {
@@ -55,6 +66,9 @@ func TestNextcloudCapacityActualIngestAndPausedNoSideEffects(t *testing.T) {
 			sql, err := os.ReadFile("../../../migrations/sqlite/000065_nextcloud_capacity_admission.up.sql")
 			require.NoError(t, err)
 			require.NoError(t, db.Exec(string(sql)).Error)
+			intentSQL, intentErr := os.ReadFile("../../../migrations/sqlite/000067_nextcloud_capacity_write_intents.up.sql")
+			require.NoError(t, intentErr)
+			require.NoError(t, db.Exec(string(intentSQL)).Error)
 			backend := "backend"
 			kb := &types.KnowledgeBase{ID: "kb", TenantID: 7, StorageBackendID: &backend}
 			require.NoError(t, db.Create(kb).Error)
@@ -66,6 +80,9 @@ func TestNextcloudCapacityActualIngestAndPausedNoSideEffects(t *testing.T) {
 			knowledge := &capacityIngestKnowledge{repo: version, db: db, fs: fs}
 			source := &DataSourceService{knowledgeService: knowledge, kbService: &processSyncKBService{kb: kb}}
 			measure := types.StorageCapacity{ScopeID: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", TotalBytes: 100000, AvailableBytes: 90000, MeasuredAt: time.Now().UTC()}
+			actualMeasure, actualErr := fs.(interfaces.StorageCapacityProvider).MeasureStorageCapacity(context.Background())
+			require.NoError(t, actualErr)
+			measure.ScopeID = actualMeasure.ScopeID
 			if mode == "paused" {
 				measure.AvailableBytes = 9000
 			}

@@ -1,0 +1,73 @@
+{
+  "acceptance_boundary": "production Nextcloud ingestion entry + real local SaveFile/resource catalog and owner CLI; queue/parser/source-version adapters controlled; derived/index/bucket capacity and actual physical GC reader/build integration remain required",
+  "cleanup_verified": true,
+  "crash": "actual subprocess os.Exit(77) without End cleanup, SQLite and PostgreSQL",
+  "go_container_id": "2e4bc7cdbd05d390255b645e5861df41a2402548d80cb169a7e2c10f3a5df5a1",
+  "go_image": "weknora-go-test@sha256:5a74e8b5137496d3e22c72c01d862c4cbb1fe6ce476ddf5616fd9a807d6ae9ac",
+  "host_ports": false,
+  "internal_network": true,
+  "limits": {
+    "go": "1 CPU/2 GiB",
+    "postgres": "1 CPU/512 MiB/tmpfs"
+  },
+  "network_id": "1ce36a1fe6c0e3ddf45d1079f7e5a7b8fe51961b6954e8a981d2c25a3f1e1ccb",
+  "no_physical_deletion": true,
+  "owned_previous_attempts": [
+    {
+      "cleanup_verified": true,
+      "go_container_id": "a134d3ce6156b3826cb940a19854b4fd6549f0ca12f7c81afe826e8909d34756",
+      "pg_container_id": "690aea16cb08bb4f3c4723db79d181abda6716ec76bbc2e54e7b06aeed206e40",
+      "result": "fixture setup refused PostgreSQL JSON Valuer under test simple protocol; corrected test to production extended protocol"
+    },
+    {
+      "cleanup_verified": true,
+      "go_container_id": "37b8ecff789dff0e75b05bbc12f9d0627c4b857a90f51a2286fd3049e22fce38",
+      "pg_container_id": "70a0e5bb9d1748b2a451026fc44b477eb0f16708b88cd14991c2b6a4cc3de4eb",
+      "result": "PASS before final concurrent-writer addition"
+    }
+  ],
+  "parent": "a7680b69f2a65859eb256b25cdb0f9c28cd89208",
+  "passed_capacity_tests": [
+    "TestCapacityIntentActualSQLiteIngestion",
+    "TestPostgresCapacityIntentActualIngestion",
+    "TestCapacityIntentWriterFenceAndUnknown",
+    "TestCapacityIntentAbsentLinkedRootSharedAndScope",
+    "TestCapacityIntentCannotAdoptExistingLegacyObject",
+    "TestCapacityIntentConcurrentActualWritersSQLite",
+    "TestPostgresCapacityIntentConcurrentActualWriters",
+    "TestCapacityIntentActualSQLiteProcessCrash",
+    "TestPostgresCapacityIntentActualProcessCrash",
+    "TestNextcloudCapacityActualIngestAndPausedNoSideEffects",
+    "TestPostgresNextcloudCapacityConcurrentPhysicalAndQuota",
+    "TestNextcloudCapacityWatermarkQuotaAndCurrentVersionsPreserved",
+    "TestNextcloudCapacityExpiredReservationsRemainCharged",
+    "TestNextcloudCapacityConcurrentReservationsAndObjectReceipt"
+  ],
+  "pg_container_id": "7f2d3f5cd8b81c657ffa03bccac8035527f734442201b5a77cef6e5be9467f21",
+  "physical_source_files": "real local filesystem files, full uploads and partial files retained by original intent",
+  "postgres_image": "postgres@sha256:20edbde7749f822887a1a022ad526fde0a47d6b2be9a8364433605cf65099416",
+  "reconciliation": "actual owner-only capacity-reconcile CLI after the crash",
+  "remaining_nonce_schemas": 0,
+  "revision_provenance": "The owned probe ran against the recorded parent plus this implementation delta; final gofmt made formatting-only changes.",
+  "shared_target_modified": false,
+  "status": "PASS",
+  "tests": {
+    "actual_owner_cli_after_subprocess_crash_sqlite_and_pg": true,
+    "before_io_failure_cancel_and_retry": true,
+    "cross_root_backend_kb_denied": true,
+    "exact_absence_no_owner_fenced_release": true,
+    "expired_current_writer_cannot_reconcile": true,
+    "fresh_upgrade_sqlite_schema67": true,
+    "late_writer_and_catalog_denied": true,
+    "legacy_existing_file_and_protocol_zero_not_adopted": true,
+    "partial_file_actual_bytes_orphan_kb_quota_and_status": true,
+    "postgres_actual_ingestion": true,
+    "register_fail_original_retained": true,
+    "same_token_two_actual_writers": true,
+    "shared_resource_owners_preserved": true,
+    "sqlite_actual_ingestion": true,
+    "stage_fail_original_retained_duplicate_retry_no_new_charge": true,
+    "symlink_and_knowledge_path_escape_denied": true
+  },
+  "tests_log_sha256": "d8b1b742cc648f6ab16ba226516177225af8dec351843ad078e4e31cc3e53504"
+}

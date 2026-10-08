@@ -21,6 +21,9 @@ func capacityFixture(t *testing.T) (*NextcloudCapacityStore, *gorm.DB) {
 	script, err := os.ReadFile("../../../migrations/sqlite/000065_nextcloud_capacity_admission.up.sql")
 	require.NoError(t, err)
 	require.NoError(t, db.Exec(string(script)).Error)
+	intentSQL, intentErr := os.ReadFile("../../../migrations/sqlite/000067_nextcloud_capacity_write_intents.up.sql")
+	require.NoError(t, intentErr)
+	require.NoError(t, db.Exec(string(intentSQL)).Error)
 	backend := "backend"
 	require.NoError(t, db.Create(&types.KnowledgeBase{ID: "kb", TenantID: 7, StorageBackendID: &backend}).Error)
 	return NewNextcloudCapacityStore(db), db

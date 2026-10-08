@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Tencent/WeKnora/internal/logger"
+	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	secutils "github.com/Tencent/WeKnora/internal/utils"
 )
@@ -51,6 +52,9 @@ func NewLocalFileService(baseDir, externalURL string) interfaces.FileService {
 func (s *localFileService) SaveFile(ctx context.Context,
 	file *multipart.FileHeader, tenantID uint64, knowledgeID string,
 ) (string, error) {
+	if types.CapacityWriteSessionFromContext(ctx) != nil {
+		return s.saveCapacityFile(ctx, file, tenantID, knowledgeID)
+	}
 	logger.Info(ctx, "Starting to save file locally")
 	logger.Infof(ctx, "File information: name=%s, size=%d, tenant ID=%d, knowledge ID=%s",
 		file.Filename, file.Size, tenantID, knowledgeID)

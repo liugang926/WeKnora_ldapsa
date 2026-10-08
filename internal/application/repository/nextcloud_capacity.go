@@ -51,6 +51,7 @@ type NextcloudCapacityReservation struct {
 	LeaseUntilMS    int64
 	CreatedAtMS     int64
 	CommittedAtMS   int64
+	ProtocolVersion int
 }
 
 func (NextcloudCapacityReservation) TableName() string { return "nextcloud_capacity_reservations" }
@@ -89,6 +90,12 @@ func threshold(total int64, percent int) int64 {
 // Reserve serializes disk-wide and KB quota admissions. A measurement failure
 // closes new AI work, without deleting any active or retained object.
 func (s *NextcloudCapacityStore) Reserve(ctx context.Context, tenant uint64, kb, backend, key string, bytes int64, m types.StorageCapacity) (*NextcloudCapacityReservation, error) {
+	return s.reserve(ctx, tenant, kb, backend, key, bytes, m, 0)
+}
+func (s *NextcloudCapacityStore) ReserveDurable(ctx context.Context, tenant uint64, kb, backend, key string, bytes int64, m types.StorageCapacity) (*NextcloudCapacityReservation, error) {
+	return s.reserve(ctx, tenant, kb, backend, key, bytes, m, 1)
+}
+func (s *NextcloudCapacityStore) reserve(ctx context.Context, tenant uint64, kb, backend, key string, bytes int64, m types.StorageCapacity, protocol int) (*NextcloudCapacityReservation, error) {
 	if s == nil || s.db == nil || tenant == 0 || kb == "" || backend == "" || key == "" || len(key) > 512 || bytes <= 0 {
 		return nil, ErrNextcloudCapacityUnavailable
 	}
@@ -131,7 +138,7 @@ func (s *NextcloudCapacityStore) Reserve(ctx context.Context, tenant uint64, kb,
 		err = tx.Where("tenant_id=? AND knowledge_base_id=? AND request_key=?", tenant, kb, key).Take(&existing).Error
 		duplicate := err == nil
 		if duplicate {
-			if existing.ScopeID != m.ScopeID || existing.BackendID != backend || existing.Bytes != bytes || existing.State != "pending" || existing.LeaseUntilMS <= nowMS {
+			if existing.ProtocolVersion != protocol || existing.ScopeID != m.ScopeID || existing.BackendID != backend || existing.Bytes != bytes || existing.State != "pending" || existing.LeaseUntilMS <= nowMS {
 				return ErrNextcloudCapacityUnavailable
 			}
 		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
@@ -171,6 +178,14 @@ func (s *NextcloudCapacityStore) Reserve(ctx context.Context, tenant uint64, kb,
 		if err := tx.Raw(`SELECT COALESCE(SUM(r.size),0) FROM resources r WHERE r.tenant_id=? AND r.storage_backend_id=? AND r.state<>'deleted' AND EXISTS (SELECT 1 FROM resource_bindings b JOIN knowledges k ON k.id=b.owner_id AND k.tenant_id=r.tenant_id WHERE b.resource_id=r.id AND b.owner_type='knowledge' AND k.knowledge_base_id=?)`, tenant, backend, kb).Scan(&logical).Error; err != nil {
 			return err
 		}
+		var orphan int64
+		if err := tx.Raw("SELECT COALESCE(SUM(i.orphan_charge_bytes),0) FROM nextcloud_capacity_write_intents i JOIN nextcloud_capacity_reservations r ON r.token=i.token WHERE r.tenant_id=? AND r.knowledge_base_id=? AND i.state='charged'", tenant, kb).Scan(&orphan).Error; err != nil {
+			return err
+		}
+		logical, err = addBytes(logical, orphan)
+		if err != nil {
+			return err
+		}
 		retained, err := addBytes(logical, kbPending)
 		if err != nil {
 			return err
@@ -189,7 +204,7 @@ func (s *NextcloudCapacityStore) Reserve(ctx context.Context, tenant uint64, kb,
 			result = &existing
 			return nil
 		}
-		reservation := NextcloudCapacityReservation{Token: uuid.NewString(), ScopeID: m.ScopeID, TenantID: tenant, KnowledgeBaseID: kb, BackendID: backend, RequestKey: key, Bytes: bytes, State: "pending", LeaseUntilMS: now.Add(15 * time.Minute).UnixMilli(), CreatedAtMS: nowMS}
+		reservation := NextcloudCapacityReservation{Token: uuid.NewString(), ScopeID: m.ScopeID, TenantID: tenant, KnowledgeBaseID: kb, BackendID: backend, RequestKey: key, Bytes: bytes, State: "pending", LeaseUntilMS: now.Add(15 * time.Minute).UnixMilli(), CreatedAtMS: nowMS, ProtocolVersion: protocol}
 		if err := tx.Create(&reservation).Error; err != nil {
 			return err
 		}
@@ -200,6 +215,9 @@ func (s *NextcloudCapacityStore) Reserve(ctx context.Context, tenant uint64, kb,
 }
 
 func (s *NextcloudCapacityStore) Finish(ctx context.Context, r *NextcloudCapacityReservation, knowledge string, success bool) error {
+	if r != nil && r.ProtocolVersion == 1 {
+		return s.FinishDurable(ctx, r, knowledge, success)
+	}
 	if r == nil || r.Token == "" {
 		return ErrNextcloudCapacityUnavailable
 	}
@@ -266,6 +284,7 @@ type NextcloudCapacityStatus struct {
 	PendingBytes         int64                   `json:"reserved_bytes"`
 	State                string                  `json:"state"`
 	LogicalRetainedBytes int64                   `json:"logical_retained_bytes"`
+	OrphanChargeBytes    int64                   `json:"orphan_charge_bytes"`
 }
 
 func (s *NextcloudCapacityStore) Status(ctx context.Context, tenant uint64, kb, backend string, m types.StorageCapacity) (NextcloudCapacityStatus, error) {
@@ -295,6 +314,13 @@ func (s *NextcloudCapacityStore) Status(ctx context.Context, tenant uint64, kb, 
 		if err := tx.Raw(`SELECT COALESCE(SUM(r.size),0) FROM resources r WHERE r.tenant_id=? AND r.storage_backend_id=? AND r.state<>'deleted' AND EXISTS (SELECT 1 FROM resource_bindings b JOIN knowledges k ON k.id=b.owner_id AND k.tenant_id=r.tenant_id WHERE b.resource_id=r.id AND b.owner_type='knowledge' AND k.knowledge_base_id=?)`, tenant, backend, kb).Scan(&result.LogicalRetainedBytes).Error; err != nil {
 			return err
 		}
+		if err := tx.Raw("SELECT COALESCE(SUM(i.orphan_charge_bytes),0) FROM nextcloud_capacity_write_intents i JOIN nextcloud_capacity_reservations r ON r.token=i.token WHERE r.tenant_id=? AND r.knowledge_base_id=? AND i.state='charged'", tenant, kb).Scan(&result.OrphanChargeBytes).Error; err != nil {
+			return err
+		}
+		result.LogicalRetainedBytes, err = addBytes(result.LogicalRetainedBytes, result.OrphanChargeBytes)
+		if err != nil {
+			return err
+		}
 		projected, err := addBytes(m.TotalBytes-m.AvailableBytes, result.PendingBytes)
 		if err != nil {
 			return err
@@ -304,6 +330,13 @@ func (s *NextcloudCapacityStore) Status(ctx context.Context, tenant uint64, kb, 
 			result.State = "paused"
 		} else if projected >= threshold(m.TotalBytes, result.Policy.WarningPercent) {
 			result.State = "warning"
+		}
+		if quota := result.Policy.RetentionQuotaBytes; quota > 0 {
+			if result.LogicalRetainedBytes >= quota {
+				result.State = "paused"
+			} else if result.State == "normal" && result.LogicalRetainedBytes >= threshold(quota, result.Policy.WarningPercent) {
+				result.State = "warning"
+			}
 		}
 		return nil
 	})

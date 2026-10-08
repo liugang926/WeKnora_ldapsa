@@ -50,18 +50,21 @@ var versionedSQLiteTables = []string{
 	"nextcloud_pair_rebuild_history",
 	"nextcloud_source_revisions",
 	"nextcloud_source_tombstones",
+	"nextcloud_capacity_write_intents",
 }
 
 // versionedSQLiteColumns maps each existing table to the columns that the
 // versioned migrations add and the SQLite baseline was missing.
 var versionedSQLiteColumns = map[string][]string{
-	"memory_subjects": {"extraction_state"},                                                                   // 000094
-	"memory_items":    {"replaces_id"},                                                                        // 000094
-	"tenants":         {"api_principal_config"},                                                               // 000064
-	"users":           {"is_system_admin"},                                                                    // 000053
-	"knowledges":      {"pending_subtasks_count", "profile"},                                                  // 000056, 000101
-	"knowledge_bases": {"profile_config", "generated_profile"},                                                // 000101
-	"messages":        {"attachments", "usage", "sandbox_checkpoint", "context_checkpoint", "source_lineage"}, // 000034/085/097/105/132
+	"nextcloud_capacity_reservations":  {"protocol_version"},
+	"nextcloud_capacity_write_intents": {"physical_path", "object_identity", "orphan_charge_bytes"},
+	"memory_subjects":                  {"extraction_state"},                                                                   // 000094
+	"memory_items":                     {"replaces_id"},                                                                        // 000094
+	"tenants":                          {"api_principal_config"},                                                               // 000064
+	"users":                            {"is_system_admin"},                                                                    // 000053
+	"knowledges":                       {"pending_subtasks_count", "profile"},                                                  // 000056, 000101
+	"knowledge_bases":                  {"profile_config", "generated_profile"},                                                // 000101
+	"messages":                         {"attachments", "usage", "sandbox_checkpoint", "context_checkpoint", "source_lineage"}, // 000034/085/097/105/132
 	"sessions": {
 		"title_source_lineage", "description_source_lineage", "title_revision", // PostgreSQL133/SQLite52
 		"parent_session_id", "forked_from_message_id", "fork_bootstrap", // 000097
@@ -77,7 +80,7 @@ var versionedSQLiteColumns = map[string][]string{
 	"sync_logs":             {"recovery_version", "recovery_trigger", "queue_task_id", "worker_started_at", "worker_active", "worker_attempt_token"}, // SQLite 000050 / PostgreSQL 000131
 }
 
-const expectedSQLiteMigrationVersion = 65
+const expectedSQLiteMigrationVersion = 67
 
 func TestSQLiteNextcloudRevisionUpgradeFrom43PreservesUnknownHistory(t *testing.T) {
 	repoRoot := sqliteRepoRoot(t)

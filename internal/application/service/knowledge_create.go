@@ -17,6 +17,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/tracing/langfuse"
 	"github.com/Tencent/WeKnora/internal/types"
+	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	secutils "github.com/Tencent/WeKnora/internal/utils"
 	"github.com/google/uuid"
 	"github.com/hibiken/asynq"
@@ -201,6 +202,12 @@ func (s *knowledgeService) CreateKnowledgeFromFile(ctx context.Context,
 	if markedNextcloud {
 		provenance = types.ResourceProvenanceNextcloud
 	}
+	if types.CapacityWriteSessionFromContext(ctx) != nil {
+		provider, ok := fileSvc.(interfaces.LocalCapacityIntentProvider)
+		if !ok || !provider.SupportsLocalCapacityIntents() {
+			return nil, repository.ErrNextcloudCapacityUnavailable
+		}
+	}
 	filePath, err := fileSvc.SaveFile(types.WithResourceProvenance(ctx, provenance), file, knowledge.TenantID, knowledge.ID)
 	if err != nil {
 		logger.Errorf(ctx, "Failed to save file, knowledge ID: %s, error: %v", knowledge.ID, err)
@@ -218,8 +225,10 @@ func (s *knowledgeService) CreateKnowledgeFromFile(ctx context.Context,
 	ctx, createErr = s.createAdmittedKnowledge(ctx, knowledge, artifact)
 	if err := createErr; err != nil {
 		logger.Errorf(ctx, "Failed to create knowledge record, ID: %s, error: %v", knowledge.ID, err)
-		if deleteErr := fileSvc.DeleteFile(ctx, filePath); deleteErr != nil {
-			logger.Errorf(ctx, "Failed to delete saved file after knowledge creation failed, path: %s, error: %v", filePath, deleteErr)
+		if types.CapacityWriteSessionFromContext(ctx) == nil {
+			if deleteErr := fileSvc.DeleteFile(ctx, filePath); deleteErr != nil {
+				logger.Errorf(ctx, "Failed to delete saved file after knowledge creation failed, path: %s, error: %v", filePath, deleteErr)
+			}
 		}
 		return nil, err
 	}

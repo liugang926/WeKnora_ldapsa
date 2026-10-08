@@ -2122,6 +2122,8 @@ func (s *DataSourceService) ingestNextcloudItem(
 	if capacityErr != nil {
 		return false, capacityErr
 	}
+	ctx = s.capacityAdmission.WriteContext(ctx, reservation)
+	defer s.capacityAdmission.End(ctx, reservation, capacityKB)
 	if err := versions.AdmitNextcloudCandidateRetry(ctx, ds.TenantID,
 		ds.KnowledgeBaseID, ds.ID, item.ExternalID, etag); err != nil {
 		return false, err

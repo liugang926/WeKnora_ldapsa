@@ -14,6 +14,9 @@ func TestPostgresNextcloudCapacityConcurrentPhysicalAndQuota(t *testing.T) {
 	sql, err := os.ReadFile("../../../migrations/versioned/000146_nextcloud_capacity_admission.up.sql")
 	require.NoError(t, err)
 	require.NoError(t, db.Exec(string(sql)).Error)
+	intentSQL, intentErr := os.ReadFile("../../../migrations/versioned/000148_nextcloud_capacity_write_intents.up.sql")
+	require.NoError(t, intentErr)
+	require.NoError(t, db.Exec(string(intentSQL)).Error)
 	backend := "backend"
 	require.NoError(t, db.Create(&types.KnowledgeBase{ID: "kb", TenantID: 7, StorageBackendID: &backend}).Error)
 	s := NewNextcloudCapacityStore(db)

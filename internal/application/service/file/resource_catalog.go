@@ -87,7 +87,9 @@ func (s *resourceCatalogFileService) register(
 		SourceProvenance: types.ResourceProvenanceFromContext(ctx),
 	})
 	if err != nil {
-		_ = s.inner.DeleteFile(ctx, physical)
+		if types.CapacityWriteSessionFromContext(ctx) == nil {
+			_ = s.inner.DeleteFile(ctx, physical)
+		}
 		return "", fmt.Errorf("register stored resource: %w", err)
 	}
 	return ref, nil
@@ -99,9 +101,18 @@ func (s *resourceCatalogFileService) SaveFile(
 	tenantID uint64,
 	knowledgeID string,
 ) (string, error) {
+	if types.CapacityWriteSessionFromContext(ctx) != nil && !supportsWrappedIntents(s.inner) {
+		return "", fmt.Errorf("durable capacity provider unavailable")
+	}
 	physical, err := s.inner.SaveFile(ctx, file, tenantID, knowledgeID)
 	if err != nil {
 		return "", err
+	}
+	session := types.CapacityWriteSessionFromContext(ctx)
+	if session != nil {
+		if err := session.ValidateCatalog(ctx, physical, knowledgeID); err != nil {
+			return "", err
+		}
 	}
 	ref, err := s.register(ctx, physical, tenantID, file.Filename, file.Size, false, "")
 	if err != nil {
@@ -109,8 +120,15 @@ func (s *resourceCatalogFileService) SaveFile(
 	}
 	if knowledgeID != "" {
 		if err := s.catalog.Bind(ctx, ref, types.ResourceOwnerKnowledge, knowledgeID, types.ResourceRelationSourceFile); err != nil {
-			_ = s.DeleteFile(ctx, ref)
+			if types.CapacityWriteSessionFromContext(ctx) == nil {
+				_ = s.DeleteFile(ctx, ref)
+			}
 			return "", fmt.Errorf("bind stored resource: %w", err)
+		}
+	}
+	if session != nil {
+		if err := session.Cataloged(ctx, physical, knowledgeID, ref); err != nil {
+			return "", err
 		}
 	}
 	return ref, nil
@@ -249,7 +267,9 @@ func (s *resourceCatalogFileService) CopyFile(
 	}
 	if knowledgeID != "" {
 		if err := s.catalog.Bind(ctx, ref, types.ResourceOwnerKnowledge, knowledgeID, types.ResourceRelationSourceFile); err != nil {
-			_ = s.DeleteFile(ctx, ref)
+			if types.CapacityWriteSessionFromContext(ctx) == nil {
+				_ = s.DeleteFile(ctx, ref)
+			}
 			return "", fmt.Errorf("bind copied resource: %w", err)
 		}
 	}
