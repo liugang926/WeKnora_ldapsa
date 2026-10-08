@@ -31,6 +31,7 @@ const kbTaskCleanupTimeout = 5 * time.Second
 
 // knowledgeBaseService implements the knowledge base service interface
 type knowledgeBaseService struct {
+	knowledgeInputWriter   interfaces.KnowledgeBaseInputWriter
 	repo                   interfaces.KnowledgeBaseRepository
 	kgRepo                 interfaces.KnowledgeRepository
 	chunkRepo              interfaces.ChunkRepository
@@ -183,7 +184,13 @@ func (s *knowledgeBaseService) CreateKnowledgeBase(ctx context.Context,
 
 	logger.Infof(ctx, "Creating knowledge base, ID: %s, tenant ID: %d, name: %s", kb.ID, kb.TenantID, kb.Name)
 
-	if err := s.repo.CreateKnowledgeBase(ctx, kb); err != nil {
+	var createErr error
+	if s.knowledgeInputWriter != nil {
+		createErr = s.knowledgeInputWriter.CreateKnowledgeBaseWithInput(ctx, kb)
+	} else {
+		createErr = s.repo.CreateKnowledgeBase(ctx, kb)
+	}
+	if err := createErr; err != nil {
 		logger.ErrorWithFields(ctx, err, map[string]interface{}{
 			"knowledge_base_id": kb.ID,
 			"tenant_id":         kb.TenantID,
@@ -589,7 +596,13 @@ func (s *knowledgeBaseService) UpdateKnowledgeBase(ctx context.Context,
 	kb.EnsureDefaults()
 
 	logger.Info(ctx, "Saving knowledge base update")
-	if err := s.repo.UpdateKnowledgeBase(ctx, kb); err != nil {
+	var updateErr error
+	if s.knowledgeInputWriter != nil {
+		updateErr = s.knowledgeInputWriter.UpdateKnowledgeBaseWithInput(ctx, kb)
+	} else {
+		updateErr = s.repo.UpdateKnowledgeBase(ctx, kb)
+	}
+	if err := updateErr; err != nil {
 		logger.ErrorWithFields(ctx, err, map[string]interface{}{
 			"knowledge_base_id": id,
 		})

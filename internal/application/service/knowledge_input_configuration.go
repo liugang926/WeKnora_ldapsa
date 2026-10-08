@@ -10,3 +10,9 @@ func ConfigureKnowledgeInputProvenance(knowledge interfaces.KnowledgeService, re
 		impl.knowledgeInputWriter = writer
 	}
 }
+
+func ConfigureKnowledgeBaseInputProvenance(base interfaces.KnowledgeBaseService, writer interfaces.KnowledgeBaseInputWriter) {
+	if impl, ok := base.(*knowledgeBaseService); ok {
+		impl.knowledgeInputWriter = writer
+	}
+}

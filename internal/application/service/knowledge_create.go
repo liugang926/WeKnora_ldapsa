@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Tencent/WeKnora/internal/application/repository"
 	werrors "github.com/Tencent/WeKnora/internal/errors"
 	"github.com/Tencent/WeKnora/internal/infrastructure/chunker"
 	"github.com/Tencent/WeKnora/internal/infrastructure/docparser"
@@ -209,7 +210,13 @@ func (s *knowledgeService) CreateKnowledgeFromFile(ctx context.Context,
 
 	// Save knowledge record to database after the file is safely stored.
 	logger.Info(ctx, "Saving knowledge record to database")
-	if err := s.repo.CreateKnowledge(ctx, knowledge); err != nil {
+	artifact, artifactErr := readOriginalUploadArtifact(file)
+	if artifactErr != nil {
+		return nil, artifactErr
+	}
+	var createErr error
+	ctx, createErr = s.createAdmittedKnowledge(ctx, knowledge, artifact)
+	if err := createErr; err != nil {
 		logger.Errorf(ctx, "Failed to create knowledge record, ID: %s, error: %v", knowledge.ID, err)
 		if deleteErr := fileSvc.DeleteFile(ctx, filePath); deleteErr != nil {
 			logger.Errorf(ctx, "Failed to delete saved file after knowledge creation failed, path: %s, error: %v", filePath, deleteErr)
@@ -234,6 +241,7 @@ func (s *knowledgeService) CreateKnowledgeFromFile(ctx context.Context,
 
 	lang := types.LanguageFromContextOrDefault(ctx)
 	taskPayload := types.DocumentProcessPayload{
+		OriginalInput:            repository.KnowledgeBuildInputProofFromContext(ctx),
 		TenantID:                 tenantID,
 		KnowledgeID:              knowledge.ID,
 		KnowledgeBaseID:          kbID,
@@ -825,7 +833,9 @@ func (s *knowledgeService) CreateKnowledgeFromManual(ctx context.Context,
 		}
 	}
 
-	if err := s.repo.CreateKnowledge(ctx, knowledge); err != nil {
+	var createErr error
+	ctx, createErr = s.createAdmittedKnowledge(ctx, knowledge, cleanContent)
+	if err := createErr; err != nil {
 		logger.Errorf(ctx, "Failed to create manual knowledge record: %v", err)
 		return nil, err
 	}
@@ -923,7 +933,9 @@ func (s *knowledgeService) createKnowledgeFromPassageInternal(ctx context.Contex
 
 	// Save knowledge record
 	logger.Infof(ctx, "Saving knowledge record to database, ID: %s", knowledge.ID)
-	if err := s.repo.CreateKnowledge(ctx, knowledge); err != nil {
+	var createErr error
+	ctx, createErr = s.createAdmittedKnowledge(ctx, knowledge, safePassages)
+	if err := createErr; err != nil {
 		logger.Errorf(ctx, "Failed to create knowledge record: %v", err)
 		return nil, err
 	}
@@ -953,6 +965,7 @@ func (s *knowledgeService) createKnowledgeFromPassageInternal(ctx context.Contex
 
 		lang := types.LanguageFromContextOrDefault(ctx)
 		taskPayload := types.DocumentProcessPayload{
+			OriginalInput:            repository.KnowledgeBuildInputProofFromContext(ctx),
 			TenantID:                 tenantID,
 			KnowledgeID:              knowledge.ID,
 			KnowledgeBaseID:          kbID,
@@ -1078,9 +1091,20 @@ func (s *knowledgeService) UpdateManualKnowledge(ctx context.Context,
 	if status == types.ManualKnowledgeStatusDraft {
 		existing.ParseStatus = types.ManualKnowledgeStatusDraft
 		existing.Description = ""
+		existing.Profile = nil
 		existing.ProcessedAt = nil
 
-		if err := s.repo.UpdateKnowledge(ctx, existing); err != nil {
+		var writeErr error
+		if s.knowledgeInputWriter != nil {
+			proof, err := s.knowledgeInputWriter.UpdateKnowledgeWithInput(ctx, existing, cleanContent)
+			writeErr = err
+			if err == nil {
+				ctx = repository.WithKnowledgeBuildInputProof(ctx, s.knowledgeInputs, proof)
+			}
+		} else {
+			writeErr = s.repo.UpdateKnowledge(ctx, existing)
+		}
+		if err := writeErr; err != nil {
 			logger.Errorf(ctx, "Failed to persist manual draft: %v", err)
 			return nil, err
 		}
@@ -1095,13 +1119,24 @@ func (s *knowledgeService) UpdateManualKnowledge(ctx context.Context,
 	// Publish: persist pending status and enqueue async task for cleanup + re-indexing
 	existing.ParseStatus = "pending"
 	existing.Description = ""
+	existing.Profile = nil
 	existing.ProcessedAt = nil
 
 	if _, err := ApplyKnowledgeProcessOverrides(ctx, kb, existing, payload.ProcessConfig, nil, nil); err != nil {
 		return nil, err
 	}
 
-	if err := s.repo.UpdateKnowledge(ctx, existing); err != nil {
+	var writeErr error
+	if s.knowledgeInputWriter != nil {
+		proof, err := s.knowledgeInputWriter.UpdateKnowledgeWithInput(ctx, existing, cleanContent)
+		writeErr = err
+		if err == nil {
+			ctx = repository.WithKnowledgeBuildInputProof(ctx, s.knowledgeInputs, proof)
+		}
+	} else {
+		writeErr = s.repo.UpdateKnowledge(ctx, existing)
+	}
+	if err := writeErr; err != nil {
 		logger.Errorf(ctx, "Failed to persist manual knowledge before indexing: %v", err)
 		return nil, err
 	}
@@ -1135,6 +1170,7 @@ func (s *knowledgeService) enqueueManualProcessing(ctx context.Context,
 ) (string, error) {
 	requestID, _ := types.RequestIDFromContext(ctx)
 	payload := types.ManualProcessPayload{
+		OriginalInput:   repository.KnowledgeBuildInputProofFromContext(ctx),
 		RequestId:       requestID,
 		TenantID:        knowledge.TenantID,
 		KnowledgeID:     knowledge.ID,

@@ -396,7 +396,7 @@ func (s *knowledgeService) processChunks(ctx context.Context,
 	}
 
 	// 幂等性处理：清理旧的chunks和索引数据，避免重复数据
-	if err := repository.CheckNextcloudBuildLease(ctx); err != nil {
+	if err := requireActualKnowledgeBuildInput(ctx); err != nil {
 		logger.Warnf(ctx, "Build lease lost before chunk cleanup for %s: %v", knowledge.ID, err)
 		return
 	}
@@ -602,7 +602,7 @@ func (s *knowledgeService) processChunks(ctx context.Context,
 	}
 
 	// Save chunks to database — ALWAYS, regardless of indexing strategy.
-	if err := repository.CheckNextcloudBuildLease(ctx); err != nil {
+	if err := requireActualKnowledgeBuildInput(ctx); err != nil {
 		logger.Warnf(ctx, "Build lease lost before chunk write for %s: %v", knowledge.ID, err)
 		return
 	}
@@ -702,7 +702,7 @@ func (s *knowledgeService) processChunks(ctx context.Context,
 			return
 		}
 
-		if err := repository.CheckNextcloudBuildLease(ctx); err != nil {
+		if err := requireActualKnowledgeBuildInput(ctx); err != nil {
 			logger.Warnf(ctx, "Build lease lost before indexing %s: %v", knowledge.ID, err)
 			return
 		}
@@ -772,7 +772,7 @@ func (s *knowledgeService) processChunks(ctx context.Context,
 	pendingPDFMultimodal := !isImage && !isVideo && options.EnableMultimodel && len(options.StoredImages) > 0
 
 	now := time.Now()
-	if err := repository.CheckNextcloudBuildLease(ctx); err != nil {
+	if err := requireActualKnowledgeBuildInput(ctx); err != nil {
 		logger.Warnf(ctx, "Build lease lost before finalizing %s: %v", knowledge.ID, err)
 		return
 	}
@@ -3377,6 +3377,10 @@ func (s *knowledgeService) ProcessManualUpdate(ctx context.Context, t *asynq.Tas
 		return fmt.Errorf("invalid processing scope: %v: %w", err, asynq.SkipRetry)
 	}
 
+	ctx, err = s.resumeKnowledgeInput(ctx, payload.OriginalInput, payload.Content)
+	if err != nil {
+		return err
+	}
 	// Re-check abort status right before marking processing — see the same
 	// note in ProcessDocument for the cancel race this guards.
 	if aborted, status := s.isKnowledgeAborted(ctx, knowledge.TenantID, knowledge.ID); aborted {
@@ -3522,6 +3526,18 @@ func (s *knowledgeService) ProcessDocument(ctx context.Context, t *asynq.Task) e
 		return fmt.Errorf("invalid processing scope: %v: %w", err, asynq.SkipRetry)
 	}
 
+	if s.knowledgeInputs != nil && len(payload.Passages) > 0 {
+		ctx, err = s.resumeKnowledgeInput(ctx, payload.OriginalInput, payload.Passages)
+		if err != nil {
+			return err
+		}
+	}
+	if s.knowledgeInputs != nil && payload.OriginalInput != nil && len(payload.Passages) == 0 {
+		if err := s.knowledgeInputs.RecheckKnowledgeBuildInputs(ctx, payload.OriginalInput); err != nil {
+			return err
+		}
+		ctx = repository.WithKnowledgeBuildInputProof(ctx, s.knowledgeInputs, payload.OriginalInput)
+	}
 	processOverrides, _ := knowledge.ProcessOverrides()
 	eff := ResolveProcessConfig(kb, processOverrides)
 
@@ -3721,6 +3737,15 @@ func (s *knowledgeService) ProcessDocument(ctx context.Context, t *asynq.Task) e
 		}
 	}
 
+	if s.knowledgeInputs != nil {
+		if convertResult == nil || convertResult.OriginalInput == nil {
+			return types.ErrSourceLineageUnknown
+		}
+		ctx = repository.WithKnowledgeBuildInputProof(ctx, s.knowledgeInputs, convertResult.OriginalInput)
+		if err := requireActualKnowledgeBuildInput(ctx); err != nil {
+			return err
+		}
+	}
 	// Step 1.5: ASR transcription for audio files
 	if convertResult != nil && convertResult.IsAudio && len(convertResult.AudioData) > 0 {
 		if !eff.ASRConfig.IsASREnabled() {
@@ -4001,11 +4026,38 @@ func (s *knowledgeService) convert(
 				werrors.ErrCodeDocReaderParseFailed, "failed to read file", err)
 			return s.failKnowledge(ctx, knowledge, isLastRetry, "failed to read file: %v", err)
 		}
+		if s.knowledgeInputs != nil {
+			if knowledge.Channel == types.ConnectorTypeNextcloud && payload.OriginalInput == nil {
+				admiter, ok := s.knowledgeInputs.(interface {
+					AdmitNextcloudBuildInputs(context.Context, any) (*types.KnowledgeBuildInputProof, error)
+				})
+				if !ok {
+					return nil, types.ErrSourceLineageUnknown
+				}
+				proof, err := admiter.AdmitNextcloudBuildInputs(ctx, contentBytes)
+				if err != nil {
+					return nil, err
+				}
+				ctx = repository.WithKnowledgeBuildInputProof(ctx, s.knowledgeInputs, proof)
+			} else {
+				var err error
+				ctx, err = s.resumeKnowledgeInput(ctx, payload.OriginalInput, contentBytes)
+				if err != nil {
+					return nil, err
+				}
+			}
+		}
 		req.FileContent = contentBytes
 		req.FileName = payload.FileName
 		req.FileType = fileType
 	}
 
+	if s.knowledgeInputs != nil && repository.KnowledgeBuildInputProofFromContext(ctx) == nil {
+		return nil, types.ErrSourceLineageUnknown
+	}
+	if err := requireActualKnowledgeBuildInput(ctx); err != nil {
+		return nil, err
+	}
 	result, err := s.callDocReaderWithTimeout(ctx, reader, req)
 	if err != nil {
 		// Distinguish DocReader timeout (a knowable user-facing
@@ -4019,6 +4071,13 @@ func (s *knowledgeService) convert(
 			code, "document read failed", err)
 		return s.failKnowledge(ctx, knowledge, isLastRetry, "document read failed: %v", err)
 	}
+	if err := requireActualKnowledgeBuildInput(ctx); err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, fmt.Errorf("document reader returned no actual input")
+	}
+	result.OriginalInput = repository.KnowledgeBuildInputProofFromContext(ctx)
 	sanitizeReadResult(result)
 	if result.Error != "" {
 		logger.Errorf(ctx, "[convert] parser returned error kb=%s knowledge=%s file=%q type=%s engine=%q: %s",
@@ -4188,6 +4247,7 @@ func (s *knowledgeService) enqueueImageMultimodalTasks(
 		}
 
 		payload := types.ImageMultimodalPayload{
+			OriginalInput:   repository.KnowledgeBuildInputProofFromContext(ctx),
 			TenantID:        knowledge.TenantID,
 			KnowledgeID:     knowledge.ID,
 			KnowledgeBaseID: kb.ID,
@@ -4358,6 +4418,7 @@ func (s *knowledgeService) enqueueKnowledgePostProcessTask(
 		return
 	}
 	payload := types.KnowledgePostProcessPayload{
+		OriginalInput:   repository.KnowledgeBuildInputProofFromContext(ctx),
 		TenantID:        knowledge.TenantID,
 		KnowledgeID:     knowledge.ID,
 		KnowledgeBaseID: knowledge.KnowledgeBaseID,
