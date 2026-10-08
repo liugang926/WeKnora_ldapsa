@@ -526,6 +526,14 @@ func BuildContainer(container *dig.Container) *dig.Container {
 			return authority
 		})
 	}))
+	must(container.Invoke(func(p struct {
+		dig.In
+		Handler interfaces.TaskHandler `name:"knowledgeAutoTag"`
+		Store   *repository.KnowledgeInputProvenanceStore
+		Guard   *access.NextcloudSourceLineageGuard
+	}) {
+		service.ConfigureKnowledgeAutoTagInputProvenance(p.Handler, p.Store, p.Guard)
+	}))
 	must(container.Invoke(service.ConfigureKnowledgeInputProvenance))
 	must(container.Invoke(service.ConfigureKnowledgeBaseInputProvenance))
 	must(container.Invoke(service.ConfigureMessageSourceLineage))
