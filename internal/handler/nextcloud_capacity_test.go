@@ -35,6 +35,9 @@ func TestNextcloudCapacityActualAdminHTTPStatusAndPolicy(t *testing.T) {
 			sql, err := os.ReadFile("../../migrations/sqlite/000065_nextcloud_capacity_admission.up.sql")
 			require.NoError(t, err)
 			require.NoError(t, db.Exec(string(sql)).Error)
+			sql, err = os.ReadFile("../../migrations/sqlite/000067_nextcloud_capacity_write_intents.up.sql")
+			require.NoError(t, err)
+			require.NoError(t, db.Exec(string(sql)).Error)
 			backend := "backend"
 			require.NoError(t, db.Model(&types.KnowledgeBase{}).Where("id='kb'").Update("storage_backend_id", backend).Error)
 			provider := &capacityHTTPFile{available: 90000}
