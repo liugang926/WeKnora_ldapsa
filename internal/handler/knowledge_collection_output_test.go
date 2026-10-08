@@ -79,7 +79,7 @@ func (s *collectionHTTPAgents) TenantCanAccessKBViaSomeSharedAgent(context.Conte
 
 func collectionHTTPFixture(t *testing.T) (*KnowledgeHandler, *gorm.DB, *repository.KnowledgeInputProvenanceStore, *outputHTTPGroups, *collectionHTTPShare, *collectionHTTPAgents) {
 	t.Helper()
-	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "collection.db")), &gorm.Config{})
+	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "collection.db")+"?_journal_mode=WAL&_busy_timeout=5000"), &gorm.Config{})
 	require.NoError(t, err)
 	sqlDB, err := db.DB()
 	require.NoError(t, err)
