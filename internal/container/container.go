@@ -523,6 +523,9 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	must(container.Provide(service.NewKnowledgeCollectionOutputAuthorizer))
 	must(container.Provide(service.NewTagOutputAuthorizer))
 	must(container.Provide(service.NewFAQOutputAuthorizer))
+	must(container.Provide(func(store *repository.KnowledgeInputProvenanceStore, knowledge interfaces.KnowledgeRepository, models interfaces.ModelService, guard *access.NextcloudSourceLineageGuard, leases *repository.NextcloudContentLeaseStore) *service.KnowledgeEnrichmentTemplateService {
+		return service.NewKnowledgeEnrichmentTemplateService(store, knowledge, models, guard, leases)
+	}))
 	must(container.Provide(service.NewGraphOriginalInputVerifier))
 	must(container.Provide(service.NewKnowledgeGraphLineageReader))
 	must(container.Provide(func(db *gorm.DB, store *repository.KnowledgeInputProvenanceStore) interfaces.RAGChunkSnapshotReader {
@@ -644,6 +647,7 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	must(container.Provide(handler.NewKnowledgeHandler))
 	must(container.Provide(handler.NewChunkHandler))
 	must(container.Provide(handler.NewFAQHandler))
+	must(container.Provide(handler.NewKnowledgeEnrichmentTemplateHandler))
 	must(container.Provide(handler.NewTagHandler))
 	must(container.Provide(session.NewHandler))
 	must(container.Provide(handler.NewMessageHandler))
