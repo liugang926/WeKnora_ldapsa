@@ -29,22 +29,23 @@ import (
 
 // KnowledgeHandler processes HTTP requests related to knowledge resources
 type KnowledgeHandler struct {
-	cfg                  *config.Config
-	kgService            interfaces.KnowledgeService
-	kbService            interfaces.KnowledgeBaseService
-	kbShareService       interfaces.KBShareService
-	agentShareService    interfaces.AgentShareService
-	groupAccess          interfaces.GroupAccessService
-	publicationGuard     *access.NextcloudPublicationGuard
-	askTargets           nextcloudAskTargetResolver
-	contentLeases        nextcloudHTTPReadLeaseStore
-	outputAuthorizer     *service.KnowledgeOutputAuthorizer
-	spanOutputAuthorizer *service.SpanOutputAuthorizer
-	leaseHeartbeat       time.Duration
-	leaseCheckpoint      time.Duration
-	publicationCheck     func(context.Context, *types.Knowledge) error // test seam; production uses publicationGuard
-	asynqClient          interfaces.TaskEnqueuer
-	spanRepo             repository.KnowledgeSpanRepository
+	cfg                        *config.Config
+	kgService                  interfaces.KnowledgeService
+	kbService                  interfaces.KnowledgeBaseService
+	kbShareService             interfaces.KBShareService
+	agentShareService          interfaces.AgentShareService
+	groupAccess                interfaces.GroupAccessService
+	publicationGuard           *access.NextcloudPublicationGuard
+	askTargets                 nextcloudAskTargetResolver
+	contentLeases              nextcloudHTTPReadLeaseStore
+	outputAuthorizer           *service.KnowledgeOutputAuthorizer
+	collectionOutputAuthorizer *service.KnowledgeCollectionOutputAuthorizer
+	spanOutputAuthorizer       *service.SpanOutputAuthorizer
+	leaseHeartbeat             time.Duration
+	leaseCheckpoint            time.Duration
+	publicationCheck           func(context.Context, *types.Knowledge) error // test seam; production uses publicationGuard
+	asynqClient                interfaces.TaskEnqueuer
+	spanRepo                   repository.KnowledgeSpanRepository
 }
 
 // ConfigureKnowledgeHandlerGroupAccess attaches the optional directory-group
@@ -1046,6 +1047,11 @@ func (h *KnowledgeHandler) ListKnowledge(c *gin.Context) {
 		effectiveTenantID,
 	)
 
+	if h.collectionOutputAuthorizer != nil {
+		h.respondKnowledgeCollection(c, ctx, []types.KnowledgeSearchScope{{TenantID: effectiveTenantID, KBID: kbID}}, types.KnowledgeCollectionSelectionRequest{Mode: "list", Filter: filter, Page: pagination}, access.LineageReadScope{})
+		return
+	}
+
 	// The page and total are read before their source IDs are known. Hold the
 	// KB fence across the query so a concurrent GC claim cannot delete rows
 	// being hydrated. Production always wires this store; test-only handlers
@@ -1153,6 +1159,10 @@ func (h *KnowledgeHandler) ListKnowledgeFolders(c *gin.Context) {
 		return
 	}
 	ctx = types.WithExecutionTenant(c.Request.Context(), effectiveTenantID)
+	if h.collectionOutputAuthorizer != nil {
+		h.respondKnowledgeCollection(c, ctx, []types.KnowledgeSearchScope{{TenantID: effectiveTenantID, KBID: kbID}}, types.KnowledgeCollectionSelectionRequest{Mode: "folders"}, access.LineageReadScope{})
+		return
+	}
 	// Folder names and counts are aggregated before document-level policy can
 	// run. A mixed KB cannot safely expose that aggregate while it contains
 	// Nextcloud documents, so require clients to use the guarded document list.
@@ -2479,6 +2489,11 @@ func (h *KnowledgeHandler) SearchKnowledge(c *gin.Context) {
 				fileTypes = append(fileTypes, ft)
 			}
 		}
+	}
+
+	if h.collectionOutputAuthorizer != nil {
+		h.searchKnowledgeCollection(c, ctx, keyword, offset, limit, fileTypes)
+		return
 	}
 
 	agentID := c.Query("agent_id")

@@ -221,7 +221,7 @@ func (r *knowledgeRepository) ListPagedKnowledgeByKnowledgeBaseID(
 	}
 
 	if err := scope(r.db.WithContext(ctx)).
-		Order("created_at DESC").
+		Order("created_at DESC, id DESC").
 		Offset(page.Offset()).
 		Limit(page.Limit()).
 		Find(&knowledges).Error; err != nil {
@@ -1149,7 +1149,7 @@ func (r *knowledgeRepository) SearchKnowledge(
 	}
 
 	// Fetch limit+1 to check if there are more results
-	err := query.Order("knowledges.created_at DESC").
+	err := query.Order("knowledges.created_at DESC, knowledges.id DESC").
 		Offset(offset).
 		Limit(limit + 1).
 		Scan(&results).Error
@@ -1271,7 +1271,7 @@ func (r *knowledgeRepository) SearchKnowledgeInScopes(
 	}
 
 	var results []KnowledgeWithKBName
-	err := query.Order("knowledges.created_at DESC").
+	err := query.Order("knowledges.created_at DESC, knowledges.id DESC").
 		Offset(offset).
 		Limit(limit + 1).
 		Scan(&results).Error

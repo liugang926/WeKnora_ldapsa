@@ -1,0 +1,7 @@
+DROP TRIGGER IF EXISTS knowledge_collection_knowledges_insert;
+DROP TRIGGER IF EXISTS knowledge_collection_knowledges_update;
+DROP TRIGGER IF EXISTS knowledge_collection_knowledges_delete;
+DROP TRIGGER IF EXISTS knowledge_collection_knowledge_bases_insert;
+DROP TRIGGER IF EXISTS knowledge_collection_knowledge_bases_update;
+DROP TRIGGER IF EXISTS knowledge_collection_knowledge_bases_delete;
+DROP TABLE IF EXISTS knowledge_collection_scope_versions;
