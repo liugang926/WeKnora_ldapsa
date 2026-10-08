@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"time"
 
 	"github.com/Tencent/WeKnora/internal/types"
@@ -18,6 +19,79 @@ func (r *knowledgeRepository) SetKnowledgeTags(
 	tagIDs []string,
 ) error {
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		request, marked := ctx.Value(knowledgeDisplayRequestKey{}).(knowledgeDisplayRequest)
+		var prior []*types.KnowledgeTagRelation
+		if err := tx.Where("knowledge_id = ?", knowledgeID).Order("tag_id ASC").Find(&prior).Error; err != nil {
+			return err
+		}
+		priorIDs := []string{}
+		for _, relation := range prior {
+			priorIDs = append(priorIDs, relation.TagID)
+		}
+		nextIDs := normalizedKnowledgeDisplayTagIDs(tagIDs)
+		var kb *types.KnowledgeBase
+		var actor context.Context
+		var lineage *types.SourceLineage
+		var origin string
+		if marked {
+			var k types.Knowledge
+			if err := tx.Where("id = ?", knowledgeID).Take(&k).Error; err != nil {
+				return err
+			}
+			var actualKB types.KnowledgeBase
+			if err := tx.Where("id = ? AND tenant_id = ?", k.KnowledgeBaseID, k.TenantID).Take(&actualKB).Error; err != nil {
+				return err
+			}
+			kb = &actualKB
+			if request.Kind != "derived" && (request.Kind != "relations" || !reflect.DeepEqual(request.Assignments[knowledgeID], normalizedKnowledgeDisplayTagIDs(tagIDs))) {
+				return ErrKnowledgeInputChanged
+			}
+			var err error
+			actor, lineage, origin, err = knowledgeDisplayWriterOrigin(tx, ctx, kb, request, r.displayAuthorityFactory)
+			if err != nil {
+				return err
+			}
+			if reflect.DeepEqual(priorIDs, nextIDs) {
+				return nil
+			}
+			retained := false
+			for _, id := range priorIDs {
+				for _, nextID := range nextIDs {
+					if id == nextID {
+						retained = true
+					}
+				}
+			}
+			if retained {
+				proof, err := readKnowledgeDisplayOrigin(tx, "relations", knowledgeID, k.TenantID, k.KnowledgeBaseID, priorIDs)
+				if err != nil {
+					return err
+				}
+				lineage, err = types.UnionSourceLineage(lineage, proof.SourceLineage)
+				if err != nil {
+					return err
+				}
+			}
+			ids := normalizedKnowledgeDisplayTagIDs(tagIDs)
+			if len(ids) > 0 {
+				var count int64
+				if err := tx.Model(&types.KnowledgeTag{}).Where("id IN ? AND tenant_id = ? AND knowledge_base_id = ?", ids, k.TenantID, k.KnowledgeBaseID).Count(&count).Error; err != nil {
+					return err
+				}
+				if count != int64(len(ids)) {
+					return ErrKnowledgeInputChanged
+				}
+			}
+		}
+		finish := func() error {
+			if !marked {
+				return nil
+			}
+			if err := tx.Exec("UPDATE knowledge_display_versions SET revision = revision + 1 WHERE kind = 'relations' AND row_id = ?", knowledgeID).Error; err != nil {
+				return err
+			}
+			return admitKnowledgeDisplayOrigin(tx, actor, "relations", knowledgeID, kb, normalizedKnowledgeDisplayTagIDs(tagIDs), request, lineage, origin)
+		}
 		// Delete all existing tag relations for this knowledge
 		if err := tx.Where("knowledge_id = ?", knowledgeID).
 			Delete(&types.KnowledgeTagRelation{}).Error; err != nil {
@@ -25,7 +99,7 @@ func (r *knowledgeRepository) SetKnowledgeTags(
 		}
 		// Insert new relations (skip empty and duplicate IDs)
 		if len(tagIDs) == 0 {
-			return nil
+			return finish()
 		}
 		seen := make(map[string]struct{}, len(tagIDs))
 		now := time.Now()
@@ -45,9 +119,12 @@ func (r *knowledgeRepository) SetKnowledgeTags(
 			})
 		}
 		if len(relations) == 0 {
-			return nil
+			return finish()
 		}
-		return tx.Create(&relations).Error
+		if err := tx.Create(&relations).Error; err != nil {
+			return err
+		}
+		return finish()
 	})
 }
 
@@ -111,7 +188,48 @@ func (r *knowledgeRepository) AddKnowledgeTagRelations(
 				CreatedAt:   now,
 			})
 		}
-		return tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&relations).Error
+		request, marked := ctx.Value(knowledgeDisplayRequestKey{}).(knowledgeDisplayRequest)
+		if !marked {
+			return tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&relations).Error
+		}
+		if request.Kind != "derived" {
+			return ErrKnowledgeInputChanged
+		}
+		var kb types.KnowledgeBase
+		if err := tx.Where("id = ? AND tenant_id = ?", kbID, tenantID).Take(&kb).Error; err != nil {
+			return err
+		}
+		actor, lineage, origin, err := knowledgeDisplayWriterOrigin(tx, ctx, &kb, request, r.displayAuthorityFactory)
+		if err != nil {
+			return err
+		}
+		var prior []*types.KnowledgeTagRelation
+		if err := tx.Where("knowledge_id = ?", knowledgeID).Order("tag_id ASC").Find(&prior).Error; err != nil {
+			return err
+		}
+		priorIDs := []string{}
+		for _, relation := range prior {
+			priorIDs = append(priorIDs, relation.TagID)
+		}
+		if len(prior) > 0 {
+			proof, err := readKnowledgeDisplayOrigin(tx, "relations", knowledgeID, tenantID, kbID, priorIDs)
+			if err != nil {
+				return err
+			}
+			lineage, err = types.UnionSourceLineage(lineage, proof.SourceLineage)
+			if err != nil {
+				return err
+			}
+		}
+		result := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&relations)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return nil
+		}
+		allIDs := normalizedKnowledgeDisplayTagIDs(append(priorIDs, unique...))
+		return admitKnowledgeDisplayOrigin(tx, actor, "relations", knowledgeID, &kb, allIDs, request, lineage, origin)
 	})
 }
 

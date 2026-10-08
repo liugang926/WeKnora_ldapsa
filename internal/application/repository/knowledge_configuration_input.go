@@ -107,6 +107,9 @@ func (s *KnowledgeInputProvenanceStore) CreateKnowledgeBaseWithInput(ctx context
 		if err := tx.Where("id = ? AND tenant_id = ?", kb.ID, kb.TenantID).Take(&actual).Error; err != nil {
 			return err
 		}
+		if err := admitKnowledgeBaseNameInput(tx, ctx, nil, &actual, s.displayAuthorityFactory); err != nil {
+			return err
+		}
 		return admitKnowledgeConfigurationOrigin(tx, &actual, origin)
 	})
 }
@@ -147,13 +150,24 @@ func (s *KnowledgeInputProvenanceStore) UpdateKnowledgeBaseWithInput(ctx context
 		if err := tx.Where("id = ? AND tenant_id = ?", kb.ID, kb.TenantID).Take(&old).Error; err != nil {
 			return err
 		}
-		previous, err := readKnowledgeConfigurationOrigin(tx, &old)
+		oldControlDigest, err := knowledgeConfigurationOriginDigest(&old)
 		if err != nil {
 			return err
 		}
-		lineage, err := types.UnionSourceLineage(previous, origin.lineage)
+		requestedControlDigest, err := knowledgeConfigurationOriginDigest(kb)
 		if err != nil {
 			return err
+		}
+		var lineage *types.SourceLineage
+		if oldControlDigest != requestedControlDigest {
+			previous, err := readKnowledgeConfigurationOrigin(tx, &old)
+			if err != nil {
+				return err
+			}
+			lineage, err = types.UnionSourceLineage(previous, origin.lineage)
+			if err != nil {
+				return err
+			}
 		}
 		if err := tx.Omit("ever_had_nextcloud_source").Save(kb).Error; err != nil {
 			return err
@@ -164,6 +178,9 @@ func (s *KnowledgeInputProvenanceStore) UpdateKnowledgeBaseWithInput(ctx context
 		}
 		oldDigest, _ := knowledgeConfigurationOriginDigest(&old)
 		newDigest, _ := knowledgeConfigurationOriginDigest(&actual)
+		if err := admitKnowledgeBaseNameInput(tx, ctx, &old, &actual, s.displayAuthorityFactory); err != nil {
+			return err
+		}
 		if oldDigest == newDigest {
 			return nil
 		}

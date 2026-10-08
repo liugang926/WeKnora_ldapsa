@@ -46,6 +46,7 @@ var omitFieldsOnUpdate = []string{"DeletedAt", "PendingSubtasksCount"}
 // knowledgeRepository implements knowledge base and knowledge repository interface
 type knowledgeRepository struct {
 	db                        *gorm.DB
+	displayAuthorityFactory   KnowledgeDisplayAuthorityFactory
 	nextcloudPublicationCheck nextcloudPublicationCheck
 }
 

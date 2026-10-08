@@ -1,0 +1,18 @@
+DROP TRIGGER IF EXISTS knowledge_display_origins_immutable ON knowledge_display_input_origins;
+DROP TRIGGER IF EXISTS knowledge_display_tag_name ON knowledge_tags;
+DROP TRIGGER IF EXISTS knowledge_display_tag_color ON knowledge_tags;
+DROP TRIGGER IF EXISTS knowledge_display_tag_sort_order ON knowledge_tags;
+DROP TRIGGER IF EXISTS knowledge_display_tag_envelope ON knowledge_tags;
+DROP TRIGGER IF EXISTS knowledge_display_kb ON knowledge_bases;
+DROP TRIGGER IF EXISTS knowledge_display_relation_seed ON knowledges;
+DROP TRIGGER IF EXISTS knowledge_display_relation ON knowledge_tag_relations;
+DROP FUNCTION IF EXISTS knowledge_display_origin_immutable();
+DROP FUNCTION IF EXISTS knowledge_display_tag_name();
+DROP FUNCTION IF EXISTS knowledge_display_tag_color();
+DROP FUNCTION IF EXISTS knowledge_display_tag_sort_order();
+DROP FUNCTION IF EXISTS knowledge_display_tag_envelope();
+DROP FUNCTION IF EXISTS knowledge_display_kb();
+DROP FUNCTION IF EXISTS knowledge_display_relation_seed();
+DROP FUNCTION IF EXISTS knowledge_display_relation();
+DROP TABLE knowledge_display_input_origins;
+DROP TABLE knowledge_display_versions;

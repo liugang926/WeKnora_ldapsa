@@ -11,7 +11,8 @@ import (
 
 // knowledgeTagRepository is a repository for knowledge tags
 type knowledgeTagRepository struct {
-	db *gorm.DB
+	db                      *gorm.DB
+	displayAuthorityFactory KnowledgeDisplayAuthorityFactory
 }
 
 // NewKnowledgeTagRepository creates a new tag repository.
@@ -21,12 +22,12 @@ func NewKnowledgeTagRepository(db *gorm.DB) interfaces.KnowledgeTagRepository {
 
 // Create creates a new knowledge tag
 func (r *knowledgeTagRepository) Create(ctx context.Context, tag *types.KnowledgeTag) error {
-	return r.db.WithContext(ctx).Create(tag).Error
+	return writeKnowledgeTagWithDisplayInput(r.db, ctx, tag, true, r.displayAuthorityFactory)
 }
 
 // Update updates a knowledge tag
 func (r *knowledgeTagRepository) Update(ctx context.Context, tag *types.KnowledgeTag) error {
-	return r.db.WithContext(ctx).Save(tag).Error
+	return writeKnowledgeTagWithDisplayInput(r.db, ctx, tag, false, r.displayAuthorityFactory)
 }
 
 // GetByID gets a knowledge tag by ID

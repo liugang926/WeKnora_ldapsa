@@ -2353,7 +2353,7 @@ func (h *KnowledgeHandler) UpdateKnowledgeTagBatch(c *gin.Context) {
 		return
 	}
 
-	if err := h.kgService.UpdateKnowledgeTagBatch(ctx, authorizedKBID, req.Updates); err != nil {
+	if err := h.kgService.UpdateKnowledgeTagBatch(repository.WithIndependentKnowledgeTagAssignmentInput(ctx, req.Updates), authorizedKBID, req.Updates); err != nil {
 		logger.ErrorWithFields(ctx, err, nil)
 		c.Error(err)
 		return

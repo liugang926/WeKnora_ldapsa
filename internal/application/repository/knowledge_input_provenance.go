@@ -90,10 +90,11 @@ func (knowledgeInputMaterialReceipt) TableName() string { return "knowledge_inpu
 // KnowledgeInputProvenanceStore owns private, original admission and material
 // receipts. Missing old/derived facts are unknown; there is no inferred origin.
 type KnowledgeInputProvenanceStore struct {
-	db              *gorm.DB
-	messageVerifier interfaces.MessageSourceLineageVerifier
-	actorGroups     interfaces.GroupAccessService
-	actorShares     access.KBShareLookup
+	db                      *gorm.DB
+	displayAuthorityFactory KnowledgeDisplayAuthorityFactory
+	messageVerifier         interfaces.MessageSourceLineageVerifier
+	actorGroups             interfaces.GroupAccessService
+	actorShares             access.KBShareLookup
 }
 
 func NewKnowledgeInputProvenanceStore(db *gorm.DB) *KnowledgeInputProvenanceStore {

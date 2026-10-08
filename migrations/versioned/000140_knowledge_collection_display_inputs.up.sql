@@ -1,0 +1,35 @@
+-- Original display values are admitted only by actual typed writers.
+-- Legacy rows receive monotonic counters, never producer origins.
+CREATE TABLE knowledge_display_versions (
+ kind TEXT NOT NULL, row_id TEXT NOT NULL, revision BIGINT NOT NULL CHECK(revision > 0), PRIMARY KEY(kind,row_id)
+);
+CREATE TABLE knowledge_display_input_origins (
+ origin_id TEXT PRIMARY KEY, kind TEXT NOT NULL, row_id TEXT NOT NULL,
+ tenant_id BIGINT NOT NULL CHECK(tenant_id > 0), knowledge_base_id TEXT NOT NULL,
+ revision BIGINT NOT NULL CHECK(revision > 0), origin_kind TEXT NOT NULL CHECK(origin_kind IN ('human','derived')),
+ actual_input TEXT NOT NULL, input_digest TEXT NOT NULL CHECK(length(input_digest)=64),
+ body_digest TEXT NOT NULL CHECK(length(body_digest)=64), source_lineage TEXT NOT NULL CHECK(length(source_lineage)<=262144), actor TEXT NOT NULL,
+ UNIQUE(kind,row_id,revision)
+);
+INSERT INTO knowledge_display_versions(kind,row_id,revision) SELECT 'kb-name',id,1 FROM knowledge_bases;
+INSERT INTO knowledge_display_versions(kind,row_id,revision) SELECT 'relations',id,1 FROM knowledges;
+INSERT INTO knowledge_display_versions(kind,row_id,revision) SELECT 'tag-name',id,1 FROM knowledge_tags;
+INSERT INTO knowledge_display_versions(kind,row_id,revision) SELECT 'tag-color',id,1 FROM knowledge_tags;
+INSERT INTO knowledge_display_versions(kind,row_id,revision) SELECT 'tag-sort_order',id,1 FROM knowledge_tags;
+INSERT INTO knowledge_display_versions(kind,row_id,revision) SELECT 'tag-envelope',id,1 FROM knowledge_tags;
+CREATE FUNCTION knowledge_display_origin_immutable() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'immutable actual display input'; END; $$;
+CREATE TRIGGER knowledge_display_origins_immutable BEFORE UPDATE OR DELETE ON knowledge_display_input_origins FOR EACH ROW EXECUTE FUNCTION knowledge_display_origin_immutable();
+CREATE FUNCTION knowledge_display_tag_name() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF TG_OP='UPDATE' AND NOT (OLD.tenant_id IS DISTINCT FROM NEW.tenant_id OR OLD.knowledge_base_id IS DISTINCT FROM NEW.knowledge_base_id OR OLD.name IS DISTINCT FROM NEW.name) THEN RETURN NEW; END IF; INSERT INTO knowledge_display_versions(kind,row_id,revision) VALUES('tag-name',CASE WHEN TG_OP='DELETE' THEN OLD.id ELSE NEW.id END,1) ON CONFLICT(kind,row_id) DO UPDATE SET revision=knowledge_display_versions.revision+1; IF TG_OP='DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF; END; $$;
+CREATE TRIGGER knowledge_display_tag_name AFTER INSERT OR UPDATE OR DELETE ON knowledge_tags FOR EACH ROW EXECUTE FUNCTION knowledge_display_tag_name();
+CREATE FUNCTION knowledge_display_tag_color() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF TG_OP='UPDATE' AND NOT (OLD.tenant_id IS DISTINCT FROM NEW.tenant_id OR OLD.knowledge_base_id IS DISTINCT FROM NEW.knowledge_base_id OR OLD.color IS DISTINCT FROM NEW.color) THEN RETURN NEW; END IF; INSERT INTO knowledge_display_versions(kind,row_id,revision) VALUES('tag-color',CASE WHEN TG_OP='DELETE' THEN OLD.id ELSE NEW.id END,1) ON CONFLICT(kind,row_id) DO UPDATE SET revision=knowledge_display_versions.revision+1; IF TG_OP='DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF; END; $$;
+CREATE TRIGGER knowledge_display_tag_color AFTER INSERT OR UPDATE OR DELETE ON knowledge_tags FOR EACH ROW EXECUTE FUNCTION knowledge_display_tag_color();
+CREATE FUNCTION knowledge_display_tag_sort_order() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF TG_OP='UPDATE' AND NOT (OLD.tenant_id IS DISTINCT FROM NEW.tenant_id OR OLD.knowledge_base_id IS DISTINCT FROM NEW.knowledge_base_id OR OLD.sort_order IS DISTINCT FROM NEW.sort_order) THEN RETURN NEW; END IF; INSERT INTO knowledge_display_versions(kind,row_id,revision) VALUES('tag-sort_order',CASE WHEN TG_OP='DELETE' THEN OLD.id ELSE NEW.id END,1) ON CONFLICT(kind,row_id) DO UPDATE SET revision=knowledge_display_versions.revision+1; IF TG_OP='DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF; END; $$;
+CREATE TRIGGER knowledge_display_tag_sort_order AFTER INSERT OR UPDATE OR DELETE ON knowledge_tags FOR EACH ROW EXECUTE FUNCTION knowledge_display_tag_sort_order();
+CREATE FUNCTION knowledge_display_tag_envelope() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF TG_OP='UPDATE' AND NOT (OLD.id IS DISTINCT FROM NEW.id OR OLD.tenant_id IS DISTINCT FROM NEW.tenant_id OR OLD.knowledge_base_id IS DISTINCT FROM NEW.knowledge_base_id OR OLD.seq_id IS DISTINCT FROM NEW.seq_id OR OLD.name IS DISTINCT FROM NEW.name OR OLD.color IS DISTINCT FROM NEW.color OR OLD.sort_order IS DISTINCT FROM NEW.sort_order OR OLD.created_at IS DISTINCT FROM NEW.created_at OR OLD.updated_at IS DISTINCT FROM NEW.updated_at) THEN RETURN NEW; END IF; INSERT INTO knowledge_display_versions(kind,row_id,revision) VALUES('tag-envelope',CASE WHEN TG_OP='DELETE' THEN OLD.id ELSE NEW.id END,1) ON CONFLICT(kind,row_id) DO UPDATE SET revision=knowledge_display_versions.revision+1; IF TG_OP='DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF; END; $$;
+CREATE TRIGGER knowledge_display_tag_envelope AFTER INSERT OR UPDATE OR DELETE ON knowledge_tags FOR EACH ROW EXECUTE FUNCTION knowledge_display_tag_envelope();
+CREATE FUNCTION knowledge_display_kb() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF TG_OP='UPDATE' AND NOT (OLD.name IS DISTINCT FROM NEW.name OR OLD.tenant_id IS DISTINCT FROM NEW.tenant_id OR OLD.deleted_at IS DISTINCT FROM NEW.deleted_at) THEN RETURN NEW; END IF; INSERT INTO knowledge_display_versions(kind,row_id,revision) VALUES('kb-name',CASE WHEN TG_OP='DELETE' THEN OLD.id ELSE NEW.id END,1) ON CONFLICT(kind,row_id) DO UPDATE SET revision=knowledge_display_versions.revision+1; IF TG_OP='DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF; END; $$;
+CREATE TRIGGER knowledge_display_kb AFTER INSERT OR UPDATE OR DELETE ON knowledge_bases FOR EACH ROW EXECUTE FUNCTION knowledge_display_kb();
+CREATE FUNCTION knowledge_display_relation_seed() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN INSERT INTO knowledge_display_versions(kind,row_id,revision) VALUES('relations',NEW.id,1) ON CONFLICT(kind,row_id) DO UPDATE SET revision=knowledge_display_versions.revision+1; RETURN NEW; END; $$;
+CREATE TRIGGER knowledge_display_relation_seed AFTER INSERT ON knowledges FOR EACH ROW EXECUTE FUNCTION knowledge_display_relation_seed();
+CREATE FUNCTION knowledge_display_relation() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF TG_OP<>'INSERT' THEN INSERT INTO knowledge_display_versions(kind,row_id,revision) VALUES('relations',OLD.knowledge_id,1) ON CONFLICT(kind,row_id) DO UPDATE SET revision=knowledge_display_versions.revision+1; END IF; IF TG_OP<>'DELETE' THEN INSERT INTO knowledge_display_versions(kind,row_id,revision) VALUES('relations',NEW.knowledge_id,1) ON CONFLICT(kind,row_id) DO UPDATE SET revision=knowledge_display_versions.revision+1; END IF; IF TG_OP='DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF; END; $$;
+CREATE TRIGGER knowledge_display_relation AFTER INSERT OR UPDATE OR DELETE ON knowledge_tag_relations FOR EACH ROW EXECUTE FUNCTION knowledge_display_relation();
