@@ -1,7 +1,9 @@
 package handler
 
 import (
+	stderrors "errors"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/Tencent/WeKnora/internal/errors"
@@ -10,6 +12,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	secutils "github.com/Tencent/WeKnora/internal/utils"
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 // EvaluationHandler handles evaluation related HTTP requests
@@ -17,6 +20,82 @@ type EvaluationHandler struct {
 	evaluationService interfaces.EvaluationService // Service for evaluation operations
 	groupAccess       interfaces.GroupAccessService
 	kbService         interfaces.KnowledgeBaseService
+}
+
+// ReviewEvaluationCase persists a human verdict for one completed evaluation
+// question. This route is intentionally JWT-only: an API key may run and read
+// evaluations, but cannot impersonate a named human reviewer.
+func (e *EvaluationHandler) ReviewEvaluationCase(c *gin.Context) {
+	taskID := c.Param("taskId")
+	questionID, err := strconv.Atoi(c.Param("questionId"))
+	if taskID == "" || err != nil || questionID < 0 {
+		_ = c.Error(errors.NewBadRequestError("Invalid evaluation case"))
+		return
+	}
+	var input types.EvaluationCaseReviewInput
+	if err := c.ShouldBindJSON(&input); err != nil {
+		_ = c.Error(errors.NewBadRequestError("Invalid review labels"))
+		return
+	}
+	detail, err := e.evaluationService.ReviewEvaluationCase(c.Request.Context(), taskID, questionID, input)
+	if err != nil {
+		switch {
+		case stderrors.Is(err, types.ErrEvaluationReviewInvalid):
+			_ = c.Error(errors.NewBadRequestError("Review labels do not match case type"))
+		case stderrors.Is(err, types.ErrEvaluationReviewNotReady),
+			stderrors.Is(err, types.ErrEvaluationReviewConflict):
+			_ = c.Error(errors.NewConflictError("Evaluation review is not ready; refresh and retry"))
+		case stderrors.Is(err, types.ErrEvaluationCaseNotFound), stderrors.Is(err, gorm.ErrRecordNotFound):
+			_ = c.Error(errors.NewNotFoundError("Evaluation case not found"))
+		default:
+			logger.Errorf(c.Request.Context(), "Failed to persist evaluation review: %v", err)
+			_ = c.Error(errors.NewInternalServerError("Evaluation review unavailable"))
+		}
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": detail})
+}
+
+// SetEvaluationChatCost persists an operator tariff snapshot for a completed
+// run. It is JWT-only so an API key cannot impersonate a named operator.
+func (e *EvaluationHandler) SetEvaluationChatCost(c *gin.Context) {
+	taskID := c.Param("taskId")
+	if taskID == "" {
+		_ = c.Error(errors.NewBadRequestError("Invalid evaluation task"))
+		return
+	}
+	var request struct {
+		Currency         string   `json:"currency"`
+		TariffVersion    string   `json:"tariff_version"`
+		InputPerMillion  *float64 `json:"input_per_million"`
+		OutputPerMillion *float64 `json:"output_per_million"`
+	}
+	if err := c.ShouldBindJSON(&request); err != nil ||
+		request.InputPerMillion == nil || request.OutputPerMillion == nil {
+		_ = c.Error(errors.NewBadRequestError("Invalid chat tariff"))
+		return
+	}
+	input := types.EvaluationChatCostInput{
+		Currency: request.Currency, TariffVersion: request.TariffVersion,
+		InputPerMillion: *request.InputPerMillion, OutputPerMillion: *request.OutputPerMillion,
+	}
+	detail, err := e.evaluationService.SetEvaluationChatCost(c.Request.Context(), taskID, input)
+	if err != nil {
+		switch {
+		case stderrors.Is(err, types.ErrEvaluationChatCostInvalid):
+			_ = c.Error(errors.NewBadRequestError("Invalid chat tariff"))
+		case stderrors.Is(err, types.ErrEvaluationChatCostNotReady),
+			stderrors.Is(err, types.ErrEvaluationChatCostConflict):
+			_ = c.Error(errors.NewConflictError("Evaluation chat cost is not ready; refresh and retry"))
+		case stderrors.Is(err, gorm.ErrRecordNotFound):
+			_ = c.Error(errors.NewNotFoundError("Evaluation run not found"))
+		default:
+			logger.Errorf(c.Request.Context(), "Failed to persist evaluation chat tariff: %v", err)
+			_ = c.Error(errors.NewInternalServerError("Evaluation chat tariff unavailable"))
+		}
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": detail})
 }
 
 // NewEvaluationHandler creates a new EvaluationHandler instance
@@ -39,10 +118,11 @@ func ConfigureEvaluationGroupAccess(
 
 // EvaluationRequest contains parameters for evaluation request
 type EvaluationRequest struct {
-	DatasetID       string `json:"dataset_id"`        // ID of dataset to evaluate
-	KnowledgeBaseID string `json:"knowledge_base_id"` // ID of knowledge base to use
-	ChatModelID     string `json:"chat_id"`           // ID of chat model to use
-	RerankModelID   string `json:"rerank_id"`         // ID of rerank model to use
+	DatasetID        string `json:"dataset_id"`        // ID of dataset to evaluate
+	KnowledgeBaseID  string `json:"knowledge_base_id"` // ID of knowledge base to use
+	ChatModelID      string `json:"chat_id"`           // ID of chat model to use
+	RerankModelID    string `json:"rerank_id"`         // ID of rerank model to use
+	EmbeddingModelID string `json:"embedding_id"`      // Explicit embedding model for an isolated evaluation KB
 }
 
 // Evaluation godoc
@@ -127,8 +207,13 @@ func (e *EvaluationHandler) Evaluation(c *gin.Context) {
 		secutils.SanitizeForLog(request.KnowledgeBaseID),
 		secutils.SanitizeForLog(request.ChatModelID),
 		secutils.SanitizeForLog(request.RerankModelID),
+		secutils.SanitizeForLog(request.EmbeddingModelID),
 	)
 	if err != nil {
+		if stderrors.Is(err, types.ErrEvaluationExplicitModelsRequired) {
+			_ = c.Error(errors.NewBadRequestError("Select explicit embedding, rerank and chat models for this dataset"))
+			return
+		}
 		logger.ErrorWithFields(ctx, err, nil)
 		c.Error(errors.NewInternalServerError(err.Error()))
 		return
@@ -143,7 +228,7 @@ func (e *EvaluationHandler) Evaluation(c *gin.Context) {
 
 // GetEvaluationRequest contains parameters for getting evaluation result
 type GetEvaluationRequest struct {
-	TaskID string `form:"task_id" binding:"required"` // ID of evaluation task
+	TaskID string `form:"task_id"` // Omit to list recent runs for this tenant
 }
 
 // GetEvaluationResult godoc
@@ -167,6 +252,17 @@ func (e *EvaluationHandler) GetEvaluationResult(c *gin.Context) {
 	if err := c.ShouldBind(&request); err != nil {
 		logger.Error(ctx, "Failed to parse request parameters", err)
 		c.Error(errors.NewBadRequestError("Invalid request parameters").WithDetails(err.Error()))
+		return
+	}
+
+	if request.TaskID == "" {
+		results, err := e.evaluationService.ListEvaluationResults(ctx, 20)
+		if err != nil {
+			logger.ErrorWithFields(ctx, err, nil)
+			_ = c.Error(errors.NewInternalServerError("Evaluation history unavailable"))
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"success": true, "data": results})
 		return
 	}
 

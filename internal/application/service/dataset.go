@@ -4,6 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
+	"regexp"
+	"slices"
+	"strings"
 
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/types"
@@ -37,43 +42,93 @@ type QaInfo struct {
 	AID int64 `parquet:"aid"` // Answer ID
 }
 
-// GetDatasetByID retrieves QA pairs from dataset by ID
-func (d *DatasetService) GetDatasetByID(ctx context.Context, datasetID string) ([]*types.QAPair, error) {
+var evaluationDatasetID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$`)
+
+// GetDatasetByID loads an immutable local benchmark fixture. Operators mount
+// de-identified named fixtures; user-provided IDs never become arbitrary paths.
+func (d *DatasetService) GetDatasetByID(ctx context.Context, datasetID string) (*types.EvaluationDataset, error) {
 	logger.Info(ctx, "Start getting dataset by ID")
-	logger.Infof(ctx, "Getting dataset with ID: %s", datasetID)
-
-	dataset := DefaultDataset()
-	dataset.PrintStats(ctx)
-	qaPairs := dataset.Iterate()
-
-	logger.Infof(ctx, "Retrieved %d QA pairs from dataset", len(qaPairs))
-	return qaPairs, nil
+	if !evaluationDatasetID.MatchString(datasetID) {
+		return nil, errors.New("invalid evaluation dataset ID")
+	}
+	datasetDir := defaultEvaluationDatasetDir()
+	if datasetID != "default" {
+		base := os.Getenv("EVALUATION_DATASET_DIR")
+		if base == "" {
+			base = "./dataset/benchmarks"
+		}
+		resolvedBase, err := filepath.EvalSymlinks(base)
+		if err != nil {
+			return nil, fmt.Errorf("resolve evaluation dataset directory: %w", err)
+		}
+		resolvedDataset, err := filepath.EvalSymlinks(filepath.Join(resolvedBase, datasetID))
+		if err != nil {
+			return nil, fmt.Errorf("resolve evaluation dataset: %w", err)
+		}
+		rel, err := filepath.Rel(resolvedBase, resolvedDataset)
+		if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return nil, errors.New("evaluation dataset escapes configured directory")
+		}
+		datasetDir = resolvedDataset
+	}
+	dataset, err := loadDatasetFromDir(datasetDir)
+	if err != nil {
+		return nil, err
+	}
+	result, err := dataset.evaluationFixture()
+	if err != nil {
+		return nil, err
+	}
+	logger.Infof(ctx, "Loaded evaluation dataset %s: %d queries, %d passages", datasetID,
+		len(result.QAPairs), len(result.Corpus))
+	return result, nil
 }
 
 // DefaultDataset loads and initializes the default dataset from parquet files
 func DefaultDataset() dataset {
-	datasetDir := "./dataset/samples"
-	queries, err := loadParquet[TextInfo](fmt.Sprintf("%s/queries.parquet", datasetDir))
+	dataset, err := loadDatasetFromDir(defaultEvaluationDatasetDir())
 	if err != nil {
 		panic(err)
+	}
+	return dataset
+}
+
+func defaultEvaluationDatasetDir() string {
+	if configured := os.Getenv("EVALUATION_DEFAULT_DATASET_DIR"); configured != "" {
+		return configured
+	}
+	return "./dataset/samples"
+}
+
+func loadDatasetFromDir(datasetDir string) (dataset, error) {
+	queries, err := loadParquet[TextInfo](fmt.Sprintf("%s/queries.parquet", datasetDir))
+	if err != nil {
+		return dataset{}, err
 	}
 	corpus, err := loadParquet[TextInfo](fmt.Sprintf("%s/corpus.parquet", datasetDir))
 	if err != nil {
-		panic(err)
+		return dataset{}, err
 	}
 	answers, err := loadParquet[TextInfo](fmt.Sprintf("%s/answers.parquet", datasetDir))
 	if err != nil {
-		panic(err)
+		return dataset{}, err
 	}
 	qrels, err := loadParquet[RelsInfo](fmt.Sprintf("%s/qrels.parquet", datasetDir))
 	if err != nil {
-		panic(err)
+		return dataset{}, err
 	}
 	qas, err := loadParquet[QaInfo](fmt.Sprintf("%s/qas.parquet", datasetDir))
 	if err != nil {
-		panic(err)
+		return dataset{}, err
 	}
 
+	return datasetFromRows(queries, corpus, answers, qrels, qas)
+}
+
+// datasetFromRows rejects ambiguous IDs and orphan relations before maps can
+// silently overwrite benchmark labels. An approved external Parquet fixture
+// may be produced by a different tool than the bundled synthetic generator.
+func datasetFromRows(queries, corpus, answers []TextInfo, qrels []RelsInfo, qas []QaInfo) (dataset, error) {
 	res := dataset{
 		queries: make(map[int64]string),  // qid -> question text
 		corpus:  make(map[int64]string),  // pid -> passage text
@@ -82,21 +137,107 @@ func DefaultDataset() dataset {
 		qas:     make(map[int64]int64),   // qid -> aid
 	}
 	for _, qi := range queries {
+		if _, exists := res.queries[qi.ID]; exists {
+			return dataset{}, fmt.Errorf("duplicate evaluation question ID %d", qi.ID)
+		}
 		res.queries[qi.ID] = qi.Text
 	}
 	for _, ci := range corpus {
+		if _, exists := res.corpus[ci.ID]; exists {
+			return dataset{}, fmt.Errorf("duplicate evaluation passage ID %d", ci.ID)
+		}
 		res.corpus[ci.ID] = ci.Text
 	}
 	for _, ai := range answers {
+		if _, exists := res.answers[ai.ID]; exists {
+			return dataset{}, fmt.Errorf("duplicate evaluation answer ID %d", ai.ID)
+		}
 		res.answers[ai.ID] = ai.Text
 	}
+	seenQrels := make(map[RelsInfo]struct{}, len(qrels))
 	for _, ri := range qrels {
+		if _, exists := res.queries[ri.QID]; !exists {
+			return dataset{}, fmt.Errorf("evaluation evidence references missing question %d", ri.QID)
+		}
+		if _, exists := res.corpus[ri.PID]; !exists {
+			return dataset{}, fmt.Errorf("evaluation question %d references missing passage %d", ri.QID, ri.PID)
+		}
+		if _, exists := seenQrels[ri]; exists {
+			return dataset{}, fmt.Errorf("duplicate evaluation evidence link %d/%d", ri.QID, ri.PID)
+		}
+		seenQrels[ri] = struct{}{}
 		res.qrels[ri.QID] = append(res.qrels[ri.QID], ri.PID)
 	}
 	for _, qi := range qas {
+		if _, exists := res.queries[qi.QID]; !exists {
+			return dataset{}, fmt.Errorf("evaluation answer references missing question %d", qi.QID)
+		}
+		answer, exists := res.answers[qi.AID]
+		if !exists {
+			return dataset{}, fmt.Errorf("evaluation question %d references missing answer %d", qi.QID, qi.AID)
+		}
+		if strings.TrimSpace(answer) == "" {
+			return dataset{}, fmt.Errorf("evaluation question %d references blank answer %d", qi.QID, qi.AID)
+		}
+		if _, exists := res.qas[qi.QID]; exists {
+			return dataset{}, fmt.Errorf("duplicate evaluation answer link for question %d", qi.QID)
+		}
 		res.qas[qi.QID] = qi.AID
 	}
-	return res
+	return res, nil
+}
+
+// evaluationFixture remaps sparse source IDs to stable dense positions. This
+// prevents a large source PID from allocating a huge mostly-empty slice and
+// ensures the fingerprint is stable across Go map iteration orders.
+func (d *dataset) evaluationFixture() (*types.EvaluationDataset, error) {
+	if len(d.queries) == 0 || len(d.corpus) == 0 {
+		return nil, errors.New("evaluation dataset requires queries and corpus")
+	}
+	corpusIDs := make([]int64, 0, len(d.corpus))
+	for id, passage := range d.corpus {
+		if strings.TrimSpace(passage) == "" {
+			return nil, fmt.Errorf("empty evaluation passage %d", id)
+		}
+		corpusIDs = append(corpusIDs, id)
+	}
+	slices.Sort(corpusIDs)
+	result := &types.EvaluationDataset{Corpus: make([]string, len(corpusIDs))}
+	positions := make(map[int64]int, len(corpusIDs))
+	for i, id := range corpusIDs {
+		positions[id] = i
+		result.Corpus[i] = d.corpus[id]
+	}
+	queryIDs := make([]int64, 0, len(d.queries))
+	for id := range d.queries {
+		queryIDs = append(queryIDs, id)
+	}
+	slices.Sort(queryIDs)
+	result.QAPairs = make([]*types.QAPair, 0, len(queryIDs))
+	for _, qid := range queryIDs {
+		question := d.queries[qid]
+		if strings.TrimSpace(question) == "" {
+			return nil, fmt.Errorf("empty evaluation question %d", qid)
+		}
+		pair := &types.QAPair{QID: int(qid), Question: question}
+		for _, sourcePID := range d.qrels[qid] {
+			position, ok := positions[sourcePID]
+			if !ok {
+				return nil, fmt.Errorf("qrel for question %d references missing passage %d", qid, sourcePID)
+			}
+			pair.PIDs = append(pair.PIDs, position)
+			pair.Passages = append(pair.Passages, result.Corpus[position])
+		}
+		if answerID, ok := d.qas[qid]; ok {
+			answer, exists := d.answers[answerID]
+			if !exists {
+				return nil, fmt.Errorf("question %d references missing answer %d", qid, answerID)
+			}
+			pair.AID, pair.Answer = int(answerID), answer
+		}
+		result.QAPairs = append(result.QAPairs, pair)
+	}
+	return result, nil
 }
 
 // dataset represents the in-memory dataset structure

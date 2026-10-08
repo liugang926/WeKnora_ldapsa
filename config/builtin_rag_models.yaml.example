@@ -1,0 +1,25 @@
+# Copy to a private deployment path and set BUILTIN_MODELS_CONFIG to that path.
+# RAG_MODEL_TOKEN must be injected from a private environment file or secret.
+# The host model service must be reachable as host.docker.internal:19090.
+builtin_models:
+  - id: builtin-local-bge-small-zh-v15
+    type: Embedding
+    source: remote
+    is_default: true
+    name: BAAI/bge-small-zh-v1.5
+    parameters:
+      base_url: http://host.docker.internal:19090/v1
+      api_key: ${RAG_MODEL_TOKEN}
+      provider: generic
+      embedding_parameters:
+        dimension: 512
+
+  - id: builtin-local-bge-reranker-base
+    type: Rerank
+    source: remote
+    is_default: true
+    name: BAAI/bge-reranker-base
+    parameters:
+      base_url: http://host.docker.internal:19090/v1
+      api_key: ${RAG_MODEL_TOKEN}
+      provider: generic

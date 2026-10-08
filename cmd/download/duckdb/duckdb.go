@@ -22,6 +22,17 @@ func downloadExtensions() {
 		panic(err)
 	}
 	defer sqlDB.Close()
+	// Bootstrap the HTTPS transport from DuckDB's signed core repository.
+	// DuckDB cannot fetch HTTPS extension URLs until httpfs is loaded.
+	if _, err := sqlDB.ExecContext(ctx, "INSTALL httpfs; LOAD httpfs;"); err != nil {
+		panic(fmt.Errorf("install DuckDB HTTPS transport: %w", err))
+	}
+	// DuckDB's default core repository is HTTP. HTTPS avoids local HTTP
+	// proxies returning 502 for signed extension archives during Docker builds.
+	if _, err := sqlDB.ExecContext(ctx,
+		"SET custom_extension_repository = 'https://extensions.duckdb.org';"); err != nil {
+		panic(fmt.Errorf("set DuckDB extension repository: %w", err))
+	}
 
 	for _, ext := range duckdbExtensions {
 		if _, err := sqlDB.ExecContext(ctx, fmt.Sprintf("INSTALL %s;", ext)); err != nil {
