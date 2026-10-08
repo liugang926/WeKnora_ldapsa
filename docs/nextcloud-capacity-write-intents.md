@@ -72,7 +72,8 @@ No ordinary HTTP endpoint, actor grant or deletion option is introduced.
 Run the bounded owned verification fixture:
 
 ```sh
-python3 scripts/ops/isolated-capacity-write-intents.py
+python3 scripts/ops/isolated-capacity-write-intents.py \
+  --evidence-dir=/absolute/private/new-capacity-evidence
 ```
 
 It uses stock PG16 on a nonce internal network with no host ports, 1CPU/512MiB
@@ -85,6 +86,13 @@ two competing actual writers, expired active writer, late writer/catalog,
 shared owners, linked paths, cross root/backend/KB and legacy unknown cases are
 covered. Fixture schemas, files and Docker resources are removed afterwards;
 existing Go caches and shared application resources are preserved.
+
+The source mount is read-only. The probe refuses a dirty source checkout,
+records its actual Git commit before and after execution, waits for the final
+PostgreSQL TCP listener, and writes logs/receipts into a new private directory.
+Omit `--evidence-dir` to create a unique temporary evidence directory. Existing
+directories and paths inside the source checkout are refused. Failed tests
+return a nonzero exit code, and frozen repository evidence is never overwritten.
 
 This covers local original source-file admission and failed/crashed write
 accounting. Derived assets, index/backend writes and bucket capacity require
