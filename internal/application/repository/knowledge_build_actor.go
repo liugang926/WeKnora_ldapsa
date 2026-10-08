@@ -271,8 +271,11 @@ func (s *KnowledgeInputProvenanceStore) restoreCurrentKnowledgeActor(ctx context
 		if actor.PrincipalType == types.PrincipalAPITenant && actor.PrincipalID != fmt.Sprintf("%d", actor.CallerTenantID) {
 			return ctx, ErrKnowledgeInputChanged
 		}
-		if actor.PrincipalType == types.PrincipalAPIExternalUser && !strings.HasPrefix(actor.PrincipalID, fmt.Sprintf("%d:", actor.CallerTenantID)) {
-			return ctx, ErrKnowledgeInputChanged
+		if actor.PrincipalType == types.PrincipalAPIExternalUser {
+			prefix := fmt.Sprintf("%d:", actor.CallerTenantID)
+			if !strings.HasPrefix(actor.PrincipalID, prefix) || strings.TrimSpace(strings.TrimPrefix(actor.PrincipalID, prefix)) == "" {
+				return ctx, ErrKnowledgeInputChanged
+			}
 		}
 		scope := types.TenantAPIKeyScope{KeyID: key.ID, Name: key.Name, ScopeType: key.ScopeType, FullAccess: key.FullAccess, KnowledgeBaseIDs: key.KnowledgeBaseIDs, Capabilities: key.Capabilities}
 		ctx = types.WithTenantAPIKeyScope(ctx, scope)
