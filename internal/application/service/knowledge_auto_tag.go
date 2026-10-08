@@ -62,9 +62,36 @@ func (s *KnowledgeAutoTagService) checkAutoTagInput(ctx context.Context, snapsho
 	if err := s.knowledgeInputs.RecheckKnowledgeAutoTagInputs(ctx, snapshot); err != nil {
 		return err
 	}
-	scope := access.LineageReadScope{Targets: types.SearchTargets{&types.SearchTarget{Type: types.SearchTargetTypeKnowledgeBase, TenantID: snapshot.Original.Proof.TenantID, KnowledgeBaseID: snapshot.Original.Proof.KnowledgeBaseID}}}
-	if err := s.lineageChecker.Check(ctx, snapshot.SourceLineage, scope); err != nil {
+	// The original document may be this exact worker's unpublished Nextcloud
+	// generation. Its private lease/admission verifier authorizes that input;
+	// candidate tag and retained relation origins still use public authority.
+	if err := s.knowledgeInputs.RecheckKnowledgeBuildInputs(ctx, snapshot.Original.Proof); err != nil {
 		return err
+	}
+	extra, err := types.NewCompleteSourceLineage()
+	if err != nil {
+		return err
+	}
+	for _, proof := range snapshot.TagProofs {
+		if proof == nil {
+			return types.ErrSourceLineageUnknown
+		}
+		extra, err = types.UnionSourceLineage(extra, proof.SourceLineage)
+		if err != nil {
+			return err
+		}
+	}
+	if snapshot.RelationProof != nil {
+		extra, err = types.UnionSourceLineage(extra, snapshot.RelationProof.SourceLineage)
+		if err != nil {
+			return err
+		}
+	}
+	scope := access.LineageReadScope{Targets: types.SearchTargets{&types.SearchTarget{Type: types.SearchTargetTypeKnowledgeBase, TenantID: snapshot.Original.Proof.TenantID, KnowledgeBaseID: snapshot.Original.Proof.KnowledgeBaseID}}}
+	if len(extra.Sources) > 0 || !repository.NextcloudBuildLeasePresent(ctx, snapshot.Original.Proof.TenantID, snapshot.Original.Proof.KnowledgeBaseID, snapshot.Original.Proof.KnowledgeID) {
+		if err := s.lineageChecker.Check(ctx, extra, scope); err != nil {
+			return err
+		}
 	}
 	return s.knowledgeInputs.RecheckKnowledgeAutoTagInputs(ctx, snapshot)
 }
