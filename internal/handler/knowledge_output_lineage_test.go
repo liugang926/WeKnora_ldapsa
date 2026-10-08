@@ -142,6 +142,9 @@ func outputHTTPFixture(t *testing.T, admitted bool) (*KnowledgeHandler, *gorm.DB
 	script, err = os.ReadFile("../../migrations/sqlite/000054_knowledge_configuration_history_inputs.up.sql")
 	require.NoError(t, err)
 	require.NoError(t, db.Exec(string(script)).Error)
+	script, err = os.ReadFile("../../migrations/sqlite/000055_knowledge_actual_config_controls.up.sql")
+	require.NoError(t, err)
+	require.NoError(t, db.Exec(string(script)).Error)
 	kb := &types.KnowledgeBase{ID: "kb", TenantID: 7, Name: "human KB", Type: types.KnowledgeBaseTypeDocument}
 	k := &types.Knowledge{ID: "document", TenantID: 7, KnowledgeBaseID: kb.ID, Type: types.KnowledgeTypeManual,
 		Channel: "web", Source: "manual", Title: "owned-output-title", Metadata: types.JSON(`{"manual":{"content":"owned-output-body","version":1}}`), CustomMetadata: types.JSON(`{}`)}

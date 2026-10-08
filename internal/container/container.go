@@ -501,11 +501,15 @@ func BuildContainer(container *dig.Container) *dig.Container {
 		return store
 	}))
 	must(container.Provide(func(store *repository.KnowledgeInputProvenanceStore) interfaces.KnowledgeInputWriter { return store }))
+	must(container.Provide(func(store *repository.KnowledgeInputProvenanceStore) interfaces.KnowledgeBaseInputWriter {
+		return store
+	}))
 	must(container.Provide(service.NewKnowledgeOutputAuthorizer))
 	must(container.Provide(func(db *gorm.DB, store *repository.KnowledgeInputProvenanceStore) interfaces.RAGChunkSnapshotReader {
 		return repository.NewRAGChunkSnapshotReader(db, store)
 	}))
 	must(container.Invoke(service.ConfigureKnowledgeInputProvenance))
+	must(container.Invoke(service.ConfigureKnowledgeBaseInputProvenance))
 	must(container.Invoke(service.ConfigureMessageSourceLineage))
 	must(container.Invoke(func(store *repository.KnowledgeInputProvenanceStore, messages interfaces.MessageService) {
 		verifier, ok := messages.(interfaces.MessageSourceLineageVerifier)
