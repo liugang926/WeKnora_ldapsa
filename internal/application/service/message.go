@@ -915,6 +915,19 @@ func (s *messageService) filterHistoricalSearchPairs(
 			continue
 		}
 		if _, denied := blocked[historicalSearchPairKey(item)]; !denied {
+			if item.SessionTitleSourceLineage.RequireComplete() != nil {
+				item.SessionTitle = ""
+			} else if len(item.SessionTitleSourceLineage.Sources) > 0 {
+				if s.sourceLineageGuard == nil {
+					return nil, access.ErrNextcloudPublicationUnavailable
+				}
+				if err := s.sourceLineageGuard.Check(ctx, item.SessionTitleSourceLineage, access.LineageReadScope{}); err != nil {
+					if !errors.Is(err, access.ErrNextcloudPublicationDenied) {
+						return nil, err
+					}
+					item.SessionTitle = ""
+				}
+			}
 			if item.Role == "user" {
 				item.MessageWithSession.Message = *rawUserContentOnly([]*types.Message{&item.MessageWithSession.Message})[0]
 			}

@@ -26,7 +26,7 @@ func TestSQLiteSourceLineageUpgradeFrom50PreservesLegacyAndTombstones(t *testing
 	chdirAndRestore(t, root)
 	require.NoError(t, RunMigrationsWithOptions("sqlite3://unused", MigrationOptions{SQLiteDBPath: dbPath}))
 	version, dirty := sqliteMigrationState(t, db)
-	require.Equal(t, 51, version)
+	require.Equal(t, expectedSQLiteMigrationVersion, version)
 	require.False(t, dirty)
 	requireSourceLineageMigrationBehavior(t, db, "sqlite")
 	// A downgrade cannot silently discard the durable facts or answer lineage.

@@ -79,9 +79,13 @@ type Session struct {
 	// ID
 	ID string `json:"id"          gorm:"type:varchar(36);primaryKey"`
 	// Title
-	Title string `json:"title"`
+	Title              string         `json:"title"`
+	TitleSourceLineage *SourceLineage `json:"-" gorm:"type:jsonb;column:title_source_lineage"`
+	TitleAuthorized    bool           `json:"-" gorm:"-"`
 	// Description
-	Description string `json:"description"`
+	Description              string         `json:"description"`
+	DescriptionSourceLineage *SourceLineage `json:"-" gorm:"type:jsonb;column:description_source_lineage"`
+	DescriptionAuthorized    bool           `json:"-" gorm:"-"`
 	// Workspace ID
 	TenantID uint64 `json:"tenant_id"   gorm:"index"`
 	// UserID is the owner scope for this session. WeKnora user UUIDs, API

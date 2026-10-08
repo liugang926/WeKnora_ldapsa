@@ -17,11 +17,11 @@ import (
 // Contains query-answer pairs and associated knowledge references
 // Used for tracking conversation context and history
 type History struct {
-	SourceLineage *SourceLineage `json:"-"` // Original saved dependency union; NULL is unknown.
-	Query               string     // User query text
-	Answer              string     // System response text
-	CreateAt            time.Time  // When this history entry was created
-	KnowledgeReferences References // Knowledge references used in the answer
+	SourceLineage       *SourceLineage `json:"-"` // Original saved dependency union; NULL is unknown.
+	Query               string         // User query text
+	Answer              string         // System response text
+	CreateAt            time.Time      // When this history entry was created
+	KnowledgeReferences References     // Knowledge references used in the answer
 }
 
 // MentionedItem represents a mentioned knowledge base or file
@@ -593,7 +593,8 @@ type MessageSearchParams struct {
 type MessageWithSession struct {
 	Message
 	// Title of the session this message belongs to
-	SessionTitle string `json:"session_title"`
+	SessionTitle              string         `json:"session_title"`
+	SessionTitleSourceLineage *SourceLineage `json:"-" gorm:"column:session_title_source_lineage"`
 }
 
 // MessageSearchResultItem represents a single search result item (internal, pre-merge)

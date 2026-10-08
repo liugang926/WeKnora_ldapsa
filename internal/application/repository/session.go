@@ -162,6 +162,10 @@ func (r *sessionRepository) GetPagedByTenantID(
 func (r *sessionRepository) QueryPaged(
 	ctx context.Context, q *types.SessionListQuery,
 ) ([]*types.SessionListItem, int64, error) {
+	return r.querySessionRows(ctx, q, false)
+}
+
+func (r *sessionRepository) querySessionRows(ctx context.Context, q *types.SessionListQuery, allTitleCandidates bool) ([]*types.SessionListItem, int64, error) {
 	// Dialect-aware bits so the same query works on Postgres and SQLite (Lite build).
 	isPostgres := r.db.Dialector.Name() == "postgres"
 	titleLikeExpr := "LOWER(s.title) LIKE LOWER(?)"
@@ -193,6 +197,7 @@ func (r *sessionRepository) QueryPaged(
 			types.SkillMaintenanceSessionMarker+"%",
 		)
 		if kw := strings.TrimSpace(q.Keyword); kw != "" {
+			db = db.Where(sessionTitleCandidatePredicate(r.db.Dialector.Name()))
 			db = db.Where(titleLikeExpr, "%"+escapeLikeKeyword(kw)+"%")
 		}
 		return db
@@ -281,6 +286,9 @@ func (r *sessionRepository) QueryPaged(
 		Order(orderClause).
 		Offset((page - 1) * size).
 		Limit(size)
+	if allTitleCandidates {
+		rowsQ = rowsQ.Offset(-1).Limit(-1)
+	}
 	if err := rowsQ.Find(&items).Error; err != nil {
 		return nil, 0, err
 	}
@@ -326,9 +334,11 @@ func (r *sessionRepository) Update(ctx context.Context, session *types.Session, 
 		Model(&types.Session{}).
 		Where("tenant_id = ? AND id = ?", session.TenantID, session.ID), userID).
 		Updates(map[string]interface{}{
-			"title":       session.Title,
-			"description": session.Description,
-			"updated_at":  session.UpdatedAt,
+			"title":                      session.Title,
+			"title_source_lineage":       session.TitleSourceLineage,
+			"description":                session.Description,
+			"description_source_lineage": session.DescriptionSourceLineage,
+			"updated_at":                 session.UpdatedAt,
 		})
 	return res.RowsAffected, res.Error
 }

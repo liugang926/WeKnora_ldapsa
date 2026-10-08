@@ -210,6 +210,8 @@ func (h *Handler) CreateSession(c *gin.Context) {
 		Title:       request.Title,
 		Description: types.SanitizeClientSessionDescription(request.Description, ""),
 	}
+	createdSession.TitleSourceLineage, _ = types.NewCompleteSourceLineage()
+	createdSession.DescriptionSourceLineage, _ = types.NewCompleteSourceLineage()
 	// Attach the calling user as the session owner when available.
 	// API-key callers scope sessions per external user when configured;
 	// otherwise they fall back to the synthetic tenant user.
@@ -375,6 +377,8 @@ func (h *Handler) UpdateSession(c *gin.Context) {
 
 	session.ID = id
 	session.TenantID = tenantID.(uint64)
+	session.TitleSourceLineage, _ = types.NewCompleteSourceLineage()
+	session.DescriptionSourceLineage, _ = types.NewCompleteSourceLineage()
 
 	// Call service to update session
 	if err := h.sessionService.UpdateSession(ctx, &session); err != nil {

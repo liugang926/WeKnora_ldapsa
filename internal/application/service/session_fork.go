@@ -267,6 +267,18 @@ func (s *SessionForkService) Fork(
 		ForkedFromMessageID:   forkPoint.ID,
 		ForkBootstrap:         bootstrap,
 	}
+	if title != "" {
+		newSession.TitleSourceLineage, _ = types.NewCompleteSourceLineage() // Raw authorized human title.
+	} else {
+		newSession.TitleSourceLineage, _ = types.UnionSourceLineage(source.TitleSourceLineage)
+		if newSession.TitleSourceLineage.RequireComplete() != nil {
+			newSession.Title = ""
+		}
+	}
+	newSession.DescriptionSourceLineage, _ = types.UnionSourceLineage(source.DescriptionSourceLineage)
+	if newSession.DescriptionSourceLineage.RequireComplete() != nil {
+		newSession.Description = ""
+	}
 
 	copied := copyMessagesInto(newSession.ID, history)
 	if err := s.sessions.CreateForked(workCtx, newSession, copied); err != nil {
