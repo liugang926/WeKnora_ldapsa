@@ -28,9 +28,10 @@ func NewFAQOutputAuthorizer(store *repository.KnowledgeInputProvenanceStore, gua
 }
 
 type FAQOutputGuard struct {
-	authorizer *FAQOutputAuthorizer
-	snapshot   *types.FAQInputSnapshot
-	body       string
+	authorizer   *FAQOutputAuthorizer
+	snapshot     *types.FAQInputSnapshot
+	importOutput *types.FAQImportOutputSnapshot
+	body         string
 }
 type faqOutputBoundaryKey struct{}
 type faqOutputBoundary struct{ guard *FAQOutputGuard }
@@ -67,6 +68,9 @@ func (g *FAQOutputGuard) Recheck(ctx context.Context) error {
 	}
 	if err := ctx.Err(); err != nil {
 		return err
+	}
+	if g.importOutput != nil {
+		return g.recheckImportOutput(ctx)
 	}
 	lineages, err := repository.FAQInputLineages(g.snapshot)
 	if err != nil {
@@ -226,4 +230,11 @@ func bindFAQOutput(ctx context.Context, guard *FAQOutputGuard, value any) error 
 		return nil
 	}
 	return guard.Bind(ctx, value)
+}
+
+func (a *FAQOutputAuthorizer) ReadPlan(ctx context.Context, request types.FAQInputReadRequest) (*types.FAQInputReadPlan, error) {
+	if a == nil || a.store == nil {
+		return nil, access.ErrNextcloudPublicationUnavailable
+	}
+	return a.store.PeekFAQInputReadPlan(ctx, request)
 }

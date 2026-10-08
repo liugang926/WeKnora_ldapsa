@@ -40,6 +40,7 @@ type KnowledgeOutputGuard struct {
 	lineage    *types.SourceLineage
 	scope      access.LineageReadScope
 	auxiliary  *types.KnowledgeOutputAuxiliaryInputSnapshot
+	faqResults []*types.FAQImportOutputSnapshot
 }
 
 type knowledgeOutputGuardContextKey struct{}
@@ -68,7 +69,7 @@ func knowledgeOutputHasFAQResult(k *types.Knowledge) bool {
 }
 
 func knowledgeOutputBody(k *types.Knowledge) (string, error) {
-	if k == nil || len(k.Tags) > 0 || k.KnowledgeBaseName != "" || k.ErrorMessage != "" || knowledgeOutputHasFAQResult(k) {
+	if k == nil || len(k.Tags) > 0 || k.KnowledgeBaseName != "" || k.ErrorMessage != "" || knowledgeOutputHasFAQResult(k) && k.Type != types.KnowledgeTypeFAQ {
 		// Joined tag and KB display producers need their own original proof;
 		// the document's origin cannot certify unrelated generated strings.
 		return "", types.ErrSourceLineageUnknown
@@ -88,7 +89,7 @@ func knowledgeOutputBaseBody(k *types.Knowledge) (string, error) {
 }
 
 func knowledgeOutputJoinedBody(k *types.Knowledge) (string, error) {
-	if k == nil || k.ErrorMessage != "" || knowledgeOutputHasFAQResult(k) {
+	if k == nil || k.ErrorMessage != "" || knowledgeOutputHasFAQResult(k) && k.Type != types.KnowledgeTypeFAQ {
 		return "", types.ErrSourceLineageUnknown
 	}
 	body, err := json.Marshal(k)
@@ -190,6 +191,28 @@ func (a *KnowledgeOutputAuthorizer) Begin(ctx context.Context, rows []*types.Kno
 		if err := json.Unmarshal(encoded, proof); err != nil {
 			return nil, err
 		}
+		if knowledgeOutputHasFAQResult(row) {
+			reader, ok := a.reader.(interfaces.FAQImportOutputInputReader)
+			if !ok {
+				return nil, types.ErrSourceLineageUnknown
+			}
+			result, err := reader.CaptureFAQImportOutputInputs(ctx, types.FAQImportOutputReadRequest{TenantID: row.TenantID, KnowledgeBaseID: row.KnowledgeBaseID, KnowledgeID: row.ID, Kind: "result"})
+			if err != nil {
+				return nil, err
+			}
+			actual, err := row.GetLastFAQImportResult()
+			if err != nil {
+				return nil, err
+			}
+			if result == nil || result.Result == nil || !faqOutputBodiesEqual(actual, result.Result) {
+				return nil, repository.ErrKnowledgeInputChanged
+			}
+			result, err = cloneCollection(result)
+			if err != nil {
+				return nil, err
+			}
+			g.faqResults = append(g.faqResults, result)
+		}
 		g.entries[key] = knowledgeOutputEntry{body: supplied, baseBody: base, proof: proof}
 		g.proofs = append(g.proofs, proof)
 		if len(row.Tags) > 0 || row.KnowledgeBaseName != "" {
@@ -284,6 +307,9 @@ func (g *KnowledgeOutputGuard) Check(ctx context.Context, rows []*types.Knowledg
 	if err := checkBodies(); err != nil {
 		return err
 	}
+	if err := g.checkFAQResults(ctx); err != nil {
+		return err
+	}
 	// Callbacks receive detached private data, never the retained authority.
 	lineage, err := types.UnionSourceLineage(g.lineage)
 	if err != nil {
@@ -298,6 +324,9 @@ func (g *KnowledgeOutputGuard) Check(ctx context.Context, rows []*types.Knowledg
 		return err
 	}
 	if err := g.authorizer.checker.Check(ctx, lineage, scope); err != nil {
+		return err
+	}
+	if err := g.checkFAQResults(ctx); err != nil {
 		return err
 	}
 	if g.auxiliary != nil {
@@ -360,5 +389,24 @@ func (g *KnowledgeOutputGuard) Check(ctx context.Context, rows []*types.Knowledg
 			return err
 		}
 	}
+	if err := g.checkFAQResults(ctx); err != nil {
+		return err
+	}
 	return checkBodies()
+}
+
+func (g *KnowledgeOutputGuard) checkFAQResults(ctx context.Context) error {
+	if len(g.faqResults) == 0 {
+		return nil
+	}
+	reader, ok := g.authorizer.reader.(interfaces.FAQImportOutputInputReader)
+	if !ok {
+		return types.ErrSourceLineageUnknown
+	}
+	for _, snapshot := range g.faqResults {
+		if err := checkFAQImportOutputReceipt(ctx, reader, g.authorizer.checker, snapshot); err != nil {
+			return err
+		}
+	}
+	return nil
 }

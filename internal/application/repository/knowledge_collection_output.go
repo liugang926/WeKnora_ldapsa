@@ -243,7 +243,7 @@ func (s *KnowledgeInputProvenanceStore) recheckCollectionInTx(tx *gorm.DB, snaps
 	return recheckKnowledgeCollectionAuxiliary(tx, scopes, candidates, snapshot.Auxiliary)
 }
 
-func selectCollectionInTx(ctx context.Context, tx *gorm.DB, snapshot *types.KnowledgeCollectionInputSnapshot, request types.KnowledgeCollectionSelectionRequest) (*types.KnowledgeCollectionSelection, error) {
+func (s *KnowledgeInputProvenanceStore) selectCollectionInTx(ctx context.Context, tx *gorm.DB, snapshot *types.KnowledgeCollectionInputSnapshot, request types.KnowledgeCollectionSelectionRequest) (*types.KnowledgeCollectionSelection, error) {
 	result := &types.KnowledgeCollectionSelection{Request: request, Knowledge: []*types.Knowledge{}}
 	repo := &knowledgeRepository{db: tx}
 	var err error
@@ -281,7 +281,15 @@ func selectCollectionInTx(ctx context.Context, tx *gorm.DB, snapshot *types.Know
 		// These asynchronous diagnostic producers do not have original material
 		// receipts. Their strings must not ride a document's admission.
 		k.ErrorMessage = ""
-		k.LastFAQImportResult = nil
+		if k.Type == types.KnowledgeTypeFAQ && len(k.LastFAQImportResult) > 0 && string(k.LastFAQImportResult) != "null" {
+			proof, readErr := s.captureFAQImportOutputInTx(tx, types.FAQImportOutputReadRequest{TenantID: k.TenantID, KnowledgeBaseID: k.KnowledgeBaseID, KnowledgeID: k.ID, Kind: "result"})
+			if readErr != nil {
+				return nil, readErr
+			}
+			result.FAQImportResults = append(result.FAQImportResults, proof)
+		} else {
+			k.LastFAQImportResult = nil
+		}
 		if snapshot.Auxiliary != nil {
 			if request.Mode == "search" {
 				k.KnowledgeBaseName = snapshot.Auxiliary.KnowledgeBaseNames[k.KnowledgeBaseID]
@@ -304,7 +312,7 @@ func (s *KnowledgeInputProvenanceStore) SelectKnowledgeCollectionInputs(ctx cont
 			return err
 		}
 		var err error
-		result, err = selectCollectionInTx(ctx, tx, snapshot, request)
+		result, err = s.selectCollectionInTx(ctx, tx, snapshot, request)
 		return err
 	})
 	return result, err
@@ -318,7 +326,7 @@ func (s *KnowledgeInputProvenanceStore) RecheckKnowledgeCollectionInputs(ctx con
 		if selection == nil {
 			return nil
 		}
-		current, err := selectCollectionInTx(ctx, tx, snapshot, selection.Request)
+		current, err := s.selectCollectionInTx(ctx, tx, snapshot, selection.Request)
 		if err != nil {
 			return err
 		}

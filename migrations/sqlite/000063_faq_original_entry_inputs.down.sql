@@ -1,3 +1,9 @@
+DROP TABLE IF EXISTS faq_import_output_heads;
+DROP TABLE IF EXISTS faq_import_output_admissions;
+DROP TABLE IF EXISTS faq_import_result_versions;
+DROP TRIGGER IF EXISTS faq_import_result_insert;
+DROP TRIGGER IF EXISTS faq_import_result_update;
+DROP TRIGGER IF EXISTS faq_import_result_delete;
 DROP TRIGGER IF EXISTS faq_catalog_control_insert;
 DROP TRIGGER IF EXISTS faq_catalog_control_update;
 DROP TRIGGER IF EXISTS faq_entry_input_admissions_immutable_update;

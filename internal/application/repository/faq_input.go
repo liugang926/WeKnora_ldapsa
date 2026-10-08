@@ -80,22 +80,51 @@ func WithIndependentFAQInput(ctx context.Context, kb string, operation types.FAQ
 
 // The caller supplies the original model manifest, not a newly minted current
 // lineage claim. This bridge captures and rechecks the actual original rows.
+// WithDerivedFAQInput is the one-manifest form. The manifest must cover all
+// actually consumed model text/config/selection inputs. It is not a citation.
 func (s *KnowledgeInputProvenanceStore) WithDerivedFAQInput(ctx context.Context, kb string, operation types.FAQInputOperation, original *types.KnowledgeBuildInputProof) (context.Context, error) {
-	if original == nil || original.BodyDigest == "" || original.Projection != "" {
+	return s.WithDerivedFAQInputs(ctx, kb, operation, []*types.KnowledgeBuildInputProof{original})
+}
+
+// WithDerivedFAQInputs retains each complete original material receipt. A
+// future generator must supply every consumed parent, including non-output
+// candidates and prompt/config/history artifacts. Unknown parents are closed.
+func (s *KnowledgeInputProvenanceStore) WithDerivedFAQInputs(ctx context.Context, kb string, operation types.FAQInputOperation, originals []*types.KnowledgeBuildInputProof) (context.Context, error) {
+	if len(originals) == 0 || len(originals) > 4096 {
 		return ctx, types.ErrSourceLineageUnknown
 	}
-	if err := s.RecheckKnowledgeBuildInputs(ctx, original); err != nil {
-		return ctx, err
+	proofs := make([]*types.KnowledgeBuildInputProof, 0, len(originals))
+	lineages := make([]*types.SourceLineage, 0, len(originals))
+	for _, original := range originals {
+		if original == nil || original.BodyDigest == "" || original.Projection != "" || original.SourceLineage.RequireComplete() != nil {
+			return ctx, types.ErrSourceLineageUnknown
+		}
+		copy := cloneKnowledgeInputProof(original)
+		if copy == nil {
+			return ctx, types.ErrSourceLineageUnknown
+		}
+		if err := s.collectionTransaction(ctx, func(tx *gorm.DB) error {
+			authority, err := s.faqAuthorityInTx(tx)
+			if err != nil {
+				return err
+			}
+			_, err = authority.captureKnowledgeBuildSnapshotInTx(tx, types.KnowledgeBuildInputCaptureRequest{TenantID: copy.TenantID, KnowledgeBaseID: copy.KnowledgeBaseID, KnowledgeID: copy.KnowledgeID, ChunkIDs: copy.ChunkIDs, Expected: copy}, true)
+			return err
+		}); err != nil {
+			return ctx, err
+		}
+		proofs = append(proofs, copy)
+		lineages = append(lineages, copy.SourceLineage)
 	}
 	digest, err := KnowledgeInputDigest(operation)
 	if err != nil {
 		return ctx, err
 	}
-	lineage, err := types.UnionSourceLineage(original.SourceLineage)
+	lineage, err := types.UnionSourceLineage(lineages...)
 	if err != nil {
 		return ctx, err
 	}
-	return context.WithValue(ctx, faqInputBoundaryKey{}, faqInputBoundary{KB: kb, Digest: digest, Origin: knowledgeInputOrigin{lineage, "derived"}, OriginalInputs: []*types.KnowledgeBuildInputProof{cloneKnowledgeInputProof(original)}}), nil
+	return context.WithValue(ctx, faqInputBoundaryKey{}, faqInputBoundary{KB: kb, Digest: digest, Origin: knowledgeInputOrigin{lineage, "derived"}, OriginalInputs: proofs}), nil
 }
 
 func faqEntryDigest(chunk *types.Chunk) (string, error) {
@@ -184,6 +213,9 @@ func (s *KnowledgeInputProvenanceStore) ReadFAQEntryInputLineage(tx *gorm.DB, ch
 }
 
 func (s *KnowledgeInputProvenanceStore) captureFAQInputsInTx(tx *gorm.DB, req types.FAQInputReadRequest) (*types.FAQInputSnapshot, error) {
+	if err := s.checkFAQInputReadPlanInTx(tx, req); err != nil {
+		return nil, err
+	}
 	if req.TenantID == 0 || req.KnowledgeBaseID == "" {
 		return nil, types.ErrSourceLineageUnknown
 	}
@@ -779,6 +811,24 @@ func (s *KnowledgeInputProvenanceStore) FAQSessionSourceLineage(ctx context.Cont
 	return types.UnionSourceLineage(&lineage)
 }
 
+// FAQ parent reads hold the existing transaction. Every current actor, group,
+// and organization lookup must use that same connection (SQLite has one).
+func (s *KnowledgeInputProvenanceStore) faqAuthorityInTx(tx *gorm.DB) (*KnowledgeInputProvenanceStore, error) {
+	if s.displayAuthorityFactory == nil {
+		return nil, types.ErrSourceLineageUnknown
+	}
+	configured := s.displayAuthorityFactory(tx)
+	if configured == nil || configured.db != tx || configured.actorGroups == nil {
+		return nil, types.ErrSourceLineageUnknown
+	}
+	authority := *configured
+	// The current factory's message verifier is inherited from the global
+	// service. It cannot safely read inside this transaction. History parents
+	// stay unknown until a transaction-bound verifier is supplied explicitly.
+	authority.messageVerifier = nil
+	return &authority, nil
+}
+
 func (s *KnowledgeInputProvenanceStore) readFAQOriginalKnowledgeInputsInTx(tx *gorm.DB, session *faqInputSessionRow) ([]*types.KnowledgeBuildInputProof, error) {
 	var parents []*types.KnowledgeBuildInputProof
 	if err := json.Unmarshal([]byte(session.OriginalInputs), &parents); err != nil {
@@ -787,15 +837,23 @@ func (s *KnowledgeInputProvenanceStore) readFAQOriginalKnowledgeInputsInTx(tx *g
 	if len(parents) > 4096 {
 		return nil, types.ErrSourceLineageLimit
 	}
+	var authority *KnowledgeInputProvenanceStore
+	if len(parents) > 0 {
+		var err error
+		authority, err = s.faqAuthorityInTx(tx)
+		if err != nil {
+			return nil, err
+		}
+	}
 	for _, p := range parents {
 		if p == nil || p.BodyDigest == "" || p.Projection != "" || p.SourceLineage.RequireComplete() != nil {
 			return nil, types.ErrSourceLineageUnknown
 		}
-		if _, err := s.captureKnowledgeBuildSnapshotInTx(tx, types.KnowledgeBuildInputCaptureRequest{TenantID: p.TenantID, KnowledgeBaseID: p.KnowledgeBaseID, KnowledgeID: p.KnowledgeID, ChunkIDs: p.ChunkIDs, Expected: p}, true); err != nil {
+		if _, err := authority.captureKnowledgeBuildSnapshotInTx(tx, types.KnowledgeBuildInputCaptureRequest{TenantID: p.TenantID, KnowledgeBaseID: p.KnowledgeBaseID, KnowledgeID: p.KnowledgeID, ChunkIDs: p.ChunkIDs, Expected: p}, true); err != nil {
 			return nil, err
 		}
 		readCtx := types.WithAPIKeyOperationRequirement(tx.Statement.Context, types.APIKeyOperationRequirement{RequireFullAccess: true, Capabilities: []types.APIKeyCapability{types.APIKeyCapabilityRetrieve, types.APIKeyCapabilityChat, types.APIKeyCapabilityMessageHistory}})
-		readCtx, err := s.RefreshCurrentReadActor(readCtx)
+		readCtx, err := authority.RefreshCurrentReadActor(readCtx)
 		if err != nil {
 			return nil, err
 		}
@@ -803,10 +861,10 @@ func (s *KnowledgeInputProvenanceStore) readFAQOriginalKnowledgeInputsInTx(tx *g
 		if err := tx.Where("id=? AND tenant_id=?", p.KnowledgeBaseID, p.TenantID).Take(&kb).Error; err != nil {
 			return nil, err
 		}
-		if _, err := access.ResolveKB(readCtx, access.KBRequest{Caller: types.CallerFromContext(readCtx)}, &kb, types.OrgRoleViewer, s.actorShares, nil); err != nil {
+		if _, err := access.ResolveKB(readCtx, access.KBRequest{Caller: types.CallerFromContext(readCtx)}, &kb, types.OrgRoleViewer, authority.actorShares, nil); err != nil {
 			return nil, err
 		}
-		permission, err := s.actorGroups.EffectivePermission(readCtx, kb.TenantID, types.GroupResourceTypeKnowledgeBase, kb.ID, types.ResourceActionRead, time.Now().UTC())
+		permission, err := authority.actorGroups.EffectivePermission(readCtx, kb.TenantID, types.GroupResourceTypeKnowledgeBase, kb.ID, types.ResourceActionRead, time.Now().UTC())
 		if err != nil {
 			return nil, err
 		}

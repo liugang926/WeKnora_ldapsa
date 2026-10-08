@@ -87,6 +87,15 @@ func (e *faqHTTPEngine) BatchUpdateChunkTagID(context.Context, map[string]string
 
 type faqHTTPQueue struct{ tasks []*asynq.Task }
 
+type faqHTTPFiles struct{ interfaces.FileService }
+
+func (faqHTTPFiles) SaveBytes(_ context.Context, _ []byte, _ uint64, name string, _ bool) (string, error) {
+	return "isolated/" + name, nil
+}
+func (faqHTTPFiles) GetFileURL(_ context.Context, path string) (string, error) {
+	return "/isolated-FAQ-files/" + path, nil
+}
+
 func (q *faqHTTPQueue) Enqueue(task *asynq.Task, _ ...asynq.Option) (*asynq.TaskInfo, error) {
 	q.tasks = append(q.tasks, task)
 	return &asynq.TaskInfo{ID: "isolated"}, nil
@@ -137,7 +146,7 @@ func faqActualHTTPFixture(t *testing.T) (*FAQHandler, *TagHandler, *gorm.DB, *re
 	require.NoError(t, err)
 	ctx = grant.Context(ctx)
 	queue, engine := &faqHTTPQueue{}, &faqHTTPEngine{}
-	kg, err := service.NewKnowledgeService(nil, repository.NewKnowledgeRepository(db), nil, kbs, faqHTTPTenants{tenant: tenant}, nil, nil, repository.NewChunkRepository(db), repository.NewKnowledgeTagRepository(db), nil, nil, nil, nil, faqHTTPModel{}, queue, nil, nil, faqHTTPRegistry{engine: engine}, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	kg, err := service.NewKnowledgeService(nil, repository.NewKnowledgeRepository(db), nil, kbs, faqHTTPTenants{tenant: tenant}, nil, nil, repository.NewChunkRepository(db), repository.NewKnowledgeTagRepository(db), nil, faqHTTPFiles{}, nil, nil, faqHTTPModel{}, queue, nil, nil, faqHTTPRegistry{engine: engine}, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 	require.NoError(t, err)
 	service.ConfigureKnowledgeInputProvenance(kg, store, store)
 	service.ConfigureFAQInputProvenance(kg, store, guard)
@@ -157,6 +166,8 @@ func serveFAQHTTP(h *FAQHandler, ctx context.Context, method, url, body string) 
 	r.PUT("/knowledge-bases/:id/faq/entries/:entry_id", h.UpdateEntry)
 	r.POST("/knowledge-bases/:id/faq/search", h.SearchFAQ)
 	r.PUT("/knowledge-bases/:id/faq/entries-fields", h.UpdateEntryFieldsBatch)
+	r.GET("/faq/import/progress/:task_id", h.GetImportProgress)
+	r.PUT("/knowledge-bases/:id/faq/import/last-result/display", h.UpdateLastImportResultDisplayStatus)
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(method, url, strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")

@@ -374,6 +374,17 @@ func (s *knowledgeService) saveFAQImportResultToDatabase(ctx context.Context,
 		importResult.FailedEntriesURL = progress.FailedEntriesURL
 	}
 
+	if s.faqInputs != nil {
+		if err := s.checkFAQInput(ctx); err != nil {
+			return err
+		}
+		if err := s.faqInputs.PublishFAQImportResult(ctx, knowledge.ID, importResult, progress); err != nil {
+			return err
+		}
+		applyFAQImportResultToProgress(progress, importResult)
+		return nil
+	}
+
 	// 设置导入结果到Knowledge的metadata中
 	if err := knowledge.SetLastFAQImportResult(importResult); err != nil {
 		return fmt.Errorf("failed to set FAQ import result: %w", err)
@@ -2850,6 +2861,15 @@ func getFAQImportRunningKey(kbID string) string {
 
 // saveFAQImportProgress saves the FAQ import progress to Redis
 func (s *knowledgeService) saveFAQImportProgress(ctx context.Context, progress *types.FAQImportProgress) error {
+	progress.UpdatedAt = time.Now().Unix()
+	if s.faqInputs != nil {
+		if err := s.checkFAQInput(ctx); err != nil {
+			return err
+		}
+		if err := s.faqInputs.SealFAQImportProgress(ctx, progress); err != nil {
+			return err
+		}
+	}
 	if s.redisClient == nil {
 		progress.UpdatedAt = time.Now().Unix()
 		s.memFAQProgress.Store(progress.TaskID, progress)
@@ -2866,6 +2886,9 @@ func (s *knowledgeService) saveFAQImportProgress(ctx context.Context, progress *
 
 // GetFAQImportProgress retrieves the progress of an FAQ import task
 func (s *knowledgeService) GetFAQImportProgress(ctx context.Context, taskID string) (*types.FAQImportProgress, error) {
+	if s.faqInputs != nil {
+		return s.getAdmittedFAQImportProgress(ctx, taskID)
+	}
 	if s.redisClient == nil {
 		if v, ok := s.memFAQProgress.Load(taskID); ok {
 			return v.(*types.FAQImportProgress), nil
@@ -2924,6 +2947,23 @@ func (s *knowledgeService) UpdateLastFAQImportResultDisplayStatus(ctx context.Co
 		return err
 	}
 	tenantID := kb.TenantID
+	if s.faqInputs != nil {
+		knowledge, err := s.findFAQKnowledge(ctx, tenantID, kb.ID)
+		if err != nil {
+			return err
+		}
+		if knowledge == nil {
+			return types.ErrSourceLineageUnknown
+		}
+		guard, err := (&FAQOutputAuthorizer{s.faqInputs, s.faqLineageChecker}).BeginImportOutput(ctx, types.FAQImportOutputReadRequest{TenantID: tenantID, KnowledgeBaseID: kb.ID, KnowledgeID: knowledge.ID, Kind: "result"})
+		if err != nil {
+			return err
+		}
+		if err := guard.Recheck(ctx); err != nil {
+			return err
+		}
+		return s.faqInputs.UpdateFAQImportResultDisplayWithInput(ctx, guard.importOutput, displayStatus)
+	}
 
 	// 查找FAQ类型的knowledge
 	knowledgeList, err := s.repo.ListKnowledgeByKnowledgeBaseID(ctx, tenantID, kbID)

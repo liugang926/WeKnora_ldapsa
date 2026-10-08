@@ -587,7 +587,10 @@ func (h *FAQHandler) GetEntry(c *gin.Context) {
 // @Security     ApiKeyAuth
 // @Router       /faq/import/progress/{task_id} [get]
 func (h *FAQHandler) GetImportProgress(c *gin.Context) {
-	ctx := c.Request.Context()
+	if !h.requireFAQOutput(c) {
+		return
+	}
+	ctx := service.WithFAQOutputBoundary(c.Request.Context())
 	taskID := secutils.SanitizeForLog(c.Param("task_id"))
 	if err := requireTaskProgressTenant(ctx, taskID); err != nil {
 		c.Error(err)
@@ -601,10 +604,7 @@ func (h *FAQHandler) GetImportProgress(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"data":    progress,
-	})
+	h.writeFAQOutput(c, ctx, progress)
 }
 
 // UpdateLastImportResultDisplayStatus godoc
@@ -632,6 +632,11 @@ func (h *FAQHandler) UpdateLastImportResultDisplayStatus(c *gin.Context) {
 		return
 	}
 
+	ctx, inputErr := repository.WithIndependentFAQInput(ctx, kbID, types.FAQInputOperation{Kind: "display-status", DisplayStatus: req.DisplayStatus})
+	if inputErr != nil {
+		c.Error(knowledgeOutputHTTPError(inputErr))
+		return
+	}
 	if err := h.knowledgeService.UpdateLastFAQImportResultDisplayStatus(ctx, kbID, req.DisplayStatus); err != nil {
 		logger.ErrorWithFields(ctx, err, nil)
 		c.Error(err)

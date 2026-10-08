@@ -53,12 +53,13 @@ type KnowledgeCollectionSelectionRequest struct {
 }
 
 type KnowledgeCollectionSelection struct {
-	Request        KnowledgeCollectionSelectionRequest
-	Knowledge      []*Knowledge
-	Folders        *KnowledgeFolderTree
-	Total          int64
-	HasMore        bool
-	Page, PageSize int
+	Request          KnowledgeCollectionSelectionRequest
+	Knowledge        []*Knowledge
+	Folders          *KnowledgeFolderTree
+	Total            int64
+	HasMore          bool
+	Page, PageSize   int
+	FAQImportResults []*FAQImportOutputSnapshot
 }
 
 // Metadata display selectors describe only fields the actual explicit-ID

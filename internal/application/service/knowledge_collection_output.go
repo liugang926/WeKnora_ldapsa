@@ -115,6 +115,17 @@ func (g *KnowledgeCollectionOutputGuard) authorize(ctx context.Context) error {
 			return err
 		}
 	}
+	if g.selection != nil && len(g.selection.FAQImportResults) > 0 {
+		reader, ok := g.authorizer.reader.(interfaces.FAQImportOutputInputReader)
+		if !ok {
+			return types.ErrSourceLineageUnknown
+		}
+		for _, result := range g.selection.FAQImportResults {
+			if err := checkFAQImportOutputReceipt(ctx, reader, g.authorizer.checker, result); err != nil {
+				return err
+			}
+		}
+	}
 	if g.snapshot.Auxiliary != nil {
 		for _, proof := range g.snapshot.Auxiliary.Proofs {
 			if proof == nil {

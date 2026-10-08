@@ -44,14 +44,23 @@ type FAQInputSnapshot struct {
 // FAQInputOperation is server constructed from the actual authenticated body.
 // It is never decoded as a receipt or accepted from client metadata.
 type FAQInputOperation struct {
-	Kind       string
-	Entry      *FAQEntryPayload
-	Batch      *FAQBatchUpsertPayload
-	EntrySeqID int64
-	EntryID    string
-	Questions  []string
-	Enabled    *bool
-	TagID      *string
-	Fields     *FAQEntryFieldsBatchUpdate
-	DeleteIDs  []int64
+	Kind          string
+	Entry         *FAQEntryPayload
+	Batch         *FAQBatchUpsertPayload
+	EntrySeqID    int64
+	EntryID       string
+	Questions     []string
+	Enabled       *bool
+	TagID         *string
+	Fields        *FAQEntryFieldsBatchUpdate
+	DeleteIDs     []int64
+	DisplayStatus string
+}
+
+// FAQInputReadPlan contains only original receipt metadata. A caller can acquire
+// every scope before reading entry/config/tag material, then bind this plan.
+type FAQInputReadPlan struct {
+	Request        FAQInputReadRequest
+	MetadataDigest string
+	Scopes         []KnowledgeSearchScope
 }

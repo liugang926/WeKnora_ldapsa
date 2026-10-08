@@ -1,3 +1,8 @@
+DROP TABLE IF EXISTS faq_import_output_heads;
+DROP TABLE IF EXISTS faq_import_output_admissions;
+DROP TABLE IF EXISTS faq_import_result_versions;
+DROP TRIGGER IF EXISTS faq_import_result_checkpoint ON knowledges;
+DROP FUNCTION IF EXISTS faq_import_result_checkpoint();
 DROP TRIGGER IF EXISTS faq_catalog_control_checkpoint ON knowledges;
 DROP FUNCTION IF EXISTS faq_catalog_control_checkpoint();
 DROP TRIGGER IF EXISTS faq_input_chunk_checkpoint ON chunks;
@@ -14,3 +19,4 @@ DROP TABLE IF EXISTS faq_input_row_versions;
 DROP TABLE IF EXISTS faq_input_scope_versions;
 DROP FUNCTION IF EXISTS faq_input_immutable();
 DROP FUNCTION IF EXISTS faq_session_input_immutable();
+DROP FUNCTION IF EXISTS faq_import_output_head_monotonic();
