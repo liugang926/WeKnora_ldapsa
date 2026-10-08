@@ -484,6 +484,19 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	must(container.Provide(service.NewDataSourceService))
 	must(container.Provide(service.NewNextcloudEventDispatcher))
 	must(container.Provide(repository.NewNextcloudGCStore))
+	must(container.Provide(repository.NewNextcloudCapacityStore))
+	must(container.Provide(func(tenants interfaces.TenantRepository, storage interfaces.StorageBackendResolver) service.NextcloudCapacityFileResolver {
+		return func(ctx context.Context, kb *types.KnowledgeBase) (interfaces.FileService, error) {
+			tenant, err := tenants.GetTenantByID(ctx, kb.TenantID)
+			if err != nil || tenant == nil || kb.StorageBackendID == nil {
+				return nil, repository.ErrNextcloudCapacityUnavailable
+			}
+			fileService, _, err := storage.ResolveFileService(ctx, tenant, *kb.StorageBackendID, "", strings.TrimSpace(os.Getenv("LOCAL_STORAGE_BASE_DIR")))
+			return fileService, err
+		}
+	}))
+	must(container.Provide(service.NewNextcloudCapacityAdmission))
+
 	must(container.Provide(repository.NewNextcloudContentLeaseStore))
 	must(container.Invoke(startDataSourceScheduler))
 	must(container.Invoke(startNextcloudGC))
@@ -535,6 +548,7 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	}) {
 		service.ConfigureKnowledgeAutoTagInputProvenance(p.Handler, p.Store, p.Guard)
 	}))
+	must(container.Invoke(service.ConfigureDataSourceCapacityAdmission))
 	must(container.Invoke(service.ConfigureKnowledgeInputProvenance))
 	must(container.Invoke(service.ConfigureKnowledgeBaseInputProvenance))
 	must(container.Invoke(service.ConfigureMessageSourceLineage))
@@ -662,6 +676,7 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	must(container.Provide(handler.NewNextcloudEventConnectionHandler))
 	must(container.Provide(handler.NewNextcloudSourcePairingHandler))
 	must(container.Provide(handler.NewNextcloudGCHandler))
+	must(container.Provide(handler.NewNextcloudCapacityHandler))
 	must(container.Invoke(handler.ConfigureDataSourceCredentialsGroupAccess))
 	must(container.Provide(handler.NewWebSearchHandler))
 	must(container.Provide(handler.NewWebSearchProviderHandler))

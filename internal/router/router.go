@@ -101,6 +101,7 @@ type RouterParams struct {
 	NextcloudEventConnectionHandler *handler.NextcloudEventConnectionHandler
 	NextcloudSourcePairingHandler   *handler.NextcloudSourcePairingHandler
 	NextcloudGCHandler              *handler.NextcloudGCHandler
+	NextcloudCapacityHandler        *handler.NextcloudCapacityHandler
 	WeKnoraCloudHandler             *handler.WeKnoraCloudHandler
 	WikiPageHandler                 *handler.WikiPageHandler
 	MemoryHandler                   *handler.MemoryHandler
@@ -398,6 +399,9 @@ func NewRouter(params RouterParams) *gin.Engine {
 		}
 		if params.NextcloudGCHandler != nil {
 			RegisterNextcloudGCRoutes(v1, params.NextcloudGCHandler, rbacGuards)
+		}
+		if params.NextcloudCapacityHandler != nil {
+			RegisterNextcloudCapacityRoutes(v1, params.NextcloudCapacityHandler, rbacGuards)
 		}
 		RegisterWeKnoraCloudRoutes(v1, params.WeKnoraCloudHandler, rbacGuards)
 		RegisterWikiPageRoutes(v1, params.WikiPageHandler, rbacGuards)

@@ -38,6 +38,7 @@ type DataSourceService struct {
 	audit                   interfaces.AuditLogService
 	nextcloudEventInbox     *apprepo.NextcloudEventInboxRepository
 	nextcloudSourcePairings *apprepo.NextcloudSourcePairingRepository
+	capacityAdmission       *NextcloudCapacityAdmission
 }
 
 // NewDataSourceService creates a new data source service
@@ -2110,6 +2111,17 @@ func (s *DataSourceService) ingestNextcloudItem(
 		!validName || fileName == "" || fileName != item.FileName || strings.ContainsAny(fileName, `/\`) {
 		return false, errors.New("incomplete Nextcloud file version")
 	}
+	if s.capacityAdmission == nil {
+		return false, apprepo.ErrNextcloudCapacityUnavailable
+	}
+	capacityKB, capacityErr := s.kbService.GetKnowledgeBaseByID(ctx, ds.KnowledgeBaseID)
+	if capacityErr != nil || capacityKB == nil || capacityKB.TenantID != ds.TenantID {
+		return false, apprepo.ErrNextcloudCapacityUnavailable
+	}
+	reservation, capacityErr := s.capacityAdmission.Begin(ctx, capacityKB, ds.ID, item.ExternalID, etag, int64(len(item.Content)))
+	if capacityErr != nil {
+		return false, capacityErr
+	}
 	if err := versions.AdmitNextcloudCandidateRetry(ctx, ds.TenantID,
 		ds.KnowledgeBaseID, ds.ID, item.ExternalID, etag); err != nil {
 		return false, err
@@ -2150,6 +2162,9 @@ func (s *DataSourceService) ingestNextcloudItem(
 	// repository also invokes this after asynchronous completion.
 	if _, err := versions.PublishNextcloudVersion(ctx, candidate.ID); err != nil {
 		return isUpdate, fmt.Errorf("publish completed Nextcloud version: %w", err)
+	}
+	if err := s.capacityAdmission.Finish(ctx, reservation, candidate.ID, true); err != nil {
+		return isUpdate, err
 	}
 	return isUpdate, nil
 }
