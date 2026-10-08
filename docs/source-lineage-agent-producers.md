@@ -40,9 +40,12 @@ hydration receipts exist. Exclusion never clears the inherited turn union.
 
 A complete empty envelope is an explicit producer assertion. The following
 inventory describes this delta's coverage, not a promise that every registered
-adapter has become usable. Code-owned static schemas remain available even for
-an unused result adapter, allowing a fully accounted fresh text Agent turn.
-Dynamic schemas need their own receipt before the model sees them.
+adapter has become usable. Only exact immutable code-owned literal schema projections remain available,
+including for an unused result adapter. Dynamic definitions require an
+actual-value receipt before the model sees them. Skills have a separate receipt
+bound to their exact rendered metadata, and cannot borrow a system receipt.
+The actual model options/messages are detached before authorization, including
+RawMessage buffers, provider metadata, image pointers and private lineage.
 
 | Actual adapter | Receipt / current behavior |
 | --- | --- |
@@ -56,8 +59,9 @@ Dynamic schemas need their own receipt before the model sees them.
 | `thinking`, `todo_write` | Covered transformations of model control arguments and code-owned diagnostics; retain whole prior union |
 | `read_document` metadata / text pages / text query / text neighbors | Covered actual database snapshots plus original exact lease; reader DI required |
 | `read_document` FAQ, nonempty image/caption/custom chunk metadata | Closed pending derivative/body adapter receipts |
-| `search_knowledge` (including rerank, FAQ answers, lazy child images) | Closed pending complete actual-reader receipts at every influencing model/enrichment boundary |
-| `list_documents` | Closed pending snapshot pagination/filter/count provenance across all influencing document rows |
+| `search_knowledge` text results / title / rerank / MMR / snippets | Covered actual snapshots before influencing model calls; original expected receipt preserved; old index body/title/score not copied |
+| `search_knowledge` FAQ answers, lazy child images, graph/relation candidates | Closed pending complete writer / actual enrichment / graph-control receipts |
+| `list_documents` bounded complete candidate enumeration | All actual metadata snapshots captured before filter/sort/page/count; malformed/incomplete/overflow enumeration closes; generated descriptions/arbitrary metadata excluded |
 | `query_knowledge_graph` | Closed pending graph/entity/relation/body receipts |
 | `search_conversations` | Closed pending generated-message search/partner/pagination receipt adapter |
 | `search_memory` and recalled memory | Closed pending durable memory writer / retrieval provenance |
@@ -96,3 +100,24 @@ container with network `none`, one CPU, 2 GiB memory, `GOMEMLIMIT=1800MiB`,
 is removed; existing module/build caches are retained. This is source-entry
 proof, not production runtime, PostgreSQL, HTTP/reconnect, actual fork, full
 existing-suite migration, or model-provider evidence.
+
+## Follow-up closure after the initial freeze
+
+Commits 4443ab30 and f9bbc0f8 fix independently reproduced input binding
+counterexamples. Original d3 tests and during-authorization 4443 tests are
+retained unchanged as direct red-to-green evidence. Skills cannot reuse a
+system receipt; wire fields cannot reuse a same-name schema receipt; callback
+mutation of the original options/messages cannot alter the authenticated
+snapshot the model receives. Opaque response formats and malformed provider
+artifacts remain unknown rather than silently becoming empty.
+
+The subsequent Agent text-search/list adapters restore covered normal knowledge
+retrieval rather than treating unknown gating as its final replacement. Both
+consume actual DB snapshots and original leases, and preserve inherited union
+on empty results. SQLite tests prove stale title/body/header replacement, exact
+rerank input, revocation after rerank, actual metadata before keyword filtering
+and counts, and incomplete/overflow enumeration refusal. Graph control/node/edge
+and wiki inputs still lack original writer generation receipts; final chunk
+identities cannot authenticate those intermediate materials. Ordinary metadata
+proofs use the separately configured trusted writer classifier; an absent
+classifier does not turn manual/legacy/history-derived rows into empty.

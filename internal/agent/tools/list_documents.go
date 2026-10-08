@@ -62,6 +62,7 @@ type ListDocumentsTool struct {
 	BaseTool
 	knowledgeService interfaces.KnowledgeService
 	searchTargets    types.SearchTargets
+	snapshotReader   interfaces.RAGChunkSnapshotReader
 }
 
 // NewListDocumentsTool creates a new list_documents tool.
