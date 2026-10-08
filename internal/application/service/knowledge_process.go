@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/Tencent/WeKnora/internal/config"
 	"io"
 	"sort"
 	"strings"
@@ -1021,11 +1020,7 @@ func sortChunksForSummary(chunks []*types.Chunk) []*types.Chunk {
 func (s *knowledgeService) getSummary(ctx context.Context,
 	summaryModel chat.Chat, knowledge *types.Knowledge, chunks []*types.Chunk,
 ) (*documentSummaryResult, error) {
-	if s.knowledgeInputs != nil {
-		if _, err := config.KnowledgeEnrichmentPromptLineage(s.config, "summary"); err != nil {
-			return nil, err
-		}
-	}
+
 	// Get knowledge info from the first chunk
 	if len(chunks) == 0 {
 		return nil, fmt.Errorf("no chunks provided for summary generation")
@@ -1050,6 +1045,15 @@ func (s *knowledgeService) getSummary(ctx context.Context,
 		}
 		chunks = replacement
 		knowledge = actual.Knowledge
+	}
+	var promptKB *types.KnowledgeBase
+	if actual != nil {
+		promptKB = actual.KnowledgeBase
+	}
+	if s.knowledgeInputs != nil {
+		if err := requireKnowledgeEnrichmentPromptOrigin(s.config, promptKB, "summary"); err != nil {
+			return nil, err
+		}
 	}
 	// Determine max input chars from config
 	maxInputChars := defaultMaxInputChars
@@ -1151,7 +1155,7 @@ func (s *knowledgeService) getSummary(ctx context.Context,
 	}
 
 	// Generate summary using AI model
-	summaryPrompt := types.RenderPromptPlaceholders(s.config.Conversation.GenerateSummaryPrompt, types.PlaceholderValues{
+	summaryPrompt := types.RenderPromptPlaceholders(actualKnowledgeEnrichmentPrompt(s.config, promptKB, "summary"), types.PlaceholderValues{
 		"language": types.LanguageNameFromContext(ctx),
 	})
 	thinking := false
@@ -1815,7 +1819,7 @@ func (s *knowledgeService) processQuestionGenerationForKnowledge(ctx context.Con
 		ctx = context.WithValue(ctx, types.LanguageContextKey, payload.Language)
 	}
 
-	if strings.TrimSpace(s.config.Conversation.GenerateQuestionsPrompt) == "" {
+	if s.knowledgeInputs == nil && strings.TrimSpace(s.config.Conversation.GenerateQuestionsPrompt) == "" {
 		exitStatus = "prompt_not_configured"
 		logger.Errorf(ctx, "GenerateQuestionsPrompt is empty: configure conversation.generate_questions_prompt_id")
 		qErr = fmt.Errorf("generate questions prompt not configured")
@@ -2188,7 +2192,7 @@ func (s *knowledgeService) processQuestionGenerationForChunks(ctx context.Contex
 			"language":       payload.Language,
 		})
 
-	if strings.TrimSpace(s.config.Conversation.GenerateQuestionsPrompt) == "" {
+	if s.knowledgeInputs == nil && strings.TrimSpace(s.config.Conversation.GenerateQuestionsPrompt) == "" {
 		exitStatus = "prompt_not_configured"
 		logger.Errorf(ctx, "GenerateQuestionsPrompt is empty: configure conversation.generate_questions_prompt_id")
 		qErr = fmt.Errorf("generate questions prompt not configured")
@@ -2452,16 +2456,23 @@ func (s *knowledgeService) generateQuestionsWithContext(ctx context.Context,
 	chatModel chat.Chat, content, prevContent, nextContent, docName string, questionCount int,
 	customInstructions string,
 ) ([]string, error) {
-	if s.knowledgeInputs != nil {
-		if _, err := config.KnowledgeEnrichmentPromptLineage(s.config, "question"); err != nil {
-			return nil, err
-		}
-	}
+
 	if content == "" || questionCount <= 0 {
 		return nil, nil
 	}
 
-	prompt := strings.TrimSpace(s.config.Conversation.GenerateQuestionsPrompt)
+	var promptKB *types.KnowledgeBase
+	if s.knowledgeInputs != nil {
+		actual, err := s.captureKnowledgeTaskManifest(ctx)
+		if err != nil {
+			return nil, err
+		}
+		promptKB = actual.KnowledgeBase
+		if err := requireKnowledgeEnrichmentPromptOrigin(s.config, promptKB, "question"); err != nil {
+			return nil, err
+		}
+	}
+	prompt := strings.TrimSpace(actualKnowledgeEnrichmentPrompt(s.config, promptKB, "question"))
 	if prompt == "" {
 		return nil, fmt.Errorf("generate questions prompt not configured")
 	}
@@ -2541,11 +2552,7 @@ func (s *knowledgeService) generateQuestionsWithContext(ctx context.Context,
 func (s *knowledgeService) RegenerateChunkQuestions(
 	ctx context.Context, chunkID string,
 ) ([]types.GeneratedQuestion, error) {
-	if s.knowledgeInputs != nil {
-		if _, err := config.KnowledgeEnrichmentPromptLineage(s.config, "question"); err != nil {
-			return nil, err
-		}
-	}
+
 	tenantID := types.MustTenantIDFromContext(ctx)
 	chunk, err := s.chunkRepo.GetChunkByID(ctx, tenantID, chunkID)
 	if err != nil {
@@ -2586,6 +2593,11 @@ func (s *knowledgeService) RegenerateChunkQuestions(
 		}
 	}
 	generationRevision = chunk.ContentRevision
+	if s.knowledgeInputs != nil {
+		if err := requireKnowledgeEnrichmentPromptOrigin(s.config, kb, "question"); err != nil {
+			return nil, err
+		}
+	}
 	if kb.SummaryModelID == "" {
 		return nil, fmt.Errorf("summary model is required for question generation")
 	}
@@ -2681,11 +2693,7 @@ func (s *knowledgeService) RegenerateChunkQuestions(
 func (s *knowledgeService) RegenerateKnowledgeSummary(
 	ctx context.Context, knowledgeID string,
 ) (*types.Knowledge, error) {
-	if s.knowledgeInputs != nil {
-		if _, err := config.KnowledgeEnrichmentPromptLineage(s.config, "summary"); err != nil {
-			return nil, err
-		}
-	}
+
 	tenantID := types.MustTenantIDFromContext(ctx)
 	knowledge, err := s.repo.GetKnowledgeByID(ctx, tenantID, knowledgeID)
 	if err != nil {
@@ -2722,6 +2730,11 @@ func (s *knowledgeService) RegenerateKnowledgeSummary(
 			return nil, err
 		}
 		knowledge, kb, allChunks = actual.Knowledge, actual.KnowledgeBase, actual.Chunks
+	}
+	if s.knowledgeInputs != nil {
+		if err := requireKnowledgeEnrichmentPromptOrigin(s.config, kb, "summary"); err != nil {
+			return nil, err
+		}
 	}
 	textChunks := make([]*types.Chunk, 0)
 	for _, chunk := range allChunks {

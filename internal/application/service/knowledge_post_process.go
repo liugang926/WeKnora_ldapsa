@@ -622,9 +622,6 @@ func (s *KnowledgePostProcessService) enqueueSummaryGenerationTask(ctx context.C
 		return false
 	}
 
-	if _, err := config.KnowledgeEnrichmentPromptLineage(s.enrichmentConfig, "summary"); err != nil {
-		return false
-	}
 	if s.knowledgeInputs == nil {
 		return false
 	}
@@ -644,6 +641,10 @@ func (s *KnowledgePostProcessService) enqueueSummaryGenerationTask(ctx context.C
 		return false
 	}
 
+	actualSnapshot, err := s.knowledgeInputs.CaptureKnowledgeBuildInputs(ctx, types.KnowledgeBuildInputCaptureRequest{TenantID: original.TenantID, KnowledgeBaseID: original.KnowledgeBaseID, KnowledgeID: original.KnowledgeID, ChunkIDs: original.ChunkIDs, Expected: original})
+	if err != nil || requireKnowledgeEnrichmentPromptOrigin(s.enrichmentConfig, actualSnapshot.KnowledgeBase, "summary") != nil {
+		return false
+	}
 	taskPayload := types.SummaryGenerationPayload{
 		OriginalInput:   original,
 		TenantID:        payload.TenantID,
@@ -708,9 +709,7 @@ func (s *KnowledgePostProcessService) enqueueQuestionGenerationTasks(
 	attempt int,
 	questionChunks []*types.Chunk,
 ) int {
-	if _, err := config.KnowledgeEnrichmentPromptLineage(s.enrichmentConfig, "question"); err != nil {
-		return 0
-	}
+
 	if s.taskEnqueuer == nil || len(questionChunks) == 0 {
 		return 0
 	}
@@ -770,6 +769,11 @@ func (s *KnowledgePostProcessService) enqueueQuestionGenerationTasks(
 			continue
 		}
 		taskPayload.OriginalInput = original
+		actualSnapshot, captureErr := s.knowledgeInputs.CaptureKnowledgeBuildInputs(ctx, types.KnowledgeBuildInputCaptureRequest{TenantID: original.TenantID, KnowledgeBaseID: original.KnowledgeBaseID, KnowledgeID: original.KnowledgeID, ChunkIDs: original.ChunkIDs, Expected: original})
+		if captureErr != nil || requireKnowledgeEnrichmentPromptOrigin(s.enrichmentConfig, actualSnapshot.KnowledgeBase, "question") != nil {
+			batchIndex++
+			continue
+		}
 		store, ok := s.knowledgeInputs.(knowledgeEnrichmentInputStore)
 		if !ok {
 			batchIndex++

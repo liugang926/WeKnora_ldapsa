@@ -135,15 +135,16 @@ func (s *knowledgeService) prepareSummaryGenerationPayload(ctx context.Context, 
 	if s.knowledgeInputs == nil {
 		return nil
 	}
-	if _, err := config.KnowledgeEnrichmentPromptLineage(s.config, "summary"); err != nil {
-		return err
-	}
+
 	rows, err := s.chunkRepo.ListChunksByKnowledgeID(ctx, p.TenantID, p.KnowledgeID)
 	if err != nil {
 		return err
 	}
 	ctx, actual, err := s.captureFreshEnrichment(ctx, p.TenantID, p.KnowledgeBaseID, p.KnowledgeID, enrichmentInputChunkIDs(rows))
 	if err != nil {
+		return err
+	}
+	if err := requireKnowledgeEnrichmentPromptOrigin(s.config, actual.KnowledgeBase, "summary"); err != nil {
 		return err
 	}
 	p.OriginalInput = actual.Proof

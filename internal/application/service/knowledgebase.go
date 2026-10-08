@@ -558,6 +558,9 @@ func (s *knowledgeBaseService) UpdateKnowledgeBase(ctx context.Context,
 	kb.Name = name
 	kb.Description = description
 	if config != nil {
+		if config.EnrichmentTemplates != nil {
+			kb.EnrichmentTemplates = config.EnrichmentTemplates
+		}
 		kb.ChunkingConfig = config.ChunkingConfig
 		kb.ImageProcessingConfig = config.ImageProcessingConfig
 		if config.FAQConfig != nil {
@@ -590,6 +593,29 @@ func (s *knowledgeBaseService) UpdateKnowledgeBase(ctx context.Context,
 				kb.ExtractConfig.Enabled = config.IndexingStrategy.GraphEnabled
 			} else if config.IndexingStrategy.GraphEnabled {
 				kb.ExtractConfig = &types.ExtractConfig{Enabled: true}
+			}
+		}
+	}
+	if config != nil && config.EnrichmentTemplates != nil {
+		authority, ok := s.knowledgeInputWriter.(interface {
+			AuthorizeKnowledgeTemplateConfigurationEdit(context.Context, *types.KnowledgeBase) (context.Context, error)
+		})
+		if !ok {
+			return nil, types.ErrSourceLineageUnknown
+		}
+		var err error
+		ctx, err = authority.AuthorizeKnowledgeTemplateConfigurationEdit(ctx, kb)
+		if err != nil {
+			return nil, err
+		}
+		if content := kb.EnrichmentTemplates.Summary; content != "" {
+			if len(content) > 32768 {
+				return nil, types.ErrSourceLineageLimit
+			}
+		}
+		if content := kb.EnrichmentTemplates.Question; content != "" {
+			if len(content) > 32768 {
+				return nil, types.ErrSourceLineageLimit
 			}
 		}
 	}

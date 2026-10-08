@@ -238,7 +238,7 @@ func knowledgeConfigDigest(kb *types.KnowledgeBase, k *types.Knowledge) (string,
 	}
 	// The actual typed parser/model controls, plus their document overrides.
 	// Computed ranking scores and generated KB descriptions are not authorities.
-	return KnowledgeInputDigest(struct {
+	digest, err := KnowledgeInputDigest(struct {
 		Chunking           types.ChunkingConfig
 		Image              types.ImageProcessingConfig
 		Embedding, Summary string
@@ -254,6 +254,16 @@ func knowledgeConfigDigest(kb *types.KnowledgeBase, k *types.Knowledge) (string,
 		Overrides          *types.KnowledgeProcessOverrides
 	}{
 		kb.ChunkingConfig, kb.ImageProcessingConfig, kb.EmbeddingModelID, kb.SummaryModelID, kb.VLMConfig, kb.ASRConfig, kb.ExtractConfig, kb.FAQConfig, kb.QuestionGenerationConfig, kb.AutoTagConfig, kb.ProfileConfig, kb.WikiConfig, kb.IndexingStrategy, overrides})
+	if err != nil {
+		return "", err
+	}
+	if kb.EnrichmentTemplates == nil {
+		return digest, nil
+	}
+	return KnowledgeInputDigest(struct {
+		Controls  string
+		Templates *types.KnowledgeEnrichmentTemplates
+	}{digest, kb.EnrichmentTemplates})
 }
 func knowledgeChunkDigest(c *types.Chunk) (string, error) {
 	// Persistence timestamps, vector scores and indexing bookkeeping are not
