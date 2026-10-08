@@ -278,16 +278,6 @@ func (s *sessionService) AgentQA(
 		recall := s.memoryService.Recall(memoryCtx, req.Query)
 		if recall.Prompt != "" {
 			return access.ErrNextcloudPublicationDenied
-			engine.SetMemoryPrompt(recall.Prompt)
-			used := types.UsedMemoriesFromItems(recall.Items)
-			if err := eventBus.Emit(ctx, event.Event{
-				Type:      event.EventMemoryRecalled,
-				SessionID: sessionID,
-				Data:      event.MemoryRecalledData{Memories: used},
-			}); err != nil {
-				logger.Warnf(ctx, "Failed to emit memory recalled event: %v", err)
-			}
-			logger.Infof(ctx, "Injected %d long-term memories into agent context", len(used))
 		}
 	}
 

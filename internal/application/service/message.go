@@ -23,7 +23,7 @@ var regThinkIndex = regexp.MustCompile(`(?s)<think>.*?</think>`)
 // It reads the chat history knowledge base configuration from the tenant's ChatHistoryConfig,
 // which is managed via the settings UI.
 type messageService struct {
-	sourceLineageGuard *access.NextcloudSourceLineageGuard
+	sourceLineageGuard access.SourceLineageAuthorizer
 	messageRepo        interfaces.MessageRepository    // Repository for message storage operations
 	sessionRepo        interfaces.SessionRepository    // Repository for session validation
 	tenantService      interfaces.TenantService        // Service for tenant operations (read ChatHistoryConfig)
@@ -166,6 +166,9 @@ func (s *messageService) filterHistoryMessages(ctx context.Context, messages []*
 			return nil, err
 		}
 		filtered = append(filtered, message)
+	}
+	if err := s.checkMessageSourceLineageBatch(ctx, filtered, nil); err != nil {
+		return nil, err
 	}
 	return rawUserContentOnly(filtered), nil
 }
@@ -910,6 +913,8 @@ func (s *messageService) filterHistoricalSearchPairs(
 		}
 	}
 	filtered := make([]*types.MessageSearchResultItem, 0, len(items))
+	var batchMessages []*types.Message
+	var batchTitles []access.SourceLineageRead
 	for _, item := range items {
 		if item == nil {
 			continue
@@ -932,7 +937,14 @@ func (s *messageService) filterHistoricalSearchPairs(
 				item.MessageWithSession.Message = *rawUserContentOnly([]*types.Message{&item.MessageWithSession.Message})[0]
 			}
 			filtered = append(filtered, item)
+			batchMessages = append(batchMessages, &item.MessageWithSession.Message)
+			if item.SessionTitle != "" && item.SessionTitleSourceLineage.RequireComplete() == nil {
+				batchTitles = append(batchTitles, access.SourceLineageRead{Lineage: item.SessionTitleSourceLineage})
+			}
 		}
+	}
+	if err := s.checkMessageSourceLineageBatch(ctx, batchMessages, batchTitles); err != nil {
+		return nil, err
 	}
 	return filtered, nil
 }

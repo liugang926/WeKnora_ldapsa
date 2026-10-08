@@ -31,7 +31,9 @@ func ConfigureMessageSourceLineage(messages interfaces.MessageService, sessions 
 }
 
 func ConfigureAgentRAGChunkHydration(agents interfaces.AgentService, reader interfaces.RAGChunkSnapshotReader) {
-	if impl, ok := agents.(*agentService); ok { impl.ragChunkSnapshotReader = reader }
+	if impl, ok := agents.(*agentService); ok {
+		impl.ragChunkSnapshotReader = reader
+	}
 }
 
 type messageLineageHistoryAdmission struct {
@@ -124,6 +126,34 @@ func (s *messageService) checkTypedSourceLineage(ctx context.Context, message *t
 		return access.ErrNextcloudPublicationDenied // These generated fields lack producer contracts.
 	}
 	return s.sourceLineageGuard.Check(ctx, lineage, scope)
+}
+
+func (s *messageService) checkMessageSourceLineageBatch(ctx context.Context, messages []*types.Message, titleReads []access.SourceLineageRead) error {
+	reads := append([]access.SourceLineageRead{}, titleReads...)
+	for _, message := range messages {
+		if message == nil || message.Role == "user" {
+			continue
+		}
+		scope, err := s.messageSourceLineageScope(ctx, message)
+		if err != nil {
+			return err
+		}
+		lineage := message.SourceLineage
+		if message.ContextCheckpoint != nil {
+			lineage, err = types.UnionSourceLineage(lineage, message.ContextCheckpoint.SourceLineage)
+			if err != nil {
+				return access.ErrNextcloudPublicationDenied
+			}
+		}
+		reads = append(reads, access.SourceLineageRead{Lineage: lineage, Scope: scope})
+	}
+	if len(reads) == 0 {
+		return nil
+	}
+	if s.sourceLineageGuard == nil {
+		return access.ErrNextcloudPublicationUnavailable
+	}
+	return s.sourceLineageGuard.CheckBatch(ctx, reads)
 }
 
 func rawUserContentOnly(messages []*types.Message) []*types.Message {

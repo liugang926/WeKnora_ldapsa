@@ -11,6 +11,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
+	"os"
+	"strings"
 	"testing"
 )
 
@@ -48,18 +50,29 @@ func (s sessionTitleLineageModels) GetChatModel(context.Context, string) (chat.C
 }
 
 func TestSessionTextLineageActualTitleModelWriterAndManualRace(t *testing.T) {
-	for _, manualRace := range []bool{false, true} {
-		t.Run(map[bool]string{false: "atomic completed", true: "manual edit wins"}[manualRace], func(t *testing.T) {
+	for _, mutation := range []string{"none", "different", "same text", "ABA"} {
+		manualRace := mutation != "none"
+		t.Run(mutation, func(t *testing.T) {
 			db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 			require.NoError(t, err)
 			require.NoError(t, db.AutoMigrate(&types.Session{}))
+			triggerSQL, readErr := os.ReadFile("../../../migrations/sqlite/000052_session_text_source_lineage.up.sql")
+			require.NoError(t, readErr)
+			require.NoError(t, db.Exec(string(triggerSQL)[strings.Index(string(triggerSQL), "CREATE TRIGGER"):]).Error)
 			empty, _ := types.NewCompleteSourceLineage()
 			row := &types.Session{TenantID: 7, UserID: "reader", Title: "legacy secret title"}
 			require.NoError(t, db.Create(row).Error)
 			model := sessionTitleLineageModel{t: t}
 			if manualRace {
 				model.mutate = func() {
-					require.NoError(t, db.Model(&types.Session{}).Where("id = ?", row.ID).Updates(map[string]any{"title": "manual title", "title_source_lineage": empty}).Error)
+					if mutation == "different" {
+						require.NoError(t, db.Model(&types.Session{}).Where("id = ?", row.ID).Updates(map[string]any{"title": "manual title", "title_source_lineage": empty}).Error)
+					} else {
+						if mutation == "ABA" {
+							require.NoError(t, db.Model(&types.Session{}).Where("id = ?", row.ID).Update("title", "intermediate").Error)
+						}
+						require.NoError(t, db.Model(&types.Session{}).Where("id = ?", row.ID).Update("title", "legacy secret title").Error)
+					}
 				}
 			}
 			svc := &sessionService{sessionRepo: repository.NewSessionRepository(db), modelService: sessionTitleLineageModels{model: model}, cfg: &config.Config{Conversation: &config.ConversationConfig{}}, sourceLineageGuard: access.NewNextcloudSourceLineageGuard(nil, nil, nil, nil, nil, nil)}
@@ -73,9 +86,17 @@ func TestSessionTextLineageActualTitleModelWriterAndManualRace(t *testing.T) {
 			}
 			stored, err := svc.sessionRepo.Get(context.Background(), 7, "reader", row.ID)
 			require.NoError(t, err)
-			require.Equal(t, empty, stored.TitleSourceLineage)
+			if mutation == "same text" || mutation == "ABA" {
+				require.Nil(t, stored.TitleSourceLineage)
+			} else {
+				require.Equal(t, empty, stored.TitleSourceLineage)
+			}
 			if manualRace {
-				require.Equal(t, "manual title", stored.Title)
+				if mutation == "different" {
+					require.Equal(t, "manual title", stored.Title)
+				} else {
+					require.Equal(t, "legacy secret title", stored.Title)
+				}
 			} else {
 				require.Equal(t, "new model title", stored.Title)
 			}

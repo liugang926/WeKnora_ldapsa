@@ -63,7 +63,7 @@ var versionedSQLiteColumns = map[string][]string{
 	"knowledge_bases": {"profile_config", "generated_profile"},                                                // 000101
 	"messages":        {"attachments", "usage", "sandbox_checkpoint", "context_checkpoint", "source_lineage"}, // 000034/085/097/105/132
 	"sessions": {
-		"title_source_lineage", "description_source_lineage", // PostgreSQL133/SQLite52
+		"title_source_lineage", "description_source_lineage", "title_revision", // PostgreSQL133/SQLite52
 		"parent_session_id", "forked_from_message_id", "fork_bootstrap", // 000097
 		"sandbox_config_tenant_id", // 000108
 	},

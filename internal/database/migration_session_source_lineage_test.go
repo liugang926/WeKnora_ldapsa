@@ -34,6 +34,7 @@ func TestSessionTextLineageSQLiteUpgradeFrom51LeavesLegacyUnknown(t *testing.T) 
 	require.Equal(t, "legacy secret description", description)
 	require.False(t, titleProof.Valid)
 	require.False(t, descriptionProof.Valid)
+	requireSessionTitleRevisionMonotonic(t, db)
 	down, err := os.ReadFile(filepath.Join(root, "migrations/sqlite/000052_session_text_source_lineage.down.sql"))
 	require.NoError(t, err)
 	_, err = db.Exec(string(down))
@@ -75,5 +76,42 @@ func TestSessionTextLineagePostgresUpgradeFrom132LeavesLegacyUnknown(t *testing.
 	require.NoError(t, db.QueryRow(`SELECT title_source_lineage,description_source_lineage FROM sessions WHERE id='legacy'`).Scan(&titleProof, &descriptionProof))
 	require.False(t, titleProof.Valid)
 	require.False(t, descriptionProof.Valid)
+	requireSessionTitleRevisionMonotonic(t, db)
 	require.ErrorContains(t, m.Steps(-1), "session_text_lineage_rollback_requires_audit_export")
+}
+
+// Run on the actual upgraded schema in both dialects, including direct SQL
+// writes which deliberately bypass the repository's timestamp/CAS helpers.
+func requireSessionTitleRevisionMonotonic(t *testing.T, db *sql.DB) {
+	t.Helper()
+	var previous int64
+	require.NoError(t, db.QueryRow(`SELECT title_revision FROM sessions WHERE id='legacy'`).Scan(&previous))
+	require.Zero(t, previous)
+	for _, statement := range []string{
+		`UPDATE sessions SET title=title WHERE id='legacy'`,
+		`UPDATE sessions SET title='other title' WHERE id='legacy'`,
+		`UPDATE sessions SET title='legacy secret title' WHERE id='legacy'`,
+		`UPDATE sessions SET title_source_lineage='{"version":1,"state":"complete","sources":[]}' WHERE id='legacy'`,
+	} {
+		_, err := db.Exec(statement)
+		require.NoError(t, err)
+		var current int64
+		require.NoError(t, db.QueryRow(`SELECT title_revision FROM sessions WHERE id='legacy'`).Scan(&current))
+		require.Equal(t, previous+1, current)
+		previous = current
+	}
+	// PostgreSQL always replaces a supplied revision with OLD+1; SQLite aborts
+	// non-monotonic attempts. Both must prevent resetting the fencing token.
+	_, rewindErr := db.Exec(`UPDATE sessions SET title_revision=0 WHERE id='legacy'`)
+	var current int64
+	require.NoError(t, db.QueryRow(`SELECT title_revision FROM sessions WHERE id='legacy'`).Scan(&current))
+	if rewindErr != nil {
+		require.ErrorContains(t, rewindErr, "session_title_revision_not_monotonic")
+		require.Equal(t, previous, current)
+	} else {
+		require.Equal(t, previous+1, current)
+	}
+	var title string
+	require.NoError(t, db.QueryRow(`SELECT title FROM sessions WHERE id='legacy'`).Scan(&title))
+	require.Equal(t, "legacy secret title", title)
 }

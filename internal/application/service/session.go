@@ -112,7 +112,7 @@ func generateEventID(suffix string) string {
 // separate cross-turn cache layer.
 type sessionService struct {
 	lineageVerifier       interfaces.MessageSourceLineageVerifier
-	sourceLineageGuard    *access.NextcloudSourceLineageGuard
+	sourceLineageGuard    access.SourceLineageAuthorizer
 	historyGuard          *access.NextcloudHistoryGuard
 	cfg                   *config.Config                         // Application configuration
 	sessionRepo           interfaces.SessionRepository           // Repository for session data
@@ -884,7 +884,7 @@ func (s *sessionService) GenerateTitle(ctx context.Context,
 	if visible.Title != "" {
 		return visible.Title, nil
 	}
-	originalTitle := stored.Title
+	originalTitle := types.SessionTitleSnapshot{Text: stored.Title, Revision: stored.TitleRevision, SourceLineage: stored.TitleSourceLineage}
 
 	// Skip if title already exists
 	session.Title = ""

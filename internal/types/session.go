@@ -81,6 +81,7 @@ type Session struct {
 	// Title
 	Title              string         `json:"title"`
 	TitleSourceLineage *SourceLineage `json:"-" gorm:"type:jsonb;column:title_source_lineage"`
+	TitleRevision      uint64         `json:"-" gorm:"column:title_revision;not null;default:0"`
 	TitleAuthorized    bool           `json:"-" gorm:"-"`
 	// Description
 	Description              string         `json:"description"`

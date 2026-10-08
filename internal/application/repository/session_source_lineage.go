@@ -8,11 +8,25 @@ import (
 
 // SaveGeneratedSessionTitle commits text and original input proof in one
 // owner-scoped statement. CAS prevents an async title replacing a manual edit.
-func (r *sessionRepository) SaveGeneratedSessionTitle(ctx context.Context, tenantID uint64, ownerID, id, expectedTitle, title string, lineage *types.SourceLineage) (int64, error) {
+func (r *sessionRepository) SaveGeneratedSessionTitle(ctx context.Context, tenantID uint64, ownerID, id string, expected types.SessionTitleSnapshot, title string, lineage *types.SourceLineage) (int64, error) {
 	if lineage.RequireComplete() != nil {
 		return 0, types.ErrSourceLineageUnknown
 	}
-	result := applySessionUserScope(r.db.WithContext(ctx).Model(&types.Session{}).Where("tenant_id = ? AND id = ? AND title = ?", tenantID, id, expectedTitle), ownerID).
+	query := applySessionUserScope(r.db.WithContext(ctx).Model(&types.Session{}).Where("tenant_id = ? AND id = ? AND title = ? AND title_revision = ?", tenantID, id, expected.Text, expected.Revision), ownerID)
+	var originalProof any
+	if expected.SourceLineage != nil {
+		value, err := expected.SourceLineage.Value()
+		if err != nil {
+			return 0, err
+		}
+		originalProof = value
+	}
+	if r.db.Dialector.Name() == "postgres" {
+		query = query.Where("title_source_lineage IS NOT DISTINCT FROM ?", originalProof)
+	} else {
+		query = query.Where("title_source_lineage IS ?", originalProof)
+	}
+	result := query.
 		Updates(map[string]any{"title": title, "title_source_lineage": lineage, "updated_at": time.Now()})
 	return result.RowsAffected, result.Error
 }

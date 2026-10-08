@@ -42,6 +42,21 @@ func (s *sessionService) authorizeSessionText(ctx context.Context, session *type
 	if err := authorize(&copy.Description, copy.DescriptionSourceLineage, &copy.DescriptionAuthorized); err != nil {
 		return nil, err
 	}
+	var reads []access.SourceLineageRead
+	if copy.TitleAuthorized && len(copy.TitleSourceLineage.Sources) > 0 {
+		reads = append(reads, access.SourceLineageRead{Lineage: copy.TitleSourceLineage})
+	}
+	if copy.DescriptionAuthorized && len(copy.DescriptionSourceLineage.Sources) > 0 {
+		reads = append(reads, access.SourceLineageRead{Lineage: copy.DescriptionSourceLineage})
+	}
+	if len(reads) > 0 {
+		if s.sourceLineageGuard == nil {
+			return nil, access.ErrNextcloudPublicationUnavailable
+		}
+		if err := s.sourceLineageGuard.CheckBatch(ctx, reads); err != nil {
+			return nil, err
+		}
+	}
 	return &copy, nil
 }
 
@@ -83,7 +98,7 @@ type sessionTitleCandidates interface {
 	ListSessionTitleCandidates(context.Context, *types.SessionListQuery) ([]*types.SessionListItem, error)
 }
 type sessionTitleWriter interface {
-	SaveGeneratedSessionTitle(context.Context, uint64, string, string, string, string, *types.SourceLineage) (int64, error)
+	SaveGeneratedSessionTitle(context.Context, uint64, string, string, types.SessionTitleSnapshot, string, *types.SourceLineage) (int64, error)
 }
 
 func (s *sessionService) authorizedTitleMatches(ctx context.Context, query *types.SessionListQuery) ([]*types.SessionListItem, error) {
