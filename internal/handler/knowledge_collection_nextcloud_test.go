@@ -49,6 +49,16 @@ func collectionNextcloudHTTPFixture(t *testing.T, change string) (*KnowledgeHand
 			w.WriteHeader(http.StatusNoContent)
 		case strings.HasSuffix(r.URL.Path, "/authorize"):
 			call := calls.Add(1)
+			if change == "tag-deny-source-b" || change == "tag-late-deny-source-b" {
+				var request struct {
+					FileID int64 `json:"file_id"`
+				}
+				require.NoError(t, json.NewDecoder(r.Body).Decode(&request))
+				if request.FileID == 78 && (change == "tag-deny-source-b" || call > 4) {
+					fmt.Fprint(w, `{"allow":false,"reason":"source_not_readable","checked_at":1780000000}`)
+					return
+				}
+			}
 			if change == "deny_excluded_before_filter" || change == "personal_revoke_before_write" && call >= 3 {
 				fmt.Fprint(w, `{"allow":false,"reason":"source_not_readable","checked_at":1780000000}`)
 				return

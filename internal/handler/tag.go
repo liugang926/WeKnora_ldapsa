@@ -4,6 +4,7 @@ import (
 	"context"
 	stderrors "errors"
 	"github.com/Tencent/WeKnora/internal/application/repository"
+	"github.com/Tencent/WeKnora/internal/application/service"
 	"io"
 	"net/http"
 	"strconv"
@@ -24,9 +25,10 @@ import (
 // carry the effective tenant ID, so handlers below just use
 // c.Request.Context() the way they always did.
 type TagHandler struct {
-	tagService interfaces.KnowledgeTagService
-	tagRepo    interfaces.KnowledgeTagRepository
-	chunkRepo  interfaces.ChunkRepository
+	tagService       interfaces.KnowledgeTagService
+	tagRepo          interfaces.KnowledgeTagRepository
+	chunkRepo        interfaces.ChunkRepository
+	outputAuthorizer *service.TagOutputAuthorizer
 }
 
 // DeleteTagRequest represents the request body for deleting a tag
@@ -98,17 +100,10 @@ func (h *TagHandler) ListTags(c *gin.Context) {
 
 	keyword := secutils.SanitizeForLog(c.Query("keyword"))
 
-	tags, err := h.tagService.ListTags(ctx, kbID, &page, keyword)
-	if err != nil {
-		logger.ErrorWithFields(ctx, err, nil)
-		c.Error(err)
+	if !h.requireTagOutput(c) {
 		return
 	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"data":    tags,
-	})
+	h.respondTagList(c, ctx, kbID, page, keyword)
 }
 
 type createTagRequest struct {
@@ -131,7 +126,10 @@ type createTagRequest struct {
 // @Security     ApiKeyAuth
 // @Router       /knowledge-bases/{id}/tags [post]
 func (h *TagHandler) CreateTag(c *gin.Context) {
-	ctx := c.Request.Context()
+	if !h.requireTagOutput(c) {
+		return
+	}
+	ctx := repository.WithTagCommittedOutput(c.Request.Context())
 	kbID := secutils.SanitizeForLog(c.Param("id"))
 
 	var req createTagRequest
@@ -151,10 +149,7 @@ func (h *TagHandler) CreateTag(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"data":    tag,
-	})
+	h.respondCommittedTag(c, ctx, tag)
 }
 
 type updateTagRequest struct {
@@ -178,7 +173,10 @@ type updateTagRequest struct {
 // @Security     ApiKeyAuth
 // @Router       /knowledge-bases/{id}/tags/{tag_id} [put]
 func (h *TagHandler) UpdateTag(c *gin.Context) {
-	ctx := c.Request.Context()
+	if !h.requireTagOutput(c) {
+		return
+	}
+	ctx := repository.WithTagCommittedOutput(c.Request.Context())
 
 	tagID, err := h.resolveTagID(c)
 	if err != nil {
@@ -202,10 +200,7 @@ func (h *TagHandler) UpdateTag(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"data":    tag,
-	})
+	h.respondCommittedTag(c, ctx, tag)
 }
 
 // DeleteTag godoc

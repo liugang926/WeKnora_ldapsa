@@ -391,7 +391,9 @@ func writeKnowledgeTagWithDisplayInput(db *gorm.DB, ctx context.Context, tag *ty
 		}
 		return db.WithContext(ctx).Save(tag).Error
 	}
-	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	var captured *types.TagOutputInputSnapshot
+	var captureErr error
+	err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var kb types.KnowledgeBase
 		if err := tx.Where("id = ? AND tenant_id = ?", tag.KnowledgeBaseID, tag.TenantID).Take(&kb).Error; err != nil {
 			return err
@@ -445,8 +447,16 @@ func writeKnowledgeTagWithDisplayInput(db *gorm.DB, ctx context.Context, tag *ty
 				return err
 			}
 		}
+		if _, wantsOutput := ctx.Value(tagCommittedOutputKey{}).(*tagCommittedOutput); wantsOutput {
+			actualStore := NewKnowledgeInputProvenanceStore(tx)
+			captured, captureErr = actualStore.captureTagOutputInTx(tx, types.TagOutputReadRequest{TenantID: tag.TenantID, KnowledgeBaseID: tag.KnowledgeBaseID, TagID: tag.ID})
+		}
 		return nil
 	}, knowledgeDisplayWriteOptions(db))
+	if slot, wantsOutput := ctx.Value(tagCommittedOutputKey{}).(*tagCommittedOutput); wantsOutput && err == nil {
+		slot.snapshot, slot.err, slot.committed = captured, captureErr, true
+	}
+	return err
 }
 
 // The KB configuration writer calls this in its actual create/update tx. Only
