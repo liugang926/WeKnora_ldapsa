@@ -26,6 +26,7 @@ func historyActorIntegrationFixture(t *testing.T, kind string) (*knowledgeServic
 	require.NoError(t, db.Exec(string(ddl)).Error)
 	groups := NewGroupAccessService(repository.NewGroupAccessRepository(db))
 	repository.ConfigureKnowledgeInputActorGroupAccess(store, groups)
+	repository.ConfigureKnowledgeCurrentReadActor(service.repo, store)
 	kbs := &knowledgeBaseService{repo: repository.NewKnowledgeBaseRepository(db)}
 	guard := access.NewNextcloudSourceLineageGuard(service.repo.(access.NextcloudLineageSnapshotLookup), kbs, nil, nil, groups, nil)
 	verifier := &messageService{sourceLineageGuard: guard, kbService: kbs, knowService: service}

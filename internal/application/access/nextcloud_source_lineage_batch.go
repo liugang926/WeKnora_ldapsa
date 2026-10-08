@@ -26,6 +26,11 @@ func (g *NextcloudSourceLineageGuard) CheckBatch(ctx context.Context, reads []So
 	if ctx == nil || g == nil {
 		return ErrNextcloudPublicationUnavailable
 	}
+	var refreshErr error
+	ctx, refreshErr = g.refreshCurrentReadActor(ctx)
+	if refreshErr != nil {
+		return refreshErr
+	}
 	union, _ := types.NewCompleteSourceLineage()
 	frozen := make([]SourceLineageRead, 0, len(reads))
 	for _, read := range reads {
@@ -83,7 +88,7 @@ func (g *NextcloudSourceLineageGuard) CheckBatch(ctx context.Context, reads []So
 		}
 	}
 	if len(union.Sources) == 0 {
-		return nil
+		return g.recheckCurrentReadActor(ctx)
 	}
 	current, err := g.publication.currentDirectoryIdentity(ctx)
 	if err != nil {
@@ -99,5 +104,5 @@ func (g *NextcloudSourceLineageGuard) CheckBatch(ctx context.Context, reads []So
 	if !matches {
 		return ErrNextcloudPublicationDenied
 	}
-	return nil
+	return g.recheckCurrentReadActor(ctx)
 }

@@ -157,8 +157,15 @@ func outputHTTPFixture(t *testing.T, admitted bool) (*KnowledgeHandler, *gorm.DB
 	}
 	require.NoError(t, err)
 	require.NoError(t, db.Where("id = ?", k.ID).Take(k).Error)
+	require.NoError(t, db.AutoMigrate(&types.User{}, &types.TenantMember{}, &types.TenantAPIKey{}))
+	script, err = os.ReadFile("../../migrations/sqlite/000028_directory_group_access.up.sql")
+	require.NoError(t, err)
+	require.NoError(t, db.Exec(string(script)).Error)
+	require.NoError(t, db.Create(&types.User{ID: "user", TenantID: 7, Username: "actor", Email: "actor@example.test", PasswordHash: "unused-fixture", IsActive: true}).Error)
+	require.NoError(t, db.Create(&types.TenantMember{UserID: "user", TenantID: 7, Role: types.TenantRoleContributor, Status: types.TenantMemberStatusActive}).Error)
+	repository.ConfigureKnowledgeInputActorGroupAccess(store, service.NewGroupAccessService(repository.NewGroupAccessRepository(db)))
 	groups := &outputHTTPGroups{allowed: true}
-	guard := access.NewNextcloudSourceLineageGuard(nil, outputHTTPKB{row: kb}, nil, nil, groups, nil)
+	guard := access.NewNextcloudSourceLineageGuard(nil, outputHTTPKB{row: kb}, nil, nil, groups, nil, store)
 	h := &KnowledgeHandler{kgService: publicationHandlerKnowledge{row: k}, kbService: outputHTTPKB{row: kb}}
 	ConfigureKnowledgeHandlerOutputLineage(h, service.NewKnowledgeOutputAuthorizer(store, guard))
 	return h, db, k, groups

@@ -20,6 +20,10 @@ type LineageGroupPermissionLookup interface {
 	EffectivePermission(context.Context, uint64, types.ResourceType, string, types.ResourceAction, time.Time) (types.EffectiveResourcePermission, error)
 }
 
+type LineageCurrentReadActorLookup interface {
+	RefreshCurrentReadActor(context.Context) (context.Context, error)
+}
+
 // LineageReadScope is supplied by a trusted entry point after owner/session
 // resolution. Agent selectors are reauthorized, not accepted as grants.
 type LineageReadScope struct {
@@ -32,18 +36,24 @@ type LineageReadScope struct {
 // prompt paths. Wiring it before exhaustive producers would certify incomplete
 // dependency sets. It is not a source lease or session-owner check.
 type NextcloudSourceLineageGuard struct {
-	snapshots   NextcloudLineageSnapshotLookup
-	kbs         LineageKnowledgeBaseLookup
-	shares      KBShareLookup
-	agents      AgentShareLookup
-	groups      LineageGroupPermissionLookup
-	publication *NextcloudPublicationGuard
+	snapshots        NextcloudLineageSnapshotLookup
+	kbs              LineageKnowledgeBaseLookup
+	shares           KBShareLookup
+	agents           AgentShareLookup
+	groups           LineageGroupPermissionLookup
+	publication      *NextcloudPublicationGuard
+	currentReadActor LineageCurrentReadActorLookup
 }
 
 func NewNextcloudSourceLineageGuard(snapshots NextcloudLineageSnapshotLookup, kbs LineageKnowledgeBaseLookup,
-	shares KBShareLookup, agents AgentShareLookup, groups LineageGroupPermissionLookup, publication *NextcloudPublicationGuard,
+	shares KBShareLookup, agents AgentShareLookup, groups LineageGroupPermissionLookup, publication *NextcloudPublicationGuard, current ...LineageCurrentReadActorLookup,
 ) *NextcloudSourceLineageGuard {
-	return &NextcloudSourceLineageGuard{snapshots: snapshots, kbs: kbs, shares: shares, agents: agents, groups: groups, publication: publication}
+	g := &NextcloudSourceLineageGuard{snapshots: snapshots, kbs: kbs, shares: shares, agents: agents, groups: groups, publication: publication}
+	g.currentReadActor, _ = snapshots.(LineageCurrentReadActorLookup)
+	if len(current) == 1 {
+		g.currentReadActor = current[0]
+	}
+	return g
 }
 
 func (g *NextcloudSourceLineageGuard) Check(ctx context.Context, lineage *types.SourceLineage, scope LineageReadScope) error {
@@ -52,6 +62,11 @@ func (g *NextcloudSourceLineageGuard) Check(ctx context.Context, lineage *types.
 	}
 	if ctx == nil || g == nil {
 		return ErrNextcloudPublicationUnavailable
+	}
+	var refreshErr error
+	ctx, refreshErr = g.refreshCurrentReadActor(ctx)
+	if refreshErr != nil {
+		return refreshErr
 	}
 	caller, captured := ctx.Value(types.CallerContextKey).(types.Caller)
 	principal, principalCaptured := ctx.Value(types.PrincipalContextKey).(types.Principal)
@@ -129,7 +144,7 @@ func (g *NextcloudSourceLineageGuard) Check(ctx context.Context, lineage *types.
 		return err
 	}
 	if len(lineage.Sources) == 0 {
-		return nil
+		return g.recheckCurrentReadActor(ctx)
 	}
 	currentDirectory, err := g.publication.currentDirectoryIdentity(ctx)
 	if err != nil {
@@ -146,7 +161,7 @@ func (g *NextcloudSourceLineageGuard) Check(ctx context.Context, lineage *types.
 	if !matches {
 		return ErrNextcloudPublicationDenied
 	}
-	return nil
+	return g.recheckCurrentReadActor(ctx)
 }
 
 // Resolve performs both trusted identity resolution and current authorization.

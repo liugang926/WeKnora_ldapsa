@@ -20,6 +20,12 @@ type lineageSnapshotStub struct {
 	onRead    func(int)
 }
 
+// The policy fixture intentionally supplies fake current-account authority;
+// production SQL resolvers must delegate to the actual account/key store.
+func (s *lineageSnapshotStub) RefreshCurrentReadActor(ctx context.Context) (context.Context, error) {
+	return ctx, nil
+}
+
 func (s *lineageSnapshotStub) RecheckNextcloudSourceLineage(ctx context.Context, lineage *types.SourceLineage) (bool, error) {
 	if s.batchErr != nil {
 		return false, s.batchErr
