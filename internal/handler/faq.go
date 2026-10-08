@@ -84,12 +84,6 @@ type updateLastFAQImportResultDisplayStatusRequest struct {
 func (h *FAQHandler) ListEntries(c *gin.Context) {
 	ctx := service.WithFAQOutputBoundary(c.Request.Context())
 	kbID := secutils.SanitizeForLog(c.Param("id"))
-	ctx, closeRead, leaseErr := beginCollectionHTTPRead(c, ctx, h.outputAuthorizer.ContentLeaseStore(), kbID)
-	if leaseErr != nil {
-		_ = c.Error(leaseErr)
-		return
-	}
-	defer closeRead()
 
 	var page types.Pagination
 	if err := c.ShouldBindQuery(&page); err != nil {
@@ -121,6 +115,13 @@ func (h *FAQHandler) ListEntries(c *gin.Context) {
 	if !h.requireFAQOutput(c) {
 		return
 	}
+
+	ctx, closeRead, leaseErr := beginCollectionHTTPRead(c, ctx, h.outputAuthorizer.ContentLeaseStore(), kbID)
+	if leaseErr != nil {
+		_ = c.Error(leaseErr)
+		return
+	}
+	defer closeRead()
 
 	result, err := h.knowledgeService.ListFAQEntries(ctx, kbID, &page, tagUUIDs, legacyTagSeqID, keyword, searchField, sortOrder, isEnabled)
 	if err != nil {
