@@ -84,6 +84,12 @@ type updateLastFAQImportResultDisplayStatusRequest struct {
 func (h *FAQHandler) ListEntries(c *gin.Context) {
 	ctx := service.WithFAQOutputBoundary(c.Request.Context())
 	kbID := secutils.SanitizeForLog(c.Param("id"))
+	ctx, closeRead, leaseErr := beginCollectionHTTPRead(c, ctx, h.outputAuthorizer.ContentLeaseStore(), kbID)
+	if leaseErr != nil {
+		_ = c.Error(leaseErr)
+		return
+	}
+	defer closeRead()
 
 	var page types.Pagination
 	if err := c.ShouldBindQuery(&page); err != nil {
@@ -211,6 +217,12 @@ func (h *FAQHandler) CreateEntry(c *gin.Context) {
 	}
 	ctx := service.WithFAQOutputBoundary(c.Request.Context())
 	kbID := secutils.SanitizeForLog(c.Param("id"))
+	ctx, closeRead, leaseErr := beginCollectionHTTPRead(c, ctx, h.outputAuthorizer.ContentLeaseStore(), kbID)
+	if leaseErr != nil {
+		_ = c.Error(leaseErr)
+		return
+	}
+	defer closeRead()
 
 	var req types.FAQEntryPayload
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -254,6 +266,12 @@ func (h *FAQHandler) UpdateEntry(c *gin.Context) {
 	}
 	ctx := service.WithFAQOutputBoundary(c.Request.Context())
 	kbID := secutils.SanitizeForLog(c.Param("id"))
+	ctx, closeRead, leaseErr := beginCollectionHTTPRead(c, ctx, h.outputAuthorizer.ContentLeaseStore(), kbID)
+	if leaseErr != nil {
+		_ = c.Error(leaseErr)
+		return
+	}
+	defer closeRead()
 
 	var req types.FAQEntryPayload
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -426,6 +444,12 @@ func (h *FAQHandler) SearchFAQ(c *gin.Context) {
 	}
 	ctx := service.WithFAQOutputBoundary(c.Request.Context())
 	kbID := secutils.SanitizeForLog(c.Param("id"))
+	ctx, closeRead, leaseErr := beginCollectionHTTPRead(c, ctx, h.outputAuthorizer.ContentLeaseStore(), kbID)
+	if leaseErr != nil {
+		_ = c.Error(leaseErr)
+		return
+	}
+	defer closeRead()
 
 	var req types.FAQSearchRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -470,6 +494,12 @@ func (h *FAQHandler) ExportEntries(c *gin.Context) {
 	}
 	ctx := service.WithFAQOutputBoundary(c.Request.Context())
 	kbID := secutils.SanitizeForLog(c.Param("id"))
+	ctx, closeRead, leaseErr := beginCollectionHTTPRead(c, ctx, h.outputAuthorizer.ContentLeaseStore(), kbID)
+	if leaseErr != nil {
+		_ = c.Error(leaseErr)
+		return
+	}
+	defer closeRead()
 	format := strings.ToLower(strings.TrimSpace(c.Query("format")))
 
 	if format == "json" {
@@ -520,6 +550,12 @@ func (h *FAQHandler) GetEntry(c *gin.Context) {
 	}
 	ctx := service.WithFAQOutputBoundary(c.Request.Context())
 	kbID := secutils.SanitizeForLog(c.Param("id"))
+	ctx, closeRead, leaseErr := beginCollectionHTTPRead(c, ctx, h.outputAuthorizer.ContentLeaseStore(), kbID)
+	if leaseErr != nil {
+		_ = c.Error(leaseErr)
+		return
+	}
+	defer closeRead()
 
 	entrySeqID, err := strconv.ParseInt(c.Param("entry_id"), 10, 64)
 	if err != nil {
@@ -627,6 +663,12 @@ func (h *FAQHandler) AddSimilarQuestions(c *gin.Context) {
 	}
 	ctx := service.WithFAQOutputBoundary(c.Request.Context())
 	kbID := secutils.SanitizeForLog(c.Param("id"))
+	ctx, closeRead, leaseErr := beginCollectionHTTPRead(c, ctx, h.outputAuthorizer.ContentLeaseStore(), kbID)
+	if leaseErr != nil {
+		_ = c.Error(leaseErr)
+		return
+	}
+	defer closeRead()
 
 	entrySeqID, err := strconv.ParseInt(c.Param("entry_id"), 10, 64)
 	if err != nil {

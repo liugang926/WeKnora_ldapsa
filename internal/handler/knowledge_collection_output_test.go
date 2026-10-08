@@ -90,7 +90,7 @@ func collectionHTTPFixture(t *testing.T) (*KnowledgeHandler, *gorm.DB, *reposito
 	require.NoError(t, db.AutoMigrate(&types.User{}, &types.TenantMember{}, &types.TenantAPIKey{}, &types.Directory{}, &types.DirectoryIdentity{}, &types.DirectoryGroup{}, &types.DirectoryGroupMembership{}, &types.TenantGroupRoleGrant{}, &types.ResourceAccessPolicy{}, &types.ResourceGroupGrant{}))
 	db.Config.DisableForeignKeyConstraintWhenMigrating = false
 	require.NoError(t, db.Exec(`CREATE TABLE nextcloud_source_versions(candidate_knowledge_id TEXT); CREATE TABLE nextcloud_source_revisions(candidate_knowledge_id TEXT)`).Error)
-	for _, name := range []string{"000053_knowledge_input_provenance", "000054_knowledge_configuration_history_inputs", "000055_knowledge_actual_config_controls", "000058_knowledge_collection_checkpoints", "000059_knowledge_collection_display_inputs"} {
+	for _, name := range []string{"000046_nextcloud_content_leases", "000053_knowledge_input_provenance", "000054_knowledge_configuration_history_inputs", "000055_knowledge_actual_config_controls", "000058_knowledge_collection_checkpoints", "000059_knowledge_collection_display_inputs"} {
 		path := "../../migrations/sqlite/" + name + ".up.sql"
 		script, err := os.ReadFile(path)
 		require.NoError(t, err)
@@ -133,6 +133,7 @@ func collectionHTTPFixture(t *testing.T) (*KnowledgeHandler, *gorm.DB, *reposito
 	require.NoError(t, err)
 	h := &KnowledgeHandler{kgService: kg, kbService: kbs, kbShareService: shares, agentShareService: agents}
 	ConfigureKnowledgeHandlerCollectionOutput(h, service.NewKnowledgeCollectionOutputAuthorizer(store, guard))
+	ConfigureKnowledgeHandlerContentLeaseStore(h, repository.NewNextcloudContentLeaseStore(db))
 	return h, db, store, groups, shares, agents
 }
 

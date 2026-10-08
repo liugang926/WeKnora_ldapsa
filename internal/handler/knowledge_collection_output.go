@@ -74,21 +74,23 @@ func (w *knowledgeCollectionAuthorizationWriter) WriteHeaderNow() {
 
 func (h *KnowledgeHandler) respondKnowledgeCollection(c *gin.Context, ctx context.Context, scopes []types.KnowledgeSearchScope, request types.KnowledgeCollectionSelectionRequest, scope access.LineageReadScope) {
 	var fences []*nextcloudHTTPReadLeases
+	if h.contentLeases == nil {
+		_ = c.Error(errors.NewServiceUnavailableError("Collection content lease store unavailable"))
+		return
+	}
 	defer func() {
 		for _, fence := range fences {
 			fence.Close()
 		}
 	}()
-	if h.contentLeases != nil {
-		for _, target := range scopes {
-			fence, err := acquireNextcloudHTTPKBReadLease(ctx, h.contentLeases, target.TenantID, target.KBID, h.leaseHeartbeat)
-			if err != nil {
-				_ = c.Error(err)
-				return
-			}
-			fences = append(fences, fence)
-			ctx = fence.Context(ctx)
+	for _, target := range scopes {
+		fence, err := acquireNextcloudHTTPKBReadLease(ctx, h.contentLeases, target.TenantID, target.KBID, h.leaseHeartbeat)
+		if err != nil {
+			_ = c.Error(err)
+			return
 		}
+		fences = append(fences, fence)
+		ctx = fence.Context(ctx)
 	}
 	guard, err := h.collectionOutputAuthorizer.Begin(ctx, types.KnowledgeCollectionReadRequest{Scopes: scopes}, scope)
 	if err != nil {

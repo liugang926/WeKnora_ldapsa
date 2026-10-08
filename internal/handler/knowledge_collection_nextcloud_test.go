@@ -84,7 +84,7 @@ func collectionNextcloudHTTPStateFixture(t *testing.T, change string, beforeSour
 	t.Setenv("WEKNORA_NEXTCLOUD_ALLOWED_ORIGINS", server.URL)
 	require.NoError(t, db.Exec("DROP TABLE nextcloud_source_versions; DROP TABLE nextcloud_source_revisions").Error)
 	require.NoError(t, db.AutoMigrate(&types.DataSource{}, &repository.NextcloudSourcePairing{}))
-	for _, name := range []string{"000031_nextcloud_source_versions", "000045_nextcloud_source_revisions", "000046_nextcloud_content_leases", "000047_nextcloud_candidate_retry"} {
+	for _, name := range []string{"000031_nextcloud_source_versions", "000045_nextcloud_source_revisions", "000047_nextcloud_candidate_retry"} {
 		script, err := os.ReadFile("../../migrations/sqlite/" + name + ".up.sql")
 		require.NoError(t, err)
 		require.NoError(t, db.Exec(string(script)).Error)
