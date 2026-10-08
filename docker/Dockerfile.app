@@ -134,19 +134,21 @@ RUN if [ -n "$APK_MIRROR_ARG" ]; then \
     apt-get install -y --no-install-recommends ca-certificates && \
     rm -rf /var/lib/apt/lists/*
 
-# Then switch to mirror if specified and install other packages
+# Keep the whole install batch and its downloaded archives in one RUN. The
+# helper retries the install command; repository updates and integrity checks
+# remain the normal APT operations below.
+COPY scripts/install-runtime-packages.sh /tmp/install-runtime-packages.sh
 RUN if [ -n "$APK_MIRROR_ARG" ]; then \
         sed -i "s@deb.debian.org@${APK_MIRROR_ARG}@g" /etc/apt/sources.list.d/debian.sources; \
     fi && \
     apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=180 update && \
-    apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=180 install -y --no-install-recommends \
+    bash /tmp/install-runtime-packages.sh \
         build-essential postgresql-client default-mysql-client tzdata sed curl bash vim wget \
         libsqlite3-0 \
         python3 python3-pip python3-dev libffi-dev libssl-dev \
         nodejs npm \
         gosu \
         ffmpeg && \
-    apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
 RUN python3 -m pip install --break-system-packages --upgrade pip setuptools wheel uv==0.12.18 && \
