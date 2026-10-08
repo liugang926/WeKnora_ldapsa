@@ -3,8 +3,36 @@ package config
 import (
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
+	"os"
 	"testing"
 )
+
+func TestKnowledgeEnrichmentActualDefaultPromptFilesHaveCodeOrigins(t *testing.T) {
+	for _, purpose := range []string{"summary", "question"} {
+		file := "../../config/prompt_templates/generate_summary.yaml"
+		if purpose == "question" {
+			file = "../../config/prompt_templates/generate_questions.yaml"
+		}
+		raw, err := os.ReadFile(file)
+		require.NoError(t, err)
+		var defaults struct {
+			Templates []PromptTemplate `yaml:"templates"`
+		}
+		require.NoError(t, yaml.Unmarshal(raw, &defaults))
+		require.NotEmpty(t, defaults.Templates)
+		cfg := &Config{Conversation: &ConversationConfig{}}
+		for _, prompt := range defaults.Templates {
+			if purpose == "summary" {
+				cfg.Conversation.GenerateSummaryPrompt = prompt.Content
+			} else {
+				cfg.Conversation.GenerateQuestionsPrompt = prompt.Content
+			}
+			lineage, err := KnowledgeEnrichmentPromptLineage(cfg, purpose)
+			require.NoError(t, err, prompt.ID)
+			require.NoError(t, lineage.RequireComplete())
+		}
+	}
+}
 
 func TestKnowledgeEnrichmentPromptExactBuiltinAndCodeOrigins(t *testing.T) {
 	for _, kind := range []string{"summary", "question"} {
