@@ -202,6 +202,15 @@ func (h *Handler) ContinueStream(c *gin.Context) {
 			newEvents, newOffset, err := h.streamManager.GetEvents(ctx, sessionID, messageID, currentOffset)
 			if err != nil {
 				logger.Errorf(ctx, "Failed to get new events: %v", err)
+				// The held tail is still protected source output. A store error
+				// does not bypass current authorization for its prior prefix.
+				if err := checkReplayPublication(ctx, h.messageService, message, nil); err != nil {
+					logger.Warnf(ctx, "Discarded held stream content after publication check failed: %v", err)
+					return
+				}
+				if ctx.Err() != nil {
+					return
+				}
 				flushHeldStreamContent(ctx, c, message.RequestID, resourceRewriter)
 				return
 			}
