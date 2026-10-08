@@ -1,0 +1,16 @@
+DROP TRIGGER IF EXISTS faq_catalog_control_checkpoint ON knowledges;
+DROP FUNCTION IF EXISTS faq_catalog_control_checkpoint();
+DROP TRIGGER IF EXISTS faq_input_chunk_checkpoint ON chunks;
+DROP TRIGGER IF EXISTS faq_input_kb_checkpoint ON knowledge_bases;
+DROP FUNCTION IF EXISTS faq_input_chunk_checkpoint();
+DROP FUNCTION IF EXISTS faq_input_kb_checkpoint();
+DROP TABLE IF EXISTS faq_catalog_input_origins;
+DROP TABLE IF EXISTS faq_catalog_control_versions;
+DROP TABLE IF EXISTS faq_entry_material_receipts;
+DROP TABLE IF EXISTS faq_entry_input_admissions;
+DROP TABLE IF EXISTS faq_input_actor_selectors;
+DROP TABLE IF EXISTS faq_input_sessions;
+DROP TABLE IF EXISTS faq_input_row_versions;
+DROP TABLE IF EXISTS faq_input_scope_versions;
+DROP FUNCTION IF EXISTS faq_input_immutable();
+DROP FUNCTION IF EXISTS faq_session_input_immutable();

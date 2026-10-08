@@ -73,6 +73,8 @@ type knowledgeService struct {
 	contentLeases        *repository.NextcloudContentLeaseStore
 	knowledgeInputs      interfaces.KnowledgeBuildInputReader
 	knowledgeInputWriter interfaces.KnowledgeInputWriter
+	faqInputs            *repository.KnowledgeInputProvenanceStore
+	faqLineageChecker    knowledgeOutputLineageChecker
 	imageResolver        *docparser.ImageResolver
 	taskPendingRepo      interfaces.TaskPendingOpsRepository
 

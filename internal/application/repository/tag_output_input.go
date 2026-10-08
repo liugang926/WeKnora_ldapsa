@@ -183,7 +183,17 @@ func (s *KnowledgeInputProvenanceStore) captureTagOutputInTx(tx *gorm.DB, req ty
 			if err != nil {
 				return nil, err
 			}
-			if err := verifyKnowledgeInputMaterial(tx, admission, candidate.Knowledge, chunk); err != nil {
+			lineage := candidate.Proof.SourceLineage
+			var parents []*types.KnowledgeBuildInputProof
+			if candidate.Knowledge.Type == types.KnowledgeTypeFAQ && chunk.ChunkType == types.ChunkTypeFAQ {
+				proof, readErr := s.readFAQEntryInputInTx(tx, chunk)
+				err = readErr
+				if err != nil {
+					return nil, err
+				}
+				lineage = proof.SourceLineage
+				parents = proof.OriginalKnowledgeInputs
+			} else if err := verifyKnowledgeInputMaterial(tx, admission, candidate.Knowledge, chunk); err != nil {
 				return nil, err
 			}
 			revision, err := inputRowRevision(tx, "chunk", chunk.ID)
@@ -194,7 +204,7 @@ func (s *KnowledgeInputProvenanceStore) captureTagOutputInTx(tx *gorm.DB, req ty
 			if err != nil {
 				return nil, err
 			}
-			result.Chunks = append(result.Chunks, &types.TagOutputChunkCandidate{Chunk: chunk, Revision: revision, Digest: digest})
+			result.Chunks = append(result.Chunks, &types.TagOutputChunkCandidate{Chunk: chunk, Revision: revision, Digest: digest, SourceLineage: lineage, OriginalKnowledgeInputs: parents})
 		}
 		if len(rows) < 256 {
 			break

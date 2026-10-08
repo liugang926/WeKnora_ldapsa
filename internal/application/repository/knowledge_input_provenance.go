@@ -519,7 +519,13 @@ func (s *KnowledgeInputProvenanceStore) admissionInTx(tx *gorm.DB, k *types.Know
 
 func (s *KnowledgeInputProvenanceStore) ReadOrdinaryRAGInputLineage(ctx context.Context, tx *gorm.DB, k *types.Knowledge, c *types.Chunk) (*types.SourceLineage, error) {
 	a, _, lineage, err := s.admissionInTx(tx, k, nil)
-	if err == nil && c != nil {
+	if err == nil && c != nil && k.Type == types.KnowledgeTypeFAQ && c.ChunkType == types.ChunkTypeFAQ {
+		var entry *types.SourceLineage
+		entry, err = s.ReadFAQEntryInputLineage(tx, c)
+		if err == nil {
+			lineage, err = types.UnionSourceLineage(lineage, entry)
+		}
+	} else if err == nil && c != nil {
 		err = verifyKnowledgeInputMaterial(tx, a, k, c)
 	}
 	if errors.Is(err, gorm.ErrRecordNotFound) || errors.Is(err, ErrKnowledgeInputChanged) || errors.Is(err, ErrNextcloudLineageSnapshotDenied) || errors.Is(err, types.ErrSourceLineageUnknown) {

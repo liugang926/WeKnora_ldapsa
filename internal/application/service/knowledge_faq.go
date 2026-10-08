@@ -38,12 +38,24 @@ func (s *knowledgeService) ListFAQEntries(ctx context.Context,
 		return nil, err
 	}
 
+	outputGuard, err := s.beginFAQOutput(ctx, kb, nil, true)
+	if err != nil {
+		return nil, err
+	}
+	if outputGuard != nil {
+		kb, err = outputGuard.KnowledgeBase()
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	faqKnowledge, err := s.findFAQKnowledge(ctx, effectiveTenantID, kb.ID)
 	if err != nil {
 		return nil, err
 	}
 	if faqKnowledge == nil {
-		return types.NewPageResult(0, page, []*types.FAQEntry{}), nil
+		result := types.NewPageResult(0, page, []*types.FAQEntry{})
+		return result, bindFAQOutput(ctx, outputGuard, result)
 	}
 
 	if len(tagUUIDs) == 0 && legacyTagSeqID > 0 {
@@ -61,6 +73,12 @@ func (s *knowledgeService) ListFAQEntries(ctx context.Context,
 	)
 	if err != nil {
 		return nil, err
+	}
+
+	if outputGuard != nil {
+		if err := outputGuard.CheckChunks(ctx, chunks); err != nil {
+			return nil, err
+		}
 	}
 
 	// Build tag ID to name and seq_id mapping for all unique tag IDs (batch query)
@@ -99,7 +117,13 @@ func (s *knowledgeService) ListFAQEntries(ctx context.Context,
 		}
 		entries = append(entries, entry)
 	}
-	return types.NewPageResult(total, page, entries), nil
+	if outputGuard != nil {
+		if err := outputGuard.Entries(ctx, s, entries); err != nil {
+			return nil, err
+		}
+	}
+	result := types.NewPageResult(total, page, entries)
+	return result, bindFAQOutput(ctx, outputGuard, result)
 }
 
 // faqCreateIndexBudget caps the indexing step of a single interactive FAQ
@@ -120,6 +144,11 @@ func (s *knowledgeService) CreateFAQEntry(ctx context.Context,
 	}
 
 	kb, ctx, err := s.writableFAQKnowledgeBase(ctx, kbID)
+	if err != nil {
+		return nil, err
+	}
+
+	ctx, err = s.beginFAQInput(ctx, kb, types.FAQInputOperation{Kind: "create", Entry: payload})
 	if err != nil {
 		return nil, err
 	}
@@ -201,9 +230,10 @@ func (s *knowledgeService) CreateFAQEntry(ctx context.Context,
 	if err := chunk.SetFAQMetadata(meta); err != nil {
 		return nil, fmt.Errorf("failed to set FAQ metadata: %w", err)
 	}
+	chunk.Content = buildFAQChunkContent(meta, indexMode)
 
 	// 保存chunk
-	if err := s.chunkService.CreateChunks(ctx, []*types.Chunk{chunk}); err != nil {
+	if err := s.saveFAQChunks(ctx, []*types.Chunk{chunk}, true); err != nil {
 		return nil, fmt.Errorf("failed to create chunk: %w", err)
 	}
 
@@ -214,16 +244,21 @@ func (s *knowledgeService) CreateFAQEntry(ctx context.Context,
 	if indexErr != nil {
 		// 如果索引失败，删除已创建的chunk。回滚失败会留下一条 stored 状态的
 		// 残留：它不出现在列表里，却会被重复校验命中，因此必须告警而非静默。
-		if delErr := s.chunkService.DeleteChunk(ctx, chunk.ID); delErr != nil {
-			logger.Errorf(ctx,
-				"CreateFAQEntry: rollback failed, chunk %s left in stored state: %v", chunk.ID, delErr)
+		var delErr error
+		if s.faqInputs != nil {
+			delErr = s.deleteFAQChunks(ctx, tenantID, []string{chunk.ID})
+		} else {
+			delErr = s.chunkService.DeleteChunk(ctx, chunk.ID)
+		}
+		if delErr != nil {
+			logger.Errorf(ctx, "CreateFAQEntry: rollback failed, chunk %s left in stored state: %v", chunk.ID, delErr)
 		}
 		return nil, fmt.Errorf("failed to index chunk: %w", indexErr)
 	}
 
 	// 更新chunk状态为已索引
 	chunk.Status = int(types.ChunkStatusIndexed)
-	if err := s.chunkService.UpdateChunk(ctx, chunk); err != nil {
+	if err := s.saveFAQChunks(ctx, []*types.Chunk{chunk}, false); err != nil {
 		return nil, fmt.Errorf("failed to update chunk status: %w", err)
 	}
 
@@ -253,7 +288,7 @@ func (s *knowledgeService) CreateFAQEntry(ctx context.Context,
 		"faq_entry", chunk.ID, types.AuditOutcomeSuccess,
 		map[string]any{"entry_id": chunk.SeqID, "source_type": "faq"})
 
-	return entry, nil
+	return entry, s.bindFAQEntryOutput(ctx, kb, chunk, entry)
 }
 
 // GetFAQEntry retrieves a single FAQ entry by seq_id.
@@ -310,7 +345,7 @@ func (s *knowledgeService) GetFAQEntry(ctx context.Context,
 			entry.TagName = tag.Name
 		}
 	}
-	return entry, nil
+	return entry, s.bindFAQEntryOutput(ctx, kb, chunk, entry)
 }
 
 // UpdateFAQEntry updates a single FAQ entry.
@@ -321,6 +356,11 @@ func (s *knowledgeService) UpdateFAQEntry(ctx context.Context,
 		return nil, werrors.NewBadRequestError("请求体不能为空")
 	}
 	kb, ctx, err := s.writableFAQKnowledgeBase(ctx, kbID)
+	if err != nil {
+		return nil, err
+	}
+
+	ctx, err = s.beginFAQInput(ctx, kb, types.FAQInputOperation{Kind: "update", Entry: payload, EntrySeqID: entrySeqID})
 	if err != nil {
 		return nil, err
 	}
@@ -397,7 +437,7 @@ func (s *knowledgeService) UpdateFAQEntry(ctx context.Context,
 		}
 	}
 	chunk.UpdatedAt = time.Now()
-	if err := s.chunkService.UpdateChunk(ctx, chunk); err != nil {
+	if err := s.saveFAQChunks(ctx, []*types.Chunk{chunk}, false); err != nil {
 		return nil, err
 	}
 
@@ -476,7 +516,7 @@ func (s *knowledgeService) UpdateFAQEntry(ctx context.Context,
 		"faq_entry", chunk.ID, types.AuditOutcomeSuccess,
 		map[string]any{"entry_id": chunk.SeqID, "source_type": "faq"})
 
-	return entry, nil
+	return entry, s.bindFAQEntryOutput(ctx, kb, chunk, entry)
 }
 
 // AddSimilarQuestions adds similar questions to a FAQ entry.
@@ -489,6 +529,11 @@ func (s *knowledgeService) AddSimilarQuestions(ctx context.Context,
 	}
 
 	kb, ctx, err := s.writableFAQKnowledgeBase(ctx, kbID)
+	if err != nil {
+		return nil, err
+	}
+
+	ctx, err = s.beginFAQInput(ctx, kb, types.FAQInputOperation{Kind: "similar", EntrySeqID: entrySeqID, Questions: questions})
 	if err != nil {
 		return nil, err
 	}
@@ -543,7 +588,14 @@ func (s *knowledgeService) AddSimilarQuestions(ctx context.Context,
 				tagSeqIDMap[tag.ID] = tag.SeqID
 			}
 		}
-		return s.chunkToFAQEntry(chunk, kb, tagSeqIDMap)
+		entry, err := s.chunkToFAQEntry(chunk, kb, tagSeqIDMap)
+		if err != nil {
+			return nil, err
+		}
+		if tag, err := s.tagRepo.GetByID(ctx, tenantID, chunk.TagID); err == nil {
+			entry.TagName = tag.Name
+		}
+		return entry, s.bindFAQEntryOutput(ctx, kb, chunk, entry)
 	}
 
 	// Check for duplicates with other entries
@@ -572,7 +624,7 @@ func (s *knowledgeService) AddSimilarQuestions(ctx context.Context,
 	chunk.Content = buildFAQChunkContent(meta, indexMode)
 	chunk.UpdatedAt = time.Now()
 
-	if err := s.chunkService.UpdateChunk(ctx, chunk); err != nil {
+	if err := s.saveFAQChunks(ctx, []*types.Chunk{chunk}, false); err != nil {
 		return nil, err
 	}
 
@@ -626,7 +678,7 @@ func (s *knowledgeService) AddSimilarQuestions(ctx context.Context,
 		}
 	}
 
-	return entry, nil
+	return entry, s.bindFAQEntryOutput(ctx, kb, chunk, entry)
 }
 
 // UpdateFAQEntryStatus updates enable status for a FAQ entry.
@@ -634,6 +686,11 @@ func (s *knowledgeService) UpdateFAQEntryStatus(ctx context.Context,
 	kbID string, entryID string, isEnabled bool,
 ) error {
 	kb, ctx, err := s.writableFAQKnowledgeBase(ctx, kbID)
+	if err != nil {
+		return err
+	}
+
+	ctx, err = s.beginFAQInput(ctx, kb, types.FAQInputOperation{Kind: "enabled", EntryID: entryID, Enabled: &isEnabled})
 	if err != nil {
 		return err
 	}
@@ -650,7 +707,7 @@ func (s *knowledgeService) UpdateFAQEntryStatus(ctx context.Context,
 	}
 	chunk.IsEnabled = isEnabled
 	chunk.UpdatedAt = time.Now()
-	if err := s.chunkService.UpdateChunk(ctx, chunk); err != nil {
+	if err := s.saveFAQChunks(ctx, []*types.Chunk{chunk}, false); err != nil {
 		return err
 	}
 
@@ -685,6 +742,14 @@ func (s *knowledgeService) UpdateFAQEntryFieldsBatch(ctx context.Context,
 	kb, ctx, err := s.writableFAQKnowledgeBase(ctx, kbID)
 	if err != nil {
 		return err
+	}
+
+	ctx, err = s.beginFAQInput(ctx, kb, types.FAQInputOperation{Kind: "fields", Fields: req})
+	if err != nil {
+		return err
+	}
+	if s.faqInputs != nil {
+		return s.updateFAQFieldsWithInput(ctx, kb, req)
 	}
 	tenantID := ctx.Value(types.TenantIDContextKey).(uint64)
 
@@ -863,6 +928,11 @@ func (s *knowledgeService) UpdateFAQEntryTag(ctx context.Context, kbID string, e
 	if err != nil {
 		return err
 	}
+
+	ctx, err = s.beginFAQInput(ctx, kb, types.FAQInputOperation{Kind: "tag", EntryID: entryID, TagID: tagID})
+	if err != nil {
+		return err
+	}
 	tenantID := ctx.Value(types.TenantIDContextKey).(uint64)
 	chunk, err := s.chunkRepo.GetChunkByID(ctx, tenantID, entryID)
 	if err != nil {
@@ -891,7 +961,7 @@ func (s *knowledgeService) UpdateFAQEntryTag(ctx context.Context, kbID string, e
 
 	chunk.TagID = resolvedTagID
 	chunk.UpdatedAt = time.Now()
-	if err := s.chunkRepo.UpdateChunk(ctx, chunk); err != nil {
+	if err := s.saveFAQChunks(ctx, []*types.Chunk{chunk}, false); err != nil {
 		return err
 	}
 
@@ -926,6 +996,17 @@ func (s *knowledgeService) SearchFAQEntries(ctx context.Context,
 	kb, err := s.validateFAQKnowledgeBase(ctx, kbID)
 	if err != nil {
 		return nil, err
+	}
+
+	outputGuard, err := s.beginFAQOutput(ctx, kb, nil, true)
+	if err != nil {
+		return nil, err
+	}
+	if outputGuard != nil {
+		kb, err = outputGuard.KnowledgeBase()
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// Set default values
@@ -1067,7 +1148,8 @@ func (s *knowledgeService) SearchFAQEntries(ctx context.Context,
 	}
 
 	if len(searchResults) == 0 {
-		return []*types.FAQEntry{}, nil
+		entries := []*types.FAQEntry{}
+		return entries, bindFAQOutput(ctx, outputGuard, entries)
 	}
 
 	// Extract chunk IDs and build score/match type/matched content maps
@@ -1088,6 +1170,12 @@ func (s *knowledgeService) SearchFAQEntries(ctx context.Context,
 	chunks, err := s.chunkRepo.ListChunksByID(ctx, tenantID, chunkIDs)
 	if err != nil {
 		return nil, err
+	}
+
+	if outputGuard != nil {
+		if err := outputGuard.CheckChunks(ctx, chunks); err != nil {
+			return nil, err
+		}
 	}
 
 	// Build tag UUID to seq_id map for conversion
@@ -1249,7 +1337,12 @@ func (s *knowledgeService) SearchFAQEntries(ctx context.Context,
 		}
 	}
 
-	return entries, nil
+	if outputGuard != nil {
+		if err := outputGuard.Entries(ctx, s, entries); err != nil {
+			return nil, err
+		}
+	}
+	return entries, bindFAQOutput(ctx, outputGuard, entries)
 }
 
 // DeleteFAQEntries deletes FAQ entries in batch by seq_id.
@@ -1260,6 +1353,11 @@ func (s *knowledgeService) DeleteFAQEntries(ctx context.Context,
 		return werrors.NewBadRequestError("请选择需要删除的 FAQ 条目")
 	}
 	kb, ctx, err := s.writableFAQKnowledgeBase(ctx, kbID)
+	if err != nil {
+		return err
+	}
+
+	ctx, err = s.beginFAQInput(ctx, kb, types.FAQInputOperation{Kind: "delete", DeleteIDs: entrySeqIDs})
 	if err != nil {
 		return err
 	}
@@ -1289,10 +1387,12 @@ func (s *knowledgeService) DeleteFAQEntries(ctx context.Context,
 		chunksToRemove = append(chunksToRemove, chunk)
 	}
 	// All entries and parent documents are authorized before any deletion.
+	ids := make([]string, 0, len(chunksToRemove))
 	for _, chunk := range chunksToRemove {
-		if err := s.chunkService.DeleteChunk(ctx, chunk.ID); err != nil {
-			return err
-		}
+		ids = append(ids, chunk.ID)
+	}
+	if err := s.deleteFAQChunks(ctx, tenantID, ids); err != nil {
+		return err
 	}
 	for id, chunks := range groups {
 		if err := s.deleteFAQChunkVectors(ctx, kb, knowledges[id], chunks); err != nil {
@@ -1322,6 +1422,10 @@ func (s *knowledgeService) ExportFAQEntries(ctx context.Context, kbID string) ([
 		return nil, err
 	}
 
+	outputGuard, err := s.beginFAQOutput(ctx, kb, nil, true)
+	if err != nil {
+		return nil, err
+	}
 	tenantID := ctx.Value(types.TenantIDContextKey).(uint64)
 	faqKnowledge, err := s.findFAQKnowledge(ctx, tenantID, kb.ID)
 	if err != nil {
@@ -1329,7 +1433,8 @@ func (s *knowledgeService) ExportFAQEntries(ctx context.Context, kbID string) ([
 	}
 	if faqKnowledge == nil {
 		// Return empty CSV with headers only
-		return s.buildFAQCSV(nil, nil), nil
+		body := s.buildFAQCSV(nil, nil)
+		return body, bindFAQOutput(ctx, outputGuard, body)
 	}
 
 	// Get all FAQ chunks
@@ -1344,7 +1449,13 @@ func (s *knowledgeService) ExportFAQEntries(ctx context.Context, kbID string) ([
 		return nil, fmt.Errorf("failed to build tag map: %w", err)
 	}
 
-	return s.buildFAQCSV(chunks, tagMap), nil
+	if outputGuard != nil {
+		if err := outputGuard.CheckChunks(ctx, chunks); err != nil {
+			return nil, err
+		}
+	}
+	body := s.buildFAQCSV(chunks, tagMap)
+	return body, bindFAQOutput(ctx, outputGuard, body)
 }
 
 // ExportFAQEntriesJSON 以 JSON 数组形式导出 FAQ 知识库下的全部条目，
@@ -1355,13 +1466,21 @@ func (s *knowledgeService) ExportFAQEntriesJSON(ctx context.Context, kbID string
 		return nil, err
 	}
 
+	outputGuard, err := s.beginFAQOutput(ctx, kb, nil, true)
+	if err != nil {
+		return nil, err
+	}
 	tenantID := ctx.Value(types.TenantIDContextKey).(uint64)
 	faqKnowledge, err := s.findFAQKnowledge(ctx, tenantID, kb.ID)
 	if err != nil {
 		return nil, err
 	}
 	if faqKnowledge == nil {
-		return json.Marshal([]types.FAQExportEntry{})
+		body, err := json.Marshal([]types.FAQExportEntry{})
+		if err != nil {
+			return nil, err
+		}
+		return body, bindFAQOutput(ctx, outputGuard, body)
 	}
 
 	chunks, err := s.chunkRepo.ListAllFAQChunksForExport(ctx, tenantID, faqKnowledge.ID)
@@ -1374,7 +1493,16 @@ func (s *knowledgeService) ExportFAQEntriesJSON(ctx context.Context, kbID string
 		return nil, fmt.Errorf("failed to build tag map: %w", err)
 	}
 
-	return s.buildFAQJSON(chunks, tagMap)
+	if outputGuard != nil {
+		if err := outputGuard.CheckChunks(ctx, chunks); err != nil {
+			return nil, err
+		}
+	}
+	body, err := s.buildFAQJSON(chunks, tagMap)
+	if err != nil {
+		return nil, err
+	}
+	return body, bindFAQOutput(ctx, outputGuard, body)
 }
 
 func (s *knowledgeService) buildFAQJSON(chunks []*types.Chunk, tagMap map[string]string) ([]byte, error) {
@@ -1559,7 +1687,12 @@ func (s *knowledgeService) ensureFAQKnowledge(
 		CreatedAt:        time.Now(),
 		UpdatedAt:        time.Now(),
 	}
-	if err := s.repo.CreateKnowledge(ctx, knowledge); err != nil {
+	if s.faqInputs != nil {
+		knowledge.Title = "FAQ"
+		if err := s.faqInputs.CreateFAQCatalog(ctx, knowledge); err != nil {
+			return nil, err
+		}
+	} else if err := s.repo.CreateKnowledge(ctx, knowledge); err != nil {
 		return nil, err
 	}
 	return knowledge, nil
@@ -1826,6 +1959,9 @@ func hashQuestion(question string) string {
 // If no tag is specified, creates or finds the "未分类" tag
 // Returns the internal UUID of the tag
 func (s *knowledgeService) resolveTagID(ctx context.Context, kbID string, payload *types.FAQEntryPayload) (string, error) {
+	if s.faqInputs != nil {
+		return s.faqInputs.ResolveFAQInputTag(ctx, payload)
+	}
 	tenantID := ctx.Value(types.TenantIDContextKey).(uint64)
 
 	// 如果提供了 tag_id (seq_id)，优先使用 tag_id

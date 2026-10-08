@@ -115,6 +115,17 @@ func (g *TagOutputGuard) authorize(ctx context.Context) error {
 			return err
 		}
 	}
+	for _, c := range g.snapshot.Chunks {
+		if c == nil {
+			return types.ErrSourceLineageUnknown
+		}
+		if err := check(c.SourceLineage); err != nil {
+			return err
+		}
+		if err := checkFAQOriginalKnowledgeScopes(ctx, g.authorizer.checker, c.OriginalKnowledgeInputs); err != nil {
+			return err
+		}
+	}
 	if g.snapshot.Auxiliary != nil {
 		for _, p := range g.snapshot.Auxiliary.Proofs {
 			if p == nil {

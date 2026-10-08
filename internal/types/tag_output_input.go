@@ -8,9 +8,11 @@ type TagOutputReadRequest struct {
 	TagID           string // empty means the complete list/statistics candidate set
 }
 type TagOutputChunkCandidate struct {
-	Chunk    *Chunk
-	Revision uint64
-	Digest   string
+	Chunk                   *Chunk
+	Revision                uint64
+	Digest                  string
+	SourceLineage           *SourceLineage
+	OriginalKnowledgeInputs []*KnowledgeBuildInputProof
 }
 type TagOutputInputSnapshot struct {
 	Request       TagOutputReadRequest

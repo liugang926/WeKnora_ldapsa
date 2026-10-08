@@ -327,6 +327,8 @@ type DocumentProcessPayload struct {
 
 // FAQImportPayload represents the FAQ import task payload (including dry run mode)
 type FAQImportPayload struct {
+	OriginalFAQInputID string             `json:"_original_faq_input_id,omitempty"`
+	OriginalFAQInput   *FAQInputOperation `json:"_original_faq_input,omitempty"`
 	TracingContext
 	TenantID    uint64            `json:"tenant_id"`
 	TaskID      string            `json:"task_id"`

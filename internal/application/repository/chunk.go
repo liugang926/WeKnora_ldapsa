@@ -1012,7 +1012,7 @@ func (r *chunkRepository) ListAllFAQChunksForExport(
 	for {
 		var batchChunks []*types.Chunk
 		if err := r.db.WithContext(ctx).
-			Select("id, metadata, tag_id, is_enabled, flags").
+			Select("*").
 			Where("tenant_id = ? AND knowledge_id = ? AND chunk_type = ? AND status = ?",
 				tenantID, knowledgeID, types.ChunkTypeFAQ, types.ChunkStatusIndexed).
 			Order("created_at ASC").

@@ -48,6 +48,11 @@ func (s *knowledgeService) UpsertFAQEntries(ctx context.Context,
 	if err := s.validateFAQImportTags(ctx, kb, payload.Entries); err != nil {
 		return "", err
 	}
+	operation := types.FAQInputOperation{Kind: "import", Batch: payload}
+	ctx, err = s.beginFAQInput(ctx, kb, operation)
+	if err != nil {
+		return "", err
+	}
 
 	tenantID := ctx.Value(types.TenantIDContextKey).(uint64)
 
@@ -144,6 +149,11 @@ func (s *knowledgeService) UpsertFAQEntries(ctx context.Context,
 		EnqueuedAt:  enqueuedAt,
 		InstanceID:  instanceID,
 		Initiator:   types.TaskInitiatorFromContext(ctx),
+	}
+
+	if s.faqInputs != nil {
+		taskPayload.OriginalFAQInputID = s.faqInputs.FAQSessionID(ctx)
+		taskPayload.OriginalFAQInput = &operation
 	}
 
 	// 阈值：超过 200 条或序列化后超过 50KB 时使用对象存储
@@ -1437,7 +1447,7 @@ func (s *knowledgeService) executeFAQImport(ctx context.Context, taskID string, 
 			for _, chunk := range chunksToDelete {
 				chunkIDsToDelete = append(chunkIDsToDelete, chunk.ID)
 			}
-			if err := s.chunkRepo.DeleteChunks(ctx, tenantID, chunkIDsToDelete); err != nil {
+			if err := s.deleteFAQChunks(ctx, tenantID, chunkIDsToDelete); err != nil {
 				return fmt.Errorf("failed to delete chunks: %w", err)
 			}
 			// 删除索引
@@ -1534,6 +1544,10 @@ func (s *knowledgeService) executeFAQImport(ctx context.Context, taskID string, 
 			if entry.IsEnabled != nil {
 				isEnabled = *entry.IsEnabled
 			}
+			flags := types.ChunkFlagRecommended
+			if entry.IsRecommended != nil && !*entry.IsRecommended {
+				flags = 0
+			}
 			// ChunkIndex计算：startChunkIndex + (i+idx) + initialProcessed
 			chunk := &types.Chunk{
 				ID:              uuid.New().String(),
@@ -1543,6 +1557,7 @@ func (s *knowledgeService) executeFAQImport(ctx context.Context, taskID string, 
 				Content:         buildFAQChunkContent(meta, indexMode),
 				// ChunkIndex:      0,
 				IsEnabled: isEnabled,
+				Flags:     flags,
 				ChunkType: types.ChunkTypeFAQ,
 				TagID:     tagID,                        // 使用解析后的 TagID
 				Status:    int(types.ChunkStatusStored), // store but not indexed
@@ -1554,6 +1569,7 @@ func (s *knowledgeService) executeFAQImport(ctx context.Context, taskID string, 
 			if err := chunk.SetFAQMetadata(meta); err != nil {
 				return fmt.Errorf("failed to set FAQ metadata: %w", err)
 			}
+			chunk.Content = buildFAQChunkContent(meta, indexMode)
 			chunks = append(chunks, chunk)
 			chunkIds = append(chunkIds, chunk.ID)
 		}
@@ -1562,7 +1578,7 @@ func (s *knowledgeService) executeFAQImport(ctx context.Context, taskID string, 
 			taskID, i+1, end, len(chunks), buildDuration, chunkIds)
 		// 创建chunks
 		createStartTime := time.Now()
-		if err := s.chunkService.CreateChunks(ctx, chunks); err != nil {
+		if err := s.saveFAQChunks(ctx, chunks, true); err != nil {
 			return fmt.Errorf("failed to create chunks: %w", err)
 		}
 		createDuration := time.Since(createStartTime)
@@ -1598,7 +1614,11 @@ func (s *knowledgeService) executeFAQImport(ctx context.Context, taskID string, 
 		for _, chunk := range chunks {
 			chunk.Status = int(types.ChunkStatusIndexed) // indexed
 		}
-		if err := s.chunkRepo.UpdateChunkFieldsByIDs(ctx, tenantID, chunkIds, map[string]interface{}{
+		if s.faqInputs != nil {
+			if err := s.saveFAQChunks(ctx, chunks, false); err != nil {
+				return err
+			}
+		} else if err := s.chunkRepo.UpdateChunkFieldsByIDs(ctx, tenantID, chunkIds, map[string]interface{}{
 			"status": int(types.ChunkStatusIndexed),
 		}); err != nil {
 			return fmt.Errorf("failed to update chunks status: %w", err)
@@ -2018,6 +2038,9 @@ func (s *knowledgeService) indexFAQChunks(ctx context.Context,
 	if len(chunks) == 0 {
 		return nil
 	}
+	if err := s.checkFAQInput(ctx); err != nil {
+		return err
+	}
 	indexStartTime := time.Now()
 	logger.Debugf(ctx, "indexFAQChunks: starting to index %d chunks", len(chunks))
 
@@ -2075,7 +2098,13 @@ func (s *knowledgeService) indexFAQChunks(ctx context.Context,
 
 	// 批量索引（这里可能是性能瓶颈）
 	batchIndexStartTime := time.Now()
+	if err := s.checkFAQInput(ctx); err != nil {
+		return err
+	}
 	if err := retrieveEngine.BatchIndex(ctx, embeddingModel, indexInfo); err != nil {
+		return err
+	}
+	if err := s.checkFAQInput(ctx); err != nil {
 		return err
 	}
 	batchIndexDuration := time.Since(batchIndexStartTime)
@@ -2304,6 +2333,31 @@ func (s *knowledgeService) ProcessFAQImport(ctx context.Context, t *asynq.Task) 
 
 		payload.Entries = entries
 		logger.Infof(ctx, "Downloaded %d FAQ entries from object storage", len(entries))
+	}
+
+	if s.faqInputs != nil {
+		original := payload.OriginalFAQInput
+		if original == nil || original.Batch == nil || original.Kind != "import" {
+			return types.ErrSourceLineageUnknown
+		}
+		a, err := repository.KnowledgeInputDigest(original.Batch.Entries)
+		if err != nil {
+			return err
+		}
+		b, err := repository.KnowledgeInputDigest(payload.Entries)
+		if err != nil {
+			return err
+		}
+		if a != b || original.Batch.Mode != payload.Mode || original.Batch.DryRun != payload.DryRun {
+			return repository.ErrKnowledgeInputChanged
+		}
+		ctx, err = s.faqInputs.RestoreFAQInput(ctx, payload.OriginalFAQInputID, kb, *original)
+		if err != nil {
+			return err
+		}
+		if err = s.checkFAQInput(ctx); err != nil {
+			return err
+		}
 	}
 
 	logger.Infof(ctx, "Processing FAQ import task: task_id=%s, kb_id=%s, total_entries=%d, dry_run=%v, retry=%d/%d",
@@ -2670,7 +2724,7 @@ func (s *knowledgeService) executeFAQMergeOperations(
 		}
 
 		// 3. 事务批量保存（GORM Save 全字段更新，确保 metadata/content_hash 持久化）
-		if err := s.chunkRepo.SaveChunks(ctx, mergedChunks); err != nil {
+		if err := s.saveFAQChunks(ctx, mergedChunks, false); err != nil {
 			logger.Errorf(ctx, "FAQ import task %s: failed to batch save merged chunks: %v", taskID, err)
 			return mergedCount, fmt.Errorf("failed to batch save merged chunks: %w", err)
 		}
