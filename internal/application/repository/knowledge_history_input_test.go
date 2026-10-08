@@ -17,6 +17,22 @@ func (v historyInputVerifier) CheckMessagePublication(_ context.Context, m *type
 	}
 	return m.SourceLineage.RequireComplete()
 }
+
+// Test stub batch retains both envelopes; production requires scope-preserving
+// authorizer CheckBatch with one final directory/source/grant snapshot.
+func (v historyInputVerifier) CheckMessagePublications(ctx context.Context, messages []*types.Message) error {
+	for _, message := range messages {
+		if err := v.CheckMessagePublication(ctx, message); err != nil {
+			return err
+		}
+	}
+	for _, message := range messages {
+		if err := v.CheckMessagePublication(ctx, message); err != nil {
+			return err
+		}
+	}
+	return nil
+}
 func (v historyInputVerifier) CheckLiveMessagePublication(ctx context.Context, m *types.Message) error {
 	return v.CheckMessagePublication(ctx, m)
 }
@@ -86,7 +102,7 @@ func TestKnowledgeHistoryLegacyUnpairedAndFailedLinkNeverAdmitOrphans(t *testing
 				calls := 0
 				ConfigureKnowledgeInputHistoryVerifier(store, historyInputVerifier{check: func(*types.Message) error {
 					calls++
-					if calls > 2 {
+					if calls > 4 {
 						return ErrKnowledgeInputChanged
 					}
 					return nil

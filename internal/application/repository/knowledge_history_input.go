@@ -53,7 +53,8 @@ func historyMessageInputRevision(tx *gorm.DB, id string) (uint64, error) {
 }
 
 func (s *KnowledgeInputProvenanceStore) verifyCommittedHistoryParents(tx *gorm.DB, k *types.Knowledge, a *knowledgeInputAdmission) error {
-	if s.messageVerifier == nil {
+	batch, ok := s.messageVerifier.(interfaces.MessageSourceLineageBatchVerifier)
+	if !ok {
 		return types.ErrSourceLineageUnknown
 	}
 	var parent knowledgeInputHistoryParents
@@ -64,6 +65,7 @@ func (s *KnowledgeInputProvenanceStore) verifyCommittedHistoryParents(tx *gorm.D
 	if err := tx.Where("id = ? AND tenant_id = ?", parent.SessionID, parent.TenantID).Take(&session).Error; err != nil {
 		return err
 	}
+	messages := make([]*types.Message, 0, 2)
 	for _, item := range []struct {
 		ID, Role, Digest string
 		Revision         uint64
@@ -86,11 +88,9 @@ func (s *KnowledgeInputProvenanceStore) verifyCommittedHistoryParents(tx *gorm.D
 		if digest != item.Digest || revision != item.Revision {
 			return ErrKnowledgeInputChanged
 		}
-		if err := s.messageVerifier.CheckMessagePublication(tx.Statement.Context, &message); err != nil {
-			return err
-		}
+		messages = append(messages, &message)
 	}
-	return nil
+	return batch.CheckMessagePublications(tx.Statement.Context, messages)
 }
 
 var historyInputThinkBlocks = regexp.MustCompile(`(?s)<think>.*?</think>`)
@@ -99,7 +99,8 @@ var historyInputThinkBlocks = regexp.MustCompile(`(?s)<think>.*?</think>`)
 // unique original paired user, binds their exact envelopes/revisions, creates
 // the child and links the message in one transaction. No caller text is used.
 func (s *KnowledgeInputProvenanceStore) CreateCommittedHistoryKnowledgeInput(ctx context.Context, request types.CommittedHistoryKnowledgeInputRequest) (*types.CommittedHistoryKnowledgeInput, error) {
-	if s.messageVerifier == nil || request.TenantID == 0 || request.KnowledgeBaseID == "" || request.SessionID == "" || request.AssistantMessageID == "" {
+	batch, ok := s.messageVerifier.(interfaces.MessageSourceLineageBatchVerifier)
+	if !ok || request.TenantID == 0 || request.KnowledgeBaseID == "" || request.SessionID == "" || request.AssistantMessageID == "" {
 		return nil, types.ErrSourceLineageUnknown
 	}
 	options := &sql.TxOptions{}
@@ -127,10 +128,7 @@ func (s *KnowledgeInputProvenanceStore) CreateCommittedHistoryKnowledgeInput(ctx
 			return nilHistoryInputError()
 		}
 		user := users[0]
-		if err := s.messageVerifier.CheckMessagePublication(ctx, &assistant); err != nil {
-			return err
-		}
-		if err := s.messageVerifier.CheckMessagePublication(ctx, user); err != nil {
+		if err := batch.CheckMessagePublications(ctx, []*types.Message{&assistant, user}); err != nil {
 			return err
 		}
 		lineage, err := types.UnionSourceLineage(assistant.SourceLineage, user.SourceLineage)
