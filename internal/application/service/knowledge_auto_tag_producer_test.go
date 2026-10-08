@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/Tencent/WeKnora/internal/application/access"
 	"github.com/Tencent/WeKnora/internal/application/repository"
@@ -78,7 +79,7 @@ func autoTagActualFixture(t *testing.T, pg bool) (*repository.KnowledgeInputProv
 }
 
 func runKnowledgeAutoTagActualEnqueueOriginalActorManifestAndSQLWriter(t *testing.T, pg bool) {
-	for _, mutation := range []string{"none", "candidate ABA", "role revoked", "legacy unknown", "payload forge"} {
+	for _, mutation := range []string{"none", "candidate ABA", "role revoked", "legacy unknown", "payload forge", "API revoked"} {
 		t.Run(mutation, func(t *testing.T) {
 			store, db, ctx := autoTagActualFixture(t, pg)
 			require.NoError(t, db.AutoMigrate(&types.User{}, &types.TenantMember{}, &types.TenantAPIKey{}, &types.KnowledgeTagRelation{}, &types.Directory{}, &types.DirectoryIdentity{}, &types.DirectoryGroup{}, &types.DirectoryGroupMembership{}, &types.TenantGroupRoleGrant{}, &types.ResourceAccessPolicy{}, &types.ResourceGroupGrant{}))
@@ -96,6 +97,16 @@ func runKnowledgeAutoTagActualEnqueueOriginalActorManifestAndSQLWriter(t *testin
 				require.NoError(t, err)
 			}
 			require.NoError(t, migration.Exec(string(script)).Error)
+			require.NoError(t, db.AutoMigrate(&types.KnowledgeProcessingSpan{}))
+			require.NoError(t, db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS auto_span_producer_unique ON knowledge_processing_spans(knowledge_id,attempt,span_id)").Error)
+			spanPath := "../../../migrations/sqlite/000057_processing_span_original_inputs.up.sql"
+			if pg {
+				spanPath = "../../../migrations/versioned/000138_processing_span_original_inputs.up.sql"
+			}
+			spanScript, err := os.ReadFile(spanPath)
+			require.NoError(t, err)
+			require.NoError(t, migration.Exec(string(spanScript)).Error)
+
 			require.NoError(t, db.Create(&types.User{ID: "auto-user", Username: "auto-user", Email: "auto@example.test", IsActive: true}).Error)
 			require.NoError(t, db.Create(&types.TenantMember{TenantID: 7, UserID: "auto-user", Role: types.TenantRoleAdmin, Status: types.TenantMemberStatusActive}).Error)
 			ctx = types.WithCaller(ctx, types.Caller{TenantID: 7, UserID: "auto-user", Role: types.TenantRoleAdmin})
@@ -114,6 +125,15 @@ func runKnowledgeAutoTagActualEnqueueOriginalActorManifestAndSQLWriter(t *testin
 			kb.Type = types.KnowledgeBaseTypeDocument
 			kb.AutoTagConfig = &types.AutoTagConfig{Enabled: true, ModelID: "mock", MaxTags: 2}
 			require.NoError(t, store.UpdateKnowledgeBaseWithInput(repository.WithIndependentKnowledgeInput(ctx), &kb))
+			var apiKey *types.TenantAPIKey
+			if mutation == "API revoked" {
+				tenant := uint64(7)
+				apiKey = &types.TenantAPIKey{ID: 41, TenantID: &tenant, Name: "actual-span-worker", ScopeType: types.APIKeyScopeTenant, KeyHash: "actual-span-worker-key", KnowledgeBaseIDs: types.StringArray{"kb"}, Capabilities: types.StringArray{string(types.APIKeyCapabilityIngest), string(types.APIKeyCapabilityRetrieve)}}
+				require.NoError(t, db.Create(apiKey).Error)
+				ctx = types.WithCaller(ctx, types.Caller{TenantID: 7, Role: types.TenantRoleViewer})
+				ctx = types.WithPrincipal(ctx, types.Principal{Type: types.PrincipalAPITenant, ID: "7"})
+				ctx = types.WithTenantAPIKeyScope(ctx, types.TenantAPIKeyScope{KeyID: apiKey.ID, KnowledgeBaseIDs: apiKey.KnowledgeBaseIDs, Capabilities: apiKey.Capabilities})
+			}
 			k := &types.Knowledge{ID: "auto-actual", TenantID: 7, KnowledgeBaseID: "kb", Type: types.KnowledgeTypeManual, Source: "manual", Channel: "web", FileName: "human document", Metadata: types.JSON(`{"manual":{"content":"original human body"}}`), CustomMetadata: types.JSON(`{}`), ParseStatus: types.ParseStatusFinalizing, EnableStatus: "enabled"}
 			original, err := store.CreateKnowledgeWithInput(repository.WithIndependentKnowledgeInput(ctx), k, "original human body")
 			require.NoError(t, err)
@@ -128,9 +148,15 @@ func runKnowledgeAutoTagActualEnqueueOriginalActorManifestAndSQLWriter(t *testin
 				}
 				require.NoError(t, tags.Create(tagCtx, tag))
 			}
+			tracker := NewSpanTracker(repository.NewKnowledgeSpanRepository(db), nil)
+			root, attempt, err := tracker.OpenAttempt(build, k.ID, "actual-auto-trace")
+			require.NoError(t, err)
+			require.NotNil(t, root)
+			stage := tracker.BeginStage(build, k.ID, attempt, types.StagePostProcess, types.JSONMap{"phase": "actual original postprocess"})
+			require.NotNil(t, stage)
 			queue := &autoTagRecordingQueue{}
 			post := &KnowledgePostProcessService{taskEnqueuer: queue, chunkRepo: repository.NewChunkRepository(db), knowledgeInputs: store}
-			require.True(t, post.enqueueAutoTagTask(build, types.KnowledgePostProcessPayload{TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: k.ID}, 3))
+			require.True(t, post.enqueueAutoTagTask(build, types.KnowledgePostProcessPayload{TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: k.ID}, attempt))
 			require.NotNil(t, queue.task)
 			var payload types.KnowledgeAutoTagPayload
 			require.NoError(t, json.Unmarshal(queue.task.Payload(), &payload))
@@ -148,6 +174,9 @@ func runKnowledgeAutoTagActualEnqueueOriginalActorManifestAndSQLWriter(t *testin
 					require.NoError(t, db.Model(&types.TenantMember{}).Where("user_id='auto-user'").Update("role", types.TenantRoleViewer).Error)
 				}
 			}
+			if mutation == "API revoked" {
+				model.beforeReturn = func() { now := time.Now(); require.NoError(t, db.Model(apiKey).Update("revoked_at", &now).Error) }
+			}
 			if mutation == "payload forge" {
 				payload.OriginalInput.AdmissionID = "forged-original"
 				data, err := json.Marshal(payload)
@@ -155,13 +184,25 @@ func runKnowledgeAutoTagActualEnqueueOriginalActorManifestAndSQLWriter(t *testin
 				queue.task = asynq.NewTask(types.TypeKnowledgeAutoTag, data)
 			}
 			checker := &autoTagActualLineageChecker{}
-			handler := &KnowledgeAutoTagService{knowledgeRepo: knowledge, tagRepo: tags, kbService: &autoTagKBService{kb: &kb}, chunkService: &autoTagChunkService{chunks: []*types.Chunk{chunk}}, modelService: &stubModelService{chatModel: model}, knowledgeInputs: store, lineageChecker: checker}
+			handler := &KnowledgeAutoTagService{knowledgeRepo: knowledge, tagRepo: tags, kbService: &autoTagKBService{kb: &kb}, chunkService: &autoTagChunkService{chunks: []*types.Chunk{chunk}}, modelService: &stubModelService{chatModel: model}, knowledgeInputs: store, lineageChecker: checker, spanTracker: tracker}
 			err = handler.Handle(context.Background(), queue.task)
 			var relations []types.KnowledgeTagRelation
 			require.NoError(t, db.Where("knowledge_id=?", k.ID).Find(&relations).Error)
 			if mutation == "none" {
 				require.NoError(t, err)
 				require.Len(t, relations, 1)
+				snapshot, err := store.CaptureSpanOutputInputs(ctx, types.SpanOutputReadRequest{TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: k.ID, Attempt: attempt})
+				require.NoError(t, err)
+				found := false
+				for _, row := range snapshot.Rows {
+					if row.Name == autoTagSpanName {
+						require.Equal(t, types.SpanStatusDone, row.Status)
+						require.Equal(t, "complete", row.ContentProvenance)
+						found = true
+					}
+				}
+				require.True(t, found)
+
 				require.Equal(t, "candidate-a", relations[0].TagID)
 				require.NotEmpty(t, model.messages)
 				require.Greater(t, checker.calls, 0)

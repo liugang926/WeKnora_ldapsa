@@ -50,6 +50,7 @@ type spanMaterialInput struct {
 	Chunks         []*types.Chunk
 	ChunkRevisions []uint64
 	Original       *types.KnowledgeBuildInputProof
+	Additional     []*types.SpanAdditionalOriginalInput `json:"additional_inputs,omitempty"`
 }
 
 func spanBodyDigest(row *types.KnowledgeProcessingSpan) (string, error) {
@@ -97,7 +98,7 @@ func (r *knowledgeSpanRepository) attachSpanWriteTokens(ctx context.Context, row
 	return nil
 }
 
-func captureSpanMaterials(tx *gorm.DB, store *KnowledgeInputProvenanceStore, original *types.KnowledgeBuildInputProof) (*spanMaterialInput, error) {
+func captureSpanMaterials(ctx context.Context, tx *gorm.DB, store *KnowledgeInputProvenanceStore, original *types.KnowledgeBuildInputProof) (*spanMaterialInput, error) {
 	if original == nil || original.Projection != "" || original.AdmissionID == "" || original.SourceLineage.RequireComplete() != nil {
 		return nil, types.ErrSourceLineageUnknown
 	}
@@ -129,7 +130,25 @@ func captureSpanMaterials(tx *gorm.DB, store *KnowledgeInputProvenanceStore, ori
 			return nil, err
 		}
 	}
-	return &spanMaterialInput{Knowledge: &k, KnowledgeBase: kb, Chunks: chunks, ChunkRevisions: revisions, Original: cloneKnowledgeInputProof(original)}, nil
+	result := &spanMaterialInput{Knowledge: &k, KnowledgeBase: kb, Chunks: chunks, ChunkRevisions: revisions, Original: cloneKnowledgeInputProof(original)}
+	if extra, ok := ctx.Value(spanAdditionalInputContextKey{}).(spanAdditionalInputContext); ok {
+		if extra.reader == nil || extra.input == nil {
+			return nil, types.ErrSourceLineageUnknown
+		}
+		if _, err := extra.reader.captureSpanAdditionalOriginalInput(ctx, tx, extra.input, original, false); err != nil {
+			return nil, err
+		}
+		data, err := json.Marshal(extra.input)
+		if err != nil {
+			return nil, err
+		}
+		var detached types.SpanAdditionalOriginalInput
+		if json.Unmarshal(data, &detached) != nil {
+			return nil, ErrKnowledgeInputChanged
+		}
+		result.Additional = []*types.SpanAdditionalOriginalInput{&detached}
+	}
+	return result, nil
 }
 
 // Recheck the immutable original input against its original admission and
@@ -147,6 +166,9 @@ func verifySpanMaterials(tx *gorm.DB, store *KnowledgeInputProvenanceStore, mani
 	}
 	if digest != manifest.InputsDigest || saved.Knowledge == nil || saved.KnowledgeBase == nil || saved.Original == nil || saved.Original.Projection != "" || len(saved.Chunks) != len(saved.ChunkRevisions) {
 		return nil, ErrKnowledgeInputChanged
+	}
+	if manifest.Name == autoTagProducerSpanName && len(saved.Additional) != 1 {
+		return nil, ErrSpanAdditionalInputUnknown
 	}
 	var original types.KnowledgeBuildInputProof
 	if err := json.Unmarshal([]byte(manifest.OriginalInput), &original); err != nil {
@@ -197,7 +219,15 @@ func verifySpanMaterials(tx *gorm.DB, store *KnowledgeInputProvenanceStore, mani
 			return nil, ErrKnowledgeInputChanged
 		}
 	}
-	return types.UnionSourceLineage(lineage)
+	lineages := []*types.SourceLineage{lineage}
+	for _, extra := range saved.Additional {
+		additional, err := store.verifySpanAdditionalOriginalInput(tx, extra, &original, true)
+		if err != nil {
+			return nil, err
+		}
+		lineages = append(lineages, additional)
+	}
+	return types.UnionSourceLineage(lineages...)
 }
 
 func (r *knowledgeSpanRepository) upsertWithOriginalSpan(ctx context.Context, row *types.KnowledgeProcessingSpan) error {
@@ -240,6 +270,19 @@ func (r *knowledgeSpanRepository) upsertWithOriginalSpan(ctx context.Context, ro
 			}
 		}
 		begin := row.Status == types.SpanStatusRunning && row.FinishedAt == nil && row.WriteToken == ""
+		if begin && row.Name == autoTagProducerSpanName {
+			if extra, ok := ctx.Value(spanAdditionalInputContextKey{}).(spanAdditionalInputContext); !ok || extra.input == nil {
+				// An unproved auto Begin is operational only. In particular a
+				// later End carrying a document proof cannot sign old counters.
+				if receipt.RunToken != "" {
+					if err := tx.Where("knowledge_id = ? AND attempt = ? AND span_id = ?", row.KnowledgeID, row.Attempt, row.SpanID).Delete(&spanBodyReceipt{}).Error; err != nil {
+						return err
+					}
+					receipt = spanBodyReceipt{}
+				}
+				original = nil
+			}
+		}
 		if !begin && row.WriteToken != "" && receipt.RunToken == "" {
 			return ErrKnowledgeInputChanged
 		}
@@ -278,7 +321,7 @@ func (r *knowledgeSpanRepository) upsertWithOriginalSpan(ctx context.Context, ro
 					}
 				}
 			}
-			actual, err := captureSpanMaterials(tx, store, original)
+			actual, err := captureSpanMaterials(ctx, tx, store, original)
 			if err != nil {
 				return err
 			}
@@ -323,6 +366,24 @@ func (r *knowledgeSpanRepository) upsertWithOriginalSpan(ctx context.Context, ro
 				return err
 			}
 			if original.AdmissionID != admitted.AdmissionID || original.InputDigest != admitted.InputDigest || original.ConfigDigest != admitted.ConfigDigest || original.BuildGeneration != admitted.BuildGeneration || original.TenantID != admitted.TenantID || original.KnowledgeBaseID != admitted.KnowledgeBaseID || !reflect.DeepEqual(original.SourceLineage, admitted.SourceLineage) {
+				return ErrKnowledgeInputChanged
+			}
+			var saved spanMaterialInput
+			if json.Unmarshal([]byte(manifest.ActualInputs), &saved) != nil {
+				return ErrKnowledgeInputChanged
+			}
+			extra, hasExtra := ctx.Value(spanAdditionalInputContextKey{}).(spanAdditionalInputContext)
+			if len(saved.Additional) > 0 {
+				if !hasExtra || extra.reader == nil || len(saved.Additional) != 1 {
+					return types.ErrSourceLineageUnknown
+				}
+				if err := spanAdditionalInputMatches(extra.input, saved.Additional[0]); err != nil {
+					return err
+				}
+				if _, err := extra.reader.captureSpanAdditionalOriginalInput(ctx, tx, extra.input, original, true); err != nil {
+					return err
+				}
+			} else if hasExtra {
 				return ErrKnowledgeInputChanged
 			}
 			digest, err := spanBodyDigest(&existing)
@@ -393,7 +454,7 @@ func (r *knowledgeSpanRepository) upsertWithOriginalSpan(ctx context.Context, ro
 		}
 		bound := spanBodyReceipt{KnowledgeID: row.KnowledgeID, Attempt: row.Attempt, SpanID: row.SpanID, RunToken: manifest.RunToken, RowRevision: revision, BodyDigest: digest}
 		return tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "knowledge_id"}, {Name: "attempt"}, {Name: "span_id"}}, DoUpdates: clause.AssignmentColumns([]string{"run_token", "row_revision", "body_digest"})}).Create(&bound).Error
-	})
+	}, knowledgeDisplayWriteOptions(r.db))
 }
 
 func spanStatusOnly(row types.KnowledgeProcessingSpan) types.KnowledgeProcessingSpan {
@@ -539,6 +600,11 @@ func (s *KnowledgeInputProvenanceStore) CaptureSpanOutputInputs(ctx context.Cont
 			}
 			originalLineage, err := verifySpanMaterials(tx, s, &manifest)
 			if err != nil {
+				if errors.Is(err, ErrSpanAdditionalInputUnknown) {
+					projected = append(projected, spanStatusOnly(row))
+					material = append(material, manifest.RunToken, manifest.InputsDigest, "additional-unknown")
+					continue
+				}
 				return err
 			}
 			lineage, err = types.UnionSourceLineage(lineage, originalLineage)

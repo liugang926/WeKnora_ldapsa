@@ -160,6 +160,10 @@ func (s *KnowledgeAutoTagService) Handle(ctx context.Context, task *asynq.Task) 
 		if err := s.checkAutoTagInput(ctx, admitted); err != nil {
 			return err
 		}
+		ctx, err = repository.WithSpanAutoTagOriginalInput(ctx, s.knowledgeInputs, admitted)
+		if err != nil {
+			return err
+		}
 	}
 	if payload.Language != "" {
 		ctx = context.WithValue(ctx, types.LanguageContextKey, payload.Language)

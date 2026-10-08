@@ -17,6 +17,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/application/service"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
 type collectionDirectory struct {
@@ -35,8 +36,15 @@ func (s collectionDirectory) GetLoginSnapshot(context.Context, string, string) (
 // receipts and production lineage/publication guards are used together here.
 // The fresh AD snapshot and Nextcloud endpoint contain only isolated test data.
 func collectionNextcloudHTTPFixture(t *testing.T, change string) (*KnowledgeHandler, *atomic.Int64) {
+	h, _, _, _, calls := collectionNextcloudHTTPStateFixture(t, change, nil)
+	return h, calls
+}
+func collectionNextcloudHTTPStateFixture(t *testing.T, change string, beforeSource func(*gorm.DB, *repository.KnowledgeInputProvenanceStore)) (*KnowledgeHandler, *gorm.DB, *repository.KnowledgeInputProvenanceStore, *access.NextcloudSourceLineageGuard, *atomic.Int64) {
 	t.Helper()
 	h, db, store, groups, shares, agents := collectionHTTPFixture(t)
+	if beforeSource != nil {
+		beforeSource(db, store)
+	}
 	t.Setenv("SYSTEM_AES_KEY", "0123456789abcdef0123456789abcdef")
 	calls := &atomic.Int64{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -59,11 +67,11 @@ func collectionNextcloudHTTPFixture(t *testing.T, change string) (*KnowledgeHand
 					return
 				}
 			}
-			if change == "deny_excluded_before_filter" || change == "personal_revoke_before_write" && call >= 3 {
+			if change == "deny_excluded_before_filter" || change == "personal_revoke_before_write" && call >= 3 || change == "personal_revoke_after_auto" && call >= 4 {
 				fmt.Fprint(w, `{"allow":false,"reason":"source_not_readable","checked_at":1780000000}`)
 				return
 			}
-			if change == "source_withdraw_during_final_remote" && call == 3 {
+			if change == "source_withdraw_during_final_remote" && call == 3 || change == "source_withdraw_after_auto_final_remote" && call == 4 {
 				require.NoError(t, repository.NewNextcloudContentLeaseStore(db).RetireKnowledge(context.Background(), repository.NextcloudContentScope{TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: "source", DataSourceID: "ds", ExternalID: "nextcloud:instance:77"}))
 			}
 			fmt.Fprint(w, `{"allow":true,"reason":"authorized","policy_revision":"isolated-rev","source_etag":"original-etag","checked_at":1780000000}`)
@@ -120,7 +128,7 @@ func collectionNextcloudHTTPFixture(t *testing.T, change string) (*KnowledgeHand
 	guard := access.NewNextcloudSourceLineageGuard(repo.(access.NextcloudLineageSnapshotLookup), collectionHTTPKB{db: db}, shares, agents, groups, publication, store)
 	ConfigureKnowledgeHandlerCollectionOutput(h, service.NewKnowledgeCollectionOutputAuthorizer(store, guard))
 	ConfigureKnowledgeHandlerContentLeaseStore(h, leases)
-	return h, calls
+	return h, db, store, guard, calls
 }
 
 func TestKnowledgeCollectionNextcloudActualHTTPPositiveAndPersonalRevocation(t *testing.T) {
