@@ -282,3 +282,99 @@ func TestKnowledgeDisplaySQLiteCurrentAPIKeyAndIngestionAssignment(t *testing.T)
 func TestKnowledgeDisplayPostgresCurrentAPIKeyAndIngestionAssignment(t *testing.T) {
 	runDisplayCurrentAPIKeyAndIngestionAssignment(t, true)
 }
+
+func runAutoTagOriginalCompleteCandidateManifest(t *testing.T, pg bool) {
+	store, db, ctx, tags, knowledge, k := displayTestFixture(t, pg)
+	match := displayTag(t, tags, ctx, "automatic-match")
+	sourceID := "candidate"
+	if pg {
+		sourceID = "doc-a"
+	}
+	_, source, err := knowledge.(*knowledgeRepository).ResolveNextcloudSourceLineage(ctx, 7, "kb", sourceID)
+	require.NoError(t, err)
+	lineage, err := types.NewCompleteSourceLineage(source)
+	require.NoError(t, err)
+	derived, err := WithDerivedKnowledgeInput(ctx, lineage)
+	require.NoError(t, err)
+	input := &types.Knowledge{ID: "automatic-candidate-origin", TenantID: 7, KnowledgeBaseID: "kb", Type: types.KnowledgeTypeManual, Channel: "web", CustomMetadata: types.JSON(`{}`), ParseStatus: types.ParseStatusCompleted, EnableStatus: "enabled"}
+	original, err := store.CreateKnowledgeWithInput(derived, input, "actual nonmatching sourced candidate input")
+	require.NoError(t, err)
+	producer, err := WithDerivedKnowledgeDisplayInput(ctx, original)
+	require.NoError(t, err)
+	nonmatch := &types.KnowledgeTag{ID: "automatic-nonmatch", TenantID: 7, KnowledgeBaseID: "kb", Name: "source-derived candidate never selected", SortOrder: 7}
+	require.NoError(t, tags.Create(producer, nonmatch))
+	baseline, err := store.CaptureKnowledgeOutputInputs(ctx, types.KnowledgeBuildInputCaptureRequest{TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: k.ID, ChunkIDs: []string{"manual-chunk"}})
+	require.NoError(t, err)
+	manifest, err := store.CaptureKnowledgeAutoTagInputs(ctx, baseline.Proof)
+	require.NoError(t, err)
+	require.Len(t, manifest.Tags, 2)
+	require.Equal(t, lineage, manifest.SourceLineage, "unselected candidate retains its original source dependency")
+	require.NoError(t, store.RecheckKnowledgeAutoTagInputs(ctx, manifest))
+	require.Error(t, db.Table("knowledge_auto_tag_input_manifests").Where("manifest_id=?", manifest.ManifestID).Update("actual_inputs", "{}").Error)
+	writeCtx, err := WithKnowledgeAutoTagInput(ctx, store, manifest)
+	require.NoError(t, err)
+	require.NoError(t, knowledge.AddKnowledgeTagRelations(writeCtx, 7, "kb", k.ID, []string{match.ID}))
+	var relations []types.KnowledgeTagRelation
+	require.NoError(t, db.Where("knowledge_id=?", k.ID).Find(&relations).Error)
+	require.Len(t, relations, 1)
+	proof, err := readKnowledgeDisplayOrigin(db, "relations", k.ID, 7, "kb", []string{match.ID})
+	require.NoError(t, err)
+	require.Equal(t, lineage, proof.SourceLineage, "the match depends on every actual model candidate, not only the selected tag")
+	require.NoError(t, NewNextcloudContentLeaseStore(db).RetireKnowledge(ctx, NextcloudContentScope{TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: source.KnowledgeID, DataSourceID: source.DataSourceID, ExternalID: source.ExternalID}))
+	_, err = captureDisplayTest(t, db, k)
+	require.Error(t, err)
+}
+func TestKnowledgeAutoTagSQLiteOriginalCompleteCandidateManifest(t *testing.T) {
+	runAutoTagOriginalCompleteCandidateManifest(t, false)
+}
+func TestKnowledgeAutoTagPostgresOriginalCompleteCandidateManifest(t *testing.T) {
+	runAutoTagOriginalCompleteCandidateManifest(t, true)
+}
+
+func runAutoTagCandidateABAAndNewMembership(t *testing.T, pg bool) {
+	store, db, ctx, tags, knowledge, k := displayTestFixture(t, pg)
+	match := displayTag(t, tags, ctx, "automatic-candidate")
+	baseline, err := store.CaptureKnowledgeOutputInputs(ctx, types.KnowledgeBuildInputCaptureRequest{TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: k.ID, ChunkIDs: []string{"manual-chunk"}})
+	require.NoError(t, err)
+	manifest, err := store.CaptureKnowledgeAutoTagInputs(ctx, baseline.Proof)
+	require.NoError(t, err)
+	require.NoError(t, db.Model(&types.KnowledgeTag{}).Where("id=?", match.ID).Update("name", "changed original candidate").Error)
+	require.NoError(t, db.Model(&types.KnowledgeTag{}).Where("id=?", match.ID).Update("name", match.Name).Error)
+	require.Error(t, store.RecheckKnowledgeAutoTagInputs(ctx, manifest))
+	writeCtx, err := WithKnowledgeAutoTagInput(ctx, store, manifest)
+	require.NoError(t, err)
+	require.Error(t, knowledge.AddKnowledgeTagRelations(writeCtx, 7, "kb", k.ID, []string{match.ID}), "the actual SQL writer rechecks the complete candidate manifest")
+	var count int64
+	require.NoError(t, db.Model(&types.KnowledgeTagRelation{}).Where("knowledge_id=?", k.ID).Count(&count).Error)
+	require.Zero(t, count)
+}
+func TestKnowledgeAutoTagSQLiteCandidateABAAndNewMembership(t *testing.T) {
+	runAutoTagCandidateABAAndNewMembership(t, false)
+}
+func TestKnowledgeAutoTagPostgresCandidateABAAndNewMembership(t *testing.T) {
+	runAutoTagCandidateABAAndNewMembership(t, true)
+}
+
+type autoTagSnapshotPauseKey struct{}
+
+func TestKnowledgeAutoTagPostgresCompleteManifestUsesOneCoherentSnapshot(t *testing.T) {
+	store, db, ctx, tags, _, k := displayTestFixture(t, true)
+	tag := displayTag(t, tags, ctx, "coherent-candidate")
+	baseline, err := store.CaptureKnowledgeOutputInputs(ctx, types.KnowledgeBuildInputCaptureRequest{TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: k.ID, ChunkIDs: []string{"manual-chunk"}})
+	require.NoError(t, err)
+	fired := false
+	name := "auto_tag_candidate_changed_after_list"
+	require.NoError(t, db.Callback().Query().After("gorm:query").Register(name, func(tx *gorm.DB) {
+		if fired || tx.Statement.Context.Value(autoTagSnapshotPauseKey{}) != true || tx.Statement.Table != "knowledge_tags" {
+			return
+		}
+		fired = true
+		require.NoError(t, db.Model(&types.KnowledgeTag{}).Where("id=?", tag.ID).Update("name", "concurrently changed").Error)
+	}))
+	t.Cleanup(func() { _ = db.Callback().Query().Remove(name) })
+	manifest, err := store.CaptureKnowledgeAutoTagInputs(context.WithValue(ctx, autoTagSnapshotPauseKey{}, true), baseline.Proof)
+	require.NoError(t, err)
+	require.True(t, fired)
+	require.Equal(t, tag.Name, manifest.Tags[0].Name, "RR keeps the actual candidate body, membership version and original field receipt in one snapshot")
+	require.Error(t, store.RecheckKnowledgeAutoTagInputs(ctx, manifest), "the next model/writer checkpoint rejects the committed candidate mutation")
+}

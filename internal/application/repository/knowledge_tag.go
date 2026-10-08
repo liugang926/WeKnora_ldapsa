@@ -138,7 +138,7 @@ func (r *knowledgeRepository) SetKnowledgeTags(
 			return err
 		}
 		return finish()
-	})
+	}, knowledgeDisplayWriteOptions(r.db))
 }
 
 // AddKnowledgeTagRelations incrementally adds validated relations and never
@@ -243,7 +243,7 @@ func (r *knowledgeRepository) AddKnowledgeTagRelations(
 		}
 		allIDs := normalizedKnowledgeDisplayTagIDs(append(priorIDs, unique...))
 		return admitKnowledgeDisplayOrigin(tx, actor, "relations", knowledgeID, &kb, allIDs, request, lineage, origin)
-	})
+	}, knowledgeDisplayWriteOptions(r.db))
 }
 
 // GetKnowledgeTags returns tags for multiple knowledge IDs.

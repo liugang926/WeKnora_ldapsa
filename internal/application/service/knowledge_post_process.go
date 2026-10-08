@@ -570,7 +570,26 @@ func (s *KnowledgePostProcessService) enqueueAutoTagTask(
 	if s.taskEnqueuer == nil {
 		return false
 	}
+	if s.knowledgeInputs == nil {
+		return false
+	}
+	actual, err := s.chunkRepo.ListChunksByKnowledgeIDAndTypes(ctx, payload.TenantID, payload.KnowledgeID, []types.ChunkType{types.ChunkTypeText, types.ChunkTypeImageOCR, types.ChunkTypeImageCaption})
+	if err != nil {
+		return false
+	}
+	ids := []string{}
+	for _, chunk := range actual {
+		if chunk == nil || chunk.TenantID != payload.TenantID || chunk.KnowledgeBaseID != payload.KnowledgeBaseID || chunk.KnowledgeID != payload.KnowledgeID {
+			return false
+		}
+		ids = append(ids, chunk.ID)
+	}
+	original, err := s.capturePostProcessBuildProof(ctx, payload, ids)
+	if err != nil {
+		return false
+	}
 	taskPayload := types.KnowledgeAutoTagPayload{
+		OriginalInput:   original,
 		TenantID:        payload.TenantID,
 		KnowledgeBaseID: payload.KnowledgeBaseID,
 		KnowledgeID:     payload.KnowledgeID,

@@ -33,3 +33,15 @@ CREATE FUNCTION knowledge_display_relation_seed() RETURNS trigger LANGUAGE plpgs
 CREATE TRIGGER knowledge_display_relation_seed AFTER INSERT ON knowledges FOR EACH ROW EXECUTE FUNCTION knowledge_display_relation_seed();
 CREATE FUNCTION knowledge_display_relation() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF TG_OP<>'INSERT' THEN INSERT INTO knowledge_display_versions(kind,row_id,revision) VALUES('relations',OLD.knowledge_id,1) ON CONFLICT(kind,row_id) DO UPDATE SET revision=knowledge_display_versions.revision+1; END IF; IF TG_OP<>'DELETE' THEN INSERT INTO knowledge_display_versions(kind,row_id,revision) VALUES('relations',NEW.knowledge_id,1) ON CONFLICT(kind,row_id) DO UPDATE SET revision=knowledge_display_versions.revision+1; END IF; IF TG_OP='DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF; END; $$;
 CREATE TRIGGER knowledge_display_relation AFTER INSERT OR UPDATE OR DELETE ON knowledge_tag_relations FOR EACH ROW EXECUTE FUNCTION knowledge_display_relation();
+
+CREATE TABLE knowledge_auto_tag_input_manifests (
+ manifest_id TEXT PRIMARY KEY, tenant_id BIGINT NOT NULL CHECK(tenant_id > 0),
+ knowledge_base_id TEXT NOT NULL, knowledge_id TEXT NOT NULL, admission_id TEXT NOT NULL,
+ input_digest TEXT NOT NULL CHECK(length(input_digest)=64),actual_inputs TEXT NOT NULL,source_lineage TEXT NOT NULL CHECK(length(source_lineage)<=262144)
+ );
+ INSERT INTO knowledge_display_versions(kind,row_id,revision) SELECT 'tag-list',id,1 FROM knowledge_bases;
+CREATE TRIGGER knowledge_auto_tag_manifest_immutable BEFORE UPDATE OR DELETE ON knowledge_auto_tag_input_manifests FOR EACH ROW EXECUTE FUNCTION knowledge_display_origin_immutable();
+CREATE FUNCTION knowledge_display_tag_list_seed() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN INSERT INTO knowledge_display_versions(kind,row_id,revision) VALUES('tag-list',NEW.id,1) ON CONFLICT(kind,row_id) DO UPDATE SET revision=knowledge_display_versions.revision+1; RETURN NEW; END; $$;
+CREATE TRIGGER knowledge_display_tag_list_seed AFTER INSERT ON knowledge_bases FOR EACH ROW EXECUTE FUNCTION knowledge_display_tag_list_seed();
+CREATE FUNCTION knowledge_display_tag_list() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF TG_OP<>'INSERT' THEN INSERT INTO knowledge_display_versions(kind,row_id,revision) VALUES('tag-list',OLD.knowledge_base_id,1) ON CONFLICT(kind,row_id) DO UPDATE SET revision=knowledge_display_versions.revision+1; END IF; IF TG_OP<>'DELETE' THEN INSERT INTO knowledge_display_versions(kind,row_id,revision) VALUES('tag-list',NEW.knowledge_base_id,1) ON CONFLICT(kind,row_id) DO UPDATE SET revision=knowledge_display_versions.revision+1; END IF; IF TG_OP='DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF; END; $$;
+CREATE TRIGGER knowledge_display_tag_list AFTER INSERT OR UPDATE OR DELETE ON knowledge_tags FOR EACH ROW EXECUTE FUNCTION knowledge_display_tag_list();

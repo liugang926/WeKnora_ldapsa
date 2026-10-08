@@ -38,3 +38,16 @@ CREATE TRIGGER knowledge_display_relation_seed AFTER INSERT ON knowledges BEGIN 
 CREATE TRIGGER knowledge_display_relation_insert AFTER INSERT ON knowledge_tag_relations BEGIN INSERT INTO knowledge_display_versions(kind,row_id,revision) VALUES('relations',NEW.knowledge_id,1) ON CONFLICT(kind,row_id) DO UPDATE SET revision=revision+1; END;
 CREATE TRIGGER knowledge_display_relation_update AFTER UPDATE ON knowledge_tag_relations BEGIN INSERT INTO knowledge_display_versions(kind,row_id,revision) VALUES('relations',OLD.knowledge_id,1) ON CONFLICT(kind,row_id) DO UPDATE SET revision=revision+1; INSERT INTO knowledge_display_versions(kind,row_id,revision) VALUES('relations',NEW.knowledge_id,1) ON CONFLICT(kind,row_id) DO UPDATE SET revision=revision+1; END;
 CREATE TRIGGER knowledge_display_relation_delete AFTER DELETE ON knowledge_tag_relations BEGIN INSERT INTO knowledge_display_versions(kind,row_id,revision) VALUES('relations',OLD.knowledge_id,1) ON CONFLICT(kind,row_id) DO UPDATE SET revision=revision+1; END;
+
+CREATE TABLE knowledge_auto_tag_input_manifests (
+ manifest_id TEXT PRIMARY KEY, tenant_id BIGINT NOT NULL CHECK(tenant_id > 0),
+ knowledge_base_id TEXT NOT NULL, knowledge_id TEXT NOT NULL, admission_id TEXT NOT NULL,
+ input_digest TEXT NOT NULL CHECK(length(input_digest)=64),actual_inputs TEXT NOT NULL,source_lineage TEXT NOT NULL CHECK(length(source_lineage)<=262144)
+ );
+ INSERT INTO knowledge_display_versions(kind,row_id,revision) SELECT 'tag-list',id,1 FROM knowledge_bases;
+CREATE TRIGGER knowledge_auto_tag_manifest_immutable_update BEFORE UPDATE ON knowledge_auto_tag_input_manifests BEGIN SELECT RAISE(ABORT,'immutable actual classifier input'); END;
+CREATE TRIGGER knowledge_auto_tag_manifest_immutable_delete BEFORE DELETE ON knowledge_auto_tag_input_manifests BEGIN SELECT RAISE(ABORT,'immutable actual classifier input'); END;
+CREATE TRIGGER knowledge_display_tag_list_seed AFTER INSERT ON knowledge_bases BEGIN INSERT INTO knowledge_display_versions(kind,row_id,revision) VALUES('tag-list',NEW.id,1) ON CONFLICT(kind,row_id) DO UPDATE SET revision=revision+1; END;
+CREATE TRIGGER knowledge_display_tag_list_insert AFTER INSERT ON knowledge_tags BEGIN INSERT INTO knowledge_display_versions(kind,row_id,revision) VALUES('tag-list',NEW.knowledge_base_id,1) ON CONFLICT(kind,row_id) DO UPDATE SET revision=revision+1; END;
+CREATE TRIGGER knowledge_display_tag_list_update AFTER UPDATE ON knowledge_tags BEGIN INSERT INTO knowledge_display_versions(kind,row_id,revision) VALUES('tag-list',OLD.knowledge_base_id,1) ON CONFLICT(kind,row_id) DO UPDATE SET revision=revision+1; INSERT INTO knowledge_display_versions(kind,row_id,revision) VALUES('tag-list',NEW.knowledge_base_id,1) ON CONFLICT(kind,row_id) DO UPDATE SET revision=revision+1; END;
+CREATE TRIGGER knowledge_display_tag_list_delete AFTER DELETE ON knowledge_tags BEGIN INSERT INTO knowledge_display_versions(kind,row_id,revision) VALUES('tag-list',OLD.knowledge_base_id,1) ON CONFLICT(kind,row_id) DO UPDATE SET revision=revision+1; END;

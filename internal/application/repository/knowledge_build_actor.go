@@ -125,7 +125,11 @@ func (s *KnowledgeInputProvenanceStore) KnowledgeBuildActorRequired(ctx context.
 	if err := s.db.WithContext(ctx).Where("admission_id = ? AND tenant_id = ? AND knowledge_base_id = ? AND knowledge_id = ?", proof.AdmissionID, proof.TenantID, proof.KnowledgeBaseID, proof.KnowledgeID).Take(&admission).Error; err != nil {
 		return false, err
 	}
-	return admission.OriginKind == "history", nil
+	var count int64
+	if err := s.db.WithContext(ctx).Model(&knowledgeBuildActorSelector{}).Where("admission_id = ?", proof.AdmissionID).Count(&count).Error; err != nil {
+		return false, err
+	}
+	return admission.OriginKind == "history" || count == 1, nil
 }
 
 // RestoreKnowledgeBuildActor loads the original immutable selector and current

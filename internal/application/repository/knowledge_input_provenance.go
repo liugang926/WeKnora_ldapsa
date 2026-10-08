@@ -359,7 +359,7 @@ func (s *KnowledgeInputProvenanceStore) admitInTx(ctx context.Context, tx *gorm.
 	if err := tx.Create(&a).Error; err != nil {
 		return nil, err
 	}
-	if origin.kind == "history" {
+	if origin.kind == "history" || ctx.Value(types.CallerContextKey) != nil && ctx.Value(types.PrincipalContextKey) != nil {
 		actor, err := captureKnowledgeActorSelector(ctx, a.AdmissionID)
 		if err != nil {
 			return nil, err
@@ -605,79 +605,9 @@ func (s *KnowledgeInputProvenanceStore) snapshot(ctx context.Context, request ty
 	}
 	var result *types.KnowledgeBuildInputSnapshot
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var k types.Knowledge
-		if err := tx.Where("id = ? AND tenant_id = ? AND knowledge_base_id = ?", request.KnowledgeID, request.TenantID, request.KnowledgeBaseID).Take(&k).Error; err != nil {
-			return err
-		}
-		a, kb, lineage, err := s.admissionInTx(tx, &k, request.Expected)
-		if err != nil {
-			return err
-		}
-		chunks := make([]*types.Chunk, 0, len(request.ChunkIDs))
-		seen := map[string]bool{}
-		for _, id := range request.ChunkIDs {
-			if id == "" || seen[id] {
-				return ErrKnowledgeInputChanged
-			}
-			seen[id] = true
-			c := &types.Chunk{}
-			if err := tx.Where("id = ? AND tenant_id = ? AND knowledge_base_id = ? AND knowledge_id = ?", id, k.TenantID, k.KnowledgeBaseID, k.ID).Take(c).Error; err != nil {
-				return err
-			}
-			var verifyErr error
-			if request.Projection == types.KnowledgeBuildProjectionGraph {
-				verifyErr = verifyKnowledgeGraphChunk(tx, a, c)
-			} else {
-				verifyErr = verifyKnowledgeInputMaterial(tx, a, &k, c)
-			}
-			if verifyErr != nil {
-				return verifyErr
-			}
-			chunks = append(chunks, c)
-		}
-		ids := append([]string{}, request.ChunkIDs...)
-		sort.Strings(ids)
-		material := []string{a.AdmissionID, a.RootDigest, a.ConfigDigest}
-		kgDigest, _ := knowledgeMaterialDigest(&k)
-		if request.Projection != types.KnowledgeBuildProjectionGraph {
-			material = append(material, kgDigest)
-		}
-		ordered := append([]*types.Chunk{}, chunks...)
-		sort.Slice(ordered, func(i, j int) bool { return ordered[i].ID < ordered[j].ID })
-		for _, c := range ordered {
-			digest, err := knowledgeChunkDigest(c)
-			if request.Projection == types.KnowledgeBuildProjectionGraph {
-				digest, err = knowledgeGraphChunkDigest(c)
-			}
-			if err != nil {
-				return err
-			}
-			revision, err := inputRowRevision(tx, "chunk", c.ID)
-			if request.Projection == types.KnowledgeBuildProjectionGraph {
-				revision, err = knowledgeGraphChunkRevision(tx, c.ID)
-			}
-			if err != nil {
-				return err
-			}
-			material = append(material, fmt.Sprintf("%s:%d:%s", c.ID, revision, digest))
-		}
-		kgRevision, err := inputRowRevision(tx, "knowledge", k.ID)
-		if err != nil {
-			return err
-		}
-		if request.Projection != types.KnowledgeBuildProjectionGraph {
-			material = append(material, fmt.Sprint(kgRevision))
-		}
-		bodyDigest, err := KnowledgeInputDigest(material)
-		if err != nil {
-			return err
-		}
-		proof := &types.KnowledgeBuildInputProof{Version: 1, Projection: request.Projection, TenantID: k.TenantID, KnowledgeBaseID: k.KnowledgeBaseID, KnowledgeID: k.ID, AdmissionID: a.AdmissionID, BuildGeneration: a.BuildGeneration, InputDigest: a.InputDigest, ConfigDigest: a.ConfigDigest, BodyDigest: bodyDigest, ChunkIDs: ids, SourceLineage: lineage}
-		if (recheck || request.Expected.BodyDigest != "") && (proof.BodyDigest != request.Expected.BodyDigest || !reflect.DeepEqual(proof.ChunkIDs, request.Expected.ChunkIDs)) {
-			return ErrKnowledgeInputChanged
-		}
-		result = &types.KnowledgeBuildInputSnapshot{Knowledge: &k, KnowledgeBase: kb, Chunks: chunks, Proof: proof}
-		return nil
+		var err error
+		result, err = s.captureKnowledgeBuildSnapshotInTx(tx, request, recheck)
+		return err
 	}, options)
 	if err != nil {
 		return nil, err
@@ -747,4 +677,80 @@ func sealKnowledgeInputChunks(ctx context.Context, tx *gorm.DB, chunks []*types.
 		}
 	}
 	return nil
+}
+
+func (s *KnowledgeInputProvenanceStore) captureKnowledgeBuildSnapshotInTx(tx *gorm.DB, request types.KnowledgeBuildInputCaptureRequest, recheck bool) (*types.KnowledgeBuildInputSnapshot, error) {
+	var k types.Knowledge
+	if err := tx.Where("id = ? AND tenant_id = ? AND knowledge_base_id = ?", request.KnowledgeID, request.TenantID, request.KnowledgeBaseID).Take(&k).Error; err != nil {
+		return nil, err
+	}
+	a, kb, lineage, err := s.admissionInTx(tx, &k, request.Expected)
+	if err != nil {
+		return nil, err
+	}
+	chunks := make([]*types.Chunk, 0, len(request.ChunkIDs))
+	seen := map[string]bool{}
+	for _, id := range request.ChunkIDs {
+		if id == "" || seen[id] {
+			return nil, ErrKnowledgeInputChanged
+		}
+		seen[id] = true
+		c := &types.Chunk{}
+		if err := tx.Where("id = ? AND tenant_id = ? AND knowledge_base_id = ? AND knowledge_id = ?", id, k.TenantID, k.KnowledgeBaseID, k.ID).Take(c).Error; err != nil {
+			return nil, err
+		}
+		var verifyErr error
+		if request.Projection == types.KnowledgeBuildProjectionGraph {
+			verifyErr = verifyKnowledgeGraphChunk(tx, a, c)
+		} else {
+			verifyErr = verifyKnowledgeInputMaterial(tx, a, &k, c)
+		}
+		if verifyErr != nil {
+			return nil, verifyErr
+		}
+		chunks = append(chunks, c)
+	}
+	ids := append([]string{}, request.ChunkIDs...)
+	sort.Strings(ids)
+	material := []string{a.AdmissionID, a.RootDigest, a.ConfigDigest}
+	kgDigest, _ := knowledgeMaterialDigest(&k)
+	if request.Projection != types.KnowledgeBuildProjectionGraph {
+		material = append(material, kgDigest)
+	}
+	ordered := append([]*types.Chunk{}, chunks...)
+	sort.Slice(ordered, func(i, j int) bool { return ordered[i].ID < ordered[j].ID })
+	for _, c := range ordered {
+		digest, err := knowledgeChunkDigest(c)
+		if request.Projection == types.KnowledgeBuildProjectionGraph {
+			digest, err = knowledgeGraphChunkDigest(c)
+		}
+		if err != nil {
+			return nil, err
+		}
+		revision, err := inputRowRevision(tx, "chunk", c.ID)
+		if request.Projection == types.KnowledgeBuildProjectionGraph {
+			revision, err = knowledgeGraphChunkRevision(tx, c.ID)
+		}
+		if err != nil {
+			return nil, err
+		}
+		material = append(material, fmt.Sprintf("%s:%d:%s", c.ID, revision, digest))
+	}
+	kgRevision, err := inputRowRevision(tx, "knowledge", k.ID)
+	if err != nil {
+		return nil, err
+	}
+	if request.Projection != types.KnowledgeBuildProjectionGraph {
+		material = append(material, fmt.Sprint(kgRevision))
+	}
+	bodyDigest, err := KnowledgeInputDigest(material)
+	if err != nil {
+		return nil, err
+	}
+	proof := &types.KnowledgeBuildInputProof{Version: 1, Projection: request.Projection, TenantID: k.TenantID, KnowledgeBaseID: k.KnowledgeBaseID, KnowledgeID: k.ID, AdmissionID: a.AdmissionID, BuildGeneration: a.BuildGeneration, InputDigest: a.InputDigest, ConfigDigest: a.ConfigDigest, BodyDigest: bodyDigest, ChunkIDs: ids, SourceLineage: lineage}
+	if (recheck || request.Expected.BodyDigest != "") && (proof.BodyDigest != request.Expected.BodyDigest || !reflect.DeepEqual(proof.ChunkIDs, request.Expected.ChunkIDs)) {
+		return nil, ErrKnowledgeInputChanged
+	}
+	result := &types.KnowledgeBuildInputSnapshot{Knowledge: &k, KnowledgeBase: kb, Chunks: chunks, Proof: proof}
+	return result, nil
 }

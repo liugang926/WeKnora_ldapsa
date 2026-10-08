@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"reflect"
 	"sort"
@@ -20,17 +21,37 @@ import (
 // generic independent ingestion marker can certify an old display value.
 type knowledgeDisplayRequestKey struct{}
 type knowledgeDisplayRequest struct {
-	Kind, ID, KB string
-	Fields       map[string]any
-	Assignments  map[string][]string
-	Original     *types.KnowledgeBuildInputProof
+	Kind, ID, KB  string
+	Fields        map[string]any
+	Assignments   map[string][]string
+	Original      *types.KnowledgeBuildInputProof
+	AutoTag       *types.KnowledgeAutoTagInputSnapshot
+	AutoTagReader *KnowledgeInputProvenanceStore `json:"-"`
 }
 
 type KnowledgeDisplayAuthorityFactory func(*gorm.DB) *KnowledgeInputProvenanceStore
 
+func knowledgeDisplayWriteOptions(db *gorm.DB) *sql.TxOptions {
+	options := &sql.TxOptions{}
+	if db.Dialector.Name() == "postgres" {
+		options.Isolation = sql.LevelRepeatableRead
+	}
+	return options
+}
+
 // ConfigureKnowledgeDisplayInputWriters supplies transaction-bound group and
 // organization lookups. A missing factory fails closed for marked writes.
 func ConfigureKnowledgeDisplayInputWriters(store *KnowledgeInputProvenanceStore, tags interfaces.KnowledgeTagRepository, knowledge interfaces.KnowledgeRepository, factory KnowledgeDisplayAuthorityFactory) {
+	if factory != nil {
+		baseFactory := factory
+		factory = func(tx *gorm.DB) *KnowledgeInputProvenanceStore {
+			actual := baseFactory(tx)
+			if actual != nil && actual.messageVerifier == nil {
+				actual.messageVerifier = store.messageVerifier
+			}
+			return actual
+		}
+	}
 	store.displayAuthorityFactory = factory
 	if r, ok := tags.(*knowledgeTagRepository); ok {
 		r.displayAuthorityFactory = factory
@@ -276,6 +297,12 @@ func knowledgeDisplayWriterOrigin(tx *gorm.DB, ctx context.Context, kb *types.Kn
 		return ctx, nil, "", err
 	}
 	lineage, err := types.UnionSourceLineage(proof.SourceLineage)
+	if err == nil && request.AutoTag != nil {
+		if request.AutoTagReader == nil || request.AutoTag.Original == nil || !reflect.DeepEqual(request.AutoTag.Original.Proof, proof) {
+			return ctx, nil, "", ErrKnowledgeInputChanged
+		}
+		lineage, err = request.AutoTagReader.recheckKnowledgeAutoTagInTx(tx, actual, request.AutoTag)
+	}
 	return actual, lineage, "derived", err
 }
 
@@ -419,7 +446,7 @@ func writeKnowledgeTagWithDisplayInput(db *gorm.DB, ctx context.Context, tag *ty
 			}
 		}
 		return nil
-	})
+	}, knowledgeDisplayWriteOptions(db))
 }
 
 // The KB configuration writer calls this in its actual create/update tx. Only

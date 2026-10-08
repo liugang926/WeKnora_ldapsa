@@ -111,7 +111,7 @@ func (s *KnowledgeInputProvenanceStore) CreateKnowledgeBaseWithInput(ctx context
 			return err
 		}
 		return admitKnowledgeConfigurationOrigin(tx, &actual, origin)
-	})
+	}, knowledgeDisplayWriteOptions(s.db))
 }
 
 // ReplaceKnowledgeBaseConfigurationWithInput is exclusively a trusted full
@@ -135,7 +135,7 @@ func (s *KnowledgeInputProvenanceStore) ReplaceKnowledgeBaseConfigurationWithInp
 			return err
 		}
 		return admitKnowledgeConfigurationOrigin(tx, &actual, origin)
-	})
+	}, knowledgeDisplayWriteOptions(s.db))
 }
 
 // UpdateKnowledgeBaseWithInput preserves the original provenance of retained
@@ -185,5 +185,5 @@ func (s *KnowledgeInputProvenanceStore) UpdateKnowledgeBaseWithInput(ctx context
 			return nil
 		}
 		return admitKnowledgeConfigurationOrigin(tx, &actual, knowledgeInputOrigin{lineage, origin.kind})
-	})
+	}, knowledgeDisplayWriteOptions(s.db))
 }

@@ -1,3 +1,9 @@
+DROP TRIGGER IF EXISTS knowledge_auto_tag_manifest_immutable ON knowledge_auto_tag_input_manifests;
+DROP TRIGGER IF EXISTS knowledge_display_tag_list_seed ON knowledge_bases;
+DROP TRIGGER IF EXISTS knowledge_display_tag_list ON knowledge_tags;
+DROP FUNCTION IF EXISTS knowledge_display_tag_list();
+DROP FUNCTION IF EXISTS knowledge_display_tag_list_seed();
+DROP TABLE knowledge_auto_tag_input_manifests;
 DROP TRIGGER IF EXISTS knowledge_display_origins_immutable ON knowledge_display_input_origins;
 DROP TRIGGER IF EXISTS knowledge_display_tag_name ON knowledge_tags;
 DROP TRIGGER IF EXISTS knowledge_display_tag_color ON knowledge_tags;

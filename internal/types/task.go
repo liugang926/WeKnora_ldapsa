@@ -551,11 +551,12 @@ type KnowledgePostProcessPayload struct {
 // classified against the latest set of existing tags in its knowledge base.
 type KnowledgeAutoTagPayload struct {
 	TracingContext
-	TenantID        uint64 `json:"tenant_id"`
-	KnowledgeID     string `json:"knowledge_id"`
-	KnowledgeBaseID string `json:"knowledge_base_id"`
-	Language        string `json:"language,omitempty"`
-	Attempt         int    `json:"attempt,omitempty"`
+	OriginalInput   *KnowledgeBuildInputProof `json:"_original_input,omitempty"`
+	TenantID        uint64                    `json:"tenant_id"`
+	KnowledgeID     string                    `json:"knowledge_id"`
+	KnowledgeBaseID string                    `json:"knowledge_base_id"`
+	Language        string                    `json:"language,omitempty"`
+	Attempt         int                       `json:"attempt,omitempty"`
 }
 
 // KnowledgeBaseProfilePayload asks the worker to rebuild the generated
