@@ -28,7 +28,7 @@ func spanHTTPFixture(t *testing.T) (*KnowledgeHandler, *service.SpanOutputAuthor
 	ctx := repository.WithKnowledgeBuildInputProof(context.Background(), store, actual.Proof)
 	var kb types.KnowledgeBase
 	require.NoError(t, db.Where("id = ?", k.KnowledgeBaseID).Take(&kb).Error)
-	guard := access.NewNextcloudSourceLineageGuard(nil, outputHTTPKB{row: &kb}, nil, nil, groups, nil)
+	guard := access.NewNextcloudSourceLineageGuard(nil, outputHTTPKB{row: &kb}, nil, nil, groups, nil, store)
 	tracker := service.NewSpanTracker(repository.NewKnowledgeSpanRepository(db), nil)
 	return h, service.NewSpanOutputAuthorizer(store, guard), db, k, groups, tracker, ctx
 }
@@ -36,8 +36,8 @@ func serveSpanHTTP(h *KnowledgeHandler, a *service.SpanOutputAuthorizer, path st
 	gin.SetMode(gin.TestMode)
 	router := documentHandlerRouter()
 	router.Use(func(c *gin.Context) {
-		ctx := types.WithCaller(c.Request.Context(), types.Caller{TenantID: 7, UserID: "person"})
-		ctx = types.WithPrincipal(ctx, types.Principal{Type: types.PrincipalWebUser, ID: "person"})
+		ctx := types.WithCaller(c.Request.Context(), types.Caller{TenantID: 7, UserID: "user"})
+		ctx = types.WithPrincipal(ctx, types.Principal{Type: types.PrincipalWebUser, ID: "user"})
 		ctx = types.WithExecutionTenant(ctx, 7)
 		c.Request = c.Request.WithContext(ctx)
 	})

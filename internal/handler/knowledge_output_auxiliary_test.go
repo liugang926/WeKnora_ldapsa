@@ -104,7 +104,7 @@ func TestKnowledgeOutputAuxiliaryActualHTTPExplicitMetadata(t *testing.T) {
 				require.NoError(t, knowledge.SetKnowledgeTags(repository.WithIndependentKnowledgeTagAssignmentInput(ctx, map[string][]string{"match": {tag.ID}}), "match", []string{tag.ID}))
 				joined := &auxiliaryMetadataService{KnowledgeService: h.kgService, db: db, name: change == "original_tags_and_kb_name" || change == "name_aba_before_output"}
 				h.kgService = joined
-				guard := access.NewNextcloudSourceLineageGuard(nil, collectionHTTPKB{db: db}, shares, agents, groups, nil)
+				guard := access.NewNextcloudSourceLineageGuard(nil, collectionHTTPKB{db: db}, shares, agents, groups, nil, store)
 				ConfigureKnowledgeHandlerOutputLineage(h, service.NewKnowledgeOutputAuthorizer(store, guard))
 				if change == "unconsumed_name_and_unrelated_legacy" {
 					require.NoError(t, db.Model(&types.KnowledgeBase{}).Where("id='kb'").Update("name", "unproved unconsumed name").Error)

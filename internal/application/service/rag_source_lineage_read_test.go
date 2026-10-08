@@ -10,6 +10,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// Account lifecycle is checked by the real SQL actor tests. This explicit
+// component fixture isolates message material/provenance admission.
+type ragReadActorFixture struct{}
+
+func (ragReadActorFixture) RefreshCurrentReadActor(ctx context.Context) (context.Context, error) {
+	return ctx, nil
+}
+
 type ragReadRepo struct {
 	interfaces.MessageRepository
 	row *types.Message
@@ -51,7 +59,7 @@ func TestRAGSourceLineageActualMessageReadDeniesLegacyAndOpaqueGeneratedFields(t
 			case "artifact":
 				row.Artifacts = types.MessageArtifacts{{FileName: "copied title"}}
 			}
-			svc := &messageService{messageRepo: ragReadRepo{row: row}, sessionRepo: ragReadSessions{}, sourceLineageGuard: access.NewNextcloudSourceLineageGuard(nil, nil, nil, nil, nil, nil)}
+			svc := &messageService{messageRepo: ragReadRepo{row: row}, sessionRepo: ragReadSessions{}, sourceLineageGuard: access.NewNextcloudSourceLineageGuard(nil, nil, nil, nil, nil, nil, ragReadActorFixture{})}
 			got, err := svc.GetMessage(ragReadContext(), "session", "message")
 			if kind == "complete plain" {
 				require.NoError(t, err)

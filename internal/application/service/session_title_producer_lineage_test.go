@@ -75,7 +75,7 @@ func TestSessionTextLineageActualTitleModelWriterAndManualRace(t *testing.T) {
 					}
 				}
 			}
-			svc := &sessionService{sessionRepo: repository.NewSessionRepository(db), modelService: sessionTitleLineageModels{model: model}, cfg: &config.Config{Conversation: &config.ConversationConfig{}}, sourceLineageGuard: access.NewNextcloudSourceLineageGuard(nil, nil, nil, nil, nil, nil)}
+			svc := &sessionService{sessionRepo: repository.NewSessionRepository(db), modelService: sessionTitleLineageModels{model: model}, cfg: &config.Config{Conversation: &config.ConversationConfig{}}, sourceLineageGuard: access.NewNextcloudSourceLineageGuard(nil, nil, nil, nil, nil, nil, ragReadActorFixture{})}
 			title, err := svc.GenerateTitle(ragReadContext(), row, []types.Message{{Role: "user", Content: "raw human question"}}, "title-model")
 			if manualRace {
 				require.ErrorIs(t, err, access.ErrNextcloudPublicationDenied)

@@ -97,7 +97,10 @@ func collectionHTTPFixture(t *testing.T) (*KnowledgeHandler, *gorm.DB, *reposito
 		require.NoError(t, db.Exec(string(script)).Error)
 	}
 	store := repository.NewKnowledgeInputProvenanceStore(db)
+	repository.ConfigureKnowledgeInputActorGroupAccess(store, service.NewGroupAccessService(repository.NewGroupAccessRepository(db)))
 	require.NoError(t, db.Create(&types.User{ID: "user", Username: "collection-user", Email: "collection@example.test", IsActive: true}).Error)
+	keyTenant := uint64(7)
+	require.NoError(t, db.Create(&types.TenantAPIKey{ID: 1, TenantID: &keyTenant, ScopeType: types.APIKeyScopeTenant, Name: "collection read", KeyHash: "collection-fixture-read-key", Capabilities: types.StringArray{string(types.APIKeyCapabilityRetrieve)}, KnowledgeBaseIDs: types.StringArray{"kb"}}).Error)
 	for _, tenant := range []uint64{7, 9} {
 		require.NoError(t, db.Create(&types.TenantMember{UserID: "user", TenantID: tenant, Role: types.TenantRoleAdmin, Status: types.TenantMemberStatusActive}).Error)
 	}
@@ -125,7 +128,7 @@ func collectionHTTPFixture(t *testing.T) (*KnowledgeHandler, *gorm.DB, *reposito
 	shares := &collectionHTTPShare{kb: sharedKB, allowed: true}
 	agents := &collectionHTTPAgents{agent: &types.CustomAgent{ID: "agent", TenantID: 9, Config: types.CustomAgentConfig{KBSelectionMode: "selected", KnowledgeBases: []string{"shared-kb"}}}, allowed: true}
 	groups := &outputHTTPGroups{allowed: true}
-	guard := access.NewNextcloudSourceLineageGuard(nil, kbs, shares, agents, groups, nil)
+	guard := access.NewNextcloudSourceLineageGuard(nil, kbs, shares, agents, groups, nil, store)
 	kg, err := newCollectionHTTPKnowledgeService(db, kbs, shares)
 	require.NoError(t, err)
 	h := &KnowledgeHandler{kgService: kg, kbService: kbs, kbShareService: shares, agentShareService: agents}
@@ -145,8 +148,9 @@ func serveCollectionHTTP(h *KnowledgeHandler, url string, api bool) *httptest.Re
 	r.Use(func(c *gin.Context) {
 		ctx := c.Request.Context()
 		if api {
-			ctx = types.WithTenantAPIKeyScope(ctx, types.TenantAPIKeyScope{KeyID: 1, KnowledgeBaseIDs: types.StringArray{"kb"}})
-			ctx = context.WithValue(ctx, types.PrincipalContextKey, types.Principal{Type: types.PrincipalAPITenant, ID: "api-key"})
+			ctx = types.WithCaller(ctx, types.Caller{TenantID: 7, Role: types.TenantRoleViewer})
+			ctx = types.WithTenantAPIKeyScope(ctx, types.TenantAPIKeyScope{KeyID: 1, ScopeType: types.APIKeyScopeTenant, Capabilities: types.StringArray{string(types.APIKeyCapabilityRetrieve)}, KnowledgeBaseIDs: types.StringArray{"kb"}})
+			ctx = types.WithPrincipal(ctx, types.Principal{Type: types.PrincipalAPITenant, ID: "7"})
 		} else {
 			ctx = context.WithValue(ctx, types.PrincipalContextKey, types.Principal{Type: types.PrincipalWebUser, ID: "user"})
 		}

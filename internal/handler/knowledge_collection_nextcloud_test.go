@@ -107,7 +107,7 @@ func collectionNextcloudHTTPFixture(t *testing.T, change string) (*KnowledgeHand
 	now := time.Now().UTC()
 	dir := collectionDirectory{identity: &types.DirectoryIdentity{ID: "identity", DirectoryID: "ad-1", ObjectGUID: "00112233-4455-6677-8899-aabbccddeeff", UserID: &user, Status: types.DirectoryObjectActive, SnapshotVersion: 1}, directory: &types.Directory{ID: "ad-1", Protocol: types.DirectoryProtocolAD, Enabled: true, SnapshotVersion: 1, LastSuccessfulSyncAt: &now, StaleAfterSeconds: 900}}
 	publication := access.NewNextcloudPublicationGuard(dir, publicationHandlerSources{source: ds})
-	guard := access.NewNextcloudSourceLineageGuard(repo.(access.NextcloudLineageSnapshotLookup), collectionHTTPKB{db: db}, shares, agents, groups, publication)
+	guard := access.NewNextcloudSourceLineageGuard(repo.(access.NextcloudLineageSnapshotLookup), collectionHTTPKB{db: db}, shares, agents, groups, publication, store)
 	ConfigureKnowledgeHandlerCollectionOutput(h, service.NewKnowledgeCollectionOutputAuthorizer(store, guard))
 	ConfigureKnowledgeHandlerContentLeaseStore(h, leases)
 	return h, calls
