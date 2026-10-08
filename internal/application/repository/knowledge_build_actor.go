@@ -216,6 +216,14 @@ func (s *KnowledgeInputProvenanceStore) authorizeKnowledgeActorWrite(ctx context
 	if err := access.RequireKBWrite(fresh, kb); err != nil {
 		return ctx, err
 	}
+	if _, machine := types.TenantAPIKeyScopeFromContext(fresh); machine {
+		if _, routeBound := types.APIKeyOperationRequirementFromContext(fresh); !routeBound {
+			// This current, exact KB write has already been authorized. Its
+			// worker may inspect the original admitted inputs to complete the
+			// write. An HTTP request keeps its exact route capability policy.
+			fresh = types.WithAPIKeyOperationRequirement(fresh, types.APIKeyOperationRequirement{RequireFullAccess: true, Capabilities: []types.APIKeyCapability{types.APIKeyCapabilityIngest}})
+		}
+	}
 	return fresh, nil
 }
 

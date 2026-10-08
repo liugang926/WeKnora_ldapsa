@@ -43,7 +43,7 @@ func (s *KnowledgeInputProvenanceStore) RefreshCurrentReadActor(ctx context.Cont
 		if !bound {
 			// Internal read producers have no HTTP route policy. They must
 			// still hold a real read/conversation capability, never ingest.
-			requirement = types.APIKeyOperationRequirement{RequireFullAccess: true, Capabilities: []types.APIKeyCapability{types.APIKeyCapabilityRetrieve, types.APIKeyCapabilityChat, types.APIKeyCapabilityMessageHistory, types.APIKeyCapabilityReadAgents, types.APIKeyCapabilityManageKnowledgeBases, types.APIKeyCapabilityManageAgents}}
+			requirement = types.APIKeyOperationRequirement{RequireFullAccess: true, Capabilities: []types.APIKeyCapability{types.APIKeyCapabilityRetrieve, types.APIKeyCapabilityChat, types.APIKeyCapabilityMessageHistory}}
 		}
 		if !requirement.Allows(scope) {
 			return ctx, ErrKnowledgeInputChanged
