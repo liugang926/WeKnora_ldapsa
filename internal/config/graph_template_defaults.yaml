@@ -57,4 +57,3 @@ extract:
       Please randomly generate a text related to %s, with a word count between [50-200], and try to include some professional terms or typical elements related to these tags to make the text more targeted and relevant.
     with_no_tag: |
       Please randomly generate a text with freely chosen content, with a word count between [50-200].
-
