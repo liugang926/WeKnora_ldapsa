@@ -3,8 +3,10 @@ package session
 import (
 	"context"
 	stderrors "errors"
+	"math"
 	"net/http"
 	"reflect"
+	"strconv"
 	"time"
 
 	"github.com/Tencent/WeKnora/internal/application/access"
@@ -151,7 +153,7 @@ func (h *Handler) checkCurrentRawSearchResults(ctx context.Context, c *gin.Conte
 		}
 		if result.KnowledgeBaseID != row.KnowledgeBaseID ||
 			result.KnowledgeChannel != row.Channel ||
-			!reflect.DeepEqual(result.Metadata, row.GetMetadata()) {
+			!rawSearchMetadataMatchesSource(result.Metadata, row.GetMetadata()) {
 			return nil, errors.NewForbiddenError("Search result source changed")
 		}
 		checker, ok := h.searchKnowledgeService.(interface {
@@ -178,6 +180,36 @@ func (h *Handler) checkCurrentRawSearchResults(ctx context.Context, c *gin.Conte
 		}
 	}
 	return rows, nil
+}
+
+// Reranking adds score diagnostics to the result, not to the persisted source.
+// Preserve every source key exactly, including any persisted score key. Only
+// the two finite numeric diagnostics produced by PluginRerank may be extra;
+// unknown additions and source-key changes still fail closed. Neither map is
+// changed, and nil/empty retain the previous exact-match distinction.
+func rawSearchMetadataMatchesSource(result, source map[string]string) bool {
+	if result == nil || source == nil {
+		return reflect.DeepEqual(result, source)
+	}
+	for key, value := range source {
+		actual, exists := result[key]
+		if !exists || actual != value {
+			return false
+		}
+	}
+	for key, value := range result {
+		if _, persisted := source[key]; persisted {
+			continue
+		}
+		if key != "base_score" && key != "model_score" {
+			return false
+		}
+		score, err := strconv.ParseFloat(value, 64)
+		if err != nil || math.IsNaN(score) || math.IsInf(score, 0) {
+			return false
+		}
+	}
+	return true
 }
 
 func (h *Handler) checkCurrentRawSearchKBAccess(ctx context.Context, c *gin.Context,
@@ -221,15 +253,23 @@ func (h *Handler) checkCurrentRawSearchKBAccess(ctx context.Context, c *gin.Cont
 // after it was rendered in memory.
 type rawSearchAuthorizationWriter struct {
 	gin.ResponseWriter
-	guard *readlease.NextcloudReadGuard
-	check func(context.Context) error
+	guard  *readlease.NextcloudReadGuard
+	check  func(context.Context) error
+	denied error
 }
 
 func (w *rawSearchAuthorizationWriter) beforeWrite() error {
-	if err := w.guard.Verify(); err != nil {
-		return rawSearchLeaseHTTPError(err)
+	// Once this response was denied it must not resume if a later check
+	// succeeds. Before the first denial every boundary still checks afresh.
+	if w.denied != nil {
+		return w.denied
 	}
-	return w.check(w.guard.Context())
+	if err := w.guard.Verify(); err != nil {
+		w.denied = rawSearchLeaseHTTPError(err)
+		return w.denied
+	}
+	w.denied = w.check(w.guard.Context())
+	return w.denied
 }
 
 func (w *rawSearchAuthorizationWriter) denyWrite(err error) {
