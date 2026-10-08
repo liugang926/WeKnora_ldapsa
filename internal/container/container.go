@@ -507,6 +507,7 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	must(container.Provide(service.NewKnowledgeOutputAuthorizer))
 	must(container.Provide(service.NewChunkOutputAuthorizer))
 	must(container.Provide(service.NewSpanOutputAuthorizer))
+	must(container.Provide(service.NewKnowledgeCollectionOutputAuthorizer))
 	must(container.Provide(service.NewGraphOriginalInputVerifier))
 	must(container.Provide(service.NewKnowledgeGraphLineageReader))
 	must(container.Provide(func(db *gorm.DB, store *repository.KnowledgeInputProvenanceStore) interfaces.RAGChunkSnapshotReader {
@@ -515,6 +516,15 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	must(container.Invoke(func(store *repository.KnowledgeInputProvenanceStore, groups interfaces.GroupAccessService, shares interfaces.KBShareService) {
 		repository.ConfigureKnowledgeInputActorGroupAccess(store, groups)
 		repository.ConfigureKnowledgeInputActorShares(store, shares)
+	}))
+	must(container.Invoke(func(store *repository.KnowledgeInputProvenanceStore, tags interfaces.KnowledgeTagRepository, knowledge interfaces.KnowledgeRepository) {
+		repository.ConfigureKnowledgeCurrentReadActor(knowledge, store)
+		repository.ConfigureKnowledgeDisplayInputWriters(store, tags, knowledge, func(tx *gorm.DB) *repository.KnowledgeInputProvenanceStore {
+			authority := repository.NewKnowledgeInputProvenanceStore(tx)
+			repository.ConfigureKnowledgeInputActorGroupAccess(authority, service.NewGroupAccessService(repository.NewGroupAccessRepository(tx)))
+			repository.ConfigureKnowledgeInputActorShares(authority, service.NewKBShareService(repository.NewKBShareRepository(tx), repository.NewOrganizationRepository(tx), repository.NewKnowledgeBaseRepository(tx), repository.NewKnowledgeRepository(tx), repository.NewDataSourceRepository(tx), repository.NewChunkRepository(tx), nil))
+			return authority
+		})
 	}))
 	must(container.Invoke(service.ConfigureKnowledgeInputProvenance))
 	must(container.Invoke(service.ConfigureKnowledgeBaseInputProvenance))
@@ -620,6 +630,7 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	must(container.Invoke(handler.ConfigureKnowledgeHandlerOutputLineage))
 	must(container.Invoke(handler.ConfigureChunkHandlerOutputLineage))
 	must(container.Invoke(handler.ConfigureKnowledgeHandlerSpanOutputLineage))
+	must(container.Invoke(handler.ConfigureKnowledgeHandlerCollectionOutput))
 	must(container.Provide(handler.NewSystemHandler))
 	// Dig resolves exact types; adapt the registered service to the handler's
 	// narrower SharedAgentLookup interface at the composition boundary.
