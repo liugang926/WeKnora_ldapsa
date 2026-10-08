@@ -39,6 +39,7 @@ type kbShareService struct {
 	orgRepo   interfaces.OrganizationRepository
 	kbRepo    interfaces.KnowledgeBaseRepository
 	kgRepo    interfaces.KnowledgeRepository
+	dsRepo    interfaces.DataSourceRepository
 	chunkRepo interfaces.ChunkRepository
 	audit     interfaces.AuditLogService
 }
@@ -49,6 +50,7 @@ func NewKBShareService(
 	orgRepo interfaces.OrganizationRepository,
 	kbRepo interfaces.KnowledgeBaseRepository,
 	kgRepo interfaces.KnowledgeRepository,
+	dsRepo interfaces.DataSourceRepository,
 	chunkRepo interfaces.ChunkRepository,
 	audit interfaces.AuditLogService,
 ) interfaces.KBShareService {
@@ -57,9 +59,21 @@ func NewKBShareService(
 		orgRepo:   orgRepo,
 		kbRepo:    kbRepo,
 		kgRepo:    kgRepo,
+		dsRepo:    dsRepo,
 		chunkRepo: chunkRepo,
 		audit:     audit,
 	}
+}
+
+func (s *kbShareService) rejectNextcloudShare(ctx context.Context, tenantID uint64, kbID string) error {
+	kb, err := s.kbRepo.GetKnowledgeBaseByID(ctx, kbID)
+	if err != nil {
+		return err
+	}
+	if kb == nil || kb.ID != kbID || kb.TenantID != tenantID {
+		return ErrNextcloudDerivedContent
+	}
+	return RejectNextcloudDerivedKB(ctx, kb, s.kgRepo, s.dsRepo)
 }
 
 // applyTenantRoleCap applies the third dimension of the cap: a caller
@@ -85,6 +99,9 @@ func (s *kbShareService) ShareKnowledgeBase(ctx context.Context, kbID string, or
 	}
 	if kb.TenantID != tenantID {
 		return nil, ErrNotKBOwner
+	}
+	if err := RejectNextcloudDerivedKB(ctx, kb, s.kgRepo, s.dsRepo); err != nil {
+		return nil, err
 	}
 
 	_, err = s.orgRepo.GetByID(ctx, orgID)
@@ -299,6 +316,11 @@ func (s *kbShareService) ListSharedKnowledgeBases(ctx context.Context, tenantID 
 		}
 
 		kbID := share.KnowledgeBase.ID
+		if s.dsRepo != nil {
+			if err := s.rejectNextcloudShare(ctx, share.SourceTenantID, kbID); err != nil {
+				continue
+			}
+		}
 
 		tm, err := s.orgRepo.GetTenantMember(ctx, share.OrganizationID, tenantID)
 		if err != nil {
@@ -381,6 +403,11 @@ func (s *kbShareService) ListSharedKnowledgeBasesInOrganization(ctx context.Cont
 		if share.KnowledgeBase == nil {
 			continue
 		}
+		if s.dsRepo != nil {
+			if err := s.rejectNextcloudShare(ctx, share.SourceTenantID, share.KnowledgeBase.ID); err != nil {
+				continue
+			}
+		}
 
 		effective := types.MinOrgRole(share.Permission, tm.Role)
 		effective = applyTenantRoleCap(effective, callerTenantRole)
@@ -437,6 +464,11 @@ func (s *kbShareService) ListSharedKnowledgeBaseIDsByOrganizations(ctx context.C
 		if share == nil || members[share.OrganizationID] == nil {
 			continue
 		}
+		if s.dsRepo != nil {
+			if err := s.rejectNextcloudShare(ctx, share.SourceTenantID, share.KnowledgeBaseID); err != nil {
+				continue
+			}
+		}
 		kbID := share.KnowledgeBaseID
 		if kbID == "" && share.KnowledgeBase != nil {
 			kbID = share.KnowledgeBase.ID
@@ -482,6 +514,11 @@ func (s *kbShareService) CheckTenantKBPermission(ctx context.Context, kbID strin
 	shares, err := s.shareRepo.ListByKnowledgeBase(ctx, kbID)
 	if err != nil {
 		return "", false, err
+	}
+	if len(shares) > 0 && s.dsRepo != nil {
+		if err := s.rejectNextcloudShare(ctx, shares[0].SourceTenantID, kbID); err != nil {
+			return "", false, err
+		}
 	}
 
 	var highest types.OrgMemberRole

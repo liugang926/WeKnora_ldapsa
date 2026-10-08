@@ -3,11 +3,14 @@ package mcpserver
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"regexp"
 	"strings"
 	"unicode"
 
 	"github.com/Tencent/WeKnora/internal/agent/tools"
+	"github.com/Tencent/WeKnora/internal/application/access"
+	"github.com/Tencent/WeKnora/internal/application/readlease"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/mark3labs/mcp-go/mcp"
 )
@@ -299,27 +302,108 @@ func (s *Server) handleListDocuments(ctx context.Context, req mcp.CallToolReques
 	if pageSize > maxListPageSize {
 		pageSize = maxListPageSize
 	}
-	result, err := s.knowledgeService.ListPagedKnowledgeByKnowledgeBaseID(
-		ctx, kb.ID,
-		&types.Pagination{Page: page, PageSize: pageSize},
-		types.KnowledgeListFilter{Keyword: strings.TrimSpace(req.GetString("keyword", ""))},
+	docs, total, err := s.listVisibleDocuments(
+		ctx, ep.TenantID, kb.ID, strings.TrimSpace(req.GetString("keyword", "")), page, pageSize,
 	)
 	if err != nil {
 		return mcp.NewToolResultErrorFromErr("failed to list documents", err), nil
 	}
-	docs := []documentSummary{}
-	if rows, ok := result.Data.([]*types.Knowledge); ok {
-		for _, k := range rows {
-			docs = append(docs, summarizeKnowledge(k))
-		}
+	currentKB, err := s.authorizedKnowledgeBase(ctx, kb.ID, types.OrgRoleViewer)
+	if err != nil || currentKB == nil || currentKB.TenantID != kb.TenantID {
+		return mcp.NewToolResultError("knowledge base is no longer available"), nil
 	}
 	return jsonResult(map[string]any{
 		"knowledge_base_id": kb.ID,
-		"total":             result.Total,
-		"page":              result.Page,
-		"page_size":         result.PageSize,
+		"total":             total,
+		"page":              page,
+		"page_size":         pageSize,
 		"documents":         docs,
 	})
+}
+
+// listVisibleDocuments paginates after source authorization. Filtering only
+// one database page would leave gaps and leak the count of hidden documents.
+// The MCP caller is a machine principal; even if a malformed context carries
+// a web principal, the publication check uses a synthetic caller and denies
+// every Nextcloud source row. Ordinary sources retain their prior visibility.
+func (s *Server) listVisibleDocuments(
+	ctx context.Context, callerTenantID uint64, kbID, keyword string, page, pageSize int,
+) ([]documentSummary, int64, error) {
+	const scanSize = 1000
+	if page < 1 || pageSize < 1 || uint64(page-1) > ^uint64(0)/uint64(pageSize) {
+		return nil, 0, fmt.Errorf("invalid document page")
+	}
+	start := uint64(page-1) * uint64(pageSize)
+	end := start + uint64(pageSize)
+	if end < start {
+		return nil, 0, fmt.Errorf("invalid document page")
+	}
+	publicationCtx := types.WithCaller(ctx, types.Caller{
+		TenantID: callerTenantID, UserID: fmt.Sprintf("system-%d", callerTenantID),
+	})
+	docs := make([]documentSummary, 0, pageSize)
+	selectedTenants := make([]uint64, 0, pageSize)
+	var visible uint64
+	for scanPage := 1; ; scanPage++ {
+		result, err := s.knowledgeService.ListPagedKnowledgeByKnowledgeBaseID(
+			ctx, kbID, &types.Pagination{Page: scanPage, PageSize: scanSize},
+			types.KnowledgeListFilter{Keyword: keyword},
+		)
+		if err != nil {
+			return nil, 0, err
+		}
+		if result == nil {
+			return nil, 0, fmt.Errorf("empty document page")
+		}
+		rows, ok := result.Data.([]*types.Knowledge)
+		if !ok {
+			return nil, 0, fmt.Errorf("invalid document page data")
+		}
+		for _, k := range rows {
+			if k == nil || !s.mcpDocumentPublicationAllowed(publicationCtx, k) {
+				continue
+			}
+			if visible >= start && visible < end {
+				docs = append(docs, summarizeKnowledge(k))
+				selectedTenants = append(selectedTenants, k.TenantID)
+			}
+			visible++
+		}
+		if len(rows) < scanSize || int64(scanPage)*scanSize >= result.Total {
+			break
+		}
+	}
+	// A long scan can outlive a document update. Load and authorize every
+	// selected row once more before exposing its title or metadata.
+	for i, summary := range docs {
+		current, err := s.knowledgeService.GetKnowledgeByIDOnly(ctx, summary.ID)
+		if err != nil || current == nil || current.ID != summary.ID ||
+			current.KnowledgeBaseID != kbID || current.TenantID != selectedTenants[i] ||
+			!s.mcpDocumentPublicationAllowed(publicationCtx, current) {
+			return nil, 0, fmt.Errorf("document listing changed during authorization")
+		}
+		docs[i] = summarizeKnowledge(current)
+	}
+	return docs, int64(visible), nil
+}
+
+func (s *Server) mcpDocumentPublicationAllowed(ctx context.Context, k *types.Knowledge) bool {
+	// Endpoint bearer tokens are machine credentials. Nextcloud source rows
+	// require an interactive user's live source grant, so never pass them to
+	// a pluggable publication checker that might be less strict than the
+	// production guard. This also rejects malformed source metadata.
+	if _, marked, err := readlease.NextcloudKnowledgeLeaseScope(k); marked || err != nil {
+		return false
+	}
+	if checker, ok := s.knowledgeService.(interface {
+		CheckKnowledgePublication(context.Context, *types.Knowledge) error
+	}); ok {
+		return checker.CheckKnowledgePublication(ctx, k) == nil
+	}
+	// An alternate service without the source checker may list ordinary rows,
+	// but source-marked rows still fail closed.
+	var missingGuard *access.NextcloudPublicationGuard
+	return missingGuard.CheckKnowledge(ctx, k) == nil
 }
 
 func (s *Server) handleReadDocument(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -366,10 +450,22 @@ func (s *Server) handleReadDocument(ctx context.Context, req mcp.CallToolRequest
 	if execErr != nil || res == nil || !res.Success {
 		return toolResultFromAgentTool(res, execErr), nil
 	}
+	currentKB, err := s.authorizedKnowledgeBase(ctx, kb.ID, types.OrgRoleViewer)
+	if err != nil || currentKB == nil || currentKB.TenantID != kb.TenantID {
+		return mcp.NewToolResultError("knowledge base is no longer available"), nil
+	}
+	current, err := s.knowledgeService.GetKnowledgeByIDOnly(ctx, k.ID)
+	if err != nil || current == nil || current.ID != k.ID ||
+		current.KnowledgeBaseID != kb.ID || current.TenantID != kb.TenantID ||
+		!s.mcpDocumentPublicationAllowed(types.WithCaller(ctx, types.Caller{
+			TenantID: ep.TenantID, UserID: fmt.Sprintf("system-%d", ep.TenantID),
+		}), current) {
+		return mcp.NewToolResultError("document is no longer available"), nil
+	}
 	if res.Data == nil {
 		res.Data = map[string]interface{}{}
 	}
-	res.Data["document"] = summarizeKnowledge(k)
+	res.Data["document"] = summarizeKnowledge(current)
 	res.Data["knowledge_base"] = map[string]any{"id": kb.ID, "name": kb.Name}
 	return toolResultFromAgentTool(res, nil), nil
 }

@@ -9,6 +9,7 @@ import (
 
 	"github.com/Tencent/WeKnora/internal/agent/tools"
 	"github.com/Tencent/WeKnora/internal/application/access"
+	"github.com/Tencent/WeKnora/internal/application/readlease"
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/types"
 )
@@ -282,6 +283,11 @@ func (s *Server) knowledgeInScope(
 	k, err := s.knowledgeService.GetKnowledgeByIDOnly(ctx, knowledgeID)
 	if err != nil || k == nil {
 		return nil, nil, fmt.Errorf("document %q was not found", knowledgeID)
+	}
+	// MCP endpoint credentials cannot act as a person's source identity.
+	// Deny source rows before any downstream read tool can load their chunks.
+	if _, marked, scopeErr := readlease.NextcloudKnowledgeLeaseScope(k); marked || scopeErr != nil {
+		return nil, nil, fmt.Errorf("document %q is unavailable on this endpoint", knowledgeID)
 	}
 	allowed, err := s.allowedKnowledgeBases(ctx, ep)
 	if err != nil {

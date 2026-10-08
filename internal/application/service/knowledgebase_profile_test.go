@@ -357,6 +357,28 @@ func TestKnowledgeBaseProfileHandle(t *testing.T) {
 	assert.NoError(t, run(true), "a deleted knowledge base is skipped")
 }
 
+func TestKnowledgeBaseProfileHandleSkipsSourceRegistrationRace(t *testing.T) {
+	for _, modelFailure := range []bool{false, true} {
+		f := newKBProfileFixture(kbProfileResponse)
+		if modelFailure {
+			f.chatModel.err = errors.New("model failed during source registration")
+		}
+		// The worker loaded an ordinary KB before source registration; the
+		// repository's write boundary now sees its persisted Nextcloud marker.
+		f.kbRepo.updateErr = types.ErrKnowledgeBaseProfileUnsupported
+		body, err := json.Marshal(types.KnowledgeBaseProfilePayload{
+			TenantID: 7, KnowledgeBaseID: "kb", Force: true,
+		})
+		require.NoError(t, err)
+		err = f.service.Handle(context.Background(),
+			asynq.NewTask(types.TypeKnowledgeBaseProfile, body))
+		require.NoError(t, err, "a source-registration race is terminal, not retried")
+		require.Equal(t, 1, f.chatModel.calls)
+		require.Empty(t, f.kbRepo.saved)
+		require.Nil(t, f.kb.GeneratedProfile)
+	}
+}
+
 func TestParseDocumentSummaryOutput(t *testing.T) {
 	t.Run("structured JSON", func(t *testing.T) {
 		out := parseDocumentSummaryOutput("```json\n" +

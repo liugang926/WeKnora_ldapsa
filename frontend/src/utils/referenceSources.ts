@@ -1,3 +1,5 @@
+import { nextcloudOriginalUrl } from './nextcloudOriginalUrl'
+
 export type ReferenceItemKind = 'web' | 'document' | 'tool'
 
 export type KnowledgeReferenceLike = {
@@ -172,6 +174,7 @@ function buildDocumentItem(item: KnowledgeReferenceLike, index: number): Referen
     fileName: item.knowledge_filename,
     index,
     title,
+    url: nextcloudOriginalUrl(item.metadata),
     chunkId,
     chunkIds: item.chunk_ids,
     knowledgeId: item.knowledge_id,

@@ -202,6 +202,14 @@ func (t *SearchKnowledgeTool) Execute(ctx context.Context, args json.RawMessage)
 			Error:   "no knowledge base is in scope for this search",
 		}, fmt.Errorf("no search targets available")
 	}
+	readCtx, guard, err := beginAgentRead(ctx, t.knowledgeService, searchTargets)
+	if err != nil {
+		return &types.ToolResult{Success: false, Error: err.Error()}, err
+	}
+	if guard != nil {
+		defer guard.Close()
+	}
+	ctx = readCtx
 
 	kbIDs := searchTargets.GetAllKnowledgeBaseIDs()
 	kbList, err := t.knowledgeBaseService.GetKnowledgeBasesByIDsOnly(ctx, kbIDs)
@@ -299,6 +307,39 @@ func (t *SearchKnowledgeTool) Execute(ctx context.Context, args json.RawMessage)
 	}
 	if len(final) == 0 {
 		result.Output = emptySearchStatement(query, result.Data, len(kbIDs))
+	}
+	// Reranking, passage enrichment, and image metadata loading happen after
+	// HybridSearch returns. Keep the broad lease across those reads, then
+	// recheck the current source and KB grants before exposing tool output.
+	seen := make(map[string]bool)
+	var sourceDocuments []*types.Knowledge
+	for _, row := range final {
+		if row == nil || row.SearchResult == nil {
+			continue
+		}
+		r := row.SearchResult
+		if r.KnowledgeChannel != types.ConnectorTypeNextcloud &&
+			r.Metadata["nextcloud_file_id"] == "" && r.Metadata["nextcloud_binding_id"] == "" {
+			continue
+		}
+		if r.KnowledgeID == "" || t.knowledgeService == nil {
+			err := fmt.Errorf("Nextcloud search result has no source document")
+			return &types.ToolResult{Success: false, Error: err.Error()}, err
+		}
+		if seen[r.KnowledgeID] {
+			continue
+		}
+		seen[r.KnowledgeID] = true
+		knowledge, loadErr := t.knowledgeService.GetKnowledgeByIDOnly(ctx, r.KnowledgeID)
+		if loadErr != nil || knowledge == nil || knowledge.ID != r.KnowledgeID ||
+			knowledge.KnowledgeBaseID != r.KnowledgeBaseID {
+			err := fmt.Errorf("Nextcloud search source document is unavailable: %w", loadErr)
+			return &types.ToolResult{Success: false, Error: err.Error()}, err
+		}
+		sourceDocuments = append(sourceDocuments, knowledge)
+	}
+	if err := finishAgentRead(ctx, t.knowledgeService, searchTargets, guard, sourceDocuments); err != nil {
+		return &types.ToolResult{Success: false, Error: err.Error()}, err
 	}
 	return result, nil
 }

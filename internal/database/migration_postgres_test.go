@@ -2,7 +2,10 @@ package database
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -21,9 +24,10 @@ import (
 //	  paradedb/paradedb:v0.22.6-pg17
 //	WEKNORA_MIGRATION_TEST_POSTGRES_DSN=postgres://postgres:pg@localhost:55432/weknora?sslmode=disable
 //
-// It checks what SQLite cannot: that 000106 builds its index CONCURRENTLY
-// through golang-migrate (which fails inside a transaction block), in both
-// directions, and that the agent history queries walk it without sorting.
+// It checks what SQLite cannot: that the full migration chain serves agent
+// history without sorting, and that 000106 builds its index CONCURRENTLY
+// through golang-migrate (which fails inside a transaction block). The 106
+// down/up check uses a fresh schema so it never crosses later rollback guards.
 func TestPostgresMigrationsServeAgentHistory(t *testing.T) {
 	dsn := os.Getenv("WEKNORA_MIGRATION_TEST_POSTGRES_DSN")
 	if dsn == "" {
@@ -46,22 +50,6 @@ func TestPostgresMigrationsServeAgentHistory(t *testing.T) {
 	require.False(t, dirty)
 	requirePostgresIndexValid(t, db)
 	requirePostgresDirectoryConfigVersionSchema(t, db)
-
-	// Down and up again: DROP/CREATE INDEX CONCURRENTLY through golang-migrate.
-	// Move explicitly to 106 first: the latest migration is no longer 106, so
-	// Steps(-1) at HEAD would only roll back the LDAP migration.
-	m, err := migrate.New("file://migrations/versioned", dsn)
-	require.NoError(t, err)
-	t.Cleanup(func() { _, _ = m.Close() })
-	require.NoError(t, m.Migrate(106))
-	require.NoError(t, m.Steps(-1))
-	var indexes int
-	require.NoError(t, db.QueryRow(
-		"SELECT count(*) FROM pg_class WHERE relname = 'idx_messages_session_created_id'").Scan(&indexes))
-	require.Zero(t, indexes, "the down migration drops the index")
-	require.NoError(t, m.Steps(1))
-	requirePostgresIndexValid(t, db)
-	t.Cleanup(func() { _ = m.Migrate(uint(latest)) })
 
 	ctx := context.Background()
 	conn, err := db.Conn(ctx)
@@ -91,6 +79,65 @@ func TestPostgresMigrationsServeAgentHistory(t *testing.T) {
 		require.Contains(t, plan.String(), "idx_messages_session_created_id", "%s plan:\n%s", name, plan.String())
 		require.NotContains(t, plan.String(), "Sort", "%s must not sort:\n%s", name, plan.String())
 	}
+
+	t.Run("ConcurrentIndexRoundtripAt106", func(t *testing.T) {
+		// Migrations 126 and 129 intentionally guard provenance on rollback.
+		// Start another migration chain at zero instead of downgrading latest.
+		var random [8]byte
+		_, err := rand.Read(random[:])
+		require.NoError(t, err)
+		schema := "weknora_migration_106_" + hex.EncodeToString(random[:])
+		_, err = db.Exec("CREATE SCHEMA " + schema)
+		require.NoError(t, err)
+		t.Cleanup(func() {
+			_, err := db.Exec("DROP SCHEMA " + schema + " CASCADE")
+			require.NoError(t, err)
+		})
+
+		isolatedDSN := postgresSchemaDSN(t, dsn, schema)
+		isolatedDB, err := sql.Open("postgres", isolatedDSN)
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = isolatedDB.Close() })
+		m, err := migrate.New("file://migrations/versioned", isolatedDSN)
+		require.NoError(t, err)
+		t.Cleanup(func() { _, _ = m.Close() })
+
+		require.NoError(t, m.Migrate(106))
+		requirePostgresMigrationVersion(t, isolatedDB, 106)
+		requirePostgresIndexValid(t, isolatedDB)
+		require.NoError(t, m.Steps(-1))
+		requirePostgresMigrationVersion(t, isolatedDB, 105)
+		var indexes int
+		require.NoError(t, isolatedDB.QueryRow(`SELECT count(*) FROM pg_class c
+			JOIN pg_namespace n ON n.oid = c.relnamespace
+			WHERE n.nspname = current_schema() AND c.relname = 'idx_messages_session_created_id'`).Scan(&indexes))
+		require.Zero(t, indexes, "the down migration drops the index")
+		require.NoError(t, m.Steps(1))
+		requirePostgresMigrationVersion(t, isolatedDB, 106)
+		requirePostgresIndexValid(t, isolatedDB)
+
+		// The terminal schema was never rolled back.
+		requirePostgresMigrationVersion(t, db, latest)
+	})
+}
+
+func postgresSchemaDSN(t *testing.T, dsn, schema string) string {
+	t.Helper()
+	u, err := url.Parse(dsn)
+	require.NoError(t, err)
+	query := u.Query()
+	query.Set("search_path", schema+",public")
+	u.RawQuery = query.Encode()
+	return u.String()
+}
+
+func requirePostgresMigrationVersion(t *testing.T, db *sql.DB, want int) {
+	t.Helper()
+	var version int
+	var dirty bool
+	require.NoError(t, db.QueryRow("SELECT version, dirty FROM schema_migrations").Scan(&version, &dirty))
+	require.Equal(t, want, version)
+	require.False(t, dirty)
 }
 
 func requirePostgresDirectoryConfigVersionSchema(t *testing.T, db *sql.DB) {
@@ -120,7 +167,8 @@ func requirePostgresIndexValid(t *testing.T, db *sql.DB) {
 	var valid bool
 	require.NoError(t, db.QueryRow(`SELECT i.indisvalid FROM pg_index i
 		JOIN pg_class c ON c.oid = i.indexrelid
-		WHERE c.relname = 'idx_messages_session_created_id'`).Scan(&valid))
+		JOIN pg_namespace n ON n.oid = c.relnamespace
+		WHERE n.nspname = current_schema() AND c.relname = 'idx_messages_session_created_id'`).Scan(&valid))
 	require.True(t, valid, "a CONCURRENTLY build that failed leaves an INVALID index")
 }
 

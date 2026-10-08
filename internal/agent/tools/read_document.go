@@ -150,9 +150,20 @@ func (t *ReadDocumentTool) Execute(ctx context.Context, args json.RawMessage) (*
 		contextChunks = readDocumentMaxContext
 	}
 	query := strings.TrimSpace(input.Query)
+	readCtx, guard, err := beginAgentRead(ctx, t.knowledgeService, t.searchTargets)
+	if err != nil {
+		return &types.ToolResult{Success: false, Error: err.Error()}, err
+	}
+	if guard != nil {
+		defer guard.Close()
+	}
+	ctx = readCtx
 
 	knowledge, chunk, err := t.resolveTarget(ctx, id)
 	if err != nil {
+		return &types.ToolResult{Success: false, Error: err.Error()}, err
+	}
+	if err := guard.PinKnowledge(knowledge); err != nil {
 		return &types.ToolResult{Success: false, Error: err.Error()}, err
 	}
 
@@ -177,14 +188,23 @@ func (t *ReadDocumentTool) Execute(ctx context.Context, args json.RawMessage) (*
 
 	// A query always searches the owning document, even when id named a
 	// chunk: silently returning the single chunk would read as "no match".
+	var result *types.ToolResult
 	switch {
 	case len(matchers) > 0:
-		return t.readByQuery(ctx, knowledge, query, matchers)
+		result, err = t.readByQuery(ctx, knowledge, query, matchers)
 	case chunk != nil:
-		return t.readAroundChunk(ctx, knowledge, chunk, contextChunks)
+		result, err = t.readAroundChunk(ctx, knowledge, chunk, contextChunks)
 	default:
-		return t.readPage(ctx, knowledge, offset, limit)
+		result, err = t.readPage(ctx, knowledge, offset, limit)
 	}
+	if err != nil || result == nil || !result.Success {
+		return result, err
+	}
+	if err := finishAgentRead(ctx, t.knowledgeService, t.searchTargets, guard,
+		[]*types.Knowledge{knowledge}); err != nil {
+		return &types.ToolResult{Success: false, Error: err.Error()}, err
+	}
+	return result, nil
 }
 
 // resolveTarget accepts either a document id or a chunk id. Documents are
@@ -211,14 +231,15 @@ func (t *ReadDocumentTool) resolveTarget(ctx context.Context, id string) (*types
 	}
 	knowledge, err := t.knowledgeService.GetKnowledgeByIDOnly(ctx, authorizedChunk.KnowledgeID)
 	if err != nil || knowledge == nil {
-		// The chunk is authorized; a missing parent row only costs the header.
-		knowledge = &types.Knowledge{
-			ID:              authorizedChunk.KnowledgeID,
-			TenantID:        authorizedChunk.TenantID,
-			KnowledgeBaseID: authorizedChunk.KnowledgeBaseID,
-		}
+		return nil, nil, fmt.Errorf("chunk source document is unavailable")
 	}
-	return knowledge, authorizedChunk, nil
+	authorized, err := authorizeLoadedKnowledge(ctx, t.searchTargets, knowledge, t.knowledgeService)
+	if err != nil || authorized.ID != authorizedChunk.KnowledgeID ||
+		authorized.KnowledgeBaseID != authorizedChunk.KnowledgeBaseID ||
+		authorized.TenantID != authorizedChunk.TenantID {
+		return nil, nil, fmt.Errorf("chunk source document is not currently accessible")
+	}
+	return authorized, authorizedChunk, nil
 }
 
 func (t *ReadDocumentTool) tenantFor(knowledge *types.Knowledge) uint64 {

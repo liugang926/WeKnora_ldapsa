@@ -54,6 +54,20 @@ test('buildReferenceList aggregates chunks from the same document', () => {
   assert.match(items[0].content || '', /shipping rules/)
 })
 
+test('document citation opens the human Nextcloud original', () => {
+  const [item] = buildReferenceList([{
+    id: 'chunk-77', knowledge_id: 'candidate-77', knowledge_base_id: 'kb',
+    knowledge_title: 'file.md',
+    metadata: {
+      nextcloud_file_id: '77',
+      nextcloud_human_url: 'https://files.example/index.php/f/77',
+      url: 'https://files.example/index.php/apps/integration_weknora/api/v1/bindings/b/files/77/content',
+    },
+  }])
+  assert.equal(item.kind, 'document')
+  assert.equal(item.url, 'https://files.example/index.php/f/77')
+})
+
 test('buildReferenceSections keeps tool results in their own section', () => {
   const sections = buildReferenceSections([
     {

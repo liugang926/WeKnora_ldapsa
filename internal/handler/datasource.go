@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strconv"
 	"time"
@@ -471,6 +472,19 @@ func (h *DataSourceHandler) ManualSync(c *gin.Context) {
 
 	syncLog, err := h.service.ManualSync(ctx, id)
 	if err != nil {
+		if errors.Is(err, datasource.ErrSyncAlreadyRunning) {
+			c.JSON(http.StatusConflict, gin.H{"error": "data_source_sync_busy"})
+			return
+		}
+		if errors.Is(err, datasource.ErrSyncEnqueueUncertain) {
+			body := gin.H{"error": datasource.NextcloudSyncEnqueueUncertain}
+			if syncLog != nil && syncLog.ID != "" {
+				body["sync_log_id"] = syncLog.ID
+				body["queue_task_id"] = datasource.NextcloudSyncTaskID(syncLog.ID)
+			}
+			c.JSON(http.StatusServiceUnavailable, body)
+			return
+		}
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -527,7 +541,7 @@ func (h *DataSourceHandler) ResumeDataSource(c *gin.Context) {
 
 	id := c.Param("id")
 
-	if _, status, msg := h.getOwnedDataSource(ctx, tenantID, id, types.ResourceActionRead); status != http.StatusOK {
+	if _, status, msg := h.getOwnedDataSource(ctx, tenantID, id, types.ResourceActionEdit); status != http.StatusOK {
 		c.JSON(status, gin.H{"error": msg})
 		return
 	}
@@ -561,7 +575,8 @@ func (h *DataSourceHandler) GetSyncLogs(c *gin.Context) {
 
 	id := c.Param("id")
 
-	if _, status, msg := h.getOwnedDataSource(ctx, tenantID, id, types.ResourceActionRead); status != http.StatusOK {
+	ds, status, msg := h.getOwnedDataSource(ctx, tenantID, id, types.ResourceActionRead)
+	if status != http.StatusOK {
 		c.JSON(status, gin.H{"error": msg})
 		return
 	}
@@ -593,6 +608,9 @@ func (h *DataSourceHandler) GetSyncLogs(c *gin.Context) {
 	if logs == nil {
 		logs = make([]*types.SyncLog, 0)
 	}
+	if ds.Type == types.ConnectorTypeNextcloud {
+		logs = dto.RedactNextcloudSyncLogs(logs)
+	}
 	c.JSON(http.StatusOK, logs)
 }
 
@@ -621,12 +639,15 @@ func (h *DataSourceHandler) GetSyncLog(c *gin.Context) {
 		return
 	}
 
-	_, status, msg := h.getOwnedDataSource(ctx, tenantID, log.DataSourceID, types.ResourceActionRead)
+	ds, status, msg := h.getOwnedDataSource(ctx, tenantID, log.DataSourceID, types.ResourceActionRead)
 	if status != http.StatusOK {
 		c.JSON(status, gin.H{"error": msg})
 		return
 	}
 
+	if ds.Type == types.ConnectorTypeNextcloud {
+		log = dto.RedactNextcloudSyncLog(log)
+	}
 	c.JSON(http.StatusOK, log)
 }
 

@@ -34,6 +34,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/Tencent/WeKnora/internal/agent/approval"
+	"github.com/Tencent/WeKnora/internal/application/access"
 	"github.com/Tencent/WeKnora/internal/application/repository"
 	dorisRepo "github.com/Tencent/WeKnora/internal/application/repository/retriever/doris"
 	elasticsearchRepoV7 "github.com/Tencent/WeKnora/internal/application/repository/retriever/elasticsearch/v7"
@@ -63,6 +64,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/datasource/connector/feishu/wiki"
 	gitlabConnector "github.com/Tencent/WeKnora/internal/datasource/connector/gitlab"
 	imaConnector "github.com/Tencent/WeKnora/internal/datasource/connector/ima"
+	nextcloudConnector "github.com/Tencent/WeKnora/internal/datasource/connector/nextcloud"
 	notionConnector "github.com/Tencent/WeKnora/internal/datasource/connector/notion"
 	rssConnector "github.com/Tencent/WeKnora/internal/datasource/connector/rss"
 	yuqueConnector "github.com/Tencent/WeKnora/internal/datasource/connector/yuque"
@@ -191,6 +193,15 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	must(container.Provide(repository.NewUserResourceFavoriteRepository))
 	must(container.Provide(service.NewWebSearchStateService))
 	must(container.Provide(repository.NewDataSourceRepository))
+	must(container.Provide(repository.NewNextcloudEventInboxRepository))
+	must(container.Provide(repository.NewNextcloudAskTargetRepository))
+	must(container.Provide(repository.NewNextcloudSourcePairingRepository))
+	must(container.Provide(func(
+		directories interfaces.DirectoryRepository,
+		dataSources interfaces.DataSourceRepository,
+	) *access.NextcloudPublicationGuard {
+		return access.NewNextcloudPublicationGuard(directories, dataSources)
+	}))
 	must(container.Provide(repository.NewSyncLogRepository))
 	must(container.Provide(repository.NewWikiPageRepository))
 	must(container.Provide(repository.NewMemoryRepository))
@@ -471,7 +482,12 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	must(container.Provide(initConnectorRegistry))
 	must(container.Provide(datasource.NewScheduler))
 	must(container.Provide(service.NewDataSourceService))
+	must(container.Provide(service.NewNextcloudEventDispatcher))
+	must(container.Provide(repository.NewNextcloudGCStore))
+	must(container.Provide(repository.NewNextcloudContentLeaseStore))
 	must(container.Invoke(startDataSourceScheduler))
+	must(container.Invoke(startNextcloudGC))
+	must(container.Invoke(startNextcloudContentLeasePruner))
 	logger.Debugf(ctx, "[Container] Data source sync framework registered")
 	must(container.Invoke(startAuditLogRetention))
 	logger.Debugf(ctx, "[Container] Audit log retention runner registered")
@@ -511,6 +527,7 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	must(container.Invoke(mcpserver.ConfigureGroupAccess))
 	logger.Debugf(ctx, "[Container] MCP group-access overlay registered")
 	must(container.Invoke(service.ConfigureKnowledgeGroupAccess))
+	must(container.Invoke(service.ConfigureKnowledgeBaseGroupAccess))
 	logger.Debugf(ctx, "[Container] Knowledge group-access overlay registered")
 	must(container.Invoke(service.ConfigureGroupAccessDirectoryRuntime))
 	logger.Debugf(ctx, "[Container] Directory feature switch registered for group access")
@@ -582,6 +599,10 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	must(container.Provide(handler.NewModelCredentialsHandler))
 	must(container.Provide(handler.NewWebSearchProviderCredentialsHandler))
 	must(container.Provide(handler.NewDataSourceCredentialsHandler))
+	must(container.Provide(handler.NewNextcloudEventHandler))
+	must(container.Provide(handler.NewNextcloudEventConnectionHandler))
+	must(container.Provide(handler.NewNextcloudSourcePairingHandler))
+	must(container.Provide(handler.NewNextcloudGCHandler))
 	must(container.Invoke(handler.ConfigureDataSourceCredentialsGroupAccess))
 	must(container.Provide(handler.NewWebSearchHandler))
 	must(container.Provide(handler.NewWebSearchProviderHandler))
@@ -633,6 +654,8 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	// persistence succeeded immediately before trigger enqueue failed). Re-arm
 	// them only after the matching handlers are ready.
 	must(container.Invoke(recoverPendingWikiTasks))
+	must(container.Invoke(startNextcloudSyncAdmissionRecovery))
+	must(container.Invoke(startNextcloudEventDispatcher))
 
 	logger.Infof(ctx, "[Container] Container initialization completed successfully")
 	return container
@@ -1137,12 +1160,15 @@ func syncSequences(db *gorm.DB) {
 // Returns:
 //   - Configured file service implementation
 //   - Error if initialization fails
-func initFileService(cfg *config.Config, catalog interfaces.ResourceCatalog) (interfaces.FileService, error) {
+func initFileService(
+	cfg *config.Config, catalog interfaces.ResourceCatalog,
+	publicationGuard *access.NextcloudPublicationGuard,
+) (interfaces.FileService, error) {
 	inner, err := initRawFileService(cfg)
 	if err != nil {
 		return nil, err
 	}
-	return file.NewResourceCatalogFileService(inner, catalog), nil
+	return file.NewResourceCatalogFileService(inner, catalog, publicationGuard), nil
 }
 
 func initRawFileService(_ *config.Config) (interfaces.FileService, error) {
@@ -1879,6 +1905,9 @@ func initConnectorRegistry() (*datasource.ConnectorRegistry, error) {
 	if err := registry.Register(gitlabConnector.NewConnector()); err != nil {
 		errs = errors.Join(errs, fmt.Errorf("register gitlab connector: %w", err))
 	}
+	if err := registry.Register(nextcloudConnector.NewConnector()); err != nil {
+		errs = errors.Join(errs, fmt.Errorf("register nextcloud connector: %w", err))
+	}
 
 	// Future connectors will be registered here:
 	// if err := registry.Register(githubConnector.NewConnector()); err != nil { ... }
@@ -1897,6 +1926,121 @@ func startDataSourceScheduler(scheduler *datasource.Scheduler, cleaner interface
 
 	cleaner.RegisterWithName("DataSourceScheduler", func() error {
 		scheduler.Stop()
+		return nil
+	})
+}
+
+// startNextcloudGC records durable inventories and retries only cleanup that
+// the current storage protocol can prove safe. Scoped local objects use the
+// transactional claim/delete/ack path; unsupported objects remain blocked.
+func startNextcloudGC(
+	gc *repository.NextcloudGCStore,
+	tenants interfaces.TenantRepository,
+	storage interfaces.StorageBackendResolver,
+	cleaner interfaces.ResourceCleaner,
+) {
+	gc.ConfigureLocalDelete(func(ctx context.Context, resource *types.StoredResource) (bool, error) {
+		if resource == nil || resource.TenantID == 0 || resource.Provider != "local" ||
+			resource.State != types.ResourceStateDeleting || resource.StorageBackendID == "" {
+			return false, errors.New("Nextcloud GC resource is not a scoped local deletion claim")
+		}
+		backendID, inner, ok := types.ParseStorageBackendPath(resource.PhysicalPath)
+		if !ok || backendID != resource.StorageBackendID ||
+			!strings.HasPrefix(inner, fmt.Sprintf("local://%d/", resource.TenantID)) {
+			return false, errors.New("Nextcloud GC local path does not match owner backend")
+		}
+		tenant, err := tenants.GetTenantByID(ctx, resource.TenantID)
+		if err != nil || tenant == nil {
+			return false, errors.New("Nextcloud GC resource tenant unavailable")
+		}
+		fileService, provider, err := storage.ResolveFileService(ctx, tenant,
+			resource.StorageBackendID, "local", strings.TrimSpace(os.Getenv("LOCAL_STORAGE_BASE_DIR")))
+		if err != nil || fileService == nil || provider != "local" {
+			return false, errors.New("Nextcloud GC local backend unavailable")
+		}
+		err = fileService.DeleteFile(ctx, resource.PhysicalPath)
+		if errors.Is(err, os.ErrNotExist) {
+			return false, nil // absent path is idempotent but proves no bytes released now
+		}
+		return err == nil, err
+	})
+	stop := make(chan struct{})
+	run := func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		defer cancel()
+		now := time.Now().UTC()
+		if _, err := gc.InventoryRetired(ctx, now, 100); err != nil {
+			logger.Warnf(ctx, "[NextcloudGC] inventory failed: %v", err)
+			return
+		}
+		if _, err := gc.RunDue(ctx, now, 100); err != nil {
+			logger.Warnf(ctx, "[NextcloudGC] retry failed: %v", err)
+		}
+	}
+	go func() {
+		run()
+		ticker := time.NewTicker(time.Hour)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				run()
+			case <-stop:
+				return
+			}
+		}
+	}()
+	cleaner.RegisterWithName("NextcloudGC", func() error {
+		close(stop)
+		return nil
+	})
+}
+
+// Start after task handlers exist, including Lite's in-process executor.
+func startNextcloudEventDispatcher(dispatcher *service.NextcloudEventDispatcher, cleaner interfaces.ResourceCleaner) {
+	dispatcher.Start()
+	cleaner.RegisterWithName("NextcloudEventDispatcher", func() error {
+		dispatcher.Stop()
+		return nil
+	})
+}
+
+// Completed lease rows are useful briefly for debugging, but an active HTTP
+// reader creates one durable row per request. Prune only rows whose release or
+// expiry is beyond the retention window, in bounded batches.
+func startNextcloudContentLeasePruner(store *repository.NextcloudContentLeaseStore,
+	cleaner interfaces.ResourceCleaner,
+) {
+	stop := make(chan struct{})
+	run := func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		for i := 0; i < 10; i++ {
+			count, err := store.PruneFinishedLeases(ctx, time.Hour, 1000)
+			if err != nil {
+				logger.Warnf(ctx, "[NextcloudContentLease] prune failed: %v", err)
+				return
+			}
+			if count < 1000 {
+				return
+			}
+		}
+	}
+	go func() {
+		run()
+		ticker := time.NewTicker(time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				run()
+			case <-stop:
+				return
+			}
+		}
+	}()
+	cleaner.RegisterWithName("NextcloudContentLeasePruner", func() error {
+		close(stop)
 		return nil
 	})
 }

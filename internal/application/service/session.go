@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/Tencent/WeKnora/internal/application/access"
 	"github.com/Tencent/WeKnora/internal/application/repository"
 	chatpipeline "github.com/Tencent/WeKnora/internal/application/service/chat_pipeline"
 	"github.com/Tencent/WeKnora/internal/config"
@@ -110,6 +111,7 @@ func generateEventID(suffix string) string {
 // (see service.LoadAgentHistory and chat_pipeline history loading) — there is no
 // separate cross-turn cache layer.
 type sessionService struct {
+	historyGuard          *access.NextcloudHistoryGuard
 	cfg                   *config.Config                         // Application configuration
 	sessionRepo           interfaces.SessionRepository           // Repository for session data
 	messageRepo           interfaces.MessageRepository           // Repository for message data
@@ -176,8 +178,11 @@ func NewSessionService(cfg *config.Config,
 	sandboxConfigRepo repository.TenantSandboxConfigRepository,
 	tenantSkillRepo repository.TenantSkillRepository,
 	busyGate *SessionBusyGate,
+	dataSources interfaces.DataSourceRepository,
+	publicationGuard *access.NextcloudPublicationGuard,
 ) interfaces.SessionService {
 	return &sessionService{
+		historyGuard:          access.NewNextcloudHistoryGuard(knowledgeService, dataSources, publicationGuard),
 		cfg:                   cfg,
 		sessionRepo:           sessionRepo,
 		messageRepo:           messageRepo,

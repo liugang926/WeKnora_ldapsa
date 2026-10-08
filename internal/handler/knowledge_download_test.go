@@ -59,6 +59,10 @@ func (s *downloadKBStub) GetKnowledgeBaseByID(context.Context, string) (*types.K
 	return s.kb, nil
 }
 
+func (s *downloadKBStub) GetKnowledgeBaseByIDOnly(context.Context, string) (*types.KnowledgeBase, error) {
+	return s.kb, nil
+}
+
 type downloadShareStub struct {
 	interfaces.KBShareService
 	permission types.OrgMemberRole
@@ -144,6 +148,60 @@ func TestBatchDownloadKnowledgeProducesCompleteZIP(t *testing.T) {
 	entries, err := os.ReadDir(os.TempDir())
 	require.NoError(t, err)
 	require.Empty(t, entries, "请求完成后不应留下临时压缩包")
+}
+
+func TestBatchDownloadBufferChecksAuthorizationBeforeReleasingBytes(t *testing.T) {
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	checks := 0
+	revoked := false
+	guard := &nextcloudAuthorizationWriter{
+		ResponseWriter: c.Writer,
+		leases:         &nextcloudHTTPReadLeases{ctx: ctx, cancel: cancel},
+		check: func(context.Context) error {
+			checks++
+			if revoked {
+				return apperrors.NewForbiddenError("source revoked")
+			}
+			return nil
+		},
+	}
+	output := newNextcloudBufferedResponseWriter(guard, batchDownloadResponseBuffer)
+	chunk := bytes.Repeat([]byte("x"), 32*1024)
+	for range batchDownloadResponseBuffer / len(chunk) {
+		_, err := output.Write(chunk)
+		require.NoError(t, err)
+	}
+	require.Zero(t, checks, "small archive writes should stay buffered")
+	require.Zero(t, w.Body.Len())
+	revoked = true
+	require.Error(t, output.Flush())
+	require.Equal(t, 1, checks)
+	require.Zero(t, w.Body.Len(), "revoked bytes must not reach the response")
+}
+
+func TestBatchDownloadBufferCoalescesSourceChecks(t *testing.T) {
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	checks := 0
+	guard := &nextcloudAuthorizationWriter{
+		ResponseWriter: c.Writer,
+		leases:         &nextcloudHTTPReadLeases{ctx: context.Background()},
+		check:          func(context.Context) error { checks++; return nil },
+	}
+	output := newNextcloudBufferedResponseWriter(guard, batchDownloadResponseBuffer)
+	chunk := bytes.Repeat([]byte("x"), 32*1024)
+	for range batchDownloadResponseBuffer/len(chunk) + 1 {
+		_, err := output.Write(chunk)
+		require.NoError(t, err)
+	}
+	require.Equal(t, 1, checks)
+	require.Equal(t, batchDownloadResponseBuffer, w.Body.Len())
+	require.NoError(t, output.Flush())
+	require.Equal(t, 2, checks)
+	require.Equal(t, batchDownloadResponseBuffer+len(chunk), w.Body.Len())
 }
 
 func TestBatchDownloadKnowledgeRejectsInvalidSelectionsBeforeReading(t *testing.T) {

@@ -63,3 +63,29 @@ for (const selected of [true, false, undefined]) {
     } finally { stream.stopStream() }
   })
 }
+
+for (const agentEnabled of [false, true]) {
+  test(`SSE HTTP body ${agentEnabled ? 'keeps' : 'omits'} Agent scope in ${agentEnabled ? 'Agent' : 'quick-answer'} mode`, async () => {
+    let stream!: ReturnType<typeof useStream>
+    await renderToString(createSSRApp({ setup() { stream = useStream(); return () => null } }))
+    try {
+      await stream.startStream({
+        session_id: 'nextcloud-file-session', query: 'What is in this file?', method: 'POST',
+        url: agentEnabled ? '/api/v1/agent-chat' : '/api/v1/knowledge-chat',
+        agent_enabled: agentEnabled, agent_id: 'builtin-quick-answer',
+        agent_source_tenant_id: 10001, knowledge_ids: ['published-file-id'],
+      })
+      assert.equal(stream.error.value, null)
+      const request = transport.requests.at(-1)!
+      const body = JSON.parse(request.options.body)
+      assert.equal(body.agent_enabled, agentEnabled)
+      assert.deepEqual(body.knowledge_ids, ['published-file-id'])
+      assert.equal(Object.hasOwn(body, 'agent_id'), agentEnabled)
+      assert.equal(Object.hasOwn(body, 'agent_source_tenant_id'), agentEnabled)
+      if (agentEnabled) {
+        assert.equal(body.agent_id, 'builtin-quick-answer')
+        assert.equal(body.agent_source_tenant_id, 10001)
+      }
+    } finally { stream.stopStream() }
+  })
+}

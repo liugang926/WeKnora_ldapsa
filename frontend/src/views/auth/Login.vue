@@ -350,6 +350,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { MessagePlugin } from 'tdesign-vue-next'
 import { useRoleLabel } from '@/composables/useRoleLabel'
 import { notifyLoginSuccess } from '@/utils/loginNotify'
+import { rememberNextcloudAskReturn, safeNextcloudAskPath } from '@/utils/nextcloudAskLink'
 import { newPasswordRules } from '@/utils/passwordPolicy'
 import { Swiper, SwiperSlide } from 'swiper/vue'
 import { Autoplay, EffectFade, Pagination } from 'swiper/modules'
@@ -607,7 +608,9 @@ const persistLoginResponse = async (response: any, skipRedirect = false) => {
   await authStore.refreshFromAuthMe()
   await nextTick()
   if (skipRedirect) return
-  router.replace(authStore.hasValidTenant ? '/platform/knowledge-bases' : '/onboarding/workspace')
+  const nextcloudTarget = safeNextcloudAskPath(route.query.next)
+  router.replace(authStore.hasValidTenant
+    ? (nextcloudTarget || '/platform/knowledge-bases') : '/onboarding/workspace')
 }
 
 const getBackendOIDCRedirectURI = () => `${window.location.origin}/api/v1/auth/oidc/callback`
@@ -658,6 +661,7 @@ const handleOIDCLogin = async () => {
     if (inviteToken.value) {
       sessionStorage.setItem('weknora_pending_invite_token', inviteToken.value)
     }
+    rememberNextcloudAskReturn(route.query.next)
     window.location.href = authorizationURL
   } catch (error: any) {
     console.error('OIDC 登录跳转失败:', error)
@@ -829,7 +833,7 @@ onMounted(async () => {
   }
 
   if (authStore.isLoggedIn) {
-    router.replace('/platform/knowledge-bases')
+    router.replace(safeNextcloudAskPath(route.query.next) || '/platform/knowledge-bases')
     return
   }
 

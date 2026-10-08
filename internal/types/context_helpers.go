@@ -333,6 +333,21 @@ func TaskRetryMetadataFromContext(ctx context.Context) (retried, maxRetry int, o
 }
 
 type taskRetryMetadataContextKey struct{}
+type taskExecutionIDContextKey struct{}
+
+// WithTaskExecutionID supplies the exact task ID to Lite workers. Redis
+// workers use asynq.GetTaskID instead.
+func WithTaskExecutionID(ctx context.Context, id string) context.Context {
+	return context.WithValue(ctx, taskExecutionIDContextKey{}, id)
+}
+
+func TaskExecutionIDFromContext(ctx context.Context) (string, bool) {
+	if ctx == nil {
+		return "", false
+	}
+	id, ok := ctx.Value(taskExecutionIDContextKey{}).(string)
+	return id, ok && id != ""
+}
 
 // WithLLMCallMetadata annotates a provider call for cache observability. The
 // fingerprint must be a hash, never raw prompt content.

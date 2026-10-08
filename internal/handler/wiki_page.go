@@ -20,11 +20,13 @@ import (
 
 // WikiPageHandler handles HTTP requests for wiki page operations
 type WikiPageHandler struct {
-	wikiService   interfaces.WikiPageService
-	kbService     interfaces.KnowledgeBaseService
-	lintService   *service.WikiLintService
-	auditService  interfaces.AuditLogService
-	memoryService interfaces.MemoryService
+	wikiService    interfaces.WikiPageService
+	kbService      interfaces.KnowledgeBaseService
+	lintService    *service.WikiLintService
+	auditService   interfaces.AuditLogService
+	memoryService  interfaces.MemoryService
+	knowledgeRepo  interfaces.KnowledgeRepository
+	dataSourceRepo interfaces.DataSourceRepository
 }
 
 // NewWikiPageHandler creates a new wiki page handler
@@ -34,13 +36,17 @@ func NewWikiPageHandler(
 	lintService *service.WikiLintService,
 	auditService interfaces.AuditLogService,
 	memoryService interfaces.MemoryService,
+	knowledgeRepo interfaces.KnowledgeRepository,
+	dataSourceRepo interfaces.DataSourceRepository,
 ) *WikiPageHandler {
 	return &WikiPageHandler{
-		wikiService:   wikiService,
-		kbService:     kbService,
-		lintService:   lintService,
-		auditService:  auditService,
-		memoryService: memoryService,
+		wikiService:    wikiService,
+		kbService:      kbService,
+		lintService:    lintService,
+		auditService:   auditService,
+		memoryService:  memoryService,
+		knowledgeRepo:  knowledgeRepo,
+		dataSourceRepo: dataSourceRepo,
 	}
 }
 
@@ -62,6 +68,11 @@ func (h *WikiPageHandler) validateWikiKB(c *gin.Context) (string, uint64, error)
 
 	if !kb.IsWikiEnabled() {
 		return "", 0, errors.NewBadRequestError("Wiki feature is not enabled for this knowledge base")
+	}
+	if h.knowledgeRepo != nil && h.dataSourceRepo != nil {
+		if err := service.RejectNextcloudDerivedKB(ctx, kb, h.knowledgeRepo, h.dataSourceRepo); err != nil {
+			return "", 0, errors.NewForbiddenError("Wiki is unavailable for knowledge bases with Nextcloud content")
+		}
 	}
 
 	return kbID, tenantID, nil

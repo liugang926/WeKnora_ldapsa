@@ -49,9 +49,18 @@ func (s *knowledgeBaseService) fetchKnowledgeDataWithShared(ctx context.Context,
 			return
 		}
 		allowed, err := permissions.Check(k.KnowledgeBaseID, k.TenantID, types.OrgRoleViewer)
-		if err == nil && allowed {
-			knowledgeMap[k.ID] = k
+		if err != nil || !allowed {
+			return
 		}
+		// The index may still contain a withdrawn or newly restricted source
+		// file. Check its live publication and current reader before hydrating
+		// any chunk content into a RAG or agent search result. A missing guard,
+		// source outage, or ambiguous identity omits that document.
+		if err := s.checkSearchPublication(ctx, k); err != nil {
+			logger.Warnf(ctx, "Omitting source-unavailable knowledge %s from search results", k.ID)
+			return
+		}
+		knowledgeMap[k.ID] = k
 	}
 	for _, k := range rows {
 		appendAllowed(k)

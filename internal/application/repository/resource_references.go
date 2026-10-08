@@ -7,6 +7,44 @@ import (
 	"github.com/Tencent/WeKnora/internal/types"
 )
 
+// ListKnowledgeOwnersByResource includes soft-deleted knowledge. Old grants
+// must not become usable merely because a source document was deleted or its
+// live resource binding was released while another owner retained the bytes.
+func (r *resourceRepository) ListKnowledgeOwnersByResource(
+	ctx context.Context, tenantID uint64, resourceID, reference, physicalPath string,
+) ([]*types.Knowledge, error) {
+	if tenantID == 0 {
+		return nil, nil
+	}
+	paths := make([]string, 0, 2)
+	if reference != "" {
+		paths = append(paths, reference)
+	}
+	if physicalPath != "" && physicalPath != reference {
+		paths = append(paths, physicalPath)
+	}
+	if len(paths) == 0 {
+		return nil, nil
+	}
+	query := r.db.WithContext(ctx).Unscoped().Model(&types.Knowledge{}).
+		Where("tenant_id = ?", tenantID)
+	if resourceID != "" {
+		boundIDs := r.db.WithContext(ctx).Model(&types.ResourceBinding{}).
+			Select("owner_id").Where(
+			"resource_id = ? AND tenant_id = ? AND owner_type = ?",
+			resourceID, tenantID, types.ResourceOwnerKnowledge,
+		)
+		query = query.Where("id IN (?) OR file_path IN ?", boundIDs, paths)
+	} else {
+		query = query.Where("file_path IN ?", paths)
+	}
+	var owners []*types.Knowledge
+	if err := query.Order("id ASC").Find(&owners).Error; err != nil {
+		return nil, err
+	}
+	return owners, nil
+}
+
 // ListKnowledgeBaseIDsByResource returns authoritative live KB owners for a
 // registered resource. A textual mention of a path/handle never counts.
 func (r *resourceRepository) ListKnowledgeBaseIDsByResource(

@@ -846,6 +846,7 @@ CREATE TABLE IF NOT EXISTS knowledge_bases (
     pinned_at DATETIME NULL,
     asr_config TEXT,
 		vector_store_id VARCHAR(36),
+		ever_had_nextcloud_source BOOLEAN NOT NULL DEFAULT 0,
 		storage_backend_id VARCHAR(36),
     wiki_config TEXT,
     indexing_strategy TEXT,

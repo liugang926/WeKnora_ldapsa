@@ -263,15 +263,14 @@ func (h *InitializationHandler) UpdateKBConfig(c *gin.Context) {
 
 	// 检查Embedding模型是否可以修改
 	if kb.EmbeddingModelID != "" && req.EmbeddingModelID != "" && kb.EmbeddingModelID != req.EmbeddingModelID {
-		// 检查是否已有文件
-		knowledgeList, err := h.knowledgeService.ListPagedKnowledgeByKnowledgeBaseID(ctx,
-			kbIdStr, &types.Pagination{
-				Page:     1,
-				PageSize: 1,
-			}, types.KnowledgeListFilter{})
-		if err == nil && knowledgeList != nil && knowledgeList.Total > 0 {
+		hasFiles, countErr := h.kbHasFiles(ctx, kbIdStr)
+		if countErr != nil {
+			_ = c.Error(countErr)
+			return
+		}
+		if hasFiles {
 			logger.Error(ctx, "Cannot change embedding model when files exist")
-			c.Error(errors.NewBadRequestError("知识库中已有文件，无法修改Embedding模型"))
+			_ = c.Error(errors.NewBadRequestError("知识库中已有文件，无法修改Embedding模型"))
 			return
 		}
 	}
@@ -494,6 +493,28 @@ func kbStorageBindingChanged(kb *types.KnowledgeBase, backendID, provider string
 	return provider != "" && provider != currentProvider
 }
 
+// kbHasFiles uses tenant-scoped knowledge service counts rather than the public
+// document-list handler, which can deny withdrawn publications. The ordinary
+// list excludes deleting rows, so count that status separately as well.
+// If either required count is unavailable, keep file-sensitive settings locked.
+func (h *InitializationHandler) kbHasFiles(ctx context.Context, kbID string) (bool, error) {
+	knowledgeList, err := h.knowledgeService.ListPagedKnowledgeByKnowledgeBaseID(ctx,
+		kbID, &types.Pagination{Page: 1, PageSize: 1}, types.KnowledgeListFilter{})
+	if err != nil || knowledgeList == nil {
+		return false, errors.NewInternalServerError("Cannot verify whether the knowledge base contains files")
+	}
+	if knowledgeList.Total > 0 {
+		return true, nil
+	}
+	deletingList, err := h.knowledgeService.ListPagedKnowledgeByKnowledgeBaseID(ctx,
+		kbID, &types.Pagination{Page: 1, PageSize: 1},
+		types.KnowledgeListFilter{ParseStatus: types.ParseStatusDeleting})
+	if err != nil || deletingList == nil {
+		return false, errors.NewInternalServerError("Cannot verify whether the knowledge base contains files")
+	}
+	return deletingList.Total > 0, nil
+}
+
 // applyKBStorageBinding binds the owner's storage instance to the KB. The
 // caller's workspace must own the KB: backends resolve against TenantInfo.
 func (h *InitializationHandler) applyKBStorageBinding(
@@ -501,25 +522,18 @@ func (h *InitializationHandler) applyKBStorageBinding(
 ) error {
 	// Bind the concrete storage instance. Provider remains a compatibility
 	// projection for older clients and historical rows.
+	oldID := ""
+	if kb.StorageBackendID != nil {
+		oldID = strings.TrimSpace(*kb.StorageBackendID)
+	}
+	requestedID := strings.TrimSpace(req.StorageBackendID)
 	if strings.TrimSpace(req.StorageBackendID) != "" {
 		tenant, _ := types.TenantInfoFromContext(ctx)
 		backend, resolveErr := h.storageResolver.ResolveBackend(ctx, tenant, req.StorageBackendID, "")
 		if resolveErr != nil || backend == nil {
 			return errors.NewBadRequestError("Storage backend is unavailable")
 		}
-		oldID := ""
-		if kb.StorageBackendID != nil {
-			oldID = *kb.StorageBackendID
-		}
-		if oldID != "" && oldID != backend.ID {
-			knowledgeList, listErr := h.knowledgeService.ListPagedKnowledgeByKnowledgeBaseID(ctx,
-				kbID, &types.Pagination{Page: 1, PageSize: 1}, types.KnowledgeListFilter{})
-			if listErr == nil && knowledgeList != nil && knowledgeList.Total > 0 {
-				return errors.NewBadRequestError(
-					"Storage backend cannot be changed while the knowledge base contains files; migrate storage first")
-			}
-		}
-		kb.StorageBackendID = &backend.ID
+		requestedID = backend.ID
 		req.StorageProvider = backend.Provider
 	}
 	// Legacy provider projection.
@@ -534,12 +548,21 @@ func (h *InitializationHandler) applyKBStorageBinding(
 	if oldProvider == "" {
 		oldProvider = "local"
 	}
-	if oldProvider != provider {
-		knowledgeList, err := h.knowledgeService.ListPagedKnowledgeByKnowledgeBaseID(ctx,
-			kbID, &types.Pagination{Page: 1, PageSize: 1}, types.KnowledgeListFilter{})
-		if err == nil && knowledgeList != nil && knowledgeList.Total > 0 {
-			logger.Warn(ctx, "Storage engine changed with existing files, old files may become inaccessible")
+	// A legacy KB can have files without a concrete backend ID. Treat any new
+	// binding as a change, and refuse it unless the unfiltered KB count is
+	// known to be empty. A count failure must not authorize a storage move.
+	if (requestedID != "" && oldID != requestedID) || oldProvider != provider {
+		hasFiles, err := h.kbHasFiles(ctx, kbID)
+		if err != nil {
+			return err
 		}
+		if hasFiles {
+			return errors.NewBadRequestError(
+				"Storage backend cannot be changed while the knowledge base contains files; migrate storage first")
+		}
+	}
+	if requestedID != "" {
+		kb.StorageBackendID = &requestedID
 	}
 	kb.SetStorageProvider(provider)
 	return nil

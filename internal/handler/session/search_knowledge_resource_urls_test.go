@@ -21,10 +21,21 @@ type stubSearchSessionService struct {
 	interfaces.SessionService
 }
 
+type stubSearchKnowledgeService struct {
+	interfaces.KnowledgeService
+}
+
+func (s *stubSearchKnowledgeService) GetKnowledgeByIDOnly(
+	_ context.Context, id string,
+) (*types.Knowledge, error) {
+	return &types.Knowledge{ID: id, TenantID: 7, KnowledgeBaseID: "kb-1", Channel: "web"}, nil
+}
+
 func (s *stubSearchSessionService) SearchKnowledge(
 	_ context.Context, _ []string, _ []string, _ []types.TagScope, _ string,
 ) ([]*types.SearchResult, error) {
 	return []*types.SearchResult{{
+		KnowledgeID: "doc-1", KnowledgeBaseID: "kb-1", KnowledgeChannel: "web",
 		Content:   "chunk ![c](" + testResourceHandle + ")",
 		ImageInfo: `[{"url":"` + testResourceHandle + `"}]`,
 	}}, nil
@@ -35,8 +46,9 @@ func TestSearchKnowledge_PublicResourceURLs(t *testing.T) {
 	r := gin.New()
 	r.Use(middleware.ErrorHandler())
 	h := &Handler{
-		sessionService: &stubSearchSessionService{},
-		fileService:    &stubResourceFileService{},
+		sessionService:         &stubSearchSessionService{},
+		searchKnowledgeService: &stubSearchKnowledgeService{},
+		fileService:            &stubResourceFileService{},
 	}
 	r.POST("/knowledge-search", h.SearchKnowledge)
 
@@ -56,8 +68,9 @@ func TestSearchKnowledge_InvalidResourceURLMode(t *testing.T) {
 	r := gin.New()
 	r.Use(middleware.ErrorHandler())
 	h := &Handler{
-		sessionService: &stubSearchSessionService{},
-		fileService:    &stubResourceFileService{},
+		sessionService:         &stubSearchSessionService{},
+		searchKnowledgeService: &stubSearchKnowledgeService{},
+		fileService:            &stubResourceFileService{},
 	}
 	r.POST("/knowledge-search", h.SearchKnowledge)
 
@@ -76,8 +89,9 @@ func TestSearchKnowledge_DefaultKeepsHandles(t *testing.T) {
 	r := gin.New()
 	r.Use(middleware.ErrorHandler())
 	h := &Handler{
-		sessionService: &stubSearchSessionService{},
-		fileService:    &stubResourceFileService{},
+		sessionService:         &stubSearchSessionService{},
+		searchKnowledgeService: &stubSearchKnowledgeService{},
+		fileService:            &stubResourceFileService{},
 	}
 	r.POST("/knowledge-search", h.SearchKnowledge)
 

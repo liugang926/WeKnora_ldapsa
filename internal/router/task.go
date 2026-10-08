@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Tencent/WeKnora/internal/application/repository"
 	"github.com/Tencent/WeKnora/internal/application/service"
 	"github.com/Tencent/WeKnora/internal/common"
 	"github.com/Tencent/WeKnora/internal/logger"
@@ -35,6 +36,9 @@ type AsynqTaskParams struct {
 	SharedServer         *asynq.Server `name:"sharedAsynqServer"`
 	WikiServer           *asynq.Server `name:"wikiAsynqServer"`
 	KnowledgeService     interfaces.KnowledgeService
+	KnowledgeRepo        interfaces.KnowledgeRepository
+	ChunkRepo            interfaces.ChunkRepository
+	ContentLeases        *repository.NextcloudContentLeaseStore
 	KnowledgeBaseService interfaces.KnowledgeBaseService
 	TagService           interfaces.KnowledgeTagService
 	DataSourceService    interfaces.DataSourceService
@@ -259,26 +263,29 @@ func RunAsynqServer(params AsynqTaskParams) *asynq.ServeMux {
 	// handler execution in a SPAN so all child generations (embedding / VLM /
 	// chat / rerank / ASR) nest correctly in the Langfuse UI.
 	mux.Use(langfuse.AsynqMiddleware())
+	build := func(handler func(context.Context, *asynq.Task) error) func(context.Context, *asynq.Task) error {
+		return wrapNextcloudBuild(params.ContentLeases, params.KnowledgeRepo, params.ChunkRepo, handler)
+	}
 
 	// Register extract handlers - router will dispatch to appropriate handler
-	mux.HandleFunc(types.TypeChunkExtract, params.ChunkExtractor.Handle)
-	mux.HandleFunc(types.TypeDataTableSummary, params.DataTableSummary.Handle)
+	mux.HandleFunc(types.TypeChunkExtract, build(params.ChunkExtractor.Handle))
+	mux.HandleFunc(types.TypeDataTableSummary, build(params.DataTableSummary.Handle))
 
 	// Register document processing handler
-	mux.HandleFunc(types.TypeDocumentProcess, params.KnowledgeService.ProcessDocument)
+	mux.HandleFunc(types.TypeDocumentProcess, build(params.KnowledgeService.ProcessDocument))
 	mux.HandleFunc(types.TypeTemporaryDocumentProcess, params.TemporaryDocument.Process)
 
 	// Register manual knowledge processing handler (cleanup + re-indexing)
-	mux.HandleFunc(types.TypeManualProcess, params.KnowledgeService.ProcessManualUpdate)
+	mux.HandleFunc(types.TypeManualProcess, build(params.KnowledgeService.ProcessManualUpdate))
 
 	// Register FAQ import handler (includes dry run mode)
 	mux.HandleFunc(types.TypeFAQImport, params.KnowledgeService.ProcessFAQImport)
 
 	// Register question generation handler
-	mux.HandleFunc(types.TypeQuestionGeneration, params.KnowledgeService.ProcessQuestionGeneration)
+	mux.HandleFunc(types.TypeQuestionGeneration, build(params.KnowledgeService.ProcessQuestionGeneration))
 
 	// Register summary generation handler
-	mux.HandleFunc(types.TypeSummaryGeneration, params.KnowledgeService.ProcessSummaryGeneration)
+	mux.HandleFunc(types.TypeSummaryGeneration, build(params.KnowledgeService.ProcessSummaryGeneration))
 
 	// Register KB clone handler
 	mux.HandleFunc(types.TypeKBClone, params.KnowledgeService.ProcessKBClone)
@@ -299,11 +306,11 @@ func RunAsynqServer(params AsynqTaskParams) *asynq.ServeMux {
 	mux.HandleFunc(types.TypeKBDelete, params.KnowledgeBaseService.ProcessKBDelete)
 
 	// Register image multimodal handler
-	mux.HandleFunc(types.TypeImageMultimodal, params.ImageMultimodal.Handle)
+	mux.HandleFunc(types.TypeImageMultimodal, build(params.ImageMultimodal.Handle))
 
 	// Register knowledge post process handler
-	mux.HandleFunc(types.TypeKnowledgePostProcess, params.KnowledgePostProcess.Handle)
-	mux.HandleFunc(types.TypeKnowledgeAutoTag, params.KnowledgeAutoTag.Handle)
+	mux.HandleFunc(types.TypeKnowledgePostProcess, build(params.KnowledgePostProcess.Handle))
+	mux.HandleFunc(types.TypeKnowledgeAutoTag, build(params.KnowledgeAutoTag.Handle))
 	mux.HandleFunc(types.TypeKnowledgeBaseProfile, params.KnowledgeBaseProfile.Handle)
 
 	// Register data source sync handler

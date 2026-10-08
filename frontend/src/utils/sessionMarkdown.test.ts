@@ -61,3 +61,16 @@ test('buildSessionMarkdown exports visible conversation content without internal
   assert.doesNotMatch(markdown, /hidden system prompt/)
   assert.equal(markdown.match(/\[Notes\]/g)?.length, 1)
 })
+
+test('exported Nextcloud citation uses the visitor route', () => {
+  const markdown = buildSessionMarkdown({
+    sessionId: 's', title: 'Nextcloud', exportedAt: '2026-01-05T00:00:00Z', labels,
+    messages: [{ role: 'assistant', content: 'Answer', knowledge_references: [{
+      knowledge_title: 'file.md',
+      metadata: { nextcloud_file_id: '77', nextcloud_human_url: 'https://files.example/index.php/f/77',
+        url: 'https://files.example/index.php/apps/integration_weknora/api/v1/bindings/b/files/77/content' },
+    }] }],
+  })
+  assert.match(markdown, /\[file\.md\]\(https:\/\/files\.example\/index\.php\/f\/77\)/)
+  assert.doesNotMatch(markdown, /\/content\)/)
+})

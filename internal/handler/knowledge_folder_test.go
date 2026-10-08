@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -29,9 +30,10 @@ func (s *stubFolderKBService) GetKnowledgeBaseByID(_ context.Context, id string)
 type stubFolderKGService struct {
 	interfaces.KnowledgeService
 
-	gotFilter types.KnowledgeListFilter
-	tree      *types.KnowledgeFolderTree
-	treeErr   error
+	gotFilter      types.KnowledgeListFilter
+	tree           *types.KnowledgeFolderTree
+	treeErr        error
+	nextcloudTotal int64
 }
 
 func (s *stubFolderKGService) ListPagedKnowledgeByKnowledgeBaseID(
@@ -41,6 +43,9 @@ func (s *stubFolderKGService) ListPagedKnowledgeByKnowledgeBaseID(
 	filter types.KnowledgeListFilter,
 ) (*types.PageResult, error) {
 	s.gotFilter = filter
+	if filter.Source == types.ConnectorTypeNextcloud {
+		return types.NewPageResult(s.nextcloudTotal, page, []*types.Knowledge{}), nil
+	}
 	return types.NewPageResult(0, page, []*types.Knowledge{}), nil
 }
 
@@ -143,5 +148,22 @@ func TestListKnowledgeFolders_ReturnsTree(t *testing.T) {
 	}
 	if len(body.Data.Folders[0].Children) != 1 || body.Data.Folders[0].Children[0].Path != "docs/spec" {
 		t.Fatalf("children = %+v, want \"docs/spec\"", body.Data.Folders[0].Children)
+	}
+}
+
+func TestListKnowledgeFoldersRejectsUnverifiedNextcloudAggregates(t *testing.T) {
+	kg := &stubFolderKGService{
+		nextcloudTotal: 1,
+		tree: types.BuildKnowledgeFolderTree([]*types.KnowledgeFolderCount{
+			{FolderPath: "secret", Count: 1},
+		}),
+	}
+	router := newFolderRouter(kg)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, httptest.NewRequest(
+		http.MethodGet, "/knowledge-bases/kb-1/knowledge/folders", nil,
+	))
+	if w.Code != http.StatusForbidden || strings.Contains(w.Body.String(), "secret") {
+		t.Fatalf("folder aggregate leaked: status=%d body=%s", w.Code, w.Body.String())
 	}
 }

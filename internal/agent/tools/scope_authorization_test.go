@@ -90,6 +90,28 @@ func TestAuthorizeKnowledgeInSearchTargetsAllowsBoundDocument(t *testing.T) {
 	}
 }
 
+func TestAgentDocumentScopeRejectsNextcloudWithoutPublicationCheck(t *testing.T) {
+	knowledge := &types.Knowledge{
+		ID: "doc-1", TenantID: 7, KnowledgeBaseID: "kb-1",
+		Channel:  types.ConnectorTypeNextcloud,
+		Metadata: types.JSON(`{"datasource_id":"source-1","nextcloud_file_id":"42"}`),
+	}
+	service := &scopeKnowledgeService{knowledge: knowledge}
+	targets := types.SearchTargets{{
+		Type: types.SearchTargetTypeKnowledgeBase, KnowledgeBaseID: "kb-1", TenantID: 7,
+	}}
+	if _, err := authorizeKnowledgeInSearchTargets(context.Background(), targets, knowledge.ID, service); err == nil {
+		t.Fatal("Agent document handle exposed a Nextcloud document without source authorization")
+	}
+	chunkService := &scopeChunkService{chunk: &types.Chunk{
+		ID: "chunk-1", TenantID: 7, KnowledgeBaseID: "kb-1", KnowledgeID: knowledge.ID,
+		IsEnabled: true,
+	}}
+	if _, err := authorizeChunkInSearchTargets(context.Background(), targets, "chunk-1", chunkService, service); err == nil {
+		t.Fatal("Agent chunk handle exposed a Nextcloud document without source authorization")
+	}
+}
+
 func TestAuthorizeChunkInSearchTargetsRejectsDisabledFAQ(t *testing.T) {
 	chunkService := &scopeChunkService{chunk: &types.Chunk{
 		ID: "faq-1", KnowledgeID: "faq-document", KnowledgeBaseID: "kb-1",

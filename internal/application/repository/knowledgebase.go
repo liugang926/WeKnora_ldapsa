@@ -169,7 +169,9 @@ func (r *knowledgeBaseRepository) ListUserKBPinIDs(
 
 // UpdateKnowledgeBase updates a knowledge base
 func (r *knowledgeBaseRepository) UpdateKnowledgeBase(ctx context.Context, kb *types.KnowledgeBase) error {
-	return r.db.WithContext(ctx).Save(kb).Error
+	// A stale settings save must not clear provenance concurrently set by a
+	// Nextcloud data-source transaction. Only that transaction may set the flag.
+	return r.db.WithContext(ctx).Omit("ever_had_nextcloud_source").Save(kb).Error
 }
 
 // UpdateKnowledgeBaseGeneratedProfile writes the generated_profile column
@@ -185,12 +187,22 @@ func (r *knowledgeBaseRepository) UpdateKnowledgeBaseGeneratedProfile(
 	if profile != nil {
 		value = *profile
 	}
-	return r.db.WithContext(ctx).Model(&types.KnowledgeBase{}).
-		Where("id = ?", id).
+	result := r.db.WithContext(ctx).Model(&types.KnowledgeBase{}).
+		Where("id = ? AND ever_had_nextcloud_source = ?", id, false).
 		Updates(map[string]interface{}{
 			"generated_profile": value,
 			"updated_at":        time.Now(),
-		}).Error
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected != 1 {
+		// The KB may have become Nextcloud-backed while a model call was in
+		// flight. The provenance update and this conditional write serialize
+		// on the same row, so a stale profile cannot be saved afterward.
+		return types.ErrKnowledgeBaseProfileUnsupported
+	}
+	return nil
 }
 
 // DeleteKnowledgeBase deletes a knowledge base
