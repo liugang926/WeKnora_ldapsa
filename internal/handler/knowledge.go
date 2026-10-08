@@ -12,6 +12,7 @@ import (
 
 	"github.com/Tencent/WeKnora/internal/application/access"
 	"github.com/Tencent/WeKnora/internal/application/repository"
+	"github.com/Tencent/WeKnora/internal/application/service"
 	"github.com/Tencent/WeKnora/internal/config"
 	"github.com/Tencent/WeKnora/internal/errors"
 	"github.com/Tencent/WeKnora/internal/filetransport"
@@ -37,6 +38,7 @@ type KnowledgeHandler struct {
 	publicationGuard  *access.NextcloudPublicationGuard
 	askTargets        nextcloudAskTargetResolver
 	contentLeases     nextcloudHTTPReadLeaseStore
+	outputAuthorizer  *service.KnowledgeOutputAuthorizer
 	leaseHeartbeat    time.Duration
 	leaseCheckpoint   time.Duration
 	publicationCheck  func(context.Context, *types.Knowledge) error // test seam; production uses publicationGuard
@@ -72,18 +74,31 @@ func ConfigureKnowledgeHandlerContentLeaseStore(h *KnowledgeHandler, store *repo
 	}
 }
 
-func (h *KnowledgeHandler) checkPublication(ctx context.Context, knowledge *types.Knowledge) error {
+func (h *KnowledgeHandler) checkSourcePublication(ctx context.Context, knowledge *types.Knowledge) error {
 	if h.publicationCheck != nil {
 		return h.publicationCheck(ctx, knowledge)
 	}
 	return checkKnowledgePublication(ctx, h.publicationGuard, knowledge)
 }
 
+func (h *KnowledgeHandler) checkPublication(ctx context.Context, knowledge *types.Knowledge) error {
+	if err := h.checkSourcePublication(ctx, knowledge); err != nil {
+		return err
+	}
+	if guard := service.KnowledgeOutputGuardFromContext(ctx); guard != nil {
+		return knowledgeOutputHTTPError(guard.Check(ctx, []*types.Knowledge{knowledge}))
+	}
+	return nil
+}
+
 func (h *KnowledgeHandler) checkPublicationList(ctx context.Context, knowledges []*types.Knowledge) error {
 	for _, knowledge := range knowledges {
-		if err := h.checkPublication(ctx, knowledge); err != nil {
+		if err := h.checkSourcePublication(ctx, knowledge); err != nil {
 			return err
 		}
+	}
+	if guard := service.KnowledgeOutputGuardFromContext(ctx); guard != nil {
+		return knowledgeOutputHTTPError(guard.Check(ctx, knowledges))
 	}
 	return nil
 }

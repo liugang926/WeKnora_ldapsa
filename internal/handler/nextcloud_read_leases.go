@@ -12,6 +12,7 @@ import (
 
 	"github.com/Tencent/WeKnora/internal/application/access"
 	"github.com/Tencent/WeKnora/internal/application/repository"
+	"github.com/Tencent/WeKnora/internal/application/service"
 	"github.com/Tencent/WeKnora/internal/errors"
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/middleware"
@@ -175,6 +176,18 @@ func (h *KnowledgeHandler) beginNextcloudRead(c *gin.Context, ctx context.Contex
 	leases, err := acquireNextcloudHTTPReadLeases(ctx, h.contentLeases, knowledges, h.leaseHeartbeat)
 	if err != nil {
 		return nil, err
+	}
+	if h.outputAuthorizer != nil {
+		guard, err := h.outputAuthorizer.Begin(ctx, knowledges)
+		if err != nil {
+			leases.Close()
+			return nil, knowledgeOutputHTTPError(err)
+		}
+		if leases == nil {
+			guardCtx, cancel := context.WithCancel(ctx)
+			leases = &nextcloudHTTPReadLeases{ctx: guardCtx, cancel: cancel}
+		}
+		leases.ctx = service.WithKnowledgeOutputGuard(leases.ctx, guard)
 	}
 	attachNextcloudLeasedRequest(c, leases)
 	return leases, nil

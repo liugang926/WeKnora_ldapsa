@@ -496,9 +496,16 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	logger.Debugf(ctx, "[Container] Knowledge housekeeping runner registered")
 	must(container.Provide(chatpipeline.NewEventManager))
 	must(container.Provide(service.NewSourceLineageGuard))
-	must(container.Provide(func(db *gorm.DB) interfaces.RAGChunkSnapshotReader {
-		return repository.NewRAGChunkSnapshotReader(db, nil)
+	must(container.Provide(repository.NewKnowledgeInputProvenanceStore))
+	must(container.Provide(func(store *repository.KnowledgeInputProvenanceStore) interfaces.KnowledgeBuildInputReader {
+		return store
 	}))
+	must(container.Provide(func(store *repository.KnowledgeInputProvenanceStore) interfaces.KnowledgeInputWriter { return store }))
+	must(container.Provide(service.NewKnowledgeOutputAuthorizer))
+	must(container.Provide(func(db *gorm.DB, store *repository.KnowledgeInputProvenanceStore) interfaces.RAGChunkSnapshotReader {
+		return repository.NewRAGChunkSnapshotReader(db, store)
+	}))
+	must(container.Invoke(service.ConfigureKnowledgeInputProvenance))
 	must(container.Invoke(service.ConfigureMessageSourceLineage))
 	must(container.Invoke(service.ConfigureKnowledgeBaseRAGChunkHydration))
 	must(container.Invoke(service.ConfigureAgentRAGChunkHydration))
@@ -590,6 +597,7 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	must(container.Provide(handler.NewGroupAccessHandler))
 	must(container.Invoke(handler.ConfigureGroupAccessResourceCatalog))
 	must(container.Invoke(handler.ConfigureKnowledgeHandlerGroupAccess))
+	must(container.Invoke(handler.ConfigureKnowledgeHandlerOutputLineage))
 	must(container.Provide(handler.NewSystemHandler))
 	// Dig resolves exact types; adapt the registered service to the handler's
 	// narrower SharedAgentLookup interface at the composition boundary.
