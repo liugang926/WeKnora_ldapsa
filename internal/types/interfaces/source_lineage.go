@@ -11,3 +11,11 @@ type MessageSourceLineageVerifier interface {
 	CheckMessagePublication(context.Context, *types.Message) error
 	CheckLiveMessagePublication(context.Context, *types.Message) error
 }
+
+// MessageSourceLineageBatchVerifier authorizes original committed parents as
+// one boundary while retaining every parent's Agent/KB scope. Unlike a public
+// raw-user reader, it includes and requires the user parent's complete proof.
+// A loop over the single-message verifier is not an equivalent capability.
+type MessageSourceLineageBatchVerifier interface {
+	CheckMessagePublications(context.Context, []*types.Message) error
+}

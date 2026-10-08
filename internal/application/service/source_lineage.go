@@ -129,9 +129,28 @@ func (s *messageService) checkTypedSourceLineage(ctx context.Context, message *t
 }
 
 func (s *messageService) checkMessageSourceLineageBatch(ctx context.Context, messages []*types.Message, titleReads []access.SourceLineageRead) error {
+	return s.checkMessageSourceLineageReadBatch(ctx, messages, titleReads, false)
+}
+
+// CheckMessagePublications is the mandatory multi-parent derivative boundary.
+// Raw user inputs require their original complete envelope here; public HTTP
+// history adapters separately allow only the author's raw Content.
+func (s *messageService) CheckMessagePublications(ctx context.Context, messages []*types.Message) error {
+	if len(messages) == 0 {
+		return access.ErrNextcloudPublicationDenied
+	}
+	for _, message := range messages {
+		if message == nil || message.SourceLineage.RequireComplete() != nil {
+			return access.ErrNextcloudPublicationDenied
+		}
+	}
+	return s.checkMessageSourceLineageReadBatch(ctx, messages, nil, true)
+}
+
+func (s *messageService) checkMessageSourceLineageReadBatch(ctx context.Context, messages []*types.Message, titleReads []access.SourceLineageRead, includeRawUser bool) error {
 	reads := append([]access.SourceLineageRead{}, titleReads...)
 	for _, message := range messages {
-		if message == nil || message.Role == "user" {
+		if message == nil || message.Role == "user" && !includeRawUser {
 			continue
 		}
 		scope, err := s.messageSourceLineageScope(ctx, message)
