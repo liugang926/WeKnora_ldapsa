@@ -41,7 +41,8 @@ func serveSpanHTTP(h *KnowledgeHandler, a *service.SpanOutputAuthorizer, path st
 		ctx = types.WithExecutionTenant(ctx, 7)
 		c.Request = c.Request.WithContext(ctx)
 	})
-	router.GET("/knowledge/:id/spans", func(c *gin.Context) { ServeOriginalKnowledgeSpans(h, c, a) })
+	ConfigureKnowledgeHandlerSpanOutputLineage(h, a)
+	router.GET("/knowledge/:id/spans", h.GetKnowledgeSpans)
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, httptest.NewRequest("GET", path, nil))
 	return w

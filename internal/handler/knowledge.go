@@ -29,22 +29,22 @@ import (
 
 // KnowledgeHandler processes HTTP requests related to knowledge resources
 type KnowledgeHandler struct {
-	cfg               *config.Config
-	kgService         interfaces.KnowledgeService
-	kbService         interfaces.KnowledgeBaseService
-	kbShareService    interfaces.KBShareService
-	agentShareService interfaces.AgentShareService
-	groupAccess       interfaces.GroupAccessService
-	publicationGuard  *access.NextcloudPublicationGuard
-	askTargets        nextcloudAskTargetResolver
-	contentLeases     nextcloudHTTPReadLeaseStore
-	outputAuthorizer  *service.KnowledgeOutputAuthorizer
+	cfg                  *config.Config
+	kgService            interfaces.KnowledgeService
+	kbService            interfaces.KnowledgeBaseService
+	kbShareService       interfaces.KBShareService
+	agentShareService    interfaces.AgentShareService
+	groupAccess          interfaces.GroupAccessService
+	publicationGuard     *access.NextcloudPublicationGuard
+	askTargets           nextcloudAskTargetResolver
+	contentLeases        nextcloudHTTPReadLeaseStore
+	outputAuthorizer     *service.KnowledgeOutputAuthorizer
 	spanOutputAuthorizer *service.SpanOutputAuthorizer
-	leaseHeartbeat    time.Duration
-	leaseCheckpoint   time.Duration
-	publicationCheck  func(context.Context, *types.Knowledge) error // test seam; production uses publicationGuard
-	asynqClient       interfaces.TaskEnqueuer
-	spanRepo          repository.KnowledgeSpanRepository
+	leaseHeartbeat       time.Duration
+	leaseCheckpoint      time.Duration
+	publicationCheck     func(context.Context, *types.Knowledge) error // test seam; production uses publicationGuard
+	asynqClient          interfaces.TaskEnqueuer
+	spanRepo             repository.KnowledgeSpanRepository
 }
 
 // ConfigureKnowledgeHandlerGroupAccess attaches the optional directory-group
@@ -778,7 +778,9 @@ func (h *KnowledgeHandler) GetKnowledgeSpans(c *gin.Context) {
 // ConfigureKnowledgeHandlerSpanOutputLineage installs the original attempt
 // authorizer in production. Unconfigured readers remain unavailable.
 func ConfigureKnowledgeHandlerSpanOutputLineage(h *KnowledgeHandler, authorizer *service.SpanOutputAuthorizer) {
-	if h != nil { h.spanOutputAuthorizer = authorizer }
+	if h != nil {
+		h.spanOutputAuthorizer = authorizer
+	}
 }
 
 // knowledgeSpansLastError builds the last_error payload for GetKnowledgeSpans.
