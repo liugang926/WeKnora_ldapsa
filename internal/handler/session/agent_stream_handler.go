@@ -161,22 +161,17 @@ func (h *AgentStreamHandler) Subscribe() {
 
 func (h *AgentStreamHandler) subscribeWithLineage(kind event.EventType, handler event.EventHandler) {
 	h.eventBus.On(kind, func(ctx context.Context, evt event.Event) error {
-		if evt.SourceLineage == nil {
-			if turn := types.RAGSourceLineageFromContext(ctx); turn != nil {
-				lineage, err := turn.CheckedSnapshot(ctx)
-				if err != nil {
-					return err
-				}
-				evt.SourceLineage = lineage
-			}
-		}
 		lineage := eventSourceLineage(ctx, evt)
 		h.mu.Lock()
 		// The quick-answer close notification carries no new generated body.
 		// It seals the already-accounted prefix; a new FinalAnswer never gets
 		// this exception and must carry its own producer receipt.
-		if lineage == nil && kind == event.EventAgentComplete {
-			if data, ok := evt.Data.(event.AgentCompleteData); ok && data.FinalAnswer == "" {
+		if evt.SourceLineage == nil && kind == event.EventAgentComplete {
+			if data, ok := evt.Data.(event.AgentCompleteData); ok &&
+				data.MessageID == h.assistantMessageID && data.FinalAnswer == "" &&
+				len(data.KnowledgeRefs) == 0 && data.AgentSteps == nil && data.Usage == nil && len(data.Extra) == 0 &&
+				data.TotalSteps == 0 && data.TotalDurationMs == 0 &&
+				(data.SessionID == "" || data.SessionID == h.sessionID) && (data.RequestID == "" || data.RequestID == h.requestID) {
 				lineage = h.prefixLineage
 			}
 		}
@@ -1069,13 +1064,10 @@ func (h *AgentStreamHandler) handleCommandOutput(ctx context.Context, evt event.
 }
 
 // eventSourceLineage carries producer metadata, never client Data/citations.
-func eventSourceLineage(ctx context.Context, evt event.Event) *types.SourceLineage {
+func eventSourceLineage(_ context.Context, evt event.Event) *types.SourceLineage {
 	if lineage, ok := evt.SourceLineage.(*types.SourceLineage); ok {
 		copy, _ := types.UnionSourceLineage(lineage)
 		return copy
-	}
-	if turn := types.RAGSourceLineageFromContext(ctx); turn != nil {
-		return turn.Snapshot()
 	}
 	return nil
 }

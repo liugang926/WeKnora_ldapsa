@@ -39,6 +39,12 @@ revisions with the next value; SQLite rejects attempts to reset the revision.
 A manual edit during the model call wins. A failed write neither
 publishes the new title nor replaces its previous committed provenance.
 
+Async title events reload the committed text and its original proof after
+GenerateTitle, bind the returned text and reauthorize that snapshot. The return
+value may be an existing source-bearing title, so an event cannot assume it was
+created from today's source-independent raw query. Its exact original envelope
+is carried to the stream sink; unknown, changed or revoked text is not emitted.
+
 Fork retains the original title/description proof unchanged for inherited text;
 unknown inherited text stays redacted. An explicitly requested human fork title
 is source-independent. Message search carries session-title proof privately and

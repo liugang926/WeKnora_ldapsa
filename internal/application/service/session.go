@@ -1071,7 +1071,11 @@ func (s *sessionService) GenerateTitleAsync(
 		// Emit title update event - BUG FIX: use bgCtx instead of ctx
 		// The original ctx is from the HTTP request and may be cancelled by the time we get here
 		if eventBus != nil {
-			titleLineage, _ := types.NewCompleteSourceLineage()
+			titleLineage, err := s.committedSessionTitleEventLineage(bgCtx, session, title)
+			if err != nil {
+				logger.Warnf(bgCtx, "Skipped session title event after committed title authorization failed: %v", err)
+				return
+			}
 			if err := eventBus.Emit(bgCtx, event.Event{
 				SourceLineage: titleLineage,
 				Type:          event.EventSessionTitle,
