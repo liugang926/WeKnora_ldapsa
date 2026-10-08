@@ -49,13 +49,11 @@ func TestPostgresNextcloudActualGCProviderTransactionSerializesRestore(t *testin
 			return tx.Model(&nextcloudSourceVersion{}).Where("tenant_id=7 AND knowledge_base_id='kb' AND datasource_id='ds' AND external_id='node'").Updates(map[string]any{"state": "published", "candidate_knowledge_id": "old"}).Error
 		})
 	}()
-	var schema string
-	require.NoError(t, db.Raw("SELECT current_schema()").Scan(&schema).Error)
 	deadline := time.Now().Add(3 * time.Second)
 	blocked := false
 	for time.Now().Before(deadline) {
 		var waiting int64
-		require.NoError(t, db.Raw("SELECT count(*) FROM pg_locks l JOIN pg_class c ON c.oid=l.relation JOIN pg_namespace n ON n.oid=c.relnamespace WHERE NOT l.granted AND n.nspname=?", schema).Scan(&waiting).Error)
+		require.NoError(t, db.Raw("SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE 'UPDATE knowledge_bases%'").Scan(&waiting).Error)
 		if waiting > 0 {
 			blocked = true
 			break
