@@ -40,6 +40,9 @@ def main():
     if args.evidence_dir:
         output = args.evidence_dir.absolute()
         require(not output.exists() and not output.is_symlink(), 'evidence directory already exists')
+        planned = output.resolve()
+        require(planned != root and root not in planned.parents,
+                'evidence must be outside the source checkout')
         output.mkdir(mode=0o700)
         output = output.resolve()
     else:
