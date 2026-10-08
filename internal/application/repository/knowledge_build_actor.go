@@ -65,7 +65,8 @@ func captureKnowledgeActorSelector(ctx context.Context, admissionID string) (kno
 	}
 	switch principal.Type {
 	case types.PrincipalWebUser:
-		if caller.UserID == "" || principal.ID != caller.UserID {
+		_, machine := types.TenantAPIKeyScopeFromContext(ctx)
+		if caller.UserID == "" || principal.ID != caller.UserID || types.IsSyntheticUserID(caller.UserID) || machine {
 			return selector, ErrKnowledgeInputChanged
 		}
 	case types.PrincipalAPITenant, types.PrincipalAPIExternalUser:

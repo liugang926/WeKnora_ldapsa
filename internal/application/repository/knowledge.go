@@ -48,6 +48,7 @@ type knowledgeRepository struct {
 	db                        *gorm.DB
 	displayAuthorityFactory   KnowledgeDisplayAuthorityFactory
 	nextcloudPublicationCheck nextcloudPublicationCheck
+	currentReadActor          interfaces.CurrentReadActorRefresher
 }
 
 // NewKnowledgeRepository creates a new knowledge repository
