@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"github.com/google/uuid"
 
 	"github.com/Tencent/WeKnora/internal/application/repository"
 	"github.com/Tencent/WeKnora/internal/types"
@@ -39,7 +40,7 @@ func (a *NextcloudCapacityAdmission) Begin(ctx context.Context, kb *types.Knowle
 	if err := a.store.Observe(ctx, measured); err != nil {
 		return nil, err
 	}
-	key := sha256.Sum256([]byte(ds + "\x00" + external + "\x00" + etag))
+	key := sha256.Sum256([]byte(ds + "\x00" + external + "\x00" + etag + "\x00" + uuid.NewString()))
 	return a.store.Reserve(ctx, kb.TenantID, kb.ID, *kb.StorageBackendID, hex.EncodeToString(key[:]), bytes, measured)
 }
 func (a *NextcloudCapacityAdmission) Finish(ctx context.Context, r *repository.NextcloudCapacityReservation, k string, ok bool) error {
