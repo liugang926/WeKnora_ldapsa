@@ -11,8 +11,8 @@ type CommittedHistoryKnowledgeInput struct {
 }
 
 type CommittedHistoryKnowledgeInputRequest struct {
-	TenantID           uint64
-	KnowledgeBaseID    string
-	SessionID          string
-	AssistantMessageID string
+	TenantID           uint64 `json:"-"`
+	KnowledgeBaseID    string `json:"-"`
+	SessionID          string `json:"-"`
+	AssistantMessageID string `json:"-"`
 }

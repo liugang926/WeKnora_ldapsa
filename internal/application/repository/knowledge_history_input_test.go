@@ -48,6 +48,10 @@ func createHistoryInputParents(t *testing.T, store *KnowledgeInputProvenanceStor
 	require.NoError(t, db.Create(assistant).Error)
 	return user, assistant
 }
+func historyInputAdmissionContext() context.Context {
+	ctx := types.WithCaller(context.Background(), types.Caller{TenantID: 7, UserID: "user", Role: types.TenantRoleViewer})
+	return types.WithPrincipal(ctx, types.Principal{Type: types.PrincipalWebUser, ID: "user"})
+}
 func historyInputRequest(assistant *types.Message) types.CommittedHistoryKnowledgeInputRequest {
 	return types.CommittedHistoryKnowledgeInputRequest{TenantID: 7, KnowledgeBaseID: "kb", SessionID: assistant.SessionID, AssistantMessageID: assistant.ID}
 }
@@ -55,7 +59,7 @@ func historyInputRequest(assistant *types.Message) types.CommittedHistoryKnowled
 func TestKnowledgeHistoryActualCommittedPairAtomicLinkAndHydration(t *testing.T) {
 	store, db := knowledgeInputFixture(t)
 	user, assistant := createHistoryInputParents(t, store, db)
-	result, err := store.CreateCommittedHistoryKnowledgeInput(context.Background(), historyInputRequest(assistant))
+	result, err := store.CreateCommittedHistoryKnowledgeInput(historyInputAdmissionContext(), historyInputRequest(assistant))
 	require.NoError(t, err)
 	require.Contains(t, result.Passages[0], user.Content)
 	require.Contains(t, result.Passages[0], "actual committed answer")
@@ -108,7 +112,7 @@ func TestKnowledgeHistoryLegacyUnpairedAndFailedLinkNeverAdmitOrphans(t *testing
 					return nil
 				}})
 			}
-			result, err := store.CreateCommittedHistoryKnowledgeInput(context.Background(), historyInputRequest(assistant))
+			result, err := store.CreateCommittedHistoryKnowledgeInput(historyInputAdmissionContext(), historyInputRequest(assistant))
 			require.Error(t, err)
 			require.Nil(t, result)
 			var count int64
@@ -125,7 +129,7 @@ func TestKnowledgeHistoryLegacyUnpairedAndFailedLinkNeverAdmitOrphans(t *testing
 func TestPostgresKnowledgeHistoryAtomicPairAndParentWithdrawal(t *testing.T) {
 	store, db := knowledgeInputPostgresFixture(t)
 	_, assistant := createHistoryInputParents(t, store, db)
-	result, err := store.CreateCommittedHistoryKnowledgeInput(context.Background(), historyInputRequest(assistant))
+	result, err := store.CreateCommittedHistoryKnowledgeInput(historyInputAdmissionContext(), historyInputRequest(assistant))
 	require.NoError(t, err)
 	ctx := WithKnowledgeBuildInputProof(context.Background(), store, result.Proof)
 	c := &types.Chunk{ID: "history-pg-chunk", TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: result.Knowledge.ID, Content: result.Passages[0], ChunkType: "text", IsEnabled: true, IndexStatus: "ready"}

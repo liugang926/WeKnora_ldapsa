@@ -27,6 +27,9 @@ func knowledgeInputFixture(t *testing.T) (*KnowledgeInputProvenanceStore, *gorm.
 	controls, err := os.ReadFile("../../../migrations/sqlite/000055_knowledge_actual_config_controls.up.sql")
 	require.NoError(t, err)
 	require.NoError(t, db.Exec(string(controls)).Error)
+	actor, err := os.ReadFile("../../../migrations/sqlite/000056_knowledge_original_worker_actor.up.sql")
+	require.NoError(t, err)
+	require.NoError(t, db.Exec(string(actor)).Error)
 	store := NewKnowledgeInputProvenanceStore(db)
 	require.NoError(t, store.ReplaceKnowledgeBaseConfigurationWithInput(WithIndependentKnowledgeInput(context.Background()), &types.KnowledgeBase{ID: "kb", TenantID: 7, Name: "source", EmbeddingModelID: "embed", SummaryModelID: "summary"}))
 	return store, db

@@ -91,6 +91,7 @@ func (knowledgeInputMaterialReceipt) TableName() string { return "knowledge_inpu
 type KnowledgeInputProvenanceStore struct {
 	db              *gorm.DB
 	messageVerifier interfaces.MessageSourceLineageVerifier
+	actorGroups     interfaces.GroupAccessService
 }
 
 func NewKnowledgeInputProvenanceStore(db *gorm.DB) *KnowledgeInputProvenanceStore {
@@ -354,6 +355,15 @@ func (s *KnowledgeInputProvenanceStore) admitInTx(ctx context.Context, tx *gorm.
 	a := knowledgeInputAdmission{uuid.NewString(), k.TenantID, k.KnowledgeBaseID, k.ID, generation, origin.kind, inputDigest, rootDigest, configDigest, configRevision, string(encoded)}
 	if err := tx.Create(&a).Error; err != nil {
 		return nil, err
+	}
+	if origin.kind == "history" {
+		actor, err := captureKnowledgeActorSelector(ctx, a.AdmissionID)
+		if err != nil {
+			return nil, err
+		}
+		if err := tx.Create(&actor).Error; err != nil {
+			return nil, err
+		}
 	}
 	if err := sealKnowledgeInputMaterial(tx, a.AdmissionID, k, nil); err != nil {
 		return nil, err
@@ -681,8 +691,14 @@ func (s *KnowledgeInputProvenanceStore) RecheckKnowledgeBuildInputs(ctx context.
 	if proof == nil {
 		return types.ErrSourceLineageUnknown
 	}
+	if err := s.recheckKnowledgeWorkerActor(ctx, proof); err != nil {
+		return err
+	}
 	_, err := s.snapshot(ctx, types.KnowledgeBuildInputCaptureRequest{TenantID: proof.TenantID, KnowledgeBaseID: proof.KnowledgeBaseID, KnowledgeID: proof.KnowledgeID, ChunkIDs: proof.ChunkIDs, Expected: proof}, proof.BodyDigest != "")
-	return err
+	if err != nil {
+		return err
+	}
+	return s.recheckKnowledgeWorkerActor(ctx, proof)
 }
 
 // These writer hooks execute inside the actual SQL mutation transaction. An

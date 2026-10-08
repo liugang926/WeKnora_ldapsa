@@ -31,6 +31,9 @@ func knowledgeInputPostgresFixture(t *testing.T) (*KnowledgeInputProvenanceStore
 	controls, err := os.ReadFile("../../../migrations/versioned/000136_knowledge_actual_config_controls.up.sql")
 	require.NoError(t, err)
 	require.NoError(t, migration.Exec(string(controls)).Error)
+	actor, err := os.ReadFile("../../../migrations/versioned/000137_knowledge_original_worker_actor.up.sql")
+	require.NoError(t, err)
+	require.NoError(t, migration.Exec(string(actor)).Error)
 	store := NewKnowledgeInputProvenanceStore(db)
 	require.NoError(t, store.ReplaceKnowledgeBaseConfigurationWithInput(WithIndependentKnowledgeInput(context.Background()), &types.KnowledgeBase{ID: "kb", TenantID: 7, Name: "source", EmbeddingModelID: "embed", SummaryModelID: "summary"}))
 	return store, db
