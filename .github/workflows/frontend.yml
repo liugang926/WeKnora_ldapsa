@@ -7,11 +7,17 @@ on:
       - "frontend/**"
       - "scripts/build_frontend_dist.sh"
       - ".github/workflows/frontend.yml"
+      - ".github/workflows/docker-image.yml"
+      - ".github/workflows/app-image-pr.yml"
+      - ".github/scripts/docker-publication-policy*.sh"
   pull_request:
     paths:
       - "frontend/**"
       - "scripts/build_frontend_dist.sh"
       - ".github/workflows/frontend.yml"
+      - ".github/workflows/docker-image.yml"
+      - ".github/workflows/app-image-pr.yml"
+      - ".github/scripts/docker-publication-policy*.sh"
   workflow_dispatch:
 
 concurrency:
