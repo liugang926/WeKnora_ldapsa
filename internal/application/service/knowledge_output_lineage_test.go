@@ -97,7 +97,7 @@ func TestKnowledgeOutputLineageCallbacksCannotMutateRetainedAuthority(t *testing
 	g, err := a.Begin(context.Background(), []*types.Knowledge{row})
 	require.NoError(t, err)
 	require.NoError(t, g.Check(context.Background(), []*types.Knowledge{row}))
-	require.Equal(t, 2, checks)
+	require.Equal(t, 4, checks)
 }
 
 func TestKnowledgeOutputLineageRejectsWireMutationDuringAuthorization(t *testing.T) {

@@ -209,9 +209,9 @@ func TestKnowledgeOutputLineageActualHTTPStopsChangesBeforeResponse(t *testing.T
 		t.Run(change, func(t *testing.T) {
 			h, db, row, groups := outputHTTPFixture(t, true)
 			groups.hook = func(call int) {
-				// Begin has checked twice. Change state during the next actual
+				// Begin has checked both sides of its local snapshot. Change state during the next actual
 				// verification, before JSON rendering/output can disclose it.
-				if call != 3 {
+				if call != 5 {
 					return
 				}
 				switch change {
@@ -226,7 +226,7 @@ func TestKnowledgeOutputLineageActualHTTPStopsChangesBeforeResponse(t *testing.T
 			}
 			w := serveKnowledgeOutputHTTP(h)
 			require.Equal(t, http.StatusForbidden, w.Code, w.Body.String())
-			require.GreaterOrEqual(t, groups.calls, 3)
+			require.GreaterOrEqual(t, groups.calls, 5)
 			require.NotContains(t, w.Body.String(), "owned-output-body")
 			require.NotContains(t, w.Body.String(), "owned-output-title")
 			require.NotContains(t, w.Body.String(), "unaccounted changed wire body")

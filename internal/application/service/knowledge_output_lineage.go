@@ -195,5 +195,11 @@ func (g *KnowledgeOutputGuard) Check(ctx context.Context, rows []*types.Knowledg
 	if err := g.authorizer.reader.RecheckKnowledgeOutputInputs(ctx, proofs); err != nil {
 		return err
 	}
+	// A directory/share change during the local material snapshot must not
+	// reuse the earlier remote decision at the final response boundary.
+	lineage, err = types.UnionSourceLineage(g.lineage)
+	if err != nil { return err }
+	if err := json.Unmarshal(scopeBytes, &scope); err != nil { return err }
+	if err := g.authorizer.checker.Check(ctx, lineage, scope); err != nil { return err }
 	return checkBodies()
 }
