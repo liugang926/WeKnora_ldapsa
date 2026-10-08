@@ -215,3 +215,20 @@ export async function putDataSourceCredentials(
 export async function deleteDataSourceCredentials(id: string): Promise<void> {
   await del(`/api/v1/datasource/${id}/credentials/credentials`)
 }
+
+export interface NextcloudCapacityStatus {
+  policy: { TenantID: number; KnowledgeBaseID: string; RetentionQuotaBytes: number; WarningPercent: number; PausePercent: number }
+  physical_total_bytes: number
+  physical_available_bytes: number
+  logical_retained_bytes: number
+  reserved_bytes: number
+  state: 'normal' | 'warning' | 'paused'
+  measured_at_ms: number
+}
+export async function getNextcloudCapacity(kbId: string): Promise<NextcloudCapacityStatus> {
+  const response = await get(`/api/v1/knowledge-bases/${encodeURIComponent(kbId)}/nextcloud-capacity`)
+  return response.capacity
+}
+export async function setNextcloudCapacity(kbId: string, input: {retention_quota_bytes: number; warning_percent: number; pause_percent: number}) {
+  return put(`/api/v1/knowledge-bases/${encodeURIComponent(kbId)}/nextcloud-capacity`, input)
+}
