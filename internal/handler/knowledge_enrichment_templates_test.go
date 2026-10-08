@@ -59,7 +59,7 @@ func templateHTTPFixture(t *testing.T) (*KnowledgeEnrichmentTemplateHandler, *go
 	_, db, store, groups, _, _ := collectionHTTPFixture(t)
 	require.NoError(t, db.AutoMigrate(&types.Model{}, &types.Tenant{}))
 	require.NoError(t, db.Exec("ALTER TABLE knowledge_bases DROP COLUMN enrichment_templates").Error)
-	for _, file := range []string{"000056_knowledge_original_worker_actor", "000062_knowledge_enrichment_inputs", "000046_nextcloud_content_leases", "000066_knowledge_enrichment_template_origins"} {
+	for _, file := range []string{"000056_knowledge_original_worker_actor", "000062_knowledge_enrichment_inputs", "000066_knowledge_enrichment_template_origins"} {
 		data, e := os.ReadFile("../../migrations/sqlite/" + file + ".up.sql")
 		require.NoError(t, e)
 		require.NoError(t, db.Exec(string(data)).Error)
