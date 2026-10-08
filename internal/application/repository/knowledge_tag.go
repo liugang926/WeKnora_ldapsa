@@ -43,8 +43,21 @@ func (r *knowledgeRepository) SetKnowledgeTags(
 				return err
 			}
 			kb = &actualKB
-			if request.Kind != "derived" && (request.Kind != "relations" || !reflect.DeepEqual(request.Assignments[knowledgeID], normalizedKnowledgeDisplayTagIDs(tagIDs))) {
-				return ErrKnowledgeInputChanged
+			if request.Kind != "derived" {
+				assigned, exists := request.Assignments[knowledgeID]
+				if !exists {
+					assigned, exists = request.Assignments[""]
+					proof := KnowledgeBuildInputProofFromContext(ctx)
+					if !exists || proof == nil || proof.KnowledgeID != k.ID || proof.TenantID != k.TenantID || proof.KnowledgeBaseID != k.KnowledgeBaseID {
+						return ErrKnowledgeInputChanged
+					}
+					if _, _, _, err := NewKnowledgeInputProvenanceStore(tx).admissionInTx(tx, &k, proof); err != nil {
+						return err
+					}
+				}
+				if request.Kind != "relations" || !reflect.DeepEqual(assigned, nextIDs) {
+					return ErrKnowledgeInputChanged
+				}
 			}
 			var err error
 			actor, lineage, origin, err = knowledgeDisplayWriterOrigin(tx, ctx, kb, request, r.displayAuthorityFactory)

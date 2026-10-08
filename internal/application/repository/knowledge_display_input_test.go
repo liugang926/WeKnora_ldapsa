@@ -244,3 +244,41 @@ func TestKnowledgeDisplaySQLiteDerivedWithdrawal(t *testing.T) { runDisplayDeriv
 func TestKnowledgeDisplayPostgresDerivedWithdrawal(t *testing.T) {
 	runDisplayDerivedWithdrawal(t, true)
 }
+
+func runDisplayCurrentAPIKeyAndIngestionAssignment(t *testing.T, pg bool) {
+	store, db, ctx, tags, knowledge, k := displayTestFixture(t, pg)
+	tenant := uint64(7)
+	key := &types.TenantAPIKey{ID: 31, TenantID: &tenant, Name: "actual key", ScopeType: types.APIKeyScopeTenant, KeyHash: "display-key-actual", KnowledgeBaseIDs: types.StringArray{"kb"}, Capabilities: types.StringArray{string(types.APIKeyCapabilityIngest)}}
+	require.NoError(t, db.Create(key).Error)
+	api := types.WithCaller(context.Background(), types.Caller{TenantID: 7, Role: types.TenantRoleOwner})
+	api = types.WithPrincipal(api, types.Principal{Type: types.PrincipalAPITenant, ID: "7"})
+	api = types.WithTenantAPIKeyScope(api, types.TenantAPIKeyScope{KeyID: key.ID, FullAccess: true})
+	tag := displayTag(t, tags, api, "api-tag")
+	original, err := store.CaptureKnowledgeOutputInputs(ctx, types.KnowledgeBuildInputCaptureRequest{TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: k.ID})
+	require.NoError(t, err)
+	inputCtx := WithKnowledgeBuildInputProof(WithIndependentKnowledgeTagAssignmentInput(ctx, map[string][]string{"": {tag.ID}}), store, original.Proof)
+	require.NoError(t, knowledge.SetKnowledgeTags(inputCtx, k.ID, []string{tag.ID}))
+	_, err = captureDisplayTest(t, db, k)
+	require.NoError(t, err)
+	missingProof := WithIndependentKnowledgeTagAssignmentInput(ctx, map[string][]string{"": {tag.ID}})
+	require.Error(t, knowledge.SetKnowledgeTags(missingProof, k.ID, []string{tag.ID}), "unknown new-document placeholder requires its actual admitted original proof")
+	require.NoError(t, db.Model(key).Update("capabilities", types.StringArray{string(types.APIKeyCapabilityRetrieve)}).Error)
+	name := "no ingest current"
+	tag.Name = name
+	require.Error(t, tags.Update(WithIndependentKnowledgeTagUpdateInput(api, tag.ID, &name, nil, nil), tag), "cached FullAccess never overrides persisted key capability revocation")
+	require.NoError(t, db.Model(key).Updates(map[string]any{"capabilities": types.StringArray{string(types.APIKeyCapabilityIngest)}, "knowledge_base_ids": types.StringArray{"other"}}).Error)
+	require.Error(t, tags.Update(WithIndependentKnowledgeTagUpdateInput(api, tag.ID, &name, nil, nil), tag), "current allow-list bounds the actual target")
+	require.NoError(t, db.Model(key).Updates(map[string]any{"capabilities": types.StringArray{string(types.APIKeyCapabilityManageKnowledgeBases)}, "knowledge_base_ids": types.StringArray{"kb"}}).Error)
+	var kb types.KnowledgeBase
+	require.NoError(t, db.Where("id='kb'").Take(&kb).Error)
+	kb.Name = "API explicit rename"
+	require.NoError(t, store.UpdateKnowledgeBaseWithInput(WithIndependentKnowledgeBaseNameInput(WithIndependentKnowledgeInput(api), kb.ID, kb.Name), &kb), "current manage_kbs capability authorizes actual KB name edits without synthetic admin")
+	_, err = captureDisplayTest(t, db, k)
+	require.NoError(t, err)
+}
+func TestKnowledgeDisplaySQLiteCurrentAPIKeyAndIngestionAssignment(t *testing.T) {
+	runDisplayCurrentAPIKeyAndIngestionAssignment(t, false)
+}
+func TestKnowledgeDisplayPostgresCurrentAPIKeyAndIngestionAssignment(t *testing.T) {
+	runDisplayCurrentAPIKeyAndIngestionAssignment(t, true)
+}
