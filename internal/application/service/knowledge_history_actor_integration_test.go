@@ -60,11 +60,14 @@ func historyActorIntegrationFixture(t *testing.T, kind string) (*knowledgeServic
 }
 
 func TestKnowledgeHistoryActorActualAsynqRestoresCurrentPrincipal(t *testing.T) {
-	for _, kind := range []string{"web", "api"} {
+	for _, kind := range []string{"web", "api", "api-ingest-worker"} {
 		t.Run(kind, func(t *testing.T) {
-			service, store, db, ctx, answer, _, _ := historyActorIntegrationFixture(t, kind)
+			service, store, db, ctx, answer, key, _ := historyActorIntegrationFixture(t, kind)
 			input, err := store.CreateCommittedHistoryKnowledgeInput(ctx, types.CommittedHistoryKnowledgeInputRequest{TenantID: 7, KnowledgeBaseID: "kb", SessionID: answer.SessionID, AssistantMessageID: answer.ID})
 			require.NoError(t, err)
+			if kind == "api-ingest-worker" {
+				require.NoError(t, db.Model(key).Update("capabilities", types.StringArray{string(types.APIKeyCapabilityIngest)}).Error)
+			}
 			data, err := json.Marshal(types.DocumentProcessPayload{TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: input.Knowledge.ID, Passages: input.Passages, OriginalInput: input.Proof})
 			require.NoError(t, err)
 			// A real task entry receives a new background context without JWT/role.
@@ -78,6 +81,23 @@ func TestKnowledgeHistoryActorActualAsynqRestoresCurrentPrincipal(t *testing.T) 
 			require.False(t, types.IsSystemAdminFromContext(restored))
 		})
 	}
+}
+
+func TestKnowledgeHistoryActorReadModeDoesNotReuseIngest(t *testing.T) {
+	service, store, db, ctx, _, key, _ := historyActorIntegrationFixture(t, "api")
+	require.NoError(t, db.Model(key).Update("capabilities", types.StringArray{string(types.APIKeyCapabilityIngest)}).Error)
+	_, err := store.RefreshCurrentReadActor(ctx)
+	require.Error(t, err, "pure internal reads cannot use an ingest credential")
+	var kb types.KnowledgeBase
+	require.NoError(t, db.Where("id = ?", "kb").Take(&kb).Error)
+	worker, err := store.AuthorizeCurrentKnowledgeInputWrite(ctx, &kb)
+	require.NoError(t, err, "actual current scoped ingest authorizes its admitted write inputs")
+	empty, _ := types.NewCompleteSourceLineage()
+	guard := access.NewNextcloudSourceLineageGuard(service.repo.(access.NextcloudLineageSnapshotLookup), &knowledgeBaseService{repo: repository.NewKnowledgeBaseRepository(db)}, nil, nil, NewGroupAccessService(repository.NewGroupAccessRepository(db)), nil)
+	require.NoError(t, guard.Check(worker, empty, access.LineageReadScope{Targets: types.SearchTargets{&types.SearchTarget{Type: types.SearchTargetTypeKnowledgeBase, TenantID: 7, KnowledgeBaseID: "kb"}}}))
+	readRequest := types.WithAPIKeyOperationRequirement(ctx, types.APIKeyOperationRequirement{RequireFullAccess: true, Capabilities: []types.APIKeyCapability{types.APIKeyCapabilityRetrieve}})
+	_, err = store.AuthorizeCurrentKnowledgeInputWrite(readRequest, &kb)
+	require.Error(t, err, "a producer cannot replace a revoked HTTP read capability with ingest")
 }
 
 func TestKnowledgeHistoryActorCurrentRevocationBeforeActualWorkerStopsAllWrites(t *testing.T) {
