@@ -27,7 +27,7 @@ func TestSessionTextLineageSQLiteUpgradeFrom51LeavesLegacyUnknown(t *testing.T) 
 	chdirAndRestore(t, current)
 	require.NoError(t, RunMigrationsWithOptions("sqlite3://unused", MigrationOptions{SQLiteDBPath: path}))
 	version, dirty := sqliteMigrationState(t, db)
-	require.Equal(t, expectedSQLiteMigrationVersion, version)
+	require.Equal(t, 52, version)
 	require.False(t, dirty)
 	var title, description string
 	var titleProof, descriptionProof sql.NullString

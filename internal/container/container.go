@@ -505,6 +505,8 @@ func BuildContainer(container *dig.Container) *dig.Container {
 		return store
 	}))
 	must(container.Provide(service.NewKnowledgeOutputAuthorizer))
+	must(container.Provide(service.NewGraphOriginalInputVerifier))
+	must(container.Provide(service.NewKnowledgeGraphLineageReader))
 	must(container.Provide(func(db *gorm.DB, store *repository.KnowledgeInputProvenanceStore) interfaces.RAGChunkSnapshotReader {
 		return repository.NewRAGChunkSnapshotReader(db, store)
 	}))
@@ -519,6 +521,7 @@ func BuildContainer(container *dig.Container) *dig.Container {
 		repository.ConfigureKnowledgeInputHistoryVerifier(store, verifier)
 	}))
 	must(container.Invoke(service.ConfigureKnowledgeBaseRAGChunkHydration))
+	must(container.Invoke(service.ConfigureKnowledgeBaseGraphLineage))
 	must(container.Invoke(service.ConfigureAgentRAGChunkHydration))
 	must(container.Invoke(chatpipeline.NewPluginSearch))
 	must(container.Invoke(chatpipeline.NewPluginRerank))
