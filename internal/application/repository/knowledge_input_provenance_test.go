@@ -18,7 +18,15 @@ func knowledgeInputFixture(t *testing.T) (*KnowledgeInputProvenanceStore, *gorm.
 	script, err := os.ReadFile("../../../migrations/sqlite/000053_knowledge_input_provenance.up.sql")
 	require.NoError(t, err)
 	require.NoError(t, db.Exec(string(script)).Error)
-	return NewKnowledgeInputProvenanceStore(db), db
+	db.Config.DisableForeignKeyConstraintWhenMigrating = true
+	require.NoError(t, db.AutoMigrate(&types.Session{}, &types.Message{}))
+	db.Config.DisableForeignKeyConstraintWhenMigrating = false
+	additional, err := os.ReadFile("../../../migrations/sqlite/000054_knowledge_configuration_history_inputs.up.sql")
+	require.NoError(t, err)
+	require.NoError(t, db.Exec(string(additional)).Error)
+	store := NewKnowledgeInputProvenanceStore(db)
+	require.NoError(t, store.ReplaceKnowledgeBaseConfigurationWithInput(WithIndependentKnowledgeInput(context.Background()), &types.KnowledgeBase{ID: "kb", TenantID: 7, Name: "source", EmbeddingModelID: "embed", SummaryModelID: "summary"}))
+	return store, db
 }
 func createAdmittedManual(t *testing.T, store *KnowledgeInputProvenanceStore, db *gorm.DB) (context.Context, *types.Knowledge, *types.Chunk, *types.KnowledgeBuildInputProof) {
 	t.Helper()
@@ -183,4 +191,46 @@ func TestKnowledgeInputDerivedSourcesPreservedAndWithdrawalClosesReads(t *testin
 	rows, err := NewRAGChunkSnapshotReader(db, store).HydrateRAGChunkSnapshots(ctx, []RAGChunkReadRequest{{TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: k.ID, ChunkIDs: []string{c.ID}}})
 	require.NoError(t, err)
 	require.ErrorIs(t, rows[0].SourceLineage.RequireComplete(), types.ErrSourceLineageUnknown)
+}
+
+func TestKnowledgeInputGraphProjectionSurvivesUnusedSummaryButBodyRollbackCloses(t *testing.T) {
+	store, db := knowledgeInputFixture(t)
+	ctx, k, c, _ := createAdmittedManual(t, store, db)
+	request := types.KnowledgeBuildInputCaptureRequest{Projection: types.KnowledgeBuildProjectionGraph, TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: k.ID, ChunkIDs: []string{c.ID}}
+	input, err := store.CaptureKnowledgeBuildInputs(ctx, request)
+	require.NoError(t, err)
+	k.Description = "generated summary"
+	require.NoError(t, NewKnowledgeRepository(db).UpdateKnowledge(ctx, k))
+	c.Metadata = types.JSON(`{"generated_questions":["new generated question"]}`)
+	require.NoError(t, NewChunkRepository(db).UpdateChunk(ctx, c))
+	require.NoError(t, store.RecheckKnowledgeBuildInputs(ctx, input.Proof), "unused generated display fields do not change actual graph model input")
+	full, err := store.CaptureKnowledgeBuildInputs(ctx, types.KnowledgeBuildInputCaptureRequest{TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: k.ID, ChunkIDs: []string{c.ID}})
+	require.NoError(t, err)
+	_, err = store.CaptureKnowledgeBuildInputs(ctx, types.KnowledgeBuildInputCaptureRequest{Projection: types.KnowledgeBuildProjectionGraph, TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: k.ID, ChunkIDs: []string{c.ID}, Expected: full.Proof})
+	require.Error(t, err, "a captured full proof cannot be switched to a subset projection")
+	oldContent := c.Content
+	require.NoError(t, db.Model(c).Update("content", "new text").Error)
+	require.NoError(t, db.Model(c).Update("content", oldContent).Error)
+	require.Error(t, store.RecheckKnowledgeBuildInputs(ctx, input.Proof), "content ABA retains a higher graph input version")
+}
+
+func TestKnowledgeInputLegacyConfigurationCannotBeAuthenticatedByHumanDocument(t *testing.T) {
+	store, db := knowledgeInputFixture(t)
+	legacy := &types.KnowledgeBase{ID: "legacy-kb", TenantID: 7, Name: "legacy", ExtractConfig: &types.ExtractConfig{Text: "orphan derived example"}}
+	require.NoError(t, NewKnowledgeBaseRepository(db).CreateKnowledgeBase(context.Background(), legacy))
+	k := &types.Knowledge{ID: "human-on-legacy", TenantID: 7, KnowledgeBaseID: legacy.ID, Type: "manual", CustomMetadata: types.JSON(`{}`)}
+	_, err := store.CreateKnowledgeWithInput(WithIndependentKnowledgeInput(context.Background()), k, "new human text")
+	require.Error(t, err)
+	var count int64
+	require.NoError(t, db.Model(&types.Knowledge{}).Where("id = ?", k.ID).Count(&count).Error)
+	require.Zero(t, count, "origin failure rolls back the child creation")
+	legacy.Name = "renamed"
+	require.Error(t, store.UpdateKnowledgeBaseWithInput(WithIndependentKnowledgeInput(context.Background()), legacy), "partial human edit cannot prove retained unknown examples")
+	fresh := &types.KnowledgeBase{ID: "fresh-kb", TenantID: 7, Name: "human configuration", SummaryModelID: "explicit-model", ExtractConfig: &types.ExtractConfig{Text: "new explicitly authored example"}}
+	require.NoError(t, store.CreateKnowledgeBaseWithInput(WithIndependentKnowledgeInput(context.Background()), fresh))
+	k.ID = "human-on-fresh"
+	k.KnowledgeBaseID = fresh.ID
+	proof, err := store.CreateKnowledgeWithInput(WithIndependentKnowledgeInput(context.Background()), k, "new human text")
+	require.NoError(t, err)
+	require.NoError(t, proof.SourceLineage.RequireComplete())
 }

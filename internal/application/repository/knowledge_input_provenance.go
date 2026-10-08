@@ -13,6 +13,7 @@ import (
 	"sort"
 
 	"github.com/Tencent/WeKnora/internal/types"
+	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -37,21 +38,63 @@ type knowledgeInputAdmission struct {
 func (knowledgeInputAdmission) TableName() string { return "knowledge_input_admissions" }
 
 type knowledgeInputMaterialReceipt struct {
-	RowKind     string `gorm:"primaryKey"`
-	RowID       string `gorm:"primaryKey"`
-	AdmissionID string
-	RowRevision uint64
-	BodyDigest  string
+	RowKind          string `gorm:"primaryKey"`
+	RowID            string `gorm:"primaryKey"`
+	AdmissionID      string
+	RowRevision      uint64
+	BodyDigest       string
+	GraphBodyDigest  *string
+	GraphRowRevision *uint64
+}
+
+func knowledgeGraphChunkDigest(c *types.Chunk) (string, error) {
+	return KnowledgeInputDigest(struct {
+		Tenant                            uint64
+		KB, KG, ID, Content, Type, Parent string
+		Revision                          int
+	}{c.TenantID, c.KnowledgeBaseID, c.KnowledgeID, c.ID, c.Content, c.ChunkType, c.ParentChunkID, c.ContentRevision})
+}
+func knowledgeGraphChunkRevision(tx *gorm.DB, id string) (uint64, error) {
+	var row struct{ Revision uint64 }
+	err := tx.Table("knowledge_input_graph_chunk_versions").Where("chunk_id = ?", id).Take(&row).Error
+	if err != nil {
+		return 0, err
+	}
+	if row.Revision == 0 {
+		return 0, ErrKnowledgeInputChanged
+	}
+	return row.Revision, nil
+}
+func verifyKnowledgeGraphChunk(tx *gorm.DB, a *knowledgeInputAdmission, c *types.Chunk) error {
+	var receipt knowledgeInputMaterialReceipt
+	if err := tx.Where("row_kind = 'chunk' AND row_id = ?", c.ID).Take(&receipt).Error; err != nil {
+		return err
+	}
+	digest, err := knowledgeGraphChunkDigest(c)
+	if err != nil {
+		return err
+	}
+	revision, err := knowledgeGraphChunkRevision(tx, c.ID)
+	if err != nil {
+		return err
+	}
+	if receipt.AdmissionID != a.AdmissionID || receipt.GraphBodyDigest == nil || receipt.GraphRowRevision == nil || *receipt.GraphBodyDigest != digest || *receipt.GraphRowRevision != revision {
+		return ErrKnowledgeInputChanged
+	}
+	return nil
 }
 
 func (knowledgeInputMaterialReceipt) TableName() string { return "knowledge_input_material_receipts" }
 
 // KnowledgeInputProvenanceStore owns private, original admission and material
 // receipts. Missing old/derived facts are unknown; there is no inferred origin.
-type KnowledgeInputProvenanceStore struct{ db *gorm.DB }
+type KnowledgeInputProvenanceStore struct {
+	db              *gorm.DB
+	messageVerifier interfaces.MessageSourceLineageVerifier
+}
 
 func NewKnowledgeInputProvenanceStore(db *gorm.DB) *KnowledgeInputProvenanceStore {
-	return &KnowledgeInputProvenanceStore{db}
+	return &KnowledgeInputProvenanceStore{db: db}
 }
 
 func KnowledgeInputArtifactMatches(proof *types.KnowledgeBuildInputProof, input any) error {
@@ -265,7 +308,11 @@ func (s *KnowledgeInputProvenanceStore) admitInTx(ctx context.Context, tx *gorm.
 	if err != nil {
 		return nil, err
 	}
-	lineage, err := types.UnionSourceLineage(origin.lineage)
+	configurationLineage, err := readKnowledgeConfigurationOrigin(tx, kb)
+	if err != nil {
+		return nil, err
+	}
+	lineage, err := types.UnionSourceLineage(origin.lineage, configurationLineage)
 	if err != nil {
 		return nil, err
 	}
@@ -304,8 +351,20 @@ func sealKnowledgeInputMaterial(tx *gorm.DB, admissionID string, k *types.Knowle
 	if err != nil {
 		return err
 	}
-	receipt := knowledgeInputMaterialReceipt{kind, id, admissionID, revision, digest}
-	return tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "row_kind"}, {Name: "row_id"}}, DoUpdates: clause.AssignmentColumns([]string{"admission_id", "row_revision", "body_digest"})}).Create(&receipt).Error
+	receipt := knowledgeInputMaterialReceipt{RowKind: kind, RowID: id, AdmissionID: admissionID, RowRevision: revision, BodyDigest: digest}
+	if c != nil {
+		graphDigest, err := knowledgeGraphChunkDigest(c)
+		if err != nil {
+			return err
+		}
+		graphRevision, err := knowledgeGraphChunkRevision(tx, c.ID)
+		if err != nil {
+			return err
+		}
+		receipt.GraphBodyDigest = &graphDigest
+		receipt.GraphRowRevision = &graphRevision
+	}
+	return tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "row_kind"}, {Name: "row_id"}}, DoUpdates: clause.AssignmentColumns([]string{"admission_id", "row_revision", "body_digest", "graph_body_digest", "graph_row_revision"})}).Create(&receipt).Error
 }
 func verifyKnowledgeInputMaterial(tx *gorm.DB, a *knowledgeInputAdmission, k *types.Knowledge, c *types.Chunk) error {
 	kind, id := "knowledge", k.ID
@@ -339,7 +398,11 @@ func (s *KnowledgeInputProvenanceStore) admissionInTx(tx *gorm.DB, k *types.Know
 	if expected != nil {
 		query = query.Where("admission_id = ?", expected.AdmissionID)
 	} else {
-		query = query.Order("build_generation DESC")
+		var material knowledgeInputMaterialReceipt
+		if err := tx.Where("row_kind = 'knowledge' AND row_id = ?", k.ID).Take(&material).Error; err != nil {
+			return nil, nil, nil, err
+		}
+		query = query.Where("admission_id = ?", material.AdmissionID)
 	}
 	if err := query.Take(&a).Error; err != nil {
 		return nil, nil, nil, err
@@ -363,6 +426,14 @@ func (s *KnowledgeInputProvenanceStore) admissionInTx(tx *gorm.DB, k *types.Know
 	if a.RootDigest != rootDigest || a.ConfigDigest != configDigest || a.ConfigRevision != revision {
 		return nil, nil, nil, ErrKnowledgeInputChanged
 	}
+	if _, err := readKnowledgeConfigurationOrigin(tx, &kb); err != nil {
+		return nil, nil, nil, err
+	}
+	if a.OriginKind == "history" {
+		if err := s.verifyCommittedHistoryParents(tx, k, &a); err != nil {
+			return nil, nil, nil, err
+		}
+	}
 	var lineage types.SourceLineage
 	if err := json.Unmarshal([]byte(a.SourceLineage), &lineage); err != nil {
 		return nil, nil, nil, err
@@ -375,7 +446,21 @@ func (s *KnowledgeInputProvenanceStore) admissionInTx(tx *gorm.DB, k *types.Know
 		if err != nil {
 			return nil, nil, nil, err
 		}
-		if len(lineage.Sources) != 1 || lineage.Sources[0] != identity {
+		found := false
+		for _, source := range lineage.Sources {
+			if source.KnowledgeID == identity.KnowledgeID && source.TenantID == identity.TenantID && source.KnowledgeBaseID == identity.KnowledgeBaseID {
+				if source != identity {
+					return nil, nil, nil, ErrKnowledgeInputChanged
+				}
+				found = true
+			} else {
+				inherited, _ := types.NewCompleteSourceLineage(source)
+				if err := verifyKnowledgeInheritedSources(tx, inherited); err != nil {
+					return nil, nil, nil, err
+				}
+			}
+		}
+		if !found {
 			return nil, nil, nil, ErrKnowledgeInputChanged
 		}
 	} else if err := verifyKnowledgeInheritedSources(tx, &lineage); err != nil {
@@ -384,8 +469,10 @@ func (s *KnowledgeInputProvenanceStore) admissionInTx(tx *gorm.DB, k *types.Know
 	if expected != nil && (expected.Version != 1 || expected.TenantID != k.TenantID || expected.KnowledgeBaseID != k.KnowledgeBaseID || expected.KnowledgeID != k.ID || expected.BuildGeneration != a.BuildGeneration || expected.InputDigest != a.InputDigest || expected.ConfigDigest != a.ConfigDigest || !reflect.DeepEqual(expected.SourceLineage, &lineage)) {
 		return nil, nil, nil, ErrKnowledgeInputChanged
 	}
-	if err := verifyKnowledgeInputMaterial(tx, &a, k, nil); err != nil {
-		return nil, nil, nil, err
+	if expected == nil || expected.Projection != types.KnowledgeBuildProjectionGraph {
+		if err := verifyKnowledgeInputMaterial(tx, &a, k, nil); err != nil {
+			return nil, nil, nil, err
+		}
 	}
 	return &a, &kb, &lineage, nil
 }
@@ -395,7 +482,7 @@ func (s *KnowledgeInputProvenanceStore) ReadOrdinaryRAGInputLineage(ctx context.
 	if err == nil && c != nil {
 		err = verifyKnowledgeInputMaterial(tx, a, k, c)
 	}
-	if errors.Is(err, gorm.ErrRecordNotFound) || errors.Is(err, ErrKnowledgeInputChanged) || errors.Is(err, ErrNextcloudLineageSnapshotDenied) {
+	if errors.Is(err, gorm.ErrRecordNotFound) || errors.Is(err, ErrKnowledgeInputChanged) || errors.Is(err, ErrNextcloudLineageSnapshotDenied) || errors.Is(err, types.ErrSourceLineageUnknown) {
 		return types.UnknownSourceLineage(), nil
 	}
 	if err != nil {
@@ -421,13 +508,25 @@ func verifyKnowledgeInheritedSources(tx *gorm.DB, lineage *types.SourceLineage) 
 // original producer generation. A new publication cannot certify old SQL text.
 func (s *KnowledgeInputProvenanceStore) ReadControlledRAGInputLineage(ctx context.Context, tx *gorm.DB, k *types.Knowledge, c *types.Chunk, current *types.SourceLineage) (*types.SourceLineage, error) {
 	a, _, lineage, err := s.admissionInTx(tx, k, nil)
-	if err == nil && (a.OriginKind != "nextcloud" || !reflect.DeepEqual(lineage, current)) {
-		err = ErrKnowledgeInputChanged
+	if err == nil {
+		if a.OriginKind != "nextcloud" || len(current.Sources) != 1 {
+			err = ErrKnowledgeInputChanged
+		} else {
+			found := false
+			for _, original := range lineage.Sources {
+				if original == current.Sources[0] {
+					found = true
+				}
+			}
+			if !found {
+				err = ErrKnowledgeInputChanged
+			}
+		}
 	}
 	if err == nil && c != nil {
 		err = verifyKnowledgeInputMaterial(tx, a, k, c)
 	}
-	if errors.Is(err, gorm.ErrRecordNotFound) || errors.Is(err, ErrKnowledgeInputChanged) || errors.Is(err, ErrNextcloudLineageSnapshotDenied) {
+	if errors.Is(err, gorm.ErrRecordNotFound) || errors.Is(err, ErrKnowledgeInputChanged) || errors.Is(err, ErrNextcloudLineageSnapshotDenied) || errors.Is(err, types.ErrSourceLineageUnknown) {
 		return types.UnknownSourceLineage(), nil
 	}
 	if err != nil {
@@ -440,6 +539,17 @@ func (s *KnowledgeInputProvenanceStore) snapshot(ctx context.Context, request ty
 	if s == nil || s.db == nil || request.Expected == nil {
 		return nil, types.ErrSourceLineageUnknown
 	}
+	if request.Projection == "" {
+		request.Projection = request.Expected.Projection
+	}
+	if request.Projection != "" && request.Projection != types.KnowledgeBuildProjectionGraph {
+		return nil, ErrKnowledgeInputChanged
+	}
+	if request.Expected.BodyDigest != "" && request.Expected.Projection != request.Projection {
+		return nil, ErrKnowledgeInputChanged
+	}
+	request.Expected = cloneKnowledgeInputProof(request.Expected)
+	request.Expected.Projection = request.Projection
 	if len(request.ChunkIDs) > 4096 {
 		return nil, types.ErrSourceLineageLimit
 	}
@@ -475,8 +585,14 @@ func (s *KnowledgeInputProvenanceStore) snapshot(ctx context.Context, request ty
 			if err := tx.Where("id = ? AND tenant_id = ? AND knowledge_base_id = ? AND knowledge_id = ?", id, k.TenantID, k.KnowledgeBaseID, k.ID).Take(c).Error; err != nil {
 				return err
 			}
-			if err := verifyKnowledgeInputMaterial(tx, a, &k, c); err != nil {
-				return err
+			var verifyErr error
+			if request.Projection == types.KnowledgeBuildProjectionGraph {
+				verifyErr = verifyKnowledgeGraphChunk(tx, a, c)
+			} else {
+				verifyErr = verifyKnowledgeInputMaterial(tx, a, &k, c)
+			}
+			if verifyErr != nil {
+				return verifyErr
 			}
 			chunks = append(chunks, c)
 		}
@@ -484,15 +600,23 @@ func (s *KnowledgeInputProvenanceStore) snapshot(ctx context.Context, request ty
 		sort.Strings(ids)
 		material := []string{a.AdmissionID, a.RootDigest, a.ConfigDigest}
 		kgDigest, _ := knowledgeMaterialDigest(&k)
-		material = append(material, kgDigest)
+		if request.Projection != types.KnowledgeBuildProjectionGraph {
+			material = append(material, kgDigest)
+		}
 		ordered := append([]*types.Chunk{}, chunks...)
 		sort.Slice(ordered, func(i, j int) bool { return ordered[i].ID < ordered[j].ID })
 		for _, c := range ordered {
 			digest, err := knowledgeChunkDigest(c)
+			if request.Projection == types.KnowledgeBuildProjectionGraph {
+				digest, err = knowledgeGraphChunkDigest(c)
+			}
 			if err != nil {
 				return err
 			}
 			revision, err := inputRowRevision(tx, "chunk", c.ID)
+			if request.Projection == types.KnowledgeBuildProjectionGraph {
+				revision, err = knowledgeGraphChunkRevision(tx, c.ID)
+			}
 			if err != nil {
 				return err
 			}
@@ -502,12 +626,14 @@ func (s *KnowledgeInputProvenanceStore) snapshot(ctx context.Context, request ty
 		if err != nil {
 			return err
 		}
-		material = append(material, fmt.Sprint(kgRevision))
+		if request.Projection != types.KnowledgeBuildProjectionGraph {
+			material = append(material, fmt.Sprint(kgRevision))
+		}
 		bodyDigest, err := KnowledgeInputDigest(material)
 		if err != nil {
 			return err
 		}
-		proof := &types.KnowledgeBuildInputProof{Version: 1, TenantID: k.TenantID, KnowledgeBaseID: k.KnowledgeBaseID, KnowledgeID: k.ID, AdmissionID: a.AdmissionID, BuildGeneration: a.BuildGeneration, InputDigest: a.InputDigest, ConfigDigest: a.ConfigDigest, BodyDigest: bodyDigest, ChunkIDs: ids, SourceLineage: lineage}
+		proof := &types.KnowledgeBuildInputProof{Version: 1, Projection: request.Projection, TenantID: k.TenantID, KnowledgeBaseID: k.KnowledgeBaseID, KnowledgeID: k.ID, AdmissionID: a.AdmissionID, BuildGeneration: a.BuildGeneration, InputDigest: a.InputDigest, ConfigDigest: a.ConfigDigest, BodyDigest: bodyDigest, ChunkIDs: ids, SourceLineage: lineage}
 		if (recheck || request.Expected.BodyDigest != "") && (proof.BodyDigest != request.Expected.BodyDigest || !reflect.DeepEqual(proof.ChunkIDs, request.Expected.ChunkIDs)) {
 			return ErrKnowledgeInputChanged
 		}
@@ -550,7 +676,11 @@ func validateKnowledgeInputWrite(ctx context.Context, tx *gorm.DB, tenant uint64
 	if err := tx.Where("id = ? AND tenant_id = ? AND knowledge_base_id = ?", id, tenant, kb).Take(&k).Error; err != nil {
 		return nil, err
 	}
-	a, _, _, err := (&KnowledgeInputProvenanceStore{tx}).admissionInTx(tx, &k, guard.proof)
+	store, ok := guard.reader.(*KnowledgeInputProvenanceStore)
+	if !ok {
+		return nil, ErrKnowledgeInputChanged
+	}
+	a, _, _, err := (&KnowledgeInputProvenanceStore{db: tx, messageVerifier: store.messageVerifier}).admissionInTx(tx, &k, guard.proof)
 	return a, err
 }
 

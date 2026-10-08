@@ -22,7 +22,15 @@ func knowledgeInputPostgresFixture(t *testing.T) (*KnowledgeInputProvenanceStore
 	script, err := os.ReadFile("../../../migrations/versioned/000134_knowledge_input_provenance.up.sql")
 	require.NoError(t, err)
 	require.NoError(t, migration.Exec(string(script)).Error)
-	return NewKnowledgeInputProvenanceStore(db), db
+	db.Config.DisableForeignKeyConstraintWhenMigrating = true
+	require.NoError(t, db.AutoMigrate(&types.Session{}, &types.Message{}))
+	db.Config.DisableForeignKeyConstraintWhenMigrating = false
+	additional, err := os.ReadFile("../../../migrations/versioned/000135_knowledge_configuration_history_inputs.up.sql")
+	require.NoError(t, err)
+	require.NoError(t, migration.Exec(string(additional)).Error)
+	store := NewKnowledgeInputProvenanceStore(db)
+	require.NoError(t, store.ReplaceKnowledgeBaseConfigurationWithInput(WithIndependentKnowledgeInput(context.Background()), &types.KnowledgeBase{ID: "kb", TenantID: 7, Name: "source", EmbeddingModelID: "embed", SummaryModelID: "summary"}))
+	return store, db
 }
 
 type knowledgeInputSnapshotPauseKey struct{}

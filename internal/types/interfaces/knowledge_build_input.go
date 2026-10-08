@@ -19,3 +19,8 @@ type KnowledgeInputWriter interface {
 	CreateKnowledgeWithInput(context.Context, *types.Knowledge, any) (*types.KnowledgeBuildInputProof, error)
 	UpdateKnowledgeWithInput(context.Context, *types.Knowledge, any) (*types.KnowledgeBuildInputProof, error)
 }
+
+type KnowledgeBaseInputWriter interface {
+	CreateKnowledgeBaseWithInput(context.Context, *types.KnowledgeBase) error
+	UpdateKnowledgeBaseWithInput(context.Context, *types.KnowledgeBase) error
+}
