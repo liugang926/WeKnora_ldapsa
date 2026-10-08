@@ -50,6 +50,7 @@ type NextcloudCapacityReservation struct {
 	State           string
 	LeaseUntilMS    int64
 	CreatedAtMS     int64
+	CommittedAtMS   int64
 }
 
 func (NextcloudCapacityReservation) TableName() string { return "nextcloud_capacity_reservations" }
@@ -138,7 +139,7 @@ func (s *NextcloudCapacityStore) Reserve(ctx context.Context, tenant uint64, kb,
 		}
 
 		var diskPending, kbPending int64
-		if err := tx.Model(&NextcloudCapacityReservation{}).Where("scope_id=? AND state='pending'", m.ScopeID).Select("COALESCE(SUM(bytes),0)").Scan(&diskPending).Error; err != nil {
+		if err := tx.Model(&NextcloudCapacityReservation{}).Where("scope_id=? AND (state='pending' OR (state='committed' AND committed_at_ms>=?))", m.ScopeID, m.MeasuredAt.UnixMilli()-1000).Select("COALESCE(SUM(bytes),0)").Scan(&diskPending).Error; err != nil {
 			return err
 		}
 		if err := tx.Model(&NextcloudCapacityReservation{}).Where("tenant_id=? AND knowledge_base_id=? AND state='pending'", tenant, kb).Select("COALESCE(SUM(bytes),0)").Scan(&kbPending).Error; err != nil {
@@ -226,7 +227,11 @@ func (s *NextcloudCapacityStore) Finish(ctx context.Context, r *NextcloudCapacit
 		if count != 1 {
 			return ErrNextcloudCapacityUnavailable
 		}
-		return tx.Model(&row).Update("state", "committed").Error
+		now, err := nextcloudLeaseNowMS(tx)
+		if err != nil {
+			return err
+		}
+		return tx.Model(&row).Updates(map[string]any{"state": "committed", "committed_at_ms": now}).Error
 	})
 }
 
@@ -284,7 +289,7 @@ func (s *NextcloudCapacityStore) Status(ctx context.Context, tenant uint64, kb, 
 		if err := tx.Where("tenant_id=? AND knowledge_base_id=?", tenant, kb).Take(&result.Policy).Error; err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 			return err
 		}
-		if err := tx.Model(&NextcloudCapacityReservation{}).Where("scope_id=? AND state='pending'", m.ScopeID).Select("COALESCE(SUM(bytes),0)").Scan(&result.PendingBytes).Error; err != nil {
+		if err := tx.Model(&NextcloudCapacityReservation{}).Where("scope_id=? AND (state='pending' OR (state='committed' AND committed_at_ms>=?))", m.ScopeID, m.MeasuredAt.UnixMilli()-1000).Select("COALESCE(SUM(bytes),0)").Scan(&result.PendingBytes).Error; err != nil {
 			return err
 		}
 		if err := tx.Raw(`SELECT COALESCE(SUM(r.size),0) FROM resources r WHERE r.tenant_id=? AND r.storage_backend_id=? AND r.state<>'deleted' AND EXISTS (SELECT 1 FROM resource_bindings b JOIN knowledges k ON k.id=b.owner_id AND k.tenant_id=r.tenant_id WHERE b.resource_id=r.id AND b.owner_type='knowledge' AND k.knowledge_base_id=?)`, tenant, backend, kb).Scan(&result.LogicalRetainedBytes).Error; err != nil {
