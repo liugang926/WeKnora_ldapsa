@@ -24,3 +24,8 @@ can belong to other KBs, and those scopes must be resolved from immutable
 receipt metadata and leased before parent material is captured. Full reader /
 builder inventory and physical adapter coverage remain outstanding. This change
 does not insert production lease-coverage rows or enable derived GC.
+
+The tested GC competitor is the generation claim protocol. The existing
+`RunDue` local-object claim adapter still needs to join this content fence;
+its resource-reference lock alone does not establish reader/build coverage.
+Actual provider deletion and that adapter's races are a separate pending gate.
