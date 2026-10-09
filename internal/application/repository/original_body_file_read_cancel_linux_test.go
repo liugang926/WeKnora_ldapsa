@@ -12,7 +12,7 @@ import (
 	"gorm.io/gorm"
 )
 
-// IN_ACCESS observes the real final journal-key ReadFile operation. The large
+// IN_ACCESS observes a real journal-key ReadFile operation after the payload query. The large
 // valid owned bootstrap key gives cancellation a read/verification window;
 // no old pin/proof is re-signed and no body/absence receipt is seeded.
 func runOriginalBodyFileReadCancelActual(t *testing.T, pg bool) {
@@ -28,7 +28,7 @@ func runOriginalBodyFileReadCancelActual(t *testing.T, pg bool) {
 			_ = unix.Close(fd)
 		}
 	}()
-	require.NoError(t, db.Callback().Query().After("gorm:query").Register("actual-last-file-read-cancel", func(tx *gorm.DB) {
+	require.NoError(t, db.Callback().Query().After("gorm:query").Register("actual-journal-key-read-cancel", func(tx *gorm.DB) {
 		if armed || tx.Statement.Table != "original_body_payloads" {
 			return
 		}
@@ -50,15 +50,15 @@ func runOriginalBodyFileReadCancelActual(t *testing.T, pg bool) {
 		}()
 		<-ready
 	}))
-	defer db.Callback().Query().Remove("actual-last-file-read-cancel")
+	defer db.Callback().Query().Remove("actual-journal-key-read-cancel")
 	err := CheckOriginalBodyAvailableInTx(ctx, db, "knowledge_auto_tag_input_manifests", "actual-read-cancel")
-	require.True(t, armed, "the real final journal file check was reached")
+	require.True(t, armed, "the payload query armed the real journal-key read observer")
 	select {
 	case <-access:
 	case <-time.After(time.Second):
 		t.Fatal("real journal-key read access was not observed")
 	}
-	require.ErrorIs(t, err, context.Canceled, "cancellation during the actual final file read cannot return body success")
+	require.ErrorIs(t, err, context.Canceled, "cancellation during the observed real journal-key file read cannot return body success")
 	var state string
 	require.NoError(t, bodyInternal(db).Table("original_body_payloads").Select("state").Where("id=?", bodyID).Scan(&state).Error)
 	require.Equal(t, "live", state, "cancel rejection never fabricates a purge/absence receipt")
