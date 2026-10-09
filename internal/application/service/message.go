@@ -278,6 +278,9 @@ func (s *messageService) GetMessage(ctx context.Context, sessionID string, messa
 // a running turn. It never returns saved content, tool outputs or references,
 // and does not require permission to read content that may have been revoked.
 func (s *messageService) GetMessageForControl(ctx context.Context, sessionID, messageID string) (*types.Message, error) {
+	if s.materialStore != nil {
+		return s.materialStore.MessageOwnedControlMetadata(ctx, sessionID, messageID)
+	}
 	tenantID := types.MustTenantIDFromContext(ctx)
 	owner := types.SessionOwnerIDFromContext(ctx)
 	if owner == "" || types.CallerFromContext(ctx).TenantID != tenantID {
@@ -304,6 +307,10 @@ func (s *messageService) GetMessageForControl(ctx context.Context, sessionID, me
 // message reads continue to apply the historical guard, including incomplete
 // rows. SSE needs the running scope before it can learn tool provenance.
 func (s *messageService) GetMessageForStream(ctx context.Context, sessionID, messageID string) (*types.Message, error) {
+	if s.materialStore != nil {
+		message, _, err := s.materialStore.MessageLiveControl(ctx, sessionID, messageID)
+		return message, err
+	}
 	tenantID := types.MustTenantIDFromContext(ctx)
 	owner := types.SessionOwnerIDFromContext(ctx)
 	if owner == "" || types.CallerFromContext(ctx).TenantID != tenantID {

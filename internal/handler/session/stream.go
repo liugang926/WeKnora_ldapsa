@@ -85,6 +85,9 @@ func (h *Handler) ContinueStream(c *gin.Context) {
 	if h.tryNativeSavedReplay(ctx, c, sessionID, messageID, resourceRewriter) {
 		return
 	}
+	if h.tryNativeLiveReplay(ctx, c, sessionID, messageID, resourceRewriter) {
+		return
+	}
 
 	// Get the incomplete message
 	message, err := getMessageForStream(ctx, h.messageService, sessionID, messageID)
