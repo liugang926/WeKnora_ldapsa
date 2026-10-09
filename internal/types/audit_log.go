@@ -183,9 +183,12 @@ const (
 	AuditActionKBShareRemoved           AuditAction = "kb.share_removed"
 	AuditActionWikiContentChanged       AuditAction = "wiki.content_changed"
 
-	AuditActionFAQImportStarted   AuditAction = "faq.import_started"
-	AuditActionFAQImportCompleted AuditAction = "faq.import_completed"
-	AuditActionFAQImportFailed    AuditAction = "faq.import_failed"
+	AuditActionFAQImportStarted     AuditAction = "faq.import_started"
+	AuditActionFAQImportCompleted   AuditAction = "faq.import_completed"
+	AuditActionFAQImportFailed      AuditAction = "faq.import_failed"
+	AuditActionNextcloudGCRequested AuditAction = "nextcloud.gc_collect_requested"
+	AuditActionNextcloudGCFinished  AuditAction = "nextcloud.gc_collect_finished"
+	AuditActionNextcloudGCRetry     AuditAction = "nextcloud.gc_retry_requested"
 )
 
 // AuditOutcome separates asynchronous acceptance from terminal business

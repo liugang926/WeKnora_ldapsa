@@ -4633,7 +4633,10 @@ export default {
         'wiki.content_changed': 'Содержимое Wiki обновлено',
         'faq.import_started': 'Импорт FAQ начат',
         'faq.import_completed': 'Импорт FAQ завершён',
-        'faq.import_failed': 'Ошибка импорта FAQ'
+        'faq.import_failed': 'Ошибка импорта FAQ',
+        'nextcloud.gc_collect_requested': 'Cleanup attempt requested',
+        'nextcloud.gc_collect_finished': 'Cleanup attempt finished',
+        'nextcloud.gc_retry_requested': 'Cleanup retry scheduled'
       },
       detailFields: {
         task_id: 'ID задачи',

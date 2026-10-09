@@ -4666,7 +4666,10 @@ export default {
         'wiki.content_changed': '更新 Wiki 内容',
         'faq.import_started': '开始导入 FAQ',
         'faq.import_completed': '完成导入 FAQ',
-        'faq.import_failed': '导入 FAQ 失败'
+        'faq.import_failed': '导入 FAQ 失败',
+        'nextcloud.gc_collect_requested': '请求回收尝试',
+        'nextcloud.gc_collect_finished': '回收尝试结束',
+        'nextcloud.gc_retry_requested': '安排回收重试'
       },
       detailFields: {
         task_id: '任务 ID',

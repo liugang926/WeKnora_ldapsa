@@ -3028,7 +3028,10 @@ export default {
         'wiki.content_changed': 'Wikiの内容を変更',
         'faq.import_started': 'FAQのインポートを開始',
         'faq.import_completed': 'FAQのインポートが完了',
-        'faq.import_failed': 'FAQのインポートに失敗'
+        'faq.import_failed': 'FAQのインポートに失敗',
+        'nextcloud.gc_collect_requested': 'Cleanup attempt requested',
+        'nextcloud.gc_collect_finished': 'Cleanup attempt finished',
+        'nextcloud.gc_retry_requested': 'Cleanup retry scheduled'
       },
       outcomes: {
         accepted: '受付済み',

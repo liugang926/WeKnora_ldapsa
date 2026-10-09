@@ -73,6 +73,10 @@ const KB_ACTIVITY_ACTION_LABELS_EN: Record<string, string> = {
   'faq.import_started': 'FAQ import started',
   'faq.import_completed': 'FAQ import completed',
   'faq.import_failed': 'FAQ import failed',
+  'nextcloud.gc_collect_requested': 'Cleanup attempt requested',
+  'nextcloud.gc_collect_finished': 'Cleanup attempt finished',
+  'nextcloud.gc_retry_requested': 'Cleanup retry scheduled',
+
 }
 
 const KB_ACTIVITY_OUTCOME_LABELS_EN: Record<string, string> = {

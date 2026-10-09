@@ -87,7 +87,7 @@ func (s *NextcloudGCStore) CollectJob(ctx context.Context, authority *KnowledgeI
 		if now.Before(job.NotBefore) {
 			return ErrNextcloudGCRetention
 		}
-		return gcManualAudit(tx, ctx, job, "nextcloud.gc_collect_requested", types.AuditOutcomeAccepted)
+		return gcManualAudit(tx, ctx, job, types.AuditActionNextcloudGCRequested, types.AuditOutcomeAccepted)
 	}); e != nil {
 		return nil, e
 	}
@@ -98,7 +98,7 @@ func (s *NextcloudGCStore) CollectJob(ctx context.Context, authority *KnowledgeI
 		} else if preview != nil && preview.Status.State == "collected" {
 			outcome = types.AuditOutcomeSuccess
 		}
-		resultErr = errors.Join(resultErr, gcManualAudit(s.db.WithContext(ctx), ctx, job, "nextcloud.gc_collect_finished", outcome))
+		resultErr = errors.Join(resultErr, gcManualAudit(s.db.WithContext(ctx), ctx, job, types.AuditActionNextcloudGCFinished, outcome))
 	}()
 	if e := s.runOne(ctx, id, now); e != nil {
 		return nil, e
@@ -136,7 +136,7 @@ func (s *NextcloudGCStore) RetryJobAsAdmin(ctx context.Context, authority *Knowl
 			return r.Error
 		}
 		if changed {
-			return gcManualAudit(tx, ctx, job, "nextcloud.gc_retry_requested", types.AuditOutcomeAccepted)
+			return gcManualAudit(tx, ctx, job, types.AuditActionNextcloudGCRetry, types.AuditOutcomeAccepted)
 		}
 		return nil
 	})

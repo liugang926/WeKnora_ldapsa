@@ -4633,7 +4633,10 @@ export default {
         'wiki.content_changed': 'Wiki 콘텐츠 업데이트',
         'faq.import_started': 'FAQ 가져오기 시작',
         'faq.import_completed': 'FAQ 가져오기 완료',
-        'faq.import_failed': 'FAQ 가져오기 실패'
+        'faq.import_failed': 'FAQ 가져오기 실패',
+        'nextcloud.gc_collect_requested': 'Cleanup attempt requested',
+        'nextcloud.gc_collect_finished': 'Cleanup attempt finished',
+        'nextcloud.gc_retry_requested': 'Cleanup retry scheduled'
       },
       detailFields: {
         task_id: '작업 ID',
