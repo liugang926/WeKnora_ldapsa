@@ -546,7 +546,7 @@ func (s *NextcloudGCStore) ListStatus(ctx context.Context, tenantID uint64, limi
 		if e := anchorQuery.Take(&anchor).Error; e != nil {
 			return nil, ErrNextcloudGCJobUnavailable
 		}
-		query = query.Where("created_at < ? OR (created_at = ? AND id < ?)", anchor.CreatedAt, anchor.CreatedAt, anchor.ID)
+		query = query.Where("(created_at < ? OR (created_at = ? AND id < ?))", anchor.CreatedAt, anchor.CreatedAt, anchor.ID)
 	}
 	if err := query.Order("created_at DESC, id DESC").Limit(limit).Find(&jobs).Error; err != nil {
 		return nil, err
