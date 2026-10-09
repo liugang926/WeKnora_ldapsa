@@ -101,6 +101,7 @@ type KnowledgeInputProvenanceStore struct {
 }
 
 func NewKnowledgeInputProvenanceStore(db *gorm.DB) *KnowledgeInputProvenanceStore {
+	_ = InstallOriginalBodyRetentionCallbacks(db)
 	return &KnowledgeInputProvenanceStore{db: db}
 }
 
