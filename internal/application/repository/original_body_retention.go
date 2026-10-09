@@ -123,7 +123,9 @@ func checkOriginalBodyAvailableForHeads(ctx context.Context, tx *gorm.DB, table,
 		return err
 	}
 	if !originalBodySchemaPresent(tx) {
-		return nil
+		// Preserve the legacy no-schema compatibility result, but never hide
+		// caller cancellation as a successful absent-schema probe.
+		return ctx.Err()
 	}
 	store := NewOriginalBodyRetentionStore(tx)
 	if e := store.checkJournalInTx(tx); e != nil {
