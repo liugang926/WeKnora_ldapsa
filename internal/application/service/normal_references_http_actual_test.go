@@ -249,6 +249,7 @@ func runNormalReferencesActualHTTP(t *testing.T, pg bool, modes ...string) {
 			return f.DB.Table("nextcloud_content_leases").Where("kind='read' AND released_at_ms IS NULL").Count(&source).Error == nil && f.DB.Table("original_body_leases").Where("kind='read' AND released_at_ms IS NULL").Count(&body).Error == nil && source == 0 && body == 0
 		}, 3*time.Second, 10*time.Millisecond, "actual terminal releases producer/reader pins before fixture cleanup")
 		if mode == "idle-current" || mode == "idle-source-revoke" {
+			t.Logf("actual idle metadata: measured=%t empty_http_polls=%d held_body_leases=%d successful_sql_renewals=%d", model.idleMeasured.Load(), observedStream.emptyPolls.Load(), model.idleHeldBodies.Load(), model.idleRenewals.Load())
 			require.True(t, model.idleMeasured.Load(), "ten real empty HTTP Redis polls were observed, not fabricated callback counts")
 			require.LessOrEqual(t, model.idleRenewals.Load(), 6*model.idleHeldBodies.Load(), "real empty native polls must not perform one full SQL body renewal per100ms tick")
 		}
