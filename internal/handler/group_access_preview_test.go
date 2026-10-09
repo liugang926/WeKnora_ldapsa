@@ -44,7 +44,9 @@ func (s *previewAccessService) EffectivePermission(
 }
 
 func TestResourceEffectivePermissionPreview(t *testing.T) {
-	for _, resourceType := range []types.ResourceType{types.GroupResourceTypeKnowledgeBase, types.GroupResourceTypeAgent} {
+	for _, resourceType := range []types.ResourceType{
+		types.GroupResourceTypeKnowledgeBase, types.GroupResourceTypeAgent,
+	} {
 		t.Run(string(resourceType), func(t *testing.T) {
 			now := time.Now().UTC()
 			stale := now.Add(-time.Hour)
@@ -74,9 +76,10 @@ func TestResourceEffectivePermissionPreview(t *testing.T) {
 				roles[userID] = types.EffectiveTenantRole{TenantID: 7, Member: true, Role: types.TenantRoleViewer}
 			}
 			roles["admin"] = types.EffectiveTenantRole{TenantID: 7, Member: true, Role: types.TenantRoleAdmin}
+			userIDs := []string{denied, "outside", user2, "suspended", "admin", user1}
 			h := &GroupAccessHandler{
 				directories: repo,
-				groups:      &previewGroupRepo{userIDs: []string{denied, "outside", user2, "suspended", "admin", user1}},
+				groups:      &previewGroupRepo{userIDs: userIDs},
 				access:      &previewAccessService{roles: roles},
 			}
 			var grants []validatedResourceGrant
@@ -84,8 +87,12 @@ func TestResourceEffectivePermissionPreview(t *testing.T) {
 				id         string
 				permission types.ResourcePermission
 				directory  *types.Directory
-			}{{"edit", types.ResourcePermissionEdit, directory}, {"read", readPermission, directory},
-				{"stale", readPermission, staleDirectory}, {"foreign", readPermission, directory}} {
+			}{
+				{"edit", types.ResourcePermissionEdit, directory},
+				{"read", readPermission, directory},
+				{"stale", readPermission, staleDirectory},
+				{"foreign", readPermission, directory},
+			} {
 				grants = append(grants, validatedResourceGrant{
 					directory: item.directory,
 					group:     &types.DirectoryGroup{ID: item.id, DisplayName: item.id},
@@ -93,7 +100,8 @@ func TestResourceEffectivePermissionPreview(t *testing.T) {
 				})
 			}
 			ctx := types.WithCaller(context.Background(), types.Caller{UserID: "requesting-admin", TenantID: 7})
-			impact, err := h.previewResourceAccess(ctx, 7, resourceType, "resource", types.ResourceAccessRestricted, grants, 0, 2)
+			impact, err := h.previewResourceAccess(
+				ctx, 7, resourceType, "resource", types.ResourceAccessRestricted, grants, 0, 2)
 			require.NoError(t, err)
 			require.Equal(t, 4, impact.EffectiveUserTotal)
 			require.Equal(t, 4, impact.CurrentlyAllowed)
@@ -108,7 +116,8 @@ func TestResourceEffectivePermissionPreview(t *testing.T) {
 			require.Equal(t, types.DirectoryMembershipNested, impact.EffectiveUsers[1].GroupMatches[0].MembershipSource)
 			require.Equal(t, 2, impact.EffectiveUsers[1].GroupMatches[0].MembershipDepth)
 
-			page, err := h.previewResourceAccess(ctx, 7, resourceType, "resource", types.ResourceAccessRestricted, grants, 2, 2)
+			page, err := h.previewResourceAccess(
+				ctx, 7, resourceType, "resource", types.ResourceAccessRestricted, grants, 2, 2)
 			require.NoError(t, err)
 			require.False(t, page.Truncated)
 			require.Equal(t, string(readPermission), page.EffectiveUsers[0].PermissionAfter)
@@ -116,7 +125,8 @@ func TestResourceEffectivePermissionPreview(t *testing.T) {
 			require.False(t, page.EffectiveUsers[1].AllowedAfter)
 			require.Equal(t, "none", page.EffectiveUsers[1].PermissionAfter)
 			require.Empty(t, page.EffectiveUsers[1].GroupMatches)
-			inherit, err := h.previewResourceAccess(ctx, 7, resourceType, "resource", types.ResourceAccessInherit, grants, 100, 2)
+			inherit, err := h.previewResourceAccess(
+				ctx, 7, resourceType, "resource", types.ResourceAccessInherit, grants, 100, 2)
 			require.NoError(t, err)
 			require.Empty(t, inherit.EffectiveUsers)
 			require.Equal(t, 4, inherit.AllowedAfter)

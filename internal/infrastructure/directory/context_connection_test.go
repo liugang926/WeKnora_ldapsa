@@ -75,7 +75,7 @@ func TestConnectionNegotiationHonorsContextCancellation(t *testing.T) {
 		t.Run(string(mode), func(t *testing.T) {
 			listener, err := net.Listen("tcp", "127.0.0.1:0")
 			require.NoError(t, err)
-			defer listener.Close()
+			defer func() { _ = listener.Close() }()
 			accepted := make(chan net.Conn, 1)
 			go func() {
 				conn, acceptErr := listener.Accept()
@@ -103,7 +103,7 @@ func TestConnectionNegotiationHonorsContextCancellation(t *testing.T) {
 			}()
 			select {
 			case socket := <-accepted:
-				defer socket.Close()
+				defer func() { _ = socket.Close() }()
 			case <-time.After(time.Second):
 				t.Fatal("test server did not accept connection")
 			}
@@ -133,7 +133,7 @@ func TestProductionConnectionCancellationInterruptsBlockedSocketWrite(t *testing
 	for _, operation := range []string{"bind", "search"} {
 		t.Run(operation, func(t *testing.T) {
 			client, server := net.Pipe()
-			defer server.Close()
+			defer func() { _ = server.Close() }()
 			transport := &observedWriteConnection{Conn: client, writing: make(chan struct{})}
 			ldapConn := ldap.NewConn(transport, false)
 			ldapConn.Start()
@@ -168,7 +168,7 @@ func TestProductionQueryDeadlineBoundsBlockedSocketWrite(t *testing.T) {
 	for _, operation := range []string{"bind", "search"} {
 		t.Run(operation, func(t *testing.T) {
 			client, server := net.Pipe()
-			defer server.Close()
+			defer func() { _ = server.Close() }()
 			ldapConn := ldap.NewConn(client, false)
 			ldapConn.Start()
 			ldapConn.SetTimeout(10 * time.Second)
@@ -196,7 +196,7 @@ func TestProductionQueryDeadlineBoundsBlockedSocketWrite(t *testing.T) {
 
 func TestProductionQueryDeadlineHonorsEarlierContextDeadline(t *testing.T) {
 	client, server := net.Pipe()
-	defer server.Close()
+	defer func() { _ = server.Close() }()
 	ldapConn := ldap.NewConn(client, false)
 	ldapConn.Start()
 	ldapConn.SetTimeout(10 * time.Second)
@@ -214,10 +214,10 @@ func TestProductionQueryDeadlineHonorsEarlierContextDeadline(t *testing.T) {
 	}
 }
 
-func TestStartTLSCancellationInterruptsHandshakeAfterSuccessfulExtendedResponse(t *testing.T) {
+func TestStartTLSCancellationAfterExtendedResponse(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
-	defer listener.Close()
+	defer func() { _ = listener.Close() }()
 	responseSent := make(chan net.Conn, 1)
 	serverErrors := make(chan error, 1)
 	go func() {
@@ -274,7 +274,7 @@ func TestStartTLSCancellationInterruptsHandshakeAfterSuccessfulExtendedResponse(
 	}()
 	select {
 	case socket := <-responseSent:
-		defer socket.Close()
+		defer func() { _ = socket.Close() }()
 	case err := <-serverErrors:
 		t.Fatal(err)
 	case <-time.After(time.Second):

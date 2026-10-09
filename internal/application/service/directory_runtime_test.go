@@ -549,10 +549,13 @@ func TestDirectoryRuntimeLoginEligibilityFailureRefreshesCompleteSnapshotAndRevo
 			runtime.tokens = tokens
 			adapter := &runtimeLDAPAdapter{
 				authenticateErr: test.err,
-				syncResult:      &ldapdirectory.Snapshot{DirectoryID: "corp-ad", ControllerURL: "ldaps://dc.example.test:636"},
+				syncResult: &ldapdirectory.Snapshot{
+					DirectoryID: "corp-ad", ControllerURL: "ldaps://dc.example.test:636",
+				},
 			}
 			runtime.newAdapter = func(ldapdirectory.Config) (liveDirectoryAdapter, error) { return adapter, nil }
-			syncService := &runtimeDirectorySyncService{repo: repo,
+			syncService := &runtimeDirectorySyncService{
+				repo: repo,
 				onApply: func(snapshot *types.DirectorySnapshot) {
 					if !snapshot.Complete || !snapshot.PaginationComplete {
 						t.Fatal("eligibility failure attempted to apply a partial snapshot")
@@ -574,7 +577,8 @@ func TestDirectoryRuntimeLoginEligibilityFailureRefreshesCompleteSnapshotAndRevo
 				t.Fatalf("old directory sessions were not revoked: %v", tokens.revoked)
 			}
 			if users.generateCalls != 0 || users.registerCalls != 0 {
-				t.Fatalf("eligibility failure reached token/provisioning: %d/%d", users.generateCalls, users.registerCalls)
+				t.Fatalf("eligibility failure reached token/provisioning: %d/%d",
+					users.generateCalls, users.registerCalls)
 			}
 		})
 	}
@@ -586,8 +590,10 @@ func TestDirectoryRuntimeLoginEligibilityFailureDiscardsFailedSync(t *testing.T)
 	repo.identities = []*types.DirectoryIdentity{identity}
 	tokens := &runtimeTokenRepo{}
 	runtime.tokens = tokens
-	adapter := &runtimeLDAPAdapter{authenticateErr: ldapdirectory.ErrUserDisabled,
-		syncErr: ldapdirectory.ErrIncompleteResults}
+	adapter := &runtimeLDAPAdapter{
+		authenticateErr: ldapdirectory.ErrUserDisabled,
+		syncErr:         ldapdirectory.ErrIncompleteResults,
+	}
 	runtime.newAdapter = func(ldapdirectory.Config) (liveDirectoryAdapter, error) { return adapter, nil }
 	syncService := &runtimeDirectorySyncService{repo: repo}
 	runtime.directories = syncService

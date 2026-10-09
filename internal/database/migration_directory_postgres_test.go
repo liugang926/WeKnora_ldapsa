@@ -71,7 +71,8 @@ func TestPostgresDirectoryMigrationUpgradeAndRollback(t *testing.T) {
 		VALUES ($1, 'knowledge_base', 'fixture-kb')`, tenantID)
 	require.NoError(t, err)
 	var mode string
-	require.NoError(t, db.QueryRow("SELECT mode FROM resource_access_policies WHERE tenant_id = $1", tenantID).Scan(&mode))
+	require.NoError(t, db.QueryRow(
+		"SELECT mode FROM resource_access_policies WHERE tenant_id = $1", tenantID).Scan(&mode))
 	require.Equal(t, "inherit", mode)
 
 	require.NoError(t, m.Migrate(108))
