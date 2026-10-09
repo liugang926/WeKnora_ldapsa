@@ -29,6 +29,10 @@ func WithFAQInputReadPlan(ctx context.Context, plan *types.FAQInputReadPlan) (co
 	if err = json.Unmarshal(body, &actual); err != nil {
 		return ctx, err
 	}
+	ctx, err = WithMessageMaterialReadPlans(ctx, actual.MessagePlans)
+	if err != nil {
+		return ctx, err
+	}
 	return context.WithValue(ctx, faqInputReadPlanKey{}, &faqInputReadPlanBinding{Plan: &actual}), nil
 }
 
@@ -110,6 +114,7 @@ func (s *KnowledgeInputProvenanceStore) peekFAQInputReadPlanInTx(tx *gorm.DB, re
 	}
 	scopes := map[string]types.KnowledgeSearchScope{}
 	var lineages []*types.SourceLineage
+	messagePlans := []*types.MessageMaterialReadPlan{}
 	add := func(tenant uint64, kb string) error {
 		if tenant == 0 || kb == "" {
 			return types.ErrSourceLineageUnknown
@@ -205,6 +210,19 @@ func (s *KnowledgeInputProvenanceStore) peekFAQInputReadPlanInTx(tx *gorm.DB, re
 			return nil, types.ErrSourceLineageLimit
 		}
 		for _, parent := range parents {
+			historyPlan, err := s.peekHistoryMaterialPlanForProofInTx(tx, parent)
+			if err != nil {
+				return nil, err
+			}
+			if historyPlan != nil {
+				messagePlans = append(messagePlans, historyPlan)
+				for _, scope := range historyPlan.Scopes {
+					if err := add(scope.TenantID, scope.KBID); err != nil {
+						return nil, err
+					}
+				}
+				lineages = append(lineages, historyPlan.SourceLineage)
+			}
 			if parent == nil || parent.BodyDigest == "" || parent.Projection != "" || parent.SourceLineage.RequireComplete() != nil {
 				return nil, types.ErrSourceLineageUnknown
 			}
@@ -254,7 +272,7 @@ func (s *KnowledgeInputProvenanceStore) peekFAQInputReadPlanInTx(tx *gorm.DB, re
 	if err != nil {
 		return nil, err
 	}
-	plan := &types.FAQInputReadPlan{Request: request, MetadataDigest: digest, SourceLineage: lineage}
+	plan := &types.FAQInputReadPlan{Request: request, MetadataDigest: digest, SourceLineage: lineage, MessagePlans: messagePlans}
 	keys := make([]string, 0, len(scopes))
 	for key := range scopes {
 		keys = append(keys, key)

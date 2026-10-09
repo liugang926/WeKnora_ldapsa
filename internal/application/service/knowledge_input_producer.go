@@ -63,7 +63,24 @@ func (s *knowledgeService) resumeKnowledgeInput(ctx context.Context, proof *type
 }
 
 func (s *knowledgeService) restoreKnowledgeTaskActor(ctx context.Context, proof *types.KnowledgeBuildInputProof) (context.Context, error) {
-	return repository.RestoreKnowledgeBuildActorIfRequired(ctx, s.knowledgeInputs, proof)
+	current, err := repository.RestoreKnowledgeBuildActorIfRequired(ctx, s.knowledgeInputs, proof)
+	if err != nil {
+		return ctx, err
+	}
+	if s.historyMaterialMessages != nil && s.historyMaterialMessages.materialStore != nil && current.Value(historyMaterialGuardContextKey{}) == nil {
+		request, err := s.historyMaterialMessages.materialStore.KnowledgeHistoryMaterialRequest(current, proof)
+		if err != nil {
+			return ctx, err
+		}
+		if request != nil {
+			guard, err := s.historyMaterialMessages.beginMessageMaterialRead(current, *request)
+			if err != nil {
+				return ctx, err
+			}
+			current = context.WithValue(guard.Context(), historyMaterialGuardContextKey{}, guard)
+		}
+	}
+	return current, nil
 }
 
 func requireActualKnowledgeBuildInput(ctx context.Context) error {

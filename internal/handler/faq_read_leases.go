@@ -156,7 +156,7 @@ func (h *KnowledgeHandler) beginFAQKnowledgePreRead(c *gin.Context, ctx context.
 	if err != nil {
 		return ctx, nil, knowledgeOutputHTTPError(err)
 	}
-	if len(plan.Plans) == 0 {
+	if len(plan.Plans) == 0 && len(plan.MessagePlans) == 0 {
 		return ctx, func() {}, nil
 	}
 	group, err := acquireFAQReadPlanLeases(ctx, h.contentLeases, plan.Scopes, plan.SourceLineage, h.leaseHeartbeat)

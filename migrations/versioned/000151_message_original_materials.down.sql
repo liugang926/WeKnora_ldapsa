@@ -1,0 +1,11 @@
+DROP TRIGGER IF EXISTS message_material_checkpoint ON messages;
+DROP TRIGGER IF EXISTS message_session_owner_checkpoint ON sessions;
+DROP FUNCTION IF EXISTS message_material_checkpoint();
+DROP FUNCTION IF EXISTS message_session_owner_checkpoint();
+DROP TABLE IF EXISTS message_material_receipts;
+DROP TABLE IF EXISTS message_material_admissions;
+DROP TABLE IF EXISTS message_generation_origins;
+DROP TABLE IF EXISTS message_material_versions;
+DROP TABLE IF EXISTS message_session_owner_versions;
+DROP TABLE IF EXISTS message_session_membership_versions;
+DROP FUNCTION IF EXISTS message_material_immutable();

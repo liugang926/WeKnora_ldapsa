@@ -95,7 +95,21 @@ func (s *KnowledgeInputProvenanceStore) peekFAQImportOutputReadPlanInTx(tx *gorm
 		}
 	}
 	lineages := []*types.SourceLineage{&lineage}
+	messagePlans := []*types.MessageMaterialReadPlan{}
 	for _, original := range originals {
+		historyPlan, err := s.peekHistoryMaterialPlanForProofInTx(tx, original)
+		if err != nil {
+			return nil, err
+		}
+		if historyPlan != nil {
+			messagePlans = append(messagePlans, historyPlan)
+			for _, scope := range historyPlan.Scopes {
+				if err := add(scope.TenantID, scope.KBID); err != nil {
+					return nil, err
+				}
+			}
+			lineages = append(lineages, historyPlan.SourceLineage)
+		}
 		if original == nil || original.BodyDigest == "" || original.SourceLineage.RequireComplete() != nil {
 			return nil, types.ErrSourceLineageUnknown
 		}
@@ -121,7 +135,7 @@ func (s *KnowledgeInputProvenanceStore) peekFAQImportOutputReadPlanInTx(tx *gorm
 	if err != nil {
 		return nil, err
 	}
-	plan := &types.FAQImportOutputReadPlan{Request: actualRequest, AdmissionID: row.ID, HeadRevision: row.Revision, MetadataDigest: digest, SourceLineage: complete}
+	plan := &types.FAQImportOutputReadPlan{Request: actualRequest, AdmissionID: row.ID, HeadRevision: row.Revision, MetadataDigest: digest, SourceLineage: complete, MessagePlans: messagePlans}
 	keys := make([]string, 0, len(scopes))
 	for key := range scopes {
 		keys = append(keys, key)
@@ -146,6 +160,10 @@ func WithFAQImportOutputReadPlan(ctx context.Context, plan *types.FAQImportOutpu
 	}
 	var copy types.FAQImportOutputReadPlan
 	if err := json.Unmarshal(encoded, &copy); err != nil {
+		return ctx, err
+	}
+	ctx, err = WithMessageMaterialReadPlans(ctx, copy.MessagePlans)
+	if err != nil {
 		return ctx, err
 	}
 	return context.WithValue(ctx, faqImportOutputReadPlanKey{}, &copy), nil

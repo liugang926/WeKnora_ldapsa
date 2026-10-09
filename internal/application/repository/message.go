@@ -10,11 +10,13 @@ import (
 
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
+	"github.com/google/uuid"
 )
 
 // messageRepository implements the message repository interface
 type messageRepository struct {
-	db *gorm.DB
+	materialStore *KnowledgeInputProvenanceStore
+	db            *gorm.DB
 }
 
 // NewMessageRepository creates a new message repository
@@ -29,10 +31,37 @@ func (r *messageRepository) CreateMessage(
 	ctx context.Context, message *types.Message,
 ) (*types.Message, error) {
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// Material writer IDs are resolved before the immutable new generation.
+		if message.ID == "" {
+			message.ID = uuid.NewString()
+		}
+		var origin *messageGenerationOrigin
+		if r.materialStore != nil {
+			var err error
+			origin, err = r.materialStore.beginMessageProducerInTx(tx, message, true)
+			if err != nil {
+				return err
+			}
+		}
 		if err := tx.Create(message).Error; err != nil {
 			return err
 		}
-		return insertMessageArtifacts(tx, []*types.Message{message})
+		if err := insertMessageArtifacts(tx, []*types.Message{message}); err != nil {
+			return err
+		}
+		if origin != nil {
+			var actual types.Message
+			if err := tx.Where("id=? AND session_id=?", message.ID, message.SessionID).Take(&actual).Error; err != nil {
+				return err
+			}
+			if err := r.materialStore.sealMessageMaterialInTx(tx, origin, &actual); err != nil {
+				return err
+			}
+			message.CreatedAt = actual.CreatedAt
+			message.UpdatedAt = actual.UpdatedAt
+			return nil
+		}
+		return nil
 	})
 	if err != nil {
 		return nil, err
@@ -262,6 +291,24 @@ func (r *messageRepository) ListAssistantCheckpointsUpTo(
 // when message.Artifacts is non-nil (see writeMessageArtifacts).
 func (r *messageRepository) UpdateMessage(ctx context.Context, message *types.Message) error {
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var origin *messageGenerationOrigin
+		if r.materialStore != nil {
+			var err error
+			origin, err = r.materialStore.beginMessageProducerInTx(tx, message, false)
+			if err != nil {
+				return err
+			}
+		}
+		if origin != nil && origin.PriorSources != nil && message.Role == "user" && message.SourceLineage.RequireComplete() != nil {
+			message.SourceLineage = origin.PriorSources
+		}
+		if origin != nil && origin.PriorSources != nil && message.SourceLineage.RequireComplete() == nil {
+			inherited, err := types.UnionSourceLineage(origin.PriorSources, message.SourceLineage)
+			if err != nil {
+				return err
+			}
+			message.SourceLineage = inherited
+		}
 		if err := tx.Model(&types.Message{}).Where(
 			"id = ? AND session_id = ?", message.ID, message.SessionID,
 		).Updates(message).Error; err != nil {
@@ -274,7 +321,17 @@ func (r *messageRepository) UpdateMessage(ctx context.Context, message *types.Me
 			Select("content", "is_completed", "source_lineage", "agent_steps", "knowledge_references", "updated_at", "is_fallback").Updates(message).Error; err != nil {
 			return err
 		}
-		return writeMessageArtifacts(tx, message)
+		if err := writeMessageArtifacts(tx, message); err != nil {
+			return err
+		}
+		if origin != nil {
+			var actual types.Message
+			if err := tx.Where("id=? AND session_id=?", message.ID, message.SessionID).Take(&actual).Error; err != nil {
+				return err
+			}
+			return r.materialStore.sealMessageMaterialInTx(tx, origin, &actual)
+		}
+		return nil
 	})
 }
 

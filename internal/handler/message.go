@@ -11,6 +11,8 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/Tencent/WeKnora/internal/application/access"
+	"github.com/Tencent/WeKnora/internal/application/repository"
+	"github.com/Tencent/WeKnora/internal/application/service"
 	"github.com/Tencent/WeKnora/internal/errors"
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/storageurl"
@@ -66,7 +68,17 @@ func (h *MessageHandler) resolveResourceRewriter(c *gin.Context) (*storageurl.Re
 	return storageurl.NewRequestRewriter(ctx, mode, h.FileService, h.StorageResolver), nil
 }
 
+func messageHistoryReadErrorOrNil(err error) error {
+	if err == nil {
+		return nil
+	}
+	return messageHistoryReadError(err)
+}
 func messageHistoryReadError(err error) error {
+	if stderrors.Is(err, repository.ErrKnowledgeInputChanged) || stderrors.Is(err, types.ErrSourceLineageUnknown) || stderrors.Is(err, repository.ErrNextcloudContentGCUncovered) || stderrors.Is(err, gorm.ErrRecordNotFound) {
+		return errors.NewServiceUnavailableError("Saved message original material is unavailable")
+	}
+
 	if stderrors.Is(err, access.ErrNextcloudPublicationUnavailable) {
 		return errors.NewServiceUnavailableError("Cannot verify current Nextcloud file access")
 	}
@@ -92,7 +104,12 @@ func messageHistoryReadError(err error) error {
 // @Security     ApiKeyAuth
 // @Router       /messages/{session_id}/load [get]
 func (h *MessageHandler) LoadMessages(c *gin.Context) {
-	ctx := c.Request.Context()
+	ctx := service.WithMessageMaterialOutputBoundary(c.Request.Context())
+	c.Request = c.Request.WithContext(ctx)
+	defer service.CloseMessageMaterialOutputBoundary(ctx)
+	prior := c.Writer
+	c.Writer = &knowledgeCollectionAuthorizationWriter{ResponseWriter: prior, check: func() error { return messageHistoryReadErrorOrNil(service.CheckMessageMaterialOutputBoundary(ctx)) }}
+	defer func() { c.Writer = prior }()
 
 	logger.Info(ctx, "Start loading messages")
 

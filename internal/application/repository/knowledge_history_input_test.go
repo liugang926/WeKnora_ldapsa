@@ -56,58 +56,40 @@ func historyInputRequest(assistant *types.Message) types.CommittedHistoryKnowled
 	return types.CommittedHistoryKnowledgeInputRequest{TenantID: 7, KnowledgeBaseID: "kb", SessionID: assistant.SessionID, AssistantMessageID: assistant.ID}
 }
 
+// These rows were written directly to SQL. Current JSON and a permissive
+// global source verifier cannot mint original material receipts. Production
+// positive/ABA/atomic-write acceptance lives in message_material_input_test.go.
 func checkKnowledgeHistoryExecutionContextABA(t *testing.T, store *KnowledgeInputProvenanceStore, db *gorm.DB) {
 	t.Helper()
 	_, assistant := createHistoryInputParents(t, store, db)
-	input, err := store.CreateCommittedHistoryKnowledgeInput(historyInputAdmissionContext(), historyInputRequest(assistant))
-	require.NoError(t, err)
-	ctx := WithKnowledgeBuildInputProof(historyInputAdmissionContext(), store, input.Proof)
-	require.NoError(t, store.RecheckKnowledgeBuildInputs(ctx, input.Proof))
+	_, err := store.CreateCommittedHistoryKnowledgeInput(historyInputAdmissionContext(), historyInputRequest(assistant))
+	require.ErrorIs(t, err, ErrNextcloudContentGCUncovered)
 	original := assistant.ExecutionContext
-	require.NoError(t, db.Model(&types.Message{}).Where("id = ?", assistant.ID).Update("execution_context", types.MessageExecutionContext{KnowledgeBaseIDs: []string{"changed-scope"}}).Error)
-	require.Error(t, store.RecheckKnowledgeBuildInputs(ctx, input.Proof))
-	require.NoError(t, db.Model(&types.Message{}).Where("id = ?", assistant.ID).Update("execution_context", original).Error)
-	require.Error(t, store.RecheckKnowledgeBuildInputs(ctx, input.Proof), "restored JSON cannot revive an original parent execution scope revision")
+	require.NoError(t, db.Model(assistant).Update("execution_context", types.MessageExecutionContext{KnowledgeBaseIDs: []string{"changed-scope"}}).Error)
+	require.NoError(t, db.Model(assistant).Update("execution_context", original).Error)
+	_, err = store.CreateCommittedHistoryKnowledgeInput(historyInputAdmissionContext(), historyInputRequest(assistant))
+	require.ErrorIs(t, err, ErrNextcloudContentGCUncovered)
+	var count int64
+	require.NoError(t, db.Table("knowledge_input_history_parents").Count(&count).Error)
+	require.Zero(t, count)
 }
-
 func TestKnowledgeHistoryExecutionContextABA(t *testing.T) {
 	store, db := knowledgeInputFixture(t)
 	checkKnowledgeHistoryExecutionContextABA(t, store, db)
 }
-
 func TestPostgresKnowledgeHistoryExecutionContextABA(t *testing.T) {
 	store, db := knowledgeInputPostgresFixture(t)
 	checkKnowledgeHistoryExecutionContextABA(t, store, db)
 }
-
-func TestKnowledgeHistoryActualCommittedPairAtomicLinkAndHydration(t *testing.T) {
+func TestKnowledgeHistoryRawCommittedPairCannotBeSignedByCurrentJSON(t *testing.T) {
 	store, db := knowledgeInputFixture(t)
-	user, assistant := createHistoryInputParents(t, store, db)
+	_, assistant := createHistoryInputParents(t, store, db)
 	result, err := store.CreateCommittedHistoryKnowledgeInput(historyInputAdmissionContext(), historyInputRequest(assistant))
-	require.NoError(t, err)
-	require.Contains(t, result.Passages[0], user.Content)
-	require.Contains(t, result.Passages[0], "actual committed answer")
-	require.NotContains(t, result.Passages[0], "private reasoning")
-	require.NotContains(t, result.Passages[0], user.RenderedContent)
-	var linked types.Message
-	require.NoError(t, db.Where("id = ?", assistant.ID).Take(&linked).Error)
-	require.Equal(t, result.Knowledge.ID, linked.KnowledgeID)
-	ctx := WithKnowledgeBuildInputProof(context.Background(), store, result.Proof)
-	c := &types.Chunk{ID: "history-chunk", TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: result.Knowledge.ID, Content: result.Passages[0], ChunkType: "text", IsEnabled: true, IndexStatus: "ready"}
-	require.NoError(t, NewChunkRepository(db).CreateChunks(ctx, []*types.Chunk{c}))
-	result.Knowledge.ParseStatus = types.ParseStatusCompleted
-	result.Knowledge.EnableStatus = "enabled"
-	require.NoError(t, NewKnowledgeRepository(db).UpdateKnowledge(ctx, result.Knowledge))
-	input, err := store.CaptureKnowledgeBuildInputs(ctx, types.KnowledgeBuildInputCaptureRequest{TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: result.Knowledge.ID, ChunkIDs: []string{c.ID}})
-	require.NoError(t, err)
-	require.NoError(t, store.RecheckKnowledgeBuildInputs(ctx, input.Proof))
-	rows, err := NewRAGChunkSnapshotReader(db, store).HydrateRAGChunkSnapshots(ctx, []RAGChunkReadRequest{{TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: result.Knowledge.ID, ChunkIDs: []string{c.ID}}})
-	require.NoError(t, err)
-	require.NoError(t, rows[0].SourceLineage.RequireComplete())
-	oldAnswer := assistant.Content
-	require.NoError(t, db.Model(&types.Message{}).Where("id = ?", assistant.ID).Update("content", "changed answer").Error)
-	require.NoError(t, db.Model(&types.Message{}).Where("id = ?", assistant.ID).Update("content", oldAnswer).Error)
-	require.Error(t, store.RecheckKnowledgeBuildInputs(ctx, input.Proof), "parent text ABA cannot restore the original committed version")
+	require.ErrorIs(t, err, ErrNextcloudContentGCUncovered)
+	require.Nil(t, result)
+	var count int64
+	require.NoError(t, db.Table("knowledge_input_admissions").Where("origin_kind='history'").Count(&count).Error)
+	require.Zero(t, count)
 }
 
 func TestKnowledgeHistoryLegacyUnpairedAndFailedLinkNeverAdmitOrphans(t *testing.T) {
@@ -150,18 +132,13 @@ func TestKnowledgeHistoryLegacyUnpairedAndFailedLinkNeverAdmitOrphans(t *testing
 	}
 }
 
-func TestPostgresKnowledgeHistoryAtomicPairAndParentWithdrawal(t *testing.T) {
+func TestPostgresKnowledgeHistoryRawPairCannotBeSignedByGlobalVerifier(t *testing.T) {
 	store, db := knowledgeInputPostgresFixture(t)
 	_, assistant := createHistoryInputParents(t, store, db)
 	result, err := store.CreateCommittedHistoryKnowledgeInput(historyInputAdmissionContext(), historyInputRequest(assistant))
-	require.NoError(t, err)
-	ctx := WithKnowledgeBuildInputProof(context.Background(), store, result.Proof)
-	c := &types.Chunk{ID: "history-pg-chunk", TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: result.Knowledge.ID, Content: result.Passages[0], ChunkType: "text", IsEnabled: true, IndexStatus: "ready"}
-	require.NoError(t, NewChunkRepository(db).CreateChunks(ctx, []*types.Chunk{c}))
-	input, err := store.CaptureKnowledgeBuildInputs(ctx, types.KnowledgeBuildInputCaptureRequest{TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: result.Knowledge.ID, ChunkIDs: []string{c.ID}})
-	require.NoError(t, err)
-	oldAnswer := assistant.Content
-	require.NoError(t, db.Model(assistant).Update("content", "changed").Error)
-	require.NoError(t, db.Model(assistant).Update("content", oldAnswer).Error)
-	require.Error(t, store.RecheckKnowledgeBuildInputs(ctx, input.Proof))
+	require.ErrorIs(t, err, ErrNextcloudContentGCUncovered)
+	require.Nil(t, result)
+	var count int64
+	require.NoError(t, db.Table("knowledge_input_history_parents").Count(&count).Error)
+	require.Zero(t, count)
 }

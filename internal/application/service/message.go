@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Tencent/WeKnora/internal/application/access"
+	"github.com/Tencent/WeKnora/internal/application/repository"
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
@@ -19,6 +20,7 @@ import (
 // It reads the chat history knowledge base configuration from the tenant's ChatHistoryConfig,
 // which is managed via the settings UI.
 type messageService struct {
+	materialStore      *repository.KnowledgeInputProvenanceStore
 	sourceLineageGuard access.SourceLineageAuthorizer
 	messageRepo        interfaces.MessageRepository    // Repository for message storage operations
 	sessionRepo        interfaces.SessionRepository    // Repository for session validation
@@ -209,6 +211,15 @@ func (s *messageService) CreateMessage(ctx context.Context, message *types.Messa
 		return nil, err
 	}
 
+	if s.materialStore != nil {
+		if message.Role == "user" && message.SourceLineage == nil {
+			message.SourceLineage, _ = types.NewCompleteSourceLineage()
+		}
+		ctx, err = s.materialStore.WithMessageProducerInput(ctx, message, true)
+		if err != nil {
+			return nil, err
+		}
+	}
 	logger.Info(ctx, "Session exists, creating message")
 	createdMessage, err := s.messageRepo.CreateMessage(ctx, message)
 	if err != nil {
@@ -235,6 +246,16 @@ func (s *messageService) GetMessage(ctx context.Context, sessionID string, messa
 		return nil, err
 	}
 
+	if s.materialStore != nil {
+		rows, err := s.admittedMessages(ctx, types.MessageMaterialReadRequest{TenantID: tenantID, SessionID: sessionID, MessageIDs: []string{messageID}})
+		if err != nil {
+			return nil, err
+		}
+		if len(rows) != 1 {
+			return nil, access.ErrNextcloudPublicationDenied
+		}
+		return rows[0], nil
+	}
 	logger.Info(ctx, "Session exists, getting message")
 	message, err := s.messageRepo.GetMessage(ctx, sessionID, messageID)
 	if err != nil {
@@ -319,6 +340,9 @@ func (s *messageService) GetMessagesBySession(ctx context.Context,
 		return nil, err
 	}
 
+	if s.materialStore != nil {
+		return s.admittedMessagePage(ctx, sessionID, time.Time{}, pageSize, page, false)
+	}
 	logger.Info(ctx, "Session exists, getting messages")
 	messages, err := s.messageRepo.GetMessagesBySession(ctx, sessionID, page, pageSize)
 	if err != nil {
@@ -357,6 +381,9 @@ func (s *messageService) GetRecentMessagesBySession(ctx context.Context,
 		return nil, err
 	}
 
+	if s.materialStore != nil {
+		return s.admittedMessagePage(ctx, sessionID, time.Time{}, limit, 1, true)
+	}
 	logger.Info(ctx, "Session exists, getting recent messages")
 	messages, err := s.messageRepo.GetRecentMessagesBySession(ctx, sessionID, limit)
 	if err != nil {
@@ -394,6 +421,9 @@ func (s *messageService) GetMessagesBySessionBeforeTime(ctx context.Context,
 		return nil, err
 	}
 
+	if s.materialStore != nil {
+		return s.admittedMessagePage(ctx, sessionID, beforeTime, limit, 1, true)
+	}
 	logger.Info(ctx, "Session exists, getting messages before time")
 	messages, err := s.messageRepo.GetMessagesBySessionBeforeTime(ctx, sessionID, beforeTime, limit)
 	if err != nil {
@@ -434,6 +464,12 @@ func (s *messageService) UpdateMessage(ctx context.Context, message *types.Messa
 		return err
 	}
 
+	if s.materialStore != nil {
+		ctx, err = s.materialStore.WithMessageProducerInput(ctx, message, false)
+		if err != nil {
+			return err
+		}
+	}
 	logger.Info(ctx, "Session exists, updating message")
 	err = s.messageRepo.UpdateMessage(ctx, message)
 	if err != nil {
@@ -568,8 +604,7 @@ func (s *messageService) getRetrievalConfig(ctx context.Context) *types.Retrieva
 // original proof, creates the child and links the message before queueing it.
 // The KB ID is read from the tenant's ChatHistoryConfig — if not configured, indexing is skipped.
 func (s *messageService) IndexMessageToKB(ctx context.Context, _ string, _ string, messageID string, sessionID string) {
-	// Caller Q/A strings never enter this adapter. Controlled history remains
-	// closed until the inherited multi-parent producer/read closure is wired.
+	// Only the actual immutable saved question and assistant receipts enter this adapter.
 	tenantID, ok := sessionTenantIDForLookup(ctx)
 	if !ok || tenantID == 0 || s.sessionRepo == nil || s.messageRepo == nil {
 		return
@@ -577,11 +612,29 @@ func (s *messageService) IndexMessageToKB(ctx context.Context, _ string, _ strin
 	if _, err := s.sessionRepo.Get(ctx, tenantID, types.SessionOwnerIDFromContext(ctx), sessionID); err != nil {
 		return
 	}
-	committed, err := s.messageRepo.GetMessage(ctx, sessionID, messageID)
-	if err != nil || committed == nil || committed.ID != messageID || committed.SessionID != sessionID || committed.Role != "assistant" ||
-		!types.SourceIndependentDerivativesAllowed(committed) || s.CheckMessagePublication(ctx, committed) != nil {
+	if s.materialStore == nil {
 		return
 	}
+	request, err := s.materialStore.CommittedMessageParentRequest(ctx, tenantID, sessionID, messageID)
+	if err != nil {
+		return
+	}
+	material, err := s.beginMessageMaterialRead(ctx, request)
+	if err != nil {
+		return
+	}
+	defer material.Close()
+	ctx = material.Context()
+	var committed *types.Message
+	for _, row := range material.snapshot.Messages {
+		if row.ID == messageID {
+			committed = row
+		}
+	}
+	if committed == nil || committed.Role != "assistant" || s.CheckMessagePublication(ctx, committed) != nil {
+		return
+	}
+
 	tenant, ok := types.TenantInfoFromContext(ctx)
 	if !ok || tenant.ID != tenantID {
 		if s.tenantService == nil {

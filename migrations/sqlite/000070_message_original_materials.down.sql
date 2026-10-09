@@ -1,0 +1,13 @@
+DROP TRIGGER IF EXISTS message_material_insert;
+DROP TRIGGER IF EXISTS message_material_update;
+DROP TRIGGER IF EXISTS message_material_membership_update;
+DROP TRIGGER IF EXISTS message_material_delete;
+DROP TRIGGER IF EXISTS message_session_owner_insert;
+DROP TRIGGER IF EXISTS message_session_owner_update;
+DROP TRIGGER IF EXISTS message_session_owner_delete;
+DROP TABLE IF EXISTS message_material_receipts;
+DROP TABLE IF EXISTS message_material_admissions;
+DROP TABLE IF EXISTS message_generation_origins;
+DROP TABLE IF EXISTS message_material_versions;
+DROP TABLE IF EXISTS message_session_owner_versions;
+DROP TABLE IF EXISTS message_session_membership_versions;

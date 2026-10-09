@@ -27,9 +27,20 @@ func historyActorIntegrationFixture(t *testing.T, kind string) (*knowledgeServic
 	groups := NewGroupAccessService(repository.NewGroupAccessRepository(db))
 	repository.ConfigureKnowledgeInputActorGroupAccess(store, groups)
 	repository.ConfigureKnowledgeCurrentReadActor(service.repo, store)
+	require.NoError(t, db.Exec("ALTER TABLE messages ADD COLUMN artifacts TEXT").Error)
+	for _, name := range []string{"000023_message_artifacts_table.up.sql", "000026_message_artifacts_deleted_at.up.sql", "000046_nextcloud_content_leases.up.sql", "000070_message_original_materials.up.sql"} {
+		ddl, err := os.ReadFile("../../../migrations/sqlite/" + name)
+		require.NoError(t, err)
+		require.NoError(t, db.Exec(string(ddl)).Error)
+	}
+	repository.ConfigureKnowledgeDisplayInputWriters(store, repository.NewKnowledgeTagRepository(db), service.repo, func(tx *gorm.DB) *repository.KnowledgeInputProvenanceStore {
+		actual := repository.NewKnowledgeInputProvenanceStore(tx)
+		repository.ConfigureKnowledgeInputActorGroupAccess(actual, NewGroupAccessService(repository.NewGroupAccessRepository(tx)))
+		return actual
+	})
 	kbs := &knowledgeBaseService{repo: repository.NewKnowledgeBaseRepository(db)}
 	guard := access.NewNextcloudSourceLineageGuard(service.repo.(access.NextcloudLineageSnapshotLookup), kbs, nil, nil, groups, nil)
-	verifier := &messageService{sourceLineageGuard: guard, kbService: kbs, knowService: service}
+	verifier := &messageService{sourceLineageGuard: guard, kbService: kbs, knowService: service, messageRepo: repository.NewMessageRepository(db), sessionRepo: repository.NewSessionRepository(db)}
 	repository.ConfigureKnowledgeInputHistoryVerifier(store, verifier)
 	var ctx context.Context
 	var user *types.User
@@ -49,13 +60,30 @@ func historyActorIntegrationFixture(t *testing.T, kind string) (*knowledgeServic
 		ctx = types.WithTenantAPIKeyScope(ctx, types.TenantAPIKeyScope{KeyID: key.ID, ScopeType: key.ScopeType, KnowledgeBaseIDs: key.KnowledgeBaseIDs, Capabilities: key.Capabilities})
 	}
 	ctx = types.WithExecutionTenant(ctx, 7)
-	session := &types.Session{TenantID: 7, UserID: types.CallerFromContext(ctx).UserID}
+	if user != nil {
+		ctx = context.WithValue(ctx, types.UserIDContextKey, user.ID)
+	}
+	ConfigureMessageMaterialProvenance(verifier, store)
+	session := &types.Session{TenantID: 7, UserID: types.SessionOwnerIDFromContext(ctx)}
 	require.NoError(t, db.Create(session).Error)
 	lineage, _ := types.NewCompleteSourceLineage()
 	userMessage := &types.Message{SessionID: session.ID, RequestID: "actual-request", Role: "user", Content: "actual plain user question", IsCompleted: true, SourceLineage: lineage, ExecutionContext: types.MessageExecutionContext{KnowledgeBaseIDs: []string{"kb"}}}
 	answer := &types.Message{SessionID: session.ID, RequestID: "actual-request", Role: "assistant", Content: "actual committed answer from plain text", IsCompleted: true, SourceLineage: lineage, ExecutionContext: types.MessageExecutionContext{KnowledgeBaseIDs: []string{"kb"}}}
-	require.NoError(t, db.Create(userMessage).Error)
-	require.NoError(t, db.Create(answer).Error)
+	_, err = verifier.CreateMessage(ctx, userMessage)
+	require.NoError(t, err)
+	answer.IsCompleted = false
+	answer.Content = ""
+	_, err = verifier.CreateMessage(ctx, answer)
+	require.NoError(t, err)
+	answer.IsCompleted = true
+	answer.Content = "actual committed answer from plain text"
+	require.NoError(t, verifier.UpdateMessage(ctx, answer))
+	request, err := store.CommittedMessageParentRequest(ctx, 7, session.ID, answer.ID)
+	require.NoError(t, err)
+	held, err := verifier.beginMessageMaterialRead(ctx, request)
+	require.NoError(t, err)
+	t.Cleanup(held.Close)
+	ctx = context.WithValue(held.Context(), historyMaterialGuardContextKey{}, held)
 	return service, store, db, ctx, answer, key, user
 }
 
@@ -255,7 +283,7 @@ func TestKnowledgeHistoryActorActualSharedWritePreservesOriginalCallerTenant(t *
 	for _, mode := range []string{"allowed", "caller-membership-removed", "share-read-only", "org-member-removed", "proof-owner-swapped"} {
 		t.Run(mode, func(t *testing.T) {
 			service, store, db, ctx, answer, _, user := historyActorIntegrationFixture(t, "web")
-			require.NoError(t, db.AutoMigrate(&types.Organization{}, &types.OrganizationTenantMember{}, &types.KnowledgeBaseShare{}))
+			require.NoError(t, db.AutoMigrate(&types.Organization{}, &types.OrganizationTenantMember{}, &types.KnowledgeBaseShare{}, &types.DataSource{}))
 			require.NoError(t, db.Create(&types.Organization{ID: "actor-org", Name: "actual sharing", OwnerID: user.ID, OwnerTenantID: 7}).Error)
 			require.NoError(t, db.Create(&types.OrganizationTenantMember{ID: "actor-org-owner", OrganizationID: "actor-org", TenantID: 7, Role: types.OrgRoleAdmin}).Error)
 			require.NoError(t, db.Create(&types.OrganizationTenantMember{ID: "actor-org-caller", OrganizationID: "actor-org", TenantID: 3, Role: types.OrgRoleEditor}).Error)
@@ -265,10 +293,18 @@ func TestKnowledgeHistoryActorActualSharedWritePreservesOriginalCallerTenant(t *
 			ctx = types.WithCaller(ctx, types.Caller{TenantID: 3, UserID: user.ID, Role: types.TenantRoleContributor})
 			shares := NewKBShareService(repository.NewKBShareRepository(db), repository.NewOrganizationRepository(db), repository.NewKnowledgeBaseRepository(db), service.repo, nil, service.chunkRepo, nil)
 			repository.ConfigureKnowledgeInputActorShares(store, shares)
+			repository.ConfigureKnowledgeDisplayInputWriters(store, repository.NewKnowledgeTagRepository(db), service.repo, func(tx *gorm.DB) *repository.KnowledgeInputProvenanceStore {
+				actual := repository.NewKnowledgeInputProvenanceStore(tx)
+				repository.ConfigureKnowledgeInputActorGroupAccess(actual, NewGroupAccessService(repository.NewGroupAccessRepository(tx)))
+				repository.ConfigureKnowledgeInputActorShares(actual, NewKBShareService(repository.NewKBShareRepository(tx), repository.NewOrganizationRepository(tx), repository.NewKnowledgeBaseRepository(tx), repository.NewKnowledgeRepository(tx), repository.NewDataSourceRepository(tx), repository.NewChunkRepository(tx), nil))
+				return actual
+			})
 			groups := NewGroupAccessService(repository.NewGroupAccessRepository(db))
 			kbs := &knowledgeBaseService{repo: repository.NewKnowledgeBaseRepository(db), kbShareService: shares}
 			guard := access.NewNextcloudSourceLineageGuard(service.repo.(access.NextcloudLineageSnapshotLookup), kbs, shares, nil, groups, nil)
 			repository.ConfigureKnowledgeInputHistoryVerifier(store, &messageService{sourceLineageGuard: guard, kbService: kbs, knowService: service})
+			service.historyMaterialMessages.sourceLineageGuard = guard
+			service.historyMaterialMessages.kbService = kbs
 			input, err := store.CreateCommittedHistoryKnowledgeInput(ctx, types.CommittedHistoryKnowledgeInputRequest{TenantID: 7, KnowledgeBaseID: "kb", SessionID: answer.SessionID, AssistantMessageID: answer.ID})
 			require.NoError(t, err)
 			switch mode {

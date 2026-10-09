@@ -95,6 +95,8 @@ type KnowledgeInputProvenanceStore struct {
 	messageVerifier         interfaces.MessageSourceLineageVerifier
 	actorGroups             interfaces.GroupAccessService
 	actorShares             access.KBShareLookup
+	messageActorAgents      interfaces.AgentShareService
+	messageBodyAvailability MessageOriginalBodyAvailabilityCheck
 	originalInputSources    KnowledgeOriginalInputSourceVerifier
 }
 
@@ -730,7 +732,14 @@ func sealKnowledgeInputChunks(ctx context.Context, tx *gorm.DB, chunks []*types.
 		if !ok {
 			return ErrKnowledgeInputChanged
 		}
-		a, _, _, err := (&KnowledgeInputProvenanceStore{db: tx, messageVerifier: store.messageVerifier}).admissionInTx(tx, &k, guard.proof)
+		authority := &KnowledgeInputProvenanceStore{db: tx, messageVerifier: store.messageVerifier}
+		if store.displayAuthorityFactory != nil {
+			authority = store.displayAuthorityFactory(tx)
+			if authority == nil || authority.db != tx {
+				return ErrKnowledgeInputChanged
+			}
+		}
+		a, _, _, err := authority.admissionInTx(tx, &k, guard.proof)
 		if err != nil {
 			return err
 		}

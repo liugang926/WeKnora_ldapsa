@@ -825,10 +825,8 @@ func (s *KnowledgeInputProvenanceStore) faqAuthorityInTx(tx *gorm.DB) (*Knowledg
 		return nil, types.ErrSourceLineageUnknown
 	}
 	authority := *configured
-	// The current factory's message verifier is inherited from the global
-	// service. It cannot safely read inside this transaction. History parents
-	// stay unknown until a transaction-bound verifier is supplied explicitly.
-	authority.messageVerifier = nil
+	// Committed history verification now uses original SQL material and the
+	// transaction-bound authority, never the inherited global message service.
 	return &authority, nil
 }
 

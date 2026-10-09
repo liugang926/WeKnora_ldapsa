@@ -541,6 +541,7 @@ func BuildContainer(container *dig.Container) *dig.Container {
 			authority := repository.NewKnowledgeInputProvenanceStore(tx)
 			repository.ConfigureKnowledgeInputActorGroupAccess(authority, service.NewGroupAccessService(repository.NewGroupAccessRepository(tx)))
 			repository.ConfigureKnowledgeInputActorShares(authority, service.NewKBShareService(repository.NewKBShareRepository(tx), repository.NewOrganizationRepository(tx), repository.NewKnowledgeBaseRepository(tx), repository.NewKnowledgeRepository(tx), repository.NewDataSourceRepository(tx), repository.NewChunkRepository(tx), nil))
+			repository.ConfigureMessageMaterialAgentShares(authority, service.NewAgentShareService(repository.NewAgentShareRepository(tx), repository.NewTenantDisabledSharedAgentRepository(tx), repository.NewOrganizationRepository(tx), repository.NewCustomAgentRepository(tx), repository.NewUserRepository(tx), repository.NewWebSearchProviderRepository(tx), repository.NewKnowledgeBaseRepository(tx), repository.NewKnowledgeRepository(tx), repository.NewDataSourceRepository(tx)))
 			return authority
 		})
 	}))
@@ -578,6 +579,7 @@ func BuildContainer(container *dig.Container) *dig.Container {
 
 	must(container.Invoke(service.ConfigureKnowledgeBaseInputProvenance))
 	must(container.Invoke(service.ConfigureMessageSourceLineage))
+	must(container.Invoke(service.ConfigureMessageMaterialProvenance))
 	must(container.Invoke(func(store *repository.KnowledgeInputProvenanceStore, messages interfaces.MessageService) {
 		verifier, ok := messages.(interfaces.MessageSourceLineageVerifier)
 		if !ok {

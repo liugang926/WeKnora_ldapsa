@@ -22,6 +22,7 @@ type FAQImportOutputSnapshot struct {
 	Result                  *FAQImportResult
 }
 type FAQImportOutputReadPlan struct {
+	MessagePlans   []*MessageMaterialReadPlan
 	Request        FAQImportOutputReadRequest
 	AdmissionID    string
 	HeadRevision   uint64
@@ -32,6 +33,7 @@ type FAQImportOutputReadPlan struct {
 
 // A metadata-only plan for every actual FAQ result in scoped/explicit-ID outputs.
 type FAQImportOutputReadSetPlan struct {
+	MessagePlans    []*MessageMaterialReadPlan
 	KnowledgeScopes []KnowledgeSearchScope
 	KnowledgeIDs    []string
 	Plans           []*FAQImportOutputReadPlan

@@ -28,8 +28,25 @@ func (s *knowledgeService) CreateCommittedHistoryKnowledgeInput(ctx context.Cont
 	if err := access.RequireKBWrite(ctx, kb); err != nil {
 		return nil, err
 	}
+
+	if s.historyMaterialMessages == nil || s.historyMaterialMessages.materialStore == nil {
+		return nil, types.ErrSourceLineageUnknown
+	}
+	parentRequest, err := s.historyMaterialMessages.materialStore.CommittedMessageParentRequest(ctx, request.TenantID, request.SessionID, request.AssistantMessageID)
+	if err != nil {
+		return nil, err
+	}
+	material, err := s.historyMaterialMessages.beginMessageMaterialRead(ctx, parentRequest)
+	if err != nil {
+		return nil, err
+	}
+	defer material.Close()
+	ctx = material.Context()
 	result, err := writer.CreateCommittedHistoryKnowledgeInput(ctx, request)
 	if err != nil {
+		return nil, err
+	}
+	if err := material.Recheck(); err != nil {
 		return nil, err
 	}
 	ctx = repository.WithKnowledgeBuildInputProof(ctx, s.knowledgeInputs, result.Proof)

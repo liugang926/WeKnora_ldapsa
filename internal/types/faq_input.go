@@ -60,6 +60,7 @@ type FAQInputOperation struct {
 // FAQInputReadPlan contains only original receipt metadata. A caller can acquire
 // every scope before reading entry/config/tag material, then bind this plan.
 type FAQInputReadPlan struct {
+	MessagePlans   []*MessageMaterialReadPlan
 	Request        FAQInputReadRequest
 	MetadataDigest string
 	Scopes         []KnowledgeSearchScope

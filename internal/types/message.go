@@ -539,7 +539,9 @@ func (a *AgentSteps) Scan(value interface{}) error {
 // Returns:
 //   - error: Any error encountered during the hook execution
 func (m *Message) BeforeCreate(tx *gorm.DB) (err error) {
-	m.ID = uuid.New().String()
+	if m.ID == "" {
+		m.ID = uuid.New().String()
+	}
 	if m.KnowledgeReferences == nil {
 		m.KnowledgeReferences = make(References, 0)
 	}

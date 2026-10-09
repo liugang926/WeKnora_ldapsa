@@ -49,6 +49,9 @@ func ConfigureKnowledgeDisplayInputWriters(store *KnowledgeInputProvenanceStore,
 			if actual != nil && actual.messageVerifier == nil {
 				actual.messageVerifier = store.messageVerifier
 			}
+			if actual != nil {
+				actual.messageBodyAvailability = store.messageBodyAvailability
+			}
 			return actual
 		}
 	}

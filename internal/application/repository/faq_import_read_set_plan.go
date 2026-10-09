@@ -23,6 +23,16 @@ func WithFAQImportOutputReadSetPlan(ctx context.Context, plan *types.FAQImportOu
 	if err = json.Unmarshal(encoded, &actual); err != nil {
 		return ctx, err
 	}
+	ctx, err = WithMessageMaterialReadPlans(ctx, actual.MessagePlans)
+	if err != nil {
+		return ctx, err
+	}
+	for _, entry := range actual.Plans {
+		ctx, err = WithMessageMaterialReadPlans(ctx, entry.MessagePlans)
+		if err != nil {
+			return ctx, err
+		}
+	}
 	return context.WithValue(ctx, faqImportReadSetPlanKey{}, &actual), nil
 }
 
@@ -94,6 +104,40 @@ func (s *KnowledgeInputProvenanceStore) peekFAQImportOutputReadSetPlanInTx(tx *g
 		plan.Scopes = append(plan.Scopes, current.Scopes...)
 		lineages = append(lineages, current.SourceLineage)
 	}
+	// Also probe the immutable saved-history parents of actual ordinary rows.
+	hq := tx.Table("knowledge_input_material_receipts r").Select("a.admission_id,a.tenant_id,a.knowledge_base_id,a.knowledge_id,a.input_digest,a.build_generation").Joins("JOIN knowledge_input_admissions a ON a.admission_id=r.admission_id AND a.knowledge_id=r.row_id").Joins("JOIN knowledges k ON k.id=a.knowledge_id AND k.deleted_at IS NULL").Where("r.row_kind='knowledge' AND a.origin_kind='history'")
+	if len(ids) > 0 {
+		hq = hq.Where("k.id IN ?", ids)
+	} else {
+		conditions := ""
+		args := []any{}
+		for _, scope := range scopes {
+			if conditions != "" {
+				conditions += " OR "
+			}
+			conditions += "(k.tenant_id=? AND k.knowledge_base_id=?)"
+			args = append(args, scope.TenantID, scope.KBID)
+		}
+		hq = hq.Where(conditions, args...)
+	}
+	var histories []knowledgeInputAdmission
+	if err := hq.Order("a.knowledge_id").Scan(&histories).Error; err != nil {
+		return nil, err
+	}
+	for _, entry := range histories {
+		proof := &types.KnowledgeBuildInputProof{AdmissionID: entry.AdmissionID, TenantID: entry.TenantID, KnowledgeBaseID: entry.KnowledgeBaseID, KnowledgeID: entry.KnowledgeID, InputDigest: entry.InputDigest, BuildGeneration: entry.BuildGeneration}
+		historyPlan, err := s.peekHistoryMaterialPlanForProofInTx(tx, proof)
+		if err != nil {
+			return nil, err
+		}
+		if historyPlan == nil {
+			return nil, ErrKnowledgeInputChanged
+		}
+		plan.MessagePlans = append(plan.MessagePlans, historyPlan)
+		plan.Scopes = append(plan.Scopes, types.KnowledgeSearchScope{TenantID: proof.TenantID, KBID: proof.KnowledgeBaseID})
+		plan.Scopes = append(plan.Scopes, historyPlan.Scopes...)
+		lineages = append(lineages, historyPlan.SourceLineage)
+	}
 	// This code probe consumed zero FAQ facts. It does not certify any
 	// document body; those retain their independent original-source guards.
 	if len(lineages) == 0 {
@@ -137,7 +181,7 @@ func (s *KnowledgeInputProvenanceStore) checkFAQImportReadSetPlanInTx(tx *gorm.D
 	if !faqInputEqual(expected, actual) {
 		return ErrKnowledgeInputChanged
 	}
-	if len(actual.Plans) == 0 && len(actual.Scopes) == 0 {
+	if len(actual.Plans) == 0 && len(actual.MessagePlans) == 0 && len(actual.Scopes) == 0 {
 		return nil
 	}
 	return validateFAQReadLeaseCoverageInTx(tx, actual.Scopes, actual.SourceLineage)
