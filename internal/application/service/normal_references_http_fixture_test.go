@@ -35,6 +35,7 @@ type NormalReferencesHTTPFixtureForTest struct {
 	Config   *config.Config
 	Lineage  *types.SourceLineage
 	Revoke   func()
+	Cancel   func()
 }
 
 type normalReferencesModelsForTest struct {
@@ -147,7 +148,7 @@ func NewNormalReferencesHTTPFixtureForTest(t *testing.T, pg bool, final chat.Cha
 	require.NoError(t, m.f.db.Create(session).Error)
 	original, err := m.f.store.CaptureKnowledgeOutputInputs(ctx, types.KnowledgeBuildInputCaptureRequest{TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: k.ID})
 	require.NoError(t, err)
-	return &NormalReferencesHTTPFixtureForTest{DB: m.f.db, Store: m.f.store, Ctx: ctx, Session: session, Sessions: normalReferencesSessionForTest{SessionService: sessions, mode: mode}, Messages: messages, KBs: kbs, Models: models, Config: cfg, Lineage: original.Proof.SourceLineage, Revoke: func() { m.personal.Store(false) }}
+	return &NormalReferencesHTTPFixtureForTest{DB: m.f.db, Store: m.f.store, Ctx: ctx, Session: session, Sessions: normalReferencesSessionForTest{SessionService: sessions, mode: mode}, Messages: messages, KBs: kbs, Models: models, Config: cfg, Lineage: original.Proof.SourceLineage, Revoke: func() { m.personal.Store(false) }, Cancel: cancel}
 }
 
 type normalReferencesTenantForTest struct {

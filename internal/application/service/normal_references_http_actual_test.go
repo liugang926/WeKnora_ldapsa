@@ -62,7 +62,20 @@ func (m *normalReferencesActualModel) ChatStream(ctx context.Context, input []ch
 	if m.mode == "lease-after-start" {
 		require.NoError(m.t, m.f.DB.Exec("UPDATE nextcloud_content_leases SET expires_at_ms=1 WHERE kind='read' AND released_at_ms IS NULL").Error)
 	}
+	if m.mode == "parent-cancel" {
+		m.f.Cancel()
+	}
 	out := make(chan types.StreamResponse, 2)
+	if m.mode == "model-error" {
+		out <- types.StreamResponse{ResponseType: types.ResponseTypeError, Content: "untrusted controlled provider diagnostic"}
+		close(out)
+		return out, nil
+	}
+	if m.mode == "eof-no-done" {
+		close(out)
+		return out, nil
+	}
+
 	if m.mode == "source-after-start-open" {
 		go func() { <-ctx.Done(); m.stopped.Store(true); close(out) }()
 		return out, nil
@@ -109,12 +122,17 @@ func runNormalReferencesActualHTTP(t *testing.T, pg bool, modes ...string) {
 	server := httptest.NewServer(router)
 	t.Cleanup(server.Close)
 	client := &http.Client{Timeout: 8 * time.Second}
+	started := time.Now()
 	response, err := client.Post(server.URL+"/knowledge-chat/"+f.Session.ID, "application/json", strings.NewReader("{\"query\":\"current employee policy\",\"knowledge_base_ids\":[\"kb\"],\"summary_model_id\":\"normal-reference-model\",\"disable_title\":true}"))
 	require.NoError(t, err)
 	defer response.Body.Close()
 	var body bytes.Buffer
 	_, err = body.ReadFrom(response.Body)
-	require.NoError(t, err, "actual normal sender must terminate within the unchanged 8-second bound")
+	if mode != "parent-cancel" {
+		require.NoError(t, err, "actual normal sender must terminate within the unchanged 8-second bound")
+	} else {
+		require.Less(t, time.Since(started), 8*time.Second, "a canceled caller must terminate before the unchanged HTTP deadline")
+	}
 	require.Equal(t, http.StatusOK, response.StatusCode)
 	content := body.String()
 	defer func() {
@@ -124,11 +142,14 @@ func runNormalReferencesActualHTTP(t *testing.T, pg bool, modes ...string) {
 		}, 3*time.Second, 10*time.Millisecond, "actual terminal releases producer/reader pins before fixture cleanup")
 	}()
 	if mode != "current" && mode != "done-open" && mode != "empty-fixed" {
-		require.Contains(t, content, "\"response_type\":\"error\"")
+		if mode != "parent-cancel" {
+			require.Contains(t, content, "\"response_type\":\"error\"")
+		}
 		require.NotContains(t, content, "CURRENT ADMITTED NORMAL ANSWER")
+		require.NotContains(t, content, "untrusted controlled provider diagnostic")
 		require.NotContains(t, content, "\"response_type\":\"complete\"")
 		wantCalls := int64(0)
-		if mode == "source-after-start" || mode == "source-after-start-open" || mode == "lease-after-start" || mode == "thinking-refuse" {
+		if mode == "source-after-start" || mode == "source-after-start-open" || mode == "lease-after-start" || mode == "thinking-refuse" || mode == "parent-cancel" || mode == "model-error" || mode == "eof-no-done" {
 			wantCalls = 1
 		}
 		require.Equal(t, wantCalls, model.calls.Load(), "no later model starts after the actual producer boundary fails")
@@ -193,4 +214,15 @@ func (s normalReferencesRefusingSink) AppendEvent(ctx context.Context, session, 
 		return fmt.Errorf("controlled actual final sender refusal")
 	}
 	return s.StreamManager.AppendEvent(ctx, session, message, frame)
+}
+
+func TestNormalReferencesActualHTTPRemainingAsyncSQLite(t *testing.T) {
+	for _, mode := range []string{"parent-cancel", "model-error", "eof-no-done"} {
+		t.Run(mode, func(t *testing.T) { runNormalReferencesActualHTTP(t, false, mode) })
+	}
+}
+func TestPostgresNormalReferencesActualHTTPRemainingAsync(t *testing.T) {
+	for _, mode := range []string{"parent-cancel", "model-error", "eof-no-done"} {
+		t.Run(mode, func(t *testing.T) { runNormalReferencesActualHTTP(t, true, mode) })
+	}
 }
