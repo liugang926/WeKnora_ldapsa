@@ -20,8 +20,8 @@ services:
       LDAP_TLS_CA_FILE: /certs/ca.crt
       LDAP_LOGLEVEL: "256"
     ports:
-      - "${LDAP_IT_LDAP_PORT:-11389}:1389"
-      - "${LDAP_IT_LDAPS_PORT:-11636}:1636"
+      - "127.0.0.1:${LDAP_IT_LDAP_PORT:-11389}:1389"
+      - "127.0.0.1:${LDAP_IT_LDAPS_PORT:-11636}:1636"
     volumes:
       - ./.generated/certs:/certs:ro
       - ./schema/ad-test.ldif:/schema/ad-test.ldif:ro

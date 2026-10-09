@@ -514,6 +514,7 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	must(container.Invoke(service.ConfigureKnowledgeGroupAccess))
 	logger.Debugf(ctx, "[Container] Knowledge group-access overlay registered")
 	must(container.Invoke(service.ConfigureGroupAccessDirectoryRuntime))
+	must(container.Invoke(service.ConfigureGroupAccessUserEligibility))
 	logger.Debugf(ctx, "[Container] Directory feature switch registered for group access")
 	must(container.Provide(func(
 		sessions interfaces.SessionRepository,

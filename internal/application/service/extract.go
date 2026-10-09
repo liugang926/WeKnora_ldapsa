@@ -109,6 +109,7 @@ func NewChunkExtractTask(
 		Attempt:     attempt,
 		ChunkIndex:  chunkIndex,
 	}
+	taskPayload.Initiator = types.TaskInitiatorFromContext(ctx)
 	langfuse.InjectTracing(ctx, &taskPayload)
 	payload, err := json.Marshal(taskPayload)
 	if err != nil {
@@ -140,6 +141,7 @@ func NewDataTableSummaryTask(
 		SummaryModel:   summaryModel,
 		EmbeddingModel: embeddingModel,
 	}
+	taskPayload.Initiator = types.TaskInitiatorFromContext(ctx)
 	langfuse.InjectTracing(ctx, &taskPayload)
 	payload, err := json.Marshal(taskPayload)
 	if err != nil {
@@ -409,6 +411,7 @@ func (s *ChunkExtractService) Handle(ctx context.Context, t *asynq.Task) error {
 
 // DataTableExtractPayload represents the table extract task payload
 type DataTableSummaryPayload struct {
+	Initiator types.TaskInitiator `json:"initiator,omitempty"`
 	types.TracingContext
 	TenantID       uint64 `json:"tenant_id"`
 	KnowledgeID    string `json:"knowledge_id"`

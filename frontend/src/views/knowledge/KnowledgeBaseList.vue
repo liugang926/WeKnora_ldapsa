@@ -186,12 +186,12 @@
                         <t-icon class="menu-icon" name="file-copy" />
                         <span>{{ $t('knowledgeList.menu.duplicate') }}</span>
                       </div>
-                      <template v-if="canManageKBCard(kb)">
+                      <template v-if="canManageKBCard(kb) || hasResourceGroupEdit(kb)">
                         <div class="popup-menu-item" @click.stop="handleSettingsById(kb.id)">
                           <t-icon class="menu-icon" name="setting" />
                           <span>{{ $t('knowledgeBase.settings') }}</span>
                         </div>
-                        <div class="popup-menu-item delete" @click.stop="handleDeleteById(kb.id)">
+                        <div v-if="canManageKBCard(kb)" class="popup-menu-item delete" @click.stop="handleDeleteById(kb.id)">
                           <t-icon class="menu-icon" name="delete" />
                           <span>{{ $t('common.delete') }}</span>
                         </div>
@@ -417,12 +417,12 @@
                         <t-icon class="menu-icon" name="file-copy" />
                         <span>{{ $t('knowledgeList.menu.duplicate') }}</span>
                       </div>
-                      <template v-if="canManageKBCard(kb)">
+                      <template v-if="canManageKBCard(kb) || hasResourceGroupEdit(kb)">
                         <div class="popup-menu-item" @click.stop="handleSettings(kb)">
                           <t-icon class="menu-icon" name="setting" />
                           <span>{{ $t('knowledgeBase.settings') }}</span>
                         </div>
-                        <div class="popup-menu-item delete" @click.stop="handleDelete(kb)">
+                        <div v-if="canManageKBCard(kb)" class="popup-menu-item delete" @click.stop="handleDelete(kb)">
                           <t-icon class="menu-icon" name="delete" />
                           <span>{{ $t('common.delete') }}</span>
                         </div>
@@ -726,6 +726,7 @@ import { matchesResourceQuery } from '@/utils/resourceListSearch'
 import ResourceOriginBadge from '@/components/ResourceOriginBadge.vue'
 import { shouldShowResourceOriginBadge } from '@/utils/card-list-badge'
 import { permissionCanManageKB } from '@/utils/kbPermission'
+import { hasResourceGroupEdit } from '@/utils/resourceGroupPermission'
 import ContextualGuide from '@/components/ContextualGuide.vue'
 import { isContextualGuideDone, markContextualGuideDone } from '@/config/contextualGuides'
 import { useTenantModelReadiness } from '@/composables/useTenantModelReadiness'
@@ -768,6 +769,7 @@ const kbRecentsCount = computed(
 )
 
 interface KB {
+  group_access_permission?: 'read' | 'edit';
   id: string;
   name: string;
   description?: string;
@@ -1230,6 +1232,7 @@ const handleSettings = (kb: KB) => {
 // those as tenant-owned (Admin+ may manage) so existing KBs aren't
 // suddenly unmanageable for everyone.
 function canManageKBCard(kb: KB): boolean {
+  if (kb.group_access_permission && !authStore.hasRole('admin')) return false
   // Shared-space cards carry the org-share permission; when it exists it is
   // the only signal that counts. A read-only (viewer) or editor share must
   // not surface Settings/Delete even when the browsing user is an admin of

@@ -19,6 +19,7 @@ test('resource permissions use the correct read/use vocabulary', () => {
 test('missing workspace links fail closed and membership sources are normalized', () => {
   assert.equal(hasMissingWorkspaceGroup({ workspace_role: null }), true)
   assert.equal(hasMissingWorkspaceGroup({ workspace_role: 'viewer' }), false)
+  assert.equal(hasMissingWorkspaceGroup({}), false)
   assert.deepEqual(normalizeMembershipSources(['nested', 'direct', 'nested', 'unknown']), ['nested', 'direct'])
 })
 

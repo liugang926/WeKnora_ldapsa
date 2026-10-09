@@ -1,6 +1,7 @@
 import { get, post, put } from '@/utils/request'
 import { unwrapDirectoryAccessResponse } from '@/api/directory-access-response'
 import type { DirectoryTenantRole } from '@/api/tenant/groups'
+import { buildDirectorySearchQuery } from '@/api/directory/query'
 
 export type GroupAccessResourceType = 'knowledge_base' | 'agent'
 export type GroupAccessMode = 'inherit' | 'restricted'
@@ -56,6 +57,27 @@ export interface ResourceGroupAccessImpact {
   gaining_access: number
   unaffected_managers: number
   warnings?: string[]
+  effective_users?: ResourceEffectiveUserAccess[]
+  effective_users_total?: number
+  effective_users_truncated?: boolean
+  effective_users_offset?: number
+  effective_users_limit?: number
+}
+
+export interface ResourceEffectiveUserAccess {
+  user_id: string
+  workspace_role: string
+  currently_allowed: boolean
+  allowed_after: boolean
+  permission_after: 'none' | 'workspace' | GroupAccessPermission
+  group_matches?: Array<{
+    directory_id: string
+    directory_group_id: string
+    group_display_name: string
+    permission: GroupAccessPermission
+    membership_source: GroupMembershipSource
+    membership_depth: number
+  }>
 }
 
 function resourceAccessBase(resourceType: GroupAccessResourceType, resourceId: string): string {
@@ -73,9 +95,11 @@ export async function previewResourceGroupAccess(
   resourceType: GroupAccessResourceType,
   resourceId: string,
   payload: ResourceGroupAccessUpdate,
+  limit = 20,
+  offset = 0,
 ): Promise<ResourceGroupAccessImpact> {
   return unwrapDirectoryAccessResponse<ResourceGroupAccessImpact>(
-    await post(`${resourceAccessBase(resourceType, resourceId)}/preview`, payload),
+    await post(`${resourceAccessBase(resourceType, resourceId)}/preview?${buildDirectorySearchQuery('', limit, offset)}`, payload),
   )
 }
 

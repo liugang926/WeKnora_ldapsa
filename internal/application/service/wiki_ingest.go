@@ -272,10 +272,11 @@ type wikiFinalizeChange struct {
 // finalize lane. Exactly one of {Slug, Change, FolderIDs} is set,
 // distinguished by the row's Op column.
 type wikiFinalizeRow struct {
-	Slug      string              `json:"slug,omitempty"`
-	Title     string              `json:"title,omitempty"`
-	Change    *wikiFinalizeChange `json:"change,omitempty"`
-	FolderIDs []string            `json:"folder_ids,omitempty"`
+	Initiators []types.TaskInitiator `json:"initiators,omitempty"`
+	Slug       string                `json:"slug,omitempty"`
+	Title      string                `json:"title,omitempty"`
+	Change     *wikiFinalizeChange   `json:"change,omitempty"`
+	FolderIDs  []string              `json:"folder_ids,omitempty"`
 }
 
 // WikiDeletedTombstoneKey returns the Redis key used to mark a knowledge as
@@ -292,6 +293,7 @@ func WikiDeletedTombstoneKey(kbID, knowledgeID string) string {
 // the queue tuple (task_type, scope, scope_id) and process whatever rows
 // are queued under it.
 type WikiIngestPayload struct {
+	Initiator types.TaskInitiator `json:"initiator,omitempty"`
 	types.TracingContext
 	TenantID        uint64 `json:"tenant_id"`
 	KnowledgeBaseID string `json:"knowledge_base_id"`
@@ -329,8 +331,10 @@ const (
 // unexported and excluded from JSON so the persisted payload does not
 // duplicate the column.
 type WikiPendingOp struct {
-	Op          string `json:"op"`
-	KnowledgeID string `json:"knowledge_id"`
+	Initiator   types.TaskInitiator `json:"initiator,omitempty"`
+	Attempt     int                 `json:"attempt,omitempty"`
+	Op          string              `json:"op"`
+	KnowledgeID string              `json:"knowledge_id"`
 	// Ingest fields
 	Language string `json:"language,omitempty"`
 	// Retract fields
@@ -379,6 +383,7 @@ type wikiIngestService struct {
 	// asynq payload, which is per-KB and would otherwise be ambiguous
 	// for the 5-docs-per-batch fan-out.
 	spanTracker SpanTracker
+	groupAccess interfaces.GroupAccessService
 	// liteLocks provides per-KB mutual exclusion in Lite mode (no Redis).
 	// Keys are kbID strings; values are unused (presence = locked).
 	liteLocks sync.Map
@@ -413,6 +418,7 @@ func NewWikiIngestService(
 	deadLetterRepo interfaces.TaskDeadLetterRepository,
 	redisClient *redis.Client,
 	spanTracker SpanTracker,
+	groupAccess interfaces.GroupAccessService,
 ) interfaces.TaskHandler {
 	svc := &wikiIngestService{
 		wikiService:    wikiService,
@@ -427,7 +433,9 @@ func NewWikiIngestService(
 		deadLetterRepo: deadLetterRepo,
 		redisClient:    redisClient,
 		spanTracker:    spanTracker,
+		groupAccess:    groupAccess,
 	}
+	svc.wikiService = &wikiTaskPageService{WikiPageService: wikiService, check: svc.checkWikiTaskAuthorization}
 	return svc
 }
 
@@ -507,7 +515,6 @@ func EnqueueWikiIngest(
 	kbID, knowledgeID string,
 ) (bool, error) {
 	pendingOp, err := newWikiIngestPendingOp(ctx, tenantID, kbID, knowledgeID)
-
 	// Persist the pending op. A re-ingest of the same knowledge id while
 	// a previous op is still queued simply appends another row; the
 	// peekPendingList consumer collapses by dedup_key (== knowledge_id),
@@ -536,12 +543,18 @@ func newWikiIngestPendingOp(
 	ctx context.Context,
 	tenantID uint64,
 	kbID, knowledgeID string,
+	attempts ...int,
 ) (*types.TaskPendingOp, error) {
 	lang := types.LanguageFromContextOrDefault(ctx)
 	op := WikiPendingOp{
+		Initiator:   types.TaskInitiatorFromContext(ctx),
+		Attempt:     attemptFromCtx(ctx),
 		Op:          WikiOpIngest,
 		KnowledgeID: knowledgeID,
 		Language:    lang,
+	}
+	if len(attempts) > 0 {
+		op.Attempt = attempts[0]
 	}
 	payloadBytes, err := json.Marshal(op)
 	if err != nil {
@@ -566,6 +579,7 @@ func enqueueWikiIngestTrigger(
 ) error {
 	lang := types.LanguageFromContextOrDefault(ctx)
 	trigger := WikiIngestPayload{
+		Initiator:       types.TaskInitiatorFromContext(ctx),
 		TenantID:        tenantID,
 		KnowledgeBaseID: kbID,
 		Language:        lang,
@@ -613,6 +627,7 @@ func enqueueWikiRetract(
 	payload WikiRetractPayload,
 ) error {
 	op := WikiPendingOp{
+		Initiator:   types.TaskInitiatorFromContext(ctx),
 		Op:          WikiOpRetract,
 		KnowledgeID: payload.KnowledgeID,
 		DocTitle:    payload.DocTitle,
@@ -645,6 +660,7 @@ func enqueueWikiRetract(
 	}
 
 	trigger := WikiIngestPayload{
+		Initiator:       op.Initiator,
 		TenantID:        payload.TenantID,
 		KnowledgeBaseID: payload.KnowledgeBaseID,
 		Language:        payload.Language,
@@ -721,7 +737,7 @@ func (s *wikiIngestService) enqueueFinalize(
 	}
 	acceptedAny := false
 	for _, slug := range affectedSlugs {
-		row := wikiFinalizeRow{Slug: slug, Title: freshTitleBySlug[slug]}
+		row := wikiFinalizeRow{Slug: slug, Title: freshTitleBySlug[slug], Initiators: wikiActorsFromContext(ctx)}
 		b, err := json.Marshal(row)
 		if err != nil {
 			continue
@@ -739,7 +755,7 @@ func (s *wikiIngestService) enqueueFinalize(
 		}
 	}
 	for i := range changes {
-		row := wikiFinalizeRow{Change: &changes[i]}
+		row := wikiFinalizeRow{Change: &changes[i], Initiators: wikiActorsFromContext(ctx)}
 		b, err := json.Marshal(row)
 		if err != nil {
 			continue
@@ -757,7 +773,7 @@ func (s *wikiIngestService) enqueueFinalize(
 		}
 	}
 	if len(folderIDs) > 0 {
-		row := wikiFinalizeRow{FolderIDs: uniqueWikiFolderIDs(folderIDs)}
+		row := wikiFinalizeRow{FolderIDs: uniqueWikiFolderIDs(folderIDs), Initiators: wikiActorsFromContext(ctx)}
 		if b, err := json.Marshal(row); err == nil {
 			if s.enqueueFinalizeRow(ctx, &types.TaskPendingOp{
 				TenantID: payload.TenantID,
@@ -1354,6 +1370,7 @@ type WikiBatchContext struct {
 
 // SlugUpdate represents a single update operation for a specific slug
 type SlugUpdate struct {
+	Initiator   types.TaskInitiator
 	Slug        string
 	Type        string        // "entity", "concept", "summary", "retract", "retractStale"
 	Item        extractedItem // For entity/concept
@@ -2521,6 +2538,9 @@ func (s *wikiIngestService) deduplicateExtractedBatch(
 // summary page permanently. Retries plus failedOps requeuing (see
 // mapOneDocument) turn those events into at-most-a-few-minute hiccups.
 func (s *wikiIngestService) generateWithTemplate(ctx context.Context, chatModel chat.Chat, promptTpl string, data map[string]string) (string, error) {
+	if err := s.checkWikiTaskAuthorization(ctx); err != nil {
+		return "", err
+	}
 	tmpl, err := template.New("wiki").Parse(promptTpl)
 	if err != nil {
 		return "", fmt.Errorf("parse template: %w", err)
@@ -2590,6 +2610,9 @@ func (s *wikiIngestService) generateWithTemplate(ctx context.Context, chatModel 
 
 		var lastErr error
 		for attempt := 1; attempt <= wikiLLMMaxAttempts; attempt++ {
+			if err := s.checkWikiTaskAuthorization(ctx); err != nil {
+				return "", err
+			}
 			response, callErr := chatModel.Chat(ctx, messages, opts)
 			if callErr == nil && response != nil {
 				return response.Content, nil
@@ -2639,6 +2662,9 @@ func (s *wikiIngestService) generateWithTemplate(ctx context.Context, chatModel 
 	case result := <-resultCh:
 		if result.Err != nil {
 			return "", result.Err
+		}
+		if err := s.checkWikiTaskAuthorization(ctx); err != nil {
+			return "", err
 		}
 		content, _ := result.Val.(string)
 		return unmaskImageURLs(content, urlMap), nil

@@ -367,7 +367,7 @@
       </div>
     </t-dialog>
     <TenantDirectoryCatalog v-if="canViewAudit" :key="directoryRevision" :tenant-id="activeTenantId" :can-add-user="canManage" @available="directoryEnabled = $event" @changed="directoryMembersChanged" />
-    <TenantGroups v-if="canViewAudit" :key="directoryRevision" :tenant-id="activeTenantId" :can-manage="canViewAudit" />
+    <TenantGroups v-if="canViewAudit && directoryEnabled" :key="directoryRevision" :tenant-id="activeTenantId" :can-manage="canViewAudit" />
 
     <!-- Audit log drawer. Only rendered for Admin+ because the backend
          route is g.Admin()-gated; rendering it for lower roles would

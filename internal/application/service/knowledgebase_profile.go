@@ -108,6 +108,7 @@ func requestKnowledgeBaseProfileRefresh(
 		Language:        types.LanguageFromContextOrDefault(ctx),
 		Force:           force,
 	}
+	payload.Initiator = types.TaskInitiatorFromContext(ctx)
 	langfuse.InjectTracing(ctx, &payload)
 	body, err := json.Marshal(payload)
 	if err != nil {

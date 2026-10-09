@@ -99,7 +99,11 @@ func (h *KnowledgeBaseHandler) filterGroupAccessibleKBs(
 			continue
 		}
 		if permission.Allowed {
-			filtered = append(filtered, kb)
+			copyOfKB := *kb
+			copyOfKB.GroupAccessPermission = projectedGroupPermission(
+				ctx, h.groupAccess, kb.TenantID, types.GroupResourceTypeKnowledgeBase, kb.ID,
+			)
+			filtered = append(filtered, &copyOfKB)
 		}
 	}
 	return filtered
@@ -514,6 +518,11 @@ func (h *KnowledgeBaseHandler) GetKnowledgeBase(c *gin.Context) {
 		c.Error(err)
 		return
 	}
+	copyOfKB := *kb
+	kb = &copyOfKB
+	kb.GroupAccessPermission = projectedGroupPermission(
+		c.Request.Context(), h.groupAccess, kb.TenantID, types.GroupResourceTypeKnowledgeBase, kb.ID,
+	)
 	// Fill counts (knowledge_count, chunk_count, is_processing) so hover/detail shows correct numbers
 	if fillErr := h.service.FillKnowledgeBaseCounts(c.Request.Context(), kb); fillErr != nil {
 		logger.Warnf(c.Request.Context(), "Failed to fill KB counts for %s: %v", kb.ID, fillErr)

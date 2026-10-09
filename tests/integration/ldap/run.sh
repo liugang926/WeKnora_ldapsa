@@ -4,6 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 CERT_DIR="$SCRIPT_DIR/.generated/certs"
 COMPOSE_FILE="$SCRIPT_DIR/docker-compose.yml"
+export COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-weknora-ldap-integration-$$}"
 
 cleanup() {
   if [[ "${LDAP_IT_KEEP:-0}" == "1" ]]; then
@@ -41,8 +42,6 @@ openssl x509 -req -sha256 -days 2 \
   -extfile "$SCRIPT_DIR/certs/server-ext.cnf" \
   -out "$CERT_DIR/server.crt" >/dev/null 2>&1
 chmod 0644 "$CERT_DIR/ca.crt" "$CERT_DIR/server.crt" "$CERT_DIR/server.key"
-
-export COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-weknora-ldap-integration}"
 
 docker compose -f "$COMPOSE_FILE" up -d --wait openldap
 docker compose -f "$COMPOSE_FILE" run --rm test

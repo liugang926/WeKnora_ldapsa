@@ -23,6 +23,17 @@ test('deployment-managed parent paths make their child controls read-only', () =
   assert.equal(isDirectoryFieldReadOnly(['base_dn'], 'group_base_dn'), false)
 })
 
+test('reordering domain controllers preserves certificate-name overrides', () => {
+  assert.deepEqual(parseDirectoryServers('10.0.0.2:636\n10.0.0.1:636\ndc3:636', [
+    { address: '10.0.0.1:636', server_name: 'dc1.corp.test' },
+    { address: '10.0.0.2:636', server_name: 'dc2.corp.test' },
+  ]), [
+    { address: '10.0.0.2:636', server_name: 'dc2.corp.test' },
+    { address: '10.0.0.1:636', server_name: 'dc1.corp.test' },
+    { address: 'dc3:636' },
+  ])
+})
+
 test('directory update never sends an unchanged secret', () => {
   const config = {
     enabled: true,
@@ -48,4 +59,6 @@ test('directory update never sends an unchanged secret', () => {
   assert.equal('bind_password' in unchanged, false)
   const replaced = buildDirectoryConfigUpdate(config, 'dc1:636', 'replacement')
   assert.equal(replaced.bind_password, 'replacement')
+  const fileManaged = buildDirectoryConfigUpdate({ ...config, read_only_fields: ['bind_password'] }, 'dc1:636', 'stale-draft')
+  assert.equal('bind_password' in fileManaged, false)
 })

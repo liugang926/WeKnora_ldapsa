@@ -25,10 +25,18 @@ The script generates short-lived certificates under `.generated/`, starts the
 pinned multi-architecture containers, waits for the seeded directory to become
 healthy, runs `go test -tags=integration`, and removes the containers and
 volumes. Set `LDAP_IT_KEEP=1` to leave the fixture running for inspection.
+Each run uses its own Compose project (or the explicit `COMPOSE_PROJECT_NAME`)
+so cleanup only removes that run's fixtures. Debug ports bind to loopback.
 
 The exposed debug endpoints are `ldap://localhost:11389` and
 `ldaps://localhost:11636` by default. They can be changed with
 `LDAP_IT_LDAP_PORT` and `LDAP_IT_LDAPS_PORT`.
+
+The **LDAP directory** GitHub Actions workflow runs this harness on relevant
+pull requests and main changes. Its separate migration job supplies a fresh
+PostgreSQL database and runs both PostgreSQL and SQLite upgrade/rollback
+tests. Ordinary Go CI covers the protocol stubs and authorization regressions;
+the network suite does not silently stand in for Microsoft AD acceptance.
 
 ## Scope and real AD acceptance
 

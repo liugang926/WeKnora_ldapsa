@@ -2,10 +2,12 @@ package router
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
 
+	"github.com/Tencent/WeKnora/internal/application/service"
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
@@ -106,6 +108,11 @@ func (e *SyncTaskExecutor) Enqueue(task *asynq.Task, opts ...asynq.Option) (*asy
 					task.Type(), taskID, time.Since(start))
 				return
 			}
+			if errors.Is(lastErr, asynq.SkipRetry) {
+				logger.Warnf(ctx, "[SyncTask] Task stopped without retry type=%s id=%s err=%v",
+					task.Type(), taskID, lastErr)
+				return
+			}
 		}
 
 		logger.Errorf(ctx, "[SyncTask] Task failed (exhausted retries) type=%s id=%s elapsed=%v err=%v",
@@ -121,6 +128,10 @@ type SyncTaskParams struct {
 	Executor             *SyncTaskExecutor
 	KnowledgeService     interfaces.KnowledgeService
 	KnowledgeBaseService interfaces.KnowledgeBaseService
+	GroupAccess          interfaces.GroupAccessService
+	KnowledgeRepo        interfaces.KnowledgeRepository
+	ChunkRepo            interfaces.ChunkRepository
+	SpanTracker          service.SpanTracker
 	TagService           interfaces.KnowledgeTagService
 	DataSourceService    interfaces.DataSourceService
 	ChunkExtractor       interfaces.TaskHandler `name:"chunkExtractor"`
@@ -137,6 +148,11 @@ type SyncTaskParams struct {
 // RegisterSyncHandlers registers all task handlers on the SyncTaskExecutor.
 // Used in Lite mode instead of RunAsynqServer.
 func RegisterSyncHandlers(params SyncTaskParams) {
+	// Wrap registration once so Lite performs the same per-stage recheck as
+	// the Redis worker, including restoration of the initiating human.
+	guard := taskGroupAccessMiddleware(
+		params.GroupAccess, params.KnowledgeBaseService, params.KnowledgeRepo, params.ChunkRepo, params.SpanTracker,
+	)
 	params.Executor.RegisterHandler(types.TypeChunkExtract, params.ChunkExtractor.Handle)
 	params.Executor.RegisterHandler(types.TypeDataTableSummary, params.DataTableSummary.Handle)
 	params.Executor.RegisterHandler(types.TypeDocumentProcess, params.KnowledgeService.ProcessDocument)
@@ -159,5 +175,10 @@ func RegisterSyncHandlers(params SyncTaskParams) {
 	params.Executor.RegisterHandler(types.TypeWikiIngest, params.WikiIngest.Handle)
 	params.Executor.RegisterHandler(types.TypeWikiFinalize, params.WikiIngest.Handle)
 	params.Executor.RegisterHandler(types.TypeMemoryExtract, params.MemoryService.Handle)
+	params.Executor.mu.Lock()
+	for taskType, handler := range params.Executor.handlers {
+		params.Executor.handlers[taskType] = guard(asynq.HandlerFunc(handler)).ProcessTask
+	}
+	params.Executor.mu.Unlock()
 	logger.Infof(context.Background(), "[SyncTask] All task handlers registered (Lite mode, no Redis)")
 }
