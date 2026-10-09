@@ -140,6 +140,62 @@ func RefuseMessageMaterialOutputBoundary(ctx context.Context) {
 	}
 }
 
+// MessageMaterialIdleRecheckEligible changes only an empty HTTP poll cadence.
+// It is never authorization to publish bytes: every nonempty batch and writer
+// still executes CheckMessageMaterialOutputBoundary and its current checks.
+func MessageMaterialIdleRecheckEligible(ctx context.Context) bool {
+	if ctx == nil || ctx.Err() != nil {
+		return false
+	}
+	if turn := types.RAGSourceLineageFromContext(ctx); turn != nil && turn.Snapshot().RequireComplete() != nil {
+		return false
+	}
+	slot, ok := ctx.Value(messageMaterialOutputKey{}).(*messageMaterialOutputSlot)
+	if !ok {
+		return false
+	}
+	slot.mu.Lock()
+	defer slot.mu.Unlock()
+	if !slot.Ready || slot.Closed || slot.Failed != nil || len(slot.Guards) == 0 {
+		return false
+	}
+	for _, guard := range slot.Guards {
+		if guard == nil {
+			return false
+		}
+		guard.mu.Lock()
+		known := guard.ctx != nil && guard.ctx.Err() == nil && guard.plan != nil && guard.plan.SourceLineage.RequireComplete() == nil
+		if known && guard.snapshot != nil {
+			for _, proof := range guard.snapshot.Proofs {
+				if proof == nil || proof.SourceLineage.RequireComplete() != nil {
+					known = false
+					break
+				}
+			}
+			for _, message := range guard.snapshot.Messages {
+				if message == nil || message.SourceLineage.RequireComplete() != nil {
+					known = false
+					break
+				}
+			}
+		} else {
+			known = false
+		}
+		guard.mu.Unlock()
+		if !known {
+			return false
+		}
+	}
+	for _, output := range slot.Outputs {
+		for _, message := range output {
+			if message == nil || message.SourceLineage.RequireComplete() != nil {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 func CheckMessageMaterialOutputBoundary(ctx context.Context) error {
 	slot, ok := ctx.Value(messageMaterialOutputKey{}).(*messageMaterialOutputSlot)
 	if !ok {

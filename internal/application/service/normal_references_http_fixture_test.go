@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"os"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -41,6 +43,7 @@ type NormalReferencesHTTPFixtureForTest struct {
 	CompletionReturned <-chan struct{}
 	CompletionError    <-chan error
 	CompletionErrors   func() []error
+	BodyLeaseRenewals  func() int64
 }
 
 type normalReferencesModelsForTest struct {
@@ -140,6 +143,13 @@ func NewNormalReferencesHTTPFixtureForTest(t *testing.T, pg bool, final chat.Cha
 		}
 	}})
 	chatpipeline.NewPluginChatCompletionStream(manager, models)
+	var bodyLeaseRenewals atomic.Int64
+	require.NoError(t, m.f.db.Callback().Update().After("gorm:update").Register("actual-idle-body-lease-renewals", func(tx *gorm.DB) {
+		if tx.Statement.Table == "original_body_leases" && tx.Error == nil && tx.RowsAffected > 0 && strings.Contains(tx.Statement.SQL.String(), "expires_at_ms") {
+			bodyLeaseRenewals.Add(1)
+		}
+	}))
+	t.Cleanup(func() { m.f.db.Callback().Update().Remove("actual-idle-body-lease-renewals") })
 	producerReturned := make(chan struct{})
 	completionReturned := make(chan struct{})
 	completionError := make(chan error, 1)
@@ -157,7 +167,7 @@ func NewNormalReferencesHTTPFixtureForTest(t *testing.T, pg bool, final chat.Cha
 	require.NoError(t, m.f.db.Create(session).Error)
 	original, err := m.f.store.CaptureKnowledgeOutputInputs(ctx, types.KnowledgeBuildInputCaptureRequest{TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: k.ID})
 	require.NoError(t, err)
-	return &NormalReferencesHTTPFixtureForTest{DB: m.f.db, Store: m.f.store, Ctx: ctx, Session: session, Sessions: normalReferencesSessionForTest{SessionService: sessions, mode: mode, returned: producerReturned}, Messages: observedMessages, KBs: kbs, Models: models, Config: cfg, Lineage: original.Proof.SourceLineage, Revoke: func() { m.personal.Store(false) }, Cancel: cancel, ProducerReturned: producerReturned, CompletionReturned: completionReturned, CompletionError: completionError, CompletionErrors: observedMessages.completionErrors}
+	return &NormalReferencesHTTPFixtureForTest{DB: m.f.db, Store: m.f.store, Ctx: ctx, Session: session, Sessions: normalReferencesSessionForTest{SessionService: sessions, mode: mode, returned: producerReturned}, Messages: observedMessages, KBs: kbs, Models: models, Config: cfg, Lineage: original.Proof.SourceLineage, Revoke: func() { m.personal.Store(false) }, Cancel: cancel, ProducerReturned: producerReturned, CompletionReturned: completionReturned, CompletionError: completionError, CompletionErrors: observedMessages.completionErrors, BodyLeaseRenewals: bodyLeaseRenewals.Load}
 }
 
 type normalReferencesTenantForTest struct {

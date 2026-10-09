@@ -25,9 +25,12 @@ type liveMaterialWritePhase struct {
 	RawControl             bool
 	MaterialCheck          func() error
 	InitializationDeadline time.Time
+	LastIdleMaterialCheck  time.Time
+	IdleMaterialReady      bool
 }
 
 const liveMaterialInitializationTimeout = 10 * time.Second
+const liveIdleMaterialRecheckInterval = time.Second
 
 // ContinueStream godoc
 // @Summary      继续流式响应
@@ -564,7 +567,15 @@ func (h *Handler) handleAgentEventsForSSE(
 				}
 			}
 			if phase, ok := ctx.Value(liveMaterialWritePhaseKey{}).(*liveMaterialWritePhase); ok && phase.MaterialCheck != nil {
+				// No buffered/public-resource tail and no queued event may use
+				// the bounded idle cadence. It cannot authorize a future write.
+				idle := len(events) == 0 && !phase.RawControl && (resourceRewriter == nil || !resourceRewriter.Enabled())
+				eligible := idle && phase.IdleMaterialReady && applicationservice.MessageMaterialIdleRecheckEligible(ctx)
+				if eligible && time.Since(phase.LastIdleMaterialCheck) < liveIdleMaterialRecheckInterval {
+					continue
+				}
 				if err := phase.MaterialCheck(); err != nil {
+					phase.IdleMaterialReady = false
 					if stderrors.Is(err, applicationservice.ErrMessageMaterialHTTPInitializing) {
 						if phase.InitializationDeadline.IsZero() {
 							phase.InitializationDeadline = time.Now().Add(liveMaterialInitializationTimeout)
@@ -580,6 +591,8 @@ func (h *Handler) handleAgentEventsForSSE(
 					emitSafeTerminalGenerationError(c, requestID)
 					return
 				}
+				phase.IdleMaterialReady = true
+				phase.LastIdleMaterialCheck = time.Now()
 			}
 			events, err = protectLiveStreamBatch(ctx, h.messageService, liveMessage, events)
 			if err != nil {
