@@ -66,7 +66,8 @@ func TestAutoTagActualAsynqBeginModelEndOriginalSpanHTTP(t *testing.T) {
 				change = "personal_revoke_after_auto"
 			}
 			h, db, store, sourceGuard, calls := collectionNextcloudHTTPStateFixture(t, change, func(db *gorm.DB, store *repository.KnowledgeInputProvenanceStore) {
-				for _, name := range []string{"000056_knowledge_original_worker_actor", "000057_processing_span_original_inputs"} {
+				require.NoError(t, db.AutoMigrate(&types.Tenant{}, &types.Model{}))
+				for _, name := range []string{"000056_knowledge_original_worker_actor", "000057_processing_span_original_inputs", "000062_knowledge_enrichment_inputs"} {
 					if name == "000057_processing_span_original_inputs" {
 						require.NoError(t, db.AutoMigrate(&types.KnowledgeProcessingSpan{}))
 						require.NoError(t, db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS auto_span_http_unique ON knowledge_processing_spans(knowledge_id,attempt,span_id)").Error)
@@ -75,6 +76,8 @@ func TestAutoTagActualAsynqBeginModelEndOriginalSpanHTTP(t *testing.T) {
 					require.NoError(t, err)
 					require.NoError(t, db.Exec(string(data)).Error)
 				}
+				require.NoError(t, db.Create(&types.Tenant{ID: 7, Name: "actual auto HTTP tenant", Status: "active"}).Error)
+				require.NoError(t, db.Create(&types.Model{ID: "isolated-model", TenantID: 7, Name: "actual auto HTTP model", Source: types.ModelSourceRemote, Status: types.ModelStatusActive}).Error)
 				repository.ConfigureKnowledgeInputActorGroupAccess(store, service.NewGroupAccessService(repository.NewGroupAccessRepository(db)))
 				var kb types.KnowledgeBase
 				require.NoError(t, db.Where("id='kb'").Take(&kb).Error)
@@ -125,7 +128,10 @@ func TestAutoTagActualAsynqBeginModelEndOriginalSpanHTTP(t *testing.T) {
 			require.NotNil(t, tracker.BeginStage(build, k.ID, attempt, types.StagePostProcess, types.JSONMap{"stage": "actual source-independent pipeline"}))
 			actual, err := store.CaptureKnowledgeBuildInputs(build, types.KnowledgeBuildInputCaptureRequest{TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: k.ID, ChunkIDs: []string{chunk.ID}, Expected: original})
 			require.NoError(t, err)
-			payload, err := json.Marshal(types.KnowledgeAutoTagPayload{TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: k.ID, Attempt: attempt, OriginalInput: actual.Proof})
+			queued := types.KnowledgeAutoTagPayload{TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: k.ID, Attempt: attempt, OriginalInput: actual.Proof}
+			queued.TaskInput, err = store.AdmitKnowledgeAutoTagTaskInput(build, queued)
+			require.NoError(t, err)
+			payload, err := json.Marshal(queued)
 			require.NoError(t, err)
 			model := &autoSpanHTTPModel{}
 			if mutation == "unselected name ABA" {

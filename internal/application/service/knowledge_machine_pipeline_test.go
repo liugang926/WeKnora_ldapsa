@@ -82,15 +82,15 @@ func newMachinePipelineFixture(t *testing.T, pg bool) *machinePipelineFixture {
 	// created by the actual production sync/file pipeline.
 	require.NoError(t, f.db.Unscoped().Where("knowledge_id = ?", f.k.ID).Delete(&types.Chunk{}).Error)
 	require.NoError(t, f.db.Unscoped().Where("id = ?", f.k.ID).Delete(&types.Knowledge{}).Error)
-	require.NoError(t, f.db.AutoMigrate(&types.DataSource{}, &types.SyncLog{}, &types.StoredResource{}, &types.ResourceBinding{}, &types.ResourceAccessGrant{}, &types.StorageBackend{}, &types.KnowledgeProcessingSpan{}))
+	require.NoError(t, f.db.AutoMigrate(&types.DataSource{}, &types.SyncLog{}, &types.StoredResource{}, &types.ResourceBinding{}, &types.ResourceAccessGrant{}, &types.StorageBackend{}, &types.KnowledgeProcessingSpan{}, &types.TaskPendingOp{}))
 	require.NoError(t, f.db.Exec("CREATE UNIQUE INDEX machine_span_tuple ON knowledge_processing_spans(knowledge_id,attempt,span_id)").Error)
 	require.NoError(t, f.db.Exec("DROP TABLE nextcloud_source_revisions; DROP TABLE nextcloud_source_versions").Error)
 	migration := f.db
 	directory := "sqlite"
-	names := []string{"000031_nextcloud_source_versions", "000045_nextcloud_source_revisions", "000046_nextcloud_content_leases", "000047_nextcloud_candidate_retry", "000035_nextcloud_source_pairing", "000039_nextcloud_source_pairing_abort", "000057_processing_span_original_inputs", "000065_nextcloud_capacity_admission", "000067_nextcloud_capacity_write_intents", "000069_datasource_name_inputs"}
+	names := []string{"000031_nextcloud_source_versions", "000045_nextcloud_source_revisions", "000046_nextcloud_content_leases", "000047_nextcloud_candidate_retry", "000035_nextcloud_source_pairing", "000039_nextcloud_source_pairing_abort", "000057_processing_span_original_inputs", "000065_nextcloud_capacity_admission", "000067_nextcloud_capacity_write_intents", "000068_nextcloud_local_derived_gc", "000069_datasource_name_inputs"}
 	if pg {
 		directory = "versioned"
-		names = []string{"000112_nextcloud_source_versions", "000126_nextcloud_source_revisions", "000127_nextcloud_content_leases", "000128_nextcloud_candidate_retry", "000116_nextcloud_source_pairing", "000120_nextcloud_source_pairing_abort", "000138_processing_span_original_inputs", "000146_nextcloud_capacity_admission", "000148_nextcloud_capacity_write_intents", "000150_datasource_name_inputs"}
+		names = []string{"000112_nextcloud_source_versions", "000126_nextcloud_source_revisions", "000127_nextcloud_content_leases", "000128_nextcloud_candidate_retry", "000116_nextcloud_source_pairing", "000120_nextcloud_source_pairing_abort", "000138_processing_span_original_inputs", "000146_nextcloud_capacity_admission", "000148_nextcloud_capacity_write_intents", "000149_nextcloud_local_derived_gc", "000150_datasource_name_inputs"}
 		sql, e := f.db.DB()
 		require.NoError(t, e)
 		migration, e = gorm.Open(postgres.New(postgres.Config{Conn: sql, PreferSimpleProtocol: true}), &gorm.Config{})
