@@ -22,6 +22,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	"github.com/alicebob/miniredis/v2"
 	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -40,6 +41,7 @@ type normalReferencesActualModel struct {
 	idleMeasured          atomic.Bool
 	idleRenewals          atomic.Int64
 	idleHeldBodies        atomic.Int64
+	lateIdleFaultApplied  atomic.Bool
 }
 
 func (m *normalReferencesActualModel) GetModelID() string   { return "normal-reference-model" }
@@ -75,6 +77,44 @@ func (m *normalReferencesActualModel) ChatStream(ctx context.Context, input []ch
 		m.f.Cancel()
 	}
 	out := make(chan types.StreamResponse, 2)
+	if m.mode == "late-idle-actor" || m.mode == "late-idle-body-lease" {
+		// Only test cleanup can abandon this transport. Neither a timer nor
+		// the fault manufactures EOF/Done or cancels the production context.
+		abandoned := make(chan struct{})
+		m.t.Cleanup(func() { close(abandoned) })
+		go func() {
+			defer close(out)
+			ticker := time.NewTicker(10 * time.Millisecond)
+			defer ticker.Stop()
+			for m.consecutiveEmptyPolls.Load() < 10 {
+				select {
+				case <-ctx.Done():
+					m.stopped.Store(true)
+					return
+				case <-abandoned:
+					return
+				case <-ticker.C:
+				}
+			}
+			var err error
+			if m.mode == "late-idle-actor" {
+				err = m.f.DB.Model(&types.User{}).Where("id=?", m.f.Session.UserID).Update("is_active", false).Error
+			} else {
+				err = m.f.DB.Exec("UPDATE original_body_leases SET expires_at_ms=1 WHERE kind='read' AND released_at_ms IS NULL").Error
+			}
+			if err != nil {
+				m.t.Errorf("actual late idle mutation failed: %v", err)
+				return
+			}
+			m.lateIdleFaultApplied.Store(true)
+			select {
+			case <-ctx.Done():
+				m.stopped.Store(true)
+			case <-abandoned:
+			}
+		}()
+		return out, nil
+	}
 	if m.mode == "idle-current" || m.mode == "idle-source-revoke" {
 		var heldBodies int64
 		require.NoError(m.t, m.f.DB.Table("original_body_leases").Where("kind='read' AND released_at_ms IS NULL").Count(&heldBodies).Error)
@@ -163,6 +203,7 @@ func runNormalReferencesActualHTTP(t *testing.T, pg bool, modes ...string) {
 	if len(modes) > 0 {
 		mode = modes[0]
 	}
+	lateIdle := mode == "late-idle-actor" || mode == "late-idle-body-lease"
 	model := &normalReferencesActualModel{t: t, mode: mode, started: make(chan struct{})}
 	f := service.NewNormalReferencesHTTPFixtureForTest(t, pg, model, mode)
 	model.f = f
@@ -230,7 +271,11 @@ func runNormalReferencesActualHTTP(t *testing.T, pg bool, modes ...string) {
 		select {
 		case <-f.ProducerReturned:
 		case <-time.After(3 * time.Second):
-			t.Fatal("the actual production KnowledgeQA did not return before final database assertions")
+			if lateIdle {
+				assert.Fail(t, "the actual production KnowledgeQA did not return before final database assertions")
+			} else {
+				t.Fatal("the actual production KnowledgeQA did not return before final database assertions")
+			}
 		}
 		if mode == "producer-stop" {
 			select {
@@ -261,10 +306,15 @@ func runNormalReferencesActualHTTP(t *testing.T, pg bool, modes ...string) {
 				t.Fatal("the actual StopSession completion call did not return")
 			}
 		}
-		require.Eventually(t, func() bool {
+		leasesReleased := func() bool {
 			var source, body int64
 			return f.DB.Table("nextcloud_content_leases").Where("kind='read' AND released_at_ms IS NULL").Count(&source).Error == nil && f.DB.Table("original_body_leases").Where("kind='read' AND released_at_ms IS NULL").Count(&body).Error == nil && source == 0 && body == 0
-		}, 3*time.Second, 10*time.Millisecond, "actual terminal releases producer/reader pins before fixture cleanup")
+		}
+		if lateIdle {
+			assert.Eventually(t, leasesReleased, 3*time.Second, 10*time.Millisecond, "actual terminal releases producer/reader pins before fixture cleanup")
+		} else {
+			require.Eventually(t, leasesReleased, 3*time.Second, 10*time.Millisecond, "actual terminal releases producer/reader pins before fixture cleanup")
+		}
 		if mode == "idle-current" || mode == "idle-source-revoke" {
 			t.Logf("actual idle metadata: measured=%t empty_http_polls=%d held_body_leases=%d successful_sql_renewals=%d", model.idleMeasured.Load(), observedStream.emptyPolls.Load(), model.idleHeldBodies.Load(), model.idleRenewals.Load())
 			require.True(t, model.idleMeasured.Load(), "ten real empty HTTP Redis polls were observed, not fabricated callback counts")
@@ -277,8 +327,13 @@ func runNormalReferencesActualHTTP(t *testing.T, pg bool, modes ...string) {
 			require.EqualValues(t, 1, completed, "actual permitted background production completed before the final oracle")
 			require.EqualValues(t, 1, manifests, "the current completion receipt has its original immutable input manifest")
 		} else {
-			require.Zero(t, completed, "a refused or truly stopped producer never fabricates a completed assistant after it returns")
-			require.Zero(t, manifests, "a refused or truly stopped producer has no current completion manifest")
+			if lateIdle {
+				assert.Zero(t, completed, "a refused producer never fabricates a completed assistant")
+				assert.Zero(t, manifests, "a refused producer has no current completion manifest")
+			} else {
+				require.Zero(t, completed, "a refused or truly stopped producer never fabricates a completed assistant after it returns")
+				require.Zero(t, manifests, "a refused or truly stopped producer has no current completion manifest")
+			}
 		}
 	}()
 	if mode != "current" && mode != "done-open" && mode != "empty-fixed" && mode != "caller-disconnect" && mode != "idle-current" {
@@ -289,12 +344,19 @@ func runNormalReferencesActualHTTP(t *testing.T, pg bool, modes ...string) {
 		require.NotContains(t, content, "untrusted controlled provider diagnostic")
 		require.NotContains(t, content, "\"response_type\":\"complete\"")
 		wantCalls := int64(0)
-		if mode == "source-after-start" || mode == "source-after-start-open" || mode == "lease-after-start" || mode == "thinking-refuse" || mode == "caller-disconnect" || mode == "model-error" || mode == "eof-no-done" || mode == "producer-stop" || mode == "idle-source-revoke" {
+		if mode == "source-after-start" || mode == "source-after-start-open" || mode == "lease-after-start" || mode == "thinking-refuse" || mode == "caller-disconnect" || mode == "model-error" || mode == "eof-no-done" || mode == "producer-stop" || mode == "idle-source-revoke" || mode == "late-idle-actor" || mode == "late-idle-body-lease" {
 			wantCalls = 1
 		}
 		require.Equal(t, wantCalls, model.calls.Load(), "no later model starts after the actual producer boundary fails")
-		if mode == "source-after-start-open" || mode == "producer-stop" || mode == "idle-source-revoke" {
-			require.Eventually(t, func() bool { return model.stopped.Load() }, time.Second, time.Millisecond, "the started original provider actually receives cancellation and stops")
+		if mode == "late-idle-actor" || mode == "late-idle-body-lease" {
+			require.True(t, model.lateIdleFaultApplied.Load(), "the actual DB mutation happened after ten consecutive real empty reads")
+		}
+		if mode == "source-after-start-open" || mode == "producer-stop" || mode == "idle-source-revoke" || mode == "late-idle-actor" || mode == "late-idle-body-lease" {
+			if lateIdle {
+				assert.Eventually(t, func() bool { return model.stopped.Load() }, time.Second, time.Millisecond, "the started original provider actually receives cancellation and stops")
+			} else {
+				require.Eventually(t, func() bool { return model.stopped.Load() }, time.Second, time.Millisecond, "the started original provider actually receives cancellation and stops")
+			}
 		}
 		return
 	}
@@ -406,6 +468,18 @@ func TestNormalReferencesActualHTTPIdleMaterialSQLite(t *testing.T) {
 }
 func TestPostgresNormalReferencesActualHTTPIdleMaterial(t *testing.T) {
 	for _, mode := range []string{"idle-current", "idle-source-revoke"} {
+		t.Run(mode, func(t *testing.T) { runNormalReferencesActualHTTP(t, true, mode) })
+	}
+}
+
+func TestNormalReferencesActualHTTPLateIdleMaterialSQLite(t *testing.T) {
+	for _, mode := range []string{"late-idle-actor", "late-idle-body-lease"} {
+		t.Run(mode, func(t *testing.T) { runNormalReferencesActualHTTP(t, false, mode) })
+	}
+}
+
+func TestPostgresNormalReferencesActualHTTPLateIdleMaterial(t *testing.T) {
+	for _, mode := range []string{"late-idle-actor", "late-idle-body-lease"} {
 		t.Run(mode, func(t *testing.T) { runNormalReferencesActualHTTP(t, true, mode) })
 	}
 }
