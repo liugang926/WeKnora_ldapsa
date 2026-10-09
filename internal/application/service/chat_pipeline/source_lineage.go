@@ -145,3 +145,10 @@ func emitSourceLineageEvent(ctx context.Context, bus types.EventBusInterface, ev
 	}
 	return err
 }
+
+// EmitSourceLineageEvent publishes a producer event under the same current
+// material lifetime and original source checks as ordinary answer streaming.
+// Event data and citations never supply or repair the producer's proof.
+func EmitSourceLineageEvent(ctx context.Context, bus types.EventBusInterface, evt types.Event) error {
+	return emitSourceLineageEvent(ctx, bus, evt)
+}

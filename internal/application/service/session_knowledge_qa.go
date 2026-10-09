@@ -281,7 +281,7 @@ func (s *sessionService) KnowledgeQA(
 	markMessageMaterialReady(ctx)
 	err = s.KnowledgeQAByEvent(ctx, chatManage, pipeline)
 	if err == nil {
-		handoff = true
+		handoff = chatManage.SourceStreamResult != nil
 	}
 	if err != nil {
 		logger.ErrorWithFields(ctx, err, map[string]interface{}{
@@ -799,7 +799,18 @@ func intersectStrings(left []string, right []string) []string {
 // KnowledgeQAByEvent processes knowledge QA through a series of events in the pipeline
 func (s *sessionService) KnowledgeQAByEvent(ctx context.Context,
 	chatManage *types.ChatManage, eventList []types.EventType,
-) error {
+) (resultErr error) {
+	defer func() {
+		if resultErr != nil && chatManage.SourceStreamResult != nil {
+			if chatManage.SourceStreamCancel != nil {
+				chatManage.SourceStreamCancel()
+			}
+			// A started producer must exit before the caller releases the last
+			// original owner on any later pipeline/refusal/cancellation path.
+			<-chatManage.SourceStreamResult
+		}
+	}()
+
 	if types.RAGSourceLineageFromContext(ctx) == nil {
 		var err error
 		ctx, err = s.eventManager.BeginSourceLineage(ctx, chatManage, access.LineageReadScope{Targets: chatManage.SearchTargets})
@@ -857,10 +868,16 @@ func (s *sessionService) KnowledgeQAByEvent(ctx context.Context,
 		if eventType == types.QUERY_UNDERSTAND && chatpipeline.ShouldEmitQueryUnderstandProgress(chatManage) {
 			understandStart = stageStart
 			understandProgress = chatpipeline.BeginQueryUnderstandProgress(stageCtx, chatManage)
+			if err := understandProgress.Err(); err != nil {
+				return err
+			}
 		}
 		if chatpipeline.IsConsolidatedRetrievalStage(eventType, chatManage) && retrievalProgress == nil {
 			retrievalStart = stageStart
 			retrievalProgress = chatpipeline.BeginRetrievalProgress(stageCtx, chatManage)
+			if err := retrievalProgress.Err(); err != nil {
+				return err
+			}
 		}
 		// Emit references before answer streaming so the SSE client receives
 		// them while the connection is still open. Previously references were
@@ -870,7 +887,9 @@ func (s *sessionService) KnowledgeQAByEvent(ctx context.Context,
 			if err := chatpipeline.AccountResults(ctx, chatManage.MergeResult); err != nil {
 				return err
 			}
-			emitKnowledgeReferencesEvent(ctx, chatManage)
+			if err := emitKnowledgeReferencesEvent(ctx, chatManage); err != nil {
+				return err
+			}
 		}
 		err := s.eventManager.Trigger(stageCtx, eventType, chatManage)
 		if err == nil || err == chatpipeline.ErrSearchNothing {
@@ -881,7 +900,9 @@ func (s *sessionService) KnowledgeQAByEvent(ctx context.Context,
 			}
 		}
 		if understandProgress != nil && eventType == types.QUERY_UNDERSTAND {
-			chatpipeline.EndQueryUnderstandProgress(stageCtx, chatManage, understandProgress, understandStart, err)
+			if emitErr := chatpipeline.EndQueryUnderstandProgress(stageCtx, chatManage, understandProgress, understandStart, err); emitErr != nil {
+				return emitErr
+			}
 			understandProgress = nil
 		}
 		// Close the consolidated retrieval progress window as soon as retrieval
@@ -892,7 +913,9 @@ func (s *sessionService) KnowledgeQAByEvent(ctx context.Context,
 		// tool_call pending — so the frontend keeps spinning on "正在检索知识库"
 		// forever even though the fallback answer has already streamed.
 		if retrievalProgress != nil && chatpipeline.ShouldCloseRetrievalProgress(eventType, lastRetrievalStage, err) {
-			chatpipeline.EndRetrievalProgress(stageCtx, chatManage, retrievalProgress, retrievalStart, err)
+			if emitErr := chatpipeline.EndRetrievalProgress(stageCtx, chatManage, retrievalProgress, retrievalStart, err); emitErr != nil {
+				return emitErr
+			}
 			retrievalProgress = nil
 		}
 		stageDuration := time.Since(stageStart)
@@ -931,7 +954,9 @@ func (s *sessionService) KnowledgeQAByEvent(ctx context.Context,
 				"reason":      "search_nothing",
 				"strategy":    string(chatManage.FallbackStrategy),
 			})
-			s.handleFallbackResponse(ctx, chatManage)
+			if err := s.handleFallbackResponse(ctx, chatManage); err != nil {
+				return err
+			}
 			if turn := types.RAGSourceLineageFromContext(ctx); turn != nil {
 				return turn.Check(ctx)
 			}
@@ -954,6 +979,14 @@ func (s *sessionService) KnowledgeQAByEvent(ctx context.Context,
 		})
 	}
 
+	if chatManage.SourceStreamResult != nil {
+		select {
+		case streamErr := <-chatManage.SourceStreamResult:
+			return streamErr
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
 	common.PipelineInfo(ctx, "Pipeline", "all_stages_complete", map[string]interface{}{
 		"session_id":        chatManage.SessionID,
 		"total_stages":      len(eventList),
@@ -1084,19 +1117,23 @@ func (s *sessionService) SearchKnowledge(ctx context.Context,
 }
 
 // handleFallbackResponse handles fallback response based on strategy
-func (s *sessionService) handleFallbackResponse(ctx context.Context, chatManage *types.ChatManage) {
+func (s *sessionService) handleFallbackResponse(ctx context.Context, chatManage *types.ChatManage) error {
 	if chatManage.FallbackStrategy == types.FallbackStrategyModel {
 		s.handleModelFallback(ctx, chatManage)
+		if turn := types.RAGSourceLineageFromContext(ctx); turn != nil {
+			return turn.Check(ctx)
+		}
+		return nil
 	} else {
-		s.handleFixedFallback(ctx, chatManage)
+		return s.handleFixedFallback(ctx, chatManage)
 	}
 }
 
 // handleFixedFallback handles fixed fallback response
-func (s *sessionService) handleFixedFallback(ctx context.Context, chatManage *types.ChatManage) {
+func (s *sessionService) handleFixedFallback(ctx context.Context, chatManage *types.ChatManage) error {
 	fallbackContent := chatManage.FallbackResponse
 	chatManage.ChatResponse = &types.ChatResponse{Content: fallbackContent}
-	s.emitFallbackAnswer(ctx, chatManage, fallbackContent)
+	return s.emitFallbackAnswer(ctx, chatManage, fallbackContent)
 }
 
 // handleModelFallback handles model-based fallback response using streaming
@@ -1372,12 +1409,12 @@ func (s *sessionService) consumeFallbackStream(
 // remain available even when inline citations in the model answer are disabled.
 // Must run before CHAT_COMPLETION_STREAM so the event arrives while the
 // connection is still open (complete closes the stream).
-func emitKnowledgeReferencesEvent(ctx context.Context, chatManage *types.ChatManage) {
+func emitKnowledgeReferencesEvent(ctx context.Context, chatManage *types.ChatManage) error {
 	if chatManage == nil || chatManage.EventBus == nil || len(chatManage.MergeResult) == 0 {
-		return
+		return nil
 	}
 	logger.Infof(ctx, "Emitting references event with %d results (pre-answer)", len(chatManage.MergeResult))
-	if err := chatManage.EventBus.Emit(ctx, types.Event{
+	if err := chatpipeline.EmitSourceLineageEvent(ctx, chatManage.EventBus, types.Event{
 		ID:        generateEventID("references"),
 		Type:      types.EventType(event.EventAgentReferences),
 		SessionID: chatManage.SessionID,
@@ -1386,23 +1423,25 @@ func emitKnowledgeReferencesEvent(ctx context.Context, chatManage *types.ChatMan
 		},
 	}); err != nil {
 		logger.Errorf(ctx, "Failed to emit references event: %v", err)
+		return err
 	}
+	return nil
 }
 
 // emitFallbackAnswer emits fallback answer event
-func (s *sessionService) emitFallbackAnswer(ctx context.Context, chatManage *types.ChatManage, content string) {
+func (s *sessionService) emitFallbackAnswer(ctx context.Context, chatManage *types.ChatManage, content string) error {
 	if err := chatpipeline.CheckSourceLineageInputs(ctx, chatManage); err != nil {
-		return
+		return err
 	}
 	if chatManage.EventBus == nil {
-		return
+		return nil
 	}
 	if !chatManage.CitationsEnabled() {
 		content = modelcontext.NewRegistry(false).DecodeOutputText(content)
 	}
 
 	fallbackID := generateEventID("fallback")
-	if err := chatManage.EventBus.Emit(ctx, types.Event{
+	if err := chatpipeline.EmitSourceLineageEvent(ctx, chatManage.EventBus, types.Event{
 		ID:        fallbackID,
 		Type:      types.EventType(event.EventAgentFinalAnswer),
 		SessionID: chatManage.SessionID,
@@ -1413,9 +1452,11 @@ func (s *sessionService) emitFallbackAnswer(ctx context.Context, chatManage *typ
 		},
 	}); err != nil {
 		logger.Errorf(ctx, "Failed to emit fallback answer event: %v", err)
+		return err
 	} else {
 		logger.Infof(ctx, "Fallback answer event emitted successfully")
 	}
+	return nil
 }
 
 // resolveWebSearchProviderID returns the web search provider ID to use for a pipeline request.

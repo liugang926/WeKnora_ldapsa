@@ -141,6 +141,10 @@ type PipelineContext struct {
 	EventBus      EventBusInterface `json:"-"`
 	MessageID     string            `json:"-"`
 	UserMessageID string            `json:"-"`
+	// SourceStreamResult reports the owned ordinary producer's terminal result.
+	// It is runtime-only and never part of saved/client material.
+	SourceStreamResult <-chan error `json:"-"`
+	SourceStreamCancel func()       `json:"-"`
 }
 
 // ChatManage represents the full configuration, state and runtime context
