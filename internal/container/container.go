@@ -535,15 +535,17 @@ func BuildContainer(container *dig.Container) *dig.Container {
 		repository.ConfigureKnowledgeInputActorGroupAccess(store, groups)
 		repository.ConfigureKnowledgeInputActorShares(store, shares)
 	}))
-	must(container.Invoke(func(store *repository.KnowledgeInputProvenanceStore, tags interfaces.KnowledgeTagRepository, knowledge interfaces.KnowledgeRepository) {
+	must(container.Invoke(func(store *repository.KnowledgeInputProvenanceStore, tags interfaces.KnowledgeTagRepository, knowledge interfaces.KnowledgeRepository, sources interfaces.DataSourceRepository, pairs *repository.NextcloudSourcePairingRepository) {
 		repository.ConfigureKnowledgeCurrentReadActor(knowledge, store)
-		repository.ConfigureKnowledgeDisplayInputWriters(store, tags, knowledge, func(tx *gorm.DB) *repository.KnowledgeInputProvenanceStore {
+		factory := func(tx *gorm.DB) *repository.KnowledgeInputProvenanceStore {
 			authority := repository.NewKnowledgeInputProvenanceStore(tx)
 			repository.ConfigureKnowledgeInputActorGroupAccess(authority, service.NewGroupAccessService(repository.NewGroupAccessRepository(tx)))
 			repository.ConfigureKnowledgeInputActorShares(authority, service.NewKBShareService(repository.NewKBShareRepository(tx), repository.NewOrganizationRepository(tx), repository.NewKnowledgeBaseRepository(tx), repository.NewKnowledgeRepository(tx), repository.NewDataSourceRepository(tx), repository.NewChunkRepository(tx), nil))
 			repository.ConfigureMessageMaterialAgentShares(authority, service.NewAgentShareService(repository.NewAgentShareRepository(tx), repository.NewTenantDisabledSharedAgentRepository(tx), repository.NewOrganizationRepository(tx), repository.NewCustomAgentRepository(tx), repository.NewUserRepository(tx), repository.NewWebSearchProviderRepository(tx), repository.NewKnowledgeBaseRepository(tx), repository.NewKnowledgeRepository(tx), repository.NewDataSourceRepository(tx)))
 			return authority
-		})
+		}
+		repository.ConfigureKnowledgeDisplayInputWriters(store, tags, knowledge, factory)
+		repository.ConfigureDataSourceNameInputWriters(sources, pairs, factory)
 	}))
 	must(container.Invoke(func(p struct {
 		dig.In
@@ -554,16 +556,19 @@ func BuildContainer(container *dig.Container) *dig.Container {
 		service.ConfigureKnowledgeAutoTagInputProvenance(p.Handler, p.Store, p.Guard)
 	}))
 	must(container.Invoke(service.ConfigureDataSourceCapacityAdmission))
+	must(container.Invoke(service.ConfigureDataSourceOriginalInputSources))
 	must(container.Invoke(service.ConfigureKnowledgeInputProvenance))
 	must(container.Invoke(service.ConfigureFAQInputProvenance))
 	must(container.Invoke(service.ConfigureChunkSummaryInputProvenance))
 	must(container.Invoke(func(p struct {
 		dig.In
-		Handler interfaces.TaskHandler `name:"knowledgePostProcess"`
-		Store   *repository.KnowledgeInputProvenanceStore
-		Config  *config.Config
+		Handler   interfaces.TaskHandler `name:"knowledgePostProcess"`
+		Store     *repository.KnowledgeInputProvenanceStore
+		Knowledge interfaces.KnowledgeRepository
+		Config    *config.Config
 	}) {
 		service.ConfigureKnowledgePostProcessInputProvenance(p.Handler, p.Store)
+		service.ConfigureKnowledgeAutoTagCompletion(p.Handler, p.Knowledge, p.Store)
 		service.ConfigureKnowledgeEnrichmentRuntime(p.Handler, p.Config)
 	}))
 	must(container.Invoke(func(p struct {
