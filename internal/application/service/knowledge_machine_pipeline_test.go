@@ -81,7 +81,7 @@ func newMachinePipelineFixture(t *testing.T, pg bool) *machinePipelineFixture {
 	return newMachinePipelineFixtureWithDocument(t, pg, strings.Repeat("Actual original document about its topic, with enough text for chunking and retrieval. ", 4))
 }
 
-func newMachinePipelineFixtureWithDocument(t *testing.T, pg bool, artifact string) *machinePipelineFixture {
+func newMachinePipelineFixtureWithDocument(t *testing.T, pg bool, artifact string, withMessageMaterials ...bool) *machinePipelineFixture {
 	t.Helper()
 	f := newEnrichmentTestFixture(t, pg)
 	// Remove setup-only ordinary data. Every tested NC knowledge below is
@@ -101,6 +101,22 @@ func newMachinePipelineFixtureWithDocument(t *testing.T, pg bool, artifact strin
 		require.NoError(t, e)
 		migration, e = gorm.Open(postgres.New(postgres.Config{Conn: sql, PreferSimpleProtocol: true}), &gorm.Config{})
 		require.NoError(t, e)
+	}
+	if len(withMessageMaterials) > 0 && withMessageMaterials[0] {
+		// This optional ordinary-HTTP fixture follows the actual material chain
+		// before creating any session/message: 70→71→72→73 / 151→152→153→154.
+		message, body, steer := "000070_message_original_materials", "000071_original_body_retention", "000073_steer_original_materials"
+		if pg {
+			message, body, steer = "000151_message_original_materials", "000152_original_body_retention", "000154_steer_original_materials"
+		}
+		ordered := make([]string, 0, len(names)+2)
+		for _, name := range names {
+			if name == body {
+				ordered = append(ordered, message)
+			}
+			ordered = append(ordered, name)
+		}
+		names = append(ordered, steer)
 	}
 	for _, name := range names {
 		script, e := os.ReadFile("../../../migrations/" + directory + "/" + name + ".up.sql")

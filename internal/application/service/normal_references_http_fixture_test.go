@@ -66,7 +66,7 @@ func NewNormalReferencesHTTPFixtureForTest(t *testing.T, pg bool, final chat.Cha
 	if len(modes) > 0 {
 		mode = modes[0]
 	}
-	m := newMachinePipelineFixtureWithDocument(t, pg, "Current employee policy: read the approved record, then ask before changing another department's access.")
+	m := newMachinePipelineFixtureWithDocument(t, pg, "Current employee policy: read the approved record, then ask before changing another department's access.", true)
 	k := m.ingest(t)
 	for i := 0; i < len(m.f.queue.tasks); i++ {
 		require.NoError(t, m.run(t, m.f.queue.tasks[i]))
@@ -76,11 +76,11 @@ func NewNormalReferencesHTTPFixtureForTest(t *testing.T, pg bool, final chat.Cha
 	require.Len(t, chunks, 2, "actual signed production sync generated text and summary")
 	migration := m.f.db
 	directory := "sqlite"
-	names := []string{"000023_message_artifacts_table.up.sql", "000026_message_artifacts_deleted_at.up.sql", "000070_message_original_materials.up.sql", "000073_steer_original_materials.up.sql"}
+	names := []string{"000023_message_artifacts_table.up.sql", "000026_message_artifacts_deleted_at.up.sql"}
 	artifactType := "TEXT"
 	if pg {
 		directory, artifactType = "versioned", "JSONB"
-		names = []string{"000103_message_artifacts_table.up.sql", "000107_message_artifacts_deleted_at.up.sql", "000151_message_original_materials.up.sql", "000154_steer_original_materials.up.sql"}
+		names = []string{"000103_message_artifacts_table.up.sql", "000107_message_artifacts_deleted_at.up.sql"}
 		pool, err := m.f.db.DB()
 		require.NoError(t, err)
 		migration, err = gorm.Open(postgres.New(postgres.Config{Conn: pool, PreferSimpleProtocol: true}), &gorm.Config{})
