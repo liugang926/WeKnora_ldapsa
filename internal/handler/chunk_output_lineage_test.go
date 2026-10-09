@@ -27,6 +27,7 @@ func chunkOutputHTTPFixture(t *testing.T) (*ChunkHandler, *gorm.DB, *types.Knowl
 	t.Helper()
 	base, db, k, groups := outputHTTPFixture(t, true)
 	store := repository.NewKnowledgeInputProvenanceStore(db)
+	repository.ConfigureKnowledgeInputActorGroupAccess(store, service.NewGroupAccessService(repository.NewGroupAccessRepository(db)))
 	actual, err := store.CaptureKnowledgeOutputInputs(context.Background(), types.KnowledgeBuildInputCaptureRequest{TenantID: k.TenantID, KnowledgeBaseID: k.KnowledgeBaseID, KnowledgeID: k.ID})
 	require.NoError(t, err)
 	buildCtx := repository.WithKnowledgeBuildInputProof(context.Background(), store, actual.Proof)
@@ -56,6 +57,11 @@ func serveChunkOutput(h *ChunkHandler, path string) *httptest.ResponseRecorder {
 }
 func TestChunkOutputHTTPActualOriginalBodyReplacesServiceHint(t *testing.T) {
 	h, _, _, _, _, _ := chunkOutputHTTPFixture(t)
+	ctx := types.WithCaller(context.WithValue(context.Background(), types.TenantIDContextKey, uint64(7)), types.Caller{TenantID: 7, UserID: "user"})
+	ctx = types.WithPrincipal(ctx, types.Principal{Type: types.PrincipalWebUser, ID: "user"})
+	ctx = types.WithExecutionTenant(ctx, 7)
+	_, originalErr := h.outputAuthorizer.Begin(ctx, types.ChunkOutputReadRequest{TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: "document", ChunkIDs: []string{"actual-chunk"}})
+	require.NoError(t, originalErr, "actual fixture material/actor authority before any cached service hint")
 	fake := *h.service.(chunkOutputHTTPService).hint
 	fake.Content = "stale cached body must not be restamped"
 	fake.Metadata = types.JSON(`{"source_lineage":{"version":1,"state":"complete","sources":[]}}`)
