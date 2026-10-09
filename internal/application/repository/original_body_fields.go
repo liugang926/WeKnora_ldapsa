@@ -535,6 +535,11 @@ func (s *OriginalBodyRetentionStore) captureStatement(tx *gorm.DB, d originalBod
 	return nil
 }
 func bodySelectedField(tx *gorm.DB, column string) bool {
+	for _, omission := range tx.Statement.Omits {
+		if omission == "*" || omission == column {
+			return false
+		}
+	}
 	if len(tx.Statement.Selects) == 0 {
 		return true
 	}

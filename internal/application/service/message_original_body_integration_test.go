@@ -71,6 +71,15 @@ func messageBodyIntegrationFixture(t *testing.T, pg bool) (*messageService, *kno
 }
 func runMessageBodyIntegration(t *testing.T, pg bool) {
 	messages, _, store, db, ctx, session, body := messageBodyIntegrationFixture(t, pg)
+	checks := 0
+	repository.ConfigureMessageOriginalBodyAvailability(store, func(callCtx context.Context, tx *gorm.DB, table, id string) error {
+		_, insideTx := tx.Statement.ConnPool.(gorm.TxCommitter)
+		require.True(t, insideTx, "original availability must stay on the caller's existing transaction")
+		require.Equal(t, "message_generation_origins", table)
+		require.NotEmpty(t, id)
+		checks++
+		return repository.CheckOriginalBodyAvailableInTx(callCtx, tx, table, id)
+	})
 	user, assistant := produceActualMessagePair(t, messages, ctx, session)
 	var origins []struct{ ID, MessageID, InitialInput string }
 	require.NoError(t, db.Raw("SELECT id,message_id,initial_input FROM message_generation_origins WHERE session_id=? ORDER BY message_id", session.ID).Scan(&origins).Error)
@@ -153,6 +162,7 @@ func runMessageBodyIntegration(t *testing.T, pg bool) {
 	_, e = messages.beginMessageMaterialRead(ctx, types.MessageMaterialReadRequest{TenantID: 7, SessionID: session.ID, MessageIDs: []string{user.ID}})
 	require.Error(t, e)
 	require.Error(t, messages.UpdateMessage(ctx, user), "a current copied body cannot re-sign the unavailable original")
+	require.Positive(t, checks)
 }
 func TestMessageBodyIntegrationSQLite(t *testing.T)   { runMessageBodyIntegration(t, false) }
 func TestPostgresMessageBodyIntegration(t *testing.T) { runMessageBodyIntegration(t, true) }
