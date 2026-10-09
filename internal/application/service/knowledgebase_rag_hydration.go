@@ -69,8 +69,8 @@ func (s *knowledgeBaseService) HydrateRAGChunkAugmentations(ctx context.Context,
 		if !held {
 			defer guard.Close()
 		}
-		ctx = guard.Context()
 	}
+	ctx = guard.ContextFor(ctx)
 	if err := guard.PinKnowledge(knowledge); err != nil {
 		return nil, err
 	}

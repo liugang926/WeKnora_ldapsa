@@ -217,8 +217,10 @@ func (s *knowledgeBaseService) HybridSearch(ctx context.Context,
 			if !held {
 				defer guard.Close()
 			}
-			ctx = guard.Context()
 		}
+	}
+	if guard != nil {
+		ctx = guard.ContextFor(ctx)
 	}
 
 	// Resolve the primary KB — embedding model + FAQ type come from this

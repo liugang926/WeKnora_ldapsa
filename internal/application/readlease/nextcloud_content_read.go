@@ -113,6 +113,26 @@ func (g *NextcloudReadGuard) Context() context.Context {
 	return context.WithValue(g.ctx, nextcloudReadGuardContextKey{}, g)
 }
 
+// ContextFor attaches this fence to the current consumer's values. A reused
+// turn guard may predate its lineage accumulator, actor or search selectors;
+// returning its creation context would discard those later authority inputs.
+// Both the current caller and the original fence can cancel this read.
+func (g *NextcloudReadGuard) ContextFor(values context.Context) context.Context {
+	if g == nil {
+		return values
+	}
+	var ctx context.Context
+	var cancel context.CancelFunc
+	if deadline, ok := g.ctx.Deadline(); ok {
+		ctx, cancel = context.WithDeadline(values, deadline)
+	} else {
+		ctx, cancel = context.WithCancel(values)
+	}
+	stop := context.AfterFunc(g.ctx, cancel)
+	context.AfterFunc(ctx, func() { stop() })
+	return context.WithValue(ctx, nextcloudReadGuardContextKey{}, g)
+}
+
 // ParentContext preserves the request's authority and cancellation while a
 // turn acquires a separate fence from a borrowed, shorter-lived read guard.
 func (g *NextcloudReadGuard) ParentContext(values context.Context) context.Context {
