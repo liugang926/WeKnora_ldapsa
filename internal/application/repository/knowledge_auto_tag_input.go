@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/google/uuid"
@@ -29,6 +30,12 @@ func (s *KnowledgeInputProvenanceStore) captureKnowledgeAutoTagInTx(tx *gorm.DB,
 	result := &types.KnowledgeAutoTagInputSnapshot{Original: &types.KnowledgeAutoTagOriginalInput{Knowledge: original.Knowledge, KnowledgeBase: original.KnowledgeBase, Chunks: original.Chunks, Proof: original.Proof}, Tags: []*types.KnowledgeTag{}, TagProofs: []*types.KnowledgeCollectionAuxiliaryProof{}, Relations: []*types.KnowledgeTagRelation{}}
 	kb := original.KnowledgeBase
 	k := original.Knowledge
+	if k.Channel == types.ConnectorTypeNextcloud {
+		result.PublicationRevision, err = knowledgeAutoPublicationRevision(tx, k.ID)
+		if err != nil {
+			return nil, err
+		}
+	}
 	result.ModelDigest, result.Tenant, err = knowledgeAutoTagModelInputs(tx, kb)
 	if err != nil {
 		return nil, err
@@ -94,6 +101,7 @@ func autoTagSnapshotDigest(snapshot *types.KnowledgeAutoTagInputSnapshot) (strin
 	copy := *snapshot
 	copy.ManifestID = ""
 	copy.InputDigest = ""
+
 	return KnowledgeInputDigest(&copy)
 }
 
@@ -165,11 +173,11 @@ func (s *KnowledgeInputProvenanceStore) recheckKnowledgeAutoTagInTx(tx *gorm.DB,
 	}
 	expectedEnvelope, err := KnowledgeInputDigest(expected)
 	if err != nil || savedEnvelope != expectedEnvelope {
-		return nil, ErrKnowledgeInputChanged
+		return nil, fmt.Errorf("auto expected envelope: %w", ErrKnowledgeInputChanged)
 	}
 	digest, err := autoTagSnapshotDigest(&saved)
 	if err != nil || digest != manifest.InputDigest || expected.InputDigest != digest {
-		return nil, ErrKnowledgeInputChanged
+		return nil, fmt.Errorf("auto expected model digest: %w", ErrKnowledgeInputChanged)
 	}
 	if saved.Original == nil || saved.Original.Proof == nil {
 		return nil, ErrKnowledgeInputChanged
@@ -197,6 +205,9 @@ func (s *KnowledgeInputProvenanceStore) recheckKnowledgeAutoTagInTx(tx *gorm.DB,
 		if err != nil || frozenTenant != currentTenant {
 			return nil, ErrKnowledgeInputChanged
 		}
+	}
+	if err := acceptKnowledgeAutoPublicationTransition(tx, &saved, actual); err != nil {
+		return nil, fmt.Errorf("auto publication transition: %w", err)
 	}
 	currentDigest, err := autoTagSnapshotDigest(actual)
 	if err != nil || currentDigest != digest {

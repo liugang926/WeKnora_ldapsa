@@ -50,6 +50,7 @@ type knowledgeRepository struct {
 	nextcloudPublicationCheck nextcloudPublicationCheck
 	currentReadActor          interfaces.CurrentReadActorRefresher
 	completionObserver        func(context.Context, string) error
+	completionHandoff         func(context.Context, *gorm.DB, string) error
 }
 
 // NewKnowledgeRepository creates a new knowledge repository
@@ -835,6 +836,9 @@ func (r *knowledgeRepository) FinalizeSubtask(
 			return promoteRes.Error
 		}
 		promoted = promoteRes.RowsAffected > 0
+		if promoted && r.completionHandoff != nil {
+			return r.completionHandoff(ctx, tx, id)
+		}
 		return nil
 	}
 	var writeErr error
@@ -846,7 +850,7 @@ func (r *knowledgeRepository) FinalizeSubtask(
 			}
 			return write(tx)
 		})
-	} else if _, guarded := ctx.Value(knowledgeBuildInputKey{}).(knowledgeBuildInputContext); guarded {
+	} else if _, guarded := ctx.Value(knowledgeBuildInputKey{}).(knowledgeBuildInputContext); guarded || r.completionHandoff != nil {
 		writeErr = r.db.WithContext(ctx).Transaction(write)
 	} else {
 		writeErr = write(r.db.WithContext(ctx))
@@ -925,6 +929,9 @@ func (r *knowledgeRepository) SetFinalizing(
 // SetFinalizing. Keep the state check and completion fields in one write so a
 // concurrent cancel/delete or duplicate delivery cannot be overwritten.
 func (r *knowledgeRepository) CompleteProcessingWithoutSubtasks(ctx context.Context, id string) (bool, error) {
+	if err := PrecheckKnowledgeBuildWrite(ctx); err != nil {
+		return false, err
+	}
 	now := time.Now()
 	write := func(tx *gorm.DB) (bool, error) {
 		res := tx.Model(&types.Knowledge{}).
@@ -937,7 +944,15 @@ func (r *knowledgeRepository) CompleteProcessingWithoutSubtasks(ctx context.Cont
 				"processed_at":           now,
 				"updated_at":             now,
 			})
-		return res.RowsAffected > 0, res.Error
+		if res.Error != nil {
+			return false, res.Error
+		}
+		if res.RowsAffected > 0 && r.completionHandoff != nil {
+			if err := r.completionHandoff(ctx, tx, id); err != nil {
+				return false, err
+			}
+		}
+		return res.RowsAffected > 0, nil
 	}
 	var changed bool
 	var err error
@@ -947,6 +962,11 @@ func (r *knowledgeRepository) CompleteProcessingWithoutSubtasks(ctx context.Cont
 				guard.scope.TenantID, guard.scope.KnowledgeBaseID, id); err != nil {
 				return err
 			}
+			changed, err = write(tx)
+			return err
+		})
+	} else if r.completionHandoff != nil {
+		err = r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 			changed, err = write(tx)
 			return err
 		})

@@ -215,7 +215,7 @@ func (t *spanTracker) touchKnowledgeHeartbeat(ctx context.Context, knowledgeID, 
 		return
 	}
 	if err := t.db.WithContext(ctx).Model(&types.Knowledge{}).
-		Where("id = ?", knowledgeID).
+		Where("id = ? AND parse_status IN ?", knowledgeID, []string{types.ParseStatusPending, types.ParseStatusProcessing, types.ParseStatusFinalizing}).
 		Update("updated_at", time.Now()).Error; err != nil {
 		// Don't log every failure — heartbeat is best-effort and
 		// noisy logs would drown out real errors. Single line at

@@ -6,18 +6,19 @@ type KnowledgeAutoTagTaskInputProof struct{ ID, Digest string }
 // manifest includes every candidate name/control and every existing membership
 // that can affect classification, including candidates the model does not select.
 type KnowledgeAutoTagInputSnapshot struct {
-	ManifestID      string
-	InputDigest     string
-	Original        *KnowledgeAutoTagOriginalInput
-	Tags            []*KnowledgeTag
-	TotalTags       int64
-	TagListRevision uint64
-	TagProofs       []*KnowledgeCollectionAuxiliaryProof
-	Relations       []*KnowledgeTagRelation
-	RelationProof   *KnowledgeCollectionAuxiliaryProof
-	SourceLineage   *SourceLineage
-	DataSourceName  *DataSourceNameInputProof `json:"datasource_name_input,omitempty"`
-	ModelDigest     string                    `json:"model_digest,omitempty"`
+	ManifestID          string
+	PublicationRevision uint64 `json:"publication_revision,omitempty"`
+	InputDigest         string
+	Original            *KnowledgeAutoTagOriginalInput
+	Tags                []*KnowledgeTag
+	TotalTags           int64
+	TagListRevision     uint64
+	TagProofs           []*KnowledgeCollectionAuxiliaryProof
+	Relations           []*KnowledgeTagRelation
+	RelationProof       *KnowledgeCollectionAuxiliaryProof
+	SourceLineage       *SourceLineage
+	DataSourceName      *DataSourceNameInputProof `json:"datasource_name_input,omitempty"`
+	ModelDigest         string                    `json:"model_digest,omitempty"`
 	// Runtime-only actual SQL context. ModelDigest seals the tenant's required
 	// routing/secret configuration digest and monotonic revision; credentials
 	// must never be copied into the immutable model-input JSON.

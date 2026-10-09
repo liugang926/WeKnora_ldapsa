@@ -124,6 +124,9 @@ func (s *KnowledgeInputProvenanceStore) verifyKnowledgeAutoTagOriginalModelInput
 	if err != nil {
 		return nil, err
 	}
+	if err := acceptKnowledgeAutoPublicationTransition(tx, &saved, actual); err != nil {
+		return nil, err
+	}
 	if allowOwnResult {
 		// The exact root/chunk/config proof above checks every consumed body
 		// and material revision. Later operational status/heartbeat fields are

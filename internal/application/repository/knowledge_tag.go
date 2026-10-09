@@ -242,7 +242,10 @@ func (r *knowledgeRepository) AddKnowledgeTagRelations(
 			return nil
 		}
 		allIDs := normalizedKnowledgeDisplayTagIDs(append(priorIDs, unique...))
-		return admitKnowledgeDisplayOrigin(tx, actor, "relations", knowledgeID, &kb, allIDs, request, lineage, origin)
+		if err := admitKnowledgeDisplayOrigin(tx, actor, "relations", knowledgeID, &kb, allIDs, request, lineage, origin); err != nil {
+			return err
+		}
+		return finishAutoTagCompletionInTx(ctx, tx)
 	}, knowledgeDisplayWriteOptions(r.db))
 }
 

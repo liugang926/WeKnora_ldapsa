@@ -294,14 +294,14 @@ func finalizeSubtaskDetached(
 	knowledgeID, source string,
 	retErr error,
 	superseded, final bool,
-) {
+) error {
 	willDrain := repo != nil && knowledgeID != "" && !superseded && (retErr == nil || final)
 	if !willDrain {
-		return
+		return nil
 	}
 	if repository.KnowledgeBuildInputProofFromContext(ctx) != nil {
 		if err := requireActualKnowledgeBuildInput(ctx); err != nil {
-			return
+			return err
 		}
 	}
 	dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), finalizeSubtaskDetachedTimeout)
@@ -309,7 +309,9 @@ func finalizeSubtaskDetached(
 	if _, _, err := repo.FinalizeSubtask(dctx, knowledgeID); err != nil {
 		logger.Warnf(ctx, "finalize subtask decrement failed source=%s knowledge=%s err=%v",
 			source, knowledgeID, err)
+		return err
 	}
+	return nil
 }
 
 // beginStage / endStage / failStage / skipStage are the by-name shims

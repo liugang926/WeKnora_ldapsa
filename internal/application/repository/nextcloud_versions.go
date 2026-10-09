@@ -198,9 +198,25 @@ func (r *knowledgeRepository) unpublishIfCurrent(ctx context.Context, checked ne
 			(checked.etag != "" && nextcloudMetadataString(metadata, "nextcloud_target_etag") != checked.etag) {
 			return nil
 		}
+		var beforeRevision uint64
+		if tx.Migrator().HasTable("knowledge_auto_publication_versions") {
+			beforeRevision, err = knowledgeAutoPublicationRevision(tx, candidate.ID)
+			if err != nil {
+				return err
+			}
+		}
 		if err := r.hideNextcloudSourceRows(tx, current.TenantID, current.KnowledgeBaseID,
 			current.DataSourceID, current.ExternalID); err != nil {
 			return err
+		}
+		if beforeRevision > 0 && KnowledgeBuildInputProofFromContext(ctx) != nil {
+			var after types.Knowledge
+			if err := tx.Where("id=?", candidate.ID).Take(&after).Error; err != nil {
+				return err
+			}
+			if err := recordKnowledgeAutoPublicationTransitionInTx(ctx, tx, &candidate, &after, beforeRevision); err != nil {
+				return err
+			}
 		}
 		return nextcloudVersionQuery(tx, current.TenantID, current.KnowledgeBaseID,
 			current.DataSourceID, current.ExternalID).
@@ -627,6 +643,23 @@ func (r *knowledgeRepository) PublishNextcloudVersion(ctx context.Context, candi
 			checked.version.TenantID, checked.version.KnowledgeBaseID, candidateID); err != nil {
 			return err
 		}
+		// Repeated completion deliveries must not rewrite a published row:
+		// its exact original Auto publication transition is immutable.
+		if current.version.State == "published" {
+			published = true
+			return nil
+		}
+		var autoPublicationBefore types.Knowledge
+		if err := tx.Where("id = ?", candidateID).Take(&autoPublicationBefore).Error; err != nil {
+			return err
+		}
+		var autoPublicationBeforeRevision uint64
+		if tx.Migrator().HasTable("knowledge_auto_publication_versions") {
+			autoPublicationBeforeRevision, err = knowledgeAutoPublicationRevision(tx, candidateID)
+			if err != nil {
+				return err
+			}
+		}
 		if err := r.retireNextcloudSourceRowsLockedInTx(ctx, tx,
 			checked.version.TenantID, checked.version.KnowledgeBaseID,
 			checked.version.DataSourceID, checked.version.ExternalID, candidateID, rows); err != nil {
@@ -649,6 +682,15 @@ func (r *knowledgeRepository) PublishNextcloudVersion(ctx context.Context, candi
 			current.version.DataSourceID, current.version.ExternalID).
 			Updates(map[string]any{"state": "published", "updated_at": time.Now().UTC()}).Error; err != nil {
 			return err
+		}
+		if autoPublicationBeforeRevision > 0 {
+			var after types.Knowledge
+			if err := tx.Where("id = ?", candidateID).Take(&after).Error; err != nil {
+				return err
+			}
+			if err := recordKnowledgeAutoPublicationTransitionInTx(ctx, tx, &autoPublicationBefore, &after, autoPublicationBeforeRevision); err != nil {
+				return err
+			}
 		}
 		published = true
 		return nil

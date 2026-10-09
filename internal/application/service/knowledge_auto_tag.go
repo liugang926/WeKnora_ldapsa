@@ -3,18 +3,22 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/Tencent/WeKnora/internal/application/access"
 	"github.com/Tencent/WeKnora/internal/application/repository"
 	"github.com/Tencent/WeKnora/internal/common"
+	"github.com/Tencent/WeKnora/internal/datasource/connector/nextcloud"
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/models/chat"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	"github.com/hibiken/asynq"
+	"gorm.io/gorm"
 )
 
 const (
@@ -160,7 +164,7 @@ type autoTagModelResponse struct {
 }
 
 // Handle processes one automatic-tagging task.
-func (s *KnowledgeAutoTagService) Handle(ctx context.Context, task *asynq.Task) error {
+func (s *KnowledgeAutoTagService) Handle(ctx context.Context, task *asynq.Task) (result error) {
 	var payload types.KnowledgeAutoTagPayload
 	if err := json.Unmarshal(task.Payload(), &payload); err != nil {
 		return fmt.Errorf("unmarshal knowledge auto tag payload: %w", err)
@@ -169,7 +173,25 @@ func (s *KnowledgeAutoTagService) Handle(ctx context.Context, task *asynq.Task) 
 	var admitted *types.KnowledgeAutoTagInputSnapshot
 	if s.knowledgeInputs != nil {
 		if err := s.knowledgeInputs.VerifyKnowledgeAutoTagTaskInput(ctx, payload); err != nil {
-			return err
+			return fmt.Errorf("automatic tag queue receipt: %w", err)
+		}
+		if payload.CompletionInput != "" {
+			claimedAt, err := s.knowledgeInputs.ClaimKnowledgeAutoTagCompletion(ctx, payload)
+			if err != nil {
+				return err
+			}
+			if claimedAt == nil {
+				return nil
+			}
+			ctx = repository.WithKnowledgeAutoTagCompletion(ctx, payload, *claimedAt)
+			defer func() {
+				rejected := errors.Is(result, repository.ErrKnowledgeInputChanged) || errors.Is(result, types.ErrSourceLineageUnknown) || errors.Is(result, access.ErrForbidden) || errors.Is(result, access.ErrNextcloudPublicationDenied) || errors.Is(result, asynq.SkipRetry) || errors.Is(result, gorm.ErrRecordNotFound) || errors.Is(result, nextcloud.ErrPublicationNotCurrent)
+				finishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+				defer cancel()
+				if err := s.knowledgeInputs.FinishKnowledgeAutoTagCompletion(finishCtx, payload, *claimedAt, result == nil, rejected); err != nil && result == nil {
+					result = err
+				}
+			}()
 		}
 		if payload.OriginalInput == nil || payload.OriginalInput.TenantID != payload.TenantID || payload.OriginalInput.KnowledgeBaseID != payload.KnowledgeBaseID || payload.OriginalInput.KnowledgeID != payload.KnowledgeID {
 			return types.ErrSourceLineageUnknown
@@ -177,15 +199,43 @@ func (s *KnowledgeAutoTagService) Handle(ctx context.Context, task *asynq.Task) 
 		var err error
 		ctx, err = repository.RestoreKnowledgeBuildActorIfRequired(ctx, s.knowledgeInputs, payload.OriginalInput)
 		if err != nil {
-			return err
+			return fmt.Errorf("automatic tag current actor: %w", err)
 		}
 		if err := s.knowledgeInputs.RecheckKnowledgeBuildInputs(ctx, payload.OriginalInput); err != nil {
-			return err
+			return fmt.Errorf("automatic tag original material: %w", err)
 		}
 		ctx = repository.WithKnowledgeBuildInputProof(ctx, s.knowledgeInputs, payload.OriginalInput)
-		admitted, err = s.knowledgeInputs.CaptureKnowledgeAutoTagInputs(ctx, payload.OriginalInput)
+		if payload.CompletionInput != "" {
+			k, err := s.knowledgeRepo.GetKnowledgeByIDOnly(ctx, payload.KnowledgeID)
+			if err != nil {
+				return err
+			}
+			if k != nil && k.Channel == types.ConnectorTypeNextcloud {
+				publisher, ok := s.knowledgeRepo.(interface {
+					PublishNextcloudVersion(context.Context, string) (bool, error)
+				})
+				if !ok {
+					return types.ErrSourceLineageUnknown
+				}
+				// Completion may have committed immediately before the first
+				// publisher exited or lost its source connection. The durable
+				// intent retries the real publisher before any Auto call.
+				published, err := publisher.PublishNextcloudVersion(ctx, payload.KnowledgeID)
+				if err != nil {
+					return err
+				}
+				if !published {
+					return repository.ErrKnowledgeInputChanged
+				}
+			}
+		}
+		if payload.CompletionInput != "" {
+			admitted, err = s.knowledgeInputs.LoadKnowledgeAutoTagCompletionInput(ctx, payload)
+		} else {
+			admitted, err = s.knowledgeInputs.CaptureKnowledgeAutoTagInputs(ctx, payload.OriginalInput)
+		}
 		if err != nil {
-			return err
+			return fmt.Errorf("automatic tag sealed model input: %w", err)
 		}
 		if err := s.checkAutoTagInput(ctx, admitted); err != nil {
 			return err

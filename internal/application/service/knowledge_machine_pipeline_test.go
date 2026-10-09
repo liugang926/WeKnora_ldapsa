@@ -63,16 +63,18 @@ func (m machinePipelineModels) GetEmbeddingModel(context.Context, string) (embed
 }
 
 type machinePipelineFixture struct {
-	f             *enrichmentTestFixture
-	source        *DataSourceService
-	ds            *types.DataSource
-	allow         *atomic.Bool
-	auto          *KnowledgeAutoTagService
-	model         *machinePipelineAutoModel
-	files         interfaces.FileService
-	base          string
-	personal      *atomic.Bool
-	authenticated bool
+	f                                     *enrichmentTestFixture
+	source                                *DataSourceService
+	ds                                    *types.DataSource
+	allow                                 *atomic.Bool
+	auto                                  *KnowledgeAutoTagService
+	model                                 *machinePipelineAutoModel
+	files                                 interfaces.FileService
+	base                                  string
+	personal                              *atomic.Bool
+	authenticated                         bool
+	publicationUnavailableAfterCompletion *atomic.Bool
+	publicationFailureProbe               *atomic.Int64
 }
 
 func newMachinePipelineFixture(t *testing.T, pg bool) *machinePipelineFixture {
@@ -87,10 +89,10 @@ func newMachinePipelineFixture(t *testing.T, pg bool) *machinePipelineFixture {
 	require.NoError(t, f.db.Exec("DROP TABLE nextcloud_source_revisions; DROP TABLE nextcloud_source_versions").Error)
 	migration := f.db
 	directory := "sqlite"
-	names := []string{"000031_nextcloud_source_versions", "000045_nextcloud_source_revisions", "000046_nextcloud_content_leases", "000047_nextcloud_candidate_retry", "000035_nextcloud_source_pairing", "000039_nextcloud_source_pairing_abort", "000057_processing_span_original_inputs", "000065_nextcloud_capacity_admission", "000067_nextcloud_capacity_write_intents", "000068_nextcloud_local_derived_gc", "000069_datasource_name_inputs"}
+	names := []string{"000031_nextcloud_source_versions", "000045_nextcloud_source_revisions", "000046_nextcloud_content_leases", "000047_nextcloud_candidate_retry", "000035_nextcloud_source_pairing", "000039_nextcloud_source_pairing_abort", "000057_processing_span_original_inputs", "000065_nextcloud_capacity_admission", "000067_nextcloud_capacity_write_intents", "000068_nextcloud_local_derived_gc", "000069_datasource_name_inputs", "000072_knowledge_auto_completion_publication"}
 	if pg {
 		directory = "versioned"
-		names = []string{"000112_nextcloud_source_versions", "000126_nextcloud_source_revisions", "000127_nextcloud_content_leases", "000128_nextcloud_candidate_retry", "000116_nextcloud_source_pairing", "000120_nextcloud_source_pairing_abort", "000138_processing_span_original_inputs", "000146_nextcloud_capacity_admission", "000148_nextcloud_capacity_write_intents", "000149_nextcloud_local_derived_gc", "000150_datasource_name_inputs"}
+		names = []string{"000112_nextcloud_source_versions", "000126_nextcloud_source_revisions", "000127_nextcloud_content_leases", "000128_nextcloud_candidate_retry", "000116_nextcloud_source_pairing", "000120_nextcloud_source_pairing_abort", "000138_processing_span_original_inputs", "000146_nextcloud_capacity_admission", "000148_nextcloud_capacity_write_intents", "000149_nextcloud_local_derived_gc", "000150_datasource_name_inputs", "000153_knowledge_auto_completion_publication"}
 		sql, e := f.db.DB()
 		require.NoError(t, e)
 		migration, e = gorm.Open(postgres.New(postgres.Config{Conn: sql, PreferSimpleProtocol: true}), &gorm.Config{})
@@ -125,6 +127,9 @@ func newMachinePipelineFixture(t *testing.T, pg bool) *machinePipelineFixture {
 	allow.Store(true)
 	personal := &atomic.Bool{}
 	personal.Store(true)
+	unavailableAfterCompletion := &atomic.Bool{}
+	failureProbe := &atomic.Int64{}
+	completedProbes := &atomic.Int64{}
 	artifact := strings.Repeat("Actual original document about its topic, with enough text for chunking and retrieval. ", 4)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(t, "Bearer isolated-machine", r.Header.Get("Authorization"))
@@ -145,6 +150,18 @@ func newMachinePipelineFixture(t *testing.T, pg bool) *machinePipelineFixture {
 			w.Header().Set("Content-Type", "text/markdown")
 			fmt.Fprint(w, artifact)
 		case strings.HasSuffix(r.URL.Path, "/publication-check"):
+			if unavailableAfterCompletion.Load() {
+				var completed int64
+				require.NoError(t, f.db.Model(&types.Knowledge{}).Where("channel=? AND parse_status=?", types.ConnectorTypeNextcloud, types.ParseStatusCompleted).Count(&completed).Error)
+				if completed > 0 {
+					probe := completedProbes.Add(1)
+					target := failureProbe.Load()
+					if target == 0 || probe == target {
+						w.WriteHeader(http.StatusServiceUnavailable)
+						return
+					}
+				}
+			}
 			if !allow.Load() {
 				w.WriteHeader(http.StatusForbidden)
 				return
@@ -205,7 +222,7 @@ func newMachinePipelineFixture(t *testing.T, pg bool) *machinePipelineFixture {
 	require.NoError(t, registry.Register(nextcloud.NewConnector()))
 	admission := NewNextcloudCapacityAdmission(repository.NewNextcloudCapacityStore(f.db), func(context.Context, *types.KnowledgeBase) (interfaces.FileService, error) { return files, nil })
 	source := &DataSourceService{dsRepo: sources, syncLogRepo: repository.NewSyncLogRepository(f.db), knowledgeService: f.s, kbService: f.s.kbService, taskEnqueuer: f.queue, connectorRegistry: registry, tenantRepo: f.s.tenantRepo, nextcloudSourcePairings: pairs, nextcloudEventInbox: repository.NewNextcloudEventInboxRepository(f.db), capacityAdmission: admission, sourceInputs: f.store}
-	return &machinePipelineFixture{f: f, source: source, ds: ds, allow: allow, auto: auto, model: model, files: files, base: base, personal: personal}
+	return &machinePipelineFixture{f: f, source: source, ds: ds, allow: allow, auto: auto, model: model, files: files, base: base, personal: personal, publicationUnavailableAfterCompletion: unavailableAfterCompletion, publicationFailureProbe: failureProbe}
 }
 
 func (m *machinePipelineFixture) ingest(t *testing.T) *types.Knowledge {
@@ -459,6 +476,24 @@ func runKnowledgeMachineAdditionalPublicSources(t *testing.T, pg bool) {
 			}
 			repository.ConfigureKnowledgeDisplayInputWriters(m.f.store, tags, m.f.s.repo, factory)
 			require.NoError(t, tags.Create(sourceCtx, &types.KnowledgeTag{ID: "sourced-unselected", TenantID: 7, KnowledgeBaseID: "kb", Name: "original published source candidate", Color: "", SortOrder: 4}))
+			// The original completion intent sealed the candidate list before
+			// this new sourced tag existed. It must reject that membership
+			// change. A separately admitted fresh producer is required for
+			// the new actual candidate list and its inherited sources.
+			require.Error(t, m.run(t, autoTask))
+			var old types.KnowledgeAutoTagPayload
+			require.NoError(t, json.Unmarshal(autoTask.Payload(), &old))
+			leases := repository.NewNextcloudContentLeaseStore(m.f.db)
+			scope := repository.NextcloudContentScope{TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: row.ID, DataSourceID: m.ds.ID, ExternalID: "nextcloud:instance:77"}
+			lease, err := leases.AcquireKnowledge(m.f.ctx, scope, repository.NextcloudContentBuildLease, "fresh-auto-producer", time.Minute)
+			require.NoError(t, err)
+			freshRoot := *original.Proof
+			freshRoot.BodyDigest, freshRoot.Projection = "", ""
+			freshRoot.ChunkIDs = nil
+			fresh := repository.WithKnowledgeBuildInputProof(repository.WithNextcloudBuildLease(m.f.ctx, leases, lease, scope), m.f.store, &freshRoot)
+			require.True(t, m.f.post.enqueueAutoTagTask(fresh, types.KnowledgePostProcessPayload{TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: row.ID, Language: old.Language}, old.Attempt))
+			require.NoError(t, leases.ReleaseLease(context.Background(), lease.ID))
+			autoTask = m.f.queue.tasks[len(m.f.queue.tasks)-1]
 			m.authenticated = mode != "machine cannot borrow extra source grant"
 			if mode == "auto payload forged" {
 				var p types.KnowledgeAutoTagPayload

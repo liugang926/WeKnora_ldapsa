@@ -557,6 +557,9 @@ type KnowledgePostProcessPayload struct {
 // classified against the latest set of existing tags in its knowledge base.
 type KnowledgeAutoTagPayload struct {
 	TaskInput *KnowledgeAutoTagTaskInputProof `json:"task_input,omitempty"`
+	// CompletionInput names the immutable candidate/model snapshot sealed in
+	// the same SQL transaction as completion and the durable queue intent.
+	CompletionInput string `json:"completion_input,omitempty"`
 	TracingContext
 	OriginalInput   *KnowledgeBuildInputProof `json:"_original_input,omitempty"`
 	TenantID        uint64                    `json:"tenant_id"`

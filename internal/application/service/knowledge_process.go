@@ -1322,8 +1322,9 @@ func (s *knowledgeService) ProcessSummaryGeneration(ctx context.Context, t *asyn
 		// summaryErr would skip them and leave the row stuck in
 		// "finalizing". When we DO return an error asynq will retry, so
 		// we only drain on the final attempt.
-		finalizeSubtaskDetached(ctx, s.repo, payload.KnowledgeID, "summary",
-			retErr, false, isFinalAsynqAttempt(ctx))
+		if err := finalizeSubtaskDetached(ctx, s.repo, payload.KnowledgeID, "summary", retErr, false, isFinalAsynqAttempt(ctx)); err != nil {
+			retErr = errors.Join(retErr, err)
+		}
 		// Every terminal exit changes what the knowledge-base aggregation
 		// sees (a new profile, a cleared one, or a document that will never
 		// get one), so the debounced refresh is requested regardless of
@@ -1728,8 +1729,9 @@ func (s *knowledgeService) processQuestionGenerationForKnowledge(ctx context.Con
 	// final attempt. Runs AFTER the stats-log defer below — defers
 	// unwind LIFO, so this one declared first executes last.
 	defer func() {
-		finalizeSubtaskDetached(ctx, s.repo, payload.KnowledgeID, "question_legacy",
-			retErr, superseded, isFinalAsynqAttempt(ctx))
+		if err := finalizeSubtaskDetached(ctx, s.repo, payload.KnowledgeID, "question_legacy", retErr, superseded, isFinalAsynqAttempt(ctx)); err != nil {
+			retErr = errors.Join(retErr, err)
+		}
 	}()
 	defer func() {
 		logger.Infof(
@@ -2130,9 +2132,9 @@ func (s *knowledgeService) processQuestionGenerationForChunks(ctx context.Contex
 	// span failure yet `return nil` (terminal, must drain). Declared first
 	// so it runs LAST (after the stats/span defer below).
 	defer func() {
-		finalizeSubtaskDetached(ctx, s.repo, payload.KnowledgeID,
-			fmt.Sprintf("question_batch[%d]", payload.BatchIndex),
-			retErr, superseded, isFinalAsynqAttempt(ctx))
+		if err := finalizeSubtaskDetached(ctx, s.repo, payload.KnowledgeID, fmt.Sprintf("question_batch[%d]", payload.BatchIndex), retErr, superseded, isFinalAsynqAttempt(ctx)); err != nil {
+			retErr = errors.Join(retErr, err)
+		}
 	}()
 	defer func() {
 		logger.Infof(ctx,

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -12,6 +13,10 @@ import (
 
 	"github.com/Tencent/WeKnora/internal/types"
 )
+
+// ErrPublicationNotCurrent distinguishes a definitive source withdrawal from
+// a transport/server outage for durable consumers.
+var ErrPublicationNotCurrent = errors.New("Nextcloud publication is no longer current")
 
 // CheckCurrentPublication asks the paired Nextcloud binding whether the exact
 // candidate version is still eligible. It uses only the configured instance
@@ -57,6 +62,10 @@ func CheckCurrentPublication(ctx context.Context, source *types.DataSourceConfig
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusNoContent {
+		switch resp.StatusCode {
+		case http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound, http.StatusConflict, http.StatusGone, http.StatusLocked:
+			return fmt.Errorf("%w: status %d", ErrPublicationNotCurrent, resp.StatusCode)
+		}
 		return fmt.Errorf("Nextcloud publication check returned status %d", resp.StatusCode)
 	}
 	return nil

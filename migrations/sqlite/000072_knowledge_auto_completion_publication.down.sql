@@ -1,0 +1,7 @@
+DROP TRIGGER IF EXISTS knowledge_auto_publication_transition_no_update;
+DROP TRIGGER IF EXISTS knowledge_auto_publication_transition_no_delete;
+DROP TRIGGER IF EXISTS knowledge_auto_publication_insert;
+DROP TRIGGER IF EXISTS knowledge_auto_publication_update;
+DROP TRIGGER IF EXISTS knowledge_auto_publication_delete;
+DROP TABLE IF EXISTS knowledge_auto_publication_transitions;
+DROP TABLE IF EXISTS knowledge_auto_publication_versions;
