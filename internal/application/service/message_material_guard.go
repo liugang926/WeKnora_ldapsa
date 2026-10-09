@@ -170,13 +170,17 @@ func (g *MessageMaterialGuard) Close() {
 	g.once.Do(func() {
 		g.cancel()
 		g.stop.Wait()
+		g.mu.Lock()
+		bodies := append([]string{}, g.bodyLeases...)
+		leases := append([]repository.NextcloudContentLease{}, g.leases...)
+		g.mu.Unlock()
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		for i := len(g.bodyLeases) - 1; i >= 0; i-- {
-			_ = g.store.ReleaseMessageBodyReadLease(ctx, g.bodyLeases[i])
+		for i := len(bodies) - 1; i >= 0; i-- {
+			_ = g.store.ReleaseMessageBodyReadLease(ctx, bodies[i])
 		}
-		for i := len(g.leases) - 1; i >= 0; i-- {
-			_ = g.store.ContentLeaseStore().ReleaseLease(ctx, g.leases[i].ID)
+		for i := len(leases) - 1; i >= 0; i-- {
+			_ = g.store.ContentLeaseStore().ReleaseLease(ctx, leases[i].ID)
 		}
 	})
 }
