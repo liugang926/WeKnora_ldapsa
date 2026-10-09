@@ -136,7 +136,7 @@ func sourceBuildFixture(t *testing.T, pg bool, hooks ...sourceDerivedFixtureHook
 	if len(hooks) == 0 || !hooks[0].LocalDerived {
 		tenant, e := f.s.tenantRepo.GetTenantByID(f.ctx, 7)
 		require.NoError(t, e)
-		engine, e := retriever.CreateRetrieveEngineForKB(f.ctx, f.s.retrieveEngine, f.s.ownership, tenant.ID, kb.VectorStoreID)
+		engine, e := retriever.CreateRetrieveEngineFromPayload(ctx, f.s.retrieveEngine, f.s.ownership, tenant.ID, tenant.GetEffectiveEngines(), kb.VectorStoreID)
 		require.NoError(t, e)
 		require.NoError(t, repository.RecordNextcloudDerivedBackendSelection(ctx, engine.SelectedBackendTypes()))
 	}
