@@ -84,3 +84,29 @@ func RecordNextcloudDerivedArtifactInTx(ctx context.Context, tx *gorm.DB, knowle
 	}
 	return nil
 }
+
+// Cross-owner NC chunk pointers are not an ownership transfer. The immutable
+// writer ledger keeps this rejection effective even after the original row is
+// collected, preventing a late independent writer from reviving a stale ID.
+func guardNextcloudDerivedChunkReferences(tx *gorm.DB, chunks []*types.Chunk) error {
+	if !tx.Migrator().HasTable(&nextcloudDerivedArtifact{}) {
+		return nil
+	}
+	for _, chunk := range chunks {
+		for _, ref := range []string{chunk.ParentChunkID, chunk.PreChunkID, chunk.NextChunkID} {
+			if ref == "" {
+				continue
+			}
+			var owners []nextcloudDerivedArtifact
+			if e := tx.Where("item_kind='derived_chunk' AND object_ref=?", ref).Find(&owners).Error; e != nil {
+				return e
+			}
+			for _, owner := range owners {
+				if owner.TenantID != chunk.TenantID || owner.KnowledgeBaseID != chunk.KnowledgeBaseID || owner.KnowledgeID != chunk.KnowledgeID {
+					return ErrNextcloudContentLeaseDenied
+				}
+			}
+		}
+	}
+	return nil
+}

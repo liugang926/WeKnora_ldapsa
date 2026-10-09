@@ -98,6 +98,9 @@ func (r *chunkRepository) CreateChunks(ctx context.Context, chunks []*types.Chun
 				return err
 			}
 		}
+		if err := guardNextcloudDerivedChunkReferences(tx, chunks); err != nil {
+			return err
+		}
 		if err := tx.Select("*").CreateInBatches(chunks, createChunksBatchSize).Error; err != nil {
 			return err
 		}

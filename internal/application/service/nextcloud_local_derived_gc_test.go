@@ -75,12 +75,12 @@ func localDerivedActualPipeline(t *testing.T, pg bool, modes ...string) {
 	physicalRoot := t.TempDir()
 	localProvider := filesvc.NewBackendScopedFileService("owned-derived-backend", filesvc.NewLocalFileService(physicalRoot, ""))
 	var resourceRef, physicalPath, physicalResourceID string
-	resourceBody := []byte("owned actual original local bytes")
+	resourceBody := []byte("actual downloaded original source artifact")
 	f, build, _, _, scope := sourceBuildFixture(t, pg, sourceDerivedFixtureHook{LocalDerived: true, BeforeKnowledge: func(f *enrichmentTestFixture, k *types.Knowledge) {
 		if mode != "physical-original" {
 			return
 		}
-		require.NoError(t, f.db.AutoMigrate(&types.StoredResource{}, &types.ResourceBinding{}))
+		require.NoError(t, f.db.AutoMigrate(&types.StoredResource{}, &types.ResourceBinding{}, &repository.NextcloudIndexedWithdrawal{}))
 		catalog := NewResourceCatalog(repository.NewResourceRepository(f.db))
 		decorated := filesvc.NewResourceCatalogFileService(localProvider, catalog)
 		var err error
@@ -137,6 +137,12 @@ func localDerivedActualPipeline(t *testing.T, pg bool, modes ...string) {
 		table = "embeddings"
 	}
 	var count int64
+	// Actual ordinary writer cannot create a cross-owner parent pointer to a
+	// protected generation, even though it carries independent input rights.
+	require.Error(t, f.s.chunkRepo.CreateChunks(repository.WithIndependentKnowledgeInput(f.ctx), []*types.Chunk{{ID: "late-cross-owner-parent", TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: "doc", ParentChunkID: f.chunks[0].ID, Content: "unrelated current owner", ChunkType: types.ChunkTypeText, Metadata: types.JSON(`{}`)}}))
+	var late int64
+	require.NoError(t, f.db.Table("chunks").Where("id='late-cross-owner-parent'").Count(&late).Error)
+	require.Zero(t, late)
 	require.NoError(t, f.db.Table(table).Where("knowledge_id=?", f.k.ID).Count(&count).Error)
 	require.Equal(t, int64(1), count)
 	if !pg {
@@ -155,7 +161,7 @@ func localDerivedActualPipeline(t *testing.T, pg bool, modes ...string) {
 	if mode != "builder" {
 		require.NoError(t, leases.ReleaseLease(context.Background(), originalLease.ID))
 	}
-	require.NoError(t, f.db.AutoMigrate(&types.StoredResource{}, &types.ResourceBinding{}))
+	require.NoError(t, f.db.AutoMigrate(&types.StoredResource{}, &types.ResourceBinding{}, &repository.NextcloudIndexedWithdrawal{}))
 	now := time.Now().UTC()
 	gc := repository.NewNextcloudGCStore(f.db)
 	if mode == "physical-original" {

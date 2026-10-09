@@ -38,3 +38,4 @@ CREATE TRIGGER nextcloud_derived_artifact_immutable BEFORE UPDATE OR DELETE ON n
 CREATE TABLE nextcloud_derived_new_knowledges(knowledge_id TEXT PRIMARY KEY,created_at_ms BIGINT NOT NULL);
 CREATE FUNCTION nextcloud_derived_new_knowledge() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.channel='nextcloud' THEN INSERT INTO nextcloud_derived_new_knowledges VALUES(NEW.id,(extract(epoch FROM clock_timestamp())*1000)::bigint); END IF; RETURN NEW; END $$;
 CREATE TRIGGER nextcloud_derived_knowledge_witness AFTER INSERT ON knowledges FOR EACH ROW EXECUTE FUNCTION nextcloud_derived_new_knowledge();
+CREATE INDEX nextcloud_derived_artifact_ref ON nextcloud_derived_write_artifacts(item_kind,object_ref);

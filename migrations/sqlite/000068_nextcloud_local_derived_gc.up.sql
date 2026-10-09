@@ -38,3 +38,4 @@ CREATE TRIGGER nextcloud_derived_artifact_update BEFORE UPDATE ON nextcloud_deri
 CREATE TRIGGER nextcloud_derived_artifact_delete BEFORE DELETE ON nextcloud_derived_write_artifacts BEGIN SELECT RAISE(ABORT,'immutable derived writer evidence'); END;
 CREATE TABLE nextcloud_derived_new_knowledges(knowledge_id TEXT PRIMARY KEY,created_at_ms BIGINT NOT NULL);
 CREATE TRIGGER nextcloud_derived_knowledge_witness AFTER INSERT ON knowledges WHEN NEW.channel='nextcloud' BEGIN INSERT INTO nextcloud_derived_new_knowledges VALUES(NEW.id,CAST((julianday('now')-2440587.5)*86400000 AS INTEGER)); END;
+CREATE INDEX nextcloud_derived_artifact_ref ON nextcloud_derived_write_artifacts(item_kind,object_ref);
