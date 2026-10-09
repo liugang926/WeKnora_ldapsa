@@ -231,7 +231,7 @@ func bodyProtocolDatabaseRollback(t *testing.T, pg bool) {
 				quoted = append(quoted, bodyQuoted(schema)+"."+bodyQuoted(table))
 			}
 			require.NoError(t, db.Exec("TRUNCATE "+strings.Join(quoted, ",")+" CASCADE").Error)
-			order := []string{"knowledge_bases", "knowledges", "knowledge_auto_tag_input_manifests", "original_body_payloads", "original_body_field_heads", "original_body_field_revisions", "original_body_parent_refs", "original_body_leases", "original_body_purge_receipts", "original_body_journal_heads", "original_body_rewrite_authorities", "original_body_gc_items"}
+			order := []string{"knowledge_bases", "knowledges", "knowledge_auto_tag_input_manifests", "original_body_payloads", "original_body_field_heads", "original_body_field_revisions", "original_body_parent_refs", "original_body_leases", "original_body_purge_receipts", "original_body_journal_heads", "original_body_rewrite_authorities", "original_body_gc_items", "original_body_lease_scopes"}
 			require.Len(t, tables, len(order))
 			for _, table := range order {
 				require.NoError(t, db.Exec("INSERT INTO "+bodyQuoted(schema)+"."+bodyQuoted(table)+" SELECT * FROM "+bodyQuoted(snapshot)+"."+bodyQuoted(table)).Error)

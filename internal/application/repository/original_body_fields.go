@@ -252,6 +252,9 @@ func (s *OriginalBodyRetentionStore) captureField(tx *gorm.DB, d originalBodyFie
 	} else if e != nil {
 		return e
 	}
+	if e := s.recordMessageLeaseScopes(tx, body.ID, d, key, raw, scope); e != nil {
+		return e
+	}
 	id := body.ID
 	slot := prior.SlotID
 	if slot == "" {

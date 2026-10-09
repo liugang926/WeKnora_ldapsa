@@ -2,7 +2,6 @@ package repository
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -51,13 +50,11 @@ func (s *OriginalBodyRetentionStore) ReconcileExternalPurge(ctx context.Context)
 				fields = append(fields, h.SourceIdentitySHA256)
 			}
 			sort.Strings(fields)
-			scope, _ := json.Marshal(struct {
-				Tenant  uint64
-				BodyID  string
-				Fields  []string
-				Parents []originalBodyParentRef
-			}{body.TenantID, body.ID, fields, parents})
-			if bodySHA(scope) != event.ScopeSHA256 {
+			scopeSHA, e := originalBodyScopeDigest(tx, body, fields, parents)
+			if e != nil {
+				return e
+			}
+			if scopeSHA != event.ScopeSHA256 {
 				return ErrOriginalBodyUnavailable
 			}
 			if body.State == "purged" {

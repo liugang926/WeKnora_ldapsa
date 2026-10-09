@@ -32,6 +32,12 @@ Fresh installation, with app readers, builders, and synchronization stopped:
 
 Development equivalent: `go run ./cmd/original-body-retention -driver sqlite -mode migrate`, then `init`, then `verify`, from the repository root, with the same environment. Production uses the packaged executable, not the Go toolchain.
 
+## Existing 152/71 schema forward step
+
+Fresh migration 152/71 includes immutable `original_body_lease_scopes`. Actual authenticated message producers record resolved tenant/KB scope rows in the body capture transaction; an explicit empty KB row records a complete no-KB original. The original scope rows enter the external purge scope hash. KB collection protection follows these captured rows after a current knowledge pointer moves. Actual message readers also claim exact body ID leases before hydration, including no-KB history, renew them with the material guard, and release them when that guard closes.
+
+For an earlier installed 152/71 schema, stop the app/readers/builders/sync, retain the database and external anchor, run `original-body-retention -driver postgres -mode upgrade-scopes`, then `reconcile`, then `verify`, and reopen the app. Use `-driver sqlite` for SQLite. This explicit offline step creates the scope table and its immutable update/delete triggers; it never inserts scope rows from current pointers, reinitializes the journal, or grants content lease coverage. Old bodies with no original scope inventory remain retained. Startup verification refuses a missing scope table even with a matching sequence-zero pin. Do not downgrade to a version that omits this check.
+
 ## Restore sequence
 
 Stop app readers/builders/sync. Restore the database while retaining the current external anchor. Run `original-body-retention -driver postgres -mode reconcile`, then `original-body-retention -driver postgres -mode verify`, then reopen the app. Reconciliation validates every event and clears only the exact restored body/inline leaf. If the restored DB has a current owner, active lease, changed identity, or unexpired window, reconciliation refuses; independently reestablish source closure before retrying. Never initialize a new empty anchor to make a restored DB start.

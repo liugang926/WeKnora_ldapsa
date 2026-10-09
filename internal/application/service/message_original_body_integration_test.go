@@ -15,7 +15,7 @@ import (
 	"time"
 )
 
-func messageBodyIntegrationFixture(t *testing.T, pg bool) (*messageService, *knowledgeService, *repository.KnowledgeInputProvenanceStore, *gorm.DB, context.Context, *types.Session, *repository.OriginalBodyRetentionStore) {
+func messageBodyIntegrationFixture(t *testing.T, pg bool, before ...func(*gorm.DB, *repository.KnowledgeInputProvenanceStore, context.Context)) (*messageService, *knowledgeService, *repository.KnowledgeInputProvenanceStore, *gorm.DB, context.Context, *types.Session, *repository.OriginalBodyRetentionStore) {
 	t.Helper()
 	var messages *messageService
 	var kg *knowledgeService
@@ -47,6 +47,9 @@ func messageBodyIntegrationFixture(t *testing.T, pg bool) (*messageService, *kno
 		ConfigureMessageMaterialProvenance(messages, store)
 		session = &types.Session{ID: "actual-body-message-session", TenantID: 7, UserID: types.CallerFromContext(ctx).UserID}
 		require.NoError(t, db.Create(session).Error)
+	}
+	if len(before) > 0 {
+		before[0](db, store, ctx)
 	}
 	path := "../../../migrations/sqlite/000071_original_body_retention.up.sql"
 	if pg {
@@ -166,3 +169,109 @@ func runMessageBodyIntegration(t *testing.T, pg bool) {
 }
 func TestMessageBodyIntegrationSQLite(t *testing.T)   { runMessageBodyIntegration(t, false) }
 func TestPostgresMessageBodyIntegration(t *testing.T) { runMessageBodyIntegration(t, true) }
+
+func runMessageBodyNamespaceABA(t *testing.T, pg bool) {
+	messages, _, store, db, ctx, session, body := messageBodyIntegrationFixture(t, pg, func(db *gorm.DB, store *repository.KnowledgeInputProvenanceStore, ctx context.Context) {
+		if !db.Migrator().HasTable("knowledge_display_versions") {
+			ddl, e := os.ReadFile("../../../migrations/sqlite/000059_knowledge_collection_display_inputs.up.sql")
+			require.NoError(t, e)
+			require.NoError(t, db.Exec(string(ddl)).Error)
+		}
+		target := &types.KnowledgeBase{ID: "body-new-namespace", TenantID: 7, Name: "new namespace", Type: types.KnowledgeBaseTypeDocument}
+		require.NoError(t, store.CreateKnowledgeBaseWithInput(repository.WithIndependentKnowledgeBaseNameInput(repository.WithIndependentKnowledgeInput(ctx), "", target.Name), target))
+		source := &types.Knowledge{ID: "body-knowledge-reference", TenantID: 7, KnowledgeBaseID: "kb", Type: types.KnowledgeTypeManual, Title: "original ordinary reference", Metadata: types.JSON(`{}`), CustomMetadata: types.JSON(`{}`)}
+		_, e := store.CreateKnowledgeWithInput(repository.WithIndependentKnowledgeInput(ctx), source, "actual ordinary original")
+		require.NoError(t, e)
+	})
+	user, e := messages.CreateMessage(ctx, &types.Message{SessionID: session.ID, RequestID: "body-namespace-request", Role: "user", Content: "actual only-knowledge-id reference", IsCompleted: true, ExecutionContext: types.MessageExecutionContext{KnowledgeIDs: []string{"body-knowledge-reference"}}})
+	require.NoError(t, e)
+	var bodyID string
+	require.NoError(t, db.Raw("SELECT h.body_id FROM original_body_field_heads h JOIN message_generation_origins g ON g.id=h.row_key WHERE h.source_table='message_generation_origins' AND g.message_id=?", user.ID).Scan(&bodyID).Error)
+	var stored int64
+	require.NoError(t, db.Table("original_body_lease_scopes").Where("body_id=? AND tenant_id=7 AND knowledge_base_id='kb'", bodyID).Count(&stored).Error)
+	require.Equal(t, int64(1), stored)
+	require.Error(t, db.Exec("UPDATE original_body_lease_scopes SET knowledge_base_id='body-new-namespace' WHERE body_id=?", bodyID).Error)
+	require.Error(t, db.Exec("DELETE FROM original_body_lease_scopes WHERE body_id=?", bodyID).Error)
+	lease, e := store.ContentLeaseStore().AcquireKBRead(ctx, 7, "kb", "actual-old-namespace-reader", time.Minute)
+	require.NoError(t, e)
+	require.NoError(t, db.Exec("UPDATE knowledges SET knowledge_base_id='body-new-namespace' WHERE id='body-knowledge-reference'").Error)
+	deleted := "datetime('now','-2 hours')"
+	if pg {
+		deleted = "CURRENT_TIMESTAMP-INTERVAL '2 hours'"
+	}
+	require.NoError(t, db.Exec("UPDATE messages SET deleted_at="+deleted+" WHERE id=?", user.ID).Error)
+	_, e = body.PurgeDue(context.Background(), 100)
+	require.NoError(t, e)
+	var state string
+	require.NoError(t, db.Raw("SELECT state FROM original_body_payloads WHERE id=?", bodyID).Scan(&state).Error)
+	require.Equal(t, "live", state, "original namespace lease remains protected after the pointer moves")
+	require.NoError(t, store.ContentLeaseStore().ReleaseLease(context.Background(), lease.ID))
+	n, e := body.PurgeDue(context.Background(), 100)
+	require.NoError(t, e)
+	require.Positive(t, n)
+	require.NoError(t, db.Raw("SELECT state FROM original_body_payloads WHERE id=?", bodyID).Scan(&state).Error)
+	require.Equal(t, "purged", state)
+}
+func TestMessageBodyNamespaceABASQLite(t *testing.T)   { runMessageBodyNamespaceABA(t, false) }
+func TestPostgresMessageBodyNamespaceABA(t *testing.T) { runMessageBodyNamespaceABA(t, true) }
+
+func runMessageBodyUnknownScopeSchema(t *testing.T, pg bool) {
+	messages, _, _, db, ctx, session, body := messageBodyIntegrationFixture(t, pg)
+	_, assistant := produceActualMessagePair(t, messages, ctx, session)
+	// A missing extension table must not pass startup on a sequence-zero pin.
+	require.NoError(t, db.Exec("DROP TABLE original_body_lease_scopes").Error)
+	require.ErrorIs(t, body.VerifyJournalReady(), repository.ErrOriginalBodyUnavailable)
+	require.NoError(t, body.UpgradeLeaseScopeSchema())
+	require.NoError(t, body.VerifyJournalReady())
+	var refs int64
+	require.NoError(t, db.Table("original_body_lease_scopes").Count(&refs).Error)
+	require.Zero(t, refs, "forward schema upgrade must not infer original scopes from current pointers")
+	deleted := "datetime('now','-2 hours')"
+	if pg {
+		deleted = "CURRENT_TIMESTAMP-INTERVAL '2 hours'"
+	}
+	require.NoError(t, db.Exec("UPDATE messages SET deleted_at="+deleted+" WHERE id=?", assistant.ID).Error)
+	n, e := body.PurgeDue(context.Background(), 100)
+	require.NoError(t, e)
+	require.Zero(t, n, "unknown legacy scopes remain protected")
+}
+func TestMessageBodyUnknownScopeSchemaSQLite(t *testing.T) {
+	runMessageBodyUnknownScopeSchema(t, false)
+}
+func TestPostgresMessageBodyUnknownScopeSchema(t *testing.T) {
+	runMessageBodyUnknownScopeSchema(t, true)
+}
+
+func runMessageBodyNoKBActualReader(t *testing.T, pg bool) {
+	messages, _, _, db, ctx, session, body := messageBodyIntegrationFixture(t, pg)
+	user, e := messages.CreateMessage(ctx, &types.Message{SessionID: session.ID, RequestID: "actual-no-kb-body-request", Role: "user", Content: "actual standalone no KB body", IsCompleted: true})
+	require.NoError(t, e)
+	request := types.MessageMaterialReadRequest{TenantID: 7, SessionID: session.ID, MessageIDs: []string{user.ID}}
+	guard, e := messages.beginMessageMaterialRead(ctx, request)
+	require.NoError(t, e)
+	require.Empty(t, guard.plan.Scopes)
+	require.NotEmpty(t, guard.bodyLeases)
+	require.NoError(t, guard.Recheck())
+	var active int64
+	require.NoError(t, db.Table("original_body_leases").Where("released_at_ms IS NULL").Count(&active).Error)
+	require.Positive(t, active)
+	deleted := "datetime('now','-2 hours')"
+	if pg {
+		deleted = "CURRENT_TIMESTAMP-INTERVAL '2 hours'"
+	}
+	require.NoError(t, db.Exec("UPDATE messages SET deleted_at="+deleted+" WHERE id=?", user.ID).Error)
+	n, e := body.PurgeDue(context.Background(), 100)
+	require.NoError(t, e)
+	require.Zero(t, n, "the real no-KB reader still owns body ID leases")
+	require.Error(t, guard.Recheck(), "metadata revocation blocks subsequent model/HTTP use")
+	guard.Close()
+	n, e = body.PurgeDue(context.Background(), 100)
+	require.NoError(t, e)
+	require.Positive(t, n)
+	require.NoError(t, db.Table("original_body_leases").Where("released_at_ms IS NULL").Count(&active).Error)
+	require.Zero(t, active)
+	_, e = messages.beginMessageMaterialRead(ctx, request)
+	require.Error(t, e)
+}
+func TestMessageBodyNoKBActualReaderSQLite(t *testing.T)   { runMessageBodyNoKBActualReader(t, false) }
+func TestPostgresMessageBodyNoKBActualReader(t *testing.T) { runMessageBodyNoKBActualReader(t, true) }

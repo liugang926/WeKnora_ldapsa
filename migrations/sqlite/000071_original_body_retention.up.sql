@@ -59,3 +59,7 @@ CREATE TABLE original_body_gc_items (
  estimated_bytes BIGINT NOT NULL,created_at_ms BIGINT NOT NULL,
  PRIMARY KEY(job_id,body_id)
 );
+
+CREATE TABLE original_body_lease_scopes(body_id TEXT NOT NULL REFERENCES original_body_payloads(id),tenant_id BIGINT NOT NULL,knowledge_base_id TEXT NOT NULL,PRIMARY KEY(body_id,tenant_id,knowledge_base_id));
+CREATE TRIGGER original_body_lease_scope_immutable_update BEFORE UPDATE ON original_body_lease_scopes BEGIN SELECT RAISE(ABORT,'immutable original body lease scope'); END;
+CREATE TRIGGER original_body_lease_scope_immutable_delete BEFORE DELETE ON original_body_lease_scopes BEGIN SELECT RAISE(ABORT,'immutable original body lease scope'); END;

@@ -17,7 +17,7 @@ import (
 )
 
 func main() {
-	mode := flag.String("mode", "verify", "migrate, init, reconcile, or verify; run with app/readers stopped")
+	mode := flag.String("mode", "verify", "migrate, upgrade-scopes, init, reconcile, or verify; run with app/readers stopped")
 	driver := flag.String("driver", os.Getenv("DB_DRIVER"), "postgres or sqlite")
 	flag.Parse()
 	dsn := os.Getenv("WEKNORA_ORIGINAL_BODY_MAINTENANCE_DSN")
@@ -71,6 +71,8 @@ func main() {
 	store := repository.NewOriginalBodyRetentionStore(db)
 	count := 0
 	switch *mode {
+	case "upgrade-scopes":
+		e = store.UpgradeLeaseScopeSchema()
 	case "init":
 		e = store.InitializeJournal()
 	case "reconcile":

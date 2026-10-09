@@ -153,28 +153,33 @@ func (s *OriginalBodyRetentionStore) AcquireLease(ctx context.Context, bodyID, k
 		return "", ErrOriginalBodyUnavailable
 	}
 	var id string
-	e := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if e := s.checkJournalInTx(tx); e != nil {
-			return e
-		}
-		if e := s.checkExternalBody(bodyID); e != nil {
-			return e
-		}
-		var body originalBodyPayload
-		if e := bodyInternal(tx).Clauses(clause.Locking{Strength: "UPDATE"}).Where("id=?", bodyID).Take(&body).Error; e != nil {
-			return e
-		}
-		if body.State != "live" {
-			return ErrOriginalBodyUnavailable
-		}
-		now, e := nextcloudLeaseNowMS(bodyInternal(tx))
-		if e != nil {
-			return e
-		}
-		id = uuid.NewString()
-		return bodyInternal(tx).Create(&originalBodyLease{LeaseID: id, BodyID: bodyID, Kind: kind, OwnerID: owner, Epoch: body.PurgeEpoch, ExpiresAtMS: now + ttl.Milliseconds()}).Error
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var e error
+		id, e = s.acquireLeaseInTx(tx, bodyID, kind, owner, ttl)
+		return e
 	})
-	return id, e
+	return id, err
+}
+func (s *OriginalBodyRetentionStore) acquireLeaseInTx(tx *gorm.DB, bodyID, kind, owner string, ttl time.Duration) (string, error) {
+	if e := s.checkJournalInTx(tx); e != nil {
+		return "", e
+	}
+	if e := s.checkExternalBody(bodyID); e != nil {
+		return "", e
+	}
+	var body originalBodyPayload
+	if e := bodyInternal(tx).Select("id,state,purge_epoch").Clauses(clause.Locking{Strength: "UPDATE"}).Where("id=?", bodyID).Take(&body).Error; e != nil {
+		return "", e
+	}
+	if body.State != "live" {
+		return "", ErrOriginalBodyUnavailable
+	}
+	now, e := nextcloudLeaseNowMS(bodyInternal(tx))
+	if e != nil {
+		return "", e
+	}
+	id := uuid.NewString()
+	return id, bodyInternal(tx).Create(&originalBodyLease{LeaseID: id, BodyID: bodyID, Kind: kind, OwnerID: owner, Epoch: body.PurgeEpoch, ExpiresAtMS: now + ttl.Milliseconds()}).Error
 }
 func (s *OriginalBodyRetentionStore) ReleaseLease(ctx context.Context, id string) error {
 	now, e := nextcloudLeaseNowMS(bodyInternal(s.db))

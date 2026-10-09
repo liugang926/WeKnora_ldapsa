@@ -2,7 +2,6 @@ package repository
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/google/uuid"
@@ -310,63 +309,24 @@ func (s *OriginalBodyRetentionStore) lockBodyScopes(tx *gorm.DB, heads []origina
 			keys[scope{h.TenantID, h.KnowledgeBaseID}] = true
 		}
 	}
-	// Saved message bodies use stable session/message identity. Their actual
-	// consumers lease KBs described by immutable admission control metadata,
-	// including historical admissions, never the mutable search-index pointer.
-	messageIDs := map[string]bool{}
 	for _, head := range heads {
-		if head.SourceTable == "messages" {
-			messageIDs[head.RowKey] = true
+		if head.SourceTable != "messages" && head.SourceTable != "message_generation_origins" {
+			continue
 		}
-		if head.SourceTable == "message_generation_origins" {
-			var origin struct{ MessageID string }
-			if e := bodyInternal(tx).Table("message_generation_origins").Select("message_id").Where("id=?", head.RowKey).Take(&origin).Error; e != nil {
-				return e
-			}
-			messageIDs[origin.MessageID] = true
+		var resolved []originalBodyLeaseScope
+		if e := bodyInternal(tx).Where("body_id=?", head.BodyID).Find(&resolved).Error; e != nil {
+			return e
 		}
-	}
-	if len(messageIDs) > 0 && tx.Migrator().HasTable("message_material_admissions") {
-		for id := range messageIDs {
-			var admissions []struct {
-				TenantID                        uint64
-				ExecutionContext, SourceLineage string
-			}
-			if e := bodyInternal(tx).Table("message_material_admissions").Select("tenant_id,execution_context,source_lineage").Where("message_id=?", id).Find(&admissions).Error; e != nil {
-				return e
-			}
-			for _, admission := range admissions {
-				var execution types.MessageExecutionContext
-				if e := json.Unmarshal([]byte(admission.ExecutionContext), &execution); e != nil {
-					return e
-				}
-				for _, kb := range append(execution.KnowledgeBaseIDs, execution.AgentKnowledgeBaseIDs...) {
-					if kb != "" {
-						keys[scope{admission.TenantID, kb}] = true
-					}
-				}
-				for _, tag := range execution.TagScopes {
-					if tag.KnowledgeBaseID != "" {
-						keys[scope{admission.TenantID, tag.KnowledgeBaseID}] = true
-					}
-				}
-				for _, knowledgeID := range execution.KnowledgeIDs {
-					var k struct{ KnowledgeBaseID string }
-					if e := bodyInternal(tx).Table("knowledges").Select("knowledge_base_id").Where("id=? AND tenant_id=?", knowledgeID, admission.TenantID).Take(&k).Error; e != nil {
-						return e
-					}
-					keys[scope{admission.TenantID, k.KnowledgeBaseID}] = true
-				}
-				var lineage types.SourceLineage
-				if e := json.Unmarshal([]byte(admission.SourceLineage), &lineage); e != nil {
-					return e
-				}
-				for _, source := range lineage.Sources {
-					keys[scope{source.TenantID, source.KnowledgeBaseID}] = true
-				}
+		if len(resolved) == 0 {
+			return ErrOriginalBodyRetained
+		}
+		for _, scopeRef := range resolved {
+			if scopeRef.KnowledgeBaseID != "" {
+				keys[scope{scopeRef.TenantID, scopeRef.KnowledgeBaseID}] = true
 			}
 		}
 	}
+
 	for _, p := range parents {
 		if p.KnowledgeBaseID != "" {
 			keys[scope{p.TenantID, p.KnowledgeBaseID}] = true
@@ -615,13 +575,10 @@ func (s *OriginalBodyRetentionStore) purgeBodyIDs(ctx context.Context, ids []str
 				fields = append(fields, h.SourceIdentitySHA256)
 			}
 			sort.Strings(fields)
-			scopeJSON, _ := json.Marshal(struct {
-				Tenant  uint64
-				BodyID  string
-				Fields  []string
-				Parents []originalBodyParentRef
-			}{body.TenantID, id, fields, parents})
-			scopeSHA := bodySHA(scopeJSON)
+			scopeSHA, e := originalBodyScopeDigest(tx, body, fields, parents)
+			if e != nil {
+				return e
+			}
 			metaDeadline := now + 90*86400000
 			if body.MetadataDeadlineMS != nil {
 				metaDeadline = *body.MetadataDeadlineMS

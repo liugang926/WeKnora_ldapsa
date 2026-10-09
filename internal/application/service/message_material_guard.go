@@ -21,6 +21,7 @@ type MessageMaterialGuard struct {
 	ctx           context.Context
 	cancel        context.CancelFunc
 	leases        []repository.NextcloudContentLease
+	bodyLeases []string
 	stop          sync.WaitGroup
 	heartbeatStop chan struct{}
 	heartbeatOnce sync.Once
@@ -79,6 +80,11 @@ func (s *messageService) beginMessageMaterialRead(ctx context.Context, request t
 		return nil, err
 	}
 	guard.ctx = leaseCtx
+	guard.bodyLeases, err = s.materialStore.AcquireMessageBodyReadLeases(leaseCtx, plan, owner, 2*time.Minute)
+	if err != nil {
+		guard.Close()
+		return nil, err
+	}
 	guard.snapshot, err = s.materialStore.CaptureMessageMaterialInputs(leaseCtx, request)
 	if err != nil {
 		guard.Close()
@@ -125,6 +131,11 @@ func (g *MessageMaterialGuard) Recheck() error {
 			return err
 		}
 	}
+	for _, id := range g.bodyLeases {
+		if err := g.store.RenewMessageBodyReadLease(g.ctx, id, 2*time.Minute); err != nil {
+			return err
+		}
+	}
 	// Remote/current actor checks happen outside the body SQL transaction.
 	if len(g.snapshot.Messages) > 0 {
 		if err := g.verifier.CheckMessagePublications(g.ctx, g.snapshot.Messages); err != nil {
@@ -153,6 +164,9 @@ func (g *MessageMaterialGuard) Close() {
 		g.stop.Wait()
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
+		for i := len(g.bodyLeases) - 1; i >= 0; i-- {
+			_ = g.store.ReleaseMessageBodyReadLease(ctx, g.bodyLeases[i])
+		}
 		for i := len(g.leases) - 1; i >= 0; i-- {
 			_ = g.store.ContentLeaseStore().ReleaseLease(ctx, g.leases[i].ID)
 		}
@@ -180,6 +194,13 @@ func (g *MessageMaterialGuard) advanceOwnGeneratedField(ctx context.Context) err
 	if err != nil {
 		return err
 	}
+	// Hold the new inline fields before exposing the updated snapshot. Keep the
+	// earlier body leases until the same model/output guard finally closes.
+	bodyLeases, err := g.store.AcquireMessageBodyReadLeases(marked, plan, uuid.NewString(), 2*time.Minute)
+	if err != nil {
+		return err
+	}
+	g.bodyLeases = append(g.bodyLeases, bodyLeases...)
 	// New immutable own admission has already passed the exact transfer check.
 	// Use only the new matching plan; old unrelated plans are not re-certified.
 	g.ctx = marked
