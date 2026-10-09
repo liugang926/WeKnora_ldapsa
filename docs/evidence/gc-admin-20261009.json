@@ -1,0 +1,130 @@
+{
+  "runtime_source": "b76f61e806e4bf3594b27ec0cf44b4d8d97b9e12",
+  "final_sql_http": {
+    "cleanup": "exact owned PostgreSQL and empty internal network removed; caches retained",
+    "go_image": "sha256:5a74e8b5137496d3e22c72c01d862c4cbb1fe6ce476ddf5616fd9a807d6ae9ac",
+    "network": "nc-output-pg-2bac7c07eff490a1b205d1b6",
+    "nonce": "2bac7c07eff490a1b205d1b6",
+    "pg_image": "sha256:20edbde7749f822887a1a022ad526fde0a47d6b2be9a8364433605cf65099416",
+    "pg_terminal_state": {
+      "Dead": false,
+      "Error": "",
+      "ExitCode": 0,
+      "FinishedAt": "0001-01-01T00:00:00Z",
+      "OOMKilled": false,
+      "Paused": false,
+      "Pid": 36191,
+      "Restarting": false,
+      "Running": true,
+      "StartedAt": "2026-10-09T01:29:11.417582505Z",
+      "Status": "running"
+    },
+    "profiles": {
+      "c6": {
+        "commit": "b76f61e806e4bf3594b27ec0cf44b4d8d97b9e12",
+        "focused_exit": 0,
+        "focused_tests": {
+          "fail": 0,
+          "pass": 32,
+          "skip": 0
+        },
+        "log_sha256": "db0a96fae58eea4b9c2b9bb19d15f7bcf6f1f5d6d85730fb8b2e27bcb99e1bfd",
+        "packages": {
+          "github.com/Tencent/WeKnora/internal/application/repository": "pass",
+          "github.com/Tencent/WeKnora/internal/container": "pass",
+          "github.com/Tencent/WeKnora/internal/handler": "pass",
+          "github.com/Tencent/WeKnora/internal/router": "pass"
+        }
+      }
+    }
+  },
+  "prior_sql_http": {
+    "cleanup": "exact owned PostgreSQL and empty internal network removed; caches retained",
+    "go_image": "sha256:5a74e8b5137496d3e22c72c01d862c4cbb1fe6ce476ddf5616fd9a807d6ae9ac",
+    "network": "nc-output-pg-15ef674dd021fd7a6f4fc88d",
+    "nonce": "15ef674dd021fd7a6f4fc88d",
+    "pg_image": "sha256:20edbde7749f822887a1a022ad526fde0a47d6b2be9a8364433605cf65099416",
+    "pg_terminal_state": {
+      "Dead": false,
+      "Error": "",
+      "ExitCode": 0,
+      "FinishedAt": "0001-01-01T00:00:00Z",
+      "OOMKilled": false,
+      "Paused": false,
+      "Pid": 12242,
+      "Restarting": false,
+      "Running": true,
+      "StartedAt": "2026-10-09T01:21:45.282309924Z",
+      "Status": "running"
+    },
+    "profiles": {
+      "c6": {
+        "commit": "5647e5a2ef06b89f973406fd81bde0715bd09463",
+        "focused_exit": 0,
+        "focused_tests": {
+          "fail": 0,
+          "pass": 32,
+          "skip": 0
+        },
+        "log_sha256": "60cdd5db9ff0c8ff78b4f974c532e021e54f0b437e70ea1f8393b7710cf9cde8",
+        "packages": {
+          "github.com/Tencent/WeKnora/internal/application/repository": "pass",
+          "github.com/Tencent/WeKnora/internal/container": "pass",
+          "github.com/Tencent/WeKnora/internal/handler": "pass",
+          "github.com/Tencent/WeKnora/internal/router": "pass"
+        }
+      }
+    }
+  },
+  "initial_fixture_failure": {
+    "cleanup": "exact owned PostgreSQL and empty internal network removed; caches retained",
+    "go_image": "sha256:5a74e8b5137496d3e22c72c01d862c4cbb1fe6ce476ddf5616fd9a807d6ae9ac",
+    "network": "nc-output-pg-5998bd55511c04f6545f76f7",
+    "nonce": "5998bd55511c04f6545f76f7",
+    "pg_image": "sha256:20edbde7749f822887a1a022ad526fde0a47d6b2be9a8364433605cf65099416",
+    "pg_terminal_state": {
+      "Dead": false,
+      "Error": "",
+      "ExitCode": 0,
+      "FinishedAt": "0001-01-01T00:00:00Z",
+      "OOMKilled": false,
+      "Paused": false,
+      "Pid": 85238,
+      "Restarting": false,
+      "Running": true,
+      "StartedAt": "2026-10-09T01:14:31.229280167Z",
+      "Status": "running"
+    },
+    "profiles": {
+      "c6": {
+        "commit": "2e596231bb2dcd0b1ccb28c076428f3058846805",
+        "focused_exit": 1,
+        "focused_tests": {
+          "fail": 11,
+          "pass": 20,
+          "skip": 0
+        },
+        "log_sha256": "ee453c8699dc52ce3477fe794cc1e1b4c34f20a19179792a94e50f30df8a4ca4",
+        "packages": {
+          "github.com/Tencent/WeKnora/internal/application/repository": "fail",
+          "github.com/Tencent/WeKnora/internal/container": "pass",
+          "github.com/Tencent/WeKnora/internal/handler": "pass",
+          "github.com/Tencent/WeKnora/internal/router": "pass"
+        }
+      }
+    }
+  },
+  "frontend": {
+    "actual_app_typecheck_exit": 0,
+    "actual_app_typecheck_command": "vue-tsc --noEmit -p tsconfig.app.json",
+    "locale_audit_pass": 13,
+    "build_exit": 0,
+    "production_bundle_built": true
+  },
+  "scope": "owned PostgreSQL and SQLite pool1,actual local provider unlink/ACK,admin HTTP,110-job paging,current SQL actor/policy and metadata-only KB scope; mocked/source fixture identities",
+  "source_read_only": true,
+  "shared_runtime_changed": false,
+  "production_coverage_marker_created": false,
+  "body_purge_complete": false,
+  "external_inventory_complete": false
+}
