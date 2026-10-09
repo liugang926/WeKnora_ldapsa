@@ -78,6 +78,10 @@ type machinePipelineFixture struct {
 }
 
 func newMachinePipelineFixture(t *testing.T, pg bool) *machinePipelineFixture {
+	return newMachinePipelineFixtureWithDocument(t, pg, strings.Repeat("Actual original document about its topic, with enough text for chunking and retrieval. ", 4))
+}
+
+func newMachinePipelineFixtureWithDocument(t *testing.T, pg bool, artifact string) *machinePipelineFixture {
 	t.Helper()
 	f := newEnrichmentTestFixture(t, pg)
 	// Remove setup-only ordinary data. Every tested NC knowledge below is
@@ -148,7 +152,6 @@ func newMachinePipelineFixture(t *testing.T, pg bool) *machinePipelineFixture {
 	unavailableAfterCompletion := &atomic.Bool{}
 	failureProbe := &atomic.Int64{}
 	completedProbes := &atomic.Int64{}
-	artifact := strings.Repeat("Actual original document about its topic, with enough text for chunking and retrieval. ", 4)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(t, "Bearer isolated-machine", r.Header.Get("Authorization"))
 		require.NotEmpty(t, r.Header.Get("X-WeKnora-Signature"))

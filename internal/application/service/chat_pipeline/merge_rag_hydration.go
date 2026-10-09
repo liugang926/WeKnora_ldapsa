@@ -1,6 +1,7 @@
 package chatpipeline
 
 import (
+	"bytes"
 	"context"
 	"github.com/Tencent/WeKnora/internal/searchutil"
 	"github.com/Tencent/WeKnora/internal/types"
@@ -59,7 +60,25 @@ func (p *PluginMerge) hydrateMergeInput(ctx context.Context, original *types.Sea
 
 func (p *PluginMerge) resolveCapturedParents(ctx context.Context, results []*types.SearchResult) []*types.SearchResult {
 	for _, result := range results {
-		if result == nil || result.ParentChunkID == "" {
+		if result == nil {
+			continue
+		}
+		if result.ChunkType == types.ChunkTypeSummary {
+			// A generated summary's parent records its original text input; it
+			// is not a parent_text expansion request. Revalidate the captured
+			// summary itself under its existing proof and source lease, without
+			// borrowing parent text or certifying a changed cached body/relation.
+			rows := p.hydrateMergeInput(ctx, result, []string{result.ID})
+			if len(rows) != 1 || rows[0].ChunkType != types.ChunkTypeSummary ||
+				rows[0].Content != result.Content || rows[0].ParentChunkID != result.ParentChunkID ||
+				rows[0].ContentRevision != result.ContentRevision || rows[0].ChunkIndex != result.ChunkIndex ||
+				rows[0].StartAt != result.StartAt || rows[0].EndAt != result.EndAt ||
+				rows[0].ImageInfo != result.ImageInfo || !bytes.Equal(rows[0].Metadata, result.ChunkMetadata) || result.ContentRewritten {
+				unknownMergeInput(ctx, result)
+			}
+			continue
+		}
+		if result.ParentChunkID == "" {
 			continue
 		}
 		// The narrow text closure does not borrow OCR/caption/image children
