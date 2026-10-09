@@ -36,6 +36,7 @@ export default {
     effectiveUsers: '各用户的有效权限', userId: '用户 ID', owner: 'Owner', currentAccess: '当前访问',
     effectivePermission: '有效权限', matchedGroups: '命中组与成员来源', allowed: '允许', denied: '拒绝', managementPermission: '管理访问',
     selectGroup: '选择已同步的目录组', missingWorkspaceLink: '此组尚未关联空间角色。资源组授权仅对通过其他组或个人授权已加入本空间的成员生效。',
+    searchAllGroups: '搜索全部 AD 组', alreadyGranted: '已授权',
     permissions: { read: '读取', use: '使用', edit: '编辑', none: '无权限', workspace: '沿用空间权限' },
     sources: { direct: '直接成员', nested: '嵌套继承', primary: '主组成员' },
   },

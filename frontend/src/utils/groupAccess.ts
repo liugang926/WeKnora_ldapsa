@@ -19,7 +19,9 @@ export function defaultPermissionForResource(
 }
 
 export function hasMissingWorkspaceGroup(grant: Pick<ResourceGroupGrant, 'workspace_role'>): boolean {
-  return !grant.workspace_role
+  // Catalog search does not return workspace association metadata. Only an
+  // explicit null from resource access confirms that an association is absent.
+  return grant.workspace_role === null
 }
 
 export function normalizeMembershipSources(sources?: readonly string[]): Array<'direct' | 'nested' | 'primary'> {

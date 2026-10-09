@@ -87,6 +87,7 @@ export const directoryAccessLocale = {
     inheritGroupsHint: 'Prepare group grants before switching to restricted mode. These grants do not change inherited access until you confirm the impact preview.',
     managerBypass: 'Workspace Owner and Admin retain management access. Using an agent does not grant access to its knowledge bases.',
     groupsTitle: 'Allowed groups', addGroup: 'Add group', selectGroup: 'Select a synchronized directory group', empty: 'No groups are granted access.',
+    searchAllGroups: 'Search all AD groups', alreadyGranted: 'Already granted',
     effectiveMembers: '{count} effective members', missingWorkspaceLink: 'This group is not linked to the workspace. Resource grants apply only to users who already have workspace membership through another group or an individual grant.',
     previewTitle: 'Review access impact', previewBody: 'Switching to restricted mode changes who can use this resource.', confirmRestricted: 'Apply restricted mode',
     previewEffective: 'Preview effective access', previewEffectiveHint: 'Review each workspace member’s effective access and matching directory groups for the current configuration.',

@@ -43,6 +43,7 @@
                 :label="candidate.display_name" />
             </t-select>
             <t-button variant="outline" :disabled="!candidateKey || saving || previewing" @click="addCandidate">{{ $t('groupAccess.addGroup') }}</t-button>
+            <t-button variant="text" :disabled="saving || previewing" @click="openGroupCatalog">{{ $t('groupAccess.searchAllGroups') }}</t-button>
           </div>
         </div>
 
@@ -111,9 +112,31 @@
             <span v-if="!row.group_matches?.length">—</span>
           </template>
         </t-table>
-        <t-pagination v-model="impactPage" v-model:page-size="impactPageSize" :total="impact.effective_users_total || 0"
+        <t-pagination :current="impactPage" :page-size="impactPageSize" :total="impact.effective_users_total || 0"
           :page-size-options="[20, 50, 100]" :disabled="previewing" @change="changeImpactPage" />
       </template>
+    </t-dialog>
+
+    <t-dialog v-model:visible="catalogVisible" :header="$t('groupAccess.searchAllGroups')" width="min(900px, 96vw)"
+      :confirm-btn="null" :cancel-btn="$t('common.close')">
+      <div class="catalog-search">
+        <t-input v-model="catalogQuery" clearable :placeholder="$t('directoryGroups.searchPlaceholder')" @enter="searchGroupCatalog" />
+        <t-button :loading="catalogLoading" @click="searchGroupCatalog">{{ $t('directoryAdmin.browse.searchButton') }}</t-button>
+      </div>
+      <t-alert v-if="catalogError" theme="error" :message="catalogError" />
+      <t-alert v-if="catalog && (!catalog.enabled || !catalog.fresh)" theme="warning"
+        :message="$t(catalog.enabled ? 'directoryAdmin.catalog.stale' : 'directoryAdmin.catalog.disabled')" />
+      <t-table row-key="directory_group_id" :data="catalog?.items || []" :columns="catalogColumns" :loading="catalogLoading" size="small">
+        <template #select="{ row }">
+          <t-button variant="text" theme="primary" :loading="saving"
+            :disabled="readOnly || catalogLoading || !!catalogError || !catalog?.enabled || !catalog.fresh || !row.directory_group_id || row.disabled || catalogGroupSelected(row)"
+            @click="addCatalogGroup(row)">
+            {{ $t(catalogGroupSelected(row) ? 'groupAccess.alreadyGranted' : 'groupAccess.addGroup') }}
+          </t-button>
+        </template>
+      </t-table>
+      <t-pagination :current="catalogPage" :page-size="catalogPageSize" :total="catalog?.total || 0"
+        :page-size-options="[20, 50, 100]" :disabled="catalogLoading || saving" @change="changeCatalogPage" />
     </t-dialog>
   </div>
 </template>
@@ -139,6 +162,7 @@ import {
   normalizeMembershipSources,
   permissionsForResource,
 } from '@/utils/groupAccess'
+import { getTenantDirectoryCatalog, type DirectoryCandidate, type DirectoryCatalog } from '@/api/tenant/directory'
 
 const props = defineProps<{
   resourceType: GroupAccessResourceType
@@ -160,6 +184,15 @@ const impactVisible = ref(false)
 const pendingModeChange = ref(false)
 const impactPage = ref(1)
 const impactPageSize = ref(20)
+const catalogVisible = ref(false)
+const catalogLoading = ref(false)
+const catalogError = ref('')
+const catalogQuery = ref('')
+const catalogAppliedQuery = ref('')
+const catalogPage = ref(1)
+const catalogPageSize = ref(20)
+const catalog = ref<DirectoryCatalog | null>(null)
+let catalogRequest = 0
 let generation = 0
 let loadGeneration = 0
 let previewPayload: ReturnType<typeof buildResourceGroupAccessUpdate> | null = null
@@ -170,6 +203,11 @@ const effectiveUserColumns = computed(() => [
   { colKey: 'currently_allowed', title: t('groupAccess.currentAccess'), width: 95 },
   { colKey: 'permission_after', title: t('groupAccess.effectivePermission'), width: 130 },
   { colKey: 'group_matches', title: t('groupAccess.matchedGroups'), minWidth: 280 },
+])
+const catalogColumns = computed(() => [
+  { colKey: 'display_name', title: t('directoryGroups.group'), minWidth: 140 },
+  { colKey: 'dn', title: 'DN', minWidth: 300 },
+  { colKey: 'select', title: t('groupAccess.addGroup'), width: 130 },
 ])
 const unselectedCandidates = computed(() => {
   const selected = new Set(grants.value.map(groupKey))
@@ -276,18 +314,73 @@ async function openImpactPreview(payload: ReturnType<typeof buildResourceGroupAc
 async function changeImpactPage(info: { current: number; pageSize: number }) {
   if (!previewPayload || previewing.value || !impactVisible.value) return
   const resourceGeneration = generation
-  impactPage.value = info.current
-  impactPageSize.value = info.pageSize
   previewing.value = true
   try {
     const response = await previewResourceGroupAccess(props.resourceType, props.resourceId, previewPayload,
       info.pageSize, (info.current - 1) * info.pageSize)
-    if (resourceGeneration === generation) impact.value = response
+    if (resourceGeneration === generation) {
+      impact.value = response
+      impactPage.value = info.current
+      impactPageSize.value = info.pageSize
+    }
   } catch (cause: any) {
     if (resourceGeneration === generation) MessagePlugin.error(cause?.message || t('groupAccess.previewFailed'))
   } finally {
     if (resourceGeneration === generation) previewing.value = false
   }
+}
+
+function catalogGroupSelected(group: DirectoryCandidate) {
+  return grants.value.some((grant) => grant.directory_id === group.directory_id && grant.directory_group_id === group.directory_group_id)
+}
+
+function openGroupCatalog() {
+  if (props.readOnly || saving.value || previewing.value) return
+  catalogQuery.value = ''
+  catalogAppliedQuery.value = ''
+  catalog.value = null
+  catalogPage.value = 1
+  catalogVisible.value = true
+  void loadGroupCatalog(1, catalogPageSize.value)
+}
+
+function searchGroupCatalog() {
+  catalogAppliedQuery.value = catalogQuery.value.trim()
+  void loadGroupCatalog(1, catalogPageSize.value)
+}
+
+async function loadGroupCatalog(page: number, pageSize: number) {
+  const resourceGeneration = generation
+  const request = ++catalogRequest
+  catalogLoading.value = true
+  catalogError.value = ''
+  try {
+    const response = await getTenantDirectoryCatalog(props.tenantId, 'groups', catalogAppliedQuery.value, pageSize, (page - 1) * pageSize)
+    if (resourceGeneration !== generation || request !== catalogRequest) return
+    catalog.value = response
+    catalogPage.value = page
+    catalogPageSize.value = pageSize
+  } catch (cause: any) {
+    if (resourceGeneration === generation && request === catalogRequest) catalogError.value = cause?.message || t('directoryGroups.searchFailed')
+  } finally {
+    if (resourceGeneration === generation && request === catalogRequest) catalogLoading.value = false
+  }
+}
+
+function changeCatalogPage(info: { current: number; pageSize: number }) {
+  if (!catalogLoading.value && !saving.value) void loadGroupCatalog(info.current, info.pageSize)
+}
+
+async function addCatalogGroup(group: DirectoryCandidate) {
+  if (props.readOnly || saving.value || previewing.value || catalogLoading.value || catalogError.value || !catalog.value?.enabled || !catalog.value.fresh ||
+    !group.directory_group_id || group.disabled || catalogGroupSelected(group)) return
+  const resourceGeneration = generation
+  grants.value.push({
+    directory_id: group.directory_id, directory_group_id: group.directory_group_id,
+    display_name: group.display_name, dn: group.dn,
+    permission: defaultPermissionForResource(props.resourceType), membership_sources: [],
+  })
+  if (await persist() && resourceGeneration === generation) catalogVisible.value = false
 }
 
 async function confirmRestricted() {
@@ -331,6 +424,10 @@ watch(() => [props.resourceType, props.resourceId, props.tenantId], () => {
   grants.value = []
   candidates.value = []
   candidateKey.value = ''
+  catalogVisible.value = false
+  catalogLoading.value = false
+  catalog.value = null
+  catalogRequest++
   void loadAccess()
 }, { immediate: true })
 </script>
@@ -347,7 +444,7 @@ watch(() => [props.resourceType, props.resourceId, props.tenantId], () => {
 .mode-card span { display: flex; flex-direction: column; gap: 4px; }
 .mode-card small, .grant-dn, .grant-meta { color: var(--td-text-color-secondary); }
 .grant-panel { display: flex; flex-direction: column; gap: 14px; }
-.add-group { width: min(520px, 60%); }
+.add-group { width: min(600px, 75%); flex-wrap: wrap; }
 .add-group :deep(.t-select) { flex: 1; }
 .grant-list { border: 1px solid var(--td-component-border); border-radius: 8px; overflow: hidden; }
 .grant-row { padding: 14px 16px; border-bottom: 1px solid var(--td-component-border); align-items: flex-start; }
@@ -362,6 +459,7 @@ watch(() => [props.resourceType, props.resourceId, props.tenantId], () => {
 .impact-grid span { font-size: var(--app-text-sm); color: var(--td-text-color-secondary); }
 .effective-match { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 5px 0; }
 .effective-match span { color: var(--td-text-color-secondary); }
+.catalog-search { display: flex; gap: 10px; margin-bottom: 14px; }
 :deep(.t-pagination) { margin-top: 14px; }
 @media (max-width: 760px) { .mode-cards { grid-template-columns: 1fr; } .grant-row { flex-wrap: wrap; } .add-group { width: 100%; } }
 </style>

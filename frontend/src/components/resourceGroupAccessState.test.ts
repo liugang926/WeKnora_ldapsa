@@ -25,6 +25,7 @@ function editor(api: Record<string, (...args: any[]) => any> = {}) {
   const defaults = {
     getResourceGroupAccess: async (kind: string, id: string) => access(id),
     previewResourceGroupAccess: async () => ({ currently_allowed: 20, allowed_after: 5, losing_access: 15 }),
+    getTenantDirectoryCatalog: async () => ({ items: [], total: 0, enabled: true, fresh: true }),
     updateResourceGroupAccess: async (_kind: string, id: string, payload: any) => {
       requests.push(payload)
       return { ...access(id), mode: payload.mode, grants: payload.grants }
@@ -36,6 +37,7 @@ function editor(api: Record<string, (...args: any[]) => any> = {}) {
     'tdesign-vue-next': { MessagePlugin: { success: () => {}, error: () => {} } },
     'vue-i18n': { useI18n: () => ({ t: (key: string) => key }) },
     '@/api/group-access': defaults,
+    '@/api/tenant/directory': defaults,
     '@/utils/groupAccess': groupAccess,
   }
   const compiled = ts.transpileModule(script, {
@@ -43,7 +45,9 @@ function editor(api: Record<string, (...args: any[]) => any> = {}) {
   }).outputText
   const controller = new Function('require', 'defineProps', 'exports', `${compiled}
     return { mode, grants, candidates, candidateKey, impactVisible, loading, saving, error,
-      impact, loadAccess, persist, requestModeChange, confirmRestricted, addCandidate, previewCurrentAccess, changeImpactPage }`
+      impact, impactPage, impactPageSize, catalog, catalogVisible, catalogPage, catalogPageSize, catalogAppliedQuery,
+      loadAccess, persist, requestModeChange, confirmRestricted, addCandidate, previewCurrentAccess, changeImpactPage,
+      loadGroupCatalog, openGroupCatalog, addCatalogGroup }`
   )((name: string) => modules[name], () => props, {})
   return { ...controller, props, requests, reset: () => watchers[0]() }
 }
@@ -125,4 +129,56 @@ test('effective-access pagination keeps the reviewed grant snapshot and never ch
   await state.confirmRestricted()
   assert.equal(state.requests.length, 0)
   assert.equal(state.mode.value, 'inherit')
+})
+
+test('a failed effective-access page keeps both the displayed rows and page controls on the last successful page', async () => {
+  let calls = 0
+  const state = editor({ previewResourceGroupAccess: async () => {
+    if (++calls > 1) throw new Error('directory unavailable')
+    return { effective_users: [{ user_id: 'first-page' }], effective_users_total: 60, effective_users_limit: 20, effective_users_offset: 0 }
+  } })
+  await state.previewCurrentAccess()
+  await state.changeImpactPage({ current: 2, pageSize: 50 })
+  assert.equal(state.impactPage.value, 1)
+  assert.equal(state.impactPageSize.value, 20)
+  assert.equal(state.impact.value.effective_users[0].user_id, 'first-page')
+})
+
+test('catalog pagination can grant a directory group beyond the quick selector limit using its internal ID', async () => {
+  const calls: any[] = []
+  const group = { directory_id: 'corp', directory_group_id: 'internal-group-101', object_guid: 'ad-guid-101', display_name: 'Late group', dn: 'CN=Late group,DC=corp' }
+  const state = editor({ getTenantDirectoryCatalog: async (...args: any[]) => {
+    calls.push(args)
+    return { items: [group], total: 120, enabled: true, fresh: true }
+  } })
+  state.catalogAppliedQuery.value = 'Late group'
+  await state.loadGroupCatalog(6, 20)
+  assert.deepEqual(calls[0], [1, 'groups', 'Late group', 20, 100])
+  await state.addCatalogGroup(group)
+  assert.equal(state.requests[0].mode, 'inherit')
+  assert.equal(state.requests[0].grants[0].directory_group_id, 'internal-group-101')
+  assert.equal(state.requests[0].grants[0].directory_id, 'corp')
+})
+
+test('resource changes discard a late group-catalog response and close its dialog', async () => {
+  const response = deferred<any>()
+  const state = editor({ getTenantDirectoryCatalog: () => response.promise })
+  state.catalogVisible.value = true
+  const request = state.loadGroupCatalog(1, 20)
+  state.props.resourceId = 'kb-2'
+  state.reset()
+  response.resolve({ items: [{ directory_group_id: 'old-group' }], total: 1, enabled: true, fresh: true })
+  await request
+  assert.equal(state.catalogVisible.value, false)
+  assert.equal(state.catalog.value, null)
+})
+
+test('a stale or disabled directory catalog never produces a resource grant', async () => {
+  const state = editor()
+  const group = { directory_id: 'corp', directory_group_id: 'group', display_name: 'Group', dn: 'CN=Group,DC=corp' }
+  state.catalog.value = { items: [group], total: 1, enabled: true, fresh: false }
+  await state.addCatalogGroup(group)
+  state.catalog.value = { items: [group], total: 1, enabled: false, fresh: true }
+  await state.addCatalogGroup(group)
+  assert.equal(state.requests.length, 0)
 })

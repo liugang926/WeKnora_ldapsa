@@ -70,7 +70,7 @@ export interface ResourceEffectiveUserAccess {
   currently_allowed: boolean
   allowed_after: boolean
   permission_after: 'none' | 'workspace' | GroupAccessPermission
-  group_matches: Array<{
+  group_matches?: Array<{
     directory_id: string
     directory_group_id: string
     group_display_name: string
