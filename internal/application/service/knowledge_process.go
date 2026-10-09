@@ -3382,7 +3382,8 @@ func (s *knowledgeService) ProcessManualUpdate(ctx context.Context, t *asynq.Tas
 	// this run's summary/wiki subspans onto the previous attempt's trace.
 	attempt := payload.Attempt
 	if attempt <= 0 {
-		if root, n, err := s.tracker().OpenAttempt(ctx, knowledge.ID, payload.LangfuseTraceID); err == nil && root != nil {
+		root, n, err := s.tracker().OpenAttempt(ctx, knowledge.ID, payload.LangfuseTraceID)
+		if err == nil && root != nil {
 			attempt = n
 		} else if err != nil {
 			logger.Warnf(ctx, "ProcessManualUpdate: OpenAttempt failed for %s: %v", knowledge.ID, err)

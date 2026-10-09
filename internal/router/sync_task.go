@@ -109,7 +109,8 @@ func (e *SyncTaskExecutor) Enqueue(task *asynq.Task, opts ...asynq.Option) (*asy
 				return
 			}
 			if errors.Is(lastErr, asynq.SkipRetry) {
-				logger.Warnf(ctx, "[SyncTask] Task stopped without retry type=%s id=%s err=%v", task.Type(), taskID, lastErr)
+				logger.Warnf(ctx, "[SyncTask] Task stopped without retry type=%s id=%s err=%v",
+					task.Type(), taskID, lastErr)
 				return
 			}
 		}

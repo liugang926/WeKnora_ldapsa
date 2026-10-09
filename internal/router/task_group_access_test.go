@@ -54,7 +54,10 @@ func TestEnrichmentMiddlewareRevocationStopsExecutionAndFinalizesAttempt(t *test
 	}{
 		{name: "revoked user", initiator: types.TaskInitiator{UserID: "user-1"}, kb: "kb"},
 		{name: "legacy payload", kb: "kb"},
-		{name: "API key with user attribution", initiator: types.TaskInitiator{UserID: "user-1", APIKeyID: 3}, kb: "kb"},
+		{
+			name:      "API key with user attribution",
+			initiator: types.TaskInitiator{UserID: "user-1", APIKeyID: 3}, kb: "kb",
+		},
 		{name: "moved document", initiator: types.TaskInitiator{UserID: "user-1"}, kb: "old-kb"},
 		{name: "allowed current user", initiator: types.TaskInitiator{UserID: "user-1"}, kb: "kb", allow: true},
 		{name: "legacy task with newer attempt", kb: "kb", newer: true},

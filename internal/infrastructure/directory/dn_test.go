@@ -17,11 +17,17 @@ func TestNormalizeDNMatchesEquivalentLDAPRepresentations(t *testing.T) {
 }
 
 func TestBuildSnapshotResolvesEquivalentMemberDN(t *testing.T) {
-	user := User{ObjectGUID: "user-guid", SID: "S-1-5-21-1-2-3-1107",
-		DN: `CN=Alice\, Doe,OU=Users,DC=example,DC=test`, Enabled: true, PrimaryGroupRID: 513}
-	group := parsedGroup{group: Group{ObjectGUID: "group-guid", SID: "S-1-5-21-1-2-3-513",
-		DN: "CN=Users,OU=Groups,DC=example,DC=test"},
-		members: []string{`cn=Alice\2c Doe, ou=Users, dc=example, dc=test`}}
+	user := User{
+		ObjectGUID: "user-guid", SID: "S-1-5-21-1-2-3-1107",
+		DN: `CN=Alice\, Doe,OU=Users,DC=example,DC=test`, Enabled: true, PrimaryGroupRID: 513,
+	}
+	group := parsedGroup{
+		group: Group{
+			ObjectGUID: "group-guid", SID: "S-1-5-21-1-2-3-513",
+			DN: "CN=Users,OU=Groups,DC=example,DC=test",
+		},
+		members: []string{`cn=Alice\2c Doe, ou=Users, dc=example, dc=test`},
+	}
 
 	snapshot, err := buildSnapshot("corp-ad", "ldaps://dc.example.test", time.Now(), []User{user}, []parsedGroup{group})
 	require.NoError(t, err)
@@ -44,7 +50,9 @@ func TestDirectoryMemberDNAnomaliesFailClosed(t *testing.T) {
 	require.ErrorIs(t, err, ErrDuplicateDirectoryObject)
 
 	_, err = buildSnapshot("corp-ad", "ldaps://dc.example.test", time.Now(), nil,
-		[]parsedGroup{{group: Group{ObjectGUID: "group-guid", DN: "CN=Users,DC=example,DC=test"},
-			members: []string{"not a distinguished name"}}})
+		[]parsedGroup{{
+			group:   Group{ObjectGUID: "group-guid", DN: "CN=Users,DC=example,DC=test"},
+			members: []string{"not a distinguished name"},
+		}})
 	require.ErrorIs(t, err, ErrInvalidDirectoryObject)
 }

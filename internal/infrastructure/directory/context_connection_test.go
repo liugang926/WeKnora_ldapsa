@@ -234,8 +234,10 @@ func TestStartTLSCancellationAfterExtendedResponse(t *testing.T) {
 		}
 		response := ber.Encode(ber.ClassUniversal, ber.TypeConstructed, ber.TagSequence, nil, "LDAP response")
 		response.AppendChild(request.Children[0])
-		extended := ber.Encode(ber.ClassApplication, ber.TypeConstructed, ldap.ApplicationExtendedResponse, nil, "StartTLS response")
-		extended.AppendChild(ber.NewInteger(ber.ClassUniversal, ber.TypePrimitive, ber.TagEnumerated, int64(0), "success"))
+		extended := ber.Encode(
+			ber.ClassApplication, ber.TypeConstructed, ldap.ApplicationExtendedResponse, nil, "StartTLS response")
+		extended.AppendChild(ber.NewInteger(
+			ber.ClassUniversal, ber.TypePrimitive, ber.TagEnumerated, int64(0), "success"))
 		extended.AppendChild(ber.NewString(ber.ClassUniversal, ber.TypePrimitive, ber.TagOctetString, "", "matched DN"))
 		extended.AppendChild(ber.NewString(ber.ClassUniversal, ber.TypePrimitive, ber.TagOctetString, "", "diagnostic"))
 		response.AppendChild(extended)
