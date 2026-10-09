@@ -17,7 +17,14 @@ func WithTaskAuthorization(ctx context.Context, tenantID uint64, initiator TaskI
 		principal.Type = PrincipalAPITenant
 	} else if userID := strings.TrimSpace(initiator.UserID); userID != "" && !IsSyntheticUserID(userID) {
 		principal = Principal{Type: PrincipalWebUser, ID: userID}
-		caller = Caller{TenantID: tenantID, UserID: userID, Role: initiator.Role}
+		callerTenantID := initiator.CallerTenantID
+		if callerTenantID == 0 {
+			// Older admitted human payloads have no caller workspace. Treat
+			// them as local to execution so live membership/role checks still
+			// apply; absence never creates a cross-workspace exemption.
+			callerTenantID = tenantID
+		}
+		caller = Caller{TenantID: callerTenantID, UserID: userID, Role: initiator.Role}
 	}
 	ctx = WithCaller(ctx, caller)
 	ctx = WithPrincipal(ctx, principal)

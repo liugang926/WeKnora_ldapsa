@@ -107,6 +107,43 @@ func TestDirectoryPermissionMutationRevokesRestrictedCapabilitiesSQLite(t *testi
 	}
 }
 
+func TestInheritedTaskRejectsDurableGroupRoleDowngradeAndRemovalSQLite(t *testing.T) {
+	db, directorySvc, access := setupDirectoryAccessSQLite(t)
+	directory := createTestDirectory(t, directorySvc)
+	ctx := context.Background()
+	_, err := directorySvc.ApplySnapshot(ctx, testDirectorySnapshot(directory.ID))
+	require.NoError(t, err)
+	var identity types.DirectoryIdentity
+	var group types.DirectoryGroup
+	require.NoError(t, db.Where("object_guid = ?", "user-guid").First(&identity).Error)
+	require.NoError(t, db.Where("object_guid = ?", "leaf-guid").First(&group).Error)
+	require.NoError(t, directorySvc.LinkIdentity(ctx, identity.ID, "user-1"))
+	grant := &types.TenantGroupRoleGrant{
+		TenantID: 9, DirectoryGroupID: group.ID, Role: types.TenantRoleAdmin,
+	}
+	require.NoError(t, access.UpsertTenantGroupRoleGrant(ctx, grant))
+	taskCtx := types.WithTaskAuthorization(ctx, 9, types.TaskInitiator{
+		UserID: "user-1", Role: types.TenantRoleAdmin, CallerTenantID: 9,
+	})
+	check := func(action types.ResourceAction, allowed bool) {
+		t.Helper()
+		permission, err := access.EffectivePermission(taskCtx, 9,
+			types.GroupResourceTypeKnowledgeBase, "inherit-kb", action, time.Now().UTC())
+		require.NoError(t, err)
+		require.Equal(t, allowed, permission.Allowed)
+	}
+	check(types.ResourceActionEdit, true)
+	check(types.ResourceActionManage, true)
+	grant.Role = types.TenantRoleViewer
+	require.NoError(t, access.UpsertTenantGroupRoleGrant(ctx, grant))
+	check(types.ResourceActionRead, true)
+	check(types.ResourceActionEdit, false)
+	check(types.ResourceActionManage, false)
+	require.NoError(t, access.DeleteTenantGroupRoleGrant(ctx, 9, group.ID, types.GrantOriginManual))
+	check(types.ResourceActionRead, false)
+	check(types.ResourceActionEdit, false)
+}
+
 func TestDirectoryLinkIdentityConcurrentNeverOverwritesSQLite(t *testing.T) {
 	db, directorySvc, _ := setupDirectoryAccessSQLite(t)
 	directory := createTestDirectory(t, directorySvc)

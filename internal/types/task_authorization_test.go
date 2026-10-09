@@ -26,3 +26,21 @@ func TestTaskAuthorizationDoesNotPromoteMachineOrAmbientUser(t *testing.T) {
 	caller := CallerFromContext(ctx)
 	require.Equal(t, uint64(7), caller.TenantID)
 }
+
+func TestTaskAuthorizationPreservesAdmittedWorkspaceAcrossSharedExecution(t *testing.T) {
+	ctx := context.WithValue(context.Background(), UserIDContextKey, "user-1")
+	ctx = context.WithValue(ctx, TenantRoleContextKey, TenantRoleAdmin)
+	ctx = WithCaller(ctx, Caller{TenantID: 7, UserID: "user-1", Role: TenantRoleContributor})
+	ctx = WithExecutionTenant(ctx, 8)
+	initiator := TaskInitiatorFromContext(ctx)
+	require.Equal(t, uint64(7), initiator.CallerTenantID)
+	require.Equal(t, TenantRoleContributor, initiator.Role)
+	worker := WithTaskAuthorization(context.Background(), 8, initiator)
+	require.Equal(t, uint64(7), CallerFromContext(worker).TenantID)
+	execution, ok := TenantIDFromContext(worker)
+	require.True(t, ok)
+	require.Equal(t, uint64(8), execution)
+	// Child tasks keep the original caller even after another scope rewrite.
+	child := TaskInitiatorFromContext(WithExecutionTenant(worker, 9))
+	require.Equal(t, initiator, child)
+}

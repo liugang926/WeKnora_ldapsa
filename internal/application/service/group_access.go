@@ -346,8 +346,45 @@ func (s *groupAccessService) effectivePermissionWithMode(
 		return result, ErrInvalidResourcePolicy
 	}
 	if mode == types.ResourceAccessInherit {
-		// Inherit is an overlay no-op: the existing workspace/share/API-key
-		// authorizers remain authoritative, preserving pre-migration behaviour.
+		// HTTP admission already checks workspace/share authority. A human
+		// task continuing in its own workspace must check the current role
+		// again: its captured role and task write grant may outlive a group
+		// removal or downgrade. Cross-workspace inherited shares retain their
+		// existing admission grant instead of requiring source membership.
+		if types.IsBackgroundTask(ctx) {
+			principal, verified := types.PrincipalFromContext(ctx)
+			_, apiKey := types.TenantAPIKeyScopeFromContext(ctx)
+			if verified && !apiKey && principal.Type == types.PrincipalWebUser &&
+				!types.IsSyntheticUserID(principal.ID) {
+				caller := types.CallerFromContext(ctx)
+				if caller.UserID != "" && caller.UserID != principal.ID {
+					result.Reason = "workspace_membership_required"
+					return result, nil
+				}
+				if caller.TenantID == 0 || caller.TenantID == tenantID {
+					role, err := s.EffectiveTenantRole(ctx, principal.ID, tenantID, now)
+					if err != nil {
+						return result, err
+					}
+					result.EffectiveRole = role
+					if !role.Member {
+						result.Reason = "workspace_membership_required"
+						return result, nil
+					}
+					minimum := types.TenantRoleViewer
+					switch action {
+					case types.ResourceActionEdit:
+						minimum = types.TenantRoleContributor
+					case types.ResourceActionManage:
+						minimum = types.TenantRoleAdmin
+					}
+					if role.Role.Level() < minimum.Level() {
+						result.Reason = "workspace_role_required"
+						return result, nil
+					}
+				}
+			}
+		}
 		result.Allowed = true
 		result.Reason = "inherit_workspace_authorization"
 		return result, nil
