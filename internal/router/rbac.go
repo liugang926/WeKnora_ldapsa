@@ -459,6 +459,17 @@ func (g *rbacGuards) EditableKBOrAdmin() gin.HandlerFunc {
 	)
 }
 
+func (g *rbacGuards) KBEditOrContributor() gin.HandlerFunc {
+	return middleware.RequireRoleWithGroupEdit(types.TenantRoleContributor, g.cfg,
+		types.GroupResourceTypeKnowledgeBase, middleware.KBIDFromParam("id"), g.groupAccess)
+}
+
+func (g *rbacGuards) KnowledgeKBEditOrContributor() gin.HandlerFunc {
+	return middleware.RequireRoleWithGroupEdit(types.TenantRoleContributor, g.cfg,
+		types.GroupResourceTypeKnowledgeBase,
+		middleware.KBIDFromKnowledgeIDParam("id", g.knowledgeService), g.groupAccess)
+}
+
 // OwnedKBOrAdminFromKbIDParam is the same matrix as OwnedKBOrAdmin but
 // addresses the KB via :kbId (used by /initialization/* routes). KB
 // configuration changes — picking the embedding/parser/storage

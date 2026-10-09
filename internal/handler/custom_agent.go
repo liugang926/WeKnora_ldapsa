@@ -209,6 +209,11 @@ func (h *CustomAgentHandler) GetAgent(c *gin.Context) {
 		return
 	}
 
+	copyOfAgent := *agent
+	agent = &copyOfAgent
+	agent.GroupAccessPermission = projectedGroupPermission(
+		ctx, h.groupAccess, agent.TenantID, types.GroupResourceTypeAgent, agent.ID,
+	)
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"data":    agent,
@@ -296,7 +301,11 @@ func (h *CustomAgentHandler) ListAgents(c *gin.Context) {
 				continue
 			}
 			if permission.Allowed {
-				allowed = append(allowed, agent)
+				copyOfAgent := *agent
+				copyOfAgent.GroupAccessPermission = projectedGroupPermission(
+					ctx, h.groupAccess, agent.TenantID, types.GroupResourceTypeAgent, agent.ID,
+				)
+				allowed = append(allowed, &copyOfAgent)
 			}
 		}
 		agents = allowed

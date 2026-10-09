@@ -266,6 +266,28 @@ func RequireOwnershipOrRoleWithGroupEdit(
 	groupAccess interfaces.GroupAccessService,
 ) gin.HandlerFunc {
 	fallback := RequireOwnershipOrRole(minimumRole, lookup, cfg)
+	return requireRoleWithGroupEdit(fallback, resourceType, resolveResourceID, groupAccess)
+}
+
+// RequireRoleWithGroupEdit permits an explicit restricted-resource edit grant
+// without raising the caller's workspace role. Inherit/disabled mode keeps the
+// historical role floor, and management routes must retain their old guards.
+func RequireRoleWithGroupEdit(
+	minimumRole types.TenantRole,
+	cfg *config.Config,
+	resourceType types.ResourceType,
+	resolveResourceID GroupResourceIDResolver,
+	groupAccess interfaces.GroupAccessService,
+) gin.HandlerFunc {
+	return requireRoleWithGroupEdit(RequireRole(minimumRole, cfg), resourceType, resolveResourceID, groupAccess)
+}
+
+func requireRoleWithGroupEdit(
+	fallback gin.HandlerFunc,
+	resourceType types.ResourceType,
+	resolveResourceID GroupResourceIDResolver,
+	groupAccess interfaces.GroupAccessService,
+) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if groupAccess == nil {
 			fallback(c)

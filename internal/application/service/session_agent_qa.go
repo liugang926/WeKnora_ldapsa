@@ -484,7 +484,7 @@ func (s *sessionService) buildAgentConfig(
 	agentConfig.SearchTargets = searchTargets
 	if !req.SharedAgentReadOnly {
 		roleEnforced := s.cfg != nil && s.cfg.Tenant.IsRBACEnforced()
-		agentConfig.WritableKBIDs = kbWritableIDs(ctx, s.kbShareService, searchTargets, roleEnforced)
+		agentConfig.WritableKBIDs = kbWritableIDs(ctx, s.kbShareService, searchTargets, roleEnforced, s.groupAccess)
 	}
 	agentConfig.QuestionOrigin = questionOriginInTargets(ctx, req.QuestionOrigin, searchTargets)
 	// Document tags are stored in knowledge_tag_relations, so document-KB tag

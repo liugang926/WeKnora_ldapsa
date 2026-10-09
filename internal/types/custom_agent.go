@@ -78,7 +78,8 @@ type CustomAgent struct {
 	// Tenant ID (composite primary key with ID)
 	TenantID uint64 `yaml:"tenant_id" json:"tenant_id" gorm:"primaryKey"`
 	// Created by user ID
-	CreatedBy string `yaml:"created_by" json:"created_by" gorm:"type:varchar(36)"`
+	CreatedBy             string             `yaml:"created_by" json:"created_by" gorm:"type:varchar(36)"`
+	GroupAccessPermission ResourcePermission `yaml:"-" json:"group_access_permission,omitempty" gorm:"-"`
 
 	// Agent configuration
 	Config CustomAgentConfig `yaml:"config" json:"config" gorm:"type:json"`
