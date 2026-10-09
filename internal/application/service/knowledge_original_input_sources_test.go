@@ -14,6 +14,7 @@ import (
 
 	"github.com/Tencent/WeKnora/internal/application/access"
 	"github.com/Tencent/WeKnora/internal/application/repository"
+	"github.com/Tencent/WeKnora/internal/application/service/retriever"
 	"github.com/Tencent/WeKnora/internal/models/chat"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
@@ -41,14 +42,14 @@ func sourceBuildFixture(t *testing.T, pg bool, hooks ...sourceDerivedFixtureHook
 	kb.ExtractConfig = &types.ExtractConfig{Enabled: enabledGraph, Tags: []string{"KNOWS"}, Text: "actual original extraction configuration"}
 	if len(hooks) > 0 && hooks[0].LocalDerived {
 		kb.IndexingStrategy.GraphEnabled = false
-		file := "../../../migrations/sqlite/000068_nextcloud_local_derived_gc.up.sql"
-		if pg {
-			file = "../../../migrations/versioned/000149_nextcloud_local_derived_gc.up.sql"
-		}
-		data, e := os.ReadFile(file)
-		require.NoError(t, e)
-		require.NoError(t, f.db.Exec(string(data)).Error)
 	}
+	file := "../../../migrations/sqlite/000068_nextcloud_local_derived_gc.up.sql"
+	if pg {
+		file = "../../../migrations/versioned/000149_nextcloud_local_derived_gc.up.sql"
+	}
+	data, e := os.ReadFile(file)
+	require.NoError(t, e)
+	require.NoError(t, f.db.Exec(string(data)).Error)
 	require.NoError(t, f.store.UpdateKnowledgeBaseWithInput(repository.WithIndependentKnowledgeInput(f.ctx), &kb))
 	require.NoError(t, f.db.AutoMigrate(&types.DataSource{}, &repository.NextcloudSourcePairing{}))
 	require.NoError(t, f.db.Exec("DROP TABLE nextcloud_source_revisions").Error)
@@ -132,6 +133,11 @@ func sourceBuildFixture(t *testing.T, pg bool, hooks ...sourceDerivedFixtureHook
 	proof, e := f.store.AdmitNextcloudBuildInputs(ctx, []byte("actual downloaded original source artifact"))
 	require.NoError(t, e)
 	ctx = repository.WithKnowledgeBuildInputProof(ctx, f.store, proof)
+	tenant, e := f.s.tenantRepo.GetTenantByID(ctx, 7)
+	require.NoError(t, e)
+	engine, e := retriever.CreateRetrieveEngineForKB(ctx, f.s.retrieveEngine, f.s.ownership, tenant.ID, kb.VectorStoreID)
+	require.NoError(t, e)
+	require.NoError(t, repository.RecordNextcloudDerivedBackendSelection(ctx, engine.SelectedBackendTypes()))
 	directories := repository.NewDirectoryRepository(f.db)
 	sources := repository.NewDataSourceRepository(f.db)
 	publication := access.NewNextcloudPublicationGuard(directories, sources)
