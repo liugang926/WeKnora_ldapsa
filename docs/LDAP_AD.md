@@ -47,6 +47,16 @@ The audit fills the following gaps in the merged implementation:
   direct workspace Admin still loses access when its directory identity pauses.
   Rejected work closes the appropriate processing attempt without publishing
   content; Lite honors the same non-retryable cancellation as Redis workers.
+- Human tasks in inherited KBs recheck their current workspace membership and
+  role after admission. Durable Wiki operations retain each source's identity;
+  a coalesced administrator trigger cannot authorize a revoked source. Mapping,
+  reduction, model calls, finalization and Wiki writes recheck those identities.
+- Restricted resource edit grants also work for workspace Viewers on applicable
+  document/FAQ, batch reparse/tag/folder and agent editing paths. The separate
+  `group_access_permission` response field informs the content UI without
+  changing ownership/share metadata or granting management. Original-file
+  downloads permit the explicit restricted edit grant; group read alone keeps
+  the existing original-file download restriction.
 - Resource previews include bounded, stable pages of workspace users, proposed
   permissions and direct/nested/primary group provenance. In inherited mode the
   preview reports `workspace`, leaving existing ownership/edit rules in force.
@@ -256,6 +266,9 @@ KBs. They retain legacy behavior for inherited KBs and when LDAP is off. For a
 restricted KB, admit new work as an authorized web user; do not replay an old
 anonymous payload to recover a rejected job. This also applies to chained
 summary, question, image, graph, table, tagging and profile stages.
+Wiki operations stored before this patch have no source actor and therefore
+cannot process restricted KBs; re-admit them through an authorized user rather
+than borrowing the identity of the coalesced trigger.
 
 `POST /api/v1/group-access/:resource_type/:resource_id/preview` accepts the
 proposed mode/grants plus `offset` and `limit` query parameters (default 0/100,
