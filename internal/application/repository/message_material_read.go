@@ -205,6 +205,17 @@ func (s *KnowledgeInputProvenanceStore) peekMessageMaterialReadPlanInTx(tx *gorm
 				return nil, err
 			}
 		}
+		consumedGenerated := req.IncludeOriginalUserFields
+		for _, control := range controls {
+			if control.ID == id.ID && control.Role == "assistant" {
+				consumedGenerated = true
+			}
+		}
+		if consumedGenerated {
+			if e := checkUnreceiptedMessageFieldsInTx(tx, id.ID); e != nil {
+				return nil, e
+			}
+		}
 		var fieldParents []struct{ ParentMaterials, SourceLineage string }
 		if tx.Migrator().HasTable("message_generated_field_admissions") {
 			if err := tx.Table("message_generated_field_admissions a").Select("a.parent_materials,a.source_lineage").Joins("JOIN message_generated_field_receipts r ON r.admission_id=a.id AND r.message_id=a.message_id AND r.field=a.field").Where("a.message_id=?", id.ID).Scan(&fieldParents).Error; err != nil {

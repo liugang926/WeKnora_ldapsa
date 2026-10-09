@@ -30,7 +30,7 @@ func faqPostgresActualFixture(t *testing.T) (*knowledgeService, *repository.Know
 		sqlDB, _ := admin.DB()
 		_ = sqlDB.Close()
 	})
-	db, err := gorm.Open(postgres.New(postgres.Config{DSN: dsn + " search_path=" + schema}), &gorm.Config{DisableForeignKeyConstraintWhenMigrating: true})
+	db, err := gorm.Open(postgres.New(postgres.Config{DSN: dsn + " search_path=" + schema + ",public"}), &gorm.Config{DisableForeignKeyConstraintWhenMigrating: true})
 	require.NoError(t, err)
 	t.Cleanup(func() { sqlDB, _ := db.DB(); _ = sqlDB.Close() })
 	require.NoError(t, db.AutoMigrate(&types.KnowledgeBase{}, &types.Knowledge{}, &types.Chunk{}, &types.KnowledgeTag{}, &types.KnowledgeTagRelation{}, &types.Session{}, &types.Message{}, &types.User{}, &types.TenantMember{}, &types.TenantAPIKey{}, &types.Directory{}, &types.DirectoryIdentity{}, &types.DirectoryGroup{}, &types.DirectoryGroupMembership{}, &types.TenantGroupRoleGrant{}, &types.ResourceAccessPolicy{}, &types.ResourceGroupGrant{}))

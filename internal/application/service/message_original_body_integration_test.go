@@ -397,3 +397,38 @@ func TestMessageBodyActualGeneratedFieldSQLite(t *testing.T) {
 func TestPostgresMessageBodyActualGeneratedField(t *testing.T) {
 	runMessageBodyActualGeneratedField(t, true)
 }
+
+func runMessageBodyEmptyGeneratedABA(t *testing.T, pg bool) {
+	for _, field := range []string{"images", "attachments", "rendered_content"} {
+		t.Run(field, func(t *testing.T) {
+			messages, _, _, db, ctx, session, _ := messageBodyIntegrationFixture(t, pg)
+			user, e := messages.CreateMessage(ctx, &types.Message{SessionID: session.ID, RequestID: "actual-empty-generated-" + field, Role: "user", Content: "actual raw author survives unconsumed generated update", IsCompleted: true})
+			require.NoError(t, e)
+			request := types.MessageMaterialReadRequest{TenantID: 7, SessionID: session.ID, MessageIDs: []string{user.ID}, IncludeOriginalUserFields: true}
+			guard, e := messages.beginMessageMaterialRead(ctx, request)
+			require.NoError(t, e)
+			guard.Close()
+			var before any
+			var row map[string]any
+			require.NoError(t, db.Table("messages").Select(field).Where("id=?", user.ID).Take(&row).Error)
+			before = row[field]
+			changed := any("foreign generated rendered")
+			if field == "images" {
+				changed = `[{"url":"https://foreign.invalid/image"}]`
+			} else if field == "attachments" {
+				changed = `[{"name":"foreign attachment"}]`
+			}
+			require.NoError(t, db.Table("messages").Where("id=?", user.ID).Update(field, changed).Error)
+			require.NoError(t, db.Table("messages").Where("id=?", user.ID).Update(field, before).Error)
+			_, e = messages.beginMessageMaterialRead(ctx, request)
+			require.Error(t, e, "selected original generated controls must reject empty ABA")
+			raw := request
+			raw.IncludeOriginalUserFields = false
+			rawGuard, e := messages.beginMessageMaterialRead(ctx, raw)
+			require.NoError(t, e, "raw-user plan did not consume those generated fields")
+			rawGuard.Close()
+		})
+	}
+}
+func TestMessageBodyEmptyGeneratedABASQLite(t *testing.T)   { runMessageBodyEmptyGeneratedABA(t, false) }
+func TestPostgresMessageBodyEmptyGeneratedABA(t *testing.T) { runMessageBodyEmptyGeneratedABA(t, true) }

@@ -756,7 +756,13 @@ func legacyParentMessageBodies(raw string) (string, error) {
 		return "", nil
 	}
 	var snapshots []map[string]json.RawMessage
-	if e := json.Unmarshal([]byte(raw), &snapshots); e != nil {
+	if strings.HasPrefix(strings.TrimSpace(raw), "{") {
+		var snapshot map[string]json.RawMessage
+		if e := json.Unmarshal([]byte(raw), &snapshot); e != nil {
+			return "", e
+		}
+		snapshots = append(snapshots, snapshot)
+	} else if e := json.Unmarshal([]byte(raw), &snapshots); e != nil {
 		return "", e
 	}
 	copies := []json.RawMessage{}

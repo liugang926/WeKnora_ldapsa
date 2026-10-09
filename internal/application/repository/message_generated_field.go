@@ -264,6 +264,9 @@ CREATE TRIGGER message_fork_parent_origins_immutable BEFORE UPDATE OR DELETE ON 
 // Generated checkpoint/render/image material retains every actual original
 // parent proof. Own host-field advancement does not re-certify other parents.
 func (s *KnowledgeInputProvenanceStore) verifyGeneratedMessageFieldsInTx(tx *gorm.DB, message *types.Message) error {
+	if e := checkUnreceiptedMessageFieldsInTx(tx, message.ID); e != nil {
+		return e
+	}
 	var fields []messageGeneratedFieldAdmission
 	if err := tx.Table("message_generated_field_admissions a").Select("a.*").Joins("JOIN message_generated_field_receipts r ON r.admission_id=a.id AND r.message_id=a.message_id AND r.field=a.field").Where("a.message_id=? AND a.session_id=?", message.ID, message.SessionID).Find(&fields).Error; err != nil {
 		return err
@@ -445,4 +448,27 @@ func messageGeneratedFieldProofs(tx *gorm.DB, message string) ([]*types.MessageG
 		proofs = append(proofs, &types.MessageGeneratedFieldProof{AdmissionID: row.ID, Field: row.Field, BodyDigest: row.BodyDigest, Revision: row.FieldRevision, SourceLineage: &source})
 	}
 	return proofs, nil
+}
+
+// A missing generated-field receipt can describe only the untouched field of
+// an actual new generation. Foreign empty -> nonempty -> empty changes cannot
+// become original controls again through a current empty value.
+func checkUnreceiptedMessageFieldsInTx(tx *gorm.DB, messageID string) error {
+	var rows []struct {
+		Field       string
+		Revision    uint64
+		AdmissionID *string
+	}
+	if e := tx.Table("message_generated_field_versions v").Select("v.field,v.revision,r.admission_id").Joins("LEFT JOIN message_generated_field_receipts r ON r.message_id=v.message_id AND r.field=v.field").Where("v.message_id=?", messageID).Find(&rows).Error; e != nil {
+		return e
+	}
+	if len(rows) != 4 {
+		return types.ErrSourceLineageUnknown
+	}
+	for _, row := range rows {
+		if (row.AdmissionID == nil || *row.AdmissionID == "") && row.Revision != 1 {
+			return ErrKnowledgeInputChanged
+		}
+	}
+	return nil
 }
