@@ -333,6 +333,10 @@ func (s *NextcloudGCStore) runOne(ctx context.Context, id string, now time.Time)
 			}
 			return err
 		}
+		if e := gcValidateManualAdmin(ctx, tx, job); e != nil {
+			return e
+		}
+
 		if job.State == "collected" || now.Before(job.NotBefore) || now.Before(job.NextAttemptAt) {
 			return nil
 		}
@@ -521,7 +525,7 @@ func refreshNextcloudGCImageInventory(tx *gorm.DB, job nextcloudGCJob, now time.
 }
 
 // ListStatus returns bounded, tenant-scoped progress with no object locator.
-func (s *NextcloudGCStore) ListStatus(ctx context.Context, tenantID uint64, limit int) ([]NextcloudGCStatus, error) {
+func (s *NextcloudGCStore) ListStatus(ctx context.Context, tenantID uint64, limit int, kbIDs ...string) ([]NextcloudGCStatus, error) {
 	if tenantID == 0 {
 		return nil, errors.New("Nextcloud GC status requires a tenant")
 	}
@@ -529,8 +533,11 @@ func (s *NextcloudGCStore) ListStatus(ctx context.Context, tenantID uint64, limi
 		limit = 100
 	}
 	var jobs []nextcloudGCJob
-	if err := s.db.WithContext(ctx).Where("tenant_id = ?", tenantID).
-		Order("created_at DESC, id DESC").Limit(limit).Find(&jobs).Error; err != nil {
+	query := s.db.WithContext(ctx).Where("tenant_id = ?", tenantID)
+	if len(kbIDs) > 0 && kbIDs[0] != "" {
+		query = query.Where("knowledge_base_id = ?", kbIDs[0])
+	}
+	if err := query.Order("created_at DESC, id DESC").Limit(limit).Find(&jobs).Error; err != nil {
 		return nil, err
 	}
 	status := make([]NextcloudGCStatus, 0, len(jobs))

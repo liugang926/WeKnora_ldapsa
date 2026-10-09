@@ -15,6 +15,7 @@ import DataSourceEditorDialog from './DataSourceEditorDialog.vue'
 import DataSourceSyncLogs from './DataSourceSyncLogs.vue'
 import NextcloudFailedCandidates from './NextcloudFailedCandidates.vue'
 import NextcloudCapacity from './NextcloudCapacity.vue'
+import NextcloudGC from './NextcloudGC.vue'
 import DataSourceTypeIcon from './DataSourceTypeIcon.vue'
 import { useAuthStore } from '@/stores/auth'
 
@@ -200,6 +201,7 @@ onBeforeUnmount(stopPolling)
     </div>
 
     <NextcloudCapacity v-if="canManageDataSource && dataSources.some(ds => ds.type === 'nextcloud')" :kb-id="kbId" />
+    <NextcloudGC v-if="canManageDataSource" :kb-id="kbId" />
 
     <t-loading :loading="loading" size="small" class="ds-list-loading">
       <div

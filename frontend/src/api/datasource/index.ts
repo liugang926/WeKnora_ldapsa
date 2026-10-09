@@ -232,3 +232,29 @@ export async function getNextcloudCapacity(kbId: string): Promise<NextcloudCapac
 export async function setNextcloudCapacity(kbId: string, input: {retention_quota_bytes: number; warning_percent: number; pause_percent: number}) {
   return put(`/api/v1/knowledge-bases/${encodeURIComponent(kbId)}/nextcloud-capacity`, input)
 }
+
+export interface NextcloudGCStatus {
+  id: string; knowledge_base_id: string; knowledge_id: string; reason: string; state: string
+  not_before: string; original_not_before: string; next_attempt_at: string; attempts: number
+  last_error_code: string; pending_items: number; estimated_bytes: number; confirmed_released_bytes: number
+}
+export interface NextcloudGCPreview {
+  status: NextcloudGCStatus
+  items: {kind: string; state: string; count: number; estimated_bytes: number; confirmed_released_bytes: number}[]
+  earliest_collect_at: string; can_request_collection: boolean; collection_checks_repeated: boolean
+}
+export async function listNextcloudGC(kbId: string): Promise<NextcloudGCStatus[]> {
+  const result = await get(`/api/v1/datasource/nextcloud-gc-jobs?knowledge_base_id=${encodeURIComponent(kbId)}`)
+  return result.jobs
+}
+export async function previewNextcloudGC(id: string): Promise<NextcloudGCPreview> {
+  const result = await get(`/api/v1/datasource/nextcloud-gc-jobs/${encodeURIComponent(id)}/preview`)
+  return result.preview
+}
+export async function collectNextcloudGC(id: string): Promise<NextcloudGCPreview> {
+  const result = await post(`/api/v1/datasource/nextcloud-gc-jobs/${encodeURIComponent(id)}/collect`, {})
+  return result.preview
+}
+export async function retryNextcloudGC(id: string) {
+  return post(`/api/v1/datasource/nextcloud-gc-jobs/${encodeURIComponent(id)}/retry`, {})
+}

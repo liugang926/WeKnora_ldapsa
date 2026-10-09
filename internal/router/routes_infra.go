@@ -380,6 +380,8 @@ func RegisterNextcloudGCRoutes(r *gin.RouterGroup, h *handler.NextcloudGCHandler
 	ds := r.Group("/datasource")
 	ds.GET("/nextcloud-gc-jobs", g.Admin(), h.List)
 	ds.POST("/nextcloud-gc-jobs/:id/retry", g.Admin(), h.Retry)
+	ds.GET("/nextcloud-gc-jobs/:id/preview", g.Admin(), h.Preview)
+	ds.POST("/nextcloud-gc-jobs/:id/collect", g.Admin(), h.Collect)
 }
 
 // RegisterWeKnoraCloudRoutes 注册 WeKnoraCloud 初始化路由

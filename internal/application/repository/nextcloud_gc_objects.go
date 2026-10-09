@@ -131,6 +131,10 @@ func (s *NextcloudGCStore) claimObject(ctx context.Context, jobID, kind, ref str
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", jobID).Take(&job).Error; err != nil {
 			return err
 		}
+		if e := gcValidateManualAdmin(ctx, tx, job); e != nil {
+			return e
+		}
+
 		if gcContentScope(job) != gcContentScope(identity) {
 			claim.code = "source_identity_changed"
 			return nil

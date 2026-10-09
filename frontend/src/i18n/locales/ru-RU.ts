@@ -816,6 +816,45 @@ export default {
     pauseFailed: 'Не удалось приостановить',
     logs: 'Журнал',
     actions: 'Действия',
+    gc: {
+      "title": "Retired version cleanup",
+      "description": "Review expiration and cleanup progress. Estimated bytes are separate from confirmed filesystem releases.",
+      "unavailable": "Cleanup status is unavailable or the safety check refused the action. Refresh and inspect the current status.",
+      "empty": "No retained cleanup tasks for this knowledge base.",
+      "unknown": "Unverified",
+      "derivedExpiry": "Derived content expiry",
+      "originalExpiry": "Recovery copy expiry",
+      "estimated": "Estimated bytes",
+      "confirmed": "Confirmed released bytes",
+      "failure": "Reason for deferral",
+      "preview": "Preview inventory",
+      "safety": "An attempt repeats current-version, reference, retention and read/build lease checks. Unknown inventories stay blocked; allocated database pages may remain after row deletion.",
+      "category": "Category",
+      "status": "Status",
+      "count": "Count",
+      "collect": "Attempt collection now",
+      "retry": "Retry on next sweep",
+      "refresh": "Refresh",
+      "reason": {
+        "retired": "Replaced version",
+        "tombstone": "Source withdrawn"
+      },
+      "state": {
+        "pending": "Pending",
+        "retry": "Retry scheduled",
+        "blocked": "Safety check pending",
+        "deleting": "Collecting",
+        "collected": "Recorded items collected"
+      },
+      "kind": {
+        "knowledge": "Knowledge record",
+        "derived_index": "Derived inventory",
+        "chunk": "Chunk",
+        "local_embedding": "Local index",
+        "source_file": "Original copy",
+        "extracted_image": "Extracted image"
+      }
+    },
     capacity: {
       title: "Ёмкость загрузки ИИ",
       description: "При высокой заполненности новые загрузки ИИ приостанавливаются. Оригиналы и актуальные знания сохраняются.",

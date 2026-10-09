@@ -847,6 +847,45 @@ export default {
     pauseFailed: '暂停失败',
     logs: '日志',
     actions: '更多操作',
+    gc: {
+      "title": "旧版本回收",
+      "description": "查看到期时间及清理进度。预计字节和文件系统确认释放字节分别统计。",
+      "unavailable": "回收状态暂不可用或安全检查拒绝操作，请刷新查看当前状态。",
+      "empty": "此知识库暂无待回收任务。",
+      "unknown": "尚未核实",
+      "derivedExpiry": "派生内容到期时间",
+      "originalExpiry": "恢复副本到期时间",
+      "estimated": "预计字节",
+      "confirmed": "确认释放字节",
+      "failure": "暂缓原因",
+      "preview": "预览回收清单",
+      "safety": "每次尝试都会重新检查当前版本、引用、保留期限及读取／构建租约。未知清单继续阻断；删除数据库行不表示分配的磁盘页已释放。",
+      "category": "类别",
+      "status": "状态",
+      "count": "数量",
+      "collect": "立即尝试回收",
+      "retry": "安排下次重试",
+      "refresh": "刷新",
+      "reason": {
+        "retired": "被替换版本",
+        "tombstone": "来源撤回"
+      },
+      "state": {
+        "pending": "待处理",
+        "retry": "等待重试",
+        "blocked": "等待安全检查",
+        "deleting": "清理中",
+        "collected": "记录的对象已清理"
+      },
+      "kind": {
+        "knowledge": "知识记录",
+        "derived_index": "派生清单",
+        "chunk": "分块",
+        "local_embedding": "本地索引",
+        "source_file": "原件副本",
+        "extracted_image": "解析图片"
+      }
+    },
     capacity: {
       title: "AI 入库容量",
       description: "高水位暂停新增 AI 入库，原件上传和有效知识保留。",

@@ -102,6 +102,10 @@ func (s *NextcloudGCStore) deleteClaimedObject(ctx context.Context, jobID, kind,
 		if e = tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id=?", jobID).Take(&job).Error; e != nil {
 			return e
 		}
+		if e := gcValidateManualAdmin(ctx, tx, job); e != nil {
+			return e
+		}
+
 		if gcContentScope(job) != claim.content.Scope || job.State == "collected" || job.NotBefore.UnixMilli() > nowMS || (kind == "source_file" && job.OriginalNotBefore.UnixMilli() > nowMS) {
 			return ErrNextcloudContentLeaseDenied
 		}

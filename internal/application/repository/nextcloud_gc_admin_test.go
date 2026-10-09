@@ -1,0 +1,115 @@
+package repository
+
+import (
+	"context"
+	"encoding/json"
+	filesvc "github.com/Tencent/WeKnora/internal/application/service/file"
+	"github.com/Tencent/WeKnora/internal/types"
+	"github.com/Tencent/WeKnora/internal/types/interfaces"
+	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+)
+
+func gcManualActual(t *testing.T, pg bool) {
+	for _, mode := range []string{"collect", "retention", "no-coverage", "broad-reader", "disabled", "viewer", "api-key", "late-disabled", "cross-tenant", "missing-factory"} {
+		t.Run(mode, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			defer cancel()
+			store, db, jobID, _, path := gcActualObjectFixture(t, pg)
+			require.NoError(t, db.AutoMigrate(&types.User{}, &types.TenantMember{}, &types.ResourceAccessPolicy{}, &types.AuditLog{}))
+			require.NoError(t, db.Create(&types.User{ID: "actual-admin", Username: "actual-admin", Email: "gc@example.test", IsActive: true}).Error)
+			require.NoError(t, db.Create(&types.TenantMember{UserID: "actual-admin", TenantID: 7, Role: types.TenantRoleAdmin, Status: types.TenantMemberStatusActive}).Error)
+			factory := func(tx *gorm.DB) *KnowledgeInputProvenanceStore {
+				actual := NewKnowledgeInputProvenanceStore(tx)
+				ConfigureKnowledgeInputActorGroupAccess(actual, displayTestGroups{db: tx})
+				return actual
+			}
+			actor := factory(db)
+			ConfigureKnowledgeDisplayInputWriters(actor, nil, nil, factory)
+			ctx = types.WithExecutionTenant(ctx, 7)
+			ctx = types.WithCaller(ctx, types.Caller{TenantID: 7, UserID: "actual-admin", Role: types.TenantRoleAdmin})
+			ctx = types.WithPrincipal(ctx, types.Principal{Type: types.PrincipalWebUser, ID: "actual-admin"})
+			if mode == "disabled" {
+				require.NoError(t, db.Model(&types.User{}).Where("id='actual-admin'").Update("is_active", false).Error)
+			}
+			if mode == "viewer" {
+				require.NoError(t, db.Model(&types.TenantMember{}).Where("user_id='actual-admin'").Update("role", types.TenantRoleViewer).Error)
+			}
+			if mode == "api-key" {
+				ctx = types.WithTenantAPIKeyScope(ctx, types.TenantAPIKeyScope{KeyID: 1, FullAccess: true})
+			}
+			if mode == "retention" {
+				require.NoError(t, db.Model(&nextcloudGCJob{}).Where("id=?", jobID).Update("not_before", time.Now().Add(time.Hour)).Error)
+			}
+			if mode == "no-coverage" {
+				require.NoError(t, db.Exec("DELETE FROM nextcloud_content_lease_coverage WHERE tenant_id=7 AND knowledge_base_id='kb'").Error)
+			}
+			if mode == "broad-reader" {
+				lease, e := NewNextcloudContentLeaseStore(db).AcquireKBRead(ctx, 7, "kb", "actual-reader", time.Minute)
+				require.NoError(t, e)
+				defer NewNextcloudContentLeaseStore(db).ReleaseLease(ctx, lease.ID)
+			}
+			if mode == "missing-factory" {
+				actor.displayAuthorityFactory = nil
+			}
+			calls := 0
+			provider := filesvc.NewBackendScopedFileService("backend", filesvc.NewLocalFileService(filepath.Dir(filepath.Dir(filepath.Dir(path))), ""))
+			deleter := provider.(interfaces.NextcloudPhysicalGCDeleter)
+			store.ConfigureLocalDeletePreparation(func(context.Context, *types.StoredResource) (func(context.Context) (bool, error), error) {
+				if mode == "late-disabled" {
+					require.NoError(t, db.Model(&types.User{}).Where("id='actual-admin'").Update("is_active", false).Error)
+				}
+				return func(ioCtx context.Context) (bool, error) {
+					calls++
+					return deleter.DeleteNextcloudObject(ioCtx, "storage://backend/local://7/old/source.txt")
+				}, nil
+			})
+			tenant := uint64(7)
+			if mode == "cross-tenant" {
+				tenant = 8
+			}
+			preview, e := store.PreviewJob(ctx, 7, jobID)
+			require.NoError(t, e)
+			raw, e := json.Marshal(preview)
+			require.NoError(t, e)
+			require.NotContains(t, string(raw), "storage://")
+			require.NotContains(t, string(raw), path)
+			result, e := store.CollectJob(ctx, actor, tenant, jobID)
+			switch mode {
+			case "retention":
+				require.ErrorIs(t, e, ErrNextcloudGCRetention)
+			case "disabled", "viewer", "api-key", "missing-factory":
+				require.ErrorIs(t, e, ErrNextcloudGCAdmin)
+			case "cross-tenant":
+				require.ErrorIs(t, e, ErrNextcloudGCJobUnavailable)
+			default:
+				require.NoError(t, e)
+			}
+			if mode == "collect" {
+				require.Equal(t, 1, calls)
+				_, e = os.Stat(path)
+				require.ErrorIs(t, e, os.ErrNotExist)
+				require.Positive(t, result.Status.ConfirmedReleasedBytes)
+			} else {
+				require.Zero(t, calls)
+				_, e = os.Stat(path)
+				require.NoError(t, e)
+			}
+			var logs []types.AuditLog
+			require.NoError(t, db.Where("target_id=?", jobID).Find(&logs).Error)
+			if mode == "collect" || mode == "no-coverage" || mode == "broad-reader" || mode == "late-disabled" {
+				require.Len(t, logs, 2)
+				require.Equal(t, "actual-admin", logs[0].ActorUserID)
+				require.Equal(t, types.AuditOutcomeAccepted, logs[0].Outcome)
+			} else {
+				require.Empty(t, logs)
+			}
+		})
+	}
+}
+func TestNextcloudGCManualActualSQLite(t *testing.T)   { gcManualActual(t, false) }
+func TestPostgresNextcloudGCManualActual(t *testing.T) { gcManualActual(t, true) }

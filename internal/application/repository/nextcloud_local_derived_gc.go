@@ -279,6 +279,10 @@ func (s *NextcloudGCStore) runLocalDerived(ctx context.Context, id string, now t
 		if e = tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id=?", id).Take(&job).Error; e != nil {
 			return e
 		}
+		if e := gcValidateManualAdmin(ctx, tx, job); e != nil {
+			return e
+		}
+
 		if gcContentScope(job) != gcContentScope(identity) || job.NotBefore.UnixMilli() > nowMS {
 			return ErrNextcloudContentLeaseDenied
 		}
