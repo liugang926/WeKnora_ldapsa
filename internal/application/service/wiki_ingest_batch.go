@@ -545,11 +545,11 @@ func (s *wikiIngestService) ProcessWikiIngest(ctx context.Context, t *asynq.Task
 			result, updates, err := s.mapOneDocument(mapCtx, chatModel, payload, op, batchCtx)
 			if err != nil {
 				if errors.Is(err, ErrResourceAccessDenied) {
-					if rejectErr := s.rejectWikiOp(mapCtx, payload, op); rejectErr == nil {
+					rejectErr := s.rejectWikiOp(mapCtx, payload, op)
+					if rejectErr == nil {
 						return nil
-					} else {
-						err = rejectErr
 					}
+					err = rejectErr
 				}
 				mapMu.Lock()
 				ingestFailed++
