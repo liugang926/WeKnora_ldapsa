@@ -1,0 +1,437 @@
+{
+  "recorded_utc": "2026-10-09T03:44:54Z",
+  "module": "original SQL body lifecycle and selected job GC",
+  "base": "874b86c053e04a7cb6d34301b22608d701cd4d14",
+  "production_source": "bbb9351d87f401d78117c152e5a913e6be823529",
+  "offline_cli_test_source": "1def06d21dbed0f5c97dc74ad883731218b6c5c8",
+  "import_chain": [
+    "9e2ec82f",
+    "dd5433b9",
+    "bbb9351d87f401d78117c152e5a913e6be823529",
+    "1def06d21dbed0f5c97dc74ad883731218b6c5c8"
+  ],
+  "gc_dependency_original_head": "149b2a9f461c7fd95c6f17fbc944c8549a1b453e",
+  "gc_dependency_already_on_root": "reuse existing GC chain; do not cherry-pick the body tree GC copies",
+  "migrations": {
+    "postgres": 152,
+    "sqlite": 71,
+    "global_lease_coverage_inserted": false
+  },
+  "source_mount": {
+    "source": "/Users/abner/My_Project/ai-server/.wk-original-body-retention-20261009",
+    "destination": "/workspace",
+    "read_only": true
+  },
+  "isolation": {
+    "nonce_owner": "body-retention-20261009-f27b",
+    "network": "weknora-body-retention-20261009-f27b",
+    "internal": true,
+    "host_ports": [],
+    "limits_per_container": {
+      "cpus": 1,
+      "memory_bytes": 2147483648
+    },
+    "final_go_environment": {
+      "GOMAXPROCS": "1",
+      "GOMEMLIMIT": "384MiB",
+      "GOGC": "20"
+    },
+    "caches_preserved": [
+      "weknora-go-mod",
+      "weknora-go-build"
+    ]
+  },
+  "final_validation": {
+    "compile": {
+      "source": "bbb9351d87f401d78117c152e5a913e6be823529",
+      "command": "go test -p 1 -tags sqlite_fts5 ./... -run '^$' -timeout=180s",
+      "exit_code": 0,
+      "log": "original-body-retention-20261009-logs/body-retention-f27b-r28-ro-compile.log",
+      "anydoc": "stub build; normal anydoc image build belongs to the combined app gate"
+    },
+    "suite": {
+      "source": "bbb9351d87f401d78117c152e5a913e6be823529",
+      "exit_code": 0,
+      "leaf_tests_passed": 67,
+      "packages": [
+        {
+          "Time": "2026-10-09T03:37:20.482758667Z",
+          "Action": "pass",
+          "Package": "github.com/Tencent/WeKnora/internal/application/repository",
+          "Elapsed": 10.042
+        },
+        {
+          "Time": "2026-10-09T03:37:38.182407092Z",
+          "Action": "pass",
+          "Package": "github.com/Tencent/WeKnora/internal/application/service",
+          "Elapsed": 7.793
+        }
+      ],
+      "log": "original-body-retention-20261009-logs/body-retention-f27b-r29-final-suite.jsonl"
+    },
+    "sqlite_backend": "embedded SQLite with sqlite_fts5; system libsqlite3 in the Go image lacks contentless_delete",
+    "postgres_backend": "actual disposable PostgreSQL 16; local pipeline vector rows use TEXT storage, not native halfvec",
+    "cli_build": {
+      "source": "bbb9351d87f401d78117c152e5a913e6be823529",
+      "exit_code": 0,
+      "mode": "actual built offline executable"
+    },
+    "cli_fresh_sqlite": {
+      "source": "bbb9351d87f401d78117c152e5a913e6be823529",
+      "actual_migrator": "complete repository SQLite chain 0 -> 71",
+      "exit_code": 0,
+      "modes": [
+        "migrate",
+        "verify rejects before init",
+        "init",
+        "verify",
+        "repeated init rejects",
+        "reconcile empty anchor"
+      ]
+    },
+    "cli_restore": {
+      "test_source": "1def06d21dbed0f5c97dc74ad883731218b6c5c8",
+      "binary_production_source": "bbb9351d87f401d78117c152e5a913e6be823529",
+      "exit_code": 0,
+      "actual_nonempty_replays": [
+        {
+          "Time": "2026-10-09T03:44:53.793063293Z",
+          "Action": "output",
+          "Package": "github.com/Tencent/WeKnora/internal/application/repository",
+          "Test": "TestOriginalBodyFullDatabaseRollbackSQLite",
+          "Output": "    original_body_protocol_test.go:313: offline CLI sqlite whole database/schema restore replayed=3\n"
+        },
+        {
+          "Time": "2026-10-09T03:44:53.795986085Z",
+          "Action": "pass",
+          "Package": "github.com/Tencent/WeKnora/internal/application/repository",
+          "Test": "TestOriginalBodyFullDatabaseRollbackSQLite",
+          "Elapsed": 0.49
+        },
+        {
+          "Time": "2026-10-09T03:44:54.451299752Z",
+          "Action": "output",
+          "Package": "github.com/Tencent/WeKnora/internal/application/repository",
+          "Test": "TestPostgresOriginalBodyFullSchemaRollback",
+          "Output": "    original_body_protocol_test.go:313: offline CLI postgres whole database/schema restore replayed=3\n"
+        },
+        {
+          "Time": "2026-10-09T03:44:54.505010002Z",
+          "Action": "pass",
+          "Package": "github.com/Tencent/WeKnora/internal/application/repository",
+          "Test": "TestPostgresOriginalBodyFullSchemaRollback",
+          "Elapsed": 0.71
+        },
+        {
+          "Time": "2026-10-09T03:44:54.511746919Z",
+          "Action": "pass",
+          "Package": "github.com/Tencent/WeKnora/internal/application/repository",
+          "Elapsed": 1.572
+        }
+      ],
+      "sqlite": "entire isolated file snapshot restored",
+      "postgres": "every table in the isolated schema restored; migrated triggers preserved; not a production instance pg_dump restore"
+    },
+    "actual_producers": [
+      "CaptureKnowledgeAutoTagInputs with actual body digest capture",
+      "SpanTracker OpenAttempt/BeginStage/EndSpan with original and output body previews",
+      "WithDerivedFAQInput -> BeginFAQInput immutable session (no claim of a complete FAQ entry or asynchronous import output producer in this test)"
+    ],
+    "verified_cases": [
+      "shared two incoming owners",
+      "actual read/build lease retention",
+      "exact metadata.manual.content leaf purge with datasource/external/current pointers preserved",
+      "DB-clock 1-hour ordinary window",
+      "24-hour failed closed source window",
+      "retry/pending subtask retained",
+      "source unavailable retained",
+      "confirmed tombstone immediate body window",
+      "recorded whole-binding withdrawal with retired fence",
+      "selected job only/current admin refreshed/scoped coverage required",
+      "DB ACK failure followed by external journal replay",
+      "entire SQLite and isolated PostgreSQL schema data restore rejects current ownership then independently closed ownership replays",
+      "only inline body restored through exact rewrite guard without semantic revision or receipt changes is rejected by independent body validation",
+      "bounded scan fairness",
+      "foreign sequence-zero UUID rejected",
+      "existing admin GC and original resource recovery guards retained"
+    ]
+  },
+  "failure_attempts": [
+    {
+      "attempt": "r01",
+      "exit_code": 1,
+      "reason": "initial SQLite pointer JSON and PostgreSQL inherited DB-clock arguments"
+    },
+    {
+      "attempt": "r02",
+      "exit_code": 1,
+      "reason": "diagnostic run reproduced initial failures"
+    },
+    {
+      "attempt": "r04",
+      "exit_code": 1,
+      "reason": "test closure boundary and PostgreSQL simple-protocol JSON fixture"
+    },
+    {
+      "attempt": "r05",
+      "exit_code": 1,
+      "reason": "test reused struct primary key"
+    },
+    {
+      "attempt": "r06",
+      "exit_code": 1,
+      "reason": "PostgreSQL schema presence check inherited active query and missed purged head"
+    },
+    {
+      "attempt": "r07",
+      "exit_code": 1,
+      "reason": "test unused ctx compile failure"
+    },
+    {
+      "attempt": "r10",
+      "exit_code": 1,
+      "reason": "selected fixture reused struct primary key"
+    },
+    {
+      "attempt": "r11",
+      "exit_code": 1,
+      "reason": "service compiler killed under 2 GiB during concurrent own compile/test; failed compile stopped and preserved"
+    },
+    {
+      "attempt": "r17",
+      "exit_code": 1,
+      "reason": "selected tests asserted old count before scoped legacy inline inventory"
+    },
+    {
+      "attempt": "r18",
+      "exit_code": 1,
+      "reason": "actual span fixture lacked original span migration/root"
+    },
+    {
+      "attempt": "r19",
+      "exit_code": 1,
+      "reason": "original span correctly rejected rootless stage"
+    },
+    {
+      "attempt": "r20",
+      "exit_code": 1,
+      "reason": "service compiler killed under 2 GiB; lower heap/GC setting used after code/test repair"
+    },
+    {
+      "attempt": "r21",
+      "exit_code": 1,
+      "reason": "scalar Count callback reflected as entity; fixed scalar guard"
+    },
+    {
+      "attempt": "r22",
+      "exit_code": 1,
+      "reason": "auto-tag fixture needed genuine captured body proof"
+    },
+    {
+      "attempt": "r23",
+      "exit_code": 1,
+      "reason": "new FAQ table triggers added after fixture rewrite installation"
+    },
+    {
+      "attempt": "r24",
+      "exit_code": 1,
+      "reason": "default SQLite lacked FTS5; body item kind incompatible with old GC CHECK"
+    },
+    {
+      "attempt": "r25",
+      "exit_code": 1,
+      "reason": "system SQLite lacked contentless_delete; PostgreSQL test coerced empty string into JSON"
+    },
+    {
+      "attempt": "r26",
+      "exit_code": 1,
+      "reason": "system SQLite limitation; detected resurrection body error did not mark job blocked"
+    }
+  ],
+  "limits": [
+    "No shared runtime was modified or global coverage activated.",
+    "The combined application with 150/151 producer and history integrations must still run its own startup and recovery gate.",
+    "Full PostgreSQL migration from zero and a normal Docker image build were not executed by this isolated body module; the code packages the CLI in docker/Dockerfile.app.",
+    "Unknown historic, external search/Neo4j, Wiki, and backup copies remain independent blockers; absence of SQL rows is not complete deletion evidence.",
+    "Current/shared/unknown ownership remains retained; a collected UI job is not proof of all body copies or disk release.",
+    "Metadata/audit 90-day deadlines are recorded; this module does not claim to implement a metadata-expiry scheduler."
+  ],
+  "cleanup": {
+    "status": "complete",
+    "owned_go_rw_container": "weknora-body-go-20261009-f27b removed before readonly final run",
+    "owned_final_go_container": "weknora-body-go-ro-20261009-f27b removed after all terminal results",
+    "owned_pg_container": "weknora-body-pg-20261009-f27b removed with exact attached anonymous data volume",
+    "owned_pg_data_volume": "b7dda72a317c346fc27e7e2f74b7e297269f27d06be0c664d34e0cf51e152032",
+    "owned_network": "weknora-body-retention-20261009-f27b removed",
+    "before_removal_non_system_pg_schemas": [
+      "public"
+    ],
+    "caches_preserved": [
+      "weknora-go-mod",
+      "weknora-go-build"
+    ],
+    "shared_resources_touched": false
+  },
+  "logs": [
+    {
+      "path": "docs/evidence/original-body-retention-20261009-logs/body-retention-f27b-r02.log",
+      "sha256": "8ef55d8fe543566233d3f05f92e608ca79bba55290ebd39204e34203780b35a7",
+      "bytes": 70230
+    },
+    {
+      "path": "docs/evidence/original-body-retention-20261009-logs/body-retention-f27b-r03.log",
+      "sha256": "a30abfa286a14c019320df8676564301e40d53bd4a8f379aec2edc7afe4504f0",
+      "bytes": 68
+    },
+    {
+      "path": "docs/evidence/original-body-retention-20261009-logs/body-retention-f27b-r04.log",
+      "sha256": "4b4a730c6af76cc0ec2354ebe8657d031d020133d446ee2c78fab1fc9f620298",
+      "bytes": 2509
+    },
+    {
+      "path": "docs/evidence/original-body-retention-20261009-logs/body-retention-f27b-r05.log",
+      "sha256": "ba6c0b3bfcf91e2aec9754968a41442451f51415f885b173fb4e648d137c3bc6",
+      "bytes": 1387
+    },
+    {
+      "path": "docs/evidence/original-body-retention-20261009-logs/body-retention-f27b-r06.log",
+      "sha256": "68fe8c2b9adf3f0867030d25562bf656f078f235398cc6c08f2cf0709043b513",
+      "bytes": 719
+    },
+    {
+      "path": "docs/evidence/original-body-retention-20261009-logs/body-retention-f27b-r07.log",
+      "sha256": "23a8a8c8633e9c1d6555a38144f87414f6614fc143f4a58bab868c5b7cd60720",
+      "bytes": 308
+    },
+    {
+      "path": "docs/evidence/original-body-retention-20261009-logs/body-retention-f27b-r08.log",
+      "sha256": "33349957fe9107689ca7cae0ff29d54e5156af6a2d0232a289d27ed0c7d8fb10",
+      "bytes": 71
+    },
+    {
+      "path": "docs/evidence/original-body-retention-20261009-logs/body-retention-f27b-r09.log",
+      "sha256": "cf44ed12dacfd6759e700018c95de5af898835722e0fbde23d1f1fe4907b97cb",
+      "bytes": 139
+    },
+    {
+      "path": "docs/evidence/original-body-retention-20261009-logs/body-retention-f27b-r10.log",
+      "sha256": "04da4c73f905cda173ae41288412af94f24b6646646e309aac1fe5c636b5cf9d",
+      "bytes": 31889
+    },
+    {
+      "path": "docs/evidence/original-body-retention-20261009-logs/body-retention-f27b-r11-compile.log",
+      "sha256": "78a20aa552907c0f8cb7f1c4f0ba46b03e73ab71d645a4339120029cf261713b",
+      "bytes": 3022
+    },
+    {
+      "path": "docs/evidence/original-body-retention-20261009-logs/body-retention-f27b-r12.log",
+      "sha256": "1300c7f9134ed0cd6db960e198f5ef362be50573b4ab885e6530d1ff6f067ffe",
+      "bytes": 140
+    },
+    {
+      "path": "docs/evidence/original-body-retention-20261009-logs/body-retention-f27b-r13-cli-build.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "docs/evidence/original-body-retention-20261009-logs/body-retention-f27b-r14-cli-migrate.log",
+      "sha256": "c73b11c0f933ae5f7d5f127e18d1a3e8e2fc875c51fd706501aea2552b9d78d4",
+      "bytes": 519
+    },
+    {
+      "path": "docs/evidence/original-body-retention-20261009-logs/body-retention-f27b-r15-cli-protocol.log",
+      "sha256": "db88fe70735dfcb90e1ee0865d14d26d68dd87622400a92ceb333bd5ce5c6a53",
+      "bytes": 309
+    },
+    {
+      "path": "docs/evidence/original-body-retention-20261009-logs/body-retention-f27b-r16-ro-compile.log",
+      "sha256": "2e9f8a2bf9ffead07e2f4a327ea2792ca343ce58b0249f65db503eb36f2bb340",
+      "bytes": 12987
+    },
+    {
+      "path": "docs/evidence/original-body-retention-20261009-logs/body-retention-f27b-r17-audit-module.log",
+      "sha256": "28973bf43155a27492ea0f5d0236eaf3a0b58fc93387076746ee3e74422cfaac",
+      "bytes": 45893
+    },
+    {
+      "path": "docs/evidence/original-body-retention-20261009-logs/body-retention-f27b-r18-actual-pipeline.log",
+      "sha256": "73470522dc4ef47bb0f35fe665b4e9bc2052554bac95d56a11d0f98c66142b2b",
+      "bytes": 4050
+    },
+    {
+      "path": "docs/evidence/original-body-retention-20261009-logs/body-retention-f27b-r19-actual-pipeline.log",
+      "sha256": "16e7bb1a4efdae8a92d9bf565f7fde734b92013da9b272bf19fa3e3f37239c12",
+      "bytes": 4050
+    },
+    {
+      "path": "docs/evidence/original-body-retention-20261009-logs/body-retention-f27b-r20-actual-pipeline.log",
+      "sha256": "a78b9c7091550f205d1186daf8304a4efe1eab9b12fc91f369dfc9426f10db73",
+      "bytes": 197
+    },
+    {
+      "path": "docs/evidence/original-body-retention-20261009-logs/body-retention-f27b-r21-actual-pipeline.log",
+      "sha256": "3d8aa001cf9a765ed9b84fdf64a7c99ecb83391a4b1c948cc1e3343e3af2dc30",
+      "bytes": 4309
+    },
+    {
+      "path": "docs/evidence/original-body-retention-20261009-logs/body-retention-f27b-r22-actual-pipeline.log",
+      "sha256": "fdacbc73dc4941fd44e4995b68bfe0fb5c7dc74e9e1d749272da966a0b8aea26",
+      "bytes": 12310
+    },
+    {
+      "path": "docs/evidence/original-body-retention-20261009-logs/body-retention-f27b-r23-actual-pipeline.log",
+      "sha256": "d386367b82588888124c70c4e30c543499f062fd3b91385bdcbeee362b621fd4",
+      "bytes": 3322
+    },
+    {
+      "path": "docs/evidence/original-body-retention-20261009-logs/body-retention-f27b-r24-actual-pipeline.log",
+      "sha256": "419d113e7283b45150dac0412e2f1e3ed037bb90c5ca40431a6e2da20b6618fb",
+      "bytes": 3650
+    },
+    {
+      "path": "docs/evidence/original-body-retention-20261009-logs/body-retention-f27b-r25-all-body.log",
+      "sha256": "824c431d30d697f39f2ce724fba4cce16ade2960eda5959c77a172e1be9e51ab",
+      "bytes": 3891
+    },
+    {
+      "path": "docs/evidence/original-body-retention-20261009-logs/body-retention-f27b-r26-all-body.log",
+      "sha256": "2471637d990271ddb3bed57c28506b1cbc664c51600e6acd51eb658ba2b89563",
+      "bytes": 3458
+    },
+    {
+      "path": "docs/evidence/original-body-retention-20261009-logs/body-retention-f27b-r27-all-body.log",
+      "sha256": "2a04bcfd759a138eb36812ec421c5538bc89412a3eb1f9a4731eb94d467c05a9",
+      "bytes": 139
+    },
+    {
+      "path": "docs/evidence/original-body-retention-20261009-logs/body-retention-f27b-r28-ro-compile.log",
+      "sha256": "2e59fc74ddced47ead39b5cb22dbcc030e252409eb8ce3dcb380dcaa3f4d15b3",
+      "bytes": 12947
+    },
+    {
+      "path": "docs/evidence/original-body-retention-20261009-logs/body-retention-f27b-r29-final-suite.jsonl",
+      "sha256": "f7e1613f8a2bbbc5df01f6af56b88093fb729d0f1d695225fe9289133e286e8a",
+      "bytes": 236751
+    },
+    {
+      "path": "docs/evidence/original-body-retention-20261009-logs/body-retention-f27b-r30-cli-build.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "docs/evidence/original-body-retention-20261009-logs/body-retention-f27b-r31-cli-migrate.log",
+      "sha256": "2897c837424a92af20965953e4731bcb460bdb70cb0ba5081134e85230c6a3b4",
+      "bytes": 519
+    },
+    {
+      "path": "docs/evidence/original-body-retention-20261009-logs/body-retention-f27b-r32-cli-protocol.log",
+      "sha256": "db88fe70735dfcb90e1ee0865d14d26d68dd87622400a92ceb333bd5ce5c6a53",
+      "bytes": 309
+    },
+    {
+      "path": "docs/evidence/original-body-retention-20261009-logs/body-retention-f27b-r33-cli-restore.jsonl",
+      "sha256": "c9d12c35708cdab1c13e4eda3b6c148b396c6fb9d5334229d9c35c0e0291706c",
+      "bytes": 2999
+    }
+  ]
+}
