@@ -66,7 +66,7 @@ func TestBackgroundTaskAuthorizationFailsClosedWithoutHuman(t *testing.T) {
 	err := svc.revalidateBackgroundKBAccess(ctx, 7, "kb-1", types.ResourceActionEdit)
 
 	require.ErrorIs(t, err, ErrResourceAccessDenied)
-	require.False(t, access.seenPrincipal.Valid())
+	require.NotEqual(t, types.PrincipalWebUser, access.seenPrincipal.Type)
 	require.Equal(t, uint64(7), access.seenCaller.TenantID)
 }
 
@@ -87,7 +87,7 @@ func TestBackgroundTaskAuthorizationPreservesLegacyWhenDirectoryDisabled(t *test
 	require.NoError(t, svc.revalidateBackgroundKBAccess(
 		ctx, 7, "kb-1", types.ResourceActionEdit,
 	))
-	require.False(t, access.seenPrincipal.Valid())
+	require.NotEqual(t, types.PrincipalWebUser, access.seenPrincipal.Type)
 }
 
 func TestUserTriggeredKnowledgeWorkersRevalidateGroupAccess(t *testing.T) {
@@ -98,6 +98,45 @@ func TestUserTriggeredKnowledgeWorkersRevalidateGroupAccess(t *testing.T) {
 		require.NoError(t, err)
 		return asynq.NewTask(taskType, raw)
 	}
+	for _, taskType := range []string{types.TypeDocumentProcess, types.TypeManualProcess} {
+		t.Run(taskType, func(t *testing.T) {
+			f := newDocumentWriteFixture(t)
+			groupAccess := &tagTargetGroupAccessService{allowed: map[string]bool{}}
+			f.svc.groupAccess = groupAccess
+			require.NoError(t, f.db.Model(&types.Knowledge{}).Where("id = ?", "doc").
+				Update("parse_status", types.ParseStatusPending).Error)
+			task := marshalTask(t, taskType, types.DocumentProcessPayload{
+				TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: "doc", Initiator: initiator,
+			})
+			var err error
+			if taskType == types.TypeDocumentProcess {
+				err = f.svc.ProcessDocument(context.Background(), task)
+			} else {
+				err = f.svc.ProcessManualUpdate(context.Background(), task)
+			}
+			require.ErrorIs(t, err, asynq.SkipRetry)
+			require.Zero(t, f.chunkRepo.writes)
+			require.Zero(t, f.graph.calls)
+			row, err := f.repo.GetKnowledgeByID(context.Background(), 7, "doc")
+			require.NoError(t, err)
+			require.Equal(t, types.ParseStatusFailed, row.ParseStatus)
+		})
+	}
+	t.Run("FAQ import", func(t *testing.T) {
+		f := newDocumentWriteFixture(t)
+		f.kbs.values["kb"].Type = types.KnowledgeBaseTypeFAQ
+		f.svc.groupAccess = &tagTargetGroupAccessService{allowed: map[string]bool{}}
+		require.NoError(t, f.db.Model(&types.Knowledge{}).Where("id = ?", "doc").
+			Updates(map[string]any{"type": types.KnowledgeTypeFAQ, "parse_status": types.ParseStatusPending}).Error)
+		err := f.svc.ProcessFAQImport(context.Background(), marshalTask(t, types.TypeFAQImport, types.FAQImportPayload{
+			TenantID: 7, KBID: "kb", KnowledgeID: "doc", Initiator: initiator,
+		}))
+		require.ErrorIs(t, err, asynq.SkipRetry)
+		require.Zero(t, f.chunkRepo.writes)
+		row, err := f.repo.GetKnowledgeByID(context.Background(), 7, "doc")
+		require.NoError(t, err)
+		require.Equal(t, types.ParseStatusFailed, row.ParseStatus)
+	})
 
 	t.Run("clone", func(t *testing.T) {
 		f := transferFixture(t, access.KBTransferClone)
@@ -159,4 +198,52 @@ func TestUserTriggeredKnowledgeWorkersRevalidateGroupAccess(t *testing.T) {
 		require.Zero(t, f.repo.writes)
 		require.Equal(t, []string{"kb"}, groupAccess.calls)
 	})
+}
+
+func TestRevokedOldProcessingTaskDoesNotFailNewSource(t *testing.T) {
+	for _, taskType := range []string{types.TypeDocumentProcess, types.TypeManualProcess} {
+		t.Run(taskType, func(t *testing.T) {
+			f := newDocumentWriteFixture(t)
+			access := &tagTargetGroupAccessService{allowed: map[string]bool{}}
+			f.svc.groupAccess = access
+			row, err := f.repo.GetKnowledgeByID(context.Background(), 7, "doc")
+			require.NoError(t, err)
+			row.ParseStatus = types.ParseStatusPending
+			row.FilePath = "new-file.pdf"
+			require.NoError(t, row.SetManualMetadata(types.NewManualKnowledgeMetadata("new", "publish", 2)))
+			require.NoError(t, f.repo.UpdateKnowledge(context.Background(), row))
+			var payload any = types.DocumentProcessPayload{
+				TenantID: 7, KnowledgeID: "doc", KnowledgeBaseID: "kb", FilePath: "old-file.pdf",
+			}
+			if taskType == types.TypeManualProcess {
+				payload = types.ManualProcessPayload{
+					TenantID: 7, KnowledgeID: "doc", KnowledgeBaseID: "kb", ContentVersion: 1, Content: "old",
+				}
+			}
+			raw, err := json.Marshal(payload)
+			require.NoError(t, err)
+			task := asynq.NewTask(taskType, raw)
+			if taskType == types.TypeDocumentProcess {
+				err = f.svc.ProcessDocument(context.Background(), task)
+			} else {
+				err = f.svc.ProcessManualUpdate(context.Background(), task)
+			}
+			require.NoError(t, err)
+			require.Empty(t, access.calls)
+			row, err = f.repo.GetKnowledgeByID(context.Background(), 7, "doc")
+			require.NoError(t, err)
+			require.Equal(t, types.ParseStatusPending, row.ParseStatus)
+			if taskType == types.TypeManualProcess {
+				legacyPayload, err := json.Marshal(types.ManualProcessPayload{
+					TenantID: 7, KnowledgeID: "doc", KnowledgeBaseID: "kb", Content: "old",
+				})
+				require.NoError(t, err)
+				err = f.svc.ProcessManualUpdate(context.Background(), asynq.NewTask(taskType, legacyPayload))
+				require.ErrorIs(t, err, asynq.SkipRetry)
+				row, err = f.repo.GetKnowledgeByID(context.Background(), 7, "doc")
+				require.NoError(t, err)
+				require.Equal(t, types.ParseStatusPending, row.ParseStatus)
+			}
+		})
+	}
 }

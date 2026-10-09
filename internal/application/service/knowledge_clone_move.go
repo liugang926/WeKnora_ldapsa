@@ -1531,6 +1531,8 @@ func (s *knowledgeService) enqueueMovedKnowledge(
 			Language:                 lang,
 		}
 
+		taskPayload.Initiator = types.TaskInitiatorFromContext(ctx)
+
 		langfuse.InjectTracing(ctx, &taskPayload)
 		payloadBytes, err := json.Marshal(taskPayload)
 		if err != nil {

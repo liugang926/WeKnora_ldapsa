@@ -593,7 +593,7 @@ func (s *DataSourceService) ProcessSync(ctx context.Context, task *asynq.Task) e
 		logger.Errorf(ctx, "failed to unmarshal sync payload: %v", err)
 		return err
 	}
-	ctx = payload.Initiator.Apply(ctx)
+	ctx = types.WithTaskAuthorization(ctx, payload.TenantID, payload.Initiator)
 	taskID, _ := asynq.GetTaskID(ctx)
 	ctx = withKBActivityTask(ctx, taskID, payload.Trigger)
 
@@ -613,6 +613,9 @@ func (s *DataSourceService) ProcessSync(ctx context.Context, task *asynq.Task) e
 	}
 
 	// Get sync log
+	if ds == nil || ds.TenantID != payload.TenantID {
+		return fmt.Errorf("data source task tenant binding changed: %w", asynq.SkipRetry)
+	}
 	syncLog, err := s.syncLogRepo.FindByID(ctx, payload.SyncLogID)
 	if err != nil {
 		logger.Errorf(ctx, "failed to get sync log: %v", err)
@@ -630,6 +633,19 @@ func (s *DataSourceService) ProcessSync(ctx context.Context, task *asynq.Task) e
 		return nil
 	}
 
+	if knowledge, ok := s.knowledgeService.(*knowledgeService); ok {
+		if err := knowledge.revalidateBackgroundKBAccess(ctx, ds.TenantID, ds.KnowledgeBaseID,
+			types.ResourceActionEdit); err != nil {
+			if errors.Is(err, ErrResourceAccessDenied) {
+				syncLog.Status = types.SyncLogStatusFailed
+				syncLog.FinishedAt = timePtr(time.Now().UTC())
+				syncLog.ErrorMessage = "processing permission revoked"
+				_ = s.syncLogRepo.Update(ctx, syncLog)
+				return fmt.Errorf("data source processing authorization revoked: %w", asynq.SkipRetry)
+			}
+			return err
+		}
+	}
 	ctx, err = access.WithKBTaskWrite(ctx, kb, ds.TenantID)
 	if err != nil {
 		return fmt.Errorf("%w: data source KB does not belong to its tenant", asynq.SkipRetry)

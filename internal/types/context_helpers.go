@@ -138,6 +138,10 @@ func TaskInitiatorFromContext(ctx context.Context) TaskInitiator {
 	if !ok || IsSyntheticUserID(userID) {
 		return initiator
 	}
+	principal, ok := PrincipalFromContext(ctx)
+	if !ok || principal.Type != PrincipalWebUser || principal.ID != userID {
+		return initiator
+	}
 	initiator.UserID = userID
 	initiator.Role = TenantRoleFromContext(ctx)
 	// System-admin authority is meaningful only for an authenticated human.

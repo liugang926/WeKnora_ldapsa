@@ -235,6 +235,8 @@ func (s *knowledgeService) CreateKnowledgeFromFile(ctx context.Context,
 		Language:                 lang,
 	}
 
+	taskPayload.Initiator = types.TaskInitiatorFromContext(ctx)
+
 	langfuse.InjectTracing(ctx, &taskPayload)
 	payloadBytes, err := json.Marshal(taskPayload)
 	if err != nil {
@@ -430,6 +432,8 @@ func (s *knowledgeService) CreateKnowledgeFromURL(ctx context.Context,
 		QuestionCount:            questionCount,
 		Language:                 lang,
 	}
+
+	taskPayload.Initiator = types.TaskInitiatorFromContext(ctx)
 
 	langfuse.InjectTracing(ctx, &taskPayload)
 	payloadBytes, err := json.Marshal(taskPayload)
@@ -674,6 +678,8 @@ func (s *knowledgeService) createKnowledgeFromFileURL(
 		QuestionCount:            questionCount,
 		Language:                 lang,
 	}
+
+	taskPayload.Initiator = types.TaskInitiatorFromContext(ctx)
 
 	langfuse.InjectTracing(ctx, &taskPayload)
 	payloadBytes, err := json.Marshal(taskPayload)
@@ -952,6 +958,8 @@ func (s *knowledgeService) createKnowledgeFromPassageInternal(ctx context.Contex
 			Language:                 lang,
 		}
 
+		taskPayload.Initiator = types.TaskInitiatorFromContext(ctx)
+
 		langfuse.InjectTracing(ctx, &taskPayload)
 		payloadBytes, err := json.Marshal(taskPayload)
 		if err != nil {
@@ -1131,6 +1139,16 @@ func (s *knowledgeService) enqueueManualProcessing(ctx context.Context,
 		Content:         content,
 		NeedCleanup:     needCleanup,
 	}
+	if meta, err := knowledge.ManualMetadata(); err == nil && meta != nil {
+		payload.ContentVersion = meta.Version
+	}
+	payload.Attempt = attemptFromCtx(ctx)
+	if payload.Attempt <= 0 {
+		if span, n, err := s.tracker().OpenAttempt(ctx, knowledge.ID, ""); err == nil && span != nil {
+			payload.Attempt = n
+		}
+	}
+	payload.Initiator = types.TaskInitiatorFromContext(ctx)
 	langfuse.InjectTracing(ctx, &payload)
 	payloadBytes, err := json.Marshal(payload)
 	if err != nil {

@@ -460,6 +460,17 @@ func (s *knowledgeService) isKnowledgeAborted(
 	if knowledge == nil {
 		return true, types.ParseStatusDeleting
 	}
+	if types.IsBackgroundTask(ctx) {
+		if err := s.revalidateBackgroundKBAccess(
+			ctx, tenantID, knowledge.KnowledgeBaseID, types.ResourceActionEdit,
+		); err != nil {
+			// A revoked actor must stop without entering the deleting branch,
+			// which would remove chunks that may now belong to someone else.
+			logger.Warnf(ctx, "Knowledge processing authorization no longer valid: %v", err)
+			_ = s.failKnowledgeAuthorization(ctx, knowledge)
+			return true, types.ParseStatusCancelled
+		}
+	}
 	switch knowledge.ParseStatus {
 	case types.ParseStatusDeleting, types.ParseStatusCancelled:
 		return true, knowledge.ParseStatus

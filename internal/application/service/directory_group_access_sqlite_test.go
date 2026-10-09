@@ -58,6 +58,55 @@ func setupDirectoryAccessSQLite(
 		)
 }
 
+func TestDirectoryPermissionMutationRevokesRestrictedCapabilitiesSQLite(t *testing.T) {
+	db, directorySvc, access := setupDirectoryAccessSQLite(t)
+	directory := createTestDirectory(t, directorySvc)
+	_, err := directorySvc.ApplySnapshot(context.Background(), testDirectorySnapshot(directory.ID))
+	require.NoError(t, err)
+	var group types.DirectoryGroup
+	require.NoError(t, db.Where("object_guid = ?", "leaf-guid").First(&group).Error)
+	require.NoError(t, access.UpsertResourceGroupGrant(context.Background(), &types.ResourceGroupGrant{
+		TenantID: 7, ResourceType: types.GroupResourceTypeKnowledgeBase, ResourceID: "restricted",
+		DirectoryGroupID: group.ID, Permission: types.ResourcePermissionRead,
+	}))
+	require.NoError(t, db.AutoMigrate(&types.Knowledge{}, &types.StoredResource{},
+		&types.ResourceBinding{}, &types.ResourceAccessGrant{}))
+	ctx := context.Background()
+	for _, tc := range []struct {
+		id     string
+		tenant uint64
+		mode   types.ResourceAccessMode
+	}{
+		{"restricted", 7, types.ResourceAccessRestricted},
+		{"inherit", 7, types.ResourceAccessInherit},
+		{"foreign", 8, types.ResourceAccessRestricted},
+	} {
+		require.NoError(t, access.SetResourceAccessPolicy(ctx, &types.ResourceAccessPolicy{
+			TenantID: tc.tenant, ResourceType: types.GroupResourceTypeKnowledgeBase, ResourceID: tc.id, Mode: tc.mode,
+		}))
+		require.NoError(t, db.Create(&types.Knowledge{ID: tc.id, TenantID: tc.tenant, KnowledgeBaseID: tc.id}).Error)
+		require.NoError(t, db.Create(&types.ResourceBinding{
+			ResourceID: tc.id, TenantID: tc.tenant, OwnerType: types.ResourceOwnerKnowledge, OwnerID: tc.id,
+		}).Error)
+		require.NoError(t, db.Create(&types.ResourceAccessGrant{
+			ID: tc.id, ResourceID: tc.id, TokenHash: tc.id, ExpiresAt: time.Now().Add(time.Hour),
+		}).Error)
+	}
+	// Deleting even a resource group grant uses the same durable version
+	// transaction as directory synchronization, and revokes anonymous tokens.
+	require.NoError(t, access.DeleteResourceGroupGrant(ctx, 7, types.GroupResourceTypeKnowledgeBase,
+		"restricted", group.ID, types.ResourcePermissionRead, types.GrantOriginManual))
+	for _, id := range []string{"restricted", "inherit", "foreign"} {
+		var grant types.ResourceAccessGrant
+		require.NoError(t, db.Where("id = ?", id).First(&grant).Error)
+		if id == "restricted" {
+			require.NotNil(t, grant.RevokedAt)
+		} else {
+			require.Nil(t, grant.RevokedAt)
+		}
+	}
+}
+
 func TestDirectoryLinkIdentityConcurrentNeverOverwritesSQLite(t *testing.T) {
 	db, directorySvc, _ := setupDirectoryAccessSQLite(t)
 	directory := createTestDirectory(t, directorySvc)

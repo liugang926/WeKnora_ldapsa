@@ -542,6 +542,7 @@ func (s *KnowledgePostProcessService) enqueueAutoTagTask(
 		Language:        payload.Language,
 		Attempt:         attempt,
 	}
+	taskPayload.Initiator = types.TaskInitiatorFromContext(ctx)
 	langfuse.InjectTracing(ctx, &taskPayload)
 	payloadBytes, err := json.Marshal(taskPayload)
 	if err != nil {
@@ -573,6 +574,7 @@ func (s *KnowledgePostProcessService) enqueueSummaryGenerationTask(ctx context.C
 		Language:        payload.Language,
 		Attempt:         attempt,
 	}
+	taskPayload.Initiator = types.TaskInitiatorFromContext(ctx)
 	langfuse.InjectTracing(ctx, &taskPayload)
 	payloadBytes, err := json.Marshal(taskPayload)
 	if err != nil {
@@ -668,6 +670,8 @@ func (s *KnowledgePostProcessService) enqueueQuestionGenerationTasks(
 			taskPayload.NextChunkID = questionChunks[end].ID
 		}
 		batchIndex++
+
+		taskPayload.Initiator = types.TaskInitiatorFromContext(ctx)
 
 		langfuse.InjectTracing(ctx, &taskPayload)
 		payloadBytes, err := json.Marshal(taskPayload)
