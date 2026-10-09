@@ -42,7 +42,7 @@ openssl x509 -req -sha256 -days 2 \
   -out "$CERT_DIR/server.crt" >/dev/null 2>&1
 chmod 0644 "$CERT_DIR/ca.crt" "$CERT_DIR/server.crt" "$CERT_DIR/server.key"
 
-export COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-weknora-ldap-integration}"
+export COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-weknora-ldap-integration-$$}"
 
 docker compose -f "$COMPOSE_FILE" up -d --wait openldap
 docker compose -f "$COMPOSE_FILE" run --rm test
