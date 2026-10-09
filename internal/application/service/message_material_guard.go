@@ -253,6 +253,11 @@ func (g *MessageMaterialGuard) advanceOwnCompletionLocked(ctx context.Context) e
 	if err != nil {
 		return err
 	}
+	bodyLeases, err := g.store.AcquireMessageBodyReadLeases(marked, plan, uuid.NewString(), 2*time.Minute)
+	if err != nil {
+		return err
+	}
+	g.bodyLeases = append(g.bodyLeases, bodyLeases...)
 	g.ctx = marked
 	g.plan = plan
 	g.snapshot = updated

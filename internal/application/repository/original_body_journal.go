@@ -343,8 +343,8 @@ func (s *OriginalBodyRetentionStore) VerifyJournalReady() error {
 	if !originalBodySchemaPresent(s.db) {
 		return ErrOriginalBodyUnavailable
 	}
-	if !bodyInternal(s.db).Migrator().HasTable(&originalBodyLeaseScope{}) {
-		return ErrOriginalBodyUnavailable
+	if e := verifyBodyLeaseScopeSchema(bodyInternal(s.db)); e != nil {
+		return e
 	}
 	return s.checkJournalInTx(bodyInternal(s.db))
 }

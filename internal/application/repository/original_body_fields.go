@@ -30,6 +30,11 @@ var originalBodyFields = []originalBodyFieldDescriptor{
 	{"faq_input_sessions", "id", "vault", []string{"input_body", "original_snapshot", "current_snapshot"}},
 	{"faq_import_output_admissions", "id", "vault", []string{"body"}},
 	{"message_generation_origins", "id", "vault", []string{"initial_input"}},
+	// Old generated/fork parent snapshots can contain a second Messages copy.
+	// Inventory recognizes only that leaf, preserving proof metadata. With no
+	// durable copy/closure receipt these copies remain explicit blockers.
+	{"message_generated_field_admissions", "id", "unsupported", []string{"parent_materials.*.Messages"}},
+	{"message_fork_parent_origins", "generation_id", "unsupported", []string{"parent_materials.*.Messages"}},
 	// Current entity columns keep their SQL search/storage representation. Their
 	// exact mirror receipts permit clearing only after actual lifecycle closure.
 	{"knowledge_processing_spans", "id", "inline", []string{"input", "output", "error_message", "error_detail"}},
@@ -55,6 +60,9 @@ func bodyFieldColumn(field string) string { return strings.Split(field, ".")[0] 
 func bodyFieldValue(row map[string]any, field string) (string, error) {
 	parts := strings.Split(field, ".")
 	raw := bodyText(row[parts[0]])
+	if field == "parent_materials.*.Messages" {
+		return legacyParentMessageBodies(raw)
+	}
 	if len(parts) == 1 || raw == "" || raw == "null" {
 		return raw, nil
 	}
@@ -159,6 +167,16 @@ func bodyScopeFromRow(tx *gorm.DB, d originalBodyFieldDescriptor, key string, ro
 		scope.OwnerID = sessionID + "/" + key
 	}
 
+	if d.Table == "message_fork_parent_origins" {
+		origin, e := bodySourceRow(tx, originalBodyFieldDescriptor{Table: "message_generation_origins", Key: "id"}, key)
+		if e != nil {
+			return scope, e
+		}
+		scope.Tenant = bodyUint(origin["tenant_id"])
+		scope.Knowledge = ""
+		scope.KB = ""
+		scope.OwnerID = bodyText(origin["session_id"]) + "/" + key
+	}
 	if scope.Knowledge != "" && (scope.Tenant == 0 || scope.KB == "") {
 		knowledge, e := bodySourceRow(tx, originalBodyFieldDescriptor{Table: "knowledges", Key: "id"}, scope.Knowledge)
 		if e != nil {
@@ -731,4 +749,33 @@ func (s *OriginalBodyRetentionStore) ShareOriginalBodyFieldInTx(ctx context.Cont
 		return e
 	}
 	return originalBodyRewrite(tx, d, key, col, source.ID, bodyText(row[col]), target.OriginalBodyRef)
+}
+
+func legacyParentMessageBodies(raw string) (string, error) {
+	if raw == "" || raw == "null" {
+		return "", nil
+	}
+	var snapshots []map[string]json.RawMessage
+	if e := json.Unmarshal([]byte(raw), &snapshots); e != nil {
+		return "", e
+	}
+	copies := []json.RawMessage{}
+	for _, snapshot := range snapshots {
+		bytes := snapshot["Messages"]
+		if len(bytes) == 0 || string(bytes) == "null" || string(bytes) == "[]" {
+			continue
+		}
+		var messages []json.RawMessage
+		if e := json.Unmarshal(bytes, &messages); e != nil {
+			return "", e
+		}
+		if len(messages) > 0 {
+			copies = append(copies, bytes)
+		}
+	}
+	if len(copies) == 0 {
+		return "", nil
+	}
+	data, e := json.Marshal(copies)
+	return string(data), e
 }

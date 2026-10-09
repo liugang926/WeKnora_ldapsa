@@ -177,19 +177,22 @@ func runMessageBodyNamespaceABA(t *testing.T, pg bool) {
 			require.NoError(t, e)
 			require.NoError(t, db.Exec(string(ddl)).Error)
 		}
+		require.NoError(t, db.Create(&types.KnowledgeBase{ID: "body-cross-tenant-kb", TenantID: 8, Name: "shared scope fixture", Type: types.KnowledgeBaseTypeDocument}).Error)
 		target := &types.KnowledgeBase{ID: "body-new-namespace", TenantID: 7, Name: "new namespace", Type: types.KnowledgeBaseTypeDocument}
 		require.NoError(t, store.CreateKnowledgeBaseWithInput(repository.WithIndependentKnowledgeBaseNameInput(repository.WithIndependentKnowledgeInput(ctx), "", target.Name), target))
 		source := &types.Knowledge{ID: "body-knowledge-reference", TenantID: 7, KnowledgeBaseID: "kb", Type: types.KnowledgeTypeManual, Title: "original ordinary reference", Metadata: types.JSON(`{}`), CustomMetadata: types.JSON(`{}`)}
 		_, e := store.CreateKnowledgeWithInput(repository.WithIndependentKnowledgeInput(ctx), source, "actual ordinary original")
 		require.NoError(t, e)
 	})
-	user, e := messages.CreateMessage(ctx, &types.Message{SessionID: session.ID, RequestID: "body-namespace-request", Role: "user", Content: "actual only-knowledge-id reference", IsCompleted: true, ExecutionContext: types.MessageExecutionContext{KnowledgeIDs: []string{"body-knowledge-reference"}}})
+	user, e := messages.CreateMessage(ctx, &types.Message{SessionID: session.ID, RequestID: "body-namespace-request", Role: "user", Content: "actual only-knowledge-id reference", IsCompleted: true, ExecutionContext: types.MessageExecutionContext{KnowledgeIDs: []string{"body-knowledge-reference"}, KnowledgeBaseIDs: []string{"body-cross-tenant-kb"}, AgentKnowledgeBaseIDs: []string{"body-cross-tenant-kb"}}})
 	require.NoError(t, e)
 	var bodyID string
 	require.NoError(t, db.Raw("SELECT h.body_id FROM original_body_field_heads h JOIN message_generation_origins g ON g.id=h.row_key WHERE h.source_table='message_generation_origins' AND g.message_id=?", user.ID).Scan(&bodyID).Error)
 	var stored int64
 	require.NoError(t, db.Table("original_body_lease_scopes").Where("body_id=? AND tenant_id=7 AND knowledge_base_id='kb'", bodyID).Count(&stored).Error)
 	require.Equal(t, int64(1), stored)
+	require.NoError(t, db.Table("original_body_lease_scopes").Where("body_id=? AND tenant_id=8 AND knowledge_base_id='body-cross-tenant-kb'", bodyID).Count(&stored).Error)
+	require.Equal(t, int64(1), stored, "actual capture resolves shared KB owner tenant without assuming session tenant")
 	require.Error(t, db.Exec("UPDATE original_body_lease_scopes SET knowledge_base_id='body-new-namespace' WHERE body_id=?", bodyID).Error)
 	require.Error(t, db.Exec("DELETE FROM original_body_lease_scopes WHERE body_id=?", bodyID).Error)
 	lease, e := store.ContentLeaseStore().AcquireKBRead(ctx, 7, "kb", "actual-old-namespace-reader", time.Minute)
@@ -275,3 +278,118 @@ func runMessageBodyNoKBActualReader(t *testing.T, pg bool) {
 }
 func TestMessageBodyNoKBActualReaderSQLite(t *testing.T)   { runMessageBodyNoKBActualReader(t, false) }
 func TestPostgresMessageBodyNoKBActualReader(t *testing.T) { runMessageBodyNoKBActualReader(t, true) }
+
+func runMessageBodyNoKBHTTPHolder(t *testing.T, pg bool) {
+	messages, _, _, db, ctx, session, body := messageBodyIntegrationFixture(t, pg)
+	user, e := messages.CreateMessage(ctx, &types.Message{SessionID: session.ID, RequestID: "actual-no-kb-http-tail", Role: "user", Content: "actual no KB input for live model", IsCompleted: true})
+	require.NoError(t, e)
+	assistant, e := messages.CreateMessage(ctx, &types.Message{SessionID: session.ID, RequestID: user.RequestID, Role: "assistant"})
+	require.NoError(t, e)
+	ctx, _, check, closeHTTP := BeginMessageMaterialHTTPBoundary(ctx)
+	defer closeHTTP()
+	ctx, releaseModel, external := retainMessageMaterialProducer(ctx)
+	defer releaseModel()
+	require.True(t, external)
+	ctx = context.WithValue(ctx, agentHistoryCurrentRequestKey{}, user.RequestID)
+	_, e = messages.GetMessage(ctx, session.ID, user.ID)
+	require.NoError(t, e)
+	_, e = messages.admittedMessagePage(ctx, session.ID, time.Time{}, 20, 1, false)
+	require.NoError(t, e)
+	markMessageMaterialReady(ctx)
+	require.NoError(t, check())
+	assistant.Content = "actual live answer with no KB"
+	assistant.IsCompleted = true
+	assistant.SourceLineage, _ = types.NewCompleteSourceLineage()
+	require.NoError(t, messages.UpdateMessage(ctx, assistant))
+	require.NoError(t, check())
+	var answerLeases int64
+	require.NoError(t, db.Raw("SELECT count(*) FROM original_body_leases l JOIN original_body_field_heads h ON h.body_id=l.body_id WHERE h.source_table='messages' AND h.row_key=? AND h.column_name='content' AND l.released_at_ms IS NULL", assistant.ID).Scan(&answerLeases).Error)
+	require.Positive(t, answerLeases, "own completion claims the new body before live HTTP output")
+	releaseModel()
+	require.NoError(t, check(), "HTTP holder survives model release")
+	deleted := "datetime('now','-2 hours')"
+	if pg {
+		deleted = "CURRENT_TIMESTAMP-INTERVAL '2 hours'"
+	}
+	require.NoError(t, db.Exec("UPDATE messages SET deleted_at="+deleted+" WHERE session_id=?", session.ID).Error)
+	n, e := body.PurgeDue(context.Background(), 100)
+	require.NoError(t, e)
+	require.Zero(t, n, "real HTTP tail still owns body leases after model release")
+	require.Error(t, check(), "deleted original cannot continue HTTP output")
+	closeHTTP()
+	n, e = body.PurgeDue(context.Background(), 100)
+	require.NoError(t, e)
+	require.Positive(t, n)
+	var active int64
+	require.NoError(t, db.Table("original_body_leases").Where("released_at_ms IS NULL").Count(&active).Error)
+	require.Zero(t, active)
+}
+func TestMessageBodyNoKBHTTPHolderSQLite(t *testing.T)   { runMessageBodyNoKBHTTPHolder(t, false) }
+func TestPostgresMessageBodyNoKBHTTPHolder(t *testing.T) { runMessageBodyNoKBHTTPHolder(t, true) }
+
+func runMessageBodyActualGeneratedField(t *testing.T, pg bool) {
+	messages, _, _, db, ctx, session, body := messageBodyIntegrationFixture(t, pg)
+	user, e := messages.CreateMessage(ctx, &types.Message{SessionID: session.ID, RequestID: "actual-body-generated-field", Role: "user", Content: "actual-generated-parent-body-sentinel", IsCompleted: true})
+	require.NoError(t, e)
+	ctx = WithMessageMaterialOutputBoundary(ctx)
+	defer CloseMessageMaterialOutputBoundary(ctx)
+	turn := types.NewRAGSourceLineage(func(checkCtx context.Context, lineage *types.SourceLineage) error {
+		if e := lineage.RequireComplete(); e != nil {
+			return e
+		}
+		return CheckMessageMaterialOutputBoundary(ctx)
+	})
+	ctx = types.WithRAGSourceLineage(ctx, turn)
+	_, e = messages.GetMessage(ctx, session.ID, user.ID)
+	require.NoError(t, e)
+	require.NoError(t, messages.UpdateMessageRenderedContent(ctx, session.ID, user.ID, "actual-generated-rendered-body-sentinel"))
+	require.NoError(t, CheckMessageMaterialOutputBoundary(ctx))
+	var parents string
+	require.NoError(t, db.Raw("SELECT parent_materials FROM message_generated_field_admissions WHERE message_id=?", user.ID).Scan(&parents).Error)
+	require.NotContains(t, parents, user.Content, "metadata admission must not persist a second original text copy")
+	require.NotContains(t, parents, "actual-generated-rendered-body-sentinel")
+	var oldAdmission map[string]any
+	require.NoError(t, db.Table("message_generated_field_admissions").Where("message_id=?", user.ID).Take(&oldAdmission).Error)
+	slot := ctx.Value(messageMaterialOutputKey{}).(*messageMaterialOutputSlot)
+	legacyBytes, e := json.Marshal([]*types.MessageMaterialSnapshot{slot.Guards[0].snapshot})
+	require.NoError(t, e)
+	oldAdmission["id"] = "known-legacy-parent-copy"
+	oldAdmission["parent_materials"] = string(legacyBytes)
+	require.NoError(t, db.Table("message_generated_field_admissions").Create(&oldAdmission).Error)
+	var legacyBodyID string
+	require.NoError(t, db.Raw("SELECT body_id FROM original_body_field_heads WHERE source_table='message_generated_field_admissions' AND row_key='known-legacy-parent-copy'").Scan(&legacyBodyID).Error)
+	require.NotEmpty(t, legacyBodyID, "known old Messages copies enter conservative body inventory")
+
+	var scoped, leased int64
+	require.NoError(t, db.Raw("SELECT count(*) FROM original_body_lease_scopes s JOIN original_body_field_heads h ON h.body_id=s.body_id WHERE h.source_table='messages' AND h.row_key=? AND h.column_name='rendered_content'", user.ID).Scan(&scoped).Error)
+	require.Positive(t, scoped, "actual generated field captures original scope refs")
+	require.NoError(t, db.Raw("SELECT count(*) FROM original_body_leases l JOIN original_body_field_heads h ON h.body_id=l.body_id WHERE h.source_table='messages' AND h.row_key=? AND h.column_name='rendered_content' AND l.released_at_ms IS NULL", user.ID).Scan(&leased).Error)
+	require.Positive(t, leased, "actual guard holds newly generated body before exposure")
+	deleted := "datetime('now','-2 hours')"
+	if pg {
+		deleted = "CURRENT_TIMESTAMP-INTERVAL '2 hours'"
+	}
+	require.NoError(t, db.Exec("UPDATE messages SET deleted_at="+deleted+" WHERE id=?", user.ID).Error)
+	n, e := body.PurgeDue(context.Background(), 100)
+	require.NoError(t, e)
+	require.Zero(t, n)
+	CloseMessageMaterialOutputBoundary(ctx)
+	n, e = body.PurgeDue(context.Background(), 100)
+	require.NoError(t, e)
+	require.Positive(t, n)
+	var live int64
+	require.NoError(t, db.Raw("SELECT count(*) FROM original_body_payloads p JOIN original_body_field_heads h ON h.body_id=p.id WHERE h.source_table='messages' AND h.row_key=? AND h.column_name='rendered_content' AND p.state='live'", user.ID).Scan(&live).Error)
+	require.Zero(t, live, "closed generated body is not left unknown by a missing producer marker")
+	var legacyState string
+	require.NoError(t, db.Raw("SELECT state FROM original_body_payloads WHERE id=?", legacyBodyID).Scan(&legacyState).Error)
+	require.Equal(t, "live", legacyState, "old parent copy lacks a supported immutable closure receipt and remains blocked")
+	require.NoError(t, db.Raw("SELECT parent_materials FROM message_generated_field_admissions WHERE id='known-legacy-parent-copy'").Scan(&parents).Error)
+	require.Contains(t, parents, user.Content, "no current-body re-sign or unproved old-copy erase")
+
+}
+func TestMessageBodyActualGeneratedFieldSQLite(t *testing.T) {
+	runMessageBodyActualGeneratedField(t, false)
+}
+func TestPostgresMessageBodyActualGeneratedField(t *testing.T) {
+	runMessageBodyActualGeneratedField(t, true)
+}

@@ -59,7 +59,10 @@ func (s *OriginalBodyRetentionStore) recordMessageLeaseScopes(tx *gorm.DB, id st
 	if d.Table != "messages" && d.Table != "message_generation_origins" {
 		return nil
 	}
-	if _, actual := tx.Statement.Context.Value(messageProducerBoundaryKey{}).(messageProducerBoundary); !actual {
+	_, actualProducer := tx.Statement.Context.Value(messageProducerBoundaryKey{}).(messageProducerBoundary)
+	generated, actualGenerated := tx.Statement.Context.Value(messageGeneratedFieldKey{}).(messageGeneratedFieldBoundary)
+	actualGenerated = actualGenerated && d.Table == "messages" && generated.MessageID == key
+	if !actualProducer && !actualGenerated {
 		return nil
 	}
 	var execution types.MessageExecutionContext
@@ -93,31 +96,60 @@ func (s *OriginalBodyRetentionStore) recordMessageLeaseScopes(tx *gorm.DB, id st
 		lineage = envelope.Lineage
 	}
 	rows := []originalBodyLeaseScope{{BodyID: id, TenantID: scope.Tenant, KnowledgeBaseID: ""}}
-	for _, kb := range append(execution.KnowledgeBaseIDs, execution.AgentKnowledgeBaseIDs...) {
-		if kb != "" {
-			rows = append(rows, originalBodyLeaseScope{id, scope.Tenant, kb})
-		}
-	}
+	kbIDs := append(append([]string{}, execution.KnowledgeBaseIDs...), execution.AgentKnowledgeBaseIDs...)
 	for _, tag := range execution.TagScopes {
-		if tag.KnowledgeBaseID != "" {
-			rows = append(rows, originalBodyLeaseScope{id, scope.Tenant, tag.KnowledgeBaseID})
+		kbIDs = append(kbIDs, tag.KnowledgeBaseID)
+	}
+	for _, kb := range kbIDs {
+		if kb == "" {
+			continue
 		}
+		var actual struct {
+			TenantID uint64
+			ID       string
+		}
+		if e := bodyInternal(tx).Table("knowledge_bases").Select("tenant_id,id").Where("id=?", kb).Take(&actual).Error; e != nil {
+			return e
+		}
+		if actual.TenantID == 0 {
+			return ErrOriginalBodyUnavailable
+		}
+		rows = append(rows, originalBodyLeaseScope{id, actual.TenantID, actual.ID})
 	}
 	for _, knowledgeID := range execution.KnowledgeIDs {
 		var knowledge struct {
 			TenantID        uint64
 			KnowledgeBaseID string
 		}
-		if e := bodyInternal(tx).Table("knowledges").Select("tenant_id,knowledge_base_id").Where("id=? AND tenant_id=?", knowledgeID, scope.Tenant).Take(&knowledge).Error; e != nil {
+		if e := bodyInternal(tx).Table("knowledges").Select("tenant_id,knowledge_base_id").Where("id=?", knowledgeID).Take(&knowledge).Error; e != nil {
 			return e
 		}
-		if knowledge.KnowledgeBaseID == "" {
+		if knowledge.TenantID == 0 || knowledge.KnowledgeBaseID == "" {
 			return ErrOriginalBodyUnavailable
 		}
 		rows = append(rows, originalBodyLeaseScope{id, knowledge.TenantID, knowledge.KnowledgeBaseID})
 	}
 	if lineage != nil {
 		for _, source := range lineage.Sources {
+			rows = append(rows, originalBodyLeaseScope{id, source.TenantID, source.KnowledgeBaseID})
+		}
+	}
+	if actualGenerated {
+		for _, parent := range generated.Parents {
+			for _, proof := range parent.Proofs {
+				var original []originalBodyLeaseScope
+				if e := bodyInternal(tx).Table("original_body_lease_scopes s").Select("s.*").Joins("JOIN original_body_field_heads h ON h.body_id=s.body_id").Where("h.source_table='message_generation_origins' AND h.row_key=?", proof.GenerationID).Find(&original).Error; e != nil {
+					return e
+				}
+				if len(original) == 0 {
+					return nil
+				} // Do not certify incomplete legacy parents.
+				for _, ref := range original {
+					rows = append(rows, originalBodyLeaseScope{id, ref.TenantID, ref.KnowledgeBaseID})
+				}
+			}
+		}
+		for _, source := range generated.Sources.Sources {
 			rows = append(rows, originalBodyLeaseScope{id, source.TenantID, source.KnowledgeBaseID})
 		}
 	}
@@ -240,4 +272,34 @@ func (s *KnowledgeInputProvenanceStore) RenewMessageBodyReadLease(ctx context.Co
 }
 func (s *KnowledgeInputProvenanceStore) ReleaseMessageBodyReadLease(ctx context.Context, id string) error {
 	return NewOriginalBodyRetentionStore(s.db).ReleaseLease(ctx, id)
+}
+
+func verifyBodyLeaseScopeSchema(db *gorm.DB) error {
+	if !db.Migrator().HasTable(&originalBodyLeaseScope{}) {
+		return ErrOriginalBodyUnavailable
+	}
+	for _, col := range []string{"body_id", "tenant_id", "knowledge_base_id"} {
+		if !db.Migrator().HasColumn(&originalBodyLeaseScope{}, col) {
+			return ErrOriginalBodyUnavailable
+		}
+	}
+	var count int64
+	if db.Dialector.Name() == "postgres" {
+		if e := db.Raw("SELECT count(*) FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE c.relname='original_body_lease_scopes' AND n.nspname=current_schema() AND t.tgname='original_body_lease_scope_immutable' AND t.tgenabled<>'D'").Scan(&count).Error; e != nil {
+			return e
+		}
+		if count != 1 {
+			return ErrOriginalBodyUnavailable
+		}
+	} else if db.Dialector.Name() == "sqlite" {
+		if e := db.Raw("SELECT count(*) FROM sqlite_master WHERE type='trigger' AND tbl_name='original_body_lease_scopes' AND name IN ('original_body_lease_scope_immutable_update','original_body_lease_scope_immutable_delete')").Scan(&count).Error; e != nil {
+			return e
+		}
+		if count != 2 {
+			return ErrOriginalBodyUnavailable
+		}
+	} else {
+		return ErrOriginalBodyUnavailable
+	}
+	return nil
 }

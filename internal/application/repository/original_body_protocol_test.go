@@ -510,3 +510,63 @@ func bodyProtocolAnchorIdentity(t *testing.T, pg bool) {
 }
 func TestOriginalBodyAnchorIdentitySQLite(t *testing.T)   { bodyProtocolAnchorIdentity(t, false) }
 func TestPostgresOriginalBodyAnchorIdentity(t *testing.T) { bodyProtocolAnchorIdentity(t, true) }
+
+func bodyProtocolCLIForwardScopes(t *testing.T, pg bool) {
+	cli := os.Getenv("WEKNORA_ORIGINAL_BODY_TEST_CLI")
+	if cli == "" {
+		t.Skip("actual offline CLI executable required")
+	}
+	db, store := bodyProtocolFixture(t, pg)
+	dsn := ""
+	driver := "sqlite"
+	if pg {
+		var schema string
+		require.NoError(t, db.Raw("SELECT current_schema()").Scan(&schema).Error)
+		dsn = os.Getenv("WEKNORA_GC_TEST_POSTGRES_DSN") + " search_path=" + schema
+		driver = "postgres"
+	} else {
+		var files []struct {
+			Seq        int
+			Name, File string
+		}
+		require.NoError(t, db.Raw("PRAGMA database_list").Scan(&files).Error)
+		for _, file := range files {
+			if file.Name == "main" {
+				dsn = file.File
+			}
+		}
+	}
+	require.NotEmpty(t, dsn)
+	run := func(mode string, success bool) {
+		command := exec.Command(cli, "-driver", driver, "-mode", mode)
+		command.Env = append(os.Environ(), "WEKNORA_ORIGINAL_BODY_MAINTENANCE_DSN="+dsn)
+		output, e := command.CombinedOutput()
+		if success {
+			require.NoError(t, e, string(output))
+		} else {
+			require.Error(t, e, string(output))
+		}
+		t.Logf("actual offline CLI %s %s success=%t output=%s", driver, mode, e == nil, string(output))
+	}
+	require.NoError(t, db.Exec("DROP TABLE original_body_lease_scopes").Error)
+	run("verify", false)
+	run("upgrade-scopes", true)
+	run("upgrade-scopes", true)
+	run("verify", true)
+	require.NoError(t, store.VerifyJournalReady())
+	var count int64
+	require.NoError(t, db.Table("original_body_lease_scopes").Count(&count).Error)
+	require.Zero(t, count, "forward command must not invent original scope inventory")
+	trigger := "original_body_lease_scope_immutable_update"
+	suffix := ""
+	if pg {
+		trigger = "original_body_lease_scope_immutable"
+		suffix = " ON original_body_lease_scopes"
+	}
+	require.NoError(t, db.Exec("DROP TRIGGER "+trigger+suffix).Error)
+	run("verify", false)
+	run("upgrade-scopes", true)
+	run("verify", true)
+}
+func TestOriginalBodyCLIForwardScopesSQLite(t *testing.T)   { bodyProtocolCLIForwardScopes(t, false) }
+func TestPostgresOriginalBodyCLIForwardScopes(t *testing.T) { bodyProtocolCLIForwardScopes(t, true) }

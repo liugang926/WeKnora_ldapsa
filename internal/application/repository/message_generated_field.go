@@ -162,7 +162,13 @@ func (r *messageRepository) writeGeneratedField(ctx context.Context, sessionID, 
 				return err
 			}
 		}
-		parentJSON, err := json.Marshal(boundary.Parents)
+		metadataParents := make([]*types.MessageMaterialSnapshot, 0, len(boundary.Parents))
+		for _, parent := range boundary.Parents {
+			metadata := *parent
+			metadata.Messages = nil
+			metadataParents = append(metadataParents, &metadata)
+		}
+		parentJSON, err := json.Marshal(metadataParents)
 		if err != nil {
 			return err
 		}
