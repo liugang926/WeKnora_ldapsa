@@ -367,7 +367,14 @@ func setupActualBodyLocalGC(t *testing.T, f *enrichmentTestFixture, build contex
 	var actualSpan types.KnowledgeProcessingSpan
 	require.NoError(t, f.db.Where("span_id=?", span.SpanID).Take(&actualSpan).Error)
 	require.Equal(t, "actual sensitive summary body", actualSpan.Output["summary_preview"])
-	snapshot, err := f.store.CaptureKnowledgeAutoTagInputs(f.ctx, repository.KnowledgeBuildInputProofFromContext(build))
+	autoPath := "../../../migrations/sqlite/000072_knowledge_auto_completion_publication.up.sql"
+	if pg {
+		autoPath = "../../../migrations/versioned/000153_knowledge_auto_completion_publication.up.sql"
+	}
+	autoSQL, err := os.ReadFile(autoPath)
+	require.NoError(t, err)
+	require.NoError(t, f.db.Exec(string(autoSQL)).Error)
+	snapshot, err := f.store.CaptureKnowledgeAutoTagInputs(build, repository.KnowledgeBuildInputProofFromContext(build))
 	require.NoError(t, err)
 	require.NotNil(t, snapshot)
 	faqPath := "../../../migrations/sqlite/000063_faq_original_entry_inputs.up.sql"
@@ -381,7 +388,10 @@ func setupActualBodyLocalGC(t *testing.T, f *enrichmentTestFixture, build contex
 	target := &types.KnowledgeBase{ID: "faq-target", TenantID: 7, Name: "independent FAQ target", Type: types.KnowledgeBaseTypeFAQ, EmbeddingModelID: "embed"}
 	require.NoError(t, f.store.CreateKnowledgeBaseWithInput(repository.WithIndependentKnowledgeBaseNameInput(repository.WithIndependentKnowledgeInput(f.ctx), "", target.Name), target))
 	operation := types.FAQInputOperation{Kind: "create", Entry: &types.FAQEntryPayload{StandardQuestion: "actual derived source question", Answers: []string{f.chunks[0].Content}}}
-	derived, err := f.store.WithDerivedFAQInput(f.ctx, target.ID, operation, repository.KnowledgeBuildInputProofFromContext(build))
+	sourceLease, sourceScope, err := repository.NextcloudBuildInputLease(build)
+	require.NoError(t, err)
+	faqActor := repository.WithNextcloudBuildLease(f.ctx, repository.NewNextcloudContentLeaseStore(f.db), sourceLease, sourceScope)
+	derived, err := f.store.WithDerivedFAQInput(faqActor, target.ID, operation, repository.KnowledgeBuildInputProofFromContext(build))
 	require.NoError(t, err)
 	_, sessionID, err := f.store.BeginFAQInput(derived, target, operation)
 	require.NoError(t, err)
