@@ -471,8 +471,16 @@ func (s *messageService) UpdateMessage(ctx context.Context, message *types.Messa
 			return err
 		}
 	}
+	var finishCompletion func(error) error
+	ctx, finishCompletion, err = s.beginMessageMaterialCompletion(ctx, message)
+	if err != nil {
+		return err
+	}
 	logger.Info(ctx, "Session exists, updating message")
 	err = s.messageRepo.UpdateMessage(ctx, message)
+	if finishCompletion != nil {
+		err = finishCompletion(err)
+	}
 	if err != nil {
 		logger.ErrorWithFields(ctx, err, map[string]interface{}{
 			"session_id": message.SessionID,

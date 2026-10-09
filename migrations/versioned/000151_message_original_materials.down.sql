@@ -1,3 +1,4 @@
+DROP TABLE IF EXISTS message_producer_advances;
 DROP TABLE IF EXISTS message_fork_parent_origins;
 DROP TRIGGER IF EXISTS message_generated_field_checkpoint ON messages;
 DROP FUNCTION IF EXISTS message_generated_field_checkpoint();

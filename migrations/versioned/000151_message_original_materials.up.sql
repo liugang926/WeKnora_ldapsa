@@ -32,3 +32,6 @@ CREATE TRIGGER message_generated_field_checkpoint AFTER INSERT OR UPDATE ON mess
 
 CREATE TABLE message_fork_parent_origins(generation_id TEXT PRIMARY KEY REFERENCES message_generation_origins(id),parent_materials TEXT NOT NULL);
 CREATE TRIGGER message_fork_parent_origins_immutable BEFORE UPDATE OR DELETE ON message_fork_parent_origins FOR EACH ROW EXECUTE FUNCTION message_material_immutable();
+
+CREATE TABLE message_producer_advances(admission_id TEXT PRIMARY KEY REFERENCES message_material_admissions(id),message_id TEXT NOT NULL,session_id TEXT NOT NULL,generation_id TEXT NOT NULL,previous_admission_id TEXT NOT NULL,previous_revision BIGINT NOT NULL,previous_membership BIGINT NOT NULL,result_revision BIGINT NOT NULL);
+CREATE TRIGGER message_producer_advances_immutable BEFORE UPDATE OR DELETE ON message_producer_advances FOR EACH ROW EXECUTE FUNCTION message_material_immutable();

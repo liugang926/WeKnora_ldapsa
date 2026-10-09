@@ -16,6 +16,8 @@ import (
 
 type messageGenerationOrigin struct {
 	PriorSources                                                        *types.SourceLineage `gorm:"-"`
+	PreviousAdmissionID                                                 string               `gorm:"-"`
+	PreviousRevision, PreviousMembership                                uint64               `gorm:"-"`
 	ID                                                                  string               `gorm:"primaryKey"`
 	MessageID, SessionID, OwnerID, RequestID, Role, Actor, InitialInput string
 	TenantID, OwnerRevision                                             uint64
@@ -144,6 +146,11 @@ func (s *KnowledgeInputProvenanceStore) beginMessageProducerInTx(tx *gorm.DB, me
 	if err != nil {
 		return nil, err
 	}
+	if advance, present := tx.Statement.Context.Value(messageProducerAdvanceKey{}).(messageProducerAdvanceBoundary); present {
+		if advance.Store != s || advance.MessageID != message.ID || advance.SessionID != message.SessionID || advance.Digest != digest {
+			return nil, ErrKnowledgeInputChanged
+		}
+	}
 	if !ok || boundary.Store != s || boundary.Create != create || boundary.Digest != digest {
 		return nil, fmt.Errorf("%w: exact message producer arguments changed", types.ErrSourceLineageUnknown)
 	}
@@ -187,6 +194,12 @@ func (s *KnowledgeInputProvenanceStore) beginMessageProducerInTx(tx *gorm.DB, me
 		return nil, err
 	}
 	original, err := readMessageMaterialBodyInTx(tx, message.ID, message.SessionID, message.Role)
+	if err != nil {
+		return nil, err
+	}
+	row.PreviousAdmissionID = prior.ID
+	row.PreviousRevision = prior.Revision
+	row.PreviousMembership, err = messageVersion(tx, "message_session_membership_versions", "session_id", message.SessionID)
 	if err != nil {
 		return nil, err
 	}
@@ -245,7 +258,15 @@ func (s *KnowledgeInputProvenanceStore) sealMessageMaterialInTx(tx *gorm.DB, ori
 	if err := tx.Create(&row).Error; err != nil {
 		return err
 	}
-	return tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "message_id"}}, DoUpdates: clause.AssignmentColumns([]string{"admission_id"})}).Create(&messageMaterialReceipt{message.ID, row.ID}).Error
+	if err := tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "message_id"}}, DoUpdates: clause.AssignmentColumns([]string{"admission_id"})}).Create(&messageMaterialReceipt{message.ID, row.ID}).Error; err != nil {
+		return err
+	}
+	if origin.PreviousAdmissionID != "" {
+		if err := s.sealMessageProducerAdvanceInTx(tx, origin, &row); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func ConfigureMessageMaterialWriters(repo interface{}, store *KnowledgeInputProvenanceStore) {

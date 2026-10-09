@@ -35,3 +35,7 @@ CREATE TRIGGER message_generated_field_context_checkpoint AFTER UPDATE ON messag
 CREATE TABLE message_fork_parent_origins(generation_id TEXT PRIMARY KEY REFERENCES message_generation_origins(id),parent_materials TEXT NOT NULL);
 CREATE TRIGGER message_fork_parent_origins_immutable_update BEFORE UPDATE ON message_fork_parent_origins BEGIN SELECT RAISE(ABORT,'immutable original fork parents'); END;
 CREATE TRIGGER message_fork_parent_origins_immutable_delete BEFORE DELETE ON message_fork_parent_origins BEGIN SELECT RAISE(ABORT,'immutable original fork parents'); END;
+
+CREATE TABLE message_producer_advances(admission_id TEXT PRIMARY KEY REFERENCES message_material_admissions(id),message_id TEXT NOT NULL,session_id TEXT NOT NULL,generation_id TEXT NOT NULL,previous_admission_id TEXT NOT NULL,previous_revision BIGINT NOT NULL,previous_membership BIGINT NOT NULL,result_revision BIGINT NOT NULL);
+CREATE TRIGGER message_producer_advances_immutable_update BEFORE UPDATE ON message_producer_advances BEGIN SELECT RAISE(ABORT,'immutable actual message producer advance'); END;
+CREATE TRIGGER message_producer_advances_immutable_delete BEFORE DELETE ON message_producer_advances BEGIN SELECT RAISE(ABORT,'immutable actual message producer advance'); END;

@@ -26,8 +26,14 @@ func (s *sessionService) KnowledgeQA(
 	req *types.QARequest,
 	eventBus *event.EventBus,
 ) error {
-	ctx = WithMessageMaterialOutputBoundary(ctx)
-	ctx = types.WithHistoryMaterialLifetime(ctx, func() error { return CheckMessageMaterialOutputBoundary(ctx) }, func() { CloseMessageMaterialOutputBoundary(ctx) })
+	var releaseProducer func()
+	var external bool
+	ctx, releaseProducer, external = retainMessageMaterialProducer(ctx)
+	if !external {
+		ctx = WithMessageMaterialOutputBoundary(ctx)
+		releaseProducer = func() { CloseMessageMaterialOutputBoundary(ctx) }
+	}
+	ctx = types.WithHistoryMaterialLifetime(ctx, func() error { return CheckMessageMaterialOutputBoundary(ctx) }, releaseProducer)
 	handoff := false
 	defer func() {
 		if !handoff {
@@ -269,6 +275,7 @@ func (s *sessionService) KnowledgeQA(
 		"knowledge_base_ids": knowledgeBaseIDs,
 		"search_targets":     len(searchTargets),
 	}, nil, nil)
+	markMessageMaterialReady(ctx)
 	err = s.KnowledgeQAByEvent(ctx, chatManage, pipeline)
 	if err == nil {
 		handoff = true

@@ -69,3 +69,7 @@ func (s *messageService) BeginCompletedMessageMaterialReplay(ctx context.Context
 	}
 	return message, check, guard.Close, nil
 }
+
+func (s *messageService) HasOriginalMessageMaterialStore() bool {
+	return s.materialStore != nil && s.sourceLineageGuard != nil
+}

@@ -283,6 +283,9 @@ func TestMessageActualFirstQAPersistedPlaceholderHistoryAndFinalStream(t *testin
 	chatpipeline.NewPluginChatCompletionStream(manager, models)
 	service := &sessionService{cfg: cfg, modelService: models, eventManager: manager, lineageVerifier: messages, sourceLineageGuard: messages.sourceLineageGuard}
 	bus := event.NewEventBus()
+	require.NoError(t, repository.UpgradeMessageProducerAdvanceSchema(db))
+	ctx, _, finalCheck, closeHTTP := BeginMessageMaterialHTTPBoundary(ctx)
+	defer closeHTTP()
 	done := make(chan error, 1)
 	bus.On(event.EventAgentFinalAnswer, func(eventCtx context.Context, evt event.Event) error {
 		data, ok := evt.Data.(event.AgentFinalAnswerData)
@@ -293,7 +296,8 @@ func TestMessageActualFirstQAPersistedPlaceholderHistoryAndFinalStream(t *testin
 		if data.Done {
 			assistant.SourceLineage, _ = evt.SourceLineage.(*types.SourceLineage)
 			assistant.IsCompleted = true
-			err := messages.UpdateMessage(eventCtx, assistant)
+			// The production handler persists with its shared outer async context.
+			err := messages.UpdateMessage(ctx, assistant)
 			done <- err
 		}
 		return nil
@@ -307,6 +311,7 @@ func TestMessageActualFirstQAPersistedPlaceholderHistoryAndFinalStream(t *testin
 		t.Fatal("actual first QA stream did not finish")
 	}
 	require.True(t, called)
+	require.NoError(t, finalCheck())
 	var actual types.Message
 	require.NoError(t, db.Where("id=?", assistant.ID).Take(&actual).Error)
 	require.True(t, actual.IsCompleted)

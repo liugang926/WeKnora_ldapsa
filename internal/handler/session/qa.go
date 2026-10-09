@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/Tencent/WeKnora/internal/application/access"
+	applicationservice "github.com/Tencent/WeKnora/internal/application/service"
 	"github.com/Tencent/WeKnora/internal/errors"
 	"github.com/Tencent/WeKnora/internal/event"
 	"github.com/Tencent/WeKnora/internal/logger"
@@ -727,6 +728,9 @@ func mergeKnowledgeTargets(requestKBIDs []string, requestKnowledgeIDs []string, 
 type sseStreamContext struct {
 	eventBus         *event.EventBus
 	streamHandler    *AgentStreamHandler
+	materialAttach   func(context.Context) context.Context
+	materialCheck    func() error
+	materialClose    func()
 	asyncCtx         context.Context
 	cancel           context.CancelFunc
 	assistantMessage *types.Message
@@ -780,8 +784,17 @@ func (h *Handler) setupSSEStream(reqCtx *qaRequestContext, generateTitle bool, m
 
 	eventBus := event.NewEventBus()
 	asyncCtx, cancel := context.WithCancel(logger.CloneContext(baseCtx))
+	var materialAttach func(context.Context) context.Context
+	var materialCheck func() error
+	var materialClose func()
+	if native, ok := h.messageService.(interface{ HasOriginalMessageMaterialStore() bool }); ok && native.HasOriginalMessageMaterialStore() {
+		asyncCtx, materialAttach, materialCheck, materialClose = applicationservice.BeginMessageMaterialHTTPBoundary(asyncCtx)
+	}
 
 	streamCtx := &sseStreamContext{
+		materialAttach:   materialAttach,
+		materialCheck:    materialCheck,
+		materialClose:    materialClose,
 		eventBus:         eventBus,
 		asyncCtx:         asyncCtx,
 		cancel:           cancel,
@@ -1334,6 +1347,9 @@ func (h *Handler) executeQA(reqCtx *qaRequestContext, mode qaMode, generateTitle
 
 	// Setup SSE stream
 	streamCtx := h.setupSSEStream(reqCtx, generateTitle, mode)
+	if streamCtx.materialClose != nil {
+		defer streamCtx.materialClose()
+	}
 	streamCtx.releaseTurn = releaseQATurn
 	if streamCtx.liveRunFailed {
 		if streamCtx.cancel != nil {
@@ -1404,7 +1420,9 @@ func (h *Handler) executeQA(reqCtx *qaRequestContext, mode qaMode, generateTitle
 	livePublicationMessage := *reqCtx.assistantMessage
 	livePublicationMessage.KnowledgeReferences = nil
 	asyncDone := make(chan struct{})
+	releaseMaterialProducer := applicationservice.RetainMessageMaterialHTTPProducer(streamCtx.asyncCtx)
 	go func() {
+		defer releaseMaterialProducer()
 		defer close(asyncDone)
 		defer func() {
 			if r := recover(); r != nil {
@@ -1539,6 +1557,32 @@ func (h *Handler) executeQA(reqCtx *qaRequestContext, mode qaMode, generateTitle
 	if reqCtx.customAgent != nil && reqCtx.effectiveTenantID != 0 &&
 		reqCtx.effectiveTenantID != reqCtx.session.TenantID {
 		sseCtx = access.WithSharedAgent(ctx, reqCtx.customAgent)
+	}
+	if streamCtx.materialAttach != nil {
+		sseCtx = streamCtx.materialAttach(sseCtx)
+	}
+	if streamCtx.materialCheck != nil {
+		phase := &liveMaterialWritePhase{}
+		sseCtx = context.WithValue(sseCtx, liveMaterialWritePhaseKey{}, phase)
+		prior := reqCtx.c.Writer
+		writer := &nativeSavedReplayWriter{ResponseWriter: prior, ctx: reqCtx.c.Request.Context(), check: func() error {
+			if err := streamCtx.materialCheck(); err != nil {
+				logger.Warnf(sseCtx, "Original history HTTP material check failed: %v", err)
+				return err
+			}
+			// Before any derived frame, the loop may send the exact raw human
+			// query control. Its original user guard is in the same holder. Every
+			// source-bearing batch is independently checked before serialization.
+			if livePublicationMessage.SourceLineage.RequireComplete() != nil {
+				if phase.RawControl {
+					return nil
+				}
+				return access.ErrNextcloudPublicationDenied
+			}
+			return checkLiveStreamPublication(sseCtx, h.messageService, &livePublicationMessage, nil)
+		}}
+		reqCtx.c.Writer = writer
+		defer func() { reqCtx.c.Writer = prior }()
 	}
 	h.handleAgentEventsForSSE(sseCtx, reqCtx.c, sessionID, reqCtx.assistantMessage.ID,
 		reqCtx.requestID, streamCtx.eventBus, shouldWaitForTitle, reqCtx.resourceRewriter,

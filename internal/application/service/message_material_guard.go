@@ -209,3 +209,27 @@ func (g *MessageMaterialGuard) OriginalSnapshot() (*types.MessageMaterialSnapsho
 	}
 	return result, nil
 }
+
+func (g *MessageMaterialGuard) advanceOwnCompletion(ctx context.Context) error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.advanceOwnCompletionLocked(ctx)
+}
+func (g *MessageMaterialGuard) advanceOwnCompletionLocked(ctx context.Context) error {
+	updated, err := g.store.AdvanceMessageMaterialAfterOwnCompletion(ctx, g.snapshot)
+	if err != nil {
+		return err
+	}
+	plan, err := g.store.PeekMessageMaterialReadPlan(ctx, updated.Request)
+	if err != nil {
+		return err
+	}
+	marked, err := repository.WithMessageMaterialReadPlan(g.ctx, plan)
+	if err != nil {
+		return err
+	}
+	g.ctx = marked
+	g.plan = plan
+	g.snapshot = updated
+	return nil
+}

@@ -19,6 +19,9 @@ import (
 	"gorm.io/gorm"
 )
 
+type liveMaterialWritePhaseKey struct{}
+type liveMaterialWritePhase struct{ RawControl bool }
+
 // ContinueStream godoc
 // @Summary      继续流式响应
 // @Description  继续获取正在进行的流式响应
@@ -620,7 +623,14 @@ func (h *Handler) handleAgentEventsForSSE(
 					return
 				}
 
+				if phase, ok := ctx.Value(liveMaterialWritePhaseKey{}).(*liveMaterialWritePhase); ok {
+					phase.RawControl = evt.Type == types.ResponseTypeAgentQuery || evt.Type == types.ResponseType(event.EventStop)
+				}
 				emitStreamEvent(ctx, c, evt, requestID, resourceRewriter)
+				if writer, ok := c.Writer.(*nativeSavedReplayWriter); ok && writer.denied != nil {
+					emitSafeTerminalGenerationError(c, requestID)
+					return
+				}
 			}
 
 			// Update offset
@@ -970,18 +980,26 @@ func stopLiveStreamForPublication(
 	}
 	// Do not flush the resource URL holdback buffer: its tail may itself be
 	// source-derived text from just before the publication was withdrawn.
-	c.SSEvent("message", &types.StreamResponse{
-		ID: requestID, ResponseType: types.ResponseTypeError,
-		Content: "Current source access changed; generation stopped", Done: true,
-	})
-	c.Writer.Flush()
+	emitStaticTerminalStreamError(c, requestID, "Current source access changed; generation stopped", "source_access_changed")
 }
 
 func emitSafeTerminalGenerationError(c *gin.Context, requestID string) {
+	emitStaticTerminalStreamError(c, requestID, "Generation could not complete; please retry after checking access", "generation_failed")
+}
+
+func emitStaticTerminalStreamError(c *gin.Context, requestID, content, code string) {
+	if c.Request.Context().Err() != nil {
+		return
+	}
+	prior := c.Writer
+	if guarded, ok := prior.(*nativeSavedReplayWriter); ok {
+		c.Writer = guarded.ResponseWriter
+		defer func() { c.Writer = prior }()
+	}
 	c.SSEvent("message", &types.StreamResponse{
 		ID: requestID, ResponseType: types.ResponseTypeError,
-		Content: "Generation could not complete; please retry after checking access", Done: true,
-		Data: map[string]interface{}{"error_code": "generation_failed"},
+		Content: content, Done: true,
+		Data: map[string]interface{}{"error_code": code},
 	})
 	c.Writer.Flush()
 }

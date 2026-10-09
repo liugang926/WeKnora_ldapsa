@@ -1,3 +1,6 @@
+DROP TRIGGER IF EXISTS message_producer_advances_immutable_update;
+DROP TRIGGER IF EXISTS message_producer_advances_immutable_delete;
+DROP TABLE IF EXISTS message_producer_advances;
 DROP TABLE IF EXISTS message_fork_parent_origins;
 DROP TRIGGER IF EXISTS message_generated_field_context_checkpoint;
 DROP TRIGGER IF EXISTS message_generated_field_rendered_content;

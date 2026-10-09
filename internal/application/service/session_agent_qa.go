@@ -28,8 +28,14 @@ func (s *sessionService) AgentQA(
 	req *types.QARequest,
 	eventBus *event.EventBus,
 ) error {
-	ctx = WithMessageMaterialOutputBoundary(ctx)
-	defer CloseMessageMaterialOutputBoundary(ctx)
+	var releaseProducer func()
+	var external bool
+	ctx, releaseProducer, external = retainMessageMaterialProducer(ctx)
+	if !external {
+		ctx = WithMessageMaterialOutputBoundary(ctx)
+		releaseProducer = func() { CloseMessageMaterialOutputBoundary(ctx) }
+	}
+	defer releaseProducer()
 	if native, ok := s.lineageVerifier.(*messageService); ok && native.materialStore != nil {
 		requestID, err := native.materialStore.MessageRequestControl(ctx, req.Session.ID, req.AssistantMessageID)
 		if err != nil {
@@ -347,6 +353,7 @@ func (s *sessionService) AgentQA(
 
 	// Execute agent with streaming (asynchronously)
 	// Events will be emitted to EventBus and handled by the Handler layer
+	markMessageMaterialReady(ctx)
 	logger.Info(ctx, "Executing agent with streaming")
 	if _, err := engine.Execute(ctx, sessionID, req.AssistantMessageID, agentQuery, llmContext, agentImageURLs); err != nil {
 		logger.Errorf(ctx, "Agent execution failed: %v", err)
