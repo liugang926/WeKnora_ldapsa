@@ -591,6 +591,16 @@ func (h *Handler) handleAgentEventsForSSE(
 					emitSafeTerminalGenerationError(c, requestID)
 					return
 				}
+				// Empty physical renewal alone does not recheck the current
+				// actor grant for sources already admitted by prior frames.
+				// Use only that original complete union, never infer a source
+				// from citations or clear an unknown prefix during idle.
+				if idle && liveMessage != nil && liveMessage.SourceLineage.RequireComplete() == nil {
+					if err := checkLiveStreamPublication(ctx, h.messageService, liveMessage, nil); err != nil {
+						stopLiveStreamForPublication(ctx, c, eventBus, sessionID, assistantMessageID, requestID, err)
+						return
+					}
+				}
 				phase.IdleMaterialReady = true
 				phase.LastIdleMaterialCheck = time.Now()
 			}
