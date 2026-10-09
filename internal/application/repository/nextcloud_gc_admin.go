@@ -48,6 +48,13 @@ func (s *NextcloudGCStore) PreviewJob(ctx context.Context, tenant uint64, id str
 	if e := s.db.WithContext(ctx).Model(&nextcloudGCItem{}).Select("kind,state,COUNT(*) AS count,COALESCE(SUM(estimated_bytes),0) AS estimated_bytes,COALESCE(SUM(confirmed_released_bytes),0) AS confirmed_released_bytes").Where("job_id=?", id).Group("kind,state").Order("kind,state").Scan(&out.Items).Error; e != nil {
 		return nil, e
 	}
+	if s.db.Migrator().HasTable(&originalBodyGCItem{}) {
+		var bodies []NextcloudGCPreviewItem
+		if e := bodyInternal(s.db.WithContext(ctx)).Model(&originalBodyGCItem{}).Select("'sql_original_body' AS kind,state,COUNT(*) AS count,COALESCE(SUM(estimated_bytes),0) AS estimated_bytes,0 AS confirmed_released_bytes").Where("job_id=? AND tenant_id=? AND knowledge_base_id=? AND knowledge_id=?", job.ID, job.TenantID, job.KnowledgeBaseID, job.KnowledgeID).Group("state").Order("state").Scan(&bodies).Error; e != nil {
+			return nil, e
+		}
+		out.Items = append(out.Items, bodies...)
+	}
 	for _, item := range out.Items {
 		out.Status.EstimatedBytes += item.EstimatedBytes
 		out.Status.ConfirmedReleasedBytes += item.ConfirmedReleasedBytes

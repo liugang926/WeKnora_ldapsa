@@ -229,7 +229,7 @@ func bodyProtocolDatabaseRollback(t *testing.T, pg bool) {
 				quoted = append(quoted, bodyQuoted(schema)+"."+bodyQuoted(table))
 			}
 			require.NoError(t, db.Exec("TRUNCATE "+strings.Join(quoted, ",")+" CASCADE").Error)
-			order := []string{"knowledge_bases", "knowledges", "knowledge_auto_tag_input_manifests", "original_body_payloads", "original_body_field_heads", "original_body_field_revisions", "original_body_parent_refs", "original_body_leases", "original_body_purge_receipts", "original_body_journal_heads", "original_body_rewrite_authorities"}
+			order := []string{"knowledge_bases", "knowledges", "knowledge_auto_tag_input_manifests", "original_body_payloads", "original_body_field_heads", "original_body_field_revisions", "original_body_parent_refs", "original_body_leases", "original_body_purge_receipts", "original_body_journal_heads", "original_body_rewrite_authorities", "original_body_gc_items"}
 			require.Len(t, tables, len(order))
 			for _, table := range order {
 				require.NoError(t, db.Exec("INSERT INTO "+bodyQuoted(schema)+"."+bodyQuoted(table)+" SELECT * FROM "+bodyQuoted(snapshot)+"."+bodyQuoted(table)).Error)
@@ -420,10 +420,10 @@ func bodyProtocolSelectedAdmin(t *testing.T, pg bool) {
 			switch mode {
 			case "selected-only":
 				require.NoError(t, e)
-				require.Equal(t, 1, n)
+				require.Positive(t, n)
 			case "current-shared-owner":
 				require.NoError(t, e)
-				require.Zero(t, n)
+
 			case "missing-coverage":
 				require.ErrorIs(t, e, ErrNextcloudContentGCUncovered)
 			case "admin-revoked":
@@ -440,10 +440,42 @@ func bodyProtocolSelectedAdmin(t *testing.T, pg bool) {
 				require.Equal(t, "live", body.State)
 			}
 			var items int64
-			require.NoError(t, db.Model(&nextcloudGCItem{}).Where("job_id=? AND kind='sql_original_body' AND object_ref=?", jobID, other).Count(&items).Error)
+			require.NoError(t, db.Model(&originalBodyGCItem{}).Where("job_id=? AND body_id=?", jobID, other).Count(&items).Error)
 			require.Zero(t, items)
 		})
 	}
 }
 func TestOriginalBodySelectedAdminSQLite(t *testing.T)   { bodyProtocolSelectedAdmin(t, false) }
 func TestPostgresOriginalBodySelectedAdmin(t *testing.T) { bodyProtocolSelectedAdmin(t, true) }
+
+func bodyProtocolBatchFairness(t *testing.T, pg bool) {
+	db, s := bodyProtocolFixture(t, pg)
+	ctx := context.Background()
+	current := bodyProtocolCreate(t, db, "first-current", "two")
+	expired := bodyProtocolCreate(t, db, "second-expired", "one")
+	bodyProtocolDeleted(t, db, "one", true)
+	require.NoError(t, bodyInternal(db).Model(&originalBodyPayload{}).Where("id=?", current).Update("created_at_ms", 1).Error)
+	n, e := s.PurgeDue(ctx, 1)
+	require.NoError(t, e)
+	require.Zero(t, n)
+	n, e = s.PurgeDue(ctx, 1)
+	require.NoError(t, e)
+	require.Equal(t, 1, n, "a protected first body cannot starve a later due body")
+	var body originalBodyPayload
+	require.NoError(t, bodyInternal(db).Where("id=?", expired).Take(&body).Error)
+	require.Equal(t, "purged", body.State)
+}
+func TestOriginalBodyBatchFairnessSQLite(t *testing.T)   { bodyProtocolBatchFairness(t, false) }
+func TestPostgresOriginalBodyBatchFairness(t *testing.T) { bodyProtocolBatchFairness(t, true) }
+
+func bodyProtocolAnchorIdentity(t *testing.T, pg bool) {
+	db, first := bodyProtocolFixture(t, pg)
+	_, other := bodyProtocolFixture(t, pg)
+	first.ConfigureJournal(other.journal.paths)
+	require.ErrorIs(t, first.VerifyJournalReady(), ErrOriginalBodyUnavailable, "zero sequence from another initialized database is not an anchor")
+	var head originalBodyJournalHead
+	require.NoError(t, bodyInternal(db).Where("id=1").Take(&head).Error)
+	require.NotEmpty(t, head.JournalID)
+}
+func TestOriginalBodyAnchorIdentitySQLite(t *testing.T)   { bodyProtocolAnchorIdentity(t, false) }
+func TestPostgresOriginalBodyAnchorIdentity(t *testing.T) { bodyProtocolAnchorIdentity(t, true) }

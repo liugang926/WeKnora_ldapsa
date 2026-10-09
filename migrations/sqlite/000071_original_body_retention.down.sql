@@ -1,2 +1,2 @@
--- Purge tombstones cannot be removed by schema rollback.
-SELECT 1/0;
+-- Purge tombstones and the independent anchor cannot be rolled back.
+SELECT original_body_schema_rollback_forbidden();

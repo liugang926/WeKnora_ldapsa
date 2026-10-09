@@ -341,7 +341,7 @@ var _ = fmt.Sprintf
 // have been reconciled. Initialization is an explicit operator action.
 func (s *OriginalBodyRetentionStore) VerifyJournalReady() error {
 	if !originalBodySchemaPresent(s.db) {
-		return nil
+		return ErrOriginalBodyUnavailable
 	}
 	return s.checkJournalInTx(bodyInternal(s.db))
 }

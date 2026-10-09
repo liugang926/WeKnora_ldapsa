@@ -87,7 +87,7 @@ func gcAuditInventory(tx *gorm.DB, job nextcloudGCJob) ([]gcAuditEntry, error) {
 			return nil, e
 		}
 		for _, row := range rows {
-			body, e := json.Marshal(row)
+			body, e := gcOriginalBodyAuditMetadata(tx, entry.table, bodyText(row[entry.key]), row)
 			if e != nil {
 				return nil, e
 			}
@@ -244,6 +244,7 @@ func (s *NextcloudGCStore) runLocalDerived(ctx context.Context, id string, now t
 		return e
 	}
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		tx = bodyInternal(tx)
 		nowMS, e := gcLockKBContent(tx, identity)
 		if e != nil {
 			return e

@@ -116,6 +116,9 @@ func localDerivedActualPipeline(t *testing.T, pg bool, modes ...string) {
 		require.NoError(t, e)
 		require.NoError(t, f.db.Exec(string(body)).Error)
 	}
+	if mode == "body-retention" || mode == "body-inline-restore" {
+		setupActualBodyLocalGC(t, f, build, pg)
+	}
 	info := &types.IndexInfo{SourceID: f.chunks[0].ID, ChunkID: f.chunks[0].ID, SourceType: types.ChunkSourceType, KnowledgeID: f.k.ID, KnowledgeBaseID: "kb", Content: f.chunks[0].Content, IsEnabled: true}
 	if mode == "sqlite-ftserror" && !pg {
 		require.NoError(t, f.db.Exec("DROP TABLE lite_embeddings_fts").Error)
@@ -283,6 +286,9 @@ func localDerivedActualPipeline(t *testing.T, pg bool, modes ...string) {
 		require.Equal(t, int64(len(resourceBody)), states[0].ConfirmedReleasedBytes)
 		require.Equal(t, 3, manifest.PhysicalItems)
 	}
+	if mode == "body-retention" || mode == "body-inline-restore" {
+		assertActualBodyLocalGC(t, f, gc, mode)
+	}
 	if mode == "restored-after-collection" {
 		require.NoError(t, f.db.Exec("UPDATE nextcloud_source_versions SET state='published',candidate_knowledge_id=? WHERE datasource_id=?", f.k.ID, scope.DataSourceID).Error)
 		_, err := gc.RunDue(context.Background(), time.Now().Add(3*time.Hour), 10)
@@ -303,5 +309,118 @@ func TestNextcloudLocalDerivedActualSQLitePipeline(t *testing.T) {
 func TestPostgresNextcloudLocalDerivedActualPipeline(t *testing.T) {
 	for _, mode := range []string{"normal", "reader", "builder", "late-writer", "foreign-parent", "receipt-crash", "restored-current", "physical-original", "unwitnessed-row", "restored-after-collection"} {
 		t.Run(mode, func(t *testing.T) { localDerivedActualPipeline(t, true, mode) })
+	}
+}
+
+func TestOriginalBodyActualLocalDerivedSQLite(t *testing.T) {
+	for _, mode := range []string{"body-retention", "body-inline-restore"} {
+		t.Run(mode, func(t *testing.T) { localDerivedActualPipeline(t, false, mode) })
+	}
+}
+func TestPostgresOriginalBodyActualLocalDerived(t *testing.T) {
+	for _, mode := range []string{"body-retention", "body-inline-restore"} {
+		t.Run(mode, func(t *testing.T) { localDerivedActualPipeline(t, true, mode) })
+	}
+}
+
+func setupActualBodyLocalGC(t *testing.T, f *enrichmentTestFixture, build context.Context, pg bool) {
+	require.NoError(t, f.db.AutoMigrate(&types.KnowledgeProcessingSpan{}))
+	require.NoError(t, f.db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS body_span_scope_unique ON knowledge_processing_spans(knowledge_id,attempt,span_id)").Error)
+	spanPath := "../../../migrations/sqlite/000057_processing_span_original_inputs.up.sql"
+	if pg {
+		spanPath = "../../../migrations/versioned/000138_processing_span_original_inputs.up.sql"
+	}
+	spanSQL, err := os.ReadFile(spanPath)
+	require.NoError(t, err)
+	require.NoError(t, f.db.Exec(string(spanSQL)).Error)
+	path := "../../../migrations/sqlite/000071_original_body_retention.up.sql"
+	if pg {
+		path = "../../../migrations/versioned/000152_original_body_retention.up.sql"
+	}
+	script, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.NoError(t, f.db.Exec(string(script)).Error)
+	require.NoError(t, repository.InstallOriginalBodyRetentionTriggers(f.db))
+	require.NoError(t, repository.InstallOriginalBodyRetentionCallbacks(f.db))
+	dir := t.TempDir()
+	require.NoError(t, os.Chmod(dir, 0700))
+	key := filepath.Join(dir, "key")
+	pin := filepath.Join(dir, "pin")
+	require.NoError(t, os.WriteFile(key, []byte(strings.Repeat("actual-pipeline-key-", 3)), 0600))
+	t.Setenv("WEKNORA_ORIGINAL_BODY_JOURNAL_DIRECTORY", dir)
+	t.Setenv("WEKNORA_ORIGINAL_BODY_JOURNAL_KEY", key)
+	t.Setenv("WEKNORA_ORIGINAL_BODY_JOURNAL_PIN", pin)
+	require.NoError(t, repository.NewOriginalBodyRetentionStore(f.db).InitializeJournal())
+	require.NoError(t, f.db.AutoMigrate(&types.KnowledgeProcessingSpan{}))
+	original := repository.KnowledgeBuildInputProofFromContext(build)
+	material, err := f.store.CaptureKnowledgeBuildInputs(build, types.KnowledgeBuildInputCaptureRequest{TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: f.k.ID, ChunkIDs: []string{f.chunks[0].ID}, Expected: original})
+	require.NoError(t, err)
+	build = repository.WithKnowledgeBuildInputProof(build, f.store, material.Proof)
+	tracker := NewSpanTracker(repository.NewKnowledgeSpanRepository(f.db), f.db)
+	root, attempt, err := tracker.OpenAttempt(build, f.k.ID, "")
+	require.NoError(t, err)
+	require.NotNil(t, root)
+	span := tracker.BeginStage(build, f.k.ID, attempt, "actual-body-audit", types.JSONMap{"source_preview": "actual span original body"})
+	require.NotNil(t, span)
+	tracker.EndSpan(build, span, types.JSONMap{"summary_preview": "actual sensitive summary body", "sampleQuestion": "actual grounded question body"})
+	tracker.EndSpan(build, root, types.JSONMap{"completed_nodes": 1})
+	var actualSpan types.KnowledgeProcessingSpan
+	require.NoError(t, f.db.Where("span_id=?", span.SpanID).Take(&actualSpan).Error)
+	require.Equal(t, "actual sensitive summary body", actualSpan.Output["summary_preview"])
+	snapshot, err := f.store.CaptureKnowledgeAutoTagInputs(f.ctx, repository.KnowledgeBuildInputProofFromContext(build))
+	require.NoError(t, err)
+	require.NotNil(t, snapshot)
+	faqPath := "../../../migrations/sqlite/000063_faq_original_entry_inputs.up.sql"
+	if pg {
+		faqPath = "../../../migrations/versioned/000144_faq_original_entry_inputs.up.sql"
+	}
+	faqSQL, err := os.ReadFile(faqPath)
+	require.NoError(t, err)
+	require.NoError(t, f.db.Exec(string(faqSQL)).Error)
+	require.NoError(t, repository.InstallOriginalBodyRetentionTriggers(f.db))
+	target := &types.KnowledgeBase{ID: "faq-target", TenantID: 7, Name: "independent FAQ target", Type: types.KnowledgeBaseTypeFAQ, EmbeddingModelID: "embed"}
+	require.NoError(t, f.store.CreateKnowledgeBaseWithInput(repository.WithIndependentKnowledgeBaseNameInput(repository.WithIndependentKnowledgeInput(f.ctx), "", target.Name), target))
+	operation := types.FAQInputOperation{Kind: "create", Entry: &types.FAQEntryPayload{StandardQuestion: "actual derived source question", Answers: []string{f.chunks[0].Content}}}
+	derived, err := f.store.WithDerivedFAQInput(f.ctx, target.ID, operation, repository.KnowledgeBuildInputProofFromContext(build))
+	require.NoError(t, err)
+	_, sessionID, err := f.store.BeginFAQInput(derived, target, operation)
+	require.NoError(t, err)
+	require.NotEmpty(t, sessionID)
+}
+
+func assertActualBodyLocalGC(t *testing.T, f *enrichmentTestFixture, gc *repository.NextcloudGCStore, mode string) {
+	var raw string
+	require.NoError(t, f.db.Raw("SELECT COALESCE(CAST(input AS TEXT),'') || COALESCE(CAST(output AS TEXT),'') FROM knowledge_processing_spans WHERE knowledge_id=? LIMIT 1", f.k.ID).Scan(&raw).Error)
+	require.NotContains(t, raw, "actual span original body")
+	require.NotContains(t, raw, "actual sensitive summary body")
+	require.NotContains(t, raw, "actual grounded question body")
+	var receipts int64
+	require.NoError(t, f.db.Table("original_body_purge_receipts").Where("after_bytes=0").Count(&receipts).Error)
+	require.Positive(t, receipts)
+	var faqRaw string
+	require.NoError(t, f.db.Raw("SELECT input_body FROM faq_input_sessions LIMIT 1").Scan(&faqRaw).Error)
+	require.Contains(t, faqRaw, "_original_body_version")
+	require.NotContains(t, faqRaw, f.chunks[0].Content)
+	if mode == "body-inline-restore" {
+		var field struct{ RowKey, BodyID string }
+		require.NoError(t, f.db.Table("original_body_field_heads").Where("source_table='knowledge_processing_spans' AND column_name='output' AND row_key IN (SELECT CAST(id AS TEXT) FROM knowledge_processing_spans WHERE name='actual-body-audit')").Take(&field).Error)
+		var old string
+		require.NoError(t, f.db.Raw("SELECT CAST(output AS TEXT) FROM knowledge_processing_spans WHERE CAST(id AS TEXT)=?", field.RowKey).Scan(&old).Error)
+		restored := `{"summary_preview":"actual sensitive summary body"}`
+		if f.db.Dialector.Name() == "postgres" {
+			require.NoError(t, f.db.Raw("SELECT CAST(? AS jsonb)::text", restored).Scan(&restored).Error)
+		}
+		// Restore only physical bytes through the exact protocol guard, leaving
+		// semantic revisions/receipts unchanged. The independent body receipt must
+		// still reject this resurrection after metadata hashing omits the column.
+		require.NoError(t, f.db.Exec("INSERT INTO original_body_rewrite_authorities(source_table,row_key,column_name,body_id,old_value,new_value) VALUES('knowledge_processing_spans',?,'output',?,?,?)", field.RowKey, field.BodyID, old, restored).Error)
+		require.NoError(t, f.db.Exec("UPDATE knowledge_processing_spans SET output=? WHERE CAST(id AS TEXT)=?", restored, field.RowKey).Error)
+		require.NoError(t, f.db.Exec("DELETE FROM original_body_rewrite_authorities").Error)
+		_, err := gc.RunDue(context.Background(), time.Now().Add(4*time.Hour), 10)
+		require.Error(t, err)
+		var status []repository.NextcloudGCStatus
+		status, err = gc.ListStatus(context.Background(), 7, 10)
+		require.NoError(t, err)
+		require.Equal(t, "blocked", status[0].State)
 	}
 }

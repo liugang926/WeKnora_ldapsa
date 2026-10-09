@@ -71,6 +71,39 @@ func (s *OriginalBodyRetentionStore) ReconcileExternalPurge(ctx context.Context)
 				if receipt.JournalSequence != event.Sequence || receipt.JournalHeadSHA256 != event.HeadSHA256 {
 					return ErrOriginalBodyUnavailable
 				}
+				// A prior DB receipt does not authenticate restored physical
+				// bytes. Validate every still-owned field before idempotence.
+				for _, field := range heads {
+					var current originalBodyFieldHead
+					if e := bodyInternal(tx).Where("slot_id=?", field.SlotID).Take(&current).Error; e != nil {
+						return e
+					}
+					if current.BodyID != body.ID {
+						continue
+					}
+					d, ok := bodyDescriptor(field.SourceTable)
+					if !ok {
+						return ErrOriginalBodyUnavailable
+					}
+					row, e := bodySourceRow(tx, d, field.RowKey)
+					if errors.Is(e, gorm.ErrRecordNotFound) {
+						continue
+					}
+					if e != nil {
+						return e
+					}
+					raw, e := bodyFieldValue(row, field.ColumnName)
+					if e != nil {
+						return e
+					}
+					if d.Mode == "vault" {
+						if raw != field.OriginalBodyRef {
+							return ErrOriginalBodyUnavailable
+						}
+					} else if raw != "" && raw != "null" {
+						return ErrOriginalBodyUnavailable
+					}
+				}
 				continue
 			}
 			if e := s.lockBodyScopes(tx, heads, parents); e != nil {

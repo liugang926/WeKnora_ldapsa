@@ -146,6 +146,7 @@ func (s *NextcloudGCStore) InventoryRetired(ctx context.Context, now time.Time, 
 func (s *NextcloudGCStore) inventoryOne(ctx context.Context, source nextcloudGCSource, now time.Time) (bool, error) {
 	inserted := false
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		tx = bodyInternal(tx)
 		if _, e := gcLockKBContent(tx, nextcloudGCJob{TenantID: source.TenantID, KnowledgeBaseID: source.KnowledgeBaseID}); e != nil {
 			return e
 		}
@@ -329,6 +330,7 @@ func (s *NextcloudGCStore) runOne(ctx context.Context, id string, now time.Time)
 	}
 
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		tx = bodyInternal(tx)
 		if _, e := gcLockKBContent(tx, identity); e != nil {
 			return e
 		}
@@ -569,6 +571,14 @@ func (s *NextcloudGCStore) ListStatus(ctx context.Context, tenantID uint64, limi
 			Select("SUM(CASE WHEN state <> 'collected' THEN 1 ELSE 0 END) AS pending_items, COALESCE(SUM(estimated_bytes), 0) AS estimated_bytes, COALESCE(SUM(confirmed_released_bytes), 0) AS confirmed_released_bytes").
 			Where("job_id = ?", job.ID).Scan(&aggregate).Error; err != nil {
 			return nil, err
+		}
+		if s.db.Migrator().HasTable(&originalBodyGCItem{}) {
+			var bodies struct{ PendingItems, EstimatedBytes int64 }
+			if e := bodyInternal(s.db.WithContext(ctx)).Model(&originalBodyGCItem{}).Select("COALESCE(SUM(CASE WHEN state<>'collected' THEN 1 ELSE 0 END),0) AS pending_items,COALESCE(SUM(estimated_bytes),0) AS estimated_bytes").Where("job_id=? AND tenant_id=? AND knowledge_base_id=? AND knowledge_id=?", job.ID, job.TenantID, job.KnowledgeBaseID, job.KnowledgeID).Scan(&bodies).Error; e != nil {
+				return nil, e
+			}
+			aggregate.PendingItems += bodies.PendingItems
+			aggregate.EstimatedBytes += bodies.EstimatedBytes
 		}
 		status = append(status, NextcloudGCStatus{ID: job.ID, TenantID: job.TenantID,
 			KnowledgeBaseID: job.KnowledgeBaseID, KnowledgeID: job.KnowledgeID,

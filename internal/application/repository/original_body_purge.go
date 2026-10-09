@@ -338,7 +338,7 @@ func (s *OriginalBodyRetentionStore) PurgeDue(ctx context.Context, limit int) (i
 		return 0, ErrOriginalBodyUnavailable
 	}
 	var ids []string
-	if e := bodyInternal(s.db.WithContext(ctx)).Model(&originalBodyPayload{}).Where("state='live'").Order("created_at_ms,id").Limit(limit).Pluck("id", &ids).Error; e != nil {
+	if e := bodyInternal(s.db.WithContext(ctx)).Model(&originalBodyPayload{}).Where("state='live'").Order("last_checked_at_ms,created_at_ms,id").Limit(limit).Pluck("id", &ids).Error; e != nil {
 		return 0, e
 	}
 	return s.purgeBodyIDs(ctx, ids, nil)
@@ -360,10 +360,23 @@ func (s *OriginalBodyRetentionStore) PurgeSelectedJob(ctx context.Context, tenan
 	if limit <= 0 || limit > 100 {
 		limit = 100
 	}
+	if e := s.inventorySelectedJob(ctx, job); e != nil {
+		recordErr := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			if err := gcValidateManualAdmin(ctx, bodyInternal(tx), job); err != nil {
+				return err
+			}
+			now, err := nextcloudLeaseNowMS(bodyInternal(tx))
+			if err != nil {
+				return err
+			}
+			return bodyInternal(tx).Model(&nextcloudGCJob{}).Where("id=? AND tenant_id=? AND knowledge_base_id=? AND knowledge_id=?", job.ID, job.TenantID, job.KnowledgeBaseID, job.KnowledgeID).Updates(map[string]any{"state": "blocked", "completed_at": nil, "last_error_code": "original_body_retained_or_unverified", "next_attempt_at": time.UnixMilli(now).Add(nextcloudGCRetryWindow)}).Error
+		})
+		return 0, errors.Join(e, recordErr)
+	}
 	var ids []string
-	q := `SELECT DISTINCT p.id FROM original_body_payloads p WHERE p.state='live' AND p.tenant_id=? AND (EXISTS(SELECT 1 FROM original_body_field_revisions r WHERE r.body_id=p.id AND r.tenant_id=? AND r.knowledge_base_id=? AND r.knowledge_id=?) OR EXISTS(SELECT 1 FROM original_body_parent_refs r WHERE r.body_id=p.id AND r.tenant_id=? AND r.knowledge_base_id=? AND r.knowledge_id=?)) ORDER BY p.id LIMIT ?`
+	q := `SELECT p.id FROM original_body_payloads p WHERE p.state='live' AND p.tenant_id=? AND (EXISTS(SELECT 1 FROM original_body_field_revisions r WHERE r.body_id=p.id AND r.tenant_id=? AND r.knowledge_base_id=? AND r.knowledge_id=?) OR EXISTS(SELECT 1 FROM original_body_parent_refs r WHERE r.body_id=p.id AND r.tenant_id=? AND r.knowledge_base_id=? AND r.knowledge_id=?)) ORDER BY p.last_checked_at_ms,p.created_at_ms,p.id LIMIT ?`
 	if s.db.Migrator().HasTable("datasource_name_inputs") {
-		q = strings.Replace(q, ")) ORDER BY p.id LIMIT ?", ") OR EXISTS(SELECT 1 FROM original_body_field_revisions r JOIN datasource_name_inputs n ON r.source_table='datasource_name_inputs' AND n.id=r.row_key WHERE r.body_id=p.id AND n.tenant_id=? AND n.knowledge_base_id=? AND n.datasource_id=?)) ORDER BY p.id LIMIT ?", 1)
+		q = strings.Replace(q, ")) ORDER BY p.last_checked_at_ms,p.created_at_ms,p.id LIMIT ?", ") OR EXISTS(SELECT 1 FROM original_body_field_revisions r JOIN datasource_name_inputs n ON r.source_table='datasource_name_inputs' AND n.id=r.row_key WHERE r.body_id=p.id AND n.tenant_id=? AND n.knowledge_base_id=? AND n.datasource_id=?)) ORDER BY p.last_checked_at_ms,p.created_at_ms,p.id LIMIT ?", 1)
 	}
 	args := []any{tenant, tenant, job.KnowledgeBaseID, job.KnowledgeID, tenant, job.KnowledgeBaseID, job.KnowledgeID}
 	if s.db.Migrator().HasTable("datasource_name_inputs") {
@@ -389,7 +402,7 @@ func (s *OriginalBodyRetentionStore) PurgeSelectedJob(ctx context.Context, tenan
 			if e := bodyInternal(tx).Where("id=?", id).Take(&body).Error; e != nil {
 				return e
 			}
-			item := nextcloudGCItem{JobID: job.ID, Kind: "sql_original_body", ObjectRef: id, State: "pending", EstimatedBytes: body.BodyBytes, CreatedAt: time.UnixMilli(now), UpdatedAt: time.UnixMilli(now)}
+			item := originalBodyGCItem{JobID: job.ID, BodyID: id, TenantID: job.TenantID, KnowledgeBaseID: job.KnowledgeBaseID, KnowledgeID: job.KnowledgeID, State: "pending", EstimatedBytes: body.BodyBytes, CreatedAtMS: now}
 			if e := bodyInternal(tx).Clauses(clause.OnConflict{DoNothing: true}).Create(&item).Error; e != nil {
 				return e
 			}
@@ -404,11 +417,11 @@ func (s *OriginalBodyRetentionStore) PurgeSelectedJob(ctx context.Context, tenan
 		if e := gcValidateManualAdmin(ctx, bodyInternal(tx), job); e != nil {
 			return e
 		}
-		if e := bodyInternal(tx).Exec("UPDATE nextcloud_gc_items SET state='collected' WHERE job_id=? AND kind='sql_original_body' AND EXISTS(SELECT 1 FROM original_body_payloads p WHERE p.id=object_ref AND p.state='purged' AND p.payload IS NULL)", job.ID).Error; e != nil {
+		if e := bodyInternal(tx).Exec("UPDATE original_body_gc_items SET state='collected' WHERE job_id=? AND EXISTS(SELECT 1 FROM original_body_payloads p WHERE p.id=body_id AND p.state='purged' AND p.payload IS NULL)", job.ID).Error; e != nil {
 			return e
 		}
 		var pending int64
-		if e := bodyInternal(tx).Model(&nextcloudGCItem{}).Where("job_id=? AND kind='sql_original_body' AND state<>'collected'", job.ID).Count(&pending).Error; e != nil {
+		if e := bodyInternal(tx).Model(&originalBodyGCItem{}).Where("job_id=? AND state<>'collected'", job.ID).Count(&pending).Error; e != nil {
 			return e
 		}
 		if pending > 0 {
@@ -592,6 +605,15 @@ func (s *OriginalBodyRetentionStore) purgeBodyIDs(ctx context.Context, ids []str
 			collected = true
 			return nil
 		})
+		if e == nil || errors.Is(e, ErrOriginalBodyRetained) {
+			checked, clockErr := nextcloudLeaseNowMS(bodyInternal(s.db.WithContext(ctx)))
+			if clockErr != nil {
+				return done, clockErr
+			}
+			if markErr := bodyInternal(s.db.WithContext(ctx)).Model(&originalBodyPayload{}).Where("id=?", id).Update("last_checked_at_ms", checked).Error; markErr != nil {
+				return done, markErr
+			}
+		}
 		if errors.Is(e, ErrOriginalBodyRetained) {
 			continue
 		}

@@ -161,7 +161,7 @@ func installPostgresBodyRewrite(db *gorm.DB) error {
 				continue
 			}
 			// to_jsonb(row)->> handles both text and canonical json/jsonb values.
-			conditions = append(conditions, "((to_jsonb(NEW)-"+bodySQLLiteral(col)+")=(to_jsonb(OLD)-"+bodySQLLiteral(col)+") AND EXISTS(SELECT 1 FROM original_body_rewrite_authorities a JOIN original_body_payloads p ON p.id=a.body_id WHERE a.source_table="+bodySQLLiteral(d.Table)+" AND a.row_key=to_jsonb(OLD)->>"+bodySQLLiteral(d.Key)+" AND a.column_name="+bodySQLLiteral(col)+" AND a.old_value=to_jsonb(OLD)->>"+bodySQLLiteral(col)+" AND a.new_value=to_jsonb(NEW)->>"+bodySQLLiteral(col)+"))")
+			conditions = append(conditions, "((to_jsonb(NEW)-"+bodySQLLiteral(col)+")=(to_jsonb(OLD)-"+bodySQLLiteral(col)+") AND EXISTS(SELECT 1 FROM original_body_rewrite_authorities a JOIN original_body_payloads p ON p.id=a.body_id WHERE a.source_table="+bodySQLLiteral(d.Table)+" AND a.row_key=to_jsonb(OLD)->>"+bodySQLLiteral(d.Key)+" AND a.column_name="+bodySQLLiteral(col)+" AND a.old_value=COALESCE(to_jsonb(OLD)->>"+bodySQLLiteral(col)+",'null') AND a.new_value=COALESCE(to_jsonb(NEW)->>"+bodySQLLiteral(col)+",'null')))")
 		}
 		if len(conditions) == 0 {
 			continue

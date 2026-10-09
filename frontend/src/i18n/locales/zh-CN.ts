@@ -879,12 +879,14 @@ export default {
         "deleting": "清理中",
         "collected": "记录的对象已清理"
       },
-      "error": {"content_lease_coverage_unverified": "读取／构建覆盖尚未验收，保持阻断。", "content_read_or_build_busy": "仍有读取或构建活动，稍后重试。", "content_generation_unverified": "来源代次尚未核实，请重新核对。", "candidate_is_current": "此代次仍为当前版本，不能回收。", "build_still_active": "构建尚未结束，保留数据。", "source_identity_changed": "来源身份或版本变化，请刷新核对。", "derived_backend_inventory_unverified": "派生后端清单不完整，继续保留。", "derived_provenance_unverified": "历史派生来源尚未核实，继续保留。", "safe_object_cleanup_unavailable": "仍有受保护对象或后端清理条件未满足。", "provider_delete_failed": "存储删除未获确认，请检查后端后重试。", "retention_window_open": "尚在保留期限内，继续保留。", "invalid_image_inventory": "图片清单不完整，修复清单后重试。", "gc_step_failed": "清理步骤失败，请检查后重试。"},
+      "error": {"content_lease_coverage_unverified": "读取／构建覆盖尚未验收，保持阻断。", "content_read_or_build_busy": "仍有读取或构建活动，稍后重试。", "content_generation_unverified": "来源代次尚未核实，请重新核对。", "candidate_is_current": "此代次仍为当前版本，不能回收。", "build_still_active": "构建尚未结束，保留数据。", "source_identity_changed": "来源身份或版本变化，请刷新核对。", "derived_backend_inventory_unverified": "派生后端清单不完整，继续保留。", "derived_provenance_unverified": "历史派生来源尚未核实，继续保留。", "safe_object_cleanup_unavailable": "仍有受保护对象或后端清理条件未满足。", "provider_delete_failed": "存储删除未获确认，请检查后端后重试。", "retention_window_open": "尚在保留期限内，继续保留。", "invalid_image_inventory": "图片清单不完整，修复清单后重试。", "original_body_retained_or_unverified": "正文仍有有效引用、租约或保留窗口，或尚未完成核验",
+        "gc_step_failed": "清理步骤失败，请检查后重试。"},
       "kind": {
         "knowledge": "知识记录",
         "derived_index": "派生清单",
         "chunk": "分块",
         "local_embedding": "本地索引",
+        "sql_original_body": "正文输入副本",
         "source_file": "原件副本",
         "extracted_image": "解析图片"
       }

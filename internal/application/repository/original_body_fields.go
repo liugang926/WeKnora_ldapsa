@@ -32,7 +32,7 @@ var originalBodyFields = []originalBodyFieldDescriptor{
 	{"message_generation_origins", "id", "vault", []string{"initial_input"}},
 	// Current entity columns keep their SQL search/storage representation. Their
 	// exact mirror receipts permit clearing only after actual lifecycle closure.
-	{"knowledge_processing_spans", "id", "inline", []string{"input", "output"}},
+	{"knowledge_processing_spans", "id", "inline", []string{"input", "output", "error_message", "error_detail"}},
 	{"knowledges", "id", "inline", []string{"title", "file_name", "description", "profile", "custom_metadata", "metadata.manual.content"}},
 	{"chunks", "id", "inline", []string{"content", "source_content", "context_header", "metadata", "image_info"}},
 	{"messages", "id", "inline", []string{"content", "rendered_content", "context_checkpoint", "agent_trace", "agent_steps", "images", "attachments", "knowledge_references", "used_memories"}},
@@ -278,6 +278,15 @@ func (s *OriginalBodyRetentionStore) captureField(tx *gorm.DB, d originalBodyFie
 	if e := s.recordBodyParents(tx, body.ID, raw); e != nil {
 		return e
 	}
+	if d.Table == "faq_input_sessions" {
+		row, e := bodySourceRow(tx, d, key)
+		if e != nil {
+			return e
+		}
+		if e := s.recordBodyParents(tx, body.ID, bodyText(row["original_inputs"])); e != nil {
+			return e
+		}
+	}
 	if d.Mode == "vault" {
 		return originalBodyRewrite(tx, d, key, col, id, raw, ref)
 	}
@@ -463,6 +472,9 @@ func bodyRecordKey(tx *gorm.DB, d originalBodyFieldDescriptor, v reflect.Value) 
 		if found.IsValid() {
 			return bodyText(found.Interface())
 		}
+		return ""
+	}
+	if v.Kind() != reflect.Struct {
 		return ""
 	}
 	if tx.Statement.Schema != nil {

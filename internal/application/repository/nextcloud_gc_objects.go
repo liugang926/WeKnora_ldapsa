@@ -121,6 +121,7 @@ func (s *NextcloudGCStore) claimObject(ctx context.Context, jobID, kind, ref str
 	}
 
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		tx = bodyInternal(tx)
 		nowMS, lockErr := gcLockKBContent(tx, identity)
 		if lockErr != nil {
 			claim.code = gcLeaseErrorCode(lockErr)
@@ -336,6 +337,7 @@ func (s *NextcloudGCStore) claimObject(ctx context.Context, jobID, kind, ref str
 
 func (s *NextcloudGCStore) finishObject(ctx context.Context, jobID, kind, ref, resourceID string, claim nextcloudGCObjectClaim, unlinked bool, now time.Time) error {
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		tx = bodyInternal(tx)
 		if _, err := gcLockKBContent(tx, nextcloudGCJob{TenantID: claim.content.Scope.TenantID, KnowledgeBaseID: claim.content.Scope.KnowledgeBaseID}); err != nil {
 			return err
 		}
@@ -407,6 +409,7 @@ func (s *NextcloudGCStore) blockObject(ctx context.Context, jobID, kind, ref, co
 	}
 
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		tx = bodyInternal(tx)
 		if _, e := gcLockKBContent(tx, identity); e != nil {
 			return e
 		}

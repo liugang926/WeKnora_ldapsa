@@ -2,7 +2,7 @@ CREATE TABLE original_body_payloads (
  id TEXT PRIMARY KEY,tenant_id BIGINT NOT NULL,body_sha256 TEXT NOT NULL,
  payload TEXT,origin_domain_sha256 TEXT NOT NULL,body_bytes BIGINT NOT NULL,storage_kind TEXT NOT NULL,
  state TEXT NOT NULL CHECK(state IN ('live','pending','purged')),
- created_at_ms BIGINT NOT NULL,retired_at_ms BIGINT,body_deadline_ms BIGINT,
+ created_at_ms BIGINT NOT NULL,last_checked_at_ms BIGINT NOT NULL DEFAULT 0,retired_at_ms BIGINT,body_deadline_ms BIGINT,
  metadata_deadline_ms BIGINT,purge_token TEXT NOT NULL DEFAULT '',purge_epoch BIGINT NOT NULL DEFAULT 0
 );
 CREATE TABLE original_body_field_heads (
@@ -50,3 +50,12 @@ CREATE TABLE original_body_field_revisions (
 );
 CREATE INDEX original_body_revision_body ON original_body_field_revisions(body_id);
 CREATE INDEX original_body_same_payload ON original_body_payloads(tenant_id,origin_domain_sha256,body_sha256,state);
+
+-- Body progress is independent of the original resource-kind constraints.
+CREATE TABLE original_body_gc_items (
+ job_id TEXT NOT NULL,body_id TEXT NOT NULL REFERENCES original_body_payloads(id),
+ tenant_id BIGINT NOT NULL,knowledge_base_id TEXT NOT NULL,knowledge_id TEXT NOT NULL,
+ state TEXT NOT NULL CHECK(state IN ('pending','collected')),
+ estimated_bytes BIGINT NOT NULL,created_at_ms BIGINT NOT NULL,
+ PRIMARY KEY(job_id,body_id)
+);

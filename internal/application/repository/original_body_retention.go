@@ -25,7 +25,7 @@ type originalBodyPayload struct {
 	Payload                                         *string
 	BodyBytes                                       int64
 	StorageKind, State                              string
-	CreatedAtMS                                     int64
+	CreatedAtMS, LastCheckedAtMS                    int64
 	RetiredAtMS, BodyDeadlineMS, MetadataDeadlineMS *int64
 	PurgeToken                                      string
 	PurgeEpoch                                      int64
@@ -193,3 +193,12 @@ func bodyIdentity(table, key, col string, scope originalBodyScope) string {
 func originalBodyTimePointer(v int64) *int64 { return &v }
 
 var _ = types.ConnectorTypeNextcloud
+
+type originalBodyGCItem struct {
+	JobID, BodyID                       string `gorm:"primaryKey"`
+	TenantID                            uint64
+	KnowledgeBaseID, KnowledgeID, State string
+	EstimatedBytes, CreatedAtMS         int64
+}
+
+func (originalBodyGCItem) TableName() string { return "original_body_gc_items" }

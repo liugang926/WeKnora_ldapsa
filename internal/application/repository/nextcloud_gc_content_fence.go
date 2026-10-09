@@ -90,6 +90,7 @@ func gcReturnContentRetired(tx *gorm.DB, claim NextcloudContentGCClaim, nowMS in
 // read cannot enter after the final check and before the actual local unlink.
 func (s *NextcloudGCStore) deleteClaimedObject(ctx context.Context, jobID, kind, ref string, claim nextcloudGCObjectClaim, now time.Time) error {
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		tx = bodyInternal(tx)
 		identity := nextcloudGCJob{TenantID: claim.content.Scope.TenantID, KnowledgeBaseID: claim.content.Scope.KnowledgeBaseID}
 		nowMS, e := gcLockKBContent(tx, identity)
 		if e != nil {
@@ -173,6 +174,7 @@ func (s *NextcloudGCStore) deleteClaimedObject(ctx context.Context, jobID, kind,
 }
 func (s *NextcloudGCStore) failContentClaim(ctx context.Context, jobID, kind, ref string, claim nextcloudGCObjectClaim, now time.Time) error {
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		tx = bodyInternal(tx)
 		nowMS, e := gcLockKBContent(tx, nextcloudGCJob{TenantID: claim.content.Scope.TenantID, KnowledgeBaseID: claim.content.Scope.KnowledgeBaseID})
 		if e != nil {
 			return e
