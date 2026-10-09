@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	filesvc "github.com/Tencent/WeKnora/internal/application/service/file"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
@@ -114,3 +115,30 @@ func gcManualActual(t *testing.T, pg bool) {
 }
 func TestNextcloudGCManualActualSQLite(t *testing.T)   { gcManualActual(t, false) }
 func TestPostgresNextcloudGCManualActual(t *testing.T) { gcManualActual(t, true) }
+
+func TestNextcloudGCAdminPaginationKeepsAllJobsAndScope(t *testing.T) {
+	store, db := nextcloudGCTestDB(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	for i := 0; i < 110; i++ {
+		id := fmt.Sprintf("job-%03d", i)
+		require.NoError(t, db.Create(&nextcloudGCJob{ID: id, TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: id, CreatedAt: now, UpdatedAt: now, State: "blocked"}).Error)
+	}
+	require.NoError(t, db.Create(&nextcloudGCJob{ID: "foreign-anchor", TenantID: 8, KnowledgeBaseID: "foreign", KnowledgeID: "foreign", CreatedAt: now, State: "blocked"}).Error)
+	first, e := store.ListStatus(ctx, 7, 100, "kb", "")
+	require.NoError(t, e)
+	require.Len(t, first, 100)
+	second, e := store.ListStatus(ctx, 7, 100, "kb", first[99].ID)
+	require.NoError(t, e)
+	require.Len(t, second, 10)
+	ids := map[string]bool{}
+	for _, row := range append(first, second...) {
+		require.False(t, ids[row.ID])
+		ids[row.ID] = true
+	}
+	require.Len(t, ids, 110)
+	_, e = store.ListStatus(ctx, 7, 100, "kb", "foreign-anchor")
+	require.ErrorIs(t, e, ErrNextcloudGCJobUnavailable)
+	_, e = store.ListStatus(ctx, 7, 100, "different", first[99].ID)
+	require.ErrorIs(t, e, ErrNextcloudGCJobUnavailable)
+}

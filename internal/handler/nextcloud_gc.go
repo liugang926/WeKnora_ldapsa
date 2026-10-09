@@ -46,7 +46,7 @@ func (h *NextcloudGCHandler) List(c *gin.Context) {
 	if !ok {
 		return
 	}
-	jobs, e := h.store.ListStatus(ctx, tenant, 100, c.Query("knowledge_base_id"))
+	jobs, e := h.store.ListStatus(ctx, tenant, 100, c.Query("knowledge_base_id"), c.Query("cursor"))
 	if e != nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "nextcloud_gc_unavailable"})
 		return
@@ -54,7 +54,11 @@ func (h *NextcloudGCHandler) List(c *gin.Context) {
 	if _, _, ok = h.authorize(c); !ok {
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"jobs": jobs})
+	cursor := ""
+	if len(jobs) == 100 {
+		cursor = jobs[len(jobs)-1].ID
+	}
+	c.JSON(http.StatusOK, gin.H{"jobs": jobs, "next_cursor": cursor})
 }
 func (h *NextcloudGCHandler) Preview(c *gin.Context) {
 	ctx, tenant, ok := h.authorize(c)

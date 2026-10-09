@@ -6490,6 +6490,7 @@ export default {
     logs: 'ログ',
     actions: '操作',
     gc: {
+      "more": "More tasks",
       "title": "Retired version cleanup",
       "description": "Review expiration and cleanup progress. Estimated bytes are separate from confirmed filesystem releases.",
       "unavailable": "Cleanup status is unavailable or the safety check refused the action. Refresh and inspect the current status.",

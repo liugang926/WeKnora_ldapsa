@@ -848,6 +848,7 @@ export default {
     logs: '日志',
     actions: '更多操作',
     gc: {
+      "more": "查看更多任务",
       "title": "旧版本回收",
       "description": "查看到期时间及清理进度。预计字节和文件系统确认释放字节分别统计。",
       "unavailable": "回收状态暂不可用或安全检查拒绝操作，请刷新查看当前状态。",

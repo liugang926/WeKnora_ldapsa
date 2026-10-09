@@ -537,6 +537,17 @@ func (s *NextcloudGCStore) ListStatus(ctx context.Context, tenantID uint64, limi
 	if len(kbIDs) > 0 && kbIDs[0] != "" {
 		query = query.Where("knowledge_base_id = ?", kbIDs[0])
 	}
+	if len(kbIDs) > 1 && kbIDs[1] != "" {
+		var anchor nextcloudGCJob
+		anchorQuery := s.db.WithContext(ctx).Select("id", "created_at").Where("id=? AND tenant_id=?", kbIDs[1], tenantID)
+		if kbIDs[0] != "" {
+			anchorQuery = anchorQuery.Where("knowledge_base_id=?", kbIDs[0])
+		}
+		if e := anchorQuery.Take(&anchor).Error; e != nil {
+			return nil, ErrNextcloudGCJobUnavailable
+		}
+		query = query.Where("created_at < ? OR (created_at = ? AND id < ?)", anchor.CreatedAt, anchor.CreatedAt, anchor.ID)
+	}
 	if err := query.Order("created_at DESC, id DESC").Limit(limit).Find(&jobs).Error; err != nil {
 		return nil, err
 	}

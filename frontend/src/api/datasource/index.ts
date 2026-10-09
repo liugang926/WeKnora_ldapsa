@@ -243,9 +243,9 @@ export interface NextcloudGCPreview {
   items: {kind: string; state: string; count: number; estimated_bytes: number; confirmed_released_bytes: number}[]
   earliest_collect_at: string; can_request_collection: boolean; collection_checks_repeated: boolean
 }
-export async function listNextcloudGC(kbId: string): Promise<NextcloudGCStatus[]> {
-  const result = await get(`/api/v1/datasource/nextcloud-gc-jobs?knowledge_base_id=${encodeURIComponent(kbId)}`)
-  return result.jobs
+export async function listNextcloudGC(kbId: string, cursor = ''): Promise<{jobs: NextcloudGCStatus[]; next_cursor: string}> {
+  const result = await get(`/api/v1/datasource/nextcloud-gc-jobs?knowledge_base_id=${encodeURIComponent(kbId)}&cursor=${encodeURIComponent(cursor)}`)
+  return result
 }
 export async function previewNextcloudGC(id: string): Promise<NextcloudGCPreview> {
   const result = await get(`/api/v1/datasource/nextcloud-gc-jobs/${encodeURIComponent(id)}/preview`)

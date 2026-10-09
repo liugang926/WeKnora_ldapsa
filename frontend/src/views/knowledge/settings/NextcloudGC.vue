@@ -8,14 +8,16 @@ const jobs = ref<NextcloudGCStatus[]>([])
 const preview = ref<NextcloudGCPreview | null>(null)
 const loading = ref(false)
 const error = ref(false)
+const cursor = ref('')
 let generation = 0
 const size = (n: number) => `${(n / 1024 / 1024).toFixed(2)} MiB`
 const date = (s: string) => new Date(s).toLocaleString()
 const label = (group: string, key: string) => t(`datasource.gc.${group}.${key}`, t('datasource.gc.unknown'))
-async function load() {
-  const current = ++generation
-  loading.value = true; error.value = false; preview.value = null; jobs.value = []
-  try { const result = await listNextcloudGC(props.kbId); if (current === generation) jobs.value = result }
+async function load(more = false) {
+  const current = more ? generation : ++generation
+  loading.value = true; error.value = false; preview.value = null;
+  if (!more) { jobs.value = []; cursor.value = '' }
+  try { const result = await listNextcloudGC(props.kbId, more ? cursor.value : ''); if (current === generation) { jobs.value = more ? [...jobs.value,...result.jobs] : result.jobs; cursor.value = result.next_cursor } }
   catch { if (current === generation) error.value = true }
   finally { if (current === generation) loading.value = false }
 }
@@ -41,7 +43,7 @@ async function act(kind: 'collect' | 'retry') {
   } catch { if (current === generation) error.value = true }
   finally { if (current === generation) loading.value = false }
 }
-watch(() => props.kbId, load, {immediate: true})
+watch(() => props.kbId, () => load(), {immediate: true})
 </script>
 <template>
   <section class="gc" :aria-busy="loading">
@@ -59,6 +61,7 @@ watch(() => props.kbId, load, {immediate: true})
         <t-button variant="outline" :disabled="loading" @click="inspect(job)">{{ t('datasource.gc.preview') }}</t-button>
       </li>
     </ul>
+    <t-button v-if="cursor" variant="outline" :disabled="loading" @click="load(true)">{{ t('datasource.gc.more') }}</t-button>
     <div v-if="preview" class="preview" role="region" :aria-label="t('datasource.gc.preview')">
       <h4>{{ t('datasource.gc.preview') }}</h4>
       <p>{{ t('datasource.gc.safety') }}</p>
@@ -69,7 +72,7 @@ watch(() => props.kbId, load, {immediate: true})
       <t-button :disabled="loading || !preview.can_request_collection" @click="act('collect')">{{ t('datasource.gc.collect') }}</t-button>
       <t-button variant="outline" :disabled="loading || !['blocked','retry'].includes(preview.status.state)" @click="act('retry')">{{ t('datasource.gc.retry') }}</t-button>
     </div>
-    <t-button variant="outline" :disabled="loading" @click="load">{{ t('datasource.gc.refresh') }}</t-button>
+    <t-button variant="outline" :disabled="loading" @click="load()">{{ t('datasource.gc.refresh') }}</t-button>
   </section>
 </template>
 <style scoped>
