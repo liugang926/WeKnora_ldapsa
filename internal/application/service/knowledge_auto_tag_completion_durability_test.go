@@ -22,6 +22,17 @@ import (
 	"gorm.io/gorm"
 )
 
+// Complete row identity/scope is required for the installed original-body
+// query resolver. A partial actual_inputs projection intentionally stays an
+// opaque reference and cannot stand in for this authenticated producer read.
+type autoCompletionBodyManifest struct {
+	ManifestID                                                                          string `gorm:"primaryKey"`
+	TenantID                                                                            uint64
+	KnowledgeBaseID, KnowledgeID, AdmissionID, InputDigest, ActualInputs, SourceLineage string
+}
+
+func (autoCompletionBodyManifest) TableName() string { return "knowledge_auto_tag_input_manifests" }
+
 type autoCompletionUnavailableQueue struct{ calls int }
 
 func (q *autoCompletionUnavailableQueue) Enqueue(*asynq.Task, ...asynq.Option) (*asynq.TaskInfo, error) {
@@ -65,8 +76,10 @@ func autoCompletionRunUntilPending(t *testing.T, m *machinePipelineFixture) (*ty
 	require.NotNil(t, p.TaskInput)
 	require.NotEmpty(t, p.CompletionInput)
 	require.NoError(t, m.f.store.VerifyKnowledgeAutoTagTaskInput(context.Background(), p))
-	var receipt struct{ ActualInputs string }
-	require.NoError(t, m.f.db.Table("knowledge_auto_tag_input_manifests").Select("actual_inputs").Where("manifest_id=?", p.CompletionInput).Take(&receipt).Error)
+	var receipt autoCompletionBodyManifest
+	require.NoError(t, m.f.db.WithContext(m.f.ctx).Where("manifest_id=? AND tenant_id=? AND knowledge_base_id=? AND knowledge_id=?", p.CompletionInput, p.TenantID, p.KnowledgeBaseID, p.KnowledgeID).Take(&receipt).Error)
+	require.Equal(t, p.CompletionInput, receipt.ManifestID)
+	require.NotContains(t, receipt.ActualInputs, "_original_body_version", "the actual Query callback resolves the live immutable body")
 	require.Contains(t, receipt.ActualInputs, "Generated original profile title")
 	require.Contains(t, receipt.ActualInputs, "questions")
 	return row, op

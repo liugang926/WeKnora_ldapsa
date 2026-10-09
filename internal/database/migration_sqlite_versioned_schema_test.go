@@ -67,6 +67,17 @@ var versionedSQLiteTables = []string{
 	"message_material_versions",
 	"message_session_owner_versions",
 	"message_session_membership_versions",
+	"original_body_payloads",
+	"original_body_field_heads",
+	"original_body_rewrite_authorities",
+	"original_body_parent_refs",
+	"original_body_leases",
+	"original_body_purge_receipts",
+	"original_body_journal_heads",
+	"original_body_field_revisions",
+	"original_body_gc_items",
+	"knowledge_auto_publication_versions",
+	"knowledge_auto_publication_transitions",
 }
 
 // versionedSQLiteColumns maps each existing table to the columns that the
@@ -96,7 +107,7 @@ var versionedSQLiteColumns = map[string][]string{
 	"sync_logs":             {"recovery_version", "recovery_trigger", "queue_task_id", "worker_started_at", "worker_active", "worker_attempt_token"}, // SQLite 000050 / PostgreSQL 000131
 }
 
-const expectedSQLiteMigrationVersion = 70
+const expectedSQLiteMigrationVersion = 72
 
 func TestSQLiteNextcloudRevisionUpgradeFrom43PreservesUnknownHistory(t *testing.T) {
 	repoRoot := sqliteRepoRoot(t)

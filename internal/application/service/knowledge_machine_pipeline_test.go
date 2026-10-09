@@ -89,10 +89,10 @@ func newMachinePipelineFixture(t *testing.T, pg bool) *machinePipelineFixture {
 	require.NoError(t, f.db.Exec("DROP TABLE nextcloud_source_revisions; DROP TABLE nextcloud_source_versions").Error)
 	migration := f.db
 	directory := "sqlite"
-	names := []string{"000031_nextcloud_source_versions", "000045_nextcloud_source_revisions", "000046_nextcloud_content_leases", "000047_nextcloud_candidate_retry", "000035_nextcloud_source_pairing", "000039_nextcloud_source_pairing_abort", "000057_processing_span_original_inputs", "000065_nextcloud_capacity_admission", "000067_nextcloud_capacity_write_intents", "000068_nextcloud_local_derived_gc", "000069_datasource_name_inputs", "000072_knowledge_auto_completion_publication"}
+	names := []string{"000031_nextcloud_source_versions", "000045_nextcloud_source_revisions", "000046_nextcloud_content_leases", "000047_nextcloud_candidate_retry", "000035_nextcloud_source_pairing", "000039_nextcloud_source_pairing_abort", "000057_processing_span_original_inputs", "000065_nextcloud_capacity_admission", "000067_nextcloud_capacity_write_intents", "000068_nextcloud_local_derived_gc", "000069_datasource_name_inputs", "000071_original_body_retention", "000072_knowledge_auto_completion_publication"}
 	if pg {
 		directory = "versioned"
-		names = []string{"000112_nextcloud_source_versions", "000126_nextcloud_source_revisions", "000127_nextcloud_content_leases", "000128_nextcloud_candidate_retry", "000116_nextcloud_source_pairing", "000120_nextcloud_source_pairing_abort", "000138_processing_span_original_inputs", "000146_nextcloud_capacity_admission", "000148_nextcloud_capacity_write_intents", "000149_nextcloud_local_derived_gc", "000150_datasource_name_inputs", "000153_knowledge_auto_completion_publication"}
+		names = []string{"000112_nextcloud_source_versions", "000126_nextcloud_source_revisions", "000127_nextcloud_content_leases", "000128_nextcloud_candidate_retry", "000116_nextcloud_source_pairing", "000120_nextcloud_source_pairing_abort", "000138_processing_span_original_inputs", "000146_nextcloud_capacity_admission", "000148_nextcloud_capacity_write_intents", "000149_nextcloud_local_derived_gc", "000150_datasource_name_inputs", "000152_original_body_retention", "000153_knowledge_auto_completion_publication"}
 		sql, e := f.db.DB()
 		require.NoError(t, e)
 		migration, e = gorm.Open(postgres.New(postgres.Config{Conn: sql, PreferSimpleProtocol: true}), &gorm.Config{})
@@ -103,6 +103,24 @@ func newMachinePipelineFixture(t *testing.T, pg bool) *machinePipelineFixture {
 		require.NoError(t, e)
 		require.NoError(t, migration.Exec(string(script)).Error)
 	}
+	// Install the actual combined body protocol, bootstrap its owned external
+	// journal and retain a connection pool of one thereafter.
+	journalDir := t.TempDir()
+	require.NoError(t, os.Chmod(journalDir, 0700))
+	keyPath := filepath.Join(journalDir, "key")
+	pinPath := filepath.Join(journalDir, "pin")
+	require.NoError(t, os.WriteFile(keyPath, []byte(strings.Repeat("combination-owned-review-", 2)), 0600))
+	t.Setenv("WEKNORA_ORIGINAL_BODY_JOURNAL_DIRECTORY", journalDir)
+	t.Setenv("WEKNORA_ORIGINAL_BODY_JOURNAL_KEY", keyPath)
+	t.Setenv("WEKNORA_ORIGINAL_BODY_JOURNAL_PIN", pinPath)
+	require.NoError(t, repository.NewOriginalBodyRetentionStore(f.db).InitializeJournal())
+	require.NoError(t, repository.InstallOriginalBodyRetentionTriggers(f.db))
+	require.NoError(t, repository.InstallOriginalBodyRetentionCallbacks(f.db))
+	require.NoError(t, repository.NewOriginalBodyRetentionStore(f.db).VerifyJournalReady())
+	pool, e := f.db.DB()
+	require.NoError(t, e)
+	pool.SetMaxOpenConns(1)
+	pool.SetMaxIdleConns(1)
 	backend := "machine-local"
 	require.NoError(t, f.db.Create(&types.StorageBackend{ID: backend, TenantID: 7, Name: "isolated actual local", Provider: "local", Status: types.StorageBackendStatusActive}).Error)
 	var kb types.KnowledgeBase
@@ -289,6 +307,11 @@ func runKnowledgeMachineActualPipeline(t *testing.T, pg bool) {
 		require.NoError(t, m.run(t, m.f.queue.tasks[i]), m.f.queue.tasks[i].Type())
 	}
 	require.Equal(t, 1, m.model.calls)
+	var originalAutoBodies, originalAutoHeads int64
+	require.NoError(t, m.f.db.Table("original_body_payloads").Where("state='live'").Count(&originalAutoBodies).Error)
+	require.Greater(t, originalAutoBodies, int64(0), "combined actual producers captured original bodies")
+	require.NoError(t, m.f.db.Table("original_body_field_heads").Where("source_table='knowledge_auto_tag_input_manifests'").Count(&originalAutoHeads).Error)
+	require.EqualValues(t, 2, originalAutoHeads, "both actual queue and actual model manifests use the installed body protocol")
 	require.Equal(t, 1, m.f.model.calls, "actual NC Summary must generate under the private original purpose")
 	require.NoError(t, m.f.db.Where("id = ?", row.ID).Take(row).Error)
 	require.Equal(t, types.ParseStatusCompleted, row.ParseStatus)
