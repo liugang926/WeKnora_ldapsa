@@ -332,6 +332,9 @@ type Resource struct {
 
 // FetchedItem represents a single document/content item fetched from external source
 type FetchedItem struct {
+	// Populated only by the connector's actual signed content response. It is
+	// opaque outside that connector and never accepted from JSON or a queue.
+	OriginalArtifact any `json:"-"`
 	// Unique ID in the external system
 	ExternalID string `json:"external_id"`
 

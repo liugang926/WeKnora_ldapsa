@@ -29,6 +29,14 @@ func (s *KnowledgeInputProvenanceStore) captureKnowledgeAutoTagInTx(tx *gorm.DB,
 	result := &types.KnowledgeAutoTagInputSnapshot{Original: &types.KnowledgeAutoTagOriginalInput{Knowledge: original.Knowledge, KnowledgeBase: original.KnowledgeBase, Chunks: original.Chunks, Proof: original.Proof}, Tags: []*types.KnowledgeTag{}, TagProofs: []*types.KnowledgeCollectionAuxiliaryProof{}, Relations: []*types.KnowledgeTagRelation{}}
 	kb := original.KnowledgeBase
 	k := original.Knowledge
+	result.ModelDigest, result.Tenant, err = knowledgeAutoTagModelInputs(tx, kb)
+	if err != nil {
+		return nil, err
+	}
+	result.DataSourceName, err = s.originalUploadAutoTagNameInTx(tx, proof)
+	if err != nil {
+		return nil, err
+	}
 	if err := tx.Model(&types.KnowledgeTag{}).Where("tenant_id = ? AND knowledge_base_id = ?", kb.TenantID, kb.ID).Count(&result.TotalTags).Error; err != nil {
 		return nil, err
 	}
@@ -92,6 +100,9 @@ func autoTagSnapshotDigest(snapshot *types.KnowledgeAutoTagInputSnapshot) (strin
 // CaptureKnowledgeAutoTagInputs persists the exact current material and every
 // original influencing producer in one RR/SQLite transaction before the model.
 func (s *KnowledgeInputProvenanceStore) CaptureKnowledgeAutoTagInputs(ctx context.Context, proof *types.KnowledgeBuildInputProof) (*types.KnowledgeAutoTagInputSnapshot, error) {
+	if err := s.RecheckKnowledgeBuildInputs(ctx, proof); err != nil {
+		return nil, err
+	}
 	if s.displayAuthorityFactory == nil {
 		return nil, types.ErrSourceLineageUnknown
 	}
@@ -115,7 +126,7 @@ func (s *KnowledgeInputProvenanceStore) CaptureKnowledgeAutoTagInputs(ctx contex
 		if authority == nil || authority.db != tx {
 			return types.ErrSourceLineageUnknown
 		}
-		if _, err := authority.AuthorizeCurrentKnowledgeInputWrite(ctx, result.Original.KnowledgeBase); err != nil {
+		if _, err := authority.authorizeOriginalKnowledgeProducerWrite(ctx, result.Original.KnowledgeBase, proof); err != nil {
 			return err
 		}
 		result.ManifestID = uuid.NewString()
@@ -171,6 +182,22 @@ func (s *KnowledgeInputProvenanceStore) recheckKnowledgeAutoTagInTx(tx *gorm.DB,
 	if err != nil {
 		return nil, err
 	}
+	// A live producer uses this transient tenant to instantiate the model. It
+	// is deliberately absent from persisted JSON, but must still equal the
+	// actual routing context sealed by ModelDigest before/after the call.
+	if expected.Tenant != nil {
+		if actual.Tenant == nil {
+			return nil, ErrKnowledgeInputChanged
+		}
+		frozenTenant, err := knowledgeProducerTenantDigest(expected.Tenant)
+		if err != nil {
+			return nil, err
+		}
+		currentTenant, err := knowledgeProducerTenantDigest(actual.Tenant)
+		if err != nil || frozenTenant != currentTenant {
+			return nil, ErrKnowledgeInputChanged
+		}
+	}
 	currentDigest, err := autoTagSnapshotDigest(actual)
 	if err != nil || currentDigest != digest {
 		return nil, ErrKnowledgeInputChanged
@@ -182,14 +209,16 @@ func (s *KnowledgeInputProvenanceStore) recheckKnowledgeAutoTagInTx(tx *gorm.DB,
 	if authority == nil || authority.db != tx {
 		return nil, types.ErrSourceLineageUnknown
 	}
-	if _, err := authority.AuthorizeCurrentKnowledgeInputWrite(ctx, actual.Original.KnowledgeBase); err != nil {
+	if _, err := authority.authorizeOriginalKnowledgeProducerWrite(ctx, actual.Original.KnowledgeBase, proof); err != nil {
 		return nil, err
 	}
 	return actual.SourceLineage, nil
 }
 
 func (s *KnowledgeInputProvenanceStore) RecheckKnowledgeAutoTagInputs(ctx context.Context, expected *types.KnowledgeAutoTagInputSnapshot) error {
-	options := &sql.TxOptions{ReadOnly: true}
+	// The trusted producer's exact lease is fenced against retirement in this
+	// transaction. Fence locking uses no-op SQL writes; it is not a public read.
+	options := &sql.TxOptions{}
 	if s.db.Dialector.Name() == "postgres" {
 		options.Isolation = sql.LevelRepeatableRead
 	}

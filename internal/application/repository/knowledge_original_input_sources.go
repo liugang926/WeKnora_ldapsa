@@ -40,6 +40,17 @@ func (s *KnowledgeInputProvenanceStore) ReadOriginalNextcloudBuildSource(ctx con
 	if k.Channel != types.ConnectorTypeNextcloud {
 		return nil, ErrKnowledgeInputChanged
 	}
+	if s.db.Migrator().HasTable("nextcloud_original_upload_inputs") {
+		var count int64
+		if err := s.db.WithContext(ctx).Table("nextcloud_original_upload_inputs").Where("knowledge_id = ?", k.ID).Count(&count).Error; err != nil {
+			return nil, err
+		}
+		if count != 0 {
+			if _, err := s.verifyOriginalUploadInTx(s.db.WithContext(ctx), &k, nil, "", false); err != nil {
+				return nil, err
+			}
+		}
+	}
 	identity, err := knowledgeBuildSourceIdentity(s.db.WithContext(ctx), &k, proof.BuildGeneration)
 	if err != nil {
 		return nil, err

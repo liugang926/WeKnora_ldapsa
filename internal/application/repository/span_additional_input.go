@@ -37,7 +37,7 @@ func (s *KnowledgeInputProvenanceStore) captureSpanAdditionalOriginalInput(ctx c
 	if authority == nil || authority.db != tx {
 		return nil, types.ErrSourceLineageUnknown
 	}
-	if _, err := authority.AuthorizeCurrentKnowledgeInputWrite(ctx, input.AutoTag.Original.KnowledgeBase); err != nil {
+	if _, err := authority.authorizeOriginalKnowledgeProducerWrite(ctx, input.AutoTag.Original.KnowledgeBase, original); err != nil {
 		return nil, err
 	}
 	return lineage, nil

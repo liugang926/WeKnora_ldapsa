@@ -47,7 +47,10 @@ type NextcloudSourcePairingAbort NextcloudSourcePairing
 
 func (NextcloudSourcePairingAbort) TableName() string { return "nextcloud_source_pairing_aborts" }
 
-type NextcloudSourcePairingRepository struct{ db *gorm.DB }
+type NextcloudSourcePairingRepository struct {
+	db                   *gorm.DB
+	nameAuthorityFactory KnowledgeDisplayAuthorityFactory
+}
 
 func NewNextcloudSourcePairingRepository(db *gorm.DB) *NextcloudSourcePairingRepository {
 	return &NextcloudSourcePairingRepository{db: db}
@@ -153,6 +156,14 @@ func (r *NextcloudSourcePairingRepository) PrepareSourcePairing(
 		var persisted types.DataSource
 		if err := tx.Where("id = ? AND tenant_id = ?", ds.ID, ds.TenantID).Take(&persisted).Error; err != nil {
 			return err
+		}
+		if r.nameAuthorityFactory != nil {
+			// The prefix is code and the binding is the actual new independent
+			// pairing configuration selector, not retained data-source text.
+			nameCtx := context.WithValue(ctx, datasourceNameEditKey{}, datasourceNameEdit{Name: "Nextcloud · " + proposed.BindingID, Kind: "pairing_configuration", PairOperation: proposed.OperationID, BindingID: proposed.BindingID})
+			if err := admitDataSourceNameInput(tx, nameCtx, &persisted, r.nameAuthorityFactory); err != nil {
+				return err
+			}
 		}
 		base, hash, bindingID, err := NextcloudEventDataSourceIdentity(persisted.Config)
 		if err != nil || base != proposed.BaseURL || bindingID != proposed.BindingID {

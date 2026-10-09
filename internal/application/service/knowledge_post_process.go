@@ -228,9 +228,8 @@ func (s *KnowledgePostProcessService) Handle(ctx context.Context, task *asynq.Ta
 	willSpawnQuestion := len(textChunks) > 0 && kb.NeedsEmbeddingModel() &&
 		eff.QuestionGenerationConfig.Enabled
 	willSpawnWiki := kb.IndexingStrategy.WikiEnabled && len(textChunks) > 0
-	willSpawnAutoTag := kb.Type == types.KnowledgeBaseTypeDocument &&
+	autoTagOnCompletion := kb.Type == types.KnowledgeBaseTypeDocument &&
 		kb.AutoTagConfig != nil && kb.AutoTagConfig.Enabled && len(textChunks) > 0
-	enqueuedAutoTag := false
 
 	// Question generation now fans out one subtask per plain text chunk
 	// (mirroring the graph-extract per-chunk pattern) so each chunk's LLM
@@ -387,12 +386,9 @@ func (s *KnowledgePostProcessService) Handle(ctx context.Context, task *asynq.Ta
 		}
 	}
 
-	// Queue best-effort automatic tagging only after the processing row has
-	// successfully handed off to finalizing or completed. This avoids model calls from a
-	// duplicate post-process delivery that observes an already terminal row.
-	if willSpawnAutoTag {
-		enqueuedAutoTag = s.enqueueAutoTagTask(ctx, payload, attempt)
-	}
+	// The completion observer owns auto-tag enqueue after every producing
+	// subtask has committed, so its actual original inputs cannot be invalidated
+	// by a later legitimate summary/question output from this same parse.
 
 	// 4. Spawn Summary and Question Tasks
 	enqueuedSummary := false
@@ -540,7 +536,7 @@ func (s *KnowledgePostProcessService) Handle(ctx context.Context, task *asynq.Ta
 		"wiki_slot_owned":         wikiSlotOwned,
 		"enqueued_graph":          enqueuedGraphCount > 0,
 		"enqueued_graph_count":    enqueuedGraphCount,
-		"enqueued_auto_tag":       enqueuedAutoTag,
+		"auto_tag_on_completion":  autoTagOnCompletion,
 	}
 	s.tracker().EndSpan(ctx, postSpan, postOutput)
 	if wikiSlotOwned && wikiEnqueueErr != nil {
@@ -599,6 +595,14 @@ func (s *KnowledgePostProcessService) enqueueAutoTagTask(
 		Attempt:         attempt,
 	}
 	langfuse.InjectTracing(ctx, &taskPayload)
+	store, ok := s.knowledgeInputs.(*repository.KnowledgeInputProvenanceStore)
+	if !ok {
+		return false
+	}
+	taskPayload.TaskInput, err = store.AdmitKnowledgeAutoTagTaskInput(ctx, taskPayload)
+	if err != nil {
+		return false
+	}
 	payloadBytes, err := json.Marshal(taskPayload)
 	if err != nil {
 		logger.Warnf(ctx, "[KnowledgePostProcess] Failed to marshal auto tag payload: %v", err)
@@ -638,6 +642,7 @@ func (s *KnowledgePostProcessService) enqueueSummaryGenerationTask(ctx context.C
 	}
 	original, err := s.capturePostProcessEnrichmentProof(ctx, payload, ids)
 	if err != nil {
+		logger.Warnf(ctx, "[KnowledgePostProcess] Failed to capture original summary inputs: %v", err)
 		return false
 	}
 
@@ -659,6 +664,7 @@ func (s *KnowledgePostProcessService) enqueueSummaryGenerationTask(ctx context.C
 	}
 	taskPayload.ProducerInput, err = store.AdmitKnowledgeProducerInput(ctx, original, "summary", summaryProducerControls(s.enrichmentConfig, taskPayload))
 	if err != nil {
+		logger.Warnf(ctx, "[KnowledgePostProcess] Failed to admit original summary controls: %v", err)
 		return false
 	}
 	langfuse.InjectTracing(ctx, &taskPayload)

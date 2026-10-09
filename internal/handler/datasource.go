@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"errors"
+	"github.com/Tencent/WeKnora/internal/application/repository"
 	"net/http"
 	"strconv"
 	"time"
@@ -141,6 +142,7 @@ func (h *DataSourceHandler) CreateDataSource(c *gin.Context) {
 
 	// Enforce tenant isolation
 	req.TenantID = tenantID
+	ctx = repository.WithIndependentDataSourceNameInput(ctx, req.Name)
 
 	ds, err := h.service.CreateDataSource(ctx, &req)
 	if err != nil {
@@ -252,6 +254,9 @@ func (h *DataSourceHandler) UpdateDataSource(c *gin.Context) {
 	req.ID = id
 	req.TenantID = existing.TenantID
 	req.KnowledgeBaseID = existing.KnowledgeBaseID
+	if req.Name != "" {
+		ctx = repository.WithIndependentDataSourceNameInput(ctx, req.Name)
+	}
 	ds, err := h.service.UpdateDataSource(ctx, &req)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})

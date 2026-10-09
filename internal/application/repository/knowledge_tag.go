@@ -43,7 +43,7 @@ func (r *knowledgeRepository) SetKnowledgeTags(
 				return err
 			}
 			kb = &actualKB
-			if request.Kind != "derived" {
+			if request.Kind != "derived" && request.Kind != "original-upload-tags" {
 				assigned, exists := request.Assignments[knowledgeID]
 				if !exists {
 					assigned, exists = request.Assignments[""]

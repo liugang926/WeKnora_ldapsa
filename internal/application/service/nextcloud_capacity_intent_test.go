@@ -79,6 +79,7 @@ type capacityIntentFixture struct {
 	fs                interfaces.FileService
 	base, dsn, driver string
 	catalog           *capacityFailureCatalog
+	item              *types.FetchedItem
 }
 
 func newCapacityIntentFixture(t *testing.T, pg bool) *capacityIntentFixture {
@@ -138,8 +139,10 @@ func (f *capacityIntentFixture) ingest(t *testing.T, mode string, stageErr, admi
 	version := &deletionLookupKnowledgeRepo{stageErr: stageErr, admitErr: admitErr}
 	knowledge := &capacityIntentKnowledge{repo: version, db: f.db, fs: f.fs, mode: mode}
 	source := &DataSourceService{knowledgeService: knowledge, kbService: &processSyncKBService{kb: f.kb}, capacityAdmission: f.admission}
-	item := &types.FetchedItem{ExternalID: "nextcloud:instance:77", FileName: "source.txt", Content: []byte("actual retained original source bytes")}
-	_, e := source.ingestNextcloudItem(context.Background(), &types.DataSource{ID: "ds", TenantID: 7, KnowledgeBaseID: "kb"}, item, map[string]string{"datasource_id": "ds", "external_id": item.ExternalID, "nextcloud_etag": "opaque-etag"}, nil)
+	if f.item == nil {
+		f.item = capacityNextcloudFetchedItem(t, "actual retained original source bytes", true)
+	}
+	_, e := source.ingestNextcloudItem(context.Background(), &types.DataSource{ID: "ds", TenantID: 7, KnowledgeBaseID: "kb"}, f.item, capacityNextcloudMetadata(f.item), nil)
 	return knowledge, e
 }
 func capacityIntentIngestionContract(t *testing.T, pg bool) {
@@ -232,7 +235,7 @@ func capacityIntentIngestionContract(t *testing.T, pg bool) {
 				k.mode = "duplicate"
 				k.repo = version
 				source := &DataSourceService{knowledgeService: k, kbService: &processSyncKBService{kb: f.kb}, capacityAdmission: f.admission}
-				_, e = source.ingestNextcloudItem(ctx, &types.DataSource{ID: "ds", TenantID: 7, KnowledgeBaseID: "kb"}, &types.FetchedItem{ExternalID: "nextcloud:instance:77", FileName: "source.txt", Content: []byte("actual retained original source bytes")}, map[string]string{"nextcloud_etag": "opaque-etag"}, nil)
+				_, e = source.ingestNextcloudItem(ctx, &types.DataSource{ID: "ds", TenantID: 7, KnowledgeBaseID: "kb"}, f.item, capacityNextcloudMetadata(f.item), nil)
 				require.NoError(t, e)
 				var count int64
 				require.NoError(t, f.db.Model(&repository.NextcloudCapacityWriteIntent{}).Count(&count).Error)

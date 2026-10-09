@@ -28,9 +28,11 @@ import (
 )
 
 type enrichmentTestModel struct {
-	calls        int
-	beforeReturn func()
-	questions    bool
+	calls           int
+	beforeReturn    func()
+	questions       bool
+	detectQuestions bool
+	response        string
 }
 
 func (m *enrichmentTestModel) Chat(_ context.Context, messages []chat.Message, _ *chat.ChatOptions) (*types.ChatResponse, error) {
@@ -39,7 +41,10 @@ func (m *enrichmentTestModel) Chat(_ context.Context, messages []chat.Message, _
 		m.beforeReturn()
 	}
 	text := "Actual grounded document summary"
-	if m.questions {
+	if m.response != "" {
+		text = m.response
+	}
+	if m.questions || (m.detectQuestions && len(messages) > 0 && strings.Contains(messages[0].Content, "questions")) {
 		text = "What is the actual body of this document?\nHow does the neighboring content apply?"
 	}
 	return &types.ChatResponse{Content: text}, nil

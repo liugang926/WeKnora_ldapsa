@@ -86,10 +86,12 @@ func runKnowledgeAutoTagActualEnqueueOriginalActorManifestAndSQLWriter(t *testin
 	for _, mutation := range []string{"none", "candidate ABA", "role revoked", "legacy unknown", "payload forge", "API revoked"} {
 		t.Run(mutation, func(t *testing.T) {
 			store, db, ctx := autoTagActualFixture(t, pg)
-			require.NoError(t, db.AutoMigrate(&types.User{}, &types.TenantMember{}, &types.TenantAPIKey{}, &types.KnowledgeTagRelation{}, &types.Directory{}, &types.DirectoryIdentity{}, &types.DirectoryGroup{}, &types.DirectoryGroupMembership{}, &types.TenantGroupRoleGrant{}, &types.ResourceAccessPolicy{}, &types.ResourceGroupGrant{}))
+			require.NoError(t, db.AutoMigrate(&types.Tenant{}, &types.Model{}, &types.User{}, &types.TenantMember{}, &types.TenantAPIKey{}, &types.KnowledgeTagRelation{}, &types.Directory{}, &types.DirectoryIdentity{}, &types.DirectoryGroup{}, &types.DirectoryGroupMembership{}, &types.TenantGroupRoleGrant{}, &types.ResourceAccessPolicy{}, &types.ResourceGroupGrant{}))
 			path := "../../../migrations/sqlite/000059_knowledge_collection_display_inputs.up.sql"
+			enrichmentPath := "../../../migrations/sqlite/000062_knowledge_enrichment_inputs.up.sql"
 			if pg {
 				path = "../../../migrations/versioned/000140_knowledge_collection_display_inputs.up.sql"
+				enrichmentPath = "../../../migrations/versioned/000143_knowledge_enrichment_inputs.up.sql"
 			}
 			script, err := os.ReadFile(path)
 			require.NoError(t, err)
@@ -101,6 +103,11 @@ func runKnowledgeAutoTagActualEnqueueOriginalActorManifestAndSQLWriter(t *testin
 				require.NoError(t, err)
 			}
 			require.NoError(t, migration.Exec(string(script)).Error)
+			enrichmentScript, err := os.ReadFile(enrichmentPath)
+			require.NoError(t, err)
+			require.NoError(t, migration.Exec(string(enrichmentScript)).Error)
+			require.NoError(t, db.Create(&types.Tenant{ID: 7, Name: "actual auto tag tenant", Status: "active"}).Error)
+			require.NoError(t, db.Create(&types.Model{ID: "mock", TenantID: 7, Name: "actual auto tag mock", Source: types.ModelSourceRemote, Status: types.ModelStatusActive}).Error)
 			require.NoError(t, db.AutoMigrate(&types.KnowledgeProcessingSpan{}))
 			require.NoError(t, db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS auto_span_producer_unique ON knowledge_processing_spans(knowledge_id,attempt,span_id)").Error)
 			spanPath := "../../../migrations/sqlite/000057_processing_span_original_inputs.up.sql"
@@ -210,9 +217,24 @@ func runKnowledgeAutoTagActualEnqueueOriginalActorManifestAndSQLWriter(t *testin
 				require.Equal(t, "candidate-a", relations[0].TagID)
 				require.NotEmpty(t, model.messages)
 				require.Greater(t, checker.calls, 0)
-				var manifests int64
-				require.NoError(t, db.Table("knowledge_auto_tag_input_manifests").Count(&manifests).Error)
-				require.EqualValues(t, 1, manifests)
+				var manifests []string
+				require.NoError(t, db.Table("knowledge_auto_tag_input_manifests").Pluck("actual_inputs", &manifests).Error)
+				require.Len(t, manifests, 2)
+				kinds := map[string]int{}
+				for _, raw := range manifests {
+					var envelope struct {
+						Kind     string
+						Original *types.KnowledgeAutoTagOriginalInput
+					}
+					require.NoError(t, json.Unmarshal([]byte(raw), &envelope))
+					if envelope.Kind == "actual_queue_input" {
+						kinds["actual_queue_input"]++
+					} else {
+						require.NotNil(t, envelope.Original)
+						kinds["actual_model_input"]++
+					}
+				}
+				require.Equal(t, map[string]int{"actual_queue_input": 1, "actual_model_input": 1}, kinds)
 			} else {
 				require.Error(t, err)
 				require.Empty(t, relations)

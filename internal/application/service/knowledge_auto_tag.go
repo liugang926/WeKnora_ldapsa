@@ -168,11 +168,14 @@ func (s *KnowledgeAutoTagService) Handle(ctx context.Context, task *asynq.Task) 
 	ctx = types.WithExecutionTenant(ctx, payload.TenantID)
 	var admitted *types.KnowledgeAutoTagInputSnapshot
 	if s.knowledgeInputs != nil {
+		if err := s.knowledgeInputs.VerifyKnowledgeAutoTagTaskInput(ctx, payload); err != nil {
+			return err
+		}
 		if payload.OriginalInput == nil || payload.OriginalInput.TenantID != payload.TenantID || payload.OriginalInput.KnowledgeBaseID != payload.KnowledgeBaseID || payload.OriginalInput.KnowledgeID != payload.KnowledgeID {
 			return types.ErrSourceLineageUnknown
 		}
 		var err error
-		ctx, err = s.knowledgeInputs.RestoreKnowledgeBuildActor(ctx, payload.OriginalInput)
+		ctx, err = repository.RestoreKnowledgeBuildActorIfRequired(ctx, s.knowledgeInputs, payload.OriginalInput)
 		if err != nil {
 			return err
 		}
@@ -186,6 +189,9 @@ func (s *KnowledgeAutoTagService) Handle(ctx context.Context, task *asynq.Task) 
 		}
 		if err := s.checkAutoTagInput(ctx, admitted); err != nil {
 			return err
+		}
+		if admitted.Tenant != nil {
+			ctx = context.WithValue(ctx, types.TenantInfoContextKey, admitted.Tenant)
 		}
 		ctx, err = repository.WithSpanAutoTagOriginalInput(ctx, s.knowledgeInputs, admitted)
 		if err != nil {

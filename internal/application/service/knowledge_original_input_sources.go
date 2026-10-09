@@ -8,6 +8,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/application/repository"
 	"github.com/Tencent/WeKnora/internal/datasource/connector/nextcloud"
 	"github.com/Tencent/WeKnora/internal/types"
+	"github.com/Tencent/WeKnora/internal/types/interfaces"
 )
 
 type knowledgeOriginalInputSourceVerifier struct {
@@ -17,8 +18,20 @@ type knowledgeOriginalInputSourceVerifier struct {
 	checkBuild func(context.Context, *types.DataSourceConfig, string, string, int64, string, string) error
 }
 
+func ConfigureDataSourceOriginalInputSources(source interfaces.DataSourceService, store *repository.KnowledgeInputProvenanceStore) {
+	if s, ok := source.(*DataSourceService); ok {
+		s.sourceInputs = store
+	}
+}
+
 func NewKnowledgeOriginalInputSourceVerifier(store *repository.KnowledgeInputProvenanceStore, guard *access.NextcloudSourceLineageGuard, sources access.NextcloudDataSourceLookup) repository.KnowledgeOriginalInputSourceVerifier {
 	return &knowledgeOriginalInputSourceVerifier{store: store, public: guard, sources: sources, checkBuild: nextcloud.CheckCurrentPublication}
+}
+func (v *knowledgeOriginalInputSourceVerifier) CheckKnowledgeConfigurationSources(ctx context.Context, tenant uint64, kb string, lineage *types.SourceLineage) error {
+	if v == nil || v.public == nil {
+		return types.ErrSourceLineageUnknown
+	}
+	return v.public.Check(ctx, lineage, access.LineageReadScope{Targets: types.SearchTargets{&types.SearchTarget{Type: types.SearchTargetTypeKnowledgeBase, TenantID: tenant, KnowledgeBaseID: kb}}})
 }
 func (v *knowledgeOriginalInputSourceVerifier) CheckKnowledgeOriginalInputSources(ctx context.Context, proof *types.KnowledgeBuildInputProof) error {
 	if v == nil || v.store == nil || proof == nil || proof.SourceLineage.RequireComplete() != nil {

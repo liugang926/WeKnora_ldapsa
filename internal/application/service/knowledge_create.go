@@ -201,6 +201,25 @@ func (s *knowledgeService) CreateKnowledgeFromFile(ctx context.Context,
 	provenance := types.ResourceProvenanceOrdinary
 	if markedNextcloud {
 		provenance = types.ResourceProvenanceNextcloud
+		count := eff.QuestionGenerationConfig.QuestionCount
+		if count <= 0 {
+			count = 3
+		}
+		ctx = repository.WithNextcloudOriginalDocumentControls(ctx, types.LanguageFromContextOrDefault(ctx), safeFilename, getFileType(safeFilename), eff.EnableMultimodel, eff.QuestionGenerationConfig.Enabled, count)
+		artifact, err := readOriginalUploadArtifact(file)
+		if err != nil {
+			return nil, err
+		}
+		checker, ok := s.knowledgeInputs.(interface {
+			CheckNextcloudOriginalUploadInput(context.Context, *types.KnowledgeBase, *types.Knowledge, []byte) error
+		})
+		if !ok {
+			return nil, types.ErrSourceLineageUnknown
+		}
+		if err := checker.CheckNextcloudOriginalUploadInput(ctx, kb, knowledge, artifact); err != nil {
+			return nil, err
+		}
+		ctx = context.WithValue(ctx, knowledgeOriginalFileKBKey{}, kb)
 	}
 	if types.CapacityWriteSessionFromContext(ctx) != nil {
 		provider, ok := fileSvc.(interfaces.LocalCapacityIntentProvider)
@@ -233,9 +252,11 @@ func (s *knowledgeService) CreateKnowledgeFromFile(ctx context.Context,
 		return nil, err
 	}
 	// Set tag relations
-	if err := s.setAndAttachKnowledgeTags(ctx, tenantID, kbID, knowledge, tagIDs); err != nil {
-		logger.Errorf(ctx, "Failed to set knowledge tags, knowledge ID: %s, error: %v", knowledge.ID, err)
-		return nil, err
+	if !markedNextcloud {
+		if err := s.setAndAttachKnowledgeTags(ctx, tenantID, kbID, knowledge, tagIDs); err != nil {
+			logger.Errorf(ctx, "Failed to set knowledge tags, knowledge ID: %s, error: %v", knowledge.ID, err)
+			return nil, err
+		}
 	}
 
 	// Enqueue document processing task to Asynq

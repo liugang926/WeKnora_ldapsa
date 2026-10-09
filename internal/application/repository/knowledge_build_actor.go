@@ -219,6 +219,40 @@ func (s *KnowledgeInputProvenanceStore) AuthorizeCurrentKnowledgeInputWrite(ctx 
 	return s.authorizeKnowledgeActorWrite(fresh, &actual)
 }
 
+// authorizeOriginalKnowledgeProducerWrite is confined to derived producer
+// commits. The exact private Nextcloud lease and persisted original admission
+// authorize only this worker's generation; public readers never call it.
+func (s *KnowledgeInputProvenanceStore) authorizeOriginalKnowledgeProducerWrite(ctx context.Context, kb *types.KnowledgeBase, original *types.KnowledgeBuildInputProof) (context.Context, error) {
+	if kb == nil || original == nil || original.TenantID != kb.TenantID || original.KnowledgeBaseID != kb.ID {
+		return ctx, ErrKnowledgeInputChanged
+	}
+	if !NextcloudBuildLeasePresent(ctx, original.TenantID, original.KnowledgeBaseID, original.KnowledgeID) {
+		return s.AuthorizeCurrentKnowledgeInputWrite(ctx, kb)
+	}
+	bound := KnowledgeBuildInputProofFromContext(ctx)
+	if bound == nil || bound.AdmissionID != original.AdmissionID || bound.InputDigest != original.InputDigest || bound.BuildGeneration != original.BuildGeneration || bound.KnowledgeID != original.KnowledgeID || bound.TenantID != original.TenantID || bound.KnowledgeBaseID != original.KnowledgeBaseID {
+		return ctx, ErrKnowledgeInputChanged
+	}
+	if err := ValidateNextcloudBuildWrite(ctx, s.db, original.TenantID, original.KnowledgeBaseID, original.KnowledgeID); err != nil {
+		return ctx, err
+	}
+	var k types.Knowledge
+	if err := s.db.WithContext(ctx).Where("id = ? AND tenant_id = ? AND knowledge_base_id = ?", original.KnowledgeID, original.TenantID, original.KnowledgeBaseID).Take(&k).Error; err != nil {
+		return ctx, err
+	}
+	admission, _, _, err := s.admissionInTx(s.db.WithContext(ctx), &k, original)
+	if err != nil {
+		return ctx, err
+	}
+	if admission.OriginKind != "nextcloud" {
+		return ctx, ErrKnowledgeInputChanged
+	}
+	if err := s.recheckKnowledgeWorkerActor(ctx, original); err != nil {
+		return ctx, err
+	}
+	return ctx, nil
+}
+
 func (s *KnowledgeInputProvenanceStore) authorizeKnowledgeActorWrite(ctx context.Context, kb *types.KnowledgeBase) (context.Context, error) {
 	caller := types.CallerFromContext(ctx)
 	if scope, ok := types.TenantAPIKeyScopeFromContext(ctx); ok {

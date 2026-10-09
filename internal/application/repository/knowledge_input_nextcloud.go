@@ -59,6 +59,15 @@ func (s *KnowledgeInputProvenanceStore) AdmitNextcloudBuildInputs(ctx context.Co
 		if err := tx.Where("id = ? AND tenant_id = ? AND knowledge_base_id = ?", scope.KnowledgeID, scope.TenantID, scope.KnowledgeBaseID).Take(&k).Error; err != nil {
 			return err
 		}
+		if path, strict := ctx.Value(nextcloudOriginalUploadBuildKey{}).(string); strict {
+			artifact, ok := input.([]byte)
+			if !ok {
+				return ErrKnowledgeInputChanged
+			}
+			if _, err := s.verifyOriginalUploadInTx(tx, &k, artifact, path, true); err != nil {
+				return err
+			}
+		}
 		identity, err := knowledgeBuildSourceIdentity(tx, &k, uint64(lease.Epoch))
 		if err != nil {
 			return err

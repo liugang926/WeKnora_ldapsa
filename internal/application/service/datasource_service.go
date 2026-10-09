@@ -39,6 +39,7 @@ type DataSourceService struct {
 	nextcloudEventInbox     *apprepo.NextcloudEventInboxRepository
 	nextcloudSourcePairings *apprepo.NextcloudSourcePairingRepository
 	capacityAdmission       *NextcloudCapacityAdmission
+	sourceInputs            *apprepo.KnowledgeInputProvenanceStore
 }
 
 // NewDataSourceService creates a new data source service
@@ -938,6 +939,13 @@ func (s *DataSourceService) ProcessSync(ctx context.Context, task *asynq.Task) (
 				types.SyncLogStatusFailed, err.Error(), wasPaused)
 			return err
 		}
+		if s.sourceInputs == nil {
+			return types.ErrSourceLineageUnknown
+		}
+		ctx, err = s.sourceInputs.BindNextcloudOriginalFetch(ctx, kb, ds)
+		if err != nil {
+			return err
+		}
 	}
 
 	// Streaming path: connectors that support it interleave fetch→ingest→
@@ -1214,6 +1222,11 @@ func (s *DataSourceService) checkNextcloudSyncActive(ctx context.Context, payloa
 // synced item so results are identifiable in the KB. A tag failure is
 // non-fatal: the sync proceeds untagged.
 func (s *DataSourceService) resolveAutoTagIDs(ctx context.Context, ds *types.DataSource) []string {
+	if ds.Type == types.ConnectorTypeNextcloud {
+		// Creating or assigning this name's grouping tag is deferred to the
+		// actual original upload worker after Stage and a private build lease.
+		return nil
+	}
 	autoTagIDs := []string{}
 	if autoTag, tagErr := s.tagService.FindOrCreateTagByName(ctx, ds.KnowledgeBaseID, ds.Name); tagErr != nil {
 		logger.Warnf(ctx, "failed to find/create auto-tag %q: %v (proceeding without tag)", ds.Name, tagErr)
@@ -2100,6 +2113,11 @@ func (s *DataSourceService) ingestNextcloudItem(
 	ctx context.Context, ds *types.DataSource, item *types.FetchedItem,
 	metadata map[string]string, tagIDs []string,
 ) (bool, error) {
+	var originalErr error
+	ctx, originalErr = apprepo.WithNextcloudOriginalFetchedArtifact(ctx, ds.ID, item, tagIDs)
+	if originalErr != nil {
+		return false, originalErr
+	}
 	versions, ok := s.knowledgeService.GetRepository().(nextcloudVersionStore)
 	if !ok {
 		return false, errors.New("Nextcloud version store unavailable")

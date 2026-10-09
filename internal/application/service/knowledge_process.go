@@ -1198,7 +1198,7 @@ func (s *knowledgeService) getSummary(ctx context.Context,
 		return nil, err
 	}
 	result := parseDocumentSummaryOutput(content)
-	logger.GetLogger(ctx).WithField("summary", result.Summary).
+	logger.GetLogger(ctx).WithField("summary_bytes", len(result.Summary)).
 		WithField("has_profile", result.Profile != nil).Infof("GetSummary success")
 	return result, nil
 }
@@ -2078,7 +2078,7 @@ func (s *knowledgeService) processQuestionGenerationForKnowledge(ctx context.Con
 		return err
 	}
 	if len(pendingWrites) > 0 {
-		if err := s.chunkRepo.UpdateChunks(ctx, pendingWrites); err != nil {
+		if err := s.commitKnowledgeQuestionMetadata(ctx, pendingWrites); err != nil {
 			return err
 		}
 	}
@@ -2452,7 +2452,7 @@ func (s *knowledgeService) processQuestionGenerationForChunks(ctx context.Contex
 		if err := requireActualKnowledgeBuildInput(ctx); err != nil {
 			return err
 		}
-		if err := s.chunkRepo.UpdateChunks(ctx, pendingWrites); err != nil {
+		if err := s.commitKnowledgeQuestionMetadata(ctx, pendingWrites); err != nil {
 			return err
 		}
 	}
@@ -3790,6 +3790,45 @@ func (s *knowledgeService) ProcessDocument(ctx context.Context, t *asynq.Task) e
 		return fmt.Errorf("invalid processing scope: %v: %w", err, asynq.SkipRetry)
 	}
 
+	if knowledge.Channel == types.ConnectorTypeNextcloud && s.knowledgeInputs != nil {
+		verifier, ok := s.knowledgeInputs.(interface {
+			VerifyNextcloudOriginalDocumentTask(context.Context, types.DocumentProcessPayload) error
+			AdmitNextcloudBuildInputsFromOriginalUpload(context.Context, []byte, string) (*types.KnowledgeBuildInputProof, error)
+			AttachNextcloudOriginalUploadTags(context.Context, *types.KnowledgeBuildInputProof) error
+		})
+		if !ok {
+			return types.ErrSourceLineageUnknown
+		}
+		if err := verifier.VerifyNextcloudOriginalDocumentTask(ctx, payload); err != nil {
+			return err
+		}
+		if payload.OriginalInput == nil {
+			reader, err := s.resolveFileServiceForPath(ctx, kb, payload.FilePath).GetFile(ctx, payload.FilePath)
+			if err != nil {
+				return err
+			}
+			artifact, readErr := io.ReadAll(reader)
+			closeErr := reader.Close()
+			if readErr != nil {
+				return readErr
+			}
+			if closeErr != nil {
+				return closeErr
+			}
+			proof, err := verifier.AdmitNextcloudBuildInputsFromOriginalUpload(ctx, artifact, payload.FilePath)
+			if err != nil {
+				return err
+			}
+			ctx = repository.WithKnowledgeBuildInputProof(ctx, s.knowledgeInputs, proof)
+			if err := s.knowledgeInputs.RecheckKnowledgeBuildInputs(ctx, proof); err != nil {
+				return err
+			}
+			if err := verifier.AttachNextcloudOriginalUploadTags(ctx, proof); err != nil {
+				return err
+			}
+			payload.OriginalInput = proof
+		}
+	}
 	if s.knowledgeInputs != nil && len(payload.Passages) > 0 {
 		ctx, err = s.resumeKnowledgeInput(ctx, payload.OriginalInput, payload.Passages)
 		if err != nil {
@@ -4294,16 +4333,25 @@ func (s *knowledgeService) convert(
 		if s.knowledgeInputs != nil {
 			if knowledge.Channel == types.ConnectorTypeNextcloud && payload.OriginalInput == nil {
 				admiter, ok := s.knowledgeInputs.(interface {
-					AdmitNextcloudBuildInputs(context.Context, any) (*types.KnowledgeBuildInputProof, error)
+					AdmitNextcloudBuildInputsFromOriginalUpload(context.Context, []byte, string) (*types.KnowledgeBuildInputProof, error)
 				})
 				if !ok {
 					return nil, types.ErrSourceLineageUnknown
 				}
-				proof, err := admiter.AdmitNextcloudBuildInputs(ctx, contentBytes)
+				proof, err := admiter.AdmitNextcloudBuildInputsFromOriginalUpload(ctx, contentBytes, payload.FilePath)
 				if err != nil {
 					return nil, err
 				}
 				ctx = repository.WithKnowledgeBuildInputProof(ctx, s.knowledgeInputs, proof)
+				attacher, ok := s.knowledgeInputs.(interface {
+					AttachNextcloudOriginalUploadTags(context.Context, *types.KnowledgeBuildInputProof) error
+				})
+				if !ok {
+					return nil, types.ErrSourceLineageUnknown
+				}
+				if err := attacher.AttachNextcloudOriginalUploadTags(ctx, proof); err != nil {
+					return nil, err
+				}
 			} else {
 				var err error
 				ctx, err = s.resumeKnowledgeInput(ctx, payload.OriginalInput, contentBytes)
@@ -4437,10 +4485,14 @@ func isLikelyRateLimitError(err error) bool {
 func (s *knowledgeService) resolveDocReader(
 	ctx context.Context, engine, fileType string, isURL bool, overrides map[string]string,
 ) interfaces.DocReader {
+	var credentials func(context.Context) *types.WeKnoraCloudCredentials
+	if s.tenantService != nil {
+		credentials = s.tenantService.GetWeKnoraCloudCredentials
+	}
 	reader, err := docparser.NewReader(ctx, engine, fileType, isURL, docparser.ReaderDeps{
 		Overrides:               overrides,
 		Remote:                  s.documentReader,
-		WeKnoraCloudCredentials: s.tenantService.GetWeKnoraCloudCredentials,
+		WeKnoraCloudCredentials: credentials,
 	})
 	if err != nil {
 		logger.Warnf(ctx, "[resolveDocReader] engine=%q fileType=%q unusable: %v", engine, fileType, err)

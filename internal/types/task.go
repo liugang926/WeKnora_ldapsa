@@ -556,6 +556,7 @@ type KnowledgePostProcessPayload struct {
 // KnowledgeAutoTagPayload identifies a document whose parsed content should be
 // classified against the latest set of existing tags in its knowledge base.
 type KnowledgeAutoTagPayload struct {
+	TaskInput *KnowledgeAutoTagTaskInputProof `json:"task_input,omitempty"`
 	TracingContext
 	OriginalInput   *KnowledgeBuildInputProof `json:"_original_input,omitempty"`
 	TenantID        uint64                    `json:"tenant_id"`

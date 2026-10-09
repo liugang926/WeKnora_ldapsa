@@ -411,7 +411,7 @@ func (c *Connector) walk(
 			if err != nil {
 				return nil, nil, err
 			}
-			if err := emit(fetchedItem(cap.InstanceID, bindingID, generations[bindingID], file, content, contentType)); err != nil {
+			if err := emit(fetchedItem(cap.InstanceID, bindingID, generations[bindingID], file, content, contentType, cfg)); err != nil {
 				return nil, nil, err
 			}
 			current[id] = state
@@ -518,12 +518,12 @@ func deletedItem(instanceID, bindingID, id string, state fileState) types.Fetche
 	}
 }
 
-func fetchedItem(instanceID, bindingID, generation string, file manifestItem, content []byte, contentType string) types.FetchedItem {
+func fetchedItem(instanceID, bindingID, generation string, file manifestItem, content []byte, contentType string, originalCfg ...config) types.FetchedItem {
 	updatedAt := time.Time{}
 	if file.MTime > 0 {
 		updatedAt = time.Unix(file.MTime, 0).UTC()
 	}
-	return types.FetchedItem{
+	item := types.FetchedItem{
 		ExternalID:       "nextcloud:" + instanceID + ":" + strconv.FormatInt(file.FileID, 10),
 		SourceResourceID: bindingID,
 		Title:            file.Name,
@@ -543,4 +543,8 @@ func fetchedItem(instanceID, bindingID, generation string, file manifestItem, co
 			"nextcloud_generation":  generation,
 		},
 	}
+	if len(originalCfg) == 1 {
+		sealFetchedArtifact(&item, originalCfg[0])
+	}
+	return item
 }

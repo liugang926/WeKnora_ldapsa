@@ -21,12 +21,14 @@ import (
 // generic independent ingestion marker can certify an old display value.
 type knowledgeDisplayRequestKey struct{}
 type knowledgeDisplayRequest struct {
-	Kind, ID, KB  string
-	Fields        map[string]any
-	Assignments   map[string][]string
-	Original      *types.KnowledgeBuildInputProof
-	AutoTag       *types.KnowledgeAutoTagInputSnapshot
-	AutoTagReader *KnowledgeInputProvenanceStore `json:"-"`
+	Kind, ID, KB   string
+	Fields         map[string]any
+	Assignments    map[string][]string
+	Original       *types.KnowledgeBuildInputProof
+	AutoTag        *types.KnowledgeAutoTagInputSnapshot
+	AutoTagReader  *KnowledgeInputProvenanceStore `json:"-"`
+	DataSourceName *types.DataSourceNameInputProof
+	OriginalUpload string
 }
 
 type KnowledgeDisplayAuthorityFactory func(*gorm.DB) *KnowledgeInputProvenanceStore
@@ -276,8 +278,21 @@ func knowledgeDisplayWriterOrigin(tx *gorm.DB, ctx context.Context, kb *types.Kn
 	}
 	var actual context.Context
 	var err error
+	if request.Kind == "datasource-name-tag" || request.Kind == "original-upload-tags" {
+		actual, err = store.authorizeOriginalKnowledgeProducerWrite(ctx, kb, request.Original)
+		if err != nil {
+			return ctx, nil, "", err
+		}
+		if err := store.recheckDataSourceNameInput(tx, request.DataSourceName); err != nil {
+			return ctx, nil, "", err
+		}
+		lineage, err := store.verifyNextcloudGroupingDisplayInput(tx, request)
+		return actual, lineage, "derived", err
+	}
 	if request.Kind == "kb-name" {
 		actual, err = store.authorizeKnowledgeBaseNameInput(ctx, kb, request.ID == "")
+	} else if request.Kind == "derived" {
+		actual, err = store.authorizeOriginalKnowledgeProducerWrite(ctx, kb, request.Original)
 	} else {
 		actual, err = store.AuthorizeCurrentKnowledgeInputWrite(ctx, kb)
 	}
@@ -401,7 +416,7 @@ func writeKnowledgeTagWithDisplayInput(db *gorm.DB, ctx context.Context, tag *ty
 		if err := tx.Where("id = ? AND tenant_id = ?", tag.KnowledgeBaseID, tag.TenantID).Take(&kb).Error; err != nil {
 			return err
 		}
-		if create && request.Kind != "derived" && (request.Kind != "tag-create" || request.KB != kb.ID) {
+		if create && request.Kind != "derived" && request.Kind != "datasource-name-tag" && (request.Kind != "tag-create" || request.KB != kb.ID) {
 			return ErrKnowledgeInputChanged
 		}
 		if !create && request.Kind != "derived" && (request.Kind != "tag-update" || request.ID != tag.ID) {

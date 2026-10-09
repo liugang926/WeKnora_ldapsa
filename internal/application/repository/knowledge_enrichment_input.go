@@ -162,9 +162,13 @@ func (s *KnowledgeInputProvenanceStore) ReadKnowledgeProducerTenant(ctx context.
 // trusted runtime/task controls before enqueue or a synchronous model call.
 func (s *KnowledgeInputProvenanceStore) AdmitKnowledgeProducerInput(ctx context.Context, proof *types.KnowledgeBuildInputProof, purpose string, input any) (*types.KnowledgeProducerInputProof, error) {
 	if proof == nil || proof.Projection != types.KnowledgeBuildProjectionEnrichment || (purpose != "summary" && purpose != "question" && purpose != "image") {
-		return nil, types.ErrSourceLineageUnknown
+		return nil, fmt.Errorf("unknown original enrichment producer projection or purpose: %w", types.ErrSourceLineageUnknown)
 	}
-	if ctx.Value(types.CallerContextKey) != nil {
+	caller := types.CallerFromContext(ctx)
+	_, hasPrincipal := ctx.Value(types.PrincipalContextKey).(types.Principal)
+	_, hasAPI := types.TenantAPIKeyScopeFromContext(ctx)
+	actualActor := caller.UserID != "" || hasPrincipal || hasAPI
+	if actualActor {
 		var kb types.KnowledgeBase
 		if err := s.db.WithContext(ctx).Where("id = ? AND tenant_id = ?", proof.KnowledgeBaseID, proof.TenantID).Take(&kb).Error; err != nil {
 			return nil, err
@@ -172,20 +176,26 @@ func (s *KnowledgeInputProvenanceStore) AdmitKnowledgeProducerInput(ctx context.
 		var err error
 		ctx, err = s.AuthorizeKnowledgeCurrentProducerWrite(ctx, &kb)
 		if err != nil {
+			return nil, fmt.Errorf("current enrichment producer actor: %w", err)
+		}
+	} else {
+		var kb types.KnowledgeBase
+		if err := s.db.WithContext(ctx).Where("id = ? AND tenant_id = ?", proof.KnowledgeBaseID, proof.TenantID).Take(&kb).Error; err != nil {
 			return nil, err
 		}
-	} else if !NextcloudBuildLeasePresent(ctx, proof.TenantID, proof.KnowledgeBaseID, proof.KnowledgeID) {
-		return nil, types.ErrSourceLineageUnknown
+		if _, err := s.authorizeOriginalKnowledgeProducerWrite(ctx, &kb, proof); err != nil {
+			return nil, fmt.Errorf("enrichment producer has no exact private build purpose: %w", err)
+		}
 	}
 	if err := s.RecheckKnowledgeBuildInputs(ctx, proof); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("original enrichment producer input: %w", err)
 	}
 	digest, err := KnowledgeInputDigest(input)
 	if err != nil {
 		return nil, err
 	}
 	actorJSON := "null"
-	if ctx.Value(types.CallerContextKey) != nil {
+	if actualActor {
 		actor, e := captureKnowledgeActorSelector(ctx, proof.AdmissionID)
 		if e != nil {
 			return nil, e

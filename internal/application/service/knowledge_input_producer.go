@@ -11,6 +11,8 @@ import (
 	"github.com/Tencent/WeKnora/internal/types"
 )
 
+type knowledgeOriginalFileKBKey struct{}
+
 func readOriginalUploadArtifact(file *multipart.FileHeader) ([]byte, error) {
 	reader, err := file.Open()
 	if err != nil {
@@ -29,7 +31,15 @@ func (s *knowledgeService) createAdmittedKnowledge(ctx context.Context, k *types
 		return ctx, err
 	}
 	if marked {
-		return ctx, s.repo.CreateKnowledge(ctx, k)
+		kb, _ := ctx.Value(knowledgeOriginalFileKBKey{}).(*types.KnowledgeBase)
+		artifact, ok := input.([]byte)
+		writer, capable := s.knowledgeInputs.(interface {
+			CreateNextcloudKnowledgeWithOriginalUpload(context.Context, *types.KnowledgeBase, *types.Knowledge, []byte) error
+		})
+		if !ok || !capable || kb == nil {
+			return ctx, types.ErrSourceLineageUnknown
+		}
+		return ctx, writer.CreateNextcloudKnowledgeWithOriginalUpload(ctx, kb, k, artifact)
 	} // admitted by exact staged worker, never as independent
 	proof, err := s.knowledgeInputWriter.CreateKnowledgeWithInput(ctx, k, input)
 	if err != nil {

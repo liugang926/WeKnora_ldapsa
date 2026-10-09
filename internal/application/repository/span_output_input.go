@@ -216,7 +216,9 @@ func verifySpanMaterials(tx *gorm.DB, store *KnowledgeInputProvenanceStore, mani
 			return nil, err
 		}
 		if before != after || revision != saved.ChunkRevisions[i] {
-			return nil, ErrKnowledgeInputChanged
+			if err := verifyQuestionMetadataOwnResult(tx, a, chunk, &actual, saved.ChunkRevisions[i], revision); err != nil {
+				return nil, err
+			}
 		}
 	}
 	lineages := []*types.SourceLineage{lineage}

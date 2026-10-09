@@ -49,6 +49,7 @@ type knowledgeRepository struct {
 	displayAuthorityFactory   KnowledgeDisplayAuthorityFactory
 	nextcloudPublicationCheck nextcloudPublicationCheck
 	currentReadActor          interfaces.CurrentReadActorRefresher
+	completionObserver        func(context.Context, string) error
 }
 
 // NewKnowledgeRepository creates a new knowledge repository
@@ -856,6 +857,11 @@ func (r *knowledgeRepository) FinalizeSubtask(
 	if err := r.maybePublishNextcloudVersion(ctx, id); err != nil {
 		return 0, promoted, err
 	}
+	if promoted && r.completionObserver != nil {
+		if err := r.completionObserver(ctx, id); err != nil {
+			return 0, promoted, err
+		}
+	}
 
 	// 3) Best-effort re-read of the new count for diagnostics/return value
 	//    only. This read may be replica-stale and is intentionally NOT used
@@ -952,6 +958,11 @@ func (r *knowledgeRepository) CompleteProcessingWithoutSubtasks(ctx context.Cont
 	}
 	if err := r.maybePublishNextcloudVersion(ctx, id); err != nil {
 		return changed, err
+	}
+	if changed && r.completionObserver != nil {
+		if err := r.completionObserver(ctx, id); err != nil {
+			return changed, err
+		}
 	}
 	return changed, nil
 }
