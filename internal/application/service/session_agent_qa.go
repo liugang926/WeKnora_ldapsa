@@ -367,6 +367,9 @@ func (s *sessionService) AgentQA(
 	markMessageMaterialReady(ctx)
 	logger.Info(ctx, "Executing agent with streaming")
 	if _, err := engine.Execute(ctx, sessionID, req.AssistantMessageID, agentQuery, llmContext, agentImageURLs); err != nil {
+		if ctx.Err() == nil {
+			RefuseMessageMaterialOutputBoundary(ctx)
+		}
 		logger.Errorf(ctx, "Agent execution failed: %v", err)
 		// Emit error event to the EventBus used by this agent
 		eventBus.Emit(ctx, event.Event{
@@ -378,6 +381,7 @@ func (s *sessionService) AgentQA(
 				SessionID: sessionID,
 			},
 		})
+		return err
 	}
 	if err := CheckMessageMaterialOutputBoundary(ctx); err != nil {
 		return err
