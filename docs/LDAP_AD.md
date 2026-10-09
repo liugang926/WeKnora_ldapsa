@@ -25,6 +25,40 @@ and the SQLite test/lite migration sequence. Compatibility validation targets
 the Go and Node versions pinned by that baseline plus the repository's Docker
 build.
 
+The completion audit on 2026-10-09 starts from the submission repository's
+checked `main` commit `c5ee8c4e3b4148bbe8f3cf6db636eeaf95830e20`, which already
+contains merged LDAP PR #1 and subsequent RAG/CI work. Development takes place
+in a separate worktree; existing local deployments and unrelated uncommitted
+Nextcloud/RAG work are preserved. No new schema migration is required by this
+completion patch: LDAP remains PostgreSQL migration 109 / SQLite migration 28
+within the current main sequences (115 / 34).
+
+The audit fills the following gaps in the merged implementation:
+
+- Cancellation and read/write deadlines cover TCP/TLS establishment, StartTLS
+  upgrade, Bind and Search, including a controller that stops reading requests.
+- Equivalent escaped or multi-valued AD DNs match the same membership object;
+  malformed and duplicate equivalent member DNs fail the complete snapshot.
+- A login that discovers a disabled or out-of-scope account requests a complete
+  synchronization through the existing lease/cooldown path. A failed collection
+  preserves the prior snapshot and cannot revoke users as an empty directory.
+- Document/manual/FAQ processing and subsequent enrichment stages restore the
+  admitted human identity and recheck live directory/resource access. A queued
+  direct workspace Admin still loses access when its directory identity pauses.
+  Rejected work closes the appropriate processing attempt without publishing
+  content; Lite honors the same non-retryable cancellation as Redis workers.
+- Resource previews include bounded, stable pages of workspace users, proposed
+  permissions and direct/nested/primary group provenance. In inherited mode the
+  preview reports `workspace`, leaving existing ownership/edit rules in force.
+- Groups can be prepared while access still inherits from the workspace. This
+  does not revoke that KB's current sharing capabilities. Entering restricted
+  mode and subsequent directory permission changes revoke affected capabilities.
+  The UI confirms the same proposed grants it previewed and discards responses
+  from a previously selected resource.
+
+The patch does not perform real enterprise AD acceptance. Historical limited
+smoke evidence in PR #1 does not complete the checklist below.
+
 ## Directory browser
 
 Workspace **Member management** also exposes **Synced AD users and groups**
@@ -193,8 +227,11 @@ have their sessions revoked immediately.
   `owner` and system administrator are never directory-derived. When several
   groups match, the highest fresh role wins.
 - Knowledge-base grants are `read` or `edit`; agent grants are `use` or `edit`.
-  A resource grant is effective only if the same group gives the user a role in
-  the owning workspace. Cross-workspace shares cannot bypass this constraint.
+  A resource grant is effective only for a member of the owning workspace.
+  Workspace membership may come from a direct grant or another directory group.
+  Cross-workspace shares cannot bypass this constraint. The editor and preview
+  identify groups with no workspace-role association so administrators can
+  distinguish a resource grant from admission to the workspace.
 - `inherit` preserves normal workspace behavior. `restricted` requires a
   matching resource group for ordinary members. Workspace Owner/Admin retain
   management access. Edit grants do not grant delete, share management, access
@@ -212,6 +249,24 @@ have their sessions revoked immediately.
   re-authorize. Switching a resource to `restricted` revokes its revocable
   resource grants; unrestricted long-lived presigned links are not issued for
   restricted resources.
+
+Background payloads created before this patch, machine-triggered jobs and
+system ingestion with no verifiable initiating human cannot process restricted
+KBs. They retain legacy behavior for inherited KBs and when LDAP is off. For a
+restricted KB, admit new work as an authorized web user; do not replay an old
+anonymous payload to recover a rejected job. This also applies to chained
+summary, question, image, graph, table, tagging and profile stages.
+
+`POST /api/v1/group-access/:resource_type/:resource_id/preview` accepts the
+proposed mode/grants plus `offset` and `limit` query parameters (default 0/100,
+maximum limit 100). Aggregate impact counts cover all eligible workspace
+members; `effective_users` is the selected page with `effective_users_total`,
+`effective_users_offset`, `effective_users_limit` and
+`effective_users_truncated`. User rows include current/proposed read or use
+access, `permission_after`, workspace role and matching group sources/depths.
+Only the existing authenticated workspace-management route can request it.
+It is a preview against current directory state, not a saved authorization
+capability: saving and executing later still check live permissions.
 
 ## Upgrade and rollback
 
@@ -242,6 +297,13 @@ isolated LDAP service and checks service-account search, user bind, paging,
 TLS, StartTLS, controller failover, and sync. AD-only binary attributes and
 primary-group behavior use fixed protocol fixtures because OpenLDAP does not
 implement Active Directory semantics.
+
+The `LDAP directory` CI workflow now runs that isolated wire harness and a
+separate disposable PostgreSQL/SQLite migration gate. The migration gate checks
+default-off installation, inherited policies, role/permission constraints,
+directory upgrade/rollback and preservation of existing workspace data. Other
+Go and frontend CI retain the full regression suites and normal Docker builds.
+Each fixture has its own Compose project, and debug ports bind to loopback.
 
 ## Real AD acceptance checklist (not yet executed)
 
