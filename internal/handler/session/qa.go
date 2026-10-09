@@ -1432,6 +1432,7 @@ func (h *Handler) executeQA(reqCtx *qaRequestContext, mode qaMode, generateTitle
 		}
 		defer func() {
 			if r := recover(); r != nil {
+				applicationservice.RefuseMessageMaterialOutputBoundary(streamCtx.asyncCtx)
 				if streamCtx.releaseTurn != nil {
 					streamCtx.releaseTurn()
 				}
@@ -1534,6 +1535,10 @@ func (h *Handler) executeQA(reqCtx *qaRequestContext, mode qaMode, generateTitle
 			if streamCtx.asyncCtx.Err() != nil {
 				logger.Infof(streamCtx.asyncCtx, "QA cancelled by user stop for session: %s", sessionID)
 			} else {
+				// A refused Steer control may not touch any saved parent row.
+				// Carry that producer failure into this same request's material
+				// owner so finalization cannot certify an empty completed answer.
+				applicationservice.RefuseMessageMaterialOutputBoundary(streamCtx.asyncCtx)
 				logger.ErrorWithFields(streamCtx.asyncCtx, serviceErr, nil)
 				streamCtx.eventBus.Emit(streamCtx.asyncCtx, event.Event{
 					Type:      event.EventError,

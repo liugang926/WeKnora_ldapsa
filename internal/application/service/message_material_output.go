@@ -125,6 +125,21 @@ func CloseMessageMaterialOutputBoundary(ctx context.Context) {
 		}
 	}
 }
+
+// RefuseMessageMaterialOutputBoundary records a failed producer decision on
+// its actual request owner. It does not complete an assistant, create material
+// proof, release held originals, or retain provider error diagnostics. Static
+// terminal errors can still close the HTTP stream without publishing material.
+func RefuseMessageMaterialOutputBoundary(ctx context.Context) {
+	if slot, ok := ctx.Value(messageMaterialOutputKey{}).(*messageMaterialOutputSlot); ok {
+		slot.mu.Lock()
+		if slot.Failed == nil {
+			slot.Failed = access.ErrNextcloudPublicationDenied
+		}
+		slot.mu.Unlock()
+	}
+}
+
 func CheckMessageMaterialOutputBoundary(ctx context.Context) error {
 	slot, ok := ctx.Value(messageMaterialOutputKey{}).(*messageMaterialOutputSlot)
 	if !ok {
