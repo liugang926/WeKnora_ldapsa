@@ -821,6 +821,7 @@ export default {
       "description": "Review expiration and cleanup progress. Estimated bytes are separate from confirmed filesystem releases.",
       "unavailable": "Cleanup status is unavailable or the safety check refused the action. Refresh and inspect the current status.",
       "empty": "No retained cleanup tasks for this knowledge base.",
+      "nextAttempt": "Next retry",
       "unknown": "Unverified",
       "derivedExpiry": "Derived content expiry",
       "originalExpiry": "Recovery copy expiry",
@@ -846,6 +847,7 @@ export default {
         "deleting": "Collecting",
         "collected": "Recorded items collected"
       },
+      "error": {"content_lease_coverage_unverified": "Reader/build coverage is unverified; collection stays blocked.", "content_read_or_build_busy": "A reader or builder is active; retry later.", "content_generation_unverified": "Source generation needs reconciliation.", "candidate_is_current": "This is still the current version and cannot be collected.", "build_still_active": "Build is still active; retain its data.", "source_identity_changed": "Source identity changed; refresh and reconcile.", "derived_backend_inventory_unverified": "Derived backend inventory is incomplete; retain data.", "derived_provenance_unverified": "Historical derived origins are unverified; retain data.", "safe_object_cleanup_unavailable": "Protected references or backend checks prevent collection.", "provider_delete_failed": "Storage deletion was not confirmed; inspect the backend and retry.", "retention_window_open": "Retention is still active; retain data.", "invalid_image_inventory": "Image inventory needs repair before retry.", "gc_step_failed": "Cleanup step failed; inspect and retry."},
       "kind": {
         "knowledge": "Knowledge record",
         "derived_index": "Derived inventory",

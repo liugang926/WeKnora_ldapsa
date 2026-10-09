@@ -54,7 +54,8 @@ watch(() => props.kbId, load, {immediate: true})
         <strong>{{ label('reason', job.reason) }}</strong> · {{ label('state', job.state) }}
         <p>{{ t('datasource.gc.derivedExpiry') }}: {{ date(job.not_before) }} · {{ t('datasource.gc.originalExpiry') }}: {{ date(job.original_not_before) }}</p>
         <p>{{ t('datasource.gc.estimated') }}: {{ size(job.estimated_bytes) }} · {{ t('datasource.gc.confirmed') }}: {{ size(job.confirmed_released_bytes) }}</p>
-        <p v-if="job.last_error_code">{{ t('datasource.gc.failure') }}: {{ job.last_error_code }}</p>
+        <p v-if="['blocked','retry'].includes(job.state)">{{ t('datasource.gc.nextAttempt') }}: {{ date(job.next_attempt_at) }}</p>
+        <p v-if="job.last_error_code">{{ t('datasource.gc.failure') }}: {{ label('error', job.last_error_code) }}</p>
         <t-button variant="outline" :disabled="loading" @click="inspect(job)">{{ t('datasource.gc.preview') }}</t-button>
       </li>
     </ul>

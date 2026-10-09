@@ -852,6 +852,7 @@ export default {
       "description": "查看到期时间及清理进度。预计字节和文件系统确认释放字节分别统计。",
       "unavailable": "回收状态暂不可用或安全检查拒绝操作，请刷新查看当前状态。",
       "empty": "此知识库暂无待回收任务。",
+      "nextAttempt": "下次核对时间",
       "unknown": "尚未核实",
       "derivedExpiry": "派生内容到期时间",
       "originalExpiry": "恢复副本到期时间",
@@ -877,6 +878,7 @@ export default {
         "deleting": "清理中",
         "collected": "记录的对象已清理"
       },
+      "error": {"content_lease_coverage_unverified": "读取／构建覆盖尚未验收，保持阻断。", "content_read_or_build_busy": "仍有读取或构建活动，稍后重试。", "content_generation_unverified": "来源代次尚未核实，请重新核对。", "candidate_is_current": "此代次仍为当前版本，不能回收。", "build_still_active": "构建尚未结束，保留数据。", "source_identity_changed": "来源身份或版本变化，请刷新核对。", "derived_backend_inventory_unverified": "派生后端清单不完整，继续保留。", "derived_provenance_unverified": "历史派生来源尚未核实，继续保留。", "safe_object_cleanup_unavailable": "仍有受保护对象或后端清理条件未满足。", "provider_delete_failed": "存储删除未获确认，请检查后端后重试。", "retention_window_open": "尚在保留期限内，继续保留。", "invalid_image_inventory": "图片清单不完整，修复清单后重试。", "gc_step_failed": "清理步骤失败，请检查后重试。"},
       "kind": {
         "knowledge": "知识记录",
         "derived_index": "派生清单",

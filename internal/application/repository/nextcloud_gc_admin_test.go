@@ -20,8 +20,9 @@ func gcManualActual(t *testing.T, pg bool) {
 			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 			defer cancel()
 			store, db, jobID, _, path := gcActualObjectFixture(t, pg)
-			require.NoError(t, db.AutoMigrate(&types.User{}, &types.TenantMember{}, &types.ResourceAccessPolicy{}, &types.AuditLog{}))
-			require.NoError(t, db.Create(&types.User{ID: "actual-admin", Username: "actual-admin", Email: "gc@example.test", IsActive: true}).Error)
+			require.NoError(t, db.AutoMigrate(&types.Tenant{}, &types.User{}, &types.TenantMember{}, &types.ResourceAccessPolicy{}, &types.AuditLog{}))
+			require.NoError(t, db.Create(&types.Tenant{ID: 7, Name: "owned GC tenant", Status: "active"}).Error)
+			require.NoError(t, db.Create(&types.User{ID: "actual-admin", TenantID: 7, Username: "actual-admin", Email: "gc@example.test", IsActive: true}).Error)
 			require.NoError(t, db.Create(&types.TenantMember{UserID: "actual-admin", TenantID: 7, Role: types.TenantRoleAdmin, Status: types.TenantMemberStatusActive}).Error)
 			factory := func(tx *gorm.DB) *KnowledgeInputProvenanceStore {
 				actual := NewKnowledgeInputProvenanceStore(tx)
