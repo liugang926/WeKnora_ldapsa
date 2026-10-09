@@ -141,15 +141,36 @@ func defaultDialConnection(
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	dialer := &net.Dialer{Timeout: config.ConnectTimeout}
-	options := []ldap.DialOpt{ldap.DialWithDialer(dialer)}
-	if controller.TLSMode == TLSModeLDAPS {
-		options = append(options, ldap.DialWithTLSConfig(tlsConfig))
-	}
-	conn, err := ldap.DialURL(controller.URL, options...)
+	parsed, err := url.Parse(strings.TrimSpace(controller.URL))
 	if err != nil {
 		return nil, err
 	}
+	port := parsed.Port()
+	if port == "" {
+		port = "389"
+		if controller.TLSMode == TLSModeLDAPS {
+			port = "636"
+		}
+	}
+	address := net.JoinHostPort(parsed.Hostname(), port)
+	// DialURL does not accept a context. Dial the socket explicitly so request
+	// cancellation interrupts DNS, TCP and TLS negotiation, and one timeout
+	// bounds the complete connection setup rather than each stage separately.
+	connectCtx, cancel := context.WithTimeout(ctx, config.ConnectTimeout)
+	defer cancel()
+	dialer := &net.Dialer{Timeout: config.ConnectTimeout}
+	var socket net.Conn
+	if controller.TLSMode == TLSModeLDAPS {
+		tlsDialer := &tls.Dialer{NetDialer: dialer, Config: tlsConfig}
+		socket, err = tlsDialer.DialContext(connectCtx, "tcp", address)
+	} else {
+		socket, err = dialer.DialContext(connectCtx, "tcp", address)
+	}
+	if err != nil {
+		return nil, contextOrError(ctx, err)
+	}
+	conn := ldap.NewConn(socket, controller.TLSMode == TLSModeLDAPS)
+	conn.Start()
 	conn.SetTimeout(config.QueryTimeout)
 	if controller.TLSMode == TLSModeStartTLS {
 		// go-ldap's request timeout bounds the StartTLS extended operation but
@@ -158,22 +179,25 @@ func defaultDialConnection(
 		// peer that accepts TCP then stalls during negotiation.
 		result := make(chan error, 1)
 		go func() { result <- conn.StartTLS(tlsConfig) }()
-		timer := time.NewTimer(config.ConnectTimeout)
-		defer timer.Stop()
 		var startTLSErr error
 		select {
 		case startTLSErr = <-result:
-		case <-ctx.Done():
+		case <-connectCtx.Done():
 			_ = conn.Close()
-			return nil, ctx.Err()
-		case <-timer.C:
-			_ = conn.Close()
-			return nil, fmt.Errorf("StartTLS negotiation exceeded connection timeout %s", config.ConnectTimeout)
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+			return nil, fmt.Errorf("StartTLS negotiation exceeded connection timeout %s: %w",
+				config.ConnectTimeout, connectCtx.Err())
 		}
 		if startTLSErr != nil {
 			_ = conn.Close()
 			return nil, startTLSErr
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		_ = conn.Close()
+		return nil, err
 	}
 	return &productionConnection{conn: conn}, nil
 }
@@ -210,6 +234,9 @@ func (a *Adapter) Authenticate(
 
 		result, terminal, err := a.authenticateOnConnection(ctx, conn, identifier, password)
 		conn.Close()
+		if contextErr := ctx.Err(); contextErr != nil {
+			return nil, contextErr
+		}
 		if err == nil {
 			result.ControllerURL = controller.URL
 			return result, nil
@@ -306,7 +333,11 @@ func (a *Adapter) open(ctx context.Context, controller Controller) (ldapConnecti
 	if err != nil {
 		return nil, err
 	}
-	return a.dial(ctx, controller, tlsConfig, a.config)
+	conn, err := a.dial(ctx, controller, tlsConfig, a.config)
+	if err != nil {
+		return nil, contextOrError(ctx, err)
+	}
+	return newContextConnection(ctx, conn), nil
 }
 
 func isInvalidCredentials(err error) bool {

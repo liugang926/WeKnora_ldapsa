@@ -58,6 +58,9 @@ func (a *Adapter) Sync(ctx context.Context) (*Snapshot, error) {
 		}
 		snapshot, err := a.syncOnConnection(ctx, conn, controller.URL)
 		conn.Close()
+		if contextErr := ctx.Err(); contextErr != nil {
+			return nil, contextErr
+		}
 		if err == nil {
 			return snapshot, nil
 		}
