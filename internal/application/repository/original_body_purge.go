@@ -215,6 +215,8 @@ func (s *OriginalBodyRetentionStore) fieldCurrent(tx *gorm.DB, head originalBody
 			return true, 0, nil
 		}
 		return false, -1, nil
+	case "message_generated_field_admissions", "message_fork_parent_origins":
+		return s.parentCopyCurrent(tx, head, row, now)
 	case "messages", "message_generation_origins":
 		messageID := head.RowKey
 		if d.Table == "message_generation_origins" {
@@ -360,7 +362,7 @@ func (s *OriginalBodyRetentionStore) lockBodyScopes(tx *gorm.DB, heads []origina
 		}
 	}
 	for _, head := range heads {
-		if head.SourceTable != "messages" && head.SourceTable != "message_generation_origins" {
+		if head.SourceTable != "messages" && head.SourceTable != "message_generation_origins" && !parentCopyTable(head.SourceTable) {
 			continue
 		}
 		var resolved []originalBodyLeaseScope
@@ -369,6 +371,9 @@ func (s *OriginalBodyRetentionStore) lockBodyScopes(tx *gorm.DB, heads []origina
 		}
 		if !bodyLeaseScopesComplete(resolved, head.TenantID) {
 			return ErrOriginalBodyRetained
+		}
+		if parentCopyTable(head.SourceTable) {
+			if _, err := parentCopyScopeEvidence(tx, head, resolved); err != nil { return err }
 		}
 		for _, scopeRef := range resolved {
 			if scopeRef.KnowledgeBaseID != "" {

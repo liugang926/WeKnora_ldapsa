@@ -34,8 +34,8 @@ var originalBodyFields = []originalBodyFieldDescriptor{
 	// Old generated/fork parent snapshots can contain a second Messages copy.
 	// Inventory recognizes only that leaf, preserving proof metadata. With no
 	// durable copy/closure receipt these copies remain explicit blockers.
-	{"message_generated_field_admissions", "id", "unsupported", []string{"parent_materials.*.Messages"}},
-	{"message_fork_parent_origins", "generation_id", "unsupported", []string{"parent_materials.*.Messages"}},
+	{"message_generated_field_admissions", "id", "inline", []string{"parent_materials.*.Messages"}},
+	{"message_fork_parent_origins", "generation_id", "inline", []string{"parent_materials.*.Messages"}},
 	// Current entity columns keep their SQL search/storage representation. Their
 	// exact mirror receipts permit clearing only after actual lifecycle closure.
 	{"knowledge_processing_spans", "id", "inline", []string{"input", "output", "error_message", "error_detail"}},
@@ -88,6 +88,9 @@ func bodyFieldValue(row map[string]any, field string) (string, error) {
 	return result, nil
 }
 func bodyNestedReplace(raw, field, old, replacement string) (string, error) {
+	if field == parentCopyBodyField {
+		return parentCopyReplace(raw, old, replacement)
+	}
 	parts := strings.Split(field, ".")
 	var object map[string]any
 	if e := json.Unmarshal([]byte(raw), &object); e != nil {
@@ -241,6 +244,12 @@ func (s *OriginalBodyRetentionStore) captureField(tx *gorm.DB, d originalBodyFie
 			return e
 		}
 		if old.BodySHA256 == sha {
+			if parentCopyTable(d.Table) {
+				if e := s.recordParentCopyScopes(tx, old.ID, d, key, scope); e != nil {
+					return e
+				}
+				return bodyInternal(tx).Model(&old).Where("state='live'").Update("storage_kind", "inline").Error
+			}
 			return nil
 		}
 		// A genuine producer change retires the prior representation. Cached
@@ -270,6 +279,11 @@ func (s *OriginalBodyRetentionStore) captureField(tx *gorm.DB, d originalBodyFie
 		}
 	} else if e != nil {
 		return e
+	}
+	if parentCopyTable(d.Table) {
+		if e := s.recordParentCopyScopes(tx, body.ID, d, key, scope); e != nil {
+			return e
+		}
 	}
 	if e := s.recordMessageLeaseScopes(tx, body.ID, d, key, raw, scope); e != nil {
 		return e

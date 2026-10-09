@@ -277,6 +277,14 @@ func (s *KnowledgeInputProvenanceStore) AcquireMessageBodyReadLeases(ctx context
 				if e := bodyInternal(tx).Where("(source_table='messages' AND row_key=?) OR (source_table='message_generation_origins' AND row_key=?)", control.ID, control.GenerationID).Find(&heads).Error; e != nil {
 					return e
 				}
+				var copies []originalBodyFieldHead
+				query := bodyInternal(tx).Table("original_body_field_heads h").Select("h.*").Where("(h.source_table='message_fork_parent_origins' AND h.row_key=?) OR (h.source_table='message_generated_field_admissions' AND h.row_key IN (SELECT a.id FROM message_generated_field_admissions a JOIN message_generated_field_receipts r ON r.admission_id=a.id AND r.message_id=a.message_id AND r.field=a.field WHERE a.message_id=?))", control.GenerationID, control.ID)
+				if tx.Migrator().HasTable("message_generated_field_admissions") && tx.Migrator().HasTable("message_fork_parent_origins") {
+					if e := query.Find(&copies).Error; e != nil {
+						return e
+					}
+					heads = append(heads, copies...)
+				}
 				for _, head := range heads {
 					if seen[head.BodyID] {
 						continue

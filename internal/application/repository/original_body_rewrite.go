@@ -34,8 +34,14 @@ func originalBodyRewrite(tx *gorm.DB, d originalBodyFieldDescriptor, key, col, i
 			return e
 		}
 		if tx.Dialector.Name() == "postgres" {
-			if e := internal.Raw("SELECT CAST(? AS jsonb)::text", updated).Scan(&updated).Error; e != nil {
+			jsonColumn, e := originalBodyColumnIsJSON(tx, d.Table, col)
+			if e != nil {
 				return e
+			}
+			if jsonColumn {
+				if e := internal.Raw("SELECT CAST(? AS jsonb)::text", updated).Scan(&updated).Error; e != nil {
+					return e
+				}
 			}
 		}
 		old, new, col = stored, updated, bodyFieldColumn(col)

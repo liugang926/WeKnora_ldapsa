@@ -15,7 +15,7 @@ import (
 	"time"
 )
 
-func messageBodyIntegrationFixture(t *testing.T, pg bool, before ...func(*gorm.DB, *repository.KnowledgeInputProvenanceStore, context.Context)) (*messageService, *knowledgeService, *repository.KnowledgeInputProvenanceStore, *gorm.DB, context.Context, *types.Session, *repository.OriginalBodyRetentionStore) {
+func messageBodyIntegrationFixture(t *testing.T, pg bool, before ...any) (*messageService, *knowledgeService, *repository.KnowledgeInputProvenanceStore, *gorm.DB, context.Context, *types.Session, *repository.OriginalBodyRetentionStore) {
 	t.Helper()
 	var messages *messageService
 	var kg *knowledgeService
@@ -53,7 +53,14 @@ func messageBodyIntegrationFixture(t *testing.T, pg bool, before ...func(*gorm.D
 		require.NoError(t, db.Create(session).Error)
 	}
 	if len(before) > 0 {
-		before[0](db, store, ctx)
+		switch hook := before[0].(type) {
+		case func(*gorm.DB, *repository.KnowledgeInputProvenanceStore, context.Context):
+			hook(db, store, ctx)
+		case func(*messageService, *gorm.DB, *repository.KnowledgeInputProvenanceStore, context.Context, *types.Session):
+			hook(messages, db, store, ctx, session)
+		default:
+			t.Fatal("unsupported actual before-body fixture hook")
+		}
 	}
 	path := "../../../migrations/sqlite/000071_original_body_retention.up.sql"
 	if pg {
@@ -363,13 +370,18 @@ func runMessageBodyActualGeneratedField(t *testing.T, pg bool) {
 	var oldAdmission map[string]any
 	require.NoError(t, db.Table("message_generated_field_admissions").Where("message_id=?", user.ID).Take(&oldAdmission).Error)
 	slot := ctx.Value(messageMaterialOutputKey{}).(*messageMaterialOutputSlot)
-	legacyBytes, e := json.Marshal([]*types.MessageMaterialSnapshot{slot.Guards[0].snapshot})
+	legacyCopy := *slot.Guards[0].snapshot
+	legacyCopy.Messages = append([]*types.Message{}, legacyCopy.Messages...)
+	unadmitted := *legacyCopy.Messages[0]
+	unadmitted.Content = "unaccounted historical duplicate bytes"
+	legacyCopy.Messages[0] = &unadmitted
+	legacyBytes, e := json.Marshal([]*types.MessageMaterialSnapshot{&legacyCopy})
 	require.NoError(t, e)
-	oldAdmission["id"] = "known-legacy-parent-copy"
+	oldAdmission["id"] = "unknown-legacy-parent-copy"
 	oldAdmission["parent_materials"] = string(legacyBytes)
 	require.NoError(t, db.Table("message_generated_field_admissions").Create(&oldAdmission).Error)
 	var legacyBodyID string
-	require.NoError(t, db.Raw("SELECT body_id FROM original_body_field_heads WHERE source_table='message_generated_field_admissions' AND row_key='known-legacy-parent-copy'").Scan(&legacyBodyID).Error)
+	require.NoError(t, db.Raw("SELECT body_id FROM original_body_field_heads WHERE source_table='message_generated_field_admissions' AND row_key='unknown-legacy-parent-copy'").Scan(&legacyBodyID).Error)
 	require.NotEmpty(t, legacyBodyID, "known old Messages copies enter conservative body inventory")
 
 	var scoped, leased int64
@@ -394,9 +406,9 @@ func runMessageBodyActualGeneratedField(t *testing.T, pg bool) {
 	require.Zero(t, live, "closed generated body is not left unknown by a missing producer marker")
 	var legacyState string
 	require.NoError(t, db.Raw("SELECT state FROM original_body_payloads WHERE id=?", legacyBodyID).Scan(&legacyState).Error)
-	require.Equal(t, "live", legacyState, "old parent copy lacks a supported immutable closure receipt and remains blocked")
-	require.NoError(t, db.Raw("SELECT parent_materials FROM message_generated_field_admissions WHERE id='known-legacy-parent-copy'").Scan(&parents).Error)
-	require.Contains(t, parents, user.Content, "no current-body re-sign or unproved old-copy erase")
+	require.Equal(t, "live", legacyState, "unadmitted old copy bytes cannot acquire scope/closure proof from a current message")
+	require.NoError(t, db.Raw("SELECT parent_materials FROM message_generated_field_admissions WHERE id='unknown-legacy-parent-copy'").Scan(&parents).Error)
+	require.Contains(t, parents, "unaccounted historical duplicate bytes", "no current-body re-sign or unproved old-copy erase")
 
 }
 func TestMessageBodyActualGeneratedFieldSQLite(t *testing.T) {

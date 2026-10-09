@@ -238,7 +238,7 @@ func (s *KnowledgeInputProvenanceStore) peekMessageMaterialReadPlanInTx(tx *gorm
 		}
 		var fieldParents []struct{ ParentMaterials, SourceLineage string }
 		if tx.Migrator().HasTable("message_generated_field_admissions") {
-			if err := tx.Table("message_generated_field_admissions a").Select("a.parent_materials,a.source_lineage").Joins("JOIN message_generated_field_receipts r ON r.admission_id=a.id AND r.message_id=a.message_id AND r.field=a.field").Where("a.message_id=?", id.ID).Scan(&fieldParents).Error; err != nil {
+			if err := tx.Table("message_generated_field_admissions a").Select(parentCopyMetadataSelect(tx, "a.parent_materials", true)+" AS parent_materials,a.source_lineage").Joins("JOIN message_generated_field_receipts r ON r.admission_id=a.id AND r.message_id=a.message_id AND r.field=a.field").Where("a.message_id=?", id.ID).Scan(&fieldParents).Error; err != nil {
 				return nil, err
 			}
 		}
@@ -287,7 +287,7 @@ func (s *KnowledgeInputProvenanceStore) peekMessageMaterialReadPlanInTx(tx *gorm
 		}
 		if tx.Migrator().HasTable("message_fork_parent_origins") {
 			var fork messageForkParentOrigin
-			err := tx.Where("generation_id=?", fact.GenerationID).Take(&fork).Error
+			err := tx.Select("generation_id,"+parentCopyMetadataSelect(tx, "parent_materials", false)+" AS parent_materials").Where("generation_id=?", fact.GenerationID).Take(&fork).Error
 			if err != nil && err != gorm.ErrRecordNotFound {
 				return nil, err
 			}
