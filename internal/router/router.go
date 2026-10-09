@@ -13,6 +13,8 @@ import (
 	ginSwagger "github.com/swaggo/gin-swagger"
 	"go.uber.org/dig"
 
+	"github.com/Tencent/WeKnora/internal/application/access"
+	"github.com/Tencent/WeKnora/internal/application/repository"
 	"github.com/Tencent/WeKnora/internal/config"
 	"github.com/Tencent/WeKnora/internal/handler"
 	"github.com/Tencent/WeKnora/internal/handler/session"
@@ -29,78 +31,92 @@ import (
 type RouterParams struct {
 	dig.In
 
-	Config                       *config.Config
-	FileService                  interfaces.FileService
-	UserService                  interfaces.UserService
-	KBService                    interfaces.KnowledgeBaseService
-	KnowledgeService             interfaces.KnowledgeService
-	ChunkService                 interfaces.ChunkService
-	SessionService               interfaces.SessionService
-	MessageService               interfaces.MessageService
-	ModelService                 interfaces.ModelService
-	EvaluationService            interfaces.EvaluationService
-	KBShareService               interfaces.KBShareService
-	AgentShareService            interfaces.AgentShareService
-	KBHandler                    *handler.KnowledgeBaseHandler
-	KnowledgeHandler             *handler.KnowledgeHandler
-	TenantHandler                *handler.TenantHandler
-	TenantService                interfaces.TenantService
-	TenantAPIKeyService          interfaces.TenantAPIKeyService
-	TenantMemberService          interfaces.TenantMemberService
-	GroupAccessService           interfaces.GroupAccessService
-	TenantMemberHandler          *handler.TenantMemberHandler
-	TenantInvitationHandler      *handler.TenantInvitationHandler
-	AuditLogHandler              *handler.AuditLogHandler
-	AuditLogService              interfaces.AuditLogService
-	ChunkHandler                 *handler.ChunkHandler
-	SessionHandler               *session.Handler
-	MessageHandler               *handler.MessageHandler
-	MessageSuggestionHandler     *handler.MessageSuggestionHandler
-	ModelHandler                 *handler.ModelHandler
-	ModelCredentialsHandler      *handler.ModelCredentialsHandler
-	SandboxConfigHandler         *handler.SandboxConfigHandler
-	SandboxSkillHandler          *handler.SandboxSkillHandler
-	MeEnvVarHandler              *handler.MeEnvVarHandler
-	EvaluationHandler            *handler.EvaluationHandler
-	AuthHandler                  *handler.AuthHandler
-	DirectoryHandler             *handler.DirectoryHandler
-	GroupAccessHandler           *handler.GroupAccessHandler
-	InitializationHandler        *handler.InitializationHandler
-	SystemHandler                *handler.SystemHandler
-	MCPServiceHandler            *handler.MCPServiceHandler
-	MCPCredentialsHandler        *handler.MCPCredentialsHandler
-	MCPOAuthHandler              *handler.MCPOAuthHandler
-	WebSearchHandler             *handler.WebSearchHandler
-	WebSearchProviderHandler     *handler.WebSearchProviderHandler
-	WebSearchCredentialsHandler  *handler.WebSearchProviderCredentialsHandler
-	VectorStoreHandler           *handler.VectorStoreHandler
-	StorageBackendHandler        *handler.StorageBackendHandler
-	StorageBackendResolver       interfaces.StorageBackendResolver
-	ResourceCatalog              interfaces.ResourceCatalog
-	FAQHandler                   *handler.FAQHandler
-	TagHandler                   *handler.TagHandler
-	CustomAgentHandler           *handler.CustomAgentHandler
-	UserFavoriteHandler          *handler.UserResourceFavoriteHandler
-	SkillHandler                 *handler.SkillHandler
-	OrganizationHandler          *handler.OrganizationHandler
-	IMHandler                    *handler.IMHandler
-	EmbedChannelHandler          *handler.EmbedChannelHandler
-	EmbedChannelService          interfaces.EmbedChannelService
-	MCPEndpointHandler           *handler.MCPEndpointHandler
-	MCPEndpointService           interfaces.MCPEndpointService
-	MCPServer                    *mcpserver.Server
-	RedisClient                  *redis.Client
-	DataSourceHandler            *handler.DataSourceHandler
-	DataSourceCredentialsHandler *handler.DataSourceCredentialsHandler
-	WeKnoraCloudHandler          *handler.WeKnoraCloudHandler
-	WikiPageHandler              *handler.WikiPageHandler
-	MemoryHandler                *handler.MemoryHandler
+	Config                          *config.Config
+	FileService                     interfaces.FileService
+	UserService                     interfaces.UserService
+	KBService                       interfaces.KnowledgeBaseService
+	KnowledgeService                interfaces.KnowledgeService
+	ChunkService                    interfaces.ChunkService
+	SessionService                  interfaces.SessionService
+	MessageService                  interfaces.MessageService
+	ModelService                    interfaces.ModelService
+	EvaluationService               interfaces.EvaluationService
+	KBShareService                  interfaces.KBShareService
+	AgentShareService               interfaces.AgentShareService
+	KBHandler                       *handler.KnowledgeBaseHandler
+	KnowledgeHandler                *handler.KnowledgeHandler
+	TenantHandler                   *handler.TenantHandler
+	TenantService                   interfaces.TenantService
+	TenantAPIKeyService             interfaces.TenantAPIKeyService
+	TenantMemberService             interfaces.TenantMemberService
+	GroupAccessService              interfaces.GroupAccessService
+	NextcloudPublicationGuard       *access.NextcloudPublicationGuard
+	NextcloudAskTargetRepository    *repository.NextcloudAskTargetRepository
+	NextcloudContentLeaseStore      *repository.NextcloudContentLeaseStore
+	TenantMemberHandler             *handler.TenantMemberHandler
+	TenantInvitationHandler         *handler.TenantInvitationHandler
+	AuditLogHandler                 *handler.AuditLogHandler
+	AuditLogService                 interfaces.AuditLogService
+	ChunkHandler                    *handler.ChunkHandler
+	SessionHandler                  *session.Handler
+	MessageHandler                  *handler.MessageHandler
+	MessageSuggestionHandler        *handler.MessageSuggestionHandler
+	ModelHandler                    *handler.ModelHandler
+	ModelCredentialsHandler         *handler.ModelCredentialsHandler
+	SandboxConfigHandler            *handler.SandboxConfigHandler
+	SandboxSkillHandler             *handler.SandboxSkillHandler
+	MeEnvVarHandler                 *handler.MeEnvVarHandler
+	EvaluationHandler               *handler.EvaluationHandler
+	AuthHandler                     *handler.AuthHandler
+	DirectoryHandler                *handler.DirectoryHandler
+	GroupAccessHandler              *handler.GroupAccessHandler
+	InitializationHandler           *handler.InitializationHandler
+	SystemHandler                   *handler.SystemHandler
+	MCPServiceHandler               *handler.MCPServiceHandler
+	MCPCredentialsHandler           *handler.MCPCredentialsHandler
+	MCPOAuthHandler                 *handler.MCPOAuthHandler
+	WebSearchHandler                *handler.WebSearchHandler
+	WebSearchProviderHandler        *handler.WebSearchProviderHandler
+	WebSearchCredentialsHandler     *handler.WebSearchProviderCredentialsHandler
+	VectorStoreHandler              *handler.VectorStoreHandler
+	StorageBackendHandler           *handler.StorageBackendHandler
+	StorageBackendResolver          interfaces.StorageBackendResolver
+	ResourceCatalog                 interfaces.ResourceCatalog
+	FAQHandler                      *handler.FAQHandler
+	TagHandler                      *handler.TagHandler
+	CustomAgentHandler              *handler.CustomAgentHandler
+	UserFavoriteHandler             *handler.UserResourceFavoriteHandler
+	SkillHandler                    *handler.SkillHandler
+	OrganizationHandler             *handler.OrganizationHandler
+	IMHandler                       *handler.IMHandler
+	EmbedChannelHandler             *handler.EmbedChannelHandler
+	EmbedChannelService             interfaces.EmbedChannelService
+	MCPEndpointHandler              *handler.MCPEndpointHandler
+	MCPEndpointService              interfaces.MCPEndpointService
+	MCPServer                       *mcpserver.Server
+	RedisClient                     *redis.Client
+	DataSourceHandler               *handler.DataSourceHandler
+	DataSourceCredentialsHandler    *handler.DataSourceCredentialsHandler
+	NextcloudEventHandler           *handler.NextcloudEventHandler
+	NextcloudEventConnectionHandler *handler.NextcloudEventConnectionHandler
+	NextcloudSourcePairingHandler   *handler.NextcloudSourcePairingHandler
+	NextcloudGCHandler              *handler.NextcloudGCHandler
+	WeKnoraCloudHandler             *handler.WeKnoraCloudHandler
+	WikiPageHandler                 *handler.WikiPageHandler
+	MemoryHandler                   *handler.MemoryHandler
 }
 
 // NewRouter 创建新的路由
 func NewRouter(params RouterParams) *gin.Engine {
 	r := gin.New()
 	r.ContextWithFallback = true
+	handler.ConfigureKnowledgeHandlerPublicationGuard(params.KnowledgeHandler, params.NextcloudPublicationGuard)
+	handler.ConfigureKnowledgeHandlerAskTargets(params.KnowledgeHandler, params.NextcloudAskTargetRepository)
+	handler.ConfigureChunkHandlerPublicationGuard(params.ChunkHandler, params.NextcloudPublicationGuard)
+	handler.ConfigureKnowledgeHandlerContentLeaseStore(params.KnowledgeHandler, params.NextcloudContentLeaseStore)
+	handler.ConfigureChunkHandlerContentLeaseStore(params.ChunkHandler, params.NextcloudContentLeaseStore)
+	session.ConfigureSearchKnowledgeRead(params.SessionHandler, params.KnowledgeService,
+		params.NextcloudContentLeaseStore)
 
 	// Trusted proxies: gin defaults to trusting ALL proxies, which makes
 	// c.ClientIP() honor a client-supplied X-Forwarded-For. Public, unauthed
@@ -172,6 +188,13 @@ func NewRouter(params RouterParams) *gin.Engine {
 
 	// IM 回调路由（在认证中间件之前注册，使用各平台自身的签名验证）
 	RegisterIMRoutes(r, params.IMHandler)
+	// Nextcloud signs this machine request with a connection-scoped key.
+	// Register before user/API-key auth, and fail closed if no connection exists.
+	if params.NextcloudEventHandler != nil {
+		r.POST("/api/v1/integrations/nextcloud/events", params.NextcloudEventHandler.Receive)
+		r.GET("/api/v1/integrations/nextcloud/events/status", params.NextcloudEventHandler.Status)
+		r.GET("/api/v1/integrations/nextcloud/files/status", params.NextcloudEventHandler.FileStatus)
+	}
 
 	// Web embed 公开路由（使用 publish token 鉴权，不走全局 Auth）
 	RegisterEmbedPublicRoutes(
@@ -184,6 +207,7 @@ func NewRouter(params RouterParams) *gin.Engine {
 		params.StorageBackendResolver,
 		params.GroupAccessService,
 		params.ChunkService,
+		params.NextcloudPublicationGuard,
 		params.ResourceCatalog,
 	)
 
@@ -200,6 +224,7 @@ func NewRouter(params RouterParams) *gin.Engine {
 		params.FileService,
 		params.StorageBackendResolver,
 		params.GroupAccessService,
+		params.NextcloudPublicationGuard,
 	)
 
 	// Sandbox terminal WebSocket (self-authenticated via a short-lived
@@ -225,12 +250,13 @@ func NewRouter(params RouterParams) *gin.Engine {
 	)
 
 	// 文件服务：统一代理本地/MinIO/COS/TOS存储后端（需要认证）
-	serveFilesWithResources(
+	serveFilesWithPublication(
 		r,
 		params.FileService,
 		params.StorageBackendResolver,
 		params.ResourceCatalog,
 		params.GroupAccessService,
+		params.NextcloudPublicationGuard,
 	)
 
 	// Presigned file access: no auth required, signature-verified.
@@ -240,10 +266,12 @@ func NewRouter(params RouterParams) *gin.Engine {
 		params.StorageBackendResolver,
 		params.ResourceCatalog,
 		params.GroupAccessService,
+		params.NextcloudPublicationGuard,
 	)
 
 	// Diagnostic preview of presigned URLs (Admin only, behind auth middleware).
-	servePresignedPreview(r, params.Config, params.StorageBackendResolver, params.ResourceCatalog)
+	servePresignedPreview(r, params.Config, params.StorageBackendResolver,
+		params.ResourceCatalog, params.NextcloudPublicationGuard)
 
 	// Langfuse observability — only active when LANGFUSE_* env vars are set.
 	// The middleware is registered unconditionally; when disabled it's a no-op.
@@ -322,13 +350,14 @@ func NewRouter(params RouterParams) *gin.Engine {
 		// KB-scoped image proxy: lets tenants render images embedded in
 		// org-shared / agent-visible KB content, which the tenant-scoped
 		// /files route cannot serve because it enforces same-tenant paths.
-		serveKBScopedFiles(
+		serveKBScopedFilesWithPublication(
 			v1,
 			rbacGuards,
 			params.TenantService,
 			params.FileService,
 			params.StorageBackendResolver,
 			params.ResourceCatalog,
+			params.NextcloudPublicationGuard,
 		)
 		// Message-scoped image proxy: shared-agent replies belong to the
 		// caller's session but may reference resources stored in the agent's
@@ -336,7 +365,7 @@ func NewRouter(params RouterParams) *gin.Engine {
 		// never from a client-provided workspace ID. Replies produced by the
 		// caller's own agent over an org-shared KB fall back to the KB share
 		// relation instead (#3022).
-		serveMessageScopedFiles(
+		serveMessageScopedFilesWithPublication(
 			v1,
 			rbacGuards,
 			params.MessageService,
@@ -349,6 +378,7 @@ func NewRouter(params RouterParams) *gin.Engine {
 			params.KBService,
 			params.KnowledgeService,
 			params.GroupAccessService,
+			params.NextcloudPublicationGuard,
 		)
 		RegisterKnowledgeTagRoutes(v1, params.TagHandler, rbacGuards)
 		RegisterKnowledgeRoutes(v1, params.KnowledgeHandler, rbacGuards)
@@ -396,6 +426,20 @@ func NewRouter(params RouterParams) *gin.Engine {
 		RegisterEmbedChannelRoutes(v1, params.EmbedChannelHandler, rbacGuards)
 		RegisterMCPEndpointRoutes(v1, params.MCPEndpointHandler, rbacGuards)
 		RegisterDataSourceRoutes(v1, params.DataSourceHandler, params.DataSourceCredentialsHandler, rbacGuards)
+		// The query is an untrusted navigation hint. The handler requires an
+		// interactive web principal and verifies the current pair, KB grant and
+		// live Nextcloud file permission. API keys have no policy for this route.
+		v1.GET("/integrations/nextcloud/ask-target", rbacGuards.Viewer(),
+			params.KnowledgeHandler.NextcloudAskTarget)
+		if params.NextcloudEventConnectionHandler != nil {
+			RegisterNextcloudEventConnectionRoutes(v1, params.NextcloudEventConnectionHandler, rbacGuards)
+		}
+		if params.NextcloudSourcePairingHandler != nil {
+			RegisterNextcloudSourcePairingRoutes(v1, params.NextcloudSourcePairingHandler, rbacGuards)
+		}
+		if params.NextcloudGCHandler != nil {
+			RegisterNextcloudGCRoutes(v1, params.NextcloudGCHandler, rbacGuards)
+		}
 		RegisterWeKnoraCloudRoutes(v1, params.WeKnoraCloudHandler, rbacGuards)
 		RegisterWikiPageRoutes(v1, params.WikiPageHandler, rbacGuards)
 		RegisterMemoryRoutes(v1, params.MemoryHandler, rbacGuards)

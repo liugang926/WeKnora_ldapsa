@@ -7,6 +7,8 @@ import (
 	"sort"
 	"strings"
 
+	apperrors "github.com/Tencent/WeKnora/internal/errors"
+	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 )
@@ -18,8 +20,10 @@ const (
 
 var listDocumentsTool = BaseTool{
 	name: ToolListDocuments,
-	description: "List the documents inside one knowledge base, newest first, with pagination and an optional " +
-		"title filter.\nUse it to see what a knowledge base contains or to find a document by name; each entry " +
+	description: "List the documents inside one knowledge base, newest first, with paginat" +
+		"ion and an optional " +
+		"title filter.\nUse it to see what a knowledge base contains or to find a" +
+		" document by name; each entry " +
 		"carries the dN handle that read_document accepts.",
 	schema: json.RawMessage(`{
   "type": "object",
@@ -79,7 +83,8 @@ func NewListDocumentsTool(
 func (t *ListDocumentsTool) Execute(ctx context.Context, args json.RawMessage) (*types.ToolResult, error) {
 	var input ListDocumentsInput
 	if err := json.Unmarshal(args, &input); err != nil {
-		return &types.ToolResult{Success: false, Error: fmt.Sprintf("Failed to parse args: %v", err)}, err
+		return &types.ToolResult{Success: false, Error: fmt.Sprintf("Failed to parse args: %v",
+			apperrors.PublicMessage(err))}, err
 	}
 	kbID := strings.TrimSpace(input.KnowledgeBaseID)
 	if kbID == "" {
@@ -87,7 +92,7 @@ func (t *ListDocumentsTool) Execute(ctx context.Context, args json.RawMessage) (
 			fmt.Errorf("missing knowledge_base_id")
 	}
 	if err := validateKnowledgeBaseIDsInSearchTargets(t.searchTargets, []string{kbID}); err != nil {
-		return &types.ToolResult{Success: false, Error: err.Error()}, err
+		return &types.ToolResult{Success: false, Error: apperrors.PublicMessage(err)}, err
 	}
 	if t.knowledgeService == nil {
 		return &types.ToolResult{Success: false, Error: "knowledge service is unavailable"},
@@ -106,16 +111,52 @@ func (t *ListDocumentsTool) Execute(ctx context.Context, args json.RawMessage) (
 		pageSize = listDocumentsMaxPageSize
 	}
 	keyword := strings.TrimSpace(input.Keyword)
+	readCtx, guard, err := beginAgentRead(ctx, t.knowledgeService, t.searchTargets)
+	if err != nil {
+		return &types.ToolResult{Success: false, Error: apperrors.PublicMessage(err)}, err
+	}
+	if guard != nil {
+		defer func() {
+			if err := guard.Close(); err != nil {
+				logger.Warnf(ctx, "[Tool][ListDocuments] Close source read lease: %v", err)
+			}
+		}()
+	}
+	ctx = readCtx
 
 	filtered, total, err := t.listScoped(ctx, kbID, keyword, page, pageSize)
 	if err != nil {
-		return &types.ToolResult{Success: false, Error: fmt.Sprintf("failed to list documents: %v", err)}, err
+		return &types.ToolResult{Success: false, Error: fmt.Sprintf("failed to list documents: %v",
+			apperrors.PublicMessage(err))}, err
+	}
+	// A page can include rows from a source that has since withdrawn them.
+	// Filter titles and descriptions before either the model output or the
+	// structured result sees them. When any row is hidden, the database total
+	// is no longer a count of readable documents.
+	rawTotal := total
+	visible := make([]*types.Knowledge, 0, len(filtered))
+	redacted := false
+	for _, knowledge := range filtered {
+		if err := checkKnowledgePublication(ctx, knowledge, t.knowledgeService); err != nil {
+			redacted = true
+			continue
+		}
+		if err := guard.PinKnowledge(knowledge); err != nil {
+			return &types.ToolResult{Success: false, Error: apperrors.PublicMessage(err)}, err
+		}
+		visible = append(visible, knowledge)
+	}
+	filtered = visible
+	totalLabel := fmt.Sprint(total)
+	if redacted {
+		total = -1
+		totalLabel = "unknown"
 	}
 
 	documents := make([]map[string]interface{}, 0, len(filtered))
 	var b strings.Builder
-	fmt.Fprintf(&b, "<documents knowledge_base_id=\"%s\" total=\"%d\" page=\"%d\" page_size=\"%d\"",
-		xmlEscape(kbID), total, page, pageSize)
+	fmt.Fprintf(&b, "<documents knowledge_base_id=\"%s\" total=\"%s\" page=\"%d\" page_size=\"%d\"",
+		xmlEscape(kbID), totalLabel, page, pageSize)
 	if keyword != "" {
 		fmt.Fprintf(&b, " keyword=\"%s\"", xmlEscape(keyword))
 	}
@@ -166,7 +207,7 @@ func (t *ListDocumentsTool) Execute(ctx context.Context, args json.RawMessage) (
 	if keyword != "" {
 		data["keyword"] = keyword
 	}
-	if int64(page*pageSize) < total {
+	if int64(page*pageSize) < rawTotal {
 		data["next_page"] = page + 1
 	}
 	output := b.String()
@@ -176,6 +217,9 @@ func (t *ListDocumentsTool) Execute(ctx context.Context, args json.RawMessage) (
 		} else if total == 0 {
 			output = fmt.Sprintf("Knowledge base %s has no documents.", kbID)
 		}
+	}
+	if err := finishAgentRead(ctx, t.knowledgeService, t.searchTargets, guard, filtered); err != nil {
+		return &types.ToolResult{Success: false, Error: apperrors.PublicMessage(err)}, err
 	}
 	return &types.ToolResult{Success: true, Output: output, Data: data}, nil
 }

@@ -69,6 +69,9 @@ type KnowledgeBase struct {
 	Description string `yaml:"description"             json:"description"`
 	// Workspace ID
 	TenantID uint64 `yaml:"tenant_id"               json:"tenant_id"`
+	// EverHadNextcloudSource is an irreversible provenance marker for derived
+	// content. It remains true after source rows and documents are removed.
+	EverHadNextcloudSource bool `yaml:"-" json:"-" gorm:"column:ever_had_nextcloud_source;not null;default:false"`
 	// CreatorID records the user ID of whoever originally created the KB.
 	// Used by the workspace-level RBAC middleware to let Contributors edit
 	// their own KBs without granting them access to everyone else's.
@@ -829,6 +832,11 @@ func (kb *KnowledgeBase) MarshalJSON() ([]byte, error) {
 	redacted.StorageConfig.SecretID = ""
 	redacted.StorageConfig.SecretKey = ""
 	redacted.VLMConfig.APIKey = ""
+	if redacted.EverHadNextcloudSource {
+		// A stored aggregate may predate pairing. KB membership alone does not
+		// authorize the individual Nextcloud files that contributed to it.
+		redacted.GeneratedProfile = nil
+	}
 	aux := struct {
 		*alias
 		Capabilities KBCapabilities `json:"capabilities"`

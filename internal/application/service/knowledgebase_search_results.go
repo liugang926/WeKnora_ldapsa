@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"slices"
 
+	"github.com/Tencent/WeKnora/internal/application/readlease"
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/searchutil"
 	"github.com/Tencent/WeKnora/internal/types"
@@ -29,6 +30,16 @@ func (s *knowledgeBaseService) processSearchResults(ctx context.Context,
 	knowledgeMap, err := s.fetchKnowledgeDataWithShared(ctx, tenantID, index.knowledgeIDs)
 	if err != nil {
 		return nil, err
+	}
+	// A KB lease protects the unknown index hits; upgrade each authorized
+	// Nextcloud result to its immutable generation before loading chunks or
+	// related images. A direct caller without a guard must fail closed for a
+	// source-backed row.
+	guard := readlease.NextcloudReadGuardFromContext(ctx)
+	for _, knowledge := range knowledgeMap {
+		if err := guard.PinKnowledge(knowledge); err != nil {
+			return nil, err
+		}
 	}
 
 	// Batch fetch chunks (include shared KB chunks)

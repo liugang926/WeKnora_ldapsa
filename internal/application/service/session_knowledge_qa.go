@@ -1202,6 +1202,11 @@ func (s *sessionService) buildKBDocumentListing(ctx context.Context, chatManage 
 		if total >= maxDocuments {
 			break
 		}
+		kb, err := s.knowledgeBaseService.GetKnowledgeBaseByID(ctx, kbID)
+		if err != nil || kb == nil || kb.EverHadNextcloudSource {
+			// Generic fallback prompts cannot prove per-file AD authorization.
+			continue
+		}
 		knowledges, err := s.knowledgeService.ListKnowledgeByKnowledgeBaseID(ctx, kbID)
 		if err != nil {
 			logger.Warnf(ctx, "buildKBDocumentListing: failed to list knowledge for KB %s: %v", kbID, err)

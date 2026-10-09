@@ -39,6 +39,67 @@ func TestReparseRequiresExplicitWriteGrant(t *testing.T) {
 	require.Zero(t, f.chunkRepo.writes)
 }
 
+func TestNextcloudReparseRejectsBeforeCleanup(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		channel  string
+		metadata types.JSON
+	}{
+		{name: "source channel", channel: types.ConnectorTypeNextcloud, metadata: types.JSON(`{}`)},
+		{
+			name: "legacy source metadata", channel: types.ChannelWeb,
+			metadata: types.JSON(`{"nextcloud_file_id":"42"}`),
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newDocumentWriteFixture(t)
+			require.NoError(t, f.db.Model(&types.Knowledge{}).Where("id = ?", "doc").Updates(map[string]any{
+				"channel": tc.channel, "metadata": tc.metadata, "type": "file",
+				"file_path": "source.md", "parse_status": types.ParseStatusCompleted,
+			}).Error)
+			before, err := f.repo.GetKnowledgeByID(f.ctx, 7, "doc")
+			require.NoError(t, err)
+			beforeChunk, err := f.chunkRepo.GetChunkByID(f.ctx, 7, "chunk")
+			require.NoError(t, err)
+
+			_, err = f.svc.ReparseKnowledge(f.ctx, "doc", nil)
+			require.ErrorIs(t, err, ErrNextcloudSourceManagedMutation)
+			f.requireNoWrites(t)
+			after, err := f.repo.GetKnowledgeByID(f.ctx, 7, "doc")
+			require.NoError(t, err)
+			require.Equal(t, before, after)
+			afterChunk, err := f.chunkRepo.GetChunkByID(f.ctx, 7, "chunk")
+			require.NoError(t, err)
+			require.Equal(t, beforeChunk, afterChunk)
+		})
+	}
+}
+
+func TestNextcloudUpdateImageInfoRejectsBeforeChunkMutation(t *testing.T) {
+	f := newDocumentWriteFixture(t)
+	require.NoError(t, f.db.Model(&types.Knowledge{}).Where("id = ?", "doc").Updates(map[string]any{
+		"channel": types.ChannelWeb, "metadata": types.JSON(`{"nextcloud_file_id":"42"}`),
+	}).Error)
+	before, err := f.repo.GetKnowledgeByID(f.ctx, 7, "doc")
+	require.NoError(t, err)
+	beforeChunk, err := f.chunkRepo.GetChunkByID(f.ctx, 7, "chunk")
+	require.NoError(t, err)
+
+	err = f.svc.UpdateImageInfo(f.ctx, "doc", "chunk",
+		`[{"original_url":"source-image","caption":"must not create a child"}]`)
+	require.ErrorIs(t, err, ErrNextcloudSourceManagedMutation)
+	f.requireNoWrites(t)
+	after, err := f.repo.GetKnowledgeByID(f.ctx, 7, "doc")
+	require.NoError(t, err)
+	require.Equal(t, before, after)
+	afterChunk, err := f.chunkRepo.GetChunkByID(f.ctx, 7, "chunk")
+	require.NoError(t, err)
+	require.Equal(t, beforeChunk, afterChunk)
+	var chunkCount int64
+	require.NoError(t, f.db.Model(&types.Chunk{}).Where("knowledge_id = ?", "doc").Count(&chunkCount).Error)
+	require.EqualValues(t, 1, chunkCount)
+}
+
 func TestReparseTaskPinsOriginalKBBeforeAnySubmission(t *testing.T) {
 	for _, scenario := range []string{"moved", "missing", "mixed legacy", "blank ID", "moving"} {
 		t.Run(scenario, func(t *testing.T) {

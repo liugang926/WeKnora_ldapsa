@@ -9,6 +9,9 @@ import (
 	"strings"
 	"time"
 
+	apperrors "github.com/Tencent/WeKnora/internal/errors"
+
+	"github.com/Tencent/WeKnora/internal/application/access"
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
@@ -29,6 +32,7 @@ type messageService struct {
 	knowService    interfaces.KnowledgeService     // Service for knowledge operations (index/delete passages)
 	modelService   interfaces.ModelService         // Service for model operations (rerank model)
 	suggestionRepo interfaces.MessageSuggestionRepository
+	historyGuard   *access.NextcloudHistoryGuard
 }
 
 // NewMessageService creates a new message service instance with the required repositories
@@ -39,6 +43,8 @@ func NewMessageService(messageRepo interfaces.MessageRepository,
 	knowService interfaces.KnowledgeService,
 	modelService interfaces.ModelService,
 	suggestionRepo interfaces.MessageSuggestionRepository,
+	dataSources interfaces.DataSourceRepository,
+	publicationGuard *access.NextcloudPublicationGuard,
 ) interfaces.MessageService {
 	return &messageService{
 		messageRepo:    messageRepo,
@@ -48,7 +54,132 @@ func NewMessageService(messageRepo interfaces.MessageRepository,
 		knowService:    knowService,
 		modelService:   modelService,
 		suggestionRepo: suggestionRepo,
+		historyGuard:   access.NewNextcloudHistoryGuard(knowService, dataSources, publicationGuard),
 	}
+}
+
+// CheckMessagePublication is intentionally available through a narrow type
+// assertion to SSE replay. It rechecks authorization as a stream advances,
+// since a file can be withdrawn after the first frame was sent.
+func (s *messageService) CheckMessagePublication(ctx context.Context, message *types.Message) error {
+	return s.historyGuard.CheckMessage(ctx, message)
+}
+
+func (s *messageService) CheckLiveMessagePublication(ctx context.Context, message *types.Message) error {
+	if err := s.historyGuard.CheckLiveMessage(ctx, message); err != nil {
+		return err
+	}
+	return s.checkLiveKnowledgeGrants(ctx, message)
+}
+
+type liveKnowledgeGrantChecker interface {
+	CheckNextcloudReadTargets(context.Context, types.SearchTargets) error
+}
+
+// A source lease never grants reader access. Check the current KB share and
+// directory group grants on each emitted live batch, including Agent tool
+// results whose references supply only a document ID. The SSE sender calls
+// this before writing the batch and cancels generation on failure.
+func (s *messageService) checkLiveKnowledgeGrants(ctx context.Context, message *types.Message) error {
+	if message == nil {
+		return access.ErrNextcloudPublicationDenied
+	}
+	seen := make(map[string]bool)
+	var kbIDs []string
+	addKB := func(id string) {
+		if id != "" && !seen[id] {
+			seen[id] = true
+			kbIDs = append(kbIDs, id)
+		}
+	}
+	for _, id := range message.ExecutionContext.KnowledgeBaseIDs {
+		addKB(id)
+	}
+	for _, id := range message.ExecutionContext.AgentKnowledgeBaseIDs {
+		addKB(id)
+	}
+	for _, scope := range message.ExecutionContext.TagScopes {
+		addKB(scope.KnowledgeBaseID)
+	}
+	for _, id := range message.ExecutionContext.KnowledgeIDs {
+		if id == "" {
+			continue
+		}
+		if s.knowService == nil {
+			return access.ErrNextcloudPublicationUnavailable
+		}
+		knowledge, err := s.knowService.GetKnowledgeByIDOnly(ctx, id)
+		if err != nil || knowledge == nil || knowledge.ID != id {
+			return access.ErrNextcloudPublicationDenied
+		}
+		addKB(knowledge.KnowledgeBaseID)
+	}
+	for _, ref := range message.KnowledgeReferences {
+		if ref == nil || ref.KnowledgeID == "" {
+			continue
+		}
+		if s.knowService == nil {
+			return access.ErrNextcloudPublicationUnavailable
+		}
+		knowledge, err := s.knowService.GetKnowledgeByIDOnly(ctx, ref.KnowledgeID)
+		if err != nil || knowledge == nil || knowledge.ID != ref.KnowledgeID {
+			return access.ErrNextcloudPublicationDenied
+		}
+		addKB(knowledge.KnowledgeBaseID)
+	}
+	if len(kbIDs) == 0 {
+		return nil
+	}
+	checker, ok := s.knowService.(liveKnowledgeGrantChecker)
+	if !ok {
+		return access.ErrNextcloudPublicationUnavailable
+	}
+	if s.kbService == nil {
+		return access.ErrNextcloudPublicationUnavailable
+	}
+	targets := make(types.SearchTargets, 0, len(kbIDs))
+	for _, id := range kbIDs {
+		kb, err := s.kbService.GetKnowledgeBaseByIDOnly(ctx, id)
+		if err != nil || kb == nil || kb.ID != id || kb.TenantID == 0 {
+			return access.ErrNextcloudPublicationDenied
+		}
+		targets = append(targets, &types.SearchTarget{
+			Type: types.SearchTargetTypeKnowledgeBase, KnowledgeBaseID: id, TenantID: kb.TenantID,
+		})
+	}
+	if err := checker.CheckNextcloudReadTargets(ctx, targets); err != nil {
+		return apperrors.NewProtocolError(fmt.Errorf(
+			"%w: knowledge base read grant changed: %v",
+			access.ErrNextcloudPublicationDenied,
+			err,
+		), fmt.Sprintf("%s: knowledge base read grant changed: %v", apperrors.PublicMessage(
+			access.ErrNextcloudPublicationDenied,
+		), func() any {
+			if err ==
+				nil {
+				return nil
+			}
+			return apperrors.PublicMessage(err)
+		}()))
+	}
+	return nil
+}
+
+func (
+	s *messageService,
+) filterHistoryMessages(ctx context.Context, messages []*types.Message) ([]*types.Message, error) {
+	filtered := make([]*types.Message, 0, len(messages))
+	for _, message := range messages {
+		err := s.CheckMessagePublication(ctx, message)
+		if errors.Is(err, access.ErrNextcloudPublicationDenied) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		filtered = append(filtered, message)
+	}
+	return filtered, nil
 }
 
 // sessionTenantIDForLookup returns the tenant ID to use for session lookup.
@@ -125,7 +256,74 @@ func (s *messageService) GetMessage(ctx context.Context, sessionID string, messa
 	}
 
 	logger.Info(ctx, "Message retrieved successfully")
+	if err := s.CheckMessagePublication(ctx, message); err != nil {
+		return nil, err
+	}
 	return s.clarifyReadArtifactVersions(ctx, sessionID, []*types.Message{message})[0], nil
+}
+
+// GetMessageForControl is an owner-only metadata lookup used to stop or steer
+// a running turn. It never returns saved content, tool outputs or references,
+// and does not require permission to read content that may have been revoked.
+func (
+	s *messageService,
+) GetMessageForControl(ctx context.Context, sessionID, messageID string) (*types.Message, error) {
+	tenantID := types.MustTenantIDFromContext(ctx)
+	owner := types.SessionOwnerIDFromContext(ctx)
+	if owner == "" || types.CallerFromContext(ctx).TenantID != tenantID {
+		return nil, access.ErrNextcloudPublicationDenied
+	}
+	session, err := s.sessionRepo.Get(ctx, tenantID, owner, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	if session == nil || session.UserID != owner || session.TenantID != tenantID || session.ID != sessionID {
+		return nil, access.ErrNextcloudPublicationDenied
+	}
+
+	message, err := s.messageRepo.GetMessage(ctx, sessionID, messageID)
+	if err != nil {
+		return nil, err
+	}
+	if message == nil || message.ID != messageID || message.SessionID != sessionID {
+		return nil, access.ErrNextcloudPublicationDenied
+	}
+	return &types.Message{
+		ID:            message.ID,
+		SessionID:     message.SessionID,
+		RequestID:     message.RequestID,
+		Role:          message.Role,
+		IsCompleted:   message.IsCompleted,
+		AgentID:       message.AgentID,
+		AgentTenantID: message.AgentTenantID,
+	}, nil
+}
+
+// GetMessageForStream is private to the guarded SSE sender. Public saved
+// message reads continue to apply the historical guard, including incomplete
+// rows. SSE needs the running scope before it can learn tool provenance.
+func (s *messageService) GetMessageForStream(ctx context.Context, sessionID, messageID string) (*types.Message, error) {
+	tenantID := types.MustTenantIDFromContext(ctx)
+	owner := types.SessionOwnerIDFromContext(ctx)
+	if owner == "" || types.CallerFromContext(ctx).TenantID != tenantID {
+		return nil, access.ErrNextcloudPublicationDenied
+	}
+	session, err := s.sessionRepo.Get(ctx, tenantID, owner, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	if session == nil || session.UserID != owner || session.TenantID != tenantID || session.ID != sessionID {
+		return nil, access.ErrNextcloudPublicationDenied
+	}
+
+	message, err := s.messageRepo.GetMessage(ctx, sessionID, messageID)
+	if err != nil {
+		return nil, err
+	}
+	if message == nil || message.ID != messageID || message.SessionID != sessionID {
+		return nil, access.ErrNextcloudPublicationDenied
+	}
+	return message, nil
 }
 
 // GetMessagesBySession retrieves paginated messages for a specific session
@@ -155,6 +353,10 @@ func (s *messageService) GetMessagesBySession(ctx context.Context,
 	}
 
 	logger.Infof(ctx, "Retrieved %d messages successfully", len(messages))
+	messages, err = s.filterHistoryMessages(ctx, messages)
+	if err != nil {
+		return nil, err
+	}
 	return s.clarifyReadArtifactVersions(ctx, sessionID, messages), nil
 }
 
@@ -188,6 +390,10 @@ func (s *messageService) GetRecentMessagesBySession(ctx context.Context,
 	}
 
 	logger.Infof(ctx, "Retrieved %d recent messages successfully", len(messages))
+	messages, err = s.filterHistoryMessages(ctx, messages)
+	if err != nil {
+		return nil, err
+	}
 	return s.clarifyReadArtifactVersions(ctx, sessionID, messages), nil
 }
 
@@ -222,6 +428,10 @@ func (s *messageService) GetMessagesBySessionBeforeTime(ctx context.Context,
 	}
 
 	logger.Infof(ctx, "Retrieved %d messages before time successfully", len(messages))
+	messages, err = s.filterHistoryMessages(ctx, messages)
+	if err != nil {
+		return nil, err
+	}
 	return s.clarifyReadArtifactVersions(ctx, sessionID, messages), nil
 }
 
@@ -656,6 +866,10 @@ func (s *messageService) SearchMessages(ctx context.Context, params *types.Messa
 
 	// Step 4: Fetch partner messages (Q&A counterparts) to ensure complete pairs
 	items = s.fetchPartnerMessages(ctx, items)
+	items, err = s.filterHistoricalSearchPairs(ctx, items)
+	if err != nil {
+		return nil, err
+	}
 
 	// Step 5: Group by request_id to merge Q&A pairs
 	grouped := groupByRequestID(items)
@@ -672,6 +886,43 @@ func (s *messageService) SearchMessages(ctx context.Context, params *types.Messa
 
 	logger.Infof(ctx, "Message search completed, returning %d grouped results", result.Total)
 	return result, nil
+}
+
+// filterHistoricalSearchPairs runs after partner loading. Filtering only the
+// search hit would let fetchPartnerMessages reintroduce a revoked answer when
+// the user's harmless question was the text that matched.
+func (s *messageService) filterHistoricalSearchPairs(
+	ctx context.Context, items []*types.MessageSearchResultItem,
+) ([]*types.MessageSearchResultItem, error) {
+	blocked := make(map[string]struct{})
+	for _, item := range items {
+		if item == nil || item.Role != "assistant" {
+			continue
+		}
+		if err := s.CheckMessagePublication(ctx, &item.Message); err != nil {
+			if !errors.Is(err, access.ErrNextcloudPublicationDenied) {
+				return nil, err
+			}
+			blocked[historicalSearchPairKey(item)] = struct{}{}
+		}
+	}
+	filtered := make([]*types.MessageSearchResultItem, 0, len(items))
+	for _, item := range items {
+		if item == nil {
+			continue
+		}
+		if _, denied := blocked[historicalSearchPairKey(item)]; !denied {
+			filtered = append(filtered, item)
+		}
+	}
+	return filtered, nil
+}
+
+func historicalSearchPairKey(item *types.MessageSearchResultItem) string {
+	if item.RequestID == "" {
+		return item.ID
+	}
+	return searchPairKey(item.SessionID, item.RequestID)
 }
 
 // restrictToOwnedSessions drops results from sessions the caller does not own.
@@ -727,7 +978,10 @@ func (s *messageService) vectorSearchViaKB(ctx context.Context, params *types.Me
 
 	kbResults, err := s.kbService.HybridSearch(ctx, cfg.KnowledgeBaseID, searchParams)
 	if err != nil {
-		return nil, fmt.Errorf("KB hybrid search failed: %w", err)
+		return nil, apperrors.NewProtocolError(
+			fmt.Errorf("KB hybrid search failed: %w", err),
+			fmt.Sprintf("KB hybrid search failed: %s", apperrors.PublicMessage(err)),
+		)
 	}
 
 	if len(kbResults) == 0 {

@@ -16,7 +16,7 @@ import (
 func TestSaveChunkRevisionIsAtomicAndOptimistic(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open("file:"+uuid.NewString()+"?mode=memory&cache=shared"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&types.Chunk{}, &types.ChunkRevision{}))
+	require.NoError(t, db.AutoMigrate(&types.Knowledge{}, &types.Chunk{}, &types.ChunkRevision{}))
 	repo := NewChunkRepository(db)
 	ctx := context.Background()
 	now := time.Now()
@@ -25,6 +25,10 @@ func TestSaveChunkRevisionIsAtomicAndOptimistic(t *testing.T) {
 		Content: "before", SourceContent: "before", ChunkType: types.ChunkTypeText,
 		IsEnabled: true, IndexStatus: "ready", CreatedAt: now, UpdatedAt: now,
 	}
+	require.NoError(t, db.Create(&types.Knowledge{
+		ID: chunk.KnowledgeID, TenantID: chunk.TenantID,
+		KnowledgeBaseID: chunk.KnowledgeBaseID, Channel: types.KnowledgeTypeManual,
+	}).Error)
 	require.NoError(t, repo.CreateChunks(ctx, []*types.Chunk{chunk}))
 
 	snapshot := &types.ChunkRevision{

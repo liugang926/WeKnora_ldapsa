@@ -3,7 +3,9 @@ package service
 import (
 	"context"
 	"fmt"
+	"time"
 
+	"github.com/Tencent/WeKnora/internal/application/readlease"
 	"github.com/Tencent/WeKnora/internal/application/service/retriever"
 	apperrors "github.com/Tencent/WeKnora/internal/errors"
 	"github.com/Tencent/WeKnora/internal/logger"
@@ -170,6 +172,9 @@ func (s *knowledgeBaseService) HybridSearch(ctx context.Context,
 	if err := s.authorizeKBAccess(ctx, kbs); err != nil {
 		return nil, err
 	}
+	if err := s.checkSearchGroupAccess(ctx, kbs); err != nil {
+		return nil, err
+	}
 
 	// Explicit embedding-model consistency check. Multi-KB searches that
 	// span different embedding spaces would otherwise silently produce
@@ -177,6 +182,39 @@ func (s *knowledgeBaseService) HybridSearch(ctx context.Context,
 	// tolerated — see validateSameEmbeddingModel for the carve-out.
 	if err := s.validateSameEmbeddingModel(ctx, kbs); err != nil {
 		return nil, err
+	}
+
+	// All RAG and Agent chunk searches converge here. A broad KB lease is
+	// taken before index access and held through result hydration. Exact
+	// generation leases are added in processSearchResults before chunk reads.
+	// Production construction provides the durable store; hand-built test
+	// services with no store continue to exercise unrelated search behavior.
+	scopes := make([]readlease.NextcloudKBReadScope, 0, len(kbs))
+	for _, kb := range kbs {
+		if kb != nil {
+			scopes = append(scopes, readlease.NextcloudKBReadScope{TenantID: kb.TenantID, KBID: kb.ID})
+		}
+	}
+	guard := readlease.NextcloudReadGuardFromContext(ctx)
+	if guard == nil || !guard.Covers(scopes) {
+		if s.contentLeases != nil {
+			var beginErr error
+			guard, beginErr = readlease.BeginNextcloudKBRead(ctx, s.contentLeases, scopes)
+			if beginErr != nil {
+				return nil, apperrors.NewProtocolError(
+					fmt.Errorf("protect knowledge search: %w", beginErr),
+					fmt.Sprintf("protect knowledge search: %s", apperrors.PublicMessage(beginErr)),
+				)
+			}
+			defer func() {
+				if releaseErr := guard.Close(); releaseErr != nil {
+					// A failed release retains the existing durable fence until its TTL.
+					// It must not grant access or change an already assembled response.
+					logger.Warnf(ctx, "Knowledge search read lease release failed: %v", releaseErr)
+				}
+			}()
+			ctx = guard.Context()
+		}
 	}
 
 	// Resolve the primary KB — embedding model + FAQ type come from this
@@ -297,7 +335,54 @@ func (s *knowledgeBaseService) HybridSearch(ctx context.Context,
 		deduplicatedChunks = deduplicatedChunks[:params.MatchCount]
 	}
 
-	return s.processSearchResults(ctx, deduplicatedChunks, params.SkipContextEnrichment)
+	results, err := s.processSearchResults(ctx, deduplicatedChunks, params.SkipContextEnrichment)
+	if err != nil {
+		return nil, err
+	}
+	// A source ACL may be revoked while chunk hydration or image enrichment is
+	// running. Re-read each source document and recheck its current publication
+	// before any result leaves this service.
+	results, err = s.filterSearchResultsAtPublicationBoundary(ctx, results)
+	if err != nil {
+		return nil, err
+	}
+	if guard != nil {
+		if err := guard.Verify(); err != nil {
+			return nil, apperrors.NewProtocolError(fmt.Errorf(
+				"verify knowledge search lease: %w",
+				err,
+			), fmt.Sprintf("verify knowledge search lease: %s", apperrors.PublicMessage(
+				err,
+			)))
+		}
+	}
+	if err := s.authorizeKBAccess(ctx, kbs); err != nil {
+		return nil, err
+	}
+	if err := s.checkSearchGroupAccess(ctx, kbs); err != nil {
+		return nil, err
+	}
+	return results, nil
+}
+
+func (s *knowledgeBaseService) checkSearchGroupAccess(ctx context.Context,
+	kbs []*types.KnowledgeBase,
+) error {
+	if s.groupAccess == nil {
+		return nil
+	}
+	for _, kb := range kbs {
+		if kb == nil {
+			return fmt.Errorf("knowledge base is unavailable")
+		}
+		grant, err := s.groupAccess.EffectivePermission(ctx, kb.TenantID,
+			types.GroupResourceTypeKnowledgeBase, kb.ID,
+			types.ResourceActionRead, time.Now().UTC())
+		if err != nil || !grant.Allowed {
+			return fmt.Errorf("knowledge base %s group read grant is unavailable", kb.ID)
+		}
+	}
+	return nil
 }
 
 // normalizedMatchCount resolves the effective primary-match cap for a search.

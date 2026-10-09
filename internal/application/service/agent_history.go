@@ -13,6 +13,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/agent/compaction"
 	agenttoken "github.com/Tencent/WeKnora/internal/agent/token"
 	agenttools "github.com/Tencent/WeKnora/internal/agent/tools"
+	"github.com/Tencent/WeKnora/internal/application/access"
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/models/chat"
 	"github.com/Tencent/WeKnora/internal/types"
@@ -29,6 +30,11 @@ const agentHistoryPageSize = 200
 const agentHistoryMaxRows = 5000
 
 var agentHistoryThinkTagRegex = regexp.MustCompile(`(?s)<think>.*?</think>`)
+
+// AgentHistoryAdmission contains the source-history admission for an agent request.
+type AgentHistoryAdmission interface {
+	CheckAgentHistoryReplay(context.Context) error
+}
 
 // LoadAgentHistory rebuilds the multi-turn LLM context for an Agent-mode
 // session directly from the persistent messages table. The result is a
@@ -75,7 +81,14 @@ func LoadAgentHistory(
 	sessionID string,
 	tokenBudget int,
 	retainRetrievalHistory bool,
+	admission AgentHistoryAdmission,
 ) ([]chat.Message, float64, error) {
+	if admission == nil {
+		return nil, 0, access.ErrNextcloudPublicationUnavailable
+	}
+	if err := admission.CheckAgentHistoryReplay(ctx); err != nil {
+		return nil, 0, err
+	}
 	if tokenBudget <= 0 {
 		return []chat.Message{}, 0, nil
 	}
@@ -84,7 +97,10 @@ func LoadAgentHistory(
 		return nil, 0, fmt.Errorf("load agent history: %w", err)
 	}
 
-	checkpoint := loadContextCheckpoint(ctx, messageRepo, sessionID)
+	checkpoint, err := loadContextCheckpoint(ctx, messageRepo, sessionID)
+	if err != nil {
+		return nil, 0, err
+	}
 	out := []chat.Message{}
 	if checkpoint != nil {
 		out = append(out, compaction.SummaryMessage(checkpoint.ContextCheckpoint.Summary))
@@ -152,6 +168,9 @@ func LoadAgentHistory(
 		// row whose compactions could not be persisted.
 		logger.Warnf(ctx, "Agent history after checkpoint %s exceeds the budget; "+
 			"older turns after it were dropped", checkpointID)
+	}
+	if err := admission.CheckAgentHistoryReplay(ctx); err != nil {
+		return nil, 0, err
 	}
 	return out, scale, nil
 }
@@ -351,22 +370,30 @@ func (r *historyReplay) newestWithin(turns []*agentHistoryTurn) ([]*agentHistory
 	return turns, false
 }
 
-// loadContextCheckpoint returns the session's newest usable checkpoint, or nil.
-// A failed lookup degrades to history without one: the turn still runs, it
-// just pays for compaction again.
-func loadContextCheckpoint(
-	ctx context.Context, messageRepo interfaces.MessageRepository, sessionID string,
-) *types.Message {
+// loadContextCheckpoint requires a successful lookup before admitting any
+// summary. A nonnil malformed checkpoint is not evidence of absence.
+func loadContextCheckpoint(ctx context.Context, messageRepo interfaces.MessageRepository, sessionID string) (
+	*types.Message,
+	error,
+) {
 	msg, err := messageRepo.GetLatestContextCheckpoint(ctx, sessionID)
 	if err != nil {
-		logger.Warnf(ctx, "Failed to load the context checkpoint of session %s, "+
-			"loading history without it: %v", sessionID, err)
-		return nil
+		return nil, fmt.Errorf("load Agent context checkpoint: %w", err)
 	}
-	if msg == nil || msg.ContextCheckpoint == nil || strings.TrimSpace(msg.ContextCheckpoint.Summary) == "" {
-		return nil
+	if msg == nil {
+		return nil, nil
 	}
-	return msg
+	if msg.ID ==
+		"" ||
+		msg.Role !=
+			"assistant" ||
+		msg.ContextCheckpoint ==
+			nil ||
+		strings.TrimSpace(msg.ContextCheckpoint.Summary) ==
+			"" {
+		return nil, access.ErrNextcloudPublicationUnavailable
+	}
+	return msg, nil
 }
 
 // turnsAfterCheckpoint drops the turns a checkpoint already covers: its own

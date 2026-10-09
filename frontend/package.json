@@ -23,22 +23,22 @@
     "@vue-office/pptx": "^1.0.1",
     "@xterm/addon-fit": "^0.10.0",
     "@xterm/xterm": "^5.5.0",
-    "axios": "^1.16.0",
+    "axios": "^1.20.0",
     "docx-preview": "^0.3.7",
-    "dompurify": "^3.4.11",
+    "dompurify": "^3.4.16",
     "highlight.js": "^11.11.1",
     "jszip": "3.10.1",
-    "katex": "^0.16.45",
+    "katex": "^0.18.2",
     "marked": "^17.0.5",
-    "marked-katex-extension": "^5.1.8",
-    "mermaid": "^11.15.0",
+    "marked-katex-extension": "^5.1.13",
+    "mermaid": "^11.16.1",
     "pagefind": "^1.5.2",
     "papaparse": "^5.5.3",
     "pinia": "^3.0.4",
     "swiper": "^12.1.4",
     "tdesign-icons-vue-next": "0.4.4",
     "tdesign-vue-next": "^1.19.2",
-    "vue": "^3.5.34",
+    "vue": "^3.5.42",
     "vue-demi": "^0.14.10",
     "vue-i18n": "^11.4.2",
     "vue-router": "^4.5.0",
@@ -65,12 +65,14 @@
     "lightningcss": "none",
     "esbuild": "^0.25.0",
     "serialize-javascript": "^7.0.3",
-    "tdesign-icons-vue-next": "0.4.4"
+    "tdesign-icons-vue-next": "0.4.4",
+    "katex": "$katex"
   },
   "resolutions": {
     "lightningcss": "none",
     "esbuild": "^0.25.0",
     "serialize-javascript": "^7.0.3",
-    "tdesign-icons-vue-next": "0.4.4"
+    "tdesign-icons-vue-next": "0.4.4",
+    "katex": "^0.18.2"
   }
 }

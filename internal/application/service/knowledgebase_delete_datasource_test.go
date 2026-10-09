@@ -45,6 +45,7 @@ func (r *kbDeleteDSRepo) FindByID(_ context.Context, id string) (*types.DataSour
 	}
 	return nil, errors.New("data source not found")
 }
+
 func (r *kbDeleteDSRepo) FindByKnowledgeBase(_ context.Context, kbID string) ([]*types.DataSource, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -60,6 +61,15 @@ func (r *kbDeleteDSRepo) Update(_ context.Context, _ *types.DataSource) error { 
 func (r *kbDeleteDSRepo) UpdateSyncState(_ context.Context, _ *types.DataSource) error {
 	return nil
 }
+
+func (r *kbDeleteDSRepo) UpdateNextcloudSyncStateCAS(_ context.Context, _ *types.DataSource, _ string) (bool, error) {
+	return true, nil
+}
+
+func (r *kbDeleteDSRepo) UpdateNextcloudRetryableEventFailure(_ context.Context, _ *types.DataSource) (bool, error) {
+	return true, nil
+}
+
 func (r *kbDeleteDSRepo) Delete(_ context.Context, id string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -67,6 +77,7 @@ func (r *kbDeleteDSRepo) Delete(_ context.Context, id string) error {
 	r.deleteIDs = append(r.deleteIDs, id)
 	return nil
 }
+
 func (r *kbDeleteDSRepo) FindActive(_ context.Context) ([]*types.DataSource, error) {
 	return nil, nil
 }
@@ -82,19 +93,46 @@ func (r *kbDeleteSyncLogRepo) Create(_ context.Context, _ *types.SyncLog) error 
 func (r *kbDeleteSyncLogRepo) FindByID(_ context.Context, _ string) (*types.SyncLog, error) {
 	return nil, errors.New("not found")
 }
+
 func (r *kbDeleteSyncLogRepo) FindByDataSource(_ context.Context, _ string, _, _ int) ([]*types.SyncLog, error) {
 	return nil, nil
 }
+
 func (r *kbDeleteSyncLogRepo) FindLatest(_ context.Context, _ string) (*types.SyncLog, error) {
 	return nil, nil
 }
+
 func (r *kbDeleteSyncLogRepo) HasRunningSync(_ context.Context, _ string) (bool, error) {
+	return false, nil
+}
+
+func (r *kbDeleteSyncLogRepo) ClaimNextcloudSyncStart(context.Context, string, string, uint64, string, string, int) (
+	string,
+	error,
+) {
+	return "", nil
+}
+
+func (
+	r *kbDeleteSyncLogRepo,
+) FinishNextcloudSyncAttempt(context.Context, string, string, uint64, string, string, string, bool, string) (
+	bool,
+	error,
+) {
+	return false, nil
+}
+
+func (r *kbDeleteSyncLogRepo) MarkNextcloudEnqueueUncertain(context.Context, string, string, uint64, string, string) (
+	bool,
+	error,
+) {
 	return false, nil
 }
 func (r *kbDeleteSyncLogRepo) Update(_ context.Context, _ *types.SyncLog) error { return nil }
 func (r *kbDeleteSyncLogRepo) UpdateResult(_ context.Context, _ *types.SyncLog) error {
 	return nil
 }
+
 func (r *kbDeleteSyncLogRepo) CancelPendingByDataSource(_ context.Context, dsID string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -177,6 +215,28 @@ func TestDeleteKnowledgeBaseCleansUpDataSources(t *testing.T) {
 	assert.Equal(t, []string{"ds-1"}, dsRepo.deleteIDs)
 	assert.Equal(t, []string{"ds-1"}, syncLogRepo.canceled)
 	assert.Equal(t, 0, scheduler.EntryCount())
+}
+
+func TestDeleteKnowledgeBaseRejectsNextcloudSourceBeforeSoftDelete(t *testing.T) {
+	const kbID = "kb-nextcloud"
+	dsRepo := newKBDeleteDSRepo(kbID, &types.DataSource{
+		ID:              "nextcloud-source",
+		KnowledgeBaseID: kbID, Type: types.ConnectorTypeNextcloud,
+		Status: types.DataSourceStatusActive, SyncSchedule: "0 0 * * * *",
+	})
+	kbRepo := &kbDeleteKBRepo{fakeKBRepo: *newFakeKBRepo()}
+	kbRepo.rows[kbID] = &types.KnowledgeBase{ID: kbID, TenantID: 1, Name: "paired"}
+	scheduler := datasource.NewScheduler(dsRepo, &kbDeleteSyncLogRepo{}, kbDeleteTaskEnqueuer{})
+	require.NoError(t, scheduler.AddOrUpdate(dsRepo.byKB[kbID][0]))
+	svc := &knowledgeBaseService{
+		repo: kbRepo, asynqClient: kbDeleteTaskEnqueuer{},
+		dsRepo: dsRepo, syncLogRepo: &kbDeleteSyncLogRepo{}, dsScheduler: scheduler,
+	}
+	err := svc.DeleteKnowledgeBase(ctxWithTenantStorage(1, "local"), kbID)
+	require.ErrorContains(t, err, "Nextcloud source must be unpaired")
+	assert.Empty(t, kbRepo.deletedID)
+	assert.Empty(t, dsRepo.deleteIDs)
+	assert.Equal(t, 1, scheduler.EntryCount())
 }
 
 func TestDeleteDataSourcesForKnowledgeBaseContinuesOnDeleteError(t *testing.T) {

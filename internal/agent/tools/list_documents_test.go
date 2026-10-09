@@ -70,6 +70,21 @@ func TestListDocumentsRendersRowsForModelAndUI(t *testing.T) {
 	}
 }
 
+func TestListDocumentsOmitsUnverifiableNextcloudMetadata(t *testing.T) {
+	tool := newListDocumentsFixture()
+	service := tool.knowledgeService.(*readDocKnowledgeService)
+	service.docs["doc-b"].Channel = types.ConnectorTypeNextcloud
+	service.docs["doc-b"].Metadata = types.JSON(`{"datasource_id":"source-1","nextcloud_file_id":"42"}`)
+	res, err := tool.Execute(context.Background(), json.RawMessage(`{"knowledge_base_id":"kb-1"}`))
+	if err != nil || !res.Success {
+		t.Fatalf("res=%+v err=%v", res, err)
+	}
+	rows, _ := res.Data["documents"].([]map[string]interface{})
+	if len(rows) != 2 || strings.Contains(res.Output, "Beta Notes") || res.Data["total_docs"] != int64(-1) {
+		t.Fatalf("unverifiable source document exposed: rows=%+v data=%+v output=%s", rows, res.Data, res.Output)
+	}
+}
+
 func TestListDocumentsKeywordFilterAndEmptyStatement(t *testing.T) {
 	tool := newListDocumentsFixture()
 	res, err := tool.Execute(context.Background(), json.RawMessage(`{"knowledge_base_id":"kb-1","keyword":"alpha"}`))

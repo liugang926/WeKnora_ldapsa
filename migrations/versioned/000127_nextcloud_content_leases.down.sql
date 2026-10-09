@@ -1,0 +1,3 @@
+DROP TABLE nextcloud_content_lease_coverage;
+DROP TABLE nextcloud_content_leases;
+DROP TABLE nextcloud_content_fences;

@@ -6,7 +6,10 @@ import (
 	"strings"
 	"time"
 
+	apperrors "github.com/Tencent/WeKnora/internal/errors"
+
 	"github.com/Tencent/WeKnora/internal/common"
+	"github.com/Tencent/WeKnora/internal/datasource/connector/nextcloud"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	"gorm.io/gorm"
@@ -44,12 +47,13 @@ var omitFieldsOnUpdate = []string{"DeletedAt", "PendingSubtasksCount"}
 
 // knowledgeRepository implements knowledge base and knowledge repository interface
 type knowledgeRepository struct {
-	db *gorm.DB
+	db                        *gorm.DB
+	nextcloudPublicationCheck nextcloudPublicationCheck
 }
 
 // NewKnowledgeRepository creates a new knowledge repository
 func NewKnowledgeRepository(db *gorm.DB) interfaces.KnowledgeRepository {
-	return &knowledgeRepository{db: db}
+	return &knowledgeRepository{db: db, nextcloudPublicationCheck: nextcloud.CheckCurrentPublication}
 }
 
 // CreateKnowledge creates knowledge
@@ -337,8 +341,29 @@ func (r *knowledgeRepository) UpdateKnowledge(ctx context.Context, knowledge *ty
 	if knowledge.CustomMetadata == nil {
 		omit = append(append([]string{}, omitFieldsOnUpdate...), "custom_metadata")
 	}
-	err := r.db.WithContext(ctx).Omit(omit...).Save(knowledge).Error
-	return err
+	if knowledge.Channel != types.ConnectorTypeNextcloud {
+		return r.db.WithContext(ctx).Omit(omit...).Save(knowledge).Error
+	}
+	if err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := ValidateNextcloudBuildWrite(ctx, tx,
+			knowledge.TenantID, knowledge.KnowledgeBaseID, knowledge.ID); err != nil {
+			return err
+		}
+		if err := r.preserveNextcloudSourceFields(tx, knowledge); err != nil {
+			return err
+		}
+		if err := tx.Omit(omit...).Save(knowledge).Error; err != nil {
+			return err
+		}
+		return r.enforceNextcloudVersionMetadata(tx, knowledge)
+	}); err != nil {
+		return err
+	}
+	if knowledge.ParseStatus == types.ParseStatusCompleted {
+		_, err := r.PublishNextcloudVersion(ctx, knowledge.ID)
+		return err
+	}
+	return nil
 }
 
 // UpdateKnowledgeBatch updates knowledge items in batch
@@ -349,6 +374,20 @@ func (r *knowledgeRepository) UpdateKnowledgeBatch(ctx context.Context, knowledg
 	for _, knowledge := range knowledgeList {
 		if knowledge != nil {
 			knowledge.ErrorMessage = common.CleanInvalidUTF8(knowledge.ErrorMessage)
+		}
+	}
+	for _, knowledge := range knowledgeList {
+		if knowledge != nil && knowledge.Channel == types.ConnectorTypeNextcloud {
+			// Keep version enforcement on the single-row path. A bulk Save could
+			// otherwise restore an old ETag after a newer version was staged.
+			for _, item := range knowledgeList {
+				if item != nil {
+					if err := r.UpdateKnowledge(ctx, item); err != nil {
+						return err
+					}
+				}
+			}
+			return nil
 		}
 	}
 	return r.db.Debug().WithContext(ctx).Omit(omitFieldsOnUpdate...).Save(knowledgeList).Error
@@ -400,6 +439,18 @@ func (r *knowledgeRepository) CheckKnowledgeExists(
 		if params.DataSourceID != "" && params.ExternalID != "" {
 			query = query.Where("metadata->>'datasource_id' = ? AND metadata->>'external_id' = ?",
 				params.DataSourceID, params.ExternalID)
+		}
+		if params.NextcloudTargetETag != "" {
+			if params.DataSourceID == "" || params.ExternalID == "" {
+				return false, nil, apperrors.NewProtocolError(
+					errors.New(
+						("nextcloud duplicate check requires exact source identit" +
+							"y")), "Nextcloud duplicate check requires exact source identity")
+			}
+			query = query.Where(`id IN (SELECT candidate_knowledge_id FROM nextcloud_source_versions
+				WHERE tenant_id = ? AND knowledge_base_id = ? AND datasource_id = ?
+				AND external_id = ? AND desired_etag = ? AND state IN ('staging', 'published'))`,
+				tenantID, kbID, params.DataSourceID, params.ExternalID, params.NextcloudTargetETag)
 		}
 		// File content is only a duplicate within the same file type. This keeps
 		// same-content documents with distinct formats (for example, .md and
@@ -563,8 +614,7 @@ func (r *knowledgeRepository) UpdateKnowledgeColumn(
 			value = common.CleanInvalidUTF8(string(v))
 		}
 	}
-	err := r.db.WithContext(ctx).Model(&types.Knowledge{}).Where("id = ?", id).Update(column, value).Error
-	return err
+	return r.UpdateKnowledgeColumns(ctx, id, map[string]interface{}{column: value})
 }
 
 // UpdateKnowledgeColumns writes multiple columns in a single UPDATE so callers
@@ -587,7 +637,44 @@ func (r *knowledgeRepository) UpdateKnowledgeColumns(
 			values["error_message"] = common.CleanInvalidUTF8(string(v))
 		}
 	}
-	return r.db.WithContext(ctx).Model(&types.Knowledge{}).Where("id = ?", id).Updates(values).Error
+	_, hasMetadata := values["metadata"]
+	_, hasParseStatus := values["parse_status"]
+	_, hasEnableStatus := values["enable_status"]
+	if !hasMetadata && !hasParseStatus && !hasEnableStatus {
+		if guard, ok := ctx.Value(nextcloudBuildContextKey{}).(nextcloudBuildContext); ok {
+			return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+				if err := ValidateNextcloudBuildWrite(ctx, tx,
+					guard.scope.TenantID, guard.scope.KnowledgeBaseID, id); err != nil {
+					return err
+				}
+				return tx.Model(&types.Knowledge{}).Where("id = ?", id).Updates(values).Error
+			})
+		}
+		return r.db.WithContext(ctx).Model(&types.Knowledge{}).Where("id = ?", id).Updates(values).Error
+	}
+	var knowledge types.Knowledge
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if guard, ok := ctx.Value(nextcloudBuildContextKey{}).(nextcloudBuildContext); ok {
+			if err := ValidateNextcloudBuildWrite(ctx, tx,
+				guard.scope.TenantID, guard.scope.KnowledgeBaseID, id); err != nil {
+				return err
+			}
+		}
+		if err := tx.Model(&types.Knowledge{}).Where("id = ?", id).Updates(values).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("id = ?", id).Take(&knowledge).Error; err != nil {
+			return err
+		}
+		return r.enforceNextcloudVersionMetadata(tx, &knowledge)
+	})
+	if err != nil {
+		return err
+	}
+	if knowledge.Channel == types.ConnectorTypeNextcloud && knowledge.ParseStatus == types.ParseStatusCompleted {
+		_, err = r.PublishNextcloudVersion(ctx, id)
+	}
+	return err
 }
 
 // UpdateActiveDeletingKnowledgeColumns only touches rows that are still visible
@@ -635,45 +722,67 @@ func (r *knowledgeRepository) FinalizeSubtask(
 	ctx context.Context, id string,
 ) (int, bool, error) {
 	now := time.Now()
-	// 1) Atomic decrement, clamped at zero. The `pending_subtasks_count > 0`
-	//    guard is purely a safety net for accounting bugs — under normal
-	//    operation each subtask handler decrements at most once per task,
-	//    so the counter cannot go negative.
-	res := r.db.WithContext(ctx).Model(&types.Knowledge{}).
-		Where("id = ? AND pending_subtasks_count > 0", id).
-		Updates(map[string]interface{}{
-			"pending_subtasks_count": gorm.Expr("pending_subtasks_count - 1"),
-			"updated_at":             now,
-		})
-	if res.Error != nil {
-		return 0, false, res.Error
-	}
+	var promoted bool
+	write := func(tx *gorm.DB) error {
+		// 1) Atomic decrement, clamped at zero. The `pending_subtasks_count > 0`
+		//    guard is purely a safety net for accounting bugs — under normal
+		//    operation each subtask handler decrements at most once per task,
+		//    so the counter cannot go negative.
+		res := tx.Model(&types.Knowledge{}).
+			Where("id = ? AND pending_subtasks_count > 0", id).
+			Updates(map[string]interface{}{
+				"pending_subtasks_count": gorm.Expr("pending_subtasks_count - 1"),
+				"updated_at":             now,
+			})
+		if res.Error != nil {
+			return res.Error
+		}
 
-	// 2) Guarded promote. EVERY caller unconditionally attempts this after
-	//    decrementing — we must NOT gate it on a separate SELECT of the
-	//    counter. That read can be served by a lagging read-replica (or a
-	//    stale connection snapshot) and return a non-zero value even after
-	//    the counter has truly reached zero on the primary; if every caller
-	//    trusts that stale read, NONE of them runs the promote and the row
-	//    is stranded in `finalizing` forever (the observed "stuck
-	//    pending_subtasks_count" bug). The promote is a WRITE, so it executes
-	//    on the primary and its `pending_subtasks_count = 0` WHERE clause is
-	//    the single authoritative, atomic check on the live row: only the
-	//    caller whose decrement actually brought the counter to zero matches,
-	//    and cancel/delete cannot be clobbered by a late promote.
-	promoteRes := r.db.WithContext(ctx).Model(&types.Knowledge{}).
-		Where("id = ? AND parse_status = ? AND pending_subtasks_count = 0",
-			id, types.ParseStatusFinalizing).
-		Updates(map[string]interface{}{
-			"parse_status":  types.ParseStatusCompleted,
-			"error_message": "",
-			"processed_at":  now,
-			"updated_at":    now,
-		})
-	if promoteRes.Error != nil {
-		return 0, false, promoteRes.Error
+		// 2) Guarded promote. EVERY caller unconditionally attempts this after
+		//    decrementing — we must NOT gate it on a separate SELECT of the
+		//    counter. That read can be served by a lagging read-replica (or a
+		//    stale connection snapshot) and return a non-zero value even after
+		//    the counter has truly reached zero on the primary; if every caller
+		//    trusts that stale read, NONE of them runs the promote and the row
+		//    is stranded in `finalizing` forever (the observed "stuck
+		//    pending_subtasks_count" bug). The promote is a WRITE, so it executes
+		//    on the primary and its `pending_subtasks_count = 0` WHERE clause is
+		//    the single authoritative, atomic check on the live row: only the
+		//    caller whose decrement actually brought the counter to zero matches,
+		//    and cancel/delete cannot be clobbered by a late promote.
+		promoteRes := tx.Model(&types.Knowledge{}).
+			Where("id = ? AND parse_status = ? AND pending_subtasks_count = 0",
+				id, types.ParseStatusFinalizing).
+			Updates(map[string]interface{}{
+				"parse_status":  types.ParseStatusCompleted,
+				"error_message": "",
+				"processed_at":  now,
+				"updated_at":    now,
+			})
+		if promoteRes.Error != nil {
+			return promoteRes.Error
+		}
+		promoted = promoteRes.RowsAffected > 0
+		return nil
 	}
-	promoted := promoteRes.RowsAffected > 0
+	var writeErr error
+	if guard, ok := ctx.Value(nextcloudBuildContextKey{}).(nextcloudBuildContext); ok {
+		writeErr = r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			if err := ValidateNextcloudBuildWrite(ctx, tx,
+				guard.scope.TenantID, guard.scope.KnowledgeBaseID, id); err != nil {
+				return err
+			}
+			return write(tx)
+		})
+	} else {
+		writeErr = write(r.db.WithContext(ctx))
+	}
+	if writeErr != nil {
+		return 0, false, writeErr
+	}
+	if err := r.maybePublishNextcloudVersion(ctx, id); err != nil {
+		return 0, promoted, err
+	}
 
 	// 3) Best-effort re-read of the new count for diagnostics/return value
 	//    only. This read may be replica-stale and is intentionally NOT used
@@ -706,18 +815,31 @@ func (r *knowledgeRepository) SetFinalizing(
 		expectedSubtasks = 0
 	}
 	now := time.Now()
-	res := r.db.WithContext(ctx).Model(&types.Knowledge{}).
-		Where("id = ? AND parse_status = ?", id, types.ParseStatusProcessing).
-		Updates(map[string]interface{}{
-			"parse_status":           types.ParseStatusFinalizing,
-			"pending_subtasks_count": expectedSubtasks,
-			"error_message":          "",
-			"updated_at":             now,
-		})
-	if res.Error != nil {
-		return false, res.Error
+	write := func(tx *gorm.DB) (bool, error) {
+		res := tx.Model(&types.Knowledge{}).
+			Where("id = ? AND parse_status = ?", id, types.ParseStatusProcessing).
+			Updates(map[string]interface{}{
+				"parse_status":           types.ParseStatusFinalizing,
+				"pending_subtasks_count": expectedSubtasks,
+				"error_message":          "",
+				"updated_at":             now,
+			})
+		return res.RowsAffected > 0, res.Error
 	}
-	return res.RowsAffected > 0, nil
+	if guard, ok := ctx.Value(nextcloudBuildContextKey{}).(nextcloudBuildContext); ok {
+		var changed bool
+		err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			if err := ValidateNextcloudBuildWrite(ctx, tx,
+				guard.scope.TenantID, guard.scope.KnowledgeBaseID, id); err != nil {
+				return err
+			}
+			var err error
+			changed, err = write(tx)
+			return err
+		})
+		return changed, err
+	}
+	return write(r.db.WithContext(ctx))
 }
 
 // CompleteProcessingWithoutSubtasks is the zero-enrichment counterpart of
@@ -725,17 +847,40 @@ func (r *knowledgeRepository) SetFinalizing(
 // concurrent cancel/delete or duplicate delivery cannot be overwritten.
 func (r *knowledgeRepository) CompleteProcessingWithoutSubtasks(ctx context.Context, id string) (bool, error) {
 	now := time.Now()
-	res := r.db.WithContext(ctx).Model(&types.Knowledge{}).
-		Where("id = ? AND parse_status = ?", id, types.ParseStatusProcessing).
-		Updates(map[string]interface{}{
-			"parse_status":           types.ParseStatusCompleted,
-			"summary_status":         types.SummaryStatusNone,
-			"pending_subtasks_count": 0,
-			"error_message":          "",
-			"processed_at":           now,
-			"updated_at":             now,
+	write := func(tx *gorm.DB) (bool, error) {
+		res := tx.Model(&types.Knowledge{}).
+			Where("id = ? AND parse_status = ?", id, types.ParseStatusProcessing).
+			Updates(map[string]interface{}{
+				"parse_status":           types.ParseStatusCompleted,
+				"summary_status":         types.SummaryStatusNone,
+				"pending_subtasks_count": 0,
+				"error_message":          "",
+				"processed_at":           now,
+				"updated_at":             now,
+			})
+		return res.RowsAffected > 0, res.Error
+	}
+	var changed bool
+	var err error
+	if guard, ok := ctx.Value(nextcloudBuildContextKey{}).(nextcloudBuildContext); ok {
+		err = r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			if err := ValidateNextcloudBuildWrite(ctx, tx,
+				guard.scope.TenantID, guard.scope.KnowledgeBaseID, id); err != nil {
+				return err
+			}
+			changed, err = write(tx)
+			return err
 		})
-	return res.RowsAffected > 0, res.Error
+	} else {
+		changed, err = write(r.db.WithContext(ctx))
+	}
+	if err != nil {
+		return false, err
+	}
+	if err := r.maybePublishNextcloudVersion(ctx, id); err != nil {
+		return changed, err
+	}
+	return changed, nil
 }
 
 // CountKnowledgeByKnowledgeBaseID counts the number of knowledge items in a knowledge base

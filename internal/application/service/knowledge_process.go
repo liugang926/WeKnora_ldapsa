@@ -327,6 +327,14 @@ func (s *knowledgeService) processChunks(ctx context.Context,
 	kb *types.KnowledgeBase, knowledge *types.Knowledge, chunks []types.ParsedChunk,
 	opts ...ProcessChunksOptions,
 ) {
+	// Nextcloud parsing must enter through a leased worker. This also closes
+	// direct or legacy inline paths that would otherwise write unprotected
+	// chunks after a source generation has been retired.
+	if knowledge.Channel == types.ConnectorTypeNextcloud &&
+		!repository.NextcloudBuildLeasePresent(ctx, knowledge.TenantID, knowledge.KnowledgeBaseID, knowledge.ID) {
+		logger.Errorf(ctx, "Nextcloud chunk build without a durable lease: %s", knowledge.ID)
+		return
+	}
 	// Get options
 	var options ProcessChunksOptions
 	if len(opts) > 0 {
@@ -388,6 +396,10 @@ func (s *knowledgeService) processChunks(ctx context.Context,
 	}
 
 	// 幂等性处理：清理旧的chunks和索引数据，避免重复数据
+	if err := repository.CheckNextcloudBuildLease(ctx); err != nil {
+		logger.Warnf(ctx, "Build lease lost before chunk cleanup for %s: %v", knowledge.ID, err)
+		return
+	}
 	logger.Infof(ctx, "Cleaning up existing chunks and index data for knowledge: %s", knowledge.ID)
 
 	// 删除旧的chunks
@@ -590,6 +602,10 @@ func (s *knowledgeService) processChunks(ctx context.Context,
 	}
 
 	// Save chunks to database — ALWAYS, regardless of indexing strategy.
+	if err := repository.CheckNextcloudBuildLease(ctx); err != nil {
+		logger.Warnf(ctx, "Build lease lost before chunk write for %s: %v", knowledge.ID, err)
+		return
+	}
 	// Chunks are needed for wiki generation, graph extraction, and summary generation
 	// even when vector/keyword indexing is disabled.
 	s.beginStage(ctx, knowledge.ID, types.StageChunking, types.JSONMap{
@@ -686,6 +702,10 @@ func (s *knowledgeService) processChunks(ctx context.Context,
 			return
 		}
 
+		if err := repository.CheckNextcloudBuildLease(ctx); err != nil {
+			logger.Warnf(ctx, "Build lease lost before indexing %s: %v", knowledge.ID, err)
+			return
+		}
 		err = retrieveEngine.BatchIndex(ctx, embeddingModel, indexInfoList)
 		if err != nil {
 			knowledge.ParseStatus = types.ParseStatusFailed
@@ -752,6 +772,27 @@ func (s *knowledgeService) processChunks(ctx context.Context,
 	pendingPDFMultimodal := !isImage && !isVideo && options.EnableMultimodel && len(options.StoredImages) > 0
 
 	now := time.Now()
+	if err := repository.CheckNextcloudBuildLease(ctx); err != nil {
+		logger.Warnf(ctx, "Build lease lost before finalizing %s: %v", knowledge.ID, err)
+		return
+	}
+	if knowledge.Channel == types.ConnectorTypeNextcloud &&
+		repository.NextcloudTextChunkRequired(knowledge.FileType) && len(textChunks) == 0 &&
+		!pendingMultimodal && !pendingPDFMultimodal {
+		// A successful parser with no searchable text is still a failed source
+		// publication. Keep the generation staged and expose only a static code.
+		knowledge.ParseStatus = types.ParseStatusFailed
+		knowledge.EnableStatus = "disabled"
+		knowledge.SummaryStatus = types.SummaryStatusNone
+		knowledge.ErrorMessage = repository.NextcloudNoRetrievableContentCode
+		knowledge.UpdatedAt = now
+		if err := s.updateKnowledgeUnlessSourceReplaced(ctx, knowledge); err != nil {
+			logger.GetLogger(
+				ctx,
+			).WithField("error", err).Errorf("record empty Nextcloud text candidate %s failed", knowledge.ID)
+		}
+		return
+	}
 	finalizeIndexedKnowledgeState(
 		knowledge,
 		totalStorageSize,
@@ -2598,6 +2639,9 @@ func (s *knowledgeService) ReparseKnowledge(
 		logger.Errorf(ctx, "Failed to load knowledge: %v", err)
 		return nil, err
 	}
+	if err := rejectNextcloudSourceManagedMutation(existing); err != nil {
+		return nil, err
+	}
 
 	tenantID := existing.TenantID
 
@@ -3089,6 +3133,9 @@ func (s *knowledgeService) UpdateImageInfo(
 ) error {
 	knowledge, _, err := loadKnowledgeWrite(ctx, s.repo, s.kbService, knowledgeID)
 	if err != nil {
+		return err
+	}
+	if err := rejectNextcloudSourceManagedMutation(knowledge); err != nil {
 		return err
 	}
 	imageInfo = common.CleanInvalidUTF8(imageInfo)

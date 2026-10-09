@@ -324,7 +324,7 @@ func (h *Handler) liveAgentRun(ctx context.Context, sessionID string) (string, e
 		return "", nil
 	}
 
-	msg, err := h.messageService.GetMessage(ctx, sessionID, assistantID)
+	msg, err := getMessageForControl(ctx, h.messageService, sessionID, assistantID)
 	if err != nil {
 		return "", err
 	}

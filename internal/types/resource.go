@@ -1,6 +1,7 @@
 package types
 
 import (
+	"context"
 	"regexp"
 	"strconv"
 	"strings"
@@ -15,10 +16,32 @@ const (
 	ResourceScheme              = "resource://"
 	ResourceHandleLength        = 22
 	ResourceStateActive         = "active"
+	ResourceStateDeleting       = "deleting"
 	ResourceStateDeleted        = "deleted"
 	ResourceLifecyclePersistent = "persistent"
 	ResourceLifecycleTemporary  = "temporary"
+	// Unknown covers resources created before source tracking was installed.
+	// A Nextcloud classification is permanent even after all owners are deleted.
+	ResourceProvenanceUnknown   = "unknown"
+	ResourceProvenanceOrdinary  = "ordinary"
+	ResourceProvenanceNextcloud = "nextcloud"
 )
+
+type resourceProvenanceContextKey struct{}
+
+// WithResourceProvenance carries the source classification across file storage,
+// which runs before the knowledge row is inserted.
+func WithResourceProvenance(ctx context.Context, provenance string) context.Context {
+	return context.WithValue(ctx, resourceProvenanceContextKey{}, provenance)
+}
+
+// ResourceProvenanceFromContext retrieves the source classification carried by ctx.
+func ResourceProvenanceFromContext(ctx context.Context) string {
+	if value, ok := ctx.Value(resourceProvenanceContextKey{}).(string); ok {
+		return value
+	}
+	return ""
+}
 
 // Resource binding owner types. A binding is a claim on a stored object: the
 // bytes live as long as at least one owner still claims them, which is what
@@ -54,6 +77,7 @@ type StoredResource struct {
 	OriginalName     string         `json:"original_name,omitempty" gorm:"type:varchar(1024);not null;default:''"`
 	Size             int64          `json:"size" gorm:"not null;default:0"`
 	ContentHash      string         `json:"content_hash,omitempty" gorm:"type:varchar(64);not null;default:''"`
+	SourceProvenance string         `json:"-" gorm:"type:varchar(16);not null;default:'unknown'"`
 	Lifecycle        string         `json:"lifecycle" gorm:"type:varchar(16);not null;default:'persistent'"`
 	ExpiresAt        *time.Time     `json:"expires_at,omitempty"`
 	State            string         `json:"state" gorm:"type:varchar(16);not null;default:'active'"`
@@ -78,6 +102,9 @@ func (r *StoredResource) BeforeCreate(_ *gorm.DB) error {
 	}
 	if r.State == "" {
 		r.State = ResourceStateActive
+	}
+	if r.SourceProvenance == "" {
+		r.SourceProvenance = ResourceProvenanceUnknown
 	}
 	return nil
 }

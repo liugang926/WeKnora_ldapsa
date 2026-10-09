@@ -22,6 +22,9 @@ type ContextCheckpoint struct {
 	// Degraded marks a raw archive kept because the summarizer failed. The
 	// next compaction folds it in as the previous summary.
 	Degraded bool `json:"degraded,omitempty"`
+	// The summary has its own dependencies, independent of the host answer.
+	// Missing lineage on an older checkpoint is unknown, never complete empty.
+	SourceLineage *SourceLineage `json:"source_lineage,omitempty"`
 }
 
 // Value implements the driver.Valuer interface for database serialization.
@@ -31,6 +34,7 @@ func (c ContextCheckpoint) Value() (driver.Value, error) {
 
 // Scan implements the sql.Scanner interface for database deserialization.
 func (c *ContextCheckpoint) Scan(value any) error {
+	*c = ContextCheckpoint{}
 	if value == nil {
 		*c = ContextCheckpoint{}
 		return nil

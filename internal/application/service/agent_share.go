@@ -113,6 +113,9 @@ type agentShareService struct {
 	userRepo              interfaces.UserRepository
 	webSearchProviderRepo interfaces.WebSearchProviderRepository
 	kbRepo                interfaces.KnowledgeBaseRepository
+	kgRepo                interfaces.KnowledgeRepository
+	dsRepo                interfaces.DataSourceRepository
+	enforceSourcePolicy   bool
 }
 
 // NewAgentShareService creates a new agent share service
@@ -124,6 +127,8 @@ func NewAgentShareService(
 	userRepo interfaces.UserRepository,
 	webSearchProviderRepo interfaces.WebSearchProviderRepository,
 	kbRepo interfaces.KnowledgeBaseRepository,
+	kgRepo interfaces.KnowledgeRepository,
+	dsRepo interfaces.DataSourceRepository,
 ) interfaces.AgentShareService {
 	return &agentShareService{
 		shareRepo:             shareRepo,
@@ -133,7 +138,48 @@ func NewAgentShareService(
 		userRepo:              userRepo,
 		webSearchProviderRepo: webSearchProviderRepo,
 		kbRepo:                kbRepo,
+		kgRepo:                kgRepo,
+		dsRepo:                dsRepo,
+		enforceSourcePolicy:   true,
 	}
+}
+
+func (s *agentShareService) rejectNextcloudAgentScope(ctx context.Context, agent *types.CustomAgent) error {
+	if !s.enforceSourcePolicy {
+		return nil // Unit fixtures constructed without a source repository.
+	}
+	if agent == nil || agent.TenantID == 0 || s.kbRepo == nil || s.kgRepo == nil || s.dsRepo == nil {
+		return ErrNextcloudDerivedContent
+	}
+	scope := types.NewSharedAgentKBScope(agent)
+	var kbs []*types.KnowledgeBase
+	var err error
+	if scope.IsAll() {
+		kbs, err = s.kbRepo.ListKnowledgeBasesByTenantID(ctx, agent.TenantID)
+	} else if len(scope.IDs()) > 0 {
+		kbs, err = s.kbRepo.GetKnowledgeBaseByIDs(ctx, scope.IDs())
+	}
+	if err != nil {
+		return err
+	}
+	byID := make(map[string]*types.KnowledgeBase, len(kbs))
+	for _, kb := range kbs {
+		if kb == nil || kb.TenantID != agent.TenantID {
+			return ErrNextcloudDerivedContent
+		}
+		byID[kb.ID] = kb
+	}
+	for _, id := range scope.IDs() {
+		if byID[id] == nil {
+			return ErrNextcloudDerivedContent
+		}
+	}
+	for _, kb := range byID {
+		if err := RejectNextcloudDerivedKB(ctx, kb, s.kgRepo, s.dsRepo); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *agentShareService) sharedAgentInfo(
@@ -209,6 +255,9 @@ func (s *agentShareService) ShareAgent(ctx context.Context, agentID string, orgI
 		return nil, ErrBuiltinAgentNotShareable
 	}
 	if err := checkAgentKBScopeShareable(ctx, s.kbRepo.GetKnowledgeBaseByIDs, nil, agent, userID); err != nil {
+		return nil, err
+	}
+	if err := s.rejectNextcloudAgentScope(ctx, agent); err != nil {
 		return nil, err
 	}
 
@@ -334,6 +383,9 @@ func (s *agentShareService) ListSharedAgents(ctx context.Context, tenantID uint6
 		if share.Agent == nil || isBuiltinAgent(share.Agent) {
 			continue
 		}
+		if err := s.rejectNextcloudAgentScope(ctx, share.Agent); err != nil {
+			continue
+		}
 		tm, err := s.orgRepo.GetTenantMember(ctx, share.OrganizationID, tenantID)
 		if err != nil {
 			continue
@@ -395,6 +447,9 @@ func (s *agentShareService) ListSharedAgentsInOrganization(ctx context.Context, 
 	webSearchReadyCache := make(map[string]bool)
 	for _, share := range shares {
 		if share.Agent == nil || (share.SourceTenantID != tenantID && isBuiltinAgent(share.Agent)) {
+			continue
+		}
+		if err := s.rejectNextcloudAgentScope(ctx, share.Agent); err != nil {
 			continue
 		}
 
@@ -464,6 +519,9 @@ func (s *agentShareService) ListSharedAgentsInOrganizations(ctx context.Context,
 			if share.Agent == nil || (share.SourceTenantID != tenantID && isBuiltinAgent(share.Agent)) {
 				continue
 			}
+			if err := s.rejectNextcloudAgentScope(ctx, share.Agent); err != nil {
+				continue
+			}
 			effective := types.MinOrgRole(share.Permission, tm.Role)
 			effective = applyTenantRoleCap(effective, callerTenantRole)
 			info := s.sharedAgentInfo(ctx, share, effective, webSearchReadyCache)
@@ -529,6 +587,9 @@ func (s *agentShareService) GetSharedAgentForTenant(
 		if err != nil || agent == nil || isBuiltinAgent(agent) {
 			return nil, ErrAgentNotFoundForShare
 		}
+		if err := s.rejectNextcloudAgentScope(ctx, agent); err != nil {
+			return nil, ErrAgentSharePermission
+		}
 		types.ApplyBuiltinAgentLocalization(ctx, agent)
 		_ = callerTenantRole
 		return agent, nil
@@ -549,6 +610,9 @@ func (s *agentShareService) GetSharedAgentForTenant(
 	}
 	if isBuiltinAgent(agent) {
 		return nil, ErrAgentNotFoundForShare
+	}
+	if err := s.rejectNextcloudAgentScope(ctx, agent); err != nil {
+		return nil, ErrAgentSharePermission
 	}
 	types.ApplyBuiltinAgentLocalization(ctx, agent)
 	_ = callerTenantRole

@@ -156,6 +156,9 @@ func (s *knowledgeService) planKnowledgeMove(
 	if err != nil {
 		return nil, err
 	}
+	if err := rejectNextcloudKnowledgeRows(rows); err != nil {
+		return nil, err
+	}
 	byID := map[string]*types.Knowledge{}
 	for _, row := range rows {
 		if row != nil {
@@ -261,8 +264,14 @@ func (s *knowledgeService) planKnowledgeClone(
 	if err := access.RequireKBTransfer(ctx, source, target, access.KBTransferClone); err != nil {
 		return nil, err
 	}
+	if source.EverHadNextcloudSource {
+		return nil, ErrNextcloudDerivedContent
+	}
 	src, err := s.repo.ListKnowledgeByKnowledgeBaseID(ctx, source.TenantID, source.ID)
 	if err != nil {
+		return nil, err
+	}
+	if err := rejectNextcloudKnowledgeRows(src); err != nil {
 		return nil, err
 	}
 	dst, err := s.repo.ListKnowledgeByKnowledgeBaseID(ctx, target.TenantID, target.ID)

@@ -401,6 +401,35 @@ func TestTenantInfrastructureRoutesDeclareSpecificCapabilities(t *testing.T) {
 	}
 }
 
+func TestNextcloudEventConnectionRoutesRequireHumanAdminSession(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	g := &rbacGuards{apiKeyAuthorizer: middleware.NewAPIKeyRouteAuthorizer()}
+	RegisterNextcloudEventConnectionRoutes(r.Group("/api/v1"), &handler.NextcloudEventConnectionHandler{}, g)
+	g.assertAPIKeyPoliciesMatchRoutes(r)
+	for _, item := range []struct{ method, path string }{
+		{http.MethodGet, "/api/v1/datasource/:id/nextcloud-event-connection"},
+		{http.MethodPost, "/api/v1/datasource/:id/nextcloud-event-connection"},
+		{http.MethodPost, "/api/v1/datasource/:id/nextcloud-event-connection/rotate"},
+		{http.MethodPost, "/api/v1/datasource/:id/nextcloud-event-connection/rebind"},
+		{http.MethodDelete, "/api/v1/datasource/:id/nextcloud-event-connection"},
+	} {
+		if _, ok := g.apiKeyAuthorizer.Lookup(item.method, item.path); ok {
+			t.Fatalf("API key policy unexpectedly grants %s %s", item.method, item.path)
+		}
+		found := false
+		for _, route := range r.Routes() {
+			if route.Method == item.method && route.Path == item.path {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("missing route %s %s", item.method, item.path)
+		}
+	}
+}
+
 func TestSandboxConfigRoutesRequireFullAccessOnly(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	g := &rbacGuards{}

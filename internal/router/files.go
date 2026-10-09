@@ -165,6 +165,94 @@ func authorizeResourceKnowledgeBases(
 	return nil
 }
 
+// requireResourcePublication checks every knowledge owner of a stored object.
+// The catalog must recognize the exact handle or physical path; guessing an
+// owner from a storage path would leave a bypass for withdrawn source files.
+// A nil guard exists only for the older standalone router test constructors;
+// NewRouter supplies a guard in the application composition.
+func requireResourcePublication(
+	c *gin.Context, catalog interfaces.ResourceCatalog,
+	guard *access.NextcloudPublicationGuard, tenantID uint64, referenceOrPath string,
+) bool {
+	return requireResourcePublicationWithCheckContext(
+		c.Request.Context(), c, catalog, guard, tenantID, referenceOrPath,
+	)
+}
+
+func requireAnonymousResourcePublication(
+	c *gin.Context, catalog interfaces.ResourceCatalog,
+	guard *access.NextcloudPublicationGuard, tenantID uint64, referenceOrPath string,
+) bool {
+	return requireResourcePublicationWithCheckContext(
+		context.Background(), c, catalog, guard, tenantID, referenceOrPath,
+	)
+}
+
+func requireResourcePublicationWithCheckContext(
+	checkContext context.Context,
+	c *gin.Context, catalog interfaces.ResourceCatalog,
+	guard *access.NextcloudPublicationGuard, tenantID uint64, referenceOrPath string,
+) bool {
+	if guard == nil {
+		return true
+	}
+	lookup, ok := catalog.(interfaces.ResourceKnowledgeLookup)
+	if !ok {
+		c.Status(http.StatusServiceUnavailable)
+		return false
+	}
+	owners, recognized, err := lookup.ListResourceKnowledgeOwners(
+		c.Request.Context(), tenantID, referenceOrPath,
+	)
+	if err != nil {
+		logger.Warnf(c.Request.Context(), "resource source lookup failed: %v", err)
+		c.Status(http.StatusServiceUnavailable)
+		return false
+	}
+	if !recognized {
+		c.Status(http.StatusForbidden)
+		return false
+	}
+	provenance, err := lookup.GetResourceSourceProvenance(c.Request.Context(), tenantID, referenceOrPath)
+	if err != nil {
+		logger.Warnf(c.Request.Context(), "resource provenance lookup failed: %v", err)
+		c.Status(http.StatusServiceUnavailable)
+		return false
+	}
+	if provenance != types.ResourceProvenanceOrdinary && provenance != types.ResourceProvenanceNextcloud {
+		c.Status(http.StatusForbidden)
+		return false
+	}
+	if provenance == types.ResourceProvenanceNextcloud {
+		hasSourceOwner := false
+		for _, owner := range owners {
+			if owner != nil && owner.Channel == types.ConnectorTypeNextcloud {
+				hasSourceOwner = true
+				break
+			}
+		}
+		if !hasSourceOwner {
+			c.Status(http.StatusForbidden)
+			return false
+		}
+	}
+	for _, owner := range owners {
+		if owner == nil || owner.DeletedAt.Valid {
+			c.Status(http.StatusForbidden)
+			return false
+		}
+		if err := guard.CheckKnowledge(checkContext, owner); err != nil {
+			if errors.Is(err, access.ErrNextcloudPublicationUnavailable) {
+				c.Status(http.StatusServiceUnavailable)
+			} else {
+				c.Status(http.StatusForbidden)
+			}
+			return false
+		}
+	}
+	return true
+}
+
 // resolveFileService picks the file service for (tenant, backendID, provider)
 // — via the storage resolver when wired, else directly from the tenant's
 // storage config. No fallback; used by the presigned surfaces where a
@@ -223,7 +311,12 @@ func newFileServeHandlerWithGroupAccess(
 	storageResolver interfaces.StorageBackendResolver,
 	resourceCatalog interfaces.ResourceCatalog,
 	groupAccess resourceGroupAuthorizer,
+	publicationGuards ...*access.NextcloudPublicationGuard,
 ) gin.HandlerFunc {
+	var publicationGuard *access.NextcloudPublicationGuard
+	if len(publicationGuards) > 0 {
+		publicationGuard = publicationGuards[0]
+	}
 	absDir := localStorageAbsDir()
 	if info, err := os.Stat(absDir); err != nil || !info.IsDir() {
 		if err := os.MkdirAll(absDir, 0o755); err != nil {
@@ -261,11 +354,15 @@ func newFileServeHandlerWithGroupAccess(
 		if !resourceResolved {
 			if err := secutils.ValidateStoragePathTenant(filePath, tenant.ID); err != nil {
 				logger.Warnf(c.Request.Context(),
-					"[Router] /files denied cross-tenant or invalid path: tenant_id=%d file_path=%q err=%v",
+					"[Router] /files denied cross-tenant or invalid path: tenant_id=%d file_p"+
+						"ath=%q err=%v",
 					tenant.ID, filePath, err)
 				c.JSON(http.StatusForbidden, gin.H{"error": "forbidden: file path not accessible"})
 				return
 			}
+		}
+		if !requireResourcePublication(c, resourceCatalog, publicationGuard, tenant.ID, filePath) {
+			return
 		}
 
 		backendID, provider := parseStorageTarget(filePath)
@@ -291,7 +388,11 @@ func newFileServeHandlerWithGroupAccess(
 		}
 
 		contentType, inline := secutils.SafeContentTypeByFilename(filePath)
-		streamStoredFile(c, reader, contentType, inline, "public, max-age=86400", "/files", filePath)
+		cacheControl := "public, max-age=86400"
+		if publicationGuard != nil {
+			cacheControl = "private, no-store"
+		}
+		streamStoredFile(c, reader, contentType, inline, cacheControl, "/files", filePath)
 	}
 }
 
@@ -320,6 +421,21 @@ func serveFilesWithResources(
 	resourceCatalog interfaces.ResourceCatalog,
 	groupAccess ...resourceGroupAuthorizer,
 ) {
+	var authorizer resourceGroupAuthorizer
+	if len(groupAccess) > 0 {
+		authorizer = groupAccess[0]
+	}
+	serveFilesWithPublication(r, globalFileService, storageResolver, resourceCatalog, authorizer, nil)
+}
+
+func serveFilesWithPublication(
+	r getRouteRegistrar,
+	globalFileService interfaces.FileService,
+	storageResolver interfaces.StorageBackendResolver,
+	resourceCatalog interfaces.ResourceCatalog,
+	groupAccess resourceGroupAuthorizer,
+	publicationGuard *access.NextcloudPublicationGuard,
+) {
 	logger.Infof(context.Background(), "[Router] Serving files from /files")
 	// /files sits outside the /api/v1 APIKeyGate, so it carries its own
 	// API-key guard. A KB-restricted key is denied (a raw storage path cannot
@@ -327,14 +443,11 @@ func serveFilesWithResources(
 	// keys pass, since the handler still enforces same-tenant paths
 	// (ValidateStoragePathTenant). Embed routes use their own
 	// /embed/.../files handler.
-	var authorizer resourceGroupAuthorizer
-	if len(groupAccess) > 0 {
-		authorizer = groupAccess[0]
-	}
 	r.GET(
 		"/files",
 		middleware.AllowFileServeAPIKey(),
-		newFileServeHandlerWithGroupAccess(globalFileService, storageResolver, resourceCatalog, authorizer),
+		newFileServeHandlerWithGroupAccess(globalFileService, storageResolver, resourceCatalog, groupAccess,
+			publicationGuard),
 	)
 }
 
@@ -347,7 +460,12 @@ func serveResourceGrants(
 	globalFileService interfaces.FileService,
 	storageResolver interfaces.StorageBackendResolver,
 	groupAccess resourceGroupAuthorizer,
+	publicationGuards ...*access.NextcloudPublicationGuard,
 ) {
+	var publicationGuard *access.NextcloudPublicationGuard
+	if len(publicationGuards) > 0 {
+		publicationGuard = publicationGuards[0]
+	}
 	if resourceCatalog == nil || tenantService == nil {
 		return
 	}
@@ -356,6 +474,10 @@ func serveResourceGrants(
 		resource, err := resourceCatalog.ResolveAccessGrant(ctx, c.Param("token"))
 		if err != nil || resource == nil {
 			c.Status(http.StatusNotFound)
+			return
+		}
+		if !requireAnonymousResourcePublication(c, resourceCatalog, publicationGuard,
+			resource.TenantID, types.BuildResourcePath(resource.Handle)) {
 			return
 		}
 		if err := authorizeResourceKnowledgeBases(
@@ -431,6 +553,21 @@ func serveKBScopedFiles(
 	storageResolver interfaces.StorageBackendResolver,
 	resourceCatalogs ...interfaces.ResourceCatalog,
 ) {
+	serveKBScopedFilesWithPublication(
+		r, g, tenantService, globalFileService, storageResolver,
+		firstResourceCatalog(resourceCatalogs), nil,
+	)
+}
+
+func serveKBScopedFilesWithPublication(
+	r *gin.RouterGroup,
+	g *rbacGuards,
+	tenantService interfaces.TenantService,
+	globalFileService interfaces.FileService,
+	storageResolver interfaces.StorageBackendResolver,
+	resourceCatalog interfaces.ResourceCatalog,
+	publicationGuard *access.NextcloudPublicationGuard,
+) {
 	logger.Infof(context.Background(), "[Router] Serving KB-scoped files from /knowledge-bases/:id/files")
 	// Preserve the existing file-route API-key policy: KB-restricted keys are
 	// denied; full-access and tenant-wide retrieve keys still need KBAccessRead.
@@ -443,7 +580,8 @@ func serveKBScopedFiles(
 			tenantService,
 			globalFileService,
 			storageResolver,
-			firstResourceCatalog(resourceCatalogs),
+			resourceCatalog,
+			publicationGuard,
 		),
 	)
 }
@@ -460,7 +598,12 @@ func newKBScopedFileServeHandlerWithResources(
 	globalFileService interfaces.FileService,
 	storageResolver interfaces.StorageBackendResolver,
 	resourceCatalog interfaces.ResourceCatalog,
+	publicationGuards ...*access.NextcloudPublicationGuard,
 ) gin.HandlerFunc {
+	var publicationGuard *access.NextcloudPublicationGuard
+	if len(publicationGuards) > 0 {
+		publicationGuard = publicationGuards[0]
+	}
 	return func(c *gin.Context) {
 		reference, ok := requireFilePathQuery(c)
 		if !ok {
@@ -477,6 +620,9 @@ func newKBScopedFileServeHandlerWithResources(
 			bindings,
 		)
 		if fileAccessError(c, err) {
+			return
+		}
+		if !requireResourcePublication(c, resourceCatalog, publicationGuard, file.OwnerTenantID, reference) {
 			return
 		}
 		serveAuthorizedFile(c, file, tenantService, globalFileService, storageResolver, "KB files")
@@ -508,6 +654,23 @@ func newMessageScopedFileServeHandler(
 	if len(groupAccess) > 0 {
 		authorizer = groupAccess[0]
 	}
+	return newMessageScopedFileServeHandlerWithPublication(
+		messageService, agentShareService, tenantService, globalFileService,
+		storageResolver, resourceCatalog, kbShareAuth, authorizer, nil,
+	)
+}
+
+func newMessageScopedFileServeHandlerWithPublication(
+	messageService messageFileLookup,
+	agentShareService sharedAgentFileLookup,
+	tenantService interfaces.TenantService,
+	globalFileService interfaces.FileService,
+	storageResolver interfaces.StorageBackendResolver,
+	resourceCatalog interfaces.ResourceCatalog,
+	kbShareAuth messageKBShareAuthorizer,
+	authorizer resourceGroupAuthorizer,
+	publicationGuard *access.NextcloudPublicationGuard,
+) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		reference, ok := requireFilePathQuery(c)
 		if !ok {
@@ -516,6 +679,9 @@ func newMessageScopedFileServeHandler(
 		file, err := access.ResolveMessageFile(c.Request.Context(), c.Param("id"), c.Param("message_id"), reference,
 			messageService, agentShareService, resourceCatalog, kbShareAuth)
 		if fileAccessError(c, err) {
+			return
+		}
+		if !requireResourcePublication(c, resourceCatalog, publicationGuard, file.OwnerTenantID, reference) {
 			return
 		}
 		if err := authorizeResourceKnowledgeBases(
@@ -614,13 +780,35 @@ func serveMessageScopedFiles(
 	if len(groupAccess) > 0 {
 		authorizer = groupAccess[0]
 	}
+	serveMessageScopedFilesWithPublication(
+		r, g, messageService, agentShareService, tenantService,
+		globalFileService, storageResolver, resourceCatalog, kbShareService,
+		kbService, knowledgeService, authorizer, nil,
+	)
+}
+
+func serveMessageScopedFilesWithPublication(
+	r *gin.RouterGroup,
+	g *rbacGuards,
+	messageService interfaces.MessageService,
+	agentShareService interfaces.AgentShareService,
+	tenantService interfaces.TenantService,
+	globalFileService interfaces.FileService,
+	storageResolver interfaces.StorageBackendResolver,
+	resourceCatalog interfaces.ResourceCatalog,
+	kbShareService interfaces.KBShareService,
+	kbService interfaces.KnowledgeBaseService,
+	knowledgeService interfaces.KnowledgeService,
+	authorizer resourceGroupAuthorizer,
+	publicationGuard *access.NextcloudPublicationGuard,
+) {
 	g.apiKeyRoute(
 		r,
 		http.MethodGet,
 		"/sessions/:id/messages/:message_id/files",
 		apiKeyChat(apiKeyFullAccess()),
 		g.Viewer(),
-		newMessageScopedFileServeHandler(
+		newMessageScopedFileServeHandlerWithPublication(
 			messageService,
 			agentShareService,
 			tenantService,
@@ -633,6 +821,7 @@ func serveMessageScopedFiles(
 				Knowledges: knowledgeService,
 			},
 			authorizer,
+			publicationGuard,
 		),
 	)
 }
@@ -657,9 +846,11 @@ func servePresignedFiles(
 	storageResolver interfaces.StorageBackendResolver,
 	resourceCatalog interfaces.ResourceCatalog,
 	groupAccess resourceGroupAuthorizer,
+	publicationGuards ...*access.NextcloudPublicationGuard,
 ) {
 	handler := presignedFileHandler(
 		tenantService, localStorageAbsDir(), storageResolver, resourceCatalog, groupAccess,
+		publicationGuards...,
 	)
 	r.GET("/api/v1/files/presigned", handler)
 	r.HEAD("/api/v1/files/presigned", handler)
@@ -675,7 +866,12 @@ func presignedFileHandler(
 	storageResolver interfaces.StorageBackendResolver,
 	resourceCatalog interfaces.ResourceCatalog,
 	groupAccess resourceGroupAuthorizer,
+	publicationGuards ...*access.NextcloudPublicationGuard,
 ) gin.HandlerFunc {
+	var publicationGuard *access.NextcloudPublicationGuard
+	if len(publicationGuards) > 0 {
+		publicationGuard = publicationGuards[0]
+	}
 	return func(c *gin.Context) {
 		ctx := c.Request.Context()
 		clientIP := c.ClientIP()
@@ -743,10 +939,14 @@ func presignedFileHandler(
 			c.JSON(http.StatusForbidden, gin.H{"error": "invalid or expired signature"})
 			return
 		}
+		if !requireAnonymousResourcePublication(c, resourceCatalog, publicationGuard, tenantID, filePath) {
+			return
+		}
 		if err := authorizeResourceKnowledgeBases(
 			ctx, resourceCatalog, groupAccess, tenantID, filePath,
 		); err != nil {
-			logger.Warnf(ctx, "[Router] /files/presigned denied by KB group policy: tenant_id=%d file_path=%q err=%v",
+			logger.Warnf(ctx, "[Router] /files/presigned denied by KB group policy: tenant_id=%d file_p"+
+				"ath=%q err=%v",
 				tenantID, filePath, err)
 			c.Status(http.StatusForbidden)
 			return
@@ -770,7 +970,8 @@ func presignedFileHandler(
 		if err != nil {
 			logger.Warnf(
 				ctx,
-				"[Router] /files/presigned resolve file service failed: client_ip=%s tenant_id=%d provider=%s err=%v",
+				"[Router] /files/presigned resolve file service failed: client_ip=%s tena"+
+					"nt_id=%d provider=%s err=%v",
 				clientIP,
 				tenantID,
 				provider,
@@ -789,7 +990,8 @@ func presignedFileHandler(
 		if err != nil {
 			logger.Warnf(
 				ctx,
-				"[Router] /files/presigned get file failed: client_ip=%s tenant_id=%d provider=%s path=%q err=%v",
+				"[Router] /files/presigned get file failed: client_ip=%s tenant_id=%d pro"+
+					"vider=%s path=%q err=%v",
 				clientIP,
 				tenantID,
 				resolvedProvider,
@@ -823,7 +1025,12 @@ func servePresignedPreview(
 	cfg *config.Config,
 	storageResolver interfaces.StorageBackendResolver,
 	resourceCatalog interfaces.ResourceCatalog,
+	publicationGuards ...*access.NextcloudPublicationGuard,
 ) {
+	var publicationGuard *access.NextcloudPublicationGuard
+	if len(publicationGuards) > 0 {
+		publicationGuard = publicationGuards[0]
+	}
 	absDir := localStorageAbsDir()
 
 	// This route is registered on the engine root, NOT the /api/v1 group,
@@ -858,6 +1065,9 @@ func servePresignedPreview(
 					return
 				}
 			}
+			if !requireAnonymousResourcePublication(c, resourceCatalog, publicationGuard, tenant.ID, filePath) {
+				return
+			}
 
 			backendID, provider := parseStorageTarget(filePath)
 			fileSvc, resolvedProvider, err := resolveFileService(
@@ -882,7 +1092,8 @@ func servePresignedPreview(
 				c.JSON(http.StatusInternalServerError, gin.H{
 					"error":    err.Error(),
 					"provider": resolvedProvider,
-					"hint":     "GetFileURL failed; for local storage this usually means APP_EXTERNAL_URL is unset",
+					"hint": "GetFileURL failed; for local storage this usually means APP_EXTERNAL_URL" +
+						" is unset",
 				})
 				return
 			}
@@ -893,7 +1104,8 @@ func servePresignedPreview(
 			rewritten := httpURL != filePath
 			hint := ""
 			if !rewritten {
-				hint = "URL unchanged; for local storage set APP_EXTERNAL_URL to enable presigned HTTP URLs"
+				hint = "URL unchanged; for local storage set APP_EXTERNAL_URL to enable presigne" +
+					"d HTTP URLs"
 			}
 
 			c.JSON(http.StatusOK, gin.H{

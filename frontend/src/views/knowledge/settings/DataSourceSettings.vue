@@ -13,6 +13,7 @@ import {
 import { humanizeCron, relativeTime } from '@/utils/cronHumanize'
 import DataSourceEditorDialog from './DataSourceEditorDialog.vue'
 import DataSourceSyncLogs from './DataSourceSyncLogs.vue'
+import NextcloudFailedCandidates from './NextcloudFailedCandidates.vue'
 import DataSourceTypeIcon from './DataSourceTypeIcon.vue'
 import { useAuthStore } from '@/stores/auth'
 
@@ -33,6 +34,9 @@ const editingDs = ref<DataSource | null>(null)
 const logsVisible = ref(false)
 const logsDsId = ref('')
 const logsDsName = ref('')
+const failedCandidatesVisible = ref(false)
+const failedCandidatesDsId = ref('')
+const failedCandidatesDsName = ref('')
 const pollTimer = ref<number | null>(null)
 
 function stopPolling() {
@@ -83,6 +87,12 @@ function openLogs(ds: DataSource) {
   logsDsId.value = ds.id
   logsDsName.value = ds.name
   logsVisible.value = true
+}
+
+function openFailedCandidates(ds: DataSource) {
+  failedCandidatesDsId.value = ds.id
+  failedCandidatesDsName.value = ds.name
+  failedCandidatesVisible.value = true
 }
 
 async function removeDataSource(ds: DataSource) {
@@ -197,14 +207,14 @@ onBeforeUnmount(stopPolling)
       </div>
 
       <div v-else-if="!loading" class="ds-grid">
-        <component
-          :is="canManageDataSource ? 'button' : 'div'"
+        <div
           v-for="ds in dataSources"
           :key="ds.id"
-          :type="canManageDataSource ? 'button' : undefined"
           :class="['ds-card', `ds-card--${ds.type}`, { 'ds-card--clickable': canManageDataSource }]"
-          @click="canManageDataSource ? openEdit(ds) : undefined"
         >
+          <button v-if="canManageDataSource" type="button" class="ds-card__edit-target"
+            :aria-label="`${t('datasource.edit')}: ${ds.name}`"
+            :title="lastSyncFullTime(ds)" @click="openEdit(ds)" />
           <div class="ds-card__badge">
             <DataSourceTypeIcon :type="ds.type" variant="badge" />
           </div>
@@ -218,6 +228,7 @@ onBeforeUnmount(stopPolling)
                     shape="square"
                     size="small"
                     class="ds-card__action-btn"
+                    :aria-label="`${t('datasource.actions')}: ${ds.name}`"
                     @click.stop
                   >
                     <template #icon><t-icon name="ellipsis" /></template>
@@ -237,6 +248,12 @@ onBeforeUnmount(stopPolling)
                       </t-dropdown-item>
                       <t-dropdown-item @click="openLogs(ds)">
                         <t-icon name="root-list" /> {{ t('datasource.logs') }}
+                      </t-dropdown-item>
+                      <t-dropdown-item
+                        v-if="canManageDataSource && ds.type === 'nextcloud' && ds.status === 'active'"
+                        @click="openFailedCandidates(ds)"
+                      >
+                        <t-icon name="error-circle" /> {{ t('datasource.failedCandidates.title') }}
                       </t-dropdown-item>
                       <t-dropdown-item
                         v-if="canManageDataSource && ds.status === 'active'"
@@ -308,7 +325,7 @@ onBeforeUnmount(stopPolling)
               <span>{{ ds.error_message }}</span>
             </div>
           </div>
-        </component>
+        </div>
 
         <button
           v-if="canManageDataSource"
@@ -335,6 +352,12 @@ onBeforeUnmount(stopPolling)
       v-model:visible="logsVisible"
       :data-source-id="logsDsId"
       :data-source-name="logsDsName"
+    />
+
+    <NextcloudFailedCandidates
+      v-model:visible="failedCandidatesVisible"
+      :data-source-id="failedCandidatesDsId"
+      :data-source-name="failedCandidatesDsName"
     />
   </div>
 </template>
@@ -380,6 +403,21 @@ onBeforeUnmount(stopPolling)
     width: 100%;
     height: 100%;
   }
+}
+
+.ds-card__edit-target {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  border: 0;
+  border-radius: inherit;
+  background: transparent;
+  cursor: pointer;
+}
+
+.ds-card__edit-target:focus-visible {
+  outline: 2px solid var(--td-brand-color);
+  outline-offset: 2px;
 }
 
 .ds-card {
@@ -584,6 +622,8 @@ onBeforeUnmount(stopPolling)
   }
 
   &__actions {
+    position: relative;
+    z-index: 2;
     flex-shrink: 0;
     display: flex;
     align-items: center;

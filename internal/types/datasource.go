@@ -2,6 +2,7 @@ package types
 
 import (
 	"encoding/json"
+	"errors"
 	"log"
 	"strings"
 	"time"
@@ -38,6 +39,7 @@ const (
 	ConnectorTypeRSS         = "rss"
 	ConnectorTypeGitLab      = "gitlab"
 	ConnectorTypeIMA         = "ima"
+	ConnectorTypeNextcloud   = "nextcloud"
 
 	// Sync modes
 	SyncModeIncremental = "incremental"
@@ -182,6 +184,15 @@ type SyncLog struct {
 	// Error details if status is "failed"
 	ErrorMessage string `json:"error_message"`
 
+	// Versioned manual/cron queue intent is written with the running log before
+	// enqueue. Version zero belongs to old rows and must never be recovered.
+	RecoveryVersion    int        `json:"-" gorm:"column:recovery_version"`
+	RecoveryTrigger    string     `json:"-" gorm:"column:recovery_trigger"`
+	QueueTaskID        string     `json:"queue_task_id,omitempty" gorm:"column:queue_task_id"`
+	WorkerStartedAt    *time.Time `json:"-" gorm:"column:worker_started_at"`
+	WorkerActive       bool       `json:"-" gorm:"column:worker_active"`
+	WorkerAttemptToken string     `json:"-" gorm:"column:worker_attempt_token"`
+
 	// Detailed sync result (JSON-encoded)
 	Result JSON `json:"result" gorm:"type:jsonb"`
 
@@ -204,6 +215,16 @@ func (s *SyncLog) BeforeCreate(tx *gorm.DB) error {
 	}
 	if s.StartedAt.IsZero() {
 		s.StartedAt = time.Now().UTC()
+	}
+	if s.RecoveryVersion == 1 {
+		if s.RecoveryTrigger != "manual" && s.RecoveryTrigger != "schedule" {
+			return errors.New("invalid recoverable sync trigger")
+		}
+		want := "dssync:" + s.ID
+		if s.QueueTaskID != "" && s.QueueTaskID != want {
+			return errors.New("recoverable sync task ID mismatch")
+		}
+		s.QueueTaskID = want
 	}
 	return nil
 }
@@ -498,6 +519,21 @@ type DataSourceSyncPayload struct {
 	Initiator TaskInitiator `json:"initiator,omitempty"`
 	// Trigger distinguishes a user-requested run from a scheduler-created run.
 	Trigger string `json:"trigger,omitempty"`
+	// Event-triggered syncs are fenced to the still-active paired source.
+	// Ordinary manual/cron tasks leave these empty.
+	NextcloudEventConnectionID string `json:"nextcloud_event_connection_id,omitempty"`
+	NextcloudEventConfigSHA256 string `json:"nextcloud_event_config_sha256,omitempty"`
+	// A failed-candidate task is scoped to one current source generation.
+	NextcloudRetryKnowledgeBaseID string `json:"nextcloud_retry_knowledge_base_id,omitempty"`
+	NextcloudRetryExternalID      string `json:"nextcloud_retry_external_id,omitempty"`
+	NextcloudRetryETag            string `json:"nextcloud_retry_etag,omitempty"`
+	NextcloudRetryCandidateID     string `json:"nextcloud_retry_candidate_id,omitempty"`
+	NextcloudRetryInstanceID      string `json:"nextcloud_retry_instance_id,omitempty"`
+	NextcloudRetryBindingID       string `json:"nextcloud_retry_binding_id,omitempty"`
+	NextcloudRetryConfigSHA256    string `json:"nextcloud_retry_config_sha256,omitempty"`
+	NextcloudRetryPairOperationID string `json:"nextcloud_retry_pair_operation_id,omitempty"`
+	NextcloudRetryPairingEpoch    int64  `json:"nextcloud_retry_pairing_epoch,omitempty"`
+	NextcloudRetryLeaseToken      string `json:"nextcloud_retry_lease_token,omitempty"`
 
 	// Data source ID to sync
 	DataSourceID string `json:"data_source_id"`
