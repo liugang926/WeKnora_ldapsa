@@ -36,7 +36,8 @@ func runOriginalBodySchemaProbeCancelActual(t *testing.T, pg bool) {
 			}
 			probe := func(tx *gorm.DB) bool {
 				sql := tx.Statement.SQL.String()
-				return strings.Contains(sql, "original_body_payloads") &&
+				return tx.Statement.Context.Value(originalBodySchemaProbeTestKey{}) == "owned-probe" &&
+					strings.Contains(sql, "original_body_payloads") &&
 					(strings.Contains(sql, "sqlite_master") || strings.Contains(sql, "information_schema.tables"))
 			}
 			beforeCalls, afterCalls := 0, 0
@@ -64,6 +65,8 @@ func runOriginalBodySchemaProbeCancelActual(t *testing.T, pg bool) {
 			require.ErrorIs(t, queryErr, context.Canceled, "the real SQL query path reports cancellation; no AddError or predicate stub")
 			require.ErrorIs(t, err, context.Canceled, "a canceled schema probe cannot look like successful no-schema compatibility")
 			require.True(t, originalBodySchemaPresent(db), "the real table was not removed by cancellation")
+			require.Equal(t, 1, beforeCalls, "the separate uncanceled schema check must not retrigger the owned caller's callback")
+			require.Equal(t, 1, afterCalls)
 		})
 	}
 }
