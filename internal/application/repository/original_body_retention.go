@@ -110,9 +110,14 @@ func CheckOriginalBodyAvailableInTx(ctx context.Context, tx *gorm.DB, table, row
 	if e := bodyInternal(tx).Where("source_table=? AND row_key=?", table, rowID).Find(&heads).Error; e != nil {
 		return e
 	}
+	if len(heads) == 0 {
+		if descriptor, ok := bodyDescriptor(table); ok && descriptor.Mode == "vault" {
+			return ErrOriginalBodyUnavailable
+		}
+	}
 	for _, head := range heads {
 		var body originalBodyPayload
-		if e := bodyInternal(tx).Where("id=?", head.BodyID).Take(&body).Error; e != nil {
+		if e := bodyInternal(tx).Select("id,state").Where("id=?", head.BodyID).Take(&body).Error; e != nil {
 			return e
 		}
 		if body.State != "live" {

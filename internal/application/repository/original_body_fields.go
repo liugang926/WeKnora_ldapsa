@@ -142,22 +142,23 @@ func bodyScopeFromRow(tx *gorm.DB, d originalBodyFieldDescriptor, key string, ro
 		scope.Knowledge = key
 	}
 	if d.Table == "messages" || d.Table == "message_generation_origins" {
-		message := row
-		if d.Table == "message_generation_origins" {
-			var e error
-			message, e = bodySourceRow(tx, originalBodyFieldDescriptor{Table: "messages", Key: "id"}, bodyText(row["message_id"]))
-			if e != nil {
-				return scope, e
-			}
-		}
-		session, e := bodySourceRow(tx, originalBodyFieldDescriptor{Table: "sessions", Key: "id"}, bodyText(message["session_id"]))
+		// The immutable origin is inserted before its message. Its scope comes
+		// from that origin/session, never a later mutable indexed-knowledge link.
+		sessionID := bodyText(row["session_id"])
+		session, e := bodySourceRow(tx, originalBodyFieldDescriptor{Table: "sessions", Key: "id"}, sessionID)
 		if e != nil {
 			return scope, e
 		}
-		scope.Tenant = bodyUint(session["tenant_id"])
-		scope.Knowledge = bodyText(message["knowledge_id"])
-		scope.Lineage = bodyText(message["source_lineage"])
+		tenant := bodyUint(session["tenant_id"])
+		if d.Table == "message_generation_origins" && scope.Tenant != tenant {
+			return scope, ErrOriginalBodyUnavailable
+		}
+		scope.Tenant = tenant
+		scope.KB = ""
+		scope.Knowledge = ""
+		scope.OwnerID = sessionID + "/" + key
 	}
+
 	if scope.Knowledge != "" && (scope.Tenant == 0 || scope.KB == "") {
 		knowledge, e := bodySourceRow(tx, originalBodyFieldDescriptor{Table: "knowledges", Key: "id"}, scope.Knowledge)
 		if e != nil {
@@ -426,10 +427,10 @@ func InstallOriginalBodyRetentionCallbacks(db *gorm.DB) error {
 			return
 		}
 		table := tx.Statement.Table
-		if tx.Statement.Schema != nil {
-			table = tx.Statement.Schema.Table
-		}
 		d, ok := bodyDescriptor(table)
+		if !ok && tx.Statement.Schema != nil {
+			d, ok = bodyDescriptor(tx.Statement.Schema.Table)
+		}
 		if !ok {
 			return
 		}
@@ -533,7 +534,38 @@ func (s *OriginalBodyRetentionStore) captureStatement(tx *gorm.DB, d originalBod
 	}
 	return nil
 }
+func bodySelectedField(tx *gorm.DB, column string) bool {
+	if len(tx.Statement.Selects) == 0 {
+		return true
+	}
+	for _, selection := range tx.Statement.Selects {
+		for _, part := range strings.Split(selection, ",") {
+			value := strings.TrimSpace(part)
+			value = strings.Trim(value, "\"`")
+			if value == "*" || strings.HasSuffix(value, ".*") {
+				return true
+			}
+			if at := strings.LastIndex(value, "."); at >= 0 {
+				value = strings.Trim(value[at+1:], "\"`")
+			}
+			if value == column {
+				return true
+			}
+		}
+	}
+	return false
+}
 func (s *OriginalBodyRetentionStore) resolveStatement(tx *gorm.DB, d originalBodyFieldDescriptor) error {
+	selected := false
+	for _, field := range d.Columns {
+		if bodySelectedField(tx, bodyFieldColumn(field)) {
+			selected = true
+			break
+		}
+	}
+	if !selected {
+		return nil
+	}
 	return bodyVisit(tx.Statement.ReflectValue, func(v reflect.Value) error {
 		key := bodyRecordKey(tx, d, v)
 		if key == "" {
@@ -544,6 +576,9 @@ func (s *OriginalBodyRetentionStore) resolveStatement(tx *gorm.DB, d originalBod
 			return e
 		}
 		for _, head := range heads {
+			if !bodySelectedField(tx, bodyFieldColumn(head.ColumnName)) {
+				continue
+			}
 			var raw string
 			var field reflect.Value
 			if v.Kind() == reflect.Map {

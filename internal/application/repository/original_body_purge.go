@@ -182,15 +182,37 @@ func (s *OriginalBodyRetentionStore) fieldCurrent(tx *gorm.DB, head originalBody
 		}
 		return false, -1, nil
 	case "messages", "message_generation_origins":
-		message := row
+		messageID := head.RowKey
 		if d.Table == "message_generation_origins" {
-			message, e = bodySourceRow(tx, originalBodyFieldDescriptor{Table: "messages", Key: "id"}, bodyText(row["message_id"]))
-			if e != nil {
-				return true, 0, e
-			}
+			messageID = bodyText(row["message_id"])
 		}
-		if message["deleted_at"] != nil && bodyText(message["deleted_at"]) != "" {
+		var message struct {
+			ID, SessionID string
+			DeletedAt     gorm.DeletedAt
+		}
+		e := bodyInternal(tx).Unscoped().Table("messages").Select("id,session_id,deleted_at").Where("id=?", messageID).Take(&message).Error
+		if errors.Is(e, gorm.ErrRecordNotFound) {
 			return false, -1, nil
+		}
+		if e != nil {
+			return true, 0, e
+		}
+		if message.DeletedAt.Valid {
+			return false, message.DeletedAt.Time.UnixMilli() + 3600000, nil
+		}
+		var session struct {
+			ID        string
+			DeletedAt gorm.DeletedAt
+		}
+		e = bodyInternal(tx).Unscoped().Table("sessions").Select("id,deleted_at").Where("id=?", message.SessionID).Take(&session).Error
+		if errors.Is(e, gorm.ErrRecordNotFound) {
+			return false, -1, nil
+		}
+		if e != nil {
+			return true, 0, e
+		}
+		if session.DeletedAt.Valid {
+			return false, session.DeletedAt.Time.UnixMilli() + 3600000, nil
 		}
 		return true, 0, nil
 	case "sessions":
@@ -286,6 +308,63 @@ func (s *OriginalBodyRetentionStore) lockBodyScopes(tx *gorm.DB, heads []origina
 	for _, h := range heads {
 		if h.KnowledgeBaseID != "" {
 			keys[scope{h.TenantID, h.KnowledgeBaseID}] = true
+		}
+	}
+	// Saved message bodies use stable session/message identity. Their actual
+	// consumers lease KBs described by immutable admission control metadata,
+	// including historical admissions, never the mutable search-index pointer.
+	messageIDs := map[string]bool{}
+	for _, head := range heads {
+		if head.SourceTable == "messages" {
+			messageIDs[head.RowKey] = true
+		}
+		if head.SourceTable == "message_generation_origins" {
+			var origin struct{ MessageID string }
+			if e := bodyInternal(tx).Table("message_generation_origins").Select("message_id").Where("id=?", head.RowKey).Take(&origin).Error; e != nil {
+				return e
+			}
+			messageIDs[origin.MessageID] = true
+		}
+	}
+	if len(messageIDs) > 0 && tx.Migrator().HasTable("message_material_admissions") {
+		for id := range messageIDs {
+			var admissions []struct {
+				TenantID                        uint64
+				ExecutionContext, SourceLineage string
+			}
+			if e := bodyInternal(tx).Table("message_material_admissions").Select("tenant_id,execution_context,source_lineage").Where("message_id=?", id).Find(&admissions).Error; e != nil {
+				return e
+			}
+			for _, admission := range admissions {
+				var execution types.MessageExecutionContext
+				if e := json.Unmarshal([]byte(admission.ExecutionContext), &execution); e != nil {
+					return e
+				}
+				for _, kb := range append(execution.KnowledgeBaseIDs, execution.AgentKnowledgeBaseIDs...) {
+					if kb != "" {
+						keys[scope{admission.TenantID, kb}] = true
+					}
+				}
+				for _, tag := range execution.TagScopes {
+					if tag.KnowledgeBaseID != "" {
+						keys[scope{admission.TenantID, tag.KnowledgeBaseID}] = true
+					}
+				}
+				for _, knowledgeID := range execution.KnowledgeIDs {
+					var k struct{ KnowledgeBaseID string }
+					if e := bodyInternal(tx).Table("knowledges").Select("knowledge_base_id").Where("id=? AND tenant_id=?", knowledgeID, admission.TenantID).Take(&k).Error; e != nil {
+						return e
+					}
+					keys[scope{admission.TenantID, k.KnowledgeBaseID}] = true
+				}
+				var lineage types.SourceLineage
+				if e := json.Unmarshal([]byte(admission.SourceLineage), &lineage); e != nil {
+					return e
+				}
+				for _, source := range lineage.Sources {
+					keys[scope{source.TenantID, source.KnowledgeBaseID}] = true
+				}
+			}
 		}
 	}
 	for _, p := range parents {
