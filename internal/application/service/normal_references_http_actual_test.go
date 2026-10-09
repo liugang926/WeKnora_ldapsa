@@ -367,7 +367,10 @@ func (s *normalReferencesObservedStreamForTest) GetEvents(ctx context.Context, s
 		s.once.Do(func() { s.watcher <- ctx })
 	}
 	events, next, err := s.RedisStreamManager.GetEvents(ctx, session, message, offset)
-	if deadline, ok := ctx.Deadline(); ok && time.Until(deadline) < time.Minute && err == nil && len(events) == 0 {
+	// The ordinary SSE context is logger.CloneContext of the request: it
+	// has no deadline. The real stop watcher owns a two-hour deadline.
+	deadline, hasDeadline := ctx.Deadline()
+	if (!hasDeadline || time.Until(deadline) < time.Minute) && err == nil && len(events) == 0 {
 		s.emptyPolls.Add(1)
 	}
 	return events, next, err
