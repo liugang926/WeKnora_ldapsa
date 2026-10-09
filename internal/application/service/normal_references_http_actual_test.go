@@ -130,10 +130,12 @@ func runNormalReferencesActualHTTP(t *testing.T, pg bool, modes ...string) {
 	require.NoError(t, err)
 	defer response.Body.Close()
 	if mode == "producer-stop" {
+		remaining := 8*time.Second - time.Since(started)
+		require.Positive(t, remaining, "the unchanged HTTP deadline still bounds startup")
 		select {
 		case <-model.started:
-		case <-time.After(time.Second):
-			t.Fatal("the real original provider did not start")
+		case <-time.After(remaining):
+			t.Fatal("the real original provider did not start within the unchanged HTTP bound")
 		}
 		var assistant types.Message
 		require.NoError(t, f.DB.Select("id").Where("session_id=? AND role='assistant'", f.Session.ID).Take(&assistant).Error)
