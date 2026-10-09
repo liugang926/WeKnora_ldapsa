@@ -21,7 +21,7 @@ type MessageMaterialGuard struct {
 	ctx           context.Context
 	cancel        context.CancelFunc
 	leases        []repository.NextcloudContentLease
-	bodyLeases []string
+	bodyLeases    []string
 	stop          sync.WaitGroup
 	heartbeatStop chan struct{}
 	heartbeatOnce sync.Once
