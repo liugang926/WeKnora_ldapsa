@@ -13,7 +13,7 @@ import (
 )
 
 // A body gets a complete marker only at its actual authenticated producer.
-// The empty KB marker means the original producer consumed no KB scope; no
+// The empty KB row records completeness; a lone marker means no KB scope. No
 // marker means unknown, not an empty set inferred from current metadata.
 type originalBodyLeaseScope struct {
 	BodyID          string `gorm:"primaryKey"`
@@ -141,7 +141,7 @@ func (s *OriginalBodyRetentionStore) recordMessageLeaseScopes(tx *gorm.DB, id st
 				if e := bodyInternal(tx).Table("original_body_lease_scopes s").Select("s.*").Joins("JOIN original_body_field_heads h ON h.body_id=s.body_id").Where("h.source_table='message_generation_origins' AND h.row_key=?", proof.GenerationID).Find(&original).Error; e != nil {
 					return e
 				}
-				if len(original) == 0 {
+				if !bodyLeaseScopesComplete(original, proof.TenantID) {
 					return nil
 				} // Do not certify incomplete legacy parents.
 				for _, ref := range original {
@@ -315,4 +315,13 @@ func verifyBodyLeaseScopeSchema(db *gorm.DB) error {
 		return ErrOriginalBodyUnavailable
 	}
 	return nil
+}
+
+func bodyLeaseScopesComplete(rows []originalBodyLeaseScope, tenant uint64) bool {
+	for _, row := range rows {
+		if row.TenantID == tenant && row.KnowledgeBaseID == "" {
+			return true
+		}
+	}
+	return false
 }

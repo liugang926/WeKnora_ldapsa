@@ -317,7 +317,7 @@ func (s *OriginalBodyRetentionStore) lockBodyScopes(tx *gorm.DB, heads []origina
 		if e := bodyInternal(tx).Where("body_id=?", head.BodyID).Find(&resolved).Error; e != nil {
 			return e
 		}
-		if len(resolved) == 0 {
+		if !bodyLeaseScopesComplete(resolved, head.TenantID) {
 			return ErrOriginalBodyRetained
 		}
 		for _, scopeRef := range resolved {

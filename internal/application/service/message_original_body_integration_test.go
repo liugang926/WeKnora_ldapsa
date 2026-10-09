@@ -241,6 +241,14 @@ func runMessageBodyUnknownScopeSchema(t *testing.T, pg bool) {
 	n, e := body.PurgeDue(context.Background(), 100)
 	require.NoError(t, e)
 	require.Zero(t, n, "unknown legacy scopes remain protected")
+	var bodyID string
+	require.NoError(t, db.Raw("SELECT h.body_id FROM original_body_field_heads h JOIN message_generation_origins g ON g.id=h.row_key WHERE h.source_table='message_generation_origins' AND g.message_id=?", assistant.ID).Scan(&bodyID).Error)
+	require.NotEmpty(t, bodyID)
+	require.NoError(t, db.Exec("INSERT INTO original_body_lease_scopes(body_id,tenant_id,knowledge_base_id) VALUES(?,7,'kb')", bodyID).Error)
+	n, e = body.PurgeDue(context.Background(), 100)
+	require.NoError(t, e)
+	require.Zero(t, n, "a partial KB row without the authenticated completeness marker cannot supply old scope inventory")
+
 }
 func TestMessageBodyUnknownScopeSchemaSQLite(t *testing.T) {
 	runMessageBodyUnknownScopeSchema(t, false)
