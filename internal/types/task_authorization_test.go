@@ -18,6 +18,7 @@ func TestTaskAuthorizationDoesNotPromoteMachineOrAmbientUser(t *testing.T) {
 		require.True(t, ok)
 		require.NotEqual(t, PrincipalWebUser, principal.Type)
 		require.Empty(t, TaskInitiatorFromContext(ctx).UserID)
+		require.Zero(t, CallerFromContext(ctx).TenantID)
 	}
 	ctx := WithTaskAuthorization(context.Background(), 7, TaskInitiator{UserID: "user-1"})
 	principal, _ := PrincipalFromContext(ctx)

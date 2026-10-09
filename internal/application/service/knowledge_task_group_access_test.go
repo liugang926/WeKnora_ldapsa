@@ -67,7 +67,7 @@ func TestBackgroundTaskAuthorizationFailsClosedWithoutHuman(t *testing.T) {
 
 	require.ErrorIs(t, err, ErrResourceAccessDenied)
 	require.NotEqual(t, types.PrincipalWebUser, access.seenPrincipal.Type)
-	require.Equal(t, uint64(7), access.seenCaller.TenantID)
+	require.Zero(t, access.seenCaller.TenantID)
 }
 
 func TestBackgroundTaskAuthorizationPreservesLegacyWhenOverlayAbsent(t *testing.T) {
