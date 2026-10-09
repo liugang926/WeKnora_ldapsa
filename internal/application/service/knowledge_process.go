@@ -404,7 +404,7 @@ func (s *knowledgeService) processChunks(ctx context.Context,
 				logger.Warnf(ctx, "Nextcloud actual index selection unavailable: %v", err)
 				knowledge.ParseStatus = types.ParseStatusFailed
 				knowledge.ErrorMessage = "derived backend selection unavailable"
-				_ = s.repo.Update(ctx, knowledge)
+				_ = s.repo.UpdateKnowledge(ctx, knowledge)
 				return
 			}
 			engines = retrieveEngine.SelectedBackendTypes()
@@ -413,7 +413,7 @@ func (s *knowledgeService) processChunks(ctx context.Context,
 			logger.Warnf(ctx, "Nextcloud backend plan unavailable: %v", planErr)
 			knowledge.ParseStatus = types.ParseStatusFailed
 			knowledge.ErrorMessage = "derived backend plan unavailable"
-			_ = s.repo.Update(ctx, knowledge)
+			_ = s.repo.UpdateKnowledge(ctx, knowledge)
 			return
 		}
 	}

@@ -40,6 +40,7 @@ type gcDerivedInventory struct {
 	Audit                         []gcAuditEntry
 	Backend                       nextcloudBackendSelection
 	EmbeddingDimensions           map[string]int64
+	ResourceIdentities            map[string]string
 }
 type gcAuditEntry struct {
 	Table, Key, ID, Digest string
@@ -120,7 +121,7 @@ func gcSealLocalManifest(tx *gorm.DB, job nextcloudGCJob, nowMS int64) (nextclou
 			return existing, fmt.Errorf("unverified separate derived database")
 		}
 	}
-	inventory := gcDerivedInventory{Chunks: []string{}, Embeddings: []string{}, Resources: []string{}, Backend: backend, EmbeddingDimensions: map[string]int64{}}
+	inventory := gcDerivedInventory{Chunks: []string{}, Embeddings: []string{}, Resources: []string{}, Backend: backend, EmbeddingDimensions: map[string]int64{}, ResourceIdentities: map[string]string{}}
 	if e := tx.Table("chunks").Where("tenant_id=? AND knowledge_base_id=? AND knowledge_id=?", job.TenantID, job.KnowledgeBaseID, job.KnowledgeID).Order("id").Pluck("id", &inventory.Chunks).Error; e != nil {
 		return existing, e
 	}
@@ -207,6 +208,20 @@ func gcSealLocalManifest(tx *gorm.DB, job nextcloudGCJob, nowMS int64) (nextclou
 		inventory.Resources = append(inventory.Resources, ref)
 	}
 	sort.Strings(inventory.Resources)
+	for _, ref := range inventory.Resources {
+		handle, ok := types.ParseResourcePath(ref)
+		if !ok {
+			return existing, ErrNextcloudContentGCUncovered
+		}
+		var resource types.StoredResource
+		if e := tx.Unscoped().Where("handle=? AND tenant_id=?", handle, job.TenantID).Take(&resource).Error; e != nil {
+			return existing, e
+		}
+		if !scopedLocalGCPath(&resource) {
+			return existing, ErrNextcloudContentGCUncovered
+		}
+		inventory.ResourceIdentities[ref] = gcDerivedResourceIdentity(resource)
+	}
 	audit, e := gcAuditInventory(tx, job)
 	if e != nil {
 		return existing, e
@@ -498,6 +513,10 @@ func (s *NextcloudGCStore) deleteLocalChunkInTx(tx *gorm.DB, claim NextcloudCont
 	}
 	return s.derivedReceipt(tx, claim, job, "derived_chunk", id, rows, deletedCount, nowMS)
 }
+func gcDerivedResourceIdentity(r types.StoredResource) string {
+	body, _ := json.Marshal([]any{r.ID, r.Handle, r.TenantID, r.StorageBackendID, r.Provider, r.PhysicalPath, r.LocationHash, r.ContentHash, r.Size, r.SourceProvenance})
+	return recoverySHA(body)
+}
 func (s *NextcloudGCStore) verifyLocalDerivedGone(tx *gorm.DB, job nextcloudGCJob, inventory gcDerivedInventory) error {
 	var n int64
 	if e := tx.Table("chunks").Where("tenant_id=? AND knowledge_base_id=? AND knowledge_id=?", job.TenantID, job.KnowledgeBaseID, job.KnowledgeID).Count(&n).Error; e != nil {
@@ -525,6 +544,35 @@ func (s *NextcloudGCStore) verifyLocalDerivedGone(tx *gorm.DB, job nextcloudGCJo
 		}
 		if e = s.verifyEmbeddingPhysicalGone(tx, table, number, inventory.EmbeddingDimensions[id]); e != nil {
 			return e
+		}
+	}
+	for _, ref := range inventory.Resources {
+		handle, ok := types.ParseResourcePath(ref)
+		if !ok {
+			return ErrNextcloudContentLeaseDenied
+		}
+		var resource types.StoredResource
+		if e := tx.Unscoped().Where("handle=? AND tenant_id=?", handle, job.TenantID).Take(&resource).Error; e != nil {
+			return e
+		}
+		if inventory.ResourceIdentities[ref] == "" || gcDerivedResourceIdentity(resource) != inventory.ResourceIdentities[ref] {
+			return ErrNextcloudContentLeaseDenied
+		}
+		var own int64
+		if e := tx.Model(&types.ResourceBinding{}).Where("resource_id=? AND owner_type=? AND owner_id=?", resource.ID, types.ResourceOwnerKnowledge, job.KnowledgeID).Count(&own).Error; e != nil {
+			return e
+		}
+		if own != 0 {
+			return ErrNextcloudContentLeaseDenied
+		}
+		if resource.State != types.ResourceStateDeleted {
+			var refs int64
+			if e := tx.Model(&types.ResourceBinding{}).Where("resource_id=?", resource.ID).Count(&refs).Error; e != nil {
+				return e
+			}
+			if resource.State != types.ResourceStateActive || refs == 0 {
+				return ErrNextcloudContentLeaseDenied
+			}
 		}
 	}
 	return nil
