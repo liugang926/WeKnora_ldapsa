@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
@@ -24,18 +25,21 @@ import (
 // This test-only bridge lets the external HTTP tests use the real signed
 // machine ingestion fixture without introducing a service -> handler cycle.
 type NormalReferencesHTTPFixtureForTest struct {
-	DB       *gorm.DB
-	Store    *repository.KnowledgeInputProvenanceStore
-	Ctx      context.Context
-	Session  *types.Session
-	Sessions interfaces.SessionService
-	Messages interfaces.MessageService
-	KBs      interfaces.KnowledgeBaseService
-	Models   interfaces.ModelService
-	Config   *config.Config
-	Lineage  *types.SourceLineage
-	Revoke   func()
-	Cancel   func()
+	DB                 *gorm.DB
+	Store              *repository.KnowledgeInputProvenanceStore
+	Ctx                context.Context
+	Session            *types.Session
+	Sessions           interfaces.SessionService
+	Messages           interfaces.MessageService
+	KBs                interfaces.KnowledgeBaseService
+	Models             interfaces.ModelService
+	Config             *config.Config
+	Lineage            *types.SourceLineage
+	Revoke             func()
+	Cancel             func()
+	ProducerReturned   <-chan struct{}
+	CompletionReturned <-chan struct{}
+	CompletionError    <-chan error
 }
 
 type normalReferencesModelsForTest struct {
@@ -135,6 +139,10 @@ func NewNormalReferencesHTTPFixtureForTest(t *testing.T, pg bool, final chat.Cha
 		}
 	}})
 	chatpipeline.NewPluginChatCompletionStream(manager, models)
+	producerReturned := make(chan struct{})
+	completionReturned := make(chan struct{})
+	completionError := make(chan error, 1)
+	observedMessages := &normalReferencesObservedMessagesForTest{messageService: messages, returned: completionReturned, result: completionError}
 	sessions := &sessionService{cfg: cfg, sessionRepo: repository.NewSessionRepository(m.f.db), messageRepo: repository.NewMessageRepository(m.f.db), knowledgeBaseService: kbs,
 		knowledgeService: m.f.s, chunkService: m.f.s.chunkService, modelService: models, tenantService: tenantService, eventManager: manager, busyGate: NewSessionBusyGate(), groupAccess: groups}
 	ConfigureMessageSourceLineage(messages, sessions, &SessionForkService{}, manager, m.f.guard)
@@ -148,7 +156,7 @@ func NewNormalReferencesHTTPFixtureForTest(t *testing.T, pg bool, final chat.Cha
 	require.NoError(t, m.f.db.Create(session).Error)
 	original, err := m.f.store.CaptureKnowledgeOutputInputs(ctx, types.KnowledgeBuildInputCaptureRequest{TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: k.ID})
 	require.NoError(t, err)
-	return &NormalReferencesHTTPFixtureForTest{DB: m.f.db, Store: m.f.store, Ctx: ctx, Session: session, Sessions: normalReferencesSessionForTest{SessionService: sessions, mode: mode}, Messages: messages, KBs: kbs, Models: models, Config: cfg, Lineage: original.Proof.SourceLineage, Revoke: func() { m.personal.Store(false) }, Cancel: cancel}
+	return &NormalReferencesHTTPFixtureForTest{DB: m.f.db, Store: m.f.store, Ctx: ctx, Session: session, Sessions: normalReferencesSessionForTest{SessionService: sessions, mode: mode, returned: producerReturned}, Messages: observedMessages, KBs: kbs, Models: models, Config: cfg, Lineage: original.Proof.SourceLineage, Revoke: func() { m.personal.Store(false) }, Cancel: cancel, ProducerReturned: producerReturned, CompletionReturned: completionReturned, CompletionError: completionError}
 }
 
 type normalReferencesTenantForTest struct {
@@ -178,10 +186,12 @@ func (p normalReferencesCheckpointForTest) OnEvent(ctx context.Context, kind typ
 
 type normalReferencesSessionForTest struct {
 	interfaces.SessionService
-	mode string
+	mode     string
+	returned chan struct{}
 }
 
 func (s normalReferencesSessionForTest) KnowledgeQA(ctx context.Context, req *types.QARequest, bus *event.EventBus) error {
+	defer close(s.returned) // The actual production service returned; no fabricated stream result.
 	if s.mode == "unknown-prefix" {
 		// Explicit unproven prior-output negative. The real producer must never
 		// clear the strict consumer's unknown prefix when its own proof arrives.
@@ -198,4 +208,22 @@ func (s normalReferencesSessionForTest) KnowledgeQA(ctx context.Context, req *ty
 		bus.On(kind, func(context.Context, event.Event) error { return errors.New("controlled actual subscriber refusal") })
 	}
 	return s.SessionService.KnowledgeQA(ctx, req, bus)
+}
+
+// Embed the real concrete message service so all original-material capabilities
+// remain visible to the production handler. Only observe an actual completed
+// UpdateMessage return; do not create a receipt, origin, or completion proof.
+type normalReferencesObservedMessagesForTest struct {
+	*messageService
+	returned chan struct{}
+	result   chan error
+	once     sync.Once
+}
+
+func (s *normalReferencesObservedMessagesForTest) UpdateMessage(ctx context.Context, message *types.Message) error {
+	err := s.messageService.UpdateMessage(ctx, message)
+	if message.Role == "assistant" && message.IsCompleted {
+		s.once.Do(func() { s.result <- err; close(s.returned) })
+	}
+	return err
 }
