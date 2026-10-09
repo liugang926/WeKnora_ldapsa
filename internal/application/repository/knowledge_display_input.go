@@ -153,7 +153,10 @@ func cacheKnowledgeDisplayInputs(tx *gorm.DB, ids []string) (*gorm.DB, error) {
 			cache.versions[knowledgeDisplayCacheID(v.Kind, v.RowID)] = v.Revision
 		}
 		var origins []knowledgeDisplayInputOrigin
-		if err := tx.Table("knowledge_display_input_origins o").Select("o.*").Joins("JOIN knowledge_display_versions v ON v.kind=o.kind AND v.row_id=o.row_id AND v.revision=o.revision").Where("o.row_id IN ?", ids[first:end]).Scan(&origins).Error; err != nil {
+		// Original inputs are body-vault references after migration 152. Keep
+		// the model schema and Query callbacks through this aliased batch read
+		// so the original-body resolver authenticates and hydrates each input.
+		if err := tx.Model(&knowledgeDisplayInputOrigin{}).Table("knowledge_display_input_origins o").Select("o.*").Joins("JOIN knowledge_display_versions v ON v.kind=o.kind AND v.row_id=o.row_id AND v.revision=o.revision").Where("o.row_id IN ?", ids[first:end]).Find(&origins).Error; err != nil {
 			return nil, err
 		}
 		for _, o := range origins {
