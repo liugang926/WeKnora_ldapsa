@@ -318,6 +318,34 @@ directory upgrade/rollback and preservation of existing workspace data. Other
 Go and frontend CI retain the full regression suites and normal Docker builds.
 Each fixture has its own Compose project, and debug ports bind to loopback.
 
+### Completion validation, 2026-10-09
+
+The complete Go suite at code revision `35e630125203c441166ded588ad8141baf4cdc5e`
+passed 11,435 tests, with 40 existing external-environment/opt-in skips. `go vet`
+and the server build passed. The only later Go change before submission is
+field-tag whitespace at `13995a35ef214fdfd31fb66626d44f8bc5f1a8a9`;
+golangci-lint 2.12.2 against checked main `c5ee8c4e` reports zero new issues
+with the unchanged lint configuration.
+
+- Disposable PostgreSQL 17: full migration chain to 115, directory 108→109→108
+  round trip, constraints and preservation checks pass. SQLite upgrade/schema/
+  rollback tests through 34 pass in the same database package run.
+- Isolated LDAP wire suite: all five tests pass on the submitted adapter,
+  including both TLS transports, paging, Bind, ordered failover and untrusted
+  certificate rejection. Directory cancellation/deadline race tests also pass.
+- Frontend: 1,217 tests pass, one existing human-handoff fixture is skipped;
+  Vue type-check and Vite production build pass. Standard UI Dockerfile builds
+  the arm64 image `weknora-ldap-completion-ui:20261009-group-edit`, image ID
+  `sha256:8becfb4e49348c8987e12bcaf502d3f60bc51157b37d15c3bc485900999e490e`.
+- Bash acceptance/fixture syntax, workflow actionlint and clean Git diff checks
+  pass. Standard backend `WITH_ANYDOC=1` image verification remains a required
+  PR check; consult the PR's exact-head checks for its result.
+
+The local Go runner needed Debian's `python3-venv` for an existing skill-runtime
+test. This dependency was added to an isolated test image; that test then passed
+without changing or skipping it. No running deployment was rebuilt or restarted
+by this completion work. Enterprise AD acceptance remains outside this run.
+
 ## Real AD acceptance checklist (not yet executed)
 
 Run `scripts/ldap/acceptance-real-ad.sh` from a secured administrator host.
