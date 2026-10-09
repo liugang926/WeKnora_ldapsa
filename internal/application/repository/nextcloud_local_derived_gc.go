@@ -263,7 +263,10 @@ func (s *NextcloudGCStore) runLocalDerived(ctx context.Context, id string, now t
 			if source.State != "tombstone" && source.CandidateKnowledgeID == identity.KnowledgeID {
 				return ErrNextcloudContentLeaseDenied
 			}
-			return s.verifyLocalDerivedGone(tx, identity, inventory)
+			if e := s.verifyLocalDerivedGone(tx, identity, inventory); e != nil {
+				return e
+			}
+			return s.verifyLocalResourceRefs(tx, identity, inventory)
 		} else if !errors.Is(e, gorm.ErrRecordNotFound) {
 			return e
 		}
@@ -546,6 +549,9 @@ func (s *NextcloudGCStore) verifyLocalDerivedGone(tx *gorm.DB, job nextcloudGCJo
 			return e
 		}
 	}
+	return nil
+}
+func (s *NextcloudGCStore) verifyLocalResourceRefs(tx *gorm.DB, job nextcloudGCJob, inventory gcDerivedInventory) error {
 	for _, ref := range inventory.Resources {
 		handle, ok := types.ParseResourcePath(ref)
 		if !ok {
@@ -587,6 +593,9 @@ func (s *NextcloudGCStore) finishLocalManifestInTx(tx *gorm.DB, job nextcloudGCJ
 	}
 	if resourcesPending != 0 {
 		return nil
+	}
+	if e := s.verifyLocalResourceRefs(tx, job, inventory); e != nil {
+		return e
 	}
 	var receipts int64
 	if e := tx.Model(&nextcloudDerivedGCReceipt{}).Where("job_id=?", job.ID).Count(&receipts).Error; e != nil {
