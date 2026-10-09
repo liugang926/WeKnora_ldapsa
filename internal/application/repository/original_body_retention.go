@@ -99,6 +99,29 @@ type originalBodyInternalKey struct{}
 // Shared with actual material/history consumers, including message generation
 // origins. This never authenticates cached body by loading a newer current row.
 func CheckOriginalBodyAvailableInTx(ctx context.Context, tx *gorm.DB, table, rowID string) error {
+	return checkOriginalBodyAvailableForHeads(ctx, tx, table, rowID, nil)
+}
+
+func sameOriginalBodyHeads(before, after []originalBodyFieldHead) bool {
+	if len(before) != len(after) {
+		return false
+	}
+	byID := make(map[string]originalBodyFieldHead, len(before))
+	for _, head := range before {
+		byID[head.SlotID] = head
+	}
+	for _, head := range after {
+		if original, ok := byID[head.SlotID]; !ok || original != head {
+			return false
+		}
+	}
+	return true
+}
+
+func checkOriginalBodyAvailableForHeads(ctx context.Context, tx *gorm.DB, table, rowID string, captured []originalBodyFieldHead) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if !originalBodySchemaPresent(tx) {
 		return nil
 	}
@@ -106,9 +129,18 @@ func CheckOriginalBodyAvailableInTx(ctx context.Context, tx *gorm.DB, table, row
 	if e := store.checkJournalInTx(tx); e != nil {
 		return e
 	}
+	var initialJournal originalBodyJournalHead
+	if store.journal != nil {
+		if err := bodyInternal(tx).Where("id=1").Take(&initialJournal).Error; err != nil {
+			return err
+		}
+	}
 	var heads []originalBodyFieldHead
 	if e := bodyInternal(tx).Where("source_table=? AND row_key=?", table, rowID).Find(&heads).Error; e != nil {
 		return e
+	}
+	if captured != nil && !sameOriginalBodyHeads(captured, heads) {
+		return ErrOriginalBodyUnavailable
 	}
 	if len(heads) == 0 {
 		if descriptor, ok := bodyDescriptor(table); ok && descriptor.Mode == "vault" {
@@ -127,7 +159,26 @@ func CheckOriginalBodyAvailableInTx(ctx context.Context, tx *gorm.DB, table, row
 			return e
 		}
 	}
-	return nil
+	var finalHeads []originalBodyFieldHead
+	if err := bodyInternal(tx).Where("source_table=? AND row_key=?", table, rowID).Find(&finalHeads).Error; err != nil {
+		return err
+	}
+	if !sameOriginalBodyHeads(heads, finalHeads) {
+		return ErrOriginalBodyUnavailable
+	}
+	if store.journal != nil {
+		if err := store.checkJournalInTx(tx); err != nil {
+			return err
+		}
+		var finalJournal originalBodyJournalHead
+		if err := bodyInternal(tx).Where("id=1").Take(&finalJournal).Error; err != nil {
+			return err
+		}
+		if initialJournal != finalJournal {
+			return ErrOriginalBodyUnavailable
+		}
+	}
+	return ctx.Err()
 }
 func (s *OriginalBodyRetentionStore) resolveInTx(tx *gorm.DB, head originalBodyFieldHead, ref originalBodyReference) (string, error) {
 	if ref.Version != 1 || ref.SlotID != head.SlotID || ref.BodyID != head.BodyID {

@@ -616,6 +616,7 @@ func (s *OriginalBodyRetentionStore) resolveStatement(tx *gorm.DB, d originalBod
 		if e := bodyInternal(tx).Where("source_table=? AND row_key=?", d.Table, key).Find(&heads).Error; e != nil {
 			return e
 		}
+		checkInlineRow := false
 		for _, head := range heads {
 			if !bodySelectedField(tx, bodyFieldColumn(head.ColumnName)) {
 				continue
@@ -672,13 +673,18 @@ func (s *OriginalBodyRetentionStore) resolveStatement(tx *gorm.DB, d originalBod
 					return e
 				}
 			} else {
-				if e := CheckOriginalBodyAvailableInTx(tx.Statement.Context, tx, d.Table, key); e != nil {
-					return e
-				}
+				checkInlineRow = true
 				if d.Mode == "vault" && raw != "" {
 					return ErrOriginalBodyUnavailable
 				} // inline restore of an original snapshot
 			}
+		}
+		if checkInlineRow {
+			// Validate the whole row, including unselected heads, once at the
+			// final return boundary. This is row-local; no journal/pin result
+			// survives to a different row, SQL operation or request. Each vault
+			// reference still passes its own slot/body/SHA checks above.
+			return checkOriginalBodyAvailableForHeads(tx.Statement.Context, tx, d.Table, key, heads)
 		}
 		return nil
 	})
