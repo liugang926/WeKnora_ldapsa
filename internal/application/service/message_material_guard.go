@@ -13,16 +13,18 @@ import (
 
 type historyMaterialGuardContextKey struct{}
 type MessageMaterialGuard struct {
-	mu       sync.Mutex
-	store    *repository.KnowledgeInputProvenanceStore
-	verifier *messageService
-	snapshot *types.MessageMaterialSnapshot
-	plan     *types.MessageMaterialReadPlan
-	ctx      context.Context
-	cancel   context.CancelFunc
-	leases   []repository.NextcloudContentLease
-	stop     sync.WaitGroup
-	once     sync.Once
+	mu            sync.Mutex
+	store         *repository.KnowledgeInputProvenanceStore
+	verifier      *messageService
+	snapshot      *types.MessageMaterialSnapshot
+	plan          *types.MessageMaterialReadPlan
+	ctx           context.Context
+	cancel        context.CancelFunc
+	leases        []repository.NextcloudContentLease
+	stop          sync.WaitGroup
+	heartbeatStop chan struct{}
+	heartbeatOnce sync.Once
+	once          sync.Once
 }
 
 func (s *messageService) beginMessageMaterialRead(ctx context.Context, request types.MessageMaterialReadRequest) (*MessageMaterialGuard, error) {
@@ -34,7 +36,7 @@ func (s *messageService) beginMessageMaterialRead(ctx context.Context, request t
 		return nil, err
 	}
 	leaseCtx, cancel := context.WithCancel(ctx)
-	guard := &MessageMaterialGuard{store: s.materialStore, verifier: s, plan: plan, ctx: leaseCtx, cancel: cancel, leases: []repository.NextcloudContentLease{}}
+	guard := &MessageMaterialGuard{store: s.materialStore, verifier: s, plan: plan, ctx: leaseCtx, cancel: cancel, leases: []repository.NextcloudContentLease{}, heartbeatStop: make(chan struct{})}
 	store := s.materialStore.ContentLeaseStore()
 	owner := uuid.NewString()
 	broad := map[types.KnowledgeSearchScope]repository.NextcloudContentLease{}
@@ -95,6 +97,8 @@ func (s *messageService) beginMessageMaterialRead(ctx context.Context, request t
 		for {
 			select {
 			case <-runCtx.Done():
+				return
+			case <-guard.heartbeatStop:
 				return
 			case <-ticker.C:
 				if guard.Recheck() != nil {
@@ -232,4 +236,12 @@ func (g *MessageMaterialGuard) advanceOwnCompletionLocked(ctx context.Context) e
 	g.plan = plan
 	g.snapshot = updated
 	return nil
+}
+
+func (g *MessageMaterialGuard) stopOriginalHeartbeat() {
+	if g == nil {
+		return
+	}
+	g.heartbeatOnce.Do(func() { close(g.heartbeatStop) })
+	g.stop.Wait()
 }

@@ -1,0 +1,15 @@
+# Rewind from original message materials
+
+Parent: `38bed03a0a80e45b52c8992273ffa431d08b8e06`. No SQL migration.
+
+The actual SessionRewindService uses the configured native message service and its original-material store. The selected point is read as metadata under the current transaction-bound owner/actor. The read plan pins all current original candidates, including the suffix that will be deleted, and acquires actual parent/source scopes before bodies are consumed. The kept prefix used for reset selection is derived from the original captured rows. User points are excluded from the kept prefix; completed assistant points remain.
+
+The actual message repository performs the fixed cut and deletion in one transaction. It rechecks the original plan, material digests/counters, membership/owner/current actor and actual lease coverage, then deletes precisely the authenticated IDs. It returns only cleanup identities and knowledge pointers; deleted text is not reread for cleanup. Remote SourceGuard runs before the transaction; it is never replaced by the physical leases.
+
+Original scopes remain held through system control, the atomic writer, cleanup and the actual HTTP result Write. The actual delete transaction mints a private own-deletion receipt: original plan, post-delete plan, removed original proofs, post-delete body and field counters. Remaining material proofs must equal the original set minus exactly the removed IDs. The final writer checks current actor/source, leases, result bytes and these exact counters; it cannot re-plan unrelated mutations. Ordinary synchronous callers close their guards before returning; HTTP explicitly retains them until final serialization. Cleanup knowledge pointers must match the immutable actual history-producer directory, so an arbitrary current knowledge_id cannot authorize cleanup deletion.
+
+Cached SandboxCheckpoint/ForkBootstrap reset commands have no dedicated actual producer receipt here and remain unavailable. New legal histories without such commands support ordinary rewind. Legacy body materials and unknown generated fields cannot be admitted by current rows.
+
+Actual caller coverage: production Rewind service → native metadata plan → original capture/leases → guarded atomic delete → knowledge/suggestion/artifact cleanup. Tests use SQLite pool1 and local callbacks, never paid models. Fresh PostgreSQL pool1 actual own-delete and output-current-actor revocation pass. Actual public HTTP covers ordinary and signed sources, user/assistant cuts, current source/actor revocation, remaining/deleted body/control ABA, owner ABA, HTTP cancellation, lease expiry, unknown checkpoints and zero remaining leases. An unrelated current knowledge cleanup pointer is rejected before deletion.
+
+Remaining scope includes actual generated workspace checkpoint producers, artifact catalog cleanup provenance, steer injection controls, memory cursor readers and cross-tenant Agent acceptance. Standalone transcript import/export APIs were not found in the current call graph.
