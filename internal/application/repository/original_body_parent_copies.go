@@ -238,8 +238,23 @@ func (v *parentCopyEvidence) generated(snapshot *types.MessageMaterialSnapshot, 
 			return ErrOriginalBodyRetained
 		}
 		digest, err := KnowledgeInputDigest(value)
-		if err != nil || digest != admission.BodyDigest {
+		if err != nil {
 			return ErrOriginalBodyRetained
+		}
+		if digest != admission.BodyDigest {
+			// The real old Message serializer used omitempty for these arrays.
+			// A missing JSON leaf can represent its original typed empty slice.
+			// Try only that empty shape against the immutable original digest;
+			// omitted nonempty fields still fail, and no original seal changes.
+			if proof.Field == "images" && len(message.Images) == 0 {
+				digest, err = KnowledgeInputDigest(types.MessageImages{})
+			}
+			if proof.Field == "attachments" && len(message.Attachments) == 0 {
+				digest, err = KnowledgeInputDigest(types.MessageAttachments{})
+			}
+			if err != nil || digest != admission.BodyDigest {
+				return ErrOriginalBodyRetained
+			}
 		}
 	}
 	if err := v.addLineage(&lineage); err != nil {

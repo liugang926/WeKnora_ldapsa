@@ -145,7 +145,7 @@ func runParentCopyActualGeneratedDependency(t *testing.T, pg bool) {
 					}
 					bodyID := value.Index(0).FieldByName("BodyID").String()
 					var domain string
-					require.NoError(t, tx.Table("original_body_payloads").Select("origin_domain_sha256").Where("id=?", bodyID).Scan(&domain).Error)
+					require.NoError(t, tx.Session(&gorm.Session{NewDB: true}).Table("original_body_payloads").Select("origin_domain_sha256").Where("id=?", bodyID).Scan(&domain).Error)
 					identity := sha256.Sum256([]byte("7///message_generated_field_admissions/" + carrierID))
 					if domain != hex.EncodeToString(identity[:]) {
 						return
@@ -180,7 +180,12 @@ func runParentCopyActualGeneratedDependency(t *testing.T, pg bool) {
 					v.FieldByName("ParentMaterials").SetString(string(oldBytes))
 				}
 			}))
-			require.NoError(t, messages.UpdateMessageRenderedContent(copyWriter, session.ID, host.ID, "actual new rendered result"))
+			writeErr := messages.UpdateMessageRenderedContent(copyWriter, session.ID, host.ID, "actual new rendered result")
+			if mode == "wrong-generation" || mode == "wrong-admission" {
+				require.Error(t, writeErr, "the actual writer recheck must refuse an untrusted old parent association")
+			} else {
+				require.NoError(t, writeErr)
+			}
 			require.NoError(t, m.f.db.Callback().Create().Remove("old-parent-copy-serializer"))
 			if mode == "missing-existing-scope" || mode == "corrupt-existing-scope" {
 				require.NoError(t, m.f.db.Callback().Create().Remove("historical-copy-scope-corruption"))

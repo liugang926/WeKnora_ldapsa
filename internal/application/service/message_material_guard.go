@@ -191,6 +191,142 @@ func closeHistoryMaterialGuard(ctx context.Context) {
 	}
 }
 
+// prepareOwnPlanGrowthLocked runs only after the immutable own-write transfer
+// has passed. New scopes belong to this guard, not a borrowed sibling/slot
+// context. Preserve its original caller/cancel values and its previous leases.
+func (g *MessageMaterialGuard) checkOwnPlanGrowthAuthorization(ctx, marked context.Context, plan *types.MessageMaterialReadPlan, updated *types.MessageMaterialSnapshot) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := marked.Err(); err != nil {
+		return err
+	}
+	if g.verifier == nil || g.verifier.sourceLineageGuard == nil {
+		return access.ErrNextcloudPublicationUnavailable
+	}
+	targets := []*types.SearchTarget{}
+	for _, scope := range plan.Scopes {
+		targets = append(targets, &types.SearchTarget{Type: types.SearchTargetTypeKnowledgeBase, TenantID: scope.TenantID, KnowledgeBaseID: scope.KBID})
+	}
+	if err := g.verifier.sourceLineageGuard.Check(marked, plan.SourceLineage, access.LineageReadScope{Targets: targets}); err != nil {
+		return err
+	}
+	if len(updated.Messages) > 0 {
+		if err := g.verifier.CheckMessagePublications(marked, updated.Messages); err != nil {
+			return err
+		}
+		if err := g.store.CheckKnowledgeHistoryOriginalSources(marked, updated.Messages); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (g *MessageMaterialGuard) releaseAddedOwnBodyLeases(ids []string) {
+	cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	for i := len(ids) - 1; i >= 0; i-- {
+		_ = g.store.ReleaseMessageBodyReadLease(cleanup, ids[i])
+	}
+}
+
+func (g *MessageMaterialGuard) prepareOwnPlanGrowthLocked(ctx context.Context, plan *types.MessageMaterialReadPlan, updated *types.MessageMaterialSnapshot) (context.Context, []repository.NextcloudContentLease, func(), error) {
+	added := []repository.NextcloudContentLease{}
+	rollback := func() {
+		cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		for i := len(added) - 1; i >= 0; i-- {
+			_ = g.store.ContentLeaseStore().ReleaseLease(cleanup, added[i].ID)
+		}
+	}
+	fail := func(err error) (context.Context, []repository.NextcloudContentLease, func(), error) {
+		rollback()
+		return g.ctx, nil, func() {}, err
+	}
+	if err := ctx.Err(); err != nil {
+		return fail(err)
+	}
+	if err := g.ctx.Err(); err != nil {
+		return fail(err)
+	}
+	leases := append([]repository.NextcloudContentLease{}, g.leases...)
+	broad := map[types.KnowledgeSearchScope]repository.NextcloudContentLease{}
+	for _, lease := range leases {
+		if lease.Kind == repository.NextcloudContentReadLease && lease.KnowledgeID == "" {
+			broad[types.KnowledgeSearchScope{TenantID: lease.TenantID, KBID: lease.KnowledgeBaseID}] = lease
+		}
+	}
+	for _, scope := range plan.Scopes {
+		if _, exists := broad[scope]; exists {
+			continue
+		}
+		lease, err := g.store.ContentLeaseStore().AcquireKBRead(g.ctx, scope.TenantID, scope.KBID, uuid.NewString(), 2*time.Minute)
+		if err != nil {
+			return fail(err)
+		}
+		added = append(added, lease)
+		leases = append(leases, lease)
+		broad[scope] = lease
+	}
+	for _, source := range plan.SourceLineage.Sources {
+		found := false
+		originalScope := false
+		for _, captured := range g.plan.SourceLineage.Sources {
+			if captured == source {
+				originalScope = true
+			}
+		}
+		for _, lease := range leases {
+			// The lease struct does not expose datasource/external ID. Its
+			// original owning plan supplies that full immutable source tuple;
+			// SQL coverage then verifies the fence tuple and epoch again.
+			if originalScope && lease.Kind == repository.NextcloudContentReadLease && lease.TenantID == source.TenantID && lease.KnowledgeBaseID == source.KnowledgeBaseID && lease.KnowledgeID == source.KnowledgeID && uint64(lease.Epoch) == source.Revision {
+				found = true
+			}
+		}
+		if found {
+			continue
+		}
+		kb, exists := broad[types.KnowledgeSearchScope{TenantID: source.TenantID, KBID: source.KnowledgeBaseID}]
+		if !exists {
+			return fail(repository.ErrNextcloudContentGCUncovered)
+		}
+		lease, err := g.store.ContentLeaseStore().UpgradeKBRead(g.ctx, kb.ID, repository.NextcloudContentScope{TenantID: source.TenantID, KnowledgeBaseID: source.KnowledgeBaseID, KnowledgeID: source.KnowledgeID, DataSourceID: source.DataSourceID, ExternalID: source.ExternalID}, kb.OwnerID, 2*time.Minute)
+		if err != nil {
+			return fail(err)
+		}
+		added = append(added, lease)
+		leases = append(leases, lease)
+		if uint64(lease.Epoch) != source.Revision {
+			return fail(repository.ErrKnowledgeInputChanged)
+		}
+	}
+	marked := g.ctx
+	var err error
+	if len(leases) > 0 {
+		marked, err = repository.WithFAQReadLeaseCoverage(marked, leases)
+		if err != nil {
+			return fail(err)
+		}
+	}
+	marked, err = repository.WithMessageMaterialReadPlan(marked, plan)
+	if err != nil {
+		return fail(err)
+	}
+	if err := ctx.Err(); err != nil {
+		return fail(err)
+	}
+	if err := marked.Err(); err != nil {
+		return fail(err)
+	}
+	// Raw-user snapshots may omit unconsumed generated fields; still check
+	// the full original union, source and actor after physical acquisition.
+	if err := g.checkOwnPlanGrowthAuthorization(ctx, marked, plan, updated); err != nil {
+		return fail(err)
+	}
+	return marked, leases, rollback, nil
+}
+
 func (g *MessageMaterialGuard) advanceOwnGeneratedField(ctx context.Context) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -202,7 +338,7 @@ func (g *MessageMaterialGuard) advanceOwnGeneratedField(ctx context.Context) err
 	if err != nil {
 		return err
 	}
-	marked, err := repository.WithMessageMaterialReadPlan(g.ctx, plan)
+	marked, leases, rollback, err := g.prepareOwnPlanGrowthLocked(ctx, plan, updated)
 	if err != nil {
 		return err
 	}
@@ -210,8 +346,17 @@ func (g *MessageMaterialGuard) advanceOwnGeneratedField(ctx context.Context) err
 	// earlier body leases until the same model/output guard finally closes.
 	bodyLeases, err := g.store.AcquireMessageBodyReadLeases(marked, plan, uuid.NewString(), 2*time.Minute, g.bodyLeases)
 	if err != nil {
+		rollback()
 		return err
 	}
+	// Cancellation/withdrawal can commit during body acquisition. Install no
+	// new snapshot and release only this transition's newly acquired pins.
+	if err := g.checkOwnPlanGrowthAuthorization(ctx, marked, plan, updated); err != nil {
+		g.releaseAddedOwnBodyLeases(bodyLeases)
+		rollback()
+		return err
+	}
+	g.leases = leases
 	g.bodyLeases = append(g.bodyLeases, bodyLeases...)
 	// New immutable own admission has already passed the exact transfer check.
 	// Use only the new matching plan; old unrelated plans are not re-certified.
@@ -261,14 +406,23 @@ func (g *MessageMaterialGuard) advanceOwnCompletionLocked(ctx context.Context) e
 	if err != nil {
 		return err
 	}
-	marked, err := repository.WithMessageMaterialReadPlan(g.ctx, plan)
+	marked, leases, rollback, err := g.prepareOwnPlanGrowthLocked(ctx, plan, updated)
 	if err != nil {
 		return err
 	}
 	bodyLeases, err := g.store.AcquireMessageBodyReadLeases(marked, plan, uuid.NewString(), 2*time.Minute, g.bodyLeases)
 	if err != nil {
+		rollback()
 		return err
 	}
+	// Cancellation/withdrawal can commit during body acquisition. Install no
+	// new snapshot and release only this transition's newly acquired pins.
+	if err := g.checkOwnPlanGrowthAuthorization(ctx, marked, plan, updated); err != nil {
+		g.releaseAddedOwnBodyLeases(bodyLeases)
+		rollback()
+		return err
+	}
+	g.leases = leases
 	g.bodyLeases = append(g.bodyLeases, bodyLeases...)
 	g.ctx = marked
 	g.plan = plan
