@@ -1,9 +1,13 @@
 package handler
 
 import (
+	"context"
 	stderrors "errors"
 	"net/http"
+	"time"
 
+	"github.com/Tencent/WeKnora/internal/application/access"
+	"github.com/Tencent/WeKnora/internal/application/repository"
 	"github.com/Tencent/WeKnora/internal/application/service"
 	"github.com/Tencent/WeKnora/internal/errors"
 	"github.com/Tencent/WeKnora/internal/logger"
@@ -28,13 +32,47 @@ import (
 // access — that lookup answers "is the caller the creator of THIS
 // resource", not "does the caller's tenant have access").
 type ChunkHandler struct {
-	service   interfaces.ChunkService
-	kgService interfaces.KnowledgeService
+	service          interfaces.ChunkService
+	kgService        interfaces.KnowledgeService
+	publicationGuard *access.NextcloudPublicationGuard
+	contentLeases    nextcloudHTTPReadLeaseStore
+	leaseHeartbeat   time.Duration
+	publicationCheck func(context.Context, *types.Knowledge) error // test seam
 }
 
 // NewChunkHandler creates a new chunk handler.
 func NewChunkHandler(service interfaces.ChunkService, kgService interfaces.KnowledgeService) *ChunkHandler {
 	return &ChunkHandler{service: service, kgService: kgService}
+}
+
+// ConfigureChunkHandlerPublicationGuard installs the current source-publication verifier.
+func ConfigureChunkHandlerPublicationGuard(h *ChunkHandler, guard *access.NextcloudPublicationGuard) {
+	if h != nil {
+		h.publicationGuard = guard
+	}
+}
+
+// ConfigureChunkHandlerContentLeaseStore installs the durable source-content lease store.
+func ConfigureChunkHandlerContentLeaseStore(h *ChunkHandler, store *repository.NextcloudContentLeaseStore) {
+	if h != nil {
+		h.contentLeases = store
+	}
+}
+
+func (h *ChunkHandler) loadPublishedKnowledge(ctx context.Context, knowledgeID string) (*types.Knowledge, error) {
+	if h.kgService == nil {
+		return nil, errors.NewServiceUnavailableError("Cannot verify knowledge source")
+	}
+	knowledge, err := h.kgService.GetKnowledgeByIDOnly(ctx, knowledgeID)
+	if err != nil || knowledge == nil {
+		return nil, errors.NewNotFoundError("Knowledge not found")
+	}
+	if h.publicationCheck != nil {
+		err = h.publicationCheck(ctx, knowledge)
+	} else {
+		err = checkKnowledgePublication(ctx, h.publicationGuard, knowledge)
+	}
+	return knowledge, err
 }
 
 // GetChunkByIDOnly godoc
@@ -75,6 +113,43 @@ func (h *ChunkHandler) GetChunkByIDOnly(c *gin.Context) {
 		c.Error(errors.NewInternalServerError(err.Error()))
 		return
 	}
+	if chunk == nil {
+		_ = c.Error(errors.NewNotFoundError("Chunk not found"))
+		return
+	}
+	knowledge, err := h.loadPublishedKnowledge(ctx, chunk.KnowledgeID)
+	if err != nil {
+		_ = c.Error(err)
+		return
+	}
+	leases, err := h.beginNextcloudRead(ctx, c, knowledge)
+	if err != nil {
+		_ = c.Error(err)
+		return
+	}
+	defer leases.Close()
+	ctx = leases.Context(ctx)
+	if leases != nil {
+		// The first lookup identified the parent. Re-read content only while
+		// the exact generation is protected by its durable lease.
+		chunk, err = h.service.GetChunkByIDOnly(ctx, chunkID)
+		if err != nil || chunk == nil || chunk.KnowledgeID != knowledge.ID {
+			_ = c.Error(errors.NewNotFoundError("Chunk not found"))
+			return
+		}
+	}
+	if err := leases.Verify(); err != nil {
+		_ = c.Error(nextcloudHTTPLeaseError(err))
+		return
+	}
+	if _, err := h.loadPublishedKnowledge(ctx, chunk.KnowledgeID); err != nil {
+		_ = c.Error(err)
+		return
+	}
+	defer guardNextcloudResponseWrites(c, leases, func(checkCtx context.Context) error {
+		_, err := h.loadPublishedKnowledge(checkCtx, chunk.KnowledgeID)
+		return err
+	})()
 
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
@@ -106,6 +181,18 @@ func (h *ChunkHandler) ListKnowledgeChunks(c *gin.Context) {
 		c.Error(errors.NewBadRequestError("Knowledge ID cannot be empty"))
 		return
 	}
+	knowledge, err := h.loadPublishedKnowledge(ctx, knowledgeID)
+	if err != nil {
+		_ = c.Error(err)
+		return
+	}
+	leases, err := h.beginNextcloudRead(ctx, c, knowledge)
+	if err != nil {
+		_ = c.Error(err)
+		return
+	}
+	defer leases.Close()
+	ctx = leases.Context(ctx)
 
 	// Parse pagination parameters
 	var pagination types.Pagination
@@ -141,6 +228,18 @@ func (h *ChunkHandler) ListKnowledgeChunks(c *gin.Context) {
 		c.Error(errors.NewInternalServerError(err.Error()))
 		return
 	}
+	if err := leases.Verify(); err != nil {
+		_ = c.Error(nextcloudHTTPLeaseError(err))
+		return
+	}
+	if _, err := h.loadPublishedKnowledge(ctx, knowledgeID); err != nil {
+		_ = c.Error(err)
+		return
+	}
+	defer guardNextcloudResponseWrites(c, leases, func(checkCtx context.Context) error {
+		_, err := h.loadPublishedKnowledge(checkCtx, knowledgeID)
+		return err
+	})()
 
 	c.JSON(http.StatusOK, gin.H{
 		"success":   true,
@@ -255,16 +354,40 @@ func (h *ChunkHandler) UpdateChunk(c *gin.Context) {
 }
 
 func (h *ChunkHandler) ListChunkRevisions(c *gin.Context) {
-	chunk, _, err := h.fetchChunkAndVerifyOwnership(c)
+	chunk, knowledgeID, err := h.fetchChunkAndVerifyOwnership(c)
 	if err != nil {
 		c.Error(err)
 		return
 	}
-	items, err := h.service.ListChunkRevisions(c.Request.Context(), chunk.ID)
+	knowledge, err := h.loadPublishedKnowledge(c.Request.Context(), knowledgeID)
+	if err != nil {
+		_ = c.Error(err)
+		return
+	}
+	leases, err := h.beginNextcloudRead(c.Request.Context(), c, knowledge)
+	if err != nil {
+		_ = c.Error(err)
+		return
+	}
+	defer leases.Close()
+	ctx := leases.Context(c.Request.Context())
+	items, err := h.service.ListChunkRevisions(ctx, chunk.ID)
 	if err != nil {
 		c.Error(errors.NewInternalServerError(err.Error()))
 		return
 	}
+	if err := leases.Verify(); err != nil {
+		_ = c.Error(nextcloudHTTPLeaseError(err))
+		return
+	}
+	if _, err := h.loadPublishedKnowledge(ctx, knowledgeID); err != nil {
+		_ = c.Error(err)
+		return
+	}
+	defer guardNextcloudResponseWrites(c, leases, func(checkCtx context.Context) error {
+		_, err := h.loadPublishedKnowledge(checkCtx, knowledgeID)
+		return err
+	})()
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": items})
 }
 

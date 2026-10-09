@@ -14,14 +14,28 @@ import os
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-import torch
-from sentence_transformers import CrossEncoder, SentenceTransformer
+APPROVED_EMBEDDING = ("BAAI/bge-small-zh-v1.5", "7999e1d3359715c523056ef9478215996d62a620")
+APPROVED_RERANK = ("BAAI/bge-reranker-base", "2cfc18c9415c912f9d8155881c133215df768a70")
 
 
-EMBEDDING_MODEL = os.environ.get("RAG_EMBEDDING_MODEL", "BAAI/bge-small-zh-v1.5")
-RERANK_MODEL = os.environ.get("RAG_RERANK_MODEL", "BAAI/bge-reranker-base")
-EMBEDDING_REVISION = os.environ.get("RAG_EMBEDDING_REVISION", "7999e1d3359715c523056ef9478215996d62a620")
-RERANK_REVISION = os.environ.get("RAG_RERANK_REVISION", "2cfc18c9415c912f9d8155881c133215df768a70")
+def approved_model(role: str, approved: tuple[str, str]) -> tuple[str, str]:
+    """Reject unreviewed repositories, local paths and revisions before loading."""
+    model = os.environ.get(f"RAG_{role}_MODEL", approved[0])
+    revision = os.environ.get(f"RAG_{role}_REVISION", approved[1])
+    if (model, revision) != approved:
+        # Configuration values may contain private paths; do not echo them.
+        raise SystemExit(f"RAG_{role}_MODEL and revision must match the approved BAAI snapshot")
+    return model, revision
+
+
+for remote_code_option in (
+    "RAG_TRUST_REMOTE_CODE", "RAG_EMBEDDING_TRUST_REMOTE_CODE", "RAG_RERANK_TRUST_REMOTE_CODE",
+):
+    if os.environ.get(remote_code_option, "false").lower() not in ("false", "0"):
+        raise SystemExit("Custom model code cannot be enabled in this local model service")
+
+EMBEDDING_MODEL, EMBEDDING_REVISION = approved_model("EMBEDDING", APPROVED_EMBEDDING)
+RERANK_MODEL, RERANK_REVISION = approved_model("RERANK", APPROVED_RERANK)
 TOKEN = os.environ.get("RAG_MODEL_TOKEN", "")
 HOST = os.environ.get("RAG_MODEL_HOST", "127.0.0.1")
 PORT = int(os.environ.get("RAG_MODEL_PORT", "19090"))
@@ -33,9 +47,15 @@ MAX_BODY_BYTES = 2 * 1024 * 1024
 if len(TOKEN) < 32:
     raise SystemExit("RAG_MODEL_TOKEN must be at least 32 characters")
 
+# Delay third-party imports until the complete model configuration is accepted.
+import torch
+from sentence_transformers import CrossEncoder, SentenceTransformer
+
 DEVICE = "mps" if torch.backends.mps.is_available() else "cpu"
-embedding = SentenceTransformer(EMBEDDING_MODEL, device=DEVICE, revision=EMBEDDING_REVISION)
-reranker = CrossEncoder(RERANK_MODEL, device=DEVICE, revision=RERANK_REVISION)
+embedding = SentenceTransformer(EMBEDDING_MODEL, device=DEVICE, revision=EMBEDDING_REVISION,
+                                trust_remote_code=False)
+reranker = CrossEncoder(RERANK_MODEL, device=DEVICE, revision=RERANK_REVISION,
+                        trust_remote_code=False)
 inference_lock = threading.Lock()
 request_slots = threading.BoundedSemaphore(8)
 

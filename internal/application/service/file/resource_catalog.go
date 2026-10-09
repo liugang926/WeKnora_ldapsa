@@ -13,16 +13,21 @@ import (
 	"strings"
 	"time"
 
+	apperrors "github.com/Tencent/WeKnora/internal/errors"
+
+	"github.com/Tencent/WeKnora/internal/application/access"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
+	secutils "github.com/Tencent/WeKnora/internal/utils"
 )
 
 // resourceCatalogFileService keeps provider drivers physical-path-only while
 // exposing stable resource:// references to the application layer.
 type resourceCatalogFileService struct {
-	inner       interfaces.FileService
-	catalog     interfaces.ResourceCatalog
-	externalURL string
+	inner            interfaces.FileService
+	catalog          interfaces.ResourceCatalog
+	externalURL      string
+	publicationGuard *access.NextcloudPublicationGuard
 }
 
 // NewResourceCatalogFileService decorates a physical FileService with stable
@@ -30,15 +35,20 @@ type resourceCatalogFileService struct {
 func NewResourceCatalogFileService(
 	inner interfaces.FileService,
 	catalog interfaces.ResourceCatalog,
+	publicationGuards ...*access.NextcloudPublicationGuard,
 ) interfaces.FileService {
 	if inner == nil || catalog == nil {
 		return inner
 	}
-	return &resourceCatalogFileService{
+	service := &resourceCatalogFileService{
 		inner:       inner,
 		catalog:     catalog,
 		externalURL: strings.TrimRight(strings.TrimSpace(os.Getenv("APP_EXTERNAL_URL")), "/"),
 	}
+	if len(publicationGuards) > 0 {
+		service.publicationGuard = publicationGuards[0]
+	}
+	return service
 }
 
 func (s *resourceCatalogFileService) CheckConnectivity(ctx context.Context) error {
@@ -70,12 +80,13 @@ func (s *resourceCatalogFileService) register(
 ) (string, error) {
 	kind, mimeType := resourceKind(name)
 	ref, err := s.catalog.Register(ctx, tenantID, physical, interfaces.ResourceRegistration{
-		Kind:         kind,
-		MimeType:     mimeType,
-		OriginalName: filepath.Base(name),
-		Size:         size,
-		ContentHash:  contentHash,
-		Temporary:    temporary,
+		Kind:             kind,
+		MimeType:         mimeType,
+		OriginalName:     filepath.Base(name),
+		Size:             size,
+		ContentHash:      contentHash,
+		Temporary:        temporary,
+		SourceProvenance: types.ResourceProvenanceFromContext(ctx),
 	})
 	if err != nil {
 		_ = s.inner.DeleteFile(ctx, physical)
@@ -136,6 +147,64 @@ func (s *resourceCatalogFileService) GetFile(ctx context.Context, filePath strin
 }
 
 func (s *resourceCatalogFileService) GetFileURL(ctx context.Context, filePath string) (string, error) {
+	if s.catalog != nil {
+		lookup, ok := s.catalog.(interfaces.ResourceKnowledgeLookup)
+		if !ok {
+			return "", fmt.Errorf("resource source lookup unavailable")
+		}
+		physical, resource, err := s.catalog.ResolvePath(ctx, filePath)
+		if err != nil {
+			return "", err
+		}
+		tenantID := uint64(0)
+		if resource != nil {
+			tenantID = resource.TenantID
+		} else {
+			tenantID = secutils.ParseTenantIDFromStoragePath(physical)
+		}
+		if tenantID == 0 {
+			return "", fmt.Errorf("resource tenant cannot be verified")
+		}
+		owners, recognized, err := lookup.ListResourceKnowledgeOwners(ctx, tenantID, filePath)
+		if err != nil {
+			return "", err
+		}
+		if !recognized {
+			return "", fmt.Errorf("resource source cannot be verified")
+		}
+		provenance, err := lookup.GetResourceSourceProvenance(ctx, tenantID, filePath)
+		if err != nil {
+			return "", err
+		}
+		// Public and storage-provider URLs outlive a source revocation. A
+		// Nextcloud object must only be read through a guarded proxy.
+		if provenance != types.ResourceProvenanceOrdinary {
+			return "", fmt.Errorf("resource cannot be published: %s provenance", provenance)
+		}
+		for _, owner := range owners {
+			if owner == nil || owner.DeletedAt.Valid {
+				return "", fmt.Errorf("resource owner is unavailable")
+			}
+			if s.publicationGuard == nil {
+				if owner.Channel == types.ConnectorTypeNextcloud {
+					return "", apperrors.NewProtocolError(fmt.Errorf(
+						"nextcloud resource requires a publication guard",
+					), "Nextcloud resource requires a publication guard")
+				}
+				continue
+			}
+			// A URL has no stable human caller. Always evaluate it as an
+			// anonymous principal, even when a logged-in user requests it.
+			if err := s.publicationGuard.CheckKnowledge(context.Background(), owner); err != nil {
+				return "", apperrors.NewProtocolError(fmt.Errorf(
+					"resource cannot be published: %w",
+					err,
+				), fmt.Sprintf("resource cannot be published: %s", apperrors.PublicMessage(
+					err,
+				)))
+			}
+		}
+	}
 	physical, isResource, err := s.resolve(ctx, filePath)
 	if err != nil {
 		return "", err
@@ -170,10 +239,15 @@ func (s *resourceCatalogFileService) CopyFile(
 	tenantID uint64,
 	knowledgeID string,
 ) (string, error) {
-	physical, _, err := s.resolve(ctx, filePath)
+	physical, sourceResource, err := s.catalog.ResolvePath(ctx, filePath)
 	if err != nil {
 		return "", err
 	}
+	provenance := types.ResourceProvenanceUnknown
+	if sourceResource != nil && sourceResource.SourceProvenance != "" {
+		provenance = sourceResource.SourceProvenance
+	}
+	ctx = types.WithResourceProvenance(ctx, provenance)
 	copied, err := s.inner.CopyFile(ctx, physical, tenantID, knowledgeID)
 	if err != nil {
 		return "", err

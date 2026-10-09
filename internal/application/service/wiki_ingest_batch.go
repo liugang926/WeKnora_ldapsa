@@ -294,6 +294,12 @@ func (s *wikiIngestService) ProcessWikiIngest(ctx context.Context, t *asynq.Task
 		exitStatus = "kb_not_wiki_enabled"
 		return fmt.Errorf("wiki ingest: KB %s is not wiki type", kb.ID)
 	}
+	if s.dataSourceRepo != nil {
+		if err := RejectNextcloudDerivedKB(ctx, kb, s.knowledgeRepo, s.dataSourceRepo); err != nil {
+			exitStatus = "nextcloud_source_restricted"
+			return fmt.Errorf("wiki ingest: %w: %w", err, asynq.SkipRetry)
+		}
+	}
 
 	var synthesisModelID string
 	if kb.WikiConfig != nil {
@@ -925,6 +931,15 @@ func (s *wikiIngestService) ProcessWikiFinalize(ctx context.Context, t *asynq.Ta
 	}
 	if s.pendingRepo == nil {
 		return nil
+	}
+	if s.dataSourceRepo != nil {
+		kb, err := s.kbService.GetKnowledgeBaseByIDOnly(ctx, payload.KnowledgeBaseID)
+		if err != nil || kb == nil || kb.ID != payload.KnowledgeBaseID || kb.TenantID != payload.TenantID {
+			return fmt.Errorf("wiki finalize: knowledge-base scope unavailable: %v: %w", err, asynq.SkipRetry)
+		}
+		if err := RejectNextcloudDerivedKB(ctx, kb, s.knowledgeRepo, s.dataSourceRepo); err != nil {
+			return fmt.Errorf("wiki finalize: %w: %w", err, asynq.SkipRetry)
+		}
 	}
 
 	// Per-KB finalize lock, separate from the ingest active lock so finalize

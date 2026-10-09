@@ -2,10 +2,12 @@ package router
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
 
+	"github.com/Tencent/WeKnora/internal/application/repository"
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
@@ -19,11 +21,13 @@ import (
 type SyncTaskExecutor struct {
 	mu       sync.RWMutex
 	handlers map[string]func(context.Context, *asynq.Task) error
+	ids      map[string]struct{}
 }
 
 func NewSyncTaskExecutor() *SyncTaskExecutor {
 	return &SyncTaskExecutor{
 		handlers: make(map[string]func(context.Context, *asynq.Task) error),
+		ids:      make(map[string]struct{}),
 	}
 }
 
@@ -38,19 +42,14 @@ func (e *SyncTaskExecutor) RegisterHandler(pattern string, handler func(context.
 // Instead of queuing to Redis, it dispatches the task to a goroutine.
 // Supports ProcessIn (delay) and MaxRetry options for parity with asynq.
 func (e *SyncTaskExecutor) Enqueue(task *asynq.Task, opts ...asynq.Option) (*asynq.TaskInfo, error) {
-	e.mu.RLock()
-	handler, ok := e.handlers[task.Type()]
-	e.mu.RUnlock()
-
-	if !ok {
-		return nil, fmt.Errorf("sync task executor: no handler registered for type %q", task.Type())
-	}
-
 	var delay time.Duration
+	requestedTaskID := ""
 	maxRetry := 25 // asynq default
 	maxRetrySet := false
 	for _, opt := range opts {
 		switch opt.Type() {
+		case asynq.TaskIDOpt:
+			requestedTaskID, _ = opt.Value().(string)
 		case asynq.ProcessInOpt:
 			if d, ok := opt.Value().(time.Duration); ok {
 				delay = d
@@ -68,7 +67,22 @@ func (e *SyncTaskExecutor) Enqueue(task *asynq.Task, opts ...asynq.Option) (*asy
 		maxRetry = 0
 	}
 
-	taskID := uuid.New().String()
+	taskID := requestedTaskID
+	if taskID == "" {
+		taskID = uuid.New().String()
+	}
+	e.mu.Lock()
+	handler, ok := e.handlers[task.Type()]
+	if !ok {
+		e.mu.Unlock()
+		return nil, fmt.Errorf("sync task executor: no handler registered for type %q", task.Type())
+	}
+	if _, exists := e.ids[taskID]; exists {
+		e.mu.Unlock()
+		return nil, asynq.ErrTaskIDConflict
+	}
+	e.ids[taskID] = struct{}{}
+	e.mu.Unlock()
 	info := &asynq.TaskInfo{
 		ID:    taskID,
 		Queue: "sync",
@@ -76,6 +90,11 @@ func (e *SyncTaskExecutor) Enqueue(task *asynq.Task, opts ...asynq.Option) (*asy
 	}
 
 	go func() {
+		defer func() {
+			e.mu.Lock()
+			delete(e.ids, taskID)
+			e.mu.Unlock()
+		}()
 		if delay > 0 {
 			time.Sleep(delay)
 		}
@@ -100,15 +119,20 @@ func (e *SyncTaskExecutor) Enqueue(task *asynq.Task, opts ...asynq.Option) (*asy
 			}
 
 			attemptCtx := types.WithTaskRetryMetadata(ctx, attempt, maxRetry)
+			attemptCtx = types.WithTaskExecutionID(attemptCtx, taskID)
 			lastErr = handler(attemptCtx, task)
 			if lastErr == nil {
 				logger.Infof(ctx, "[SyncTask] Task completed type=%s id=%s elapsed=%v",
 					task.Type(), taskID, time.Since(start))
 				return
 			}
+			if errors.Is(lastErr, asynq.SkipRetry) {
+				break
+			}
 		}
 
-		logger.Errorf(ctx, "[SyncTask] Task failed (exhausted retries) type=%s id=%s elapsed=%v err=%v",
+		logger.Errorf(ctx, "[SyncTask] Task failed (exhausted retries) type=%s id=%s elapsed=%v err="+
+			"%v",
 			task.Type(), taskID, time.Since(start), lastErr)
 	}()
 
@@ -120,6 +144,9 @@ type SyncTaskParams struct {
 
 	Executor             *SyncTaskExecutor
 	KnowledgeService     interfaces.KnowledgeService
+	KnowledgeRepo        interfaces.KnowledgeRepository
+	ChunkRepo            interfaces.ChunkRepository
+	ContentLeases        *repository.NextcloudContentLeaseStore
 	KnowledgeBaseService interfaces.KnowledgeBaseService
 	TagService           interfaces.KnowledgeTagService
 	DataSourceService    interfaces.DataSourceService
@@ -137,23 +164,28 @@ type SyncTaskParams struct {
 // RegisterSyncHandlers registers all task handlers on the SyncTaskExecutor.
 // Used in Lite mode instead of RunAsynqServer.
 func RegisterSyncHandlers(params SyncTaskParams) {
-	params.Executor.RegisterHandler(types.TypeChunkExtract, params.ChunkExtractor.Handle)
-	params.Executor.RegisterHandler(types.TypeDataTableSummary, params.DataTableSummary.Handle)
-	params.Executor.RegisterHandler(types.TypeDocumentProcess, params.KnowledgeService.ProcessDocument)
+	build := func(handler func(context.Context, *asynq.Task) error) func(context.Context, *asynq.Task) error {
+		return wrapNextcloudBuild(params.ContentLeases, params.KnowledgeRepo, params.ChunkRepo, handler)
+	}
+	params.Executor.RegisterHandler(types.TypeChunkExtract, build(params.ChunkExtractor.Handle))
+	params.Executor.RegisterHandler(types.TypeDataTableSummary, build(params.DataTableSummary.Handle))
+	params.Executor.RegisterHandler(types.TypeDocumentProcess, build(params.KnowledgeService.ProcessDocument))
 	params.Executor.RegisterHandler(types.TypeTemporaryDocumentProcess, params.TemporaryDocument.Process)
-	params.Executor.RegisterHandler(types.TypeManualProcess, params.KnowledgeService.ProcessManualUpdate)
+	params.Executor.RegisterHandler(types.TypeManualProcess, build(params.KnowledgeService.ProcessManualUpdate))
 	params.Executor.RegisterHandler(types.TypeFAQImport, params.KnowledgeService.ProcessFAQImport)
-	params.Executor.RegisterHandler(types.TypeQuestionGeneration, params.KnowledgeService.ProcessQuestionGeneration)
-	params.Executor.RegisterHandler(types.TypeSummaryGeneration, params.KnowledgeService.ProcessSummaryGeneration)
+	params.Executor.RegisterHandler(types.TypeQuestionGeneration, build(
+		params.KnowledgeService.ProcessQuestionGeneration))
+	params.Executor.RegisterHandler(types.TypeSummaryGeneration, build(
+		params.KnowledgeService.ProcessSummaryGeneration))
 	params.Executor.RegisterHandler(types.TypeKBClone, params.KnowledgeService.ProcessKBClone)
 	params.Executor.RegisterHandler(types.TypeKnowledgeMove, params.KnowledgeService.ProcessKnowledgeMove)
 	params.Executor.RegisterHandler(types.TypeKnowledgeListDelete, params.KnowledgeService.ProcessKnowledgeListDelete)
 	params.Executor.RegisterHandler(types.TypeKnowledgeListReparse, params.KnowledgeService.ProcessKnowledgeListReparse)
 	params.Executor.RegisterHandler(types.TypeIndexDelete, params.TagService.ProcessIndexDelete)
 	params.Executor.RegisterHandler(types.TypeKBDelete, params.KnowledgeBaseService.ProcessKBDelete)
-	params.Executor.RegisterHandler(types.TypeImageMultimodal, params.ImageMultimodal.Handle)
-	params.Executor.RegisterHandler(types.TypeKnowledgePostProcess, params.KnowledgePostProcess.Handle)
-	params.Executor.RegisterHandler(types.TypeKnowledgeAutoTag, params.KnowledgeAutoTag.Handle)
+	params.Executor.RegisterHandler(types.TypeImageMultimodal, build(params.ImageMultimodal.Handle))
+	params.Executor.RegisterHandler(types.TypeKnowledgePostProcess, build(params.KnowledgePostProcess.Handle))
+	params.Executor.RegisterHandler(types.TypeKnowledgeAutoTag, build(params.KnowledgeAutoTag.Handle))
 	params.Executor.RegisterHandler(types.TypeKnowledgeBaseProfile, params.KnowledgeBaseProfile.Handle)
 	params.Executor.RegisterHandler(types.TypeDataSourceSync, params.DataSourceService.ProcessSync)
 	params.Executor.RegisterHandler(types.TypeWikiIngest, params.WikiIngest.Handle)

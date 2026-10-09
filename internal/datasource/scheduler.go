@@ -3,6 +3,7 @@ package datasource
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -22,8 +23,8 @@ import (
 // instances will fire at the same moment. Dedup is handled by two layers:
 //
 //  1. HasRunningSync — if a previous sync is still running, skip (prevent overlap).
-//  2. asynq.TaskID  — deterministic ID per (dataSourceID, minute). Redis ensures
-//     only one task with a given ID is enqueued. Losers get ErrTaskIDConflict.
+//  2. asynq.TaskID  — deterministic ID per admitted Nextcloud sync log, or per
+//     (dataSourceID, minute) for other connectors. Redis rejects duplicate IDs.
 type Scheduler struct {
 	cron         *cron.Cron
 	dsRepo       interfaces.DataSourceRepository
@@ -134,9 +135,8 @@ func (s *Scheduler) addEntryLocked(ds *types.DataSource) error {
 // Layer 1 — DB: if a previous sync is still running, skip. This prevents
 // overlap when a sync takes longer than the cron interval.
 //
-// Layer 2 — Redis: deterministic asynq.TaskID = "dssync:<dsID>:<minute>".
-// Since robfig/cron fires at absolute wall-clock times, all instances trigger
-// at the same minute. The first Enqueue wins; others get ErrTaskIDConflict.
+// Layer 2 — Redis: an exact, durable log ID for Nextcloud; other connectors
+// retain the minute-based ID. The first Enqueue wins for a given ID.
 func (s *Scheduler) triggerSync(dataSourceID string, tenantID uint64) {
 	ctx := context.Background()
 
@@ -158,7 +158,15 @@ func (s *Scheduler) triggerSync(dataSourceID string, tenantID uint64) {
 		Status:       types.SyncLogStatusRunning,
 		StartedAt:    time.Now().UTC(),
 	}
+	if ds.Type == types.ConnectorTypeNextcloud {
+		syncLog.RecoveryVersion = 1
+		syncLog.RecoveryTrigger = "schedule"
+	}
 	if err := s.syncLogRepo.Create(ctx, syncLog); err != nil {
+		if errors.Is(err, ErrSyncAlreadyRunning) {
+			logger.Infof(ctx, "[Scheduler] skipping sync for ds=%s (another sync was admitted)", dataSourceID)
+			return
+		}
 		logger.Errorf(ctx, "[Scheduler] failed to create sync log for ds=%s: %v", dataSourceID, err)
 		return
 	}
@@ -174,17 +182,22 @@ func (s *Scheduler) triggerSync(dataSourceID string, tenantID uint64) {
 	payloadJSON, _ := json.Marshal(payload)
 	task := asynq.NewTask(types.TypeDataSourceSync, payloadJSON)
 
-	// Layer 2: deterministic TaskID — all instances in the same minute produce the same ID
-	taskID := fmt.Sprintf("dssync:%s:%s", dataSourceID, time.Now().UTC().Truncate(time.Minute).Format("200601021504"))
+	// The database admits exactly one Nextcloud running log per source. Tie
+	// the queue identity to that durable log so a lost reply can be inspected.
+	taskID := NextcloudSyncTaskID(syncLog.ID)
+	if ds.Type != types.ConnectorTypeNextcloud {
+		taskID = fmt.Sprintf("dssync:%s:%s", dataSourceID, time.Now().UTC().Truncate(time.Minute).Format(
+			"200601021504"))
+	}
 
-	_, err = s.taskEnqueuer.Enqueue(task,
+	info, err := s.taskEnqueuer.Enqueue(task,
 		asynq.Queue(types.QueueSync),
 		asynq.MaxRetry(5),
 		asynq.Timeout(2*time.Hour),
 		asynq.TaskID(taskID),
 	)
 	if err != nil {
-		if err == asynq.ErrTaskIDConflict {
+		if err == asynq.ErrTaskIDConflict && ds.Type != types.ConnectorTypeNextcloud {
 			logger.Infof(ctx, "[Scheduler] sync already enqueued by another instance for ds=%s", dataSourceID)
 			syncLog.Status = types.SyncLogStatusCanceled
 			now := time.Now().UTC()
@@ -194,12 +207,38 @@ func (s *Scheduler) triggerSync(dataSourceID string, tenantID uint64) {
 			return
 		}
 		logger.Errorf(ctx, "[Scheduler] failed to enqueue sync task for ds=%s: %v", dataSourceID, err)
+		if ds.Type == types.ConnectorTypeNextcloud {
+			// A worker may have finished before the lost enqueue reply.
+			// Update only the exact still-unstarted admission.
+			if _, markErr := s.syncLogRepo.MarkNextcloudEnqueueUncertain(ctx,
+				syncLog.ID, dataSourceID, tenantID, "schedule", taskID); markErr != nil {
+				logger.Warnf(ctx, "[Scheduler] could not mark uncertain sync enqueue: %v", markErr)
+			}
+			return
+		}
 		syncLog.Status = types.SyncLogStatusFailed
 		now := time.Now().UTC()
 		syncLog.FinishedAt = &now
 		syncLog.ErrorMessage = fmt.Sprintf("enqueue failed: %v", err)
 		_ = s.syncLogRepo.Update(ctx, syncLog)
 		return
+	}
+
+	if ds.Type == types.ConnectorTypeNextcloud {
+		stored, readErr := s.syncLogRepo.FindByID(ctx, syncLog.ID)
+		returnedID := ""
+		if info != nil {
+			returnedID = info.ID
+		}
+		if readErr != nil || !NextcloudSyncReceiptAccepted(stored,
+			dataSourceID, tenantID, "schedule", returnedID) {
+			_, markErr := s.syncLogRepo.MarkNextcloudEnqueueUncertain(ctx,
+				syncLog.ID, dataSourceID, tenantID, "schedule", taskID)
+			logger.Warnf(ctx, "[Scheduler] Nextcloud enqueue receipt cannot be confirmed: lookup=%v mar"+
+				"k=%v",
+				readErr, markErr)
+			return
+		}
 	}
 
 	logger.Infof(ctx, "[Scheduler] sync task enqueued for ds=%s syncLog=%s", dataSourceID, syncLog.ID)

@@ -42,6 +42,13 @@ CREATE TABLE IF NOT EXISTS sync_logs (
 );
 `
 
+const resetPendingDataSourcesDDL = `
+CREATE TABLE IF NOT EXISTS data_sources (
+    id VARCHAR(64) PRIMARY KEY,
+    type VARCHAR(32) NOT NULL
+);
+`
+
 const resetPendingSpansDDL = `
 CREATE TABLE IF NOT EXISTS knowledge_processing_spans (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -95,6 +102,7 @@ func setupResetPendingDB(t *testing.T) *gorm.DB {
 	require.NoError(t, err)
 	require.NoError(t, db.Exec(resetPendingKnowledgeDDL).Error)
 	require.NoError(t, db.Exec(resetPendingSyncLogDDL).Error)
+	require.NoError(t, db.Exec(resetPendingDataSourcesDDL).Error)
 	require.NoError(t, db.Exec(resetPendingSpansDDL).Error)
 	require.NoError(t, db.Exec(resetPendingOpsDDL).Error)
 	require.NoError(t, db.Exec(resetPendingKnowledgeBasesDDL).Error)
@@ -274,6 +282,29 @@ func TestResetPendingTasks_SyncLogLiteMode(t *testing.T) {
 		`SELECT status FROM sync_logs WHERE id = ?`, "sync-lite",
 	).Row().Scan(&status))
 	assert.Equal(t, types.SyncLogStatusFailed, status)
+}
+
+func TestResetPendingTasks_NextcloudRunningLogKeepsAdmission(t *testing.T) {
+	for _, distributed := range []bool{false, true} {
+		t.Run(map[bool]string{false: "lite", true: "distributed"}[distributed], func(t *testing.T) {
+			db := setupResetPendingDB(t)
+			require.NoError(t, db.Exec(`INSERT INTO data_sources (id, type) VALUES ('ds-nextcloud', ?)`,
+				types.ConnectorTypeNextcloud).Error)
+			require.NoError(t, db.Exec(`INSERT INTO sync_logs
+				(id, data_source_id, status, started_at) VALUES ('long-nextcloud', 'ds-nextcloud', ?, ?)`,
+				types.SyncLogStatusRunning, time.Now().Add(-2*time.Hour)).Error)
+			if distributed {
+				t.Setenv("REDIS_ADDR", "redis:6379")
+			} else {
+				t.Setenv("REDIS_ADDR", "")
+			}
+			resetPendingTasks(db)
+			var status string
+			require.NoError(t, db.Raw(`SELECT status FROM sync_logs WHERE id = 'long-nextcloud'`).
+				Scan(&status).Error)
+			require.Equal(t, types.SyncLogStatusRunning, status)
+		})
+	}
 }
 
 func TestStuckKnowledgeParseQuery_ReuseAfterFindDoesNotBreakUpdate(t *testing.T) {

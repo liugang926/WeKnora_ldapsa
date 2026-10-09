@@ -5,12 +5,14 @@ import (
 	"encoding/json"
 	stderrors "errors"
 	"net/http"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/Tencent/WeKnora/internal/application/access"
 	"github.com/Tencent/WeKnora/internal/application/repository"
+	"github.com/Tencent/WeKnora/internal/application/service"
 	"github.com/Tencent/WeKnora/internal/config"
 	"github.com/Tencent/WeKnora/internal/errors"
 	apperrors "github.com/Tencent/WeKnora/internal/errors"
@@ -46,6 +48,8 @@ type KnowledgeBaseHandler struct {
 	fileService     interfaces.FileService
 	storageResolver interfaces.StorageBackendResolver
 	groupAccess     interfaces.GroupAccessService
+	dataSourceRepo  interfaces.DataSourceRepository
+	contentLeases   nextcloudHTTPReadLeaseStore
 }
 
 // NewKnowledgeBaseHandler creates a new knowledge base handler instance
@@ -62,6 +66,8 @@ func NewKnowledgeBaseHandler(
 	storageResolver interfaces.StorageBackendResolver,
 	profileService interfaces.KnowledgeBaseProfileService,
 	groupAccess interfaces.GroupAccessService,
+	dataSourceRepo interfaces.DataSourceRepository,
+	contentLeases *repository.NextcloudContentLeaseStore,
 ) *KnowledgeBaseHandler {
 	return &KnowledgeBaseHandler{
 		cfg:                cfg,
@@ -76,6 +82,8 @@ func NewKnowledgeBaseHandler(
 		fileService:        fileService,
 		storageResolver:    storageResolver,
 		groupAccess:        groupAccess,
+		dataSourceRepo:     dataSourceRepo,
+		contentLeases:      contentLeases,
 	}
 }
 
@@ -358,6 +366,7 @@ func (h *KnowledgeBaseHandler) HybridSearch(c *gin.Context) {
 		c.Error(err)
 		return
 	}
+	ctx = c.Request.Context()
 
 	// Parse request body
 	var req types.SearchParams
@@ -397,16 +406,130 @@ func (h *KnowledgeBaseHandler) HybridSearch(c *gin.Context) {
 			return
 		}
 		logger.ErrorWithFields(ctx, err, nil)
-		c.Error(apperrors.NewInternalServerError(err.Error()))
+		_ = c.Error(apperrors.NewInternalServerError(apperrors.PublicMessage(err)))
 		return
 	}
 
 	logger.Infof(ctx, "Hybrid search completed, knowledge base ID: %s, result count: %d",
 		secutils.SanitizeForLog(id), len(results))
+	// The service's search leases end when HybridSearch returns. Hold a fresh
+	// exact generation fence through JSON output, and recheck source, share,
+	// and directory grants at the actual ResponseWriter boundary.
+	sourceResults := make([]*types.SearchResult, 0)
+	readRows := make([]*types.Knowledge, 0)
+	for _, result := range results {
+		if !hybridSearchSourceResult(result) {
+			continue
+		}
+		row, loadErr := h.currentHybridSearchKnowledge(ctx, result)
+		if loadErr != nil {
+			_ = c.Error(loadErr)
+			return
+		}
+		sourceResults = append(sourceResults, result)
+		readRows = append(readRows, row)
+	}
+	var leases *nextcloudHTTPReadLeases
+	if len(sourceResults) > 0 {
+		if err := h.checkHybridSearchPublication(ctx, c, sourceResults); err != nil {
+			_ = c.Error(err)
+			return
+		}
+		leases, err = acquireNextcloudHTTPReadLeases(ctx, h.contentLeases, readRows, 0)
+		if err != nil {
+			_ = c.Error(err)
+			return
+		}
+		defer leases.Close()
+	}
+	output := rewriter.CopyReferences(ctx, results)
+	if leases != nil {
+		check := func(checkCtx context.Context) error {
+			return h.checkHybridSearchPublication(checkCtx, c, sourceResults)
+		}
+		if err := leases.Verify(); err != nil {
+			_ = c.Error(nextcloudHTTPLeaseError(err))
+			return
+		}
+		if err := check(leases.Context(ctx)); err != nil {
+			_ = c.Error(err)
+			return
+		}
+		defer guardNextcloudResponseWrites(c, leases, check)()
+	}
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
-		"data":    rewriter.CopyReferences(ctx, results),
+		"data":    output,
 	})
+}
+
+func hybridSearchSourceResult(result *types.SearchResult) bool {
+	if result == nil {
+		return false
+	}
+	return result.KnowledgeChannel == types.ConnectorTypeNextcloud ||
+		result.Metadata["datasource_id"] != "" || result.Metadata["nextcloud_instance_id"] != "" ||
+		result.Metadata["nextcloud_binding_id"] != "" || result.Metadata["nextcloud_file_id"] != ""
+}
+
+func (h *KnowledgeBaseHandler) currentHybridSearchKnowledge(ctx context.Context,
+	result *types.SearchResult,
+) (*types.Knowledge, error) {
+	if h.knowledgeService == nil || result == nil || result.KnowledgeID == "" || result.KnowledgeBaseID == "" {
+		return nil, errors.NewServiceUnavailableError("Cannot verify current search publication")
+	}
+	row, err := h.knowledgeService.GetKnowledgeByIDOnly(ctx, result.KnowledgeID)
+	if err != nil || row == nil || row.ID != result.KnowledgeID ||
+		row.KnowledgeBaseID != result.KnowledgeBaseID || row.Channel != result.KnowledgeChannel ||
+		!reflect.DeepEqual(row.GetMetadata(), result.Metadata) {
+		return nil, errors.NewForbiddenError("Search publication changed")
+	}
+	return row, nil
+}
+
+func (h *KnowledgeBaseHandler) checkHybridSearchPublication(ctx context.Context,
+	c *gin.Context, results []*types.SearchResult,
+) error {
+	checker, ok := h.knowledgeService.(interface {
+		CheckKnowledgePublication(context.Context, *types.Knowledge) error
+	})
+	if !ok || h.service == nil {
+		return errors.NewServiceUnavailableError("Cannot verify current search publication")
+	}
+	checked := make(map[string]bool, len(results))
+	for _, result := range results {
+		if result == nil || checked[result.KnowledgeID] {
+			continue
+		}
+		checked[result.KnowledgeID] = true
+		row, err := h.currentHybridSearchKnowledge(ctx, result)
+		if err != nil {
+			return err
+		}
+		kb, err := h.service.GetKnowledgeBaseByIDOnly(ctx, row.KnowledgeBaseID)
+		if err != nil || kb == nil || kb.ID != row.KnowledgeBaseID || kb.TenantID != row.TenantID {
+			return errors.NewServiceUnavailableError("Cannot verify current knowledge base access")
+		}
+		grant, err := access.ResolveKB(ctx, middleware.KBAccessRequest(c), kb,
+			types.OrgRoleViewer, h.kbShareService, h.agentShareService)
+		if err != nil || grant == nil || grant.EffectiveTenantID != row.TenantID {
+			return errors.NewForbiddenError("Current knowledge base access is required")
+		}
+		if h.groupAccess != nil {
+			permission, groupErr := h.groupAccess.EffectivePermission(ctx, kb.TenantID,
+				types.GroupResourceTypeKnowledgeBase, kb.ID, types.ResourceActionRead, time.Now().UTC())
+			if groupErr != nil || !permission.Allowed {
+				return errors.NewForbiddenError("Current directory group access is required")
+			}
+		}
+		if err := checker.CheckKnowledgePublication(ctx, row); err != nil {
+			if stderrors.Is(err, access.ErrNextcloudPublicationUnavailable) {
+				return errors.NewServiceUnavailableError("Cannot verify current Nextcloud file access")
+			}
+			return errors.NewForbiddenError("Current Nextcloud file access is required")
+		}
+	}
+	return nil
 }
 
 // CreateKnowledgeBase godoc
@@ -903,7 +1026,7 @@ func (h *KnowledgeBaseHandler) DeleteKnowledgeBase(c *gin.Context) {
 	// Delete the knowledge base
 	if err := h.service.DeleteKnowledgeBase(ctx, id); err != nil {
 		logger.ErrorWithFields(ctx, err, nil)
-		c.Error(apperrors.NewInternalServerError(err.Error()))
+		_ = c.Error(apperrors.NewInternalServerError(apperrors.PublicMessage(err)))
 		return
 	}
 
@@ -973,6 +1096,13 @@ func (h *KnowledgeBaseHandler) CopyKnowledgeBase(c *gin.Context) {
 		_ = c.Error(errors.NewForbiddenError("No permission to copy this knowledge base"))
 		return
 	}
+	if h.dataSourceRepo != nil && h.knowledgeService != nil {
+		if err := service.RejectNextcloudDerivedKB(ctx, sourceKB, h.knowledgeService.GetRepository(),
+			h.dataSourceRepo); err != nil {
+			_ = c.Error(errors.NewForbiddenError("Nextcloud source content cannot be copied"))
+			return
+		}
+	}
 	taskID := req.TaskID
 	if taskID == "" {
 		taskID = utils.GenerateTaskID("kb_clone", caller.TenantID, req.SourceID)
@@ -1015,7 +1145,7 @@ func (h *KnowledgeBaseHandler) CopyKnowledgeBase(c *gin.Context) {
 			access.KBTransferClone,
 			"",
 			tenant); err != nil {
-			_ = c.Error(errors.NewBadRequestError(err.Error()))
+			_ = c.Error(errors.NewBadRequestError(errors.PublicMessage(err)))
 			return
 		}
 	}

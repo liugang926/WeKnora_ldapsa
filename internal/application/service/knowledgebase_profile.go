@@ -83,7 +83,8 @@ func NewKnowledgeBaseProfileService(
 // knowledgeBaseProfileEligible reports whether a KB can carry a generated
 // description at all, independent of whether automatic generation is on.
 func knowledgeBaseProfileEligible(kb *types.KnowledgeBase) bool {
-	return kb != nil && kb.ID != "" && !kb.IsTemporary && kb.Type == types.KnowledgeBaseTypeDocument
+	return kb != nil && kb.ID != "" && !kb.IsTemporary && !kb.EverHadNextcloudSource &&
+		kb.Type == types.KnowledgeBaseTypeDocument
 }
 
 // requestKnowledgeBaseProfileRefresh enqueues a debounced rebuild. It is a
@@ -395,6 +396,11 @@ func (s *KnowledgeBaseProfileService) persistFailure(
 	failed.Error = previewText(cause.Error(), 300)
 	failed.Stats = agg.Stats
 	if err := s.kbRepo.UpdateKnowledgeBaseGeneratedProfile(ctx, kb.ID, failed); err != nil {
+		if errors.Is(err, ErrKnowledgeBaseProfileUnsupported) {
+			// Source provenance can change while the model is running. This
+			// rejection is terminal even when the model failed first.
+			return nil, err
+		}
 		logger.Warnf(ctx, "[KnowledgeBaseProfile] Failed to record generation failure for %s: %v", kb.ID, err)
 	} else {
 		kb.GeneratedProfile = failed

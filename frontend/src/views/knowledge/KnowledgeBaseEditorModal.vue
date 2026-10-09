@@ -529,6 +529,7 @@ import GraphSettings from './settings/GraphSettings.vue'
 import KBShareSettings from './settings/KBShareSettings.vue'
 import ResourceGroupAccessSettings from '@/components/ResourceGroupAccessSettings.vue'
 import DataSourceSettings from './settings/DataSourceSettings.vue'
+import { loadKBEditorReadiness } from './kbEditorFileProbe'
 import KnowledgeBaseActivitySettings from './settings/KnowledgeBaseActivitySettings.vue'
 import { useI18n } from 'vue-i18n'
 
@@ -907,10 +908,10 @@ const loadKBData = async (
   
   loading.value = true
   try {
-    const [kbInfo, filesResult] = await Promise.all([
+    const { kbInfo, hasKnowledgeFiles } = await loadKBEditorReadiness(
       getKnowledgeBaseById(kbId),
-      listKnowledgeFiles(kbId, { page: 1, page_size: 1 })
-    ])
+      listKnowledgeFiles(kbId, { page: 1, page_size: 1 }),
+    )
 
     if (!isCurrentKBLoad(generation, kbId)) return
     
@@ -919,7 +920,10 @@ const loadKBData = async (
     }
 
     const kb = kbInfo.data
-    hasFiles.value = (filesResult as any)?.total > 0
+    // A failed current Nextcloud generation can make the ordinary knowledge
+    // list return 403. Keep its edit protections locked while allowing the
+    // administrator to reach Data Sources and the exact failed-file retry.
+    hasFiles.value = hasKnowledgeFiles
     generatedProfile.value = (kb as any).generated_profile || null
     kbCreatorId.value = (kb as any).creator_id || ''
     kbTenantId.value = Number((kb as any).tenant_id || 0)

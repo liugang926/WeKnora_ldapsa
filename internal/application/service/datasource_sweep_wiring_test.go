@@ -20,6 +20,38 @@ type sweepFakeRepo struct {
 	prefixReturn []*types.Knowledge // children to return from FindByMetadataKeyPrefix
 }
 
+func (r *sweepFakeRepo) AdmitNextcloudCandidateRetry(context.Context, uint64, string, string, string, string) error {
+	return nil
+}
+
+func (r *sweepFakeRepo) StageNextcloudVersion(context.Context, uint64, string, string, string, string, string) error {
+	return nil
+}
+
+func (
+	r *sweepFakeRepo,
+) StageNextcloudVersionWithSource(
+	context.Context,
+	uint64,
+	string,
+	string,
+	string,
+	string,
+	string,
+	string,
+	map[string]string,
+) error {
+	return nil
+}
+
+func (r *sweepFakeRepo) PublishNextcloudVersion(context.Context, string) (bool, error) {
+	return false, nil
+}
+
+func (r *sweepFakeRepo) TombstoneNextcloudVersion(context.Context, uint64, string, string, string) error {
+	return nil
+}
+
 func (r *sweepFakeRepo) FindByMetadataKey(ctx context.Context, tenantID uint64, kbID, key, value string) (*types.Knowledge, error) {
 	return nil, nil // no existing main item → skip the case-1 update delete
 }
@@ -49,6 +81,7 @@ type sweepFakeKS struct {
 	events             []string // ordered log of "delete:<id>" and "create:<fname>"
 	deleted            []string
 	createErr          error            // if set, CreateKnowledgeFromFile returns it after logging
+	createdKnowledge   *types.Knowledge // optional candidate status for Nextcloud ingest tests
 	deleteErr          error            // if set, DeleteKnowledge returns it after logging
 	createURLKnowledge *types.Knowledge // if set, CreateKnowledgeFromURL returns it
 }
@@ -86,6 +119,9 @@ func (k *sweepFakeKS) CreateKnowledgeFromFile(
 	k.events = append(k.events, "create:"+customFileName)
 	if k.createErr != nil {
 		return nil, k.createErr
+	}
+	if k.createdKnowledge != nil {
+		return k.createdKnowledge, nil
 	}
 	return &types.Knowledge{ID: "new-knowledge"}, nil
 }

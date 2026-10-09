@@ -2,11 +2,13 @@ package handler
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strconv"
 	"time"
 
 	"github.com/Tencent/WeKnora/internal/datasource"
+	apperrors "github.com/Tencent/WeKnora/internal/errors"
 	"github.com/Tencent/WeKnora/internal/handler/dto"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
@@ -66,7 +68,7 @@ func (h *DataSourceHandler) getOwnedKnowledgeBase(
 		return nil, http.StatusForbidden, "access denied"
 	}
 	if err := types.AuthorizeTenantAPIKeyKnowledgeBases(ctx, kbID); err != nil {
-		return nil, http.StatusForbidden, err.Error()
+		return nil, http.StatusForbidden, apperrors.PublicMessage(err)
 	}
 	if h.groupAccess != nil {
 		permission, err := h.groupAccess.EffectivePermission(
@@ -143,7 +145,7 @@ func (h *DataSourceHandler) CreateDataSource(c *gin.Context) {
 
 	ds, err := h.service.CreateDataSource(ctx, &req)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": apperrors.PublicMessage(err)})
 		return
 	}
 
@@ -253,7 +255,7 @@ func (h *DataSourceHandler) UpdateDataSource(c *gin.Context) {
 	req.KnowledgeBaseID = existing.KnowledgeBaseID
 	ds, err := h.service.UpdateDataSource(ctx, &req)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": apperrors.PublicMessage(err)})
 		return
 	}
 
@@ -315,7 +317,7 @@ func (h *DataSourceHandler) ValidateConnection(c *gin.Context) {
 	}
 
 	if err := h.service.ValidateConnection(ctx, id); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": apperrors.PublicMessage(err)})
 		return
 	}
 
@@ -354,7 +356,7 @@ func (h *DataSourceHandler) ValidateCredentials(c *gin.Context) {
 	}
 
 	if err := h.service.ValidateCredentials(ctx, req.Type, req.Credentials); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": apperrors.PublicMessage(err)})
 		return
 	}
 
@@ -388,7 +390,7 @@ func (h *DataSourceHandler) ListAvailableResources(c *gin.Context) {
 
 	resources, err := h.service.ListAvailableResources(ctx, id, parentID)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": apperrors.PublicMessage(err)})
 		return
 	}
 
@@ -425,13 +427,13 @@ func (h *DataSourceHandler) ResolveResourceAncestors(c *gin.Context) {
 
 	var req resolveAncestorsRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": apperrors.PublicMessage(err)})
 		return
 	}
 
 	ancestors, err := h.service.ResolveResourceAncestors(ctx, id, req.ResourceIDs)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": apperrors.PublicMessage(err)})
 		return
 	}
 
@@ -471,7 +473,20 @@ func (h *DataSourceHandler) ManualSync(c *gin.Context) {
 
 	syncLog, err := h.service.ManualSync(ctx, id)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		if errors.Is(err, datasource.ErrSyncAlreadyRunning) {
+			c.JSON(http.StatusConflict, gin.H{"error": "data_source_sync_busy"})
+			return
+		}
+		if errors.Is(err, datasource.ErrSyncEnqueueUncertain) {
+			body := gin.H{"error": datasource.NextcloudSyncEnqueueUncertain}
+			if syncLog != nil && syncLog.ID != "" {
+				body["sync_log_id"] = syncLog.ID
+				body["queue_task_id"] = datasource.NextcloudSyncTaskID(syncLog.ID)
+			}
+			c.JSON(http.StatusServiceUnavailable, body)
+			return
+		}
+		c.JSON(http.StatusBadRequest, gin.H{"error": apperrors.PublicMessage(err)})
 		return
 	}
 
@@ -502,7 +517,7 @@ func (h *DataSourceHandler) PauseDataSource(c *gin.Context) {
 	}
 
 	if err := h.service.PauseDataSource(ctx, id); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": apperrors.PublicMessage(err)})
 		return
 	}
 
@@ -527,13 +542,13 @@ func (h *DataSourceHandler) ResumeDataSource(c *gin.Context) {
 
 	id := c.Param("id")
 
-	if _, status, msg := h.getOwnedDataSource(ctx, tenantID, id, types.ResourceActionRead); status != http.StatusOK {
+	if _, status, msg := h.getOwnedDataSource(ctx, tenantID, id, types.ResourceActionEdit); status != http.StatusOK {
 		c.JSON(status, gin.H{"error": msg})
 		return
 	}
 
 	if err := h.service.ResumeDataSource(ctx, id); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": apperrors.PublicMessage(err)})
 		return
 	}
 
@@ -561,7 +576,8 @@ func (h *DataSourceHandler) GetSyncLogs(c *gin.Context) {
 
 	id := c.Param("id")
 
-	if _, status, msg := h.getOwnedDataSource(ctx, tenantID, id, types.ResourceActionRead); status != http.StatusOK {
+	ds, status, msg := h.getOwnedDataSource(ctx, tenantID, id, types.ResourceActionRead)
+	if status != http.StatusOK {
 		c.JSON(status, gin.H{"error": msg})
 		return
 	}
@@ -586,12 +602,15 @@ func (h *DataSourceHandler) GetSyncLogs(c *gin.Context) {
 
 	logs, err := h.service.GetSyncLogs(ctx, id, limit, offset)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": apperrors.PublicMessage(err)})
 		return
 	}
 
 	if logs == nil {
 		logs = make([]*types.SyncLog, 0)
+	}
+	if ds.Type == types.ConnectorTypeNextcloud {
+		logs = dto.RedactNextcloudSyncLogs(logs)
 	}
 	c.JSON(http.StatusOK, logs)
 }
@@ -621,12 +640,15 @@ func (h *DataSourceHandler) GetSyncLog(c *gin.Context) {
 		return
 	}
 
-	_, status, msg := h.getOwnedDataSource(ctx, tenantID, log.DataSourceID, types.ResourceActionRead)
+	ds, status, msg := h.getOwnedDataSource(ctx, tenantID, log.DataSourceID, types.ResourceActionRead)
 	if status != http.StatusOK {
 		c.JSON(status, gin.H{"error": msg})
 		return
 	}
 
+	if ds.Type == types.ConnectorTypeNextcloud {
+		log = dto.RedactNextcloudSyncLog(log)
+	}
 	c.JSON(http.StatusOK, log)
 }
 

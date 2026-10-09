@@ -161,7 +161,14 @@ func stuckKnowledgeSummaryQuery(db *gorm.DB) *gorm.DB {
 
 func stuckSyncLogQuery(db *gorm.DB, distributed bool, staleCutoff time.Time) *gorm.DB {
 	q := db.Model(&types.SyncLog{}).
-		Where("status = ?", types.SyncLogStatusRunning)
+		Where("status = ?", types.SyncLogStatusRunning).
+		// A Nextcloud full scan can run beyond the startup stale window on
+		// another replica. Releasing its running slot can admit a second writer.
+		Where(`NOT EXISTS (
+			SELECT 1 FROM data_sources
+			WHERE data_sources.id = sync_logs.data_source_id
+			  AND data_sources.type = ?
+		)`, types.ConnectorTypeNextcloud)
 	if distributed {
 		q = q.Where("started_at < ?", staleCutoff)
 	}

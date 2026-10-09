@@ -4,18 +4,44 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"mime/multipart"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	apprepo "github.com/Tencent/WeKnora/internal/application/repository"
 	"github.com/Tencent/WeKnora/internal/datasource"
+	nextcloudconnector "github.com/Tencent/WeKnora/internal/datasource/connector/nextcloud"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
+	"github.com/google/uuid"
 	"github.com/hibiken/asynq"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
 )
+
+func nextcloudBaselineTestDB(t *testing.T) (*gorm.DB, *apprepo.NextcloudEventInboxRepository) {
+	t.Helper()
+	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "baseline.db")), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.Exec(`CREATE TABLE nextcloud_source_versions (
+		tenant_id INTEGER, knowledge_base_id TEXT, datasource_id TEXT,
+		external_id TEXT, state TEXT)`).Error)
+	require.NoError(t, db.Exec(`CREATE TABLE knowledges (
+		id TEXT PRIMARY KEY, tenant_id INTEGER, knowledge_base_id TEXT,
+		channel TEXT, metadata TEXT)`).Error)
+	return db, apprepo.NewNextcloudEventInboxRepository(db)
+}
+
+func nextcloudBaselineTestRepo(t *testing.T) *apprepo.NextcloudEventInboxRepository {
+	t.Helper()
+	_, repo := nextcloudBaselineTestDB(t)
+	return repo
+}
 
 func TestProcessSyncCancelsWhenKnowledgeBaseDeleted(t *testing.T) {
 	ds := &types.DataSource{
@@ -128,10 +154,424 @@ func (s *processSyncKBService) ProcessKBDelete(context.Context, *asynq.Task) err
 var _ interfaces.KnowledgeBaseService = (*processSyncKBService)(nil)
 
 type processSyncSyncLogRepo struct {
-	logs map[string]*types.SyncLog
+	logs   map[string]*types.SyncLog
+	nextID string
+}
+
+type nextcloudUncertainTestQueue struct {
+	taskID            string
+	acceptedTaskID    string
+	acceptBeforeError bool
+}
+
+func (q *nextcloudUncertainTestQueue) Enqueue(_ *asynq.Task, opts ...asynq.Option) (*asynq.TaskInfo, error) {
+	for _, opt := range opts {
+		if opt.Type() == asynq.TaskIDOpt {
+			q.taskID, _ = opt.Value().(string)
+		}
+	}
+	if q.acceptBeforeError {
+		q.acceptedTaskID = q.taskID
+	}
+	return nil, errors.New("synthetic enqueue response lost")
+}
+
+type nextcloudLateSuccessQueue struct {
+	logs             *processSyncSyncLogRepo
+	taskID           string
+	failBeforeReturn bool
+}
+
+func (q *nextcloudLateSuccessQueue) Enqueue(_ *asynq.Task, opts ...asynq.Option) (*asynq.TaskInfo, error) {
+	for _, opt := range opts {
+		if opt.Type() == asynq.TaskIDOpt {
+			q.taskID, _ = opt.Value().(string)
+		}
+	}
+	if q.failBeforeReturn {
+		for _, log := range q.logs.logs {
+			log.Status = types.SyncLogStatusFailed
+			log.ErrorMessage = "sync_task_absent_before_worker_start"
+			now := time.Now().UTC()
+			log.FinishedAt = &now
+		}
+	}
+	return &asynq.TaskInfo{ID: q.taskID}, nil
+}
+
+func TestManualNextcloudSyncLateEnqueueReceipt(t *testing.T) {
+	for _, tc := range []struct {
+		name             string
+		failBeforeReturn bool
+	}{
+		{name: "current admission remains accepted"},
+		{name: "recovery won before late queue reply", failBeforeReturn: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ds := &types.DataSource{
+				ID: "nextcloud-manual", TenantID: 1,
+				KnowledgeBaseID: "kb-1", Type: types.ConnectorTypeNextcloud,
+				Status: types.DataSourceStatusActive,
+			}
+			logs := &processSyncSyncLogRepo{logs: make(map[string]*types.SyncLog), nextID: "late-receipt-log"}
+			queue := &nextcloudLateSuccessQueue{logs: logs, failBeforeReturn: tc.failBeforeReturn}
+			svc := &DataSourceService{
+				dsRepo:      newKBDeleteDSRepo("kb-1", ds),
+				syncLogRepo: logs, taskEnqueuer: queue,
+			}
+			admitted, err := svc.ManualSync(context.Background(), ds.ID)
+			require.Equal(t, "dssync:late-receipt-log", queue.taskID)
+			require.NotNil(t, admitted)
+			if tc.failBeforeReturn {
+				require.ErrorIs(t, err, datasource.ErrSyncEnqueueUncertain)
+				require.Equal(t, types.SyncLogStatusFailed, admitted.Status)
+				require.Equal(t, "sync_task_absent_before_worker_start", admitted.ErrorMessage)
+			} else {
+				require.NoError(t, err)
+				require.Equal(t, types.SyncLogStatusRunning, admitted.Status)
+			}
+		})
+	}
+}
+
+func TestManualNextcloudSyncUncertainEnqueueRetainsAdmission(t *testing.T) {
+	for _, tc := range []struct {
+		name              string
+		acceptBeforeError bool
+	}{
+		{"failed_before_accept", false},
+		{"accepted_reply_lost", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ds := &types.DataSource{
+				ID: "nextcloud-manual", TenantID: 1,
+				KnowledgeBaseID: "kb-1", Type: types.ConnectorTypeNextcloud,
+				Status: types.DataSourceStatusActive,
+			}
+			logs := &processSyncSyncLogRepo{logs: make(map[string]*types.SyncLog), nextID: "stable-manual-log"}
+			queue := &nextcloudUncertainTestQueue{acceptBeforeError: tc.acceptBeforeError}
+			svc := &DataSourceService{
+				dsRepo:      newKBDeleteDSRepo("kb-1", ds),
+				syncLogRepo: logs, taskEnqueuer: queue,
+			}
+			admitted, err := svc.ManualSync(context.Background(), ds.ID)
+			require.ErrorIs(t, err, datasource.ErrSyncEnqueueUncertain)
+			require.Len(t, logs.logs, 1)
+			require.NotNil(t, admitted)
+			require.Equal(t, "stable-manual-log", admitted.ID)
+			require.Equal(t, "dssync:stable-manual-log", queue.taskID)
+			if tc.acceptBeforeError {
+				require.Equal(t, queue.taskID, queue.acceptedTaskID)
+			} else {
+				require.Empty(t, queue.acceptedTaskID)
+			}
+			require.Equal(t, types.SyncLogStatusRunning, admitted.Status)
+			require.Equal(t, datasource.NextcloudSyncEnqueueUncertain, admitted.ErrorMessage)
+		})
+	}
+}
+
+func TestProcessSyncNextcloudTerminalLogCannotRestart(t *testing.T) {
+	ds := &types.DataSource{
+		ID: "nextcloud-terminal", TenantID: 1,
+		KnowledgeBaseID: "kb-1", Type: types.ConnectorTypeNextcloud,
+		Status: types.DataSourceStatusActive,
+	}
+	log := &types.SyncLog{
+		ID: "terminated-log", DataSourceID: ds.ID,
+		TenantID: ds.TenantID, Status: types.SyncLogStatusFailed,
+	}
+	logs := &processSyncSyncLogRepo{logs: map[string]*types.SyncLog{log.ID: log}}
+	svc := &DataSourceService{dsRepo: newKBDeleteDSRepo("kb-1", ds), syncLogRepo: logs}
+	payload, err := json.Marshal(types.DataSourceSyncPayload{
+		DataSourceID: ds.ID,
+		TenantID:     ds.TenantID, SyncLogID: log.ID, Trigger: "manual",
+	})
+	require.NoError(t, err)
+	err = svc.ProcessSync(context.Background(), asynq.NewTask(types.TypeDataSourceSync, payload))
+	require.ErrorIs(t, err, asynq.SkipRetry)
+	require.Equal(t, types.SyncLogStatusFailed, log.Status)
+}
+
+func TestProcessSyncUnpairedLegacyNextcloudStopsBeforeFetch(t *testing.T) {
+	db, _ := nextcloudBaselineTestDB(t)
+	require.NoError(t, db.AutoMigrate(&apprepo.NextcloudSourcePairing{}))
+	ds := &types.DataSource{
+		ID: "legacy-unpaired", TenantID: 1,
+		KnowledgeBaseID: "kb-1", Type: types.ConnectorTypeNextcloud,
+		Status: types.DataSourceStatusActive,
+	}
+	log := &types.SyncLog{
+		ID: "old-running-log", DataSourceID: ds.ID,
+		TenantID: ds.TenantID, Status: types.SyncLogStatusRunning,
+	}
+	logs := &processSyncSyncLogRepo{logs: map[string]*types.SyncLog{log.ID: log}}
+	svc := &DataSourceService{
+		dsRepo: newKBDeleteDSRepo("kb-1", ds), syncLogRepo: logs,
+		nextcloudSourcePairings: apprepo.NewNextcloudSourcePairingRepository(db),
+	}
+	payload, err := json.Marshal(types.DataSourceSyncPayload{
+		DataSourceID: ds.ID,
+		TenantID:     ds.TenantID, SyncLogID: log.ID, Trigger: "manual",
+	})
+	require.NoError(t, err)
+	err = svc.ProcessSync(context.Background(), asynq.NewTask(types.TypeDataSourceSync, payload))
+	require.ErrorIs(t, err, asynq.SkipRetry)
+	require.Equal(t, types.SyncLogStatusCanceled, log.Status)
+	require.Contains(t, log.ErrorMessage, "not paired")
+}
+
+func TestProcessSyncRejectsUnclaimedNextcloudManualBeforeSourceIO(t *testing.T) {
+	ds := &types.DataSource{
+		ID: "nextcloud-claim", TenantID: 7,
+		KnowledgeBaseID: "kb", Type: types.ConnectorTypeNextcloud,
+		Status: types.DataSourceStatusActive,
+	}
+	for _, tc := range []struct {
+		name, trigger, taskID string
+		version               int
+	}{
+		{"unknown_version", "manual", "dssync:claim-log", 2},
+		{"wrong_trigger", "schedule", "dssync:claim-log", 1},
+		{"wrong_task", "manual", "dssync:wrong", 1},
+		{"unknown_trigger", "legacy", "dssync:claim-log", 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			log := &types.SyncLog{
+				ID: "claim-log", DataSourceID: ds.ID, TenantID: ds.TenantID,
+				Status: types.SyncLogStatusRunning, RecoveryVersion: tc.version,
+				RecoveryTrigger: "manual", QueueTaskID: "dssync:claim-log",
+			}
+			logs := &processSyncSyncLogRepo{logs: map[string]*types.SyncLog{log.ID: log}}
+			// kbService is deliberately nil: reaching it means source work began
+			// without an exact claim.
+			svc := &DataSourceService{dsRepo: newKBDeleteDSRepo("kb", ds), syncLogRepo: logs}
+			payload, err := json.Marshal(types.DataSourceSyncPayload{
+				DataSourceID: ds.ID,
+				TenantID:     ds.TenantID, SyncLogID: log.ID, Trigger: tc.trigger,
+			})
+			require.NoError(t, err)
+			err = svc.ProcessSync(types.WithTaskExecutionID(context.Background(), tc.taskID),
+				asynq.NewTask(types.TypeDataSourceSync, payload))
+			require.ErrorIs(t, err, asynq.SkipRetry)
+			require.Nil(t, log.WorkerStartedAt)
+		})
+	}
+}
+
+func TestProcessSyncNextcloudRetryAfterTransientFailure(t *testing.T) {
+	config, err := (&types.DataSourceConfig{
+		Type:        types.ConnectorTypeNextcloud,
+		ResourceIDs: []string{"binding-1"},
+		Settings:    map[string]interface{}{"base_url": "https://nextcloud.example.test"},
+		Credentials: map[string]interface{}{"token": "synthetic-token"},
+	}).ToJSON()
+	require.NoError(t, err)
+	ds := &types.DataSource{
+		ID: "nextcloud-retry", TenantID: 1,
+		KnowledgeBaseID: "kb-1", Type: types.ConnectorTypeNextcloud,
+		Status: types.DataSourceStatusActive, Config: config,
+		LastSyncCursor: types.JSON(`{"connector_cursor":`),
+	}
+	log := &types.SyncLog{
+		ID: "retry-log", DataSourceID: ds.ID,
+		TenantID: ds.TenantID, Status: types.SyncLogStatusRunning,
+		RecoveryVersion: 1, RecoveryTrigger: "manual", QueueTaskID: "dssync:retry-log",
+	}
+	logs := &processSyncSyncLogRepo{logs: map[string]*types.SyncLog{log.ID: log}}
+	registry := datasource.NewConnectorRegistry()
+	require.NoError(t, registry.Register(nextcloudconnector.NewConnector()))
+	svc := &DataSourceService{
+		dsRepo:      newKBDeleteDSRepo("kb-1", ds),
+		syncLogRepo: logs, connectorRegistry: registry,
+		kbService: &processSyncKBService{kb: &types.KnowledgeBase{ID: "kb-1", TenantID: 1}},
+	}
+	payload, err := json.Marshal(types.DataSourceSyncPayload{
+		DataSourceID: ds.ID,
+		TenantID:     ds.TenantID, SyncLogID: log.ID, Trigger: "manual",
+	})
+	require.NoError(t, err)
+	task := asynq.NewTask(types.TypeDataSourceSync, payload)
+	firstCtx := types.WithTaskRetryMetadata(types.WithTaskExecutionID(context.Background(), log.QueueTaskID), 0, 2)
+	err = svc.ProcessSync(firstCtx, task)
+	require.ErrorContains(t, err, "baseline verifier is unavailable")
+	require.Equal(t, types.SyncLogStatusRunning, log.Status)
+	require.NotNil(t, log.WorkerStartedAt)
+	require.False(t, log.WorkerActive)
+	require.Empty(t, log.WorkerAttemptToken)
+
+	svc.nextcloudEventInbox = nextcloudBaselineTestRepo(t)
+	secondCtx := types.WithTaskRetryMetadata(types.WithTaskExecutionID(context.Background(), log.QueueTaskID), 1, 2)
+	err = svc.ProcessSync(secondCtx, task)
+	require.ErrorIs(t, err, apprepo.ErrNextcloudSourceCursor)
+	require.NotErrorIs(t, err, asynq.SkipRetry)
+	require.Equal(t, types.SyncLogStatusFailed, log.Status)
+}
+
+func TestProcessSyncNextcloudMalformedCursorFailsClosed(t *testing.T) {
+	for _, full := range []bool{true, false} {
+		t.Run(map[bool]string{true: "full", false: "incremental"}[full], func(t *testing.T) {
+			config, err := (&types.DataSourceConfig{
+				Type:        types.ConnectorTypeNextcloud,
+				ResourceIDs: []string{"binding-1"},
+				Settings:    map[string]interface{}{"base_url": "https://nextcloud.example.test"},
+				Credentials: map[string]interface{}{"token": "synthetic-token"},
+			}).ToJSON()
+			require.NoError(t, err)
+			ds := &types.DataSource{
+				ID: "nextcloud-bad-cursor", TenantID: 1,
+				KnowledgeBaseID: "kb-1", Type: types.ConnectorTypeNextcloud,
+				Status: types.DataSourceStatusActive, Config: config,
+				LastSyncCursor: types.JSON(`{"connector_cursor":`),
+			}
+			log := &types.SyncLog{
+				ID: "bad-cursor-log", DataSourceID: ds.ID,
+				TenantID: ds.TenantID, Status: types.SyncLogStatusRunning,
+				RecoveryVersion: 1, RecoveryTrigger: "manual", QueueTaskID: "dssync:bad-cursor-log",
+			}
+			logs := &processSyncSyncLogRepo{logs: map[string]*types.SyncLog{log.ID: log}}
+			registry := datasource.NewConnectorRegistry()
+			require.NoError(t, registry.Register(nextcloudconnector.NewConnector()))
+			svc := &DataSourceService{
+				dsRepo:      newKBDeleteDSRepo("kb-1", ds),
+				syncLogRepo: logs, connectorRegistry: registry,
+				kbService:           &processSyncKBService{kb: &types.KnowledgeBase{ID: "kb-1", TenantID: 1}},
+				nextcloudEventInbox: nextcloudBaselineTestRepo(t),
+			}
+			payload, err := json.Marshal(types.DataSourceSyncPayload{
+				DataSourceID: ds.ID,
+				TenantID:     ds.TenantID, SyncLogID: log.ID, ForceFull: full, Trigger: "manual",
+			})
+			require.NoError(t, err)
+			err = svc.ProcessSync(types.WithTaskExecutionID(context.Background(), log.QueueTaskID),
+				asynq.NewTask(types.TypeDataSourceSync, payload))
+			require.ErrorIs(t, err, apprepo.ErrNextcloudSourceCursor)
+			require.Equal(t, types.SyncLogStatusFailed, log.Status)
+			require.Equal(t, `{"connector_cursor":`, string(ds.LastSyncCursor))
+		})
+	}
+}
+
+func TestProcessSyncNextcloudLostCursorWithHistoryFailsClosed(t *testing.T) {
+	for _, scenario := range []string{"manual_version", "schedule_legacy_knowledge"} {
+		t.Run(scenario, func(t *testing.T) {
+			db, baselineRepo := nextcloudBaselineTestDB(t)
+			if scenario == "manual_version" {
+				require.NoError(t, db.Exec(`INSERT INTO nextcloud_source_versions
+					(tenant_id, knowledge_base_id, datasource_id, external_id, state)
+					VALUES (1, 'kb-1', 'nextcloud-lost-cursor', 'nextcloud:instance-1:41', 'published')`).Error)
+			} else {
+				require.NoError(t, db.Exec(`INSERT INTO knowledges
+					(id, tenant_id, knowledge_base_id, channel, metadata)
+					VALUES ('old-knowledge', 1, 'kb-1', 'nextcloud', ?)`,
+					`{"datasource_id":"nextcloud-lost-cursor","external_id":"nextcloud:instance-1:41"}`).Error)
+			}
+			config, err := (&types.DataSourceConfig{
+				Type:        types.ConnectorTypeNextcloud,
+				ResourceIDs: []string{"binding-1"},
+			}).ToJSON()
+			require.NoError(t, err)
+			ds := &types.DataSource{
+				ID: "nextcloud-lost-cursor", TenantID: 1,
+				KnowledgeBaseID: "kb-1", Type: types.ConnectorTypeNextcloud,
+				Status: types.DataSourceStatusActive, Config: config,
+			}
+			log := &types.SyncLog{
+				ID: "lost-cursor-log", DataSourceID: ds.ID,
+				TenantID: ds.TenantID, Status: types.SyncLogStatusRunning,
+				RecoveryVersion: 1, QueueTaskID: "dssync:lost-cursor-log",
+			}
+			logs := &processSyncSyncLogRepo{logs: map[string]*types.SyncLog{log.ID: log}}
+			registry := datasource.NewConnectorRegistry()
+			require.NoError(t, registry.Register(nextcloudconnector.NewConnector()))
+			svc := &DataSourceService{
+				dsRepo:      newKBDeleteDSRepo("kb-1", ds),
+				syncLogRepo: logs, connectorRegistry: registry,
+				kbService:           &processSyncKBService{kb: &types.KnowledgeBase{ID: "kb-1", TenantID: 1}},
+				nextcloudEventInbox: baselineRepo,
+			}
+			trigger := "manual"
+			if scenario == "schedule_legacy_knowledge" {
+				trigger = "schedule"
+			}
+			log.RecoveryTrigger = trigger
+			payload, err := json.Marshal(types.DataSourceSyncPayload{
+				DataSourceID: ds.ID,
+				TenantID:     ds.TenantID, SyncLogID: log.ID, ForceFull: true, Trigger: trigger,
+			})
+			require.NoError(t, err)
+			err = svc.ProcessSync(types.WithTaskExecutionID(context.Background(), log.QueueTaskID),
+				asynq.NewTask(types.TypeDataSourceSync, payload))
+			require.ErrorIs(t, err, apprepo.ErrNextcloudSourceCursor)
+			require.Equal(t, types.SyncLogStatusFailed, log.Status)
+			require.Empty(t, ds.LastSyncCursor)
+		})
+	}
+}
+
+func (r *processSyncSyncLogRepo) MarkNextcloudEnqueueUncertain(_ context.Context, logID, dsID string,
+	tenantID uint64, _, _ string,
+) (bool, error) {
+	log := r.logs[logID]
+	if log == nil || log.DataSourceID != dsID || log.TenantID != tenantID ||
+		log.Status != types.SyncLogStatusRunning || log.WorkerStartedAt != nil {
+		return false, nil
+	}
+	log.ErrorMessage = datasource.NextcloudSyncEnqueueUncertain
+	return true, nil
+}
+
+func (r *processSyncSyncLogRepo) ClaimNextcloudSyncStart(_ context.Context, logID, dsID string,
+	tenantID uint64, trigger, taskID string, retried int,
+) (string, error) {
+	log := r.logs[logID]
+	if log == nil || log.DataSourceID != dsID || log.TenantID != tenantID ||
+		log.Status != types.SyncLogStatusRunning || log.RecoveryVersion != 1 ||
+		log.RecoveryTrigger != trigger || log.QueueTaskID != taskID || log.WorkerActive ||
+		(retried == 0 && log.WorkerStartedAt != nil) ||
+		(retried > 0 && log.WorkerStartedAt == nil) {
+		return "", nil
+	}
+	now := time.Now().UTC()
+	if log.WorkerStartedAt == nil {
+		log.WorkerStartedAt = &now
+	}
+	log.WorkerActive = true
+	log.WorkerAttemptToken = fmt.Sprintf("attempt-%d", retried)
+	return log.WorkerAttemptToken, nil
+}
+
+func (r *processSyncSyncLogRepo) FinishNextcloudSyncAttempt(_ context.Context, logID, dsID string,
+	tenantID uint64, trigger, taskID, token string, terminal bool, message string,
+) (bool, error) {
+	log := r.logs[logID]
+	if log == nil || log.DataSourceID != dsID || log.TenantID != tenantID ||
+		log.Status != types.SyncLogStatusRunning || log.RecoveryVersion != 1 ||
+		log.RecoveryTrigger != trigger || log.QueueTaskID != taskID ||
+		!log.WorkerActive || log.WorkerAttemptToken != token {
+		return false, nil
+	}
+	log.WorkerActive = false
+	log.WorkerAttemptToken = ""
+	log.ErrorMessage = message
+	if terminal {
+		log.Status = types.SyncLogStatusFailed
+		now := time.Now().UTC()
+		log.FinishedAt = &now
+	}
+	return true, nil
 }
 
 func (r *processSyncSyncLogRepo) Create(_ context.Context, log *types.SyncLog) error {
+	if log.ID == "" {
+		log.ID = r.nextID
+		if log.ID == "" {
+			log.ID = uuid.NewString()
+		}
+	}
+	if log.RecoveryVersion == 1 && log.QueueTaskID == "" {
+		log.QueueTaskID = datasource.NextcloudSyncTaskID(log.ID)
+	}
 	r.logs[log.ID] = log
 	return nil
 }
@@ -278,6 +718,52 @@ type deletionLookupKnowledgeRepo struct {
 	knowledgeBaseID   string
 	dataSourceID      string
 	externalID        string
+	stageErr          error
+	stageCalls        int
+	admitErr          error
+	admitCalls        int
+	tombstoneErr      error
+	tombstoneCalls    int
+}
+
+func (
+	r *deletionLookupKnowledgeRepo,
+) AdmitNextcloudCandidateRetry(context.Context, uint64, string, string, string, string) error {
+	r.admitCalls++
+	return r.admitErr
+}
+
+func (
+	r *deletionLookupKnowledgeRepo,
+) StageNextcloudVersion(context.Context, uint64, string, string, string, string, string) error {
+	r.stageCalls++
+	return r.stageErr
+}
+
+func (
+	r *deletionLookupKnowledgeRepo,
+) StageNextcloudVersionWithSource(
+	context.Context,
+	uint64,
+	string,
+	string,
+	string,
+	string,
+	string,
+	string,
+	map[string]string,
+) error {
+	r.stageCalls++
+	return r.stageErr
+}
+
+func (r *deletionLookupKnowledgeRepo) PublishNextcloudVersion(context.Context, string) (bool, error) {
+	return false, nil
+}
+
+func (r *deletionLookupKnowledgeRepo) TombstoneNextcloudVersion(context.Context, uint64, string, string, string) error {
+	r.tombstoneCalls++
+	return r.tombstoneErr
 }
 
 func (r *deletionLookupKnowledgeRepo) UpdateKnowledge(_ context.Context, knowledge *types.Knowledge) error {
@@ -356,6 +842,43 @@ type keyedDeletionRepo struct {
 	items         map[string]*types.Knowledge
 	hardDeleted   []string
 	hardDeleteErr error
+	tombstoneErr  error
+}
+
+func (
+	r *keyedDeletionRepo,
+) AdmitNextcloudCandidateRetry(context.Context, uint64, string, string, string, string) error {
+	return nil
+}
+
+func (
+	r *keyedDeletionRepo,
+) StageNextcloudVersion(context.Context, uint64, string, string, string, string, string) error {
+	return nil
+}
+
+func (
+	r *keyedDeletionRepo,
+) StageNextcloudVersionWithSource(
+	context.Context,
+	uint64,
+	string,
+	string,
+	string,
+	string,
+	string,
+	string,
+	map[string]string,
+) error {
+	return nil
+}
+
+func (r *keyedDeletionRepo) PublishNextcloudVersion(context.Context, string) (bool, error) {
+	return false, nil
+}
+
+func (r *keyedDeletionRepo) TombstoneNextcloudVersion(context.Context, uint64, string, string, string) error {
+	return r.tombstoneErr
 }
 
 func (r *keyedDeletionRepo) FindByDataSourceExternalID(
@@ -687,6 +1210,115 @@ func (mixedSyncConnector) FetchIncremental(
 	return items, nil, err
 }
 
+type nextcloudCursorMixedConnector struct{ mixedSyncConnector }
+
+func (nextcloudCursorMixedConnector) Type() string { return types.ConnectorTypeNextcloud }
+
+func (nextcloudCursorMixedConnector) FetchIncremental(
+	ctx context.Context, config *types.DataSourceConfig, _ *types.SyncCursor,
+) ([]types.FetchedItem, *types.SyncCursor, error) {
+	items, err := (mixedSyncConnector{}).FetchAll(ctx, config, nil)
+	items[1].Metadata = map[string]string{"nextcloud_etag": "etag-new"}
+	return items, &types.SyncCursor{ConnectorCursor: map[string]interface{}{
+		"instance_id": "instance-1", "files": map[string]interface{}{"binding-1": map[string]interface{}{}},
+		"marker": "new",
+	}}, err
+}
+
+func TestProcessSync_NextcloudPartialFailureDoesNotAdvanceCursor(t *testing.T) {
+	for _, test := range []struct {
+		name            string
+		trigger         string
+		deleteFail      bool
+		wantMarker      string
+		recoveryVersion int
+	}{
+		{
+			name:            "failed deletion retains checkpoint",
+			trigger:         "manual",
+			deleteFail:      true,
+			wantMarker:      "old",
+			recoveryVersion: 1,
+		},
+		{name: "successful deletion advances checkpoint", trigger: "manual", wantMarker: "new", recoveryVersion: 1},
+		{
+			name:            "legacy queued manual sync completes after upgrade",
+			trigger:         "manual",
+			wantMarker:      "new",
+			recoveryVersion: 0,
+		},
+		{
+			name:            "legacy queued empty trigger completes after upgrade",
+			trigger:         "",
+			wantMarker:      "new",
+			recoveryVersion: 0,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			configJSON, err := (&types.DataSourceConfig{
+				Type:        types.ConnectorTypeNextcloud,
+				ResourceIDs: []string{"binding-1"},
+			}).ToJSON()
+			require.NoError(t, err)
+			oldCursor, err := (&types.SyncCursor{ConnectorCursor: map[string]interface{}{
+				"instance_id": "instance-1", "files": map[string]interface{}{"binding-1": map[string]interface{}{}},
+				"marker": "old",
+			}}).ToJSON()
+			require.NoError(t, err)
+			ds := &types.DataSource{
+				ID: "ds-nextcloud", TenantID: 1, KnowledgeBaseID: "kb-1",
+				Type: types.ConnectorTypeNextcloud, Config: configJSON,
+				SyncMode: types.SyncModeIncremental, Status: types.DataSourceStatusActive,
+				SyncDeletions: true, LastSyncCursor: oldCursor,
+			}
+			syncLog := &types.SyncLog{
+				ID: "log-nextcloud", DataSourceID: ds.ID, TenantID: ds.TenantID,
+				Status: types.SyncLogStatusRunning, StartedAt: time.Now().UTC(),
+				RecoveryVersion: test.recoveryVersion,
+			}
+			if test.recoveryVersion == 1 {
+				syncLog.RecoveryTrigger = "manual"
+				syncLog.QueueTaskID = "dssync:log-nextcloud"
+			}
+			repo := &keyedDeletionRepo{items: map[string]*types.Knowledge{
+				"file:gone": {ID: "knowledge-gone"},
+			}}
+			if test.deleteFail {
+				repo.tombstoneErr = errors.New("tombstone failed")
+			}
+			registry := datasource.NewConnectorRegistry()
+			require.NoError(t, registry.Register(nextcloudCursorMixedConnector{}))
+			svc := &DataSourceService{
+				dsRepo:           newKBDeleteDSRepo(ds.KnowledgeBaseID, ds),
+				syncLogRepo:      &processSyncSyncLogRepo{logs: map[string]*types.SyncLog{syncLog.ID: syncLog}},
+				knowledgeService: &sweepFakeKS{repo: repo},
+				kbService: &processSyncKBService{kb: &types.KnowledgeBase{
+					ID:       ds.KnowledgeBaseID,
+					TenantID: ds.TenantID,
+				}},
+				connectorRegistry:   registry,
+				tenantRepo:          &processSyncTenantRepo{tenant: &types.Tenant{ID: ds.TenantID}},
+				tagService:          &processSyncTagService{},
+				nextcloudEventInbox: nextcloudBaselineTestRepo(t),
+			}
+			payload, err := json.Marshal(types.DataSourceSyncPayload{
+				DataSourceID: ds.ID, TenantID: ds.TenantID, SyncLogID: syncLog.ID, Trigger: test.trigger,
+			})
+			require.NoError(t, err)
+			ctx := context.Background()
+			if test.recoveryVersion == 1 {
+				ctx = types.WithTaskExecutionID(ctx, syncLog.QueueTaskID)
+			}
+			require.NoError(t, svc.ProcessSync(ctx, asynq.NewTask(types.TypeDataSourceSync, payload)))
+			require.NotEqual(t, types.SyncLogStatusRunning, syncLog.Status)
+			stored, err := ds.ParseSyncCursor()
+			require.NoError(t, err)
+			require.NotNil(t, stored)
+			assert.Equal(t, test.wantMarker, stored.ConnectorCursor["marker"])
+		})
+	}
+}
+
 func TestProcessSync_SyncDeletionsPartialWhenMixedResults(t *testing.T) {
 	configJSON, err := (&types.DataSourceConfig{Type: "test-sync-mixed"}).ToJSON()
 	require.NoError(t, err)
@@ -747,4 +1379,98 @@ func TestIngestItem_URLCreationMetadataAttachFailure(t *testing.T) {
 	}, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "attach datasource metadata")
+}
+
+func TestNextcloudOrdinarySyncSkipsFailedSameETagBeforeCreate(t *testing.T) {
+	repo := &deletionLookupKnowledgeRepo{admitErr: apprepo.ErrNextcloudCandidateRetryNotDue}
+	knowledge := &sweepFakeKS{repo: repo}
+	svc := &DataSourceService{knowledgeService: knowledge}
+	result := &types.SyncResult{}
+	svc.applyFetchedItem(context.Background(), &types.DataSource{
+		ID: "ds", TenantID: 7, KnowledgeBaseID: "kb", Type: types.ConnectorTypeNextcloud,
+	}, &types.FetchedItem{
+		ExternalID: "nextcloud:instance:77", FileName: "file.md",
+		Content: []byte("identical bytes"), Metadata: map[string]string{"nextcloud_etag": "same-etag"},
+	},
+		nil, result)
+	require.Equal(t, 1, result.Skipped)
+	require.Zero(t, result.Failed)
+	require.Equal(t, 1, repo.admitCalls)
+	require.Zero(t, repo.stageCalls)
+	require.Empty(t, knowledge.events, "no parser job or stored file is created")
+}
+
+func TestIngestItem_NextcloudFailureRetainsOldKnowledge(t *testing.T) {
+	for _, tc := range []struct {
+		name            string
+		lookupErr       error
+		createErr       error
+		stageErr        error
+		failedCandidate bool
+	}{
+		{name: "lookup", lookupErr: errors.New("lookup unavailable")},
+		{name: "create", createErr: errors.New("storage unavailable")},
+		{name: "enqueue failure", failedCandidate: true},
+		{name: "stage", stageErr: errors.New("database unavailable")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := &deletionLookupKnowledgeRepo{
+				knowledge: &types.Knowledge{ID: "old-version"},
+				lookupErr: tc.lookupErr,
+				stageErr:  tc.stageErr,
+			}
+			ks := &sweepFakeKS{repo: repo, createErr: tc.createErr}
+			if tc.failedCandidate {
+				ks.createdKnowledge = &types.Knowledge{ID: "new-knowledge", ParseStatus: types.ParseStatusFailed}
+			}
+			svc := &DataSourceService{knowledgeService: ks}
+			ds := &types.DataSource{
+				ID: "ds-nextcloud", TenantID: 1, KnowledgeBaseID: "kb-1", Type: types.ConnectorTypeNextcloud,
+			}
+			updated, err := svc.ingestItem(context.Background(), ds, &types.FetchedItem{
+				ExternalID: "nextcloud:instance:77", FileName: "document.txt", Content: []byte("new bytes"),
+				Metadata: map[string]string{"nextcloud_etag": "new-etag"},
+			}, nil)
+			require.Error(t, err)
+			assert.Equal(t, tc.lookupErr == nil, updated)
+			assert.Empty(t, ks.deleted)
+			assert.Empty(t, repo.hardDeleted)
+			if tc.failedCandidate {
+				assert.Zero(t, repo.stageCalls, "failed enqueue must not become a desired version")
+			}
+			if tc.lookupErr != nil {
+				assert.NotContains(t, ks.events, "create:document.txt")
+			}
+		})
+	}
+}
+
+type nextcloudChannelCaptureKnowledgeService struct {
+	*sweepFakeKS
+	channel string
+}
+
+func (s *nextcloudChannelCaptureKnowledgeService) CreateKnowledgeFromFile(
+	_ context.Context, _ string, _ *multipart.FileHeader, _ map[string]string,
+	_ *bool, _ string, _ []string, channel string,
+	_ *types.KnowledgeProcessOverrides,
+) (*types.Knowledge, error) {
+	s.channel = channel
+	return &types.Knowledge{ID: "new-knowledge"}, nil
+}
+
+func TestIngestItem_NextcloudConnectorCannotRelabelProvenance(t *testing.T) {
+	knowledge := &nextcloudChannelCaptureKnowledgeService{
+		sweepFakeKS: &sweepFakeKS{repo: &deletionLookupKnowledgeRepo{}},
+	}
+	svc := &DataSourceService{knowledgeService: knowledge}
+	_, err := svc.ingestItem(context.Background(), &types.DataSource{
+		ID: "nextcloud-source", TenantID: 1, KnowledgeBaseID: "kb-1",
+		Type: types.ConnectorTypeNextcloud,
+	}, &types.FetchedItem{
+		ExternalID: "nextcloud:instance:77", FileName: "document.txt",
+		Content: []byte("current bytes"), Metadata: map[string]string{"channel": "local", "nextcloud_etag": "etag-1"},
+	}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, types.ConnectorTypeNextcloud, knowledge.channel)
 }

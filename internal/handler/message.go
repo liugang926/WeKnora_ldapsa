@@ -10,6 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
+	"github.com/Tencent/WeKnora/internal/application/access"
 	"github.com/Tencent/WeKnora/internal/errors"
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/storageurl"
@@ -63,6 +64,16 @@ func (h *MessageHandler) resolveResourceRewriter(c *gin.Context) (*storageurl.Re
 		return nil, errors.NewBadRequestError(err.Error())
 	}
 	return storageurl.NewRequestRewriter(ctx, mode, h.FileService, h.StorageResolver), nil
+}
+
+func messageHistoryReadError(err error) error {
+	if stderrors.Is(err, access.ErrNextcloudPublicationUnavailable) {
+		return errors.NewServiceUnavailableError("Cannot verify current Nextcloud file access")
+	}
+	if stderrors.Is(err, access.ErrNextcloudPublicationDenied) {
+		return errors.NewForbiddenError("Current Nextcloud file access is required")
+	}
+	return errors.NewInternalServerError(errors.PublicMessage(err))
 }
 
 // LoadMessages godoc
@@ -122,7 +133,7 @@ func (h *MessageHandler) LoadMessages(c *gin.Context) {
 				return
 			}
 			logger.ErrorWithFields(ctx, err, nil)
-			c.Error(errors.NewInternalServerError(err.Error()))
+			_ = c.Error(messageHistoryReadError(err))
 			return
 		}
 
@@ -162,7 +173,7 @@ func (h *MessageHandler) LoadMessages(c *gin.Context) {
 			return
 		}
 		logger.ErrorWithFields(ctx, err, nil)
-		c.Error(errors.NewInternalServerError(err.Error()))
+		_ = c.Error(messageHistoryReadError(err))
 		return
 	}
 
@@ -275,7 +286,7 @@ func (h *MessageHandler) SearchMessages(c *gin.Context) {
 	result, err := h.MessageService.SearchMessages(ctx, params)
 	if err != nil {
 		logger.ErrorWithFields(ctx, err, nil)
-		c.Error(errors.NewInternalServerError(err.Error()))
+		_ = c.Error(messageHistoryReadError(err))
 		return
 	}
 

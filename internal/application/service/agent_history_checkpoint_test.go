@@ -18,15 +18,20 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+type allowAgentHistory struct{}
+
+func (allowAgentHistory) CheckAgentHistoryReplay(context.Context) error { return nil }
+
 // historyRepo pages a fixed message list backwards the way the database does
 // and serves one checkpoint lookup.
 type historyRepo struct {
 	interfaces.MessageRepository
-	rows          []*types.Message
-	checkpoint    *types.Message
-	checkpointErr error
-	updates       []string
-	pages         int
+	rows            []*types.Message
+	checkpoint      *types.Message
+	checkpointErr   error
+	updates         []string
+	pages           int
+	checkpointReads int
 }
 
 func (r *historyRepo) ListMessagesBySessionBeforeCursor(
@@ -52,6 +57,7 @@ func (r *historyRepo) ListMessagesBySessionBeforeCursor(
 func (r *historyRepo) GetLatestContextCheckpoint(
 	context.Context, string,
 ) (*types.Message, error) {
+	r.checkpointReads++
 	return r.checkpoint, r.checkpointErr
 }
 
@@ -123,7 +129,7 @@ const unlimitedBudget = 1 << 30
 func TestLoadAgentHistoryTagsEveryMessageWithItsTurn(t *testing.T) {
 	repo := &historyRepo{rows: storedTurns(2)}
 
-	got, _, err := LoadAgentHistory(context.Background(), repo, "s1", unlimitedBudget, false)
+	got, _, err := LoadAgentHistory(context.Background(), repo, "s1", unlimitedBudget, false, allowAgentHistory{})
 	require.NoError(t, err)
 
 	require.Equal(t, []string{"question 1", "answer 1", "question 2", "answer 2"}, contents(got))
@@ -137,7 +143,7 @@ func TestLoadAgentHistoryTagsEveryMessageWithItsTurn(t *testing.T) {
 func TestLoadAgentHistoryIsNotCappedByTurnCount(t *testing.T) {
 	repo := &historyRepo{rows: storedTurns(40)}
 
-	got, _, err := LoadAgentHistory(context.Background(), repo, "s1", unlimitedBudget, false)
+	got, _, err := LoadAgentHistory(context.Background(), repo, "s1", unlimitedBudget, false, allowAgentHistory{})
 	require.NoError(t, err)
 	assert.Len(t, questions(got), 40)
 }
@@ -148,7 +154,7 @@ func TestLoadAgentHistoryResumesFromTheCheckpoint(t *testing.T) {
 	rows := storedTurns(4)
 	repo := &historyRepo{rows: rows, checkpoint: checkpointOn(rows[3], "## Goal\nturns one and two")}
 
-	got, _, err := LoadAgentHistory(context.Background(), repo, "s1", unlimitedBudget, false)
+	got, _, err := LoadAgentHistory(context.Background(), repo, "s1", unlimitedBudget, false, allowAgentHistory{})
 	require.NoError(t, err)
 
 	require.Len(t, got, 5)
@@ -167,7 +173,7 @@ func TestLoadAgentHistoryStopsReadingAtTheCheckpoint(t *testing.T) {
 	rows := storedTurns(300) // 600 rows, three pages
 	repo := &historyRepo{rows: rows, checkpoint: checkpointOn(rows[2*250-1], "## Goal\nthe first 250 turns")}
 
-	got, _, err := LoadAgentHistory(context.Background(), repo, "s1", unlimitedBudget, false)
+	got, _, err := LoadAgentHistory(context.Background(), repo, "s1", unlimitedBudget, false, allowAgentHistory{})
 	require.NoError(t, err)
 
 	assert.Equal(t, 1, repo.pages)
@@ -181,7 +187,7 @@ func TestLoadAgentHistoryStopsReadingAtTheCheckpoint(t *testing.T) {
 func TestLoadAgentHistoryStopsReadingOnceTheBudgetIsFull(t *testing.T) {
 	repo := &historyRepo{rows: storedTurnsOfSize(300, 1000)}
 
-	got, _, err := LoadAgentHistory(context.Background(), repo, "s1", 5500, false)
+	got, _, err := LoadAgentHistory(context.Background(), repo, "s1", 5500, false, allowAgentHistory{})
 	require.NoError(t, err)
 
 	assert.Equal(t, 1, repo.pages)
@@ -194,7 +200,7 @@ func TestLoadAgentHistoryStopsReadingOnceTheBudgetIsFull(t *testing.T) {
 func TestLoadAgentHistoryKeepsAnOversizedNewestTurn(t *testing.T) {
 	repo := &historyRepo{rows: storedTurnsOfSize(3, 1000)}
 
-	got, _, err := LoadAgentHistory(context.Background(), repo, "s1", 100, false)
+	got, _, err := LoadAgentHistory(context.Background(), repo, "s1", 100, false, allowAgentHistory{})
 	require.NoError(t, err)
 	assert.Equal(t, []string{"question 3"}, questions(got))
 }
@@ -205,7 +211,7 @@ func TestLoadAgentHistoryBudgetsTurnsAfterTheCheckpoint(t *testing.T) {
 	rows := storedTurnsOfSize(6, 1000)
 	repo := &historyRepo{rows: rows, checkpoint: checkpointOn(rows[1], "## Goal\nturn one")}
 
-	got, _, err := LoadAgentHistory(context.Background(), repo, "s1", 2500, false)
+	got, _, err := LoadAgentHistory(context.Background(), repo, "s1", 2500, false, allowAgentHistory{})
 	require.NoError(t, err)
 
 	assert.Equal(t, chat.MessageKindCompactionSummary, got[0].Kind)
@@ -245,13 +251,13 @@ func TestLoadAgentHistoryReturnsTurnsAsTheEngineSendsThem(t *testing.T) {
 		return ""
 	}
 
-	got, _, err := LoadAgentHistory(context.Background(), repo, "s1", 1500, false)
+	got, _, err := LoadAgentHistory(context.Background(), repo, "s1", 1500, false, allowAgentHistory{})
 	require.NoError(t, err)
 	assert.Len(t, questions(got), 5, "redacted pages cost a line each, so every turn fits")
 	assert.NotContains(t, toolContent(got), "page page", "the page is not held, only its marker")
 	assert.Equal(t, "a5", got[len(got)-1].TurnID, "redaction keeps the turn tag")
 
-	got, _, err = LoadAgentHistory(context.Background(), repo, "s1", 1500, true)
+	got, _, err = LoadAgentHistory(context.Background(), repo, "s1", 1500, true, allowAgentHistory{})
 	require.NoError(t, err)
 	assert.Equal(t, []string{"question 5"}, questions(got),
 		"retained pages are sent in full and priced in full")
@@ -306,7 +312,7 @@ func TestCompleteHistoryTurnsLeavesOutATurnCutByTheRead(t *testing.T) {
 func TestLoadAgentHistoryWithoutABudgetLoadsNothing(t *testing.T) {
 	repo := &historyRepo{rows: storedTurns(2)}
 
-	got, _, err := LoadAgentHistory(context.Background(), repo, "s1", 0, false)
+	got, _, err := LoadAgentHistory(context.Background(), repo, "s1", 0, false, allowAgentHistory{})
 	require.NoError(t, err)
 	assert.Empty(t, got)
 	assert.Zero(t, repo.pages)
@@ -316,18 +322,18 @@ func TestLoadAgentHistoryWithoutABudgetLoadsNothing(t *testing.T) {
 func TestLoadAgentHistoryWithoutACheckpointWhenTheLookupFails(t *testing.T) {
 	repo := &historyRepo{rows: storedTurns(2), checkpointErr: errors.New("db down")}
 
-	got, _, err := LoadAgentHistory(context.Background(), repo, "s1", unlimitedBudget, false)
-	require.NoError(t, err)
-	assert.Equal(t, []string{"question 1", "answer 1", "question 2", "answer 2"}, contents(got))
+	got, _, err := LoadAgentHistory(context.Background(), repo, "s1", unlimitedBudget, false, allowAgentHistory{})
+	require.Error(t, err)
+	assert.Empty(t, got)
 }
 
 func TestLoadAgentHistoryIgnoresAnEmptyCheckpoint(t *testing.T) {
 	rows := storedTurns(2)
 	repo := &historyRepo{rows: rows, checkpoint: checkpointOn(rows[1], "  ")}
 
-	got, _, err := LoadAgentHistory(context.Background(), repo, "s1", unlimitedBudget, false)
-	require.NoError(t, err)
-	assert.Equal(t, []string{"question 1", "answer 1", "question 2", "answer 2"}, contents(got))
+	got, _, err := LoadAgentHistory(context.Background(), repo, "s1", unlimitedBudget, false, allowAgentHistory{})
+	require.Error(t, err)
+	assert.Empty(t, got)
 }
 
 func TestMessageCheckpointSinkWritesThroughTheSession(t *testing.T) {

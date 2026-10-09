@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Tencent/WeKnora/internal/application/access"
 	filesvc "github.com/Tencent/WeKnora/internal/application/service/file"
 	apperrors "github.com/Tencent/WeKnora/internal/errors"
 	"github.com/Tencent/WeKnora/internal/types"
@@ -18,9 +19,10 @@ import (
 )
 
 type StorageBackendService struct {
-	repo            interfaces.StorageBackendRepository
-	db              *gorm.DB
-	resourceCatalog interfaces.ResourceCatalog
+	repo             interfaces.StorageBackendRepository
+	db               *gorm.DB
+	resourceCatalog  interfaces.ResourceCatalog
+	publicationGuard *access.NextcloudPublicationGuard
 }
 
 // NewStorageBackendService creates a storage backend service. The optional
@@ -45,8 +47,11 @@ func NewStorageBackendServiceWithResources(
 	repo interfaces.StorageBackendRepository,
 	db *gorm.DB,
 	catalog interfaces.ResourceCatalog,
+	publicationGuard *access.NextcloudPublicationGuard,
 ) *StorageBackendService {
-	return NewStorageBackendService(repo, db, catalog)
+	service := NewStorageBackendService(repo, db, catalog)
+	service.publicationGuard = publicationGuard
+	return service
 }
 
 func (s *StorageBackendService) Create(ctx context.Context, backend *types.StorageBackend) error {
@@ -101,10 +106,10 @@ func (s *StorageBackendService) Update(ctx context.Context, incoming *types.Stor
 		if references == 0 {
 			if err := s.db.WithContext(ctx).Model(&types.StoredResource{}).
 				Where(
-					"tenant_id = ? AND storage_backend_id = ? AND state = ?",
+					"tenant_id = ? AND storage_backend_id = ? AND state <> ?",
 					incoming.TenantID,
 					incoming.ID,
-					types.ResourceStateActive,
+					types.ResourceStateDeleted,
 				).
 				Count(&references).Error; err != nil {
 				return err
@@ -159,7 +164,7 @@ func (s *StorageBackendService) Delete(ctx context.Context, tenantID uint64, id 
 		}
 		var resourceCount int64
 		if err := tx.Model(&types.StoredResource{}).
-			Where("tenant_id = ? AND storage_backend_id = ? AND state = ?", tenantID, id, types.ResourceStateActive).
+			Where("tenant_id = ? AND storage_backend_id = ? AND state <> ?", tenantID, id, types.ResourceStateDeleted).
 			Count(&resourceCount).Error; err != nil {
 			return err
 		}
@@ -337,7 +342,7 @@ func (s *StorageBackendService) ResolveFileService(ctx context.Context, tenant *
 			return nil, provider, err
 		}
 		scoped := filesvc.NewBackendScopedFileService(backend.ID, inner)
-		return filesvc.NewResourceCatalogFileService(scoped, s.resourceCatalog), provider, nil
+		return filesvc.NewResourceCatalogFileService(scoped, s.resourceCatalog, s.publicationGuard), provider, nil
 	}
 	sec := tenant.StorageEngineConfig
 	if strings.TrimSpace(provider) == "" && storageEngineDefaultProvider(sec) == "" {
@@ -356,7 +361,7 @@ func (s *StorageBackendService) ResolveFileService(ctx context.Context, tenant *
 	if err != nil {
 		return nil, resolvedProvider, err
 	}
-	return filesvc.NewResourceCatalogFileService(inner, s.resourceCatalog), resolvedProvider, nil
+	return filesvc.NewResourceCatalogFileService(inner, s.resourceCatalog, s.publicationGuard), resolvedProvider, nil
 }
 
 func validateStorageBackendEndpoint(backend *types.StorageBackend) error {

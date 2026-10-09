@@ -34,6 +34,12 @@ type KnowledgeHandler struct {
 	kbShareService    interfaces.KBShareService
 	agentShareService interfaces.AgentShareService
 	groupAccess       interfaces.GroupAccessService
+	publicationGuard  *access.NextcloudPublicationGuard
+	askTargets        nextcloudAskTargetResolver
+	contentLeases     nextcloudHTTPReadLeaseStore
+	leaseHeartbeat    time.Duration
+	leaseCheckpoint   time.Duration
+	publicationCheck  func(context.Context, *types.Knowledge) error // test seam; production uses publicationGuard
 	asynqClient       interfaces.TaskEnqueuer
 	spanRepo          repository.KnowledgeSpanRepository
 }
@@ -44,6 +50,44 @@ func ConfigureKnowledgeHandlerGroupAccess(h *KnowledgeHandler, groupAccess inter
 	if h != nil {
 		h.groupAccess = groupAccess
 	}
+}
+
+// ConfigureKnowledgeHandlerPublicationGuard attaches the live source check at
+// the HTTP boundary, after the ordinary KB authorization is resolved.
+func ConfigureKnowledgeHandlerPublicationGuard(h *KnowledgeHandler, guard *access.NextcloudPublicationGuard) {
+	if h != nil {
+		h.publicationGuard = guard
+	}
+}
+
+// ConfigureKnowledgeHandlerAskTargets installs trusted Nextcloud ask-target lookup.
+func ConfigureKnowledgeHandlerAskTargets(h *KnowledgeHandler, targets *repository.NextcloudAskTargetRepository) {
+	if h != nil {
+		h.askTargets = targets
+	}
+}
+
+// ConfigureKnowledgeHandlerContentLeaseStore installs the durable source-content lease store.
+func ConfigureKnowledgeHandlerContentLeaseStore(h *KnowledgeHandler, store *repository.NextcloudContentLeaseStore) {
+	if h != nil {
+		h.contentLeases = store
+	}
+}
+
+func (h *KnowledgeHandler) checkPublication(ctx context.Context, knowledge *types.Knowledge) error {
+	if h.publicationCheck != nil {
+		return h.publicationCheck(ctx, knowledge)
+	}
+	return checkKnowledgePublication(ctx, h.publicationGuard, knowledge)
+}
+
+func (h *KnowledgeHandler) checkPublicationList(ctx context.Context, knowledges []*types.Knowledge) error {
+	for _, knowledge := range knowledges {
+		if err := h.checkPublication(ctx, knowledge); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (h *KnowledgeHandler) authorizeKBGroupAccess(
@@ -672,6 +716,23 @@ func (h *KnowledgeHandler) GetKnowledge(c *gin.Context) {
 		c.Error(errors.NewNotFoundError("Knowledge not found"))
 		return
 	}
+	if err := h.checkPublication(ctx, knowledge); err != nil {
+		_ = c.Error(err)
+		return
+	}
+	leases, err := h.beginNextcloudRead(effCtx, c, []*types.Knowledge{knowledge})
+	if err != nil {
+		_ = c.Error(err)
+		return
+	}
+	defer leases.Close()
+	if err := h.verifyNextcloudRead(leases.Context(effCtx), leases, []*types.Knowledge{knowledge}); err != nil {
+		_ = c.Error(err)
+		return
+	}
+	defer guardNextcloudResponseWrites(c, leases, func(checkCtx context.Context) error {
+		return h.checkPublication(checkCtx, knowledge)
+	})()
 
 	logger.Infof(ctx, "Knowledge retrieved successfully, ID: %s, title: %s",
 		secutils.SanitizeForLog(knowledge.ID), secutils.SanitizeForLog(knowledge.Title))
@@ -710,6 +771,17 @@ func (h *KnowledgeHandler) GetKnowledgeSpans(c *gin.Context) {
 		c.Error(err)
 		return
 	}
+	if err := h.checkPublication(ctx, knowledge); err != nil {
+		_ = c.Error(err)
+		return
+	}
+	leases, err := h.beginNextcloudRead(ctx, c, []*types.Knowledge{knowledge})
+	if err != nil {
+		_ = c.Error(err)
+		return
+	}
+	defer leases.Close()
+	ctx = leases.Context(ctx)
 
 	// Pick attempt: explicit ?attempt=N wins; otherwise pull the
 	// latest attempt from the spans table. Lite-mode / fresh installs
@@ -777,6 +849,13 @@ func (h *KnowledgeHandler) GetKnowledgeSpans(c *gin.Context) {
 	); lastError != nil {
 		resp["last_error"] = lastError
 	}
+	if err := h.verifyNextcloudRead(ctx, leases, []*types.Knowledge{knowledge}); err != nil {
+		_ = c.Error(err)
+		return
+	}
+	defer guardNextcloudResponseWrites(c, leases, func(checkCtx context.Context) error {
+		return h.checkPublication(checkCtx, knowledge)
+	})()
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"data":    resp,
@@ -1046,12 +1125,73 @@ func (h *KnowledgeHandler) ListKnowledge(c *gin.Context) {
 		effectiveTenantID,
 	)
 
+	// The page and total are read before their source IDs are known. Hold the
+	// KB fence across the query so a concurrent GC claim cannot delete rows
+	// being hydrated. Production always wires this store; test-only handlers
+	// without it may still list ordinary rows, while source rows fail closed
+	// when their exact lease is requested below.
+	var kbLease *nextcloudHTTPReadLeases
+	if h.contentLeases != nil {
+		kbLease, err = acquireNextcloudHTTPKBReadLease(ctx, h.contentLeases,
+			effectiveTenantID, kbID, h.leaseHeartbeat)
+		if err != nil {
+			_ = c.Error(err)
+			return
+		}
+		defer kbLease.Close()
+		ctx = kbLease.Context(ctx)
+	}
+
 	// Retrieve paginated knowledge entries
 	result, err := h.kgService.ListPagedKnowledgeByKnowledgeBaseID(ctx, kbID, &pagination, filter)
 	if err != nil {
 		logger.ErrorWithFields(ctx, err, nil)
 		c.Error(errors.NewInternalServerError(err.Error()))
 		return
+	}
+	// Do not return a partial page or a total that includes a withdrawn file.
+	items, ok := result.Data.([]*types.Knowledge)
+	if !ok {
+		_ = c.Error(errors.NewInternalServerError("Invalid knowledge list result"))
+		return
+	}
+	if err := h.checkPublicationList(ctx, items); err != nil {
+		_ = c.Error(err)
+		return
+	}
+	leases, err := h.beginNextcloudRead(ctx, c, items)
+	if err != nil {
+		_ = c.Error(err)
+		return
+	}
+	defer leases.Close()
+	ctx = leases.Context(ctx)
+	if err := kbLease.Verify(); err != nil {
+		_ = c.Error(nextcloudHTTPLeaseError(err))
+		return
+	}
+	if err := leases.Verify(); err != nil {
+		_ = c.Error(nextcloudHTTPLeaseError(err))
+		return
+	}
+	var sourceRow *types.Knowledge
+	for _, item := range items {
+		if item != nil && item.Channel == types.ConnectorTypeNextcloud {
+			sourceRow = item
+			break
+		}
+	}
+	if leases != nil {
+		defer guardNextcloudResponseWrites(c, leases, func(checkCtx context.Context) error {
+			if err := kbLease.Verify(); err != nil {
+				return nextcloudHTTPLeaseError(err)
+			}
+			if err := h.checkCurrentNextcloudKBAccess(checkCtx, c, sourceRow,
+				types.OrgRoleViewer); err != nil {
+				return err
+			}
+			return h.checkPublicationList(checkCtx, items)
+		})()
 	}
 
 	logger.Infof(
@@ -1092,6 +1232,21 @@ func (h *KnowledgeHandler) ListKnowledgeFolders(c *gin.Context) {
 		return
 	}
 	ctx = types.WithExecutionTenant(c.Request.Context(), effectiveTenantID)
+	// Folder names and counts are aggregated before document-level policy can
+	// run. A mixed KB cannot safely expose that aggregate while it contains
+	// Nextcloud documents, so require clients to use the guarded document list.
+	nextcloudPage, err := h.kgService.ListPagedKnowledgeByKnowledgeBaseID(
+		ctx, kbID, &types.Pagination{Page: 1, PageSize: 1},
+		types.KnowledgeListFilter{Source: types.ConnectorTypeNextcloud},
+	)
+	if err != nil || nextcloudPage == nil {
+		_ = c.Error(errors.NewServiceUnavailableError("Cannot verify knowledge folder visibility"))
+		return
+	}
+	if nextcloudPage.Total > 0 {
+		_ = c.Error(errors.NewForbiddenError("Folder aggregates are unavailable for a Nextcloud knowledge base"))
+		return
+	}
 
 	tree, err := h.kgService.ListKnowledgeFolderTree(ctx, kbID)
 	if err != nil {
@@ -1580,26 +1735,65 @@ func (h *KnowledgeHandler) DownloadKnowledgeFile(c *gin.Context) {
 	// Keep a handler-level Editor check in addition to the route guard. The
 	// original file is more sensitive than parsed-content reads and must not
 	// be downloadable through a read-only organization share.
-	_, effCtx, err := h.resolveKnowledgeAndValidateKBAccess(c, id, types.OrgRoleEditor)
+	knowledge, effCtx, err := h.resolveKnowledgeAndValidateKBAccess(c, id, types.OrgRoleEditor)
 	if err != nil {
 		c.Error(err)
 		return
 	}
+	if err := h.checkPublication(ctx, knowledge); err != nil {
+		_ = c.Error(err)
+		return
+	}
 	logger.Infof(ctx, "Retrieving knowledge file, ID: %s", secutils.SanitizeForLog(id))
+	leases, err := h.beginNextcloudRead(effCtx, c, []*types.Knowledge{knowledge})
+	if err != nil {
+		_ = c.Error(err)
+		return
+	}
+	defer leases.Close()
+	effCtx = leases.Context(effCtx)
 
 	file, filename, err := h.kgService.GetKnowledgeFile(effCtx, id)
 	if err != nil {
+		if leaseErr := leases.Err(); leaseErr != nil {
+			_ = c.Error(nextcloudHTTPLeaseError(leaseErr))
+			return
+		}
 		logger.ErrorWithFields(ctx, err, nil)
 		c.Error(errors.NewInternalServerError("Failed to retrieve file").WithDetails(err.Error()))
 		return
 	}
+	if err := h.verifyNextcloudRead(effCtx, leases, []*types.Knowledge{knowledge}); err != nil {
+		_ = file.Close()
+		_ = c.Error(err)
+		return
+	}
+	checkLive := func(checkCtx context.Context) error {
+		if leases != nil {
+			if err := h.checkCurrentNextcloudKBAccess(checkCtx, c, knowledge, types.OrgRoleEditor); err != nil {
+				return err
+			}
+		}
+		return h.checkPublication(checkCtx, knowledge)
+	}
+	if err := checkLive(effCtx); err != nil {
+		_ = file.Close()
+		_ = c.Error(err)
+		return
+	}
+	file = wrapNextcloudLeasedFile(file, leases, checkLive, h.leaseCheckpoint)
+	defer guardNextcloudResponseWrites(c, leases, checkLive)()
 	c.Header("Content-Description", "File Transfer")
 	c.Header("Content-Transfer-Encoding", "binary")
 	c.Header("Expires", "0")
-	if err := filetransport.Serve(c.Writer, c.Request, file, filetransport.Options{
+	output, flush := bufferedNextcloudResponse(c.Writer, leases, nextcloudDirectResponseBuffer)
+	if err := filetransport.Serve(output, c.Request, file, filetransport.Options{
 		Filename: filename, Download: true, ContentType: "application/octet-stream", CacheControl: "private, no-store",
 	}); err != nil {
 		logger.Errorf(ctx, "Failed to send file: %v", err)
+	}
+	if err := flush(); err != nil {
+		logger.Errorf(ctx, "Failed to finish file response: %v", err)
 	}
 }
 
@@ -1624,22 +1818,61 @@ func (h *KnowledgeHandler) PreviewKnowledgeFile(c *gin.Context) {
 		return
 	}
 
-	_, effCtx, err := h.resolveKnowledgeAndValidateKBAccess(c, id, types.OrgRoleViewer)
+	knowledge, effCtx, err := h.resolveKnowledgeAndValidateKBAccess(c, id, types.OrgRoleViewer)
 	if err != nil {
 		c.Error(err)
 		return
 	}
+	if err := h.checkPublication(ctx, knowledge); err != nil {
+		_ = c.Error(err)
+		return
+	}
+	leases, err := h.beginNextcloudRead(effCtx, c, []*types.Knowledge{knowledge})
+	if err != nil {
+		_ = c.Error(err)
+		return
+	}
+	defer leases.Close()
+	effCtx = leases.Context(effCtx)
 
 	file, filename, err := h.kgService.GetKnowledgeFile(effCtx, id)
 	if err != nil {
+		if leaseErr := leases.Err(); leaseErr != nil {
+			_ = c.Error(nextcloudHTTPLeaseError(leaseErr))
+			return
+		}
 		logger.ErrorWithFields(ctx, err, nil)
 		c.Error(errors.NewInternalServerError("Failed to retrieve file").WithDetails(err.Error()))
 		return
 	}
-	if err := filetransport.Serve(c.Writer, c.Request, file, filetransport.Options{
+	if err := h.verifyNextcloudRead(effCtx, leases, []*types.Knowledge{knowledge}); err != nil {
+		_ = file.Close()
+		_ = c.Error(err)
+		return
+	}
+	checkLive := func(checkCtx context.Context) error {
+		if leases != nil {
+			if err := h.checkCurrentNextcloudKBAccess(checkCtx, c, knowledge, types.OrgRoleViewer); err != nil {
+				return err
+			}
+		}
+		return h.checkPublication(checkCtx, knowledge)
+	}
+	if err := checkLive(effCtx); err != nil {
+		_ = file.Close()
+		_ = c.Error(err)
+		return
+	}
+	file = wrapNextcloudLeasedFile(file, leases, checkLive, h.leaseCheckpoint)
+	defer guardNextcloudResponseWrites(c, leases, checkLive)()
+	output, flush := bufferedNextcloudResponse(c.Writer, leases, nextcloudDirectResponseBuffer)
+	if err := filetransport.Serve(output, c.Request, file, filetransport.Options{
 		Filename: filename, CacheControl: "private, no-store",
 	}); err != nil {
 		logger.Errorf(ctx, "Failed to stream preview: %v", err)
+	}
+	if err := flush(); err != nil {
+		logger.Errorf(ctx, "Failed to finish preview response: %v", err)
 	}
 }
 
@@ -1788,6 +2021,24 @@ func (h *KnowledgeHandler) GetKnowledgeBatch(c *gin.Context) {
 		}
 		knowledges = allowed
 	}
+	if err := h.checkPublicationList(ctx, knowledges); err != nil {
+		_ = c.Error(err)
+		return
+	}
+	leases, err := h.beginNextcloudRead(ctx, c, knowledges)
+	if err != nil {
+		_ = c.Error(err)
+		return
+	}
+	defer leases.Close()
+	ctx = leases.Context(ctx)
+	if err := h.verifyNextcloudRead(ctx, leases, knowledges); err != nil {
+		_ = c.Error(err)
+		return
+	}
+	defer guardNextcloudResponseWrites(c, leases, func(checkCtx context.Context) error {
+		return h.checkPublicationList(checkCtx, knowledges)
+	})()
 
 	logger.Infof(ctx, "Batch knowledge retrieval successful, requested count: %d, returned count: %d",
 		len(req.IDs), len(knowledges))
@@ -2355,12 +2606,7 @@ func (h *KnowledgeHandler) SearchKnowledge(c *gin.Context) {
 			c.Error(errors.NewInternalServerError("Failed to search knowledge").WithDetails(err.Error()))
 			return
 		}
-		c.JSON(http.StatusOK, gin.H{
-			"success":  true,
-			"data":     knowledges,
-			"has_more": hasMore,
-			"total":    total,
-		})
+		h.respondKnowledgeSearch(ctx, c, knowledges, hasMore, total)
 		return
 	}
 
@@ -2380,12 +2626,7 @@ func (h *KnowledgeHandler) SearchKnowledge(c *gin.Context) {
 			c.Error(errors.NewInternalServerError("Failed to search knowledge").WithDetails(err.Error()))
 			return
 		}
-		c.JSON(http.StatusOK, gin.H{
-			"success":  true,
-			"data":     knowledges,
-			"has_more": hasMore,
-			"total":    total,
-		})
+		h.respondKnowledgeSearch(ctx, c, knowledges, hasMore, total)
 		return
 	}
 
@@ -2396,13 +2637,7 @@ func (h *KnowledgeHandler) SearchKnowledge(c *gin.Context) {
 		c.Error(errors.NewInternalServerError("Failed to search knowledge").WithDetails(err.Error()))
 		return
 	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"success":  true,
-		"data":     knowledges,
-		"has_more": hasMore,
-		"total":    total,
-	})
+	h.respondKnowledgeSearch(ctx, c, knowledges, hasMore, total)
 }
 
 // MoveKnowledgeRequest defines the request for moving knowledge items

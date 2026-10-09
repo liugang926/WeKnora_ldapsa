@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/Tencent/WeKnora/internal/datasource"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/stretchr/testify/assert"
 )
@@ -51,6 +52,52 @@ func TestDataSourceResponse_OmitsCredentials(t *testing.T) {
 func TestDataSourceResponse_NilSafe(t *testing.T) {
 	assert.Nil(t, NewDataSourceResponse(nil))
 	assert.Equal(t, []*DataSourceResponse{}, NewDataSourceResponses(nil))
+}
+
+func TestNextcloudDataSourceResponseRedactsFileMetadata(t *testing.T) {
+	const secretName = "private-department-plan.txt"
+	log := &types.SyncLog{
+		ID: "log-1", Status: "partial", ItemsFailed: 1,
+		ErrorMessage: secretName,
+		Result:       types.JSON(`{"errors":[{"title":"` + secretName + `"}]}`),
+	}
+	ds := &types.DataSource{
+		ID: "ds-1", Type: types.ConnectorTypeNextcloud,
+		LastSyncCursor: types.JSON(`{"connector_cursor":{"files":{"binding":{"1":{"name":"` + secretName + `"}}}}}`),
+		LastSyncResult: types.JSON(`{"errors":[{"title":"` + secretName + `"}]}`),
+		ErrorMessage:   secretName, LatestSyncLog: log,
+	}
+	response := NewDataSourceResponse(ds)
+	body, err := json.Marshal(response)
+	assert.NoError(t, err)
+	assert.NotContains(t, string(body), secretName)
+	assert.NotContains(t, string(body), "last_sync_cursor")
+	assert.NotContains(t, string(body), "last_sync_result")
+	assert.Equal(t, 1, response.LatestSyncLog.ItemsFailed)
+	assert.Empty(t, response.LatestSyncLog.ErrorMessage)
+	assert.Empty(t, response.LatestSyncLog.Result)
+	assert.Equal(t, secretName, log.ErrorMessage, "redaction must not mutate stored logs")
+	logs, err := json.Marshal(RedactNextcloudSyncLogs([]*types.SyncLog{log}))
+	assert.NoError(t, err)
+	assert.NotContains(t, string(logs), secretName)
+}
+
+func TestNextcloudUncertainEnqueueStatusIsStaticAndRedacted(t *testing.T) {
+	log := &types.SyncLog{
+		ID: "synthetic-log", Status: types.SyncLogStatusRunning,
+		ErrorMessage: datasource.NextcloudSyncEnqueueUncertain,
+		Result:       types.JSON(`{"private_path":"department/restricted.txt"}`),
+	}
+	redacted := RedactNextcloudSyncLog(log)
+	assert.Equal(t, datasource.NextcloudSyncEnqueueUncertain, redacted.ErrorMessage)
+	assert.Equal(t, "dssync:synthetic-log", redacted.QueueTaskID)
+	assert.Empty(t, redacted.Result)
+	assert.Equal(t, datasource.NextcloudSyncEnqueueUncertain, log.ErrorMessage)
+
+	log.ErrorMessage = "department/restricted.txt"
+	redacted = RedactNextcloudSyncLog(log)
+	assert.Empty(t, redacted.ErrorMessage)
+	assert.Empty(t, redacted.QueueTaskID)
 }
 
 func TestDataSourceResponse_RSSFeedURLsFromCredentials(t *testing.T) {

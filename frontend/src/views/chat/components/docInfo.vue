@@ -28,7 +28,7 @@
                         <span class="doc-group-count">{{ $t('chat.referenceChunkCount', { count: group.chunks.length })
                             }}</span>
                     </div>
-                    <div class="doc-group-actions" v-if="!embeddedMode && group.knowledgeBaseId" @click.stop>
+                    <div class="doc-group-actions" v-if="!embeddedMode && (group.sourceUrl || group.knowledgeBaseId)" @click.stop>
                         <t-tooltip :content="$t('chat.navigateToDocument')">
                             <a
                                 class="doc-group-navigate"
@@ -64,6 +64,7 @@ import { computed, ref, reactive } from "vue";
 import { useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
 import { sanitizeHTML } from '@/utils/security';
+import { nextcloudOriginalUrl } from '@/utils/nextcloudOriginalUrl';
 import ContentPopup from './tool-results/ContentPopup.vue';
 import { useChatReferencesDrawer } from '@/composables/useChatReferencesDrawer';
 
@@ -133,6 +134,7 @@ const groupedKnowledgeRefs = computed(() => {
                 title: item.knowledge_title || item.knowledge_filename || key,
                 knowledgeId: item.knowledge_id,
                 knowledgeBaseId: item.knowledge_base_id,
+                sourceUrl: nextcloudOriginalUrl(item.metadata),
                 chunks: [],
             });
         }
@@ -171,6 +173,7 @@ const truncateContent = (content, maxLen) => {
 };
 
 const getDocumentHref = (group) => {
+    if (group.sourceUrl) return group.sourceUrl;
     if (!group.knowledgeBaseId) return '';
     const query = {};
     if (group.knowledgeId) {

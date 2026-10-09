@@ -100,6 +100,9 @@ func (s *knowledgeService) CreateKnowledgeFromFile(ctx context.Context,
 	if usesSourceIdentityDuplicateCheck(channel) {
 		checkParams.DataSourceID = metadata["datasource_id"]
 		checkParams.ExternalID = metadata["external_id"]
+		if channel == types.ConnectorTypeNextcloud {
+			checkParams.NextcloudTargetETag = metadata["nextcloud_target_etag"]
+		}
 	}
 	exists, existingKnowledge, err := s.repo.CheckKnowledgeExists(ctx, tenantID, kbID, checkParams)
 	if err != nil {
@@ -189,7 +192,18 @@ func (s *knowledgeService) CreateKnowledgeFromFile(ctx context.Context,
 	// Save the file to storage (use KB-level storage engine if configured)
 	logger.Infof(ctx, "Saving file, knowledge ID: %s", knowledge.ID)
 	fileSvc := s.resolveFileService(ctx, kb)
-	filePath, err := fileSvc.SaveFile(ctx, file, knowledge.TenantID, knowledge.ID)
+	markedNextcloud, err := isNextcloudKnowledge(knowledge)
+	if err != nil {
+		return nil, err
+	}
+	provenance := types.ResourceProvenanceOrdinary
+	if markedNextcloud {
+		provenance = types.ResourceProvenanceNextcloud
+	}
+	filePath, err := fileSvc.SaveFile(types.WithResourceProvenance(
+		ctx,
+		provenance,
+	), file, knowledge.TenantID, knowledge.ID)
 	if err != nil {
 		logger.Errorf(ctx, "Failed to save file, knowledge ID: %s, error: %v", knowledge.ID, err)
 		return nil, err
@@ -1163,7 +1177,7 @@ func (s *knowledgeService) markKnowledgeEnqueueFailed(ctx context.Context, knowl
 
 func usesSourceIdentityDuplicateCheck(channel string) bool {
 	switch channel {
-	case types.ConnectorTypeGitLab, types.ChannelConfluence:
+	case types.ConnectorTypeGitLab, types.ChannelConfluence, types.ConnectorTypeNextcloud:
 		return true
 	default:
 		return false

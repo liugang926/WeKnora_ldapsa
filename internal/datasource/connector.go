@@ -310,6 +310,14 @@ var ConnectorMetadataRegistry = map[string]ConnectorMetadata{
 		AuthType:     "token",
 		Capabilities: []string{"incremental", "hierarchical"},
 	},
+	types.ConnectorTypeNextcloud: {
+		Type:         types.ConnectorTypeNextcloud,
+		Name:         "Nextcloud",
+		Description:  "Sync files from authorized Nextcloud publication folders",
+		Priority:     8,
+		AuthType:     "token",
+		Capabilities: []string{"incremental"},
+	},
 }
 
 // ListAvailableConnectors returns all available connector metadata

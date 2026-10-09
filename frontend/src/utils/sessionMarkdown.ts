@@ -1,4 +1,5 @@
 import { KB_WEB_TAG_RE } from './citationMarkdown'
+import { nextcloudOriginalUrl } from './nextcloudOriginalUrl'
 
 export interface SessionExportAttachment {
   file_name?: string
@@ -97,7 +98,8 @@ function referenceLine(reference: SessionExportReference): string {
     || ''
   if (!title) return ''
 
-  const source = reference.metadata?.url || reference.knowledge_source || ''
+  const source = nextcloudOriginalUrl(reference.metadata)
+    || reference.metadata?.url || reference.knowledge_source || ''
   const safeTitle = markdownListText(title)
   return isHttpUrl(source) ? `- [${safeTitle}](${source})` : `- ${safeTitle}`
 }

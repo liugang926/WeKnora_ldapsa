@@ -187,6 +187,10 @@ func (s *agentService) CreateAgentEngine(
 ) (interfaces.AgentEngine, error) {
 	logger.Infof(ctx, "Creating agent engine with custom EventBus")
 
+	if config != nil && config.ExcludeHistoricalContext {
+		config = withoutHistoricalAgentContext(config)
+	}
+
 	// 1. Validate config
 	if err := s.ValidateConfig(config); err != nil {
 		return nil, fmt.Errorf("invalid agent config: %w", err)
@@ -213,9 +217,11 @@ func (s *agentService) CreateAgentEngine(
 	// Register the shell first: file discovery needs a separate tool only
 	// when no shell is available. File access still follows the sandbox
 	// capability independently of the existing SkillsEnabled execution gate.
-	s.registerSandboxShellIfAllowed(ctx, toolRegistry, sessionID, config)
-	s.registerSandboxFileTools(ctx, toolRegistry, sessionID, config)
-	s.registerWebPageFiles(ctx, toolRegistry, config, sessionID, assistantMessageID)
+	if !config.ExcludeHistoricalContext {
+		s.registerSandboxShellIfAllowed(ctx, toolRegistry, sessionID, config)
+		s.registerSandboxFileTools(ctx, toolRegistry, sessionID, config)
+		s.registerWebPageFiles(ctx, toolRegistry, config, sessionID, assistantMessageID)
+	}
 	// Advertise cached service summaries independently of @mentions. Concrete
 	// tool definitions are published after describe, before the next model request.
 	toolRegistry.PrepareMCPTools(ctx)
@@ -267,7 +273,7 @@ func (s *agentService) CreateAgentEngine(
 	// the installed-skill list and the read_file / shell_exec environment. A sandbox whose skills are still installing —
 	// or that simply has none yet — therefore gets a shell without an
 	// empty skills manager or skill tools that cannot succeed.
-	offerSkills := config.SkillsEnabled &&
+	offerSkills := !config.ExcludeHistoricalContext && config.SkillsEnabled &&
 		(len(config.SkillDirs) > 0 || len(config.TenantSkills) > 0)
 	if offerSkills {
 		skillsManager, err := s.initializeSkillsManager(ctx, sessionID, config, toolRegistry)
@@ -293,6 +299,45 @@ func (s *agentService) CreateAgentEngine(
 	}
 
 	return engine, nil
+}
+
+// Keep a denied/unknown history out of every model-visible session capability,
+// not just llmContext. Current grounded retrieval and plain Q&A still run; the
+// next positively verified no-source turn retains its original capabilities.
+func withoutHistoricalAgentContext(config *types.AgentConfig) *types.AgentConfig {
+	cloned := *config
+	cloned.SkillsEnabled = false
+	cloned.SkillDirs = nil
+	cloned.AllowedSkills = nil
+	cloned.TenantSkills = nil
+	cloned.LocalBrowserEnabled = false
+	cloned.MCPSelectionMode = "none"
+	cloned.MCPServices = nil
+	cloned.PinnedMCPServiceIDs = nil
+	cloned.PinnedSkillNames = nil
+	cloned.SandboxConfigID = ""
+	disabledMemory := false
+	cloned.MemoryEnabled = &disabledMemory
+	allowed := cloned.AllowedTools
+	if len(allowed) == 0 {
+		allowed = tools.DefaultAllowedTools()
+	}
+	safe := map[string]bool{
+		tools.ToolThinking:            true,
+		tools.ToolSearchKnowledge:     true,
+		tools.ToolReadDocument:        true,
+		tools.ToolListDocuments:       true,
+		tools.ToolQueryKnowledgeGraph: true,
+		tools.ToolWebSearch:           true,
+		tools.ToolWebFetch:            true,
+	}
+	cloned.AllowedTools = []string{tools.ToolThinking}
+	for _, name := range tools.NormalizeAllowedTools(allowed) {
+		if safe[name] && name != tools.ToolThinking {
+			cloned.AllowedTools = append(cloned.AllowedTools, name)
+		}
+	}
+	return &cloned
 }
 
 // registerMCPTools registers MCP tools from enabled services for this tenant.
@@ -1229,6 +1274,16 @@ func (s *agentService) getKnowledgeBaseInfos(ctx context.Context, kbIDs []string
 		// Skip hidden/system-managed knowledge bases (e.g., __chat_history__)
 		if kb.IsTemporary {
 			logger.Debugf(ctx, "Skipping temporary knowledge base %s (%s) from prompt", kb.ID, kb.Name)
+			continue
+		}
+		if kb.EverHadNextcloudSource {
+			// The agent prompt has no per-file AD proof for a generic KB browse.
+			// Live retrieval has its own guard; omit cached titles and profiles.
+			kbInfos = append(kbInfos, &agent.KnowledgeBaseInfo{
+				ID: kb.ID, Name: kb.Name, Type: kb.Type, Description: kb.Description,
+				Capabilities: kbRetrievalCapabilities(kb),
+				RecentDocs:   []agent.RecentDocInfo{},
+			})
 			continue
 		}
 

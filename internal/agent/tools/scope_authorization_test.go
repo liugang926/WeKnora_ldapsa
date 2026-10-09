@@ -50,8 +50,8 @@ func TestKnowledgeIDsMatchingAnyTag(t *testing.T) {
 		[]string{"tag-a"},
 		func(_ context.Context, ids []string) (map[string][]*types.KnowledgeTag, error) {
 			return map[string][]*types.KnowledgeTag{
-				"doc-1": []*types.KnowledgeTag{testKnowledgeTag("tag-z")},
-				"doc-2": []*types.KnowledgeTag{testKnowledgeTag("tag-a")},
+				"doc-1": {testKnowledgeTag("tag-z")},
+				"doc-2": {testKnowledgeTag("tag-a")},
 			}, nil
 		},
 	)
@@ -87,6 +87,29 @@ func TestAuthorizeKnowledgeInSearchTargetsAllowsBoundDocument(t *testing.T) {
 	got, err := authorizeKnowledgeInSearchTargets(context.Background(), targets, "doc-1", service)
 	if err != nil || got == nil || got.ID != "doc-1" {
 		t.Fatalf("bound document authorization failed: got=%+v err=%v", got, err)
+	}
+}
+
+func TestAgentDocumentScopeRejectsNextcloudWithoutPublicationCheck(t *testing.T) {
+	knowledge := &types.Knowledge{
+		ID: "doc-1", TenantID: 7, KnowledgeBaseID: "kb-1",
+		Channel:  types.ConnectorTypeNextcloud,
+		Metadata: types.JSON(`{"datasource_id":"source-1","nextcloud_file_id":"42"}`),
+	}
+	service := &scopeKnowledgeService{knowledge: knowledge}
+	targets := types.SearchTargets{{
+		Type: types.SearchTargetTypeKnowledgeBase, KnowledgeBaseID: "kb-1", TenantID: 7,
+	}}
+	if _, err := authorizeKnowledgeInSearchTargets(context.Background(), targets, knowledge.ID, service); err == nil {
+		t.Fatal("Agent document handle exposed a Nextcloud document without source authorization")
+	}
+	chunkService := &scopeChunkService{chunk: &types.Chunk{
+		ID: "chunk-1", TenantID: 7, KnowledgeBaseID: "kb-1", KnowledgeID: knowledge.ID,
+		IsEnabled: true,
+	}}
+	if _, err := authorizeChunkInSearchTargets(context.Background(), targets, "chunk-1", chunkService,
+		service); err == nil {
+		t.Fatal("Agent chunk handle exposed a Nextcloud document without source authorization")
 	}
 }
 
@@ -199,8 +222,8 @@ func TestPagePassesWikiScope_TagScope(t *testing.T) {
 		WikiScope{KnowledgeBaseID: "kb-1", TagIDs: []string{"tag-a"}},
 		func(_ context.Context, ids []string) (map[string][]*types.KnowledgeTag, error) {
 			return map[string][]*types.KnowledgeTag{
-				"doc-1": []*types.KnowledgeTag{testKnowledgeTag("tag-z")},
-				"doc-2": []*types.KnowledgeTag{testKnowledgeTag("tag-a")},
+				"doc-1": {testKnowledgeTag("tag-z")},
+				"doc-2": {testKnowledgeTag("tag-a")},
 			}, nil
 		},
 	)
@@ -217,8 +240,8 @@ func TestPagePassesWikiScope_TagScope(t *testing.T) {
 		WikiScope{KnowledgeBaseID: "kb-1", TagIDs: []string{"tag-missing"}},
 		func(_ context.Context, ids []string) (map[string][]*types.KnowledgeTag, error) {
 			return map[string][]*types.KnowledgeTag{
-				"doc-1": []*types.KnowledgeTag{testKnowledgeTag("tag-z")},
-				"doc-2": []*types.KnowledgeTag{testKnowledgeTag("tag-a")},
+				"doc-1": {testKnowledgeTag("tag-z")},
+				"doc-2": {testKnowledgeTag("tag-a")},
 			}, nil
 		},
 	)

@@ -229,6 +229,50 @@ func md5Hex(content string) string {
 	return fmt.Sprintf("%x", md5.Sum([]byte(content)))
 }
 
+func TestNextcloudReplaceKnowledgeFileRejectsBeforeFileOrSourceWrite(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		channel   string
+		metadata  types.JSON
+		content   string
+		fileName  string
+		replaceMD map[string]string
+	}{
+		{
+			name: "source channel and changed file", channel: types.ConnectorTypeNextcloud,
+			content: "new source body",
+		},
+		{
+			name: "legacy source metadata and changed file", channel: types.ChannelWeb,
+			metadata: types.JSON(`{"nextcloud_file_id":"42","external_id":"notes/a.md"}`),
+			content:  "new source body",
+		},
+		{
+			name: "same file with metadata edit", channel: types.ConnectorTypeNextcloud,
+			content: replaceFileOldContent, fileName: "a.md",
+			replaceMD: map[string]string{"extra": "changed"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newReplaceFileHarness(t)
+			h.original.Channel = tc.channel
+			if len(tc.metadata) != 0 {
+				h.original.Metadata = tc.metadata
+			}
+			h.repo.row = h.original
+
+			_, err := h.replace(t, tc.content, tc.fileName, tc.replaceMD)
+			require.ErrorIs(t, err, ErrNextcloudSourceManagedMutation)
+			require.Equal(t, h.original, h.repo.row)
+			require.Zero(t, h.repo.columnsCalls)
+			require.Zero(t, h.store.saved)
+			require.Empty(t, h.store.deleted)
+			require.Empty(t, h.events)
+			require.Empty(t, h.tasks.payloads)
+		})
+	}
+}
+
 func TestReplaceKnowledgeFilePreservesIDAndReparsesNewContent(t *testing.T) {
 	h := newReplaceFileHarness(t)
 	content := "# new body"

@@ -378,6 +378,32 @@ func TestSharedKnowledgeBaseRunsUnderOwnerTenant(t *testing.T) {
 	}
 }
 
+func TestMCPDocumentHandleRejectsNextcloudBeforeRead(t *testing.T) {
+	srv := newScopeTestServer(&types.KnowledgeBase{ID: "kb-1", TenantID: 1})
+	srv.knowledgeService = &stubKnowledgeService{docs: map[string]*types.Knowledge{
+		"source-channel": {
+			ID: "source-channel", TenantID: 1, KnowledgeBaseID: "kb-1",
+			Channel: types.ConnectorTypeNextcloud,
+		},
+		"source-metadata": {
+			ID: "source-metadata", TenantID: 1, KnowledgeBaseID: "kb-1",
+			Metadata: types.JSON(`{"nextcloud_binding_id":"binding-1"}`),
+		},
+		"ordinary": {ID: "ordinary", TenantID: 1, KnowledgeBaseID: "kb-1"},
+	}}
+	ep := &types.MCPEndpoint{ID: "ep", TenantID: 1}
+	ctx := mcpCallContext(1, ep)
+	for _, id := range []string{"source-channel", "source-metadata"} {
+		if _, _, err := srv.knowledgeInScope(ctx, ep, id); err == nil ||
+			!strings.Contains(err.Error(), "unavailable") {
+			t.Fatalf("source document %q must be denied before read, err=%v", id, err)
+		}
+	}
+	if k, _, err := srv.knowledgeInScope(ctx, ep, "ordinary"); err != nil || k.ID != "ordinary" {
+		t.Fatalf("ordinary document should remain readable, k=%v err=%v", k, err)
+	}
+}
+
 func TestResolveAskAgentUsesEndpointAgentOnly(t *testing.T) {
 	agents := &stubAgentService{agents: map[string]*types.CustomAgent{
 		types.BuiltinQuickAnswerID: {ID: types.BuiltinQuickAnswerID, TenantID: 1, IsBuiltin: true},
