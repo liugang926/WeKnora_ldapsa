@@ -1,0 +1,282 @@
+
+2026/10/09 02:03:56 [31;1m/workspace/internal/application/repository/original_body_fields.go:201 [35;1mrecord not found
+[0m[33m[0.051ms] [34;1m[rows:0][0m SELECT * FROM `original_body_field_heads` WHERE source_table="knowledge_auto_tag_input_manifests" AND row_key="selected-owner" AND column_name="actual_inputs" LIMIT 1 
+
+2026/10/09 02:03:56 [31;1m/workspace/internal/application/repository/original_body_fields.go:240 [35;1mrecord not found
+[0m[33m[0.045ms] [34;1m[rows:0][0m SELECT * FROM `original_body_payloads` WHERE tenant_id=7 AND origin_domain_sha256="4a8e1f5a2b3d21f700564c223518157eb835fcde906a3424ab6783a49e19b2a1" AND body_sha256="83b58d23f7d0e309b72aa95e8c431c0c6bde030823eec4939eccad670480c244" AND storage_kind="vault" AND state='live' ORDER BY created_at_ms,id LIMIT 1 
+
+2026/10/09 02:03:56 [31;1m/workspace/internal/application/repository/original_body_fields.go:201 [35;1mrecord not found
+[0m[33m[0.024ms] [34;1m[rows:0][0m SELECT * FROM `original_body_field_heads` WHERE source_table="knowledges" AND row_key="unrelated" AND column_name="custom_metadata" LIMIT 1 
+
+2026/10/09 02:03:56 [31;1m/workspace/internal/application/repository/original_body_fields.go:240 [35;1mrecord not found
+[0m[33m[0.030ms] [34;1m[rows:0][0m SELECT * FROM `original_body_payloads` WHERE tenant_id=7 AND origin_domain_sha256="3ee9f64162ca40dd73ada46f6297c18c9b0eb41994d61d250f05e47ac4fb9803" AND body_sha256="44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a" AND storage_kind="inline" AND state='live' ORDER BY created_at_ms,id LIMIT 1 
+
+2026/10/09 02:03:56 [31;1m/workspace/internal/application/repository/original_body_fields.go:201 [35;1mrecord not found
+[0m[33m[0.019ms] [34;1m[rows:0][0m SELECT * FROM `original_body_field_heads` WHERE source_table="knowledge_auto_tag_input_manifests" AND row_key="unrelated-owner" AND column_name="actual_inputs" LIMIT 1 
+
+2026/10/09 02:03:56 [31;1m/workspace/internal/application/repository/original_body_fields.go:240 [35;1mrecord not found
+[0m[33m[0.041ms] [34;1m[rows:0][0m SELECT * FROM `original_body_payloads` WHERE tenant_id=7 AND origin_domain_sha256="9895eeda2a1266bd79cf1ac3e7711050635cbd43eb8efb14e24c363d0b646b67" AND body_sha256="83b58d23f7d0e309b72aa95e8c431c0c6bde030823eec4939eccad670480c244" AND storage_kind="vault" AND state='live' ORDER BY created_at_ms,id LIMIT 1 
+
+2026/10/09 02:03:56 [31;1m/workspace/internal/application/repository/group_access.go:254 [35;1mrecord not found
+[0m[33m[0.087ms] [34;1m[rows:0][0m SELECT * FROM `resource_access_policies` WHERE tenant_id = 7 AND resource_type = "knowledge_base" AND resource_id = "kb" ORDER BY `resource_access_policies`.`id` LIMIT 1
+
+2026/10/09 02:03:56 [31;1m/workspace/internal/application/repository/group_access.go:254 [35;1mrecord not found
+[0m[33m[0.025ms] [34;1m[rows:0][0m SELECT * FROM `resource_access_policies` WHERE tenant_id = 7 AND resource_type = "knowledge_base" AND resource_id = "kb" ORDER BY `resource_access_policies`.`id` LIMIT 1
+
+2026/10/09 02:03:56 [31;1m/workspace/internal/application/repository/group_access.go:254 [35;1mrecord not found
+[0m[33m[0.046ms] [34;1m[rows:0][0m SELECT * FROM `resource_access_policies` WHERE tenant_id = 7 AND resource_type = "knowledge_base" AND resource_id = "kb" ORDER BY `resource_access_policies`.`id` LIMIT 1
+
+2026/10/09 02:03:56 [31;1m/workspace/internal/application/repository/original_body_protocol_test.go:435 [35;1mrecord not found
+[0m[33m[0.017ms] [34;1m[rows:0][0m SELECT * FROM `original_body_payloads` WHERE id="06439673-bcb5-480b-a62e-1be07b607f1a" AND `original_body_payloads`.`id` = "7bcf0ad4-aa9e-4ec8-a54b-8049bdf931ac" LIMIT 1
+
+2026/10/09 02:03:56 [31;1m/workspace/internal/application/repository/original_body_fields.go:201 [35;1mrecord not found
+[0m[33m[0.110ms] [34;1m[rows:0][0m SELECT * FROM `original_body_field_heads` WHERE source_table="knowledge_auto_tag_input_manifests" AND row_key="selected-owner" AND column_name="actual_inputs" LIMIT 1 
+
+2026/10/09 02:03:56 [31;1m/workspace/internal/application/repository/original_body_fields.go:240 [35;1mrecord not found
+[0m[33m[0.081ms] [34;1m[rows:0][0m SELECT * FROM `original_body_payloads` WHERE tenant_id=7 AND origin_domain_sha256="4a8e1f5a2b3d21f700564c223518157eb835fcde906a3424ab6783a49e19b2a1" AND body_sha256="83b58d23f7d0e309b72aa95e8c431c0c6bde030823eec4939eccad670480c244" AND storage_kind="vault" AND state='live' ORDER BY created_at_ms,id LIMIT 1 
+
+2026/10/09 02:03:56 [31;1m/workspace/internal/application/repository/original_body_fields.go:201 [35;1mrecord not found
+[0m[33m[0.050ms] [34;1m[rows:0][0m SELECT * FROM `original_body_field_heads` WHERE source_table="knowledges" AND row_key="unrelated" AND column_name="custom_metadata" LIMIT 1 
+
+2026/10/09 02:03:56 [31;1m/workspace/internal/application/repository/original_body_fields.go:240 [35;1mrecord not found
+[0m[33m[0.054ms] [34;1m[rows:0][0m SELECT * FROM `original_body_payloads` WHERE tenant_id=7 AND origin_domain_sha256="3ee9f64162ca40dd73ada46f6297c18c9b0eb41994d61d250f05e47ac4fb9803" AND body_sha256="44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a" AND storage_kind="inline" AND state='live' ORDER BY created_at_ms,id LIMIT 1 
+
+2026/10/09 02:03:56 [31;1m/workspace/internal/application/repository/original_body_fields.go:201 [35;1mrecord not found
+[0m[33m[0.020ms] [34;1m[rows:0][0m SELECT * FROM `original_body_field_heads` WHERE source_table="knowledge_auto_tag_input_manifests" AND row_key="unrelated-owner" AND column_name="actual_inputs" LIMIT 1 
+
+2026/10/09 02:03:56 [31;1m/workspace/internal/application/repository/original_body_fields.go:240 [35;1mrecord not found
+[0m[33m[0.022ms] [34;1m[rows:0][0m SELECT * FROM `original_body_payloads` WHERE tenant_id=7 AND origin_domain_sha256="9895eeda2a1266bd79cf1ac3e7711050635cbd43eb8efb14e24c363d0b646b67" AND body_sha256="83b58d23f7d0e309b72aa95e8c431c0c6bde030823eec4939eccad670480c244" AND storage_kind="vault" AND state='live' ORDER BY created_at_ms,id LIMIT 1 
+
+2026/10/09 02:03:56 [31;1m/workspace/internal/application/repository/group_access.go:254 [35;1mrecord not found
+[0m[33m[0.016ms] [34;1m[rows:0][0m SELECT * FROM `resource_access_policies` WHERE tenant_id = 7 AND resource_type = "knowledge_base" AND resource_id = "kb" ORDER BY `resource_access_policies`.`id` LIMIT 1
+
+2026/10/09 02:03:56 [31;1m/workspace/internal/application/repository/group_access.go:254 [35;1mrecord not found
+[0m[33m[0.020ms] [34;1m[rows:0][0m SELECT * FROM `resource_access_policies` WHERE tenant_id = 7 AND resource_type = "knowledge_base" AND resource_id = "kb" ORDER BY `resource_access_policies`.`id` LIMIT 1
+
+2026/10/09 02:03:56 [31;1m/workspace/internal/application/repository/group_access.go:254 [35;1mrecord not found
+[0m[33m[0.016ms] [34;1m[rows:0][0m SELECT * FROM `resource_access_policies` WHERE tenant_id = 7 AND resource_type = "knowledge_base" AND resource_id = "kb" ORDER BY `resource_access_policies`.`id` LIMIT 1
+
+2026/10/09 02:03:56 [31;1m/workspace/internal/application/repository/original_body_protocol_test.go:435 [35;1mrecord not found
+[0m[33m[0.027ms] [34;1m[rows:0][0m SELECT * FROM `original_body_payloads` WHERE id="5105fb60-982a-45b4-b3ab-6bf23f200a82" AND `original_body_payloads`.`id` = "3453229c-01b5-4b43-8bd6-f4072989bff0" LIMIT 1
+
+2026/10/09 02:03:56 [31;1m/workspace/internal/application/repository/original_body_fields.go:201 [35;1mrecord not found
+[0m[33m[0.051ms] [34;1m[rows:0][0m SELECT * FROM `original_body_field_heads` WHERE source_table="knowledge_auto_tag_input_manifests" AND row_key="selected-owner" AND column_name="actual_inputs" LIMIT 1 
+
+2026/10/09 02:03:56 [31;1m/workspace/internal/application/repository/original_body_fields.go:240 [35;1mrecord not found
+[0m[33m[0.061ms] [34;1m[rows:0][0m SELECT * FROM `original_body_payloads` WHERE tenant_id=7 AND origin_domain_sha256="4a8e1f5a2b3d21f700564c223518157eb835fcde906a3424ab6783a49e19b2a1" AND body_sha256="83b58d23f7d0e309b72aa95e8c431c0c6bde030823eec4939eccad670480c244" AND storage_kind="vault" AND state='live' ORDER BY created_at_ms,id LIMIT 1 
+
+2026/10/09 02:03:56 [31;1m/workspace/internal/application/repository/original_body_fields.go:201 [35;1mrecord not found
+[0m[33m[0.041ms] [34;1m[rows:0][0m SELECT * FROM `original_body_field_heads` WHERE source_table="knowledges" AND row_key="unrelated" AND column_name="custom_metadata" LIMIT 1 
+
+2026/10/09 02:03:56 [31;1m/workspace/internal/application/repository/original_body_fields.go:240 [35;1mrecord not found
+[0m[33m[0.021ms] [34;1m[rows:0][0m SELECT * FROM `original_body_payloads` WHERE tenant_id=7 AND origin_domain_sha256="3ee9f64162ca40dd73ada46f6297c18c9b0eb41994d61d250f05e47ac4fb9803" AND body_sha256="44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a" AND storage_kind="inline" AND state='live' ORDER BY created_at_ms,id LIMIT 1 
+
+2026/10/09 02:03:56 [31;1m/workspace/internal/application/repository/original_body_fields.go:201 [35;1mrecord not found
+[0m[33m[0.012ms] [34;1m[rows:0][0m SELECT * FROM `original_body_field_heads` WHERE source_table="knowledge_auto_tag_input_manifests" AND row_key="unrelated-owner" AND column_name="actual_inputs" LIMIT 1 
+
+2026/10/09 02:03:56 [31;1m/workspace/internal/application/repository/original_body_fields.go:240 [35;1mrecord not found
+[0m[33m[0.018ms] [34;1m[rows:0][0m SELECT * FROM `original_body_payloads` WHERE tenant_id=7 AND origin_domain_sha256="9895eeda2a1266bd79cf1ac3e7711050635cbd43eb8efb14e24c363d0b646b67" AND body_sha256="83b58d23f7d0e309b72aa95e8c431c0c6bde030823eec4939eccad670480c244" AND storage_kind="vault" AND state='live' ORDER BY created_at_ms,id LIMIT 1 
+
+2026/10/09 02:03:56 [31;1m/workspace/internal/application/repository/group_access.go:254 [35;1mrecord not found
+[0m[33m[0.019ms] [34;1m[rows:0][0m SELECT * FROM `resource_access_policies` WHERE tenant_id = 7 AND resource_type = "knowledge_base" AND resource_id = "kb" ORDER BY `resource_access_policies`.`id` LIMIT 1
+
+2026/10/09 02:03:56 [31;1m/workspace/internal/application/repository/group_access.go:254 [35;1mrecord not found
+[0m[33m[0.014ms] [34;1m[rows:0][0m SELECT * FROM `resource_access_policies` WHERE tenant_id = 7 AND resource_type = "knowledge_base" AND resource_id = "kb" ORDER BY `resource_access_policies`.`id` LIMIT 1
+
+2026/10/09 02:03:56 [31;1m/workspace/internal/application/repository/group_access.go:254 [35;1mrecord not found
+[0m[33m[0.012ms] [34;1m[rows:0][0m SELECT * FROM `resource_access_policies` WHERE tenant_id = 7 AND resource_type = "knowledge_base" AND resource_id = "kb" ORDER BY `resource_access_policies`.`id` LIMIT 1
+
+2026/10/09 02:03:56 [31;1m/workspace/internal/application/repository/original_body_protocol_test.go:435 [35;1mrecord not found
+[0m[33m[0.034ms] [34;1m[rows:0][0m SELECT * FROM `original_body_payloads` WHERE id="2f1307c5-ba41-4e51-a087-a90cf4c3254b" AND `original_body_payloads`.`id` = "e86ab5f8-a976-426a-8d35-a802d137e99a" LIMIT 1
+
+2026/10/09 02:03:56 [31;1m/workspace/internal/application/repository/original_body_fields.go:201 [35;1mrecord not found
+[0m[33m[0.073ms] [34;1m[rows:0][0m SELECT * FROM `original_body_field_heads` WHERE source_table="knowledge_auto_tag_input_manifests" AND row_key="selected-owner" AND column_name="actual_inputs" LIMIT 1 
+
+2026/10/09 02:03:56 [31;1m/workspace/internal/application/repository/original_body_fields.go:240 [35;1mrecord not found
+[0m[33m[0.039ms] [34;1m[rows:0][0m SELECT * FROM `original_body_payloads` WHERE tenant_id=7 AND origin_domain_sha256="4a8e1f5a2b3d21f700564c223518157eb835fcde906a3424ab6783a49e19b2a1" AND body_sha256="83b58d23f7d0e309b72aa95e8c431c0c6bde030823eec4939eccad670480c244" AND storage_kind="vault" AND state='live' ORDER BY created_at_ms,id LIMIT 1 
+
+2026/10/09 02:03:56 [31;1m/workspace/internal/application/repository/original_body_fields.go:201 [35;1mrecord not found
+[0m[33m[0.033ms] [34;1m[rows:0][0m SELECT * FROM `original_body_field_heads` WHERE source_table="knowledges" AND row_key="unrelated" AND column_name="custom_metadata" LIMIT 1 
+
+2026/10/09 02:03:56 [31;1m/workspace/internal/application/repository/original_body_fields.go:240 [35;1mrecord not found
+[0m[33m[0.027ms] [34;1m[rows:0][0m SELECT * FROM `original_body_payloads` WHERE tenant_id=7 AND origin_domain_sha256="3ee9f64162ca40dd73ada46f6297c18c9b0eb41994d61d250f05e47ac4fb9803" AND body_sha256="44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a" AND storage_kind="inline" AND state='live' ORDER BY created_at_ms,id LIMIT 1 
+
+2026/10/09 02:03:56 [31;1m/workspace/internal/application/repository/original_body_fields.go:201 [35;1mrecord not found
+[0m[33m[0.013ms] [34;1m[rows:0][0m SELECT * FROM `original_body_field_heads` WHERE source_table="knowledge_auto_tag_input_manifests" AND row_key="unrelated-owner" AND column_name="actual_inputs" LIMIT 1 
+
+2026/10/09 02:03:56 [31;1m/workspace/internal/application/repository/original_body_fields.go:240 [35;1mrecord not found
+[0m[33m[0.034ms] [34;1m[rows:0][0m SELECT * FROM `original_body_payloads` WHERE tenant_id=7 AND origin_domain_sha256="9895eeda2a1266bd79cf1ac3e7711050635cbd43eb8efb14e24c363d0b646b67" AND body_sha256="83b58d23f7d0e309b72aa95e8c431c0c6bde030823eec4939eccad670480c244" AND storage_kind="vault" AND state='live' ORDER BY created_at_ms,id LIMIT 1 
+
+2026/10/09 02:03:56 [31;1m/workspace/internal/application/repository/knowledge_build_actor.go:283 [35;1mrecord not found
+[0m[33m[0.088ms] [34;1m[rows:0][0m SELECT * FROM `users` WHERE (id = "body-admin" AND is_active = true) AND `users`.`deleted_at` IS NULL LIMIT 1
+
+2026/10/09 02:03:56 [31;1m/workspace/internal/application/repository/original_body_protocol_test.go:435 [35;1mrecord not found
+[0m[33m[0.043ms] [34;1m[rows:0][0m SELECT * FROM `original_body_payloads` WHERE id="8ab3bcc4-2f5f-4ded-b4fe-aa2eb69873ab" AND `original_body_payloads`.`id` = "d31748e7-1b1d-4265-92d8-dcb65291089a" LIMIT 1
+--- FAIL: TestOriginalBodySelectedAdminSQLite (0.10s)
+    --- FAIL: TestOriginalBodySelectedAdminSQLite/selected-only (0.02s)
+        original_body_protocol_test.go:435: 
+            	Error Trace:	/workspace/internal/application/repository/original_body_protocol_test.go:435
+            	Error:      	Received unexpected error:
+            	            	record not found
+            	Test:       	TestOriginalBodySelectedAdminSQLite/selected-only
+    --- FAIL: TestOriginalBodySelectedAdminSQLite/current-shared-owner (0.02s)
+        original_body_protocol_test.go:435: 
+            	Error Trace:	/workspace/internal/application/repository/original_body_protocol_test.go:435
+            	Error:      	Received unexpected error:
+            	            	record not found
+            	Test:       	TestOriginalBodySelectedAdminSQLite/current-shared-owner
+    --- FAIL: TestOriginalBodySelectedAdminSQLite/missing-coverage (0.02s)
+        original_body_protocol_test.go:435: 
+            	Error Trace:	/workspace/internal/application/repository/original_body_protocol_test.go:435
+            	Error:      	Received unexpected error:
+            	            	record not found
+            	Test:       	TestOriginalBodySelectedAdminSQLite/missing-coverage
+    --- FAIL: TestOriginalBodySelectedAdminSQLite/admin-revoked (0.04s)
+        original_body_protocol_test.go:435: 
+            	Error Trace:	/workspace/internal/application/repository/original_body_protocol_test.go:435
+            	Error:      	Received unexpected error:
+            	            	record not found
+            	Test:       	TestOriginalBodySelectedAdminSQLite/admin-revoked
+
+2026/10/09 02:03:56 [31;1m/workspace/internal/application/repository/original_body_fields.go:201 [35;1mrecord not found
+[0m[33m[0.505ms] [34;1m[rows:0][0m SELECT * FROM "original_body_field_heads" WHERE source_table='knowledge_auto_tag_input_manifests' AND row_key='selected-owner' AND column_name='actual_inputs' LIMIT 1 FOR UPDATE
+
+2026/10/09 02:03:56 [31;1m/workspace/internal/application/repository/original_body_fields.go:240 [35;1mrecord not found
+[0m[33m[0.362ms] [34;1m[rows:0][0m SELECT * FROM "original_body_payloads" WHERE tenant_id=7 AND origin_domain_sha256='4a8e1f5a2b3d21f700564c223518157eb835fcde906a3424ab6783a49e19b2a1' AND body_sha256='83b58d23f7d0e309b72aa95e8c431c0c6bde030823eec4939eccad670480c244' AND storage_kind='vault' AND state='live' ORDER BY created_at_ms,id LIMIT 1 FOR UPDATE
+
+2026/10/09 02:03:56 [31;1m/workspace/internal/application/repository/original_body_fields.go:201 [35;1mrecord not found
+[0m[33m[0.137ms] [34;1m[rows:0][0m SELECT * FROM "original_body_field_heads" WHERE source_table='knowledges' AND row_key='unrelated' AND column_name='custom_metadata' LIMIT 1 FOR UPDATE
+
+2026/10/09 02:03:56 [31;1m/workspace/internal/application/repository/original_body_fields.go:240 [35;1mrecord not found
+[0m[33m[0.184ms] [34;1m[rows:0][0m SELECT * FROM "original_body_payloads" WHERE tenant_id=7 AND origin_domain_sha256='3ee9f64162ca40dd73ada46f6297c18c9b0eb41994d61d250f05e47ac4fb9803' AND body_sha256='44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a' AND storage_kind='inline' AND state='live' ORDER BY created_at_ms,id LIMIT 1 FOR UPDATE
+
+2026/10/09 02:03:56 [31;1m/workspace/internal/application/repository/original_body_fields.go:201 [35;1mrecord not found
+[0m[33m[0.123ms] [34;1m[rows:0][0m SELECT * FROM "original_body_field_heads" WHERE source_table='knowledge_auto_tag_input_manifests' AND row_key='unrelated-owner' AND column_name='actual_inputs' LIMIT 1 FOR UPDATE
+
+2026/10/09 02:03:56 [31;1m/workspace/internal/application/repository/original_body_fields.go:240 [35;1mrecord not found
+[0m[33m[0.159ms] [34;1m[rows:0][0m SELECT * FROM "original_body_payloads" WHERE tenant_id=7 AND origin_domain_sha256='9895eeda2a1266bd79cf1ac3e7711050635cbd43eb8efb14e24c363d0b646b67' AND body_sha256='83b58d23f7d0e309b72aa95e8c431c0c6bde030823eec4939eccad670480c244' AND storage_kind='vault' AND state='live' ORDER BY created_at_ms,id LIMIT 1 FOR UPDATE
+
+2026/10/09 02:03:56 [31;1m/workspace/internal/application/repository/group_access.go:254 [35;1mrecord not found
+[0m[33m[0.439ms] [34;1m[rows:0][0m SELECT * FROM "resource_access_policies" WHERE tenant_id = 7 AND resource_type = 'knowledge_base' AND resource_id = 'kb' ORDER BY "resource_access_policies"."id" LIMIT 1
+
+2026/10/09 02:03:56 [31;1m/workspace/internal/application/repository/group_access.go:254 [35;1mrecord not found
+[0m[33m[0.156ms] [34;1m[rows:0][0m SELECT * FROM "resource_access_policies" WHERE tenant_id = 7 AND resource_type = 'knowledge_base' AND resource_id = 'kb' ORDER BY "resource_access_policies"."id" LIMIT 1
+
+2026/10/09 02:03:56 [31;1m/workspace/internal/application/repository/group_access.go:254 [35;1mrecord not found
+[0m[33m[0.656ms] [34;1m[rows:0][0m SELECT * FROM "resource_access_policies" WHERE tenant_id = 7 AND resource_type = 'knowledge_base' AND resource_id = 'kb' ORDER BY "resource_access_policies"."id" LIMIT 1
+
+2026/10/09 02:03:56 [31;1m/workspace/internal/application/repository/original_body_protocol_test.go:435 [35;1mrecord not found
+[0m[33m[0.295ms] [34;1m[rows:0][0m SELECT * FROM "original_body_payloads" WHERE id='6081fa48-838c-41c7-acee-15f7c2e2dbe8' AND "original_body_payloads"."id" = 'ef7996ba-5777-45ed-8478-ec07622fa216' LIMIT 1
+
+2026/10/09 02:03:57 [31;1m/workspace/internal/application/repository/original_body_fields.go:201 [35;1mrecord not found
+[0m[33m[0.597ms] [34;1m[rows:0][0m SELECT * FROM "original_body_field_heads" WHERE source_table='knowledge_auto_tag_input_manifests' AND row_key='selected-owner' AND column_name='actual_inputs' LIMIT 1 FOR UPDATE
+
+2026/10/09 02:03:57 [31;1m/workspace/internal/application/repository/original_body_fields.go:240 [35;1mrecord not found
+[0m[33m[0.255ms] [34;1m[rows:0][0m SELECT * FROM "original_body_payloads" WHERE tenant_id=7 AND origin_domain_sha256='4a8e1f5a2b3d21f700564c223518157eb835fcde906a3424ab6783a49e19b2a1' AND body_sha256='83b58d23f7d0e309b72aa95e8c431c0c6bde030823eec4939eccad670480c244' AND storage_kind='vault' AND state='live' ORDER BY created_at_ms,id LIMIT 1 FOR UPDATE
+
+2026/10/09 02:03:57 [31;1m/workspace/internal/application/repository/original_body_fields.go:201 [35;1mrecord not found
+[0m[33m[0.085ms] [34;1m[rows:0][0m SELECT * FROM "original_body_field_heads" WHERE source_table='knowledges' AND row_key='unrelated' AND column_name='custom_metadata' LIMIT 1 FOR UPDATE
+
+2026/10/09 02:03:57 [31;1m/workspace/internal/application/repository/original_body_fields.go:240 [35;1mrecord not found
+[0m[33m[0.106ms] [34;1m[rows:0][0m SELECT * FROM "original_body_payloads" WHERE tenant_id=7 AND origin_domain_sha256='3ee9f64162ca40dd73ada46f6297c18c9b0eb41994d61d250f05e47ac4fb9803' AND body_sha256='44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a' AND storage_kind='inline' AND state='live' ORDER BY created_at_ms,id LIMIT 1 FOR UPDATE
+
+2026/10/09 02:03:57 [31;1m/workspace/internal/application/repository/original_body_fields.go:201 [35;1mrecord not found
+[0m[33m[0.079ms] [34;1m[rows:0][0m SELECT * FROM "original_body_field_heads" WHERE source_table='knowledge_auto_tag_input_manifests' AND row_key='unrelated-owner' AND column_name='actual_inputs' LIMIT 1 FOR UPDATE
+
+2026/10/09 02:03:57 [31;1m/workspace/internal/application/repository/original_body_fields.go:240 [35;1mrecord not found
+[0m[33m[0.120ms] [34;1m[rows:0][0m SELECT * FROM "original_body_payloads" WHERE tenant_id=7 AND origin_domain_sha256='9895eeda2a1266bd79cf1ac3e7711050635cbd43eb8efb14e24c363d0b646b67' AND body_sha256='83b58d23f7d0e309b72aa95e8c431c0c6bde030823eec4939eccad670480c244' AND storage_kind='vault' AND state='live' ORDER BY created_at_ms,id LIMIT 1 FOR UPDATE
+
+2026/10/09 02:03:57 [31;1m/workspace/internal/application/repository/group_access.go:254 [35;1mrecord not found
+[0m[33m[0.390ms] [34;1m[rows:0][0m SELECT * FROM "resource_access_policies" WHERE tenant_id = 7 AND resource_type = 'knowledge_base' AND resource_id = 'kb' ORDER BY "resource_access_policies"."id" LIMIT 1
+
+2026/10/09 02:03:57 [31;1m/workspace/internal/application/repository/group_access.go:254 [35;1mrecord not found
+[0m[33m[0.083ms] [34;1m[rows:0][0m SELECT * FROM "resource_access_policies" WHERE tenant_id = 7 AND resource_type = 'knowledge_base' AND resource_id = 'kb' ORDER BY "resource_access_policies"."id" LIMIT 1
+
+2026/10/09 02:03:57 [31;1m/workspace/internal/application/repository/group_access.go:254 [35;1mrecord not found
+[0m[33m[0.124ms] [34;1m[rows:0][0m SELECT * FROM "resource_access_policies" WHERE tenant_id = 7 AND resource_type = 'knowledge_base' AND resource_id = 'kb' ORDER BY "resource_access_policies"."id" LIMIT 1
+
+2026/10/09 02:03:57 [31;1m/workspace/internal/application/repository/original_body_protocol_test.go:435 [35;1mrecord not found
+[0m[33m[0.116ms] [34;1m[rows:0][0m SELECT * FROM "original_body_payloads" WHERE id='925063e9-f460-4225-91b9-5e85d3fff678' AND "original_body_payloads"."id" = '92fd6aa8-968c-4441-8a37-33a076fb8dd3' LIMIT 1
+
+2026/10/09 02:03:57 [31;1m/workspace/internal/application/repository/original_body_fields.go:201 [35;1mrecord not found
+[0m[33m[0.404ms] [34;1m[rows:0][0m SELECT * FROM "original_body_field_heads" WHERE source_table='knowledge_auto_tag_input_manifests' AND row_key='selected-owner' AND column_name='actual_inputs' LIMIT 1 FOR UPDATE
+
+2026/10/09 02:03:57 [31;1m/workspace/internal/application/repository/original_body_fields.go:240 [35;1mrecord not found
+[0m[33m[0.250ms] [34;1m[rows:0][0m SELECT * FROM "original_body_payloads" WHERE tenant_id=7 AND origin_domain_sha256='4a8e1f5a2b3d21f700564c223518157eb835fcde906a3424ab6783a49e19b2a1' AND body_sha256='83b58d23f7d0e309b72aa95e8c431c0c6bde030823eec4939eccad670480c244' AND storage_kind='vault' AND state='live' ORDER BY created_at_ms,id LIMIT 1 FOR UPDATE
+
+2026/10/09 02:03:57 [31;1m/workspace/internal/application/repository/original_body_fields.go:201 [35;1mrecord not found
+[0m[33m[0.174ms] [34;1m[rows:0][0m SELECT * FROM "original_body_field_heads" WHERE source_table='knowledges' AND row_key='unrelated' AND column_name='custom_metadata' LIMIT 1 FOR UPDATE
+
+2026/10/09 02:03:57 [31;1m/workspace/internal/application/repository/original_body_fields.go:240 [35;1mrecord not found
+[0m[33m[0.167ms] [34;1m[rows:0][0m SELECT * FROM "original_body_payloads" WHERE tenant_id=7 AND origin_domain_sha256='3ee9f64162ca40dd73ada46f6297c18c9b0eb41994d61d250f05e47ac4fb9803' AND body_sha256='44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a' AND storage_kind='inline' AND state='live' ORDER BY created_at_ms,id LIMIT 1 FOR UPDATE
+
+2026/10/09 02:03:57 [31;1m/workspace/internal/application/repository/original_body_fields.go:201 [35;1mrecord not found
+[0m[33m[0.208ms] [34;1m[rows:0][0m SELECT * FROM "original_body_field_heads" WHERE source_table='knowledge_auto_tag_input_manifests' AND row_key='unrelated-owner' AND column_name='actual_inputs' LIMIT 1 FOR UPDATE
+
+2026/10/09 02:03:57 [31;1m/workspace/internal/application/repository/original_body_fields.go:240 [35;1mrecord not found
+[0m[33m[0.225ms] [34;1m[rows:0][0m SELECT * FROM "original_body_payloads" WHERE tenant_id=7 AND origin_domain_sha256='9895eeda2a1266bd79cf1ac3e7711050635cbd43eb8efb14e24c363d0b646b67' AND body_sha256='83b58d23f7d0e309b72aa95e8c431c0c6bde030823eec4939eccad670480c244' AND storage_kind='vault' AND state='live' ORDER BY created_at_ms,id LIMIT 1 FOR UPDATE
+
+2026/10/09 02:03:57 [31;1m/workspace/internal/application/repository/group_access.go:254 [35;1mrecord not found
+[0m[33m[4.094ms] [34;1m[rows:0][0m SELECT * FROM "resource_access_policies" WHERE tenant_id = 7 AND resource_type = 'knowledge_base' AND resource_id = 'kb' ORDER BY "resource_access_policies"."id" LIMIT 1
+
+2026/10/09 02:03:57 [31;1m/workspace/internal/application/repository/group_access.go:254 [35;1mrecord not found
+[0m[33m[0.146ms] [34;1m[rows:0][0m SELECT * FROM "resource_access_policies" WHERE tenant_id = 7 AND resource_type = 'knowledge_base' AND resource_id = 'kb' ORDER BY "resource_access_policies"."id" LIMIT 1
+
+2026/10/09 02:03:57 [31;1m/workspace/internal/application/repository/group_access.go:254 [35;1mrecord not found
+[0m[33m[0.104ms] [34;1m[rows:0][0m SELECT * FROM "resource_access_policies" WHERE tenant_id = 7 AND resource_type = 'knowledge_base' AND resource_id = 'kb' ORDER BY "resource_access_policies"."id" LIMIT 1
+
+2026/10/09 02:03:57 [31;1m/workspace/internal/application/repository/original_body_protocol_test.go:435 [35;1mrecord not found
+[0m[33m[0.223ms] [34;1m[rows:0][0m SELECT * FROM "original_body_payloads" WHERE id='a9c238b9-e609-416d-9aec-fea361075a1f' AND "original_body_payloads"."id" = '387d7c3f-7b28-4db4-8f94-6d80ecd160ec' LIMIT 1
+
+2026/10/09 02:03:57 [31;1m/workspace/internal/application/repository/original_body_fields.go:201 [35;1mrecord not found
+[0m[33m[0.435ms] [34;1m[rows:0][0m SELECT * FROM "original_body_field_heads" WHERE source_table='knowledge_auto_tag_input_manifests' AND row_key='selected-owner' AND column_name='actual_inputs' LIMIT 1 FOR UPDATE
+
+2026/10/09 02:03:57 [31;1m/workspace/internal/application/repository/original_body_fields.go:240 [35;1mrecord not found
+[0m[33m[0.288ms] [34;1m[rows:0][0m SELECT * FROM "original_body_payloads" WHERE tenant_id=7 AND origin_domain_sha256='4a8e1f5a2b3d21f700564c223518157eb835fcde906a3424ab6783a49e19b2a1' AND body_sha256='83b58d23f7d0e309b72aa95e8c431c0c6bde030823eec4939eccad670480c244' AND storage_kind='vault' AND state='live' ORDER BY created_at_ms,id LIMIT 1 FOR UPDATE
+
+2026/10/09 02:03:57 [31;1m/workspace/internal/application/repository/original_body_fields.go:201 [35;1mrecord not found
+[0m[33m[0.085ms] [34;1m[rows:0][0m SELECT * FROM "original_body_field_heads" WHERE source_table='knowledges' AND row_key='unrelated' AND column_name='custom_metadata' LIMIT 1 FOR UPDATE
+
+2026/10/09 02:03:57 [31;1m/workspace/internal/application/repository/original_body_fields.go:240 [35;1mrecord not found
+[0m[33m[0.147ms] [34;1m[rows:0][0m SELECT * FROM "original_body_payloads" WHERE tenant_id=7 AND origin_domain_sha256='3ee9f64162ca40dd73ada46f6297c18c9b0eb41994d61d250f05e47ac4fb9803' AND body_sha256='44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a' AND storage_kind='inline' AND state='live' ORDER BY created_at_ms,id LIMIT 1 FOR UPDATE
+
+2026/10/09 02:03:57 [31;1m/workspace/internal/application/repository/original_body_fields.go:201 [35;1mrecord not found
+[0m[33m[0.086ms] [34;1m[rows:0][0m SELECT * FROM "original_body_field_heads" WHERE source_table='knowledge_auto_tag_input_manifests' AND row_key='unrelated-owner' AND column_name='actual_inputs' LIMIT 1 FOR UPDATE
+
+2026/10/09 02:03:57 [31;1m/workspace/internal/application/repository/original_body_fields.go:240 [35;1mrecord not found
+[0m[33m[0.139ms] [34;1m[rows:0][0m SELECT * FROM "original_body_payloads" WHERE tenant_id=7 AND origin_domain_sha256='9895eeda2a1266bd79cf1ac3e7711050635cbd43eb8efb14e24c363d0b646b67' AND body_sha256='83b58d23f7d0e309b72aa95e8c431c0c6bde030823eec4939eccad670480c244' AND storage_kind='vault' AND state='live' ORDER BY created_at_ms,id LIMIT 1 FOR UPDATE
+
+2026/10/09 02:03:57 [31;1m/workspace/internal/application/repository/knowledge_build_actor.go:283 [35;1mrecord not found
+[0m[33m[0.183ms] [34;1m[rows:0][0m SELECT * FROM "users" WHERE (id = 'body-admin' AND is_active = true) AND "users"."deleted_at" IS NULL LIMIT 1
+
+2026/10/09 02:03:57 [31;1m/workspace/internal/application/repository/original_body_protocol_test.go:435 [35;1mrecord not found
+[0m[33m[0.129ms] [34;1m[rows:0][0m SELECT * FROM "original_body_payloads" WHERE id='d519d9a9-9c82-4a6d-9c2d-5925afe5807b' AND "original_body_payloads"."id" = '15c302d4-e189-4d3e-a118-fdba3e5ccda6' LIMIT 1
+--- FAIL: TestPostgresOriginalBodySelectedAdmin (1.35s)
+    --- FAIL: TestPostgresOriginalBodySelectedAdmin/selected-only (0.35s)
+        original_body_protocol_test.go:435: 
+            	Error Trace:	/workspace/internal/application/repository/original_body_protocol_test.go:435
+            	Error:      	Received unexpected error:
+            	            	record not found
+            	Test:       	TestPostgresOriginalBodySelectedAdmin/selected-only
+    --- FAIL: TestPostgresOriginalBodySelectedAdmin/current-shared-owner (0.33s)
+        original_body_protocol_test.go:435: 
+            	Error Trace:	/workspace/internal/application/repository/original_body_protocol_test.go:435
+            	Error:      	Received unexpected error:
+            	            	record not found
+            	Test:       	TestPostgresOriginalBodySelectedAdmin/current-shared-owner
+    --- FAIL: TestPostgresOriginalBodySelectedAdmin/missing-coverage (0.38s)
+        original_body_protocol_test.go:435: 
+            	Error Trace:	/workspace/internal/application/repository/original_body_protocol_test.go:435
+            	Error:      	Received unexpected error:
+            	            	record not found
+            	Test:       	TestPostgresOriginalBodySelectedAdmin/missing-coverage
+    --- FAIL: TestPostgresOriginalBodySelectedAdmin/admin-revoked (0.29s)
+        original_body_protocol_test.go:435: 
+            	Error Trace:	/workspace/internal/application/repository/original_body_protocol_test.go:435
+            	Error:      	Received unexpected error:
+            	            	record not found
+            	Test:       	TestPostgresOriginalBodySelectedAdmin/admin-revoked
+FAIL
+FAIL	github.com/Tencent/WeKnora/internal/application/repository	4.974s
+ok  	github.com/Tencent/WeKnora/internal/application/service	1.227s
+FAIL
