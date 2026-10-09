@@ -26,7 +26,7 @@ type bodyProtocolRow struct {
 }
 
 func (bodyProtocolRow) TableName() string { return "knowledge_auto_tag_input_manifests" }
-func bodyProtocolFixture(t *testing.T, pg bool) (*gorm.DB, *OriginalBodyRetentionStore) {
+func bodyProtocolFixture(t *testing.T, pg bool, ownedKeys ...[]byte) (*gorm.DB, *OriginalBodyRetentionStore) {
 	t.Helper()
 	var db *gorm.DB
 	var e error
@@ -73,7 +73,11 @@ func bodyProtocolFixture(t *testing.T, pg bool) (*gorm.DB, *OriginalBodyRetentio
 	require.NoError(t, os.Chmod(dir, 0700))
 	key := filepath.Join(dir, "key")
 	pin := filepath.Join(dir, "pin")
-	require.NoError(t, os.WriteFile(key, []byte(strings.Repeat("owned-secret-", 4)), 0600))
+	keyBytes := []byte(strings.Repeat("owned-secret-", 4))
+	if len(ownedKeys) > 0 {
+		keyBytes = ownedKeys[0]
+	}
+	require.NoError(t, os.WriteFile(key, keyBytes, 0600))
 	t.Setenv("WEKNORA_ORIGINAL_BODY_JOURNAL_DIRECTORY", dir)
 	t.Setenv("WEKNORA_ORIGINAL_BODY_JOURNAL_KEY", key)
 	t.Setenv("WEKNORA_ORIGINAL_BODY_JOURNAL_PIN", pin)
