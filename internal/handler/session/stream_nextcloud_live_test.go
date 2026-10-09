@@ -56,12 +56,16 @@ func (s *liveHistoryMessageService) CheckLiveMessagePublication(_ context.Contex
 func TestLiveSSEStopsBeforeRevokedNextChunk(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	svc := &liveHistoryMessageService{denyAt: 3}
+	lineage, err := types.NewCompleteSourceLineage()
+	if err != nil {
+		t.Fatal(err)
+	}
 	h := &Handler{messageService: svc, streamManager: &stagedLiveStream{events: []interfaces.StreamEvent{
-		{ID: "refs", Type: types.ResponseTypeReferences, Data: map[string]interface{}{"references": types.References{{
+		{SourceLineage: lineage, ID: "refs", Type: types.ResponseTypeReferences, Data: map[string]interface{}{"references": types.References{{
 			KnowledgeID: "nextcloud-document", KnowledgeChannel: types.ConnectorTypeNextcloud,
 		}}}},
-		{ID: "answer", Type: types.ResponseTypeAnswer, Content: "authorized first chunk"},
-		{ID: "answer", Type: types.ResponseTypeAnswer, Content: "revoked secret second chunk"},
+		{SourceLineage: lineage, ID: "answer", Type: types.ResponseTypeAnswer, Content: "authorized first chunk"},
+		{SourceLineage: lineage, ID: "answer", Type: types.ResponseTypeAnswer, Content: "revoked secret second chunk"},
 	}}}
 	bus := event.NewEventBus()
 	stops := 0

@@ -232,6 +232,11 @@ func (h *Handler) ContinueStream(c *gin.Context) {
 						return
 					}
 				}
+				if evt.Type == types.ResponseTypeError && evt.Done {
+					emitSafeTerminalGenerationError(c, message.RequestID)
+					return
+				}
+
 				// Check for completion event
 				if evt.Type == "complete" {
 					streamCompletedNow = true
@@ -570,6 +575,13 @@ func (h *Handler) handleAgentEventsForSSE(
 						Done:         true,
 					})
 					c.Writer.Flush()
+					return
+				}
+
+				// Producer failure is terminal. Do not wait for a success marker,
+				// a title, or flush source-derived holdback text on this path.
+				if evt.Type == types.ResponseTypeError && evt.Done {
+					emitSafeTerminalGenerationError(c, requestID)
 					return
 				}
 
@@ -945,6 +957,15 @@ func stopLiveStreamForPublication(
 	c.SSEvent("message", &types.StreamResponse{
 		ID: requestID, ResponseType: types.ResponseTypeError,
 		Content: "Current source access changed; generation stopped", Done: true,
+	})
+	c.Writer.Flush()
+}
+
+func emitSafeTerminalGenerationError(c *gin.Context, requestID string) {
+	c.SSEvent("message", &types.StreamResponse{
+		ID: requestID, ResponseType: types.ResponseTypeError,
+		Content: "Generation could not complete; please retry after checking access", Done: true,
+		Data: map[string]interface{}{"error_code": "generation_failed"},
 	})
 	c.Writer.Flush()
 }

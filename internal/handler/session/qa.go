@@ -1515,7 +1515,8 @@ func (h *Handler) executeQA(reqCtx *qaRequestContext, mode qaMode, generateTitle
 					Type:      event.EventError,
 					SessionID: sessionID,
 					Data: event.ErrorData{
-						Error:     serviceErr.Error(),
+						Error:     "Generation could not complete; please retry after checking access",
+						ErrorCode: "generation_failed",
 						Stage:     stageName,
 						SessionID: sessionID,
 					},
