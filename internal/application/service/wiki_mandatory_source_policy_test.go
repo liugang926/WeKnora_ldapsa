@@ -88,3 +88,20 @@ func TestWikiIDScopeBeforeBodyAndOrdinaryUsable(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "secret", got.Content)
 }
+
+func TestWikiMetadataCannotRelabelProtectedOwner(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(fmt.Sprintf("file:%s?mode=memory&cache=shared", t.Name())), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&types.WikiPage{}))
+	repo := repository.NewWikiPageRepository(db)
+	ctx := context.Background()
+	require.NoError(t, repo.Create(ctx, &types.WikiPage{ID: "owned", TenantID: 1, KnowledgeBaseID: "protected", Slug: "s", Status: "published", Content: "secret"}))
+	svc := NewWikiPageService(repo, nil, wikiOrdinaryTestPolicy{}, nil, nil)
+	err = svc.UpdatePageMeta(ctx, &types.WikiPage{ID: "owned", KnowledgeBaseID: "ordinary", Status: "archived"})
+	require.ErrorIs(t, err, ErrNextcloudDerivedContent)
+	require.Error(t, repo.UpdateMeta(ctx, &types.WikiPage{ID: "owned", KnowledgeBaseID: "ordinary", Status: "archived"}))
+	got, err := repo.GetByID(ctx, "owned")
+	require.NoError(t, err)
+	require.Equal(t, "published", got.Status)
+	require.Equal(t, "protected", got.KnowledgeBaseID)
+}

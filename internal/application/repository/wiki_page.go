@@ -299,7 +299,7 @@ func (r *wikiPageRepository) UpdateAutoLinkedContent(ctx context.Context, page *
 func (r *wikiPageRepository) UpdateMeta(ctx context.Context, page *types.WikiPage) error {
 	result := r.db.WithContext(ctx).
 		Model(page).
-		Where("id = ?", page.ID).
+		Where("id = ? AND knowledge_base_id = ?", page.ID, page.KnowledgeBaseID).
 		Updates(map[string]interface{}{
 			"in_links":      page.InLinks,
 			"out_links":     page.OutLinks,

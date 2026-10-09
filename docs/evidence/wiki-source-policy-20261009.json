@@ -20,5 +20,15 @@
     "fail_nodes": 3,
     "reason": "existing unrelated KnowledgePostProcess summary fixtures lack admitted prompt origins",
     "log_sha256": "0e441320da28c2b3313d2b927b757b8543d40e3f22ca6543819fc28350ca7133"
+  },
+  "metadata_owner_followup": {
+    "counts": {
+      "pass": 6,
+      "fail": 0,
+      "skip": 0
+    },
+    "log_sha256": "30c8c9683a0a04af1429efdd4af4ce27e81687ed30de26291e7c476e53994ec1",
+    "exact_actual_id_scope_checked": true,
+    "repository_update_predicate_has_kb": true
   }
 }

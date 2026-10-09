@@ -235,6 +235,23 @@ func (s *wikiPageService) UpdatePageMeta(ctx context.Context, page *types.WikiPa
 		return err
 	}
 
+	resolver, ok := s.repo.(interface {
+		GetPageScopeByID(context.Context, string) (string, error)
+	})
+	if !ok {
+		return fmt.Errorf("%w: Wiki scope lookup unavailable", ErrNextcloudDerivedContent)
+	}
+	actualKB, err := resolver.GetPageScopeByID(ctx, page.ID)
+	if err != nil {
+		return err
+	}
+	if actualKB != page.KnowledgeBaseID {
+		return fmt.Errorf("%w: Wiki scope changed", ErrNextcloudDerivedContent)
+	}
+	if err := s.rejectNextcloudSource(ctx, actualKB); err != nil {
+		return err
+	}
+
 	normalizeWikiHierarchy(page)
 	page.UpdatedAt = time.Now()
 	return s.repo.UpdateMeta(ctx, page)
