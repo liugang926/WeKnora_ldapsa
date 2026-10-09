@@ -1,0 +1,426 @@
+{
+  "code_commit": "7bbe13ce592de303de23882f0cf8f54244df535b",
+  "base_commit": "be3fea862fc0d40536b2c69eff71521196bc8810",
+  "fixture_fix_root_commit": "e0b33efe6eb89321060f3e1a401afc1499117b4b",
+  "fixture_fix_local_commit": "adb510d0",
+  "migrations": {
+    "postgres": 153,
+    "sqlite": 72
+  },
+  "runs": [
+    {
+      "run": "r1",
+      "stdout": "/tmp/weknora-auto-completion-d47a-r1.jsonl",
+      "sha256": "5277fb617715cb9260cfb8f95bf847c1a0f5fbf508ed8a629f6fe320708f2ccb",
+      "bytes": 1463,
+      "terminal_exit": 0,
+      "events": {
+        "pass": 2,
+        "fail": 0,
+        "skip": 0
+      },
+      "package_results": [
+        {
+          "package": "github.com/Tencent/WeKnora/internal/application/service",
+          "action": "pass"
+        }
+      ],
+      "failed_tests": [],
+      "skipped_tests": [],
+      "note": "Compile-only child entry smoke; no crash was invoked in this standalone run."
+    },
+    {
+      "run": "r2",
+      "stdout": "/tmp/weknora-auto-completion-d47a-r2.jsonl",
+      "sha256": "85b7df65410a5f5c7482baf798f1158addf985f7b7ee2d68449e4872b5e4b0f1",
+      "bytes": 525143,
+      "terminal_exit": 1,
+      "events": {
+        "pass": 9,
+        "fail": 23,
+        "skip": 0
+      },
+      "package_results": [
+        {
+          "package": "github.com/Tencent/WeKnora/internal/application/service",
+          "action": "fail"
+        }
+      ],
+      "failed_tests": [
+        "TestKnowledgeAutoCompletionDurabilitySQLitePoolOne/enqueue_failure",
+        "TestKnowledgeAutoCompletionDurabilitySQLitePoolOne/exit_before_enqueue",
+        "TestKnowledgeAutoCompletionDurabilitySQLitePoolOne/consumer_process_exit",
+        "TestKnowledgeAutoCompletionDurabilitySQLitePoolOne",
+        "TestPostgresKnowledgeAutoCompletionDurabilityPoolOne/enqueue_failure",
+        "TestPostgresKnowledgeAutoCompletionDurabilityPoolOne/exit_before_enqueue",
+        "TestPostgresKnowledgeAutoCompletionDurabilityPoolOne/consumer_process_exit",
+        "TestPostgresKnowledgeAutoCompletionDurabilityPoolOne",
+        "TestKnowledgeAutoCompletionWithdrawSQLitePoolOne/source_withdraw",
+        "TestKnowledgeAutoCompletionWithdrawSQLitePoolOne/actor_withdraw",
+        "TestKnowledgeAutoCompletionWithdrawSQLitePoolOne",
+        "TestPostgresKnowledgeAutoCompletionWithdrawPoolOne/source_withdraw",
+        "TestPostgresKnowledgeAutoCompletionWithdrawPoolOne/actor_withdraw",
+        "TestPostgresKnowledgeAutoCompletionWithdrawPoolOne",
+        "TestKnowledgeAutoCompletionActualRedisSQLite",
+        "TestPostgresKnowledgeAutoCompletionActualRedis",
+        "TestKnowledgeAutoCompletionProducerSQLFailureSQLitePoolOne/zero_subtasks",
+        "TestKnowledgeAutoCompletionProducerSQLFailureSQLitePoolOne/Summary_QA_fanin",
+        "TestKnowledgeAutoCompletionProducerSQLFailureSQLitePoolOne",
+        "TestPostgresKnowledgeAutoCompletionProducerSQLFailurePoolOne/zero_subtasks",
+        "TestPostgresKnowledgeAutoCompletionProducerSQLFailurePoolOne/Summary_QA_fanin",
+        "TestPostgresKnowledgeAutoCompletionProducerSQLFailurePoolOne"
+      ],
+      "skipped_tests": [],
+      "note": "Historical failures: publication bookkeeping self-invalidation and untyped withdrawal; failed zero-subtask test setup."
+    },
+    {
+      "run": "r3",
+      "stdout": "/tmp/weknora-auto-completion-d47a-r3.jsonl",
+      "sha256": "bb9a496e0b0cc3df899f76ef5bdef1c040eff6aa1c1f8cf235dea585c479094d",
+      "bytes": 459836,
+      "terminal_exit": 0,
+      "events": {
+        "pass": 30,
+        "fail": 0,
+        "skip": 0
+      },
+      "package_results": [
+        {
+          "package": "github.com/Tencent/WeKnora/internal/application/service",
+          "action": "pass"
+        }
+      ],
+      "failed_tests": [],
+      "skipped_tests": [],
+      "note": "Historical normalized-bookkeeping implementation; replaced by exact same-admission transitions."
+    },
+    {
+      "run": "r4",
+      "stdout": "/tmp/weknora-auto-completion-d47a-r4.jsonl",
+      "sha256": "f2f19ab91e40752322ac5d3cb4644920f84ab43cc957392beb71b2471eea5c5a",
+      "bytes": 589041,
+      "terminal_exit": 0,
+      "events": {
+        "pass": 36,
+        "fail": 0,
+        "skip": 0
+      },
+      "package_results": [
+        {
+          "package": "github.com/Tencent/WeKnora/internal/application/service",
+          "action": "pass"
+        }
+      ],
+      "failed_tests": [],
+      "skipped_tests": [],
+      "note": "Exact publication counter/receipt plus external publication-field ABA negatives passed."
+    },
+    {
+      "run": "r5",
+      "stdout": "/tmp/weknora-auto-completion-d47a-r5.jsonl",
+      "sha256": "891c7f5595e50c0318ac59a5c6e8af0c6a2f0bcd4562594c56c60384237c18a6",
+      "bytes": 721983,
+      "terminal_exit": 1,
+      "events": {
+        "pass": 47,
+        "fail": 5,
+        "skip": 0
+      },
+      "package_results": [
+        {
+          "package": "github.com/Tencent/WeKnora/internal/application/service",
+          "action": "fail"
+        },
+        {
+          "package": "github.com/Tencent/WeKnora/internal/container",
+          "action": "pass"
+        },
+        {
+          "package": "github.com/Tencent/WeKnora/internal/datasource/connector/nextcloud",
+          "action": "pass"
+        }
+      ],
+      "failed_tests": [
+        "TestKnowledgeMachineActualPipelineSQLite",
+        "TestPostgresKnowledgeMachineActualPipeline",
+        "TestKnowledgeMachineQuestionsAndProfileSQLite",
+        "TestPostgresKnowledgeMachineQuestionsAndProfile"
+      ],
+      "skipped_tests": [],
+      "note": "Actual durability and publication outage passed; four existing machine positives exposed missing span Begin transition handling."
+    },
+    {
+      "run": "r6",
+      "stdout": "/tmp/weknora-auto-completion-d47a-r6.jsonl",
+      "sha256": "0a06cd4435294e09cee925dd0d19c9de7becd376c57aba5a1029d118887e314d",
+      "bytes": 1979753,
+      "terminal_exit": 1,
+      "events": {
+        "pass": 124,
+        "fail": 17,
+        "skip": 9
+      },
+      "package_results": [
+        {
+          "package": "github.com/Tencent/WeKnora/internal/application/repository",
+          "action": "pass"
+        },
+        {
+          "package": "github.com/Tencent/WeKnora/internal/application/service",
+          "action": "fail"
+        },
+        {
+          "package": "github.com/Tencent/WeKnora/internal/container",
+          "action": "pass"
+        },
+        {
+          "package": "github.com/Tencent/WeKnora/internal/datasource/connector/nextcloud",
+          "action": "pass"
+        }
+      ],
+      "failed_tests": [
+        "TestKnowledgeMachineAdditionalPublicSourcesSQLite/real_actor_extra_published_source",
+        "TestKnowledgeMachineAdditionalPublicSourcesSQLite/machine_cannot_borrow_extra_source_grant",
+        "TestKnowledgeMachineAdditionalPublicSourcesSQLite/additional_personal_source_withdrawn",
+        "TestKnowledgeMachineAdditionalPublicSourcesSQLite/actual_user_revoked",
+        "TestKnowledgeMachineAdditionalPublicSourcesSQLite/auto_payload_forged",
+        "TestKnowledgeMachineAdditionalPublicSourcesSQLite/auto_model_ABA",
+        "TestKnowledgeMachineAdditionalPublicSourcesSQLite/auto_tenant_ABA",
+        "TestKnowledgeMachineAdditionalPublicSourcesSQLite",
+        "TestPostgresKnowledgeMachineAdditionalPublicSources/real_actor_extra_published_source",
+        "TestPostgresKnowledgeMachineAdditionalPublicSources/machine_cannot_borrow_extra_source_grant",
+        "TestPostgresKnowledgeMachineAdditionalPublicSources/additional_personal_source_withdrawn",
+        "TestPostgresKnowledgeMachineAdditionalPublicSources/actual_user_revoked",
+        "TestPostgresKnowledgeMachineAdditionalPublicSources/auto_payload_forged",
+        "TestPostgresKnowledgeMachineAdditionalPublicSources/auto_model_ABA",
+        "TestPostgresKnowledgeMachineAdditionalPublicSources/auto_tenant_ABA",
+        "TestPostgresKnowledgeMachineAdditionalPublicSources"
+      ],
+      "skipped_tests": [
+        "TestKnowledgeAutoTagPostgresOriginalCompleteCandidateManifest",
+        "TestKnowledgeAutoTagPostgresCandidateABAAndNewMembership",
+        "TestKnowledgeAutoTagPostgresCompleteManifestUsesOneCoherentSnapshot",
+        "TestAutoSpanPostgresOriginalAdditionalManifest",
+        "TestAutoSpanPostgresCandidateAndRelationABA/candidate_name_ABA",
+        "TestAutoSpanPostgresCandidateAndRelationABA/relationship_ABA",
+        "TestAutoSpanPostgresCandidateAndRelationABA/human_origin_substitution",
+        "TestAutoSpanPostgresCandidateAndRelationABA/extra_manifest_replacement",
+        "TestAutoSpanPostgresCoherentAdditionalInputsAndFinalRecheck"
+      ],
+      "note": "Historical fresh candidate fixture lacked the real producer lease; old repository PG fixtures skipped because the lease DSN was not supplied."
+    },
+    {
+      "run": "r7",
+      "stdout": "/tmp/weknora-auto-completion-d47a-r7.jsonl",
+      "sha256": "05119847b817995e0a549bc6bba59917a4f7a4e14ac686f99035f7874885cbc9",
+      "bytes": 890401,
+      "terminal_exit": 0,
+      "events": {
+        "pass": 71,
+        "fail": 0,
+        "skip": 0
+      },
+      "package_results": [
+        {
+          "package": "github.com/Tencent/WeKnora/internal/application/repository",
+          "action": "pass"
+        },
+        {
+          "package": "github.com/Tencent/WeKnora/internal/application/service",
+          "action": "pass"
+        },
+        {
+          "package": "github.com/Tencent/WeKnora/internal/container",
+          "action": "pass"
+        },
+        {
+          "package": "github.com/Tencent/WeKnora/internal/datasource/connector/nextcloud",
+          "action": "pass"
+        }
+      ],
+      "failed_tests": [],
+      "skipped_tests": [],
+      "note": "Correct lease DSN, real fresh producer lease, exact publication/span transitions and both publication outage windows passed."
+    },
+    {
+      "run": "r8",
+      "stdout": "/tmp/weknora-auto-completion-d47a-r8.jsonl",
+      "sha256": "1afd8f013937510ea7175d50172a349d95c95d0ac8bf5fb36f1e261121e58db0",
+      "bytes": 2191416,
+      "terminal_exit": 1,
+      "events": {
+        "pass": 155,
+        "fail": 3,
+        "skip": 0
+      },
+      "package_results": [
+        {
+          "package": "github.com/Tencent/WeKnora/internal/application/repository",
+          "action": "pass"
+        },
+        {
+          "package": "github.com/Tencent/WeKnora/internal/application/service",
+          "action": "fail"
+        },
+        {
+          "package": "github.com/Tencent/WeKnora/internal/container",
+          "action": "pass"
+        },
+        {
+          "package": "github.com/Tencent/WeKnora/internal/datasource/connector/nextcloud",
+          "action": "pass"
+        }
+      ],
+      "failed_tests": [
+        "TestKnowledgeAutoCompletionZeroSubtasksSQLitePoolOne",
+        "TestPostgresKnowledgeAutoCompletionZeroSubtasksPoolOne"
+      ],
+      "skipped_tests": [],
+      "note": "Historical two zero-subtask positives exposed the completed-row heartbeat changing updated_at after publication."
+    },
+    {
+      "run": "r9",
+      "stdout": "/tmp/weknora-auto-completion-d47a-r9.jsonl",
+      "sha256": "5d1f6ccdd2350c89a521692ceec49cce16a91e4c540eb39eba9d3ca2711ccde4",
+      "bytes": 35398,
+      "terminal_exit": 1,
+      "events": {
+        "pass": 0,
+        "fail": 3,
+        "skip": 0
+      },
+      "package_results": [
+        {
+          "package": "github.com/Tencent/WeKnora/internal/application/service",
+          "action": "fail"
+        }
+      ],
+      "failed_tests": [
+        "TestKnowledgeAutoCompletionZeroSubtasksSQLitePoolOne",
+        "TestPostgresKnowledgeAutoCompletionZeroSubtasksPoolOne"
+      ],
+      "skipped_tests": [],
+      "note": "Preserved zero-subtask sealed model failure diagnosis."
+    },
+    {
+      "run": "r10",
+      "stdout": "/tmp/weknora-auto-completion-d47a-r10.jsonl",
+      "sha256": "a018c497d29951437be7f471744edd0c654e0f1429cd173c4e92d59503b3e868",
+      "bytes": 35407,
+      "terminal_exit": 1,
+      "events": {
+        "pass": 0,
+        "fail": 3,
+        "skip": 0
+      },
+      "package_results": [
+        {
+          "package": "github.com/Tencent/WeKnora/internal/application/service",
+          "action": "fail"
+        }
+      ],
+      "failed_tests": [
+        "TestKnowledgeAutoCompletionZeroSubtasksSQLitePoolOne",
+        "TestPostgresKnowledgeAutoCompletionZeroSubtasksPoolOne"
+      ],
+      "skipped_tests": [],
+      "note": "Preserved zero-subtask sealed model failure diagnosis."
+    },
+    {
+      "run": "r11",
+      "stdout": "/tmp/weknora-auto-completion-d47a-r11.jsonl",
+      "sha256": "743e4cef31f9d63c222ee2f7032604f878b3c694cf1f8496ac99516c9a1ed718",
+      "bytes": 37029,
+      "terminal_exit": 1,
+      "events": {
+        "pass": 0,
+        "fail": 3,
+        "skip": 0
+      },
+      "package_results": [
+        {
+          "package": "github.com/Tencent/WeKnora/internal/application/service",
+          "action": "fail"
+        }
+      ],
+      "failed_tests": [
+        "TestKnowledgeAutoCompletionZeroSubtasksSQLitePoolOne",
+        "TestPostgresKnowledgeAutoCompletionZeroSubtasksPoolOne"
+      ],
+      "skipped_tests": [],
+      "note": "Preserved diagnosis locating the exact publication transition mismatch."
+    },
+    {
+      "run": "r12",
+      "stdout": "/tmp/weknora-auto-completion-d47a-r12.jsonl",
+      "sha256": "c69be6eafe6f13387906f0ace0d9e6fc2f01950a1ec1aaadafcd31790d75f0a4",
+      "bytes": 2184119,
+      "terminal_exit": 0,
+      "events": {
+        "pass": 156,
+        "fail": 0,
+        "skip": 0
+      },
+      "package_results": [
+        {
+          "package": "github.com/Tencent/WeKnora/internal/application/repository",
+          "action": "pass"
+        },
+        {
+          "package": "github.com/Tencent/WeKnora/internal/application/service",
+          "action": "pass"
+        },
+        {
+          "package": "github.com/Tencent/WeKnora/internal/container",
+          "action": "pass"
+        },
+        {
+          "package": "github.com/Tencent/WeKnora/internal/datasource/connector/nextcloud",
+          "action": "pass"
+        }
+      ],
+      "failed_tests": [],
+      "skipped_tests": [],
+      "note": "Final actual combined run after heartbeat is restricted to pending/processing/finalizing; all test and package events pass."
+    }
+  ],
+  "runner": {
+    "image": "weknora-go-test:1.26-sqlite",
+    "cpus": 1,
+    "memory_bytes": 2147483648,
+    "source_mount": "/Users/abner/My_Project/ai-server/.weknora-auto-completion-durability-20261009:/src:ro",
+    "source_mount_inspected_in_run": "r6",
+    "module_cache_mount": "weknora-go-mod:/go/pkg/mod:ro",
+    "build_cache_mount": "weknora-go-build:/root/.cache/go-build",
+    "go_flags": "-tags sqlite_fts5 -p 1 -json",
+    "source_network": "internal only, no host ports"
+  },
+  "owned_cleanup": {
+    "owner_label": "auto-completion-durability-20261009-d47a",
+    "postgres_id": "c95f33016fc4f78e7a1435edd58c47f80598fffca507505f1492bac4e275040b",
+    "redis_id": "50faba7835e2c589266f1e564b3b634eee63f4d55ecda030c1513e05bb0ba976",
+    "network_id": "33b06a955514cb449cf759e70cfce9192f1725c4e9e51c52a0a0a1a55ad3da18",
+    "network_internal": true,
+    "host_port_bindings": {},
+    "postgres_memory_bytes": 536870912,
+    "postgres_tmpfs_bytes": 268435456,
+    "non_system_schema_count_before_stop": 0,
+    "docker_stop_terminal": 0,
+    "docker_network_rm_terminal": 0,
+    "filtered_container_inventory_after_cleanup": [],
+    "filtered_network_inventory_after_cleanup": [],
+    "retained_cache_volumes": [
+      "weknora-go-mod",
+      "weknora-go-build"
+    ]
+  },
+  "actual_test_boundary": {
+    "production_entry": "ProcessSync signed original transport -> real KnowledgeService file admission/storage -> document parser/chunk SQL -> production postprocess -> Summary/QA metadata SQL -> atomic completion/outbox -> actual Auto handler/tag SQL -> real Nextcloud publication -> guarded metadata/chunk/RAG/span reads",
+    "database": "real PostgreSQL 16 and file-backed SQLite; new durability fixtures set max open/idle connections to one",
+    "model": "isolated Summary/QA and classifier mocks; existing retrieval fixture uses real Composite selection with its isolated test backend",
+    "redis": "actual Asynq client unavailable TCP endpoint -> durable SQL intent -> actual isolated Redis enqueue -> inspect exact stored payload -> execute actual handler with a real exact build lease; no background Asynq server in these package tests",
+    "crash": "actual subprocess verifies immutable queue receipt, commits SQL consumer claim, exits 73; parent verifies running claim then advances only its expiry time and redelivers original bytes",
+    "publication_outages": "actual signed HTTP503 before publication commit and after publication commit; real SQL hide/publish transitions retry with contiguous immutable receipts",
+    "not_covered": "whole local application deployment acceptance, real enterprise AD/Nextcloud deployment, paid model, real native vector backend acceptance; parent task owns those combined checks"
+  }
+}
