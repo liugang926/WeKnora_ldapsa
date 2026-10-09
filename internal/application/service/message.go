@@ -247,7 +247,8 @@ func (s *messageService) GetMessage(ctx context.Context, sessionID string, messa
 	}
 
 	if s.materialStore != nil {
-		rows, err := s.admittedMessages(ctx, types.MessageMaterialReadRequest{TenantID: tenantID, SessionID: sessionID, MessageIDs: []string{messageID}})
+		_, model := ctx.Value(agentHistoryCurrentRequestKey{}).(string)
+		rows, err := s.admittedMessages(ctx, types.MessageMaterialReadRequest{TenantID: tenantID, SessionID: sessionID, MessageIDs: []string{messageID}, IncludeOriginalUserFields: model})
 		if err != nil {
 			return nil, err
 		}
@@ -486,12 +487,32 @@ func (s *messageService) UpdateMessage(ctx context.Context, message *types.Messa
 
 // UpdateMessageImages updates only the images JSONB column for a message.
 func (s *messageService) UpdateMessageImages(ctx context.Context, sessionID, messageID string, images types.MessageImages) error {
-	return s.messageRepo.UpdateMessageImages(ctx, sessionID, messageID, images)
+	marked, actual, err := s.actualGeneratedMessageFieldContext(ctx, sessionID, messageID, "images", images)
+	if err != nil {
+		return err
+	}
+	if err = s.messageRepo.UpdateMessageImages(marked, sessionID, messageID, images); err != nil {
+		return err
+	}
+	if actual {
+		return advanceMessageMaterialBoundaryAfterOwnField(marked)
+	}
+	return nil
 }
 
 // UpdateMessageRenderedContent updates the rendered_content column for a user message.
 func (s *messageService) UpdateMessageRenderedContent(ctx context.Context, sessionID, messageID string, renderedContent string) error {
-	return s.messageRepo.UpdateMessageRenderedContent(ctx, sessionID, messageID, renderedContent)
+	marked, actual, err := s.actualGeneratedMessageFieldContext(ctx, sessionID, messageID, "rendered_content", renderedContent)
+	if err != nil {
+		return err
+	}
+	if err = s.messageRepo.UpdateMessageRenderedContent(marked, sessionID, messageID, renderedContent); err != nil {
+		return err
+	}
+	if actual {
+		return advanceMessageMaterialBoundaryAfterOwnField(marked)
+	}
+	return nil
 }
 
 // DeleteMessage removes a message from a session, also cleaning up its Knowledge entry in the chat history KB.

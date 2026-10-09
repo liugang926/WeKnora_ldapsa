@@ -163,7 +163,7 @@ func (s *KnowledgeInputProvenanceStore) beginMessageProducerInTx(tx *gorm.DB, me
 		if message.Role == "assistant" && (message.Content != "" || message.IsCompleted) {
 			return nil, types.ErrSourceLineageUnknown
 		}
-		input, err := json.Marshal(message)
+		input, err := messageOriginalInputJSON(message)
 		if err != nil {
 			return nil, err
 		}
@@ -174,7 +174,7 @@ func (s *KnowledgeInputProvenanceStore) beginMessageProducerInTx(tx *gorm.DB, me
 		return row, nil
 	}
 	var row messageGenerationOrigin
-	if err := tx.Where("message_id=? AND session_id=?", message.ID, message.SessionID).Take(&row).Error; err != nil {
+	if err := tx.Select(messageGenerationMetadataFields).Where("message_id=? AND session_id=?", message.ID, message.SessionID).Take(&row).Error; err != nil {
 		return nil, err
 	}
 	if row.Actor != string(actorJSON) || row.RequestID != message.RequestID || row.Role != message.Role || row.OwnerID != session.UserID || row.OwnerRevision != ownerRevision || row.TenantID != session.TenantID {
@@ -294,3 +294,16 @@ func readMessageMaterialBodyInTx(tx *gorm.DB, id, session, role string) (*types.
 	}
 	return &message, nil
 }
+
+func messageOriginalInputJSON(message *types.Message) ([]byte, error) {
+	return json.Marshal(struct {
+		Body        *types.Message
+		Lineage     *types.SourceLineage
+		Execution   types.MessageExecutionContext
+		AgentTenant uint64
+		Rendered    string
+		Checkpoint  *types.ContextCheckpoint
+	}{message, message.SourceLineage, message.ExecutionContext, message.AgentTenantID, message.RenderedContent, message.ContextCheckpoint})
+}
+
+const messageGenerationMetadataFields = "id,message_id,session_id,tenant_id,owner_id,owner_revision,request_id,role,actor"

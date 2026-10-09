@@ -1,3 +1,9 @@
+DROP TABLE IF EXISTS message_fork_parent_origins;
+DROP TRIGGER IF EXISTS message_generated_field_checkpoint ON messages;
+DROP FUNCTION IF EXISTS message_generated_field_checkpoint();
+DROP TABLE IF EXISTS message_generated_field_versions;
+DROP TABLE IF EXISTS message_generated_field_receipts;
+DROP TABLE IF EXISTS message_generated_field_admissions;
 DROP TRIGGER IF EXISTS message_material_checkpoint ON messages;
 DROP TRIGGER IF EXISTS message_session_owner_checkpoint ON sessions;
 DROP FUNCTION IF EXISTS message_material_checkpoint();

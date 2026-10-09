@@ -77,6 +77,12 @@ func (h *Handler) ContinueStream(c *gin.Context) {
 		return
 	}
 
+	// Completed reconnects consume authenticated saved material. Redis frames
+	// are live transport data and cannot prove the original completed body.
+	if h.tryNativeSavedReplay(ctx, c, sessionID, messageID, resourceRewriter) {
+		return
+	}
+
 	// Get the incomplete message
 	message, err := getMessageForStream(ctx, h.messageService, sessionID, messageID)
 	if err != nil {
@@ -118,6 +124,16 @@ func (h *Handler) ContinueStream(c *gin.Context) {
 			"success": false,
 			"error":   "Incomplete message not found",
 		})
+		return
+	}
+
+	if message.IsCompleted {
+		// The metadata probe may have observed the last running moment. Retry
+		// after completion without authorizing its cached frames from row lineage.
+		if h.tryNativeSavedReplay(ctx, c, sessionID, messageID, resourceRewriter) {
+			return
+		}
+		c.Error(replayPublicationHTTPError(access.ErrNextcloudPublicationUnavailable))
 		return
 	}
 

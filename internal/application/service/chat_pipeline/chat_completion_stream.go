@@ -134,6 +134,7 @@ func (p *PluginChatCompletionStream) OnEvent(ctx context.Context,
 	// and the upstream channel is not closed promptly.
 	streamStarted = true
 	go func() {
+		defer types.CloseHistoryMaterialLifetime(ctx)
 		defer cancelLineage()
 		answerDecoder := modelContext.StreamDecoder()
 		thinkingDecoder := modelContext.StreamDecoder()

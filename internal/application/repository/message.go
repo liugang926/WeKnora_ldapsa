@@ -57,6 +57,9 @@ func (r *messageRepository) CreateMessage(
 			if err := r.materialStore.sealMessageMaterialInTx(tx, origin, &actual); err != nil {
 				return err
 			}
+			if err := r.materialStore.sealInitialUserFieldsInTx(tx, origin, &actual); err != nil {
+				return err
+			}
 			message.CreatedAt = actual.CreatedAt
 			message.UpdatedAt = actual.UpdatedAt
 			return nil
@@ -565,6 +568,9 @@ func (r *messageRepository) GetKnowledgeIDsBySessionID(
 // Uses Select to force GORM to include the column even when struct-based
 // Updates would otherwise skip custom Valuer types.
 func (r *messageRepository) UpdateMessageImages(ctx context.Context, sessionID, messageID string, images types.MessageImages) error {
+	if _, ok := ctx.Value(messageGeneratedFieldKey{}).(messageGeneratedFieldBoundary); ok {
+		return r.writeGeneratedField(ctx, sessionID, messageID, "images", images)
+	}
 	return r.db.WithContext(ctx).
 		Model(&types.Message{}).
 		Where("id = ? AND session_id = ?", messageID, sessionID).
@@ -573,6 +579,9 @@ func (r *messageRepository) UpdateMessageImages(ctx context.Context, sessionID, 
 
 // UpdateMessageRenderedContent updates only the rendered_content column for a message.
 func (r *messageRepository) UpdateMessageRenderedContent(ctx context.Context, sessionID, messageID string, renderedContent string) error {
+	if _, ok := ctx.Value(messageGeneratedFieldKey{}).(messageGeneratedFieldBoundary); ok {
+		return r.writeGeneratedField(ctx, sessionID, messageID, "rendered_content", renderedContent)
+	}
 	return r.db.WithContext(ctx).
 		Model(&types.Message{}).
 		Where("id = ? AND session_id = ?", messageID, sessionID).
@@ -586,6 +595,9 @@ func (r *messageRepository) UpdateMessageRenderedContent(ctx context.Context, se
 func (r *messageRepository) UpdateMessageContextCheckpoint(
 	ctx context.Context, sessionID, messageID string, checkpoint *types.ContextCheckpoint,
 ) error {
+	if _, ok := ctx.Value(messageGeneratedFieldKey{}).(messageGeneratedFieldBoundary); ok {
+		return r.writeGeneratedField(ctx, sessionID, messageID, "context_checkpoint", checkpoint)
+	}
 	result := r.db.WithContext(ctx).
 		Model(&types.Message{}).
 		Where("id = ? AND session_id = ? AND role = 'assistant'", messageID, sessionID).
@@ -696,4 +708,8 @@ func (r *messageRepository) GetSessionAttachments(
 		result = append(result, row.Attachments...)
 	}
 	return result, nil
+}
+
+func (r *messageRepository) MessageMaterialStore() *KnowledgeInputProvenanceStore {
+	return r.materialStore
 }

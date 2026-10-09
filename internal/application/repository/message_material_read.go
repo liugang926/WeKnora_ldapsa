@@ -26,6 +26,10 @@ func WithMessageMaterialReadPlan(ctx context.Context, plan *types.MessageMateria
 	if err = json.Unmarshal(encoded, &actual); err != nil {
 		return ctx, err
 	}
+	ctx, err = WithMessageMaterialReadPlans(ctx, actual.ParentPlans)
+	if err != nil {
+		return ctx, err
+	}
 	plans, _ := ctx.Value(messageMaterialPlanKey{}).([]*types.MessageMaterialReadPlan)
 	plans = append(append([]*types.MessageMaterialReadPlan{}, plans...), &actual)
 	return context.WithValue(ctx, messageMaterialPlanKey{}, plans), nil
@@ -44,7 +48,7 @@ func (s *KnowledgeInputProvenanceStore) PeekMessageMaterialReadPlan(ctx context.
 func (s *KnowledgeInputProvenanceStore) CommittedMessageParentRequest(ctx context.Context, tenant uint64, sessionID, assistantID string) (types.MessageMaterialReadRequest, error) {
 	req := types.MessageMaterialReadRequest{TenantID: tenant, SessionID: sessionID}
 	var origin messageGenerationOrigin
-	if err := s.db.WithContext(ctx).Where("message_id=? AND session_id=? AND tenant_id=? AND role='assistant'", assistantID, sessionID, tenant).Take(&origin).Error; err != nil {
+	if err := s.db.WithContext(ctx).Select("request_id").Where("message_id=? AND session_id=? AND tenant_id=? AND role='assistant'", assistantID, sessionID, tenant).Take(&origin).Error; err != nil {
 		return req, err
 	}
 	var users []struct{ MessageID string }
@@ -113,15 +117,38 @@ func (s *KnowledgeInputProvenanceStore) peekMessageMaterialReadPlanInTx(tx *gorm
 	if !req.AllSession {
 		query = query.Where("id IN ?", req.MessageIDs)
 	}
+	if req.CompletedOnly {
+		query = query.Where("is_completed = ?", true)
+	}
+	if req.ExcludeRequestID != "" {
+		query = query.Where("request_id <> ?", req.ExcludeRequestID)
+	}
 	if err = query.Order("id").Scan(&ids).Error; err != nil {
 		return nil, err
 	}
 	if !req.AllSession && len(ids) != len(req.MessageIDs) {
 		return nil, ErrKnowledgeInputChanged
 	}
+	// Selection consumes every candidate's original control identity, including
+	// candidates excluded for completion/request/budget. No current header alone
+	// may supply those controls; a foreign partial write invalidates its receipt.
+	var controls []*types.MessageMaterialCandidateControl
+	cq := tx.Table("messages m").Select("m.id,m.request_id,m.role,m.is_completed AS complete,m.created_at,a.id AS admission_id,a.generation_id,a.revision,v.revision AS current_revision").Joins("LEFT JOIN message_material_receipts r ON r.message_id=m.id").Joins("LEFT JOIN message_material_admissions a ON a.id=r.admission_id AND a.message_id=m.id").Joins("LEFT JOIN message_material_versions v ON v.message_id=m.id").Where("m.session_id=? AND m.deleted_at IS NULL", req.SessionID)
+	if !req.AllSession {
+		cq = cq.Where("m.id IN ?", req.MessageIDs)
+	}
+	if err := cq.Order("m.id").Scan(&controls).Error; err != nil {
+		return nil, err
+	}
+	for _, control := range controls {
+		if control.AdmissionID == "" || control.GenerationID == "" || control.Revision == 0 || control.Revision != control.CurrentRevision {
+			return nil, types.ErrSourceLineageUnknown
+		}
+	}
 	facts := []messageMaterialAdmission{}
 	lineages := []*types.SourceLineage{}
 	scopes := map[string]types.KnowledgeSearchScope{}
+	parentPlans := []*types.MessageMaterialReadPlan{}
 	add := func(tenant uint64, kb string) error {
 		if tenant == 0 || kb == "" {
 			return types.ErrSourceLineageUnknown
@@ -178,6 +205,83 @@ func (s *KnowledgeInputProvenanceStore) peekMessageMaterialReadPlanInTx(tx *gorm
 				return nil, err
 			}
 		}
+		var fieldParents []struct{ ParentMaterials, SourceLineage string }
+		if tx.Migrator().HasTable("message_generated_field_admissions") {
+			if err := tx.Table("message_generated_field_admissions a").Select("a.parent_materials,a.source_lineage").Joins("JOIN message_generated_field_receipts r ON r.admission_id=a.id AND r.message_id=a.message_id AND r.field=a.field").Where("a.message_id=?", id.ID).Scan(&fieldParents).Error; err != nil {
+				return nil, err
+			}
+		}
+		for _, field := range fieldParents {
+			var source types.SourceLineage
+			if err := json.Unmarshal([]byte(field.SourceLineage), &source); err != nil {
+				return nil, err
+			}
+			if err := source.RequireComplete(); err != nil {
+				return nil, err
+			}
+			lineages = append(lineages, &source)
+			for _, entry := range source.Sources {
+				if err := add(entry.TenantID, entry.KnowledgeBaseID); err != nil {
+					return nil, err
+				}
+			}
+			var parents []*types.MessageMaterialSnapshot
+			if err := json.Unmarshal([]byte(field.ParentMaterials), &parents); err != nil {
+				return nil, err
+			}
+			for _, parent := range parents {
+				for _, proof := range parent.Proofs {
+					kbIDs := append(append([]string{}, proof.Execution.KnowledgeBaseIDs...), proof.Execution.AgentKnowledgeBaseIDs...)
+					for _, tag := range proof.Execution.TagScopes {
+						kbIDs = append(kbIDs, tag.KnowledgeBaseID)
+					}
+					for _, knowledgeID := range proof.Execution.KnowledgeIDs {
+						var identity struct{ KnowledgeBaseID string }
+						if err := tx.Table("knowledges").Select("knowledge_base_id").Where("id=? AND deleted_at IS NULL", knowledgeID).Take(&identity).Error; err != nil {
+							return nil, err
+						}
+						kbIDs = append(kbIDs, identity.KnowledgeBaseID)
+					}
+					for _, kbID := range kbIDs {
+						var identity struct{ TenantID uint64 }
+						if err := tx.Table("knowledge_bases").Select("tenant_id").Where("id=? AND deleted_at IS NULL", kbID).Take(&identity).Error; err != nil {
+							return nil, err
+						}
+						if err := add(identity.TenantID, kbID); err != nil {
+							return nil, err
+						}
+					}
+				}
+			}
+		}
+		if tx.Migrator().HasTable("message_fork_parent_origins") {
+			var fork messageForkParentOrigin
+			err := tx.Where("generation_id=?", fact.GenerationID).Take(&fork).Error
+			if err != nil && err != gorm.ErrRecordNotFound {
+				return nil, err
+			}
+			if err == nil {
+				var parent types.MessageMaterialSnapshot
+				if err = json.Unmarshal([]byte(fork.ParentMaterials), &parent); err != nil {
+					return nil, err
+				}
+				depth, _ := tx.Statement.Context.Value(messageParentPlanDepthKey{}).(int)
+				if depth > 64 {
+					return nil, types.ErrSourceLineageLimit
+				}
+				nested, err := s.peekMessageMaterialReadPlanInTx(tx.WithContext(context.WithValue(tx.Statement.Context, messageParentPlanDepthKey{}, depth+1)), parent.Request)
+				if err != nil {
+					return nil, err
+				}
+				parentPlans = append(parentPlans, nested)
+				for _, scope := range nested.Scopes {
+					if err := add(scope.TenantID, scope.KBID); err != nil {
+						return nil, err
+					}
+				}
+				lineages = append(lineages, nested.SourceLineage)
+			}
+		}
 		facts = append(facts, fact)
 	}
 	if len(lineages) == 0 {
@@ -193,11 +297,12 @@ func (s *KnowledgeInputProvenanceStore) peekMessageMaterialReadPlanInTx(tx *gorm
 		Session           any
 		Owner, Membership uint64
 		Facts             []messageMaterialAdmission
-	}{req, session, ownerRevision, membership, facts})
+		Controls          any
+	}{req, session, ownerRevision, membership, facts, controls})
 	if err != nil {
 		return nil, err
 	}
-	result := &types.MessageMaterialReadPlan{Request: req, MetadataDigest: digest, SourceLineage: lineage}
+	result := &types.MessageMaterialReadPlan{Request: req, MetadataDigest: digest, SourceLineage: lineage, Controls: controls, ParentPlans: parentPlans}
 	for _, scope := range scopes {
 		result.Scopes = append(result.Scopes, scope)
 	}
@@ -245,6 +350,11 @@ func (s *KnowledgeInputProvenanceStore) verifyMessageMaterialInTx(tx *gorm.DB, m
 	}
 	if err := s.checkMessageOriginalBodyAvailability(tx, fact.GenerationID); err != nil {
 		return nil, err
+	}
+	if tx.Migrator().HasTable("message_fork_parent_origins") {
+		if err := s.verifyMessageForkParentsInTx(tx, fact.GenerationID); err != nil {
+			return nil, err
+		}
 	}
 	revision, err := messageVersion(tx, "message_material_versions", "message_id", message.ID)
 	if err != nil {
@@ -342,6 +452,11 @@ func (s *KnowledgeInputProvenanceStore) verifyMessageMaterialInTx(tx *gorm.DB, m
 			return nil, access.ErrForbidden
 		}
 	}
+	if message.Role == "assistant" {
+		if err := s.verifyGeneratedMessageFieldsInTx(tx, message); err != nil {
+			return nil, err
+		}
+	}
 	return &types.MessageMaterialProof{AdmissionID: fact.ID, GenerationID: fact.GenerationID, MessageID: fact.MessageID, SessionID: fact.SessionID, TenantID: fact.TenantID, OwnerID: fact.OwnerID, OwnerRevision: fact.OwnerRevision, Revision: fact.Revision, BodyDigest: fact.BodyDigest, SourceLineage: &lineage, Execution: execution, AgentID: fact.AgentID, AgentTenantID: fact.AgentTenantID}, nil
 }
 func (s *KnowledgeInputProvenanceStore) captureMessageMaterialInTx(tx *gorm.DB, req types.MessageMaterialReadRequest) (*types.MessageMaterialSnapshot, error) {
@@ -373,6 +488,12 @@ func (s *KnowledgeInputProvenanceStore) captureMessageMaterialInTx(tx *gorm.DB, 
 		return nil, err
 	}
 	q := tx.Where("session_id=?", req.SessionID)
+	if req.CompletedOnly {
+		q = q.Where("is_completed = ?", true)
+	}
+	if req.ExcludeRequestID != "" {
+		q = q.Where("request_id <> ?", req.ExcludeRequestID)
+	}
 	if !req.AllSession {
 		q = q.Where("id IN ?", req.MessageIDs)
 	}
@@ -386,6 +507,22 @@ func (s *KnowledgeInputProvenanceStore) captureMessageMaterialInTx(tx *gorm.DB, 
 		if err != nil {
 			return nil, err
 		}
+		if req.IncludeOriginalUserFields && message.Role == "user" {
+			var extra struct {
+				Images          types.MessageImages
+				Attachments     types.MessageAttachments
+				RenderedContent string
+			}
+			if err := tx.Table("messages").Select("images,attachments,rendered_content").Where("id=? AND session_id=?", message.ID, req.SessionID).Take(&extra).Error; err != nil {
+				return nil, err
+			}
+			message.Images = extra.Images
+			message.Attachments = extra.Attachments
+			message.RenderedContent = extra.RenderedContent
+			if err := s.verifyGeneratedMessageFieldsInTx(tx, message); err != nil {
+				return nil, err
+			}
+		}
 		result.Messages = append(result.Messages, message)
 	}
 	for _, message := range result.Messages {
@@ -395,6 +532,34 @@ func (s *KnowledgeInputProvenanceStore) captureMessageMaterialInTx(tx *gorm.DB, 
 		}
 		if message.Role == "user" {
 			message.SourceLineage = proof.SourceLineage
+		}
+		if req.IncludeOriginalUserFields && message.Role == "user" {
+			lineages := []*types.SourceLineage{proof.SourceLineage}
+			var rows []struct{ SourceLineage string }
+			if err := tx.Table("message_generated_field_admissions a").Select("a.source_lineage").Joins("JOIN message_generated_field_receipts r ON r.admission_id=a.id AND r.message_id=a.message_id AND r.field=a.field").Where("a.message_id=?", message.ID).Scan(&rows).Error; err != nil {
+				return nil, err
+			}
+			for _, row := range rows {
+				var source types.SourceLineage
+				if err := json.Unmarshal([]byte(row.SourceLineage), &source); err != nil {
+					return nil, err
+				}
+				lineages = append(lineages, &source)
+			}
+			union, err := types.UnionSourceLineage(lineages...)
+			if err != nil {
+				return nil, err
+			}
+			message.SourceLineage = union
+			proof.SourceLineage = union
+		}
+
+		if req.IncludeOriginalUserFields && message.Role == "user" || message.Role == "assistant" {
+			generated, err := messageGeneratedFieldProofs(tx, message.ID)
+			if err != nil {
+				return nil, err
+			}
+			proof.GeneratedFields = generated
 		}
 		result.Proofs = append(result.Proofs, proof)
 	}
@@ -442,8 +607,9 @@ func WithMessageMaterialReadPlans(ctx context.Context, plans []*types.MessageMat
 }
 func findMessageMaterialReadPlan(ctx context.Context, req types.MessageMaterialReadRequest) *types.MessageMaterialReadPlan {
 	plans, _ := ctx.Value(messageMaterialPlanKey{}).([]*types.MessageMaterialReadPlan)
-	for _, plan := range plans {
-		if plan.Request.TenantID != req.TenantID || plan.Request.SessionID != req.SessionID {
+	for i := len(plans) - 1; i >= 0; i-- {
+		plan := plans[i]
+		if plan.Request.TenantID != req.TenantID || plan.Request.SessionID != req.SessionID || plan.Request.CompletedOnly != req.CompletedOnly || plan.Request.ExcludeRequestID != req.ExcludeRequestID || plan.Request.IncludeOriginalUserFields != req.IncludeOriginalUserFields {
 			continue
 		}
 		covered := plan.Request.AllSession
@@ -486,3 +652,139 @@ func (s *KnowledgeInputProvenanceStore) peekHistoryMaterialPlanForProofInTx(tx *
 	}
 	return s.peekMessageMaterialReadPlanInTx(tx, types.MessageMaterialReadRequest{TenantID: parent.TenantID, SessionID: parent.SessionID, MessageIDs: []string{parent.AssistantMessageID, parent.UserMessageID}})
 }
+
+// Identity/control only: no saved text or checkpoint is read here.
+func (s *KnowledgeInputProvenanceStore) MessageRequestControl(ctx context.Context, sessionID, messageID string) (string, error) {
+	var row struct{ RequestID string }
+	err := s.db.WithContext(ctx).Table("messages").Select("request_id").Where("id=? AND session_id=? AND deleted_at IS NULL", messageID, sessionID).Take(&row).Error
+	if err != nil {
+		return "", err
+	}
+	if row.RequestID == "" {
+		return "", types.ErrSourceLineageUnknown
+	}
+	return row.RequestID, nil
+}
+
+func (s *KnowledgeInputProvenanceStore) AdvanceMessageMaterialAfterOwnFieldWrite(ctx context.Context, expected *types.MessageMaterialSnapshot) (*types.MessageMaterialSnapshot, error) {
+	boundary, ok := ctx.Value(messageGeneratedFieldKey{}).(messageGeneratedFieldBoundary)
+	if !ok || boundary.Store != s || expected == nil {
+		return nil, types.ErrSourceLineageUnknown
+	}
+	matched := false
+	for _, parent := range boundary.Parents {
+		if faqInputEqual(parent, expected) {
+			matched = true
+		}
+	}
+	if !matched {
+		return nil, ErrKnowledgeInputChanged
+	}
+	// The exact immutable field admission must still be the current field head.
+	var result *types.MessageMaterialSnapshot
+	err := s.collectionTransaction(ctx, func(tx *gorm.DB) error {
+		var receipt messageGeneratedFieldAdmission
+		if err := tx.Table("message_generated_field_admissions a").Select("a.*").Joins("JOIN message_generated_field_receipts r ON r.admission_id=a.id AND r.message_id=a.message_id AND r.field=a.field").Where("a.message_id=? AND a.session_id=? AND a.field=? AND a.body_digest=?", boundary.MessageID, boundary.SessionID, boundary.Field, boundary.Digest).Take(&receipt).Error; err != nil {
+			return err
+		}
+		currentMembership, err := messageVersion(tx, "message_session_membership_versions", "session_id", expected.Request.SessionID)
+		if err != nil {
+			return err
+		}
+		if currentMembership != expected.MembershipRevision || receipt.PreviousMembership != expected.MembershipRevision {
+			return ErrKnowledgeInputChanged
+		}
+		targetMatched := false
+		for _, proof := range expected.Proofs {
+			if proof.MessageID == boundary.MessageID {
+				if proof.AdmissionID != receipt.PreviousAdmissionID || proof.Revision != receipt.PreviousRevision {
+					return ErrKnowledgeInputChanged
+				}
+				targetMatched = true
+			}
+		}
+		if !targetMatched {
+			return ErrKnowledgeInputChanged
+		}
+		currentRevision, err := messageVersion(tx, "message_material_versions", "message_id", boundary.MessageID)
+		if err != nil {
+			return err
+		}
+		if currentRevision != receipt.ResultRevision {
+			return ErrKnowledgeInputChanged
+		}
+		actualPlan, err := s.peekMessageMaterialReadPlanInTx(tx, expected.Request)
+		if err != nil {
+			return err
+		}
+		oldPlan := findMessageMaterialReadPlan(tx.Statement.Context, expected.Request)
+		if oldPlan == nil || len(oldPlan.Controls) != len(actualPlan.Controls) {
+			return ErrKnowledgeInputChanged
+		}
+		for i, control := range oldPlan.Controls {
+			after := actualPlan.Controls[i]
+			if control.ID != boundary.MessageID {
+				if !faqInputEqual(control, after) {
+					return ErrKnowledgeInputChanged
+				}
+				continue
+			}
+			a, b := *control, *after
+			a.AdmissionID = ""
+			b.AdmissionID = ""
+			a.Revision = 0
+			b.Revision = 0
+			a.CurrentRevision = 0
+			b.CurrentRevision = 0
+			if !faqInputEqual(a, b) {
+				return ErrKnowledgeInputChanged
+			}
+		}
+		if err = validateFAQReadLeaseCoverageInTx(tx, actualPlan.Scopes, actualPlan.SourceLineage); err != nil {
+			return err
+		}
+		// Every other original material must retain its immutable receipt/version.
+		for _, proof := range expected.Proofs {
+			if proof.MessageID == boundary.MessageID {
+				continue
+			}
+			var fact messageMaterialAdmission
+			if err := tx.Table("message_material_admissions a").Select("a.*").Joins("JOIN message_material_receipts r ON r.admission_id=a.id AND r.message_id=a.message_id").Where("a.message_id=?", proof.MessageID).Take(&fact).Error; err != nil {
+				return err
+			}
+			if fact.ID != proof.AdmissionID || fact.Revision != proof.Revision || fact.BodyDigest != proof.BodyDigest {
+				return ErrKnowledgeInputChanged
+			}
+		}
+
+		isolated := context.WithValue(tx.Statement.Context, messageMaterialPlanKey{}, []*types.MessageMaterialReadPlan{})
+		marked, err := WithMessageMaterialReadPlan(isolated, actualPlan)
+		if err != nil {
+			return err
+		}
+		result, err = s.captureMessageMaterialInTx(tx.WithContext(marked), expected.Request)
+		return err
+	})
+	return result, err
+}
+
+func (s *KnowledgeInputProvenanceStore) MessageCompletionControl(ctx context.Context, sessionID, messageID string) (bool, error) {
+	var complete bool
+	err := s.collectionTransaction(ctx, func(tx *gorm.DB) error {
+		if _, _, _, err := s.currentMessageOwnerInTx(tx, sessionID); err != nil {
+			return err
+		}
+		var identity struct {
+			ID          string
+			IsCompleted bool
+		}
+		if err := tx.Table("messages").Select("id,is_completed").Where("id=? AND session_id=? AND deleted_at IS NULL", messageID, sessionID).Take(&identity).Error; err != nil {
+			return err
+		}
+		complete = identity.IsCompleted
+		return nil
+	})
+	return complete, err
+}
+
+type messageParentPlanDepthKey struct{}

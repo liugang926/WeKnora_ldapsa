@@ -28,6 +28,20 @@ func (s *sessionService) AgentQA(
 	req *types.QARequest,
 	eventBus *event.EventBus,
 ) error {
+	ctx = WithMessageMaterialOutputBoundary(ctx)
+	defer CloseMessageMaterialOutputBoundary(ctx)
+	if native, ok := s.lineageVerifier.(*messageService); ok && native.materialStore != nil {
+		requestID, err := native.materialStore.MessageRequestControl(ctx, req.Session.ID, req.AssistantMessageID)
+		if err != nil {
+			return err
+		}
+		ctx = context.WithValue(ctx, agentHistoryCurrentRequestKey{}, requestID)
+		if req.UserMessageID != "" {
+			if _, err := native.GetMessage(ctx, req.Session.ID, req.UserMessageID); err != nil {
+				return err
+			}
+		}
+	}
 	if len(req.ImageURLs) > 0 || req.ImageDescription != "" || req.QuotedContext != "" || len(req.Attachments) > 0 {
 		return access.ErrNextcloudPublicationDenied
 	}
@@ -217,7 +231,7 @@ func (s *sessionService) AgentQA(
 			return fmt.Errorf("resolve sandbox file store for session %s: %w", sessionID, storeErr)
 		}
 		if inputStore != nil {
-			sessionAttachments, loadErr := s.messageRepo.GetSessionAttachments(ctx, sessionID)
+			sessionAttachments, loadErr := admittedAgentSessionAttachments(ctx, s.lineageVerifier, sessionID)
 			if loadErr != nil {
 				return fmt.Errorf("load session attachments for sandbox staging: %w", loadErr)
 			}
@@ -252,6 +266,10 @@ func (s *sessionService) AgentQA(
 	}
 	lineageScope := access.LineageReadScope{Targets: agentConfig.SearchTargets, AgentID: req.CustomAgent.ID, AgentTenantID: req.CustomAgent.TenantID}
 	lineageEngine.SetSourceLineageVerifier(func(checkCtx context.Context, lineage *types.SourceLineage) error {
+		if err := CheckMessageMaterialOutputBoundary(ctx); err != nil {
+			return err
+		}
+
 		if err := s.revalidateAgentExecution(checkCtx, req.CustomAgent, agentConfig.SearchTargets); err != nil {
 			return err
 		}
@@ -267,6 +285,10 @@ func (s *sessionService) AgentQA(
 		agent := req.CustomAgent
 		searchTargets := agentConfig.SearchTargets
 		guarded.SetRoundGuard(func(guardCtx context.Context) error {
+			if err := CheckMessageMaterialOutputBoundary(ctx); err != nil {
+				return err
+			}
+
 			return s.revalidateAgentExecution(guardCtx, agent, searchTargets)
 		})
 	}
@@ -338,6 +360,9 @@ func (s *sessionService) AgentQA(
 				SessionID: sessionID,
 			},
 		})
+	}
+	if err := CheckMessageMaterialOutputBoundary(ctx); err != nil {
+		return err
 	}
 	// Return empty - events will be handled by Handler via EventBus subscription
 	return nil

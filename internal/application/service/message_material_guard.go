@@ -13,6 +13,7 @@ import (
 
 type historyMaterialGuardContextKey struct{}
 type MessageMaterialGuard struct {
+	mu       sync.Mutex
 	store    *repository.KnowledgeInputProvenanceStore
 	verifier *messageService
 	snapshot *types.MessageMaterialSnapshot
@@ -86,13 +87,14 @@ func (s *messageService) beginMessageMaterialRead(ctx context.Context, request t
 		return nil, err
 	}
 	guard.stop.Add(1)
+	runCtx := guard.ctx
 	go func() {
 		defer guard.stop.Done()
 		ticker := time.NewTicker(30 * time.Second)
 		defer ticker.Stop()
 		for {
 			select {
-			case <-guard.ctx.Done():
+			case <-runCtx.Done():
 				return
 			case <-ticker.C:
 				if guard.Recheck() != nil {
@@ -106,9 +108,11 @@ func (s *messageService) beginMessageMaterialRead(ctx context.Context, request t
 }
 func (g *MessageMaterialGuard) Context() context.Context { return g.ctx }
 func (g *MessageMaterialGuard) Recheck() error {
-	if g == nil || g.snapshot == nil {
+	if g == nil {
 		return access.ErrNextcloudPublicationUnavailable
 	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
 	if err := g.ctx.Err(); err != nil {
 		return err
 	}
@@ -118,14 +122,21 @@ func (g *MessageMaterialGuard) Recheck() error {
 		}
 	}
 	// Remote/current actor checks happen outside the body SQL transaction.
-	if err := g.verifier.CheckMessagePublications(g.ctx, g.snapshot.Messages); err != nil {
-		return err
+	if len(g.snapshot.Messages) > 0 {
+		if err := g.verifier.CheckMessagePublications(g.ctx, g.snapshot.Messages); err != nil {
+			return err
+		}
 	}
-	if err := g.store.CheckKnowledgeHistoryOriginalSources(g.ctx, g.snapshot.Messages); err != nil {
-		return err
+	if len(g.snapshot.Messages) > 0 {
+		if err := g.store.CheckKnowledgeHistoryOriginalSources(g.ctx, g.snapshot.Messages); err != nil {
+			return err
+		}
 	}
 	if err := g.store.RecheckMessageMaterialInputs(g.ctx, g.snapshot); err != nil {
 		return err
+	}
+	if len(g.snapshot.Messages) == 0 {
+		return nil
 	}
 	return g.verifier.CheckMessagePublications(g.ctx, g.snapshot.Messages)
 }
@@ -148,4 +159,53 @@ func closeHistoryMaterialGuard(ctx context.Context) {
 	if guard, ok := ctx.Value(historyMaterialGuardContextKey{}).(*MessageMaterialGuard); ok {
 		guard.Close()
 	}
+}
+
+func (g *MessageMaterialGuard) advanceOwnGeneratedField(ctx context.Context) error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	updated, err := g.store.AdvanceMessageMaterialAfterOwnFieldWrite(ctx, g.snapshot)
+	if err != nil {
+		return err
+	}
+	plan, err := g.store.PeekMessageMaterialReadPlan(ctx, updated.Request)
+	if err != nil {
+		return err
+	}
+	marked, err := repository.WithMessageMaterialReadPlan(g.ctx, plan)
+	if err != nil {
+		return err
+	}
+	// New immutable own admission has already passed the exact transfer check.
+	// Use only the new matching plan; old unrelated plans are not re-certified.
+	g.ctx = marked
+	g.plan = plan
+	g.snapshot = updated
+	return nil
+}
+
+func (g *MessageMaterialGuard) OriginalSnapshot() (*types.MessageMaterialSnapshot, error) {
+	if err := g.Recheck(); err != nil {
+		return nil, err
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	result, err := cloneCollection(g.snapshot)
+	if err != nil {
+		return nil, err
+	}
+	for i, message := range g.snapshot.Messages {
+		if message == nil {
+			continue
+		}
+		result.Messages[i].SourceLineage, _ = types.UnionSourceLineage(message.SourceLineage)
+		result.Messages[i].ExecutionContext = message.ExecutionContext
+		result.Messages[i].AgentTenantID = message.AgentTenantID
+		result.Messages[i].RenderedContent = message.RenderedContent
+		result.Messages[i].ContextCheckpoint, err = cloneCollection(message.ContextCheckpoint)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return result, nil
 }

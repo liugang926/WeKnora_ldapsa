@@ -40,9 +40,12 @@ type messageLineageHistoryAdmission struct {
 	verifier interfaces.MessageSourceLineageVerifier
 }
 
-func (a messageLineageHistoryAdmission) CheckAgentHistoryReplay(context.Context) error {
+func (a messageLineageHistoryAdmission) CheckAgentHistoryReplay(ctx context.Context) error {
 	if a.verifier == nil {
 		return access.ErrNextcloudPublicationUnavailable
+	}
+	if _, ok := ctx.Value(messageMaterialOutputKey{}).(*messageMaterialOutputSlot); ok {
+		return CheckMessageMaterialOutputBoundary(ctx)
 	}
 	return nil
 }

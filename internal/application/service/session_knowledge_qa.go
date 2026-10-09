@@ -26,6 +26,27 @@ func (s *sessionService) KnowledgeQA(
 	req *types.QARequest,
 	eventBus *event.EventBus,
 ) error {
+	ctx = WithMessageMaterialOutputBoundary(ctx)
+	ctx = types.WithHistoryMaterialLifetime(ctx, func() error { return CheckMessageMaterialOutputBoundary(ctx) }, func() { CloseMessageMaterialOutputBoundary(ctx) })
+	handoff := false
+	defer func() {
+		if !handoff {
+			types.CloseHistoryMaterialLifetime(ctx)
+		}
+	}()
+	ctx = context.WithValue(ctx, agentHistoryCurrentRequestKey{}, "")
+	if native, ok := s.lineageVerifier.(*messageService); ok && native.materialStore != nil {
+		requestID, err := native.materialStore.MessageRequestControl(ctx, req.Session.ID, req.AssistantMessageID)
+		if err != nil {
+			return err
+		}
+		ctx = context.WithValue(ctx, agentHistoryCurrentRequestKey{}, requestID)
+		if req.UserMessageID != "" {
+			if _, err := native.GetMessage(ctx, req.Session.ID, req.UserMessageID); err != nil {
+				return err
+			}
+		}
+	}
 	webSearchEnabled := resolveWebSearchEnabled(req)
 	logger.Infof(
 		ctx,
@@ -249,6 +270,9 @@ func (s *sessionService) KnowledgeQA(
 		"search_targets":     len(searchTargets),
 	}, nil, nil)
 	err = s.KnowledgeQAByEvent(ctx, chatManage, pipeline)
+	if err == nil {
+		handoff = true
+	}
 	if err != nil {
 		logger.ErrorWithFields(ctx, err, map[string]interface{}{
 			"session_id": req.Session.ID,

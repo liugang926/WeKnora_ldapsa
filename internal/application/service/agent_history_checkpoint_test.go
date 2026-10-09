@@ -21,6 +21,9 @@ import (
 type allowAgentHistory struct{}
 
 func (allowAgentHistory) CheckAgentHistoryReplay(context.Context) error { return nil }
+func (allowAgentHistory) CheckMessageSourceLineage(_ context.Context, message *types.Message) error {
+	return nil
+}
 
 // historyRepo pages a fixed message list backwards the way the database does
 // and serves one checkpoint lookup.

@@ -585,6 +585,7 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	must(container.Invoke(service.ConfigureKnowledgeBaseInputProvenance))
 	must(container.Invoke(service.ConfigureMessageSourceLineage))
 	must(container.Invoke(service.ConfigureMessageMaterialProvenance))
+	must(container.Invoke(func(db *gorm.DB) error { return repository.UpgradeMessageGeneratedFieldSchema(db) }))
 	must(container.Invoke(func(store *repository.KnowledgeInputProvenanceStore, messages interfaces.MessageService) {
 		verifier, ok := messages.(interfaces.MessageSourceLineageVerifier)
 		if !ok {

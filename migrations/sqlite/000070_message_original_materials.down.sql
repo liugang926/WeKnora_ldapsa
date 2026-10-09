@@ -1,3 +1,12 @@
+DROP TABLE IF EXISTS message_fork_parent_origins;
+DROP TRIGGER IF EXISTS message_generated_field_context_checkpoint;
+DROP TRIGGER IF EXISTS message_generated_field_rendered_content;
+DROP TRIGGER IF EXISTS message_generated_field_attachments;
+DROP TRIGGER IF EXISTS message_generated_field_images;
+DROP TRIGGER IF EXISTS message_generated_field_insert;
+DROP TABLE IF EXISTS message_generated_field_versions;
+DROP TABLE IF EXISTS message_generated_field_receipts;
+DROP TABLE IF EXISTS message_generated_field_admissions;
 DROP TRIGGER IF EXISTS message_material_insert;
 DROP TRIGGER IF EXISTS message_material_update;
 DROP TRIGGER IF EXISTS message_material_membership_update;
