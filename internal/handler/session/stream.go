@@ -547,6 +547,15 @@ func (h *Handler) handleAgentEventsForSSE(
 				log.Warnf("Failed to get events from stream: %v", err)
 				continue
 			}
+			// An error closes through a fixed code-origin recipe only. Discard
+			// the entire pending batch and holdback tail before any source or
+			// original-material check; refusal cannot suppress this static close.
+			for _, evt := range events {
+				if evt.Type == types.ResponseTypeError && evt.Done {
+					emitSafeTerminalGenerationError(c, requestID)
+					return
+				}
+			}
 			events, err = protectLiveStreamBatch(ctx, h.messageService, liveMessage, events)
 			if err != nil {
 				stopLiveStreamForPublication(ctx, c, eventBus, sessionID, assistantMessageID, requestID, err)
@@ -597,13 +606,6 @@ func (h *Handler) handleAgentEventsForSSE(
 						Done:         true,
 					})
 					c.Writer.Flush()
-					return
-				}
-
-				// Producer failure is terminal. Do not wait for a success marker,
-				// a title, or flush source-derived holdback text on this path.
-				if evt.Type == types.ResponseTypeError && evt.Done {
-					emitSafeTerminalGenerationError(c, requestID)
 					return
 				}
 

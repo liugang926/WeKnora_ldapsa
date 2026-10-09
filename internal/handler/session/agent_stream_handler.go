@@ -150,7 +150,10 @@ func (h *AgentStreamHandler) Subscribe() {
 	h.subscribeWithLineage(event.EventUserMessageInjected, h.handleUserMessageInjected)
 	h.subscribeWithLineage(event.EventAgentFinalAnswer, h.handleFinalAnswer)
 	h.subscribeWithLineage(event.EventAgentReflection, h.handleReflection)
-	h.subscribeWithLineage(event.EventError, h.handleError)
+	// Failure carries no admitted generated body. Its handler replaces all
+	// diagnostics with a fixed code-origin terminal before transport storage;
+	// a missing/poisoned source prefix must not suppress that close signal.
+	h.eventBus.On(event.EventError, h.handleError)
 	h.subscribeWithLineage(event.EventSessionTitle, h.handleSessionTitle)
 	h.subscribeWithLineage(event.EventAgentComplete, h.handleComplete)
 	h.subscribeWithLineage(event.EventToolApprovalRequired, h.handleToolApprovalRequired)
@@ -684,26 +687,24 @@ func (h *AgentStreamHandler) handleReflection(ctx context.Context, evt event.Eve
 
 // handleError handles error events
 func (h *AgentStreamHandler) handleError(ctx context.Context, evt event.Event) error {
-	data, ok := evt.Data.(event.ErrorData)
+	_, ok := evt.Data.(event.ErrorData)
 	if !ok {
 		return nil
 	}
-
-	// Build error metadata
-	metadata := map[string]interface{}{
-		"stage": data.Stage,
-		"error": data.Error,
+	if evt.SessionID != "" && evt.SessionID != h.sessionID || evt.RequestID != "" && evt.RequestID != h.requestID {
+		return access.ErrNextcloudPublicationDenied
 	}
 
-	// Append error event to stream
+	// Provider errors and stage metadata can contain source text or secrets.
+	// This code-origin control neither authenticates the failed assistant nor
+	// certifies a source lineage, and is bound to this handler's exact run.
 	if err := h.streamManager.AppendEvent(h.ctx, h.sessionID, h.assistantMessageID, interfaces.StreamEvent{
-		SourceLineage: eventSourceLineage(ctx, evt),
-		ID:            evt.ID,
-		Type:          types.ResponseTypeError,
-		Content:       data.Error,
-		Done:          true,
-		Timestamp:     time.Now(),
-		Data:          metadata,
+		ID:        h.requestID,
+		Type:      types.ResponseTypeError,
+		Content:   "Generation could not complete; please retry after checking access",
+		Done:      true,
+		Timestamp: time.Now(),
+		Data:      map[string]interface{}{"error_code": "generation_failed"},
 	}); err != nil {
 		logger.GetLogger(h.ctx).Error("Append error event to stream failed", "error", err)
 	}
