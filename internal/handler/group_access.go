@@ -520,7 +520,8 @@ func (h *GroupAccessHandler) UpdateResourceGroupAccess(c *gin.Context) {
 		h.internalError(c, "set resource access policy", err)
 		return
 	}
-	if resourceType == types.GroupResourceTypeKnowledgeBase && h.resources != nil {
+	if request.Mode == types.ResourceAccessRestricted &&
+		resourceType == types.GroupResourceTypeKnowledgeBase && h.resources != nil {
 		if _, err := h.resources.RevokeAccessGrantsByKnowledgeBase(ctx, tenantID, resourceID); err != nil {
 			// Runtime capability checks still fail closed against the new policy;
 			// log the durable cleanup failure so an operator can retry the update.

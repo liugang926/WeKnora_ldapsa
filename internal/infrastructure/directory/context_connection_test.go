@@ -228,7 +228,7 @@ func TestStartTLSCancellationAfterExtendedResponse(t *testing.T) {
 		}
 		request, err := ber.ReadPacket(socket)
 		if err != nil {
-			socket.Close()
+			_ = socket.Close()
 			serverErrors <- err
 			return
 		}
@@ -240,7 +240,7 @@ func TestStartTLSCancellationAfterExtendedResponse(t *testing.T) {
 		extended.AppendChild(ber.NewString(ber.ClassUniversal, ber.TypePrimitive, ber.TagOctetString, "", "diagnostic"))
 		response.AppendChild(extended)
 		if _, err := socket.Write(response.Bytes()); err != nil {
-			socket.Close()
+			_ = socket.Close()
 			serverErrors <- err
 			return
 		}
@@ -248,12 +248,12 @@ func TestStartTLSCancellationAfterExtendedResponse(t *testing.T) {
 		// completed and the client is blocked inside the TLS handshake itself.
 		header := make([]byte, 5)
 		if _, err := io.ReadFull(socket, header); err != nil {
-			socket.Close()
+			_ = socket.Close()
 			serverErrors <- err
 			return
 		}
 		if header[0] != 22 {
-			socket.Close()
+			_ = socket.Close()
 			serverErrors <- errors.New("expected TLS ClientHello after StartTLS response")
 			return
 		}
