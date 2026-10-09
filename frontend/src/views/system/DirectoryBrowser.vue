@@ -10,6 +10,7 @@
       <t-button :loading="loading" @click="resetSearch">{{ t('directoryAdmin.browse.searchButton') }}</t-button>
     </div>
     <t-alert v-if="error" theme="error" :message="error" />
+    <t-alert v-if="warning" theme="warning" :message="warning" />
     <p class="hint">{{ t('directoryAdmin.browse.total', { count: total }) }}</p>
     <t-table row-key="object_guid" :data="items" :columns="columns" :loading="loading" :empty="t('directoryAdmin.diagnostics.empty')">
       <template #display_name="{ row }">
@@ -79,6 +80,7 @@ const total = ref(0)
 const items = ref<DirectoryGroupSummary[]>([])
 const loading = ref(false)
 const error = ref('')
+const warning = ref('')
 let searchRequest = 0
 const detailVisible = ref(false)
 const selected = ref<DirectoryObjectSummary | null>(null)
@@ -121,6 +123,7 @@ async function load() {
   const request = ++searchRequest
   loading.value = true
   error.value = ''
+  warning.value = ''
   items.value = []
   try {
     const search = kind.value === 'users' ? searchDirectoryUsers : searchDirectoryGroups
@@ -128,6 +131,7 @@ async function load() {
     if (request !== searchRequest) return
     items.value = result.items
     total.value = result.total
+    warning.value = result.warning || (result.truncated ? t('directoryAdmin.diagnostics.truncated') : '')
   } catch (e: any) {
     if (request === searchRequest) { error.value = e?.message || t('directoryAdmin.diagnostics.searchFailed'); total.value = 0 }
   } finally { if (request === searchRequest) loading.value = false }

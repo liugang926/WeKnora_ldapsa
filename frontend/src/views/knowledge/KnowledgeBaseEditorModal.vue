@@ -446,7 +446,7 @@
       </div>
 
       <!-- 目录组访问控制（仅编辑模式；所有判断仍由后端统一执行） -->
-      <div v-if="editorMode === 'edit' && activeKbId && currentSection === 'access'" class="section">
+      <div v-if="directoryEnabled && editorMode === 'edit' && activeKbId && currentSection === 'access'" class="section">
         <ResourceGroupAccessSettings resource-type="knowledge_base" :resource-id="activeKbId"
           :tenant-id="Number(kbTenantId || authStore.currentTenantId || 0)" :read-only="!canShareKB" />
       </div>
@@ -528,6 +528,7 @@ import ModelSelector from '@/components/ModelSelector.vue'
 import GraphSettings from './settings/GraphSettings.vue'
 import KBShareSettings from './settings/KBShareSettings.vue'
 import ResourceGroupAccessSettings from '@/components/ResourceGroupAccessSettings.vue'
+import { useDirectoryFeature } from '@/composables/useDirectoryFeature'
 import DataSourceSettings from './settings/DataSourceSettings.vue'
 import KnowledgeBaseActivitySettings from './settings/KnowledgeBaseActivitySettings.vue'
 import { useI18n } from 'vue-i18n'
@@ -545,6 +546,7 @@ const props = defineProps<{
   kbId?: string
   initialType?: 'document' | 'faq'
 }>()
+const { directoryEnabled } = useDirectoryFeature(() => props.visible)
 
 // Emits
 const emit = defineEmits<{
@@ -690,7 +692,7 @@ const navItems = computed(() => {
     }
   }
   if (editorMode.value === 'edit' && activeKbId.value && !authStore.isLiteMode) {
-    items.push({ key: 'access', icon: 'lock-on', label: t('groupAccess.title') })
+    if (directoryEnabled.value) items.push({ key: 'access', icon: 'lock-on', label: t('groupAccess.title') })
     items.push({ key: 'share', icon: 'share', label: t('knowledgeEditor.sidebar.share') })
   }
   if (canViewActivity.value) {

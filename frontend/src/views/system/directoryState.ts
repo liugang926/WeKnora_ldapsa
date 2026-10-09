@@ -1,13 +1,17 @@
 import type { DirectoryConfig, DirectoryConfigUpdate, DirectoryServer } from '@/api/directory'
 
-export function parseDirectoryServers(value: string): DirectoryServer[] {
+export function parseDirectoryServers(value: string, previous: readonly DirectoryServer[] = []): DirectoryServer[] {
   const seen = new Set<string>()
+  const previousByAddress = new Map(previous.map((server) => [server.address, server]))
   const servers: DirectoryServer[] = []
   for (const line of value.split(/\r?\n/)) {
     const address = line.trim()
     if (!address || seen.has(address)) continue
     seen.add(address)
-    servers.push({ address })
+    // Keep TLS name overrides when an administrator edits the controller order.
+    // The text control edits addresses, not the server's certificate identity.
+    const serverName = previousByAddress.get(address)?.server_name
+    servers.push(serverName ? { address, server_name: serverName } : { address })
   }
   return servers
 }
@@ -28,7 +32,7 @@ export function buildDirectoryConfigUpdate(
   const payload: DirectoryConfigUpdate = {
     enabled: config.enabled,
     display_name: config.display_name.trim(),
-    servers: parseDirectoryServers(serverText),
+    servers: parseDirectoryServers(serverText, config.servers),
     transport: config.transport,
     ca_file: config.ca_file?.trim() || '',
     base_dn: config.base_dn.trim(),
@@ -46,6 +50,8 @@ export function buildDirectoryConfigUpdate(
     sync_interval_seconds: config.sync_interval_seconds,
     stale_after_seconds: config.stale_after_seconds,
   }
-  if (replacementPassword) payload.bind_password = replacementPassword
+  if (replacementPassword && !isDirectoryFieldReadOnly(config.read_only_fields, 'bind_password')) {
+    payload.bind_password = replacementPassword
+  }
   return payload
 }
