@@ -76,7 +76,8 @@ type qaRequestContext struct {
 	// steerSink bridges the engine's round-boundary drain to the steer
 	// sub-list and user-row persistence. Set by setupSSEStream for agent
 	// runs only.
-	steerSink *steerSink
+	steerSink       *steerSink
+	steerInputClose func()
 
 	// Snapshot of the request fields needed to persist the input-bar state
 	// for session restoration. Kept verbatim from the request so we record
@@ -726,14 +727,16 @@ func mergeKnowledgeTargets(requestKBIDs []string, requestKnowledgeIDs []string, 
 
 // sseStreamContext holds the context for SSE streaming
 type sseStreamContext struct {
-	eventBus         *event.EventBus
-	streamHandler    *AgentStreamHandler
-	materialAttach   func(context.Context) context.Context
-	materialCheck    func() error
-	materialClose    func()
-	asyncCtx         context.Context
-	cancel           context.CancelFunc
-	assistantMessage *types.Message
+	actualSteerClaimAttempted bool
+	producerDone              <-chan struct{}
+	eventBus                  *event.EventBus
+	streamHandler             *AgentStreamHandler
+	materialAttach            func(context.Context) context.Context
+	materialCheck             func() error
+	materialClose             func()
+	asyncCtx                  context.Context
+	cancel                    context.CancelFunc
+	assistantMessage          *types.Message
 	// steerSink bridges the engine's round-boundary drain to the steer
 	// sub-list and user-row persistence. Nil for non-agent modes.
 	steerSink *steerSink
@@ -1255,6 +1258,9 @@ func (h *Handler) holdQATurn(ctx context.Context, reqCtx *qaRequestContext) (fun
 // It handles message creation, SSE setup, VLM analysis, service invocation, and error handling.
 func (h *Handler) executeQA(reqCtx *qaRequestContext, mode qaMode, generateTitle bool) {
 	ctx := reqCtx.ctx
+	if reqCtx.steerInputClose != nil {
+		defer reqCtx.steerInputClose()
+	}
 	if len(reqCtx.images) > 0 || len(reqCtx.attachments) > 0 || len(reqCtx.attachmentIDs) > 0 || reqCtx.questionOrigin != nil {
 		if reqCtx.c != nil && !reqCtx.skipSSE {
 			_ = reqCtx.c.Error(errors.NewForbiddenError("Input source lineage is not available"))
@@ -1420,10 +1426,11 @@ func (h *Handler) executeQA(reqCtx *qaRequestContext, mode qaMode, generateTitle
 	livePublicationMessage := *reqCtx.assistantMessage
 	livePublicationMessage.KnowledgeReferences = nil
 	asyncDone := make(chan struct{})
+	streamCtx.producerDone = asyncDone
 	releaseMaterialProducer := applicationservice.RetainMessageMaterialHTTPProducer(streamCtx.asyncCtx)
 	go func() {
-		defer releaseMaterialProducer()
 		defer close(asyncDone)
+		defer releaseMaterialProducer()
 		// Polling holds original Steer bodies before atomic consumption. A
 		// refused consume must release them even when the request context is
 		// still live. Register before finalization so final guards run first.

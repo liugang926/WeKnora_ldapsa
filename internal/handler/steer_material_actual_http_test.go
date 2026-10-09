@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Tencent/WeKnora/internal/application/service"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	"github.com/google/uuid"
@@ -25,9 +26,158 @@ func TestSteerOriginalMaterialActualHTTPAgentPromoteCanonicalAndRedisForgery(t *
 }
 
 func TestSteerOriginalMaterialActualHTTPAgentRevocationBeforeConsumeAndBeforeNextModel(t *testing.T) {
-	for _, mode := range []string{"actor_before_consume", "control_aba_before_consume", "source_before_consume", "actor_after_persist", "control_aba_after_persist", "source_after_persist"} {
+	for _, mode := range []string{"actor_before_consume", "control_aba_before_consume", "source_before_consume", "actor_after_persist", "control_aba_after_persist", "source_after_persist", "control_discard_before_consume", "control_discard_after_persist", "control_delete_after_persist"} {
 		t.Run(mode, func(t *testing.T) { runActualSteerHTTPAgent(t, strings.HasPrefix(mode, "source_"), mode) })
 	}
+}
+
+func TestSteerOriginalMaterialActualHTTPAfterCreatesExactNewInitialAndCompletion(t *testing.T) {
+	runActualSteerAfterHTTP(t, "positive")
+}
+
+func TestSteerOriginalMaterialActualHTTPAfterRejectsCurrentOriginSlotAndControlChanges(t *testing.T) {
+	for _, mode := range []string{"old_run_aba", "new_run_aba", "unknown_slot", "unknown_origin", "changed_input", "control_append", "control_version_aba", "source_before_consume", "actor_before_consume", "source_after_consume", "claim_failed"} {
+		t.Run(mode, func(t *testing.T) { runActualSteerAfterHTTP(t, mode) })
+	}
+}
+
+func runActualSteerAfterHTTP(t *testing.T, mode string) {
+	f := newActualSteerHTTPFixture(t, true)
+	model := &actualSteerHTTPModel{t: t, f: f, followUp: true, ready: make(chan struct{}), resume: make(chan struct{})}
+	model.claimFailure = mode == "claim_failed"
+	t.Cleanup(model.release)
+	h, observed, _, _ := newActualSteerHTTPHandler(t, f, model)
+	router := actualSteerHTTPRouter(f.ctx, h)
+	w := &actualSteerHTTPWriter{ResponseRecorder: httptest.NewRecorder(), t: t, f: f}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		request := httptest.NewRequest(http.MethodPost, "/agent-chat/"+f.parent.SessionID, strings.NewReader(`{"query":"actual initial after task","agent_id":"actual-steer-agent","agent_enabled":true,"summary_model_id":"actual-http-tail-model","disable_title":true}`))
+		request.Header.Set("Content-Type", "application/json")
+		router.ServeHTTP(w, request)
+	}()
+	select {
+	case <-model.ready:
+	case <-done:
+		t.Fatal("initial actual AgentQA ended before its model")
+	case <-time.After(8 * time.Second):
+		t.Fatal("initial actual AgentQA did not reach its model")
+	}
+	var initial types.Message
+	require.NoError(t, f.db.Where("session_id=? AND role='assistant' AND request_id<>?", f.parent.SessionID, f.parent.RequestID).Take(&initial).Error)
+	steerID := uuid.NewString()
+	queued := actualSteerHTTPRequest(router, http.MethodPost, "/sessions/"+f.parent.SessionID+"/steer", map[string]interface{}{
+		"query": actualSteerHTTPQuery, "steer_id": steerID, "expected_assistant_message_id": initial.ID, "channel": "api", "delivery": "after",
+	})
+	require.Equal(t, http.StatusOK, queued.Code, queued.Body.String())
+	observed.beforeAssistant = func(input *types.SteerMaterialInput, _ *types.Message) {
+		switch mode {
+		case "old_run_aba":
+			require.NoError(t, f.db.Model(&types.Message{}).Where("id=?", initial.ID).Update("request_id", "transient-other-request").Error)
+			require.NoError(t, f.db.Model(&types.Message{}).Where("id=?", initial.ID).Update("request_id", initial.RequestID).Error)
+		case "control_append":
+			_, err := observed.ApplyActualSteerControl(f.ctx, &types.SteerControlRequest{TenantID: 7, SessionID: initial.SessionID, SteerID: input.Proof.SteerID, OriginalAdmissionID: input.Proof.OriginID, ExpectedHeadID: input.Control.HeadID, ExpectedRevision: input.Control.Revision, Operation: types.SteerControlDiscard})
+			require.NoError(t, err)
+		case "control_version_aba":
+			require.NoError(t, f.db.Table("steer_control_heads").Where("origin_id=?", input.Proof.OriginID).Update("head_id", input.Control.HeadID).Error)
+		case "source_before_consume":
+			f.revokeSource()
+		case "actor_before_consume":
+			require.NoError(t, f.db.Model(&types.User{}).Where("id='user'").Update("is_active", false).Error)
+		}
+	}
+	observed.afterAssistant = func(created *types.Message) {
+		if mode == "new_run_aba" {
+			require.NoError(t, f.db.Model(&types.Message{}).Where("id=?", created.ID).Update("request_id", "transient-new-run-request").Error)
+			require.NoError(t, f.db.Model(&types.Message{}).Where("id=?", created.ID).Update("request_id", created.RequestID).Error)
+		}
+	}
+	observed.beforeConsume = func(input *types.SteerMaterialInput) {
+		switch mode {
+		case "unknown_origin":
+			copy := *input.Proof
+			copy.OriginID = uuid.NewString()
+			input.Proof = &copy
+		case "changed_input":
+			input.Query = "UNADMITTED ALTERED GUIDANCE"
+		}
+	}
+	if mode != "unknown_origin" && mode != "changed_input" {
+		observed.beforeConsume = nil
+	}
+	if mode == "unknown_slot" {
+		observed.consumeContext = service.WithMessageMaterialOutputBoundary
+	}
+	if mode == "source_after_consume" {
+		observed.afterConsume = func(_ *types.Message, _ *types.SteerConsumptionProof) { f.revokeSource() }
+	}
+	model.release()
+	select {
+	case <-done:
+	case <-time.After(8 * time.Second):
+		t.Fatal("initial actual HTTP run did not finish")
+	}
+	if mode != "positive" {
+		require.Eventually(t, func() bool {
+			var leases int64
+			return f.db.Table("original_body_leases").Where("kind='read' AND released_at_ms IS NULL").Count(&leases).Error == nil && leases == 0
+		}, 3*time.Second, 10*time.Millisecond, "refused successor releases actual carried reads")
+		require.EqualValues(t, 1, model.calls.Load(), "refused original/control cannot start a successor model")
+		require.LessOrEqual(t, observed.consumes.Load(), int64(1), "one attempted input is never automatically claimed again")
+		var successors int64
+		require.NoError(t, f.db.Model(&types.Message{}).Where("session_id=? AND role='assistant' AND request_id NOT IN ? AND is_completed=true", initial.SessionID, []string{initial.RequestID, f.parent.RequestID}).Count(&successors).Error)
+		require.Zero(t, successors)
+		var originals int64
+		require.NoError(t, f.db.Table("steer_authored_origins").Count(&originals).Error)
+		require.EqualValues(t, 1, originals)
+		if mode == "claim_failed" {
+			var failed struct {
+				Operation, UserMessageID string
+				Consumed, Discarded      bool
+			}
+			require.NoError(t, f.db.Table("steer_control_heads h").Select("c.operation,c.user_message_id,c.consumed,c.discarded").Joins("JOIN steer_control_admissions c ON c.id=h.head_id AND c.origin_id=h.origin_id").Take(&failed).Error)
+			require.Equal(t, "claim_failed", failed.Operation)
+			require.True(t, failed.Consumed)
+			require.True(t, failed.Discarded)
+			require.NotEmpty(t, failed.UserMessageID)
+			var edgeCount int64
+			require.NoError(t, f.db.Table("steer_consumption_origins").Where("user_message_id=?", failed.UserMessageID).Count(&edgeCount).Error)
+			require.EqualValues(t, 1, edgeCount)
+			var preserved types.Message
+			require.NoError(t, f.db.Unscoped().Where("id=?", failed.UserMessageID).Take(&preserved).Error)
+			require.False(t, preserved.DeletedAt.Valid)
+			_, err := f.messages.GetMessage(f.ctx, initial.SessionID, failed.UserMessageID)
+			require.Error(t, err, "explicit reads must honestly reject this negatively terminated consumption instead of re-signing it")
+		}
+		return
+	}
+	require.Eventually(t, func() bool {
+		var completed int64
+		return model.calls.Load() == 2 && f.db.Model(&types.Message{}).Where("session_id=? AND role='assistant' AND request_id<>? AND is_completed=true", f.parent.SessionID, f.parent.RequestID).Count(&completed).Error == nil && completed == 2
+	}, 8*time.Second, 10*time.Millisecond, "one legitimate after input creates one completed successor through the actual public producer")
+	require.EqualValues(t, 1, observed.consumes.Load())
+	var answers []types.Message
+	require.NoError(t, f.db.Where("session_id=? AND role='assistant' AND request_id<>? AND is_completed=true", f.parent.SessionID, f.parent.RequestID).Find(&answers).Error)
+	require.Len(t, answers, 2)
+	for _, answer := range answers {
+		require.Equal(t, actualSteerHTTPAnswer, answer.Content)
+		require.Equal(t, f.parent.SourceLineage, answer.SourceLineage, "both real answers retain the exact admitted source union")
+	}
+	var user types.Message
+	require.NoError(t, f.db.Where("session_id=? AND content=? AND role='user'", f.parent.SessionID, actualSteerHTTPQuery).Take(&user).Error)
+	require.NotEqual(t, initial.RequestID, user.RequestID)
+	var origin struct{ OriginRunMessageID string }
+	require.NoError(t, f.db.Table("steer_authored_origins").Select("origin_run_message_id").Where("steer_id=?", steerID).Take(&origin).Error)
+	require.Equal(t, initial.ID, origin.OriginRunMessageID, "cross-run consumption never re-signs authored attribution")
+	var edges, completions int64
+	require.NoError(t, f.db.Table("steer_consumption_origins").Where("user_message_id=?", user.ID).Count(&edges).Error)
+	require.EqualValues(t, 1, edges)
+	require.NoError(t, f.db.Table("message_completion_input_manifests m").Joins("JOIN message_material_admissions a ON a.id=m.assistant_admission_id").Joins("JOIN messages msg ON msg.id=a.message_id").Where("a.session_id=? AND msg.request_id<>?", f.parent.SessionID, f.parent.RequestID).Count(&completions).Error)
+	require.EqualValues(t, 2, completions)
+	require.Eventually(t, func() bool {
+		var leases int64
+		return f.db.Table("original_body_leases").Where("kind='read' AND released_at_ms IS NULL").Count(&leases).Error == nil && leases == 0
+	}, 3*time.Second, 10*time.Millisecond, "successor producer closes exact carried original reads")
 }
 
 func runActualSteerHTTPAgent(t *testing.T, controlled bool, mode string) {
@@ -113,6 +263,17 @@ func runActualSteerHTTPAgent(t *testing.T, controlled bool, mode string) {
 			}
 			require.NoError(t, f.db.Table("steer_control_heads").Where("origin_id=?", origin.ID).Update("head_id", initialHead).Error)
 			require.NoError(t, f.db.Table("steer_control_heads").Where("origin_id=?", origin.ID).Update("head_id", current).Error)
+		case strings.HasPrefix(mode, "control_discard_") || strings.HasPrefix(mode, "control_delete_"):
+			head, revision := promotedHead, uint64(2)
+			if proof != nil {
+				head, revision = proof.ResultHeadID, proof.ResultRevision
+			}
+			operation := types.SteerControlDiscard
+			if strings.HasPrefix(mode, "control_delete_") {
+				operation = types.SteerControlDelete
+			}
+			_, err := observed.ApplyActualSteerControl(f.ctx, &types.SteerControlRequest{TenantID: 7, SessionID: run.SessionID, SteerID: steerID, OriginalAdmissionID: origin.ID, ExpectedHeadID: head, ExpectedRevision: revision, Operation: operation})
+			require.NoError(t, err, "a real consistent append must still revoke the exact old consumed capability")
 		}
 	}
 	if strings.HasSuffix(mode, "before_consume") {

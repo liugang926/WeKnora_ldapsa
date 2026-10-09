@@ -22,6 +22,8 @@ type actualSteerMaterialService interface {
 	ApplyActualSteerControl(context.Context, *types.SteerControlRequest) (*types.SteerCandidateControl, error)
 	CheckActualSteerControl(context.Context, *types.SteerCandidateControl) error
 	ConsumeActualSteerIntoMessage(context.Context, *types.SteerMaterialInput, string, string, string) (*types.Message, *types.SteerConsumptionProof, func() error, func(), error)
+	ConsumeActualSteerFollowUpIntoMessage(context.Context, *types.SteerMaterialInput, string, string, string) (*types.Message, *types.SteerConsumptionProof, func() error, func(), error)
+	CreateActualSteerFollowUpAssistant(context.Context, *types.SteerMaterialInput, *types.Message) (*types.Message, error)
 }
 
 // Only explicit service-package algorithm fixtures can use the old Redis
@@ -445,6 +447,12 @@ func (h *Handler) claimActualSteerFollowUp(ctx context.Context, previous *qaRequ
 	if err != nil {
 		return nil, false, true
 	}
+	if previousStream.materialCheck != nil && previousStream.materialCheck() != nil {
+		return nil, false, true
+	}
+	if previousStream.actualSteerClaimAttempted {
+		return nil, false, true
+	}
 	snapshot, check, close, err := beginActualSteerRead(ctx, actual, previous.sessionID, previousStream.assistantMessage.ID, types.SteerMaterialFollowUp, nil)
 	if err != nil {
 		return nil, false, true
@@ -453,6 +461,7 @@ func (h *Handler) claimActualSteerFollowUp(ctx context.Context, previous *qaRequ
 	if len(snapshot.Inputs) == 0 {
 		return nil, false, true
 	}
+	previousStream.actualSteerClaimAttempted = true
 	first := snapshot.Inputs[0]
 	if first == nil || first.Proof == nil || first.Control == nil {
 		return nil, false, true
@@ -461,7 +470,7 @@ func (h *Handler) claimActualSteerFollowUp(ctx context.Context, previous *qaRequ
 		return nil, false, true
 	}
 	follow := *previous
-	follow.ctx = ctx
+	follow.ctx = applicationservice.MessageMaterialOwnerContext(ctx)
 	follow.query = first.Query
 	follow.channel = first.Channel
 	follow.requestID = uuid.NewString()
@@ -478,7 +487,7 @@ func (h *Handler) claimActualSteerFollowUp(ctx context.Context, previous *qaRequ
 	// The only ordinary Create here is the actual empty assistant producer.
 	// The user row is derived exclusively from the admitted authored receipt.
 	follow.assistantMessage = &types.Message{SessionID: previous.sessionID, RequestID: follow.requestID, Role: "assistant", ExecutionContext: previous.assistantMessage.ExecutionContext, AgentID: previous.assistantMessage.AgentID, AgentTenantID: previous.assistantMessage.AgentTenantID}
-	created, err := h.messageService.CreateMessage(ctx, follow.assistantMessage)
+	created, err := actual.CreateActualSteerFollowUpAssistant(ctx, first, follow.assistantMessage)
 	if err != nil {
 		return nil, false, true
 	}
@@ -488,29 +497,28 @@ func (h *Handler) claimActualSteerFollowUp(ctx context.Context, previous *qaRequ
 		h.rollbackTurnMessages(ctx, &follow, false, true)
 		return nil, false, true
 	}
-	user, consumed, readCheck, readClose, err := actual.ConsumeActualSteerIntoMessage(ctx, first, created.ID, generation, control.RequestID)
+	user, consumed, readCheck, readClose, err := actual.ConsumeActualSteerFollowUpIntoMessage(ctx, first, created.ID, generation, control.RequestID)
 	if err != nil || user == nil || consumed == nil || readCheck == nil || readClose == nil {
 		if readClose != nil {
 			readClose()
 		}
-		h.rollbackTurnMessages(ctx, &follow, false, true)
 		return nil, false, true
 	}
 	if err := readCheck(); err != nil {
 		readClose()
-		h.rollbackTurnMessages(ctx, &follow, false, true)
 		return nil, false, true
 	}
 	follow.userMessageID = user.ID
 	follow.userCreatedAt = user.CreatedAt
 	if err := h.streamManager.ClaimLiveRun(ctx, previous.sessionID, created.ID, follow.requestID); err != nil {
 		readClose()
-		h.rollbackTurnMessages(ctx, &follow, true, true)
+		_, _ = actual.ApplyActualSteerControl(ctx, &types.SteerControlRequest{TenantID: first.Proof.TenantID, SessionID: previous.sessionID, SteerID: first.Proof.SteerID, OriginalAdmissionID: first.Proof.OriginID, ExpectedHeadID: consumed.ResultHeadID, ExpectedRevision: consumed.ResultRevision, Operation: types.SteerControlClaimFailed})
 		return nil, false, true
 	}
 	// Subsequent QA receives its actual saved user receipt. Keep this original
 	// consume capability alive across the handoff; the producer context owns it.
-	context.AfterFunc(ctx, readClose)
+	follow.steerInputClose = readClose
+	context.AfterFunc(follow.ctx, readClose)
 	_, _ = h.streamManager.UpdateSteerEventData(ctx, previous.sessionID, previousStream.assistantMessage.ID, first.Proof.SteerID, map[string]interface{}{steerDataConsumed: true, steerDataUserMessageID: user.ID, "control_head_id": consumed.ResultHeadID, "control_revision": consumed.ResultRevision})
 	for _, input := range snapshot.Inputs[1:] {
 		if input == nil || input.Control == nil || input.Proof == nil {

@@ -21,6 +21,7 @@ type MessageMaterialReadRequest struct {
 	CompletedOnly             bool
 	IncludeOriginalUserFields bool
 	ExcludeRequestID          string
+	ExcludeRequestIDs         []string `json:"ExcludeRequestIDs,omitempty"`
 }
 type MessageMaterialReadPlan struct {
 	ParentPlans    []*MessageMaterialReadPlan

@@ -23,6 +23,14 @@ type steerConsumptionBoundary struct {
 }
 
 func (s *KnowledgeInputProvenanceStore) ConsumeSteerIntoMessage(ctx context.Context, input *types.SteerMaterialInput, runID, generation, request string) (*types.Message, *types.SteerConsumptionProof, error) {
+	return s.consumeSteerIntoMessage(ctx, input, runID, generation, request, false)
+}
+
+func (s *KnowledgeInputProvenanceStore) ConsumeSteerIntoFollowUp(ctx context.Context, input *types.SteerMaterialInput, runID, generation, request string) (*types.Message, *types.SteerConsumptionProof, error) {
+	return s.consumeSteerIntoMessage(ctx, input, runID, generation, request, true)
+}
+
+func (s *KnowledgeInputProvenanceStore) consumeSteerIntoMessage(ctx context.Context, input *types.SteerMaterialInput, runID, generation, request string, followUp bool) (*types.Message, *types.SteerConsumptionProof, error) {
 	if input == nil || input.Proof == nil || input.Control == nil {
 		return nil, nil, types.ErrSourceLineageUnknown
 	}
@@ -53,7 +61,14 @@ func (s *KnowledgeInputProvenanceStore) ConsumeSteerIntoMessage(ctx context.Cont
 		if run.IsCompleted || currentGeneration != generation || run.RequestID != request {
 			return ErrKnowledgeInputChanged
 		}
-		if original.Control.RunMessageID != runID || original.Control.RunGenerationID != generation || original.Control.RunRequestID != request || original.Control.Delivery != types.SteerDeliveryInject || original.Control.Consumed || original.Control.Discarded || original.Control.Deleted {
+		if original.Control.Consumed || original.Control.Discarded || original.Control.Deleted {
+			return ErrKnowledgeInputChanged
+		}
+		if followUp {
+			if boundary.Plan.Request.Use != types.SteerMaterialFollowUp || original.Control.RunMessageID != boundary.Plan.Request.RunMessageID || original.Control.RunGenerationID != boundary.Plan.Request.RunGenerationID || original.Control.RunMessageID == runID || original.Control.RunRequestID == request {
+				return ErrKnowledgeInputChanged
+			}
+		} else if original.Control.RunMessageID != runID || original.Control.RunGenerationID != generation || original.Control.RunRequestID != request || original.Control.Delivery != types.SteerDeliveryInject {
 			return ErrKnowledgeInputChanged
 		}
 		before, err := messageVersion(tx, "message_session_membership_versions", "session_id", input.Proof.SessionID)
@@ -105,6 +120,9 @@ func (s *KnowledgeInputProvenanceStore) ConsumeSteerIntoMessage(ctx context.Cont
 		next.Operation = string(types.SteerControlConsume)
 		next.Consumed = true
 		next.UserMessageID = message.ID
+		if followUp {
+			next.RunMessageID, next.RunGenerationID, next.RunRequestID = runID, generation, request
+		}
 		next.CreatedAtMS, err = nextcloudLeaseNowMS(tx)
 		if err != nil {
 			return err
@@ -247,6 +265,16 @@ func (s *KnowledgeInputProvenanceStore) verifySteerConsumedMessageInTx(tx *gorm.
 	if err := verifySteerConsumptionSelectionInTx(tx, &edge); err != nil {
 		return err
 	}
+	var before, consumed steerControlAdmission
+	if err := tx.Where("id=? AND origin_id=?", edge.PreviousHeadID, edge.OriginID).Take(&before).Error; err != nil {
+		return err
+	}
+	if err := tx.Where("id=? AND origin_id=?", edge.ResultHeadID, edge.OriginID).Take(&consumed).Error; err != nil {
+		return err
+	}
+	if err := s.checkSteerConsumptionInTx(tx, steerConsumptionProof(&edge, before.Revision, consumed.Revision)); err != nil {
+		return err
+	}
 	if message.Role != "user" || message.SessionID != edge.SessionID || message.RequestID != edge.RunRequestID {
 		return ErrKnowledgeInputChanged
 	}
@@ -291,8 +319,12 @@ func (s *KnowledgeInputProvenanceStore) checkSteerConsumptionInTx(tx *gorm.DB, p
 	if _, _, _, err := s.currentMessageOwnerInTx(tx, proof.SessionID); err != nil {
 		return err
 	}
-	if _, err := s.steerCurrentControlInTx(tx, edge.OriginID); err != nil {
+	current, err := s.steerCurrentControlInTx(tx, edge.OriginID)
+	if err != nil {
 		return err
+	}
+	if current.ID != proof.ResultHeadID || current.Revision != proof.ResultRevision || !current.Consumed || current.Discarded || current.Deleted || current.UserMessageID != proof.UserMessageID || current.RunMessageID != proof.RunMessageID || current.RunGenerationID != proof.RunGenerationID || current.RunRequestID != proof.RunRequestID {
+		return ErrKnowledgeInputChanged
 	}
 	return CheckOriginalBodyAvailableInTx(tx.Statement.Context, tx, "steer_authored_origins", edge.OriginID)
 }

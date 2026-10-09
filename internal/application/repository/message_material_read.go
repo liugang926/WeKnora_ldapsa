@@ -14,6 +14,21 @@ import (
 
 type messageMaterialPlanKey struct{}
 
+func canonicalMessageMaterialExcludedRequests(ids []string) []string {
+	if len(ids) == 0 {
+		return nil
+	}
+	values := append([]string(nil), ids...)
+	sort.Strings(values)
+	out := values[:0]
+	for _, id := range values {
+		if len(out) == 0 || out[len(out)-1] != id {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
 func WithMessageMaterialReadPlan(ctx context.Context, plan *types.MessageMaterialReadPlan) (context.Context, error) {
 	if plan == nil || plan.MetadataDigest == "" || plan.SourceLineage.RequireComplete() != nil {
 		return ctx, types.ErrSourceLineageUnknown
@@ -26,6 +41,7 @@ func WithMessageMaterialReadPlan(ctx context.Context, plan *types.MessageMateria
 	if err = json.Unmarshal(encoded, &actual); err != nil {
 		return ctx, err
 	}
+	actual.Request.ExcludeRequestIDs = canonicalMessageMaterialExcludedRequests(actual.Request.ExcludeRequestIDs)
 	ctx, err = WithMessageMaterialReadPlans(ctx, actual.ParentPlans)
 	if err != nil {
 		return ctx, err
@@ -91,6 +107,7 @@ func (s *KnowledgeInputProvenanceStore) MessagePageMaterialRequest(ctx context.C
 	return req, nil
 }
 func (s *KnowledgeInputProvenanceStore) peekMessageMaterialReadPlanInTx(tx *gorm.DB, req types.MessageMaterialReadRequest) (*types.MessageMaterialReadPlan, error) {
+	req.ExcludeRequestIDs = canonicalMessageMaterialExcludedRequests(req.ExcludeRequestIDs)
 	req.MessageIDs = append([]string{}, req.MessageIDs...)
 	sort.Strings(req.MessageIDs)
 	if req.TenantID == 0 || req.SessionID == "" || !req.AllSession && len(req.MessageIDs) == 0 {
@@ -122,6 +139,9 @@ func (s *KnowledgeInputProvenanceStore) peekMessageMaterialReadPlanInTx(tx *gorm
 	}
 	if req.ExcludeRequestID != "" {
 		query = query.Where("request_id <> ?", req.ExcludeRequestID)
+	}
+	if len(req.ExcludeRequestIDs) != 0 {
+		query = query.Where("request_id NOT IN ?", req.ExcludeRequestIDs)
 	}
 	if err = query.Order("id").Scan(&ids).Error; err != nil {
 		return nil, err
@@ -476,6 +496,7 @@ func (s *KnowledgeInputProvenanceStore) verifyMessageMaterialInTx(tx *gorm.DB, m
 	return &types.MessageMaterialProof{AdmissionID: fact.ID, GenerationID: fact.GenerationID, MessageID: fact.MessageID, SessionID: fact.SessionID, TenantID: fact.TenantID, OwnerID: fact.OwnerID, OwnerRevision: fact.OwnerRevision, Revision: fact.Revision, BodyDigest: fact.BodyDigest, SourceLineage: &lineage, Execution: execution, AgentID: fact.AgentID, AgentTenantID: fact.AgentTenantID}, nil
 }
 func (s *KnowledgeInputProvenanceStore) captureMessageMaterialInTx(tx *gorm.DB, req types.MessageMaterialReadRequest) (*types.MessageMaterialSnapshot, error) {
+	req.ExcludeRequestIDs = canonicalMessageMaterialExcludedRequests(req.ExcludeRequestIDs)
 	req.MessageIDs = append([]string{}, req.MessageIDs...)
 	sort.Strings(req.MessageIDs)
 	if err := s.checkMessageMaterialPlanInTx(tx, req); err != nil {
@@ -483,9 +504,18 @@ func (s *KnowledgeInputProvenanceStore) captureMessageMaterialInTx(tx *gorm.DB, 
 	}
 	// Resolve only receipt identities and availability before the first body read.
 	var generations []struct{ GenerationID string }
-	gq := tx.Table("message_material_admissions a").Select("a.generation_id").Joins("JOIN message_material_receipts r ON r.admission_id=a.id AND r.message_id=a.message_id").Where("a.session_id=? AND a.tenant_id=?", req.SessionID, req.TenantID)
+	gq := tx.Table("message_material_admissions a").Select("a.generation_id").Joins("JOIN message_material_receipts r ON r.admission_id=a.id AND r.message_id=a.message_id").Joins("JOIN messages m ON m.id=a.message_id AND m.session_id=a.session_id").Where("a.session_id=? AND a.tenant_id=? AND m.deleted_at IS NULL", req.SessionID, req.TenantID)
 	if !req.AllSession {
 		gq = gq.Where("a.message_id IN ?", req.MessageIDs)
+	}
+	if req.CompletedOnly {
+		gq = gq.Where("m.is_completed = ?", true)
+	}
+	if req.ExcludeRequestID != "" {
+		gq = gq.Where("m.request_id <> ?", req.ExcludeRequestID)
+	}
+	if len(req.ExcludeRequestIDs) != 0 {
+		gq = gq.Where("m.request_id NOT IN ?", req.ExcludeRequestIDs)
 	}
 	if err := gq.Scan(&generations).Error; err != nil {
 		return nil, err
@@ -500,6 +530,15 @@ func (s *KnowledgeInputProvenanceStore) captureMessageMaterialInTx(tx *gorm.DB, 
 		query := tx.Table("steer_consumption_origins p").Select("p.origin_id").Joins("JOIN messages m ON m.id=p.user_message_id AND m.session_id=p.session_id").Where("p.session_id=? AND m.deleted_at IS NULL", req.SessionID)
 		if !req.AllSession {
 			query = query.Where("p.user_message_id IN ?", req.MessageIDs)
+		}
+		if req.CompletedOnly {
+			query = query.Where("m.is_completed = ?", true)
+		}
+		if req.ExcludeRequestID != "" {
+			query = query.Where("m.request_id <> ?", req.ExcludeRequestID)
+		}
+		if len(req.ExcludeRequestIDs) != 0 {
+			query = query.Where("m.request_id NOT IN ?", req.ExcludeRequestIDs)
 		}
 		if err := query.Scan(&steerParents).Error; err != nil {
 			return nil, err
@@ -531,6 +570,9 @@ func (s *KnowledgeInputProvenanceStore) captureMessageMaterialInTx(tx *gorm.DB, 
 	}
 	if req.ExcludeRequestID != "" {
 		q = q.Where("request_id <> ?", req.ExcludeRequestID)
+	}
+	if len(req.ExcludeRequestIDs) != 0 {
+		q = q.Where("request_id NOT IN ?", req.ExcludeRequestIDs)
 	}
 	if !req.AllSession {
 		q = q.Where("id IN ?", req.MessageIDs)
@@ -647,7 +689,7 @@ func findMessageMaterialReadPlan(ctx context.Context, req types.MessageMaterialR
 	plans, _ := ctx.Value(messageMaterialPlanKey{}).([]*types.MessageMaterialReadPlan)
 	for i := len(plans) - 1; i >= 0; i-- {
 		plan := plans[i]
-		if plan.Request.TenantID != req.TenantID || plan.Request.SessionID != req.SessionID || plan.Request.CompletedOnly != req.CompletedOnly || plan.Request.ExcludeRequestID != req.ExcludeRequestID || plan.Request.IncludeOriginalUserFields != req.IncludeOriginalUserFields {
+		if plan.Request.TenantID != req.TenantID || plan.Request.SessionID != req.SessionID || plan.Request.CompletedOnly != req.CompletedOnly || plan.Request.ExcludeRequestID != req.ExcludeRequestID || plan.Request.IncludeOriginalUserFields != req.IncludeOriginalUserFields || !faqInputEqual(canonicalMessageMaterialExcludedRequests(plan.Request.ExcludeRequestIDs), canonicalMessageMaterialExcludedRequests(req.ExcludeRequestIDs)) {
 			continue
 		}
 		covered := plan.Request.AllSession

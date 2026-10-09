@@ -301,6 +301,11 @@ func (s *KnowledgeInputProvenanceStore) ApplySteerControl(ctx context.Context, r
 			next.Delivery = string(types.SteerDeliveryInject)
 		case types.SteerControlDiscard:
 			next.Discarded = true
+		case types.SteerControlClaimFailed:
+			if !control.Consumed || control.UserMessageID == "" {
+				return ErrKnowledgeInputChanged
+			}
+			next.Discarded = true
 		case types.SteerControlDelete:
 			next.Deleted = true
 		case types.SteerControlRebind:

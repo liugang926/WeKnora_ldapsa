@@ -910,6 +910,19 @@ func (h *Handler) kickNextRunFromSteerBacklog(
 				logger.Errorf(ctx, "steer follow-up run panicked: %v", r)
 			}
 		}()
+		if prevStreamCtx.producerDone != nil {
+			<-prevStreamCtx.producerDone
+		}
+		if _, algorithm, err := actualSteerService(h.messageService); !algorithm {
+			previous, readErr := h.messageService.GetMessage(followUp.ctx, prevReqCtx.sessionID, prevStreamCtx.assistantMessage.ID)
+			if err != nil || readErr != nil || previous == nil || !previous.IsCompleted {
+				if followUp.steerInputClose != nil {
+					followUp.steerInputClose()
+				}
+				_ = h.streamManager.ClearLiveRun(followUp.ctx, followUp.sessionID, followUp.assistantMessage.ID)
+				return
+			}
+		}
 		h.executeQA(followUp, qaModeAgent, false)
 	}()
 	return true

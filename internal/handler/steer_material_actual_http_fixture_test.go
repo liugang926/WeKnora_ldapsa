@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -59,14 +60,20 @@ type actualSteerHTTPPort interface {
 	ApplyActualSteerControl(context.Context, *types.SteerControlRequest) (*types.SteerCandidateControl, error)
 	CheckActualSteerControl(context.Context, *types.SteerCandidateControl) error
 	ConsumeActualSteerIntoMessage(context.Context, *types.SteerMaterialInput, string, string, string) (*types.Message, *types.SteerConsumptionProof, func() error, func(), error)
+	ConsumeActualSteerFollowUpIntoMessage(context.Context, *types.SteerMaterialInput, string, string, string) (*types.Message, *types.SteerConsumptionProof, func() error, func(), error)
+	CreateActualSteerFollowUpAssistant(context.Context, *types.SteerMaterialInput, *types.Message) (*types.Message, error)
 }
 
 type actualSteerHTTPObservedMessages struct {
 	actualSteerHTTPPort
-	beforeConsume func(*types.SteerMaterialInput)
-	afterConsume  func(*types.Message, *types.SteerConsumptionProof)
-	once          sync.Once
-	consumes      atomic.Int64
+	t               *testing.T
+	beforeConsume   func(*types.SteerMaterialInput)
+	beforeAssistant func(*types.SteerMaterialInput, *types.Message)
+	afterAssistant  func(*types.Message)
+	consumeContext  func(context.Context) context.Context
+	afterConsume    func(*types.Message, *types.SteerConsumptionProof)
+	once            sync.Once
+	consumes        atomic.Int64
 }
 
 func (m *actualSteerHTTPObservedMessages) ConsumeActualSteerIntoMessage(ctx context.Context, input *types.SteerMaterialInput, run, generation, request string) (*types.Message, *types.SteerConsumptionProof, func() error, func(), error) {
@@ -81,15 +88,49 @@ func (m *actualSteerHTTPObservedMessages) ConsumeActualSteerIntoMessage(ctx cont
 	return message, proof, check, close, err
 }
 
+func (m *actualSteerHTTPObservedMessages) ConsumeActualSteerFollowUpIntoMessage(ctx context.Context, input *types.SteerMaterialInput, run, generation, request string) (*types.Message, *types.SteerConsumptionProof, func() error, func(), error) {
+	m.consumes.Add(1)
+	if m.beforeConsume != nil {
+		m.once.Do(func() { m.beforeConsume(input) })
+	}
+	if m.consumeContext != nil {
+		ctx = m.consumeContext(ctx)
+	}
+	message, proof, check, close, err := m.actualSteerHTTPPort.ConsumeActualSteerFollowUpIntoMessage(ctx, input, run, generation, request)
+	if err != nil {
+		m.t.Logf("actual followup consume refused: %v", err)
+	}
+	if err == nil && m.afterConsume != nil {
+		m.once.Do(func() { m.afterConsume(message, proof) })
+	}
+	return message, proof, check, close, err
+}
+
+func (m *actualSteerHTTPObservedMessages) CreateActualSteerFollowUpAssistant(ctx context.Context, input *types.SteerMaterialInput, message *types.Message) (*types.Message, error) {
+	if m.beforeAssistant != nil {
+		m.beforeAssistant(input, message)
+	}
+	created, err := m.actualSteerHTTPPort.CreateActualSteerFollowUpAssistant(ctx, input, message)
+	if err != nil {
+		m.t.Logf("actual followup assistant transfer refused: %v", err)
+	}
+	if err == nil && m.afterAssistant != nil {
+		m.afterAssistant(created)
+	}
+	return created, err
+}
+
 type actualSteerHTTPModel struct {
-	t          *testing.T
-	f          *actualHTTPTailFixture
-	steerID    string
-	ready      chan struct{}
-	resume     chan struct{}
-	resumeOnce sync.Once
-	calls      atomic.Int64
-	inputs     [][]chat.Message
+	t            *testing.T
+	f            *actualHTTPTailFixture
+	steerID      string
+	ready        chan struct{}
+	resume       chan struct{}
+	resumeOnce   sync.Once
+	calls        atomic.Int64
+	inputs       [][]chat.Message
+	followUp     bool
+	claimFailure bool
 }
 
 func (m *actualSteerHTTPModel) GetModelName() string { return "local-original-steer-agent" }
@@ -111,10 +152,22 @@ func (m *actualSteerHTTPModel) ChatStream(ctx context.Context, input []chat.Mess
 		}
 		if strings.Contains(item.Content, "original steer guidance") {
 			steerSeen = true
-			require.Equal(m.t, types.SteerMessageContent(actualSteerHTTPQuery), item.Content)
+			if m.followUp {
+				envelope, authored, ok := strings.Cut(item.Content, "</runtime_context>\n\n")
+				require.True(m.t, ok, "the actual query uses the production runtime scaffold")
+				require.Regexp(m.t, `^<runtime_context scope="this_turn">\n  <current_time>[0-9]{4}-[0-9]{2}-[0-9]{2}</current_time>\n  <session>`+regexp.QuoteMeta(m.f.parent.SessionID)+`</session>\n$`, envelope)
+				require.Equal(m.t, actualSteerHTTPQuery, authored)
+			} else {
+				require.Equal(m.t, types.SteerMessageContent(actualSteerHTTPQuery), item.Content)
+			}
 			require.NoError(m.t, item.SourceLineage.RequireComplete())
 		}
 		require.NotContains(m.t, item.Content, "FORGED REDIS")
+	}
+	if m.followUp && !parentSeen {
+		for _, item := range input {
+			m.t.Logf("actual successor model item role=%s bytes=%d source=%v", item.Role, len(item.Content), item.SourceLineage)
+		}
 	}
 	require.True(m.t, parentSeen, "actual Agent rounds preserve admitted saved history")
 	require.Equal(m.t, call > 1, steerSeen, "the next actual model call receives the exact canonical steer input")
@@ -129,6 +182,11 @@ func (m *actualSteerHTTPModel) ChatStream(ctx context.Context, input []chat.Mess
 			case <-ctx.Done():
 				return
 			case <-m.resume:
+			}
+			if m.followUp {
+				out <- types.StreamResponse{Content: actualSteerHTTPAnswer}
+				out <- types.StreamResponse{Done: true, FinishReason: "stop"}
+				return
 			}
 			out <- types.StreamResponse{ResponseType: types.ResponseTypeAnswer, Content: "ACTUAL FIRST ROUND", Done: true, FinishReason: "stop"}
 		}()
@@ -307,9 +365,19 @@ func newActualSteerHTTPHandler(t *testing.T, f *actualHTTPTailFixture, model *ac
 	t.Cleanup(func() { _ = raw.Close(); _ = redis.Close() })
 	actual, ok := f.messages.(actualSteerHTTPPort)
 	require.True(t, ok)
-	observed := &actualSteerHTTPObservedMessages{actualSteerHTTPPort: actual}
-	h := sessionhandler.NewHandler(sessions, observed, nil, redis, cfg, f.kbs, customs, nil, nil, nil, nil, nil, nil, models, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, groups)
+	observed := &actualSteerHTTPObservedMessages{actualSteerHTTPPort: actual, t: t}
+	var transport interfaces.StreamManager = redis
+	if model.claimFailure {
+		transport = &actualSteerHTTPClaimFailureStream{StreamManager: redis}
+	}
+	h := sessionhandler.NewHandler(sessions, observed, nil, transport, cfg, f.kbs, customs, nil, nil, nil, nil, nil, nil, models, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, groups)
 	return h, observed, redis, raw
+}
+
+type actualSteerHTTPClaimFailureStream struct{ interfaces.StreamManager }
+
+func (*actualSteerHTTPClaimFailureStream) ClaimLiveRun(context.Context, string, string, string) error {
+	return fmt.Errorf("controlled actual successor claim failure")
 }
 
 func actualSteerHTTPRequest(router http.Handler, method, path string, body interface{}) *httptest.ResponseRecorder {

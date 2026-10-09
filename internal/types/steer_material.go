@@ -56,11 +56,12 @@ type SteerOriginalProof struct {
 type SteerControlOperation string
 
 const (
-	SteerControlPromote SteerControlOperation = "promote"
-	SteerControlConsume SteerControlOperation = "consume"
-	SteerControlDiscard SteerControlOperation = "discard"
-	SteerControlDelete  SteerControlOperation = "delete"
-	SteerControlRebind  SteerControlOperation = "rebind"
+	SteerControlPromote     SteerControlOperation = "promote"
+	SteerControlConsume     SteerControlOperation = "consume"
+	SteerControlDiscard     SteerControlOperation = "discard"
+	SteerControlClaimFailed SteerControlOperation = "claim_failed"
+	SteerControlDelete      SteerControlOperation = "delete"
+	SteerControlRebind      SteerControlOperation = "rebind"
 )
 
 // Every mutation names its exact previous immutable head. Body/mention/channel

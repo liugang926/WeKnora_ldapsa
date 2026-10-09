@@ -124,6 +124,55 @@ func TestSteerMaterialActualConsumeOwnInsertionAndModelGuard(t *testing.T) {
 func TestSteerMaterialPostgresActualConsumeOwnInsertionAndModelGuard(t *testing.T) {
 	runSteerActualConsume(t, true)
 }
+
+func TestSteerMaterialActualFollowUpKeepsOriginalAndBindsExactNewInitial(t *testing.T) {
+	for _, pg := range []bool{false, true} {
+		name := "sqlite"
+		if pg {
+			name = "postgres"
+		}
+		t.Run(name, func(t *testing.T) {
+			messages, _, db, base, session, old := steerMaterialActualFixture(t, pg)
+			input, _ := actualSteerInput(t, messages, base, session, old)
+			ctx, _, _, closeOld := BeginMessageMaterialHTTPBoundary(base)
+			defer closeOld()
+			ctx = context.WithValue(ctx, agentHistoryCurrentRequestKey{}, old.RequestID)
+			var initial types.Message
+			require.NoError(t, db.Where("session_id=? AND request_id=? AND role='user'", session.ID, old.RequestID).Take(&initial).Error)
+			_, err := messages.GetMessage(ctx, session.ID, initial.ID)
+			require.NoError(t, err)
+			require.NoError(t, messages.bindInitialMessageMaterial(ctx, old.ID, initial.ID, old.RequestID))
+			_, err = messages.admittedMessagePage(ctx, session.ID, time.Time{}, 20, 1, false)
+			require.NoError(t, err)
+			markMessageMaterialReady(ctx)
+			next, err := messages.CreateActualSteerFollowUpAssistant(ctx, input, &types.Message{SessionID: session.ID, RequestID: uuid.NewString(), Role: "assistant", ExecutionContext: old.ExecutionContext})
+			require.NoError(t, err)
+			_, generation, err := messages.MessageNativeLiveIdentity(ctx, session.ID, next.ID)
+			require.NoError(t, err)
+			user, proof, check, closeInput, err := messages.ConsumeActualSteerFollowUpIntoMessage(ctx, input, next.ID, generation, next.RequestID)
+			require.NoError(t, err)
+			defer closeInput()
+			require.NoError(t, check())
+			require.Equal(t, input.Query, user.Content)
+			require.NotEqual(t, old.RequestID, user.RequestID)
+			require.NoError(t, CheckMessageMaterialOutputBoundary(ctx), "two exact owned transitions preserve all old witnesses")
+			nextCtx := WithMessageMaterialOutputBoundary(MessageMaterialOwnerContext(ctx))
+			defer CloseMessageMaterialOutputBoundary(nextCtx)
+			_, err = messages.GetMessage(nextCtx, session.ID, user.ID)
+			require.NoError(t, err)
+			require.NoError(t, messages.bindInitialMessageMaterial(nextCtx, next.ID, user.ID, next.RequestID))
+			slot := nextCtx.Value(messageMaterialOutputKey{}).(*messageMaterialOutputSlot)
+			require.Equal(t, proof.UserAdmissionID, slot.Completion.Initial.AdmissionID)
+			var origin struct{ OriginRunMessageID string }
+			require.NoError(t, db.Table("steer_authored_origins").Select("origin_run_message_id").Where("id=?", input.Proof.OriginID).Take(&origin).Error)
+			require.Equal(t, old.ID, origin.OriginRunMessageID)
+			_, err = messages.ApplyActualSteerControl(base, &types.SteerControlRequest{TenantID: 7, SessionID: session.ID, SteerID: input.Proof.SteerID, OriginalAdmissionID: input.Proof.OriginID, ExpectedHeadID: proof.ResultHeadID, ExpectedRevision: proof.ResultRevision, Operation: types.SteerControlDiscard})
+			require.NoError(t, err)
+			require.Error(t, check(), "a real internally consistent appended control cannot reuse the sealed consumed head")
+			require.Error(t, CheckMessageMaterialOutputBoundary(nextCtx))
+		})
+	}
+}
 func runSteerActualConsume(t *testing.T, pg bool) {
 	messages, _, db, ctx, session, run := steerMaterialActualFixture(t, pg)
 	input, _ := actualSteerInput(t, messages, ctx, session, run)
