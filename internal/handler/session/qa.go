@@ -1562,7 +1562,7 @@ func (h *Handler) executeQA(reqCtx *qaRequestContext, mode qaMode, generateTitle
 		sseCtx = streamCtx.materialAttach(sseCtx)
 	}
 	if streamCtx.materialCheck != nil {
-		phase := &liveMaterialWritePhase{}
+		phase := &liveMaterialWritePhase{MaterialCheck: streamCtx.materialCheck}
 		sseCtx = context.WithValue(sseCtx, liveMaterialWritePhaseKey{}, phase)
 		prior := reqCtx.c.Writer
 		writer := &nativeSavedReplayWriter{ResponseWriter: prior, ctx: reqCtx.c.Request.Context(), check: func() error {

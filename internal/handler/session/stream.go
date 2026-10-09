@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Tencent/WeKnora/internal/application/access"
+	applicationservice "github.com/Tencent/WeKnora/internal/application/service"
 	"github.com/Tencent/WeKnora/internal/errors"
 	"github.com/Tencent/WeKnora/internal/event"
 	"github.com/Tencent/WeKnora/internal/logger"
@@ -20,7 +21,13 @@ import (
 )
 
 type liveMaterialWritePhaseKey struct{}
-type liveMaterialWritePhase struct{ RawControl bool }
+type liveMaterialWritePhase struct {
+	RawControl             bool
+	MaterialCheck          func() error
+	InitializationDeadline time.Time
+}
+
+const liveMaterialInitializationTimeout = 10 * time.Second
 
 // ContinueStream godoc
 // @Summary      继续流式响应
@@ -552,6 +559,24 @@ func (h *Handler) handleAgentEventsForSSE(
 			// original-material check; refusal cannot suppress this static close.
 			for _, evt := range events {
 				if evt.Type == types.ResponseTypeError && evt.Done {
+					emitSafeTerminalGenerationError(c, requestID)
+					return
+				}
+			}
+			if phase, ok := ctx.Value(liveMaterialWritePhaseKey{}).(*liveMaterialWritePhase); ok && phase.MaterialCheck != nil {
+				if err := phase.MaterialCheck(); err != nil {
+					if stderrors.Is(err, applicationservice.ErrMessageMaterialHTTPInitializing) {
+						if phase.InitializationDeadline.IsZero() {
+							phase.InitializationDeadline = time.Now().Add(liveMaterialInitializationTimeout)
+						}
+						if time.Now().Before(phase.InitializationDeadline) {
+							// Keep the original offset and all bytes unconsumed. Even
+							// raw query controls wait for their actual user admission.
+							continue
+						}
+					}
+					// Actual refusal, failed setup or bounded initialization expiry
+					// closes without granting a placeholder any completed proof.
 					emitSafeTerminalGenerationError(c, requestID)
 					return
 				}

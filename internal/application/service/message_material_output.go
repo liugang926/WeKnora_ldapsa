@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"sync"
 	"time"
 
@@ -11,6 +12,10 @@ import (
 	"github.com/Tencent/WeKnora/internal/application/repository"
 	"github.com/Tencent/WeKnora/internal/types"
 )
+
+// Initialization is not an authorization decision. HTTP may wait for this
+// state, but must still run the original/current checks once setup finishes.
+var ErrMessageMaterialHTTPInitializing = fmt.Errorf("%w: original message material initialization pending", access.ErrNextcloudPublicationUnavailable)
 
 type messageMaterialOutputKey struct{}
 type messageMaterialExternalKey struct{}
@@ -48,8 +53,11 @@ func BeginMessageMaterialHTTPBoundary(ctx context.Context) (context.Context, fun
 		if failed != nil {
 			return failed
 		}
-		if !ready || closed {
+		if closed {
 			return access.ErrNextcloudPublicationUnavailable
+		}
+		if !ready {
+			return ErrMessageMaterialHTTPInitializing
 		}
 		return CheckMessageMaterialOutputBoundary(marked)
 	}
