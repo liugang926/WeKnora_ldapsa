@@ -145,6 +145,22 @@ func (g *pgRepository) writeIndexRows(ctx context.Context, infos []*types.IndexI
 			return err
 		}
 		for _, scope := range scopes {
+			var written []*pgVector
+			if err := tx.Where("knowledge_base_id=? AND knowledge_id=? AND source_id IN ?", scope.kbID, scope.knowledgeID, scope.sourceIDs).Find(&written).Error; err != nil {
+				return err
+			}
+			uniqueSources := map[string]bool{}
+			for _, id := range scope.sourceIDs {
+				uniqueSources[id] = true
+			}
+			if len(written) != len(uniqueSources) {
+				return apprepo.ErrNextcloudContentLeaseDenied
+			}
+			for _, row := range written {
+				if err := apprepo.RecordNextcloudDerivedArtifactInTx(ctx, tx, row.KnowledgeID, row.KnowledgeBaseID, "postgres_embedding", strconv.FormatUint(uint64(row.ID), 10), int64(row.Dimension)); err != nil {
+					return err
+				}
+			}
 			if err := g.inventoryNextcloudVectorIDs(tx, scope); err != nil {
 				return err
 			}
@@ -751,8 +767,11 @@ func (g *pgRepository) CopyIndices(ctx context.Context,
 
 		// Batch insert target vector index
 		if len(targetVectors) > 0 {
-			if err := g.db.WithContext(ctx).
-				Clauses(clause.OnConflict{DoNothing: true}).Create(targetVectors).Error; err != nil {
+			infos := make([]*types.IndexInfo, len(targetVectors))
+			for i, row := range targetVectors {
+				infos[i] = &types.IndexInfo{KnowledgeID: row.KnowledgeID, KnowledgeBaseID: row.KnowledgeBaseID, SourceID: row.SourceID, SourceType: types.SourceType(row.SourceType), ChunkID: row.ChunkID}
+			}
+			if err := g.writeIndexRows(ctx, infos, targetVectors, true); err != nil {
 				logger.GetLogger(ctx).Errorf("[Postgres] Failed to batch create target index: %v", err)
 				return err
 			}

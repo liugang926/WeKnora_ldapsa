@@ -22,13 +22,33 @@ import (
 	"gorm.io/gorm"
 )
 
-func sourceBuildFixture(t *testing.T, pg bool) (*enrichmentTestFixture, context.Context, *types.KnowledgeBuildInputProof, *atomic.Bool, repository.NextcloudContentScope) {
+type sourceDerivedFixtureHook struct {
+	BeforeChunk     func(*enrichmentTestFixture, context.Context)
+	BeforeKnowledge func(*enrichmentTestFixture, *types.Knowledge)
+	LocalDerived    bool
+}
+
+func sourceBuildFixture(t *testing.T, pg bool, hooks ...sourceDerivedFixtureHook) (*enrichmentTestFixture, context.Context, *types.KnowledgeBuildInputProof, *atomic.Bool, repository.NextcloudContentScope) {
 	t.Helper()
 	t.Setenv("SYSTEM_AES_KEY", "0123456789abcdef0123456789abcdef")
 	f := newEnrichmentTestFixture(t, pg)
 	var kb types.KnowledgeBase
 	require.NoError(t, f.db.Where("id='kb'").Take(&kb).Error)
-	kb.ExtractConfig = &types.ExtractConfig{Enabled: true, Tags: []string{"KNOWS"}, Text: "actual original extraction configuration"}
+	enabledGraph := true
+	if len(hooks) > 0 && hooks[0].LocalDerived {
+		enabledGraph = false
+	}
+	kb.ExtractConfig = &types.ExtractConfig{Enabled: enabledGraph, Tags: []string{"KNOWS"}, Text: "actual original extraction configuration"}
+	if len(hooks) > 0 && hooks[0].LocalDerived {
+		kb.IndexingStrategy.GraphEnabled = false
+		file := "../../../migrations/sqlite/000068_nextcloud_local_derived_gc.up.sql"
+		if pg {
+			file = "../../../migrations/versioned/000149_nextcloud_local_derived_gc.up.sql"
+		}
+		data, e := os.ReadFile(file)
+		require.NoError(t, e)
+		require.NoError(t, f.db.Exec(string(data)).Error)
+	}
 	require.NoError(t, f.store.UpdateKnowledgeBaseWithInput(repository.WithIndependentKnowledgeInput(f.ctx), &kb))
 	require.NoError(t, f.db.AutoMigrate(&types.DataSource{}, &repository.NextcloudSourcePairing{}))
 	require.NoError(t, f.db.Exec("DROP TABLE nextcloud_source_revisions").Error)
@@ -95,6 +115,9 @@ func sourceBuildFixture(t *testing.T, pg bool) (*enrichmentTestFixture, context.
 	metadata, e := json.Marshal(map[string]string{"datasource_id": ds.ID, "external_id": "nextcloud:instance:77", "source_resource_id": binding, "nextcloud_instance_id": "instance", "nextcloud_binding_id": binding, "nextcloud_file_id": "77", "nextcloud_etag": "", "nextcloud_path": "source.md"})
 	require.NoError(t, e)
 	k := &types.Knowledge{ID: "source-candidate", TenantID: 7, KnowledgeBaseID: "kb", Title: "original source title", FileName: "source.md", Type: "file", Channel: types.ConnectorTypeNextcloud, Metadata: metadata, CustomMetadata: types.JSON(`{}`), ParseStatus: types.ParseStatusFinalizing, EnableStatus: "disabled", PendingSubtasksCount: 1}
+	if len(hooks) > 0 && hooks[0].BeforeKnowledge != nil {
+		hooks[0].BeforeKnowledge(f, k)
+	}
 	require.NoError(t, f.db.Create(k).Error)
 	require.NoError(t, f.s.repo.(interface {
 		StageNextcloudVersion(context.Context, uint64, string, string, string, string, string) error
@@ -115,6 +138,9 @@ func sourceBuildFixture(t *testing.T, pg bool) (*enrichmentTestFixture, context.
 	groups := NewGroupAccessService(repository.NewGroupAccessRepository(f.db))
 	f.guard = access.NewNextcloudSourceLineageGuard(f.s.repo.(access.NextcloudLineageSnapshotLookup), f.s.kbService, nil, nil, groups, publication)
 	repository.ConfigureKnowledgeOriginalInputSourceVerifier(f.store, NewKnowledgeOriginalInputSourceVerifier(f.store, f.guard, sources))
+	if len(hooks) > 0 && hooks[0].BeforeChunk != nil {
+		hooks[0].BeforeChunk(f, ctx)
+	}
 	c := &types.Chunk{ID: "source-body", TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: k.ID, Content: strings.Repeat("Actual text parsed from the original source artifact. ", 3), ChunkType: types.ChunkTypeText, IsEnabled: true, IndexStatus: "ready", Metadata: types.JSON(`{}`)}
 	require.NoError(t, f.s.chunkRepo.CreateChunks(ctx, []*types.Chunk{c}))
 	now := time.Now().UTC()

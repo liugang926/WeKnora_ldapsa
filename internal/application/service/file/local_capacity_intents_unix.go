@@ -138,6 +138,11 @@ func (s *localFileService) saveCapacityFile(ctx context.Context, header *multipa
 	if e = session.ValidateCatalog(ctx, physical, knowledge); e != nil {
 		return "", e
 	}
+	pathLock, lockErr := s.physicalPathFence(inner)
+	if lockErr != nil {
+		return "", lockErr
+	}
+	defer pathLock.Close()
 	fd, e := unix.Openat(knowledgeFD, filename, unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL|unix.O_NOFOLLOW, 0600)
 	if e != nil {
 		return "", e

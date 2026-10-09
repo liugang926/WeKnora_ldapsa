@@ -51,6 +51,13 @@ var versionedSQLiteTables = []string{
 	"nextcloud_source_revisions",
 	"nextcloud_source_tombstones",
 	"nextcloud_capacity_write_intents",
+	"nextcloud_derived_backend_plans",
+	"nextcloud_derived_gc_manifests",
+	"nextcloud_derived_gc_receipts",
+	"nextcloud_derived_write_artifacts",
+	"nextcloud_derived_protocol_boundary",
+	"nextcloud_derived_origin_witnesses",
+	"nextcloud_derived_new_knowledges",
 }
 
 // versionedSQLiteColumns maps each existing table to the columns that the
@@ -80,7 +87,7 @@ var versionedSQLiteColumns = map[string][]string{
 	"sync_logs":             {"recovery_version", "recovery_trigger", "queue_task_id", "worker_started_at", "worker_active", "worker_attempt_token"}, // SQLite 000050 / PostgreSQL 000131
 }
 
-const expectedSQLiteMigrationVersion = 67
+const expectedSQLiteMigrationVersion = 68
 
 func TestSQLiteNextcloudRevisionUpgradeFrom43PreservesUnknownHistory(t *testing.T) {
 	repoRoot := sqliteRepoRoot(t)

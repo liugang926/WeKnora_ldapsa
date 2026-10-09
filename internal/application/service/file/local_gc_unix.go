@@ -5,7 +5,6 @@ package file
 import (
 	"context"
 	"errors"
-	"fmt"
 	"github.com/Tencent/WeKnora/internal/types"
 	"golang.org/x/sys/unix"
 	"strings"
@@ -32,6 +31,11 @@ func (s *localFileService) DeleteNextcloudObject(ctx context.Context, path strin
 		return false, e
 	}
 	defer unix.Close(root)
+	pathLock, e := s.physicalPathFence(path)
+	if e != nil {
+		return false, e
+	}
+	defer pathLock.Close()
 	filename := parts[len(parts)-1]
 	if strings.HasPrefix(filename, "capacity-") {
 		if len(filename) < len("capacity-")+36 {
@@ -43,6 +47,9 @@ func (s *localFileService) DeleteNextcloudObject(ctx context.Context, path strin
 			return false, e
 		}
 		defer lock.Close()
+	}
+	if resumed, unlinked, e := gcResumeHolding(ctx, root, path); e != nil || resumed {
+		return unlinked, e
 	}
 	current := root
 	opened := []int{}
@@ -87,13 +94,7 @@ func (s *localFileService) DeleteNextcloudObject(ctx context.Context, path strin
 	if e = ctx.Err(); e != nil {
 		return false, e
 	}
-	if e = unix.Unlinkat(current, filename, 0); e != nil {
-		return false, e
-	}
-	if e = unix.Fsync(current); e != nil {
-		return false, fmt.Errorf("GC unlink sync acknowledgement unavailable: %w", e)
-	}
-	return true, nil
+	return gcQuarantineUnlink(ctx, root, current, filename, path, actual)
 }
 func (s *backendScopedFileService) DeleteNextcloudObject(ctx context.Context, path string) (bool, error) {
 	id, inner, ok := types.ParseStorageBackendPath(path)

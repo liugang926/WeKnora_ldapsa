@@ -52,7 +52,11 @@ func autoTagActualFixture(t *testing.T, pg bool) (*repository.KnowledgeInputProv
 	require.NoError(t, err)
 	schema := "auto_tag_" + uuid.NewString()[:8]
 	require.NoError(t, admin.Exec("CREATE SCHEMA "+schema).Error)
-	db, err := gorm.Open(postgres.Open(dsn+" search_path="+schema), &gorm.Config{DisableForeignKeyConstraintWhenMigrating: true})
+	searchPath := schema
+	if os.Getenv("WEKNORA_LOCAL_DERIVED_NATIVE_VECTOR") == "1" {
+		searchPath += ",public"
+	}
+	db, err := gorm.Open(postgres.Open(dsn+" search_path="+searchPath), &gorm.Config{DisableForeignKeyConstraintWhenMigrating: true})
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		sqlDB, _ := db.DB()

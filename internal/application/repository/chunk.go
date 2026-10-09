@@ -101,6 +101,11 @@ func (r *chunkRepository) CreateChunks(ctx context.Context, chunks []*types.Chun
 		if err := tx.Select("*").CreateInBatches(chunks, createChunksBatchSize).Error; err != nil {
 			return err
 		}
+		for _, chunk := range chunks {
+			if err := RecordNextcloudDerivedArtifactInTx(ctx, tx, chunk.KnowledgeID, chunk.KnowledgeBaseID, "derived_chunk", chunk.ID, 0); err != nil {
+				return err
+			}
+		}
 		return sealKnowledgeInputChunks(ctx, tx, chunks)
 	})
 }

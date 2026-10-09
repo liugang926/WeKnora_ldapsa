@@ -395,40 +395,48 @@ func (s *knowledgeService) processChunks(ctx context.Context,
 		logger.Infof(ctx, "Vector/keyword indexing disabled for KB %s, skipping embedding model", kb.ID)
 	}
 
-	// 幂等性处理：清理旧的chunks和索引数据，避免重复数据
-	if err := requireActualKnowledgeBuildInput(ctx); err != nil {
-		logger.Warnf(ctx, "Build lease lost before chunk cleanup for %s: %v", knowledge.ID, err)
-		return
-	}
-	logger.Infof(ctx, "Cleaning up existing chunks and index data for knowledge: %s", knowledge.ID)
-
-	// 删除旧的chunks
-	if err := s.chunkRepo.DeleteChunksByKnowledgeID(ctx, knowledge.TenantID, knowledge.ID); err != nil {
-		logger.Warnf(ctx, "Failed to delete existing chunks (may not exist): %v", err)
-		// 不返回错误，继续处理（可能没有旧数据）
-	}
-
-	// 删除旧的索引数据 — only when vector/keyword indexing is enabled
 	tenantInfo := ctx.Value(types.TenantInfoContextKey).(*types.Tenant)
-	retrieveEngine, err := retriever.CreateRetrieveEngineForKB(
-		ctx, s.retrieveEngine, s.ownership, tenantInfo.ID, kb.VectorStoreID)
-	if err == nil && embeddingModel != nil {
-		if err := retrieveEngine.DeleteByKnowledgeIDList(ctx, []string{knowledge.ID}, embeddingModel.GetDimensions(), knowledge.Type); err != nil {
-			logger.Warnf(ctx, "Failed to delete existing index data (may not exist): %v", err)
-			// 不返回错误，继续处理（可能没有旧数据）
-		} else {
-			logger.Infof(ctx, "Successfully deleted existing index data for knowledge: %s", knowledge.ID)
+	retrieveEngine, err := retriever.CreateRetrieveEngineForKB(ctx, s.retrieveEngine, s.ownership, tenantInfo.ID, kb.VectorStoreID)
+	if knowledge.Channel == types.ConnectorTypeNextcloud {
+		engines := []types.RetrieverEngineType{}
+		if embeddingModel != nil {
+			if err != nil {
+				logger.Warnf(ctx, "Nextcloud actual index selection unavailable: %v", err)
+				knowledge.ParseStatus = types.ParseStatusFailed
+				knowledge.ErrorMessage = "derived backend selection unavailable"
+				_ = s.repo.Update(ctx, knowledge)
+				return
+			}
+			engines = retrieveEngine.SelectedBackendTypes()
+		}
+		if planErr := repository.RecordNextcloudDerivedBackendSelection(ctx, engines); planErr != nil {
+			logger.Warnf(ctx, "Nextcloud backend plan unavailable: %v", planErr)
+			knowledge.ParseStatus = types.ParseStatusFailed
+			knowledge.ErrorMessage = "derived backend plan unavailable"
+			_ = s.repo.Update(ctx, knowledge)
+			return
 		}
 	}
-
-	// 删除知识图谱数据（如果存在）
-	namespace := types.NameSpace{KnowledgeBase: knowledge.KnowledgeBaseID, Knowledge: knowledge.ID}
-	if err := s.graphEngine.DelGraph(ctx, []types.NameSpace{namespace}); err != nil {
-		logger.Warnf(ctx, "Failed to delete existing graph data (may not exist): %v", err)
-		// 不返回错误，继续处理
+	// Existing source generations are never adopted by a plan after cleanup.
+	if err := requireActualKnowledgeBuildInput(ctx); err != nil {
+		return
 	}
-
-	logger.Infof(ctx, "Cleanup completed, starting to process new chunks")
+	if err := s.chunkRepo.DeleteChunksByKnowledgeID(ctx, knowledge.TenantID, knowledge.ID); err != nil {
+		logger.Warnf(ctx, "Existing chunk cleanup unavailable: %v", err)
+	}
+	if err == nil && embeddingModel != nil {
+		if e := retrieveEngine.DeleteByKnowledgeIDList(ctx, []string{knowledge.ID}, embeddingModel.GetDimensions(), knowledge.Type); e != nil {
+			logger.Warnf(ctx, "Existing index cleanup unavailable: %v", e)
+		}
+	}
+	// Nextcloud graph output requires exact original writer/backend receipts;
+	// namespace-prefix cleanup cannot prove ownership of historic output.
+	if knowledge.Channel != types.ConnectorTypeNextcloud {
+		namespace := types.NameSpace{KnowledgeBase: knowledge.KnowledgeBaseID, Knowledge: knowledge.ID}
+		if e := s.graphEngine.DelGraph(ctx, []types.NameSpace{namespace}); e != nil {
+			logger.Warnf(ctx, "Graph cleanup unavailable: %v", e)
+		}
+	}
 
 	// ========== DocReader 解析结果日志 ==========
 	logger.Infof(ctx, "[DocReader] ========== 解析结果概览 ==========")

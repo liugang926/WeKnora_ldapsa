@@ -265,19 +265,21 @@ func (s *NextcloudGCStore) inventoryOne(ctx context.Context, source nextcloudGCS
 	return inserted && err == nil, err
 }
 
-// RunDue is intentionally fail-closed for all stored objects and indexes.
-// The current generic delete path can lose cleanup failures and races a new
-// resource binding. Even an empty local inventory cannot prove that historical
-// graph, Wiki or external index output is absent, so the job stays blocked
-// after any individually proven local resource deletion. Its metadata is
-// retained for the separate 90-day history policy.
+// RunDue collects proven local objects and post-protocol local SQL derived
+// inventories. Historic or external output remains an observable blocker.
+// Collected local inventories are periodically verified without deleting again,
+// so a partial restore cannot silently revive rows behind an old receipt.
 func (s *NextcloudGCStore) RunDue(ctx context.Context, now time.Time, limit int) (int, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 100
 	}
 	var ids []string
-	if err := s.db.WithContext(ctx).Model(&nextcloudGCJob{}).
-		Where("state IN ? AND not_before <= ? AND next_attempt_at <= ?", []string{"pending", "retry", "blocked"}, now, now).
+	query := s.db.WithContext(ctx).Model(&nextcloudGCJob{})
+	condition := "state IN ('pending','retry','blocked')"
+	if s.db.Migrator().HasTable(&nextcloudDerivedGCManifest{}) {
+		condition = "(" + condition + " OR (state='collected' AND EXISTS (SELECT 1 FROM nextcloud_derived_gc_manifests m WHERE m.job_id=nextcloud_gc_jobs.id)))"
+	}
+	if err := query.Where(condition).Where("not_before <= ? AND next_attempt_at <= ?", now, now).
 		Order("next_attempt_at ASC, id ASC").Limit(limit).Pluck("id", &ids).Error; err != nil {
 		return 0, err
 	}
@@ -297,6 +299,13 @@ func (s *NextcloudGCStore) RunDue(ctx context.Context, now time.Time, limit int)
 			if err := s.runPhysical(ctx, id, now); err != nil {
 				return processed, err
 			}
+		}
+		if err := s.runLocalDerived(ctx, id, now); err != nil {
+			recordErr := s.db.WithContext(ctx).Model(&nextcloudGCJob{}).Where("id=?", id).Updates(map[string]any{"state": "blocked", "last_error_code": "derived_exact_verification_failed", "next_attempt_at": now.Add(nextcloudGCRetryWindow)}).Error
+			return processed, errors.Join(err, recordErr)
+		}
+		if err := s.db.WithContext(ctx).Model(&nextcloudGCJob{}).Where("id=? AND state='collected'", id).Update("next_attempt_at", now.Add(nextcloudGCRetryWindow)).Error; err != nil {
+			return processed, err
 		}
 		processed++
 	}
