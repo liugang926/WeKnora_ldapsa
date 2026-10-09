@@ -46,6 +46,9 @@ func (s *sessionService) AgentQA(
 			if _, err := native.GetMessage(ctx, req.Session.ID, req.UserMessageID); err != nil {
 				return err
 			}
+			if err := native.bindInitialMessageMaterial(ctx, req.AssistantMessageID, req.UserMessageID, requestID); err != nil {
+				return err
+			}
 		}
 	}
 	if len(req.ImageURLs) > 0 || req.ImageDescription != "" || req.QuotedContext != "" || len(req.Attachments) > 0 {
@@ -191,7 +194,15 @@ func (s *sessionService) AgentQA(
 	}
 	// A single-turn Agent can still reuse the session workspace, attachments,
 	// memory and tools. Admission is independent from message replay settings.
-	if err := s.historyGuard.CheckAgentHistoryReplay(ctx); err != nil {
+	if native, ok := s.lineageVerifier.(*messageService); ok && native.materialStore != nil {
+		// Native retained materials have per-message original proofs and actual
+		// scopes. Their current source guard runs on the captured inputs.
+		if err := CheckMessageMaterialOutputBoundary(ctx); err != nil {
+			return err
+		}
+	} else if s.historyGuard == nil {
+		excludeHistoricalContext(access.ErrNextcloudPublicationUnavailable)
+	} else if err := s.historyGuard.CheckAgentHistoryReplay(ctx); err != nil {
 		excludeHistoricalContext(err)
 	}
 	if historyAdmitted && agentConfig.MultiTurnEnabled {

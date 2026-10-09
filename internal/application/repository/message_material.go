@@ -187,6 +187,9 @@ func (s *KnowledgeInputProvenanceStore) beginMessageProducerInTx(tx *gorm.DB, me
 	if row.Actor != string(actorJSON) || row.RequestID != message.RequestID || row.Role != message.Role || row.OwnerID != session.UserID || row.OwnerRevision != ownerRevision || row.TenantID != session.TenantID {
 		return nil, ErrKnowledgeInputChanged
 	}
+	if err := s.validateMessageCompletionInputsInTx(tx, message); err != nil {
+		return nil, err
+	}
 	// A full producer update can advance only its own last immutable material.
 	// An unrelated partial write or ABA never becomes admitted by loading it.
 	var prior messageMaterialAdmission
@@ -257,6 +260,11 @@ func (s *KnowledgeInputProvenanceStore) sealMessageMaterialInTx(tx *gorm.DB, ori
 	row := messageMaterialAdmission{ID: uuid.NewString(), GenerationID: origin.ID, MessageID: message.ID, SessionID: message.SessionID, TenantID: origin.TenantID, OwnerID: origin.OwnerID, OwnerRevision: origin.OwnerRevision, Revision: revision, BodyDigest: digest, SourceLineage: string(source), ExecutionContext: string(execution), AgentID: message.AgentID, AgentTenantID: message.AgentTenantID}
 	if err := tx.Create(&row).Error; err != nil {
 		return err
+	}
+	if message.Role == "assistant" && message.IsCompleted && tx.Migrator().HasTable("message_completion_input_manifests") {
+		if err := s.sealMessageCompletionInputsInTx(tx, origin, &row, message); err != nil {
+			return err
+		}
 	}
 	if err := tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "message_id"}}, DoUpdates: clause.AssignmentColumns([]string{"admission_id"})}).Create(&messageMaterialReceipt{message.ID, row.ID}).Error; err != nil {
 		return err

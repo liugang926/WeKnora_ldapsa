@@ -20,8 +20,10 @@ var ErrMessageMaterialHTTPInitializing = fmt.Errorf("%w: original message materi
 type messageMaterialOutputKey struct{}
 type messageMaterialExternalKey struct{}
 type messageMaterialOutputSlot struct {
+	OwnerContext  context.Context
 	mu            sync.Mutex
 	Guards        []*MessageMaterialGuard
+	Completion    *messageCompletionBinding
 	PhysicalReads []*readlease.NextcloudReadGuard
 	Bodies        []string
 	Outputs       [][]*types.Message
@@ -33,14 +35,14 @@ type messageMaterialOutputSlot struct {
 }
 
 func WithMessageMaterialOutputBoundary(ctx context.Context) context.Context {
-	return context.WithValue(ctx, messageMaterialOutputKey{}, &messageMaterialOutputSlot{})
+	return context.WithValue(ctx, messageMaterialOutputKey{}, &messageMaterialOutputSlot{OwnerContext: ctx})
 }
 
 // BeginMessageMaterialHTTPBoundary creates a private shared owner. The model
 // and the HTTP sender each retain one reference; only the last release closes
 // the actual original guards. No caller text or row header grants admission.
 func BeginMessageMaterialHTTPBoundary(ctx context.Context) (context.Context, func(context.Context) context.Context, func() error, func()) {
-	slot := &messageMaterialOutputSlot{Refs: 1}
+	slot := &messageMaterialOutputSlot{Refs: 1, OwnerContext: ctx}
 	attach := func(target context.Context) context.Context {
 		target = context.WithValue(target, messageMaterialOutputKey{}, slot)
 		return context.WithValue(target, messageMaterialExternalKey{}, slot)
@@ -409,13 +411,14 @@ func (s *messageService) actualGeneratedMessageFieldContext(ctx context.Context,
 }
 
 func (s *messageService) beginMessageMaterialCompletion(ctx context.Context, message *types.Message) (context.Context, func(error) error, error) {
-	slot, ok := ctx.Value(messageMaterialExternalKey{}).(*messageMaterialOutputSlot)
+	slot, ok := ctx.Value(messageMaterialOutputKey{}).(*messageMaterialOutputSlot)
 	if !ok || message == nil || message.Role != "assistant" || !message.IsCompleted {
 		return ctx, nil, nil
 	}
+	_, external := ctx.Value(messageMaterialExternalKey{}).(*messageMaterialOutputSlot)
 	slot.mu.Lock()
 	fail := func(err error) (context.Context, func(error) error, error) { slot.mu.Unlock(); return ctx, nil, err }
-	if slot.Closed || !slot.Ready || slot.Failed != nil {
+	if slot.Closed || external && !slot.Ready || slot.Failed != nil {
 		return fail(access.ErrNextcloudPublicationUnavailable)
 	}
 	leases := []repository.NextcloudContentLease{}
@@ -449,6 +452,16 @@ func (s *messageService) beginMessageMaterialCompletion(ctx context.Context, mes
 	// its exact immutable edge has transferred the corresponding old controls.
 	for _, guard := range slot.Guards {
 		guard.mu.Lock()
+	}
+	if slot.Completion != nil {
+		ctx, err = s.markCompletionInputsLocked(ctx, slot, message)
+		if err != nil {
+			for i := len(slot.Guards) - 1; i >= 0; i-- {
+				slot.Guards[i].mu.Unlock()
+			}
+			slot.mu.Unlock()
+			return ctx, nil, err
+		}
 	}
 	finish := func(writeErr error) error {
 		defer slot.mu.Unlock()

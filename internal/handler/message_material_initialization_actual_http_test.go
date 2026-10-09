@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -41,9 +42,14 @@ func (m *actualHTTPInitializationModels) GetModelByID(ctx context.Context, id st
 }
 
 func TestMessageMaterialActualHTTPInitializationWaitsForAdmission(t *testing.T) {
-	for _, mode := range []string{"ready", "current_user_aba", "actor_revoked", "source_revoked", "cancelled"} {
+	for _, mode := range []string{"ready", "steer_schema_ready", "current_user_aba", "actor_revoked", "source_revoked", "cancelled"} {
 		t.Run(mode, func(t *testing.T) {
 			f := newActualHTTPTailFixture(t, mode == "source_revoked")
+			if mode == "steer_schema_ready" {
+				migration, err := os.ReadFile("../../migrations/sqlite/000073_steer_original_materials.up.sql")
+				require.NoError(t, err)
+				require.NoError(t, f.db.Exec(string(migration)).Error)
+			}
 			model := &actualHTTPTailModel{t: t, db: f.db, parent: f.parent}
 			ctx, cancel := context.WithCancel(f.ctx)
 			defer cancel()
@@ -92,13 +98,18 @@ func TestMessageMaterialActualHTTPInitializationWaitsForAdmission(t *testing.T) 
 			defer response.Body.Close()
 			body, err := io.ReadAll(response.Body)
 			require.NoError(t, err, "the actual HTTP receiver must terminate without client timeout")
-			if mode == "ready" {
+			if mode == "ready" || mode == "steer_schema_ready" {
 				require.Equal(t, http.StatusOK, response.StatusCode, string(body))
 				require.GreaterOrEqual(t, time.Since(started), 350*time.Millisecond)
 				require.Contains(t, string(body), `"response_type":"agent_query"`)
 				require.Contains(t, string(body), "LIVE HTTP SECRET")
 				require.Contains(t, string(body), `"response_type":"complete"`)
 				require.EqualValues(t, 1, model.calls.Load())
+				if mode == "steer_schema_ready" {
+					var manifests int64
+					require.NoError(t, f.db.Table("message_completion_input_manifests c").Joins("JOIN message_material_admissions a ON a.id=c.assistant_admission_id").Joins("JOIN messages m ON m.id=a.message_id").Where("m.request_id='actual-initialization-request' AND m.role='assistant' AND m.is_completed=true").Count(&manifests).Error)
+					require.EqualValues(t, 1, manifests, "Ready wait must preserve the exact initial-user completion manifest under Steer154/73")
+				}
 			} else {
 				require.NotContains(t, string(body), "LIVE HTTP SECRET")
 				require.NotContains(t, string(body), f.parent.Content)

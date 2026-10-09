@@ -121,6 +121,41 @@ func (s *OriginalBodyRetentionStore) fieldCurrent(tx *gorm.DB, head originalBody
 		return current, deadline, e
 	}
 	switch d.Table {
+	case "steer_authored_origins":
+		var control struct {
+			Consumed, Discarded, Deleted bool
+			UserMessageID                string
+			CreatedAtMS                  int64
+		}
+		if e := bodyInternal(tx).Table("steer_control_admissions a").Select("a.consumed,a.discarded,a.deleted,a.user_message_id,a.created_at_ms").Joins("JOIN steer_control_heads h ON h.head_id=a.id AND h.origin_id=a.origin_id").Where("a.origin_id=?", head.RowKey).Take(&control).Error; e != nil {
+			return true, 0, e
+		}
+		if control.Discarded || control.Deleted {
+			return false, control.CreatedAtMS + 3600000, nil
+		}
+		if control.Consumed && control.UserMessageID != "" {
+			var user struct{ DeletedAt gorm.DeletedAt }
+			e := bodyInternal(tx).Unscoped().Table("messages").Select("deleted_at").Where("id=?", control.UserMessageID).Take(&user).Error
+			if errors.Is(e, gorm.ErrRecordNotFound) {
+				return false, -1, nil
+			}
+			if e != nil {
+				return true, 0, e
+			}
+			if user.DeletedAt.Valid {
+				return false, user.DeletedAt.Time.UnixMilli() + 3600000, nil
+			}
+		}
+		var session struct{ DeletedAt gorm.DeletedAt }
+		if e := bodyInternal(tx).Unscoped().Table("sessions").Select("deleted_at").Where("id=?", bodyText(row["session_id"])).Take(&session).Error; e != nil {
+			return true, 0, e
+		}
+		if session.DeletedAt.Valid {
+			return false, session.DeletedAt.Time.UnixMilli() + 3600000, nil
+		}
+		// A queued/consumed original is hot only for the explicit seven-day
+		// authored-input window; later reads require a new actual human input.
+		return false, int64(bodyUint(row["created_at_ms"])) + 7*86400000, nil
 	case "datasource_name_inputs":
 		source, e := bodySourceRow(tx, originalBodyFieldDescriptor{Table: "data_sources", Key: "id"}, bodyText(row["datasource_id"]))
 		if errors.Is(e, gorm.ErrRecordNotFound) {
@@ -212,6 +247,21 @@ func (s *OriginalBodyRetentionStore) fieldCurrent(tx *gorm.DB, head originalBody
 		}
 		if session.DeletedAt.Valid {
 			return false, session.DeletedAt.Time.UnixMilli() + 3600000, nil
+		}
+		if tx.Migrator().HasTable("steer_consumption_origins") {
+			var origins []struct{ CreatedAtMS int64 }
+			if e := bodyInternal(tx).Table("steer_consumption_origins p").Select("o.created_at_ms").Joins("JOIN steer_authored_origins o ON o.id=p.origin_id").Where("p.user_message_id=?", messageID).Scan(&origins).Error; e != nil {
+				return true, 0, e
+			}
+			if len(origins) > 0 {
+				deadline := origins[0].CreatedAtMS + 7*86400000
+				for _, origin := range origins {
+					if origin.CreatedAtMS+7*86400000 < deadline {
+						deadline = origin.CreatedAtMS + 7*86400000
+					}
+				}
+				return false, deadline, nil
+			}
 		}
 		return true, 0, nil
 	case "sessions":

@@ -362,6 +362,11 @@ func (s *KnowledgeInputProvenanceStore) verifyMessageMaterialInTx(tx *gorm.DB, m
 	if err := s.checkMessageOriginalBodyAvailability(tx, fact.GenerationID); err != nil {
 		return nil, err
 	}
+	if tx.Migrator().HasTable("steer_consumption_origins") {
+		if err := s.verifySteerConsumedMessageInTx(tx, message); err != nil {
+			return nil, err
+		}
+	}
 	if tx.Migrator().HasTable("message_fork_parent_origins") {
 		if err := s.verifyMessageForkParentsInTx(tx, fact.GenerationID); err != nil {
 			return nil, err
@@ -488,6 +493,28 @@ func (s *KnowledgeInputProvenanceStore) captureMessageMaterialInTx(tx *gorm.DB, 
 	for _, generation := range generations {
 		if err := s.checkMessageOriginalBodyAvailability(tx, generation.GenerationID); err != nil {
 			return nil, err
+		}
+	}
+	if tx.Migrator().HasTable("steer_consumption_origins") {
+		var steerParents []struct{ OriginID string }
+		query := tx.Table("steer_consumption_origins p").Select("p.origin_id").Joins("JOIN messages m ON m.id=p.user_message_id AND m.session_id=p.session_id").Where("p.session_id=? AND m.deleted_at IS NULL", req.SessionID)
+		if !req.AllSession {
+			query = query.Where("p.user_message_id IN ?", req.MessageIDs)
+		}
+		if err := query.Scan(&steerParents).Error; err != nil {
+			return nil, err
+		}
+		for _, parent := range steerParents {
+			var original steerAuthoredOrigin
+			if err := tx.Select(steerOriginMetadataFields).Where("id=?", parent.OriginID).Take(&original).Error; err != nil {
+				return nil, err
+			}
+			if err := checkSteerOriginalWindow(tx, &original); err != nil {
+				return nil, err
+			}
+			if err := CheckOriginalBodyAvailableInTx(tx.Statement.Context, tx, "steer_authored_origins", parent.OriginID); err != nil {
+				return nil, err
+			}
 		}
 	}
 	_, session, ownerRevision, err := s.currentMessageOwnerInTx(tx, req.SessionID)

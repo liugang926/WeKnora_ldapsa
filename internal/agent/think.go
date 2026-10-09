@@ -80,10 +80,12 @@ func (e *AgentEngine) streamLLMToEventBus(
 	}
 	if e.toolRegistry != nil && opts != nil {
 		if err := e.addLineage(e.toolRegistry.DefinitionSourceLineage(opts.Tools)); err != nil {
+			logger.Warn(ctx, "Agent input rejected at original tool definition boundary")
 			return nil, err
 		}
 	}
 	if err := e.accountMessages(ctx, messages); err != nil {
+		logger.Warn(ctx, "Agent input rejected at original wire message boundary")
 		return nil, err
 	}
 	reportModelContextLeaks(ctx, "Agent", e.modelContext, messages)

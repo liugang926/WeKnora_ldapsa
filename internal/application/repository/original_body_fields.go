@@ -21,6 +21,7 @@ type originalBodyFieldDescriptor struct {
 }
 
 var originalBodyFields = []originalBodyFieldDescriptor{
+	{"steer_authored_origins", "id", "vault", []string{"input_body"}},
 	{"datasource_name_inputs", "id", "vault", []string{"actual_inputs"}},
 	{"nextcloud_original_upload_inputs", "knowledge_id", "vault", []string{"actual_inputs"}},
 	{"knowledge_auto_tag_input_manifests", "manifest_id", "vault", []string{"actual_inputs"}},
@@ -149,7 +150,7 @@ func bodyScopeFromRow(tx *gorm.DB, d originalBodyFieldDescriptor, key string, ro
 	if d.Table == "knowledges" {
 		scope.Knowledge = key
 	}
-	if d.Table == "messages" || d.Table == "message_generation_origins" {
+	if d.Table == "messages" || d.Table == "message_generation_origins" || d.Table == "steer_authored_origins" {
 		// The immutable origin is inserted before its message. Its scope comes
 		// from that origin/session, never a later mutable indexed-knowledge link.
 		sessionID := bodyText(row["session_id"])
@@ -158,7 +159,7 @@ func bodyScopeFromRow(tx *gorm.DB, d originalBodyFieldDescriptor, key string, ro
 			return scope, e
 		}
 		tenant := bodyUint(session["tenant_id"])
-		if d.Table == "message_generation_origins" && scope.Tenant != tenant {
+		if (d.Table == "message_generation_origins" || d.Table == "steer_authored_origins") && scope.Tenant != tenant {
 			return scope, ErrOriginalBodyUnavailable
 		}
 		scope.Tenant = tenant

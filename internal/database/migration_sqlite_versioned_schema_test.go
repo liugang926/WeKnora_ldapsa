@@ -78,6 +78,12 @@ var versionedSQLiteTables = []string{
 	"original_body_gc_items",
 	"knowledge_auto_publication_versions",
 	"knowledge_auto_publication_transitions",
+	"steer_authored_origins",
+	"steer_control_admissions",
+	"steer_control_heads",
+	"steer_consumption_origins",
+	"steer_control_versions",
+	"message_completion_input_manifests",
 }
 
 // versionedSQLiteColumns maps each existing table to the columns that the
@@ -107,7 +113,7 @@ var versionedSQLiteColumns = map[string][]string{
 	"sync_logs":             {"recovery_version", "recovery_trigger", "queue_task_id", "worker_started_at", "worker_active", "worker_attempt_token"}, // SQLite 000050 / PostgreSQL 000131
 }
 
-const expectedSQLiteMigrationVersion = 72
+const expectedSQLiteMigrationVersion = 73
 
 func TestSQLiteNextcloudRevisionUpgradeFrom43PreservesUnknownHistory(t *testing.T) {
 	repoRoot := sqliteRepoRoot(t)
@@ -268,6 +274,7 @@ func TestSQLiteMigrationsCreateVersionedSchema(t *testing.T) {
 	for _, table := range versionedSQLiteTables {
 		require.Truef(t, sqliteTableExists(t, db, table), "SQLite migrations must create table %s", table)
 	}
+	requireSteerOriginalSchema(t, db, "sqlite")
 	for table, columns := range versionedSQLiteColumns {
 		for _, column := range columns {
 			require.Truef(
@@ -327,6 +334,7 @@ func TestSQLiteMigrationsUpgradeV4PreservesData(t *testing.T) {
 	for _, table := range versionedSQLiteTables {
 		require.Truef(t, sqliteTableExists(t, db, table), "upgraded SQLite DB must have table %s", table)
 	}
+	requireSteerOriginalSchema(t, db, "sqlite")
 	for table, columns := range versionedSQLiteColumns {
 		for _, column := range columns {
 			require.Truef(

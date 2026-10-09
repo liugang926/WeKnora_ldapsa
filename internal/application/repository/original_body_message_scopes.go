@@ -56,6 +56,24 @@ func (s *OriginalBodyRetentionStore) UpgradeLeaseScopeSchema() error {
 	})
 }
 func (s *OriginalBodyRetentionStore) recordMessageLeaseScopes(tx *gorm.DB, id string, d originalBodyFieldDescriptor, key, raw string, scope originalBodyScope) error {
+	if d.Table == "steer_authored_origins" {
+		boundary, actual := tx.Statement.Context.Value(steerAuthoredProducerKey{}).(steerAuthoredProducerBoundary)
+		if !actual || boundary.ID != key || boundary.Lineage.RequireComplete() != nil || len(boundary.Lineage.Sources) != 0 {
+			return ErrOriginalBodyUnavailable
+		}
+		var input steerAuthoredBody
+		if e := json.Unmarshal([]byte(raw), &input); e != nil {
+			return e
+		}
+		digest, e := KnowledgeInputDigest(input)
+		if e != nil {
+			return e
+		}
+		if digest != boundary.BodyDigest {
+			return ErrOriginalBodyUnavailable
+		}
+		return bodyInternal(tx).Create(&originalBodyLeaseScope{BodyID: id, TenantID: scope.Tenant, KnowledgeBaseID: ""}).Error
+	}
 	if d.Table != "messages" && d.Table != "message_generation_origins" {
 		return nil
 	}
@@ -222,6 +240,39 @@ func (s *KnowledgeInputProvenanceStore) AcquireMessageBodyReadLeases(ctx context
 				}
 			}
 			for _, control := range current.Controls {
+				if tx.Migrator().HasTable("steer_consumption_origins") {
+					var parents []struct{ OriginID string }
+					if e := bodyInternal(tx).Table("steer_consumption_origins").Select("origin_id").Where("user_message_id=?", control.ID).Scan(&parents).Error; e != nil {
+						return e
+					}
+					for _, parent := range parents {
+						var original steerAuthoredOrigin
+						if e := tx.Select(steerOriginMetadataFields).Where("id=?", parent.OriginID).Take(&original).Error; e != nil {
+							return e
+						}
+						if e := checkSteerOriginalWindow(tx, &original); e != nil {
+							return e
+						}
+						var steerHeads []originalBodyFieldHead
+						if e := bodyInternal(tx).Where("source_table='steer_authored_origins' AND row_key=?", parent.OriginID).Find(&steerHeads).Error; e != nil {
+							return e
+						}
+						if len(steerHeads) == 0 {
+							return ErrOriginalBodyUnavailable
+						}
+						for _, head := range steerHeads {
+							if seen[head.BodyID] {
+								continue
+							}
+							seen[head.BodyID] = true
+							id, e := retention.acquireLeaseInTx(tx, head.BodyID, "read", owner, ttl)
+							if e != nil {
+								return e
+							}
+							ids = append(ids, id)
+						}
+					}
+				}
 				var heads []originalBodyFieldHead
 				if e := bodyInternal(tx).Where("(source_table='messages' AND row_key=?) OR (source_table='message_generation_origins' AND row_key=?)", control.ID, control.GenerationID).Find(&heads).Error; e != nil {
 					return e

@@ -51,6 +51,9 @@ func (s *sessionService) KnowledgeQA(
 			if _, err := native.GetMessage(ctx, req.Session.ID, req.UserMessageID); err != nil {
 				return err
 			}
+			if err := native.bindInitialMessageMaterial(ctx, req.AssistantMessageID, req.UserMessageID, requestID); err != nil {
+				return err
+			}
 		}
 	}
 	webSearchEnabled := resolveWebSearchEnabled(req)

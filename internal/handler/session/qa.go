@@ -1424,6 +1424,12 @@ func (h *Handler) executeQA(reqCtx *qaRequestContext, mode qaMode, generateTitle
 	go func() {
 		defer releaseMaterialProducer()
 		defer close(asyncDone)
+		// Polling holds original Steer bodies before atomic consumption. A
+		// refused consume must release them even when the request context is
+		// still live. Register before finalization so final guards run first.
+		if streamCtx.steerSink != nil {
+			defer streamCtx.steerSink.closeOriginalSteerInputs()
+		}
 		defer func() {
 			if r := recover(); r != nil {
 				if streamCtx.releaseTurn != nil {
