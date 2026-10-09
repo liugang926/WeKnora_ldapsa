@@ -113,6 +113,15 @@ func (g *NextcloudReadGuard) Context() context.Context {
 	return context.WithValue(g.ctx, nextcloudReadGuardContextKey{}, g)
 }
 
+// ParentContext preserves the request's authority and cancellation while a
+// turn acquires a separate fence from a borrowed, shorter-lived read guard.
+func (g *NextcloudReadGuard) ParentContext() context.Context {
+	if g == nil {
+		return nil
+	}
+	return g.parentCtx
+}
+
 func (g *NextcloudReadGuard) Covers(scopes []NextcloudKBReadScope) bool {
 	if g == nil {
 		return false

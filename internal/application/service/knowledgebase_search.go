@@ -196,6 +196,12 @@ func (s *knowledgeBaseService) HybridSearch(ctx context.Context,
 		}
 	}
 	guard := readlease.NextcloudReadGuardFromContext(ctx)
+	if owned, turn := ragTurnPhysicalReadGuard(ctx, scopes); turn {
+		if guard != nil && owned != guard {
+			ctx = guard.ParentContext()
+		}
+		guard = owned
+	}
 	if guard == nil || !guard.Covers(scopes) {
 		if s.contentLeases != nil {
 			var beginErr error
@@ -203,7 +209,14 @@ func (s *knowledgeBaseService) HybridSearch(ctx context.Context,
 			if beginErr != nil {
 				return nil, fmt.Errorf("protect knowledge search: %w", beginErr)
 			}
-			defer guard.Close()
+			held, holdErr := holdRAGPhysicalReadGuard(ctx, guard)
+			if holdErr != nil {
+				_ = guard.Close()
+				return nil, holdErr
+			}
+			if !held {
+				defer guard.Close()
+			}
 			ctx = guard.Context()
 		}
 	}

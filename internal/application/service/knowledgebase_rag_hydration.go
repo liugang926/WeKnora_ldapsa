@@ -50,12 +50,25 @@ func (s *knowledgeBaseService) HydrateRAGChunkAugmentations(ctx context.Context,
 	}
 	scopes := []readlease.NextcloudKBReadScope{{TenantID: knowledge.TenantID, KBID: knowledge.KnowledgeBaseID}}
 	guard := readlease.NextcloudReadGuardFromContext(ctx)
+	if owned, turn := ragTurnPhysicalReadGuard(ctx, scopes); turn {
+		if guard != nil && owned != guard {
+			ctx = guard.ParentContext()
+		}
+		guard = owned
+	}
 	if guard == nil || !guard.Covers(scopes) {
 		guard, err = readlease.BeginNextcloudKBRead(ctx, s.contentLeases, scopes)
 		if err != nil {
 			return nil, err
 		}
-		defer guard.Close()
+		held, holdErr := holdRAGPhysicalReadGuard(ctx, guard)
+		if holdErr != nil {
+			_ = guard.Close()
+			return nil, holdErr
+		}
+		if !held {
+			defer guard.Close()
+		}
 		ctx = guard.Context()
 	}
 	if err := guard.PinKnowledge(knowledge); err != nil {

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/Tencent/WeKnora/internal/application/access"
+	"github.com/Tencent/WeKnora/internal/application/readlease"
 	"github.com/Tencent/WeKnora/internal/application/repository"
 	"github.com/Tencent/WeKnora/internal/types"
 )
@@ -14,15 +15,16 @@ import (
 type messageMaterialOutputKey struct{}
 type messageMaterialExternalKey struct{}
 type messageMaterialOutputSlot struct {
-	mu           sync.Mutex
-	Guards       []*MessageMaterialGuard
-	Bodies       []string
-	Outputs      [][]*types.Message
-	OutputBodies []string
-	Ready        bool
-	Failed       error
-	Refs         int
-	Closed       bool
+	mu            sync.Mutex
+	Guards        []*MessageMaterialGuard
+	PhysicalReads []*readlease.NextcloudReadGuard
+	Bodies        []string
+	Outputs       [][]*types.Message
+	OutputBodies  []string
+	Ready         bool
+	Failed        error
+	Refs          int
+	Closed        bool
 }
 
 func WithMessageMaterialOutputBoundary(ctx context.Context) context.Context {
@@ -64,9 +66,13 @@ func releaseExternalMessageMaterial(slot *messageMaterialOutputSlot) {
 	}
 	slot.Closed = true
 	guards := append([]*MessageMaterialGuard{}, slot.Guards...)
+	physical := append([]*readlease.NextcloudReadGuard{}, slot.PhysicalReads...)
 	slot.mu.Unlock()
 	for _, guard := range guards {
 		guard.Close()
+	}
+	for _, guard := range physical {
+		_ = guard.Close()
 	}
 }
 func retainMessageMaterialProducer(ctx context.Context) (context.Context, func(), bool) {
@@ -99,9 +105,13 @@ func CloseMessageMaterialOutputBoundary(ctx context.Context) {
 			slot.Closed = true
 		}
 		guards := append([]*MessageMaterialGuard{}, slot.Guards...)
+		physical := append([]*readlease.NextcloudReadGuard{}, slot.PhysicalReads...)
 		slot.mu.Unlock()
 		for _, guard := range guards {
 			guard.Close()
+		}
+		for _, guard := range physical {
+			_ = guard.Close()
 		}
 	}
 }
@@ -117,6 +127,11 @@ func CheckMessageMaterialOutputBoundary(ctx context.Context) error {
 	}
 	if slot.Failed != nil {
 		return slot.Failed
+	}
+	for _, guard := range slot.PhysicalReads {
+		if err := guard.Verify(); err != nil {
+			return err
+		}
 	}
 	for i, guard := range slot.Guards {
 		if err := guard.Recheck(); err != nil {
@@ -142,6 +157,51 @@ func CheckMessageMaterialOutputBoundary(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// A turn owns each actual retrieval guard before index/body access. Its model
+// and HTTP references release independently; cached bytes never prolong a
+// retired generation's access. Non-turn calls retain the normal method scope.
+func holdRAGPhysicalReadGuard(ctx context.Context, guard *readlease.NextcloudReadGuard) (bool, error) {
+	slot, ok := ctx.Value(messageMaterialOutputKey{}).(*messageMaterialOutputSlot)
+	if !ok {
+		return false, nil
+	}
+	if guard == nil {
+		return false, access.ErrNextcloudPublicationUnavailable
+	}
+	slot.mu.Lock()
+	defer slot.mu.Unlock()
+	if slot.Closed || slot.Failed != nil {
+		return false, access.ErrNextcloudPublicationUnavailable
+	}
+	if err := guard.Verify(); err != nil {
+		return false, err
+	}
+	for _, prior := range slot.PhysicalReads {
+		if prior == guard {
+			return true, nil
+		}
+	}
+	slot.PhysicalReads = append(slot.PhysicalReads, guard)
+	return true, nil
+}
+
+// Borrowed request guards can close at their caller's return. A turn reuses
+// only a guard it owns, or acquires its own guard before touching any content.
+func ragTurnPhysicalReadGuard(ctx context.Context, scopes []readlease.NextcloudKBReadScope) (*readlease.NextcloudReadGuard, bool) {
+	slot, ok := ctx.Value(messageMaterialOutputKey{}).(*messageMaterialOutputSlot)
+	if !ok {
+		return nil, false
+	}
+	slot.mu.Lock()
+	defer slot.mu.Unlock()
+	for _, guard := range slot.PhysicalReads {
+		if guard.Covers(scopes) {
+			return guard, true
+		}
+	}
+	return nil, true
 }
 func (s *messageService) admittedMessagePage(ctx context.Context, sessionID string, before time.Time, limit, page int, descending bool) ([]*types.Message, error) {
 	tenant, ok := sessionTenantIDForLookup(ctx)
