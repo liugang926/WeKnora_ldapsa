@@ -249,7 +249,7 @@ func (s *wikiIngestService) ProcessWikiIngest(ctx context.Context, t *asynq.Task
 	}
 
 	// Inject context
-	ctx = context.WithValue(ctx, types.TenantIDContextKey, payload.TenantID)
+	ctx = types.WithTaskAuthorization(ctx, payload.TenantID, types.TaskInitiator{})
 	if payload.Language != "" {
 		ctx = context.WithValue(ctx, types.LanguageContextKey, payload.Language)
 	}
@@ -289,6 +289,9 @@ func (s *wikiIngestService) ProcessWikiIngest(ctx context.Context, t *asynq.Task
 	if err != nil {
 		exitStatus = "get_kb_failed"
 		return fmt.Errorf("wiki ingest: get KB: %w", err)
+	}
+	if s.groupAccess != nil && (kb.ID != payload.KnowledgeBaseID || kb.TenantID != payload.TenantID) {
+		return fmt.Errorf("wiki ingest: KB owner changed: %w", asynq.SkipRetry)
 	}
 	if !kb.IsWikiEnabled() {
 		exitStatus = "kb_not_wiki_enabled"
@@ -402,6 +405,25 @@ func (s *wikiIngestService) ProcessWikiIngest(ctx context.Context, t *asynq.Task
 			logger.Warnf(ctx, "wiki ingest: released %d claimed rows on abnormal exit for KB %s (re-claimable immediately)", len(peekedIDs), payload.KnowledgeBaseID)
 		}()
 	}
+	pendingOps, err = s.filterAuthorizedWikiOps(ctx, payload, pendingOps)
+	if err != nil {
+		return fmt.Errorf("wiki ingest: source authorization: %w", err)
+	}
+	if len(pendingOps) == 0 {
+		dctx, cancel := wikiIngestCleanupContext(ctx)
+		defer cancel()
+		if err := s.trimPendingList(dctx, peekedIDs); err != nil {
+			return err
+		}
+		claimsSettled = true
+		s.scheduleFollowUp(dctx, payload, wikiFollowUpDelay)
+		return nil
+	}
+	actors := make([]types.TaskInitiator, 0, len(pendingOps))
+	for _, op := range pendingOps {
+		actors = append(actors, op.Initiator)
+	}
+	ctx = wikiActorContext(ctx, payload, actors)
 
 	// Resolve extraction granularity once per batch. Historical rows with
 	// empty/unknown values fall back to Standard via Normalize(). Failures
@@ -433,6 +455,13 @@ func (s *wikiIngestService) ProcessWikiIngest(ctx context.Context, t *asynq.Task
 	for _, op := range pendingOps {
 		op := op
 		eg.Go(func() error {
+			mapCtx := wikiActorContext(mapCtx, payload, []types.TaskInitiator{op.Initiator})
+			if err := s.checkWikiTaskAuthorization(mapCtx); err != nil {
+				mapMu.Lock()
+				failedOps = append(failedOps, op)
+				mapMu.Unlock()
+				return nil
+			}
 			if op.Op == WikiOpRetract {
 				// Resolve the authoritative page set at run-time. The caller
 				// (knowledgeService.cleanupWikiOnKnowledgeDelete) captures
@@ -491,6 +520,7 @@ func (s *wikiIngestService) ProcessWikiIngest(ctx context.Context, t *asynq.Task
 
 				for slug := range slugSet {
 					slugUpdates[slug] = append(slugUpdates[slug], SlugUpdate{
+						Initiator:         op.Initiator,
 						Slug:              slug,
 						Type:              "retract",
 						RetractDocContent: op.DocSummary,
@@ -514,6 +544,13 @@ func (s *wikiIngestService) ProcessWikiIngest(ctx context.Context, t *asynq.Task
 			logger.Infof(mapCtx, "wiki ingest: processing document '%s' (%s)", op.DocTitle, op.KnowledgeID)
 			result, updates, err := s.mapOneDocument(mapCtx, chatModel, payload, op, batchCtx)
 			if err != nil {
+				if errors.Is(err, ErrResourceAccessDenied) {
+					if rejectErr := s.rejectWikiOp(mapCtx, payload, op); rejectErr == nil {
+						return nil
+					} else {
+						err = rejectErr
+					}
+				}
 				mapMu.Lock()
 				ingestFailed++
 				failedOps = append(failedOps, op)
@@ -531,6 +568,7 @@ func (s *wikiIngestService) ProcessWikiIngest(ctx context.Context, t *asynq.Task
 				docResults = append(docResults, result)
 				docPreview = append(docPreview, fmt.Sprintf("ingest[%s]: title=%s summary=%s", previewText(result.KnowledgeID, 24), previewText(result.DocTitle, 40), previewText(result.Summary, 64)))
 				for _, u := range updates {
+					u.Initiator = op.Initiator
 					slugUpdates[u.Slug] = append(slugUpdates[u.Slug], u)
 				}
 				mapMu.Unlock()
@@ -561,6 +599,9 @@ func (s *wikiIngestService) ProcessWikiIngest(ctx context.Context, t *asynq.Task
 		})
 	}
 	_ = eg.Wait()
+	if err := s.checkWikiTaskAuthorization(ctx); err != nil {
+		return fmt.Errorf("wiki ingest: authorization changed after map: %w", err)
+	}
 
 	// Re-read identity claims after every map worker has chosen a slug so
 	// concurrent romanizations of the same title collapse before taxonomy
@@ -689,6 +730,9 @@ func (s *wikiIngestService) ProcessWikiIngest(ctx context.Context, t *asynq.Task
 
 	tailCtx, tailCancel := wikiIngestCleanupContext(ctx)
 	defer tailCancel()
+	if err := s.checkWikiTaskAuthorization(tailCtx); err != nil {
+		return fmt.Errorf("wiki ingest: authorization changed after reduce: %w", err)
+	}
 
 	// Sanitize the doc summary pages produced by this batch BEFORE we
 	// rebuild the index. The summary LLM (run during
@@ -724,6 +768,9 @@ func (s *wikiIngestService) ProcessWikiIngest(ctx context.Context, t *asynq.Task
 	if len(allPagesAffected) > 0 {
 		logger.Infof(ctx, "wiki ingest: publishing draft pages")
 		s.publishDraftPages(tailCtx, payload.KnowledgeBaseID, allPagesAffected)
+	}
+	if err := s.checkWikiTaskAuthorization(tailCtx); err != nil {
+		return fmt.Errorf("wiki ingest: authorization changed during publish: %w", err)
 	}
 
 	// Defer KB-global convergence (index-intro rebuild + dead-link cleanup +
@@ -919,7 +966,7 @@ func (s *wikiIngestService) ProcessWikiFinalize(ctx context.Context, t *asynq.Ta
 	if err := json.Unmarshal(t.Payload(), &payload); err != nil {
 		return fmt.Errorf("wiki finalize: unmarshal payload: %w", err)
 	}
-	ctx = context.WithValue(ctx, types.TenantIDContextKey, payload.TenantID)
+	ctx = types.WithTaskAuthorization(ctx, payload.TenantID, types.TaskInitiator{})
 	if payload.Language != "" {
 		ctx = context.WithValue(ctx, types.LanguageContextKey, payload.Language)
 	}
@@ -989,6 +1036,9 @@ func (s *wikiIngestService) ProcessWikiFinalize(ctx context.Context, t *asynq.Ta
 	if err != nil {
 		return fmt.Errorf("wiki finalize: get KB: %w", err)
 	}
+	if s.groupAccess != nil && (kb.ID != payload.KnowledgeBaseID || kb.TenantID != payload.TenantID) {
+		return fmt.Errorf("wiki finalize: KB owner changed: %w", asynq.SkipRetry)
+	}
 
 	// Aggregate the drained rows into: affected slugs (dedup), fresh cross-link
 	// refs, and the index-intro change description. We collect ids up front so
@@ -1000,11 +1050,10 @@ func (s *wikiIngestService) ProcessWikiFinalize(ctx context.Context, t *asynq.Ta
 	var freshRefs []linkRef
 	var folderPruneIDs []string
 	var changeDesc strings.Builder
+	var actors []types.TaskInitiator
+	authorizedRows := 0
 	for _, r := range rows {
 		ids = append(ids, r.ID)
-		if r.Op == wikiFinalizeOpFolderPrune {
-			pruneRowIDs = append(pruneRowIDs, r.ID)
-		}
 		if len(r.Payload) == 0 {
 			continue
 		}
@@ -1013,7 +1062,17 @@ func (s *wikiIngestService) ProcessWikiFinalize(ctx context.Context, t *asynq.Ta
 			logger.Warnf(ctx, "wiki finalize: unmarshal row id=%d failed: %v", r.ID, err)
 			continue
 		}
+		rowCtx := wikiActorContext(ctx, payload, row.Initiators)
+		if err := s.checkWikiTaskAuthorization(rowCtx); err != nil {
+			if errors.Is(err, ErrResourceAccessDenied) {
+				continue
+			}
+			return fmt.Errorf("wiki finalize: source authorization: %w", err)
+		}
+		authorizedRows++
+		actors = append(actors, wikiActorsFromContext(rowCtx)...)
 		if r.Op == wikiFinalizeOpFolderPrune {
+			pruneRowIDs = append(pruneRowIDs, r.ID)
 			folderPruneIDs = append(folderPruneIDs, row.FolderIDs...)
 			continue
 		}
@@ -1035,6 +1094,12 @@ func (s *wikiIngestService) ProcessWikiFinalize(ctx context.Context, t *asynq.Ta
 			}
 		}
 	}
+	if authorizedRows == 0 {
+		dctx, cancel := wikiIngestCleanupContext(ctx)
+		defer cancel()
+		return s.trimPendingList(dctx, ids)
+	}
+	ctx = wikiActorContext(ctx, payload, actors)
 
 	// KB flipped away from wiki (deleted / type change) — drain the lane so the
 	// rows don't accumulate, then stop.
@@ -1080,6 +1145,9 @@ func (s *wikiIngestService) ProcessWikiFinalize(ctx context.Context, t *asynq.Ta
 	if len(affectedSlugs) > 0 {
 		s.cleanDeadLinks(ctx, payload.KnowledgeBaseID, affectedSlugs, batchCtx)
 		s.injectCrossLinks(ctx, payload.KnowledgeBaseID, affectedSlugs, freshRefs, batchCtx)
+	}
+	if err := s.checkWikiTaskAuthorization(ctx); err != nil {
+		return fmt.Errorf("wiki finalize: authorization changed during convergence: %w", err)
 	}
 
 	// A retract may leave one or more generated folders empty. Do not prune
@@ -1160,6 +1228,19 @@ func (s *wikiIngestService) mapOneDocument(
 	op WikiPendingOp,
 	batchCtx *WikiBatchContext,
 ) (*docIngestResult, []SlugUpdate, error) {
+	if err := s.checkWikiTaskAuthorization(ctx); err != nil {
+		return nil, nil, err
+	}
+	if s.groupAccess != nil {
+		knowledge, err := s.knowledgeRepo.GetKnowledgeByID(ctx, payload.TenantID, op.KnowledgeID)
+		if err != nil {
+			return nil, nil, err
+		}
+		if knowledge == nil || knowledge.KnowledgeBaseID != payload.KnowledgeBaseID ||
+			knowledge.TenantID != payload.TenantID {
+			return nil, nil, fmt.Errorf("%w: wiki source KB binding changed", ErrResourceAccessDenied)
+		}
+	}
 	docStartedAt := time.Now()
 	knowledgeID := op.KnowledgeID
 	lang := types.ResolveLanguageName(ctx, op.Language)
@@ -1709,6 +1790,14 @@ func (s *wikiIngestService) reduceSlugUpdates(
 	batchCtx *WikiBatchContext,
 	kidToWikiSpan map[string]*Span,
 ) (changed bool, affectedType string, additionFailed bool, err error) {
+	actors := make([]types.TaskInitiator, 0, len(updates))
+	for _, update := range updates {
+		actors = append(actors, update.Initiator)
+	}
+	ctx = wikiActorContext(ctx, WikiIngestPayload{TenantID: tenantID, KnowledgeBaseID: kbID}, actors)
+	if err := s.checkWikiTaskAuthorization(ctx); err != nil {
+		return false, "", false, err
+	}
 	// Final safety net for the ingest/delete race: between Map (which already
 	// checks isKnowledgeGone) and Reduce there is a long LLM call where the
 	// source document may be deleted. Drop any addition/summary updates whose
