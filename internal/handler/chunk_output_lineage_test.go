@@ -34,7 +34,7 @@ func chunkOutputHTTPFixture(t *testing.T) (*ChunkHandler, *gorm.DB, *types.Knowl
 	require.NoError(t, repository.NewChunkRepository(db).CreateChunks(buildCtx, []*types.Chunk{chunk}))
 	var kb types.KnowledgeBase
 	require.NoError(t, db.Where("id = ?", k.KnowledgeBaseID).Take(&kb).Error)
-	guard := access.NewNextcloudSourceLineageGuard(nil, outputHTTPKB{row: &kb}, nil, nil, groups, nil)
+	guard := access.NewNextcloudSourceLineageGuard(nil, outputHTTPKB{row: &kb}, nil, nil, groups, nil, store)
 	h := &ChunkHandler{service: chunkOutputHTTPService{hint: chunk}, kgService: base.kgService}
 	ConfigureChunkHandlerOutputLineage(h, service.NewChunkOutputAuthorizer(store, guard))
 	return h, db, k, groups, store, buildCtx
@@ -43,8 +43,8 @@ func serveChunkOutput(h *ChunkHandler, path string) *httptest.ResponseRecorder {
 	gin.SetMode(gin.TestMode)
 	router := documentHandlerRouter()
 	router.Use(func(c *gin.Context) {
-		ctx := types.WithCaller(c.Request.Context(), types.Caller{TenantID: 7, UserID: "person"})
-		ctx = types.WithPrincipal(ctx, types.Principal{Type: types.PrincipalWebUser, ID: "person"})
+		ctx := types.WithCaller(c.Request.Context(), types.Caller{TenantID: 7, UserID: "user"})
+		ctx = types.WithPrincipal(ctx, types.Principal{Type: types.PrincipalWebUser, ID: "user"})
 		ctx = types.WithExecutionTenant(ctx, 7)
 		c.Request = c.Request.WithContext(ctx)
 	})
