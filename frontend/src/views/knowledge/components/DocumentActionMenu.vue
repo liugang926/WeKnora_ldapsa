@@ -13,6 +13,8 @@ const props = defineProps<{
   item: KnowledgeItem;
   canDownload: boolean;
   canMutateKnowledge: boolean;
+  canDelete?: boolean;
+  canBatchEdit?: boolean;
   traceVisible: boolean;
   /** Whether the knowledge base has a folder structure to file documents into. */
   foldersAvailable?: boolean;
@@ -94,7 +96,7 @@ const fileName = computed(() => props.item.file_name || props.item.title || prop
   </t-popconfirm>
 
   <!-- 移动到目录 -->
-  <div v-if="canMutateKnowledge" class="doc-action-menu-item" @click.stop="emit('move-folder')">
+  <div v-if="canMutateKnowledge || canBatchEdit" class="doc-action-menu-item" @click.stop="emit('move-folder')">
     <t-icon class="icon" name="folder" />
     <span>{{ $t('knowledgeBase.moveToFolder.action') }}</span>
   </div>
@@ -106,13 +108,13 @@ const fileName = computed(() => props.item.file_name || props.item.title || prop
   </div>
 
   <!-- 批量管理 -->
-  <div v-if="canMutateKnowledge || canDownload" class="doc-action-menu-item" @click.stop="emit('batch-manage')">
+  <div v-if="canMutateKnowledge || canDownload || canBatchEdit" class="doc-action-menu-item" @click.stop="emit('batch-manage')">
     <t-icon class="icon" name="queue" />
     <span>{{ $t('menu.batchManage') }}</span>
   </div>
 
   <!-- 删除文档 -->
-  <t-popconfirm theme="warning"
+  <t-popconfirm v-if="canDelete !== false" theme="warning"
     :content="$t('knowledgeBase.confirmDeleteDocument', { fileName })"
     :confirm-btn="{ content: $t('knowledgeBase.confirmDelete'), theme: 'danger' }"
     :cancel-btn="{ content: $t('common.cancel') }" placement="left"

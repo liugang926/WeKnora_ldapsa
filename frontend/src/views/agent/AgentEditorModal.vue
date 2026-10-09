@@ -1775,13 +1775,13 @@
       <!-- 共享管理（仅编辑模式且非内置智能体） -->
       <div v-if="editorMode === 'edit' && editorAgent?.id && !editorAgent?.is_builtin"
         v-show="currentSection === 'access'" class="section">
-        <ResourceGroupAccessSettings v-if="directoryEnabled" resource-type="agent" :resource-id="editorAgent.id"
+        <ResourceGroupAccessSettings v-if="directoryEnabled && props.canManage !== false" resource-type="agent" :resource-id="editorAgent.id"
           :tenant-id="Number(editorAgent.tenant_id || authStore.currentTenantId || 0)" :read-only="props.readOnly" />
       </div>
 
       <div v-if="editorMode === 'edit' && editorAgent?.id && !editorAgent?.is_builtin"
         v-show="currentSection === 'share'" class="section">
-        <AgentShareSettings :agent-id="editorAgent.id" :agent="editorAgent" />
+        <AgentShareSettings v-if="props.canManage !== false" :agent-id="editorAgent.id" :agent="editorAgent" />
       </div>
     </div>
 
@@ -1933,6 +1933,8 @@ const props = defineProps<{
   // wired here yet (the modal has 3000+ lines of form inputs); instead
   // we just remove the only mutation surface — the footer button.
   readOnly?: boolean;
+  /** Resource editing never grants share, group-policy, or ownership management. */
+  canManage?: boolean;
 }>();
 const { directoryEnabled } = useDirectoryFeature(() => props.visible);
 
@@ -2741,7 +2743,7 @@ const navItems = computed(() => {
     items.push({ key: 'skills', icon: SKILL_ICON, label: t('agent.editor.skillsConfig') });
   }
   // 发布（仅编辑模式）
-  if (editorMode.value === 'edit' && editorAgent.value?.id && !editorAgent.value?.is_builtin && !authStore.isLiteMode) {
+  if (props.canManage !== false && editorMode.value === 'edit' && editorAgent.value?.id && !editorAgent.value?.is_builtin && !authStore.isLiteMode) {
     if (directoryEnabled.value) items.push({ key: 'access', icon: 'lock-on', label: t('groupAccess.title') });
     items.push({ key: 'share', icon: 'share', label: t('knowledgeEditor.sidebar.share') });
   }

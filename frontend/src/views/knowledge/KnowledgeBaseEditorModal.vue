@@ -441,18 +441,18 @@
       </div>
 
       <!-- 数据源管理（仅编辑模式） -->
-      <div v-if="editorMode === 'edit' && activeKbId && currentSection === 'datasource'" class="section">
+      <div v-if="canUseManagementSections && editorMode === 'edit' && activeKbId && currentSection === 'datasource'" class="section">
         <DataSourceSettings :kb-id="activeKbId" @count="dsCount = $event" />
       </div>
 
       <!-- 目录组访问控制（仅编辑模式；所有判断仍由后端统一执行） -->
-      <div v-if="directoryEnabled && editorMode === 'edit' && activeKbId && currentSection === 'access'" class="section">
+      <div v-if="canUseManagementSections && directoryEnabled && editorMode === 'edit' && activeKbId && currentSection === 'access'" class="section">
         <ResourceGroupAccessSettings resource-type="knowledge_base" :resource-id="activeKbId"
           :tenant-id="Number(kbTenantId || authStore.currentTenantId || 0)" :read-only="!canShareKB" />
       </div>
 
       <!-- 共享设置（仅编辑模式） -->
-      <div v-if="editorMode === 'edit' && activeKbId && currentSection === 'share'" class="section">
+      <div v-if="canUseManagementSections && editorMode === 'edit' && activeKbId && currentSection === 'share'" class="section">
         <KBShareSettings :kb-id="activeKbId" :can-share="canShareKB" />
       </div>
 
@@ -617,6 +617,7 @@ const dsCount = ref(0)
 // only tenant Admin+ can mutate their share settings.
 const kbCreatorId = ref<string>('')
 const kbTenantId = ref<number>(0)
+const kbGroupPermission = ref('')
 
 // Backend gate for /knowledge-bases/:id/shares (POST/PUT/DELETE) is
 // g.OwnedKBOrAdmin(): only the KB creator or tenant Admin+ may mutate
@@ -625,10 +626,12 @@ const kbTenantId = ref<number>(0)
 // the buttons disappear instead of failing.
 const canShareKB = computed(() => {
   if (!activeKbId.value) return false
+  if (kbGroupPermission.value && !authStore.hasRole('admin')) return false
   const userId = authStore.user?.id || ''
   if (kbCreatorId.value && userId && kbCreatorId.value === userId) return true
   return authStore.hasRole('admin')
 })
+const canUseManagementSections = computed(() => !kbGroupPermission.value || canShareKB.value)
 
 const isKbOwner = computed(() => {
   const userId = authStore.user?.id || ''
@@ -687,11 +690,11 @@ const navItems = computed(() => {
       { key: 'graph', icon: 'chart-bubble', label: t('knowledgeEditor.sidebar.graph') },
       { key: 'advanced', icon: 'setting', label: t('knowledgeEditor.sidebar.advanced') }
     )
-    if (editorMode.value === 'edit' && activeKbId.value) {
+    if (canUseManagementSections.value && editorMode.value === 'edit' && activeKbId.value) {
       items.push({ key: 'datasource', icon: 'cloud-download', label: t('knowledgeEditor.sidebar.datasource'), badge: dsCount.value || undefined })
     }
   }
-  if (editorMode.value === 'edit' && activeKbId.value && !authStore.isLiteMode) {
+  if (canUseManagementSections.value && editorMode.value === 'edit' && activeKbId.value && !authStore.isLiteMode) {
     if (directoryEnabled.value) items.push({ key: 'access', icon: 'lock-on', label: t('groupAccess.title') })
     items.push({ key: 'share', icon: 'share', label: t('knowledgeEditor.sidebar.share') })
   }
@@ -925,6 +928,7 @@ const loadKBData = async (
     generatedProfile.value = (kb as any).generated_profile || null
     kbCreatorId.value = (kb as any).creator_id || ''
     kbTenantId.value = Number((kb as any).tenant_id || 0)
+    kbGroupPermission.value = (kb as any).group_access_permission || ''
 
     // 设置表单数据
     const kbType = (kb.type as 'document' | 'faq') || 'document'
@@ -1659,6 +1663,7 @@ const resetState = () => {
   chunkingDirty.value = false
   kbCreatorId.value = ''
   kbTenantId.value = 0
+  kbGroupPermission.value = ''
 }
 
 // 关闭弹窗
