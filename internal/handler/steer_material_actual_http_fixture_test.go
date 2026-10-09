@@ -131,6 +131,7 @@ type actualSteerHTTPModel struct {
 	inputs       [][]chat.Message
 	followUp     bool
 	claimFailure bool
+	titleCalls   atomic.Int64
 }
 
 func (m *actualSteerHTTPModel) GetModelName() string { return "local-original-steer-agent" }
@@ -205,6 +206,22 @@ func (m *actualSteerHTTPModel) release() { m.resumeOnce.Do(func() { close(m.resu
 type actualSteerHTTPModels struct {
 	actualHTTPTailModels
 	steered *actualSteerHTTPModel
+}
+
+type actualSteerHTTPSessionPort interface {
+	interfaces.SessionService
+	RejectSendIfRewinding(context.Context, string) error
+	HoldSandboxTurn(context.Context, string, string) (func(), error)
+}
+
+type actualSteerHTTPObservedSessions struct {
+	actualSteerHTTPSessionPort
+	titleCalls *atomic.Int64
+}
+
+func (s *actualSteerHTTPObservedSessions) GenerateTitleAsync(ctx context.Context, session *types.Session, query, modelID string, bus *event.EventBus) {
+	s.titleCalls.Add(1)
+	s.actualSteerHTTPSessionPort.GenerateTitleAsync(ctx, session, query, modelID, bus)
 }
 
 func (m actualSteerHTTPModels) GetChatModel(context.Context, string) (chat.Chat, error) {
@@ -370,7 +387,10 @@ func newActualSteerHTTPHandler(t *testing.T, f *actualHTTPTailFixture, model *ac
 	if model.claimFailure {
 		transport = &actualSteerHTTPClaimFailureStream{StreamManager: redis}
 	}
-	h := sessionhandler.NewHandler(sessions, observed, nil, transport, cfg, f.kbs, customs, nil, nil, nil, nil, nil, nil, models, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, groups)
+	actualSessions, ok := sessions.(actualSteerHTTPSessionPort)
+	require.True(t, ok, "observe the real title producer without dropping the production turn/rewind guards")
+	observedSessions := &actualSteerHTTPObservedSessions{actualSteerHTTPSessionPort: actualSessions, titleCalls: &model.titleCalls}
+	h := sessionhandler.NewHandler(observedSessions, observed, nil, transport, cfg, f.kbs, customs, nil, nil, nil, nil, nil, nil, models, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, groups)
 	return h, observed, redis, raw
 }
 

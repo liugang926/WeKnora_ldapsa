@@ -25,6 +25,64 @@ func TestSteerOriginalMaterialActualHTTPAgentPromoteCanonicalAndRedisForgery(t *
 	}
 }
 
+func TestSteerOriginalMaterialActualHTTPAgentHonorsDisableTitle(t *testing.T) {
+	for _, mode := range []string{"disabled", "default", "explicit_false"} {
+		t.Run(mode, func(t *testing.T) {
+			f := newActualSteerHTTPFixture(t, true)
+			model := &actualSteerHTTPModel{t: t, f: f, followUp: true, ready: make(chan struct{}), resume: make(chan struct{})}
+			t.Cleanup(model.release)
+			h, _, _, _ := newActualSteerHTTPHandler(t, f, model)
+			router := actualSteerHTTPRouter(f.ctx, h)
+			payload := map[string]interface{}{"query": "actual current user task", "agent_id": "actual-steer-agent", "agent_enabled": true, "summary_model_id": "actual-http-tail-model"}
+			if mode != "default" {
+				payload["disable_title"] = mode == "disabled"
+			}
+			raw, err := json.Marshal(payload)
+			require.NoError(t, err)
+			w := &actualSteerHTTPWriter{ResponseRecorder: httptest.NewRecorder(), t: t, f: f}
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				request := httptest.NewRequest(http.MethodPost, "/agent-chat/"+f.parent.SessionID, strings.NewReader(string(raw)))
+				request.Header.Set("Content-Type", "application/json")
+				router.ServeHTTP(w, request)
+			}()
+			select {
+			case <-model.ready:
+			case <-done:
+				t.Fatal("actual AgentQA ended before its admitted local model")
+			case <-time.After(8 * time.Second):
+				t.Fatal("actual AgentQA did not reach its admitted local model")
+			}
+			wantTitles := int64(1)
+			if mode == "disabled" {
+				wantTitles = 0
+			}
+			require.Equal(t, wantTitles, model.titleCalls.Load(), "the actual public route controls the real title service")
+			model.release()
+			select {
+			case <-done:
+			case <-time.After(8 * time.Second):
+				t.Fatal("actual Agent producer or its final HTTP sender did not finish")
+			}
+			require.Equal(t, wantTitles, model.titleCalls.Load())
+			require.EqualValues(t, 1, model.calls.Load())
+			require.Equal(t, 1, w.completeWrites)
+			require.Positive(t, w.finalWrites)
+			require.Contains(t, w.Body.String(), actualSteerHTTPAnswer)
+			var final types.Message
+			require.NoError(t, f.db.Where("session_id=? AND role='assistant' AND request_id<>?", f.parent.SessionID, f.parent.RequestID).Take(&final).Error)
+			require.True(t, final.IsCompleted)
+			require.Equal(t, actualSteerHTTPAnswer, final.Content)
+			require.Equal(t, f.parent.SourceLineage, final.SourceLineage)
+			require.Eventually(t, func() bool {
+				var held int64
+				return f.db.Table("original_body_leases").Where("kind='read' AND released_at_ms IS NULL").Count(&held).Error == nil && held == 0
+			}, 3*time.Second, 10*time.Millisecond, "actual finalization releases original material reads")
+		})
+	}
+}
+
 func TestSteerOriginalMaterialActualHTTPAgentRevocationBeforeConsumeAndBeforeNextModel(t *testing.T) {
 	for _, mode := range []string{"actor_before_consume", "control_aba_before_consume", "source_before_consume", "actor_after_persist", "control_aba_after_persist", "source_after_persist", "control_discard_before_consume", "control_discard_after_persist", "control_delete_after_persist"} {
 		t.Run(mode, func(t *testing.T) { runActualSteerHTTPAgent(t, strings.HasPrefix(mode, "source_"), mode) })
@@ -204,6 +262,7 @@ func runActualSteerHTTPAgent(t *testing.T, controlled bool, mode string) {
 		t.Fatal("actual public AgentQA did not reach the paused local model")
 	}
 	var run types.Message
+	require.Zero(t, model.titleCalls.Load(), "disable_title must reach the actual Agent route and title producer")
 	require.NoError(t, f.db.Where("session_id=? AND role='assistant' AND request_id<>?", f.parent.SessionID, f.parent.RequestID).Take(&run).Error)
 	require.False(t, run.IsCompleted)
 	mentions := types.MentionedItems{{ID: "human-literal-name", Type: "file", Name: "actual original typed mention", KBID: "kb", KBName: "actual original typed KB name"}}
@@ -289,6 +348,7 @@ func runActualSteerHTTPAgent(t *testing.T, controlled bool, mode string) {
 		t.Fatal("actual Agent producer or its final HTTP sender did not finish")
 	}
 	require.EqualValues(t, 1, observed.consumes.Load(), "one actual round drain consumes one exact admitted original")
+	require.Zero(t, model.titleCalls.Load(), "no asynchronous title generation may outlive an opted-out request")
 	require.NotContains(t, w.Body.String(), "FORGED REDIS")
 	var users []types.Message
 	require.NoError(t, f.db.Where("session_id=? AND request_id=? AND role='user'", f.parent.SessionID, run.RequestID).Order("created_at").Find(&users).Error)

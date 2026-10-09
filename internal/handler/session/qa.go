@@ -1087,7 +1087,7 @@ func (h *Handler) AgentQA(c *gin.Context) {
 
 	// Route to appropriate handler based on agent mode
 	if agentModeEnabled {
-		h.executeQA(reqCtx, qaModeAgent, true)
+		h.executeQA(reqCtx, qaModeAgent, !request.DisableTitle)
 	} else {
 		logger.Infof(reqCtx.ctx, "Agent mode disabled, delegating to normal mode for session: %s", reqCtx.sessionID)
 		h.executeQA(reqCtx, qaModeNormal, !request.DisableTitle)
