@@ -40,6 +40,7 @@ type NormalReferencesHTTPFixtureForTest struct {
 	ProducerReturned   <-chan struct{}
 	CompletionReturned <-chan struct{}
 	CompletionError    <-chan error
+	CompletionErrors   func() []error
 }
 
 type normalReferencesModelsForTest struct {
@@ -156,7 +157,7 @@ func NewNormalReferencesHTTPFixtureForTest(t *testing.T, pg bool, final chat.Cha
 	require.NoError(t, m.f.db.Create(session).Error)
 	original, err := m.f.store.CaptureKnowledgeOutputInputs(ctx, types.KnowledgeBuildInputCaptureRequest{TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: k.ID})
 	require.NoError(t, err)
-	return &NormalReferencesHTTPFixtureForTest{DB: m.f.db, Store: m.f.store, Ctx: ctx, Session: session, Sessions: normalReferencesSessionForTest{SessionService: sessions, mode: mode, returned: producerReturned}, Messages: observedMessages, KBs: kbs, Models: models, Config: cfg, Lineage: original.Proof.SourceLineage, Revoke: func() { m.personal.Store(false) }, Cancel: cancel, ProducerReturned: producerReturned, CompletionReturned: completionReturned, CompletionError: completionError}
+	return &NormalReferencesHTTPFixtureForTest{DB: m.f.db, Store: m.f.store, Ctx: ctx, Session: session, Sessions: normalReferencesSessionForTest{SessionService: sessions, mode: mode, returned: producerReturned}, Messages: observedMessages, KBs: kbs, Models: models, Config: cfg, Lineage: original.Proof.SourceLineage, Revoke: func() { m.personal.Store(false) }, Cancel: cancel, ProducerReturned: producerReturned, CompletionReturned: completionReturned, CompletionError: completionError, CompletionErrors: observedMessages.completionErrors}
 }
 
 type normalReferencesTenantForTest struct {
@@ -218,12 +219,23 @@ type normalReferencesObservedMessagesForTest struct {
 	returned chan struct{}
 	result   chan error
 	once     sync.Once
+	mu       sync.Mutex
+	errors   []error
 }
 
 func (s *normalReferencesObservedMessagesForTest) UpdateMessage(ctx context.Context, message *types.Message) error {
 	err := s.messageService.UpdateMessage(ctx, message)
 	if message.Role == "assistant" && message.IsCompleted {
+		s.mu.Lock()
+		s.errors = append(s.errors, err)
+		s.mu.Unlock()
 		s.once.Do(func() { s.result <- err; close(s.returned) })
 	}
 	return err
+}
+
+func (s *normalReferencesObservedMessagesForTest) completionErrors() []error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]error(nil), s.errors...)
 }

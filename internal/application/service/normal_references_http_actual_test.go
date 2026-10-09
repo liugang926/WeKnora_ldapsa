@@ -7,10 +7,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/Tencent/WeKnora/internal/application/access"
 	"github.com/Tencent/WeKnora/internal/application/service"
 	sessionhandler "github.com/Tencent/WeKnora/internal/handler/session"
 	"github.com/Tencent/WeKnora/internal/middleware"
@@ -106,9 +108,10 @@ func runNormalReferencesActualHTTP(t *testing.T, pg bool, modes ...string) {
 	redis, err := stream.NewRedisStreamManager(mini.Addr(), "", "", 0, "normal-reference-actual", time.Minute)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = redis.Close() })
-	var sender interfaces.StreamManager = redis
+	observedStream := &normalReferencesObservedStreamForTest{RedisStreamManager: redis, watcher: make(chan context.Context, 1)}
+	var sender interfaces.StreamManager = observedStream
 	if mode == "empty-fixed-refuse" {
-		sender = normalReferencesRefusingSink{StreamManager: redis}
+		sender = normalReferencesRefusingSink{StreamManager: observedStream}
 	}
 	h := sessionhandler.NewHandler(f.Sessions, f.Messages, nil, sender, f.Config, f.KBs, nil, nil, nil, nil, nil, nil, nil, f.Models, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 	gin.SetMode(gin.TestMode)
@@ -122,7 +125,13 @@ func runNormalReferencesActualHTTP(t *testing.T, pg bool, modes ...string) {
 	})
 	router.POST("/knowledge-chat/:session_id", h.KnowledgeQA)
 	router.POST("/sessions/:session_id/stop", h.StopSession)
-	server := httptest.NewServer(router)
+	httpReturned := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if strings.HasPrefix(req.URL.Path, "/knowledge-chat/") {
+			defer close(httpReturned)
+		}
+		router.ServeHTTP(w, req)
+	}))
 	t.Cleanup(server.Close)
 	client := &http.Client{Timeout: 8 * time.Second}
 	started := time.Now()
@@ -161,8 +170,29 @@ func runNormalReferencesActualHTTP(t *testing.T, pg bool, modes ...string) {
 		}
 		if mode == "producer-stop" {
 			select {
+			case <-httpReturned:
+			case <-time.After(3 * time.Second):
+				t.Fatal("the real owned HTTP sender did not exit")
+			}
+			var watcherCtx context.Context
+			select {
+			case watcherCtx = <-observedStream.watcher:
+			case <-time.After(3 * time.Second):
+				t.Fatal("the real owned stop watcher never called the actual Redis reader")
+			}
+			select {
+			case <-watcherCtx.Done():
+			case <-time.After(3 * time.Second):
+				t.Fatal("the real owned stop watcher did not exit")
+			}
+			select {
 			case <-f.CompletionReturned:
-				t.Logf("actual StopSession completion call returned error=%t", (<-f.CompletionError) != nil)
+				require.ErrorIs(t, <-f.CompletionError, access.ErrNextcloudPublicationDenied, "the real completed write was refused by the original output boundary")
+				errors := f.CompletionErrors()
+				require.NotEmpty(t, errors)
+				for _, completionErr := range errors {
+					require.ErrorIs(t, completionErr, access.ErrNextcloudPublicationDenied, "every completed attempt ended with the same original-boundary denial after both delivery loops exited")
+				}
 			case <-time.After(3 * time.Second):
 				t.Fatal("the actual StopSession completion call did not return")
 			}
@@ -268,4 +298,20 @@ func TestPostgresNormalReferencesActualHTTPRemainingAsync(t *testing.T) {
 	for _, mode := range []string{"caller-disconnect", "producer-stop", "model-error", "eof-no-done"} {
 		t.Run(mode, func(t *testing.T) { runNormalReferencesActualHTTP(t, true, mode) })
 	}
+}
+
+// Observe the actual production stop watcher's owned context. GetEvents still
+// reads the real Redis queue unchanged; its context is cancelled by the real
+// watcher defer only after its synchronous stop callback returns.
+type normalReferencesObservedStreamForTest struct {
+	*stream.RedisStreamManager
+	watcher chan context.Context
+	once    sync.Once
+}
+
+func (s *normalReferencesObservedStreamForTest) GetEvents(ctx context.Context, session, message string, offset int) ([]interfaces.StreamEvent, int, error) {
+	if deadline, ok := ctx.Deadline(); ok && time.Until(deadline) > time.Hour {
+		s.once.Do(func() { s.watcher <- ctx })
+	}
+	return s.RedisStreamManager.GetEvents(ctx, session, message, offset)
 }
