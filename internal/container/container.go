@@ -1078,6 +1078,9 @@ func initDatabase(cfg *config.Config) (*gorm.DB, error) {
 	if err := repository.InstallOriginalBodyRetentionTriggers(db); err != nil {
 		return nil, fmt.Errorf("original body retention trigger protocol unavailable: %w", err)
 	}
+	if err := repository.NewOriginalBodyRetentionStore(db).VerifyJournalReady(); err != nil {
+		return nil, fmt.Errorf("original body external purge journal unavailable or reconciliation required: %w", err)
+	}
 	if err := repository.InstallOriginalBodyRetentionCallbacks(db); err != nil {
 		return nil, err
 	}

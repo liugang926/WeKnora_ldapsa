@@ -83,6 +83,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     else \
         make build-prod; \
     fi
+RUN --mount=type=cache,target=/go/pkg/mod go build -o /app/original-body-retention ./cmd/original-body-retention
 RUN --mount=type=cache,target=/go/pkg/mod cp -r /go/pkg/mod/github.com/yanyiwu/ /app/yanyiwu/
 
 # Final stage
@@ -141,6 +142,7 @@ COPY --from=builder /app/migrations ./migrations
 COPY --from=builder /app/dataset/samples ./dataset/samples
 COPY --from=builder /root/.duckdb /home/appuser/.duckdb
 COPY --from=builder /app/WeKnora .
+COPY --from=builder /app/original-body-retention /usr/local/bin/original-body-retention
 COPY --from=builder /license-bundle/ ./
 
 # Copy and make entrypoint script executable

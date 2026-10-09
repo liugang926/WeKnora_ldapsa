@@ -21,6 +21,8 @@ type originalBodyFieldDescriptor struct {
 }
 
 var originalBodyFields = []originalBodyFieldDescriptor{
+	{"datasource_name_inputs", "id", "vault", []string{"actual_inputs"}},
+	{"nextcloud_original_upload_inputs", "knowledge_id", "vault", []string{"actual_inputs"}},
 	{"knowledge_auto_tag_input_manifests", "manifest_id", "vault", []string{"actual_inputs"}},
 	{"knowledge_display_input_origins", "origin_id", "vault", []string{"actual_input"}},
 	{"knowledge_span_start_manifests", "run_token", "vault", []string{"original_input", "actual_inputs"}},
@@ -31,10 +33,10 @@ var originalBodyFields = []originalBodyFieldDescriptor{
 	// Current entity columns keep their SQL search/storage representation. Their
 	// exact mirror receipts permit clearing only after actual lifecycle closure.
 	{"knowledge_processing_spans", "id", "inline", []string{"input", "output"}},
-	{"knowledges", "id", "inline", []string{"description", "profile", "custom_metadata"}},
-	{"chunks", "id", "inline", []string{"content", "source_content", "context_header", "metadata"}},
-	{"messages", "id", "inline", []string{"content", "rendered_content", "context_checkpoint", "agent_trace"}},
-	{"sessions", "id", "inline", []string{"description"}},
+	{"knowledges", "id", "inline", []string{"title", "file_name", "description", "profile", "custom_metadata", "metadata.manual.content"}},
+	{"chunks", "id", "inline", []string{"content", "source_content", "context_header", "metadata", "image_info"}},
+	{"messages", "id", "inline", []string{"content", "rendered_content", "context_checkpoint", "agent_trace", "agent_steps", "images", "attachments", "knowledge_references", "used_memories"}},
+	{"sessions", "id", "inline", []string{"title", "description"}},
 	{"wiki_pages", "id", "unsupported", []string{"content", "summary", "page_metadata"}},
 	{"wiki_page_revisions", "id", "unsupported", []string{"content", "summary"}},
 }
@@ -47,7 +49,67 @@ func bodyDescriptor(table string) (originalBodyFieldDescriptor, bool) {
 	}
 	return originalBodyFieldDescriptor{}, false
 }
+
+// Nested fields are exact JSON leaves. Whole metadata is never a body slot.
+func bodyFieldColumn(field string) string { return strings.Split(field, ".")[0] }
+func bodyFieldValue(row map[string]any, field string) (string, error) {
+	parts := strings.Split(field, ".")
+	raw := bodyText(row[parts[0]])
+	if len(parts) == 1 || raw == "" || raw == "null" {
+		return raw, nil
+	}
+	var value any
+	if e := json.Unmarshal([]byte(raw), &value); e != nil {
+		return "", fmt.Errorf("body JSON %s type %T: %w", field, row[parts[0]], e)
+	}
+	for _, part := range parts[1:] {
+		object, ok := value.(map[string]any)
+		if !ok {
+			return "", nil
+		}
+		value = object[part]
+	}
+	if value == nil {
+		return "", nil
+	}
+	result, ok := value.(string)
+	if !ok {
+		return "", ErrOriginalBodyUnavailable
+	}
+	return result, nil
+}
+func bodyNestedReplace(raw, field, old, replacement string) (string, error) {
+	parts := strings.Split(field, ".")
+	var object map[string]any
+	if e := json.Unmarshal([]byte(raw), &object); e != nil {
+		return "", e
+	}
+	current := object
+	for _, part := range parts[1 : len(parts)-1] {
+		next, ok := current[part].(map[string]any)
+		if !ok {
+			return "", ErrOriginalBodyUnavailable
+		}
+		current = next
+	}
+	leaf := parts[len(parts)-1]
+	if value, ok := current[leaf].(string); !ok || value != old {
+		return "", ErrOriginalBodyUnavailable
+	}
+	current[leaf] = replacement
+	data, e := json.Marshal(object)
+	return string(data), e
+}
 func bodyText(v any) string {
+	if v != nil {
+		value := reflect.ValueOf(v)
+		if value.Kind() == reflect.Pointer {
+			if value.IsNil() {
+				return ""
+			}
+			return bodyText(value.Elem().Interface())
+		}
+	}
 	switch value := v.(type) {
 	case nil:
 		return ""
@@ -140,7 +202,7 @@ func (s *OriginalBodyRetentionStore) captureField(tx *gorm.DB, d originalBodyFie
 	if e != nil && !errors.Is(e, gorm.ErrRecordNotFound) {
 		return e
 	}
-	now, e := nextcloudLeaseNowMS(tx)
+	now, e := nextcloudLeaseNowMS(bodyInternal(tx))
 	if e != nil {
 		return e
 	}
@@ -289,7 +351,10 @@ func (s *OriginalBodyRetentionStore) Inventory(ctx context.Context, limit int) (
 					return e
 				}
 				for _, col := range d.Columns {
-					raw := bodyText(row[col])
+					raw, e := bodyFieldValue(row, col)
+					if e != nil {
+						return e
+					}
 					if raw == "" {
 						continue
 					}
@@ -442,7 +507,10 @@ func (s *OriginalBodyRetentionStore) captureStatement(tx *gorm.DB, d originalBod
 			return e
 		}
 		for _, col := range d.Columns {
-			raw := bodyText(row[col])
+			raw, e := bodyFieldValue(row, col)
+			if e != nil {
+				return e
+			}
 			if raw == "" {
 				continue
 			}
@@ -467,13 +535,13 @@ func (s *OriginalBodyRetentionStore) resolveStatement(tx *gorm.DB, d originalBod
 			var raw string
 			var field reflect.Value
 			if v.Kind() == reflect.Map {
-				value := v.MapIndex(reflect.ValueOf(head.ColumnName))
+				value := v.MapIndex(reflect.ValueOf(bodyFieldColumn(head.ColumnName)))
 				if !value.IsValid() {
 					continue
 				}
 				raw = bodyText(value.Interface())
 			} else if tx.Statement.Schema != nil {
-				f := tx.Statement.Schema.FieldsByDBName[head.ColumnName]
+				f := tx.Statement.Schema.FieldsByDBName[bodyFieldColumn(head.ColumnName)]
 				if f == nil {
 					continue
 				}
@@ -488,6 +556,13 @@ func (s *OriginalBodyRetentionStore) resolveStatement(tx *gorm.DB, d originalBod
 					raw = string(b)
 				}
 				field = v.FieldByIndex(f.StructField.Index)
+			}
+			if strings.Contains(head.ColumnName, ".") {
+				leaf, e := bodyFieldValue(map[string]any{bodyFieldColumn(head.ColumnName): raw}, head.ColumnName)
+				if e != nil {
+					return e
+				}
+				raw = leaf
 			}
 			if ref, ok := bodyReference(raw); ok {
 				body, e := s.resolveInTx(tx, head, ref)
@@ -538,18 +613,67 @@ func originalBodySchemaPresent(tx *gorm.DB) bool {
 // producer has already persisted the same body bytes under its own authority;
 // this only deduplicates storage and creates an additional incoming owner.
 // It cannot introduce cached text, cross-tenant sharing, or a purged body ID.
-func(s *OriginalBodyRetentionStore)ShareOriginalBodyFieldInTx(ctx context.Context,tx *gorm.DB,bodyID,table,key,col string)error{
- d,ok:=bodyDescriptor(table);if !ok||d.Mode!="vault"{return ErrOriginalBodyUnavailable}
- allowed:=false;for _,field:=range d.Columns{if field==col{allowed=true}};if !allowed{return ErrOriginalBodyUnavailable}
- if e:=s.checkJournalInTx(tx);e!=nil{return e};if e:=s.checkExternalBody(bodyID);e!=nil{return e}
- var source originalBodyPayload;if e:=bodyInternal(tx).Clauses(clause.Locking{Strength:"UPDATE"}).Where("id=?",bodyID).Take(&source).Error;e!=nil{return e}
- if source.State!="live"||source.Payload==nil||bodySHA([]byte(*source.Payload))!=source.BodySHA256{return ErrOriginalBodyUnavailable}
- row,e:=bodySourceRow(tx,d,key);if e!=nil{return e};scope,e:=bodyScopeFromRow(tx,d,key,row);if e!=nil{return e};if scope.Tenant!=source.TenantID{return ErrOriginalBodyUnavailable}
- var target originalBodyFieldHead;if e:=bodyInternal(tx).Where("source_table=? AND row_key=? AND column_name=?",table,key,col).Take(&target).Error;e!=nil{return e}
- ref,ok:=bodyReference(bodyText(row[col]));if !ok{return ErrOriginalBodyUnavailable}
- raw,e:=s.resolveInTx(tx,target,ref);if e!=nil{return e};if bodySHA([]byte(raw))!=source.BodySHA256{return ErrOriginalBodyUnavailable}
- target.BodyID=source.ID;target.Revision++;target.OriginalBodyRef=bodyRefString(target.SlotID,source.ID,source.BodySHA256)
- if e:=bodyInternal(tx).Model(&originalBodyFieldHead{}).Where("slot_id=?",target.SlotID).Updates(map[string]any{"body_id":target.BodyID,"revision":target.Revision,"original_body_ref":target.OriginalBodyRef}).Error;e!=nil{return e}
- if e:=bodyInternal(tx).Table("original_body_field_revisions").Create(&target).Error;e!=nil{return e}
- return originalBodyRewrite(tx,d,key,col,source.ID,bodyText(row[col]),target.OriginalBodyRef)
+func (s *OriginalBodyRetentionStore) ShareOriginalBodyFieldInTx(ctx context.Context, tx *gorm.DB, bodyID, table, key, col string) error {
+	d, ok := bodyDescriptor(table)
+	if !ok || d.Mode != "vault" {
+		return ErrOriginalBodyUnavailable
+	}
+	allowed := false
+	for _, field := range d.Columns {
+		if field == col {
+			allowed = true
+		}
+	}
+	if !allowed {
+		return ErrOriginalBodyUnavailable
+	}
+	if e := s.checkJournalInTx(tx); e != nil {
+		return e
+	}
+	if e := s.checkExternalBody(bodyID); e != nil {
+		return e
+	}
+	var source originalBodyPayload
+	if e := bodyInternal(tx).Clauses(clause.Locking{Strength: "UPDATE"}).Where("id=?", bodyID).Take(&source).Error; e != nil {
+		return e
+	}
+	if source.State != "live" || source.Payload == nil || bodySHA([]byte(*source.Payload)) != source.BodySHA256 {
+		return ErrOriginalBodyUnavailable
+	}
+	row, e := bodySourceRow(tx, d, key)
+	if e != nil {
+		return e
+	}
+	scope, e := bodyScopeFromRow(tx, d, key, row)
+	if e != nil {
+		return e
+	}
+	if scope.Tenant != source.TenantID {
+		return ErrOriginalBodyUnavailable
+	}
+	var target originalBodyFieldHead
+	if e := bodyInternal(tx).Where("source_table=? AND row_key=? AND column_name=?", table, key, col).Take(&target).Error; e != nil {
+		return e
+	}
+	ref, ok := bodyReference(bodyText(row[col]))
+	if !ok {
+		return ErrOriginalBodyUnavailable
+	}
+	raw, e := s.resolveInTx(tx, target, ref)
+	if e != nil {
+		return e
+	}
+	if bodySHA([]byte(raw)) != source.BodySHA256 {
+		return ErrOriginalBodyUnavailable
+	}
+	target.BodyID = source.ID
+	target.Revision++
+	target.OriginalBodyRef = bodyRefString(target.SlotID, source.ID, source.BodySHA256)
+	if e := bodyInternal(tx).Model(&originalBodyFieldHead{}).Where("slot_id=?", target.SlotID).Updates(map[string]any{"body_id": target.BodyID, "revision": target.Revision, "original_body_ref": target.OriginalBodyRef}).Error; e != nil {
+		return e
+	}
+	if e := bodyInternal(tx).Table("original_body_field_revisions").Create(&target).Error; e != nil {
+		return e
+	}
+	return originalBodyRewrite(tx, d, key, col, source.ID, bodyText(row[col]), target.OriginalBodyRef)
 }

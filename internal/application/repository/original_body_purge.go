@@ -9,6 +9,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -18,7 +19,15 @@ func (s *OriginalBodyRetentionStore) bodyKnowledgeDeadline(tx *gorm.DB, tenant u
 	var k types.Knowledge
 	e := bodyInternal(tx).Unscoped().Where("id=? AND tenant_id=? AND knowledge_base_id=?", id, tenant, kb).Take(&k).Error
 	if errors.Is(e, gorm.ErrRecordNotFound) {
-		return now + 3600000, false, nil
+		if tx.Migrator().HasTable("nextcloud_gc_jobs") {
+			var job nextcloudGCJob
+			if e := bodyInternal(tx).Where("tenant_id=? AND knowledge_base_id=? AND knowledge_id=?", tenant, kb, id).Take(&job).Error; e == nil {
+				return job.NotBefore.UnixMilli(), false, nil
+			} else if !errors.Is(e, gorm.ErrRecordNotFound) {
+				return 0, true, e
+			}
+		}
+		return -1, false, nil
 	}
 	if e != nil {
 		return 0, false, e
@@ -32,7 +41,24 @@ func (s *OriginalBodyRetentionStore) bodyKnowledgeDeadline(tx *gorm.DB, tenant u
 		if e := nextcloudVersionQuery(bodyInternal(tx), tenant, kb, meta["datasource_id"], meta["external_id"]).Take(&version).Error; e != nil {
 			return 0, true, e
 		}
-		if version.State != "tombstone" && version.CandidateKnowledgeID == id {
+		withdrawn := false
+		if tx.Migrator().HasTable(&NextcloudIndexedWithdrawal{}) {
+			var n int64
+			if e := bodyInternal(tx).Model(&NextcloudIndexedWithdrawal{}).Where("tenant_id=? AND knowledge_base_id=? AND datasource_id=? AND state=?", tenant, kb, meta["datasource_id"], "withdrawn_inventory_incomplete").Count(&n).Error; e != nil {
+				return 0, true, e
+			}
+			withdrawn = n > 0
+		}
+		if !withdrawn && version.State != "tombstone" && tx.Migrator().HasTable("data_sources") {
+			var source types.DataSource
+			if e := bodyInternal(tx).Where("id=? AND tenant_id=? AND knowledge_base_id=?", meta["datasource_id"], tenant, kb).Take(&source).Error; e != nil {
+				return 0, true, e
+			}
+			if source.Status != types.DataSourceStatusActive {
+				return 0, true, nil
+			}
+		}
+		if !withdrawn && version.State != "tombstone" && version.CandidateKnowledgeID == id {
 			return 0, true, nil
 		}
 		var fence nextcloudContentFence
@@ -42,11 +68,11 @@ func (s *OriginalBodyRetentionStore) bodyKnowledgeDeadline(tx *gorm.DB, tenant u
 		if fence.State != "retired" || fence.RetiredAtMS == nil {
 			return 0, true, nil
 		}
-		if version.State == "tombstone" {
-			return *fence.RetiredAtMS, false, nil
-		}
 		if k.PendingSubtasksCount > 0 {
 			return 0, true, nil
+		}
+		if version.State == "tombstone" || withdrawn {
+			return *fence.RetiredAtMS, false, nil
 		}
 		window := int64(3600000)
 		if k.ParseStatus == types.ParseStatusFailed || k.ParseStatus == types.ParseStatusCancelled {
@@ -60,7 +86,7 @@ func (s *OriginalBodyRetentionStore) bodyKnowledgeDeadline(tx *gorm.DB, tenant u
 	if admission != "" && tx.Migrator().HasTable("knowledge_input_material_receipts") {
 		var receipt knowledgeInputMaterialReceipt
 		if e := bodyInternal(tx).Where("row_kind='knowledge' AND row_id=?", id).Take(&receipt).Error; e == nil && receipt.AdmissionID != admission {
-			return now + 3600000, false, nil
+			return -1, false, nil
 		}
 	}
 	return 0, true, nil
@@ -79,7 +105,7 @@ func (s *OriginalBodyRetentionStore) fieldCurrent(tx *gorm.DB, head originalBody
 	}
 	row, e := bodySourceRow(tx, d, head.RowKey)
 	if errors.Is(e, gorm.ErrRecordNotFound) {
-		return false, now + 3600000, nil
+		return false, -1, nil
 	}
 	if e != nil {
 		return true, 0, e
@@ -96,6 +122,38 @@ func (s *OriginalBodyRetentionStore) fieldCurrent(tx *gorm.DB, head originalBody
 		return current, deadline, e
 	}
 	switch d.Table {
+	case "datasource_name_inputs":
+		source, e := bodySourceRow(tx, originalBodyFieldDescriptor{Table: "data_sources", Key: "id"}, bodyText(row["datasource_id"]))
+		if errors.Is(e, gorm.ErrRecordNotFound) {
+			return false, -1, nil
+		}
+		if e != nil {
+			return true, 0, e
+		}
+		if bodyUint(source["tenant_id"]) != head.TenantID || bodyText(source["knowledge_base_id"]) != head.KnowledgeBaseID {
+			return true, 0, ErrOriginalBodyUnavailable
+		}
+		if tx.Migrator().HasTable(&NextcloudIndexedWithdrawal{}) {
+			var withdrawal NextcloudIndexedWithdrawal
+			e := bodyInternal(tx).Where("tenant_id=? AND knowledge_base_id=? AND datasource_id=? AND state=?", head.TenantID, head.KnowledgeBaseID, row["datasource_id"], "withdrawn_inventory_incomplete").Take(&withdrawal).Error
+			if e == nil {
+				return false, withdrawal.CreatedAt.UnixMilli(), nil
+			}
+			if !errors.Is(e, gorm.ErrRecordNotFound) {
+				return true, 0, e
+			}
+		}
+		if bodyText(source["status"]) != types.DataSourceStatusActive {
+			return true, 0, nil
+		}
+		var version struct{ Revision uint64 }
+		if e := bodyInternal(tx).Table("datasource_name_versions").Where("datasource_id=?", row["datasource_id"]).Take(&version).Error; e != nil {
+			return true, 0, e
+		}
+		if version.Revision == bodyUint(row["revision"]) {
+			return true, 0, nil
+		}
+		return false, -1, nil
 	case "faq_input_sessions":
 		var refs int64
 		if e := bodyInternal(tx).Table("faq_entry_material_receipts r").Joins("JOIN faq_entry_input_admissions a ON a.id=r.admission_id").Where("a.session_id=?", head.RowKey).Count(&refs).Error; e != nil {
@@ -104,7 +162,7 @@ func (s *OriginalBodyRetentionStore) fieldCurrent(tx *gorm.DB, head originalBody
 		if refs > 0 {
 			return true, 0, nil
 		}
-		return false, now + 3600000, nil
+		return false, -1, nil
 	case "faq_import_output_admissions":
 		var refs int64
 		if e := bodyInternal(tx).Table("faq_import_output_heads").Where("admission_id=?", head.RowKey).Count(&refs).Error; e != nil {
@@ -113,7 +171,7 @@ func (s *OriginalBodyRetentionStore) fieldCurrent(tx *gorm.DB, head originalBody
 		if refs > 0 {
 			return true, 0, nil
 		}
-		return false, now + 3600000, nil
+		return false, -1, nil
 	case "knowledge_display_input_origins":
 		var version struct{ Revision int64 }
 		if e := bodyInternal(tx).Table("knowledge_display_versions").Where("kind=? AND row_id=?", row["kind"], row["row_id"]).Take(&version).Error; e != nil {
@@ -122,7 +180,7 @@ func (s *OriginalBodyRetentionStore) fieldCurrent(tx *gorm.DB, head originalBody
 		if version.Revision == int64(bodyUint(row["revision"])) {
 			return true, 0, nil
 		}
-		return false, now + 3600000, nil
+		return false, -1, nil
 	case "messages", "message_generation_origins":
 		message := row
 		if d.Table == "message_generation_origins" {
@@ -132,25 +190,44 @@ func (s *OriginalBodyRetentionStore) fieldCurrent(tx *gorm.DB, head originalBody
 			}
 		}
 		if message["deleted_at"] != nil && bodyText(message["deleted_at"]) != "" {
-			return false, now + 3600000, nil
+			return false, -1, nil
 		}
 		return true, 0, nil
 	case "sessions":
 		if row["deleted_at"] != nil && bodyText(row["deleted_at"]) != "" {
-			return false, now + 3600000, nil
+			return false, -1, nil
 		}
 		return true, 0, nil
 	case "knowledge_enrichment_template_inputs":
-		// Each actual captured parent is checked below; no current configuration
-		// or absent result rows can prove this original was unused.
-		var parents int64
-		if e := bodyInternal(tx).Model(&originalBodyParentRef{}).Where("body_id=?", head.BodyID).Count(&parents).Error; e != nil {
-			return true, 0, e
-		}
-		if parents == 0 {
+		// A completed template still used by the current KB protects its captured
+		// input. Missing result evidence never proves that a build terminated.
+		if !tx.Migrator().HasTable("knowledge_enrichment_template_results") {
 			return true, 0, nil
 		}
-		return false, now + 3600000, nil
+		var results []struct{ OutputDigest string }
+		if e := bodyInternal(tx).Table("knowledge_enrichment_template_results").Where("input_id=?", head.RowKey).Find(&results).Error; e != nil {
+			return true, 0, e
+		}
+		if len(results) == 0 {
+			return true, 0, nil
+		}
+		var kb types.KnowledgeBase
+		if e := bodyInternal(tx).Where("id=? AND tenant_id=?", head.KnowledgeBaseID, head.TenantID).Take(&kb).Error; e != nil {
+			return true, 0, e
+		}
+		if kb.EnrichmentTemplates != nil {
+			current := kb.EnrichmentTemplates.Content(bodyText(row["purpose"]))
+			digest, e := KnowledgeInputDigest(current)
+			if e != nil {
+				return true, 0, e
+			}
+			for _, result := range results {
+				if result.OutputDigest == digest {
+					return true, 0, nil
+				}
+			}
+		}
+		return false, -1, nil
 	default:
 		return true, 0, nil
 	}
@@ -232,7 +309,7 @@ func (s *OriginalBodyRetentionStore) lockBodyScopes(tx *gorm.DB, heads []origina
 			return e
 		}
 		if tx.Migrator().HasTable("nextcloud_content_fences") {
-			now, e := nextcloudLeaseNowMS(tx)
+			now, e := nextcloudLeaseNowMS(bodyInternal(tx))
 			if e != nil {
 				return e
 			}
@@ -264,10 +341,98 @@ func (s *OriginalBodyRetentionStore) PurgeDue(ctx context.Context, limit int) (i
 	if e := bodyInternal(s.db.WithContext(ctx)).Model(&originalBodyPayload{}).Where("state='live'").Order("created_at_ms,id").Limit(limit).Pluck("id", &ids).Error; e != nil {
 		return 0, e
 	}
+	return s.purgeBodyIDs(ctx, ids, nil)
+}
+
+// PurgeSelectedJob selects only body owners/parent tuples of one persisted job.
+// The same SQL transaction repeats admin, exact scope, source and lease gates.
+func (s *OriginalBodyRetentionStore) PurgeSelectedJob(ctx context.Context, tenant uint64, jobID string, limit int) (int, error) {
+	if !originalBodySchemaPresent(s.db) {
+		return 0, nil
+	}
+	if tenant == 0 || jobID == "" {
+		return 0, ErrNextcloudGCJobUnavailable
+	}
+	var job nextcloudGCJob
+	if e := bodyInternal(s.db.WithContext(ctx)).Where("id=? AND tenant_id=?", jobID, tenant).Take(&job).Error; e != nil {
+		return 0, ErrNextcloudGCJobUnavailable
+	}
+	if limit <= 0 || limit > 100 {
+		limit = 100
+	}
+	var ids []string
+	q := `SELECT DISTINCT p.id FROM original_body_payloads p WHERE p.state='live' AND p.tenant_id=? AND (EXISTS(SELECT 1 FROM original_body_field_revisions r WHERE r.body_id=p.id AND r.tenant_id=? AND r.knowledge_base_id=? AND r.knowledge_id=?) OR EXISTS(SELECT 1 FROM original_body_parent_refs r WHERE r.body_id=p.id AND r.tenant_id=? AND r.knowledge_base_id=? AND r.knowledge_id=?)) ORDER BY p.id LIMIT ?`
+	if s.db.Migrator().HasTable("datasource_name_inputs") {
+		q = strings.Replace(q, ")) ORDER BY p.id LIMIT ?", ") OR EXISTS(SELECT 1 FROM original_body_field_revisions r JOIN datasource_name_inputs n ON r.source_table='datasource_name_inputs' AND n.id=r.row_key WHERE r.body_id=p.id AND n.tenant_id=? AND n.knowledge_base_id=? AND n.datasource_id=?)) ORDER BY p.id LIMIT ?", 1)
+	}
+	args := []any{tenant, tenant, job.KnowledgeBaseID, job.KnowledgeID, tenant, job.KnowledgeBaseID, job.KnowledgeID}
+	if s.db.Migrator().HasTable("datasource_name_inputs") {
+		args = append(args, tenant, job.KnowledgeBaseID, job.DataSourceID)
+	}
+	args = append(args, limit)
+	if e := bodyInternal(s.db.WithContext(ctx)).Raw(q, args...).Scan(&ids).Error; e != nil {
+		return 0, e
+	}
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	e := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if e := gcValidateManualAdmin(ctx, bodyInternal(tx), job); e != nil {
+			return e
+		}
+		now, e := nextcloudLeaseNowMS(bodyInternal(tx))
+		if e != nil {
+			return e
+		}
+		for _, id := range ids {
+			var body originalBodyPayload
+			if e := bodyInternal(tx).Where("id=?", id).Take(&body).Error; e != nil {
+				return e
+			}
+			item := nextcloudGCItem{JobID: job.ID, Kind: "sql_original_body", ObjectRef: id, State: "pending", EstimatedBytes: body.BodyBytes, CreatedAt: time.UnixMilli(now), UpdatedAt: time.UnixMilli(now)}
+			if e := bodyInternal(tx).Clauses(clause.OnConflict{DoNothing: true}).Create(&item).Error; e != nil {
+				return e
+			}
+		}
+		return nil
+	})
+	if e != nil {
+		return 0, e
+	}
+	n, purgeErr := s.purgeBodyIDs(ctx, ids, &job)
+	recordErr := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if e := gcValidateManualAdmin(ctx, bodyInternal(tx), job); e != nil {
+			return e
+		}
+		if e := bodyInternal(tx).Exec("UPDATE nextcloud_gc_items SET state='collected' WHERE job_id=? AND kind='sql_original_body' AND EXISTS(SELECT 1 FROM original_body_payloads p WHERE p.id=object_ref AND p.state='purged' AND p.payload IS NULL)", job.ID).Error; e != nil {
+			return e
+		}
+		var pending int64
+		if e := bodyInternal(tx).Model(&nextcloudGCItem{}).Where("job_id=? AND kind='sql_original_body' AND state<>'collected'", job.ID).Count(&pending).Error; e != nil {
+			return e
+		}
+		if pending > 0 {
+			return bodyInternal(tx).Model(&nextcloudGCJob{}).Where("id=?", job.ID).Updates(map[string]any{"state": "blocked", "completed_at": nil, "last_error_code": "original_body_retained_or_unverified"}).Error
+		}
+		return nil
+	})
+	return n, errors.Join(purgeErr, recordErr)
+}
+func (s *OriginalBodyRetentionStore) purgeBodyIDs(ctx context.Context, ids []string, selected *nextcloudGCJob) (int, error) {
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	if s.journal == nil {
+		return 0, ErrOriginalBodyUnavailable
+	}
 	done := 0
 	for _, id := range ids {
 		collected := false
 		e := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			var journalHead originalBodyJournalHead
+			if e := bodyInternal(tx).Clauses(clause.Locking{Strength: "UPDATE"}).Where("id=1").Take(&journalHead).Error; e != nil {
+				return e
+			}
 			if e := s.checkJournalInTx(tx); e != nil {
 				return e
 			}
@@ -282,6 +447,35 @@ func (s *OriginalBodyRetentionStore) PurgeDue(ctx context.Context, limit int) (i
 			if e := s.lockBodyScopes(tx, heads, parents); e != nil {
 				return e
 			}
+			if selected != nil {
+				var job nextcloudGCJob
+				if e := bodyInternal(tx).Clauses(clause.Locking{Strength: "UPDATE"}).Where("id=? AND tenant_id=?", selected.ID, selected.TenantID).Take(&job).Error; e != nil {
+					return e
+				}
+				if job.KnowledgeBaseID != selected.KnowledgeBaseID || job.KnowledgeID != selected.KnowledgeID || job.DataSourceID != selected.DataSourceID || job.ExternalID != selected.ExternalID {
+					return ErrOriginalBodyUnavailable
+				}
+				if e := gcValidateManualAdmin(ctx, bodyInternal(tx), job); e != nil {
+					return e
+				}
+				now, e := nextcloudLeaseNowMS(bodyInternal(tx))
+				if e != nil {
+					return e
+				}
+				if job.NotBefore.UnixMilli() > now {
+					return ErrOriginalBodyRetained
+				}
+				if _, e := gcCheckRetiredContent(bodyInternal(tx), job, now); e != nil {
+					return e
+				}
+				var version nextcloudSourceVersion
+				if e := nextcloudVersionQuery(bodyInternal(tx).Clauses(clause.Locking{Strength: "UPDATE"}), job.TenantID, job.KnowledgeBaseID, job.DataSourceID, job.ExternalID).Take(&version).Error; e != nil {
+					return e
+				}
+				if version.State != "tombstone" && version.CandidateKnowledgeID == job.KnowledgeID {
+					return ErrOriginalBodyRetained
+				}
+			}
 			var body originalBodyPayload
 			if e := bodyInternal(tx).Clauses(clause.Locking{Strength: "UPDATE"}).Where("id=?", id).Take(&body).Error; e != nil {
 				return e
@@ -292,7 +486,7 @@ func (s *OriginalBodyRetentionStore) PurgeDue(ctx context.Context, limit int) (i
 			if body.StorageKind == "unsupported" {
 				return ErrOriginalBodyRetained
 			}
-			now, e := nextcloudLeaseNowMS(tx)
+			now, e := nextcloudLeaseNowMS(bodyInternal(tx))
 			if e != nil {
 				return e
 			}
@@ -362,14 +556,17 @@ func (s *OriginalBodyRetentionStore) PurgeDue(ctx context.Context, limit int) (i
 					if e != nil {
 						return e
 					}
-					raw := bodyText(row[head.ColumnName])
+					raw, e := bodyFieldValue(row, head.ColumnName)
+					if e != nil {
+						return e
+					}
 					if bodySHA([]byte(raw)) != body.BodySHA256 {
 						return ErrOriginalBodyUnavailable
 					}
 					clearedValue := ""
 					if isJSON, e := originalBodyColumnIsJSON(tx, d.Table, head.ColumnName); e != nil {
 						return e
-					} else if isJSON {
+					} else if isJSON && !strings.Contains(head.ColumnName, ".") {
 						clearedValue = "null"
 					}
 					if e := originalBodyRewrite(tx, d, head.RowKey, head.ColumnName, id, raw, clearedValue); e != nil {

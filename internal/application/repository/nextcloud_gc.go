@@ -307,6 +307,13 @@ func (s *NextcloudGCStore) RunDue(ctx context.Context, now time.Time, limit int)
 		if err := s.db.WithContext(ctx).Model(&nextcloudGCJob{}).Where("id=? AND state='collected'", id).Update("next_attempt_at", now.Add(nextcloudGCRetryWindow)).Error; err != nil {
 			return processed, err
 		}
+		var bodyJob nextcloudGCJob
+		if err := bodyInternal(s.db.WithContext(ctx)).Select("tenant_id").Where("id=?", id).Take(&bodyJob).Error; err != nil {
+			return processed, err
+		}
+		if _, err := NewOriginalBodyRetentionStore(s.db).PurgeSelectedJob(ctx, bodyJob.TenantID, id, 100); err != nil {
+			return processed, err
+		}
 		processed++
 	}
 	return processed, nil

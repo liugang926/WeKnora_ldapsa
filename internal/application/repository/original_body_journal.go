@@ -7,7 +7,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/google/uuid"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -20,19 +22,21 @@ type originalBodyJournalEvent struct {
 	Sequence                                                                  int64  `json:"sequence"`
 	PreviousSHA256                                                            string `json:"previous_sha256"`
 	BodyID, BodySHA256, ScopeSHA256                                           string
+	JournalID                                                                 string
 	TenantID                                                                  uint64
 	Fields                                                                    []string
 	BeforeBytes, BodyDeadlineMS, MetadataDeadlineMS, RecordedAtMS, PurgeEpoch int64
 	Signature, HeadSHA256                                                     string
 }
 type originalBodyJournalPin struct {
-	Sequence              int64
-	HeadSHA256, Signature string
+	Sequence                         int64
+	HeadSHA256, Signature, JournalID string
 }
 type originalBodyJournalHead struct {
 	ID         int `gorm:"primaryKey"`
 	Sequence   int64
 	HeadSHA256 string
+	JournalID  string
 }
 
 func (originalBodyJournalHead) TableName() string { return "original_body_journal_heads" }
@@ -102,7 +106,7 @@ func bodyEventCore(event originalBodyJournalEvent) []byte {
 	return b
 }
 func bodyPinMAC(key []byte, p originalBodyJournalPin) string {
-	return bodyMAC(key, []byte("body-pin-v1\n"+strconv.FormatInt(p.Sequence, 10)+"\n"+p.HeadSHA256))
+	return bodyMAC(key, []byte("body-pin-v1\n"+p.JournalID+"\n"+strconv.FormatInt(p.Sequence, 10)+"\n"+p.HeadSHA256))
 }
 func (j *originalBodyJournal) read() ([]originalBodyJournalEvent, originalBodyJournalPin, error) {
 	var pin originalBodyJournalPin
@@ -132,8 +136,30 @@ func (j *originalBodyJournal) read() ([]originalBodyJournalEvent, originalBodyJo
 	if e != nil {
 		return nil, pin, e
 	}
-	if json.Unmarshal(raw, &pin) != nil || pin.Sequence != int64(len(events)) || pin.HeadSHA256 != head || !hmac.Equal([]byte(pin.Signature), []byte(bodyPinMAC(key, pin))) {
+	if json.Unmarshal(raw, &pin) != nil || pin.JournalID == "" || pin.Sequence < 0 || pin.Sequence > int64(len(events)) || !hmac.Equal([]byte(pin.Signature), []byte(bodyPinMAC(key, pin))) {
 		return nil, pin, ErrOriginalBodyUnavailable
+	}
+	for _, event := range events {
+		if event.JournalID != pin.JournalID {
+			return nil, pin, ErrOriginalBodyUnavailable
+		}
+	}
+	pinnedHead := ""
+	if pin.Sequence > 0 {
+		pinnedHead = events[pin.Sequence-1].HeadSHA256
+	}
+	if pin.HeadSHA256 != pinnedHead {
+		return nil, pin, ErrOriginalBodyUnavailable
+	}
+	if pin.Sequence < int64(len(events)) {
+		// A durable authenticated tail with an older pin is the interrupted
+		// append boundary. Verify its pinned prefix before advancing the pin.
+		pin = originalBodyJournalPin{Sequence: int64(len(events)), HeadSHA256: head, JournalID: pin.JournalID}
+		pin.Signature = bodyPinMAC(key, pin)
+		data, _ := json.Marshal(pin)
+		if e := bodyWritePrivateAtomic(j.paths.PinPath, data); e != nil {
+			return nil, pin, e
+		}
 	}
 	return events, pin, nil
 }
@@ -183,6 +209,9 @@ func bodyWritePrivateAtomic(path string, data []byte) error {
 
 // Explicit owned initialization; a conflicting marker/file is never adopted.
 func (s *OriginalBodyRetentionStore) InitializeJournal() error {
+	if !originalBodySchemaPresent(s.db) {
+		return ErrOriginalBodyUnavailable
+	}
 	key, e := s.journal.key()
 	if e != nil {
 		return e
@@ -193,13 +222,38 @@ func (s *OriginalBodyRetentionStore) InitializeJournal() error {
 			return ErrOriginalBodyUnavailable
 		}
 	}
-	if e = bodyWritePrivateAtomic(path, []byte("[]")); e != nil {
-		return e
-	}
-	pin := originalBodyJournalPin{}
-	pin.Signature = bodyPinMAC(key, pin)
-	raw, _ := json.Marshal(pin)
-	return bodyWritePrivateAtomic(s.journal.paths.PinPath, raw)
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		var head originalBodyJournalHead
+		if e := bodyInternal(tx).Clauses(clause.Locking{Strength: "UPDATE"}).Where("id=1").Take(&head).Error; e != nil {
+			return e
+		}
+		if head.Sequence != 0 || head.HeadSHA256 != "" || head.JournalID != "" {
+			return ErrOriginalBodyUnavailable
+		}
+		var count int64
+		if e := bodyInternal(tx).Model(&originalBodyPayload{}).Where("state<>'live'").Count(&count).Error; e != nil {
+			return e
+		}
+		if count != 0 {
+			return ErrOriginalBodyUnavailable
+		}
+		if e := bodyInternal(tx).Model(&originalBodyPurgeReceipt{}).Count(&count).Error; e != nil {
+			return e
+		}
+		if count != 0 {
+			return ErrOriginalBodyUnavailable
+		}
+		pin := originalBodyJournalPin{JournalID: uuid.NewString()}
+		pin.Signature = bodyPinMAC(key, pin)
+		if e := bodyWritePrivateAtomic(path, []byte("[]")); e != nil {
+			return e
+		}
+		data, _ := json.Marshal(pin)
+		if e := bodyWritePrivateAtomic(s.journal.paths.PinPath, data); e != nil {
+			return e
+		}
+		return bodyInternal(tx).Model(&head).Where("sequence=0 AND journal_id='' AND head_sha256=''").Update("journal_id", pin.JournalID).Error
+	})
 }
 func (s *OriginalBodyRetentionStore) checkJournalInTx(tx *gorm.DB) error {
 	var head originalBodyJournalHead
@@ -207,16 +261,13 @@ func (s *OriginalBodyRetentionStore) checkJournalInTx(tx *gorm.DB) error {
 		return e
 	}
 	if s.journal == nil {
-		if head.Sequence == 0 {
-			return nil
-		}
 		return ErrOriginalBodyUnavailable
 	}
 	_, pin, e := s.journal.read()
 	if e != nil {
 		return e
 	}
-	if pin.Sequence != head.Sequence || pin.HeadSHA256 != head.HeadSHA256 {
+	if pin.JournalID != head.JournalID || pin.Sequence != head.Sequence || pin.HeadSHA256 != head.HeadSHA256 {
 		return ErrOriginalBodyUnavailable
 	}
 	return nil
@@ -265,6 +316,7 @@ func (j *originalBodyJournal) append(event originalBodyJournalEvent) (originalBo
 			return old, nil
 		}
 	}
+	event.JournalID = pin.JournalID
 	event.Sequence = pin.Sequence + 1
 	event.PreviousSHA256 = pin.HeadSHA256
 	event.Signature = bodyMAC(key, bodyEventCore(event))
@@ -277,10 +329,19 @@ func (j *originalBodyJournal) append(event originalBodyJournalEvent) (originalBo
 	if e = bodyWritePrivateAtomic(filepath.Join(j.paths.Directory, "purge-ledger.json"), raw); e != nil {
 		return event, e
 	}
-	pin = originalBodyJournalPin{Sequence: event.Sequence, HeadSHA256: event.HeadSHA256}
+	pin = originalBodyJournalPin{Sequence: event.Sequence, HeadSHA256: event.HeadSHA256, JournalID: pin.JournalID}
 	pin.Signature = bodyPinMAC(key, pin)
 	raw, _ = json.Marshal(pin)
 	return event, bodyWritePrivateAtomic(j.paths.PinPath, raw)
 }
 
 var _ = fmt.Sprintf
+
+// VerifyJournalReady fails startup after a restore until external decisions
+// have been reconciled. Initialization is an explicit operator action.
+func (s *OriginalBodyRetentionStore) VerifyJournalReady() error {
+	if !originalBodySchemaPresent(s.db) {
+		return nil
+	}
+	return s.checkJournalInTx(bodyInternal(s.db))
+}

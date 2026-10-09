@@ -38,7 +38,6 @@ func bodyActualFixture(t *testing.T, pg bool) (*enrichmentTestFixture, *reposito
 }
 func runOriginalBodyActualTagProducer(t *testing.T, pg bool) {
 	f, store := bodyActualFixture(t, pg)
-	t.Setenv("WEKNORA_BODY_CALLBACK_DEBUG", "1")
 	require.True(t, f.db.Migrator().HasTable("original_body_payloads"))
 	proof := repository.KnowledgeBuildInputProofFromContext(f.build)
 	require.NotNil(t, proof)

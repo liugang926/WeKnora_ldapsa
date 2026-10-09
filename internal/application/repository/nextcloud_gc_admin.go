@@ -111,6 +111,9 @@ func (s *NextcloudGCStore) CollectJob(ctx context.Context, authority *KnowledgeI
 	if e := s.runLocalDerived(ctx, id, now); e != nil {
 		return nil, e
 	}
+	if _, e := NewOriginalBodyRetentionStore(s.db).PurgeSelectedJob(ctx, tenant, id, 100); e != nil {
+		return nil, e
+	}
 	return s.PreviewJob(ctx, tenant, id)
 }
 

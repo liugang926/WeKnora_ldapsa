@@ -36,8 +36,8 @@ CREATE TABLE original_body_purge_receipts (
  journal_sequence BIGINT NOT NULL,journal_head_sha256 TEXT NOT NULL,
  purge_token TEXT NOT NULL,purge_epoch BIGINT NOT NULL,completed_at_ms BIGINT NOT NULL
 );
-CREATE TABLE original_body_journal_heads(id INTEGER PRIMARY KEY CHECK(id=1),sequence BIGINT NOT NULL,head_sha256 TEXT NOT NULL);
-INSERT INTO original_body_journal_heads VALUES(1,0,'');
+CREATE TABLE original_body_journal_heads(id INTEGER PRIMARY KEY CHECK(id=1),sequence BIGINT NOT NULL,head_sha256 TEXT NOT NULL,journal_id TEXT NOT NULL DEFAULT '');
+INSERT INTO original_body_journal_heads(id,sequence,head_sha256) VALUES(1,0,'');
 CREATE TRIGGER original_body_receipt_update BEFORE UPDATE ON original_body_purge_receipts BEGIN SELECT RAISE(ABORT,'immutable original body purge'); END;
 CREATE TRIGGER original_body_receipt_delete BEFORE DELETE ON original_body_purge_receipts BEGIN SELECT RAISE(ABORT,'immutable original body purge'); END;
 

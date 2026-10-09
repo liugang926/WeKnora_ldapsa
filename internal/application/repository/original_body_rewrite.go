@@ -14,7 +14,7 @@ func originalBodyColumnIsJSON(tx *gorm.DB, table, col string) (bool, error) {
 		return false, e
 	}
 	for _, c := range columns {
-		if c.Name() == col {
+		if c.Name() == bodyFieldColumn(col) {
 			name := strings.ToLower(c.DatabaseTypeName())
 			return strings.Contains(name, "json"), nil
 		}
@@ -23,6 +23,23 @@ func originalBodyColumnIsJSON(tx *gorm.DB, table, col string) (bool, error) {
 }
 func originalBodyRewrite(tx *gorm.DB, d originalBodyFieldDescriptor, key, col, id, old, new string) error {
 	internal := bodyInternal(tx)
+	if strings.Contains(col, ".") {
+		row, e := bodySourceRow(tx, d, key)
+		if e != nil {
+			return e
+		}
+		stored := bodyText(row[bodyFieldColumn(col)])
+		updated, e := bodyNestedReplace(stored, col, old, new)
+		if e != nil {
+			return e
+		}
+		if tx.Dialector.Name() == "postgres" {
+			if e := internal.Raw("SELECT CAST(? AS jsonb)::text", updated).Scan(&updated).Error; e != nil {
+				return e
+			}
+		}
+		old, new, col = stored, updated, bodyFieldColumn(col)
+	}
 	if e := internal.Exec("INSERT INTO original_body_rewrite_authorities(source_table,row_key,column_name,body_id,old_value,new_value) VALUES(?,?,?,?,?,?)", d.Table, key, col, id, old, new).Error; e != nil {
 		return e
 	}
@@ -63,7 +80,8 @@ func InstallOriginalBodyRetentionTriggers(db *gorm.DB) error {
 			known[c.Name()] = true
 		}
 		permitted := []string{}
-		for _, col := range d.Columns {
+		for _, field := range d.Columns {
+			col := bodyFieldColumn(field)
 			if !known[col] {
 				continue
 			}
@@ -137,7 +155,8 @@ func installPostgresBodyRewrite(db *gorm.DB) error {
 			known[c.Name()] = true
 		}
 		conditions := []string{}
-		for _, col := range d.Columns {
+		for _, field := range d.Columns {
+			col := bodyFieldColumn(field)
 			if !known[col] {
 				continue
 			}

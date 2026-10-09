@@ -7,6 +7,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 	"sort"
+	"strings"
 )
 
 // ReconcileExternalPurge replays verified external decisions after a failed
@@ -26,7 +27,7 @@ func (s *OriginalBodyRetentionStore) ReconcileExternalPurge(ctx context.Context)
 		if e := bodyInternal(tx).Clauses(clause.Locking{Strength: "UPDATE"}).Where("id=1").Take(&head).Error; e != nil {
 			return e
 		}
-		if head.Sequence > pin.Sequence {
+		if head.JournalID != pin.JournalID || head.Sequence > pin.Sequence {
 			return ErrOriginalBodyUnavailable
 		}
 		for _, event := range events {
@@ -75,7 +76,7 @@ func (s *OriginalBodyRetentionStore) ReconcileExternalPurge(ctx context.Context)
 			if e := s.lockBodyScopes(tx, heads, parents); e != nil {
 				return e
 			}
-			now, e := nextcloudLeaseNowMS(tx)
+			now, e := nextcloudLeaseNowMS(bodyInternal(tx))
 			if e != nil {
 				return e
 			}
@@ -124,14 +125,17 @@ func (s *OriginalBodyRetentionStore) ReconcileExternalPurge(ctx context.Context)
 					if e != nil {
 						return e
 					}
-					raw := bodyText(row[h.ColumnName])
+					raw, e := bodyFieldValue(row, h.ColumnName)
+					if e != nil {
+						return e
+					}
 					if bodySHA([]byte(raw)) != body.BodySHA256 {
 						return ErrOriginalBodyUnavailable
 					}
 					empty := ""
 					if jsonCol, e := originalBodyColumnIsJSON(tx, d.Table, h.ColumnName); e != nil {
 						return e
-					} else if jsonCol {
+					} else if jsonCol && !strings.Contains(h.ColumnName, ".") {
 						empty = "null"
 					}
 					if e := originalBodyRewrite(tx, d, h.RowKey, h.ColumnName, body.ID, raw, empty); e != nil {

@@ -99,7 +99,7 @@ type originalBodyInternalKey struct{}
 // Shared with actual material/history consumers, including message generation
 // origins. This never authenticates cached body by loading a newer current row.
 func CheckOriginalBodyAvailableInTx(ctx context.Context, tx *gorm.DB, table, rowID string) error {
-	if !tx.Migrator().HasTable(&originalBodyPayload{}) {
+	if !originalBodySchemaPresent(tx) {
 		return nil
 	}
 	store := NewOriginalBodyRetentionStore(tx)
@@ -162,7 +162,7 @@ func (s *OriginalBodyRetentionStore) AcquireLease(ctx context.Context, bodyID, k
 		if body.State != "live" {
 			return ErrOriginalBodyUnavailable
 		}
-		now, e := nextcloudLeaseNowMS(tx)
+		now, e := nextcloudLeaseNowMS(bodyInternal(tx))
 		if e != nil {
 			return e
 		}
@@ -172,7 +172,7 @@ func (s *OriginalBodyRetentionStore) AcquireLease(ctx context.Context, bodyID, k
 	return id, e
 }
 func (s *OriginalBodyRetentionStore) ReleaseLease(ctx context.Context, id string) error {
-	now, e := nextcloudLeaseNowMS(s.db)
+	now, e := nextcloudLeaseNowMS(bodyInternal(s.db))
 	if e != nil {
 		return e
 	}
