@@ -325,6 +325,16 @@ func (r *wikiPageRepository) UpdateMeta(ctx context.Context, page *types.WikiPag
 	return nil
 }
 
+// GetPageScopeByID resolves only ownership before the service's source policy.
+func (r *wikiPageRepository) GetPageScopeByID(ctx context.Context, id string) (string, error) {
+	var row struct{ KnowledgeBaseID string }
+	err := r.db.WithContext(ctx).Model(&types.WikiPage{}).Select("knowledge_base_id").Where("id = ?", id).Take(&row).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return "", ErrWikiPageNotFound
+	}
+	return row.KnowledgeBaseID, err
+}
+
 // GetByID retrieves a wiki page by its unique ID
 func (r *wikiPageRepository) GetByID(ctx context.Context, id string) (*types.WikiPage, error) {
 	var page types.WikiPage

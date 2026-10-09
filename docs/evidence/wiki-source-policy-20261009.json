@@ -1,0 +1,24 @@
+{
+  "scope": "actual SQLite repository ownership-only read and ordinary Wiki service; no production coverage marker",
+  "focused": {
+    "counts": {
+      "pass": 36,
+      "fail": 0,
+      "skip": 0
+    },
+    "log_sha256": "f7e6b1841af06a58cc1c35d9bcf36ab6327039cbe6c22fbef59f51c2cf76ee06"
+  },
+  "revision_regression": {
+    "counts": {
+      "pass": 3,
+      "fail": 0,
+      "skip": 0
+    },
+    "log_sha256": "f2ecbc7636a94ce2145aa72430da77d6c9c6950af9d2f8481dc2f7734910ae08"
+  },
+  "original_broad_failure": {
+    "fail_nodes": 3,
+    "reason": "existing unrelated KnowledgePostProcess summary fixtures lack admitted prompt origins",
+    "log_sha256": "0e441320da28c2b3313d2b927b757b8543d40e3f22ca6543819fc28350ca7133"
+  }
+}
