@@ -1,0 +1,211 @@
+{
+  "review_base": "d7cee0415eeafadbbb1507ef6ea63a2c2362aa2d",
+  "fixture_commit": "7dd09bcd67830bdbcf745f8e74f83bd3f450178c",
+  "latest_checker_test_head": "0f9664937207ce0c42c7d847b1fac61da8183045",
+  "root_commits_added_for_latest_checker": [
+    "7930e9009296f895e27a234a86b5d649041bd428",
+    "c201507df8ec6cd73294ceef22b12f5aa8b2bfc8",
+    "58e163415220d85a9798021da07a41d39da3a537"
+  ],
+  "runs": [
+    {
+      "run": "r1",
+      "stdout": "/tmp/weknora-auto-body-combination-a58c-r1.jsonl",
+      "stdout_sha256": "e08e813dd1cf0111e35278cb87d72ae7ad09dcb9112f96b78ee5ecb2c226c264",
+      "stdout_bytes": 170052,
+      "terminal_exit": 0,
+      "events": {
+        "pass": 13,
+        "fail": 0,
+        "skip": 0
+      },
+      "failed_tests": [],
+      "package_results": [
+        {
+          "package": "github.com/Tencent/WeKnora/internal/application/service",
+          "action": "pass"
+        },
+        {
+          "package": "github.com/Tencent/WeKnora/internal/database",
+          "action": "pass"
+        }
+      ]
+    },
+    {
+      "run": "r2",
+      "stdout": "/tmp/weknora-auto-body-combination-a58c-r2.jsonl",
+      "stdout_sha256": "a0ad2df517ce7ed7e80d69ba4950c03ae0b1123bd62ee2d70a8cbb8d8ae161e5",
+      "stdout_bytes": 1833750,
+      "terminal_exit": 1,
+      "events": {
+        "pass": 74,
+        "fail": 33,
+        "skip": 0
+      },
+      "failed_tests": [
+        "TestKnowledgeAutoCompletionDurabilitySQLitePoolOne/enqueue_failure",
+        "TestKnowledgeAutoCompletionDurabilitySQLitePoolOne/exit_before_enqueue",
+        "TestKnowledgeAutoCompletionDurabilitySQLitePoolOne/consumer_process_exit",
+        "TestKnowledgeAutoCompletionDurabilitySQLitePoolOne",
+        "TestPostgresKnowledgeAutoCompletionDurabilityPoolOne/enqueue_failure",
+        "TestPostgresKnowledgeAutoCompletionDurabilityPoolOne/exit_before_enqueue",
+        "TestPostgresKnowledgeAutoCompletionDurabilityPoolOne/consumer_process_exit",
+        "TestPostgresKnowledgeAutoCompletionDurabilityPoolOne",
+        "TestKnowledgeAutoCompletionWithdrawSQLitePoolOne/source_withdraw",
+        "TestKnowledgeAutoCompletionWithdrawSQLitePoolOne/actor_withdraw",
+        "TestKnowledgeAutoCompletionWithdrawSQLitePoolOne/model_ABA",
+        "TestKnowledgeAutoCompletionWithdrawSQLitePoolOne/tenant_ABA",
+        "TestKnowledgeAutoCompletionWithdrawSQLitePoolOne/body_ABA",
+        "TestKnowledgeAutoCompletionWithdrawSQLitePoolOne/publication_etag_ABA",
+        "TestKnowledgeAutoCompletionWithdrawSQLitePoolOne/publication_updated_at_ABA",
+        "TestKnowledgeAutoCompletionWithdrawSQLitePoolOne/publication_metadata_ABA",
+        "TestKnowledgeAutoCompletionWithdrawSQLitePoolOne/queue_forge",
+        "TestKnowledgeAutoCompletionWithdrawSQLitePoolOne",
+        "TestPostgresKnowledgeAutoCompletionWithdrawPoolOne/source_withdraw",
+        "TestPostgresKnowledgeAutoCompletionWithdrawPoolOne/actor_withdraw",
+        "TestPostgresKnowledgeAutoCompletionWithdrawPoolOne/model_ABA",
+        "TestPostgresKnowledgeAutoCompletionWithdrawPoolOne/tenant_ABA",
+        "TestPostgresKnowledgeAutoCompletionWithdrawPoolOne/body_ABA",
+        "TestPostgresKnowledgeAutoCompletionWithdrawPoolOne/publication_etag_ABA",
+        "TestPostgresKnowledgeAutoCompletionWithdrawPoolOne/publication_updated_at_ABA",
+        "TestPostgresKnowledgeAutoCompletionWithdrawPoolOne/publication_metadata_ABA",
+        "TestPostgresKnowledgeAutoCompletionWithdrawPoolOne/queue_forge",
+        "TestPostgresKnowledgeAutoCompletionWithdrawPoolOne",
+        "TestKnowledgeAutoCompletionActualRedisSQLite",
+        "TestPostgresKnowledgeAutoCompletionActualRedis",
+        "TestKnowledgeAutoCompletionClaimFenceSQLitePoolOne",
+        "TestPostgresKnowledgeAutoCompletionClaimFencePoolOne"
+      ],
+      "package_results": [
+        {
+          "package": "github.com/Tencent/WeKnora/internal/application/service",
+          "action": "fail"
+        },
+        {
+          "package": "github.com/Tencent/WeKnora/internal/database",
+          "action": "pass"
+        }
+      ]
+    },
+    {
+      "run": "r3",
+      "stdout": "/tmp/weknora-auto-body-combination-a58c-r3.jsonl",
+      "stdout_sha256": "4f6785eefbf6be5cf9573f8a1eb95a256f5b60a3a1fe5f97dc596fbf6f6786bd",
+      "stdout_bytes": 1891883,
+      "terminal_exit": 1,
+      "events": {
+        "pass": 64,
+        "fail": 1,
+        "skip": 0
+      },
+      "failed_tests": [],
+      "package_results": [
+        {
+          "package": "github.com/Tencent/WeKnora/internal/application/service",
+          "action": "fail"
+        },
+        {
+          "package": "github.com/Tencent/WeKnora/internal/database",
+          "action": "pass"
+        }
+      ]
+    },
+    {
+      "run": "r4",
+      "stdout": "/tmp/weknora-auto-body-combination-a58c-r4.jsonl",
+      "stdout_sha256": "6da07f850760cd0fa2878aa9a8ce006c38284491b511d43e971835d419d17ce2",
+      "stdout_bytes": 814403,
+      "terminal_exit": 0,
+      "events": {
+        "pass": 53,
+        "fail": 0,
+        "skip": 0
+      },
+      "failed_tests": [],
+      "package_results": [
+        {
+          "package": "github.com/Tencent/WeKnora/internal/application/service",
+          "action": "pass"
+        },
+        {
+          "package": "github.com/Tencent/WeKnora/internal/database",
+          "action": "pass"
+        }
+      ]
+    },
+    {
+      "run": "r5",
+      "stdout": "/tmp/weknora-auto-body-combination-a58c-r5.jsonl",
+      "stdout_sha256": "2779d5cd006d46ea16fac455782d74d0ad4bc62007691528cdffe7653aa83311",
+      "stdout_bytes": 996409,
+      "terminal_exit": 0,
+      "events": {
+        "pass": 67,
+        "fail": 0,
+        "skip": 0
+      },
+      "failed_tests": [],
+      "package_results": [
+        {
+          "package": "github.com/Tencent/WeKnora/internal/application/service",
+          "action": "pass"
+        }
+      ]
+    },
+    {
+      "run": "r6",
+      "stdout": "/tmp/weknora-auto-body-combination-a58c-r6.jsonl",
+      "stdout_sha256": "89f8149c718b1f43e659863a5691a37bb1e9cada9a27e708e5f5aada93effb00",
+      "stdout_bytes": 206823,
+      "terminal_exit": 0,
+      "events": {
+        "pass": 13,
+        "fail": 0,
+        "skip": 0
+      },
+      "failed_tests": [],
+      "package_results": [
+        {
+          "package": "github.com/Tencent/WeKnora/internal/application/service",
+          "action": "pass"
+        }
+      ]
+    }
+  ],
+  "limits": {
+    "go_cpus": 1,
+    "go_memory_bytes": 2147483648,
+    "postgres_memory_bytes": 536870912,
+    "postgres_tmpfs_bytes": 268435456,
+    "source_readonly": true,
+    "source_readonly_inspected_run": "r2",
+    "network_internal": true,
+    "host_port_bindings": {},
+    "database_pool_open_idle": 1
+  },
+  "coverage": {
+    "r1": "diagnostic actual PG/SQLite machine, zero-subtasks and both publication outage windows; migration assertion file changed while this WIP diagnostic ran, so not final freeze evidence",
+    "r2": "historical partial actual_inputs projection assertions received correct original-body references; no production resolver gate relaxed",
+    "r3": "historical aggregate service package reached its 300-second timeout; 64 pass events and no test assertion failure, package fail recorded; database migrations passed",
+    "r4": "all Auto durability with body protocol enabled plus SQLite migration directory/tail/schema upgrades; 53 pass / 0 fail / 0 skip; terminal 0",
+    "r5": "all original machine pipeline/negative/source/QA/span/secret groups with body protocol enabled; 69 pass / 0 fail / 0 skip; terminal 0",
+    "r6": "latest metadata-only/empty-vault checker and consumer commit compile; actual dual-SQL pipeline/durability/zero smoke, 13 pass / 0 fail / 0 skip; terminal 0"
+  },
+  "cleanup": {
+    "owner": "auto-body-review-20261009-a58c",
+    "postgres_id": "36db1563c65b94cdd592438013913352c060bad658f84142ce8e9a008f8a30e8",
+    "redis_id": "1272daa70e63bcc269e0d2359b9931ec71b4bb5a1d617a4bb61e9477f33ed720",
+    "network_id": "c0f4f5c1faf8dad27d3147528a1fa53f2d81e4229def18059f0340000ea049d3",
+    "non_system_schemas_before_stop": 1,
+    "schema_zero_not_claimed": true,
+    "reason_for_residual_schema": "not inspected; timeout residue is possible but not asserted",
+    "owned_containers_auto_removed": true,
+    "owned_pg_data_tmpfs_removed_with_container": true,
+    "owner_filtered_containers_after_cleanup": [],
+    "owner_filtered_networks_after_cleanup": [],
+    "retained_volumes": [
+      "weknora-go-mod",
+      "weknora-go-build"
+    ]
+  }
+}
