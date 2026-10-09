@@ -150,6 +150,14 @@ func (g *MessageMaterialGuard) Recheck() error {
 	if err := g.store.RecheckMessageMaterialInputs(g.ctx, g.snapshot); err != nil {
 		return err
 	}
+	// A raw-user plan may remain valid after an actual unconsumed generated
+	// field write. Hold every new physical head without recertifying that
+	// field as consumed original material.
+	added, err := g.store.AcquireMessageBodyReadLeases(g.ctx, g.plan, uuid.NewString(), 2*time.Minute, g.bodyLeases)
+	if err != nil {
+		return err
+	}
+	g.bodyLeases = append(g.bodyLeases, added...)
 	if len(g.snapshot.Messages) == 0 {
 		return nil
 	}
@@ -196,7 +204,7 @@ func (g *MessageMaterialGuard) advanceOwnGeneratedField(ctx context.Context) err
 	}
 	// Hold the new inline fields before exposing the updated snapshot. Keep the
 	// earlier body leases until the same model/output guard finally closes.
-	bodyLeases, err := g.store.AcquireMessageBodyReadLeases(marked, plan, uuid.NewString(), 2*time.Minute)
+	bodyLeases, err := g.store.AcquireMessageBodyReadLeases(marked, plan, uuid.NewString(), 2*time.Minute, g.bodyLeases)
 	if err != nil {
 		return err
 	}
@@ -253,7 +261,7 @@ func (g *MessageMaterialGuard) advanceOwnCompletionLocked(ctx context.Context) e
 	if err != nil {
 		return err
 	}
-	bodyLeases, err := g.store.AcquireMessageBodyReadLeases(marked, plan, uuid.NewString(), 2*time.Minute)
+	bodyLeases, err := g.store.AcquireMessageBodyReadLeases(marked, plan, uuid.NewString(), 2*time.Minute, g.bodyLeases)
 	if err != nil {
 		return err
 	}

@@ -28,7 +28,11 @@ func messageBodyIntegrationFixture(t *testing.T, pg bool, before ...func(*gorm.D
 	} else {
 		kg, store, db, ctx = faqPostgresActualFixture(t)
 		kg.graphEngine = parentChildGraphRepo{}
-		require.NoError(t, db.Exec("CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\"").Error)
+		// Extensions must outlive an individual fixture schema, including a
+		// prior terminal test timeout that left its schema behind.
+		require.NoError(t, db.Exec(`CREATE EXTENSION IF NOT EXISTS "uuid-ossp" WITH SCHEMA public`).Error)
+		require.NoError(t, db.Exec(`ALTER EXTENSION "uuid-ossp" SET SCHEMA public`).Error)
+		require.NoError(t, db.Exec(`CREATE FUNCTION uuid_generate_v4() RETURNS uuid LANGUAGE sql AS $$ SELECT public.uuid_generate_v4() $$`).Error)
 		require.NoError(t, db.Exec("ALTER TABLE messages ADD COLUMN artifacts JSONB").Error)
 		for _, name := range []string{"000103_message_artifacts_table.up.sql", "000107_message_artifacts_deleted_at.up.sql", "000127_nextcloud_content_leases.up.sql", "000151_message_original_materials.up.sql"} {
 			ddl, e := os.ReadFile("../../../migrations/versioned/" + name)

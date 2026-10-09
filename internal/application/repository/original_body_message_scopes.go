@@ -184,7 +184,7 @@ func originalBodyScopeDigest(tx *gorm.DB, body originalBodyPayload, fields []str
 // AcquireMessageBodyReadLeases performs metadata verification and exact body
 // ID claims before the first original/material body read, on one caller-owned
 // transaction. Parent plans are included without loading their message bytes.
-func (s *KnowledgeInputProvenanceStore) AcquireMessageBodyReadLeases(ctx context.Context, plan *types.MessageMaterialReadPlan, owner string, ttl time.Duration) ([]string, error) {
+func (s *KnowledgeInputProvenanceStore) AcquireMessageBodyReadLeases(ctx context.Context, plan *types.MessageMaterialReadPlan, owner string, ttl time.Duration, existing ...[]string) ([]string, error) {
 	if !originalBodySchemaPresent(s.db) {
 		return nil, nil
 	}
@@ -201,6 +201,19 @@ func (s *KnowledgeInputProvenanceStore) AcquireMessageBodyReadLeases(ctx context
 			return e
 		}
 		seen := map[string]bool{}
+		if len(existing) > 0 && len(existing[0]) > 0 {
+			now, e := nextcloudLeaseNowMS(bodyInternal(tx))
+			if e != nil {
+				return e
+			}
+			var active []originalBodyLease
+			if e := bodyInternal(tx).Select("body_id").Where("lease_id IN ? AND kind='read' AND released_at_ms IS NULL AND expires_at_ms>?", existing[0], now).Find(&active).Error; e != nil {
+				return e
+			}
+			for _, lease := range active {
+				seen[lease.BodyID] = true
+			}
+		}
 		var claim func(*types.MessageMaterialReadPlan) error
 		claim = func(current *types.MessageMaterialReadPlan) error {
 			for _, parent := range current.ParentPlans {
