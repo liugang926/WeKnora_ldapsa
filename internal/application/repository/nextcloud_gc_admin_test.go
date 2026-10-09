@@ -80,6 +80,12 @@ func gcManualActual(t *testing.T, pg bool) {
 			require.NoError(t, e)
 			require.NotContains(t, string(raw), "storage://")
 			require.NotContains(t, string(raw), path)
+			var kbQueries []string
+			require.NoError(t, db.Callback().Query().After("gorm:query").Register("gc_admin_scope_projection", func(tx *gorm.DB) {
+				if tx.Statement.Table == "knowledge_bases" {
+					kbQueries = append(kbQueries, tx.Statement.SQL.String())
+				}
+			}))
 			result, e := store.CollectJob(ctx, actor, tenant, jobID)
 			switch mode {
 			case "retention":
@@ -100,6 +106,10 @@ func gcManualActual(t *testing.T, pg bool) {
 				require.Zero(t, calls)
 				_, e = os.Stat(path)
 				require.NoError(t, e)
+			}
+			for _, q := range kbQueries {
+				require.NotContains(t, q, "SELECT *")
+				require.NotContains(t, q, "enrichment_templates")
 			}
 			var logs []types.AuditLog
 			require.NoError(t, db.Where("target_id=?", jobID).Find(&logs).Error)

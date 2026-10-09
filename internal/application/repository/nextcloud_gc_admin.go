@@ -170,10 +170,10 @@ func gcValidateManualAdmin(ctx context.Context, tx *gorm.DB, job nextcloudGCJob)
 		return ErrNextcloudGCAdmin
 	}
 	var kb types.KnowledgeBase
-	if e := tx.Where("id=? AND tenant_id=?", job.KnowledgeBaseID, job.TenantID).Take(&kb).Error; e != nil {
+	if e := tx.Select("id", "tenant_id", "creator_id").Where("id=? AND tenant_id=?", job.KnowledgeBaseID, job.TenantID).Take(&kb).Error; e != nil {
 		return ErrNextcloudGCAdmin
 	}
-	if _, e := actual.AuthorizeCurrentKnowledgeInputWrite(fresh, &kb); e != nil {
+	if _, e := actual.authorizeKnowledgeActorWrite(fresh, &kb); e != nil {
 		return ErrNextcloudGCAdmin
 	}
 	return nil
