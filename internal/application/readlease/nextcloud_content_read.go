@@ -115,12 +115,21 @@ func (g *NextcloudReadGuard) Context() context.Context {
 
 // ParentContext preserves the request's authority and cancellation while a
 // turn acquires a separate fence from a borrowed, shorter-lived read guard.
-func (g *NextcloudReadGuard) ParentContext() context.Context {
+func (g *NextcloudReadGuard) ParentContext(values context.Context) context.Context {
 	if g == nil {
 		return nil
 	}
-	return g.parentCtx
+	return &readParentContext{Context: values, parent: g.parentCtx}
 }
+
+type readParentContext struct {
+	context.Context
+	parent context.Context
+}
+
+func (c *readParentContext) Deadline() (time.Time, bool) { return c.parent.Deadline() }
+func (c *readParentContext) Done() <-chan struct{}       { return c.parent.Done() }
+func (c *readParentContext) Err() error                  { return c.parent.Err() }
 
 func (g *NextcloudReadGuard) Covers(scopes []NextcloudKBReadScope) bool {
 	if g == nil {

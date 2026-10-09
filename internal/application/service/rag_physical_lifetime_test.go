@@ -57,7 +57,7 @@ func TestRAGPhysicalActualHydrationHeldUntilFinalProducerAndSenderRelease(t *tes
 			require.Len(t, rows, 1)
 			require.Equal(t, chunk.Content, rows[0].Chunk.Content)
 			if borrowed != nil {
-				ctx = borrowed.ParentContext()
+				ctx = borrowed.ParentContext(ctx)
 				require.NoError(t, borrowed.Close())
 			}
 			active := func() int64 {

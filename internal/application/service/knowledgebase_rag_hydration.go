@@ -52,7 +52,7 @@ func (s *knowledgeBaseService) HydrateRAGChunkAugmentations(ctx context.Context,
 	guard := readlease.NextcloudReadGuardFromContext(ctx)
 	if owned, turn := ragTurnPhysicalReadGuard(ctx, scopes); turn {
 		if guard != nil && owned != guard {
-			ctx = guard.ParentContext()
+			ctx = guard.ParentContext(ctx)
 		}
 		guard = owned
 	}
