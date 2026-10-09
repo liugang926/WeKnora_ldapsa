@@ -21,7 +21,7 @@ WORKDIR /app
 # 通过构建参数接收敏感信息
 ARG GOPRIVATE_ARG
 ARG GOPROXY_ARG
-ARG GOSUMDB_ARG=off
+ARG GOSUMDB_ARG=sum.golang.org
 ARG APK_MIRROR_ARG
 
 # 设置Go环境变量
@@ -37,7 +37,7 @@ RUN if [ -n "$APK_MIRROR_ARG" ]; then \
     apt-get install -y git build-essential libsqlite3-dev curl
 
 # Install migrate tool
-RUN go install -tags 'postgres' github.com/golang-migrate/migrate/v4/cmd/migrate@latest
+RUN go install -tags 'postgres' github.com/golang-migrate/migrate/v4/cmd/migrate@v4.19.1
 
 # Copy go mod files. go.mod replace-points anydoc at ./third_party/anydoc-go,
 # so that module's go.mod must exist before `go mod download`.
