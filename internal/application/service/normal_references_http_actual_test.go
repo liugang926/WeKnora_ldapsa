@@ -28,17 +28,18 @@ import (
 type normalReferencesActualBaseChat interface{ chat.Chat }
 type normalReferencesActualModel struct {
 	normalReferencesActualBaseChat
-	t              *testing.T
-	f              *service.NormalReferencesHTTPFixtureForTest
-	calls          atomic.Int64
-	inputFound     atomic.Bool
-	stopped        atomic.Bool
-	mode           string
-	started        chan struct{}
-	emptyPolls     *atomic.Int64
-	idleMeasured   atomic.Bool
-	idleRenewals   atomic.Int64
-	idleHeldBodies atomic.Int64
+	t                     *testing.T
+	f                     *service.NormalReferencesHTTPFixtureForTest
+	calls                 atomic.Int64
+	inputFound            atomic.Bool
+	stopped               atomic.Bool
+	mode                  string
+	started               chan struct{}
+	emptyPolls            *atomic.Int64
+	consecutiveEmptyPolls *atomic.Int64
+	idleMeasured          atomic.Bool
+	idleRenewals          atomic.Int64
+	idleHeldBodies        atomic.Int64
 }
 
 func (m *normalReferencesActualModel) GetModelID() string   { return "normal-reference-model" }
@@ -78,14 +79,29 @@ func (m *normalReferencesActualModel) ChatStream(ctx context.Context, input []ch
 		var heldBodies int64
 		require.NoError(m.t, m.f.DB.Table("original_body_leases").Where("kind='read' AND released_at_ms IS NULL").Count(&heldBodies).Error)
 		require.Positive(m.t, heldBodies)
-		beforeRenewals, beforeEmpty := m.f.BodyLeaseRenewals(), m.emptyPolls.Load()
-		require.Positive(m.t, beforeRenewals, "the actual GORM observer captured successful physical body SQL renewals before idle sampling")
+		entryRenewals := m.f.BodyLeaseRenewals()
+		require.Positive(m.t, entryRenewals, "the actual GORM observer captured successful physical body SQL renewals before idle sampling")
 		m.idleHeldBodies.Store(heldBodies)
 		go func() {
 			deadline := time.NewTimer(3 * time.Second)
 			defer deadline.Stop()
 			ticker := time.NewTicker(10 * time.Millisecond)
 			defer ticker.Stop()
+			// First let actual queued references/progress finish. Every real
+			// nonempty batch resets this observation; no write check is removed.
+			for m.consecutiveEmptyPolls.Load() < 3 {
+				select {
+				case <-ctx.Done():
+					m.stopped.Store(true)
+					close(out)
+					return
+				case <-deadline.C:
+					close(out)
+					return
+				case <-ticker.C:
+				}
+			}
+			beforeRenewals, beforeEmpty := m.f.BodyLeaseRenewals(), m.emptyPolls.Load()
 			for m.emptyPolls.Load()-beforeEmpty < 10 {
 				select {
 				case <-ctx.Done():
@@ -156,6 +172,7 @@ func runNormalReferencesActualHTTP(t *testing.T, pg bool, modes ...string) {
 	t.Cleanup(func() { _ = redis.Close() })
 	observedStream := &normalReferencesObservedStreamForTest{RedisStreamManager: redis, watcher: make(chan context.Context, 1)}
 	model.emptyPolls = &observedStream.emptyPolls
+	model.consecutiveEmptyPolls = &observedStream.consecutiveEmptyPolls
 	var sender interfaces.StreamManager = observedStream
 	if mode == "empty-fixed-refuse" {
 		sender = normalReferencesRefusingSink{StreamManager: observedStream}
@@ -357,9 +374,10 @@ func TestPostgresNormalReferencesActualHTTPRemainingAsync(t *testing.T) {
 // watcher defer only after its synchronous stop callback returns.
 type normalReferencesObservedStreamForTest struct {
 	*stream.RedisStreamManager
-	watcher    chan context.Context
-	once       sync.Once
-	emptyPolls atomic.Int64
+	watcher               chan context.Context
+	once                  sync.Once
+	emptyPolls            atomic.Int64
+	consecutiveEmptyPolls atomic.Int64
 }
 
 func (s *normalReferencesObservedStreamForTest) GetEvents(ctx context.Context, session, message string, offset int) ([]interfaces.StreamEvent, int, error) {
@@ -370,8 +388,13 @@ func (s *normalReferencesObservedStreamForTest) GetEvents(ctx context.Context, s
 	// The ordinary SSE context is logger.CloneContext of the request: it
 	// has no deadline. The real stop watcher owns a two-hour deadline.
 	deadline, hasDeadline := ctx.Deadline()
-	if (!hasDeadline || time.Until(deadline) < time.Minute) && err == nil && len(events) == 0 {
-		s.emptyPolls.Add(1)
+	if (!hasDeadline || time.Until(deadline) < time.Minute) && err == nil {
+		if len(events) == 0 {
+			s.emptyPolls.Add(1)
+			s.consecutiveEmptyPolls.Add(1)
+		} else {
+			s.consecutiveEmptyPolls.Store(0)
+		}
 	}
 	return events, next, err
 }
