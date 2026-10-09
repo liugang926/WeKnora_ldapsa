@@ -54,8 +54,9 @@ func gcReadExactRows(tx *gorm.DB, table, where string, args ...any) ([]map[strin
 }
 func gcAuditInventory(tx *gorm.DB, job nextcloudGCJob) ([]gcAuditEntry, error) {
 	result := []gcAuditEntry{}
-	// Bodies are explicitly counted as retained fulltext with a 90-day boundary.
-	// Immutable provenance/history parents are not silently labelled metadata.
+	// Inventory includes fulltext-bearing rows, but AuditRetainUntilMS is only
+	// a metadata/audit deadline. It does not authorize 90-day body retention;
+	// the body lifecycle must apply PRD source-state-specific deadlines.
 	tables := []struct {
 		table, key, scope string
 		args              []any

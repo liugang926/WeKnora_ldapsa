@@ -28,7 +28,7 @@ The frozen base predates root's later all-entry lease module; this delta does no
 
 ## Audit retention remains a separate lifecycle
 
-Existing immutable history/enrichment/span/classifier/FAQ tables can contain fulltext in JSON. Their row digests and byte sizes are inventoried separately, with a 90-day retention deadline. Physical `collected` is not a claim that those bodies were purged. A body/metadata separation and exact expiry purge module is still required; neither the manifest nor this module labels these bodies permanent audit metadata.
+Existing immutable history/enrichment/span/classifier/FAQ tables can contain fulltext in JSON. Their row digests and byte sizes are inventoried separately. The existing `AuditRetainUntilMS` field records the proposed 90-day metadata/audit deadline, not permission to retain fulltext until that date. PRD §7.4 permits 90 days only for metadata without bodies; retired derived bodies have a one-hour safety window, terminal failed build bodies 24 hours, and confirmed deletion/whole-binding withdrawal requires prompt cleanup. Current/shared material and temporary source unavailability have different preservation rules. Physical `collected` is not a claim that those bodies were purged. A body/metadata separation and exact expiry purge module is still required; neither the manifest nor this module labels these bodies permanent audit metadata.
 
 ## Reproduce
 
