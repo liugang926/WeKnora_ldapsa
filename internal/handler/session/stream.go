@@ -588,7 +588,7 @@ func (h *Handler) handleAgentEventsForSSE(
 					}
 					// Actual refusal, failed setup or bounded initialization expiry
 					// closes without granting a placeholder any completed proof.
-					emitSafeTerminalGenerationError(c, requestID)
+					stopLiveStreamForOriginalMaterial(ctx, c, eventBus, sessionID, assistantMessageID, requestID)
 					return
 				}
 				// Empty physical renewal alone does not recheck the current
@@ -1034,6 +1034,23 @@ func stopLiveStreamForPublication(
 	// Do not flush the resource URL holdback buffer: its tail may itself be
 	// source-derived text from just before the publication was withdrawn.
 	emitStaticTerminalStreamError(c, requestID, "Current source access changed; generation stopped", "source_access_changed")
+}
+
+// Original-material refusal closes the original owner before cancellation.
+// Stop is an exact control event, never authorization for a completed body.
+// The existing KnowledgeQA cancellation path joins its actual child stream.
+func stopLiveStreamForOriginalMaterial(
+	ctx context.Context, c *gin.Context, bus *event.EventBus,
+	sessionID, messageID, requestID string,
+) {
+	applicationservice.RefuseMessageMaterialOutputBoundary(ctx)
+	if bus != nil {
+		_ = bus.Emit(ctx, event.Event{
+			Type: event.EventStop, SessionID: sessionID,
+			Data: event.StopData{SessionID: sessionID, MessageID: messageID, Reason: "original_material_unavailable"},
+		})
+	}
+	emitSafeTerminalGenerationError(c, requestID)
 }
 
 func emitSafeTerminalGenerationError(c *gin.Context, requestID string) {
