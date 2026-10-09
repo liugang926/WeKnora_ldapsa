@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"errors"
+	"fmt"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -11,6 +12,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -282,8 +284,37 @@ func bodyProtocolDatabaseRollback(t *testing.T, pg bool) {
 	// The source is independently closed again; replay may now erase the exact
 	// restored payload and the exact inline leaf, never the current second owner.
 	bodyProtocolDeleted(t, db, "one", true)
-	n, e = s.ReconcileExternalPurge(ctx)
-	require.NoError(t, e)
+	if cli := os.Getenv("WEKNORA_ORIGINAL_BODY_TEST_CLI"); cli != "" {
+		dsn := ""
+		driver := "sqlite"
+		if pg {
+			var schema string
+			require.NoError(t, db.Raw("SELECT current_schema()").Scan(&schema).Error)
+			dsn = os.Getenv("WEKNORA_GC_TEST_POSTGRES_DSN") + " search_path=" + schema
+			driver = "postgres"
+		} else {
+			var files []struct {
+				Seq        int
+				Name, File string
+			}
+			require.NoError(t, db.Raw("PRAGMA database_list").Scan(&files).Error)
+			for _, file := range files {
+				if file.Name == "main" {
+					dsn = file.File
+				}
+			}
+		}
+		command := exec.Command(cli, "-driver", driver, "-mode", "reconcile")
+		command.Env = append(os.Environ(), "WEKNORA_ORIGINAL_BODY_MAINTENANCE_DSN="+dsn)
+		output, err := command.CombinedOutput()
+		require.NoError(t, err, string(output))
+		_, err = fmt.Sscanf(string(output), "original body reconcile complete; replayed=%d", &n)
+		require.NoError(t, err)
+		t.Logf("offline CLI %s whole database/schema restore replayed=%d", driver, n)
+	} else {
+		n, e = s.ReconcileExternalPurge(ctx)
+		require.NoError(t, e)
+	}
 	require.Positive(t, n)
 	require.NoError(t, s.VerifyJournalReady())
 	var payload originalBodyPayload
