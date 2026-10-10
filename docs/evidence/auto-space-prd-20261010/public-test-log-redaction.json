@@ -414,6 +414,26 @@
         "58fd74811976391519d18739ed8075bc4bee77d4a32ea2a34aca805cb72b687b"
       ],
       "public_tabs_expanded": true
+    },
+    {
+      "file": "sdk-content-privacy-real-http-20261010.log",
+      "original_sha256": "da123022a556333d21605498d83883851c987d6bcf595db4bb21b403780add7d",
+      "published_sha256": "d77277dd32f2467ff513c953e3d585aad7cdc84e701cb7593dab76500fd03890",
+      "omitted_lines": 111,
+      "policy": "Test names/assertions/results only; application and vendor diagnostics omitted",
+      "private_original_retained": true,
+      "private_original_file": "sdk-content-privacy-real-http-20261010.log.da123022a556.raw",
+      "public_whitespace_normalized": true
+    },
+    {
+      "file": "caller-content-privacy-real-http-20261010.log",
+      "original_sha256": "49fdb87a7e10998bc53c6c3c0e56e243c9505add044300429e560b3432846d02",
+      "published_sha256": "bfe3cd92499886d0ecd7d41ed03470af9e349eac76bb1f9f9e6ddc8759c67caf",
+      "omitted_lines": 19,
+      "policy": "Test names/assertions/results only; application and vendor diagnostics omitted",
+      "private_original_retained": true,
+      "private_original_file": "caller-content-privacy-real-http-20261010.log.49fdb87a7e10.raw",
+      "public_whitespace_normalized": true
     }
   ]
 }

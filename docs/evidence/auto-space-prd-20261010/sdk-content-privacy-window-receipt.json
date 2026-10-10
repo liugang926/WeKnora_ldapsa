@@ -1,0 +1,88 @@
+{
+  "actor_id": "197d7679d22ce4ed297703e3c47826e8dc58d856a5cc22de67c730d11e216225",
+  "actor_name": "weknora-prd-sdk-privacy-go",
+  "started_at": "2026-10-10T12:37:46.115384043Z",
+  "hard_deadline": "2026-10-10T12:42:46.115384+00:00",
+  "cpu": 1000000000,
+  "memory_cap_bytes": 2147483648,
+  "format": {
+    "changed_count": 9,
+    "initial_nonempty_count": 3,
+    "exit": 0,
+    "final_list": []
+  },
+  "source_manifest": {
+    "internal/models/api/anthropicmessages/client.go": "c653c4d66b4870c61719c80a79ab879e1f73c5730fe65f1e5e0d972153fbdfb3",
+    "internal/models/api/content_privacy_test.go": "a5a765a6bf329b9317e869268c2d062925d4d2fb40b2a145da6d9076483155fb",
+    "internal/models/api/endpoint.go": "1cc87d585fb8dc3669e27a1bccc34e85709f1e491e28740cf42f9094906fcdfe",
+    "internal/models/api/googlegenai/client.go": "923a4907c39ee23d38167b21ce6f1f86c50c4f4d2f34661bc94fde9d18661e55",
+    "internal/models/api/openaicompletions/client.go": "4d9f31e184bd8704fe97358e3015cc9cfdcbf39f047d5a767862621346381ada",
+    "internal/models/api/openairesponses/client.go": "960917ce7ed7d5826142626e1021f88dbf8aa41e49926108a724ea2dcb6e7616",
+    "internal/models/api/raw_dump.go": "e6f33b447118226ec4009157fe4de10d2c8560dd1b21fbd2d45f4de8b9be93fd",
+    "internal/models/api/sdk_content_privacy_test.go": "a94a53b6ef0718b0acf326c9b2459069e29eef630f5fa8d1b87c26a8d157cc4c",
+    "internal/models/api/stream_assembler.go": "78900918efbcee1705354178a8bcfbd058e69323eee362889838bad901cfb19e"
+  },
+  "historical_note": "Previous 10000 graph/source receipt hashes remain historical and unchanged; current delta changes logging/raw dump privacy only and real SDK model wire/output is checked independently",
+  "commands": [
+    {
+      "label": "sdk-content-privacy-real-http-20261010",
+      "started_at": "2026-10-10T12:37:46.664795+00:00",
+      "ended_at": "2026-10-10T12:37:54.544063+00:00",
+      "exit": 0,
+      "command": [
+        "docker",
+        "exec",
+        "197d7679d22ce4ed297703e3c47826e8dc58d856a5cc22de67c730d11e216225",
+        "go",
+        "test",
+        "-p",
+        "1",
+        "./internal/models/api",
+        "./internal/models/api/openaicompletions",
+        "./internal/models/api/openairesponses",
+        "./internal/models/api/anthropicmessages",
+        "./internal/models/api/googlegenai",
+        "-run",
+        "^(TestSourceContentAPIRequestAndStreamLogsRemainPrivate|TestSourceContentRawDumpRequiresContextAndPreservesOrdinary|TestSourceContentSDKActualHTTPStreamAndNonstream|TestStreamAssembler_AbandonedConsumerDoesNotBlock|TestStreamAssembler_CancelledContextAbortsImmediately|TestChatStream_UndecodableChunkFailsTheStream|TestChatStream_MalformedToolCallFailsTheStream|TestChatStreamFailedEvent|TestChatStreamUndecodableEventFailsTheStream|TestChatStreamMalformedOutputItemFailsTheStream|TestChatStreamErrorPayload)$",
+        "-count=1",
+        "-v",
+        "-timeout=120s"
+      ]
+    }
+  ],
+  "source_sha256": "76587fc68f4d269aabba5e7f5153878f48efc566df8798adbb8d760054e27c7a",
+  "combined_final_format": {
+    "count": 135,
+    "exit": 0,
+    "final_list": []
+  },
+  "combined_source_sha256": "69f7ded9d9bd21910d85199a5232f2650cf63e4eb49827f1e706fb0202f409ad",
+  "memory_peak_bytes": 312631296,
+  "memory_events": {
+    "low": 0,
+    "high": 0,
+    "max": 0,
+    "oom": 0,
+    "oom_kill": 0,
+    "oom_group_kill": 0,
+    "sock_throttled": 0
+  },
+  "raw_log_sha256": "da123022a556333d21605498d83883851c987d6bcf595db4bb21b403780add7d",
+  "outcome": "passed_sdk_request_error_logs_and_raw_dump_privacy_real_http",
+  "actual_protocols": [
+    "openaicompletions",
+    "openairesponses",
+    "anthropicmessages",
+    "googlegenai"
+  ],
+  "matrix": "actual HTTP nonstream+stream with direct private marker, typed RAG and unmarked ordinary contexts; actual request/model/reasoning/tool/content outputs retained, private logs omit payload and raw-dump directory not created, ordinary raw dump present",
+  "anthropic_package_note": "No separate selected historical protocol regression in that package; anthropic actual HTTP nonstream/stream assertions are executed by external api_test four-protocol matrix",
+  "terminal": {
+    "Status": "exited",
+    "Running": false,
+    "OOMKilled": false,
+    "ExitCode": 0,
+    "StartedAt": "2026-10-10T12:37:46.115384043Z",
+    "FinishedAt": "2026-10-10T12:39:17.18261621Z"
+  }
+}

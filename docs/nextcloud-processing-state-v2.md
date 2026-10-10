@@ -75,3 +75,11 @@ Nextcloud 构建租约、受保护或未知来源输入证明及所有非空 RAG
 The final focused privacy, opaque 404 error-contract, protected graph/withdrawal and candidate-index query-plan tests passed with actual command exit 0; the owned two-system onboarding also passed. `processing-sixth-final-window-receipt.json` records these results, final source hash, hard actor terminal and the unavailable lint binary. The initial changed-scope formatting check passed with an empty list; its last 126-file probe hit the actor deadline and is explicitly not counted as a pass. The final independent scale actor completed the 126-file changed-scope formatting check with exit 0 and an empty list, and its frozen source hashes still matched after test completion.
 
 `processing-real-10000-full-window-receipt.json` and `final-real-graph-10000-full-20261010T1149.log` record the completed 10,000-head result, exact source hash, measured peak, command exit 0 and early exact actor removal. The actor ended at 20:10:17.464 CST with OOM false; it did not remain idle until its 20:19:51 hard deadline. The first 9,368-result timeout remains a failed run. Both runs retain original raw-log hashes, distinct from the published redacted-log hashes.
+
+## SDK 与调用层补充验证
+
+包装器的九项测试使用受控 inner model，只证明该包装器的日志边界；其 PASS 不覆盖 SDK 或上层普通日志。补充审查定位并修复了 SDK 的完整请求日志、raw dump、首 reasoning/content/tool 输出和 stream 原始错误，以及 RAG 公共 Info/Warn/Error、SSE 消费日志和原生 Ollama 错误日志。raw dumper 现在强制接收原 context，受保护或 nil context 在创建目录/文件之前返回 nil；四 SDK 调用都传入保留标记的派生 context。受保护公共流水线日志只保留固定级别诊断，任意 metadata fields 不格式化；请求、模型结果、原始业务错误与控制流程保持原行为。
+
+`sdk-content-privacy-window-receipt.json` 保存三项新父测试及既有流错误/取消回归的实际 exit0：四种协议、marker/RAG/ordinary、流式/非流式真实 HTTP，校验实际请求及解析结果、受保护日志无正文且没有 raw 目录、无标记调用有实际 dump 和日志。`caller-content-privacy-window-receipt.json` 保存四项新父测试及旧流式/转换回归的实际 exit0：原生 Ollama HTTP heartbeat/tags/chat500、真实 completion 插件错误实例保留、SSE 失败消费控制，以及三类公共日志输出。两轮均无 OOM、容器精确清理；最终 141 Go 文件格式检查实际 exit0 且为空，源码哈希与测试后匹配。测试不涉及生产模型或所有第三方 tracing sink。
+
+完整 10,000 图谱测试仍对应原冻结 126 文件 SHA `091ced5994247d974efd1619a26da43d1954e7e5cd882eb3549f96a8e00374cf`；这 126 文件在补修后字节完全一致。补充的 15 Go 文件仅修改 SDK/调用层日志及其测试，原图谱耗时、数量和源哈希不改写，也不把原矩阵的 PASS 借给补充路径。生产 GORM 已配置 `ParameterizedQueries: true` 是静态配置证据，不等于测试 Default logger 或所有数据库 tracing 的运行验收。

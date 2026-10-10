@@ -46,5 +46,25 @@
     "build_scope_does_not_grant_access_passed": true,
     "actual_graph_success_and_withdrawal_passed": true,
     "execution_exit": 0
-  }
+  },
+  "sdk_supplement": {
+    "status": "PASS",
+    "parent_tests": 3,
+    "actual_http_protocols": [
+      "openaicompletions",
+      "openairesponses",
+      "anthropicmessages",
+      "googlegenai"
+    ],
+    "receipt": "sdk-content-privacy-window-receipt.json",
+    "scope": "SDK request/raw dump/reasoning/content/tool/error logs; original wrapper tests alone did not cover SDK"
+  },
+  "caller_supplement": {
+    "status": "PASS",
+    "parent_tests": 4,
+    "receipt": "caller-content-privacy-window-receipt.json",
+    "scope": "common PipelineInfo/Warn/Error, SSE error consumer, native Ollama error log; request/error/response control preserved"
+  },
+  "final_changed_go_format_count": 141,
+  "benchmark_126_source_files_unchanged_after_supplement": true
 }

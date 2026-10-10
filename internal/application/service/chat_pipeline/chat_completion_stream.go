@@ -7,6 +7,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/models/api"
 
 	"github.com/Tencent/WeKnora/internal/event"
+	"github.com/Tencent/WeKnora/internal/logprivacy"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	"github.com/google/uuid"
@@ -254,9 +255,13 @@ func (p *PluginChatCompletionStream) OnEvent(ctx context.Context,
 				}
 
 				if response.ResponseType == types.ResponseTypeError {
+					errorDiagnostic := "model_stream_error"
+					if !logprivacy.ContentSuppressed(ctx) {
+						errorDiagnostic = response.Content
+					}
 					pipelineError(ctx, "Stream", "stream_error", map[string]interface{}{
 						"session_id": chatManage.SessionID,
-						"error":      response.Content,
+						"error":      errorDiagnostic,
 					})
 					failStream(errors.New("model stream reported failure"))
 					return
