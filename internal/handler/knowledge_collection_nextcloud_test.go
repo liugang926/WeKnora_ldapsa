@@ -32,6 +32,10 @@ func (s collectionDirectory) GetLoginSnapshot(context.Context, string, string) (
 	return &types.DirectoryLoginSnapshot{Identity: s.identity, Directory: s.directory}, nil
 }
 
+func (s collectionDirectory) GetUserLoginSnapshot(context.Context, string) ([]*types.DirectoryIdentity, *types.DirectoryLoginSnapshot, error) {
+	return []*types.DirectoryIdentity{s.identity}, &types.DirectoryLoginSnapshot{Identity: s.identity, Directory: s.directory}, nil
+}
+
 // The actual signed connector HTTP transport, persisted source staging/build
 // receipts and production lineage/publication guards are used together here.
 // The fresh AD snapshot and Nextcloud endpoint contain only isolated test data.

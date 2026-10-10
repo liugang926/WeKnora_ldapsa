@@ -22,8 +22,7 @@ var (
 // narrow so the guard can use the existing repositories without owning their
 // broader management APIs.
 type NextcloudDirectoryLookup interface {
-	GetIdentityByUserID(context.Context, string) ([]*types.DirectoryIdentity, error)
-	GetLoginSnapshot(context.Context, string, string) (*types.DirectoryLoginSnapshot, error)
+	GetUserLoginSnapshot(context.Context, string) ([]*types.DirectoryIdentity, *types.DirectoryLoginSnapshot, error)
 }
 
 type NextcloudDataSourceLookup interface {
@@ -179,7 +178,7 @@ func (g *NextcloudPublicationGuard) currentDirectoryIdentity(ctx context.Context
 	if g == nil || g.directories == nil {
 		return nil, ErrNextcloudPublicationUnavailable
 	}
-	identities, err := g.directories.GetIdentityByUserID(ctx, caller.UserID)
+	identities, snapshot, err := g.directories.GetUserLoginSnapshot(ctx, caller.UserID)
 	if err != nil {
 		return nil, fmt.Errorf("%w: directory identity lookup failed: %v", ErrNextcloudPublicationUnavailable, err)
 	}
@@ -192,8 +191,7 @@ func (g *NextcloudPublicationGuard) currentDirectoryIdentity(ctx context.Context
 		identity.DirectoryID == "" || identity.ObjectGUID == "" {
 		return nil, fmt.Errorf("%w: linked directory identity is inactive", ErrNextcloudPublicationDenied)
 	}
-	snapshot, err := g.directories.GetLoginSnapshot(ctx, identity.DirectoryID, identity.ObjectGUID)
-	if err != nil || snapshot == nil || snapshot.Directory == nil {
+	if snapshot == nil || snapshot.Directory == nil {
 		return nil, fmt.Errorf("%w: directory snapshot lookup failed: %v", ErrNextcloudPublicationUnavailable, err)
 	}
 	directory := snapshot.Directory

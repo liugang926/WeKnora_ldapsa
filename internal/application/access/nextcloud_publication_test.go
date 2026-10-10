@@ -35,6 +35,11 @@ func (l *publicationDirectoryLookup) GetLoginSnapshot(context.Context, string, s
 	return &types.DirectoryLoginSnapshot{Directory: l.directory, Identity: l.identities[0]}, nil
 }
 
+func (l *publicationDirectoryLookup) GetUserLoginSnapshot(ctx context.Context, _ string) ([]*types.DirectoryIdentity, *types.DirectoryLoginSnapshot, error) {
+	snapshot, err := l.GetLoginSnapshot(ctx, "", "")
+	return l.identities, snapshot, err
+}
+
 type publicationDataSourceLookup struct {
 	source *types.DataSource
 	err    error

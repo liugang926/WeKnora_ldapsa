@@ -146,11 +146,34 @@ type enrichmentTestFixture struct {
 	engine     *enrichmentTestEngine
 }
 
-func newEnrichmentTestFixture(t *testing.T, pg bool) *enrichmentTestFixture {
+func newEnrichmentTestFixture(t *testing.T, pg bool, fullDirectorySchema ...bool) *enrichmentTestFixture {
 	t.Helper()
 	store, db, ctx := autoTagActualFixture(t, pg)
 	db.Config.Logger = gormlogger.Default.LogMode(gormlogger.Silent)
-	require.NoError(t, db.AutoMigrate(&types.Tenant{}, &types.User{}, &types.TenantMember{}, &types.TenantAPIKey{}, &types.Model{}, &types.KnowledgeTagRelation{}, &types.Directory{}, &types.DirectoryIdentity{}, &types.DirectoryGroup{}, &types.DirectoryGroupMembership{}, &types.TenantGroupRoleGrant{}, &types.ResourceAccessPolicy{}, &types.ResourceGroupGrant{}))
+	require.NoError(t, db.AutoMigrate(&types.Tenant{}, &types.User{}, &types.TenantMember{}, &types.TenantAPIKey{}, &types.Model{}, &types.KnowledgeTagRelation{}))
+	if len(fullDirectorySchema) > 0 && fullDirectorySchema[0] {
+		// The periodic HTTP mode exercises actual ApplySnapshot writes. Its
+		// directory relations/unique constraints must come from production DDL
+		// before message creation, rather than partial AutoMigrate lookups.
+		directoryMigration := db
+		directoryPath := "../../../migrations/sqlite/000028_directory_group_access.up.sql"
+		if pg {
+			pool, err := db.DB()
+			require.NoError(t, err)
+			directoryMigration, err = gorm.Open(postgres.New(postgres.Config{Conn: pool, PreferSimpleProtocol: true}), &gorm.Config{Logger: gormlogger.Default.LogMode(gormlogger.Silent)})
+			require.NoError(t, err)
+			require.NoError(t, directoryMigration.Exec("CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\" WITH SCHEMA public").Error)
+			require.NoError(t, directoryMigration.Exec("ALTER EXTENSION \"uuid-ossp\" SET SCHEMA public").Error)
+			require.NoError(t, directoryMigration.Exec("CREATE FUNCTION uuid_generate_v4() RETURNS uuid LANGUAGE sql AS $$ SELECT public.uuid_generate_v4() $$").Error)
+			directoryPath = "../../../migrations/versioned/000109_directory_group_access.up.sql"
+		}
+		ddl, err := os.ReadFile(directoryPath)
+		require.NoError(t, err)
+		require.NoError(t, directoryMigration.Exec(string(ddl)).Error)
+		require.NoError(t, db.AutoMigrate(&types.AuthToken{}))
+	} else {
+		require.NoError(t, db.AutoMigrate(&types.Directory{}, &types.DirectoryIdentity{}, &types.DirectoryGroup{}, &types.DirectoryGroupMembership{}, &types.TenantGroupRoleGrant{}, &types.ResourceAccessPolicy{}, &types.ResourceGroupGrant{}))
+	}
 	migration := db
 	path := "../../../migrations/sqlite/000062_knowledge_enrichment_inputs.up.sql"
 	displayPath := "../../../migrations/sqlite/000059_knowledge_collection_display_inputs.up.sql"

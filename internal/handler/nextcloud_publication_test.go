@@ -37,6 +37,10 @@ func (publicationHandlerDirectories) GetLoginSnapshot(context.Context, string, s
 	return nil, nil
 }
 
+func (publicationHandlerDirectories) GetUserLoginSnapshot(context.Context, string) ([]*types.DirectoryIdentity, *types.DirectoryLoginSnapshot, error) {
+	return nil, nil, nil
+}
+
 type publicationHandlerKnowledge struct {
 	interfaces.KnowledgeService
 	row *types.Knowledge

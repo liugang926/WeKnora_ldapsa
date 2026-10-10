@@ -27,23 +27,24 @@ import (
 // This test-only bridge lets the external HTTP tests use the real signed
 // machine ingestion fixture without introducing a service -> handler cycle.
 type NormalReferencesHTTPFixtureForTest struct {
-	DB                 *gorm.DB
-	Store              *repository.KnowledgeInputProvenanceStore
-	Ctx                context.Context
-	Session            *types.Session
-	Sessions           interfaces.SessionService
-	Messages           interfaces.MessageService
-	KBs                interfaces.KnowledgeBaseService
-	Models             interfaces.ModelService
-	Config             *config.Config
-	Lineage            *types.SourceLineage
-	Revoke             func()
-	Cancel             func()
-	ProducerReturned   <-chan struct{}
-	CompletionReturned <-chan struct{}
-	CompletionError    <-chan error
-	CompletionErrors   func() []error
-	BodyLeaseRenewals  func() int64
+	DB                   *gorm.DB
+	Store                *repository.KnowledgeInputProvenanceStore
+	Ctx                  context.Context
+	Session              *types.Session
+	Sessions             interfaces.SessionService
+	Messages             interfaces.MessageService
+	KBs                  interfaces.KnowledgeBaseService
+	Models               interfaces.ModelService
+	Config               *config.Config
+	Lineage              *types.SourceLineage
+	Revoke               func()
+	Cancel               func()
+	ProducerReturned     <-chan struct{}
+	CompletionReturned   <-chan struct{}
+	CompletionError      <-chan error
+	CompletionErrors     func() []error
+	BodyLeaseRenewals    func() int64
+	SourceAuthorizeCalls func() int64
 }
 
 type normalReferencesModelsForTest struct {
@@ -70,7 +71,7 @@ func NewNormalReferencesHTTPFixtureForTest(t *testing.T, pg bool, final chat.Cha
 	if len(modes) > 0 {
 		mode = modes[0]
 	}
-	m := newMachinePipelineFixtureWithDocument(t, pg, "Current employee policy: read the approved record, then ask before changing another department's access.", true)
+	m := newMachinePipelineFixtureWithDocument(t, pg, "Current employee policy: read the approved record, then ask before changing another department's access.", true, mode == "directory-periodic")
 	k := m.ingest(t)
 	for i := 0; i < len(m.f.queue.tasks); i++ {
 		require.NoError(t, m.run(t, m.f.queue.tasks[i]))
@@ -91,7 +92,9 @@ func NewNormalReferencesHTTPFixtureForTest(t *testing.T, pg bool, final chat.Cha
 		require.NoError(t, err)
 		require.NoError(t, migration.Exec("CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\" WITH SCHEMA public").Error)
 		require.NoError(t, migration.Exec("ALTER EXTENSION \"uuid-ossp\" SET SCHEMA public").Error)
-		require.NoError(t, migration.Exec("CREATE FUNCTION uuid_generate_v4() RETURNS uuid LANGUAGE sql AS $$ SELECT public.uuid_generate_v4() $$").Error)
+		if mode != "directory-periodic" {
+			require.NoError(t, migration.Exec("CREATE FUNCTION uuid_generate_v4() RETURNS uuid LANGUAGE sql AS $$ SELECT public.uuid_generate_v4() $$").Error)
+		}
 	}
 	if !m.f.db.Migrator().HasColumn(&types.Message{}, "artifacts") {
 		require.NoError(t, migration.Exec("ALTER TABLE messages ADD COLUMN artifacts "+artifactType).Error)
@@ -167,7 +170,7 @@ func NewNormalReferencesHTTPFixtureForTest(t *testing.T, pg bool, final chat.Cha
 	require.NoError(t, m.f.db.Create(session).Error)
 	original, err := m.f.store.CaptureKnowledgeOutputInputs(ctx, types.KnowledgeBuildInputCaptureRequest{TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: k.ID})
 	require.NoError(t, err)
-	return &NormalReferencesHTTPFixtureForTest{DB: m.f.db, Store: m.f.store, Ctx: ctx, Session: session, Sessions: normalReferencesSessionForTest{SessionService: sessions, mode: mode, returned: producerReturned}, Messages: observedMessages, KBs: kbs, Models: models, Config: cfg, Lineage: original.Proof.SourceLineage, Revoke: func() { m.personal.Store(false) }, Cancel: cancel, ProducerReturned: producerReturned, CompletionReturned: completionReturned, CompletionError: completionError, CompletionErrors: observedMessages.completionErrors, BodyLeaseRenewals: bodyLeaseRenewals.Load}
+	return &NormalReferencesHTTPFixtureForTest{DB: m.f.db, Store: m.f.store, Ctx: ctx, Session: session, Sessions: normalReferencesSessionForTest{SessionService: sessions, mode: mode, returned: producerReturned}, Messages: observedMessages, KBs: kbs, Models: models, Config: cfg, Lineage: original.Proof.SourceLineage, Revoke: func() { m.personal.Store(false) }, Cancel: cancel, ProducerReturned: producerReturned, CompletionReturned: completionReturned, CompletionError: completionError, CompletionErrors: observedMessages.completionErrors, BodyLeaseRenewals: bodyLeaseRenewals.Load, SourceAuthorizeCalls: m.publicationAuthorizeCalls.Load}
 }
 
 type normalReferencesTenantForTest struct {

@@ -75,6 +75,7 @@ type machinePipelineFixture struct {
 	authenticated                         bool
 	publicationUnavailableAfterCompletion *atomic.Bool
 	publicationFailureProbe               *atomic.Int64
+	publicationAuthorizeCalls             *atomic.Int64
 }
 
 func newMachinePipelineFixture(t *testing.T, pg bool) *machinePipelineFixture {
@@ -83,7 +84,8 @@ func newMachinePipelineFixture(t *testing.T, pg bool) *machinePipelineFixture {
 
 func newMachinePipelineFixtureWithDocument(t *testing.T, pg bool, artifact string, withMessageMaterials ...bool) *machinePipelineFixture {
 	t.Helper()
-	f := newEnrichmentTestFixture(t, pg)
+	fullDirectory := len(withMessageMaterials) > 1 && withMessageMaterials[1]
+	f := newEnrichmentTestFixture(t, pg, fullDirectory)
 	// Remove setup-only ordinary data. Every tested NC knowledge below is
 	// created by the actual production sync/file pipeline.
 	require.NoError(t, f.db.Unscoped().Where("knowledge_id = ?", f.k.ID).Delete(&types.Chunk{}).Error)
@@ -168,6 +170,7 @@ func newMachinePipelineFixtureWithDocument(t *testing.T, pg bool, artifact strin
 	unavailableAfterCompletion := &atomic.Bool{}
 	failureProbe := &atomic.Int64{}
 	completedProbes := &atomic.Int64{}
+	authorizeCalls := &atomic.Int64{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(t, "Bearer isolated-machine", r.Header.Get("Authorization"))
 		require.NotEmpty(t, r.Header.Get("X-WeKnora-Signature"))
@@ -209,6 +212,7 @@ func newMachinePipelineFixtureWithDocument(t *testing.T, pg bool, artifact strin
 			require.Equal(t, "source.md", p.Path)
 			w.WriteHeader(http.StatusNoContent)
 		case strings.HasSuffix(r.URL.Path, "/authorize"):
+			authorizeCalls.Add(1)
 			if !allow.Load() || !personal.Load() {
 				fmt.Fprint(w, `{"allow":false,"reason":"withdrawn","checked_at":1780000000}`)
 			} else {
@@ -233,7 +237,20 @@ func newMachinePipelineFixtureWithDocument(t *testing.T, pg bool, artifact strin
 	ds, e := sources.FindByID(f.ctx, pair.DataSourceID)
 	require.NoError(t, e)
 	now := time.Now().UTC()
-	require.NoError(t, f.db.Create(&types.Directory{ID: "machine-ad", Protocol: types.DirectoryProtocolAD, Enabled: true, SnapshotVersion: 1, LastSuccessfulSyncAt: &now, StaleAfterSeconds: 900}).Error)
+	directoryRecord := &types.Directory{ID: "machine-ad", Protocol: types.DirectoryProtocolAD, Enabled: true, SnapshotVersion: 1, LastSuccessfulSyncAt: &now, StaleAfterSeconds: 900}
+	if fullDirectory {
+		directoryRecord.Name = "Actual periodic directory"
+		directoryRecord.ConfigSource = types.DirectoryConfigSourceDatabase
+		directoryRecord.TLSMode = types.DirectoryTLSLDAPS
+		directoryRecord.BaseDN = "dc=example,dc=test"
+		directoryRecord.UserBaseDN = "ou=People,dc=example,dc=test"
+		directoryRecord.GroupBaseDN = "ou=Groups,dc=example,dc=test"
+		directoryRecord.UserFilter = "(objectClass=user)"
+		directoryRecord.GroupFilter = "(objectClass=group)"
+		directoryRecord.ServiceAccountDN = "cn=fixture-reader,dc=example,dc=test"
+		directoryRecord.PasswordCiphertext = "fixture-only-ciphertext"
+	}
+	require.NoError(t, f.db.Create(directoryRecord).Error)
 	user := "enrich-human"
 	require.NoError(t, f.db.Create(&types.DirectoryIdentity{ID: "machine-ad-user", DirectoryID: "machine-ad", ObjectGUID: "00112233-4455-6677-8899-aabbccddeeff", UserID: &user, Status: types.DirectoryObjectActive, SnapshotVersion: 1}).Error)
 	publication := access.NewNextcloudPublicationGuard(repository.NewDirectoryRepository(f.db), sources)
@@ -259,7 +276,7 @@ func newMachinePipelineFixtureWithDocument(t *testing.T, pg bool, artifact strin
 	require.NoError(t, registry.Register(nextcloud.NewConnector()))
 	admission := NewNextcloudCapacityAdmission(repository.NewNextcloudCapacityStore(f.db), func(context.Context, *types.KnowledgeBase) (interfaces.FileService, error) { return files, nil })
 	source := &DataSourceService{dsRepo: sources, syncLogRepo: repository.NewSyncLogRepository(f.db), knowledgeService: f.s, kbService: f.s.kbService, taskEnqueuer: f.queue, connectorRegistry: registry, tenantRepo: f.s.tenantRepo, nextcloudSourcePairings: pairs, nextcloudEventInbox: repository.NewNextcloudEventInboxRepository(f.db), capacityAdmission: admission, sourceInputs: f.store}
-	return &machinePipelineFixture{f: f, source: source, ds: ds, allow: allow, auto: auto, model: model, files: files, base: base, personal: personal, publicationUnavailableAfterCompletion: unavailableAfterCompletion, publicationFailureProbe: failureProbe}
+	return &machinePipelineFixture{f: f, source: source, ds: ds, allow: allow, auto: auto, model: model, files: files, base: base, personal: personal, publicationUnavailableAfterCompletion: unavailableAfterCompletion, publicationFailureProbe: failureProbe, publicationAuthorizeCalls: authorizeCalls}
 }
 
 func (m *machinePipelineFixture) ingest(t *testing.T) *types.Knowledge {
