@@ -149,20 +149,20 @@ BLEU 核心（`metric/bleu.go`）：修正 n-gram 精度的加权几何平均乘
 
 ### API
 
-`internal/router/router.go`：
+`internal/router/routes_infra.go` 的 `RegisterEvaluationRoutes`：
 
 ```go
 evaluationRoutes := g.apiKeyGroup(r.Group("/evaluation"), apiKeyRunEvaluations(apiKeyFullAccess()))
 {
     evaluationRoutes.POST("", g.Admin(), handler.Evaluation)
-    evaluationRoutes.GET("", g.Viewer(), handler.GetEvaluationResult)
+    evaluationRoutes.GET("", g.Admin(), handler.GetEvaluationResult)
 }
 ```
 
 | 方法 | 路径 | 权限 | 说明 |
 | --- | --- | --- | --- |
 | POST | `/api/v1/evaluation` | Admin（API Key 需 `RunEvaluations` 能力） | 创建评估任务，立即返回任务信息 |
-| GET | `/api/v1/evaluation?task_id=...` | Viewer | 查询任务状态、进度与指标结果 |
+| GET | `/api/v1/evaluation?task_id=...` | Admin（API Key 需 `RunEvaluations` 能力） | 查询任务状态、进度与指标结果；不带任务 ID 时查询当前空间历史 |
 
 #### 创建评估任务
 
@@ -170,10 +170,11 @@ evaluationRoutes := g.apiKeyGroup(r.Group("/evaluation"), apiKeyRunEvaluations(a
 
 ```go
 type EvaluationRequest struct {
-    DatasetID       string `json:"dataset_id"`        // 数据集 ID，默认 "default"
-    KnowledgeBaseID string `json:"knowledge_base_id"` // 参考知识库（复用其配置）
-    ChatModelID     string `json:"chat_id"`           // 聊天模型
-    RerankModelID   string `json:"rerank_id"`         // 重排模型
+    DatasetID        string `json:"dataset_id"`        // 数据集 ID，默认 "default"
+    KnowledgeBaseID  string `json:"knowledge_base_id"` // 参考知识库（复用其配置）
+    ChatModelID      string `json:"chat_id"`           // 聊天模型
+    RerankModelID    string `json:"rerank_id"`         // 重排模型
+    EmbeddingModelID string `json:"embedding_id"`     // 评估知识库使用的 Embedding
 }
 ```
 
@@ -181,8 +182,11 @@ type EvaluationRequest struct {
 | --- | --- | --- |
 | `dataset_id` | 否 | 缺省使用内置 `default` 数据集（`dataset/samples/`） |
 | `knowledge_base_id` | 否 | 未提供则新建评估专用知识库；提供则复制其配置创建评估 KB |
-| `chat_id` | 否 | 缺省自动选择默认 Chat 模型 |
-| `rerank_id` | 否 | 缺省自动选择默认 Rerank 模型 |
+| `embedding_id` | 自定义题集必填 | 内置默认样本保留自动选择；复制参考知识库时必须与其 Embedding 一致 |
+| `chat_id` | 自定义题集必填 | 内置默认样本保留自动选择；选定模型同时用于临时入库摘要与最终答复 |
+| `rerank_id` | 自定义题集必填 | 内置默认样本保留自动选择默认 ReRank 模型 |
+
+自定义题集（`dataset_id` 非内置 `default`），以及通过 `EVALUATION_DEFAULT_DATASET_DIR` 替换默认样本的运行，必须显式指定以上三个模型 ID；缺一返回 400。显式选择只能防止模型隐式替换，不代表数据负责人已批准该模型或外发范围。
 
 任务 ID 是带时间戳和随机后缀的唯一值，不应自行拼接。任务对象（`internal/types/evaluation.go`）：
 
