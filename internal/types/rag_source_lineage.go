@@ -3,6 +3,8 @@ package types
 import (
 	"context"
 	"sync"
+
+	"github.com/Tencent/WeKnora/internal/logprivacy"
 )
 
 type ragLineageContextKey struct{}
@@ -23,6 +25,9 @@ func NewRAGSourceLineage(authorize func(context.Context, *SourceLineage) error) 
 }
 
 func WithRAGSourceLineage(ctx context.Context, turn *RAGSourceLineage) context.Context {
+	if turn != nil {
+		ctx = logprivacy.SuppressContent(ctx)
+	}
 	return context.WithValue(ctx, ragLineageContextKey{}, turn)
 }
 

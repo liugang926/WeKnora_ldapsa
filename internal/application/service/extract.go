@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/Tencent/WeKnora/internal/application/repository"
 	"os"
@@ -99,7 +100,12 @@ func NewChunkExtractTask(
 	chunkIndex int,
 	originalInputs ...*types.KnowledgeBuildInputProof,
 ) (bool, error) {
-	if strings.ToLower(os.Getenv("NEO4J_ENABLE")) != "true" {
+	if strings.ToLower(os.Getenv("NEO4J_ENABLE")) != "true" && !repository.NextcloudBuildLeasePresent(ctx, tenantID, func() string {
+		if len(originalInputs) == 1 && originalInputs[0] != nil {
+			return originalInputs[0].KnowledgeBaseID
+		}
+		return ""
+	}(), knowledgeID) {
 		logger.Warn(ctx, "NEO4J is not enabled, skip chunk extract task")
 		return false, nil
 	}
@@ -120,9 +126,34 @@ func NewChunkExtractTask(
 	if err != nil {
 		return false, err
 	}
-	task := asynq.NewTask(types.TypeChunkExtract, payload,
-		asynq.Queue(types.QueueGraph), asynq.MaxRetry(3), asynq.Timeout(30*time.Minute))
+	ledger := types.NextcloudGraphQueueLedgerFromContext(ctx)
+	if ledger != nil {
+		if err := ledger.RecordGraphPayload(ctx, tenantID, knowledgeID, attempt, chunkID, payload); err != nil {
+			return false, err
+		}
+	}
+	options := []asynq.Option{asynq.Queue(types.QueueGraph), asynq.MaxRetry(3), asynq.Timeout(30 * time.Minute)}
+	if ledger != nil {
+		options = append(options, asynq.TaskID("nc-graph:"+repository.NextcloudGraphOperationID(tenantID, knowledgeID, attempt, chunkID)))
+	}
+	task := asynq.NewTask(types.TypeChunkExtract, payload, options...)
+	if client == nil {
+		if ledger != nil {
+			return true, nil
+		}
+		return false, errors.New("graph queue unavailable")
+	}
 	info, err := client.Enqueue(task)
+	if ledger != nil {
+		accepted := err == nil || errors.Is(err, asynq.ErrTaskIDConflict)
+		if markErr := ledger.MarkGraphQueued(ctx, tenantID, knowledgeID, attempt, chunkID, accepted); markErr != nil {
+			return true, markErr
+		}
+		if err != nil {
+			return true, nil
+		} // durable intent owns the slot and retries independently
+	}
+
 	if err != nil {
 		logger.Errorf(ctx, "failed to enqueue task: %v", err)
 		return false, fmt.Errorf("failed to enqueue task: %v", err)
@@ -197,7 +228,8 @@ type ChunkExtractService struct {
 	// spanTracker records this graph-extract task's subspan under the
 	// parent attempt's postprocess stage so the trace viewer shows real
 	// per-chunk graph extraction time rather than the upstream's enqueue.
-	spanTracker SpanTracker
+	spanTracker      SpanTracker
+	processingLedger types.NextcloudProcessingLedger
 }
 
 // NewChunkExtractService creates a new chunk extract service
@@ -226,6 +258,12 @@ func NewChunkExtractService(
 		chunkRepo:         chunkRepo,
 		graphEngine:       graphEngine,
 		spanTracker:       spanTracker,
+	}
+}
+
+func ConfigureNextcloudChunkExtractLedger(handler interfaces.TaskHandler, ledger types.NextcloudProcessingLedger) {
+	if impl, ok := handler.(*ChunkExtractService); ok {
+		impl.processingLedger = ledger
 	}
 }
 
@@ -287,6 +325,42 @@ func (s *ChunkExtractService) Handle(ctx context.Context, t *asynq.Task) (return
 		return err
 	}
 
+	graphFailureCode := "graph_extraction_failed"
+	sourcePrivate := snapshot.Knowledge.Channel == types.ConnectorTypeNextcloud
+	for _, source := range snapshot.Proof.SourceLineage.Sources {
+		if source.Provider == types.ConnectorTypeNextcloud {
+			sourcePrivate = true
+		}
+	}
+	defer func() {
+		if sourcePrivate && returnErr != nil {
+			returnErr = errors.New(graphFailureCode)
+		}
+	}()
+	if snapshot.Knowledge.Channel == types.ConnectorTypeNextcloud {
+		if s.processingLedger == nil {
+			return errors.New("Nextcloud graph processing ledger unavailable")
+		}
+		ctx = types.WithGraphWriteOperation(ctx, types.GraphWriteOperation{ID: repository.NextcloudGraphOperationID(p.TenantID, p.KnowledgeID, p.Attempt, p.ChunkID), Attempt: p.Attempt, ChunkID: p.ChunkID})
+		done, err := s.processingLedger.StartGraph(ctx, p.TenantID, p.KnowledgeID, p.Attempt, p.ChunkID)
+		if err != nil {
+			return err
+		}
+		if done {
+			finalizeSubtaskDetached(ctx, s.knowledgeRepo, p.KnowledgeID, fmt.Sprintf("graph_chunk[%d]", p.ChunkIndex), nil, false, true)
+			mainFinalizeRegistered = true
+			return nil
+		}
+
+		defer func() {
+			if returnErr != nil {
+				fctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+				defer cancel()
+				_ = s.processingLedger.FailGraph(fctx, p.TenantID, p.KnowledgeID, p.Attempt, p.ChunkID, graphFailureCode, isFinalAsynqAttempt(ctx))
+			}
+		}()
+	}
+
 	// Open a postprocess subspan keyed by chunk ordinal so the trace
 	// shows real per-chunk graph extraction time. Skipped silently when
 	// upstream didn't pass the parent attempt (legacy in-flight tasks)
@@ -313,14 +387,22 @@ func (s *ChunkExtractService) Handle(ctx context.Context, t *asynq.Task) (return
 		// completed (or terminally-failed) per-chunk extract releases its
 		// slot in pending_subtasks_count. KnowledgeID is the new (post-#? )
 		// payload field; legacy in-flight tasks without it are skipped.
+		safeErr := handleErr
+		if sourcePrivate && safeErr != nil {
+			safeErr = errors.New(graphFailureCode)
+		}
 		finalizeSubtaskDetached(ctx, s.knowledgeRepo, p.KnowledgeID,
 			fmt.Sprintf("graph_chunk[%d]", p.ChunkIndex),
-			handleErr, false, isFinalAsynqAttempt(ctx))
+			safeErr, false, isFinalAsynqAttempt(ctx))
 		if gSpan == nil {
 			return
 		}
 		if handleErr != nil {
-			s.tracker().FailSpan(ctx, gSpan, "GRAPH_EXTRACT_FAILED", handleErr.Error(), handleErr)
+			if sourcePrivate {
+				s.tracker().FailSpan(ctx, gSpan, graphFailureCode, graphFailureCode, errors.New(graphFailureCode))
+			} else {
+				s.tracker().FailSpan(ctx, gSpan, "GRAPH_EXTRACT_FAILED", handleErr.Error(), handleErr)
+			}
 		} else {
 			s.tracker().EndSpan(ctx, gSpan, graphOut)
 		}
@@ -444,6 +526,7 @@ func (s *ChunkExtractService) Handle(ctx context.Context, t *asynq.Task) (return
 		}
 		return check(ctx, receipt.SourceLineage)
 	})
+	graphFailureCode = "graph_persistence_failed"
 	if err := s.graphEngine.AddGraph(writeCtx, namespace, []*types.GraphData{graph}); err != nil {
 		handleErr = err
 		return err
@@ -458,7 +541,7 @@ func (s *ChunkExtractService) Handle(ctx context.Context, t *asynq.Task) (return
 	// answer "what did the LLM actually extract?" without round-tripping
 	// to the graph store. Cap to two each — anything more bloats span
 	// rows and the full graph is queryable elsewhere.
-	if len(graph.Node) > 0 {
+	if !sourcePrivate && len(graph.Node) > 0 {
 		samples := graph.Node
 		if len(samples) > 2 {
 			samples = samples[:2]
@@ -469,7 +552,7 @@ func (s *ChunkExtractService) Handle(ctx context.Context, t *asynq.Task) (return
 		}
 		graphOut["sample_nodes"] = names
 	}
-	if len(graph.Relation) > 0 {
+	if !sourcePrivate && len(graph.Relation) > 0 {
 		samples := graph.Relation
 		if len(samples) > 2 {
 			samples = samples[:2]
@@ -752,7 +835,7 @@ func (s *DataTableSummaryService) processTableData(ctx context.Context, resource
 		logger.Errorf(ctx, "failed to generate table description: %v", err)
 		return nil, err
 	}
-	logger.Debugf(ctx, "table describe of knowledge %s: %s", resources.knowledge.ID, tableDescription)
+	logger.Debugf(ctx, "table description prepared for knowledge %s", resources.knowledge.ID)
 
 	columnDescription, err := s.generateColumnDescriptions(ctx, resources.chatModel, tools.DataAnalysisTableName,
 		schemaDesc, sampleDesc, customInstructions)
@@ -760,7 +843,7 @@ func (s *DataTableSummaryService) processTableData(ctx context.Context, resource
 		logger.Errorf(ctx, "failed to generate column descriptions: %v", err)
 		return nil, err
 	}
-	logger.Debugf(ctx, "column describe of knowledge %s: %s", resources.knowledge.ID, columnDescription)
+	logger.Debugf(ctx, "column descriptions prepared for knowledge %s", resources.knowledge.ID)
 
 	// 构建chunks：一个表格摘要chunk + 多个列描述chunks
 	chunks := s.buildChunks(resources, tableDescription, columnDescription)

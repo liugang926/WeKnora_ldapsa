@@ -45,6 +45,8 @@ var omitFieldsOnUpdate = []string{"DeletedAt", "PendingSubtasksCount"}
 
 // knowledgeRepository implements knowledge base and knowledge repository interface
 type knowledgeRepository struct {
+	// Only private maintenance Snapshot construction may bypass the read gate.
+	nextcloudRecoveryProbe    bool
 	db                        *gorm.DB
 	displayAuthorityFactory   KnowledgeDisplayAuthorityFactory
 	nextcloudPublicationCheck nextcloudPublicationCheck
@@ -489,6 +491,11 @@ func (r *knowledgeRepository) CheckKnowledgeExists(
 				params.DataSourceID, params.ExternalID)
 		}
 		if params.NextcloudTargetETag != "" {
+			expectedContentRevision, err := types.NormalizeNextcloudContentRevision(params.NextcloudContentRevision)
+			if err != nil {
+				return false, nil, err
+			}
+			query = query.Where("COALESCE(NULLIF(metadata->>'nextcloud_content_revision',''),'0')=?", expectedContentRevision)
 			if params.DataSourceID == "" || params.ExternalID == "" {
 				return false, nil, errors.New("Nextcloud duplicate check requires exact source identity")
 			}
@@ -513,6 +520,15 @@ func (r *knowledgeRepository) CheckKnowledgeExists(
 				}
 				return false, nil, err
 			}
+			if params.NextcloudTargetETag != "" {
+				same, err := nextcloudDuplicateProcessingConfigCurrent(r.db.WithContext(ctx), &knowledge)
+				if err != nil {
+					return false, nil, err
+				}
+				if !same {
+					return false, nil, nil
+				}
+			}
 			return true, &knowledge, nil
 		}
 
@@ -532,6 +548,15 @@ func (r *knowledgeRepository) CheckKnowledgeExists(
 					return false, nil, nil
 				}
 				return false, nil, err
+			}
+			if params.NextcloudTargetETag != "" {
+				same, err := nextcloudDuplicateProcessingConfigCurrent(r.db.WithContext(ctx), &knowledge)
+				if err != nil {
+					return false, nil, err
+				}
+				if !same {
+					return false, nil, nil
+				}
 			}
 			return true, &knowledge, nil
 		}
@@ -797,6 +822,22 @@ func (r *knowledgeRepository) FinalizeSubtask(
 				return err
 			}
 		}
+		if operation, ok := types.GraphWriteOperationFromContext(ctx); ok {
+			var task nextcloudGraphTask
+			if err := tx.Where("operation_id=? AND knowledge_id=? AND attempt=? AND chunk_id=?", operation.ID, id, operation.Attempt, operation.ChunkID).Take(&task).Error; err != nil {
+				return err
+			}
+			if err := validateNextcloudGraphTask(ctx, tx, task); err != nil {
+				return err
+			}
+			claim := tx.Model(&task).Where("finalized=?", false).Update("finalized", true)
+			if claim.Error != nil {
+				return claim.Error
+			}
+			if claim.RowsAffected == 0 {
+				return nil
+			}
+		}
 		// 1) Atomic decrement, clamped at zero. The `pending_subtasks_count > 0`
 		//    guard is purely a safety net for accounting bugs — under normal
 		//    operation each subtask handler decrements at most once per task,
@@ -844,6 +885,11 @@ func (r *knowledgeRepository) FinalizeSubtask(
 	var writeErr error
 	if guard, ok := ctx.Value(nextcloudBuildContextKey{}).(nextcloudBuildContext); ok {
 		writeErr = r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			if _, graph := types.GraphWriteOperationFromContext(ctx); graph {
+				if err := lockNextcloudGraphKnowledgeBase(tx, guard.scope.TenantID, guard.scope.KnowledgeBaseID); err != nil {
+					return err
+				}
+			}
 			if err := ValidateNextcloudBuildWrite(ctx, tx,
 				guard.scope.TenantID, guard.scope.KnowledgeBaseID, id); err != nil {
 				return err
@@ -1376,4 +1422,43 @@ func (r *knowledgeRepository) ListIDsByTagIDs(
 		Distinct("knowledges.id").
 		Pluck("knowledges.id", &ids).Error
 	return ids, err
+}
+
+// Matching bytes/ETag do not make a result built with old parser/index/graph
+// settings current. A new candidate is admitted through the normal source path.
+func nextcloudDuplicateProcessingConfigCurrent(tx *gorm.DB, k *types.Knowledge) (bool, error) {
+	if k.Channel != types.ConnectorTypeNextcloud || !tx.Migrator().HasTable("knowledge_input_admissions") {
+		return true, nil
+	}
+	var kb types.KnowledgeBase
+	if err := tx.Where("id=? AND tenant_id=?", k.KnowledgeBaseID, k.TenantID).Take(&kb).Error; err != nil {
+		return false, err
+	}
+	digest, err := knowledgeConfigDigest(&kb, k)
+	if err != nil {
+		return false, err
+	}
+	var admissions []knowledgeInputAdmission
+	if err := tx.Where("knowledge_id=? AND tenant_id=? AND knowledge_base_id=?", k.ID, k.TenantID, k.KnowledgeBaseID).Order("build_generation DESC").Limit(1).Find(&admissions).Error; err != nil {
+		return false, err
+	}
+	if len(admissions) == 0 {
+		if tx.Migrator().HasTable("nextcloud_original_upload_inputs") && (k.ParseStatus == types.ParseStatusPending || k.ParseStatus == types.ParseStatusProcessing || k.ParseStatus == types.ParseStatusFinalizing) {
+			var original struct{ ConfigRevision uint64 }
+			err := tx.Table("nextcloud_original_upload_inputs").Where("knowledge_id=? AND tenant_id=? AND knowledge_base_id=?", k.ID, k.TenantID, k.KnowledgeBaseID).Take(&original).Error
+			if err == nil {
+				revision, err := knowledgeConfigurationControlRevision(tx, k.KnowledgeBaseID)
+				return original.ConfigRevision == revision, err
+			}
+			if !errors.Is(err, gorm.ErrRecordNotFound) {
+				return false, err
+			}
+		}
+		return false, nil
+	}
+	revision, err := knowledgeConfigurationControlRevision(tx, k.KnowledgeBaseID)
+	if err != nil {
+		return false, err
+	}
+	return admissions[0].ConfigDigest == digest && admissions[0].ConfigRevision == revision, nil
 }

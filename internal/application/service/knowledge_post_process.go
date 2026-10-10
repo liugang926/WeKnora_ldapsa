@@ -33,11 +33,18 @@ type KnowledgePostProcessService struct {
 	spanTracker      SpanTracker
 	knowledgeInputs  interfaces.KnowledgeBuildInputReader
 	enrichmentConfig *config.Config
+	processingLedger types.NextcloudProcessingLedger
 }
 
 func ConfigureKnowledgePostProcessInputProvenance(handler interfaces.TaskHandler, reader interfaces.KnowledgeBuildInputReader) {
 	if impl, ok := handler.(*KnowledgePostProcessService); ok {
 		impl.knowledgeInputs = reader
+	}
+}
+
+func ConfigureNextcloudPostProcessLedger(handler interfaces.TaskHandler, ledger types.NextcloudProcessingLedger) {
+	if impl, ok := handler.(*KnowledgePostProcessService); ok {
+		impl.processingLedger = ledger
 	}
 }
 
@@ -272,6 +279,51 @@ func (s *KnowledgePostProcessService) Handle(ctx context.Context, task *asynq.Ta
 	}
 	expectedSubtasks += graphChunkCount
 
+	if knowledge.Channel == types.ConnectorTypeNextcloud {
+		if s.processingLedger == nil {
+			return errors.New("Nextcloud graph processing ledger unavailable")
+		}
+		if err := s.processingLedger.PlanGraph(ctx, knowledge, attempt, graphChunks, eff.GraphEnabled, kb.IndexingStrategy.GraphRequired); err != nil {
+			return err
+		}
+		ctx = types.WithNextcloudGraphQueueLedger(ctx, s.processingLedger)
+	}
+
+	// A retry after the durable finalizing handoff may precede graph payload
+	// persistence. Resume only those exact planned slots; existing queue intents
+	// and successful provider records retain their IDs and original inputs.
+	if knowledge.Channel == types.ConnectorTypeNextcloud && knowledge.ParseStatus == types.ParseStatusFinalizing && eff.GraphEnabled {
+		reader, ok := s.processingLedger.(interface {
+			UnpreparedGraphChunks(context.Context, uint64, string, int) ([]string, error)
+		})
+		if !ok {
+			return errors.New("Nextcloud graph queue recovery unavailable")
+		}
+		ids, err := reader.UnpreparedGraphChunks(ctx, payload.TenantID, payload.KnowledgeID, attempt)
+		if err != nil {
+			return err
+		}
+		for i, chunkID := range ids {
+			if s.knowledgeInputs == nil {
+				return types.ErrGraphSourceReceiptUnknown
+			}
+			snapshot, err := s.knowledgeInputs.CaptureKnowledgeBuildInputs(ctx, types.KnowledgeBuildInputCaptureRequest{Projection: types.KnowledgeBuildProjectionGraph, TenantID: payload.TenantID, KnowledgeBaseID: kb.ID, KnowledgeID: payload.KnowledgeID, ChunkIDs: []string{chunkID}, Expected: repository.KnowledgeBuildInputProofFromContext(ctx)})
+			if err != nil {
+				return err
+			}
+			if snapshot == nil || snapshot.Proof == nil {
+				return types.ErrGraphSourceReceiptUnknown
+			}
+			queued, err := NewChunkExtractTask(ctx, s.taskEnqueuer, payload.TenantID, chunkID, kb.SummaryModelID, payload.KnowledgeID, attempt, i, snapshot.Proof)
+			if err != nil {
+				return err
+			}
+			if !queued {
+				return errors.New("Nextcloud planned graph queue unavailable")
+			}
+		}
+	}
+
 	// enteredFinalizing is set only when the processing-to-finalizing handoff
 	// actually seeded the counter. For Wiki-enabled knowledge, that handoff
 	// also persists the pending Wiki op in the same transaction.
@@ -446,12 +498,22 @@ func (s *KnowledgePostProcessService) Handle(ctx context.Context, task *asynq.Ta
 			}
 			if captureErr != nil {
 				logger.Warn(ctx, "graph original input admission unavailable")
+				if knowledge.Channel == types.ConnectorTypeNextcloud {
+					if err := s.processingLedger.FailGraph(ctx, payload.TenantID, payload.KnowledgeID, attempt, chunk.ID, "graph_input_unverified", true); err != nil {
+						return err
+					}
+				}
 				continue
 			}
 			ok, err := NewChunkExtractTask(ctx, s.taskEnqueuer, payload.TenantID, chunk.ID, kb.SummaryModelID,
 				payload.KnowledgeID, attempt, i, original)
 			if err != nil {
 				logger.Errorf(ctx, "[KnowledgePostProcess] Failed to create chunk extract task for %s: %v", chunk.ID, err)
+			}
+			if !ok && knowledge.Channel == types.ConnectorTypeNextcloud {
+				if ledgerErr := s.processingLedger.FailGraph(ctx, payload.TenantID, payload.KnowledgeID, attempt, chunk.ID, "graph_enqueue_failed", true); ledgerErr != nil {
+					return ledgerErr
+				}
 			}
 			if ok {
 				enqueuedGraphCount++

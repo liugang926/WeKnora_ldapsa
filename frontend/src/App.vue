@@ -185,11 +185,11 @@ let invitationPollTimer: ReturnType<typeof setInterval> | null = null
 const INVITATION_POLL_INTERVAL_MS = 2 * 60 * 1000
 
 const startInvitationPolling = () => {
-  if (invitationPollTimer || !authStore.isLoggedIn) return
+  if (invitationPollTimer || !authStore.isLoggedIn || authStore.currentTenantScopedOnly) return
   // Immediate fetch so the badge is correct before the first tick.
   authStore.fetchPendingInvitationCount()
   invitationPollTimer = setInterval(() => {
-    if (!authStore.isLoggedIn) return
+    if (!authStore.isLoggedIn || authStore.currentTenantScopedOnly) return
     authStore.fetchPendingInvitationCount()
   }, INVITATION_POLL_INTERVAL_MS)
 }
@@ -205,9 +205,9 @@ const stopInvitationPolling = () => {
 // here (rather than only on first mount) handles the OIDC callback
 // flow where the user logs in well after App.vue has already mounted.
 watch(
-  () => authStore.isLoggedIn,
-  (logged) => {
-    if (logged) startInvitationPolling()
+  () => [authStore.isLoggedIn, authStore.currentTenantScopedOnly],
+  ([logged, scoped]) => {
+    if (logged && !scoped) startInvitationPolling()
     else stopInvitationPolling()
   },
   { immediate: true },

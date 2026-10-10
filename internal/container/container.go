@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -32,6 +33,7 @@ import (
 	"gorm.io/driver/postgres"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
+	gormlogger "gorm.io/gorm/logger"
 
 	"github.com/Tencent/WeKnora/internal/agent/approval"
 	"github.com/Tencent/WeKnora/internal/application/access"
@@ -177,7 +179,9 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	must(container.Provide(repository.NewDirectoryRepository))
 	must(container.Provide(repository.NewGroupAccessRepository))
 	must(container.Provide(repository.NewSystemSettingRepository))
-	must(container.Provide(neo4jRepo.NewNeo4jRepository))
+	must(container.Provide(func(db *gorm.DB, driver neo4j.Driver) interfaces.RetrieveGraphRepository {
+		return repository.NewScopedSQLGraphRepository(db, neo4jRepo.NewNeo4jRepository(driver))
+	}))
 	must(container.Provide(repository.NewMCPServiceRepository))
 	must(container.Provide(repository.NewMCPToolApprovalRepository))
 	must(container.Provide(repository.NewMCPOAuthRepository))
@@ -194,13 +198,19 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	must(container.Provide(service.NewWebSearchStateService))
 	must(container.Provide(repository.NewDataSourceRepository))
 	must(container.Provide(repository.NewNextcloudEventInboxRepository))
+	must(container.Provide(repository.NewNextcloudProcessingStateStore))
+	must(container.Provide(service.NewNextcloudStateDispatcher))
 	must(container.Provide(repository.NewNextcloudAskTargetRepository))
 	must(container.Provide(repository.NewNextcloudSourcePairingRepository))
+	must(container.Provide(repository.NewNextcloudOnboardingStore))
 	must(container.Provide(func(
 		directories interfaces.DirectoryRepository,
 		dataSources interfaces.DataSourceRepository,
+		paths *repository.NextcloudOnboardingStore,
 	) *access.NextcloudPublicationGuard {
-		return access.NewNextcloudPublicationGuard(directories, dataSources)
+		guard := access.NewNextcloudPublicationGuard(directories, dataSources)
+		guard.ConfigureSourcePathResolver(paths)
+		return guard
 	}))
 	must(container.Provide(repository.NewSyncLogRepository))
 	must(container.Provide(repository.NewWikiPageRepository))
@@ -270,6 +280,7 @@ func BuildContainer(container *dig.Container) *dig.Container {
 
 	// Extract services - register individual extracters with names
 	must(container.Provide(service.NewChunkExtractService, dig.Name("chunkExtractor")))
+
 	must(container.Provide(service.NewDataTableSummaryService, dig.Name("dataTableSummary")))
 	must(container.Provide(service.NewImageMultimodalService, dig.Name("imageMultimodal")))
 	must(container.Provide(service.NewKnowledgePostProcessService, dig.Name("knowledgePostProcess")))
@@ -555,6 +566,13 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	}) {
 		service.ConfigureKnowledgeAutoTagInputProvenance(p.Handler, p.Store, p.Guard)
 	}))
+	must(container.Invoke(func(p struct {
+		dig.In
+		Handler interfaces.TaskHandler `name:"chunkExtractor"`
+		State   *repository.NextcloudProcessingStateStore
+	}) {
+		service.ConfigureNextcloudChunkExtractLedger(p.Handler, p.State)
+	}))
 	must(container.Invoke(service.ConfigureDataSourceCapacityAdmission))
 	must(container.Invoke(service.ConfigureDataSourceOriginalInputSources))
 	must(container.Invoke(service.ConfigureKnowledgeInputProvenance))
@@ -566,7 +584,9 @@ func BuildContainer(container *dig.Container) *dig.Container {
 		Store     *repository.KnowledgeInputProvenanceStore
 		Knowledge interfaces.KnowledgeRepository
 		Config    *config.Config
+		State     *repository.NextcloudProcessingStateStore
 	}) {
+		service.ConfigureNextcloudPostProcessLedger(p.Handler, p.State)
 		service.ConfigureKnowledgePostProcessInputProvenance(p.Handler, p.Store)
 		service.ConfigureKnowledgeAutoTagCompletion(p.Handler, p.Knowledge, p.Store)
 		service.ConfigureKnowledgeEnrichmentRuntime(p.Handler, p.Config)
@@ -578,8 +598,8 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	}) {
 		service.ConfigureImageMultimodalInputProvenance(p.Handler, p.Store)
 	}))
-	must(container.Invoke(func(store *repository.KnowledgeInputProvenanceStore, guard *access.NextcloudSourceLineageGuard, sources interfaces.DataSourceRepository) {
-		repository.ConfigureKnowledgeOriginalInputSourceVerifier(store, service.NewKnowledgeOriginalInputSourceVerifier(store, guard, sources))
+	must(container.Invoke(func(store *repository.KnowledgeInputProvenanceStore, guard *access.NextcloudSourceLineageGuard, sources interfaces.DataSourceRepository, paths *repository.NextcloudOnboardingStore) {
+		repository.ConfigureKnowledgeOriginalInputSourceVerifier(store, service.NewKnowledgeOriginalInputSourceVerifier(store, guard, sources, paths))
 	}))
 
 	must(container.Invoke(service.ConfigureKnowledgeBaseInputProvenance))
@@ -633,6 +653,9 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	must(container.Invoke(service.ConfigureKnowledgeBaseGroupAccess))
 	logger.Debugf(ctx, "[Container] Knowledge group-access overlay registered")
 	must(container.Invoke(service.ConfigureGroupAccessDirectoryRuntime))
+	must(container.Invoke(func(groups interfaces.GroupAccessService, scopes *repository.NextcloudOnboardingStore) {
+		service.ConfigureGroupAccessNextcloudScopes(groups, scopes)
+	}))
 	logger.Debugf(ctx, "[Container] Directory feature switch registered for group access")
 	must(container.Provide(func(
 		sessions interfaces.SessionRepository,
@@ -653,6 +676,7 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	must(container.Provide(handler.NewTenantInvitationHandler))
 	must(container.Provide(handler.NewAuditLogHandler))
 	must(container.Provide(handler.NewKnowledgeBaseHandler))
+	must(container.Invoke(handler.ConfigureKnowledgeBaseSourceMetadataGuard))
 	must(container.Provide(handler.NewKnowledgeHandler))
 	must(container.Provide(handler.NewChunkHandler))
 	must(container.Provide(handler.NewFAQHandler))
@@ -712,6 +736,7 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	must(container.Provide(handler.NewNextcloudEventHandler))
 	must(container.Provide(handler.NewNextcloudEventConnectionHandler))
 	must(container.Provide(handler.NewNextcloudSourcePairingHandler))
+	must(container.Provide(handler.NewNextcloudOnboardingHandler))
 	must(container.Provide(handler.NewNextcloudGCHandler))
 	must(container.Provide(handler.NewNextcloudCapacityHandler))
 	must(container.Invoke(handler.ConfigureDataSourceCredentialsGroupAccess))
@@ -728,6 +753,7 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	}))
 	must(container.Provide(handler.NewOrganizationHandler))
 	must(container.Invoke(handler.ConfigureOrganizationGroupAccess))
+	must(container.Invoke(handler.ConfigureOrganizationSourceMetadataGuard))
 	must(container.Provide(handler.NewMemoryHandler))
 
 	// Data source handler
@@ -768,6 +794,10 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	must(container.Invoke(startKnowledgeAutoTagCompletionRecovery))
 	must(container.Invoke(startNextcloudSyncAdmissionRecovery))
 	must(container.Invoke(startNextcloudEventDispatcher))
+	must(container.Invoke(func(dispatcher *service.NextcloudStateDispatcher, cleaner interfaces.ResourceCleaner) {
+		dispatcher.Start()
+		cleaner.RegisterWithName("NextcloudStateDispatcher", func() error { dispatcher.Stop(); return nil })
+	}))
 
 	logger.Infof(ctx, "[Container] Container initialization completed successfully")
 	return container
@@ -1008,6 +1038,13 @@ func initDatabase(cfg *config.Config) (*gorm.DB, error) {
 		return nil, fmt.Errorf("unsupported database driver: %s", os.Getenv("DB_DRIVER"))
 	}
 	db, err := gorm.Open(dialector, &gorm.Config{
+		// SQL diagnostics must not expose source bodies, graph entities or
+		// credentials stored as bound values, including failed writes.
+		Logger: gormlogger.New(log.New(os.Stdout, "", log.LstdFlags), gormlogger.Config{
+			SlowThreshold:        200 * time.Millisecond,
+			LogLevel:             gormlogger.Warn,
+			ParameterizedQueries: true,
+		}),
 		NowFunc: func() time.Time {
 			return time.Now().UTC()
 		},

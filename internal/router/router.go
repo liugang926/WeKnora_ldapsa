@@ -100,6 +100,8 @@ type RouterParams struct {
 	NextcloudEventHandler              *handler.NextcloudEventHandler
 	NextcloudEventConnectionHandler    *handler.NextcloudEventConnectionHandler
 	NextcloudSourcePairingHandler      *handler.NextcloudSourcePairingHandler
+	NextcloudOnboardingHandler         *handler.NextcloudOnboardingHandler
+	NextcloudOnboardingStore           *repository.NextcloudOnboardingStore
 	NextcloudGCHandler                 *handler.NextcloudGCHandler
 	NextcloudCapacityHandler           *handler.NextcloudCapacityHandler
 	KnowledgeEnrichmentTemplateHandler *handler.KnowledgeEnrichmentTemplateHandler `optional:"true"`
@@ -192,10 +194,23 @@ func NewRouter(params RouterParams) *gin.Engine {
 	RegisterIMRoutes(r, params.IMHandler)
 	// Nextcloud signs this machine request with a connection-scoped key.
 	// Register before user/API-key auth, and fail closed if no connection exists.
+	if h := params.NextcloudOnboardingHandler; h != nil {
+		group := r.Group("/api/v1/integrations/nextcloud/onboarding")
+		group.GET("/candidates", h.Candidates)
+		group.POST("/operations", h.Create)
+		group.GET("/operations/:operation_id", h.Status)
+		group.POST("/operations/:operation_id/pair", h.Pair)
+		group.PUT("/operations/:operation_id/grants", h.Grants)
+		group.POST("/operations/:operation_id/sync", h.Sync)
+		group.POST("/operations/:operation_id/root-migrations", h.RootMigration)
+		group.POST("/operations/:operation_id/target-migrations", h.TargetMigration)
+		group.POST("/operations/:operation_id/target-migrations/:migration_id/finalize", h.FinalizeTargetMigration)
+	}
 	if params.NextcloudEventHandler != nil {
 		r.POST("/api/v1/integrations/nextcloud/events", params.NextcloudEventHandler.Receive)
 		r.GET("/api/v1/integrations/nextcloud/events/status", params.NextcloudEventHandler.Status)
 		r.GET("/api/v1/integrations/nextcloud/files/status", params.NextcloudEventHandler.FileStatus)
+		r.GET("/api/v1/integrations/nextcloud/files/status/v2", params.NextcloudEventHandler.FileStatusV2)
 	}
 
 	// Web embed 公开路由（使用 publish token 鉴权，不走全局 Auth）
@@ -241,6 +256,7 @@ func NewRouter(params RouterParams) *gin.Engine {
 
 	// 认证中间件
 	r.Use(middleware.Auth(params.TenantService, params.UserService, params.TenantMemberService, params.TenantAPIKeyService, params.Config, params.GroupAccessService))
+	r.Use(middleware.RequireNextcloudScopedRoutes(params.GroupAccessService, params.NextcloudOnboardingStore))
 
 	// 文件服务：统一代理本地/MinIO/COS/TOS存储后端（需要认证）
 	serveFilesWithPublication(r, params.FileService, params.StorageBackendResolver,

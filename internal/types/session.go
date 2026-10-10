@@ -76,6 +76,7 @@ type ContextConfig struct {
 
 // Session represents the session
 type Session struct {
+	NextcloudScoped bool `json:"nextcloud_scoped,omitempty" gorm:"not null;default:false"`
 	// ID
 	ID string `json:"id"          gorm:"type:varchar(36);primaryKey"`
 	// Title

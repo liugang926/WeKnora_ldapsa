@@ -39,6 +39,8 @@ func readNextcloudFileStatus(router http.Handler, request *http.Request) *httpte
 
 func installNextcloudFileStatusVersion(t *testing.T, db *gorm.DB, state, parseStatus, enabled, etag string) {
 	t.Helper()
+	require.NoError(t, db.Exec(`CREATE TABLE IF NOT EXISTS nextcloud_content_fences(tenant_id BIGINT,knowledge_base_id TEXT,knowledge_id TEXT,state TEXT)`).Error)
+	require.NoError(t, db.Exec(`INSERT INTO nextcloud_content_fences VALUES(7,'kb-synthetic','','open'),(7,'kb-synthetic','candidate-77','open')`).Error)
 	require.NoError(t, db.Exec(`ALTER TABLE knowledges ADD COLUMN file_type TEXT NOT NULL DEFAULT ''`).Error)
 	require.NoError(t, db.Exec(`ALTER TABLE knowledges ADD COLUMN error_message TEXT NOT NULL DEFAULT ''`).Error)
 	require.NoError(t, db.Exec(`CREATE TABLE chunks (

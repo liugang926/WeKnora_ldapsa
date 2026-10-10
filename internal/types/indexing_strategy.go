@@ -3,6 +3,7 @@ package types
 import (
 	"database/sql/driver"
 	"encoding/json"
+	"errors"
 )
 
 // IndexingStrategy controls which indexing pipelines are active for a knowledge base.
@@ -17,6 +18,8 @@ type IndexingStrategy struct {
 	WikiEnabled bool `yaml:"wiki_enabled" json:"wiki_enabled"`
 	// GraphEnabled enables knowledge graph entity/relation extraction
 	GraphEnabled bool `yaml:"graph_enabled" json:"graph_enabled"`
+	// GraphRequired makes durable graph completion part of source publication.
+	GraphRequired bool `yaml:"graph_required" json:"graph_required"`
 }
 
 // DefaultIndexingStrategy returns the default strategy matching the legacy behavior:
@@ -72,6 +75,15 @@ func (s *IndexingStrategy) Scan(value interface{}) error {
 	if err := json.Unmarshal(b, s); err != nil {
 		*s = DefaultIndexingStrategy()
 		return nil
+	}
+	return nil
+}
+
+// ValidateGraphRequirement rejects a policy whose required writer is disabled
+// before default normalization can silently discard the requirement.
+func (s IndexingStrategy) ValidateGraphRequirement() error {
+	if s.GraphRequired && !s.GraphEnabled {
+		return errors.New("required graph processing must enable graph indexing")
 	}
 	return nil
 }

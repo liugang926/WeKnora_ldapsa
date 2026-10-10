@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 
+	"github.com/Tencent/WeKnora/internal/logprivacy"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 )
@@ -57,6 +58,10 @@ func cloneKnowledgeInputProof(proof *types.KnowledgeBuildInputProof) *types.Know
 }
 
 func WithKnowledgeBuildInputProof(ctx context.Context, reader interfaces.KnowledgeBuildInputReader, proof *types.KnowledgeBuildInputProof) context.Context {
+	if proof != nil && proof.SourceLineage != nil &&
+		(proof.SourceLineage.State != types.SourceLineageComplete || len(proof.SourceLineage.Sources) > 0) {
+		ctx = logprivacy.SuppressContent(ctx)
+	}
 	return context.WithValue(ctx, knowledgeBuildInputKey{}, knowledgeBuildInputContext{reader, cloneKnowledgeInputProof(proof), ctx})
 }
 

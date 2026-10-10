@@ -78,7 +78,7 @@ func (p *PluginExtractEntity) OnEvent(ctx context.Context,
 
 	model, err := p.modelService.GetChatModel(ctx, chatManage.ChatModelID)
 	if err != nil {
-		logger.Errorf(ctx, "Failed to get model, session_id: %s, error: %v", chatManage.SessionID, err)
+		logger.Errorf(ctx, "Failed to get extraction model, session_id: %s", chatManage.SessionID)
 		return next()
 	}
 
@@ -94,7 +94,7 @@ func (p *PluginExtractEntity) OnEvent(ctx context.Context,
 	if len(chatManage.KnowledgeIDs) > 0 {
 		knowledges, err := p.knowledgeService.GetKnowledgeBatchWithSharedAccess(ctx, chatManage.TenantID, chatManage.KnowledgeIDs)
 		if err != nil {
-			logger.Errorf(ctx, "failed to get knowledges: %v", err)
+			logger.Errorf(ctx, "failed to get extraction knowledges")
 			return next()
 		}
 		for _, k := range knowledges {
@@ -112,7 +112,7 @@ func (p *PluginExtractEntity) OnEvent(ctx context.Context,
 	// Batch retrieve all knowledge bases
 	kbs, err := p.knowledgeBaseRepo.GetKnowledgeBaseByIDs(ctx, allKBIDs)
 	if err != nil {
-		logger.Errorf(ctx, "failed to get knowledge bases: %v", err)
+		logger.Errorf(ctx, "failed to get extraction knowledge bases")
 		return next()
 	}
 
@@ -151,14 +151,14 @@ func (p *PluginExtractEntity) OnEvent(ctx context.Context,
 	extractor := NewExtractor(model, template)
 	graph, err := extractor.Extract(ctx, query)
 	if err != nil {
-		logger.Errorf(ctx, "Failed to extract entities, session_id: %s, error: %v", chatManage.SessionID, err)
+		logger.Errorf(ctx, "Failed to extract entities, session_id: %s", chatManage.SessionID)
 		return next()
 	}
 	nodes := []string{}
 	for _, node := range graph.Node {
 		nodes = append(nodes, node.Name)
 	}
-	logger.Debugf(ctx, "extracted node: %v", nodes)
+	logger.Debugf(ctx, "extracted node count: %d", len(nodes))
 	chatManage.Entity = nodes
 	return next()
 }
@@ -199,19 +199,16 @@ func (e *Extractor) Extract(ctx context.Context, content string) (*types.GraphDa
 	}
 	generator := NewQAPromptGenerator(e.formater, e.template)
 
-	// logger.Debugf(ctx, "chat system: %s", generator.System(ctx))
-	// logger.Debugf(ctx, "chat user: %s", generator.User(ctx, content))
-
 	modelCtx := types.WithLLMCallMetadata(ctx, "entity_extraction", "")
 	chatResponse, err := e.chat.Chat(modelCtx, generator.Render(ctx, content), e.chatOpt)
 	if err != nil {
-		logger.Errorf(ctx, "failed to chat: %v", err)
+		logger.Errorf(ctx, "entity extraction model call failed")
 		return nil, err
 	}
 
 	graph, err := e.formater.ParseGraph(ctx, chatResponse.Content)
 	if err != nil {
-		logger.Errorf(ctx, "failed to parse graph: %v", err)
+		logger.Errorf(ctx, "entity extraction graph parse failed")
 		return nil, err
 	}
 	// e.RemoveUnknownRelation(ctx, graph)
@@ -230,7 +227,7 @@ func (e *Extractor) RemoveUnknownRelation(ctx context.Context, graph *types.Grap
 		if _, ok := relationType[relation.Type]; ok {
 			relationNew = append(relationNew, relation)
 		} else {
-			logger.Infof(ctx, "Unknown relation type %s with %v, ignore it", relation.Type, e.template.Tags)
+			logger.Infof(ctx, "Unknown relation type, ignore it")
 		}
 	}
 	graph.Relation = relationNew
@@ -398,7 +395,6 @@ func (f *Formater) parseOutput(ctx context.Context, text string) ([]map[string]i
 		return nil, errors.New("empty or invalid input string")
 	}
 	content := f.extractContent(ctx, text)
-	// logger.Debugf(ctx, "Extracted content: %s", content)
 	if content == "" {
 		return nil, errors.New("empty or invalid input string")
 	}
@@ -444,8 +440,6 @@ func (f *Formater) ParseGraph(ctx context.Context, text string) (*types.GraphDat
 		logger.Debugf(ctx, "received empty extraction data.")
 		return &types.GraphData{}, nil
 	}
-	// mm, _ := json.Marshal(matchData)
-	// logger.Debugf(ctx, "Parsed graph data: %s", string(mm))
 
 	var nodes []*types.GraphNode
 	var relations []*types.GraphRelation
@@ -471,7 +465,7 @@ func (f *Formater) ParseGraph(ctx context.Context, text string) (*types.GraphDat
 				Type:  fmt.Sprintf("%v", group[f.relationPrefix]),
 			})
 		default:
-			logger.Warnf(ctx, "Unsupported graph group: %v", group)
+			logger.Warnf(ctx, "Unsupported graph group, ignore it")
 			continue
 		}
 	}
@@ -488,7 +482,7 @@ func (f *Formater) rebuildGraph(ctx context.Context, graph *types.GraphData) {
 	nodes := make([]*types.GraphNode, 0, len(graph.Node))
 	for _, node := range graph.Node {
 		if prenode, ok := nodeMap[node.Name]; ok {
-			logger.Infof(ctx, "Duplicate node ID: %s, merge attribute", node.Name)
+			logger.Infof(ctx, "Duplicate graph node, merge attribute")
 			// 修复panic：检查Attributes是否为nil
 			if node.Attributes == nil {
 				node.Attributes = make([]string, 0)
@@ -513,13 +507,13 @@ func (f *Formater) rebuildGraph(ctx context.Context, graph *types.GraphData) {
 			node := &types.GraphNode{Name: relation.Node1}
 			nodes = append(nodes, node)
 			nodeMap[relation.Node1] = node
-			logger.Infof(ctx, "Add unknown source node ID: %s", relation.Node1)
+			logger.Infof(ctx, "Add missing relation source node")
 		}
 		if _, ok := nodeMap[relation.Node2]; !ok {
 			node := &types.GraphNode{Name: relation.Node2}
 			nodes = append(nodes, node)
 			nodeMap[relation.Node2] = node
-			logger.Infof(ctx, "Add unknown target node ID: %s", relation.Node2)
+			logger.Infof(ctx, "Add missing relation target node")
 		}
 
 		relations = append(relations, relation)
@@ -556,7 +550,7 @@ func (f *Formater) extractContent(ctx context.Context, text string) string {
 		return strings.TrimSpace(candidates[0])
 
 	case len(matches) == 1:
-		logger.Debugf(ctx, "no candidate found, use first match without language tag: %s", matches[0][1])
+		logger.Debugf(ctx, "no candidate found, use first match without language tag")
 		return strings.TrimSpace(matches[0][2])
 
 	case len(matches) > 1:

@@ -105,14 +105,19 @@ func (r *knowledgeSpanRepository) upsertSpanRow(ctx context.Context, row *types.
 	if row.Metadata != nil {
 		cols = append(cols, "metadata")
 	}
-	return r.db.WithContext(ctx).Clauses(clause.OnConflict{
-		Columns: []clause.Column{
-			{Name: "knowledge_id"},
-			{Name: "attempt"},
-			{Name: "span_id"},
-		},
-		DoUpdates: clause.AssignmentColumns(cols),
-	}).Create(row).Error
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Clauses(clause.OnConflict{
+			Columns: []clause.Column{
+				{Name: "knowledge_id"},
+				{Name: "attempt"},
+				{Name: "span_id"},
+			},
+			DoUpdates: clause.AssignmentColumns(cols),
+		}).Create(row).Error; err != nil {
+			return err
+		}
+		return CaptureNextcloudKnowledgeStateInTx(ctx, tx, row.KnowledgeID)
+	})
 }
 
 func (r *knowledgeSpanRepository) NextAttempt(ctx context.Context, knowledgeID string) (int, error) {

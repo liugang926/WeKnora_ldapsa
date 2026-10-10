@@ -51,7 +51,11 @@ func RecordNextcloudDerivedArtifactInTx(ctx context.Context, tx *gorm.DB, knowle
 	if recoverySHA([]byte(plan.BackendPlan)) != plan.PlanSHA256 || json.Unmarshal([]byte(plan.BackendPlan), &backend) != nil {
 		return ErrNextcloudContentLeaseDenied
 	}
-	if kind != "derived_chunk" {
+	if kind == "scoped_sql_graph" {
+		if !backend.Graph || backend.GraphBackend != NextcloudGraphBackend {
+			return ErrNextcloudContentLeaseDenied
+		}
+	} else if kind != "derived_chunk" {
 		expected := string(types.PostgresRetrieverEngineType)
 		if kind == "sqlite_embedding" {
 			expected = string(types.SQLiteRetrieverEngineType)

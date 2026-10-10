@@ -36,11 +36,16 @@ func CheckCurrentPublication(ctx context.Context, source *types.DataSourceConfig
 	if err != nil {
 		return err
 	}
+	revision, revisionErr := types.NormalizeNextcloudContentRevision(types.NextcloudContentRevisionFromContext(ctx))
+	if revisionErr != nil {
+		return revisionErr
+	}
 	body, err := json.Marshal(struct {
-		InstanceID string `json:"instance_id"`
-		ETag       string `json:"etag"`
-		Path       string `json:"path"`
-	}{instanceID, etag, path})
+		ContentRevision string `json:"content_revision"`
+		InstanceID      string `json:"instance_id"`
+		ETag            string `json:"etag"`
+		Path            string `json:"path"`
+	}{revision, instanceID, etag, path})
 	if err != nil {
 		return err
 	}

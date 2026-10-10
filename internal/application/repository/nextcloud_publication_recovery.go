@@ -26,22 +26,30 @@ var recoveryID = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
 var recoveryStream = regexp.MustCompile(`^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$`)
 
 type NextcloudRecoveryPlan struct {
-	SchemaVersion                       int                        `json:"schema_version"`
-	InstanceID                          string                     `json:"instance_id"`
-	StreamID                            string                     `json:"stream_id"`
-	CheckpointRecordSHA256              string                     `json:"checkpoint_record_sha256"`
-	RecoveryRecordSHA256                string                     `json:"recovery_record_sha256"`
-	CheckpointSequence                  string                     `json:"checkpoint_sequence"`
-	CheckpointDatabaseChainSHA256       string                     `json:"checkpoint_database_chain_sha256"`
-	ThroughSequence                     string                     `json:"through_sequence"`
-	ThroughDatabaseChainSHA256          string                     `json:"through_database_chain_sha256"`
-	DatabasePrefixHashes                map[string]string          `json:"database_prefix_hashes"`
-	CloseBindings                       []NextcloudRecoveryBinding `json:"close_bindings"`
-	WithdrawFiles                       []NextcloudRecoveryFile    `json:"withdraw_files"`
-	AuthoritativeReconciliationRequired bool                       `json:"authoritative_reconciliation_required"`
-	IngressReopenPermitted              bool                       `json:"ingress_reopen_permitted"`
+	SchemaVersion                       int                                `json:"schema_version"`
+	InstanceID                          string                             `json:"instance_id"`
+	StreamID                            string                             `json:"stream_id"`
+	CheckpointRecordSHA256              string                             `json:"checkpoint_record_sha256"`
+	RecoveryRecordSHA256                string                             `json:"recovery_record_sha256"`
+	CheckpointSequence                  string                             `json:"checkpoint_sequence"`
+	CheckpointDatabaseChainSHA256       string                             `json:"checkpoint_database_chain_sha256"`
+	ThroughSequence                     string                             `json:"through_sequence"`
+	ThroughDatabaseChainSHA256          string                             `json:"through_database_chain_sha256"`
+	DatabasePrefixHashes                map[string]string                  `json:"database_prefix_hashes"`
+	CloseBindings                       []NextcloudRecoveryBinding         `json:"close_bindings"`
+	WithdrawFiles                       []NextcloudRecoveryFile            `json:"withdraw_files"`
+	AuthoritativeReconciliationRequired bool                               `json:"authoritative_reconciliation_required"`
+	IngressReopenPermitted              bool                               `json:"ingress_reopen_permitted"`
+	LatestContentRevisions              []NextcloudRecoveryContentRevision `json:"latest_content_revisions,omitempty"`
 	digest                              string
 	raw                                 string
+}
+
+type NextcloudRecoveryContentRevision struct {
+	BindingID string `json:"binding_id"`
+	FileID    string `json:"file_id"`
+	Revision  string `json:"revision"`
+	Writing   bool   `json:"writing"`
 }
 
 type NextcloudRecoveryBinding struct {
@@ -247,7 +255,7 @@ func VerifyNextcloudRecoveryPlan(envelope, key []byte) (*NextcloudRecoveryPlan, 
 		return nil, ErrNextcloudRecoveryDenied
 	}
 	var fields map[string]json.RawMessage
-	if json.Unmarshal([]byte(signed.Plan), &fields) != nil || len(fields) != 14 {
+	if json.Unmarshal([]byte(signed.Plan), &fields) != nil || (len(fields) != 14 && len(fields) != 15) {
 		return nil, ErrNextcloudRecoveryDenied
 	}
 	for _, value := range fields {
@@ -304,6 +312,27 @@ func VerifyNextcloudRecoveryPlan(envelope, key []byte) (*NextcloudRecoveryPlan, 
 		previous = f.BindingID
 		previousFile = f.FileID
 	}
+	previous = ""
+	previousFile = ""
+	if raw, ok := fields["latest_content_revisions"]; ok {
+		var rows []map[string]json.RawMessage
+		if json.Unmarshal(raw, &rows) != nil || len(rows) > 100000 {
+			return nil, ErrNextcloudRecoveryDenied
+		}
+		for _, row := range rows {
+			if len(row) != 4 || (!bytes.Equal(bytes.TrimSpace(row["writing"]), []byte("true")) && !bytes.Equal(bytes.TrimSpace(row["writing"]), []byte("false"))) {
+				return nil, ErrNextcloudRecoveryDenied
+			}
+		}
+	}
+	for _, f := range p.LatestContentRevisions {
+		fid, e := recoverySequence(f.FileID)
+		_, re := recoverySequence(f.Revision)
+		if e != nil || re != nil || fid < 1 || bindings[f.BindingID] == 0 || !recoveryID.MatchString(f.BindingID) || f.BindingID < previous || (f.BindingID == previous && f.FileID <= previousFile) {
+			return nil, ErrNextcloudRecoveryDenied
+		}
+		previous, previousFile = f.BindingID, f.FileID
+	}
 	p.digest = recoverySHA([]byte(signed.Plan))
 	p.raw = signed.Plan
 	return &p, nil
@@ -345,7 +374,7 @@ func (s *NextcloudPublicationRecoveryStore) Capture(ctx context.Context, anchor 
 
 func (s *NextcloudPublicationRecoveryStore) captureInTx(tx *gorm.DB, a NextcloudRecoveryAnchor) (*NextcloudRecoveryInventory, error) {
 	var pairs []NextcloudSourcePairing
-	if e := tx.Where("nextcloud_instance_id = ?", a.InstanceID).Order("operation_id").Find(&pairs).Error; e != nil {
+	if e := recoveryPairCurrentQuery(tx, a.InstanceID).Order("operation_id").Find(&pairs).Error; e != nil {
 		return nil, e
 	}
 	if len(pairs) == 0 {
@@ -451,6 +480,14 @@ func (s *NextcloudPublicationRecoveryStore) captureInTx(tx *gorm.DB, a Nextcloud
 		}{recoveryPair(p), ds.Status, versions, revisions, knowledge, fences})
 	}
 	var e error
+
+	if tx.Migrator().HasTable(&types.NextcloudOnboardingOperation{}) {
+		controls, err := nextcloudControlMetadataInventory(tx)
+		if err != nil {
+			return nil, err
+		}
+		states = append(states, map[string]any{"auto_space_control_metadata": controls})
+	}
 	inv.SourceStateSHA256, e = recoveryJSONSHA(states)
 	return inv, e
 }
@@ -610,7 +647,7 @@ func (s *NextcloudPublicationRecoveryStore) Apply(ctx context.Context, p *Nextcl
 				return e
 			}
 		}
-		return nil
+		return closeNextcloudControlsInTx(tx, p.InstanceID, p.digest, pin)
 	})
 	if e != nil {
 		return nil, e

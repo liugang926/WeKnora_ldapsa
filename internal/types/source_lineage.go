@@ -44,11 +44,15 @@ type SourceIdentity struct {
 	KnowledgeID     string `json:"knowledge_id"`
 	// Revision is the exact open build-fence epoch, paired with KnowledgeID.
 	// It is not the append-only observation/audit sequence number.
-	Revision uint64 `json:"revision"`
-	ETag     string `json:"etag"`
+	Revision        uint64 `json:"revision"`
+	ETag            string `json:"etag"`
+	ContentRevision string `json:"content_revision,omitempty"`
 }
 
 func (s SourceIdentity) Validate() error {
+	if _, err := NormalizeNextcloudContentRevision(s.ContentRevision); err != nil {
+		return fmt.Errorf("%w: source content revision", ErrSourceLineageInvalid)
+	}
 	if s.Provider != ConnectorTypeNextcloud || s.TenantID == 0 || s.TenantID > math.MaxInt64 ||
 		s.Revision == 0 || s.Revision > math.MaxInt64 {
 		return fmt.Errorf("%w: source provider, tenant or revision", ErrSourceLineageInvalid)
@@ -286,7 +290,7 @@ func canonicalSourceLineageJSONKey(depth int, key string) bool {
 	if depth == 2 {
 		switch key {
 		case "provider", "tenant_id", "knowledge_base_id", "datasource_id", "pair_operation_id",
-			"instance_id", "binding_id", "file_id", "external_id", "knowledge_id", "revision", "etag":
+			"instance_id", "binding_id", "file_id", "external_id", "knowledge_id", "revision", "etag", "content_revision":
 			return true
 		}
 	}

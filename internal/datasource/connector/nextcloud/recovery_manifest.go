@@ -3,6 +3,7 @@ package nextcloud
 import (
 	"context"
 	"fmt"
+	"path"
 	"reflect"
 
 	"github.com/Tencent/WeKnora/internal/types"
@@ -17,9 +18,10 @@ type RecoveryManifest struct {
 }
 
 type RecoveryManifestFile struct {
-	FileID int64  `json:"file_id"`
-	ETag   string `json:"etag"`
-	Path   string `json:"path"`
+	FileID                int64  `json:"file_id"`
+	ETag                  string `json:"etag"`
+	Path                  string `json:"path"`
+	SourceContentRevision string `json:"source_content_revision,omitempty"`
 }
 
 // InspectRecoveryManifest requires two complete manifest scans with identical
@@ -54,7 +56,24 @@ func InspectRecoveryManifest(ctx context.Context, ds *types.DataSourceConfig) (R
 	result.Identity, result.Generation = after, generation
 	result.Files = make([]RecoveryManifestFile, 0, len(second))
 	for _, file := range second {
-		result.Files = append(result.Files, RecoveryManifestFile{file.FileID, file.ETag, file.Path})
+		result.Files = append(result.Files, RecoveryManifestFile{FileID: file.FileID, ETag: file.ETag, Path: file.Path, SourceContentRevision: file.ContentRevision})
 	}
 	return result, nil
+}
+
+// InspectImportableRecoveryManifest keeps the complete double-scan proof, then
+// applies the same frozen filename/type policy used by connector admission.
+func InspectImportableRecoveryManifest(ctx context.Context, ds *types.DataSourceConfig, multimodal bool) (RecoveryManifest, error) {
+	manifest, err := InspectRecoveryManifest(ctx, ds)
+	if err != nil {
+		return manifest, err
+	}
+	files := []RecoveryManifestFile{}
+	for _, f := range manifest.Files {
+		if supportedFile(path.Base(f.Path), multimodal) {
+			files = append(files, f)
+		}
+	}
+	manifest.Files = files
+	return manifest, nil
 }

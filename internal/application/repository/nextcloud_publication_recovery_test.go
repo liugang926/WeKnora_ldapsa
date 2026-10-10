@@ -239,6 +239,14 @@ func TestPostgresNextcloudPublicationRecoveryClosure(t *testing.T) { recoveryClo
 func recoveryNewGenerationContract(t *testing.T, pg bool) {
 	r, db, old, _ := recoveryFixture(t, pg)
 	ctx := context.Background()
+	require.NoError(t, db.AutoMigrate(&nextcloudControlRecoveryGate{}))
+	buildMigration := "../../../migrations/sqlite/000079_nextcloud_recovery_build_leases.up.sql"
+	if pg {
+		buildMigration = "../../../migrations/versioned/000160_nextcloud_recovery_build_leases.up.sql"
+	}
+	ddl, e := os.ReadFile(buildMigration)
+	require.NoError(t, e)
+	require.NoError(t, db.Exec(string(ddl)).Error)
 	state := "active"
 	generation := "g1"
 	epoch := int64(5)
@@ -279,6 +287,8 @@ func recoveryNewGenerationContract(t *testing.T, pg bool) {
 			_ = json.NewEncoder(w).Encode(map[string]any{"protocol_version": "1", "instance_id": instance})
 		case strings.HasSuffix(req.URL.Path, "/bindings"):
 			_ = json.NewEncoder(w).Encode(map[string]any{"bindings": []any{map[string]any{"id": "binding", "name": "owned", "root_file_id": 1, "publication_state": state, "publication_epoch": epoch}}})
+		case strings.HasSuffix(req.URL.Path, "/recovery-state"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"instance_id": "instance", "binding_id": "binding", "publication_epoch": epoch, "stream_id": recoveryTestAnchor().StreamID, "sequence": "7", "chain_sha256": strings.Repeat("d", 64), "controls_closed": false, "control_inventory_sha256": strings.Repeat("f", 64)})
 		case strings.HasSuffix(req.URL.Path, "/manifest"):
 			manifestCalls++
 			g := generation
@@ -321,6 +331,10 @@ func recoveryNewGenerationContract(t *testing.T, pg bool) {
 	_, e = store.Apply(ctx, plan, inv, pin)
 	require.NoError(t, e)
 	op := inv.Pairs[0].OperationID
+	metadata, e := nextcloudControlMetadataInventory(db)
+	require.NoError(t, e)
+	_, e = store.ReopenControls(ctx, plan.digest, inv, pin, plan, onboardingDigest(metadata), "", "")
+	require.ErrorIs(t, e, ErrNextcloudRecoveryDenied)
 	wrongPair = true
 	_, e = store.Reconcile(ctx, plan.digest, op)
 	require.Error(t, e)
@@ -358,16 +372,52 @@ func recoveryNewGenerationContract(t *testing.T, pg bool) {
 	m["external_id"] = "nextcloud:instance:78"
 	m["nextcloud_file_id"] = "78"
 	m["nextcloud_path"] = "current.md"
+	m["nextcloud_publication_epoch"] = "5"
 	fresh.Metadata, _ = json.Marshal(m)
 	require.NoError(t, db.Save(fresh).Error)
 	require.NoError(t, r.StageNextcloudVersion(ctx, 7, "kb", "ds", "nextcloud:instance:78", "new-etag", fresh.ID))
+	leases := NewNextcloudContentLeaseStore(db)
+	freshScope := NextcloudContentScope{TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: fresh.ID, DataSourceID: "ds", ExternalID: "nextcloud:instance:78"}
+	_, e = leases.AcquireKnowledge(ctx, freshScope, NextcloudContentReadLease, "owner-reader", time.Minute)
+	require.ErrorIs(t, e, ErrNextcloudContentLeaseDenied, "ordinary owner reads remain closed for new generations")
+	_, e = leases.AcquireKBRead(ctx, 7, "kb", "owner-search", time.Minute)
+	require.ErrorIs(t, e, ErrNextcloudContentLeaseDenied)
+	build, e := leases.AcquireKnowledge(ctx, freshScope, NextcloudContentBuildLease, "maintenance-fresh", time.Minute)
+	require.NoError(t, e)
+	require.NoError(t, leases.ValidateBuildLeaseInTx(ctx, db, build, freshScope))
+	buildCtx := WithNextcloudBuildLease(ctx, leases, build, freshScope)
 	r.nextcloudPublicationCheck = nextcloud.CheckCurrentPublication
-	ready, e := r.PublishNextcloudVersion(ctx, fresh.ID)
+	ready, e := r.PublishNextcloudVersion(buildCtx, fresh.ID)
 	require.NoError(t, e)
 	require.True(t, ready)
+	_, _, e = r.ResolveNextcloudSourceLineage(ctx, 7, "kb", fresh.ID)
+	require.ErrorIs(t, e, ErrNextcloudLineageSnapshotDenied, "ordinary source readers remain closed even for a newly indexed candidate")
+	snapshot, e := store.Snapshot(ctx, plan.digest, inv, pin)
+	require.NoError(t, e)
+	_, e = store.ReopenControls(ctx, plan.digest, inv, pin, plan, snapshot.ControlState["sha256"].(string), "", "")
+	require.ErrorIs(t, e, ErrNextcloudRecoveryDenied, "new generations must cover full indexed manifest before control reopen")
+	require.NoError(t, db.Create(&types.Chunk{ID: "fresh-indexed", TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: fresh.ID, Content: "fresh bytes", Status: int(types.ChunkStatusIndexed), IsEnabled: true, IndexStatus: "ready"}).Error)
+	snapshot, e = store.Snapshot(ctx, plan.digest, inv, pin)
+	require.NoError(t, e)
+	_, e = store.ReopenControls(ctx, plan.digest, inv, pin, plan, strings.Repeat("0", 64), "", "")
+	require.ErrorIs(t, e, ErrNextcloudRecoveryDenied, "stale operator inventory CAS cannot release controls")
+	badTail := recoveryTestPlan(t, func(p *NextcloudRecoveryPlan) {
+		p.ThroughDatabaseChainSHA256 = strings.Repeat("e", 64)
+		p.DatabasePrefixHashes["7"] = p.ThroughDatabaseChainSHA256
+	})
+	_, e = store.ReopenControls(ctx, plan.digest, inv, pin, badTail, snapshot.ControlState["sha256"].(string), "", "")
+	require.ErrorIs(t, e, ErrNextcloudRecoveryDenied, "saved signed tail is not current NC tail")
+	done, e := store.ReopenControls(ctx, plan.digest, inv, pin, plan, snapshot.ControlState["sha256"].(string), "", "")
+	require.NoError(t, e)
+	require.Equal(t, true, done["controls_reconciled"])
+	closed, e := nextcloudControlsClosed(db, "instance")
+	require.NoError(t, e)
+	require.False(t, closed)
 	_, identity, e := r.ResolveNextcloudSourceLineage(ctx, 7, "kb", fresh.ID)
 	require.NoError(t, e)
 	require.Equal(t, fresh.ID, identity.KnowledgeID)
+	require.ErrorIs(t, r.StageNextcloudVersion(ctx, 7, "kb", "ds", "nextcloud:instance:77", "old-etag", old.ID), ErrNextcloudContentLeaseDenied, "global control reopening never revives retired old body IDs")
+
 	_, e = store.Apply(ctx, plan, inv, pin)
 	require.NoError(t, e)
 	_, _, e = r.ResolveNextcloudSourceLineage(ctx, 7, "kb", fresh.ID)

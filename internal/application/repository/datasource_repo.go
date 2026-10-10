@@ -743,3 +743,9 @@ func (r *SyncLogRepository) CleanupOldLogs(ctx context.Context, retentionDays in
 	}
 	return nil
 }
+
+// InstanceControlsClosed exposes the private recovery gate to the real human
+// source guard without allowing requests to reopen it.
+func (r *DataSourceRepository) InstanceControlsClosed(ctx context.Context, instance string) (bool, error) {
+	return nextcloudControlsClosed(r.db.WithContext(ctx), instance)
+}

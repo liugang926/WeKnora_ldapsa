@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/Tencent/WeKnora/internal/logprivacy"
 )
 
 var llmDebug struct {
@@ -88,7 +90,7 @@ func LLMDebugEnabled() bool {
 // LLMDebugLog writes a complete model call record to a per-request log file.
 // All calls sharing the same request_id are appended to the same file.
 func LLMDebugLog(ctx context.Context, record *LLMCallRecord) {
-	if !llmDebug.enabled || record == nil {
+	if logprivacy.ContentSuppressed(ctx) || !llmDebug.enabled || record == nil {
 		return
 	}
 

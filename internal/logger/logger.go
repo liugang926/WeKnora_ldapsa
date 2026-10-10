@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/Tencent/WeKnora/internal/logprivacy"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/sirupsen/logrus"
 	"go.opentelemetry.io/otel/trace"
@@ -510,6 +511,9 @@ func Fatalf(c context.Context, format string, args ...interface{}) {
 // new key silently defaulted to being dropped.
 func CloneContext(ctx context.Context) context.Context {
 	newCtx := context.Background()
+	if logprivacy.ContentSuppressed(ctx) {
+		newCtx = logprivacy.SuppressContent(newCtx)
+	}
 
 	for _, k := range types.ContextKeysClonedAcrossDetach() {
 		if v := ctx.Value(k); v != nil {
@@ -537,6 +541,9 @@ func CloneContext(ctx context.Context) context.Context {
 // a tool has returned) onto the originating chat trace.
 func CloneContextWithoutTrace(ctx context.Context) context.Context {
 	newCtx := context.Background()
+	if logprivacy.ContentSuppressed(ctx) {
+		newCtx = logprivacy.SuppressContent(newCtx)
+	}
 	for _, k := range types.ContextKeysClonedAcrossDetach() {
 		if k == types.LangfuseTraceContextKey {
 			continue

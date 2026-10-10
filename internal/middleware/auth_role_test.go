@@ -4,11 +4,44 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/Tencent/WeKnora/internal/config"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 )
+
+type unavailableScopedRoleService struct {
+	interfaces.GroupAccessService
+	role types.EffectiveTenantRole
+}
+
+func (s unavailableScopedRoleService) EffectiveTenantRole(context.Context, string, uint64, time.Time) (types.EffectiveTenantRole, error) {
+	return s.role, errors.New("current source qualification unavailable")
+}
+
+func TestResolveTenantRoleSourceLookupFailureCannotPromoteOrFailOpen(t *testing.T) {
+	for _, enforced := range []bool{false, true} {
+		members := newFakeMemberService()
+		user := &types.User{ID: "source-reader", TenantID: 7}
+		role, ok := resolveTenantRole(context.Background(), members, user, 7, false, cfgWithRBAC(enforced), unavailableScopedRoleService{})
+		if ok || role != "" || len(members.addCalls) != 0 {
+			t.Fatalf("unknown source qualification created ordinary privileges: role=%s ok=%v promotions=%d", role, ok, len(members.addCalls))
+		}
+	}
+}
+
+func TestResolveTenantRoleSourceLookupFailurePreservesVerifiedDirectRole(t *testing.T) {
+	members := newFakeMemberService()
+	user := &types.User{ID: "ordinary-member", TenantID: 7}
+	direct := types.TenantRoleContributor
+	role, ok := resolveTenantRole(context.Background(), members, user, 7, false, cfgWithRBAC(false), unavailableScopedRoleService{
+		role: types.EffectiveTenantRole{TenantID: 7, Member: true, DirectRole: &direct, Role: direct},
+	})
+	if !ok || role != direct || len(members.addCalls) != 0 {
+		t.Fatalf("verified ordinary role was lost or promoted: role=%s ok=%v promotions=%d", role, ok, len(members.addCalls))
+	}
+}
 
 // fakeMemberService is a hand-rolled stand-in for
 // interfaces.TenantMemberService. It backs Get/HasAnyMembers/AddMember

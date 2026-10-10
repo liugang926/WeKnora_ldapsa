@@ -1,0 +1,7 @@
+{"controlled_rpc":"reserve","status":200,"error_code":null,"operation_state":"active"}
+{"controlled_rpc":"pair","status":202,"error_code":"event_connection_pending","operation_state":"active","has_event_connection":false}
+RuntimeException: Actual reserve/pair/grants remained pending: {"operation_id":"45fe601c-9981-469b-8c4a-e7bc6b31df1a","binding_id":"dir_45fe601c9981469b8c4ae7bc6b31df1a","folder_id":22825,"state":"pending","revision":1,"error_code":"connection_unverified","updated_at":1791627144} in /var/www/html/custom_apps/integration_weknora/tests/onboarding_actual_runtime.php:11
+Stack trace:
+#0 /var/www/html/custom_apps/integration_weknora/tests/onboarding_actual_runtime.php(31): actualCheck(false, 'Actual reserve/...')
+#1 {main}
+Controlled component aborted after NC phase failure

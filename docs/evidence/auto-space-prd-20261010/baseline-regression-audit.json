@@ -1,0 +1,85 @@
+{
+  "base_commit": "7e1d5ce4ba8b23c80bdf5371b550999d3ce1fd87",
+  "scope": "Exact git archive baseline, unchanged by this implementation",
+  "environment": "Docker weknora-go-test:1.26-sqlite; separate source archive; shared Go caches",
+  "runs": [
+    {
+      "log_name": "auto-space-baseline-tests.log",
+      "sha256": "120aeee92805b66ac6c0d7fca8e4e290ba987eaf7bb0e62280b72ec8931f7c92",
+      "log_bytes": 221498,
+      "failed_parent_tests": [
+        "TestCountByModelID_KnowledgeBase",
+        "TestCountByModelID_KnowledgeBaseAutoTag",
+        "TestCountByVectorStoreID",
+        "TestKnowledgeBase_VectorStoreID_RawSQL_EscapeHatch",
+        "TestKnowledgeBase_VectorStoreID_Roundtrip_Nil",
+        "TestKnowledgeBase_VectorStoreID_Roundtrip_Value",
+        "TestKnowledgeBase_VectorStoreID_Save_Immutable",
+        "TestKnowledgeBase_VectorStoreID_Select_StillImmutable",
+        "TestKnowledgeBase_VectorStoreID_Updates_Immutable",
+        "TestListModelUsages_KnowledgeBase",
+        "TestListModelUsages_KnowledgeBaseRespectsLimit"
+      ],
+      "failed_parent_test_count": 11,
+      "build_oom_observed": true,
+      "package_results": [
+        "FAIL\tgithub.com/Tencent/WeKnora/internal/application/repository\t14.792s",
+        "FAIL\tgithub.com/Tencent/WeKnora/internal/application/service [build failed]",
+        "FAIL\tgithub.com/Tencent/WeKnora/internal/handler [build failed]"
+      ]
+    },
+    {
+      "log_name": "auto-space-baseline-service-handler.log",
+      "sha256": "bf9608d9ffd253340073ec46e752c4bdfb1785cab33dedd34fe790b20230ad81",
+      "log_bytes": 39549284,
+      "failed_parent_tests": [
+        "TestAgentHistoryAdmissionAllowsOrdinaryCheckpointAndRechecks",
+        "TestAgentHistoryAdmissionBothModesIsolateRetainedWorkspaceAtAgentQA",
+        "TestAgentHistoryAdmissionFallbackBlocksOldWorkspaceReadAndExec",
+        "TestAgentHistoryAdmissionRejectedContextStillRunsCurrentAgentQA",
+        "TestAgentHistoryCompactsInsteadOfDroppingTurns",
+        "TestAgentHistoryDoesNotRecompactAfterTheSummarizerFails",
+        "TestBrowserSourceKeepsOtherConfiguredTools",
+        "TestCalibratedSessionFillsMoreOfTheWindow",
+        "TestCreateAgentEngineOpensSandboxToolsOnlyForInstallMode",
+        "TestCreateAgentEngineShellFollowsSkillsEnabledWithoutInstalledSkills",
+        "TestDirectChunkReadFailsClosedWithoutPublicationVerifier",
+        "TestGlobalKnowledgeSearchRechecksPublicationAtJSONWrite",
+        "TestGlobalKnowledgeSearchRetirementBlocksGCAndSourceOutput",
+        "TestIngestItem_NextcloudConnectorCannotRelabelProvenance",
+        "TestIngestItem_NextcloudFailureRetainsOldKnowledge",
+        "TestKnowledgeAutoCompletionActualRedisSQLite",
+        "TestKnowledgePostProcessAtomicallySeedsWikiSlot",
+        "TestKnowledgePostProcessGraphEnqueueSelection",
+        "TestKnowledgePostProcessOptionalSummary",
+        "TestKnowledgePostProcessRetriesWikiTriggerWithoutDoubleAccounting",
+        "TestKnowledgePostProcessWithoutSummaryCompletionFailure",
+        "TestListArtifactLibraryScopesToCallerAndNormalizesQuery",
+        "TestListKnowledgeBroadLeaseBlocksGCBeforeExactPin",
+        "TestListKnowledgeExactLeaseBlocksGCAndRevokedOutput",
+        "TestListKnowledgeFoldersRejectsUnverifiedNextcloudAggregates",
+        "TestListKnowledgeFolders_ReturnsTree",
+        "TestListKnowledgeSourcePageReturnsUnderBothLeases",
+        "TestListKnowledgeWriteBoundaryRechecksCurrentShare",
+        "TestListKnowledge_FolderScopeFromQuery",
+        "TestNextcloudOrdinarySyncSkipsFailedSameETagBeforeCreate",
+        "TestNextcloudStreamHandlerStagesVersionBeforeAcceptingItem",
+        "TestPostgresKnowledgeAutoCompletionActualRedis",
+        "TestProcessSync_NextcloudPartialFailureDoesNotAdvanceCursor",
+        "TestSharedAgentScopesAgreeAcrossListSearchAndBatch"
+      ],
+      "failed_parent_test_count": 34,
+      "build_oom_observed": false,
+      "package_results": [
+        "FAIL\tgithub.com/Tencent/WeKnora/internal/application/service\t167.401s",
+        "FAIL\tgithub.com/Tencent/WeKnora/internal/handler\t219.770s"
+      ]
+    }
+  ],
+  "notes": [
+    "First run with 2 GiB had compile OOM; not used to claim service/handler assertions passed.",
+    "Sequential service/handler run used 3 GiB / 2 CPUs and finished at 14:10:59 CST.",
+    "The sequential actor briefly overlapped another task profiling window. No resource OOM conclusion is inferred from assertion failures.",
+    "All failures introduced by this implementation are fixed and must separately pass before final freeze; whole historical baseline was not green."
+  ]
+}

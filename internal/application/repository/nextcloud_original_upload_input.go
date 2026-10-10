@@ -221,6 +221,14 @@ func knowledgeEnrichmentRoutingDigest(kb *types.KnowledgeBase) (string, error) {
 func originalUploadSourceInTx(tx *gorm.DB, k *types.Knowledge, input nextcloudFetchedArtifactContext) (*types.DataSource, *NextcloudSourcePairing, error) {
 	meta := k.GetMetadata()
 	a := input.Actual
+	currentRevision, err := types.NormalizeNextcloudContentRevision(meta["nextcloud_content_revision"])
+	if err != nil {
+		return nil, nil, ErrKnowledgeInputChanged
+	}
+	artifactRevision, err := types.NormalizeNextcloudContentRevision(a.ContentRevision)
+	if err != nil || currentRevision != artifactRevision {
+		return nil, nil, ErrKnowledgeInputChanged
+	}
 	if k.Channel != types.ConnectorTypeNextcloud || k.Type != "file" || k.ID == "" || k.FileName != a.FileName || meta["datasource_id"] != input.DataSourceID || meta["external_id"] != a.ExternalID || meta["source_resource_id"] != a.BindingID || meta["nextcloud_instance_id"] != a.InstanceID || meta["nextcloud_binding_id"] != a.BindingID || meta["nextcloud_file_id"] != a.FileID || meta["nextcloud_target_etag"] != a.ETag || meta["nextcloud_path"] != a.Path {
 		return nil, nil, ErrKnowledgeInputChanged
 	}
@@ -306,7 +314,7 @@ func (s *KnowledgeInputProvenanceStore) CheckNextcloudOriginalUploadInput(ctx co
 	if err != nil {
 		return err
 	}
-	if err := nextcloud.CheckCurrentPublication(ctx, cfg, original.Actual.InstanceID, original.Actual.BindingID, fileID, original.Actual.ETag, original.Actual.Path); err != nil {
+	if err := nextcloud.CheckCurrentPublication(types.WithNextcloudContentRevision(ctx, original.Actual.ContentRevision), cfg, original.Actual.InstanceID, original.Actual.BindingID, fileID, original.Actual.ETag, original.Actual.Path); err != nil {
 		return err
 	}
 	return s.verifyNextcloudOriginalFetchInTx(s.db.WithContext(ctx), ctx, &current, original.DataSourceID)
@@ -521,7 +529,7 @@ func (s *KnowledgeInputProvenanceStore) AdmitNextcloudBuildInputsFromOriginalUpl
 	if err != nil {
 		return nil, err
 	}
-	if err := nextcloud.CheckCurrentPublication(ctx, cfg, actual.Artifact.InstanceID, actual.Artifact.BindingID, id, actual.Artifact.ETag, actual.Artifact.Path); err != nil {
+	if err := nextcloud.CheckCurrentPublication(types.WithNextcloudContentRevision(ctx, actual.Artifact.ContentRevision), cfg, actual.Artifact.InstanceID, actual.Artifact.BindingID, id, actual.Artifact.ETag, actual.Artifact.Path); err != nil {
 		return nil, err
 	}
 	return s.AdmitNextcloudBuildInputs(context.WithValue(ctx, nextcloudOriginalUploadBuildKey{}, path), input)

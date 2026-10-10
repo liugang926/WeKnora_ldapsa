@@ -345,6 +345,7 @@ export interface MembershipInfo {
   tenant_id: number
   tenant_name?: string
   role: string
+  scoped_only?: boolean
 }
 
 /**

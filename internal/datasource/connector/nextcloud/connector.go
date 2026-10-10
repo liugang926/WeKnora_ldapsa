@@ -46,6 +46,10 @@ type eventManifestStreamHandler interface {
 	NextcloudRequireManifest() bool
 }
 
+type publicationEpochStreamHandler interface {
+	ObserveNextcloudPublicationEpoch(context.Context, string, string, int64) error
+}
+
 type Connector struct{}
 
 func NewConnector() *Connector { return &Connector{} }
@@ -265,6 +269,11 @@ func (c *Connector) walk(
 		for _, binding := range bindings {
 			if binding.ID == selected[0] {
 				found = true
+				if observer, ok := h.(publicationEpochStreamHandler); ok {
+					if err := observer.ObserveNextcloudPublicationEpoch(ctx, cap.InstanceID, binding.ID, binding.PublicationEpoch); err != nil {
+						return nil, nil, err
+					}
+				}
 				break
 			}
 		}
@@ -288,6 +297,9 @@ func (c *Connector) walk(
 		requireManifest = event.NextcloudRequireManifest()
 	}
 	policy := fmt.Sprintf("v1:multimodal=%t", ds.MultimodalEnabled)
+	if ds.ProcessingPolicyDigest != "" {
+		policy += ";processing=" + ds.ProcessingPolicyDigest
+	}
 	// Hints are read before the authoritative manifest. If a file changes
 	// between these two reads, its hint is still pending on the next run.
 	// No hint is ever used as evidence that a file is gone.
@@ -297,7 +309,7 @@ func (c *Connector) walk(
 	forceContentAudit := full || previous.LastContentAuditAt <= 0 ||
 		previous.LastContentAuditAt > now.Unix() ||
 		now.Sub(time.Unix(previous.LastContentAuditAt, 0)) >= cfg.reconcileInterval
-	forceAllContent := forceContentAudit
+	forceAllContent := forceContentAudit || previous.ImportPolicy != policy
 	forceManifest := requireManifest || len(failedCandidates) > 0 || forceContentAudit || previous.LastReconcileAt <= 0 ||
 		previous.LastReconcileAt > now.Unix() ||
 		now.Sub(time.Unix(previous.LastReconcileAt, 0)) >= cfg.reconcileInterval ||
@@ -538,13 +550,23 @@ func fetchedItem(instanceID, bindingID, generation string, file manifestItem, co
 			"nextcloud_binding_id":  bindingID,
 			"nextcloud_file_id":     strconv.FormatInt(file.FileID, 10),
 			"nextcloud_etag":        file.ETag,
-			"nextcloud_path":        file.Path,
-			"nextcloud_human_url":   strings.TrimSpace(file.HumanURL),
-			"nextcloud_generation":  generation,
+			"nextcloud_content_revision": func() string {
+				revision, _ := types.NormalizeNextcloudContentRevision(file.ContentRevision)
+				return revision
+			}(),
+			"nextcloud_path":       file.Path,
+			"nextcloud_human_url":  strings.TrimSpace(file.HumanURL),
+			"nextcloud_generation": generation,
 		},
 	}
 	if len(originalCfg) == 1 {
 		sealFetchedArtifact(&item, originalCfg[0])
 	}
 	return item
+}
+
+func revisionEqual(a, b string) bool {
+	a, ae := types.NormalizeNextcloudContentRevision(a)
+	b, be := types.NormalizeNextcloudContentRevision(b)
+	return ae == nil && be == nil && a == b
 }

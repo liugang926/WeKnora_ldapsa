@@ -5243,6 +5243,8 @@ export default {
     next: '다음'
   },
   graphSettings: {
+    requiredForPublication: '원본 파일을 공개하기 전에 그래프 완료 필수',
+    requiredForPublicationDescription: '이 지식 베이스를 원본 템플릿으로 사용하면 그래프 추출이 성공한 후에만 파일로 질문할 수 있습니다. 선택을 해제하면 그래프는 선택 사항이 되며 실패는 파일 상태에 표시됩니다.',
     title: '지식 그래프 설정',
     description: '엔티티-관계 추출 기능을 구성하여 텍스트에서 자동으로 엔티티와 관계를 추출하여 지식 그래프를 구축합니다 (참고: Wiki의 \'페이지 링크 그래프\'와는 다릅니다. 후자는 Wiki 페이지 간의 참조 관계를 보여주며, 이쪽은 LLM이 추출한 엔티티-관계 그래프입니다)',
     enableLabel: '엔티티 관계 추출 활성화',

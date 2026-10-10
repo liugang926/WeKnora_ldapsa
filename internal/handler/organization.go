@@ -29,11 +29,12 @@ type OrganizationHandler struct {
 	// and to back the tenant-centric invite picker. Plan 3 lifts org
 	// membership to the tenant level, so the UI needs to surface the
 	// tenant identity rather than the representative user alone.
-	tenantService interfaces.TenantService
-	kbService     interfaces.KnowledgeBaseService
-	knowledgeRepo interfaces.KnowledgeRepository
-	chunkRepo     interfaces.ChunkRepository
-	groupAccess   interfaces.GroupAccessService
+	tenantService  interfaces.TenantService
+	kbService      interfaces.KnowledgeBaseService
+	knowledgeRepo  interfaces.KnowledgeRepository
+	chunkRepo      interfaces.ChunkRepository
+	groupAccess    interfaces.GroupAccessService
+	sourceMetadata *KnowledgeBaseHandler
 }
 
 // NewOrganizationHandler creates a new organization handler
@@ -101,6 +102,23 @@ func (h *OrganizationHandler) mayListSharedKnowledgeBase(
 	kb *types.KnowledgeBase,
 	kbID string,
 ) bool {
+	if h.sourceMetadata != nil {
+		if kb == nil {
+			if h.kbService == nil {
+				return false
+			}
+			var err error
+			kb, err = h.kbService.GetKnowledgeBaseByIDOnly(ctx, kbID)
+			if err != nil {
+				return false
+			}
+		}
+		if !h.sourceMetadata.ordinaryKBMetadataAllowed(ctx, kb) {
+			return false
+		}
+	} else if kb != nil && kb.EverHadNextcloudSource {
+		return false
+	}
 	if kb != nil {
 		kbID = kb.ID
 		if kb.TenantID != 0 {
@@ -292,14 +310,32 @@ func (h *OrganizationHandler) buildResourceCountsByOrg(ctx context.Context, orgs
 	_ = userID
 	byOrgKB := make(map[string]int)
 	tenantKBCache := make(map[uint64][]string) // cache ListKnowledgeBasesByTenantID by tenantID
+	allowedCache := map[string]bool{}
+	mayCountKB := func(id string) bool {
+		if h.sourceMetadata == nil {
+			return true
+		}
+		if allowed, ok := allowedCache[id]; ok {
+			return allowed
+		}
+		allowed := false
+		if h.kbService != nil {
+			kb, err := h.kbService.GetKnowledgeBaseByIDOnly(ctx, id)
+			allowed = err == nil && kb != nil && h.mayListSharedKnowledgeBase(ctx, kb.TenantID, kb, id)
+		}
+		allowedCache[id] = allowed
+		return allowed
+	}
 	for _, o := range orgs {
 		oid := o.ID
 		directIDs := directKBIDsByOrg[oid]
 		directSet := make(map[string]bool)
 		for _, id := range directIDs {
-			directSet[id] = true
+			if id != "" && mayCountKB(id) {
+				directSet[id] = true
+			}
 		}
-		count := len(directIDs)
+		count := len(directSet)
 		for _, item := range agentListByOrg[oid] {
 			if item.Agent == nil {
 				continue
@@ -340,7 +376,7 @@ func (h *OrganizationHandler) buildResourceCountsByOrg(ctx context.Context, orgs
 				}
 			}
 			for _, kbID := range kbIDs {
-				if kbID != "" && !directSet[kbID] {
+				if kbID != "" && !directSet[kbID] && mayCountKB(kbID) {
 					directSet[kbID] = true
 					count++
 				}

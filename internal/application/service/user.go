@@ -407,6 +407,7 @@ func (s *userService) buildMembershipsForUser(
 		return []types.Membership{}
 	}
 	roleByTenant := make(map[uint64]types.TenantRole)
+	scopedByTenant := make(map[uint64]bool)
 	if s.memberService != nil {
 		rows, err := s.memberService.ListByUser(ctx, user.ID)
 		if err != nil {
@@ -435,6 +436,12 @@ func (s *userService) buildMembershipsForUser(
 				current, exists := roleByTenant[effective.TenantID]
 				if !exists || effective.Role.Level() > current.Level() {
 					roleByTenant[effective.TenantID] = effective.Role
+				}
+				if !exists {
+					scopedByTenant[effective.TenantID] = effective.ScopedOnly
+				}
+				if !effective.ScopedOnly {
+					scopedByTenant[effective.TenantID] = false
 				}
 			}
 		}
@@ -479,6 +486,7 @@ func (s *userService) buildMembershipsForUser(
 			TenantID:   tenantID,
 			TenantName: name,
 			Role:       roleByTenant[tenantID],
+			ScopedOnly: scopedByTenant[tenantID],
 		})
 	}
 	return out

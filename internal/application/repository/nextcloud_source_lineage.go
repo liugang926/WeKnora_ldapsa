@@ -89,6 +89,18 @@ func (r *knowledgeRepository) resolveNextcloudSourceLineageInTx(tx *gorm.DB, ten
 			tenantID, kbID, candidate.version.DataSourceID).Take(&pair).Error; err != nil {
 			return lineageSnapshotReadError(err)
 		}
+		if !r.nextcloudRecoveryProbe {
+			closed, err := nextcloudControlsClosed(tx, pair.InstanceID)
+			if err != nil {
+				return err
+			}
+			if closed {
+				allowed, e := nextcloudAllowRecoveryBuildRead(tx.Statement.Context, tx, tenantID, kbID, knowledgeID)
+				if e != nil || !allowed {
+					return ErrNextcloudLineageSnapshotDenied
+				}
+			}
+		}
 		var observed struct {
 			Revision             int64
 			DesiredETag          string `gorm:"column:desired_etag"`
@@ -128,7 +140,7 @@ func (r *knowledgeRepository) resolveNextcloudSourceLineageInTx(tx *gorm.DB, ten
 			KnowledgeBaseID: current.KnowledgeBaseID, DataSourceID: candidate.version.DataSourceID,
 			PairOperationID: pair.OperationID, InstanceID: candidate.instance, BindingID: candidate.binding,
 			FileID: strconv.FormatInt(candidate.fileID, 10), ExternalID: candidate.version.ExternalID,
-			KnowledgeID: current.ID, Revision: uint64(fence.Epoch), ETag: metadata["nextcloud_etag"]}
+			KnowledgeID: current.ID, Revision: uint64(fence.Epoch), ETag: metadata["nextcloud_etag"], ContentRevision: types.NextcloudLineageContentRevision(candidate.version.DesiredContentRevision)}
 		if identity.ETag != candidate.etag || identity.ETag != candidate.version.DesiredETag || identity.Validate() != nil {
 			return ErrNextcloudLineageSnapshotDenied
 		}
@@ -212,7 +224,7 @@ func strictLineageKnowledgeMetadata(data []byte) (map[string]string, error) {
 			return nil, ErrNextcloudLineageSnapshotDenied
 		}
 		switch key {
-		case "datasource_id", "external_id", "source_resource_id", "nextcloud_instance_id", "nextcloud_binding_id", "nextcloud_file_id", "nextcloud_etag", "nextcloud_target_etag":
+		case "datasource_id", "external_id", "source_resource_id", "nextcloud_instance_id", "nextcloud_binding_id", "nextcloud_file_id", "nextcloud_etag", "nextcloud_target_etag", "nextcloud_content_revision", "nextcloud_path", "nextcloud_publication_epoch":
 			var value *string
 			if err := json.Unmarshal(raw, &value); err != nil || value == nil {
 				return nil, ErrNextcloudLineageSnapshotDenied

@@ -2324,6 +2324,8 @@ export default {
     }
   },
   graphSettings: {
+    requiredForPublication: 'Require graph completion before publishing source files',
+    requiredForPublicationDescription: 'When this knowledge base is used as a source template, files become available for Q&A only after graph extraction succeeds. When unchecked, graph extraction is optional and failures remain visible in file status.',
     title: 'Knowledge Graph Configuration',
     description: 'Configure entity-relationship extraction to automatically build a knowledge graph from text (note: this is different from the "page-link graph" inside the Wiki — that one shows references between Wiki pages, while this one is an LLM-extracted entity-relationship graph)',
     enableLabel: 'Enable Entity-Relationship Extraction',

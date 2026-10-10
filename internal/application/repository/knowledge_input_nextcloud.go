@@ -35,7 +35,7 @@ func knowledgeBuildSourceIdentity(tx *gorm.DB, k *types.Knowledge, epoch uint64)
 	if err := tx.Where("tenant_id = ? AND knowledge_base_id = ? AND datasource_id = ? AND state = 'active'", k.TenantID, k.KnowledgeBaseID, candidate.version.DataSourceID).Take(&pair).Error; err != nil {
 		return zero, err
 	}
-	identity := types.SourceIdentity{Provider: types.ConnectorTypeNextcloud, TenantID: k.TenantID, KnowledgeBaseID: k.KnowledgeBaseID, KnowledgeID: k.ID, DataSourceID: candidate.version.DataSourceID, PairOperationID: pair.OperationID, InstanceID: candidate.instance, BindingID: candidate.binding, FileID: strconv.FormatInt(candidate.fileID, 10), ExternalID: candidate.version.ExternalID, Revision: epoch, ETag: candidate.version.DesiredETag}
+	identity := types.SourceIdentity{Provider: types.ConnectorTypeNextcloud, TenantID: k.TenantID, KnowledgeBaseID: k.KnowledgeBaseID, KnowledgeID: k.ID, DataSourceID: candidate.version.DataSourceID, PairOperationID: pair.OperationID, InstanceID: candidate.instance, BindingID: candidate.binding, FileID: strconv.FormatInt(candidate.fileID, 10), ExternalID: candidate.version.ExternalID, Revision: epoch, ETag: candidate.version.DesiredETag, ContentRevision: types.NextcloudLineageContentRevision(candidate.version.DesiredContentRevision)}
 	if err := identity.Validate(); err != nil {
 		return zero, err
 	}

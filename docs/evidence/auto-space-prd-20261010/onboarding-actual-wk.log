@@ -1,0 +1,7 @@
+=== RUN   TestNextcloudOnboardingActualNCRuntime
+    nextcloud_onboarding_live_test.go:77: controlled HTTP GET /api/v1/integrations/nextcloud/onboarding/operations/:operation_id status=404
+    nextcloud_onboarding_live_test.go:77: controlled HTTP POST /api/v1/integrations/nextcloud/onboarding/operations/:operation_id/target-migrations/:migration_id/finalize status=409
+    nextcloud_onboarding_live_test.go:139: Actual NC signed prepare/commit + WK scoped reserve/grants, same-root rename exact ACK, cross-tenant new-source transfer with empty stable manifest passed; synthetic actor/model snapshot; no tenant membership created
+--- PASS: TestNextcloudOnboardingActualNCRuntime (6.51s)
+PASS
+ok      github.com/Tencent/WeKnora/internal/handler 6.884s

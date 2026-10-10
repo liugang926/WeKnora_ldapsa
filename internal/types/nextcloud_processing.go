@@ -1,0 +1,40 @@
+package types
+
+import "context"
+
+// NextcloudProcessingLedger is installed by the actual task wiring. Counters
+// represent a frozen task manifest, never a pending-subtask approximation.
+type NextcloudProcessingLedger interface {
+	PlanGraph(context.Context, *Knowledge, int, []*Chunk, bool, bool) error
+	StartGraph(context.Context, uint64, string, int, string) (bool, error)
+	FailGraph(context.Context, uint64, string, int, string, string, bool) error
+}
+
+type graphWriteOperationKey struct{}
+type GraphWriteOperation struct {
+	ID      string
+	Attempt int
+	ChunkID string
+}
+
+func WithGraphWriteOperation(ctx context.Context, operation GraphWriteOperation) context.Context {
+	return context.WithValue(ctx, graphWriteOperationKey{}, operation)
+}
+func GraphWriteOperationFromContext(ctx context.Context) (GraphWriteOperation, bool) {
+	value, ok := ctx.Value(graphWriteOperationKey{}).(GraphWriteOperation)
+	return value, ok && value.ID != "" && value.Attempt > 0 && value.ChunkID != ""
+}
+
+type NextcloudGraphQueueLedger interface {
+	RecordGraphPayload(context.Context, uint64, string, int, string, []byte) error
+	MarkGraphQueued(context.Context, uint64, string, int, string, bool) error
+}
+type graphQueueLedgerKey struct{}
+
+func WithNextcloudGraphQueueLedger(ctx context.Context, ledger NextcloudProcessingLedger) context.Context {
+	return context.WithValue(ctx, graphQueueLedgerKey{}, ledger)
+}
+func NextcloudGraphQueueLedgerFromContext(ctx context.Context) NextcloudGraphQueueLedger {
+	ledger, _ := ctx.Value(graphQueueLedgerKey{}).(NextcloudGraphQueueLedger)
+	return ledger
+}

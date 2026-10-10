@@ -36,11 +36,11 @@ type nextcloudDerivedGCReceipt struct {
 func (nextcloudDerivedGCReceipt) TableName() string { return "nextcloud_derived_gc_receipts" }
 
 type gcDerivedInventory struct {
-	Chunks, Embeddings, Resources []string
-	Audit                         []gcAuditEntry
-	Backend                       nextcloudBackendSelection
-	EmbeddingDimensions           map[string]int64
-	ResourceIdentities            map[string]string
+	Chunks, Embeddings, Resources, GraphOperations []string
+	Audit                                          []gcAuditEntry
+	Backend                                        nextcloudBackendSelection
+	EmbeddingDimensions                            map[string]int64
+	ResourceIdentities                             map[string]string
 }
 type gcAuditEntry struct {
 	Table, Key, ID, Digest string
@@ -111,7 +111,7 @@ func gcSealLocalManifest(tx *gorm.DB, job nextcloudGCJob, nowMS int64) (nextclou
 	if json.Unmarshal([]byte(plan.BackendPlan), &backend) != nil || recoverySHA([]byte(plan.BackendPlan)) != plan.PlanSHA256 || plan.DataSourceID != job.DataSourceID || plan.ExternalID != job.ExternalID {
 		return existing, ErrNextcloudContentLeaseDenied
 	}
-	if backend.Graph || backend.Wiki || backend.VectorStoreID != "" {
+	if backend.Graph && backend.GraphBackend != NextcloudGraphBackend || backend.Wiki || backend.VectorStoreID != "" {
 		return existing, fmt.Errorf("unverified external derived backend")
 	}
 	for _, engine := range backend.Engines {
@@ -155,7 +155,7 @@ func gcSealLocalManifest(tx *gorm.DB, job nextcloudGCJob, nowMS int64) (nextclou
 	if e := tx.Where("tenant_id=? AND knowledge_base_id=? AND knowledge_id=?", job.TenantID, job.KnowledgeBaseID, job.KnowledgeID).Order("item_kind,object_ref").Find(&artifacts).Error; e != nil {
 		return existing, e
 	}
-	chunkSet, embeddingSet := map[string]bool{}, map[string]bool{}
+	chunkSet, embeddingSet, graphSet := map[string]bool{}, map[string]bool{}, map[string]bool{}
 	expectedKind := "postgres_embedding"
 	if tx.Dialector.Name() == "sqlite" {
 		expectedKind = "sqlite_embedding"
@@ -165,6 +165,11 @@ func gcSealLocalManifest(tx *gorm.DB, job nextcloudGCJob, nowMS int64) (nextclou
 			return existing, ErrNextcloudContentLeaseDenied
 		}
 		switch a.ItemKind {
+		case "scoped_sql_graph":
+			if !backend.Graph || backend.GraphBackend != NextcloudGraphBackend {
+				return existing, ErrNextcloudContentGCUncovered
+			}
+			graphSet[a.ObjectRef] = true
 		case "derived_chunk":
 			chunkSet[a.ObjectRef] = true
 		case expectedKind:
@@ -177,6 +182,21 @@ func gcSealLocalManifest(tx *gorm.DB, job nextcloudGCJob, nowMS int64) (nextclou
 			return existing, ErrNextcloudContentGCUncovered
 		}
 	}
+	if backend.Graph {
+		var records []nextcloudGraphRecord
+		if e := tx.Where("tenant_id=? AND knowledge_base_id=? AND knowledge_id=?", job.TenantID, job.KnowledgeBaseID, job.KnowledgeID).Find(&records).Error; e != nil {
+			return existing, e
+		}
+		for _, record := range records {
+			if !graphSet[record.OperationID] || record.Backend != NextcloudGraphBackend || recoverySHA([]byte(record.BodyJSON)) != record.BodySHA256 {
+				return existing, ErrNextcloudContentGCUncovered
+			}
+		}
+	}
+	for id := range graphSet {
+		inventory.GraphOperations = append(inventory.GraphOperations, id)
+	}
+	sort.Strings(inventory.GraphOperations)
 	for _, id := range inventory.Chunks {
 		if !chunkSet[id] {
 			return existing, ErrNextcloudContentGCUncovered
@@ -232,7 +252,7 @@ func gcSealLocalManifest(tx *gorm.DB, job nextcloudGCJob, nowMS int64) (nextclou
 	if e != nil {
 		return existing, e
 	}
-	existing = nextcloudDerivedGCManifest{JobID: job.ID, PlanSHA256: plan.PlanSHA256, InventoryJSON: string(body), InventorySHA256: recoverySHA(body), State: "sealed", CreatedAtMS: nowMS, PhysicalItems: len(inventory.Chunks) + len(inventory.Embeddings) + len(inventory.Resources), RetainedAuditItems: len(audit), AuditRetainUntilMS: job.CreatedAt.Add(90 * 24 * time.Hour).UnixMilli()}
+	existing = nextcloudDerivedGCManifest{JobID: job.ID, PlanSHA256: plan.PlanSHA256, InventoryJSON: string(body), InventorySHA256: recoverySHA(body), State: "sealed", CreatedAtMS: nowMS, PhysicalItems: len(inventory.Chunks) + len(inventory.Embeddings) + len(inventory.Resources) + len(inventory.GraphOperations), RetainedAuditItems: len(audit), AuditRetainUntilMS: job.CreatedAt.Add(90 * 24 * time.Hour).UnixMilli()}
 	return existing, tx.Create(&existing).Error
 }
 func (s *NextcloudGCStore) runLocalDerived(ctx context.Context, id string, now time.Time) error {
@@ -320,6 +340,11 @@ func (s *NextcloudGCStore) runLocalDerived(ctx context.Context, id string, now t
 		}
 		for _, embeddingID := range inventory.Embeddings {
 			if e = s.deleteLocalEmbeddingInTx(tx, claim, job, embeddingID, inventory.EmbeddingDimensions[embeddingID], nowMS); e != nil {
+				return e
+			}
+		}
+		for _, operationID := range inventory.GraphOperations {
+			if e = s.deleteScopedGraphInTx(tx, claim, job, operationID, nowMS); e != nil {
 				return e
 			}
 		}
@@ -528,6 +553,14 @@ func gcDerivedResourceIdentity(r types.StoredResource) string {
 }
 func (s *NextcloudGCStore) verifyLocalDerivedGone(tx *gorm.DB, job nextcloudGCJob, inventory gcDerivedInventory) error {
 	var n int64
+	if len(inventory.GraphOperations) > 0 {
+		if e := tx.Table("nextcloud_graph_records").Where("tenant_id=? AND knowledge_base_id=? AND knowledge_id=?", job.TenantID, job.KnowledgeBaseID, job.KnowledgeID).Count(&n).Error; e != nil {
+			return e
+		}
+		if n != 0 {
+			return ErrNextcloudContentLeaseDenied
+		}
+	}
 	if e := tx.Table("chunks").Where("tenant_id=? AND knowledge_base_id=? AND knowledge_id=?", job.TenantID, job.KnowledgeBaseID, job.KnowledgeID).Count(&n).Error; e != nil {
 		return e
 	}
@@ -607,13 +640,13 @@ func (s *NextcloudGCStore) finishLocalManifestInTx(tx *gorm.DB, job nextcloudGCJ
 	if e := tx.Model(&nextcloudDerivedGCReceipt{}).Where("job_id=?", job.ID).Count(&receipts).Error; e != nil {
 		return e
 	}
-	if receipts != int64(len(inventory.Chunks)+len(inventory.Embeddings)) {
+	if receipts != int64(len(inventory.Chunks)+len(inventory.Embeddings)+len(inventory.GraphOperations)) {
 		return ErrNextcloudContentLeaseDenied
 	}
 	if e := tx.Model(&nextcloudGCItem{}).Where("job_id=? AND kind IN ('derived_index','knowledge')", job.ID).Update("state", "collected").Error; e != nil {
 		return e
 	}
-	physicalCollected := len(inventory.Chunks) + len(inventory.Embeddings)
+	physicalCollected := len(inventory.Chunks) + len(inventory.Embeddings) + len(inventory.GraphOperations)
 	protected := 0
 	for _, ref := range inventory.Resources {
 		handle, ok := types.ParseResourcePath(ref)
@@ -650,4 +683,49 @@ func (s *NextcloudGCStore) finishLocalManifestInTx(tx *gorm.DB, job nextcloudGCJ
 		return e
 	}
 	return tx.Model(&job).Updates(map[string]any{"state": "collected", "completed_at": time.UnixMilli(nowMS), "last_error_code": "", "updated_at": time.UnixMilli(nowMS)}).Error
+}
+
+// Graph material uses the existing immutable inventory and generation claim;
+// this is an additional exact provider item, not an independent delete worker.
+func (s *NextcloudGCStore) deleteScopedGraphInTx(tx *gorm.DB, claim NextcloudContentGCClaim, job nextcloudGCJob, id string, nowMS int64) error {
+	if claim.Scope != gcContentScope(job) || job.NotBefore.UnixMilli() > nowMS {
+		return ErrNextcloudContentLeaseDenied
+	}
+	if err := NewNextcloudContentLeaseStore(s.db).ValidateGCClaimInTx(tx.Statement.Context, tx, claim); err != nil {
+		return err
+	}
+	var current nextcloudSourceVersion
+	if err := nextcloudVersionQuery(tx, job.TenantID, job.KnowledgeBaseID, job.DataSourceID, job.ExternalID).Take(&current).Error; err != nil {
+		return err
+	}
+	if current.State != "tombstone" && current.CandidateKnowledgeID == job.KnowledgeID {
+		return ErrNextcloudContentLeaseDenied
+	}
+	rows, e := gcReadExactRows(tx, "nextcloud_graph_records", "operation_id=?", id)
+	if e != nil {
+		return e
+	}
+	if len(rows) > 1 {
+		return ErrNextcloudContentLeaseDenied
+	}
+	if len(rows) == 1 && (fmt.Sprint(rows[0]["tenant_id"]) != strconv.FormatUint(job.TenantID, 10) || fmt.Sprint(rows[0]["knowledge_base_id"]) != job.KnowledgeBaseID || fmt.Sprint(rows[0]["knowledge_id"]) != job.KnowledgeID || fmt.Sprint(rows[0]["backend"]) != NextcloudGraphBackend) {
+		return ErrNextcloudContentLeaseDenied
+	}
+	var receipt nextcloudDerivedGCReceipt
+	if e := tx.Where("job_id=? AND item_kind='scoped_sql_graph' AND object_ref=?", job.ID, id).Take(&receipt).Error; e == nil {
+		if len(rows) != 0 {
+			return ErrNextcloudContentLeaseDenied
+		}
+		return nil
+	} else if !errors.Is(e, gorm.ErrRecordNotFound) {
+		return e
+	}
+	deleted := tx.Table("nextcloud_graph_records").Where("operation_id=? AND tenant_id=? AND knowledge_base_id=? AND knowledge_id=?", id, job.TenantID, job.KnowledgeBaseID, job.KnowledgeID).Delete(map[string]any{})
+	if deleted.Error != nil {
+		return deleted.Error
+	}
+	if deleted.RowsAffected != int64(len(rows)) {
+		return ErrNextcloudContentLeaseDenied
+	}
+	return s.derivedReceipt(tx, claim, job, "scoped_sql_graph", id, rows, deleted.RowsAffected, nowMS)
 }

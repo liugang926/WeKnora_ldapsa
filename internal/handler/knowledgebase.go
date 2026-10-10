@@ -45,11 +45,13 @@ type KnowledgeBaseHandler struct {
 	// fileService and storageResolver back the optional `resource_urls=public`
 	// mode on hybrid-search. Both may be nil in tests, in which case only the
 	// default handle mode is available.
-	fileService     interfaces.FileService
-	storageResolver interfaces.StorageBackendResolver
-	groupAccess     interfaces.GroupAccessService
-	dataSourceRepo  interfaces.DataSourceRepository
-	contentLeases   nextcloudHTTPReadLeaseStore
+	fileService         interfaces.FileService
+	storageResolver     interfaces.StorageBackendResolver
+	groupAccess         interfaces.GroupAccessService
+	dataSourceRepo      interfaces.DataSourceRepository
+	contentLeases       nextcloudHTTPReadLeaseStore
+	sourceMetadataGuard *access.NextcloudPublicationGuard
+	sourceMetadataPairs *repository.NextcloudSourcePairingRepository
 }
 
 // NewKnowledgeBaseHandler creates a new knowledge base handler instance
@@ -91,12 +93,16 @@ func (h *KnowledgeBaseHandler) filterGroupAccessibleKBs(
 	ctx context.Context,
 	kbs []*types.KnowledgeBase,
 ) []*types.KnowledgeBase {
-	if h.groupAccess == nil {
-		return kbs
-	}
 	filtered := make([]*types.KnowledgeBase, 0, len(kbs))
 	for _, kb := range kbs {
 		if kb == nil {
+			continue
+		}
+		if _, err := h.checkSourceKBMetadata(ctx, kb); err != nil {
+			continue
+		}
+		if h.groupAccess == nil {
+			filtered = append(filtered, kb)
 			continue
 		}
 		permission, err := h.groupAccess.EffectivePermission(
@@ -215,7 +221,13 @@ func (h *KnowledgeBaseHandler) buildKBListResponse(
 				view = v
 			}
 		}
-		out = append(out, buildKBResponse(kb, view, nil))
+		response := buildKBResponse(kb, view, nil)
+		if source, err := h.checkSourceKBMetadata(ctx, kb); err != nil {
+			continue
+		} else if source {
+			response = sourceKBStatsUnverified(response)
+		}
+		out = append(out, response)
 	}
 	return out
 }
@@ -556,6 +568,14 @@ func (h *KnowledgeBaseHandler) CreateKnowledgeBase(c *gin.Context) {
 		c.Error(apperrors.NewBadRequestError("Invalid request parameters").WithDetails(err.Error()))
 		return
 	}
+	if err := req.IndexingStrategy.ValidateGraphRequirement(); err != nil {
+		c.Error(apperrors.NewBadRequestError(err.Error()))
+		return
+	}
+	if req.IndexingStrategy.GraphRequired && !req.IsGraphEnabled() {
+		c.Error(apperrors.NewBadRequestError("required graph processing requires an enabled extraction configuration"))
+		return
+	}
 	if err := validateExtractConfig(req.ExtractConfig); err != nil {
 		logger.Error(ctx, "Invalid extract configuration", err)
 		c.Error(err)
@@ -613,6 +633,9 @@ func (h *KnowledgeBaseHandler) validateAndGetKnowledgeBase(
 	if err != nil {
 		return nil, id, 0, "", err
 	}
+	if _, err := h.checkSourceKBMetadata(c.Request.Context(), grant.KnowledgeBase); err != nil {
+		return nil, id, 0, "", apperrors.NewForbiddenError("Nextcloud source metadata unavailable")
+	}
 	return grant.KnowledgeBase, id, grant.EffectiveTenantID, grant.Permission, nil
 }
 
@@ -648,7 +671,14 @@ func (h *KnowledgeBaseHandler) GetKnowledgeBase(c *gin.Context) {
 		// Include my_permission in data so frontend can show role (e.g. "只读") instead of "--" for agent-visible KBs
 		extras = map[string]interface{}{"my_permission": permission}
 	}
-	c.JSON(http.StatusOK, gin.H{"success": true, "data": buildKBResponse(kb, storeView, extras)})
+	response := buildKBResponse(kb, storeView, extras)
+	if source, err := h.checkSourceKBMetadata(c.Request.Context(), kb); err != nil {
+		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "source_metadata_unavailable"})
+		return
+	} else if source {
+		response = sourceKBStatsUnverified(response)
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": response})
 }
 
 // ListKnowledgeBases godoc
@@ -910,6 +940,12 @@ func (h *KnowledgeBaseHandler) UpdateKnowledgeBase(c *gin.Context) {
 		return
 	}
 	if req.Config != nil {
+		if req.Config.IndexingStrategy != nil {
+			if err := req.Config.IndexingStrategy.ValidateGraphRequirement(); err != nil {
+				c.Error(apperrors.NewBadRequestError(err.Error()))
+				return
+			}
+		}
 		probe := &types.KnowledgeBase{
 			ChunkingConfig:        req.Config.ChunkingConfig,
 			ImageProcessingConfig: req.Config.ImageProcessingConfig,
@@ -1440,6 +1476,11 @@ func (h *KnowledgeBaseHandler) ListMoveTargets(c *gin.Context) {
 		return
 	}
 
+	if !h.ordinaryKBMetadataAllowed(ctx, sourceKB) {
+		c.Error(errors.NewForbiddenError("Managed source knowledge bases cannot be moved manually"))
+		return
+	}
+
 	// Get all knowledge bases
 	allKBs, err := h.service.ListKnowledgeBases(ctx)
 	if err != nil {
@@ -1450,6 +1491,9 @@ func (h *KnowledgeBaseHandler) ListMoveTargets(c *gin.Context) {
 	// Filter eligible targets
 	targets := make([]*types.KnowledgeBase, 0)
 	for _, kb := range allKBs {
+		if !h.ordinaryKBMetadataAllowed(ctx, kb) {
+			continue
+		}
 		if kb.ID == sourceKBID {
 			continue
 		}
@@ -1467,6 +1511,6 @@ func (h *KnowledgeBaseHandler) ListMoveTargets(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
-		"data":    targets,
+		"data":    h.filterGroupAccessibleKBs(ctx, targets),
 	})
 }

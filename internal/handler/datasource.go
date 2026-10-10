@@ -667,3 +667,13 @@ func (h *DataSourceHandler) GetAvailableConnectors(c *gin.Context) {
 	connectors := datasource.ListAvailableConnectors()
 	c.JSON(http.StatusOK, connectors)
 }
+
+func (h *DataSourceHandler) PublishTargetMigrationCandidates(ctx context.Context, row repository.NextcloudTargetMigration) error {
+	// Handler wiring uses the same configured repository as asynchronous workers.
+	if publisher, ok := h.service.(interface {
+		PublishTargetMigrationCandidates(context.Context, repository.NextcloudTargetMigration) error
+	}); ok {
+		return publisher.PublishTargetMigrationCandidates(ctx, row)
+	}
+	return repository.ErrNextcloudOnboardingConflict
+}

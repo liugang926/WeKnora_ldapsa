@@ -104,6 +104,7 @@ func (s *knowledgeService) CreateKnowledgeFromFile(ctx context.Context,
 		checkParams.ExternalID = metadata["external_id"]
 		if channel == types.ConnectorTypeNextcloud {
 			checkParams.NextcloudTargetETag = metadata["nextcloud_target_etag"]
+			checkParams.NextcloudContentRevision = metadata["nextcloud_content_revision"]
 		}
 	}
 	exists, existingKnowledge, err := s.repo.CheckKnowledgeExists(ctx, tenantID, kbID, checkParams)

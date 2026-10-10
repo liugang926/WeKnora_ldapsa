@@ -1,0 +1,5 @@
+Prepared private owned NC root and exact tenant/template scoped credentials; synthetic pre-login WK actor resources will be used
+Traceback (most recent call last):
+  File "/Users/abner/My_Project/ai-server/nextcloud-auto-space-prd-20261010/apps/integration_weknora/tests/run_onboarding_actual_runtime.py", line 24, in <module>
+    if finish.returncode:raise RuntimeError('Actual NC phase failed; retained raw log')
+RuntimeError: Actual NC phase failed; retained raw log

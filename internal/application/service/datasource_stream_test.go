@@ -509,8 +509,13 @@ func TestNextcloudStreamHandlerRejectsFailedItemAndPartialCheckpoint(t *testing.
 	svc := &DataSourceService{dsRepo: dsRepo, knowledgeService: &sweepFakeKS{repo: repo},
 		syncLogRepo: &processSyncSyncLogRepo{logs: map[string]*types.SyncLog{log.ID: log}}}
 	ds := &types.DataSource{ID: "ds-1", TenantID: 1, KnowledgeBaseID: "kb-1", Type: types.ConnectorTypeNextcloud}
+	if svc.dsRepo == nil {
+		svc.dsRepo = newKBDeleteDSRepo(ds.KnowledgeBaseID, ds)
+	} else if r, ok := svc.dsRepo.(*recordingDSRepo); ok {
+		r.kbDeleteDSRepo = *newKBDeleteDSRepo(ds.KnowledgeBaseID, ds)
+	}
 	h := &streamSyncHandler{svc: svc, ds: ds, result: &types.SyncResult{}, syncLog: log,
-		payload: types.DataSourceSyncPayload{SyncLogID: log.ID}}
+		payload: types.DataSourceSyncPayload{SyncLogID: log.ID, DataSourceID: ds.ID, TenantID: ds.TenantID}}
 	require.NoError(t, h.ObserveNextcloudIdentity(context.Background(), "instance-1", "binding-1"))
 	require.ErrorContains(t, h.Emit(context.Background(), nextcloudStreamDeletion()), "could not be processed")
 	require.Equal(t, 1, h.result.Failed)
@@ -525,8 +530,13 @@ func TestNextcloudStreamHandlerRechecksRunningLogBeforeItem(t *testing.T) {
 	svc := &DataSourceService{knowledgeService: &sweepFakeKS{repo: repo},
 		syncLogRepo: &processSyncSyncLogRepo{logs: map[string]*types.SyncLog{log.ID: log}}}
 	ds := &types.DataSource{ID: "ds-1", TenantID: 1, KnowledgeBaseID: "kb-1", Type: types.ConnectorTypeNextcloud}
+	if svc.dsRepo == nil {
+		svc.dsRepo = newKBDeleteDSRepo(ds.KnowledgeBaseID, ds)
+	} else if r, ok := svc.dsRepo.(*recordingDSRepo); ok {
+		r.kbDeleteDSRepo = *newKBDeleteDSRepo(ds.KnowledgeBaseID, ds)
+	}
 	h := &streamSyncHandler{svc: svc, ds: ds, result: &types.SyncResult{}, syncLog: log,
-		payload: types.DataSourceSyncPayload{SyncLogID: log.ID}}
+		payload: types.DataSourceSyncPayload{SyncLogID: log.ID, DataSourceID: ds.ID, TenantID: ds.TenantID}}
 	require.NoError(t, h.ObserveNextcloudIdentity(context.Background(), "instance-1", "binding-1"))
 	log.Status = types.SyncLogStatusCanceled
 	require.ErrorIs(t, h.Emit(context.Background(), nextcloudStreamDeletion()), asynq.SkipRetry)
@@ -545,8 +555,13 @@ func TestNextcloudStreamHandlerStagesVersionBeforeAcceptingItem(t *testing.T) {
 			svc := &DataSourceService{knowledgeService: &sweepFakeKS{repo: repo},
 				syncLogRepo: &processSyncSyncLogRepo{logs: map[string]*types.SyncLog{log.ID: log}}}
 			ds := &types.DataSource{ID: "ds-1", TenantID: 1, KnowledgeBaseID: "kb-1", Type: types.ConnectorTypeNextcloud}
+			if svc.dsRepo == nil {
+				svc.dsRepo = newKBDeleteDSRepo(ds.KnowledgeBaseID, ds)
+			} else if r, ok := svc.dsRepo.(*recordingDSRepo); ok {
+				r.kbDeleteDSRepo = *newKBDeleteDSRepo(ds.KnowledgeBaseID, ds)
+			}
 			h := &streamSyncHandler{svc: svc, ds: ds, result: &types.SyncResult{}, syncLog: log,
-				payload: types.DataSourceSyncPayload{SyncLogID: log.ID}}
+				payload: types.DataSourceSyncPayload{SyncLogID: log.ID, DataSourceID: ds.ID, TenantID: ds.TenantID}}
 			require.NoError(t, h.ObserveNextcloudIdentity(context.Background(), "instance-1", "binding-1"))
 			item := types.FetchedItem{ExternalID: "nextcloud:instance-1:41", SourceResourceID: "binding-1",
 				FileName: "Notes.md", Content: []byte("hello"), Metadata: map[string]string{

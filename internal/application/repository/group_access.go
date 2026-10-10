@@ -426,3 +426,37 @@ func (r *groupAccessRepository) GetPermissionVersion(
 // bump helper declared in directory.go. Keep this reference so accidental
 // removal is caught even when only this file is selected by a narrow build.
 var _ = time.Time{}
+
+func (r *groupAccessRepository) ScopedMatches(ctx context.Context, user string, tenant uint64, kb string, now time.Time) ([]types.NextcloudScopedGrantMatch, error) {
+	if available, err := r.nextcloudScopeSchema(ctx); !available || err != nil {
+		return nil, err
+	}
+	return NewNextcloudOnboardingStore(r.db).ScopedMatches(ctx, user, tenant, kb, now)
+}
+func (r *groupAccessRepository) TenantScoped(ctx context.Context, tenant uint64) (bool, error) {
+	if available, err := r.nextcloudScopeSchema(ctx); !available || err != nil {
+		return false, err
+	}
+	return NewNextcloudOnboardingStore(r.db).TenantScoped(ctx, tenant)
+}
+
+func (r *groupAccessRepository) ManagedKB(ctx context.Context, tenant uint64, kb string) (bool, error) {
+	if available, err := r.nextcloudScopeSchema(ctx); !available || err != nil {
+		return false, err
+	}
+	return NewNextcloudOnboardingStore(r.db).ManagedKB(ctx, tenant, kb)
+}
+
+// A missing ledger is compatible only with a schema that has never enabled
+// onboarding. Independent migration markers survive lost ledger tables and
+// must keep role resolution from promoting a source reader into a workspace.
+func (r *groupAccessRepository) nextcloudScopeSchema(ctx context.Context) (bool, error) {
+	tx := r.db.WithContext(ctx)
+	if tx.Migrator().HasTable(&types.NextcloudOnboardingOperation{}) {
+		return true, nil
+	}
+	if nextcloudCurrentControlModule(tx) {
+		return false, ErrNextcloudOnboardingDenied
+	}
+	return false, nil
+}

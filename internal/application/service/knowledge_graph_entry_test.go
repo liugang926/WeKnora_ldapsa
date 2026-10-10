@@ -293,6 +293,9 @@ func graphNextcloudSource(t *testing.T, db *gorm.DB, store *repository.Knowledge
 	proof, err := store.AdmitNextcloudBuildInputs(ctx, []byte("actual original source artifact "+fileID))
 	require.NoError(t, err)
 	ctx = repository.WithKnowledgeBuildInputProof(ctx, store, proof)
+	if db.Migrator().HasTable("nextcloud_derived_backend_plans") {
+		require.NoError(t, repository.RecordNextcloudDerivedBackendSelection(ctx, nil))
+	}
 	chunk := &types.Chunk{ID: document + "-chunk", TenantID: 7, KnowledgeBaseID: namespace.KnowledgeBase, KnowledgeID: document, Content: "actual admitted source body " + fileID, ChunkType: types.ChunkTypeText, IsEnabled: true, IndexStatus: "ready", Metadata: types.JSON(`{}`)}
 	require.NoError(t, repository.NewChunkRepository(db).CreateChunks(ctx, []*types.Chunk{chunk}))
 	snapshot, err := store.CaptureKnowledgeBuildInputs(ctx, types.KnowledgeBuildInputCaptureRequest{Projection: types.KnowledgeBuildProjectionGraph, TenantID: 7, KnowledgeBaseID: namespace.KnowledgeBase, KnowledgeID: document, ChunkIDs: []string{chunk.ID}})
@@ -527,4 +530,15 @@ func TestKnowledgeGraphActualWriterAgentCitationFreeNextTurnWithdrawal(t *testin
 	require.Empty(t, blockedModel.calls)
 }
 
-func TestKnowledgeGraphActualSQLUnusedKBDescriptionDoesNotRestampOrDisableGraph(t *testing.T){db,store,repo,namespace,bases,_:=graphSQLNeoFixture(t);ctx,proof:=graphAdmittedInput(t,db,store,namespace);require.NoError(t,graphExtractTask(t,ctx,store,repo,namespace,proof,&graphEntryModel{}));require.NoError(t,db.Model(&types.KnowledgeBase{}).Where("id = ?",namespace.KnowledgeBase).Update("description","unused generated KB description").Error);require.NoError(t,store.RecheckKnowledgeBuildInputs(context.Background(),proof));readCtx:=types.WithRAGSourceLineage(types.WithExecutionTenant(context.Background(),7),types.NewRAGSourceLineage(func(context.Context,*types.SourceLineage)error{return nil}));snapshot,err:=bases.reader.ReadKnowledgeGraphSnapshot(readCtx,types.SearchTargets{&types.SearchTarget{Type:types.SearchTargetTypeKnowledgeBase,TenantID:7,KnowledgeBaseID:namespace.KnowledgeBase}},types.NameSpace{KnowledgeBase:namespace.KnowledgeBase},[]string{"shared"});require.NoError(t,err);require.Equal(t,proof.InputDigest,snapshot.Graph.Node[0].SourceReceipt.InputDigest);require.NoError(t,snapshot.Close())}
+func TestKnowledgeGraphActualSQLUnusedKBDescriptionDoesNotRestampOrDisableGraph(t *testing.T) {
+	db, store, repo, namespace, bases, _ := graphSQLNeoFixture(t)
+	ctx, proof := graphAdmittedInput(t, db, store, namespace)
+	require.NoError(t, graphExtractTask(t, ctx, store, repo, namespace, proof, &graphEntryModel{}))
+	require.NoError(t, db.Model(&types.KnowledgeBase{}).Where("id = ?", namespace.KnowledgeBase).Update("description", "unused generated KB description").Error)
+	require.NoError(t, store.RecheckKnowledgeBuildInputs(context.Background(), proof))
+	readCtx := types.WithRAGSourceLineage(types.WithExecutionTenant(context.Background(), 7), types.NewRAGSourceLineage(func(context.Context, *types.SourceLineage) error { return nil }))
+	snapshot, err := bases.reader.ReadKnowledgeGraphSnapshot(readCtx, types.SearchTargets{&types.SearchTarget{Type: types.SearchTargetTypeKnowledgeBase, TenantID: 7, KnowledgeBaseID: namespace.KnowledgeBase}}, types.NameSpace{KnowledgeBase: namespace.KnowledgeBase}, []string{"shared"})
+	require.NoError(t, err)
+	require.Equal(t, proof.InputDigest, snapshot.Graph.Node[0].SourceReceipt.InputDigest)
+	require.NoError(t, snapshot.Close())
+}

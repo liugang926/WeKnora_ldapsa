@@ -3,7 +3,9 @@ package vlm
 import (
 	"context"
 
+	"github.com/Tencent/WeKnora/internal/logprivacy"
 	"github.com/Tencent/WeKnora/internal/tracing/langfuse"
+	"github.com/Tencent/WeKnora/internal/types"
 )
 
 // langfuseVLM wraps a VLM and reports each Predict call as a Langfuse
@@ -19,6 +21,9 @@ func (l *langfuseVLM) GetModelName() string { return l.inner.GetModelName() }
 func (l *langfuseVLM) GetModelID() string   { return l.inner.GetModelID() }
 
 func (l *langfuseVLM) Predict(ctx context.Context, imgBytes [][]byte, prompt string) (string, error) {
+	if logprivacy.ContentSuppressed(ctx) || types.RAGSourceLineageFromContext(ctx) != nil {
+		return l.inner.Predict(ctx, imgBytes, prompt)
+	}
 	mgr := langfuse.GetManager()
 	if !mgr.Enabled() {
 		return l.inner.Predict(ctx, imgBytes, prompt)

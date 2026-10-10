@@ -1,0 +1,10 @@
+-- The original graph fence still owns KB/exact generation and actual lease
+-- locks. This additional target guard requires a reconciled maintenance permit
+-- while the independent human-publication recovery gate is closed.
+CREATE FUNCTION nextcloud_graph_recovery_controls_fence() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+ IF EXISTS(SELECT 1 FROM nextcloud_content_fences f JOIN nextcloud_source_pairings p ON p.tenant_id=f.tenant_id AND p.knowledge_base_id=f.knowledge_base_id AND p.datasource_id=f.datasource_id JOIN nextcloud_control_recovery_gates g ON g.instance_id=p.nextcloud_instance_id AND g.closed=TRUE WHERE f.tenant_id=NEW.tenant_id AND f.knowledge_base_id=NEW.knowledge_base_id AND f.knowledge_id=NEW.knowledge_id)
+ AND NOT EXISTS(SELECT 1 FROM nextcloud_recovery_build_leases m JOIN nextcloud_publication_recovery_scopes s ON s.plan_sha256=m.plan_sha256 AND s.operation_id=m.operation_id AND s.tenant_id=m.tenant_id AND s.knowledge_base_id=m.knowledge_base_id AND s.datasource_id=m.datasource_id JOIN nextcloud_control_recovery_gates g ON g.instance_id=s.instance_id AND g.plan_sha256=s.plan_sha256 AND g.closed=TRUE JOIN nextcloud_content_fences f ON f.tenant_id=m.tenant_id AND f.knowledge_base_id=m.knowledge_base_id AND f.knowledge_id=m.knowledge_id JOIN nextcloud_content_fences kb ON kb.tenant_id=m.tenant_id AND kb.knowledge_base_id=m.knowledge_base_id AND kb.knowledge_id='' WHERE m.lease_id=NEW.build_lease_id AND m.tenant_id=NEW.tenant_id AND m.knowledge_base_id=NEW.knowledge_base_id AND m.knowledge_id=NEW.knowledge_id AND m.build_epoch=NEW.generation AND f.datasource_id=m.datasource_id AND f.epoch=m.build_epoch AND f.state='open' AND kb.state='open' AND kb.epoch=m.kb_epoch AND kb.epoch>s.closed_kb_epoch AND s.state='reconciled' AND s.reconciliation_sha256=m.manifest_sha256) THEN RAISE EXCEPTION 'nextcloud_graph_recovery_permit_required'; END IF;
+ RETURN NEW;
+END $$;
+CREATE TRIGGER nextcloud_graph_recovery_controls_fence BEFORE INSERT ON nextcloud_graph_records FOR EACH ROW EXECUTE FUNCTION nextcloud_graph_recovery_controls_fence();

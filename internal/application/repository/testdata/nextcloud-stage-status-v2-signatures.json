@@ -1,0 +1,13 @@
+{
+  "secret": "0123456789abcdef0123456789abcdef",
+  "derived_key_hex": "7f16dc008e51573b164f67ce4e6846f08d7a5d4c7361bc9582dcfad03f0147b2",
+  "key_id": "current",
+  "nonce": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "timestamp": "1791600000",
+  "query": "connection_id=connection-0000001&file_id=77&source_etag=etag-1",
+  "body": "{\"schema_version\":2,\"event_id\":\"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee\",\"connection_id\":\"connection-0000001\",\"instance_id\":\"nc-1\",\"binding_id\":\"binding-1\",\"pair_operation_id\":\"11111111-2222-3333-4444-555555555555\",\"tenant_id\":\"7\",\"knowledge_base_id\":\"kb-1\",\"data_source_id\":\"source-1\",\"file_id\":\"77\",\"source_etag\":\"etag-1\",\"publication_epoch\":\"0\",\"head_revision\":\"1\",\"status_revision\":\"1\",\"knowledge_id\":null,\"build_attempt\":\"0\",\"processing_config_revision\":\"1\",\"sync_state\":\"discovered\",\"stages\":{\"parse\":{\"state\":\"pending\",\"started_at\":null,\"completed_at\":null},\"chunk\":{\"state\":\"pending\",\"started_at\":null,\"completed_at\":null},\"embedding\":{\"state\":\"pending\",\"started_at\":null,\"completed_at\":null},\"index\":{\"state\":\"pending\",\"started_at\":null,\"completed_at\":null}},\"graph\":{\"enabled\":false,\"required\":false,\"state\":\"not_enabled\",\"expected\":0,\"succeeded\":0,\"failed\":0,\"skipped\":0,\"cancelled\":0,\"pending\":0,\"persisted\":false,\"completed_at\":null,\"error_code\":\"\"},\"publication_state\":\"building\",\"published_source_etag\":null,\"permission_revision\":\"0\",\"last_permission_sync_at\":null,\"withdrawal_state\":\"none\",\"permission_reclaim_state\":\"unverified\",\"gc_state\":\"cleanup_pending\",\"error_code\":\"\",\"occurred_at\":1791600000,\"last_verified_at\":1791600000,\"qa_available\":false}",
+  "push_path": "/index.php/apps/integration_weknora/api/v1/status",
+  "request_signature": "f7370dc33e53026b7b8076ddedc28bbe3bb9ecf881202d5f962ba53827a6c3a5",
+  "response_signature": "8261056056e755ddacac4ed687f8649747c88358ba145a07417da364e12e5ac1",
+  "push_signature": "9ca6ae1504731999971b736cb2a5f8662eb7324b95367189f5df5e25e9d17e5a"
+}

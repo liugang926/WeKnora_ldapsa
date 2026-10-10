@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import type { UserInfo, TenantInfo, KnowledgeBaseInfo } from '@/api/auth'
+import type { UserInfo, TenantInfo, KnowledgeBaseInfo, MembershipInfo } from '@/api/auth'
 import { userInfoFromApi } from '@/api/auth'
 import type { TenantInfo as TenantInfoFromAPI } from '@/api/tenant'
 import i18n from '@/i18n'
@@ -43,7 +43,7 @@ export const useAuthStore = defineStore('auth', () => {
   // along with their role in each. Populated from /auth/login response.
   // v1 deployments will typically have length 1; the field is wired now
   // so PR 3 can render a tenant-switcher UI without a store migration.
-  const memberships = ref<Array<{ tenant_id: number; tenant_name?: string; role: string }>>([])
+  const memberships = ref<MembershipInfo[]>([])
   const isLiteMode = ref(false)
   // pendingInvitationCount is the number of pending tenant invitations
   // addressed to the current user. Renders as a badge next to the
@@ -184,6 +184,8 @@ export const useAuthStore = defineStore('auth', () => {
     // 如果选择了其他空间，使用选择的空间ID，否则使用用户默认空间ID
     return selectedTenantId.value || (tenant.value?.id ? Number(tenant.value.id) : null)
   })
+  const currentTenantScopedOnly = computed(() =>
+    memberships.value.find((m) => Number(m.tenant_id) === effectiveTenantId.value)?.scoped_only === true)
 
   // 操作方法
   const setUser = (userData: UserInfo) => {
@@ -290,7 +292,7 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   const setMemberships = (
-    list: Array<{ tenant_id: number; tenant_name?: string; role: string }>
+    list: MembershipInfo[]
   ) => {
     memberships.value = Array.isArray(list) ? list : []
     localStorage.setItem('weknora_memberships', JSON.stringify(memberships.value))
@@ -568,6 +570,7 @@ export const useAuthStore = defineStore('auth', () => {
     currentTenantRole,
     hasRole,
     effectiveTenantId,
+    currentTenantScopedOnly,
     isLiteMode,
 
     // 方法

@@ -19,6 +19,7 @@ type originalFetchedArtifact struct {
 // bytes. The opaque issuer and actual item still have to match every field.
 type OriginalFetchedArtifactInput struct {
 	ExternalID, BindingID, InstanceID, FileID, ETag, Path, FileName string
+	ContentRevision                                                 string `json:"content_revision,omitempty"`
 	ArtifactSHA256, ItemDigest                                      string
 	SourceConfigDigest                                              string
 }
@@ -27,7 +28,7 @@ func fetchedArtifactInput(item *types.FetchedItem) OriginalFetchedArtifactInput 
 	hash := sha256.Sum256(item.Content)
 	encoded, _ := json.Marshal(item)
 	all := sha256.Sum256(encoded)
-	return OriginalFetchedArtifactInput{ExternalID: item.ExternalID, BindingID: item.SourceResourceID, InstanceID: item.Metadata["nextcloud_instance_id"], FileID: item.Metadata["nextcloud_file_id"], ETag: item.Metadata["nextcloud_etag"], Path: item.Metadata["nextcloud_path"], FileName: item.FileName, ArtifactSHA256: hex.EncodeToString(hash[:]), ItemDigest: hex.EncodeToString(all[:])}
+	return OriginalFetchedArtifactInput{ContentRevision: types.NextcloudLineageContentRevision(item.Metadata["nextcloud_content_revision"]), ExternalID: item.ExternalID, BindingID: item.SourceResourceID, InstanceID: item.Metadata["nextcloud_instance_id"], FileID: item.Metadata["nextcloud_file_id"], ETag: item.Metadata["nextcloud_etag"], Path: item.Metadata["nextcloud_path"], FileName: item.FileName, ArtifactSHA256: hex.EncodeToString(hash[:]), ItemDigest: hex.EncodeToString(all[:])}
 }
 func originalArtifactConfigDigest(cfg config) string {
 	key := sha256.Sum256([]byte(cfg.token))

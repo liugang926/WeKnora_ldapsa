@@ -16,6 +16,7 @@ type NextcloudRecoverySnapshot struct {
 	Receipt       NextcloudRecoveryReceipt          `json:"receipt"`
 	Sources       []NextcloudRecoverySourceSnapshot `json:"sources"`
 	StateSHA256   string                            `json:"state_sha256"`
+	ControlState  map[string]any                    `json:"control_state,omitempty"`
 }
 type NextcloudRecoverySourceSnapshot struct {
 	Pair               NextcloudRecoveryPair                   `json:"pair"`
@@ -28,10 +29,11 @@ type NextcloudRecoverySourceSnapshot struct {
 	Published          []NextcloudRecoveryPublishedSource      `json:"published"`
 }
 type NextcloudRecoveryPublishedSource struct {
-	KnowledgeID     string   `json:"knowledge_id"`
-	FileID          string   `json:"file_id"`
-	ETag            string   `json:"etag"`
-	IndexedChunkIDs []string `json:"indexed_chunk_ids"`
+	KnowledgeID           string   `json:"knowledge_id"`
+	FileID                string   `json:"file_id"`
+	ETag                  string   `json:"etag"`
+	SourceContentRevision string   `json:"source_content_revision,omitempty"`
+	IndexedChunkIDs       []string `json:"indexed_chunk_ids"`
 }
 
 func (s *NextcloudPublicationRecoveryStore) Snapshot(ctx context.Context, planSHA string, inv *NextcloudRecoveryInventory, pin string) (*NextcloudRecoverySnapshot, error) {
@@ -51,13 +53,26 @@ func (s *NextcloudPublicationRecoveryStore) Snapshot(ctx context.Context, planSH
 			return e
 		}
 		var pairs []NextcloudSourcePairing
-		if e := tx.Where("nextcloud_instance_id=?", inv.Anchor.InstanceID).Order("operation_id").Find(&pairs).Error; e != nil {
+		if e := recoveryPairCurrentQuery(tx, inv.Anchor.InstanceID).Order("operation_id").Find(&pairs).Error; e != nil {
 			return e
 		}
 		if len(scopes) != len(inv.Pairs) || len(pairs) != len(inv.Pairs) {
 			return ErrNextcloudRecoveryDenied
 		}
-		repo := &knowledgeRepository{db: tx}
+
+		if tx.Migrator().HasTable(&nextcloudControlRecoveryGate{}) {
+			var gate nextcloudControlRecoveryGate
+			if err := tx.Where("instance_id=? AND plan_sha256=?", inv.Anchor.InstanceID, planSHA).Take(&gate).Error; err != nil {
+				return ErrNextcloudRecoveryDenied
+			}
+			controls, err := nextcloudControlMetadataInventory(tx)
+			if err != nil {
+				return err
+			}
+			result.ControlState = map[string]any{"closed": gate.Closed, "metadata": controls, "sha256": onboardingDigest(controls)}
+		}
+
+		repo := &knowledgeRepository{db: tx, nextcloudRecoveryProbe: true}
 		for i, p := range pairs {
 			pair := recoveryPair(p)
 			sha, _ := recoveryJSONSHA(pair)
@@ -146,7 +161,7 @@ func (s *NextcloudPublicationRecoveryStore) Snapshot(ctx context.Context, planSH
 					for _, c := range chunks {
 						ids = append(ids, c.ID)
 					}
-					entry.Published = append(entry.Published, NextcloudRecoveryPublishedSource{k.ID, metadata["nextcloud_file_id"], metadata["nextcloud_etag"], ids})
+					entry.Published = append(entry.Published, NextcloudRecoveryPublishedSource{KnowledgeID: k.ID, FileID: metadata["nextcloud_file_id"], ETag: metadata["nextcloud_etag"], IndexedChunkIDs: ids, SourceContentRevision: metadata["nextcloud_content_revision"]})
 				}
 			}
 			result.Sources = append(result.Sources, entry)

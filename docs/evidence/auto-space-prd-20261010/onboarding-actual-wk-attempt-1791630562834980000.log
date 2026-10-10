@@ -1,0 +1,11 @@
+=== RUN   TestNextcloudOnboardingActualNCRuntime
+    nextcloud_onboarding_live_test.go:77: controlled HTTP GET /api/v1/integrations/nextcloud/onboarding/operations/:operation_id status=403
+    nextcloud_onboarding_live_test.go:138:
+            Error Trace:    /app/internal/handler/nextcloud_onboarding_live_test.go:138
+            Error:          Should be true
+            Test:           TestNextcloudOnboardingActualNCRuntime
+            Messages:       owned NC phase failed; see retained controlled RPC diagnostics
+--- FAIL: TestNextcloudOnboardingActualNCRuntime (4.05s)
+FAIL
+FAIL    github.com/Tencent/WeKnora/internal/handler 4.658s
+FAIL

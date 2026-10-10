@@ -5276,6 +5276,8 @@ export default {
     next: '下一步'
   },
   graphSettings: {
+    requiredForPublication: '来源文件发布前必须完成图谱',
+    requiredForPublicationDescription: '此知识库作为来源模板时，勾选后需等图谱提取成功，文件才能用于问答。取消勾选后，图谱为可选步骤，提取失败仍会显示在文件状态中。',
     title: '知识图谱配置',
     description: '配置实体-关系提取功能，自动从文本中抽取实体和关系构建知识图谱（注意：这与 Wiki 知识库中的「页面链接图谱」是两回事——前者是基于 LLM 的实体-关系图，后者是 Wiki 页面之间的引用关系图）',
     enableLabel: '启用实体关系提取',

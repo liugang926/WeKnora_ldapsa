@@ -222,6 +222,15 @@ func (s *NextcloudGCStore) inventoryOne(ctx context.Context, source nextcloudGCS
 			current.TenantID, current.KnowledgeBaseID, current.ID).Find(&chunkRows).Error; err != nil {
 			return err
 		}
+		if tx.Migrator().HasTable("nextcloud_graph_records") {
+			var graphIDs []string
+			if err := tx.Table("nextcloud_graph_records").Where("tenant_id=? AND knowledge_base_id=? AND knowledge_id=?", job.TenantID, job.KnowledgeBaseID, job.KnowledgeID).Pluck("operation_id", &graphIDs).Error; err != nil {
+				return err
+			}
+			for _, id := range graphIDs {
+				items = append(items, nextcloudGCItem{JobID: job.ID, Kind: "scoped_sql_graph", ObjectRef: id, State: "pending", CreatedAt: now, UpdatedAt: now})
+			}
+		}
 		if err := appendNextcloudGCEmbeddingItems(tx, job, now, &items); err != nil {
 			return err
 		}
@@ -493,6 +502,15 @@ func refreshNextcloudGCDerivedInventory(tx *gorm.DB, job nextcloudGCJob, now tim
 	for _, row := range rows {
 		items = append(items, nextcloudGCItem{JobID: job.ID, Kind: "derived_chunk",
 			ObjectRef: row.ID, State: "pending", CreatedAt: now, UpdatedAt: now})
+	}
+	if tx.Migrator().HasTable("nextcloud_graph_records") {
+		var ids []string
+		if err := tx.Table("nextcloud_graph_records").Where("tenant_id=? AND knowledge_base_id=? AND knowledge_id=?", job.TenantID, job.KnowledgeBaseID, job.KnowledgeID).Pluck("operation_id", &ids).Error; err != nil {
+			return err
+		}
+		for _, id := range ids {
+			items = append(items, nextcloudGCItem{JobID: job.ID, Kind: "scoped_sql_graph", ObjectRef: id, State: "pending", CreatedAt: now, UpdatedAt: now})
+		}
 	}
 	if err := appendNextcloudGCEmbeddingItems(tx, job, now, &items); err != nil {
 		return err

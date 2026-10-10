@@ -83,6 +83,20 @@ func (r *NextcloudSourcePairingRepository) PrepareSourcePairing(
 		if lock.RowsAffected != 1 {
 			return ErrNextcloudSourcePairingConflict
 		}
+		// Reserved admission and generic pairing share this writer lock. Only the
+		// owning immutable operation may enter a reserved knowledge base.
+		if tx.Migrator().HasTable(&types.NextcloudOnboardingOperation{}) {
+			var reservation types.NextcloudOnboardingOperation
+			err := tx.Where("tenant_id = ? AND knowledge_base_id = ?", proposed.TenantID, proposed.KnowledgeBaseID).Take(&reservation).Error
+			if err == nil {
+				if reservation.OperationID != proposed.OperationID || reservation.InstanceID != proposed.InstanceID || reservation.BindingID != proposed.BindingID || reservation.State == "retired" {
+					return ErrNextcloudSourcePairingConflict
+				}
+				cfg.Settings["onboarding_operation_id"] = reservation.OperationID
+			} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+				return err
+			}
+		}
 		var aborted NextcloudSourcePairing
 		abortErr := tx.Table("nextcloud_source_pairing_aborts").
 			Where("operation_id = ?", proposed.OperationID).Take(&aborted).Error
@@ -483,4 +497,9 @@ func activeNextcloudSourcePairing(tx *gorm.DB, tenantID uint64, kbID, datasource
 		return ErrNextcloudEventScope
 	}
 	return nil
+}
+
+// Recovery controls are an additional barrier even for ordinary tenant owners.
+func (r *NextcloudSourcePairingRepository) ControlsClosed(ctx context.Context, instance string) (bool, error) {
+	return nextcloudControlsClosed(r.db.WithContext(ctx), instance)
 }

@@ -5,6 +5,7 @@ import (
 	stderrors "errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/Tencent/WeKnora/internal/application/access"
 	"github.com/Tencent/WeKnora/internal/application/repository"
@@ -222,6 +223,19 @@ func (s *sessionService) CreateSession(ctx context.Context, session *types.Sessi
 
 	logger.Infof(ctx, "Creating session, tenant ID: %d", session.TenantID)
 
+	if s.groupAccess != nil {
+		caller := types.CallerFromContext(ctx)
+		role, err := s.groupAccess.EffectiveTenantRole(ctx, caller.UserID, session.TenantID, time.Now().UTC())
+		if err != nil {
+			return nil, err
+		}
+		if role.ScopedOnly {
+			if !role.Member {
+				return nil, ErrResourceAccessDenied
+			}
+			session.NextcloudScoped = true
+		}
+	}
 	// Create session in repository
 	createdSession, err := s.sessionRepo.Create(ctx, session)
 	if err != nil {

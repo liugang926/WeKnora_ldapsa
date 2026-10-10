@@ -1,0 +1,13 @@
+=== RUN   TestNextcloudControlledTenThousandFileProcessingPipeline
+    nextcloud_graph_scale_test.go:80: processed=1000 elapsed_ms=86688
+    nextcloud_graph_scale_test.go:80: processed=2000 elapsed_ms=184910
+    nextcloud_graph_scale_test.go:80: processed=3000 elapsed_ms=287916
+    nextcloud_graph_scale_test.go:80: processed=4000 elapsed_ms=398358
+    nextcloud_graph_scale_test.go:80: processed=5000 elapsed_ms=518213
+    nextcloud_graph_scale_test.go:80: processed=6000 elapsed_ms=642720
+    nextcloud_graph_scale_test.go:80: processed=7000 elapsed_ms=769650
+    nextcloud_graph_scale_test.go:80: processed=8000 elapsed_ms=910276
+    nextcloud_graph_scale_test.go:80: processed=9000 elapsed_ms=1054867
+panic: test timed out after 18m30s
+FAIL    github.com/Tencent/WeKnora/internal/application/service 1110.345s
+FAIL

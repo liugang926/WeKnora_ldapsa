@@ -201,6 +201,7 @@ func (m ResourceGroupMatch) Fresh(now time.Time) bool {
 type EffectiveTenantRole struct {
 	TenantID     uint64           `json:"tenant_id"`
 	Member       bool             `json:"member"`
+	ScopedOnly   bool             `json:"scoped_only,omitempty"`
 	Role         TenantRole       `json:"role,omitempty"`
 	DirectRole   *TenantRole      `json:"direct_role,omitempty"`
 	GroupMatches []GroupRoleMatch `json:"group_matches,omitempty"`

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/Tencent/WeKnora/internal/datasource"
+	"github.com/Tencent/WeKnora/internal/types"
 )
 
 const (
@@ -378,7 +379,15 @@ func (c *client) content(ctx context.Context, bindingID string, item manifestIte
 		return nil, "", fmt.Errorf("%w: invalid content identifier", datasource.ErrInvalidConfig)
 	}
 	endpoint := "/bindings/" + bindingID + "/files/" + strconv.FormatInt(item.FileID, 10) + "/content"
-	resp, err := c.get(ctx, endpoint, nil, item.ETag)
+	revision, err := types.NormalizeNextcloudContentRevision(item.ContentRevision)
+	if err != nil {
+		return nil, "", err
+	}
+	var query url.Values
+	if revision != "0" {
+		query = url.Values{"content_revision": {revision}}
+	}
+	resp, err := c.get(ctx, endpoint, query, item.ETag)
 	if err != nil {
 		return nil, "", err
 	}
@@ -395,6 +404,10 @@ func (c *client) content(ctx context.Context, bindingID string, item manifestIte
 	}
 	if tag := normalizedETag(resp.Header.Get("ETag")); tag == "" || tag != normalizedETag(item.ETag) {
 		return nil, "", fmt.Errorf("%w: Nextcloud file %d ETag changed during download", datasource.ErrRetryableSource, item.FileID)
+	}
+	actualRevision, err := types.NormalizeNextcloudContentRevision(resp.Header.Get("X-Nextcloud-Content-Revision"))
+	if err != nil || actualRevision != revision {
+		return nil, "", fmt.Errorf("%w: Nextcloud content revision changed during download", datasource.ErrRetryableSource)
 	}
 	contentType := strings.TrimSpace(resp.Header.Get("Content-Type"))
 	if contentType == "" {

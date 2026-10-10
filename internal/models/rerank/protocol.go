@@ -8,6 +8,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/Tencent/WeKnora/internal/logger"
+	"github.com/Tencent/WeKnora/internal/logprivacy"
 	"github.com/Tencent/WeKnora/internal/models/api"
 	"github.com/Tencent/WeKnora/internal/models/catalog"
 	"golang.org/x/sync/errgroup"
@@ -39,7 +40,9 @@ func (r *protocolReranker) Rerank(
 	if len(documents) == 0 {
 		return nil, nil
 	}
-	logger.Debugf(ctx, "%s", buildRerankRequestDebug(r.modelName, r.endpoint, query, documents))
+	if !logprivacy.ContentSuppressed(ctx) {
+		logger.Debugf(ctx, "%s", buildRerankRequestDebug(r.modelName, r.endpoint, query, documents))
+	}
 
 	// The query travels in every request, so an over-long one cannot be made
 	// to fit by splitting the documents. SplitBatches charges it to each

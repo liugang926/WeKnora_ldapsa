@@ -1,0 +1,50 @@
+{
+  "file": "internal/application/service/chat_pipeline/extract_entity.go",
+  "change": "13 runtime content and raw-error logs changed to counts/fixed diagnostics; commented raw-content examples removed",
+  "changes_extraction_or_control_semantics": false,
+  "baseline_sha256": "21144251f4db660c792bc1503f128c7c519a64d2eb18294c1e386df82927327b",
+  "final_sha256": "a0e40fc8c04ab0863354a27f20ad3e405cd9fb1a91e2a0a9a43d9940d7d276f7",
+  "benchmark_boundary": "First 10000 attempt used pre-privacy binary; independent final 10000 rerun uses frozen final privacy source and has its own receipt",
+  "final_compile_and_format": "PASS: changed scope formatting and actual focused runtime",
+  "protected_telemetry_boundary": {
+    "context_package": "internal/logprivacy",
+    "source_build_contexts": true,
+    "typed_rag_contexts": true,
+    "central_llm_debug": true,
+    "langfuse_models": [
+      "chat",
+      "embedding",
+      "rerank",
+      "vlm",
+      "asr"
+    ],
+    "manual_detached_contexts": [
+      "logger.CloneContext",
+      "logger.CloneContextWithoutTrace"
+    ],
+    "does_not_grant_source_access": true,
+    "tests": "TestSourceContent* and TestNextcloudBuildContextsSuppressContentWithoutGrantingAccess",
+    "status": "PASS",
+    "all_non_nil_rag_turns_including_ordinary_rag_and_agent": true,
+    "generation_usage_also_bypassed": true,
+    "ordinary_positive_test_boundary": "Unmarked direct model context, not full ordinary RAG entry"
+  },
+  "actual_runtime": {
+    "log": "final-privacy-404-pipeline-20261010T1133.log",
+    "original_log_sha256": "4f29d362dc9674419486487e8990b1b103e39f3f123ab1a0bdd9fbb9b0e8a632",
+    "privacy_parent_tests": [
+      "TestSourceContentSuppressionIsInherited",
+      "TestSourceContentDebugLoggingAndDetachedContextsAreSuppressed",
+      "TestSourceContentRAGLineageMarksAndPreservesPrivacy",
+      "TestSourceContentChatTelemetryBypassPreservesOrdinary",
+      "TestSourceContentEmbeddingTelemetryBypassPreservesOrdinary",
+      "TestSourceContentRerankTelemetryBypassPreservesOrdinary",
+      "TestSourceContentProtocolRerankDebugPreservesOrdinary",
+      "TestSourceContentVLMTelemetryBypassPreservesOrdinary",
+      "TestSourceContentASRTelemetryBypassPreservesOrdinary"
+    ],
+    "build_scope_does_not_grant_access_passed": true,
+    "actual_graph_success_and_withdrawal_passed": true,
+    "execution_exit": 0
+  }
+}

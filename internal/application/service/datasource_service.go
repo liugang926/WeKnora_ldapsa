@@ -10,6 +10,7 @@ import (
 	"net/textproto"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -826,6 +827,13 @@ func (s *DataSourceService) ProcessSync(ctx context.Context, task *asynq.Task) (
 		logger.Errorf(ctx, "failed to get sync log: %v", err)
 		return nil
 	}
+	if ds.Type == types.ConnectorTypeNextcloud && ds.SyncEnabled != nil && !*ds.SyncEnabled {
+		syncLog.Status = types.SyncLogStatusCanceled
+		syncLog.FinishedAt = timePtr(time.Now().UTC())
+		syncLog.ErrorMessage = "content_sync_paused"
+		_ = s.syncLogRepo.Update(ctx, syncLog)
+		return fmt.Errorf("%w: content sync paused", asynq.SkipRetry)
+	}
 	if ds.Type == types.ConnectorTypeNextcloud && syncLog.Status != types.SyncLogStatusRunning {
 		return fmt.Errorf("%w: Nextcloud sync log is no longer running", asynq.SkipRetry)
 	}
@@ -930,6 +938,11 @@ func (s *DataSourceService) ProcessSync(ctx context.Context, task *asynq.Task) (
 	// Surface the KB's multimodal/VLM state to the connector so it only extracts
 	// embedded images for OCR when the KB can actually ingest them (never persisted).
 	config.MultimodalEnabled = kb.IsMultimodalEnabled()
+	config.ProcessingPolicyDigest = types.GraphDigest(struct {
+		Process types.EffectiveProcessConfig
+		Index   types.IndexingStrategy
+		Summary string
+	}{ResolveProcessConfig(kb, nil), kb.IndexingStrategy, kb.SummaryModelID})
 	if ds.Type == types.ConnectorTypeNextcloud {
 		if s.nextcloudEventInbox == nil {
 			return fmt.Errorf("Nextcloud source baseline verifier is unavailable")
@@ -1184,6 +1197,22 @@ func (s *DataSourceService) checkNextcloudEventSync(ctx context.Context, payload
 // was still alive. Recheck before every knowledge write and before committing
 // the cursor; event tasks also recheck their pinned connection.
 func (s *DataSourceService) checkNextcloudSyncActive(ctx context.Context, payload types.DataSourceSyncPayload, observedInstanceID ...string) (bool, error) {
+	if s.dsRepo == nil || payload.DataSourceID == "" {
+		return false, errors.New("Nextcloud current data source unavailable")
+	}
+	currentSource, err := s.GetDataSource(ctx, payload.DataSourceID)
+	if err != nil {
+		return false, err
+	}
+	if currentSource == nil || currentSource.TenantID != payload.TenantID || currentSource.Type != types.ConnectorTypeNextcloud {
+		return false, errors.New("Nextcloud current data source scope changed")
+	}
+	if currentSource.Status == types.DataSourceStatusPaused {
+		return true, fmt.Errorf("%w: source admission paused", asynq.SkipRetry)
+	}
+	if currentSource.SyncEnabled != nil && !*currentSource.SyncEnabled {
+		return true, fmt.Errorf("%w: content sync paused", asynq.SkipRetry)
+	}
 	if s.nextcloudSourcePairings != nil {
 		active, err := s.nextcloudSourcePairings.ActiveForSync(ctx, payload.DataSourceID, payload.TenantID, observedInstanceID...)
 		if err != nil {
@@ -1432,20 +1461,32 @@ func streamStartCursor(ds *types.DataSource, forceFull bool, attempt int) (*type
 // Emit ingests each item as it arrives (bounding memory) and Checkpoint persists
 // the connector cursor plus live progress counts at page boundaries.
 type streamSyncHandler struct {
-	svc                   *DataSourceService
-	ds                    *types.DataSource
-	tagIDs                []string
-	result                *types.SyncResult
-	syncLog               *types.SyncLog
-	payload               types.DataSourceSyncPayload
-	nextcloudInstanceID   string
-	nextcloudBindingID    string
-	nextcloudObserved     bool
-	nextcloudGuardStopped bool
-	nextcloudFailedETags  map[string]string
+	svc                       *DataSourceService
+	ds                        *types.DataSource
+	tagIDs                    []string
+	result                    *types.SyncResult
+	syncLog                   *types.SyncLog
+	payload                   types.DataSourceSyncPayload
+	nextcloudInstanceID       string
+	nextcloudBindingID        string
+	nextcloudObserved         bool
+	nextcloudPublicationEpoch *int64
+	nextcloudGuardStopped     bool
+	nextcloudFailedETags      map[string]string
 }
 
 var errNextcloudStreamCanceled = errors.New("Nextcloud stream canceled")
+
+func (h *streamSyncHandler) ObserveNextcloudPublicationEpoch(ctx context.Context, instance, binding string, epoch int64) error {
+	if epoch < 0 || h.ds.Type != types.ConnectorTypeNextcloud {
+		return errNextcloudStreamCanceled
+	}
+	if h.nextcloudObserved && (h.nextcloudInstanceID != instance || h.nextcloudBindingID != binding) {
+		return errNextcloudStreamCanceled
+	}
+	h.nextcloudPublicationEpoch = &epoch
+	return nil
+}
 
 // ObserveNextcloudIdentity is called by the Nextcloud connector after its
 // signed capabilities and live binding checks, before it emits any item.
@@ -1553,6 +1594,9 @@ func (h *streamSyncHandler) Emit(ctx context.Context, item types.FetchedItem) er
 		return err
 	}
 	if h.ds.Type == types.ConnectorTypeNextcloud {
+		if h.nextcloudPublicationEpoch != nil {
+			item.Metadata["nextcloud_publication_epoch"] = strconv.FormatInt(*h.nextcloudPublicationEpoch, 10)
+		}
 		fileID := item.Metadata["nextcloud_file_id"]
 		if fileID == "" || item.Metadata["nextcloud_instance_id"] != h.nextcloudInstanceID ||
 			item.Metadata["nextcloud_binding_id"] != h.nextcloudBindingID ||
@@ -2305,4 +2349,29 @@ func bytesToFileHeader(data []byte, filename string) (*multipart.FileHeader, err
 func timePtr(t time.Time) *time.Time {
 	utc := t.UTC()
 	return &utc
+}
+
+func (s *DataSourceService) PublishTargetMigrationCandidates(ctx context.Context, row apprepo.NextcloudTargetMigration) error {
+	if row.State != "active" || s.knowledgeService == nil {
+		return apprepo.ErrNextcloudOnboardingConflict
+	}
+	repository := s.knowledgeService.GetRepository()
+	candidates, err := repository.ListKnowledgeByKnowledgeBaseID(ctx, row.NewTenantID, row.NewKnowledgeBaseID)
+	if err != nil {
+		return err
+	}
+	publisher, ok := repository.(interface {
+		PublishNextcloudVersion(context.Context, string) (bool, error)
+	})
+	if !ok {
+		return apprepo.ErrNextcloudOnboardingConflict
+	}
+	for _, k := range candidates {
+		if k.Channel == types.ConnectorTypeNextcloud {
+			if _, err := publisher.PublishNextcloudVersion(ctx, k.ID); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }

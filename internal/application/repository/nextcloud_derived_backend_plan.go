@@ -23,6 +23,7 @@ func (nextcloudDerivedBackendPlan) TableName() string { return "nextcloud_derive
 type nextcloudBackendSelection struct {
 	Engines       []string `json:"engines"`
 	Graph         bool     `json:"graph"`
+	GraphBackend  string   `json:"graph_backend,omitempty"`
 	Wiki          bool     `json:"wiki"`
 	VectorStoreID string   `json:"vector_store_id"`
 }
@@ -69,6 +70,9 @@ func (s *NextcloudContentLeaseStore) RecordDerivedBackendSelection(ctx context.C
 				extractEnabled = overrides.ExtractConfig.Enabled
 			}
 			selected.Graph = selected.Graph && extractEnabled
+		}
+		if selected.Graph {
+			selected.GraphBackend = NextcloudGraphBackend
 		}
 		if kb.VectorStoreID != nil {
 			selected.VectorStoreID = *kb.VectorStoreID

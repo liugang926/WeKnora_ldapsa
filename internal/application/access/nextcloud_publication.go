@@ -29,6 +29,10 @@ type NextcloudDataSourceLookup interface {
 	FindByID(context.Context, string) (*types.DataSource, error)
 }
 
+type NextcloudSourcePathResolver interface {
+	ResolveCurrentSourcePath(context.Context, uint64, string, string, string) (string, error)
+}
+
 type nextcloudSourceAuthorizer func(
 	context.Context, *types.DataSourceConfig, string, string, string, string, int64,
 ) (nextcloud.AuthorizationDecision, error)
@@ -40,6 +44,8 @@ type NextcloudPublicationGuard struct {
 	directories NextcloudDirectoryLookup
 	dataSources NextcloudDataSourceLookup
 	authorize   nextcloudSourceAuthorizer
+	paths       NextcloudSourcePathResolver
+	checkPath   func(context.Context, *types.DataSourceConfig, string, string, int64, string, string) error
 }
 
 func NewNextcloudPublicationGuard(
@@ -50,6 +56,11 @@ func NewNextcloudPublicationGuard(
 		dataSources: dataSources,
 		authorize:   nextcloud.AuthorizeCurrentFile,
 	}
+}
+
+func (g *NextcloudPublicationGuard) ConfigureSourcePathResolver(paths NextcloudSourcePathResolver) {
+	g.paths = paths
+	g.checkPath = nextcloud.CheckCurrentPublication
 }
 
 // CheckKnowledge returns nil for unrelated knowledge and for a currently
@@ -114,6 +125,9 @@ func (g *NextcloudPublicationGuard) CheckKnowledge(ctx context.Context, knowledg
 		externalID != "nextcloud:"+instanceID+":"+fileIDRaw {
 		return fmt.Errorf("%w: incomplete source identity", ErrNextcloudPublicationDenied)
 	}
+	if err := g.checkSourceControls(ctx, instanceID); err != nil {
+		return err
+	}
 	config, err := ds.ParseConfig()
 	if err != nil || config == nil {
 		return fmt.Errorf("%w: data source configuration failed: %v", ErrNextcloudPublicationUnavailable, err)
@@ -133,7 +147,12 @@ func (g *NextcloudPublicationGuard) CheckKnowledge(ctx context.Context, knowledg
 	if g.authorize == nil {
 		return ErrNextcloudPublicationUnavailable
 	}
-	decision, err := g.authorize(ctx, config, instanceID, bindingID,
+	importedRevision, _ := publicationMetadataString(metadata, "nextcloud_content_revision")
+	importedRevision, err = types.NormalizeNextcloudContentRevision(importedRevision)
+	if err != nil {
+		return ErrNextcloudPublicationDenied
+	}
+	decision, err := g.authorize(types.WithNextcloudContentRevision(ctx, importedRevision), config, instanceID, bindingID,
 		currentIdentity.DirectoryID, currentIdentity.ObjectGUID, fileID)
 	if err != nil {
 		return fmt.Errorf("%w: source check failed: %v", ErrNextcloudPublicationUnavailable, err)
@@ -143,10 +162,27 @@ func (g *NextcloudPublicationGuard) CheckKnowledge(ctx context.Context, knowledg
 	}
 	// Publication and ACL may still be valid while the source bytes have
 	// changed. Never expose an imported older version as the current file.
+	currentRevision, err := types.NormalizeNextcloudContentRevision(decision.SourceContentRevision)
+	if err != nil || currentRevision != importedRevision {
+		return ErrNextcloudPublicationDenied
+	}
 	if decision.SourceETag == "" || decision.SourceETag != importedETag {
 		return fmt.Errorf("%w: source version changed", ErrNextcloudPublicationDenied)
 	}
-	return nil
+	if g.paths != nil {
+		oldPath, valid := publicationMetadataString(metadata, "nextcloud_path")
+		if !valid || oldPath == "" || g.checkPath == nil {
+			return ErrNextcloudPublicationDenied
+		}
+		path, err := g.paths.ResolveCurrentSourcePath(ctx, knowledge.TenantID, knowledge.KnowledgeBaseID, dsID, oldPath)
+		if err != nil {
+			return ErrNextcloudPublicationUnavailable
+		}
+		if err := g.checkPath(types.WithNextcloudContentRevision(ctx, importedRevision), config, instanceID, bindingID, fileID, importedETag, path); err != nil {
+			return ErrNextcloudPublicationDenied
+		}
+	}
+	return g.checkSourceControls(ctx, instanceID)
 }
 
 // currentDirectoryIdentity validates only captured principal and local AD
@@ -224,4 +260,48 @@ func publicationMetadataString(metadata map[string]json.RawMessage, key string) 
 		return "", false
 	}
 	return *value, true
+}
+
+// CheckSourceRoot gates KB labels and metadata before a complete document
+// listing exists, including an empty root. It retains the real principal and
+// NC/LDAPS checks; a target Owner/Admin or cached grant cannot bypass them.
+func (g *NextcloudPublicationGuard) CheckSourceRoot(ctx context.Context, ds *types.DataSource, instance, binding string) error {
+	if err := g.checkSourceControls(ctx, instance); err != nil {
+		return err
+	}
+
+	if g == nil || ds == nil || ds.Type != types.ConnectorTypeNextcloud || ds.Status != types.DataSourceStatusActive {
+		return ErrNextcloudPublicationDenied
+	}
+	identity, err := g.currentDirectoryIdentity(ctx)
+	if err != nil {
+		return err
+	}
+	cfg, err := ds.ParseConfig()
+	if err != nil || cfg == nil {
+		return ErrNextcloudPublicationUnavailable
+	}
+	cfg.Type = ds.Type
+	if err := nextcloud.AuthorizeCurrentRoot(ctx, cfg, instance, binding, identity.DirectoryID, identity.ObjectGUID); err != nil {
+		return ErrNextcloudPublicationDenied
+	}
+	return g.checkSourceControls(ctx, instance)
+}
+
+func (g *NextcloudPublicationGuard) checkSourceControls(ctx context.Context, instance string) error {
+	if g == nil {
+		return ErrNextcloudPublicationUnavailable
+	}
+	if reader, ok := g.dataSources.(interface {
+		InstanceControlsClosed(context.Context, string) (bool, error)
+	}); ok {
+		closed, err := reader.InstanceControlsClosed(ctx, instance)
+		if err != nil {
+			return ErrNextcloudPublicationUnavailable
+		}
+		if closed {
+			return ErrNextcloudPublicationDenied
+		}
+	}
+	return nil
 }

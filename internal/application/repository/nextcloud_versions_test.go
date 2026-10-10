@@ -1001,11 +1001,11 @@ func TestSQLiteNextcloudVersionMigrationCreatesDurableUniqueCandidate(t *testing
 	}
 	first := nextcloudSourceVersion{TenantID: 7, KnowledgeBaseID: "kb", DataSourceID: "ds",
 		ExternalID: "one", DesiredETag: "v1", CandidateKnowledgeID: "candidate", State: "staging"}
-	require.NoError(t, db.Create(&first).Error)
+	require.NoError(t, db.Omit("desired_content_revision").Create(&first).Error)
 	second := first
 	second.ExternalID = "two"
-	require.Error(t, db.Create(&second).Error, "one knowledge row cannot be desired by two source files")
+	require.Error(t, db.Omit("desired_content_revision").Create(&second).Error, "one knowledge row cannot be desired by two source files")
 	second.CandidateKnowledgeID = ""
 	second.State = "tombstone"
-	require.NoError(t, db.Create(&second).Error)
+	require.NoError(t, db.Omit("desired_content_revision").Create(&second).Error)
 }

@@ -15,6 +15,7 @@ type knowledgeOriginalInputSourceVerifier struct {
 	store      *repository.KnowledgeInputProvenanceStore
 	public     *access.NextcloudSourceLineageGuard
 	sources    access.NextcloudDataSourceLookup
+	paths      access.NextcloudSourcePathResolver
 	checkBuild func(context.Context, *types.DataSourceConfig, string, string, int64, string, string) error
 }
 
@@ -24,8 +25,12 @@ func ConfigureDataSourceOriginalInputSources(source interfaces.DataSourceService
 	}
 }
 
-func NewKnowledgeOriginalInputSourceVerifier(store *repository.KnowledgeInputProvenanceStore, guard *access.NextcloudSourceLineageGuard, sources access.NextcloudDataSourceLookup) repository.KnowledgeOriginalInputSourceVerifier {
-	return &knowledgeOriginalInputSourceVerifier{store: store, public: guard, sources: sources, checkBuild: nextcloud.CheckCurrentPublication}
+func NewKnowledgeOriginalInputSourceVerifier(store *repository.KnowledgeInputProvenanceStore, guard *access.NextcloudSourceLineageGuard, sources access.NextcloudDataSourceLookup, paths ...access.NextcloudSourcePathResolver) repository.KnowledgeOriginalInputSourceVerifier {
+	verifier := &knowledgeOriginalInputSourceVerifier{store: store, public: guard, sources: sources, checkBuild: nextcloud.CheckCurrentPublication}
+	if len(paths) == 1 {
+		verifier.paths = paths[0]
+	}
+	return verifier
 }
 func (v *knowledgeOriginalInputSourceVerifier) CheckKnowledgeConfigurationSources(ctx context.Context, tenant uint64, kb string, lineage *types.SourceLineage) error {
 	if v == nil || v.public == nil {
@@ -79,7 +84,15 @@ func (v *knowledgeOriginalInputSourceVerifier) CheckKnowledgeOriginalInputSource
 			if err != nil || id <= 0 {
 				return access.ErrNextcloudPublicationDenied
 			}
-			if err := v.checkBuild(ctx, cfg, saved.InstanceID, saved.BindingID, id, saved.ETag, k.GetMetadata()["nextcloud_path"]); err != nil {
+			path := k.GetMetadata()["nextcloud_path"]
+			if v.paths != nil {
+				var err error
+				path, err = v.paths.ResolveCurrentSourcePath(ctx, saved.TenantID, saved.KnowledgeBaseID, saved.DataSourceID, path)
+				if err != nil {
+					return err
+				}
+			}
+			if err := v.checkBuild(types.WithNextcloudContentRevision(ctx, k.GetMetadata()["nextcloud_content_revision"]), cfg, saved.InstanceID, saved.BindingID, id, saved.ETag, path); err != nil {
 				return err
 			}
 		}

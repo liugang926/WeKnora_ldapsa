@@ -112,7 +112,7 @@ func writePrivate(path string, data []byte) error {
 	return f.Sync()
 }
 func run() error {
-	mode := flag.String("mode", "", "capture, apply, reconcile, or snapshot")
+	mode := flag.String("mode", "", "capture, apply, reconcile, snapshot or reopen-controls")
 	dbFile := flag.String("sqlite-db", "", "owned stopped SQLite database")
 	connectionFile := flag.String("postgres-connection-file", "", "private owner-only PostgreSQL DSN file")
 	planFile := flag.String("plan", "", "external signed journal replay plan")
@@ -127,6 +127,10 @@ func run() error {
 	prefix := flag.String("checkpoint-database-chain-sha256", "", "external checkpoint database prefix")
 	receipt := flag.String("plan-sha256", "", "closure receipt digest")
 	operation := flag.String("pair-operation-id", "", "original persisted pair operation")
+	credentialID := flag.String("onboarding-credential-id", "", "explicit scoped credential to reauthorize after control reconciliation")
+	controlPin := flag.String("control-inventory-sha256", "", "independently pinned current control metadata digest")
+	actorDir := flag.String("actor-directory-id", "", "current authorized maintenance actor directory")
+	actorGUID := flag.String("actor-object-guid", "", "current authorized maintenance actor GUID")
 	flag.Parse()
 	if *output == "" {
 		return errors.New("private output file required")
@@ -208,6 +212,30 @@ func run() error {
 		value, e = store.Apply(ctx, plan, inventory, *pin)
 	case "reconcile":
 		value, e = store.Reconcile(ctx, *receipt, *operation)
+	case "reauthorize-onboarding":
+		value, e = store.ReauthorizeOnboardingCredential(ctx, *receipt, *credentialID, *controlPin, *actorDir, *actorGUID)
+	case "reopen-controls":
+		key, er := privateFile(*keyFile)
+		if er != nil {
+			return er
+		}
+		envelope, er := privateFile(*planFile)
+		if er != nil {
+			return er
+		}
+		tail, er := repository.VerifyNextcloudRecoveryPlan(envelope, key)
+		if er != nil {
+			return er
+		}
+		raw, er := privateFile(*inventoryFile)
+		if er != nil {
+			return er
+		}
+		inventory, er := repository.DecodeNextcloudRecoveryInventory(raw, *pin)
+		if er != nil {
+			return er
+		}
+		value, e = store.ReopenControls(ctx, *receipt, inventory, *pin, tail, *controlPin, *actorDir, *actorGUID)
 	case "snapshot":
 		raw, er := privateFile(*inventoryFile)
 		if er != nil {

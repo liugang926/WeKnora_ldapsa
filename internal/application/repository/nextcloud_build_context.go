@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/Tencent/WeKnora/internal/logprivacy"
 	"gorm.io/gorm"
 )
 
@@ -53,7 +54,7 @@ func CheckNextcloudBuildLease(ctx context.Context) error {
 func WithNextcloudBuildLease(ctx context.Context, validator NextcloudBuildLeaseValidator,
 	lease NextcloudContentLease, scope NextcloudContentScope,
 ) context.Context {
-	return context.WithValue(ctx, nextcloudBuildContextKey{}, nextcloudBuildContext{
+	return context.WithValue(logprivacy.SuppressContent(ctx), nextcloudBuildContextKey{}, nextcloudBuildContext{
 		validator: validator, lease: lease, scope: scope, admissionCtx: ctx,
 	})
 }

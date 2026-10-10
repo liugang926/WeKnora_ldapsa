@@ -1,0 +1,64 @@
+{
+  "actor_id": "1e375e3e49409aae890d139a8ac8ecd7db6ed4b7db38faf85b5b77ba917f0df3",
+  "actor_name": "weknora-prd-component-go",
+  "cpu": 1000000000,
+  "memory": 2147483648,
+  "started_at": "2026-10-10T11:06:39.906146846Z",
+  "hard_deadline": "2026-10-10T11:09:39.906146+00:00",
+  "changed_go_files": 100,
+  "source_sha256": "cd4cdc9a20823e3890263dc6706bbd001c371f7f2d7265ec27c3a3622a1c1183",
+  "commands": [
+    {
+      "label": "changed-scope-format-lint-probe",
+      "ended_at": "2026-10-10T11:07:08.025392+00:00",
+      "checked_count": 100,
+      "gofmt_exit": 0,
+      "initial_unformatted_count": 0,
+      "final_gofmt_list": [],
+      "lint_probe_exit": 127,
+      "lint_available": false,
+      "lint_path": "unavailable"
+    },
+    {
+      "label": "final-paired-auto-runner-20261010T1106",
+      "started_at": "2026-10-10T11:07:08.074968+00:00",
+      "ended_at": "2026-10-10T11:07:21.363002+00:00",
+      "exit": 1,
+      "command": [
+        "python3",
+        "/Users/abner/My_Project/ai-server/nextcloud-auto-space-prd-20261010/apps/integration_weknora/tests/run_onboarding_actual_runtime.py",
+        "--actor",
+        "weknora-prd-component-go",
+        "--evidence",
+        "/Users/abner/My_Project/ai-server/WeKnora-auto-space-prd-20261010/docs/evidence/auto-space-prd-20261010"
+      ]
+    },
+    {
+      "label": "final-paired-404-retry-20261010T1108",
+      "started_at": "2026-10-10T11:09:21.874512+00:00",
+      "ended_at": "2026-10-10T11:09:40.579080+00:00",
+      "exit": 1,
+      "command": [
+        "python3",
+        "/Users/abner/My_Project/ai-server/nextcloud-auto-space-prd-20261010/apps/integration_weknora/tests/run_onboarding_actual_runtime.py",
+        "--actor",
+        "weknora-prd-component-go",
+        "--evidence",
+        "/Users/abner/My_Project/ai-server/WeKnora-auto-space-prd-20261010/docs/evidence/auto-space-prd-20261010"
+      ]
+    },
+    {
+      "label": "late-404-targeted-tests",
+      "state": "not-executed",
+      "reason": "Patch-triggered compile did not finish before actual actor hard deadline; paired retry failed before readiness, no nested assertions ran"
+    }
+  ],
+  "terminal": {
+    "Status": "exited",
+    "Running": false,
+    "OOMKilled": false,
+    "ExitCode": 0,
+    "StartedAt": "2026-10-10T11:06:39.906146846Z",
+    "FinishedAt": "2026-10-10T11:09:40.355168972Z"
+  }
+}
