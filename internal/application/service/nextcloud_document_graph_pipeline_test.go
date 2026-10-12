@@ -67,7 +67,7 @@ func runDocumentGraphPipeline(t *testing.T, path string) {
 			require.Eventually(t, func() bool { _, err := os.Stat(path + ".committed"); return err == nil }, 45*time.Second, 100*time.Millisecond)
 		}}
 	}
-	m := newMachinePipelineFixtureWithSource(t, false, "Actual original document about its topic, with enough text for chunking and retrieval.", source)
+	m := newMachinePipelineFixtureWithSource(t, false, "Actual original document about its topic, with enough text for chunking and retrieval.", source, os.Getenv("WEKNORA_DOCUMENT_GRAPH_HISTORY") == "1")
 	if source != nil {
 		require.NotEmpty(t, live.Directory)
 		require.NotEmpty(t, live.GUID)

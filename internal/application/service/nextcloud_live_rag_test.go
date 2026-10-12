@@ -29,6 +29,8 @@ func documentLiveRAG(t *testing.T, m *machinePipelineFixture, models *documentLi
 	var tenant types.Tenant
 	require.NoError(t, m.f.db.Where("id=7").Take(&tenant).Error)
 	ctx := context.WithValue(m.f.ctx, types.TenantInfoContextKey, &tenant)
+	query := "Who does Alice know on Project Cedar?"
+	history := prepareDocumentLiveHistory(t, m, ctx, query)
 	ctx, cancel := context.WithTimeout(ctx, 150*time.Second)
 	t.Cleanup(cancel)
 	ctx, attach, checkpoint, releaseHTTP := BeginMessageMaterialHTTPBoundary(ctx)
@@ -46,7 +48,12 @@ func documentLiveRAG(t *testing.T, m *machinePipelineFixture, models *documentLi
 	cm := &types.ChatManage{}
 	cm.TenantID = 7
 	cm.SessionID = "live-owned-rag"
-	cm.Query = "Who does Alice know on Project Cedar?"
+	cm.Query = query
+	if history != nil {
+		cm.SessionID = history.session.ID
+		cm.UserMessageID = history.user.ID
+		cm.MessageID = history.assistant.ID
+	}
 	cm.UserContent = cm.Query
 	cm.ChatModelID = models.chatRow.ID
 	cm.SearchTargets = types.SearchTargets{&types.SearchTarget{Type: types.SearchTargetTypeKnowledgeBase, TenantID: 7, KnowledgeBaseID: m.ds.KnowledgeBaseID}}
@@ -91,6 +98,7 @@ func documentLiveRAG(t *testing.T, m *machinePipelineFixture, models *documentLi
 	require.Contains(t, strings.ToLower(cm.RenderedContexts), "bob")
 	require.Contains(t, strings.ToLower(answer.String()), "bob")
 	require.Equal(t, streamCount+1, models.summary.streams.Load())
+	checkHistoryRevoked := history.complete(t, ctx, answer.String(), answerLineage)
 	require.NoError(t, checkpoint())
 	releaseModel()
 	require.NoError(t, CheckMessageMaterialOutputBoundary(attach(ctx)))
@@ -100,6 +108,7 @@ func documentLiveRAG(t *testing.T, m *machinePipelineFixture, models *documentLi
 	require.NotEmpty(t, lineage.Sources)
 	t.Log("REAL_RAG native vector/FTS retrieval, actual chunk hydration/merge and real streamed answer passed; answer depends on the source")
 	return func() {
+		checkHistoryRevoked()
 		require.Error(t, turn.Check(ctx), "cached query/answer dependency must deny after actual share removal")
 		denied, err := svc.HybridSearch(ctx, m.ds.KnowledgeBaseID, params)
 		require.NoError(t, err, "search filters denied source rows")
