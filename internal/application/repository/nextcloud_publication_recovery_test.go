@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -549,4 +550,47 @@ func TestNextcloudRecoveryRejectsReceiptWithPartiallyRestoredOpenGeneration(t *t
 	require.NoError(t, db.Exec("UPDATE nextcloud_content_fences SET state='open',epoch=1,retired_at_ms=NULL WHERE knowledge_id=?", old.ID).Error)
 	_, e = store.Apply(ctx, plan, inv, pin)
 	require.ErrorIs(t, e, ErrNextcloudRecoveryDenied)
+}
+
+func TestRecoveryAuthenticatedJournalEvents(t *testing.T) {
+	p := recoveryTestPlan(t, func(p *NextcloudRecoveryPlan) {
+		file := "77"
+		p.JournalEvents = []NextcloudRecoveryJournalEvent{{"6", "binding", &file, "withdrawn", "1", 1}, {"7", "binding", nil, "binding_stop", "1", 2}}
+		chain := p.CheckpointDatabaseChainSHA256
+		for _, event := range p.JournalEvents {
+			fid := "-"
+			if event.FileID != nil {
+				fid = *event.FileID
+			}
+			chain = recoverySHA([]byte(strings.Join([]string{chain, event.Sequence, event.BindingID, fid, event.Kind, event.SourceRevision, fmt.Sprint(event.CreatedAt)}, "\n")))
+			p.DatabasePrefixHashes[event.Sequence] = chain
+		}
+		p.ThroughDatabaseChainSHA256 = chain
+	})
+	for _, name := range []string{"changed-event", "missing-event", "reordered", "missing-required-field"} {
+		t.Run(name, func(t *testing.T) {
+			var fields map[string]any
+			require.NoError(t, json.Unmarshal([]byte(p.raw), &fields))
+			events := fields["journal_events"].([]any)
+			switch name {
+			case "changed-event":
+				events[0].(map[string]any)["kind"] = "eligible"
+			case "missing-event":
+				fields["journal_events"] = events[:1]
+			case "reordered":
+				events[0], events[1] = events[1], events[0]
+			case "missing-required-field":
+				delete(fields, "withdraw_files")
+			}
+			raw, err := json.Marshal(fields)
+			require.NoError(t, err)
+			key := []byte("0123456789abcdef0123456789abcdef")
+			mac := hmac.New(sha256.New, key)
+			mac.Write(raw)
+			signed, err := json.Marshal(map[string]string{"plan": string(raw), "hmac_sha256": hex.EncodeToString(mac.Sum(nil))})
+			require.NoError(t, err)
+			_, err = VerifyNextcloudRecoveryPlan(signed, key)
+			require.Error(t, err)
+		})
+	}
 }

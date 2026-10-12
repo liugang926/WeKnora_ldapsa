@@ -25,7 +25,17 @@ var recoveryHash = regexp.MustCompile(`^[a-f0-9]{64}$`)
 var recoveryID = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
 var recoveryStream = regexp.MustCompile(`^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$`)
 
+type NextcloudRecoveryJournalEvent struct {
+	Sequence       string  `json:"sequence"`
+	BindingID      string  `json:"binding_id"`
+	FileID         *string `json:"file_id"`
+	Kind           string  `json:"kind"`
+	SourceRevision string  `json:"source_revision"`
+	CreatedAt      int64   `json:"created_at"`
+}
+
 type NextcloudRecoveryPlan struct {
+	JournalEvents                       []NextcloudRecoveryJournalEvent    `json:"journal_events,omitempty"`
 	SchemaVersion                       int                                `json:"schema_version"`
 	InstanceID                          string                             `json:"instance_id"`
 	StreamID                            string                             `json:"stream_id"`
@@ -255,8 +265,13 @@ func VerifyNextcloudRecoveryPlan(envelope, key []byte) (*NextcloudRecoveryPlan, 
 		return nil, ErrNextcloudRecoveryDenied
 	}
 	var fields map[string]json.RawMessage
-	if json.Unmarshal([]byte(signed.Plan), &fields) != nil || (len(fields) != 14 && len(fields) != 15) {
+	if json.Unmarshal([]byte(signed.Plan), &fields) != nil || (len(fields) < 14 || len(fields) > 16) {
 		return nil, ErrNextcloudRecoveryDenied
+	}
+	for _, name := range []string{"schema_version", "instance_id", "stream_id", "checkpoint_record_sha256", "recovery_record_sha256", "checkpoint_sequence", "checkpoint_database_chain_sha256", "through_sequence", "through_database_chain_sha256", "database_prefix_hashes", "close_bindings", "withdraw_files", "authoritative_reconciliation_required", "ingress_reopen_permitted"} {
+		if _, ok := fields[name]; !ok {
+			return nil, ErrNextcloudRecoveryDenied
+		}
 	}
 	for _, value := range fields {
 		if bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
@@ -289,6 +304,41 @@ func VerifyNextcloudRecoveryPlan(envelope, key []byte) (*NextcloudRecoveryPlan, 
 		}
 		if i == math.MaxInt64 {
 			break
+		}
+	}
+	if raw, ok := fields["journal_events"]; ok {
+		var rows []map[string]json.RawMessage
+		if json.Unmarshal(raw, &rows) != nil || len(rows) != int(end-start) {
+			return nil, ErrNextcloudRecoveryDenied
+		}
+		chain := p.CheckpointDatabaseChainSHA256
+		for i, event := range p.JournalEvents {
+			seq, se := recoverySequence(event.Sequence)
+			_, re := recoverySequence(event.SourceRevision)
+			file := "-"
+			if event.FileID != nil {
+				n, e := recoverySequence(*event.FileID)
+				if e != nil || n < 1 {
+					return nil, ErrNextcloudRecoveryDenied
+				}
+				file = *event.FileID
+			}
+			validKind := false
+			for _, kind := range []string{"upsert", "metadata", "delete", "subtree_scan", "subtree_moved", "subtree_deleted", "reconcile", "withdrawn", "eligible", "binding_stop", "binding_resume", "binding_retired", "binding_created", "content_write_begin", "content_write_complete"} {
+				if event.Kind == kind {
+					validKind = true
+				}
+			}
+			if len(rows[i]) != 6 || se != nil || seq != start+int64(i)+1 || re != nil || !recoveryID.MatchString(event.BindingID) || event.CreatedAt < 0 || !validKind {
+				return nil, ErrNextcloudRecoveryDenied
+			}
+			chain = recoverySHA([]byte(strings.Join([]string{chain, event.Sequence, event.BindingID, file, event.Kind, event.SourceRevision, strconv.FormatInt(event.CreatedAt, 10)}, "\n")))
+			if chain != p.DatabasePrefixHashes[event.Sequence] {
+				return nil, ErrNextcloudRecoveryDenied
+			}
+		}
+		if chain != p.ThroughDatabaseChainSHA256 {
+			return nil, ErrNextcloudRecoveryDenied
 		}
 	}
 	bindings := map[string]int64{}

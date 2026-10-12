@@ -27,8 +27,8 @@ func TestPostgresCoordinatedRecoveryLiveNextcloud(t *testing.T) {
 		Instance, Binding, Operation, KeyID, Token, KB, DS, Directory, AliceGUID, BobGUID string
 		Epoch                                                                             int64
 		Files                                                                             []struct {
-			ID         int64
-			ETag, Path string
+			ID                   int64
+			ETag, Path, Revision string
 		}
 		Anchor NextcloudRecoveryAnchor
 	}
@@ -57,7 +57,7 @@ func TestPostgresCoordinatedRecoveryLiveNextcloud(t *testing.T) {
 	t.Setenv("WEKNORA_NEXTCLOUD_DEV_HTTP", "1")
 	db := leaseTestPostgres(t)
 	require.NoError(t, db.AutoMigrate(&types.Knowledge{}, &types.DataSource{}, &NextcloudSourcePairing{}, &types.KnowledgeBase{}, &types.Chunk{}, &nextcloudCandidateRetryJob{}, &types.SyncLog{}, &types.Directory{}, &types.DirectoryIdentity{}, &types.DirectoryGroup{}, &types.DirectoryGroupMembership{}))
-	for _, name := range []string{"000112_nextcloud_source_versions", "000126_nextcloud_source_revisions", "000145_nextcloud_publication_recovery"} {
+	for _, name := range []string{"000112_nextcloud_source_versions", "000126_nextcloud_source_revisions", "000145_nextcloud_publication_recovery", "000158_nextcloud_content_revision"} {
 		b, e := os.ReadFile("../../../migrations/versioned/" + name + ".up.sql")
 		require.NoError(t, e)
 		simplePGExec(t, db, string(b))
@@ -73,8 +73,8 @@ func TestPostgresCoordinatedRecoveryLiveNextcloud(t *testing.T) {
 	require.NoError(t, db.Create(&NextcloudSourcePairing{OperationID: f.Operation, TenantID: 7, KnowledgeBaseID: f.KB, DataSourceID: f.DS, InstanceID: f.Instance, BindingID: binding, BaseURL: base, ConfigSHA: hash, PublicationEpoch: f.Epoch, KeyID: f.KeyID, State: "active"}).Error)
 	ctx := context.Background()
 	repo := NewKnowledgeRepository(db).(*knowledgeRepository)
-	makeKnowledge := func(id string, fid int64, etag, path string) *types.Knowledge {
-		metadata, e := json.Marshal(map[string]string{"datasource_id": f.DS, "external_id": "nextcloud:" + f.Instance + ":" + strconv.FormatInt(fid, 10), "nextcloud_instance_id": f.Instance, "nextcloud_binding_id": f.Binding, "nextcloud_file_id": strconv.FormatInt(fid, 10), "nextcloud_etag": "", "source_resource_id": f.Binding, "nextcloud_path": path})
+	makeKnowledge := func(id string, fid int64, etag, path, revision string) *types.Knowledge {
+		metadata, e := json.Marshal(map[string]string{"datasource_id": f.DS, "external_id": "nextcloud:" + f.Instance + ":" + strconv.FormatInt(fid, 10), "nextcloud_instance_id": f.Instance, "nextcloud_binding_id": f.Binding, "nextcloud_file_id": strconv.FormatInt(fid, 10), "nextcloud_etag": "", "source_resource_id": f.Binding, "nextcloud_path": path, "nextcloud_content_revision": revision, "nextcloud_publication_epoch": strconv.FormatInt(f.Epoch, 10)})
 		require.NoError(t, e)
 		k := &types.Knowledge{ID: id, TenantID: 7, KnowledgeBaseID: f.KB, Channel: types.ConnectorTypeNextcloud, Type: "file", ParseStatus: types.ParseStatusCompleted, EnableStatus: "enabled", Metadata: metadata}
 		require.NoError(t, db.Create(k).Error)
@@ -92,8 +92,8 @@ func TestPostgresCoordinatedRecoveryLiveNextcloud(t *testing.T) {
 		require.NoError(t, db.Where("id=?", id).Take(k).Error)
 		return k
 	}
-	old := makeKnowledge("old-withdrawn", f.Files[0].ID, f.Files[0].ETag, f.Files[0].Path)
-	oldLive := makeKnowledge("old-current", f.Files[1].ID, f.Files[1].ETag, f.Files[1].Path)
+	old := makeKnowledge("old-withdrawn", f.Files[0].ID, f.Files[0].ETag, f.Files[0].Path, f.Files[0].Revision)
+	oldLive := makeKnowledge("old-current", f.Files[1].ID, f.Files[1].ETag, f.Files[1].Path, f.Files[1].Revision)
 	_, identity, e := repo.ResolveNextcloudSourceLineage(ctx, 7, f.KB, old.ID)
 	require.NoError(t, e)
 	lineage, e := types.NewCompleteSourceLineage(identity)
@@ -197,11 +197,11 @@ func TestPostgresCoordinatedRecoveryLiveNextcloud(t *testing.T) {
 	require.NoError(t, cli("reconcile", "reconciled", reconcileArgs...))
 	require.NoError(t, cli("reconcile", "reconciled-again", reconcileArgs...))
 	var current struct {
-		ID         int64
-		ETag, Path string
+		ID                   int64
+		ETag, Path, Revision string
 	}
 	read("current-file.json", &current)
-	newer := makeKnowledge("new-generation", current.ID, current.ETag, current.Path)
+	newer := makeKnowledge("new-generation", current.ID, current.ETag, current.Path, current.Revision)
 	require.NoError(t, guard.CheckKnowledge(actor("alice"), newer))
 	require.Error(t, guard.CheckKnowledge(actor("bob"), newer))
 	require.Error(t, guard.CheckKnowledge(ctx, newer))
@@ -220,16 +220,24 @@ func TestPostgresCoordinatedRecoveryLiveNextcloud(t *testing.T) {
 	wait("etag-changed")
 	require.Error(t, guard.CheckKnowledge(actor("alice"), newer), "second live source ETag invalidates indexed generation")
 	require.Error(t, cli("snapshot", "changed-current", baseSnapshot...))
-	write("etag-denied", map[string]bool{"second_etag_denied": true})
-	wait("acl-revoked")
-	// Restore fixture bytes to the ingested version before exercising ACL loss.
-	require.Error(t, guard.CheckKnowledge(actor("alice"), newer), "current NC nested-department share revocation must deny")
+	var version struct {
+		Revision string `json:"revision"`
+	}
+	read("current-revision.json", &version)
 	configured, e := ds.ParseConfig()
 	require.NoError(t, e)
 	configured.Type = types.ConnectorTypeNextcloud
-	decision, e := nextcloud.AuthorizeCurrentFile(ctx, configured, f.Instance, f.Binding, f.Directory, f.AliceGUID, current.ID)
+	aclContext := types.WithNextcloudContentRevision(ctx, version.Revision)
+	decision, e := nextcloud.AuthorizeCurrentFile(aclContext, configured, f.Instance, f.Binding, f.Directory, f.AliceGUID, current.ID)
+	require.NoError(t, e)
+	require.True(t, decision.Allow, "current source revision is readable before actual share revocation")
+	write("etag-denied", map[string]bool{"second_etag_denied": true})
+	wait("acl-revoked")
+	// Independently probe the current source revision after actual ACL loss.
+	require.Error(t, guard.CheckKnowledge(actor("alice"), newer), "current NC nested-department share revocation must deny")
+	decision, e = nextcloud.AuthorizeCurrentFile(aclContext, configured, f.Instance, f.Binding, f.Directory, f.AliceGUID, current.ID)
 	require.NoError(t, e)
 	require.False(t, decision.Allow)
-	require.Equal(t, "source_not_readable", decision.Reason, "actual NC ACL denial must be independent of source ETag")
+	require.Equal(t, "current_directory_membership_denied", decision.Reason, "revoked department share must fail the live audience gate independently of source revision")
 	write("complete.json", map[string]bool{"actual_cli_capture_apply_snapshot_reconcile": true, "database_rollback_verified": true, "old_ids_retired": true, "new_id_positive": true, "source_etag_negative": true, "current_acl_negative": true, "no_actor_negative": true})
 }
