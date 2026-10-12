@@ -33,6 +33,7 @@ func (documentGraphModels) GetEmbeddingModel(context.Context, string) (embedding
 type documentGraphLive struct {
 	Pair                                        repository.NextcloudSourcePairing
 	Token, ExternalID, ETag, Connection, Secret string
+	Directory, GUID                             string
 }
 
 func TestNextcloudDocumentToSQLIndexGraphAndCurrentState(t *testing.T) {
@@ -63,6 +64,12 @@ func runDocumentGraphPipeline(t *testing.T, path string) {
 		}}
 	}
 	m := newMachinePipelineFixtureWithSource(t, false, "Actual original document about its topic, with enough text for chunking and retrieval.", source)
+	if source != nil {
+		require.NotEmpty(t, live.Directory)
+		require.NotEmpty(t, live.GUID)
+		require.NoError(t, m.f.db.Model(&types.Directory{}).Where("id=?", "machine-ad").Update("id", live.Directory).Error)
+		require.NoError(t, m.f.db.Model(&types.DirectoryIdentity{}).Where("id=?", "machine-ad-user").Updates(map[string]any{"directory_id": live.Directory, "object_guid": live.GUID}).Error)
+	}
 	connection, instance, secret := "actual-document-graph-connection", "instance", "0123456789abcdef0123456789abcdef"
 	if source != nil {
 		connection, instance, secret = live.Connection, live.Pair.InstanceID, live.Secret
@@ -151,6 +158,26 @@ func runDocumentGraphPipeline(t *testing.T, path string) {
 		require.NoError(t, db.Table("nextcloud_status_outbox").Where("event_id=? AND state='delivered'", status.EventID).Count(&delivered).Error)
 		require.EqualValues(t, 1, delivered)
 		require.NoError(t, os.WriteFile(path+".result", []byte(persisted.PayloadJSON), 0600))
+		// The same derived output is read with a nominal WK admin actor whose
+		// actual source identity is checked over signed HTTP against NC/LDAPS.
+		output, err := NewKnowledgeOutputAuthorizer(m.f.store, m.f.guard).Begin(m.f.ctx, []*types.Knowledge{row})
+		require.NoError(t, err)
+		require.NoError(t, output.Check(m.f.ctx, []*types.Knowledge{row}))
+		var chunk types.Chunk
+		require.NoError(t, db.Where("knowledge_id=?", row.ID).Take(&chunk).Error)
+		chunks, err := NewChunkOutputAuthorizer(m.f.store, m.f.guard).Begin(m.f.ctx, types.ChunkOutputReadRequest{TenantID: 7, KnowledgeBaseID: m.ds.KnowledgeBaseID, KnowledgeID: row.ID, ChunkIDs: []string{chunk.ID}})
+		require.NoError(t, err)
+		snapshot, err := chunks.Snapshot()
+		require.NoError(t, err)
+		require.NoError(t, chunks.Check(m.f.ctx, snapshot))
+		require.NoError(t, os.WriteFile(path+".access-ready", []byte("ready"), 0600))
+		require.Eventually(t, func() bool { _, err := os.Stat(path + ".revoked"); return err == nil }, 45*time.Second, 100*time.Millisecond)
+		require.Error(t, output.Check(m.f.ctx, []*types.Knowledge{row}), "retained document output must recheck current source access")
+		require.Error(t, chunks.Check(m.f.ctx, snapshot), "retained chunks must recheck current source access")
+		_, err = NewKnowledgeOutputAuthorizer(m.f.store, m.f.guard).Begin(m.f.ctx, []*types.Knowledge{row})
+		require.Error(t, err, "nominal WK admin must not bypass actual LDAP source revocation")
+		t.Log("actual LDAPS reader can read processed output before NC share removal; retained document/chunk output and new admin read denied after removal")
+
 	}
 	t.Log("actual HTTP sync -> saved original -> parser/chunker -> SQLite vector+FTS rows -> enqueued extraction -> fenced SQL graph -> published stage/outbox; controlled source and models")
 }
