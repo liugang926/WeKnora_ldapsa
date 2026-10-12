@@ -63,6 +63,7 @@ func (m machinePipelineModels) GetEmbeddingModel(context.Context, string) (embed
 }
 
 type machinePipelineFixture struct {
+	externalID, etag                      string
 	f                                     *enrichmentTestFixture
 	source                                *DataSourceService
 	ds                                    *types.DataSource
@@ -83,6 +84,16 @@ func newMachinePipelineFixture(t *testing.T, pg bool) *machinePipelineFixture {
 }
 
 func newMachinePipelineFixtureWithDocument(t *testing.T, pg bool, artifact string, withMessageMaterials ...bool) *machinePipelineFixture {
+	return newMachinePipelineFixtureWithSource(t, pg, artifact, nil, withMessageMaterials...)
+}
+
+type machinePipelineSource struct {
+	Pair                    repository.NextcloudSourcePairing
+	Token, ExternalID, ETag string
+	Prepared                func(*repository.NextcloudSourcePairing)
+}
+
+func newMachinePipelineFixtureWithSource(t *testing.T, pg bool, artifact string, live *machinePipelineSource, withMessageMaterials ...bool) *machinePipelineFixture {
 	t.Helper()
 	fullDirectory := len(withMessageMaterials) > 1 && withMessageMaterials[1]
 	f := newEnrichmentTestFixture(t, pg, fullDirectory)
@@ -244,9 +255,23 @@ func newMachinePipelineFixtureWithDocument(t *testing.T, pg bool, artifact strin
 	pairs := repository.NewNextcloudSourcePairingRepository(f.db)
 	repository.ConfigureDataSourceNameInputWriters(sources, pairs, factory)
 	proposed := repository.NextcloudSourcePairing{OperationID: "actual-machine-pair", TenantID: 7, KnowledgeBaseID: "kb", InstanceID: "instance", BindingID: "binding", BaseURL: server.URL, PublicationEpoch: 1, KeyID: "local-key"}
-	pair, created, e := pairs.PrepareSourcePairing(f.ctx, proposed, "isolated-machine")
+	token, externalID, etag := "isolated-machine", "nextcloud:instance:77", "actual-etag"
+	if live != nil {
+		proposed = live.Pair
+		if proposed.KnowledgeBaseID != kb.ID {
+			kb.ID = proposed.KnowledgeBaseID
+			kb.AutoTagConfig = nil
+			require.NoError(t, f.store.CreateKnowledgeBaseWithInput(repository.WithIndependentKnowledgeInput(f.ctx), &kb))
+		}
+		token, externalID, etag = live.Token, live.ExternalID, live.ETag
+		t.Setenv("WEKNORA_NEXTCLOUD_ALLOWED_ORIGINS", proposed.BaseURL)
+	}
+	pair, created, e := pairs.PrepareSourcePairing(f.ctx, proposed, token)
 	require.NoError(t, e)
 	require.True(t, created)
+	if live != nil && live.Prepared != nil {
+		live.Prepared(&pair)
+	}
 	require.NoError(t, pairs.ActivateSourcePairing(f.ctx, pair))
 	ds, e := sources.FindByID(f.ctx, pair.DataSourceID)
 	require.NoError(t, e)
@@ -291,7 +316,7 @@ func newMachinePipelineFixtureWithDocument(t *testing.T, pg bool, artifact strin
 	require.NoError(t, registry.Register(nextcloud.NewConnector()))
 	admission := NewNextcloudCapacityAdmission(repository.NewNextcloudCapacityStore(f.db), func(context.Context, *types.KnowledgeBase) (interfaces.FileService, error) { return files, nil })
 	source := &DataSourceService{dsRepo: sources, syncLogRepo: repository.NewSyncLogRepository(f.db), knowledgeService: f.s, kbService: f.s.kbService, taskEnqueuer: f.queue, connectorRegistry: registry, tenantRepo: f.s.tenantRepo, nextcloudSourcePairings: pairs, nextcloudEventInbox: repository.NewNextcloudEventInboxRepository(f.db), capacityAdmission: admission, sourceInputs: f.store}
-	return &machinePipelineFixture{f: f, source: source, ds: ds, allow: allow, auto: auto, model: model, files: files, base: base, personal: personal, publicationUnavailableAfterCompletion: unavailableAfterCompletion, publicationFailureProbe: failureProbe, publicationAuthorizeCalls: authorizeCalls}
+	return &machinePipelineFixture{externalID: externalID, etag: etag, f: f, source: source, ds: ds, allow: allow, auto: auto, model: model, files: files, base: base, personal: personal, publicationUnavailableAfterCompletion: unavailableAfterCompletion, publicationFailureProbe: failureProbe, publicationAuthorizeCalls: authorizeCalls}
 }
 
 func (m *machinePipelineFixture) ingest(t *testing.T) *types.Knowledge {
@@ -320,14 +345,14 @@ func (m *machinePipelineFixture) run(t *testing.T, task *asynq.Task) error {
 	if row == nil || row.KnowledgeBaseID != p.KnowledgeBaseID {
 		return repository.ErrKnowledgeInputChanged
 	}
-	scope := repository.NextcloudContentScope{TenantID: p.TenantID, KnowledgeBaseID: p.KnowledgeBaseID, KnowledgeID: p.KnowledgeID, DataSourceID: m.ds.ID, ExternalID: "nextcloud:instance:77"}
+	scope := repository.NextcloudContentScope{TenantID: p.TenantID, KnowledgeBaseID: p.KnowledgeBaseID, KnowledgeID: p.KnowledgeID, DataSourceID: m.ds.ID, ExternalID: m.externalID}
 	leases := repository.NewNextcloudContentLeaseStore(m.f.db)
 	lease, e := leases.AcquireKnowledge(context.Background(), scope, repository.NextcloudContentBuildLease, "actual-asynq-"+task.Type(), time.Minute)
 	if e != nil {
 		return e
 	}
 	defer leases.ReleaseLease(context.Background(), lease.ID)
-	if e = leases.WaitForCurrentSourceVersion(context.Background(), scope, lease, "actual-etag", time.Second); e != nil {
+	if e = leases.WaitForCurrentSourceVersion(context.Background(), scope, lease, m.etag, time.Second); e != nil {
 		return e
 	}
 	parent := context.Background()
