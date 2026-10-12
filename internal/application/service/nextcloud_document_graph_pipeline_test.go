@@ -177,6 +177,10 @@ func runDocumentGraphPipeline(t *testing.T, path string) {
 	require.Equal(t, "succeeded", status.Graph.State)
 	require.True(t, status.Graph.Persisted)
 	require.Equal(t, graphTasks, status.Graph.Expected)
+	var checkRAGRevoked func()
+	if source != nil && liveModels != nil && os.Getenv("WEKNORA_DOCUMENT_GRAPH_RAG") == "1" {
+		checkRAGRevoked = documentLiveRAG(t, m, liveModels, row.ID)
+	}
 	if source != nil {
 		require.Equal(t, live.ETag, status.SourceETag)
 		require.Equal(t, strconv.FormatInt(live.Pair.PublicationEpoch, 10), status.PublicationEpoch)
@@ -233,6 +237,9 @@ func runDocumentGraphPipeline(t *testing.T, path string) {
 		require.Error(t, chunks.Check(m.f.ctx, snapshot), "retained chunks must recheck current source access")
 		_, err = NewKnowledgeOutputAuthorizer(m.f.store, m.f.guard).Begin(m.f.ctx, []*types.Knowledge{row})
 		require.Error(t, err, "nominal WK admin must not bypass actual LDAP source revocation")
+		if checkRAGRevoked != nil {
+			checkRAGRevoked()
+		}
 		if os.Getenv("WEKNORA_DOCUMENT_GRAPH_HTTP") == "1" {
 			require.NoError(t, os.WriteFile(path+".source-checked", []byte("checked"), 0600))
 			require.Eventually(t, func() bool { _, err := os.Stat(path + ".http-done"); return err == nil }, 60*time.Second, 100*time.Millisecond)

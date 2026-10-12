@@ -33,6 +33,7 @@ type documentLiveModels struct {
 type documentLiveChat struct {
 	provider chat.Chat
 	calls    atomic.Int64
+	streams  atomic.Int64
 }
 
 func (m *documentLiveChat) Chat(ctx context.Context, messages []chat.Message, options *chat.ChatOptions) (*types.ChatResponse, error) {
@@ -56,6 +57,7 @@ func (m *documentLiveModels) GetChatModel(_ context.Context, id string) (chat.Ch
 func (m *documentLiveChat) GetModelID() string   { return m.provider.GetModelID() }
 func (m *documentLiveChat) GetModelName() string { return m.provider.GetModelName() }
 func (m *documentLiveChat) ChatStream(ctx context.Context, messages []chat.Message, options *chat.ChatOptions) (<-chan types.StreamResponse, error) {
+	m.streams.Add(1)
 	return m.provider.ChatStream(ctx, messages, options)
 }
 
