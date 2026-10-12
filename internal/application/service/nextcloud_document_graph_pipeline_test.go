@@ -99,6 +99,10 @@ func runDocumentGraphPipeline(t *testing.T, path string) {
 	if liveModels != nil {
 		require.NoError(t, db.Save(&liveModels.embeddingRow).Error)
 		require.NoError(t, db.Save(&liveModels.chatRow).Error)
+		// Agent retrieval resolves model identity through the production service.
+		// Keep the real provider wrappers for call accounting, and delegate the
+		// remaining model metadata methods to the actual persisted model rows.
+		liveModels.ModelService = &modelService{repo: repository.NewModelRepository(db)}
 		m.f.s.modelService = liveModels
 		dimensions = liveModels.embedder.GetDimensions()
 	}
