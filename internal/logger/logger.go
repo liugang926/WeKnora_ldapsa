@@ -279,8 +279,20 @@ func ConfigureFromEnv() {
 	appLogger.SetReportCaller(false)
 }
 
+// Direct logrus callers cannot be safely rewritten before formatting. Disable
+// their output in protected contexts; package helpers retain fixed diagnostics.
+var protectedSourceLogger = func() *logrus.Logger {
+	l := logrus.New()
+	l.SetOutput(io.Discard)
+	l.SetLevel(logrus.PanicLevel)
+	return l
+}()
+
 // GetLogger 获取日志实例
 func GetLogger(c context.Context) *logrus.Entry {
+	if logprivacy.ContentSuppressed(c) {
+		return logrus.NewEntry(protectedSourceLogger)
+	}
 	if logger := c.Value(types.LoggerContextKey); logger != nil {
 		return logger.(*logrus.Entry)
 	}
@@ -426,33 +438,61 @@ func WithFields(c context.Context, fields logrus.Fields) context.Context {
 	return context.WithValue(c, types.LoggerContextKey, logger)
 }
 
+// Source worker contexts may carry document bodies, paths or provider errors.
+// Keep a diagnostic event without formatting those values or inherited fields.
+func protectedDiagnostic(c context.Context, level logrus.Level) bool {
+	if !logprivacy.ContentSuppressed(c) {
+		return false
+	}
+	logrus.NewEntry(appLogger).Log(level, "Protected source diagnostic")
+	return true
+}
+
 // Debug 输出调试级别的日志
 func Debug(c context.Context, args ...interface{}) {
+	if protectedDiagnostic(c, logrus.DebugLevel) {
+		return
+	}
 	addCaller(GetLogger(c), 2).Debug(args...)
 }
 
 // Debugf 使用格式化字符串输出调试级别的日志
 func Debugf(c context.Context, format string, args ...interface{}) {
+	if protectedDiagnostic(c, logrus.DebugLevel) {
+		return
+	}
 	addCaller(GetLogger(c), 2).Debugf(format, args...)
 }
 
 // Info 输出信息级别的日志
 func Info(c context.Context, args ...interface{}) {
+	if protectedDiagnostic(c, logrus.InfoLevel) {
+		return
+	}
 	addCaller(GetLogger(c), 2).Info(args...)
 }
 
 // Infof 使用格式化字符串输出信息级别的日志
 func Infof(c context.Context, format string, args ...interface{}) {
+	if protectedDiagnostic(c, logrus.InfoLevel) {
+		return
+	}
 	addCaller(GetLogger(c), 2).Infof(format, args...)
 }
 
 // Warn 输出警告级别的日志
 func Warn(c context.Context, args ...interface{}) {
+	if protectedDiagnostic(c, logrus.WarnLevel) {
+		return
+	}
 	addCaller(GetLogger(c), 2).Warn(args...)
 }
 
 // Warnf 使用格式化字符串输出警告级别的日志
 func Warnf(c context.Context, format string, args ...interface{}) {
+	if protectedDiagnostic(c, logrus.WarnLevel) {
+		return
+	}
 	addCaller(GetLogger(c), 2).Warnf(format, args...)
 }
 
@@ -466,6 +506,9 @@ type Fields = logrus.Fields
 // parsing free-form text. Format-string style (Warnf) is appropriate for
 // low-stakes diagnostic messages.
 func WarnWithFields(c context.Context, fields Fields, msg string) {
+	if protectedDiagnostic(c, logrus.WarnLevel) {
+		return
+	}
 	if fields == nil {
 		fields = Fields{}
 	}
@@ -474,16 +517,25 @@ func WarnWithFields(c context.Context, fields Fields, msg string) {
 
 // Error 输出错误级别的日志
 func Error(c context.Context, args ...interface{}) {
+	if protectedDiagnostic(c, logrus.ErrorLevel) {
+		return
+	}
 	addCaller(GetLogger(c), 2).Error(args...)
 }
 
 // Errorf 使用格式化字符串输出错误级别的日志
 func Errorf(c context.Context, format string, args ...interface{}) {
+	if protectedDiagnostic(c, logrus.ErrorLevel) {
+		return
+	}
 	addCaller(GetLogger(c), 2).Errorf(format, args...)
 }
 
 // ErrorWithFields 输出带有额外字段的错误级别日志
 func ErrorWithFields(c context.Context, err error, fields logrus.Fields) {
+	if protectedDiagnostic(c, logrus.ErrorLevel) {
+		return
+	}
 	if fields == nil {
 		fields = logrus.Fields{}
 	}

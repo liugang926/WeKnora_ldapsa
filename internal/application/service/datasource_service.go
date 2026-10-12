@@ -1595,7 +1595,9 @@ func (h *streamSyncHandler) Emit(ctx context.Context, item types.FetchedItem) er
 	}
 	if h.ds.Type == types.ConnectorTypeNextcloud {
 		if h.nextcloudPublicationEpoch != nil {
-			item.Metadata["nextcloud_publication_epoch"] = strconv.FormatInt(*h.nextcloudPublicationEpoch, 10)
+			// The connector seals the complete fetched item. Keep source observation
+			// outside that immutable artifact until constructing knowledge metadata.
+			ctx = context.WithValue(ctx, nextcloudObservedEpochKey{}, nextcloudObservedEpoch{h.ds.ID, *h.nextcloudPublicationEpoch})
 		}
 		fileID := item.Metadata["nextcloud_file_id"]
 		if fileID == "" || item.Metadata["nextcloud_instance_id"] != h.nextcloudInstanceID ||
@@ -1994,6 +1996,14 @@ func (s *DataSourceService) validateDataSourceConfig(ctx context.Context, ds *ty
 //   - Has URL only      → CreateKnowledgeFromURL  (让 WeKnora 下载并解析)
 //
 // Returns (isUpdate, error) — isUpdate is true when an existing item was replaced.
+// Internal source observation, scoped to the stream's data source. It does not
+// replace the connector's original-byte proof or current-source admission.
+type nextcloudObservedEpochKey struct{}
+type nextcloudObservedEpoch struct {
+	dataSourceID string
+	epoch        int64
+}
+
 func (s *DataSourceService) ingestItem(ctx context.Context, ds *types.DataSource, item *types.FetchedItem, tagIDs []string) (bool, error) {
 	// Channel decides the knowledge "source" label shown in the UI. Prefer the
 	// connector-supplied metadata["channel"] (e.g. Feishu Drive sets it to
@@ -2032,6 +2042,12 @@ func (s *DataSourceService) ingestItem(ctx context.Context, ds *types.DataSource
 		metadata["datasource_id"] = ds.ID
 		metadata["external_id"] = item.ExternalID
 		metadata["source_resource_id"] = item.SourceResourceID
+		if observed, ok := ctx.Value(nextcloudObservedEpochKey{}).(nextcloudObservedEpoch); ok {
+			if observed.dataSourceID != ds.ID || observed.epoch < 0 {
+				return false, errors.New("Nextcloud observed publication scope changed")
+			}
+			metadata["nextcloud_publication_epoch"] = strconv.FormatInt(observed.epoch, 10)
+		}
 		return s.ingestNextcloudItem(ctx, ds, item, metadata, tagIDs)
 	}
 

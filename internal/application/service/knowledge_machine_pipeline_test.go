@@ -125,6 +125,20 @@ func newMachinePipelineFixtureWithDocument(t *testing.T, pg bool, artifact strin
 		require.NoError(t, e)
 		require.NoError(t, migration.Exec(string(script)).Error)
 	}
+	// This fixture exercises the current production pipeline, including the
+	// processing ledger and recovery gates added by directory onboarding.
+	processing := []string{"000032_nextcloud_event_inbox", "000038_nextcloud_gc", "000040_nextcloud_gc_object_claim", "000041_nextcloud_gc_derived_inventory", "000064_nextcloud_publication_recovery", "000075_nextcloud_processing_state", "000076_nextcloud_directory_migrations", "000077_nextcloud_content_revision", "000078_nextcloud_control_recovery", "000079_nextcloud_recovery_build_leases", "000080_nextcloud_graph_recovery_fence"}
+	if pg {
+		processing = []string{"000113_nextcloud_event_inbox", "000119_nextcloud_gc", "000121_nextcloud_gc_object_claim", "000122_nextcloud_gc_derived_inventory", "000145_nextcloud_publication_recovery", "000156_nextcloud_processing_state", "000157_nextcloud_directory_migrations", "000158_nextcloud_content_revision", "000159_nextcloud_control_recovery", "000160_nextcloud_recovery_build_leases", "000161_nextcloud_graph_recovery_fence"}
+	}
+	for _, name := range processing {
+		script, err := os.ReadFile("../../../migrations/" + directory + "/" + name + ".up.sql")
+		require.NoError(t, err)
+		if strings.HasSuffix(name, "_nextcloud_processing_state") && f.db.Migrator().HasColumn(&types.DataSource{}, "sync_enabled") {
+			script = []byte(strings.SplitN(string(script), "\n", 2)[1])
+		}
+		require.NoError(t, migration.Exec(string(script)).Error)
+	}
 	// Install the actual combined body protocol, bootstrap its owned external
 	// journal and retain a connection pool of one thereafter.
 	journalDir := t.TempDir()
@@ -272,6 +286,7 @@ func newMachinePipelineFixtureWithDocument(t *testing.T, pg bool, artifact strin
 	ConfigureKnowledgeAutoTagInputProvenance(auto, f.store, f.guard)
 	f.post = &KnowledgePostProcessService{knowledgeRepo: f.s.repo, kbService: f.s.kbService, chunkService: f.s.chunkService, chunkRepo: f.s.chunkRepo, taskEnqueuer: f.queue, knowledgeInputs: f.store, enrichmentConfig: f.s.config, spanTracker: f.s.spanTracker}
 	ConfigureKnowledgeAutoTagCompletion(f.post, f.s.repo, f.store)
+	ConfigureNextcloudPostProcessLedger(f.post, repository.NewNextcloudProcessingStateStore(f.db))
 	registry := datasource.NewConnectorRegistry()
 	require.NoError(t, registry.Register(nextcloud.NewConnector()))
 	admission := NewNextcloudCapacityAdmission(repository.NewNextcloudCapacityStore(f.db), func(context.Context, *types.KnowledgeBase) (interfaces.FileService, error) { return files, nil })
@@ -338,6 +353,7 @@ func (m *machinePipelineFixture) run(t *testing.T, task *asynq.Task) error {
 func runKnowledgeMachineActualPipeline(t *testing.T, pg bool) {
 	m := newMachinePipelineFixture(t, pg)
 	row := m.ingest(t)
+	require.Equal(t, "1", row.GetMetadata()["nextcloud_publication_epoch"], "observed epoch belongs in knowledge metadata without altering the sealed connector artifact")
 	require.NotNil(t, repository.NewNextcloudContentLeaseStore(m.f.db))
 	for i := 0; i < len(m.f.queue.tasks); i++ {
 		require.NoError(t, m.run(t, m.f.queue.tasks[i]), m.f.queue.tasks[i].Type())
