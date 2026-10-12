@@ -4,6 +4,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"strings"
 	"testing"
@@ -16,6 +17,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/event"
 	"github.com/Tencent/WeKnora/internal/models/chat"
 	"github.com/Tencent/WeKnora/internal/types"
+	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	"github.com/stretchr/testify/require"
 )
 
@@ -47,6 +49,15 @@ func documentLiveAgent(t *testing.T, m *machinePipelineFixture, models *document
 	registry.RegisterTool(agenttools.NewSearchKnowledgeTool(kbs, m.f.s, chunks, targets, nil, nil))
 	registry.RegisterTool(agenttools.NewReadDocumentTool(m.f.s, chunks, targets))
 	registry.SetRAGChunkSnapshotReader(repository.NewRAGChunkSnapshotReader(m.f.db, m.f.store))
+	if os.Getenv("WEKNORA_DOCUMENT_GRAPH_AGENT_PREFLIGHT") == "1" {
+		// Diagnostic only; the final acceptance run omits this preflight so
+		// the model's first tool call starts with a fresh physical-read slot.
+		probe := agenttools.NewSearchKnowledgeTool(kbs, m.f.s, chunks, targets, nil, nil)
+		probe.SetRAGChunkSnapshotReader(documentAgentSnapshotDiagnostic{t, repository.NewRAGChunkSnapshotReader(m.f.db, m.f.store)})
+		probeCtx := types.WithRAGSourceLineage(ctx, types.NewRAGSourceLineage(verify))
+		_, probeErr := probe.ExecuteSourceLineage(probeCtx, json.RawMessage(`{"query":"Who does Alice know on Project Cedar?","limit":3}`))
+		require.NoError(t, probeErr, "actual search tool preflight before the model loop")
+	}
 	independent, _ := types.NewCompleteSourceLineage()
 	thinking, citations := false, false
 	makeEngine := func() *agent.AgentEngine {
@@ -91,4 +102,23 @@ func documentLiveAgent(t *testing.T, m *machinePipelineFixture, models *document
 		t.Log("REAL_AGENT revoked source history rejected before either model entrypoint")
 		releaseHTTP()
 	}
+}
+
+// Print only fixed shape flags, never document text or model credentials.
+// This wrapper returns the production reader's exact result unchanged.
+type documentAgentSnapshotDiagnostic struct {
+	t *testing.T
+	inner interfaces.RAGChunkSnapshotReader
+}
+
+func (d documentAgentSnapshotDiagnostic) HydrateRAGChunkSnapshots(ctx context.Context, requests []types.RAGChunkReadRequest) ([]types.RAGChunkInputSnapshot, error) {
+	rows, err := d.inner.HydrateRAGChunkSnapshots(ctx, requests)
+	for _, row := range rows {
+		if c := row.Chunk; c != nil {
+			metadata := strings.TrimSpace(string(c.Metadata))
+			images := strings.TrimSpace(c.ImageInfo)
+			d.t.Logf("AGENT_SNAPSHOT text=%t summary=%t metadata_empty=%t metadata_null=%t images_empty=%t lineage_complete=%t", c.ChunkType == types.ChunkTypeText, c.ChunkType == types.ChunkTypeSummary, metadata == "" || metadata == "{}", metadata == "null", images == "" || images == "[]", row.SourceLineage.RequireComplete() == nil)
+		}
+	}
+	return rows, err
 }
