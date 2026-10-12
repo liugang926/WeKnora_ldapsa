@@ -4,7 +4,10 @@ package service
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"io"
 	"os"
 	"strconv"
 	"testing"
@@ -76,6 +79,11 @@ func runDocumentGraphPipeline(t *testing.T, path string) {
 	}
 
 	db := m.f.db
+	// Collection reads require the same membership/ABA checkpoint migration
+	// as the normal app, before document creation starts updating the scope.
+	collectionDDL, err := os.ReadFile("../../../migrations/sqlite/000058_knowledge_collection_checkpoints.up.sql")
+	require.NoError(t, err)
+	require.NoError(t, db.Exec(string(collectionDDL)).Error)
 	engines := types.RetrieverEngines{Engines: []types.RetrieverEngineParams{
 		{RetrieverType: types.VectorRetrieverType, RetrieverEngineType: types.SQLiteRetrieverEngineType},
 		{RetrieverType: types.KeywordsRetrieverType, RetrieverEngineType: types.SQLiteRetrieverEngineType},
@@ -170,12 +178,45 @@ func runDocumentGraphPipeline(t *testing.T, path string) {
 		snapshot, err := chunks.Snapshot()
 		require.NoError(t, err)
 		require.NoError(t, chunks.Check(m.f.ctx, snapshot))
+		if os.Getenv("WEKNORA_DOCUMENT_GRAPH_HTTP") == "1" {
+			var databases []struct{ Name, File string }
+			require.NoError(t, db.Raw("PRAGMA database_list").Scan(&databases).Error)
+			databasePath := ""
+			for _, database := range databases {
+				if database.Name == "main" {
+					databasePath = database.File
+				}
+			}
+			require.NotEmpty(t, databasePath)
+			// Private paths reference this exact live database and original file;
+			// the handler test must not synthesize another published generation.
+			original, err := m.files.GetFile(m.f.ctx, row.FilePath)
+			require.NoError(t, err)
+			originalBytes, err := io.ReadAll(original)
+			require.NoError(t, err)
+			require.NoError(t, original.Close())
+			bodySHA := sha256.Sum256(originalBytes)
+			descriptor := map[string]any{"database": databasePath, "file_root": m.base, "knowledge_id": row.ID,
+				"knowledge_base_id": row.KnowledgeBaseID, "user_id": "enrich-human", "file_path": row.FilePath, "body_sha256": hex.EncodeToString(bodySHA[:]),
+				"environment": map[string]string{}}
+			environment := descriptor["environment"].(map[string]string)
+			for _, key := range []string{"SYSTEM_AES_KEY", "WEKNORA_NEXTCLOUD_DEV_HTTP", "WEKNORA_NEXTCLOUD_ALLOWED_ORIGINS", "WEKNORA_ORIGINAL_BODY_JOURNAL_DIRECTORY", "WEKNORA_ORIGINAL_BODY_JOURNAL_KEY", "WEKNORA_ORIGINAL_BODY_JOURNAL_PIN"} {
+				environment[key] = os.Getenv(key)
+			}
+			encoded, err := json.Marshal(descriptor)
+			require.NoError(t, err)
+			require.NoError(t, os.WriteFile(path+".http-input", encoded, 0600))
+		}
 		require.NoError(t, os.WriteFile(path+".access-ready", []byte("ready"), 0600))
-		require.Eventually(t, func() bool { _, err := os.Stat(path + ".revoked"); return err == nil }, 45*time.Second, 100*time.Millisecond)
+		require.Eventually(t, func() bool { _, err := os.Stat(path + ".revoked"); return err == nil }, 90*time.Second, 100*time.Millisecond)
 		require.Error(t, output.Check(m.f.ctx, []*types.Knowledge{row}), "retained document output must recheck current source access")
 		require.Error(t, chunks.Check(m.f.ctx, snapshot), "retained chunks must recheck current source access")
 		_, err = NewKnowledgeOutputAuthorizer(m.f.store, m.f.guard).Begin(m.f.ctx, []*types.Knowledge{row})
 		require.Error(t, err, "nominal WK admin must not bypass actual LDAP source revocation")
+		if os.Getenv("WEKNORA_DOCUMENT_GRAPH_HTTP") == "1" {
+			require.NoError(t, os.WriteFile(path+".source-checked", []byte("checked"), 0600))
+			require.Eventually(t, func() bool { _, err := os.Stat(path + ".http-done"); return err == nil }, 60*time.Second, 100*time.Millisecond)
+		}
 		t.Log("actual LDAPS reader can read processed output before NC share removal; retained document/chunk output and new admin read denied after removal")
 
 	}

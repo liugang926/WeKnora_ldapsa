@@ -261,7 +261,7 @@ func newMachinePipelineFixtureWithSource(t *testing.T, pg bool, artifact string,
 		if proposed.KnowledgeBaseID != kb.ID {
 			kb.ID = proposed.KnowledgeBaseID
 			kb.AutoTagConfig = nil
-			require.NoError(t, f.store.CreateKnowledgeBaseWithInput(repository.WithIndependentKnowledgeInput(f.ctx), &kb))
+			require.NoError(t, f.store.CreateKnowledgeBaseWithInput(repository.WithIndependentKnowledgeBaseNameInput(repository.WithIndependentKnowledgeInput(f.ctx), kb.ID, kb.Name), &kb))
 		}
 		token, externalID, etag = live.Token, live.ExternalID, live.ETag
 		t.Setenv("WEKNORA_NEXTCLOUD_ALLOWED_ORIGINS", proposed.BaseURL)
