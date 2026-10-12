@@ -18,6 +18,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/application/service/retriever"
 	"github.com/Tencent/WeKnora/internal/models/embedding"
 	"github.com/Tencent/WeKnora/internal/types"
+	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	"github.com/Tencent/WeKnora/internal/utils"
 	sqlite_vec "github.com/asg017/sqlite-vec-go-bindings/cgo"
 	"github.com/hibiken/asynq"
@@ -93,10 +94,22 @@ func runDocumentGraphPipeline(t *testing.T, path string) {
 	require.NoError(t, registry.Register(retriever.NewKVHybridRetrieveEngine(sqlindex.NewSQLiteRetrieveEngineRepository(db), types.SQLiteRetrieverEngineType)))
 	m.f.s.retrieveEngine = registry
 	m.f.s.modelService = documentGraphModels{machinePipelineModels{auto: m.model, summary: m.f.model}}
+	liveModels, liveTemplate := loadDocumentLiveModels(t)
+	dimensions := 3
+	if liveModels != nil {
+		require.NoError(t, db.Save(&liveModels.embeddingRow).Error)
+		require.NoError(t, db.Save(&liveModels.chatRow).Error)
+		m.f.s.modelService = liveModels
+		dimensions = liveModels.embedder.GetDimensions()
+	}
 	var kb types.KnowledgeBase
 	require.NoError(t, db.Where("id=?", m.ds.KnowledgeBaseID).Take(&kb).Error)
 	kb.IndexingStrategy = types.IndexingStrategy{VectorEnabled: true, KeywordEnabled: true, GraphEnabled: true, GraphRequired: true}
 	kb.ExtractConfig = &types.ExtractConfig{Enabled: true, Tags: []string{"KNOWS"}}
+	if liveModels != nil {
+		kb.EmbeddingModelID = liveModels.embeddingRow.ID
+		kb.SummaryModelID = liveModels.chatRow.ID
+	}
 	require.NoError(t, m.f.store.UpdateKnowledgeBaseWithInput(repository.WithIndependentKnowledgeInput(m.f.ctx), &kb))
 	state := repository.NewNextcloudProcessingStateStore(db)
 	provider := repository.NewScopedSQLGraphRepository(db, nil)
@@ -112,7 +125,14 @@ func runDocumentGraphPipeline(t *testing.T, path string) {
 	empty, _ := types.NewCompleteSourceLineage()
 	template, err := types.BindGraphPromptTemplateOrigin(&types.PromptTemplateStructured{Description: "extract entities and edges %s"}, empty)
 	require.NoError(t, err)
-	handler := &ChunkExtractService{buildInputs: m.f.store, template: template, modelService: &graphEntryModels{model: model}, graphEngine: provider, processingLedger: state, knowledgeRepo: m.f.s.repo}
+	var graphModels interfaces.ModelService = &graphEntryModels{model: model}
+	graphCalls := func() int { return model.calls }
+	if liveModels != nil {
+		template = liveTemplate
+		graphModels = documentLiveGraphModels{liveModels}
+		graphCalls = func() int { return int(liveModels.graph.calls.Load()) }
+	}
+	handler := &ChunkExtractService{buildInputs: m.f.store, template: template, modelService: graphModels, graphEngine: provider, processingLedger: state, knowledgeRepo: m.f.s.repo}
 	graphTasks := 0
 	for i := 0; i < len(m.f.queue.tasks); i++ {
 		task := m.f.queue.tasks[i]
@@ -131,17 +151,17 @@ func runDocumentGraphPipeline(t *testing.T, path string) {
 		require.NoError(t, err)
 		ctx := repository.WithNextcloudBuildLease(context.Background(), leases, lease, scope)
 		require.NoError(t, handler.Handle(ctx, task))
-		calls := model.calls
+		calls := graphCalls()
 		require.NoError(t, handler.Handle(ctx, asynq.NewTask(task.Type(), task.Payload())))
-		require.Equal(t, calls, model.calls, "queue redelivery must reuse durable graph ACK")
+		require.Equal(t, calls, graphCalls(), "queue redelivery must reuse durable graph ACK")
 		require.NoError(t, leases.ReleaseLease(context.Background(), lease.ID))
 	}
 	require.NoError(t, db.Where("id=?", row.ID).Take(row).Error)
 	require.Equal(t, types.ParseStatusCompleted, row.ParseStatus, row.ErrorMessage)
 	require.Positive(t, graphTasks)
-	require.Equal(t, graphTasks, model.calls)
+	require.Equal(t, graphTasks, graphCalls())
 	var n int64
-	for _, table := range []string{"chunks", "lite_embeddings", "vec_embeddings_3", "lite_embeddings_fts", "nextcloud_graph_records", "nextcloud_status_outbox"} {
+	for _, table := range []string{"chunks", "lite_embeddings", "vec_embeddings_" + strconv.Itoa(dimensions), "lite_embeddings_fts", "nextcloud_graph_records", "nextcloud_status_outbox"} {
 		require.NoError(t, db.Table(table).Count(&n).Error)
 		require.Positive(t, n, table)
 	}
@@ -219,6 +239,11 @@ func runDocumentGraphPipeline(t *testing.T, path string) {
 		}
 		t.Log("actual LDAPS reader can read processed output before NC share removal; retained document/chunk output and new admin read denied after removal")
 
+	}
+	if liveModels != nil {
+		require.Positive(t, liveModels.summary.calls.Load(), "actual summary provider must run")
+		t.Logf("REAL_MODEL_PIPELINE embedding=%s dimension=%d chat=%s summary_calls=%d graph_calls=%d", liveModels.embeddingRow.Name, dimensions, liveModels.chatRow.Name, liveModels.summary.calls.Load(), liveModels.graph.calls.Load())
+		return
 	}
 	t.Log("actual HTTP sync -> saved original -> parser/chunker -> SQLite vector+FTS rows -> enqueued extraction -> fenced SQL graph -> published stage/outbox; controlled source and models")
 }
