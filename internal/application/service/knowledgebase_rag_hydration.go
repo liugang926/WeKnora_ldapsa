@@ -57,7 +57,7 @@ func (s *knowledgeBaseService) HydrateRAGChunkAugmentations(ctx context.Context,
 		guard = owned
 	}
 	if guard == nil || !guard.Covers(scopes) {
-		guard, err = readlease.BeginNextcloudKBRead(ctx, s.contentLeases, scopes)
+		guard, err = readlease.BeginNextcloudKBRead(ragPhysicalReadLifetimeContext(ctx), s.contentLeases, scopes)
 		if err != nil {
 			return nil, err
 		}

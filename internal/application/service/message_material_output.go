@@ -197,6 +197,9 @@ func MessageMaterialIdleRecheckEligible(ctx context.Context) bool {
 }
 
 func CheckMessageMaterialOutputBoundary(ctx context.Context) error {
+	if ctx == nil || ctx.Err() != nil {
+		return access.ErrNextcloudPublicationUnavailable
+	}
 	slot, ok := ctx.Value(messageMaterialOutputKey{}).(*messageMaterialOutputSlot)
 	if !ok {
 		return access.ErrNextcloudPublicationUnavailable
@@ -239,6 +242,25 @@ func CheckMessageMaterialOutputBoundary(ctx context.Context) error {
 	}
 	return nil
 }
+
+// A tool's execution context ends before the HTTP sender consumes its buffered
+// output. Turn-owned physical fences follow the request owner; ContextFor still
+// binds each individual read to its current consumer's cancellation and values.
+func ragPhysicalReadLifetimeContext(ctx context.Context) context.Context {
+	if slot, ok := ctx.Value(messageMaterialOutputKey{}).(*messageMaterialOutputSlot); ok && slot.OwnerContext != nil {
+		return &ragReadOwnerContext{Context: ctx, owner: slot.OwnerContext}
+	}
+	return ctx
+}
+
+type ragReadOwnerContext struct {
+	context.Context
+	owner context.Context
+}
+
+func (c *ragReadOwnerContext) Deadline() (time.Time, bool) { return c.owner.Deadline() }
+func (c *ragReadOwnerContext) Done() <-chan struct{}       { return c.owner.Done() }
+func (c *ragReadOwnerContext) Err() error                  { return c.owner.Err() }
 
 // A turn owns each actual retrieval guard before index/body access. Its model
 // and HTTP references release independently; cached bytes never prolong a

@@ -17,7 +17,7 @@ import (
 // Only the vector backend is controlled: it returns actual persisted chunk IDs,
 // whose text/provenance is captured by the real SQL snapshot reader.
 func runRAGPhysicalActualReusedTurn(t *testing.T, pg bool) {
-	for _, mode := range []string{"search-and-merge", "source-revoked", "missing-proof", "caller-cancelled"} {
+	for _, mode := range []string{"search-and-merge", "producer-finished", "producer-borrowed", "owner-cancelled", "source-revoked", "missing-proof", "caller-cancelled"} {
 		t.Run(mode, func(t *testing.T) {
 			m := newMachinePipelineFixture(t, pg)
 			k := m.ingest(t)
@@ -36,6 +36,8 @@ func runRAGPhysicalActualReusedTurn(t *testing.T, pg bool) {
 			var tenant types.Tenant
 			require.NoError(t, m.f.db.Where("id=7").Take(&tenant).Error)
 			ctx := context.WithValue(m.f.ctx, types.TenantInfoContextKey, &tenant)
+			ctx, cancelOwner := context.WithCancel(ctx)
+			defer cancelOwner()
 			ctx, attach, checkpoint, releaseHTTP := BeginMessageMaterialHTTPBoundary(ctx)
 			defer releaseHTTP()
 			ctx, releaseModel, external := retainMessageMaterialProducer(ctx)
@@ -53,9 +55,41 @@ func runRAGPhysicalActualReusedTurn(t *testing.T, pg bool) {
 			params := types.SearchParams{QueryText: "actual original topic", QueryEmbedding: []float32{0.5}, MatchCount: 1}
 			// The holder may acquire its fence before the QA entry adds its
 			// lineage accumulator. Reuse must preserve that later accumulator.
-			warm, err := svc.HybridSearch(ctx, "kb", params)
+			readCtx := ctx
+			var finishTool context.CancelFunc
+			var borrowed *readlease.NextcloudReadGuard
+			if mode == "producer-finished" || mode == "producer-borrowed" {
+				readCtx, finishTool = context.WithCancel(ctx)
+				defer finishTool()
+				if mode == "producer-borrowed" {
+					var err error
+					borrowed, err = readlease.BeginNextcloudKBRead(readCtx, m.f.store.ContentLeaseStore(), []readlease.NextcloudKBReadScope{{TenantID: 7, KBID: "kb"}})
+					require.NoError(t, err)
+					defer borrowed.Close()
+					readCtx = borrowed.Context()
+				}
+			}
+			warm, err := svc.HybridSearch(readCtx, "kb", params)
 			require.NoError(t, err)
 			require.Len(t, warm, 1)
+			if finishTool != nil {
+				if borrowed != nil {
+					require.NoError(t, borrowed.Close())
+				}
+				finishTool()
+				releaseModel()
+				require.NoError(t, CheckMessageMaterialOutputBoundary(attach(ctx)), "HTTP sender retains the original read fence after tool context completion")
+				releaseHTTP()
+				var active int64
+				require.NoError(t, m.f.db.Table("nextcloud_content_leases").Where("kind='read' AND released_at_ms IS NULL").Count(&active).Error)
+				require.Zero(t, active)
+				return
+			}
+			if mode == "owner-cancelled" {
+				cancelOwner()
+				require.Error(t, checkpoint(), "actual request cancellation still denies output")
+				return
+			}
 			ctx, err = manager.BeginSourceLineage(ctx, cm, access.LineageReadScope{Targets: cm.SearchTargets})
 			require.NoError(t, err)
 			turn := types.RAGSourceLineageFromContext(ctx)

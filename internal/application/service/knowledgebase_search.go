@@ -205,7 +205,7 @@ func (s *knowledgeBaseService) HybridSearch(ctx context.Context,
 	if guard == nil || !guard.Covers(scopes) {
 		if s.contentLeases != nil {
 			var beginErr error
-			guard, beginErr = readlease.BeginNextcloudKBRead(ctx, s.contentLeases, scopes)
+			guard, beginErr = readlease.BeginNextcloudKBRead(ragPhysicalReadLifetimeContext(ctx), s.contentLeases, scopes)
 			if beginErr != nil {
 				return nil, fmt.Errorf("protect knowledge search: %w", beginErr)
 			}
