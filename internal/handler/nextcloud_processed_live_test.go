@@ -38,14 +38,18 @@ func TestNextcloudProcessedLiveHTTPReadAndRevocation(t *testing.T) {
 		t.Skip("owned live producer required")
 	}
 	var input struct {
-		Database         string            `json:"database"`
-		FileRoot         string            `json:"file_root"`
-		KnowledgeID      string            `json:"knowledge_id"`
-		KnowledgeBaseID  string            `json:"knowledge_base_id"`
-		HistorySessionID string            `json:"history_session_id"`
-		UserID           string            `json:"user_id"`
-		BodySHA256       string            `json:"body_sha256"`
-		Environment      map[string]string `json:"environment"`
+		Database                  string            `json:"database"`
+		FileRoot                  string            `json:"file_root"`
+		KnowledgeID               string            `json:"knowledge_id"`
+		KnowledgeBaseID           string            `json:"knowledge_base_id"`
+		HistorySessionID          string            `json:"history_session_id"`
+		HistoryVectorKBID         string            `json:"history_vector_kb_id"`
+		HistoryVectorKnowledgeID  string            `json:"history_vector_knowledge_id"`
+		HistoryVectorEmbeddingID  string            `json:"history_vector_embedding_model_id"`
+		HistoryVectorAnswerSHA256 string            `json:"history_vector_answer_sha256"`
+		UserID                    string            `json:"user_id"`
+		BodySHA256                string            `json:"body_sha256"`
+		Environment               map[string]string `json:"environment"`
 	}
 	raw, err := os.ReadFile(path + ".http-input")
 	require.NoError(t, err)
@@ -143,8 +147,12 @@ func TestNextcloudProcessedLiveHTTPReadAndRevocation(t *testing.T) {
 		jwtRouter.GET("/knowledge/:id/preview", h.PreviewKnowledgeFile)
 		jwtRouter.GET("/knowledge/:id/download", h.DownloadKnowledgeFile)
 		jwtRouter.GET("/knowledge-bases/:id/knowledge", h.ListKnowledge)
-		if os.Getenv("WEKNORA_DOCUMENT_GRAPH_HISTORY_SEARCH") == "1" {
-			checkHistorySearch = addDocumentLiveHistorySearch(t, jwtRouter, db, store, guard, publication, sources, kbs, kg, input.HistorySessionID, accessToken)
+		if os.Getenv("WEKNORA_DOCUMENT_GRAPH_HISTORY_SEARCH") == "1" || os.Getenv("WEKNORA_DOCUMENT_GRAPH_HISTORY_VECTOR") == "1" {
+			var vector *documentHistoryVectorSpec
+			if os.Getenv("WEKNORA_DOCUMENT_GRAPH_HISTORY_VECTOR") == "1" {
+				vector = &documentHistoryVectorSpec{KnowledgeBaseID: input.HistoryVectorKBID, KnowledgeID: input.HistoryVectorKnowledgeID, EmbeddingModelID: input.HistoryVectorEmbeddingID, AnswerSHA256: input.HistoryVectorAnswerSHA256}
+			}
+			checkHistorySearch = addDocumentLiveHistorySearch(t, jwtRouter, db, store, guard, publication, sources, kbs, kg, input.HistorySessionID, accessToken, vector)
 		}
 	}
 	baseline := map[string][]string{}
@@ -271,8 +279,8 @@ func TestNextcloudProcessedLiveHTTPReadAndRevocation(t *testing.T) {
 	// The producer retains its own output guards; only its pre-existing lease
 	// IDs may remain. Newly acquired HTTP leases must all be released.
 	sourceWait := 30 * time.Second
-	if os.Getenv("WEKNORA_DOCUMENT_GRAPH_HISTORY_SEARCH") == "1" {
-		sourceWait = 120 * time.Second
+	if os.Getenv("WEKNORA_DOCUMENT_GRAPH_HISTORY_SEARCH") == "1" || os.Getenv("WEKNORA_DOCUMENT_GRAPH_HISTORY_VECTOR") == "1" {
+		sourceWait = 180 * time.Second
 	}
 	require.Eventually(t, func() bool { _, err := os.Stat(path + ".source-checked"); return err == nil }, sourceWait, 100*time.Millisecond)
 	for table, ids := range baseline {

@@ -4,9 +4,11 @@ package handler
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
@@ -27,17 +29,49 @@ func addDocumentLiveHistorySearch(t *testing.T, router *gin.Engine, db *gorm.DB,
 	store *repository.KnowledgeInputProvenanceStore, guard *access.NextcloudSourceLineageGuard,
 	publication *access.NextcloudPublicationGuard, sources interfaces.DataSourceRepository,
 	kbs interfaces.KnowledgeBaseService, knowledge interfaces.KnowledgeService,
-	sessionID, token string,
+	sessionID, token string, vector *documentHistoryVectorSpec,
 ) func(bool) {
 	t.Helper()
 	require.NotEmpty(t, sessionID)
-	messages := service.NewMessageService(repository.NewMessageRepository(db), repository.NewSessionRepository(db), nil, kbs, knowledge, nil, nil, sources, publication)
+	var vectorModels *documentHTTPVectorModels
+	if vector != nil {
+		kbs, vectorModels = documentHistoryVectorHTTPServices(t, db, store, guard, publication, sources, vector)
+		// Auth remains the production JWT middleware. Only persisted tenant
+		// settings are attached so message search sees the actual history KB,
+		// native engines and explicit retrieval configuration.
+		router.Use(func(c *gin.Context) {
+			ctx := c.Request.Context()
+			var tenant types.Tenant
+			if err := db.WithContext(ctx).Where("id=?", types.MustTenantIDFromContext(ctx)).Take(&tenant).Error; err != nil {
+				c.AbortWithStatus(http.StatusServiceUnavailable)
+				return
+			}
+			c.Request = c.Request.WithContext(context.WithValue(ctx, types.TenantInfoContextKey, &tenant))
+			c.Next()
+		})
+	}
+	var models interfaces.ModelService
+	if vectorModels != nil {
+		models = vectorModels
+	}
+	messages := service.NewMessageService(repository.NewMessageRepository(db), repository.NewSessionRepository(db), nil, kbs, knowledge, models, nil, sources, publication)
 	service.ConfigureMessageMaterialProvenance(messages, store)
 	service.ConfigureMessageSourceLineage(messages, nil, &service.SessionForkService{}, chatpipeline.NewEventManager(), guard)
 	repository.ConfigureMessageOriginalBodyAvailability(store, repository.CheckOriginalBodyAvailableInTx)
 	h := NewMessageHandler(messages, nil, nil)
 	router.POST("/messages/search", h.SearchMessages)
+	var checkVector func(bool)
+	if vector != nil {
+		checkVector = documentHistoryVectorHTTPCheck(t, router, db, token, sessionID, vector, vectorModels)
+		documentHistoryVectorUnavailableAuthority(t, router, db, guard, publication, sources, kbs, models, token, sessionID)
+	}
 	return func(revoked bool) {
+		if checkVector != nil {
+			checkVector(revoked)
+		}
+		if os.Getenv("WEKNORA_DOCUMENT_GRAPH_HISTORY_SEARCH") != "1" {
+			return
+		}
 		stage := "before"
 		if revoked {
 			stage = "source_revoked"

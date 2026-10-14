@@ -25,6 +25,7 @@ type messageMaterialOutputSlot struct {
 	Guards             []*MessageMaterialGuard
 	Completion         *messageCompletionBinding
 	PhysicalReads      []*readlease.NextcloudReadGuard
+	HistoryVectorReads []*historyVectorMaterialBridge
 	Bodies             []string
 	Outputs            [][]*types.Message
 	OutputBodies       []string
@@ -216,6 +217,15 @@ func CheckMessageMaterialOutputBoundary(ctx context.Context) error {
 	}
 	for _, guard := range slot.PhysicalReads {
 		if err := guard.Verify(); err != nil {
+			return err
+		}
+	}
+	// A child proof and a physical lease do not grant access to its current
+	// history KB. Retain the actual bridge's KB/group and child checks through
+	// the final HTTP write, using its merged original/lease context. This
+	// method must not reenter this output slot while its mutex is held.
+	for _, bridge := range slot.HistoryVectorReads {
+		if err := bridge.recheckHeldInputs(); err != nil {
 			return err
 		}
 	}

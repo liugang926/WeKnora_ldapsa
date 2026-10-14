@@ -19,6 +19,13 @@ func installDocumentLiveAuthSchema(t *testing.T, db *gorm.DB) {
 	if os.Getenv("WEKNORA_DOCUMENT_GRAPH_JWT") != "1" {
 		return
 	}
+	installDocumentOnboardingSchema(t, db)
+}
+
+// Restricted KB reads also resolve source-scoped eligibility. Fixtures using
+// those real readers need the complete ledger even without JWT acceptance.
+func installDocumentOnboardingSchema(t *testing.T, db *gorm.DB) {
+	t.Helper()
 	require.NoError(t, db.AutoMigrate(&types.AuthToken{}, &types.WikiPage{}))
 	ddl, err := os.ReadFile("../../../migrations/sqlite/000074_nextcloud_onboarding.up.sql")
 	require.NoError(t, err)

@@ -1257,6 +1257,12 @@ func (s *knowledgeService) ProcessSummaryGeneration(ctx context.Context, t *asyn
 	}
 	var inputErr error
 	if s.knowledgeInputs != nil {
+		var closeMaterials func()
+		ctx, closeMaterials, inputErr = beginKnowledgeHistoryTaskMaterial(ctx, s.knowledgeInputs, s, payload.OriginalInput)
+		if inputErr != nil {
+			return inputErr
+		}
+		defer closeMaterials()
 		ctx, inputErr = resumeKnowledgeEnrichment(ctx, s.knowledgeInputs, payload.OriginalInput, payload.ProducerInput, func() any { return summaryProducerControls(s.config, payload) })
 	}
 	if inputErr != nil {
@@ -1670,6 +1676,12 @@ func (s *knowledgeService) ProcessQuestionGeneration(ctx context.Context, t *asy
 	}
 	var inputErr error
 	if s.knowledgeInputs != nil {
+		var closeMaterials func()
+		ctx, closeMaterials, inputErr = beginKnowledgeHistoryTaskMaterial(ctx, s.knowledgeInputs, s, payload.OriginalInput)
+		if inputErr != nil {
+			return inputErr
+		}
+		defer closeMaterials()
 		ctx, inputErr = resumeKnowledgeEnrichment(ctx, s.knowledgeInputs, payload.OriginalInput, payload.ProducerInput, func() any { return questionProducerControls(s.config, payload) })
 	}
 	if inputErr != nil {

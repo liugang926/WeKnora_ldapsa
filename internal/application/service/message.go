@@ -907,8 +907,9 @@ func normalizeArtifactFileTypes(in []string) []string {
 // Message Search (Hybrid: Keyword + KB Vector Search)
 // ─────────────────────────────────────────────────────────────────────────────
 
-// SearchMessages searches messages by keyword and/or vector similarity across all sessions of the current tenant.
-// Vector search is delegated to the chat history knowledge base's HybridSearch (configured via ChatHistoryConfig).
+// SearchMessages searches the authenticated person's owned conversations.
+// Native vector candidates are admitted through original message and child
+// guards before hydration or reranking, under the configured history KB.
 func (s *messageService) SearchMessages(ctx context.Context, params *types.MessageSearchParams) (*types.MessageSearchResult, error) {
 	if params == nil || params.Query == "" {
 		return nil, access.ErrNextcloudPublicationDenied
@@ -978,10 +979,8 @@ func (s *messageService) SearchMessages(ctx context.Context, params *types.Messa
 			pairs[key] = rows
 		}
 		if err != nil {
-			logger.Warnf(ctx, "Vector search via KB failed, falling back to keyword-only: %v", err)
-			if params.Mode == types.MessageSearchModeVector {
-				return nil, err
-			}
+			logger.Warnf(ctx, "History vector search did not complete: %v", err)
+			return nil, err
 		} else {
 			logger.Infof(ctx, "Vector search found %d results", len(vectorResults))
 		}
@@ -999,8 +998,7 @@ func (s *messageService) SearchMessages(ctx context.Context, params *types.Messa
 		items = rrfMerge(keywordResults, vectorResults)
 	}
 
-	// The vector path resolves hits through a shared knowledge base that does
-	// not know who wrote a message, so ownership is re-checked on the results.
+	// Recheck current owned sessions after merging both admitted search paths.
 	items, err = s.restrictToOwnedSessions(ctx, tenantID, params.OwnerID, items)
 	if err != nil {
 		return nil, err
@@ -1134,94 +1132,15 @@ func (s *messageService) restrictToOwnedSessions(
 	return filtered, nil
 }
 
-// vectorSearchViaKB performs vector search using the chat history knowledge base's HybridSearch.
-// The KB ID is read from ChatHistoryConfig, search params from RetrievalConfig.
+// vectorSearchViaKB discovers native metadata candidates, admits their actual
+// original message inputs and child bodies, then rechecks each model boundary.
 func (s *messageService) vectorSearchViaKB(ctx context.Context, params *types.MessageSearchParams) ([]*types.MessageSearchResultItem, map[string][]*types.Message, error) {
 	cfg := s.getChatHistoryConfig(ctx)
 	if cfg == nil {
 		return nil, nil, nil // Chat history KB not configured, skip vector search
 	}
 
-	// Read global retrieval config for search parameters
-	rc := s.getRetrievalConfig(ctx)
-
-	// Use KB HybridSearch with vector-only mode (keyword search is done separately on the messages table)
-	searchParams := types.SearchParams{
-		QueryText:            params.Query,
-		MatchCount:           min(rc.GetEffectiveEmbeddingTopK(), historySearchMaximumResults),
-		VectorThreshold:      rc.GetEffectiveVectorThreshold(),
-		DisableKeywordsMatch: true, // We handle keyword search separately on the messages table
-	}
-
-	kbResults, err := s.kbService.HybridSearch(ctx, cfg.KnowledgeBaseID, searchParams)
-	if err != nil {
-		return nil, nil, fmt.Errorf("KB hybrid search failed: %w", err)
-	}
-
-	if len(kbResults) == 0 {
-		return nil, nil, nil
-	}
-
-	// Rerank results if a rerank model is configured
-	kbResults = s.rerankResults(ctx, rc, params.Query, kbResults)
-	if len(kbResults) == 0 {
-		return nil, nil, nil
-	}
-
-	scores := make(map[string]float64)
-	for _, result := range kbResults {
-		scores[result.KnowledgeID] = result.Score
-	}
-	return s.fencedVectorHistoryCandidates(ctx, params, scores)
-}
-
-// rerankResults applies rerank model to search results if configured.
-// Returns reranked + filtered results, or original results if rerank is unavailable.
-func (s *messageService) rerankResults(ctx context.Context, rc *types.RetrievalConfig, query string, results []*types.SearchResult) []*types.SearchResult {
-	if rc == nil || rc.RerankModelID == "" || len(results) == 0 {
-		return results
-	}
-
-	reranker, err := s.modelService.GetRerankModel(ctx, rc.RerankModelID)
-	if err != nil {
-		logger.Warnf(ctx, "Failed to get rerank model %s, skipping rerank: %v", rc.RerankModelID, err)
-		return results
-	}
-
-	// Build documents for rerank
-	documents := make([]string, len(results))
-	for i, r := range results {
-		documents[i] = r.Content
-	}
-
-	rankResults, err := reranker.Rerank(ctx, query, documents)
-	if err != nil {
-		logger.Warnf(ctx, "Rerank call failed, skipping: %v", err)
-		return results
-	}
-
-	// Filter by threshold and topK, rebuild results with rerank scores
-	threshold := rc.GetEffectiveRerankThreshold()
-	topK := rc.GetEffectiveRerankTopK()
-
-	var reranked []*types.SearchResult
-	for _, rr := range rankResults {
-		if rr.Index >= len(results) {
-			continue
-		}
-		if rr.RelevanceScore < threshold {
-			continue
-		}
-		item := *results[rr.Index]
-		item.Score = rr.RelevanceScore
-		reranked = append(reranked, &item)
-		if len(reranked) >= topK {
-			break
-		}
-	}
-
-	logger.Infof(ctx, "Rerank: %d -> %d results (threshold=%.2f, topK=%d)", len(results), len(reranked), threshold, topK)
-	return reranked
+	return s.searchHistoryVectorViaNativeBridge(ctx, params, cfg.KnowledgeBaseID, s.getRetrievalConfig(ctx))
 }
 
 // convertKeywordResults converts keyword search results to MessageSearchResultItem

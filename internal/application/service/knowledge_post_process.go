@@ -32,6 +32,7 @@ type KnowledgePostProcessService struct {
 	redisClient      *redis.Client
 	spanTracker      SpanTracker
 	knowledgeInputs  interfaces.KnowledgeBuildInputReader
+	historyMaterials interfaces.KnowledgeHistoryTaskMaterialRestorer
 	enrichmentConfig *config.Config
 	processingLedger types.NextcloudProcessingLedger
 }
@@ -105,16 +106,26 @@ func (s *KnowledgePostProcessService) Handle(ctx context.Context, task *asynq.Ta
 
 	logger.Infof(ctx, "[KnowledgePostProcess] Orchestrating post processing for knowledge: %s", payload.KnowledgeID)
 
-	ctx = types.WithExecutionTenant(ctx, payload.TenantID)
 	if payload.OriginalInput != nil {
 		if s.knowledgeInputs == nil {
 			return types.ErrGraphSourceReceiptUnknown
 		}
+		var closeMaterials func()
+		var restoreErr error
+		ctx, closeMaterials, restoreErr = beginKnowledgeHistoryTaskMaterial(ctx, s.knowledgeInputs, s.historyMaterials, payload.OriginalInput)
+		if restoreErr != nil {
+			return restoreErr
+		}
+		defer closeMaterials()
+		// Restore history's actual actor before an execution-only wrapper
+		// captures an otherwise empty Caller in a fresh queue context.
+		ctx = types.WithExecutionTenant(ctx, payload.TenantID)
 		if err := s.knowledgeInputs.RecheckKnowledgeBuildInputs(ctx, payload.OriginalInput); err != nil {
 			return err
 		}
 		ctx = repository.WithKnowledgeBuildInputProof(ctx, s.knowledgeInputs, payload.OriginalInput)
 	}
+	ctx = types.WithExecutionTenant(ctx, payload.TenantID)
 	if payload.Language != "" {
 		ctx = context.WithValue(ctx, types.LanguageContextKey, payload.Language)
 	}

@@ -63,21 +63,22 @@ func (m machinePipelineModels) GetEmbeddingModel(context.Context, string) (embed
 }
 
 type machinePipelineFixture struct {
-	liveHistorySessionID                  string
-	externalID, etag                      string
-	f                                     *enrichmentTestFixture
-	source                                *DataSourceService
-	ds                                    *types.DataSource
-	allow                                 *atomic.Bool
-	auto                                  *KnowledgeAutoTagService
-	model                                 *machinePipelineAutoModel
-	files                                 interfaces.FileService
-	base                                  string
-	personal                              *atomic.Bool
-	authenticated                         bool
-	publicationUnavailableAfterCompletion *atomic.Bool
-	publicationFailureProbe               *atomic.Int64
-	publicationAuthorizeCalls             *atomic.Int64
+	liveHistorySessionID                                                                                             string
+	liveHistoryVectorKBID, liveHistoryVectorKnowledgeID, liveHistoryVectorEmbeddingID, liveHistoryVectorAnswerSHA256 string
+	externalID, etag                                                                                                 string
+	f                                                                                                                *enrichmentTestFixture
+	source                                                                                                           *DataSourceService
+	ds                                                                                                               *types.DataSource
+	allow                                                                                                            *atomic.Bool
+	auto                                                                                                             *KnowledgeAutoTagService
+	model                                                                                                            *machinePipelineAutoModel
+	files                                                                                                            interfaces.FileService
+	base                                                                                                             string
+	personal                                                                                                         *atomic.Bool
+	authenticated                                                                                                    bool
+	publicationUnavailableAfterCompletion                                                                            *atomic.Bool
+	publicationFailureProbe                                                                                          *atomic.Int64
+	publicationAuthorizeCalls                                                                                        *atomic.Int64
 }
 
 func newMachinePipelineFixture(t *testing.T, pg bool) *machinePipelineFixture {

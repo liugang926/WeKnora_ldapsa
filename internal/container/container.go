@@ -583,11 +583,13 @@ func BuildContainer(container *dig.Container) *dig.Container {
 		Handler   interfaces.TaskHandler `name:"knowledgePostProcess"`
 		Store     *repository.KnowledgeInputProvenanceStore
 		Knowledge interfaces.KnowledgeRepository
+		Service   interfaces.KnowledgeService
 		Config    *config.Config
 		State     *repository.NextcloudProcessingStateStore
 	}) {
 		service.ConfigureNextcloudPostProcessLedger(p.Handler, p.State)
 		service.ConfigureKnowledgePostProcessInputProvenance(p.Handler, p.Store)
+		service.ConfigureKnowledgePostProcessHistoryMaterial(p.Handler, p.Service)
 		service.ConfigureKnowledgeAutoTagCompletion(p.Handler, p.Knowledge, p.Store)
 		service.ConfigureKnowledgeEnrichmentRuntime(p.Handler, p.Config)
 	}))

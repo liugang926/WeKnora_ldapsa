@@ -36,7 +36,7 @@ func documentLiveRAG(t *testing.T, m *machinePipelineFixture, models *documentLi
 	if os.Getenv("WEKNORA_DOCUMENT_GRAPH_AGENT") == "1" {
 		budget = 240 * time.Second
 	}
-	if os.Getenv("WEKNORA_DOCUMENT_GRAPH_HISTORY_SEARCH") == "1" {
+	if os.Getenv("WEKNORA_DOCUMENT_GRAPH_HISTORY_SEARCH") == "1" || os.Getenv("WEKNORA_DOCUMENT_GRAPH_HISTORY_VECTOR") == "1" {
 		budget = 360 * time.Second
 	}
 	ctx, cancel := context.WithTimeout(ctx, budget)
@@ -107,6 +107,7 @@ func documentLiveRAG(t *testing.T, m *machinePipelineFixture, models *documentLi
 	require.Contains(t, strings.ToLower(answer.String()), "bob")
 	require.Equal(t, streamCount+1, models.summary.streams.Load())
 	checkHistoryRevoked := history.complete(t, ctx, answer.String(), answerLineage)
+	checkHistoryVectorRevoked := documentLiveHistoryVector(t, m, models, svc, history, answer.String())
 	checkAgentRevoked := documentLiveAgent(t, m, models, svc)
 	require.NoError(t, checkpoint())
 	releaseModel()
@@ -118,6 +119,7 @@ func documentLiveRAG(t *testing.T, m *machinePipelineFixture, models *documentLi
 	t.Log("REAL_RAG native vector/FTS retrieval, actual chunk hydration/merge and real streamed answer passed; answer depends on the source")
 	return func() {
 		checkHistoryRevoked()
+		checkHistoryVectorRevoked()
 		checkAgentRevoked()
 		require.Error(t, turn.Check(ctx), "cached query/answer dependency must deny after actual share removal")
 		denied, err := svc.HybridSearch(ctx, m.ds.KnowledgeBaseID, params)
