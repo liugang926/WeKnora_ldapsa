@@ -67,6 +67,10 @@ func onboardingError(c *gin.Context, err error) {
 	if errors.Is(err, repository.ErrNextcloudKBBlankUnverified) {
 		code = "nextcloud_kb_blank_unverified"
 	}
+	if errors.Is(err, repository.ErrNextcloudTargetDeleted) {
+		status = http.StatusConflict
+		code = "nextcloud_target_closed"
+	}
 	c.JSON(status, gin.H{"error": code})
 }
 func (h *NextcloudOnboardingHandler) Candidates(c *gin.Context) {
@@ -150,14 +154,53 @@ func (h *NextcloudOnboardingHandler) operation(c *gin.Context) (types.NextcloudO
 			return cred, op, false
 		}
 	}
+	if err = h.store.RequireTargetOpen(c.Request.Context(), op); err != nil {
+		onboardingError(c, err)
+		return cred, op, false
+	}
 	return cred, op, true
 }
 func (h *NextcloudOnboardingHandler) Status(c *gin.Context) {
-	_, op, ok := h.operation(c)
+	cred, ok := h.credential(c)
 	if !ok {
 		return
 	}
-	result := gin.H{"operation": op}
+	op, err := h.store.Operation(c.Request.Context(), cred, c.Param("operation_id"))
+	if err != nil {
+		onboardingError(c, err)
+		return
+	}
+	tenantDeletion, err := h.store.TenantDeletionObservation(c.Request.Context(), cred, op, c.Query("actor_directory_id"), c.Query("actor_object_guid"))
+	if err != nil {
+		onboardingError(c, err)
+		return
+	}
+	op, err = h.store.Operation(c.Request.Context(), cred, op.OperationID)
+	if err != nil {
+		onboardingError(c, err)
+		return
+	}
+	target, err := h.store.TargetObservation(c.Request.Context(), cred, op, c.Query("actor_directory_id"), c.Query("actor_object_guid"))
+	if err != nil {
+		onboardingError(c, err)
+		return
+	}
+	// Positive deletion observation can repair a pre-hook closure and bump
+	// the operation revision. Return its fresh immutable owner tuple/revision.
+	op, err = h.store.Operation(c.Request.Context(), cred, op.OperationID)
+	if err != nil {
+		onboardingError(c, err)
+		return
+	}
+	result := gin.H{"operation": op, "target": target}
+	if tenantDeletion != nil {
+		result["tenant_deletion"] = tenantDeletion
+	}
+	if target.State == "target_deleted" || tenantDeletion != nil {
+		result["sync_enabled"] = false
+		c.JSON(http.StatusOK, result)
+		return
+	}
 	if enabled, err := h.store.SyncEnabled(c.Request.Context(), op); err == nil {
 		result["sync_enabled"] = enabled
 	}

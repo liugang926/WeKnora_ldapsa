@@ -555,7 +555,7 @@ func TestNextcloudRecoveryRejectsReceiptWithPartiallyRestoredOpenGeneration(t *t
 func TestRecoveryAuthenticatedJournalEvents(t *testing.T) {
 	p := recoveryTestPlan(t, func(p *NextcloudRecoveryPlan) {
 		file := "77"
-		p.JournalEvents = []NextcloudRecoveryJournalEvent{{"6", "binding", &file, "withdrawn", "1", 1}, {"7", "binding", nil, "binding_stop", "1", 2}}
+		p.JournalEvents = []NextcloudRecoveryJournalEvent{{"6", "binding", &file, "withdrawn", "1", 1, nil, nil}, {"7", "binding", nil, "binding_stop", "1", 2, nil, nil}}
 		chain := p.CheckpointDatabaseChainSHA256
 		for _, event := range p.JournalEvents {
 			fid := "-"

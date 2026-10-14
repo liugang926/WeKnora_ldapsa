@@ -26,16 +26,20 @@ var recoveryID = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
 var recoveryStream = regexp.MustCompile(`^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$`)
 
 type NextcloudRecoveryJournalEvent struct {
-	Sequence       string  `json:"sequence"`
-	BindingID      string  `json:"binding_id"`
-	FileID         *string `json:"file_id"`
-	Kind           string  `json:"kind"`
-	SourceRevision string  `json:"source_revision"`
-	CreatedAt      int64   `json:"created_at"`
+	Sequence       string                           `json:"sequence"`
+	BindingID      string                           `json:"binding_id"`
+	FileID         *string                          `json:"file_id"`
+	Kind           string                           `json:"kind"`
+	SourceRevision string                           `json:"source_revision"`
+	CreatedAt      int64                            `json:"created_at"`
+	TargetClosure  *NextcloudRecoveryTargetClosure  `json:"target_closure,omitempty"`
+	TenantDeletion *NextcloudRecoveryTenantDeletion `json:"tenant_deletion,omitempty"`
 }
 
 type NextcloudRecoveryPlan struct {
 	JournalEvents                       []NextcloudRecoveryJournalEvent    `json:"journal_events,omitempty"`
+	TargetClosures                      []NextcloudRecoveryTargetClosure   `json:"target_closures,omitempty"`
+	TenantDeletions                     []NextcloudRecoveryTenantDeletion  `json:"tenant_deletions,omitempty"`
 	SchemaVersion                       int                                `json:"schema_version"`
 	InstanceID                          string                             `json:"instance_id"`
 	StreamID                            string                             `json:"stream_id"`
@@ -265,7 +269,7 @@ func VerifyNextcloudRecoveryPlan(envelope, key []byte) (*NextcloudRecoveryPlan, 
 		return nil, ErrNextcloudRecoveryDenied
 	}
 	var fields map[string]json.RawMessage
-	if json.Unmarshal([]byte(signed.Plan), &fields) != nil || (len(fields) < 14 || len(fields) > 16) {
+	if json.Unmarshal([]byte(signed.Plan), &fields) != nil || (len(fields) < 14 || len(fields) > 18) {
 		return nil, ErrNextcloudRecoveryDenied
 	}
 	for _, name := range []string{"schema_version", "instance_id", "stream_id", "checkpoint_record_sha256", "recovery_record_sha256", "checkpoint_sequence", "checkpoint_database_chain_sha256", "through_sequence", "through_database_chain_sha256", "database_prefix_hashes", "close_bindings", "withdraw_files", "authoritative_reconciliation_required", "ingress_reopen_permitted"} {
@@ -306,6 +310,12 @@ func VerifyNextcloudRecoveryPlan(envelope, key []byte) (*NextcloudRecoveryPlan, 
 			break
 		}
 	}
+	if err := validateRecoveryTargetClosures(fields, &p); err != nil {
+		return nil, err
+	}
+	if err := validateRecoveryTenantDeletions(fields, &p); err != nil {
+		return nil, err
+	}
 	if raw, ok := fields["journal_events"]; ok {
 		var rows []map[string]json.RawMessage
 		if json.Unmarshal(raw, &rows) != nil || len(rows) != int(end-start) {
@@ -324,15 +334,45 @@ func VerifyNextcloudRecoveryPlan(envelope, key []byte) (*NextcloudRecoveryPlan, 
 				file = *event.FileID
 			}
 			validKind := false
-			for _, kind := range []string{"upsert", "metadata", "delete", "subtree_scan", "subtree_moved", "subtree_deleted", "reconcile", "withdrawn", "eligible", "binding_stop", "binding_resume", "binding_retired", "binding_created", "content_write_begin", "content_write_complete"} {
+			for _, kind := range []string{"upsert", "metadata", "delete", "subtree_scan", "subtree_moved", "subtree_deleted", "reconcile", "withdrawn", "eligible", "binding_stop", "binding_resume", "binding_retired", "binding_created", "content_write_begin", "content_write_complete", "target_deleted", "tenant_deleted"} {
 				if event.Kind == kind {
 					validKind = true
 				}
 			}
-			if len(rows[i]) != 6 || se != nil || seq != start+int64(i)+1 || re != nil || !recoveryID.MatchString(event.BindingID) || event.CreatedAt < 0 || !validKind {
+			expectedKeys := 6
+			if event.Kind == "target_deleted" {
+				expectedKeys = 7
+				proof, err := validateRecoveryTargetClosure(rows[i]["target_closure"], p.InstanceID)
+				if err != nil || event.TargetClosure == nil || proof != *event.TargetClosure {
+					return nil, ErrNextcloudRecoveryDenied
+				}
+			}
+			if event.Kind == "tenant_deleted" {
+				expectedKeys = 7
+				proof, err := validateRecoveryTenantDeletion(rows[i]["tenant_deletion"], p.InstanceID)
+				if err != nil || event.TenantDeletion == nil || proof != *event.TenantDeletion {
+					return nil, ErrNextcloudRecoveryDenied
+				}
+			}
+			if len(rows[i]) != expectedKeys || se != nil || seq != start+int64(i)+1 || re != nil || !recoveryID.MatchString(event.BindingID) || event.CreatedAt < 0 || !validKind {
 				return nil, ErrNextcloudRecoveryDenied
 			}
-			chain = recoverySHA([]byte(strings.Join([]string{chain, event.Sequence, event.BindingID, file, event.Kind, event.SourceRevision, strconv.FormatInt(event.CreatedAt, 10)}, "\n")))
+			lines := []string{chain, event.Sequence, event.BindingID, file, event.Kind, event.SourceRevision, strconv.FormatInt(event.CreatedAt, 10)}
+			if event.Kind == "target_deleted" {
+				lines = append(lines, targetClosureJournalLines(*event.TargetClosure)...)
+				closed, _ := canonicalPositiveTargetNumber(event.TargetClosure.Target.ClosedAt)
+				if closed > event.CreatedAt+300 {
+					return nil, ErrNextcloudRecoveryDenied
+				}
+			}
+			if event.Kind == "tenant_deleted" {
+				lines = append(lines, tenantDeletionJournalLines(*event.TenantDeletion)...)
+				closed, _ := canonicalPositiveTargetNumber(event.TenantDeletion.Tenant.ClosedAt)
+				if closed > event.CreatedAt+300 {
+					return nil, ErrNextcloudRecoveryDenied
+				}
+			}
+			chain = recoverySHA([]byte(strings.Join(lines, "\n")))
 			if chain != p.DatabasePrefixHashes[event.Sequence] {
 				return nil, ErrNextcloudRecoveryDenied
 			}
@@ -445,8 +485,15 @@ func (s *NextcloudPublicationRecoveryStore) captureInTx(tx *gorm.DB, a Nextcloud
 			return nil, ErrNextcloudRecoveryDenied
 		}
 		var kb types.KnowledgeBase
-		if e := tx.Select("id", "tenant_id", "deleted_at").Where("id=? AND tenant_id=? AND deleted_at IS NULL", p.KnowledgeBaseID, p.TenantID).Take(&kb).Error; e != nil {
+		if e := tx.Unscoped().Select("id", "tenant_id", "deleted_at").Where("id=? AND tenant_id=?", p.KnowledgeBaseID, p.TenantID).Take(&kb).Error; e != nil {
 			return nil, ErrNextcloudRecoveryDenied
+		}
+		if kb.DeletedAt.Valid {
+			var op types.NextcloudOnboardingOperation
+			var closure NextcloudTargetClosure
+			if tx.Where("operation_id=?", p.OperationID).Take(&op).Error != nil || tx.Where("operation_id=?", p.OperationID).Take(&closure).Error != nil || !validTargetClosure(closure, op) {
+				return nil, ErrNextcloudRecoveryDenied
+			}
 		}
 		var ds types.DataSource
 		if e := tx.Where("id=? AND tenant_id=? AND knowledge_base_id=? AND type=? AND deleted_at IS NULL", p.DataSourceID, p.TenantID, p.KnowledgeBaseID, types.ConnectorTypeNextcloud).Take(&ds).Error; e != nil {
@@ -573,6 +620,7 @@ func (s *NextcloudPublicationRecoveryStore) Apply(ctx context.Context, p *Nextcl
 		return nil, ErrNextcloudRecoveryDenied
 	}
 	var result NextcloudRecoveryReceipt
+	evidencePinned := false
 	e = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		// Serialize with every writer before checking the pinned restored snapshot.
 		nowMS, e := nextcloudLeaseNowMS(tx)
@@ -592,7 +640,14 @@ func (s *NextcloudPublicationRecoveryStore) Apply(ctx context.Context, p *Nextcl
 			}
 			existing.ClosedAt = existing.ClosedAt.UTC()
 			result = existing
-			return s.checkReceiptScopes(tx, existing, inv)
+			if err := s.checkReceiptScopes(tx, existing, inv); err != nil {
+				return err
+			}
+			evidencePinned = true
+			if err := requireRecoveryPermanentFactOperationsInTx(tx, p); err != nil {
+				return err
+			}
+			return requireRecoveryPermanentFactsRetainedInTx(tx, p)
 		}
 		if !errors.Is(er, gorm.ErrRecordNotFound) {
 			return er
@@ -611,6 +666,10 @@ func (s *NextcloudPublicationRecoveryStore) Apply(ctx context.Context, p *Nextcl
 		actual, e := recoveryJSONSHA(current)
 		if e != nil || actual != pin {
 			return ErrNextcloudRecoveryDenied
+		}
+		evidencePinned = true
+		if err := requireRecoveryPermanentFactOperationsInTx(tx, p); err != nil {
+			return err
 		}
 		// Unknown interval bindings are proven absent only after the complete paired
 		// source registry and pinned inventory have matched. They authorize nothing.
@@ -697,9 +756,31 @@ func (s *NextcloudPublicationRecoveryStore) Apply(ctx context.Context, p *Nextcl
 				return e
 			}
 		}
+		if e := applyRecoveryTargetClosuresInTx(ctx, tx, p); e != nil {
+			return e
+		}
+		if e := applyRecoveryTenantDeletionsInTx(tx, p); e != nil {
+			return e
+		}
 		return closeNextcloudControlsInTx(tx, p.InstanceID, p.digest, pin)
 	})
 	if e != nil {
+		if evidencePinned && errors.Is(e, ErrNextcloudRecoveryUnknownOperation) {
+			// Keep the established instance restore gate closed even though the body
+			// transaction rolls back. No partial receipt or fabricated op is committed.
+			closeContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
+			defer cancel()
+			closedErr := s.db.WithContext(closeContext).Transaction(func(tx *gorm.DB) error {
+				if !tx.Migrator().HasTable(&nextcloudControlRecoveryGate{}) {
+					return ErrNextcloudRecoveryDenied
+				}
+				return closeNextcloudControlsInTx(tx, p.InstanceID, p.digest, pin)
+			})
+			if closedErr != nil {
+				return nil, errors.Join(ErrNextcloudRecoveryDenied, e, closedErr)
+			}
+			return nil, errors.Join(ErrNextcloudRecoveryDenied, e)
+		}
 		return nil, e
 	}
 	return &result, nil

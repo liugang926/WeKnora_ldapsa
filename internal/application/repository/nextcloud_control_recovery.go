@@ -48,8 +48,8 @@ func nextcloudMissingControlTables(tx *gorm.DB) []string {
 	required := []string{"nextcloud_control_recovery_gates", "nextcloud_source_pairings", "nextcloud_source_versions", "nextcloud_source_revisions", "nextcloud_content_fences", "nextcloud_content_leases", "nextcloud_content_lease_coverage", "nextcloud_recovery_build_leases", "nextcloud_publication_recovery_receipts", "nextcloud_publication_recovery_scopes", "knowledge_bases", "knowledges", "chunks", "data_sources"}
 	// The onboarding migration installs this independent session marker. Dropping
 	// all onboarding tables cannot disguise a partial current schema as legacy.
-	if tx.Migrator().HasColumn("sessions", "nextcloud_scoped") || tx.Migrator().HasTable("nextcloud_onboarding_credentials") || tx.Migrator().HasTable("nextcloud_onboarding_operations") {
-		required = append(required, "nextcloud_onboarding_credentials", "nextcloud_onboarding_delegations", "nextcloud_onboarding_operations", "nextcloud_source_grants", "nextcloud_kb_blank_witnesses", "nextcloud_root_migrations", "nextcloud_target_migrations", "directory_permission_versions", "directories", "directory_identities", "directory_groups", "directory_group_edges", "directory_group_memberships", "tenant_group_role_grants", "resource_group_grants", "resource_access_policies", "tenant_members", "nextcloud_file_states", "nextcloud_status_outbox", "nextcloud_graph_plans", "nextcloud_graph_tasks", "nextcloud_graph_records", "nextcloud_source_status_epochs")
+	if tx.Migrator().HasColumn("sessions", "nextcloud_scoped") || tx.Migrator().HasTable("nextcloud_onboarding_credentials") || tx.Migrator().HasTable("nextcloud_onboarding_operations") || tx.Migrator().HasTable(&NextcloudTargetClosure{}) || tx.Migrator().HasTable(&NextcloudTenantDeletion{}) {
+		required = append(required, "tenants", "nextcloud_onboarding_target_closures", "nextcloud_onboarding_tenant_deletions", "nextcloud_onboarding_credentials", "nextcloud_onboarding_delegations", "nextcloud_onboarding_operations", "nextcloud_source_grants", "nextcloud_kb_blank_witnesses", "nextcloud_root_migrations", "nextcloud_target_migrations", "directory_permission_versions", "directories", "directory_identities", "directory_groups", "directory_group_edges", "directory_group_memberships", "tenant_group_role_grants", "resource_group_grants", "resource_access_policies", "tenant_members", "nextcloud_file_states", "nextcloud_status_outbox", "nextcloud_graph_plans", "nextcloud_graph_tasks", "nextcloud_graph_records", "nextcloud_source_status_epochs")
 	}
 	missing := []string{}
 	for _, table := range required {
@@ -64,7 +64,7 @@ func nextcloudMissingControlTables(tx *gorm.DB) []string {
 func nextcloudControlMetadataInventory(tx *gorm.DB) (map[string]any, error) {
 	// Hash every protective/control table, including disabled state and pending
 	// operations. No ciphertext, user GUID, paths or graph bodies are exported.
-	tables := []string{"nextcloud_onboarding_credentials", "nextcloud_onboarding_delegations", "nextcloud_onboarding_operations", "nextcloud_source_grants", "nextcloud_kb_blank_witnesses", "nextcloud_root_migrations", "nextcloud_target_migrations", "nextcloud_source_status_epochs", "nextcloud_graph_plans", "nextcloud_graph_tasks", "nextcloud_graph_records", "nextcloud_file_states", "nextcloud_status_outbox", "nextcloud_control_recovery_gates", "nextcloud_source_pairings", "nextcloud_source_pairing_aborts", "nextcloud_source_rotations", "nextcloud_source_decommissions", "nextcloud_event_connections", "nextcloud_event_checkpoint", "nextcloud_source_versions", "nextcloud_source_revisions", "nextcloud_source_tombstones", "nextcloud_content_fences", "nextcloud_content_leases", "nextcloud_content_lease_coverage", "nextcloud_recovery_build_leases", "nextcloud_gc_jobs", "nextcloud_resource_refs", "nextcloud_backend_descriptors", "knowledge_bases", "data_sources", "resource_access_policies", "directory_permission_versions", "directories", "directory_identities", "directory_groups", "directory_group_edges", "directory_sync_runs", "directory_group_memberships", "tenant_group_role_grants", "resource_group_grants", "tenant_members"}
+	tables := []string{"tenants", "nextcloud_onboarding_target_closures", "nextcloud_onboarding_tenant_deletions", "nextcloud_onboarding_credentials", "nextcloud_onboarding_delegations", "nextcloud_onboarding_operations", "nextcloud_source_grants", "nextcloud_kb_blank_witnesses", "nextcloud_root_migrations", "nextcloud_target_migrations", "nextcloud_source_status_epochs", "nextcloud_graph_plans", "nextcloud_graph_tasks", "nextcloud_graph_records", "nextcloud_file_states", "nextcloud_status_outbox", "nextcloud_control_recovery_gates", "nextcloud_source_pairings", "nextcloud_source_pairing_aborts", "nextcloud_source_rotations", "nextcloud_source_decommissions", "nextcloud_event_connections", "nextcloud_event_checkpoint", "nextcloud_source_versions", "nextcloud_source_revisions", "nextcloud_source_tombstones", "nextcloud_content_fences", "nextcloud_content_leases", "nextcloud_content_lease_coverage", "nextcloud_recovery_build_leases", "nextcloud_gc_jobs", "nextcloud_resource_refs", "nextcloud_backend_descriptors", "knowledge_bases", "data_sources", "resource_access_policies", "directory_permission_versions", "directories", "directory_identities", "directory_groups", "directory_group_edges", "directory_sync_runs", "directory_group_memberships", "tenant_group_role_grants", "resource_group_grants", "tenant_members"}
 	out := map[string]any{"__missing_tables": nextcloudMissingControlTables(tx)}
 	for _, table := range tables {
 		if !tx.Migrator().HasTable(table) {
@@ -135,6 +135,9 @@ func (s *NextcloudPublicationRecoveryStore) ReopenControls(ctx context.Context, 
 	}
 	ncControlSHA := ""
 	for _, source := range snapshot.Sources {
+		if e := requireNextcloudTargetOpenInTx(s.db.WithContext(ctx), source.Pair.TenantID, source.Pair.KnowledgeBaseID); e != nil {
+			return nil, ErrNextcloudRecoveryDenied
+		}
 		if source.ScopeState != "reconciled" || source.SourceStatus != types.DataSourceStatusActive || source.Reconciliation == nil {
 			return nil, ErrNextcloudRecoveryDenied
 		}
@@ -200,6 +203,15 @@ func (s *NextcloudPublicationRecoveryStore) ReopenControls(ctx context.Context, 
 		}
 		if onboardingDigest(metadata) != expectedControlSHA {
 			return ErrNextcloudRecoveryDenied
+		}
+		// A freshly anchored tail may contain a deletion after the applied
+		// checkpoint. Never reopen while its permanent owner facts are absent;
+		// the existing closed global gate is retained on this failed transaction.
+		if e := requireRecoveryPermanentFactOperationsInTx(tx, tail); e != nil {
+			return e
+		}
+		if e := requireRecoveryPermanentFactsRetainedInTx(tx, tail); e != nil {
+			return e
 		}
 		// A restored directory cache must not qualify the final source-control CAS.
 		if tx.Migrator().HasTable(&types.NextcloudOnboardingOperation{}) {

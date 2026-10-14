@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 const NextcloudContentLeaseMaxTTL = 5 * time.Minute
@@ -604,6 +605,20 @@ func (s *NextcloudContentLeaseStore) RetireKnowledgeInTx(ctx context.Context,
 	if _, err := nextcloudLockKBFence(tx, scope.TenantID, scope.KnowledgeBaseID, nowMS); err != nil {
 		return err
 	}
+	// Permanent closure cannot create a new open exact fence while retiring
+	// a retained generation. Create it already retired; never grant a lease.
+	if tx.Migrator().HasTable(&NextcloudTargetClosure{}) {
+		var closed int64
+		if e := tx.Model(&NextcloudTargetClosure{}).Where("tenant_id=? AND knowledge_base_id=?", scope.TenantID, scope.KnowledgeBaseID).Count(&closed).Error; e != nil {
+			return e
+		}
+		if closed > 0 {
+			row := map[string]any{"tenant_id": scope.TenantID, "knowledge_base_id": scope.KnowledgeBaseID, "knowledge_id": scope.KnowledgeID, "datasource_id": scope.DataSourceID, "external_id": scope.ExternalID, "epoch": 1, "state": "retired", "retired_at_ms": nowMS, "created_at_ms": nowMS, "updated_at_ms": nowMS}
+			if e := tx.Table("nextcloud_content_fences").Clauses(clause.OnConflict{DoNothing: true}).Create(row).Error; e != nil {
+				return e
+			}
+		}
+	}
 	fence, err := nextcloudLockExactFence(tx, scope, nowMS, true)
 	if err != nil {
 		return err
@@ -658,6 +673,9 @@ func (s *NextcloudContentLeaseStore) ValidateBuildLeaseInTx(ctx context.Context,
 		lease.TenantID != scope.TenantID || lease.KnowledgeBaseID != scope.KnowledgeBaseID ||
 		lease.KnowledgeID != scope.KnowledgeID {
 		return ErrNextcloudContentLeaseInvalid
+	}
+	if err := requireNextcloudTargetOpenInTx(tx.WithContext(ctx), scope.TenantID, scope.KnowledgeBaseID); err != nil {
+		return err
 	}
 	tx = tx.WithContext(ctx)
 	nowMS, err := nextcloudLeaseNowMS(tx)

@@ -207,7 +207,18 @@ func (r *knowledgeBaseRepository) UpdateKnowledgeBaseGeneratedProfile(
 
 // DeleteKnowledgeBase deletes a knowledge base
 func (r *knowledgeBaseRepository) DeleteKnowledgeBase(ctx context.Context, id string) error {
-	return r.db.WithContext(ctx).Where("id = ?", id).Delete(&types.KnowledgeBase{}).Error
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var target types.KnowledgeBase
+		if err := tx.Unscoped().Where("id=?", id).Take(&target).Error; err != nil {
+			return err
+		}
+		if !target.DeletedAt.Valid {
+			if err := tx.Where("id = ?", id).Delete(&types.KnowledgeBase{}).Error; err != nil {
+				return err
+			}
+		}
+		return closeDeletedNextcloudTargetsInTx(tx, target.TenantID, target.ID)
+	})
 }
 
 // CountByVectorStoreID counts active knowledge bases that are bound to the

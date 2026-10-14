@@ -75,6 +75,9 @@ func (r *NextcloudSourcePairingRepository) PrepareSourcePairing(
 	var result NextcloudSourcePairing
 	created := false
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := requireNextcloudTargetOpenInTx(tx, proposed.TenantID, proposed.KnowledgeBaseID); err != nil {
+			return err
+		}
 		lock := tx.Exec(`UPDATE knowledge_bases SET ever_had_nextcloud_source = ever_had_nextcloud_source
 			WHERE id = ? AND tenant_id = ? AND deleted_at IS NULL`, proposed.KnowledgeBaseID, proposed.TenantID)
 		if lock.Error != nil {
@@ -237,6 +240,9 @@ func (r *NextcloudSourcePairingRepository) ActiveSourcePairingForDataSource(ctx 
 	if err != nil {
 		return pair, nil, err
 	}
+	if err := requireNextcloudTargetOpenInTx(r.db.WithContext(ctx), tenantID, pair.KnowledgeBaseID); err != nil {
+		return pair, nil, err
+	}
 	var ds types.DataSource
 	err = r.db.WithContext(ctx).Where("id = ? AND tenant_id = ? AND knowledge_base_id = ? AND type = ? AND status = ? AND deleted_at IS NULL",
 		datasourceID, tenantID, pair.KnowledgeBaseID, types.ConnectorTypeNextcloud, types.DataSourceStatusActive).Take(&ds).Error
@@ -256,6 +262,9 @@ func (r *NextcloudSourcePairingRepository) ActiveSourcePairingForDataSource(ctx 
 func (r *NextcloudSourcePairingRepository) AbortPendingSourcePairing(ctx context.Context,
 	pair NextcloudSourcePairing) error {
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := requireNextcloudTargetOpenInTx(tx, pair.TenantID, pair.KnowledgeBaseID); err != nil {
+			return err
+		}
 		lock := tx.Exec(`UPDATE knowledge_bases SET ever_had_nextcloud_source = ever_had_nextcloud_source
 			WHERE id = ? AND tenant_id = ? AND deleted_at IS NULL`, pair.KnowledgeBaseID, pair.TenantID)
 		if lock.Error != nil {
@@ -349,6 +358,9 @@ func (r *NextcloudSourcePairingRepository) AbortPendingSourcePairing(ctx context
 // ACK and this commit is repaired by repeating the same signed POST.
 func (r *NextcloudSourcePairingRepository) ActivateSourcePairing(ctx context.Context, pair NextcloudSourcePairing) error {
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := requireNextcloudTargetOpenInTx(tx, pair.TenantID, pair.KnowledgeBaseID); err != nil {
+			return err
+		}
 		lock := tx.Exec(`UPDATE knowledge_bases SET ever_had_nextcloud_source = ever_had_nextcloud_source
 			WHERE id = ? AND tenant_id = ? AND deleted_at IS NULL`, pair.KnowledgeBaseID, pair.TenantID)
 		if lock.Error != nil {
@@ -438,6 +450,9 @@ func (r *NextcloudSourcePairingRepository) HasActiveSourcePairing(ctx context.Co
 	if ds == nil || ds.Type != types.ConnectorTypeNextcloud {
 		return false, nil
 	}
+	if err := requireNextcloudTargetOpenInTx(r.db.WithContext(ctx), ds.TenantID, ds.KnowledgeBaseID); err != nil {
+		return false, err
+	}
 	var pair NextcloudSourcePairing
 	err := r.db.WithContext(ctx).Where("datasource_id = ? AND tenant_id = ? AND knowledge_base_id = ? AND state = 'active'",
 		ds.ID, ds.TenantID, ds.KnowledgeBaseID).Take(&pair).Error
@@ -486,6 +501,9 @@ func pairedSourceConfigImmutable(tx *gorm.DB, previous, next *types.DataSource) 
 // A legacy event connection never upgrades a generic source implicitly.
 func activeNextcloudSourcePairing(tx *gorm.DB, tenantID uint64, kbID, datasourceID,
 	instanceID, bindingID, baseURL, configSHA string) error {
+	if err := requireNextcloudTargetOpenInTx(tx, tenantID, kbID); err != nil {
+		return ErrNextcloudEventScope
+	}
 	var pair NextcloudSourcePairing
 	err := tx.Where("tenant_id = ? AND knowledge_base_id = ? AND datasource_id = ? AND state = 'active'",
 		tenantID, kbID, datasourceID).Take(&pair).Error

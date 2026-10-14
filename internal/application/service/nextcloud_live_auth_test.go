@@ -4,11 +4,8 @@ package service
 
 import (
 	"os"
-	"strings"
 	"testing"
 
-	"github.com/Tencent/WeKnora/internal/types"
-	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
 
@@ -20,19 +17,4 @@ func installDocumentLiveAuthSchema(t *testing.T, db *gorm.DB) {
 		return
 	}
 	installDocumentOnboardingSchema(t, db)
-}
-
-// Restricted KB reads also resolve source-scoped eligibility. Fixtures using
-// those real readers need the complete ledger even without JWT acceptance.
-func installDocumentOnboardingSchema(t *testing.T, db *gorm.DB) {
-	t.Helper()
-	require.NoError(t, db.AutoMigrate(&types.AuthToken{}, &types.WikiPage{}))
-	ddl, err := os.ReadFile("../../../migrations/sqlite/000074_nextcloud_onboarding.up.sql")
-	require.NoError(t, err)
-	// Session AutoMigrate already installed this column. All production
-	// onboarding tables, constraints and triggers remain byte-for-byte.
-	statement := "ALTER TABLE sessions ADD COLUMN nextcloud_scoped BOOLEAN NOT NULL DEFAULT FALSE;"
-	require.True(t, db.Migrator().HasColumn(&types.Session{}, "nextcloud_scoped"))
-	require.Equal(t, 1, strings.Count(string(ddl), statement))
-	require.NoError(t, db.Exec(strings.Replace(string(ddl), statement, "", 1)).Error)
 }

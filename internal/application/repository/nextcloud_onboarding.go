@@ -58,6 +58,9 @@ func directoryUsable(tx *gorm.DB, directoryID string, now time.Time) error {
 }
 func (s *NextcloudOnboardingStore) Actor(ctx context.Context, c types.NextcloudOnboardingCredential, dir, guid string) (string, error) {
 	tx := s.db.WithContext(ctx)
+	if err := requireNextcloudTargetTenantLiveInTx(tx, c.TenantID); err != nil {
+		return "", err
+	}
 	if dir != c.DirectoryID || directoryUsable(tx, dir, time.Now().UTC()) != nil {
 		return "", ErrNextcloudOnboardingDenied
 	}
@@ -161,12 +164,19 @@ func (s *NextcloudOnboardingStore) Reserve(ctx context.Context, c types.Nextclou
 		return out, err
 	}
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// Tenant -> credential -> KB is the admission lock order.
+		if err := lockNextcloudTargetTenantLiveInTx(tx, c.TenantID); err != nil {
+			return err
+		}
 		// Credential lock serializes quota and operation uniqueness before KB mutation.
 		if q := tx.Exec("UPDATE nextcloud_onboarding_credentials SET enabled = enabled WHERE id = ? AND enabled = ?", c.ID, true); q.Error != nil || q.RowsAffected != 1 {
 			return ErrNextcloudOnboardingDenied
 		}
 		e := tx.Where("operation_id = ?", req.OperationID).Take(&out).Error
 		if e == nil {
+			if err := requireNextcloudTargetOpenInTx(tx, out.TenantID, out.KnowledgeBaseID); err != nil {
+				return err
+			}
 			if out.CredentialID != c.ID || out.RequestSHA256 != onboardingDigest(req) {
 				return ErrNextcloudOnboardingConflict
 			}
@@ -275,11 +285,16 @@ func (s *NextcloudOnboardingStore) Operation(ctx context.Context, c types.Nextcl
 	return out, nil
 }
 func (s *NextcloudOnboardingStore) MarkActive(ctx context.Context, op types.NextcloudOnboardingOperation) error {
-	var pair NextcloudSourcePairing
-	if err := s.db.WithContext(ctx).Where("operation_id=? AND tenant_id=? AND knowledge_base_id=? AND nextcloud_instance_id=? AND binding_id=? AND state='active'", op.OperationID, op.TenantID, op.KnowledgeBaseID, op.InstanceID, op.BindingID).Take(&pair).Error; err != nil {
-		return ErrNextcloudOnboardingConflict
-	}
-	return s.db.WithContext(ctx).Model(&types.NextcloudOnboardingOperation{}).Where("operation_id = ? AND state = 'reserved'", op.OperationID).Updates(map[string]any{"state": "active", "updated_at": time.Now().UTC()}).Error
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := requireNextcloudTargetOpenInTx(tx, op.TenantID, op.KnowledgeBaseID); err != nil {
+			return err
+		}
+		var pair NextcloudSourcePairing
+		if err := tx.Where("operation_id=? AND tenant_id=? AND knowledge_base_id=? AND nextcloud_instance_id=? AND binding_id=? AND state='active'", op.OperationID, op.TenantID, op.KnowledgeBaseID, op.InstanceID, op.BindingID).Take(&pair).Error; err != nil {
+			return ErrNextcloudOnboardingConflict
+		}
+		return tx.Model(&types.NextcloudOnboardingOperation{}).Where("operation_id = ? AND state = 'reserved'", op.OperationID).Updates(map[string]any{"state": "active", "updated_at": time.Now().UTC()}).Error
+	})
 }
 func (s *NextcloudOnboardingStore) ApplyGrantSnapshot(ctx context.Context, op types.NextcloudOnboardingOperation, snapshot types.NextcloudGrantSnapshot) error {
 	if !snapshot.Complete || snapshot.PermissionVersion == 0 || len(snapshot.Subjects) > 10000 {
@@ -290,6 +305,9 @@ func (s *NextcloudOnboardingStore) ApplyGrantSnapshot(ctx context.Context, op ty
 	})
 	digest := onboardingDigest(snapshot)
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := requireNextcloudTargetOpenInTx(tx, op.TenantID, op.KnowledgeBaseID); err != nil {
+			return err
+		}
 		if q := tx.Exec("UPDATE nextcloud_onboarding_operations SET revision = revision WHERE operation_id = ? AND tenant_id = ?", op.OperationID, op.TenantID); q.Error != nil || q.RowsAffected != 1 {
 			return ErrNextcloudOnboardingConflict
 		}
@@ -371,7 +389,7 @@ func (s *NextcloudOnboardingStore) ApplyGrantSnapshot(ctx context.Context, op ty
 }
 func (s *NextcloudOnboardingStore) ScopedMatches(ctx context.Context, user string, tenant uint64, kb string, now time.Time) ([]types.NextcloudScopedGrantMatch, error) {
 	tx := s.db.WithContext(ctx)
-	if !tx.Migrator().HasTable(&nextcloudControlRecoveryGate{}) && nextcloudCurrentControlModule(tx) {
+	if (!tx.Migrator().HasTable(&nextcloudControlRecoveryGate{}) || !tx.Migrator().HasTable(&NextcloudTargetClosure{}) || !tx.Migrator().HasTable(&types.Tenant{})) && nextcloudCurrentControlModule(tx) {
 		return []types.NextcloudScopedGrantMatch{}, nil
 	}
 	var rows []struct {
@@ -396,6 +414,7 @@ func (s *NextcloudOnboardingStore) ScopedMatches(ctx context.Context, user strin
 	if tx.Migrator().HasTable(&nextcloudControlRecoveryGate{}) {
 		query += " AND NOT EXISTS(SELECT 1 FROM nextcloud_control_recovery_gates cg WHERE cg.instance_id=o.instance_id AND cg.closed=TRUE)"
 	}
+	query += " AND NOT EXISTS(SELECT 1 FROM nextcloud_onboarding_target_closures tc WHERE (tc.operation_id=o.operation_id OR (tc.tenant_id=o.tenant_id AND tc.reason='tenant_deleted'))) AND EXISTS(SELECT 1 FROM tenants tt WHERE tt.id=o.tenant_id AND tt.deleted_at IS NULL) AND EXISTS(SELECT 1 FROM knowledge_bases kk WHERE kk.id=o.knowledge_base_id AND kk.tenant_id=o.tenant_id AND kk.deleted_at IS NULL)"
 	args := []any{user}
 	if tenant != 0 {
 		query += " AND sg.tenant_id=?"
@@ -417,6 +436,9 @@ func (s *NextcloudOnboardingStore) ScopedMatches(ctx context.Context, user strin
 	return out, nil
 }
 func (s *NextcloudOnboardingStore) EventCredential(ctx context.Context, op types.NextcloudOnboardingOperation) (NextcloudEventConnectionCredential, error) {
+	if err := s.RequireTargetOpen(ctx, op); err != nil {
+		return NextcloudEventConnectionCredential{}, err
+	}
 	var row nextcloudEventConnection
 	err := s.db.WithContext(ctx).Table("nextcloud_event_connections").Where("tenant_id = ? AND knowledge_base_id = ? AND nextcloud_instance_id = ? AND binding_id = ? AND status = 'active' AND datasource_id IN (SELECT datasource_id FROM nextcloud_source_pairings WHERE operation_id=? AND state='active')", op.TenantID, op.KnowledgeBaseID, op.InstanceID, op.BindingID, op.OperationID).Take(&row).Error
 	if err != nil {
@@ -429,12 +451,18 @@ func (s *NextcloudOnboardingStore) EventCredential(ctx context.Context, op types
 	return NextcloudEventConnectionCredential{ConnectionID: row.ConnectionID, NextcloudInstanceID: row.NextcloudInstanceID, BindingID: row.BindingID, KeyID: row.CurrentKeyID, Secret: secret}, nil
 }
 func (s *NextcloudOnboardingStore) SyncEnabled(ctx context.Context, op types.NextcloudOnboardingOperation) (bool, error) {
+	if err := s.RequireTargetOpen(ctx, op); err != nil {
+		return false, err
+	}
 	var row struct{ SyncEnabled bool }
 	q := s.db.WithContext(ctx).Table("data_sources").Select("sync_enabled").Where("id IN (SELECT datasource_id FROM nextcloud_source_pairings WHERE operation_id = ? AND state='active')", op.OperationID).Take(&row)
 	return row.SyncEnabled, q.Error
 }
 func (s *NextcloudOnboardingStore) SetSyncEnabled(ctx context.Context, op types.NextcloudOnboardingOperation, enabled bool, revision uint64) (types.NextcloudOnboardingOperation, error) {
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := requireNextcloudTargetOpenInTx(tx, op.TenantID, op.KnowledgeBaseID); err != nil {
+			return err
+		}
 		q := tx.Exec("UPDATE nextcloud_onboarding_operations SET revision=revision WHERE operation_id=? AND state='active'", op.OperationID)
 		if q.Error != nil || q.RowsAffected != 1 {
 			return ErrNextcloudOnboardingConflict
@@ -488,6 +516,9 @@ func (s *NextcloudOnboardingStore) ManagedKB(ctx context.Context, tenant uint64,
 }
 
 func (s *NextcloudOnboardingStore) RefreshGrantEpoch(ctx context.Context, op types.NextcloudOnboardingOperation) error {
+	if err := s.RequireTargetOpen(ctx, op); err != nil {
+		return err
+	}
 	var connection nextcloudEventConnection
 	if err := s.db.WithContext(ctx).Table("nextcloud_event_connections").Where("tenant_id=? AND knowledge_base_id=? AND nextcloud_instance_id=? AND binding_id=? AND status='active'", op.TenantID, op.KnowledgeBaseID, op.InstanceID, op.BindingID).Take(&connection).Error; err != nil {
 		return err

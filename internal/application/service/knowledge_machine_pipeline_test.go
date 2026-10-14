@@ -152,6 +152,7 @@ func newMachinePipelineFixtureWithSource(t *testing.T, pg bool, artifact string,
 		}
 		require.NoError(t, migration.Exec(string(script)).Error)
 	}
+	installMachineOnboardingSchema(t, f.db, migration)
 	// Install the actual combined body protocol, bootstrap its owned external
 	// journal and retain a connection pool of one thereafter.
 	journalDir := t.TempDir()

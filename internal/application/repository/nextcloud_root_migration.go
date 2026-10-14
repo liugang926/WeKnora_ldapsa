@@ -72,6 +72,9 @@ func (s *NextcloudOnboardingStore) PrepareRootMigration(ctx context.Context, op 
 		return out, ErrNextcloudOnboardingConflict
 	}
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := requireNextcloudTargetOpenInTx(tx, op.TenantID, op.KnowledgeBaseID); err != nil {
+			return err
+		}
 		q := tx.Exec("UPDATE knowledge_bases SET ever_had_nextcloud_source=ever_had_nextcloud_source WHERE tenant_id=? AND id=? AND deleted_at IS NULL", op.TenantID, op.KnowledgeBaseID)
 		if q.Error != nil || q.RowsAffected != 1 {
 			return ErrNextcloudOnboardingConflict
@@ -162,6 +165,9 @@ func (s *NextcloudOnboardingStore) FinalizeRootMigration(ctx context.Context, op
 		return ErrNextcloudOnboardingConflict
 	}
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := requireNextcloudTargetOpenInTx(tx, op.TenantID, op.KnowledgeBaseID); err != nil {
+			return err
+		}
 		q := tx.Exec("UPDATE knowledge_bases SET ever_had_nextcloud_source=ever_had_nextcloud_source WHERE tenant_id=? AND id=?", op.TenantID, op.KnowledgeBaseID)
 		if q.Error != nil || q.RowsAffected != 1 {
 			return ErrNextcloudOnboardingConflict
@@ -345,6 +351,9 @@ func (s *NextcloudOnboardingStore) PrepareTargetMigration(ctx context.Context, o
 		return out, err
 	}
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := requireNextcloudTargetOpenInTx(tx, old.TenantID, old.KnowledgeBaseID); err != nil {
+			return err
+		}
 		// Lock KBs in a deterministic tenant/KB order for cross-tenant moves.
 		ids := []types.NextcloudOnboardingOperation{old, target}
 		sort.Slice(ids, func(i, j int) bool {
@@ -354,6 +363,9 @@ func (s *NextcloudOnboardingStore) PrepareTargetMigration(ctx context.Context, o
 			return ids[i].TenantID < ids[j].TenantID
 		})
 		for _, o := range ids {
+			if err := requireNextcloudTargetOpenInTx(tx, o.TenantID, o.KnowledgeBaseID); err != nil {
+				return err
+			}
 			q := tx.Exec("UPDATE knowledge_bases SET ever_had_nextcloud_source=ever_had_nextcloud_source WHERE tenant_id=? AND id=? AND deleted_at IS NULL", o.TenantID, o.KnowledgeBaseID)
 			if q.Error != nil || q.RowsAffected != 1 {
 				return ErrNextcloudOnboardingConflict
@@ -434,8 +446,14 @@ func (s *NextcloudOnboardingStore) PrepareTargetMigration(ctx context.Context, o
 func (s *NextcloudOnboardingStore) FinalizeTargetMigration(ctx context.Context, old types.NextcloudOnboardingOperation, migrationID string, manifest nextcloud.RecoveryManifest) (NextcloudTargetMigration, error) {
 	var out NextcloudTargetMigration
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := requireNextcloudTargetOpenInTx(tx, old.TenantID, old.KnowledgeBaseID); err != nil {
+			return err
+		}
 		if err := tx.Where("operation_id=? AND old_operation_id=?", migrationID, old.OperationID).Take(&out).Error; err != nil {
 			return ErrNextcloudOnboardingConflict
+		}
+		if err := requireNextcloudTargetOpenInTx(tx, out.NewTenantID, out.NewKnowledgeBaseID); err != nil {
+			return err
 		}
 		q := tx.Exec("UPDATE knowledge_bases SET ever_had_nextcloud_source=ever_had_nextcloud_source WHERE tenant_id=? AND id=?", out.NewTenantID, out.NewKnowledgeBaseID)
 		if q.Error != nil || q.RowsAffected != 1 {

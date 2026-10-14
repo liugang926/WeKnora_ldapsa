@@ -31,7 +31,9 @@ func TestNextcloudRootMigrationClosesLeaseIDsPreservesContentEpochAndRetries(t *
 	// Exact schema is installed by onboardingDB; never rebuild tables with immutable triggers.
 	ddl, err := os.ReadFile("../../../migrations/sqlite/000046_nextcloud_content_leases.up.sql")
 	require.NoError(t, err)
-	require.NoError(t, db.Exec(string(ddl)).Error)
+	if !db.Migrator().HasTable("nextcloud_content_fences") {
+		require.NoError(t, db.Exec(string(ddl)).Error)
+	}
 	require.NoError(t, db.Exec("CREATE TABLE nextcloud_graph_tasks(operation_id TEXT PRIMARY KEY,tenant_id BIGINT,knowledge_base_id TEXT,state TEXT,error_code TEXT,completed_at BIGINT)").Error)
 	require.NoError(t, db.Exec("CREATE TABLE nextcloud_graph_records(operation_id TEXT PRIMARY KEY,body_json TEXT,generation BIGINT)").Error)
 	require.NoError(t, db.Exec("INSERT INTO nextcloud_graph_records VALUES('persisted','immutable original graph receipt',1)").Error)

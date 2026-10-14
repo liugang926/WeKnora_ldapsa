@@ -51,6 +51,9 @@ func nextcloudUnpairedCurrentKB(tx *gorm.DB, tenant uint64, kb string) (bool, er
 	return false, nil
 }
 func nextcloudKBControlsClosed(tx *gorm.DB, tenant uint64, kb string) (bool, error) {
+	if err := requireNextcloudTargetOpenInTx(tx, tenant, kb); err != nil {
+		return true, err
+	}
 	if !tx.Migrator().HasTable(&NextcloudSourcePairing{}) {
 		return nextcloudCurrentControlModule(tx), nil
 	}
@@ -79,6 +82,9 @@ func NextcloudBuildControlsAllowed(ctx context.Context, tx *gorm.DB, tenant uint
 	return allowed, e
 }
 func nextcloudRecoveryBuildProof(ctx context.Context, tx *gorm.DB, tenant uint64, kb, ds string, knowledgeID ...string) (bool, *nextcloudRecoveryScope, int64, error) {
+	if err := requireNextcloudTargetOpenInTx(tx, tenant, kb); err != nil {
+		return false, nil, 0, err
+	}
 	if !tx.Migrator().HasTable(&NextcloudSourcePairing{}) {
 		return !nextcloudCurrentControlModule(tx), nil, 0, nil
 	}

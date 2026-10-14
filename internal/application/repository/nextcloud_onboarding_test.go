@@ -50,10 +50,11 @@ func onboardingDB(t *testing.T) (*gorm.DB, *repo.NextcloudOnboardingStore, types
 		t.Cleanup(func() { _ = sqlDB.Close() })
 	}
 
-	require.NoError(t, db.AutoMigrate(&types.KnowledgeBase{}, &types.Knowledge{}, &types.DataSource{}, &types.Model{}, &types.StorageBackend{}, &types.TenantMember{}, &types.ResourceAccessPolicy{}, &types.ResourceGroupGrant{}, &types.TenantGroupRoleGrant{}, &types.PermissionVersion{}, &types.Directory{}, &types.DirectoryIdentity{}, &types.DirectoryGroup{}, &types.DirectoryGroupMembership{}, &types.Session{}, &repo.NextcloudSourcePairing{}, &repo.NextcloudSourcePairingAbort{}))
-	for _, sql := range []string{"CREATE UNIQUE INDEX policies_key ON resource_access_policies(tenant_id,resource_type,resource_id)", "CREATE TABLE wiki_pages(tenant_id INTEGER,knowledge_base_id TEXT)", "CREATE TABLE chunks(tenant_id INTEGER,knowledge_base_id TEXT)", "CREATE TABLE nextcloud_source_tombstones(tenant_id INTEGER,scope_type TEXT,scope_id TEXT)"} {
+	require.NoError(t, db.AutoMigrate(&types.Tenant{}, &types.Chunk{}, &types.KnowledgeBase{}, &types.Knowledge{}, &types.DataSource{}, &types.Model{}, &types.StorageBackend{}, &types.TenantMember{}, &types.ResourceAccessPolicy{}, &types.ResourceGroupGrant{}, &types.TenantGroupRoleGrant{}, &types.PermissionVersion{}, &types.Directory{}, &types.DirectoryIdentity{}, &types.DirectoryGroup{}, &types.DirectoryGroupMembership{}, &types.Session{}, &repo.NextcloudSourcePairing{}, &repo.NextcloudSourcePairingAbort{}))
+	for _, sql := range []string{"CREATE UNIQUE INDEX policies_key ON resource_access_policies(tenant_id,resource_type,resource_id)", "CREATE TABLE wiki_pages(tenant_id INTEGER,knowledge_base_id TEXT)", "CREATE TABLE nextcloud_source_tombstones(tenant_id INTEGER,scope_type TEXT,scope_id TEXT)", "CREATE TABLE nextcloud_event_connections(tenant_id BIGINT,knowledge_base_id TEXT,nextcloud_instance_id TEXT,binding_id TEXT,status TEXT)"} {
 		require.NoError(t, db.Exec(sql).Error)
 	}
+	require.NoError(t, db.Create(&types.Tenant{ID: 7, Name: "onboarding-owner"}).Error)
 	// A KB born before the guarded inventory boundary must stay unselectable.
 	old := types.KnowledgeBase{ID: "legacy-zero-count", TenantID: 7, Name: "Legacy", Type: "document"}
 	require.NoError(t, db.Create(&old).Error)
@@ -63,15 +64,16 @@ func onboardingDB(t *testing.T) (*gorm.DB, *repo.NextcloudOnboardingStore, types
 	}
 	migration, err := os.ReadFile(migrationPath)
 	require.NoError(t, err)
-	controls := []string{"../../../migrations/sqlite/000076_nextcloud_directory_migrations.up.sql", "../../../migrations/sqlite/000078_nextcloud_control_recovery.up.sql"}
+	controls := []string{"../../../migrations/sqlite/000076_nextcloud_directory_migrations.up.sql", "../../../migrations/sqlite/000078_nextcloud_control_recovery.up.sql", "../../../migrations/sqlite/000046_nextcloud_content_leases.up.sql", "../../../migrations/sqlite/000081_nextcloud_target_closure.up.sql"}
 	if dialect == "versioned" {
-		controls = []string{"../../../migrations/versioned/000157_nextcloud_directory_migrations.up.sql", "../../../migrations/versioned/000159_nextcloud_control_recovery.up.sql"}
+		controls = []string{"../../../migrations/versioned/000157_nextcloud_directory_migrations.up.sql", "../../../migrations/versioned/000159_nextcloud_control_recovery.up.sql", "../../../migrations/versioned/000127_nextcloud_content_leases.up.sql", "../../../migrations/versioned/000162_nextcloud_target_closure.up.sql"}
 	}
 	for _, path := range controls {
 		part, e := os.ReadFile(path)
 		require.NoError(t, e)
 		migration = append(migration, append([]byte("\n"), part...)...)
 	}
+	require.NoError(t, db.AutoMigrate(&repo.NextcloudRecoveryReceipt{}))
 	// Session column is already present through AutoMigrate above.
 	require.NoError(t, db.Migrator().DropColumn(&types.Session{}, "nextcloud_scoped"))
 	if dialect == "versioned" {
@@ -368,7 +370,9 @@ func TestNextcloudOnboardingCurrentSchemaMissingControlsOrPairingFailsClosed(t *
 	require.NoError(t, store.ApplyGrantSnapshot(ctx, op, snapshot))
 	ddl, err := os.ReadFile("../../../migrations/sqlite/000046_nextcloud_content_leases.up.sql")
 	require.NoError(t, err)
-	require.NoError(t, db.Exec(string(ddl)).Error)
+	if !db.Migrator().HasTable("nextcloud_content_fences") {
+		require.NoError(t, db.Exec(string(ddl)).Error)
+	}
 	require.NoError(t, db.Exec("DROP TABLE nextcloud_control_recovery_gates").Error)
 	closed, err := store.InstanceControlsClosed(ctx, c.InstanceID)
 	require.NoError(t, err)
