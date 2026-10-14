@@ -142,13 +142,14 @@ func onboardingDB(t *testing.T) (*gorm.DB, *repo.NextcloudOnboardingStore, types
 	require.NoError(t, retention.InitializeJournal())
 	require.NoError(t, repo.InstallOriginalBodyRetentionTriggers(db))
 	require.NoError(t, repo.InstallOriginalBodyRetentionCallbacks(db))
-	createOnboardingTemplate(t, db, freshOnboardingKB("template"))
+	template := freshOnboardingKB("template")
+	createOnboardingTemplate(t, db, &template)
 	return db, repo.NewNextcloudOnboardingStore(db), cred
 }
 
 // Create a template through the same authenticated independent-input writer
 // as a human author; never certify an already-loaded legacy configuration.
-func createOnboardingTemplate(t *testing.T, db *gorm.DB, kb types.KnowledgeBase) {
+func createOnboardingTemplate(t *testing.T, db *gorm.DB, kb *types.KnowledgeBase) {
 	t.Helper()
 	store := repo.NewKnowledgeInputProvenanceStore(db)
 	factory := func(tx *gorm.DB) *repo.KnowledgeInputProvenanceStore {
@@ -158,7 +159,7 @@ func createOnboardingTemplate(t *testing.T, db *gorm.DB, kb types.KnowledgeBase)
 	}
 	repo.ConfigureKnowledgeDisplayInputWriters(store, repo.NewKnowledgeTagRepository(db), repo.NewKnowledgeRepository(db), factory)
 	admin := types.WithExecutionTenant(types.WithPrincipal(types.WithCaller(context.Background(), types.Caller{TenantID: 7, UserID: "owner", Role: types.TenantRoleOwner}), types.Principal{Type: types.PrincipalWebUser, ID: "owner"}), 7)
-	require.NoError(t, store.CreateKnowledgeBaseWithInput(repo.WithIndependentKnowledgeBaseNameInput(repo.WithIndependentKnowledgeInput(admin), kb.ID, kb.Name), &kb))
+	require.NoError(t, store.CreateKnowledgeBaseWithInput(repo.WithIndependentKnowledgeBaseNameInput(repo.WithIndependentKnowledgeInput(admin), kb.ID, kb.Name), kb))
 }
 
 func freshOnboardingKB(id string) types.KnowledgeBase {
@@ -192,7 +193,7 @@ func TestNextcloudOnboardingBlankHistoryReservationAndRetry(t *testing.T) {
 	_, err := store.Reserve(ctx, c, onboardingRequest(c, uuid.NewString(), "legacy-zero-count"))
 	require.ErrorIs(t, err, repo.ErrNextcloudKBBlankUnverified)
 	kb := freshOnboardingKB("blank")
-	require.NoError(t, db.Create(&kb).Error)
+	createOnboardingTemplate(t, db, &kb)
 	req := onboardingRequest(c, uuid.NewString(), kb.ID)
 	first, err := store.Reserve(ctx, c, req)
 	require.NoError(t, err)
@@ -222,7 +223,7 @@ func TestNextcloudOnboardingBlankHistoryReservationAndRetry(t *testing.T) {
 func TestNextcloudOnboardingCompetingRootsAndConcurrentContent(t *testing.T) {
 	db, store, c := onboardingDB(t)
 	kb := freshOnboardingKB("contended")
-	require.NoError(t, db.Create(&kb).Error)
+	createOnboardingTemplate(t, db, &kb)
 	start := make(chan struct{})
 	out := make(chan error, 2)
 	var wg sync.WaitGroup
@@ -260,7 +261,7 @@ func TestNextcloudOnboardingLedgerScopeRevocationAndDirectoryFailure(t *testing.
 	ops := []types.NextcloudOnboardingOperation{}
 	for _, id := range []string{"root-a", "root-b"} {
 		kb := freshOnboardingKB(id)
-		require.NoError(t, db.Create(&kb).Error)
+		createOnboardingTemplate(t, db, &kb)
 		op, err := store.Reserve(ctx, c, onboardingRequest(c, uuid.NewString(), id))
 		require.NoError(t, err)
 		activateOnboarding(t, db, store, op)
@@ -308,7 +309,7 @@ func TestNextcloudOnboardingSyncPauseCASIsRecoverable(t *testing.T) {
 		require.NoError(t, db.Exec("ALTER TABLE data_sources ADD COLUMN sync_enabled BOOLEAN NOT NULL DEFAULT TRUE").Error)
 	}
 	kb := freshOnboardingKB("pausable")
-	require.NoError(t, db.Create(&kb).Error)
+	createOnboardingTemplate(t, db, &kb)
 	op, err := store.Reserve(ctx, c, onboardingRequest(c, uuid.NewString(), kb.ID))
 	require.NoError(t, err)
 	activateOnboarding(t, db, store, op)
@@ -332,7 +333,7 @@ func TestNextcloudOnboardingAuthorityEpochSupersedesPairingReceipt(t *testing.T)
 	db, store, c := onboardingDB(t)
 	ctx := context.Background()
 	kb := freshOnboardingKB("resumed")
-	require.NoError(t, db.Create(&kb).Error)
+	createOnboardingTemplate(t, db, &kb)
 	op, err := store.Reserve(ctx, c, onboardingRequest(c, uuid.NewString(), kb.ID))
 	require.NoError(t, err)
 	activateOnboarding(t, db, store, op)
@@ -374,7 +375,7 @@ func TestNextcloudOnboardingPostgresConcurrentAdmission(t *testing.T) {
 	peerSQL.SetMaxOpenConns(1)
 	t.Cleanup(func() { _ = peerSQL.Close() })
 	kb := freshOnboardingKB("pg-root-race")
-	require.NoError(t, db.Create(&kb).Error)
+	createOnboardingTemplate(t, db, &kb)
 	start := make(chan struct{})
 	out := make(chan error, 2)
 	for _, writer := range []*repo.NextcloudOnboardingStore{store, repo.NewNextcloudOnboardingStore(peer)} {
@@ -395,7 +396,7 @@ func TestNextcloudOnboardingPostgresConcurrentAdmission(t *testing.T) {
 	for range 5 {
 		id := uuid.NewString()
 		kb := freshOnboardingKB(id)
-		require.NoError(t, db.Create(&kb).Error)
+		createOnboardingTemplate(t, db, &kb)
 		start := make(chan struct{})
 		out := make(chan error, 2)
 		go func() {
@@ -423,7 +424,7 @@ func TestNextcloudOnboardingCurrentSchemaMissingControlsOrPairingFailsClosed(t *
 	db, store, c := onboardingDB(t)
 	ctx := context.Background()
 	kb := freshOnboardingKB("missing-control-root")
-	require.NoError(t, db.Create(&kb).Error)
+	createOnboardingTemplate(t, db, &kb)
 	op, err := store.Reserve(ctx, c, onboardingRequest(c, uuid.NewString(), kb.ID))
 	require.NoError(t, err)
 	activateOnboarding(t, db, store, op)
@@ -454,7 +455,7 @@ func TestNextcloudOnboardingCurrentSchemaMissingControlsOrPairingFailsClosed(t *
 	require.ErrorIs(t, err, repo.ErrNextcloudContentLeaseDenied)
 }
 
-func TestNextcloudOnboardingExistingBlankUsesApprovedTemplateAtomically(t *testing.T) {
+func TestNextcloudOnboardingExistingBlankPreservesLegalConfigurationAtomically(t *testing.T) {
 	db, store, c := onboardingDB(t)
 	ctx := context.Background()
 	require.NoError(t, db.Create(&types.Model{ID: "graph-model", TenantID: 7, Type: types.ModelTypeKnowledgeQA, Status: types.ModelStatusActive}).Error)
@@ -465,7 +466,7 @@ func TestNextcloudOnboardingExistingBlankUsesApprovedTemplateAtomically(t *testi
 		template.ExtractConfig = &types.ExtractConfig{Enabled: true}
 		template.SummaryModelID = "graph-model"
 		template.ChunkingConfig.ChunkSize = 1234
-		createOnboardingTemplate(t, db, template)
+		createOnboardingTemplate(t, db, &template)
 		credential := c
 		credential.ID = "template-credential-" + uuid.NewString()
 		credential.TokenSHA256 = onboardingTestSHA(credential.ID)
@@ -475,7 +476,12 @@ func TestNextcloudOnboardingExistingBlankUsesApprovedTemplateAtomically(t *testi
 		kb.Name = "Retained human title"
 		kb.Description = "Retained human description"
 		kb.CreatorID = "existing-owner"
-		require.NoError(t, db.Create(&kb).Error)
+		kb.ChunkingConfig.ChunkSize = 567
+		kb.IndexingStrategy.GraphEnabled = true
+		kb.IndexingStrategy.GraphRequired = !required
+		kb.ExtractConfig = &types.ExtractConfig{Enabled: true}
+		kb.SummaryModelID = "graph-model"
+		createOnboardingTemplate(t, db, &kb)
 		req := onboardingRequest(credential, uuid.NewString(), kb.ID)
 		op, err := store.Reserve(ctx, credential, req)
 		require.NoError(t, err)
@@ -483,10 +489,10 @@ func TestNextcloudOnboardingExistingBlankUsesApprovedTemplateAtomically(t *testi
 		var current types.KnowledgeBase
 		require.NoError(t, db.Where("id=?", kb.ID).Take(&current).Error)
 		require.True(t, current.IndexingStrategy.GraphEnabled)
-		require.Equal(t, required, current.IndexingStrategy.GraphRequired)
-		require.Equal(t, template.ExtractConfig, current.ExtractConfig)
+		require.Equal(t, !required, current.IndexingStrategy.GraphRequired)
+		require.Equal(t, kb.ExtractConfig, current.ExtractConfig)
 		require.Equal(t, "graph-model", current.SummaryModelID)
-		require.Equal(t, 1234, current.ChunkingConfig.ChunkSize)
+		require.Equal(t, 567, current.ChunkingConfig.ChunkSize)
 		require.Equal(t, kb.Name, current.Name)
 		require.Equal(t, kb.Description, current.Description)
 		require.Equal(t, kb.CreatorID, current.CreatorID)

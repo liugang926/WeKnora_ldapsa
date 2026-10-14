@@ -88,6 +88,21 @@ func (s *NextcloudOnboardingStore) beginOnboardingTemplateRead(ctx context.Conte
 	return s.beginOnboardingConfigurationRead(ctx, c, req.ActorDirectoryID, req.ActorObjectGUID, c.TenantID, c.TemplateKBID, lineage, nil, &copy, "")
 }
 
+func (s *NextcloudOnboardingStore) beginOnboardingExistingConfigurationRead(ctx context.Context, c types.NextcloudOnboardingCredential, req types.NextcloudOnboardingRequest) (*NextcloudOnboardingConfigurationRead, error) {
+	if req.Mode != "existing" || req.KnowledgeBaseID == "" {
+		return nil, ErrNextcloudOnboardingDenied
+	}
+	if _, err := onboardingBlankTargetMetadata(s.db.WithContext(ctx), c.TenantID, req.KnowledgeBaseID); err != nil {
+		return nil, err
+	}
+	_, lineage, err := onboardingConfigurationMetadata(s.db.WithContext(ctx), c.TenantID, req.KnowledgeBaseID)
+	if err != nil {
+		return nil, err
+	}
+	copy := req
+	return s.beginOnboardingConfigurationRead(ctx, c, req.ActorDirectoryID, req.ActorObjectGUID, c.TenantID, req.KnowledgeBaseID, lineage, nil, &copy, "")
+}
+
 func (s *NextcloudOnboardingStore) beginOnboardingConfigurationRead(ctx context.Context, c types.NextcloudOnboardingCredential, dir, guid string, tenant uint64, kb string, lineage *types.SourceLineage, op *types.NextcloudOnboardingOperation, req *types.NextcloudOnboardingRequest, dsID string) (*NextcloudOnboardingConfigurationRead, error) {
 	if ctx == nil || lineage.RequireComplete() != nil {
 		return nil, types.ErrSourceLineageUnknown
@@ -273,9 +288,19 @@ func (r *NextcloudOnboardingConfigurationRead) checkAuthority(tx *gorm.DB, ctx c
 		if err != nil || config == nil || config.Settings["onboarding_operation_id"] != op.OperationID {
 			return ErrKnowledgeInputChanged
 		}
-	} else if r.request == nil || r.kb != c.TemplateKBID || r.tenant != c.TenantID || r.request.ActorDirectoryID != r.directory || r.request.ActorObjectGUID != r.guid || r.request.ProcessingTemplateID != c.TemplateKBID {
-		return ErrNextcloudOnboardingDenied
+	} else {
+		if r.request == nil || r.tenant != c.TenantID || r.request.ActorDirectoryID != r.directory || r.request.ActorObjectGUID != r.guid || r.request.ProcessingTemplateID != c.TemplateKBID {
+			return ErrNextcloudOnboardingDenied
+		}
+		expected := c.TemplateKBID
+		if r.request.Mode == "existing" {
+			expected = r.request.KnowledgeBaseID
+		}
+		if r.kb != expected {
+			return ErrNextcloudOnboardingDenied
+		}
 	}
+
 	origin, lineage, err := onboardingConfigurationMetadata(tx, r.tenant, r.kb)
 	if err != nil {
 		return err

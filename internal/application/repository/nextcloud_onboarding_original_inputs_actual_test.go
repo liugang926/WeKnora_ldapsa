@@ -257,16 +257,31 @@ func TestNextcloudOnboardingActualIndependentConfigurationAndScopedNameProducer(
 	require.Equal(t, op.RequestSHA256, actual.Producer.RequestSHA256)
 	require.Equal(t, onboardingActualGUID, actual.Producer.ActorObjectGUID)
 	require.Equal(t, pair.OperationID, actual.Producer.OperationID)
-	// A blank legacy name is not configuration input. Full replacement must not
-	// read it or create a display origin for retained, unproved old text.
+	// A legacy configuration without an original receipt is refused. A later
+	// explicit configuration producer must not certify its unrelated old name.
 	legacy := &types.KnowledgeBase{ID: "onboarding-actual-legacy-name", TenantID: 7, Type: types.KnowledgeBaseTypeDocument, Name: "Unproved retained legacy name"}
 	require.NoError(t, f.db.Create(legacy).Error)
 	existing := f.request("Ignored requested name")
 	existing.Mode = "existing"
 	existing.KnowledgeBaseID = legacy.ID
+	_, err = f.onboarding.Reserve(context.Background(), f.credential, existing)
+	require.Error(t, err, "unknown legacy configuration must remain unselectable")
+	storage := "onboarding-actual-storage"
+	replacement := &types.KnowledgeBase{ID: legacy.ID, TenantID: 7, Name: legacy.Name, StorageBackendID: &storage, Type: types.KnowledgeBaseTypeDocument, EmbeddingModelID: "onboarding-actual-embedding", IndexingStrategy: types.DefaultIndexingStrategy()}
+	replacement.ChunkingConfig.ChunkSize = 321
+	require.NoError(t, f.store.ReplaceKnowledgeBaseConfigurationWithInput(WithIndependentKnowledgeInput(f.admin), replacement))
+	beforeOrigin, beforeLineage, err := onboardingConfigurationMetadata(f.db, 7, legacy.ID)
+	require.NoError(t, err)
 	result, err := f.onboarding.Reserve(context.Background(), f.credential, existing)
 	require.NoError(t, err)
 	require.Equal(t, legacy.ID, result.KnowledgeBaseID)
+	afterOrigin, afterLineage, err := onboardingConfigurationMetadata(f.db, 7, legacy.ID)
+	require.NoError(t, err)
+	require.Equal(t, beforeOrigin, afterOrigin)
+	require.Equal(t, beforeLineage, afterLineage)
+	kept, err := onboardingConfigurationProjection(f.db, 7, legacy.ID)
+	require.NoError(t, err)
+	require.Equal(t, 321, kept.ChunkingConfig.ChunkSize)
 	var nameCount int64
 	require.NoError(t, f.db.Table("knowledge_display_input_origins").Where("kind='kb-name' AND row_id=?", legacy.ID).Count(&nameCount).Error)
 	require.Zero(t, nameCount)

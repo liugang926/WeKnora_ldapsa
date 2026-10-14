@@ -24,7 +24,7 @@ func TestNextcloudRootMigrationClosesLeaseIDsPreservesContentEpochAndRetries(t *
 	db, store, c := onboardingDB(t)
 	ctx := context.Background()
 	kb := freshOnboardingKB("root-lease")
-	require.NoError(t, db.Create(&kb).Error)
+	createOnboardingTemplate(t, db, &kb)
 	op, err := store.Reserve(ctx, c, onboardingRequest(c, uuid.NewString(), kb.ID))
 	require.NoError(t, err)
 	activateOnboarding(t, db, store, op)
@@ -106,7 +106,7 @@ func TestNextcloudTargetMigrationIsOneWayAndWaitsForCompleteManifest(t *testing.
 	ops := []types.NextcloudOnboardingOperation{}
 	for _, id := range []string{"old-target", "new-target"} {
 		kb := freshOnboardingKB(id)
-		require.NoError(t, db.Create(&kb).Error)
+		createOnboardingTemplate(t, db, &kb)
 		op, err := store.Reserve(ctx, c, onboardingRequest(c, uuid.NewString(), id))
 		require.NoError(t, err)
 		ops = append(ops, op)

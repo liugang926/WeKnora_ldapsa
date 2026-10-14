@@ -10,8 +10,8 @@ import (
 	"gorm.io/gorm/clause"
 )
 
-// Every digest-bearing processing field is replaced, including the enrichment,
-// FAQ and wiki fields previously missed by the blank-target projection. Names,
+// New creation copies every digest-bearing processing field, including enrichment,
+// FAQ and wiki controls. Existing legal targets keep their actual configuration. Names,
 // descriptions, generated profiles and runtime counters are never template input.
 var onboardingProcessingFields = []string{"chunking_config", "image_processing_config", "embedding_model_id", "summary_model_id", "vlm_config", "asr_config", "extract_config", "faq_config", "question_generation_config", "auto_tag_config", "profile_config", "wiki_config", "indexing_strategy", "enrichment_templates"}
 
@@ -56,11 +56,44 @@ func cloneOnboardingProcessingConfiguration(template *types.KnowledgeBase, id st
 		StorageBackendID: template.StorageBackendID, VectorStoreID: template.VectorStoreID, ExtractConfig: template.ExtractConfig, FAQConfig: template.FAQConfig, QuestionGenerationConfig: template.QuestionGenerationConfig, AutoTagConfig: template.AutoTagConfig, ProfileConfig: template.ProfileConfig, WikiConfig: template.WikiConfig, IndexingStrategy: template.IndexingStrategy, EnrichmentTemplates: template.EnrichmentTemplates}
 }
 func writeOnboardingConfigurationClone(ctx context.Context, tx *gorm.DB, c types.NextcloudOnboardingCredential, req types.NextcloudOnboardingRequest, actor string, read *NextcloudOnboardingConfigurationRead) (*types.KnowledgeBase, error) {
-	// This writer runs after durable base-DB leases have committed. All current
-	// rows and exact leases are rechecked through this transaction, without a
-	// nested connection/renew/acquire operation (also works with a pool of one).
+	// Every original body read follows actual authority and committed physical
+	// leases; this transaction never acquires/renews through a second connection.
 	if err := read.checkInTx(ctx, tx); err != nil {
 		return nil, err
+	}
+	if req.Mode == "existing" {
+		if q := tx.Exec("UPDATE knowledge_bases SET ever_had_nextcloud_source=ever_had_nextcloud_source WHERE tenant_id=? AND id=? AND deleted_at IS NULL", c.TenantID, req.KnowledgeBaseID); q.Error != nil || q.RowsAffected != 1 {
+			return nil, ErrNextcloudKBBlankUnverified
+		}
+		if _, err := onboardingBlankTargetMetadata(tx, c.TenantID, req.KnowledgeBaseID); err != nil {
+			return nil, err
+		}
+		if err := requireNextcloudTargetOpenInTx(tx, c.TenantID, req.KnowledgeBaseID); err != nil {
+			return nil, err
+		}
+		actual, err := onboardingConfigurationProjection(tx, c.TenantID, req.KnowledgeBaseID)
+		if err != nil {
+			return nil, err
+		}
+		digest, err := knowledgeConfigurationOriginDigest(actual)
+		if err != nil {
+			return nil, err
+		}
+		if digest != read.origin.InputDigest {
+			return nil, ErrKnowledgeInputChanged
+		}
+		if _, err := readKnowledgeConfigurationOrigin(tx.WithContext(ctx), actual); err != nil {
+			return nil, err
+		}
+		if err := validateOnboardingTemplate(tx, actual); err != nil {
+			return nil, err
+		}
+		if err := read.checkInTx(ctx, tx); err != nil {
+			return nil, err
+		}
+		// PRD §5 preserves the target ID and every already legal configuration
+		// field. No template bytes, name, storage selection or origin is rewritten.
+		return actual, nil
 	}
 	template, err := onboardingConfigurationProjection(tx, c.TenantID, c.TemplateKBID)
 	if err != nil {
@@ -80,56 +113,20 @@ func writeOnboardingConfigurationClone(ctx context.Context, tx *gorm.DB, c types
 	if err != nil {
 		return nil, err
 	}
-	var target *types.KnowledgeBase
-	if req.Mode == "create" {
-		target = cloneOnboardingProcessingConfiguration(template, uuid.NewString(), c.TenantID)
-		target.Name = req.Name
-		target.CreatorID = actor
-		target.CreatedAt = time.Now().UTC()
-		target.UpdatedAt = target.CreatedAt
-		create := tx
-		if actor == "" {
-			create = create.Omit("creator_id")
-		}
-		if err := create.Create(target).Error; err != nil {
-			return nil, err
-		}
-		if err := admitOnboardingKnowledgeBaseName(tx, req, c, target); err != nil {
-			return nil, err
-		}
-	} else {
-		if q := tx.Exec("UPDATE knowledge_bases SET ever_had_nextcloud_source=ever_had_nextcloud_source WHERE tenant_id=? AND id=? AND deleted_at IS NULL", c.TenantID, req.KnowledgeBaseID); q.Error != nil || q.RowsAffected != 1 {
-			return nil, ErrNextcloudKBBlankUnverified
-		}
-		if err := requireNextcloudTargetOpenInTx(tx, c.TenantID, req.KnowledgeBaseID); err != nil {
-			return nil, err
-		}
-		blank, err := onboardingBlankTargetMetadata(tx, c.TenantID, req.KnowledgeBaseID)
-		if err != nil {
-			return nil, err
-		}
-		binding := func(p *string) string {
-			if p == nil {
-				return ""
-			}
-			return *p
-		}
-		if binding(blank.VectorStoreID) != binding(template.VectorStoreID) {
-			return nil, ErrNextcloudOnboardingConflict
-		}
-		target = cloneOnboardingProcessingConfiguration(template, blank.ID, blank.TenantID)
-		// Concrete approved storage-backend selection is retained as a control ID.
-		// Deprecated provider/COS configuration is reset by code rather than copied
-		// outside the processing-origin digest. No old target field is certified as
-		// independent and no existing name is read or re-labelled.
-		fields := append(append([]string{}, onboardingProcessingFields...), "storage_backend_id", "storage_provider_config", "cos_config")
-		q := tx.Model(&types.KnowledgeBase{}).Where("tenant_id=? AND id=? AND deleted_at IS NULL", c.TenantID, target.ID).Select(fields).Updates(target)
-		if q.Error != nil {
-			return nil, q.Error
-		}
-		if q.RowsAffected != 1 {
-			return nil, ErrNextcloudOnboardingConflict
-		}
+	target := cloneOnboardingProcessingConfiguration(template, uuid.NewString(), c.TenantID)
+	target.Name = req.Name
+	target.CreatorID = actor
+	target.CreatedAt = time.Now().UTC()
+	target.UpdatedAt = target.CreatedAt
+	create := tx
+	if actor == "" {
+		create = create.Omit("creator_id")
+	}
+	if err := create.Create(target).Error; err != nil {
+		return nil, err
+	}
+	if err := admitOnboardingKnowledgeBaseName(tx, req, c, target); err != nil {
+		return nil, err
 	}
 	actual, err := onboardingConfigurationProjection(tx, c.TenantID, target.ID)
 	if err != nil {

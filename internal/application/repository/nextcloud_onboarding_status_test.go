@@ -13,7 +13,7 @@ func TestNextcloudOnboardingOperationNotFoundIsOpaqueAndScoped(t *testing.T) {
 	db, store, credential := onboardingDB(t)
 	ctx := context.Background()
 	kb := freshOnboardingKB(uuid.NewString())
-	require.NoError(t, db.Create(&kb).Error)
+	createOnboardingTemplate(t, db, &kb)
 	op, err := store.Reserve(ctx, credential, onboardingRequest(credential, uuid.NewString(), kb.ID))
 	require.NoError(t, err)
 	_, err = store.Operation(ctx, credential, uuid.NewString())

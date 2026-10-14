@@ -175,7 +175,11 @@ func (s *NextcloudOnboardingStore) Reserve(ctx context.Context, c types.Nextclou
 	var read *NextcloudOnboardingConfigurationRead
 	if errors.Is(replay, gorm.ErrRecordNotFound) {
 		var err error
-		read, err = s.beginOnboardingTemplateRead(ctx, c, req)
+		if req.Mode == "existing" {
+			read, err = s.beginOnboardingExistingConfigurationRead(ctx, c, req)
+		} else {
+			read, err = s.beginOnboardingTemplateRead(ctx, c, req)
+		}
 		if err != nil {
 			return out, err
 		}

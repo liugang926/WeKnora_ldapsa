@@ -29,7 +29,7 @@ func TestNextcloudTargetDeletedTenantTransactionRetainsExitEvidence(t *testing.T
 	var operations []types.NextcloudOnboardingOperation
 	for _, id := range []string{"delete-tenant-one", "delete-tenant-two"} {
 		kb := freshOnboardingKB(id)
-		require.NoError(t, db.Create(&kb).Error)
+		createOnboardingTemplate(t, db, &kb)
 		op, err := store.Reserve(ctx, c, onboardingRequest(c, uuid.NewString(), id))
 		require.NoError(t, err)
 		activateOnboarding(t, db, store, op)
@@ -93,7 +93,7 @@ func TestNextcloudTargetDeletedKBIsExactAndMissingIsNotDeletion(t *testing.T) {
 	var ops []types.NextcloudOnboardingOperation
 	for _, id := range []string{"delete-kb", "keep-kb"} {
 		kb := freshOnboardingKB(id)
-		require.NoError(t, db.Create(&kb).Error)
+		createOnboardingTemplate(t, db, &kb)
 		op, err := store.Reserve(ctx, c, onboardingRequest(c, uuid.NewString(), id))
 		require.NoError(t, err)
 		activateOnboarding(t, db, store, op)
@@ -130,7 +130,7 @@ func TestNextcloudTargetDeleteUnknownLegacySourceRollsBack(t *testing.T) {
 	db, _, _ := onboardingDB(t)
 	ctx := context.Background()
 	kb := freshOnboardingKB("legacy-source")
-	require.NoError(t, db.Create(&kb).Error)
+	createOnboardingTemplate(t, db, &kb)
 	require.NoError(t, db.Create(&types.DataSource{ID: "legacy", TenantID: 7, KnowledgeBaseID: kb.ID, Type: types.ConnectorTypeNextcloud, Status: types.DataSourceStatusPaused}).Error)
 	require.Error(t, repo.NewTenantRepository(db).DeleteTenant(ctx, 7))
 	var tenant types.Tenant
@@ -148,7 +148,7 @@ func TestNextcloudTargetPositiveDeletedAtObservationRepairsPreHookFact(t *testin
 	db, store, c := onboardingDB(t)
 	ctx := context.Background()
 	kb := freshOnboardingKB("positive-delete-observation")
-	require.NoError(t, db.Create(&kb).Error)
+	createOnboardingTemplate(t, db, &kb)
 	op, err := store.Reserve(ctx, c, onboardingRequest(c, uuid.NewString(), kb.ID))
 	require.NoError(t, err)
 	activateOnboarding(t, db, store, op)
@@ -177,7 +177,7 @@ func TestNextcloudTenantDeletedAfterKBClosureKeepsOriginalTargetReceipt(t *testi
 	db, store, c := onboardingDB(t)
 	ctx := context.Background()
 	kb := freshOnboardingKB("kb-before-tenant")
-	require.NoError(t, db.Create(&kb).Error)
+	createOnboardingTemplate(t, db, &kb)
 	op, err := store.Reserve(ctx, c, onboardingRequest(c, uuid.NewString(), kb.ID))
 	require.NoError(t, err)
 	activateOnboarding(t, db, store, op)
@@ -212,7 +212,7 @@ func TestNextcloudRetiredHistoricalOperationObservesOnlyDeletedOwner(t *testing.
 	db, store, c := onboardingDB(t)
 	ctx := context.Background()
 	kb := freshOnboardingKB("historical-retired")
-	require.NoError(t, db.Create(&kb).Error)
+	createOnboardingTemplate(t, db, &kb)
 	op, err := store.Reserve(ctx, c, onboardingRequest(c, uuid.NewString(), kb.ID))
 	require.NoError(t, err)
 	require.NoError(t, db.Model(&types.NextcloudOnboardingOperation{}).Where("operation_id=?", op.OperationID).Update("state", "retired").Error)
