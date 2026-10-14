@@ -150,6 +150,7 @@ func TestNextcloudProcessedLiveHTTPReadAndRevocation(t *testing.T) {
 		{"preview", "/knowledge/" + input.KnowledgeID + "/preview", true},
 		{"download", "/knowledge/" + input.KnowledgeID + "/download", true},
 	}
+	sourceSentinels := []string{"Alice", "Bob", "Project Cedar"}
 	checkJWT := func(stage string, status int, bearer string, authenticated bool) {
 		if jwtRouter == nil {
 			return
@@ -175,11 +176,17 @@ func TestNextcloudProcessedLiveHTTPReadAndRevocation(t *testing.T) {
 						sum := sha256.Sum256(w.Body.Bytes())
 						require.Equal(t, input.BodySHA256, hex.EncodeToString(sum[:]))
 						require.Equal(t, "private, no-store", w.Header().Get("Cache-Control"))
+						for _, sentinel := range sourceSentinels {
+							require.Contains(t, w.Body.String(), sentinel)
+						}
 					} else {
 						require.Contains(t, w.Body.String(), input.KnowledgeID)
 					}
 				} else {
 					require.NotContains(t, w.Body.String(), input.KnowledgeID)
+					for _, sentinel := range sourceSentinels {
+						require.NotContains(t, w.Body.String(), sentinel)
+					}
 				}
 			})
 		}
@@ -212,6 +219,9 @@ func TestNextcloudProcessedLiveHTTPReadAndRevocation(t *testing.T) {
 			router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, route.URL, nil))
 			require.Equal(t, http.StatusForbidden, w.Code, w.Body.String())
 			require.NotContains(t, w.Body.String(), input.KnowledgeID)
+			for _, sentinel := range sourceSentinels {
+				require.NotContains(t, w.Body.String(), sentinel)
+			}
 		})
 	}
 	human = true
@@ -226,6 +236,9 @@ func TestNextcloudProcessedLiveHTTPReadAndRevocation(t *testing.T) {
 			router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, route.URL, nil))
 			require.Equal(t, http.StatusForbidden, w.Code, w.Body.String())
 			require.NotContains(t, w.Body.String(), input.KnowledgeID)
+			for _, sentinel := range sourceSentinels {
+				require.NotContains(t, w.Body.String(), sentinel)
+			}
 		})
 	}
 	if t.Failed() {

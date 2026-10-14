@@ -80,6 +80,7 @@ func runDocumentGraphPipeline(t *testing.T, path string, inspect ...func(*machin
 	}
 
 	db := m.f.db
+	installDocumentLiveAuthSchema(t, db)
 	// Collection reads require the same membership/ABA checkpoint migration
 	// as the normal app, before document creation starts updating the scope.
 	collectionDDL, err := os.ReadFile("../../../migrations/sqlite/000058_knowledge_collection_checkpoints.up.sql")
@@ -239,7 +240,12 @@ func runDocumentGraphPipeline(t *testing.T, path string, inspect ...func(*machin
 			require.NoError(t, os.WriteFile(path+".http-input", encoded, 0600))
 		}
 		require.NoError(t, os.WriteFile(path+".access-ready", []byte("ready"), 0600))
-		require.Eventually(t, func() bool { _, err := os.Stat(path + ".revoked"); return err == nil }, 90*time.Second, 100*time.Millisecond)
+		revokeWait := 90 * time.Second
+		if os.Getenv("WEKNORA_DOCUMENT_GRAPH_JWT") == "1" {
+			// HTTP positives get 90s, followed by NC's bounded revoke command.
+			revokeWait = 150 * time.Second
+		}
+		require.Eventually(t, func() bool { _, err := os.Stat(path + ".revoked"); return err == nil }, revokeWait, 100*time.Millisecond)
 		require.Error(t, output.Check(m.f.ctx, []*types.Knowledge{row}), "retained document output must recheck current source access")
 		require.Error(t, chunks.Check(m.f.ctx, snapshot), "retained chunks must recheck current source access")
 		_, err = NewKnowledgeOutputAuthorizer(m.f.store, m.f.guard).Begin(m.f.ctx, []*types.Knowledge{row})

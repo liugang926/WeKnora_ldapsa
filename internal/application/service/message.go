@@ -910,7 +910,7 @@ func normalizeArtifactFileTypes(in []string) []string {
 // SearchMessages searches messages by keyword and/or vector similarity across all sessions of the current tenant.
 // Vector search is delegated to the chat history knowledge base's HybridSearch (configured via ChatHistoryConfig).
 func (s *messageService) SearchMessages(ctx context.Context, params *types.MessageSearchParams) (*types.MessageSearchResult, error) {
-	logger.Infof(ctx, "Start searching messages, query: %s, mode: %s", params.Query, params.Mode)
+	logger.Infof(ctx, "Start searching messages, mode: %s", params.Mode)
 
 	tenantID := types.MustTenantIDFromContext(ctx)
 
