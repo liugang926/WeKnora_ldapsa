@@ -252,7 +252,14 @@ func TestNextcloudProcessedLiveHTTPReadAndRevocation(t *testing.T) {
 		return
 	}
 	require.NoError(t, os.WriteFile(path+".http-positive", []byte("ready"), 0600))
-	require.Eventually(t, func() bool { _, err := os.Stat(path + ".revoked"); return err == nil }, 60*time.Second, 100*time.Millisecond)
+	revocationMarker := path + ".revoked"
+	if os.Getenv("WEKNORA_DOCUMENT_GRAPH_HISTORY_VECTOR") == "1" {
+		// The two test binaries share one SQLite file. Finish JWT denial
+		// requests before the producer's fresh denial requests, so their
+		// write transactions do not compete during this sequential profile.
+		revocationMarker = path + ".http-revoked"
+	}
+	require.Eventually(t, func() bool { _, err := os.Stat(revocationMarker); return err == nil }, 60*time.Second, 100*time.Millisecond)
 	for _, route := range routes {
 		t.Run("revoked_"+route.Name, func(t *testing.T) {
 			w := &closeNotifyRecorder{ResponseRecorder: httptest.NewRecorder()}
@@ -275,6 +282,9 @@ func TestNextcloudProcessedLiveHTTPReadAndRevocation(t *testing.T) {
 	}
 	if t.Failed() {
 		return
+	}
+	if os.Getenv("WEKNORA_DOCUMENT_GRAPH_HISTORY_VECTOR") == "1" {
+		require.NoError(t, os.WriteFile(path+".http-revocation-checked", []byte("passed"), 0600))
 	}
 	// The producer retains its own output guards; only its pre-existing lease
 	// IDs may remain. Newly acquired HTTP leases must all be released.

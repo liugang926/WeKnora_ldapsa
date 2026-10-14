@@ -144,12 +144,12 @@ func documentLiveHistoryVector(t *testing.T, m *machinePipelineFixture, live *do
 		defer CloseMessageMaterialOutputBoundary(current)
 		before := models.queries.Load()
 		result, err := history.messages.SearchMessages(current, &types.MessageSearchParams{Query: query, Mode: mode, Limit: 3, SessionIDs: []string{history.session.ID}})
-		require.Greater(t, models.queries.Load(), before, "real BGE query provider must run in each vector/hybrid attempt")
 		if revoked {
 			require.ErrorIs(t, err, access.ErrNextcloudPublicationDenied, "known actual NC revocation is an explicit vector/hybrid error, never complete zero success")
 			require.Nil(t, result)
 			return
 		}
+		require.Greater(t, models.queries.Load(), before, "successful vector/hybrid search must use the real BGE query provider")
 		require.NoError(t, err)
 		require.Equal(t, 1, result.Total)
 		require.Len(t, result.Items, 1)

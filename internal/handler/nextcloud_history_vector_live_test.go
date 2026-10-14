@@ -107,7 +107,6 @@ func documentHistoryVectorHTTPCheck(t *testing.T, router *gin.Engine, db *gorm.D
 				before := models.queries.Load()
 				response := httptest.NewRecorder()
 				router.ServeHTTP(response, request)
-				require.Greater(t, models.queries.Load(), before, "JWT search must query actual BGE via production model service")
 				if revoked {
 					require.Equal(t, http.StatusForbidden, response.Code, "known NC share deletion must be explicit denial, never 200/zero; 503 is incomplete verification and cannot pass acceptance")
 					for _, privateText := range []string{"Alice", "Bob", "Project Cedar"} {
@@ -115,6 +114,7 @@ func documentHistoryVectorHTTPCheck(t *testing.T, router *gin.Engine, db *gorm.D
 					}
 					return
 				}
+				require.Greater(t, models.queries.Load(), before, "successful JWT search must query actual BGE via production model service")
 				require.Equal(t, http.StatusOK, response.Code)
 				var result struct {
 					Success bool                      `json:"success"`
