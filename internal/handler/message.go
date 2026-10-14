@@ -85,6 +85,9 @@ func messageHistoryReadError(err error) error {
 	if stderrors.Is(err, access.ErrNextcloudPublicationDenied) {
 		return errors.NewForbiddenError("Current Nextcloud file access is required")
 	}
+	if messageHistoryStorageUnavailable(err) {
+		return errors.NewServiceUnavailableError("Saved message storage is unavailable")
+	}
 	return errors.NewInternalServerError(err.Error())
 }
 
