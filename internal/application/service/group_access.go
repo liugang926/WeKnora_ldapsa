@@ -25,7 +25,38 @@ type groupAccessService struct {
 	repo             interfaces.GroupAccessRepository
 	invalidator      interfaces.PermissionInvalidator
 	directoryRuntime interfaces.DirectoryRuntimeService
+	userEligibility  func(context.Context, string) error
 	now              func() time.Time
+}
+
+// ConfigureGroupAccessUserEligibility rechecks the live user and directory
+// state at resource execution time. Workers have no JWT to validate, and a
+// captured workspace role must never keep a disabled or stale AD user alive.
+func ConfigureGroupAccessUserEligibility(
+	groupAccess interfaces.GroupAccessService,
+	users interfaces.UserService,
+) {
+	impl, ok := groupAccess.(*groupAccessService)
+	userImpl, userOK := users.(*userService)
+	if !ok || !userOK {
+		return
+	}
+	impl.userEligibility = func(ctx context.Context, userID string) error {
+		user, err := userImpl.userRepo.GetUserByID(ctx, userID)
+		if err != nil {
+			return fmt.Errorf("load executing user: %w", err)
+		}
+		if user == nil || !user.IsActive {
+			return ErrResourceAccessDenied
+		}
+		if err := userImpl.validateUserSessionEligibility(ctx, user); err != nil {
+			if errors.Is(err, ErrDirectoryAccessSuspended) {
+				return fmt.Errorf("%w: directory identity suspended", ErrResourceAccessDenied)
+			}
+			return err
+		}
+		return nil
+	}
 }
 
 // NewGroupAccessService constructs the group and resource authorization service.
@@ -72,6 +103,14 @@ func (s *groupAccessService) EffectiveTenantRole(
 	if strings.TrimSpace(userID) == "" || tenantID == 0 {
 		return result, nil
 	}
+	if s.userEligibility != nil && !s.directoryModuleDisabled(ctx) {
+		if err := s.userEligibility(ctx, userID); err != nil {
+			if errors.Is(err, ErrResourceAccessDenied) {
+				return result, nil
+			}
+			return result, err
+		}
+	}
 	direct, err := s.repo.GetDirectTenantRole(ctx, userID, tenantID)
 	if err != nil {
 		return result, err
@@ -108,6 +147,14 @@ func (s *groupAccessService) ListEffectiveTenantRoles(
 	userID string,
 	now time.Time,
 ) ([]types.EffectiveTenantRole, error) {
+	if s.userEligibility != nil && !s.directoryModuleDisabled(ctx) {
+		if err := s.userEligibility(ctx, userID); err != nil {
+			if errors.Is(err, ErrResourceAccessDenied) {
+				return []types.EffectiveTenantRole{}, nil
+			}
+			return nil, err
+		}
+	}
 	roles, err := s.repo.ListEffectiveTenantRoles(ctx, strings.TrimSpace(userID), now)
 	if err != nil {
 		return nil, err
@@ -268,6 +315,18 @@ func (s *groupAccessService) EffectivePermission(
 	if policy != nil {
 		mode = policy.Mode
 	}
+	if principal, ok := types.PrincipalFromContext(ctx); ok &&
+		principal.Type == types.PrincipalWebUser && !types.IsSyntheticUserID(principal.ID) &&
+		s.userEligibility != nil {
+		if err := s.userEligibility(ctx, principal.ID); err != nil {
+			if errors.Is(err, ErrResourceAccessDenied) {
+				return types.EffectiveResourcePermission{
+					Mode: mode, Action: action, Reason: "user_identity_suspended",
+				}, nil
+			}
+			return types.EffectiveResourcePermission{}, err
+		}
+	}
 	return s.effectivePermissionWithMode(ctx, tenantID, resourceType, resourceID, action, mode, now)
 }
 
@@ -287,8 +346,45 @@ func (s *groupAccessService) effectivePermissionWithMode(
 		return result, ErrInvalidResourcePolicy
 	}
 	if mode == types.ResourceAccessInherit {
-		// Inherit is an overlay no-op: the existing workspace/share/API-key
-		// authorizers remain authoritative, preserving pre-migration behaviour.
+		// HTTP admission already checks workspace/share authority. A human
+		// task continuing in its own workspace must check the current role
+		// again: its captured role and task write grant may outlive a group
+		// removal or downgrade. Cross-workspace inherited shares retain their
+		// existing admission grant instead of requiring source membership.
+		if types.IsBackgroundTask(ctx) {
+			principal, verified := types.PrincipalFromContext(ctx)
+			_, apiKey := types.TenantAPIKeyScopeFromContext(ctx)
+			if verified && !apiKey && principal.Type == types.PrincipalWebUser &&
+				!types.IsSyntheticUserID(principal.ID) {
+				caller := types.CallerFromContext(ctx)
+				if caller.UserID != "" && caller.UserID != principal.ID {
+					result.Reason = "workspace_membership_required"
+					return result, nil
+				}
+				if caller.TenantID == 0 || caller.TenantID == tenantID {
+					role, err := s.EffectiveTenantRole(ctx, principal.ID, tenantID, now)
+					if err != nil {
+						return result, err
+					}
+					result.EffectiveRole = role
+					if !role.Member {
+						result.Reason = "workspace_membership_required"
+						return result, nil
+					}
+					minimum := types.TenantRoleViewer
+					switch action {
+					case types.ResourceActionEdit:
+						minimum = types.TenantRoleContributor
+					case types.ResourceActionManage:
+						minimum = types.TenantRoleAdmin
+					}
+					if role.Role.Level() < minimum.Level() {
+						result.Reason = "workspace_role_required"
+						return result, nil
+					}
+				}
+			}
+		}
 		result.Allowed = true
 		result.Reason = "inherit_workspace_authorization"
 		return result, nil

@@ -11,6 +11,7 @@ defineProps<{
   downloadLoading?: boolean;
   canDownload?: boolean;
   canMutate?: boolean;
+  canEdit?: boolean;
   // When true the bar stays visible even with 0 selections, so users can exit
   // batch mode from here without selecting anything first.
   visible?: boolean;
@@ -62,7 +63,7 @@ const folderPickerVisible = ref(false);
             </span>
           </t-tooltip>
 
-          <t-popconfirm v-if="canMutate" theme="warning" :content="t('knowledgeBase.confirmBatchReparseDocument', { count })"
+          <t-popconfirm v-if="canEdit ?? canMutate" theme="warning" :content="t('knowledgeBase.confirmBatchReparseDocument', { count })"
             :confirm-btn="{ content: t('knowledgeBase.confirmBatchReparse'), theme: 'warning' }"
             :cancel-btn="{ content: t('common.cancel') }" placement="top" @confirm="emit('reparse')">
             <t-button theme="default" variant="outline" size="small"
@@ -72,14 +73,14 @@ const folderPickerVisible = ref(false);
             </t-button>
           </t-popconfirm>
 
-          <t-button v-if="canMutate" theme="default" variant="outline" size="small"
+          <t-button v-if="canEdit ?? canMutate" theme="default" variant="outline" size="small"
             :disabled="count === 0 || deleteLoading || reparseLoading || tagLoading || downloadLoading" :loading="tagLoading"
             @click="emit('batchTag')">
             <template #icon><t-icon name="tag" size="14px" /></template>
             {{ t('knowledgeBase.batchTag') }}
           </t-button>
 
-          <t-popup v-if="canMutate && showMoveToFolder" v-model:visible="folderPickerVisible" trigger="click"
+          <t-popup v-if="(canEdit ?? canMutate) && showMoveToFolder" v-model:visible="folderPickerVisible" trigger="click"
             placement="top" overlay-class-name="card-more" destroy-on-close>
             <t-button theme="default" variant="outline" size="small"
               :disabled="count === 0 || deleteLoading || reparseLoading || tagLoading || downloadLoading">

@@ -117,18 +117,53 @@ func validateConfig(config Config) error {
 }
 
 type productionConnection struct {
-	conn *ldap.Conn
+	conn         *ldap.Conn
+	socket       net.Conn
+	queryTimeout time.Duration
+	ctx          context.Context
 }
 
 func (c *productionConnection) Bind(username, password string) error {
+	if err := c.setQueryDeadline(); err != nil {
+		return err
+	}
+	defer c.clearQueryDeadline()
 	return c.conn.Bind(username, password)
 }
 
 func (c *productionConnection) Search(request *ldap.SearchRequest) (*ldap.SearchResult, error) {
+	if err := c.setQueryDeadline(); err != nil {
+		return nil, err
+	}
+	defer c.clearQueryDeadline()
 	return c.conn.Search(request)
 }
 
+func (c *productionConnection) setQueryDeadline() error {
+	if c.queryTimeout <= 0 {
+		return nil
+	}
+	// The library starts its request timer only after writing the entire
+	// packet. Bound socket reads and writes as well, including a peer that
+	// accepts a connection but stops reading before the request is sent.
+	deadline := time.Now().Add(c.queryTimeout)
+	if c.ctx != nil {
+		if requestDeadline, ok := c.ctx.Deadline(); ok && requestDeadline.Before(deadline) {
+			deadline = requestDeadline
+		}
+	}
+	return c.socket.SetDeadline(deadline)
+}
+
+func (c *productionConnection) clearQueryDeadline() {
+	_ = c.socket.SetDeadline(time.Time{})
+}
+
 func (c *productionConnection) Close() {
+	// go-ldap waits for its message loop before closing the connection. Close
+	// the transport first so a blocked socket write cannot delay cancellation
+	// (the library's request timeout only starts after that write completes).
+	_ = c.socket.Close()
 	_ = c.conn.Close()
 }
 
@@ -141,16 +176,42 @@ func defaultDialConnection(
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	dialer := &net.Dialer{Timeout: config.ConnectTimeout}
-	options := []ldap.DialOpt{ldap.DialWithDialer(dialer)}
-	if controller.TLSMode == TLSModeLDAPS {
-		options = append(options, ldap.DialWithTLSConfig(tlsConfig))
-	}
-	conn, err := ldap.DialURL(controller.URL, options...)
+	parsed, err := url.Parse(strings.TrimSpace(controller.URL))
 	if err != nil {
 		return nil, err
 	}
+	port := parsed.Port()
+	if port == "" {
+		port = "389"
+		if controller.TLSMode == TLSModeLDAPS {
+			port = "636"
+		}
+	}
+	address := net.JoinHostPort(parsed.Hostname(), port)
+	// DialURL does not accept a context. Dial the socket explicitly so request
+	// cancellation interrupts DNS, TCP and TLS negotiation, and one timeout
+	// bounds the complete connection setup rather than each stage separately.
+	connectCtx, cancel := context.WithTimeout(ctx, config.ConnectTimeout)
+	defer cancel()
+	dialer := &net.Dialer{Timeout: config.ConnectTimeout}
+	var socket net.Conn
+	if controller.TLSMode == TLSModeLDAPS {
+		tlsDialer := &tls.Dialer{NetDialer: dialer, Config: tlsConfig}
+		socket, err = tlsDialer.DialContext(connectCtx, "tcp", address)
+	} else {
+		socket, err = dialer.DialContext(connectCtx, "tcp", address)
+	}
+	if err != nil {
+		return nil, contextOrError(ctx, err)
+	}
+	conn := ldap.NewConn(socket, controller.TLSMode == TLSModeLDAPS)
+	conn.Start()
 	conn.SetTimeout(config.QueryTimeout)
+	rawSocket := socket
+	if tlsSocket, ok := socket.(*tls.Conn); ok {
+		rawSocket = tlsSocket.NetConn()
+	}
+	production := &productionConnection{conn: conn, socket: rawSocket, queryTimeout: config.QueryTimeout, ctx: ctx}
 	if controller.TLSMode == TLSModeStartTLS {
 		// go-ldap's request timeout bounds the StartTLS extended operation but
 		// not the subsequent TLS handshake itself. Run the whole upgrade behind
@@ -158,24 +219,32 @@ func defaultDialConnection(
 		// peer that accepts TCP then stalls during negotiation.
 		result := make(chan error, 1)
 		go func() { result <- conn.StartTLS(tlsConfig) }()
-		timer := time.NewTimer(config.ConnectTimeout)
-		defer timer.Stop()
 		var startTLSErr error
 		select {
 		case startTLSErr = <-result:
-		case <-ctx.Done():
-			_ = conn.Close()
-			return nil, ctx.Err()
-		case <-timer.C:
-			_ = conn.Close()
-			return nil, fmt.Errorf("StartTLS negotiation exceeded connection timeout %s", config.ConnectTimeout)
+		case <-connectCtx.Done():
+			// Interrupt both the extended operation and the TLS handshake before
+			// joining the upgrade goroutine. Joining also prevents Close racing
+			// go-ldap's replacement of its internal socket on successful upgrade.
+			_ = rawSocket.Close()
+			<-result
+			production.Close()
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+			return nil, fmt.Errorf("StartTLS negotiation exceeded connection timeout %s: %w",
+				config.ConnectTimeout, connectCtx.Err())
 		}
 		if startTLSErr != nil {
-			_ = conn.Close()
+			production.Close()
 			return nil, startTLSErr
 		}
 	}
-	return &productionConnection{conn: conn}, nil
+	if err := ctx.Err(); err != nil {
+		production.Close()
+		return nil, err
+	}
+	return production, nil
 }
 
 // Authenticate searches with the read-only service account, validates the
@@ -210,6 +279,9 @@ func (a *Adapter) Authenticate(
 
 		result, terminal, err := a.authenticateOnConnection(ctx, conn, identifier, password)
 		conn.Close()
+		if contextErr := ctx.Err(); contextErr != nil {
+			return nil, contextErr
+		}
 		if err == nil {
 			result.ControllerURL = controller.URL
 			return result, nil
@@ -306,7 +378,11 @@ func (a *Adapter) open(ctx context.Context, controller Controller) (ldapConnecti
 	if err != nil {
 		return nil, err
 	}
-	return a.dial(ctx, controller, tlsConfig, a.config)
+	conn, err := a.dial(ctx, controller, tlsConfig, a.config)
+	if err != nil {
+		return nil, contextOrError(ctx, err)
+	}
+	return newContextConnection(ctx, conn), nil
 }
 
 func isInvalidCredentials(err error) bool {

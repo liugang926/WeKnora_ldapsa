@@ -176,6 +176,10 @@ func (h *KnowledgeHandler) requireKBOwnershipOrAdmin(c *gin.Context, kbID string
 			return errors.NewForbiddenError("Directory group edit permission required for this knowledge base")
 		}
 	}
+	return h.requireKBLegacyOwnershipOrAdmin(c, kbID)
+}
+
+func (h *KnowledgeHandler) requireKBLegacyOwnershipOrAdmin(c *gin.Context, kbID string) error {
 	evalErr := middleware.EvaluateOwnershipOrRole(
 		c.Request.Context(),
 		h.cfg,
@@ -1582,7 +1586,7 @@ func (h *KnowledgeHandler) BatchDeleteKnowledge(c *gin.Context) {
 		c.Error(errors.NewForbiddenError("No permission to delete knowledge"))
 		return
 	}
-	if err := h.requireKBOwnershipOrAdmin(c, kbID); err != nil {
+	if err := h.requireKBLegacyOwnershipOrAdmin(c, kbID); err != nil {
 		c.Error(err)
 		return
 	}
@@ -2711,7 +2715,7 @@ func (h *KnowledgeHandler) MoveKnowledge(c *gin.Context) {
 		c.Error(errors.NewForbiddenError("No permission to access source knowledge base"))
 		return
 	}
-	if err := h.requireKBOwnershipOrAdmin(c, req.SourceKBID); err != nil {
+	if err := h.requireKBLegacyOwnershipOrAdmin(c, req.SourceKBID); err != nil {
 		c.Error(err)
 		return
 	}
@@ -2730,7 +2734,7 @@ func (h *KnowledgeHandler) MoveKnowledge(c *gin.Context) {
 		c.Error(errors.NewForbiddenError("No permission to access target knowledge base"))
 		return
 	}
-	if err := h.requireKBOwnershipOrAdmin(c, req.TargetKBID); err != nil {
+	if err := h.requireKBLegacyOwnershipOrAdmin(c, req.TargetKBID); err != nil {
 		c.Error(err)
 		return
 	}

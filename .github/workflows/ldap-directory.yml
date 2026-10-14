@@ -1,0 +1,76 @@
+name: LDAP directory
+
+on:
+  pull_request:
+    paths:
+      - "internal/infrastructure/directory/**"
+      - "internal/application/**"
+      - "internal/handler/**"
+      - "internal/middleware/**"
+      - "internal/router/**"
+      - "internal/config/**"
+      - "internal/types/**"
+      - "internal/database/**"
+      - "migrations/**"
+      - "tests/integration/ldap/**"
+      - "scripts/ldap/**"
+      - "go.mod"
+      - "go.sum"
+      - ".github/workflows/ldap-directory.yml"
+  push:
+    branches: [main]
+    paths:
+      - "internal/**"
+      - "migrations/**"
+      - "tests/integration/ldap/**"
+      - "scripts/ldap/**"
+      - "go.mod"
+      - "go.sum"
+      - ".github/workflows/ldap-directory.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  protocol:
+    name: Isolated LDAPS and StartTLS protocol
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - name: Run real LDAP wire tests
+        run: tests/integration/ldap/run.sh
+      - name: Check real AD acceptance helper syntax
+        run: bash -n scripts/ldap/acceptance-real-ad.sh
+
+  migrations:
+    name: PostgreSQL and SQLite directory migrations
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: paradedb/paradedb:v0.22.6-pg17@sha256:58bf87d2a6f1e72f56590b0f0ae1467e82c3f99ca203dde646672c8ac13148b2
+        env:
+          POSTGRES_PASSWORD: fixture-only
+          POSTGRES_DB: directory_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d directory_test"
+          --health-interval 2s --health-timeout 5s --health-retries 30
+    env:
+      LOG_FORMAT: ""
+      WEKNORA_MIGRATION_TEST_POSTGRES_DSN: postgres://postgres:fixture-only@localhost:5432/directory_test?sslmode=disable
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.26"
+          cache: true
+      - name: Test migration upgrade, constraints and rollback
+        run: go test -count=1 -timeout=5m -v ./internal/database

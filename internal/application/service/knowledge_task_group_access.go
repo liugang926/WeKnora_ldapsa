@@ -3,7 +3,6 @@ package service
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/Tencent/WeKnora/internal/types"
@@ -18,16 +17,7 @@ func backgroundTaskAuthorizationContext(
 	tenantID uint64,
 	initiator types.TaskInitiator,
 ) context.Context {
-	ctx = initiator.Apply(ctx)
-	ctx = types.WithCaller(ctx, types.Caller{
-		TenantID: tenantID,
-		UserID:   strings.TrimSpace(initiator.UserID),
-		Role:     initiator.Role,
-	})
-	if userID := strings.TrimSpace(initiator.UserID); userID != "" && !types.IsSyntheticUserID(userID) {
-		ctx = types.WithPrincipal(ctx, types.Principal{Type: types.PrincipalWebUser, ID: userID})
-	}
-	return types.WithExecutionTenant(ctx, tenantID)
+	return types.WithTaskAuthorization(ctx, tenantID, initiator)
 }
 
 func (s *knowledgeService) revalidateBackgroundKBAccess(
@@ -52,6 +42,28 @@ func (s *knowledgeService) revalidateBackgroundKBAccess(
 	}
 	if !permission.Allowed {
 		return fmt.Errorf("%w: knowledge base %s (%s)", ErrResourceAccessDenied, kbID, permission.Reason)
+	}
+	return nil
+}
+
+// Record terminal authorization failures separately from content writes. A
+// worker rejected before registering its normal finalizers must leave a clear
+// failure state instead of an indefinitely pending parse.
+func (s *knowledgeService) failKnowledgeAuthorization(ctx context.Context, knowledge *types.Knowledge) error {
+	if knowledge == nil {
+		return nil
+	}
+	if s.tracker().LatestAttempt(ctx, knowledge.ID) > attemptFromCtx(ctx) {
+		return nil
+	}
+	dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer cancel()
+	if err := s.repo.FailKnowledgeAuthorization(dctx, knowledge, false); err != nil {
+		return err
+	}
+	if attempt := attemptFromCtx(ctx); attempt > 0 {
+		s.tracker().FinalizeAttempt(dctx, knowledge.ID, attempt, types.SpanStatusFailed,
+			nil, "AUTHORIZATION_REVOKED", "processing permission revoked")
 	}
 	return nil
 }

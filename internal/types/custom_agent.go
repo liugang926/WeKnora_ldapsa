@@ -80,6 +80,8 @@ type CustomAgent struct {
 	// Created by user ID
 	CreatedBy string `yaml:"created_by" json:"created_by" gorm:"type:varchar(36)"`
 
+	GroupAccessPermission ResourcePermission `yaml:"-" json:"group_access_permission,omitempty" gorm:"-"`
+
 	// Agent configuration
 	Config CustomAgentConfig `yaml:"config" json:"config" gorm:"type:json"`
 

@@ -1481,6 +1481,14 @@ func (s *directoryRuntimeService) Login(
 	}
 	authenticated, err := adapter.Authenticate(ctx, identifier, password)
 	if err != nil {
+		// A live disabled/out-of-scope result can precede the scheduled sync.
+		// Refresh only through the complete snapshot path, which atomically
+		// disables identities and revokes their old sessions. Invalid passwords
+		// must never trigger additional directory authentication or sync work.
+		if (errors.Is(err, ldapdirectory.ErrUserDisabled) || errors.Is(err, ldapdirectory.ErrUserNotFound)) &&
+			s.directories != nil && directoryLoginSyncDue(directory, s.now().UTC()) {
+			_, _ = s.runSync(ctx, directoryLoginTrigger)
+		}
 		return nil, err
 	}
 	s.setActiveServer(authenticated.ControllerURL)

@@ -36,10 +36,12 @@ const authStore = useAuthStore();
 // 传下来（包含 KB creator / Admin / 组织分享 editor 三种来源），未
 // 传时按更严格的 Admin 兜底，避免 Viewer 看到一个会 403 的入口。
 const canDeleteGeneratedQuestion = computed(() => {
+  if (props.canDeleteKB === false) return false;
+  if (props.canDeleteKB === true) return true;
   if (props.canEditKB === true) return true;
   return authStore.hasRole('admin');
 });
-const canEditContent = canDeleteGeneratedQuestion;
+const canEditContent = computed(() => props.canEditKB === true || authStore.hasRole('admin'));
 
 type MetadataValueType = 'text' | 'number' | 'boolean' | 'null';
 interface MetadataDraftRow {
@@ -238,7 +240,7 @@ mermaid.initialize({
     topPadding: 50
   }
 });
-const props = defineProps(["visible", "details", "knowledgeType", "sourceInfo", "canEditKB", "canDownloadKB", "parse_status", "kbId"]);
+const props = defineProps(["visible", "details", "knowledgeType", "sourceInfo", "canEditKB", "canDeleteKB", "canDownloadKB", "parse_status", "kbId"]);
 const emit = defineEmits(["closeDoc", "getDoc", "questionDeleted", "summaryStateChange"]);
 
 const applySummaryState = (summaryStatus?: string, description?: string) => {

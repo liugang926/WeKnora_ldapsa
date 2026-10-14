@@ -415,12 +415,28 @@ type resourceAccessView struct {
 }
 
 type resourceAccessImpactView struct {
-	CurrentlyAllowed   int      `json:"currently_allowed"`
-	AllowedAfter       int      `json:"allowed_after"`
-	LosingAccess       int      `json:"losing_access"`
-	GainingAccess      int      `json:"gaining_access"`
-	UnaffectedManagers int      `json:"unaffected_managers"`
-	Warnings           []string `json:"warnings,omitempty"`
+	CurrentlyAllowed   int                         `json:"currently_allowed"`
+	AllowedAfter       int                         `json:"allowed_after"`
+	LosingAccess       int                         `json:"losing_access"`
+	GainingAccess      int                         `json:"gaining_access"`
+	UnaffectedManagers int                         `json:"unaffected_managers"`
+	Warnings           []string                    `json:"warnings,omitempty"`
+	EffectiveUsers     []resourceEffectiveUserView `json:"effective_users"`
+	EffectiveUserTotal int                         `json:"effective_users_total"`
+	Offset             int                         `json:"effective_users_offset"`
+	Limit              int                         `json:"effective_users_limit"`
+	Truncated          bool                        `json:"effective_users_truncated"`
+}
+
+// Permissions in inherited mode remain subject to the existing workspace and
+// resource ownership rules. "workspace" deliberately does not promise edit.
+type resourceEffectiveUserView struct {
+	UserID           string                     `json:"user_id"`
+	WorkspaceRole    types.TenantRole           `json:"workspace_role"`
+	CurrentlyAllowed bool                       `json:"currently_allowed"`
+	AllowedAfter     bool                       `json:"allowed_after"`
+	PermissionAfter  string                     `json:"permission_after"`
+	GroupMatches     []types.ResourceGroupMatch `json:"group_matches,omitempty"`
 }
 
 // GetResourceGroupAccess returns a resource's access mode and grants.
@@ -504,7 +520,8 @@ func (h *GroupAccessHandler) UpdateResourceGroupAccess(c *gin.Context) {
 		h.internalError(c, "set resource access policy", err)
 		return
 	}
-	if resourceType == types.GroupResourceTypeKnowledgeBase && h.resources != nil {
+	if request.Mode == types.ResourceAccessRestricted &&
+		resourceType == types.GroupResourceTypeKnowledgeBase && h.resources != nil {
 		if _, err := h.resources.RevokeAccessGrantsByKnowledgeBase(ctx, tenantID, resourceID); err != nil {
 			// Runtime capability checks still fail closed against the new policy;
 			// log the durable cleanup failure so an operator can retry the update.
@@ -535,6 +552,11 @@ func (h *GroupAccessHandler) PreviewResourceGroupAccess(c *gin.Context) {
 	if !ok {
 		return
 	}
+	offset, limit, err := resourcePreviewPagination(c)
+	if err != nil {
+		_ = c.Error(apperrors.NewValidationError(err.Error()))
+		return
+	}
 	var request resourceAccessUpdateRequest
 	if err := c.ShouldBindJSON(&request); err != nil {
 		_ = c.Error(
@@ -555,12 +577,26 @@ func (h *GroupAccessHandler) PreviewResourceGroupAccess(c *gin.Context) {
 		resourceID,
 		request.Mode,
 		validated,
+		offset,
+		limit,
 	)
 	if err != nil {
 		h.internalError(c, "preview resource group access", err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": impact})
+}
+
+func resourcePreviewPagination(c *gin.Context) (int, int, error) {
+	offset, err := strconv.Atoi(c.DefaultQuery("offset", "0"))
+	if err != nil || offset < 0 {
+		return 0, 0, errors.New("offset must be a non-negative integer")
+	}
+	limit, err := strconv.Atoi(c.DefaultQuery("limit", "100"))
+	if err != nil || limit < 1 || limit > 100 {
+		return 0, 0, errors.New("limit must be between 1 and 100")
+	}
+	return offset, limit, nil
 }
 
 type validatedResourceGrant struct {
@@ -712,11 +748,13 @@ func (h *GroupAccessHandler) previewResourceAccess(
 	resourceID string,
 	proposedMode types.ResourceAccessMode,
 	requested []validatedResourceGrant,
+	offset, limit int,
 ) (*resourceAccessImpactView, error) {
 	userIDs, err := h.groups.ListTenantUserIDs(ctx, tenantID)
 	if err != nil {
 		return nil, err
 	}
+	sort.Strings(userIDs)
 	existing, err := h.groups.ListResourceGroupGrants(ctx, tenantID, resourceType, resourceID)
 	if err != nil {
 		return nil, err
@@ -756,8 +794,13 @@ func (h *GroupAccessHandler) previewResourceAccess(
 	if resourceType == types.GroupResourceTypeAgent {
 		action = types.ResourceActionUse
 	}
-	impact := &resourceAccessImpactView{}
+	impact := &resourceAccessImpactView{
+		EffectiveUsers: make([]resourceEffectiveUserView, 0), Offset: offset, Limit: limit,
+	}
 	for _, userID := range userIDs {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		role, err := h.access.EffectiveTenantRole(ctx, userID, tenantID, now)
 		if err != nil {
 			return nil, err
@@ -766,7 +809,7 @@ func (h *GroupAccessHandler) previewResourceAccess(
 			continue
 		}
 		userCtx := types.WithCaller(
-			context.Background(),
+			ctx,
 			types.Caller{TenantID: tenantID, UserID: userID, Role: role.Role},
 		)
 		userCtx = types.WithPrincipal(
@@ -786,8 +829,9 @@ func (h *GroupAccessHandler) previewResourceAccess(
 		}
 		manager := role.Role == types.TenantRoleOwner || role.Role == types.TenantRoleAdmin
 		proposedAllowed := proposedMode == types.ResourceAccessInherit || manager
+		matches := allowedUsers[userID]
 		if proposedMode == types.ResourceAccessRestricted && !manager {
-			_, proposedAllowed = allowedUsers[userID]
+			proposedAllowed = len(matches) > 0
 		}
 		if current.Allowed {
 			impact.CurrentlyAllowed++
@@ -804,7 +848,19 @@ func (h *GroupAccessHandler) previewResourceAccess(
 		if manager && current.Allowed && proposedAllowed {
 			impact.UnaffectedManagers++
 		}
+		index := impact.EffectiveUserTotal
+		impact.EffectiveUserTotal++
+		if index >= offset && len(impact.EffectiveUsers) < limit {
+			impact.EffectiveUsers = append(impact.EffectiveUsers, resourceEffectiveUserView{
+				UserID: userID, WorkspaceRole: role.Role,
+				CurrentlyAllowed: current.Allowed, AllowedAfter: proposedAllowed,
+				PermissionAfter: previewPermissionAfter(resourceType, proposedMode, manager, matches),
+				GroupMatches:    matches,
+			})
+		}
 	}
+	impact.Truncated = offset < impact.EffectiveUserTotal &&
+		len(impact.EffectiveUsers) < impact.EffectiveUserTotal-offset
 	if proposedMode == types.ResourceAccessRestricted && len(proposed) == 0 {
 		impact.Warnings = append(
 			impact.Warnings,
@@ -833,8 +889,8 @@ func (h *GroupAccessHandler) proposedAllowedUsers(
 	ctx context.Context,
 	grants []validatedResourceGrant,
 	now time.Time,
-) (map[string]struct{}, error) {
-	allowed := make(map[string]struct{})
+) (map[string][]types.ResourceGroupMatch, error) {
+	allowed := make(map[string][]types.ResourceGroupMatch)
 	for _, grant := range grants {
 		// A stale directory pauses directory-derived access exactly like the
 		// request-time authorizer. The preview must not promise access that the
@@ -855,13 +911,51 @@ func (h *GroupAccessHandler) proposedAllowedUsers(
 				return nil, err
 			}
 			if identity != nil && identity.Status == types.DirectoryObjectActive &&
+				identity.DirectoryID == grant.directory.ID &&
 				identity.UserID != nil &&
 				*identity.UserID != "" {
-				allowed[*identity.UserID] = struct{}{}
+				allowed[*identity.UserID] = append(allowed[*identity.UserID], types.ResourceGroupMatch{
+					DirectoryID: grant.directory.ID, DirectoryGroupID: grant.group.ID,
+					GroupDisplayName: grant.group.DisplayName, Permission: grant.request.Permission,
+					MembershipSource: membership.Source, MembershipDepth: membership.Depth,
+				})
 			}
 		}
 	}
+	for userID := range allowed {
+		sort.SliceStable(allowed[userID], func(i, j int) bool {
+			left, right := allowed[userID][i], allowed[userID][j]
+			if left.DirectoryGroupID == right.DirectoryGroupID {
+				return left.Permission < right.Permission
+			}
+			return left.DirectoryGroupID < right.DirectoryGroupID
+		})
+	}
 	return allowed, nil
+}
+
+func previewPermissionAfter(
+	resourceType types.ResourceType,
+	mode types.ResourceAccessMode,
+	manager bool,
+	matches []types.ResourceGroupMatch,
+) string {
+	if mode == types.ResourceAccessInherit {
+		return "workspace"
+	}
+	if manager {
+		return string(types.ResourcePermissionEdit)
+	}
+	permission := "none"
+	for _, match := range matches {
+		if match.Permission == types.ResourcePermissionEdit {
+			return string(types.ResourcePermissionEdit)
+		}
+		if match.Permission.ValidFor(resourceType) {
+			permission = string(match.Permission)
+		}
+	}
+	return permission
 }
 
 func (h *GroupAccessHandler) resolveResource(

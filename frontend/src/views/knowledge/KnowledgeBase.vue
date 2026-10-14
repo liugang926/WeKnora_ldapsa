@@ -12,6 +12,7 @@ import { useUIStore } from '@/stores/ui';
 import { useOrganizationStore } from '@/stores/organization';
 import { useAuthStore } from '@/stores/auth';
 import { permissionCanEditKB, permissionCanManageKB } from '@/utils/kbPermission';
+import { hasResourceGroupEdit } from '@/utils/resourceGroupPermission';
 import { useChatResourcesStore } from '@/stores/chatResources';
 import { useEditorResourcesStore } from '@/stores/editorResources';
 import KnowledgeBaseEditorModal from './KnowledgeBaseEditorModal.vue';
@@ -291,7 +292,8 @@ const effectiveKBPermission = computed(() => orgStore.getKBPermission(kbId.value
 //
 // hasRole('contributor') is intentionally NOT here — being a Contributor
 // in a tenant does not by itself grant edit on someone else's KB.
-const canEdit = computed(() => {
+const canLegacyEdit = computed(() => {
+  if (kbInfo.value?.group_access_permission === 'read') return false;
   const permission = effectiveKBPermission.value;
   if (permission) return permissionCanEditKB(permission);
   if (isViaShare.value) return orgStore.canEditKB(kbId.value, false);
@@ -299,11 +301,14 @@ const canEdit = computed(() => {
   if (authStore.hasRole('admin')) return true;
   return orgStore.canEditKB(kbId.value, false);
 });
+const hasGroupEdit = computed(() => hasResourceGroupEdit(kbInfo.value));
+const canEdit = computed(() => hasGroupEdit.value || canLegacyEdit.value);
 
 // Can manage (delete, settings, etc.): same permission-first rule. For
 // shared KBs only an 'admin' share grant qualifies — editor/viewer (and
 // even being the creator viewed via share) never grant delete/settings.
 const canManage = computed(() => {
+  if (kbInfo.value?.group_access_permission && !authStore.hasRole('admin')) return false;
   const permission = effectiveKBPermission.value;
   if (permission) return permissionCanManageKB(permission);
   if (isViaShare.value) return orgStore.canManageKB(kbId.value, false);
@@ -311,6 +316,7 @@ const canManage = computed(() => {
   if (authStore.hasRole('admin')) return true;
   return orgStore.canManageKB(kbId.value, false);
 });
+const canEditSettings = computed(() => hasGroupEdit.value || (!kbInfo.value?.group_access_permission && canManage.value));
 
 // The activity feed exposes owner-side actor and configuration summaries.
 // It lives in KB settings (KnowledgeBaseEditorModal) for Owner/Admin in the home tenant.
@@ -323,18 +329,21 @@ const canManage = computed(() => {
 // the local tenant role is irrelevant — canEdit already encodes the share
 // grant, so trust it.
 const canMutateKnowledge = computed(() => {
-  if (!canEdit.value) return false;
+  if (!canLegacyEdit.value) return false;
   if (isViaShare.value) return true;
   if (isOwner.value) return true;
   if (authStore.hasRole('admin')) return true;
   return authStore.hasRole('contributor');
 });
+const canBatchEditKnowledge = computed(() => hasGroupEdit.value || canMutateKnowledge.value);
 
 // Downloading returns the original source file, which is intentionally more
 // restrictive than viewing parsed content or using the preview tab. A tenant
 // Viewer can never download; for cross-tenant KBs the effective share
 // permission must additionally be Editor or Admin.
 const canDownloadKnowledge = computed(() => {
+  if (hasGroupEdit.value && !isViaShare.value) return true;
+  if (kbInfo.value?.group_access_permission === 'read') return false;
   if (!authStore.hasRole('contributor')) return false;
   const permission = effectiveKBPermission.value;
   return !permission || permission === 'owner' || permission === 'admin' || permission === 'editor';
@@ -2196,7 +2205,7 @@ const handleKBEditorSuccess = (kbIdValue: string) => {
             <div class="kb-title-actions">
               <KBInfoPopover v-if="kbInfo && !authStore.isLiteMode" :kb-info="kbInfo"
                 :supported-file-types="[...supportedFileTypes]" />
-              <t-tooltip v-if="canManage" :content="$t('knowledgeBase.settings')" placement="top">
+              <t-tooltip v-if="canEditSettings" :content="$t('knowledgeBase.settings')" placement="top">
                 <button type="button" class="kb-settings-button" :aria-label="$t('knowledgeBase.settings')" :disabled="!kbId" @click="handleOpenKBSettings">
                   <t-icon name="setting" size="16px" />
                 </button>
@@ -2320,7 +2329,7 @@ const handleKBEditorSuccess = (kbIdValue: string) => {
                       </section>
                     </template>
                   </t-popup>
-                  <button v-if="viewMode === 'grid' && (canDownloadKnowledge || canMutateKnowledge) && cardList.length"
+                  <button v-if="viewMode === 'grid' && (canDownloadKnowledge || canBatchEditKnowledge) && cardList.length"
                     type="button" class="doc-filter-toggle doc-batch-toggle" :class="{ active: batchMode }" :aria-pressed="batchMode"
                     :disabled="batchDeleting || batchReparsing || batchTagging || batchDownloading"
                     @click="toggleBatchMode">
@@ -2389,6 +2398,7 @@ const handleKBEditorSuccess = (kbIdValue: string) => {
                     :can-edit="canEdit"
                     :can-download="canDownloadKnowledge"
                     :can-mutate-knowledge="canMutateKnowledge"
+                    :can-delete-knowledge="canLegacyEdit" :can-batch-edit="canBatchEditKnowledge"
                     :trace-available-by-id="traceAvailableById"
                     :move-menu-mode="moveMenuMode"
                     :move-target-kbs="moveTargetKbs"
@@ -2414,6 +2424,7 @@ const handleKBEditorSuccess = (kbIdValue: string) => {
                   <DocumentListView :kb-id="kbId" :items="cardList" :folder-options="folderOptions"
                     :selected-ids="selectedIds"
                     :can-edit="canEdit" :can-download="canDownloadKnowledge" :can-mutate-knowledge="canMutateKnowledge"
+                    :can-delete-knowledge="canLegacyEdit" :can-batch-edit="canBatchEditKnowledge"
                     :trace-visible-ids="traceAvailableById"
                     :move-menu-mode="moveMenuMode"
                     :move-target-kbs="moveTargetKbs"
@@ -2449,6 +2460,7 @@ const handleKBEditorSuccess = (kbIdValue: string) => {
                 <DocumentBatchBar :count="selectedIds.size" :delete-loading="batchDeleting"
                   :reparse-loading="batchReparsing" :tag-loading="batchTagging" :download-loading="batchDownloading"
                   :can-download="canDownloadKnowledge" :can-mutate="canMutateKnowledge"
+                  :can-edit="canBatchEditKnowledge"
                   :visible="batchMode || selectedIds.size > 0"
                   :show-move-to-folder="canEdit" :folder-options="folderOptions"
                   @cancel="handleBatchCancel" @delete="confirmBatchDelete" @reparse="confirmBatchReparse"
@@ -2461,7 +2473,7 @@ const handleKBEditorSuccess = (kbIdValue: string) => {
       </template>
 
       <!-- DocContent drawer (shared by documents tab and wiki source refs) -->
-      <DocContent ref="docContentRef" :visible="isCardDetails" :details="details" :canEditKB="canEdit"
+      <DocContent ref="docContentRef" :visible="isCardDetails" :details="details" :canEditKB="canEdit" :canDeleteKB="canLegacyEdit"
         :canDownloadKB="canDownloadKnowledge" :kbId="kbId"
         @closeDoc="closeDoc" @getDoc="getDoc" @summaryStateChange="syncDocumentSummaryState">
       </DocContent>

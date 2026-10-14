@@ -56,14 +56,14 @@ func RegisterChunkRoutes(r *gin.RouterGroup, handler *handler.ChunkHandler, g *r
 		// 删除分块 — KB owner OR Admin+，且对父 KB 有 write 权限
 		chunks.DELETE(
 			"/:knowledge_id/:id",
-			g.EditableChunkKBOrAdmin(),
+			g.OwnedChunkKBOrAdmin(),
 			g.KBAccessWriteFromKnowledgeIDParam("knowledge_id"),
 			handler.DeleteChunk,
 		)
 		// 删除知识下的所有分块 — KB owner OR Admin+，且对父 KB 有 write 权限
 		chunks.DELETE(
 			"/:knowledge_id",
-			g.EditableChunkKBOrAdmin(),
+			g.OwnedChunkKBOrAdmin(),
 			g.KBAccessWriteFromKnowledgeIDParam("knowledge_id"),
 			handler.DeleteChunksByKnowledgeID,
 		)
@@ -87,7 +87,7 @@ func RegisterChunkRoutes(r *gin.RouterGroup, handler *handler.ChunkHandler, g *r
 		// 现在通过 KBCreatorLookupFromChunkIDParam 把那一跳补上，统一矩阵。
 		chunks.DELETE(
 			"/by-id/:id/questions",
-			g.EditableChunkKBOrAdminFromChunkID(),
+			g.OwnedChunkKBOrAdminFromChunkID(),
 			g.KBAccessWriteFromChunkIDParam("id"),
 			handler.DeleteGeneratedQuestion,
 		)
@@ -126,8 +126,8 @@ func RegisterKnowledgeRoutes(r *gin.RouterGroup, handler *handler.KnowledgeHandl
 		kb.POST("/url", g.EditableKBOrAdmin(), g.KBAccessWrite("id"), handler.CreateKnowledgeFromURL)
 		kb.POST("/manual", g.EditableKBOrAdmin(), g.KBAccessWrite("id"), handler.CreateManualKnowledge)
 		kbRead.GET("", g.Viewer(), g.KBAccessRead("id"), handler.ListKnowledge)
-		// 原始文件下载沿用单文件下载的 Contributor + Editor 权限边界。
-		kbRead.POST("/batch-download", g.Contributor(), g.KBAccessWrite("id"), handler.BatchDownloadKnowledge)
+		// 原始文件下载允许限定资源的组 edit，继承模式保留 Contributor + Editor 门槛。
+		kbRead.POST("/batch-download", g.KBEditOrContributor(), g.KBAccessWrite("id"), handler.BatchDownloadKnowledge)
 		kbRead.GET("/folders", g.Viewer(), g.KBAccessRead("id"), handler.ListKnowledgeFolders)
 		kb.PUT("/folders", g.EditableKBOrAdmin(), g.KBAccessWrite("id"), handler.RenameKnowledgeFolder)
 		// Clearing all contents under a KB is a destructive op; gate
@@ -159,7 +159,7 @@ func RegisterKnowledgeRoutes(r *gin.RouterGroup, handler *handler.KnowledgeHandl
 		kRead.GET("/:id/spans", g.Viewer(), g.KBAccessReadFromKnowledgeIDParam("id"), handler.GetKnowledgeSpans)
 		k.DELETE(
 			"/:id",
-			g.EditableKnowledgeKBOrAdmin(),
+			g.OwnedKnowledgeKBOrAdmin(),
 			g.KBAccessWriteFromKnowledgeIDParam("id"),
 			handler.DeleteKnowledge,
 		)
@@ -194,14 +194,14 @@ func RegisterKnowledgeRoutes(r *gin.RouterGroup, handler *handler.KnowledgeHandl
 			handler.CancelKnowledgeParse,
 		)
 		// Downloading exposes the original source file, so it has a stricter
-		// boundary than viewing parsed content or previewing it: tenant Viewers
-		// cannot download from their own workspace, and org-shared Viewer access
+		// boundary than viewing parsed content or previewing it: inherited-mode
+		// tenant Viewers cannot download, and org-shared Viewer access
 		// cannot download from the source workspace. API keys still follow the
 		// retrieve capability declared by kRead; role guards intentionally defer
 		// machine-principal authorization to the API-key gate.
 		kRead.GET(
 			"/:id/download",
-			g.Contributor(),
+			g.KnowledgeKBEditOrContributor(),
 			g.KBAccessWriteFromKnowledgeIDParam("id"),
 			handler.DownloadKnowledgeFile,
 		)
@@ -214,15 +214,18 @@ func RegisterKnowledgeRoutes(r *gin.RouterGroup, handler *handler.KnowledgeHandl
 		)
 		kRead.GET("/search", g.Viewer(), handler.SearchKnowledge)
 		kRead.GET("/move/progress/:task_id", g.Viewer(), handler.GetKnowledgeMoveProgress)
-		// Batch / cross-KB content writes: JWT Contributor+, or an API key
+		// Body-scoped edits are checked by their handler against the exact KB:
+		// restricted group edit or the historical creator/role rule. Deletion
+		// and cross-KB transfer retain the Contributor and ownership gates.
+		// API keys require
 		// with the ingest capability (or full access). Each handler binds the
 		// operation to a single (move: source+target) KB and rejects any KB
 		// or knowledge id outside the key's allow-list, so a scoped ingest key
 		// can only touch KBs it is already permitted to write.
-		k.PUT("/tags", g.Contributor(), handler.UpdateKnowledgeTagBatch)
-		k.POST("/batch-reparse", g.Contributor(), handler.BatchReparseKnowledge)
+		k.PUT("/tags", g.Viewer(), handler.UpdateKnowledgeTagBatch)
+		k.POST("/batch-reparse", g.Viewer(), handler.BatchReparseKnowledge)
 		k.POST("/batch-delete", g.Contributor(), handler.BatchDeleteKnowledge)
-		k.POST("/folder", g.Contributor(), handler.MoveKnowledgeToFolder)
+		k.POST("/folder", g.Viewer(), handler.MoveKnowledgeToFolder)
 		k.POST("/move", g.Contributor(), handler.MoveKnowledge)
 	}
 }
@@ -261,7 +264,7 @@ func RegisterFAQRoutes(r *gin.RouterGroup, handler *handler.FAQHandler, g *rbacG
 		// Unified batch update API - supports is_enabled, is_recommended, tag_id
 		faq.PUT("/entries/fields", g.EditableKBOrAdmin(), g.KBAccessWrite("id"), handler.UpdateEntryFieldsBatch)
 		faq.PUT("/entries/tags", g.EditableKBOrAdmin(), g.KBAccessWrite("id"), handler.UpdateEntryTagBatch)
-		faq.DELETE("/entries", g.EditableKBOrAdmin(), g.KBAccessWrite("id"), handler.DeleteEntries)
+		faq.DELETE("/entries", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), handler.DeleteEntries)
 		// Search is a read route: scoped API keys may call it with retrieve
 		// even though POST is otherwise an unsafe method.
 		faqRead.POST("/search", g.Viewer(), g.KBAccessRead("id"), handler.SearchFAQ)
@@ -408,7 +411,7 @@ func RegisterWikiPageRoutes(r *gin.RouterGroup, wikiHandler *handler.WikiPageHan
 		wiki.PUT("/move-page", g.EditableWikiKBOrAdmin(), g.KBAccessWrite("kb_id"), wikiHandler.MovePage)
 		wikiRead.GET("/pages/*slug", g.Viewer(), g.KBAccessRead("kb_id"), wikiHandler.GetPage)
 		wiki.PUT("/pages/*slug", g.EditableWikiKBOrAdmin(), g.KBAccessWrite("kb_id"), wikiHandler.UpdatePage)
-		wiki.DELETE("/pages/*slug", g.EditableWikiKBOrAdmin(), g.KBAccessWrite("kb_id"), wikiHandler.DeletePage)
+		wiki.DELETE("/pages/*slug", g.OwnedWikiKBOrAdmin(), g.KBAccessWrite("kb_id"), wikiHandler.DeletePage)
 
 		// Revision history (slug is a catch-all like /pages; revert carries
 		// the slug in the body for the same reason move-page does)
@@ -421,7 +424,7 @@ func RegisterWikiPageRoutes(r *gin.RouterGroup, wikiHandler *handler.WikiPageHan
 		wiki.PUT("/folders/:folder_id", g.EditableWikiKBOrAdmin(), g.KBAccessWrite("kb_id"), wikiHandler.UpdateFolder)
 		wiki.DELETE(
 			"/folders/:folder_id",
-			g.EditableWikiKBOrAdmin(),
+			g.OwnedWikiKBOrAdmin(),
 			g.KBAccessWrite("kb_id"),
 			wikiHandler.DeleteFolder,
 		)

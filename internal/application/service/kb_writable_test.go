@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/stretchr/testify/require"
@@ -53,4 +54,39 @@ func TestKBWritableIDs(t *testing.T) {
 	require.Empty(t, kbWritableIDs(apiKey(chatOnly), shares, targets, true))
 	ingest := types.TenantAPIKeyScope{Capabilities: types.StringArray{string(types.APIKeyCapabilityIngest)}}
 	require.Equal(t, []string{"own"}, kbWritableIDs(apiKey(ingest), shares, targets, true))
+}
+
+type writableGroupRepo struct {
+	backgroundRoleRepo
+	permission types.ResourcePermission
+}
+
+func (r *writableGroupRepo) ListResourceGroupMatches(
+	context.Context, string, uint64, types.ResourceType, string,
+) ([]types.ResourceGroupMatch, error) {
+	now := time.Now().UTC()
+	return []types.ResourceGroupMatch{{
+		Permission: r.permission, DirectoryEnabled: true, LastSuccessfulSyncAt: &now,
+	}}, nil
+}
+
+func TestAgentWritableTargetsUseExactGroupEditWithoutElevatingWorkspaceRole(t *testing.T) {
+	viewer := types.TenantRoleViewer
+	repo := &writableGroupRepo{
+		backgroundRoleRepo: backgroundRoleRepo{mode: types.ResourceAccessRestricted, direct: &viewer},
+		permission:         types.ResourcePermissionEdit,
+	}
+	groups := NewGroupAccessService(repo)
+	ctx := types.WithPrincipal(context.Background(), types.Principal{Type: types.PrincipalWebUser, ID: "user"})
+	ctx = types.WithCaller(ctx, types.Caller{TenantID: 7, UserID: "user", Role: types.TenantRoleViewer})
+	targets := types.SearchTargets{{KnowledgeBaseID: "own", TenantID: 7}, {KnowledgeBaseID: "foreign", TenantID: 8}}
+	require.Equal(t, []string{"own"}, kbWritableIDs(ctx, nil, targets, true, groups))
+	// A Contributor with only a group read grant must not receive an Editor
+	// operation grant through agent save-to-KB tools.
+	repo.permission = types.ResourcePermissionRead
+	ctx = types.WithCaller(ctx, types.Caller{TenantID: 7, UserID: "user", Role: types.TenantRoleContributor})
+	require.Empty(t, kbWritableIDs(ctx, nil, targets, true, groups))
+	repo.mode = types.ResourceAccessInherit
+	ctx = types.WithCaller(ctx, types.Caller{TenantID: 7, UserID: "user", Role: types.TenantRoleViewer})
+	require.Empty(t, kbWritableIDs(ctx, nil, targets, true, groups))
 }

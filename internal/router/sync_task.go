@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Tencent/WeKnora/internal/application/repository"
+	"github.com/Tencent/WeKnora/internal/application/service"
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
@@ -127,7 +128,9 @@ func (e *SyncTaskExecutor) Enqueue(task *asynq.Task, opts ...asynq.Option) (*asy
 				return
 			}
 			if errors.Is(lastErr, asynq.SkipRetry) {
-				break
+				logger.Warnf(ctx, "[SyncTask] Task stopped without retry type=%s id=%s err=%v",
+					task.Type(), taskID, lastErr)
+				return
 			}
 		}
 
@@ -148,6 +151,8 @@ type SyncTaskParams struct {
 	ChunkRepo            interfaces.ChunkRepository
 	ContentLeases        *repository.NextcloudContentLeaseStore
 	KnowledgeBaseService interfaces.KnowledgeBaseService
+	GroupAccess          interfaces.GroupAccessService
+	SpanTracker          service.SpanTracker
 	TagService           interfaces.KnowledgeTagService
 	DataSourceService    interfaces.DataSourceService
 	ChunkExtractor       interfaces.TaskHandler `name:"chunkExtractor"`
@@ -164,6 +169,12 @@ type SyncTaskParams struct {
 // RegisterSyncHandlers registers all task handlers on the SyncTaskExecutor.
 // Used in Lite mode instead of RunAsynqServer.
 func RegisterSyncHandlers(params SyncTaskParams) {
+	// Wrap registration once so Lite performs the same per-stage recheck as
+	// the Redis worker, including restoration of the initiating human. The
+	// authorization guard runs before acquiring a Nextcloud build lease.
+	guard := taskGroupAccessMiddleware(
+		params.GroupAccess, params.KnowledgeBaseService, params.KnowledgeRepo, params.ChunkRepo, params.SpanTracker,
+	)
 	build := func(handler func(context.Context, *asynq.Task) error) func(context.Context, *asynq.Task) error {
 		return wrapNextcloudBuild(params.ContentLeases, params.KnowledgeRepo, params.ChunkRepo, handler)
 	}
@@ -191,5 +202,10 @@ func RegisterSyncHandlers(params SyncTaskParams) {
 	params.Executor.RegisterHandler(types.TypeWikiIngest, params.WikiIngest.Handle)
 	params.Executor.RegisterHandler(types.TypeWikiFinalize, params.WikiIngest.Handle)
 	params.Executor.RegisterHandler(types.TypeMemoryExtract, params.MemoryService.Handle)
+	params.Executor.mu.Lock()
+	for taskType, handler := range params.Executor.handlers {
+		params.Executor.handlers[taskType] = guard(asynq.HandlerFunc(handler)).ProcessTask
+	}
+	params.Executor.mu.Unlock()
 	logger.Infof(context.Background(), "[SyncTask] All task handlers registered (Lite mode, no Redis)")
 }

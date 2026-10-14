@@ -180,7 +180,7 @@
                   <span class="card-title" :title="agent.name">{{ agent.name }}</span>
                 </div>
                 <t-popup
-                  v-if="agent.isMine && (canManageAgent(agent) || authStore.hasRole('contributor') || authStore.hasRole('admin'))"
+                  v-if="agent.isMine && (canEditAgent(agent) || authStore.hasRole('contributor') || authStore.hasRole('admin'))"
                   :visible="openMoreAgentId === agent.id" trigger="click" overlayClassName="card-more-popup"
                   destroy-on-close placement="bottom-right"
                   @update:visible="(v: boolean) => { openMoreAgentId = v ? agent.id : null }">
@@ -190,7 +190,7 @@
                   </button>
                   <template #content>
                     <div class="popup-menu">
-                      <div v-if="canManageAgent(agent)" class="popup-menu-item" @click="handleEdit(agent)"><t-icon
+                      <div v-if="canEditAgent(agent)" class="popup-menu-item" @click="handleEdit(agent)"><t-icon
                           class="menu-icon" name="edit" /><span>{{ $t('common.edit') }}</span></div>
                       <div v-if="authStore.hasRole('contributor')" class="popup-menu-item" @click="handleCopy(agent)">
                         <t-icon class="menu-icon" name="file-copy" /><span>{{ $t('common.copy') }}</span>
@@ -362,7 +362,7 @@
                   <AgentAvatar v-else :name="agent.name" size="small" />
                   <span class="card-title" :title="agent.name">{{ agent.name }}</span>
                 </div>
-                <t-popup v-if="canManageAgent(agent) || authStore.hasRole('contributor') || authStore.hasRole('admin')"
+                <t-popup v-if="canEditAgent(agent) || authStore.hasRole('contributor') || authStore.hasRole('admin')"
                   :visible="openMoreAgentId === agent.id" trigger="click" overlayClassName="card-more-popup"
                   destroy-on-close placement="bottom-right"
                   @update:visible="(v: boolean) => { openMoreAgentId = v ? agent.id : null }">
@@ -372,7 +372,7 @@
                   </button>
                   <template #content>
                     <div class="popup-menu">
-                      <div v-if="canManageAgent(agent)" class="popup-menu-item" @click="handleEdit(agent)">
+                      <div v-if="canEditAgent(agent)" class="popup-menu-item" @click="handleEdit(agent)">
                         <t-icon class="menu-icon" name="edit" />
                         <span>{{ $t('common.edit') }}</span>
                       </div>
@@ -725,7 +725,8 @@
     <AgentEditorModal :visible="editorVisible" :mode="editorMode" :agent="editingAgent"
       :initialSection="editorInitialSection"
       :initialHighlightField="editorInitialHighlightField"
-      :readOnly="editorMode === 'edit' && editingAgent != null && !canManageAgent(editingAgent as AgentWithUI)"
+      :readOnly="editorMode === 'edit' && editingAgent != null && !canEditAgent(editingAgent as AgentWithUI)"
+      :can-manage="editingAgent != null && canManageAgent(editingAgent as AgentWithUI)"
       @update:visible="editorVisible = $event" @success="handleEditorSuccess" />
 
     <TenantModelsGuide :when="showAgentTenantModelsGuide" variant="agent" />
@@ -750,6 +751,7 @@ import { useSettingsStore } from '@/stores/settings'
 import { useMenuStore } from '@/stores/menu'
 import type { SharedAgentInfo, OrganizationSharedAgentItem } from '@/api/organization'
 import AgentEditorModal from './AgentEditorModal.vue'
+import { hasResourceGroupEdit } from '@/utils/resourceGroupPermission'
 import ContextualGuide from '@/components/ContextualGuide.vue'
 import TenantModelsGuide from '@/components/TenantModelsGuide.vue'
 import { focusAgentEditorSection, markContextualGuideDone } from '@/config/contextualGuides'
@@ -1258,10 +1260,15 @@ const handleEdit = (agent: AgentWithUI) => {
 // mutation; this gate just hides buttons the user has no authority
 // to use.
 function canManageAgent(agent: AgentWithUI): boolean {
+  if (agent.group_access_permission && !authStore.hasRole('admin')) return false
   const userId = authStore.user?.id || ''
   const creatorId = (agent as any).created_by || ''
   if (creatorId && userId && creatorId === userId) return true
   return authStore.hasRole('admin')
+}
+function canEditAgent(agent: AgentWithUI): boolean {
+  if (agent.group_access_permission) return !agent.is_builtin && hasResourceGroupEdit(agent)
+  return canManageAgent(agent) || (!agent.is_builtin && hasResourceGroupEdit(agent))
 }
 
 // isMyAgent 仅用于卡片来源徽章在「我创建」与「同空间其他成员创建」之间切换。

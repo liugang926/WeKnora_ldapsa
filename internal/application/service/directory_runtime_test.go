@@ -142,6 +142,7 @@ type runtimeDirectorySyncService struct {
 	failureCode       string
 	failureTrigger    types.DirectorySyncTrigger
 	failureContextErr error
+	onApply           func(*types.DirectorySnapshot)
 }
 
 func (s *runtimeDirectorySyncService) RunSync(
@@ -155,6 +156,9 @@ func (s *runtimeDirectorySyncService) RunSync(
 		return nil, err
 	}
 	s.trigger = snapshot.Trigger
+	if s.onApply != nil {
+		s.onApply(snapshot)
+	}
 	s.repo.directory.SnapshotVersion++
 	now := time.Now().UTC()
 	s.repo.directory.LastSuccessfulSyncAt = &now
@@ -525,6 +529,113 @@ func TestDirectoryRuntimeLoginMismatchHonorsSyncCooldown(t *testing.T) {
 	}
 	if users.generateCalls != 0 {
 		t.Fatalf("mismatch during cooldown issued %d tokens", users.generateCalls)
+	}
+}
+
+func TestDirectoryRuntimeLoginEligibilityFailureRefreshesCompleteSnapshotAndRevokesSessions(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		err    error
+		status types.DirectoryObjectStatus
+	}{
+		{name: "disabled", err: ldapdirectory.ErrUserDisabled, status: types.DirectoryObjectDisabled},
+		{name: "outside login scope", err: ldapdirectory.ErrUserNotFound, status: types.DirectoryObjectOutOfScope},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			runtime, users, repo := liveLoginRuntimeFixture(t, []string{"group-a"}, []string{"group-a"})
+			identity := repo.loginSnapshot.Identity
+			repo.identities = []*types.DirectoryIdentity{identity}
+			tokens := &runtimeTokenRepo{}
+			runtime.tokens = tokens
+			adapter := &runtimeLDAPAdapter{
+				authenticateErr: test.err,
+				syncResult: &ldapdirectory.Snapshot{
+					DirectoryID: "corp-ad", ControllerURL: "ldaps://dc.example.test:636",
+				},
+			}
+			runtime.newAdapter = func(ldapdirectory.Config) (liveDirectoryAdapter, error) { return adapter, nil }
+			syncService := &runtimeDirectorySyncService{
+				repo: repo,
+				onApply: func(snapshot *types.DirectorySnapshot) {
+					if !snapshot.Complete || !snapshot.PaginationComplete {
+						t.Fatal("eligibility failure attempted to apply a partial snapshot")
+					}
+					identity.Status = test.status
+				},
+			}
+			runtime.directories = syncService
+
+			_, err := runtime.Login(context.Background(), "alice", "secret")
+			if !errors.Is(err, test.err) {
+				t.Fatalf("eligibility failure changed login error: %v", err)
+			}
+			if syncService.runCalls != 1 || syncService.trigger != types.DirectorySyncTriggerLogin {
+				t.Fatalf("eligibility failure did not run one complete login sync: calls=%d trigger=%q",
+					syncService.runCalls, syncService.trigger)
+			}
+			if len(tokens.revoked) != 1 || tokens.revoked[0] != users.user.ID {
+				t.Fatalf("old directory sessions were not revoked: %v", tokens.revoked)
+			}
+			if users.generateCalls != 0 || users.registerCalls != 0 {
+				t.Fatalf("eligibility failure reached token/provisioning: %d/%d",
+					users.generateCalls, users.registerCalls)
+			}
+		})
+	}
+}
+
+func TestDirectoryRuntimeLoginEligibilityFailureDiscardsFailedSync(t *testing.T) {
+	runtime, users, repo := liveLoginRuntimeFixture(t, []string{"group-a"}, []string{"group-a"})
+	identity := repo.loginSnapshot.Identity
+	repo.identities = []*types.DirectoryIdentity{identity}
+	tokens := &runtimeTokenRepo{}
+	runtime.tokens = tokens
+	adapter := &runtimeLDAPAdapter{
+		authenticateErr: ldapdirectory.ErrUserDisabled,
+		syncErr:         ldapdirectory.ErrIncompleteResults,
+	}
+	runtime.newAdapter = func(ldapdirectory.Config) (liveDirectoryAdapter, error) { return adapter, nil }
+	syncService := &runtimeDirectorySyncService{repo: repo}
+	runtime.directories = syncService
+	_, err := runtime.Login(context.Background(), "alice", "secret")
+	if !errors.Is(err, ldapdirectory.ErrUserDisabled) {
+		t.Fatalf("expected original eligibility failure, got %v", err)
+	}
+	if syncService.runCalls != 1 || syncService.failureCalls != 1 || syncService.failureCode != "incomplete_results" {
+		t.Fatalf("failed eligibility refresh did not record sync failure: %+v", syncService)
+	}
+	if identity.Status != types.DirectoryObjectActive || len(tokens.revoked) != 0 || users.generateCalls != 0 {
+		t.Fatalf("failed refresh changed old identity/session or issued token: status=%q revoked=%v generated=%d",
+			identity.Status, tokens.revoked, users.generateCalls)
+	}
+}
+
+func TestDirectoryRuntimeLoginPasswordFailureAndEligibilityCooldownDoNotTriggerSync(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		err      error
+		cooldown bool
+	}{
+		{name: "wrong user password", err: ldapdirectory.ErrInvalidCredentials},
+		{name: "wrong service password", err: ldapdirectory.ErrInvalidServiceCredentials},
+		{name: "recent eligibility refresh", err: ldapdirectory.ErrUserDisabled, cooldown: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			runtime, users, repo := liveLoginRuntimeFixture(t, []string{"group-a"}, []string{"group-a"})
+			if test.cooldown {
+				now := runtime.now().UTC()
+				repo.directory.LastSyncAttemptAt = &now
+			}
+			adapter := &runtimeLDAPAdapter{authenticateErr: test.err}
+			runtime.newAdapter = func(ldapdirectory.Config) (liveDirectoryAdapter, error) { return adapter, nil }
+			syncService := &runtimeDirectorySyncService{repo: repo}
+			runtime.directories = syncService
+			_, err := runtime.Login(context.Background(), "alice", "secret")
+			if !errors.Is(err, test.err) || syncService.runCalls != 0 || users.generateCalls != 0 {
+				t.Fatalf("unexpected authentication retry/sync/token: err=%v syncs=%d tokens=%d",
+					err, syncService.runCalls, users.generateCalls)
+			}
+		})
 	}
 }
 

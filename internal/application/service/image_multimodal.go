@@ -709,6 +709,7 @@ func (s *ImageMultimodalService) enqueueKnowledgePostProcessTask(ctx context.Con
 		KnowledgeBaseID: payload.KnowledgeBaseID,
 		Language:        payload.Language,
 	}
+	taskPayload.Initiator = types.TaskInitiatorFromContext(ctx)
 	langfuse.InjectTracing(ctx, &taskPayload)
 	payloadBytes, err := json.Marshal(taskPayload)
 	if err != nil {

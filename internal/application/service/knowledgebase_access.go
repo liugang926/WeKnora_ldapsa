@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"time"
 
 	"github.com/Tencent/WeKnora/internal/application/access"
 	apperrors "github.com/Tencent/WeKnora/internal/errors"
@@ -30,14 +31,16 @@ func kbReadPermissions(ctx context.Context, shares access.KBShareLookup) *access
 // the RBAC rollout switch, under which role checks only log.
 func kbWritableIDs(
 	ctx context.Context, shares access.KBShareLookup, targets types.SearchTargets, roleEnforced bool,
+	groupAccess ...interfaces.GroupAccessService,
 ) []string {
 	caller := types.CallerFromContext(ctx)
+	roleAllowed := true
 	if scope, ok := types.TenantAPIKeyScopeFromContext(ctx); ok {
 		if !scope.FullAccess && !scope.HasCapability(types.APIKeyCapabilityIngest) {
 			return nil
 		}
 	} else if roleEnforced && !caller.Role.HasPermission(types.TenantRoleContributor) {
-		return nil
+		roleAllowed = false
 	}
 	if caller.UserID == "" {
 		shares = nil
@@ -50,6 +53,21 @@ func kbWritableIDs(
 			continue
 		}
 		seen[target.KnowledgeBaseID] = true
+		if len(groupAccess) > 0 && groupAccess[0] != nil {
+			permission, err := groupAccess[0].EffectivePermission(ctx, target.TenantID,
+				types.GroupResourceTypeKnowledgeBase, target.KnowledgeBaseID,
+				types.ResourceActionEdit, time.Now().UTC())
+			if err != nil || !permission.Allowed {
+				continue
+			}
+			if permission.Mode == types.ResourceAccessRestricted {
+				ids = append(ids, target.KnowledgeBaseID)
+				continue
+			}
+		}
+		if !roleAllowed {
+			continue
+		}
 		writable := caller.TenantID != 0 && target.TenantID == caller.TenantID
 		if !writable {
 			writable, _ = permissions.Check(target.KnowledgeBaseID, types.OrgRoleEditor)

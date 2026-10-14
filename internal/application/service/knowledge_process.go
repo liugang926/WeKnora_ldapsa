@@ -2657,6 +2657,7 @@ func (s *knowledgeService) ReparseKnowledge(
 	} else if err != nil {
 		logger.Warnf(ctx, "[Reparse] OpenAttempt failed for %s: %v (will fall back in worker)", existing.ID, err)
 	}
+	ctx = withAttempt(ctx, reparseAttempt)
 
 	// When the caller supplies new overrides (e.g. via the reparse confirm
 	// dialog), validate them against this knowledge's file type, then persist
@@ -2773,6 +2774,8 @@ func (s *knowledgeService) ReparseKnowledge(
 			Attempt:                  reparseAttempt,
 		}
 
+		taskPayload.Initiator = types.TaskInitiatorFromContext(ctx)
+
 		langfuse.InjectTracing(ctx, &taskPayload)
 		payloadBytes, err := json.Marshal(taskPayload)
 		if err != nil {
@@ -2827,6 +2830,8 @@ func (s *knowledgeService) ReparseKnowledge(
 			Attempt:                  reparseAttempt,
 		}
 
+		taskPayload.Initiator = types.TaskInitiatorFromContext(ctx)
+
 		langfuse.InjectTracing(ctx, &taskPayload)
 		payloadBytes, err := json.Marshal(taskPayload)
 		if err != nil {
@@ -2877,6 +2882,8 @@ func (s *knowledgeService) ReparseKnowledge(
 			Language:                 lang,
 			Attempt:                  reparseAttempt,
 		}
+
+		taskPayload.Initiator = types.TaskInitiatorFromContext(ctx)
 
 		langfuse.InjectTracing(ctx, &taskPayload)
 		payloadBytes, err := json.Marshal(taskPayload)
@@ -3322,7 +3329,7 @@ func (s *knowledgeService) ProcessManualUpdate(ctx context.Context, t *asynq.Tas
 
 	ctx = logger.WithRequestID(ctx, payload.RequestId)
 	ctx = logger.WithField(ctx, "manual_process", payload.KnowledgeID)
-	ctx = types.WithExecutionTenant(ctx, payload.TenantID)
+	ctx = backgroundTaskAuthorizationContext(ctx, payload.TenantID, payload.Initiator)
 
 	tenantInfo, err := s.tenantRepo.GetTenantByID(ctx, payload.TenantID)
 	if err != nil {
@@ -3347,6 +3354,16 @@ func (s *knowledgeService) ProcessManualUpdate(ctx context.Context, t *asynq.Tas
 		payload.KnowledgeID); err != nil {
 		return err
 	}
+	if attemptSuperseded(ctx, s.tracker(), knowledge.ID, payload.Attempt) {
+		return nil
+	}
+	if payload.ContentVersion > 0 {
+		meta, err := knowledge.ManualMetadata()
+		if err != nil || meta == nil || meta.Version != payload.ContentVersion || meta.Content != payload.Content {
+			return nil
+		}
+	}
+	ctx = withAttempt(ctx, payload.Attempt)
 
 	// Skip if already completed or being deleted
 	if knowledge.ParseStatus == types.ParseStatusCompleted {
@@ -3374,6 +3391,20 @@ func (s *knowledgeService) ProcessManualUpdate(ctx context.Context, t *asynq.Tas
 	if kb == nil || kb.ID != payload.KnowledgeBaseID || kb.TenantID != payload.TenantID {
 		return fmt.Errorf("processing task KB owner changed: %w", asynq.SkipRetry)
 	}
+	if err := s.revalidateBackgroundKBAccess(ctx, kb.TenantID, kb.ID, types.ResourceActionEdit); err != nil {
+		if errors.Is(err, ErrResourceAccessDenied) {
+			if payload.ContentVersion == 0 {
+				if meta, metaErr := knowledge.ManualMetadata(); metaErr == nil && meta != nil && meta.Version > 0 {
+					return fmt.Errorf("legacy manual processing authorization revoked: %w", asynq.SkipRetry)
+				}
+			}
+			if failErr := s.failKnowledgeAuthorization(ctx, knowledge); failErr != nil {
+				return failErr
+			}
+			return fmt.Errorf("processing authorization revoked: %v: %w", err, asynq.SkipRetry)
+		}
+		return err
+	}
 	ctx, err = access.WithKBTaskWrite(ctx, kb, payload.TenantID)
 	if err != nil {
 		return fmt.Errorf("invalid processing scope: %v: %w", err, asynq.SkipRetry)
@@ -3396,11 +3427,14 @@ func (s *knowledgeService) ProcessManualUpdate(ctx context.Context, t *asynq.Tas
 	// Without it attemptFromCtx stays 0, so processChunks drops all stage
 	// spans and KnowledgePostProcess falls back to LatestAttempt — piling
 	// this run's summary/wiki subspans onto the previous attempt's trace.
-	attempt := 0
-	if root, n, err := s.tracker().OpenAttempt(ctx, knowledge.ID, payload.LangfuseTraceID); err == nil && root != nil {
-		attempt = n
-	} else if err != nil {
-		logger.Warnf(ctx, "ProcessManualUpdate: OpenAttempt failed for %s: %v", knowledge.ID, err)
+	attempt := payload.Attempt
+	if attempt <= 0 {
+		root, n, err := s.tracker().OpenAttempt(ctx, knowledge.ID, payload.LangfuseTraceID)
+		if err == nil && root != nil {
+			attempt = n
+		} else if err != nil {
+			logger.Warnf(ctx, "ProcessManualUpdate: OpenAttempt failed for %s: %v", knowledge.ID, err)
+		}
 	}
 	ctx = withAttempt(ctx, attempt)
 
@@ -3433,7 +3467,7 @@ func (s *knowledgeService) ProcessDocument(ctx context.Context, t *asynq.Task) e
 
 	ctx = logger.WithRequestID(ctx, payload.RequestId)
 	ctx = logger.WithField(ctx, "document_process", payload.KnowledgeID)
-	ctx = types.WithExecutionTenant(ctx, payload.TenantID)
+	ctx = backgroundTaskAuthorizationContext(ctx, payload.TenantID, payload.Initiator)
 	if payload.Language != "" {
 		ctx = context.WithValue(ctx, types.LanguageContextKey, payload.Language)
 	}
@@ -3470,6 +3504,11 @@ func (s *knowledgeService) ProcessDocument(ctx context.Context, t *asynq.Task) e
 		payload.KnowledgeID); err != nil {
 		return err
 	}
+	if attemptSuperseded(ctx, s.tracker(), knowledge.ID, payload.Attempt) ||
+		(payload.FilePath != "" && knowledge.FilePath != "" && payload.FilePath != knowledge.FilePath) {
+		return nil
+	}
+	ctx = withAttempt(ctx, payload.Attempt)
 
 	// 检查是否正在删除 / 已被用户取消 - 如果是则直接退出
 	if knowledge.ParseStatus == types.ParseStatusDeleting {
@@ -3518,6 +3557,15 @@ func (s *knowledgeService) ProcessDocument(ctx context.Context, t *asynq.Task) e
 	}
 	if kb == nil || kb.ID != payload.KnowledgeBaseID || kb.TenantID != payload.TenantID {
 		return fmt.Errorf("processing task KB owner changed: %w", asynq.SkipRetry)
+	}
+	if err := s.revalidateBackgroundKBAccess(ctx, kb.TenantID, kb.ID, types.ResourceActionEdit); err != nil {
+		if errors.Is(err, ErrResourceAccessDenied) {
+			if failErr := s.failKnowledgeAuthorization(ctx, knowledge); failErr != nil {
+				return failErr
+			}
+			return fmt.Errorf("processing authorization revoked: %v: %w", err, asynq.SkipRetry)
+		}
+		return err
 	}
 	ctx, err = access.WithKBTaskWrite(ctx, kb, payload.TenantID)
 	if err != nil {
@@ -4203,6 +4251,8 @@ func (s *knowledgeService) enqueueImageMultimodalTasks(
 			ImageIndex:      idx,
 		}
 
+		payload.Initiator = types.TaskInitiatorFromContext(ctx)
+
 		langfuse.InjectTracing(ctx, &payload)
 		payloadBytes, err := json.Marshal(payload)
 		if err != nil {
@@ -4366,6 +4416,7 @@ func (s *knowledgeService) enqueueKnowledgePostProcessTask(
 		Language:        types.LanguageFromContextOrDefault(ctx),
 		Attempt:         attemptFromCtx(ctx),
 	}
+	payload.Initiator = types.TaskInitiatorFromContext(ctx)
 	langfuse.InjectTracing(ctx, &payload)
 	payloadBytes, err := json.Marshal(payload)
 	if err != nil {

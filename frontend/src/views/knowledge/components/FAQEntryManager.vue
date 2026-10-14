@@ -43,7 +43,7 @@
                 v-if="kbInfo && !authStore.isLiteMode"
                 :kb-info="kbInfo"
               />
-              <t-tooltip v-if="canManage" :content="$t('knowledgeBase.settings')" placement="top">
+              <t-tooltip v-if="canManage || hasResourceGroupEdit(kbInfo)" :content="$t('knowledgeBase.settings')" placement="top">
                 <button type="button" class="kb-settings-button" @click="handleOpenKBSettings">
                   <t-icon name="setting" size="16px" />
                 </button>
@@ -176,7 +176,7 @@
                         {{ entry.standard_question }}
                       </div>
                       <div class="faq-card-actions">
-                        <t-popup v-if="canManage" v-model="entry.showMore" overlayClassName="card-more-popup"
+                        <t-popup v-if="canManage || hasResourceGroupEdit(kbInfo)" v-model="entry.showMore" overlayClassName="card-more-popup"
                           trigger="click" destroy-on-close placement="bottom-right"
                           @visible-change="(visible: boolean) => (entry.showMore = visible)">
                           <div class="card-more-btn" @click.stop>
@@ -188,7 +188,7 @@
                                 <t-icon class="menu-icon" name="edit" />
                                 <span>{{ $t('common.edit') }}</span>
                               </div>
-                              <div class="popup-menu-item delete" @click.stop="handleMenuDelete(entry)">
+                              <div v-if="canManage" class="popup-menu-item delete" @click.stop="handleMenuDelete(entry)">
                                 <t-icon class="menu-icon" name="delete" />
                                 <span>{{ $t('common.delete') }}</span>
                               </div>
@@ -765,6 +765,7 @@ import type { FormRules, FormInstanceFunctions } from 'tdesign-vue-next'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
+import { hasResourceGroupEdit } from '@/utils/resourceGroupPermission'
 import { useOrganizationStore } from '@/stores/organization'
 import {
   listFAQEntries,
@@ -872,6 +873,8 @@ const isViaShare = computed(() => !!currentSharedKb.value)
 // different tenant context will be 403'd on write. Otherwise: KB creator
 // (any role) or tenant Admin+ in the home tenant.
 const canEdit = computed(() => {
+  if (hasResourceGroupEdit(kbInfo.value)) return true
+  if (kbInfo.value?.group_access_permission === 'read') return false
   if (isViaShare.value) return orgStore.canEditKB(props.kbId, false)
   if (isOwner.value) return true
   if (authStore.hasRole('admin')) return true
@@ -882,6 +885,7 @@ const canEdit = computed(() => {
 // shared KBs only an 'admin' share grant qualifies — editor/viewer (and
 // even being the creator viewed via share) never grant delete/settings.
 const canManage = computed(() => {
+  if (kbInfo.value?.group_access_permission === 'read') return false
   if (isViaShare.value) return orgStore.canManageKB(props.kbId, false)
   if (isOwner.value) return true
   if (authStore.hasRole('admin')) return true

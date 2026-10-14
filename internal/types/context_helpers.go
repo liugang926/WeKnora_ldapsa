@@ -88,11 +88,12 @@ func IsEmbedQuery(ctx context.Context) bool {
 // initiated the operation, while tasks created by schedulers remain
 // attributable to the system.
 type TaskInitiator struct {
-	UserID      string     `json:"user_id,omitempty"`
-	Role        TenantRole `json:"role,omitempty"`
-	SystemAdmin bool       `json:"system_admin,omitempty"`
-	APIKeyID    uint64     `json:"api_key_id,omitempty"`
-	APIKeyName  string     `json:"api_key_name,omitempty"`
+	UserID         string     `json:"user_id,omitempty"`
+	Role           TenantRole `json:"role,omitempty"`
+	CallerTenantID uint64     `json:"caller_tenant_id,omitempty"`
+	SystemAdmin    bool       `json:"system_admin,omitempty"`
+	APIKeyID       uint64     `json:"api_key_id,omitempty"`
+	APIKeyName     string     `json:"api_key_name,omitempty"`
 }
 
 // AuditAPIKey is the display identity of the API key that initiated work.
@@ -138,8 +139,14 @@ func TaskInitiatorFromContext(ctx context.Context) TaskInitiator {
 	if !ok || IsSyntheticUserID(userID) {
 		return initiator
 	}
+	principal, ok := PrincipalFromContext(ctx)
+	if !ok || principal.Type != PrincipalWebUser || principal.ID != userID {
+		return initiator
+	}
 	initiator.UserID = userID
-	initiator.Role = TenantRoleFromContext(ctx)
+	caller := CallerFromContext(ctx)
+	initiator.Role = caller.Role
+	initiator.CallerTenantID = caller.TenantID
 	// System-admin authority is meaningful only for an authenticated human.
 	// Never serialize it alongside an API-key/synthetic machine identity.
 	initiator.SystemAdmin = IsSystemAdminFromContext(ctx)

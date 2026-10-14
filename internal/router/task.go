@@ -40,6 +40,7 @@ type AsynqTaskParams struct {
 	ChunkRepo            interfaces.ChunkRepository
 	ContentLeases        *repository.NextcloudContentLeaseStore
 	KnowledgeBaseService interfaces.KnowledgeBaseService
+	GroupAccess          interfaces.GroupAccessService
 	TagService           interfaces.KnowledgeTagService
 	DataSourceService    interfaces.DataSourceService
 	ChunkExtractor       interfaces.TaskHandler `name:"chunkExtractor"`
@@ -255,6 +256,9 @@ func RunAsynqServer(params AsynqTaskParams) *asynq.ServeMux {
 	// leaving user-facing interactive chat ungated. Installed early so all
 	// downstream handlers (and their model calls) inherit the flag.
 	mux.Use(backgroundTaskMiddleware())
+	mux.Use(taskGroupAccessMiddleware(
+		params.GroupAccess, params.KnowledgeBaseService, params.KnowledgeRepo, params.ChunkRepo, params.SpanTracker,
+	))
 
 	// Install Langfuse middleware BEFORE handler registration so every task
 	// type is automatically wrapped. When Langfuse is disabled the middleware

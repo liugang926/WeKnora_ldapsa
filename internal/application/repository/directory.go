@@ -740,6 +740,9 @@ func bumpPermissionVersion(tx *gorm.DB, tenantID uint64) (uint64, error) {
 		Updates(map[string]any{"version": gorm.Expr("version + 1"), "updated_at": now}).Error; err != nil {
 		return 0, err
 	}
+	if err := revokeRestrictedResourceCapabilities(tx, tenantID, now); err != nil {
+		return 0, err
+	}
 	var row types.PermissionVersion
 	if err := tx.Where("tenant_id = ?", tenantID).First(&row).Error; err != nil {
 		return 0, err

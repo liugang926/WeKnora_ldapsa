@@ -1395,6 +1395,9 @@ func (s *knowledgeService) executeFAQImport(ctx context.Context, taskID string, 
 	if err != nil {
 		return err
 	}
+	if err := s.revalidateBackgroundKBAccess(ctx, kb.TenantID, kb.ID, types.ResourceActionEdit); err != nil {
+		return err
+	}
 
 	kb.EnsureDefaults()
 
@@ -1497,6 +1500,9 @@ func (s *knowledgeService) executeFAQImport(ctx context.Context, taskID string, 
 	)
 
 	for i := 0; i < remainingEntries; i += faqImportBatchSize {
+		if err := s.revalidateBackgroundKBAccess(ctx, kb.TenantID, kb.ID, types.ResourceActionEdit); err != nil {
+			return err
+		}
 		batchStartTime := time.Now()
 		end := i + faqImportBatchSize
 		if end > remainingEntries {
@@ -2239,7 +2245,7 @@ func (s *knowledgeService) ProcessFAQImport(ctx context.Context, t *asynq.Task) 
 		logger.Errorf(ctx, "failed to unmarshal FAQ import task payload: %v", err)
 		return fmt.Errorf("failed to unmarshal task payload: %w", err)
 	}
-	ctx = payload.Initiator.Apply(ctx)
+	ctx = backgroundTaskAuthorizationContext(ctx, payload.TenantID, payload.Initiator)
 	ctx = withKBActivityTask(ctx, payload.TaskID, kbActivityTrigger(ctx))
 
 	ctx = logger.WithRequestID(ctx, uuid.New().String())
@@ -2266,6 +2272,15 @@ func (s *knowledgeService) ProcessFAQImport(ctx context.Context, t *asynq.Task) 
 	if knowledge == nil || knowledge.TenantID != payload.TenantID || knowledge.KnowledgeBaseID != payload.KBID ||
 		knowledge.Type != types.KnowledgeTypeFAQ {
 		return fmt.Errorf("%w: FAQ task document does not belong to its KB", asynq.SkipRetry)
+	}
+	if err := s.revalidateBackgroundKBAccess(ctx, kb.TenantID, kb.ID, types.ResourceActionEdit); err != nil {
+		if errors.Is(err, ErrResourceAccessDenied) {
+			if failErr := s.failKnowledgeAuthorization(ctx, knowledge); failErr != nil {
+				return failErr
+			}
+			return fmt.Errorf("FAQ import authorization revoked: %v: %w", err, asynq.SkipRetry)
+		}
+		return err
 	}
 
 	// 获取任务重试信息，用于判断是否是最后一次重试
@@ -2614,6 +2629,9 @@ func (s *knowledgeService) executeFAQMergeOperations(
 	mergedCount := 0
 
 	for batchStart := 0; batchStart < len(mergeOps); batchStart += faqImportBatchSize {
+		if err := s.revalidateBackgroundKBAccess(ctx, kb.TenantID, kb.ID, types.ResourceActionEdit); err != nil {
+			return mergedCount, err
+		}
 		batchEnd := batchStart + faqImportBatchSize
 		if batchEnd > len(mergeOps) {
 			batchEnd = len(mergeOps)

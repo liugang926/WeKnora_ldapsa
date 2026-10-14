@@ -258,6 +258,9 @@ type KnowledgeRepository interface {
 	// UpdateKnowledgeForTransfer conditionally persists a transfer checkpoint
 	// and its storage delta in one transaction, without inserting missing rows.
 	UpdateKnowledgeForTransfer(ctx context.Context, before, after *types.Knowledge) error
+	// FailKnowledgeAuthorization stops the same live processing attempt and
+	// clears its outstanding subtask count without modifying document content.
+	FailKnowledgeAuthorization(ctx context.Context, before *types.Knowledge, summary bool) error
 
 	// UpdateKnowledgeBatch updates knowledge items in batch
 	UpdateKnowledgeBatch(ctx context.Context, knowledgeList []*types.Knowledge) error

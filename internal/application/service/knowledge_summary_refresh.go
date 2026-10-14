@@ -121,6 +121,7 @@ func enqueueSummaryRefresh(
 		Attempt:         tracker.LatestAttempt(ctx, knowledge.ID),
 		Refresh:         true,
 	}
+	payload.Initiator = types.TaskInitiatorFromContext(ctx)
 	langfuse.InjectTracing(ctx, &payload)
 	payloadBytes, err := json.Marshal(payload)
 	if err != nil {

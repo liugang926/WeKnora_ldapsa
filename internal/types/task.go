@@ -280,6 +280,7 @@ type MemoryExtractPayload struct {
 
 // ExtractChunkPayload represents the extract chunk task payload
 type ExtractChunkPayload struct {
+	Initiator TaskInitiator `json:"initiator,omitempty"`
 	TracingContext
 	TenantID uint64 `json:"tenant_id"`
 	ChunkID  string `json:"chunk_id"`
@@ -298,6 +299,7 @@ type ExtractChunkPayload struct {
 
 // DocumentProcessPayload represents the document process task payload
 type DocumentProcessPayload struct {
+	Initiator TaskInitiator `json:"initiator,omitempty"`
 	TracingContext
 	RequestId                string   `json:"request_id"`
 	TenantID                 uint64   `json:"tenant_id"`
@@ -341,6 +343,7 @@ type FAQImportPayload struct {
 
 // QuestionGenerationPayload represents the question generation task payload
 type QuestionGenerationPayload struct {
+	Initiator TaskInitiator `json:"initiator,omitempty"`
 	TracingContext
 	TenantID        uint64 `json:"tenant_id"`
 	KnowledgeBaseID string `json:"knowledge_base_id"`
@@ -385,6 +388,7 @@ type QuestionGenerationPayload struct {
 
 // SummaryGenerationPayload represents the summary generation task payload
 type SummaryGenerationPayload struct {
+	Initiator TaskInitiator `json:"initiator,omitempty"`
 	TracingContext
 	TenantID        uint64 `json:"tenant_id"`
 	KnowledgeBaseID string `json:"knowledge_base_id"`
@@ -492,6 +496,7 @@ type KnowledgeMoveProgress struct {
 // ManualProcessPayload represents the manual knowledge processing task payload.
 // Used for both create (publish) and update operations.
 type ManualProcessPayload struct {
+	Initiator TaskInitiator `json:"initiator,omitempty"`
 	TracingContext
 	RequestId       string `json:"request_id"`
 	TenantID        uint64 `json:"tenant_id"`
@@ -499,10 +504,13 @@ type ManualProcessPayload struct {
 	KnowledgeBaseID string `json:"knowledge_base_id"`
 	Content         string `json:"content"`      // cleaned markdown content
 	NeedCleanup     bool   `json:"need_cleanup"` // true for update, false for create
+	ContentVersion  int    `json:"content_version,omitempty"`
+	Attempt         int    `json:"attempt,omitempty"`
 }
 
 // ImageMultimodalPayload represents the image multimodal processing task payload.
 type ImageMultimodalPayload struct {
+	Initiator TaskInitiator `json:"initiator,omitempty"`
 	TracingContext
 	TenantID        uint64 `json:"tenant_id"`
 	KnowledgeID     string `json:"knowledge_id"`
@@ -526,6 +534,7 @@ type ImageMultimodalPayload struct {
 
 // KnowledgePostProcessPayload represents the knowledge post process task payload.
 type KnowledgePostProcessPayload struct {
+	Initiator TaskInitiator `json:"initiator,omitempty"`
 	TracingContext
 	TenantID        uint64 `json:"tenant_id"`
 	KnowledgeID     string `json:"knowledge_id"`
@@ -537,6 +546,7 @@ type KnowledgePostProcessPayload struct {
 // KnowledgeAutoTagPayload identifies a document whose parsed content should be
 // classified against the latest set of existing tags in its knowledge base.
 type KnowledgeAutoTagPayload struct {
+	Initiator TaskInitiator `json:"initiator,omitempty"`
 	TracingContext
 	TenantID        uint64 `json:"tenant_id"`
 	KnowledgeID     string `json:"knowledge_id"`
@@ -549,6 +559,7 @@ type KnowledgeAutoTagPayload struct {
 // description of one knowledge base from its current document profiles.
 // Force bypasses the aggregate-hash short circuit (manual regeneration).
 type KnowledgeBaseProfilePayload struct {
+	Initiator TaskInitiator `json:"initiator,omitempty"`
 	TracingContext
 	TenantID        uint64 `json:"tenant_id"`
 	KnowledgeBaseID string `json:"knowledge_base_id"`

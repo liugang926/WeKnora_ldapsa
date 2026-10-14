@@ -38,6 +38,8 @@ const props = defineProps<{
   canEdit: boolean;
   canDownload: boolean;
   canMutateKnowledge: boolean;
+  canDeleteKnowledge?: boolean;
+  canBatchEdit?: boolean;
   traceVisibleIds: Record<string, boolean>;
   loading?: boolean;
   /** Every folder of the knowledge base, for the "move to folder" picker. */
@@ -352,6 +354,7 @@ const handleAction = (action: 'download' | 'edit' | 'reparse' | 'cancel-parse' |
                   :item="item"
                   :can-download="canDownload"
                   :can-mutate-knowledge="canMutateKnowledge"
+                  :can-delete="canDeleteKnowledge" :can-batch-edit="canBatchEdit"
                   :trace-visible="!!traceVisibleIds[item.id] || (item.parse_status === 'pending' || item.parse_status === 'processing' || item.parse_status === 'finalizing')"
                   @download="handleAction('download', item)"
                   @edit="handleAction('edit', item)"

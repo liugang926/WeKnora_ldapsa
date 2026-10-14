@@ -58,6 +58,9 @@ func (a *Adapter) Sync(ctx context.Context) (*Snapshot, error) {
 		}
 		snapshot, err := a.syncOnConnection(ctx, conn, controller.URL)
 		conn.Close()
+		if contextErr := ctx.Err(); contextErr != nil {
+			return nil, contextErr
+		}
 		if err == nil {
 			return snapshot, nil
 		}
@@ -368,7 +371,15 @@ func recordIdentity(
 }
 
 func normalizeDN(dn string) string {
-	return strings.ToLower(strings.TrimSpace(dn))
+	trimmed := strings.TrimSpace(dn)
+	if parsed, err := ldap.ParseDN(trimmed); err == nil {
+		// Directory entries and member attributes can encode the same DN
+		// differently (hex escapes, insignificant spaces, multivalued RDNs).
+		// Compare the LDAP library's canonical representation so a complete
+		// snapshot does not silently lose these direct membership edges.
+		return strings.ToLower(parsed.String())
+	}
+	return strings.ToLower(trimmed)
 }
 
 func buildSnapshot(
@@ -402,6 +413,10 @@ func buildSnapshot(
 	for _, parsed := range parsedGroups {
 		seenMembers := make(map[string]struct{}, len(parsed.members))
 		for _, memberDN := range parsed.members {
+			if _, err := ldap.ParseDN(memberDN); err != nil {
+				return nil, fmt.Errorf("%w: group %q has malformed member DN %q",
+					ErrInvalidDirectoryObject, parsed.group.DN, memberDN)
+			}
 			normalized := normalizeDN(memberDN)
 			if normalized == "" {
 				return nil, fmt.Errorf(
@@ -623,6 +638,9 @@ func validateMemberValues(values []string, limit int) ([]string, error) {
 	}
 	seen := make(map[string]struct{}, len(values))
 	for _, value := range values {
+		if _, err := ldap.ParseDN(value); err != nil {
+			return nil, fmt.Errorf("%w: group has malformed member DN %q", ErrInvalidDirectoryObject, value)
+		}
 		normalized := normalizeDN(value)
 		if normalized == "" {
 			return nil, fmt.Errorf("%w: group has an empty member DN", ErrInvalidDirectoryObject)

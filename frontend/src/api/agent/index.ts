@@ -154,6 +154,7 @@ export interface CustomAgent {
   created_by?: string;
   // creator_name 由后端 list 接口批量回填，仅用于列表卡片来源徽章。
   creator_name?: string;
+  group_access_permission?: 'read' | 'use' | 'edit';
   config: CustomAgentConfig;
   created_at?: string;
   updated_at?: string;
