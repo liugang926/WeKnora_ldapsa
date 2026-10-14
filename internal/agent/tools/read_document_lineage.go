@@ -121,8 +121,8 @@ func (t *ReadDocumentTool) hydrateDocumentInputs(ctx context.Context, k *types.K
 			if c == nil || c.ID != chunks[i].ID || c.TenantID != k.TenantID || c.KnowledgeBaseID != k.KnowledgeBaseID || c.KnowledgeID != k.ID {
 				return nil, ErrToolSourceLineageUnavailable
 			}
-			if c.ChunkType != types.ChunkTypeText || (strings.TrimSpace(c.ImageInfo) != "" && strings.TrimSpace(c.ImageInfo) != "[]") || (len(c.Metadata) > 0 && strings.TrimSpace(string(c.Metadata)) != "{}") {
-				return nil, errors.New("document chunk enrichment lineage adapter is unavailable")
+			if err := validateDocumentChunkProjection(snapshot); err != nil {
+				return nil, err
 			}
 			out.Chunks = append(out.Chunks, c)
 		} else if snapshot.Chunk != nil {
@@ -150,6 +150,23 @@ func (t *ReadDocumentTool) hydrateDocumentInputs(ctx context.Context, k *types.K
 		return nil, err
 	}
 	return out, nil
+}
+
+func validateDocumentChunkProjection(snapshot types.RAGChunkInputSnapshot) error {
+	if err := snapshot.SourceLineage.RequireComplete(); err != nil {
+		return err
+	}
+	c := snapshot.Chunk
+	if c == nil {
+		return ErrToolSourceLineageUnavailable
+	}
+	// Generated summaries need an exact producer receipt. Older readers that
+	// can only pin current source identity retain the original text-only scope.
+	supported := c.ChunkType == types.ChunkTypeText || (c.ChunkType == types.ChunkTypeSummary && snapshot.ProducerMaterialVerified)
+	if !supported || (strings.TrimSpace(c.ImageInfo) != "" && strings.TrimSpace(c.ImageInfo) != "[]") || (len(c.Metadata) > 0 && strings.TrimSpace(string(c.Metadata)) != "{}") {
+		return errors.New("document chunk enrichment lineage adapter is unavailable")
+	}
+	return nil
 }
 
 // Only fields from the covered source snapshot are rendered. Generated

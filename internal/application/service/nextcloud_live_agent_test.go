@@ -107,7 +107,7 @@ func documentLiveAgent(t *testing.T, m *machinePipelineFixture, models *document
 // Print only fixed shape flags, never document text or model credentials.
 // This wrapper returns the production reader's exact result unchanged.
 type documentAgentSnapshotDiagnostic struct {
-	t *testing.T
+	t     *testing.T
 	inner interfaces.RAGChunkSnapshotReader
 }
 

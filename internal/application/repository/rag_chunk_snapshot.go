@@ -148,6 +148,7 @@ func (r *RAGChunkSnapshotReader) HydrateRAGChunkSnapshots(ctx context.Context, r
 					}
 				}
 				lineage := sourceLineage
+				materialVerified := false
 				if controlled && r.ordinary != nil {
 					proof, ok := r.ordinary.(ControlledRAGInputProofLookup)
 					if !ok {
@@ -164,6 +165,7 @@ func (r *RAGChunkSnapshotReader) HydrateRAGChunkSnapshots(ctx context.Context, r
 						if err := lineage.Validate(); err != nil {
 							return err
 						}
+						materialVerified = chunk != nil && lineage.RequireComplete() == nil
 					}
 				}
 				if !controlled {
@@ -180,6 +182,7 @@ func (r *RAGChunkSnapshotReader) HydrateRAGChunkSnapshots(ctx context.Context, r
 						if err := lineage.Validate(); err != nil {
 							return err
 						}
+						materialVerified = chunk != nil && lineage.RequireComplete() == nil
 					}
 				}
 				if request.ExpectedLineage != nil {
@@ -194,7 +197,7 @@ func (r *RAGChunkSnapshotReader) HydrateRAGChunkSnapshots(ctx context.Context, r
 					return err
 				}
 				copyKnowledge := knowledge
-				out = append(out, RAGChunkInputSnapshot{Knowledge: &copyKnowledge, Chunk: chunk, SourceLineage: copyLineage})
+				out = append(out, RAGChunkInputSnapshot{Knowledge: &copyKnowledge, Chunk: chunk, SourceLineage: copyLineage, ProducerMaterialVerified: materialVerified && copyLineage.RequireComplete() == nil})
 			}
 		}
 		return nil

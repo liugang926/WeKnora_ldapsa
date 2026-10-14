@@ -32,4 +32,8 @@ type RAGChunkInputSnapshot struct {
 	Knowledge     *Knowledge     `json:"-"`
 	Chunk         *Chunk         `json:"-"`
 	SourceLineage *SourceLineage `json:"-"`
+	// Set only after the trusted snapshot reader verifies the exact persisted
+	// producer material, including its digest/revision. Current publication
+	// identity by itself cannot authorize generated summary text.
+	ProducerMaterialVerified bool `json:"-"`
 }

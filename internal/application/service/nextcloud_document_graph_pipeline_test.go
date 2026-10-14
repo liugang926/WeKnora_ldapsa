@@ -50,7 +50,7 @@ func TestNextcloudLiveDocumentToGraphAndInbox(t *testing.T) {
 	}
 	runDocumentGraphPipeline(t, path)
 }
-func runDocumentGraphPipeline(t *testing.T, path string) {
+func runDocumentGraphPipeline(t *testing.T, path string, inspect ...func(*machinePipelineFixture, *types.Knowledge)) {
 	localDerivedVecAuto.Do(sqlite_vec.Auto)
 	var live documentGraphLive
 	var source *machinePipelineSource
@@ -181,6 +181,9 @@ func runDocumentGraphPipeline(t *testing.T, path string) {
 	require.Equal(t, "succeeded", status.Graph.State)
 	require.True(t, status.Graph.Persisted)
 	require.Equal(t, graphTasks, status.Graph.Expected)
+	for _, check := range inspect {
+		check(m, row)
+	}
 	var checkRAGRevoked func()
 	if source != nil && liveModels != nil && os.Getenv("WEKNORA_DOCUMENT_GRAPH_RAG") == "1" {
 		checkRAGRevoked = documentLiveRAG(t, m, liveModels, row.ID)
