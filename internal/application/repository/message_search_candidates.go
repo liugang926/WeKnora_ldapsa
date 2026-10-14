@@ -40,9 +40,9 @@ func (r *messageRepository) HistorySearchPartnerCandidates(ctx context.Context, 
 		q = q.Where("m.request_id=?", candidate.RequestID)
 	}
 	var rows []*types.MessageSearchCandidate
-	// A normal exchange has one user and one assistant. A third row makes
-	// the pair ambiguous and must be refused without loading unbounded bodies.
-	err := q.Order("m.created_at DESC,m.id DESC").Limit(3).Scan(&rows).Error
+	// Injected steer inputs deliberately share the running request ID. Fetch
+	// their control metadata with one overflow row, never an unbounded body set.
+	err := q.Order("m.created_at DESC,m.id DESC").Limit(types.MessageSearchMaximumExchangeMessages + 1).Scan(&rows).Error
 	return rows, err
 }
 

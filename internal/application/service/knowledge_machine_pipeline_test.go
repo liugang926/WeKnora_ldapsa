@@ -63,7 +63,7 @@ func (m machinePipelineModels) GetEmbeddingModel(context.Context, string) (embed
 }
 
 type machinePipelineFixture struct {
-	liveHistorySessionID string
+	liveHistorySessionID                  string
 	externalID, etag                      string
 	f                                     *enrichmentTestFixture
 	source                                *DataSourceService

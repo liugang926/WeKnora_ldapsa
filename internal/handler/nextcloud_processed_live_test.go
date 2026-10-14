@@ -69,6 +69,13 @@ func TestNextcloudProcessedLiveHTTPReadAndRevocation(t *testing.T) {
 	publication := access.NewNextcloudPublicationGuard(repository.NewDirectoryRepository(db), sources)
 	store := repository.NewKnowledgeInputProvenanceStore(db)
 	repository.ConfigureKnowledgeInputActorGroupAccess(store, groups)
+	// Material reads resolve current authority on their existing SQL
+	// transaction, using the same factory as the production container.
+	repository.ConfigureKnowledgeDisplayInputWriters(store, nil, repo, func(tx *gorm.DB) *repository.KnowledgeInputProvenanceStore {
+		actual := repository.NewKnowledgeInputProvenanceStore(tx)
+		repository.ConfigureKnowledgeInputActorGroupAccess(actual, service.NewGroupAccessService(repository.NewGroupAccessRepository(tx)))
+		return actual
+	})
 	repository.ConfigureKnowledgeCurrentReadActor(repo, store)
 	guard := access.NewNextcloudSourceLineageGuard(repo.(access.NextcloudLineageSnapshotLookup), kbs, nil, nil, groups, publication, store)
 	repository.ConfigureKnowledgeOriginalInputSourceVerifier(store, service.NewKnowledgeOriginalInputSourceVerifier(store, guard, sources))

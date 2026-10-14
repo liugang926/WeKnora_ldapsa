@@ -668,3 +668,7 @@ type MessageSearchCandidate struct {
 	ID, SessionID, RequestID, Role, KnowledgeID string
 	CreatedAt                                   time.Time
 }
+
+// One history request may include the initial question and several consumed
+// steer inputs. Bound metadata discovery before acquiring their original bodies.
+const MessageSearchMaximumExchangeMessages = 200

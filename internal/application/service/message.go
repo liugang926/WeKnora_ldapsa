@@ -1015,6 +1015,7 @@ func (s *messageService) SearchMessages(ctx context.Context, params *types.Messa
 	if err != nil {
 		return nil, err
 	}
+	keepEligibleHistoricalCursorHits(keywordPage, items)
 
 	// Step 5: Group by request_id to merge Q&A pairs
 	grouped := groupByRequestID(items)
@@ -1365,6 +1366,7 @@ func groupByRequestID(items []*types.MessageSearchResultItem) []*types.MessageSe
 	type groupState struct {
 		item  *types.MessageSearchGroupItem
 		order int // preserve the order of first appearance
+		users []*types.Message
 	}
 	groups := make(map[string]*groupState)
 	nextOrder := 0
@@ -1396,7 +1398,7 @@ func groupByRequestID(items []*types.MessageSearchResultItem) []*types.MessageSe
 		// Assign content based on role
 		switch item.Role {
 		case "user":
-			g.item.QueryContent = item.Content
+			g.users = append(g.users, &item.MessageWithSession.Message)
 		case "assistant":
 			g.item.AnswerContent = item.Content
 		}
@@ -1427,6 +1429,19 @@ func groupByRequestID(items []*types.MessageSearchResultItem) []*types.MessageSe
 		return ordered[i].order < ordered[j].order
 	})
 	for _, g := range ordered {
+		// Preserve the initial question and all authenticated steer questions,
+		// even when their hits arrived in relevance order rather than time order.
+		sort.SliceStable(g.users, func(i, j int) bool {
+			if g.users[i].CreatedAt.Equal(g.users[j].CreatedAt) {
+				return g.users[i].ID < g.users[j].ID
+			}
+			return g.users[i].CreatedAt.Before(g.users[j].CreatedAt)
+		})
+		questions := make([]string, 0, len(g.users))
+		for _, user := range g.users {
+			questions = append(questions, user.Content)
+		}
+		g.item.QueryContent = strings.Join(questions, "\n\n")
 		result = append(result, g.item)
 	}
 

@@ -20,6 +20,8 @@ import (
 const historySearchCandidateBudget = 200
 const historySearchMaximumResults = 100
 
+var errHistorySearchPageMaterialBudget = errors.New("history search page material budget exhausted")
+
 type historySearchCandidateReader interface {
 	OwnedHistorySearchCandidatesByIDs(context.Context, uint64, string, []string, []string) ([]*types.MessageSearchCandidate, error)
 	ListOwnedHistorySearchCandidates(context.Context, uint64, string, []string, time.Time, string, int) ([]*types.MessageSearchCandidate, error)
@@ -105,7 +107,7 @@ func historySearchCandidateDenied(err error) bool {
 // Read only the exact, small exchange after its immutable producer metadata
 // has supplied the real source/body generations and the read guard has taken
 // their leases. There is no SQL body lookup before this admission.
-func (s *messageService) beginHistorySearchPair(ctx context.Context, params *types.MessageSearchParams, candidate *types.MessageSearchCandidate) (*MessageMaterialGuard, *types.Message, error) {
+func (s *messageService) beginHistorySearchPair(ctx context.Context, params *types.MessageSearchParams, candidate *types.MessageSearchCandidate, remaining *int) (*MessageMaterialGuard, *types.Message, error) {
 	reader, ok := s.messageRepo.(historySearchCandidateReader)
 	if !ok || s.materialStore == nil || s.sourceLineageGuard == nil {
 		return nil, nil, access.ErrNextcloudPublicationUnavailable
@@ -114,16 +116,30 @@ func (s *messageService) beginHistorySearchPair(ctx context.Context, params *typ
 	if err != nil {
 		return nil, nil, err
 	}
-	if len(metadata) == 0 || len(metadata) > 2 {
+	if len(metadata) == 0 {
 		return nil, nil, access.ErrNextcloudPublicationDenied
 	}
+	if len(metadata) > types.MessageSearchMaximumExchangeMessages {
+		return nil, nil, access.ErrNextcloudPublicationUnavailable
+	}
+	if len(metadata) > *remaining {
+		return nil, nil, errHistorySearchPageMaterialBudget
+	}
+	*remaining -= len(metadata)
 	request := types.MessageMaterialReadRequest{TenantID: types.MustTenantIDFromContext(ctx), SessionID: candidate.SessionID}
-	roles := make(map[string]bool)
+	assistantCount := 0
+	seen := make(map[string]bool)
 	for _, row := range metadata {
-		if row == nil || row.SessionID != candidate.SessionID || row.RequestID != candidate.RequestID || roles[row.Role] {
+		if row == nil || row.SessionID != candidate.SessionID || row.RequestID != candidate.RequestID || seen[row.ID] || (row.Role != "user" && row.Role != "assistant") {
 			return nil, nil, access.ErrNextcloudPublicationDenied
 		}
-		roles[row.Role] = true
+		seen[row.ID] = true
+		if row.Role == "assistant" {
+			assistantCount++
+			if assistantCount > 1 {
+				return nil, nil, access.ErrNextcloudPublicationDenied
+			}
+		}
 		request.MessageIDs = append(request.MessageIDs, row.ID)
 	}
 	guard, err := s.beginMessageMaterialRead(ctx, request)
@@ -166,6 +182,7 @@ func (s *messageService) fencedKeywordHistorySearch(ctx context.Context, params 
 	candidates := append(append([]*types.MessageSearchCandidate{}, pending...), normal...)
 	page := &historyKeywordPage{Pairs: make(map[string][]*types.Message)}
 	processed := 0
+	remaining := historySearchCandidateBudget
 	needle := strings.ToLower(params.Query)
 	for index, candidate := range candidates {
 		if index >= historySearchCandidateBudget || len(page.Hits) >= params.Limit {
@@ -174,8 +191,11 @@ func (s *messageService) fencedKeywordHistorySearch(ctx context.Context, params 
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
+		guard, original, err := s.beginHistorySearchPair(ctx, params, candidate, &remaining)
+		if errors.Is(err, errHistorySearchPageMaterialBudget) {
+			break
+		}
 		processed = index + 1
-		guard, original, err := s.beginHistorySearchPair(ctx, params, candidate)
 		if err != nil {
 			if historySearchCandidateDenied(err) {
 				continue
@@ -240,8 +260,12 @@ func (s *messageService) fencedVectorHistoryCandidates(ctx context.Context, para
 	}
 	pairs := make(map[string][]*types.Message)
 	var items []*types.MessageSearchResultItem
+	remaining := historySearchCandidateBudget
 	for _, candidate := range metadata {
-		guard, original, err := s.beginHistorySearchPair(ctx, params, candidate)
+		guard, original, err := s.beginHistorySearchPair(ctx, params, candidate, &remaining)
+		if errors.Is(err, errHistorySearchPageMaterialBudget) {
+			return nil, nil, access.ErrNextcloudPublicationUnavailable
+		}
 		if err != nil {
 			if historySearchCandidateDenied(err) {
 				continue
@@ -288,6 +312,26 @@ func expandHeldHistoricalSearchPairs(items []*types.MessageSearchResultItem, pai
 		}
 	}
 	return out, nil
+}
+
+// Only a keyword hit that passed the final projection filter may be retried
+// because ranking/limit omitted it. Closed projections are consumed metadata,
+// not pending matches: retrying them can monopolize every subsequent page.
+func keepEligibleHistoricalCursorHits(page *historyKeywordPage, items []*types.MessageSearchResultItem) {
+	if page == nil {
+		return
+	}
+	eligible := make(map[string]bool)
+	for _, item := range items {
+		eligible[historySearchPairKey(&item.MessageWithSession.Message)] = true
+	}
+	kept := page.Hits[:0]
+	for _, hit := range page.Hits {
+		if eligible[historySearchPairKey(&hit.Message)] {
+			kept = append(kept, hit)
+		}
+	}
+	page.Hits = kept
 }
 
 // Hybrid ranking can use the first-page vector hits ahead of a keyword hit.
