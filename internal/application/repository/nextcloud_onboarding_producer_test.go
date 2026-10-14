@@ -2,7 +2,6 @@ package repository_test
 
 import (
 	"context"
-	"os"
 	"testing"
 	"time"
 
@@ -19,13 +18,6 @@ func TestNextcloudPairProducerExactScopeAndCurrentAuthority(t *testing.T) {
 	for _, scenario := range []string{"success", "unmarked", "nil-factory", "wrong-binding", "wrong-kb", "credential-revoked", "actor-disabled", "directory-failed", "directory-future", "operation-retired", "changed-credential"} {
 		t.Run(scenario, func(t *testing.T) {
 			db, store, cred := onboardingDB(t)
-			migration := "../../../migrations/sqlite/000069_datasource_name_inputs.up.sql"
-			if db.Dialector.Name() == "postgres" {
-				migration = "../../../migrations/versioned/000150_datasource_name_inputs.up.sql"
-			}
-			schema, err := os.ReadFile(migration)
-			require.NoError(t, err)
-			require.NoError(t, db.Exec(string(schema)).Error)
 			require.NoError(t, db.Model(&types.Directory{}).Where("id=?", cred.DirectoryID).Update("protocol", types.DirectoryProtocolAD).Error)
 			req := onboardingRequest(cred, uuid.NewString(), "")
 			req.Mode = "create"
@@ -90,10 +82,15 @@ func TestNextcloudPairProducerExactScopeAndCurrentAuthority(t *testing.T) {
 			proof, err := repo.NewKnowledgeInputProvenanceStore(db).ReadDataSourceNameInput(context.Background(), op.TenantID, op.KnowledgeBaseID, pair.DataSourceID)
 			require.NoError(t, err)
 			require.NotEmpty(t, proof.InputDigest)
-			var actual string
-			require.NoError(t, db.Table("datasource_name_inputs").Select("actual_inputs").Where("datasource_id=?", pair.DataSourceID).Scan(&actual).Error)
-			require.Contains(t, actual, op.RequestSHA256)
-			require.Contains(t, actual, "onboarding_producer")
+			var actual struct {
+				ID           string
+				ActualInputs string
+			}
+			// Query through the actual body-resolution callback, retaining the row
+			// identity required to verify the immutable original-body reference.
+			require.NoError(t, db.Table("datasource_name_inputs").Where("datasource_id=?", pair.DataSourceID).Take(&actual).Error)
+			require.Contains(t, actual.ActualInputs, op.RequestSHA256)
+			require.Contains(t, actual.ActualInputs, "onboarding_producer")
 			var members int64
 			require.NoError(t, db.Model(&types.TenantMember{}).Count(&members).Error)
 			require.EqualValues(t, 1, members, "only pre-existing owner membership remains")

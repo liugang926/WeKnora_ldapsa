@@ -159,11 +159,34 @@ func (s *NextcloudOnboardingStore) Reserve(ctx context.Context, c types.Nextclou
 	if _, err := uuid.Parse(req.OperationID); err != nil || req.TenantID != c.TenantID || req.InstanceID != c.InstanceID || req.BindingID == "" || len(req.BindingID) > 128 || strings.TrimSpace(req.Name) == "" || len(req.Name) > 255 || (req.Mode != "create" && req.Mode != "existing") || req.ProcessingTemplateID != c.TemplateKBID {
 		return out, ErrNextcloudOnboardingDenied
 	}
-	actor, err := s.Actor(ctx, c, req.ActorDirectoryID, req.ActorObjectGUID)
-	if err != nil {
+	if _, err := currentOnboardingCredential(s.db.WithContext(ctx), c); err != nil {
 		return out, err
 	}
-	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	if err := currentOnboardingActor(s.db.WithContext(ctx), c, req.ActorDirectoryID, req.ActorObjectGUID); err != nil {
+		return out, err
+	}
+	// A durable exact replay does not consume old configuration a second time.
+	// Recheck its credential, actor and permanent target controls in the writer.
+	var existing types.NextcloudOnboardingOperation
+	replay := s.db.WithContext(ctx).Where("operation_id=?", req.OperationID).Take(&existing).Error
+	if replay != nil && !errors.Is(replay, gorm.ErrRecordNotFound) {
+		return out, replay
+	}
+	var read *NextcloudOnboardingConfigurationRead
+	if errors.Is(replay, gorm.ErrRecordNotFound) {
+		var err error
+		read, err = s.beginOnboardingTemplateRead(ctx, c, req)
+		if err != nil {
+			return out, err
+		}
+		defer read.Close()
+	}
+	var actor string
+	writerCtx := ctx
+	if read != nil {
+		writerCtx = read.Context(ctx)
+	}
+	err := s.db.WithContext(writerCtx).Transaction(func(tx *gorm.DB) error {
 		// Tenant -> credential -> KB is the admission lock order.
 		if err := lockNextcloudTargetTenantLiveInTx(tx, c.TenantID); err != nil {
 			return err
@@ -171,6 +194,17 @@ func (s *NextcloudOnboardingStore) Reserve(ctx context.Context, c types.Nextclou
 		// Credential lock serializes quota and operation uniqueness before KB mutation.
 		if q := tx.Exec("UPDATE nextcloud_onboarding_credentials SET enabled = enabled WHERE id = ? AND enabled = ?", c.ID, true); q.Error != nil || q.RowsAffected != 1 {
 			return ErrNextcloudOnboardingDenied
+		}
+		actualCredential, err := currentOnboardingCredential(tx, c)
+		if err != nil {
+			return err
+		}
+		if err := currentOnboardingActor(tx, actualCredential, req.ActorDirectoryID, req.ActorObjectGUID); err != nil {
+			return err
+		}
+		actor, err = NewNextcloudOnboardingStore(tx).Actor(ctx, actualCredential, req.ActorDirectoryID, req.ActorObjectGUID)
+		if err != nil {
+			return err
 		}
 		e := tx.Where("operation_id = ?", req.OperationID).Take(&out).Error
 		if e == nil {
@@ -192,82 +226,18 @@ func (s *NextcloudOnboardingStore) Reserve(ctx context.Context, c types.Nextclou
 		if c.MaxKnowledgeBases <= 0 || n >= int64(c.MaxKnowledgeBases) {
 			return ErrNextcloudOnboardingConflict
 		}
-		var kb *types.KnowledgeBase
-		if req.Mode == "create" {
-			var template types.KnowledgeBase
-			if err := tx.Where("tenant_id = ? AND id = ? AND deleted_at IS NULL", c.TenantID, c.TemplateKBID).Take(&template).Error; err != nil {
-				return ErrNextcloudOnboardingConflict
-			}
-			if err := validateOnboardingTemplate(tx, &template); err != nil {
-				return err
-			}
-			template.ID = uuid.NewString()
-			template.Name = req.Name
-			template.Description = ""
-			template.CreatorID = actor
-			template.CreatedAt = time.Now().UTC()
-			template.UpdatedAt = template.CreatedAt
-			template.EverHadNextcloudSource = false
-			template.GeneratedProfile = nil
-			create := tx
-			if actor == "" {
-				create = create.Omit("creator_id")
-			}
-			if err := create.Create(&template).Error; err != nil {
-				return err
-			}
-			kb = &template
-		} else {
-			if q := tx.Exec("UPDATE knowledge_bases SET ever_had_nextcloud_source = ever_had_nextcloud_source WHERE tenant_id = ? AND id = ? AND deleted_at IS NULL", c.TenantID, req.KnowledgeBaseID); q.Error != nil || q.RowsAffected != 1 {
-				return ErrNextcloudKBBlankUnverified
-			}
-			var err error
-			kb, err = blankKB(tx, c.TenantID, req.KnowledgeBaseID)
-			if err != nil {
-				return err
-			}
-			var template types.KnowledgeBase
-			if err := tx.Where("tenant_id=? AND id=? AND deleted_at IS NULL", c.TenantID, c.TemplateKBID).Take(&template).Error; err != nil {
-				return ErrNextcloudOnboardingConflict
-			}
-			if err := validateOnboardingTemplate(tx, &template); err != nil {
-				return err
-			}
-			// Backend selection is immutable after KB creation. A blank target
-			// with a different vector-store binding must use a compatible
-			// template or a freshly created target.
-			binding := func(p *string) string {
-				if p == nil {
-					return ""
-				}
-				return *p
-			}
-			if binding(kb.VectorStoreID) != binding(template.VectorStoreID) {
-				return ErrNextcloudOnboardingConflict
-			}
-			fields := []string{"chunking_config", "image_processing_config", "embedding_model_id", "summary_model_id", "vlm_config", "asr_config", "storage_provider_config", "storage_backend_id", "cos_config", "extract_config", "question_generation_config", "auto_tag_config", "profile_config", "indexing_strategy"}
-			copy := template
-			copy.ID = kb.ID
-			copy.TenantID = kb.TenantID
-			changed := tx.Model(&types.KnowledgeBase{}).Where("tenant_id=? AND id=? AND deleted_at IS NULL", c.TenantID, kb.ID).Select(fields).Updates(&copy)
-			if changed.Error != nil {
-				return changed.Error
-			}
-			if changed.RowsAffected != 1 {
-				return ErrNextcloudOnboardingConflict
-			}
-			if err := tx.Where("tenant_id=? AND id=?", c.TenantID, kb.ID).Take(kb).Error; err != nil {
-				return err
-			}
-			if err := validateOnboardingTemplate(tx, kb); err != nil {
-				return err
-			}
+		if read == nil {
+			return ErrNextcloudOnboardingConflict
+		}
+		kb, err := writeOnboardingConfigurationClone(writerCtx, tx, c, req, actor, read)
+		if err != nil {
+			return err
 		}
 		out = types.NextcloudOnboardingOperation{OperationID: req.OperationID, CredentialID: c.ID, TenantID: c.TenantID, InstanceID: c.InstanceID, BindingID: req.BindingID, KnowledgeBaseID: kb.ID, ActorDirectoryID: req.ActorDirectoryID, ActorObjectGUID: req.ActorObjectGUID, ActorUserID: actor, Mode: req.Mode, Name: req.Name, ProcessingTemplateID: req.ProcessingTemplateID, RequestSHA256: onboardingDigest(req), State: "reserved", Revision: 1, CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC()}
 		if err := tx.Create(&out).Error; err != nil {
 			return err
 		}
-		_, err := NewGroupAccessRepository(tx).UpsertResourceAccessPolicy(ctx, &types.ResourceAccessPolicy{TenantID: c.TenantID, ResourceType: types.GroupResourceTypeKnowledgeBase, ResourceID: kb.ID, Mode: types.ResourceAccessRestricted, UpdatedBy: actor})
+		_, err = NewGroupAccessRepository(tx).UpsertResourceAccessPolicy(ctx, &types.ResourceAccessPolicy{TenantID: c.TenantID, ResourceType: types.GroupResourceTypeKnowledgeBase, ResourceID: kb.ID, Mode: types.ResourceAccessRestricted, UpdatedBy: actor})
 		return err
 	})
 	return out, err

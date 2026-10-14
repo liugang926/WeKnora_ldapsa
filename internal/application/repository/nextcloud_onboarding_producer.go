@@ -2,6 +2,8 @@ package repository
 
 import (
 	"context"
+	"encoding/json"
+	"reflect"
 	"time"
 
 	"github.com/Tencent/WeKnora/internal/types"
@@ -110,4 +112,42 @@ func scopedOnboardingDataSourceName(tx *gorm.DB, ctx context.Context, ds *types.
 	}
 	r := p.receipt()
 	return &r, true, nil
+}
+
+// The name is the actual authenticated NC manager input, not retained template
+// text. Its independent envelope does not certify any copied configuration.
+func admitOnboardingKnowledgeBaseName(tx *gorm.DB, req types.NextcloudOnboardingRequest, c types.NextcloudOnboardingCredential, kb *types.KnowledgeBase) error {
+	if req.Mode != "create" || kb == nil || kb.Name != req.Name || kb.TenantID != c.TenantID {
+		return ErrNextcloudOnboardingDenied
+	}
+	if err := currentOnboardingActor(tx, c, req.ActorDirectoryID, req.ActorObjectGUID); err != nil {
+		return err
+	}
+	lineage, err := types.NewCompleteSourceLineage()
+	if err != nil {
+		return err
+	}
+	input := struct {
+		Request      types.NextcloudOnboardingRequest
+		CredentialID string
+	}{req, c.ID}
+	return admitKnowledgeDisplayOrigin(tx, tx.Statement.Context, "kb-name", kb.ID, kb, kb.Name, input, lineage, "human")
+}
+func onboardingConfigurationMetadata(tx *gorm.DB, tenant uint64, kb string) (knowledgeConfigurationInputOrigin, *types.SourceLineage, error) {
+	var origin knowledgeConfigurationInputOrigin
+	revision, err := knowledgeConfigurationControlRevision(tx, kb)
+	if err != nil {
+		return origin, nil, err
+	}
+	if err := tx.Where("tenant_id=? AND knowledge_base_id=? AND config_revision=?", tenant, kb, revision).Take(&origin).Error; err != nil {
+		return origin, nil, err
+	}
+	var lineage types.SourceLineage
+	if json.Unmarshal([]byte(origin.SourceLineage), &lineage) != nil || lineage.RequireComplete() != nil || origin.InputDigest == "" {
+		return origin, nil, types.ErrSourceLineageUnknown
+	}
+	return origin, &lineage, nil
+}
+func sameOnboardingConfigurationMetadata(a, b knowledgeConfigurationInputOrigin) bool {
+	return reflect.DeepEqual(a, b)
 }
