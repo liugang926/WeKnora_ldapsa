@@ -518,13 +518,13 @@ func TestNextcloudOnboardingActualManagerReplacementCurrentDelegationAndHeadABA(
 
 	buildCtx, closeBuild := f.configurationBuildContext(t, op, ds)
 	defer closeBuild()
+	beginner := &onboardingActualBuildConfigurationBeginner{store: f.onboarding}
+	ConfigureKnowledgeOriginalInputSourceVerifier(f.store, beginner)
 	begin := func() (context.Context, *NextcloudOnboardingConfigurationRead, func(), error) {
-		read, e := f.onboarding.BeginScopedOnboardingConfigurationRead(buildCtx, 7, op.KnowledgeBaseID, source)
-		if e != nil {
-			return buildCtx, nil, func() {}, e
-		}
-		return read.Context(buildCtx), read, func() { require.NoError(t, read.Close()) }, nil
+		owned, close, err := f.store.BeginNextcloudBuildConfigurationRead(buildCtx)
+		return owned, beginner.read, close, err
 	}
+
 	owned, old, closeOld, err := begin()
 	require.NoError(t, err)
 	require.NoError(t, old.Checkpoint(owned))
@@ -644,4 +644,27 @@ func (f *onboardingOriginalActualFixture) configurationBuildContext(t *testing.T
 	lease, err := leases.AcquireKnowledge(context.Background(), scope, NextcloudContentBuildLease, "actual-config-worker", time.Minute)
 	require.NoError(t, err)
 	return WithNextcloudBuildLease(context.Background(), leases, lease, scope), func() { require.NoError(t, leases.ReleaseLease(context.Background(), lease.ID)) }
+}
+
+// Test adapter for the actual configuration-reader port. The producer still
+// creates and validates the sealed capability from its persisted build lease.
+type onboardingActualBuildConfigurationBeginner struct {
+	store *NextcloudOnboardingStore
+	read  *NextcloudOnboardingConfigurationRead
+}
+
+func (b *onboardingActualBuildConfigurationBeginner) CheckKnowledgeOriginalInputSources(context.Context, *types.KnowledgeBuildInputProof) error {
+	return types.ErrSourceLineageUnknown
+}
+func (b *onboardingActualBuildConfigurationBeginner) BeginKnowledgeConfigurationSources(ctx context.Context, tenant uint64, kb string, lineage *types.SourceLineage) (context.Context, func(), error) {
+	read, err := b.store.BeginScopedOnboardingConfigurationRead(ctx, tenant, kb, lineage)
+	if err != nil {
+		return ctx, func() {}, err
+	}
+	if err := HoldScopedOnboardingConfigurationRead(ctx, tenant, kb, lineage, read); err != nil {
+		_ = read.Close()
+		return ctx, func() {}, err
+	}
+	b.read = read
+	return read.Context(ctx), func() { CloseScopedOnboardingConfigurationReads(ctx) }, nil
 }

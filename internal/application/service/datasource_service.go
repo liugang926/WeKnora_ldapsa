@@ -903,8 +903,26 @@ func (s *DataSourceService) ProcessSync(ctx context.Context, task *asynq.Task) (
 		}
 	}
 
+	if ds.Type == types.ConnectorTypeNextcloud {
+		if s.sourceInputs == nil {
+			return types.ErrSourceLineageUnknown
+		}
+		var closeConfiguration func()
+		ctx, closeConfiguration, err = s.sourceInputs.BeginNextcloudOriginalFetchConfigurationRead(ctx, ds)
+		if err != nil {
+			return fmt.Errorf("begin Nextcloud configuration read: %w", err)
+		}
+		defer closeConfiguration()
+	}
+
 	kb, kbErr := s.kbService.GetKnowledgeBaseByID(ctx, ds.KnowledgeBaseID)
 	if kbErr != nil {
+		if ds.Type == types.ConnectorTypeNextcloud {
+			// A failed current configuration/source check is not proof that
+			// the KB was deleted. Keep the failure retryable and preserve it.
+			s.recordPreStreamSyncFailure(ctx, ds, syncLog, "Nextcloud configuration unavailable", ds.Status == types.DataSourceStatusPaused)
+			return fmt.Errorf("read Nextcloud configuration projection: %w", kbErr)
+		}
 		logger.Warnf(ctx, "knowledge base not found (likely deleted), cancelling sync: kb=%s ds=%s err=%v",
 			ds.KnowledgeBaseID, payload.DataSourceID, kbErr)
 		syncLog.Status = types.SyncLogStatusCanceled
@@ -957,7 +975,7 @@ func (s *DataSourceService) ProcessSync(ctx context.Context, task *asynq.Task) (
 		}
 		ctx, err = s.sourceInputs.BindNextcloudOriginalFetch(ctx, kb, ds)
 		if err != nil {
-			return err
+			return fmt.Errorf("bind Nextcloud original fetch: %w", err)
 		}
 	}
 

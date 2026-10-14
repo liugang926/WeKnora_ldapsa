@@ -1255,6 +1255,13 @@ func (s *knowledgeService) ProcessSummaryGeneration(ctx context.Context, t *asyn
 		logger.Errorf(ctx, "Failed to unmarshal summary generation payload: %v", err)
 		return nil // Don't retry on unmarshal error
 	}
+	var closeConfiguration func()
+	var configurationErr error
+	ctx, closeConfiguration, configurationErr = beginNextcloudTaskConfigurationRead(ctx, s.knowledgeInputs)
+	if configurationErr != nil {
+		return configurationErr
+	}
+	defer closeConfiguration()
 	var inputErr error
 	if s.knowledgeInputs != nil {
 		var closeMaterials func()
@@ -1674,6 +1681,13 @@ func (s *knowledgeService) ProcessQuestionGeneration(ctx context.Context, t *asy
 		logger.Errorf(ctx, "Failed to unmarshal question generation payload: %v", err)
 		return nil // Don't retry on unmarshal error
 	}
+	var closeConfiguration func()
+	var configurationErr error
+	ctx, closeConfiguration, configurationErr = beginNextcloudTaskConfigurationRead(ctx, s.knowledgeInputs)
+	if configurationErr != nil {
+		return configurationErr
+	}
+	defer closeConfiguration()
 	var inputErr error
 	if s.knowledgeInputs != nil {
 		var closeMaterials func()
@@ -3711,6 +3725,13 @@ func (s *knowledgeService) ProcessDocument(ctx context.Context, t *asynq.Task) e
 		return nil
 	}
 
+	var closeConfiguration func()
+	var configurationErr error
+	ctx, closeConfiguration, configurationErr = beginNextcloudTaskConfigurationRead(ctx, s.knowledgeInputs)
+	if configurationErr != nil {
+		return configurationErr
+	}
+	defer closeConfiguration()
 	ctx = logger.WithRequestID(ctx, payload.RequestId)
 	ctx = logger.WithField(ctx, "document_process", payload.KnowledgeID)
 	ctx = types.WithExecutionTenant(ctx, payload.TenantID)

@@ -122,6 +122,9 @@ func (s *KnowledgeInputProvenanceStore) CreateKnowledgeBaseWithInput(ctx context
 // replacement producer. Passing a freshly loaded legacy object is not a human
 // input boundary. Partial settings edits use the preserving method below.
 func (s *KnowledgeInputProvenanceStore) ReplaceKnowledgeBaseConfigurationWithInput(ctx context.Context, kb *types.KnowledgeBase) error {
+	if scopedWorkerConfigurationFullSaveDenied(ctx, kb) {
+		return ErrKnowledgeInputChanged
+	}
 	origin, ok := ctx.Value(knowledgeInputOriginKey{}).(knowledgeInputOrigin)
 	if !ok {
 		return types.ErrSourceLineageUnknown
@@ -145,6 +148,9 @@ func (s *KnowledgeInputProvenanceStore) ReplaceKnowledgeBaseConfigurationWithInp
 // UpdateKnowledgeBaseWithInput preserves the original provenance of retained
 // fields. A name-only edit cannot declare legacy examples source-independent.
 func (s *KnowledgeInputProvenanceStore) UpdateKnowledgeBaseWithInput(ctx context.Context, kb *types.KnowledgeBase) error {
+	if scopedWorkerConfigurationFullSaveDenied(ctx, kb) {
+		return ErrKnowledgeInputChanged
+	}
 	origin, ok := ctx.Value(knowledgeInputOriginKey{}).(knowledgeInputOrigin)
 	if !ok {
 		return types.ErrSourceLineageUnknown

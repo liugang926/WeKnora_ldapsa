@@ -104,6 +104,13 @@ func (s *KnowledgePostProcessService) Handle(ctx context.Context, task *asynq.Ta
 		return fmt.Errorf("unmarshal knowledge post process payload: %w", err)
 	}
 
+	var closeConfiguration func()
+	var configurationErr error
+	ctx, closeConfiguration, configurationErr = beginNextcloudTaskConfigurationRead(ctx, s.knowledgeInputs)
+	if configurationErr != nil {
+		return configurationErr
+	}
+	defer closeConfiguration()
 	logger.Infof(ctx, "[KnowledgePostProcess] Orchestrating post processing for knowledge: %s", payload.KnowledgeID)
 
 	if payload.OriginalInput != nil {

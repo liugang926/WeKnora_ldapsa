@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Tencent/WeKnora/internal/application/access"
@@ -44,7 +45,7 @@ type NextcloudOnboardingConfigurationRead struct {
 	sourceBodyLeases                   map[string]string
 	sourceBodies                       map[string]originalBodyPayload
 	leases                             []NextcloudContentLease
-	closed                             bool
+	closed                             atomic.Bool
 	lifetime                           context.Context
 	cancel                             context.CancelCauseFunc
 	heartbeatStop                      chan struct{}
@@ -509,8 +510,13 @@ func (r *NextcloudOnboardingConfigurationRead) checkSource(tx *gorm.DB, ctx cont
 }
 
 func (r *NextcloudOnboardingConfigurationRead) checkInTx(ctx context.Context, tx *gorm.DB) error {
-	if r.closed {
+	if r.closed.Load() {
 		return ErrNextcloudContentLeaseExpired
+	}
+	if r.operation != nil {
+		if err := scopedOnboardingConfigurationPurposeInTx(ctx, tx, r.tenant, r.kb); err != nil {
+			return err
+		}
 	}
 	if err := r.checkAuthority(tx, ctx); err != nil {
 		return err
@@ -580,6 +586,11 @@ func (r *NextcloudOnboardingConfigurationRead) checkInTx(ctx context.Context, tx
 			return ErrOriginalBodyUnavailable
 		}
 	}
+	if r.operation != nil {
+		if err := scopedOnboardingConfigurationPurposeInTx(ctx, tx, r.tenant, r.kb); err != nil {
+			return err
+		}
+	}
 	return ctx.Err()
 }
 
@@ -600,7 +611,7 @@ func (r *NextcloudOnboardingConfigurationRead) Checkpoint(ctx context.Context) e
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.closed {
+	if r.closed.Load() {
 		return ErrNextcloudContentLeaseExpired
 	}
 	if r.heartbeatError != nil {
@@ -649,7 +660,7 @@ func (r *NextcloudOnboardingConfigurationRead) startHeartbeat() {
 				return
 			case <-ticker.C:
 				r.mu.Lock()
-				if r.closed {
+				if r.closed.Load() {
 					r.mu.Unlock()
 					return
 				}
@@ -672,11 +683,11 @@ func (r *NextcloudOnboardingConfigurationRead) Close() error {
 		return nil
 	}
 	r.mu.Lock()
-	if r.closed {
+	if r.closed.Load() {
 		r.mu.Unlock()
 		return nil
 	}
-	r.closed = true
+	r.closed.Store(true)
 	if r.cancel != nil {
 		r.cancel(ErrNextcloudContentLeaseExpired)
 	}
@@ -703,30 +714,75 @@ func (r *NextcloudOnboardingConfigurationRead) Close() error {
 	return errors.Join(errs...)
 }
 
-// A fresh worker can read only the configuration of its actual, current build
-// lease. A tenant/KB DTO, ordinary role, or captured lineage is not a purpose.
-// Connector pre-admission authorization is integrated separately at its real
-// credential boundary; it cannot manufacture this durable worker capability.
-func scopedOnboardingConfigurationPurposeFromContext(ctx context.Context, tenant uint64, kb string) (string, error) {
-	if ctx == nil {
-		return "", types.ErrSourceLineageUnknown
+// ConfigurationProjection is the only configuration hydration allowed to a
+// held worker purpose. It returns a new SQL-decoded value, with no display name,
+// description or generated profile implicitly selected by GetKnowledgeBase.
+func (r *NextcloudOnboardingConfigurationRead) ConfigurationProjection(ctx context.Context) (*types.KnowledgeBase, error) {
+	if err := r.Checkpoint(ctx); err != nil {
+		return nil, err
 	}
-	guard, ok := ctx.Value(nextcloudBuildContextKey{}).(nextcloudBuildContext)
-	if !ok {
-		return "", types.ErrSourceLineageUnknown
-	}
-	if _, ok := guard.validator.(*NextcloudContentLeaseStore); !ok {
-		return "", types.ErrSourceLineageUnknown
-	}
-	lease, scope, err := NextcloudBuildInputLease(ctx)
+	owned := r.Context(ctx)
+	var result *types.KnowledgeBase
+	err := r.store.db.WithContext(owned).Transaction(func(tx *gorm.DB) error {
+		if err := r.checkInTx(owned, tx); err != nil {
+			return err
+		}
+		var actual types.KnowledgeBase
+		if err := tx.Select(knowledgeWorkerConfigurationColumns).Where("id=? AND tenant_id=? AND deleted_at IS NULL", r.kb, r.tenant).Take(&actual).Error; err != nil {
+			return err
+		}
+		digest, err := knowledgeConfigurationOriginDigest(&actual)
+		if err != nil {
+			return err
+		}
+		if digest != r.origin.InputDigest {
+			return ErrKnowledgeInputChanged
+		}
+		if err := r.checkInTx(owned, tx); err != nil {
+			return err
+		}
+		result = &actual
+		return nil
+	})
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	if scope.TenantID != tenant || scope.KnowledgeBaseID != kb || scope.KnowledgeID == "" || scope.DataSourceID == "" || lease.Kind != NextcloudContentBuildLease {
-		return "", types.ErrSourceLineageUnknown
+	if err := r.Checkpoint(owned); err != nil {
+		return nil, err
 	}
-	if err := CheckNextcloudBuildLease(ctx); err != nil {
-		return "", err
+	return result, nil
+}
+
+// ConfigurationProjectionInTx runs inside the caller's existing transaction.
+// It never opens a second connection, renews a lease or invokes the purpose
+// checker/snapshot. Captured plans/scope are immutable; owned cancellation and
+// actual lease rows reject concurrent Close or a failed heartbeat.
+func (r *NextcloudOnboardingConfigurationRead) ConfigurationProjectionInTx(ctx context.Context, tx *gorm.DB) (*types.KnowledgeBase, error) {
+	if r == nil || ctx == nil || tx == nil {
+		return nil, types.ErrSourceLineageUnknown
 	}
-	return scope.DataSourceID, nil
+	if r.lifetime != nil && r.lifetime.Err() != nil {
+		return nil, context.Cause(r.lifetime)
+	}
+	if err := r.checkInTx(ctx, tx); err != nil {
+		return nil, err
+	}
+	var actual types.KnowledgeBase
+	if err := tx.WithContext(ctx).Select(knowledgeWorkerConfigurationColumns).Where("id=? AND tenant_id=? AND deleted_at IS NULL", r.kb, r.tenant).Take(&actual).Error; err != nil {
+		return nil, err
+	}
+	digest, err := knowledgeConfigurationOriginDigest(&actual)
+	if err != nil {
+		return nil, err
+	}
+	if digest != r.origin.InputDigest {
+		return nil, ErrKnowledgeInputChanged
+	}
+	if err := r.checkInTx(ctx, tx); err != nil {
+		return nil, err
+	}
+	if r.lifetime != nil && r.lifetime.Err() != nil {
+		return nil, context.Cause(r.lifetime)
+	}
+	return &actual, nil
 }

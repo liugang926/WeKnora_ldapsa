@@ -32,7 +32,44 @@ func NewKnowledgeOriginalInputSourceVerifier(store *repository.KnowledgeInputPro
 	}
 	return verifier
 }
+func (v *knowledgeOriginalInputSourceVerifier) BeginKnowledgeConfigurationSources(ctx context.Context, tenant uint64, kb string, lineage *types.SourceLineage) (context.Context, func(), error) {
+	noop := func() {}
+	if v == nil || v.store == nil || lineage.RequireComplete() != nil {
+		return ctx, noop, types.ErrSourceLineageUnknown
+	}
+	var read repository.ScopedOnboardingConfigurationRead
+	var err error
+	if len(lineage.Sources) == 0 {
+		read, err = v.store.BeginScopedIndependentConfigurationRead(ctx, tenant, kb, lineage)
+	} else {
+		store := v.store.NextcloudOnboardingConfigurationStore()
+		if store == nil {
+			return ctx, noop, access.ErrNextcloudPublicationUnavailable
+		}
+		read, err = store.BeginScopedOnboardingConfigurationRead(ctx, tenant, kb, lineage)
+	}
+	if err != nil {
+		return ctx, noop, err
+	}
+	if read == nil {
+		return ctx, noop, access.ErrNextcloudPublicationUnavailable
+	}
+	if err := repository.HoldScopedOnboardingConfigurationRead(ctx, tenant, kb, lineage, read); err != nil {
+		_ = read.Close()
+		return ctx, noop, err
+	}
+	current := read.Context(ctx)
+	if current == nil {
+		repository.CloseScopedOnboardingConfigurationReads(ctx)
+		return ctx, noop, access.ErrNextcloudPublicationUnavailable
+	}
+	return current, func() { repository.CloseScopedOnboardingConfigurationReads(ctx) }, nil
+}
+
 func (v *knowledgeOriginalInputSourceVerifier) CheckKnowledgeConfigurationSources(ctx context.Context, tenant uint64, kb string, lineage *types.SourceLineage) error {
+	if handled, err := repository.CheckScopedOnboardingConfigurationSources(ctx, tenant, kb, lineage, false); handled || err != nil {
+		return err
+	}
 	if v == nil || v.public == nil {
 		return types.ErrSourceLineageUnknown
 	}
@@ -100,6 +137,9 @@ func (v *knowledgeOriginalInputSourceVerifier) CheckKnowledgeOriginalInputSource
 			return access.ErrNextcloudPublicationDenied
 		}
 		lineage.Sources = remaining
+		if handled, err := repository.CheckScopedOnboardingConfigurationSources(ctx, proof.TenantID, proof.KnowledgeBaseID, lineage, true); handled || err != nil {
+			return err
+		}
 		// This exact staging source uses a machine build lease and signed source
 		// policy check. Inherited public sources still need the real actor.
 		if len(remaining) == 0 {

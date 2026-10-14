@@ -76,8 +76,11 @@ func (s *KnowledgeInputProvenanceStore) BindNextcloudOriginalFetch(ctx context.C
 	if kb == nil || ds == nil || kb.ID != ds.KnowledgeBaseID || kb.TenantID != ds.TenantID || ds.Type != types.ConnectorTypeNextcloud {
 		return ctx, ErrKnowledgeInputChanged
 	}
+	if err := CheckScopedOnboardingConfigurationReads(ctx); err != nil {
+		return ctx, err
+	}
 	var actual types.DataSource
-	if err := s.db.WithContext(ctx).Where("id = ? AND tenant_id = ? AND knowledge_base_id = ? AND status = ?", ds.ID, ds.TenantID, ds.KnowledgeBaseID, types.DataSourceStatusActive).Take(&actual).Error; err != nil {
+	if err := s.db.WithContext(ctx).Select("id", "tenant_id", "knowledge_base_id", "type", "status", "config", "name").Where("id = ? AND tenant_id = ? AND knowledge_base_id = ? AND status = ?", ds.ID, ds.TenantID, ds.KnowledgeBaseID, types.DataSourceStatusActive).Take(&actual).Error; err != nil {
 		return ctx, err
 	}
 	a, err := KnowledgeInputDigest(ds.Config)
@@ -88,8 +91,8 @@ func (s *KnowledgeInputProvenanceStore) BindNextcloudOriginalFetch(ctx context.C
 	if err != nil || a != b {
 		return ctx, ErrKnowledgeInputChanged
 	}
-	var current types.KnowledgeBase
-	if err := s.db.WithContext(ctx).Where("id = ? AND tenant_id = ?", kb.ID, kb.TenantID).Take(&current).Error; err != nil {
+	current, err := loadKnowledgeBuildConfiguration(ctx, s.db, kb.TenantID, kb.ID)
+	if err != nil {
 		return ctx, err
 	}
 	empty := &types.Knowledge{}
@@ -97,11 +100,11 @@ func (s *KnowledgeInputProvenanceStore) BindNextcloudOriginalFetch(ctx context.C
 	if err != nil {
 		return ctx, err
 	}
-	currentDigest, err := knowledgeConfigDigest(&current, empty)
+	currentDigest, err := knowledgeConfigDigest(current, empty)
 	if err != nil || digest != currentDigest {
 		return ctx, ErrKnowledgeInputChanged
 	}
-	lineage, err := readKnowledgeConfigurationOrigin(s.db.WithContext(ctx), &current)
+	lineage, err := readKnowledgeConfigurationOrigin(s.db.WithContext(ctx), current)
 	if err != nil {
 		return ctx, err
 	}
@@ -130,7 +133,7 @@ func (s *KnowledgeInputProvenanceStore) BindNextcloudOriginalFetch(ctx context.C
 	if err != nil {
 		return ctx, err
 	}
-	actualRouting, err := knowledgeEnrichmentRoutingDigest(&current)
+	actualRouting, err := knowledgeEnrichmentRoutingDigest(current)
 	if err != nil || actualRouting != routingDigest {
 		return ctx, ErrKnowledgeInputChanged
 	}
@@ -265,6 +268,9 @@ type originalUploadConfigurationSourceVerifier interface {
 // CheckNextcloudOriginalUploadInput requires the opaque actual connector read
 // and independently checks its signed current source before physical storage.
 func (s *KnowledgeInputProvenanceStore) CheckNextcloudOriginalUploadInput(ctx context.Context, kb *types.KnowledgeBase, k *types.Knowledge, input []byte) error {
+	if err := CheckScopedOnboardingConfigurationReads(ctx); err != nil {
+		return err
+	}
 	original, ok := ctx.Value(nextcloudFetchedArtifactKey{}).(nextcloudFetchedArtifactContext)
 	if !ok {
 		return types.ErrSourceLineageUnknown
@@ -277,22 +283,22 @@ func (s *KnowledgeInputProvenanceStore) CheckNextcloudOriginalUploadInput(ctx co
 	if err != nil {
 		return err
 	}
-	var current types.KnowledgeBase
-	if err := s.db.WithContext(ctx).Where("id = ? AND tenant_id = ?", k.KnowledgeBaseID, k.TenantID).Take(&current).Error; err != nil {
+	current, err := loadKnowledgeBuildConfiguration(ctx, s.db, k.TenantID, k.KnowledgeBaseID)
+	if err != nil {
 		return err
 	}
-	if err := s.verifyNextcloudOriginalFetchInTx(s.db.WithContext(ctx), ctx, &current, original.DataSourceID); err != nil {
+	if err := s.verifyNextcloudOriginalFetchInTx(s.db.WithContext(ctx), ctx, current, original.DataSourceID); err != nil {
 		return err
 	}
 	wanted, err := knowledgeConfigDigest(kb, k)
 	if err != nil {
 		return err
 	}
-	actual, err := knowledgeConfigDigest(&current, k)
+	actual, err := knowledgeConfigDigest(current, k)
 	if err != nil || actual != wanted {
 		return ErrKnowledgeInputChanged
 	}
-	lineage, err := readKnowledgeConfigurationOrigin(s.db.WithContext(ctx), &current)
+	lineage, err := readKnowledgeConfigurationOrigin(s.db.WithContext(ctx), current)
 	if err != nil {
 		return err
 	}
@@ -317,7 +323,7 @@ func (s *KnowledgeInputProvenanceStore) CheckNextcloudOriginalUploadInput(ctx co
 	if err := nextcloud.CheckCurrentPublication(types.WithNextcloudContentRevision(ctx, original.Actual.ContentRevision), cfg, original.Actual.InstanceID, original.Actual.BindingID, fileID, original.Actual.ETag, original.Actual.Path); err != nil {
 		return err
 	}
-	return s.verifyNextcloudOriginalFetchInTx(s.db.WithContext(ctx), ctx, &current, original.DataSourceID)
+	return s.verifyNextcloudOriginalFetchInTx(s.db.WithContext(ctx), ctx, current, original.DataSourceID)
 }
 func (s *KnowledgeInputProvenanceStore) CreateNextcloudKnowledgeWithOriginalUpload(ctx context.Context, kb *types.KnowledgeBase, k *types.Knowledge, input []byte) error {
 	if err := s.CheckNextcloudOriginalUploadInput(ctx, kb, k, input); err != nil {
@@ -345,14 +351,14 @@ func (s *KnowledgeInputProvenanceStore) CreateNextcloudKnowledgeWithOriginalUplo
 		if err != nil || revision != before {
 			return ErrKnowledgeInputChanged
 		}
-		var current types.KnowledgeBase
-		if err := tx.Where("id = ? AND tenant_id = ?", kb.ID, kb.TenantID).Take(&current).Error; err != nil {
+		current, err := loadKnowledgeBuildConfigurationInTx(tx, kb.TenantID, kb.ID)
+		if err != nil {
 			return err
 		}
-		if err := s.verifyNextcloudOriginalFetchInTx(tx, ctx, &current, original.DataSourceID); err != nil {
+		if err := s.verifyNextcloudOriginalFetchInTx(tx, ctx, current, original.DataSourceID); err != nil {
 			return err
 		}
-		nowConfig, err := knowledgeConfigDigest(&current, k)
+		nowConfig, err := knowledgeConfigDigest(current, k)
 		if err != nil || nowConfig != configDigest {
 			return ErrKnowledgeInputChanged
 		}
@@ -360,7 +366,7 @@ func (s *KnowledgeInputProvenanceStore) CreateNextcloudKnowledgeWithOriginalUplo
 		if err != nil || nowRevision != configRevision {
 			return ErrKnowledgeInputChanged
 		}
-		lineage, err := readKnowledgeConfigurationOrigin(tx, &current)
+		lineage, err := readKnowledgeConfigurationOrigin(tx, current)
 		if err != nil {
 			return err
 		}
@@ -464,11 +470,11 @@ func (s *KnowledgeInputProvenanceStore) verifyOriginalUploadInTx(tx *gorm.DB, k 
 		if err != nil || revision != receipt.RootRevision {
 			return nil, ErrKnowledgeInputChanged
 		}
-		var kb types.KnowledgeBase
-		if err := tx.Where("id = ? AND tenant_id = ?", k.KnowledgeBaseID, k.TenantID).Take(&kb).Error; err != nil {
+		kb, err := loadKnowledgeBuildConfigurationInTx(tx, k.TenantID, k.KnowledgeBaseID)
+		if err != nil {
 			return nil, err
 		}
-		digest, err := knowledgeConfigDigest(&kb, k)
+		digest, err := knowledgeConfigDigest(kb, k)
 		if err != nil || digest != receipt.ConfigDigest {
 			return nil, ErrKnowledgeInputChanged
 		}
@@ -476,7 +482,7 @@ func (s *KnowledgeInputProvenanceStore) verifyOriginalUploadInTx(tx *gorm.DB, k 
 		if err != nil || revision != receipt.ConfigRevision {
 			return nil, ErrKnowledgeInputChanged
 		}
-		routing, err := knowledgeEnrichmentRoutingDigest(&kb)
+		routing, err := knowledgeEnrichmentRoutingDigest(kb)
 		if err != nil || routing != receipt.RoutingDigest {
 			return nil, ErrKnowledgeInputChanged
 		}

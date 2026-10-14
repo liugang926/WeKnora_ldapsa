@@ -165,14 +165,14 @@ func (s *KnowledgeInputProvenanceStore) UpdateKnowledgeWithInput(ctx context.Con
 			return err
 		}
 		origin.lineage = combined
-		var kb types.KnowledgeBase
-		if err := tx.Where("id = ? AND tenant_id = ?", k.KnowledgeBaseID, k.TenantID).Take(&kb).Error; err != nil {
+		kb, err := loadKnowledgeBuildConfigurationInTx(tx, k.TenantID, k.KnowledgeBaseID)
+		if err != nil {
 			return err
 		}
 		if err := tx.Omit(omitFieldsOnUpdate...).Save(k).Error; err != nil {
 			return err
 		}
-		proof, err = s.admitInTx(ctx, tx, k, &kb, input, origin)
+		proof, err = s.admitInTx(ctx, tx, k, kb, input, origin)
 		return err
 	})
 	return proof, err
@@ -305,8 +305,8 @@ func (s *KnowledgeInputProvenanceStore) CreateKnowledgeWithInput(ctx context.Con
 	}
 	var proof *types.KnowledgeBuildInputProof
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var kb types.KnowledgeBase
-		if err := tx.Where("id = ? AND tenant_id = ?", k.KnowledgeBaseID, k.TenantID).Take(&kb).Error; err != nil {
+		kb, err := loadKnowledgeBuildConfigurationInTx(tx, k.TenantID, k.KnowledgeBaseID)
+		if err != nil {
 			return err
 		}
 		controlled, err := ragKnowledgeIsControlled(tx, k)
@@ -319,7 +319,7 @@ func (s *KnowledgeInputProvenanceStore) CreateKnowledgeWithInput(ctx context.Con
 		if err := tx.Create(k).Error; err != nil {
 			return err
 		}
-		proof, err = s.admitInTx(ctx, tx, k, &kb, input, origin)
+		proof, err = s.admitInTx(ctx, tx, k, kb, input, origin)
 		return err
 	})
 	return proof, err
@@ -460,8 +460,8 @@ func (s *KnowledgeInputProvenanceStore) admissionInTx(tx *gorm.DB, k *types.Know
 	if err := query.Take(&a).Error; err != nil {
 		return nil, nil, nil, err
 	}
-	var kb types.KnowledgeBase
-	if err := tx.Where("id = ? AND tenant_id = ?", k.KnowledgeBaseID, k.TenantID).Take(&kb).Error; err != nil {
+	kb, err := loadKnowledgeBuildConfigurationInTx(tx, k.TenantID, k.KnowledgeBaseID)
+	if err != nil {
 		return nil, nil, nil, err
 	}
 	revision, err := knowledgeConfigurationControlRevision(tx, kb.ID)
@@ -472,14 +472,14 @@ func (s *KnowledgeInputProvenanceStore) admissionInTx(tx *gorm.DB, k *types.Know
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	configDigest, err := knowledgeConfigDigest(&kb, k)
+	configDigest, err := knowledgeConfigDigest(kb, k)
 	if err != nil {
 		return nil, nil, nil, err
 	}
 	if a.RootDigest != rootDigest || a.ConfigDigest != configDigest || a.ConfigRevision != revision {
 		return nil, nil, nil, ErrKnowledgeInputChanged
 	}
-	if _, err := readKnowledgeConfigurationOrigin(tx, &kb); err != nil {
+	if _, err := readKnowledgeConfigurationOrigin(tx, kb); err != nil {
 		return nil, nil, nil, err
 	}
 	if a.OriginKind == "history" {
@@ -527,7 +527,7 @@ func (s *KnowledgeInputProvenanceStore) admissionInTx(tx *gorm.DB, k *types.Know
 			return nil, nil, nil, err
 		}
 	}
-	return &a, &kb, &lineage, nil
+	return &a, kb, &lineage, nil
 }
 
 func (s *KnowledgeInputProvenanceStore) ReadOrdinaryRAGInputLineage(ctx context.Context, tx *gorm.DB, k *types.Knowledge, c *types.Chunk) (*types.SourceLineage, error) {
@@ -595,6 +595,9 @@ func (s *KnowledgeInputProvenanceStore) ReadControlledRAGInputLineage(ctx contex
 }
 
 func (s *KnowledgeInputProvenanceStore) snapshot(ctx context.Context, request types.KnowledgeBuildInputCaptureRequest, recheck bool) (*types.KnowledgeBuildInputSnapshot, error) {
+	if err := CheckScopedOnboardingConfigurationReads(ctx); err != nil {
+		return nil, err
+	}
 	if s == nil || s.db == nil || request.Expected == nil {
 		return nil, types.ErrSourceLineageUnknown
 	}
@@ -613,6 +616,12 @@ func (s *KnowledgeInputProvenanceStore) snapshot(ctx context.Context, request ty
 		return nil, types.ErrSourceLineageLimit
 	}
 	options := &sql.TxOptions{ReadOnly: true}
+	if ctx.Value(scopedOnboardingConfigurationReadKey{}) != nil {
+		// Exact worker projection uses actual build-fence row locks. PG
+		// read-only transactions reject the guard's no-op lock UPDATE;
+		// ordinary public snapshots retain their read-only contract.
+		options.ReadOnly = false
+	}
 	switch s.db.Dialector.Name() {
 	case "postgres":
 		options.Isolation = sql.LevelRepeatableRead

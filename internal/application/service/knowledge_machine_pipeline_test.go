@@ -93,6 +93,8 @@ type machinePipelineSource struct {
 	Pair                    repository.NextcloudSourcePairing
 	Token, ExternalID, ETag string
 	Prepared                func(*repository.NextcloudSourcePairing)
+	BeforePrepare           func(*enrichmentTestFixture, *types.KnowledgeBase, *repository.NextcloudSourcePairing) (context.Context, error)
+	AfterActivate           func(*enrichmentTestFixture, *repository.NextcloudSourcePairing)
 }
 
 func newMachinePipelineFixtureWithSource(t *testing.T, pg bool, artifact string, live *machinePipelineSource, withMessageMaterials ...bool) *machinePipelineFixture {
@@ -140,9 +142,9 @@ func newMachinePipelineFixtureWithSource(t *testing.T, pg bool, artifact string,
 	}
 	// This fixture exercises the current production pipeline, including the
 	// processing ledger and recovery gates added by directory onboarding.
-	processing := []string{"000032_nextcloud_event_inbox", "000038_nextcloud_gc", "000040_nextcloud_gc_object_claim", "000041_nextcloud_gc_derived_inventory", "000064_nextcloud_publication_recovery", "000075_nextcloud_processing_state", "000076_nextcloud_directory_migrations", "000077_nextcloud_content_revision", "000078_nextcloud_control_recovery", "000079_nextcloud_recovery_build_leases", "000080_nextcloud_graph_recovery_fence"}
+	processing := []string{"000032_nextcloud_event_inbox", "000033_nextcloud_event_dispatch", "000038_nextcloud_gc", "000040_nextcloud_gc_object_claim", "000041_nextcloud_gc_derived_inventory", "000064_nextcloud_publication_recovery", "000075_nextcloud_processing_state", "000076_nextcloud_directory_migrations", "000077_nextcloud_content_revision", "000078_nextcloud_control_recovery", "000079_nextcloud_recovery_build_leases", "000080_nextcloud_graph_recovery_fence"}
 	if pg {
-		processing = []string{"000113_nextcloud_event_inbox", "000119_nextcloud_gc", "000121_nextcloud_gc_object_claim", "000122_nextcloud_gc_derived_inventory", "000145_nextcloud_publication_recovery", "000156_nextcloud_processing_state", "000157_nextcloud_directory_migrations", "000158_nextcloud_content_revision", "000159_nextcloud_control_recovery", "000160_nextcloud_recovery_build_leases", "000161_nextcloud_graph_recovery_fence"}
+		processing = []string{"000113_nextcloud_event_inbox", "000114_nextcloud_event_dispatch", "000119_nextcloud_gc", "000121_nextcloud_gc_object_claim", "000122_nextcloud_gc_derived_inventory", "000145_nextcloud_publication_recovery", "000156_nextcloud_processing_state", "000157_nextcloud_directory_migrations", "000158_nextcloud_content_revision", "000159_nextcloud_control_recovery", "000160_nextcloud_recovery_build_leases", "000161_nextcloud_graph_recovery_fence"}
 	}
 	for _, name := range processing {
 		script, err := os.ReadFile("../../../migrations/" + directory + "/" + name + ".up.sql")
@@ -153,6 +155,7 @@ func newMachinePipelineFixtureWithSource(t *testing.T, pg bool, artifact string,
 		require.NoError(t, migration.Exec(string(script)).Error)
 	}
 	installMachineOnboardingSchema(t, f.db, migration)
+	installMachineCurrentManagerSchema(t, f.db, migration)
 	// Install the actual combined body protocol, bootstrap its owned external
 	// journal and retain a connection pool of one thereafter.
 	journalDir := t.TempDir()
@@ -269,13 +272,22 @@ func newMachinePipelineFixtureWithSource(t *testing.T, pg bool, artifact string,
 		token, externalID, etag = live.Token, live.ExternalID, live.ETag
 		t.Setenv("WEKNORA_NEXTCLOUD_ALLOWED_ORIGINS", proposed.BaseURL)
 	}
-	pair, created, e := pairs.PrepareSourcePairing(f.ctx, proposed, token)
+	prepareCtx := f.ctx
+	if live != nil && live.BeforePrepare != nil {
+		var err error
+		prepareCtx, err = live.BeforePrepare(f, &kb, &proposed)
+		require.NoError(t, err)
+	}
+	pair, created, e := pairs.PrepareSourcePairing(prepareCtx, proposed, token)
 	require.NoError(t, e)
 	require.True(t, created)
 	if live != nil && live.Prepared != nil {
 		live.Prepared(&pair)
 	}
-	require.NoError(t, pairs.ActivateSourcePairing(f.ctx, pair))
+	require.NoError(t, pairs.ActivateSourcePairing(prepareCtx, pair))
+	if live != nil && live.AfterActivate != nil {
+		live.AfterActivate(f, &pair)
+	}
 	ds, e := sources.FindByID(f.ctx, pair.DataSourceID)
 	require.NoError(t, e)
 	now := time.Now().UTC()
@@ -295,6 +307,9 @@ func newMachinePipelineFixtureWithSource(t *testing.T, pg bool, artifact string,
 	require.NoError(t, f.db.Create(directoryRecord).Error)
 	user := "enrich-human"
 	require.NoError(t, f.db.Create(&types.DirectoryIdentity{ID: "machine-ad-user", DirectoryID: "machine-ad", ObjectGUID: "00112233-4455-6677-8899-aabbccddeeff", UserID: &user, Status: types.DirectoryObjectActive, SnapshotVersion: 1}).Error)
+	// Use the production repository getter, including sealed worker configuration
+	// projections. The general enrichment fixture mock selects full KB rows.
+	f.s.kbService = &knowledgeBaseService{repo: repository.NewKnowledgeBaseRepository(f.db)}
 	publication := access.NewNextcloudPublicationGuard(repository.NewDirectoryRepository(f.db), sources)
 	groups := NewGroupAccessService(repository.NewGroupAccessRepository(f.db))
 	f.guard = access.NewNextcloudSourceLineageGuard(f.s.repo.(access.NextcloudLineageSnapshotLookup), f.s.kbService, nil, nil, groups, publication)
@@ -327,6 +342,9 @@ func (m *machinePipelineFixture) ingest(t *testing.T) *types.Knowledge {
 	log := &types.SyncLog{ID: "actual-machine-sync", DataSourceID: m.ds.ID, TenantID: 7, Status: types.SyncLogStatusRunning, StartedAt: time.Now().UTC()}
 	require.NoError(t, m.source.syncLogRepo.Create(context.Background(), log))
 	require.NoError(t, m.source.ProcessSync(context.Background(), enrichmentTask(t, types.TypeDataSourceSync, types.DataSourceSyncPayload{DataSourceID: m.ds.ID, TenantID: 7, SyncLogID: log.ID, ForceFull: true})))
+	var completed types.SyncLog
+	require.NoError(t, m.f.db.Where("id=?", log.ID).Take(&completed).Error)
+	require.Empty(t, completed.ErrorMessage, "actual connector ingestion must not hide per-file errors")
 	var row types.Knowledge
 	require.NoError(t, m.f.db.Where("channel = ?", types.ConnectorTypeNextcloud).Take(&row).Error)
 	require.Equal(t, types.ParseStatusPending, row.ParseStatus)
