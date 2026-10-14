@@ -86,16 +86,20 @@ func newNextcloudTaskAdmissionFixture(t *testing.T, trigger string) *nextcloudTa
 		Credentials: map[string]interface{}{"token": "test-machine-token", "key_id": "test-key"},
 	}).ToJSON()
 	require.NoError(t, err)
-	ds := &types.DataSource{ID: "ds", TenantID: 7, KnowledgeBaseID: "kb",
-		Type: types.ConnectorTypeNextcloud, Status: types.DataSourceStatusActive, Config: config}
+	ds := &types.DataSource{
+		ID: "ds", TenantID: 7, KnowledgeBaseID: "kb",
+		Type: types.ConnectorTypeNextcloud, Status: types.DataSourceStatusActive, Config: config,
+	}
 	kb := &types.KnowledgeBase{ID: "kb", TenantID: 7}
 	require.NoError(t, db.Create(ds).Error)
 	require.NoError(t, db.Create(kb).Error)
 	baseURL, configSHA, bindingID, err := apprepo.NextcloudEventDataSourceIdentity(ds.Config)
 	require.NoError(t, err)
-	pair := &apprepo.NextcloudSourcePairing{OperationID: "pair", TenantID: 7,
+	pair := &apprepo.NextcloudSourcePairing{
+		OperationID: "pair", TenantID: 7,
 		KnowledgeBaseID: "kb", DataSourceID: "ds", InstanceID: "instance", BindingID: bindingID,
-		BaseURL: baseURL, ConfigSHA: configSHA, State: "active", PublicationEpoch: 3}
+		BaseURL: baseURL, ConfigSHA: configSHA, State: "active", PublicationEpoch: 3,
+	}
 	require.NoError(t, db.Create(pair).Error)
 	payload := types.DataSourceSyncPayload{
 		TenantID: 7, DataSourceID: "ds", SyncLogID: "log", Trigger: trigger,
@@ -117,9 +121,11 @@ func newNextcloudTaskAdmissionFixture(t *testing.T, trigger string) *nextcloudTa
 			(connection_id, state, last_sync_log_id) VALUES ('connection', 'queued', 'log')`).Error)
 	} else {
 		now := time.Now().UTC()
-		require.NoError(t, db.Create(&types.Knowledge{ID: "failed-candidate", TenantID: 7,
+		require.NoError(t, db.Create(&types.Knowledge{
+			ID: "failed-candidate", TenantID: 7,
 			KnowledgeBaseID: "kb", Channel: types.ConnectorTypeNextcloud,
-			ParseStatus: types.ParseStatusFailed}).Error)
+			ParseStatus: types.ParseStatusFailed,
+		}).Error)
 		require.NoError(t, db.Exec(`INSERT INTO nextcloud_source_versions
 			(tenant_id, knowledge_base_id, datasource_id, external_id, desired_etag, candidate_knowledge_id, state)
 			VALUES (7, 'kb', 'ds', 'nextcloud:instance:77', 'etag', 'failed-candidate', 'staging')`).Error)
@@ -132,14 +138,16 @@ func newNextcloudTaskAdmissionFixture(t *testing.T, trigger string) *nextcloudTa
 	}
 	logs := &nextcloudTaskLogRepo{processSyncSyncLogRepo: processSyncSyncLogRepo{logs: map[string]*types.SyncLog{}}}
 	probe := &nextcloudTaskAccessProbe{}
-	return &nextcloudTaskAdmissionFixture{db: db, logs: logs, access: probe, payload: payload,
+	return &nextcloudTaskAdmissionFixture{
+		db: db, logs: logs, access: probe, payload: payload,
 		svc: &DataSourceService{
 			dsRepo: newKBDeleteDSRepo("kb", ds), syncLogRepo: logs,
 			kbService:               &processSyncKBService{kb: kb},
 			knowledgeService:        &knowledgeService{groupAccess: probe},
 			nextcloudEventInbox:     apprepo.NewNextcloudEventInboxRepository(db),
 			nextcloudSourcePairings: apprepo.NewNextcloudSourcePairingRepository(db),
-		}}
+		},
+	}
 }
 
 func (f *nextcloudTaskAdmissionFixture) run(ctx context.Context, t *testing.T) error {
@@ -169,15 +177,23 @@ func TestProcessSyncNextcloudTaskRestoresActorBeforeAdmissionAndAuthorization(t 
 			principal types.Principal
 			caller    types.Caller
 		}{
-			{name: "human", initiator: types.TaskInitiator{UserID: "actor", CallerTenantID: 8,
-				Role: types.TenantRoleContributor},
+			{
+				name: "human", initiator: types.TaskInitiator{
+					UserID: "actor", CallerTenantID: 8,
+					Role: types.TenantRoleContributor,
+				},
 				principal: types.Principal{Type: types.PrincipalWebUser, ID: "actor"},
-				caller:    types.Caller{TenantID: 8, UserID: "actor", Role: types.TenantRoleContributor}},
-			{name: "legacy", principal: types.Principal{Type: "background_unverified", ID: "task"},
-				caller: types.Caller{Role: types.TenantRoleViewer}},
-			{name: "machine", initiator: types.TaskInitiator{APIKeyID: 42, APIKeyName: "scheduler", UserID: "actor"},
+				caller:    types.Caller{TenantID: 8, UserID: "actor", Role: types.TenantRoleContributor},
+			},
+			{
+				name: "legacy", principal: types.Principal{Type: "background_unverified", ID: "task"},
+				caller: types.Caller{Role: types.TenantRoleViewer},
+			},
+			{
+				name: "machine", initiator: types.TaskInitiator{APIKeyID: 42, APIKeyName: "scheduler", UserID: "actor"},
 				principal: types.Principal{Type: types.PrincipalAPITenant, ID: "task"},
-				caller:    types.Caller{Role: types.TenantRoleViewer}},
+				caller:    types.Caller{Role: types.TenantRoleViewer},
+			},
 		} {
 			t.Run(trigger+"/"+actor.name, func(t *testing.T) {
 				f := newNextcloudTaskAdmissionFixture(t, trigger)
@@ -215,8 +231,10 @@ func TestProcessSyncNextcloudTaskAdmissionRemainsFencedAndIdempotent(t *testing.
 				case "revoked while admitting":
 					f.logs.afterCreate = func() { f.revoke(t) }
 				case "duplicate delivery":
-					f.logs.logs["log"] = &types.SyncLog{ID: "log", DataSourceID: "ds",
-						TenantID: 7, Status: types.SyncLogStatusRunning}
+					f.logs.logs["log"] = &types.SyncLog{
+						ID: "log", DataSourceID: "ds",
+						TenantID: 7, Status: types.SyncLogStatusRunning,
+					}
 				}
 				require.NoError(t, f.run(context.Background(), t))
 				require.Zero(t, f.access.calls, "revoked or duplicate tasks must stop before source access")

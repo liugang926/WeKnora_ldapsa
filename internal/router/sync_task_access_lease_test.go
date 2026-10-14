@@ -69,27 +69,35 @@ type syncLifecycleKnowledgeService struct {
 func (s syncLifecycleKnowledgeService) ProcessDocument(ctx context.Context, task *asynq.Task) error {
 	return s.Handle(ctx, task)
 }
+
 func (s syncLifecycleKnowledgeService) ProcessManualUpdate(ctx context.Context, task *asynq.Task) error {
 	return s.Handle(ctx, task)
 }
+
 func (s syncLifecycleKnowledgeService) ProcessFAQImport(ctx context.Context, task *asynq.Task) error {
 	return s.Handle(ctx, task)
 }
+
 func (s syncLifecycleKnowledgeService) ProcessQuestionGeneration(ctx context.Context, task *asynq.Task) error {
 	return s.Handle(ctx, task)
 }
+
 func (s syncLifecycleKnowledgeService) ProcessSummaryGeneration(ctx context.Context, task *asynq.Task) error {
 	return s.Handle(ctx, task)
 }
+
 func (s syncLifecycleKnowledgeService) ProcessKBClone(ctx context.Context, task *asynq.Task) error {
 	return s.Handle(ctx, task)
 }
+
 func (s syncLifecycleKnowledgeService) ProcessKnowledgeMove(ctx context.Context, task *asynq.Task) error {
 	return s.Handle(ctx, task)
 }
+
 func (s syncLifecycleKnowledgeService) ProcessKnowledgeListDelete(ctx context.Context, task *asynq.Task) error {
 	return s.Handle(ctx, task)
 }
+
 func (s syncLifecycleKnowledgeService) ProcessKnowledgeListReparse(ctx context.Context, task *asynq.Task) error {
 	return s.Handle(ctx, task)
 }
