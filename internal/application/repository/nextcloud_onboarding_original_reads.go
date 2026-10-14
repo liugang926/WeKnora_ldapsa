@@ -30,6 +30,7 @@ type NextcloudOnboardingConfigurationRead struct {
 	store                              *NextcloudOnboardingStore
 	credential                         types.NextcloudOnboardingCredential
 	operation                          *types.NextcloudOnboardingOperation
+	manager                            *NextcloudOnboardingManagerPurpose
 	request                            *types.NextcloudOnboardingRequest
 	directory, guid, datasource, owner string
 	tenant                             uint64
@@ -75,8 +76,12 @@ func (s *NextcloudOnboardingStore) BeginScopedOnboardingConfigurationRead(ctx co
 	if op.TenantID != cred.TenantID || op.InstanceID != cred.InstanceID || op.ProcessingTemplateID != cred.TemplateKBID || op.ActorDirectoryID != cred.DirectoryID {
 		return nil, types.ErrSourceLineageUnknown
 	}
+	manager, err := currentOnboardingManagerPurpose(tx, cred, op)
+	if err != nil {
+		return nil, err
+	}
 	copy := op
-	return s.beginOnboardingConfigurationRead(ctx, cred, op.ActorDirectoryID, op.ActorObjectGUID, tenant, kb, lineage, &copy, nil, dsID)
+	return s.beginOnboardingConfigurationRead(ctx, cred, manager.ActorDirectoryID, manager.ActorObjectGUID, tenant, kb, lineage, &copy, nil, dsID)
 }
 
 func (s *NextcloudOnboardingStore) beginOnboardingTemplateRead(ctx context.Context, c types.NextcloudOnboardingCredential, req types.NextcloudOnboardingRequest) (*NextcloudOnboardingConfigurationRead, error) {
@@ -117,6 +122,15 @@ func (s *NextcloudOnboardingStore) beginOnboardingConfigurationRead(ctx context.
 	}
 	r := &NextcloudOnboardingConfigurationRead{store: s, credential: c, operation: op, request: req, directory: dir, guid: guid, datasource: dsID, tenant: tenant, kb: kb, origin: origin, lineage: actualLineage, sourceHeads: map[string][]originalBodyFieldHead{}, sourceParents: map[string][]originalBodyParentRef{}, sourceBodyLeases: map[string]string{}, sourceBodies: map[string]originalBodyPayload{}}
 	fail := func(err error) (*NextcloudOnboardingConfigurationRead, error) { _ = r.Close(); return nil, err }
+	if op != nil {
+		r.manager, err = currentOnboardingManagerPurpose(s.db.WithContext(ctx), c, *op)
+		if err != nil {
+			return fail(err)
+		}
+		if r.manager.ActorDirectoryID != dir || r.manager.ActorObjectGUID != guid {
+			return fail(ErrKnowledgeInputChanged)
+		}
+	}
 	// All authority checks precede config/body SELECTs and durable lease writes.
 	if err := r.checkAuthority(s.db.WithContext(ctx), ctx); err != nil {
 		return fail(err)
@@ -262,6 +276,13 @@ func (r *NextcloudOnboardingConfigurationRead) checkAuthority(tx *gorm.DB, ctx c
 		return err
 	}
 	if r.operation != nil {
+		manager, err := currentOnboardingManagerPurpose(tx, c, *r.operation)
+		if err != nil {
+			return err
+		}
+		if !sameOnboardingManagerPurpose(manager, r.manager) || manager.ActorDirectoryID != r.directory || manager.ActorObjectGUID != r.guid {
+			return ErrKnowledgeInputChanged
+		}
 		var op types.NextcloudOnboardingOperation
 		if err := tx.Where("operation_id=? AND state='active'", r.operation.OperationID).Take(&op).Error; err != nil {
 			return err

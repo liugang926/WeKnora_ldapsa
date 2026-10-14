@@ -141,10 +141,10 @@ func installDisplayCurrentControls(t *testing.T, db *gorm.DB, pg bool) {
 	t.Helper()
 	require.NoError(t, db.AutoMigrate(&types.Tenant{}, &types.AuthToken{}, &types.WikiPage{}, &types.KnowledgeProcessingSpan{}))
 	directory := "sqlite"
-	names := []string{"000032_nextcloud_event_inbox", "000038_nextcloud_gc", "000040_nextcloud_gc_object_claim", "000041_nextcloud_gc_derived_inventory", "000064_nextcloud_publication_recovery", "000075_nextcloud_processing_state", "000076_nextcloud_directory_migrations", "000078_nextcloud_control_recovery", "000079_nextcloud_recovery_build_leases", "000080_nextcloud_graph_recovery_fence", "000074_nextcloud_onboarding", "000081_nextcloud_target_closure"}
+	names := []string{"000032_nextcloud_event_inbox", "000038_nextcloud_gc", "000040_nextcloud_gc_object_claim", "000041_nextcloud_gc_derived_inventory", "000064_nextcloud_publication_recovery", "000075_nextcloud_processing_state", "000076_nextcloud_directory_migrations", "000078_nextcloud_control_recovery", "000079_nextcloud_recovery_build_leases", "000080_nextcloud_graph_recovery_fence", "000074_nextcloud_onboarding", "000081_nextcloud_target_closure", "000083_nextcloud_current_manager_purpose"}
 	if pg {
 		directory = "versioned"
-		names = []string{"000113_nextcloud_event_inbox", "000119_nextcloud_gc", "000121_nextcloud_gc_object_claim", "000122_nextcloud_gc_derived_inventory", "000145_nextcloud_publication_recovery", "000156_nextcloud_processing_state", "000157_nextcloud_directory_migrations", "000159_nextcloud_control_recovery", "000160_nextcloud_recovery_build_leases", "000161_nextcloud_graph_recovery_fence", "000155_nextcloud_onboarding", "000162_nextcloud_target_closure"}
+		names = []string{"000113_nextcloud_event_inbox", "000119_nextcloud_gc", "000121_nextcloud_gc_object_claim", "000122_nextcloud_gc_derived_inventory", "000145_nextcloud_publication_recovery", "000156_nextcloud_processing_state", "000157_nextcloud_directory_migrations", "000159_nextcloud_control_recovery", "000160_nextcloud_recovery_build_leases", "000161_nextcloud_graph_recovery_fence", "000155_nextcloud_onboarding", "000162_nextcloud_target_closure", "000164_nextcloud_current_manager_purpose"}
 	}
 	for _, name := range names {
 		ddl, err := os.ReadFile("../../../migrations/" + directory + "/" + name + ".up.sql")

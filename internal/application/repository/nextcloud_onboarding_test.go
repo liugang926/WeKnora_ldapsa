@@ -65,9 +65,9 @@ func onboardingDB(t *testing.T) (*gorm.DB, *repo.NextcloudOnboardingStore, types
 	}
 	migration, err := os.ReadFile(migrationPath)
 	require.NoError(t, err)
-	controls := []string{"../../../migrations/sqlite/000076_nextcloud_directory_migrations.up.sql", "../../../migrations/sqlite/000078_nextcloud_control_recovery.up.sql", "../../../migrations/sqlite/000046_nextcloud_content_leases.up.sql", "../../../migrations/sqlite/000081_nextcloud_target_closure.up.sql"}
+	controls := []string{"../../../migrations/sqlite/000076_nextcloud_directory_migrations.up.sql", "../../../migrations/sqlite/000078_nextcloud_control_recovery.up.sql", "../../../migrations/sqlite/000046_nextcloud_content_leases.up.sql", "../../../migrations/sqlite/000081_nextcloud_target_closure.up.sql", "../../../migrations/sqlite/000083_nextcloud_current_manager_purpose.up.sql"}
 	if dialect == "versioned" {
-		controls = []string{"../../../migrations/versioned/000157_nextcloud_directory_migrations.up.sql", "../../../migrations/versioned/000159_nextcloud_control_recovery.up.sql", "../../../migrations/versioned/000127_nextcloud_content_leases.up.sql", "../../../migrations/versioned/000162_nextcloud_target_closure.up.sql"}
+		controls = []string{"../../../migrations/versioned/000157_nextcloud_directory_migrations.up.sql", "../../../migrations/versioned/000159_nextcloud_control_recovery.up.sql", "../../../migrations/versioned/000127_nextcloud_content_leases.up.sql", "../../../migrations/versioned/000162_nextcloud_target_closure.up.sql", "../../../migrations/versioned/000164_nextcloud_current_manager_purpose.up.sql"}
 	}
 	// Producer/config/name fixtures use the actual immutable origin and body
 	// schema. No current template row is retroactively declared independent.

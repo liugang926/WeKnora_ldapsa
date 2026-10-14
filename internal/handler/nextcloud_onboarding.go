@@ -261,6 +261,10 @@ func (h *NextcloudOnboardingHandler) Pair(c *gin.Context) {
 		return
 	}
 	op.State = "active"
+	if _, err = h.store.RecordPairManagerPurpose(producerCtx); err != nil {
+		onboardingError(c, err)
+		return
+	}
 	credential, err := h.store.EventCredential(c.Request.Context(), op)
 	if err != nil {
 		credential, err = h.inbox.Pair(c.Request.Context(), repository.NextcloudEventPairingIdentity{TenantID: op.TenantID, KnowledgeBaseID: op.KnowledgeBaseID, DatasourceID: pair.DataSourceID, NextcloudInstanceID: op.InstanceID, BindingID: op.BindingID, DatasourceBaseURL: pair.BaseURL, DatasourceConfigSHA: pair.ConfigSHA, PublicationEpoch: pair.PublicationEpoch, PublicationState: "active"})

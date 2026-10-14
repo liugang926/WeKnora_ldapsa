@@ -19,15 +19,15 @@ func installMachineOnboardingSchema(t *testing.T, db, migration *gorm.DB) {
 	if db.Migrator().HasTable("nextcloud_onboarding_operations") {
 		// A later reader reuses this exact fixture installation. A partial schema
 		// cannot be repaired with blank control rows or counted as successful setup.
-		for _, table := range []string{"nextcloud_onboarding_credentials", "nextcloud_onboarding_delegations", "nextcloud_source_grants", "nextcloud_kb_blank_witnesses", "nextcloud_onboarding_target_closures", "nextcloud_onboarding_tenant_deletions"} {
+		for _, table := range []string{"nextcloud_onboarding_credentials", "nextcloud_onboarding_delegations", "nextcloud_source_grants", "nextcloud_kb_blank_witnesses", "nextcloud_onboarding_target_closures", "nextcloud_onboarding_tenant_deletions", "nextcloud_onboarding_manager_purposes", "nextcloud_onboarding_manager_heads"} {
 			require.True(t, db.Migrator().HasTable(table), "actual module schema incomplete: %s", table)
 		}
 		return
 	}
 	require.NoError(t, db.AutoMigrate(&types.AuthToken{}, &types.WikiPage{}))
-	directory, onboarding, closure := "sqlite", "000074_nextcloud_onboarding", "000081_nextcloud_target_closure"
+	directory, onboarding, closure, manager := "sqlite", "000074_nextcloud_onboarding", "000081_nextcloud_target_closure", "000083_nextcloud_current_manager_purpose"
 	if db.Dialector.Name() == "postgres" {
-		directory, onboarding, closure = "versioned", "000155_nextcloud_onboarding", "000162_nextcloud_target_closure"
+		directory, onboarding, closure, manager = "versioned", "000155_nextcloud_onboarding", "000162_nextcloud_target_closure", "000164_nextcloud_current_manager_purpose"
 	}
 	ddl, err := os.ReadFile("../../../migrations/" + directory + "/" + onboarding + ".up.sql")
 	require.NoError(t, err)
@@ -36,6 +36,9 @@ func installMachineOnboardingSchema(t *testing.T, db, migration *gorm.DB) {
 	require.Equal(t, 1, strings.Count(string(ddl), statement))
 	require.NoError(t, migration.Exec(strings.Replace(string(ddl), statement, "", 1)).Error)
 	ddl, err = os.ReadFile("../../../migrations/" + directory + "/" + closure + ".up.sql")
+	require.NoError(t, err)
+	require.NoError(t, migration.Exec(string(ddl)).Error)
+	ddl, err = os.ReadFile("../../../migrations/" + directory + "/" + manager + ".up.sql")
 	require.NoError(t, err)
 	require.NoError(t, migration.Exec(string(ddl)).Error)
 }

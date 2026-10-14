@@ -33,24 +33,28 @@ import (
 )
 
 const onboardingActualGUID = "00112233-4455-6677-8899-aabbccddeeff"
+const onboardingNextManagerGUID = "11112233-4455-6677-8899-aabbccddeeff"
+const onboardingThirdManagerGUID = "22112233-4455-6677-8899-aabbccddeeff"
 const onboardingActualToken = "actual-test-paired-source-token-0123456789"
 
 type onboardingOriginalActualFixture struct {
-	bindings       sync.Map
-	db             *gorm.DB
-	store          *KnowledgeInputProvenanceStore
-	onboarding     *NextcloudOnboardingStore
-	pairs          *NextcloudSourcePairingRepository
-	credential     types.NextcloudOnboardingCredential
-	admin          context.Context
-	allow, unknown atomic.Bool
-	readCalls      atomic.Int64
+	bindings                                     sync.Map
+	db                                           *gorm.DB
+	store                                        *KnowledgeInputProvenanceStore
+	onboarding                                   *NextcloudOnboardingStore
+	pairs                                        *NextcloudSourcePairingRepository
+	credential                                   types.NextcloudOnboardingCredential
+	admin                                        context.Context
+	allow, unknown, managerAllow, managerUnknown atomic.Bool
+	managerCalls                                 atomic.Int64
+	readCalls                                    atomic.Int64
 }
 
 func newOnboardingOriginalActualFixture(t *testing.T) *onboardingOriginalActualFixture {
 	t.Helper()
 	f := &onboardingOriginalActualFixture{}
 	f.allow.Store(true)
+	f.managerAllow.Store(true)
 	// This controlled signed HTTP origin exercises the real adapter. It is an
 	// actual SQL/producer-boundary test, not a claim of live NC or LDAPS acceptance.
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -84,6 +88,40 @@ func newOnboardingOriginalActualFixture(t *testing.T) *onboardingOriginalActualF
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
+		if strings.HasSuffix(r.URL.Path, "/authorize-manager") {
+			f.managerCalls.Add(1)
+			var request nextcloud.ManagerAuthorizationScope
+			require.NoError(t, json.Unmarshal(raw, &request))
+			require.Equal(t, "onboarding-actual-instance", request.InstanceID)
+			require.Equal(t, "7", request.TenantID)
+			require.Equal(t, "onboarding-actual-ad", request.DirectoryID)
+			require.Equal(t, "onboarding-actual-template", request.ProcessingTemplateID)
+			require.Contains(t, []string{onboardingActualGUID, onboardingNextManagerGUID, onboardingThirdManagerGUID}, request.ObjectGUID)
+			require.Len(t, request.PurposeSHA256, 64)
+			response := map[string]any{}
+			require.NoError(t, json.Unmarshal(raw, &response))
+			response["binding_id"] = strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/index.php/apps/integration_weknora/api/v1/bindings/"), "/authorize-manager")
+			response["checked_at"] = time.Now().Unix()
+			if f.managerUnknown.Load() {
+				w.WriteHeader(http.StatusServiceUnavailable)
+				return
+			}
+			if !f.managerAllow.Load() {
+				response["allow"] = false
+				response["reason"] = "manager_denied"
+				w.WriteHeader(http.StatusForbidden)
+			} else {
+				response["allow"] = true
+				response["reason"] = "authorized"
+				response["root_file_id"] = "77"
+				response["rule_id"] = "actual-rule"
+				response["rule_revision"] = "1"
+				response["publication_epoch"] = "1"
+				response["policy_revision"] = strings.Repeat("1", 64)
+			}
+			require.NoError(t, json.NewEncoder(w).Encode(response))
+			return
+		}
 		if strings.HasSuffix(r.URL.Path, "/authorize") {
 			f.readCalls.Add(1)
 			var request struct {
@@ -94,7 +132,7 @@ func newOnboardingOriginalActualFixture(t *testing.T) *onboardingOriginalActualF
 			}
 			require.NoError(t, json.Unmarshal(raw, &request))
 			require.Equal(t, "onboarding-actual-ad", request.DirectoryID)
-			require.Equal(t, onboardingActualGUID, request.ObjectGUID)
+			require.Contains(t, []string{onboardingActualGUID, onboardingNextManagerGUID, onboardingThirdManagerGUID}, request.ObjectGUID)
 			require.EqualValues(t, 77, request.FileID)
 			require.Equal(t, "0", request.ContentRevision)
 			if f.unknown.Load() {
@@ -195,6 +233,8 @@ func (f *onboardingOriginalActualFixture) pair(t *testing.T, op types.NextcloudO
 	require.NoError(t, err)
 	require.NoError(t, f.pairs.ActivateSourcePairing(context.Background(), pair))
 	require.NoError(t, f.onboarding.MarkActive(context.Background(), op))
+	_, err = f.onboarding.RecordPairManagerPurpose(machine)
+	require.NoError(t, err)
 	f.bindings.Store(op.BindingID, true)
 	_, err = NewNextcloudEventInboxRepository(f.db).Pair(context.Background(), NextcloudEventPairingIdentity{TenantID: 7, KnowledgeBaseID: op.KnowledgeBaseID, DatasourceID: pair.DataSourceID, NextcloudInstanceID: op.InstanceID, BindingID: op.BindingID, DatasourceBaseURL: pair.BaseURL, DatasourceConfigSHA: pair.ConfigSHA, PublicationEpoch: 1, PublicationState: "active"})
 	require.NoError(t, err)
@@ -464,4 +504,144 @@ func TestNextcloudOnboardingActualRevocationDuringCloneRollsBack(t *testing.T) {
 		require.Equal(t, before[table], n, table+" must roll back with the denied clone")
 	}
 	f.assertNoEscalationOrOwnedLeases(t)
+}
+
+func TestNextcloudOnboardingActualManagerReplacementCurrentDelegationAndHeadABA(t *testing.T) {
+	f := newOnboardingOriginalActualFixture(t)
+	source := f.produceSourceBoundTemplate(t)
+	req := f.request("Actual manager handover target")
+	op, err := f.onboarding.Reserve(context.Background(), f.credential, req)
+	require.NoError(t, err)
+	_, ds := f.pair(t, op)
+	initial, err := currentOnboardingManagerPurpose(f.db, f.credential, op)
+	require.NoError(t, err)
+
+	buildCtx, closeBuild := f.configurationBuildContext(t, op, ds)
+	defer closeBuild()
+	begin := func() (context.Context, *NextcloudOnboardingConfigurationRead, func(), error) {
+		read, e := f.onboarding.BeginScopedOnboardingConfigurationRead(buildCtx, 7, op.KnowledgeBaseID, source)
+		if e != nil {
+			return buildCtx, nil, func() {}, e
+		}
+		return read.Context(buildCtx), read, func() { require.NoError(t, read.Close()) }, nil
+	}
+	owned, old, closeOld, err := begin()
+	require.NoError(t, err)
+	require.NoError(t, old.Checkpoint(owned))
+	defer closeOld()
+	// New directory principals have no WK browser UserID, ordinary membership or
+	// role. The explicit current manager action and source entitlement are separate.
+	for i, guid := range []string{onboardingNextManagerGUID, onboardingThirdManagerGUID} {
+		require.NoError(t, f.db.Create(&types.DirectoryIdentity{ID: fmt.Sprintf("actual-next-manager-%d", i), DirectoryID: f.credential.DirectoryID, ObjectGUID: guid, Status: types.DirectoryObjectActive, SnapshotVersion: 1}).Error)
+		require.NoError(t, f.db.Create(&types.NextcloudOnboardingDelegation{TenantID: 7, DirectoryID: f.credential.DirectoryID, ObjectGUID: guid}).Error)
+	}
+	var original types.NextcloudOnboardingOperation
+	require.NoError(t, f.db.Where("operation_id=?", op.OperationID).Take(&original).Error)
+	record := func(guid string) *NextcloudOnboardingManagerPurpose {
+		machine, e := f.onboarding.BeginPairProducer(context.Background(), f.credential, op, f.credential.DirectoryID, guid)
+		require.NoError(t, e)
+		head, e := f.onboarding.RecordPairManagerPurpose(machine)
+		require.NoError(t, e)
+		return head
+	}
+	second := record(onboardingNextManagerGUID)
+	require.Greater(t, second.Version, initial.Version)
+	require.NoError(t, f.db.Model(&types.DirectoryIdentity{}).Where("object_guid=?", onboardingActualGUID).Update("status", types.DirectoryObjectDisabled).Error)
+	// The original immutable actor/name remains intact, but the fresh new manager
+	// can continue once independently granted the actual source scope.
+	var sourceOp types.NextcloudOnboardingOperation
+	require.NoError(t, f.db.Where("operation_id=?", source.Sources[0].PairOperationID).Take(&sourceOp).Error)
+	grant := types.NextcloudGrantSnapshot{PermissionVersion: 2, PublicationEpoch: 1, Complete: true, Subjects: []types.NextcloudGrantSubject{{Kind: "user", DirectoryID: f.credential.DirectoryID, ObjectGUID: onboardingNextManagerGUID, SourceRelationID: "actual-new-manager-read"}, {Kind: "user", DirectoryID: f.credential.DirectoryID, ObjectGUID: onboardingThirdManagerGUID, SourceRelationID: "actual-third-manager-read"}}}
+	require.NoError(t, f.onboarding.ApplyGrantSnapshot(context.Background(), sourceOp, grant))
+	require.Error(t, old.Checkpoint(owned))
+	closeOld()
+	fresh, held, closeFresh, err := begin()
+	require.NoError(t, err)
+	defer closeFresh()
+	require.NoError(t, held.Checkpoint(fresh))
+	require.Positive(t, f.readCalls.Load())
+	after, err := currentOnboardingManagerPurpose(f.db, f.credential, op)
+	require.NoError(t, err)
+	require.Equal(t, second, after)
+	// Observation never promotes/replaces a manager; no append history is created.
+	_, err = f.onboarding.TargetObservation(context.Background(), f.credential, op, f.credential.DirectoryID, onboardingNextManagerGUID)
+	require.NoError(t, err)
+	observed, err := currentOnboardingManagerPurpose(f.db, f.credential, op)
+	require.NoError(t, err)
+	require.Equal(t, second, observed)
+	var immutable types.NextcloudOnboardingOperation
+	require.NoError(t, f.db.Where("operation_id=?", op.OperationID).Take(&immutable).Error)
+	require.Equal(t, original.ActorObjectGUID, immutable.ActorObjectGUID)
+	require.Equal(t, original.Name, immutable.Name)
+	// NC management can be revoked while this same GUID still has file READ.
+	// The explicit manager endpoint denies before source READ/config hydration.
+	readBefore := f.readCalls.Load()
+	f.managerAllow.Store(false)
+	require.ErrorIs(t, held.Checkpoint(fresh), access.ErrNextcloudPublicationDenied)
+	require.Equal(t, readBefore, f.readCalls.Load())
+	f.managerAllow.Store(true)
+	f.managerUnknown.Store(true)
+	require.ErrorIs(t, held.Checkpoint(fresh), access.ErrNextcloudPublicationUnavailable)
+	require.Equal(t, readBefore, f.readCalls.Load())
+	f.managerUnknown.Store(false)
+	third := record(onboardingThirdManagerGUID)
+	fourth := record(onboardingNextManagerGUID)
+	require.Greater(t, third.Version, second.Version)
+	require.Greater(t, fourth.Version, third.Version)
+	require.NotEqual(t, second.PurposeID, fourth.PurposeID)
+	require.ErrorIs(t, held.Checkpoint(fresh), ErrKnowledgeInputChanged)
+	closeFresh()
+	retry := record(onboardingNextManagerGUID)
+	require.Equal(t, fourth, retry)
+	newest, newestRead, closeNewest, err := begin()
+	require.NoError(t, err)
+	require.NoError(t, newestRead.Checkpoint(newest))
+	closeNewest()
+	// Removing source WK entitlement rejects despite current manager and NC READ.
+	grant.PermissionVersion = 3
+	grant.Subjects = nil
+	require.NoError(t, f.onboarding.ApplyGrantSnapshot(context.Background(), sourceOp, grant))
+	_, _, closeDenied, err := begin()
+	closeDenied()
+	require.ErrorIs(t, err, ErrNextcloudOnboardingDenied)
+	require.Error(t, f.db.Model(&NextcloudOnboardingManagerPurpose{}).Where("purpose_id=?", fourth.PurposeID).Update("actor_object_guid", onboardingThirdManagerGUID).Error)
+	require.Error(t, f.db.Model(&nextcloudOnboardingManagerHead{}).Where("operation_id=?", op.OperationID).Updates(map[string]any{"purpose_id": second.PurposeID, "version": second.Version}).Error)
+	require.Positive(t, f.managerCalls.Load())
+	closeBuild()
+	f.assertNoEscalationOrOwnedLeases(t)
+	inventory, err := nextcloudControlMetadataInventory(f.db)
+	require.NoError(t, err)
+	require.Contains(t, inventory, "nextcloud_onboarding_manager_purposes")
+	require.Contains(t, inventory, "nextcloud_onboarding_manager_heads")
+	require.NoError(t, ValidateNextcloudOnboardingManagerPurposeCoverageInTx(f.db, op.InstanceID))
+	// The real recovery close disables credentials. Structural retained facts
+	// remain verifiable, but they must never re-enable runtime authority.
+	require.NoError(t, f.db.Transaction(func(tx *gorm.DB) error {
+		return closeNextcloudControlsInTx(tx, op.InstanceID, strings.Repeat("a", 64), strings.Repeat("b", 64))
+	}))
+	require.NoError(t, ValidateNextcloudOnboardingManagerPurposeCoverageInTx(f.db, op.InstanceID))
+	_, err = f.onboarding.BeginPairProducer(context.Background(), f.credential, op, f.credential.DirectoryID, onboardingNextManagerGUID)
+	require.Error(t, err)
+	require.NoError(t, f.db.Exec("DROP TABLE nextcloud_onboarding_manager_heads").Error)
+	require.Contains(t, nextcloudMissingControlTables(f.db), "nextcloud_onboarding_manager_heads")
+	require.Error(t, ValidateNextcloudOnboardingManagerPurposeCoverageInTx(f.db, op.InstanceID))
+
+}
+
+// Stage a real candidate and acquire its durable build lease. The read under
+// test uses the production build-purpose validator, never a hand-made marker.
+func (f *onboardingOriginalActualFixture) configurationBuildContext(t *testing.T, op types.NextcloudOnboardingOperation, ds *types.DataSource) (context.Context, func()) {
+	t.Helper()
+	repository := NewKnowledgeRepository(f.db).(*knowledgeRepository)
+	external := "nextcloud:" + op.InstanceID + ":88"
+	metadata, err := json.Marshal(map[string]string{"datasource_id": ds.ID, "external_id": external, "nextcloud_instance_id": op.InstanceID, "nextcloud_binding_id": op.BindingID, "nextcloud_file_id": "88", "nextcloud_etag": "", "source_resource_id": op.BindingID, "nextcloud_path": "candidate.md"})
+	require.NoError(t, err)
+	k := &types.Knowledge{ID: uuid.NewString(), TenantID: 7, KnowledgeBaseID: op.KnowledgeBaseID, Type: "file", Channel: types.ConnectorTypeNextcloud, Metadata: types.JSON(metadata), ParseStatus: types.ParseStatusFinalizing, EnableStatus: "disabled"}
+	require.NoError(t, repository.CreateKnowledge(context.Background(), k))
+	require.NoError(t, repository.StageNextcloudVersion(context.Background(), 7, k.KnowledgeBaseID, ds.ID, external, "candidate-etag", k.ID))
+	leases := NewNextcloudContentLeaseStore(f.db)
+	scope := NextcloudContentScope{TenantID: 7, KnowledgeBaseID: k.KnowledgeBaseID, KnowledgeID: k.ID, DataSourceID: ds.ID, ExternalID: external}
+	lease, err := leases.AcquireKnowledge(context.Background(), scope, NextcloudContentBuildLease, "actual-config-worker", time.Minute)
+	require.NoError(t, err)
+	return WithNextcloudBuildLease(context.Background(), leases, lease, scope), func() { require.NoError(t, leases.ReleaseLease(context.Background(), lease.ID)) }
 }
