@@ -76,6 +76,24 @@ func processingStateFixtureBackend(t *testing.T, required, pg bool) (*NextcloudP
 		require.NoError(t, e)
 		require.NoError(t, migrationDB.Exec(string(b)).Error)
 	}
+	// Current Session fields require the complete production target controls.
+	// Keep the existing source/version records; missing controls must not be
+	// bypassed just because this fixture predates the onboarding migration.
+	require.NoError(t, db.AutoMigrate(&types.Tenant{}, &types.AuthToken{}, &types.WikiPage{}))
+	controlDir := "sqlite"
+	controlNames := []string{"000074_nextcloud_onboarding", "000081_nextcloud_target_closure", "000083_nextcloud_current_manager_purpose"}
+	if pg {
+		controlDir = "versioned"
+		controlNames = []string{"000155_nextcloud_onboarding", "000162_nextcloud_target_closure", "000164_nextcloud_current_manager_purpose"}
+	}
+	for _, name := range controlNames {
+		ddl, err := os.ReadFile("../../../migrations/" + controlDir + "/" + name + ".up.sql")
+		require.NoError(t, err)
+		if db.Migrator().HasColumn("sessions", "nextcloud_scoped") {
+			ddl = []byte(strings.Replace(string(ddl), "ALTER TABLE sessions ADD COLUMN nextcloud_scoped BOOLEAN NOT NULL DEFAULT FALSE;", "", 1))
+		}
+		require.NoError(t, migrationDB.Exec(string(ddl)).Error)
+	}
 	var ds types.DataSource
 	require.NoError(t, db.Where("id='ds'").Take(&ds).Error)
 	baseURL, sha, binding, err := NextcloudEventDataSourceIdentity(ds.Config)
