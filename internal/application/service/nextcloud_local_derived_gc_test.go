@@ -101,21 +101,6 @@ func localDerivedActualPipeline(t *testing.T, pg bool, modes ...string) {
 		composite = actualLocalComposite(t, f.db, pg)
 		require.NoError(t, composite.PrepareNextcloudStorageSelection(ctx))
 	}})
-	var gcSQL []string
-	if pg {
-		gcSQL = []string{"000119_nextcloud_gc", "000121_nextcloud_gc_object_claim", "000122_nextcloud_gc_derived_inventory"}
-	} else {
-		gcSQL = []string{"000038_nextcloud_gc", "000040_nextcloud_gc_object_claim", "000041_nextcloud_gc_derived_inventory"}
-	}
-	for _, name := range gcSQL {
-		directory := "sqlite"
-		if pg {
-			directory = "versioned"
-		}
-		body, e := os.ReadFile("../../../migrations/" + directory + "/" + name + ".up.sql")
-		require.NoError(t, e)
-		require.NoError(t, f.db.Exec(string(body)).Error)
-	}
 	if mode == "body-retention" || mode == "body-inline-restore" {
 		setupActualBodyLocalGC(t, f, build, pg)
 	}
@@ -198,7 +183,7 @@ func localDerivedActualPipeline(t *testing.T, pg bool, modes ...string) {
 		require.NoError(t, f.db.Create(&types.Chunk{ID: "foreign-child", TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: "doc", ParentChunkID: f.chunks[0].ID, Content: "current other owner", ChunkType: types.ChunkTypeText}).Error)
 	}
 	if mode == "restored-current" {
-		require.NoError(t, f.db.Exec("UPDATE nextcloud_source_versions SET state='published',candidate_knowledge_id=? WHERE tenant_id=7 AND knowledge_base_id='kb' AND datasource_id=?", f.k.ID, scope.DataSourceID).Error)
+		restoreSourceVersionForGCProbe(t, f.db, f.k.ID, scope.DataSourceID)
 	}
 	if mode == "unwitnessed-row" {
 		sql := "INSERT INTO " + table + "(source_id,source_type,chunk_id,knowledge_id,knowledge_base_id,content,dimension) VALUES('unwitnessed',0,'source-body',?,'kb','unknown',0)"
@@ -290,7 +275,7 @@ func localDerivedActualPipeline(t *testing.T, pg bool, modes ...string) {
 		assertActualBodyLocalGC(t, f, gc, mode)
 	}
 	if mode == "restored-after-collection" {
-		require.NoError(t, f.db.Exec("UPDATE nextcloud_source_versions SET state='published',candidate_knowledge_id=? WHERE datasource_id=?", f.k.ID, scope.DataSourceID).Error)
+		restoreSourceVersionForGCProbe(t, f.db, f.k.ID, scope.DataSourceID)
 		_, err := gc.RunDue(context.Background(), time.Now().Add(3*time.Hour), 10)
 		require.Error(t, err)
 		statuses, err := gc.ListStatus(context.Background(), 7, 10)
@@ -435,4 +420,39 @@ func assertActualBodyLocalGC(t *testing.T, f *enrichmentTestFixture, gc *reposit
 		require.NoError(t, err)
 		require.Equal(t, "blocked", status[0].State)
 	}
+}
+
+// A running writer must be rejected before any privileged restore simulation.
+// Only this test transaction temporarily suspends the one production trigger,
+// injects an old source-version row, and reinstalls that exact trigger. This
+// tests GC's independent verification after stale metadata restoration; it is
+// not evidence of a full-volume recovery or a production restore bypass.
+func restoreSourceVersionForGCProbe(t *testing.T, db *gorm.DB, knowledge, datasource string) {
+	t.Helper()
+	update := "UPDATE nextcloud_source_versions SET state='published',candidate_knowledge_id=? WHERE tenant_id=7 AND knowledge_base_id='kb' AND datasource_id=?"
+	err := db.Exec(update, knowledge, datasource).Error
+	require.ErrorContains(t, err, "nextcloud_recovery_closed")
+	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
+		if db.Dialector.Name() == "postgres" {
+			if err := tx.Exec("ALTER TABLE nextcloud_source_versions DISABLE TRIGGER nextcloud_recovery_nextcloud_source_versions").Error; err != nil {
+				return err
+			}
+			if err := tx.Exec(update, knowledge, datasource).Error; err != nil {
+				return err
+			}
+			return tx.Exec("ALTER TABLE nextcloud_source_versions ENABLE TRIGGER nextcloud_recovery_nextcloud_source_versions").Error
+		}
+		var ddl string
+		if err := tx.Raw("SELECT sql FROM sqlite_master WHERE type='trigger' AND name='nextcloud_recovery_nextcloud_source_versions_update'").Scan(&ddl).Error; err != nil {
+			return err
+		}
+		require.NotEmpty(t, ddl)
+		if err := tx.Exec("DROP TRIGGER nextcloud_recovery_nextcloud_source_versions_update").Error; err != nil {
+			return err
+		}
+		if err := tx.Exec(update, knowledge, datasource).Error; err != nil {
+			return err
+		}
+		return tx.Exec(ddl).Error
+	}))
 }

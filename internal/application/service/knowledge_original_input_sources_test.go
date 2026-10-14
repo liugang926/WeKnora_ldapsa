@@ -27,6 +27,7 @@ type sourceDerivedFixtureHook struct {
 	BeforeChunk     func(*enrichmentTestFixture, context.Context)
 	BeforeKnowledge func(*enrichmentTestFixture, *types.Knowledge)
 	LocalDerived    bool
+	Graph           bool
 }
 
 func sourceBuildFixture(t *testing.T, pg bool, hooks ...sourceDerivedFixtureHook) (*enrichmentTestFixture, context.Context, *types.KnowledgeBuildInputProof, *atomic.Bool, repository.NextcloudContentScope) {
@@ -40,6 +41,9 @@ func sourceBuildFixture(t *testing.T, pg bool, hooks ...sourceDerivedFixtureHook
 		enabledGraph = false
 	}
 	kb.ExtractConfig = &types.ExtractConfig{Enabled: enabledGraph, Tags: []string{"KNOWS"}, Text: "actual original extraction configuration"}
+	if len(hooks) > 0 && hooks[0].Graph {
+		kb.IndexingStrategy.GraphEnabled = true
+	}
 	if len(hooks) > 0 && hooks[0].LocalDerived {
 		kb.IndexingStrategy.GraphEnabled = false
 	}
@@ -70,6 +74,7 @@ func sourceBuildFixture(t *testing.T, pg bool, hooks ...sourceDerivedFixtureHook
 		require.NoError(t, e)
 		require.NoError(t, migration.Exec(string(data)).Error)
 	}
+	installSourceCurrentControlSchema(t, f.db, migration)
 	allow := &atomic.Bool{}
 	allow.Store(true)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -240,9 +245,14 @@ type enrichmentBuildGraphRepository struct {
 	graphs []*types.GraphData
 }
 
-func (r *enrichmentBuildGraphRepository) AddGraph(ctx context.Context, _ types.NameSpace, graphs []*types.GraphData) error {
+func (r *enrichmentBuildGraphRepository) AddGraph(ctx context.Context, namespace types.NameSpace, graphs []*types.GraphData) error {
 	for _, g := range graphs {
 		if err := types.CheckGraphWriteAuthorization(ctx, g.SourceReceipt); err != nil {
+			return err
+		}
+	}
+	if r.RetrieveGraphRepository != nil {
+		if err := r.RetrieveGraphRepository.AddGraph(ctx, namespace, graphs); err != nil {
 			return err
 		}
 	}
@@ -256,7 +266,7 @@ func runNextcloudActualGraphBuildPurpose(t *testing.T, pg bool) {
 			name = "graph model source withdrawal denies graph commit"
 		}
 		t.Run(name, func(t *testing.T) {
-			f, ctx, original, allow, _ := sourceBuildFixture(t, pg)
+			f, ctx, original, allow, _ := sourceBuildFixture(t, pg, sourceDerivedFixtureHook{Graph: true})
 			snapshot, e := f.store.CaptureKnowledgeBuildInputs(ctx, types.KnowledgeBuildInputCaptureRequest{Projection: types.KnowledgeBuildProjectionGraph, TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: f.k.ID, ChunkIDs: []string{f.chunks[0].ID}, Expected: original})
 			require.NoError(t, e)
 			empty, _ := types.NewCompleteSourceLineage()
@@ -266,11 +276,21 @@ func runNextcloudActualGraphBuildPurpose(t *testing.T, pg bool) {
 			if withdraw {
 				model.call = func(_ []chat.Message, _ *chat.ChatOptions) { allow.Store(false) }
 			}
-			graph := &enrichmentBuildGraphRepository{}
-			svc := &ChunkExtractService{buildInputs: f.store, template: template, modelService: &graphEntryModels{model: model}, graphEngine: graph}
-			p := types.ExtractChunkPayload{TenantID: 7, KnowledgeID: f.k.ID, ChunkID: f.chunks[0].ID, ModelID: "summary", OriginalInput: snapshot.Proof}
+			require.NoError(t, f.db.Create(&types.KnowledgeProcessingSpan{KnowledgeID: f.k.ID, Attempt: 1, SpanID: "root", Kind: types.SpanKindRoot, Name: "root", Status: types.SpanStatusRunning}).Error)
+			state := repository.NewNextcloudProcessingStateStore(f.db)
+			require.NoError(t, state.PlanGraph(ctx, f.k, 1, f.chunks, true, false))
+			graph := &enrichmentBuildGraphRepository{RetrieveGraphRepository: repository.NewScopedSQLGraphRepository(f.db, nil)}
+			svc := &ChunkExtractService{buildInputs: f.store, template: template, modelService: &graphEntryModels{model: model}, graphEngine: graph, processingLedger: state}
+			p := types.ExtractChunkPayload{TenantID: 7, KnowledgeID: f.k.ID, ChunkID: f.chunks[0].ID, ModelID: "summary", OriginalInput: snapshot.Proof, Attempt: 1}
 			e = svc.Handle(ctx, enrichmentTask(t, types.TypeChunkExtract, p))
-			require.Equal(t, 1, model.calls)
+			require.Equal(t, 1, model.calls, "worker error: %v", e)
+			var persisted int64
+			require.NoError(t, f.db.Table("nextcloud_graph_records").Where("tenant_id=? AND knowledge_id=?", 7, f.k.ID).Count(&persisted).Error)
+			if withdraw {
+				require.Zero(t, persisted)
+			} else {
+				require.Equal(t, int64(1), persisted)
+			}
 			if withdraw {
 				require.Error(t, e)
 				require.Empty(t, graph.graphs)

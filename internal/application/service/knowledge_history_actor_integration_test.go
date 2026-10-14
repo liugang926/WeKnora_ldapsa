@@ -33,6 +33,25 @@ func historyActorIntegrationFixture(t *testing.T, kind string) (*knowledgeServic
 		require.NoError(t, err)
 		require.NoError(t, db.Exec(string(ddl)).Error)
 	}
+	// Session's current scoped column requires the complete module schema,
+	// even for this ordinary user history test. Replace only the empty legacy
+	// source-table stubs before installing production controls.
+	require.NoError(t, db.AutoMigrate(&types.Tenant{}, &types.DataSource{}, &types.SyncLog{}))
+	tenantRecord, err := service.tenantRepo.GetTenantByID(context.Background(), 7)
+	require.NoError(t, err)
+	require.NoError(t, db.Create(tenantRecord).Error)
+	for _, table := range []string{"nextcloud_source_versions", "nextcloud_source_revisions"} {
+		var count int64
+		require.NoError(t, db.Table(table).Count(&count).Error)
+		require.Zero(t, count, "only empty legacy fixture stubs may be replaced")
+		require.NoError(t, db.Migrator().DropTable(table))
+	}
+	for _, name := range []string{"000031_nextcloud_source_versions", "000045_nextcloud_source_revisions", "000047_nextcloud_candidate_retry", "000035_nextcloud_source_pairing", "000039_nextcloud_source_pairing_abort"} {
+		ddl, err := os.ReadFile("../../../migrations/sqlite/" + name + ".up.sql")
+		require.NoError(t, err)
+		require.NoError(t, db.Exec(string(ddl)).Error)
+	}
+	installSourceCurrentControlSchema(t, db, db)
 	repository.ConfigureKnowledgeDisplayInputWriters(store, repository.NewKnowledgeTagRepository(db), service.repo, func(tx *gorm.DB) *repository.KnowledgeInputProvenanceStore {
 		actual := repository.NewKnowledgeInputProvenanceStore(tx)
 		repository.ConfigureKnowledgeInputActorGroupAccess(actual, NewGroupAccessService(repository.NewGroupAccessRepository(tx)))

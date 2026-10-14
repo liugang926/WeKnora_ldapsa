@@ -14,6 +14,7 @@ import (
 
 func initializeDisplayOriginalBody(t *testing.T, db *gorm.DB, pg bool) {
 	t.Helper()
+	installDisplayCurrentControls(t, db, pg)
 	path := "../../../migrations/sqlite/000071_original_body_retention.up.sql"
 	if pg {
 		path = "../../../migrations/versioned/000152_original_body_retention.up.sql"
@@ -131,4 +132,29 @@ func TestKnowledgeDisplayOriginalBodySQLite(t *testing.T) {
 
 func TestPostgresKnowledgeDisplayOriginalBody(t *testing.T) {
 	runKnowledgeDisplayOriginalBody(t, true)
+}
+
+// Current Session/KB types are paired with the production control schema.
+// Existing source records are retained; this does not fabricate an origin or
+// change their publication/fence generation to get a reader through a guard.
+func installDisplayCurrentControls(t *testing.T, db *gorm.DB, pg bool) {
+	t.Helper()
+	require.NoError(t, db.AutoMigrate(&types.Tenant{}, &types.AuthToken{}, &types.WikiPage{}, &types.KnowledgeProcessingSpan{}))
+	directory := "sqlite"
+	names := []string{"000032_nextcloud_event_inbox", "000038_nextcloud_gc", "000040_nextcloud_gc_object_claim", "000041_nextcloud_gc_derived_inventory", "000064_nextcloud_publication_recovery", "000075_nextcloud_processing_state", "000076_nextcloud_directory_migrations", "000078_nextcloud_control_recovery", "000079_nextcloud_recovery_build_leases", "000080_nextcloud_graph_recovery_fence", "000074_nextcloud_onboarding", "000081_nextcloud_target_closure"}
+	if pg {
+		directory = "versioned"
+		names = []string{"000113_nextcloud_event_inbox", "000119_nextcloud_gc", "000121_nextcloud_gc_object_claim", "000122_nextcloud_gc_derived_inventory", "000145_nextcloud_publication_recovery", "000156_nextcloud_processing_state", "000157_nextcloud_directory_migrations", "000159_nextcloud_control_recovery", "000160_nextcloud_recovery_build_leases", "000161_nextcloud_graph_recovery_fence", "000155_nextcloud_onboarding", "000162_nextcloud_target_closure"}
+	}
+	for _, name := range names {
+		ddl, err := os.ReadFile("../../../migrations/" + directory + "/" + name + ".up.sql")
+		require.NoError(t, err)
+		for _, statement := range []string{"ALTER TABLE data_sources ADD COLUMN sync_enabled BOOLEAN NOT NULL DEFAULT TRUE;", "ALTER TABLE sessions ADD COLUMN nextcloud_scoped BOOLEAN NOT NULL DEFAULT FALSE;"} {
+			if strings.Contains(string(ddl), statement) {
+				require.Equal(t, 1, strings.Count(string(ddl), statement))
+				ddl = []byte(strings.Replace(string(ddl), statement, "", 1))
+			}
+		}
+		require.NoError(t, db.Exec(string(ddl)).Error)
+	}
 }
