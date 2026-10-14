@@ -36,6 +36,9 @@ func documentLiveRAG(t *testing.T, m *machinePipelineFixture, models *documentLi
 	if os.Getenv("WEKNORA_DOCUMENT_GRAPH_AGENT") == "1" {
 		budget = 240 * time.Second
 	}
+	if os.Getenv("WEKNORA_DOCUMENT_GRAPH_HISTORY_SEARCH") == "1" {
+		budget = 360 * time.Second
+	}
 	ctx, cancel := context.WithTimeout(ctx, budget)
 	t.Cleanup(cancel)
 	ctx, attach, checkpoint, releaseHTTP := BeginMessageMaterialHTTPBoundary(ctx)

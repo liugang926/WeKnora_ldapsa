@@ -229,7 +229,7 @@ func runDocumentGraphPipeline(t *testing.T, path string, inspect ...func(*machin
 			require.NoError(t, original.Close())
 			bodySHA := sha256.Sum256(originalBytes)
 			descriptor := map[string]any{"database": databasePath, "file_root": m.base, "knowledge_id": row.ID,
-				"knowledge_base_id": row.KnowledgeBaseID, "user_id": "enrich-human", "file_path": row.FilePath, "body_sha256": hex.EncodeToString(bodySHA[:]),
+				"knowledge_base_id": row.KnowledgeBaseID, "user_id": "enrich-human", "file_path": row.FilePath, "body_sha256": hex.EncodeToString(bodySHA[:]), "history_session_id": m.liveHistorySessionID,
 				"environment": map[string]string{}}
 			environment := descriptor["environment"].(map[string]string)
 			for _, key := range []string{"SYSTEM_AES_KEY", "WEKNORA_NEXTCLOUD_DEV_HTTP", "WEKNORA_NEXTCLOUD_ALLOWED_ORIGINS", "WEKNORA_ORIGINAL_BODY_JOURNAL_DIRECTORY", "WEKNORA_ORIGINAL_BODY_JOURNAL_KEY", "WEKNORA_ORIGINAL_BODY_JOURNAL_PIN"} {
@@ -245,6 +245,9 @@ func runDocumentGraphPipeline(t *testing.T, path string, inspect ...func(*machin
 			// HTTP positives get 90s, followed by NC's bounded revoke command.
 			revokeWait = 150 * time.Second
 		}
+		if os.Getenv("WEKNORA_DOCUMENT_GRAPH_HISTORY_SEARCH") == "1" {
+			revokeWait = 180 * time.Second
+		}
 		require.Eventually(t, func() bool { _, err := os.Stat(path + ".revoked"); return err == nil }, revokeWait, 100*time.Millisecond)
 		require.Error(t, output.Check(m.f.ctx, []*types.Knowledge{row}), "retained document output must recheck current source access")
 		require.Error(t, chunks.Check(m.f.ctx, snapshot), "retained chunks must recheck current source access")
@@ -255,7 +258,11 @@ func runDocumentGraphPipeline(t *testing.T, path string, inspect ...func(*machin
 		}
 		if os.Getenv("WEKNORA_DOCUMENT_GRAPH_HTTP") == "1" {
 			require.NoError(t, os.WriteFile(path+".source-checked", []byte("checked"), 0600))
-			require.Eventually(t, func() bool { _, err := os.Stat(path + ".http-done"); return err == nil }, 60*time.Second, 100*time.Millisecond)
+			httpDoneWait := 60 * time.Second
+			if os.Getenv("WEKNORA_DOCUMENT_GRAPH_HISTORY_SEARCH") == "1" {
+				httpDoneWait = 120 * time.Second
+			}
+			require.Eventually(t, func() bool { _, err := os.Stat(path + ".http-done"); return err == nil }, httpDoneWait, 100*time.Millisecond)
 		}
 		t.Log("actual LDAPS reader can read processed output before NC share removal; retained document/chunk output and new admin read denied after removal")
 

@@ -43,6 +43,7 @@ func prepareDocumentLiveHistory(t *testing.T, m *machinePipelineFixture, ctx con
 	ctx = context.WithValue(ctx, types.UserIDContextKey, types.CallerFromContext(ctx).UserID)
 	session := &types.Session{ID: "live-history-" + m.ds.ID, TenantID: 7, UserID: types.CallerFromContext(ctx).UserID}
 	require.NoError(t, db.Create(session).Error)
+	m.liveHistorySessionID = session.ID
 	execution := types.MessageExecutionContext{KnowledgeBaseIDs: []string{m.ds.KnowledgeBaseID}}
 	user, err := messages.CreateMessage(ctx, &types.Message{SessionID: session.ID, RequestID: "live-rag-history-turn", Role: "user", Content: query, IsCompleted: true, ExecutionContext: execution})
 	require.NoError(t, err)
@@ -96,6 +97,7 @@ func (h *documentLiveHistory) complete(t *testing.T, ctx context.Context, answer
 	}
 	checkPage(false, false)
 	checkPage(true, false)
+	checkSearchRevoked := h.checkKeywordSearch(t, answer)
 	t.Log("REAL_HISTORY actual streamed answer persisted with original material proof; detail/list/recent reads passed")
 	return func() {
 		require.Error(t, CheckMessageMaterialOutputBoundary(read), "retained historical body must recheck current source authority")
@@ -106,6 +108,7 @@ func (h *documentLiveHistory) complete(t *testing.T, ctx context.Context, answer
 		CloseMessageMaterialOutputBoundary(current)
 		checkPage(false, true)
 		checkPage(true, true)
+		checkSearchRevoked()
 		CloseMessageMaterialOutputBoundary(read)
 	}
 }

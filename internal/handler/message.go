@@ -273,7 +273,12 @@ func (h *MessageHandler) DeleteMessage(c *gin.Context) {
 // @Security     ApiKeyAuth
 // @Router       /messages/search [post]
 func (h *MessageHandler) SearchMessages(c *gin.Context) {
-	ctx := c.Request.Context()
+	ctx := service.WithMessageMaterialOutputBoundary(c.Request.Context())
+	c.Request = c.Request.WithContext(ctx)
+	defer service.CloseMessageMaterialOutputBoundary(ctx)
+	prior := c.Writer
+	c.Writer = &knowledgeCollectionAuthorizationWriter{ResponseWriter: prior, check: func() error { return messageHistoryReadErrorOrNil(service.CheckMessageMaterialOutputBoundary(ctx)) }}
+	defer func() { c.Writer = prior }()
 
 	logger.Info(ctx, "Start searching messages")
 
@@ -291,7 +296,8 @@ func (h *MessageHandler) SearchMessages(c *gin.Context) {
 	}
 
 	params := &types.MessageSearchParams{
-		Query:      secutils.SanitizeForLog(request.Query),
+		Query:      request.Query,
+		Cursor:     request.Cursor,
 		Mode:       types.MessageSearchMode(request.Mode),
 		Limit:      request.Limit,
 		SessionIDs: request.SessionIDs,
@@ -316,6 +322,7 @@ func (h *MessageHandler) SearchMessages(c *gin.Context) {
 
 // SearchMessagesRequest defines the request structure for searching messages
 type SearchMessagesRequest struct {
+	Cursor string `json:"cursor,omitempty"`
 	// Query text for search
 	Query string `json:"query" binding:"required"`
 	// Search mode: "keyword", "vector", "hybrid" (default: "hybrid")

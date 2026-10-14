@@ -1882,6 +1882,14 @@ export default {
     todoWrite: '계획 수립'
   },
   commandPalette: {
+    search: {
+      previousMessages: '이전 페이지',
+      pageEmpty: '이 페이지에 일치하는 대화가 없습니다.',
+      continueMessages: '이전 대화 계속 검색',
+      moreAvailable: '아직 검색하지 않은 이전 대화가 있습니다.',
+      failed: '검색을 완료하지 못했습니다. 다시 시도해 주세요.',
+      retry: '검색 다시 시도',
+    },
     placeholder: '지식베이스, 파일, 대화 검색…',
     clearRecent: '지우기',
     retrieval: '검색 설정',

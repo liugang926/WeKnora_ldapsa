@@ -12,7 +12,6 @@ import (
 	"github.com/Tencent/WeKnora/internal/models/embedding"
 	"github.com/Tencent/WeKnora/internal/tracing/langfuse"
 	"github.com/Tencent/WeKnora/internal/types"
-	secutils "github.com/Tencent/WeKnora/internal/utils"
 )
 
 // maxRetrievalPoolSize bounds every retrieval depth derived from MatchCount:
@@ -138,11 +137,8 @@ func (s *knowledgeBaseService) HybridSearch(ctx context.Context,
 		searchKBIDs = []string{id}
 	}
 
-	// QueryText is user-controlled; sanitize before logging to prevent
-	// CR/LF/tab log injection. Matches the handler-layer sanitization at
-	// handler/knowledgebase.go.
-	logger.Infof(ctx, "Hybrid search parameters, knowledge base IDs: %v, query text: %s",
-		searchKBIDs, secutils.SanitizeForLog(params.QueryText))
+	// Search text may contain protected document or conversation material.
+	logger.Infof(ctx, "Hybrid search parameters, knowledge base IDs: %v", searchKBIDs)
 
 	tenantInfo, _ := types.TenantInfoFromContext(ctx)
 
@@ -277,7 +273,7 @@ func (s *knowledgeBaseService) HybridSearch(ctx context.Context,
 	retrieveCtx, retrieveSpan := langfuse.GetManager().StartSpan(ctx, langfuse.SpanOptions{
 		Name: "retrieve",
 		Input: map[string]interface{}{
-			"query_text":             params.QueryText,
+			"query_length":           len(params.QueryText),
 			"kb_ids":                 searchKBIDs,
 			"knowledge_ids":          params.KnowledgeIDs,
 			"tag_ids":                params.TagIDs,
@@ -301,7 +297,6 @@ func (s *knowledgeBaseService) HybridSearch(ctx context.Context,
 	if err != nil {
 		logger.ErrorWithFields(ctx, err, map[string]interface{}{
 			"knowledge_base_ids": searchKBIDs,
-			"query_text":         params.QueryText,
 		})
 		return nil, err
 	}

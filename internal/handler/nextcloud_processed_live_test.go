@@ -38,13 +38,14 @@ func TestNextcloudProcessedLiveHTTPReadAndRevocation(t *testing.T) {
 		t.Skip("owned live producer required")
 	}
 	var input struct {
-		Database        string            `json:"database"`
-		FileRoot        string            `json:"file_root"`
-		KnowledgeID     string            `json:"knowledge_id"`
-		KnowledgeBaseID string            `json:"knowledge_base_id"`
-		UserID          string            `json:"user_id"`
-		BodySHA256      string            `json:"body_sha256"`
-		Environment     map[string]string `json:"environment"`
+		Database         string            `json:"database"`
+		FileRoot         string            `json:"file_root"`
+		KnowledgeID      string            `json:"knowledge_id"`
+		KnowledgeBaseID  string            `json:"knowledge_base_id"`
+		HistorySessionID string            `json:"history_session_id"`
+		UserID           string            `json:"user_id"`
+		BodySHA256       string            `json:"body_sha256"`
+		Environment      map[string]string `json:"environment"`
 	}
 	raw, err := os.ReadFile(path + ".http-input")
 	require.NoError(t, err)
@@ -101,6 +102,7 @@ func TestNextcloudProcessedLiveHTTPReadAndRevocation(t *testing.T) {
 	router.GET("/knowledge/:id/preview", h.PreviewKnowledgeFile)
 	router.GET("/knowledge/:id/download", h.DownloadKnowledgeFile)
 	router.GET("/knowledge-bases/:id/knowledge", h.ListKnowledge)
+	var checkHistorySearch func(bool)
 	var jwtRouter *gin.Engine
 	var accessToken, refreshToken string
 	var jwtAuthenticated bool
@@ -134,6 +136,9 @@ func TestNextcloudProcessedLiveHTTPReadAndRevocation(t *testing.T) {
 		jwtRouter.GET("/knowledge/:id/preview", h.PreviewKnowledgeFile)
 		jwtRouter.GET("/knowledge/:id/download", h.DownloadKnowledgeFile)
 		jwtRouter.GET("/knowledge-bases/:id/knowledge", h.ListKnowledge)
+		if os.Getenv("WEKNORA_DOCUMENT_GRAPH_HISTORY_SEARCH") == "1" {
+			checkHistorySearch = addDocumentLiveHistorySearch(t, jwtRouter, db, store, guard, publication, sources, kbs, kg, input.HistorySessionID, accessToken)
+		}
 	}
 	baseline := map[string][]string{}
 	for _, table := range []string{"nextcloud_content_leases", "original_body_leases"} {
@@ -191,6 +196,9 @@ func TestNextcloudProcessedLiveHTTPReadAndRevocation(t *testing.T) {
 			})
 		}
 	}
+	if checkHistorySearch != nil {
+		checkHistorySearch(false)
+	}
 	checkJWT("before", http.StatusOK, accessToken, true)
 	checkJWT("missing", http.StatusUnauthorized, "", false)
 	checkJWT("invalid", http.StatusUnauthorized, "invalid-owned-fixture-token", false)
@@ -247,12 +255,19 @@ func TestNextcloudProcessedLiveHTTPReadAndRevocation(t *testing.T) {
 	// Reuse the exact pre-revocation token. Auth must still accept the current
 	// active member, while the actual source guard refuses its stale authority.
 	checkJWT("source_revoked", http.StatusForbidden, accessToken, true)
+	if checkHistorySearch != nil {
+		checkHistorySearch(true)
+	}
 	if t.Failed() {
 		return
 	}
 	// The producer retains its own output guards; only its pre-existing lease
 	// IDs may remain. Newly acquired HTTP leases must all be released.
-	require.Eventually(t, func() bool { _, err := os.Stat(path + ".source-checked"); return err == nil }, 30*time.Second, 100*time.Millisecond)
+	sourceWait := 30 * time.Second
+	if os.Getenv("WEKNORA_DOCUMENT_GRAPH_HISTORY_SEARCH") == "1" {
+		sourceWait = 120 * time.Second
+	}
+	require.Eventually(t, func() bool { _, err := os.Stat(path + ".source-checked"); return err == nil }, sourceWait, 100*time.Millisecond)
 	for table, ids := range baseline {
 		query := db.Table(table).Where("released_at_ms IS NULL AND expires_at_ms > ?", time.Now().UnixMilli())
 		if len(ids) > 0 {

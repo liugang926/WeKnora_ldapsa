@@ -5693,6 +5693,14 @@ export default {
     videoNotSupported: 'お使いのブラウザは動画再生に対応していません'
   },
   commandPalette: {
+    search: {
+      previousMessages: '前のページ',
+      pageEmpty: 'このページには一致する会話がありません。',
+      continueMessages: '以前の会話を引き続き検索',
+      moreAvailable: 'まだ検索されていない以前の会話があります。',
+      failed: '検索を完了できませんでした。再試行してください。',
+      retry: '検索を再試行',
+    },
     placeholder: 'ナレッジベース、ファイル、会話を検索…',
     clearRecent: 'クリア',
     retrieval: '検索設定',

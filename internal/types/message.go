@@ -577,6 +577,8 @@ const (
 
 // MessageSearchParams defines the parameters for searching chat history messages
 type MessageSearchParams struct {
+	// Cursor continues the bounded owned-history scan; it grants no read access.
+	Cursor string `json:"cursor,omitempty"`
 	// Query text for search
 	Query string `json:"query" binding:"required"`
 	// Search mode: "keyword", "vector", "hybrid" (default: "hybrid")
@@ -613,6 +615,8 @@ type MessageSearchResultItem struct {
 // Messages sharing the same request_id are grouped together so that the user query
 // and assistant answer are displayed side by side.
 type MessageSearchGroupItem struct {
+	// MessageID identifies a standalone original when there is no request_id.
+	MessageID string `json:"message_id,omitempty"`
 	// The request_id that groups Q&A together
 	RequestID string `json:"request_id"`
 	// Session info
@@ -632,6 +636,10 @@ type MessageSearchGroupItem struct {
 
 // MessageSearchResult represents the search result for message search
 type MessageSearchResult struct {
+	// HasMore means owned keyword candidates remain unscanned, including when
+	// this page has no authorized matches. Total counts this page only.
+	NextCursor string `json:"next_cursor,omitempty"`
+	HasMore    bool   `json:"has_more"`
 	// List of merged Q&A pairs
 	Items []*MessageSearchGroupItem `json:"items"`
 	// Total number of results
@@ -652,4 +660,11 @@ type ChatHistoryKBStats struct {
 	IndexedMessageCount int64 `json:"indexed_message_count"`
 	// Whether there are any indexed messages (used by frontend to lock embedding model)
 	HasIndexedMessages bool `json:"has_indexed_messages"`
+}
+
+// MessageSearchCandidate contains only control metadata. Saved text is read
+// exclusively through its exact original-material plan and physical leases.
+type MessageSearchCandidate struct {
+	ID, SessionID, RequestID, Role, KnowledgeID string
+	CreatedAt                                   time.Time
 }

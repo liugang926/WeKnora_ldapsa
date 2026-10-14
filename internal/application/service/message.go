@@ -910,6 +910,18 @@ func normalizeArtifactFileTypes(in []string) []string {
 // SearchMessages searches messages by keyword and/or vector similarity across all sessions of the current tenant.
 // Vector search is delegated to the chat history knowledge base's HybridSearch (configured via ChatHistoryConfig).
 func (s *messageService) SearchMessages(ctx context.Context, params *types.MessageSearchParams) (*types.MessageSearchResult, error) {
+	if params == nil || params.Query == "" {
+		return nil, access.ErrNextcloudPublicationDenied
+	}
+	if params.Mode == "" {
+		params.Mode = types.MessageSearchModeHybrid
+	}
+	if params.Mode != types.MessageSearchModeKeyword && params.Mode != types.MessageSearchModeVector && params.Mode != types.MessageSearchModeHybrid {
+		return nil, access.ErrNextcloudPublicationDenied
+	}
+	if params.Mode == types.MessageSearchModeVector && params.Cursor != "" {
+		return nil, access.ErrNextcloudPublicationDenied
+	}
 	logger.Infof(ctx, "Start searching messages, mode: %s", params.Mode)
 
 	tenantID := types.MustTenantIDFromContext(ctx)
@@ -918,9 +930,11 @@ func (s *messageService) SearchMessages(ctx context.Context, params *types.Messa
 	// session list is. Sessions are per-user state, and a workspace-wide
 	// keyword search over them let any viewer read a colleague's private
 	// conversations, which is not something a search box should be able to do.
-	if params.OwnerID == "" {
-		params.OwnerID = types.SessionOwnerIDFromContext(ctx)
+	owner := types.SessionOwnerIDFromContext(ctx)
+	if owner == "" || (params.OwnerID != "" && params.OwnerID != owner) {
+		return nil, access.ErrNextcloudPublicationDenied
 	}
+	params.OwnerID = owner
 
 	// Set defaults
 	if params.Mode == "" {
@@ -930,24 +944,39 @@ func (s *messageService) SearchMessages(ctx context.Context, params *types.Messa
 		params.Limit = 20
 	}
 
+	if params.Limit > historySearchMaximumResults {
+		params.Limit = historySearchMaximumResults
+	}
+	if len(params.SessionIDs) > 100 {
+		return nil, access.ErrNextcloudPublicationDenied
+	}
 	var keywordResults []*types.MessageWithSession
 	var vectorResults []*types.MessageSearchResultItem
+	var keywordPage *historyKeywordPage
+	pairs := make(map[string][]*types.Message)
 	var err error
 
-	// Step 1: Keyword search (dialect-aware LIKE in the repository)
+	// Step 1: Metadata candidates -> original leases/receipts -> body matching.
 	if params.Mode == types.MessageSearchModeKeyword || params.Mode == types.MessageSearchModeHybrid {
-		keywordResults, err = s.messageRepo.SearchMessagesByKeyword(
-			ctx, tenantID, params.OwnerID, params.Query, params.SessionIDs, params.Limit*3)
+		keywordPage, err = s.fencedKeywordHistorySearch(ctx, params)
 		if err != nil {
 			logger.Errorf(ctx, "Keyword search failed: %v", err)
 			return nil, err
+		}
+		keywordResults = keywordPage.Hits
+		for key, rows := range keywordPage.Pairs {
+			pairs[key] = rows
 		}
 		logger.Infof(ctx, "Keyword search found %d results", len(keywordResults))
 	}
 
 	// Step 2: Vector search via chat history knowledge base (if configured)
-	if params.Mode == types.MessageSearchModeVector || params.Mode == types.MessageSearchModeHybrid {
-		vectorResults, err = s.vectorSearchViaKB(ctx, params)
+	if params.Cursor == "" && (params.Mode == types.MessageSearchModeVector || params.Mode == types.MessageSearchModeHybrid) {
+		var vectorPairs map[string][]*types.Message
+		vectorResults, vectorPairs, err = s.vectorSearchViaKB(ctx, params)
+		for key, rows := range vectorPairs {
+			pairs[key] = rows
+		}
 		if err != nil {
 			logger.Warnf(ctx, "Vector search via KB failed, falling back to keyword-only: %v", err)
 			if params.Mode == types.MessageSearchModeVector {
@@ -978,7 +1007,10 @@ func (s *messageService) SearchMessages(ctx context.Context, params *types.Messa
 	}
 
 	// Step 4: Fetch partner messages (Q&A counterparts) to ensure complete pairs
-	items = s.fetchPartnerMessages(ctx, items)
+	items, err = expandHeldHistoricalSearchPairs(items, pairs)
+	if err != nil {
+		return nil, err
+	}
 	items, err = s.filterHistoricalSearchPairs(ctx, items)
 	if err != nil {
 		return nil, err
@@ -997,6 +1029,12 @@ func (s *messageService) SearchMessages(ctx context.Context, params *types.Messa
 		Total: len(grouped),
 	}
 
+	if err := completeHistorySearchCursor(keywordPage, result); err != nil {
+		return nil, err
+	}
+	if err := holdHistoricalSearchProjection(ctx, result); err != nil {
+		return nil, err
+	}
 	logger.Infof(ctx, "Message search completed, returning %d grouped results", result.Total)
 	return result, nil
 }
@@ -1097,10 +1135,10 @@ func (s *messageService) restrictToOwnedSessions(
 
 // vectorSearchViaKB performs vector search using the chat history knowledge base's HybridSearch.
 // The KB ID is read from ChatHistoryConfig, search params from RetrievalConfig.
-func (s *messageService) vectorSearchViaKB(ctx context.Context, params *types.MessageSearchParams) ([]*types.MessageSearchResultItem, error) {
+func (s *messageService) vectorSearchViaKB(ctx context.Context, params *types.MessageSearchParams) ([]*types.MessageSearchResultItem, map[string][]*types.Message, error) {
 	cfg := s.getChatHistoryConfig(ctx)
 	if cfg == nil {
-		return nil, nil // Chat history KB not configured, skip vector search
+		return nil, nil, nil // Chat history KB not configured, skip vector search
 	}
 
 	// Read global retrieval config for search parameters
@@ -1109,65 +1147,31 @@ func (s *messageService) vectorSearchViaKB(ctx context.Context, params *types.Me
 	// Use KB HybridSearch with vector-only mode (keyword search is done separately on the messages table)
 	searchParams := types.SearchParams{
 		QueryText:            params.Query,
-		MatchCount:           rc.GetEffectiveEmbeddingTopK(),
+		MatchCount:           min(rc.GetEffectiveEmbeddingTopK(), historySearchMaximumResults),
 		VectorThreshold:      rc.GetEffectiveVectorThreshold(),
 		DisableKeywordsMatch: true, // We handle keyword search separately on the messages table
 	}
 
 	kbResults, err := s.kbService.HybridSearch(ctx, cfg.KnowledgeBaseID, searchParams)
 	if err != nil {
-		return nil, fmt.Errorf("KB hybrid search failed: %w", err)
+		return nil, nil, fmt.Errorf("KB hybrid search failed: %w", err)
 	}
 
 	if len(kbResults) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
 
 	// Rerank results if a rerank model is configured
 	kbResults = s.rerankResults(ctx, rc, params.Query, kbResults)
 	if len(kbResults) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
 
-	// Map KB search results back to messages via knowledge_id
-	knowledgeIDs := make([]string, 0, len(kbResults))
-	scoreByKnowledgeID := make(map[string]float64)
-	for _, r := range kbResults {
-		knowledgeIDs = append(knowledgeIDs, r.KnowledgeID)
-		scoreByKnowledgeID[r.KnowledgeID] = r.Score
+	scores := make(map[string]float64)
+	for _, result := range kbResults {
+		scores[result.KnowledgeID] = result.Score
 	}
-
-	// Look up messages by their knowledge_id
-	messages, err := s.messageRepo.GetMessagesByKnowledgeIDs(ctx, knowledgeIDs)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get messages by knowledge IDs: %w", err)
-	}
-
-	// Filter by session IDs if specified
-	sessionFilter := make(map[string]bool)
-	for _, sid := range params.SessionIDs {
-		sessionFilter[sid] = true
-	}
-
-	var results []*types.MessageSearchResultItem
-	for _, msg := range messages {
-		if len(sessionFilter) > 0 && !sessionFilter[msg.SessionID] {
-			continue
-		}
-		score := scoreByKnowledgeID[msg.KnowledgeID]
-		results = append(results, &types.MessageSearchResultItem{
-			MessageWithSession: *msg,
-			Score:              score,
-			MatchType:          "vector",
-		})
-	}
-
-	// Sort by score descending
-	sort.Slice(results, func(i, j int) bool {
-		return results[i].Score > results[j].Score
-	})
-
-	return results, nil
+	return s.fencedVectorHistoryCandidates(ctx, params, scores)
 }
 
 // rerankResults applies rerank model to search results if configured.
@@ -1381,6 +1385,9 @@ func groupByRequestID(items []*types.MessageSearchResultItem) []*types.MessageSe
 					CreatedAt:    item.CreatedAt,
 				},
 				order: nextOrder,
+			}
+			if item.RequestID == "" {
+				g.item.MessageID = item.ID
 			}
 			nextOrder++
 			groups[key] = g

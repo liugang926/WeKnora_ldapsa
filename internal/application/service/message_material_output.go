@@ -20,18 +20,20 @@ var ErrMessageMaterialHTTPInitializing = fmt.Errorf("%w: original message materi
 type messageMaterialOutputKey struct{}
 type messageMaterialExternalKey struct{}
 type messageMaterialOutputSlot struct {
-	OwnerContext  context.Context
-	mu            sync.Mutex
-	Guards        []*MessageMaterialGuard
-	Completion    *messageCompletionBinding
-	PhysicalReads []*readlease.NextcloudReadGuard
-	Bodies        []string
-	Outputs       [][]*types.Message
-	OutputBodies  []string
-	Ready         bool
-	Failed        error
-	Refs          int
-	Closed        bool
+	OwnerContext       context.Context
+	mu                 sync.Mutex
+	Guards             []*MessageMaterialGuard
+	Completion         *messageCompletionBinding
+	PhysicalReads      []*readlease.NextcloudReadGuard
+	Bodies             []string
+	Outputs            [][]*types.Message
+	OutputBodies       []string
+	SearchOutputs      []*types.MessageSearchResult
+	SearchOutputBodies []string
+	Ready              bool
+	Failed             error
+	Refs               int
+	Closed             bool
 }
 
 func WithMessageMaterialOutputBoundary(ctx context.Context) context.Context {
@@ -240,6 +242,15 @@ func CheckMessageMaterialOutputBoundary(ctx context.Context) error {
 			return access.ErrNextcloudPublicationDenied
 		}
 	}
+	for i, output := range slot.SearchOutputs {
+		body, err := historicalSearchProjectionDigest(output)
+		if err != nil {
+			return err
+		}
+		if body != slot.SearchOutputBodies[i] {
+			return access.ErrNextcloudPublicationDenied
+		}
+	}
 	return nil
 }
 
@@ -329,6 +340,10 @@ func (s *messageService) admittedMessages(ctx context.Context, request types.Mes
 	if err != nil {
 		return nil, err
 	}
+	return s.bindAdmittedMessageGuard(ctx, guard, request)
+}
+
+func (s *messageService) bindAdmittedMessageGuard(ctx context.Context, guard *MessageMaterialGuard, request types.MessageMaterialReadRequest) ([]*types.Message, error) {
 	if slot, ok := ctx.Value(messageMaterialOutputKey{}).(*messageMaterialOutputSlot); ok {
 		body, err := messageBoundaryBodyDigest(guard.snapshot.Messages)
 		if err != nil {

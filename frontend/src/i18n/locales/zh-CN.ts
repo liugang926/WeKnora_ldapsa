@@ -1915,6 +1915,14 @@ export default {
     todoWrite: '制定计划'
   },
   commandPalette: {
+    search: {
+      previousMessages: '返回上一页',
+      pageEmpty: '本页没有匹配的对话。',
+      continueMessages: '继续搜索较早对话',
+      moreAvailable: '还有较早的对话尚未搜索。',
+      failed: '搜索未完成，请重试。',
+      retry: '重试搜索',
+    },
     placeholder: '搜索知识库、文件、对话…',
     clearRecent: '清除',
     retrieval: '检索参数',

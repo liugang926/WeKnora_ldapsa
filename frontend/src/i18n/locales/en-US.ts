@@ -5693,6 +5693,14 @@ export default {
     videoNotSupported: 'Your browser does not support video playback'
   },
   commandPalette: {
+    search: {
+      previousMessages: 'Previous page',
+      pageEmpty: 'No matching conversations on this page.',
+      continueMessages: 'Continue searching earlier conversations',
+      moreAvailable: 'Earlier conversations have not all been searched.',
+      failed: 'Search could not finish. Please try again.',
+      retry: 'Retry search',
+    },
     placeholder: 'Search knowledge bases, files, conversations…',
     clearRecent: 'Clear',
     retrieval: 'Retrieval settings',
