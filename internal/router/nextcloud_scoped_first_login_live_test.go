@@ -41,6 +41,10 @@ func TestNextcloudScopedFirstLoginActualLDAPSAndProductionRoutes(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	r.Use(middleware.ErrorHandler())
+	r.Use(func(c *gin.Context) {
+		c.Next()
+		t.Logf("actual route method=%s template=%s status=%d", c.Request.Method, c.FullPath(), c.Writer.Status())
+	})
 	machine := r.Group("/api/v1/integrations/nextcloud/onboarding")
 	machine.GET("/candidates", f.onboardingHandler.Candidates)
 	machine.POST("/operations", f.onboardingHandler.Create)

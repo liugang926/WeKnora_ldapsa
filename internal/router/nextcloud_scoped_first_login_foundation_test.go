@@ -199,6 +199,8 @@ func newScopedFirstLoginFoundation(t *testing.T, input scopedFirstLoginInput, fi
 	backend := "scoped-live-local"
 	require.NoError(t, db.Create(&types.StorageBackend{ID: backend, TenantID: 77, Name: "Owned local scoped source", Provider: "local", Status: types.StorageBackendStatusActive}).Error)
 	catalog := service.NewResourceCatalog(repository.NewResourceRepository(db))
+	// Capacity admission measures the configured storage root before any upload.
+	require.NoError(t, os.MkdirAll(filepath.Join(temp, "files"), 0700))
 	files := storagefile.NewResourceCatalogFileService(storagefile.NewBackendScopedFileService(backend, storagefile.NewLocalFileService(filepath.Join(temp, "files"), "")), catalog, public)
 	pool, err := ants.NewPool(1)
 	require.NoError(t, err)
@@ -286,7 +288,19 @@ func (f *scopedFirstLoginFoundation) processSource(t *testing.T, input scopedFir
 		var run func(context.Context, *asynq.Task) error
 		switch task.Type() {
 		case types.TypeDataSourceSync:
-			require.NoError(t, f.source.ProcessSync(context.Background(), task))
+			syncErr := f.source.ProcessSync(context.Background(), task)
+			if syncErr != nil {
+				var recorded types.SyncLog
+				require.NoError(t, f.db.Where("id=?", log.ID).Take(&recorded).Error)
+				detail, parseErr := recorded.ParseResult()
+				require.NoError(t, parseErr)
+				if detail != nil {
+					for _, item := range detail.Errors {
+						t.Logf("actual sync item failure code=%s", item.Code)
+					}
+				}
+			}
+			require.NoError(t, syncErr)
 			continue
 		case types.TypeDocumentProcess:
 			run = f.knowledge.ProcessDocument
