@@ -121,6 +121,8 @@ func (s *OriginalBodyRetentionStore) fieldCurrent(tx *gorm.DB, head originalBody
 		return current, deadline, e
 	}
 	switch d.Table {
+	case "knowledge_bases":
+		return s.configurationOriginalBodyCurrent(tx, head, row, now)
 	case "steer_authored_origins":
 		var control struct {
 			Consumed, Discarded, Deleted bool
@@ -272,6 +274,15 @@ func (s *OriginalBodyRetentionStore) fieldCurrent(tx *gorm.DB, head originalBody
 		}
 		return true, 0, nil
 	case "knowledge_enrichment_template_inputs":
+		if head.SourceLineage != "" {
+			closed, deadline, err := configurationOriginalBodySourcesClosed(tx, head.SourceLineage, now)
+			if err != nil {
+				return true, 0, err
+			}
+			if closed {
+				return false, deadline, nil
+			}
+		}
 		// A completed template still used by the current KB protects its captured
 		// input. Missing result evidence never proves that a build terminated.
 		if !tx.Migrator().HasTable("knowledge_enrichment_template_results") {
@@ -373,7 +384,9 @@ func (s *OriginalBodyRetentionStore) lockBodyScopes(tx *gorm.DB, heads []origina
 			return ErrOriginalBodyRetained
 		}
 		if parentCopyTable(head.SourceTable) {
-			if _, err := parentCopyScopeEvidence(tx, head, resolved); err != nil { return err }
+			if _, err := parentCopyScopeEvidence(tx, head, resolved); err != nil {
+				return err
+			}
 		}
 		for _, scopeRef := range resolved {
 			if scopeRef.KnowledgeBaseID != "" {

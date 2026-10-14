@@ -51,6 +51,9 @@ func nextcloudMissingControlTables(tx *gorm.DB) []string {
 	if tx.Migrator().HasColumn("sessions", "nextcloud_scoped") || tx.Migrator().HasTable("nextcloud_onboarding_credentials") || tx.Migrator().HasTable("nextcloud_onboarding_operations") || tx.Migrator().HasTable(&NextcloudTargetClosure{}) || tx.Migrator().HasTable(&NextcloudTenantDeletion{}) {
 		required = append(required, "tenants", "nextcloud_onboarding_target_closures", "nextcloud_onboarding_tenant_deletions", "nextcloud_onboarding_credentials", "nextcloud_onboarding_delegations", "nextcloud_onboarding_operations", "nextcloud_source_grants", "nextcloud_kb_blank_witnesses", "nextcloud_root_migrations", "nextcloud_target_migrations", "directory_permission_versions", "directories", "directory_identities", "directory_groups", "directory_group_edges", "directory_group_memberships", "tenant_group_role_grants", "resource_group_grants", "resource_access_policies", "tenant_members", "nextcloud_file_states", "nextcloud_status_outbox", "nextcloud_graph_plans", "nextcloud_graph_tasks", "nextcloud_graph_records", "nextcloud_source_status_epochs")
 	}
+	if tx.Migrator().HasTable("original_body_payloads") && tx.Migrator().HasTable("knowledge_config_input_origins") {
+		required = append(required, "knowledge_configuration_original_body_manifests")
+	}
 	missing := []string{}
 	for _, table := range required {
 		if !tx.Migrator().HasTable(table) {
@@ -65,6 +68,7 @@ func nextcloudControlMetadataInventory(tx *gorm.DB) (map[string]any, error) {
 	// Hash every protective/control table, including disabled state and pending
 	// operations. No ciphertext, user GUID, paths or graph bodies are exported.
 	tables := []string{"tenants", "nextcloud_onboarding_target_closures", "nextcloud_onboarding_tenant_deletions", "nextcloud_onboarding_credentials", "nextcloud_onboarding_delegations", "nextcloud_onboarding_operations", "nextcloud_source_grants", "nextcloud_kb_blank_witnesses", "nextcloud_root_migrations", "nextcloud_target_migrations", "nextcloud_source_status_epochs", "nextcloud_graph_plans", "nextcloud_graph_tasks", "nextcloud_graph_records", "nextcloud_file_states", "nextcloud_status_outbox", "nextcloud_control_recovery_gates", "nextcloud_source_pairings", "nextcloud_source_pairing_aborts", "nextcloud_source_rotations", "nextcloud_source_decommissions", "nextcloud_event_connections", "nextcloud_event_checkpoint", "nextcloud_source_versions", "nextcloud_source_revisions", "nextcloud_source_tombstones", "nextcloud_content_fences", "nextcloud_content_leases", "nextcloud_content_lease_coverage", "nextcloud_recovery_build_leases", "nextcloud_gc_jobs", "nextcloud_resource_refs", "nextcloud_backend_descriptors", "knowledge_bases", "data_sources", "resource_access_policies", "directory_permission_versions", "directories", "directory_identities", "directory_groups", "directory_group_edges", "directory_sync_runs", "directory_group_memberships", "tenant_group_role_grants", "resource_group_grants", "tenant_members"}
+	tables = append(tables, "knowledge_configuration_original_body_manifests")
 	out := map[string]any{"__missing_tables": nextcloudMissingControlTables(tx)}
 	for _, table := range tables {
 		if !tx.Migrator().HasTable(table) {

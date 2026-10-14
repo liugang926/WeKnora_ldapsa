@@ -89,7 +89,11 @@ func admitKnowledgeConfigurationOrigin(tx *gorm.DB, kb *types.KnowledgeBase, ori
 	if err != nil {
 		return err
 	}
-	return tx.Create(&knowledgeConfigurationInputOrigin{uuid.NewString(), kb.TenantID, kb.ID, revision, origin.kind, digest, string(encoded)}).Error
+	fact := knowledgeConfigurationInputOrigin{uuid.NewString(), kb.TenantID, kb.ID, revision, origin.kind, digest, string(encoded)}
+	if err := tx.Create(&fact).Error; err != nil {
+		return err
+	}
+	return bindKnowledgeConfigurationOriginalBodiesInTx(tx, kb, fact)
 }
 
 // CreateKnowledgeBaseWithInput binds the actual new human/code/derived config

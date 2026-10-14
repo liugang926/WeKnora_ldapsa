@@ -22,6 +22,7 @@ func bodyActualFixture(t *testing.T, pg bool) (*enrichmentTestFixture, *reposito
 	sql, e := os.ReadFile(path)
 	require.NoError(t, e)
 	require.NoError(t, f.db.Exec(string(sql)).Error)
+	installConfigurationOriginalBodyFixtureSchema(t, f.db, pg)
 	require.NoError(t, repository.InstallOriginalBodyRetentionTriggers(f.db))
 	require.NoError(t, repository.InstallOriginalBodyRetentionCallbacks(f.db))
 	dir := t.TempDir()
@@ -34,6 +35,7 @@ func bodyActualFixture(t *testing.T, pg bool) (*enrichmentTestFixture, *reposito
 	t.Setenv("WEKNORA_ORIGINAL_BODY_JOURNAL_PIN", pin)
 	store := repository.NewOriginalBodyRetentionStore(f.db)
 	require.NoError(t, store.InitializeJournal())
+	inventoryKnownConfigurationOriginalBodyFixture(t, f.ctx, f.db, f.store)
 	return f, store
 }
 func runOriginalBodyActualTagProducer(t *testing.T, pg bool) {

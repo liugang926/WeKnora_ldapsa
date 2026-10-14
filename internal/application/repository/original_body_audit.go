@@ -20,6 +20,11 @@ func gcOriginalBodyAuditMetadata(tx *gorm.DB, table, key string, row map[string]
 	if !known {
 		return json.Marshal(row)
 	}
+	if table == "knowledge_bases" {
+		if e := verifyConfigurationOriginalBodyInventoryInTx(tx, bodyUint(row["tenant_id"]), key); e != nil {
+			return nil, e
+		}
+	}
 	store := NewOriginalBodyRetentionStore(tx)
 	scope, e := bodyScopeFromRow(tx, d, key, row)
 	if e != nil {

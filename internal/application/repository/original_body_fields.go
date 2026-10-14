@@ -21,6 +21,9 @@ type originalBodyFieldDescriptor struct {
 }
 
 var originalBodyFields = []originalBodyFieldDescriptor{
+	// Configuration JSON and templates are actual source-bearing bytes. Keep
+	// technical identity/storage columns outside this physical body catalog.
+	{"knowledge_bases", "id", "inline", knowledgeConfigurationOriginalBodyColumns},
 	{"steer_authored_origins", "id", "vault", []string{"input_body"}},
 	{"datasource_name_inputs", "id", "vault", []string{"actual_inputs"}},
 	{"nextcloud_original_upload_inputs", "knowledge_id", "vault", []string{"actual_inputs"}},
@@ -153,6 +156,18 @@ func bodyScopeFromRow(tx *gorm.DB, d originalBodyFieldDescriptor, key string, ro
 	if d.Table == "knowledges" {
 		scope.Knowledge = key
 	}
+	if d.Table == "knowledge_bases" {
+		scope.KB = key
+		scope.Knowledge = ""
+		// Only an already persisted producer origin supplies ancestry. Inventory
+		// never creates a new configuration origin from current JSON.
+		if fact, err := configurationOriginalBodyCurrentOrigin(tx, scope.Tenant, key); err == nil {
+			scope.AdmissionID = fact.OriginID
+			scope.Lineage = fact.SourceLineage
+		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return scope, err
+		}
+	}
 	if d.Table == "messages" || d.Table == "message_generation_origins" || d.Table == "steer_authored_origins" {
 		// The immutable origin is inserted before its message. Its scope comes
 		// from that origin/session, never a later mutable indexed-knowledge link.
@@ -243,7 +258,27 @@ func (s *OriginalBodyRetentionStore) captureField(tx *gorm.DB, d originalBodyFie
 		if e := s.checkExternalBody(old.ID); e != nil {
 			return e
 		}
-		if old.BodySHA256 == sha {
+		if old.BodySHA256 == sha && (d.Table != "knowledge_bases" || (prior.AdmissionID == scope.AdmissionID && prior.SourceLineage == scope.Lineage)) {
+			if d.Table == "knowledge_bases" && scope.AdmissionID != "" {
+				var count int64
+				if tx.Migrator().HasTable(&knowledgeConfigurationOriginalBodyManifest{}) {
+					if e := bodyInternal(tx).Model(&knowledgeConfigurationOriginalBodyManifest{}).Where("origin_id=?", scope.AdmissionID).Count(&count).Error; e != nil {
+						return e
+					}
+				}
+				// Only a real admission or explicit known-origin forward
+				// inventory may bind absent parents before its first manifest.
+				// An ordinary same-body save cannot repair lost dependencies.
+				if count == 0 {
+					if e := recordConfigurationOriginalBodyParents(tx, old.ID, scope); e != nil {
+						return e
+					}
+				}
+			} else if d.Table == "knowledge_enrichment_template_inputs" {
+				if e := recordConfigurationOriginalBodyParents(tx, old.ID, scope); e != nil {
+					return e
+				}
+			}
 			if parentCopyTable(d.Table) {
 				if e := s.recordParentCopyScopes(tx, old.ID, d, key, scope); e != nil {
 					return e
@@ -312,8 +347,15 @@ func (s *OriginalBodyRetentionStore) captureField(tx *gorm.DB, d originalBodyFie
 	if e := bodyInternal(tx).Table("original_body_field_revisions").Create(&head).Error; e != nil {
 		return e
 	}
-	if e := s.recordBodyParents(tx, body.ID, raw); e != nil {
-		return e
+	if d.Table != "knowledge_bases" {
+		if e := s.recordBodyParents(tx, body.ID, raw); e != nil {
+			return e
+		}
+	}
+	if (d.Table == "knowledge_bases" && scope.AdmissionID != "") || d.Table == "knowledge_enrichment_template_inputs" {
+		if err := recordConfigurationOriginalBodyParents(tx, body.ID, scope); err != nil {
+			return err
+		}
 	}
 	if d.Table == "faq_input_sessions" {
 		row, e := bodySourceRow(tx, d, key)

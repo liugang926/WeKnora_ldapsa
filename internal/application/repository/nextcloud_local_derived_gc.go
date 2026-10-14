@@ -78,6 +78,29 @@ func gcAuditInventory(tx *gorm.DB, job nextcloudGCJob) ([]gcAuditEntry, error) {
 		{"faq_entry_input_admissions", "id", "tenant_id=? AND knowledge_base_id=? AND knowledge_id=?", []any{job.TenantID, job.KnowledgeBaseID, job.KnowledgeID}},
 		{"faq_input_sessions", "id", "id IN (SELECT session_id FROM faq_entry_input_admissions WHERE knowledge_id=?)", []any{job.KnowledgeID}},
 	}
+	// Reverse source-dependent configuration bodies include cloned target KBs.
+	// The exact immutable source identity is checked before body inventory; a
+	// matching JSON substring or KB UUID is not sufficient proof.
+	dependent, err := configurationOriginalBodyDependentKBs(tx, job)
+	if err != nil {
+		return nil, err
+	}
+	for _, target := range dependent {
+		tables = append(tables, struct {
+			table, key, scope string
+			args              []any
+		}{"knowledge_bases", "id", "tenant_id=? AND id=?", []any{target.TenantID, target.KnowledgeBaseID}})
+	}
+	inputs, err := configurationOriginalBodyDependentTemplateInputs(tx, job)
+	if err != nil {
+		return nil, err
+	}
+	for _, id := range inputs {
+		tables = append(tables, struct {
+			table, key, scope string
+			args              []any
+		}{"knowledge_enrichment_template_inputs", "id", "id=?", []any{id}})
+	}
 	for _, entry := range tables {
 		if !tx.Migrator().HasTable(entry.table) {
 			continue

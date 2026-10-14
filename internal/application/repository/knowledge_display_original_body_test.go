@@ -21,6 +21,13 @@ func initializeDisplayOriginalBody(t *testing.T, db *gorm.DB, pg bool) {
 	script, err := os.ReadFile(path)
 	require.NoError(t, err)
 	require.NoError(t, db.Exec(string(script)).Error)
+	manifest := "../../../migrations/sqlite/000082_knowledge_configuration_original_body.up.sql"
+	if pg {
+		manifest = "../../../migrations/versioned/000163_knowledge_configuration_original_body.up.sql"
+	}
+	script, err = os.ReadFile(manifest)
+	require.NoError(t, err)
+	require.NoError(t, db.Exec(string(script)).Error)
 	require.NoError(t, InstallOriginalBodyRetentionTriggers(db))
 	require.NoError(t, InstallOriginalBodyRetentionCallbacks(db))
 	directory := t.TempDir()

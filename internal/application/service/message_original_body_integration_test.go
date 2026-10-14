@@ -69,6 +69,7 @@ func messageBodyIntegrationFixture(t *testing.T, pg bool, before ...any) (*messa
 	ddl, e := os.ReadFile(path)
 	require.NoError(t, e)
 	require.NoError(t, db.Exec(string(ddl)).Error)
+	installConfigurationOriginalBodyFixtureSchema(t, db, pg)
 	require.NoError(t, repository.InstallOriginalBodyRetentionTriggers(db))
 	require.NoError(t, repository.InstallOriginalBodyRetentionCallbacks(db))
 	dir := t.TempDir()
@@ -81,6 +82,7 @@ func messageBodyIntegrationFixture(t *testing.T, pg bool, before ...any) (*messa
 	t.Setenv("WEKNORA_ORIGINAL_BODY_JOURNAL_PIN", pin)
 	body := repository.NewOriginalBodyRetentionStore(db)
 	require.NoError(t, body.InitializeJournal())
+	inventoryKnownConfigurationOriginalBodyFixture(t, ctx, db, store)
 	return messages, kg, store, db, ctx, session, body
 }
 func runMessageBodyIntegration(t *testing.T, pg bool) {
