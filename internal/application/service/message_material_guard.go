@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"time"
 
@@ -20,6 +21,7 @@ type MessageMaterialGuard struct {
 	plan          *types.MessageMaterialReadPlan
 	ctx           context.Context
 	cancel        context.CancelFunc
+	cancelCause   context.CancelCauseFunc
 	leases        []repository.NextcloudContentLease
 	bodyLeases    []string
 	stop          sync.WaitGroup
@@ -36,8 +38,9 @@ func (s *messageService) beginMessageMaterialRead(ctx context.Context, request t
 	if err != nil {
 		return nil, err
 	}
-	leaseCtx, cancel := context.WithCancel(ctx)
-	guard := &MessageMaterialGuard{store: s.materialStore, verifier: s, plan: plan, ctx: leaseCtx, cancel: cancel, leases: []repository.NextcloudContentLease{}, heartbeatStop: make(chan struct{})}
+	leaseCtx, cancelCause := context.WithCancelCause(ctx)
+	cancel := func() { cancelCause(context.Canceled) }
+	guard := &MessageMaterialGuard{store: s.materialStore, verifier: s, plan: plan, ctx: leaseCtx, cancel: cancel, cancelCause: cancelCause, leases: []repository.NextcloudContentLease{}, heartbeatStop: make(chan struct{})}
 	store := s.materialStore.ContentLeaseStore()
 	owner := uuid.NewString()
 	broad := map[types.KnowledgeSearchScope]repository.NextcloudContentLease{}
@@ -107,8 +110,7 @@ func (s *messageService) beginMessageMaterialRead(ctx context.Context, request t
 			case <-guard.heartbeatStop:
 				return
 			case <-ticker.C:
-				if guard.Recheck() != nil {
-					guard.cancel()
+				if guard.heartbeatRecheck() != nil {
 					return
 				}
 			}
@@ -116,6 +118,25 @@ func (s *messageService) beginMessageMaterialRead(ctx context.Context, request t
 	}()
 	return guard, nil
 }
+
+// The actual ticker and deterministic SQL regression share this checkpoint.
+// Cancel the consumer immediately, retaining the original failure cause; a
+// known current-source denial must not become an unrelated unknown outage.
+func (g *MessageMaterialGuard) heartbeatRecheck() error {
+	if g == nil {
+		return access.ErrNextcloudPublicationUnavailable
+	}
+	err := g.Recheck()
+	if err != nil {
+		if g.cancelCause != nil {
+			g.cancelCause(err)
+		} else {
+			g.cancel()
+		}
+	}
+	return err
+}
+
 func (g *MessageMaterialGuard) Context() context.Context { return g.ctx }
 func (g *MessageMaterialGuard) Recheck() error {
 	if g == nil {
@@ -124,6 +145,9 @@ func (g *MessageMaterialGuard) Recheck() error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	if err := g.ctx.Err(); err != nil {
+		if errors.Is(context.Cause(g.ctx), access.ErrNextcloudPublicationDenied) {
+			return context.Cause(g.ctx)
+		}
 		return err
 	}
 	for _, lease := range g.leases {

@@ -146,7 +146,7 @@ func runHistoryVectorRerank(ctx context.Context, rc *types.RetrievalConfig, quer
 	}
 	checkpoint := func() error {
 		if ctx.Err() != nil {
-			return access.ErrNextcloudPublicationUnavailable
+			return historyVectorCancellationError(ctx)
 		}
 		if err := current(); err != nil {
 			return err

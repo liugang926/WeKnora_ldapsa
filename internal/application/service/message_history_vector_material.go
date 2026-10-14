@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"math"
 	"sort"
 
@@ -216,8 +217,8 @@ func (s *messageService) beginHistoryVectorMaterialBridge(ctx context.Context, p
 	if err != nil {
 		return nil, err
 	}
-	joined, cancel := context.WithCancel(merged)
-	b.cancel = cancel
+	joined, cancelCause := context.WithCancelCause(merged)
+	b.cancel = func() { cancelCause(context.Canceled) }
 	b.ctx = logprivacy.SuppressContent(context.WithValue(joined, historyVectorMaterialBridgeKey{}, b))
 	slot := ctx.Value(messageMaterialOutputKey{}).(*messageMaterialOutputSlot)
 	slot.mu.Lock()
@@ -227,13 +228,23 @@ func (s *messageService) beginHistoryVectorMaterialBridge(ctx context.Context, p
 		guard.mu.Lock()
 		guardContext := guard.ctx
 		guard.mu.Unlock()
-		stop := context.AfterFunc(guardContext, cancel)
+		stop := context.AfterFunc(guardContext, func() { cancelCause(context.Cause(guardContext)) })
 		context.AfterFunc(b.ctx, func() { stop() })
 	}
 	if err := b.Checkpoint(b.ctx); err != nil {
 		return nil, err
 	}
 	return b, nil
+}
+
+// This classifies only a failed/cancelled bridge; it never admits output or
+// skips a physical lease checkpoint. Ordinary Close/deadline/unknown causes
+// remain unavailable. Only the actual parent's typed source denial survives.
+func historyVectorCancellationError(ctx context.Context) error {
+	if ctx != nil && errors.Is(context.Cause(ctx), access.ErrNextcloudPublicationDenied) {
+		return context.Cause(ctx)
+	}
+	return access.ErrNextcloudPublicationUnavailable
 }
 
 func (b *historyVectorMaterialBridge) Context() context.Context { return b.ctx }
@@ -247,8 +258,14 @@ func (b *historyVectorMaterialBridge) KnowledgeIDs() []string {
 }
 
 func (b *historyVectorMaterialBridge) Checkpoint(ctx context.Context) error {
-	if b == nil || ctx == nil || ctx.Err() != nil || b.ctx == nil || b.ctx.Err() != nil || b.service == nil || b.service.materialStore == nil {
+	if b == nil || ctx == nil || b.ctx == nil || b.service == nil || b.service.materialStore == nil {
 		return access.ErrNextcloudPublicationUnavailable
+	}
+	if ctx.Err() != nil {
+		return historyVectorCancellationError(ctx)
+	}
+	if b.ctx.Err() != nil {
+		return historyVectorCancellationError(b.ctx)
 	}
 	tenant, ok := types.TenantIDFromContext(ctx)
 	if !ok || tenant != b.tenant || types.SessionOwnerIDFromContext(ctx) != b.owner {
@@ -268,8 +285,11 @@ func (b *historyVectorMaterialBridge) Checkpoint(ctx context.Context) error {
 // captured context carries every admitted original plan and FAQ lease;
 // the HTTP writer's context alone does not carry those producer inputs.
 func (b *historyVectorMaterialBridge) recheckCurrentInputs() error {
-	if b == nil || b.ctx == nil || b.ctx.Err() != nil || b.service == nil || b.service.materialStore == nil {
+	if b == nil || b.ctx == nil || b.service == nil || b.service.materialStore == nil {
 		return access.ErrNextcloudPublicationUnavailable
+	}
+	if b.ctx.Err() != nil {
+		return historyVectorCancellationError(b.ctx)
 	}
 	ctx := b.ctx
 	tenant, ok := types.TenantIDFromContext(ctx)
