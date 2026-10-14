@@ -28,6 +28,7 @@ type datasourceNameEdit struct {
 	Name                     string
 	Kind                     string
 	PairOperation, BindingID string
+	Producer                 *nextcloudOnboardingProducerReceipt `json:"onboarding_producer,omitempty"`
 }
 
 // WithIndependentDataSourceNameInput belongs only at an actual edit boundary.
@@ -69,17 +70,28 @@ func admitDataSourceNameInput(tx *gorm.DB, ctx context.Context, ds *types.DataSo
 	if authority == nil || authority.db != tx {
 		return types.ErrSourceLineageUnknown
 	}
-	var kb types.KnowledgeBase
-	if err := tx.Where("id = ? AND tenant_id = ?", ds.KnowledgeBaseID, ds.TenantID).Take(&kb).Error; err != nil {
-		return err
-	}
-	fresh, err := authority.AuthorizeCurrentKnowledgeInputWrite(ctx, &kb)
+	// A machine coordinator carries only this exact private producer purpose.
+	// The ordinary authority factory must still be real and transaction-bound;
+	// no caller, workspace role or model/read capability is synthesized.
+	producer, scoped, err := scopedOnboardingDataSourceName(tx, ctx, ds, edit)
 	if err != nil {
 		return err
 	}
-	caller := types.CallerFromContext(fresh)
-	if caller.TenantID != ds.TenantID || !caller.Role.HasPermission(types.TenantRoleAdmin) {
-		return access.ErrForbidden
+	if scoped {
+		edit.Producer = producer
+	} else {
+		var kb types.KnowledgeBase
+		if err := tx.Where("id = ? AND tenant_id = ?", ds.KnowledgeBaseID, ds.TenantID).Take(&kb).Error; err != nil {
+			return err
+		}
+		fresh, err := authority.AuthorizeCurrentKnowledgeInputWrite(ctx, &kb)
+		if err != nil {
+			return err
+		}
+		caller := types.CallerFromContext(fresh)
+		if caller.TenantID != ds.TenantID || !caller.Role.HasPermission(types.TenantRoleAdmin) {
+			return access.ErrForbidden
+		}
 	}
 	if edit.Kind != "human" && (edit.Kind != "pairing_configuration" || edit.BindingID == "" || edit.PairOperation == "" || edit.Name != "Nextcloud · "+edit.BindingID) {
 		return ErrKnowledgeInputChanged

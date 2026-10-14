@@ -62,6 +62,8 @@ func (h *NextcloudSourcePairingHandler) admin(c *gin.Context) (uint64, bool) {
 }
 
 type sourcePairingRequest struct {
+	ActorDirectoryID string `json:"actor_directory_id"`
+	ActorObjectGUID  string `json:"actor_object_guid"`
 	KnowledgeBaseID  string `json:"knowledge_base_id" binding:"required"`
 	BaseURL          string `json:"base_url" binding:"required"`
 	BindingID        string `json:"binding_id" binding:"required"`

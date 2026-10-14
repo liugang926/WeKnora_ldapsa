@@ -86,6 +86,20 @@ func (r *NextcloudSourcePairingRepository) PrepareSourcePairing(
 		if lock.RowsAffected != 1 {
 			return ErrNextcloudSourcePairingConflict
 		}
+		// Exact retries consume the same machine purpose as first creation.
+		// Recheck after the writer lock; a capability captured before revocation
+		// cannot skip validation through the existing-pair early return.
+		if producer, scoped := ctx.Value(nextcloudOnboardingProducerKey{}).(nextcloudOnboardingProducer); scoped {
+			if r.nameAuthorityFactory == nil || proposed.OperationID != producer.Operation.OperationID ||
+				proposed.TenantID != producer.Operation.TenantID || proposed.KnowledgeBaseID != producer.Operation.KnowledgeBaseID ||
+				proposed.InstanceID != producer.Operation.InstanceID || proposed.BindingID != producer.Operation.BindingID ||
+				proposed.BaseURL != producer.Credential.BaseURL {
+				return ErrNextcloudOnboardingDenied
+			}
+			if err := producer.check(tx); err != nil {
+				return err
+			}
+		}
 		// Reserved admission and generic pairing share this writer lock. Only the
 		// owning immutable operation may enter a reserved knowledge base.
 		if tx.Migrator().HasTable(&types.NextcloudOnboardingOperation{}) {
@@ -174,7 +188,7 @@ func (r *NextcloudSourcePairingRepository) PrepareSourcePairing(
 		if err := tx.Where("id = ? AND tenant_id = ?", ds.ID, ds.TenantID).Take(&persisted).Error; err != nil {
 			return err
 		}
-		if r.nameAuthorityFactory != nil {
+		if _, scoped := ctx.Value(nextcloudOnboardingProducerKey{}).(nextcloudOnboardingProducer); r.nameAuthorityFactory != nil || scoped {
 			// The prefix is code and the binding is the actual new independent
 			// pairing configuration selector, not retained data-source text.
 			nameCtx := context.WithValue(ctx, datasourceNameEditKey{}, datasourceNameEdit{Name: "Nextcloud · " + proposed.BindingID, Kind: "pairing_configuration", PairOperation: proposed.OperationID, BindingID: proposed.BindingID})

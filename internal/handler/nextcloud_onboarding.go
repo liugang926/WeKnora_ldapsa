@@ -230,7 +230,16 @@ func (h *NextcloudOnboardingHandler) Pair(c *gin.Context) {
 		c.JSON(http.StatusConflict, gin.H{"error": "nextcloud_prepared_binding_unavailable"})
 		return
 	}
-	pair, _, err := h.pairing.repo.PrepareSourcePairing(c.Request.Context(), repository.NextcloudSourcePairing{OperationID: op.OperationID, TenantID: op.TenantID, KnowledgeBaseID: op.KnowledgeBaseID, InstanceID: op.InstanceID, BindingID: op.BindingID, BaseURL: cred.BaseURL, PublicationEpoch: *req.PublicationEpoch, KeyID: req.KeyID}, req.Token)
+	actorDir, actorGUID := req.ActorDirectoryID, req.ActorObjectGUID
+	if actorDir == "" && actorGUID == "" {
+		actorDir, actorGUID = op.ActorDirectoryID, op.ActorObjectGUID
+	}
+	producerCtx, err := h.store.BeginPairProducer(c.Request.Context(), cred, op, actorDir, actorGUID)
+	if err != nil {
+		onboardingError(c, err)
+		return
+	}
+	pair, _, err := h.pairing.repo.PrepareSourcePairing(producerCtx, repository.NextcloudSourcePairing{OperationID: op.OperationID, TenantID: op.TenantID, KnowledgeBaseID: op.KnowledgeBaseID, InstanceID: op.InstanceID, BindingID: op.BindingID, BaseURL: cred.BaseURL, PublicationEpoch: *req.PublicationEpoch, KeyID: req.KeyID}, req.Token)
 	if err != nil {
 		sourcePairingError(c, err)
 		return

@@ -51,7 +51,7 @@ func onboardingDB(t *testing.T) (*gorm.DB, *repo.NextcloudOnboardingStore, types
 	}
 
 	require.NoError(t, db.AutoMigrate(&types.Tenant{}, &types.Chunk{}, &types.KnowledgeBase{}, &types.Knowledge{}, &types.DataSource{}, &types.Model{}, &types.StorageBackend{}, &types.TenantMember{}, &types.ResourceAccessPolicy{}, &types.ResourceGroupGrant{}, &types.TenantGroupRoleGrant{}, &types.PermissionVersion{}, &types.Directory{}, &types.DirectoryIdentity{}, &types.DirectoryGroup{}, &types.DirectoryGroupMembership{}, &types.Session{}, &repo.NextcloudSourcePairing{}, &repo.NextcloudSourcePairingAbort{}))
-	for _, sql := range []string{"CREATE UNIQUE INDEX policies_key ON resource_access_policies(tenant_id,resource_type,resource_id)", "CREATE TABLE wiki_pages(tenant_id INTEGER,knowledge_base_id TEXT)", "CREATE TABLE nextcloud_source_tombstones(tenant_id INTEGER,scope_type TEXT,scope_id TEXT)", "CREATE TABLE nextcloud_event_connections(tenant_id BIGINT,knowledge_base_id TEXT,nextcloud_instance_id TEXT,binding_id TEXT,status TEXT)"} {
+	for _, sql := range []string{"CREATE UNIQUE INDEX policies_key ON resource_access_policies(tenant_id,resource_type,resource_id)", "CREATE TABLE wiki_pages(tenant_id INTEGER,knowledge_base_id TEXT)", "CREATE TABLE nextcloud_source_tombstones(tenant_id INTEGER,scope_type TEXT,scope_id TEXT)", "CREATE TABLE nextcloud_event_connections(connection_id TEXT PRIMARY KEY,tenant_id BIGINT,knowledge_base_id TEXT,nextcloud_instance_id TEXT,binding_id TEXT,datasource_id TEXT,status TEXT)"} {
 		require.NoError(t, db.Exec(sql).Error)
 	}
 	require.NoError(t, db.Create(&types.Tenant{ID: 7, Name: "onboarding-owner"}).Error)
@@ -274,11 +274,10 @@ func TestNextcloudOnboardingAuthorityEpochSupersedesPairingReceipt(t *testing.T)
 	op, err := store.Reserve(ctx, c, onboardingRequest(c, uuid.NewString(), kb.ID))
 	require.NoError(t, err)
 	activateOnboarding(t, db, store, op)
-	require.NoError(t, db.Exec("CREATE TABLE nextcloud_event_connections(connection_id TEXT PRIMARY KEY,tenant_id BIGINT,knowledge_base_id TEXT,datasource_id TEXT,status TEXT)").Error)
 	require.NoError(t, db.Exec("CREATE TABLE nextcloud_source_status_epochs(connection_id TEXT PRIMARY KEY,publication_epoch BIGINT,pair_operation_id TEXT,verified_at BIGINT)").Error)
 	var pair repo.NextcloudSourcePairing
 	require.NoError(t, db.Where("operation_id=?", op.OperationID).Take(&pair).Error)
-	require.NoError(t, db.Exec("INSERT INTO nextcloud_event_connections VALUES(?,?,?,?,?)", "conn", uint64(7), kb.ID, pair.DataSourceID, "active").Error)
+	require.NoError(t, db.Exec("INSERT INTO nextcloud_event_connections(connection_id,tenant_id,knowledge_base_id,datasource_id,status) VALUES(?,?,?,?,?)", "conn", uint64(7), kb.ID, pair.DataSourceID, "active").Error)
 	require.NoError(t, db.Exec("INSERT INTO nextcloud_source_status_epochs VALUES(?,?,?,?)", "conn", int64(1), op.OperationID, time.Now().Unix()).Error)
 	snap := types.NextcloudGrantSnapshot{PermissionVersion: 1, PublicationEpoch: 1, Complete: true, Subjects: []types.NextcloudGrantSubject{{Kind: "user", DirectoryID: c.DirectoryID, ObjectGUID: "guid-reader", SourceRelationID: "share"}}}
 	require.NoError(t, store.ApplyGrantSnapshot(ctx, op, snap))
