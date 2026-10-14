@@ -3,6 +3,7 @@
 package handler
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -16,6 +17,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/application/repository"
 	"github.com/Tencent/WeKnora/internal/application/service"
 	storagefile "github.com/Tencent/WeKnora/internal/application/service/file"
+	"github.com/Tencent/WeKnora/internal/config"
 	"github.com/Tencent/WeKnora/internal/middleware"
 	"github.com/Tencent/WeKnora/internal/types"
 	sqlite_vec "github.com/asg017/sqlite-vec-go-bindings/cgo"
@@ -28,7 +30,8 @@ import (
 
 // Uses the producer test's actual database and file artifacts while that
 // process keeps its original-body journal and source generation alive.
-// The WK login context is controlled; source identity and READ use live NC/AD.
+// The baseline WK login context is controlled; optional JWT cases use the
+// production token and authentication services. Source READ uses live NC/AD.
 func TestNextcloudProcessedLiveHTTPReadAndRevocation(t *testing.T) {
 	path := os.Getenv("WEKNORA_DOCUMENT_GRAPH_LIVE_FIXTURE")
 	if path == "" || os.Getenv("WEKNORA_DOCUMENT_GRAPH_HTTP") != "1" {
@@ -98,6 +101,40 @@ func TestNextcloudProcessedLiveHTTPReadAndRevocation(t *testing.T) {
 	router.GET("/knowledge/:id/preview", h.PreviewKnowledgeFile)
 	router.GET("/knowledge/:id/download", h.DownloadKnowledgeFile)
 	router.GET("/knowledge-bases/:id/knowledge", h.ListKnowledge)
+	var jwtRouter *gin.Engine
+	var accessToken, refreshToken string
+	var jwtAuthenticated bool
+	var jwtCaller types.Caller
+	if os.Getenv("WEKNORA_DOCUMENT_GRAPH_JWT") == "1" {
+		// Production token issuance, SQL token/user/directory lookups and Auth.
+		// The pre-existing fixture member remains Admin; no new role is granted.
+		require.NoError(t, db.AutoMigrate(&types.AuthToken{}))
+		users := repository.NewUserRepository(db)
+		tokens := repository.NewAuthTokenRepository(db)
+		tenants := service.NewTenantService(repository.NewTenantRepository(db), nil)
+		members := service.NewTenantMemberService(repository.NewTenantMemberRepository(db), nil, users, tokens)
+		enforced := true
+		cfg := &config.Config{Tenant: &config.TenantConfig{EnableRBAC: &enforced}}
+		userService := service.NewUserService(cfg, users, tokens, tenants, members, nil, repository.NewDirectoryRepository(db), groups)
+		user, err := users.GetUserByID(context.Background(), input.UserID)
+		require.NoError(t, err)
+		accessToken, refreshToken, err = userService.GenerateTokens(context.Background(), user)
+		require.NoError(t, err)
+		validated, tenantID, err := userService.ValidateToken(context.Background(), accessToken)
+		require.NoError(t, err)
+		require.Equal(t, input.UserID, validated.ID)
+		require.Equal(t, uint64(7), tenantID)
+		jwtRouter = gin.New()
+		jwtRouter.Use(middleware.ErrorHandler(), middleware.Auth(tenants, userService, members, nil, cfg, groups), func(c *gin.Context) {
+			jwtCaller = types.CallerFromContext(c.Request.Context())
+			jwtAuthenticated = true
+			c.Next()
+		})
+		jwtRouter.GET("/knowledge/:id", h.GetKnowledge)
+		jwtRouter.GET("/knowledge/:id/preview", h.PreviewKnowledgeFile)
+		jwtRouter.GET("/knowledge/:id/download", h.DownloadKnowledgeFile)
+		jwtRouter.GET("/knowledge-bases/:id/knowledge", h.ListKnowledge)
+	}
 	baseline := map[string][]string{}
 	for _, table := range []string{"nextcloud_content_leases", "original_body_leases"} {
 		var ids []string
@@ -113,6 +150,44 @@ func TestNextcloudProcessedLiveHTTPReadAndRevocation(t *testing.T) {
 		{"preview", "/knowledge/" + input.KnowledgeID + "/preview", true},
 		{"download", "/knowledge/" + input.KnowledgeID + "/download", true},
 	}
+	checkJWT := func(stage string, status int, bearer string, authenticated bool) {
+		if jwtRouter == nil {
+			return
+		}
+		for _, route := range routes {
+			t.Run("jwt_"+stage+"_"+route.Name, func(t *testing.T) {
+				jwtAuthenticated = false
+				request := httptest.NewRequest(http.MethodGet, route.URL, nil)
+				if bearer != "" {
+					request.Header.Set("Authorization", "Bearer "+bearer)
+				}
+				w := &closeNotifyRecorder{ResponseRecorder: httptest.NewRecorder()}
+				jwtRouter.ServeHTTP(w, request)
+				require.Equal(t, status, w.Code, w.Body.String())
+				require.Equal(t, authenticated, jwtAuthenticated, "verify whether production authentication reached the content guard")
+				if authenticated {
+					require.Equal(t, input.UserID, jwtCaller.UserID)
+					require.Equal(t, uint64(7), jwtCaller.TenantID)
+					require.Equal(t, types.TenantRoleAdmin, jwtCaller.Role)
+				}
+				if status == http.StatusOK {
+					if route.File {
+						sum := sha256.Sum256(w.Body.Bytes())
+						require.Equal(t, input.BodySHA256, hex.EncodeToString(sum[:]))
+						require.Equal(t, "private, no-store", w.Header().Get("Cache-Control"))
+					} else {
+						require.Contains(t, w.Body.String(), input.KnowledgeID)
+					}
+				} else {
+					require.NotContains(t, w.Body.String(), input.KnowledgeID)
+				}
+			})
+		}
+	}
+	checkJWT("before", http.StatusOK, accessToken, true)
+	checkJWT("missing", http.StatusUnauthorized, "", false)
+	checkJWT("invalid", http.StatusUnauthorized, "invalid-owned-fixture-token", false)
+	checkJWT("refresh", http.StatusUnauthorized, refreshToken, false)
 	for _, route := range routes {
 		t.Run("before_"+route.Name, func(t *testing.T) {
 			w := &closeNotifyRecorder{ResponseRecorder: httptest.NewRecorder()}
@@ -153,6 +228,12 @@ func TestNextcloudProcessedLiveHTTPReadAndRevocation(t *testing.T) {
 			require.NotContains(t, w.Body.String(), input.KnowledgeID)
 		})
 	}
+	if t.Failed() {
+		return
+	}
+	// Reuse the exact pre-revocation token. Auth must still accept the current
+	// active member, while the actual source guard refuses its stale authority.
+	checkJWT("source_revoked", http.StatusForbidden, accessToken, true)
 	if t.Failed() {
 		return
 	}
