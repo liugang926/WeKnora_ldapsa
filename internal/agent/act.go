@@ -11,6 +11,7 @@ import (
 
 	agenttools "github.com/Tencent/WeKnora/internal/agent/tools"
 	"github.com/Tencent/WeKnora/internal/common"
+	apperrors "github.com/Tencent/WeKnora/internal/errors"
 	"github.com/Tencent/WeKnora/internal/event"
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/modelcontext"
@@ -572,7 +573,7 @@ func (e *AgentEngine) runToolCall(
 		logger.Errorf(ctx, "%s Failed in %dms: %v", toolTag, duration, err)
 		toolCall.Result = &types.ToolResult{
 			Success: false,
-			Error:   err.Error(),
+			Error:   apperrors.PublicMessage(err),
 		}
 	} else {
 		success := result != nil && result.Success

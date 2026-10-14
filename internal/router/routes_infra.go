@@ -455,6 +455,55 @@ func RegisterDataSourceRoutes(
 	}
 }
 
+// RegisterNextcloudEventConnectionRoutes registers tenant event credentials. These
+// administrator-only routes do not declare API-key access; the global API-key
+// gate denies them, and the handler enforces Admin+ during RBAC rollout.
+func RegisterNextcloudEventConnectionRoutes(
+	r *gin.RouterGroup,
+	h *handler.NextcloudEventConnectionHandler,
+	g *rbacGuards,
+) {
+	ds := r.Group("/datasource")
+	ds.GET("/:id/nextcloud-event-connection", g.Admin(), h.Status)
+	ds.POST("/:id/nextcloud-event-connection", g.Admin(), h.Pair)
+	ds.POST("/:id/nextcloud-event-connection/rotate", g.Admin(), h.Rotate)
+	ds.POST("/:id/nextcloud-event-connection/rebind", g.Admin(), h.Rebind)
+	ds.DELETE("/:id/nextcloud-event-connection", g.Admin(), h.Revoke)
+}
+
+// RegisterNextcloudSourcePairingRoutes requires an administrator session and KB edit permission.
+// The handler independently enforces both while the global API-key gate
+// denies these routes by default.
+func RegisterNextcloudSourcePairingRoutes(r *gin.RouterGroup,
+	h *handler.NextcloudSourcePairingHandler, g *rbacGuards,
+) {
+	ds := r.Group("/datasource")
+	ds.POST("/nextcloud-source-pairings", g.Admin(), h.Pair)
+	ds.GET("/nextcloud-source-pairings/by-datasource/:id/failed-candidates", g.Admin(), h.FailedCandidates)
+	ds.GET("/nextcloud-source-pairings/:operation_id", g.Admin(), h.Status)
+	ds.GET("/nextcloud-source-pairings/:operation_id/health", g.Admin(), h.Health)
+	ds.POST("/nextcloud-source-pairings/:operation_id/retry", g.Admin(), h.Retry)
+	ds.GET("/nextcloud-source-pairings/:operation_id/candidates/:file_id/retry", g.Admin(),
+		h.FailedCandidateRetryStatus)
+	ds.POST("/nextcloud-source-pairings/:operation_id/candidates/:file_id/retry", g.Admin(), h.RetryFailedCandidate)
+	ds.POST("/nextcloud-source-pairings/:operation_id/abort", g.Admin(), h.Abort)
+	ds.GET("/nextcloud-source-pairings/:operation_id/decommission", g.Admin(), h.DecommissionStatus)
+	ds.POST("/nextcloud-source-pairings/:operation_id/decommission", g.Admin(), h.Decommission)
+	ds.GET("/nextcloud-source-pairings/:operation_id/indexed-withdrawal", g.Admin(), h.IndexedWithdrawalStatus)
+	ds.POST("/nextcloud-source-pairings/:operation_id/indexed-withdrawal", g.Admin(), h.BeginIndexedWithdrawal)
+	ds.POST("/nextcloud-source-pairings/:operation_id/rotations", g.Admin(), h.Rotate)
+	ds.GET("/nextcloud-source-pairings/:operation_id/rotations/:rotation_id", g.Admin(), h.RotationStatus)
+	ds.POST("/nextcloud-source-pairings/:operation_id/rotations/:rotation_id/retry", g.Admin(), h.RetryRotation)
+	ds.POST("/nextcloud-source-pairings/:operation_id/rotations/:rotation_id/abort", g.Admin(), h.AbortRotation)
+}
+
+// RegisterNextcloudGCRoutes exposes administrative GC status without storage locators.
+func RegisterNextcloudGCRoutes(r *gin.RouterGroup, h *handler.NextcloudGCHandler, g *rbacGuards) {
+	ds := r.Group("/datasource")
+	ds.GET("/nextcloud-gc-jobs", g.Admin(), h.List)
+	ds.POST("/nextcloud-gc-jobs/:id/retry", g.Admin(), h.Retry)
+}
+
 // RegisterWeKnoraCloudRoutes 注册 WeKnoraCloud 初始化路由
 // RegisterWeKnoraCloudRoutes registers the WeKnoraCloud credential
 // management endpoints. SaveCredentials persists external SaaS keys

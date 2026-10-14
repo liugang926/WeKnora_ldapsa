@@ -9,6 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
 
+	"github.com/Tencent/WeKnora/internal/application/access"
 	"github.com/Tencent/WeKnora/internal/embedpolicy"
 	"github.com/Tencent/WeKnora/internal/handler"
 	"github.com/Tencent/WeKnora/internal/middleware"
@@ -267,6 +268,7 @@ func RegisterEmbedPublicRoutes(
 	storageResolver interfaces.StorageBackendResolver,
 	groupAccess interfaces.GroupAccessService,
 	chunkService interfaces.ChunkService,
+	publicationGuard *access.NextcloudPublicationGuard,
 	resourceCatalogs ...interfaces.ResourceCatalog,
 ) {
 	if embedHandler == nil || embedService == nil {
@@ -324,6 +326,7 @@ func RegisterEmbedPublicRoutes(
 		// requested path belongs to that tenant.
 		embed.GET("/files", newFileServeHandlerWithGroupAccess(
 			fileService, storageResolver, firstResourceCatalog(resourceCatalogs), groupAccess,
+			publicationGuard,
 		))
 	}
 }

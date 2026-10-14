@@ -508,6 +508,15 @@ func buildMessageExecutionContext(
 	if agent == nil {
 		return snapshot, "", effectiveTenantID, modelOverride
 	}
+	snapshot.AgentKBSelectionMode = agent.Config.KBSelectionMode
+	if snapshot.AgentKBSelectionMode == "" {
+		if len(agent.Config.KnowledgeBases) > 0 {
+			snapshot.AgentKBSelectionMode = "selected"
+		} else {
+			snapshot.AgentKBSelectionMode = "none"
+		}
+	}
+	snapshot.AgentKnowledgeBaseIDs = append([]string(nil), agent.Config.KnowledgeBases...)
 
 	modelID := modelOverride
 	if modelID == "" {
@@ -868,7 +877,9 @@ func (h *Handler) setupSSEStream(reqCtx *qaRequestContext, generateTitle bool, m
 // @Security     ApiKeyAuth
 // @Router       /knowledge-search [post]
 func (h *Handler) SearchKnowledge(c *gin.Context) {
-	ctx := logger.CloneContext(c.Request.Context())
+	// This endpoint is synchronous: keep the client cancellation attached to
+	// retrieval and to the source read leases held through JSON output.
+	ctx := c.Request.Context()
 	logger.Info(ctx, "Start processing knowledge search request")
 
 	// Parse request body
@@ -938,19 +949,49 @@ func (h *Handler) SearchKnowledge(c *gin.Context) {
 		len(tagScopes),
 		secutils.SanitizeForLog(request.Query),
 	)
+	// The service can read the index before it knows matching document IDs.
+	// Resolve every requested KB (including document and tag scopes) and hold
+	// its broad fence from before retrieval until the response is complete.
+	lease, err := h.beginRawSearchRead(c, knowledgeBaseIDs, request.KnowledgeIDs, tagScopes)
+	if err != nil {
+		_ = c.Error(err)
+		return
+	}
+	defer func() {
+		if closeErr := lease.Close(); closeErr != nil {
+			// JSON may already be committed; record release failure instead of
+			// rewriting a completed response or hiding the cleanup error.
+			logger.Warnf(ctx, "Failed to release knowledge-search content leases: %v", closeErr)
+		}
+	}()
+	if lease != nil {
+		ctx = lease.Context()
+		c.Request = c.Request.WithContext(ctx)
+	}
 
 	// Directly call knowledge retrieval service without LLM summarization
 	searchResults, err := h.sessionService.SearchKnowledge(ctx, knowledgeBaseIDs, request.KnowledgeIDs, tagScopes, request.Query)
 	if err != nil {
 		logger.ErrorWithFields(ctx, err, nil)
-		c.Error(errors.NewInternalServerError(err.Error()))
+		_ = c.Error(errors.NewInternalServerError(errors.PublicMessage(err)))
+		return
+	}
+	if err := h.protectRawSearchResults(c, lease, searchResults); err != nil {
+		_ = c.Error(err)
 		return
 	}
 
 	logger.Infof(ctx, "Knowledge search completed, found %d results", len(searchResults))
+	output := rewriter.CopyReferences(ctx, searchResults)
+	if lease != nil {
+		defer guardRawSearchResponseWrites(c, lease, func(checkCtx context.Context) error {
+			_, err := h.checkCurrentRawSearchResults(checkCtx, c, searchResults)
+			return err
+		})()
+	}
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
-		"data":    rewriter.CopyReferences(ctx, searchResults),
+		"data":    output,
 	})
 }
 
@@ -1357,6 +1398,11 @@ func (h *Handler) executeQA(reqCtx *qaRequestContext, mode qaMode, generateTitle
 	}
 
 	// Execute QA asynchronously
+	// The send loop owns this immutable source-scope snapshot. The engine edits
+	// assistantMessage concurrently while producing references and answer text;
+	// those references are learned from serialized stream events instead.
+	livePublicationMessage := *reqCtx.assistantMessage
+	livePublicationMessage.KnowledgeReferences = nil
 	asyncDone := make(chan struct{})
 	go func() {
 		defer close(asyncDone)
@@ -1469,7 +1515,7 @@ func (h *Handler) executeQA(reqCtx *qaRequestContext, mode qaMode, generateTitle
 					Type:      event.EventError,
 					SessionID: sessionID,
 					Data: event.ErrorData{
-						Error:     serviceErr.Error(),
+						Error:     errors.PublicMessage(serviceErr),
 						Stage:     stageName,
 						SessionID: sessionID,
 					},
@@ -1485,8 +1531,17 @@ func (h *Handler) executeQA(reqCtx *qaRequestContext, mode qaMode, generateTitle
 
 	// Handle SSE events (blocking)
 	shouldWaitForTitle := generateTitle && reqCtx.session.Title == ""
-	h.handleAgentEventsForSSE(ctx, reqCtx.c, sessionID, reqCtx.assistantMessage.ID,
-		reqCtx.requestID, streamCtx.eventBus, shouldWaitForTitle, reqCtx.resourceRewriter)
+	// The send-side authorization checkpoint must see the same authorized
+	// shared-agent KB scope as the engine. It still inherits the HTTP request's
+	// cancellation, so disconnects stop the SSE loop promptly.
+	sseCtx := ctx
+	if reqCtx.customAgent != nil && reqCtx.effectiveTenantID != 0 &&
+		reqCtx.effectiveTenantID != reqCtx.session.TenantID {
+		sseCtx = access.WithSharedAgent(ctx, reqCtx.customAgent)
+	}
+	h.handleAgentEventsForSSE(sseCtx, reqCtx.c, sessionID, reqCtx.assistantMessage.ID,
+		reqCtx.requestID, streamCtx.eventBus, shouldWaitForTitle, reqCtx.resourceRewriter,
+		&livePublicationMessage)
 }
 
 // runVLMAnalysisIfNeeded runs VLM image analysis within the async goroutine,

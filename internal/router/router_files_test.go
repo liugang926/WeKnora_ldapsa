@@ -25,10 +25,11 @@ type stubFileService struct {
 }
 
 type stubResourceCatalog struct {
-	resource     *types.StoredResource
-	fileBindings *types.MessageFileBindings
-	bound        func(context.Context, uint64, string, string) (bool, error)
-	kbIDs        func(context.Context, uint64, string) ([]string, error)
+	resource        *types.StoredResource
+	fileBindings    *types.MessageFileBindings
+	bound           func(context.Context, uint64, string, string) (bool, error)
+	kbIDs           func(context.Context, uint64, string) ([]string, error)
+	knowledgeOwners func(context.Context, uint64, string) ([]*types.Knowledge, bool, error)
 }
 
 type stubMessageFileLookup struct {
@@ -129,6 +130,27 @@ func (s *stubResourceCatalog) ListKnowledgeBaseIDs(
 		return nil, nil
 	}
 	return s.kbIDs(ctx, tenantID, reference)
+}
+
+func (s *stubResourceCatalog) ListResourceKnowledgeOwners(
+	ctx context.Context, tenantID uint64, reference string,
+) ([]*types.Knowledge, bool, error) {
+	if s.knowledgeOwners != nil {
+		return s.knowledgeOwners(ctx, tenantID, reference)
+	}
+	return nil, s.resource != nil, nil
+}
+
+func (s *stubResourceCatalog) GetResourceSourceProvenance(
+	context.Context, uint64, string,
+) (string, error) {
+	if s.resource == nil {
+		return types.ResourceProvenanceUnknown, nil
+	}
+	if s.resource.SourceProvenance != "" {
+		return s.resource.SourceProvenance, nil
+	}
+	return types.ResourceProvenanceOrdinary, nil
 }
 
 func (s *stubResourceCatalog) CreateAccessGrant(context.Context, string, time.Duration) (string, error) {

@@ -17,6 +17,11 @@ func setupDataSourceRepoTestDB(t *testing.T) *gorm.DB {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&types.DataSource{}, &types.SyncLog{}))
+	require.NoError(t, db.Exec(`CREATE TABLE knowledge_bases (
+		id TEXT PRIMARY KEY, tenant_id INTEGER NOT NULL,
+		ever_had_nextcloud_source BOOLEAN NOT NULL DEFAULT 0
+	)`).Error)
+	require.NoError(t, db.Exec("INSERT INTO knowledge_bases (id, tenant_id) VALUES ('kb-1', 1)").Error)
 	return db
 }
 
@@ -49,6 +54,166 @@ func TestDataSourceRepositoryUpdateSyncStateClearsErrorMessage(t *testing.T) {
 	assert.Empty(t, stored.ErrorMessage)
 	assert.Equal(t, result.ToString(), stored.LastSyncResult.ToString())
 	require.NotNil(t, stored.LastSyncAt)
+}
+
+func TestDataSourceRepositoryRetryableNextcloudEventFailureCannotUndoPause(t *testing.T) {
+	ctx := context.Background()
+	db := setupDataSourceRepoTestDB(t)
+	repo := NewDataSourceRepository(db)
+	originalCursor := types.JSON(`{"connector_cursor":{"instance_id":"instance-1"}}`)
+	ds := &types.DataSource{
+		ID: "nextcloud-pause-race", TenantID: 1,
+		KnowledgeBaseID: "kb-1", Name: "Nextcloud", Type: types.ConnectorTypeNextcloud,
+		Status: types.DataSourceStatusActive, LastSyncCursor: originalCursor,
+	}
+	require.NoError(t, db.Create(ds).Error)
+	staleWorker := *ds // Worker loaded active before the administrator's pause.
+	staleWorker.ErrorMessage = "temporary source read failure"
+	staleWorker.LastSyncResult = types.JSON(`{"failed":1}`)
+	require.NoError(t, db.Model(&types.DataSource{}).Where("id = ?", ds.ID).
+		Update("status", types.DataSourceStatusPaused).Error)
+
+	updated, err := repo.UpdateNextcloudRetryableEventFailure(ctx, &staleWorker)
+	require.NoError(t, err)
+	require.False(t, updated)
+	var stored types.DataSource
+	require.NoError(t, db.First(&stored, "id = ?", ds.ID).Error)
+	require.Equal(t, types.DataSourceStatusPaused, stored.Status)
+	require.Equal(t, originalCursor, stored.LastSyncCursor)
+	require.Empty(t, stored.ErrorMessage)
+	require.Empty(t, stored.LastSyncResult)
+
+	// With an active source, only failure details change; the cursor and
+	// status still cannot be written from the worker's stale snapshot.
+	require.NoError(t, db.Model(&types.DataSource{}).Where("id = ?", ds.ID).
+		Update("status", types.DataSourceStatusActive).Error)
+	updated, err = repo.UpdateNextcloudRetryableEventFailure(ctx, &staleWorker)
+	require.NoError(t, err)
+	require.True(t, updated)
+	require.NoError(t, db.First(&stored, "id = ?", ds.ID).Error)
+	require.Equal(t, types.DataSourceStatusActive, stored.Status)
+	require.Equal(t, originalCursor, stored.LastSyncCursor)
+	require.Equal(t, staleWorker.ErrorMessage, stored.ErrorMessage)
+	require.Equal(t, staleWorker.LastSyncResult, stored.LastSyncResult)
+}
+
+func TestNextcloudSyncStateCASPreservesConcurrentStatus(t *testing.T) {
+	for _, scenario := range []struct {
+		name, original, current, desired string
+		deleted                          bool
+		updated                          bool
+	}{
+		{
+			"active success",
+			types.DataSourceStatusActive,
+			types.DataSourceStatusActive,
+			types.DataSourceStatusActive,
+			false,
+			true,
+		},
+		{
+			"pause before success",
+			types.DataSourceStatusActive,
+			types.DataSourceStatusPaused,
+			types.DataSourceStatusActive,
+			false,
+			false,
+		},
+		{
+			"pause before auth failure",
+			types.DataSourceStatusActive,
+			types.DataSourceStatusPaused,
+			types.DataSourceStatusError,
+			false,
+			false,
+		},
+		{
+			"auth failure",
+			types.DataSourceStatusActive,
+			types.DataSourceStatusActive,
+			types.DataSourceStatusError,
+			false,
+			true,
+		},
+		{
+			"manual error retry succeeds",
+			types.DataSourceStatusError,
+			types.DataSourceStatusError,
+			types.DataSourceStatusActive,
+			false,
+			true,
+		},
+		{
+			"manual paused run succeeds",
+			types.DataSourceStatusPaused,
+			types.DataSourceStatusPaused,
+			types.DataSourceStatusPaused,
+			false,
+			true,
+		},
+		{
+			"resume during paused manual run",
+			types.DataSourceStatusPaused,
+			types.DataSourceStatusActive,
+			types.DataSourceStatusPaused,
+			false,
+			false,
+		},
+		{
+			"source deleted before completion",
+			types.DataSourceStatusActive,
+			types.DataSourceStatusActive,
+			types.DataSourceStatusActive,
+			true,
+			false,
+		},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			ctx := context.Background()
+			db := setupDataSourceRepoTestDB(t)
+			repo := NewDataSourceRepository(db)
+			oldCursor := types.JSON(`{"marker":"old"}`)
+			newCursor := types.JSON(`{"marker":"new"}`)
+			ds := &types.DataSource{
+				ID: "nextcloud-cas", TenantID: 1, KnowledgeBaseID: "kb-1",
+				Name: "Nextcloud", Type: types.ConnectorTypeNextcloud,
+				Status: scenario.original, LastSyncCursor: oldCursor, ErrorMessage: "old error",
+			}
+			require.NoError(t, db.Create(ds).Error)
+			worker := *ds
+			worker.Status = scenario.desired
+			worker.LastSyncCursor = newCursor
+			worker.LastSyncResult = types.JSON(`{"total":1}`)
+			worker.ErrorMessage = "new result"
+			now := time.Now().UTC()
+			worker.LastSyncAt = &now
+			if scenario.current != scenario.original {
+				require.NoError(t, db.Model(&types.DataSource{}).Where("id = ?", ds.ID).
+					Update("status", scenario.current).Error)
+			}
+			if scenario.deleted {
+				require.NoError(t, db.Delete(ds).Error)
+			}
+			updated, err := repo.UpdateNextcloudSyncStateCAS(ctx, &worker, scenario.original)
+			require.NoError(t, err)
+			require.Equal(t, scenario.updated, updated)
+			var stored types.DataSource
+			require.NoError(t, db.Unscoped().First(&stored, "id = ?", ds.ID).Error)
+			if scenario.updated {
+				require.Equal(t, scenario.desired, stored.Status)
+				require.Equal(t, newCursor, stored.LastSyncCursor)
+				require.Equal(t, worker.LastSyncResult, stored.LastSyncResult)
+				require.Equal(t, worker.ErrorMessage, stored.ErrorMessage)
+				require.NotNil(t, stored.LastSyncAt)
+			} else {
+				require.Equal(t, scenario.current, stored.Status)
+				require.Equal(t, oldCursor, stored.LastSyncCursor)
+				require.Empty(t, stored.LastSyncResult)
+				require.Equal(t, "old error", stored.ErrorMessage)
+				require.Nil(t, stored.LastSyncAt)
+			}
+		})
+	}
 }
 
 func TestDataSourceRepositoryUpdatePersistsDisabledSyncDeletions(t *testing.T) {

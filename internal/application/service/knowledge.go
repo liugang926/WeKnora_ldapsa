@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Tencent/WeKnora/internal/application/access"
 	"github.com/Tencent/WeKnora/internal/application/repository"
 	"github.com/Tencent/WeKnora/internal/application/service/retriever"
 	"github.com/Tencent/WeKnora/internal/config"
@@ -46,30 +47,32 @@ var (
 // knowledgeService implements the knowledge service interface
 // service 实现知识服务接口
 type knowledgeService struct {
-	config          *config.Config
-	retrieveEngine  interfaces.RetrieveEngineRegistry
-	ownership       retriever.TenantStoreOwnership
-	repo            interfaces.KnowledgeRepository
-	kbService       interfaces.KnowledgeBaseService
-	tenantRepo      interfaces.TenantRepository
-	tenantService   interfaces.TenantService
-	documentReader  interfaces.DocumentReader
-	chunkService    interfaces.ChunkService
-	chunkRepo       interfaces.ChunkRepository
-	tagRepo         interfaces.KnowledgeTagRepository
-	tagService      interfaces.KnowledgeTagService
-	fileSvc         interfaces.FileService
-	storageResolver interfaces.StorageBackendResolver
-	resourceCatalog interfaces.ResourceCatalog
-	modelService    interfaces.ModelService
-	task            interfaces.TaskEnqueuer
-	taskInspector   interfaces.TaskInspector
-	graphEngine     interfaces.RetrieveGraphRepository
-	redisClient     *redis.Client
-	kbShareService  interfaces.KBShareService
-	groupAccess     interfaces.GroupAccessService
-	imageResolver   *docparser.ImageResolver
-	taskPendingRepo interfaces.TaskPendingOpsRepository
+	config           *config.Config
+	retrieveEngine   interfaces.RetrieveEngineRegistry
+	ownership        retriever.TenantStoreOwnership
+	repo             interfaces.KnowledgeRepository
+	kbService        interfaces.KnowledgeBaseService
+	tenantRepo       interfaces.TenantRepository
+	tenantService    interfaces.TenantService
+	documentReader   interfaces.DocumentReader
+	chunkService     interfaces.ChunkService
+	chunkRepo        interfaces.ChunkRepository
+	tagRepo          interfaces.KnowledgeTagRepository
+	tagService       interfaces.KnowledgeTagService
+	fileSvc          interfaces.FileService
+	storageResolver  interfaces.StorageBackendResolver
+	resourceCatalog  interfaces.ResourceCatalog
+	modelService     interfaces.ModelService
+	task             interfaces.TaskEnqueuer
+	taskInspector    interfaces.TaskInspector
+	graphEngine      interfaces.RetrieveGraphRepository
+	redisClient      *redis.Client
+	kbShareService   interfaces.KBShareService
+	groupAccess      interfaces.GroupAccessService
+	publicationGuard *access.NextcloudPublicationGuard
+	contentLeases    *repository.NextcloudContentLeaseStore
+	imageResolver    *docparser.ImageResolver
+	taskPendingRepo  interfaces.TaskPendingOpsRepository
 
 	// In-memory fallbacks for Lite mode (no Redis)
 	memFAQProgress      sync.Map // taskID -> *types.FAQImportProgress
@@ -162,36 +165,47 @@ func NewKnowledgeService(
 	taskPendingRepo interfaces.TaskPendingOpsRepository,
 	spanTracker SpanTracker,
 	audit interfaces.AuditLogService,
+	publicationGuard *access.NextcloudPublicationGuard,
+	contentLeases *repository.NextcloudContentLeaseStore,
 ) (interfaces.KnowledgeService, error) {
 	return &knowledgeService{
-		config:          config,
-		repo:            repo,
-		kbService:       kbService,
-		tenantRepo:      tenantRepo,
-		tenantService:   tenantService,
-		documentReader:  documentReader,
-		chunkService:    chunkService,
-		chunkRepo:       chunkRepo,
-		tagRepo:         tagRepo,
-		tagService:      tagService,
-		fileSvc:         fileSvc,
-		storageResolver: storageResolver,
-		resourceCatalog: resourceCatalog,
-		modelService:    modelService,
-		task:            task,
-		taskInspector:   taskInspector,
-		graphEngine:     graphEngine,
-		retrieveEngine:  retrieveEngine,
-		ownership:       ownership,
-		redisClient:     redisClient,
-		kbShareService:  kbShareService,
-		imageResolver:   imageResolver,
-		wikiRepo:        wikiRepo,
-		wikiService:     wikiService,
-		taskPendingRepo: taskPendingRepo,
-		spanTracker:     spanTracker,
-		audit:           audit,
+		config:           config,
+		repo:             repo,
+		kbService:        kbService,
+		tenantRepo:       tenantRepo,
+		tenantService:    tenantService,
+		documentReader:   documentReader,
+		chunkService:     chunkService,
+		chunkRepo:        chunkRepo,
+		tagRepo:          tagRepo,
+		tagService:       tagService,
+		fileSvc:          fileSvc,
+		storageResolver:  storageResolver,
+		resourceCatalog:  resourceCatalog,
+		modelService:     modelService,
+		task:             task,
+		taskInspector:    taskInspector,
+		graphEngine:      graphEngine,
+		retrieveEngine:   retrieveEngine,
+		ownership:        ownership,
+		redisClient:      redisClient,
+		kbShareService:   kbShareService,
+		imageResolver:    imageResolver,
+		wikiRepo:         wikiRepo,
+		wikiService:      wikiService,
+		taskPendingRepo:  taskPendingRepo,
+		spanTracker:      spanTracker,
+		audit:            audit,
+		publicationGuard: publicationGuard,
+		contentLeases:    contentLeases,
 	}, nil
+}
+
+// CheckKnowledgePublication is a narrow capability for Agent tools that
+// expose document metadata or chunks without going through HybridSearch.
+// An absent guard remains fail-closed for source-backed knowledge.
+func (s *knowledgeService) CheckKnowledgePublication(ctx context.Context, knowledge *types.Knowledge) error {
+	return s.publicationGuard.CheckKnowledge(ctx, knowledge)
 }
 
 // tracker returns a usable SpanTracker — falls back to a no-op when the

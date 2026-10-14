@@ -145,6 +145,20 @@ func TestCatalogMatchesSettingsCatalog(t *testing.T) {
 	}
 }
 
+func TestMCPServerDoesNotExposeFileResources(t *testing.T) {
+	ep := &types.MCPEndpoint{ID: "ep-1", TenantID: 1, Enabled: true}
+	r := newTestEngine(t, ep)
+	for _, method := range []string{"resources/list", "resources/read"} {
+		resp := rpc(t, r, method, map[string]any{"uri": "file:///private/source.txt"})
+		if _, ok := resp["result"]; ok {
+			t.Fatalf("%s unexpectedly exposed a resource: %v", method, resp)
+		}
+		if _, ok := resp["error"].(map[string]any); !ok {
+			t.Fatalf("%s should be unsupported: %v", method, resp)
+		}
+	}
+}
+
 func TestCallHiddenToolIsRefused(t *testing.T) {
 	ep := &types.MCPEndpoint{
 		ID: "ep-1", TenantID: 1, Enabled: true, RateLimitPerMinute: 100,

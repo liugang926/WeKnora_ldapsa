@@ -4,8 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
+	"strconv"
 	"strings"
+	"time"
 
+	apprepo "github.com/Tencent/WeKnora/internal/application/repository"
 	"github.com/Tencent/WeKnora/internal/common"
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/types"
@@ -78,9 +82,12 @@ func (g *pgRepository) EstimateStorageSize(
 
 // Save stores a single index entry
 func (g *pgRepository) Save(ctx context.Context, indexInfo *types.IndexInfo, additionalParams map[string]any) error {
+	if indexInfo == nil {
+		return errors.New("nil index info")
+	}
 	logger.GetLogger(ctx).Debugf("[Postgres] Saving index for source ID: %s", indexInfo.SourceID)
 	embeddingDB := toDBVectorEmbedding(indexInfo, additionalParams)
-	err := g.db.WithContext(ctx).Create(embeddingDB).Error
+	err := g.writeIndexRows(ctx, []*types.IndexInfo{indexInfo}, []*pgVector{embeddingDB}, false)
 	if err != nil {
 		logger.GetLogger(ctx).Errorf("[Postgres] Failed to save index: %v", err)
 		return err
@@ -93,17 +100,173 @@ func (g *pgRepository) Save(ctx context.Context, indexInfo *types.IndexInfo, add
 func (g *pgRepository) BatchSave(
 	ctx context.Context, indexInfoList []*types.IndexInfo, additionalParams map[string]any,
 ) error {
+	if len(indexInfoList) == 0 {
+		return nil
+	}
 	logger.GetLogger(ctx).Infof("[Postgres] Batch saving %d indices", len(indexInfoList))
 	indexInfoDBList := make([]*pgVector, len(indexInfoList))
 	for i := range indexInfoList {
+		if indexInfoList[i] == nil {
+			return errors.New("nil index info")
+		}
 		indexInfoDBList[i] = toDBVectorEmbedding(indexInfoList[i], additionalParams)
 	}
-	err := g.db.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(indexInfoDBList).Error
+	err := g.writeIndexRows(ctx, indexInfoList, indexInfoDBList, true)
 	if err != nil {
 		logger.GetLogger(ctx).Errorf("[Postgres] Batch save failed: %v", err)
 		return err
 	}
 	logger.GetLogger(ctx).Infof("[Postgres] Successfully batch saved %d indices", len(indexInfoList))
+	return nil
+}
+
+type nextcloudVectorScope struct {
+	tenantID                            uint64
+	kbID, knowledgeID, dsID, externalID string
+	sourceIDs                           []string
+}
+
+// writeIndexRows keeps the lease fence, source-version check, vector insertion,
+// and any late exact-ID GC inventory in one PostgreSQL transaction. A write
+// cannot commit after the source transition has retired its generation.
+func (r *pgRepository) writeIndexRows(ctx context.Context, infos []*types.IndexInfo,
+	rows []*pgVector, ignoreConflicts bool,
+) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		scopes, err := r.guardNextcloudVectorWrites(ctx, tx, infos)
+		if err != nil {
+			return err
+		}
+		insert := tx
+		if ignoreConflicts {
+			insert = insert.Clauses(clause.OnConflict{DoNothing: true})
+		}
+		if err := insert.Create(rows).Error; err != nil {
+			return err
+		}
+		for _, scope := range scopes {
+			if err := r.inventoryNextcloudVectorIDs(tx, scope); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+func (r *pgRepository) guardNextcloudVectorWrites(ctx context.Context, tx *gorm.DB,
+	infos []*types.IndexInfo,
+) ([]nextcloudVectorScope, error) {
+	byKnowledge := make(map[string]*nextcloudVectorScope)
+	for _, info := range infos {
+		if info.KnowledgeID == "" || info.KnowledgeBaseID == "" {
+			// Preserve ordinary index callers that do not bind a knowledge
+			// row. A Nextcloud worker's scoped context rejects this omission.
+			if err := apprepo.CheckNextcloudBuildIdentity(ctx, 0, "", ""); err != nil {
+				return nil, err
+			}
+			continue
+		}
+		key := info.KnowledgeBaseID + "\x00" + info.KnowledgeID
+		scope := byKnowledge[key]
+		if scope == nil {
+			scope = &nextcloudVectorScope{kbID: info.KnowledgeBaseID, knowledgeID: info.KnowledgeID}
+			byKnowledge[key] = scope
+		}
+		scope.sourceIDs = append(scope.sourceIDs, info.SourceID)
+	}
+	keys := make([]string, 0, len(byKnowledge))
+	for key := range byKnowledge {
+		keys = append(keys, key)
+	}
+	slices.Sort(keys)
+	result := make([]nextcloudVectorScope, 0, len(keys))
+	for _, key := range keys {
+		scope := byKnowledge[key]
+		var knowledge types.Knowledge
+		if err := tx.Unscoped().Select("id", "tenant_id", "knowledge_base_id", "channel", "metadata").
+			Where("id = ? AND knowledge_base_id = ?", scope.knowledgeID, scope.kbID).
+			Take(&knowledge).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				if identityErr := apprepo.CheckNextcloudBuildIdentity(ctx, 0, "", ""); identityErr != nil {
+					return nil, identityErr
+				}
+				continue
+			}
+			return nil, err
+		}
+		if knowledge.Channel != types.ConnectorTypeNextcloud {
+			if err := apprepo.CheckNextcloudBuildIdentity(ctx, knowledge.TenantID,
+				knowledge.KnowledgeBaseID, knowledge.ID); err != nil {
+				return nil, err
+			}
+			continue
+		}
+		scope.tenantID = knowledge.TenantID
+		meta := knowledge.GetMetadata()
+		scope.dsID, scope.externalID = meta["datasource_id"], meta["external_id"]
+		if scope.tenantID == 0 || scope.dsID == "" || scope.externalID == "" || len(scope.sourceIDs) == 0 ||
+			!apprepo.NextcloudBuildLeasePresent(ctx, scope.tenantID, scope.kbID, scope.knowledgeID) {
+			return nil, apprepo.ErrNextcloudContentLeaseInvalid
+		}
+		for _, sourceID := range scope.sourceIDs {
+			if sourceID == "" {
+				return nil, apprepo.ErrNextcloudContentLeaseInvalid
+			}
+		}
+		if err := apprepo.ValidateNextcloudBuildWrite(ctx, tx,
+			scope.tenantID, scope.kbID, scope.knowledgeID); err != nil {
+			return nil, err
+		}
+		var version struct {
+			CandidateKnowledgeID string `gorm:"column:candidate_knowledge_id"`
+			State                string
+		}
+		if err := tx.Table("nextcloud_source_versions").Clauses(clause.Locking{Strength: "UPDATE"}).
+			Select("candidate_knowledge_id", "state").Where(
+			"tenant_id = ? AND knowledge_base_id = ? AND datasource_id = ? AND external_id = ?",
+			scope.tenantID, scope.kbID, scope.dsID, scope.externalID).Take(&version).Error; err != nil {
+			return nil, err
+		}
+		if version.State == "tombstone" || version.CandidateKnowledgeID != scope.knowledgeID {
+			return nil, apprepo.ErrNextcloudContentLeaseDenied
+		}
+		result = append(result, *scope)
+	}
+	return result, nil
+}
+
+// An already-created GC job may have scanned before this batch reached the
+// database. Persist the actual primary keys (including conflict survivors)
+// without changing job/item state. The job's derived_index blocker remains.
+func (r *pgRepository) inventoryNextcloudVectorIDs(tx *gorm.DB, scope nextcloudVectorScope) error {
+	var jobs []struct{ ID, State string }
+	if err := tx.Table("nextcloud_gc_jobs").Select("id", "state").Where(
+		"tenant_id = ? AND knowledge_base_id = ? AND knowledge_id = ?",
+		scope.tenantID, scope.kbID, scope.knowledgeID).Find(&jobs).Error; err != nil {
+		return err
+	}
+	if len(jobs) == 0 {
+		return nil
+	}
+	if len(jobs) != 1 || jobs[0].State == "collected" {
+		return apprepo.ErrNextcloudContentLeaseDenied
+	}
+	var ids []uint
+	if err := tx.Model(&pgVector{}).Where(
+		"knowledge_base_id = ? AND knowledge_id = ? AND source_id IN ?",
+		scope.kbID, scope.knowledgeID, scope.sourceIDs).Pluck("id", &ids).Error; err != nil {
+		return err
+	}
+	now := time.Now().UTC()
+	for _, id := range ids {
+		if err := tx.Exec(`INSERT INTO nextcloud_gc_items
+			(job_id, kind, object_ref, state, created_at, updated_at)
+			VALUES (?, 'postgres_embedding', ?, 'pending', ?, ?)
+			ON CONFLICT (job_id, kind, object_ref) DO NOTHING`,
+			jobs[0].ID, strconv.FormatUint(uint64(id), 10), now, now).Error; err != nil {
+			return err
+		}
+	}
 	return nil
 }
 

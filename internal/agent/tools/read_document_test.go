@@ -104,6 +104,7 @@ type readDocChunkRepo struct {
 	ordered  []*types.Chunk // document order
 	listErr  error
 	requests []types.Pagination
+	onList   func()
 }
 
 func (r *readDocChunkRepo) ListPagedChunksByKnowledgeID(
@@ -114,6 +115,9 @@ func (r *readDocChunkRepo) ListPagedChunksByKnowledgeID(
 		return nil, 0, r.listErr
 	}
 	r.requests = append(r.requests, *page)
+	if r.onList != nil {
+		r.onList()
+	}
 	start := (page.Page - 1) * page.PageSize
 	end := start + page.PageSize
 	total := int64(len(r.ordered))
@@ -220,6 +224,25 @@ func TestReadDocumentRequiresID(t *testing.T) {
 	res, err := tool.Execute(context.Background(), json.RawMessage(`{}`))
 	if err == nil || res.Success || !strings.Contains(res.Error, "id is required") {
 		t.Fatalf("res=%+v err=%v", res, err)
+	}
+}
+
+func TestReadDocumentRejectsNextcloudWithoutSourceAuthorization(t *testing.T) {
+	tool, _ := newReadDocumentFixture(2)
+	knowledge := tool.knowledgeService.(*readDocKnowledgeService).docs["doc-1"]
+	knowledge.Channel = types.ConnectorTypeNextcloud
+	knowledge.Metadata = types.JSON(`{"datasource_id":"source-1","nextcloud_file_id":"42"}`)
+	for _, id := range []string{"doc-1", "chunk-0"} {
+		t.Run(id, func(t *testing.T) {
+			args, err := json.Marshal(ReadDocumentInput{ID: id})
+			if err != nil {
+				t.Fatal(err)
+			}
+			res, err := tool.Execute(context.Background(), args)
+			if err == nil || res.Success || strings.Contains(res.Output, "psionic engine") {
+				t.Fatalf("source-backed document exposed through %s: res=%+v err=%v", id, res, err)
+			}
+		})
 	}
 }
 

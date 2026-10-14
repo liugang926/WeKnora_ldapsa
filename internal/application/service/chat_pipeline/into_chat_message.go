@@ -6,6 +6,7 @@ import (
 	"html"
 	"strings"
 
+	"github.com/Tencent/WeKnora/internal/application/access"
 	"github.com/Tencent/WeKnora/internal/searchutil"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
@@ -14,12 +15,15 @@ import (
 
 // PluginIntoChatMessage handles the transformation of search results into chat messages
 type PluginIntoChatMessage struct {
-	messageService interfaces.MessageService
+	messageService   interfaces.MessageService
+	knowledgeService interfaces.KnowledgeService
 }
 
 // NewPluginIntoChatMessage creates and registers a new PluginIntoChatMessage instance
-func NewPluginIntoChatMessage(eventManager *EventManager, messageService interfaces.MessageService) *PluginIntoChatMessage {
-	res := &PluginIntoChatMessage{messageService: messageService}
+func NewPluginIntoChatMessage(eventManager *EventManager, messageService interfaces.MessageService,
+	knowledgeService interfaces.KnowledgeService,
+) *PluginIntoChatMessage {
+	res := &PluginIntoChatMessage{messageService: messageService, knowledgeService: knowledgeService}
 	eventManager.Register(res)
 	return res
 }
@@ -33,6 +37,10 @@ func (p *PluginIntoChatMessage) ActivationEvents() []types.EventType {
 func (p *PluginIntoChatMessage) OnEvent(ctx context.Context,
 	eventType types.EventType, chatManage *types.ChatManage, next func() *PluginError,
 ) *PluginError {
+	// Merge can reintroduce cached references from earlier turns. Validate the
+	// final list against the current knowledge row and source authorization
+	// immediately before it is rendered into the model prompt.
+	chatManage.MergeResult = p.filterCurrentPublications(ctx, chatManage.MergeResult)
 	pipelineInfo(ctx, "IntoChatMessage", "input", map[string]interface{}{
 		"session_id":       chatManage.SessionID,
 		"merge_result_cnt": len(chatManage.MergeResult),
@@ -197,6 +205,66 @@ func (p *PluginIntoChatMessage) OnEvent(ctx context.Context,
 
 	p.persistRenderedContent(ctx, chatManage)
 	return next()
+}
+
+func (p *PluginIntoChatMessage) filterCurrentPublications(
+	ctx context.Context, results []*types.SearchResult,
+) []*types.SearchResult {
+	if len(results) == 0 {
+		return results
+	}
+	filtered := make([]*types.SearchResult, 0, len(results))
+	checked := make(map[string]bool)
+	for _, result := range results {
+		if result == nil {
+			continue
+		}
+		// Web results have no durable knowledge ID. Their own provider policy
+		// applies; a malformed source-backed result without an ID is dropped.
+		if result.KnowledgeID == "" {
+			if result.KnowledgeChannel != types.ConnectorTypeNextcloud &&
+				result.Metadata["nextcloud_file_id"] == "" && result.Metadata["nextcloud_binding_id"] == "" {
+				filtered = append(filtered, result)
+			}
+			continue
+		}
+		if p.knowledgeService == nil {
+			if result.KnowledgeChannel != types.ConnectorTypeNextcloud &&
+				result.Metadata["nextcloud_file_id"] == "" && result.Metadata["nextcloud_binding_id"] == "" {
+				filtered = append(filtered, result)
+			}
+			continue
+		}
+		checkKey := result.KnowledgeID + "\x00" + result.KnowledgeBaseID
+		allowed, seen := checked[checkKey]
+		if !seen {
+			knowledge, err := p.knowledgeService.GetKnowledgeByIDOnly(ctx, result.KnowledgeID)
+			allowed = err == nil && knowledge != nil && knowledge.ID == result.KnowledgeID &&
+				(result.KnowledgeBaseID == "" || knowledge.KnowledgeBaseID == result.KnowledgeBaseID)
+			if allowed {
+				allowed = checkCurrentKnowledgePublication(ctx, p.knowledgeService, knowledge) == nil
+			}
+			checked[checkKey] = allowed
+		}
+		if allowed {
+			filtered = append(filtered, result)
+		}
+	}
+	return filtered
+}
+
+type currentKnowledgePublicationChecker interface {
+	CheckKnowledgePublication(context.Context, *types.Knowledge) error
+}
+
+func checkCurrentKnowledgePublication(
+	ctx context.Context, service interfaces.KnowledgeService, knowledge *types.Knowledge,
+) error {
+	if checker, ok := service.(currentKnowledgePublicationChecker); ok {
+		return checker.CheckKnowledgePublication(ctx, knowledge)
+	}
+	var missingGuard *access.NextcloudPublicationGuard
+	return missingGuard.CheckKnowledge(ctx, knowledge)
 }
 
 // persistRenderedContent asynchronously writes the RAG-augmented UserContent back

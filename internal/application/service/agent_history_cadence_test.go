@@ -99,7 +99,9 @@ func runSessionCadenceWith(
 	var compacted []int
 	for i := 1; i <= turns; i++ {
 		ctx := context.Background()
-		history, loadedScale, err := LoadAgentHistory(ctx, repo, "s1", agent.HistoryTokenBudget(cfg), false)
+		history, loadedScale, err := LoadAgentHistory(ctx, repo, "s1", agent.HistoryTokenBudget(
+			cfg,
+		), false, allowAgentHistory{})
 		require.NoError(t, err)
 		est.SetScale(loadedScale)
 		requireNoGapAfterCheckpoint(t, repo, history, i)

@@ -189,6 +189,27 @@ func RunMigrationsWithOptions(dsn string, opts MigrationOptions) error {
 			))
 		}
 	}
+	// An operation acknowledged under SQLite migration 42 may rely on a false
+	// virgin marker minted by a rebuilt old pair. Refuse the upgrade before
+	// golang-migrate marks 43 dirty, so an operator can review that operation
+	// without the generic dirty-state recovery retrying this safety check.
+	if opts.SQLiteDBPath != "" && !oldDirty && oldVersion == 42 {
+		preflightDB, err := sql.Open("sqlite3", opts.SQLiteDBPath)
+		if err != nil {
+			return captureMigrationFailure(m, fmt.Errorf("open SQLite decommission preflight: %w", err))
+		}
+		var existing int
+		err = preflightDB.QueryRow(`SELECT EXISTS (
+			SELECT 1 FROM nextcloud_source_decommissions)`).Scan(&existing)
+		_ = preflightDB.Close()
+		if err != nil {
+			return captureMigrationFailure(m, fmt.Errorf("check SQLite decommission preflight: %w", err))
+		}
+		if existing != 0 {
+			return captureMigrationFailure(m, fmt.Errorf(
+				"review existing Nextcloud decommissions before virgin-proof upgrade"))
+		}
+	}
 
 	// Run all pending migrations
 	logger.Infof(ctx, "Running pending migrations...")

@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Tencent/WeKnora/internal/datasource"
 	"github.com/Tencent/WeKnora/internal/types"
 )
 
@@ -69,7 +70,7 @@ func NewDataSourceResponse(ds *types.DataSource) *DataSourceResponse {
 		enrichRSSFeedURLsInSettings(ds.Type, parsed, cfgDTO)
 		configured = parsed.HasConfiguredCredentials(ds.Type)
 	}
-	return &DataSourceResponse{
+	response := &DataSourceResponse{
 		ID:                   ds.ID,
 		TenantID:             ds.TenantID,
 		KnowledgeBaseID:      ds.KnowledgeBaseID,
@@ -94,6 +95,43 @@ func NewDataSourceResponse(ds *types.DataSource) *DataSourceResponse {
 			"credentials": {Configured: configured},
 		},
 	}
+	if ds.Type == types.ConnectorTypeNextcloud {
+		// The cursor and detailed results include source file names and paths.
+		// KB read permission alone does not establish Nextcloud file access.
+		response.LastSyncCursor = nil
+		response.LastSyncResult = nil
+		response.ErrorMessage = ""
+		response.LatestSyncLog = RedactNextcloudSyncLog(ds.LatestSyncLog)
+	}
+	return response
+}
+
+// RedactNextcloudSyncLog keeps aggregate status and counts but removes fields
+// that can contain per-file metadata before a KB viewer sees a sync log.
+func RedactNextcloudSyncLog(log *types.SyncLog) *types.SyncLog {
+	if log == nil {
+		return nil
+	}
+	redactedLog := *log
+	// This exact static code contains no file name or path. Preserve it so an
+	// operator can identify a blocked admission from the redacted log list.
+	if redactedLog.ErrorMessage != datasource.NextcloudSyncEnqueueUncertain {
+		redactedLog.ErrorMessage = ""
+		redactedLog.QueueTaskID = ""
+	} else {
+		redactedLog.QueueTaskID = datasource.NextcloudSyncTaskID(redactedLog.ID)
+	}
+	redactedLog.Result = nil
+	return &redactedLog
+}
+
+// RedactNextcloudSyncLogs redacts per-file details while retaining aggregate sync status.
+func RedactNextcloudSyncLogs(logs []*types.SyncLog) []*types.SyncLog {
+	redacted := make([]*types.SyncLog, 0, len(logs))
+	for _, log := range logs {
+		redacted = append(redacted, RedactNextcloudSyncLog(log))
+	}
+	return redacted
 }
 
 // enrichRSSFeedURLsInSettings copies feed_urls from credentials into settings

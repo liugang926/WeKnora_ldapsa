@@ -68,6 +68,16 @@ func (r *chunkRepository) CreateChunks(ctx context.Context, chunks []*types.Chun
 	}
 
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		for _, chunk := range chunks {
+			if err := CheckNextcloudBuildIdentity(ctx, chunk.TenantID, chunk.KnowledgeBaseID, chunk.KnowledgeID); err !=
+				nil {
+				return err
+			}
+		}
+		if err := ValidateNextcloudBuildWrite(ctx, tx,
+			chunks[0].TenantID, chunks[0].KnowledgeBaseID, chunks[0].KnowledgeID); err != nil {
+			return err
+		}
 		// SQLite doesn't support autoIncrement on non-PK columns, so SeqIDs are
 		// pre-assigned from MAX(seq_id). Doing it inside the write transaction
 		// keeps the read and the insert on the same connection.
@@ -380,7 +390,16 @@ func (r *chunkRepository) ListChunksByParentIDs(
 // except SeqID (auto-increment, must not be overwritten).
 // Make sure the chunk object is complete (e.g., fetched from DB) before calling this method.
 func (r *chunkRepository) UpdateChunk(ctx context.Context, chunk *types.Chunk) error {
-	return r.db.WithContext(ctx).Omit("SeqID").Save(chunk).Error
+	if _, guarded := ctx.Value(nextcloudBuildContextKey{}).(nextcloudBuildContext); !guarded {
+		return r.db.WithContext(ctx).Omit("SeqID").Save(chunk).Error
+	}
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := ValidateNextcloudBuildWrite(ctx, tx,
+			chunk.TenantID, chunk.KnowledgeBaseID, chunk.KnowledgeID); err != nil {
+			return err
+		}
+		return tx.Omit("SeqID").Save(chunk).Error
+	})
 }
 
 func (r *chunkRepository) CreateChunkRevision(ctx context.Context, revision *types.ChunkRevision) error {
@@ -390,9 +409,49 @@ func (r *chunkRepository) CreateChunkRevision(ctx context.Context, revision *typ
 func (r *chunkRepository) SaveChunkRevision(
 	ctx context.Context, chunk *types.Chunk, revision *types.ChunkRevision, expectedRevision int,
 ) error {
+	if chunk == nil || revision == nil || revision.TenantID != chunk.TenantID ||
+		revision.KnowledgeBaseID != chunk.KnowledgeBaseID ||
+		revision.KnowledgeID != chunk.KnowledgeID || revision.ChunkID != chunk.ID ||
+		revision.Revision != expectedRevision {
+		return ErrChunkRevisionConflict
+	}
+	if err := CheckNextcloudBuildIdentity(ctx, chunk.TenantID,
+		chunk.KnowledgeBaseID, chunk.KnowledgeID); err != nil {
+		return err
+	}
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// Manual edits have no build context. Resolve the persisted document in
+		// this transaction so a source chunk cannot bypass its build fence.
+		var knowledge types.Knowledge
+		if err := tx.Select("channel", "metadata").Where(
+			"id = ? AND tenant_id = ? AND knowledge_base_id = ?",
+			chunk.KnowledgeID, chunk.TenantID, chunk.KnowledgeBaseID,
+		).Take(&knowledge).Error; err != nil {
+			return err
+		}
+		var metadata map[string]json.RawMessage
+		if len(knowledge.Metadata) > 0 {
+			if err := json.Unmarshal(knowledge.Metadata, &metadata); err != nil {
+				return ErrNextcloudContentLeaseInvalid
+			}
+		}
+		source := knowledge.Channel == types.ConnectorTypeNextcloud
+		for _, key := range []string{"nextcloud_instance_id", "nextcloud_binding_id", "nextcloud_file_id"} {
+			if _, marked := metadata[key]; marked {
+				source = true
+			}
+		}
+		if source && !NextcloudBuildLeasePresent(ctx, chunk.TenantID,
+			chunk.KnowledgeBaseID, chunk.KnowledgeID) {
+			return ErrNextcloudContentLeaseInvalid
+		}
+		if err := ValidateNextcloudBuildWrite(ctx, tx,
+			chunk.TenantID, chunk.KnowledgeBaseID, chunk.KnowledgeID); err != nil {
+			return err
+		}
 		result := tx.Model(&types.Chunk{}).
-			Where("id = ? AND tenant_id = ? AND content_revision = ?", chunk.ID, chunk.TenantID, expectedRevision).
+			Where("id = ? AND tenant_id = ? AND knowledge_base_id = ? AND knowledge_id = ? AND content_revision = ?",
+				chunk.ID, chunk.TenantID, chunk.KnowledgeBaseID, chunk.KnowledgeID, expectedRevision).
 			Updates(map[string]interface{}{
 				"content":          common.CleanInvalidUTF8(chunk.Content),
 				"source_content":   common.CleanInvalidUTF8(chunk.SourceContent),
@@ -440,6 +499,16 @@ func (r *chunkRepository) SaveChunks(ctx context.Context, chunks []*types.Chunk)
 	}
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		for _, chunk := range chunks {
+			if err := CheckNextcloudBuildIdentity(ctx, chunk.TenantID, chunk.KnowledgeBaseID, chunk.KnowledgeID); err !=
+				nil {
+				return err
+			}
+		}
+		if err := ValidateNextcloudBuildWrite(ctx, tx,
+			chunks[0].TenantID, chunks[0].KnowledgeBaseID, chunks[0].KnowledgeID); err != nil {
+			return err
+		}
+		for _, chunk := range chunks {
 			if err := tx.Omit("SeqID").Save(chunk).Error; err != nil {
 				return err
 			}
@@ -477,6 +546,16 @@ func (r *chunkRepository) UpdateChunks(ctx context.Context, chunks []*types.Chun
 	}
 
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		for _, chunk := range chunks {
+			if err := CheckNextcloudBuildIdentity(ctx, chunk.TenantID, chunk.KnowledgeBaseID, chunk.KnowledgeID); err !=
+				nil {
+				return err
+			}
+		}
+		if err := ValidateNextcloudBuildWrite(ctx, tx,
+			chunks[0].TenantID, chunks[0].KnowledgeBaseID, chunks[0].KnowledgeID); err != nil {
+			return err
+		}
 		for start := 0; start < len(chunks); start += updateChunksBatchSize {
 			end := start + updateChunksBatchSize
 			if end > len(chunks) {
@@ -615,9 +694,20 @@ func (r *chunkRepository) DeleteChunks(ctx context.Context, tenantID uint64, ids
 
 // DeleteChunksByKnowledgeID deletes all chunks for a knowledge ID
 func (r *chunkRepository) DeleteChunksByKnowledgeID(ctx context.Context, tenantID uint64, knowledgeID string) error {
-	return r.db.WithContext(ctx).Where(
-		"tenant_id = ? AND knowledge_id = ?", tenantID, knowledgeID,
-	).Delete(&types.Chunk{}).Error
+	if _, guarded := ctx.Value(nextcloudBuildContextKey{}).(nextcloudBuildContext); !guarded {
+		return r.db.WithContext(ctx).Where(
+			"tenant_id = ? AND knowledge_id = ?", tenantID, knowledgeID,
+		).Delete(&types.Chunk{}).Error
+	}
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		guard := ctx.Value(nextcloudBuildContextKey{}).(nextcloudBuildContext)
+		if err := ValidateNextcloudBuildWrite(ctx, tx, tenantID,
+			guard.scope.KnowledgeBaseID, knowledgeID); err != nil {
+			return err
+		}
+		return tx.Where("tenant_id = ? AND knowledge_id = ?", tenantID, knowledgeID).
+			Delete(&types.Chunk{}).Error
+	})
 }
 
 // ListImageInfoByKnowledgeIDs returns non-empty image_info values for the given knowledge IDs.

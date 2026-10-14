@@ -178,3 +178,11 @@ func TestContinueStream_RejectsInvalidResourceURLMode(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, code, body)
 	assert.Contains(t, body, "resource_urls")
 }
+
+func (s *stubMessageServiceForStream) CheckLiveMessagePublication(context.Context, *types.Message) error {
+	return nil
+}
+
+func (s *stubMessageServiceForStream) CheckMessagePublication(context.Context, *types.Message) error {
+	return nil
+}

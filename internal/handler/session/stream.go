@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/Tencent/WeKnora/internal/application/access"
 	"github.com/Tencent/WeKnora/internal/errors"
 	"github.com/Tencent/WeKnora/internal/event"
 	"github.com/Tencent/WeKnora/internal/logger"
@@ -77,8 +78,16 @@ func (h *Handler) ContinueStream(c *gin.Context) {
 	}
 
 	// Get the incomplete message
-	message, err := h.messageService.GetMessage(ctx, sessionID, messageID)
+	message, err := getMessageForStream(ctx, h.messageService, sessionID, messageID)
 	if err != nil {
+		if stderrors.Is(err, access.ErrNextcloudPublicationDenied) {
+			_ = c.Error(errors.NewForbiddenError("Current Nextcloud file access is required"))
+			return
+		}
+		if stderrors.Is(err, access.ErrNextcloudPublicationUnavailable) {
+			_ = c.Error(errors.NewServiceUnavailableError("Cannot verify current Nextcloud file access"))
+			return
+		}
 		if stderrors.Is(err, errors.ErrSessionNotFound) {
 			// PR #1309 plumbed user-scope into messageService.GetMessage's
 			// session existence check; non-owner / wrong-user lookups now
@@ -128,6 +137,18 @@ func (h *Handler) ContinueStream(c *gin.Context) {
 		})
 		return
 	}
+	if message.IsCompleted {
+		if err := checkReplayPublication(ctx, h.messageService, message, events); err != nil {
+			_ = c.Error(replayPublicationHTTPError(err))
+			return
+		}
+	} else {
+		events, err = protectLiveStreamBatch(ctx, h.messageService, message, events)
+		if err != nil {
+			_ = c.Error(replayPublicationHTTPError(err))
+			return
+		}
+	}
 
 	logger.Infof(
 		ctx, "Preparing to replay %d events and continue streaming, session ID: %s, message ID: %s",
@@ -149,7 +170,12 @@ func (h *Handler) ContinueStream(c *gin.Context) {
 	// Replay existing events, a segment's worth of chunks per frame
 	replay := coalesceReplayEvents(events)
 	logger.Debugf(ctx, "Replaying %d existing events as %d frames", len(events), len(replay))
-	for _, evt := range replay {
+	for index, evt := range replay {
+		if index > 0 && (message.IsCompleted || liveBatchNeedsPublicationCheck([]interfaces.StreamEvent{evt})) {
+			if err := checkReplayPublication(ctx, h.messageService, message, nil); err != nil {
+				return
+			}
+		}
 		emitStreamEvent(ctx, c, evt, message.RequestID, resourceRewriter)
 	}
 
@@ -176,13 +202,36 @@ func (h *Handler) ContinueStream(c *gin.Context) {
 			newEvents, newOffset, err := h.streamManager.GetEvents(ctx, sessionID, messageID, currentOffset)
 			if err != nil {
 				logger.Errorf(ctx, "Failed to get new events: %v", err)
+				// The held tail is still protected source output. A store error
+				// does not bypass current authorization for its prior prefix.
+				if err := checkReplayPublication(ctx, h.messageService, message, nil); err != nil {
+					logger.Warnf(ctx, "Discarded held stream content after publication check failed: %v", err)
+					return
+				}
+				if ctx.Err() != nil {
+					return
+				}
 				flushHeldStreamContent(ctx, c, message.RequestID, resourceRewriter)
+				return
+			}
+			if message.IsCompleted {
+				err = checkReplayPublication(ctx, h.messageService, message, newEvents)
+			} else {
+				newEvents, err = protectLiveStreamBatch(ctx, h.messageService, message, newEvents)
+			}
+			if err != nil {
+				logger.Warnf(ctx, "Stopped stream replay after source authorization changed: %v", err)
 				return
 			}
 
 			// Send new events
 			streamCompletedNow := false
-			for _, evt := range newEvents {
+			for index, evt := range newEvents {
+				if index > 0 && (message.IsCompleted || liveBatchNeedsPublicationCheck([]interfaces.StreamEvent{evt})) {
+					if err := checkReplayPublication(ctx, h.messageService, message, nil); err != nil {
+						return
+					}
+				}
 				// Check for completion event
 				if evt.Type == "complete" {
 					streamCompletedNow = true
@@ -202,6 +251,101 @@ func (h *Handler) ContinueStream(c *gin.Context) {
 			}
 		}
 	}
+}
+
+type replayPublicationVerifier interface {
+	CheckMessagePublication(context.Context, *types.Message) error
+}
+
+func checkReplayPublication(
+	ctx context.Context, service interfaces.MessageService,
+	message *types.Message, events []interfaces.StreamEvent,
+) error {
+	if message == nil {
+		return access.ErrNextcloudPublicationUnavailable
+	}
+	if !message.IsCompleted {
+		return checkLiveStreamPublication(ctx, service, message, events)
+	}
+	verifier, ok := service.(replayPublicationVerifier)
+	if !ok {
+		return access.ErrNextcloudPublicationUnavailable
+	}
+	messageSnapshot := *message
+	messageSnapshot.KnowledgeReferences = append(types.References(nil), message.KnowledgeReferences...)
+	for _, streamEvent := range events {
+		if streamEvent.Type == types.ResponseTypeReferences {
+			response := buildStreamResponse(streamEvent, message.RequestID)
+			messageSnapshot.KnowledgeReferences = append(messageSnapshot.KnowledgeReferences,
+				response.KnowledgeReferences...)
+		}
+		// Old Redis frames may contain tool output not yet copied to the row.
+		// Such a saved Agent replay remains globally guarded even without AgentID.
+		if streamEvent.Type == types.ResponseTypeToolResult || streamEvent.Type == types.ResponseTypeToolCall {
+			name, _ := streamEvent.Data["tool_name"].(string)
+			id, _ := streamEvent.Data["tool_call_id"].(string)
+			if !types.IsPipelineToolCallID(id) && !syntheticHistoryStreamCall(message, id) && name != "final_answer" {
+				messageSnapshot.AgentSteps = append(messageSnapshot.AgentSteps,
+					types.AgentStep{ToolCalls: []types.ToolCall{{ID: id, Name: name}}})
+			}
+		}
+	}
+	if err := verifier.CheckMessagePublication(ctx, &messageSnapshot); err != nil {
+		return err
+	}
+	message.KnowledgeReferences = messageSnapshot.KnowledgeReferences
+	message.AgentSteps = messageSnapshot.AgentSteps
+	return nil
+}
+
+// KnowledgeQA records ragpipe-prefixed calls in the message, while its SSE
+// frame carries the original ID. Match the persisted synthetic call so the
+// ordinary fast-answer timeline is not mistaken for an opaque Agent round.
+func syntheticHistoryStreamCall(message *types.Message, id string) bool {
+	if message == nil || id == "" {
+		return false
+	}
+	for _, step := range message.AgentSteps {
+		for _, call := range step.ToolCalls {
+			if call.ID == types.PipelineToolCallIDPrefix+id {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+type controlMessageLookup interface {
+	GetMessageForControl(context.Context, string, string) (*types.Message, error)
+}
+
+func getMessageForControl(ctx context.Context, service interfaces.MessageService, sessionID,
+	messageID string,
+) (*types.Message, error) {
+	if lookup, ok := service.(controlMessageLookup); ok {
+		return lookup.GetMessageForControl(ctx, sessionID, messageID)
+	}
+	return service.GetMessage(ctx, sessionID, messageID)
+}
+
+type streamMessageLookup interface {
+	GetMessageForStream(context.Context, string, string) (*types.Message, error)
+}
+
+func getMessageForStream(ctx context.Context, service interfaces.MessageService, sessionID,
+	messageID string,
+) (*types.Message, error) {
+	if lookup, ok := service.(streamMessageLookup); ok {
+		return lookup.GetMessageForStream(ctx, sessionID, messageID)
+	}
+	return service.GetMessage(ctx, sessionID, messageID)
+}
+
+func replayPublicationHTTPError(err error) error {
+	if stderrors.Is(err, access.ErrNextcloudPublicationUnavailable) {
+		return errors.NewServiceUnavailableError("Cannot verify current Nextcloud file access")
+	}
+	return errors.NewForbiddenError("Current Nextcloud file access is required")
 }
 
 // StopSession godoc
@@ -249,7 +393,7 @@ func (h *Handler) StopSession(c *gin.Context) {
 	tenantIDUint := tenantID.(uint64)
 
 	// Verify message ownership and status
-	message, err := h.messageService.GetMessage(ctx, sessionID, assistantMessageID)
+	message, err := getMessageForControl(ctx, h.messageService, sessionID, assistantMessageID)
 	if err != nil {
 		logger.ErrorWithFields(ctx, err, map[string]interface{}{
 			"session_id": sessionID,
@@ -335,6 +479,7 @@ func (h *Handler) handleAgentEventsForSSE(
 	eventBus *event.EventBus,
 	waitForTitle bool,
 	resourceRewriter *storageurl.StreamRewriter,
+	liveMessages ...*types.Message,
 ) {
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
@@ -343,6 +488,10 @@ func (h *Handler) handleAgentEventsForSSE(
 	log := logger.GetLogger(ctx)
 
 	log.Infof("Starting pull-based SSE streaming for session=%s, message=%s", sessionID, assistantMessageID)
+	var liveMessage *types.Message
+	if len(liveMessages) > 0 {
+		liveMessage = liveMessages[0]
+	}
 
 	for {
 		select {
@@ -362,11 +511,25 @@ func (h *Handler) handleAgentEventsForSSE(
 				log.Warnf("Failed to get events from stream: %v", err)
 				continue
 			}
+			events, err = protectLiveStreamBatch(ctx, h.messageService, liveMessage, events)
+			if err != nil {
+				stopLiveStreamForPublication(ctx, c, eventBus, sessionID, assistantMessageID, requestID, err)
+				return
+			}
 
 			// Send any new events
 			streamCompleted := false
 			titleReceived := false
-			for _, evt := range events {
+			for index, evt := range events {
+				// A batch can contain several answer frames. Recheck before
+				// each later source-bearing frame so a grant withdrawn while
+				// the batch is being sent stops further output.
+				if index > 0 && liveBatchNeedsPublicationCheck([]interfaces.StreamEvent{evt}) {
+					if err := checkLiveStreamPublication(ctx, h.messageService, liveMessage, nil); err != nil {
+						stopLiveStreamForPublication(ctx, c, eventBus, sessionID, assistantMessageID, requestID, err)
+						return
+					}
+				}
 				// Check for stop event
 				if evt.Type == types.ResponseType(event.EventStop) {
 					log.Infof("Detected stop event, triggering stop via EventBus for session=%s", sessionID)
@@ -449,7 +612,21 @@ func (h *Handler) handleAgentEventsForSSE(
 								break titleWaitLoop
 							}
 							if len(events) > 0 {
-								for _, evt := range events {
+								if err := checkLiveStreamPublication(ctx, h.messageService, liveMessage,
+									events); err != nil {
+									stopLiveStreamForPublication(ctx, c, eventBus, sessionID,
+										assistantMessageID, requestID, err)
+									return
+								}
+								for index, evt := range events {
+									if index > 0 && liveBatchNeedsPublicationCheck([]interfaces.StreamEvent{evt}) {
+										if err := checkLiveStreamPublication(ctx, h.messageService,
+											liveMessage, nil); err != nil {
+											stopLiveStreamForPublication(ctx, c, eventBus, sessionID,
+												assistantMessageID, requestID, err)
+											return
+										}
+									}
 									emitStreamEvent(ctx, c, evt, requestID, resourceRewriter)
 									// If we got the title, we can exit
 									if evt.Type == types.ResponseTypeSessionTitle {
@@ -472,4 +649,291 @@ func (h *Handler) handleAgentEventsForSSE(
 			}
 		}
 	}
+}
+
+type livePublicationVerifier interface {
+	CheckLiveMessagePublication(context.Context, *types.Message) error
+}
+
+func liveBatchNeedsPublicationCheck(events []interfaces.StreamEvent) bool {
+	for _, evt := range events {
+		switch evt.Type {
+		case types.ResponseTypeAgentQuery, types.ResponseType(event.EventStop):
+			continue
+		default:
+			return true
+		}
+	}
+	return false
+}
+
+// Preparatory tool arguments can contain source-derived text. When a broad
+// Nextcloud turn has not identified documents yet, omit only tool-call frames
+// while retrieval continues. Content/result frames still fail closed. Once any
+// reference is known, every later tool argument is checked against those refs.
+func protectLiveStreamBatch(ctx context.Context, service interfaces.MessageService, message *types.Message,
+	events []interfaces.StreamEvent,
+) ([]interfaces.StreamEvent, error) {
+	if !liveBatchNeedsPublicationCheck(events) {
+		return events, nil
+	}
+	err := checkLiveStreamPublication(ctx, service, message, events)
+	if err == nil {
+		return events, nil
+	}
+	if !stderrors.Is(err, access.ErrNextcloudPublicationDenied) || message == nil ||
+		len(message.KnowledgeReferences) > 0 {
+		return nil, err
+	}
+	var filtered []interfaces.StreamEvent
+	hasToolCall := false
+	for _, evt := range events {
+		switch evt.Type {
+		case types.ResponseTypeToolCall:
+			hasToolCall = true
+		case types.ResponseTypeAgentQuery, types.ResponseType(event.EventStop):
+			filtered = append(filtered, evt)
+		default:
+			return nil, err
+		}
+	}
+	if !hasToolCall {
+		return nil, err
+	}
+	return filtered, nil
+}
+
+func checkLiveStreamPublication(
+	ctx context.Context, service interfaces.MessageService,
+	message *types.Message, events []interfaces.StreamEvent,
+) error {
+	verifier, ok := service.(livePublicationVerifier)
+	if !ok {
+		return access.ErrNextcloudPublicationUnavailable
+	}
+	if message == nil {
+		return access.ErrNextcloudPublicationUnavailable
+	}
+	messageSnapshot := *message
+	messageSnapshot.KnowledgeReferences = append(types.References(nil), message.KnowledgeReferences...)
+	seen := make(map[string]struct{}, len(messageSnapshot.KnowledgeReferences))
+	for _, ref := range messageSnapshot.KnowledgeReferences {
+		if ref != nil && ref.KnowledgeID != "" {
+			seen[ref.KnowledgeID] = struct{}{}
+		}
+	}
+	for _, streamEvent := range events {
+		if streamEvent.Type == types.ResponseTypeReferences {
+			response := buildStreamResponse(streamEvent, message.RequestID)
+			for _, ref := range response.KnowledgeReferences {
+				if ref == nil {
+					continue
+				}
+				if ref.KnowledgeID == "" {
+					messageSnapshot.KnowledgeReferences = append(messageSnapshot.KnowledgeReferences, ref)
+					continue
+				}
+				if _, exists := seen[ref.KnowledgeID]; !exists {
+					seen[ref.KnowledgeID] = struct{}{}
+					messageSnapshot.KnowledgeReferences = append(messageSnapshot.KnowledgeReferences, ref)
+				}
+			}
+		}
+		if streamEvent.Type == types.ResponseTypeToolResult && isKnowledgeSourceTool(streamEvent.Data) {
+			ids := make(map[string]struct{})
+			collectStreamKnowledgeIDs(streamEvent.Data, ids, 0)
+			if len(ids) == 0 && !contentlessKnowledgeToolResult(streamEvent) {
+				return fmt.Errorf("%w: knowledge tool output lacks document identity",
+					access.ErrNextcloudPublicationDenied)
+			}
+			for id := range ids {
+				if _, exists := seen[id]; !exists {
+					seen[id] = struct{}{}
+					messageSnapshot.KnowledgeReferences = append(messageSnapshot.KnowledgeReferences,
+						&types.SearchResult{KnowledgeID: id})
+				}
+			}
+		}
+	}
+	if err := verifier.CheckLiveMessagePublication(ctx, &messageSnapshot); err != nil {
+		return err
+	}
+	message.KnowledgeReferences = messageSnapshot.KnowledgeReferences
+	return nil
+}
+
+// Empty search/list results and errors without a result payload contain no
+// document to authorize. Accept only the structured contracts emitted by our
+// tools, then still run the message verifier for earlier references and grants.
+// Missing or opaque provenance must never be inferred from output text.
+func contentlessKnowledgeToolResult(evt interfaces.StreamEvent) bool {
+	data := evt.Data
+	success, ok := data["success"].(bool)
+	if !ok {
+		return false
+	}
+	allowed := map[string]bool{
+		"tool_name": true, "success": true, "error": true,
+		"duration_ms": true, "tool_call_id": true,
+	}
+	if !success {
+		// handleToolResult emits the diagnostic error as Content. No raw output
+		// or structured tool payload is permitted on this contentless branch.
+		diagnostic, ok := data["error"].(string)
+		if !ok || evt.Content != diagnostic {
+			return false
+		}
+	} else {
+		name, _ := data["tool_name"].(string)
+		switch name {
+		case "search_knowledge":
+			if data["display_type"] != "search_results" || !emptyKnowledgeResultList(data["results"]) ||
+				!zeroKnowledgeResultCount(data["count"]) {
+				return false
+			}
+			for _, key := range []string{
+				"display_type", "results", "count", "knowledge_base_ids",
+				"query", "queries", "mode", "requested_mode", "mode_fallbacks", "rerank_rejected",
+			} {
+				allowed[key] = true
+			}
+		case "list_documents":
+			kbID, _ := data["knowledge_base_id"].(string)
+			if data["display_type"] != "document_info" || !emptyKnowledgeResultList(data["documents"]) ||
+				kbID == "" || !knowledgeResultCountAtLeast(data["total_docs"], -1) ||
+				!knowledgeResultCountAtLeast(data["page"], 1) || !knowledgeResultCountAtLeast(data["page_size"], 1) {
+				return false
+			}
+			for _, key := range []string{
+				"display_type", "documents", "knowledge_base_id", "total_docs",
+				"page", "page_size", "keyword", "next_page",
+			} {
+				allowed[key] = true
+			}
+		case "query_knowledge_graph":
+			if evt.Content != "No relevant graph information found." || !emptyKnowledgeResultList(data["results"]) {
+				return false
+			}
+			if _, ok := data["query"].(string); !ok {
+				return false
+			}
+			if _, ok := data["knowledge_base_ids"]; !ok {
+				return false
+			}
+			if _, ok := data["graph_configs"]; !ok {
+				return false
+			}
+			if _, ok := data["graph_config"]; !ok {
+				return false
+			}
+			if _, ok := data["errors"]; !ok {
+				return false
+			}
+			for _, key := range []string{
+				"knowledge_base_ids", "query", "results", "graph_configs",
+				"graph_config", "errors",
+			} {
+				allowed[key] = true
+			}
+
+		default:
+			return false
+		}
+	}
+	for key := range data {
+		if !allowed[key] {
+			return false
+		}
+	}
+	return true
+}
+
+func emptyKnowledgeResultList(value interface{}) bool {
+	switch rows := value.(type) {
+	case []interface{}:
+		return rows != nil && len(rows) == 0
+	case []map[string]interface{}:
+		return rows != nil && len(rows) == 0
+	default:
+		return false
+	}
+}
+
+func zeroKnowledgeResultCount(value interface{}) bool {
+	switch count := value.(type) {
+	case int:
+		return count == 0
+	case float64: // StreamManager JSON decoding.
+		return count == 0
+	default:
+		return false
+	}
+}
+
+func knowledgeResultCountAtLeast(value interface{}, minimum int64) bool {
+	switch count := value.(type) {
+	case int:
+		return int64(count) >= minimum
+	case int64:
+		return count >= minimum
+	case float64:
+		return count >= float64(minimum) && count == float64(int64(count))
+	default:
+		return false
+	}
+}
+
+func isKnowledgeSourceTool(data map[string]interface{}) bool {
+	name, _ := data["tool_name"].(string)
+	switch name {
+	case "search_knowledge", "read_document", "list_documents", "query_knowledge_graph":
+		return true
+	default:
+		return false
+	}
+}
+
+func collectStreamKnowledgeIDs(value interface{}, ids map[string]struct{}, depth int) {
+	if depth > 6 || len(ids) >= 1000 {
+		return
+	}
+	switch data := value.(type) {
+	case map[string]interface{}:
+		if id, ok := data["knowledge_id"].(string); ok && id != "" {
+			ids[id] = struct{}{}
+		}
+		for key, nested := range data {
+			if key == "results" || key == "documents" || key == "chunks" || key == "document" || key == "data" {
+				collectStreamKnowledgeIDs(nested, ids, depth+1)
+			}
+		}
+	case []interface{}:
+		for _, nested := range data {
+			collectStreamKnowledgeIDs(nested, ids, depth+1)
+		}
+	case []map[string]interface{}:
+		for _, nested := range data {
+			collectStreamKnowledgeIDs(nested, ids, depth+1)
+		}
+	}
+}
+
+func stopLiveStreamForPublication(
+	ctx context.Context, c *gin.Context, bus *event.EventBus,
+	sessionID, messageID, requestID string, cause error,
+) {
+	logger.Warnf(ctx, "Stopping live answer after source authorization failed: %v", cause)
+	if bus != nil {
+		_ = bus.Emit(ctx, event.Event{
+			Type: event.EventStop, SessionID: sessionID,
+			Data: event.StopData{SessionID: sessionID, MessageID: messageID, Reason: "source_access_changed"},
+		})
+	}
+	// Do not flush the resource URL holdback buffer: its tail may itself be
+	// source-derived text from just before the publication was withdrawn.
+	c.SSEvent("message", &types.StreamResponse{
+		ID: requestID, ResponseType: types.ResponseTypeError,
+		Content: "Current source access changed; generation stopped", Done: true,
+	})
+	c.Writer.Flush()
 }

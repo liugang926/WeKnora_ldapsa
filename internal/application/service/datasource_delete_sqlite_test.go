@@ -30,6 +30,12 @@ func newSQLiteDataSourceDeleteFixture(t *testing.T) *sqliteDataSourceDeleteFixtu
 	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "weknora.db")), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&types.DataSource{}, &types.SyncLog{}))
+	require.NoError(t, db.Exec(`CREATE TABLE knowledge_bases (
+		id TEXT PRIMARY KEY,
+		tenant_id INTEGER NOT NULL,
+		ever_had_nextcloud_source BOOLEAN NOT NULL DEFAULT 0,
+		deleted_at DATETIME
+	)`).Error)
 
 	dsRepo := repository.NewDataSourceRepository(db)
 	syncLogRepo := repository.NewSyncLogRepository(db)
@@ -42,6 +48,8 @@ func newSQLiteDataSourceDeleteFixture(t *testing.T) *sqliteDataSourceDeleteFixtu
 		Status:          types.DataSourceStatusActive,
 		SyncSchedule:    "0 0 * * * *",
 	}
+	require.NoError(t, db.Exec(`INSERT INTO knowledge_bases (id, tenant_id) VALUES (?, ?)`,
+		ds.KnowledgeBaseID, ds.TenantID).Error)
 	pendingLog := &types.SyncLog{
 		ID:           "log-pending",
 		DataSourceID: ds.ID,

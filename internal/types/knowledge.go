@@ -497,6 +497,9 @@ type KnowledgeCheckParams struct {
 	// When both are set, file deduplication is scoped to this source item.
 	DataSourceID string
 	ExternalID   string
+	// Nextcloud deduplicates only against the current exact source version.
+	// Retired generations may have identical bytes but must never be reopened.
+	NextcloudTargetETag string
 	// URL parameters
 	URL string
 	// Text passage parameters

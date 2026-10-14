@@ -202,6 +202,25 @@ func cleanupCopiedObjects(ctx context.Context, svc interfaces.FileService, paths
 }
 
 func (s *knowledgeService) CloneKnowledgeBase(ctx context.Context, srcID, dstID string) error {
+	// Do not reserve a destination or create an independent copy of source
+	// content whose access can later be withdrawn in Nextcloud.
+	sourceKB, err := s.kbService.GetKnowledgeBaseByID(ctx, srcID)
+	if err != nil {
+		return err
+	}
+	if sourceKB == nil || sourceKB.ID != srcID {
+		return access.ErrNotFound
+	}
+	if sourceKB.EverHadNextcloudSource {
+		return ErrNextcloudDerivedContent
+	}
+	sourceRows, err := s.repo.ListKnowledgeByKnowledgeBaseID(ctx, sourceKB.TenantID, srcID)
+	if err != nil {
+		return err
+	}
+	if err := rejectNextcloudKnowledgeRows(sourceRows); err != nil {
+		return err
+	}
 	source, target, err := s.kbService.CopyKnowledgeBase(ctx, srcID, dstID)
 	if err != nil {
 		return err
@@ -235,6 +254,9 @@ func (s *knowledgeService) CloneKnowledgeBase(ctx context.Context, srcID, dstID 
 // It also ensures that the chunk's relationships (like pre and next chunk IDs) are maintained
 // by mapping the source chunk IDs to the new target chunk IDs.
 func (s *knowledgeService) CloneChunk(ctx context.Context, src, dst *types.Knowledge) (err error) {
+	if err := rejectNextcloudKnowledgeRows([]*types.Knowledge{src}); err != nil {
+		return err
+	}
 	sourceKB, err := knowledgeWriteKB(ctx, s.kbService, src)
 	if err != nil {
 		return err
@@ -474,6 +496,22 @@ func (s *knowledgeService) ProcessKBClone(ctx context.Context, t *asynq.Task) er
 	}
 	if source == nil || source.ID != payload.SourceID || target == nil || target.ID != payload.TargetID {
 		return fmt.Errorf("invalid clone binding: %w", asynq.SkipRetry)
+	}
+	if source.EverHadNextcloudSource {
+		return werrors.NewProtocolError(fmt.Errorf(
+			"clone source is not exportable: %w: %w",
+			ErrNextcloudDerivedContent,
+			asynq.SkipRetry,
+		), fmt.Sprintf("clone source is not exportable: %s: %s", werrors.PublicMessage(
+			ErrNextcloudDerivedContent,
+		), asynq.SkipRetry.Error()))
+	}
+	sourceRows, err := s.repo.ListKnowledgeByKnowledgeBaseID(ctx, source.TenantID, source.ID)
+	if err != nil {
+		return err
+	}
+	if err := rejectNextcloudKnowledgeRows(sourceRows); err != nil {
+		return fmt.Errorf("clone source is not exportable: %w: %w", err, asynq.SkipRetry)
 	}
 	if err := s.revalidateBackgroundKBAccess(
 		ctx, source.TenantID, source.ID, types.ResourceActionRead,
@@ -1253,6 +1291,9 @@ func (s *knowledgeService) moveOneKnowledge(
 	}
 	if knowledge == nil || knowledge.ID != knowledgeID {
 		return access.ErrNotFound
+	}
+	if err := rejectNextcloudKnowledgeRows([]*types.Knowledge{knowledge}); err != nil {
+		return err
 	}
 	if err := validateMoveItem(ctx, knowledge, sourceKB, targetKB, mode); err != nil {
 		return err

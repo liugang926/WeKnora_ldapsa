@@ -67,8 +67,55 @@ func (r *resourceRepository) MarkDeleted(ctx context.Context, id string) error {
 		Updates(map[string]interface{}{"state": types.ResourceStateDeleted, "deleted_at": time.Now()}).Error
 }
 
+// PromoteSourceProvenance never erases a Nextcloud tombstone. Unknown also
+// cannot be silently upgraded to ordinary because its historical source is
+// unprovable after a knowledge hard delete.
+func (r *resourceRepository) PromoteSourceProvenance(ctx context.Context, id, provenance string) error {
+	if provenance != types.ResourceProvenanceNextcloud && provenance != types.ResourceProvenanceUnknown {
+		return nil
+	}
+	query := r.db.WithContext(
+		ctx,
+	).Model(&types.StoredResource{}).Where("id = ? AND source_provenance <> ?", id, types.ResourceProvenanceNextcloud)
+	if provenance == types.ResourceProvenanceUnknown {
+		query = query.Where("source_provenance <> ?", types.ResourceProvenanceUnknown)
+	}
+	return query.Update("source_provenance", provenance).Error
+}
+
+func (r *resourceRepository) GetKnowledgeForResourceBinding(
+	ctx context.Context, tenantID uint64, knowledgeID string,
+) (*types.Knowledge, error) {
+	var knowledge types.Knowledge
+	err := r.db.WithContext(
+		ctx,
+	).Unscoped().Where("id = ? AND tenant_id = ?", knowledgeID, tenantID).First(&knowledge).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	return &knowledge, err
+}
+
 func (r *resourceRepository) CreateBinding(ctx context.Context, binding *types.ResourceBinding) error {
-	return r.db.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(binding).Error
+	if binding == nil || binding.ResourceID == "" || binding.TenantID == 0 {
+		return errors.New("incomplete resource binding")
+	}
+	// Every new claim takes the same resource-row lock as Nextcloud GC. A
+	// zero-binding check followed by state=deleting is therefore atomic with
+	// respect to all application binding writes. SQLite serializes writers;
+	// PostgreSQL enforces the row lock explicitly.
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var resource types.StoredResource
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("id = ? AND tenant_id = ?", binding.ResourceID, binding.TenantID).
+			Take(&resource).Error; err != nil {
+			return err
+		}
+		if resource.State != types.ResourceStateActive || resource.DeletedAt.Valid {
+			return errors.New("resource is not bindable")
+		}
+		return tx.Clauses(clause.OnConflict{DoNothing: true}).Create(binding).Error
+	})
 }
 
 // DeleteBinding removes one owner's claim on a resource. Deleting a claim that

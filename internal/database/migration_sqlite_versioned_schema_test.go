@@ -15,7 +15,7 @@ import (
 // create to stay in sync with the versioned (PostgreSQL) migrations:
 // 000041 task queue, 000053 system settings, 000055 processing spans,
 // 000063 knowledge multi-tags, 000093 browser authorization, 000103 message
-// artifacts.
+// artifacts, 000113 Nextcloud event inbox, 000114 Nextcloud event dispatch.
 var versionedSQLiteTables = []string{
 	"memory_extraction_sessions",
 	"task_pending_ops",
@@ -39,32 +39,210 @@ var versionedSQLiteTables = []string{
 	"resource_access_policies",
 	"resource_group_grants",
 	"directory_permission_versions",
-	"evaluation_runs",
+	"nextcloud_event_connections",
+	"nextcloud_event_nonces",
+	"nextcloud_event_inbox",
+	"nextcloud_event_checkpoint",
+	"nextcloud_event_dispatch",
+	"nextcloud_source_pairings",
+	"nextcloud_source_rotations",
+	"nextcloud_source_pairing_aborts",
+	"nextcloud_pair_rebuild_history",
+	"nextcloud_source_revisions",
+	"nextcloud_source_tombstones",
 }
 
 // versionedSQLiteColumns maps each existing table to the columns that the
 // versioned migrations add and the SQLite baseline was missing.
 var versionedSQLiteColumns = map[string][]string{
-	"memory_subjects": {"extraction_state"},                                                 // 000094
-	"memory_items":    {"replaces_id"},                                                      // 000094
-	"tenants":         {"api_principal_config"},                                             // 000064
-	"users":           {"is_system_admin"},                                                  // 000053
-	"knowledges":      {"pending_subtasks_count", "profile"},                                // 000056, 000101
-	"knowledge_bases": {"profile_config", "generated_profile"},                              // 000101
-	"messages":        {"attachments", "usage", "sandbox_checkpoint", "context_checkpoint"}, // 000034/085/097/105
+	"memory_subjects": {"extraction_state"},     // 000094
+	"memory_items":    {"replaces_id"},          // 000094
+	"tenants":         {"api_principal_config"}, // 000064
+	"users":           {"is_system_admin"},      // 000053
+	"knowledges":      {"pending_subtasks_count", "profile"},
+	// 000056, 000101
+	"knowledge_bases": {"profile_config", "generated_profile"}, // 000101
+	"messages": {
+		"attachments", "usage", "sandbox_checkpoint", "context_checkpoint",
+		"source_lineage",
+	}, // 000034/085/097/105/132
 	"sessions": {
 		"parent_session_id", "forked_from_message_id", "fork_bootstrap", // 000097
 		"sandbox_config_tenant_id", // 000108
 	},
-	"tenant_invitations": {"token", "accepted_count"},                       // 000054
-	"embed_channels":     {"allow_memory"},                                  // 000060
-	"mcp_oauth_tokens":   {"principal_type", "principal_id"},                // 000064
-	"mcp_tool_approvals": {"enabled"},                                       // 000091
-	"message_artifacts":  {"deleted_at"},                                    // 000107
-	"directories":        {"config_version", "security_config_fingerprint"}, // 000109 / SQLite 000028
+	"tenant_invitations": {"token", "accepted_count"},
+	// 000054
+	"embed_channels": {"allow_memory"},
+	// 000060
+	"mcp_oauth_tokens": {"principal_type", "principal_id"},
+	// 000064
+	"mcp_tool_approvals": {"enabled"},
+	// 000091
+	"message_artifacts": {"deleted_at"},
+	// 000107
+	"directories": {"config_version", "security_config_fingerprint"},
+	// 000109 / SQLite 000028
+	"nextcloud_event_inbox": {"etag", "path", "relative_path"},
+	// SQLite 000049 / PostgreSQL 000130
+	"sync_logs": {
+		"recovery_version", "recovery_trigger", "queue_task_id", "worker_started_at",
+		"worker_active", "worker_attempt_token",
+	}, // SQLite 000050 / PostgreSQL 000131
 }
 
-const expectedSQLiteMigrationVersion = 34
+const expectedSQLiteMigrationVersion = 51
+
+func TestSQLiteNextcloudRevisionUpgradeFrom43PreservesUnknownHistory(t *testing.T) {
+	repoRoot := sqliteRepoRoot(t)
+	legacyRoot := copySQLiteMigrationsThrough(t, repoRoot, 43)
+	chdirAndRestore(t, legacyRoot)
+	dbPath := filepath.Join(t.TempDir(), "source-revision-upgrade.db")
+	require.NoError(t, RunMigrationsWithOptions("sqlite3://unused", MigrationOptions{SQLiteDBPath: dbPath}))
+	db := openSQLiteDB(t, dbPath)
+	_, err := db.Exec(`INSERT INTO nextcloud_source_versions
+		(tenant_id, knowledge_base_id, datasource_id, external_id,
+		 desired_etag, candidate_knowledge_id, state)
+		VALUES (7, 'kb', 'ds', 'nextcloud:instance:77', 'etag-before-upgrade',
+		'candidate-before-upgrade', 'published')`)
+	require.NoError(t, err)
+
+	chdirAndRestore(t, repoRoot)
+	require.NoError(t, RunMigrationsWithOptions("sqlite3://unused", MigrationOptions{SQLiteDBPath: dbPath}))
+	version, dirty := sqliteMigrationState(t, db)
+	require.Equal(t, expectedSQLiteMigrationVersion, version)
+	require.False(t, dirty)
+	var revision, unknown int
+	var etag, candidate, state string
+	require.NoError(t, db.QueryRow(`SELECT revision, desired_etag, candidate_knowledge_id,
+		state, legacy_history_unknown FROM nextcloud_source_revisions
+		WHERE external_id = 'nextcloud:instance:77'`).Scan(&revision, &etag, &candidate, &state, &unknown))
+	require.Equal(t, 1, revision)
+	require.Equal(t, "etag-before-upgrade", etag)
+	require.Equal(t, "candidate-before-upgrade", candidate)
+	require.Equal(t, "published", state)
+	require.Equal(t, 1, unknown, "pre-migration candidates cannot be reconstructed")
+
+	_, err = db.Exec(`UPDATE nextcloud_source_versions SET desired_etag = 'etag-after-upgrade',
+		candidate_knowledge_id = 'candidate-after-upgrade', state = 'staging'
+		WHERE external_id = 'nextcloud:instance:77'`)
+	require.NoError(t, err)
+	require.NoError(t, db.QueryRow(`SELECT revision, legacy_history_unknown
+		FROM nextcloud_source_revisions WHERE external_id = 'nextcloud:instance:77'
+		ORDER BY revision DESC LIMIT 1`).Scan(&revision, &unknown))
+	require.Equal(t, 2, revision)
+	require.Equal(t, 1, unknown, "future observations retain the legacy gap marker")
+}
+
+func TestSQLiteVirginProofUpgradeWithExistingDecommissionStaysCleanAt42(t *testing.T) {
+	repoRoot := sqliteRepoRoot(t)
+	legacyRoot := copySQLiteMigrationsThrough(t, repoRoot, 42)
+	chdirAndRestore(t, legacyRoot)
+	dbPath := filepath.Join(t.TempDir(), "decommission-review.db")
+	require.NoError(t, RunMigrationsWithOptions("sqlite3://unused", MigrationOptions{SQLiteDBPath: dbPath}))
+	db := openSQLiteDB(t, dbPath)
+	_, err := db.Exec(`INSERT INTO tenants (id, name, business) VALUES (7, 'paired', 'test')`)
+	require.NoError(t, err)
+	_, err = db.Exec(`INSERT INTO knowledge_bases
+		(id, name, tenant_id, embedding_model_id, summary_model_id)
+		VALUES ('kb-review', 'review', 7, 'embed', 'summary')`)
+	require.NoError(t, err)
+	_, err = db.Exec(`INSERT INTO data_sources
+		(id, tenant_id, knowledge_base_id, name, type, config, status)
+		VALUES ('ds-review', 7, 'kb-review', 'review', 'nextcloud', '{}', 'paused')`)
+	require.NoError(t, err)
+	_, err = db.Exec(`INSERT INTO nextcloud_source_pairings
+		(operation_id, tenant_id, knowledge_base_id, datasource_id,
+		nextcloud_instance_id, binding_id, datasource_base_url,
+		datasource_config_sha256, publication_epoch, key_id, state)
+		VALUES ('pair-review', 7, 'kb-review', 'ds-review', 'instance', 'binding',
+		'https://nextcloud.example', 'hash', 1, 'pair_key', 'pending')`)
+	require.NoError(t, err)
+	_, err = db.Exec(`INSERT INTO nextcloud_source_decommissions
+		(operation_id, pair_operation_id, tenant_id, knowledge_base_id,
+		datasource_id, nextcloud_instance_id, binding_id, publication_epoch,
+		key_id, state)
+		VALUES ('decommission-review', 'pair-review', 7, 'kb-review',
+		'ds-review', 'instance', 'binding', 1, 'pair_key', 'prepared')`)
+	require.NoError(t, err)
+
+	chdirAndRestore(t, repoRoot)
+	err = RunMigrationsWithOptions("sqlite3://unused", MigrationOptions{
+		SQLiteDBPath: dbPath, AutoRecoverDirty: true,
+	})
+	require.ErrorContains(t, err, "review existing Nextcloud decommissions")
+	version, dirty := sqliteMigrationState(t, db)
+	require.Equal(t, 42, version)
+	require.False(t, dirty)
+	require.False(t, sqliteTableExists(t, db, "nextcloud_pair_rebuild_history"))
+}
+
+func TestSQLiteNextcloudPairingGuardsPendingAndActiveKnowledgeBase(t *testing.T) {
+	repoRoot := sqliteRepoRoot(t)
+	chdirAndRestore(t, repoRoot)
+	dbPath := filepath.Join(t.TempDir(), "pairing-guard.db")
+	require.NoError(t, RunMigrationsWithOptions("sqlite3://unused", MigrationOptions{SQLiteDBPath: dbPath}))
+	db := openSQLiteDB(t, dbPath)
+	_, err := db.Exec(`INSERT INTO tenants (id, name, business) VALUES (7, 'paired', 'test')`)
+	require.NoError(t, err)
+	_, err = db.Exec(`INSERT INTO knowledge_bases
+		(id, name, tenant_id, embedding_model_id, summary_model_id)
+		VALUES ('kb-paired', 'paired', 7, 'embed', 'summary')`)
+	require.NoError(t, err)
+	_, err = db.Exec(`INSERT INTO data_sources
+		(id, tenant_id, knowledge_base_id, name, type, config, status)
+		VALUES ('ds-paired', 7, 'kb-paired', 'paired', 'nextcloud', '{}', 'paused')`)
+	require.NoError(t, err)
+	_, err = db.Exec(`INSERT INTO nextcloud_source_pairings
+		(operation_id, tenant_id, knowledge_base_id, datasource_id,
+		nextcloud_instance_id, binding_id, datasource_base_url,
+		datasource_config_sha256, publication_epoch, key_id, state)
+		VALUES ('op', 7, 'kb-paired', 'ds-paired', 'instance', 'binding',
+		'https://nextcloud.example', 'hash', 1, 'pair_key', 'pending')`)
+	require.NoError(t, err)
+	_, err = db.Exec(`UPDATE data_sources SET status = 'active' WHERE id = 'ds-paired'`)
+	require.ErrorContains(t, err, "nextcloud_source_unpaired")
+	_, err = db.Exec(`UPDATE knowledge_bases SET deleted_at = CURRENT_TIMESTAMP WHERE id = 'kb` +
+		`-paired'`)
+	require.ErrorContains(t, err, "nextcloud_paired_kb_delete_forbidden")
+	_, err = db.Exec(`UPDATE nextcloud_source_pairings SET state = 'active' WHERE operation_id` +
+		` = 'op'`)
+	require.NoError(t, err)
+	_, err = db.Exec(`UPDATE data_sources SET status = 'active' WHERE id = 'ds-paired'`)
+	require.NoError(t, err)
+	_, err = db.Exec(`UPDATE knowledge_bases SET deleted_at = CURRENT_TIMESTAMP WHERE id = 'kb` +
+		`-paired'`)
+	require.ErrorContains(t, err, "nextcloud_paired_kb_delete_forbidden")
+	_, err = db.Exec(`INSERT INTO nextcloud_source_rotations
+		(operation_id, pair_operation_id, tenant_id, knowledge_base_id, datasource_id,
+		 nextcloud_instance_id, binding_id, old_key_id, new_key_id,
+		 old_config_sha256, new_config_sha256, old_config, new_config, state)
+		VALUES ('rotation', 'op', 7, 'kb-paired', 'ds-paired', 'instance', 'binding',
+		        'pair_key', 'rot_key', 'hash', 'newhash', '{}', '{"credential":"new"}', 'pending')`)
+	require.NoError(t, err)
+	_, err = db.Exec(`UPDATE data_sources SET config = '{"credential":"new"}' WHERE id = 'ds-p` +
+		`aired'`)
+	require.ErrorContains(t, err, "nextcloud_paired_source_immutable")
+	_, err = db.Exec(`UPDATE nextcloud_source_pairings SET key_id = 'rot_key',
+		datasource_config_sha256 = 'newhash' WHERE operation_id = 'op'`)
+	require.ErrorContains(t, err, "nextcloud_source_pairing_immutable")
+	_, err = db.Exec(`UPDATE nextcloud_source_rotations SET state = 'committed' WHERE operatio` +
+		`n_id = 'rotation'`)
+	require.NoError(t, err)
+	_, err = db.Exec(`UPDATE data_sources SET config = '{"credential":"other"}' WHERE id = 'ds` +
+		`-paired'`)
+	require.ErrorContains(t, err, "nextcloud_paired_source_immutable")
+	_, err = db.Exec(`UPDATE data_sources SET config = '{"credential":"new"}' WHERE id = 'ds-p` +
+		`aired'`)
+	require.NoError(t, err)
+	_, err = db.Exec(`UPDATE nextcloud_source_pairings SET key_id = 'rot_key',
+		datasource_config_sha256 = 'newhash' WHERE operation_id = 'op'`)
+	require.NoError(t, err)
+	_, err = db.Exec(`UPDATE nextcloud_source_rotations SET state = 'switched' WHERE operation` +
+		`_id = 'rotation'`)
+	require.NoError(t, err)
+	_, err = db.Exec(`UPDATE data_sources SET config = '{}' WHERE id = 'ds-paired'`)
+	require.ErrorContains(t, err, "nextcloud_paired_source_immutable")
+}
 
 func TestSQLiteMigrationsCreateVersionedSchema(t *testing.T) {
 	repoRoot := sqliteRepoRoot(t)
@@ -201,6 +379,64 @@ func TestSQLiteMigrationsUpgradeV16AddsSessionForkColumns(t *testing.T) {
 	require.True(t, sqliteColumnExists(t, db, "messages", "sandbox_checkpoint"))
 }
 
+func TestSQLiteMigrationsUpgradeV32BackfillsNextcloudEventDispatch(t *testing.T) {
+	repoRoot := sqliteRepoRoot(t)
+	legacyRoot := copySQLiteMigrationsThrough(t, repoRoot, 32)
+	chdirAndRestore(t, legacyRoot)
+
+	dbPath := filepath.Join(t.TempDir(), "upgrade-nextcloud-dispatch.db")
+	require.NoError(t, RunMigrationsWithOptions("sqlite3://unused", MigrationOptions{SQLiteDBPath: dbPath}))
+	db := openSQLiteDB(t, dbPath)
+	versionBefore, dirtyBefore := sqliteMigrationState(t, db)
+	require.Equal(t, 32, versionBefore)
+	require.False(t, dirtyBefore)
+
+	_, err := db.Exec(`INSERT INTO nextcloud_event_connections
+		(connection_id, tenant_id, knowledge_base_id, datasource_id,
+		 nextcloud_instance_id, binding_id, datasource_base_url,
+		 datasource_config_sha256, status, current_key_id, current_secret_ciphertext)
+		 VALUES (?, 7, 'kb-1', 'source-1', 'instance-1', 'binding-1',
+		 'https://nextcloud.example', ?, 'active', 'key-1', 'enc:v1:synthetic')`,
+		"connection-1", strings.Repeat("a", 64))
+	require.NoError(t, err)
+	_, err = db.Exec(`INSERT INTO nextcloud_event_checkpoint (connection_id, received_id)
+		VALUES ('connection-1', 42)`)
+	require.NoError(t, err)
+
+	chdirAndRestore(t, repoRoot)
+	require.NoError(t, RunMigrationsWithOptions("sqlite3://unused", MigrationOptions{SQLiteDBPath: dbPath}))
+	db = openSQLiteDB(t, dbPath)
+	versionAfter, dirtyAfter := sqliteMigrationState(t, db)
+	require.Equal(t, expectedSQLiteMigrationVersion, versionAfter)
+	require.False(t, dirtyAfter)
+	require.True(t, sqliteIndexExists(t, db, "idx_nextcloud_event_dispatch_due"))
+	require.True(t, sqliteIndexExists(t, db, "idx_nextcloud_event_dispatch_lease"))
+
+	var dispatchedID, appliedID, targetEventID, attemptCount int64
+	var state, lastErrorCode string
+	var leaseToken, leaseUntil, lastSyncLogID sql.NullString
+	var nextAttemptAt, updatedAt string
+	require.NoError(t, db.QueryRow(`SELECT dispatched_id, applied_id, target_event_id,
+		state, lease_token, lease_until, last_sync_log_id, attempt_count,
+		next_attempt_at, last_error_code, updated_at
+		FROM nextcloud_event_dispatch WHERE connection_id = 'connection-1'`).Scan(
+		&dispatchedID, &appliedID, &targetEventID, &state, &leaseToken,
+		&leaseUntil, &lastSyncLogID, &attemptCount, &nextAttemptAt,
+		&lastErrorCode, &updatedAt,
+	))
+	require.Zero(t, dispatchedID)
+	require.Zero(t, appliedID)
+	require.Zero(t, targetEventID)
+	require.Equal(t, "idle", state)
+	require.False(t, leaseToken.Valid)
+	require.False(t, leaseUntil.Valid)
+	require.False(t, lastSyncLogID.Valid)
+	require.Zero(t, attemptCount)
+	require.NotEmpty(t, nextAttemptAt)
+	require.Empty(t, lastErrorCode)
+	require.NotEmpty(t, updatedAt)
+}
+
 func sqliteRepoRoot(t *testing.T) string {
 	t.Helper()
 	repoRoot, err := filepath.Abs(filepath.Join("..", ".."))
@@ -306,7 +542,8 @@ func assertSQLiteShareLinkInvitationsWork(t *testing.T, db *sql.DB) {
 
 	var count int
 	require.NoError(t, db.QueryRow(
-		"SELECT COUNT(*) FROM tenant_invitations WHERE tenant_id = 1 AND invitee_user_id = '' AND status = 'pending'",
+		"SELECT COUNT(*) FROM tenant_invitations WHERE tenant_id = 1 AND invitee_"+
+			"user_id = '' AND status = 'pending'",
 	).Scan(&count))
 	require.Equal(t, 2, count)
 }
@@ -314,7 +551,8 @@ func assertSQLiteShareLinkInvitationsWork(t *testing.T, db *sql.DB) {
 func assertSQLiteMCPOAuthPrincipalUpsertWorks(t *testing.T, db *sql.DB) {
 	t.Helper()
 	_, err := db.Exec(
-		"INSERT INTO mcp_services (id, tenant_id, name, transport_type) VALUES (?, 1, 'svc', 'http')",
+		"INSERT INTO mcp_services (id, tenant_id, name, transport_type) VALUES (?"+
+			", 1, 'svc', 'http')",
 		"svc-migration-1",
 	)
 	require.NoError(t, err)
@@ -345,7 +583,8 @@ func assertSQLiteMCPOAuthPrincipalUpsertWorks(t *testing.T, db *sql.DB) {
 
 	var rowCount int
 	require.NoError(t, db.QueryRow(
-		"SELECT COUNT(*) FROM mcp_oauth_tokens WHERE tenant_id = 1 AND service_id = 'svc-migration-1'",
+		"SELECT COUNT(*) FROM mcp_oauth_tokens WHERE tenant_id = 1 AND service_id"+
+			" = 'svc-migration-1'",
 	).Scan(&rowCount))
 	require.Equal(t, 1, rowCount)
 }

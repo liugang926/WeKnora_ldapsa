@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/Tencent/WeKnora/internal/application/access"
 	apperrors "github.com/Tencent/WeKnora/internal/errors"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
@@ -26,23 +27,29 @@ var (
 )
 
 type embedChannelService struct {
-	repo         interfaces.EmbedChannelRepository
-	agentService interfaces.CustomAgentService
-	chunkService interfaces.ChunkService
-	redis        *redis.Client
+	repo             interfaces.EmbedChannelRepository
+	agentService     interfaces.CustomAgentService
+	chunkService     interfaces.ChunkService
+	knowledgeService interfaces.KnowledgeService
+	publicationGuard *access.NextcloudPublicationGuard
+	redis            *redis.Client
 }
 
 func NewEmbedChannelService(
 	repo interfaces.EmbedChannelRepository,
 	agentService interfaces.CustomAgentService,
 	chunkService interfaces.ChunkService,
+	knowledgeService interfaces.KnowledgeService,
+	publicationGuard *access.NextcloudPublicationGuard,
 	redisClient *redis.Client,
 ) interfaces.EmbedChannelService {
 	return &embedChannelService{
-		repo:         repo,
-		agentService: agentService,
-		chunkService: chunkService,
-		redis:        redisClient,
+		repo:             repo,
+		agentService:     agentService,
+		chunkService:     chunkService,
+		knowledgeService: knowledgeService,
+		publicationGuard: publicationGuard,
+		redis:            redisClient,
 	}
 }
 
@@ -277,6 +284,24 @@ func (s *embedChannelService) EmbedChunk(
 		return nil, ErrEmbedChunkNotFound
 	}
 	if !s.chunkAllowedForEmbed(ctx, ch, chunk) {
+		return nil, ErrEmbedChunkForbidden
+	}
+	// A chunk's KB grant is not proof that its original source is still
+	// published. Resolve the parent document and verify its current source
+	// before returning any body text. Embed callers are anonymous, so source
+	// backed documents always fail closed.
+	if s.knowledgeService == nil || chunk.KnowledgeID == "" {
+		return nil, ErrEmbedChunkForbidden
+	}
+	knowledge, err := s.knowledgeService.GetKnowledgeByIDOnly(ctx, chunk.KnowledgeID)
+	if err != nil || knowledge == nil || knowledge.ID != chunk.KnowledgeID ||
+		knowledge.TenantID != chunk.TenantID || knowledge.KnowledgeBaseID != chunk.KnowledgeBaseID {
+		return nil, ErrEmbedChunkForbidden
+	}
+	publicationCtx := types.WithCaller(ctx, types.Caller{
+		TenantID: ch.TenantID, UserID: fmt.Sprintf("system-%d", ch.TenantID),
+	})
+	if err := s.publicationGuard.CheckKnowledge(publicationCtx, knowledge); err != nil {
 		return nil, ErrEmbedChunkForbidden
 	}
 	return chunk, nil

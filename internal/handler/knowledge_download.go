@@ -24,6 +24,7 @@ const (
 	maxBatchDownloadFiles             = 200
 	maxBatchDownloadBytes       int64 = 512 * 1024 * 1024
 	maxConcurrentBatchDownloads       = 4
+	batchDownloadResponseBuffer       = 4 * 1024 * 1024
 )
 
 var batchDownloadSlots = make(chan struct{}, maxConcurrentBatchDownloads)
@@ -99,6 +100,10 @@ func (h *KnowledgeHandler) BatchDownloadKnowledge(c *gin.Context) {
 			_ = c.Error(errors.NewNotFoundError("部分文档不存在或不属于当前知识库，请刷新列表后重试"))
 			return
 		}
+		if err := h.checkPublication(ctx, item); err != nil {
+			_ = c.Error(err)
+			return
+		}
 		if !item.IsManual() && item.FilePath == "" {
 			continue
 		}
@@ -114,6 +119,17 @@ func (h *KnowledgeHandler) BatchDownloadKnowledge(c *gin.Context) {
 		return
 	}
 	defer releaseBatchDownloadSlot()
+	readItems := make([]*types.Knowledge, 0, len(entries))
+	for _, entry := range entries {
+		readItems = append(readItems, byID[entry.ID])
+	}
+	leases, err := h.beginNextcloudRead(ctx, c, readItems)
+	if err != nil {
+		_ = c.Error(err)
+		return
+	}
+	defer leases.Close()
+	ctx = leases.Context(ctx)
 
 	// 先在临时文件中完整生成压缩包，避免读取失败时向用户返回残缺 ZIP。
 	archive, err := os.CreateTemp("", "weknora-download-*.zip")
@@ -126,9 +142,35 @@ func (h *KnowledgeHandler) BatchDownloadKnowledge(c *gin.Context) {
 		_ = archive.Close()
 		_ = os.Remove(archivePath)
 	}()
+	checkKB := func(checkCtx context.Context) error {
+		if leases == nil {
+			return nil
+		}
+		return h.checkCurrentNextcloudKBAccess(checkCtx, c, readItems[0], types.OrgRoleEditor)
+	}
+	open := func(openCtx context.Context, id string) (io.ReadCloser, string, error) {
+		file, filename, err := h.kgService.GetKnowledgeFile(openCtx, id)
+		if err != nil {
+			return nil, "", err
+		}
+		return wrapNextcloudLeasedFile(file, leases, func(checkCtx context.Context) error {
+			if err := checkKB(checkCtx); err != nil {
+				return err
+			}
+			return h.checkPublication(checkCtx, byID[id])
+		}, h.leaseCheckpoint), filename, nil
+	}
 	if err := writeKnowledgeDownloadArchive(
-		ctx, archive, entries, h.kgService.GetKnowledgeFile, maxBatchDownloadBytes,
+		ctx, archive, entries, open, maxBatchDownloadBytes,
 	); err != nil {
+		if leaseErr := leases.Err(); leaseErr != nil {
+			if _, ok := errors.IsAppError(leaseErr); ok {
+				_ = c.Error(leaseErr)
+			} else {
+				_ = c.Error(nextcloudHTTPLeaseError(leaseErr))
+			}
+			return
+		}
 		mapped := mapKnowledgeDownloadError(err)
 		if appErr, ok := errors.IsAppError(mapped); !ok || appErr.HTTPCode >= 500 {
 			logger.ErrorWithFields(ctx, err, nil)
@@ -140,11 +182,33 @@ func (h *KnowledgeHandler) BatchDownloadKnowledge(c *gin.Context) {
 		_ = c.Error(errors.NewInternalServerError("无法读取下载压缩包，请稍后重试"))
 		return
 	}
+	if err := h.verifyNextcloudRead(ctx, leases, readItems); err != nil {
+		_ = c.Error(err)
+		return
+	}
+	checkLive := func(checkCtx context.Context) error {
+		if err := checkKB(checkCtx); err != nil {
+			return err
+		}
+		return h.checkPublicationList(checkCtx, readItems)
+	}
+	if err := checkLive(ctx); err != nil {
+		_ = c.Error(err)
+		return
+	}
+	defer guardNextcloudResponseWrites(c, leases, checkLive)()
 	filename := "knowledge-files-" + time.Now().Format("20060102-150405") + ".zip"
-	if err := filetransport.Serve(c.Writer, c.Request, archive, filetransport.Options{
+	// ServeContent copies a seekable ZIP in small chunks. Buffer those chunks
+	// so the live source check runs at each actual response write, rather than
+	// once per internal 32 KiB copy. Buffered bytes are checked before release.
+	output := newNextcloudBufferedResponseWriter(c.Writer, batchDownloadResponseBuffer)
+	if err := filetransport.Serve(output, c.Request, archive, filetransport.Options{
 		Filename: filename, Download: true, ContentType: "application/zip", CacheControl: "private, no-store",
 	}); err != nil {
 		logger.Errorf(ctx, "Failed to send knowledge archive: %v", err)
+	}
+	if err := output.Flush(); err != nil {
+		logger.Errorf(ctx, "Failed to finish knowledge archive response: %v", err)
 	}
 }
 

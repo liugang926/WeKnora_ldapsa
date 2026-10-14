@@ -4,6 +4,7 @@ import (
 	stderrors "errors"
 	"net/http"
 
+	"github.com/Tencent/WeKnora/internal/application/readlease"
 	"github.com/Tencent/WeKnora/internal/application/service"
 	"github.com/Tencent/WeKnora/internal/browserskill"
 	"github.com/Tencent/WeKnora/internal/config"
@@ -52,6 +53,10 @@ type Handler struct {
 	userService   interfaces.UserService
 	memberService interfaces.TenantMemberService
 	groupAccess   interfaces.GroupAccessService
+	// Raw knowledge search returns hydrated source chunks after the service's
+	// retrieval lease ends. These dependencies protect the HTTP output phase.
+	searchKnowledgeService interfaces.KnowledgeService
+	searchContentLeases    readlease.NextcloudReadLeaseStore
 	// terminalService opens PTYs on the sandbox bound to a session. It also
 	// owns first-use provisioning: the WS handshake carries the chat page's
 	// selected agent so the sandbox is created with the same config a
@@ -69,6 +74,16 @@ type Handler struct {
 	// rewindService truncates the current session at a chosen message. May
 	// be nil in deployments where rewind is not wired; RewindSession checks.
 	rewindService sessionRewinder
+}
+
+// ConfigureSearchKnowledgeRead installs source hydration and durable output-phase leases.
+func ConfigureSearchKnowledgeRead(h *Handler, knowledge interfaces.KnowledgeService,
+	leases readlease.NextcloudReadLeaseStore,
+) {
+	if h != nil {
+		h.searchKnowledgeService = knowledge
+		h.searchContentLeases = leases
+	}
 }
 
 // NewHandler creates a new instance of Handler with all necessary dependencies

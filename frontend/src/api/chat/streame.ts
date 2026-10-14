@@ -100,11 +100,12 @@ export function useStream() {
       if (params.knowledge_ids !== undefined && params.knowledge_ids.length > 0) {
         postBody.knowledge_ids = params.knowledge_ids;
       }
-      // Include agent_id if provided (backend resolves shared agent and tenant from share relation)
-      if (params.agent_id) {
+      // A quick-answer request can still have a selected built-in Agent in the
+      // UI. Only Agent mode may send its identity and tenant scope.
+      if (postBody.agent_enabled && params.agent_id) {
         postBody.agent_id = params.agent_id;
       }
-      if (params.agent_source_tenant_id) {
+      if (postBody.agent_enabled && params.agent_source_tenant_id) {
         postBody.agent_source_tenant_id = Number(params.agent_source_tenant_id);
       }
       // Include web_search_enabled if provided

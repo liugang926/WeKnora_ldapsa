@@ -61,6 +61,12 @@ func (s *resourceCatalog) Register(
 		return "", err
 	}
 	if existing != nil {
+		if err := s.repo.PromoteSourceProvenance(ctx, existing.ID, registrationProvenance(
+			meta.SourceProvenance,
+		)); err !=
+			nil {
+			return "", err
+		}
 		return types.BuildResourcePath(existing.Handle), nil
 	}
 
@@ -94,6 +100,7 @@ func (s *resourceCatalog) Register(
 			OriginalName:     meta.OriginalName,
 			Size:             meta.Size,
 			ContentHash:      meta.ContentHash,
+			SourceProvenance: registrationProvenance(meta.SourceProvenance),
 			Lifecycle:        lifecycle,
 		}
 		if err := s.repo.Create(ctx, resource); err == nil {
@@ -103,10 +110,27 @@ func (s *resourceCatalog) Register(
 		}
 		existing, lookupErr := s.repo.GetByTenantLocation(ctx, tenantID, locationHash)
 		if lookupErr == nil && existing != nil {
+			if err := s.repo.PromoteSourceProvenance(ctx, existing.ID, registrationProvenance(
+				meta.SourceProvenance,
+			)); err !=
+				nil {
+				return "", err
+			}
 			return types.BuildResourcePath(existing.Handle), nil
 		}
 	}
 	return "", fmt.Errorf("failed to allocate unique resource handle")
+}
+
+func registrationProvenance(value string) string {
+	switch value {
+	case "", types.ResourceProvenanceOrdinary:
+		return types.ResourceProvenanceOrdinary
+	case types.ResourceProvenanceNextcloud, types.ResourceProvenanceUnknown:
+		return value
+	default:
+		return types.ResourceProvenanceUnknown
+	}
 }
 
 func (s *resourceCatalog) Resolve(ctx context.Context, reference string) (*types.StoredResource, error) {
@@ -146,6 +170,36 @@ func (s *resourceCatalog) Bind(ctx context.Context, reference, ownerType, ownerI
 	if relation == "" {
 		relation = "attachment"
 	}
+	if ownerType == types.ResourceOwnerKnowledge {
+		knowledge, err := s.repo.GetKnowledgeForResourceBinding(ctx, resource.TenantID, ownerID)
+		if err != nil {
+			return err
+		}
+		if knowledge != nil {
+			marked, err := isNextcloudKnowledge(knowledge)
+			if err != nil {
+				if markErr := s.repo.PromoteSourceProvenance(
+					ctx,
+					resource.ID,
+					types.ResourceProvenanceUnknown,
+				); markErr !=
+					nil {
+					return markErr
+				}
+				return err
+			}
+			if marked {
+				if err := s.repo.PromoteSourceProvenance(ctx, resource.ID, types.ResourceProvenanceNextcloud); err !=
+					nil {
+					return err
+				}
+			}
+		} else if relation != types.ResourceRelationSourceFile {
+			if err := s.repo.PromoteSourceProvenance(ctx, resource.ID, types.ResourceProvenanceUnknown); err != nil {
+				return err
+			}
+		}
+	}
 	return s.repo.CreateBinding(ctx, &types.ResourceBinding{
 		ResourceID: resource.ID,
 		TenantID:   resource.TenantID,
@@ -153,6 +207,31 @@ func (s *resourceCatalog) Bind(ctx context.Context, reference, ownerType, ownerI
 		OwnerID:    ownerID,
 		Relation:   relation,
 	})
+}
+
+func (s *resourceCatalog) GetResourceSourceProvenance(
+	ctx context.Context, tenantID uint64, referenceOrPath string,
+) (string, error) {
+	physical, resource, err := s.ResolvePath(ctx, referenceOrPath)
+	if err != nil {
+		return "", err
+	}
+	if resource == nil {
+		resource, err = s.repo.GetByTenantLocation(ctx, tenantID, resourceLocationHash(physical))
+		if err != nil {
+			return "", err
+		}
+	}
+	if resource == nil {
+		return types.ResourceProvenanceUnknown, nil
+	}
+	if resource.TenantID != tenantID {
+		return "", fmt.Errorf("resource tenant does not match authorization tenant")
+	}
+	if resource.SourceProvenance == "" {
+		return types.ResourceProvenanceUnknown, nil
+	}
+	return resource.SourceProvenance, nil
 }
 
 func (s *resourceCatalog) IsReferencedByKnowledgeBase(
@@ -218,6 +297,39 @@ func (s *resourceCatalog) ListKnowledgeBaseIDs(
 		return nil, fmt.Errorf("resource tenant does not match authorization tenant")
 	}
 	return s.repo.ListKnowledgeBaseIDsByResource(ctx, tenantID, resource.ID)
+}
+
+// ListResourceKnowledgeOwners accepts both stable handles and exact physical
+// locators. An exact knowledge.file_path match remains authoritative after a
+// live binding is removed, so a soft-deleted Nextcloud source still blocks an
+// old capability URL.
+func (s *resourceCatalog) ListResourceKnowledgeOwners(
+	ctx context.Context, tenantID uint64, referenceOrPath string,
+) ([]*types.Knowledge, bool, error) {
+	physical, resource, err := s.ResolvePath(ctx, referenceOrPath)
+	if err != nil {
+		return nil, false, err
+	}
+	if resource == nil {
+		resource, err = s.repo.GetByTenantLocation(ctx, tenantID, resourceLocationHash(physical))
+		if err != nil {
+			return nil, false, err
+		}
+	}
+	if resource != nil && resource.TenantID != tenantID {
+		return nil, false, fmt.Errorf("resource tenant does not match authorization tenant")
+	}
+	resourceID := ""
+	canonical := referenceOrPath
+	if resource != nil {
+		resourceID = resource.ID
+		canonical = types.BuildResourcePath(resource.Handle)
+	}
+	owners, err := s.repo.ListKnowledgeOwnersByResource(ctx, tenantID, resourceID, canonical, physical)
+	if err != nil {
+		return nil, false, err
+	}
+	return owners, resource != nil || len(owners) > 0, nil
 }
 
 // Release implements interfaces.ResourceCatalog.

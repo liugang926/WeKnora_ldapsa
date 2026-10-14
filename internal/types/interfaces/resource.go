@@ -23,6 +23,8 @@ type ResourceRepository interface {
 	GetByHandle(ctx context.Context, handle string) (*types.StoredResource, error)
 	GetByTenantLocation(ctx context.Context, tenantID uint64, locationHash string) (*types.StoredResource, error)
 	MarkDeleted(ctx context.Context, id string) error
+	PromoteSourceProvenance(ctx context.Context, id, provenance string) error
+	GetKnowledgeForResourceBinding(ctx context.Context, tenantID uint64, knowledgeID string) (*types.Knowledge, error)
 	CreateBinding(ctx context.Context, binding *types.ResourceBinding) error
 	DeleteBinding(ctx context.Context, resourceID, ownerType, ownerID string) error
 	CountBindings(ctx context.Context, resourceID string) (int64, error)
@@ -37,6 +39,9 @@ type ResourceRepository interface {
 		resourceID, messageID string,
 	) (*types.MessageFileBindings, error)
 	ListKnowledgeBaseIDsByResource(ctx context.Context, tenantID uint64, resourceID string) ([]string, error)
+	ListKnowledgeOwnersByResource(
+		ctx context.Context, tenantID uint64, resourceID, reference, physicalPath string,
+	) ([]*types.Knowledge, error)
 	CreateGrant(ctx context.Context, grant *types.ResourceAccessGrant) error
 	GetValidGrant(ctx context.Context, tokenHash string, now time.Time) (*types.ResourceAccessGrant, error)
 	RevokeValidGrantsByKnowledgeBase(ctx context.Context, tenantID uint64, kbID string, now time.Time) (int64, error)
@@ -45,12 +50,13 @@ type ResourceRepository interface {
 
 // ResourceRegistration describes one physical object at registration time.
 type ResourceRegistration struct {
-	Kind         string
-	MimeType     string
-	OriginalName string
-	Size         int64
-	ContentHash  string
-	Temporary    bool
+	Kind             string
+	MimeType         string
+	OriginalName     string
+	Size             int64
+	ContentHash      string
+	Temporary        bool
+	SourceProvenance string
 }
 
 // ResourceCatalog maps public resource references to internal storage
@@ -85,6 +91,17 @@ type ResourceCatalog interface {
 // Text references and common storage tenancy never establish ownership.
 type KBResourceLookup interface {
 	IsReferencedByKnowledgeBase(ctx context.Context, tenantID uint64, kbID, reference string) (bool, error)
+}
+
+// ResourceKnowledgeLookup resolves a stored object to its authoritative
+// knowledge owners. recognized is false when neither a registered resource
+// nor an exact knowledge file path exists; raw paths in that state cannot be
+// safely served by source-aware file routes.
+type ResourceKnowledgeLookup interface {
+	ListResourceKnowledgeOwners(
+		ctx context.Context, tenantID uint64, referenceOrPath string,
+	) (owners []*types.Knowledge, recognized bool, err error)
+	GetResourceSourceProvenance(ctx context.Context, tenantID uint64, referenceOrPath string) (string, error)
 }
 
 // MessageFileBindingLookup resolves explicit KB and message-artifact bindings.

@@ -31,27 +31,41 @@ const kbTaskCleanupTimeout = 5 * time.Second
 
 // knowledgeBaseService implements the knowledge base service interface
 type knowledgeBaseService struct {
-	repo            interfaces.KnowledgeBaseRepository
-	kgRepo          interfaces.KnowledgeRepository
-	chunkRepo       interfaces.ChunkRepository
-	shareRepo       interfaces.KBShareRepository
-	kbShareService  interfaces.KBShareService
-	modelService    interfaces.ModelService
-	retrieveEngine  interfaces.RetrieveEngineRegistry
-	ownership       retriever.TenantStoreOwnership
-	tenantRepo      interfaces.TenantRepository
-	fileSvc         interfaces.FileService
-	storageResolver interfaces.StorageBackendResolver
-	graphEngine     interfaces.RetrieveGraphRepository
-	asynqClient     interfaces.TaskEnqueuer
-	taskInspector   interfaces.TaskInspector
-	taskPendingRepo interfaces.TaskPendingOpsRepository
-	dsRepo          interfaces.DataSourceRepository
-	syncLogRepo     interfaces.SyncLogRepository
-	dsScheduler     *datasource.Scheduler
-	audit           interfaces.AuditLogService
-	resourceCatalog interfaces.ResourceCatalog
-	wikiRepo        interfaces.WikiPageRepository
+	repo                   interfaces.KnowledgeBaseRepository
+	kgRepo                 interfaces.KnowledgeRepository
+	chunkRepo              interfaces.ChunkRepository
+	shareRepo              interfaces.KBShareRepository
+	kbShareService         interfaces.KBShareService
+	modelService           interfaces.ModelService
+	retrieveEngine         interfaces.RetrieveEngineRegistry
+	ownership              retriever.TenantStoreOwnership
+	tenantRepo             interfaces.TenantRepository
+	fileSvc                interfaces.FileService
+	storageResolver        interfaces.StorageBackendResolver
+	graphEngine            interfaces.RetrieveGraphRepository
+	asynqClient            interfaces.TaskEnqueuer
+	taskInspector          interfaces.TaskInspector
+	taskPendingRepo        interfaces.TaskPendingOpsRepository
+	dsRepo                 interfaces.DataSourceRepository
+	syncLogRepo            interfaces.SyncLogRepository
+	dsScheduler            *datasource.Scheduler
+	audit                  interfaces.AuditLogService
+	resourceCatalog        interfaces.ResourceCatalog
+	wikiRepo               interfaces.WikiPageRepository
+	publicationGuard       *access.NextcloudPublicationGuard
+	searchPublicationCheck func(context.Context, *types.Knowledge) error // test seam; production uses publicationGuard
+	contentLeases          *repository.NextcloudContentLeaseStore
+	groupAccess            interfaces.GroupAccessService
+}
+
+// ConfigureKnowledgeBaseGroupAccess gives RAG and Agent search the same live
+// directory-grant checkpoint used when search targets are constructed.
+func ConfigureKnowledgeBaseGroupAccess(base interfaces.KnowledgeBaseService,
+	groups interfaces.GroupAccessService,
+) {
+	if impl, ok := base.(*knowledgeBaseService); ok {
+		impl.groupAccess = groups
+	}
 }
 
 // NewKnowledgeBaseService creates a new knowledge base service
@@ -76,29 +90,33 @@ func NewKnowledgeBaseService(repo interfaces.KnowledgeBaseRepository,
 	audit interfaces.AuditLogService,
 	resourceCatalog interfaces.ResourceCatalog,
 	wikiRepo interfaces.WikiPageRepository,
+	publicationGuard *access.NextcloudPublicationGuard,
+	contentLeases *repository.NextcloudContentLeaseStore,
 ) interfaces.KnowledgeBaseService {
 	return &knowledgeBaseService{
-		repo:            repo,
-		kgRepo:          kgRepo,
-		chunkRepo:       chunkRepo,
-		shareRepo:       shareRepo,
-		kbShareService:  kbShareService,
-		modelService:    modelService,
-		retrieveEngine:  retrieveEngine,
-		ownership:       ownership,
-		tenantRepo:      tenantRepo,
-		fileSvc:         fileSvc,
-		storageResolver: storageResolver,
-		graphEngine:     graphEngine,
-		asynqClient:     asynqClient,
-		taskInspector:   taskInspector,
-		taskPendingRepo: taskPendingRepo,
-		dsRepo:          dsRepo,
-		syncLogRepo:     syncLogRepo,
-		dsScheduler:     dsScheduler,
-		audit:           audit,
-		resourceCatalog: resourceCatalog,
-		wikiRepo:        wikiRepo,
+		repo:             repo,
+		kgRepo:           kgRepo,
+		chunkRepo:        chunkRepo,
+		shareRepo:        shareRepo,
+		kbShareService:   kbShareService,
+		modelService:     modelService,
+		retrieveEngine:   retrieveEngine,
+		ownership:        ownership,
+		tenantRepo:       tenantRepo,
+		fileSvc:          fileSvc,
+		storageResolver:  storageResolver,
+		graphEngine:      graphEngine,
+		asynqClient:      asynqClient,
+		taskInspector:    taskInspector,
+		taskPendingRepo:  taskPendingRepo,
+		dsRepo:           dsRepo,
+		syncLogRepo:      syncLogRepo,
+		dsScheduler:      dsScheduler,
+		audit:            audit,
+		resourceCatalog:  resourceCatalog,
+		wikiRepo:         wikiRepo,
+		publicationGuard: publicationGuard,
+		contentLeases:    contentLeases,
 	}
 }
 
@@ -738,6 +756,25 @@ func (s *knowledgeBaseService) DeleteKnowledgeBase(ctx context.Context, id strin
 	var vectorStoreIDSnapshot *string
 	if kb != nil {
 		vectorStoreIDSnapshot = kb.VectorStoreID
+	}
+	// A paired Nextcloud source cannot be detached by the generic data-source
+	// deletion path. Reject the KB deletion before any side effects as well;
+	// otherwise its cron entry and pending logs would survive a soft-deleted
+	// KB. Legacy unpaired Nextcloud sources are held for explicit repair too.
+	if s.dsRepo != nil {
+		sources, listErr := s.dsRepo.FindByKnowledgeBase(ctx, id)
+		if listErr != nil {
+			return listErr
+		}
+		for _, source := range sources {
+			if source != nil && source.Type == types.ConnectorTypeNextcloud {
+				return types.NewNextcloudKnowledgeBaseDeletionBlockedError(
+					errors.New(
+						("nextcloud source must be unpaired before deleting its k" +
+							"nowledge base")),
+				)
+			}
+		}
 	}
 
 	// Step 1: Delete the knowledge base record first (mark as deleted)

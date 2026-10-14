@@ -88,6 +88,12 @@ type DataSourceRepository interface {
 
 	// UpdateSyncState updates only fields produced by a sync run.
 	UpdateSyncState(ctx context.Context, ds *types.DataSource) error
+	// UpdateNextcloudSyncStateCAS commits a complete Nextcloud sync only if the
+	// source still has the status observed when the worker loaded it.
+	UpdateNextcloudSyncStateCAS(ctx context.Context, ds *types.DataSource, expectedStatus string) (bool, error)
+	// UpdateNextcloudRetryableEventFailure records a transient event error only
+	// while the source is still active. It must not overwrite a concurrent pause.
+	UpdateNextcloudRetryableEventFailure(ctx context.Context, ds *types.DataSource) (bool, error)
 
 	// Delete performs a soft delete
 	Delete(ctx context.Context, id string) error
@@ -113,6 +119,19 @@ type SyncLogRepository interface {
 	// HasRunningSync checks if a data source has any sync currently in "running" status.
 	// Used to prevent overlapping sync executions.
 	HasRunningSync(ctx context.Context, dsID string) (bool, error)
+
+	// ClaimNextcloudSyncStart fences duplicate, old, and recovered manual/cron
+	// tasks before any source I/O. The task ID is supplied by the executor.
+	ClaimNextcloudSyncStart(ctx context.Context, logID, dsID string, tenantID uint64, trigger,
+		taskID string, retryCount int) (string, error)
+	// FinishNextcloudSyncAttempt releases a failed attempt to the exact Asynq
+	// retry, or terminally fails a still-running log after its last attempt.
+	FinishNextcloudSyncAttempt(ctx context.Context, logID, dsID string, tenantID uint64, trigger, taskID,
+		token string, terminal bool, message string) (bool, error)
+	// MarkNextcloudEnqueueUncertain records a lost reply only while this exact
+	// reserved task is still unstarted; it never reopens a worker result.
+	MarkNextcloudEnqueueUncertain(ctx context.Context, logID, dsID string, tenantID uint64, trigger,
+		taskID string) (bool, error)
 
 	// Update updates an existing sync log entry
 	Update(ctx context.Context, log *types.SyncLog) error

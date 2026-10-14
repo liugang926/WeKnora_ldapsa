@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 
+	apperrors "github.com/Tencent/WeKnora/internal/errors"
+
 	"github.com/Tencent/WeKnora/internal/config"
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/models/rerank"
@@ -32,44 +34,67 @@ const (
 
 var searchKnowledgeTool = BaseTool{
 	name: ToolSearchKnowledge,
-	description: "Search the knowledge bases in scope and return the most relevant chunks with their content.\n" +
-		"mode \"hybrid\" (default) combines semantic and keyword retrieval. \"semantic\" ranks by meaning and " +
-		"tolerates paraphrase. \"keyword\" matches the literal terms and is the right choice for identifiers, " +
-		"error codes, product names and exact phrases. A base without the requested index is searched with the " +
+	description: "Search the knowledge bases in scope and return the most relevant chunks " +
+		"with their content.\n" +
+		"mode \"hybrid\" (default) combines semantic and keyword retrieval. \"sem" +
+		"antic\" ranks by meaning and " +
+		"tolerates paraphrase. \"keyword\" matches the literal terms and is the r" +
+		"ight choice for identifiers, " +
+		"error codes, product names and exact phrases. A base without the request" +
+		"ed index is searched with the " +
 		"index it has; the result reports that as a mode fallback.\n" +
-		"In hybrid and semantic mode write query as one complete natural-language question or statement that " +
-		"names the subject and what you want to know (\"Why does Echo use open-weight models to cut cost?\"), " +
-		"not a keyword list (\"Echo open-weight cost\"): results are ranked by a relevance model that scores " +
-		"meaning. In keyword mode write the exact terms. Pass knowledge_base_ids to focus on the bases whose " +
-		"profile fits the question. When nothing passes the relevance check, rephrase with terms the documents " +
-		"would use; repeating the same query in another mode usually does not help. For identifiers, error " +
+		"In hybrid and semantic mode write query as one complete natural-language" +
+		" question or statement that " +
+		"names the subject and what you want to know (\"Why does Echo use open-we" +
+		"ight models to cut cost?\"), " +
+		"not a keyword list (\"Echo open-weight cost\"): results are ranked by a " +
+		"relevance model that scores " +
+		"meaning. In keyword mode write the exact terms. Pass knowledge_base_ids " +
+		"to focus on the bases whose " +
+		"profile fits the question. When nothing passes the relevance check, reph" +
+		"rase with terms the documents " +
+		"would use; repeating the same query in another mode usually does not hel" +
+		"p. For identifiers, error " +
 		"codes or exact names retry with mode=keyword.\n" +
-		"Every chunk carries a cN handle and belongs to a dN document. Use read_document(id=dN) to read the " +
-		"surrounding context or the whole document. Retrieval matches chunk text; the relevance model also " +
-		"sees the document title. To find a document by its title or file name use list_documents(keyword=...).",
+		"Every chunk carries a cN handle and belongs to a dN document. Use read_d" +
+		"ocument(id=dN) to read the " +
+		"surrounding context or the whole document. Retrieval matches chunk text;" +
+		" the relevance model also " +
+		"sees the document title. To find a document by its title or file name us" +
+		"e list_documents(keyword=...).",
 	schema: json.RawMessage(`{
   "type": "object",
   "properties": {
     "query": {
-      "type": "string",
-      "description": "A complete natural-language question, not a keyword list; exact terms when mode is keyword",
+      "type": "st` +
+		`ring",
+      "description": "A complete natural-language question, not a` +
+		` keyword list; exact terms when mode is keyword",
       "minLength": 1
-    },
+ ` +
+		`   },
     "mode": {
       "type": "string",
-      "enum": ["hybrid", "semantic", "keyword"],
-      "description": "Retrieval mode (default hybrid)"
+      "enum": ["hybrid", "se` +
+		`mantic", "keyword"],
+      "description": "Retrieval mode (default hybri` +
+		`d)"
     },
     "knowledge_base_ids": {
       "type": "array",
-      "description": "Optional bN knowledge-base handles from the runtime context to restrict the search",
+      "des` +
+		`cription": "Optional bN knowledge-base handles from the runtime context ` +
+		`to restrict the search",
       "items": { "type": "string" },
-      "maxItems": 10
+      "max` +
+		`Items": 10
     },
     "limit": {
       "type": "integer",
-      "description": "Maximum chunks to return (default 10, max 30)",
-      "minimum": 1,
+      "descrip` +
+		`tion": "Maximum chunks to return (default 10, max 30)",
+      "minimum":` +
+		` 1,
       "maximum": 30
     }
   },
@@ -165,7 +190,8 @@ func clampSearchLimit(limit int) int {
 func (t *SearchKnowledgeTool) Execute(ctx context.Context, args json.RawMessage) (*types.ToolResult, error) {
 	var input SearchKnowledgeInput
 	if err := json.Unmarshal(args, &input); err != nil {
-		return &types.ToolResult{Success: false, Error: fmt.Sprintf("Failed to parse args: %v", err)}, err
+		return &types.ToolResult{Success: false, Error: fmt.Sprintf("Failed to parse args: %v",
+			apperrors.PublicMessage(err))}, err
 	}
 
 	query := strings.TrimSpace(input.Query)
@@ -174,7 +200,7 @@ func (t *SearchKnowledgeTool) Execute(ctx context.Context, args json.RawMessage)
 	}
 	mode, err := normalizeSearchMode(input.Mode)
 	if err != nil {
-		return &types.ToolResult{Success: false, Error: err.Error()}, err
+		return &types.ToolResult{Success: false, Error: apperrors.PublicMessage(err)}, err
 	}
 	limit := clampSearchLimit(input.Limit)
 
@@ -182,7 +208,7 @@ func (t *SearchKnowledgeTool) Execute(ctx context.Context, args json.RawMessage)
 	searchTargets := t.searchTargets
 	if len(input.KnowledgeBaseIDs) > 0 {
 		if err := validateKnowledgeBaseIDsInSearchTargets(t.searchTargets, input.KnowledgeBaseIDs); err != nil {
-			return &types.ToolResult{Success: false, Error: err.Error()}, err
+			return &types.ToolResult{Success: false, Error: apperrors.PublicMessage(err)}, err
 		}
 		wanted := make(map[string]bool, len(input.KnowledgeBaseIDs))
 		for _, kbID := range input.KnowledgeBaseIDs {
@@ -202,6 +228,18 @@ func (t *SearchKnowledgeTool) Execute(ctx context.Context, args json.RawMessage)
 			Error:   "no knowledge base is in scope for this search",
 		}, fmt.Errorf("no search targets available")
 	}
+	readCtx, guard, err := beginAgentRead(ctx, t.knowledgeService, searchTargets)
+	if err != nil {
+		return &types.ToolResult{Success: false, Error: apperrors.PublicMessage(err)}, err
+	}
+	if guard != nil {
+		defer func() {
+			if err := guard.Close(); err != nil {
+				logger.Warnf(ctx, "[Tool][SearchKnowledge] Close source read lease: %v", err)
+			}
+		}()
+	}
+	ctx = readCtx
 
 	kbIDs := searchTargets.GetAllKnowledgeBaseIDs()
 	kbList, err := t.knowledgeBaseService.GetKnowledgeBasesByIDsOnly(ctx, kbIDs)
@@ -300,6 +338,49 @@ func (t *SearchKnowledgeTool) Execute(ctx context.Context, args json.RawMessage)
 	if len(final) == 0 {
 		result.Output = emptySearchStatement(query, result.Data, len(kbIDs))
 	}
+	// Reranking, passage enrichment, and image metadata loading happen after
+	// HybridSearch returns. Keep the broad lease across those reads, then
+	// recheck the current source and KB grants before exposing tool output.
+	seen := make(map[string]bool)
+	var sourceDocuments []*types.Knowledge
+	for _, row := range final {
+		if row == nil || row.SearchResult == nil {
+			continue
+		}
+		r := row.SearchResult
+		if r.KnowledgeChannel != types.ConnectorTypeNextcloud &&
+			r.Metadata["nextcloud_file_id"] == "" && r.Metadata["nextcloud_binding_id"] == "" {
+			continue
+		}
+		if r.KnowledgeID == "" || t.knowledgeService == nil {
+			err := apperrors.NewProtocolError(fmt.Errorf("nextcloud search result has no source document"),
+				"Nextcloud search result has no source document")
+			return &types.ToolResult{Success: false, Error: apperrors.PublicMessage(err)}, err
+		}
+		if seen[r.KnowledgeID] {
+			continue
+		}
+		seen[r.KnowledgeID] = true
+		knowledge, loadErr := t.knowledgeService.GetKnowledgeByIDOnly(ctx, r.KnowledgeID)
+		if loadErr != nil || knowledge == nil || knowledge.ID != r.KnowledgeID ||
+			knowledge.KnowledgeBaseID != r.KnowledgeBaseID {
+			publicCause := apperrors.PublicMessage(loadErr)
+			if loadErr == nil {
+				// Preserve the previous fmt.Errorf %w nil display on the
+				// missing/mismatched-document branch, not a successful lookup.
+				publicCause = "%!w(<nil>)"
+			}
+			err := apperrors.NewProtocolError(
+				fmt.Errorf("nextcloud search source document is unavailable: %w", loadErr),
+				fmt.Sprintf("Nextcloud search source document is unavailable: %s", publicCause),
+			)
+			return &types.ToolResult{Success: false, Error: apperrors.PublicMessage(err)}, err
+		}
+		sourceDocuments = append(sourceDocuments, knowledge)
+	}
+	if err := finishAgentRead(ctx, t.knowledgeService, searchTargets, guard, sourceDocuments); err != nil {
+		return &types.ToolResult{Success: false, Error: apperrors.PublicMessage(err)}, err
+	}
 	return result, nil
 }
 
@@ -313,10 +394,14 @@ func emptySearchStatement(query string, data map[string]interface{}, kbCount int
 	mode, _ := data["mode"].(string)
 	msg := fmt.Sprintf("No matching chunks for %q (mode=%s) in %d knowledge base(s).", query, mode, kbCount)
 	if rejected, _ := data["rerank_rejected"].(int); rejected > 0 {
-		msg = fmt.Sprintf("No chunk passed the relevance check for %q (mode=%s) in %d knowledge base(s): "+
-			"retrieval found %d candidate chunks but the relevance model scored none of them as answering the "+
-			"query. Repeating the same query in another mode usually will not help; rephrase with terms the "+
-			"documents would use. For identifiers, error codes or exact names retry with mode=keyword.",
+		msg = fmt.Sprintf("No chunk passed the relevance check for %q (mode=%s) in %d knowledge bas"+
+			"e(s): "+
+			"retrieval found %d candidate chunks but the relevance model scored none "+
+			"of them as answering the "+
+			"query. Repeating the same query in another mode usually will not help; r"+
+			"ephrase with terms the "+
+			"documents would use. For identifiers, error codes or exact names retry w"+
+			"ith mode=keyword.",
 			query, mode, kbCount, rejected)
 	}
 	fallbacks, _ := data["mode_fallbacks"].([]map[string]interface{})
@@ -369,7 +454,8 @@ func resolveKBSearchModes(mode string, kbs []*types.KnowledgeBase) (map[string]k
 		}
 	}
 	if len(modes) == 0 {
-		return nil, "none of the selected knowledge bases has a chunk index; use a wiki or graph tool for this scope"
+		return nil, "none of the selected knowledge bases has a chunk index; use a wiki or gr" +
+			"aph tool for this scope"
 	}
 	return modes, ""
 }
@@ -474,7 +560,8 @@ func (t *SearchKnowledgeTool) concurrentSearchByTargets(
 			filteredTargets = append(filteredTargets, st)
 			continue
 		}
-		logger.Infof(ctx, "[Tool][SearchKnowledge] Skipping non-searchable KB %s (no vector/keyword index)",
+		logger.Infof(ctx, "[Tool][SearchKnowledge] Skipping non-searchable KB %s (no vector/keyword"+
+			" index)",
 			st.KnowledgeBaseID)
 	}
 	if len(filteredTargets) == 0 {
@@ -621,7 +708,8 @@ func (t *SearchKnowledgeTool) rerankResults(
 
 	rankResults, err := t.rerankScores(ctx, query, results)
 	if err != nil {
-		logger.Warnf(ctx, "[Tool][SearchKnowledge] Rerank model failed, using raw retrieval results: %v", err)
+		logger.Warnf(ctx, "[Tool][SearchKnowledge] Rerank model failed, using raw retrieval results"+
+			": %v", err)
 		return results, nil
 	}
 
@@ -910,7 +998,8 @@ func (t *SearchKnowledgeTool) formatOutput(
 			tag = "faq"
 			idAttr = fmt.Sprintf("faq_id=\"%s\" index=\"%d\"", xmlEscape(result.ID), result.ChunkIndex)
 		}
-		fmt.Fprintf(&ob, "<%s rank=\"%d\" %s knowledge_base_id=\"%s\" knowledge_title=\"%s\" score=\"%.3f\">\n",
+		fmt.Fprintf(&ob, "<%s rank=\"%d\" %s knowledge_base_id=\"%s\" knowledge_title=\"%s\" score"+
+			"=\"%.3f\">\n",
 			tag, i+1, idAttr, xmlEscape(result.KnowledgeBaseID), xmlEscape(result.KnowledgeTitle), result.Score)
 		if snippet != "" {
 			fmt.Fprintf(&ob, "<match_snippet>%s</match_snippet>\n", xmlEscape(snippet))

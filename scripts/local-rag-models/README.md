@@ -19,6 +19,19 @@ RAG_MODEL_TOKEN_FILE=/private/path/rag-model-token \
 
 模型配置的关键字段：`source: remote`、`provider: generic`、`base_url: http://host.docker.internal:19090/v1`，名称分别为 `BAAI/bge-small-zh-v1.5` 和 `BAAI/bge-reranker-base`；Embedding 维度为 `512`。本地测试部署的样例在 `../weknora-ldap-local/builtin_rag_models.yaml`（部署目录不在 Git 仓库中）。既有 3 维知识库不能原地切换到 512 维，应新建知识库或重新索引。已有生产资料不会自动送入本服务。
 
+### 模型加载的安全边界
+
+`requirements.txt` 固定 Sentence Transformers `6.0.0`，两个加载器均显式设置 `trust_remote_code=False`。服务只接受下面两个已批准的模型／修订号配对；环境变量可以重述该配对，但不能改成其他仓库、分支名、修订号或本地路径。模型名、修订号及自定义代码开关在导入模型依赖及初始化模型前检查；这些检查的错误消息不回显配置值。`RAG_TRUST_REMOTE_CODE`、`RAG_EMBEDDING_TRUST_REMOTE_CODE`、`RAG_RERANK_TRUST_REMOTE_CODE` 只能不设置或设置为 `false`／`0`，不能启用自定义模型代码。
+
+| 用途 | 批准模型 | 固定修订号 |
+| --- | --- | --- |
+| Embedding | `BAAI/bge-small-zh-v1.5` | `7999e1d3359715c523056ef9478215996d62a620` |
+| ReRank | `BAAI/bge-reranker-base` | `2cfc18c9415c912f9d8155881c133215df768a70` |
+
+升级理由是 [GHSA-jhr6-gm9c-rqjv](https://github.com/advisories/GHSA-jhr6-gm9c-rqjv)：攻击者若能影响本地模型目录，旧版可能在 `trust_remote_code=False` 时仍加载自定义 Python。告警元数据标注 5.6.0 为修补版本，但[官方 5.6.0 发布说明](https://github.com/huggingface/sentence-transformers/releases/tag/v5.6.0)及[实现](https://github.com/huggingface/sentence-transformers/blob/v5.6.0/sentence_transformers/util/misc.py)明确它仍隐式信任本地目录，仅添加弃用警告；[6.0.0 发布说明](https://github.com/huggingface/sentence-transformers/releases/tag/v6.0.0)和[上游修补](https://github.com/huggingface/sentence-transformers/pull/3935)才强制要求自定义代码获得显式信任。因此本服务不能只升到 5.6.0 就称已阻断此行为。
+
+固定修订号及禁用自定义代码不替代模型缓存、运行账号和下载供应链的保护：使用独立、受控写权限的缓存，不让上传文件或其他低信任用户写入缓存，并复核下载内容。现有虚拟环境和服务不会因修改依赖文件自动升级。请在新虚拟环境中安装后先验证 MPS／CPU 加载、512 维非零有限向量及 ReRank 有限分数，再决定切换服务；升级候选尚不等于实际安装或安全验收。离线单元测试中的模型加载器是桩，不会读取权重，也不证明真实推理兼容性。
+
 ## 候选应用镜像隔离烟测
 
 模型服务启动后，可用 `smoke_candidate.py` 在**全新的一次性 Docker Compose 项目**里验证指定本地应用镜像。脚本先核对可选的源码/补丁镜像标签，再生成随机测试凭据并仅在环回地址发布 API；它使用虚构采购条款注册测试用户、创建知识库、完成解析和 512 维入库，通过应用模型调试接口验证 Embedding/ReRank，并关闭关键词召回执行纯向量检索。结束时只删除自己生成的容器、网络、临时数据库和令牌副本；不会触碰共享 `18080` 或其他 Compose 项目。令牌文件须为 `0600`，脚本不会输出明文令牌、密码或测试文本。

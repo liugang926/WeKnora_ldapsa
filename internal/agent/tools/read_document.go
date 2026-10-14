@@ -8,6 +8,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	apperrors "github.com/Tencent/WeKnora/internal/errors"
+	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 )
@@ -25,48 +27,71 @@ const (
 
 var readDocumentTool = BaseTool{
 	name: ToolReadDocument,
-	description: "Read a document from the knowledge bases in scope: its metadata plus chunks in document order.\n" +
-		"id is a dN document handle (reads a page of chunks starting at offset) or a cN chunk handle (reads that " +
+	description: "Read a document from the knowledge bases in scope: its metadata plus chu" +
+		"nks in document order.\n" +
+		"id is a dN document handle (reads a page of chunks starting at offset) o" +
+		"r a cN chunk handle (reads that " +
 		"chunk; set context to include neighbouring chunks on each side).\n" +
-		"query finds passages inside the document: matching chunks come back with one chunk of context on each " +
-		"side. By default query is case-insensitive and split on whitespace: a chunk matches when it contains " +
-		"every word, in any order. Set regex=true to match query as one POSIX regular expression instead.\n" +
-		"Page through long documents with offset and limit: offset counts chunks in reading order from 0 and is " +
-		"not a chunk index, so continue with the returned next_offset, and use id=cN with context to read around " +
-		"a specific chunk. A page holds fewer than limit chunks when they would exceed the output size budget; " +
-		"next_offset always points at the first chunk not yet returned. Reading a long document end to end " +
+		"query finds passages inside the document: matching chunks come back with" +
+		" one chunk of context on each " +
+		"side. By default query is case-insensitive and split on whitespace: a ch" +
+		"unk matches when it contains " +
+		"every word, in any order. Set regex=true to match query as one POSIX reg" +
+		"ular expression instead.\n" +
+		"Page through long documents with offset and limit: offset counts chunks " +
+		"in reading order from 0 and is " +
+		"not a chunk index, so continue with the returned next_offset, and use id" +
+		"=cN with context to read around " +
+		"a specific chunk. A page holds fewer than limit chunks when they would e" +
+		"xceed the output size budget; " +
+		"next_offset always points at the first chunk not yet returned. Reading a" +
+		" long document end to end " +
 		"costs many calls, so prefer query or search_knowledge to locate the relevant part first.",
 	schema: json.RawMessage(`{
   "type": "object",
   "properties": {
     "id": {
-      "type": "string",
-      "description": "dN document handle or cN chunk handle from retrieval results or the runtime context",
+      "type": "strin` +
+		`g",
+      "description": "dN document handle or cN chunk handle from ret` +
+		`rieval results or the runtime context",
       "minLength": 1
     },
-    "offset": {
+    ` +
+		`"offset": {
       "type": "integer",
-      "description": "Position in reading order to start from (default 0); continue with next_offset",
-      "minimum": 0
+      "description": "Position in r` +
+		`eading order to start from (default 0); continue with next_offset",
+    ` +
+		`  "minimum": 0
     },
     "limit": {
       "type": "integer",
-      "description": "Chunks per page (default 20, max 100)",
+      "des` +
+		`cription": "Chunks per page (default 20, max 100)",
       "minimum": 1,
-      "maximum": 100
+` +
+		`      "maximum": 100
     },
     "query": {
       "type": "string",
-      "description": "Words a chunk must all contain; returns matching chunks with context instead of a page"
+     ` +
+		` "description": "Words a chunk must all contain; returns matching chunks` +
+		` with context instead of a page"
     },
     "regex": {
-      "type": "boolean",
-      "description": "Match query as one POSIX regular expression (default false: each word matched literally)"
+      "type": "bo` +
+		`olean",
+      "description": "Match query as one POSIX regular expressio` +
+		`n (default false: each word matched literally)"
     },
     "context": {
-      "type": "integer",
-      "description": "Neighbouring chunks to include on each side of a cN chunk (default 0, max 5)",
-      "minimum": 0,
+` +
+		`      "type": "integer",
+      "description": "Neighbouring chunks to in` +
+		`clude on each side of a cN chunk (default 0, max 5)",
+      "minimum": 0` +
+		`,
       "maximum": 5
     }
   },
@@ -119,7 +144,8 @@ type readChunkRow struct {
 func (t *ReadDocumentTool) Execute(ctx context.Context, args json.RawMessage) (*types.ToolResult, error) {
 	var input ReadDocumentInput
 	if err := json.Unmarshal(args, &input); err != nil {
-		return &types.ToolResult{Success: false, Error: fmt.Sprintf("Failed to parse args: %v", err)}, err
+		return &types.ToolResult{Success: false, Error: fmt.Sprintf("Failed to parse args: %v",
+			apperrors.PublicMessage(err))}, err
 	}
 	id := strings.TrimSpace(input.ID)
 	if id == "" {
@@ -150,10 +176,25 @@ func (t *ReadDocumentTool) Execute(ctx context.Context, args json.RawMessage) (*
 		contextChunks = readDocumentMaxContext
 	}
 	query := strings.TrimSpace(input.Query)
+	readCtx, guard, err := beginAgentRead(ctx, t.knowledgeService, t.searchTargets)
+	if err != nil {
+		return &types.ToolResult{Success: false, Error: apperrors.PublicMessage(err)}, err
+	}
+	if guard != nil {
+		defer func() {
+			if err := guard.Close(); err != nil {
+				logger.Warnf(ctx, "[Tool][ReadDocument] Close source read lease: %v", err)
+			}
+		}()
+	}
+	ctx = readCtx
 
 	knowledge, chunk, err := t.resolveTarget(ctx, id)
 	if err != nil {
-		return &types.ToolResult{Success: false, Error: err.Error()}, err
+		return &types.ToolResult{Success: false, Error: apperrors.PublicMessage(err)}, err
+	}
+	if err := guard.PinKnowledge(knowledge); err != nil {
+		return &types.ToolResult{Success: false, Error: apperrors.PublicMessage(err)}, err
 	}
 
 	var matchers []*regexp.Regexp
@@ -163,7 +204,7 @@ func (t *ReadDocumentTool) Execute(ctx context.Context, args json.RawMessage) (*
 		compiled, cerr := regexp.Compile("(?i)" + query)
 		if cerr != nil {
 			return &types.ToolResult{
-				Success: false, Error: fmt.Sprintf("invalid regex query %q: %v", query, cerr),
+				Success: false, Error: fmt.Sprintf("invalid regex query %q: %v", query, apperrors.PublicMessage(cerr)),
 			}, cerr
 		}
 		matchers = []*regexp.Regexp{compiled}
@@ -177,14 +218,23 @@ func (t *ReadDocumentTool) Execute(ctx context.Context, args json.RawMessage) (*
 
 	// A query always searches the owning document, even when id named a
 	// chunk: silently returning the single chunk would read as "no match".
+	var result *types.ToolResult
 	switch {
 	case len(matchers) > 0:
-		return t.readByQuery(ctx, knowledge, query, matchers)
+		result, err = t.readByQuery(ctx, knowledge, query, matchers)
 	case chunk != nil:
-		return t.readAroundChunk(ctx, knowledge, chunk, contextChunks)
+		result, err = t.readAroundChunk(ctx, knowledge, chunk, contextChunks)
 	default:
-		return t.readPage(ctx, knowledge, offset, limit)
+		result, err = t.readPage(ctx, knowledge, offset, limit)
 	}
+	if err != nil || result == nil || !result.Success {
+		return result, err
+	}
+	if err := finishAgentRead(ctx, t.knowledgeService, t.searchTargets, guard,
+		[]*types.Knowledge{knowledge}); err != nil {
+		return &types.ToolResult{Success: false, Error: apperrors.PublicMessage(err)}, err
+	}
+	return result, nil
 }
 
 // resolveTarget accepts either a document id or a chunk id. Documents are
@@ -195,7 +245,8 @@ func (t *ReadDocumentTool) resolveTarget(ctx context.Context, id string) (*types
 	if knowledge, err := t.knowledgeService.GetKnowledgeByIDOnly(ctx, id); err == nil && knowledge != nil {
 		authorized, authErr := authorizeLoadedKnowledge(ctx, t.searchTargets, knowledge, t.knowledgeService)
 		if authErr != nil {
-			return nil, nil, fmt.Errorf("document is not accessible: %w", authErr)
+			return nil, nil, apperrors.NewProtocolError(fmt.Errorf("document is not accessible: %w",
+				authErr), fmt.Sprintf("document is not accessible: %s", apperrors.PublicMessage(authErr)))
 		}
 		return authorized, nil, nil
 	}
@@ -207,18 +258,20 @@ func (t *ReadDocumentTool) resolveTarget(ctx context.Context, id string) (*types
 		ctx, t.searchTargets, id, t.chunkService, t.knowledgeService,
 	)
 	if authErr != nil {
-		return nil, nil, fmt.Errorf("chunk is not accessible: %w", authErr)
+		return nil, nil, apperrors.NewProtocolError(fmt.Errorf("chunk is not accessible: %w", authErr),
+			fmt.Sprintf("chunk is not accessible: %s", apperrors.PublicMessage(authErr)))
 	}
 	knowledge, err := t.knowledgeService.GetKnowledgeByIDOnly(ctx, authorizedChunk.KnowledgeID)
 	if err != nil || knowledge == nil {
-		// The chunk is authorized; a missing parent row only costs the header.
-		knowledge = &types.Knowledge{
-			ID:              authorizedChunk.KnowledgeID,
-			TenantID:        authorizedChunk.TenantID,
-			KnowledgeBaseID: authorizedChunk.KnowledgeBaseID,
-		}
+		return nil, nil, fmt.Errorf("chunk source document is unavailable")
 	}
-	return knowledge, authorizedChunk, nil
+	authorized, err := authorizeLoadedKnowledge(ctx, t.searchTargets, knowledge, t.knowledgeService)
+	if err != nil || authorized.ID != authorizedChunk.KnowledgeID ||
+		authorized.KnowledgeBaseID != authorizedChunk.KnowledgeBaseID ||
+		authorized.TenantID != authorizedChunk.TenantID {
+		return nil, nil, fmt.Errorf("chunk source document is not currently accessible")
+	}
+	return authorized, authorizedChunk, nil
 }
 
 func (t *ReadDocumentTool) tenantFor(knowledge *types.Knowledge) uint64 {
@@ -240,7 +293,8 @@ func (t *ReadDocumentTool) listChunks(
 		nil, "", "", "", "", &enabled,
 	)
 	if err != nil {
-		return nil, 0, fmt.Errorf("failed to list chunks: %w", err)
+		return nil, 0, apperrors.NewProtocolError(fmt.Errorf("failed to list chunks: %w", err), fmt.Sprintf(
+			"failed to list chunks: %s", apperrors.PublicMessage(err)))
 	}
 	return chunks, total, nil
 }
@@ -297,7 +351,7 @@ func (t *ReadDocumentTool) readPage(
 ) (*types.ToolResult, error) {
 	chunks, total, err := t.fetchWindow(ctx, knowledge, offset, limit)
 	if err != nil {
-		return &types.ToolResult{Success: false, Error: err.Error()}, err
+		return &types.ToolResult{Success: false, Error: apperrors.PublicMessage(err)}, err
 	}
 	if len(chunks) == 0 && total > 0 && int64(offset) >= total {
 		suggested := int(total) - limit
@@ -307,7 +361,8 @@ func (t *ReadDocumentTool) readPage(
 		return &types.ToolResult{
 			Success: false,
 			Error: fmt.Sprintf(
-				"offset %d is out of range: document has %d chunks (valid offsets 0..%d). Retry with offset=%d.",
+				"offset %d is out of range: document has %d chunks (valid offsets 0..%d)."+
+					" Retry with offset=%d.",
 				offset, total, total-1, suggested),
 			Data: map[string]interface{}{
 				"knowledge_id":     knowledge.ID,
@@ -355,7 +410,8 @@ func (t *ReadDocumentTool) readAroundChunk(
 		)
 		if err != nil {
 			return &types.ToolResult{
-				Success: false, Error: fmt.Sprintf("failed to list neighbouring chunks: %v", err),
+				Success: false, Error: fmt.Sprintf("failed to list neighbouring chunks: %v",
+					apperrors.PublicMessage(err)),
 			}, err
 		}
 		rows = rows[:0]
@@ -424,7 +480,7 @@ scan:
 	for {
 		chunks, pageTotal, err := t.listChunks(ctx, knowledge, page, readDocumentScanPageSize)
 		if err != nil {
-			return &types.ToolResult{Success: false, Error: err.Error()}, err
+			return &types.ToolResult{Success: false, Error: apperrors.PublicMessage(err)}, err
 		}
 		if page == 1 {
 			total = pageTotal

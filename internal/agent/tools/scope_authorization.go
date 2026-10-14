@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/Tencent/WeKnora/internal/application/access"
+	apperrors "github.com/Tencent/WeKnora/internal/errors"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 )
@@ -102,7 +104,30 @@ func authorizeLoadedKnowledge(
 	if !allowed {
 		return nil, fmt.Errorf("document %s is not within the current @mention scope", knowledge.ID)
 	}
+	if err := checkKnowledgePublication(ctx, knowledge, knowledgeService); err != nil {
+		return nil, apperrors.NewProtocolError(
+			fmt.Errorf("document %s is not currently accessible: %w", knowledge.ID, err),
+			fmt.Sprintf("document %s is not currently accessible: %s", knowledge.ID, apperrors.PublicMessage(err)),
+		)
+	}
 	return knowledge, nil
+}
+
+type knowledgePublicationChecker interface {
+	CheckKnowledgePublication(context.Context, *types.Knowledge) error
+}
+
+// Production KnowledgeService implements the source check. Test and alternate
+// service implementations may not; a nil guard still rejects anything marked
+// as source-backed while allowing unrelated documents.
+func checkKnowledgePublication(
+	ctx context.Context, knowledge *types.Knowledge, knowledgeService interfaces.KnowledgeService,
+) error {
+	if checker, ok := knowledgeService.(knowledgePublicationChecker); ok {
+		return checker.CheckKnowledgePublication(ctx, knowledge)
+	}
+	var missingGuard *access.NextcloudPublicationGuard
+	return missingGuard.CheckKnowledge(ctx, knowledge)
 }
 
 // authorizeChunkInSearchTargets is the chunk/FAQ counterpart of
@@ -144,6 +169,20 @@ func authorizeChunkInSearchTargets(
 	}
 	if !allowed {
 		return nil, fmt.Errorf("chunk %s is not within the current @mention scope", chunk.ID)
+	}
+	if knowledgeService == nil {
+		return nil, fmt.Errorf("knowledge service is unavailable for chunk source authorization")
+	}
+	knowledge, err := knowledgeService.GetKnowledgeByIDOnly(ctx, chunk.KnowledgeID)
+	if err != nil || knowledge == nil || knowledge.ID != chunk.KnowledgeID ||
+		knowledge.KnowledgeBaseID != chunk.KnowledgeBaseID || knowledge.TenantID != chunk.TenantID {
+		return nil, fmt.Errorf("chunk %s has no matching source document", chunk.ID)
+	}
+	if err := checkKnowledgePublication(ctx, knowledge, knowledgeService); err != nil {
+		return nil, apperrors.NewProtocolError(
+			fmt.Errorf("chunk %s is not currently accessible: %w", chunk.ID, err),
+			fmt.Sprintf("chunk %s is not currently accessible: %s", chunk.ID, apperrors.PublicMessage(err)),
+		)
 	}
 	return chunk, nil
 }

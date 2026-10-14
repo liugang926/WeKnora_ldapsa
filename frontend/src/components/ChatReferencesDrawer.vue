@@ -72,7 +72,7 @@
                       <div class="reference-item__title-row">
                         <h5 class="reference-item__title" :title="item.title">{{ item.title }}</h5>
                         <a
-                          v-if="item.knowledgeBaseId && !embeddedMode"
+                          v-if="(item.url || item.knowledgeBaseId) && !embeddedMode"
                           class="reference-item__open"
                           :href="getDocumentHref(item)"
                           target="_blank"
@@ -262,6 +262,7 @@ function toggleDocumentSnippet(item: ReferenceListItem, event?: MouseEvent) {
 }
 
 function getDocumentHref(item: ReferenceListItem) {
+  if (item.url) return item.url
   if (!item.knowledgeBaseId) return ''
   const query: Record<string, string> = {}
   if (item.knowledgeId) query.knowledge_id = item.knowledgeId

@@ -40,6 +40,18 @@ func stripWikiPageInlineChunkCitations(page *types.WikiPage) {
 	page.Summary = stripWikiInlineChunkCitations(page.Summary)
 }
 
+func (s *wikiPageService) rejectNextcloudSource(ctx context.Context, kbID string) error {
+	// Production uses knowledgeBaseService. In small unit fixtures the KB
+	// dependency is often deliberately absent; those fixtures have no source
+	// configuration or imported documents to expose.
+	if checker, ok := s.kbService.(interface {
+		RejectNextcloudDerivedKB(context.Context, string) error
+	}); ok {
+		return checker.RejectNextcloudDerivedKB(ctx, kbID)
+	}
+	return nil
+}
+
 // wikiPageService implements the WikiPageService interface
 type wikiPageService struct {
 	repo            interfaces.WikiPageRepository
@@ -343,6 +355,9 @@ func (s *wikiPageService) RevertPageToVersion(
 
 // GetPageBySlug retrieves a wiki page by its slug
 func (s *wikiPageService) GetPageBySlug(ctx context.Context, kbID string, slug string) (*types.WikiPage, error) {
+	if err := s.rejectNextcloudSource(ctx, kbID); err != nil {
+		return nil, err
+	}
 	page, err := s.repo.GetBySlug(ctx, kbID, slug)
 	if err != nil {
 		return nil, err
@@ -357,12 +372,20 @@ func (s *wikiPageService) GetPageByID(ctx context.Context, id string) (*types.Wi
 	if err != nil {
 		return nil, err
 	}
+	if page != nil {
+		if err := s.rejectNextcloudSource(ctx, page.KnowledgeBaseID); err != nil {
+			return nil, err
+		}
+	}
 	stripWikiPageInlineChunkCitations(page)
 	return page, nil
 }
 
 // ListPages lists wiki pages with optional filtering and pagination
 func (s *wikiPageService) ListPages(ctx context.Context, req *types.WikiPageListRequest) (*types.WikiPageListResponse, error) {
+	if err := s.rejectNextcloudSource(ctx, req.KnowledgeBaseID); err != nil {
+		return nil, err
+	}
 	pages, total, err := s.repo.List(ctx, req)
 	if err != nil {
 		return nil, err
@@ -424,6 +447,9 @@ func (s *wikiPageService) DeletePage(ctx context.Context, kbID string, slug stri
 
 // GetIndex returns the index page for a knowledge base
 func (s *wikiPageService) GetIndex(ctx context.Context, kbID string) (*types.WikiPage, error) {
+	if err := s.rejectNextcloudSource(ctx, kbID); err != nil {
+		return nil, err
+	}
 	page, err := s.repo.GetBySlug(ctx, kbID, "index")
 	if err != nil {
 		if errors.Is(err, repository.ErrWikiPageNotFound) {
@@ -576,6 +602,9 @@ func (s *wikiPageService) GetIndexView(
 func (s *wikiPageService) GetGraph(ctx context.Context, req *types.WikiGraphRequest) (*types.WikiGraphData, error) {
 	if req == nil {
 		return nil, errors.New("wiki graph request is required")
+	}
+	if err := s.rejectNextcloudSource(ctx, req.KnowledgeBaseID); err != nil {
+		return nil, err
 	}
 
 	pages, err := s.repo.ListAll(ctx, req.KnowledgeBaseID)
@@ -1019,6 +1048,9 @@ func (s *wikiPageService) CountByType(ctx context.Context, kbID string) (map[str
 
 // SearchPages performs full-text search over wiki pages
 func (s *wikiPageService) SearchPages(ctx context.Context, kbID string, query string, limit int) ([]*types.WikiPage, error) {
+	if err := s.rejectNextcloudSource(ctx, kbID); err != nil {
+		return nil, err
+	}
 	return s.repo.Search(ctx, kbID, query, limit)
 }
 

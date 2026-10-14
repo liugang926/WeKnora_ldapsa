@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
+	"github.com/Tencent/WeKnora/internal/datasource"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	"github.com/gin-gonic/gin"
@@ -16,6 +18,7 @@ type stubDataSourceService struct {
 	interfaces.DataSourceService
 	getSyncLogs   func(ctx context.Context, dsID string, limit int, offset int) ([]*types.SyncLog, error)
 	getDataSource func(ctx context.Context, id string) (*types.DataSource, error)
+	manualSync    func(ctx context.Context, id string) (*types.SyncLog, error)
 }
 
 func (s *stubDataSourceService) GetSyncLogs(ctx context.Context, dsID string, limit int, offset int) ([]*types.SyncLog, error) {
@@ -30,6 +33,62 @@ func (s *stubDataSourceService) GetDataSource(ctx context.Context, id string) (*
 		return s.getDataSource(ctx, id)
 	}
 	return nil, nil
+}
+
+func (s *stubDataSourceService) ManualSync(ctx context.Context, id string) (*types.SyncLog, error) {
+	if s.manualSync != nil {
+		return s.manualSync(ctx, id)
+	}
+	return nil, nil
+}
+
+func TestDataSource_ManualNextcloudSyncAdmissionResponses(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		err    error
+		status int
+		code   string
+	}{
+		{"busy", datasource.ErrSyncAlreadyRunning, http.StatusConflict, "data_source_sync_busy"},
+		{
+			"uncertain", datasource.ErrSyncEnqueueUncertain, http.StatusServiceUnavailable,
+			"sync_enqueue_uncertain_review_required",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dsSvc := &stubDataSourceService{
+				getDataSource: func(context.Context, string) (*types.DataSource, error) {
+					return &types.DataSource{ID: "ds1", KnowledgeBaseID: "kb1"}, nil
+				},
+				manualSync: func(context.Context, string) (*types.SyncLog, error) {
+					if tc.err == datasource.ErrSyncEnqueueUncertain {
+						return &types.SyncLog{ID: "synthetic-log"}, tc.err
+					}
+					return nil, tc.err
+				},
+			}
+			kbSvc := &stubKBServiceForDS{getByID: func(context.Context, string) (*types.KnowledgeBase, error) {
+				return &types.KnowledgeBase{ID: "kb1", TenantID: 1}, nil
+			}}
+			router := gin.New()
+			router.Use(func(c *gin.Context) {
+				c.Set(types.TenantIDContextKey.String(), uint64(1))
+				c.Next()
+			})
+			router.POST("/datasource/:id/sync", NewDataSourceHandler(dsSvc, kbSvc).ManualSync)
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/datasource/ds1/sync", nil))
+			if response.Code != tc.status || !strings.Contains(response.Body.String(), tc.code) {
+				t.Fatalf("response = %d %q, want %d %s", response.Code, response.Body.String(), tc.status, tc.code)
+			}
+			if tc.err == datasource.ErrSyncEnqueueUncertain {
+				if !strings.Contains(response.Body.String(), `"sync_log_id":"synthetic-log"`) ||
+					!strings.Contains(response.Body.String(), `"queue_task_id":"dssync:synthetic-log"`) {
+					t.Fatalf("uncertain enqueue response lost stable task identity: %q", response.Body.String())
+				}
+			}
+		})
+	}
 }
 
 type stubKBServiceForDS struct {

@@ -48,6 +48,9 @@ func (s *knowledgeService) ReplaceKnowledgeFile(ctx context.Context,
 	if err != nil {
 		return nil, err
 	}
+	if err := rejectNextcloudSourceManagedMutation(existing); err != nil {
+		return nil, err
+	}
 	if kb != nil && kb.Type == types.KnowledgeBaseTypeFAQ {
 		return nil, werrors.NewBadRequestError("FAQ 知识库不支持文件上传，请使用 FAQ 导入功能")
 	}
@@ -122,7 +125,20 @@ func (s *knowledgeService) ReplaceKnowledgeFile(ctx context.Context,
 	}
 
 	fileSvc := s.resolveFileService(ctx, kb)
-	newPath, err := fileSvc.SaveFile(ctx, file, existing.TenantID, existing.ID)
+	candidate := *existing
+	candidate.Metadata = newMetadata
+	markedNextcloud, err := isNextcloudKnowledge(&candidate)
+	if err != nil {
+		return nil, err
+	}
+	provenance := types.ResourceProvenanceOrdinary
+	if markedNextcloud {
+		provenance = types.ResourceProvenanceNextcloud
+	}
+	newPath, err := fileSvc.SaveFile(types.WithResourceProvenance(
+		ctx,
+		provenance,
+	), file, existing.TenantID, existing.ID)
 	if err != nil {
 		logger.Errorf(ctx, "Failed to save replacement file for knowledge %s: %v", existing.ID, err)
 		return nil, err

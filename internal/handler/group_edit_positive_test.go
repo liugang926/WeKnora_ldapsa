@@ -119,7 +119,8 @@ func TestRestrictedGroupEditReachesHTTPAndRealKnowledgeService(t *testing.T) {
 			knowledgeRepo := repository.NewKnowledgeRepository(db)
 			kg, err := service.NewKnowledgeService(transferHandlerConfig(), knowledgeRepo, nil, kb,
 				nil, nil, nil, nil, nil, nil, nil, nil, nil, nil,
-				nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+				nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil,
+				nil, nil) // Ordinary knowledge has no Nextcloud publication or lease dependencies.
 			require.NoError(t, err)
 			groups := service.NewGroupAccessService(&positiveGroupRepo{
 				mode: tc.mode, permission: tc.permission, fresh: tc.fresh,

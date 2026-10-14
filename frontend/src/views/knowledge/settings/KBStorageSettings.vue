@@ -34,6 +34,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { listStorageBackends, type StorageBackend } from '@/api/storage-backend'
 import { useUIStore } from '@/stores/ui'
+import { resolveStorageInitialSelection } from './kbStorageInitialSelection'
 
 const props = defineProps<{ storageBackendId?: string; storageProvider?: string; hasFiles?: boolean }>()
 const emit = defineEmits<{
@@ -54,8 +55,11 @@ async function load() {
     const response = await listStorageBackends()
     backends.value = (response.data || []).filter(item => item.status === 'active')
     defaultID.value = response.default_storage_backend_id || ''
-    if (!localID.value) localID.value = defaultID.value || backends.value[0]?.id || ''
-    if (localID.value) handleChange()
+    const selection = resolveStorageInitialSelection(
+      localID.value, defaultID.value, backends.value.map(item => item.id), !!props.hasFiles,
+    )
+    localID.value = selection.displayID
+    if (selection.persistID) handleChange()
   } finally { loading.value = false }
 }
 function goToSettings() { uiStore.closeKBEditor?.(); uiStore.openSettings?.('storage') }

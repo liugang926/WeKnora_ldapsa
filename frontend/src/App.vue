@@ -12,6 +12,7 @@ import { getCurrentUser, userInfoFromApi } from '@/api/auth'
 import { consumePendingTenantSwitchToast } from '@/utils/tenantSwitch'
 import { useRoleLabel } from '@/composables/useRoleLabel'
 import { notifyLoginSuccess } from '@/utils/loginNotify'
+import { consumeNextcloudAskReturn } from '@/utils/nextcloudAskLink'
 import { renderWorkspaceNotifyContent } from '@/utils/workspaceNotifyContent'
 
 // TDesign locale configs
@@ -122,7 +123,9 @@ const persistOIDCLoginResponse = async (response: any) => {
   }
 
   await nextTick()
-  router.replace(authStore.hasValidTenant ? '/platform/knowledge-bases' : '/onboarding/workspace')
+  const nextcloudTarget = consumeNextcloudAskReturn()
+  router.replace(authStore.hasValidTenant
+    ? (nextcloudTarget || '/platform/knowledge-bases') : '/onboarding/workspace')
 }
 
 const handleGlobalOIDCCallback = async () => {

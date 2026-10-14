@@ -7,6 +7,7 @@ import type { DeploymentCapabilityKey } from '@/config/deploymentCapabilities'
 import { MessagePlugin } from 'tdesign-vue-next'
 import i18n from '@/i18n'
 import { normalizeSettingsSection } from '@/config/settingsRoute'
+import { safeNextcloudAskPath } from '@/utils/nextcloudAskLink'
 
 /** Lite /桌面 WebView 硬刷新时可能只打开 `/`，用 session 记住上次页面以便恢复 */
 const LITE_LAST_PATH_KEY = 'weknora_lite_last_path'
@@ -166,6 +167,12 @@ const router = createRouter({
           path: "creatChat",
           name: "globalCreatChat",
           component: () => import("../views/creatChat/creatChat.vue"),
+          meta: { requiresInit: true, requiresAuth: true }
+        },
+        {
+          path: "nextcloud-ask",
+          name: "nextcloudAsk",
+          component: () => import("../views/nextcloud/NextcloudAsk.vue"),
           meta: { requiresInit: true, requiresAuth: true }
         },
         {
@@ -364,7 +371,9 @@ router.beforeEach(async (to, from, next) => {
   if (to.meta.requiresAuth === false || to.meta.requiresInit === false) {
     // 如果已登录用户访问登录页面，重定向到知识库列表页面
     if (to.path === '/login' && authStore.isLoggedIn) {
-      next(authStore.hasValidTenant ? '/platform/knowledge-bases' : '/onboarding/workspace')
+      const returnTo = safeNextcloudAskPath(to.query.next)
+      next(authStore.hasValidTenant
+        ? (returnTo || '/platform/knowledge-bases') : '/onboarding/workspace')
       return
     }
     next()
@@ -400,7 +409,8 @@ router.beforeEach(async (to, from, next) => {
           markAutoSetupFailed()
         }
       }
-      next('/login')
+      const nextcloudTarget = to.name === 'nextcloudAsk' ? safeNextcloudAskPath(to.fullPath) : null
+      next(nextcloudTarget ? { path: '/login', query: { next: nextcloudTarget } } : '/login')
       return
     }
   }

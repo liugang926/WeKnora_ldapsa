@@ -369,6 +369,7 @@ type wikiIngestService struct {
 	kbService      interfaces.KnowledgeBaseService
 	knowledgeSvc   interfaces.KnowledgeService
 	knowledgeRepo  interfaces.KnowledgeRepository
+	dataSourceRepo interfaces.DataSourceRepository
 	chunkRepo      interfaces.ChunkRepository
 	modelService   interfaces.ModelService
 	task           interfaces.TaskEnqueuer
@@ -410,6 +411,7 @@ func NewWikiIngestService(
 	kbService interfaces.KnowledgeBaseService,
 	knowledgeSvc interfaces.KnowledgeService,
 	knowledgeRepo interfaces.KnowledgeRepository,
+	dataSourceRepo interfaces.DataSourceRepository,
 	chunkRepo interfaces.ChunkRepository,
 	modelService interfaces.ModelService,
 	task interfaces.TaskEnqueuer,
@@ -425,6 +427,7 @@ func NewWikiIngestService(
 		kbService:      kbService,
 		knowledgeSvc:   knowledgeSvc,
 		knowledgeRepo:  knowledgeRepo,
+		dataSourceRepo: dataSourceRepo,
 		chunkRepo:      chunkRepo,
 		modelService:   modelService,
 		task:           task,

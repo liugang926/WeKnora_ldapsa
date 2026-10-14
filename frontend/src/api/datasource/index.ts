@@ -150,6 +150,48 @@ export function getSyncLogs(id: string, limit = 20, offset = 0) {
   return get(`/api/v1/datasource/${id}/logs?limit=${limit}&offset=${offset}`)
 }
 
+export interface NextcloudFailedCandidate {
+  file_id: string
+  state: string
+  attempt_count: number
+  next_attempt_at?: string
+  last_error_code: string
+}
+
+export interface NextcloudFailedCandidatePage {
+  operation_id: string
+  candidates: NextcloudFailedCandidate[]
+  next_cursor: string
+}
+
+export interface NextcloudFailedCandidateRetryStatus extends NextcloudFailedCandidate {
+  source_etag: string
+  candidate_id: string
+  first_staged_at: string
+  next_attempt_at: string
+}
+
+export function listNextcloudFailedCandidates(dataSourceId: string, cursor = '') {
+  const query = cursor ? `?limit=25&cursor=${encodeURIComponent(cursor)}` : '?limit=25'
+  return get<NextcloudFailedCandidatePage>(
+    `/api/v1/datasource/nextcloud-source-pairings/by-datasource/${encodeURIComponent(dataSourceId)}/failed-candidates${query}`,
+  )
+}
+
+export function getNextcloudFailedCandidateRetry(operationId: string, fileId: string) {
+  return get<{ retry: NextcloudFailedCandidateRetryStatus }>(
+    `/api/v1/datasource/nextcloud-source-pairings/${encodeURIComponent(operationId)}/candidates/${encodeURIComponent(fileId)}/retry`,
+  )
+}
+
+export function retryNextcloudFailedCandidate(operationId: string, fileId: string,
+  status: Pick<NextcloudFailedCandidateRetryStatus, 'source_etag' | 'candidate_id'>) {
+  return post(
+    `/api/v1/datasource/nextcloud-source-pairings/${encodeURIComponent(operationId)}/candidates/${encodeURIComponent(fileId)}/retry`,
+    { source_etag: status.source_etag, candidate_id: status.candidate_id },
+  )
+}
+
 // ----------------------------------------------------------------------------
 // Data source credential subresource. Unlike the other three resources,
 // DataSource exposes a single logical field "credentials" because connector

@@ -4,9 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"sort"
 	"sync"
 
+	apperrors "github.com/Tencent/WeKnora/internal/errors"
+
+	"github.com/Tencent/WeKnora/internal/application/readlease"
+	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	"github.com/Tencent/WeKnora/internal/utils"
@@ -19,8 +24,10 @@ type graphConfigSummary struct {
 
 var queryKnowledgeGraphTool = BaseTool{
 	name: ToolQueryKnowledgeGraph,
-	description: "Query the knowledge graph of graph-enabled knowledge bases to explore how entities relate " +
-		"(for example \"relationship between Docker and Kubernetes\"). Returns the chunks that carry those " +
+	description: "Query the knowledge graph of graph-enabled knowledge bases to explore ho" +
+		"w entities relate " +
+		"(for example \"relationship between Docker and Kubernetes\"). Returns th" +
+		"e chunks that carry those " +
 		"relationships with cN handles.\nUse search_knowledge for ordinary text retrieval and " +
 		"read_document(id=dN) to read a source in full.",
 	schema: utils.GenerateSchema[QueryKnowledgeGraphInput](),
@@ -76,7 +83,7 @@ func (t *QueryKnowledgeGraphTool) Execute(ctx context.Context, args json.RawMess
 	if err := json.Unmarshal(args, &input); err != nil {
 		return &types.ToolResult{
 			Success: false,
-			Error:   fmt.Sprintf("Failed to parse args: %v", err),
+			Error:   fmt.Sprintf("Failed to parse args: %v", apperrors.PublicMessage(err)),
 		}, err
 	}
 
@@ -97,7 +104,11 @@ func (t *QueryKnowledgeGraphTool) Execute(ctx context.Context, args json.RawMess
 	}
 	if t.scopeEnforced {
 		if err := validateKnowledgeBaseIDsInSearchTargets(t.searchTargets, input.KnowledgeBaseIDs); err != nil {
-			return &types.ToolResult{Success: false, Error: err.Error()}, err
+			return &types.ToolResult{Success: false, Error: apperrors.PublicMessage(err)}, err
+		}
+		if t.scopeKnowledgeService == nil {
+			err := fmt.Errorf("knowledge service is unavailable for scoped graph reads")
+			return &types.ToolResult{Success: false, Error: apperrors.PublicMessage(err)}, err
 		}
 	}
 
@@ -108,6 +119,34 @@ func (t *QueryKnowledgeGraphTool) Execute(ctx context.Context, args json.RawMess
 			Error:   "query is required",
 		}, fmt.Errorf("invalid query")
 	}
+
+	// Keep a KB read lease across retrieval, scope filtering, and the final
+	// tool result. HybridSearch protects its own hydration, but its lease ends
+	// when it returns, before this tool formats the source text for the model.
+	var readTargets types.SearchTargets
+	if t.scopeEnforced {
+		wanted := make(map[string]bool, len(input.KnowledgeBaseIDs))
+		for _, kbID := range input.KnowledgeBaseIDs {
+			wanted[kbID] = true
+		}
+		for _, target := range t.searchTargets {
+			if target != nil && wanted[target.KnowledgeBaseID] {
+				readTargets = append(readTargets, target)
+			}
+		}
+	}
+	readCtx, guard, err := beginAgentRead(ctx, t.scopeKnowledgeService, readTargets)
+	if err != nil {
+		return &types.ToolResult{Success: false, Error: apperrors.PublicMessage(err)}, err
+	}
+	if guard != nil {
+		defer func() {
+			if err := guard.Close(); err != nil {
+				logger.Warnf(ctx, "[Tool][QueryKnowledgeGraph] Close source read lease: %v", err)
+			}
+		}()
+	}
+	ctx = readCtx
 
 	// Concurrently query all knowledge bases
 	type graphQueryResult struct {
@@ -185,7 +224,7 @@ func (t *QueryKnowledgeGraphTool) Execute(ctx context.Context, args json.RawMess
 	for _, kbID := range input.KnowledgeBaseIDs {
 		result := kbResults[kbID]
 		if result.err != nil {
-			errors = append(errors, fmt.Sprintf("KB %s: %v", kbID, result.err))
+			errors = append(errors, fmt.Sprintf("KB %s: %v", kbID, apperrors.PublicMessage(result.err)))
 			continue
 		}
 
@@ -212,6 +251,9 @@ func (t *QueryKnowledgeGraphTool) Execute(ctx context.Context, args json.RawMess
 	})
 
 	if len(allResults) == 0 {
+		if err := t.finishGraphRead(ctx, readTargets, guard, nil); err != nil {
+			return &types.ToolResult{Success: false, Error: apperrors.PublicMessage(err)}, err
+		}
 		return &types.ToolResult{
 			Success: true,
 			Output:  "No relevant graph information found.",
@@ -315,6 +357,9 @@ func (t *QueryKnowledgeGraphTool) Execute(ctx context.Context, args json.RawMess
 
 	// Build structured graph data for frontend visualization
 	graphData := buildGraphVisualizationData(allResults)
+	if err := t.finishGraphRead(ctx, readTargets, guard, allResults); err != nil {
+		return &types.ToolResult{Success: false, Error: apperrors.PublicMessage(err)}, err
+	}
 
 	return &types.ToolResult{
 		Success: true,
@@ -333,6 +378,75 @@ func (t *QueryKnowledgeGraphTool) Execute(ctx context.Context, args json.RawMess
 			"display_type":       "graph_query_results",
 		},
 	}, nil
+}
+
+// finishGraphRead revalidates each result's source generation, publication,
+// and current Agent scope while the outer KB/exact leases are still active.
+func (t *QueryKnowledgeGraphTool) finishGraphRead(ctx context.Context,
+	readTargets types.SearchTargets, guard *readlease.NextcloudReadGuard,
+	results []*types.SearchResult,
+) error {
+	seenKB := make(map[string]string, len(results))
+	loaded := make(map[string]*types.Knowledge, len(results))
+	documents := make([]*types.Knowledge, 0, len(results))
+	for _, result := range results {
+		if result == nil || result.KnowledgeID == "" {
+			return fmt.Errorf("graph result has no source document")
+		}
+		if kbID, exists := seenKB[result.KnowledgeID]; exists {
+			if kbID != result.KnowledgeBaseID {
+				return fmt.Errorf("graph result source belongs to inconsistent knowledge bases")
+			}
+		}
+		seenKB[result.KnowledgeID] = result.KnowledgeBaseID
+		if t.scopeKnowledgeService == nil {
+			if graphNextcloudResult(result) {
+				return apperrors.NewProtocolError(fmt.Errorf(
+					"nextcloud graph source document is unavailable"), "Nextcloud graph source document is unavailable")
+			}
+			continue
+		}
+		document := loaded[result.KnowledgeID]
+		if document == nil {
+			var err error
+			document, err = t.scopeKnowledgeService.GetKnowledgeByIDOnly(ctx, result.KnowledgeID)
+			if err != nil || document == nil || document.ID != result.KnowledgeID ||
+				(document.KnowledgeBaseID != result.KnowledgeBaseID && result.KnowledgeBaseID != "") ||
+				(t.scopeEnforced && !readTargets.ContainsKB(document.KnowledgeBaseID)) {
+				return fmt.Errorf("graph source document %s is unavailable", result.KnowledgeID)
+			}
+			if t.scopeEnforced {
+				allowed, scopeErr := searchTargetsAllowKnowledgeID(ctx, readTargets,
+					document.ID, document.KnowledgeBaseID, t.scopeKnowledgeService)
+				if scopeErr != nil || !allowed {
+					return fmt.Errorf("graph source document %s is outside the current Agent scope", result.KnowledgeID)
+				}
+			}
+			loaded[result.KnowledgeID] = document
+			documents = append(documents, document)
+		}
+		_, currentSource, err := readlease.NextcloudKnowledgeLeaseScope(document)
+		if err != nil {
+			return apperrors.NewProtocolError(fmt.Errorf(
+				"graph source document %s has invalid provenance: %w", result.KnowledgeID, err),
+				fmt.Sprintf("graph source document %s has invalid provenance: %s", result.KnowledgeID,
+					apperrors.PublicMessage(err)))
+		}
+		if currentSource || graphNextcloudResult(result) {
+			if document.KnowledgeBaseID != result.KnowledgeBaseID ||
+				document.Channel != result.KnowledgeChannel ||
+				!reflect.DeepEqual(document.GetMetadata(), result.Metadata) {
+				return fmt.Errorf("graph source document %s changed after retrieval", result.KnowledgeID)
+			}
+		}
+	}
+	return finishAgentRead(ctx, t.scopeKnowledgeService, readTargets, guard, documents)
+}
+
+func graphNextcloudResult(result *types.SearchResult) bool {
+	return result.KnowledgeChannel == types.ConnectorTypeNextcloud ||
+		result.Metadata["datasource_id"] != "" || result.Metadata["nextcloud_instance_id"] != "" ||
+		result.Metadata["nextcloud_binding_id"] != "" || result.Metadata["nextcloud_file_id"] != ""
 }
 
 func summarizeGraphConfig(config *types.ExtractConfig) graphConfigSummary {

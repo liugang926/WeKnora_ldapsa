@@ -153,20 +153,40 @@ func (s *sessionService) AgentQA(
 	// tried last turn — except final_answer, which is replayed as the trailing
 	// canonical assistant message. History is sized by the window, not by a
 	// turn count: compaction and its persisted checkpoints keep it in bounds.
+
 	var llmContext []chat.Message
-	if agentConfig.MultiTurnEnabled {
+	historyAdmitted := true
+	excludeHistoricalContext := func(reason error) {
+		logger.Warnf(ctx, ("Agent retained context rejected; continuing current tur" +
+			"n without historical capabilities: %v"), reason)
+		llmContext = []chat.Message{}
+		agentConfig.ContextTokenScale = 0
+		historyAdmitted = false
+		agentConfig.ExcludeHistoricalContext = true
+		disabledMemory := false
+		agentConfig.MemoryEnabled = &disabledMemory
+	}
+	// A single-turn Agent can still reuse the session workspace, attachments,
+	// memory and tools. Admission is independent from message replay settings.
+	if err := s.historyGuard.CheckAgentHistoryReplay(ctx); err != nil {
+		excludeHistoricalContext(err)
+	}
+	if historyAdmitted && agentConfig.MultiTurnEnabled {
 		budget := agent.HistoryTokenBudget(agentConfig)
 		llmContext, agentConfig.ContextTokenScale, err = LoadAgentHistory(
-			ctx, s.messageRepo, sessionID, budget, agentConfig.RetainRetrievalHistory,
+			ctx,
+			s.messageRepo,
+			sessionID,
+			budget,
+			agentConfig.RetainRetrievalHistory,
+			s.historyGuard,
 		)
 		if err != nil {
-			logger.Warnf(ctx, "Failed to load agent history from DB: %v, continuing without history", err)
-			llmContext = []chat.Message{}
+			excludeHistoricalContext(err)
 		}
-		logger.Infof(ctx, "Loaded %d history messages from DB (budget=%d tokens, token scale=%.2f)",
-			len(llmContext), budget, agentConfig.ContextTokenScale)
+		logger.Infof(ctx, ("Loaded %d history messages from DB (budget=%d tokens, t" +
+			"oken scale=%.2f)"), len(llmContext), budget, agentConfig.ContextTokenScale)
 	} else {
-		logger.Infof(ctx, "Multi-turn disabled for this agent, running without history")
 		llmContext = []chat.Message{}
 	}
 
@@ -175,7 +195,7 @@ func (s *sessionService) AgentQA(
 	// the first resolve: if the previous turn left a stale mark, that is
 	// where the new image is picked up. HTTP send already holds the lease it
 	// took before persisting the turn, so only direct callers take one here.
-	if !req.TurnLeaseHeld {
+	if historyAdmitted && !req.TurnLeaseHeld {
 		releaseTurn, err := s.holdSandboxTurn(ctx, sessionID, agentConfig.SandboxConfigID)
 		if err != nil {
 			return err
@@ -189,26 +209,35 @@ func (s *sessionService) AgentQA(
 	// source of truth. Gated on the sandbox manager advertising a session
 	// filesystem capability so provider-neutral remote wiring stays here.
 	var stagedAttachments []stagedSessionAttachment
-	stager, ok := s.agentService.(sessionAttachmentStager)
-	if !ok {
-		return errors.New("agent service does not support session attachment staging")
-	}
-	// Probe the backend this session's sandbox actually runs on. Gating on the
-	// process-wide manager instead could inspect a different backend than the
-	// named workspace config selected by this agent.
-	inputStore, storeErr := stager.sessionSandboxInputStore(ctx, sessionID, agentConfig.SandboxConfigID)
-	if storeErr != nil {
-		return fmt.Errorf("resolve sandbox file store for session %s: %w", sessionID, storeErr)
-	}
-	if inputStore != nil {
-		sessionAttachments, loadErr := s.messageRepo.GetSessionAttachments(ctx, sessionID)
-		if loadErr != nil {
-			return fmt.Errorf("load session attachments for sandbox staging: %w", loadErr)
+	if historyAdmitted {
+		stager, ok := s.agentService.(sessionAttachmentStager)
+		if !ok {
+			return errors.New("agent service does not support session attachment staging")
 		}
-		stagedAttachments, err = stager.stageSessionAttachments(ctx, sessionID, agentConfig.SandboxConfigID, req.Session.TenantID, sessionAttachments)
-		if err != nil {
-			return fmt.Errorf("restore session attachments into sandbox: %w", err)
+		// Probe the backend this session's sandbox actually runs on. Gating on the
+		// process-wide manager instead could inspect a different backend than the
+		// named workspace config selected by this agent.
+		inputStore, storeErr := stager.sessionSandboxInputStore(ctx, sessionID, agentConfig.SandboxConfigID)
+		if storeErr != nil {
+			return fmt.Errorf("resolve sandbox file store for session %s: %w", sessionID, storeErr)
 		}
+		if inputStore != nil {
+			sessionAttachments, loadErr := s.messageRepo.GetSessionAttachments(ctx, sessionID)
+			if loadErr != nil {
+				return fmt.Errorf("load session attachments for sandbox staging: %w", loadErr)
+			}
+			stagedAttachments, err = stager.stageSessionAttachments(
+				ctx,
+				sessionID,
+				agentConfig.SandboxConfigID,
+				req.Session.TenantID,
+				sessionAttachments,
+			)
+			if err != nil {
+				return fmt.Errorf("restore session attachments into sandbox: %w", err)
+			}
+		}
+
 	}
 
 	// Create agent engine with EventBus
@@ -243,7 +272,7 @@ func (s *sessionService) AgentQA(
 	// Recall long-term memory for this turn. Like the RAG path this is a
 	// no-model read, and an agent may opt out of it entirely.
 	memoryCtx := types.ApplyAgentMemoryPreference(ctx, agentConfig.MemoryEnabled)
-	if s.memoryService != nil {
+	if historyAdmitted && s.memoryService != nil {
 		recall := s.memoryService.Recall(memoryCtx, req.Query)
 		if recall.Prompt != "" {
 			engine.SetMemoryPrompt(recall.Prompt)
@@ -269,7 +298,7 @@ func (s *sessionService) AgentQA(
 	// A compaction that ends on a stored turn is written back onto it, so the
 	// next turn loads the summary instead of summarizing the same history
 	// again. Without multi-turn there is no stored history to end on.
-	if agentConfig.MultiTurnEnabled {
+	if historyAdmitted && agentConfig.MultiTurnEnabled {
 		engine.SetContextCheckpointSink(messageCheckpointSink{repo: s.messageRepo, sessionID: sessionID})
 	}
 
