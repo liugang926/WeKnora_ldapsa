@@ -1,14 +1,43 @@
 #!/usr/bin/env python3
 """Pull only complete, published prod-* releases from the configured public fork."""
-import hashlib, json, os, pathlib, re, shutil, subprocess, tarfile, tempfile, urllib.request
+import hashlib, json, os, pathlib, re, shutil, subprocess, tarfile, tempfile, time, urllib.request
 from validate_release import validate
+from parallel_download import download_parallel
 BASE = pathlib.Path('/srv/weknora-production')
 REPO = 'liugang926/WeKnora_ldapsa'
 
 def get(url):
     return urllib.request.urlopen(urllib.request.Request(url, headers={'User-Agent': 'weknora-production-updater', 'Accept': 'application/vnd.github+json'}), timeout=90)
 
+def download_asset(url, destination, expected_size):
+    # Metadata is small and fetched afresh. Commit it only after an exact,
+    # bounded read so a failed attempt cannot replace previously valid data.
+    if not isinstance(expected_size, int) or not 0 <= expected_size <= 16*1024*1024:
+        raise ValueError('Invalid metadata size')
+    for attempt in range(3):
+        temporary = None
+        try:
+            with get(url) as response:
+                content = response.read(expected_size + 1)
+            if len(content) != expected_size:
+                raise RuntimeError('Metadata size mismatch')
+            with tempfile.NamedTemporaryFile(dir=destination.parent, delete=False) as output:
+                temporary = pathlib.Path(output.name)
+                output.write(content)
+                output.flush(); os.fsync(output.fileno())
+            os.replace(temporary, destination)
+            return
+        except Exception:
+            if attempt == 2:
+                raise RuntimeError('Metadata download failed: '+destination.name) from None
+            time.sleep(0.5 * (attempt+1))
+        finally:
+            if temporary is not None: temporary.unlink(missing_ok=True)
+
 def main():
+    if (BASE/'ACTIVATION_PENDING').exists():
+        (BASE/'UPDATE_FAILED').touch(mode=0o600)
+        raise RuntimeError('Interrupted activation requires recovery; original backup pointer retained')
     if (BASE/'UPDATE_FAILED').exists():
         raise RuntimeError('Previous deployment failed; operator must resolve and remove UPDATE_FAILED')
     releases = json.load(get(f'https://api.github.com/repos/{REPO}/releases?per_page=30'))
@@ -26,12 +55,16 @@ def main():
         parts = sorted(n for n in assets if re.fullmatch(r'images.tar.gz.part[0-9]{2}', n))
         if not parts or parts != [f'images.tar.gz.part{i:02}' for i in range(len(parts))]:
             raise RuntimeError('Missing image archive parts')
-        scratch = pathlib.Path(tempfile.mkdtemp(prefix='release-', dir='/data/weknora-production/downloads'))
+        scratch = pathlib.Path('/data/weknora-production/downloads')/tag
+        scratch.mkdir(mode=0o700, exist_ok=True)
         try:
             for name in ['SHA256SUMS', 'manifest.json', 'deployment.tar.gz'] + parts:
                 url = assets[name]['browser_download_url']
                 if not url.startswith(f'https://github.com/{REPO}/releases/download/{tag}/'): raise RuntimeError('Untrusted asset URL')
-                with get(url) as response, open(scratch/name, 'wb') as output: shutil.copyfileobj(response, output)
+                if name in parts:
+                    download_parallel(url, scratch/name, assets[name]['size'])
+                else:
+                    download_asset(url, scratch/name, assets[name]['size'])
             hashes = {}
             for line in (scratch/'SHA256SUMS').read_text().splitlines():
                 digest, name = line.split(None, 1); name = name.lstrip('*')
@@ -39,7 +72,9 @@ def main():
                 hashes[name] = digest
             for name in ['manifest.json', 'deployment.tar.gz'] + parts:
                 with open(scratch/name, 'rb') as f: digest = hashlib.file_digest(f, 'sha256').hexdigest()
-                if hashes.get(name) != digest: raise RuntimeError('Checksum mismatch: '+name)
+                if hashes.get(name) != digest:
+                    (scratch/name).unlink()
+                    raise RuntimeError('Checksum mismatch: '+name)
             manifest = validate(json.loads((scratch/'manifest.json').read_text()))
             if manifest['tag'] != tag: raise RuntimeError('Tag mismatch')
             # The complete image stream is loaded without an intermediate uncompressed archive.
@@ -57,8 +92,9 @@ def main():
             (scratch/'images.env').write_text(''.join(k+'='+v+'\n' for k,v in sorted(manifest['images'].items())))
             (scratch/'images.tar.gz').unlink()
             shutil.move(str(scratch), str(target))
-        finally:
-            if scratch.exists(): shutil.rmtree(scratch)
+        except Exception:
+            # Keep partial downloads for the next retry, without touching live data.
+            raise
     # Recheck cached releases too: a previously downloaded older release must
     # never bypass the schema downgrade gate when republished.
     manifest = validate(json.loads((target/'manifest.json').read_text()))

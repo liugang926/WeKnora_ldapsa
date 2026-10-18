@@ -10,6 +10,12 @@ exec 9>"$base/deploy.lock"
 flock -n 9 || exit 0
 old=$(readlink -f "$base/current" || true)
 compose() { docker compose --env-file "$base/secrets/app.env" --env-file "$1/images.env" -f "$1/production/compose.yaml" "${@:2}"; }
+if [[ -e "$base/ACTIVATION_PENDING" ]]; then
+  touch "$base/UPDATE_FAILED"
+  compose "$release" stop || true
+  echo 'Interrupted activation requires operator recovery; original backup pointer retained.' >&2
+  exit 1
+fi
 compose "$release" config --quiet
 for ref in $(cut -d= -f2 "$release/images.env"); do docker image inspect "$ref" >/dev/null; done
 if [[ "$old" == "$release" ]]; then exit 0; fi
@@ -42,18 +48,38 @@ rollback() {
   if [[ -f "$old/production/compose.yaml" ]]; then
     compose "$old" up -d --pull never --wait --wait-timeout 420 || true
   fi
+  python3 -c 'import pathlib; pathlib.Path("/srv/weknora-production/ACTIVATION_PENDING").unlink(missing_ok=True)'
   touch "$base/UPDATE_FAILED"
   echo "Activation failed; restored pre-update data. Automatic updates paused. Backup: $backup" >&2
   exit 1
 }
+# Persist the recovery pointer before any new binary can migrate the DB.
+python3 - "$base/ACTIVATION_PENDING" "$release" "$backup" <<'PYMARK'
+import json, os, sys
+path, release, backup = sys.argv[1:]
+with open(path, 'w') as f:
+    json.dump({'release': release, 'backup': backup}, f)
+    f.flush(); os.fsync(f.fileno())
+fd = os.open(os.path.dirname(path), os.O_DIRECTORY)
+os.fsync(fd); os.close(fd)
+PYMARK
 trap rollback ERR
 compose "$release" up -d --pull never --wait --wait-timeout 420 postgres redis app
 compose "$release" exec -T app curl -fsS http://localhost:8080/health >/dev/null
 compose "$release" exec -T app curl -fsS http://localhost:8080/api/v1/auth/config >/dev/null
+bash "$base/bin/check-schema.sh" "$release"
 # No automatic destructive rollback after reopening traffic.
 trap - ERR
 ln -sfn "$release" "$base/current.new"
 mv -Tf "$base/current.new" "$base/current"
+python3 - <<'PYCOMMIT'
+import os, pathlib
+base = pathlib.Path('/srv/weknora-production')
+fd = os.open(base, os.O_DIRECTORY)
+os.fsync(fd)
+(base/'ACTIVATION_PENDING').unlink()
+os.fsync(fd); os.close(fd)
+PYCOMMIT
 if ! compose "$release" up -d --pull never --wait --wait-timeout 180 frontend; then
   touch "$base/UPDATE_FAILED"
   echo 'Frontend failed; backend and data retained for operator recovery.' >&2

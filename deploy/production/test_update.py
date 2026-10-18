@@ -35,3 +35,10 @@ class UpdateTests(unittest.TestCase):
             with patch.object(update,'get',side_effect=responses),patch.object(update.subprocess,'run') as run:
                 with self.assertRaises(RuntimeError): update.main()
                 run.assert_not_called()
+    def test_interrupted_activation_preserves_pointer_and_stops_before_network(self):
+        marker=self.base/'ACTIVATION_PENDING';marker.write_text('original backup pointer')
+        with patch.object(update,'get') as get,patch.object(update.subprocess,'run') as run:
+            with self.assertRaises(RuntimeError): update.main()
+            get.assert_not_called();run.assert_not_called()
+        self.assertEqual(marker.read_text(),'original backup pointer')
+        self.assertTrue((self.base/'UPDATE_FAILED').exists())
