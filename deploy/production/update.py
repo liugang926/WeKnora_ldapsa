@@ -34,6 +34,27 @@ def download_asset(url, destination, expected_size):
         finally:
             if temporary is not None: temporary.unlink(missing_ok=True)
 
+def read_checksums(path):
+    hashes = {}
+    for line in path.read_text().splitlines():
+        digest, name = line.split(None, 1); name = name.lstrip('*')
+        if not re.fullmatch('[a-f0-9]{64}', digest) or '/' in name:
+            raise RuntimeError('Invalid checksum record')
+        hashes[name] = digest
+    return hashes
+
+def file_sha256(path):
+    digest = hashlib.sha256()
+    with path.open('rb') as stream:
+        for block in iter(lambda: stream.read(1024*1024), b''):
+            digest.update(block)
+    return digest.hexdigest()
+
+def cached_asset_valid(path, expected_digest):
+    if not path.is_file() or not expected_digest:
+        return False
+    return file_sha256(path) == expected_digest
+
 def main():
     if (BASE/'ACTIVATION_PENDING').exists():
         (BASE/'UPDATE_FAILED').touch(mode=0o600)
@@ -58,20 +79,20 @@ def main():
         scratch = pathlib.Path('/data/weknora-production/downloads')/tag
         scratch.mkdir(mode=0o700, exist_ok=True)
         try:
+            hashes = {}
             for name in ['SHA256SUMS', 'manifest.json', 'deployment.tar.gz'] + parts:
                 url = assets[name]['browser_download_url']
                 if not url.startswith(f'https://github.com/{REPO}/releases/download/{tag}/'): raise RuntimeError('Untrusted asset URL')
+                if name not in parts and name != 'SHA256SUMS' and cached_asset_valid(scratch/name, hashes.get(name)):
+                    continue
                 if name in parts:
                     download_parallel(url, scratch/name, assets[name]['size'])
                 else:
                     download_asset(url, scratch/name, assets[name]['size'])
-            hashes = {}
-            for line in (scratch/'SHA256SUMS').read_text().splitlines():
-                digest, name = line.split(None, 1); name = name.lstrip('*')
-                if not re.fullmatch('[a-f0-9]{64}', digest) or '/' in name: raise RuntimeError('Invalid checksum record')
-                hashes[name] = digest
+                if name == 'SHA256SUMS':
+                    hashes = read_checksums(scratch/name)
             for name in ['manifest.json', 'deployment.tar.gz'] + parts:
-                with open(scratch/name, 'rb') as f: digest = hashlib.file_digest(f, 'sha256').hexdigest()
+                digest = file_sha256(scratch/name)
                 if hashes.get(name) != digest:
                     (scratch/name).unlink()
                     raise RuntimeError('Checksum mismatch: '+name)
