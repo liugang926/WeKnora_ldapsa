@@ -35,7 +35,10 @@ jobs:
           build-args: |
             WITH_ANYDOC=1
             COMMIT_ID_ARG=${{ github.sha }}
-          cache-from: type=gha,scope=app-image-pr-amd64
+          cache-from: |
+            type=gha,scope=production-app-amd64
+            type=gha,scope=app-image-pr-amd64
+          cache-to: type=gha,scope=production-app-amd64,mode=min
       - name: Build frontend
         uses: docker/build-push-action@v7
         with:
@@ -57,7 +60,7 @@ jobs:
           mkdir bundle
           python3 deploy/production/make_manifest.py > bundle/manifest.json
           docker save "weknora-production-app:$GITHUB_SHA" "weknora-production-ui:$GITHUB_SHA" paradedb/paradedb:v0.22.6-pg17 redis:7.4.10-alpine | gzip -1 | split -b 1800M -d - bundle/images.tar.gz.part
-          tar -czf bundle/deployment.tar.gz -C deploy production
+          tar --exclude=__pycache__ -czf bundle/deployment.tar.gz -C deploy production
           (cd bundle && sha256sum manifest.json deployment.tar.gz images.tar.gz.part* > SHA256SUMS)
           gh release create "$GITHUB_REF_NAME" --verify-tag --title "WeKnora production $GITHUB_REF_NAME" --notes "Merged main commit: $GITHUB_SHA. Linux amd64. Deployment includes bounded resources, backup and health gates." --draft
           gh release upload "$GITHUB_REF_NAME" bundle/*
