@@ -7,7 +7,7 @@ data=/data/weknora-production
 [[ ! -e "$base/secrets/app.env" ]] || { echo 'Already initialized; refusing to overwrite secrets'; exit 1; }
 install -d -m 700 "$base/secrets" "$base/bin" "$base/releases" "$data/runtime" "$data/backups" "$data/downloads"
 install -d "$data/runtime/"{postgres,redis,files}
-cp "$(dirname "$0")/"{activate.sh,update.py,validate_release.py} "$base/bin/"
+cp "$(dirname "$0")/"{activate.sh,start.sh,check-schema.sh,update.py,validate_release.py} "$base/bin/"
 python3 - <<'PY'
 import pathlib, secrets
 base=pathlib.Path('/srv/weknora-production/secrets')
@@ -16,7 +16,7 @@ values=dict(DB_DRIVER='postgres',DB_HOST='postgres',DB_PORT='5432',DB_USER='wekn
     REDIS_ADDR='redis:6379',REDIS_PASSWORD=redis,REDIS_DB='0',REDIS_PREFIX='stream:',STREAM_MANAGER_TYPE='redis',
     RETRIEVE_DRIVER='postgres',STORAGE_TYPE='local',LOCAL_STORAGE_BASE_DIR='/data/files',
     SYSTEM_AES_KEY=secrets.token_hex(16),SYSTEM_SIGNING_KEY=secrets.token_hex(32),JWT_SECRET=secrets.token_hex(32),
-    LOG_LEVEL='info',GIN_MODE='release',TZ='Asia/Shanghai',GOMAXPROCS='3',CONCURRENCY_POOL_SIZE='2',AUTO_MIGRATE='true',
+    LOG_LEVEL='info',GIN_MODE='release',TZ='Asia/Shanghai',GOMAXPROCS='3',CONCURRENCY_POOL_SIZE='2',AUTO_MIGRATE='true',AUTO_RECOVER_DIRTY='false',
     DOCREADER_ADDR='',OLLAMA_OPTIONAL='true',WEKNORA_SANDBOX_DOCKER_ENABLED='false',
     DISABLE_REGISTRATION='false',WEKNORA_AUTH_COMPLEX_PASSWORD_ENABLED='true',
     WEKNORA_BOOTSTRAP_SYSTEM_ADMIN_EMAIL='admin@ai-doc.tianjizn.com',
@@ -67,6 +67,7 @@ Persistent=true
 [Install]
 WantedBy=timers.target
 UNIT
+install -m 644 "$(dirname "$0")/weknora-production.service" /etc/systemd/system/weknora-production.service
 systemctl daemon-reload
 systemctl start weknora-production.slice
 # Timer is enabled only after private bootstrap and acceptance.

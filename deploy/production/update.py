@@ -1,12 +1,29 @@
 #!/usr/bin/env python3
 """Pull only complete, published prod-* releases from the configured public fork."""
-import hashlib, json, os, pathlib, re, shutil, subprocess, tarfile, tempfile, urllib.request
+import hashlib, json, os, pathlib, re, shutil, subprocess, tarfile, urllib.request
 from validate_release import validate
 BASE = pathlib.Path('/srv/weknora-production')
 REPO = 'liugang926/WeKnora_ldapsa'
 
 def get(url):
     return urllib.request.urlopen(urllib.request.Request(url, headers={'User-Agent': 'weknora-production-updater', 'Accept': 'application/vnd.github+json'}), timeout=90)
+
+def download_asset(url, destination, expected_size, resume=False):
+    # Published tags are immutable. Existing complete image parts are always
+    # checked against SHA256SUMS before use; interrupted transfers can resume.
+    if resume and destination.exists() and destination.stat().st_size == expected_size:
+        return
+    command = ['curl', '--fail', '--location', '--silent', '--show-error',
+               '--retry', '5', '--retry-delay', '2', '--connect-timeout', '20',
+               '--max-time', '3600']
+    if resume and destination.exists():
+        if destination.stat().st_size > expected_size:
+            destination.unlink()
+        else:
+            command += ['--continue-at', '-']
+    subprocess.run(command + ['--output', str(destination), url], check=True)
+    if destination.stat().st_size != expected_size:
+        raise RuntimeError('Incomplete asset: ' + destination.name)
 
 def main():
     if (BASE/'UPDATE_FAILED').exists():
@@ -26,12 +43,13 @@ def main():
         parts = sorted(n for n in assets if re.fullmatch(r'images.tar.gz.part[0-9]{2}', n))
         if not parts or parts != [f'images.tar.gz.part{i:02}' for i in range(len(parts))]:
             raise RuntimeError('Missing image archive parts')
-        scratch = pathlib.Path(tempfile.mkdtemp(prefix='release-', dir='/data/weknora-production/downloads'))
+        scratch = pathlib.Path('/data/weknora-production/downloads')/tag
+        scratch.mkdir(mode=0o700, exist_ok=True)
         try:
             for name in ['SHA256SUMS', 'manifest.json', 'deployment.tar.gz'] + parts:
                 url = assets[name]['browser_download_url']
                 if not url.startswith(f'https://github.com/{REPO}/releases/download/{tag}/'): raise RuntimeError('Untrusted asset URL')
-                with get(url) as response, open(scratch/name, 'wb') as output: shutil.copyfileobj(response, output)
+                download_asset(url, scratch/name, assets[name]['size'], resume=name in parts)
             hashes = {}
             for line in (scratch/'SHA256SUMS').read_text().splitlines():
                 digest, name = line.split(None, 1); name = name.lstrip('*')
@@ -39,7 +57,9 @@ def main():
                 hashes[name] = digest
             for name in ['manifest.json', 'deployment.tar.gz'] + parts:
                 with open(scratch/name, 'rb') as f: digest = hashlib.file_digest(f, 'sha256').hexdigest()
-                if hashes.get(name) != digest: raise RuntimeError('Checksum mismatch: '+name)
+                if hashes.get(name) != digest:
+                    (scratch/name).unlink()
+                    raise RuntimeError('Checksum mismatch: '+name)
             manifest = validate(json.loads((scratch/'manifest.json').read_text()))
             if manifest['tag'] != tag: raise RuntimeError('Tag mismatch')
             # The complete image stream is loaded without an intermediate uncompressed archive.
@@ -57,8 +77,9 @@ def main():
             (scratch/'images.env').write_text(''.join(k+'='+v+'\n' for k,v in sorted(manifest['images'].items())))
             (scratch/'images.tar.gz').unlink()
             shutil.move(str(scratch), str(target))
-        finally:
-            if scratch.exists(): shutil.rmtree(scratch)
+        except Exception:
+            # Keep partial downloads for the next retry, without touching live data.
+            raise
     # Recheck cached releases too: a previously downloaded older release must
     # never bypass the schema downgrade gate when republished.
     manifest = validate(json.loads((target/'manifest.json').read_text()))

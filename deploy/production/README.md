@@ -15,7 +15,8 @@ push, draft release or prerelease does not deploy. Never reuse a production tag.
 
 The server polls published `prod-*` releases every five minutes. It downloads
 and verifies complete bundles, loads exact image IDs, stops this stack for a
-consistent backup, starts database/Redis/app, verifies health and auth config,
+consistent backup, starts database/Redis/app, verifies health, the exact clean migration version
+and application tables,
 and only then opens the frontend. This is a maintenance-window deployment,
 not zero-downtime. Future schema migrations run through the application's normal
 AUTO_MIGRATE path. Production releases require local/PR tests and review before
@@ -35,7 +36,11 @@ Verify system-administrator promotion before changing BIND_IP to 10.106.1.128
 and recreating the frontend. Credentials live in root-only
 `/srv/weknora-production/secrets/admin.json`; rotate through the application.
 Enable the updater with `systemctl enable --now weknora-production-update.timer`
-only after acceptance. No development data is imported.
+only after acceptance. Enable and start `weknora-production.service` after the
+first successful deployment. It restores the current stack on every boot,
+requires Docker, the resource slice and the data mount, and serializes against
+updates. Containers also retain their restart policies. Downloads use curl
+with checksum verification and retained partial files for interrupted transfers. No development data is imported.
 
 ## Boundaries and resource allocation
 
@@ -69,6 +74,9 @@ Large data sets need a dedicated snapshot/backup strategy before scaling.
 A backend startup failure restores the pre-update physical data snapshot and
 old images while the frontend is closed, then creates `UPDATE_FAILED`. The
 updater stays paused until an operator investigates and removes that marker.
+An interrupted activation leaves a durable `ACTIVATION_PENDING` pointer to its
+backup. Boot closes the stack rather than starting an old binary on a database
+that may have migrated; an operator must complete the recorded recovery.
 If the frontend fails after backend activation, data is retained rather than
 performing a destructive rollback after traffic may have reopened. For manual
 rollback, stop the stack and restore the matching backup and prior release;
