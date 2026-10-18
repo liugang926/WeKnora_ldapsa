@@ -2,6 +2,7 @@
 """Pull only complete, published prod-* releases from the configured public fork."""
 import hashlib, json, os, pathlib, re, shutil, subprocess, tarfile, urllib.request
 from validate_release import validate
+from parallel_download import download_parallel
 BASE = pathlib.Path('/srv/weknora-production')
 REPO = 'liugang926/WeKnora_ldapsa'
 
@@ -49,7 +50,10 @@ def main():
             for name in ['SHA256SUMS', 'manifest.json', 'deployment.tar.gz'] + parts:
                 url = assets[name]['browser_download_url']
                 if not url.startswith(f'https://github.com/{REPO}/releases/download/{tag}/'): raise RuntimeError('Untrusted asset URL')
-                download_asset(url, scratch/name, assets[name]['size'], resume=name in parts)
+                if name in parts:
+                    download_parallel(url, scratch/name, assets[name]['size'])
+                else:
+                    download_asset(url, scratch/name, assets[name]['size'])
             hashes = {}
             for line in (scratch/'SHA256SUMS').read_text().splitlines():
                 digest, name = line.split(None, 1); name = name.lstrip('*')
