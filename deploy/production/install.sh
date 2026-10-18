@@ -21,6 +21,7 @@ values=dict(DB_DRIVER='postgres',DB_HOST='postgres',DB_PORT='5432',DB_USER='wekn
     DISABLE_REGISTRATION='false',WEKNORA_AUTH_COMPLEX_PASSWORD_ENABLED='true',
     WEKNORA_BOOTSTRAP_SYSTEM_ADMIN_EMAIL='admin@ai-doc.tianjizn.com',
     FRONTEND_BASE_URL='https://ai-doc.tianjizn.com',APP_EXTERNAL_URL='https://ai-doc.tianjizn.com',
+    WEKNORA_NEXTCLOUD_ALLOWED_ORIGINS='https://cloud.tianjizn.com',
     WEKNORA_TRUSTED_PROXIES='172.30.54.0/24',BIND_IP='127.0.0.1',HTTP_PORT='18080')
 (base/'app.env').write_text(''.join(k+'='+v+'\n' for k,v in values.items()))
 (base/'redis.conf').write_text('appendonly yes\nmaxmemory 1536mb\nmaxmemory-policy noeviction\nrequirepass '+redis+'\n')

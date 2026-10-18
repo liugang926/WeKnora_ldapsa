@@ -42,6 +42,12 @@ def main():
                 if hashes.get(name) != digest: raise RuntimeError('Checksum mismatch: '+name)
             manifest = validate(json.loads((scratch/'manifest.json').read_text()))
             if manifest['tag'] != tag: raise RuntimeError('Tag mismatch')
+            active = BASE/'current'/'manifest.json'
+            if active.exists():
+                old = validate(json.loads(active.read_text()))
+                comparison = json.load(get(f"https://api.github.com/repos/{REPO}/compare/{old['commit']}...{manifest['commit']}"))
+                if comparison.get('status') not in ('ahead', 'identical'):
+                    raise RuntimeError('Automatic database downgrade/divergent release refused')
             # The complete image stream is loaded without an intermediate uncompressed archive.
             with open(scratch/'images.tar.gz', 'wb') as out:
                 for name in parts:
