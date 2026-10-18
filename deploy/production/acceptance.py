@@ -45,7 +45,7 @@ subprocess.run(['bash',str(base/'bin/check-schema.sh'),str(release)],check=True,
 app_id=output(['ps','-q','app'])
 environment=json.loads(subprocess.check_output(['docker','inspect',app_id,'--format','{{json .Config.Env}}'],text=True))
 assert 'WEKNORA_BUILD_COMMIT='+manifest['commit'] in environment, 'Application revision mismatch'
-output(['exec','-T','frontend','sh','-c','grep -Rl --include="*.js" '+manifest['commit'][:7]+' /usr/share/nginx/html >/dev/null'])
+assert output(['exec','-T','frontend','sh','-c',"find /usr/share/nginx/html -type f -name '*.js' -exec grep -l "+manifest['commit'][:7]+" {} + | head -n 1"]), 'Frontend build revision missing'
 resolved=resolve_images(manifest)
 assert resolved==json.loads((release/'resolved-images.json').read_text()), 'Recorded image identity proof differs'
 images={}
