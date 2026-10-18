@@ -7,7 +7,7 @@ data=/data/weknora-production
 [[ ! -e "$base/secrets/app.env" ]] || { echo 'Already initialized; refusing to overwrite secrets'; exit 1; }
 install -d -m 700 "$base/secrets" "$base/bin" "$base/releases" "$data/runtime" "$data/backups" "$data/downloads"
 install -d "$data/runtime/"{postgres,redis,files}
-cp "$(dirname "$0")/"{activate.sh,start.sh,check-schema.sh,update.py,parallel_download.py,validate_release.py} "$base/bin/"
+cp "$(dirname "$0")/"{activate.sh,start.sh,check-schema.sh,update.py,parallel_download.py,image_identity.py,validate_release.py} "$base/bin/"
 python3 - <<'PY'
 import pathlib, secrets
 base=pathlib.Path('/srv/weknora-production/secrets')
@@ -26,7 +26,7 @@ values=dict(DB_DRIVER='postgres',DB_HOST='postgres',DB_PORT='5432',DB_USER='wekn
 (base/'app.env').write_text(''.join(k+'='+v+'\n' for k,v in values.items()))
 (base/'redis.conf').write_text('appendonly yes\nmaxmemory 1536mb\nmaxmemory-policy noeviction\nrequirepass '+redis+'\n')
 (base/'redis.conf').chmod(0o644) # Parent directory is root-only; redis container drops UID.
-(base/'admin.json').write_text(__import__('json').dumps(dict(username='admin',email=values['WEKNORA_BOOTSTRAP_SYSTEM_ADMIN_EMAIL'],password=secrets.token_urlsafe(30)+'Aa1!')))
+(base/'admin.json').write_text(__import__('json').dumps(dict(username='admin',email=values['WEKNORA_BOOTSTRAP_SYSTEM_ADMIN_EMAIL'],password=secrets.token_urlsafe(18)+'Aa1!')))
 PY
 cat > /etc/systemd/system/weknora-production.slice <<'UNIT'
 [Unit]

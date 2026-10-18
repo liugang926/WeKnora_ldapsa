@@ -3,6 +3,8 @@
 import json, pathlib, re, subprocess, sys, urllib.error, urllib.request
 base = pathlib.Path('/srv/weknora-production')
 origin = sys.argv[1] if len(sys.argv) > 1 else 'http://127.0.0.1:18080'
+sys.path.insert(0, str(base/'bin'))
+from image_identity import resolve_images
 release = (base/'current').resolve()
 manifest = json.loads((release/'manifest.json').read_text())
 credentials = json.loads((base/'secrets/admin.json').read_text())
@@ -44,11 +46,13 @@ app_id=output(['ps','-q','app'])
 environment=json.loads(subprocess.check_output(['docker','inspect',app_id,'--format','{{json .Config.Env}}'],text=True))
 assert 'WEKNORA_BUILD_COMMIT='+manifest['commit'] in environment, 'Application revision mismatch'
 output(['exec','-T','frontend','sh','-c','grep -Rl --include="*.js" '+manifest['commit'][:7]+' /usr/share/nginx/html >/dev/null'])
+resolved=resolve_images(manifest)
+assert resolved==json.loads((release/'resolved-images.json').read_text()), 'Recorded image identity proof differs'
 images={}
 for service,key in [('app','APP_IMAGE'),('frontend','UI_IMAGE'),('postgres','POSTGRES_IMAGE'),('redis','REDIS_IMAGE')]:
     container=output(['ps','-q',service])
     record=json.loads(subprocess.check_output(['docker','inspect',container],text=True))[0]
-    assert record['Image']==manifest['images'][key], 'Image identity mismatch: '+service
+    assert record['Image']==resolved['local_images'][key], 'Image identity mismatch: '+service
     assert record['State'].get('Health',{}).get('Status')=='healthy', 'Unhealthy container: '+service
     assert record['HostConfig']['CgroupParent']=='weknora-production.slice', 'Wrong resource slice'
     assert not record['HostConfig'].get('DeviceRequests') and not record['HostConfig'].get('Devices'), 'Unexpected GPU/device allocation'

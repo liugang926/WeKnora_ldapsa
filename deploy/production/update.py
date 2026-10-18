@@ -3,6 +3,7 @@
 import hashlib, json, os, pathlib, re, shutil, subprocess, tarfile, tempfile, time, urllib.request
 from validate_release import validate
 from parallel_download import download_parallel
+from image_identity import resolve_images
 BASE = pathlib.Path('/srv/weknora-production')
 REPO = 'liugang926/WeKnora_ldapsa'
 
@@ -125,6 +126,9 @@ def main():
         comparison = json.load(get(f"https://api.github.com/repos/{REPO}/compare/{old['commit']}...{manifest['commit']}"))
         if comparison.get('status') not in ('ahead', 'identical'):
             raise RuntimeError('Automatic database downgrade/divergent release refused')
+    resolved = resolve_images(manifest)
+    (target/'resolved-images.json').write_text(json.dumps(resolved, indent=2)+'\n')
+    (target/'images.env').write_text(''.join(k+'='+v+'\n' for k,v in sorted(resolved['local_images'].items())))
     subprocess.run(['bash', str(BASE/'bin/activate.sh'), str(target)], check=True)
 
 if __name__ == '__main__': main()

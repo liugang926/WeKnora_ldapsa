@@ -13,6 +13,11 @@ app (including AnyDoc) and UI, and publishes a complete GitHub release only
 after all image bundles and SHA-256 manifests have uploaded. A normal branch
 push, draft release or prerelease does not deploy. Never reuse a production tag.
 
+Published image identities and configuration digests are preserved in the release
+manifest. The server verifies their configuration and filesystem layers before
+recording its own immutable image IDs in `resolved-images.json`; this supports
+Docker classic and containerd stores without trusting a mutable tag.
+
 The server polls published `prod-*` releases every five minutes. It downloads
 and verifies complete bundles, loads exact image IDs, stops this stack for a
 consistent backup, starts database/Redis/app, verifies health, the exact clean migration version
