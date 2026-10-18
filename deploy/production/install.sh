@@ -45,6 +45,7 @@ Description=Pull verified WeKnora production release
 After=network-online.target docker.service
 Wants=network-online.target
 Requires=docker.service
+RequiresMountsFor=/srv/weknora-production /data/weknora-production
 [Service]
 Type=oneshot
 ExecStart=/usr/bin/python3 /srv/weknora-production/bin/update.py

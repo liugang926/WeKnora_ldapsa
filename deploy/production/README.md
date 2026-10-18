@@ -30,6 +30,7 @@ tagging; image compilation does not replace behavioral acceptance.
 The production server does not need a GitHub token, inbound GitHub webhook,
 build toolchain, Docker Hub access, or a self-hosted Actions runner. The fork is
 public; release assets contain code/images only, never runtime secrets/data.
+Downloads use this public repository's GitHub API asset endpoints with `Accept: application/octet-stream`, without a token.
 
 ## First installation
 
@@ -46,6 +47,26 @@ first successful deployment. It restores the current stack on every boot,
 requires Docker, the resource slice and the data mount, and serializes against
 updates. Containers also retain their restart policies. Image downloads use eight bounded HTTP ranges with retained chunk caches;
 metadata uses bounded atomic reads. Every complete asset must pass SHA-256 verification. No development data is imported.
+
+## Updating deployment infrastructure
+
+Production releases update application images and the release's Compose/nginx
+configuration. The trusted helpers installed in `/srv/weknora-production/bin`
+and the systemd units in `/etc/systemd/system` are separate operator-managed
+copies; publishing a tag does not replace them.
+
+When reviewed changes affect these helpers or units, stop the update timer and
+wait for any running updater to finish. As root, hold the deployment lock while
+copying the affected helpers from the reviewed source into `bin`, and synchronize
+the affected unit definitions. The update service, timer and resource slice are
+defined in `install.sh`; the application unit is `weknora-production.service`.
+Run `systemctl daemon-reload` after unit changes, verify the effective units, and
+re-enable the timer with `systemctl enable --now weknora-production-update.timer`.
+Both application startup and the updater require the deployment and data mounts.
+
+`install.sh` is for first installation only and refuses an initialized instance.
+Do not rerun it to upgrade infrastructure or regenerate runtime secrets. Copy
+only the reviewed changes, retaining the existing environment and data.
 
 ## Boundaries and resource allocation
 

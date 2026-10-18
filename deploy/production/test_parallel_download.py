@@ -1,3 +1,4 @@
+import hashlib
 import pathlib
 import re
 import socket
@@ -11,12 +12,13 @@ from parallel_download import DownloadError, download_parallel
 
 
 class Response:
-    def __init__(self, body, start, end, total, status=206, content_range=None, read_hook=None):
+    def __init__(self, body, start, end, total, status=206, content_range=None, read_hook=None, url=None):
         self.status = status
         self.headers = {'Content-Range': content_range or f'bytes {start}-{end}/{total}'}
         self.body = body
         self.read_hook = read_hook
         self.read_limits = []
+        self.url = url
 
     def __enter__(self):
         return self
@@ -29,6 +31,9 @@ class Response:
         if self.read_hook:
             self.read_hook()
         return self.body[:limit]
+
+    def geturl(self):
+        return self.url
 
 
 class ParallelDownloadTests(unittest.TestCase):
@@ -47,6 +52,7 @@ class ParallelDownloadTests(unittest.TestCase):
 
     def network(self, request, *, timeout):
         self.assertEqual(request.full_url, self.url)
+        self.assertEqual(request.get_header('Accept'), 'application/octet-stream')
         self.assertEqual(request.get_header('Accept-encoding'), 'identity')
         self.assertEqual(timeout, 60)
         match = re.fullmatch(r'bytes=(\d+)-(\d+)', request.get_header('Range'))
@@ -224,6 +230,89 @@ class ParallelDownloadTests(unittest.TestCase):
         with patch('parallel_download.urllib.request.urlopen') as network:
             download_parallel(self.url, self.destination, len(self.data), chunk_size=4)
         network.assert_not_called()
+
+    def test_api_asset_is_resolved_once_before_direct_parallel_range_requests(self):
+        api = 'https://api.github.com/repos/liugang926/WeKnora_ldapsa/releases/assets/123'
+        signed = 'https://release-assets.githubusercontent.com/asset?signature=do-not-log'
+        calls = []
+
+        def network(request, *, timeout):
+            calls.append((request.full_url, request.get_header('Range')))
+            self.assertEqual(request.get_header('Accept'), 'application/octet-stream')
+            self.assertEqual(request.get_header('Accept-encoding'), 'identity')
+            if request.full_url == api:
+                self.assertEqual(request.get_header('Range'), 'bytes=0-0')
+                return Response(self.data[:1], 0, 0, len(self.data), url=signed)
+            self.assertEqual(request.full_url, signed)
+            start, end = map(int, re.fullmatch(r'bytes=(\d+)-(\d+)', request.get_header('Range')).groups())
+            return Response(self.data[start:end + 1], start, end, len(self.data), url=signed)
+
+        with patch('parallel_download.urllib.request.urlopen', side_effect=network):
+            download_parallel(api, self.destination, len(self.data), workers=3, chunk_size=4)
+        self.assertEqual(sum(url == api for url, _ in calls), 1)
+        self.assertEqual(sum(url == signed for url, _ in calls), 4)
+        self.assertEqual(self.destination.read_bytes(), self.data)
+
+    def test_api_cache_identity_survives_signed_redirect_url_changes(self):
+        api = 'https://api.github.com/repos/liugang926/WeKnora_ldapsa/releases/assets/123'
+        signed = ['https://release-assets.githubusercontent.com/asset?signature=first',
+                  'https://release-assets.githubusercontent.com/asset?signature=second']
+        round_index = 0
+        calls = []
+
+        def network(request, *, timeout):
+            if request.full_url == api:
+                calls.append(('api', request.get_header('Range')))
+                return Response(self.data[:1], 0, 0, len(self.data), url=signed[round_index])
+            self.assertEqual(request.full_url, signed[round_index])
+            start, end = map(int, re.fullmatch(r'bytes=(\d+)-(\d+)', request.get_header('Range')).groups())
+            calls.append(('chunk', (start, end)))
+            status = 503 if round_index == 0 and start == 4 else 206
+            return Response(self.data[start:end + 1], start, end, len(self.data), status=status, url=request.full_url)
+
+        with patch('parallel_download.urllib.request.urlopen', side_effect=network):
+            with self.assertRaises(DownloadError):
+                download_parallel(api, self.destination, len(self.data), workers=1, chunk_size=4)
+            root = self.destination.with_name(self.destination.name + '.chunks')
+            identity = hashlib.sha256(api.encode()).hexdigest()
+            self.assertEqual([path.name for path in root.iterdir()], [f'{identity}-{len(self.data)}-4'])
+            self.assertEqual(len(list(root.rglob('*.part'))), 3)
+            round_index = 1
+            calls.clear()
+            download_parallel(api, self.destination, len(self.data), workers=3, chunk_size=4)
+        self.assertEqual(calls, [('api', 'bytes=0-0'), ('chunk', (4, 7))])
+        self.assertEqual(self.destination.read_bytes(), self.data)
+
+    def test_complete_api_chunk_cache_assembles_without_resolving_redirect(self):
+        api = 'https://api.github.com/repos/liugang926/WeKnora_ldapsa/releases/assets/123'
+        identity = hashlib.sha256(api.encode()).hexdigest()
+        root = self.destination.with_name(self.destination.name + '.chunks') / f'{identity}-{len(self.data)}-4'
+        root.mkdir(parents=True)
+        for index, start in enumerate(range(0, len(self.data), 4)):
+            (root / f'{index:08d}.part').write_bytes(self.data[start:start + 4])
+        with patch('parallel_download.urllib.request.urlopen') as network:
+            download_parallel(api, self.destination, len(self.data), chunk_size=4)
+        network.assert_not_called()
+        self.assertEqual(self.destination.read_bytes(), self.data)
+
+    def test_api_redirect_requires_exact_https_release_asset_domain(self):
+        api = 'https://api.github.com/repos/liugang926/WeKnora_ldapsa/releases/assets/123'
+        urls = ['https://untrusted.invalid/asset?signature=do-not-log',
+                'http://release-assets.githubusercontent.com/asset',
+                'https://release-assets.githubusercontent.com.evil.invalid/asset',
+                'https://user:password@release-assets.githubusercontent.com/asset',
+                'https://release-assets.githubusercontent.com:8443/asset']
+        for url in urls:
+            with self.subTest(url=url):
+                response = Response(self.data[:1], 0, 0, len(self.data), url=url)
+                with patch('parallel_download.urllib.request.urlopen', return_value=response) as network:
+                    with self.assertRaisesRegex(DownloadError, 'Untrusted asset redirect domain') as caught:
+                        download_parallel(api, self.destination, len(self.data), chunk_size=4)
+                self.assertEqual(network.call_count, 1)
+                self.assertEqual(response.read_limits, [])
+                self.assertNotIn(url, str(caught.exception))
+                self.assertNotIn('do-not-log', str(caught.exception))
+                self.assertFalse(self.destination.exists())
 
     def test_invalid_bounds_are_rejected_without_requests(self):
         for options in [dict(expected_size=-1), dict(expected_size=4, workers=0),

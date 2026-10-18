@@ -42,3 +42,20 @@ class UpdateTests(unittest.TestCase):
             get.assert_not_called();run.assert_not_called()
         self.assertEqual(marker.read_text(),'original backup pointer')
         self.assertTrue((self.base/'UPDATE_FAILED').exists())
+    def test_asset_url_uses_the_strict_public_repository_api_endpoint(self):
+        url = 'https://api.github.com/repos/liugang926/WeKnora_ldapsa/releases/assets/123456'
+        self.assertEqual(update.asset_url({'url': url, 'browser_download_url': 'https://untrusted.invalid/ignored'}), url)
+    def test_untrusted_or_browser_asset_urls_are_rejected(self):
+        prefix = 'https://api.github.com/repos/liugang926/WeKnora_ldapsa/releases/assets/'
+        urls = [None, 'https://github.com/liugang926/WeKnora_ldapsa/releases/download/prod-1/manifest.json',
+                prefix + '123?token=private', prefix + '../123', prefix + 'abc',
+                prefix + '123\n', prefix.replace('https:', 'http:') + '123',
+                prefix.replace('api.github.com', 'api.github.com.evil.invalid') + '123',
+                prefix.replace('liugang926', 'another-owner') + '123',
+                prefix.replace('WeKnora_ldapsa', 'another-repository') + '123']
+        for url in urls:
+            with self.subTest(url=url):
+                with self.assertRaisesRegex(RuntimeError, '^Untrusted asset URL$'):
+                    update.asset_url({'url': url})
+        with self.assertRaisesRegex(RuntimeError, '^Untrusted asset URL$'):
+            update.asset_url({'browser_download_url': urls[1]})

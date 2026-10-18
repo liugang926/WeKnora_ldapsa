@@ -7,8 +7,14 @@ from image_identity import resolve_images
 BASE = pathlib.Path('/srv/weknora-production')
 REPO = 'liugang926/WeKnora_ldapsa'
 
-def get(url):
-    return urllib.request.urlopen(urllib.request.Request(url, headers={'User-Agent': 'weknora-production-updater', 'Accept': 'application/vnd.github+json'}), timeout=90)
+def get(url, accept='application/vnd.github+json'):
+    return urllib.request.urlopen(urllib.request.Request(url, headers={'User-Agent': 'weknora-production-updater', 'Accept': accept}), timeout=90)
+
+def asset_url(asset):
+    url = asset.get('url')
+    if not isinstance(url, str) or not re.fullmatch(r'https://api\.github\.com/repos/' + re.escape(REPO) + r'/releases/assets/[0-9]+', url):
+        raise RuntimeError('Untrusted asset URL')
+    return url
 
 def download_asset(url, destination, expected_size):
     # Metadata is small and fetched afresh. Commit it only after an exact,
@@ -18,7 +24,7 @@ def download_asset(url, destination, expected_size):
     for attempt in range(3):
         temporary = None
         try:
-            with get(url) as response:
+            with get(url, accept='application/octet-stream') as response:
                 content = response.read(expected_size + 1)
             if len(content) != expected_size:
                 raise RuntimeError('Metadata size mismatch')
@@ -82,8 +88,7 @@ def main():
         try:
             hashes = {}
             for name in ['SHA256SUMS', 'manifest.json', 'deployment.tar.gz'] + parts:
-                url = assets[name]['browser_download_url']
-                if not url.startswith(f'https://github.com/{REPO}/releases/download/{tag}/'): raise RuntimeError('Untrusted asset URL')
+                url = asset_url(assets[name])
                 if name not in parts and name != 'SHA256SUMS' and cached_asset_valid(scratch/name, hashes.get(name)):
                     continue
                 if name in parts:
