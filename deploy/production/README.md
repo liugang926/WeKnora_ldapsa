@@ -40,7 +40,7 @@ only after acceptance. Enable and start `weknora-production.service` after the
 first successful deployment. It restores the current stack on every boot,
 requires Docker, the resource slice and the data mount, and serializes against
 updates. Containers also retain their restart policies. Image downloads use eight bounded HTTP ranges with retained chunk caches;
-metadata uses curl. Every complete asset must pass SHA-256 verification. No development data is imported.
+metadata uses bounded atomic reads. Every complete asset must pass SHA-256 verification. No development data is imported.
 
 ## Boundaries and resource allocation
 

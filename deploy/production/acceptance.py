@@ -43,7 +43,7 @@ subprocess.run(['bash',str(base/'bin/check-schema.sh'),str(release)],check=True,
 app_id=output(['ps','-q','app'])
 environment=json.loads(subprocess.check_output(['docker','inspect',app_id,'--format','{{json .Config.Env}}'],text=True))
 assert 'WEKNORA_BUILD_COMMIT='+manifest['commit'] in environment, 'Application revision mismatch'
-output(['exec','-T','frontend','sh','-c','grep -Rl --include="*.js" '+manifest['commit']+' /usr/share/nginx/html >/dev/null'])
+output(['exec','-T','frontend','sh','-c','grep -Rl --include="*.js" '+manifest['commit'][:7]+' /usr/share/nginx/html >/dev/null'])
 images={}
 for service,key in [('app','APP_IMAGE'),('frontend','UI_IMAGE'),('postgres','POSTGRES_IMAGE'),('redis','REDIS_IMAGE')]:
     container=output(['ps','-q',service])

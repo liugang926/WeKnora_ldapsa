@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Pull only complete, published prod-* releases from the configured public fork."""
-import hashlib, json, os, pathlib, re, shutil, subprocess, tarfile, urllib.request
+import hashlib, json, os, pathlib, re, shutil, subprocess, tarfile, tempfile, time, urllib.request
 from validate_release import validate
 from parallel_download import download_parallel
 BASE = pathlib.Path('/srv/weknora-production')
@@ -9,24 +9,35 @@ REPO = 'liugang926/WeKnora_ldapsa'
 def get(url):
     return urllib.request.urlopen(urllib.request.Request(url, headers={'User-Agent': 'weknora-production-updater', 'Accept': 'application/vnd.github+json'}), timeout=90)
 
-def download_asset(url, destination, expected_size, resume=False):
-    # Published tags are immutable. Existing complete image parts are always
-    # checked against SHA256SUMS before use; interrupted transfers can resume.
-    if resume and destination.exists() and destination.stat().st_size == expected_size:
-        return
-    command = ['curl', '--fail', '--location', '--silent', '--show-error',
-               '--retry', '5', '--retry-delay', '2', '--connect-timeout', '20',
-               '--max-time', '3600']
-    if resume and destination.exists():
-        if destination.stat().st_size > expected_size:
-            destination.unlink()
-        else:
-            command += ['--continue-at', '-']
-    subprocess.run(command + ['--output', str(destination), url], check=True)
-    if destination.stat().st_size != expected_size:
-        raise RuntimeError('Incomplete asset: ' + destination.name)
+def download_asset(url, destination, expected_size):
+    # Metadata is small and fetched afresh. Commit it only after an exact,
+    # bounded read so a failed attempt cannot replace previously valid data.
+    if not isinstance(expected_size, int) or not 0 <= expected_size <= 16*1024*1024:
+        raise ValueError('Invalid metadata size')
+    for attempt in range(3):
+        temporary = None
+        try:
+            with get(url) as response:
+                content = response.read(expected_size + 1)
+            if len(content) != expected_size:
+                raise RuntimeError('Metadata size mismatch')
+            with tempfile.NamedTemporaryFile(dir=destination.parent, delete=False) as output:
+                temporary = pathlib.Path(output.name)
+                output.write(content)
+                output.flush(); os.fsync(output.fileno())
+            os.replace(temporary, destination)
+            return
+        except Exception:
+            if attempt == 2:
+                raise RuntimeError('Metadata download failed: '+destination.name) from None
+            time.sleep(0.5 * (attempt+1))
+        finally:
+            if temporary is not None: temporary.unlink(missing_ok=True)
 
 def main():
+    if (BASE/'ACTIVATION_PENDING').exists():
+        (BASE/'UPDATE_FAILED').touch(mode=0o600)
+        raise RuntimeError('Interrupted activation requires recovery; original backup pointer retained')
     if (BASE/'UPDATE_FAILED').exists():
         raise RuntimeError('Previous deployment failed; operator must resolve and remove UPDATE_FAILED')
     releases = json.load(get(f'https://api.github.com/repos/{REPO}/releases?per_page=30'))

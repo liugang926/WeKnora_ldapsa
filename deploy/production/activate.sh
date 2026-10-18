@@ -10,6 +10,12 @@ exec 9>"$base/deploy.lock"
 flock -n 9 || exit 0
 old=$(readlink -f "$base/current" || true)
 compose() { docker compose --env-file "$base/secrets/app.env" --env-file "$1/images.env" -f "$1/production/compose.yaml" "${@:2}"; }
+if [[ -e "$base/ACTIVATION_PENDING" ]]; then
+  touch "$base/UPDATE_FAILED"
+  compose "$release" stop || true
+  echo 'Interrupted activation requires operator recovery; original backup pointer retained.' >&2
+  exit 1
+fi
 compose "$release" config --quiet
 for ref in $(cut -d= -f2 "$release/images.env"); do docker image inspect "$ref" >/dev/null; done
 if [[ "$old" == "$release" ]]; then exit 0; fi
