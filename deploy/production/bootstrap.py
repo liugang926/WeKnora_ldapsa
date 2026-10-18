@@ -14,6 +14,7 @@ def request(path, payload):
 request('auth/register', credentials)
 envfile.write_text(envfile.read_text().replace('DISABLE_REGISTRATION=false\n','DISABLE_REGISTRATION=true\n'))
 subprocess.run(cmd+['up','-d','--pull','never','--wait','--wait-timeout','420','app'],check=True)
-request('auth/login', {'email':credentials['email'],'password':credentials['password']})
+result=request('auth/login', {'email':credentials['email'],'password':credentials['password']})
+assert result.get('success') and result.get('user', {}).get('is_system_admin'), 'Administrator promotion failed'
 (base/'BOOTSTRAPPED').touch(mode=0o600)
 print('Admin created and login verified; registration closed. Credentials remain in secrets/admin.json.')

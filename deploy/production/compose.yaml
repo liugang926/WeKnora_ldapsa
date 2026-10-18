@@ -67,6 +67,7 @@ services:
     memswap_limit: 512m
     cpus: 0.5
     ports: ['${BIND_IP:-10.106.1.128}:${HTTP_PORT:-18080}:80']
+    volumes: ['./nginx-api-proxy.conf:/etc/nginx/api-proxy.conf:ro']
     environment:
       APP_HOST: app
       APP_PORT: '8080'

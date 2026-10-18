@@ -14,6 +14,9 @@ compose "$release" config --quiet
 for ref in $(cut -d= -f2 "$release/images.env"); do docker image inspect "$ref" >/dev/null; done
 if [[ "$old" == "$release" ]]; then exit 0; fi
 backup="$data/backups/$(date -u +%Y%m%dT%H%M%SZ)"
+required=$(du -sb "$data/runtime" | cut -f1)
+available=$(df -B1 --output=avail "$data" | tail -1 | tr -d " ")
+(( available > required + 5*1024*1024*1024 )) || { echo "Insufficient backup space" >&2; exit 1; }
 mkdir -p "$backup"
 # All writers are stopped for a consistent physical DB/Redis/file snapshot.
 # This is deliberately a maintenance window; no unsafe old-binary/new-schema rollback.
