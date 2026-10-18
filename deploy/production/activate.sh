@@ -27,7 +27,10 @@ if ! tar -czf "$backup/runtime.tar.gz" -C "$data" runtime; then
   [[ ! -f "$old/production/compose.yaml" ]] || compose "$old" up -d --pull never
   exit 1
 fi
-cp -a "$base/secrets" "$backup/secrets"
+if ! cp -a "$base/secrets" "$backup/secrets"; then
+  [[ ! -f "$old/production/compose.yaml" ]] || compose "$old" up -d --pull never
+  exit 1
+fi
 [[ ! -f "$old/images.env" ]] || cp "$old/images.env" "$backup/previous-images.env"
 printf '%s\n' "$old" > "$backup/previous-release"
 sha256sum "$backup/runtime.tar.gz" > "$backup/SHA256SUMS"
