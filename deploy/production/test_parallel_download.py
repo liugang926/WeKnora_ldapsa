@@ -1,5 +1,6 @@
 import pathlib
 import re
+import socket
 import tempfile
 import threading
 import unittest
@@ -47,7 +48,7 @@ class ParallelDownloadTests(unittest.TestCase):
     def network(self, request, *, timeout):
         self.assertEqual(request.full_url, self.url)
         self.assertEqual(request.get_header('Accept-encoding'), 'identity')
-        self.assertGreater(timeout, 0)
+        self.assertEqual(timeout, 60)
         match = re.fullmatch(r'bytes=(\d+)-(\d+)', request.get_header('Range'))
         self.assertIsNotNone(match)
         start, end = map(int, match.groups())
@@ -173,6 +174,50 @@ class ParallelDownloadTests(unittest.TestCase):
         self.assertNotIn(self.url, str(caught.exception))
         self.assertNotIn('do-not-log', str(caught.exception))
         self.assertTrue(caught.exception.__suppress_context__)
+
+    def test_failed_middle_chunk_does_not_stop_later_chunks_or_discard_cache(self):
+        self.destination.write_bytes(b'a')
+
+        def fail_middle(request, *, timeout):
+            response = self.network(request, timeout=timeout)
+            if request.get_header('Range') == 'bytes=4-7':
+                response.status = 503
+            return response
+
+        with patch('parallel_download.urllib.request.urlopen', side_effect=fail_middle):
+            with self.assertRaisesRegex(DownloadError, '1 chunks failed: Chunk 1.*HTTP 503'):
+                download_parallel(self.url, self.destination, len(self.data), workers=1, chunk_size=4)
+        self.assertEqual(self.destination.read_bytes(), b'a')
+        self.assertEqual(self.requests, [(0, 3), (4, 7), (4, 7), (4, 7), (8, 11), (12, 13)])
+        cached = sorted(pathlib.Path(self.tmp.name).rglob('*.part'))
+        self.assertEqual([path.read_bytes() for path in cached], [b'abcd', b'ijkl', b'mn'])
+        self.requests.clear()
+
+        with patch('parallel_download.urllib.request.urlopen', side_effect=self.network):
+            download_parallel(self.url, self.destination, len(self.data), workers=3, chunk_size=4)
+        self.assertEqual(self.requests, [(4, 7)])
+        self.assertEqual(self.destination.read_bytes(), self.data)
+
+    def test_network_error_categories_never_expose_exception_text(self):
+        cases = [
+            (urllib.error.HTTPError(self.url, 502, self.url, None, None), 'HTTP 502'),
+            (socket.timeout(self.url), 'request timeout'),
+            (urllib.error.URLError(socket.timeout(self.url)), 'URLError timeout'),
+            (urllib.error.URLError(PermissionError(self.url)), 'URLError reason type: PermissionError'),
+            (urllib.error.URLError(self.url), 'URLError reason type: str'),
+            (PermissionError(self.url), 'OSError type: PermissionError'),
+            (RuntimeError(self.url), 'exception type: RuntimeError'),
+        ]
+        for failure, category in cases:
+            with self.subTest(category=category):
+                with patch('parallel_download.urllib.request.urlopen', side_effect=failure) as network:
+                    with self.assertRaises(DownloadError) as caught:
+                        download_parallel(self.url, self.destination, 4, workers=1, chunk_size=4)
+                self.assertEqual(network.call_count, 3)
+                self.assertIn(category, str(caught.exception))
+                self.assertNotIn(self.url, str(caught.exception))
+                self.assertNotIn('do-not-log', str(caught.exception))
+                self.assertTrue(caught.exception.__suppress_context__)
 
     def test_existing_complete_destination_needs_no_requests(self):
         self.destination.write_bytes(self.data)

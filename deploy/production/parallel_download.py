@@ -5,17 +5,36 @@ import hashlib
 import os
 import pathlib
 import shutil
+import socket
 import tempfile
 import time
+import urllib.error
 import urllib.request
 
 
 _ATTEMPTS = 3
-_REQUEST_TIMEOUT = 30
+_REQUEST_TIMEOUT = 60
 
 
 class DownloadError(RuntimeError):
     """A sanitized download failure; messages never include remote URLs."""
+
+
+def _describe_error(error):
+    if isinstance(error, DownloadError):
+        return str(error)
+    if isinstance(error, urllib.error.HTTPError):
+        return f'HTTP {error.code}'
+    if isinstance(error, (TimeoutError, socket.timeout)):
+        return 'request timeout'
+    if isinstance(error, urllib.error.URLError):
+        reason = error.reason
+        if isinstance(reason, (TimeoutError, socket.timeout)):
+            return 'URLError timeout'
+        return f'URLError reason type: {type(reason).__name__}'
+    if isinstance(error, OSError):
+        return f'OSError type: {type(error).__name__}'
+    return f'exception type: {type(error).__name__}'
 
 
 def _write_chunk(path, content):
@@ -50,7 +69,7 @@ def _fetch_chunk(url, path, index, start, end, total):
             })
             with urllib.request.urlopen(request, timeout=_REQUEST_TIMEOUT) as response:
                 if response.status != 206:
-                    raise DownloadError('server did not return HTTP 206')
+                    raise DownloadError(f'HTTP {response.status}; expected 206')
                 if response.headers.get('Content-Range') != f'bytes {start}-{end}/{total}':
                     raise DownloadError('unexpected Content-Range')
                 # A server ignoring the range must never make us consume an
@@ -60,12 +79,10 @@ def _fetch_chunk(url, path, index, start, end, total):
                     raise DownloadError('response body has the wrong size')
             _write_chunk(path, content)
             return
-        except DownloadError as error:
-            reason = str(error)
-        except Exception:
+        except Exception as error:
             # HTTPError/URLError messages and tracebacks can contain signed
-            # redirects. Surface only a fixed reason without exception chaining.
-            reason = 'network or local I/O failure'
+            # redirects. Keep useful status/type information, never raw text.
+            reason = _describe_error(error)
         if attempt + 1 < _ATTEMPTS:
             time.sleep(0.5 * (attempt + 1))
     raise DownloadError(f'Chunk {index} failed after {_ATTEMPTS} attempts: {reason}') from None
@@ -121,31 +138,41 @@ def download_parallel(url, destination: pathlib.Path, expected_size: int,
     # Keep only workers futures live at once, including for very large assets.
     missing = (index for index in range(count)
                if not _valid_chunk(chunk(index)[0], chunk(index)[2] - chunk(index)[1] + 1))
+    failures = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
-        pending = set()
+        pending = {}
 
         def schedule():
             index = next(missing, None)
             if index is None:
                 return False
             path, start, end = chunk(index)
-            pending.add(pool.submit(_fetch_chunk, url, path, index, start, end, expected_size))
+            future = pool.submit(_fetch_chunk, url, path, index, start, end, expected_size)
+            pending[future] = index
             return True
 
         for _ in range(workers):
             if not schedule():
                 break
         while pending:
-            done, pending = concurrent.futures.wait(pending, return_when=concurrent.futures.FIRST_COMPLETED)
-            try:
-                for future in done:
+            done, _ = concurrent.futures.wait(pending, return_when=concurrent.futures.FIRST_COMPLETED)
+            for future in done:
+                index = pending.pop(future)
+                try:
                     future.result()
-            except Exception:
-                for future in pending:
-                    future.cancel()
-                raise
+                except Exception as error:
+                    failures.append((index, _describe_error(error)))
             for _ in done:
                 schedule()
+
+    if failures:
+        # Unstable links should still make progress on all other chunks. Keep
+        # successful caches and report a bounded summary only after draining.
+        failures.sort()
+        details = '; '.join(reason for _, reason in failures[:8])
+        if len(failures) > 8:
+            details += f'; and {len(failures) - 8} more failed chunks'
+        raise DownloadError(f'{len(failures)} chunks failed: {details}') from None
 
     assembled = None
     try:
