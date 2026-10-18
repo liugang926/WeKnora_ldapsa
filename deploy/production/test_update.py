@@ -21,3 +21,17 @@ class UpdateTests(unittest.TestCase):
         data=[{'draft':False,'prerelease':False,'tag_name':'prod-1','published_at':'2026-10-18T00:00:00Z'}]
         with patch.object(update,'get',return_value=io.StringIO(json.dumps(data))),patch.object(update.subprocess,'run') as run:
             update.main();run.assert_not_called()
+    def test_cached_old_release_cannot_downgrade_database(self):
+        target=self.base/'releases'/'prod-old';target.mkdir(parents=True)
+        active=self.base/'current';active.mkdir()
+        images={k:'sha256:'+'b'*64 for k in ['APP_IMAGE','UI_IMAGE','POSTGRES_IMAGE','REDIS_IMAGE']}
+        old={'schema':1,'tag':'prod-old','commit':'a'*40,'images':images}
+        new=dict(old,tag='prod-current',commit='c'*40)
+        (target/'manifest.json').write_text(json.dumps(old))
+        (active/'manifest.json').write_text(json.dumps(new))
+        releases=[{'draft':False,'prerelease':False,'tag_name':'prod-old','published_at':'2026-10-18T00:00:00Z'}]
+        for status in ['behind','diverged']:
+            responses=[io.StringIO(json.dumps(releases)),io.StringIO(json.dumps({'status':status}))]
+            with patch.object(update,'get',side_effect=responses),patch.object(update.subprocess,'run') as run:
+                with self.assertRaises(RuntimeError): update.main()
+                run.assert_not_called()
