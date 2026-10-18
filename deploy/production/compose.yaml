@@ -1,0 +1,87 @@
+name: weknora-production
+x-common: &common
+  restart: unless-stopped
+  cgroup_parent: weknora-production.slice
+  security_opt: [no-new-privileges:true]
+  pids_limit: 512
+  logging:
+    driver: json-file
+    options: {max-size: 10m, max-file: '3'}
+services:
+  postgres:
+    <<: *common
+    image: ${POSTGRES_IMAGE:?}
+    mem_limit: 12g
+    memswap_limit: 12g
+    cpus: 2
+    environment:
+      POSTGRES_USER: weknora
+      POSTGRES_DB: weknora
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?}
+    volumes: [/data/weknora-production/runtime/postgres:/var/lib/postgresql/data]
+    shm_size: 1g
+    stop_grace_period: 90s
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U weknora -d weknora']
+      interval: 5s
+      timeout: 5s
+      retries: 30
+  redis:
+    <<: *common
+    image: ${REDIS_IMAGE:?}
+    mem_limit: 2g
+    memswap_limit: 2g
+    cpus: 0.5
+    command: [redis-server, /usr/local/etc/redis/redis.conf]
+    volumes:
+      - /data/weknora-production/runtime/redis:/data
+      - /srv/weknora-production/secrets/redis.conf:/usr/local/etc/redis/redis.conf:ro
+    healthcheck:
+      test: [CMD-SHELL, 'REDISCLI_AUTH=$$(sed -n "s/^requirepass //p" /usr/local/etc/redis/redis.conf) redis-cli ping | grep -qx PONG']
+      interval: 5s
+      timeout: 5s
+      retries: 30
+  app:
+    <<: *common
+    image: ${APP_IMAGE:?}
+    mem_limit: 12g
+    memswap_limit: 12g
+    cpus: 3
+    env_file: [/srv/weknora-production/secrets/app.env]
+    volumes:
+      - /data/weknora-production/runtime/files:/data/files
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    healthcheck:
+      test: [CMD, curl, -fsS, http://localhost:8080/health]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 120s
+    stop_grace_period: 90s
+  frontend:
+    <<: *common
+    image: ${UI_IMAGE:?}
+    mem_limit: 512m
+    memswap_limit: 512m
+    cpus: 0.5
+    ports: ['${BIND_IP:-10.106.1.128}:${HTTP_PORT:-18080}:80']
+    environment:
+      APP_HOST: app
+      APP_PORT: '8080'
+      APP_SCHEME: http
+      DEFAULT_LOCALE: zh-CN
+      MAX_FILE_SIZE_MB: '50'
+    depends_on:
+      app: {condition: service_healthy}
+    healthcheck:
+      test: [CMD, wget, -q, -O, /dev/null, http://127.0.0.1/]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+networks:
+  default:
+    name: weknora-production
+    ipam:
+      config: [{subnet: 172.30.54.0/24}]
