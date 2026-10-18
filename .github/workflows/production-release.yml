@@ -1,0 +1,64 @@
+name: Production release
+on:
+  push:
+    tags: ['prod-*']
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: production-release
+  cancel-in-progress: false
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Require a production tag on merged main
+        run: |
+          [[ "$GITHUB_REF" == refs/tags/prod-* ]]
+          git fetch origin main
+          git merge-base --is-ancestor HEAD origin/main
+          bash -n deploy/production/*.sh
+          python3 -m unittest discover -s deploy/production -p 'test_*.py'
+      - uses: docker/setup-buildx-action@v4
+      - name: Build application
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: docker/Dockerfile.app
+          platforms: linux/amd64
+          load: true
+          tags: weknora-production-app:${{ github.sha }}
+          build-args: |
+            WITH_ANYDOC=1
+            COMMIT_ID_ARG=${{ github.sha }}
+          cache-from: type=gha,scope=app-image-pr-amd64
+      - name: Build frontend
+        uses: docker/build-push-action@v7
+        with:
+          context: frontend
+          platforms: linux/amd64
+          load: true
+          tags: weknora-production-ui:${{ github.sha }}
+          build-args: VITE_FRONTEND_COMMIT=${{ github.sha }}
+      - name: Verify and package immutable images
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          docker image inspect "weknora-production-app:$GITHUB_SHA" --format '{{range .Config.Env}}{{println .}}{{end}}' | grep -Fx "WEKNORA_BUILD_COMMIT=$GITHUB_SHA"
+          docker run --rm --entrypoint sh "weknora-production-app:$GITHUB_SHA" -c 'test -x /app/WeKnora && test -x /usr/local/bin/migrate'
+          docker pull paradedb/paradedb:v0.22.6-pg17@sha256:58bf87d2a6f1e72f56590b0f0ae1467e82c3f99ca203dde646672c8ac13148b2
+          docker tag paradedb/paradedb:v0.22.6-pg17@sha256:58bf87d2a6f1e72f56590b0f0ae1467e82c3f99ca203dde646672c8ac13148b2 paradedb/paradedb:v0.22.6-pg17
+          docker pull redis:7.4.10-alpine
+          mkdir bundle
+          python3 deploy/production/make_manifest.py > bundle/manifest.json
+          docker save "weknora-production-app:$GITHUB_SHA" "weknora-production-ui:$GITHUB_SHA" paradedb/paradedb:v0.22.6-pg17 redis:7.4.10-alpine | gzip -1 | split -b 1800M -d - bundle/images.tar.gz.part
+          tar -czf bundle/deployment.tar.gz -C deploy production
+          (cd bundle && sha256sum manifest.json deployment.tar.gz images.tar.gz.part* > SHA256SUMS)
+          gh release create "$GITHUB_REF_NAME" --verify-tag --title "WeKnora production $GITHUB_REF_NAME" --notes "Merged main commit: $GITHUB_SHA. Linux amd64. Deployment includes bounded resources, backup and health gates." --draft
+          gh release upload "$GITHUB_REF_NAME" bundle/*
+          gh release edit "$GITHUB_REF_NAME" --draft=false --latest=false
