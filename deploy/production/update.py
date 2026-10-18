@@ -3,11 +3,18 @@
 import hashlib, json, os, pathlib, re, shutil, subprocess, tarfile, tempfile, time, urllib.request
 from validate_release import validate
 from parallel_download import download_parallel
+from image_identity import resolve_images
 BASE = pathlib.Path('/srv/weknora-production')
 REPO = 'liugang926/WeKnora_ldapsa'
 
-def get(url):
-    return urllib.request.urlopen(urllib.request.Request(url, headers={'User-Agent': 'weknora-production-updater', 'Accept': 'application/vnd.github+json'}), timeout=90)
+def get(url, accept='application/vnd.github+json'):
+    return urllib.request.urlopen(urllib.request.Request(url, headers={'User-Agent': 'weknora-production-updater', 'Accept': accept}), timeout=90)
+
+def asset_url(asset):
+    url = asset.get('url')
+    if not isinstance(url, str) or not re.fullmatch(r'https://api\.github\.com/repos/' + re.escape(REPO) + r'/releases/assets/[0-9]+', url):
+        raise RuntimeError('Untrusted asset URL')
+    return url
 
 def download_asset(url, destination, expected_size):
     # Metadata is small and fetched afresh. Commit it only after an exact,
@@ -17,7 +24,7 @@ def download_asset(url, destination, expected_size):
     for attempt in range(3):
         temporary = None
         try:
-            with get(url) as response:
+            with get(url, accept='application/octet-stream') as response:
                 content = response.read(expected_size + 1)
             if len(content) != expected_size:
                 raise RuntimeError('Metadata size mismatch')
@@ -33,6 +40,27 @@ def download_asset(url, destination, expected_size):
             time.sleep(0.5 * (attempt+1))
         finally:
             if temporary is not None: temporary.unlink(missing_ok=True)
+
+def read_checksums(path):
+    hashes = {}
+    for line in path.read_text().splitlines():
+        digest, name = line.split(None, 1); name = name.lstrip('*')
+        if not re.fullmatch('[a-f0-9]{64}', digest) or '/' in name:
+            raise RuntimeError('Invalid checksum record')
+        hashes[name] = digest
+    return hashes
+
+def file_sha256(path):
+    digest = hashlib.sha256()
+    with path.open('rb') as stream:
+        for block in iter(lambda: stream.read(1024*1024), b''):
+            digest.update(block)
+    return digest.hexdigest()
+
+def cached_asset_valid(path, expected_digest):
+    if not path.is_file() or not expected_digest:
+        return False
+    return file_sha256(path) == expected_digest
 
 def main():
     if (BASE/'ACTIVATION_PENDING').exists():
@@ -58,20 +86,19 @@ def main():
         scratch = pathlib.Path('/data/weknora-production/downloads')/tag
         scratch.mkdir(mode=0o700, exist_ok=True)
         try:
+            hashes = {}
             for name in ['SHA256SUMS', 'manifest.json', 'deployment.tar.gz'] + parts:
-                url = assets[name]['browser_download_url']
-                if not url.startswith(f'https://github.com/{REPO}/releases/download/{tag}/'): raise RuntimeError('Untrusted asset URL')
+                url = asset_url(assets[name])
+                if name not in parts and name != 'SHA256SUMS' and cached_asset_valid(scratch/name, hashes.get(name)):
+                    continue
                 if name in parts:
                     download_parallel(url, scratch/name, assets[name]['size'])
                 else:
                     download_asset(url, scratch/name, assets[name]['size'])
-            hashes = {}
-            for line in (scratch/'SHA256SUMS').read_text().splitlines():
-                digest, name = line.split(None, 1); name = name.lstrip('*')
-                if not re.fullmatch('[a-f0-9]{64}', digest) or '/' in name: raise RuntimeError('Invalid checksum record')
-                hashes[name] = digest
+                if name == 'SHA256SUMS':
+                    hashes = read_checksums(scratch/name)
             for name in ['manifest.json', 'deployment.tar.gz'] + parts:
-                with open(scratch/name, 'rb') as f: digest = hashlib.file_digest(f, 'sha256').hexdigest()
+                digest = file_sha256(scratch/name)
                 if hashes.get(name) != digest:
                     (scratch/name).unlink()
                     raise RuntimeError('Checksum mismatch: '+name)
@@ -104,6 +131,9 @@ def main():
         comparison = json.load(get(f"https://api.github.com/repos/{REPO}/compare/{old['commit']}...{manifest['commit']}"))
         if comparison.get('status') not in ('ahead', 'identical'):
             raise RuntimeError('Automatic database downgrade/divergent release refused')
+    resolved = resolve_images(manifest)
+    (target/'resolved-images.json').write_text(json.dumps(resolved, indent=2)+'\n')
+    (target/'images.env').write_text(''.join(k+'='+v+'\n' for k,v in sorted(resolved['local_images'].items())))
     subprocess.run(['bash', str(BASE/'bin/activate.sh'), str(target)], check=True)
 
 if __name__ == '__main__': main()

@@ -2,13 +2,16 @@
 
 import concurrent.futures
 import hashlib
+import itertools
 import os
 import pathlib
+import re
 import shutil
 import socket
 import tempfile
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
 
@@ -55,6 +58,33 @@ def _valid_chunk(path, size):
     return path.is_file() and path.stat().st_size == size
 
 
+def _asset_redirect(url, total):
+    """Resolve one public API asset request, retaining its signed URL in RAM."""
+    try:
+        request = urllib.request.Request(url, headers={
+            'User-Agent': 'weknora-production-updater',
+            'Accept': 'application/octet-stream',
+            'Accept-Encoding': 'identity',
+            'Range': 'bytes=0-0',
+        })
+        with urllib.request.urlopen(request, timeout=_REQUEST_TIMEOUT) as response:
+            final_url = response.geturl()
+            parsed = urllib.parse.urlsplit(final_url)
+            if (parsed.scheme != 'https' or parsed.hostname != 'release-assets.githubusercontent.com'
+                    or parsed.port not in (None, 443) or parsed.username is not None
+                    or parsed.password is not None or parsed.fragment):
+                raise DownloadError('Untrusted asset redirect domain')
+            if response.status != 206:
+                raise DownloadError(f'HTTP {response.status}; expected 206 for asset redirect')
+            if response.headers.get('Content-Range') != f'bytes 0-0/{total}':
+                raise DownloadError('Unexpected asset redirect Content-Range')
+            if len(response.read(2)) != 1:
+                raise DownloadError('Asset redirect response body has the wrong size')
+            return final_url
+    except Exception as error:
+        raise DownloadError('Asset redirect resolution failed: ' + _describe_error(error)) from None
+
+
 def _fetch_chunk(url, path, index, start, end, total):
     size = end - start + 1
     if _valid_chunk(path, size):
@@ -64,6 +94,7 @@ def _fetch_chunk(url, path, index, start, end, total):
         try:
             request = urllib.request.Request(url, headers={
                 'User-Agent': 'weknora-production-updater',
+                'Accept': 'application/octet-stream',
                 'Range': f'bytes={start}-{end}',
                 'Accept-Encoding': 'identity',
             })
@@ -138,6 +169,12 @@ def download_parallel(url, destination: pathlib.Path, expected_size: int,
     # Keep only workers futures live at once, including for very large assets.
     missing = (index for index in range(count)
                if not _valid_chunk(chunk(index)[0], chunk(index)[2] - chunk(index)[1] + 1))
+    first_missing = next(missing, None)
+    request_url = url
+    if first_missing is not None:
+        missing = itertools.chain([first_missing], missing)
+        if re.fullmatch(r'https://api\.github\.com/repos/liugang926/WeKnora_ldapsa/releases/assets/[0-9]+', url):
+            request_url = _asset_redirect(url, expected_size)
     failures = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
         pending = {}
@@ -147,7 +184,7 @@ def download_parallel(url, destination: pathlib.Path, expected_size: int,
             if index is None:
                 return False
             path, start, end = chunk(index)
-            future = pool.submit(_fetch_chunk, url, path, index, start, end, expected_size)
+            future = pool.submit(_fetch_chunk, request_url, path, index, start, end, expected_size)
             pending[future] = index
             return True
 

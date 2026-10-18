@@ -4,11 +4,13 @@ def image_id(name):
     return subprocess.check_output(['docker', 'image', 'inspect', name, '--format', '{{.Id}}'], text=True).strip()
 
 if __name__ == '__main__':
+    from image_identity import inspect_config_digest
     sha = os.environ['GITHUB_SHA']
-    print(json.dumps({'schema': 1, 'commit': sha, 'tag': os.environ['GITHUB_REF_NAME'],
-        'images': {name: image_id(ref) for name, ref in {
-            'APP_IMAGE': 'weknora-production-app:' + sha,
+    refs = {'APP_IMAGE': 'weknora-production-app:' + sha,
             'UI_IMAGE': 'weknora-production-ui:' + sha,
             'POSTGRES_IMAGE': 'paradedb/paradedb:v0.22.6-pg17',
-            'REDIS_IMAGE': 'redis:7.4.10-alpine',
-        }.items()}}, indent=2))
+            'REDIS_IMAGE': 'redis:7.4.10-alpine'}
+    print(json.dumps({'schema': 1, 'commit': sha, 'tag': os.environ['GITHUB_REF_NAME'],
+        'images': {key: image_id(ref) for key, ref in refs.items()},
+        'image_references': refs,
+        'image_config_digests': {key: inspect_config_digest(ref) for key, ref in refs.items()}}, indent=2))
