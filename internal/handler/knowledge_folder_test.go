@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -11,9 +12,11 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/Tencent/WeKnora/internal/application/repository"
 	"github.com/Tencent/WeKnora/internal/middleware"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
+	"github.com/stretchr/testify/require"
 )
 
 type stubFolderKBService struct {
@@ -71,59 +74,88 @@ func newFolderRouter(kg interfaces.KnowledgeService) *gin.Engine {
 	return r
 }
 
+// originalFolderFixture authors fresh literal documents through the original
+// input writer. It does not certify pre-existing folder names or cached totals.
+func originalFolderFixture(t *testing.T, kbID string, folders ...string) *KnowledgeHandler {
+	t.Helper()
+	h, _, store, _, _, _ := collectionHTTPFixture(t)
+	ctx := collectionHumanInputContext(7)
+	if kbID != "kb" {
+		kb := &types.KnowledgeBase{
+			ID:       kbID,
+			TenantID: 7,
+			Type:     types.KnowledgeBaseTypeDocument,
+			Name:     "Original folder test KB",
+		}
+		require.NoError(
+			t,
+			store.CreateKnowledgeBaseWithInput(
+				repository.WithIndependentKnowledgeBaseNameInput(
+					repository.WithIndependentKnowledgeInput(ctx),
+					"",
+					kb.Name,
+				),
+				kb,
+			),
+		)
+	}
+	for index, folder := range folders {
+		row := &types.Knowledge{
+			ID: fmt.Sprintf("folder-%d", index), TenantID: 7, KnowledgeBaseID: kbID,
+			Type: types.KnowledgeTypeManual, Channel: "web", Source: "manual",
+			Title: "New original folder document", FolderPath: folder,
+			ParseStatus: types.ParseStatusCompleted, EnableStatus: "enabled",
+			Metadata:       types.JSON(`{"manual":{"content":"new original folder body","version":1}}`),
+			CustomMetadata: types.JSON(`{}`),
+		}
+		_, err := store.CreateKnowledgeWithInput(repository.WithIndependentKnowledgeInput(ctx), row, row.Metadata)
+		require.NoError(t, err)
+	}
+	return h
+}
+
 // The folder dimension is keyed off parameter presence, because an empty
 // folder_path is a meaningful value (the knowledge base root) and must be
 // distinguishable from "browse every folder".
 func TestListKnowledge_FolderScopeFromQuery(t *testing.T) {
 	tests := []struct {
-		name      string
-		query     string
-		wantPath  string
-		wantScope types.KnowledgeFolderScope
+		name    string
+		query   string
+		wantIDs []string
 	}{
-		{"absent parameter keeps the flat listing", "", "", types.FolderScopeAny},
-		{"empty parameter selects the root", "?folder_path=", "", types.FolderScopeExact},
-		{"folder selects that folder only", "?folder_path=docs/spec", "docs/spec", types.FolderScopeExact},
-		{"recursive selects the subtree", "?folder_path=docs&folder_recursive=true", "docs", types.FolderScopeSubtree},
-		{"recursive false stays exact", "?folder_path=docs&folder_recursive=false", "docs", types.FolderScopeExact},
-		{"path is normalized", "?folder_path=/docs//spec/", "docs/spec", types.FolderScopeExact},
-		{"traversal cannot escape the root", "?folder_path=../../spec", "spec", types.FolderScopeExact},
+		{"absent parameter keeps the flat listing", "", []string{"folder-0", "folder-1", "folder-2", "folder-3"}},
+		{"empty parameter selects the root", "?folder_path=", []string{"folder-0"}},
+		{"folder selects that folder only", "?folder_path=docs/spec", []string{"folder-2"}},
+		{"recursive selects the subtree", "?folder_path=docs&folder_recursive=true", []string{"folder-1", "folder-2"}},
+		{"recursive false stays exact", "?folder_path=docs&folder_recursive=false", []string{"folder-1"}},
+		{"path is normalized", "?folder_path=/docs//spec/", []string{"folder-2"}},
+		{"traversal cannot escape the root", "?folder_path=../../spec", []string{"folder-3"}},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			kg := &stubFolderKGService{}
-			router := newFolderRouter(kg)
-
-			req := httptest.NewRequest(http.MethodGet, "/knowledge-bases/kb-1/knowledge"+tt.query, nil)
-			w := httptest.NewRecorder()
-			router.ServeHTTP(w, req)
+			h := originalFolderFixture(t, "folder-kb", "", "docs", "docs/spec", "spec")
+			w := serveCollectionHTTP(h, "/knowledge-bases/folder-kb/knowledge"+tt.query, false)
 
 			if w.Code != http.StatusOK {
 				t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
 			}
-			if kg.gotFilter.FolderPath != tt.wantPath {
-				t.Fatalf("folder path = %q, want %q", kg.gotFilter.FolderPath, tt.wantPath)
+			var body struct {
+				Data []*types.Knowledge `json:"data"`
 			}
-			if kg.gotFilter.FolderScope != tt.wantScope {
-				t.Fatalf("folder scope = %q, want %q", kg.gotFilter.FolderScope, tt.wantScope)
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+			ids := make([]string, 0, len(body.Data))
+			for _, row := range body.Data {
+				ids = append(ids, row.ID)
 			}
+			require.ElementsMatch(t, tt.wantIDs, ids)
 		})
 	}
 }
 
 func TestListKnowledgeFolders_ReturnsTree(t *testing.T) {
-	kg := &stubFolderKGService{
-		tree: types.BuildKnowledgeFolderTree([]*types.KnowledgeFolderCount{
-			{FolderPath: "", Count: 1},
-			{FolderPath: "docs/spec", Count: 2},
-		}),
-	}
-	router := newFolderRouter(kg)
-
-	req := httptest.NewRequest(http.MethodGet, "/knowledge-bases/kb-1/knowledge/folders", nil)
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
+	h := originalFolderFixture(t, "folder-kb", "", "docs/spec", "docs/spec")
+	w := serveCollectionHTTP(h, "/knowledge-bases/folder-kb/knowledge/folders", false)
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())

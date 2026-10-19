@@ -68,7 +68,7 @@ func TestNextcloudSourceRotationRecoversUncertainCommitAndFinalize(t *testing.T)
 		}
 		return nil
 	}
-	h.rotateFinalize = func(_ context.Context, cfg *types.DataSourceConfig, tuple nextcloud.SourceRotation) error {
+	h.rotateFinalize = func(_ context.Context, _ *types.DataSourceConfig, tuple nextcloud.SourceRotation) error {
 		finalizes++
 		require.Equal(t, pair.DataSourceID, tuple.DataSourceID)
 		if finalizes == 1 {
@@ -138,7 +138,7 @@ func TestNextcloudSourceRotationRecoversUncertainCommitAndFinalize(t *testing.T)
 		return &nextcloud.SourcePairingRemoteError{StatusCode: http.StatusConflict}
 	}
 	abortAttempts := 0
-	h.rotateAbort = func(_ context.Context, old *types.DataSourceConfig, tuple nextcloud.SourceRotation) error {
+	h.rotateAbort = func(_ context.Context, old *types.DataSourceConfig, _ nextcloud.SourceRotation) error {
 		abortAttempts++
 		require.Equal(t, "new-secret", old.Credentials["token"])
 		if abortAttempts == 1 {

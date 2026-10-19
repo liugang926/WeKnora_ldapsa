@@ -28,7 +28,7 @@ func TestAgentConversationActualOwnedSearchOriginalsAndNonmatchingReads(t *testi
 			messages, _, _, db, ctx, session := messageMaterialActualFixture(t)
 			var assistant *types.Message
 			if kind != "empty-session" {
-				_, assistant = produceActualMessagePair(t, messages, ctx, session)
+				_, assistant = produceActualMessagePair(ctx, t, messages, session)
 			}
 			ctx = agentConversationActualContext(ctx, messages)
 			defer CloseMessageMaterialOutputBoundary(ctx)

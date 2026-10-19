@@ -11,6 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// ConfigureTagHandlerOutputLineage configures the tag handler output lineage boundary.
 func ConfigureTagHandlerOutputLineage(h *TagHandler, authorizer *service.TagOutputAuthorizer) {
 	if h != nil {
 		h.outputAuthorizer = authorizer
@@ -25,7 +26,7 @@ func (h *TagHandler) requireTagOutput(c *gin.Context) bool {
 	return true
 }
 
-func (h *TagHandler) respondCommittedTag(c *gin.Context, ctx context.Context, returned *types.KnowledgeTag) {
+func (h *TagHandler) respondCommittedTag(ctx context.Context, c *gin.Context, returned *types.KnowledgeTag) {
 	snapshot, err := repository.TagCommittedOutput(ctx)
 	if err == nil &&
 		(returned == nil || snapshot.Request.TagID != returned.ID || snapshot.Request.TenantID != returned.TenantID || snapshot.Request.KnowledgeBaseID != returned.KnowledgeBaseID) {
@@ -35,7 +36,7 @@ func (h *TagHandler) respondCommittedTag(c *gin.Context, ctx context.Context, re
 		_ = c.Error(knowledgeOutputHTTPError(err))
 		return
 	}
-	ctx, closeRead, err := beginFAQTagHTTPRead(c, ctx, h.outputAuthorizer, snapshot.Request.KnowledgeBaseID)
+	ctx, closeRead, err := beginFAQTagHTTPRead(ctx, c, h.outputAuthorizer, snapshot.Request.KnowledgeBaseID)
 	if err != nil {
 		_ = c.Error(err)
 		return
@@ -55,8 +56,8 @@ func (h *TagHandler) respondCommittedTag(c *gin.Context, ctx context.Context, re
 }
 
 func (h *TagHandler) respondTagList(
-	c *gin.Context,
-	ctx context.Context,
+	ctx context.Context, c *gin.Context,
+
 	kb string,
 	page types.Pagination,
 	keyword string,
@@ -66,7 +67,7 @@ func (h *TagHandler) respondTagList(
 		_ = c.Error(errors.NewForbiddenError("Current tag scope is required"))
 		return
 	}
-	ctx, closeRead, err := beginFAQTagHTTPRead(c, ctx, h.outputAuthorizer, kb)
+	ctx, closeRead, err := beginFAQTagHTTPRead(ctx, c, h.outputAuthorizer, kb)
 	if err != nil {
 		_ = c.Error(err)
 		return

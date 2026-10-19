@@ -33,6 +33,7 @@ type LineageGroupPermissionLookup interface {
 	) (types.EffectiveResourcePermission, error)
 }
 
+// LineageCurrentReadActorLookup loads the actor's current read authority.
 type LineageCurrentReadActorLookup interface {
 	RefreshCurrentReadActor(context.Context) (context.Context, error)
 }
@@ -58,6 +59,7 @@ type NextcloudSourceLineageGuard struct {
 	currentReadActor LineageCurrentReadActorLookup
 }
 
+// NewNextcloudSourceLineageGuard constructs the configured NextcloudSourceLineageGuard.
 func NewNextcloudSourceLineageGuard(
 	snapshots NextcloudLineageSnapshotLookup,
 	kbs LineageKnowledgeBaseLookup,

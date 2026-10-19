@@ -21,7 +21,7 @@ import (
 type allowAgentHistory struct{}
 
 func (allowAgentHistory) CheckAgentHistoryReplay(context.Context) error { return nil }
-func (allowAgentHistory) CheckMessageSourceLineage(_ context.Context, message *types.Message) error {
+func (allowAgentHistory) CheckMessageSourceLineage(_ context.Context, _ *types.Message) error {
 	return nil
 }
 

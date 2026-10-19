@@ -55,7 +55,10 @@ type (
 	}
 )
 
-const steerOriginMetadataFields = "id,steer_id,tenant_id,session_id,owner_id,owner_revision,origin_run_message_id,origin_run_generation_id,origin_run_request_id,actor,body_digest,canonical_digest,source_lineage,execution_context,agent_id,agent_tenant_id,created_at_ms"
+const steerOriginMetadataFields = ("id,steer_id,tenant_id,session_id,owner_id,owner_revision,origin_run_messag" +
+	"e_id,origin_run_generation_id,origin_run_request_id,actor,body_digest,cano" +
+	"nical_digest,source_lineage,execution_context,agent_id,agent_tenant_id,cre" +
+	"ated_at_ms")
 
 // Authorship, control transitions, body leases and consumption commit facts.
 // Their authorization reads share the same write transaction; ordinary Steer
@@ -65,7 +68,7 @@ func (s *KnowledgeInputProvenanceStore) steerWriteTransaction(ctx context.Contex
 		return types.ErrSourceLineageUnknown
 	}
 	options := &sql.TxOptions{}
-	switch s.db.Dialector.Name() {
+	switch s.db.Name() {
 	case "postgres":
 		options.Isolation = sql.LevelSerializable
 	case "sqlite":
@@ -120,6 +123,7 @@ func canonicalSteerBody(req *types.SteerAuthoredRequest) (steerAuthoredBody, err
 	}, nil
 }
 
+// AdmitSteerAuthoredInput admits steer authored input.
 func (s *KnowledgeInputProvenanceStore) AdmitSteerAuthoredInput(
 	ctx context.Context,
 	req *types.SteerAuthoredRequest,
@@ -196,7 +200,8 @@ func (s *KnowledgeInputProvenanceStore) AdmitSteerAuthoredInput(
 		if err := tx.Table("steer_control_heads h").
 			Select("h.origin_id").
 			Joins("JOIN steer_control_admissions c ON c.id=h.head_id AND c.origin_id=h.origin_id").
-			Where("c.tenant_id=? AND c.session_id=? AND c.run_message_id=? AND c.run_generation_id=? AND c.consumed=false AND c.discarded=false AND c.deleted=false", req.TenantID, req.SessionID, run.ID, generation).
+			Where(("c.tenant_id=? AND c.session_id=? AND c.run_message_id=? AND c.run_generati" +
+				"on_id=? AND c.consumed=false AND c.discarded=false AND c.deleted=false"), req.TenantID, req.SessionID, run.ID, generation).
 			Scan(&pending).
 			Error; err != nil {
 			return err
@@ -368,6 +373,7 @@ func steerInputFromOriginal(
 	}, nil
 }
 
+// ApplySteerControl applies steer control.
 func (s *KnowledgeInputProvenanceStore) ApplySteerControl(
 	ctx context.Context,
 	req *types.SteerControlRequest,

@@ -268,7 +268,7 @@ func faqAllReadLeaseFixture(t *testing.T, change string) *faqAllLeaseFixture {
 	return &faqAllLeaseFixture{h, knowledgeHandler, db, store, ctx, entry, task, engine, calls, observedGroups, guard}
 }
 
-func serveFAQKnowledgeLeaseHTTP(h *KnowledgeHandler, ctx context.Context, url string) *httptest.ResponseRecorder {
+func serveFAQKnowledgeLeaseHTTP(ctx context.Context, h *KnowledgeHandler, url string) *httptest.ResponseRecorder {
 	r := documentHandlerRouter()
 	r.Use(func(c *gin.Context) { c.Request = c.Request.WithContext(ctx); c.Next() })
 	r.GET("/knowledge/batch", h.GetKnowledgeBatch)
@@ -304,7 +304,8 @@ func TestFAQAllParentReadLeasesActualHTTPPositiveAndGCBarrier(t *testing.T) {
 			require.NoError(
 				t,
 				f.db.Exec(
-					`INSERT INTO nextcloud_content_lease_coverage VALUES(7,'kb',?,?,'FAQ-reader-test-contract','FAQ-builder-test-contract')`,
+					("INSERT INTO nextcloud_content_lease_coverage VALUES(7,'kb',?,?,'FAQ-reader"+
+						"-test-contract','FAQ-builder-test-contract')"),
 					retired,
 					retired,
 				).Error,
@@ -334,7 +335,8 @@ func TestFAQAllParentReadLeasesActualHTTPPositiveAndGCBarrier(t *testing.T) {
 						require.NoError(
 							t,
 							actual.Table("nextcloud_content_leases").
-								Where("kind='read' AND released_at_ms IS NULL AND knowledge_id='' AND knowledge_base_id IN ('kb','faq-derived')").
+								Where(("kind='read' AND released_at_ms IS NULL AND knowledge_id='' AND knowledge_b" +
+									"ase_id IN ('kb','faq-derived')")).
 								Count(&count).
 								Error,
 						)
@@ -353,35 +355,38 @@ func TestFAQAllParentReadLeasesActualHTTPPositiveAndGCBarrier(t *testing.T) {
 			var w *httptest.ResponseRecorder
 			switch route {
 			case "list":
-				w = serveFAQHTTP(f.h, f.ctx, http.MethodGet, "/knowledge-bases/faq-derived/faq/entries", "")
+				w = serveFAQHTTP(f.ctx, f.h, http.MethodGet, "/knowledge-bases/faq-derived/faq/entries", "")
 			case "get":
 				w = serveFAQHTTP(
-					f.h,
-					f.ctx,
+
+					f.ctx, f.h,
+
 					http.MethodGet,
 					fmt.Sprintf("/knowledge-bases/faq-derived/faq/entries/%d", f.entry.ID),
 					"",
 				)
 			case "search":
 				w = serveFAQHTTP(
-					f.h,
-					f.ctx,
+
+					f.ctx, f.h,
+
 					http.MethodPost,
 					"/knowledge-bases/faq-derived/faq/search",
 					`{"query_text":"source"}`,
 				)
 			case "export":
 				w = serveFAQHTTP(
-					f.h,
-					f.ctx,
+
+					f.ctx, f.h,
+
 					http.MethodGet,
 					"/knowledge-bases/faq-derived/faq/entries/export?format=json",
 					"",
 				)
 			case "progress":
-				w = serveFAQHTTP(f.h, f.ctx, http.MethodGet, "/faq/import/progress/"+f.task, "")
+				w = serveFAQHTTP(f.ctx, f.h, http.MethodGet, "/faq/import/progress/"+f.task, "")
 			case "knowledge":
-				w = serveFAQKnowledgeLeaseHTTP(f.knowledge, f.ctx, "/knowledge/"+f.entry.KnowledgeID)
+				w = serveFAQKnowledgeLeaseHTTP(f.ctx, f.knowledge, "/knowledge/"+f.entry.KnowledgeID)
 			case "tags":
 				tag := NewTagHandler(
 					nil,
@@ -389,17 +394,19 @@ func TestFAQAllParentReadLeasesActualHTTPPositiveAndGCBarrier(t *testing.T) {
 					repository.NewChunkRepository(f.db),
 				)
 				ConfigureTagHandlerOutputLineage(tag, service.NewTagOutputAuthorizer(f.store, f.guard))
-				w = serveTagHTTP(tag, f.ctx, http.MethodGet, "/knowledge-bases/faq-derived/tags", "")
+				w = serveTagHTTP(f.ctx, tag, http.MethodGet, "/knowledge-bases/faq-derived/tags", "")
 			case "batch":
 				w = serveFAQKnowledgeLeaseHTTP(
-					f.knowledge,
-					f.ctx,
+
+					f.ctx, f.knowledge,
+
 					"/knowledge/batch?ids="+f.entry.KnowledgeID+"&kb_id=faq-derived",
 				)
 			case "collection":
 				w = serveFAQKnowledgeLeaseHTTP(
-					f.knowledge,
-					f.ctx,
+
+					f.ctx, f.knowledge,
+
 					"/knowledge-bases/faq-derived/knowledge?page_size=20",
 				)
 			}
@@ -430,14 +437,14 @@ func TestFAQAllParentPlansRequireRealLeasesAndRejectABA(t *testing.T) {
 	require.NoError(t, err)
 	_, err = f.store.CaptureFAQInputs(unsafe, request)
 	require.ErrorIs(t, err, repository.ErrNextcloudContentGCUncovered)
-	real, err := acquireFAQReadPlanLeases(f.ctx, f.store.ContentLeaseStore(), plan.Scopes, plan.SourceLineage, 0)
+	actual2, err := acquireFAQReadPlanLeases(f.ctx, f.store.ContentLeaseStore(), plan.Scopes, plan.SourceLineage, 0)
 	require.NoError(t, err)
-	defer real.Close()
-	marked, err := repository.WithFAQInputReadPlan(real.Context(f.ctx), plan)
+	defer actual2.Close()
+	marked, err := repository.WithFAQInputReadPlan(actual2.Context(f.ctx), plan)
 	require.NoError(t, err)
 	_, err = f.store.CaptureFAQInputs(marked, request)
 	require.NoError(t, err)
-	fake := append([]repository.NextcloudContentLease{}, real.rows...)
+	fake := append([]repository.NextcloudContentLease{}, actual2.rows...)
 	fake[0].KnowledgeBaseID = "foreign-kb"
 	forged, err := repository.WithFAQReadLeaseCoverage(marked, fake)
 	require.NoError(t, err)
@@ -460,7 +467,7 @@ func TestFAQAllParentHTTPSourcePermissionRevokeWithOpenLeases(t *testing.T) {
 		t.Run(route, func(t *testing.T) {
 			f := faqAllReadLeaseFixture(t, "personal_revoke_before_write")
 			observed := false
-			f.groups.Hook = func(ctx context.Context) {
+			f.groups.Hook = func(_ context.Context) {
 				observed = true
 				var count int64
 				require.NoError(
@@ -475,35 +482,38 @@ func TestFAQAllParentHTTPSourcePermissionRevokeWithOpenLeases(t *testing.T) {
 			var w *httptest.ResponseRecorder
 			switch route {
 			case "list":
-				w = serveFAQHTTP(f.h, f.ctx, http.MethodGet, "/knowledge-bases/faq-derived/faq/entries", "")
+				w = serveFAQHTTP(f.ctx, f.h, http.MethodGet, "/knowledge-bases/faq-derived/faq/entries", "")
 			case "get":
 				w = serveFAQHTTP(
-					f.h,
-					f.ctx,
+
+					f.ctx, f.h,
+
 					http.MethodGet,
 					fmt.Sprintf("/knowledge-bases/faq-derived/faq/entries/%d", f.entry.ID),
 					"",
 				)
 			case "search":
 				w = serveFAQHTTP(
-					f.h,
-					f.ctx,
+
+					f.ctx, f.h,
+
 					http.MethodPost,
 					"/knowledge-bases/faq-derived/faq/search",
 					`{"query_text":"source"}`,
 				)
 			case "export":
 				w = serveFAQHTTP(
-					f.h,
-					f.ctx,
+
+					f.ctx, f.h,
+
 					http.MethodGet,
 					"/knowledge-bases/faq-derived/faq/entries/export?format=json",
 					"",
 				)
 			case "progress":
-				w = serveFAQHTTP(f.h, f.ctx, http.MethodGet, "/faq/import/progress/"+f.task, "")
+				w = serveFAQHTTP(f.ctx, f.h, http.MethodGet, "/faq/import/progress/"+f.task, "")
 			case "knowledge":
-				w = serveFAQKnowledgeLeaseHTTP(f.knowledge, f.ctx, "/knowledge/"+f.entry.KnowledgeID)
+				w = serveFAQKnowledgeLeaseHTTP(f.ctx, f.knowledge, "/knowledge/"+f.entry.KnowledgeID)
 			case "tags":
 				tag := NewTagHandler(
 					nil,
@@ -511,17 +521,19 @@ func TestFAQAllParentHTTPSourcePermissionRevokeWithOpenLeases(t *testing.T) {
 					repository.NewChunkRepository(f.db),
 				)
 				ConfigureTagHandlerOutputLineage(tag, service.NewTagOutputAuthorizer(f.store, f.guard))
-				w = serveTagHTTP(tag, f.ctx, http.MethodGet, "/knowledge-bases/faq-derived/tags", "")
+				w = serveTagHTTP(f.ctx, tag, http.MethodGet, "/knowledge-bases/faq-derived/tags", "")
 			case "batch":
 				w = serveFAQKnowledgeLeaseHTTP(
-					f.knowledge,
-					f.ctx,
+
+					f.ctx, f.knowledge,
+
 					"/knowledge/batch?ids="+f.entry.KnowledgeID+"&kb_id=faq-derived",
 				)
 			case "collection":
 				w = serveFAQKnowledgeLeaseHTTP(
-					f.knowledge,
-					f.ctx,
+
+					f.ctx, f.knowledge,
+
 					"/knowledge-bases/faq-derived/knowledge?page_size=20",
 				)
 			}
@@ -599,7 +611,7 @@ func configureFAQProductionSQLAuthority(db *gorm.DB, store *repository.Knowledge
 
 func TestFAQAllParentActualSharedReadSingleConnectionAndShareRevoke(t *testing.T) {
 	h, _, db, store, _, _, ctx := faqActualHTTPFixture(t)
-	db.Config.DisableForeignKeyConstraintWhenMigrating = true
+	db.DisableForeignKeyConstraintWhenMigrating = true
 	require.NoError(
 		t,
 		db.AutoMigrate(
@@ -687,11 +699,11 @@ func TestFAQAllParentActualSharedReadSingleConnectionAndShareRevoke(t *testing.T
 	require.NoError(t, err)
 	_, err = h.knowledgeService.CreateFAQEntry(derived, "kb", input)
 	require.NoError(t, err)
-	w := serveFAQHTTP(h, ctx, http.MethodGet, "/knowledge-bases/kb/faq/entries", "")
+	w := serveFAQHTTP(ctx, h, http.MethodGet, "/knowledge-bases/kb/faq/entries", "")
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	require.Contains(t, w.Body.String(), "actual shared parent derived answer")
 	require.NoError(t, db.Where("id='actual-parent-share'").Delete(&types.KnowledgeBaseShare{}).Error)
-	w = serveFAQHTTP(h, ctx, http.MethodGet, "/knowledge-bases/kb/faq/entries", "")
+	w = serveFAQHTTP(ctx, h, http.MethodGet, "/knowledge-bases/kb/faq/entries", "")
 	require.NotEqual(t, http.StatusOK, w.Code, w.Body.String())
 	require.NotContains(t, w.Body.String(), "actual shared parent derived answer")
 	var active int64
@@ -705,7 +717,7 @@ func TestFAQAllParentActualSharedReadSingleConnectionAndShareRevoke(t *testing.T
 func TestFAQAllParentHTTPCurrentActorRevokeKeepsSourceFenceOpen(t *testing.T) {
 	f := faqAllReadLeaseFixture(t, "allowed")
 	observed := false
-	f.groups.Hook = func(ctx context.Context) {
+	f.groups.Hook = func(_ context.Context) {
 		if observed {
 			return
 		}
@@ -721,7 +733,7 @@ func TestFAQAllParentHTTPCurrentActorRevokeKeepsSourceFenceOpen(t *testing.T) {
 		require.Equal(t, int64(1), active)
 		require.NoError(t, f.db.Model(&types.User{}).Where("id='user'").Update("is_active", false).Error)
 	}
-	w := serveFAQHTTP(f.h, f.ctx, http.MethodGet, "/faq/import/progress/"+f.task, "")
+	w := serveFAQHTTP(f.ctx, f.h, http.MethodGet, "/faq/import/progress/"+f.task, "")
 	require.True(t, observed)
 	require.NotEqual(t, http.StatusOK, w.Code, w.Body.String())
 	require.NotContains(t, w.Body.String(), "all leased import answer")

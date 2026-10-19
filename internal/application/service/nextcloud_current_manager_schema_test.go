@@ -18,7 +18,7 @@ func installMachineCurrentManagerSchema(t *testing.T, db, migration *gorm.DB) {
 		return
 	}
 	path := "../../../migrations/sqlite/000083_nextcloud_current_manager_purpose.up.sql"
-	if db.Dialector.Name() == "postgres" {
+	if db.Name() == "postgres" {
 		path = "../../../migrations/versioned/000164_nextcloud_current_manager_purpose.up.sql"
 	}
 	ddl, err := os.ReadFile(path)

@@ -18,21 +18,23 @@ import (
 func TestFAQImportActualHTTPProgressResultAndDisplayToggle(t *testing.T) {
 	h, _, db, store, queue, _, ctx := faqActualHTTPFixture(t)
 	w := serveFAQHTTP(
-		h,
-		ctx,
+
+		ctx, h,
+
 		http.MethodPost,
 		"/knowledge-bases/kb/faq/entries",
-		`{"mode":"append","entries":[{"standard_question":"actual progress source question","answers":["actual imported answer"]}]}`,
+		("{\"mode\":\"append\",\"entries\":[{\"standard_question\":\"actual progress" +
+			" source question\",\"answers\":[\"actual imported answer\"]}]}"),
 	)
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	require.Len(t, queue.tasks, 1)
 	var task types.FAQImportPayload
 	require.NoError(t, json.Unmarshal(queue.tasks[0].Payload(), &task))
-	w = serveFAQHTTP(h, ctx, http.MethodGet, "/faq/import/progress/"+task.TaskID, "")
+	w = serveFAQHTTP(ctx, h, http.MethodGet, "/faq/import/progress/"+task.TaskID, "")
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	require.Contains(t, w.Body.String(), "pending")
 	require.NoError(t, h.knowledgeService.ProcessFAQImport(context.Background(), queue.tasks[0]))
-	w = serveFAQHTTP(h, ctx, http.MethodGet, "/faq/import/progress/"+task.TaskID, "")
+	w = serveFAQHTTP(ctx, h, http.MethodGet, "/faq/import/progress/"+task.TaskID, "")
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	require.Contains(t, w.Body.String(), `"success_count":1`)
 	require.Contains(t, w.Body.String(), "actual progress source question")
@@ -48,14 +50,15 @@ func TestFAQImportActualHTTPProgressResultAndDisplayToggle(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, result.Result.SuccessCount)
 	w = serveFAQHTTP(
-		h,
-		ctx,
+
+		ctx, h,
+
 		http.MethodPut,
 		"/knowledge-bases/kb/faq/import/last-result/display",
 		`{"display_status":"close"}`,
 	)
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
-	w = serveFAQHTTP(h, ctx, http.MethodGet, "/faq/import/progress/"+task.TaskID, "")
+	w = serveFAQHTTP(ctx, h, http.MethodGet, "/faq/import/progress/"+task.TaskID, "")
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	require.Contains(t, w.Body.String(), `"display_status":"close"`)
 	require.Contains(t, w.Body.String(), `"success_count":1`)
@@ -75,14 +78,16 @@ func TestFAQImportActualHTTPProgressResultAndDisplayToggle(t *testing.T) {
 	require.NoError(
 		t,
 		db.Model(&knowledge).
-			Update("last_faq_import_result", types.JSON(`{"task_id":"foreign","success_count":999,"display_status":"open"}`)).
+			Update("last_faq_import_result", types.JSON(("{\"task_id\":\"foreign\",\"success_count\":999,\"display_status\":\"open\""+
+				"}"))).
 			Error,
 	)
 	require.NoError(t, db.Model(&knowledge).Update("last_faq_import_result", legacy).Error)
 	require.Error(t, store.RecheckFAQImportOutputInputs(ctx, current))
 	w = serveFAQHTTP(
-		h,
-		ctx,
+
+		ctx, h,
+
 		http.MethodPut,
 		"/knowledge-bases/kb/faq/import/last-result/display",
 		`{"display_status":"open"}`,
@@ -95,11 +100,13 @@ func TestFAQImportActualHTTPCurrentKeyAndKBReadWithdraw(t *testing.T) {
 		t.Run(change, func(t *testing.T) {
 			h, _, db, _, queue, _, ctx := faqActualHTTPFixture(t)
 			w := serveFAQHTTP(
-				h,
-				ctx,
+
+				ctx, h,
+
 				http.MethodPost,
 				"/knowledge-bases/kb/faq/entries",
-				`{"mode":"append","entries":[{"standard_question":"current read protected question","answers":["original read protected answer"]}]}`,
+				("{\"mode\":\"append\",\"entries\":[{\"standard_question\":\"current read pr" +
+					"otected question\",\"answers\":[\"original read protected answer\"]}]}"),
 			)
 			require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 			var task types.FAQImportPayload
@@ -129,7 +136,7 @@ func TestFAQImportActualHTTPCurrentKeyAndKBReadWithdraw(t *testing.T) {
 					},
 				)
 			}
-			w = serveFAQHTTP(h, ctx, http.MethodGet, "/faq/import/progress/"+task.TaskID, "")
+			w = serveFAQHTTP(ctx, h, http.MethodGet, "/faq/import/progress/"+task.TaskID, "")
 			require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 			require.Contains(t, w.Body.String(), "current read protected question")
 			switch change {
@@ -164,7 +171,7 @@ func TestFAQImportActualHTTPCurrentKeyAndKBReadWithdraw(t *testing.T) {
 						Error,
 				)
 			}
-			w = serveFAQHTTP(h, ctx, http.MethodGet, "/faq/import/progress/"+task.TaskID, "")
+			w = serveFAQHTTP(ctx, h, http.MethodGet, "/faq/import/progress/"+task.TaskID, "")
 			require.NotEqual(t, http.StatusOK, w.Code, w.Body.String())
 			require.NotContains(t, w.Body.String(), "current read protected question")
 		})
@@ -174,8 +181,9 @@ func TestFAQImportActualHTTPCurrentKeyAndKBReadWithdraw(t *testing.T) {
 func TestFAQImportActualKnowledgeCollectionLastResultReceipt(t *testing.T) {
 	h, _, db, store, queue, _, ctx := faqActualHTTPFixture(t)
 	w := serveFAQHTTP(
-		h,
-		ctx,
+
+		ctx, h,
+
 		http.MethodPost,
 		"/knowledge-bases/kb/faq/entries",
 		`{"mode":"append","entries":[{"standard_question":"last result original question","answers":["original"]}]}`,
@@ -215,18 +223,20 @@ func TestFAQImportActualKnowledgeCollectionLastResultReceipt(t *testing.T) {
 func TestFAQImportActualHTTPCurrentActorAndMissingLegacyReceiptReject(t *testing.T) {
 	h, _, db, _, queue, _, ctx := faqActualHTTPFixture(t)
 	w := serveFAQHTTP(
-		h,
-		ctx,
+
+		ctx, h,
+
 		http.MethodPost,
 		"/knowledge-bases/kb/faq/entries",
-		`{"mode":"append","entries":[{"standard_question":"protected progress question","answers":["known original"]}]}`,
+		("{\"mode\":\"append\",\"entries\":[{\"standard_question\":\"protected progr" +
+			"ess question\",\"answers\":[\"known original\"]}]}"),
 	)
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	var task types.FAQImportPayload
 	require.NoError(t, json.Unmarshal(queue.tasks[0].Payload(), &task))
 	require.NoError(t, h.knowledgeService.ProcessFAQImport(context.Background(), queue.tasks[0]))
 	require.NoError(t, db.Model(&types.User{}).Where("id='user'").Update("is_active", false).Error)
-	w = serveFAQHTTP(h, ctx, http.MethodGet, "/faq/import/progress/"+task.TaskID, "")
+	w = serveFAQHTTP(ctx, h, http.MethodGet, "/faq/import/progress/"+task.TaskID, "")
 	require.NotEqual(t, http.StatusOK, w.Code, w.Body.String())
 	require.NotContains(t, w.Body.String(), "protected progress question")
 	require.NoError(t, db.Model(&types.User{}).Where("id='user'").Update("is_active", true).Error)
@@ -237,8 +247,9 @@ func TestFAQImportActualHTTPCurrentActorAndMissingLegacyReceiptReject(t *testing
 		db.Exec("DELETE FROM faq_import_output_heads WHERE output_key=?", "result:7:"+task.KnowledgeID).Error,
 	)
 	w = serveFAQHTTP(
-		h,
-		ctx,
+
+		ctx, h,
+
 		http.MethodPut,
 		"/knowledge-bases/kb/faq/import/last-result/display",
 		`{"display_status":"close"}`,
@@ -249,8 +260,9 @@ func TestFAQImportActualHTTPCurrentActorAndMissingLegacyReceiptReject(t *testing
 func TestFAQImportActualMetadataPlanPinsHeadBeforeBodyCapture(t *testing.T) {
 	h, _, _, store, queue, _, ctx := faqActualHTTPFixture(t)
 	w := serveFAQHTTP(
-		h,
-		ctx,
+
+		ctx, h,
+
 		http.MethodPost,
 		"/knowledge-bases/kb/faq/entries",
 		`{"mode":"append","entries":[{"standard_question":"plan original question","answers":["original"]}]}`,
@@ -300,12 +312,12 @@ func TestFAQImportActualHTTPDryRunAndPartialFailureProgress(t *testing.T) {
 			}
 			body, err := json.Marshal(batch)
 			require.NoError(t, err)
-			w := serveFAQHTTP(h, ctx, http.MethodPost, "/knowledge-bases/kb/faq/entries", string(body))
+			w := serveFAQHTTP(ctx, h, http.MethodPost, "/knowledge-bases/kb/faq/entries", string(body))
 			require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 			var task types.FAQImportPayload
 			require.NoError(t, json.Unmarshal(queue.tasks[0].Payload(), &task))
 			require.NoError(t, h.knowledgeService.ProcessFAQImport(context.Background(), queue.tasks[0]))
-			w = serveFAQHTTP(h, ctx, http.MethodGet, "/faq/import/progress/"+task.TaskID, "")
+			w = serveFAQHTTP(ctx, h, http.MethodGet, "/faq/import/progress/"+task.TaskID, "")
 			require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 			require.Contains(t, w.Body.String(), `"total":2`)
 			require.Contains(t, w.Body.String(), `"failed_count":1`)

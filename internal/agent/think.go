@@ -339,7 +339,7 @@ func (e *AgentEngine) streamThinkingToEventBus(
 			return
 		}
 		emittedEventTypes["thought_chunk"]++
-		e.emitEvent(ctx, event.Event{
+		_ = e.emitEvent(ctx, event.Event{
 			ID:        thinkingID,
 			Type:      event.EventAgentThought,
 			SessionID: sessionID,
@@ -376,7 +376,7 @@ func (e *AgentEngine) streamThinkingToEventBus(
 		closeThinking()
 		answerStreamed = true
 		emittedEventTypes["final_answer_chunk"]++
-		e.emitEvent(ctx, event.Event{
+		_ = e.emitEvent(ctx, event.Event{
 			ID:        answerID,
 			Type:      event.EventAgentFinalAnswer,
 			SessionID: sessionID,
@@ -400,7 +400,7 @@ func (e *AgentEngine) streamThinkingToEventBus(
 				if toolCallID != "" && toolName != "" && !pendingToolCalls[toolCallID] {
 					pendingToolCalls[toolCallID] = true
 					emittedEventTypes["tool_call_pending"]++
-					e.emitEvent(ctx, event.Event{
+					_ = e.emitEvent(ctx, event.Event{
 						ID:        fmt.Sprintf("%s-tool-call-pending", toolCallID),
 						Type:      event.EventAgentToolCall,
 						SessionID: sessionID,
@@ -437,7 +437,7 @@ func (e *AgentEngine) streamThinkingToEventBus(
 						thinkingToolIDs[toolCallID] = eventID
 					}
 					emittedEventTypes["thinking_tool_chunk"]++
-					e.emitEvent(ctx, event.Event{
+					_ = e.emitEvent(ctx, event.Event{
 						ID:        eventID,
 						Type:      event.EventAgentThought,
 						SessionID: sessionID,

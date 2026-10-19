@@ -121,8 +121,9 @@ func (r *NextcloudSourcePairingRepository) ListFailedCandidates(ctx context.Cont
 		Joins(`JOIN nextcloud_source_pairings AS p ON p.tenant_id = v.tenant_id AND
 			p.knowledge_base_id = v.knowledge_base_id AND p.datasource_id = v.datasource_id AND
 			p.operation_id = ? AND p.state = 'active'`, pair.OperationID).
-		Joins(`LEFT JOIN nextcloud_candidate_retry_jobs AS j ON j.tenant_id = v.tenant_id AND
-			j.knowledge_base_id = v.knowledge_base_id AND j.datasource_id = v.datasource_id AND j.external_id = v.external_id`).
+		Joins(("LEFT JOIN nextcloud_candidate_retry_jobs AS j ON j.tenant_id = v.tenant_id" +
+			" AND\n\t\t\tj.knowledge_base_id = v.knowledge_base_id AND j.datasource_id " +
+			"= v.datasource_id AND j.external_id = v.external_id")).
 		Where(`v.tenant_id = ? AND v.knowledge_base_id = ? AND v.datasource_id = ? AND
 			v.state = 'staging' AND SUBSTR(v.external_id, 1, ?) = ? AND
 			k.channel = ? AND k.parse_status = ? AND k.deleted_at IS NULL`,
@@ -212,10 +213,17 @@ func (r *NextcloudEventInboxRepository) CandidateRetryClaims(
 		var failures []nextcloudCandidateFailure
 		query := r.db.WithContext(ctx).Table("nextcloud_source_versions AS v").
 			Select("v.*, k.updated_at AS failed_at").
-			Joins("JOIN knowledges AS k ON k.id = v.candidate_knowledge_id AND k.tenant_id = v.tenant_id AND k.knowledge_base_id = v.knowledge_base_id").
-			Joins("JOIN data_sources AS d ON d.id = v.datasource_id AND d.tenant_id = v.tenant_id AND d.knowledge_base_id = v.knowledge_base_id AND d.type = ? AND d.status = ? AND d.deleted_at IS NULL", types.ConnectorTypeNextcloud, types.DataSourceStatusActive).
-			Joins("JOIN nextcloud_source_pairings AS p ON p.tenant_id = v.tenant_id AND p.knowledge_base_id = v.knowledge_base_id AND p.datasource_id = v.datasource_id AND p.state = 'active'").
-			Joins("LEFT JOIN nextcloud_candidate_retry_jobs AS j ON j.tenant_id = v.tenant_id AND j.knowledge_base_id = v.knowledge_base_id AND j.datasource_id = v.datasource_id AND j.external_id = v.external_id").
+			Joins(("JOIN knowledges AS k ON k.id = v.candidate_knowledge_id AND k.tenant_id = "+
+				"v.tenant_id AND k.knowledge_base_id = v.knowledge_base_id")).
+			Joins(("JOIN data_sources AS d ON d.id = v.datasource_id AND d.tenant_id = v.tenan"+
+				"t_id AND d.knowledge_base_id = v.knowledge_base_id AND d.type = ? AND d.st"+
+				"atus = ? AND d.deleted_at IS NULL"), types.ConnectorTypeNextcloud, types.DataSourceStatusActive).
+			Joins(("JOIN nextcloud_source_pairings AS p ON p.tenant_id = v.tenant_id AND p.kno"+
+				"wledge_base_id = v.knowledge_base_id AND p.datasource_id = v.datasource_id"+
+				" AND p.state = 'active'")).
+			Joins(("LEFT JOIN nextcloud_candidate_retry_jobs AS j ON j.tenant_id = v.tenant_id"+
+				" AND j.knowledge_base_id = v.knowledge_base_id AND j.datasource_id = v.dat"+
+				"asource_id AND j.external_id = v.external_id")).
 			Where("v.state = 'staging' AND k.channel = ? AND k.parse_status = ? AND k.deleted_at IS NULL",
 				types.ConnectorTypeNextcloud, types.ParseStatusFailed).
 			Where(`j.external_id IS NULL OR j.desired_etag <> v.desired_etag OR
@@ -276,7 +284,8 @@ func (r *NextcloudEventInboxRepository) claimCandidateRetry(ctx context.Context,
 			return nil
 		}
 		var candidate types.Knowledge
-		if err := tx.Where("id = ? AND tenant_id = ? AND knowledge_base_id = ? AND channel = ? AND parse_status = ? AND deleted_at IS NULL",
+		if err := tx.Where(("id = ? AND tenant_id = ? AND knowledge_base_id = ? AND channel = ? AND par" +
+			"se_status = ? AND deleted_at IS NULL"),
 			version.CandidateKnowledgeID, version.TenantID, version.KnowledgeBaseID,
 			types.ConnectorTypeNextcloud, types.ParseStatusFailed).
 			Take(&candidate).
@@ -287,7 +296,8 @@ func (r *NextcloudEventInboxRepository) claimCandidateRetry(ctx context.Context,
 			return err
 		}
 		var ds types.DataSource
-		if err := tx.Where("id = ? AND tenant_id = ? AND knowledge_base_id = ? AND type = ? AND status = ? AND deleted_at IS NULL",
+		if err := tx.Where(("id = ? AND tenant_id = ? AND knowledge_base_id = ? AND type = ? AND status" +
+			" = ? AND deleted_at IS NULL"),
 			version.DataSourceID, version.TenantID, version.KnowledgeBaseID,
 			types.ConnectorTypeNextcloud, types.DataSourceStatusActive).
 			Take(&ds).
@@ -464,7 +474,8 @@ func (r *NextcloudEventInboxRepository) ValidateCandidateRetryTask(ctx context.C
 			return ErrNextcloudEventScope
 		}
 		var ds types.DataSource
-		if err := tx.Where("id = ? AND tenant_id = ? AND knowledge_base_id = ? AND type = ? AND status = ? AND deleted_at IS NULL",
+		if err := tx.Where(("id = ? AND tenant_id = ? AND knowledge_base_id = ? AND type = ? AND status" +
+			" = ? AND deleted_at IS NULL"),
 			claim.DataSourceID, claim.TenantID, claim.KnowledgeBaseID,
 			types.ConnectorTypeNextcloud, types.DataSourceStatusActive).
 			Take(&ds).
@@ -523,7 +534,8 @@ func (r *NextcloudSourcePairingRepository) RetryFailedCandidate(ctx context.Cont
 	externalID := "nextcloud:" + pair.InstanceID + ":" + strconv.FormatInt(fileID, 10)
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var ds types.DataSource
-		if err := tx.Where("id = ? AND tenant_id = ? AND knowledge_base_id = ? AND type = ? AND status = ? AND deleted_at IS NULL",
+		if err := tx.Where(("id = ? AND tenant_id = ? AND knowledge_base_id = ? AND type = ? AND status" +
+			" = ? AND deleted_at IS NULL"),
 			pair.DataSourceID, pair.TenantID, pair.KnowledgeBaseID,
 			types.ConnectorTypeNextcloud, types.DataSourceStatusActive).
 			Take(&ds).
@@ -551,7 +563,8 @@ func (r *NextcloudSourcePairingRepository) RetryFailedCandidate(ctx context.Cont
 			return ErrNextcloudSourcePairingConflict
 		}
 		var candidate types.Knowledge
-		if err := tx.Where("id = ? AND tenant_id = ? AND knowledge_base_id = ? AND channel = ? AND parse_status = ? AND deleted_at IS NULL",
+		if err := tx.Where(("id = ? AND tenant_id = ? AND knowledge_base_id = ? AND channel = ? AND par" +
+			"se_status = ? AND deleted_at IS NULL"),
 			candidateID, pair.TenantID, pair.KnowledgeBaseID,
 			types.ConnectorTypeNextcloud, types.ParseStatusFailed).
 			Take(&candidate).
@@ -630,7 +643,8 @@ func (r *NextcloudSourcePairingRepository) FailedCandidateRetryStatus(ctx contex
 			return ErrNextcloudSourcePairingConflict
 		}
 		var ds types.DataSource
-		if err := tx.Where("id = ? AND tenant_id = ? AND knowledge_base_id = ? AND type = ? AND status = ? AND deleted_at IS NULL",
+		if err := tx.Where(("id = ? AND tenant_id = ? AND knowledge_base_id = ? AND type = ? AND status" +
+			" = ? AND deleted_at IS NULL"),
 			pair.DataSourceID, pair.TenantID, pair.KnowledgeBaseID,
 			types.ConnectorTypeNextcloud, types.DataSourceStatusActive).
 			Take(&ds).
@@ -648,7 +662,8 @@ func (r *NextcloudSourcePairingRepository) FailedCandidateRetryStatus(ctx contex
 			return ErrNextcloudSourcePairingConflict
 		}
 		var candidate types.Knowledge
-		if err := tx.Where("id = ? AND tenant_id = ? AND knowledge_base_id = ? AND channel = ? AND parse_status = ? AND deleted_at IS NULL",
+		if err := tx.Where(("id = ? AND tenant_id = ? AND knowledge_base_id = ? AND channel = ? AND par" +
+			"se_status = ? AND deleted_at IS NULL"),
 			version.CandidateKnowledgeID, pair.TenantID, pair.KnowledgeBaseID,
 			types.ConnectorTypeNextcloud, types.ParseStatusFailed).
 			Take(&candidate).

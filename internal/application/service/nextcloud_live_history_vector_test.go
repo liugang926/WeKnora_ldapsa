@@ -279,7 +279,9 @@ func documentLiveHistoryVector(
 	require.Equal(t, 1, result.Total)
 	require.NoError(t, CheckMessageMaterialOutputBoundary(retained))
 	t.Log(
-		"REAL_HISTORY_VECTOR actual persisted RAG -> committed-history producer -> fresh-context DocumentProcess/post/finalize -> native BGE vector/hybrid positive passed; no reranker claim",
+		("REAL_HISTORY_VECTOR actual persisted RAG -> committed-history producer -> " +
+			"fresh-context DocumentProcess/post/finalize -> native BGE vector/hybrid po" +
+			"sitive passed; no reranker claim"),
 	)
 	return func() {
 		require.ErrorIs(t, CheckMessageMaterialOutputBoundary(retained), access.ErrNextcloudPublicationDenied)
@@ -288,7 +290,8 @@ func documentLiveHistoryVector(
 			search(mode, true)
 		}
 		t.Log(
-			"REAL_HISTORY_VECTOR actual NC revocation denied retained output and fresh native vector/hybrid attempts explicitly",
+			("REAL_HISTORY_VECTOR actual NC revocation denied retained output and fresh " +
+				"native vector/hybrid attempts explicitly"),
 		)
 	}
 }

@@ -225,7 +225,9 @@ func runPublicationDirectorySnapshotActual(t *testing.T, pg bool) {
 				}
 				switch r.URL.Path {
 				case "/index.php/apps/integration_weknora/api/v1/capabilities":
-					fmt.Fprint(w, `{"protocol_version":"1","instance_id":"instance-1"}`)
+					if _, err := fmt.Fprint(w, `{"protocol_version":"1","instance_id":"instance-1"}`); err != nil {
+						t.Errorf("write fixture response: %v", err)
+					}
 				case "/index.php/apps/integration_weknora/api/v1/bindings/binding-1/authorize":
 					sourceCalls.Add(1)
 					var payload struct {
@@ -240,10 +242,13 @@ func runPublicationDirectorySnapshotActual(t *testing.T, pg bool) {
 						w.WriteHeader(http.StatusBadRequest)
 						return
 					}
-					fmt.Fprint(
+					if _, err := fmt.Fprint(
 						w,
-						`{"allow":true,"reason":"authorized","policy_revision":"policy-1","source_etag":"etag-42","checked_at":1780000000}`,
-					)
+						("{\"allow\":true,\"reason\":\"authorized\",\"policy_revision\":\"policy-1\"" +
+							",\"source_etag\":\"etag-42\",\"checked_at\":1780000000}"),
+					); err != nil {
+						t.Errorf("write fixture response: %v", err)
+					}
 				default:
 					http.NotFound(w, r)
 				}

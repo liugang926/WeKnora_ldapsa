@@ -16,6 +16,7 @@ import (
 	"gorm.io/gorm/clause"
 )
 
+// NextcloudRootMigration represents nextcloud root migration repository data.
 type NextcloudRootMigration struct {
 	OperationID       string `gorm:"primaryKey"`
 	PairOperationID   string
@@ -31,12 +32,15 @@ type NextcloudRootMigration struct {
 	UpdatedAt         time.Time
 }
 
+// TableName returns the persisted table name.
 func (NextcloudRootMigration) TableName() string { return "nextcloud_root_migrations" }
+
 func rootProofDigest(proof nextcloud.RootMigration) string {
 	proof.State = ""
 	return onboardingDigest(proof)
 }
 
+// PrepareRootMigration prepares root migration.
 func (s *NextcloudOnboardingStore) PrepareRootMigration(
 	ctx context.Context,
 	op types.NextcloudOnboardingOperation,
@@ -89,7 +93,8 @@ func (s *NextcloudOnboardingStore) PrepareRootMigration(
 			return err
 		}
 		q := tx.Exec(
-			"UPDATE knowledge_bases SET ever_had_nextcloud_source=ever_had_nextcloud_source WHERE tenant_id=? AND id=? AND deleted_at IS NULL",
+			("UPDATE knowledge_bases SET ever_had_nextcloud_source=ever_had_nextcloud_so" +
+				"urce WHERE tenant_id=? AND id=? AND deleted_at IS NULL"),
 			op.TenantID,
 			op.KnowledgeBaseID,
 		)
@@ -139,8 +144,8 @@ func (s *NextcloudOnboardingStore) PrepareRootMigration(
 				return ErrNextcloudOnboardingConflict
 			}
 			if n > latestSeq {
-				copy := previous
-				latest = &copy
+				copied := previous
+				latest = &copied
 				latestSeq = n
 			}
 		}
@@ -216,6 +221,7 @@ func (s *NextcloudOnboardingStore) PrepareRootMigration(
 	return out, err
 }
 
+// FinalizeRootMigration finalizes root migration.
 func (s *NextcloudOnboardingStore) FinalizeRootMigration(
 	ctx context.Context,
 	op types.NextcloudOnboardingOperation,
@@ -277,7 +283,8 @@ func (s *NextcloudOnboardingStore) FinalizeRootMigration(
 			}
 			for _, id := range ids {
 				if err := tx.Table("nextcloud_source_status_epochs").
-					Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "connection_id"}}, DoUpdates: clause.Assignments(map[string]any{"publication_epoch": epoch, "pair_operation_id": op.OperationID, "verified_at": time.Now().Unix()}), Where: clause.Where{Exprs: []clause.Expression{clause.Expr{SQL: "nextcloud_source_status_epochs.publication_epoch <= excluded.publication_epoch"}}}}).
+					Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "connection_id"}}, DoUpdates: clause.Assignments(map[string]any{"publication_epoch": epoch, "pair_operation_id": op.OperationID, "verified_at": time.Now().Unix()}), Where: clause.Where{Exprs: []clause.Expression{clause.Expr{SQL: ("nextcloud_source_status_epochs.publication_epoch <= excluded.publication_e" +
+						"poch")}}}}).
 					Create(map[string]any{"connection_id": id, "publication_epoch": epoch, "pair_operation_id": op.OperationID, "verified_at": time.Now().Unix()}).
 					Error; err != nil {
 					return err
@@ -350,6 +357,7 @@ func (s *NextcloudOnboardingStore) finalizedRootPathChain(
 	return proofs, nil
 }
 
+// ResolveCurrentSourcePath resolves current source path.
 func (s *NextcloudOnboardingStore) ResolveCurrentSourcePath(
 	ctx context.Context,
 	tenant uint64,
@@ -379,6 +387,7 @@ func (s *NextcloudOnboardingStore) ResolveCurrentSourcePath(
 	return path, nil
 }
 
+// RootMigrationAuthorizesEpoch returns the root migration authorizes epoch result.
 func (s *NextcloudOnboardingStore) RootMigrationAuthorizesEpoch(
 	ctx context.Context,
 	tenant uint64,
@@ -417,6 +426,7 @@ func (s *NextcloudOnboardingStore) RootMigrationAuthorizesEpoch(
 	return used && oldEpoch >= 0 && oldEpoch <= firstOld && lastResume == currentEpoch, nil
 }
 
+// NextcloudTargetMigration represents nextcloud target migration repository data.
 // TargetMigration is a new empty-KB reservation followed by a one-way source
 // retirement. Its new source is built privately until the complete live
 // manifest has matching completed candidates.
@@ -436,8 +446,10 @@ type NextcloudTargetMigration struct {
 	UpdatedAt          time.Time
 }
 
+// TableName returns the persisted table name.
 func (NextcloudTargetMigration) TableName() string { return "nextcloud_target_migrations" }
 
+// PrepareTargetMigration prepares target migration.
 func (s *NextcloudOnboardingStore) PrepareTargetMigration(
 	ctx context.Context,
 	old types.NextcloudOnboardingOperation,
@@ -482,7 +494,8 @@ func (s *NextcloudOnboardingStore) PrepareTargetMigration(
 				return err
 			}
 			q := tx.Exec(
-				"UPDATE knowledge_bases SET ever_had_nextcloud_source=ever_had_nextcloud_source WHERE tenant_id=? AND id=? AND deleted_at IS NULL",
+				("UPDATE knowledge_bases SET ever_had_nextcloud_source=ever_had_nextcloud_so" +
+					"urce WHERE tenant_id=? AND id=? AND deleted_at IS NULL"),
 				o.TenantID,
 				o.KnowledgeBaseID,
 			)
@@ -604,6 +617,7 @@ func (s *NextcloudOnboardingStore) PrepareTargetMigration(
 	return out, err
 }
 
+// FinalizeTargetMigration finalizes target migration.
 func (s *NextcloudOnboardingStore) FinalizeTargetMigration(
 	ctx context.Context,
 	old types.NextcloudOnboardingOperation,
@@ -702,7 +716,7 @@ func (s *NextcloudOnboardingStore) FinalizeTargetMigration(
 	return out, err
 }
 
-func nextcloudTargetMigrationPublicationBlocked(tx *gorm.DB, tenant uint64, kb, ds string) (bool, error) {
+func nextcloudTargetMigrationPublicationBlocked(tx *gorm.DB, tenant uint64, kb, _ string) (bool, error) {
 	if !tx.Migrator().HasTable(&NextcloudTargetMigration{}) {
 		return false, nil
 	}
@@ -714,6 +728,7 @@ func nextcloudTargetMigrationPublicationBlocked(tx *gorm.DB, tenant uint64, kb, 
 	return n > 0, err
 }
 
+// TargetMigrationSource returns the target migration source result.
 func (s *NextcloudOnboardingStore) TargetMigrationSource(
 	ctx context.Context,
 	old types.NextcloudOnboardingOperation,
@@ -741,6 +756,7 @@ func (s *NextcloudOnboardingStore) TargetMigrationSource(
 	return row, &ds, err
 }
 
+// TargetMigrationCandidateIDs returns the target migration candidate ids result.
 func (s *NextcloudOnboardingStore) TargetMigrationCandidateIDs(
 	ctx context.Context,
 	row NextcloudTargetMigration,
@@ -748,13 +764,15 @@ func (s *NextcloudOnboardingStore) TargetMigrationCandidateIDs(
 	var ids []string
 	err := s.db.WithContext(ctx).
 		Table("nextcloud_source_versions").
-		Where("tenant_id=? AND knowledge_base_id=? AND state='staging' AND candidate_knowledge_id<>''", row.NewTenantID, row.NewKnowledgeBaseID).
+		Where(("tenant_id=? AND knowledge_base_id=? AND state='staging' AND candidate_know"+
+			"ledge_id<>''"), row.NewTenantID, row.NewKnowledgeBaseID).
 		Order("external_id").
 		Pluck("candidate_knowledge_id", &ids).
 		Error
 	return ids, err
 }
 
+// TargetMigrationMultimodal returns the target migration multimodal result.
 func (s *NextcloudOnboardingStore) TargetMigrationMultimodal(
 	ctx context.Context,
 	row NextcloudTargetMigration,

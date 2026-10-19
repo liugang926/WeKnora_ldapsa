@@ -44,10 +44,12 @@ func searchCaptureFromContext(ctx context.Context) *searchLineageCapture {
 	return capture
 }
 
+// SetRAGChunkSnapshotReader configures the reader used to hydrate original chunk snapshots.
 func (t *SearchKnowledgeTool) SetRAGChunkSnapshotReader(reader interfaces.RAGChunkSnapshotReader) {
 	t.snapshotReader = reader
 }
 
+// ExecuteSourceLineage executes the tool with retained original input receipts.
 func (t *SearchKnowledgeTool) ExecuteSourceLineage(
 	ctx context.Context,
 	args json.RawMessage,

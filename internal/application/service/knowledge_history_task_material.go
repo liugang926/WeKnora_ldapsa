@@ -46,20 +46,20 @@ func beginKnowledgeHistoryTaskMaterial(
 	if restorer == nil {
 		return ctx, noop, access.ErrNextcloudPublicationUnavailable
 	}
-	current, close, err := restorer.BeginKnowledgeHistoryTaskMaterial(ctx, proof)
+	current, closeRead, err := restorer.BeginKnowledgeHistoryTaskMaterial(ctx, proof)
 	if err != nil {
-		if close != nil {
-			close()
+		if closeRead != nil {
+			closeRead()
 		}
 		return ctx, noop, err
 	}
-	if current == nil || close == nil {
-		if close != nil {
-			close()
+	if current == nil || closeRead == nil {
+		if closeRead != nil {
+			closeRead()
 		}
 		return ctx, noop, access.ErrNextcloudPublicationUnavailable
 	}
-	return current, close, nil
+	return current, closeRead, nil
 }
 
 // BeginKnowledgeHistoryTaskMaterial opens a separate actual guard even when a

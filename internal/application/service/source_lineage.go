@@ -9,6 +9,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 )
 
+// NewSourceLineageGuard constructs the configured SourceLineageGuard.
 func NewSourceLineageGuard(knowledge interfaces.KnowledgeRepository, kbs interfaces.KnowledgeBaseService,
 	shares interfaces.KBShareService, agents interfaces.AgentShareService, groups interfaces.GroupAccessService,
 	publication *access.NextcloudPublicationGuard,
@@ -17,6 +18,7 @@ func NewSourceLineageGuard(knowledge interfaces.KnowledgeRepository, kbs interfa
 	return access.NewNextcloudSourceLineageGuard(snapshots, kbs, shares, agents, groups, publication)
 }
 
+// ConfigureMessageSourceLineage configures the message source lineage boundary.
 func ConfigureMessageSourceLineage(
 	messages interfaces.MessageService,
 	sessions interfaces.SessionService,
@@ -36,6 +38,7 @@ func ConfigureMessageSourceLineage(
 	chatpipeline.ConfigureSourceLineage(manager, guard)
 }
 
+// ConfigureAgentRAGChunkHydration configures the agent ragchunk hydration boundary.
 func ConfigureAgentRAGChunkHydration(agents interfaces.AgentService, reader interfaces.RAGChunkSnapshotReader) {
 	if impl, ok := agents.(*agentService); ok {
 		impl.ragChunkSnapshotReader = reader
@@ -212,12 +215,12 @@ func rawUserContentOnly(messages []*types.Message) []*types.Message {
 		// Preserve exactly the user's authored Content. Captions, rendered
 		// contexts, attachments, references and generated artifacts have no
 		// covered user-field producer in this phase.
-		copy := types.Message{
+		copied := types.Message{
 			ID: message.ID, SessionID: message.SessionID, RequestID: message.RequestID,
 			Role: message.Role, Content: message.Content, CreatedAt: message.CreatedAt, UpdatedAt: message.UpdatedAt,
 			IsCompleted: message.IsCompleted,
 		}
-		out = append(out, &copy)
+		out = append(out, &copied)
 	}
 	return out
 }

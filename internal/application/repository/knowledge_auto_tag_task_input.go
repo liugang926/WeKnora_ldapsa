@@ -14,6 +14,7 @@ type autoTagActualTaskInput struct {
 	Payload types.KnowledgeAutoTagPayload
 }
 
+// AdmitKnowledgeAutoTagTaskInput admits knowledge auto tag task input.
 func (s *KnowledgeInputProvenanceStore) AdmitKnowledgeAutoTagTaskInput(
 	ctx context.Context,
 	p types.KnowledgeAutoTagPayload,
@@ -89,6 +90,7 @@ func (s *KnowledgeInputProvenanceStore) AdmitKnowledgeAutoTagTaskInput(
 	return &types.KnowledgeAutoTagTaskInputProof{ID: id, Digest: digest}, nil
 }
 
+// VerifyKnowledgeAutoTagTaskInput verifies knowledge auto tag task input.
 func (s *KnowledgeInputProvenanceStore) VerifyKnowledgeAutoTagTaskInput(
 	ctx context.Context,
 	p types.KnowledgeAutoTagPayload,
@@ -98,7 +100,8 @@ func (s *KnowledgeInputProvenanceStore) VerifyKnowledgeAutoTagTaskInput(
 	}
 	var row knowledgeAutoTagManifest
 	if err := s.db.WithContext(ctx).
-		Where("manifest_id = ? AND tenant_id = ? AND knowledge_base_id = ? AND knowledge_id = ? AND admission_id = ?", p.TaskInput.ID, p.TenantID, p.KnowledgeBaseID, p.KnowledgeID, p.OriginalInput.AdmissionID).
+		Where(("manifest_id = ? AND tenant_id = ? AND knowledge_base_id = ? AND knowledge_" +
+			"id = ? AND admission_id = ?"), p.TaskInput.ID, p.TenantID, p.KnowledgeBaseID, p.KnowledgeID, p.OriginalInput.AdmissionID).
 		Take(&row).
 		Error; err != nil {
 		return err

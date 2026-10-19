@@ -19,7 +19,7 @@ func (s *OriginalBodyRetentionStore) bodyKnowledgeDeadline(
 	tx *gorm.DB,
 	tenant uint64,
 	kb, id, admission string,
-	now int64,
+	_ int64,
 ) (int64, bool, error) {
 	var k types.Knowledge
 	e := bodyInternal(
@@ -587,7 +587,8 @@ func (s *OriginalBodyRetentionStore) lockBodyScopes(
 			if e := bodyInternal(
 				tx,
 			).Table("nextcloud_content_leases").
-				Where("tenant_id=? AND knowledge_base_id=? AND released_at_ms IS NULL AND expires_at_ms>?", key.Tenant, key.KB, now).
+				Where(("tenant_id=? AND knowledge_base_id=? AND released_at_ms IS NULL AND expires" +
+					"_at_ms>?"), key.Tenant, key.KB, now).
 				Count(&active).
 				Error; e != nil {
 				return e
@@ -667,12 +668,21 @@ func (s *OriginalBodyRetentionStore) PurgeSelectedJob(
 		return 0, errors.Join(e, recordErr)
 	}
 	var ids []string
-	q := `SELECT p.id FROM original_body_payloads p WHERE p.state='live' AND p.tenant_id=? AND (EXISTS(SELECT 1 FROM original_body_field_revisions r WHERE r.body_id=p.id AND r.tenant_id=? AND r.knowledge_base_id=? AND r.knowledge_id=?) OR EXISTS(SELECT 1 FROM original_body_parent_refs r WHERE r.body_id=p.id AND r.tenant_id=? AND r.knowledge_base_id=? AND r.knowledge_id=?)) ORDER BY p.last_checked_at_ms,p.created_at_ms,p.id LIMIT ?`
+	q := ("SELECT p.id FROM original_body_payloads p WHERE p.state='live' AND p.tenan" +
+		"t_id=? AND (EXISTS(SELECT 1 FROM original_body_field_revisions r WHERE r.b" +
+		"ody_id=p.id AND r.tenant_id=? AND r.knowledge_base_id=? AND r.knowledge_id" +
+		"=?) OR EXISTS(SELECT 1 FROM original_body_parent_refs r WHERE r.body_id=p." +
+		"id AND r.tenant_id=? AND r.knowledge_base_id=? AND r.knowledge_id=?)) ORDE" +
+		"R BY p.last_checked_at_ms,p.created_at_ms,p.id LIMIT ?")
 	if s.db.Migrator().HasTable("datasource_name_inputs") {
 		q = strings.Replace(
 			q,
 			")) ORDER BY p.last_checked_at_ms,p.created_at_ms,p.id LIMIT ?",
-			") OR EXISTS(SELECT 1 FROM original_body_field_revisions r JOIN datasource_name_inputs n ON r.source_table='datasource_name_inputs' AND n.id=r.row_key WHERE r.body_id=p.id AND n.tenant_id=? AND n.knowledge_base_id=? AND n.datasource_id=?)) ORDER BY p.last_checked_at_ms,p.created_at_ms,p.id LIMIT ?",
+			(") OR EXISTS(SELECT 1 FROM original_body_field_revisions r JOIN datasource_" +
+				"name_inputs n ON r.source_table='datasource_name_inputs' AND n.id=r.row_ke" +
+				"y WHERE r.body_id=p.id AND n.tenant_id=? AND n.knowledge_base_id=? AND n.d" +
+				"atasource_id=?)) ORDER BY p.last_checked_at_ms,p.created_at_ms,p.id LIMIT " +
+				"?"),
 			1,
 		)
 	}
@@ -726,7 +736,9 @@ func (s *OriginalBodyRetentionStore) PurgeSelectedJob(
 		}
 		if e := bodyInternal(
 			tx,
-		).Exec("UPDATE original_body_gc_items SET state='collected' WHERE job_id=? AND EXISTS(SELECT 1 FROM original_body_payloads p WHERE p.id=body_id AND p.state='purged' AND p.payload IS NULL)", job.ID).
+		).Exec(("UPDATE original_body_gc_items SET state='collected' WHERE job_id=? AND EXI" +
+			"STS(SELECT 1 FROM original_body_payloads p WHERE p.id=body_id AND p.state=" +
+			"'purged' AND p.payload IS NULL)"), job.ID).
 			Error; e != nil {
 			return e
 		}

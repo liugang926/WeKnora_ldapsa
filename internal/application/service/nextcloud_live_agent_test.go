@@ -115,7 +115,9 @@ func documentLiveAgent(
 		engine.SetSourceLineageVerifier(verify)
 		return engine
 	}
-	result, err := makeEngine().Execute(ctx, "live-owned-agent", "live-agent-turn", "Use search_knowledge to find the Project Cedar document, then use read_document to inspect it. Based only on that document, who does Alice know? Answer with the person's name in one sentence.", nil)
+	result, err := makeEngine().Execute(ctx, "live-owned-agent", "live-agent-turn", ("Use search_knowledge to find the Project Cedar document, then use read_doc" +
+		"ument to inspect it. Based only on that document, who does Alice know? Ans" +
+		"wer with the person's name in one sentence."), nil)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.True(t, result.IsComplete)
@@ -141,7 +143,8 @@ func documentLiveAgent(
 	releaseModel()
 	require.NoError(t, CheckMessageMaterialOutputBoundary(attach(ctx)))
 	t.Log(
-		"REAL_AGENT actual model selected search_knowledge and read_document, real tool outputs and final answer carry source dependencies",
+		("REAL_AGENT actual model selected search_knowledge and read_document, real " +
+			"tool outputs and final answer carry source dependencies"),
 	)
 	return func() {
 		require.Error(t, verify(ctx, result.SourceLineage))
@@ -183,7 +186,8 @@ func (d documentAgentSnapshotDiagnostic) HydrateRAGChunkSnapshots(
 			metadata := strings.TrimSpace(string(c.Metadata))
 			images := strings.TrimSpace(c.ImageInfo)
 			d.t.Logf(
-				"AGENT_SNAPSHOT text=%t summary=%t metadata_empty=%t metadata_null=%t images_empty=%t lineage_complete=%t",
+				("AGENT_SNAPSHOT text=%t summary=%t metadata_empty=%t metadata_null=%t image" +
+					"s_empty=%t lineage_complete=%t"),
 				c.ChunkType == types.ChunkTypeText,
 				c.ChunkType == types.ChunkTypeSummary,
 				metadata == "" || metadata == "{}",

@@ -13,6 +13,7 @@ type (
 	faqReadLeaseCoverage    struct{ Leases []NextcloudContentLease }
 )
 
+// WithFAQReadLeaseCoverage binds faqread lease coverage.
 // IDs here are private server state. Every capture verifies their actual SQL
 // row, owner, scope, epoch, expiry and open fence in its existing transaction.
 // Merely binding plan metadata or manufacturing a lease struct cannot cover a read.

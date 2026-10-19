@@ -86,7 +86,7 @@ func InspectPairing(ctx context.Context, ds *types.DataSourceConfig) (PairingIde
 		return PairingIdentity{}, err
 	}
 	cli := newClient(cfg)
-	cap, err := cli.capabilities(ctx)
+	capacity, err := cli.capabilities(ctx)
 	if err != nil {
 		return PairingIdentity{}, err
 	}
@@ -99,7 +99,7 @@ func InspectPairing(ctx context.Context, ds *types.DataSourceConfig) (PairingIde
 			baseURL := *cfg.baseURL
 			baseURL.Host = strings.ToLower(baseURL.Host)
 			return PairingIdentity{
-				InstanceID:       cap.InstanceID,
+				InstanceID:       capacity.InstanceID,
 				BindingID:        binding.ID,
 				BaseURL:          baseURL.String(),
 				PublicationState: binding.PublicationState,
@@ -118,6 +118,7 @@ func (*Connector) Validate(ctx context.Context, ds *types.DataSourceConfig) erro
 	return err
 }
 
+// ListResources lists resources under the connector's current source controls.
 func (*Connector) ListResources(
 	ctx context.Context,
 	ds *types.DataSourceConfig,
@@ -155,6 +156,7 @@ func (*Connector) ResolveResourceAncestors(context.Context, *types.DataSourceCon
 	return []string{}, nil
 }
 
+// FetchAll fetches source content under the connector's current controls.
 func (c *Connector) FetchAll(
 	ctx context.Context,
 	ds *types.DataSourceConfig,
@@ -261,11 +263,11 @@ func (c *Connector) walk(
 		return nil, nil, err
 	}
 	cli := newClient(cfg)
-	cap, err := cli.capabilities(ctx)
+	capacity2, err := cli.capabilities(ctx)
 	if err != nil {
 		return nil, nil, err
 	}
-	if old != nil && old.ConnectorCursor != nil && previous.InstanceID != cap.InstanceID {
+	if old != nil && old.ConnectorCursor != nil && previous.InstanceID != capacity2.InstanceID {
 		// A cloned instance may reuse file IDs. Dropping the old inventory
 		// would also lose deletion evidence. A truncated cursor with no
 		// instance ID is unsafe for the same reason.
@@ -296,7 +298,7 @@ func (c *Connector) walk(
 				if observer, ok := h.(publicationEpochStreamHandler); ok {
 					if err := observer.ObserveNextcloudPublicationEpoch(
 						ctx,
-						cap.InstanceID,
+						capacity2.InstanceID,
 						binding.ID,
 						binding.PublicationEpoch,
 					); err != nil {
@@ -312,7 +314,7 @@ func (c *Connector) walk(
 				"%s: selected Nextcloud binding is unavailable", apperrors.PublicMessage(
 					datasource.ErrInvalidConfig)))
 		}
-		if err := h.ObserveNextcloudIdentity(ctx, cap.InstanceID, selected[0]); err != nil {
+		if err := h.ObserveNextcloudIdentity(ctx, capacity2.InstanceID, selected[0]); err != nil {
 			return nil, nil, err
 		}
 	}
@@ -408,7 +410,7 @@ func (c *Connector) walk(
 	}
 
 	next := syncState{
-		InstanceID:         cap.InstanceID,
+		InstanceID:         capacity2.InstanceID,
 		Files:              make(map[string]map[string]fileState, len(selected)),
 		ImportPolicy:       policy,
 		Changes:            changeCursors,
@@ -444,7 +446,7 @@ func (c *Connector) walk(
 			state := file.state()
 			oldState, hadOld := previous.Files[bindingID][id]
 			_, wasTombstone := previous.Tombstones[bindingID][id]
-			if retryExternalID != "" && retryExternalID != "nextcloud:"+cap.InstanceID+":"+id {
+			if retryExternalID != "" && retryExternalID != "nextcloud:"+capacity2.InstanceID+":"+id {
 				// The complete manifest was validated above; only the claimed file
 				// may incur a content read. The service retains the original cursor
 				// so this neighbor is handled by a later ordinary sync.
@@ -463,7 +465,7 @@ func (c *Connector) walk(
 				return nil, nil, err
 			}
 			if err := emit(
-				fetchedItem(cap.InstanceID, bindingID, generations[bindingID], file, content, contentType, cfg),
+				fetchedItem(capacity2.InstanceID, bindingID, generations[bindingID], file, content, contentType, cfg),
 			); err != nil {
 				return nil, nil, err
 			}
@@ -497,7 +499,7 @@ func (c *Connector) walk(
 			}
 			if previous.Missing[bindingID][id] {
 				rememberTombstone(&next, bindingID, id, state)
-				if err := emit(deletedItem(cap.InstanceID, bindingID, id, state)); err != nil {
+				if err := emit(deletedItem(capacity2.InstanceID, bindingID, id, state)); err != nil {
 					return nil, nil, err
 				}
 			} else {
@@ -518,7 +520,7 @@ func (c *Connector) walk(
 				continue
 			}
 			rememberTombstone(&next, bindingID, id, state)
-			if err := emit(deletedItem(cap.InstanceID, bindingID, id, state)); err != nil {
+			if err := emit(deletedItem(capacity2.InstanceID, bindingID, id, state)); err != nil {
 				return nil, nil, err
 			}
 		}

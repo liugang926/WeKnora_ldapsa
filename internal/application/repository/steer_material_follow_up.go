@@ -28,7 +28,8 @@ func (s *KnowledgeInputProvenanceStore) AdvanceMessageMaterialAfterOwnFollowUpRo
 		}
 		var inserted types.MessageMaterialCandidateControl
 		if err := tx.Table("messages m").
-			Select("m.id,m.request_id,m.role,m.is_completed AS complete,m.created_at,a.id AS admission_id,a.generation_id,a.revision,v.revision AS current_revision").
+			Select(("m.id,m.request_id,m.role,m.is_completed AS complete,m.created_at,a.id AS a" +
+				"dmission_id,a.generation_id,a.revision,v.revision AS current_revision")).
 			Joins("JOIN message_material_receipts r ON r.message_id=m.id").
 			Joins("JOIN message_material_admissions a ON a.id=r.admission_id AND a.message_id=m.id").
 			Joins("JOIN message_material_versions v ON v.message_id=m.id").

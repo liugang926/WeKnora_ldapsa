@@ -201,12 +201,13 @@ func (e *AgentEngine) systemPromptOptions(ctx context.Context) *BuildSystemPromp
 		_, err := e.toolRegistry.GetTool(agenttools.ToolShellExec)
 		opts.ShellExecEnabled = err == nil
 	}
-	if e.renderedSkillsMetadataLineage != nil {
-		// A failed metadata copy remains unknown.
-	} else if len(opts.SkillsMetadata) > 0 {
-		e.renderedSkillsMetadataLineage = e.skillsMetadataInputLineage(opts.SkillsMetadata)
-	} else {
-		e.renderedSkillsMetadataLineage = independentAgentInput()
+	// Keep a prior failed metadata copy unknown; initialize only an absent receipt.
+	if e.renderedSkillsMetadataLineage == nil {
+		if len(opts.SkillsMetadata) > 0 {
+			e.renderedSkillsMetadataLineage = e.skillsMetadataInputLineage(opts.SkillsMetadata)
+		} else {
+			e.renderedSkillsMetadataLineage = independentAgentInput()
+		}
 	}
 	return opts
 }
@@ -439,7 +440,7 @@ func (e *AgentEngine) Execute(
 	state.SourceLineage = e.SourceLineageSnapshot()
 	if err != nil {
 		logger.Errorf(ctx, "[Agent] Execution failed: %v", err)
-		e.emitEvent(ctx, event.Event{
+		_ = e.emitEvent(ctx, event.Event{
 			ID:        generateEventID("error"),
 			Type:      event.EventError,
 			SessionID: sessionID,

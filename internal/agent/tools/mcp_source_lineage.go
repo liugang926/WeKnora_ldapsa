@@ -114,9 +114,9 @@ func (c *MCPCatalog) currentSourceConfigs(ctx context.Context) (map[string][]byt
 func mcpIndependentContext(ctx context.Context, execution *mcpIndependentTransport) context.Context {
 	ctx = context.WithValue(ctx, mcpIndependentTransportKey{}, execution)
 	if meta, ok := ToolExecFromContext(ctx); ok && meta != nil && meta.ApprovalCtx != nil {
-		copy := *meta
-		copy.ApprovalCtx = context.WithValue(meta.ApprovalCtx, mcpIndependentTransportKey{}, execution)
-		ctx = WithToolExecContext(ctx, &copy)
+		copied := *meta
+		copied.ApprovalCtx = context.WithValue(meta.ApprovalCtx, mcpIndependentTransportKey{}, execution)
+		ctx = WithToolExecContext(ctx, &copied)
 	}
 	return ctx
 }
@@ -187,14 +187,15 @@ func mcpSourceResult(ctx context.Context, execution *mcpIndependentTransport, re
 	// Detach all returned fields, including nested metadata/images. The receipt
 	// describes this actual Go-owned transport result; remote lineage fields
 	// cannot grant authority or alter the enclosing turn's accumulated sources.
-	var copy types.ToolResult
-	if json.Unmarshal(mcpSourceJSON(result), &copy) != nil {
+	var copied2 types.ToolResult
+	if json.Unmarshal(mcpSourceJSON(result), &copied2) != nil {
 		return nil, ErrToolSourceLineageUnavailable
 	}
-	copy.SourceLineage = independentToolInput()
-	return &copy, execErr
+	copied2.SourceLineage = independentToolInput()
+	return &copied2, execErr
 }
 
+// DefinitionSourceLineageForContext accounts for the actual registered tool definition.
 func (t *MCPDiscoverTool) DefinitionSourceLineageForContext(ctx context.Context,
 	actual types.FunctionDefinition,
 ) *types.SourceLineage {
@@ -208,6 +209,7 @@ func (t *MCPDiscoverTool) DefinitionSourceLineageForContext(ctx context.Context,
 	return independentToolInput()
 }
 
+// DefinitionSourceLineageForContext accounts for the actual registered tool definition.
 func (t *MCPCallTool) DefinitionSourceLineageForContext(ctx context.Context,
 	actual types.FunctionDefinition,
 ) *types.SourceLineage {
@@ -221,6 +223,7 @@ func (t *MCPCallTool) DefinitionSourceLineageForContext(ctx context.Context,
 	return independentToolInput()
 }
 
+// DefinitionSourceLineageForContext accounts for the actual registered tool definition.
 func (t *MCPRegisteredTool) DefinitionSourceLineageForContext(ctx context.Context,
 	actual types.FunctionDefinition,
 ) *types.SourceLineage {
@@ -238,6 +241,7 @@ func (t *MCPRegisteredTool) DefinitionSourceLineageForContext(ctx context.Contex
 	return independentToolInput()
 }
 
+// ExecuteSourceLineage executes the tool through its typed source-input boundary.
 func (t *MCPDiscoverTool) ExecuteSourceLineage(ctx context.Context,
 	raw json.RawMessage,
 ) (*types.ToolResult, error) {
@@ -283,6 +287,7 @@ func (t *MCPDiscoverTool) ExecuteSourceLineage(ctx context.Context,
 	return mcpSourceResult(current, execution, result, err)
 }
 
+// ExecuteSourceLineage executes the tool through its typed source-input boundary.
 func (t *MCPCallTool) ExecuteSourceLineage(ctx context.Context,
 	raw json.RawMessage,
 ) (*types.ToolResult, error) {
@@ -312,6 +317,7 @@ func (t *MCPCallTool) ExecuteSourceLineage(ctx context.Context,
 	return mcpSourceResult(current, execution, result, err)
 }
 
+// ExecuteSourceLineage executes the tool through its typed source-input boundary.
 func (t *MCPRegisteredTool) ExecuteSourceLineage(ctx context.Context,
 	raw json.RawMessage,
 ) (*types.ToolResult, error) {

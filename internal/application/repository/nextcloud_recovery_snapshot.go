@@ -9,6 +9,7 @@ import (
 	"gorm.io/gorm"
 )
 
+// NextcloudRecoverySnapshot represents nextcloud recovery snapshot repository data.
 // Snapshot is a fresh owner observation, not a saved receipt or an actor grant.
 // The coordinator must obtain it again immediately before its final gate.
 type NextcloudRecoverySnapshot struct {
@@ -18,6 +19,8 @@ type NextcloudRecoverySnapshot struct {
 	StateSHA256   string                            `json:"state_sha256"`
 	ControlState  map[string]any                    `json:"control_state,omitempty"`
 }
+
+// NextcloudRecoverySourceSnapshot represents nextcloud recovery source snapshot repository data.
 type NextcloudRecoverySourceSnapshot struct {
 	Pair               NextcloudRecoveryPair                   `json:"pair"`
 	PairSHA256         string                                  `json:"pair_sha256"`
@@ -28,6 +31,8 @@ type NextcloudRecoverySourceSnapshot struct {
 	Reconciliation     *NextcloudRecoveryReconciliationReceipt `json:"reconciliation"`
 	Published          []NextcloudRecoveryPublishedSource      `json:"published"`
 }
+
+// NextcloudRecoveryPublishedSource represents nextcloud recovery published source repository data.
 type NextcloudRecoveryPublishedSource struct {
 	KnowledgeID           string   `json:"knowledge_id"`
 	FileID                string   `json:"file_id"`
@@ -36,6 +41,7 @@ type NextcloudRecoveryPublishedSource struct {
 	IndexedChunkIDs       []string `json:"indexed_chunk_ids"`
 }
 
+// Snapshot returns the snapshot result.
 func (s *NextcloudPublicationRecoveryStore) Snapshot(
 	ctx context.Context,
 	planSHA string,
@@ -178,7 +184,8 @@ func (s *NextcloudPublicationRecoveryStore) Snapshot(
 					return e
 				}
 				var versions []nextcloudSourceVersion
-				if e = tx.Where("tenant_id=? AND knowledge_base_id=? AND datasource_id=? AND state='published'", p.TenantID, p.KnowledgeBaseID, p.DataSourceID).
+				if e = tx.Where(("tenant_id=? AND knowledge_base_id=? AND datasource_id=? AND state='publish" +
+					"ed'"), p.TenantID, p.KnowledgeBaseID, p.DataSourceID).
 					Order("external_id").
 					Find(&versions).
 					Error; e != nil {
@@ -199,7 +206,8 @@ func (s *NextcloudPublicationRecoveryStore) Snapshot(
 						return e
 					}
 					var chunks []types.Chunk
-					if e = tx.Where("knowledge_id=? AND tenant_id=? AND knowledge_base_id=? AND is_enabled=? AND status=? AND index_status='ready'", k.ID, p.TenantID, p.KnowledgeBaseID, true, types.ChunkStatusIndexed).
+					if e = tx.Where(("knowledge_id=? AND tenant_id=? AND knowledge_base_id=? AND is_enabled=? AN" +
+						"D status=? AND index_status='ready'"), k.ID, p.TenantID, p.KnowledgeBaseID, true, types.ChunkStatusIndexed).
 						Order("id").
 						Find(&chunks).
 						Error; e != nil {

@@ -10,16 +10,18 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// storedTurn is a turn replayed from the database: every message carries the
-// ID of the assistant message that closes it.
+// storedTurn constructs local literal messages with the shape of a stored turn.
+// It reads no database; each message carries the closing assistant ID.
 func storedTurn(id string, rounds int, path string) []chat.Message {
-	msgs := []chat.Message{{Role: "user", Content: "question " + id}}
+	msgs := []chat.Message{{SourceLineage: literalCompactionInput(), Role: "user", Content: "question " + id}}
 	for i := 0; i < rounds; i++ {
 		callID := id + "-call-" + string(rune('a'+i%26))
-		msgs = append(msgs,
+		msgs = append(
+			msgs,
 			chat.Message{
-				Role:    "assistant",
-				Content: filler(20),
+				SourceLineage: literalCompactionInput(),
+				Role:          "assistant",
+				Content:       filler(20),
 				ToolCalls: []chat.ToolCall{{
 					ID:   callID,
 					Type: "function",
@@ -29,10 +31,19 @@ func storedTurn(id string, rounds int, path string) []chat.Message {
 					},
 				}},
 			},
-			chat.Message{Role: "tool", Name: "write_sandbox_file", ToolCallID: callID, Content: filler(30)},
+			chat.Message{
+				SourceLineage: literalCompactionInput(),
+				Role:          "tool",
+				Name:          "write_sandbox_file",
+				ToolCallID:    callID,
+				Content:       filler(30),
+			},
 		)
 	}
-	msgs = append(msgs, chat.Message{Role: "assistant", Content: "answer " + id})
+	msgs = append(
+		msgs,
+		chat.Message{SourceLineage: literalCompactionInput(), Role: "assistant", Content: "answer " + id},
+	)
 	for i := range msgs {
 		msgs[i].TurnID = id
 	}
@@ -55,7 +66,7 @@ func withStoredHistory(live []chat.Message, turns ...[]chat.Message) []chat.Mess
 // cannot, because that turn will be replayed verbatim once it is stored.
 func TestCheckpointEndsOnTheLastStoredTurn(t *testing.T) {
 	llm := &stubChat{response: "## Goal\nsummary"}
-	c := New(llm, newEstimator(t), testSettings())
+	c := newLiteralTestCompactor(llm, newEstimator(t), testSettings())
 
 	msgs := withStoredHistory(reactTurn(12),
 		storedTurn("turn-a", 1, "/workspace/a.txt"),
@@ -78,9 +89,12 @@ func TestCheckpointEndsOnTheLastStoredTurn(t *testing.T) {
 // before it. The split turn's prefix is summarized for this request only; the
 // next request replays that turn whole.
 func TestCheckpointStopsBeforeASplitStoredTurn(t *testing.T) {
-	c := New(&stubChat{response: "## Goal\nsummary"}, newEstimator(t), testSettings())
+	c := newLiteralTestCompactor(&stubChat{response: "## Goal\nsummary"}, newEstimator(t), testSettings())
 
-	live := []chat.Message{{Role: "system", Content: "you are an agent"}, {Role: "user", Content: "next"}}
+	live := []chat.Message{
+		{SourceLineage: literalCompactionInput(), Role: "system", Content: "you are an agent"},
+		{SourceLineage: literalCompactionInput(), Role: "user", Content: "next"},
+	}
 	msgs := withStoredHistory(live,
 		storedTurn("turn-a", 1, "/workspace/a.txt"),
 		storedTurn("turn-b", 12, "/workspace/b.txt"))
@@ -97,22 +111,31 @@ func TestCheckpointStopsBeforeASplitStoredTurn(t *testing.T) {
 // there summarizes half of a stored turn as history, which no stored boundary
 // describes, so nothing is persisted.
 func TestNoCheckpointWhenHistoryEndsInsideAStoredTurn(t *testing.T) {
-	c := New(&stubChat{response: "## Goal\nsummary"}, newEstimator(t), testSettings())
+	c := newLiteralTestCompactor(&stubChat{response: "## Goal\nsummary"}, newEstimator(t), testSettings())
 
 	turn := []chat.Message{
-		{Role: "user", Content: "question"},
-		{Role: "assistant", ToolCalls: []chat.ToolCall{{
+		{SourceLineage: literalCompactionInput(), Role: "user", Content: "question"},
+		{SourceLineage: literalCompactionInput(), Role: "assistant", ToolCalls: []chat.ToolCall{{
 			ID: "call-1", Type: "function",
 			Function: chat.FunctionCall{Name: "read_file", Arguments: `{"path":"/workspace/big.txt"}`},
 		}}},
-		{Role: "tool", Name: "read_file", ToolCallID: "call-1", Content: filler(800)},
-		{Role: "user", Content: "steered: also check the footer"},
-		{Role: "assistant", Content: "done"},
+		{
+			SourceLineage: literalCompactionInput(),
+			Role:          "tool",
+			Name:          "read_file",
+			ToolCallID:    "call-1",
+			Content:       filler(800),
+		},
+		{SourceLineage: literalCompactionInput(), Role: "user", Content: "steered: also check the footer"},
+		{SourceLineage: literalCompactionInput(), Role: "assistant", Content: "done"},
 	}
 	for i := range turn {
 		turn[i].TurnID = "turn-a"
 	}
-	live := []chat.Message{{Role: "system", Content: "you are an agent"}, {Role: "user", Content: "next"}}
+	live := []chat.Message{
+		{SourceLineage: literalCompactionInput(), Role: "system", Content: "you are an agent"},
+		{SourceLineage: literalCompactionInput(), Role: "user", Content: "next"},
+	}
 
 	result, err := c.Compact(context.Background(), withStoredHistory(live, turn), ReasonThreshold)
 	require.NoError(t, err)
@@ -121,7 +144,7 @@ func TestNoCheckpointWhenHistoryEndsInsideAStoredTurn(t *testing.T) {
 }
 
 func TestNoCheckpointForALiveTurnOnly(t *testing.T) {
-	c := New(&stubChat{response: "## Goal\nsummary"}, newEstimator(t), testSettings())
+	c := newLiteralTestCompactor(&stubChat{response: "## Goal\nsummary"}, newEstimator(t), testSettings())
 
 	result, err := c.Compact(context.Background(), reactTurn(12), ReasonThreshold)
 	require.NoError(t, err)
@@ -133,7 +156,7 @@ func TestNoCheckpointForALiveTurnOnly(t *testing.T) {
 // archive is kept as a degraded checkpoint instead; the next compaction folds
 // it in as the previous summary.
 func TestDegradedSummaryIsStillACheckpoint(t *testing.T) {
-	c := New(&stubChat{err: assert.AnError}, newEstimator(t), testSettings())
+	c := newLiteralTestCompactor(&stubChat{err: assert.AnError}, newEstimator(t), testSettings())
 
 	msgs := withStoredHistory(reactTurn(12), storedTurn("turn-a", 1, "/workspace/a.txt"))
 	result, err := c.Compact(context.Background(), msgs, ReasonThreshold)
@@ -152,13 +175,13 @@ func TestDegradedSummaryIsStillACheckpoint(t *testing.T) {
 // window was nearly as large as the history, and the compaction freed nothing.
 func TestRawArchiveIsHeldToTheSummaryBudget(t *testing.T) {
 	est := newEstimator(t)
-	c := New(&stubChat{err: assert.AnError}, est, testSettings())
+	c := newLiteralTestCompactor(&stubChat{err: assert.AnError}, est, testSettings())
 
-	msgs := []chat.Message{{Role: "system", Content: "you are an agent"}}
+	msgs := []chat.Message{{SourceLineage: literalCompactionInput(), Role: "system", Content: "you are an agent"}}
 	for i := 0; i < 150; i++ {
 		msgs = append(msgs, storedTurn(fmt.Sprintf("turn-%03d", i), 1, "/workspace/f.txt")...)
 	}
-	msgs = append(msgs, chat.Message{Role: "user", Content: "next"})
+	msgs = append(msgs, chat.Message{SourceLineage: literalCompactionInput(), Role: "user", Content: "next"})
 
 	result, err := c.Compact(context.Background(), msgs, ReasonThreshold)
 	require.NoError(t, err)
@@ -178,9 +201,10 @@ func TestRawArchiveIsHeldToTheSummaryBudget(t *testing.T) {
 // before the loaded turns is lost the moment a new checkpoint replaces it.
 func TestCheckpointCarriesTheLoadedSummaryForward(t *testing.T) {
 	llm := &stubChat{response: "## Goal\nupdated"}
-	c := New(llm, newEstimator(t), testSettings())
+	c := newLiteralTestCompactor(llm, newEstimator(t), testSettings())
 
 	loaded := SummaryMessage("## Goal\nearlier work" + fileOps{written: []string{"/workspace/old.txt"}}.format())
+	loaded.SourceLineage = literalCompactionInput()
 	live := reactTurn(12)
 	msgs := append([]chat.Message{live[0], loaded}, storedTurn("turn-c", 1, "/workspace/c.txt")...)
 	msgs = append(msgs, live[1:]...)
@@ -205,14 +229,14 @@ func TestSummarizerInputIsFittedToTheWindow(t *testing.T) {
 	est := newEstimator(t)
 	llm := &stubChat{response: "## Goal\nsummary"}
 	settings := Settings{Enabled: true, MaxContextTokens: 20000, ReserveTokens: 8000, KeepRecentTokens: 2000}
-	c := New(llm, est, settings)
+	c := newLiteralTestCompactor(llm, est, settings)
 
-	msgs := []chat.Message{{Role: "system", Content: "you are an agent"}}
+	msgs := []chat.Message{{SourceLineage: literalCompactionInput(), Role: "system", Content: "you are an agent"}}
 	for i := 0; i < 150; i++ {
 		id := fmt.Sprintf("turn-%03d", i)
 		msgs = append(msgs, storedTurn(id, 1, "/workspace/"+id+".txt")...)
 	}
-	msgs = append(msgs, chat.Message{Role: "user", Content: "next"})
+	msgs = append(msgs, chat.Message{SourceLineage: literalCompactionInput(), Role: "user", Content: "next"})
 
 	result, err := c.Compact(context.Background(), msgs, ReasonThreshold)
 	require.NoError(t, err)
@@ -234,7 +258,7 @@ func TestSummarizerInputIsFittedToTheWindow(t *testing.T) {
 
 func TestSummarizerInputIsUntouchedWhenItFits(t *testing.T) {
 	llm := &stubChat{response: "## Goal\nsummary"}
-	c := New(llm, newEstimator(t), testSettings())
+	c := newLiteralTestCompactor(llm, newEstimator(t), testSettings())
 
 	result, err := c.Compact(context.Background(),
 		withStoredHistory(reactTurn(12), storedTurn("turn-a", 1, "/workspace/a.txt")), ReasonThreshold)

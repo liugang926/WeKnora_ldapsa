@@ -171,8 +171,8 @@ func (s *KnowledgeInputProvenanceStore) AttachNextcloudOriginalUploadTags(
 		}
 		writeCtx := context.WithValue(ctx, knowledgeDisplayRequestKey{}, request)
 		if err := writeKnowledgeTagWithDisplayInput(
-			s.db,
 			writeCtx,
+			s.db,
 			&group,
 			true,
 			s.displayAuthorityFactory,

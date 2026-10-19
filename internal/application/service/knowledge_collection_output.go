@@ -10,11 +10,13 @@ import (
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 )
 
+// KnowledgeCollectionOutputAuthorizer authorizes inputs used to select knowledge collections.
 type KnowledgeCollectionOutputAuthorizer struct {
 	reader  interfaces.KnowledgeCollectionInputReader
 	checker knowledgeOutputLineageChecker
 }
 
+// NewKnowledgeCollectionOutputAuthorizer constructs the configured KnowledgeCollectionOutputAuthorizer.
 func NewKnowledgeCollectionOutputAuthorizer(
 	store *repository.KnowledgeInputProvenanceStore,
 	guard *access.NextcloudSourceLineageGuard,
@@ -22,6 +24,7 @@ func NewKnowledgeCollectionOutputAuthorizer(
 	return &KnowledgeCollectionOutputAuthorizer{reader: store, checker: guard}
 }
 
+// KnowledgeCollectionOutputGuard holds and rechecks a knowledge collection selection.
 type KnowledgeCollectionOutputGuard struct {
 	authorizer *KnowledgeCollectionOutputAuthorizer
 	snapshot   *types.KnowledgeCollectionInputSnapshot
@@ -30,15 +33,16 @@ type KnowledgeCollectionOutputGuard struct {
 }
 
 func cloneCollection[T any](value T) (T, error) {
-	var copy T
+	var copied T
 	encoded, err := json.Marshal(value)
 	if err != nil {
-		return copy, err
+		return copied, err
 	}
-	err = json.Unmarshal(encoded, &copy)
-	return copy, err
+	err = json.Unmarshal(encoded, &copied)
+	return copied, err
 }
 
+// Begin captures the original inputs and current controls for this operation.
 func (a *KnowledgeCollectionOutputAuthorizer) Begin(
 	ctx context.Context,
 	request types.KnowledgeCollectionReadRequest,
@@ -158,6 +162,7 @@ func (g *KnowledgeCollectionOutputGuard) authorize(ctx context.Context) error {
 	return g.authorizer.checker.Check(ctx, lineage, scope)
 }
 
+// Select selects a collection from the retained original inputs.
 func (g *KnowledgeCollectionOutputGuard) Select(
 	ctx context.Context,
 	request types.KnowledgeCollectionSelectionRequest,
@@ -184,6 +189,7 @@ func (g *KnowledgeCollectionOutputGuard) Select(
 	return selection, nil
 }
 
+// Check rechecks the retained inputs and their current read controls.
 func (g *KnowledgeCollectionOutputGuard) Check(
 	ctx context.Context,
 	selection *types.KnowledgeCollectionSelection,
@@ -232,6 +238,7 @@ func (g *KnowledgeCollectionOutputGuard) Check(
 	return checkBody()
 }
 
+// FAQResultReadPlan plans original material reads for FAQ result output.
 func (a *KnowledgeCollectionOutputAuthorizer) FAQResultReadPlan(
 	ctx context.Context,
 	scopes []types.KnowledgeSearchScope,

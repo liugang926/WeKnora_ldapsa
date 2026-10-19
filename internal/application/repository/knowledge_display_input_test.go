@@ -25,7 +25,7 @@ func (g displayTestGroups) EffectiveTenantRole(
 	ctx context.Context,
 	id string,
 	tenant uint64,
-	now time.Time,
+	_ time.Time,
 ) (types.EffectiveTenantRole, error) {
 	role, err := NewGroupAccessRepository(g.db).GetDirectTenantRole(ctx, id, tenant)
 	result := types.EffectiveTenantRole{TenantID: tenant}
@@ -41,8 +41,8 @@ func (g displayTestGroups) EffectivePermission(
 	tenant uint64,
 	kind types.ResourceType,
 	id string,
-	action types.ResourceAction,
-	now time.Time,
+	_ types.ResourceAction,
+	_ time.Time,
 ) (types.EffectiveResourcePermission, error) {
 	policy, err := NewGroupAccessRepository(g.db).GetResourceAccessPolicy(ctx, tenant, kind, id)
 	if err != nil {
@@ -146,7 +146,7 @@ func captureDisplayTest(t *testing.T, db *gorm.DB, k *types.Knowledge) (*types.K
 	t.Helper()
 	var snapshot *types.KnowledgeCollectionAuxiliary
 	options := &sql.TxOptions{ReadOnly: true}
-	if db.Dialector.Name() == "postgres" {
+	if db.Name() == "postgres" {
 		options.Isolation = sql.LevelRepeatableRead
 	}
 	err := db.Transaction(func(tx *gorm.DB) error {
@@ -162,9 +162,9 @@ func captureDisplayTest(t *testing.T, db *gorm.DB, k *types.Knowledge) (*types.K
 }
 
 func displayTag(
+	ctx context.Context,
 	t *testing.T,
 	repo interfaces.KnowledgeTagRepository,
-	ctx context.Context,
 	id string,
 ) *types.KnowledgeTag {
 	t.Helper()
@@ -185,7 +185,7 @@ func displayTag(
 
 func runDisplayActualInputAndABA(t *testing.T, pg bool) {
 	store, db, ctx, tags, knowledge, k := displayTestFixture(t, pg)
-	tag := displayTag(t, tags, ctx, "tag-one")
+	tag := displayTag(ctx, t, tags, "tag-one")
 	require.NoError(
 		t,
 		knowledge.SetKnowledgeTags(
@@ -315,7 +315,7 @@ func TestKnowledgeDisplayPostgresUnknownForgeryAndRetained(t *testing.T) {
 
 func runDisplayRelationshipABAAndWrongScope(t *testing.T, pg bool) {
 	_, db, ctx, tags, knowledge, k := displayTestFixture(t, pg)
-	tag := displayTag(t, tags, ctx, "tag-relationship")
+	tag := displayTag(ctx, t, tags, "tag-relationship")
 	snapshot, err := captureDisplayTest(t, db, k)
 	require.NoError(t, err)
 	require.NoError(
@@ -462,7 +462,7 @@ func runDisplayCurrentAPIKeyAndIngestionAssignment(t *testing.T, pg bool) {
 	api := types.WithCaller(context.Background(), types.Caller{TenantID: 7, Role: types.TenantRoleOwner})
 	api = types.WithPrincipal(api, types.Principal{Type: types.PrincipalAPITenant, ID: "7"})
 	api = types.WithTenantAPIKeyScope(api, types.TenantAPIKeyScope{KeyID: key.ID, FullAccess: true})
-	tag := displayTag(t, tags, api, "api-tag")
+	tag := displayTag(api, t, tags, "api-tag")
 	original, err := store.CaptureKnowledgeOutputInputs(
 		ctx,
 		types.KnowledgeBuildInputCaptureRequest{TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: k.ID},
@@ -535,7 +535,7 @@ func TestKnowledgeDisplayPostgresCurrentAPIKeyAndIngestionAssignment(t *testing.
 
 func runAutoTagOriginalCompleteCandidateManifest(t *testing.T, pg bool) {
 	store, db, ctx, tags, knowledge, k := displayTestFixture(t, pg)
-	match := displayTag(t, tags, ctx, "automatic-match")
+	match := displayTag(ctx, t, tags, "automatic-match")
 	sourceID := "candidate"
 	if pg {
 		sourceID = "doc-a"
@@ -624,7 +624,7 @@ func TestKnowledgeAutoTagPostgresOriginalCompleteCandidateManifest(t *testing.T)
 
 func runAutoTagCandidateABAAndNewMembership(t *testing.T, pg bool) {
 	store, db, ctx, tags, knowledge, k := displayTestFixture(t, pg)
-	match := displayTag(t, tags, ctx, "automatic-candidate")
+	match := displayTag(ctx, t, tags, "automatic-candidate")
 	baseline, err := store.CaptureKnowledgeOutputInputs(
 		ctx,
 		types.KnowledgeBuildInputCaptureRequest{
@@ -667,7 +667,7 @@ type autoTagSnapshotPauseKey struct{}
 
 func TestKnowledgeAutoTagPostgresCompleteManifestUsesOneCoherentSnapshot(t *testing.T) {
 	store, db, ctx, tags, _, k := displayTestFixture(t, true)
-	tag := displayTag(t, tags, ctx, "coherent-candidate")
+	tag := displayTag(ctx, t, tags, "coherent-candidate")
 	baseline, err := store.CaptureKnowledgeOutputInputs(
 		ctx,
 		types.KnowledgeBuildInputCaptureRequest{

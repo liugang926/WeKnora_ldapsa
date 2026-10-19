@@ -150,7 +150,7 @@ func TestNextcloudPGVectorWriteAndStageSerialize(t *testing.T) {
 	nextcloudVectorStage(t, db, "etag-old", "old")
 	nextcloudVectorKnowledge(t, db, "new", types.ConnectorTypeNextcloud)
 	buildCtx, leases, lease := nextcloudVectorLease(t, db, "old")
-	defer leases.ReleaseLease(ctx, lease.ID)
+	defer func() { require.NoError(t, leases.ReleaseLease(ctx, lease.ID)) }()
 	repo := &pgRepository{db: db}
 	blocker := db.Begin()
 	require.NoError(t, blocker.Error)
@@ -329,7 +329,7 @@ func TestNextcloudPGVectorBackendCrashBeforeInventoryCommitRollsBack(t *testing.
 	nextcloudVectorKnowledge(t, db, "old", types.ConnectorTypeNextcloud)
 	nextcloudVectorStage(t, db, "etag-old", "old")
 	buildCtx, leases, lease := nextcloudVectorLease(t, db, "old")
-	defer leases.ReleaseLease(ctx, lease.ID)
+	defer func() { require.NoError(t, leases.ReleaseLease(ctx, lease.ID)) }()
 	jobID := uuid.NewString()
 	require.NoError(t, db.Exec(`INSERT INTO nextcloud_gc_jobs
 		(id, tenant_id, knowledge_base_id, datasource_id, external_id, knowledge_id,

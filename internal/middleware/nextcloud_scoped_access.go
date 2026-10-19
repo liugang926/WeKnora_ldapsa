@@ -14,13 +14,17 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// NextcloudScopedSessionReader loads sessions for scoped route authorization.
 type NextcloudScopedSessionReader interface {
 	ScopedSession(context.Context, uint64, string, string) (bool, error)
 }
+
+// NextcloudScopedDocumentReader loads documents for scoped route authorization.
 type NextcloudScopedDocumentReader interface {
 	ScopedDocument(context.Context, uint64, string) (string, error)
 }
 
+// RequireNextcloudScopedRoutes enforces the route boundary of scoped source sessions.
 // Source-only entrants can create a private QA session and query explicit
 // authorized KBs. Agent tools, arbitrary model inputs, attachments and general
 // tenant history remain closed until their own scoped contracts are validated.

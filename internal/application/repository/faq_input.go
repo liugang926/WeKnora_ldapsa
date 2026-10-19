@@ -70,6 +70,7 @@ func (faqCatalogOrigin) TableName() string { return "faq_catalog_input_origins" 
 
 func (faqEntryMaterial) TableName() string { return "faq_entry_material_receipts" }
 
+// WithIndependentFAQInput binds independent faqinput.
 func WithIndependentFAQInput(
 	ctx context.Context,
 	kb string,
@@ -92,6 +93,7 @@ func WithIndependentFAQInput(
 	), nil
 }
 
+// WithDerivedFAQInput binds derived faqinput.
 // The caller supplies the original model manifest, not a newly minted current
 // lineage claim. This bridge captures and rechecks the actual original rows.
 // WithDerivedFAQInput is the one-manifest form. The manifest must cover all
@@ -124,8 +126,8 @@ func (s *KnowledgeInputProvenanceStore) WithDerivedFAQInputs(
 			original.SourceLineage.RequireComplete() != nil {
 			return ctx, types.ErrSourceLineageUnknown
 		}
-		copy := cloneKnowledgeInputProof(original)
-		if copy == nil {
+		copied2 := cloneKnowledgeInputProof(original)
+		if copied2 == nil {
 			return ctx, types.ErrSourceLineageUnknown
 		}
 		if err := s.collectionTransaction(ctx, func(tx *gorm.DB) error {
@@ -136,11 +138,11 @@ func (s *KnowledgeInputProvenanceStore) WithDerivedFAQInputs(
 			_, err = authority.captureKnowledgeBuildSnapshotInTx(
 				tx,
 				types.KnowledgeBuildInputCaptureRequest{
-					TenantID:        copy.TenantID,
-					KnowledgeBaseID: copy.KnowledgeBaseID,
-					KnowledgeID:     copy.KnowledgeID,
-					ChunkIDs:        copy.ChunkIDs,
-					Expected:        copy,
+					TenantID:        copied2.TenantID,
+					KnowledgeBaseID: copied2.KnowledgeBaseID,
+					KnowledgeID:     copied2.KnowledgeID,
+					ChunkIDs:        copied2.ChunkIDs,
+					Expected:        copied2,
 				},
 				true,
 			)
@@ -148,8 +150,8 @@ func (s *KnowledgeInputProvenanceStore) WithDerivedFAQInputs(
 		}); err != nil {
 			return ctx, err
 		}
-		proofs = append(proofs, copy)
-		lineages = append(lineages, copy.SourceLineage)
+		proofs = append(proofs, copied2)
+		lineages = append(lineages, copied2.SourceLineage)
 	}
 	digest, err := KnowledgeInputDigest(operation)
 	if err != nil {
@@ -203,7 +205,8 @@ func (s *KnowledgeInputProvenanceStore) readFAQEntryInputInTx(
 		return nil, err
 	}
 	var admission faqEntryAdmission
-	if err := tx.Where("id=? AND chunk_id=? AND knowledge_id=? AND knowledge_base_id=? AND tenant_id=?", receipt.AdmissionID, chunk.ID, chunk.KnowledgeID, chunk.KnowledgeBaseID, chunk.TenantID).
+	if err := tx.Where(("id=? AND chunk_id=? AND knowledge_id=? AND knowledge_base_id=? AND tenant_" +
+		"id=?"), receipt.AdmissionID, chunk.ID, chunk.KnowledgeID, chunk.KnowledgeBaseID, chunk.TenantID).
 		Take(&admission).
 		Error; err != nil {
 		return nil, err
@@ -269,6 +272,7 @@ func (s *KnowledgeInputProvenanceStore) readFAQEntryInputInTx(
 	}, nil
 }
 
+// ReadFAQEntryInputLineage reads faqentry input lineage.
 func (s *KnowledgeInputProvenanceStore) ReadFAQEntryInputLineage(
 	tx *gorm.DB,
 	chunk *types.Chunk,
@@ -443,6 +447,7 @@ func (s *KnowledgeInputProvenanceStore) captureFAQInputsInTx(
 	return snapshot, nil
 }
 
+// CaptureFAQInputs captures faqinputs.
 func (s *KnowledgeInputProvenanceStore) CaptureFAQInputs(
 	ctx context.Context,
 	req types.FAQInputReadRequest,
@@ -484,10 +489,12 @@ func faqInputEqual(a, b any) bool {
 	return err == nil && left == right
 }
 
+// RecheckFAQInputs rechecks faqinputs.
 func (s *KnowledgeInputProvenanceStore) RecheckFAQInputs(ctx context.Context, snapshot *types.FAQInputSnapshot) error {
 	return s.collectionTransaction(ctx, func(tx *gorm.DB) error { return s.recheckFAQInputsInTx(tx, snapshot) })
 }
 
+// FAQInputLineages returns the faqinput lineages result.
 func FAQInputLineages(snapshot *types.FAQInputSnapshot) ([]*types.SourceLineage, error) {
 	if snapshot == nil || snapshot.ConfigLineage.RequireComplete() != nil {
 		return nil, types.ErrSourceLineageUnknown
@@ -508,6 +515,7 @@ func FAQInputLineages(snapshot *types.FAQInputSnapshot) ([]*types.SourceLineage,
 	return lineages, nil
 }
 
+// BeginFAQInput begins faqinput.
 func (s *KnowledgeInputProvenanceStore) BeginFAQInput(
 	ctx context.Context,
 	kb *types.KnowledgeBase,
@@ -604,6 +612,7 @@ func (s *KnowledgeInputProvenanceStore) BeginFAQInput(
 	return context.WithValue(ctx, faqInputSessionKey{}, faqInputSession{id, s}), id, nil
 }
 
+// RestoreFAQInput restores faqinput.
 func (s *KnowledgeInputProvenanceStore) RestoreFAQInput(
 	ctx context.Context,
 	id string,
@@ -678,6 +687,7 @@ func (s *KnowledgeInputProvenanceStore) faqSessionInTx(
 	return &session, &snapshot, nil
 }
 
+// CheckFAQInput checks faqinput.
 func (s *KnowledgeInputProvenanceStore) CheckFAQInput(ctx context.Context) error {
 	active, ok := ctx.Value(faqInputSessionKey{}).(faqInputSession)
 	if !ok || active.Store != s {
@@ -698,11 +708,13 @@ func (s *KnowledgeInputProvenanceStore) CheckFAQInput(ctx context.Context) error
 	return s.collectionTransaction(ctx, func(tx *gorm.DB) error { _, _, err := s.faqSessionInTx(ctx, tx); return err })
 }
 
+// FAQSessionID returns the faqsession id result.
 func (s *KnowledgeInputProvenanceStore) FAQSessionID(ctx context.Context) string {
 	active, _ := ctx.Value(faqInputSessionKey{}).(faqInputSession)
 	return active.ID
 }
 
+// WriteFAQChunks writes faqchunks.
 func (s *KnowledgeInputProvenanceStore) WriteFAQChunks(ctx context.Context, chunks []*types.Chunk, create bool) error {
 	if len(chunks) == 0 {
 		return nil
@@ -944,6 +956,7 @@ func faqCatalogCodeDigest(k *types.Knowledge) (string, error) {
 	)
 }
 
+// DeleteFAQChunks deletes faqchunks.
 func (s *KnowledgeInputProvenanceStore) DeleteFAQChunks(ctx context.Context, ids []string) error {
 	if err := s.CheckFAQInput(ctx); err != nil {
 		return err
@@ -998,6 +1011,7 @@ func (s *KnowledgeInputProvenanceStore) DeleteFAQChunks(ctx context.Context, ids
 	}, knowledgeDisplayWriteOptions(s.db))
 }
 
+// FAQSessionSnapshot returns the faqsession snapshot result.
 func (s *KnowledgeInputProvenanceStore) FAQSessionSnapshot(ctx context.Context) (*types.FAQInputSnapshot, error) {
 	var snapshot *types.FAQInputSnapshot
 	err := s.collectionTransaction(ctx, func(tx *gorm.DB) error {
@@ -1008,6 +1022,7 @@ func (s *KnowledgeInputProvenanceStore) FAQSessionSnapshot(ctx context.Context) 
 	return snapshot, err
 }
 
+// FAQSessionSourceLineage returns the faqsession source lineage result.
 func (s *KnowledgeInputProvenanceStore) FAQSessionSourceLineage(ctx context.Context) (*types.SourceLineage, error) {
 	active, ok := ctx.Value(faqInputSessionKey{}).(faqInputSession)
 	if !ok || active.Store != s {
@@ -1123,6 +1138,7 @@ func (s *KnowledgeInputProvenanceStore) readFAQOriginalKnowledgeInputsInTx(
 	return parents, nil
 }
 
+// FAQSessionOriginalKnowledgeInputs returns the faqsession original knowledge inputs result.
 func (s *KnowledgeInputProvenanceStore) FAQSessionOriginalKnowledgeInputs(
 	ctx context.Context,
 ) ([]*types.KnowledgeBuildInputProof, error) {
@@ -1142,6 +1158,7 @@ func (s *KnowledgeInputProvenanceStore) FAQSessionOriginalKnowledgeInputs(
 	return parents, err
 }
 
+// ResolveFAQInputTag resolves faqinput tag.
 // Tag resolution is part of the exact FAQ operation. New names/defaults are
 // written with their actual operation's union, and only that own addition may
 // advance the original candidate manifest.
@@ -1234,8 +1251,8 @@ func (s *KnowledgeInputProvenanceStore) ResolveFAQInputTag(
 		}
 		for _, field := range []string{"name", "color", "sort_order"} {
 			if err := admitKnowledgeDisplayOrigin(
-				tx,
 				ctx,
+				tx,
 				"tag-"+field,
 				tag.ID,
 				&kb,

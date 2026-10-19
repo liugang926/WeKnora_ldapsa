@@ -4,243 +4,189 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
-	"strings"
-	"sync/atomic"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/Tencent/WeKnora/internal/application/repository"
-	apperrors "github.com/Tencent/WeKnora/internal/errors"
-	"github.com/Tencent/WeKnora/internal/middleware"
 	"github.com/Tencent/WeKnora/internal/types"
-	"github.com/Tencent/WeKnora/internal/types/interfaces"
-	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
 
-type leasedListKnowledgeService struct {
-	interfaces.KnowledgeService
-	rows   []*types.Knowledge
-	onList func()
+type collectionLeaseHookStore struct {
+	*repository.NextcloudContentLeaseStore
+	afterBroad func()
+	once       sync.Once
 }
 
-func (s *leasedListKnowledgeService) ListPagedKnowledgeByKnowledgeBaseID(
-	_ context.Context, _ string, page *types.Pagination, _ types.KnowledgeListFilter,
-) (*types.PageResult, error) {
-	if s.onList != nil {
-		s.onList()
+func (s *collectionLeaseHookStore) AcquireKBRead(
+	ctx context.Context, tenant uint64, kb, owner string, ttl time.Duration,
+) (repository.NextcloudContentLease, error) {
+	lease, err := s.NextcloudContentLeaseStore.AcquireKBRead(ctx, tenant, kb, owner, ttl)
+	if err == nil && s.afterBroad != nil {
+		s.once.Do(s.afterBroad)
 	}
-	return types.NewPageResult(int64(len(s.rows)), page, s.rows), nil
+	return lease, err
 }
 
-type leasedListKBService struct {
-	interfaces.KnowledgeBaseService
-	kb *types.KnowledgeBase
+type collectionLeaseFixture struct {
+	handler *KnowledgeHandler
+	db      *gorm.DB
+	store   *repository.NextcloudContentLeaseStore
+	row     *types.Knowledge
+	scope   repository.NextcloudContentScope
 }
 
-func (s *leasedListKBService) GetKnowledgeBaseByID(context.Context, string) (*types.KnowledgeBase, error) {
-	return s.kb, nil
-}
-
-func (s *leasedListKBService) GetKnowledgeBaseByIDOnly(context.Context, string) (*types.KnowledgeBase, error) {
-	return s.kb, nil
-}
-
-func leasedListRouter(h *KnowledgeHandler) *gin.Engine {
-	gin.SetMode(gin.TestMode)
-	router := gin.New()
-	router.Use(middleware.ErrorHandler(), func(c *gin.Context) {
-		ctx := types.WithCaller(c.Request.Context(), types.Caller{
-			TenantID: 7, UserID: "user-1", Role: types.TenantRoleContributor,
-		})
-		c.Request = c.Request.WithContext(ctx)
-		c.Set(types.TenantIDContextKey.String(), uint64(7))
-		c.Set(types.UserIDContextKey.String(), "user-1")
-		c.Next()
-	})
-	router.GET("/knowledge-bases/:id/knowledge", h.ListKnowledge)
-	return router
-}
-
-func leaseListRequest(h *KnowledgeHandler) *httptest.ResponseRecorder {
-	w := httptest.NewRecorder()
-	leasedListRouter(h).ServeHTTP(w, httptest.NewRequest(http.MethodGet,
-		"/knowledge-bases/kb-1/knowledge?page=1&page_size=10", nil))
-	return w
-}
-
-func markListLeaseCoverage(t *testing.T, db *gorm.DB, tenantID uint64) {
+func newCollectionLeaseFixture(t *testing.T) *collectionLeaseFixture {
 	t.Helper()
-	nowMS := time.Now().UnixMilli() - 1000
-	require.NoError(t, db.Exec(`INSERT INTO nextcloud_content_lease_coverage
-		(tenant_id, knowledge_base_id, activated_at_ms, legacy_drained_at_ms,
-		 reader_revision, builder_revision)
-		VALUES (?, 'kb-1', ?, ?, 'test-reader', 'test-builder')`,
-		tenantID, nowMS, nowMS).Error)
-}
-
-func listLeaseScope(row *types.Knowledge) repository.NextcloudContentScope {
-	return repository.NextcloudContentScope{
-		TenantID:        row.TenantID,
-		KnowledgeBaseID: row.KnowledgeBaseID, KnowledgeID: row.ID,
-		DataSourceID: "source-1", ExternalID: "nextcloud:instance:1",
-	}
-}
-
-func retiredListLeaseTime(t *testing.T, db *gorm.DB, row *types.Knowledge) time.Time {
-	t.Helper()
-	var retiredAtMS int64
-	require.NoError(t, db.Table("nextcloud_content_fences").Select("retired_at_ms").
-		Where("tenant_id = ? AND knowledge_base_id = ? AND knowledge_id = ?",
-			row.TenantID, row.KnowledgeBaseID, row.ID).
-		Row().Scan(&retiredAtMS))
-	return time.UnixMilli(retiredAtMS)
-}
-
-func assertListLeasesReleased(t *testing.T, db *gorm.DB, want int64) {
-	t.Helper()
-	var total, released int64
-	require.NoError(t, db.Table("nextcloud_content_leases").Count(&total).Error)
-	require.NoError(t, db.Table("nextcloud_content_leases").
-		Where("released_at_ms IS NOT NULL").Count(&released).Error)
-	require.Equal(t, want, total)
-	require.Equal(t, want, released)
-}
-
-// Retirement between the list query and exact pin must not race a physical
-// delete: the pre-query KB lease blocks GC while the handler denies the row.
-func TestListKnowledgeBroadLeaseBlocksGCBeforeExactPin(t *testing.T) {
-	db := leaseHandlerDB(t)
-	markListLeaseCoverage(t, db, 7)
+	h, db, _, _, _ := collectionNextcloudHTTPStateFixture(t, "positive", nil)
+	row := &types.Knowledge{}
+	require.NoError(t, db.Where("id = ?", "source").Take(row).Error)
 	store := repository.NewNextcloudContentLeaseStore(db)
-	row := leaseHandlerKnowledge(t)
-	row.Title = "source list secret"
+	// The actual publication fixture holds its builder for its own assertions.
+	// End that completed build so only the reader under test can block GC.
+	var builders []struct {
+		ID string `gorm:"column:lease_id"`
+	}
+	require.NoError(
+		t,
+		db.Table("nextcloud_content_leases").
+			Where("knowledge_id = ? AND kind = ? AND released_at_ms IS NULL", row.ID, repository.NextcloudContentBuildLease).
+			Find(&builders).
+			Error,
+	)
+	for _, lease := range builders {
+		require.NoError(t, store.ReleaseLease(context.Background(), lease.ID))
+	}
+	now := time.Now().Add(-time.Second).UnixMilli()
+	require.NoError(t, db.Exec(`INSERT INTO nextcloud_content_lease_coverage
+      (tenant_id, knowledge_base_id, activated_at_ms, legacy_drained_at_ms, reader_revision, builder_revision)
+      VALUES (7, 'kb', ?, ?, 'actual-collection-fixture-reader', 'actual-completed-fixture-builder')`, now, now).Error)
+	return &collectionLeaseFixture{
+		handler: h,
+		db:      db,
+		store:   store,
+		row:     row,
+		scope: repository.NextcloudContentScope{
+			TenantID:        7,
+			KnowledgeBaseID: "kb",
+			KnowledgeID:     row.ID,
+			DataSourceID:    "ds",
+			ExternalID:      "nextcloud:instance:77",
+		},
+	}
+}
+
+func collectionRetiredAt(t *testing.T, f *collectionLeaseFixture) time.Time {
+	t.Helper()
+	var retired int64
+	require.NoError(
+		t,
+		f.db.Table("nextcloud_content_fences").
+			Select("retired_at_ms").
+			Where("tenant_id = ? AND knowledge_base_id = ? AND knowledge_id = ?", f.scope.TenantID, f.scope.KnowledgeBaseID, f.scope.KnowledgeID).
+			Row().
+			Scan(&retired),
+	)
+	return time.UnixMilli(retired)
+}
+
+func assertCollectionReadersReleased(t *testing.T, db *gorm.DB, minimum int64) {
+	t.Helper()
+	var total, active int64
+	readers := []repository.NextcloudContentLeaseKind{repository.NextcloudContentReadLease}
+	require.NoError(t, db.Table("nextcloud_content_leases").Where("kind IN ?", readers).Count(&total).Error)
+	require.NoError(
+		t,
+		db.Table("nextcloud_content_leases").
+			Where("kind IN ? AND released_at_ms IS NULL", readers).
+			Count(&active).
+			Error,
+	)
+	require.GreaterOrEqual(t, total, minimum)
+	require.Zero(t, active)
+}
+
+func collectionRetirementRequest(t *testing.T, url string) *httptest.ResponseRecorder {
+	t.Helper()
+	f := newCollectionLeaseFixture(t)
 	var retireErr, claimErr error
-	var retired atomic.Bool
-	svc := &leasedListKnowledgeService{rows: []*types.Knowledge{row}}
-	svc.onList = func() {
-		retireErr = store.RetireKnowledge(context.Background(), listLeaseScope(row))
+	f.handler.contentLeases = &collectionLeaseHookStore{NextcloudContentLeaseStore: f.store, afterBroad: func() {
+		retireErr = f.store.RetireKnowledge(context.Background(), f.scope)
 		if retireErr != nil {
 			return
 		}
-		retired.Store(true)
-		_, claimErr = store.ClaimKnowledgeGC(context.Background(), listLeaseScope(row),
-			retiredListLeaseTime(t, db, row), time.Minute)
-	}
-	h := &KnowledgeHandler{
-		kgService:     svc,
-		kbService:     &leasedListKBService{kb: &types.KnowledgeBase{ID: "kb-1", TenantID: 7}},
-		contentLeases: store,
-		publicationCheck: func(context.Context, *types.Knowledge) error {
-			if retired.Load() {
-				return apperrors.NewForbiddenError("source retired")
-			}
-			return nil
-		},
-	}
-	w := leaseListRequest(h)
+		_, claimErr = f.store.ClaimKnowledgeGC(context.Background(), f.scope, collectionRetiredAt(t, f), time.Minute)
+	}}
+	w := serveCollectionHTTP(f.handler, url, false)
 	require.NoError(t, retireErr)
-	require.ErrorIs(t, claimErr, repository.ErrNextcloudContentGCBusy)
+	require.ErrorIs(
+		t,
+		claimErr,
+		repository.ErrNextcloudContentGCBusy,
+		"the actual current collection reader must block physical GC",
+	)
 	require.Equal(t, http.StatusForbidden, w.Code, w.Body.String())
-	require.NotContains(t, w.Body.String(), row.Title)
-	assertListLeasesReleased(t, db, 1)
-	claim, err := store.ClaimKnowledgeGC(context.Background(), listLeaseScope(row),
-		retiredListLeaseTime(t, db, row), time.Minute)
-	require.NoError(t, err, "GC may claim only after the broad reader exits")
-	require.NoError(t, store.FinishGCClaim(context.Background(), claim, false))
+	require.NotContains(t, w.Body.String(), f.row.Title)
+	assertCollectionReadersReleased(t, f.db, 1)
+	claim, err := f.store.ClaimKnowledgeGC(context.Background(), f.scope, collectionRetiredAt(t, f), time.Minute)
+	require.NoError(t, err, "the completed builder and exited reader must no longer pin this retired scope")
+	require.NoError(t, f.store.FinishGCClaim(context.Background(), claim, false))
+	return w
 }
 
-// A source can retire after exact acquisition. Both broad and exact leases
-// must block GC, and the response boundary must suppress its title.
-func TestListKnowledgeExactLeaseBlocksGCAndRevokedOutput(t *testing.T) {
-	db := leaseHandlerDB(t)
-	markListLeaseCoverage(t, db, 7)
-	store := repository.NewNextcloudContentLeaseStore(db)
-	row := leaseHandlerKnowledge(t)
-	row.Title = "source list secret"
-	var retired atomic.Bool
-	var retireErr, claimErr error
-	wrapped := &leaseAcquireHookStore{
-		NextcloudContentLeaseStore: store,
-		onAcquire: func() {
-			retireErr = store.RetireKnowledge(context.Background(), listLeaseScope(row))
-			if retireErr != nil {
-				return
-			}
-			retired.Store(true)
-			_, claimErr = store.ClaimKnowledgeGC(context.Background(), listLeaseScope(row),
-				retiredListLeaseTime(t, db, row), time.Minute)
-		},
-	}
-	h := &KnowledgeHandler{
-		kgService:     &leasedListKnowledgeService{rows: []*types.Knowledge{row}},
-		kbService:     &leasedListKBService{kb: &types.KnowledgeBase{ID: "kb-1", TenantID: 7}},
-		contentLeases: wrapped,
-		publicationCheck: func(context.Context, *types.Knowledge) error {
-			if retired.Load() {
-				return apperrors.NewForbiddenError("source retired")
-			}
-			return nil
-		},
-	}
-	w := leaseListRequest(h)
-	require.NoError(t, retireErr)
-	require.ErrorIs(t, claimErr, repository.ErrNextcloudContentGCBusy)
-	require.Equal(t, http.StatusForbidden, w.Code, w.Body.String())
-	require.NotContains(t, w.Body.String(), row.Title)
-	assertListLeasesReleased(t, db, 2)
+// Current list selection holds its real broad fence before capturing originals.
+func TestListKnowledgeBroadLeaseBlocksGCBeforeSnapshotCapture(t *testing.T) {
+	collectionRetirementRequest(t, "/knowledge-bases/kb/knowledge?keyword=source")
 }
 
-// A cached route grant cannot survive a share revocation between the final
-// handler check and Gin's JSON write.
+// Exact upgrades remain independently covered; the current collection handler
+// does not promise the retired legacy list path's exact-lease count.
+func TestCollectionExactLeaseUpgradeBlocksGCUntilBothReadersExit(t *testing.T) {
+	f := newCollectionLeaseFixture(t)
+	broad, err := f.store.AcquireKBRead(context.Background(), 7, "kb", "actual-exact-upgrade", time.Minute)
+	require.NoError(t, err)
+	exact, err := f.store.UpgradeKBRead(context.Background(), broad.ID, f.scope, "actual-exact-upgrade", time.Minute)
+	require.NoError(t, err)
+	require.NoError(t, f.store.RetireKnowledge(context.Background(), f.scope))
+	_, err = f.store.ClaimKnowledgeGC(context.Background(), f.scope, collectionRetiredAt(t, f), time.Minute)
+	require.ErrorIs(t, err, repository.ErrNextcloudContentGCBusy)
+	require.NoError(t, f.store.ReleaseLease(context.Background(), broad.ID))
+	_, err = f.store.ClaimKnowledgeGC(context.Background(), f.scope, collectionRetiredAt(t, f), time.Minute)
+	require.ErrorIs(
+		t,
+		err,
+		repository.ErrNextcloudContentGCBusy,
+		"the exact reader must still hold its scope after the broad reader exits",
+	)
+	require.NoError(t, f.store.ReleaseLease(context.Background(), exact.ID))
+	claim, err := f.store.ClaimKnowledgeGC(context.Background(), f.scope, collectionRetiredAt(t, f), time.Minute)
+	require.NoError(t, err)
+	require.NoError(t, f.store.FinishGCClaim(context.Background(), claim, false))
+	assertCollectionReadersReleased(t, f.db, 2)
+}
+
 func TestListKnowledgeWriteBoundaryRechecksCurrentShare(t *testing.T) {
-	db := leaseHandlerDB(t)
-	store := repository.NewNextcloudContentLeaseStore(db)
-	row := leaseHandlerKnowledge(t)
-	row.TenantID = 8
-	row.Title = "shared source secret"
-	share := &leaseRevocableShare{}
-	var checks atomic.Int32
-	wrapped := &leaseAcquireHookStore{
-		NextcloudContentLeaseStore: store,
-		onAcquire:                  func() { share.revoked.Store(true) },
+	h, db, _, groups, shares, _ := collectionHTTPFixture(t)
+	revoked := false
+	groups.hook = func(call int) {
+		if call >= 5 {
+			shares.allowed = false
+			revoked = true
+		}
 	}
-	h := &KnowledgeHandler{
-		kgService:      &leasedListKnowledgeService{rows: []*types.Knowledge{row}},
-		kbService:      &leasedListKBService{kb: &types.KnowledgeBase{ID: "kb-1", TenantID: 8}},
-		kbShareService: share, contentLeases: wrapped,
-		publicationCheck: func(context.Context, *types.Knowledge) error {
-			checks.Add(1)
-			return nil
-		},
-	}
-	w := leaseListRequest(h)
-	require.Equal(t, int32(1), checks.Load())
-	require.True(t, share.revoked.Load())
+	w := serveCollectionHTTP(h, "/knowledge-bases/shared-kb/knowledge", false)
+	require.True(t, revoked, "the initial read must succeed before the current share changes")
 	require.Equal(t, http.StatusForbidden, w.Code, w.Body.String())
-	require.False(t, strings.Contains(w.Body.String(), row.Title))
-	assertListLeasesReleased(t, db, 2)
+	require.NotContains(t, w.Body.String(), "match shared original")
+	assertCollectionReadersReleased(t, db, 1)
 }
 
-func TestListKnowledgeSourcePageReturnsUnderBothLeases(t *testing.T) {
-	db := leaseHandlerDB(t)
-	store := repository.NewNextcloudContentLeaseStore(db)
-	row := leaseHandlerKnowledge(t)
-	row.Title = "current source title"
-	var checks atomic.Int32
-	h := &KnowledgeHandler{
-		kgService:     &leasedListKnowledgeService{rows: []*types.Knowledge{row}},
-		kbService:     &leasedListKBService{kb: &types.KnowledgeBase{ID: "kb-1", TenantID: 7}},
-		contentLeases: store,
-		publicationCheck: func(context.Context, *types.Knowledge) error {
-			checks.Add(1)
-			return nil
-		},
-	}
-	w := leaseListRequest(h)
+func TestListKnowledgeSourcePageReturnsUnderCurrentCollectionFence(t *testing.T) {
+	f := newCollectionLeaseFixture(t)
+	w := serveCollectionHTTP(f.handler, "/knowledge-bases/kb/knowledge?keyword=source", false)
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
-	require.Contains(t, w.Body.String(), row.Title)
-	require.GreaterOrEqual(t, checks.Load(), int32(2))
-	assertListLeasesReleased(t, db, 2)
+	require.Contains(t, w.Body.String(), f.row.Title)
+	assertCollectionReadersReleased(t, f.db, 1)
 }

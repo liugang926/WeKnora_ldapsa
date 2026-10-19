@@ -11,6 +11,7 @@ import (
 
 type faqImportReadSetPlanKey struct{}
 
+// WithFAQImportOutputReadSetPlan binds faqimport output read set plan.
 func WithFAQImportOutputReadSetPlan(
 	ctx context.Context,
 	plan *types.FAQImportOutputReadSetPlan,
@@ -39,6 +40,7 @@ func WithFAQImportOutputReadSetPlan(
 	return context.WithValue(ctx, faqImportReadSetPlanKey{}, &actual), nil
 }
 
+// PeekFAQImportOutputReadSetPlan reads faqimport output read set plan.
 func (s *KnowledgeInputProvenanceStore) PeekFAQImportOutputReadSetPlan(
 	ctx context.Context,
 	scopes []types.KnowledgeSearchScope,
@@ -75,7 +77,8 @@ func (s *KnowledgeInputProvenanceStore) peekFAQImportOutputReadSetPlanInTx(
 	sort.Strings(ids)
 	q := tx.Table("knowledges k").
 		Select("k.id,k.tenant_id,k.knowledge_base_id").
-		Where("k.type=? AND k.deleted_at IS NULL AND k.last_faq_import_result IS NOT NULL AND CAST(k.last_faq_import_result AS TEXT) NOT IN ('','null')", types.KnowledgeTypeFAQ)
+		Where(("k.type=? AND k.deleted_at IS NULL AND k.last_faq_import_result IS NOT NULL" +
+			" AND CAST(k.last_faq_import_result AS TEXT) NOT IN ('','null')"), types.KnowledgeTypeFAQ)
 	if len(ids) > 0 {
 		q = q.Where("k.id IN ?", ids)
 	} else {

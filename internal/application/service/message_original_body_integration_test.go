@@ -40,7 +40,8 @@ func messageBodyIntegrationFixture(
 		require.NoError(
 			t,
 			db.Exec(
-				`CREATE FUNCTION uuid_generate_v4() RETURNS uuid LANGUAGE sql AS $$ SELECT public.uuid_generate_v4() $$`,
+				("CREATE FUNCTION uuid_generate_v4() RETURNS uuid LANGUAGE sql AS $$ SELECT " +
+					"public.uuid_generate_v4() $$"),
 			).Error,
 		)
 		require.NoError(t, db.Exec("ALTER TABLE messages ADD COLUMN artifacts JSONB").Error)
@@ -110,7 +111,7 @@ func messageBodyIntegrationFixture(
 	t.Setenv("WEKNORA_ORIGINAL_BODY_JOURNAL_PIN", pin)
 	body := repository.NewOriginalBodyRetentionStore(db)
 	require.NoError(t, body.InitializeJournal())
-	inventoryKnownConfigurationOriginalBodyFixture(t, ctx, db, store)
+	inventoryKnownConfigurationOriginalBodyFixture(ctx, t, db, store)
 	return messages, kg, store, db, ctx, session, body
 }
 
@@ -128,11 +129,12 @@ func runMessageBodyIntegration(t *testing.T, pg bool) {
 			return repository.CheckOriginalBodyAvailableInTx(callCtx, tx, table, id)
 		},
 	)
-	user, assistant := produceActualMessagePair(t, messages, ctx, session)
+	user, assistant := produceActualMessagePair(ctx, t, messages, session)
 	var origins []struct{ ID, MessageID, InitialInput string }
 	require.NoError(
 		t,
-		db.Raw("SELECT id,message_id,initial_input FROM message_generation_origins WHERE session_id=? ORDER BY message_id", session.ID).
+		db.Raw(("SELECT id,message_id,initial_input FROM message_generation_origins WHERE s"+
+			"ession_id=? ORDER BY message_id"), session.ID).
 			Scan(&origins).
 			Error,
 	)
@@ -159,7 +161,7 @@ func runMessageBodyIntegration(t *testing.T, pg bool) {
 			}
 		}),
 	)
-	defer db.Callback().Query().Remove("body_message_payload_observer")
+	defer func() { require.NoError(t, db.Callback().Query().Remove("body_message_payload_observer")) }()
 	request, e = store.CommittedMessageParentRequest(ctx, 7, session.ID, assistant.ID)
 	require.NoError(t, e)
 	require.Empty(t, payloadReads, "metadata request resolution must not read the vault")
@@ -190,7 +192,8 @@ func runMessageBodyIntegration(t *testing.T, pg bool) {
 	var bodyID string
 	require.NoError(
 		t,
-		db.Raw("SELECT body_id FROM original_body_field_heads WHERE source_table='message_generation_origins' AND row_key=?", origin.ID).
+		db.Raw(("SELECT body_id FROM original_body_field_heads WHERE source_table='message_"+
+			"generation_origins' AND row_key=?"), origin.ID).
 			Scan(&bodyID).
 			Error,
 	)
@@ -317,7 +320,9 @@ func runMessageBodyNamespaceABA(t *testing.T, pg bool) {
 	var bodyID string
 	require.NoError(
 		t,
-		db.Raw("SELECT h.body_id FROM original_body_field_heads h JOIN message_generation_origins g ON g.id=h.row_key WHERE h.source_table='message_generation_origins' AND g.message_id=?", user.ID).
+		db.Raw(("SELECT h.body_id FROM original_body_field_heads h JOIN message_generation_"+
+			"origins g ON g.id=h.row_key WHERE h.source_table='message_generation_origi"+
+			"ns' AND g.message_id=?"), user.ID).
 			Scan(&bodyID).
 			Error,
 	)
@@ -376,7 +381,7 @@ func TestPostgresMessageBodyNamespaceABA(t *testing.T) { runMessageBodyNamespace
 
 func runMessageBodyUnknownScopeSchema(t *testing.T, pg bool) {
 	messages, _, _, db, ctx, session, body := messageBodyIntegrationFixture(t, pg)
-	_, assistant := produceActualMessagePair(t, messages, ctx, session)
+	_, assistant := produceActualMessagePair(ctx, t, messages, session)
 	// A missing extension table must not pass startup on a sequence-zero pin.
 	require.NoError(t, db.Exec("DROP TABLE original_body_lease_scopes").Error)
 	require.ErrorIs(t, body.VerifyJournalReady(), repository.ErrOriginalBodyUnavailable)
@@ -396,7 +401,9 @@ func runMessageBodyUnknownScopeSchema(t *testing.T, pg bool) {
 	var bodyID string
 	require.NoError(
 		t,
-		db.Raw("SELECT h.body_id FROM original_body_field_heads h JOIN message_generation_origins g ON g.id=h.row_key WHERE h.source_table='message_generation_origins' AND g.message_id=?", assistant.ID).
+		db.Raw(("SELECT h.body_id FROM original_body_field_heads h JOIN message_generation_"+
+			"origins g ON g.id=h.row_key WHERE h.source_table='message_generation_origi"+
+			"ns' AND g.message_id=?"), assistant.ID).
 			Scan(&bodyID).
 			Error,
 	)
@@ -506,7 +513,9 @@ func runMessageBodyNoKBHTTPHolder(t *testing.T, pg bool) {
 	var answerLeases int64
 	require.NoError(
 		t,
-		db.Raw("SELECT count(*) FROM original_body_leases l JOIN original_body_field_heads h ON h.body_id=l.body_id WHERE h.source_table='messages' AND h.row_key=? AND h.column_name='content' AND l.released_at_ms IS NULL", assistant.ID).
+		db.Raw(("SELECT count(*) FROM original_body_leases l JOIN original_body_field_heads"+
+			" h ON h.body_id=l.body_id WHERE h.source_table='messages' AND h.row_key=? "+
+			"AND h.column_name='content' AND l.released_at_ms IS NULL"), assistant.ID).
 			Scan(&answerLeases).
 			Error,
 	)
@@ -548,7 +557,7 @@ func runMessageBodyActualGeneratedField(t *testing.T, pg bool) {
 	require.NoError(t, e)
 	ctx = WithMessageMaterialOutputBoundary(ctx)
 	defer CloseMessageMaterialOutputBoundary(ctx)
-	turn := types.NewRAGSourceLineage(func(checkCtx context.Context, lineage *types.SourceLineage) error {
+	turn := types.NewRAGSourceLineage(func(_ context.Context, lineage *types.SourceLineage) error {
 		if e := lineage.RequireComplete(); e != nil {
 			return e
 		}
@@ -590,7 +599,8 @@ func runMessageBodyActualGeneratedField(t *testing.T, pg bool) {
 	var legacyBodyID string
 	require.NoError(
 		t,
-		db.Raw("SELECT body_id FROM original_body_field_heads WHERE source_table='message_generated_field_admissions' AND row_key='unknown-legacy-parent-copy'").
+		db.Raw(("SELECT body_id FROM original_body_field_heads WHERE source_table='message_" +
+			"generated_field_admissions' AND row_key='unknown-legacy-parent-copy'")).
 			Scan(&legacyBodyID).
 			Error,
 	)
@@ -599,14 +609,18 @@ func runMessageBodyActualGeneratedField(t *testing.T, pg bool) {
 	var scoped, leased int64
 	require.NoError(
 		t,
-		db.Raw("SELECT count(*) FROM original_body_lease_scopes s JOIN original_body_field_heads h ON h.body_id=s.body_id WHERE h.source_table='messages' AND h.row_key=? AND h.column_name='rendered_content'", user.ID).
+		db.Raw(("SELECT count(*) FROM original_body_lease_scopes s JOIN original_body_field"+
+			"_heads h ON h.body_id=s.body_id WHERE h.source_table='messages' AND h.row_"+
+			"key=? AND h.column_name='rendered_content'"), user.ID).
 			Scan(&scoped).
 			Error,
 	)
 	require.Positive(t, scoped, "actual generated field captures original scope refs")
 	require.NoError(
 		t,
-		db.Raw("SELECT count(*) FROM original_body_leases l JOIN original_body_field_heads h ON h.body_id=l.body_id WHERE h.source_table='messages' AND h.row_key=? AND h.column_name='rendered_content' AND l.released_at_ms IS NULL", user.ID).
+		db.Raw(("SELECT count(*) FROM original_body_leases l JOIN original_body_field_heads"+
+			" h ON h.body_id=l.body_id WHERE h.source_table='messages' AND h.row_key=? "+
+			"AND h.column_name='rendered_content' AND l.released_at_ms IS NULL"), user.ID).
 			Scan(&leased).
 			Error,
 	)
@@ -626,7 +640,9 @@ func runMessageBodyActualGeneratedField(t *testing.T, pg bool) {
 	var live int64
 	require.NoError(
 		t,
-		db.Raw("SELECT count(*) FROM original_body_payloads p JOIN original_body_field_heads h ON h.body_id=p.id WHERE h.source_table='messages' AND h.row_key=? AND h.column_name='rendered_content' AND p.state='live'", user.ID).
+		db.Raw(("SELECT count(*) FROM original_body_payloads p JOIN original_body_field_hea"+
+			"ds h ON h.body_id=p.id WHERE h.source_table='messages' AND h.row_key=? AND"+
+			" h.column_name='rendered_content' AND p.state='live'"), user.ID).
 			Scan(&live).
 			Error,
 	)

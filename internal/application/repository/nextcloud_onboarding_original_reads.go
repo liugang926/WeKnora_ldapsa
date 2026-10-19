@@ -23,6 +23,7 @@ import (
 
 const onboardingConfigurationReadTTL = 2 * time.Minute
 
+// NextcloudOnboardingConfigurationRead represents nextcloud onboarding configuration read repository data.
 // This guard has no ordinary actor role. The credential approves exactly one
 // template; every inherited original separately requires current scoped WK
 // entitlement for the actual GUID and a fresh signed Nextcloud READ decision.
@@ -74,7 +75,8 @@ func (s *NextcloudOnboardingStore) BeginScopedOnboardingConfigurationRead(
 		return nil, types.ErrSourceLineageUnknown
 	}
 	var op types.NextcloudOnboardingOperation
-	if err := tx.Where("operation_id=? AND tenant_id=? AND knowledge_base_id=? AND instance_id=? AND binding_id=? AND state='active'", pair.OperationID, tenant, kb, pair.InstanceID, pair.BindingID).
+	if err := tx.Where(("operation_id=? AND tenant_id=? AND knowledge_base_id=? AND instance_id=? A" +
+		"ND binding_id=? AND state='active'"), pair.OperationID, tenant, kb, pair.InstanceID, pair.BindingID).
 		Take(&op).
 		Error; err != nil {
 		return nil, types.ErrSourceLineageUnknown
@@ -92,7 +94,7 @@ func (s *NextcloudOnboardingStore) BeginScopedOnboardingConfigurationRead(
 	if err != nil {
 		return nil, err
 	}
-	copy := op
+	copied := op
 	return s.beginOnboardingConfigurationRead(
 		ctx,
 		cred,
@@ -101,7 +103,7 @@ func (s *NextcloudOnboardingStore) BeginScopedOnboardingConfigurationRead(
 		tenant,
 		kb,
 		lineage,
-		&copy,
+		&copied,
 		nil,
 		dsID,
 	)
@@ -116,7 +118,7 @@ func (s *NextcloudOnboardingStore) beginOnboardingTemplateRead(
 	if err != nil {
 		return nil, err
 	}
-	copy := req
+	copied2 := req
 	return s.beginOnboardingConfigurationRead(
 		ctx,
 		c,
@@ -126,7 +128,7 @@ func (s *NextcloudOnboardingStore) beginOnboardingTemplateRead(
 		c.TemplateKBID,
 		lineage,
 		nil,
-		&copy,
+		&copied2,
 		"",
 	)
 }
@@ -146,7 +148,7 @@ func (s *NextcloudOnboardingStore) beginOnboardingExistingConfigurationRead(
 	if err != nil {
 		return nil, err
 	}
-	copy := req
+	copied3 := req
 	return s.beginOnboardingConfigurationRead(
 		ctx,
 		c,
@@ -156,7 +158,7 @@ func (s *NextcloudOnboardingStore) beginOnboardingExistingConfigurationRead(
 		req.KnowledgeBaseID,
 		lineage,
 		nil,
-		&copy,
+		&copied3,
 		"",
 	)
 }
@@ -211,7 +213,7 @@ func (s *NextcloudOnboardingStore) beginOnboardingConfigurationRead(
 		}
 	}
 	// All authority checks precede config/body SELECTs and durable lease writes.
-	if err := r.checkAuthority(s.db.WithContext(ctx), ctx); err != nil {
+	if err := r.checkAuthority(ctx, s.db.WithContext(ctx)); err != nil {
 		return fail(err)
 	}
 	r.lifetime, r.cancel = context.WithCancelCause(ctx)
@@ -286,7 +288,8 @@ func (s *NextcloudOnboardingStore) beginOnboardingConfigurationRead(
 		var heads []originalBodyFieldHead
 		if err := bodyInternal(
 			s.db.WithContext(ctx),
-		).Where("source_table='knowledges' AND row_key=? AND tenant_id=? AND knowledge_base_id=? AND knowledge_id=?", source.KnowledgeID, source.TenantID, source.KnowledgeBaseID, source.KnowledgeID).
+		).Where(("source_table='knowledges' AND row_key=? AND tenant_id=? AND knowledge_base" +
+			"_id=? AND knowledge_id=?"), source.KnowledgeID, source.TenantID, source.KnowledgeBaseID, source.KnowledgeID).
 			Order("slot_id").
 			Find(&heads).
 			Error; err != nil {
@@ -344,6 +347,7 @@ func (s *NextcloudOnboardingStore) beginOnboardingConfigurationRead(
 	return r, nil
 }
 
+// Context returns the context result.
 func (r *NextcloudOnboardingConfigurationRead) Context(ctx context.Context) context.Context {
 	if r == nil {
 		return ctx
@@ -378,7 +382,7 @@ func (r *NextcloudOnboardingConfigurationRead) Context(ctx context.Context) cont
 	return child
 }
 
-func (r *NextcloudOnboardingConfigurationRead) checkAuthority(tx *gorm.DB, ctx context.Context) error {
+func (r *NextcloudOnboardingConfigurationRead) checkAuthority(ctx context.Context, tx *gorm.DB) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -409,7 +413,8 @@ func (r *NextcloudOnboardingConfigurationRead) checkAuthority(tx *gorm.DB, ctx c
 			return ErrKnowledgeInputChanged
 		}
 		var pair NextcloudSourcePairing
-		if err := tx.Where("operation_id=? AND tenant_id=? AND knowledge_base_id=? AND datasource_id=? AND state='active'", op.OperationID, r.tenant, r.kb, r.datasource).
+		if err := tx.Where(("operation_id=? AND tenant_id=? AND knowledge_base_id=? AND datasource_id=?" +
+			" AND state='active'"), op.OperationID, r.tenant, r.kb, r.datasource).
 			Take(&pair).
 			Error; err != nil {
 			return err
@@ -419,7 +424,8 @@ func (r *NextcloudOnboardingConfigurationRead) checkAuthority(tx *gorm.DB, ctx c
 		}
 		var target types.DataSource
 		if err := tx.Select("id,tenant_id,knowledge_base_id,type,status,config").
-			Where("id=? AND tenant_id=? AND knowledge_base_id=? AND type=? AND status=? AND deleted_at IS NULL", r.datasource, r.tenant, r.kb, types.ConnectorTypeNextcloud, types.DataSourceStatusActive).
+			Where(("id=? AND tenant_id=? AND knowledge_base_id=? AND type=? AND status=? AND d" +
+				"eleted_at IS NULL"), r.datasource, r.tenant, r.kb, types.ConnectorTypeNextcloud, types.DataSourceStatusActive).
 			Take(&target).
 			Error; err != nil {
 			return err
@@ -455,7 +461,7 @@ func (r *NextcloudOnboardingConfigurationRead) checkAuthority(tx *gorm.DB, ctx c
 		return ErrKnowledgeInputChanged
 	}
 	for _, source := range r.lineage.Sources {
-		if err := r.checkSource(tx, ctx, source); err != nil {
+		if err := r.checkSource(ctx, tx, source); err != nil {
 			return err
 		}
 	}
@@ -463,8 +469,8 @@ func (r *NextcloudOnboardingConfigurationRead) checkAuthority(tx *gorm.DB, ctx c
 }
 
 func (r *NextcloudOnboardingConfigurationRead) checkSource(
-	tx *gorm.DB,
 	ctx context.Context,
+	tx *gorm.DB,
 	source types.SourceIdentity,
 ) error {
 	if source.Validate() != nil {
@@ -485,13 +491,15 @@ func (r *NextcloudOnboardingConfigurationRead) checkSource(
 		return access.ErrNextcloudPublicationUnavailable
 	}
 	var pair NextcloudSourcePairing
-	if err := tx.Where("operation_id=? AND tenant_id=? AND knowledge_base_id=? AND datasource_id=? AND nextcloud_instance_id=? AND binding_id=? AND state='active'", source.PairOperationID, source.TenantID, source.KnowledgeBaseID, source.DataSourceID, source.InstanceID, source.BindingID).
+	if err := tx.Where(("operation_id=? AND tenant_id=? AND knowledge_base_id=? AND datasource_id=?" +
+		" AND nextcloud_instance_id=? AND binding_id=? AND state='active'"), source.PairOperationID, source.TenantID, source.KnowledgeBaseID, source.DataSourceID, source.InstanceID, source.BindingID).
 		Take(&pair).
 		Error; err != nil {
 		return access.ErrNextcloudPublicationUnavailable
 	}
 	var op types.NextcloudOnboardingOperation
-	if err := tx.Where("operation_id=? AND tenant_id=? AND knowledge_base_id=? AND instance_id=? AND binding_id=? AND actor_directory_id=? AND state='active'", pair.OperationID, source.TenantID, source.KnowledgeBaseID, source.InstanceID, source.BindingID, r.directory).
+	if err := tx.Where(("operation_id=? AND tenant_id=? AND knowledge_base_id=? AND instance_id=? A" +
+		"ND binding_id=? AND actor_directory_id=? AND state='active'"), pair.OperationID, source.TenantID, source.KnowledgeBaseID, source.InstanceID, source.BindingID, r.directory).
 		Take(&op).
 		Error; err != nil {
 		return access.ErrNextcloudPublicationUnavailable
@@ -546,7 +554,7 @@ func (r *NextcloudOnboardingConfigurationRead) checkSource(
 	// Select only source control selectors, never the complete metadata JSON or
 	// its manual text leaf. A changed current identity is refused before READ.
 	field := func(key, alias string) string {
-		if tx.Dialector.Name() == "postgres" {
+		if tx.Name() == "postgres" {
 			return "COALESCE(metadata::jsonb->>'" + key + "','') AS " + alias
 		}
 		return "COALESCE(json_extract(metadata,'$." + key + "'),'') AS " + alias
@@ -611,7 +619,8 @@ func (r *NextcloudOnboardingConfigurationRead) checkSource(
 		return ErrKnowledgeInputChanged
 	}
 	var admission knowledgeInputAdmission
-	if err := tx.Where("admission_id=? AND tenant_id=? AND knowledge_base_id=? AND knowledge_id=? AND build_generation=? AND origin_kind='nextcloud'", material.AdmissionID, source.TenantID, source.KnowledgeBaseID, source.KnowledgeID, source.Revision).
+	if err := tx.Where(("admission_id=? AND tenant_id=? AND knowledge_base_id=? AND knowledge_id=? " +
+		"AND build_generation=? AND origin_kind='nextcloud'"), material.AdmissionID, source.TenantID, source.KnowledgeBaseID, source.KnowledgeID, source.Revision).
 		Take(&admission).
 		Error; err != nil {
 		return types.ErrSourceLineageUnknown
@@ -646,13 +655,24 @@ func (r *NextcloudOnboardingConfigurationRead) checkSource(
 
 	// The current directory identity may have no WK UserID before first login.
 	// Entitlement comes from exact scoped ledger subjects, never a new role.
-	query := `SELECT COUNT(*) FROM nextcloud_source_grants sg JOIN directory_identities i ON i.directory_id=sg.directory_id AND i.object_guid=? AND i.status='active'
- JOIN directories d ON d.id=i.directory_id AND i.snapshot_version=d.snapshot_version
- WHERE sg.operation_id=? AND sg.tenant_id=? AND sg.knowledge_base_id=? AND sg.directory_id=? AND sg.permission_version=? AND sg.origin='nextcloud'
- AND ((sg.kind='user' AND sg.principal_id=i.id AND sg.object_guid=i.object_guid) OR (sg.kind='group' AND EXISTS(SELECT 1 FROM directory_group_memberships gm JOIN directory_groups g ON g.id=gm.group_id AND g.directory_id=d.id AND g.status='active' AND g.snapshot_version=d.snapshot_version WHERE gm.identity_id=i.id AND gm.group_id=sg.principal_id AND gm.directory_id=d.id AND gm.snapshot_version=d.snapshot_version AND g.object_guid=sg.object_guid)))`
+	query := ("SELECT COUNT(*) FROM nextcloud_source_grants sg JOIN directory_identities " +
+		"i ON i.directory_id=sg.directory_id AND i.object_guid=? AND i.status='acti" +
+		"ve'\n JOIN directories d ON d.id=i.directory_id AND i.snapshot_version=d.s" +
+		"napshot_version\n WHERE sg.operation_id=? AND sg.tenant_id=? AND sg.knowle" +
+		"dge_base_id=? AND sg.directory_id=? AND sg.permission_version=? AND sg.ori" +
+		"gin='nextcloud'\n AND ((sg.kind='user' AND sg.principal_id=i.id AND sg.obj" +
+		"ect_guid=i.object_guid) OR (sg.kind='group' AND EXISTS(SELECT 1 FROM direc" +
+		"tory_group_memberships gm JOIN directory_groups g ON g.id=gm.group_id AND " +
+		"g.directory_id=d.id AND g.status='active' AND g.snapshot_version=d.snapsho" +
+		"t_version WHERE gm.identity_id=i.id AND gm.group_id=sg.principal_id AND gm" +
+		".directory_id=d.id AND gm.snapshot_version=d.snapshot_version AND g.object" +
+		"_guid=sg.object_guid)))")
 	args := []any{r.guid, op.OperationID, source.TenantID, source.KnowledgeBaseID, r.directory, op.PermissionVersion}
 	if tx.Migrator().HasTable("nextcloud_source_status_epochs") {
-		query += " AND sg.publication_epoch=COALESCE((SELECT MAX(e.publication_epoch) FROM nextcloud_source_status_epochs e JOIN nextcloud_event_connections c ON c.connection_id=e.connection_id AND c.status='active' WHERE e.pair_operation_id=? AND c.datasource_id=?),?)"
+		query += (" AND sg.publication_epoch=COALESCE((SELECT MAX(e.publication_epoch) FROM n" +
+			"extcloud_source_status_epochs e JOIN nextcloud_event_connections c ON c.co" +
+			"nnection_id=e.connection_id AND c.status='active' WHERE e.pair_operation_i" +
+			"d=? AND c.datasource_id=?),?)")
 		args = append(args, pair.OperationID, source.DataSourceID, pair.PublicationEpoch)
 	} else {
 		query += " AND sg.publication_epoch=?"
@@ -667,7 +687,8 @@ func (r *NextcloudOnboardingConfigurationRead) checkSource(
 	}
 	var ds types.DataSource
 	if err := tx.Select("id,tenant_id,knowledge_base_id,type,status,config").
-		Where("id=? AND tenant_id=? AND knowledge_base_id=? AND type=? AND status=? AND deleted_at IS NULL", source.DataSourceID, source.TenantID, source.KnowledgeBaseID, types.ConnectorTypeNextcloud, types.DataSourceStatusActive).
+		Where(("id=? AND tenant_id=? AND knowledge_base_id=? AND type=? AND status=? AND d" +
+			"eleted_at IS NULL"), source.DataSourceID, source.TenantID, source.KnowledgeBaseID, types.ConnectorTypeNextcloud, types.DataSourceStatusActive).
 		Take(&ds).
 		Error; err != nil {
 		return access.ErrNextcloudPublicationUnavailable
@@ -711,7 +732,7 @@ func (r *NextcloudOnboardingConfigurationRead) checkInTx(ctx context.Context, tx
 			return err
 		}
 	}
-	if err := r.checkAuthority(tx, ctx); err != nil {
+	if err := r.checkAuthority(ctx, tx); err != nil {
 		return err
 	}
 	if r.configPlan == nil {
@@ -808,6 +829,7 @@ func (r *NextcloudOnboardingConfigurationRead) checkInTx(ctx context.Context, tx
 	return ctx.Err()
 }
 
+// Checkpoint checks point.
 func (r *NextcloudOnboardingConfigurationRead) Checkpoint(ctx context.Context) error {
 	if r == nil || ctx == nil {
 		return types.ErrSourceLineageUnknown
@@ -900,6 +922,7 @@ func (r *NextcloudOnboardingConfigurationRead) startHeartbeat() {
 	}()
 }
 
+// Close returns the close result.
 func (r *NextcloudOnboardingConfigurationRead) Close() error {
 	if r == nil {
 		return nil

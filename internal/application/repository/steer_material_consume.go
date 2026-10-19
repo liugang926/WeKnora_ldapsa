@@ -25,6 +25,7 @@ type (
 	}
 )
 
+// ConsumeSteerIntoMessage returns the consume steer into message result.
 func (s *KnowledgeInputProvenanceStore) ConsumeSteerIntoMessage(
 	ctx context.Context,
 	input *types.SteerMaterialInput,
@@ -33,6 +34,7 @@ func (s *KnowledgeInputProvenanceStore) ConsumeSteerIntoMessage(
 	return s.consumeSteerIntoMessage(ctx, input, runID, generation, request, false)
 }
 
+// ConsumeSteerIntoFollowUp returns the consume steer into follow up result.
 func (s *KnowledgeInputProvenanceStore) ConsumeSteerIntoFollowUp(
 	ctx context.Context,
 	input *types.SteerMaterialInput,
@@ -244,6 +246,7 @@ func steerConsumptionProof(edge *steerConsumptionOrigin, previous, result uint64
 	}
 }
 
+// AdvanceMessageMaterialAfterOwnSteerInsertion advances message material after own steer insertion.
 func (s *KnowledgeInputProvenanceStore) AdvanceMessageMaterialAfterOwnSteerInsertion(
 	ctx context.Context,
 	expected *types.MessageMaterialSnapshot,
@@ -304,7 +307,8 @@ func (s *KnowledgeInputProvenanceStore) AdvanceMessageMaterialAfterOwnSteerInser
 			}
 			var actual types.MessageMaterialCandidateControl
 			if err := tx.Table("messages m").
-				Select("m.id,m.request_id,m.role,m.is_completed AS complete,a.id AS admission_id,a.generation_id,a.revision,v.revision AS current_revision").
+				Select(("m.id,m.request_id,m.role,m.is_completed AS complete,a.id AS admission_id,a" +
+					".generation_id,a.revision,v.revision AS current_revision")).
 				Joins("JOIN message_material_receipts r ON r.message_id=m.id").
 				Joins("JOIN message_material_admissions a ON a.id=r.admission_id").
 				Joins("JOIN message_material_versions v ON v.message_id=m.id").
@@ -414,6 +418,7 @@ func (s *KnowledgeInputProvenanceStore) verifySteerConsumedMessageInTx(tx *gorm.
 	return nil
 }
 
+// CheckSteerConsumption checks steer consumption.
 func (s *KnowledgeInputProvenanceStore) CheckSteerConsumption(
 	ctx context.Context,
 	proof *types.SteerConsumptionProof,
@@ -459,6 +464,7 @@ func (s *KnowledgeInputProvenanceStore) checkSteerConsumptionInTx(
 	return CheckOriginalBodyAvailableInTx(tx.Statement.Context, tx, "steer_authored_origins", edge.OriginID)
 }
 
+// ExistingSteerConsumption returns the existing steer consumption result.
 func (s *KnowledgeInputProvenanceStore) ExistingSteerConsumption(
 	ctx context.Context,
 	input *types.SteerMaterialInput,
@@ -560,6 +566,7 @@ func verifySteerConsumptionSelectionInTx(tx *gorm.DB, edge *steerConsumptionOrig
 	return nil
 }
 
+// SteerConsumptionSelectionDigest returns the steer consumption selection digest result.
 func (s *KnowledgeInputProvenanceStore) SteerConsumptionSelectionDigest(
 	ctx context.Context,
 	proof *types.SteerConsumptionProof,

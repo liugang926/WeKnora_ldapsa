@@ -22,12 +22,12 @@ func NewKnowledgeTagRepository(db *gorm.DB) interfaces.KnowledgeTagRepository {
 
 // Create creates a new knowledge tag
 func (r *knowledgeTagRepository) Create(ctx context.Context, tag *types.KnowledgeTag) error {
-	return writeKnowledgeTagWithDisplayInput(r.db, ctx, tag, true, r.displayAuthorityFactory)
+	return writeKnowledgeTagWithDisplayInput(ctx, r.db, tag, true, r.displayAuthorityFactory)
 }
 
 // Update updates a knowledge tag
 func (r *knowledgeTagRepository) Update(ctx context.Context, tag *types.KnowledgeTag) error {
-	return writeKnowledgeTagWithDisplayInput(r.db, ctx, tag, false, r.displayAuthorityFactory)
+	return writeKnowledgeTagWithDisplayInput(ctx, r.db, tag, false, r.displayAuthorityFactory)
 }
 
 // GetByID gets a knowledge tag by ID

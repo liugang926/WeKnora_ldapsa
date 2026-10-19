@@ -218,8 +218,8 @@ func (s *knowledgeBaseService) SearchHistoryVectorCandidates(
 				}
 				key := row.KnowledgeID + "\x00" + row.ChunkID
 				if prior := byChunk[key]; prior == nil || row.Score > prior.Score {
-					copy := *row
-					byChunk[key] = &copy
+					copied := *row
+					byChunk[key] = &copied
 				}
 			}
 		}

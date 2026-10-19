@@ -18,6 +18,7 @@ type (
 	}
 )
 
+// WithTagCommittedOutput binds tag committed output.
 // A request-local private slot is populated only from the actual writer SQL
 // transaction and published only after commit. Partial edits cannot certify
 // retained unknown fields. The slot and proofs never appear in response JSON.
@@ -25,6 +26,7 @@ func WithTagCommittedOutput(ctx context.Context) context.Context {
 	return context.WithValue(ctx, tagCommittedOutputKey{}, &tagCommittedOutput{})
 }
 
+// TagCommittedOutput returns the tag committed output result.
 func TagCommittedOutput(ctx context.Context) (*types.TagOutputInputSnapshot, error) {
 	slot, ok := ctx.Value(tagCommittedOutputKey{}).(*tagCommittedOutput)
 	if !ok || !slot.committed {
@@ -186,7 +188,10 @@ func (s *KnowledgeInputProvenanceStore) captureTagOutputInTx(
 	for {
 		var rows []*types.Knowledge
 		q := tx.Where("tenant_id=? AND knowledge_base_id=?", req.TenantID, req.KnowledgeBaseID).
-			Where("EXISTS (SELECT 1 FROM knowledge_tag_relations r WHERE r.knowledge_id=knowledges.id AND r.tag_id IN (?)) OR EXISTS (SELECT 1 FROM chunks c WHERE c.knowledge_id=knowledges.id AND c.tenant_id=? AND c.knowledge_base_id=? AND c.deleted_at IS NULL AND c.tag_id IN (?))", tagsQuery, req.TenantID, req.KnowledgeBaseID, tagsQuery)
+			Where(("EXISTS (SELECT 1 FROM knowledge_tag_relations r WHERE r.knowledge_id=knowl" +
+				"edges.id AND r.tag_id IN (?)) OR EXISTS (SELECT 1 FROM chunks c WHERE c.kn" +
+				"owledge_id=knowledges.id AND c.tenant_id=? AND c.knowledge_base_id=? AND c" +
+				".deleted_at IS NULL AND c.tag_id IN (?))"), tagsQuery, req.TenantID, req.KnowledgeBaseID, tagsQuery)
 		if last != "" {
 			q = q.Where("id > ?", last)
 		}
@@ -285,6 +290,7 @@ func (s *KnowledgeInputProvenanceStore) captureTagOutputInTx(
 	return result, err
 }
 
+// CaptureTagOutputInputs captures tag output inputs.
 func (s *KnowledgeInputProvenanceStore) CaptureTagOutputInputs(
 	ctx context.Context,
 	req types.TagOutputReadRequest,
@@ -352,6 +358,7 @@ func selectTagOutputInTx(
 	return result, nil
 }
 
+// SelectTagOutputInputs selects tag output inputs.
 func (s *KnowledgeInputProvenanceStore) SelectTagOutputInputs(
 	ctx context.Context,
 	snapshot *types.TagOutputInputSnapshot,
@@ -369,6 +376,7 @@ func (s *KnowledgeInputProvenanceStore) SelectTagOutputInputs(
 	return result, err
 }
 
+// RecheckTagOutputInputs rechecks tag output inputs.
 func (s *KnowledgeInputProvenanceStore) RecheckTagOutputInputs(
 	ctx context.Context,
 	snapshot *types.TagOutputInputSnapshot,

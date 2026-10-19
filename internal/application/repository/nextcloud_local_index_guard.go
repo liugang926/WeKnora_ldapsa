@@ -10,6 +10,7 @@ import (
 	"gorm.io/gorm/clause"
 )
 
+// GuardNextcloudLocalIndexWrites returns the guard nextcloud local index writes result.
 // Shared by the SQLite metadata/FTS/vec0 transaction. Ordinary unrelated rows
 // retain their existing API, but an actual Nextcloud row requires its worker.
 func GuardNextcloudLocalIndexWrites(ctx context.Context, tx *gorm.DB, infos []*types.IndexInfo) error {

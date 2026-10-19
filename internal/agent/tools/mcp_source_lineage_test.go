@@ -64,11 +64,11 @@ func newMCPSourceFixture(t *testing.T) *mcpSourceFixture {
 			if f.lookupError || tenant != 7 || id != f.service.ID {
 				return nil, errors.New("controlled lookup refusal")
 			}
-			var copy types.MCPService
-			if json.Unmarshal(mcpSourceJSON(f.service), &copy) != nil {
+			var copied types.MCPService
+			if json.Unmarshal(mcpSourceJSON(f.service), &copied) != nil {
 				return nil, errors.New("invalid fixture row")
 			}
-			return &copy, nil
+			return &copied, nil
 		}, nil)
 	require.NoError(t, err)
 	ConfigureMCPIndependentTransportVerifier(f.registry, func(ctx context.Context) error {

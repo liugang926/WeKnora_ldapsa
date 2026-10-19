@@ -261,7 +261,8 @@ func (h *Handler) parseQARequest(
 	// Log merge results for debugging
 	logger.Infof(
 		ctx,
-		"[%s] @mention merge: request.KnowledgeBaseIDs=%v, request.MentionedItems=%d, merged kbIDs=%v, merged knowledgeIDs=%v",
+		("[%s] @mention merge: request.KnowledgeBaseIDs=%v, request.MentionedItems=%" +
+			"d, merged kbIDs=%v, merged knowledgeIDs=%v"),
 		logPrefix,
 		request.KnowledgeBaseIDs,
 		len(request.MentionedItems),
@@ -1013,7 +1014,7 @@ func (h *Handler) SearchKnowledge(c *gin.Context) {
 
 	if len(knowledgeBaseIDs) == 0 && len(request.KnowledgeIDs) == 0 && len(tagScopes) == 0 {
 		logger.Error(ctx, "No knowledge base IDs, knowledge IDs, or tag scopes provided")
-		c.Error(
+		_ = c.Error(
 			errors.NewBadRequestError(
 				"At least one knowledge_base_id, knowledge_base_ids, knowledge_ids, or scoped tag must be provided",
 			),

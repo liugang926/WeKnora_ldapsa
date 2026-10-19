@@ -24,6 +24,8 @@ type graphReadLeaseProvider interface {
 type GraphOriginalInputVerifier interface {
 	RecheckGraphOriginalInputs(context.Context, *types.GraphSourceReceipt) error
 }
+
+// KnowledgeGraphLineageReader hydrates graph material with its original input receipts.
 type KnowledgeGraphLineageReader struct {
 	knowledge interfaces.KnowledgeService
 	bases     interfaces.KnowledgeBaseService
@@ -32,6 +34,7 @@ type KnowledgeGraphLineageReader struct {
 	originals GraphOriginalInputVerifier
 }
 
+// NewKnowledgeGraphLineageReader constructs the configured KnowledgeGraphLineageReader.
 func NewKnowledgeGraphLineageReader(
 	knowledge interfaces.KnowledgeService,
 	bases interfaces.KnowledgeBaseService,
@@ -48,6 +51,7 @@ func NewKnowledgeGraphLineageReader(
 	}
 }
 
+// ConfigureKnowledgeBaseGraphLineage configures the knowledge base graph lineage boundary.
 func ConfigureKnowledgeBaseGraphLineage(base interfaces.KnowledgeBaseService, reader *KnowledgeGraphLineageReader) {
 	if impl, ok := base.(*knowledgeBaseService); ok {
 		impl.graphLineageReader = reader
@@ -66,6 +70,7 @@ func (s *knowledgeBaseService) ReadKnowledgeGraphSnapshot(
 	return s.graphLineageReader.ReadKnowledgeGraphSnapshot(ctx, targets, namespace, names)
 }
 
+// ReadKnowledgeGraphSnapshot hydrates graph material and retains its original input controls.
 func (r *KnowledgeGraphLineageReader) ReadKnowledgeGraphSnapshot(
 	ctx context.Context,
 	targets types.SearchTargets,
@@ -362,7 +367,7 @@ func (r *KnowledgeGraphLineageReader) ReadKnowledgeGraphSnapshot(
 	}
 	var once sync.Once
 	var closeErr error
-	close := func() error {
+	closeRead := func() error {
 		once.Do(func() {
 			closeErr = expanded.Close()
 			if ownedGuard {
@@ -379,7 +384,7 @@ func (r *KnowledgeGraphLineageReader) ReadKnowledgeGraphSnapshot(
 		Chunks:        results,
 		SourceLineage: graph.SourceLineage,
 		Recheck:       recheck,
-		Close:         close,
+		Close:         closeRead,
 	}, nil
 }
 

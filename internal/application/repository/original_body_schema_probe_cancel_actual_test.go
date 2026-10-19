@@ -70,7 +70,7 @@ func runOriginalBodySchemaProbeCancelActual(t *testing.T, pg bool) {
 						cancel()
 					}),
 			)
-			defer db.Callback().Row().Remove("actual-body-schema-probe-cancel-before")
+			defer func() { require.NoError(t, db.Callback().Row().Remove("actual-body-schema-probe-cancel-before")) }()
 			require.NoError(
 				t,
 				db.Callback().
@@ -83,7 +83,7 @@ func runOriginalBodySchemaProbeCancelActual(t *testing.T, pg bool) {
 						}
 					}),
 			)
-			defer db.Callback().Row().Remove("actual-body-schema-probe-cancel-after")
+			defer func() { require.NoError(t, db.Callback().Row().Remove("actual-body-schema-probe-cancel-after")) }()
 			err := CheckOriginalBodyAvailableInTx(ctx, tx, "knowledge_auto_tag_input_manifests", "schema-probe-live")
 			require.Equal(t, 1, beforeCalls, "cancel at the actual Raw.Scan schema query, not before API entry")
 			require.Equal(t, 1, afterCalls)

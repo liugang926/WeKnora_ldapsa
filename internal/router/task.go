@@ -533,7 +533,8 @@ func markKnowledgeListDeleteFailed(
 		if !updated {
 			logger.Infof(
 				ctx,
-				"dead-letter callback: skipped marking knowledge %s after delete task exhaustion because it is no longer active deleting",
+				("dead-letter callback: skipped marking knowledge %s after delete task exhau" +
+					"stion because it is no longer active deleting"),
 				knowledgeID,
 			)
 			continue

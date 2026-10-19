@@ -16,6 +16,7 @@ type (
 	}
 )
 
+// MessageRewindOutputReceipt represents message rewind output receipt repository data.
 type MessageRewindOutputReceipt struct {
 	Parent          *types.MessageMaterialSnapshot
 	OriginalPlan    *types.MessageMaterialReadPlan
@@ -25,6 +26,7 @@ type MessageRewindOutputReceipt struct {
 	FieldVersions   map[string]uint64
 }
 
+// WithMessageRewindMaterialStore binds message rewind material store.
 func WithMessageRewindMaterialStore(
 	ctx context.Context,
 	store *KnowledgeInputProvenanceStore,
@@ -37,6 +39,7 @@ func WithMessageRewindMaterialStore(
 	)
 }
 
+// MessageRewindMaterialRequest returns the message rewind material request result.
 func (s *KnowledgeInputProvenanceStore) MessageRewindMaterialRequest(
 	ctx context.Context,
 	tenant uint64,
@@ -113,8 +116,10 @@ func (r *messageRepository) DeleteMessagesFromMaterial(
 				var links []struct{ KnowledgeID string }
 				if err := tx.Table("knowledge_input_history_parents p").
 					Select("a.knowledge_id").
-					Joins("JOIN knowledge_input_admissions a ON a.admission_id=p.admission_id AND a.tenant_id=p.tenant_id").
-					Where("p.assistant_message_id=? AND p.session_id=? AND p.tenant_id=? AND a.origin_kind='history'", message.ID, session, expected.Request.TenantID).
+					Joins(("JOIN knowledge_input_admissions a ON a.admission_id=p.admission_id AND a.t" +
+						"enant_id=p.tenant_id")).
+					Where(("p.assistant_message_id=? AND p.session_id=? AND p.tenant_id=? AND a.origin" +
+						"_kind='history'"), message.ID, session, expected.Request.TenantID).
 					Scan(&links).
 					Error; err != nil {
 					return err
@@ -195,11 +200,13 @@ func (r *messageRepository) DeleteMessagesFromMaterial(
 	return deleted, err
 }
 
+// MessageRewindOutputReceiptFromContext returns the message rewind output receipt from context result.
 func MessageRewindOutputReceiptFromContext(ctx context.Context) *MessageRewindOutputReceipt {
 	holder, _ := ctx.Value(messageRewindStoreKey{}).(messageRewindHolder)
 	return holder.Output
 }
 
+// CheckMessageRewindOutput checks message rewind output.
 func (s *KnowledgeInputProvenanceStore) CheckMessageRewindOutput(
 	ctx context.Context,
 	receipt *MessageRewindOutputReceipt,

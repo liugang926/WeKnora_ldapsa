@@ -41,7 +41,10 @@ func (g *KnowledgeOutputGuard) BindFile(
 	if input == nil {
 		return nil, types.ErrSourceLineageUnknown
 	}
-	defer input.Close()
+	defer func() {
+		// Only the consumed source reader is closed; no artifact write is committed here.
+		_ = input.Close()
+	}()
 	if err := g.Check(ctx, []*types.Knowledge{row}); err != nil {
 		return nil, err
 	}

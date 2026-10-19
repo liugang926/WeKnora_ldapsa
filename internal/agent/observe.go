@@ -396,7 +396,7 @@ func (e *AgentEngine) analyzeResponse(
 		}
 
 		answerID := generateEventID("answer")
-		e.emitEvent(ctx, event.Event{
+		if err := e.emitEvent(ctx, event.Event{
 			ID:        answerID,
 			Type:      event.EventAgentFinalAnswer,
 			SessionID: sessionID,
@@ -404,8 +404,10 @@ func (e *AgentEngine) analyzeResponse(
 				Content: answer,
 				Done:    false,
 			},
-		})
-		e.emitEvent(ctx, event.Event{
+		}); err != nil {
+			return responseVerdict{isDone: true, step: step}
+		}
+		if err := e.emitEvent(ctx, event.Event{
 			ID:        answerID,
 			Type:      event.EventAgentFinalAnswer,
 			SessionID: sessionID,
@@ -413,7 +415,9 @@ func (e *AgentEngine) analyzeResponse(
 				Content: "",
 				Done:    true,
 			},
-		})
+		}); err != nil {
+			return responseVerdict{isDone: true, step: step}
+		}
 
 		return responseVerdict{
 			isDone:      true,
@@ -467,7 +471,7 @@ func (e *AgentEngine) analyzeResponse(
 		} else {
 			answerID = generateEventID("answer")
 			if response.Content != "" {
-				e.emitEvent(ctx, event.Event{
+				if err := e.emitEvent(ctx, event.Event{
 					ID:        answerID,
 					Type:      event.EventAgentFinalAnswer,
 					SessionID: sessionID,
@@ -475,7 +479,9 @@ func (e *AgentEngine) analyzeResponse(
 						Content: response.Content,
 						Done:    false,
 					},
-				})
+				}); err != nil {
+					return responseVerdict{isDone: true, step: step}
+				}
 			}
 		}
 		// Do not emit Done:true here. The caller drains any loop-end inject

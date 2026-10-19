@@ -36,7 +36,7 @@ func bodyActualFixture(t *testing.T, pg bool) (*enrichmentTestFixture, *reposito
 	t.Setenv("WEKNORA_ORIGINAL_BODY_JOURNAL_PIN", pin)
 	store := repository.NewOriginalBodyRetentionStore(f.db)
 	require.NoError(t, store.InitializeJournal())
-	inventoryKnownConfigurationOriginalBodyFixture(t, f.ctx, f.db, f.store)
+	inventoryKnownConfigurationOriginalBodyFixture(f.ctx, t, f.db, f.store)
 	return f, store
 }
 

@@ -29,7 +29,8 @@ func TestPostgresNextcloudProductionUpgradeFrom132PreservesLegacySession(t *test
 	require.NoError(t, m.Migrate(132))
 	requirePostgresMigrationVersion(t, db, 132)
 	_, err = db.Exec(
-		`INSERT INTO sessions(id,tenant_id,title,description) VALUES('legacy-upgrade',7,'existing title','existing description')`,
+		("INSERT INTO sessions(id,tenant_id,title,description) VALUES('legacy-upgrad" +
+			"e',7,'existing title','existing description')"),
 	)
 	require.NoError(t, err)
 	require.NoError(t, m.Migrate(uint(latestVersionedMigration(t, root))))
@@ -39,7 +40,8 @@ func TestPostgresNextcloudProductionUpgradeFrom132PreservesLegacySession(t *test
 	var scoped bool
 	require.NoError(
 		t,
-		db.QueryRow(`SELECT title,description,title_source_lineage,description_source_lineage,nextcloud_scoped FROM sessions WHERE id='legacy-upgrade'`).
+		db.QueryRow(("SELECT title,description,title_source_lineage,description_source_lineage,n"+
+			"extcloud_scoped FROM sessions WHERE id='legacy-upgrade'")).
 			Scan(&title, &description, &titleLineage, &descriptionLineage, &scoped),
 	)
 	require.Equal(t, "existing title", title)
@@ -57,7 +59,8 @@ func TestPostgresNextcloudProductionUpgradeFrom132PreservesLegacySession(t *test
 		var exists bool
 		require.NoError(
 			t,
-			db.QueryRow(`SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_schema=current_schema() AND table_name=$1)`, table).
+			db.QueryRow(("SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_schema=c"+
+				"urrent_schema() AND table_name=$1)"), table).
 				Scan(&exists),
 		)
 		require.True(t, exists, "missing upgraded table %s", table)

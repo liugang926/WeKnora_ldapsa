@@ -105,7 +105,7 @@ func TestRAGPhysicalActualHydrationHeldUntilFinalProducerAndSenderRelease(t *tes
 					[]readlease.NextcloudKBReadScope{{TenantID: 7, KBID: "kb"}},
 				)
 				require.NoError(t, err)
-				defer borrowed.Close()
+				defer func() { require.NoError(t, borrowed.Close()) }()
 				ctx = borrowed.Context()
 			}
 			cached := &types.SearchResult{

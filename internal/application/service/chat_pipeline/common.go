@@ -191,9 +191,9 @@ func loadAndProcessHistory(
 				if ref == nil {
 					continue
 				}
-				copy := *ref
-				copy.SourceLineage, _ = types.UnionSourceLineage(message.SourceLineage)
-				h.KnowledgeReferences = append(h.KnowledgeReferences, &copy)
+				copied := *ref
+				copied.SourceLineage, _ = types.UnionSourceLineage(message.SourceLineage)
+				h.KnowledgeReferences = append(h.KnowledgeReferences, &copied)
 			}
 		}
 		historyMap[message.RequestID] = h

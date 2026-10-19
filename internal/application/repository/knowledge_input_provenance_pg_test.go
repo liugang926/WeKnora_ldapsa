@@ -22,9 +22,9 @@ func knowledgeInputPostgresFixture(t *testing.T) (*KnowledgeInputProvenanceStore
 	script, err := os.ReadFile("../../../migrations/versioned/000134_knowledge_input_provenance.up.sql")
 	require.NoError(t, err)
 	require.NoError(t, migration.Exec(string(script)).Error)
-	db.Config.DisableForeignKeyConstraintWhenMigrating = true
+	db.DisableForeignKeyConstraintWhenMigrating = true
 	require.NoError(t, db.AutoMigrate(&types.Session{}, &types.Message{}))
-	db.Config.DisableForeignKeyConstraintWhenMigrating = false
+	db.DisableForeignKeyConstraintWhenMigrating = false
 	additional, err := os.ReadFile("../../../migrations/versioned/000135_knowledge_configuration_history_inputs.up.sql")
 	require.NoError(t, err)
 	require.NoError(t, migration.Exec(string(additional)).Error)
@@ -220,7 +220,8 @@ func TestPostgresKnowledgeInputActualControlsIgnoreGeneratedKBDescription(t *tes
 	require.NoError(
 		t,
 		db.Exec(
-			"UPDATE knowledge_bases SET description='generated description',generated_profile='{\"gist\":\"generated\"}' WHERE id='kb'",
+			("UPDATE knowledge_bases SET description='generated description',generated_p" +
+				"rofile='{\"gist\":\"generated\"}' WHERE id='kb'"),
 		).Error,
 	)
 	require.NoError(t, store.RecheckKnowledgeBuildInputs(ctx, input.Proof))

@@ -147,14 +147,15 @@ func TestKnowledgeHistoryLegacyUnpairedAndFailedLinkNeverAdmitOrphans(t *testing
 			case "missing-user":
 				require.NoError(t, db.Unscoped().Delete(user).Error)
 			case "duplicate-user":
-				copy := *user
-				copy.ID = "duplicate"
-				require.NoError(t, db.Create(&copy).Error)
+				copied := *user
+				copied.ID = "duplicate"
+				require.NoError(t, db.Create(&copied).Error)
 			case "link-failure":
 				require.NoError(
 					t,
 					db.Exec(
-						"CREATE TRIGGER deny_history_link BEFORE UPDATE OF knowledge_id ON messages BEGIN SELECT RAISE(ABORT,'injected link failure'); END",
+						("CREATE TRIGGER deny_history_link BEFORE UPDATE OF knowledge_id ON messages" +
+							" BEGIN SELECT RAISE(ABORT,'injected link failure'); END"),
 					).Error,
 				)
 			case "late-denial":

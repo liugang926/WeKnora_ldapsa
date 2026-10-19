@@ -34,6 +34,7 @@ type NextcloudDataSourceLookup interface {
 	FindByID(context.Context, string) (*types.DataSource, error)
 }
 
+// NextcloudSourcePathResolver resolves a source binding's current path metadata.
 type NextcloudSourcePathResolver interface {
 	ResolveCurrentSourcePath(context.Context, uint64, string, string, string) (string, error)
 }
@@ -63,6 +64,7 @@ func NewNextcloudPublicationGuard(
 	}
 }
 
+// ConfigureSourcePathResolver configures current path resolution for publication checks.
 func (g *NextcloudPublicationGuard) ConfigureSourcePathResolver(paths NextcloudSourcePathResolver) {
 	g.paths = paths
 	g.checkPath = nextcloud.CheckCurrentPublication
@@ -399,10 +401,10 @@ func (g *NextcloudPublicationGuard) currentDirectoryIdentity(ctx context.Context
 		)))
 	}
 
-	copy := *currentIdentity
+	copied := *currentIdentity
 	userID := *currentIdentity.UserID
-	copy.UserID = &userID
-	return &copy, nil
+	copied.UserID = &userID
+	return &copied, nil
 }
 
 func publicationMetadataString(metadata map[string]json.RawMessage, key string) (string, bool) {

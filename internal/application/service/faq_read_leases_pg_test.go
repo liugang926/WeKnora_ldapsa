@@ -16,6 +16,11 @@ func TestFAQPostgresActualParentReadPlansAndDurableLeaseCoverage(t *testing.T) {
 	ddl, err := os.ReadFile("../../../migrations/versioned/000127_nextcloud_content_leases.up.sql")
 	require.NoError(t, err)
 	require.NoError(t, db.Exec(string(ddl)).Error)
+	// The current Session type carries scoped-source columns, so install the real
+	// target closure/onboarding controls before acquiring physical read leases.
+	require.NoError(t, db.AutoMigrate(&types.Tenant{}, &types.DataSource{}))
+	require.NoError(t, db.Create(&types.Tenant{ID: 7}).Error)
+	installDocumentOnboardingSchema(t, db)
 	sqlDB, err := db.DB()
 	require.NoError(t, err)
 	sqlDB.SetMaxOpenConns(1)

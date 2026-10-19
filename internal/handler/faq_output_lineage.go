@@ -9,6 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// ConfigureFAQHandlerOutputLineage configures the faqhandler output lineage boundary.
 func ConfigureFAQHandlerOutputLineage(h *FAQHandler, authorizer *service.FAQOutputAuthorizer) {
 	if h != nil {
 		h.outputAuthorizer = authorizer
@@ -17,21 +18,21 @@ func ConfigureFAQHandlerOutputLineage(h *FAQHandler, authorizer *service.FAQOutp
 
 func (h *FAQHandler) requireFAQOutput(c *gin.Context) bool {
 	if h == nil || h.outputAuthorizer == nil {
-		c.Error(errors.NewServiceUnavailableError("Original FAQ output verifier is unavailable"))
+		_ = c.Error(errors.NewServiceUnavailableError("Original FAQ output verifier is unavailable"))
 		return false
 	}
 	return true
 }
 
-func (h *FAQHandler) writeFAQOutput(c *gin.Context, ctx context.Context, data any) {
+func (h *FAQHandler) writeFAQOutput(ctx context.Context, c *gin.Context, data any) {
 	guard := service.FAQOutputGuardFromContext(ctx)
 	if guard == nil {
-		c.Error(errors.NewServiceUnavailableError("Original FAQ producer output is unavailable"))
+		_ = c.Error(errors.NewServiceUnavailableError("Original FAQ producer output is unavailable"))
 		return
 	}
 	check := func() error { return knowledgeOutputHTTPError(guard.Check(ctx, data)) }
 	if err := check(); err != nil {
-		c.Error(err)
+		_ = c.Error(err)
 		return
 	}
 	prior := c.Writer
@@ -40,15 +41,15 @@ func (h *FAQHandler) writeFAQOutput(c *gin.Context, ctx context.Context, data an
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": data})
 }
 
-func (h *FAQHandler) writeFAQData(c *gin.Context, ctx context.Context, contentType string, original, published []byte) {
+func (h *FAQHandler) writeFAQData(ctx context.Context, c *gin.Context, contentType string, original, published []byte) {
 	guard := service.FAQOutputGuardFromContext(ctx)
 	if guard == nil {
-		c.Error(errors.NewServiceUnavailableError("Original FAQ export producer is unavailable"))
+		_ = c.Error(errors.NewServiceUnavailableError("Original FAQ export producer is unavailable"))
 		return
 	}
 	check := func() error { return knowledgeOutputHTTPError(guard.Check(ctx, original)) }
 	if err := check(); err != nil {
-		c.Error(err)
+		_ = c.Error(err)
 		return
 	}
 	prior := c.Writer

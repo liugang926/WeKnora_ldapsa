@@ -118,7 +118,8 @@ func captureKnowledgeBasePromptInputInTx(
 		return nil, err
 	}
 	var display knowledgeDisplayInputOrigin
-	if err := tx.Where("kind = 'kb-name' AND row_id = ? AND tenant_id = ? AND knowledge_base_id = ? AND revision = ?", kbID, tenant, kbID, name.Revision).
+	if err := tx.Where(("kind = 'kb-name' AND row_id = ? AND tenant_id = ? AND knowledge_base_id = " +
+		"? AND revision = ?"), kbID, tenant, kbID, name.Revision).
 		Take(&display).
 		Error; err != nil {
 		return nil, err
@@ -267,7 +268,8 @@ func (s *KnowledgeInputProvenanceStore) beginKnowledgeBasePromptPhysicalRead(
 	if err := s.db.WithContext(ctx).
 		Model(&knowledgeDisplayInputOrigin{}).
 		Select("origin_id").
-		Where("kind='kb-name' AND row_id=? AND tenant_id=? AND knowledge_base_id=? AND revision=?", kb, tenant, kb, revision).
+		Where(("kind='kb-name' AND row_id=? AND tenant_id=? AND knowledge_base_id=? AND re" +
+			"vision=?"), kb, tenant, kb, revision).
 		Take(&original).
 		Error; err != nil {
 		return nil, err
@@ -287,7 +289,8 @@ func (s *KnowledgeInputProvenanceStore) beginKnowledgeBasePromptPhysicalRead(
 	}
 	if err := bodyInternal(
 		s.db.WithContext(ctx),
-	).Where("source_table='knowledge_display_input_origins' AND row_key=? AND column_name='actual_input'", original.OriginID).
+	).Where(("source_table='knowledge_display_input_origins' AND row_key=? AND column_na" +
+		"me='actual_input'"), original.OriginID).
 		Order("slot_id").
 		Find(&read.displayHeads).
 		Error; err != nil {

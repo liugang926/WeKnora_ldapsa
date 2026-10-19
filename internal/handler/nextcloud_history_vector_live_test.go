@@ -137,7 +137,7 @@ func documentHistoryVectorHTTPServices(t *testing.T, db *gorm.DB, store *reposit
 func documentHistoryVectorHTTPCheck(
 	t *testing.T,
 	router *gin.Engine,
-	db *gorm.DB,
+	_ *gorm.DB,
 	token, sessionID string,
 	spec *documentHistoryVectorSpec,
 	models *documentHTTPVectorModels,
@@ -170,7 +170,8 @@ func documentHistoryVectorHTTPCheck(
 						t,
 						http.StatusForbidden,
 						response.Code,
-						"known NC share deletion must be explicit denial, never 200/zero; 503 is incomplete verification and cannot pass acceptance",
+						("known NC share deletion must be explicit denial, never 200/zero; 503 is in" +
+							"complete verification and cannot pass acceptance"),
 					)
 					for _, privateText := range []string{"Alice", "Bob", "Project Cedar"} {
 						require.False(

@@ -146,8 +146,8 @@ func processingStateFixtureBackend(
 }
 
 func boundProcessingGraph(
-	t *testing.T,
 	ctx context.Context,
+	t *testing.T,
 	k *types.Knowledge,
 	c *types.Chunk,
 	inputs *KnowledgeInputProvenanceStore,
@@ -221,7 +221,7 @@ func TestNextcloudGraphActualSQLProviderDurableStateAndIdempotentTask(t *testing
 	done, err := state.StartGraph(ctx, 7, k.ID, 1, chunk.ID)
 	require.NoError(t, err)
 	require.False(t, done)
-	ctx, graph := boundProcessingGraph(t, ctx, k, chunk, inputs)
+	ctx, graph := boundProcessingGraph(ctx, t, k, chunk, inputs)
 	provider := NewScopedSQLGraphRepository(db, nil)
 	require.NoError(
 		t,
@@ -272,7 +272,7 @@ func TestNextcloudGraphActualSQLRetirementAndAttemptFence(t *testing.T) {
 			state, db, ctx, k, chunk, inputs := processingStateFixture(t, false)
 			_, err := state.StartGraph(ctx, 7, k.ID, 1, chunk.ID)
 			require.NoError(t, err)
-			ctx, graph := boundProcessingGraph(t, ctx, k, chunk, inputs)
+			ctx, graph := boundProcessingGraph(ctx, t, k, chunk, inputs)
 			switch change {
 			case "retire":
 				require.NoError(
@@ -528,7 +528,7 @@ func TestNextcloudActualGraphExactGCReceiptAndUnknownCoverage(t *testing.T) {
 	state, db, ctx, k, chunk, inputs := processingStateFixture(t, true)
 	_, err := state.StartGraph(ctx, 7, k.ID, 1, chunk.ID)
 	require.NoError(t, err)
-	ctx, graph := boundProcessingGraph(t, ctx, k, chunk, inputs)
+	ctx, graph := boundProcessingGraph(ctx, t, k, chunk, inputs)
 	require.NoError(
 		t,
 		NewScopedSQLGraphRepository(
@@ -576,6 +576,7 @@ func TestNextcloudActualGraphExactGCReceiptAndUnknownCoverage(t *testing.T) {
 	require.NoError(t, err)
 	job := nextcloudGCJob{
 		ID:                "actual-graph-gc",
+		Reason:            "tombstone",
 		TenantID:          7,
 		KnowledgeBaseID:   "kb",
 		KnowledgeID:       k.ID,
@@ -627,7 +628,7 @@ func TestNextcloudClosedRecoveryControlsCannotReportPublishedOrDeliverOldReady(t
 	state, db, ctx, k, chunk, inputs := processingStateFixture(t, true)
 	_, err := state.StartGraph(ctx, 7, k.ID, 1, chunk.ID)
 	require.NoError(t, err)
-	ctx, graph := boundProcessingGraph(t, ctx, k, chunk, inputs)
+	ctx, graph := boundProcessingGraph(ctx, t, k, chunk, inputs)
 	require.NoError(
 		t,
 		NewScopedSQLGraphRepository(

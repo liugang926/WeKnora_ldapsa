@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/Tencent/WeKnora/internal/application/repository"
+	"github.com/Tencent/WeKnora/internal/models/embedding"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	"github.com/hibiken/asynq"
@@ -17,6 +18,30 @@ import (
 )
 
 type knowledgeInputQueue struct{ tasks []*asynq.Task }
+
+type staleManualEmbeddingSpy struct {
+	parentChildEmbedder
+	calls int
+}
+
+func (s *staleManualEmbeddingSpy) Embed(ctx context.Context, text string) ([]float32, error) {
+	s.calls++
+	return s.parentChildEmbedder.Embed(ctx, text)
+}
+
+func (s *staleManualEmbeddingSpy) BatchEmbed(ctx context.Context, texts []string) ([][]float32, error) {
+	s.calls++
+	return s.parentChildEmbedder.BatchEmbed(ctx, texts)
+}
+
+func (s *staleManualEmbeddingSpy) BatchEmbedWithPool(
+	ctx context.Context,
+	model embedding.Embedder,
+	texts []string,
+) ([][]float32, error) {
+	s.calls++
+	return s.parentChildEmbedder.BatchEmbedWithPool(ctx, model, texts)
+}
 
 func (q *knowledgeInputQueue) Enqueue(task *asynq.Task, _ ...asynq.Option) (*asynq.TaskInfo, error) {
 	q.tasks = append(q.tasks, task)
@@ -56,7 +81,9 @@ func knowledgeInputServiceFixture(
 	require.NoError(
 		t,
 		db.Exec(
-			"CREATE TABLE nextcloud_source_versions(candidate_knowledge_id TEXT); CREATE TABLE nextcloud_source_revisions(candidate_knowledge_id TEXT); CREATE TABLE knowledge_tag_relations(knowledge_id TEXT,tag_id TEXT)",
+			("CREATE TABLE nextcloud_source_versions(candidate_knowledge_id TEXT); CREAT" +
+				"E TABLE nextcloud_source_revisions(candidate_knowledge_id TEXT); CREATE TA" +
+				"BLE knowledge_tag_relations(knowledge_id TEXT,tag_id TEXT)"),
 		).Error,
 	)
 	for _, file := range []string{"000053_knowledge_input_provenance.up.sql", "000054_knowledge_configuration_history_inputs.up.sql", "000055_knowledge_actual_config_controls.up.sql", "000056_knowledge_original_worker_actor.up.sql"} {
@@ -170,6 +197,8 @@ func TestKnowledgeInputManualForgedJobAndConfigChangeNeverReadModel(t *testing.T
 	for _, mode := range []string{"artifact", "config"} {
 		t.Run(mode, func(t *testing.T) {
 			s, _, db, queue, ctx := knowledgeInputServiceFixture(t)
+			model := &staleManualEmbeddingSpy{}
+			s.modelService = parentChildModelService{embedder: model}
 			_, err := s.CreateKnowledgeFromManual(
 				repository.WithIndependentKnowledgeInput(ctx),
 				"kb",
@@ -183,17 +212,46 @@ func TestKnowledgeInputManualForgedJobAndConfigChangeNeverReadModel(t *testing.T
 			require.NoError(t, err)
 			var payload types.ManualProcessPayload
 			require.NoError(t, json.Unmarshal(queue.tasks[0].Payload(), &payload))
+			var original types.Knowledge
+			require.NoError(t, db.Where("id = ?", payload.KnowledgeID).Take(&original).Error)
+			before := map[string]int64{}
+			for _, table := range []string{"knowledge_input_row_versions", "knowledge_input_admissions", "knowledge_input_material_receipts"} {
+				var count int64
+				require.NoError(t, db.Table(table).Count(&count).Error)
+				before[table] = count
+			}
+			queued := len(queue.tasks)
 			if mode == "artifact" {
+				require.Positive(t, payload.ContentVersion, "this case exercises the stale versioned-task no-op")
 				payload.Content = "forged derived body"
 			} else {
 				require.NoError(t, db.Exec("UPDATE knowledge_bases SET summary_model_id='new' WHERE id='kb'").Error)
 			}
 			data, err := json.Marshal(payload)
 			require.NoError(t, err)
-			require.Error(t, s.ProcessManualUpdate(ctx, asynq.NewTask(types.TypeManualProcess, data)))
+			err = s.ProcessManualUpdate(ctx, asynq.NewTask(types.TypeManualProcess, data))
+			if mode == "artifact" {
+				// A payload differing from the current version is acknowledged as a stale
+				// no-op before input resume, model selection or any content write.
+				require.NoError(t, err)
+			} else {
+				require.Error(t, err)
+			}
+			require.Zero(t, model.calls, "untrusted task bytes must never reach the configured embedding provider")
+			require.Len(t, queue.tasks, queued, "a refused or stale task cannot enqueue child work")
 			var count int64
 			require.NoError(t, db.Model(&types.Chunk{}).Count(&count).Error)
 			require.Zero(t, count)
+			var current types.Knowledge
+			require.NoError(t, db.Where("id = ?", original.ID).Take(&current).Error)
+			require.Equal(t, original.Metadata, current.Metadata, "the actual stored manual body must remain unchanged")
+			if mode == "artifact" {
+				require.Equal(t, original.ParseStatus, current.ParseStatus)
+			}
+			for table, expected := range before {
+				require.NoError(t, db.Table(table).Count(&count).Error)
+				require.Equal(t, expected, count, "no new input admission or material receipt: %s", table)
+			}
 		})
 	}
 }

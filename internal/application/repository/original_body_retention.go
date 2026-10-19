@@ -16,6 +16,7 @@ import (
 )
 
 var (
+	// ErrOriginalBodyUnavailable reports a original body unavailable condition.
 	ErrOriginalBodyUnavailable = errors.New("original body is unavailable or retention evidence changed")
 	ErrOriginalBodyRetained    = errors.New(
 		"original body has a current owner, lease, unexpired recovery or unknown copy",
@@ -86,11 +87,14 @@ type originalBodyScope struct {
 	Tenant                                                  uint64
 	KB, Knowledge, OwnerKind, OwnerID, AdmissionID, Lineage string
 }
+
+// OriginalBodyRetentionStore represents original body retention store repository data.
 type OriginalBodyRetentionStore struct {
 	db      *gorm.DB
 	journal *originalBodyJournal
 }
 
+// NewOriginalBodyRetentionStore constructs original body retention store.
 func NewOriginalBodyRetentionStore(db *gorm.DB) *OriginalBodyRetentionStore {
 	return &OriginalBodyRetentionStore{db: db, journal: originalBodyJournalFromEnv()}
 }
@@ -103,6 +107,7 @@ func bodyInternal(tx *gorm.DB) *gorm.DB {
 
 type originalBodyInternalKey struct{}
 
+// CheckOriginalBodyAvailableInTx checks original body available in tx.
 // Shared with actual material/history consumers, including message generation
 // origins. This never authenticates cached body by loading a newer current row.
 func CheckOriginalBodyAvailableInTx(ctx context.Context, tx *gorm.DB, table, rowID string) error {
@@ -220,6 +225,7 @@ func (s *OriginalBodyRetentionStore) resolveInTx(
 	return *body.Payload, nil
 }
 
+// AcquireLease acquires lease.
 func (s *OriginalBodyRetentionStore) AcquireLease(
 	ctx context.Context,
 	bodyID, kind, owner string,
@@ -272,6 +278,7 @@ func (s *OriginalBodyRetentionStore) acquireLeaseInTx(
 		Error
 }
 
+// ReleaseLease releases lease.
 func (s *OriginalBodyRetentionStore) ReleaseLease(ctx context.Context, id string) error {
 	now, e := nextcloudLeaseNowMS(bodyInternal(s.db))
 	if e != nil {

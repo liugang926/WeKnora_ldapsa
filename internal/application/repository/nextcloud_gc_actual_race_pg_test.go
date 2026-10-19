@@ -52,7 +52,8 @@ func TestPostgresNextcloudActualGCProviderTransactionSerializesRestore(t *testin
 			if _, e := gcLockKBContent(tx, nextcloudGCJob{TenantID: 7, KnowledgeBaseID: "kb"}); e != nil {
 				return e
 			}
-			return tx.Model(&nextcloudSourceVersion{}).Where("tenant_id=7 AND knowledge_base_id='kb' AND datasource_id='ds' AND external_id='node'").Updates(map[string]any{"state": "published", "candidate_knowledge_id": "old"}).Error
+			return tx.Model(&nextcloudSourceVersion{}).Where(("tenant_id=7 AND knowledge_base_id='kb' AND datasource_id='ds' AND external" +
+				"_id='node'")).Updates(map[string]any{"state": "published", "candidate_knowledge_id": "old"}).Error
 		})
 	}()
 	deadline := time.Now().Add(3 * time.Second)
@@ -61,7 +62,8 @@ func TestPostgresNextcloudActualGCProviderTransactionSerializesRestore(t *testin
 		var waiting int64
 		require.NoError(
 			t,
-			db.Raw("SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE 'UPDATE knowledge_bases%'").
+			db.Raw(("SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() AND" +
+				" wait_event_type='Lock' AND query LIKE 'UPDATE knowledge_bases%'")).
 				Scan(&waiting).
 				Error,
 		)

@@ -14,7 +14,8 @@ import (
 
 type (
 	historyMaterialGuardContextKey struct{}
-	MessageMaterialGuard           struct {
+	// MessageMaterialGuard retains original message inputs and rechecks current read controls.
+	MessageMaterialGuard struct {
 		mu            sync.Mutex
 		store         *repository.KnowledgeInputProvenanceStore
 		verifier      *messageService
@@ -163,7 +164,10 @@ func (g *MessageMaterialGuard) heartbeatRecheck() error {
 	return err
 }
 
+// Context returns the context carrying the retained read controls.
 func (g *MessageMaterialGuard) Context() context.Context { return g.ctx }
+
+// Recheck rechecks the retained inputs and their current read controls.
 func (g *MessageMaterialGuard) Recheck() error {
 	if g == nil {
 		return access.ErrNextcloudPublicationUnavailable
@@ -214,6 +218,7 @@ func (g *MessageMaterialGuard) Recheck() error {
 	return g.verifier.CheckMessagePublications(g.ctx, g.snapshot.Messages)
 }
 
+// Close releases the retained original input reads.
 func (g *MessageMaterialGuard) Close() {
 	if g == nil {
 		return
@@ -442,6 +447,7 @@ func (g *MessageMaterialGuard) advanceOwnGeneratedField(ctx context.Context) err
 	return nil
 }
 
+// OriginalSnapshot returns the retained original message input snapshot.
 func (g *MessageMaterialGuard) OriginalSnapshot() (*types.MessageMaterialSnapshot, error) {
 	if err := g.Recheck(); err != nil {
 		return nil, err

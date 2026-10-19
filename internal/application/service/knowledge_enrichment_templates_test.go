@@ -37,6 +37,10 @@ func applyEnrichmentTemplateMigration(t *testing.T, f *enrichmentTestFixture, pg
 		require.NoError(t, e)
 		require.NoError(t, migration.Exec(string(leaseData)).Error)
 	}
+	// Current Session columns require the actual scoped-source target controls
+	// before the template reader can acquire physical parent leases.
+	require.NoError(t, f.db.AutoMigrate(&types.DataSource{}))
+	installMachineOnboardingSchema(t, f.db, migration)
 	if pg {
 		sqlDB, e := f.db.DB()
 		require.NoError(t, e)
@@ -188,7 +192,7 @@ func runKnowledgeTrustedTemplates(t *testing.T, pg bool) {
 					}
 				}
 				_, e = svc.GenerateDerivedTemplate(f.ctx, 7, "kb", "summary", []string{f.k.ID})
-				require.Equal(t, 1, f.model.calls)
+				require.Equal(t, 1, f.model.calls, "derived original parent reads must reach the model: %v", e)
 			}
 			if mode == "parent body ABA" || mode == "model ABA" || mode == "admin revoke" {
 				require.Error(t, e)
@@ -266,7 +270,7 @@ func runKnowledgeDerivedTemplateSourceUnion(t *testing.T, pg bool) {
 	f.model.beforeReturn = nil
 	read, e := svc.ReadTemplate(f.ctx, 7, "kb", "summary")
 	require.NoError(t, e)
-	defer read.Close()
+	defer func() { require.NoError(t, read.Close()) }()
 	require.NoError(t, read.Check(f.ctx))
 	ctx := newTemplateArtifact(t, f, "derived-template-artifact")
 	original := repository.KnowledgeBuildInputProofFromContext(ctx)

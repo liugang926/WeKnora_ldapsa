@@ -1522,7 +1522,8 @@ func (r *chunkRepository) ListRecentDocumentChunksWithQuestions(
 	case "postgres":
 		if err := baseQuery.
 			Where(
-				"metadata IS NOT NULL AND metadata::text != '{}' AND jsonb_array_length(COALESCE(metadata->'generated_questions', '[]'::jsonb)) > 0",
+				("metadata IS NOT NULL AND metadata::text != '{}' AND jsonb_array_length(COA" +
+					"LESCE(metadata->'generated_questions', '[]'::jsonb)) > 0"),
 			).
 			Order(orderClause).
 			Limit(limit).

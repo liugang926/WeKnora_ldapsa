@@ -100,6 +100,7 @@ func (c *CompositeRetrieveEngine) SelectedBackendTypes() []types.RetrieverEngine
 	return result
 }
 
+// PrepareNextcloudStorageSelection holds source controls while selecting retrieval storage.
 func (c *CompositeRetrieveEngine) PrepareNextcloudStorageSelection(ctx context.Context) error {
 	return apprepo.RecordNextcloudDerivedBackendSelection(ctx, c.SelectedBackendTypes())
 }

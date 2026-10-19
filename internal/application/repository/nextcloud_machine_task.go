@@ -14,6 +14,7 @@ import (
 	"gorm.io/gorm/clause"
 )
 
+// ErrNextcloudMachineTaskInvalid rejects unverified, stale or consumed machine work.
 var ErrNextcloudMachineTaskInvalid = apperrors.NewProtocolError(
 	errors.New("nextcloud machine task is unverified, stale or already consumed"),
 	"Nextcloud machine task is unverified, stale or already consumed",

@@ -236,7 +236,8 @@ func TestNativeLiveReplayActualPausedProducerReceiverAndRedisForgery(t *testing.
 				nativeRunningRouter(
 					firstCtx,
 					firstHandler,
-				).ServeHTTP(first, httptest.NewRequest(http.MethodPost, "/knowledge-chat/"+f.parent.SessionID, strings.NewReader(`{"query":"current native question","summary_model_id":"actual-http-tail-model","disable_title":true}`)))
+				).ServeHTTP(first, httptest.NewRequest(http.MethodPost, "/knowledge-chat/"+f.parent.SessionID, strings.NewReader(("{\"query\":\"current native question\",\"summary_model_id\":\"actual-http-"+
+					"tail-model\",\"disable_title\":true}"))))
 			}()
 			select {
 			case <-first.seen:

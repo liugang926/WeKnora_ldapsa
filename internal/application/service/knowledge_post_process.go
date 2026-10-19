@@ -38,6 +38,7 @@ type KnowledgePostProcessService struct {
 	processingLedger types.NextcloudProcessingLedger
 }
 
+// ConfigureKnowledgePostProcessInputProvenance configures the knowledge post process input provenance boundary.
 func ConfigureKnowledgePostProcessInputProvenance(
 	handler interfaces.TaskHandler,
 	reader interfaces.KnowledgeBuildInputReader,
@@ -47,6 +48,7 @@ func ConfigureKnowledgePostProcessInputProvenance(
 	}
 }
 
+// ConfigureNextcloudPostProcessLedger configures the nextcloud post process ledger boundary.
 func ConfigureNextcloudPostProcessLedger(handler interfaces.TaskHandler, ledger types.NextcloudProcessingLedger) {
 	if impl, ok := handler.(*KnowledgePostProcessService); ok {
 		impl.processingLedger = ledger
@@ -309,7 +311,7 @@ func (s *KnowledgePostProcessService) Handle(ctx context.Context, task *asynq.Ta
 
 	if knowledge.Channel == types.ConnectorTypeNextcloud {
 		if s.processingLedger == nil {
-			return errors.New("Nextcloud graph processing ledger unavailable")
+			return errors.New("nextcloud graph processing ledger unavailable")
 		}
 		if err := s.processingLedger.PlanGraph(
 			ctx,
@@ -333,7 +335,7 @@ func (s *KnowledgePostProcessService) Handle(ctx context.Context, task *asynq.Ta
 			UnpreparedGraphChunks(context.Context, uint64, string, int) ([]string, error)
 		})
 		if !ok {
-			return errors.New("Nextcloud graph queue recovery unavailable")
+			return errors.New("nextcloud graph queue recovery unavailable")
 		}
 		ids, err := reader.UnpreparedGraphChunks(ctx, payload.TenantID, payload.KnowledgeID, attempt)
 		if err != nil {
@@ -375,7 +377,7 @@ func (s *KnowledgePostProcessService) Handle(ctx context.Context, task *asynq.Ta
 				return err
 			}
 			if !queued {
-				return errors.New("Nextcloud planned graph queue unavailable")
+				return errors.New("nextcloud planned graph queue unavailable")
 			}
 		}
 	}
@@ -1042,7 +1044,8 @@ func (s *KnowledgePostProcessService) enqueueQuestionGenerationTasks(
 	}
 	logger.Infof(
 		ctx,
-		"[KnowledgePostProcess] Enqueued %d question generation batch tasks (%d chunks, batch_size=%d) for %s (count=%d)",
+		("[KnowledgePostProcess] Enqueued %d question generation batch tasks (%d chu" +
+			"nks, batch_size=%d) for %s (count=%d)"),
 		enqueued,
 		total,
 		questionGenChunkBatchSize,

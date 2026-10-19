@@ -198,20 +198,28 @@ func datasourceOriginalFetchedItem(
 		require.NotEmpty(t, r.Header.Get("X-WeKnora-Nonce"))
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/capabilities"):
-			fmt.Fprint(w, `{"protocol_version":"1","instance_id":"instance-1"}`)
+			if _, err := fmt.Fprint(w, `{"protocol_version":"1","instance_id":"instance-1"}`); err != nil {
+				t.Errorf("write fixture response: %v", err)
+			}
 		case strings.HasSuffix(r.URL.Path, "/manifest"):
-			fmt.Fprintf(
+			if _, err := fmt.Fprintf(
 				w,
-				`{"generation":"sync-fixture","complete":true,"next_cursor":null,"items":[{"file_id":77,"etag":%q,"name":%q,"path":%q,"mime_type":"text/plain","size":%d,"mtime":1700000000}]}`,
+				("{\"generation\":\"sync-fixture\",\"complete\":true,\"next_cursor\":null,\"" +
+					"items\":[{\"file_id\":77,\"etag\":%q,\"name\":%q,\"path\":%q,\"mime_type\"" +
+					":\"text/plain\",\"size\":%d,\"mtime\":1700000000}]}"),
 				etag,
 				fileName,
 				fileName,
 				len(body),
-			)
+			); err != nil {
+				t.Errorf("write fixture response: %v", err)
+			}
 		case strings.HasSuffix(r.URL.Path, "/content"):
 			require.Equal(t, `"`+etag+`"`, r.Header.Get("If-Match"))
 			w.Header().Set("ETag", `"`+etag+`"`)
-			fmt.Fprint(w, body)
+			if _, err := fmt.Fprint(w, body); err != nil {
+				t.Errorf("write fixture response: %v", err)
+			}
 		default:
 			http.NotFound(w, r)
 		}

@@ -12,6 +12,7 @@ import (
 	"gorm.io/gorm"
 )
 
+// NextcloudGraphBackend defines the nextcloud graph backend value.
 const NextcloudGraphBackend = "scoped_sql_v1"
 
 type nextcloudGraphPlan struct {
@@ -71,6 +72,7 @@ type privateGraphBody struct {
 	Chunks     [][]string
 }
 
+// NextcloudGraphOperationID returns the nextcloud graph operation id result.
 func NextcloudGraphOperationID(tenant uint64, knowledge string, attempt int, chunk string) string {
 	return types.GraphDigest(struct {
 		Backend   string
@@ -89,6 +91,7 @@ func nextcloudGraphConfig(kb *types.KnowledgeBase) string {
 	}{kb.IndexingStrategy, kb.ExtractConfig, kb.SummaryModelID})
 }
 
+// PlanGraph returns the plan graph result.
 func (s *NextcloudProcessingStateStore) PlanGraph(
 	ctx context.Context,
 	k *types.Knowledge,
@@ -275,6 +278,7 @@ func validateNextcloudGraphTask(ctx context.Context, tx *gorm.DB, task nextcloud
 	return nil
 }
 
+// StartGraph starts graph.
 func (s *NextcloudProcessingStateStore) StartGraph(
 	ctx context.Context,
 	tenant uint64,
@@ -319,6 +323,7 @@ func (s *NextcloudProcessingStateStore) StartGraph(
 	return done, err
 }
 
+// FailGraph returns the fail graph result.
 func (s *NextcloudProcessingStateStore) FailGraph(
 	ctx context.Context,
 	tenant uint64,
@@ -531,10 +536,12 @@ type ScopedSQLGraphRepository struct {
 	fallback interfaces.RetrieveGraphRepository
 }
 
+// NewScopedSQLGraphRepository constructs scoped sqlgraph repository.
 func NewScopedSQLGraphRepository(db *gorm.DB, fallback interfaces.RetrieveGraphRepository) *ScopedSQLGraphRepository {
 	return &ScopedSQLGraphRepository{db: db, fallback: fallback}
 }
 
+// AddGraph returns the add graph result.
 func (s *ScopedSQLGraphRepository) AddGraph(
 	ctx context.Context,
 	namespace types.NameSpace,
@@ -677,6 +684,7 @@ func (s *ScopedSQLGraphRepository) AddGraph(
 	})
 }
 
+// DelGraph returns the del graph result.
 func (s *ScopedSQLGraphRepository) DelGraph(ctx context.Context, namespaces []types.NameSpace) error {
 	// Source graph deletion belongs to the existing exact GC claim protocol.
 	for _, namespace := range namespaces {
@@ -702,6 +710,7 @@ func (s *ScopedSQLGraphRepository) DelGraph(ctx context.Context, namespaces []ty
 	return s.fallback.DelGraph(ctx, namespaces)
 }
 
+// SearchNode returns the search node result.
 func (s *ScopedSQLGraphRepository) SearchNode(
 	ctx context.Context,
 	namespace types.NameSpace,
@@ -894,6 +903,7 @@ func decodeScopedGraphRecord(row nextcloudGraphRecord) (*types.GraphData, error)
 	return graph, nil
 }
 
+// RecordGraphPayload records graph payload.
 func (s *NextcloudProcessingStateStore) RecordGraphPayload(
 	ctx context.Context,
 	tenant uint64,
@@ -930,6 +940,7 @@ func (s *NextcloudProcessingStateStore) RecordGraphPayload(
 	})
 }
 
+// MarkGraphQueued returns the mark graph queued result.
 func (s *NextcloudProcessingStateStore) MarkGraphQueued(
 	ctx context.Context,
 	tenant uint64,
@@ -949,11 +960,13 @@ func (s *NextcloudProcessingStateStore) MarkGraphQueued(
 		Error
 }
 
+// NextcloudGraphQueueIntent represents nextcloud graph queue intent repository data.
 type NextcloudGraphQueueIntent struct {
 	OperationID string
 	Payload     []byte
 }
 
+// PendingGraphQueueIntents returns pending graph queue intents.
 func (s *NextcloudProcessingStateStore) PendingGraphQueueIntents(
 	ctx context.Context,
 	now time.Time,
@@ -962,9 +975,24 @@ func (s *NextcloudProcessingStateStore) PendingGraphQueueIntents(
 	// Reject permanently stale queue heads in the bounded selection itself,
 	// so retired or superseded tasks cannot occupy every compensation page.
 	query := s.db.WithContext(ctx).
-		Where("queue_state='pending' AND payload_json<>'' AND queue_next_at<=? AND state IN ('pending','running')", now.Unix()).
-		Where(`EXISTS(SELECT 1 FROM nextcloud_content_fences f JOIN nextcloud_content_fences kb ON kb.tenant_id=f.tenant_id AND kb.knowledge_base_id=f.knowledge_base_id AND kb.knowledge_id='' JOIN nextcloud_source_versions v ON v.tenant_id=f.tenant_id AND v.knowledge_base_id=f.knowledge_base_id AND v.datasource_id=f.datasource_id AND v.external_id=f.external_id JOIN data_sources d ON d.id=v.datasource_id AND d.tenant_id=v.tenant_id AND d.knowledge_base_id=v.knowledge_base_id WHERE f.tenant_id=nextcloud_graph_tasks.tenant_id AND f.knowledge_base_id=nextcloud_graph_tasks.knowledge_base_id AND f.knowledge_id=nextcloud_graph_tasks.knowledge_id AND f.state='open' AND kb.state='open' AND f.epoch=nextcloud_graph_tasks.build_epoch AND v.candidate_knowledge_id=f.knowledge_id AND v.state IN ('staging','published') AND d.status='active' AND d.deleted_at IS NULL)`).
-		Where(`attempt=(SELECT MAX(attempt) FROM knowledge_processing_spans WHERE knowledge_id=nextcloud_graph_tasks.knowledge_id) AND config_revision=(SELECT revision FROM knowledge_configuration_control_versions WHERE knowledge_base_id=nextcloud_graph_tasks.knowledge_base_id)`)
+		Where(("queue_state='pending' AND payload_json<>'' AND queue_next_at<=? AND state " +
+			"IN ('pending','running')"), now.Unix()).
+		Where(("EXISTS(SELECT 1 FROM nextcloud_content_fences f JOIN nextcloud_content_fen" +
+			"ces kb ON kb.tenant_id=f.tenant_id AND kb.knowledge_base_id=f.knowledge_ba" +
+			"se_id AND kb.knowledge_id='' JOIN nextcloud_source_versions v ON v.tenant_" +
+			"id=f.tenant_id AND v.knowledge_base_id=f.knowledge_base_id AND v.datasourc" +
+			"e_id=f.datasource_id AND v.external_id=f.external_id JOIN data_sources d O" +
+			"N d.id=v.datasource_id AND d.tenant_id=v.tenant_id AND d.knowledge_base_id" +
+			"=v.knowledge_base_id WHERE f.tenant_id=nextcloud_graph_tasks.tenant_id AND" +
+			" f.knowledge_base_id=nextcloud_graph_tasks.knowledge_base_id AND f.knowled" +
+			"ge_id=nextcloud_graph_tasks.knowledge_id AND f.state='open' AND kb.state='" +
+			"open' AND f.epoch=nextcloud_graph_tasks.build_epoch AND v.candidate_knowle" +
+			"dge_id=f.knowledge_id AND v.state IN ('staging','published') AND d.status=" +
+			"'active' AND d.deleted_at IS NULL)")).
+		Where(("attempt=(SELECT MAX(attempt) FROM knowledge_processing_spans WHERE knowled" +
+			"ge_id=nextcloud_graph_tasks.knowledge_id) AND config_revision=(SELECT revi" +
+			"sion FROM knowledge_configuration_control_versions WHERE knowledge_base_id" +
+			"=nextcloud_graph_tasks.knowledge_base_id)"))
 	if err := query.Order("created_at,operation_id").Limit(100).Find(&tasks).Error; err != nil {
 		return nil, err
 	}
@@ -1005,7 +1033,8 @@ func (s *NextcloudProcessingStateStore) PendingGraphQueueIntents(
 				return ErrNextcloudContentLeaseDenied
 			}
 			var fence nextcloudContentFence
-			if err := tx.Where("tenant_id=? AND knowledge_base_id=? AND knowledge_id=? AND state='open' AND epoch=?", task.TenantID, task.KnowledgeBaseID, task.KnowledgeID, task.BuildEpoch).
+			if err := tx.Where(("tenant_id=? AND knowledge_base_id=? AND knowledge_id=? AND state='open' AN" +
+				"D epoch=?"), task.TenantID, task.KnowledgeBaseID, task.KnowledgeID, task.BuildEpoch).
 				Take(&fence).
 				Error; err != nil {
 				return err
@@ -1022,6 +1051,7 @@ func (s *NextcloudProcessingStateStore) PendingGraphQueueIntents(
 	return intents, nil
 }
 
+// FinishGraphEnqueue finishes graph enqueue.
 func (s *NextcloudProcessingStateStore) FinishGraphEnqueue(
 	ctx context.Context,
 	operation string,
@@ -1080,7 +1110,8 @@ func (s *NextcloudProcessingStateStore) UnpreparedGraphChunks(
 	result := []string{}
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var tasks []nextcloudGraphTask
-		if err := tx.Where("tenant_id=? AND knowledge_id=? AND attempt=? AND state='pending' AND queue_state='unprepared' AND payload_json='' AND finalized=FALSE", tenant, knowledge, attempt).
+		if err := tx.Where(("tenant_id=? AND knowledge_id=? AND attempt=? AND state='pending' AND queue" +
+			"_state='unprepared' AND payload_json='' AND finalized=FALSE"), tenant, knowledge, attempt).
 			Order("chunk_id").
 			Find(&tasks).
 			Error; err != nil {

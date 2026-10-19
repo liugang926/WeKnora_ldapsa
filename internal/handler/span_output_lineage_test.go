@@ -69,9 +69,9 @@ func serveSpanHTTP(h *KnowledgeHandler, a *service.SpanOutputAuthorizer, path st
 }
 
 func recordActualSpanHTTP(
-	t *testing.T,
+	ctx context.Context, t *testing.T,
 	tracker service.SpanTracker,
-	ctx context.Context,
+
 	kid string,
 ) (*service.Span, *service.Span, int) {
 	t.Helper()
@@ -102,7 +102,7 @@ func recordActualSpanHTTP(
 
 func TestSpanOutputHTTPActualTrackerStartWorkEndRESTOriginalAttempt(t *testing.T) {
 	h, a, _, k, _, tracker, ctx := spanHTTPFixture(t)
-	_, _, attempt := recordActualSpanHTTP(t, tracker, ctx, k.ID)
+	_, _, attempt := recordActualSpanHTTP(ctx, t, tracker, k.ID)
 	// The current document's recovery message has a different producer and
 	// cannot authenticate the previous attempt's diagnostic body.
 	k.ErrorMessage = "CURRENT recovery body must never certify old attempt"
@@ -155,7 +155,7 @@ func TestSpanOutputHTTPFinalSetRecheckClosesWithdrawBodyABAInputConfigAndMembers
 	for _, mode := range []string{"grant", "span body ABA", "config ABA", "config afterremote", "input ABA", "membership"} {
 		t.Run(mode, func(t *testing.T) {
 			h, a, db, k, groups, tracker, ctx := spanHTTPFixture(t)
-			_, _, _ = recordActualSpanHTTP(t, tracker, ctx, k.ID)
+			_, _, _ = recordActualSpanHTTP(ctx, t, tracker, k.ID)
 			groups.hook = func(n int) {
 				boundary := 2
 				if mode == "config afterremote" {
@@ -177,7 +177,8 @@ func TestSpanOutputHTTPFinalSetRecheckClosesWithdrawBodyABAInputConfigAndMembers
 					require.NoError(
 						t,
 						db.Exec(
-							"UPDATE knowledge_processing_spans SET error_message='actual original model error' WHERE name='summary.actual'",
+							("UPDATE knowledge_processing_spans SET error_message='actual original model" +
+								" error' WHERE name='summary.actual'"),
 						).Error,
 					)
 				case "config ABA", "config afterremote":

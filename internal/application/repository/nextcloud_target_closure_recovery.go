@@ -14,6 +14,7 @@ import (
 	"gorm.io/gorm/clause"
 )
 
+// NextcloudRecoveryTargetClosure represents nextcloud recovery target closure repository data.
 // These facts are retained by the existing independent HMAC journal. This port
 // grants no source/content access, and never purges or reconstructs any target.
 type NextcloudRecoveryTargetClosure struct {
@@ -220,7 +221,8 @@ func applyRecoveryTargetClosuresInTx(ctx context.Context, tx *gorm.DB, p *Nextcl
 		}
 		if tx.Migrator().HasTable("nextcloud_event_connections") {
 			if err = tx.Table("nextcloud_event_connections").
-				Where("tenant_id=? AND knowledge_base_id=? AND nextcloud_instance_id=? AND binding_id=?", op.TenantID, op.KnowledgeBaseID, op.InstanceID, op.BindingID).
+				Where(("tenant_id=? AND knowledge_base_id=? AND nextcloud_instance_id=? AND bindin"+
+					"g_id=?"), op.TenantID, op.KnowledgeBaseID, op.InstanceID, op.BindingID).
 				Update("status", "revoked").
 				Error; err != nil {
 				return err

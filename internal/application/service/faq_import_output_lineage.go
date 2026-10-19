@@ -8,6 +8,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 )
 
+// BeginImportOutput captures the original inputs used to display FAQ import progress.
 func (a *FAQOutputAuthorizer) BeginImportOutput(
 	ctx context.Context,
 	request types.FAQImportOutputReadRequest,
@@ -27,6 +28,7 @@ func (a *FAQOutputAuthorizer) BeginImportOutput(
 	return guard, guard.Recheck(ctx)
 }
 
+// ProgressReadScope resolves the current source scope of FAQ import progress.
 func (a *FAQOutputAuthorizer) ProgressReadScope(ctx context.Context, task string) (types.KnowledgeSearchScope, error) {
 	if a == nil || a.store == nil {
 		return types.KnowledgeSearchScope{}, access.ErrNextcloudPublicationUnavailable
@@ -38,6 +40,7 @@ func (a *FAQOutputAuthorizer) ProgressReadScope(ctx context.Context, task string
 	return a.store.PeekFAQImportProgressScope(ctx, tenant, task)
 }
 
+// ProgressReadPlan plans original input reads for FAQ import progress.
 func (a *FAQOutputAuthorizer) ProgressReadPlan(
 	ctx context.Context,
 	task string,
@@ -91,17 +94,18 @@ func checkFAQImportOutputReceipt(
 		); err != nil {
 			return err
 		}
-		copy, err := cloneCollection(snapshot)
+		copied, err := cloneCollection(snapshot)
 		if err != nil {
 			return err
 		}
-		if err := reader.RecheckFAQImportOutputInputs(ctx, copy); err != nil {
+		if err := reader.RecheckFAQImportOutputInputs(ctx, copied); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
+// ImportProgress returns progress projected from the retained original inputs.
 func (g *FAQOutputGuard) ImportProgress() (*types.FAQImportProgress, error) {
 	if g == nil || g.importOutput == nil || g.importOutput.Progress == nil {
 		return nil, types.ErrSourceLineageUnknown

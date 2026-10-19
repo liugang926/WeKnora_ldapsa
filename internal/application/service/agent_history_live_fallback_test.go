@@ -21,18 +21,43 @@ type safeCurrentTurnEngine struct {
 	contexts        [][]chat.Message
 	queries         []string
 	checkpointCalls int
+	check           func(context.Context, *types.SourceLineage) error
+	round           func(context.Context) error
 }
 
 func (e *safeCurrentTurnEngine) Execute(
-	_ context.Context,
+	ctx context.Context,
 	_, _, query string,
 	history []chat.Message,
 	_ ...[]string,
 ) (*types.AgentState, error) {
+	if e.round != nil {
+		if err := e.round(ctx); err != nil {
+			return nil, err
+		}
+	}
+	if e.check == nil {
+		return nil, access.ErrNextcloudPublicationUnavailable
+	}
+	actual, ok := ctx.Value(actualHistoryInputKey{}).(actualHistoryInput)
+	if !ok || actual.query != query || actual.lineage.RequireComplete() != nil {
+		return nil, types.ErrSourceLineageUnknown
+	}
+	if err := e.check(ctx, actual.lineage); err != nil {
+		return nil, err
+	}
 	e.contexts = append(e.contexts, history)
 	e.queries = append(e.queries, query)
 	return &types.AgentState{IsComplete: true}, nil
 }
+
+// SetSourceLineageVerifier keeps actual current request proofs in the fixture engine.
+func (e *safeCurrentTurnEngine) SetSourceLineageVerifier(check func(context.Context, *types.SourceLineage) error) {
+	e.check = check
+}
+
+// SetRoundGuard retains the actual current Agent grant at execution.
+func (e *safeCurrentTurnEngine) SetRoundGuard(check func(context.Context) error) { e.round = check }
 
 func (e *safeCurrentTurnEngine) SetContextCheckpointSink(types.ContextCheckpointSink) {
 	e.checkpointCalls++
@@ -126,6 +151,7 @@ func TestAgentHistoryAdmissionRejectedContextStillRunsCurrentAgentQA(t *testing.
 					},
 				},
 			}
+			ctx = actualAgentHistoryRequest(t, svc, req)
 			require.NoError(t, svc.AgentQA(ctx, req, event.NewEventBus()))
 			require.Len(t, engine.contexts, 1)
 			require.Empty(t, engine.contexts[0])

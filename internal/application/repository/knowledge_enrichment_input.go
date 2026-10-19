@@ -165,6 +165,7 @@ func knowledgeProducerTenantDigest(tenant *types.Tenant) (string, error) {
 	}{tenant.ID, tenant.Status, tenant.RetrieverEngines, tenant.Credentials, tenant.StorageEngineConfig, tenant.DefaultStorageBackendID})
 }
 
+// ReadKnowledgeProducerTenant reads knowledge producer tenant.
 // The actual model/factory context is loaded after private receipt validation;
 // an old middleware TenantInfo pointer cannot certify a newly captured row.
 func (s *KnowledgeInputProvenanceStore) ReadKnowledgeProducerTenant(
@@ -352,6 +353,7 @@ func (s *KnowledgeInputProvenanceStore) recheckKnowledgeProducerInputInTx(
 	return ctx.Err()
 }
 
+// RecheckKnowledgeProducerInput rechecks knowledge producer input.
 func (s *KnowledgeInputProvenanceStore) RecheckKnowledgeProducerInput(
 	ctx context.Context,
 	original *types.KnowledgeBuildInputProof,
@@ -373,19 +375,21 @@ type (
 	}
 )
 
+// WithKnowledgeProducerInput binds knowledge producer input.
 func WithKnowledgeProducerInput(
 	ctx context.Context,
 	proof *types.KnowledgeProducerInputProof,
 	input func() any,
 ) context.Context {
-	var copy *types.KnowledgeProducerInputProof
+	var copied *types.KnowledgeProducerInputProof
 	if proof != nil {
 		v := *proof
-		copy = &v
+		copied = &v
 	}
-	return context.WithValue(ctx, knowledgeProducerInputContextKey{}, knowledgeProducerInputContext{copy, input})
+	return context.WithValue(ctx, knowledgeProducerInputContextKey{}, knowledgeProducerInputContext{copied, input})
 }
 
+// CheckKnowledgeProducerInput checks knowledge producer input.
 func CheckKnowledgeProducerInput(ctx context.Context) error {
 	guard, ok := ctx.Value(knowledgeProducerInputContextKey{}).(knowledgeProducerInputContext)
 	if !ok {
@@ -452,6 +456,7 @@ func (s *KnowledgeInputProvenanceStore) refreshKnowledgeCurrentProducerWrite(
 	return s.authorizeKnowledgeActorWrite(fresh, &kb)
 }
 
+// RestoreKnowledgeProducerActor restores knowledge producer actor.
 func (s *KnowledgeInputProvenanceStore) RestoreKnowledgeProducerActor(
 	ctx context.Context,
 	original *types.KnowledgeBuildInputProof,
@@ -497,6 +502,7 @@ func (s *KnowledgeInputProvenanceStore) RestoreKnowledgeProducerActor(
 	return fresh, nil
 }
 
+// KnowledgeProducerInputPresent returns the knowledge producer input present result.
 func KnowledgeProducerInputPresent(ctx context.Context) bool {
 	_, ok := ctx.Value(knowledgeProducerInputContextKey{}).(knowledgeProducerInputContext)
 	return ok

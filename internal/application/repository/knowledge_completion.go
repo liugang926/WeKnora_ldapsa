@@ -7,6 +7,7 @@ import (
 	"gorm.io/gorm"
 )
 
+// ConfigureKnowledgeCompletionObserver configures knowledge completion observer.
 func ConfigureKnowledgeCompletionObserver(
 	repo interfaces.KnowledgeRepository,
 	observer func(context.Context, string) error,
@@ -16,6 +17,7 @@ func ConfigureKnowledgeCompletionObserver(
 	}
 }
 
+// ConfigureKnowledgeCompletionHandoff configures knowledge completion handoff.
 // The handoff runs before completion commits. Failure rolls back both the last
 // subtask decrement and completion, so redelivery can try the same handoff.
 func ConfigureKnowledgeCompletionHandoff(

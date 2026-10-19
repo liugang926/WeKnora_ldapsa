@@ -41,7 +41,7 @@ func documentLiveRAG(t *testing.T, m *machinePipelineFixture, models *documentLi
 	require.NoError(t, m.f.db.Where("id=7").Take(&tenant).Error)
 	ctx := context.WithValue(m.f.ctx, types.TenantInfoContextKey, &tenant)
 	query := "Who does Alice know on Project Cedar?"
-	history := prepareDocumentLiveHistory(t, m, ctx, query)
+	history := prepareDocumentLiveHistory(ctx, t, m, query)
 	budget := 150 * time.Second
 	if os.Getenv("WEKNORA_DOCUMENT_GRAPH_AGENT") == "1" {
 		budget = 240 * time.Second
@@ -133,7 +133,7 @@ func documentLiveRAG(t *testing.T, m *machinePipelineFixture, models *documentLi
 	require.Contains(t, strings.ToLower(cm.RenderedContexts), "bob")
 	require.Contains(t, strings.ToLower(answer.String()), "bob")
 	require.Equal(t, streamCount+1, models.summary.streams.Load())
-	checkHistoryRevoked := history.complete(t, ctx, answer.String(), answerLineage)
+	checkHistoryRevoked := history.complete(ctx, t, answer.String(), answerLineage)
 	checkHistoryVectorRevoked := documentLiveHistoryVector(t, m, models, svc, history, answer.String())
 	checkAgentRevoked := documentLiveAgent(t, m, models, svc)
 	require.NoError(t, checkpoint())
@@ -144,7 +144,8 @@ func documentLiveRAG(t *testing.T, m *machinePipelineFixture, models *documentLi
 	require.NoError(t, err)
 	require.NotEmpty(t, lineage.Sources)
 	t.Log(
-		"REAL_RAG native vector/FTS retrieval, actual chunk hydration/merge and real streamed answer passed; answer depends on the source",
+		("REAL_RAG native vector/FTS retrieval, actual chunk hydration/merge and rea" +
+			"l streamed answer passed; answer depends on the source"),
 	)
 	return func() {
 		checkHistoryRevoked()

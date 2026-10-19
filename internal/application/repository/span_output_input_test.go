@@ -14,19 +14,20 @@ import (
 
 func installSpanInputs(t *testing.T, db *gorm.DB) {
 	t.Helper()
-	if db.Dialector.Name() == "sqlite" {
+	if db.Name() == "sqlite" {
 		require.NoError(t, db.Exec(spansTestDDL).Error)
 	} else {
 		require.NoError(t, db.AutoMigrate(&types.KnowledgeProcessingSpan{}))
 		require.NoError(
 			t,
 			db.Exec(
-				"CREATE UNIQUE INDEX IF NOT EXISTS span_test_unique_tuple ON knowledge_processing_spans(knowledge_id,attempt,span_id)",
+				("CREATE UNIQUE INDEX IF NOT EXISTS span_test_unique_tuple ON knowledge_proc" +
+					"essing_spans(knowledge_id,attempt,span_id)"),
 			).Error,
 		)
 	}
 	path := "../../../migrations/sqlite/000057_processing_span_original_inputs.up.sql"
-	if db.Dialector.Name() == "postgres" {
+	if db.Name() == "postgres" {
 		path = "../../../migrations/versioned/000138_processing_span_original_inputs.up.sql"
 	}
 	script, err := os.ReadFile(path)
@@ -45,12 +46,14 @@ func spanFixture(
 }
 
 func startOriginalSpan(
+	ctx context.Context,
 	t *testing.T,
 	repo KnowledgeSpanRepository,
-	ctx context.Context,
 	kid string,
 	attempt int,
-	id, parent, kind string,
+	id,
+	parent,
+	kind string,
 ) *types.KnowledgeProcessingSpan {
 	t.Helper()
 	now := time.Now()
@@ -72,9 +75,9 @@ func startOriginalSpan(
 }
 
 func finishOriginalSpan(
+	ctx context.Context,
 	t *testing.T,
 	repo KnowledgeSpanRepository,
-	ctx context.Context,
 	start *types.KnowledgeProcessingSpan,
 ) {
 	t.Helper()
@@ -113,10 +116,10 @@ func captureOriginalSpans(
 
 func TestSpanOriginalStartTerminalAtomicReceiptAndManifest(t *testing.T) {
 	store, db, ctx, k, c, repo := spanFixture(t)
-	root := startOriginalSpan(t, repo, ctx, k.ID, 1, "root", "", types.SpanKindRoot)
-	child := startOriginalSpan(t, repo, ctx, k.ID, 1, "child", root.SpanID, types.SpanKindGeneration)
+	root := startOriginalSpan(ctx, t, repo, k.ID, 1, "root", "", types.SpanKindRoot)
+	child := startOriginalSpan(ctx, t, repo, k.ID, 1, "child", root.SpanID, types.SpanKindGeneration)
 	child.Input["actual"] = "caller later mutates input"
-	finishOriginalSpan(t, repo, ctx, child)
+	finishOriginalSpan(ctx, t, repo, child)
 	snapshot := captureOriginalSpans(t, store, k, 1)
 	require.Len(t, snapshot.Rows, 2)
 	actual := snapshot.Rows[1]
@@ -218,15 +221,15 @@ func TestSpanOriginalNewActualBeginReplacesUnknownRunAndClearsOldContent(t *test
 	require.NoError(t, err)
 	require.NotContains(t, string(encoded), "OLD")
 	require.Contains(t, string(encoded), "actual original Start input")
-	finishOriginalSpan(t, repo, ctx, &actual)
+	finishOriginalSpan(ctx, t, repo, &actual)
 	require.Equal(t, "complete", captureOriginalSpans(t, store, k, 1).Rows[1].ContentProvenance)
 }
 
 func TestSpanOriginalLateRunTokenAndCrossAttemptRejected(t *testing.T) {
 	store, db, ctx, k, _, repo := spanFixture(t)
-	root := startOriginalSpan(t, repo, ctx, k.ID, 1, "root", "", types.SpanKindRoot)
-	first := startOriginalSpan(t, repo, ctx, k.ID, 1, "stage", root.SpanID, types.SpanKindStage)
-	second := startOriginalSpan(t, repo, ctx, k.ID, 1, "stage", root.SpanID, types.SpanKindStage)
+	root := startOriginalSpan(ctx, t, repo, k.ID, 1, "root", "", types.SpanKindRoot)
+	first := startOriginalSpan(ctx, t, repo, k.ID, 1, "stage", root.SpanID, types.SpanKindStage)
+	second := startOriginalSpan(ctx, t, repo, k.ID, 1, "stage", root.SpanID, types.SpanKindStage)
 	require.NotEqual(t, first.WriteToken, second.WriteToken)
 	changed := *second
 	changed.Input = types.JSONMap{"body": "replacement input at End"}
@@ -267,9 +270,9 @@ func TestSpanOriginalBodyAndInputControlABAClosed(t *testing.T) {
 	for _, mode := range []string{"span body", "chunk input", "chunk metadata", "parser controls", "input artifact", "tuple"} {
 		t.Run(mode, func(t *testing.T) {
 			store, db, ctx, k, c, repo := spanFixture(t)
-			root := startOriginalSpan(t, repo, ctx, k.ID, 1, "root", "", types.SpanKindRoot)
-			child := startOriginalSpan(t, repo, ctx, k.ID, 1, "child", root.SpanID, types.SpanKindGeneration)
-			finishOriginalSpan(t, repo, ctx, child)
+			root := startOriginalSpan(ctx, t, repo, k.ID, 1, "root", "", types.SpanKindRoot)
+			child := startOriginalSpan(ctx, t, repo, k.ID, 1, "child", root.SpanID, types.SpanKindGeneration)
+			finishOriginalSpan(ctx, t, repo, child)
 			saved := captureOriginalSpans(t, store, k, 1)
 			switch mode {
 			case "span body":
@@ -282,7 +285,8 @@ func TestSpanOriginalBodyAndInputControlABAClosed(t *testing.T) {
 				require.NoError(
 					t,
 					db.Exec(
-						"UPDATE knowledge_processing_spans SET error_message='original error body' WHERE span_id='child'",
+						("UPDATE knowledge_processing_spans SET error_message='original error body' " +
+							"WHERE span_id='child'"),
 					).Error,
 				)
 			case "chunk input":
@@ -425,8 +429,8 @@ func TestSpanOriginalNextcloudETagChangeAndWithdrawalCannotCertifyOldAttempt(t *
 			ctx = WithKnowledgeBuildInputProof(ctx, store, proof)
 			installSpanInputs(t, db)
 			spans := NewKnowledgeSpanRepository(db)
-			root := startOriginalSpan(t, spans, ctx, k.ID, 1, "root", "", types.SpanKindRoot)
-			finishOriginalSpan(t, spans, ctx, root)
+			root := startOriginalSpan(ctx, t, spans, k.ID, 1, "root", "", types.SpanKindRoot)
+			finishOriginalSpan(ctx, t, spans, root)
 			require.NoError(t, db.Where("id = ?", k.ID).Take(&k).Error)
 			k.ParseStatus = types.ParseStatusCompleted
 			k.EnableStatus = "enabled"
@@ -465,8 +469,8 @@ func TestSpanOriginalNextcloudETagChangeAndWithdrawalCannotCertifyOldAttempt(t *
 
 func TestSpanOriginalKnowledgeDeletionClearsManifestAndContent(t *testing.T) {
 	_, db, ctx, k, _, repo := spanFixture(t)
-	root := startOriginalSpan(t, repo, ctx, k.ID, 1, "root", "", types.SpanKindRoot)
-	finishOriginalSpan(t, repo, ctx, root)
+	root := startOriginalSpan(ctx, t, repo, k.ID, 1, "root", "", types.SpanKindRoot)
+	finishOriginalSpan(ctx, t, repo, root)
 	require.NoError(t, db.Unscoped().Where("id = ?", k.ID).Delete(&types.Knowledge{}).Error)
 	for _, table := range []string{"knowledge_span_start_manifests", "knowledge_span_body_receipts", "knowledge_span_row_versions", "knowledge_processing_spans"} {
 		var count int64

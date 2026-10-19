@@ -18,7 +18,8 @@ func (s *NextcloudOnboardingStore) ScopedDocument(ctx context.Context, tenant ui
 	}
 	var count int64
 	if err := s.db.WithContext(ctx).Model(&nextcloudSourceVersion{}).
-		Where("tenant_id=? AND knowledge_base_id=? AND candidate_knowledge_id=? AND state='published'", tenant, k.KnowledgeBaseID, id).
+		Where(("tenant_id=? AND knowledge_base_id=? AND candidate_knowledge_id=? AND state" +
+			"='published'"), tenant, k.KnowledgeBaseID, id).
 		Count(&count).Error; err != nil {
 		return "", err
 	}

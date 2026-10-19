@@ -6,6 +6,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/types"
 )
 
+// RAGChunkSnapshotReader hydrates original chunk snapshots for retrieval consumers.
 type RAGChunkSnapshotReader interface {
 	HydrateRAGChunkSnapshots(context.Context, []types.RAGChunkReadRequest) ([]types.RAGChunkInputSnapshot, error)
 }

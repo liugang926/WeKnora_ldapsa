@@ -10,7 +10,9 @@ import (
 )
 
 func TestSteerMaterialLegacyMessageRequestJSONAndDigestStayExact(t *testing.T) {
-	legacy := `{"TenantID":7,"SessionID":"legacy-session","MessageIDs":["legacy-message"],"AllSession":false,"CompletedOnly":true,"IncludeOriginalUserFields":true,"ExcludeRequestID":"legacy-request"}`
+	legacy := ("{\"TenantID\":7,\"SessionID\":\"legacy-session\",\"MessageIDs\":[\"legacy-" +
+		"message\"],\"AllSession\":false,\"CompletedOnly\":true,\"IncludeOriginalUs" +
+		"erFields\":true,\"ExcludeRequestID\":\"legacy-request\"}")
 	req := types.MessageMaterialReadRequest{
 		TenantID:                  7,
 		SessionID:                 "legacy-session",

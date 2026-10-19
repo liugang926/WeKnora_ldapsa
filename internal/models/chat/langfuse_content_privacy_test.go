@@ -67,7 +67,7 @@ type privacyChatSpy struct {
 
 func (s *privacyChatSpy) GetModelName() string { return "controlled" }
 func (s *privacyChatSpy) GetModelID() string   { return "controlled" }
-func (s *privacyChatSpy) Chat(ctx context.Context, messages []Message, opts *ChatOptions) (*types.ChatResponse, error) {
+func (s *privacyChatSpy) Chat(ctx context.Context, messages []Message, _ *ChatOptions) (*types.ChatResponse, error) {
 	s.ctx = ctx
 	s.recording = trace.SpanFromContext(ctx).IsRecording()
 	return &types.ChatResponse{Content: messages[0].Content}, nil
@@ -76,7 +76,7 @@ func (s *privacyChatSpy) Chat(ctx context.Context, messages []Message, opts *Cha
 func (s *privacyChatSpy) ChatStream(
 	ctx context.Context,
 	messages []Message,
-	opts *ChatOptions,
+	_ *ChatOptions,
 ) (<-chan types.StreamResponse, error) {
 	s.ctx = ctx
 	s.recording = trace.SpanFromContext(ctx).IsRecording()
@@ -118,8 +118,12 @@ func TestSourceContentChatTelemetryBypassPreservesOrdinary(t *testing.T) {
 		nil,
 	)
 	require.NoError(t, err)
-	for range stream {
+	streamed := 0
+	for response := range stream {
+		require.Equal(t, "PUBLIC_ORDINARY_STREAM", response.Content)
+		streamed++
 	}
+	require.Equal(t, 1, streamed)
 	require.NoError(t, mgr.Shutdown(context.Background()))
 	require.Positive(t, requests)
 	require.Contains(t, payload.String(), "PUBLIC_ORDINARY_CHAT")

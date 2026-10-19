@@ -73,7 +73,8 @@ func (v *parentCopyEvidence) addLineage(lineage *types.SourceLineage) error {
 		if _, found := v.sources[source]; !found {
 			var original knowledgeInputAdmission
 			var candidates []knowledgeInputAdmission
-			if v.tx.Where("tenant_id=? AND knowledge_base_id=? AND knowledge_id=? AND build_generation=? AND origin_kind='nextcloud'", source.TenantID, source.KnowledgeBaseID, source.KnowledgeID, source.Revision).
+			if v.tx.Where(("tenant_id=? AND knowledge_base_id=? AND knowledge_id=? AND build_generatio"+
+				"n=? AND origin_kind='nextcloud'"), source.TenantID, source.KnowledgeBaseID, source.KnowledgeID, source.Revision).
 				Limit(2).
 				Find(&candidates).
 				Error != nil ||
@@ -247,7 +248,7 @@ func (v *parentCopyEvidence) proof(
 }
 
 func (v *parentCopyEvidence) generated(
-	snapshot *types.MessageMaterialSnapshot,
+	_ *types.MessageMaterialSnapshot,
 	fact *messageMaterialAdmission,
 	proof *types.MessageGeneratedFieldProof,
 	message *types.Message,
@@ -593,12 +594,14 @@ func parentCopyReplace(raw, old, replacement string) (string, error) {
 
 func parentCopyMetadataSelect(tx *gorm.DB, column string, array bool) string {
 	if array {
-		if tx.Dialector.Name() == "postgres" {
-			return "(SELECT COALESCE(jsonb_agg(v - 'Messages'),'[]'::jsonb)::text FROM jsonb_array_elements(CAST(" + column + " AS jsonb)) v)"
+		if tx.Name() == "postgres" {
+			return ("(SELECT COALESCE(jsonb_agg(v - 'Messages'),'[]'::jsonb)::text FROM jsonb_a" +
+				"rray_elements(CAST(") + column + " AS jsonb)) v)"
 		}
-		return "(SELECT COALESCE(json_group_array(json_remove(value,'$.Messages')),'[]') FROM json_each(" + column + "))"
+		return ("(SELECT COALESCE(json_group_array(json_remove(value,'$.Messages')),'[]') F" +
+			"ROM json_each(") + column + "))"
 	}
-	if tx.Dialector.Name() == "postgres" {
+	if tx.Name() == "postgres" {
 		return "(CAST(" + column + " AS jsonb)-'Messages')::text"
 	}
 	return "json_remove(" + column + ",'$.Messages')"
@@ -690,7 +693,7 @@ func (s *OriginalBodyRetentionStore) parentCopyCurrent(
 	tx *gorm.DB,
 	head originalBodyFieldHead,
 	row map[string]any,
-	now int64,
+	_ int64,
 ) (bool, int64, error) {
 	// Every recorded body head is checked by bodyEligibility. A missing
 	// current receipt alone never closes a historical consumer or shared owner.

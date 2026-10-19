@@ -318,3 +318,51 @@ func TestNextcloudRetiredHistoricalOperationObservesOnlyDeletedOwner(t *testing.
 	_, err = store.TenantDeletionObservation(ctx, c, op, c.DirectoryID, "guid-reader")
 	require.ErrorIs(t, err, repo.ErrNextcloudOnboardingDenied)
 }
+
+// TestNextcloudTargetDeleteRetiresExistingFenceWithoutReadmission checks exact closure of a real open read fence.
+func TestNextcloudTargetDeleteRetiresExistingFenceWithoutReadmission(t *testing.T) {
+	for _, target := range []string{"knowledge_base", "tenant"} {
+		t.Run(target, func(t *testing.T) {
+			db, store, credential := onboardingDB(t)
+			ctx := context.Background()
+			kb := freshOnboardingKB("delete-held-fence")
+			createOnboardingTemplate(t, db, &kb)
+			operation, err := store.Reserve(ctx, credential, onboardingRequest(credential, uuid.NewString(), kb.ID))
+			require.NoError(t, err)
+			activateOnboarding(t, db, store, operation)
+			leases := repo.NewNextcloudContentLeaseStore(db)
+			read, err := leases.AcquireKBRead(ctx, 7, kb.ID, "held-before-target-delete", time.Minute)
+			require.NoError(t, err)
+			defer func() { require.NoError(t, leases.ReleaseLease(context.Background(), read.ID)) }()
+			var before struct {
+				Epoch int64
+				State string
+			}
+			require.NoError(t, db.Table("nextcloud_content_fences").
+				Where("tenant_id=? AND knowledge_base_id=? AND knowledge_id=''", 7, kb.ID).Take(&before).Error)
+			require.Equal(t, "open", before.State)
+			if target == "tenant" {
+				require.NoError(t, repo.NewTenantRepository(db).DeleteTenant(ctx, 7))
+			} else {
+				require.NoError(t, repo.NewKnowledgeBaseRepository(db).DeleteKnowledgeBase(ctx, kb.ID))
+			}
+			after := before
+			require.NoError(t, db.Table("nextcloud_content_fences").
+				Where("tenant_id=? AND knowledge_base_id=? AND knowledge_id=''", 7, kb.ID).Take(&after).Error)
+			require.Equal(t, "retired", after.State)
+			require.Equal(t, before.Epoch+1, after.Epoch)
+			_, err = leases.AcquireKBRead(ctx, 7, kb.ID, "new-reader-after-delete", time.Minute)
+			require.Error(t, err)
+			current, err := store.Operation(ctx, credential, operation.OperationID)
+			require.NoError(t, err)
+			_, err = store.TargetObservation(ctx, credential, current, credential.DirectoryID, "guid-owner")
+			require.NoError(t, err)
+			again := after
+			require.NoError(t, db.Table("nextcloud_content_fences").
+				Where("tenant_id=? AND knowledge_base_id=? AND knowledge_id=''", 7, kb.ID).Take(&again).Error)
+			require.Equal(t, after, again, "closure retry cannot advance or reopen an already-closed fence")
+			require.Error(t, db.Exec("UPDATE nextcloud_content_fences SET state='open',epoch=epoch+1 "+
+				"WHERE tenant_id=? AND knowledge_base_id=? AND knowledge_id=''", 7, kb.ID).Error)
+		})
+	}
+}

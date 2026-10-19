@@ -185,7 +185,8 @@ func TestSQLiteNextcloudKBProvenanceMigrationBackfillsDeletedSources(t *testing.
 	require.NoError(
 		t,
 		db.Exec(
-			"CREATE TABLE knowledges (knowledge_base_id TEXT, tenant_id INTEGER, channel TEXT, metadata TEXT, deleted_at DATETIME)",
+			("CREATE TABLE knowledges (knowledge_base_id TEXT, tenant_id INTEGER, channe" +
+				"l TEXT, metadata TEXT, deleted_at DATETIME)"),
 		).Error,
 	)
 	require.NoError(t, db.Exec("INSERT INTO knowledge_bases VALUES ('source',7),('document',7),('ordinary',7)").Error)

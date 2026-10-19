@@ -14,6 +14,7 @@ import (
 	"gorm.io/gorm"
 )
 
+// ConfigureKnowledgeAutoTagCompletion configures the knowledge auto tag completion boundary.
 // Completion and its immutable Auto handoff commit in one SQL transaction.
 // Redis is only a wake-up channel; recovery always reuses the persisted bytes.
 func ConfigureKnowledgeAutoTagCompletion(
@@ -38,6 +39,7 @@ func ConfigureKnowledgeAutoTagCompletion(
 	})
 }
 
+// RecoverKnowledgeAutoTagCompletions recovers persisted automatic tag completion work.
 func RecoverKnowledgeAutoTagCompletions(
 	ctx context.Context,
 	store *repository.KnowledgeInputProvenanceStore,

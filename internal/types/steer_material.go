@@ -11,6 +11,7 @@ import (
 type SteerDelivery string
 
 const (
+	// SteerDeliveryAfter schedules an injected message after the current operation.
 	SteerDeliveryAfter  SteerDelivery = "after"
 	SteerDeliveryInject SteerDelivery = "inject"
 )
@@ -62,6 +63,7 @@ type SteerOriginalProof struct {
 type SteerControlOperation string
 
 const (
+	// SteerControlPromote identifies the operation that promotes a queued injected message.
 	SteerControlPromote     SteerControlOperation = "promote"
 	SteerControlConsume     SteerControlOperation = "consume"
 	SteerControlDiscard     SteerControlOperation = "discard"
@@ -101,6 +103,7 @@ type SteerCandidateControl struct {
 type SteerMaterialUse string
 
 const (
+	// SteerMaterialPending marks an injected original input awaiting consumption.
 	SteerMaterialPending  SteerMaterialUse = "pending"
 	SteerMaterialInject   SteerMaterialUse = "inject"
 	SteerMaterialFollowUp SteerMaterialUse = "follow_up"

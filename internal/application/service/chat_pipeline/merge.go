@@ -16,6 +16,7 @@ type PluginMerge struct {
 	ragChunks    interfaces.RAGChunkAugmentationReader
 }
 
+// ConfigurePluginMergeRAGChunkHydration configures the plugin merge ragchunk hydration boundary.
 func ConfigurePluginMergeRAGChunkHydration(plugin *PluginMerge, reader interfaces.RAGChunkAugmentationReader) {
 	if plugin != nil {
 		plugin.ragChunks = reader

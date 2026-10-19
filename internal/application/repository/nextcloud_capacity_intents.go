@@ -11,6 +11,7 @@ import (
 	"gorm.io/gorm/clause"
 )
 
+// NextcloudCapacityWriteIntent represents nextcloud capacity write intent repository data.
 type NextcloudCapacityWriteIntent struct {
 	Token                                                             string `gorm:"primaryKey"`
 	KnowledgeID, WriterID, PhysicalPath, RootIdentity, ScopeID, State string
@@ -21,6 +22,7 @@ type NextcloudCapacityWriteIntent struct {
 	OrphanChargeBytes, UpdatedAtMS                                    int64
 }
 
+// TableName returns the persisted table name.
 func (NextcloudCapacityWriteIntent) TableName() string { return "nextcloud_capacity_write_intents" }
 
 func (s *NextcloudCapacityStore) lockDurable(
@@ -60,6 +62,7 @@ func (s *NextcloudCapacityStore) lockDurable(
 	return row, now, e
 }
 
+// PrepareLocal prepares local.
 func (s *NextcloudCapacityStore) PrepareLocal(
 	ctx context.Context,
 	r *NextcloudCapacityReservation,
@@ -109,6 +112,7 @@ func (s *NextcloudCapacityStore) PrepareLocal(
 	})
 }
 
+// ValidateWriter validates writer.
 func (s *NextcloudCapacityStore) ValidateWriter(
 	ctx context.Context,
 	r *NextcloudCapacityReservation,
@@ -134,6 +138,7 @@ func (s *NextcloudCapacityStore) ValidateWriter(
 	})
 }
 
+// LocalCreated returns the local created result.
 func (s *NextcloudCapacityStore) LocalCreated(
 	ctx context.Context,
 	r *NextcloudCapacityReservation,
@@ -151,7 +156,8 @@ func (s *NextcloudCapacityStore) LocalCreated(
 			return ErrNextcloudCapacityUnavailable
 		}
 		u := tx.Model(&NextcloudCapacityWriteIntent{}).
-			Where("token=? AND writer_id=? AND physical_path=? AND state='prepared' AND object_identity=''", row.Token, writer, path).
+			Where(("token=? AND writer_id=? AND physical_path=? AND state='prepared' AND objec" +
+				"t_identity=''"), row.Token, writer, path).
 			Updates(map[string]any{"state": "writing", "object_identity": identity, "updated_at_ms": now})
 		if u.Error != nil {
 			return u.Error
@@ -163,6 +169,7 @@ func (s *NextcloudCapacityStore) LocalCreated(
 	})
 }
 
+// PhysicalWritten returns the physical written result.
 func (s *NextcloudCapacityStore) PhysicalWritten(
 	ctx context.Context,
 	r *NextcloudCapacityReservation,
@@ -191,6 +198,7 @@ func (s *NextcloudCapacityStore) PhysicalWritten(
 	})
 }
 
+// Cataloged returns the cataloged result.
 func (s *NextcloudCapacityStore) Cataloged(
 	ctx context.Context,
 	r *NextcloudCapacityReservation,
@@ -209,7 +217,8 @@ func (s *NextcloudCapacityStore) Cataloged(
 			return ErrNextcloudCapacityUnavailable
 		}
 		var resource types.StoredResource
-		if e = tx.Where("handle=? AND tenant_id=? AND storage_backend_id=? AND physical_path=? AND provider='local' AND state='active'", handle, row.TenantID, row.BackendID, path).
+		if e = tx.Where(("handle=? AND tenant_id=? AND storage_backend_id=? AND physical_path=? AND " +
+			"provider='local' AND state='active'"), handle, row.TenantID, row.BackendID, path).
 			Take(&resource).
 			Error; e != nil {
 			return e
@@ -219,7 +228,8 @@ func (s *NextcloudCapacityStore) Cataloged(
 		}
 		var count int64
 		if e = tx.Model(&types.ResourceBinding{}).
-			Where("resource_id=? AND tenant_id=? AND owner_type='knowledge' AND owner_id=? AND relation='source_file'", resource.ID, row.TenantID, knowledge).
+			Where(("resource_id=? AND tenant_id=? AND owner_type='knowledge' AND owner_id=? AN" +
+				"D relation='source_file'"), resource.ID, row.TenantID, knowledge).
 			Count(&count).
 			Error; e != nil {
 			return e
@@ -228,7 +238,8 @@ func (s *NextcloudCapacityStore) Cataloged(
 			return ErrNextcloudCapacityUnavailable
 		}
 		u := tx.Model(&NextcloudCapacityWriteIntent{}).
-			Where("token=? AND writer_id=? AND physical_path=? AND knowledge_id=? AND state='written'", row.Token, writer, path, knowledge).
+			Where(("token=? AND writer_id=? AND physical_path=? AND knowledge_id=? AND state='" +
+				"written'"), row.Token, writer, path, knowledge).
 			Updates(map[string]any{"state": "cataloged", "resource_id": resource.ID, "updated_at_ms": now})
 		if u.Error != nil {
 			return u.Error
@@ -240,6 +251,7 @@ func (s *NextcloudCapacityStore) Cataloged(
 	})
 }
 
+// CancelUnstarted returns the cancel unstarted result.
 // Cancel is proof from the new protocol's absence of a pre-IO intent. Old
 // reservations remain unknown and can never be retrospectively certified.
 func (s *NextcloudCapacityStore) CancelUnstarted(ctx context.Context, r *NextcloudCapacityReservation) error {
@@ -265,6 +277,7 @@ func (s *NextcloudCapacityStore) CancelUnstarted(ctx context.Context, r *Nextclo
 	})
 }
 
+// MarkWriteFailed returns the mark write failed result.
 func (s *NextcloudCapacityStore) MarkWriteFailed(
 	ctx context.Context,
 	r *NextcloudCapacityReservation,
@@ -279,12 +292,14 @@ func (s *NextcloudCapacityStore) MarkWriteFailed(
 			return nil
 		}
 		return tx.Model(&NextcloudCapacityWriteIntent{}).
-			Where("token=? AND writer_id=? AND state IN ('prepared','writing','written','cataloged')", row.Token, writer).
+			Where(("token=? AND writer_id=? AND state IN ('prepared','writing','written','cata" +
+				"loged')"), row.Token, writer).
 			Updates(map[string]any{"state": "failed", "updated_at_ms": now}).
 			Error
 	})
 }
 
+// Intent returns the intent result.
 func (s *NextcloudCapacityStore) Intent(
 	ctx context.Context,
 	r *NextcloudCapacityReservation,
@@ -297,6 +312,7 @@ func (s *NextcloudCapacityStore) Intent(
 	return i, e
 }
 
+// ReconcileLocal reconciles local.
 // Called only while the exact local provider holds its exclusive OS fence.
 // An object is never deleted here. Existing owner claims stay authoritative.
 func (s *NextcloudCapacityStore) ReconcileLocal(
@@ -356,7 +372,8 @@ func (s *NextcloudCapacityStore) ReconcileLocal(
 				Error
 			var count int64
 			if e = tx.Model(&types.ResourceBinding{}).
-				Where("resource_id=? AND tenant_id=? AND owner_type='knowledge' AND owner_id=? AND relation='source_file'", resource.ID, row.TenantID, i.KnowledgeID).
+				Where(("resource_id=? AND tenant_id=? AND owner_type='knowledge' AND owner_id=? AN" +
+					"D relation='source_file'"), resource.ID, row.TenantID, i.KnowledgeID).
 				Count(&count).
 				Error; e != nil {
 				return e
@@ -418,6 +435,7 @@ func (s *NextcloudCapacityStore) ReconcileLocal(
 	})
 }
 
+// FinishDurable finishes durable.
 func (s *NextcloudCapacityStore) FinishDurable(
 	ctx context.Context,
 	r *NextcloudCapacityReservation,
@@ -452,7 +470,12 @@ func (s *NextcloudCapacityStore) FinishDurable(
 		if e = tx.Where("id=?", i.ResourceID).Take(&resource).Error; e != nil {
 			return e
 		}
-		if e = tx.Raw("SELECT COUNT(*) FROM resources s JOIN resource_bindings b ON b.resource_id=s.id JOIN knowledges k ON k.id=b.owner_id AND k.tenant_id=s.tenant_id WHERE s.id=? AND s.tenant_id=? AND s.storage_backend_id=? AND s.physical_path=? AND s.state='active' AND s.size=? AND b.owner_type='knowledge' AND b.relation='source_file' AND k.id=? AND k.knowledge_base_id=? AND k.file_path=?", i.ResourceID, row.TenantID, row.BackendID, i.PhysicalPath, i.ObservedBytes, k, row.KnowledgeBaseID, types.BuildResourcePath(resource.Handle)).
+		if e = tx.Raw(("SELECT COUNT(*) FROM resources s JOIN resource_bindings b ON b.resource_id" +
+			"=s.id JOIN knowledges k ON k.id=b.owner_id AND k.tenant_id=s.tenant_id WHE" +
+			"RE s.id=? AND s.tenant_id=? AND s.storage_backend_id=? AND s.physical_path" +
+			"=? AND s.state='active' AND s.size=? AND b.owner_type='knowledge' AND b.re" +
+			"lation='source_file' AND k.id=? AND k.knowledge_base_id=? AND k.file_path=" +
+			"?"), i.ResourceID, row.TenantID, row.BackendID, i.PhysicalPath, i.ObservedBytes, k, row.KnowledgeBaseID, types.BuildResourcePath(resource.Handle)).
 			Scan(&count).
 			Error; e != nil {
 			return e

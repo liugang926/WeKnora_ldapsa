@@ -60,7 +60,7 @@ func (r *DataSourceRepository) Create(ctx context.Context, ds *types.DataSource)
 			UpdateColumn("sync_deletions", syncDeletions).Error; err != nil {
 			return err
 		}
-		return admitDataSourceNameInput(tx, ctx, ds, r.nameAuthorityFactory)
+		return admitDataSourceNameInput(ctx, tx, ds, r.nameAuthorityFactory)
 	})
 	ds.SyncDeletions = syncDeletions
 	return err
@@ -344,7 +344,7 @@ func (r *DataSourceRepository) Update(ctx context.Context, ds *types.DataSource)
 		if err := tx.Where("id = ?", ds.ID).Take(&actual).Error; err != nil {
 			return err
 		}
-		return admitDataSourceNameInput(tx, ctx, &actual, r.nameAuthorityFactory)
+		return admitDataSourceNameInput(ctx, tx, &actual, r.nameAuthorityFactory)
 	})
 }
 

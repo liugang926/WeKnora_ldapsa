@@ -14,6 +14,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 )
 
+// ErrAgentSourceLineageDenied indicates that the turn cannot account for an actual input.
 // This error deliberately contains no source names, tool diagnostics or model
 // output. A rejected prefix must not be published through a control event.
 var ErrAgentSourceLineageDenied = errors.New("agent source lineage is unavailable or unauthorized")
@@ -40,12 +41,18 @@ func (e *AgentEngine) SetSourceLineageVerifier(check func(context.Context, *type
 	}
 }
 
+// SetSystemPromptSourceLineage binds the exact system prompt to its input receipt.
 // These receipts are server-only producer assertions over the actual rendered
 // values. A selected KB, role, citation or absence of a datasource is no receipt.
 func (e *AgentEngine) SetSystemPromptSourceLineage(l *types.SourceLineage) { e.systemPromptLineage = l }
-func (e *AgentEngine) SetMemoryPromptSourceLineage(l *types.SourceLineage) { e.memoryPromptLineage = l }
-func (e *AgentEngine) SetUserInputSourceLineage(l *types.SourceLineage)    { e.userInputLineage = l }
 
+// SetMemoryPromptSourceLineage binds recalled memory to its input receipt.
+func (e *AgentEngine) SetMemoryPromptSourceLineage(l *types.SourceLineage) { e.memoryPromptLineage = l }
+
+// SetUserInputSourceLineage binds the current user input to its receipt.
+func (e *AgentEngine) SetUserInputSourceLineage(l *types.SourceLineage) { e.userInputLineage = l }
+
+// SetSkillsMetadataSourceLineage binds skill metadata to its input receipt.
 // The receipt is bound to a private copy of the exact skill metadata values.
 // System prompt receipts cannot certify skill/package descriptions.
 func (e *AgentEngine) SetSkillsMetadataSourceLineage(l *types.SourceLineage) {
@@ -62,11 +69,11 @@ func cloneSkillsMetadata(metadata []*skills.SkillMetadata) []*skills.SkillMetada
 	if err != nil {
 		return nil
 	}
-	var copy []*skills.SkillMetadata
-	if err := json.Unmarshal(bytes, &copy); err != nil {
+	var copied []*skills.SkillMetadata
+	if err := json.Unmarshal(bytes, &copied); err != nil {
 		return nil
 	}
-	return copy
+	return copied
 }
 
 func (e *AgentEngine) skillsMetadataInputLineage(metadata []*skills.SkillMetadata) *types.SourceLineage {
@@ -78,12 +85,14 @@ func (e *AgentEngine) skillsMetadataInputLineage(metadata []*skills.SkillMetadat
 	return lineage
 }
 
+// SetRAGChunkSnapshotReader configures the reader used to hydrate original chunk snapshots.
 func (e *AgentEngine) SetRAGChunkSnapshotReader(reader interfaces.RAGChunkSnapshotReader) {
 	if e.toolRegistry != nil {
 		e.toolRegistry.SetRAGChunkSnapshotReader(reader)
 	}
 }
 
+// SourceLineageSnapshot returns the accumulated source lineage of the turn.
 func (e *AgentEngine) SourceLineageSnapshot() *types.SourceLineage {
 	return e.turnLineage.Snapshot()
 }

@@ -57,7 +57,10 @@ func (p *PluginSearchEntity) onLineageEntitySearch(
 			snapshot.Recheck == nil {
 			return fail(types.ErrGraphSourceReceiptUnknown)
 		}
-		defer snapshot.Close()
+		defer func() {
+			// Only read pins are released here; cleanup does not publish protected material.
+			_ = snapshot.Close()
+		}()
 		snapshot, err = types.CloneKnowledgeGraphInputSnapshot(snapshot)
 		if err != nil {
 			return fail(err)

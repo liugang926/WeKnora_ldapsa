@@ -194,7 +194,8 @@ func newConfigurationGCActualFixture(t *testing.T) *configurationGCActualFixture
 	var virgin bool
 	require.NoError(
 		t,
-		db.Raw("SELECT virgin FROM nextcloud_kb_blank_witnesses WHERE tenant_id=? AND knowledge_base_id=?", 7, clone.ID).
+		db.Raw(("SELECT virgin FROM nextcloud_kb_blank_witnesses WHERE tenant_id=? AND know"+
+			"ledge_base_id=?"), 7, clone.ID).
 			Scan(&virgin).
 			Error,
 	)
@@ -377,9 +378,9 @@ func TestKnowledgeConfigurationActualSQLSourceTombstoneClearsCloneBodiesAfterRea
 	// Production activation remains gated on the separate full reader audit.
 	var nowMS int64
 	require.NoError(t, db.Raw("SELECT CAST((julianday('now') - 2440587.5)*86400000 AS INTEGER)").Scan(&nowMS).Error)
-	require.NoError(t, db.Exec(`INSERT INTO nextcloud_content_lease_coverage
- (tenant_id,knowledge_base_id,activated_at_ms,legacy_drained_at_ms,reader_revision,builder_revision)
- VALUES (?,?,?,?,?,?)`, 7, f.history.source.KnowledgeBaseID, nowMS-1000, nowMS, "isolated-config-body-test", "isolated-config-body-test").Error)
+	require.NoError(t, db.Exec(("INSERT INTO nextcloud_content_lease_coverage\n (tenant_id,knowledge_base_i"+
+		"d,activated_at_ms,legacy_drained_at_ms,reader_revision,builder_revision)\n"+
+		" VALUES (?,?,?,?,?,?)"), 7, f.history.source.KnowledgeBaseID, nowMS-1000, nowMS, "isolated-config-body-test", "isolated-config-body-test").Error)
 	_, err = bodies.PurgeSelectedJob(f.admin, 7, job, 100)
 	require.NoError(t, err)
 	require.Equal(
@@ -447,7 +448,9 @@ func TestKnowledgeConfigurationActualSQLSourceTombstoneClearsCloneBodiesAfterRea
 	var cleared int64
 	require.NoError(
 		t,
-		db.Raw("SELECT COALESCE(SUM(r.cleared_fields),0) FROM original_body_purge_receipts r JOIN original_body_field_heads h ON h.body_id=r.body_id WHERE h.source_table=? AND h.row_key=? AND h.column_name=?", "knowledge_bases", f.clone.ID, "enrichment_templates").
+		db.Raw(("SELECT COALESCE(SUM(r.cleared_fields),0) FROM original_body_purge_receipts"+
+			" r JOIN original_body_field_heads h ON h.body_id=r.body_id WHERE h.source_"+
+			"table=? AND h.row_key=? AND h.column_name=?"), "knowledge_bases", f.clone.ID, "enrichment_templates").
 			Scan(&cleared).
 			Error,
 	)
@@ -541,7 +544,8 @@ func TestKnowledgeConfigurationActualSQLReadPlanAndLeaseCheckpointsAreMetadataOn
 	require.Empty(
 		t,
 		selects,
-		"metadata plans/checkpoints must never consume KB config or captured parent bodies before the caller's fresh source READ",
+		("metadata plans/checkpoints must never consume KB config or captured parent" +
+			" bodies before the caller's fresh source READ"),
 	)
 }
 

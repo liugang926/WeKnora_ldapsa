@@ -1,3 +1,5 @@
+//go:build sqlite_fts5
+
 package sqlite
 
 import (
@@ -28,8 +30,10 @@ func TestNativeSQLiteVectorCandidatesFilterBeforeTopKAndNeverSelectBody(t *testi
 			require.NoError(
 				t,
 				r.db.Exec(
-					`CREATE TABLE knowledge_bases(id TEXT PRIMARY KEY,tenant_id BIGINT NOT NULL,deleted_at DATETIME);
-				CREATE TABLE knowledges(id TEXT PRIMARY KEY,tenant_id BIGINT NOT NULL,knowledge_base_id TEXT NOT NULL,parse_status TEXT NOT NULL,enable_status TEXT NOT NULL,deleted_at DATETIME)`,
+					("CREATE TABLE knowledge_bases(id TEXT PRIMARY KEY,tenant_id BIGINT NOT NULL" +
+						",deleted_at DATETIME);\n\t\t\t\tCREATE TABLE knowledges(id TEXT PRIMARY KE" +
+						"Y,tenant_id BIGINT NOT NULL,knowledge_base_id TEXT NOT NULL,parse_status T" +
+						"EXT NOT NULL,enable_status TEXT NOT NULL,deleted_at DATETIME)"),
 				).Error,
 			)
 			require.NoError(
@@ -62,13 +66,15 @@ func TestNativeSQLiteVectorCandidatesFilterBeforeTopKAndNeverSelectBody(t *testi
 			require.NoError(
 				t,
 				r.db.Exec(
-					"INSERT INTO knowledges(id,tenant_id,knowledge_base_id,parse_status,enable_status) VALUES('target',7,'kb-target','completed','enabled')",
+					("INSERT INTO knowledges(id,tenant_id,knowledge_base_id,parse_status,enable_" +
+						"status) VALUES('target',7,'kb-target','completed','enabled')"),
 				).Error,
 			)
 			require.NoError(
 				t,
 				r.db.Exec(
-					"INSERT INTO knowledges(id,tenant_id,knowledge_base_id,parse_status,enable_status) VALUES(?,?,?,'completed',?)",
+					("INSERT INTO knowledges(id,tenant_id,knowledge_base_id,parse_status,enable_"+
+						"status) VALUES(?,?,?,'completed',?)"),
 					"blocker",
 					blockerTenant,
 					blockerKB,

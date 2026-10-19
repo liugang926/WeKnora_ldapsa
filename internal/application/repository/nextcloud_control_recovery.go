@@ -39,6 +39,7 @@ func nextcloudControlsClosed(tx *gorm.DB, instance string) (bool, error) {
 	return row.Closed, err
 }
 
+// InstanceControlsClosed returns the instance controls closed result.
 func (s *NextcloudOnboardingStore) InstanceControlsClosed(ctx context.Context, instance string) (bool, error) {
 	return nextcloudControlsClosed(s.db.WithContext(ctx), instance)
 }
@@ -220,7 +221,8 @@ func closeNextcloudControlsInTx(tx *gorm.DB, instance, planSHA, inventorySHA str
 		}
 	}
 	if tx.Migrator().HasTable(&types.NextcloudSourceGrant{}) {
-		if err := tx.Where("operation_id IN (SELECT operation_id FROM nextcloud_onboarding_operations WHERE instance_id=?)", instance).
+		if err := tx.Where(("operation_id IN (SELECT operation_id FROM nextcloud_onboarding_operations " +
+			"WHERE instance_id=?)"), instance).
 			Delete(&types.NextcloudSourceGrant{}).
 			Error; err != nil {
 			return err
@@ -459,6 +461,7 @@ func (s *NextcloudPublicationRecoveryStore) ReauthorizeOnboardingCredential(
 	}, nil
 }
 
+// SourceControlsClosed returns the source controls closed result.
 func (s *NextcloudOnboardingStore) SourceControlsClosed(
 	ctx context.Context,
 	tenant uint64,

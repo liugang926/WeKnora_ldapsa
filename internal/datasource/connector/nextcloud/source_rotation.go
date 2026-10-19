@@ -129,7 +129,7 @@ func sourceRotationRequest(ctx context.Context, source *types.DataSourceConfig, 
 		answer.Rotation.DataSourceID != rotation.DataSourceID ||
 		expectedKey != keyID ||
 		(answer.Rotation.State != expectedState &&
-			!(action == "commit" && answer.Rotation.State == "finalized")) {
+			(action != "commit" || answer.Rotation.State != "finalized")) {
 		return apperrors.NewProtocolError(fmt.Errorf("nextcloud source rotation response tuple mismatch"),
 			"Nextcloud source rotation response tuple mismatch")
 	}

@@ -281,6 +281,7 @@ func NewChunkExtractService(
 	}
 }
 
+// ConfigureNextcloudChunkExtractLedger binds graph work to the durable processing ledger.
 func ConfigureNextcloudChunkExtractLedger(handler interfaces.TaskHandler, ledger types.NextcloudProcessingLedger) {
 	if impl, ok := handler.(*ChunkExtractService); ok {
 		impl.processingLedger = ledger
@@ -317,7 +318,7 @@ func (s *ChunkExtractService) Handle(ctx context.Context, t *asynq.Task) (return
 	mainFinalizeRegistered := false
 	defer func() {
 		if !mainFinalizeRegistered && returnErr != nil {
-			finalizeSubtaskDetached(
+			returnErr = errors.Join(returnErr, finalizeSubtaskDetached(
 				ctx,
 				s.knowledgeRepo,
 				p.KnowledgeID,
@@ -325,7 +326,7 @@ func (s *ChunkExtractService) Handle(ctx context.Context, t *asynq.Task) (return
 				returnErr,
 				false,
 				isFinalAsynqAttempt(ctx),
-			)
+			))
 		}
 	}()
 
@@ -381,7 +382,8 @@ func (s *ChunkExtractService) Handle(ctx context.Context, t *asynq.Task) (return
 	}()
 	if snapshot.Knowledge.Channel == types.ConnectorTypeNextcloud {
 		if s.processingLedger == nil {
-			return errors.New("Nextcloud graph processing ledger unavailable")
+			return apperrors.NewProtocolError(errors.New("nextcloud graph processing ledger unavailable"),
+				"Nextcloud graph processing ledger unavailable")
 		}
 		ctx = types.WithGraphWriteOperation(
 			ctx,
@@ -396,7 +398,8 @@ func (s *ChunkExtractService) Handle(ctx context.Context, t *asynq.Task) (return
 			return err
 		}
 		if done {
-			finalizeSubtaskDetached(
+			mainFinalizeRegistered = true
+			return finalizeSubtaskDetached(
 				ctx,
 				s.knowledgeRepo,
 				p.KnowledgeID,
@@ -405,8 +408,6 @@ func (s *ChunkExtractService) Handle(ctx context.Context, t *asynq.Task) (return
 				false,
 				true,
 			)
-			mainFinalizeRegistered = true
-			return nil
 		}
 
 		defer func() {
@@ -456,9 +457,14 @@ func (s *ChunkExtractService) Handle(ctx context.Context, t *asynq.Task) (return
 		if sourcePrivate && safeErr != nil {
 			safeErr = errors.New(graphFailureCode)
 		}
-		finalizeSubtaskDetached(ctx, s.knowledgeRepo, p.KnowledgeID,
+		if err := finalizeSubtaskDetached(ctx, s.knowledgeRepo, p.KnowledgeID,
 			fmt.Sprintf("graph_chunk[%d]", p.ChunkIndex),
-			safeErr, false, isFinalAsynqAttempt(ctx))
+			safeErr, false, isFinalAsynqAttempt(ctx)); err != nil {
+			returnErr = errors.Join(returnErr, err)
+			if handleErr == nil {
+				handleErr = err
+			}
+		}
 		if gSpan == nil {
 			return
 		}
@@ -1350,9 +1356,9 @@ func recheckOriginalGraphProof(
 	if err != nil {
 		return err
 	}
-	var copy types.KnowledgeBuildInputProof
-	if err := json.Unmarshal(data, &copy); err != nil {
+	var copied types.KnowledgeBuildInputProof
+	if err := json.Unmarshal(data, &copied); err != nil {
 		return err
 	}
-	return reader.RecheckKnowledgeBuildInputs(ctx, &copy)
+	return reader.RecheckKnowledgeBuildInputs(ctx, &copied)
 }

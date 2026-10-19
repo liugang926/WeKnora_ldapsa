@@ -54,12 +54,12 @@ type spanMaterialInput struct {
 }
 
 func spanBodyDigest(row *types.KnowledgeProcessingSpan) (string, error) {
-	copy := *row
-	copy.ContentProvenance = ""
+	copied := *row
+	copied.ContentProvenance = ""
 	return KnowledgeInputDigest(struct {
 		Row         types.KnowledgeProcessingSpan
 		ErrorDetail string
-	}{copy, row.ErrorDetail})
+	}{copied, row.ErrorDetail})
 }
 
 func spanRevision(tx *gorm.DB, id int64) (uint64, error) {
@@ -622,6 +622,7 @@ func spanStatusOnly(row types.KnowledgeProcessingSpan) types.KnowledgeProcessing
 	}
 }
 
+// CaptureSpanOutputInputs captures span output inputs.
 func (s *KnowledgeInputProvenanceStore) CaptureSpanOutputInputs(
 	ctx context.Context,
 	request types.SpanOutputReadRequest,
@@ -632,7 +633,7 @@ func (s *KnowledgeInputProvenanceStore) CaptureSpanOutputInputs(
 		return nil, types.ErrSourceLineageUnknown
 	}
 	options := &sql.TxOptions{ReadOnly: true}
-	switch s.db.Dialector.Name() {
+	switch s.db.Name() {
 	case "postgres":
 		options.Isolation = sql.LevelRepeatableRead
 	case "sqlite":
@@ -812,6 +813,7 @@ func (s *KnowledgeInputProvenanceStore) CaptureSpanOutputInputs(
 	return result, err
 }
 
+// RecheckSpanOutputInputs rechecks span output inputs.
 func (s *KnowledgeInputProvenanceStore) RecheckSpanOutputInputs(
 	ctx context.Context,
 	saved *types.SpanOutputInputSnapshot,

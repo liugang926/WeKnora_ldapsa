@@ -21,18 +21,18 @@ func beginNextcloudTaskConfigurationRead(ctx context.Context, reader any) (conte
 	if !ok {
 		return ctx, noop, types.ErrSourceLineageUnknown
 	}
-	current, close, err := beginner.BeginNextcloudBuildConfigurationRead(ctx)
+	current, closeRead, err := beginner.BeginNextcloudBuildConfigurationRead(ctx)
 	if err != nil {
-		if close != nil {
-			close()
+		if closeRead != nil {
+			closeRead()
 		}
 		return ctx, noop, err
 	}
-	if current == nil || close == nil {
-		if close != nil {
-			close()
+	if current == nil || closeRead == nil {
+		if closeRead != nil {
+			closeRead()
 		}
 		return ctx, noop, types.ErrSourceLineageUnknown
 	}
-	return current, close, nil
+	return current, closeRead, nil
 }

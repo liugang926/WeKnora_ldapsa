@@ -20,6 +20,7 @@ type nextcloudDerivedArtifact struct {
 
 func (nextcloudDerivedArtifact) TableName() string { return "nextcloud_derived_write_artifacts" }
 
+// RecordNextcloudDerivedArtifactInTx records nextcloud derived artifact in tx.
 // Called in the actual row-write transaction. The immutable identity ledger is
 // exhaustive for this protocol's supported local writers; historic rows cannot
 // be backfilled from a later config, empty scan, or garbage-collection attempt.
@@ -105,7 +106,8 @@ func RecordNextcloudDerivedArtifactInTx(
 		return e
 	}
 	var actual nextcloudDerivedArtifact
-	if e = tx.Where("tenant_id=? AND knowledge_base_id=? AND knowledge_id=? AND item_kind=? AND object_ref=?", k.TenantID, kbID, knowledgeID, kind, ref).
+	if e = tx.Where(("tenant_id=? AND knowledge_base_id=? AND knowledge_id=? AND item_kind=? AND" +
+		" object_ref=?"), k.TenantID, kbID, knowledgeID, kind, ref).
 		Take(&actual).
 		Error; e != nil {
 		return e

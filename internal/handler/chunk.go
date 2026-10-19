@@ -225,7 +225,7 @@ func (h *ChunkHandler) ListChunkRevisions(c *gin.Context) {
 		_ = c.Error(err)
 		return
 	}
-	leases, err := h.beginNextcloudRead(c, c.Request.Context(), knowledge)
+	leases, err := h.beginNextcloudRead(c.Request.Context(), c, knowledge)
 	if err != nil {
 		_ = c.Error(err)
 		return

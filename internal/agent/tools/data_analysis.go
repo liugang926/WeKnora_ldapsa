@@ -515,12 +515,9 @@ func (t *DataAnalysisTool) formatQueryResults(results []map[string]string, query
 
 	output.WriteString("=== Data Details ===\n\n")
 	if len(results) > 10 {
-		output.WriteString(
-			fmt.Sprintf(
-				"Showing all %d records. Consider using a LIMIT clause to restrict the result count for better performance.\n\n",
-				len(results),
-			),
-		)
+		fmt.Fprintf(&output, ("Showing all %d records. Consider using a LIMIT clause to restrict the resu" +
+			"lt count for better performance.\n\n"),
+			len(results))
 	}
 
 	// Write each record as a separate JSON line
@@ -998,7 +995,8 @@ func (t *DataAnalysisTool) resolveFileServiceForKnowledge(
 		if err != nil {
 			logger.Warnf(
 				ctx,
-				"[Tool][DataAnalysis][storage] get kb failed, fallback default: session_id=%s knowledge_id=%s kb_id=%s err=%v",
+				("[Tool][DataAnalysis][storage] get kb failed, fallback default: session_id=" +
+					"%s knowledge_id=%s kb_id=%s err=%v"),
 				t.sessionID,
 				knowledge.ID,
 				kbID,
@@ -1040,7 +1038,8 @@ func (t *DataAnalysisTool) resolveFileServiceForKnowledge(
 			if err != nil {
 				logger.Warnf(
 					ctx,
-					"[Tool][DataAnalysis][storage] get tenant failed: session_id=%s knowledge_id=%s kb_id=%s tenant_id=%d err=%v",
+					("[Tool][DataAnalysis][storage] get tenant failed: session_id=%s knowledge_i" +
+						"d=%s kb_id=%s tenant_id=%d err=%v"),
 					t.sessionID,
 					knowledge.ID,
 					kbID,
@@ -1051,7 +1050,8 @@ func (t *DataAnalysisTool) resolveFileServiceForKnowledge(
 				tenant = resolvedTenant
 				logger.Infof(
 					ctx,
-					"[Tool][DataAnalysis][storage] resolved tenant from service: session_id=%s knowledge_id=%s kb_id=%s tenant_id=%d",
+					("[Tool][DataAnalysis][storage] resolved tenant from service: session_id=%s " +
+						"knowledge_id=%s kb_id=%s tenant_id=%d"),
 					t.sessionID,
 					knowledge.ID,
 					kbID,
@@ -1070,7 +1070,8 @@ func (t *DataAnalysisTool) resolveFileServiceForKnowledge(
 		if err == nil {
 			logger.Infof(
 				ctx,
-				"[Tool][DataAnalysis][storage] resolved storage backend: session_id=%s knowledge_id=%s kb_id=%s backend_id=%s provider=%s",
+				("[Tool][DataAnalysis][storage] resolved storage backend: session_id=%s know" +
+					"ledge_id=%s kb_id=%s backend_id=%s provider=%s"),
 				t.sessionID,
 				knowledge.ID,
 				kbID,
@@ -1081,7 +1082,9 @@ func (t *DataAnalysisTool) resolveFileServiceForKnowledge(
 		}
 		logger.Warnf(
 			ctx,
-			"[Tool][DataAnalysis][storage] resolve storage backend failed, trying legacy config: session_id=%s knowledge_id=%s kb_id=%s backend_id=%s provider=%s err=%v",
+			("[Tool][DataAnalysis][storage] resolve storage backend failed, trying legac" +
+				"y config: session_id=%s knowledge_id=%s kb_id=%s backend_id=%s provider=%s" +
+				" err=%v"),
 			t.sessionID,
 			knowledge.ID,
 			kbID,
@@ -1095,7 +1098,8 @@ func (t *DataAnalysisTool) resolveFileServiceForKnowledge(
 		hasTenantStorageConfig := tenant != nil && tenant.StorageEngineConfig != nil
 		logger.Infof(
 			ctx,
-			"[Tool][DataAnalysis][storage] fallback default: session_id=%s knowledge_id=%s kb_id=%s provider=%q tenant_cfg=%t",
+			("[Tool][DataAnalysis][storage] fallback default: session_id=%s knowledge_id" +
+				"=%s kb_id=%s provider=%q tenant_cfg=%t"),
 			t.sessionID,
 			knowledge.ID,
 			kbID,
@@ -1119,7 +1123,8 @@ func (t *DataAnalysisTool) resolveFileServiceForKnowledge(
 	if err != nil {
 		logger.Warnf(
 			ctx,
-			"[Tool][DataAnalysis][storage] create file service failed, fallback default: session_id=%s knowledge_id=%s kb_id=%s provider=%s err=%v",
+			("[Tool][DataAnalysis][storage] create file service failed, fallback default" +
+				": session_id=%s knowledge_id=%s kb_id=%s provider=%s err=%v"),
 			t.sessionID,
 			knowledge.ID,
 			kbID,

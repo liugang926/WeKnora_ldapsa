@@ -196,7 +196,8 @@ func testNextcloudEventDispatchTransaction(t *testing.T, usePostgres bool) {
 	require.NoError(
 		t,
 		db.Exec(
-			`INSERT INTO sync_logs (id, data_source_id, status, started_at, finished_at) VALUES (?, 'ds-synthetic', ?, ?, ?)`,
+			("INSERT INTO sync_logs (id, data_source_id, status, started_at, finished_at"+
+				") VALUES (?, 'ds-synthetic', ?, ?, ?)"),
 			"log-43",
 			types.SyncLogStatusSuccess,
 			now,
@@ -286,9 +287,10 @@ func testNextcloudEventAppliedAfterParse(t *testing.T, usePostgres bool) {
 	require.NoError(t, err)
 	require.NoError(t, db.Exec(`UPDATE data_sources SET last_sync_cursor = ? WHERE id = 'ds-synthetic'`,
 		string(cursor)).Error)
-	require.NoError(t, db.Exec(`INSERT INTO nextcloud_source_versions
-		(tenant_id, knowledge_base_id, datasource_id, external_id, desired_etag, candidate_knowledge_id, state)
-		VALUES (7, 'kb-synthetic', 'ds-synthetic', 'nextcloud:instance_synthetic:41', 'v1', 'candidate-41', 'staging')`).Error)
+	require.NoError(t, db.Exec(("INSERT INTO nextcloud_source_versions\n\t\t(tenant_id, knowledge_base_id, " +
+		"datasource_id, external_id, desired_etag, candidate_knowledge_id, state)\n" +
+		"\t\tVALUES (7, 'kb-synthetic', 'ds-synthetic', 'nextcloud:instance_synthet" +
+		"ic:41', 'v1', 'candidate-41', 'staging')")).Error)
 	metadata := `{"datasource_id":"ds-synthetic","external_id":"nextcloud:instance_synthetic:41",` +
 		`"source_resource_id":"binding_synthetic","nextcloud_instance_id":"instance_synthetic",` +
 		`"nextcloud_binding_id":"binding_synthetic","nextcloud_file_id":"41",` +
@@ -385,9 +387,12 @@ func TestNextcloudEventDispatchRejectsLostOrMismatchedInventory(t *testing.T) {
 			} else {
 				if scenario == "version_without_cursor" || scenario == "truncated_inventory" ||
 					scenario == "valid_inventory" {
-					require.NoError(t, db.Exec(`INSERT INTO nextcloud_source_versions
-						(tenant_id, knowledge_base_id, datasource_id, external_id, state)
-						VALUES (7, 'kb-synthetic', 'ds-synthetic', 'nextcloud:instance_synthetic:41', 'published')`).Error)
+					require.NoError(
+						t,
+						db.Exec(("INSERT INTO nextcloud_source_versions\n\t\t\t\t\t\t(tenant_id, knowledge_b" +
+							"ase_id, datasource_id, external_id, state)\n\t\t\t\t\t\tVALUES (7, 'kb-syn" +
+							"thetic', 'ds-synthetic', 'nextcloud:instance_synthetic:41', 'published')")).Error,
+					)
 				}
 				if scenario != "version_without_cursor" {
 					instance := testEventInstance
@@ -564,8 +569,8 @@ func TestNextcloudEventDispatchRequiresSecondDeletionScan(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, second)
 	require.NoError(t, repo.PrepareDispatch(ctx, *second, "missing-second", now.Add(4*time.Minute)))
-	require.NoError(t, db.Exec(`INSERT INTO sync_logs (id, data_source_id, status, started_at, finished_at)
-		VALUES ('missing-second', 'ds-synthetic', 'success', ?, ?)`, now.Add(4*time.Minute), now.Add(4*time.Minute)).Error)
+	require.NoError(t, db.Exec(("INSERT INTO sync_logs (id, data_source_id, status, started_at, finished_at"+
+		")\n\t\tVALUES ('missing-second', 'ds-synthetic', 'success', ?, ?)"), now.Add(4*time.Minute), now.Add(4*time.Minute)).Error)
 	require.NoError(t, repo.FinishDispatch(ctx, *second, "missing-second", now.Add(4*time.Minute)))
 	require.NoError(t, db.Exec(`INSERT INTO nextcloud_source_versions
 		(tenant_id, knowledge_base_id, datasource_id, external_id, state)
@@ -684,7 +689,8 @@ func TestNextcloudEventDispatchCrashAfterEnqueueReconcilesIntent(t *testing.T) {
 	require.NoError(
 		t,
 		db.Exec(
-			`INSERT INTO sync_logs (id, data_source_id, status, started_at, finished_at) VALUES (?, 'ds-synthetic', ?, ?, ?)`,
+			("INSERT INTO sync_logs (id, data_source_id, status, started_at, finished_at"+
+				") VALUES (?, 'ds-synthetic', ?, ?, ?)"),
 			"completed-before-record",
 			types.SyncLogStatusSuccess,
 			now,
@@ -833,7 +839,8 @@ func TestNextcloudEventDispatcherQueuesIncrementalManifestWithoutPrematureSyncLo
 				require.NoError(
 					t,
 					db.Exec(
-						`INSERT INTO sync_logs (id, data_source_id, status, started_at) VALUES (?, 'ds-synthetic', ?, ?)`,
+						("INSERT INTO sync_logs (id, data_source_id, status, started_at) VALUES (?, "+
+							"'ds-synthetic', ?, ?)"),
 						payload.SyncLogID,
 						types.SyncLogStatusRunning,
 						time.Now().UTC(),

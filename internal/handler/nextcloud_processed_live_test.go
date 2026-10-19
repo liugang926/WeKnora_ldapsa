@@ -65,7 +65,7 @@ func TestNextcloudProcessedLiveHTTPReadAndRevocation(t *testing.T) {
 	require.NoError(t, err)
 	sqlDB, err := db.DB()
 	require.NoError(t, err)
-	defer sqlDB.Close()
+	defer func() { require.NoError(t, sqlDB.Close()) }()
 	sqlDB.SetMaxOpenConns(1)
 	require.NoError(t, repository.InstallOriginalBodyRetentionCallbacks(db))
 	require.NoError(t, repository.NewOriginalBodyRetentionStore(db).VerifyJournalReady())

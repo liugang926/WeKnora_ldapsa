@@ -29,6 +29,7 @@ func canonicalMessageMaterialExcludedRequests(ids []string) []string {
 	return out
 }
 
+// WithMessageMaterialReadPlan binds message material read plan.
 func WithMessageMaterialReadPlan(ctx context.Context, plan *types.MessageMaterialReadPlan) (context.Context, error) {
 	if plan == nil || plan.MetadataDigest == "" || plan.SourceLineage.RequireComplete() != nil {
 		return ctx, types.ErrSourceLineageUnknown
@@ -51,6 +52,7 @@ func WithMessageMaterialReadPlan(ctx context.Context, plan *types.MessageMateria
 	return context.WithValue(ctx, messageMaterialPlanKey{}, plans), nil
 }
 
+// PeekMessageMaterialReadPlan reads message material read plan.
 func (s *KnowledgeInputProvenanceStore) PeekMessageMaterialReadPlan(
 	ctx context.Context,
 	req types.MessageMaterialReadRequest,
@@ -64,6 +66,7 @@ func (s *KnowledgeInputProvenanceStore) PeekMessageMaterialReadPlan(
 	return result, err
 }
 
+// CommittedMessageParentRequest commits ted message parent request.
 func (s *KnowledgeInputProvenanceStore) CommittedMessageParentRequest(
 	ctx context.Context,
 	tenant uint64,
@@ -96,6 +99,7 @@ func (s *KnowledgeInputProvenanceStore) CommittedMessageParentRequest(
 	return req, nil
 }
 
+// MessagePageMaterialRequest returns the message page material request result.
 func (s *KnowledgeInputProvenanceStore) MessagePageMaterialRequest(
 	ctx context.Context,
 	tenant uint64,
@@ -186,7 +190,8 @@ func (s *KnowledgeInputProvenanceStore) peekMessageMaterialReadPlanInTx(
 	// may supply those controls; a foreign partial write invalidates its receipt.
 	var controls []*types.MessageMaterialCandidateControl
 	cq := tx.Table("messages m").
-		Select("m.id,m.request_id,m.role,m.is_completed AS complete,m.created_at,a.id AS admission_id,a.generation_id,a.revision,v.revision AS current_revision").
+		Select(("m.id,m.request_id,m.role,m.is_completed AS complete,m.created_at,a.id AS a" +
+			"dmission_id,a.generation_id,a.revision,v.revision AS current_revision")).
 		Joins("LEFT JOIN message_material_receipts r ON r.message_id=m.id").
 		Joins("LEFT JOIN message_material_admissions a ON a.id=r.admission_id AND a.message_id=m.id").
 		Joins("LEFT JOIN message_material_versions v ON v.message_id=m.id").
@@ -291,7 +296,8 @@ func (s *KnowledgeInputProvenanceStore) peekMessageMaterialReadPlanInTx(
 		if tx.Migrator().HasTable("message_generated_field_admissions") {
 			if err := tx.Table("message_generated_field_admissions a").
 				Select(parentCopyMetadataSelect(tx, "a.parent_materials", true)+" AS parent_materials,a.source_lineage").
-				Joins("JOIN message_generated_field_receipts r ON r.admission_id=a.id AND r.message_id=a.message_id AND r.field=a.field").
+				Joins(("JOIN message_generated_field_receipts r ON r.admission_id=a.id AND r.messa" +
+					"ge_id=a.message_id AND r.field=a.field")).
 				Where("a.message_id=?", id.ID).
 				Scan(&fieldParents).
 				Error; err != nil {
@@ -791,7 +797,8 @@ func (s *KnowledgeInputProvenanceStore) captureMessageMaterialInTx(
 			var rows []struct{ SourceLineage string }
 			if err := tx.Table("message_generated_field_admissions a").
 				Select("a.source_lineage").
-				Joins("JOIN message_generated_field_receipts r ON r.admission_id=a.id AND r.message_id=a.message_id AND r.field=a.field").
+				Joins(("JOIN message_generated_field_receipts r ON r.admission_id=a.id AND r.messa" +
+					"ge_id=a.message_id AND r.field=a.field")).
 				Where("a.message_id=?", message.ID).
 				Scan(&rows).
 				Error; err != nil {
@@ -826,6 +833,7 @@ func (s *KnowledgeInputProvenanceStore) captureMessageMaterialInTx(
 	return result, nil
 }
 
+// CaptureMessageMaterialInputs captures message material inputs.
 func (s *KnowledgeInputProvenanceStore) CaptureMessageMaterialInputs(
 	ctx context.Context,
 	req types.MessageMaterialReadRequest,
@@ -839,6 +847,7 @@ func (s *KnowledgeInputProvenanceStore) CaptureMessageMaterialInputs(
 	return result, err
 }
 
+// RecheckMessageMaterialInputs rechecks message material inputs.
 func (s *KnowledgeInputProvenanceStore) RecheckMessageMaterialInputs(
 	ctx context.Context,
 	expected *types.MessageMaterialSnapshot,
@@ -861,6 +870,7 @@ func (s *KnowledgeInputProvenanceStore) RecheckMessageMaterialInputs(
 	})
 }
 
+// WithMessageMaterialReadPlans binds message material read plans.
 func WithMessageMaterialReadPlans(
 	ctx context.Context,
 	plans []*types.MessageMaterialReadPlan,
@@ -921,7 +931,8 @@ func (s *KnowledgeInputProvenanceStore) peekHistoryMaterialPlanForProofInTx(
 		return nil, types.ErrSourceLineageUnknown
 	}
 	var admission knowledgeInputAdmission
-	if err := tx.Select("admission_id,tenant_id,knowledge_base_id,knowledge_id,origin_kind,input_digest,build_generation").
+	if err := tx.Select(("admission_id,tenant_id,knowledge_base_id,knowledge_id,origin_kind,input_di" +
+		"gest,build_generation")).
 		Where("admission_id=? AND tenant_id=? AND knowledge_id=?", proof.AdmissionID, proof.TenantID, proof.KnowledgeID).
 		Take(&admission).
 		Error; err != nil {
@@ -949,6 +960,7 @@ func (s *KnowledgeInputProvenanceStore) peekHistoryMaterialPlanForProofInTx(
 	)
 }
 
+// MessageRequestControl returns the message request control result.
 // Identity/control only: no saved text or checkpoint is read here.
 func (s *KnowledgeInputProvenanceStore) MessageRequestControl(
 	ctx context.Context,
@@ -970,6 +982,7 @@ func (s *KnowledgeInputProvenanceStore) MessageRequestControl(
 	return row.RequestID, nil
 }
 
+// AdvanceMessageMaterialAfterOwnFieldWrite advances message material after own field write.
 func (s *KnowledgeInputProvenanceStore) AdvanceMessageMaterialAfterOwnFieldWrite(
 	ctx context.Context,
 	expected *types.MessageMaterialSnapshot,
@@ -993,7 +1006,8 @@ func (s *KnowledgeInputProvenanceStore) AdvanceMessageMaterialAfterOwnFieldWrite
 		var receipt messageGeneratedFieldAdmission
 		if err := tx.Table("message_generated_field_admissions a").
 			Select("a.*").
-			Joins("JOIN message_generated_field_receipts r ON r.admission_id=a.id AND r.message_id=a.message_id AND r.field=a.field").
+			Joins(("JOIN message_generated_field_receipts r ON r.admission_id=a.id AND r.messa" +
+				"ge_id=a.message_id AND r.field=a.field")).
 			Where("a.message_id=? AND a.session_id=? AND a.field=? AND a.body_digest=?", boundary.MessageID, boundary.SessionID, boundary.Field, boundary.Digest).
 			Take(&receipt).
 			Error; err != nil {
@@ -1095,6 +1109,7 @@ func (s *KnowledgeInputProvenanceStore) AdvanceMessageMaterialAfterOwnFieldWrite
 	return result, err
 }
 
+// MessageCompletionControl returns the message completion control result.
 func (s *KnowledgeInputProvenanceStore) MessageCompletionControl(
 	ctx context.Context,
 	sessionID, messageID string,

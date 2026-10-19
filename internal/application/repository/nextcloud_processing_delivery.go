@@ -17,6 +17,7 @@ import (
 	"gorm.io/gorm/clause"
 )
 
+// SignedFileStateV2 returns the signed file state v2 result.
 func (r *NextcloudEventInboxRepository) SignedFileStateV2(
 	ctx context.Context,
 	request SignedNextcloudFileStatusRequest,
@@ -132,6 +133,7 @@ func (r *NextcloudEventInboxRepository) SignedFileStateV2(
 	return body, responseSignature, err
 }
 
+// NextcloudStatusDelivery represents nextcloud status delivery repository data.
 type NextcloudStatusDelivery struct {
 	ConfigSHA, SecretCiphertext  string
 	State                        NextcloudFileStateV2
@@ -141,16 +143,24 @@ type NextcloudStatusDelivery struct {
 	Body                         []byte
 }
 
+// DueDeliveries returns the due deliveries result.
 func (s *NextcloudProcessingStateStore) DueDeliveries(ctx context.Context, now time.Time) ([]string, error) {
 	// Supersession is durable and local. A lost ACK for an older heartbeat need
 	// not hold newer verified snapshots or real stage changes behind retries.
 	if err := s.db.WithContext(ctx).
-		Exec("UPDATE nextcloud_status_outbox SET state='superseded' WHERE state='pending' AND EXISTS(SELECT 1 FROM nextcloud_file_states f WHERE f.connection_id=nextcloud_status_outbox.connection_id AND f.file_id=nextcloud_status_outbox.file_id AND f.publication_epoch=nextcloud_status_outbox.publication_epoch AND f.latest_event_id<>nextcloud_status_outbox.event_id)").
+		Exec(("UPDATE nextcloud_status_outbox SET state='superseded' WHERE state='pending" +
+			"' AND EXISTS(SELECT 1 FROM nextcloud_file_states f WHERE f.connection_id=n" +
+			"extcloud_status_outbox.connection_id AND f.file_id=nextcloud_status_outbox" +
+			".file_id AND f.publication_epoch=nextcloud_status_outbox.publication_epoch" +
+			" AND f.latest_event_id<>nextcloud_status_outbox.event_id)")).
 		Error; err != nil {
 		return nil, err
 	}
 	if err := s.db.WithContext(ctx).
-		Exec("UPDATE nextcloud_status_outbox SET state='superseded' WHERE state='pending' AND EXISTS(SELECT 1 FROM nextcloud_source_status_epochs e WHERE e.connection_id=nextcloud_status_outbox.connection_id AND e.publication_epoch>nextcloud_status_outbox.publication_epoch)").
+		Exec(("UPDATE nextcloud_status_outbox SET state='superseded' WHERE state='pending" +
+			"' AND EXISTS(SELECT 1 FROM nextcloud_source_status_epochs e WHERE e.connec" +
+			"tion_id=nextcloud_status_outbox.connection_id AND e.publication_epoch>next" +
+			"cloud_status_outbox.publication_epoch)")).
 		Error; err != nil {
 		return nil, err
 	}
@@ -165,6 +175,7 @@ func (s *NextcloudProcessingStateStore) DueDeliveries(ctx context.Context, now t
 	return ids, err
 }
 
+// PrepareDelivery prepares delivery.
 func (s *NextcloudProcessingStateStore) PrepareDelivery(
 	ctx context.Context,
 	event string,
@@ -267,6 +278,7 @@ func (s *NextcloudProcessingStateStore) PrepareDelivery(
 	return delivery, err
 }
 
+// FinishDelivery finishes delivery.
 func (s *NextcloudProcessingStateStore) FinishDelivery(
 	ctx context.Context,
 	event string,
@@ -374,6 +386,7 @@ func (s *NextcloudProcessingStateStore) RefreshSourceEpoch(ctx context.Context, 
 	})
 }
 
+// RefreshSources returns the refresh sources result.
 func (s *NextcloudProcessingStateStore) RefreshSources(ctx context.Context) error {
 	var ids []string
 	if err := s.db.WithContext(ctx).
@@ -391,6 +404,7 @@ func (s *NextcloudProcessingStateStore) RefreshSources(ctx context.Context) erro
 	return nil
 }
 
+// NextcloudFileStateResponseCanonical returns the nextcloud file state response canonical result.
 func NextcloudFileStateResponseCanonical(request SignedNextcloudFileStatusRequest, body []byte) []byte {
 	sum := sha256.Sum256(body)
 	return []byte(
@@ -484,6 +498,7 @@ func (s *NextcloudProcessingStateStore) PrepareDeliveryBatch(
 	return result, err
 }
 
+// DeliveryCurrent returns the delivery current result.
 func (s *NextcloudProcessingStateStore) DeliveryCurrent(
 	ctx context.Context,
 	delivery NextcloudStatusDelivery,
@@ -502,13 +517,25 @@ func (s *NextcloudProcessingStateStore) DeliveryCurrent(
 	var count int64
 	query := s.db.WithContext(ctx).
 		Table("nextcloud_status_outbox o").
-		Joins("JOIN nextcloud_file_states f ON f.connection_id=o.connection_id AND f.file_id=o.file_id AND f.publication_epoch=o.publication_epoch AND f.latest_event_id=o.event_id AND f.head_revision=o.head_revision AND f.status_revision=o.status_revision").
+		Joins(("JOIN nextcloud_file_states f ON f.connection_id=o.connection_id AND f.file" +
+			"_id=o.file_id AND f.publication_epoch=o.publication_epoch AND f.latest_eve" +
+			"nt_id=o.event_id AND f.head_revision=o.head_revision AND f.status_revision" +
+			"=o.status_revision")).
 		Joins("JOIN nextcloud_event_connections c ON c.connection_id=o.connection_id AND c.status='active'").
-		Joins("JOIN data_sources d ON d.id=c.datasource_id AND d.tenant_id=c.tenant_id AND d.knowledge_base_id=c.knowledge_base_id AND d.type='nextcloud' AND d.status='active' AND d.deleted_at IS NULL").
-		Joins("JOIN nextcloud_source_pairings p ON p.tenant_id=c.tenant_id AND p.knowledge_base_id=c.knowledge_base_id AND p.datasource_id=c.datasource_id AND p.state='active'").
+		Joins(("JOIN data_sources d ON d.id=c.datasource_id AND d.tenant_id=c.tenant_id AN" +
+			"D d.knowledge_base_id=c.knowledge_base_id AND d.type='nextcloud' AND d.sta" +
+			"tus='active' AND d.deleted_at IS NULL")).
+		Joins(("JOIN nextcloud_source_pairings p ON p.tenant_id=c.tenant_id AND p.knowledg" +
+			"e_base_id=c.knowledge_base_id AND p.datasource_id=c.datasource_id AND p.st" +
+			"ate='active'")).
 		Joins("LEFT JOIN nextcloud_source_status_epochs e ON e.connection_id=c.connection_id").
-		Joins("JOIN nextcloud_source_versions v ON v.tenant_id=c.tenant_id AND v.knowledge_base_id=c.knowledge_base_id AND v.datasource_id=c.datasource_id AND v.external_id=('nextcloud:' || c.nextcloud_instance_id || ':' || o.file_id)").
-		Where("o.event_id=? AND o.state='pending' AND c.current_key_id=? AND c.current_secret_ciphertext=? AND c.datasource_config_sha256=? AND p.operation_id=? AND COALESCE(e.publication_epoch,p.publication_epoch)=o.publication_epoch AND v.desired_etag=? AND COALESCE(v.candidate_knowledge_id,'')=?", delivery.EventID, delivery.KeyID, delivery.SecretCiphertext, delivery.ConfigSHA, state.PairOperationID, state.SourceETag, knowledge)
+		Joins(("JOIN nextcloud_source_versions v ON v.tenant_id=c.tenant_id AND v.knowledg" +
+			"e_base_id=c.knowledge_base_id AND v.datasource_id=c.datasource_id AND v.ex" +
+			"ternal_id=('nextcloud:' || c.nextcloud_instance_id || ':' || o.file_id)")).
+		Where(("o.event_id=? AND o.state='pending' AND c.current_key_id=? AND c.current_se" +
+			"cret_ciphertext=? AND c.datasource_config_sha256=? AND p.operation_id=? AN" +
+			"D COALESCE(e.publication_epoch,p.publication_epoch)=o.publication_epoch AN" +
+			"D v.desired_etag=? AND COALESCE(v.candidate_knowledge_id,'')=?"), delivery.EventID, delivery.KeyID, delivery.SecretCiphertext, delivery.ConfigSHA, state.PairOperationID, state.SourceETag, knowledge)
 	if s.contentRevisionSupported {
 		query = query.Where("v.desired_content_revision=?", state.SourceContentRevision)
 	} else if state.SourceContentRevision != "0" {
@@ -518,16 +545,25 @@ func (s *NextcloudProcessingStateStore) DeliveryCurrent(
 	return count == 1, err
 }
 
+// AcknowledgeCurrentDelivery returns the acknowledge current delivery result.
 func (s *NextcloudProcessingStateStore) AcknowledgeCurrentDelivery(
 	ctx context.Context,
 	event string,
 	now time.Time,
 ) error {
 	return s.db.WithContext(ctx).
-		Exec("UPDATE nextcloud_status_outbox SET state=CASE WHEN EXISTS(SELECT 1 FROM nextcloud_file_states f WHERE f.connection_id=nextcloud_status_outbox.connection_id AND f.file_id=nextcloud_status_outbox.file_id AND f.publication_epoch=nextcloud_status_outbox.publication_epoch AND f.latest_event_id=nextcloud_status_outbox.event_id AND f.head_revision=nextcloud_status_outbox.head_revision AND f.status_revision=nextcloud_status_outbox.status_revision) THEN 'delivered' ELSE 'superseded' END,delivered_at=?,last_error_code='' WHERE event_id=? AND state='pending'", now.Unix(), event).
+		Exec(("UPDATE nextcloud_status_outbox SET state=CASE WHEN EXISTS(SELECT 1 FROM ne" +
+			"xtcloud_file_states f WHERE f.connection_id=nextcloud_status_outbox.connec" +
+			"tion_id AND f.file_id=nextcloud_status_outbox.file_id AND f.publication_ep" +
+			"och=nextcloud_status_outbox.publication_epoch AND f.latest_event_id=nextcl" +
+			"oud_status_outbox.event_id AND f.head_revision=nextcloud_status_outbox.hea" +
+			"d_revision AND f.status_revision=nextcloud_status_outbox.status_revision) " +
+			"THEN 'delivered' ELSE 'superseded' END,delivered_at=?,last_error_code='' W" +
+			"HERE event_id=? AND state='pending'"), now.Unix(), event).
 		Error
 }
 
+// AcknowledgeCurrentDeliveries returns the acknowledge current deliveries result.
 func (s *NextcloudProcessingStateStore) AcknowledgeCurrentDeliveries(
 	ctx context.Context,
 	events []string,
@@ -537,6 +573,13 @@ func (s *NextcloudProcessingStateStore) AcknowledgeCurrentDeliveries(
 		return nil
 	}
 	return s.db.WithContext(ctx).
-		Exec("UPDATE nextcloud_status_outbox SET state=CASE WHEN EXISTS(SELECT 1 FROM nextcloud_file_states f WHERE f.connection_id=nextcloud_status_outbox.connection_id AND f.file_id=nextcloud_status_outbox.file_id AND f.publication_epoch=nextcloud_status_outbox.publication_epoch AND f.latest_event_id=nextcloud_status_outbox.event_id AND f.head_revision=nextcloud_status_outbox.head_revision AND f.status_revision=nextcloud_status_outbox.status_revision) THEN 'delivered' ELSE 'superseded' END,delivered_at=?,last_error_code='' WHERE event_id IN ? AND state='pending'", now.Unix(), events).
+		Exec(("UPDATE nextcloud_status_outbox SET state=CASE WHEN EXISTS(SELECT 1 FROM ne" +
+			"xtcloud_file_states f WHERE f.connection_id=nextcloud_status_outbox.connec" +
+			"tion_id AND f.file_id=nextcloud_status_outbox.file_id AND f.publication_ep" +
+			"och=nextcloud_status_outbox.publication_epoch AND f.latest_event_id=nextcl" +
+			"oud_status_outbox.event_id AND f.head_revision=nextcloud_status_outbox.hea" +
+			"d_revision AND f.status_revision=nextcloud_status_outbox.status_revision) " +
+			"THEN 'delivered' ELSE 'superseded' END,delivered_at=?,last_error_code='' W" +
+			"HERE event_id IN ? AND state='pending'"), now.Unix(), events).
 		Error
 }

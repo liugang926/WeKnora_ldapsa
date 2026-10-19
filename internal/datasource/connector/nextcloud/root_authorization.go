@@ -14,6 +14,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/types"
 )
 
+// AuthorizeCurrentRoot checks the signed current-root authorization response.
 func AuthorizeCurrentRoot(
 	ctx context.Context,
 	source *types.DataSourceConfig,
@@ -35,7 +36,7 @@ func AuthorizeCurrentRoot(
 	cli := &client{cfg: cfg, http: authorizationHTTPClient}
 	capabilities, err := cli.capabilities(ctx)
 	if err != nil || capabilities.InstanceID != instance {
-		return fmt.Errorf("Nextcloud root instance is unavailable")
+		return fmt.Errorf("nextcloud root instance is unavailable")
 	}
 	body, err := json.Marshal(map[string]string{"directory_id": directory, "object_guid": strings.ToLower(guid)})
 	if err != nil {
@@ -56,15 +57,15 @@ func AuthorizeCurrentRoot(
 	}
 	response, err := cli.http.Do(req)
 	if err != nil {
-		return fmt.Errorf("Nextcloud root authorization unavailable")
+		return fmt.Errorf("nextcloud root authorization unavailable")
 	}
 	defer closeNextcloudResponseBody(ctx, response.Body)
 	if response.StatusCode != http.StatusOK {
-		return fmt.Errorf("Nextcloud root authorization denied")
+		return fmt.Errorf("nextcloud root authorization denied")
 	}
 	raw, err := io.ReadAll(io.LimitReader(response.Body, maxAuthorizationResponseBytes+1))
 	if err != nil || len(raw) > maxAuthorizationResponseBytes {
-		return fmt.Errorf("Nextcloud root authorization unavailable")
+		return fmt.Errorf("nextcloud root authorization unavailable")
 	}
 	var wire struct {
 		Allow            *bool  `json:"allow"`
@@ -79,13 +80,13 @@ func AuthorizeCurrentRoot(
 	if json.Unmarshal(raw, &wire) != nil || wire.Allow == nil || !*wire.Allow || wire.Reason != "authorized" ||
 		wire.BindingID != binding ||
 		wire.DirectoryID != directory ||
-		strings.ToLower(wire.ObjectGUID) != strings.ToLower(guid) ||
+		!strings.EqualFold(wire.ObjectGUID, guid) ||
 		wire.PublicationEpoch == "" ||
 		wire.PolicyRevision == "" ||
 		wire.CheckedAt <= 0 ||
 		wire.CheckedAt < time.Now().Add(-5*time.Minute).Unix() ||
 		wire.CheckedAt > time.Now().Add(5*time.Minute).Unix() {
-		return fmt.Errorf("Nextcloud root authorization denied")
+		return fmt.Errorf("nextcloud root authorization denied")
 	}
 	if n, err := strconv.ParseInt(
 		wire.PublicationEpoch,

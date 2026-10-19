@@ -126,6 +126,7 @@ func (h *NextcloudSourcePairingHandler) RetryRotation(c *gin.Context) {
 	h.continueRotation(c, rotation, config, false)
 }
 
+// AbortRotation aborts the current source credential rotation operation.
 // Abort is a signed remote compare-and-swap: only an uncommitted rotation can
 // be discarded. The old source credential signs the request and stays active.
 func (h *NextcloudSourcePairingHandler) AbortRotation(c *gin.Context) {

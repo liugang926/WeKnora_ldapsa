@@ -121,7 +121,7 @@ func (e *AgentEngine) drainSteerMessages(
 	if err != nil {
 		logger.Warnf(ctx, "[Agent] Steer poll failed at round %d: %v", state.CurrentRound+1, err)
 		if !fixture {
-			e.rememberLineageFailure(err)
+			logger.Debugf(ctx, "[Agent] Steer material rejected: %v", e.rememberLineageFailure(err))
 		}
 		return 0
 	}
@@ -140,8 +140,8 @@ func (e *AgentEngine) drainSteerMessages(
 		var lineage *types.SourceLineage
 		if actual {
 			var check func() error
-			var close func()
-			userMessageID, lineage, check, close, err = actualSink.PersistSteerMaterial(
+			var closeRead func()
+			userMessageID, lineage, check, closeRead, err = actualSink.PersistSteerMaterial(
 				ctx,
 				sessionID,
 				messageID,
@@ -151,11 +151,15 @@ func (e *AgentEngine) drainSteerMessages(
 				getString(evt, "channel"),
 			)
 			if err != nil {
-				e.rememberLineageFailure(err)
+				logger.Debugf(ctx, "[Agent] Steer material rejected: %v", e.rememberLineageFailure(err))
 				return injected
 			}
-			if userMessageID == "" || check == nil || close == nil || lineage.RequireComplete() != nil {
-				e.rememberLineageFailure(types.ErrSourceLineageUnknown)
+			if userMessageID == "" || check == nil || closeRead == nil || lineage.RequireComplete() != nil {
+				logger.Debugf(
+					ctx,
+					"[Agent] Steer material rejected: %v",
+					e.rememberLineageFailure(types.ErrSourceLineageUnknown),
+				)
 				return injected
 			}
 			// Keep a private receipt for the exact input, then validate the live
@@ -163,11 +167,11 @@ func (e *AgentEngine) drainSteerMessages(
 			// closing here would invalidate the next model/output boundary.
 			lineage, err = types.UnionSourceLineage(lineage)
 			if err != nil {
-				e.rememberLineageFailure(err)
+				logger.Debugf(ctx, "[Agent] Steer material rejected: %v", e.rememberLineageFailure(err))
 				return injected
 			}
 			if err := check(); err != nil {
-				e.rememberLineageFailure(err)
+				logger.Debugf(ctx, "[Agent] Steer material rejected: %v", e.rememberLineageFailure(err))
 				return injected
 			}
 			if err := e.addLineage(lineage); err != nil {
@@ -185,7 +189,11 @@ func (e *AgentEngine) drainSteerMessages(
 			}
 			lineage = independentAgentInput()
 		} else {
-			e.rememberLineageFailure(types.ErrSourceLineageUnknown)
+			logger.Debugf(
+				ctx,
+				"[Agent] Steer material rejected: %v",
+				e.rememberLineageFailure(types.ErrSourceLineageUnknown),
+			)
 			return injected
 		}
 		*messagesPtr = append(*messagesPtr, chat.Message{

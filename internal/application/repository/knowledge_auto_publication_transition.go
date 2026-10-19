@@ -177,7 +177,8 @@ func knowledgeAutoPublicationTail(tx *gorm.DB, saved *types.KnowledgeAutoTagInpu
 		return 0, "", err
 	}
 	var receipts []knowledgeAutoPublicationTransition
-	if err := tx.Where("snapshot_id=? AND tenant_id=? AND knowledge_base_id=? AND knowledge_id=? AND admission_id=?", saved.ManifestID, proof.TenantID, proof.KnowledgeBaseID, proof.KnowledgeID, proof.AdmissionID).
+	if err := tx.Where(("snapshot_id=? AND tenant_id=? AND knowledge_base_id=? AND knowledge_id=? A" +
+		"ND admission_id=?"), saved.ManifestID, proof.TenantID, proof.KnowledgeBaseID, proof.KnowledgeID, proof.AdmissionID).
 		Order("before_revision ASC").
 		Find(&receipts).
 		Error; err != nil {

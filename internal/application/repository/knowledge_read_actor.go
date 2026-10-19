@@ -25,6 +25,7 @@ func (r *knowledgeRepository) RefreshCurrentReadActor(ctx context.Context) (cont
 	return r.currentReadActor.RefreshCurrentReadActor(ctx)
 }
 
+// RefreshCurrentReadActor returns the refresh current read actor result.
 func (s *KnowledgeInputProvenanceStore) RefreshCurrentReadActor(ctx context.Context) (context.Context, error) {
 	if marker, ok := ctx.Value(knowledgeCurrentProducerWriteKey{}).(knowledgeCurrentProducerWrite); ok {
 		return s.refreshKnowledgeCurrentProducerWrite(ctx, marker)

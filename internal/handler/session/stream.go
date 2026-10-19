@@ -153,7 +153,7 @@ func (h *Handler) ContinueStream(c *gin.Context) {
 		if h.tryNativeSavedReplay(ctx, c, sessionID, messageID, resourceRewriter) {
 			return
 		}
-		c.Error(replayPublicationHTTPError(access.ErrNextcloudPublicationUnavailable))
+		_ = c.Error(replayPublicationHTTPError(access.ErrNextcloudPublicationUnavailable))
 		return
 	}
 
@@ -312,8 +312,8 @@ func checkReplayPublication(
 	if !ok {
 		return access.ErrNextcloudPublicationUnavailable
 	}
-	copy := *message
-	if copy.SourceLineage.RequireComplete() != nil {
+	copied := *message
+	if copied.SourceLineage.RequireComplete() != nil {
 		return access.ErrNextcloudPublicationDenied
 	}
 	for _, frame := range events {
@@ -323,16 +323,16 @@ func checkReplayPublication(
 		if frame.SourceLineage.RequireComplete() != nil {
 			return access.ErrNextcloudPublicationDenied
 		}
-		union, err := types.UnionSourceLineage(copy.SourceLineage, frame.SourceLineage)
-		if err != nil || len(union.Sources) != len(copy.SourceLineage.Sources) {
+		union, err := types.UnionSourceLineage(copied.SourceLineage, frame.SourceLineage)
+		if err != nil || len(union.Sources) != len(copied.SourceLineage.Sources) {
 			return access.ErrNextcloudPublicationDenied
 		}
 	}
-	copy.KnowledgeReferences = append(types.References(nil), message.KnowledgeReferences...)
+	copied.KnowledgeReferences = append(types.References(nil), message.KnowledgeReferences...)
 	for _, streamEvent := range events {
 		if streamEvent.Type == types.ResponseTypeReferences {
 			response := buildStreamResponse(streamEvent, message.RequestID)
-			copy.KnowledgeReferences = append(copy.KnowledgeReferences, response.KnowledgeReferences...)
+			copied.KnowledgeReferences = append(copied.KnowledgeReferences, response.KnowledgeReferences...)
 		}
 		// Old Redis frames may contain tool output not yet copied to the row.
 		// Such a saved Agent replay remains globally guarded even without AgentID.
@@ -340,18 +340,18 @@ func checkReplayPublication(
 			name, _ := streamEvent.Data["tool_name"].(string)
 			id, _ := streamEvent.Data["tool_call_id"].(string)
 			if !types.IsPipelineToolCallID(id) && !syntheticHistoryStreamCall(message, id) && name != "final_answer" {
-				copy.AgentSteps = append(
-					copy.AgentSteps,
+				copied.AgentSteps = append(
+					copied.AgentSteps,
 					types.AgentStep{ToolCalls: []types.ToolCall{{ID: id, Name: name}}},
 				)
 			}
 		}
 	}
-	if err := verifier.CheckMessagePublication(ctx, &copy); err != nil {
+	if err := verifier.CheckMessagePublication(ctx, &copied); err != nil {
 		return err
 	}
-	message.KnowledgeReferences = copy.KnowledgeReferences
-	message.AgentSteps = copy.AgentSteps
+	message.KnowledgeReferences = copied.KnowledgeReferences
+	message.AgentSteps = copied.AgentSteps
 	return nil
 }
 
@@ -833,7 +833,7 @@ func checkLiveStreamPublication(
 	if message == nil {
 		return access.ErrNextcloudPublicationUnavailable
 	}
-	copy := *message
+	copied2 := *message
 	for _, frame := range events {
 		if !liveBatchNeedsPublicationCheck([]interfaces.StreamEvent{frame}) {
 			continue
@@ -841,19 +841,19 @@ func checkLiveStreamPublication(
 		if frame.SourceLineage.RequireComplete() != nil {
 			return access.ErrNextcloudPublicationDenied
 		}
-		if copy.SourceLineage.RequireComplete() != nil {
-			copy.SourceLineage, _ = types.UnionSourceLineage(frame.SourceLineage)
+		if copied2.SourceLineage.RequireComplete() != nil {
+			copied2.SourceLineage, _ = types.UnionSourceLineage(frame.SourceLineage)
 		} else {
 			var err error
-			copy.SourceLineage, err = types.UnionSourceLineage(copy.SourceLineage, frame.SourceLineage)
+			copied2.SourceLineage, err = types.UnionSourceLineage(copied2.SourceLineage, frame.SourceLineage)
 			if err != nil {
 				return access.ErrNextcloudPublicationDenied
 			}
 		}
 	}
-	copy.KnowledgeReferences = append(types.References(nil), message.KnowledgeReferences...)
-	seen := make(map[string]struct{}, len(copy.KnowledgeReferences))
-	for _, ref := range copy.KnowledgeReferences {
+	copied2.KnowledgeReferences = append(types.References(nil), message.KnowledgeReferences...)
+	seen := make(map[string]struct{}, len(copied2.KnowledgeReferences))
+	for _, ref := range copied2.KnowledgeReferences {
 		if ref != nil && ref.KnowledgeID != "" {
 			seen[ref.KnowledgeID] = struct{}{}
 		}
@@ -866,12 +866,12 @@ func checkLiveStreamPublication(
 					continue
 				}
 				if ref.KnowledgeID == "" {
-					copy.KnowledgeReferences = append(copy.KnowledgeReferences, ref)
+					copied2.KnowledgeReferences = append(copied2.KnowledgeReferences, ref)
 					continue
 				}
 				if _, exists := seen[ref.KnowledgeID]; !exists {
 					seen[ref.KnowledgeID] = struct{}{}
-					copy.KnowledgeReferences = append(copy.KnowledgeReferences, ref)
+					copied2.KnowledgeReferences = append(copied2.KnowledgeReferences, ref)
 				}
 			}
 		}
@@ -885,16 +885,19 @@ func checkLiveStreamPublication(
 			for id := range ids {
 				if _, exists := seen[id]; !exists {
 					seen[id] = struct{}{}
-					copy.KnowledgeReferences = append(copy.KnowledgeReferences, &types.SearchResult{KnowledgeID: id})
+					copied2.KnowledgeReferences = append(
+						copied2.KnowledgeReferences,
+						&types.SearchResult{KnowledgeID: id},
+					)
 				}
 			}
 		}
 	}
-	if err := verifier.CheckLiveMessagePublication(ctx, &copy); err != nil {
+	if err := verifier.CheckLiveMessagePublication(ctx, &copied2); err != nil {
 		return err
 	}
-	message.KnowledgeReferences = copy.KnowledgeReferences
-	message.SourceLineage = copy.SourceLineage
+	message.KnowledgeReferences = copied2.KnowledgeReferences
+	message.SourceLineage = copied2.SourceLineage
 	return nil
 }
 

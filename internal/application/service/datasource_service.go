@@ -1313,7 +1313,7 @@ func (s *DataSourceService) checkNextcloudSyncActive(
 	observedInstanceID ...string,
 ) (bool, error) {
 	if s.dsRepo == nil || payload.DataSourceID == "" {
-		return false, errors.New("Nextcloud current data source unavailable")
+		return false, errors.New("nextcloud current data source unavailable")
 	}
 	currentSource, err := s.GetDataSource(ctx, payload.DataSourceID)
 	if err != nil {
@@ -1321,7 +1321,7 @@ func (s *DataSourceService) checkNextcloudSyncActive(
 	}
 	if currentSource == nil || currentSource.TenantID != payload.TenantID ||
 		currentSource.Type != types.ConnectorTypeNextcloud {
-		return false, errors.New("Nextcloud current data source scope changed")
+		return false, errors.New("nextcloud current data source scope changed")
 	}
 	if currentSource.Status == types.DataSourceStatusPaused {
 		return true, fmt.Errorf("%w: source admission paused", asynq.SkipRetry)
@@ -1717,7 +1717,7 @@ var errNextcloudStreamCanceled = apperrors.NewProtocolError(errors.New(
 ), "Nextcloud stream canceled")
 
 func (h *streamSyncHandler) ObserveNextcloudPublicationEpoch(
-	ctx context.Context,
+	_ context.Context,
 	instance, binding string,
 	epoch int64,
 ) error {
@@ -2331,7 +2331,7 @@ func (s *DataSourceService) ingestItem(
 		metadata["source_resource_id"] = item.SourceResourceID
 		if observed, ok := ctx.Value(nextcloudObservedEpochKey{}).(nextcloudObservedEpoch); ok {
 			if observed.dataSourceID != ds.ID || observed.epoch < 0 {
-				return false, errors.New("Nextcloud observed publication scope changed")
+				return false, errors.New("nextcloud observed publication scope changed")
 			}
 			metadata["nextcloud_publication_epoch"] = strconv.FormatInt(observed.epoch, 10)
 		}
@@ -2697,6 +2697,7 @@ func timePtr(t time.Time) *time.Time {
 	return &utc
 }
 
+// PublishTargetMigrationCandidates publishes candidates under the current target migration controls.
 func (s *DataSourceService) PublishTargetMigrationCandidates(
 	ctx context.Context,
 	row apprepo.NextcloudTargetMigration,

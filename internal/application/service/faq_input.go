@@ -9,6 +9,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 )
 
+// ConfigureFAQInputProvenance configures the faqinput provenance boundary.
 func ConfigureFAQInputProvenance(
 	knowledge interfaces.KnowledgeService,
 	store *repository.KnowledgeInputProvenanceStore,

@@ -43,7 +43,8 @@ func TestNextcloudControlledTenThousandFileProcessingPipeline(t *testing.T) {
 		external := "nextcloud:instance:" + file
 		body := []byte(
 			fmt.Sprintf(
-				"Synthetic source file %d: Alice knows Bob. This plaintext is actually admitted, chunked and processed.",
+				("Synthetic source file %d: Alice knows Bob. This plaintext is actually admi" +
+					"tted, chunked and processed."),
 				i,
 			),
 		)
@@ -133,7 +134,7 @@ func TestNextcloudControlledTenThousandFileProcessingPipeline(t *testing.T) {
 			},
 		)
 		require.NoError(t, err)
-		require.NoError(t, pipelineExtractTask(t, db, inputs, state, provider, ctx, snapshot.Proof, doc, model))
+		require.NoError(t, pipelineExtractTask(ctx, t, db, inputs, state, provider, snapshot.Proof, doc, model))
 		require.NoError(t, leases.ReleaseLease(context.Background(), lease.ID))
 		latencies = append(latencies, time.Since(one))
 		if (i+1)%1000 == 0 {
@@ -177,13 +178,18 @@ func TestNextcloudControlledTenThousandFileProcessingPipeline(t *testing.T) {
 	require.NoError(
 		t,
 		db.Table("nextcloud_file_states").
-			Where("connection_id=? AND CAST(file_id AS INTEGER)>=1000 AND CAST(file_id AS INTEGER)<? AND json_extract(payload_json,'$.publication_state')='published' AND json_extract(payload_json,'$.graph.persisted')=1", "pipeline-connection-0001", 1000+count).
+			Where(("connection_id=? AND CAST(file_id AS INTEGER)>=1000 AND CAST(file_id AS INT"+
+				"EGER)<? AND json_extract(payload_json,'$.publication_state')='published' A"+
+				"ND json_extract(payload_json,'$.graph.persisted')=1"), "pipeline-connection-0001", 1000+count).
 			Count(&states).
 			Error,
 	)
 	require.EqualValues(t, count, states)
 	t.Logf(
-		"real_file_heads=%d real_chunk_extract_calls=%d real_graph_records=%d durable_task_acks=%d exact_graph_resources=%d published=%d elapsed_ms=%d files_per_second=%.2f; controlled small plaintext/source/model; embedding explicitly skipped; excludes liveNC/LDAP/remoteLLM/100GB source transfer",
+		("real_file_heads=%d real_chunk_extract_calls=%d real_graph_records=%d durab" +
+			"le_task_acks=%d exact_graph_resources=%d published=%d elapsed_ms=%d files_" +
+			"per_second=%.2f; controlled small plaintext/source/model; embedding explic" +
+			"itly skipped; excludes liveNC/LDAP/remoteLLM/100GB source transfer"),
 		count,
 		model.calls,
 		records,

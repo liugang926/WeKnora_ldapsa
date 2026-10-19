@@ -57,7 +57,7 @@ func TestNextcloudSameETagHigherContentRevisionFetchesNewSnapshot(t *testing.T) 
 }
 
 func TestNextcloudDownloadContentRevisionMismatchRejectsArtifact(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("ETag", "same")
 		w.Header().Set("X-Nextcloud-Content-Revision", "2")
 		writeNextcloudTestResponse(t, w, "newer bytes")

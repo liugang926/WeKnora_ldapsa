@@ -57,9 +57,9 @@ func steerMaterialActualFixture(
 }
 
 func actualSteerInput(
-	t *testing.T,
+	ctx context.Context, t *testing.T,
 	messages *messageService,
-	ctx context.Context,
+
 	session *types.Session,
 	run *types.Message,
 ) (*types.SteerMaterialInput, context.Context) {
@@ -89,7 +89,7 @@ func TestSteerMaterialActualAuthoredVaultReadPromoteAndActorControlABA(t *testin
 	for _, change := range []string{"positive", "control_aba", "actor_revoke"} {
 		t.Run(change, func(t *testing.T) {
 			messages, _, db, ctx, session, run := steerMaterialActualFixture(t, false)
-			input, _ := actualSteerInput(t, messages, ctx, session, run)
+			input, _ := actualSteerInput(ctx, t, messages, session, run)
 			var storage string
 			require.NoError(
 				t,
@@ -118,9 +118,9 @@ func TestSteerMaterialActualAuthoredVaultReadPromoteAndActorControlABA(t *testin
 				RunGenerationID: input.Proof.OriginRunGenerationID,
 				Use:             types.SteerMaterialInject,
 			}
-			snapshot, check, close, err := messages.BeginSteerMaterialRead(ctx, request)
+			snapshot, check, closeRead, err := messages.BeginSteerMaterialRead(ctx, request)
 			require.NoError(t, err)
-			defer close()
+			defer closeRead()
 			require.Len(t, snapshot.Inputs, 1)
 			require.Equal(t, input.Query, snapshot.Inputs[0].Query)
 			require.Equal(t, next.HeadID, snapshot.Inputs[0].Control.HeadID)
@@ -163,7 +163,7 @@ func TestSteerMaterialActualRollbackRefusesProofDeletion(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			messages, _, db, ctx, session, run := steerMaterialActualFixture(t, pg)
-			input, _ := actualSteerInput(t, messages, ctx, session, run)
+			input, _ := actualSteerInput(ctx, t, messages, session, run)
 			discarded, err := messages.ApplyActualSteerControl(ctx, &types.SteerControlRequest{
 				TenantID: session.TenantID, SessionID: session.ID, SteerID: input.Proof.SteerID,
 				OriginalAdmissionID: input.Proof.OriginID, ExpectedHeadID: input.Control.HeadID,
@@ -228,7 +228,7 @@ func TestSteerMaterialActualFollowUpKeepsOriginalAndBindsExactNewInitial(t *test
 		}
 		t.Run(name, func(t *testing.T) {
 			messages, _, db, base, session, old := steerMaterialActualFixture(t, pg)
-			input, _ := actualSteerInput(t, messages, base, session, old)
+			input, _ := actualSteerInput(base, t, messages, session, old)
 			ctx, _, _, closeOld := BeginMessageMaterialHTTPBoundary(base)
 			defer closeOld()
 			ctx = context.WithValue(ctx, agentHistoryCurrentRequestKey{}, old.RequestID)
@@ -317,7 +317,7 @@ func TestSteerMaterialActualFollowUpKeepsOriginalAndBindsExactNewInitial(t *test
 
 func runSteerActualConsume(t *testing.T, pg bool) {
 	messages, _, db, ctx, session, run := steerMaterialActualFixture(t, pg)
-	input, _ := actualSteerInput(t, messages, ctx, session, run)
+	input, _ := actualSteerInput(ctx, t, messages, session, run)
 	_, err := messages.ApplyActualSteerControl(
 		ctx,
 		&types.SteerControlRequest{
@@ -360,7 +360,7 @@ func runSteerActualConsume(t *testing.T, pg bool) {
 	require.NoError(t, messages.bindInitialMessageMaterial(ctx, run.ID, initial.ID, run.RequestID))
 	_, err = messages.admittedMessagePage(ctx, session.ID, time.Time{}, 20, 1, false)
 	require.NoError(t, err)
-	message, proof, check, close, err := messages.ConsumeActualSteerIntoMessage(
+	message, proof, check, closeRead2, err := messages.ConsumeActualSteerIntoMessage(
 		ctx,
 		snapshot.Inputs[0],
 		run.ID,
@@ -368,7 +368,7 @@ func runSteerActualConsume(t *testing.T, pg bool) {
 		run.RequestID,
 	)
 	require.NoError(t, err)
-	defer close()
+	defer closeRead2()
 	require.Equal(t, input.Query, message.Content)
 	require.Equal(t, proof.PreviousMembershipRevision+1, proof.ResultMembershipRevision)
 	require.NoError(t, check())
@@ -456,8 +456,8 @@ func TestSteerMaterialActualAuthoredRetryRawMentionAndChannelCannotBeReSigned(t 
 
 func TestSteerMaterialActualUnseenCandidateControlAndMissingBodyLeaseReject(t *testing.T) {
 	messages, store, db, ctx, session, run := steerMaterialActualFixture(t, false)
-	first, _ := actualSteerInput(t, messages, ctx, session, run)
-	second, _ := actualSteerInput(t, messages, ctx, session, run)
+	first, _ := actualSteerInput(ctx, t, messages, session, run)
+	second, _ := actualSteerInput(ctx, t, messages, session, run)
 	promoted, err := messages.ApplyActualSteerControl(
 		ctx,
 		&types.SteerControlRequest{
@@ -487,9 +487,9 @@ func TestSteerMaterialActualUnseenCandidateControlAndMissingBodyLeaseReject(t *t
 	require.NoError(t, err)
 	_, err = store.CaptureSteerMaterial(noBodyLease, plan)
 	require.Error(t, err)
-	snapshot, check, close, err := messages.BeginSteerMaterialRead(ctx, request)
+	snapshot, check, closeRead3, err := messages.BeginSteerMaterialRead(ctx, request)
 	require.NoError(t, err)
-	defer close()
+	defer closeRead3()
 	require.Len(t, snapshot.Inputs, 1)
 	require.Equal(t, promoted.HeadID, snapshot.Inputs[0].Control.HeadID)
 	require.NoError(
@@ -511,7 +511,7 @@ func TestSteerMaterialActualUnseenCandidateControlAndMissingBodyLeaseReject(t *t
 
 func TestSteerMaterialActualNoKBVaultLeaseBlocksPurgeThenJournalDeniesOldInput(t *testing.T) {
 	messages, _, db, ctx, session, run := steerMaterialActualFixture(t, false)
-	input, _ := actualSteerInput(t, messages, ctx, session, run)
+	input, _ := actualSteerInput(ctx, t, messages, session, run)
 	request := &types.SteerMaterialRequest{
 		TenantID:        7,
 		SessionID:       session.ID,
@@ -519,14 +519,15 @@ func TestSteerMaterialActualNoKBVaultLeaseBlocksPurgeThenJournalDeniesOldInput(t
 		RunGenerationID: input.Proof.OriginRunGenerationID,
 		Use:             types.SteerMaterialPending,
 	}
-	snapshot, check, close, err := messages.BeginSteerMaterialRead(ctx, request)
+	snapshot, check, closeRead4, err := messages.BeginSteerMaterialRead(ctx, request)
 	require.NoError(t, err)
 	require.Len(t, snapshot.Inputs, 1)
 	require.NoError(t, check())
 	var bodyID string
 	require.NoError(
 		t,
-		db.Raw("SELECT body_id FROM original_body_field_heads WHERE source_table='steer_authored_origins' AND row_key=?", input.Proof.OriginID).
+		db.Raw(("SELECT body_id FROM original_body_field_heads WHERE source_table='steer_au"+
+			"thored_origins' AND row_key=?"), input.Proof.OriginID).
 			Scan(&bodyID).
 			Error,
 	)
@@ -551,7 +552,7 @@ func TestSteerMaterialActualNoKBVaultLeaseBlocksPurgeThenJournalDeniesOldInput(t
 	require.NoError(t, db.Raw("SELECT state FROM original_body_payloads WHERE id=?", bodyID).Scan(&state).Error)
 	require.Equal(t, "live", state)
 	require.Error(t, check(), "lease never grants permission after actual session closure")
-	close()
+	closeRead4()
 	_, err = retention.PurgeDue(context.Background(), 100)
 	require.NoError(t, err)
 	require.NoError(t, db.Raw("SELECT state FROM original_body_payloads WHERE id=?", bodyID).Scan(&state).Error)

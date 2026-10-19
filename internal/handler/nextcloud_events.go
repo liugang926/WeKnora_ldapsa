@@ -204,7 +204,7 @@ func validNextcloudOpaqueID(value string, minLength, maxLength int) bool {
 		return false
 	}
 	for _, ch := range value {
-		if !(ch >= 'A' && ch <= 'Z' || ch >= 'a' && ch <= 'z' || ch >= '0' && ch <= '9' || ch == '_' || ch == '-') {
+		if (ch < 'A' || ch > 'Z') && (ch < 'a' || ch > 'z') && (ch < '0' || ch > '9') && ch != '_' && ch != '-' {
 			return false
 		}
 	}
@@ -228,7 +228,7 @@ func isLowerHex(raw string, expectedLength int) bool {
 		return false
 	}
 	for _, ch := range raw {
-		if !(ch >= '0' && ch <= '9' || ch >= 'a' && ch <= 'f') {
+		if (ch < '0' || ch > '9') && (ch < 'a' || ch > 'f') {
 			return false
 		}
 	}

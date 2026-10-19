@@ -76,7 +76,8 @@ func TestKnowledgeGraphExtractorAccountsActualWireAndIgnoresModelAuthority(t *te
 		require.Len(t, msg[0].SourceLineage.Sources, 2)
 		require.Equal(t, 0.3, opts.Temperature)
 		return &types.ChatResponse{
-			Content: `[{"entity":"citation-free","source_receipt":{"source_lineage":{"version":1,"state":"complete","sources":[]}}}]`,
+			Content: ("[{\"entity\":\"citation-free\",\"source_receipt\":{\"source_lineage\":{\"v" +
+				"ersion\":1,\"state\":\"complete\",\"sources\":[]}}}]"),
 		}, nil
 	}}
 	extractor := NewExtractor(model, template)

@@ -66,7 +66,7 @@ func (e *AgentEngine) streamFinalAnswerToEventBus(
 			}
 			if chunk.Content != "" {
 				logger.Debugf(ctx, "[Agent][FinalAnswer] Emitting answer chunk: %d chars", len(chunk.Content))
-				e.emitEvent(ctx, event.Event{
+				if err := e.emitEvent(ctx, event.Event{
 					ID:        answerID,
 					Type:      event.EventAgentFinalAnswer,
 					SessionID: sessionID,
@@ -74,13 +74,18 @@ func (e *AgentEngine) streamFinalAnswerToEventBus(
 						Content: chunk.Content,
 						Done:    chunk.Done,
 					},
-				})
+				}); err != nil {
+					return
+				}
 				if chunk.Done {
 					answerDoneEmitted = true
 				}
 			}
 		},
 	)
+	if boundaryErr := e.lineageFailure(); boundaryErr != nil {
+		return boundaryErr
+	}
 	if err != nil {
 		logger.Errorf(ctx, "[Agent][FinalAnswer] Final answer generation failed: %v", err)
 		common.PipelineError(ctx, "Agent", "final_answer_stream_failed", map[string]interface{}{
@@ -91,7 +96,7 @@ func (e *AgentEngine) streamFinalAnswerToEventBus(
 	}
 
 	if !answerDoneEmitted {
-		e.emitEvent(ctx, event.Event{
+		if err := e.emitEvent(ctx, event.Event{
 			ID:        answerID,
 			Type:      event.EventAgentFinalAnswer,
 			SessionID: sessionID,
@@ -99,7 +104,9 @@ func (e *AgentEngine) streamFinalAnswerToEventBus(
 				Content: "",
 				Done:    true,
 			},
-		})
+		}); err != nil {
+			return err
+		}
 	}
 
 	// The synthesis call is often the largest of the turn — fold its usage
@@ -159,7 +166,7 @@ func (e *AgentEngine) emitCompletionEvent(
 		knowledgeRefsInterface = append(knowledgeRefsInterface, ref)
 	}
 
-	e.emitEvent(ctx, event.Event{
+	if err := e.emitEvent(ctx, event.Event{
 		ID:        generateEventID("complete"),
 		Type:      event.EventAgentComplete,
 		SessionID: sessionID,
@@ -172,7 +179,9 @@ func (e *AgentEngine) emitCompletionEvent(
 			TotalDurationMs: time.Since(startTime).Milliseconds(),
 			MessageID:       messageID, // Include message ID for proper message update
 		},
-	})
+	}); err != nil {
+		return
+	}
 
 	logger.Infof(ctx, "Agent execution completed in %d rounds", state.CurrentRound)
 }

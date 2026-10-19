@@ -17,6 +17,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// NextcloudOnboardingHandler serves scoped source onboarding and migration requests.
 type NextcloudOnboardingHandler struct {
 	store    *repository.NextcloudOnboardingStore
 	pairing  *NextcloudSourcePairingHandler
@@ -25,6 +26,7 @@ type NextcloudOnboardingHandler struct {
 	ackRoot  func(context.Context, *types.DataSourceConfig, nextcloud.RootMigration) (nextcloud.RootMigration, error)
 }
 
+// NewNextcloudOnboardingHandler constructs the configured NextcloudOnboardingHandler.
 func NewNextcloudOnboardingHandler(
 	store *repository.NextcloudOnboardingStore,
 	pairing *NextcloudSourcePairingHandler,
@@ -87,6 +89,7 @@ func onboardingError(c *gin.Context, err error) {
 	c.JSON(status, gin.H{"error": code})
 }
 
+// Candidates returns candidates for the scoped onboarding operation.
 func (h *NextcloudOnboardingHandler) Candidates(c *gin.Context) {
 	cred, ok := h.credential(c)
 	if !ok {
@@ -125,6 +128,7 @@ func (h *NextcloudOnboardingHandler) Candidates(c *gin.Context) {
 	)
 }
 
+// Create creates a scoped source onboarding operation.
 func (h *NextcloudOnboardingHandler) Create(c *gin.Context) {
 	cred, ok := h.credential(c)
 	if !ok {
@@ -194,6 +198,7 @@ func (h *NextcloudOnboardingHandler) operation(
 	return cred, op, true
 }
 
+// Status returns the current operation state under its scoped controls.
 func (h *NextcloudOnboardingHandler) Status(c *gin.Context) {
 	cred, ok := h.credential(c)
 	if !ok {
@@ -264,6 +269,7 @@ func (h *NextcloudOnboardingHandler) Status(c *gin.Context) {
 	c.JSON(http.StatusOK, result)
 }
 
+// Pair pairs the exact source selected by a scoped onboarding operation.
 func (h *NextcloudOnboardingHandler) Pair(c *gin.Context) {
 	cred, op, ok := h.operation(c)
 	if !ok {
@@ -396,6 +402,7 @@ func (h *NextcloudOnboardingHandler) Pair(c *gin.Context) {
 	)
 }
 
+// Grants updates the scoped operation's source grants.
 func (h *NextcloudOnboardingHandler) Grants(c *gin.Context) {
 	_, op, ok := h.operation(c)
 	if !ok {
@@ -436,6 +443,7 @@ func (h *NextcloudOnboardingHandler) Grants(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"permission_version": req.PermissionVersion, "updated_at": time.Now().UTC()})
 }
 
+// Sync dispatches synchronization for the scoped source operation.
 func (h *NextcloudOnboardingHandler) Sync(c *gin.Context) {
 	_, op, ok := h.operation(c)
 	if !ok {
@@ -457,6 +465,7 @@ func (h *NextcloudOnboardingHandler) Sync(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"operation": out, "sync_enabled": *req.SyncEnabled})
 }
 
+// RootMigration processes the scoped source root migration request.
 func (h *NextcloudOnboardingHandler) RootMigration(c *gin.Context) {
 	_, op, ok := h.operation(c)
 	if !ok {
@@ -505,6 +514,7 @@ func (h *NextcloudOnboardingHandler) RootMigration(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"migration": ack})
 }
 
+// TargetMigration processes the scoped source target migration request.
 func (h *NextcloudOnboardingHandler) TargetMigration(c *gin.Context) {
 	_, op, ok := h.operation(c)
 	if !ok {
@@ -576,6 +586,7 @@ func (h *NextcloudOnboardingHandler) TargetMigration(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"migration": row})
 }
 
+// FinalizeTargetMigration finalizes the exact pending target migration operation.
 func (h *NextcloudOnboardingHandler) FinalizeTargetMigration(c *gin.Context) {
 	_, op, ok := h.operation(c)
 	if !ok {

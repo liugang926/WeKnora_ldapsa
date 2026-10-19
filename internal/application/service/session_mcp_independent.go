@@ -91,7 +91,8 @@ func (s *sessionService) agentMCPIndependentVerifier(
 		}
 		live, liveGeneration, err := native.materialStore.MessageLiveControl(checkCtx, sessionID, assistantID)
 		if err != nil || live == nil || liveGeneration != generation || live.RequestID != requestID ||
-			live.Role != "assistant" || live.IsCompleted || live.AgentID != control.AgentID || live.AgentTenantID != control.AgentTenantID {
+			live.Role != "assistant" || live.IsCompleted || live.AgentID != control.AgentID ||
+			live.AgentTenantID != control.AgentTenantID {
 			return access.ErrNextcloudPublicationDenied
 		}
 		currentAgent, err := agents.GetAgentByID(checkCtx, agent.ID, agent.TenantID)

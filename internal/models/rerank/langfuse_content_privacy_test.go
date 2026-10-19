@@ -67,7 +67,7 @@ type privacyRerankSpy struct {
 
 func (s *privacyRerankSpy) GetModelName() string { return "controlled" }
 func (s *privacyRerankSpy) GetModelID() string   { return "controlled" }
-func (s *privacyRerankSpy) Rerank(ctx context.Context, query string, documents []string) ([]RankResult, error) {
+func (s *privacyRerankSpy) Rerank(ctx context.Context, _ string, documents []string) ([]RankResult, error) {
 	s.ctx = ctx
 	s.recording = trace.SpanFromContext(ctx).IsRecording()
 	return []RankResult{{Index: 0, Document: DocumentInfo{Text: documents[0]}, RelevanceScore: 1}}, nil

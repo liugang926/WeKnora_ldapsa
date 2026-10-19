@@ -86,12 +86,12 @@ func newOnboardingOriginalActualFixture(t *testing.T) *onboardingOriginalActualF
 		require.NoError(t, err)
 		require.True(t, hmac.Equal(mac.Sum(nil), signature))
 		if strings.HasSuffix(r.URL.Path, "/capabilities") {
-			fmt.Fprint(w, `{"protocol_version":"1","instance_id":"onboarding-actual-instance"}`)
+			_, _ = fmt.Fprint(w, `{"protocol_version":"1","instance_id":"onboarding-actual-instance"}`)
 			return
 		}
 		if strings.HasSuffix(r.URL.Path, "/bindings") {
 			rows := []map[string]any{}
-			f.bindings.Range(func(key, value any) bool {
+			f.bindings.Range(func(key, _ any) bool {
 				rows = append(
 					rows,
 					map[string]any{
@@ -174,12 +174,13 @@ func newOnboardingOriginalActualFixture(t *testing.T) *onboardingOriginalActualF
 				return
 			}
 			if !f.allow.Load() {
-				fmt.Fprint(w, `{"allow":false,"reason":"read_permission_denied","checked_at":1780000000}`)
+				_, _ = fmt.Fprint(w, `{"allow":false,"reason":"read_permission_denied","checked_at":1780000000}`)
 				return
 			}
-			fmt.Fprint(
+			_, _ = fmt.Fprint(
 				w,
-				`{"allow":true,"reason":"authorized","policy_revision":"actual-1","source_etag":"onboarding-actual-etag","checked_at":1780000000}`,
+				("{\"allow\":true,\"reason\":\"authorized\",\"policy_revision\":\"actual-1\"" +
+					",\"source_etag\":\"onboarding-actual-etag\",\"checked_at\":1780000000}"),
 			)
 			return
 		}
@@ -800,7 +801,7 @@ func TestNextcloudOnboardingActualSourceBoundConfigurationCurrentReadAndRevocati
 				}
 			}),
 	)
-	defer f.db.Callback().Query().Remove("onboarding-denied-original-body-read")
+	defer func() { require.NoError(t, f.db.Callback().Query().Remove("onboarding-denied-original-body-read")) }()
 	f.allow.Store(false)
 	require.ErrorIs(t, retained.Checkpoint(own), access.ErrNextcloudPublicationDenied)
 	require.NoError(t, retained.Close())
@@ -883,7 +884,7 @@ func TestNextcloudOnboardingActualRevocationDuringCloneRollsBack(t *testing.T) {
 			}
 		}),
 	)
-	defer f.db.Callback().Create().Remove("revoke-during-onboarding-clone")
+	defer func() { require.NoError(t, f.db.Callback().Create().Remove("revoke-during-onboarding-clone")) }()
 	_, err := f.onboarding.Reserve(context.Background(), f.credential, req)
 	require.True(t, reached.Load(), "the source must be revoked after the real clone writer begins")
 	require.ErrorIs(t, err, access.ErrNextcloudPublicationDenied)
@@ -910,8 +911,8 @@ func TestNextcloudOnboardingActualManagerReplacementCurrentDelegationAndHeadABA(
 	beginner := &onboardingActualBuildConfigurationBeginner{store: f.onboarding}
 	ConfigureKnowledgeOriginalInputSourceVerifier(f.store, beginner)
 	begin := func() (context.Context, *NextcloudOnboardingConfigurationRead, func(), error) {
-		owned, close, err := f.store.BeginNextcloudBuildConfigurationRead(buildCtx)
-		return owned, beginner.read, close, err
+		owned, closeRead, err := f.store.BeginNextcloudBuildConfigurationRead(buildCtx)
+		return owned, beginner.read, closeRead, err
 	}
 
 	owned, old, closeOld, err := begin()

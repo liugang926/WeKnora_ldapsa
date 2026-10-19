@@ -17,14 +17,17 @@ import (
 )
 
 var (
+	// ErrNextcloudOnboardingDenied reports a nextcloud onboarding denied condition.
 	ErrNextcloudOnboardingDenied   = errors.New("nextcloud_onboarding_denied")
 	ErrNextcloudOnboardingNotFound = errors.New("nextcloud_onboarding_not_found")
 	ErrNextcloudOnboardingConflict = errors.New("nextcloud_onboarding_conflict")
 	ErrNextcloudKBBlankUnverified  = errors.New("knowledge_base_blank_unverified")
 )
 
+// NextcloudOnboardingStore represents nextcloud onboarding store repository data.
 type NextcloudOnboardingStore struct{ db *gorm.DB }
 
+// NewNextcloudOnboardingStore constructs nextcloud onboarding store.
 func NewNextcloudOnboardingStore(db *gorm.DB) *NextcloudOnboardingStore {
 	return &NextcloudOnboardingStore{db: db}
 }
@@ -35,6 +38,7 @@ func onboardingDigest(v any) string {
 	return hex.EncodeToString(h[:])
 }
 
+// Credential returns the credential result.
 func (s *NextcloudOnboardingStore) Credential(
 	ctx context.Context,
 	token string,
@@ -69,6 +73,7 @@ func directoryUsable(tx *gorm.DB, directoryID string, now time.Time) error {
 	return nil
 }
 
+// Actor returns the actor result.
 func (s *NextcloudOnboardingStore) Actor(
 	ctx context.Context,
 	c types.NextcloudOnboardingCredential,
@@ -82,7 +87,8 @@ func (s *NextcloudOnboardingStore) Actor(
 		return "", ErrNextcloudOnboardingDenied
 	}
 	var i types.DirectoryIdentity
-	if err := tx.Where("directory_id = ? AND object_guid = ? AND status = ? AND snapshot_version = (SELECT snapshot_version FROM directories WHERE id=?)", dir, guid, types.DirectoryObjectActive, dir).
+	if err := tx.Where(("directory_id = ? AND object_guid = ? AND status = ? AND snapshot_version =" +
+		" (SELECT snapshot_version FROM directories WHERE id=?)"), dir, guid, types.DirectoryObjectActive, dir).
 		Take(&i).
 		Error; err != nil {
 		return "", ErrNextcloudOnboardingDenied
@@ -146,6 +152,7 @@ func blankKB(tx *gorm.DB, tenant uint64, id string) (*types.KnowledgeBase, error
 	return &kb, nil
 }
 
+// Candidates returns the candidates result.
 func (s *NextcloudOnboardingStore) Candidates(
 	ctx context.Context,
 	c types.NextcloudOnboardingCredential,
@@ -180,7 +187,8 @@ func validateOnboardingTemplate(tx *gorm.DB, kb *types.KnowledgeBase) error {
 	}
 	if kb.IndexingStrategy.NeedsEmbedding() {
 		var model types.Model
-		if err := tx.Where("id = ? AND (tenant_id = ? OR is_builtin = ?) AND type = ? AND status = ? AND deleted_at IS NULL", kb.EmbeddingModelID, kb.TenantID, true, types.ModelTypeEmbedding, types.ModelStatusActive).
+		if err := tx.Where(("id = ? AND (tenant_id = ? OR is_builtin = ?) AND type = ? AND status = ? A" +
+			"ND deleted_at IS NULL"), kb.EmbeddingModelID, kb.TenantID, true, types.ModelTypeEmbedding, types.ModelStatusActive).
 			Take(&model).
 			Error; err != nil {
 			return ErrNextcloudOnboardingConflict
@@ -191,7 +199,8 @@ func validateOnboardingTemplate(tx *gorm.DB, kb *types.KnowledgeBase) error {
 			return ErrNextcloudOnboardingConflict
 		}
 		var model types.Model
-		if err := tx.Where("id=? AND (tenant_id=? OR is_builtin=?) AND type=? AND status=? AND deleted_at IS NULL", kb.SummaryModelID, kb.TenantID, true, types.ModelTypeKnowledgeQA, types.ModelStatusActive).
+		if err := tx.Where(("id=? AND (tenant_id=? OR is_builtin=?) AND type=? AND status=? AND deleted" +
+			"_at IS NULL"), kb.SummaryModelID, kb.TenantID, true, types.ModelTypeKnowledgeQA, types.ModelStatusActive).
 			Take(&model).
 			Error; err != nil {
 			return ErrNextcloudOnboardingConflict
@@ -212,6 +221,7 @@ func validateOnboardingTemplate(tx *gorm.DB, kb *types.KnowledgeBase) error {
 	return nil
 }
 
+// Reserve returns the reserve result.
 func (s *NextcloudOnboardingStore) Reserve(
 	ctx context.Context,
 	c types.NextcloudOnboardingCredential,
@@ -342,6 +352,7 @@ func (s *NextcloudOnboardingStore) Reserve(
 	return out, err
 }
 
+// Operation returns the operation result.
 func (s *NextcloudOnboardingStore) Operation(
 	ctx context.Context,
 	c types.NextcloudOnboardingCredential,
@@ -349,7 +360,8 @@ func (s *NextcloudOnboardingStore) Operation(
 ) (types.NextcloudOnboardingOperation, error) {
 	var out types.NextcloudOnboardingOperation
 	if err := s.db.WithContext(ctx).
-		Where("operation_id = ? AND credential_id = ? AND tenant_id = ? AND instance_id = ?", id, c.ID, c.TenantID, c.InstanceID).
+		Where(("operation_id = ? AND credential_id = ? AND tenant_id = ? AND instance_id =" +
+			" ?"), id, c.ID, c.TenantID, c.InstanceID).
 		Take(&out).
 		Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -362,13 +374,15 @@ func (s *NextcloudOnboardingStore) Operation(
 	return out, nil
 }
 
+// MarkActive returns the mark active result.
 func (s *NextcloudOnboardingStore) MarkActive(ctx context.Context, op types.NextcloudOnboardingOperation) error {
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := requireNextcloudTargetOpenInTx(tx, op.TenantID, op.KnowledgeBaseID); err != nil {
 			return err
 		}
 		var pair NextcloudSourcePairing
-		if err := tx.Where("operation_id=? AND tenant_id=? AND knowledge_base_id=? AND nextcloud_instance_id=? AND binding_id=? AND state='active'", op.OperationID, op.TenantID, op.KnowledgeBaseID, op.InstanceID, op.BindingID).
+		if err := tx.Where(("operation_id=? AND tenant_id=? AND knowledge_base_id=? AND nextcloud_insta" +
+			"nce_id=? AND binding_id=? AND state='active'"), op.OperationID, op.TenantID, op.KnowledgeBaseID, op.InstanceID, op.BindingID).
 			Take(&pair).
 			Error; err != nil {
 			return ErrNextcloudOnboardingConflict
@@ -380,6 +394,7 @@ func (s *NextcloudOnboardingStore) MarkActive(ctx context.Context, op types.Next
 	})
 }
 
+// ApplyGrantSnapshot applies grant snapshot.
 func (s *NextcloudOnboardingStore) ApplyGrantSnapshot(
 	ctx context.Context,
 	op types.NextcloudOnboardingOperation,
@@ -428,7 +443,8 @@ func (s *NextcloudOnboardingStore) ApplyGrantSnapshot(
 			err := tx.Table("nextcloud_source_status_epochs e").
 				Select("e.*").
 				Joins("JOIN nextcloud_event_connections c ON c.connection_id=e.connection_id AND c.status='active'").
-				Where("c.tenant_id=? AND c.knowledge_base_id=? AND c.datasource_id=? AND e.pair_operation_id=?", op.TenantID, op.KnowledgeBaseID, pair.DataSourceID, op.OperationID).
+				Where(("c.tenant_id=? AND c.knowledge_base_id=? AND c.datasource_id=? AND e.pair_o" +
+					"peration_id=?"), op.TenantID, op.KnowledgeBaseID, pair.DataSourceID, op.OperationID).
 				Take(&epoch).
 				Error
 			if err != nil || epoch.PairOperationID != op.OperationID || time.Now().Unix()-epoch.VerifiedAt > 300 {
@@ -457,7 +473,8 @@ func (s *NextcloudOnboardingStore) ApplyGrantSnapshot(
 			switch subject.Kind {
 			case "user":
 				var i types.DirectoryIdentity
-				if err := tx.Where("directory_id = ? AND object_guid = ? AND status = ? AND snapshot_version = (SELECT snapshot_version FROM directories WHERE id=?)", subject.DirectoryID, subject.ObjectGUID, types.DirectoryObjectActive, subject.DirectoryID).
+				if err := tx.Where(("directory_id = ? AND object_guid = ? AND status = ? AND snapshot_version =" +
+					" (SELECT snapshot_version FROM directories WHERE id=?)"), subject.DirectoryID, subject.ObjectGUID, types.DirectoryObjectActive, subject.DirectoryID).
 					Take(&i).
 					Error; err != nil {
 					return ErrNextcloudOnboardingDenied
@@ -465,7 +482,8 @@ func (s *NextcloudOnboardingStore) ApplyGrantSnapshot(
 				principal = i.ID
 			case "group":
 				var g types.DirectoryGroup
-				if err := tx.Where("directory_id = ? AND object_guid = ? AND status = ? AND snapshot_version = (SELECT snapshot_version FROM directories WHERE id=?)", subject.DirectoryID, subject.ObjectGUID, types.DirectoryObjectActive, subject.DirectoryID).
+				if err := tx.Where(("directory_id = ? AND object_guid = ? AND status = ? AND snapshot_version =" +
+					" (SELECT snapshot_version FROM directories WHERE id=?)"), subject.DirectoryID, subject.ObjectGUID, types.DirectoryObjectActive, subject.DirectoryID).
 					Take(&g).
 					Error; err != nil {
 					return ErrNextcloudOnboardingDenied
@@ -512,6 +530,7 @@ func (s *NextcloudOnboardingStore) ApplyGrantSnapshot(
 	})
 }
 
+// ScopedMatches returns the scoped matches result.
 func (s *NextcloudOnboardingStore) ScopedMatches(
 	ctx context.Context,
 	user string,
@@ -530,23 +549,38 @@ func (s *NextcloudOnboardingStore) ScopedMatches(
 		LastSyncError        string
 		Enabled              bool
 	}
-	query := `SELECT DISTINCT sg.tenant_id, sg.knowledge_base_id, sg.directory_id,d.last_successful_sync_at,d.last_sync_error,d.enabled
- FROM nextcloud_source_grants sg JOIN nextcloud_onboarding_operations o ON o.operation_id=sg.operation_id AND o.state='active'
- JOIN nextcloud_source_pairings p ON p.operation_id=o.operation_id AND p.state='active'
- JOIN data_sources ds ON ds.id=p.datasource_id AND ds.status='active' AND ds.deleted_at IS NULL
- JOIN directories d ON d.id=sg.directory_id
- JOIN directory_identities i ON i.directory_id=d.id AND i.user_id=? AND i.status='active' AND i.snapshot_version=d.snapshot_version
- WHERE ( (sg.kind='user' AND sg.principal_id=i.id) OR (sg.kind='group' AND EXISTS(SELECT 1 FROM directory_group_memberships gm JOIN directory_groups g ON g.id=gm.group_id AND g.status='active' AND g.snapshot_version=d.snapshot_version WHERE gm.identity_id=i.id AND gm.group_id=sg.principal_id AND gm.snapshot_version=d.snapshot_version)))`
+	query := ("SELECT DISTINCT sg.tenant_id, sg.knowledge_base_id, sg.directory_id,d.last" +
+		"_successful_sync_at,d.last_sync_error,d.enabled\n FROM nextcloud_source_gr" +
+		"ants sg JOIN nextcloud_onboarding_operations o ON o.operation_id=sg.operat" +
+		"ion_id AND o.state='active'\n JOIN nextcloud_source_pairings p ON p.operat" +
+		"ion_id=o.operation_id AND p.state='active'\n JOIN data_sources ds ON ds.id" +
+		"=p.datasource_id AND ds.status='active' AND ds.deleted_at IS NULL\n JOIN d" +
+		"irectories d ON d.id=sg.directory_id\n JOIN directory_identities i ON i.di" +
+		"rectory_id=d.id AND i.user_id=? AND i.status='active' AND i.snapshot_versi" +
+		"on=d.snapshot_version\n WHERE ( (sg.kind='user' AND sg.principal_id=i.id) " +
+		"OR (sg.kind='group' AND EXISTS(SELECT 1 FROM directory_group_memberships g" +
+		"m JOIN directory_groups g ON g.id=gm.group_id AND g.status='active' AND g." +
+		"snapshot_version=d.snapshot_version WHERE gm.identity_id=i.id AND gm.group" +
+		"_id=sg.principal_id AND gm.snapshot_version=d.snapshot_version)))")
 	if tx.Migrator().HasTable("nextcloud_source_status_epochs") {
-		query += " AND sg.publication_epoch=COALESCE((SELECT MAX(e.publication_epoch) FROM nextcloud_source_status_epochs e JOIN nextcloud_event_connections c ON c.connection_id=e.connection_id AND c.status='active' WHERE e.pair_operation_id=p.operation_id AND c.datasource_id=ds.id),p.publication_epoch)"
+		query += (" AND sg.publication_epoch=COALESCE((SELECT MAX(e.publication_epoch) FROM n" +
+			"extcloud_source_status_epochs e JOIN nextcloud_event_connections c ON c.co" +
+			"nnection_id=e.connection_id AND c.status='active' WHERE e.pair_operation_i" +
+			"d=p.operation_id AND c.datasource_id=ds.id),p.publication_epoch)")
 	} else {
 		query += " AND sg.publication_epoch=p.publication_epoch"
 	}
 
 	if tx.Migrator().HasTable(&nextcloudControlRecoveryGate{}) {
-		query += " AND NOT EXISTS(SELECT 1 FROM nextcloud_control_recovery_gates cg WHERE cg.instance_id=o.instance_id AND cg.closed=TRUE)"
+		query += (" AND NOT EXISTS(SELECT 1 FROM nextcloud_control_recovery_gates cg WHERE cg" +
+			".instance_id=o.instance_id AND cg.closed=TRUE)")
 	}
-	query += " AND NOT EXISTS(SELECT 1 FROM nextcloud_onboarding_target_closures tc WHERE (tc.operation_id=o.operation_id OR (tc.tenant_id=o.tenant_id AND tc.reason='tenant_deleted'))) AND EXISTS(SELECT 1 FROM tenants tt WHERE tt.id=o.tenant_id AND tt.deleted_at IS NULL) AND EXISTS(SELECT 1 FROM knowledge_bases kk WHERE kk.id=o.knowledge_base_id AND kk.tenant_id=o.tenant_id AND kk.deleted_at IS NULL)"
+	query += (" AND NOT EXISTS(SELECT 1 FROM nextcloud_onboarding_target_closures tc WHER" +
+		"E (tc.operation_id=o.operation_id OR (tc.tenant_id=o.tenant_id AND tc.reas" +
+		"on='tenant_deleted'))) AND EXISTS(SELECT 1 FROM tenants tt WHERE tt.id=o.t" +
+		"enant_id AND tt.deleted_at IS NULL) AND EXISTS(SELECT 1 FROM knowledge_bas" +
+		"es kk WHERE kk.id=o.knowledge_base_id AND kk.tenant_id=o.tenant_id AND kk." +
+		"deleted_at IS NULL)")
 	args := []any{user}
 	if tenant != 0 {
 		query += " AND sg.tenant_id=?"
@@ -569,6 +603,7 @@ func (s *NextcloudOnboardingStore) ScopedMatches(
 	return out, nil
 }
 
+// EventCredential returns the event credential result.
 func (s *NextcloudOnboardingStore) EventCredential(
 	ctx context.Context,
 	op types.NextcloudOnboardingOperation,
@@ -579,7 +614,10 @@ func (s *NextcloudOnboardingStore) EventCredential(
 	var row nextcloudEventConnection
 	err := s.db.WithContext(ctx).
 		Table("nextcloud_event_connections").
-		Where("tenant_id = ? AND knowledge_base_id = ? AND nextcloud_instance_id = ? AND binding_id = ? AND status = 'active' AND datasource_id IN (SELECT datasource_id FROM nextcloud_source_pairings WHERE operation_id=? AND state='active')", op.TenantID, op.KnowledgeBaseID, op.InstanceID, op.BindingID, op.OperationID).
+		Where(("tenant_id = ? AND knowledge_base_id = ? AND nextcloud_instance_id = ? AND " +
+			"binding_id = ? AND status = 'active' AND datasource_id IN (SELECT datasour" +
+			"ce_id FROM nextcloud_source_pairings WHERE operation_id=? AND state='activ" +
+			"e')"), op.TenantID, op.KnowledgeBaseID, op.InstanceID, op.BindingID, op.OperationID).
 		Take(&row).
 		Error
 	if err != nil {
@@ -598,6 +636,7 @@ func (s *NextcloudOnboardingStore) EventCredential(
 	}, nil
 }
 
+// SyncEnabled returns the sync enabled result.
 func (s *NextcloudOnboardingStore) SyncEnabled(
 	ctx context.Context,
 	op types.NextcloudOnboardingOperation,
@@ -609,11 +648,13 @@ func (s *NextcloudOnboardingStore) SyncEnabled(
 	q := s.db.WithContext(ctx).
 		Table("data_sources").
 		Select("sync_enabled").
-		Where("id IN (SELECT datasource_id FROM nextcloud_source_pairings WHERE operation_id = ? AND state='active')", op.OperationID).
+		Where(("id IN (SELECT datasource_id FROM nextcloud_source_pairings WHERE operation" +
+			"_id = ? AND state='active')"), op.OperationID).
 		Take(&row)
 	return row.SyncEnabled, q.Error
 }
 
+// SetSyncEnabled sets sync enabled.
 func (s *NextcloudOnboardingStore) SetSyncEnabled(
 	ctx context.Context,
 	op types.NextcloudOnboardingOperation,
@@ -650,7 +691,8 @@ func (s *NextcloudOnboardingStore) SetSyncEnabled(
 			return q.Error
 		}
 		q = tx.Table("data_sources").
-			Where("id IN (SELECT datasource_id FROM nextcloud_source_pairings WHERE operation_id = ? AND state='active')", op.OperationID).
+			Where(("id IN (SELECT datasource_id FROM nextcloud_source_pairings WHERE operation"+
+				"_id = ? AND state='active')"), op.OperationID).
 			Update("sync_enabled", enabled)
 		if q.Error != nil || q.RowsAffected != 1 {
 			return ErrNextcloudOnboardingConflict
@@ -674,16 +716,19 @@ func (s *NextcloudOnboardingStore) TenantScoped(ctx context.Context, tenant uint
 	return n > 0, err
 }
 
+// ScopedSession returns the scoped session result.
 func (s *NextcloudOnboardingStore) ScopedSession(ctx context.Context, tenant uint64, user, id string) (bool, error) {
 	var n int64
 	err := s.db.WithContext(ctx).
 		Table("sessions").
-		Where("tenant_id = ? AND user_id = ? AND id = ? AND nextcloud_scoped = ? AND deleted_at IS NULL", tenant, user, id, true).
+		Where(("tenant_id = ? AND user_id = ? AND id = ? AND nextcloud_scoped = ? AND dele" +
+			"ted_at IS NULL"), tenant, user, id, true).
 		Count(&n).
 		Error
 	return n == 1, err
 }
 
+// ManagedKB returns the managed kb result.
 func (s *NextcloudOnboardingStore) ManagedKB(ctx context.Context, tenant uint64, kb string) (bool, error) {
 	var n int64
 	err := s.db.WithContext(ctx).
@@ -694,6 +739,7 @@ func (s *NextcloudOnboardingStore) ManagedKB(ctx context.Context, tenant uint64,
 	return n > 0, err
 }
 
+// RefreshGrantEpoch returns the refresh grant epoch result.
 func (s *NextcloudOnboardingStore) RefreshGrantEpoch(ctx context.Context, op types.NextcloudOnboardingOperation) error {
 	if err := s.RequireTargetOpen(ctx, op); err != nil {
 		return err
@@ -701,7 +747,8 @@ func (s *NextcloudOnboardingStore) RefreshGrantEpoch(ctx context.Context, op typ
 	var connection nextcloudEventConnection
 	if err := s.db.WithContext(ctx).
 		Table("nextcloud_event_connections").
-		Where("tenant_id=? AND knowledge_base_id=? AND nextcloud_instance_id=? AND binding_id=? AND status='active'", op.TenantID, op.KnowledgeBaseID, op.InstanceID, op.BindingID).
+		Where(("tenant_id=? AND knowledge_base_id=? AND nextcloud_instance_id=? AND bindin" +
+			"g_id=? AND status='active'"), op.TenantID, op.KnowledgeBaseID, op.InstanceID, op.BindingID).
 		Take(&connection).
 		Error; err != nil {
 		return err
@@ -709,6 +756,7 @@ func (s *NextcloudOnboardingStore) RefreshGrantEpoch(ctx context.Context, op typ
 	return NewNextcloudProcessingStateStore(s.db).RefreshSourceEpoch(ctx, connection.ConnectionID)
 }
 
+// TemplateDescriptor returns the template descriptor result.
 func (s *NextcloudOnboardingStore) TemplateDescriptor(
 	ctx context.Context,
 	c types.NextcloudOnboardingCredential,

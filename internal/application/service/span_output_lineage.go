@@ -10,11 +10,13 @@ import (
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 )
 
+// SpanOutputAuthorizer authorizes original span inputs before public output.
 type SpanOutputAuthorizer struct {
 	reader  interfaces.SpanOutputInputReader
 	checker knowledgeOutputLineageChecker
 }
 
+// NewSpanOutputAuthorizer constructs the configured SpanOutputAuthorizer.
 func NewSpanOutputAuthorizer(
 	store *repository.KnowledgeInputProvenanceStore,
 	guard *access.NextcloudSourceLineageGuard,
@@ -22,6 +24,7 @@ func NewSpanOutputAuthorizer(
 	return &SpanOutputAuthorizer{reader: store, checker: guard}
 }
 
+// SpanOutputGuard retains and rechecks original span inputs.
 type SpanOutputGuard struct {
 	authorizer *SpanOutputAuthorizer
 	snapshot   *types.SpanOutputInputSnapshot
@@ -45,6 +48,7 @@ func cloneSpanOutput(in *types.SpanOutputInputSnapshot) (*types.SpanOutputInputS
 	return &out, nil
 }
 
+// Begin captures the original inputs and current controls for this operation.
 func (a *SpanOutputAuthorizer) Begin(
 	ctx context.Context,
 	request types.SpanOutputReadRequest,
@@ -89,6 +93,7 @@ func (a *SpanOutputAuthorizer) Begin(
 	return g, nil
 }
 
+// Snapshot returns the selected original material snapshot.
 func (g *SpanOutputGuard) Snapshot() (*types.SpanOutputInputSnapshot, error) {
 	if g == nil {
 		return nil, types.ErrSourceLineageUnknown
@@ -96,6 +101,7 @@ func (g *SpanOutputGuard) Snapshot() (*types.SpanOutputInputSnapshot, error) {
 	return cloneSpanOutput(g.snapshot)
 }
 
+// Check rechecks the retained inputs and their current read controls.
 func (g *SpanOutputGuard) Check(ctx context.Context, published *types.SpanOutputInputSnapshot) error {
 	if ctx == nil || g == nil || g.authorizer == nil || g.authorizer.reader == nil || g.authorizer.checker == nil {
 		return access.ErrNextcloudPublicationUnavailable

@@ -12,8 +12,8 @@ func (s *sessionService) authorizeSessionText(ctx context.Context, session *type
 	if session == nil {
 		return nil, access.ErrNextcloudPublicationUnavailable
 	}
-	copy := *session
-	copy.TitleAuthorized, copy.DescriptionAuthorized = false, false
+	copied := *session
+	copied.TitleAuthorized, copied.DescriptionAuthorized = false, false
 	authorize := func(text *string, lineage *types.SourceLineage, approved *bool) error {
 		if lineage.RequireComplete() != nil {
 			*text = ""
@@ -36,18 +36,22 @@ func (s *sessionService) authorizeSessionText(ctx context.Context, session *type
 		*approved = true
 		return nil
 	}
-	if err := authorize(&copy.Title, copy.TitleSourceLineage, &copy.TitleAuthorized); err != nil {
+	if err := authorize(&copied.Title, copied.TitleSourceLineage, &copied.TitleAuthorized); err != nil {
 		return nil, err
 	}
-	if err := authorize(&copy.Description, copy.DescriptionSourceLineage, &copy.DescriptionAuthorized); err != nil {
+	if err := authorize(
+		&copied.Description,
+		copied.DescriptionSourceLineage,
+		&copied.DescriptionAuthorized,
+	); err != nil {
 		return nil, err
 	}
 	var reads []access.SourceLineageRead
-	if copy.TitleAuthorized && len(copy.TitleSourceLineage.Sources) > 0 {
-		reads = append(reads, access.SourceLineageRead{Lineage: copy.TitleSourceLineage})
+	if copied.TitleAuthorized && len(copied.TitleSourceLineage.Sources) > 0 {
+		reads = append(reads, access.SourceLineageRead{Lineage: copied.TitleSourceLineage})
 	}
-	if copy.DescriptionAuthorized && len(copy.DescriptionSourceLineage.Sources) > 0 {
-		reads = append(reads, access.SourceLineageRead{Lineage: copy.DescriptionSourceLineage})
+	if copied.DescriptionAuthorized && len(copied.DescriptionSourceLineage.Sources) > 0 {
+		reads = append(reads, access.SourceLineageRead{Lineage: copied.DescriptionSourceLineage})
 	}
 	if len(reads) > 0 {
 		if s.sourceLineageGuard == nil {
@@ -57,7 +61,7 @@ func (s *sessionService) authorizeSessionText(ctx context.Context, session *type
 			return nil, err
 		}
 	}
-	return &copy, nil
+	return &copied, nil
 }
 
 func (s *sessionService) authorizeSessionTexts(
@@ -133,9 +137,9 @@ func (s *sessionService) authorizedTitleMatches(
 		if !visible.TitleAuthorized {
 			continue
 		}
-		copy := *row
-		copy.Session = *visible
-		matched = append(matched, &copy)
+		copied2 := *row
+		copied2.Session = *visible
+		matched = append(matched, &copied2)
 	}
 	visibleSessions := make([]*types.Session, 0, len(matched))
 	for _, row := range matched {

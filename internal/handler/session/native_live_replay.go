@@ -121,12 +121,12 @@ func (h *Handler) nativeLiveStreamManager(
 	}
 	// The metadata API already checked this exact owner in its authority tx.
 	key := nativeLiveKey{actual, tenant, nativeLiveOwner(ctx), session, message, request, generation}
-	copy, err := cloneNativeLiveControl(control)
+	copied, err := cloneNativeLiveControl(control)
 	if err != nil {
 		appender.registrationErr = err
 		return appender
 	}
-	run := &nativeLiveRun{key: key, control: copy, expires: time.Now().Add(nativeLiveFrameTTL)}
+	run := &nativeLiveRun{key: key, control: copied, expires: time.Now().Add(nativeLiveFrameTTL)}
 	nativeLiveRuns.Lock()
 	prior := nativeLiveRuns.items[key]
 	if prior == nil {
@@ -153,17 +153,17 @@ func cloneNativeLiveControl(original *types.Message) (*types.Message, error) {
 	if err != nil {
 		return nil, err
 	}
-	var copy struct {
+	var copied2 struct {
 		Body        *types.Message
 		Execution   types.MessageExecutionContext
 		AgentTenant uint64
 	}
-	if err := json.Unmarshal(encoded, &copy); err != nil {
+	if err := json.Unmarshal(encoded, &copied2); err != nil {
 		return nil, err
 	}
-	copy.Body.ExecutionContext = copy.Execution
-	copy.Body.AgentTenantID = copy.AgentTenant
-	return copy.Body, nil
+	copied2.Body.ExecutionContext = copied2.Execution
+	copied2.Body.AgentTenantID = copied2.AgentTenant
+	return copied2.Body, nil
 }
 
 func (a *nativeLiveAppender) AppendEvent(
@@ -314,11 +314,11 @@ func (run *nativeLiveRun) read(after uint64) ([]nativeLiveFrame, error) {
 		if time.Now().After(entry.Expires) {
 			return nil, access.ErrNextcloudPublicationUnavailable
 		}
-		copy := entry
-		copy.Body = nil // Scope and original proof are acquired before body access.
-		copy.Parents = append([]byte(nil), entry.Parents...)
-		copy.Lineage = append([]byte(nil), entry.Lineage...)
-		result = append(result, copy)
+		copied3 := entry
+		copied3.Body = nil // Scope and original proof are acquired before body access.
+		copied3.Parents = append([]byte(nil), entry.Parents...)
+		copied3.Lineage = append([]byte(nil), entry.Lineage...)
+		result = append(result, copied3)
 	}
 	return result, nil
 }

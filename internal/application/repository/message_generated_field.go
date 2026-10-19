@@ -36,6 +36,7 @@ type (
 	}
 )
 
+// WithActualMessageGeneratedField binds actual message generated field.
 // Only the actual model/checkpoint callback binds its exact value and original
 // consumed material. It cannot be decoded from a request or current row.
 func (s *KnowledgeInputProvenanceStore) WithActualMessageGeneratedField(
@@ -79,14 +80,14 @@ func (s *KnowledgeInputProvenanceStore) WithActualMessageGeneratedField(
 	if err != nil {
 		return ctx, err
 	}
-	var copy []*types.MessageMaterialSnapshot
-	if err = json.Unmarshal(encoded, &copy); err != nil {
+	var copied []*types.MessageMaterialSnapshot
+	if err = json.Unmarshal(encoded, &copied); err != nil {
 		return ctx, err
 	}
 	return context.WithValue(
 		ctx,
 		messageGeneratedFieldKey{},
-		messageGeneratedFieldBoundary{s, message, session, field, digest, copy, sources},
+		messageGeneratedFieldBoundary{s, message, session, field, digest, copied, sources},
 	), nil
 }
 
@@ -255,6 +256,7 @@ func (r *messageRepository) writeGeneratedField(
 	})
 }
 
+// UpgradeMessageGeneratedFieldSchema returns the upgrade message generated field schema result.
 // A real forward upgrade for installations that already completed old 151/70.
 // The bundled fresh migration remains authoritative for clean installations.
 func UpgradeMessageGeneratedFieldSchema(db *gorm.DB) error {
@@ -269,9 +271,9 @@ func UpgradeMessageGeneratedFieldSchema(db *gorm.DB) error {
 		return types.ErrSourceLineageUnknown
 	} // incomplete private upgrade needs operator reconciliation, never current-body admission
 	ddl := messageGeneratedFieldsSQLiteUpgrade
-	if db.Dialector.Name() == "postgres" {
+	if db.Name() == "postgres" {
 		ddl = messageGeneratedFieldsPostgresUpgrade
-	} else if db.Dialector.Name() != "sqlite" {
+	} else if db.Name() != "sqlite" {
 		return types.ErrSourceLineageUnknown
 	}
 	return db.Transaction(func(tx *gorm.DB) error {
@@ -279,41 +281,86 @@ func UpgradeMessageGeneratedFieldSchema(db *gorm.DB) error {
 			return err
 		}
 		return tx.Exec(
-			"INSERT INTO message_generated_field_versions(message_id,field,revision) SELECT id,'images',1 FROM messages UNION ALL SELECT id,'attachments',1 FROM messages UNION ALL SELECT id,'rendered_content',1 FROM messages UNION ALL SELECT id,'context_checkpoint',1 FROM messages",
+			("INSERT INTO message_generated_field_versions(message_id,field,revision) SE" +
+				"LECT id,'images',1 FROM messages UNION ALL SELECT id,'attachments',1 FROM " +
+				"messages UNION ALL SELECT id,'rendered_content',1 FROM messages UNION ALL " +
+				"SELECT id,'context_checkpoint',1 FROM messages"),
 		).Error
 	})
 }
 
-const messageGeneratedFieldsSQLiteUpgrade = `-- Actual generated fields have independent immutable parents and material.
-CREATE TABLE message_generated_field_admissions(id TEXT PRIMARY KEY,message_id TEXT NOT NULL,generation_id TEXT NOT NULL,session_id TEXT NOT NULL,tenant_id BIGINT NOT NULL,field TEXT NOT NULL,body_digest TEXT NOT NULL,source_lineage TEXT NOT NULL,parent_materials TEXT NOT NULL,actor TEXT NOT NULL,previous_admission_id TEXT NOT NULL,previous_revision BIGINT NOT NULL,previous_membership BIGINT NOT NULL,result_revision BIGINT NOT NULL,field_revision BIGINT NOT NULL);
-CREATE TABLE message_generated_field_receipts(message_id TEXT NOT NULL,field TEXT NOT NULL,admission_id TEXT NOT NULL REFERENCES message_generated_field_admissions(id),PRIMARY KEY(message_id,field));
-CREATE TRIGGER message_generated_field_admissions_immutable_update BEFORE UPDATE ON message_generated_field_admissions BEGIN SELECT RAISE(ABORT,'immutable original generated message field'); END;
-CREATE TRIGGER message_generated_field_admissions_immutable_delete BEFORE DELETE ON message_generated_field_admissions BEGIN SELECT RAISE(ABORT,'immutable original generated message field'); END;
+const messageGeneratedFieldsSQLiteUpgrade = ("-- Actual generated fields have independent immutable parents and material" +
+	".\nCREATE TABLE message_generated_field_admissions(id TEXT PRIMARY KEY,mes" +
+	"sage_id TEXT NOT NULL,generation_id TEXT NOT NULL,session_id TEXT NOT NULL" +
+	",tenant_id BIGINT NOT NULL,field TEXT NOT NULL,body_digest TEXT NOT NULL,s" +
+	"ource_lineage TEXT NOT NULL,parent_materials TEXT NOT NULL,actor TEXT NOT " +
+	"NULL,previous_admission_id TEXT NOT NULL,previous_revision BIGINT NOT NULL" +
+	",previous_membership BIGINT NOT NULL,result_revision BIGINT NOT NULL,field" +
+	"_revision BIGINT NOT NULL);\nCREATE TABLE message_generated_field_receipts" +
+	"(message_id TEXT NOT NULL,field TEXT NOT NULL,admission_id TEXT NOT NULL R" +
+	"EFERENCES message_generated_field_admissions(id),PRIMARY KEY(message_id,fi" +
+	"eld));\nCREATE TRIGGER message_generated_field_admissions_immutable_update" +
+	" BEFORE UPDATE ON message_generated_field_admissions BEGIN SELECT RAISE(AB" +
+	"ORT,'immutable original generated message field'); END;\nCREATE TRIGGER me" +
+	"ssage_generated_field_admissions_immutable_delete BEFORE DELETE ON message" +
+	"_generated_field_admissions BEGIN SELECT RAISE(ABORT,'immutable original g" +
+	"enerated message field'); END;\n\nCREATE TABLE message_generated_field_ver" +
+	"sions(message_id TEXT NOT NULL,field TEXT NOT NULL,revision BIGINT NOT NUL" +
+	"L,PRIMARY KEY(message_id,field));\nCREATE TRIGGER message_generated_field_" +
+	"insert AFTER INSERT ON messages BEGIN INSERT INTO message_generated_field_" +
+	"versions VALUES(NEW.id,'images',1),(NEW.id,'attachments',1),(NEW.id,'rende" +
+	"red_content',1),(NEW.id,'context_checkpoint',1); END;\nCREATE TRIGGER mess" +
+	"age_generated_field_images AFTER UPDATE ON messages WHEN OLD.images IS NOT" +
+	" NEW.images BEGIN INSERT INTO message_generated_field_versions VALUES(NEW." +
+	"id,'images',1) ON CONFLICT(message_id,field) DO UPDATE SET revision=revisi" +
+	"on+1; END;\nCREATE TRIGGER message_generated_field_attachments AFTER UPDAT" +
+	"E ON messages WHEN OLD.attachments IS NOT NEW.attachments BEGIN INSERT INT" +
+	"O message_generated_field_versions VALUES(NEW.id,'attachments',1) ON CONFL" +
+	"ICT(message_id,field) DO UPDATE SET revision=revision+1; END;\nCREATE TRIG" +
+	"GER message_generated_field_rendered_content AFTER UPDATE ON messages WHEN" +
+	" OLD.rendered_content IS NOT NEW.rendered_content BEGIN INSERT INTO messag" +
+	"e_generated_field_versions VALUES(NEW.id,'rendered_content',1) ON CONFLICT" +
+	"(message_id,field) DO UPDATE SET revision=revision+1; END;\nCREATE TRIGGER" +
+	" message_generated_field_context_checkpoint AFTER UPDATE ON messages WHEN " +
+	"OLD.context_checkpoint IS NOT NEW.context_checkpoint BEGIN INSERT INTO mes" +
+	"sage_generated_field_versions VALUES(NEW.id,'context_checkpoint',1) ON CON" +
+	"FLICT(message_id,field) DO UPDATE SET revision=revision+1; END;\n\nCREATE " +
+	"TABLE message_fork_parent_origins(generation_id TEXT PRIMARY KEY REFERENCE" +
+	"S message_generation_origins(id),parent_materials TEXT NOT NULL);\nCREATE " +
+	"TRIGGER message_fork_parent_origins_immutable_update BEFORE UPDATE ON mess" +
+	"age_fork_parent_origins BEGIN SELECT RAISE(ABORT,'immutable original fork " +
+	"parents'); END;\nCREATE TRIGGER message_fork_parent_origins_immutable_dele" +
+	"te BEFORE DELETE ON message_fork_parent_origins BEGIN SELECT RAISE(ABORT,'" +
+	"immutable original fork parents'); END;\n")
 
-CREATE TABLE message_generated_field_versions(message_id TEXT NOT NULL,field TEXT NOT NULL,revision BIGINT NOT NULL,PRIMARY KEY(message_id,field));
-CREATE TRIGGER message_generated_field_insert AFTER INSERT ON messages BEGIN INSERT INTO message_generated_field_versions VALUES(NEW.id,'images',1),(NEW.id,'attachments',1),(NEW.id,'rendered_content',1),(NEW.id,'context_checkpoint',1); END;
-CREATE TRIGGER message_generated_field_images AFTER UPDATE ON messages WHEN OLD.images IS NOT NEW.images BEGIN INSERT INTO message_generated_field_versions VALUES(NEW.id,'images',1) ON CONFLICT(message_id,field) DO UPDATE SET revision=revision+1; END;
-CREATE TRIGGER message_generated_field_attachments AFTER UPDATE ON messages WHEN OLD.attachments IS NOT NEW.attachments BEGIN INSERT INTO message_generated_field_versions VALUES(NEW.id,'attachments',1) ON CONFLICT(message_id,field) DO UPDATE SET revision=revision+1; END;
-CREATE TRIGGER message_generated_field_rendered_content AFTER UPDATE ON messages WHEN OLD.rendered_content IS NOT NEW.rendered_content BEGIN INSERT INTO message_generated_field_versions VALUES(NEW.id,'rendered_content',1) ON CONFLICT(message_id,field) DO UPDATE SET revision=revision+1; END;
-CREATE TRIGGER message_generated_field_context_checkpoint AFTER UPDATE ON messages WHEN OLD.context_checkpoint IS NOT NEW.context_checkpoint BEGIN INSERT INTO message_generated_field_versions VALUES(NEW.id,'context_checkpoint',1) ON CONFLICT(message_id,field) DO UPDATE SET revision=revision+1; END;
-
-CREATE TABLE message_fork_parent_origins(generation_id TEXT PRIMARY KEY REFERENCES message_generation_origins(id),parent_materials TEXT NOT NULL);
-CREATE TRIGGER message_fork_parent_origins_immutable_update BEFORE UPDATE ON message_fork_parent_origins BEGIN SELECT RAISE(ABORT,'immutable original fork parents'); END;
-CREATE TRIGGER message_fork_parent_origins_immutable_delete BEFORE DELETE ON message_fork_parent_origins BEGIN SELECT RAISE(ABORT,'immutable original fork parents'); END;
-`
-
-const messageGeneratedFieldsPostgresUpgrade = `-- Actual generated fields have independent immutable parents and material.
-CREATE TABLE message_generated_field_admissions(id TEXT PRIMARY KEY,message_id TEXT NOT NULL,generation_id TEXT NOT NULL,session_id TEXT NOT NULL,tenant_id BIGINT NOT NULL,field TEXT NOT NULL,body_digest TEXT NOT NULL,source_lineage TEXT NOT NULL,parent_materials TEXT NOT NULL,actor TEXT NOT NULL,previous_admission_id TEXT NOT NULL,previous_revision BIGINT NOT NULL,previous_membership BIGINT NOT NULL,result_revision BIGINT NOT NULL,field_revision BIGINT NOT NULL);
-CREATE TABLE message_generated_field_receipts(message_id TEXT NOT NULL,field TEXT NOT NULL,admission_id TEXT NOT NULL REFERENCES message_generated_field_admissions(id),PRIMARY KEY(message_id,field));
-CREATE TRIGGER message_generated_field_admissions_immutable BEFORE UPDATE OR DELETE ON message_generated_field_admissions FOR EACH ROW EXECUTE FUNCTION message_material_immutable();
-
-CREATE TABLE message_generated_field_versions(message_id TEXT NOT NULL,field TEXT NOT NULL,revision BIGINT NOT NULL,PRIMARY KEY(message_id,field));
-CREATE FUNCTION message_generated_field_checkpoint() RETURNS trigger LANGUAGE plpgsql AS $$ DECLARE f TEXT;BEGIN FOREACH f IN ARRAY ARRAY['images','attachments','rendered_content','context_checkpoint'] LOOP IF TG_OP='INSERT' OR to_jsonb(OLD)->f IS DISTINCT FROM to_jsonb(NEW)->f THEN INSERT INTO message_generated_field_versions VALUES(NEW.id,f,1) ON CONFLICT(message_id,field) DO UPDATE SET revision=message_generated_field_versions.revision+1; END IF;END LOOP;RETURN NEW;END $$;
-CREATE TRIGGER message_generated_field_checkpoint AFTER INSERT OR UPDATE ON messages FOR EACH ROW EXECUTE FUNCTION message_generated_field_checkpoint();
-
-CREATE TABLE message_fork_parent_origins(generation_id TEXT PRIMARY KEY REFERENCES message_generation_origins(id),parent_materials TEXT NOT NULL);
-CREATE TRIGGER message_fork_parent_origins_immutable BEFORE UPDATE OR DELETE ON message_fork_parent_origins FOR EACH ROW EXECUTE FUNCTION message_material_immutable();
-`
+const messageGeneratedFieldsPostgresUpgrade = ("-- Actual generated fields have independent immutable parents and material" +
+	".\nCREATE TABLE message_generated_field_admissions(id TEXT PRIMARY KEY,mes" +
+	"sage_id TEXT NOT NULL,generation_id TEXT NOT NULL,session_id TEXT NOT NULL" +
+	",tenant_id BIGINT NOT NULL,field TEXT NOT NULL,body_digest TEXT NOT NULL,s" +
+	"ource_lineage TEXT NOT NULL,parent_materials TEXT NOT NULL,actor TEXT NOT " +
+	"NULL,previous_admission_id TEXT NOT NULL,previous_revision BIGINT NOT NULL" +
+	",previous_membership BIGINT NOT NULL,result_revision BIGINT NOT NULL,field" +
+	"_revision BIGINT NOT NULL);\nCREATE TABLE message_generated_field_receipts" +
+	"(message_id TEXT NOT NULL,field TEXT NOT NULL,admission_id TEXT NOT NULL R" +
+	"EFERENCES message_generated_field_admissions(id),PRIMARY KEY(message_id,fi" +
+	"eld));\nCREATE TRIGGER message_generated_field_admissions_immutable BEFORE" +
+	" UPDATE OR DELETE ON message_generated_field_admissions FOR EACH ROW EXECU" +
+	"TE FUNCTION message_material_immutable();\n\nCREATE TABLE message_generate" +
+	"d_field_versions(message_id TEXT NOT NULL,field TEXT NOT NULL,revision BIG" +
+	"INT NOT NULL,PRIMARY KEY(message_id,field));\nCREATE FUNCTION message_gene" +
+	"rated_field_checkpoint() RETURNS trigger LANGUAGE plpgsql AS $$ DECLARE f " +
+	"TEXT;BEGIN FOREACH f IN ARRAY ARRAY['images','attachments','rendered_conte" +
+	"nt','context_checkpoint'] LOOP IF TG_OP='INSERT' OR to_jsonb(OLD)->f IS DI" +
+	"STINCT FROM to_jsonb(NEW)->f THEN INSERT INTO message_generated_field_vers" +
+	"ions VALUES(NEW.id,f,1) ON CONFLICT(message_id,field) DO UPDATE SET revisi" +
+	"on=message_generated_field_versions.revision+1; END IF;END LOOP;RETURN NEW" +
+	";END $$;\nCREATE TRIGGER message_generated_field_checkpoint AFTER INSERT O" +
+	"R UPDATE ON messages FOR EACH ROW EXECUTE FUNCTION message_generated_field" +
+	"_checkpoint();\n\nCREATE TABLE message_fork_parent_origins(generation_id T" +
+	"EXT PRIMARY KEY REFERENCES message_generation_origins(id),parent_materials" +
+	" TEXT NOT NULL);\nCREATE TRIGGER message_fork_parent_origins_immutable BEF" +
+	"ORE UPDATE OR DELETE ON message_fork_parent_origins FOR EACH ROW EXECUTE F" +
+	"UNCTION message_material_immutable();\n")
 
 // Generated checkpoint/render/image material retains every actual original
 // parent proof. Own host-field advancement does not re-certify other parents.
@@ -324,7 +371,8 @@ func (s *KnowledgeInputProvenanceStore) verifyGeneratedMessageFieldsInTx(tx *gor
 	var fields []messageGeneratedFieldAdmission
 	if err := tx.Table("message_generated_field_admissions a").
 		Select("a.*").
-		Joins("JOIN message_generated_field_receipts r ON r.admission_id=a.id AND r.message_id=a.message_id AND r.field=a.field").
+		Joins(("JOIN message_generated_field_receipts r ON r.admission_id=a.id AND r.messa" +
+			"ge_id=a.message_id AND r.field=a.field")).
 		Where("a.message_id=? AND a.session_id=?", message.ID, message.SessionID).
 		Find(&fields).
 		Error; err != nil {
@@ -538,7 +586,8 @@ func messageGeneratedFieldProofs(tx *gorm.DB, message string) ([]*types.MessageG
 	var rows []messageGeneratedFieldAdmission
 	if err := tx.Table("message_generated_field_admissions a").
 		Select("a.*").
-		Joins("JOIN message_generated_field_receipts r ON r.admission_id=a.id AND r.message_id=a.message_id AND r.field=a.field").
+		Joins(("JOIN message_generated_field_receipts r ON r.admission_id=a.id AND r.messa" +
+			"ge_id=a.message_id AND r.field=a.field")).
 		Where("a.message_id=?", message).
 		Order("a.field").
 		Find(&rows).

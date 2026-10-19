@@ -209,11 +209,11 @@ func runHistoryVectorRerank(
 	if len(results) == 0 || rc == nil || rc.RerankModelID == "" {
 		out := make([]*types.SearchResult, 0, len(results))
 		for _, result := range results {
-			copy, err := copyResult(result)
+			copied2, err := copyResult(result)
 			if err != nil {
 				return nil, err
 			}
-			out = append(out, copy)
+			out = append(out, copied2)
 		}
 		if err := checkpoint(); err != nil {
 			return nil, err
@@ -263,12 +263,12 @@ func runHistoryVectorRerank(
 		if rank.RelevanceScore < threshold {
 			continue
 		}
-		copy, err := copyResult(results[rank.Index])
+		copied3, err := copyResult(results[rank.Index])
 		if err != nil {
 			return nil, err
 		}
-		copy.Score = rank.RelevanceScore
-		out = append(out, copy)
+		copied3.Score = rank.RelevanceScore
+		out = append(out, copied3)
 		if len(out) == limit {
 			break
 		}

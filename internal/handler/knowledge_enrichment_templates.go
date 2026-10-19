@@ -10,11 +10,13 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// KnowledgeEnrichmentTemplateHandler serves provenance-bound enrichment template operations.
 type KnowledgeEnrichmentTemplateHandler struct {
 	service *service.KnowledgeEnrichmentTemplateService
 	bases   interfaces.KnowledgeBaseService
 }
 
+// NewKnowledgeEnrichmentTemplateHandler constructs the configured KnowledgeEnrichmentTemplateHandler.
 func NewKnowledgeEnrichmentTemplateHandler(
 	s *service.KnowledgeEnrichmentTemplateService,
 	bases interfaces.KnowledgeBaseService,
@@ -105,7 +107,10 @@ func (h *KnowledgeEnrichmentTemplateHandler) Read(c *gin.Context) {
 		return
 	}
 
-	defer snapshot.Close()
+	defer func() {
+		// Only original read pins are released; no protected material is published by cleanup.
+		_ = snapshot.Close()
+	}()
 	prior := c.Writer
 	c.Writer = &knowledgeCollectionAuthorizationWriter{
 		ResponseWriter: prior,

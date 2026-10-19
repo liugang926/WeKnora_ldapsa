@@ -139,6 +139,7 @@ func captureKnowledgeActorSelector(ctx context.Context, admissionID string) (kno
 	return selector, nil
 }
 
+// ConfigureKnowledgeInputActorGroupAccess configures knowledge input actor group access.
 func ConfigureKnowledgeInputActorGroupAccess(
 	store *KnowledgeInputProvenanceStore,
 	groups interfaces.GroupAccessService,
@@ -146,6 +147,7 @@ func ConfigureKnowledgeInputActorGroupAccess(
 	store.actorGroups = groups
 }
 
+// ConfigureKnowledgeInputActorShares configures knowledge input actor shares.
 func ConfigureKnowledgeInputActorShares(store *KnowledgeInputProvenanceStore, shares access.KBShareLookup) {
 	store.actorShares = shares
 }
@@ -180,6 +182,7 @@ func RestoreKnowledgeBuildActorIfRequired(
 	return restorer.RestoreKnowledgeBuildActor(ctx, proof)
 }
 
+// KnowledgeBuildActorRequired returns the knowledge build actor required result.
 func (s *KnowledgeInputProvenanceStore) KnowledgeBuildActorRequired(
 	ctx context.Context,
 	proof *types.KnowledgeBuildInputProof,
@@ -189,7 +192,8 @@ func (s *KnowledgeInputProvenanceStore) KnowledgeBuildActorRequired(
 	}
 	var admission knowledgeInputAdmission
 	if err := s.db.WithContext(ctx).
-		Where("admission_id = ? AND tenant_id = ? AND knowledge_base_id = ? AND knowledge_id = ?", proof.AdmissionID, proof.TenantID, proof.KnowledgeBaseID, proof.KnowledgeID).
+		Where(("admission_id = ? AND tenant_id = ? AND knowledge_base_id = ? AND knowledge" +
+			"_id = ?"), proof.AdmissionID, proof.TenantID, proof.KnowledgeBaseID, proof.KnowledgeID).
 		Take(&admission).
 		Error; err != nil {
 		return false, err
@@ -222,7 +226,8 @@ func (s *KnowledgeInputProvenanceStore) RestoreKnowledgeBuildActor(
 	}
 	var admission knowledgeInputAdmission
 	if err := s.db.WithContext(ctx).
-		Where("admission_id = ? AND tenant_id = ? AND knowledge_base_id = ? AND knowledge_id = ?", proof.AdmissionID, proof.TenantID, proof.KnowledgeBaseID, proof.KnowledgeID).
+		Where(("admission_id = ? AND tenant_id = ? AND knowledge_base_id = ? AND knowledge" +
+			"_id = ?"), proof.AdmissionID, proof.TenantID, proof.KnowledgeBaseID, proof.KnowledgeID).
 		Take(&admission).
 		Error; err != nil {
 		return ctx, err

@@ -97,7 +97,7 @@ func (r *NextcloudEventInboxRepository) ClaimDispatch(
 ) (*NextcloudEventDispatchClaim, error) {
 	var claim *NextcloudEventDispatchClaim
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if tx.Dialector.Name() == "sqlite" {
+		if tx.Name() == "sqlite" {
 			lock := tx.Exec(`UPDATE nextcloud_event_connections SET status = status
 				WHERE connection_id = ? AND status = 'active'`, connectionID)
 			if lock.Error != nil {
@@ -861,7 +861,7 @@ func (r *NextcloudEventInboxRepository) PrepareDispatch(
 		return ErrNextcloudEventConflict
 	}
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if tx.Dialector.Name() == "sqlite" {
+		if tx.Name() == "sqlite" {
 			lock := tx.Exec(`UPDATE nextcloud_event_connections SET status = status
 				WHERE connection_id = ? AND status = 'active'`, claim.ConnectionID)
 			if lock.Error != nil {
@@ -887,7 +887,8 @@ func (r *NextcloudEventInboxRepository) PrepareDispatch(
 			return err
 		}
 		result := tx.Table("nextcloud_event_dispatch").
-			Where("connection_id = ? AND state = 'leased' AND lease_token = ? AND target_event_id = ? AND last_sync_log_id IS NULL",
+			Where(("connection_id = ? AND state = 'leased' AND lease_token = ? AND target_even" +
+				"t_id = ? AND last_sync_log_id IS NULL"),
 				claim.ConnectionID, claim.LeaseToken, claim.TargetEventID).
 			Updates(map[string]any{"last_sync_log_id": syncLogID, "updated_at": now})
 		if result.Error != nil {
@@ -912,7 +913,7 @@ func (r *NextcloudEventInboxRepository) FinishDispatch(
 		return ErrNextcloudEventConflict
 	}
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if tx.Dialector.Name() == "sqlite" {
+		if tx.Name() == "sqlite" {
 			lock := tx.Exec(
 				`UPDATE nextcloud_event_connections SET status = status WHERE connection_id = ? AND status = 'active'`,
 				claim.ConnectionID,

@@ -61,7 +61,7 @@ func tagHTTPFixture(
 	return h, db, store, groups
 }
 
-func serveTagHTTP(h *TagHandler, ctx context.Context, method, url, body string) *httptest.ResponseRecorder {
+func serveTagHTTP(ctx context.Context, h *TagHandler, method, url, body string) *httptest.ResponseRecorder {
 	if method != http.MethodGet {
 		grant, err := access.ResolveKB(
 			ctx,
@@ -91,8 +91,9 @@ func TestTagOutputActualHTTPCRUDAndList(t *testing.T) {
 	h, db, store, _ := tagHTTPFixture(t)
 	ctx := collectionHumanInputContext(7)
 	w := serveTagHTTP(
-		h,
-		ctx,
+
+		ctx, h,
+
 		http.MethodPost,
 		"/knowledge-bases/kb/tags",
 		`{"name":"actual public name","color":"blue","sort_order":2}`,
@@ -101,7 +102,7 @@ func TestTagOutputActualHTTPCRUDAndList(t *testing.T) {
 	require.Contains(t, w.Body.String(), "actual public name")
 	var tag types.KnowledgeTag
 	require.NoError(t, db.Where("name='actual public name'").Take(&tag).Error)
-	w = serveTagHTTP(h, ctx, http.MethodPut, "/knowledge-bases/kb/tags/"+tag.ID, `{"color":"green"}`)
+	w = serveTagHTTP(ctx, h, http.MethodPut, "/knowledge-bases/kb/tags/"+tag.ID, `{"color":"green"}`)
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	require.Contains(t, w.Body.String(), "actual public name")
 	knowledge := repository.NewKnowledgeRepository(db)
@@ -145,7 +146,7 @@ func TestTagOutputActualHTTPCRUDAndList(t *testing.T) {
 		repository.NewChunkRepository(db).
 			CreateChunks(repository.WithKnowledgeBuildInputProof(ctx, store, actual.Proof), []*types.Chunk{chunk}),
 	)
-	w = serveTagHTTP(h, ctx, http.MethodGet, "/knowledge-bases/kb/tags?page_size=1&keyword=public", "")
+	w = serveTagHTTP(ctx, h, http.MethodGet, "/knowledge-bases/kb/tags?page_size=1&keyword=public", "")
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	require.Contains(t, w.Body.String(), `"knowledge_count":1`)
 	require.Contains(t, w.Body.String(), `"chunk_count":1`)
@@ -163,7 +164,7 @@ func TestTagOutputActualHTTPUnknownRetainedAndMissingVerifier(t *testing.T) {
 		SortOrder:       2,
 	}
 	require.NoError(t, db.Create(tag).Error)
-	w := serveTagHTTP(h, ctx, http.MethodPut, "/knowledge-bases/kb/tags/legacy-tag", `{"color":"green"}`)
+	w := serveTagHTTP(ctx, h, http.MethodPut, "/knowledge-bases/kb/tags/legacy-tag", `{"color":"green"}`)
 	require.Equal(t, http.StatusForbidden, w.Code, w.Body.String())
 	require.NotContains(t, w.Body.String(), tag.Name)
 	require.NoError(t, db.Where("id='legacy-tag'").Take(tag).Error)
@@ -173,11 +174,11 @@ func TestTagOutputActualHTTPUnknownRetainedAndMissingVerifier(t *testing.T) {
 		tag.Color,
 		"the actual authorized partial edit committed; response still cannot disclose retained unknown Name",
 	)
-	w = serveTagHTTP(h, ctx, http.MethodGet, "/knowledge-bases/kb/tags?keyword=absent", "")
+	w = serveTagHTTP(ctx, h, http.MethodGet, "/knowledge-bases/kb/tags?keyword=absent", "")
 	require.Equal(t, http.StatusForbidden, w.Code, w.Body.String())
 	require.NotContains(t, w.Body.String(), tag.Name)
 	h.outputAuthorizer = nil
-	w = serveTagHTTP(h, ctx, http.MethodPost, "/knowledge-bases/kb/tags", `{"name":"new"}`)
+	w = serveTagHTTP(ctx, h, http.MethodPost, "/knowledge-bases/kb/tags", `{"name":"new"}`)
 	require.Equal(t, http.StatusServiceUnavailable, w.Code, w.Body.String())
 }
 
@@ -262,7 +263,7 @@ func TestTagOutputActualHTTPRevokeBeforeWrite(t *testing.T) {
 					require.NoError(t, db.Unscoped().Delete(c).Error)
 				}
 			}
-			w := serveTagHTTP(h, ctx, http.MethodGet, "/knowledge-bases/kb/tags", "")
+			w := serveTagHTTP(ctx, h, http.MethodGet, "/knowledge-bases/kb/tags", "")
 			status := http.StatusForbidden
 			if mode == "missing-actor" {
 				status = http.StatusServiceUnavailable
@@ -388,13 +389,13 @@ func TestTagOutputActualHTTPSignedSourceDependencies(t *testing.T) {
 			ConfigureTagHandlerOutputLineage(h, service.NewTagOutputAuthorizer(store, guard))
 			// The response is source-empty ordinary text, but original candidate Name
 			// influences its filter/page/total and must still authorize its dependency.
-			w := serveTagHTTP(h, ctx, http.MethodGet, "/knowledge-bases/kb/tags?page_size=1&keyword=ordinary", "")
+			w := serveTagHTTP(ctx, h, http.MethodGet, "/knowledge-bases/kb/tags?page_size=1&keyword=ordinary", "")
 			require.Positive(t, calls.Load())
 			if mode == "allowed" {
 				require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 				require.Contains(t, w.Body.String(), ordinary.Name)
 				// A fresh color edit cannot erase the unchanged derived Name/Sort origin.
-				w = serveTagHTTP(h, ctx, http.MethodPut, "/knowledge-bases/kb/tags/"+derived.ID, `{"color":"green"}`)
+				w = serveTagHTTP(ctx, h, http.MethodPut, "/knowledge-bases/kb/tags/"+derived.ID, `{"color":"green"}`)
 				require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 				require.Contains(t, w.Body.String(), derived.Name)
 			} else {
@@ -580,7 +581,7 @@ func TestTagOutputActualHTTPAllOriginalNameSources(t *testing.T) {
 			ConfigureTagHandlerOutputLineage(h, service.NewTagOutputAuthorizer(store, guard))
 			// Color is actual fresh independent input. Name retains BOTH original
 			// sources, so a permission to A alone can never publish the old Name.
-			w := serveTagHTTP(h, ctx, http.MethodPut, "/knowledge-bases/kb/tags/"+tag.ID, `{"color":"green"}`)
+			w := serveTagHTTP(ctx, h, http.MethodPut, "/knowledge-bases/kb/tags/"+tag.ID, `{"color":"green"}`)
 			if mode == "tag-two-sources-allowed" {
 				require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 				require.Contains(t, w.Body.String(), tag.Name)
@@ -607,8 +608,9 @@ func TestTagOutputActualHTTPCreatedCommittedThenUserRevoked(t *testing.T) {
 		}
 	}
 	w := serveTagHTTP(
-		h,
-		ctx,
+
+		ctx, h,
+
 		http.MethodPost,
 		"/knowledge-bases/kb/tags",
 		`{"name":"new committed private tag","color":"blue","sort_order":2}`,

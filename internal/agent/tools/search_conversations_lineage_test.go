@@ -25,8 +25,8 @@ func (f *conversationSearchFixture) SearchMessages(_ context.Context,
 	params *types.MessageSearchParams,
 ) (*types.MessageSearchResult, error) {
 	f.legacyCalls++
-	copy := *params
-	f.params = &copy
+	copied := *params
+	f.params = &copied
 	return f.result, nil
 }
 
@@ -42,8 +42,8 @@ func (f *conversationInputFixture) SearchConversationsWithInputs(_ context.Conte
 	params *types.MessageSearchParams,
 ) (*types.MessageSearchResult, *types.SourceLineage, error) {
 	f.inputCalls++
-	copy := *params
-	f.params = &copy
+	copied2 := *params
+	f.params = &copied2
 	if f.after != nil {
 		f.after()
 	}

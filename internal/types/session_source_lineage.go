@@ -2,20 +2,22 @@ package types
 
 import "encoding/json"
 
+// MarshalJSON encodes the public session projection without private lineage fields.
 // Raw repository models cannot serialize unverified generated text. Service
 // readers mark a field only after owner checks and current lineage authorization.
 func (s Session) MarshalJSON() ([]byte, error) {
 	type plainSession Session
-	copy := s
+	copied := s
 	if !s.TitleAuthorized || s.TitleSourceLineage.RequireComplete() != nil {
-		copy.Title = ""
+		copied.Title = ""
 	}
 	if !s.DescriptionAuthorized || s.DescriptionSourceLineage.RequireComplete() != nil {
-		copy.Description = ""
+		copied.Description = ""
 	}
-	return json.Marshal(plainSession(copy))
+	return json.Marshal(plainSession(copied))
 }
 
+// MarshalJSON encodes the public session projection without private lineage fields.
 // An embedded Marshaler would otherwise discard the outer IM-origin fields.
 func (s SessionListItem) MarshalJSON() ([]byte, error) {
 	payload, err := s.Session.MarshalJSON()

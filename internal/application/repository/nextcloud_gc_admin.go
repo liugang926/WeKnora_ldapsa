@@ -13,6 +13,7 @@ import (
 )
 
 var (
+	// ErrNextcloudGCAdmin reports a nextcloud gcadmin condition.
 	ErrNextcloudGCAdmin          = errors.New("current GC admin session required")
 	ErrNextcloudGCJobUnavailable = apperrors.NewProtocolError(errors.New("gc job unavailable"), "GC job unavailable")
 	ErrNextcloudGCRetention      = apperrors.NewProtocolError(
@@ -29,6 +30,7 @@ type (
 	}
 )
 
+// NextcloudGCPreviewItem represents nextcloud gcpreview item repository data.
 type NextcloudGCPreviewItem struct {
 	Kind                   string `json:"kind"`
 	State                  string `json:"state"`
@@ -36,6 +38,8 @@ type NextcloudGCPreviewItem struct {
 	EstimatedBytes         int64  `json:"estimated_bytes"`
 	ConfirmedReleasedBytes int64  `json:"confirmed_released_bytes"`
 }
+
+// NextcloudGCPreview represents nextcloud gcpreview repository data.
 type NextcloudGCPreview struct {
 	Status                   NextcloudGCStatus        `json:"status"`
 	Items                    []NextcloudGCPreviewItem `json:"items"`
@@ -44,6 +48,7 @@ type NextcloudGCPreview struct {
 	CollectionChecksRepeated bool                     `json:"collection_checks_repeated"`
 }
 
+// PreviewJob returns the preview job result.
 func (s *NextcloudGCStore) PreviewJob(ctx context.Context, tenant uint64, id string) (*NextcloudGCPreview, error) {
 	if tenant == 0 || id == "" {
 		return nil, ErrNextcloudGCJobUnavailable
@@ -73,7 +78,9 @@ func (s *NextcloudGCStore) PreviewJob(ctx context.Context, tenant uint64, id str
 	}
 	if e := s.db.WithContext(ctx).
 		Model(&nextcloudGCItem{}).
-		Select("kind,state,COUNT(*) AS count,COALESCE(SUM(estimated_bytes),0) AS estimated_bytes,COALESCE(SUM(confirmed_released_bytes),0) AS confirmed_released_bytes").
+		Select(("kind,state,COUNT(*) AS count,COALESCE(SUM(estimated_bytes),0) AS estimated" +
+			"_bytes,COALESCE(SUM(confirmed_released_bytes),0) AS confirmed_released_byt" +
+			"es")).
 		Where("job_id=?", id).
 		Group("kind,state").
 		Order("kind,state").
@@ -86,7 +93,8 @@ func (s *NextcloudGCStore) PreviewJob(ctx context.Context, tenant uint64, id str
 		if e := bodyInternal(
 			s.db.WithContext(ctx),
 		).Model(&originalBodyGCItem{}).
-			Select("'sql_original_body' AS kind,state,COUNT(*) AS count,COALESCE(SUM(estimated_bytes),0) AS estimated_bytes,0 AS confirmed_released_bytes").
+			Select(("'sql_original_body' AS kind,state,COUNT(*) AS count,COALESCE(SUM(estimated" +
+				"_bytes),0) AS estimated_bytes,0 AS confirmed_released_bytes")).
 			Where("job_id=? AND tenant_id=? AND knowledge_base_id=? AND knowledge_id=?", job.ID, job.TenantID, job.KnowledgeBaseID, job.KnowledgeID).
 			Group("state").
 			Order("state").
@@ -107,6 +115,7 @@ func (s *NextcloudGCStore) PreviewJob(ctx context.Context, tenant uint64, id str
 	return out, nil
 }
 
+// CollectJob returns the collect job result.
 // A request targets one persisted job; no inventory locator or safety deadline
 // is accepted from the browser. Every destructive transaction repeats authority.
 func (s *NextcloudGCStore) CollectJob(
@@ -147,7 +156,7 @@ func (s *NextcloudGCStore) CollectJob(
 		if now.Before(job.NotBefore) {
 			return ErrNextcloudGCRetention
 		}
-		return gcManualAudit(tx, ctx, job, types.AuditActionNextcloudGCRequested, types.AuditOutcomeAccepted)
+		return gcManualAudit(ctx, tx, job, types.AuditActionNextcloudGCRequested, types.AuditOutcomeAccepted)
 	}); e != nil {
 		return nil, e
 	}
@@ -160,7 +169,7 @@ func (s *NextcloudGCStore) CollectJob(
 		}
 		resultErr = errors.Join(
 			resultErr,
-			gcManualAudit(s.db.WithContext(ctx), ctx, job, types.AuditActionNextcloudGCFinished, outcome),
+			gcManualAudit(ctx, s.db.WithContext(ctx), job, types.AuditActionNextcloudGCFinished, outcome),
 		)
 	}()
 	if e := s.runOne(ctx, id, now); e != nil {
@@ -180,6 +189,7 @@ func (s *NextcloudGCStore) CollectJob(
 	return s.PreviewJob(ctx, tenant, id)
 }
 
+// RetryJobAsAdmin returns the retry job as admin result.
 func (s *NextcloudGCStore) RetryJobAsAdmin(
 	ctx context.Context,
 	authority *KnowledgeInputProvenanceStore,
@@ -213,7 +223,7 @@ func (s *NextcloudGCStore) RetryJobAsAdmin(
 			return r.Error
 		}
 		if changed {
-			return gcManualAudit(tx, ctx, job, types.AuditActionNextcloudGCRetry, types.AuditOutcomeAccepted)
+			return gcManualAudit(ctx, tx, job, types.AuditActionNextcloudGCRetry, types.AuditOutcomeAccepted)
 		}
 		return nil
 	})
@@ -265,8 +275,8 @@ func gcValidateManualAdmin(ctx context.Context, tx *gorm.DB, job nextcloudGCJob)
 }
 
 func gcManualAudit(
-	tx *gorm.DB,
 	ctx context.Context,
+	tx *gorm.DB,
 	job nextcloudGCJob,
 	action types.AuditAction,
 	outcome types.AuditOutcome,

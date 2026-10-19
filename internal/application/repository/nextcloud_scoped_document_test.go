@@ -13,7 +13,8 @@ func TestNextcloudScopedDocumentRequiresCurrentPublishedSource(t *testing.T) {
 	require.NoError(
 		t,
 		db.Exec(
-			"CREATE TABLE nextcloud_source_versions(tenant_id INTEGER,knowledge_base_id TEXT,candidate_knowledge_id TEXT,state TEXT)",
+			("CREATE TABLE nextcloud_source_versions(tenant_id INTEGER,knowledge_base_id" +
+				" TEXT,candidate_knowledge_id TEXT,state TEXT)"),
 		).Error,
 	)
 	require.NoError(

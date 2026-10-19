@@ -371,11 +371,12 @@ func TestProcessSyncRejectsUnclaimedNextcloudManualBeforeSourceIO(t *testing.T) 
 }
 
 func TestProcessSyncNextcloudRetryAfterTransientFailure(t *testing.T) {
+	t.Setenv("SYSTEM_AES_KEY", "0123456789abcdef0123456789abcdef")
 	config, err := (&types.DataSourceConfig{
 		Type:        types.ConnectorTypeNextcloud,
 		ResourceIDs: []string{"binding-1"},
 		Settings:    map[string]interface{}{"base_url": "https://nextcloud.example.test"},
-		Credentials: map[string]interface{}{"token": "synthetic-token"},
+		Credentials: map[string]interface{}{"token": "synthetic-token", "key_id": "fixture"},
 	}).ToJSON()
 	require.NoError(t, err)
 	ds := &types.DataSource{
@@ -1246,6 +1247,7 @@ func (c nextcloudCursorMixedConnector) FetchIncremental(
 }
 
 func TestProcessSync_NextcloudPartialFailureDoesNotAdvanceCursor(t *testing.T) {
+	t.Setenv("SYSTEM_AES_KEY", "0123456789abcdef0123456789abcdef")
 	for _, test := range []struct {
 		name            string
 		trigger         string

@@ -10,11 +10,13 @@ import (
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 )
 
+// ChunkOutputAuthorizer authorizes original chunk inputs before public output.
 type ChunkOutputAuthorizer struct {
 	reader  interfaces.ChunkOutputInputReader
 	checker knowledgeOutputLineageChecker
 }
 
+// NewChunkOutputAuthorizer constructs the configured ChunkOutputAuthorizer.
 func NewChunkOutputAuthorizer(
 	store *repository.KnowledgeInputProvenanceStore,
 	guard *access.NextcloudSourceLineageGuard,
@@ -22,6 +24,7 @@ func NewChunkOutputAuthorizer(
 	return &ChunkOutputAuthorizer{reader: store, checker: guard}
 }
 
+// ChunkOutputGuard retains and rechecks the chunk inputs selected for output.
 type ChunkOutputGuard struct {
 	authorizer *ChunkOutputAuthorizer
 	snapshot   *types.ChunkOutputInputSnapshot
@@ -71,6 +74,7 @@ func chunkOutputSnapshotBody(snapshot *types.ChunkOutputInputSnapshot) (string, 
 	return string(data), err
 }
 
+// Begin captures the original inputs and current controls for this operation.
 func (a *ChunkOutputAuthorizer) Begin(
 	ctx context.Context,
 	request types.ChunkOutputReadRequest,
@@ -117,6 +121,7 @@ func (a *ChunkOutputAuthorizer) Begin(
 	return g, nil
 }
 
+// Snapshot returns the selected original material snapshot.
 func (g *ChunkOutputGuard) Snapshot() (*types.ChunkOutputInputSnapshot, error) {
 	if g == nil {
 		return nil, types.ErrSourceLineageUnknown
@@ -124,14 +129,16 @@ func (g *ChunkOutputGuard) Snapshot() (*types.ChunkOutputInputSnapshot, error) {
 	return cloneChunkOutputSnapshot(g.snapshot)
 }
 
+// SourceLineage returns the lineage retained by this output guard.
 func (g *ChunkOutputGuard) SourceLineage() *types.SourceLineage {
 	if g == nil || g.snapshot == nil {
 		return types.UnknownSourceLineage()
 	}
-	copy, _ := types.UnionSourceLineage(g.snapshot.Proof.SourceLineage)
-	return copy
+	copied, _ := types.UnionSourceLineage(g.snapshot.Proof.SourceLineage)
+	return copied
 }
 
+// Check rechecks the retained inputs and their current read controls.
 func (g *ChunkOutputGuard) Check(ctx context.Context, published *types.ChunkOutputInputSnapshot) error {
 	if ctx == nil || g == nil || g.authorizer == nil || g.authorizer.reader == nil || g.authorizer.checker == nil {
 		return access.ErrNextcloudPublicationUnavailable

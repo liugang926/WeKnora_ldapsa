@@ -92,8 +92,8 @@ func validNextcloudFileETag(etag string) bool {
 		return false
 	}
 	for _, char := range etag {
-		if !(char >= 'a' && char <= 'z' || char >= 'A' && char <= 'Z' ||
-			char >= '0' && char <= '9' || char == '.' || char == '_' || char == ':' || char == '-') {
+		if (char < 'a' || char > 'z') && (char < 'A' || char > 'Z') &&
+			(char < '0' || char > '9') && char != '.' && char != '_' && char != ':' && char != '-' {
 			return false
 		}
 	}
@@ -109,6 +109,7 @@ func nextcloudFileStatusCanonicalRequest(query, timestamp, nonce, connectionID, 
 	}, "\n"))
 }
 
+// FileStatusV2 serves version two source file status under scoped authorization.
 // FileStatus is machine-only. It reports a persisted publication version,
 // never an event receipt, sync cursor, or browser user's retrieval grant.
 func (h *NextcloudEventHandler) FileStatusV2(c *gin.Context) {

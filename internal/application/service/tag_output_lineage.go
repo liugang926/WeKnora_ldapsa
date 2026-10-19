@@ -10,11 +10,13 @@ import (
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 )
 
+// TagOutputAuthorizer authorizes original tag inputs before public output.
 type TagOutputAuthorizer struct {
 	reader  interfaces.TagOutputInputReader
 	checker knowledgeOutputLineageChecker
 }
 
+// NewTagOutputAuthorizer constructs the configured TagOutputAuthorizer.
 func NewTagOutputAuthorizer(
 	store *repository.KnowledgeInputProvenanceStore,
 	guard *access.NextcloudSourceLineageGuard,
@@ -22,6 +24,7 @@ func NewTagOutputAuthorizer(
 	return &TagOutputAuthorizer{reader: store, checker: guard}
 }
 
+// TagOutputGuard retains and rechecks the tag inputs selected for output.
 type TagOutputGuard struct {
 	authorizer *TagOutputAuthorizer
 	snapshot   *types.TagOutputInputSnapshot
@@ -29,6 +32,7 @@ type TagOutputGuard struct {
 	scope      access.LineageReadScope
 }
 
+// Begin captures the original inputs and current controls for this operation.
 func (a *TagOutputAuthorizer) Begin(ctx context.Context, req types.TagOutputReadRequest) (*TagOutputGuard, error) {
 	if a == nil || a.reader == nil || a.checker == nil {
 		return nil, access.ErrNextcloudPublicationUnavailable
@@ -40,6 +44,7 @@ func (a *TagOutputAuthorizer) Begin(ctx context.Context, req types.TagOutputRead
 	return a.BeginCommitted(ctx, snapshot)
 }
 
+// BeginCommitted captures the committed original tag inputs and current read controls.
 func (a *TagOutputAuthorizer) BeginCommitted(
 	ctx context.Context,
 	original *types.TagOutputInputSnapshot,
@@ -75,6 +80,7 @@ func (a *TagOutputAuthorizer) BeginCommitted(
 	return g, nil
 }
 
+// Tag returns the retained tag projection.
 func (g *TagOutputGuard) Tag() (*types.KnowledgeTag, error) {
 	if g == nil || g.snapshot == nil || g.snapshot.Request.TagID == "" || len(g.snapshot.Tags) != 1 {
 		return nil, types.ErrSourceLineageUnknown
@@ -82,6 +88,7 @@ func (g *TagOutputGuard) Tag() (*types.KnowledgeTag, error) {
 	return cloneCollection(g.snapshot.Tags[0])
 }
 
+// Select selects a collection from the retained original inputs.
 func (g *TagOutputGuard) Select(
 	ctx context.Context,
 	req types.TagOutputSelectionRequest,
@@ -171,6 +178,7 @@ func (g *TagOutputGuard) authorize(ctx context.Context) error {
 	return g.authorizer.checker.Check(ctx, empty, scope)
 }
 
+// Check rechecks the retained inputs and their current read controls.
 func (g *TagOutputGuard) Check(ctx context.Context, published any) error {
 	if g == nil || g.authorizer == nil || ctx == nil {
 		return access.ErrNextcloudPublicationUnavailable
@@ -226,6 +234,7 @@ func (g *TagOutputGuard) Check(ctx context.Context, published any) error {
 	return body()
 }
 
+// FAQReadPlan plans original material reads for FAQ output.
 func (a *TagOutputAuthorizer) FAQReadPlan(
 	ctx context.Context,
 	tenant uint64,

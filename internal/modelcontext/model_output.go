@@ -661,7 +661,8 @@ func (r *sourceRegistry) modelWebFetchOutput(rows []map[string]interface{}, fall
 			b.WriteString("- Explicitly state that page content was not verified and treat dynamic facts as uncertain.")
 		} else {
 			b.WriteString(
-				"- Use successful page content together with existing search snippets; failed URLs do not invalidate successful evidence.\n",
+				("- Use successful page content together with existing search snippets; fail" +
+					"ed URLs do not invalidate successful evidence.\n"),
 			)
 			b.WriteString("- Do not retry non-retryable failures. If evidence is sufficient, answer now.")
 		}

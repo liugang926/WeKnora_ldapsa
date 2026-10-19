@@ -5,6 +5,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// RegisterKnowledgeEnrichmentTemplateRoutes registers enrichment template administration routes.
 func RegisterKnowledgeEnrichmentTemplateRoutes(
 	r *gin.RouterGroup,
 	h *handler.KnowledgeEnrichmentTemplateHandler,

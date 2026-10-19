@@ -23,7 +23,7 @@ func (s *KnowledgeInputProvenanceStore) RecheckKnowledgeOutputInputs(
 		return types.ErrSourceLineageLimit
 	}
 	options := &sql.TxOptions{ReadOnly: true}
-	switch s.db.Dialector.Name() {
+	switch s.db.Name() {
 	case "postgres":
 		options.Isolation = sql.LevelRepeatableRead
 	case "sqlite":

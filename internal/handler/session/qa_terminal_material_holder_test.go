@@ -37,13 +37,13 @@ func (s *terminalMaterialStream) AppendEvent(
 	if err != nil {
 		return err
 	}
-	var copy interfaces.StreamEvent
-	if err := json.Unmarshal(raw, &copy); err != nil {
+	var copied interfaces.StreamEvent
+	if err := json.Unmarshal(raw, &copied); err != nil {
 		return err
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.events = append(s.events, copy)
+	s.events = append(s.events, copied)
 	s.scopes = append(s.scopes, [2]string{session, message})
 	return nil
 }
@@ -112,8 +112,10 @@ func TestLiveSSEProducerErrorWithRefusedOriginalMaterialHolder(t *testing.T) {
 			r.GET("/stream", func(c *gin.Context) {
 				// This is the actual original-material owner used by executeQA,
 				// not a check stub. It has no admitted originals and is not Ready.
-				ctx, attach, check, close := applicationservice.BeginMessageMaterialHTTPBoundary(c.Request.Context())
-				defer close()
+				ctx, attach, check, closeRead := applicationservice.BeginMessageMaterialHTTPBoundary(
+					c.Request.Context(),
+				)
+				defer closeRead()
 				require.ErrorIs(t, check(), access.ErrNextcloudPublicationUnavailable)
 				ctx = attach(ctx)
 				c.Writer = &nativeSavedReplayWriter{ResponseWriter: c.Writer, ctx: ctx, check: check}
@@ -170,7 +172,7 @@ func TestLiveSSEProducerErrorWithRefusedOriginalMaterialHolder(t *testing.T) {
 			started := time.Now()
 			response, err := client.Get(server.URL + "/stream")
 			require.NoError(t, err, "original refusal must close via a static terminal, not client timeout")
-			defer response.Body.Close()
+			defer func() { require.NoError(t, response.Body.Close()) }()
 			raw, err := io.ReadAll(response.Body)
 			require.NoError(t, err)
 			require.Less(t, time.Since(started), time.Second)

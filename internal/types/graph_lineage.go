@@ -34,22 +34,22 @@ func CloneKnowledgeGraphInputSnapshot(input *KnowledgeGraphInputSnapshot) (*Know
 		if node == nil {
 			return nil, ErrGraphSourceReceiptUnknown
 		}
-		copy := *node
+		copied := *node
 		if node.Chunks != nil {
-			copy.Chunks = append([]string{}, node.Chunks...)
+			copied.Chunks = append([]string{}, node.Chunks...)
 		}
 		if node.Attributes != nil {
-			copy.Attributes = append([]string{}, node.Attributes...)
+			copied.Attributes = append([]string{}, node.Attributes...)
 		}
-		out.Graph.Node[i] = &copy
+		out.Graph.Node[i] = &copied
 	}
 	out.Graph.Relation = make([]*GraphRelation, len(input.Graph.Relation))
 	for i, edge := range input.Graph.Relation {
 		if edge == nil {
 			return nil, ErrGraphSourceReceiptUnknown
 		}
-		copy := *edge
-		out.Graph.Relation[i] = &copy
+		copied2 := *edge
+		out.Graph.Relation[i] = &copied2
 	}
 	out.Graph.InputReceipts = nil
 	out.Graph.SourceLineage, err = UnionSourceLineage(input.Graph.SourceLineage)
@@ -82,11 +82,11 @@ func CloneKnowledgeGraphInputSnapshot(input *KnowledgeGraphInputSnapshot) (*Know
 		}
 	}
 	for _, receipt := range input.Graph.InputReceipts {
-		copy, err := CopyGraphSourceReceipt(receipt)
+		copied3, err := CopyGraphSourceReceipt(receipt)
 		if err != nil {
 			return nil, err
 		}
-		out.Graph.InputReceipts = append(out.Graph.InputReceipts, copy)
+		out.Graph.InputReceipts = append(out.Graph.InputReceipts, copied3)
 	}
 	data, err := json.Marshal(input.Chunks)
 	if err != nil {

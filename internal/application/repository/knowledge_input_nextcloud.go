@@ -39,7 +39,8 @@ func knowledgeBuildSourceIdentity(tx *gorm.DB, k *types.Knowledge, epoch uint64)
 		return zero, ErrKnowledgeInputChanged
 	}
 	var pair NextcloudSourcePairing
-	if err := tx.Where("tenant_id = ? AND knowledge_base_id = ? AND datasource_id = ? AND state = 'active'", k.TenantID, k.KnowledgeBaseID, candidate.version.DataSourceID).
+	if err := tx.Where(("tenant_id = ? AND knowledge_base_id = ? AND datasource_id = ? AND state = " +
+		"'active'"), k.TenantID, k.KnowledgeBaseID, candidate.version.DataSourceID).
 		Take(&pair).
 		Error; err != nil {
 		return zero, err

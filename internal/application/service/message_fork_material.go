@@ -81,12 +81,12 @@ func (s *SessionForkService) beginForkMessageMaterial(
 			guard.Close()
 			return nil, nil, nil, access.ErrNextcloudPublicationDenied
 		}
-		copy, err := cloneForkOriginalMessage(original)
+		copied, err := cloneForkOriginalMessage(original)
 		if err != nil {
 			guard.Close()
 			return nil, nil, nil, err
 		}
-		history = append(history, copy)
+		history = append(history, copied)
 	}
 	if originalPoint == nil {
 		guard.Close()
@@ -106,7 +106,7 @@ func (s *SessionForkService) beginForkMessageMaterial(
 // Explicitly include every hidden native field in the deep copy. Serializing
 // Message alone would lose its original source envelope and execution scope.
 func cloneForkOriginalMessage(original *types.Message) (*types.Message, error) {
-	copy, err := cloneCollection(struct {
+	copied2, err := cloneCollection(struct {
 		Message           *types.Message
 		SourceLineage     *types.SourceLineage
 		ExecutionContext  types.MessageExecutionContext
@@ -117,11 +117,11 @@ func cloneForkOriginalMessage(original *types.Message) (*types.Message, error) {
 	if err != nil {
 		return nil, err
 	}
-	copy.Message.SourceLineage = copy.SourceLineage
-	copy.Message.ExecutionContext = copy.ExecutionContext
-	copy.Message.AgentTenantID = copy.AgentTenantID
-	copy.Message.RenderedContent = copy.RenderedContent
-	copy.Message.ContextCheckpoint = copy.ContextCheckpoint
-	copy.Message.Artifacts = nil
-	return copy.Message, nil
+	copied2.Message.SourceLineage = copied2.SourceLineage
+	copied2.Message.ExecutionContext = copied2.ExecutionContext
+	copied2.Message.AgentTenantID = copied2.AgentTenantID
+	copied2.Message.RenderedContent = copied2.RenderedContent
+	copied2.Message.ContextCheckpoint = copied2.ContextCheckpoint
+	copied2.Message.Artifacts = nil
+	return copied2.Message, nil
 }

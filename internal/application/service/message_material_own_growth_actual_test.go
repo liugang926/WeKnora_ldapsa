@@ -53,7 +53,8 @@ func runMessageMaterialOwnGrowthActual(t *testing.T, pg bool) {
 				require.NoError(
 					t,
 					migration.Exec(
-						`CREATE FUNCTION uuid_generate_v4() RETURNS uuid LANGUAGE sql AS $$ SELECT public.uuid_generate_v4() $$`,
+						("CREATE FUNCTION uuid_generate_v4() RETURNS uuid LANGUAGE sql AS $$ SELECT " +
+							"public.uuid_generate_v4() $$"),
 					).Error,
 				)
 			}
@@ -223,7 +224,8 @@ func runMessageMaterialOwnGrowthActual(t *testing.T, pg bool) {
 						tx.Session(&gorm.Session{NewDB: true, Initialized: true}).
 							Table("nextcloud_content_fences").
 							Select("epoch", "state").
-							Where("tenant_id=? AND knowledge_base_id=? AND knowledge_id=? AND datasource_id=? AND external_id=?", source.TenantID, source.KnowledgeBaseID, source.KnowledgeID, source.DataSourceID, source.ExternalID).
+							Where(("tenant_id=? AND knowledge_base_id=? AND knowledge_id=? AND datasource_id=?"+
+								" AND external_id=?"), source.TenantID, source.KnowledgeBaseID, source.KnowledgeID, source.DataSourceID, source.ExternalID).
 							Take(&fence).
 							Error,
 					)
@@ -258,7 +260,8 @@ func runMessageMaterialOwnGrowthActual(t *testing.T, pg bool) {
 								t,
 								tx.Session(&gorm.Session{NewDB: true}).
 									Table("original_body_field_heads").
-									Where("body_id=? AND source_table='messages' AND row_key=? AND column_name='images'", value.FieldByName("BodyID").String(), user.ID).
+									Where(("body_id=? AND source_table='messages' AND row_key=? AND column_name='image"+
+										"s'"), value.FieldByName("BodyID").String(), user.ID).
 									Count(&count).
 									Error,
 							)

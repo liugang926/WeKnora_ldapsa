@@ -127,7 +127,7 @@ func collectionHTTPFixture(
 			&types.KnowledgeTagRelation{},
 		),
 	)
-	db.Config.DisableForeignKeyConstraintWhenMigrating = true
+	db.DisableForeignKeyConstraintWhenMigrating = true
 	require.NoError(t, db.AutoMigrate(&types.Session{}, &types.Message{}))
 	require.NoError(
 		t,
@@ -144,7 +144,7 @@ func collectionHTTPFixture(
 			&types.ResourceGroupGrant{},
 		),
 	)
-	db.Config.DisableForeignKeyConstraintWhenMigrating = false
+	db.DisableForeignKeyConstraintWhenMigrating = false
 	for _, name := range []string{"000031_nextcloud_source_versions", "000045_nextcloud_source_revisions"} {
 		ddl, err := os.ReadFile("../../migrations/sqlite/" + name + ".up.sql")
 		require.NoError(t, err)
@@ -313,11 +313,13 @@ func TestKnowledgeCollectionHTTPPositiveListFoldersAndThreeSearchBranches(t *tes
 		api       bool
 		total     int64
 	}{
-		{"list", "/knowledge-bases/kb/knowledge?keyword=match&file_type=md&folder_path=docs&folder_recursive=true&page_size=1", false, 1},
+		{"list", ("/knowledge-bases/kb/knowledge?keyword=match&file_type=md&folder_path=docs&" +
+			"folder_recursive=true&page_size=1"), false, 1},
 		{"folders", "/knowledge-bases/kb/knowledge/folders", false, 2},
 		{"own_shared_search", "/knowledge/search?keyword=match&limit=1", false, 2},
 		{"restricted_api_search", "/knowledge/search?keyword=match&limit=1", true, 1},
-		{"shared_agent_search", "/knowledge/search?keyword=match&agent_id=agent&agent_source_tenant_id=9&limit=1", false, 1},
+		{"shared_agent_search", ("/knowledge/search?keyword=match&agent_id=agent&agent_source_tenant_id=9&li" +
+			"mit=1"), false, 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h, _, _, _, _, _ := collectionHTTPFixture(t)

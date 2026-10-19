@@ -17,6 +17,7 @@ type RecoveryManifest struct {
 	Files      []RecoveryManifestFile `json:"files"`
 }
 
+// RecoveryManifestFile describes one file in a recovery manifest.
 type RecoveryManifestFile struct {
 	FileID                int64  `json:"file_id"`
 	ETag                  string `json:"etag"`
@@ -51,7 +52,7 @@ func InspectRecoveryManifest(ctx context.Context, ds *types.DataSourceConfig) (R
 		return result, err
 	}
 	if before != after || generation == "" || generation != nextGeneration || !reflect.DeepEqual(first, second) {
-		return result, fmt.Errorf("Nextcloud recovery manifest changed during reconciliation")
+		return result, fmt.Errorf("nextcloud recovery manifest changed during reconciliation")
 	}
 	result.Identity, result.Generation = after, generation
 	result.Files = make([]RecoveryManifestFile, 0, len(second))

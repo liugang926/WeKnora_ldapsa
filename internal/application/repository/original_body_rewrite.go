@@ -23,7 +23,7 @@ func originalBodyColumnIsJSON(tx *gorm.DB, table, col string) (bool, error) {
 	return false, nil
 }
 
-func originalBodyRewrite(tx *gorm.DB, d originalBodyFieldDescriptor, key, col, id, old, new string) error {
+func originalBodyRewrite(tx *gorm.DB, d originalBodyFieldDescriptor, key, col, id, old, newValue string) error {
 	internal := bodyInternal(tx)
 	if strings.Contains(col, ".") {
 		row, e := bodySourceRow(tx, d, key)
@@ -31,11 +31,11 @@ func originalBodyRewrite(tx *gorm.DB, d originalBodyFieldDescriptor, key, col, i
 			return e
 		}
 		stored := bodyText(row[bodyFieldColumn(col)])
-		updated, e := bodyNestedReplace(stored, col, old, new)
+		updated, e := bodyNestedReplace(stored, col, old, newValue)
 		if e != nil {
 			return e
 		}
-		if tx.Dialector.Name() == "postgres" {
+		if tx.Name() == "postgres" {
 			jsonColumn, e := originalBodyColumnIsJSON(tx, d.Table, col)
 			if e != nil {
 				return e
@@ -46,16 +46,17 @@ func originalBodyRewrite(tx *gorm.DB, d originalBodyFieldDescriptor, key, col, i
 				}
 			}
 		}
-		old, new, col = stored, updated, bodyFieldColumn(col)
+		old, newValue, col = stored, updated, bodyFieldColumn(col)
 	}
 	if e := internal.Exec(
-		"INSERT INTO original_body_rewrite_authorities(source_table,row_key,column_name,body_id,old_value,new_value) VALUES(?,?,?,?,?,?)",
+		("INSERT INTO original_body_rewrite_authorities(source_table,row_key,column_" +
+			"name,body_id,old_value,new_value) VALUES(?,?,?,?,?,?)"),
 		d.Table,
 		key,
 		col,
 		id,
 		old,
-		new,
+		newValue,
 	).Error; e != nil {
 		return e
 	}
@@ -66,7 +67,7 @@ func originalBodyRewrite(tx *gorm.DB, d originalBodyFieldDescriptor, key, col, i
 	) + "=? WHERE CAST(" + bodyQuoted(
 		d.Key,
 	) + " AS TEXT)=?"
-	result := internal.Exec(query, new, key)
+	result := internal.Exec(query, newValue, key)
 	if result.Error != nil {
 		return result.Error
 	}
@@ -81,6 +82,7 @@ func originalBodyRewrite(tx *gorm.DB, d originalBodyFieldDescriptor, key, col, i
 	).Error
 }
 
+// InstallOriginalBodyRetentionTriggers installs original body retention triggers.
 // Only a same-transaction, exact old bytes -> exact reference/empty-body move
 // can bypass an immutable or semantic version trigger. All metadata columns
 // and every other body field must compare equal. Delete triggers are preserved.
@@ -88,10 +90,10 @@ func InstallOriginalBodyRetentionTriggers(db *gorm.DB) error {
 	if !db.Migrator().HasTable(&originalBodyPayload{}) {
 		return nil
 	}
-	if db.Dialector.Name() == "postgres" {
+	if db.Name() == "postgres" {
 		return installPostgresBodyRewrite(db)
 	}
-	if db.Dialector.Name() != "sqlite" {
+	if db.Name() != "sqlite" {
 		return ErrOriginalBodyUnavailable
 	}
 	for _, d := range originalBodyFields {
@@ -118,7 +120,8 @@ func InstallOriginalBodyRetentionTriggers(db *gorm.DB) error {
 					eq = append(eq, "NEW."+bodyQuoted(other.Name())+" IS OLD."+bodyQuoted(other.Name()))
 				}
 			}
-			a := "EXISTS (SELECT 1 FROM original_body_rewrite_authorities a JOIN original_body_payloads p ON p.id=a.body_id WHERE a.source_table=" + bodySQLLiteral(
+			a := ("EXISTS (SELECT 1 FROM original_body_rewrite_authorities a JOIN original_bo" +
+				"dy_payloads p ON p.id=a.body_id WHERE a.source_table=") + bodySQLLiteral(
 				d.Table,
 			) + " AND a.row_key=CAST(OLD." + bodyQuoted(
 				d.Key,
@@ -210,7 +213,8 @@ func installPostgresBodyRewrite(db *gorm.DB) error {
 					col,
 				)+")=(to_jsonb(OLD)-"+bodySQLLiteral(
 					col,
-				)+") AND EXISTS(SELECT 1 FROM original_body_rewrite_authorities a JOIN original_body_payloads p ON p.id=a.body_id WHERE a.source_table="+bodySQLLiteral(
+				)+(") AND EXISTS(SELECT 1 FROM original_body_rewrite_authorities a JOIN origin"+
+					"al_body_payloads p ON p.id=a.body_id WHERE a.source_table=")+bodySQLLiteral(
 					d.Table,
 				)+" AND a.row_key=to_jsonb(OLD)->>"+bodySQLLiteral(
 					d.Key,
@@ -227,7 +231,10 @@ func installPostgresBodyRewrite(db *gorm.DB) error {
 			continue
 		}
 		var triggers []struct{ Name, Definition, Function string }
-		q := `SELECT t.tgname AS name,pg_get_triggerdef(t.oid) AS definition,pg_get_functiondef(t.tgfoid) AS function FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE c.relname=? AND n.nspname=current_schema() AND NOT t.tgisinternal`
+		q := ("SELECT t.tgname AS name,pg_get_triggerdef(t.oid) AS definition,pg_get_func" +
+			"tiondef(t.tgfoid) AS function FROM pg_trigger t JOIN pg_class c ON c.oid=t" +
+			".tgrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE c.relname=? AND" +
+			" n.nspname=current_schema() AND NOT t.tgisinternal")
 		if e := bodyInternal(db).Raw(q, d.Table).Scan(&triggers).Error; e != nil {
 			return e
 		}

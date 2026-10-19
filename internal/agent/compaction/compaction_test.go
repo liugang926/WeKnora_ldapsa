@@ -83,14 +83,15 @@ func filler(n int) string { return strings.Repeat("some conversation content ", 
 // impossible to compact.
 func reactTurn(rounds int) []chat.Message {
 	msgs := []chat.Message{
-		{Role: "system", Content: "you are an agent"},
-		{Role: "user", Content: "build me a deck"},
+		{SourceLineage: literalCompactionInput(), Role: "system", Content: "you are an agent"},
+		{SourceLineage: literalCompactionInput(), Role: "user", Content: "build me a deck"},
 	}
 	for i := 0; i < rounds; i++ {
 		msgs = append(msgs,
 			chat.Message{
-				Role:    "assistant",
-				Content: filler(20),
+				SourceLineage: literalCompactionInput(),
+				Role:          "assistant",
+				Content:       filler(20),
 				ToolCalls: []chat.ToolCall{{
 					ID:   "call-" + string(rune('a'+i%26)),
 					Type: "function",
@@ -101,10 +102,11 @@ func reactTurn(rounds int) []chat.Message {
 				}},
 			},
 			chat.Message{
-				Role:       "tool",
-				Name:       "write_sandbox_file",
-				ToolCallID: "call-" + string(rune('a'+i%26)),
-				Content:    filler(30),
+				SourceLineage: literalCompactionInput(),
+				Role:          "tool",
+				Name:          "write_sandbox_file",
+				ToolCallID:    "call-" + string(rune('a'+i%26)),
+				Content:       filler(30),
 			},
 		)
 	}
@@ -118,7 +120,7 @@ func reactTurn(rounds int) []chat.Message {
 func TestCompactsInsideASingleTurn(t *testing.T) {
 	est := newEstimator(t)
 	llm := &stubChat{response: "## Goal\nbuild a deck"}
-	c := New(llm, est, testSettings())
+	c := newLiteralTestCompactor(llm, est, testSettings())
 	require.NotNil(t, c)
 
 	msgs := reactTurn(40)
@@ -140,7 +142,7 @@ func TestCompactsInsideASingleTurn(t *testing.T) {
 func TestSplitTurnSummarizesThePrefixSeparately(t *testing.T) {
 	est := newEstimator(t)
 	llm := &stubChat{response: "summary text"}
-	c := New(llm, est, testSettings())
+	c := newLiteralTestCompactor(llm, est, testSettings())
 
 	result, err := c.Compact(context.Background(), reactTurn(12), ReasonThreshold)
 	require.NoError(t, err)
@@ -156,7 +158,7 @@ func TestSplitTurnSummarizesThePrefixSeparately(t *testing.T) {
 // originating assistant message was summarized away is rejected outright.
 func TestKeptTailNeverStartsWithAnOrphanToolResult(t *testing.T) {
 	est := newEstimator(t)
-	c := New(&stubChat{response: "s"}, est, testSettings())
+	c := newLiteralTestCompactor(&stubChat{response: "s"}, est, testSettings())
 
 	for rounds := 4; rounds <= 40; rounds++ {
 		result, err := c.Compact(context.Background(), reactTurn(rounds), ReasonThreshold)
@@ -186,21 +188,28 @@ func TestKeptTailNeverStartsWithAnOrphanToolResult(t *testing.T) {
 func TestRetainedTailStaysWithinTheKeepRecentBudget(t *testing.T) {
 	est := newEstimator(t)
 	s := testSettings()
-	c := New(&stubChat{response: "summary"}, est, s)
+	c := newLiteralTestCompactor(&stubChat{response: "summary"}, est, s)
 
 	// A search result far larger than the budget, followed by small rounds.
 	msgs := []chat.Message{
-		{Role: "system", Content: "you are an agent"},
-		{Role: "user", Content: "research this"},
+		{SourceLineage: literalCompactionInput(), Role: "system", Content: "you are an agent"},
+		{SourceLineage: literalCompactionInput(), Role: "user", Content: "research this"},
 	}
 	for i := 0; i < 6; i++ {
 		id := "search-" + string(rune('a'+i))
-		msgs = append(msgs,
-			chat.Message{Role: "assistant", ToolCalls: []chat.ToolCall{{
+		msgs = append(
+			msgs,
+			chat.Message{SourceLineage: literalCompactionInput(), Role: "assistant", ToolCalls: []chat.ToolCall{{
 				ID: id, Type: "function",
 				Function: chat.FunctionCall{Name: "knowledge_search", Arguments: `{"query":"x"}`},
 			}}},
-			chat.Message{Role: "tool", Name: "knowledge_search", ToolCallID: id, Content: filler(600)},
+			chat.Message{
+				SourceLineage: literalCompactionInput(),
+				Role:          "tool",
+				Name:          "knowledge_search",
+				ToolCallID:    id,
+				Content:       filler(600),
+			},
 		)
 	}
 
@@ -221,7 +230,7 @@ func TestRetainedTailStaysWithinTheKeepRecentBudget(t *testing.T) {
 func TestCompactionLeavesRoomForSeveralMoreRounds(t *testing.T) {
 	est := newEstimator(t)
 	s := testSettings().Normalize()
-	c := New(&stubChat{response: strings.Repeat("summary line\n", 40)}, est, s)
+	c := newLiteralTestCompactor(&stubChat{response: strings.Repeat("summary line\n", 40)}, est, s)
 
 	result, err := c.Compact(context.Background(), reactTurn(40), ReasonThreshold)
 	require.NoError(t, err)
@@ -238,7 +247,7 @@ func TestCompactionLeavesRoomForSeveralMoreRounds(t *testing.T) {
 func TestSecondCompactionReportsNothingToDo(t *testing.T) {
 	est := newEstimator(t)
 	llm := &stubChat{response: "## Goal\nbuild a deck"}
-	c := New(llm, est, testSettings())
+	c := newLiteralTestCompactor(llm, est, testSettings())
 
 	first, err := c.Compact(context.Background(), reactTurn(12), ReasonThreshold)
 	require.NoError(t, err)
@@ -255,7 +264,7 @@ func TestSecondCompactionReportsNothingToDo(t *testing.T) {
 func TestPreviousSummaryIsUpdatedNotResummarized(t *testing.T) {
 	est := newEstimator(t)
 	llm := &stubChat{response: "## Goal\nfirst pass"}
-	c := New(llm, est, testSettings())
+	c := newLiteralTestCompactor(llm, est, testSettings())
 
 	first, err := c.Compact(context.Background(), reactTurn(12), ReasonThreshold)
 	require.NoError(t, err)
@@ -283,7 +292,7 @@ func TestPreviousSummaryIsUpdatedNotResummarized(t *testing.T) {
 func TestTruncatedSummaryIsRejected(t *testing.T) {
 	est := newEstimator(t)
 	llm := &stubChat{response: "## Goal\nhalf a sum", finishReason: "length"}
-	c := New(llm, est, testSettings())
+	c := newLiteralTestCompactor(llm, est, testSettings())
 
 	result, err := c.Compact(context.Background(), reactTurn(12), ReasonThreshold)
 	require.NoError(t, err)
@@ -295,7 +304,7 @@ func TestTruncatedSummaryIsRejected(t *testing.T) {
 
 func TestSummarizerFailureFallsBackToArchive(t *testing.T) {
 	est := newEstimator(t)
-	c := New(&stubChat{err: assert.AnError}, est, testSettings())
+	c := newLiteralTestCompactor(&stubChat{err: assert.AnError}, est, testSettings())
 
 	result, err := c.Compact(context.Background(), reactTurn(12), ReasonThreshold)
 	require.NoError(t, err)
@@ -309,7 +318,7 @@ func TestSummarizerFailureFallsBackToArchive(t *testing.T) {
 // makes the agent rebuild files it already wrote.
 func TestFilePathsSurviveCompaction(t *testing.T) {
 	est := newEstimator(t)
-	c := New(&stubChat{response: "prose that mentions no paths"}, est, testSettings())
+	c := newLiteralTestCompactor(&stubChat{response: "prose that mentions no paths"}, est, testSettings())
 
 	result, err := c.Compact(context.Background(), reactTurn(12), ReasonThreshold)
 	require.NoError(t, err)
@@ -322,12 +331,12 @@ func TestFilePathsSurviveCompaction(t *testing.T) {
 func TestSmallConversationIsLeftAlone(t *testing.T) {
 	est := newEstimator(t)
 	llm := &stubChat{response: "s"}
-	c := New(llm, est, testSettings())
+	c := newLiteralTestCompactor(llm, est, testSettings())
 
 	_, err := c.Compact(context.Background(), []chat.Message{
-		{Role: "system", Content: "sys"},
-		{Role: "user", Content: "hi"},
-		{Role: "assistant", Content: "hello"},
+		{SourceLineage: literalCompactionInput(), Role: "system", Content: "sys"},
+		{SourceLineage: literalCompactionInput(), Role: "user", Content: "hi"},
+		{SourceLineage: literalCompactionInput(), Role: "assistant", Content: "hello"},
 	}, ReasonThreshold)
 
 	require.ErrorIs(t, err, ErrNothingToCompact)

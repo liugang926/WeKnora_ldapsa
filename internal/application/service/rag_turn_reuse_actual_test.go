@@ -93,7 +93,7 @@ func runRAGPhysicalActualReusedTurn(t *testing.T, pg bool) {
 						[]readlease.NextcloudKBReadScope{{TenantID: 7, KBID: "kb"}},
 					)
 					require.NoError(t, err)
-					defer borrowed.Close()
+					defer func() { require.NoError(t, borrowed.Close()) }()
 					readCtx = borrowed.Context()
 				}
 			}

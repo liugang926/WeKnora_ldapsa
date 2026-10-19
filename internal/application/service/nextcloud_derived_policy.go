@@ -13,7 +13,7 @@ import (
 
 // A copied or synthesized document has no source authorization link that can
 // reliably revoke it. These operations remain unavailable for Nextcloud data.
-var ErrNextcloudDerivedContent = errors.New("Nextcloud source content cannot be copied, shared, or synthesized")
+var ErrNextcloudDerivedContent = errors.New("nextcloud source content cannot be copied, shared, or synthesized")
 
 var ErrNextcloudSourceManagedMutation = werrors.NewConflictError(
 	"Nextcloud source-managed files must be rebuilt through a new connector candidate",

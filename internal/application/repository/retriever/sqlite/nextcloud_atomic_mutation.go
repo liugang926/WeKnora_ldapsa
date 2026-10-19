@@ -120,7 +120,8 @@ func (r *sqliteRepository) copyRowsAtomic(
 					return e
 				}
 				if e := tx.Exec(
-					"INSERT INTO lite_embeddings_fts(rowid,content,source_id,chunk_id,knowledge_id,knowledge_base_id) VALUES(?,?,?,?,?,?)",
+					("INSERT INTO lite_embeddings_fts(rowid,content,source_id,chunk_id,knowledge" +
+						"_id,knowledge_base_id) VALUES(?,?,?,?,?,?)"),
 					row.ID,
 					tokenizeCJKBigram(row.Content),
 					row.SourceID,
@@ -136,7 +137,8 @@ func (r *sqliteRepository) copyRowsAtomic(
 					}
 					result := tx.Exec(
 						fmt.Sprintf(
-							"INSERT INTO vec_embeddings_%d(rowid,embedding) SELECT ?,embedding FROM vec_embeddings_%d WHERE rowid=?",
+							("INSERT INTO vec_embeddings_%d(rowid,embedding) SELECT ?,embedding FROM vec"+
+								"_embeddings_%d WHERE rowid=?"),
 							row.Dimension,
 							row.Dimension,
 						),

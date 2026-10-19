@@ -67,7 +67,7 @@ type privacyASRSpy struct {
 
 func (s *privacyASRSpy) GetModelName() string { return "controlled" }
 func (s *privacyASRSpy) GetModelID() string   { return "controlled" }
-func (s *privacyASRSpy) Transcribe(ctx context.Context, audio []byte, name string) (*TranscriptionResult, error) {
+func (s *privacyASRSpy) Transcribe(ctx context.Context, _ []byte, name string) (*TranscriptionResult, error) {
 	s.ctx = ctx
 	s.recording = trace.SpanFromContext(ctx).IsRecording()
 	return &TranscriptionResult{Text: name}, nil

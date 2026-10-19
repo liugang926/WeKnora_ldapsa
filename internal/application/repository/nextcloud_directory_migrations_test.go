@@ -60,7 +60,9 @@ func TestNextcloudRootMigrationClosesLeaseIDsPreservesContentEpochAndRetries(t *
 	require.NoError(
 		t,
 		db.Exec(
-			"CREATE TABLE nextcloud_graph_tasks(operation_id TEXT PRIMARY KEY,tenant_id BIGINT,knowledge_base_id TEXT,state TEXT,error_code TEXT,completed_at BIGINT)",
+			("CREATE TABLE nextcloud_graph_tasks(operation_id TEXT PRIMARY KEY,tenant_id" +
+				" BIGINT,knowledge_base_id TEXT,state TEXT,error_code TEXT,completed_at BIG" +
+				"INT)"),
 		).Error,
 	)
 	require.NoError(
@@ -214,7 +216,9 @@ func TestNextcloudTargetMigrationIsOneWayAndWaitsForCompleteManifest(t *testing.
 	require.NoError(
 		t,
 		db.Exec(
-			"CREATE TABLE nextcloud_source_versions(tenant_id BIGINT,knowledge_base_id TEXT,datasource_id TEXT,external_id TEXT,desired_etag TEXT,candidate_knowledge_id TEXT,state TEXT,updated_at DATETIME)",
+			("CREATE TABLE nextcloud_source_versions(tenant_id BIGINT,knowledge_base_id " +
+				"TEXT,datasource_id TEXT,external_id TEXT,desired_etag TEXT,candidate_knowl" +
+				"edge_id TEXT,state TEXT,updated_at DATETIME)"),
 		).Error,
 	)
 	manifest := nextcloud.RecoveryManifest{

@@ -349,7 +349,7 @@ func (e *AgentEngine) emitToolOutcome(
 		return
 	}
 
-	e.emitEvent(ctx, event.Event{
+	if err := e.emitEvent(ctx, event.Event{
 		ID:        toolCall.ID + "-tool-result",
 		Type:      event.EventAgentToolResult,
 		SessionID: sessionID,
@@ -363,9 +363,11 @@ func (e *AgentEngine) emitToolOutcome(
 			Iteration:  iteration,
 			Data:       agenttools.SanitizeToolDataForPersist(toolCall.Name, result.Data),
 		},
-	})
+	}); err != nil {
+		return
+	}
 
-	e.emitEvent(ctx, event.Event{
+	if err := e.emitEvent(ctx, event.Event{
 		ID:        toolCall.ID + "-tool-exec",
 		Type:      event.EventAgentTool,
 		SessionID: sessionID,
@@ -378,7 +380,9 @@ func (e *AgentEngine) emitToolOutcome(
 			Error:      result.Error,
 			Duration:   toolCall.Duration,
 		},
-	})
+	}); err != nil {
+		return
+	}
 }
 
 // executeSingleToolCall runs one tool call sequentially (original behavior).
@@ -487,7 +491,7 @@ func (e *AgentEngine) runToolCall(
 
 	// Emit tool hint for UI progress display
 	toolHint := formatToolHint(executionName, executionArgs)
-	e.emitEvent(ctx, event.Event{
+	if err := e.emitEvent(ctx, event.Event{
 		ID:        tc.ID + "-tool-hint",
 		Type:      event.EventAgentToolCall,
 		SessionID: sessionID,
@@ -498,7 +502,12 @@ func (e *AgentEngine) runToolCall(
 			Iteration:  iteration,
 			Hint:       toolHint,
 		},
-	})
+	}); err != nil {
+		return types.ToolCall{
+			Target: target, ID: tc.ID, Name: tc.Function.Name, Args: args,
+			Result: &types.ToolResult{Success: false, Error: err.Error(), SourceLineage: types.UnknownSourceLineage()},
+		}
+	}
 
 	common.PipelineInfo(ctx, "Agent", "tool_call_start", map[string]interface{}{
 		"iteration":    iteration,
@@ -582,12 +591,12 @@ func (e *AgentEngine) runToolCall(
 	if err != nil {
 		// A refused/unaccounted result cannot become a source-free diagnostic.
 		if result == nil || result.SourceLineage.RequireComplete() != nil {
-			e.rememberLineageFailure(err)
+			lineageErr := e.rememberLineageFailure(err)
 			return types.ToolCall{
 				ID: tc.ID, Name: tc.Function.Name, Args: args,
 				Result: &types.ToolResult{
 					Success:       false,
-					Error:         ErrAgentSourceLineageDenied.Error(),
+					Error:         lineageErr.Error(),
 					SourceLineage: types.UnknownSourceLineage(),
 				},
 			}

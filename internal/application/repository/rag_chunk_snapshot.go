@@ -12,6 +12,7 @@ import (
 	"gorm.io/gorm"
 )
 
+// RAGChunkInputSnapshot represents ragchunk input snapshot repository data.
 // RAGChunkReadRequest identifies server-resolved rows, never supplied text.
 // Lease is the original exact read lease held before content hydration.
 // ExpectedLineage is required when augmenting an already captured result.
@@ -29,6 +30,7 @@ type OrdinaryRAGInputProofLookup interface {
 	ReadOrdinaryRAGInputLineage(context.Context, *gorm.DB, *types.Knowledge, *types.Chunk) (*types.SourceLineage, error)
 }
 
+// ControlledRAGInputProofLookup represents controlled raginput proof lookup repository data.
 type ControlledRAGInputProofLookup interface {
 	ReadControlledRAGInputLineage(
 		context.Context,
@@ -39,13 +41,16 @@ type ControlledRAGInputProofLookup interface {
 	) (*types.SourceLineage, error)
 }
 
+// RAGChunkSnapshotLookup represents ragchunk snapshot lookup repository data.
 type RAGChunkSnapshotLookup = interfaces.RAGChunkSnapshotReader
 
+// RAGChunkSnapshotReader represents ragchunk snapshot reader repository data.
 type RAGChunkSnapshotReader struct {
 	db       *gorm.DB
 	ordinary OrdinaryRAGInputProofLookup
 }
 
+// NewRAGChunkSnapshotReader constructs ragchunk snapshot reader.
 func NewRAGChunkSnapshotReader(db *gorm.DB, ordinary OrdinaryRAGInputProofLookup) *RAGChunkSnapshotReader {
 	return &RAGChunkSnapshotReader{db: db, ordinary: ordinary}
 }
@@ -69,7 +74,7 @@ func (r *RAGChunkSnapshotReader) HydrateRAGChunkSnapshots(
 		return []RAGChunkInputSnapshot{}, nil
 	}
 	options := &sql.TxOptions{ReadOnly: true}
-	switch r.db.Dialector.Name() {
+	switch r.db.Name() {
 	case "postgres":
 		options.Isolation = sql.LevelRepeatableRead
 	case "sqlite":

@@ -27,8 +27,8 @@ func installConfigurationOriginalBodyFixtureSchema(t *testing.T, db *gorm.DB, pg
 // Fixture maintenance preserves existing immutable producer origins. It is
 // intentionally separate from request reading and cannot adopt unknown rows.
 func inventoryKnownConfigurationOriginalBodyFixture(
-	t *testing.T,
-	ctx context.Context,
+	ctx context.Context, t *testing.T,
+
 	db *gorm.DB,
 	store *repository.KnowledgeInputProvenanceStore,
 ) {
@@ -44,7 +44,8 @@ func inventoryKnownConfigurationOriginalBodyFixture(
 		t,
 		db.Table("knowledge_config_input_origins o").
 			Select("o.tenant_id,o.knowledge_base_id").
-			Joins("JOIN knowledge_configuration_control_versions v ON v.knowledge_base_id=o.knowledge_base_id AND v.revision=o.config_revision").
+			Joins(("JOIN knowledge_configuration_control_versions v ON v.knowledge_base_id=o.k" +
+				"nowledge_base_id AND v.revision=o.config_revision")).
 			Order("o.tenant_id,o.knowledge_base_id").
 			Find(&scopes).
 			Error,

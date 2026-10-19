@@ -914,6 +914,7 @@ func (s *ImageMultimodalService) enqueueKnowledgePostProcessTask(
 	}
 }
 
+// ConfigureImageMultimodalInputProvenance configures the image multimodal input provenance boundary.
 func ConfigureImageMultimodalInputProvenance(
 	handler interfaces.TaskHandler,
 	reader interfaces.KnowledgeBuildInputReader,

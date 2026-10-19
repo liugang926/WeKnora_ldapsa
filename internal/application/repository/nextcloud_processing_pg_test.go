@@ -16,7 +16,7 @@ func TestPostgresNextcloudActualGraphProviderCommitSerializesRetirement(t *testi
 	state, db, ctx, k, chunk, inputs := processingStateFixtureBackend(t, true, true)
 	_, err := state.StartGraph(ctx, 7, k.ID, 1, chunk.ID)
 	require.NoError(t, err)
-	ctx, graph := boundProcessingGraph(t, ctx, k, chunk, inputs)
+	ctx, graph := boundProcessingGraph(ctx, t, k, chunk, inputs)
 	admitted := make(chan struct{})
 	release := make(chan struct{})
 	name := "pause_graph_provider_actual_commit"

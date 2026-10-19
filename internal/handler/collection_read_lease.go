@@ -13,8 +13,8 @@ import (
 // output. The original-input/current-source guards still authorize all data;
 // a lease prevents physical GC and never supplies a read permission.
 func beginCollectionHTTPRead(
-	c *gin.Context,
-	ctx context.Context,
+	ctx context.Context, c *gin.Context,
+
 	store *repository.NextcloudContentLeaseStore,
 	kbID string,
 ) (context.Context, func(), error) {

@@ -19,6 +19,7 @@ type (
 	}
 )
 
+// WithSteerMaterialReadPlan binds steer material read plan.
 func WithSteerMaterialReadPlan(
 	ctx context.Context,
 	plan *types.SteerMaterialPlan,
@@ -31,32 +32,33 @@ func WithSteerMaterialReadPlan(
 	if err != nil {
 		return ctx, err
 	}
-	var copy types.SteerMaterialPlan
-	if err := json.Unmarshal(raw, &copy); err != nil {
+	var copied types.SteerMaterialPlan
+	if err := json.Unmarshal(raw, &copied); err != nil {
 		return ctx, err
 	}
-	copy.SourceLineage, err = types.UnionSourceLineage(plan.SourceLineage)
+	copied.SourceLineage, err = types.UnionSourceLineage(plan.SourceLineage)
 	if err != nil {
 		return ctx, err
 	}
 	for i, proof := range plan.OriginalProofs {
-		copy.OriginalProofs[i].SourceLineage, err = types.UnionSourceLineage(proof.SourceLineage)
+		copied.OriginalProofs[i].SourceLineage, err = types.UnionSourceLineage(proof.SourceLineage)
 		if err != nil {
 			return ctx, err
 		}
 		encoded, _ := json.Marshal(proof.ExecutionContext)
-		if err := json.Unmarshal(encoded, &copy.OriginalProofs[i].ExecutionContext); err != nil {
+		if err := json.Unmarshal(encoded, &copied.OriginalProofs[i].ExecutionContext); err != nil {
 			return ctx, err
 		}
-		copy.OriginalProofs[i].AgentTenantID = proof.AgentTenantID
+		copied.OriginalProofs[i].AgentTenantID = proof.AgentTenantID
 	}
 	return context.WithValue(
 		ctx,
 		steerReadBoundaryKey{},
-		steerReadBoundary{&copy, append([]string{}, bodyLeases...)},
+		steerReadBoundary{&copied, append([]string{}, bodyLeases...)},
 	), nil
 }
 
+// PeekSteerMaterialPlan reads steer material plan.
 func (s *KnowledgeInputProvenanceStore) PeekSteerMaterialPlan(
 	ctx context.Context,
 	req *types.SteerMaterialRequest,
@@ -98,7 +100,8 @@ func (s *KnowledgeInputProvenanceStore) peekSteerMaterialPlanInTx(
 		Select("o."+strings.ReplaceAll(steerOriginMetadataFields, ",", ",o.")).
 		Joins("JOIN steer_control_heads h ON h.origin_id=o.id").
 		Joins("JOIN steer_control_admissions c ON c.id=h.head_id AND c.origin_id=o.id").
-		Where("o.tenant_id=? AND o.session_id=? AND c.run_message_id=? AND c.run_generation_id=?", req.TenantID, req.SessionID, req.RunMessageID, req.RunGenerationID).
+		Where(("o.tenant_id=? AND o.session_id=? AND c.run_message_id=? AND c.run_generati" +
+			"on_id=?"), req.TenantID, req.SessionID, req.RunMessageID, req.RunGenerationID).
 		Order("o.created_at_ms,o.id").
 		Find(&origins).
 		Error; err != nil {
@@ -184,6 +187,7 @@ func (s *KnowledgeInputProvenanceStore) peekSteerMaterialPlanInTx(
 	return result, nil
 }
 
+// AcquireSteerOriginalBodyLeases acquires steer original body leases.
 func (s *KnowledgeInputProvenanceStore) AcquireSteerOriginalBodyLeases(
 	ctx context.Context,
 	plan *types.SteerMaterialPlan,
@@ -241,6 +245,7 @@ func (s *KnowledgeInputProvenanceStore) AcquireSteerOriginalBodyLeases(
 	return ids, err
 }
 
+// CaptureSteerMaterial captures steer material.
 func (s *KnowledgeInputProvenanceStore) CaptureSteerMaterial(
 	ctx context.Context,
 	plan *types.SteerMaterialPlan,
@@ -298,7 +303,8 @@ func (s *KnowledgeInputProvenanceStore) captureSteerMaterialInTx(
 		if err := bodyInternal(
 			tx,
 		).Model(&originalBodyLease{}).
-			Where("lease_id IN ? AND body_id=? AND kind='read' AND released_at_ms IS NULL AND expires_at_ms>?", boundary.BodyLeases, head.BodyID, now).
+			Where(("lease_id IN ? AND body_id=? AND kind='read' AND released_at_ms IS NULL AND" +
+				" expires_at_ms>?"), boundary.BodyLeases, head.BodyID, now).
 			Count(&count).
 			Error; err != nil {
 			return nil, err
@@ -342,6 +348,7 @@ func (s *KnowledgeInputProvenanceStore) captureSteerMaterialInTx(
 	return result, nil
 }
 
+// CheckSteerControl checks steer control.
 func (s *KnowledgeInputProvenanceStore) CheckSteerControl(
 	ctx context.Context,
 	expected *types.SteerCandidateControl,

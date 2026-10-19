@@ -44,6 +44,8 @@ func (knowledgeConfigurationOriginalBodyManifest) TableName() string {
 	return "knowledge_configuration_original_body_manifests"
 }
 
+// KnowledgeConfigurationOriginalBodyReadPlan represents knowledge configuration original body read plan repository
+// data.
 type KnowledgeConfigurationOriginalBodyReadPlan struct {
 	TenantID                  uint64
 	KnowledgeBaseID, OriginID string
@@ -74,7 +76,8 @@ func configurationOriginalBodyCurrentOrigin(
 		tx,
 	).Table("knowledge_config_input_origins o").
 		Select("o.*").
-		Joins("JOIN knowledge_configuration_control_versions v ON v.knowledge_base_id=o.knowledge_base_id AND v.revision=o.config_revision").
+		Joins(("JOIN knowledge_configuration_control_versions v ON v.knowledge_base_id=o.k" +
+			"nowledge_base_id AND v.revision=o.config_revision")).
 		Where("o.tenant_id=? AND o.knowledge_base_id=?", tenant, kb).
 		Take(&fact).
 		Error
@@ -273,6 +276,7 @@ func bindKnowledgeConfigurationOriginalBodiesInTx(
 	return bodyInternal(tx).Create(&manifest).Error
 }
 
+// InventoryKnownKnowledgeConfigurationOriginalBodies inventories known knowledge configuration original bodies.
 // Explicit DB-owner forward inventory, never a request-side fallback. An old
 // unknown configuration cannot acquire lineage or a new origin here. Missing
 // schema, digest mismatch, external purge/rollback or missing parent receipts
@@ -379,6 +383,7 @@ func recordConfigurationOriginalBodyParents(tx *gorm.DB, bodyID string, scope or
 	return nil
 }
 
+// KnowledgeConfigurationBodyReadPlan returns the knowledge configuration body read plan result.
 // Metadata-only plan: no knowledge_bases config or template body is selected.
 func (s *KnowledgeInputProvenanceStore) KnowledgeConfigurationBodyReadPlan(
 	ctx context.Context,
@@ -463,6 +468,7 @@ func (s *KnowledgeInputProvenanceStore) KnowledgeConfigurationBodyReadPlan(
 	return result, err
 }
 
+// RecheckKnowledgeConfigurationBodyReadLeasesInTx rechecks knowledge configuration body read leases in tx.
 func (s *KnowledgeInputProvenanceStore) RecheckKnowledgeConfigurationBodyReadLeasesInTx(
 	ctx context.Context,
 	tx *gorm.DB,
@@ -541,7 +547,8 @@ func (s *KnowledgeInputProvenanceStore) recheckKnowledgeConfigurationBodyReadLea
 		var lease originalBodyLease
 		if bodyInternal(
 			tx,
-		).Where("lease_id=? AND body_id=? AND kind='read' AND released_at_ms IS NULL AND expires_at_ms>?", ids[i], original.ID, now).
+		).Where(("lease_id=? AND body_id=? AND kind='read' AND released_at_ms IS NULL AND ex"+
+			"pires_at_ms>?"), ids[i], original.ID, now).
 			Take(&lease).
 			Error != nil ||
 			owners[ids[i]] == "" ||
@@ -553,6 +560,7 @@ func (s *KnowledgeInputProvenanceStore) recheckKnowledgeConfigurationBodyReadLea
 	return CheckOriginalBodyAvailableInTx(ctx, tx, "knowledge_bases", plan.KnowledgeBaseID)
 }
 
+// AcquireKnowledgeConfigurationBodyReadLeases acquires knowledge configuration body read leases.
 func (s *KnowledgeInputProvenanceStore) AcquireKnowledgeConfigurationBodyReadLeases(
 	ctx context.Context,
 	plan *KnowledgeConfigurationOriginalBodyReadPlan,
@@ -590,6 +598,7 @@ func (s *KnowledgeInputProvenanceStore) AcquireKnowledgeConfigurationBodyReadLea
 	return ids, nil
 }
 
+// RecheckKnowledgeConfigurationBodyReadLeases rechecks knowledge configuration body read leases.
 func (s *KnowledgeInputProvenanceStore) RecheckKnowledgeConfigurationBodyReadLeases(
 	ctx context.Context,
 	plan *KnowledgeConfigurationOriginalBodyReadPlan,

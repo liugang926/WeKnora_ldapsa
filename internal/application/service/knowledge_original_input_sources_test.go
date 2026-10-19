@@ -40,7 +40,7 @@ func sourceBuildFixture(
 	f := newEnrichmentTestFixture(t, pg)
 	var kb types.KnowledgeBase
 	require.NoError(t, f.db.Where("id='kb'").Take(&kb).Error)
-	enabledGraph := !(len(hooks) > 0 && hooks[0].LocalDerived)
+	enabledGraph := len(hooks) == 0 || !hooks[0].LocalDerived
 	kb.ExtractConfig = &types.ExtractConfig{
 		Enabled: enabledGraph,
 		Tags:    []string{"KNOWS"},
@@ -102,7 +102,9 @@ func sourceBuildFixture(
 		}
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/capabilities"):
-			fmt.Fprint(w, `{"protocol_version":"1","instance_id":"instance"}`)
+			if _, err := fmt.Fprint(w, `{"protocol_version":"1","instance_id":"instance"}`); err != nil {
+				t.Errorf("write fixture response: %v", err)
+			}
 		case strings.HasSuffix(r.URL.Path, "/publication-check"):
 			var body struct {
 				InstanceID string `json:"instance_id"`
@@ -119,12 +121,18 @@ func sourceBuildFixture(
 			w.WriteHeader(http.StatusNoContent)
 		case strings.HasSuffix(r.URL.Path, "/authorize"):
 			if !allow.Load() {
-				fmt.Fprint(w, `{"allow":false,"reason":"withdrawn","checked_at":1780000000}`)
+				if _, err := fmt.Fprint(w, `{"allow":false,"reason":"withdrawn","checked_at":1780000000}`); err != nil {
+					t.Errorf("write fixture response: %v", err)
+				}
 			} else {
-				fmt.Fprint(
+				if _, err := fmt.Fprint(
 					w,
-					`{"allow":true,"reason":"authorized","policy_revision":"original-policy","source_etag":"original-source-etag","checked_at":1780000000}`,
-				)
+					("{\"allow\":true,\"reason\":\"authorized\",\"policy_revision\":\"original-p" +
+						"olicy\",\"source_etag\":\"original-source-etag\",\"checked_at\":1780000000" +
+						"}"),
+				); err != nil {
+					t.Errorf("write fixture response: %v", err)
+				}
 			}
 		default:
 			http.NotFound(w, r)
@@ -403,7 +411,7 @@ func runNextcloudOriginalBuildPurpose(t *testing.T, pg bool) {
 				time.Minute,
 			)
 			require.NoError(t, e)
-			defer leases.ReleaseLease(context.Background(), lease.ID)
+			defer func() { require.NoError(t, leases.ReleaseLease(context.Background(), lease.ID)) }()
 			rows, e := repository.NewRAGChunkSnapshotReader(f.db, f.store).
 				HydrateRAGChunkSnapshots(f.ctx, []types.RAGChunkReadRequest{{TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: current.ID, ChunkIDs: []string{f.chunks[0].ID}, Lease: &types.RAGExactReadLease{ID: lease.ID, TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: current.ID, Kind: string(lease.Kind), Epoch: lease.Epoch, OwnerID: lease.OwnerID, ExpiresAt: lease.ExpiresAt}}})
 			require.NoError(t, e)

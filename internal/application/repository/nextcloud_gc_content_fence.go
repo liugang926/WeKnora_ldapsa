@@ -89,7 +89,9 @@ func gcMarkContentClaim(
 	}
 	until := nowMS + nextcloudGCObjectLease.Milliseconds()
 	result := tx.Exec(
-		"UPDATE nextcloud_content_fences SET state='deleting',epoch=epoch+1,claim_token=?,claim_until_ms=?,updated_at_ms=? WHERE tenant_id=? AND knowledge_base_id=? AND knowledge_id=? AND epoch=? AND state IN ('retired','deleting')",
+		("UPDATE nextcloud_content_fences SET state='deleting',epoch=epoch+1,claim_t" +
+			"oken=?,claim_until_ms=?,updated_at_ms=? WHERE tenant_id=? AND knowledge_ba" +
+			"se_id=? AND knowledge_id=? AND epoch=? AND state IN ('retired','deleting')"),
 		token,
 		until,
 		nowMS,
@@ -114,7 +116,9 @@ func gcMarkContentClaim(
 
 func gcReturnContentRetired(tx *gorm.DB, claim NextcloudContentGCClaim, nowMS int64) error {
 	result := tx.Exec(
-		"UPDATE nextcloud_content_fences SET state='retired',claim_token='',claim_until_ms=NULL,updated_at_ms=? WHERE tenant_id=? AND knowledge_base_id=? AND knowledge_id=? AND state='deleting' AND epoch=? AND claim_token=?",
+		("UPDATE nextcloud_content_fences SET state='retired',claim_token='',claim_u" +
+			"ntil_ms=NULL,updated_at_ms=? WHERE tenant_id=? AND knowledge_base_id=? AND" +
+			" knowledge_id=? AND state='deleting' AND epoch=? AND claim_token=?"),
 		nowMS,
 		claim.Scope.TenantID,
 		claim.Scope.KnowledgeBaseID,
@@ -292,7 +296,8 @@ func (s *NextcloudGCStore) failContentClaim(
 			return ErrNextcloudContentLeaseDenied
 		}
 		u := tx.Model(&nextcloudGCItem{}).
-			Where("job_id=? AND kind=? AND object_ref=? AND state='deleting' AND lease_token=?", jobID, kind, ref, claim.token).
+			Where(("job_id=? AND kind=? AND object_ref=? AND state='deleting' AND lease_token=" +
+				"?"), jobID, kind, ref, claim.token).
 			Updates(map[string]any{"lease_token": "", "lease_until": nil, "updated_at": now})
 		if u.Error != nil {
 			return u.Error

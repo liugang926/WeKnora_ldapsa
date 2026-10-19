@@ -42,7 +42,8 @@ func (s *KnowledgeInputProvenanceStore) messageLiveControlInTx(
 		return nil, "", ErrKnowledgeInputChanged
 	}
 	var control types.Message
-	if err := tx.Select("id,session_id,request_id,role,is_completed,agent_id,agent_tenant_id,model_id,execution_context,created_at").
+	if err := tx.Select(("id,session_id,request_id,role,is_completed,agent_id,agent_tenant_id,model_" +
+		"id,execution_context,created_at")).
 		Where("id=? AND session_id=? AND deleted_at IS NULL", messageID, sessionID).
 		Take(&control).
 		Error; err != nil {
@@ -70,6 +71,7 @@ func (s *KnowledgeInputProvenanceStore) messageLiveControlInTx(
 	return &control, origin.ID, nil
 }
 
+// MessageOwnedControlMetadata returns the message owned control metadata result.
 func (s *KnowledgeInputProvenanceStore) MessageOwnedControlMetadata(
 	ctx context.Context,
 	sessionID, messageID string,

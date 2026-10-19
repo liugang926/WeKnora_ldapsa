@@ -69,7 +69,7 @@ func testMessageNativeLiveReceiver(t *testing.T, pg bool) {
 	if pg {
 		messages, db, ctx, session = messageNativePostgresFixture(t)
 	}
-	_, prior := produceActualMessagePair(t, messages, ctx, session)
+	_, prior := produceActualMessagePair(ctx, t, messages, session)
 	user, err := messages.CreateMessage(
 		ctx,
 		&types.Message{
@@ -118,9 +118,9 @@ func testMessageNativeLiveReceiver(t *testing.T, pg bool) {
 	)
 	_, _, err = messages.BeginNativeLiveMaterialReceiver(other, parents)
 	require.Error(t, err)
-	check, close, err := messages.BeginNativeLiveMaterialReceiver(ctx, parents)
+	check, closeRead, err := messages.BeginNativeLiveMaterialReceiver(ctx, parents)
 	require.NoError(t, err)
-	defer close()
+	defer closeRead()
 	require.NoError(t, check())
 	require.NoError(
 		t,
@@ -130,8 +130,8 @@ func testMessageNativeLiveReceiver(t *testing.T, pg bool) {
 	require.Error(t, check())
 	_, _, err = messages.BeginNativeLiveMaterialReceiver(ctx, parents)
 	require.Error(t, err)
-	close()
-	close()
+	closeRead()
+	closeRead()
 	require.Error(t, check())
 }
 

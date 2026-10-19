@@ -81,7 +81,8 @@ func TestAutoTagActualAsynqBeginModelEndOriginalSpanHTTP(t *testing.T) {
 							require.NoError(
 								t,
 								db.Exec(
-									"CREATE UNIQUE INDEX IF NOT EXISTS auto_span_http_unique ON knowledge_processing_spans(knowledge_id,attempt,span_id)",
+									("CREATE UNIQUE INDEX IF NOT EXISTS auto_span_http_unique ON knowledge_proce" +
+										"ssing_spans(knowledge_id,attempt,span_id)"),
 								).Error,
 							)
 						}

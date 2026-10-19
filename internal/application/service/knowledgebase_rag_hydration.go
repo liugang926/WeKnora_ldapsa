@@ -79,7 +79,10 @@ func (s *knowledgeBaseService) HydrateRAGChunkAugmentations(
 			return nil, holdErr
 		}
 		if !held {
-			defer guard.Close()
+			defer func() {
+				// Only read pins are released here; cleanup does not publish protected material.
+				_ = guard.Close()
+			}()
 		}
 	}
 	ctx = guard.ContextFor(ctx)

@@ -49,7 +49,7 @@ func (s *messageService) BeginNativeLiveMaterialReceiver(
 	guards := []*MessageMaterialGuard{}
 	var closed atomic.Bool
 	var once sync.Once
-	close := func() {
+	closeRead := func() {
 		once.Do(func() {
 			closed.Store(true)
 			for _, guard := range guards {
@@ -59,18 +59,18 @@ func (s *messageService) BeginNativeLiveMaterialReceiver(
 	}
 	for _, parent := range parents {
 		if parent == nil {
-			close()
+			closeRead()
 			return nil, nil, types.ErrSourceLineageUnknown
 		}
 		guard, err := s.beginMessageMaterialRead(ctx, parent.Request)
 		if err != nil {
-			close()
+			closeRead()
 			return nil, nil, err
 		}
 		actual, err := guard.OriginalSnapshot()
 		if err != nil {
 			guard.Close()
-			close()
+			closeRead()
 			return nil, nil, err
 		}
 		a, b := *actual, *parent
@@ -79,7 +79,7 @@ func (s *messageService) BeginNativeLiveMaterialReceiver(
 		// Deep serialized metadata equality includes receipt/control/owner counters.
 		if !messageLiveParentEqual(&a, &b) {
 			guard.Close()
-			close()
+			closeRead()
 			return nil, nil, access.ErrNextcloudPublicationDenied
 		}
 		guards = append(guards, guard)
@@ -95,7 +95,7 @@ func (s *messageService) BeginNativeLiveMaterialReceiver(
 		}
 		return nil
 	}
-	return check, close, nil
+	return check, closeRead, nil
 }
 
 func messageLiveParentEqual(a, b *types.MessageMaterialSnapshot) bool {
@@ -208,7 +208,7 @@ func (s *messageService) BeginNativeLiveFrameSources(
 	broad := map[types.KnowledgeSearchScope]repository.NextcloudContentLease{}
 	var closed atomic.Bool
 	var once sync.Once
-	close := func() {
+	closeRead2 := func() {
 		once.Do(func() {
 			closed.Store(true)
 			cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -221,7 +221,7 @@ func (s *messageService) BeginNativeLiveFrameSources(
 	for _, scope := range ordered {
 		lease, err := store.AcquireKBRead(ctx, scope.TenantID, scope.KBID, owner, 2*time.Minute)
 		if err != nil {
-			close()
+			closeRead2()
 			return nil, nil, err
 		}
 		leases = append(leases, lease)
@@ -243,12 +243,12 @@ func (s *messageService) BeginNativeLiveFrameSources(
 			2*time.Minute,
 		)
 		if err != nil {
-			close()
+			closeRead2()
 			return nil, nil, err
 		}
 		leases = append(leases, lease)
 		if uint64(lease.Epoch) != source.Revision {
-			close()
+			closeRead2()
 			return nil, nil, repository.ErrKnowledgeInputChanged
 		}
 	}
@@ -267,8 +267,8 @@ func (s *messageService) BeginNativeLiveFrameSources(
 		return s.CheckNativeLiveFramePublication(ctx, control, lineage)
 	}
 	if err := check(); err != nil {
-		close()
+		closeRead2()
 		return nil, nil, err
 	}
-	return check, close, nil
+	return check, closeRead2, nil
 }

@@ -573,11 +573,13 @@ func (h *KnowledgeBaseHandler) CreateKnowledgeBase(c *gin.Context) {
 		return
 	}
 	if err := req.IndexingStrategy.ValidateGraphRequirement(); err != nil {
-		c.Error(apperrors.NewBadRequestError(err.Error()))
+		_ = c.Error(apperrors.NewBadRequestError(err.Error()))
 		return
 	}
 	if req.IndexingStrategy.GraphRequired && !req.IsGraphEnabled() {
-		c.Error(apperrors.NewBadRequestError("required graph processing requires an enabled extraction configuration"))
+		_ = c.Error(
+			apperrors.NewBadRequestError("required graph processing requires an enabled extraction configuration"),
+		)
 		return
 	}
 	if err := validateExtractConfig(req.ExtractConfig); err != nil {
@@ -954,7 +956,7 @@ func (h *KnowledgeBaseHandler) UpdateKnowledgeBase(c *gin.Context) {
 	if req.Config != nil {
 		if req.Config.IndexingStrategy != nil {
 			if err := req.Config.IndexingStrategy.ValidateGraphRequirement(); err != nil {
-				c.Error(apperrors.NewBadRequestError(err.Error()))
+				_ = c.Error(apperrors.NewBadRequestError(err.Error()))
 				return
 			}
 		}
@@ -1500,7 +1502,7 @@ func (h *KnowledgeBaseHandler) ListMoveTargets(c *gin.Context) {
 	}
 
 	if !h.ordinaryKBMetadataAllowed(ctx, sourceKB) {
-		c.Error(errors.NewForbiddenError("Managed source knowledge bases cannot be moved manually"))
+		_ = c.Error(errors.NewForbiddenError("Managed source knowledge bases cannot be moved manually"))
 		return
 	}
 

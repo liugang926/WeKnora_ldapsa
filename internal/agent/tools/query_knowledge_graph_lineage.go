@@ -13,10 +13,12 @@ import (
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 )
 
+// SetKnowledgeGraphSnapshotReader configures the reader used to hydrate original graph snapshots.
 func (t *QueryKnowledgeGraphTool) SetKnowledgeGraphSnapshotReader(reader interfaces.KnowledgeGraphSnapshotReader) {
 	t.graphReader = reader
 }
 
+// SetKnowledgeGraphSnapshotReader configures the reader used to hydrate original graph snapshots.
 func (r *ToolRegistry) SetKnowledgeGraphSnapshotReader(reader interfaces.KnowledgeGraphSnapshotReader) {
 	for _, tool := range r.tools {
 		if adapter, ok := tool.(interface {
@@ -27,6 +29,7 @@ func (r *ToolRegistry) SetKnowledgeGraphSnapshotReader(reader interfaces.Knowled
 	}
 }
 
+// ExecuteSourceLineage executes the tool with retained original input receipts.
 // This adapter returns actual graph nodes and edges. ExtractConfig examples
 // are model inputs of the writer; they are never displayed as retrieved graph.
 func (t *QueryKnowledgeGraphTool) ExecuteSourceLineage(
@@ -57,7 +60,10 @@ func (t *QueryKnowledgeGraphTool) ExecuteSourceLineage(
 		return nil, err
 	}
 	if guard != nil {
-		defer guard.Close()
+		defer func() {
+			// Only read pins are released here; cleanup does not publish protected material.
+			_ = guard.Close()
+		}()
 	}
 	if err := turn.Check(ctx); err != nil {
 		return nil, err
@@ -82,7 +88,10 @@ func (t *QueryKnowledgeGraphTool) ExecuteSourceLineage(
 			snapshot.Recheck == nil {
 			return nil, ErrToolSourceLineageUnavailable
 		}
-		defer snapshot.Close()
+		defer func() {
+			// Only read pins are released here; cleanup does not publish protected material.
+			_ = snapshot.Close()
+		}()
 		snapshot, err = types.CloneKnowledgeGraphInputSnapshot(snapshot)
 		if err != nil {
 			return nil, err

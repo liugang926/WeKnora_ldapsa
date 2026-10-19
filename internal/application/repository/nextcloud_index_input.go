@@ -68,7 +68,7 @@ func ValidateNextcloudIndexInputWriteInTx(ctx context.Context, tx *gorm.DB, tena
 	// entity UPDATE triggers cannot finish a configuration/model mutation
 	// between this check and vector insertion. Do not lock model/tenant entity
 	// rows after their revisions: their UPDATE triggers use the reverse order.
-	if tx.Dialector.Name() != "postgres" {
+	if tx.Name() != "postgres" {
 		return nil
 	}
 	currentKB, err := loadKnowledgeBuildConfigurationInTx(tx, tenant, kb)

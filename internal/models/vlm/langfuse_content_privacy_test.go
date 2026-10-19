@@ -67,7 +67,7 @@ type privacyVLMSpy struct {
 
 func (s *privacyVLMSpy) GetModelName() string { return "controlled" }
 func (s *privacyVLMSpy) GetModelID() string   { return "controlled" }
-func (s *privacyVLMSpy) Predict(ctx context.Context, images [][]byte, prompt string) (string, error) {
+func (s *privacyVLMSpy) Predict(ctx context.Context, _ [][]byte, prompt string) (string, error) {
 	s.ctx = ctx
 	s.recording = trace.SpanFromContext(ctx).IsRecording()
 	return prompt, nil

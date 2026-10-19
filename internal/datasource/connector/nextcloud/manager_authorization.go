@@ -17,8 +17,9 @@ import (
 )
 
 var (
+	// ErrManagerAuthorizationDenied indicates that current-manager authorization was refused.
 	ErrManagerAuthorizationDenied      = errors.New("Nextcloud manager authorization denied")
-	ErrManagerAuthorizationUnavailable = errors.New("Nextcloud manager authorization unavailable")
+	ErrManagerAuthorizationUnavailable = errors.New("nextcloud manager authorization unavailable")
 	managerSHA256Pattern               = regexp.MustCompile(`^[0-9a-f]{64}$`)
 	managerControlIDPattern            = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,256}$`)
 )
@@ -36,6 +37,8 @@ type ManagerAuthorizationScope struct {
 	ObjectGUID           string `json:"object_guid"`
 	PurposeSHA256        string `json:"purpose_sha256"`
 }
+
+// ManagerAuthorizationDecision records a signed current-manager authorization decision.
 type ManagerAuthorizationDecision struct {
 	RootFileID       string
 	RuleID           string

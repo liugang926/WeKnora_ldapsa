@@ -18,9 +18,9 @@ func knowledgeInputFixture(t *testing.T) (*KnowledgeInputProvenanceStore, *gorm.
 	script, err := os.ReadFile("../../../migrations/sqlite/000053_knowledge_input_provenance.up.sql")
 	require.NoError(t, err)
 	require.NoError(t, db.Exec(string(script)).Error)
-	db.Config.DisableForeignKeyConstraintWhenMigrating = true
+	db.DisableForeignKeyConstraintWhenMigrating = true
 	require.NoError(t, db.AutoMigrate(&types.Session{}, &types.Message{}))
-	db.Config.DisableForeignKeyConstraintWhenMigrating = false
+	db.DisableForeignKeyConstraintWhenMigrating = false
 	additional, err := os.ReadFile("../../../migrations/sqlite/000054_knowledge_configuration_history_inputs.up.sql")
 	require.NoError(t, err)
 	require.NoError(t, db.Exec(string(additional)).Error)
@@ -257,12 +257,12 @@ func TestKnowledgeInputImmutableOriginAndWholeBatchRollback(t *testing.T) {
 }
 
 func TestKnowledgeInputNextcloudStagingAndActualOriginalChunkReceipt(t *testing.T) {
-	runNextcloudOriginalChunkReceipt(t, context.Background())
+	runNextcloudOriginalChunkReceipt(context.Background(), t)
 }
 
 func TestKnowledgeInputNextcloudBuildFromUnverifiedTask(t *testing.T) {
 	worker := types.WithTaskAuthorization(context.Background(), 7, types.TaskInitiator{})
-	runNextcloudOriginalChunkReceipt(t, worker)
+	runNextcloudOriginalChunkReceipt(worker, t)
 	store, _ := knowledgeInputFixture(t)
 	_, err := store.AdmitNextcloudBuildInputs(worker, []byte("unleased artifact"))
 	require.Error(t, err, "an empty task initiator grants no private build authority")
@@ -317,7 +317,7 @@ func TestKnowledgeInputNextcloudUnverifiedMarkerCannotMaskPresentedActor(t *test
 	require.Zero(t, admissions, "failed actor validation rolls back the original admission")
 }
 
-func runNextcloudOriginalChunkReceipt(t *testing.T, worker context.Context) {
+func runNextcloudOriginalChunkReceipt(worker context.Context, t *testing.T) {
 	t.Helper()
 	store, db := knowledgeInputFixture(t)
 	repo := NewKnowledgeRepository(db).(*knowledgeRepository)

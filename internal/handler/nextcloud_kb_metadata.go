@@ -8,6 +8,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/types"
 )
 
+// ConfigureKnowledgeBaseSourceMetadataGuard configures the knowledge base source metadata guard boundary.
 func ConfigureKnowledgeBaseSourceMetadataGuard(
 	h *KnowledgeBaseHandler,
 	guard *access.NextcloudPublicationGuard,
@@ -108,6 +109,7 @@ func (h *KnowledgeBaseHandler) ordinaryKBMetadataAllowed(ctx context.Context, kb
 	return true
 }
 
+// ConfigureOrganizationSourceMetadataGuard configures the organization source metadata guard boundary.
 func ConfigureOrganizationSourceMetadataGuard(h *OrganizationHandler, kb *KnowledgeBaseHandler) {
 	if h != nil {
 		h.sourceMetadata = kb

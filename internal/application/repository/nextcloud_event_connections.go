@@ -245,9 +245,9 @@ func (r *NextcloudEventInboxRepository) Rotate(
 	}
 	var result NextcloudEventConnectionCredential
 	err = r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if tx.Dialector.Name() == "sqlite" {
-			lock := tx.Exec(`UPDATE nextcloud_event_connections SET status = status
-				WHERE tenant_id = ? AND datasource_id = ? AND status = 'active'`, identity.TenantID, identity.DatasourceID)
+		if tx.Name() == "sqlite" {
+			lock := tx.Exec(("UPDATE nextcloud_event_connections SET status = status\n\t\t\t\tWHERE tena" +
+				"nt_id = ? AND datasource_id = ? AND status = 'active'"), identity.TenantID, identity.DatasourceID)
 			if lock.Error != nil {
 				return fmt.Errorf("lock Nextcloud event connection: %w", lock.Error)
 			}
@@ -310,7 +310,7 @@ func (r *NextcloudEventInboxRepository) Revoke(ctx context.Context, tenantID uin
 		return ErrNextcloudEventScope
 	}
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if tx.Dialector.Name() == "sqlite" {
+		if tx.Name() == "sqlite" {
 			lock := tx.Exec(`UPDATE nextcloud_event_connections SET status = status
 				WHERE tenant_id = ? AND datasource_id = ? AND status = 'active'`, tenantID, datasourceID)
 			if lock.Error != nil {

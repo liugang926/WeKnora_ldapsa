@@ -160,7 +160,10 @@ func TestNextcloudPublicationGuardFailsClosed(t *testing.T) {
 		}, ErrNextcloudPublicationDenied},
 		{"missing imported etag", func(_ *NextcloudPublicationGuard, _ *context.Context, k *types.Knowledge) {
 			k.Metadata = types.JSON(
-				`{"datasource_id":"source-1","external_id":"nextcloud:instance-1:42","source_resource_id":"binding-1","nextcloud_instance_id":"instance-1","nextcloud_binding_id":"binding-1","nextcloud_file_id":"42"}`,
+				("{\"datasource_id\":\"source-1\",\"external_id\":\"nextcloud:instance-1:42" +
+					"\",\"source_resource_id\":\"binding-1\",\"nextcloud_instance_id\":\"instan" +
+					"ce-1\",\"nextcloud_binding_id\":\"binding-1\",\"nextcloud_file_id\":\"42\"" +
+					"}"),
 			)
 		}, ErrNextcloudPublicationDenied},
 		{"unlinked user", func(g *NextcloudPublicationGuard, _ *context.Context, _ *types.Knowledge) {
@@ -178,9 +181,9 @@ func TestNextcloudPublicationGuardFailsClosed(t *testing.T) {
 		}, ErrNextcloudPublicationDenied},
 		{"identity changed after lookup", func(g *NextcloudPublicationGuard, _ *context.Context, _ *types.Knowledge) {
 			lookup := g.directories.(*publicationDirectoryLookup)
-			copy := *lookup.identities[0]
-			copy.Status = types.DirectoryObjectDisabled
-			lookup.snapshotIdentity = &copy
+			copied := *lookup.identities[0]
+			copied.Status = types.DirectoryObjectDisabled
+			lookup.snapshotIdentity = &copied
 		}, ErrNextcloudPublicationDenied},
 		{"directory sync stale", func(g *NextcloudPublicationGuard, _ *context.Context, _ *types.Knowledge) {
 			last := time.Now().Add(-time.Hour)

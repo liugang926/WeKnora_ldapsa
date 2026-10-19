@@ -604,7 +604,7 @@ func TestChangedContentETagRejectsCursor(t *testing.T) {
 
 func TestRedirectAndOversizeAreRejected(t *testing.T) {
 	var redirected int
-	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	target := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 		redirected++
 	}))
 	defer target.Close()

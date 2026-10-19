@@ -41,13 +41,13 @@ func (r *knowledgeRepository) ResolveNextcloudSourceLineage(
 	if r == nil || r.db == nil || tenantID == 0 || tenantID > math.MaxInt64 || kbID == "" || knowledgeID == "" {
 		return nil, identity, ErrNextcloudLineageSnapshotDenied
 	}
-	if r.db.Dialector.Name() != "postgres" && r.db.Dialector.Name() != "sqlite" {
+	if r.db.Name() != "postgres" && r.db.Name() != "sqlite" {
 		return nil, identity, ErrNextcloudLineageSnapshotStore
 	}
 	// PostgreSQL READ COMMITTED would permit a mixed version/pair/fence across
 	// queries. SQLite's read transaction supplies a coherent database snapshot.
 	options := &sql.TxOptions{ReadOnly: true}
-	if r.db.Dialector.Name() == "postgres" {
+	if r.db.Name() == "postgres" {
 		options.Isolation = sql.LevelRepeatableRead
 	}
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -193,7 +193,7 @@ func (r *knowledgeRepository) RecheckNextcloudSourceLineage(
 		return false, ErrNextcloudLineageSnapshotStore
 	}
 	options := &sql.TxOptions{ReadOnly: true}
-	switch r.db.Dialector.Name() {
+	switch r.db.Name() {
 	case "postgres":
 		options.Isolation = sql.LevelRepeatableRead
 	case "sqlite":

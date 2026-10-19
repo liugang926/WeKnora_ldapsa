@@ -11,12 +11,14 @@ import (
 	"github.com/Tencent/WeKnora/internal/types"
 )
 
+// NextcloudGCHandler serves derived source data collection operations.
 // Administrative responses expose category/count/expiry only, never locators.
 type NextcloudGCHandler struct {
 	store *repository.NextcloudGCStore
 	actor *repository.KnowledgeInputProvenanceStore
 }
 
+// NewNextcloudGCHandler constructs the configured NextcloudGCHandler.
 func NewNextcloudGCHandler(
 	store *repository.NextcloudGCStore,
 	actor *repository.KnowledgeInputProvenanceStore,
@@ -70,6 +72,7 @@ func (h *NextcloudGCHandler) List(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"jobs": jobs, "next_cursor": cursor})
 }
 
+// Preview previews derived source artifacts eligible for collection.
 func (h *NextcloudGCHandler) Preview(c *gin.Context) {
 	ctx, tenant, ok := h.authorize(c)
 	if !ok {
@@ -86,6 +89,7 @@ func (h *NextcloudGCHandler) Preview(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"preview": preview})
 }
 
+// Collect collects eligible derived artifacts under current source controls.
 func (h *NextcloudGCHandler) Collect(c *gin.Context) {
 	ctx, tenant, ok := h.authorize(c)
 	if !ok {

@@ -191,7 +191,9 @@ func publicationConcurrentActualFixture(t *testing.T) *publicationConcurrentFixt
 		}
 		switch r.URL.Path {
 		case "/index.php/apps/integration_weknora/api/v1/capabilities":
-			fmt.Fprint(w, `{"protocol_version":"1","instance_id":"instance-1"}`)
+			if _, err := fmt.Fprint(w, `{"protocol_version":"1","instance_id":"instance-1"}`); err != nil {
+				t.Errorf("write fixture response: %v", err)
+			}
 		case "/index.php/apps/integration_weknora/api/v1/bindings/binding-1/authorize":
 			f.sourceCalls.Add(1)
 			var payload struct {
@@ -206,10 +208,13 @@ func publicationConcurrentActualFixture(t *testing.T) *publicationConcurrentFixt
 				w.WriteHeader(http.StatusBadRequest)
 				return
 			}
-			fmt.Fprint(
+			if _, err := fmt.Fprint(
 				w,
-				`{"allow":true,"reason":"authorized","policy_revision":"policy-1","source_etag":"etag-42","checked_at":1780000000}`,
-			)
+				("{\"allow\":true,\"reason\":\"authorized\",\"policy_revision\":\"policy-1\"" +
+					",\"source_etag\":\"etag-42\",\"checked_at\":1780000000}"),
+			); err != nil {
+				t.Errorf("write fixture response: %v", err)
+			}
 		default:
 			http.NotFound(w, r)
 		}
@@ -332,9 +337,9 @@ func TestPostgresNextcloudPublicationDirectorySnapshotConcurrentTransactions(t *
 					snapshot.Identities, snapshot.Memberships = nil, nil
 					_, hookErr = writerSvc.ApplySnapshot(writerCtx, snapshot)
 				case "directory_disabled":
-					copy := *f.directory
-					copy.Enabled = false
-					_, hookErr = writerSvc.Update(writerCtx, &copy)
+					copied := *f.directory
+					copied.Enabled = false
+					_, hookErr = writerSvc.Update(writerCtx, &copied)
 				case "link_phantom_point_in_time":
 					hookErr = writerSvc.LinkIdentity(writerCtx, otherIdentity.ID, publicationConcurrentUser)
 				default:
@@ -500,7 +505,9 @@ func TestPostgresNextcloudPublicationDirectorySnapshotConcurrentTransactions(t *
 		// Timing alone, callback counts and a synthetic SQL error are insufficient.
 		require.Eventually(t, func() bool {
 			var blocked bool
-			err := f.observer.QueryRowContext(writerCtx, "SELECT COALESCE(wait_event_type = 'Lock', false) AND $2 = ANY(pg_blocking_pids(pid)) FROM pg_stat_activity WHERE pid = $1 AND datname = current_database() AND usename = current_user", f.readerPID, f.writerPID).
+			err := f.observer.QueryRowContext(writerCtx, ("SELECT COALESCE(wait_event_type = 'Lock', false) AND $2 = ANY(pg_blocking_" +
+				"pids(pid)) FROM pg_stat_activity WHERE pid = $1 AND datname = current_data" +
+				"base() AND usename = current_user"), f.readerPID, f.writerPID).
 				Scan(&blocked)
 			return err == nil && blocked
 		}, 3*time.Second, 5*time.Millisecond, "actual reader SHARE waits on the owned ApplySnapshot writer")

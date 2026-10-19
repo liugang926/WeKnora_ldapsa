@@ -139,7 +139,8 @@ func gcActualProcessCrash(t *testing.T, pg bool) {
 			require.NoError(
 				t,
 				db.Exec(
-					"UPDATE nextcloud_content_fences SET claim_until_ms=1 WHERE tenant_id=7 AND knowledge_base_id='kb' AND knowledge_id='old'",
+					("UPDATE nextcloud_content_fences SET claim_until_ms=1 WHERE tenant_id=7 AND" +
+						" knowledge_base_id='kb' AND knowledge_id='old'"),
 				).Error,
 			)
 			reader, e := leases.AcquireKBRead(context.Background(), 7, "kb", "expired-claim-reader", time.Minute)

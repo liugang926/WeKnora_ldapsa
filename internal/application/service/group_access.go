@@ -36,6 +36,7 @@ type NextcloudScopedGrantReader interface {
 	TenantScoped(context.Context, uint64) (bool, error)
 }
 
+// ConfigureGroupAccessNextcloudScopes configures the group access nextcloud scopes boundary.
 func ConfigureGroupAccessNextcloudScopes(access interfaces.GroupAccessService, reader NextcloudScopedGrantReader) {
 	if impl, ok := access.(*groupAccessService); ok {
 		impl.nextcloudScopes = reader

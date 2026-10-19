@@ -72,7 +72,7 @@ func TestTagOutputTenThousandOriginalProducersDoNotFormWholeKBUnion(t *testing.T
 	a := &TagOutputAuthorizer{
 		reader: tagOutputComponentReader{snapshot: snapshot},
 		checker: outputCheckerFunc(
-			func(_ context.Context, l *types.SourceLineage, scope access.LineageReadScope) error {
+			func(_ context.Context, l *types.SourceLineage, _ access.LineageReadScope) error {
 				require.NoError(t, l.RequireComplete())
 				require.LessOrEqual(t, len(l.Sources), 1)
 				count++

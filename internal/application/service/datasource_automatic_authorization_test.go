@@ -84,7 +84,8 @@ func automaticSourceFixture(t *testing.T, tableCSV ...bool) (*machinePipelineFix
 		require.NoError(
 			t,
 			f.db.Exec(
-				"CREATE UNIQUE INDEX IF NOT EXISTS automatic_source_policy_key ON resource_access_policies(tenant_id,resource_type,resource_id)",
+				("CREATE UNIQUE INDEX IF NOT EXISTS automatic_source_policy_key ON resource_" +
+					"access_policies(tenant_id,resource_type,resource_id)"),
 			).Error,
 		)
 		now := time.Now().UTC()
@@ -151,7 +152,7 @@ func automaticSourceFixture(t *testing.T, tableCSV ...bool) (*machinePipelineFix
 		return pairCtx, err
 	}
 	live.AfterActivate = func(f *enrichmentTestFixture, pair *apprepo.NextcloudSourcePairing) {
-		scopedWorkerActivate(t, f, credential, operation, pair, pairCtx)
+		scopedWorkerActivate(pairCtx, t, f, credential, operation, pair)
 	}
 	m := newMachinePipelineFixtureWithSource(t, false, "owned automatic source", live, false, true)
 	groups := NewGroupAccessService(apprepo.NewGroupAccessRepository(m.f.db))
@@ -313,8 +314,9 @@ func automaticSourcePayload(t *testing.T, m *machinePipelineFixture, trigger str
 		require.NoError(
 			t,
 			m.f.db.Exec(
-				`INSERT INTO nextcloud_source_versions(tenant_id,knowledge_base_id,datasource_id,external_id,desired_etag,candidate_knowledge_id,state)
-			VALUES (7,?,?,?,'actual-etag','automatic-failed-candidate','staging')`,
+				("INSERT INTO nextcloud_source_versions(tenant_id,knowledge_base_id,datasour"+
+					"ce_id,external_id,desired_etag,candidate_knowledge_id,state)\n\t\t\tVALUES"+
+					" (7,?,?,?,'actual-etag','automatic-failed-candidate','staging')"),
 				m.ds.KnowledgeBaseID,
 				m.ds.ID,
 				m.externalID,
@@ -323,9 +325,11 @@ func automaticSourcePayload(t *testing.T, m *machinePipelineFixture, trigger str
 		require.NoError(
 			t,
 			m.f.db.Exec(
-				`INSERT INTO nextcloud_candidate_retry_jobs(tenant_id,knowledge_base_id,datasource_id,external_id,desired_etag,failed_candidate_id,
-			first_staged_at,next_attempt_at,state,lease_token,lease_until,sync_log_id)
-			VALUES (7,?,?,?,'actual-etag','automatic-failed-candidate',?,?,'leased','automatic-owned-lease',?,?)`,
+				("INSERT INTO nextcloud_candidate_retry_jobs(tenant_id,knowledge_base_id,dat"+
+					"asource_id,external_id,desired_etag,failed_candidate_id,\n\t\t\tfirst_stag"+
+					"ed_at,next_attempt_at,state,lease_token,lease_until,sync_log_id)\n\t\t\tVA"+
+					"LUES (7,?,?,?,'actual-etag','automatic-failed-candidate',?,?,'leased','aut"+
+					"omatic-owned-lease',?,?)"),
 				m.ds.KnowledgeBaseID,
 				m.ds.ID,
 				m.externalID,
@@ -421,18 +425,19 @@ func TestNextcloudAutomaticRestrictedSyncRequiresCurrentManagedDispatch(t *testi
 				body, err := json.Marshal(payload)
 				require.NoError(t, err)
 				err = m.source.ProcessSync(ctx, asynq.NewTask(types.TypeDataSourceSync, body))
-				if scenario == "current" {
+				switch scenario {
+				case "current":
 					require.ErrorIs(t, err, stop)
 					require.Equal(t, 1, connector.calls)
 					require.Empty(t, types.CallerFromContext(connector.ctx).UserID)
 					principal, ok := types.PrincipalFromContext(connector.ctx)
 					require.True(t, ok)
 					require.Equal(t, "background_unverified", string(principal.Type))
-				} else if scenario == "manager revoked during fetch" {
+				case "manager revoked during fetch":
 					require.Equal(t, 1, connector.calls)
 					require.Error(t, err)
 					require.NotErrorIs(t, err, stop, "a later current-manager denial must close the active scan")
-				} else {
+				default:
 					require.Zero(t, connector.calls, "refused authority must never reach connector transport")
 					require.NotErrorIs(t, err, stop)
 					if ordinary {

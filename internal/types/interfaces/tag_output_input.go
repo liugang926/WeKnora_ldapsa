@@ -6,6 +6,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/types"
 )
 
+// TagOutputInputReader captures and rechecks original tag output inputs.
 type TagOutputInputReader interface {
 	CaptureTagOutputInputs(context.Context, types.TagOutputReadRequest) (*types.TagOutputInputSnapshot, error)
 	SelectTagOutputInputs(

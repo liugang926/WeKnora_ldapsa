@@ -74,7 +74,8 @@ func TestAuthorizeCurrentFileUsesAuthenticatedSourceContract(t *testing.T) {
 			writeNextcloudTestResponse(
 				t,
 				w,
-				`{"allow":true,"reason":"authorized","policy_revision":"rev-1","source_etag":"etag-42","checked_at":1780000000}`,
+				("{\"allow\":true,\"reason\":\"authorized\",\"policy_revision\":\"rev-1\",\"" +
+					"source_etag\":\"etag-42\",\"checked_at\":1780000000}"),
 			)
 		default:
 			http.NotFound(w, r)
@@ -97,13 +98,17 @@ func TestAuthorizeCurrentFileRejectsChangedInstanceAndBadResponses(t *testing.T)
 		statusCode int
 		instanceID string
 	}{
-		{name: "changed instance", response: `{"allow":true,"reason":"authorized","policy_revision":"rev","checked_at":1780000000}`, instanceID: "another"},
+		{name: "changed instance", response: ("{\"allow\":true,\"reason\":\"authorized\",\"policy_revision\":\"rev\",\"ch" +
+			"ecked_at\":1780000000}"), instanceID: "another"},
 		{name: "upstream forbidden", statusCode: http.StatusForbidden},
 		{name: "missing allow", response: `{"reason":"authorized","policy_revision":"rev","checked_at":1780000000}`},
-		{name: "malformed allow", response: `{"allow":"true","reason":"authorized","policy_revision":"rev","checked_at":1780000000}`},
+		{name: "malformed allow", response: ("{\"allow\":\"true\",\"reason\":\"authorized\",\"policy_revision\":\"rev\"," +
+			"\"checked_at\":1780000000}")},
 		{name: "missing revision", response: `{"allow":true,"reason":"authorized","checked_at":1780000000}`},
-		{name: "missing source etag", response: `{"allow":true,"reason":"authorized","policy_revision":"rev","checked_at":1780000000}`},
-		{name: "empty source etag", response: `{"allow":true,"reason":"authorized","policy_revision":"rev","source_etag":"","checked_at":1780000000}`},
+		{name: "missing source etag", response: ("{\"allow\":true,\"reason\":\"authorized\",\"policy_revision\":\"rev\",\"ch" +
+			"ecked_at\":1780000000}")},
+		{name: "empty source etag", response: ("{\"allow\":true,\"reason\":\"authorized\",\"policy_revision\":\"rev\",\"so" +
+			"urce_etag\":\"\",\"checked_at\":1780000000}")},
 		{name: "oversized response", response: string(make([]byte, maxAuthorizationResponseBytes+1))},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

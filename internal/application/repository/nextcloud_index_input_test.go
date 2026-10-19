@@ -51,7 +51,7 @@ func nextcloudIndexInputFixture(t *testing.T) (*onboardingOriginalActualFixture,
 	return f, ctx, controls
 }
 
-func nextcloudIndexInputGuard(t *testing.T, f *onboardingOriginalActualFixture, ctx context.Context) error {
+func nextcloudIndexInputGuard(ctx context.Context, t *testing.T, f *onboardingOriginalActualFixture) error {
 	t.Helper()
 	proof := KnowledgeBuildInputProofFromContext(ctx)
 	return f.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -67,7 +67,7 @@ func TestNextcloudIndexInputRechecksActualTableProducerBeforeSQLWrite(t *testing
 	for _, mutation := range []string{"summary model", "embedding model", "KB controls", "table controls"} {
 		t.Run(mutation, func(t *testing.T) {
 			f, ctx, controls := nextcloudIndexInputFixture(t)
-			require.NoError(t, nextcloudIndexInputGuard(t, f, ctx))
+			require.NoError(t, nextcloudIndexInputGuard(ctx, t, f))
 			proof := KnowledgeBuildInputProofFromContext(ctx)
 			switch mutation {
 			case "summary model", "embedding model":
@@ -83,7 +83,7 @@ func TestNextcloudIndexInputRechecksActualTableProducerBeforeSQLWrite(t *testing
 			case "table controls":
 				controls.SampleRows = 9
 			}
-			require.Error(t, nextcloudIndexInputGuard(t, f, ctx),
+			require.Error(t, nextcloudIndexInputGuard(ctx, t, f),
 				"a prior provider checkpoint cannot certify changed producer/model inputs at vector commit")
 		})
 	}

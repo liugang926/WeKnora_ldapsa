@@ -7,6 +7,7 @@ import (
 )
 
 var (
+	// ErrVectorCandidateRetrievalUnavailable indicates that candidate retrieval lacks its required boundary.
 	ErrVectorCandidateRetrievalUnavailable = errors.New("native vector candidate retrieval unavailable")
 	ErrVectorCandidateScope                = errors.New("invalid native vector candidate scope")
 )

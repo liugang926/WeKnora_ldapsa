@@ -6,6 +6,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/types"
 )
 
+// FAQImportOutputInputReader captures and rechecks original FAQ import progress inputs.
 type FAQImportOutputInputReader interface {
 	CaptureFAQImportOutputInputs(
 		context.Context,

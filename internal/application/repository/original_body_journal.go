@@ -18,6 +18,7 @@ import (
 )
 
 type (
+	// OriginalBodyJournalPaths represents original body journal paths repository data.
 	OriginalBodyJournalPaths struct{ Directory, KeyPath, PinPath string }
 	originalBodyJournal      struct{ paths OriginalBodyJournalPaths }
 	originalBodyJournalEvent struct {
@@ -56,6 +57,7 @@ func originalBodyJournalFromEnv() *originalBodyJournal {
 	return &originalBodyJournal{p}
 }
 
+// ConfigureJournal configures journal.
 func (s *OriginalBodyRetentionStore) ConfigureJournal(paths OriginalBodyJournalPaths) {
 	s.journal = &originalBodyJournal{paths}
 }
@@ -222,6 +224,7 @@ func bodyWritePrivateAtomic(path string, data []byte) error {
 	return errors.Join(dir.Sync(), dir.Close())
 }
 
+// InitializeJournal returns the initialize journal result.
 // Explicit owned initialization; a conflicting marker/file is never adopted.
 func (s *OriginalBodyRetentionStore) InitializeJournal() error {
 	if !originalBodySchemaPresent(s.db) {

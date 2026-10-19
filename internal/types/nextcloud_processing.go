@@ -12,7 +12,8 @@ type NextcloudProcessingLedger interface {
 
 type (
 	graphWriteOperationKey struct{}
-	GraphWriteOperation    struct {
+	// GraphWriteOperation identifies the graph writer operation recorded by a producer.
+	GraphWriteOperation struct {
 		ID      string
 		Attempt int
 		ChunkID string

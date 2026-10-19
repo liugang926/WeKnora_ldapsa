@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -78,7 +79,8 @@ func (m *historyBoundaryModel) ChatStream(
 		Done:         true,
 		FinishReason: "stop",
 	}
-	if m.calls == 1 {
+	if m.calls == 1 && slices.Contains(m.offered, tools.ToolReadFile) &&
+		slices.Contains(m.offered, tools.ToolShellExec) {
 		response = types.StreamResponse{Done: true, FinishReason: "tool_calls", ToolCalls: []types.LLMToolCall{
 			{
 				ID:   "read-old",
@@ -140,12 +142,40 @@ func TestAgentHistoryAdmissionFallbackBlocksOldWorkspaceReadAndExec(t *testing.T
 					func(_ context.Context, evt event.Event) error { fmt.Fprint(&output, evt.Data); return nil },
 				)
 			}
-			ctx := context.WithValue(context.Background(), types.TenantIDContextKey, uint64(1))
-			engine, err := svc.CreateAgentEngine(ctx, cfg, model, nil, bus, "old-session", "new-message")
+			request := &types.QARequest{
+				Query:       "new user question",
+				CustomAgent: &types.CustomAgent{ID: "workspace-fixture-agent"},
+			}
+			current := &sessionService{agentService: svc}
+			ctx := actualAgentHistoryRequest(t, current, request)
+			engine, err := svc.CreateAgentEngine(
+				ctx,
+				cfg,
+				model,
+				nil,
+				bus,
+				request.Session.ID,
+				request.AssistantMessageID,
+			)
 			require.NoError(t, err)
-			_, err = engine.Execute(ctx, "old-session", "new-message", "new user question", nil)
-			require.NoError(t, err)
+			native := engine.(interface {
+				SetSourceLineageVerifier(func(context.Context, *types.SourceLineage) error)
+				SetSystemPromptSourceLineage(*types.SourceLineage)
+				SetUserInputSourceLineage(*types.SourceLineage)
+			})
+			independent, lineageErr := types.NewCompleteSourceLineage()
+			require.NoError(t, lineageErr)
+			native.SetSystemPromptSourceLineage(independent)
+			native.SetUserInputSourceLineage(ctx.Value(actualHistoryInputKey{}).(actualHistoryInput).lineage)
+			native.SetSourceLineageVerifier(func(checkCtx context.Context, lineage *types.SourceLineage) error {
+				if err := CheckMessageMaterialOutputBoundary(ctx); err != nil {
+					return err
+				}
+				return current.sourceLineageGuard.Check(checkCtx, lineage, access.LineageReadScope{})
+			})
+			_, err = engine.Execute(ctx, request.Session.ID, request.AssistantMessageID, request.Query, nil)
 			if exclude {
+				require.NoError(t, err)
 				require.Zero(t, files.reads)
 				require.Zero(t, shell.calls)
 				require.False(t, model.sawMarker)
@@ -155,10 +185,15 @@ func TestAgentHistoryAdmissionFallbackBlocksOldWorkspaceReadAndExec(t *testing.T
 				}
 				require.Contains(t, output.String(), "new plain answer")
 			} else {
-				require.Positive(t, files.reads)
-				require.Positive(t, shell.calls)
-				require.True(t, model.sawMarker)
-				require.Contains(t, output.String(), protectedHistoryFileMarker)
+				require.Error(
+					t,
+					err,
+					"retained sandbox bytes have no typed source adapter in the accepted release scope",
+				)
+				require.Zero(t, files.reads)
+				require.Zero(t, shell.calls)
+				require.False(t, model.sawMarker)
+				require.NotContains(t, output.String(), protectedHistoryFileMarker)
 			}
 		})
 	}
@@ -176,7 +211,7 @@ func (r *retainedContextHistoryRepo) GetSessionAttachments(context.Context, stri
 
 func TestAgentHistoryAdmissionBothModesIsolateRetainedWorkspaceAtAgentQA(t *testing.T) {
 	for _, multiTurn := range []bool{false, true} {
-		for _, scenario := range []string{"ever-source", "lookup-unavailable", "missing-policy", "ordinary-no-source"} {
+		for _, scenario := range []string{"ever-source", "lookup-unavailable", "missing-policy", "legacy-no-source-state"} {
 			t.Run(fmt.Sprintf("multi-turn-%t/%s", multiTurn, scenario), func(t *testing.T) {
 				files := &historyBoundaryFileStore{}
 				shell := &historyBoundaryShell{}
@@ -240,6 +275,7 @@ func TestAgentHistoryAdmissionBothModesIsolateRetainedWorkspaceAtAgentQA(t *test
 						func(_ context.Context, evt event.Event) error { fmt.Fprint(&output, evt.Data); return nil },
 					)
 				}
+				ctx = actualAgentHistoryRequest(t, svc, req)
 				require.NoError(t, svc.AgentQA(ctx, req, bus))
 				require.Equal(
 					t,
@@ -247,13 +283,8 @@ func TestAgentHistoryAdmissionBothModesIsolateRetainedWorkspaceAtAgentQA(t *test
 					req.CustomAgent.Config.MultiTurnEnabled,
 					"the single-turn case must not be defaulted into multi-turn",
 				)
-				if scenario == "ordinary-no-source" {
-					require.Positive(t, repo.attachmentLoads)
-					require.Positive(t, files.reads)
-					require.Positive(t, shell.calls)
-					require.True(t, model.sawMarker)
-					require.Contains(t, output.String(), protectedHistoryFileMarker)
-				} else {
+				// A global no-source fact cannot certify raw legacy history or sandbox bytes.
+				{
 					require.Zero(t, repo.attachmentLoads)
 					require.Zero(t, repo.pages)
 					require.Zero(t, repo.checkpointReads)

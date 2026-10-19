@@ -18,9 +18,13 @@ import (
 func runRAGPhysicalActualShortSummary(t *testing.T, pg bool) {
 	for _, mode := range []string{"short-summary", "text-neighbors", "source-revoked", "missing-summary-proof", "changed-stored-parent", "forged-parent-selector", "changed-cached-summary", "unsupported-image-parent"} {
 		t.Run(mode, func(t *testing.T) {
-			body := "Current employee policy: read the approved record, then ask before changing another department's access."
+			body := ("Current employee policy: read the approved record, then ask before changin" +
+				"g another department's access.")
 			if mode == "text-neighbors" {
-				body = "First policy paragraph: current authorization is required.\n\nSecond policy paragraph: keep the original record intact.\n\nThird policy paragraph: ask the owner before changing access.\n\nFourth policy paragraph: source withdrawal ends reading rights."
+				body = ("First policy paragraph: current authorization is required.\n\nSecond polic" +
+					"y paragraph: keep the original record intact.\n\nThird policy paragraph: a" +
+					"sk the owner before changing access.\n\nFourth policy paragraph: source wi" +
+					"thdrawal ends reading rights.")
 			}
 			m := newMachinePipelineFixtureWithDocument(t, pg, body)
 			if mode == "text-neighbors" {

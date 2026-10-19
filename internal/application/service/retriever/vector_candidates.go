@@ -9,6 +9,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 )
 
+// RetrieveVectorCandidates retrieves candidate identities before original material hydration.
 func (v *KeywordsVectorHybridRetrieveEngineService) RetrieveVectorCandidates(
 	ctx context.Context,
 	params types.VectorCandidateParams,

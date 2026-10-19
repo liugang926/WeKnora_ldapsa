@@ -219,7 +219,8 @@ func TestRAGChunkSnapshotOrdinaryLegacyAndOrphanRemainUnknownUntilTrustedProof(t
 		ParseStatus:     types.ParseStatusCompleted,
 		EnableStatus:    "enabled",
 		Metadata: types.JSON(
-			`{"source_lineage":{"version":1,"state":"complete","sources":[]},"origin":"user_upload","never_source":true}`,
+			("{\"source_lineage\":{\"version\":1,\"state\":\"complete\",\"sources\":[]}," +
+				"\"origin\":\"user_upload\",\"never_source\":true}"),
 		),
 	}
 	c := &types.Chunk{

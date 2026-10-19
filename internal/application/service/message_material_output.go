@@ -13,6 +13,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/types"
 )
 
+// ErrMessageMaterialHTTPInitializing indicates that HTTP material initialization is still in progress.
 // Initialization is not an authorization decision. HTTP may wait for this
 // state, but must still run the original/current checks once setup finishes.
 var ErrMessageMaterialHTTPInitializing = fmt.Errorf(
@@ -43,6 +44,7 @@ type (
 	}
 )
 
+// WithMessageMaterialOutputBoundary attaches retained material guards to an output context.
 func WithMessageMaterialOutputBoundary(ctx context.Context) context.Context {
 	return context.WithValue(ctx, messageMaterialOutputKey{}, &messageMaterialOutputSlot{OwnerContext: ctx})
 }
@@ -75,8 +77,8 @@ func BeginMessageMaterialHTTPBoundary(
 		return CheckMessageMaterialOutputBoundary(marked)
 	}
 	var once sync.Once
-	close := func() { once.Do(func() { releaseExternalMessageMaterial(slot) }) }
-	return marked, attach, check, close
+	closeRead := func() { once.Do(func() { releaseExternalMessageMaterial(slot) }) }
+	return marked, attach, check, closeRead
 }
 
 func releaseExternalMessageMaterial(slot *messageMaterialOutputSlot) {
@@ -126,6 +128,7 @@ func markMessageMaterialReady(ctx context.Context) {
 	}
 }
 
+// CloseMessageMaterialOutputBoundary releases material held by the final output consumer.
 func CloseMessageMaterialOutputBoundary(ctx context.Context) {
 	if slot, ok := ctx.Value(messageMaterialOutputKey{}).(*messageMaterialOutputSlot); ok {
 		slot.mu.Lock()
@@ -219,6 +222,7 @@ func MessageMaterialIdleRecheckEligible(ctx context.Context) bool {
 	return true
 }
 
+// CheckMessageMaterialOutputBoundary rechecks retained inputs before their next public output.
 func CheckMessageMaterialOutputBoundary(ctx context.Context) error {
 	if ctx == nil || ctx.Err() != nil {
 		return access.ErrNextcloudPublicationUnavailable
@@ -475,11 +479,11 @@ func messageMaterialBoundarySnapshots(ctx context.Context) ([]*types.MessageMate
 	}
 	result := []*types.MessageMaterialSnapshot{}
 	for _, guard := range guards {
-		copy, err := guard.OriginalSnapshot()
+		copied2, err := guard.OriginalSnapshot()
 		if err != nil {
 			return nil, err
 		}
-		result = append(result, copy)
+		result = append(result, copied2)
 	}
 	return result, nil
 }
@@ -682,6 +686,7 @@ func (s *messageService) beginMessageMaterialCompletion(
 	return ctx, finish, nil
 }
 
+// RetainMessageMaterialHTTPProducer retains an HTTP producer until its final output check.
 func RetainMessageMaterialHTTPProducer(ctx context.Context) func() {
 	_, release, external := retainMessageMaterialProducer(ctx)
 	if !external {

@@ -156,7 +156,8 @@ func (h *documentLiveHistory) checkKeywordSearch(t *testing.T, answer string) fu
 		"cross-session search must remain restricted to the authenticated person's owned conversations",
 	)
 	t.Log(
-		"REAL_HISTORY_SEARCH real persisted RAG answer and question partner passed across owned sessions; shared request IDs remain separate",
+		("REAL_HISTORY_SEARCH real persisted RAG answer and question partner passed " +
+			"across owned sessions; shared request IDs remain separate"),
 	)
 	return func() {
 		require.Error(
@@ -167,7 +168,9 @@ func (h *documentLiveHistory) checkKeywordSearch(t *testing.T, answer string) fu
 		checkOwned(true)
 		CloseMessageMaterialOutputBoundary(retained)
 		t.Log(
-			"REAL_HISTORY_SEARCH actual NC share deletion filtered both direct answer hits and question partners; independent owned raw user history remains readable",
+			("REAL_HISTORY_SEARCH actual NC share deletion filtered both direct answer h" +
+				"its and question partners; independent owned raw user history remains read" +
+				"able"),
 		)
 	}
 }

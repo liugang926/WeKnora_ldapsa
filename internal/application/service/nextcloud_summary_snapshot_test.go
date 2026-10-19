@@ -24,7 +24,7 @@ func TestProcessedSummarySnapshotRequiresPersistedProducerReceipt(t *testing.T) 
 			[]readlease.NextcloudKBReadScope{{TenantID: 7, KBID: knowledge.KnowledgeBaseID}},
 		)
 		require.NoError(t, err)
-		defer guard.Close()
+		defer func() { require.NoError(t, guard.Close()) }()
 		require.NoError(t, guard.PinKnowledge(knowledge))
 		lease, err := guard.ExactLease(knowledge)
 		require.NoError(t, err)

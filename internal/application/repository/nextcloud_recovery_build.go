@@ -85,6 +85,7 @@ func nextcloudKBControlsClosed(tx *gorm.DB, tenant uint64, kb string) (bool, err
 	return false, nil
 }
 
+// NextcloudBuildControlsAllowed returns the nextcloud build controls allowed result.
 // A reconciled scope is a private maintenance capability written only by the
 // DB-owner Reconcile command after signed current source/complete-manifest proof.
 // Only new non-retired candidates from that exact proof can rebuild while the
@@ -142,7 +143,8 @@ func nextcloudRecoveryBuildProof(
 		return false, nil, 0, fmt.Errorf("%w: maintenance proof check 3", ErrNextcloudContentLeaseDenied)
 	}
 	var scope nextcloudRecoveryScope
-	if e := tx.Where("plan_sha256=? AND operation_id=? AND tenant_id=? AND knowledge_base_id=? AND datasource_id=? AND state='reconciled'", gate.PlanSHA256, pair.OperationID, tenant, kb, pair.DataSourceID).
+	if e := tx.Where(("plan_sha256=? AND operation_id=? AND tenant_id=? AND knowledge_base_id=? A" +
+		"ND datasource_id=? AND state='reconciled'"), gate.PlanSHA256, pair.OperationID, tenant, kb, pair.DataSourceID).
 		Take(&scope).
 		Error; e != nil {
 		return false, nil, 0, fmt.Errorf("%w: maintenance proof check 4", ErrNextcloudContentLeaseDenied)
@@ -182,7 +184,8 @@ func nextcloudRecoveryBuildProof(
 			}
 		}
 		var k types.Knowledge
-		if e := tx.Where("tenant_id=? AND knowledge_base_id=? AND id=? AND channel=? AND deleted_at IS NULL", tenant, kb, knowledgeID[0], types.ConnectorTypeNextcloud).
+		if e := tx.Where(("tenant_id=? AND knowledge_base_id=? AND id=? AND channel=? AND deleted_at " +
+			"IS NULL"), tenant, kb, knowledgeID[0], types.ConnectorTypeNextcloud).
 			Take(&k).
 			Error; e != nil {
 			return false, nil, 0, fmt.Errorf("%w: maintenance proof check 11", ErrNextcloudContentLeaseDenied)
@@ -305,7 +308,9 @@ func nextcloudValidateRecoveryBuildLease(
 		return nil
 	}
 	var permit nextcloudRecoveryBuildLease
-	if e := tx.Where("lease_id=? AND plan_sha256=? AND operation_id=? AND tenant_id=? AND knowledge_base_id=? AND datasource_id=? AND knowledge_id=? AND build_epoch=? AND kb_epoch=? AND manifest_sha256=?", lease.ID, proof.PlanSHA256, proof.OperationID, scope.TenantID, scope.KnowledgeBaseID, scope.DataSourceID, scope.KnowledgeID, lease.Epoch, kbEpoch, proof.ReconciliationSHA256).
+	if e := tx.Where(("lease_id=? AND plan_sha256=? AND operation_id=? AND tenant_id=? AND knowle" +
+		"dge_base_id=? AND datasource_id=? AND knowledge_id=? AND build_epoch=? AND" +
+		" kb_epoch=? AND manifest_sha256=?"), lease.ID, proof.PlanSHA256, proof.OperationID, scope.TenantID, scope.KnowledgeBaseID, scope.DataSourceID, scope.KnowledgeID, lease.Epoch, kbEpoch, proof.ReconciliationSHA256).
 		Take(&permit).
 		Error; e != nil {
 		return ErrNextcloudContentLeaseDenied
@@ -324,7 +329,9 @@ func nextcloudAllowRecoveryBuildRead(ctx context.Context, tx *gorm.DB, tenant ui
 	}
 	var live int64
 	if e := tx.Table("nextcloud_content_leases").
-		Where("lease_id=? AND tenant_id=? AND knowledge_base_id=? AND knowledge_id=? AND kind='build' AND epoch=? AND owner_id=? AND released_at_ms IS NULL AND expires_at_ms>?", guard.lease.ID, tenant, kb, kid, guard.lease.Epoch, guard.lease.OwnerID, time.Now().UnixMilli()).
+		Where(("lease_id=? AND tenant_id=? AND knowledge_base_id=? AND knowledge_id=? AND " +
+			"kind='build' AND epoch=? AND owner_id=? AND released_at_ms IS NULL AND exp" +
+			"ires_at_ms>?"), guard.lease.ID, tenant, kb, kid, guard.lease.Epoch, guard.lease.OwnerID, time.Now().UnixMilli()).
 		Count(&live).
 		Error; e != nil {
 		return false, e
@@ -342,6 +349,7 @@ func nextcloudAllowRecoveryBuildRead(ctx context.Context, tx *gorm.DB, tenant ui
 	return true, nil
 }
 
+// AllowRecoveryBuildRead allows recovery build read.
 func (r *DataSourceRepository) AllowRecoveryBuildRead(
 	ctx context.Context,
 	tenant uint64,

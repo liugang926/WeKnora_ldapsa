@@ -92,12 +92,12 @@ func (s *SessionRewindService) beginRewindMessageMaterial(
 			guard.Close()
 			return nil, nil, nil, types.ErrSourceLineageUnknown
 		}
-		copy, err := cloneForkOriginalMessage(original)
+		copied, err := cloneForkOriginalMessage(original)
 		if err != nil {
 			guard.Close()
 			return nil, nil, nil, err
 		}
-		history = append(history, copy)
+		history = append(history, copied)
 	}
 	if !foundPoint {
 		guard.Close()
@@ -116,6 +116,7 @@ func (s *SessionRewindService) beginRewindMessageMaterial(
 
 type rewindHTTPOutputKey struct{}
 
+// WithRewindOriginalHTTPOutput binds retained original rewind inputs to HTTP output.
 func WithRewindOriginalHTTPOutput(ctx context.Context) context.Context {
 	return context.WithValue(ctx, rewindHTTPOutputKey{}, true)
 }

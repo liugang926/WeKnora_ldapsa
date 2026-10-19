@@ -7,6 +7,7 @@ import (
 	"gorm.io/gorm"
 )
 
+// AdvanceMessageMaterialAfterOwnCompletion advances message material after own completion.
 // This transfer requires an exact actual producer marker and immutable edge.
 // It updates one excluded control; no selected parent's body is re-certified.
 func (s *KnowledgeInputProvenanceStore) AdvanceMessageMaterialAfterOwnCompletion(

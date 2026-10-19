@@ -48,7 +48,8 @@ func (s *KnowledgeInputProvenanceStore) SealKnowledgeAutoTagCompletionInTx(
 	root.BodyDigest, root.Projection = "", ""
 	root.ChunkIDs = nil
 	var chunks []*types.Chunk
-	if err := tx.Where("tenant_id = ? AND knowledge_base_id = ? AND knowledge_id = ? AND chunk_type IN ?", k.TenantID, kb.ID, id, []types.ChunkType{types.ChunkTypeText, types.ChunkTypeImageOCR, types.ChunkTypeImageCaption}).
+	if err := tx.Where(("tenant_id = ? AND knowledge_base_id = ? AND knowledge_id = ? AND chunk_typ" +
+		"e IN ?"), k.TenantID, kb.ID, id, []types.ChunkType{types.ChunkTypeText, types.ChunkTypeImageOCR, types.ChunkTypeImageCaption}).
 		Find(&chunks).
 		Error; err != nil {
 		return err
@@ -180,7 +181,8 @@ func (s *KnowledgeInputProvenanceStore) LoadKnowledgeAutoTagCompletionInput(
 	}
 	var row knowledgeAutoTagManifest
 	if err := s.db.WithContext(ctx).
-		Where("manifest_id = ? AND tenant_id = ? AND knowledge_base_id = ? AND knowledge_id = ? AND admission_id = ?", p.CompletionInput, p.TenantID, p.KnowledgeBaseID, p.KnowledgeID, p.OriginalInput.AdmissionID).
+		Where(("manifest_id = ? AND tenant_id = ? AND knowledge_base_id = ? AND knowledge_" +
+			"id = ? AND admission_id = ?"), p.CompletionInput, p.TenantID, p.KnowledgeBaseID, p.KnowledgeID, p.OriginalInput.AdmissionID).
 		Take(&row).
 		Error; err != nil {
 		return nil, err
@@ -195,7 +197,7 @@ func (s *KnowledgeInputProvenanceStore) LoadKnowledgeAutoTagCompletionInput(
 		return nil, fmt.Errorf("completion model digest: %w", ErrKnowledgeInputChanged)
 	}
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if _, err := s.recheckKnowledgeAutoTagInTx(tx, ctx, &snapshot); err != nil {
+		if _, err := s.recheckKnowledgeAutoTagInTx(ctx, tx, &snapshot); err != nil {
 			return err
 		}
 		_, tenant, err := knowledgeAutoTagModelInputs(tx, snapshot.Original.KnowledgeBase)
@@ -205,6 +207,7 @@ func (s *KnowledgeInputProvenanceStore) LoadKnowledgeAutoTagCompletionInput(
 	return &snapshot, err
 }
 
+// PendingKnowledgeAutoTagCompletions returns pending knowledge auto tag completions.
 func (s *KnowledgeInputProvenanceStore) PendingKnowledgeAutoTagCompletions(
 	ctx context.Context,
 	knowledgeID string,
@@ -223,6 +226,7 @@ func (s *KnowledgeInputProvenanceStore) PendingKnowledgeAutoTagCompletions(
 	return rows, err
 }
 
+// NoteKnowledgeAutoTagCompletionDelivery records knowledge auto tag completion delivery.
 // Rotate delivered pending rows so an old blocked wrapper cannot starve later
 // intents. For pending rows claimed_at is the last wake-up attempt; consuming
 // changes op and replaces it with the exact consumer claim timestamp.
@@ -234,6 +238,7 @@ func (s *KnowledgeInputProvenanceStore) NoteKnowledgeAutoTagCompletionDelivery(c
 		Error
 }
 
+// ClaimKnowledgeAutoTagCompletion claims knowledge auto tag completion.
 // Claim serializes duplicate deliveries. A crashed consumer is reclaimable;
 // terminal rows stay in SQL and cannot be awakened by startup or redelivery.
 func (s *KnowledgeInputProvenanceStore) ClaimKnowledgeAutoTagCompletion(
@@ -246,7 +251,8 @@ func (s *KnowledgeInputProvenanceStore) ClaimKnowledgeAutoTagCompletion(
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	res := s.db.WithContext(ctx).
 		Model(&types.TaskPendingOp{}).
-		Where("task_type = ? AND scope = ? AND scope_id = ? AND tenant_id = ? AND dedup_key = ? AND (op = ? OR (op = ? AND claimed_at < ?))", types.TypeKnowledgeAutoTag, types.TaskScopeKnowledge, p.KnowledgeID, p.TenantID, p.TaskInput.ID, autoTagCompletionOp, autoTagCompletionRunning, now.Add(-3*time.Minute)).
+		Where(("task_type = ? AND scope = ? AND scope_id = ? AND tenant_id = ? AND dedup_k" +
+			"ey = ? AND (op = ? OR (op = ? AND claimed_at < ?))"), types.TypeKnowledgeAutoTag, types.TaskScopeKnowledge, p.KnowledgeID, p.TenantID, p.TaskInput.ID, autoTagCompletionOp, autoTagCompletionRunning, now.Add(-3*time.Minute)).
 		Updates(map[string]any{"op": autoTagCompletionRunning, "claimed_at": now})
 	if res.Error != nil {
 		return nil, res.Error
@@ -256,7 +262,8 @@ func (s *KnowledgeInputProvenanceStore) ClaimKnowledgeAutoTagCompletion(
 	}
 	var row types.TaskPendingOp
 	if err := s.db.WithContext(ctx).
-		Where("task_type = ? AND scope = ? AND scope_id = ? AND tenant_id = ? AND dedup_key = ?", types.TypeKnowledgeAutoTag, types.TaskScopeKnowledge, p.KnowledgeID, p.TenantID, p.TaskInput.ID).
+		Where(("task_type = ? AND scope = ? AND scope_id = ? AND tenant_id = ? AND dedup_k" +
+			"ey = ?"), types.TypeKnowledgeAutoTag, types.TaskScopeKnowledge, p.KnowledgeID, p.TenantID, p.TaskInput.ID).
 		Take(&row).
 		Error; err != nil {
 		return nil, err
@@ -267,6 +274,7 @@ func (s *KnowledgeInputProvenanceStore) ClaimKnowledgeAutoTagCompletion(
 	return nil, ErrKnowledgeInputChanged
 }
 
+// FinishKnowledgeAutoTagCompletion finishes knowledge auto tag completion.
 func (s *KnowledgeInputProvenanceStore) FinishKnowledgeAutoTagCompletion(
 	ctx context.Context,
 	p types.KnowledgeAutoTagPayload,
@@ -285,7 +293,8 @@ func (s *KnowledgeInputProvenanceStore) FinishKnowledgeAutoTagCompletion(
 	}
 	return s.db.WithContext(ctx).
 		Model(&types.TaskPendingOp{}).
-		Where("task_type = ? AND scope = ? AND scope_id = ? AND tenant_id = ? AND dedup_key = ? AND op = ? AND claimed_at = ?", types.TypeKnowledgeAutoTag, types.TaskScopeKnowledge, p.KnowledgeID, p.TenantID, p.TaskInput.ID, autoTagCompletionRunning, claim).
+		Where(("task_type = ? AND scope = ? AND scope_id = ? AND tenant_id = ? AND dedup_k" +
+			"ey = ? AND op = ? AND claimed_at = ?"), types.TypeKnowledgeAutoTag, types.TaskScopeKnowledge, p.KnowledgeID, p.TenantID, p.TaskInput.ID, autoTagCompletionRunning, claim).
 		Updates(updates).
 		Error
 }
@@ -298,6 +307,7 @@ type (
 	}
 )
 
+// WithKnowledgeAutoTagCompletion binds knowledge auto tag completion.
 func WithKnowledgeAutoTagCompletion(
 	ctx context.Context,
 	p types.KnowledgeAutoTagPayload,
@@ -316,7 +326,8 @@ func finishAutoTagCompletionInTx(ctx context.Context, tx *gorm.DB) error {
 		return types.ErrSourceLineageUnknown
 	}
 	res := tx.Model(&types.TaskPendingOp{}).
-		Where("task_type = ? AND scope = ? AND scope_id = ? AND tenant_id = ? AND dedup_key = ? AND op = ? AND claimed_at = ?", types.TypeKnowledgeAutoTag, types.TaskScopeKnowledge, p.KnowledgeID, p.TenantID, p.TaskInput.ID, autoTagCompletionRunning, claim).
+		Where(("task_type = ? AND scope = ? AND scope_id = ? AND tenant_id = ? AND dedup_k" +
+			"ey = ? AND op = ? AND claimed_at = ?"), types.TypeKnowledgeAutoTag, types.TaskScopeKnowledge, p.KnowledgeID, p.TenantID, p.TaskInput.ID, autoTagCompletionRunning, claim).
 		Updates(map[string]any{"op": autoTagCompletionDone, "claimed_at": nil})
 	if res.Error != nil {
 		return res.Error

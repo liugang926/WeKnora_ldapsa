@@ -162,7 +162,7 @@ func TestNextcloudLiveOriginalExtractionProviderAndStatusInbox(t *testing.T) {
 		time.Minute,
 	)
 	require.NoError(t, err)
-	defer leases.ReleaseLease(context.Background(), lease.ID)
+	defer func() { require.NoError(t, leases.ReleaseLease(context.Background(), lease.ID)) }()
 	ctx := repository.WithNextcloudBuildLease(context.Background(), leases, lease, scope)
 	proof, err := inputs.AdmitNextcloudBuildInputs(ctx, item.Content)
 	require.NoError(t, err)
@@ -250,12 +250,13 @@ func TestNextcloudLiveOriginalExtractionProviderAndStatusInbox(t *testing.T) {
 	require.NoError(
 		t,
 		pipelineExtractTask(
-			t,
+
+			ctx, t,
 			db,
 			inputs,
 			state,
 			repository.NewScopedSQLGraphRepository(db, nil),
-			ctx,
+
 			snapshot.Proof,
 			doc,
 			model,
@@ -303,6 +304,8 @@ func TestNextcloudLiveOriginalExtractionProviderAndStatusInbox(t *testing.T) {
 		require.NoError(t, os.WriteFile(out, []byte(row.PayloadJSON), 0o600))
 	}
 	t.Log(
-		"fixture sender DB rebuilt from exact durable owned checkpoint; actual NC original bytes -> controlled text parse/model -> real scoped SQL graph commit+ledger -> durable signed NC inbox ACK; exact duplicate event ACK passed",
+		("fixture sender DB rebuilt from exact durable owned checkpoint; actual NC o" +
+			"riginal bytes -> controlled text parse/model -> real scoped SQL graph comm" +
+			"it+ledger -> durable signed NC inbox ACK; exact duplicate event ACK passed"),
 	)
 }

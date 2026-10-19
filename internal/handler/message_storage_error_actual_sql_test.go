@@ -45,7 +45,7 @@ func (s historyActualStorageFaultService) SearchMessages(
 
 // Generate real SQLite driver faults through independent connections. No error
 // value/Code is invented and no original message/assistant proof is fabricated.
-func actualHistoryStorageFault(t *testing.T, kind string) (error, sqlite3.ErrNo) {
+func actualHistoryStorageFault(t *testing.T, kind string) (sqlite3.ErrNo, error) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "fault.db")
 	shared := ""
@@ -61,10 +61,10 @@ func actualHistoryStorageFault(t *testing.T, kind string) (error, sqlite3.ErrNo)
 	if kind == "readonly" {
 		reader, err := sql.Open("sqlite3", "file:"+path+"?mode=ro&_busy_timeout=1")
 		require.NoError(t, err)
-		defer reader.Close()
+		defer func() { require.NoError(t, reader.Close()) }()
 		_, err = reader.Exec("INSERT INTO fault_probe(id) VALUES(1)")
 		require.Error(t, err)
-		return err, sqlite3.ErrReadonly
+		return sqlite3.ErrReadonly, err
 	}
 	conn, err := writer.Conn(context.Background())
 	require.NoError(t, err)
@@ -75,16 +75,16 @@ func actualHistoryStorageFault(t *testing.T, kind string) (error, sqlite3.ErrNo)
 	require.NoError(t, err)
 	contender, err := sql.Open("sqlite3", "file:"+path+"?_busy_timeout=1"+shared)
 	require.NoError(t, err)
-	defer contender.Close()
+	defer func() { require.NoError(t, contender.Close()) }()
 	if kind == "locked" {
 		var id int
 		err = contender.QueryRow("SELECT id FROM fault_probe").Scan(&id)
 		require.Error(t, err)
-		return err, sqlite3.ErrLocked
+		return sqlite3.ErrLocked, err
 	}
 	_, err = contender.Exec("INSERT INTO fault_probe(id) VALUES(2)")
 	require.Error(t, err)
-	return err, sqlite3.ErrBusy
+	return sqlite3.ErrBusy, err
 }
 
 func TestMessageHistoryActualSQLiteStorageFaultReturnsUnavailableWithoutBody(t *testing.T) {
@@ -153,7 +153,7 @@ func TestMessageHistoryActualSQLiteStorageFaultReturnsUnavailableWithoutBody(t *
 	})
 	for _, kind := range []string{"busy", "locked", "readonly"} {
 		t.Run(kind, func(t *testing.T) {
-			fault, code := actualHistoryStorageFault(t, kind)
+			code, fault := actualHistoryStorageFault(t, kind)
 			var actual sqlite3.Error
 			require.True(t, errors.As(fault, &actual))
 			require.Equal(t, code, actual.Code, "prove this is the intended actual driver condition")

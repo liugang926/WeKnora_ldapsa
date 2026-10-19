@@ -15,7 +15,9 @@ func TestPostgresNextcloudGlobalAndScopedHistoryAdmission(t *testing.T) {
 			require.NoError(
 				t,
 				db.Exec(
-					`CREATE TABLE knowledge_bases(id TEXT PRIMARY KEY, tenant_id BIGINT NOT NULL, ever_had_nextcloud_source BOOLEAN NOT NULL DEFAULT FALSE, deleted_at TIMESTAMPTZ)`,
+					("CREATE TABLE knowledge_bases(id TEXT PRIMARY KEY, tenant_id BIGINT NOT NUL" +
+						"L, ever_had_nextcloud_source BOOLEAN NOT NULL DEFAULT FALSE, deleted_at TI" +
+						"MESTAMPTZ)"),
 				).Error,
 			)
 			require.NoError(

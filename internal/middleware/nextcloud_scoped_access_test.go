@@ -108,15 +108,21 @@ func TestNextcloudScopedRoutesAllowExplicitQAAndBlockCrossResourceInputs(t *test
 		{"/api/v1/knowledge-bases/copy/progress/other-users-task", "GET", "", 403},
 		{"/api/v1/knowledge-bases/granted-kb/wiki/stats", "GET", "", 403},
 		{"/api/v1/knowledge-chat/private-qa", "POST", good, 200},
-		{"/api/v1/knowledge-chat/private-qa", "POST", `{"query":"question","knowledge_base_ids":["granted-kb"],"knowledge_ids":["current-source-document"]}`, 200},
-		{"/api/v1/knowledge-chat/private-qa", "POST", `{"query":"question","knowledge_base_ids":["granted-kb"],"knowledge_ids":["other-kb-document"]}`, 403},
-		{"/api/v1/knowledge-chat/private-qa", "POST", `{"query":"question","knowledge_base_ids":["granted-kb"],"knowledge_ids":["unavailable-document"]}`, 403},
-		{"/api/v1/knowledge-search", "POST", `{"query":"question","knowledge_base_ids":["granted-kb"],"knowledge_ids":["current-source-document"]}`, 403},
+		{"/api/v1/knowledge-chat/private-qa", "POST", ("{\"query\":\"question\",\"knowledge_base_ids\":[\"granted-kb\"],\"knowledg" +
+			"e_ids\":[\"current-source-document\"]}"), 200},
+		{"/api/v1/knowledge-chat/private-qa", "POST", ("{\"query\":\"question\",\"knowledge_base_ids\":[\"granted-kb\"],\"knowledg" +
+			"e_ids\":[\"other-kb-document\"]}"), 403},
+		{"/api/v1/knowledge-chat/private-qa", "POST", ("{\"query\":\"question\",\"knowledge_base_ids\":[\"granted-kb\"],\"knowledg" +
+			"e_ids\":[\"unavailable-document\"]}"), 403},
+		{"/api/v1/knowledge-search", "POST", ("{\"query\":\"question\",\"knowledge_base_ids\":[\"granted-kb\"],\"knowledg" +
+			"e_ids\":[\"current-source-document\"]}"), 403},
 		{"/api/v1/knowledge-chat/legacy-session", "POST", good, 403},
 		{"/api/v1/knowledge-search", "POST", good, 200},
 		{"/api/v1/knowledge-chat/private-qa", "POST", `{"query":"question","knowledge_base_ids":["unrelated-kb"]}`, 403},
-		{"/api/v1/knowledge-chat/private-qa", "POST", `{"query":"question","knowledge_base_ids":["granted-kb"],"agent_id":"other-agent"}`, 403},
-		{"/api/v1/knowledge-chat/private-qa", "POST", `{"query":"question","knowledge_base_ids":["granted-kb"],"summary_model_id":"other-model"}`, 403},
+		{"/api/v1/knowledge-chat/private-qa", "POST", ("{\"query\":\"question\",\"knowledge_base_ids\":[\"granted-kb\"],\"agent_id" +
+			"\":\"other-agent\"}"), 403},
+		{"/api/v1/knowledge-chat/private-qa", "POST", ("{\"query\":\"question\",\"knowledge_base_ids\":[\"granted-kb\"],\"summary_" +
+			"model_id\":\"other-model\"}"), 403},
 		{"/api/v1/knowledge-chat/private-qa", "POST", `{"query":"question"}`, 403},
 		{"/api/v1/models", "GET", "", 403},
 		{"/api/v1/messages/private-qa/load", "GET", "", 200},

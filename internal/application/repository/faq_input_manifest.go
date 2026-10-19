@@ -30,8 +30,8 @@ func faqInputMetadata(entry *types.FAQEntryPayload) *types.FAQChunkMetadata {
 }
 
 func faqOriginalContent(meta *types.FAQChunkMetadata, kb *types.KnowledgeBase) string {
-	copy := *kb
-	copy.EnsureDefaults()
+	copied := *kb
+	copied.EnsureDefaults()
 	var b strings.Builder
 	fmt.Fprintf(&b, "Q: %s\n", meta.StandardQuestion)
 	if len(meta.SimilarQuestions) > 0 {
@@ -40,7 +40,8 @@ func faqOriginalContent(meta *types.FAQChunkMetadata, kb *types.KnowledgeBase) s
 			fmt.Fprintf(&b, "- %s\n", q)
 		}
 	}
-	if copy.FAQConfig != nil && copy.FAQConfig.IndexMode == types.FAQIndexModeQuestionAnswer && len(meta.Answers) > 0 {
+	if copied.FAQConfig != nil && copied.FAQConfig.IndexMode == types.FAQIndexModeQuestionAnswer &&
+		len(meta.Answers) > 0 {
 		b.WriteString("Answers:\n")
 		for _, a := range meta.Answers {
 			fmt.Fprintf(&b, "- %s\n", a)
@@ -50,10 +51,10 @@ func faqOriginalContent(meta *types.FAQChunkMetadata, kb *types.KnowledgeBase) s
 }
 
 func faqComparable(c *types.Chunk) *types.Chunk {
-	copy := *c
-	copy.CreatedAt = time.Time{}
-	copy.UpdatedAt = time.Time{}
-	return &copy
+	copied2 := *c
+	copied2.CreatedAt = time.Time{}
+	copied2.UpdatedAt = time.Time{}
+	return &copied2
 }
 
 func faqUnionStrings(a, b []string) []string {

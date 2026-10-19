@@ -9,6 +9,7 @@ import (
 	"unicode"
 
 	"github.com/Tencent/WeKnora/internal/common"
+	apperrors "github.com/Tencent/WeKnora/internal/errors"
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
@@ -84,7 +85,10 @@ func initFTS5(db *gorm.DB) error {
 				return e
 			}
 			if protected != 0 {
-				return fmt.Errorf("Nextcloud FTS rebuild requires guarded maintenance")
+				return apperrors.NewProtocolError(
+					fmt.Errorf("nextcloud FTS rebuild requires guarded maintenance"),
+					"Nextcloud FTS rebuild requires guarded maintenance",
+				)
 			}
 		}
 		if schema != "" {
@@ -93,7 +97,9 @@ func initFTS5(db *gorm.DB) error {
 			}
 		}
 		if e := tx.Exec(
-			"CREATE VIRTUAL TABLE lite_embeddings_fts USING fts5(content,source_id,chunk_id,knowledge_id,knowledge_base_id,content='',contentless_delete=1,tokenize='unicode61')",
+			("CREATE VIRTUAL TABLE lite_embeddings_fts USING fts5(content,source_id,chun" +
+				"k_id,knowledge_id,knowledge_base_id,content='',contentless_delete=1,tokeni" +
+				"ze='unicode61')"),
 		).Error; e != nil {
 			return e
 		}
@@ -103,7 +109,8 @@ func initFTS5(db *gorm.DB) error {
 		}
 		for _, row := range rows {
 			if e := tx.Exec(
-				"INSERT INTO lite_embeddings_fts(rowid,content,source_id,chunk_id,knowledge_id,knowledge_base_id) VALUES(?,?,?,?,?,?)",
+				("INSERT INTO lite_embeddings_fts(rowid,content,source_id,chunk_id,knowledge" +
+					"_id,knowledge_base_id) VALUES(?,?,?,?,?,?)"),
 				row.ID,
 				tokenizeCJKBigram(row.Content),
 				row.SourceID,

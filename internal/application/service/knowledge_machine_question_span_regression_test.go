@@ -21,7 +21,9 @@ func runKnowledgeMachineQuestionSpanExternalMutation(t *testing.T, pg bool) {
 				m.f.store.UpdateKnowledgeBaseWithInput(repository.WithIndependentKnowledgeInput(m.f.ctx), &kb),
 			)
 			m.f.model.detectQuestions = true
-			m.f.model.response = `{"summary":"A complete generated summary","gist":"Generated original profile title","topics":["actual topic"],"doc_type":"guide","typical_question":"What is this actual topic?"}`
+			m.f.model.response = ("{\"summary\":\"A complete generated summary\",\"gist\":\"Generated origina" +
+				"l profile title\",\"topics\":[\"actual topic\"],\"doc_type\":\"guide\",\"t" +
+				"ypical_question\":\"What is this actual topic?\"}")
 			row := m.ingest(t)
 			completed := map[string]int{}
 			for i := 0; i < len(m.f.queue.tasks); i++ {
@@ -50,7 +52,8 @@ func runKnowledgeMachineQuestionSpanExternalMutation(t *testing.T, pg bool) {
 			require.NoError(
 				t,
 				m.f.db.Table("nextcloud_source_versions").
-					Where("tenant_id = ? AND knowledge_base_id = ? AND datasource_id = ? AND candidate_knowledge_id = ? AND state = ?", 7, "kb", m.ds.ID, row.ID, "published").
+					Where(("tenant_id = ? AND knowledge_base_id = ? AND datasource_id = ? AND candidat"+
+						"e_knowledge_id = ? AND state = ?"), 7, "kb", m.ds.ID, row.ID, "published").
 					Count(&published).
 					Error,
 			)

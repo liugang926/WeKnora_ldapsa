@@ -19,6 +19,7 @@ func ConfigureKnowledgeInputProvenance(
 	}
 }
 
+// ConfigureKnowledgeBaseInputProvenance configures the knowledge base input provenance boundary.
 func ConfigureKnowledgeBaseInputProvenance(
 	base interfaces.KnowledgeBaseService,
 	writer interfaces.KnowledgeBaseInputWriter,
@@ -28,6 +29,7 @@ func ConfigureKnowledgeBaseInputProvenance(
 	}
 }
 
+// ConfigureChunkSummaryInputProvenance configures the chunk summary input provenance boundary.
 func ConfigureChunkSummaryInputProvenance(chunks interfaces.ChunkService, knowledge interfaces.KnowledgeService) {
 	if c, ok := chunks.(*chunkService); ok {
 		if k, ok := knowledge.(*knowledgeService); ok {

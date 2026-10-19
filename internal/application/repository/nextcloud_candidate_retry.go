@@ -156,7 +156,8 @@ func (r *knowledgeRepository) FailedNextcloudCandidateETags(ctx context.Context,
 	}
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var ds types.DataSource
-		if err := tx.Where("id = ? AND tenant_id = ? AND knowledge_base_id = ? AND type = ? AND status = ? AND deleted_at IS NULL",
+		if err := tx.Where(("id = ? AND tenant_id = ? AND knowledge_base_id = ? AND type = ? AND status" +
+			" = ? AND deleted_at IS NULL"),
 			dsID, tenantID, kbID, types.ConnectorTypeNextcloud, types.DataSourceStatusActive).
 			Take(&ds).
 			Error; err != nil {
@@ -181,7 +182,8 @@ func (r *knowledgeRepository) FailedNextcloudCandidateETags(ctx context.Context,
 			return nil
 		}
 		if err := tx.Table("nextcloud_source_versions AS v").Select("v.*").
-			Joins("JOIN knowledges AS k ON k.id = v.candidate_knowledge_id AND k.tenant_id = v.tenant_id AND k.knowledge_base_id = v.knowledge_base_id").
+			Joins(("JOIN knowledges AS k ON k.id = v.candidate_knowledge_id AND k.tenant_id = "+
+				"v.tenant_id AND k.knowledge_base_id = v.knowledge_base_id")).
 			Where("v.tenant_id = ? AND v.knowledge_base_id = ? AND v.datasource_id = ? AND v.state = 'staging'",
 				tenantID, kbID, dsID).
 			Where("k.channel = ? AND k.parse_status = ? AND k.deleted_at IS NULL",

@@ -166,7 +166,7 @@ func TestSavedAgentHistoryGetListAndSearchGuard(t *testing.T) {
 
 func TestSavedAgentOrdinarySearchUsesCurrentSQLMaterialInputs(t *testing.T) {
 	messages, _, _, _, ctx, session := messageMaterialActualFixture(t)
-	_, answer := produceActualMessagePair(t, messages, ctx, session)
+	_, answer := produceActualMessagePair(ctx, t, messages, session)
 	ctx = WithMessageMaterialOutputBoundary(ctx)
 	defer CloseMessageMaterialOutputBoundary(ctx)
 	result, err := messages.SearchMessages(ctx, &types.MessageSearchParams{

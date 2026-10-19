@@ -24,6 +24,7 @@ type KnowledgeInputWriter interface {
 	UpdateKnowledgeWithInput(context.Context, *types.Knowledge, any) (*types.KnowledgeBuildInputProof, error)
 }
 
+// KnowledgeBaseInputWriter persists original knowledge base configuration inputs.
 type KnowledgeBaseInputWriter interface {
 	CreateKnowledgeBaseWithInput(context.Context, *types.KnowledgeBase) error
 	UpdateKnowledgeBaseWithInput(context.Context, *types.KnowledgeBase) error

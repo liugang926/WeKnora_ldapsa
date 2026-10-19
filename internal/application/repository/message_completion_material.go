@@ -25,6 +25,7 @@ type (
 	}
 )
 
+// WithActualMessageCompletionInputs binds actual message completion inputs.
 func (s *KnowledgeInputProvenanceStore) WithActualMessageCompletionInputs(
 	ctx context.Context,
 	manifest *types.MessageCompletionInputManifest,
@@ -37,11 +38,11 @@ func (s *KnowledgeInputProvenanceStore) WithActualMessageCompletionInputs(
 	if err != nil {
 		return ctx, err
 	}
-	var copy types.MessageCompletionInputManifest
-	if err := json.Unmarshal(body, &copy); err != nil {
+	var copied types.MessageCompletionInputManifest
+	if err := json.Unmarshal(body, &copied); err != nil {
 		return ctx, err
 	}
-	return context.WithValue(ctx, messageCompletionInputKey{}, messageCompletionInputBoundary{s, &copy}), nil
+	return context.WithValue(ctx, messageCompletionInputKey{}, messageCompletionInputBoundary{s, &copied}), nil
 }
 
 func (s *KnowledgeInputProvenanceStore) sealMessageCompletionInputsInTx(

@@ -151,9 +151,7 @@ func (p *PluginIntoChatMessage) OnEvent(ctx context.Context,
 		for i, result := range faqResults {
 			passage := getEnrichedPassageForChat(ctx, result)
 			if hasHighConfidenceFAQ && i == 0 {
-				contextsBuilder.WriteString(
-					fmt.Sprintf("<context id=\"FAQ-%d\" match=\"exact\">%s</context>\n", i+1, passage),
-				)
+				fmt.Fprintf(&contextsBuilder, "<context id=\"FAQ-%d\" match=\"exact\">%s</context>\n", i+1, passage)
 			} else {
 				contextsBuilder.WriteString(fmt.Sprintf("<context id=\"FAQ-%d\">%s</context>\n", i+1, passage))
 			}

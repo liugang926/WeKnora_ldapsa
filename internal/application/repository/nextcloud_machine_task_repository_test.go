@@ -104,7 +104,7 @@ func machineTaskRepositoryFixtureWithConfiguration(t *testing.T,
 	return f, build, raw, taskID
 }
 
-func machineTaskRepositoryWrite(t *testing.T, f *onboardingOriginalActualFixture, ctx context.Context) error {
+func machineTaskRepositoryWrite(ctx context.Context, t *testing.T, f *onboardingOriginalActualFixture) error {
 	t.Helper()
 	_, scope, err := NextcloudBuildInputLease(ctx)
 	if err != nil {
@@ -115,8 +115,7 @@ func machineTaskRepositoryWrite(t *testing.T, f *onboardingOriginalActualFixture
 	})
 }
 
-func machineTaskRepositoryNextWorker(t *testing.T, f *onboardingOriginalActualFixture,
-	old context.Context,
+func machineTaskRepositoryNextWorker(old context.Context, t *testing.T, f *onboardingOriginalActualFixture,
 ) context.Context {
 	t.Helper()
 	_, scope, err := NextcloudBuildInputLease(old)
@@ -142,9 +141,9 @@ func TestNextcloudMachineRepositoryReceiptIsImmutableAndSingleUse(t *testing.T) 
 	require.Error(t, f.db.Where("receipt_id = ?", payload.Receipt.ID).Delete(&nextcloudMachineTask{}).Error)
 	current, finish, err := f.store.BeginNextcloudMachineTask(build, types.TypeKnowledgePostProcess, raw, taskID)
 	require.NoError(t, err)
-	require.NoError(t, machineTaskRepositoryWrite(t, f, current))
+	require.NoError(t, machineTaskRepositoryWrite(current, t, f))
 	require.NoError(t, finish(true, false))
-	require.Error(t, machineTaskRepositoryWrite(t, f, current), "completed work cannot keep writing")
+	require.Error(t, machineTaskRepositoryWrite(current, t, f), "completed work cannot keep writing")
 	_, _, err = f.store.BeginNextcloudMachineTask(build, types.TypeKnowledgePostProcess, raw, taskID)
 	require.Error(t, err, "a completed receipt cannot replay")
 	require.Error(t, finish(true, false), "completion CAS is single use")
@@ -188,11 +187,11 @@ func TestNextcloudMachineRepositoryRechecksManagerAfterBegin(t *testing.T) {
 	f, build, raw, taskID := machineTaskRepositoryFixture(t)
 	current, finish, err := f.store.BeginNextcloudMachineTask(build, types.TypeKnowledgePostProcess, raw, taskID)
 	require.NoError(t, err)
-	require.NoError(t, machineTaskRepositoryWrite(t, f, current))
+	require.NoError(t, machineTaskRepositoryWrite(current, t, f))
 	require.NoError(t, CheckNextcloudMachineTaskExecution(current))
 
 	f.managerAllow.Store(false)
-	require.Error(t, machineTaskRepositoryWrite(t, f, current),
+	require.Error(t, machineTaskRepositoryWrite(current, t, f),
 		"a running claim and held original bytes cannot preserve revoked manager authority")
 	require.Error(t, CheckNextcloudMachineTaskExecution(current),
 		"the model/provider checkpoint must recheck manager authority after admission")
@@ -208,15 +207,15 @@ func TestNextcloudMachineRepositoryRetryFencesPreviousClaim(t *testing.T) {
 	f, build, raw, taskID := machineTaskRepositoryFixture(t)
 	old, finish, err := f.store.BeginNextcloudMachineTask(build, types.TypeKnowledgePostProcess, raw, taskID)
 	require.NoError(t, err)
-	next := machineTaskRepositoryNextWorker(t, f, build)
+	next := machineTaskRepositoryNextWorker(build, t, f)
 	_, _, err = f.store.BeginNextcloudMachineTask(next, types.TypeKnowledgePostProcess, raw, taskID)
 	require.Error(t, err, "another worker cannot take a running claim with a live durable lease")
 	require.NoError(t, finish(false, true))
-	require.Error(t, machineTaskRepositoryWrite(t, f, old), "a retryable completion fences its old worker")
+	require.Error(t, machineTaskRepositoryWrite(old, t, f), "a retryable completion fences its old worker")
 	current, finishCurrent, err := f.store.BeginNextcloudMachineTask(next, types.TypeKnowledgePostProcess, raw, taskID)
 	require.NoError(t, err)
-	require.NoError(t, machineTaskRepositoryWrite(t, f, current))
-	require.Error(t, machineTaskRepositoryWrite(t, f, old), "the old live lease cannot reuse a different claim")
+	require.NoError(t, machineTaskRepositoryWrite(current, t, f))
+	require.Error(t, machineTaskRepositoryWrite(old, t, f), "the old live lease cannot reuse a different claim")
 	require.NoError(t, finishCurrent(false, false))
 	_, _, err = f.store.BeginNextcloudMachineTask(next, types.TypeKnowledgePostProcess, raw, taskID)
 	require.Error(t, err, "terminal failure is not a retryable receipt")
@@ -226,7 +225,7 @@ func TestNextcloudMachineRepositoryExpiredLeaseTakeoverUsesDatabaseClock(t *test
 	f, build, raw, taskID := machineTaskRepositoryFixture(t)
 	old, finish, err := f.store.BeginNextcloudMachineTask(build, types.TypeKnowledgePostProcess, raw, taskID)
 	require.NoError(t, err)
-	next := machineTaskRepositoryNextWorker(t, f, build)
+	next := machineTaskRepositoryNextWorker(build, t, f)
 	lease, _, err := NextcloudBuildInputLease(build)
 	require.NoError(t, err)
 	now, err := nextcloudLeaseNowMS(f.db)
@@ -237,8 +236,8 @@ func TestNextcloudMachineRepositoryExpiredLeaseTakeoverUsesDatabaseClock(t *test
 		Update("expires_at_ms", now-1).Error)
 	current, finishCurrent, err := f.store.BeginNextcloudMachineTask(next, types.TypeKnowledgePostProcess, raw, taskID)
 	require.NoError(t, err)
-	require.NoError(t, machineTaskRepositoryWrite(t, f, current))
-	require.Error(t, machineTaskRepositoryWrite(t, f, old))
+	require.NoError(t, machineTaskRepositoryWrite(current, t, f))
+	require.Error(t, machineTaskRepositoryWrite(old, t, f))
 	require.Error(t, finish(true, false), "a previous claim cannot finish its successor")
 	require.NoError(t, finishCurrent(true, false))
 }

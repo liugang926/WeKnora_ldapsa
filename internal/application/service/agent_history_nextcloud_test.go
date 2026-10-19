@@ -51,9 +51,12 @@ func TestAgentHistoryAdmissionBeforeCheckpointAndTokenPage(t *testing.T) {
 }
 
 func TestAgentHistoryAdmissionAllowsOrdinaryCheckpointAndRechecks(t *testing.T) {
-	rows := storedTurns(3)
+	rows := literalAgentHistoryTurns(t, 3)
 	for _, changed := range []bool{false, true} {
-		repo := &historyRepo{rows: rows, checkpoint: checkpointOn(rows[1], "ordinary checkpoint")}
+		checkpoint := checkpointOn(rows[1], "ordinary checkpoint")
+		checkpoint.SourceLineage = rows[1].SourceLineage
+		checkpoint.ContextCheckpoint.SourceLineage = rows[1].SourceLineage
+		repo := &historyRepo{rows: rows, checkpoint: checkpoint}
 		sources := &instanceHistorySources{}
 		if changed {
 			sources.becomeSourceAt = 2
@@ -64,7 +67,7 @@ func TestAgentHistoryAdmissionAllowsOrdinaryCheckpointAndRechecks(t *testing.T) 
 			"s1",
 			unlimitedBudget,
 			false,
-			access.NewNextcloudHistoryGuard(nil, sources, nil),
+			literalHistoryAdmission{guard: access.NewNextcloudHistoryGuard(nil, sources, nil)},
 		)
 		require.Equal(t, 2, sources.calls)
 		if changed {

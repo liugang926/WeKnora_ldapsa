@@ -30,7 +30,7 @@ func TestHistoryVectorRerankBoundaryChecksLookupAndCall(t *testing.T) {
 		{ID: "c1", KnowledgeID: "k1", KnowledgeBaseID: "kb", Content: "actual child text", Score: .4},
 	}
 	check := func() error { events = append(events, "check"); return nil }
-	load := func(ctx context.Context, id string) (rerank.Reranker, error) {
+	load := func(ctx context.Context, _ string) (rerank.Reranker, error) {
 		events = append(events, "lookup")
 		if !logprivacy.ContentSuppressed(ctx) {
 			t.Fatal("lookup must suppress content")

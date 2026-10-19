@@ -21,6 +21,15 @@ func (t *orderedTestTool) Execute(ctx context.Context, _ json.RawMessage) (*type
 	return t.run(ctx), nil
 }
 
+// DefinitionSourceLineageFor certifies only the literal schema in this ordering fixture.
+func (t *orderedTestTool) DefinitionSourceLineageFor(types.FunctionDefinition) *types.SourceLineage {
+	return independentAgentInput()
+}
+
+func (t *orderedTestTool) ExecuteSourceLineage(ctx context.Context, args json.RawMessage) (*types.ToolResult, error) {
+	return t.Execute(ctx, args)
+}
+
 func TestParallelReadsRespectMutationBarriers(t *testing.T) {
 	engine := newTestEngine(t, &mockChat{})
 	engine.toolRegistry = tools.NewToolRegistry()
@@ -36,7 +45,7 @@ func TestParallelReadsRespectMutationBarriers(t *testing.T) {
 				mu.Lock()
 				order = append(order, name)
 				mu.Unlock()
-				return &types.ToolResult{Success: true}
+				return &types.ToolResult{Success: true, SourceLineage: independentAgentInput()}
 			},
 		})
 	}
@@ -59,7 +68,10 @@ func TestParallelReadsRespectMutationBarriers(t *testing.T) {
 	}
 	response := &types.ChatResponse{}
 	for _, name := range names {
-		response.ToolCalls = append(response.ToolCalls, types.LLMToolCall{ID: name, Function: types.FunctionCall{Name: name, Arguments: `{}`}})
+		response.ToolCalls = append(
+			response.ToolCalls,
+			types.LLMToolCall{ID: name, Function: types.FunctionCall{Name: name, Arguments: `{}`}},
+		)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

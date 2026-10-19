@@ -143,7 +143,9 @@ func runActualSteerAfterHTTP(t *testing.T, mode string) {
 			http.MethodPost,
 			"/agent-chat/"+f.parent.SessionID,
 			strings.NewReader(
-				`{"query":"actual initial after task","agent_id":"actual-steer-agent","agent_enabled":true,"summary_model_id":"actual-http-tail-model","disable_title":true}`,
+				("{\"query\":\"actual initial after task\",\"agent_id\":\"actual-steer-agent" +
+					"\",\"agent_enabled\":true,\"summary_model_id\":\"actual-http-tail-model\"," +
+					"\"disable_title\":true}"),
 			),
 		)
 		request.Header.Set("Content-Type", "application/json")
@@ -237,9 +239,9 @@ func runActualSteerAfterHTTP(t *testing.T, mode string) {
 	observed.beforeConsume = func(input *types.SteerMaterialInput) {
 		switch mode {
 		case "unknown_origin":
-			copy := *input.Proof
-			copy.OriginID = uuid.NewString()
-			input.Proof = &copy
+			copied := *input.Proof
+			copied.OriginID = uuid.NewString()
+			input.Proof = &copied
 		case "changed_input":
 			input.Query = "UNADMITTED ALTERED GUIDANCE"
 		}
@@ -279,7 +281,8 @@ func runActualSteerAfterHTTP(t *testing.T, mode string) {
 		require.NoError(
 			t,
 			f.db.Model(&types.Message{}).
-				Where("session_id=? AND role='assistant' AND request_id NOT IN ? AND is_completed=true", initial.SessionID, []string{initial.RequestID, f.parent.RequestID}).
+				Where(("session_id=? AND role='assistant' AND request_id NOT IN ? AND is_completed"+
+					"=true"), initial.SessionID, []string{initial.RequestID, f.parent.RequestID}).
 				Count(&successors).
 				Error,
 		)
@@ -333,7 +336,8 @@ func runActualSteerAfterHTTP(t *testing.T, mode string) {
 				Count(&completed).
 				Error == nil &&
 			completed == 2
-	}, 8*time.Second, 10*time.Millisecond, "one legitimate after input creates one completed successor through the actual public producer")
+	}, 8*time.Second, 10*time.Millisecond, ("one legitimate after input creates one completed successor through the act" +
+		"ual public producer"))
 	require.EqualValues(t, 1, observed.consumes.Load())
 	var answers []types.Message
 	require.NoError(
@@ -415,7 +419,9 @@ func runActualSteerHTTPAgent(t *testing.T, controlled bool, mode string) {
 			http.MethodPost,
 			"/agent-chat/"+f.parent.SessionID,
 			strings.NewReader(
-				`{"query":"actual current user task","agent_id":"actual-steer-agent","agent_enabled":true,"summary_model_id":"actual-http-tail-model","disable_title":true}`,
+				("{\"query\":\"actual current user task\",\"agent_id\":\"actual-steer-agent" +
+					"\",\"agent_enabled\":true,\"summary_model_id\":\"actual-http-tail-model\"," +
+					"\"disable_title\":true}"),
 			),
 		)
 		request.Header.Set("Content-Type", "application/json")
@@ -477,7 +483,8 @@ func runActualSteerHTTPAgent(t *testing.T, controlled bool, mode string) {
 	require.NoError(
 		t,
 		f.db.Table("original_body_lease_scopes s").
-			Joins("JOIN original_body_field_heads h ON h.body_id=s.body_id AND h.source_table='steer_authored_origins'").
+			Joins(("JOIN original_body_field_heads h ON h.body_id=s.body_id AND h.source_table"+
+				"='steer_authored_origins'")).
 			Where("h.row_key=? AND s.tenant_id=7 AND s.knowledge_base_id=''", origin.ID).
 			Count(&scopeCount).
 			Error,
@@ -653,7 +660,8 @@ func runActualSteerHTTPAgent(t *testing.T, controlled bool, mode string) {
 				Count(&sources).
 				Error == nil &&
 			sources == 0
-	}, 3*time.Second, 10*time.Millisecond, "actual producer and HTTP ownership close every source and original body read lease")
+	}, 3*time.Second, 10*time.Millisecond, ("actual producer and HTTP ownership close every source and original body re" +
+		"ad lease"))
 	assertActualSteerBodyLease(t, f.db, "", false)
 	var completed types.Message
 	require.NoError(t, f.db.Where("id=?", run.ID).Take(&completed).Error)

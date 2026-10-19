@@ -36,6 +36,7 @@ var (
 type NextcloudContentLeaseKind string
 
 const (
+	// NextcloudContentReadLease defines the nextcloud content read lease value.
 	NextcloudContentReadLease  NextcloudContentLeaseKind = "read"
 	NextcloudContentBuildLease NextcloudContentLeaseKind = "build"
 )
@@ -120,13 +121,13 @@ func nextcloudLeaseTTL(ttl time.Duration) (int64, error) {
 func nextcloudLeaseNowMS(tx *gorm.DB) (int64, error) {
 	var ms int64
 	var query string
-	switch tx.Dialector.Name() {
+	switch tx.Name() {
 	case "postgres":
 		query = "SELECT floor(extract(epoch from clock_timestamp()) * 1000)::bigint"
 	case "sqlite":
 		query = "SELECT CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER)"
 	default:
-		return 0, fmt.Errorf("unsupported Nextcloud content lease database %q", tx.Dialector.Name())
+		return 0, fmt.Errorf("unsupported Nextcloud content lease database %q", tx.Name())
 	}
 	if err := tx.Raw(query).Scan(&ms).Error; err != nil {
 		return 0, err
@@ -338,7 +339,10 @@ func (s *NextcloudContentLeaseStore) WaitForCurrentSourceVersion(ctx context.Con
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-waitCtx.Done():
-			return fmt.Errorf("Nextcloud source version was not staged: %w", ErrNextcloudContentLeaseDenied)
+			return apperrors.NewProtocolError(
+				fmt.Errorf("nextcloud source version was not staged: %w", ErrNextcloudContentLeaseDenied),
+				fmt.Sprintf("Nextcloud source version was not staged: %s", ErrNextcloudContentLeaseDenied),
+			)
 		case <-ticker.C:
 		}
 	}

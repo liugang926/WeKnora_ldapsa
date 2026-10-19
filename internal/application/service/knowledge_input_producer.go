@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -13,12 +14,12 @@ import (
 
 type knowledgeOriginalFileKBKey struct{}
 
-func readOriginalUploadArtifact(file *multipart.FileHeader) ([]byte, error) {
+func readOriginalUploadArtifact(file *multipart.FileHeader) (data []byte, retErr error) {
 	reader, err := file.Open()
 	if err != nil {
 		return nil, err
 	}
-	defer reader.Close()
+	defer func() { retErr = errors.Join(retErr, reader.Close()) }()
 	return io.ReadAll(reader)
 }
 

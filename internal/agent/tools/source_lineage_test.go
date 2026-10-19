@@ -58,7 +58,8 @@ func TestAgentLineageThinkingPureControlArgumentsPreserveExistingSource(t *testi
 		ctx,
 		ToolThinking,
 		json.RawMessage(
-			`{"thought":"citation-free reasoning from earlier context","thought_number":1,"total_thoughts":1,"next_thought_needed":false}`,
+			("{\"thought\":\"citation-free reasoning from earlier context\",\"thought_nu" +
+				"mber\":1,\"total_thoughts\":1,\"next_thought_needed\":false}"),
 		),
 	)
 	require.NoError(t, err)

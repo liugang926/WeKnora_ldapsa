@@ -25,7 +25,7 @@ func TestPostgresNextcloudSourceRotationUsesPersistedJSONBHash(t *testing.T) {
 	sqlDB, err := db.DB()
 	require.NoError(t, err)
 	sqlDB.SetMaxOpenConns(1)
-	defer sqlDB.Close()
+	defer func() { require.NoError(t, sqlDB.Close()) }()
 	schema := "pair_rotation_" + uuid.NewString()[:8]
 	require.NoError(t, db.Exec(`CREATE SCHEMA "`+schema+`"`).Error)
 	defer db.Exec(`DROP SCHEMA "` + schema + `" CASCADE`)

@@ -18,6 +18,7 @@ type KnowledgeOutputInputReader interface {
 	RecheckKnowledgeOutputInputs(context.Context, []*types.KnowledgeBuildInputProof) error
 }
 
+// KnowledgeOutputAuxiliaryInputReader captures original auxiliary knowledge output fields.
 type KnowledgeOutputAuxiliaryInputReader interface {
 	CaptureKnowledgeOutputAuxiliary(
 		context.Context,

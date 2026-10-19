@@ -81,6 +81,7 @@ func PushProcessingState(
 	return nil
 }
 
+// StatePushCanonical encodes the canonical payload signed by source state pushes.
 func StatePushCanonical(path, bodyHash, timestamp, nonce, connection, keyID string) []byte {
 	return []byte(
 		strings.Join(

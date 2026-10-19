@@ -1068,8 +1068,8 @@ func (h *AgentStreamHandler) handleCommandOutput(ctx context.Context, evt event.
 // eventSourceLineage carries producer metadata, never client Data/citations.
 func eventSourceLineage(_ context.Context, evt event.Event) *types.SourceLineage {
 	if lineage, ok := evt.SourceLineage.(*types.SourceLineage); ok {
-		copy, _ := types.UnionSourceLineage(lineage)
-		return copy
+		copied, _ := types.UnionSourceLineage(lineage)
+		return copied
 	}
 	return nil
 }

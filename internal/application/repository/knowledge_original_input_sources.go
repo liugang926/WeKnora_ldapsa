@@ -6,12 +6,14 @@ import (
 	"github.com/Tencent/WeKnora/internal/types"
 )
 
+// KnowledgeOriginalInputSourceVerifier represents knowledge original input source verifier repository data.
 // This capability is separate from public reading. Only the exact admitted
 // worker lease may verify its own unpublished original source generation.
 type KnowledgeOriginalInputSourceVerifier interface {
 	CheckKnowledgeOriginalInputSources(context.Context, *types.KnowledgeBuildInputProof) error
 }
 
+// ConfigureKnowledgeOriginalInputSourceVerifier configures knowledge original input source verifier.
 func ConfigureKnowledgeOriginalInputSourceVerifier(
 	store *KnowledgeInputProvenanceStore,
 	verifier KnowledgeOriginalInputSourceVerifier,
@@ -19,6 +21,7 @@ func ConfigureKnowledgeOriginalInputSourceVerifier(
 	store.originalInputSources = verifier
 }
 
+// ReadOriginalNextcloudBuildSource reads original nextcloud build source.
 func (s *KnowledgeInputProvenanceStore) ReadOriginalNextcloudBuildSource(
 	ctx context.Context,
 	proof *types.KnowledgeBuildInputProof,

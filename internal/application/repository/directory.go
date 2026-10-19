@@ -345,7 +345,8 @@ func (r *directoryRepository) GetUserLoginSnapshot(
 			snapshot = &types.DirectoryLoginSnapshot{Directory: &directory}
 			var identity types.DirectoryIdentity
 			lookupErr := tx.Where(
-				"id = ? AND directory_id = ? AND object_guid = ? AND user_id = ? AND snapshot_version = ? AND status = ?",
+				("id = ? AND directory_id = ? AND object_guid = ? AND user_id = ? AND snapsh" +
+					"ot_version = ? AND status = ?"),
 				linked.ID,
 				directory.ID,
 				linked.ObjectGUID,

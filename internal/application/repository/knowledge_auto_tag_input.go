@@ -150,11 +150,11 @@ func (s *KnowledgeInputProvenanceStore) captureKnowledgeAutoTagInTx(
 }
 
 func autoTagSnapshotDigest(snapshot *types.KnowledgeAutoTagInputSnapshot) (string, error) {
-	copy := *snapshot
-	copy.ManifestID = ""
-	copy.InputDigest = ""
+	copied := *snapshot
+	copied.ManifestID = ""
+	copied.InputDigest = ""
 
-	return KnowledgeInputDigest(&copy)
+	return KnowledgeInputDigest(&copied)
 }
 
 // CaptureKnowledgeAutoTagInputs persists the exact current material and every
@@ -173,9 +173,9 @@ func (s *KnowledgeInputProvenanceStore) CaptureKnowledgeAutoTagInputs(
 		return nil, ErrKnowledgeInputChanged
 	}
 	options := &sql.TxOptions{}
-	if s.db.Dialector.Name() == "postgres" {
+	if s.db.Name() == "postgres" {
 		options.Isolation = sql.LevelRepeatableRead
-	} else if s.db.Dialector.Name() != "sqlite" {
+	} else if s.db.Name() != "sqlite" {
 		return nil, ErrKnowledgeInputChanged
 	}
 	var result *types.KnowledgeAutoTagInputSnapshot
@@ -226,8 +226,8 @@ func (s *KnowledgeInputProvenanceStore) CaptureKnowledgeAutoTagInputs(
 }
 
 func (s *KnowledgeInputProvenanceStore) recheckKnowledgeAutoTagInTx(
-	tx *gorm.DB,
 	ctx context.Context,
+	tx *gorm.DB,
 	expected *types.KnowledgeAutoTagInputSnapshot,
 ) (*types.SourceLineage, error) {
 	if expected == nil || expected.ManifestID == "" || expected.Original == nil || expected.Original.Proof == nil {
@@ -306,6 +306,7 @@ func (s *KnowledgeInputProvenanceStore) recheckKnowledgeAutoTagInTx(
 	return actual.SourceLineage, nil
 }
 
+// RecheckKnowledgeAutoTagInputs rechecks knowledge auto tag inputs.
 func (s *KnowledgeInputProvenanceStore) RecheckKnowledgeAutoTagInputs(
 	ctx context.Context,
 	expected *types.KnowledgeAutoTagInputSnapshot,
@@ -313,13 +314,14 @@ func (s *KnowledgeInputProvenanceStore) RecheckKnowledgeAutoTagInputs(
 	// The trusted producer's exact lease is fenced against retirement in this
 	// transaction. Fence locking uses no-op SQL writes; it is not a public read.
 	options := &sql.TxOptions{}
-	if s.db.Dialector.Name() == "postgres" {
+	if s.db.Name() == "postgres" {
 		options.Isolation = sql.LevelRepeatableRead
 	}
 	return s.db.WithContext(ctx).
-		Transaction(func(tx *gorm.DB) error { _, err := s.recheckKnowledgeAutoTagInTx(tx, ctx, expected); return err }, options)
+		Transaction(func(tx *gorm.DB) error { _, err := s.recheckKnowledgeAutoTagInTx(ctx, tx, expected); return err }, options)
 }
 
+// WithKnowledgeAutoTagInput binds knowledge auto tag input.
 func WithKnowledgeAutoTagInput(
 	ctx context.Context,
 	reader *KnowledgeInputProvenanceStore,
@@ -332,8 +334,8 @@ func WithKnowledgeAutoTagInput(
 	if err != nil {
 		return ctx, err
 	}
-	var copy types.KnowledgeAutoTagInputSnapshot
-	if json.Unmarshal(data, &copy) != nil {
+	var copied2 types.KnowledgeAutoTagInputSnapshot
+	if json.Unmarshal(data, &copied2) != nil {
 		return ctx, ErrKnowledgeInputChanged
 	}
 	return context.WithValue(
@@ -342,7 +344,7 @@ func WithKnowledgeAutoTagInput(
 		knowledgeDisplayRequest{
 			Kind:          "derived",
 			Original:      cloneKnowledgeInputProof(snapshot.Original.Proof),
-			AutoTag:       &copy,
+			AutoTag:       &copied2,
 			AutoTagReader: reader,
 		},
 	), nil

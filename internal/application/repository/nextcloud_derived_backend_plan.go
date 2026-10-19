@@ -29,6 +29,7 @@ type nextcloudBackendSelection struct {
 	VectorStoreID string   `json:"vector_store_id"`
 }
 
+// RecordNextcloudDerivedBackendSelection records nextcloud derived backend selection.
 // Invoked by the actual Composite selection before model or storage IO.
 // No caller-supplied ready flag and no current-config restamping of old rows.
 func RecordNextcloudDerivedBackendSelection(ctx context.Context, engines []types.RetrieverEngineType) error {
@@ -45,6 +46,7 @@ func RecordNextcloudDerivedBackendSelection(ctx context.Context, engines []types
 	return recorder.RecordDerivedBackendSelection(ctx, guard, engines)
 }
 
+// RecordDerivedBackendSelection records derived backend selection.
 func (s *NextcloudContentLeaseStore) RecordDerivedBackendSelection(
 	ctx context.Context,
 	guard nextcloudBuildContext,

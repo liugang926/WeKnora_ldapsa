@@ -297,7 +297,8 @@ func (s *messageService) fencedKeywordHistorySearch(
 		duplicate := false
 		for _, partner := range guard.snapshot.Messages {
 			if partner.ID != original.ID && strings.Contains(strings.ToLower(partner.Content), needle) &&
-				(partner.CreatedAt.After(original.CreatedAt) || (partner.CreatedAt.Equal(original.CreatedAt) && partner.ID > original.ID)) {
+				(partner.CreatedAt.After(original.CreatedAt) ||
+					(partner.CreatedAt.Equal(original.CreatedAt) && partner.ID > original.ID)) {
 				duplicate = true
 				break
 			}
@@ -346,7 +347,7 @@ func expandHeldHistoricalSearchPairs(
 	}
 	out := append([]*types.MessageSearchResultItem{}, items...)
 	for _, item := range items {
-		rows, ok := pairs[historySearchPairKey(&item.MessageWithSession.Message)]
+		rows, ok := pairs[historySearchPairKey(&item.Message)]
 		if !ok {
 			return nil, access.ErrNextcloudPublicationUnavailable
 		}
@@ -372,7 +373,7 @@ func keepEligibleHistoricalCursorHits(page *historyKeywordPage, items []*types.M
 	}
 	eligible := make(map[string]bool)
 	for _, item := range items {
-		eligible[historySearchPairKey(&item.MessageWithSession.Message)] = true
+		eligible[historySearchPairKey(&item.Message)] = true
 	}
 	kept := page.Hits[:0]
 	for _, hit := range page.Hits {

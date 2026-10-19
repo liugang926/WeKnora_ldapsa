@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"net"
 	"net/http"
 	"os"
@@ -45,7 +46,7 @@ func TestNextcloudOnboardingActualNCRuntime(t *testing.T) {
 	sql, e := db.DB()
 	require.NoError(t, e)
 	sql.SetMaxOpenConns(1)
-	defer sql.Close()
+	defer func() { require.NoError(t, sql.Close()) }()
 	require.NoError(
 		t,
 		db.AutoMigrate(
@@ -86,7 +87,8 @@ func TestNextcloudOnboardingActualNCRuntime(t *testing.T) {
 	require.NoError(
 		t,
 		db.Exec(
-			"CREATE TABLE nextcloud_source_status_epochs(connection_id TEXT PRIMARY KEY,publication_epoch BIGINT,pair_operation_id TEXT,verified_at BIGINT)",
+			("CREATE TABLE nextcloud_source_status_epochs(connection_id TEXT PRIMARY KEY" +
+				",publication_epoch BIGINT,pair_operation_id TEXT,verified_at BIGINT)"),
 		).Error,
 	)
 	now := time.Now().UTC()
@@ -241,16 +243,22 @@ func TestNextcloudOnboardingActualNCRuntime(t *testing.T) {
 	listener, e := net.Listen("tcp", "0.0.0.0:8089")
 	require.NoError(t, e)
 	server := &http.Server{Handler: r, ReadHeaderTimeout: 5 * time.Second}
-	defer server.Close()
-	go server.Serve(listener)
+	defer func() { require.NoError(t, server.Close()) }()
+	go func() {
+		if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			t.Errorf("serve controlled onboarding fixture: %v", err)
+		}
+	}()
 	ready := fixture + ".ready"
 	require.NoError(t, os.WriteFile(ready, []byte("ready"), 0o600))
-	defer os.Remove(ready)
+	defer func() { require.NoError(t, os.Remove(ready)) }()
 	select {
 	case success := <-done:
 		require.True(t, success, "owned NC phase failed; see retained controlled RPC diagnostics")
 		t.Log(
-			"Actual NC signed prepare/commit + WK scoped reserve/grants, same-root rename exact ACK, cross-tenant new-source transfer with empty stable manifest passed; synthetic actor/model snapshot; no tenant membership created",
+			("Actual NC signed prepare/commit + WK scoped reserve/grants, same-root rena" +
+				"me exact ACK, cross-tenant new-source transfer with empty stable manifest " +
+				"passed; synthetic actor/model snapshot; no tenant membership created"),
 		)
 	case <-time.After(7 * time.Minute):
 		t.Fatal("owned NC coordinator timed out")

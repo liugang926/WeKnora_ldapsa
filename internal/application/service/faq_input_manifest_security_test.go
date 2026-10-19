@@ -17,7 +17,7 @@ func TestFAQActualFalseControlsSanitizedMaterialAndProjectionReject(t *testing.T
 		IsRecommended:    boolFAQ(false),
 	}
 	entry, err := s.CreateFAQEntry(
-		faqInputContext(t, ctx, types.FAQInputOperation{Kind: "create", Entry: payload}),
+		faqInputContext(ctx, t, types.FAQInputOperation{Kind: "create", Entry: payload}),
 		"kb",
 		payload,
 	)
@@ -31,7 +31,7 @@ func TestFAQActualFalseControlsSanitizedMaterialAndProjectionReject(t *testing.T
 		ByID: map[int64]types.FAQEntryFieldsUpdate{entry.ID: {IsEnabled: boolFAQ(true)}},
 	}
 	operation := types.FAQInputOperation{Kind: "fields", Fields: patch}
-	marked := faqInputContext(t, ctx, operation)
+	marked := faqInputContext(ctx, t, operation)
 	marked, err = s.beginFAQInput(marked, &kb, operation)
 	require.NoError(t, err)
 	var actual types.Chunk

@@ -18,13 +18,16 @@ import (
 )
 
 type (
+	// NextcloudCapacityFileResolver loads files considered by source capacity admission.
 	NextcloudCapacityFileResolver func(context.Context, *types.KnowledgeBase) (interfaces.FileService, error)
-	NextcloudCapacityAdmission    struct {
+	// NextcloudCapacityAdmission accounts for source capacity before accepting file processing.
+	NextcloudCapacityAdmission struct {
 		store   *repository.NextcloudCapacityStore
 		resolve NextcloudCapacityFileResolver
 	}
 )
 
+// NewNextcloudCapacityAdmission constructs the configured NextcloudCapacityAdmission.
 func NewNextcloudCapacityAdmission(
 	store *repository.NextcloudCapacityStore,
 	resolve NextcloudCapacityFileResolver,
@@ -32,6 +35,7 @@ func NewNextcloudCapacityAdmission(
 	return &NextcloudCapacityAdmission{store: store, resolve: resolve}
 }
 
+// Begin captures the original inputs and current controls for this operation.
 func (a *NextcloudCapacityAdmission) Begin(
 	ctx context.Context,
 	kb *types.KnowledgeBase,
@@ -72,6 +76,7 @@ func (a *NextcloudCapacityAdmission) Begin(
 	)
 }
 
+// Finish records the result of source capacity admission.
 func (a *NextcloudCapacityAdmission) Finish(
 	ctx context.Context,
 	r *repository.NextcloudCapacityReservation,
@@ -122,6 +127,7 @@ func (s *capacityWriteSession) Cataloged(ctx context.Context, path, k, ref strin
 	return s.store.Cataloged(ctx, s.reservation, s.writer, path, k, ref)
 }
 
+// WriteContext returns the context carrying the current capacity admission.
 func (a *NextcloudCapacityAdmission) WriteContext(
 	ctx context.Context,
 	r *repository.NextcloudCapacityReservation,
@@ -161,6 +167,7 @@ func (a *NextcloudCapacityAdmission) End(
 	_ = a.Reconcile(cleanup, kb, r)
 }
 
+// Reconcile reconciles source capacity accounting with current artifacts.
 func (a *NextcloudCapacityAdmission) Reconcile(
 	ctx context.Context,
 	kb *types.KnowledgeBase,
@@ -201,12 +208,14 @@ func (a *NextcloudCapacityAdmission) Reconcile(
 	)
 }
 
+// ConfigureDataSourceCapacityAdmission configures the data source capacity admission boundary.
 func ConfigureDataSourceCapacityAdmission(source interfaces.DataSourceService, admission *NextcloudCapacityAdmission) {
 	if service, ok := source.(*DataSourceService); ok {
 		service.capacityAdmission = admission
 	}
 }
 
+// Status returns the current operation state under its scoped controls.
 func (a *NextcloudCapacityAdmission) Status(
 	ctx context.Context,
 	kb *types.KnowledgeBase,

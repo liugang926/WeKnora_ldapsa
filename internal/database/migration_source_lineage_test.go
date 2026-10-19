@@ -100,8 +100,8 @@ func requirePostgresSourceLineageUpgrade(t *testing.T, dsn string) {
 	} else {
 		require.NotEqual(t, "absent", snapshotPostgresPublicEmbedding(t, db))
 		var guards int
-		require.NoError(t, db.QueryRow(`SELECT count(*) FROM pg_trigger
-			WHERE tgrelid = 'public.embeddings'::regclass AND tgname = 'nextcloud_indexed_embedding_guard'`).Scan(&guards))
+		require.NoError(t, db.QueryRow(("SELECT count(*) FROM pg_trigger\n\t\t\tWHERE tgrelid = 'public.embeddings'" +
+			"::regclass AND tgname = 'nextcloud_indexed_embedding_guard'")).Scan(&guards))
 		require.Equal(t, 1, guards, "the fixture's own embeddings must retain its production withdrawal guard")
 	}
 	seedSourceLineageLegacy(t, db, "postgres")
@@ -241,8 +241,12 @@ func seedSourceLineageLegacy(t *testing.T, db *sql.DB, dialect string) {
 func requireSourceTombstone(t *testing.T, db *sql.DB, dialect string, tenant int, scope, id string, want int) {
 	t.Helper()
 	var count int
-	require.NoError(t, db.QueryRow(lineageMigrationQuery(dialect, `SELECT count(*)
-		FROM nextcloud_source_tombstones WHERE tenant_id = ? AND scope_type = ? AND scope_id = ?`), tenant, scope, id).Scan(&count))
+	require.NoError(
+		t,
+		db.QueryRow(lineageMigrationQuery(dialect, ("SELECT count(*)\n\t\tFROM nextcloud_source_tombstones WHERE tenant_id = ? "+
+			"AND scope_type = ? AND scope_id = ?")), tenant, scope, id).
+			Scan(&count),
+	)
 	require.Equal(t, want, count, "%d/%s/%s", tenant, scope, id)
 }
 
@@ -274,7 +278,8 @@ func requireSourceLineageMigrationBehavior(t *testing.T, db *sql.DB, dialect str
 	requireSourceTombstone(t, db, dialect, 8, "tenant", "8", 0) // absence remains unknown
 	for _, invalid := range []string{
 		`{}`, `{"version":1,"sources":[]}`, `{"version":2,"state":"complete","sources":[]}`,
-		`{"version":1,"state":"complete","sources":null}`, `{"version":1,"state":"complete","sources":[],"extra":true} trailing`,
+		`{"version":1,"state":"complete","sources":null}`, ("{\"version\":1,\"state\":\"complete\",\"sources\":[],\"extra\":true} trail" +
+			"ing"),
 	} {
 		_, err := db.Exec(
 			lineageMigrationQuery(dialect, `UPDATE messages SET source_lineage = ? WHERE id = 'legacy-answer'`),
@@ -302,7 +307,8 @@ func requireSourceLineageMigrationBehavior(t *testing.T, db *sql.DB, dialect str
 		var original string
 		require.NoError(
 			t,
-			db.QueryRow(`SELECT recorded_at FROM nextcloud_source_tombstones WHERE tenant_id = 7 AND scope_type = 'tenant'`).
+			db.QueryRow(("SELECT recorded_at FROM nextcloud_source_tombstones WHERE tenant_id = 7 AN" +
+				"D scope_type = 'tenant'")).
 				Scan(&original),
 		)
 		lineageMigrationExec(t, db, dialect, `INSERT OR REPLACE INTO nextcloud_source_tombstones
@@ -310,7 +316,8 @@ func requireSourceLineageMigrationBehavior(t *testing.T, db *sql.DB, dialect str
 		var stillOriginal string
 		require.NoError(
 			t,
-			db.QueryRow(`SELECT recorded_at FROM nextcloud_source_tombstones WHERE tenant_id = 7 AND scope_type = 'tenant'`).
+			db.QueryRow(("SELECT recorded_at FROM nextcloud_source_tombstones WHERE tenant_id = 7 AN" +
+				"D scope_type = 'tenant'")).
 				Scan(&stillOriginal),
 		)
 		require.Equal(t, original, stillOriginal, "REPLACE must not rewrite the first fact")

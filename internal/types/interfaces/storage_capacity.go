@@ -6,11 +6,13 @@ import (
 	"github.com/Tencent/WeKnora/internal/types"
 )
 
+// StorageCapacityProvider reports capacity for the configured artifact store.
 // Implemented only by providers that can measure their actual quota/filesystem.
 type StorageCapacityProvider interface {
 	MeasureStorageCapacity(context.Context) (types.StorageCapacity, error)
 }
 
+// LocalCapacityIntentProvider records local storage admission intent.
 // The provider holds the same exclusive process-wide writer fence while the
 // callback validates catalog/state and records a conservative charge/release.
 type LocalCapacityIntentProvider interface {

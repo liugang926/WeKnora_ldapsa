@@ -23,6 +23,7 @@ type KnowledgeOutputAuthorizer struct {
 	checker knowledgeOutputLineageChecker
 }
 
+// NewKnowledgeOutputAuthorizer constructs the configured KnowledgeOutputAuthorizer.
 func NewKnowledgeOutputAuthorizer(
 	reader *repository.KnowledgeInputProvenanceStore,
 	guard *access.NextcloudSourceLineageGuard,
@@ -36,6 +37,7 @@ type knowledgeOutputEntry struct {
 	proof    *types.KnowledgeBuildInputProof
 }
 
+// KnowledgeOutputGuard retains original knowledge fields and their current read authority.
 type KnowledgeOutputGuard struct {
 	authorizer *KnowledgeOutputAuthorizer
 	entries    map[string]knowledgeOutputEntry
@@ -48,10 +50,12 @@ type KnowledgeOutputGuard struct {
 
 type knowledgeOutputGuardContextKey struct{}
 
+// WithKnowledgeOutputGuard attaches a retained knowledge output guard to a context.
 func WithKnowledgeOutputGuard(ctx context.Context, guard *KnowledgeOutputGuard) context.Context {
 	return context.WithValue(ctx, knowledgeOutputGuardContextKey{}, guard)
 }
 
+// KnowledgeOutputGuardFromContext returns the knowledge output guard attached to a context.
 func KnowledgeOutputGuardFromContext(ctx context.Context) *KnowledgeOutputGuard {
 	if ctx == nil {
 		return nil
@@ -141,6 +145,7 @@ func validateKnowledgeOutputDisplay(k *types.Knowledge, aux *types.KnowledgeColl
 	return nil
 }
 
+// Begin captures the original inputs and current controls for this operation.
 func (a *KnowledgeOutputAuthorizer) Begin(ctx context.Context, rows []*types.Knowledge) (*KnowledgeOutputGuard, error) {
 	if ctx == nil || a == nil || a.reader == nil || a.checker == nil {
 		return nil, access.ErrNextcloudPublicationUnavailable
@@ -314,6 +319,7 @@ func (a *KnowledgeOutputAuthorizer) Begin(ctx context.Context, rows []*types.Kno
 	return g, nil
 }
 
+// Check rechecks the retained inputs and their current read controls.
 func (g *KnowledgeOutputGuard) Check(ctx context.Context, rows []*types.Knowledge) error {
 	if ctx == nil || ctx.Err() != nil {
 		if ctx != nil {
@@ -447,6 +453,7 @@ func (g *KnowledgeOutputGuard) checkFAQResults(ctx context.Context) error {
 	return nil
 }
 
+// FAQResultReadPlan plans original material reads for FAQ result output.
 func (a *KnowledgeOutputAuthorizer) FAQResultReadPlan(
 	ctx context.Context,
 	ids []string,

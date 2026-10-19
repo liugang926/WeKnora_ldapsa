@@ -75,14 +75,21 @@ func capacityNextcloudFetchedItem(t *testing.T, body string, incremental bool) *
 		}
 		switch r.URL.Path {
 		case api + "/capabilities":
-			fmt.Fprint(w, `{"protocol_version":"1","instance_id":"instance"}`)
+			if _, err := fmt.Fprint(w, `{"protocol_version":"1","instance_id":"instance"}`); err != nil {
+				t.Errorf("write fixture response: %v", err)
+			}
 		case api + "/bindings/binding/manifest":
-			fmt.Fprintf(
+			if _, err := fmt.Fprintf(
 				w,
-				`{"generation":"capacity-generation","complete":true,"next_cursor":null,"items":[{"file_id":77,"etag":"%s","name":"source.txt","path":"source.txt","mime_type":"text/plain","size":%d,"mtime":1700000000}]}`,
+				("{\"generation\":\"capacity-generation\",\"complete\":true,\"next_cursor\":" +
+					"null,\"items\":[{\"file_id\":77,\"etag\":\"%s\",\"name\":\"source.txt\",\"" +
+					"path\":\"source.txt\",\"mime_type\":\"text/plain\",\"size\":%d,\"mtime\":1" +
+					"700000000}]}"),
 				etag,
 				len(body),
-			)
+			); err != nil {
+				t.Errorf("write fixture response: %v", err)
+			}
 		case api + "/bindings/binding/changes":
 			http.NotFound(w, r)
 		case api + "/bindings/binding/files/77/content":
@@ -93,7 +100,9 @@ func capacityNextcloudFetchedItem(t *testing.T, body string, incremental bool) *
 			}
 			w.Header().Set("ETag", `"`+etag+`"`)
 			w.Header().Set("Content-Type", "text/plain")
-			fmt.Fprint(w, body)
+			if _, err := fmt.Fprint(w, body); err != nil {
+				t.Errorf("write fixture response: %v", err)
+			}
 		default:
 			t.Errorf("unexpected capacity connector path %s", r.URL.Path)
 			http.NotFound(w, r)
@@ -173,7 +182,7 @@ func (s *capacityIngestKnowledge) CreateKnowledgeFromFile(
 	ctx context.Context,
 	kb string,
 	header *multipart.FileHeader,
-	metadata map[string]string,
+	_ map[string]string,
 	_ *bool,
 	_ string,
 	_ []string,

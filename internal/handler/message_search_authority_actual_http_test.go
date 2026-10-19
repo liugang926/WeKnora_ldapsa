@@ -56,7 +56,7 @@ func TestHistorySearchActualHTTPTransactionAuthorityFactory(t *testing.T) {
 	installHTTPCurrentNextcloudControls(t, db)
 	sqlDB, err := db.DB()
 	require.NoError(t, err)
-	defer sqlDB.Close()
+	defer func() { require.NoError(t, sqlDB.Close()) }()
 	sqlDB.SetMaxOpenConns(1)
 	sqlDB.SetMaxIdleConns(1)
 	groups := service.NewGroupAccessService(repository.NewGroupAccessRepository(db))

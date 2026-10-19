@@ -28,7 +28,7 @@ func (s *KnowledgeInputProvenanceStore) CaptureKnowledgeOutputInputs(
 		return nil, types.ErrSourceLineageLimit
 	}
 	options := &sql.TxOptions{ReadOnly: true}
-	switch s.db.Dialector.Name() {
+	switch s.db.Name() {
 	case "postgres":
 		options.Isolation = sql.LevelRepeatableRead
 	case "sqlite":

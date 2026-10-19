@@ -18,7 +18,7 @@ func autoSpanFixture(
 ) (*KnowledgeInputProvenanceStore, *gorm.DB, context.Context, *types.Knowledge, interfaces.KnowledgeRepository, *types.KnowledgeAutoTagInputSnapshot, *types.KnowledgeProcessingSpan, KnowledgeSpanRepository) {
 	t.Helper()
 	store, db, ctx, tags, knowledge, k := displayTestFixture(t, pg)
-	_ = displayTag(t, tags, ctx, "span-match")
+	_ = displayTag(ctx, t, tags, "span-match")
 	if derived {
 		sourceID := "candidate"
 		if pg {
@@ -58,7 +58,7 @@ func autoSpanFixture(
 			),
 		)
 	} else {
-		_ = displayTag(t, tags, ctx, "span-nonmatch")
+		_ = displayTag(ctx, t, tags, "span-nonmatch")
 	}
 	actual, err := store.CaptureKnowledgeOutputInputs(
 		ctx,
@@ -75,7 +75,7 @@ func autoSpanFixture(
 	installSpanInputs(t, db)
 	repo := NewKnowledgeSpanRepository(db)
 	ctx = WithKnowledgeBuildInputProof(ctx, store, actual.Proof)
-	root := startOriginalSpan(t, repo, ctx, k.ID, 1, "root", "", types.SpanKindRoot)
+	root := startOriginalSpan(ctx, t, repo, k.ID, 1, "root", "", types.SpanKindRoot)
 	ctx, err = WithSpanAutoTagOriginalInput(ctx, store, manifest)
 	require.NoError(t, err)
 	now := time.Now()
@@ -107,7 +107,7 @@ func runAutoSpanOriginalAdditionalManifest(t *testing.T, pg bool) {
 	writeCtx, err := WithKnowledgeAutoTagInput(ctx, store, manifest)
 	require.NoError(t, err)
 	require.NoError(t, knowledge.AddKnowledgeTagRelations(writeCtx, 7, "kb", k.ID, []string{"span-match"}))
-	finishOriginalSpan(t, repo, ctx, row)
+	finishOriginalSpan(ctx, t, repo, row)
 	snapshot, err := store.CaptureSpanOutputInputs(
 		context.Background(),
 		types.SpanOutputReadRequest{TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: k.ID, Attempt: 1},
@@ -156,7 +156,7 @@ func runAutoSpanCandidateAndRelationABA(t *testing.T, pg bool) {
 			writeCtx, err := WithKnowledgeAutoTagInput(ctx, store, manifest)
 			require.NoError(t, err)
 			require.NoError(t, knowledge.AddKnowledgeTagRelations(writeCtx, 7, "kb", k.ID, []string{"span-match"}))
-			finishOriginalSpan(t, repo, ctx, row)
+			finishOriginalSpan(ctx, t, repo, row)
 			before, err := store.CaptureSpanOutputInputs(
 				context.Background(),
 				types.SpanOutputReadRequest{TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: k.ID, Attempt: 1},
@@ -266,7 +266,7 @@ func TestAutoSpanPostgresCoherentAdditionalInputsAndFinalRecheck(t *testing.T) {
 	writer, err := WithKnowledgeAutoTagInput(ctx, store, manifest)
 	require.NoError(t, err)
 	require.NoError(t, knowledge.AddKnowledgeTagRelations(writer, 7, "kb", k.ID, []string{"span-match"}))
-	finishOriginalSpan(t, repo, ctx, row)
+	finishOriginalSpan(ctx, t, repo, row)
 	before, err := store.CaptureSpanOutputInputs(
 		context.Background(),
 		types.SpanOutputReadRequest{TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: k.ID, Attempt: 1},
@@ -300,6 +300,7 @@ func TestAutoSpanPostgresCoherentAdditionalInputsAndFinalRecheck(t *testing.T) {
 	require.Error(
 		t,
 		store.RecheckSpanOutputInputs(context.Background(), actual),
-		"one RR snapshot keeps the original span body/additional receipts coherent; the final checkpoint rejects committed unselected input mutation",
+		("one RR snapshot keeps the original span body/additional receipts coherent;" +
+			" the final checkpoint rejects committed unselected input mutation"),
 	)
 }

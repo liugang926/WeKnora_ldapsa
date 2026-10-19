@@ -18,7 +18,7 @@ func TestNextcloudRootMigrationPreservesTypedGraphOriginalInputsAndCurrentProbe(
 	state, db, ctx, k, chunk, inputs := processingStateFixture(t, true)
 	_, err := state.StartGraph(ctx, 7, k.ID, 1, chunk.ID)
 	require.NoError(t, err)
-	ctx, graph := boundProcessingGraph(t, ctx, k, chunk, inputs)
+	ctx, graph := boundProcessingGraph(ctx, t, k, chunk, inputs)
 	require.NoError(
 		t,
 		NewScopedSQLGraphRepository(

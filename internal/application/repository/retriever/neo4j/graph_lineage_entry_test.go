@@ -94,16 +94,19 @@ func graphTestLineage(t *testing.T, namespace types.NameSpace, file, etag string
 }
 
 func extractGraph(
-	t *testing.T,
 	ctx context.Context,
+	t *testing.T,
 	namespace types.NameSpace,
-	body, config *types.SourceLineage,
+	body,
+	config *types.SourceLineage,
 	chunk string,
 	authorize func(context.Context, *types.SourceLineage) error,
 ) *types.GraphData {
 	t.Helper()
 	model := &localGraphModel{
-		output: "```json\n[{\"entity\":\"shared\",\"entity_attributes\":[\"extracted fact\"]},{\"entity1\":\"shared\",\"entity2\":\"target\",\"relation\":\"REL\"}]\n```",
+		output: ("```json\n[{\"entity\":\"shared\",\"entity_attributes\":[\"extracted fact\"" +
+			"]},{\"entity1\":\"shared\",\"entity2\":\"target\",\"relation\":\"REL\"}]\n" +
+			"```"),
 	}
 	template := &types.PromptTemplateStructured{
 		Description: "custom extraction instructions %s",
@@ -182,12 +185,12 @@ func TestKnowledgeGraphExtractorNeo4jOriginalUnionEntry(t *testing.T) {
 		ctx,
 		func(ctx context.Context, r *types.GraphSourceReceipt) error { return authorize(ctx, r.SourceLineage) },
 	)
-	first := extractGraph(t, ctx, namespace, a, b, "chunk-a", authorize)
+	first := extractGraph(ctx, t, namespace, a, b, "chunk-a", authorize)
 	require.NoError(t, repo.AddGraph(ctx, namespace, []*types.GraphData{first}))
 	secondNamespace := types.NameSpace{KnowledgeBase: namespace.KnowledgeBase, Knowledge: "other-doc"}
 	c := graphTestLineage(t, secondNamespace, "79", "other-etag", 3)
 	empty, _ := types.NewCompleteSourceLineage()
-	second := extractGraph(t, ctx, secondNamespace, c, empty, "chunk-b", authorize)
+	second := extractGraph(ctx, t, secondNamespace, c, empty, "chunk-b", authorize)
 	require.NoError(t, repo.AddGraph(ctx, secondNamespace, []*types.GraphData{second}))
 	graph, err := repo.SearchNode(ctx, types.NameSpace{KnowledgeBase: namespace.KnowledgeBase}, []string{"shared"})
 	require.NoError(t, err)
@@ -217,8 +220,8 @@ func TestKnowledgeGraphSameFileEpochsNeverRestamped(t *testing.T) {
 	check := func(context.Context, *types.SourceLineage) error { return nil }
 	ctx = types.WithGraphWriteAuthorization(ctx, func(context.Context, *types.GraphSourceReceipt) error { return nil })
 	old := extractGraph(
-		t,
 		ctx,
+		t,
 		namespace,
 		graphTestLineage(t, namespace, "77", "old-etag", 1),
 		empty,
@@ -227,8 +230,8 @@ func TestKnowledgeGraphSameFileEpochsNeverRestamped(t *testing.T) {
 	)
 	require.NoError(t, repo.AddGraph(ctx, namespace, []*types.GraphData{old}))
 	fresh := extractGraph(
-		t,
 		ctx,
+		t,
 		namespace,
 		graphTestLineage(t, namespace, "77", "fresh-etag", 2),
 		empty,
@@ -252,8 +255,8 @@ func TestKnowledgeGraphWriteWithdrawalRollsBackAllUnits(t *testing.T) {
 	ctx, _, repo, namespace := neoGraphFixture(t)
 	empty, _ := types.NewCompleteSourceLineage()
 	graph := extractGraph(
-		t,
 		ctx,
+		t,
 		namespace,
 		empty,
 		empty,
@@ -282,8 +285,8 @@ func TestKnowledgeGraphLegacyOrChangedBodyCannotBorrowChunkProof(t *testing.T) {
 			ctx, driver, repo, namespace := neoGraphFixture(t)
 			empty, _ := types.NewCompleteSourceLineage()
 			graph := extractGraph(
-				t,
 				ctx,
+				t,
 				namespace,
 				empty,
 				empty,
@@ -296,11 +299,12 @@ func TestKnowledgeGraphLegacyOrChangedBodyCannotBorrowChunkProof(t *testing.T) {
 			)
 			require.NoError(t, repo.AddGraph(ctx, namespace, []*types.GraphData{graph}))
 			session := driver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeWrite})
-			defer session.Close(ctx)
+			defer func() { require.NoError(t, session.Close(ctx)) }()
 			label := "`ENTITY" + namespace.KnowledgeBase + "`:`ENTITY" + namespace.Knowledge + "`"
 			query := `MATCH (n:` + label + `) SET n.attributes=['rewritten attributes']`
 			if mode != "changed body" {
-				query = `CREATE (n:` + label + ` {name:'legacy',kg:$kg,chunks:['current-chunk'],attributes:['unknown graph']})`
+				query = `CREATE (n:` + label + (" {name:'legacy',kg:$kg,chunks:['current-chunk'],attributes:['unknown graph" +
+					"']})")
 			}
 			_, err := session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
 				result, err := tx.Run(ctx, query, map[string]any{"kg": namespace.Knowledge})
@@ -377,8 +381,8 @@ func TestKnowledgeGraphOrphanChildrenCannotOutliveTheirInputReceipt(t *testing.T
 	ctx, driver, repo, namespace := neoGraphFixture(t)
 	empty, _ := types.NewCompleteSourceLineage()
 	graph := extractGraph(
-		t,
 		ctx,
+		t,
 		namespace,
 		empty,
 		empty,
@@ -388,7 +392,7 @@ func TestKnowledgeGraphOrphanChildrenCannotOutliveTheirInputReceipt(t *testing.T
 	ctx = types.WithGraphWriteAuthorization(ctx, func(context.Context, *types.GraphSourceReceipt) error { return nil })
 	require.NoError(t, repo.AddGraph(ctx, namespace, []*types.GraphData{graph}))
 	session := driver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeWrite})
-	defer session.Close(ctx)
+	defer func() { require.NoError(t, session.Close(ctx)) }()
 	_, err := session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
 		result, err := tx.Run(
 			ctx,

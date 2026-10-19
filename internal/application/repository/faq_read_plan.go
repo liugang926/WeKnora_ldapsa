@@ -19,6 +19,7 @@ type (
 	}
 )
 
+// WithFAQInputReadPlan binds faqinput read plan.
 func WithFAQInputReadPlan(ctx context.Context, plan *types.FAQInputReadPlan) (context.Context, error) {
 	if plan == nil || plan.MetadataDigest == "" || len(plan.Scopes) == 0 {
 		return ctx, types.ErrSourceLineageUnknown
@@ -38,6 +39,7 @@ func WithFAQInputReadPlan(ctx context.Context, plan *types.FAQInputReadPlan) (co
 	return context.WithValue(ctx, faqInputReadPlanKey{}, &faqInputReadPlanBinding{Plan: &actual}), nil
 }
 
+// PeekFAQInputReadPlan reads faqinput read plan.
 func (s *KnowledgeInputProvenanceStore) PeekFAQInputReadPlan(
 	ctx context.Context,
 	request types.FAQInputReadRequest,
@@ -51,6 +53,7 @@ func (s *KnowledgeInputProvenanceStore) PeekFAQInputReadPlan(
 	return plan, err
 }
 
+// PeekFAQTagReadPlan reads faqtag read plan.
 func (s *KnowledgeInputProvenanceStore) PeekFAQTagReadPlan(
 	ctx context.Context,
 	tenant uint64,
@@ -171,7 +174,8 @@ func (s *KnowledgeInputProvenanceStore) peekFAQInputReadPlanInTx(
 	var config knowledgeConfigurationInputOrigin
 	err := tx.Table("knowledge_config_input_origins o").
 		Select("o.*").
-		Joins("JOIN knowledge_configuration_control_versions v ON v.knowledge_base_id=o.knowledge_base_id AND v.revision=o.config_revision").
+		Joins(("JOIN knowledge_configuration_control_versions v ON v.knowledge_base_id=o.k" +
+			"nowledge_base_id AND v.revision=o.config_revision")).
 		Where("o.tenant_id=? AND o.knowledge_base_id=?", request.TenantID, request.KnowledgeBaseID).
 		Take(&config).
 		Error
@@ -200,7 +204,8 @@ func (s *KnowledgeInputProvenanceStore) peekFAQInputReadPlanInTx(
 		Select("k.id,v.revision,cv.revision AS control_revision").
 		Joins("LEFT JOIN knowledge_input_row_versions v ON v.row_kind='knowledge' AND v.row_id=k.id").
 		Joins("LEFT JOIN faq_catalog_control_versions cv ON cv.knowledge_id=k.id").
-		Where("k.tenant_id=? AND k.knowledge_base_id=? AND k.type=? AND k.deleted_at IS NULL", request.TenantID, request.KnowledgeBaseID, types.KnowledgeTypeFAQ).
+		Where(("k.tenant_id=? AND k.knowledge_base_id=? AND k.type=? AND k.deleted_at IS N" +
+			"ULL"), request.TenantID, request.KnowledgeBaseID, types.KnowledgeTypeFAQ).
 		Order("k.id").
 		Scan(&catalogs).
 		Error; err != nil {
@@ -212,7 +217,8 @@ func (s *KnowledgeInputProvenanceStore) peekFAQInputReadPlanInTx(
 	var entries []struct{ ID, KnowledgeID, TagID string }
 	q := tx.Table("chunks").
 		Select("id,knowledge_id,tag_id").
-		Where("tenant_id=? AND knowledge_base_id=? AND chunk_type=? AND deleted_at IS NULL", request.TenantID, request.KnowledgeBaseID, types.ChunkTypeFAQ)
+		Where(("tenant_id=? AND knowledge_base_id=? AND chunk_type=? AND deleted_at IS NUL" +
+			"L"), request.TenantID, request.KnowledgeBaseID, types.ChunkTypeFAQ)
 	if !request.AllEntries {
 		q = q.Where("id IN ?", request.ChunkIDs)
 	}
@@ -232,7 +238,8 @@ func (s *KnowledgeInputProvenanceStore) peekFAQInputReadPlanInTx(
 			ids = append(ids, entry.ID)
 		}
 		err := tx.Table("faq_entry_material_receipts m").
-			Select("m.chunk_id,m.admission_id,m.revision,m.body_digest,a.session_id,a.knowledge_id,a.source_lineage,s.original_inputs,v.revision AS current_revision").
+			Select(("m.chunk_id,m.admission_id,m.revision,m.body_digest,a.session_id,a.knowledg" +
+				"e_id,a.source_lineage,s.original_inputs,v.revision AS current_revision")).
 			Joins("JOIN faq_entry_input_admissions a ON a.id=m.admission_id AND a.chunk_id=m.chunk_id").
 			Joins("JOIN faq_input_sessions s ON s.id=a.session_id").
 			Joins("JOIN faq_input_row_versions v ON v.chunk_id=m.chunk_id").
@@ -296,7 +303,8 @@ func (s *KnowledgeInputProvenanceStore) peekFAQInputReadPlanInTx(
 	}
 	tagQuery := tx.Table("knowledge_tags t").
 		Select("t.id,v.kind,o.origin_id,o.source_lineage,v.revision").
-		Joins("JOIN knowledge_display_versions v ON v.kind IN ('tag-name','tag-color','tag-sort_order','tag-envelope') AND v.row_id=t.id").
+		Joins(("JOIN knowledge_display_versions v ON v.kind IN ('tag-name','tag-color','ta" +
+			"g-sort_order','tag-envelope') AND v.row_id=t.id")).
 		Joins("JOIN knowledge_display_input_origins o ON o.kind=v.kind AND o.row_id=t.id AND o.revision=v.revision").
 		Where("t.tenant_id=? AND t.knowledge_base_id=?", request.TenantID, request.KnowledgeBaseID)
 	if !request.AllEntries {

@@ -344,11 +344,12 @@ func runDirectoryPeriodicActualHTTP(t *testing.T, pg bool) {
 				server.URL+"/knowledge-chat/"+f.Session.ID,
 				"application/json",
 				strings.NewReader(
-					"{\"query\":\"current employee policy\",\"knowledge_base_ids\":[\"kb\"],\"summary_model_id\":\"normal-reference-model\",\"disable_title\":true}",
+					("{\"query\":\"current employee policy\",\"knowledge_base_ids\":[\"kb\"],\"s" +
+						"ummary_model_id\":\"normal-reference-model\",\"disable_title\":true}"),
 				),
 			)
 			require.NoError(t, err)
-			defer response.Body.Close()
+			defer func() { require.NoError(t, response.Body.Close()) }()
 			var body bytes.Buffer
 			_, err = body.ReadFrom(response.Body)
 			assert.NoError(t, err, "the real original SSE still has the unchanged 8-second HTTP bound")
@@ -449,7 +450,8 @@ func runDirectoryPeriodicActualHTTP(t *testing.T, pg bool) {
 				// evidence of post-withdrawal exposure. Final failed production
 				// leaves no source-bearing frame/completed body/manifest.
 				t.Logf(
-					"safe periodic metadata: epochs=%d source_calls_at_fault=%d source_calls_terminal=%d empty_polls=%d",
+					("safe periodic metadata: epochs=%d source_calls_at_fault=%d source_calls_te" +
+						"rminal=%d empty_polls=%d"),
 					model.syncedEpochs.Load(),
 					model.sourceCallsAtFault.Load(),
 					f.SourceAuthorizeCalls(),

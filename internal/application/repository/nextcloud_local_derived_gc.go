@@ -85,7 +85,8 @@ func gcAuditInventory(tx *gorm.DB, job nextcloudGCJob) ([]gcAuditEntry, error) {
 		{
 			"knowledge_display_input_origins",
 			"origin_id",
-			"tenant_id=? AND knowledge_base_id=? AND (row_id=? OR kind='kb-name' OR row_id IN (SELECT tag_id FROM knowledge_tag_relations WHERE knowledge_id=?))",
+			("tenant_id=? AND knowledge_base_id=? AND (row_id=? OR kind='kb-name' OR row" +
+				"_id IN (SELECT tag_id FROM knowledge_tag_relations WHERE knowledge_id=?))"),
 			[]any{job.TenantID, job.KnowledgeBaseID, job.KnowledgeID, job.KnowledgeID},
 		},
 		{"knowledge_span_body_receipts", "run_token", "knowledge_id=?", []any{job.KnowledgeID}},
@@ -207,7 +208,7 @@ func gcSealLocalManifest(tx *gorm.DB, job nextcloudGCJob, nowMS int64) (nextclou
 		if engine != string(types.SQLiteRetrieverEngineType) && engine != string(types.PostgresRetrieverEngineType) {
 			return existing, fmt.Errorf("unverified external derived backend")
 		}
-		if (engine == string(types.SQLiteRetrieverEngineType)) != (tx.Dialector.Name() == "sqlite") {
+		if (engine == string(types.SQLiteRetrieverEngineType)) != (tx.Name() == "sqlite") {
 			return existing, fmt.Errorf("unverified separate derived database")
 		}
 	}
@@ -227,7 +228,7 @@ func gcSealLocalManifest(tx *gorm.DB, job nextcloudGCJob, nowMS int64) (nextclou
 		return existing, e
 	}
 	table := "embeddings"
-	if tx.Dialector.Name() == "sqlite" {
+	if tx.Name() == "sqlite" {
 		table = "lite_embeddings"
 	}
 	if len(backend.Engines) > 0 {
@@ -264,7 +265,7 @@ func gcSealLocalManifest(tx *gorm.DB, job nextcloudGCJob, nowMS int64) (nextclou
 	}
 	chunkSet, embeddingSet, graphSet := map[string]bool{}, map[string]bool{}, map[string]bool{}
 	expectedKind := "postgres_embedding"
-	if tx.Dialector.Name() == "sqlite" {
+	if tx.Name() == "sqlite" {
 		expectedKind = "sqlite_embedding"
 	}
 	for _, a := range artifacts {
@@ -388,7 +389,7 @@ func gcSealLocalManifest(tx *gorm.DB, job nextcloudGCJob, nowMS int64) (nextclou
 	return existing, tx.Create(&existing).Error
 }
 
-func (s *NextcloudGCStore) runLocalDerived(ctx context.Context, id string, now time.Time) error {
+func (s *NextcloudGCStore) runLocalDerived(ctx context.Context, id string, _ time.Time) error {
 	if !s.db.Migrator().HasTable(&nextcloudDerivedBackendPlan{}) {
 		return nil
 	} // Legacy remains its observable derived_index blocker.
@@ -573,7 +574,7 @@ func (s *NextcloudGCStore) deleteLocalEmbeddingInTx(
 		return ErrNextcloudContentLeaseDenied
 	}
 	table, kind := "embeddings", "postgres_embedding"
-	if tx.Dialector.Name() == "sqlite" {
+	if tx.Name() == "sqlite" {
 		table, kind = "lite_embeddings", "sqlite_embedding"
 	}
 	var receipt nextcloudDerivedGCReceipt
@@ -712,7 +713,8 @@ func (s *NextcloudGCStore) deleteLocalChunkInTx(
 	}
 	var foreignParents int64
 	if e := tx.Table("chunks").
-		Where("(parent_chunk_id=? OR pre_chunk_id=? OR next_chunk_id=?) AND (tenant_id<>? OR knowledge_base_id<>? OR knowledge_id<>?)", id, id, id, job.TenantID, job.KnowledgeBaseID, job.KnowledgeID).
+		Where(("(parent_chunk_id=? OR pre_chunk_id=? OR next_chunk_id=?) AND (tenant_id<>?" +
+			" OR knowledge_base_id<>? OR knowledge_id<>?)"), id, id, id, job.TenantID, job.KnowledgeBaseID, job.KnowledgeID).
 		Count(&foreignParents).
 		Error; e != nil {
 		return e
@@ -816,7 +818,7 @@ func (s *NextcloudGCStore) verifyLocalDerivedGone(tx *gorm.DB, job nextcloudGCJo
 		return ErrNextcloudContentLeaseDenied
 	}
 	table := "embeddings"
-	if tx.Dialector.Name() == "sqlite" {
+	if tx.Name() == "sqlite" {
 		table = "lite_embeddings"
 	}
 	if len(inventory.Backend.Engines) > 0 {

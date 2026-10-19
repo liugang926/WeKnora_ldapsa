@@ -20,7 +20,7 @@ func (s *KnowledgeInputProvenanceStore) collectionTransaction(ctx context.Contex
 		return types.ErrSourceLineageUnknown
 	}
 	options := &sql.TxOptions{ReadOnly: true}
-	switch s.db.Dialector.Name() {
+	switch s.db.Name() {
 	case "postgres":
 		options.Isolation = sql.LevelRepeatableRead
 	case "sqlite":
@@ -98,6 +98,7 @@ func collectionProof(
 	}, nil
 }
 
+// CaptureKnowledgeCollectionInputs captures knowledge collection inputs.
 // No caller-provided predicate is evaluated here. All candidate bodies start
 // from their persisted original admission, including candidates that will not
 // be displayed and documents excluded by the subsequent operational filters.
@@ -377,6 +378,7 @@ func (s *KnowledgeInputProvenanceStore) selectCollectionInTx(
 	return result, nil
 }
 
+// SelectKnowledgeCollectionInputs selects knowledge collection inputs.
 // Select is called only after the request's original candidates have passed
 // live authorization. Filtering, total, has_more and folder aggregation run in
 // the same local snapshot as the complete membership/material recheck.
@@ -397,6 +399,7 @@ func (s *KnowledgeInputProvenanceStore) SelectKnowledgeCollectionInputs(
 	return result, err
 }
 
+// RecheckKnowledgeCollectionInputs rechecks knowledge collection inputs.
 func (s *KnowledgeInputProvenanceStore) RecheckKnowledgeCollectionInputs(
 	ctx context.Context,
 	snapshot *types.KnowledgeCollectionInputSnapshot,

@@ -104,7 +104,7 @@ func (h *TagHandler) ListTags(c *gin.Context) {
 	if !h.requireTagOutput(c) {
 		return
 	}
-	h.respondTagList(c, ctx, kbID, page, keyword)
+	h.respondTagList(ctx, c, kbID, page, keyword)
 }
 
 type createTagRequest struct {
@@ -161,7 +161,7 @@ func (h *TagHandler) CreateTag(c *gin.Context) {
 		return
 	}
 
-	h.respondCommittedTag(c, ctx, tag)
+	h.respondCommittedTag(ctx, c, tag)
 }
 
 type updateTagRequest struct {
@@ -218,7 +218,7 @@ func (h *TagHandler) UpdateTag(c *gin.Context) {
 		return
 	}
 
-	h.respondCommittedTag(c, ctx, tag)
+	h.respondCommittedTag(ctx, c, tag)
 }
 
 // DeleteTag godoc

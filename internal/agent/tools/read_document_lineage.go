@@ -31,10 +31,12 @@ type hydratedDocumentInputs struct {
 	Chunks    []*types.Chunk
 }
 
+// SetRAGChunkSnapshotReader configures the reader used to hydrate original chunk snapshots.
 func (t *ReadDocumentTool) SetRAGChunkSnapshotReader(reader interfaces.RAGChunkSnapshotReader) {
 	t.snapshotReader = reader
 }
 
+// SetRAGChunkSnapshotReader configures the reader used to hydrate original chunk snapshots.
 func (r *ToolRegistry) SetRAGChunkSnapshotReader(reader interfaces.RAGChunkSnapshotReader) {
 	for _, tool := range r.tools {
 		if adapter, ok := tool.(interface {

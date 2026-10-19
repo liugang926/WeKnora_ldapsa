@@ -27,7 +27,7 @@ func runParentBodyCopyCase(t *testing.T, pg bool, mode string) {
 	messages, _, _, db, ctx, session, body := messageBodyIntegrationFixture(
 		t,
 		pg,
-		func(messages *messageService, db *gorm.DB, store *repository.KnowledgeInputProvenanceStore, ctx context.Context, session *types.Session) {
+		func(messages *messageService, db *gorm.DB, _ *repository.KnowledgeInputProvenanceStore, ctx context.Context, session *types.Session) {
 			var e error
 			input := &types.Message{
 				SessionID:   session.ID,
@@ -43,7 +43,7 @@ func runParentBodyCopyCase(t *testing.T, pg bool, mode string) {
 			require.NoError(t, e)
 			writer := WithMessageMaterialOutputBoundary(ctx)
 			defer CloseMessageMaterialOutputBoundary(writer)
-			turn := types.NewRAGSourceLineage(func(checkCtx context.Context, lineage *types.SourceLineage) error {
+			turn := types.NewRAGSourceLineage(func(_ context.Context, lineage *types.SourceLineage) error {
 				if e := lineage.RequireComplete(); e != nil {
 					return e
 				}
@@ -77,7 +77,8 @@ func runParentBodyCopyCase(t *testing.T, pg bool, mode string) {
 			require.NoError(t, db.Callback().Create().Remove(name))
 			require.NoError(
 				t,
-				db.Raw("SELECT parent_materials FROM message_generated_field_admissions WHERE message_id=? AND field='rendered_content'", user.ID).
+				db.Raw(("SELECT parent_materials FROM message_generated_field_admissions WHERE mess"+
+					"age_id=? AND field='rendered_content'"), user.ID).
 					Scan(&rawBefore).
 					Error,
 			)
@@ -90,14 +91,18 @@ func runParentBodyCopyCase(t *testing.T, pg bool, mode string) {
 		var scopes int64
 		require.NoError(
 			t,
-			db.Raw("SELECT count(*) FROM original_body_lease_scopes s JOIN original_body_field_heads h ON h.body_id=s.body_id JOIN message_generated_field_admissions a ON a.id=h.row_key WHERE h.source_table='message_generated_field_admissions' AND a.message_id=?", user.ID).
+			db.Raw(("SELECT count(*) FROM original_body_lease_scopes s JOIN original_body_field"+
+				"_heads h ON h.body_id=s.body_id JOIN message_generated_field_admissions a "+
+				"ON a.id=h.row_key WHERE h.source_table='message_generated_field_admissions"+
+				"' AND a.message_id=?"), user.ID).
 				Scan(&scopes).
 				Error,
 		)
 		require.Zero(
 			t,
 			scopes,
-			"an actual pre152 KB selector without immutable resolved scope cannot be backfilled from current KB metadata",
+			("an actual pre152 KB selector without immutable resolved scope cannot be ba" +
+				"ckfilled from current KB metadata"),
 		)
 		require.NoError(t, messages.DeleteMessage(ctx, session.ID, user.ID))
 		deleted := "datetime('now','-2 hours')"
@@ -110,7 +115,8 @@ func runParentBodyCopyCase(t *testing.T, pg bool, mode string) {
 		var retained string
 		require.NoError(
 			t,
-			db.Raw("SELECT parent_materials FROM message_generated_field_admissions WHERE message_id=? AND field='rendered_content'", user.ID).
+			db.Raw(("SELECT parent_materials FROM message_generated_field_admissions WHERE mess"+
+				"age_id=? AND field='rendered_content'"), user.ID).
 				Scan(&retained).
 				Error,
 		)
@@ -149,7 +155,10 @@ func runParentBodyCopyCase(t *testing.T, pg bool, mode string) {
 		var marker int64
 		require.NoError(
 			t,
-			db.Raw("SELECT count(*) FROM original_body_lease_scopes s JOIN original_body_field_heads h ON h.body_id=s.body_id WHERE h.source_table='message_generated_field_admissions' AND h.row_key='unknown-old-parent-copy' AND s.knowledge_base_id='' ").
+			db.Raw(("SELECT count(*) FROM original_body_lease_scopes s JOIN original_body_field" +
+				"_heads h ON h.body_id=s.body_id WHERE h.source_table='message_generated_fi" +
+				"eld_admissions' AND h.row_key='unknown-old-parent-copy' AND s.knowledge_ba" +
+				"se_id='' ")).
 				Scan(&marker).
 				Error,
 		)
@@ -157,7 +166,8 @@ func runParentBodyCopyCase(t *testing.T, pg bool, mode string) {
 		var remains string
 		require.NoError(
 			t,
-			db.Raw("SELECT parent_materials FROM message_generated_field_admissions WHERE id='unknown-old-parent-copy'").
+			db.Raw(("SELECT parent_materials FROM message_generated_field_admissions WHERE id='" +
+				"unknown-old-parent-copy'")).
 				Scan(&remains).
 				Error,
 		)
@@ -170,7 +180,9 @@ func runParentBodyCopyCase(t *testing.T, pg bool, mode string) {
 	var bodyID string
 	require.NoError(
 		t,
-		db.Raw("SELECT h.body_id FROM original_body_field_heads h JOIN message_generated_field_admissions a ON a.id=h.row_key WHERE h.source_table='message_generated_field_admissions' AND a.message_id=? AND a.field='rendered_content'", user.ID).
+		db.Raw(("SELECT h.body_id FROM original_body_field_heads h JOIN message_generated_f"+
+			"ield_admissions a ON a.id=h.row_key WHERE h.source_table='message_generate"+
+			"d_field_admissions' AND a.message_id=? AND a.field='rendered_content'"), user.ID).
 			Scan(&bodyID).
 			Error,
 	)
@@ -220,7 +232,8 @@ func runParentBodyCopyCase(t *testing.T, pg bool, mode string) {
 	var cleared string
 	require.NoError(
 		t,
-		db.Raw("SELECT parent_materials FROM message_generated_field_admissions WHERE message_id=? AND field='rendered_content'", user.ID).
+		db.Raw(("SELECT parent_materials FROM message_generated_field_admissions WHERE mess"+
+			"age_id=? AND field='rendered_content'"), user.ID).
 			Scan(&cleared).
 			Error,
 	)
@@ -250,7 +263,8 @@ func runParentBodyCopyCase(t *testing.T, pg bool, mode string) {
 	var rowID string
 	require.NoError(
 		t,
-		db.Raw("SELECT id FROM message_generated_field_admissions WHERE message_id=? AND field='rendered_content'", user.ID).
+		db.Raw(("SELECT id FROM message_generated_field_admissions WHERE message_id=? AND f"+
+			"ield='rendered_content'"), user.ID).
 			Scan(&rowID).
 			Error,
 	)
@@ -276,7 +290,8 @@ func parentCopyDatabaseSnapshot(t *testing.T, db *gorm.DB, pg bool) func() {
 		var tables []string
 		require.NoError(
 			t,
-			db.Raw("SELECT table_name FROM information_schema.tables WHERE table_schema=? AND table_type='BASE TABLE' ORDER BY table_name", schema).
+			db.Raw(("SELECT table_name FROM information_schema.tables WHERE table_schema=? AND "+
+				"table_type='BASE TABLE' ORDER BY table_name"), schema).
 				Scan(&tables).
 				Error,
 		)
@@ -330,8 +345,8 @@ func parentCopyDatabaseSnapshot(t *testing.T, db *gorm.DB, pg bool) func() {
 		sql, e = fresh.DB()
 		require.NoError(t, e)
 		sql.SetMaxOpenConns(1)
-		t.Cleanup(func() { sql.Close() })
-		db.Config.ConnPool = fresh.Config.ConnPool
+		t.Cleanup(func() { require.NoError(t, sql.Close()) })
+		db.ConnPool = fresh.ConnPool
 		db.Statement.ConnPool = fresh.Statement.ConnPool
 	}
 }
@@ -360,7 +375,7 @@ func runParentBodyCopyMultipleLiveHosts(t *testing.T, pg bool) {
 	messages, _, _, db, ctx, session, body := messageBodyIntegrationFixture(
 		t,
 		pg,
-		func(messages *messageService, db *gorm.DB, store *repository.KnowledgeInputProvenanceStore, ctx context.Context, session *types.Session) {
+		func(messages *messageService, db *gorm.DB, _ *repository.KnowledgeInputProvenanceStore, ctx context.Context, session *types.Session) {
 			source, err := messages.CreateMessage(
 				ctx,
 				&types.Message{
@@ -391,7 +406,7 @@ func runParentBodyCopyMultipleLiveHosts(t *testing.T, pg bool) {
 				defer CloseMessageMaterialOutputBoundary(writer)
 				writer = types.WithRAGSourceLineage(
 					writer,
-					types.NewRAGSourceLineage(func(check context.Context, lineage *types.SourceLineage) error {
+					types.NewRAGSourceLineage(func(_ context.Context, lineage *types.SourceLineage) error {
 						if err := lineage.RequireComplete(); err != nil {
 							return err
 						}
@@ -446,7 +461,9 @@ func runParentBodyCopyMultipleLiveHosts(t *testing.T, pg bool) {
 		var id string
 		require.NoError(
 			t,
-			db.Raw("SELECT h.body_id FROM original_body_field_heads h JOIN message_generated_field_admissions a ON a.id=h.row_key WHERE h.source_table='message_generated_field_admissions' AND a.message_id=? AND a.field='rendered_content'", host.ID).
+			db.Raw(("SELECT h.body_id FROM original_body_field_heads h JOIN message_generated_f"+
+				"ield_admissions a ON a.id=h.row_key WHERE h.source_table='message_generate"+
+				"d_field_admissions' AND a.message_id=? AND a.field='rendered_content'"), host.ID).
 				Scan(&id).
 				Error,
 		)
@@ -513,7 +530,8 @@ func runParentBodyCopyMultipleLiveHosts(t *testing.T, pg bool) {
 		var carrier string
 		require.NoError(
 			t,
-			db.Raw("SELECT parent_materials FROM message_generated_field_admissions WHERE message_id=? AND field='rendered_content'", host.ID).
+			db.Raw(("SELECT parent_materials FROM message_generated_field_admissions WHERE mess"+
+				"age_id=? AND field='rendered_content'"), host.ID).
 				Scan(&carrier).
 				Error,
 		)

@@ -11,6 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// NextcloudCapacityHandler serves source capacity administration requests.
 type NextcloudCapacityHandler struct {
 	store     *repository.NextcloudCapacityStore
 	actor     *repository.KnowledgeInputProvenanceStore
@@ -18,6 +19,7 @@ type NextcloudCapacityHandler struct {
 	admission *service.NextcloudCapacityAdmission
 }
 
+// NewNextcloudCapacityHandler constructs the configured NextcloudCapacityHandler.
 func NewNextcloudCapacityHandler(
 	s *repository.NextcloudCapacityStore,
 	a *repository.KnowledgeInputProvenanceStore,
@@ -48,6 +50,7 @@ func (h *NextcloudCapacityHandler) authorize(c *gin.Context) (context.Context, *
 	return ctx, kb, true
 }
 
+// Get returns the current source capacity settings.
 func (h *NextcloudCapacityHandler) Get(c *gin.Context) {
 	ctx, kb, ok := h.authorize(c)
 	if !ok {
@@ -64,6 +67,7 @@ func (h *NextcloudCapacityHandler) Get(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"capacity": status})
 }
 
+// Set updates source capacity settings under administrator authorization.
 func (h *NextcloudCapacityHandler) Set(c *gin.Context) {
 	ctx, kb, ok := h.authorize(c)
 	if !ok {

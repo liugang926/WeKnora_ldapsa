@@ -14,6 +14,7 @@ import (
 )
 
 var (
+	// ErrNextcloudCapacityUnavailable reports a nextcloud capacity unavailable condition.
 	ErrNextcloudCapacityUnavailable = apperrors.NewProtocolError(
 		errors.New("nextcloud storage capacity is unavailable"), "Nextcloud storage capacity is unavailable",
 	)
@@ -28,6 +29,7 @@ var (
 	)
 )
 
+// NextcloudCapacityPolicy represents nextcloud capacity policy repository data.
 type NextcloudCapacityPolicy struct {
 	TenantID            uint64 `gorm:"primaryKey"`
 	KnowledgeBaseID     string `gorm:"primaryKey"`
@@ -36,6 +38,7 @@ type NextcloudCapacityPolicy struct {
 	PausePercent        int
 }
 
+// TableName returns the persisted table name.
 func (NextcloudCapacityPolicy) TableName() string { return "nextcloud_capacity_policies" }
 
 type capacityScope struct {
@@ -49,6 +52,7 @@ type capacityScope struct {
 
 func (capacityScope) TableName() string { return "nextcloud_capacity_scopes" }
 
+// NextcloudCapacityReservation represents nextcloud capacity reservation repository data.
 type NextcloudCapacityReservation struct {
 	Token           string `gorm:"primaryKey"`
 	ScopeID         string
@@ -64,14 +68,18 @@ type NextcloudCapacityReservation struct {
 	ProtocolVersion int
 }
 
+// TableName returns the persisted table name.
 func (NextcloudCapacityReservation) TableName() string { return "nextcloud_capacity_reservations" }
 
+// NextcloudCapacityStore represents nextcloud capacity store repository data.
 type NextcloudCapacityStore struct{ db *gorm.DB }
 
+// NewNextcloudCapacityStore constructs nextcloud capacity store.
 func NewNextcloudCapacityStore(db *gorm.DB) *NextcloudCapacityStore {
 	return &NextcloudCapacityStore{db: db}
 }
 
+// SetPolicy sets policy.
 func (s *NextcloudCapacityStore) SetPolicy(ctx context.Context, p NextcloudCapacityPolicy) error {
 	if p.TenantID == 0 || p.KnowledgeBaseID == "" || p.RetentionQuotaBytes < 0 || p.WarningPercent <= 0 ||
 		p.WarningPercent >= p.PausePercent ||
@@ -118,6 +126,7 @@ func (s *NextcloudCapacityStore) Reserve(
 	return s.reserve(ctx, tenant, kb, backend, key, bytes, m, 0)
 }
 
+// ReserveDurable returns the reserve durable result.
 func (s *NextcloudCapacityStore) ReserveDurable(
 	ctx context.Context,
 	tenant uint64,
@@ -210,7 +219,8 @@ func (s *NextcloudCapacityStore) reserve(
 
 		var diskPending, kbPending int64
 		if err := tx.Model(&NextcloudCapacityReservation{}).
-			Where("scope_id=? AND (state='pending' OR (state='committed' AND committed_at_ms>=?))", m.ScopeID, m.MeasuredAt.UnixMilli()-1000).
+			Where(("scope_id=? AND (state='pending' OR (state='committed' AND committed_at_ms>" +
+				"=?))"), m.ScopeID, m.MeasuredAt.UnixMilli()-1000).
 			Select("COALESCE(SUM(bytes),0)").
 			Scan(&diskPending).
 			Error; err != nil {
@@ -247,13 +257,19 @@ func (s *NextcloudCapacityStore) reserve(
 			return ErrNextcloudCapacityPaused
 		}
 		var logical int64
-		if err := tx.Raw(`SELECT COALESCE(SUM(r.size),0) FROM resources r WHERE r.tenant_id=? AND r.storage_backend_id=? AND r.state<>'deleted' AND EXISTS (SELECT 1 FROM resource_bindings b JOIN knowledges k ON k.id=b.owner_id AND k.tenant_id=r.tenant_id WHERE b.resource_id=r.id AND b.owner_type='knowledge' AND k.knowledge_base_id=?)`, tenant, backend, kb).
+		if err := tx.Raw(("SELECT COALESCE(SUM(r.size),0) FROM resources r WHERE r.tenant_id=? AND r." +
+			"storage_backend_id=? AND r.state<>'deleted' AND EXISTS (SELECT 1 FROM reso" +
+			"urce_bindings b JOIN knowledges k ON k.id=b.owner_id AND k.tenant_id=r.ten" +
+			"ant_id WHERE b.resource_id=r.id AND b.owner_type='knowledge' AND k.knowled" +
+			"ge_base_id=?)"), tenant, backend, kb).
 			Scan(&logical).
 			Error; err != nil {
 			return err
 		}
 		var orphan int64
-		if err := tx.Raw("SELECT COALESCE(SUM(i.orphan_charge_bytes),0) FROM nextcloud_capacity_write_intents i JOIN nextcloud_capacity_reservations r ON r.token=i.token WHERE r.tenant_id=? AND r.knowledge_base_id=? AND i.state='charged'", tenant, kb).
+		if err := tx.Raw(("SELECT COALESCE(SUM(i.orphan_charge_bytes),0) FROM nextcloud_capacity_writ" +
+			"e_intents i JOIN nextcloud_capacity_reservations r ON r.token=i.token WHER" +
+			"E r.tenant_id=? AND r.knowledge_base_id=? AND i.state='charged'"), tenant, kb).
 			Scan(&orphan).
 			Error; err != nil {
 			return err
@@ -304,6 +320,7 @@ func (s *NextcloudCapacityStore) reserve(
 	return result, err
 }
 
+// Finish returns the finish result.
 func (s *NextcloudCapacityStore) Finish(
 	ctx context.Context,
 	r *NextcloudCapacityReservation,
@@ -338,7 +355,11 @@ func (s *NextcloudCapacityStore) Finish(
 			return nil
 		} // retained until storage/no-owner reconciliation proves release safe
 		var count int64
-		if err := tx.Raw(`SELECT COUNT(*) FROM resource_bindings b JOIN resources s ON s.id=b.resource_id JOIN knowledges k ON k.id=b.owner_id WHERE b.owner_type='knowledge' AND b.owner_id=? AND k.tenant_id=? AND k.knowledge_base_id=? AND s.tenant_id=k.tenant_id AND s.storage_backend_id=? AND s.state='active' AND s.size>=?`, knowledge, row.TenantID, row.KnowledgeBaseID, row.BackendID, row.Bytes).
+		if err := tx.Raw(("SELECT COUNT(*) FROM resource_bindings b JOIN resources s ON s.id=b.resour" +
+			"ce_id JOIN knowledges k ON k.id=b.owner_id WHERE b.owner_type='knowledge' " +
+			"AND b.owner_id=? AND k.tenant_id=? AND k.knowledge_base_id=? AND s.tenant_" +
+			"id=k.tenant_id AND s.storage_backend_id=? AND s.state='active' AND s.size>" +
+			"=?"), knowledge, row.TenantID, row.KnowledgeBaseID, row.BackendID, row.Bytes).
 			Scan(&count).
 			Error; err != nil {
 			return err
@@ -385,6 +406,7 @@ func (s *NextcloudCapacityStore) Observe(ctx context.Context, m types.StorageCap
 	})
 }
 
+// NextcloudCapacityStatus represents nextcloud capacity status repository data.
 type NextcloudCapacityStatus struct {
 	Policy               NextcloudCapacityPolicy `json:"policy"`
 	ScopeID              string                  `json:"scope_id"`
@@ -397,6 +419,7 @@ type NextcloudCapacityStatus struct {
 	OrphanChargeBytes    int64                   `json:"orphan_charge_bytes"`
 }
 
+// Status returns the status result.
 func (s *NextcloudCapacityStore) Status(
 	ctx context.Context,
 	tenant uint64,
@@ -437,18 +460,25 @@ func (s *NextcloudCapacityStore) Status(
 			return err
 		}
 		if err := tx.Model(&NextcloudCapacityReservation{}).
-			Where("scope_id=? AND (state='pending' OR (state='committed' AND committed_at_ms>=?))", m.ScopeID, m.MeasuredAt.UnixMilli()-1000).
+			Where(("scope_id=? AND (state='pending' OR (state='committed' AND committed_at_ms>" +
+				"=?))"), m.ScopeID, m.MeasuredAt.UnixMilli()-1000).
 			Select("COALESCE(SUM(bytes),0)").
 			Scan(&result.PendingBytes).
 			Error; err != nil {
 			return err
 		}
-		if err := tx.Raw(`SELECT COALESCE(SUM(r.size),0) FROM resources r WHERE r.tenant_id=? AND r.storage_backend_id=? AND r.state<>'deleted' AND EXISTS (SELECT 1 FROM resource_bindings b JOIN knowledges k ON k.id=b.owner_id AND k.tenant_id=r.tenant_id WHERE b.resource_id=r.id AND b.owner_type='knowledge' AND k.knowledge_base_id=?)`, tenant, backend, kb).
+		if err := tx.Raw(("SELECT COALESCE(SUM(r.size),0) FROM resources r WHERE r.tenant_id=? AND r." +
+			"storage_backend_id=? AND r.state<>'deleted' AND EXISTS (SELECT 1 FROM reso" +
+			"urce_bindings b JOIN knowledges k ON k.id=b.owner_id AND k.tenant_id=r.ten" +
+			"ant_id WHERE b.resource_id=r.id AND b.owner_type='knowledge' AND k.knowled" +
+			"ge_base_id=?)"), tenant, backend, kb).
 			Scan(&result.LogicalRetainedBytes).
 			Error; err != nil {
 			return err
 		}
-		if err := tx.Raw("SELECT COALESCE(SUM(i.orphan_charge_bytes),0) FROM nextcloud_capacity_write_intents i JOIN nextcloud_capacity_reservations r ON r.token=i.token WHERE r.tenant_id=? AND r.knowledge_base_id=? AND i.state='charged'", tenant, kb).
+		if err := tx.Raw(("SELECT COALESCE(SUM(i.orphan_charge_bytes),0) FROM nextcloud_capacity_writ" +
+			"e_intents i JOIN nextcloud_capacity_reservations r ON r.token=i.token WHER" +
+			"E r.tenant_id=? AND r.knowledge_base_id=? AND i.state='charged'"), tenant, kb).
 			Scan(&result.OrphanChargeBytes).
 			Error; err != nil {
 			return err

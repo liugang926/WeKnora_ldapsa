@@ -152,16 +152,16 @@ func TestMessageForkActualOriginalCloneAndSavedReadSingleConnection(t *testing.T
 	require.NoError(t, err, "a legitimate new fork must remain readable through actual saved-original receipts")
 	require.Len(t, guard.snapshot.Messages, 2)
 	for index, original := range []*types.Message{user, assistant} {
-		copy := guard.snapshot.Messages[index]
-		require.NotEqual(t, original.ID, copy.ID)
-		require.Equal(t, result.SessionID, copy.SessionID)
-		require.Equal(t, original.Content, copy.Content)
-		require.True(t, original.CreatedAt.Equal(copy.CreatedAt))
-		require.Equal(t, original.ExecutionContext, copy.ExecutionContext)
-		require.Equal(t, original.AgentTenantID, copy.AgentTenantID)
-		require.Empty(t, copy.KnowledgeID)
-		require.Empty(t, copy.Artifacts)
-		require.NoError(t, copy.SourceLineage.RequireComplete())
+		copied2 := guard.snapshot.Messages[index]
+		require.NotEqual(t, original.ID, copied2.ID)
+		require.Equal(t, result.SessionID, copied2.SessionID)
+		require.Equal(t, original.Content, copied2.Content)
+		require.True(t, original.CreatedAt.Equal(copied2.CreatedAt))
+		require.Equal(t, original.ExecutionContext, copied2.ExecutionContext)
+		require.Equal(t, original.AgentTenantID, copied2.AgentTenantID)
+		require.Empty(t, copied2.KnowledgeID)
+		require.Empty(t, copied2.Artifacts)
+		require.NoError(t, copied2.SourceLineage.RequireComplete())
 	}
 	require.Equal(t, user.Images, guard.snapshot.Messages[0].Images)
 	require.Equal(t, user.Attachments, guard.snapshot.Messages[0].Attachments)
@@ -343,16 +343,16 @@ func TestMessageForkNativeCopyPreservesHiddenMaterialAndDoesNotAliasOriginal(t *
 		ExecutionContext:  types.MessageExecutionContext{KnowledgeBaseIDs: []string{"original-scope"}},
 		ContextCheckpoint: &types.ContextCheckpoint{Summary: "original summary", SourceLineage: lineage},
 	}
-	copy, err := cloneForkOriginalMessage(original)
+	copied3, err := cloneForkOriginalMessage(original)
 	require.NoError(t, err)
-	require.Equal(t, original.SourceLineage, copy.SourceLineage)
-	require.Equal(t, original.AgentTenantID, copy.AgentTenantID)
-	require.Equal(t, original.RenderedContent, copy.RenderedContent)
-	require.Equal(t, original.ExecutionContext, copy.ExecutionContext)
-	require.Equal(t, original.ContextCheckpoint, copy.ContextCheckpoint)
-	copy.ExecutionContext.KnowledgeBaseIDs[0] = "changed"
-	copy.ContextCheckpoint.Summary = "changed"
-	copy.SourceLineage.State = types.SourceLineageUnknown
+	require.Equal(t, original.SourceLineage, copied3.SourceLineage)
+	require.Equal(t, original.AgentTenantID, copied3.AgentTenantID)
+	require.Equal(t, original.RenderedContent, copied3.RenderedContent)
+	require.Equal(t, original.ExecutionContext, copied3.ExecutionContext)
+	require.Equal(t, original.ContextCheckpoint, copied3.ContextCheckpoint)
+	copied3.ExecutionContext.KnowledgeBaseIDs[0] = "changed"
+	copied3.ContextCheckpoint.Summary = "changed"
+	copied3.SourceLineage.State = types.SourceLineageUnknown
 	require.Equal(t, "original-scope", original.ExecutionContext.KnowledgeBaseIDs[0])
 	require.Equal(t, "original summary", original.ContextCheckpoint.Summary)
 	require.NoError(t, original.SourceLineage.RequireComplete())

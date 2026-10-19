@@ -100,7 +100,7 @@ func createNextcloudEventSyncLogFixture(t *testing.T, db *gorm.DB) {
 func applyNextcloudEventDispatchMigration(t *testing.T, db *gorm.DB) {
 	t.Helper()
 	migrationPath := "../../migrations/sqlite/000033_nextcloud_event_dispatch.up.sql"
-	if db.Dialector.Name() == "postgres" {
+	if db.Name() == "postgres" {
 		migrationPath = "../../migrations/versioned/000114_nextcloud_event_dispatch.up.sql"
 	}
 	migration, err := os.ReadFile(migrationPath)
@@ -115,7 +115,7 @@ func applyNextcloudEventDispatchMigration(t *testing.T, db *gorm.DB) {
 		if strings.HasPrefix(trimmed, "CREATE FUNCTION ") {
 			inFunction = true
 		}
-		if db.Dialector.Name() == "sqlite" && strings.HasPrefix(trimmed, "CREATE TRIGGER ") {
+		if db.Name() == "sqlite" && strings.HasPrefix(trimmed, "CREATE TRIGGER ") {
 			inSQLiteTrigger = true
 		}
 		statement.WriteString(line)
@@ -204,7 +204,8 @@ func TestNextcloudEventConnectionPairRotateRevoke(t *testing.T) {
 	var ciphertext string
 	require.NoError(
 		t,
-		db.Raw(`SELECT current_secret_ciphertext FROM nextcloud_event_connections WHERE connection_id = ?`, first.ConnectionID).
+		db.Raw(("SELECT current_secret_ciphertext FROM nextcloud_event_connections WHERE co"+
+			"nnection_id = ?"), first.ConnectionID).
 			Scan(&ciphertext).
 			Error,
 	)

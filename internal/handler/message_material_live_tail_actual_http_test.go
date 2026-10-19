@@ -189,7 +189,8 @@ func assertActualHTTPTailLeases(t *testing.T, db *gorm.DB, held bool, source str
 				Count(&pending).
 				Error == nil &&
 				pending == 0
-		}, 2*time.Second, 10*time.Millisecond, "HTTP release must preserve an active producer until it finishes, then all leases close")
+		}, 2*time.Second, 10*time.Millisecond, ("HTTP release must preserve an active producer until it finishes, then all " +
+			"leases close"))
 	}
 }
 
@@ -225,7 +226,7 @@ func newActualHTTPTailFixture(t *testing.T, controlled bool) *actualHTTPTailFixt
 		ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 		t.Cleanup(cancel)
 		empty, _ := types.NewCompleteSourceLineage()
-		original := produceNativeSavedReplayMessage(t, db, messages, ctx, "ACTUAL LIVE PARENT SECRET", empty)
+		original := produceNativeSavedReplayMessage(ctx, t, db, messages, "ACTUAL LIVE PARENT SECRET", empty)
 		return &actualHTTPTailFixture{
 			db:        db,
 			store:     store,
@@ -264,10 +265,11 @@ func newActualHTTPTailFixture(t *testing.T, controlled bool) *actualHTTPTailFixt
 	require.NoError(t, err)
 	require.Len(t, original.Chunks, 1)
 	prior := produceNativeSavedReplayMessage(
-		t,
+
+		readCtx, t,
 		f.db,
 		messages,
-		readCtx,
+
 		"ACTUAL LIVE PARENT SECRET: "+original.Chunks[0].Content,
 		original.Proofs[0].SourceLineage,
 	)
@@ -416,7 +418,8 @@ func serveActualHTTPTail(
 			http.MethodPost,
 			"/knowledge-chat/"+f.parent.SessionID+"?resource_urls=public",
 			strings.NewReader(
-				`{"query":"actual current human question","summary_model_id":"actual-http-tail-model","disable_title":true}`,
+				("{\"query\":\"actual current human question\",\"summary_model_id\":\"actual"+
+					"-http-tail-model\",\"disable_title\":true}"),
 			),
 		),
 	)

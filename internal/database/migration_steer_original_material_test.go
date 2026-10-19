@@ -138,10 +138,13 @@ func requireSteerOriginalSchema(t *testing.T, db *sql.DB, dialect string) {
 			}
 		} else {
 			var count int
-			require.NoError(t, db.QueryRow(`SELECT count(*) FROM pg_trigger t
-				JOIN pg_class c ON c.oid=t.tgrelid JOIN pg_namespace n ON n.oid=c.relnamespace
-				WHERE n.nspname=current_schema() AND c.relname=$1 AND t.tgname=$2
-				AND NOT t.tgisinternal AND t.tgenabled='O' AND (t.tgtype & 26)=26`, table, table+"_immutable").Scan(&count))
+			require.NoError(
+				t,
+				db.QueryRow(("SELECT count(*) FROM pg_trigger t\n\t\t\t\tJOIN pg_class c ON c.oid=t.tgre"+
+					"lid JOIN pg_namespace n ON n.oid=c.relnamespace\n\t\t\t\tWHERE n.nspname=c"+
+					"urrent_schema() AND c.relname=$1 AND t.tgname=$2\n\t\t\t\tAND NOT t.tgisin"+
+					"ternal AND t.tgenabled='O' AND (t.tgtype & 26)=26"), table, table+"_immutable").Scan(&count),
+			)
 			require.Equal(t, 1, count, "%s must reject update and delete of original proofs", table)
 		}
 	}

@@ -1,7 +1,6 @@
 package repository
 
 import (
-	"bytes"
 	"context"
 	"encoding/binary"
 	"testing"
@@ -12,16 +11,18 @@ import (
 	"gorm.io/gorm"
 )
 
-// IN_ACCESS observes a real journal-key ReadFile operation after the payload query. The large
-// valid owned bootstrap key gives cancellation a read/verification window;
-// no old pin/proof is re-signed and no body/absence receipt is seeded.
+// IN_ACCESS observes a real journal-key ReadFile operation after the payload query.
+// The following actual header query waits for that observation and cancellation,
+// establishing cancellation before the operation returns without a scheduling race.
+// No old pin/proof is re-signed and no body/absence receipt is seeded.
 func runOriginalBodyFileReadCancelActual(t *testing.T, pg bool) {
-	db, store := bodyProtocolFixture(t, pg, bytes.Repeat([]byte("owned-bootstrap-cancel-key-"), 320000))
+	db, store := bodyProtocolFixture(t, pg)
 	bodyID := bodyProtocolCreate(t, db, "actual-read-cancel", "one")
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	access := make(chan struct{})
 	armed := false
+	observedBeforeReturn := false
 	fd := -1
 	defer func() {
 		if fd >= 0 {
@@ -31,7 +32,18 @@ func runOriginalBodyFileReadCancelActual(t *testing.T, pg bool) {
 	require.NoError(
 		t,
 		db.Callback().Query().After("gorm:query").Register("actual-journal-key-read-cancel", func(tx *gorm.DB) {
-			if armed || tx.Statement.Table != "original_body_payloads" {
+			if armed {
+				if !observedBeforeReturn && tx.Statement.Table == "original_body_field_heads" {
+					select {
+					case <-access:
+						observedBeforeReturn = true
+					case <-time.After(time.Second):
+						t.Fatal("real journal-key read cancellation was not observed before the final header check")
+					}
+				}
+				return
+			}
+			if tx.Statement.Table != "original_body_payloads" {
 				return
 			}
 			armed = true
@@ -57,6 +69,7 @@ func runOriginalBodyFileReadCancelActual(t *testing.T, pg bool) {
 	defer func() { require.NoError(t, db.Callback().Query().Remove("actual-journal-key-read-cancel")) }()
 	err := CheckOriginalBodyAvailableInTx(ctx, db, "knowledge_auto_tag_input_manifests", "actual-read-cancel")
 	require.True(t, armed, "the payload query armed the real journal-key read observer")
+	require.True(t, observedBeforeReturn, "the actual final header query observed cancellation before return")
 	select {
 	case <-access:
 	case <-time.After(time.Second):
@@ -66,7 +79,7 @@ func runOriginalBodyFileReadCancelActual(t *testing.T, pg bool) {
 		t,
 		err,
 		context.Canceled,
-		"cancellation during the observed real journal-key file read cannot return body success",
+		"cancellation after the observed real journal-key file read cannot return body success",
 	)
 	var state string
 	require.NoError(

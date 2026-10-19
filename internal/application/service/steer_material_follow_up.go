@@ -19,7 +19,7 @@ func MessageMaterialOwnerContext(ctx context.Context) context.Context {
 }
 
 func (s *messageService) advanceFollowUpMaterialRowLocked(
-	ctx context.Context,
+	_ context.Context,
 	slot *messageMaterialOutputSlot,
 	id, generation, admission, request, role string,
 ) error {

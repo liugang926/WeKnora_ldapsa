@@ -6,6 +6,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/types"
 )
 
+// MessageMaterialReader captures and rechecks original message material inputs.
 type MessageMaterialReader interface {
 	PeekMessageMaterialReadPlan(
 		context.Context,

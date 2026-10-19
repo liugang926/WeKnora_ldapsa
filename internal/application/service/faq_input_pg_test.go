@@ -69,7 +69,8 @@ func faqPostgresActualFixture(
 	require.NoError(
 		t,
 		db.Exec(
-			"CREATE TABLE nextcloud_source_versions(candidate_knowledge_id TEXT); CREATE TABLE nextcloud_source_revisions(candidate_knowledge_id TEXT)",
+			("CREATE TABLE nextcloud_source_versions(candidate_knowledge_id TEXT); CREAT" +
+				"E TABLE nextcloud_source_revisions(candidate_knowledge_id TEXT)"),
 		).Error,
 	)
 	for _, file := range []string{"000134_knowledge_input_provenance", "000135_knowledge_configuration_history_inputs", "000136_knowledge_actual_config_controls", "000137_knowledge_original_worker_actor", "000139_knowledge_collection_checkpoints", "000140_knowledge_collection_display_inputs", "000141_tag_statistics_checkpoints", "000144_faq_original_entry_inputs"} {
@@ -189,7 +190,7 @@ func TestFAQPostgresActualProducerPerEntryAndControlsABA(t *testing.T) {
 	s, store, db, ctx := faqPostgresActualFixture(t)
 	first := &types.FAQEntryPayload{StandardQuestion: "first PostgreSQL FAQ", Answers: []string{"first original body"}}
 	a, err := s.CreateFAQEntry(
-		faqInputContext(t, ctx, types.FAQInputOperation{Kind: "create", Entry: first}),
+		faqInputContext(ctx, t, types.FAQInputOperation{Kind: "create", Entry: first}),
 		"kb",
 		first,
 	)
@@ -199,7 +200,7 @@ func TestFAQPostgresActualProducerPerEntryAndControlsABA(t *testing.T) {
 		Answers:          []string{"second original body"},
 	}
 	b, err := s.CreateFAQEntry(
-		faqInputContext(t, ctx, types.FAQInputOperation{Kind: "create", Entry: second}),
+		faqInputContext(ctx, t, types.FAQInputOperation{Kind: "create", Entry: second}),
 		"kb",
 		second,
 	)
@@ -211,7 +212,7 @@ func TestFAQPostgresActualProducerPerEntryAndControlsABA(t *testing.T) {
 	require.NoError(t, err)
 	first.Answers = []string{"edited first body"}
 	_, err = s.UpdateFAQEntry(
-		faqInputContext(t, ctx, types.FAQInputOperation{Kind: "update", Entry: first, EntrySeqID: a.ID}),
+		faqInputContext(ctx, t, types.FAQInputOperation{Kind: "update", Entry: first, EntrySeqID: a.ID}),
 		"kb",
 		a.ID,
 		first,

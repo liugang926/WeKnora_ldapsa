@@ -105,6 +105,7 @@ func sameOnboardingOperation(a, b types.NextcloudOnboardingOperation) bool {
 		a.RequestSHA256 == b.RequestSHA256
 }
 
+// BeginPairProducer begins pair producer.
 func (s *NextcloudOnboardingStore) BeginPairProducer(
 	ctx context.Context,
 	c types.NextcloudOnboardingCredential,
@@ -144,8 +145,8 @@ func (p nextcloudOnboardingProducer) check(tx *gorm.DB) error {
 }
 
 func scopedOnboardingDataSourceName(
-	tx *gorm.DB,
 	ctx context.Context,
+	tx *gorm.DB,
 	ds *types.DataSource,
 	edit datasourceNameEdit,
 ) (*nextcloudOnboardingProducerReceipt, bool, error) {
@@ -202,7 +203,7 @@ func admitOnboardingKnowledgeBaseName(
 		Request      types.NextcloudOnboardingRequest
 		CredentialID string
 	}{req, c.ID}
-	return admitKnowledgeDisplayOrigin(tx, tx.Statement.Context, "kb-name", kb.ID, kb, kb.Name, input, lineage, "human")
+	return admitKnowledgeDisplayOrigin(tx.Statement.Context, tx, "kb-name", kb.ID, kb, kb.Name, input, lineage, "human")
 }
 
 func onboardingConfigurationMetadata(

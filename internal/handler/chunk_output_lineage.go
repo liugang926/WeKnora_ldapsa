@@ -11,6 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// ConfigureChunkHandlerOutputLineage configures the chunk handler output lineage boundary.
 func ConfigureChunkHandlerOutputLineage(h *ChunkHandler, authorizer *service.ChunkOutputAuthorizer) {
 	if h != nil {
 		h.outputAuthorizer = authorizer
@@ -43,7 +44,7 @@ func (h *ChunkHandler) getOriginalChunkOutput(c *gin.Context) {
 		_ = c.Error(knowledgeOutputHTTPError(types.ErrSourceLineageUnknown))
 		return
 	}
-	leases, err := h.beginNextcloudRead(c, ctx, knowledge)
+	leases, err := h.beginNextcloudRead(ctx, c, knowledge)
 	if err != nil {
 		_ = c.Error(err)
 		return
@@ -98,7 +99,7 @@ func (h *ChunkHandler) listOriginalChunkOutputs(c *gin.Context) {
 		_ = c.Error(err)
 		return
 	}
-	leases, err := h.beginNextcloudRead(c, ctx, knowledge)
+	leases, err := h.beginNextcloudRead(ctx, c, knowledge)
 	if err != nil {
 		_ = c.Error(err)
 		return

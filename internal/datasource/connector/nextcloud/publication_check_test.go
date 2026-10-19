@@ -78,7 +78,7 @@ func TestCheckCurrentPublicationFailsClosed(t *testing.T) {
 		http.StatusLocked, http.StatusServiceUnavailable, http.StatusFound,
 	} {
 		t.Run(http.StatusText(status), func(t *testing.T) {
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				w.WriteHeader(status)
 			}))
 			defer server.Close()

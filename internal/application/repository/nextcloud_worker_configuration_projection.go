@@ -45,13 +45,13 @@ func knowledgeWorkerConfigurationProjectionDigest(kb *types.KnowledgeBase) (stri
 	if err != nil {
 		return "", err
 	}
-	var copy wire
-	if err := json.Unmarshal(encoded, &copy); err != nil || copy.KB == nil {
+	var copied wire
+	if err := json.Unmarshal(encoded, &copied); err != nil || copied.KB == nil {
 		return "", ErrKnowledgeInputChanged
 	}
-	copy.KB.EnrichmentTemplates = copy.Templates
-	copy.KB.EnsureDefaults()
-	return KnowledgeInputDigest(wire{copy.KB, copy.KB.EnrichmentTemplates})
+	copied.KB.EnrichmentTemplates = copied.Templates
+	copied.KB.EnsureDefaults()
+	return KnowledgeInputDigest(wire{copied.KB, copied.KB.EnrichmentTemplates})
 }
 
 func checkScopedConfigurationProjections(slot *scopedOnboardingConfigurationReadSlot) error {

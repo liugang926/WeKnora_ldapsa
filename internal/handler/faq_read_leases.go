@@ -135,8 +135,8 @@ func nextcloudHTTPLeaseErrorOrNil(err error) error {
 }
 
 func beginFAQHTTPRead(
-	c *gin.Context,
-	ctx context.Context,
+	ctx context.Context, c *gin.Context,
+
 	a *service.FAQOutputAuthorizer,
 	kb string,
 ) (context.Context, func(), error) {
@@ -161,8 +161,8 @@ func beginFAQHTTPRead(
 }
 
 func beginFAQProgressHTTPRead(
-	c *gin.Context,
-	ctx context.Context,
+	ctx context.Context, c *gin.Context,
+
 	a *service.FAQOutputAuthorizer,
 	task string,
 ) (context.Context, func(), error) {
@@ -187,8 +187,8 @@ type faqKnowledgePreReadKey struct{}
 // Resolve FAQ result identities and pin their parents before the ordinary
 // knowledge service loads the result JSON. beginNextcloudRead reuses this group.
 func (h *KnowledgeHandler) beginFAQKnowledgePreRead(
-	c *gin.Context,
-	ctx context.Context,
+	ctx context.Context, c *gin.Context,
+
 	ids []string,
 ) (context.Context, func(), error) {
 	if h.outputAuthorizer == nil {
@@ -217,8 +217,8 @@ func (h *KnowledgeHandler) beginFAQKnowledgePreRead(
 }
 
 func beginFAQTagHTTPRead(
-	c *gin.Context,
-	ctx context.Context,
+	ctx context.Context, c *gin.Context,
+
 	a *service.TagOutputAuthorizer,
 	kb string,
 ) (context.Context, func(), error) {
@@ -231,7 +231,7 @@ func beginFAQTagHTTPRead(
 		return ctx, nil, knowledgeOutputHTTPError(err)
 	}
 	if plan == nil {
-		return beginCollectionHTTPRead(c, ctx, a.ContentLeaseStore(), kb)
+		return beginCollectionHTTPRead(ctx, c, a.ContentLeaseStore(), kb)
 	}
 	group, err := acquireFAQReadPlanLeases(ctx, a.ContentLeaseStore(), plan.Scopes, plan.SourceLineage, 0)
 	if err != nil {

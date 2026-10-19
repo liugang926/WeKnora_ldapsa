@@ -51,7 +51,7 @@ func agentPromptDisplayFixtureSchema(
 
 // Start a new actual request for a newly created KB. The body fixture's
 // resolved old-KB capability cannot authorize creating a different resource.
-func agentPromptActualRequestContext(t *testing.T, original context.Context) context.Context {
+func agentPromptActualRequestContext(original context.Context, t *testing.T) context.Context {
 	t.Helper()
 	caller := types.CallerFromContext(original)
 	principal, ok := types.PrincipalFromContext(original)
@@ -78,7 +78,7 @@ func TestAgentPromptActualDefaultKBAndDocumentMetadata(t *testing.T) {
 		false,
 		agentPromptDisplayFixtureSchema(t),
 	)
-	ctx = agentPromptActualRequestContext(t, ctx)
+	ctx = agentPromptActualRequestContext(ctx, t)
 	groups := NewGroupAccessService(repository.NewGroupAccessRepository(db))
 	kbs := &knowledgeBaseService{repo: repository.NewKnowledgeBaseRepository(db)}
 	knowledge.kbService = kbs
@@ -191,7 +191,7 @@ func TestAgentPromptActualBodyAndLineageMutationDeniedAtHTTP(t *testing.T) {
 				false,
 				agentPromptDisplayFixtureSchema(t),
 			)
-			ctx = agentPromptActualRequestContext(t, ctx)
+			ctx = agentPromptActualRequestContext(ctx, t)
 			kbs := &knowledgeBaseService{repo: repository.NewKnowledgeBaseRepository(db)}
 			knowledge.kbService = kbs
 			knowledge.groupAccess = NewGroupAccessService(repository.NewGroupAccessRepository(db))

@@ -39,6 +39,7 @@ func WithIndependentDataSourceNameInput(ctx context.Context, name string) contex
 	return context.WithValue(ctx, datasourceNameEditKey{}, datasourceNameEdit{Name: name, Kind: "human"})
 }
 
+// ConfigureDataSourceNameInputWriters configures data source name input writers.
 func ConfigureDataSourceNameInputWriters(
 	ds interfaces.DataSourceRepository,
 	pairs *NextcloudSourcePairingRepository,
@@ -69,8 +70,8 @@ func datasourceNameRevision(tx *gorm.DB, id string) (uint64, error) {
 }
 
 func admitDataSourceNameInput(
-	tx *gorm.DB,
 	ctx context.Context,
+	tx *gorm.DB,
 	ds *types.DataSource,
 	factory KnowledgeDisplayAuthorityFactory,
 ) error {
@@ -88,7 +89,7 @@ func admitDataSourceNameInput(
 	// A machine coordinator carries only this exact private producer purpose.
 	// The ordinary authority factory must still be real and transaction-bound;
 	// no caller, workspace role or model/read capability is synthesized.
-	producer, scoped, err := scopedOnboardingDataSourceName(tx, ctx, ds, edit)
+	producer, scoped, err := scopedOnboardingDataSourceName(ctx, tx, ds, edit)
 	if err != nil {
 		return err
 	}
@@ -156,7 +157,8 @@ func readDataSourceNameInput(tx *gorm.DB, ds *types.DataSource) (*types.DataSour
 		return nil, err
 	}
 	var receipt datasourceNameInput
-	if err := tx.Where("datasource_id = ? AND tenant_id = ? AND knowledge_base_id = ? AND revision = ? AND body_digest = ?", ds.ID, ds.TenantID, ds.KnowledgeBaseID, revision, body).
+	if err := tx.Where(("datasource_id = ? AND tenant_id = ? AND knowledge_base_id = ? AND revision" +
+		" = ? AND body_digest = ?"), ds.ID, ds.TenantID, ds.KnowledgeBaseID, revision, body).
 		Order("id").
 		Take(&receipt).
 		Error; err != nil {
@@ -183,6 +185,7 @@ func readDataSourceNameInput(tx *gorm.DB, ds *types.DataSource) (*types.DataSour
 	}, nil
 }
 
+// ReadDataSourceNameInput reads data source name input.
 func (s *KnowledgeInputProvenanceStore) ReadDataSourceNameInput(
 	ctx context.Context,
 	tenant uint64,

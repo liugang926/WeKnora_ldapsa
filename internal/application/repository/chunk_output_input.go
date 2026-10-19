@@ -13,6 +13,7 @@ import (
 	"gorm.io/gorm"
 )
 
+// CaptureChunkOutputInputs captures chunk output inputs.
 func (s *KnowledgeInputProvenanceStore) CaptureChunkOutputInputs(
 	ctx context.Context,
 	request types.ChunkOutputReadRequest,
@@ -72,6 +73,7 @@ func (s *KnowledgeInputProvenanceStore) CaptureChunkOutputInputs(
 	return snapshot, nil
 }
 
+// RecheckChunkOutputInputs rechecks chunk output inputs.
 // Recheck the exact body and complete candidate membership with the original
 // metadata/chunk material receipts in one SQLite/RR snapshot. A current ETag or
 // a freshly obtained document origin cannot authenticate these old values.

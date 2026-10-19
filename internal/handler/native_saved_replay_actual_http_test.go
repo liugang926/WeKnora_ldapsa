@@ -123,10 +123,10 @@ func configureNativeSavedReplayMessages(
 }
 
 func produceNativeSavedReplayMessage(
-	t *testing.T,
+	ctx context.Context, t *testing.T,
 	db *gorm.DB,
 	messages interfaces.MessageService,
-	ctx context.Context,
+
 	content string,
 	lineage *types.SourceLineage,
 ) *types.Message {
@@ -177,10 +177,10 @@ func produceNativeSavedReplayMessage(
 }
 
 func serveNativeSavedReplay(
-	t *testing.T,
+	ctx context.Context, t *testing.T,
 	db *gorm.DB,
 	messages interfaces.MessageService,
-	ctx context.Context,
+
 	answer *types.Message,
 	fileService interfaces.FileService,
 	public bool,
@@ -280,8 +280,8 @@ func nativeSavedReplayPlainFixture(
 func TestNativeSavedReplayActualPlainRedisReconnectAndLegacyReject(t *testing.T) {
 	db, _, messages, ctx := nativeSavedReplayPlainFixture(t)
 	empty, _ := types.NewCompleteSourceLineage()
-	answer := produceNativeSavedReplayMessage(t, db, messages, ctx, "actual native saved answer", empty)
-	w, streams := serveNativeSavedReplay(t, db, messages, ctx, answer, nil, false)
+	answer := produceNativeSavedReplayMessage(ctx, t, db, messages, "actual native saved answer", empty)
+	w, streams := serveNativeSavedReplay(ctx, t, db, messages, answer, nil, false)
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	for _, material := range []string{answer.Content, "actual original saved thought", "actual original saved argument", "actual original saved result", "actual original saved reference", `"final_content":"actual native saved answer"`, `"response_type":"complete"`} {
 		require.Contains(t, w.Body.String(), material)
@@ -304,7 +304,7 @@ func TestNativeSavedReplayActualPlainRedisReconnectAndLegacyReject(t *testing.T)
 		SourceLineage: empty,
 	}
 	require.NoError(t, db.Create(legacy).Error)
-	w, streams = serveNativeSavedReplay(t, db, messages, ctx, legacy, nil, false)
+	w, streams = serveNativeSavedReplay(ctx, t, db, messages, legacy, nil, false)
 	require.Equal(t, http.StatusServiceUnavailable, w.Code, w.Body.String())
 	require.NotContains(t, w.Body.String(), "SECRET")
 	require.Zero(t, streams.reads)
@@ -316,10 +316,11 @@ func TestNativeSavedReplayActualFinalWriterRejectsBodyABAAndCurrentActor(t *test
 			db, _, messages, ctx := nativeSavedReplayPlainFixture(t)
 			empty, _ := types.NewCompleteSourceLineage()
 			answer := produceNativeSavedReplayMessage(
-				t,
+
+				ctx, t,
 				db,
 				messages,
-				ctx,
+
 				"SAVED SECRET ![image](resource://xifDo7NTSL300Lp1goVutw)",
 				empty,
 			)
@@ -351,7 +352,7 @@ func TestNativeSavedReplayActualFinalWriterRejectsBodyABAAndCurrentActor(t *test
 					require.NoError(t, db.Model(&types.User{}).Where("id='user'").Update("is_active", false).Error)
 				}
 			}}
-			w, streams := serveNativeSavedReplay(t, db, messages, ctx, answer, files, true)
+			w, streams := serveNativeSavedReplay(ctx, t, db, messages, answer, files, true)
 			require.True(t, observed)
 			require.NotContains(t, w.Body.String(), "SAVED SECRET")
 			require.NotContains(t, w.Body.String(), "CACHED")
@@ -394,15 +395,16 @@ func TestNativeSavedReplayActualSignedSourceAndFinalWriterRevoke(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, actual.Chunks, 1)
 	answer := produceNativeSavedReplayMessage(
-		t,
+
+		readCtx, t,
 		f.db,
 		messages,
-		readCtx,
+
 		"CONTROLLED NATIVE SECRET: "+actual.Chunks[0].Content+" ![image](resource://xifDo7NTSL300Lp1goVutw)",
 		actual.Proofs[0].SourceLineage,
 	)
 	inputLease.Close()
-	w, streams := serveNativeSavedReplay(t, f.db, messages, ctx, answer, nil, false)
+	w, streams := serveNativeSavedReplay(ctx, t, f.db, messages, answer, nil, false)
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	quotedContent, err := json.Marshal(answer.Content)
 	require.NoError(t, err)
@@ -425,7 +427,7 @@ func TestNativeSavedReplayActualSignedSourceAndFinalWriterRevoke(t *testing.T) {
 		require.Positive(t, exact)
 		f.calls.Store(2)
 	}}
-	w, streams = serveNativeSavedReplay(t, f.db, messages, ctx, answer, files, true)
+	w, streams = serveNativeSavedReplay(ctx, t, f.db, messages, answer, files, true)
 	require.True(t, observed)
 	require.NotContains(t, w.Body.String(), "CONTROLLED NATIVE SECRET")
 	require.NotContains(t, w.Body.String(), "CACHED")

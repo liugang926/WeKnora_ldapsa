@@ -119,7 +119,8 @@ func NewNormalReferencesHTTPFixtureForTest(
 			require.NoError(
 				t,
 				migration.Exec(
-					"CREATE FUNCTION uuid_generate_v4() RETURNS uuid LANGUAGE sql AS $$ SELECT public.uuid_generate_v4() $$",
+					("CREATE FUNCTION uuid_generate_v4() RETURNS uuid LANGUAGE sql AS $$ SELECT " +
+						"public.uuid_generate_v4() $$"),
 				).Error,
 			)
 		}
@@ -243,7 +244,7 @@ func NewNormalReferencesHTTPFixtureForTest(
 			}
 		}),
 	)
-	t.Cleanup(func() { m.f.db.Callback().Update().Remove("actual-idle-body-lease-renewals") })
+	t.Cleanup(func() { require.NoError(t, m.f.db.Callback().Update().Remove("actual-idle-body-lease-renewals")) })
 	producerReturned := make(chan struct{})
 	completionReturned := make(chan struct{})
 	completionError := make(chan error, 1)

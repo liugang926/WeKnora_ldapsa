@@ -174,7 +174,7 @@ func attachNextcloudLeasedRequest(c *gin.Context, leases *nextcloudHTTPReadLease
 	}
 }
 
-func (h *KnowledgeHandler) beginNextcloudRead(c *gin.Context, ctx context.Context,
+func (h *KnowledgeHandler) beginNextcloudRead(ctx context.Context, c *gin.Context,
 	knowledges []*types.Knowledge,
 ) (*nextcloudHTTPReadLeases, error) {
 	faqLeases, _ := ctx.Value(faqKnowledgePreReadKey{}).(*nextcloudHTTPReadLeases)
@@ -262,14 +262,14 @@ func (h *KnowledgeHandler) verifyNextcloudRead(ctx context.Context,
 // narrowed its results to the caller's allowed scopes; each returned source
 // generation is then pinned before its title, description or metadata leaves
 // the process. The write boundary rechecks publication after JSON rendering.
-func (h *KnowledgeHandler) respondKnowledgeSearch(c *gin.Context, ctx context.Context,
+func (h *KnowledgeHandler) respondKnowledgeSearch(ctx context.Context, c *gin.Context,
 	knowledges []*types.Knowledge, hasMore bool, total int64,
 ) {
 	if err := h.checkPublicationList(ctx, knowledges); err != nil {
 		_ = c.Error(err)
 		return
 	}
-	leases, err := h.beginNextcloudRead(c, ctx, knowledges)
+	leases, err := h.beginNextcloudRead(ctx, c, knowledges)
 	if err != nil {
 		_ = c.Error(err)
 		return
@@ -319,7 +319,7 @@ func (h *KnowledgeHandler) checkCurrentNextcloudKBAccess(ctx context.Context,
 	return h.authorizeKBGroupAccess(ctx, kb, action)
 }
 
-func (h *ChunkHandler) beginNextcloudRead(c *gin.Context, ctx context.Context,
+func (h *ChunkHandler) beginNextcloudRead(ctx context.Context, c *gin.Context,
 	knowledge *types.Knowledge,
 ) (*nextcloudHTTPReadLeases, error) {
 	leases, err := acquireNextcloudHTTPReadLeases(ctx, h.contentLeases,

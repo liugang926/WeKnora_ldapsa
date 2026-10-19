@@ -17,11 +17,14 @@ import (
 	"gorm.io/gorm/clause"
 )
 
+// NextcloudStageState represents nextcloud stage state repository data.
 type NextcloudStageState struct {
 	State       string `json:"state"`
 	StartedAt   *int64 `json:"started_at"`
 	CompletedAt *int64 `json:"completed_at"`
 }
+
+// NextcloudGraphState represents nextcloud graph state repository data.
 type NextcloudGraphState struct {
 	Enabled     bool   `json:"enabled"`
 	Required    bool   `json:"required"`
@@ -37,6 +40,7 @@ type NextcloudGraphState struct {
 	CompletedAt *int64 `json:"completed_at"`
 }
 
+// NextcloudFileStateV2 represents nextcloud file state v2 repository data.
 // Revisions are decimal strings on the wire, avoiding JS precision loss.
 type NextcloudFileStateV2 struct {
 	SchemaVersion            int                            `json:"schema_version"`
@@ -98,11 +102,13 @@ type nextcloudStatusOutboxRow struct {
 
 func (nextcloudStatusOutboxRow) TableName() string { return "nextcloud_status_outbox" }
 
+// NextcloudProcessingStateStore represents nextcloud processing state store repository data.
 type NextcloudProcessingStateStore struct {
 	db                       *gorm.DB
 	contentRevisionSupported bool
 }
 
+// NewNextcloudProcessingStateStore constructs nextcloud processing state store.
 func NewNextcloudProcessingStateStore(db *gorm.DB) *NextcloudProcessingStateStore {
 	return &NextcloudProcessingStateStore{
 		db:                       db,
@@ -110,6 +116,7 @@ func NewNextcloudProcessingStateStore(db *gorm.DB) *NextcloudProcessingStateStor
 	}
 }
 
+// NextcloudStateSigningKey returns the nextcloud state signing key result.
 func NextcloudStateSigningKey(secret []byte) []byte {
 	mac := hmac.New(sha256.New, secret)
 	mac.Write([]byte("weknora-nextcloud-state-key-v2"))
@@ -145,6 +152,7 @@ func (s *NextcloudProcessingStateStore) Capture(
 	})
 }
 
+// CaptureNextcloudKnowledgeStateInTx captures nextcloud knowledge state in tx.
 func CaptureNextcloudKnowledgeStateInTx(ctx context.Context, tx *gorm.DB, knowledgeID string) error {
 	if !tx.Migrator().HasTable("nextcloud_file_states") {
 		return nil
@@ -460,7 +468,8 @@ func captureNextcloudStateInTx(
 	}
 	if v.CandidateKnowledgeID != "" && tx.Migrator().HasTable("nextcloud_gc_jobs") {
 		var job nextcloudGCJob
-		if err := tx.Where("tenant_id=? AND knowledge_base_id=? AND datasource_id=? AND external_id=? AND knowledge_id=?", tenant, kb, ds, external, v.CandidateKnowledgeID).
+		if err := tx.Where(("tenant_id=? AND knowledge_base_id=? AND datasource_id=? AND external_id=? " +
+			"AND knowledge_id=?"), tenant, kb, ds, external, v.CandidateKnowledgeID).
 			Order("created_at DESC").
 			Take(&job).
 			Error; err == nil {
@@ -580,6 +589,7 @@ func captureNextcloudStateInTx(
 	).Error
 }
 
+// Reconcile returns the reconcile result.
 func (s *NextcloudProcessingStateStore) Reconcile(ctx context.Context) error {
 	// Durable least-recently-verified ordering rotates compensation across all
 	// files. Bounded pages do not repeatedly choose the newest 200 documents.
@@ -588,10 +598,16 @@ func (s *NextcloudProcessingStateStore) Reconcile(ctx context.Context) error {
 		query := s.db.WithContext(ctx).
 			Table("nextcloud_source_versions v").
 			Select("v.*").
-			Joins("JOIN nextcloud_event_connections c ON c.tenant_id=v.tenant_id AND c.knowledge_base_id=v.knowledge_base_id AND c.datasource_id=v.datasource_id AND c.status='active'").
-			Joins("JOIN nextcloud_source_pairings p ON p.tenant_id=v.tenant_id AND p.knowledge_base_id=v.knowledge_base_id AND p.datasource_id=v.datasource_id AND p.state='active'").
+			Joins(("JOIN nextcloud_event_connections c ON c.tenant_id=v.tenant_id AND c.knowle" +
+				"dge_base_id=v.knowledge_base_id AND c.datasource_id=v.datasource_id AND c." +
+				"status='active'")).
+			Joins(("JOIN nextcloud_source_pairings p ON p.tenant_id=v.tenant_id AND p.knowledg" +
+				"e_base_id=v.knowledge_base_id AND p.datasource_id=v.datasource_id AND p.st" +
+				"ate='active'")).
 			Joins("LEFT JOIN nextcloud_source_status_epochs e ON e.connection_id=c.connection_id").
-			Joins("LEFT JOIN nextcloud_file_states f ON f.connection_id=c.connection_id AND ('nextcloud:' || c.nextcloud_instance_id || ':' || f.file_id)=v.external_id AND f.publication_epoch=COALESCE(e.publication_epoch,p.publication_epoch)").
+			Joins(("LEFT JOIN nextcloud_file_states f ON f.connection_id=c.connection_id AND (" +
+				"'nextcloud:' || c.nextcloud_instance_id || ':' || f.file_id)=v.external_id" +
+				" AND f.publication_epoch=COALESCE(e.publication_epoch,p.publication_epoch)")).
 			Where("COALESCE(f.last_verified_at,0)<?", time.Now().UTC().Add(-55*time.Second).Unix()).
 			Order("COALESCE(f.last_verified_at,0),v.tenant_id,v.knowledge_base_id,v.datasource_id,v.external_id").
 			Limit(200)

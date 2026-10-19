@@ -207,13 +207,13 @@ func TestFAQActualControlledDerivativeHTTPAndTagCountWithdraw(t *testing.T) {
 		types.FAQInputReadRequest{TenantID: 7, KnowledgeBaseID: kb.ID, ChunkIDs: []string{entry.ChunkID}},
 	)
 	require.NoError(t, err)
-	w := serveFAQHTTP(h, ctx, http.MethodGet, "/knowledge-bases/faq-derived/faq/entries", "")
+	w := serveFAQHTTP(ctx, h, http.MethodGet, "/knowledge-bases/faq-derived/faq/entries", "")
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	require.Contains(t, w.Body.String(), "source inherited FAQ answer")
 	require.Positive(t, calls.Load())
 	tag := NewTagHandler(nil, repository.NewKnowledgeTagRepository(db), repository.NewChunkRepository(db))
 	ConfigureTagHandlerOutputLineage(tag, service.NewTagOutputAuthorizer(store, guard))
-	w = serveTagHTTP(tag, ctx, http.MethodGet, "/knowledge-bases/faq-derived/tags", "")
+	w = serveTagHTTP(ctx, tag, http.MethodGet, "/knowledge-bases/faq-derived/tags", "")
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	require.Contains(t, w.Body.String(), `"chunk_count":1`)
 	batch := &types.FAQBatchUpsertPayload{
@@ -243,7 +243,7 @@ func TestFAQActualControlledDerivativeHTTPAndTagCountWithdraw(t *testing.T) {
 		[]types.KnowledgeSearchScope{{TenantID: 7, KBID: "faq-derived"}, {TenantID: 7, KBID: "kb"}},
 		progressPlan.Scopes,
 	)
-	w = serveFAQHTTP(h, ctx, http.MethodGet, "/faq/import/progress/"+taskID, "")
+	w = serveFAQHTTP(ctx, h, http.MethodGet, "/faq/import/progress/"+taskID, "")
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	require.Contains(t, w.Body.String(), "controlled import original question")
 	_, err = store.CaptureFAQInputs(
@@ -267,10 +267,10 @@ func TestFAQActualControlledDerivativeHTTPAndTagCountWithdraw(t *testing.T) {
 		repository.NewNextcloudContentLeaseStore(db).
 			RetireKnowledge(context.Background(), repository.NextcloudContentScope{TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: "source", DataSourceID: "ds", ExternalID: "nextcloud:instance:77"}),
 	)
-	w = serveFAQHTTP(h, ctx, http.MethodGet, "/knowledge-bases/faq-derived/faq/entries", "")
+	w = serveFAQHTTP(ctx, h, http.MethodGet, "/knowledge-bases/faq-derived/faq/entries", "")
 	require.NotEqual(t, http.StatusOK, w.Code, w.Body.String())
 	require.NotContains(t, w.Body.String(), "source inherited FAQ answer")
-	w = serveFAQHTTP(h, ctx, http.MethodGet, "/faq/import/progress/"+taskID, "")
+	w = serveFAQHTTP(ctx, h, http.MethodGet, "/faq/import/progress/"+taskID, "")
 	require.NotEqual(t, http.StatusOK, w.Code, w.Body.String())
 	require.NotContains(t, w.Body.String(), "controlled import original question")
 	_, err = store.CaptureFAQImportOutputInputs(
@@ -283,7 +283,7 @@ func TestFAQActualControlledDerivativeHTTPAndTagCountWithdraw(t *testing.T) {
 		},
 	)
 	require.Error(t, err)
-	w = serveTagHTTP(tag, ctx, http.MethodGet, "/knowledge-bases/faq-derived/tags", "")
+	w = serveTagHTTP(ctx, tag, http.MethodGet, "/knowledge-bases/faq-derived/tags", "")
 	require.NotEqual(t, http.StatusOK, w.Code, w.Body.String())
 	require.NotContains(t, w.Body.String(), "chunk_count")
 }

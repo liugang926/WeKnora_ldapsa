@@ -18,7 +18,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func ordinaryMCPAgentFixture(t *testing.T, engine *AgentEngine, ctx context.Context) context.Context {
+func ordinaryMCPAgentFixture(ctx context.Context, t *testing.T, engine *AgentEngine) context.Context {
 	t.Helper()
 	engine.SetSourceLineageVerifier(func(_ context.Context, lineage *types.SourceLineage) error {
 		return lineage.RequireComplete()
@@ -77,7 +77,7 @@ func TestAgentMCPProxyKeepsTargetEventsAndProtocolHistory(t *testing.T) {
 	require.NoError(t, err)
 	engine := newTestEngine(t, &mockChat{})
 	engine.toolRegistry = registry
-	ctx = ordinaryMCPAgentFixture(t, engine, ctx)
+	ctx = ordinaryMCPAgentFixture(ctx, t, engine)
 	var starts []event.AgentToolCallData
 	var outcomes []event.AgentToolResultData
 	engine.eventBus.On(event.EventAgentToolCall, func(_ context.Context, evt event.Event) error {
@@ -167,7 +167,7 @@ func TestAgentMCPStringArgumentsKeepValidationAndAudit(t *testing.T) {
 	require.NoError(t, err)
 	engine := newTestEngine(t, &mockChat{})
 	engine.toolRegistry = registry
-	ctx = ordinaryMCPAgentFixture(t, engine, ctx)
+	ctx = ordinaryMCPAgentFixture(ctx, t, engine)
 	var starts []event.AgentToolCallData
 	engine.eventBus.On(event.EventAgentToolCall, func(_ context.Context, evt event.Event) error {
 		starts = append(starts, evt.Data.(event.AgentToolCallData))

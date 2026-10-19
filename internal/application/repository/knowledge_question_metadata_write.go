@@ -15,9 +15,9 @@ type questionMetadataOutput struct {
 
 func (questionMetadataOutput) TableName() string { return "knowledge_question_metadata_outputs" }
 func questionMetadataIndependentBody(c *types.Chunk) (string, error) {
-	copy := *c
-	copy.Metadata = nil
-	return knowledgeChunkDigest(&copy)
+	copied := *c
+	copied.Metadata = nil
+	return knowledgeChunkDigest(&copied)
 }
 
 // A span may retain an old input only through the exact immutable result of
@@ -51,7 +51,8 @@ func verifyQuestionMetadataOwnResult(
 	revision := beforeRevision
 	for step := 0; step < 128 && revision != afterRevision; step++ {
 		var result questionMetadataOutput
-		if err := tx.Where("chunk_id = ? AND admission_id = ? AND previous_revision = ? AND previous_metadata_digest = ?", before.ID, a.AdmissionID, revision, currentDigest).
+		if err := tx.Where(("chunk_id = ? AND admission_id = ? AND previous_revision = ? AND previous_m" +
+			"etadata_digest = ?"), before.ID, a.AdmissionID, revision, currentDigest).
 			Order("result_revision ASC").
 			Take(&result).
 			Error; err != nil {
@@ -136,7 +137,8 @@ func (r *chunkRepository) UpdateKnowledgeGeneratedQuestionMetadata(ctx context.C
 				return ErrKnowledgeInputChanged
 			}
 			result := tx.Model(&types.Chunk{}).
-				Where("id = ? AND tenant_id = ? AND knowledge_base_id = ? AND knowledge_id = ? AND content_revision = ?", c.ID, c.TenantID, c.KnowledgeBaseID, c.KnowledgeID, c.ContentRevision).
+				Where(("id = ? AND tenant_id = ? AND knowledge_base_id = ? AND knowledge_id = ? AN"+
+					"D content_revision = ?"), c.ID, c.TenantID, c.KnowledgeBaseID, c.KnowledgeID, c.ContentRevision).
 				Update("metadata", c.Metadata)
 			if result.Error != nil {
 				return result.Error

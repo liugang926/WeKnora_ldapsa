@@ -698,7 +698,8 @@ func ValidateConfig(cfg *Config) error {
 			(strings.TrimSpace(cfg.OIDCAuth.AuthorizationEndpoint) == "" || strings.TrimSpace(cfg.OIDCAuth.TokenEndpoint) == "") {
 			errs = append(
 				errs,
-				"oidc_auth.discovery_url or both oidc_auth.authorization_endpoint and oidc_auth.token_endpoint are required when OIDC is enabled",
+				("oidc_auth.discovery_url or both oidc_auth.authorization_endpoint and oidc_" +
+					"auth.token_endpoint are required when OIDC is enabled"),
 			)
 		}
 	}

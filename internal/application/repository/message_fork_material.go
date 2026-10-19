@@ -11,6 +11,7 @@ import (
 	"gorm.io/gorm"
 )
 
+// MessageForkMaterialRequest returns the message fork material request result.
 func (s *KnowledgeInputProvenanceStore) MessageForkMaterialRequest(
 	ctx context.Context,
 	tenant uint64,
@@ -36,7 +37,8 @@ func (s *KnowledgeInputProvenanceStore) MessageForkMaterialRequest(
 		var rows []struct{ ID string }
 		if err := tx.Table("messages").
 			Select("id").
-			Where("session_id=? AND deleted_at IS NULL AND (created_at < ? OR (created_at = ? AND id <= ?))", sourceID, current.CreatedAt, current.CreatedAt, current.ID).
+			Where(("session_id=? AND deleted_at IS NULL AND (created_at < ? OR (created_at = ?" +
+				" AND id <= ?))"), sourceID, current.CreatedAt, current.CreatedAt, current.ID).
 			Order("created_at,id").
 			Scan(&rows).
 			Error; err != nil {
@@ -212,6 +214,7 @@ type messageForkMaterialHolder struct {
 	Prewrite func() error
 }
 
+// WithMessageForkMaterialStore binds message fork material store.
 func WithMessageForkMaterialStore(
 	ctx context.Context,
 	store *KnowledgeInputProvenanceStore,
@@ -302,12 +305,13 @@ func (s *KnowledgeInputProvenanceStore) verifyMessageForkParentsInTx(tx *gorm.DB
 func (s *KnowledgeInputProvenanceStore) copyForkFieldOriginsInTx(
 	tx *gorm.DB,
 	origin *messageGenerationOrigin,
-	copy, source *types.Message,
+	copied, source *types.Message,
 ) error {
 	var fields []messageGeneratedFieldAdmission
 	if err := tx.Table("message_generated_field_admissions a").
 		Select("a.*").
-		Joins("JOIN message_generated_field_receipts r ON r.admission_id=a.id AND r.message_id=a.message_id AND r.field=a.field").
+		Joins(("JOIN message_generated_field_receipts r ON r.admission_id=a.id AND r.messa" +
+			"ge_id=a.message_id AND r.field=a.field")).
 		Where("a.message_id=? AND a.session_id=?", source.ID, source.SessionID).
 		Find(&fields).
 		Error; err != nil {
@@ -317,24 +321,24 @@ func (s *KnowledgeInputProvenanceStore) copyForkFieldOriginsInTx(
 	if err := tx.Table("message_material_admissions a").
 		Select("a.*").
 		Joins("JOIN message_material_receipts r ON r.admission_id=a.id AND r.message_id=a.message_id").
-		Where("a.message_id=?", copy.ID).
+		Where("a.message_id=?", copied.ID).
 		Take(&host).
 		Error; err != nil {
 		return err
 	}
-	membership, err := messageVersion(tx, "message_session_membership_versions", "session_id", copy.SessionID)
+	membership, err := messageVersion(tx, "message_session_membership_versions", "session_id", copied.SessionID)
 	if err != nil {
 		return err
 	}
 	for _, old := range fields {
-		revision, err := messageGeneratedFieldVersion(tx, copy.ID, old.Field)
+		revision, err := messageGeneratedFieldVersion(tx, copied.ID, old.Field)
 		if err != nil {
 			return err
 		}
 		entry := old
 		entry.ID = uuid.NewString()
-		entry.MessageID = copy.ID
-		entry.SessionID = copy.SessionID
+		entry.MessageID = copied.ID
+		entry.SessionID = copied.SessionID
 		entry.GenerationID = origin.ID
 		entry.Actor = origin.Actor
 		entry.PreviousAdmissionID = host.ID
@@ -348,7 +352,7 @@ func (s *KnowledgeInputProvenanceStore) copyForkFieldOriginsInTx(
 		if err := tx.Create(&entry).Error; err != nil {
 			return err
 		}
-		if err := tx.Create(&messageGeneratedFieldReceipt{copy.ID, entry.Field, entry.ID}).Error; err != nil {
+		if err := tx.Create(&messageGeneratedFieldReceipt{copied.ID, entry.Field, entry.ID}).Error; err != nil {
 			return err
 		}
 	}

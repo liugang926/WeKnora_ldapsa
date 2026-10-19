@@ -611,7 +611,8 @@ func (s *knowledgeBaseService) resolveQueryEmbedding(
 	if kb.TenantID != currentTenantID {
 		logger.Infof(
 			ctx,
-			"Cross-tenant knowledge base detected, using source tenant's embedding model. KB tenant: %d, current tenant: %d",
+			("Cross-tenant knowledge base detected, using source tenant's embedding mode" +
+				"l. KB tenant: %d, current tenant: %d"),
 			kb.TenantID,
 			currentTenantID,
 		)

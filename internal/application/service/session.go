@@ -436,9 +436,9 @@ func (s *sessionService) ListSessions(
 			return nil, err
 		}
 		for i, row := range items {
-			copy := *row
-			copy.Session = *visibleRows[i]
-			items[i] = &copy
+			copied := *row
+			copied.Session = *visibleRows[i]
+			items[i] = &copied
 		}
 	}
 

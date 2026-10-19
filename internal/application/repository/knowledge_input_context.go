@@ -38,11 +38,11 @@ func WithDerivedKnowledgeInput(ctx context.Context, lineage *types.SourceLineage
 	if err := lineage.RequireComplete(); err != nil {
 		return ctx, err
 	}
-	copy, err := types.UnionSourceLineage(lineage)
+	copied, err := types.UnionSourceLineage(lineage)
 	if err != nil {
 		return ctx, err
 	}
-	return context.WithValue(ctx, knowledgeInputOriginKey{}, knowledgeInputOrigin{copy, "derived"}), nil
+	return context.WithValue(ctx, knowledgeInputOriginKey{}, knowledgeInputOrigin{copied, "derived"}), nil
 }
 
 func cloneKnowledgeInputProof(proof *types.KnowledgeBuildInputProof) *types.KnowledgeBuildInputProof {
@@ -53,13 +53,14 @@ func cloneKnowledgeInputProof(proof *types.KnowledgeBuildInputProof) *types.Know
 	if err != nil {
 		return nil
 	}
-	var copy types.KnowledgeBuildInputProof
-	if json.Unmarshal(data, &copy) != nil {
+	var copied2 types.KnowledgeBuildInputProof
+	if json.Unmarshal(data, &copied2) != nil {
 		return nil
 	}
-	return &copy
+	return &copied2
 }
 
+// WithKnowledgeBuildInputProof binds knowledge build input proof.
 func WithKnowledgeBuildInputProof(
 	ctx context.Context,
 	reader interfaces.KnowledgeBuildInputReader,
@@ -76,6 +77,7 @@ func WithKnowledgeBuildInputProof(
 	)
 }
 
+// KnowledgeBuildInputProofFromContext returns the knowledge build input proof from context result.
 func KnowledgeBuildInputProofFromContext(ctx context.Context) *types.KnowledgeBuildInputProof {
 	if ctx == nil {
 		return nil
@@ -84,6 +86,7 @@ func KnowledgeBuildInputProofFromContext(ctx context.Context) *types.KnowledgeBu
 	return cloneKnowledgeInputProof(guard.proof)
 }
 
+// CheckKnowledgeBuildInputs checks knowledge build inputs.
 func CheckKnowledgeBuildInputs(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -117,6 +120,7 @@ func NextcloudBuildInputLease(ctx context.Context) (NextcloudContentLease, Nextc
 	return guard.lease, guard.scope, nil
 }
 
+// PrecheckKnowledgeBuildWrite returns the precheck knowledge build write result.
 func PrecheckKnowledgeBuildWrite(ctx context.Context) error {
 	if err := CheckNextcloudBuildLease(ctx); err != nil {
 		return err

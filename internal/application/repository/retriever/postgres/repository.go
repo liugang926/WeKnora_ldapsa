@@ -305,14 +305,14 @@ func (r *pgRepository) inventoryNextcloudVectorIDs(tx *gorm.DB, scope nextcloudV
 }
 
 // DeleteByChunkIDList deletes indices by chunk IDs
-func (g *pgRepository) DeleteByChunkIDList(
+func (r *pgRepository) DeleteByChunkIDList(
 	ctx context.Context,
 	chunkIDList []string,
-	dimension int,
-	knowledgeType string,
+	_ int,
+	_ string,
 ) error {
 	logger.GetLogger(ctx).Infof("[Postgres] Deleting indices by chunk IDs, count: %d", len(chunkIDList))
-	result := g.db.WithContext(ctx).Where("chunk_id IN ?", chunkIDList).Delete(&pgVector{})
+	result := r.db.WithContext(ctx).Where("chunk_id IN ?", chunkIDList).Delete(&pgVector{})
 	if result.Error != nil {
 		logger.GetLogger(ctx).Errorf("[Postgres] Failed to delete indices by chunk IDs: %v", result.Error)
 		return result.Error
@@ -322,17 +322,17 @@ func (g *pgRepository) DeleteByChunkIDList(
 }
 
 // DeleteBySourceIDList deletes indices by source IDs
-func (g *pgRepository) DeleteBySourceIDList(
+func (r *pgRepository) DeleteBySourceIDList(
 	ctx context.Context,
 	sourceIDList []string,
-	dimension int,
-	knowledgeType string,
+	_ int,
+	_ string,
 ) error {
 	if len(sourceIDList) == 0 {
 		return nil
 	}
 	logger.GetLogger(ctx).Infof("[Postgres] Deleting indices by source IDs, count: %d", len(sourceIDList))
-	result := g.db.WithContext(ctx).Where("source_id IN ?", sourceIDList).Delete(&pgVector{})
+	result := r.db.WithContext(ctx).Where("source_id IN ?", sourceIDList).Delete(&pgVector{})
 	if result.Error != nil {
 		logger.GetLogger(ctx).Errorf("[Postgres] Failed to delete indices by source IDs: %v", result.Error)
 		return result.Error
@@ -342,14 +342,14 @@ func (g *pgRepository) DeleteBySourceIDList(
 }
 
 // DeleteByKnowledgeIDList deletes indices by knowledge IDs
-func (g *pgRepository) DeleteByKnowledgeIDList(
+func (r *pgRepository) DeleteByKnowledgeIDList(
 	ctx context.Context,
 	knowledgeIDList []string,
-	dimension int,
-	knowledgeType string,
+	_ int,
+	_ string,
 ) error {
 	logger.GetLogger(ctx).Infof("[Postgres] Deleting indices by knowledge IDs, count: %d", len(knowledgeIDList))
-	result := g.db.WithContext(ctx).Where("knowledge_id IN ?", knowledgeIDList).Delete(&pgVector{})
+	result := r.db.WithContext(ctx).Where("knowledge_id IN ?", knowledgeIDList).Delete(&pgVector{})
 	if result.Error != nil {
 		logger.GetLogger(ctx).Errorf("[Postgres] Failed to delete indices by knowledge IDs: %v", result.Error)
 		return result.Error

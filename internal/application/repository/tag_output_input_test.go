@@ -29,7 +29,7 @@ func tagOutputFixture(
 	b, e := os.ReadFile(path)
 	require.NoError(t, e)
 	require.NoError(t, migration.Exec(string(b)).Error)
-	tag := displayTag(t, tags, ctx, "stats-tag")
+	tag := displayTag(ctx, t, tags, "stats-tag")
 	require.NoError(
 		t,
 		knowledge.SetKnowledgeTags(
@@ -143,7 +143,7 @@ func TestTagOutputPostgresWholeSetABA(t *testing.T) { runTagOutputABA(t, true) }
 func runTagCommittedFields(t *testing.T, pg bool) {
 	store, db, ctx, tags, _, _ := displayTestFixture(t, pg)
 	marked := WithTagCommittedOutput(ctx)
-	tag := displayTag(t, tags, marked, "committed-tag")
+	tag := displayTag(marked, t, tags, "committed-tag")
 	snapshot, e := TagCommittedOutput(marked)
 	require.NoError(t, e)
 	require.Equal(t, tag.Name, snapshot.Tags[0].Name)

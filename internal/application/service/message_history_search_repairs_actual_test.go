@@ -20,7 +20,7 @@ func historySearchRepairFixture(
 	t.Helper()
 	t.Setenv("WEKNORA_DOCUMENT_GRAPH_HISTORY", "1")
 	m := newMachinePipelineFixtureWithDocument(t, false, "md", true, true)
-	h := prepareDocumentLiveHistory(t, m, m.f.ctx, "independent setup question")
+	h := prepareDocumentLiveHistory(m.f.ctx, t, m, "independent setup question")
 	reader, ok := h.messages.messageRepo.(historySearchCandidateReader)
 	require.True(t, ok)
 	h.messages.messageRepo = &historySearchNoRawBodyRepository{

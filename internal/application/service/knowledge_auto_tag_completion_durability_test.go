@@ -53,7 +53,9 @@ func autoCompletionFixture(t *testing.T, pg bool) *machinePipelineFixture {
 	kb.QuestionGenerationConfig = &types.QuestionGenerationConfig{Enabled: true, QuestionCount: 2}
 	require.NoError(t, m.f.store.UpdateKnowledgeBaseWithInput(repository.WithIndependentKnowledgeInput(m.f.ctx), &kb))
 	m.f.model.detectQuestions = true
-	m.f.model.response = `{"summary":"A complete generated summary","gist":"Generated original profile title","topics":["actual topic"],"doc_type":"guide","typical_question":"What is this actual topic?"}`
+	m.f.model.response = ("{\"summary\":\"A complete generated summary\",\"gist\":\"Generated origina" +
+		"l profile title\",\"topics\":[\"actual topic\"],\"doc_type\":\"guide\",\"t" +
+		"ypical_question\":\"What is this actual topic?\"}")
 	return m
 }
 
@@ -181,10 +183,15 @@ func actualCompletionChildExit(t *testing.T, m *machinePipelineFixture, op types
 		require.NoError(t, m.f.db.Raw("SELECT current_schema()").Scan(&schema).Error)
 		dsn = os.Getenv("WEKNORA_AUTO_TAG_TEST_POSTGRES_DSN") + " search_path=" + schema
 	} else {
-		var databases []struct{ File string }
+		var databases []struct{ Name, File string }
 		require.NoError(t, m.f.db.Raw("PRAGMA database_list").Scan(&databases).Error)
-		require.Len(t, databases, 1)
-		dsn = databases[0].File
+		for _, database := range databases {
+			if database.Name == "main" {
+				require.Empty(t, dsn, "the crash child must bind exactly one original main database")
+				dsn = database.File
+			}
+		}
+		require.NotEmpty(t, dsn, "temporary SQLite schemas cannot replace the durable main database")
 	}
 	binary, err := os.Executable()
 	require.NoError(t, err)
@@ -351,7 +358,7 @@ func runAutoCompletionActualRedis(t *testing.T, pg bool) {
 	// A real Asynq sender reaches an unavailable loopback port. The permanent
 	// SQL intent must survive the actual network/enqueue error.
 	offline := redis.NewClient(&redis.Options{Addr: "127.0.0.1:1", DialTimeout: 100 * time.Millisecond, MaxRetries: -1})
-	defer offline.Close()
+	defer func() { require.NoError(t, offline.Close()) }()
 	unavailable := asynq.NewClientFromRedisClient(offline)
 	repository.ConfigureKnowledgeCompletionObserver(m.f.s.repo, func(ctx context.Context, id string) error {
 		_, err := RecoverKnowledgeAutoTagCompletions(ctx, m.f.store, unavailable, id)
@@ -360,12 +367,12 @@ func runAutoCompletionActualRedis(t *testing.T, pg bool) {
 	})
 	_, op := autoCompletionRunUntilPending(t, m)
 	restored := asynq.NewClient(asynq.RedisClientOpt{Addr: addr, DB: 9})
-	defer restored.Close()
+	defer func() { require.NoError(t, restored.Close()) }()
 	count, err := RecoverKnowledgeAutoTagCompletions(context.Background(), m.f.store, restored, op.ScopeID)
 	require.NoError(t, err)
 	require.Equal(t, 1, count)
 	inspector := asynq.NewInspector(asynq.RedisClientOpt{Addr: addr, DB: 9})
-	defer inspector.Close()
+	defer func() { require.NoError(t, inspector.Close()) }()
 	pending, err := inspector.ListPendingTasks(types.QueueSummary)
 	require.NoError(t, err)
 	var delivered *asynq.TaskInfo

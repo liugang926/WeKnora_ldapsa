@@ -49,6 +49,7 @@ type (
 	}
 )
 
+// WithMessageProducerInput binds message producer input.
 // This marker is minted only by the actual authenticated message service over
 // the new producer's exact arguments. A JSON field cannot carry it.
 func (s *KnowledgeInputProvenanceStore) WithMessageProducerInput(
@@ -350,23 +351,27 @@ func (s *KnowledgeInputProvenanceStore) sealMessageMaterialInTx(
 	return nil
 }
 
+// ConfigureMessageMaterialWriters configures message material writers.
 func ConfigureMessageMaterialWriters(repo interface{}, store *KnowledgeInputProvenanceStore) {
 	if r, ok := repo.(*messageRepository); ok {
 		r.materialStore = store
 	}
 }
 
+// ConfigureMessageMaterialAgentShares configures message material agent shares.
 func ConfigureMessageMaterialAgentShares(store *KnowledgeInputProvenanceStore, agents interface{}) {
 	if actual, ok := agents.(interfaces.AgentShareService); ok {
 		store.messageActorAgents = actual
 	}
 }
 
+// MessageOriginalBodyAvailabilityCheck represents message original body availability check repository data.
 // The retention owner supplies the actual vault and external purge-journal
 // checker. A digest or current message body never substitutes for unavailable
 // original generation material.
 type MessageOriginalBodyAvailabilityCheck func(context.Context, *gorm.DB, string, string) error
 
+// ConfigureMessageOriginalBodyAvailability configures message original body availability.
 func ConfigureMessageOriginalBodyAvailability(
 	store *KnowledgeInputProvenanceStore,
 	check MessageOriginalBodyAvailabilityCheck,
@@ -392,7 +397,8 @@ func (s *KnowledgeInputProvenanceStore) checkMessageOriginalBodyAvailability(tx 
 	return nil // Retention is not installed in this module's parent; this is not purge authorization.
 }
 
-const messageRawAuthorFields = "id,session_id,request_id,role,content,is_completed,created_at,agent_id,agent_tenant_id,execution_context"
+const messageRawAuthorFields = ("id,session_id,request_id,role,content,is_completed,created_at,agent_id,age" +
+	"nt_tenant_id,execution_context")
 
 func readMessageMaterialBodyInTx(tx *gorm.DB, id, session, role string) (*types.Message, error) {
 	var message types.Message
@@ -417,4 +423,5 @@ func messageOriginalInputJSON(message *types.Message) ([]byte, error) {
 	}{message, message.SourceLineage, message.ExecutionContext, message.AgentTenantID, message.RenderedContent, message.ContextCheckpoint})
 }
 
-const messageGenerationMetadataFields = "id,message_id,session_id,tenant_id,owner_id,owner_revision,request_id,role,actor"
+const messageGenerationMetadataFields = ("id,message_id,session_id,tenant_id,owner_id,owner_revision,request_id,role" +
+	",actor")

@@ -518,7 +518,7 @@ func (h *Handler) SteerMessage(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if h.tryActualSteerEnqueue(c, ctx, sessionID, assistantID, &req, query, delivery) {
+	if h.tryActualSteerEnqueue(ctx, c, sessionID, assistantID, &req, query, delivery) {
 		return
 	}
 	if req.SteerID != "" && req.ExpectedAssistantMessageID != "" {
@@ -652,7 +652,7 @@ func (h *Handler) PromoteSteerMessage(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if h.tryActualSteerControl(c, ctx, sessionID, assistantID, steerID, types.SteerControlPromote) {
+	if h.tryActualSteerControl(ctx, c, sessionID, assistantID, steerID, types.SteerControlPromote) {
 		return
 	}
 	if assistantID == "" {
@@ -736,7 +736,7 @@ func (h *Handler) ListSteerMessages(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if h.tryActualSteerList(c, ctx, sessionID, assistantID) {
+	if h.tryActualSteerList(ctx, c, sessionID, assistantID) {
 		return
 	}
 	if assistantID == "" {
@@ -793,7 +793,7 @@ func (h *Handler) DeleteSteerMessage(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if h.tryActualSteerControl(c, ctx, sessionID, assistantID, steerID, types.SteerControlDelete) {
+	if h.tryActualSteerControl(ctx, c, sessionID, assistantID, steerID, types.SteerControlDelete) {
 		return
 	}
 	if assistantID == "" {

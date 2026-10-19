@@ -63,7 +63,7 @@ func (r *knowledgeRepository) SetKnowledgeTags(
 				}
 			}
 			var err error
-			actor, lineage, origin, err = knowledgeDisplayWriterOrigin(tx, ctx, kb, request, r.displayAuthorityFactory)
+			actor, lineage, origin, err = knowledgeDisplayWriterOrigin(ctx, tx, kb, request, r.displayAuthorityFactory)
 			if err != nil {
 				return err
 			}
@@ -120,8 +120,8 @@ func (r *knowledgeRepository) SetKnowledgeTags(
 				return err
 			}
 			return admitKnowledgeDisplayOrigin(
-				tx,
 				actor,
+				tx,
 				"relations",
 				knowledgeID,
 				kb,
@@ -243,7 +243,7 @@ func (r *knowledgeRepository) AddKnowledgeTagRelations(
 		if err := tx.Where("id = ? AND tenant_id = ?", kbID, tenantID).Take(&kb).Error; err != nil {
 			return err
 		}
-		actor, lineage, origin, err := knowledgeDisplayWriterOrigin(tx, ctx, &kb, request, r.displayAuthorityFactory)
+		actor, lineage, origin, err := knowledgeDisplayWriterOrigin(ctx, tx, &kb, request, r.displayAuthorityFactory)
 		if err != nil {
 			return err
 		}
@@ -274,8 +274,8 @@ func (r *knowledgeRepository) AddKnowledgeTagRelations(
 		}
 		allIDs := normalizedKnowledgeDisplayTagIDs(append(priorIDs, unique...))
 		if err := admitKnowledgeDisplayOrigin(
-			tx,
 			actor,
+			tx,
 			"relations",
 			knowledgeID,
 			&kb,

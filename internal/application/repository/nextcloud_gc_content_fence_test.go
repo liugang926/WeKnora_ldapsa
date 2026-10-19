@@ -26,7 +26,7 @@ func gcObjectTestLeaseSchema(t *testing.T, db *gorm.DB) {
 	}
 	if !db.Migrator().HasTable("nextcloud_content_fences") {
 		path := "sqlite/000046"
-		if db.Dialector.Name() == "postgres" {
+		if db.Name() == "postgres" {
 			path = "versioned/000127"
 		}
 		b, e := os.ReadFile("../../../migrations/" + path + "_nextcloud_content_leases.up.sql")
@@ -115,7 +115,8 @@ func gcActualRunDueContract(t *testing.T, pg bool) {
 				require.NoError(
 					t,
 					db.Exec(
-						"UPDATE nextcloud_content_fences SET state='open' WHERE tenant_id=7 AND knowledge_base_id='kb' AND knowledge_id='old'",
+						("UPDATE nextcloud_content_fences SET state='open' WHERE tenant_id=7 AND kno" +
+							"wledge_base_id='kb' AND knowledge_id='old'"),
 					).Error,
 				)
 				kind := NextcloudContentReadLease
@@ -178,7 +179,8 @@ func gcActualRunDueContract(t *testing.T, pg bool) {
 						require.NoError(
 							t,
 							db.Exec(
-								"UPDATE nextcloud_content_fences SET claim_token='successor-claim' WHERE tenant_id=7 AND knowledge_base_id='kb' AND knowledge_id='old'",
+								("UPDATE nextcloud_content_fences SET claim_token='successor-claim' WHERE te" +
+									"nant_id=7 AND knowledge_base_id='kb' AND knowledge_id='old'"),
 							).Error,
 						)
 						require.NoError(
@@ -193,7 +195,8 @@ func gcActualRunDueContract(t *testing.T, pg bool) {
 						require.NoError(
 							t,
 							db.Model(&nextcloudSourceVersion{}).
-								Where("tenant_id=7 AND knowledge_base_id='kb' AND datasource_id='ds' AND external_id='node'").
+								Where(("tenant_id=7 AND knowledge_base_id='kb' AND datasource_id='ds' AND external" +
+									"_id='node'")).
 								Updates(map[string]any{"state": "published", "candidate_knowledge_id": "old"}).
 								Error,
 						)
@@ -311,7 +314,8 @@ func gcObjectTestRetiredFence(t *testing.T, db *gorm.DB, id string, at time.Time
 			return e
 		}
 		return tx.Exec(
-			"UPDATE nextcloud_content_fences SET state='retired',retired_at_ms=?,epoch=epoch+1 WHERE tenant_id=7 AND knowledge_base_id='kb' AND knowledge_id=?",
+			("UPDATE nextcloud_content_fences SET state='retired',retired_at_ms=?,epoch=" +
+				"epoch+1 WHERE tenant_id=7 AND knowledge_base_id='kb' AND knowledge_id=?"),
 			at.UnixMilli(),
 			id,
 		).Error

@@ -12,7 +12,10 @@ type KnowledgeEnrichmentTemplates struct {
 	Question string `json:"question,omitempty"`
 }
 
+// Value encodes template settings for database persistence.
 func (c KnowledgeEnrichmentTemplates) Value() (driver.Value, error) { return json.Marshal(c) }
+
+// Scan decodes persisted template settings.
 func (c *KnowledgeEnrichmentTemplates) Scan(value any) error {
 	if value == nil {
 		return nil
@@ -29,6 +32,7 @@ func (c *KnowledgeEnrichmentTemplates) Scan(value any) error {
 	return json.Unmarshal(data, c)
 }
 
+// Content returns the template content for a purpose.
 func (c *KnowledgeEnrichmentTemplates) Content(purpose string) string {
 	if c == nil {
 		return ""
@@ -42,6 +46,7 @@ func (c *KnowledgeEnrichmentTemplates) Content(purpose string) string {
 	return ""
 }
 
+// Set sets template content for a purpose.
 func (c *KnowledgeEnrichmentTemplates) Set(purpose, content string) error {
 	if purpose == "summary" {
 		c.Summary = content

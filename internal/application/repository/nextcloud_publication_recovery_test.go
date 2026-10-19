@@ -78,7 +78,7 @@ func recoveryTestAnchor() NextcloudRecoveryAnchor {
 func recoverySchema(t *testing.T, db *gorm.DB) {
 	t.Helper()
 	version := "sqlite/000064"
-	if db.Dialector.Name() == "postgres" {
+	if db.Name() == "postgres" {
 		version = "versioned/000145"
 	}
 	b, e := os.ReadFile("../../../migrations/" + version + "_nextcloud_publication_recovery.up.sql")

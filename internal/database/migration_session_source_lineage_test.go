@@ -18,7 +18,8 @@ func TestSessionTextLineageSQLiteUpgradeFrom51LeavesLegacyUnknown(t *testing.T) 
 	require.NoError(t, RunMigrationsWithOptions("sqlite3://unused", MigrationOptions{SQLiteDBPath: path}))
 	db := openSQLiteDB(t, path)
 	_, err := db.Exec(
-		`INSERT INTO sessions(id,tenant_id,title,description) VALUES('legacy',7,'legacy secret title','legacy secret description')`,
+		("INSERT INTO sessions(id,tenant_id,title,description) VALUES('legacy',7,'le" +
+			"gacy secret title','legacy secret description')"),
 	)
 	require.NoError(t, err)
 	// Exercise this precise prior upgrade even after newer migrations exist.
@@ -32,7 +33,8 @@ func TestSessionTextLineageSQLiteUpgradeFrom51LeavesLegacyUnknown(t *testing.T) 
 	var titleProof, descriptionProof sql.NullString
 	require.NoError(
 		t,
-		db.QueryRow(`SELECT title,description,title_source_lineage,description_source_lineage FROM sessions WHERE id='legacy'`).
+		db.QueryRow(("SELECT title,description,title_source_lineage,description_source_lineage F"+
+			"ROM sessions WHERE id='legacy'")).
 			Scan(&title, &description, &titleProof, &descriptionProof),
 	)
 	require.Equal(t, "legacy secret title", title)
@@ -64,7 +66,8 @@ func TestSessionTextLineagePostgresUpgradeFrom132LeavesLegacyUnknown(t *testing.
 	t.Cleanup(func() { _, _ = m.Close() })
 	require.NoError(t, m.Migrate(132))
 	_, err = db.Exec(
-		`INSERT INTO sessions(id,tenant_id,title,description) VALUES('legacy',7,'legacy secret title','legacy secret description')`,
+		("INSERT INTO sessions(id,tenant_id,title,description) VALUES('legacy',7,'le" +
+			"gacy secret title','legacy secret description')"),
 	)
 	require.NoError(t, err)
 	require.NoError(t, m.Migrate(133))

@@ -101,11 +101,11 @@ type lineageGroupsStub struct {
 
 func (s *lineageGroupsStub) EffectivePermission(
 	ctx context.Context,
-	tenant uint64,
-	kind types.ResourceType,
-	kb string,
-	action types.ResourceAction,
-	now time.Time,
+	_ uint64,
+	_ types.ResourceType,
+	_ string,
+	_ types.ResourceAction,
+	_ time.Time,
 ) (types.EffectiveResourcePermission, error) {
 	s.callers = append(s.callers, types.CallerFromContext(ctx))
 	return types.EffectiveResourcePermission{Allowed: s.allowed}, s.err

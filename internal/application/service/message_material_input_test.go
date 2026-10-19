@@ -98,9 +98,9 @@ func messageMaterialActualFixture(
 }
 
 func produceActualMessagePair(
-	t *testing.T,
+	ctx context.Context, t *testing.T,
 	messages *messageService,
-	ctx context.Context,
+
 	session *types.Session,
 ) (*types.Message, *types.Message) {
 	t.Helper()
@@ -136,7 +136,7 @@ func produceActualMessagePair(
 
 func TestMessageMaterialActualProducerReadAndDerivedKnowledgeSingleConnection(t *testing.T) {
 	messages, kg, store, db, ctx, session := messageMaterialActualFixture(t)
-	_, assistant := produceActualMessagePair(t, messages, ctx, session)
+	_, assistant := produceActualMessagePair(ctx, t, messages, session)
 	request, err := store.CommittedMessageParentRequest(ctx, 7, session.ID, assistant.ID)
 	require.NoError(t, err)
 	guard, err := messages.beginMessageMaterialRead(ctx, request)
@@ -217,7 +217,7 @@ func TestMessageMaterialActualProducerLegacyAndBodyOwnerABAReject(t *testing.T) 
 	for _, change := range []string{"legacy", "content-ABA", "owner-ABA", "caller", "user-revoked", "member-revoked", "execution-ABA", "membership-ABA"} {
 		t.Run(change, func(t *testing.T) {
 			messages, _, store, db, ctx, session := messageMaterialActualFixture(t)
-			_, assistant := produceActualMessagePair(t, messages, ctx, session)
+			_, assistant := produceActualMessagePair(ctx, t, messages, session)
 			request, err := store.CommittedMessageParentRequest(ctx, 7, session.ID, assistant.ID)
 			require.NoError(t, err)
 			guard, err := messages.beginMessageMaterialRead(ctx, request)
@@ -328,7 +328,7 @@ func TestMessageMaterialActualProducerLegacyAndBodyOwnerABAReject(t *testing.T) 
 
 func TestMessageMaterialActualSavedReadBoundarySingleConnection(t *testing.T) {
 	messages, _, _, db, ctx, session := messageMaterialActualFixture(t)
-	_, assistant := produceActualMessagePair(t, messages, ctx, session)
+	_, assistant := produceActualMessagePair(ctx, t, messages, session)
 	ctx = WithMessageMaterialOutputBoundary(ctx)
 	defer CloseMessageMaterialOutputBoundary(ctx)
 	rows, err := messages.GetRecentMessagesBySession(ctx, session.ID, 20)
@@ -359,7 +359,7 @@ func TestMessageMaterialActualSavedReadBoundarySingleConnection(t *testing.T) {
 
 func TestMessageMaterialRawUserFieldsSurviveUnconsumedGeneratedUpdates(t *testing.T) {
 	messages, _, store, db, ctx, session := messageMaterialActualFixture(t)
-	user, assistant := produceActualMessagePair(t, messages, ctx, session)
+	user, assistant := produceActualMessagePair(ctx, t, messages, session)
 	request, err := store.CommittedMessageParentRequest(ctx, 7, session.ID, assistant.ID)
 	require.NoError(t, err)
 	guard, err := messages.beginMessageMaterialRead(ctx, request)
@@ -427,7 +427,7 @@ func TestMessageMaterialPostgresActualProducerReadDerivedKnowledgeSingleConnecti
 	ConfigureMessageMaterialProvenance(messages, store)
 	session := &types.Session{TenantID: 7, UserID: types.CallerFromContext(ctx).UserID}
 	require.NoError(t, db.Create(session).Error)
-	_, assistant := produceActualMessagePair(t, messages, ctx, session)
+	_, assistant := produceActualMessagePair(ctx, t, messages, session)
 	request, err := store.CommittedMessageParentRequest(ctx, 7, session.ID, assistant.ID)
 	require.NoError(t, err)
 	original, err := messages.beginMessageMaterialRead(ctx, request)

@@ -85,6 +85,7 @@ func (s *KnowledgeInputProvenanceStore) captureKnowledgeOutputAuxiliaryInTx(
 	return result, err
 }
 
+// CaptureKnowledgeOutputAuxiliary captures knowledge output auxiliary.
 // Both original document receipts and the actual consumed joined producers
 // are bound in one RR/SQLite snapshot. Current display strings cannot seal an
 // older material body or widen the explicit document membership.
@@ -102,6 +103,7 @@ func (s *KnowledgeInputProvenanceStore) CaptureKnowledgeOutputAuxiliary(
 	return result, err
 }
 
+// RecheckKnowledgeOutputAuxiliary rechecks knowledge output auxiliary.
 func (s *KnowledgeInputProvenanceStore) RecheckKnowledgeOutputAuxiliary(
 	ctx context.Context,
 	snapshot *types.KnowledgeOutputAuxiliaryInputSnapshot,

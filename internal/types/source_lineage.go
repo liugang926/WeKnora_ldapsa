@@ -15,6 +15,7 @@ import (
 )
 
 const (
+	// SourceLineageVersion identifies the supported source lineage representation.
 	SourceLineageVersion    = 1
 	SourceLineageMaxSources = 1024
 	SourceLineageMaxBytes   = 256 * 1024

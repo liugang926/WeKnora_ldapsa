@@ -38,9 +38,9 @@ func (m *autoTagActualModel) Chat(
 type autoTagActualLineageChecker struct{ calls int }
 
 func (c *autoTagActualLineageChecker) Check(
-	ctx context.Context,
+	_ context.Context,
 	lineage *types.SourceLineage,
-	scope access.LineageReadScope,
+	_ access.LineageReadScope,
 ) error {
 	c.calls++
 	return lineage.RequireComplete()
@@ -94,7 +94,8 @@ func autoTagActualFixture(
 	require.NoError(
 		t,
 		db.Exec(
-			"CREATE TABLE nextcloud_source_versions(candidate_knowledge_id TEXT); CREATE TABLE nextcloud_source_revisions(candidate_knowledge_id TEXT)",
+			("CREATE TABLE nextcloud_source_versions(candidate_knowledge_id TEXT); CREAT" +
+				"E TABLE nextcloud_source_revisions(candidate_knowledge_id TEXT)"),
 		).Error,
 	)
 	sqlDB, err := db.DB()
@@ -182,7 +183,8 @@ func runKnowledgeAutoTagActualEnqueueOriginalActorManifestAndSQLWriter(t *testin
 			require.NoError(
 				t,
 				db.Exec(
-					"CREATE UNIQUE INDEX IF NOT EXISTS auto_span_producer_unique ON knowledge_processing_spans(knowledge_id,attempt,span_id)",
+					("CREATE UNIQUE INDEX IF NOT EXISTS auto_span_producer_unique ON knowledge_p" +
+						"rocessing_spans(knowledge_id,attempt,span_id)"),
 				).Error,
 			)
 			spanPath := "../../../migrations/sqlite/000057_processing_span_original_inputs.up.sql"

@@ -38,10 +38,12 @@ func (e *EventManager) BeginSourceLineage(
 	return ctx, nil
 }
 
+// ConfigureSourceLineage configures the source lineage boundary.
 func ConfigureSourceLineage(manager *EventManager, guard *access.NextcloudSourceLineageGuard) {
 	manager.sourceLineageGuard = guard
 }
 
+// ConfigureRAGChunkMergeHydration configures the ragchunk merge hydration boundary.
 func ConfigureRAGChunkMergeHydration(manager *EventManager, base interfaces.KnowledgeBaseService) {
 	reader, _ := base.(interfaces.RAGChunkAugmentationReader)
 	for _, plugin := range manager.listeners[types.CHUNK_MERGE] {
@@ -70,6 +72,7 @@ func AccountHistory(ctx context.Context, history []*types.History) error {
 	return turn.Check(ctx)
 }
 
+// AccountResults adds the actual retrieved result receipts to the current turn.
 func AccountResults(ctx context.Context, results []*types.SearchResult) error {
 	turn := types.RAGSourceLineageFromContext(ctx)
 	if turn == nil {

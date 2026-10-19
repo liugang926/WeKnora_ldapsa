@@ -36,12 +36,15 @@ type knowledgeTemplateResult struct {
 
 func (knowledgeTemplateResult) TableName() string { return "knowledge_enrichment_template_results" }
 
+// KnowledgeEnrichmentTemplateInputSnapshot represents knowledge enrichment template input snapshot repository data.
 type KnowledgeEnrichmentTemplateInputSnapshot struct {
 	ID, ModelID, Purpose string
 	Tenant               *types.Tenant
 	Parents              []*types.ChunkOutputInputSnapshot
 	Lineage              *types.SourceLineage
 }
+
+// KnowledgeEnrichmentTemplateModelResult represents knowledge enrichment template model result repository data.
 type KnowledgeEnrichmentTemplateModelResult struct{ inputID, resultID, content string }
 
 func validKnowledgeTemplate(purpose, content string) error {
@@ -80,6 +83,7 @@ func (s *KnowledgeInputProvenanceStore) authorizeKnowledgeTemplateWrite(
 	return fresh, nil
 }
 
+// ReadKnowledgeTemplateConfiguration reads knowledge template configuration.
 func (s *KnowledgeInputProvenanceStore) ReadKnowledgeTemplateConfiguration(
 	ctx context.Context,
 	tenant uint64,
@@ -93,6 +97,7 @@ func (s *KnowledgeInputProvenanceStore) ReadKnowledgeTemplateConfiguration(
 	return &kb, lineage, err
 }
 
+// WriteIndependentKnowledgeEnrichmentTemplate writes independent knowledge enrichment template.
 func (s *KnowledgeInputProvenanceStore) WriteIndependentKnowledgeEnrichmentTemplate(
 	ctx context.Context,
 	tenant uint64,
@@ -142,6 +147,7 @@ func (s *KnowledgeInputProvenanceStore) WriteIndependentKnowledgeEnrichmentTempl
 	return result, err
 }
 
+// WriteCodeKnowledgeEnrichmentTemplate writes code knowledge enrichment template.
 // The code boundary accepts an exact new literal and a known configuration;
 // it cannot adopt old unknown configuration fields or client origin markers.
 func (s *KnowledgeInputProvenanceStore) WriteCodeKnowledgeEnrichmentTemplate(
@@ -186,6 +192,7 @@ func (s *KnowledgeInputProvenanceStore) WriteCodeKnowledgeEnrichmentTemplate(
 	return result, err
 }
 
+// CaptureKnowledgeEnrichmentTemplateInputs captures knowledge enrichment template inputs.
 func (s *KnowledgeInputProvenanceStore) CaptureKnowledgeEnrichmentTemplateInputs(
 	ctx context.Context,
 	tenant uint64,
@@ -418,6 +425,7 @@ func (s *KnowledgeInputProvenanceStore) recheckTemplateInputInTx(
 	return &row, ctx.Err()
 }
 
+// RecheckKnowledgeEnrichmentTemplateInputs rechecks knowledge enrichment template inputs.
 func (s *KnowledgeInputProvenanceStore) RecheckKnowledgeEnrichmentTemplateInputs(ctx context.Context, id string) error {
 	var row knowledgeTemplateInput
 	if err := s.db.WithContext(ctx).Where("id = ?", id).Take(&row).Error; err != nil {
@@ -447,6 +455,7 @@ func (s *KnowledgeInputProvenanceStore) RecheckKnowledgeEnrichmentTemplateInputs
 		Transaction(func(tx *gorm.DB) error { _, err := s.recheckTemplateInputInTx(ctx, tx, id); return err }, knowledgeDisplayWriteOptions(s.db))
 }
 
+// CaptureKnowledgeTemplateModelResult captures knowledge template model result.
 func (s *KnowledgeInputProvenanceStore) CaptureKnowledgeTemplateModelResult(
 	ctx context.Context,
 	id, content string,
@@ -472,6 +481,7 @@ func (s *KnowledgeInputProvenanceStore) CaptureKnowledgeTemplateModelResult(
 	return &KnowledgeEnrichmentTemplateModelResult{id, result.ID, content}, nil
 }
 
+// CommitDerivedKnowledgeEnrichmentTemplate commits derived knowledge enrichment template.
 func (s *KnowledgeInputProvenanceStore) CommitDerivedKnowledgeEnrichmentTemplate(
 	ctx context.Context,
 	result *KnowledgeEnrichmentTemplateModelResult,
@@ -539,6 +549,7 @@ func (s *KnowledgeInputProvenanceStore) CommitDerivedKnowledgeEnrichmentTemplate
 	return kbResult, err
 }
 
+// AuthorizeKnowledgeTemplateConfigurationEdit authorizes knowledge template configuration edit.
 func (s *KnowledgeInputProvenanceStore) AuthorizeKnowledgeTemplateConfigurationEdit(
 	ctx context.Context,
 	kb *types.KnowledgeBase,
@@ -546,6 +557,7 @@ func (s *KnowledgeInputProvenanceStore) AuthorizeKnowledgeTemplateConfigurationE
 	return s.authorizeKnowledgeTemplateWrite(ctx, kb)
 }
 
+// ReadKnowledgeEnrichmentTemplateInputs reads knowledge enrichment template inputs.
 func (s *KnowledgeInputProvenanceStore) ReadKnowledgeEnrichmentTemplateInputs(
 	ctx context.Context,
 	id string,
@@ -584,6 +596,7 @@ func (s *KnowledgeInputProvenanceStore) ReadKnowledgeEnrichmentTemplateInputs(
 	return &KnowledgeEnrichmentTemplateInputSnapshot{row.ID, row.ModelID, row.Purpose, &tenant, parents, &lineage}, nil
 }
 
+// KnowledgeTemplateConfigurationStamp returns the knowledge template configuration stamp result.
 func (s *KnowledgeInputProvenanceStore) KnowledgeTemplateConfigurationStamp(
 	ctx context.Context,
 	tenant uint64,

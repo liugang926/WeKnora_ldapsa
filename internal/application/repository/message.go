@@ -452,7 +452,8 @@ func (r *messageRepository) SearchMessagesByKeyword(
 
 	query := r.db.WithContext(ctx).
 		Table("messages").
-		Select("messages.*, sessions.title as session_title, sessions.title_source_lineage as session_title_source_lineage").
+		Select(("messages.*, sessions.title as session_title, sessions.title_source_lineage"+
+			" as session_title_source_lineage")).
 		Joins("INNER JOIN sessions ON sessions.id = messages.session_id AND sessions.deleted_at IS NULL").
 		Where("sessions.tenant_id = ?", tenantID).
 		Where("messages.deleted_at IS NULL").
@@ -519,7 +520,8 @@ func (r *messageRepository) GetMessagesByKnowledgeIDs(
 	var results []*types.MessageWithSession
 	if err := r.db.WithContext(ctx).
 		Table("messages").
-		Select("messages.*, sessions.title as session_title, sessions.title_source_lineage as session_title_source_lineage").
+		Select(("messages.*, sessions.title as session_title, sessions.title_source_lineage" +
+			" as session_title_source_lineage")).
 		Joins("INNER JOIN sessions ON sessions.id = messages.session_id AND sessions.deleted_at IS NULL").
 		Where("messages.deleted_at IS NULL").
 		Where("messages.knowledge_id IN ?", knowledgeIDs).
@@ -543,7 +545,8 @@ func (r *messageRepository) GetMessagesByRequestIDs(
 	var results []*types.MessageWithSession
 	if err := r.db.WithContext(ctx).
 		Table("messages").
-		Select("messages.*, sessions.title as session_title, sessions.title_source_lineage as session_title_source_lineage").
+		Select(("messages.*, sessions.title as session_title, sessions.title_source_lineage"+
+			" as session_title_source_lineage")).
 		Joins("INNER JOIN sessions ON sessions.id = messages.session_id AND sessions.deleted_at IS NULL").
 		Where("messages.deleted_at IS NULL").
 		Where("messages.session_id = ?", sessionID).

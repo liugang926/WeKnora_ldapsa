@@ -55,6 +55,7 @@ type NextcloudSourcePairingAbort NextcloudSourcePairing
 
 func (NextcloudSourcePairingAbort) TableName() string { return "nextcloud_source_pairing_aborts" }
 
+// NextcloudSourcePairingRepository represents nextcloud source pairing repository repository data.
 type NextcloudSourcePairingRepository struct {
 	db                   *gorm.DB
 	nameAuthorityFactory KnowledgeDisplayAuthorityFactory
@@ -221,7 +222,7 @@ func (r *NextcloudSourcePairingRepository) PrepareSourcePairing(
 					BindingID:     proposed.BindingID,
 				},
 			)
-			if err := admitDataSourceNameInput(tx, nameCtx, &persisted, r.nameAuthorityFactory); err != nil {
+			if err := admitDataSourceNameInput(nameCtx, tx, &persisted, r.nameAuthorityFactory); err != nil {
 				return err
 			}
 		}
@@ -600,6 +601,7 @@ func activeNextcloudSourcePairing(tx *gorm.DB, tenantID uint64, kbID, datasource
 	return nil
 }
 
+// ControlsClosed returns the controls closed result.
 // Recovery controls are an additional barrier even for ordinary tenant owners.
 func (r *NextcloudSourcePairingRepository) ControlsClosed(ctx context.Context, instance string) (bool, error) {
 	return nextcloudControlsClosed(r.db.WithContext(ctx), instance)

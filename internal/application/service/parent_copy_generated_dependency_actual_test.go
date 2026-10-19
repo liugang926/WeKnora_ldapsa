@@ -60,7 +60,8 @@ func runParentCopyActualGeneratedDependency(t *testing.T, pg bool) {
 				require.NoError(
 					t,
 					migration.Exec(
-						`CREATE FUNCTION uuid_generate_v4() RETURNS uuid LANGUAGE sql AS $$ SELECT public.uuid_generate_v4() $$`,
+						("CREATE FUNCTION uuid_generate_v4() RETURNS uuid LANGUAGE sql AS $$ SELECT " +
+							"public.uuid_generate_v4() $$"),
 					).Error,
 				)
 			}
@@ -232,7 +233,7 @@ func runParentCopyActualGeneratedDependency(t *testing.T, pg bool) {
 								return
 							}
 							value := tx.Statement.ReflectValue
-							for value.Kind() == reflect.Ptr {
+							for value.Kind() == reflect.Pointer {
 								value = value.Elem()
 							}
 							if value.Kind() != reflect.Slice || value.Len() == 0 {
@@ -281,7 +282,7 @@ func runParentCopyActualGeneratedDependency(t *testing.T, pg bool) {
 							return
 						}
 						v := tx.Statement.ReflectValue
-						for v.Kind() == reflect.Ptr {
+						for v.Kind() == reflect.Pointer {
 							v = v.Elem()
 						}
 						if v.FieldByName("Field").String() == "rendered_content" {
@@ -308,7 +309,9 @@ func runParentCopyActualGeneratedDependency(t *testing.T, pg bool) {
 			var copyID string
 			require.NoError(
 				t,
-				m.f.db.Raw("SELECT h.body_id FROM original_body_field_heads h JOIN message_generated_field_admissions a ON a.id=h.row_key WHERE h.source_table='message_generated_field_admissions' AND a.message_id=? AND a.field='rendered_content'", host.ID).
+				m.f.db.Raw(("SELECT h.body_id FROM original_body_field_heads h JOIN message_generated_f"+
+					"ield_admissions a ON a.id=h.row_key WHERE h.source_table='message_generate"+
+					"d_field_admissions' AND a.message_id=? AND a.field='rendered_content'"), host.ID).
 					Scan(&copyID).
 					Error,
 			)
@@ -348,7 +351,8 @@ func runParentCopyActualGeneratedDependency(t *testing.T, pg bool) {
 				var retained string
 				require.NoError(
 					t,
-					m.f.db.Raw("SELECT parent_materials FROM message_generated_field_admissions WHERE message_id=? AND field='rendered_content'", host.ID).
+					m.f.db.Raw(("SELECT parent_materials FROM message_generated_field_admissions WHERE mess"+
+						"age_id=? AND field='rendered_content'"), host.ID).
 						Scan(&retained).
 						Error,
 				)
@@ -363,7 +367,9 @@ func runParentCopyActualGeneratedDependency(t *testing.T, pg bool) {
 			var sourceRef int64
 			require.NoError(
 				t,
-				m.f.db.Raw("SELECT count(*) FROM original_body_parent_refs p JOIN knowledge_input_admissions a ON a.admission_id=p.admission_id WHERE p.body_id=? AND a.knowledge_id=? AND a.build_generation=?", copyID, k.ID, actual.Proof.SourceLineage.Sources[0].Revision).
+				m.f.db.Raw(("SELECT count(*) FROM original_body_parent_refs p JOIN knowledge_input_admi"+
+					"ssions a ON a.admission_id=p.admission_id WHERE p.body_id=? AND a.knowledg"+
+					"e_id=? AND a.build_generation=?"), copyID, k.ID, actual.Proof.SourceLineage.Sources[0].Revision).
 					Scan(&sourceRef).
 					Error,
 			)
@@ -391,7 +397,8 @@ func runParentCopyActualGeneratedDependency(t *testing.T, pg bool) {
 			require.NoError(
 				t,
 				m.f.db.Table("nextcloud_content_leases").
-					Where("tenant_id=7 AND knowledge_base_id='kb' AND knowledge_id=? AND epoch=? AND kind='read' AND released_at_ms IS NULL", k.ID, actual.Proof.SourceLineage.Sources[0].Revision).
+					Where(("tenant_id=7 AND knowledge_base_id='kb' AND knowledge_id=? AND epoch=? AND "+
+						"kind='read' AND released_at_ms IS NULL"), k.ID, actual.Proof.SourceLineage.Sources[0].Revision).
 					Count(&exactHeld).
 					Error,
 			)
@@ -431,7 +438,10 @@ func runParentCopyActualGeneratedDependency(t *testing.T, pg bool) {
 				require.NoError(
 					t,
 					m.f.db.Exec(
-						"INSERT INTO nextcloud_content_lease_coverage(tenant_id,knowledge_base_id,activated_at_ms,legacy_drained_at_ms,reader_revision,builder_revision) VALUES(7,'kb',"+clock+","+clock+",'actual-copy-pipeline-reader-contract','actual-copy-pipeline-builder-contract')",
+						("INSERT INTO nextcloud_content_lease_coverage(tenant_id,knowledge_base_id,a"+
+							"ctivated_at_ms,legacy_drained_at_ms,reader_revision,builder_revision) VALU"+
+							"ES(7,'kb',")+clock+","+clock+(",'actual-copy-pipeline-reader-contract','actual-copy-pipeline-builder-cont"+
+							"ract')"),
 					).Error,
 				)
 			}
@@ -467,7 +477,8 @@ func runParentCopyActualGeneratedDependency(t *testing.T, pg bool) {
 			var cleared string
 			require.NoError(
 				t,
-				m.f.db.Raw("SELECT parent_materials FROM message_generated_field_admissions WHERE message_id=? AND field='rendered_content'", host.ID).
+				m.f.db.Raw(("SELECT parent_materials FROM message_generated_field_admissions WHERE mess"+
+					"age_id=? AND field='rendered_content'"), host.ID).
 					Scan(&cleared).
 					Error,
 			)

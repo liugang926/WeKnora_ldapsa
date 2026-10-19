@@ -15,6 +15,7 @@ type conversationInputReader interface {
 		*types.MessageSearchResult, *types.SourceLineage, error)
 }
 
+// ExecuteSourceLineage executes the tool through its typed source-input boundary.
 func (t *SearchConversationsTool) ExecuteSourceLineage(
 	ctx context.Context, args json.RawMessage,
 ) (result *types.ToolResult, err error) {

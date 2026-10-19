@@ -37,6 +37,7 @@ type RootMigration struct {
 	State              string `json:"state"`
 }
 
+// ReadRootMigration loads the current signed source root migration state.
 func ReadRootMigration(
 	ctx context.Context,
 	source *types.DataSourceConfig,
@@ -74,6 +75,7 @@ func ReadRootMigration(
 	return out, nil
 }
 
+// AcknowledgeRootMigration acknowledges the exact pending source root migration.
 func AcknowledgeRootMigration(
 	ctx context.Context,
 	source *types.DataSourceConfig,

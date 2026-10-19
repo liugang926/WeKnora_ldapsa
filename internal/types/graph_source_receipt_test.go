@@ -62,7 +62,8 @@ func TestKnowledgeGraphReceiptPrivateAndOriginalBinding(t *testing.T) {
 		t,
 		json.Unmarshal(
 			[]byte(
-				`{"name":"entity","source_receipt":{"version":1,"source_lineage":{"version":1,"state":"complete","sources":[]}}}`,
+				("{\"name\":\"entity\",\"source_receipt\":{\"version\":1,\"source_lineage\":"+
+					"{\"version\":1,\"state\":\"complete\",\"sources\":[]}}}"),
 			),
 			&forged,
 		),

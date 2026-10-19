@@ -39,7 +39,7 @@ func (r *NextcloudEventInboxRepository) RebindFinalizedSourceRotation(
 	err = r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		// Ingest, dispatch, key rotation and revoke all lock the connection
 		// first. SQLite needs a real write before its first transactional read.
-		if tx.Dialector.Name() == "sqlite" {
+		if tx.Name() == "sqlite" {
 			lock := tx.Exec(`UPDATE nextcloud_event_connections SET status = status
 				WHERE tenant_id = ? AND datasource_id = ? AND status = 'active'`,
 				identity.TenantID, identity.DatasourceID)

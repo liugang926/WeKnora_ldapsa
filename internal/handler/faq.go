@@ -116,7 +116,7 @@ func (h *FAQHandler) ListEntries(c *gin.Context) {
 		return
 	}
 
-	ctx, closeRead, leaseErr := beginFAQHTTPRead(c, ctx, h.outputAuthorizer, kbID)
+	ctx, closeRead, leaseErr := beginFAQHTTPRead(ctx, c, h.outputAuthorizer, kbID)
 	if leaseErr != nil {
 		_ = c.Error(leaseErr)
 		return
@@ -140,7 +140,7 @@ func (h *FAQHandler) ListEntries(c *gin.Context) {
 		return
 	}
 
-	h.writeFAQOutput(c, ctx, result)
+	h.writeFAQOutput(ctx, c, result)
 }
 
 // parseOptionalFAQEnabled preserves the distinction between an omitted filter
@@ -191,7 +191,7 @@ func (h *FAQHandler) UpsertEntries(c *gin.Context) {
 
 	ctx, inputErr := repository.WithIndependentFAQInput(ctx, kbID, types.FAQInputOperation{Kind: "import", Batch: &req})
 	if inputErr != nil {
-		c.Error(knowledgeOutputHTTPError(inputErr))
+		_ = c.Error(knowledgeOutputHTTPError(inputErr))
 		return
 	}
 	taskID, err := h.knowledgeService.UpsertFAQEntries(ctx, kbID, &req)
@@ -228,7 +228,7 @@ func (h *FAQHandler) CreateEntry(c *gin.Context) {
 	}
 	ctx := service.WithFAQOutputBoundary(c.Request.Context())
 	kbID := secutils.SanitizeForLog(c.Param("id"))
-	ctx, closeRead, leaseErr := beginFAQHTTPRead(c, ctx, h.outputAuthorizer, kbID)
+	ctx, closeRead, leaseErr := beginFAQHTTPRead(ctx, c, h.outputAuthorizer, kbID)
 	if leaseErr != nil {
 		_ = c.Error(leaseErr)
 		return
@@ -244,7 +244,7 @@ func (h *FAQHandler) CreateEntry(c *gin.Context) {
 
 	ctx, inputErr := repository.WithIndependentFAQInput(ctx, kbID, types.FAQInputOperation{Kind: "create", Entry: &req})
 	if inputErr != nil {
-		c.Error(knowledgeOutputHTTPError(inputErr))
+		_ = c.Error(knowledgeOutputHTTPError(inputErr))
 		return
 	}
 	entry, err := h.knowledgeService.CreateFAQEntry(ctx, kbID, &req)
@@ -254,7 +254,7 @@ func (h *FAQHandler) CreateEntry(c *gin.Context) {
 		return
 	}
 
-	h.writeFAQOutput(c, ctx, entry)
+	h.writeFAQOutput(ctx, c, entry)
 }
 
 // UpdateEntry godoc
@@ -277,7 +277,7 @@ func (h *FAQHandler) UpdateEntry(c *gin.Context) {
 	}
 	ctx := service.WithFAQOutputBoundary(c.Request.Context())
 	kbID := secutils.SanitizeForLog(c.Param("id"))
-	ctx, closeRead, leaseErr := beginFAQHTTPRead(c, ctx, h.outputAuthorizer, kbID)
+	ctx, closeRead, leaseErr := beginFAQHTTPRead(ctx, c, h.outputAuthorizer, kbID)
 	if leaseErr != nil {
 		_ = c.Error(leaseErr)
 		return
@@ -303,7 +303,7 @@ func (h *FAQHandler) UpdateEntry(c *gin.Context) {
 		types.FAQInputOperation{Kind: "update", Entry: &req, EntrySeqID: entrySeqID},
 	)
 	if inputErr != nil {
-		c.Error(knowledgeOutputHTTPError(inputErr))
+		_ = c.Error(knowledgeOutputHTTPError(inputErr))
 		return
 	}
 	entry, err := h.knowledgeService.UpdateFAQEntry(ctx, kbID, entrySeqID, &req)
@@ -313,7 +313,7 @@ func (h *FAQHandler) UpdateEntry(c *gin.Context) {
 		return
 	}
 
-	h.writeFAQOutput(c, ctx, entry)
+	h.writeFAQOutput(ctx, c, entry)
 }
 
 // UpdateEntryTagBatch godoc
@@ -353,7 +353,7 @@ func (h *FAQHandler) UpdateEntryTagBatch(c *gin.Context) {
 		types.FAQInputOperation{Kind: "fields", Fields: fields},
 	)
 	if inputErr != nil {
-		c.Error(knowledgeOutputHTTPError(inputErr))
+		_ = c.Error(knowledgeOutputHTTPError(inputErr))
 		return
 	}
 	if err := h.knowledgeService.UpdateFAQEntryTagBatch(ctx, kbID, req.Updates); err != nil {
@@ -395,7 +395,7 @@ func (h *FAQHandler) UpdateEntryFieldsBatch(c *gin.Context) {
 		types.FAQInputOperation{Kind: "fields", Fields: &req},
 	)
 	if inputErr != nil {
-		c.Error(knowledgeOutputHTTPError(inputErr))
+		_ = c.Error(knowledgeOutputHTTPError(inputErr))
 		return
 	}
 	if err := h.knowledgeService.UpdateFAQEntryFieldsBatch(ctx, kbID, &req); err != nil {
@@ -438,7 +438,7 @@ func (h *FAQHandler) DeleteEntries(c *gin.Context) {
 		types.FAQInputOperation{Kind: "delete", DeleteIDs: req.IDs},
 	)
 	if inputErr != nil {
-		c.Error(knowledgeOutputHTTPError(inputErr))
+		_ = c.Error(knowledgeOutputHTTPError(inputErr))
 		return
 	}
 	if err := h.knowledgeService.DeleteFAQEntries(ctx, kbID, req.IDs); err != nil {
@@ -471,7 +471,7 @@ func (h *FAQHandler) SearchFAQ(c *gin.Context) {
 	}
 	ctx := service.WithFAQOutputBoundary(c.Request.Context())
 	kbID := secutils.SanitizeForLog(c.Param("id"))
-	ctx, closeRead, leaseErr := beginFAQHTTPRead(c, ctx, h.outputAuthorizer, kbID)
+	ctx, closeRead, leaseErr := beginFAQHTTPRead(ctx, c, h.outputAuthorizer, kbID)
 	if leaseErr != nil {
 		_ = c.Error(leaseErr)
 		return
@@ -498,7 +498,7 @@ func (h *FAQHandler) SearchFAQ(c *gin.Context) {
 		return
 	}
 
-	h.writeFAQOutput(c, ctx, entries)
+	h.writeFAQOutput(ctx, c, entries)
 }
 
 // ExportEntries godoc
@@ -521,7 +521,7 @@ func (h *FAQHandler) ExportEntries(c *gin.Context) {
 	}
 	ctx := service.WithFAQOutputBoundary(c.Request.Context())
 	kbID := secutils.SanitizeForLog(c.Param("id"))
-	ctx, closeRead, leaseErr := beginFAQHTTPRead(c, ctx, h.outputAuthorizer, kbID)
+	ctx, closeRead, leaseErr := beginFAQHTTPRead(ctx, c, h.outputAuthorizer, kbID)
 	if leaseErr != nil {
 		_ = c.Error(leaseErr)
 		return
@@ -538,7 +538,7 @@ func (h *FAQHandler) ExportEntries(c *gin.Context) {
 		}
 		c.Header("Content-Type", "application/json; charset=utf-8")
 		c.Header("Content-Disposition", "attachment; filename=faq_export.json")
-		h.writeFAQData(c, ctx, "application/json; charset=utf-8", jsonData, jsonData)
+		h.writeFAQData(ctx, c, "application/json; charset=utf-8", jsonData, jsonData)
 		return
 	}
 
@@ -554,7 +554,7 @@ func (h *FAQHandler) ExportEntries(c *gin.Context) {
 	c.Header("Content-Disposition", "attachment; filename=faq_export.csv")
 	// Add BOM for Excel compatibility with UTF-8
 	bom := []byte{0xEF, 0xBB, 0xBF}
-	h.writeFAQData(c, ctx, "text/csv; charset=utf-8", csvData, append(bom, csvData...))
+	h.writeFAQData(ctx, c, "text/csv; charset=utf-8", csvData, append(bom, csvData...))
 }
 
 // GetEntry godoc
@@ -577,7 +577,7 @@ func (h *FAQHandler) GetEntry(c *gin.Context) {
 	}
 	ctx := service.WithFAQOutputBoundary(c.Request.Context())
 	kbID := secutils.SanitizeForLog(c.Param("id"))
-	ctx, closeRead, leaseErr := beginFAQHTTPRead(c, ctx, h.outputAuthorizer, kbID)
+	ctx, closeRead, leaseErr := beginFAQHTTPRead(ctx, c, h.outputAuthorizer, kbID)
 	if leaseErr != nil {
 		_ = c.Error(leaseErr)
 		return
@@ -597,7 +597,7 @@ func (h *FAQHandler) GetEntry(c *gin.Context) {
 		return
 	}
 
-	h.writeFAQOutput(c, ctx, entry)
+	h.writeFAQOutput(ctx, c, entry)
 }
 
 // GetImportProgress godoc
@@ -623,9 +623,9 @@ func (h *FAQHandler) GetImportProgress(c *gin.Context) {
 		return
 	}
 
-	ctx, closeRead, leaseErr := beginFAQProgressHTTPRead(c, ctx, h.outputAuthorizer, taskID)
+	ctx, closeRead, leaseErr := beginFAQProgressHTTPRead(ctx, c, h.outputAuthorizer, taskID)
 	if leaseErr != nil {
-		c.Error(leaseErr)
+		_ = c.Error(leaseErr)
 		return
 	}
 	defer closeRead()
@@ -636,7 +636,7 @@ func (h *FAQHandler) GetImportProgress(c *gin.Context) {
 		return
 	}
 
-	h.writeFAQOutput(c, ctx, progress)
+	h.writeFAQOutput(ctx, c, progress)
 }
 
 // UpdateLastImportResultDisplayStatus godoc
@@ -670,7 +670,7 @@ func (h *FAQHandler) UpdateLastImportResultDisplayStatus(c *gin.Context) {
 		types.FAQInputOperation{Kind: "display-status", DisplayStatus: req.DisplayStatus},
 	)
 	if inputErr != nil {
-		c.Error(knowledgeOutputHTTPError(inputErr))
+		_ = c.Error(knowledgeOutputHTTPError(inputErr))
 		return
 	}
 	if err := h.knowledgeService.UpdateLastFAQImportResultDisplayStatus(ctx, kbID, req.DisplayStatus); err != nil {
@@ -705,7 +705,7 @@ func (h *FAQHandler) AddSimilarQuestions(c *gin.Context) {
 	}
 	ctx := service.WithFAQOutputBoundary(c.Request.Context())
 	kbID := secutils.SanitizeForLog(c.Param("id"))
-	ctx, closeRead, leaseErr := beginFAQHTTPRead(c, ctx, h.outputAuthorizer, kbID)
+	ctx, closeRead, leaseErr := beginFAQHTTPRead(ctx, c, h.outputAuthorizer, kbID)
 	if leaseErr != nil {
 		_ = c.Error(leaseErr)
 		return
@@ -731,7 +731,7 @@ func (h *FAQHandler) AddSimilarQuestions(c *gin.Context) {
 		types.FAQInputOperation{Kind: "similar", EntrySeqID: entrySeqID, Questions: req.SimilarQuestions},
 	)
 	if inputErr != nil {
-		c.Error(knowledgeOutputHTTPError(inputErr))
+		_ = c.Error(knowledgeOutputHTTPError(inputErr))
 		return
 	}
 	entry, err := h.knowledgeService.AddSimilarQuestions(ctx, kbID, entrySeqID, req.SimilarQuestions)
@@ -741,5 +741,5 @@ func (h *FAQHandler) AddSimilarQuestions(c *gin.Context) {
 		return
 	}
 
-	h.writeFAQOutput(c, ctx, entry)
+	h.writeFAQOutput(ctx, c, entry)
 }

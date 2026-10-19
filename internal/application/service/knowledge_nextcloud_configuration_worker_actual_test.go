@@ -79,29 +79,43 @@ func newScopedConfigurationWorkerSource(t *testing.T, decision *atomic.Int32) *h
 		}
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/capabilities"):
-			fmt.Fprint(w, `{"protocol_version":"1","instance_id":"instance"}`)
+			if _, err := fmt.Fprint(w, `{"protocol_version":"1","instance_id":"instance"}`); err != nil {
+				t.Errorf("write fixture response: %v", err)
+			}
 		case strings.HasSuffix(r.URL.Path, "/bindings"):
-			fmt.Fprintf(
+			if _, err := fmt.Fprintf(
 				w,
-				`{"bindings":[{"id":%q,"name":"Actual source root","root_file_id":7,"publication_state":"active","publication_epoch":1},{"id":%q,"name":"Actual cloned root","root_file_id":8,"publication_state":"active","publication_epoch":1}]}`,
+				("{\"bindings\":[{\"id\":%q,\"name\":\"Actual source root\",\"root_file_id\"" +
+					":7,\"publication_state\":\"active\",\"publication_epoch\":1},{\"id\":%q,\"" +
+					"name\":\"Actual cloned root\",\"root_file_id\":8,\"publication_state\":\"a" +
+					"ctive\",\"publication_epoch\":1}]}"),
 				scopedWorkerSourceBinding,
 				scopedWorkerTargetBinding,
-			)
+			); err != nil {
+				t.Errorf("write fixture response: %v", err)
+			}
 		case strings.HasSuffix(r.URL.Path, "/manifest"):
-			fmt.Fprintf(
+			if _, err := fmt.Fprintf(
 				w,
-				`{"generation":"actual-worker-generation","complete":true,"next_cursor":null,"items":[{"file_id":%d,"etag":%q,"name":"source.md","path":"source.md","mime_type":"text/markdown","size":%d,"mtime":1700000000}]}`,
+				("{\"generation\":\"actual-worker-generation\",\"complete\":true,\"next_curs" +
+					"or\":null,\"items\":[{\"file_id\":%d,\"etag\":%q,\"name\":\"source.md\",\"" +
+					"path\":\"source.md\",\"mime_type\":\"text/markdown\",\"size\":%d,\"mtime\"" +
+					":1700000000}]}"),
 				file,
 				etag,
 				len(artifact),
-			)
+			); err != nil {
+				t.Errorf("write fixture response: %v", err)
+			}
 		case strings.HasSuffix(r.URL.Path, "/changes"):
 			http.NotFound(w, r)
 		case strings.HasSuffix(r.URL.Path, "/content"):
 			require.Equal(t, `"`+etag+`"`, r.Header.Get("If-Match"))
 			w.Header().Set("ETag", `"`+etag+`"`)
 			w.Header().Set("Content-Type", "text/markdown")
-			fmt.Fprint(w, artifact)
+			if _, err := fmt.Fprint(w, artifact); err != nil {
+				t.Errorf("write fixture response: %v", err)
+			}
 		case strings.HasSuffix(r.URL.Path, "/publication-check"):
 			var input struct {
 				InstanceID string `json:"instance_id"`
@@ -161,15 +175,25 @@ func newScopedConfigurationWorkerSource(t *testing.T, decision *atomic.Int32) *h
 				return
 			}
 			if binding == scopedWorkerSourceBinding && decision.Load() == 1 {
-				fmt.Fprintf(w, `{"allow":false,"reason":"withdrawn","checked_at":%d}`, time.Now().Unix())
+				if _, err := fmt.Fprintf(
+					w,
+					`{"allow":false,"reason":"withdrawn","checked_at":%d}`,
+					time.Now().Unix(),
+				); err != nil {
+					t.Errorf("write fixture response: %v", err)
+				}
 				return
 			}
-			fmt.Fprintf(
+			if _, err := fmt.Fprintf(
 				w,
-				`{"allow":true,"reason":"authorized","policy_revision":"actual-current-policy","source_etag":%q,"source_content_revision":"0","checked_at":%d}`,
+				("{\"allow\":true,\"reason\":\"authorized\",\"policy_revision\":\"actual-cur" +
+					"rent-policy\",\"source_etag\":%q,\"source_content_revision\":\"0\",\"check" +
+					"ed_at\":%d}"),
 				etag,
 				time.Now().Unix(),
-			)
+			); err != nil {
+				t.Errorf("write fixture response: %v", err)
+			}
 		default:
 			http.NotFound(w, r)
 		}
@@ -197,12 +221,11 @@ func scopedWorkerCredential(t *testing.T, db *gorm.DB, id, base, template string
 }
 
 func scopedWorkerActivate(
-	t *testing.T,
+	pairCtx context.Context, t *testing.T,
 	f *enrichmentTestFixture,
 	credential types.NextcloudOnboardingCredential,
 	op types.NextcloudOnboardingOperation,
 	pair *repository.NextcloudSourcePairing,
-	pairCtx context.Context,
 ) {
 	t.Helper()
 	store := repository.NewNextcloudOnboardingStore(f.db)
@@ -305,7 +328,8 @@ func newScopedConfigurationWorkerFixture(
 		require.NoError(
 			t,
 			f.db.Exec(
-				"CREATE UNIQUE INDEX IF NOT EXISTS scoped_worker_policy_key ON resource_access_policies(tenant_id,resource_type,resource_id)",
+				("CREATE UNIQUE INDEX IF NOT EXISTS scoped_worker_policy_key ON resource_acc" +
+					"ess_policies(tenant_id,resource_type,resource_id)"),
 			).Error,
 		)
 		now := time.Now().UTC()
@@ -393,7 +417,7 @@ func newScopedConfigurationWorkerFixture(
 		return sourcePairCtx, err
 	}
 	live.AfterActivate = func(f *enrichmentTestFixture, pair *repository.NextcloudSourcePairing) {
-		scopedWorkerActivate(t, f, sourceCredential, sourceOp, pair, sourcePairCtx)
+		scopedWorkerActivate(sourcePairCtx, t, f, sourceCredential, sourceOp, pair)
 	}
 	m := newMachinePipelineFixtureWithSource(
 		t,
@@ -488,7 +512,7 @@ func newScopedConfigurationWorkerFixture(
 	require.NoError(t, err)
 	require.True(t, created)
 	require.NoError(t, pairer.ActivateSourcePairing(pairCtx, pair))
-	scopedWorkerActivate(t, m.f, credential, op, &pair, pairCtx)
+	scopedWorkerActivate(pairCtx, t, m.f, credential, op, &pair)
 	targetDS, err := sources.FindByID(context.Background(), pair.DataSourceID)
 	require.NoError(t, err)
 	target := *m
@@ -581,7 +605,9 @@ func TestNextcloudSourceBoundConfigurationFreshWorkerActualSQLite(t *testing.T) 
 						var bodies int64
 						require.NoError(
 							t,
-							m.f.db.Raw("SELECT COUNT(*) FROM original_body_leases l JOIN original_body_field_heads h ON h.body_id=l.body_id WHERE h.source_table='knowledge_bases' AND h.row_key=? AND l.kind='read' AND l.released_at_ms IS NULL", config.ID).
+							m.f.db.Raw(("SELECT COUNT(*) FROM original_body_leases l JOIN original_body_field_heads"+
+								" h ON h.body_id=l.body_id WHERE h.source_table='knowledge_bases' AND h.row"+
+								"_key=? AND l.kind='read' AND l.released_at_ms IS NULL"), config.ID).
 								Scan(&bodies).
 								Error,
 						)

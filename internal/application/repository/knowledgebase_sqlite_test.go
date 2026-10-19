@@ -12,13 +12,15 @@ import (
 )
 
 // knowledgeBasesTestDDL mirrors the `knowledge_bases` section of
-// migrations/sqlite/000000_init.up.sql. We inline the DDL here instead of
+// migrations/sqlite/000000_init.up.sql plus the enrichment-template column
+// added by 000066. We inline the DDL here instead of
 // using GORM AutoMigrate because KnowledgeBase carries fields tagged with
 // `type:jsonb`, which AutoMigrate does not map cleanly onto SQLite.
 const knowledgeBasesTestDDL = `
 CREATE TABLE IF NOT EXISTS knowledge_bases (
     profile_config TEXT,
     generated_profile TEXT,
+    enrichment_templates TEXT,
     id VARCHAR(36) PRIMARY KEY,
     name VARCHAR(255) NOT NULL,
     description TEXT,

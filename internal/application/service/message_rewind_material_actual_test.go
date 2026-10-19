@@ -65,9 +65,9 @@ func (s *actualRewindMaterialSandbox) HasActiveTurn(ctx context.Context, session
 }
 
 func produceActualRewindLaterTurn(
-	t *testing.T,
+	ctx context.Context, t *testing.T,
 	messages *messageService,
-	ctx context.Context,
+
 	session string,
 	after time.Time,
 ) (*types.Message, *types.Message) {
@@ -121,7 +121,7 @@ func TestMessageRewindActualOriginalUserAndAssistantCutsSingleConnection(t *test
 	for _, role := range []string{"user", "assistant"} {
 		t.Run(role, func(t *testing.T) {
 			_, messages, _, db, ctx, session, firstUser, firstAnswer, _, _ := actualForkMaterialFixture(t)
-			laterUser, laterAnswer := produceActualRewindLaterTurn(t, messages, ctx, session.ID, firstAnswer.CreatedAt)
+			laterUser, laterAnswer := produceActualRewindLaterTurn(ctx, t, messages, session.ID, firstAnswer.CreatedAt)
 			rewind, rows, port := actualRewindMaterialService(t, messages, db)
 			point := firstAnswer.ID
 			if role == "user" {
@@ -167,7 +167,7 @@ func TestMessageRewindActualLegacyCheckpointAndBootstrapRejectWithoutEffects(t *
 	for _, mode := range []string{"legacy_boundary", "unknown_checkpoint", "unknown_pending_bootstrap"} {
 		t.Run(mode, func(t *testing.T) {
 			_, messages, _, db, ctx, session, _, firstAnswer, _, _ := actualForkMaterialFixture(t)
-			laterUser, _ := produceActualRewindLaterTurn(t, messages, ctx, session.ID, firstAnswer.CreatedAt)
+			laterUser, _ := produceActualRewindLaterTurn(ctx, t, messages, session.ID, firstAnswer.CreatedAt)
 			rewind, rows, port := actualRewindMaterialService(t, messages, db)
 			point := laterUser.ID
 			switch mode {
@@ -237,7 +237,7 @@ func TestMessageRewindActualSystemControlAndAtomicDeleteRejectABAAndRevocation(t
 		for _, mode := range []string{"body_aba", "owner_aba", "control_aba", "actor_revoke", "scope_revoke"} {
 			t.Run(stage+"/"+mode, func(t *testing.T) {
 				_, messages, _, db, ctx, session, _, firstAnswer, _, _ := actualForkMaterialFixture(t)
-				point, _ := produceActualRewindLaterTurn(t, messages, ctx, session.ID, firstAnswer.CreatedAt)
+				point, _ := produceActualRewindLaterTurn(ctx, t, messages, session.ID, firstAnswer.CreatedAt)
 				rewind, rows, port := actualRewindMaterialService(t, messages, db)
 				changed := false
 				mutate := func() {
@@ -418,7 +418,7 @@ func TestMessageRewindActualSignedSourceDeletesAndFinalWriterRevoke(t *testing.T
 			messages, db, ctx, session, firstAnswer, setAllow, sourceID, modelCalls := actualRewindSignedSourceFixture(
 				t,
 			)
-			point, _ := produceActualRewindLaterTurn(t, messages, ctx, session.ID, firstAnswer.CreatedAt)
+			point, _ := produceActualRewindLaterTurn(ctx, t, messages, session.ID, firstAnswer.CreatedAt)
 			rewind, rows, port := actualRewindMaterialService(t, messages, db)
 			observed := false
 			rows.beforeDelete = func() {
@@ -465,8 +465,8 @@ func TestMessageRewindActualSignedSourceDeletesAndFinalWriterRevoke(t *testing.T
 
 func TestMessageRewindPostgresActualOriginalCutAndOutputCurrentCaller(t *testing.T) {
 	messages, db, ctx, session := messageNativePostgresFixture(t)
-	_, first := produceActualMessagePair(t, messages, ctx, session)
-	laterUser, _ := produceActualRewindLaterTurn(t, messages, ctx, session.ID, first.CreatedAt)
+	_, first := produceActualMessagePair(ctx, t, messages, session)
+	laterUser, _ := produceActualRewindLaterTurn(ctx, t, messages, session.ID, first.CreatedAt)
 	rewind, _, _ := actualRewindMaterialService(t, messages, db)
 	result, err := rewind.Rewind(WithRewindOriginalHTTPOutput(ctx), 7, session.UserID, session.ID, laterUser.ID)
 	require.NoError(t, err)
@@ -480,7 +480,7 @@ func TestMessageRewindPostgresActualOriginalCutAndOutputCurrentCaller(t *testing
 
 func TestMessageRewindActualForeignKnowledgeCleanupLinkRejects(t *testing.T) {
 	_, messages, _, db, ctx, session, _, first, _, _ := actualForkMaterialFixture(t)
-	_, later := produceActualRewindLaterTurn(t, messages, ctx, session.ID, first.CreatedAt)
+	_, later := produceActualRewindLaterTurn(ctx, t, messages, session.ID, first.CreatedAt)
 	require.NoError(
 		t,
 		db.Model(&types.Message{}).Where("id=?", later.ID).Update("knowledge_id", "unrelated-current-knowledge").Error,

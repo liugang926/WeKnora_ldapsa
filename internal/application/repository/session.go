@@ -210,7 +210,7 @@ func (r *sessionRepository) querySessionRows(
 			types.SkillMaintenanceSessionMarker+"%",
 		)
 		if kw := strings.TrimSpace(q.Keyword); kw != "" {
-			db = db.Where(sessionTitleCandidatePredicate(r.db.Dialector.Name()))
+			db = db.Where(sessionTitleCandidatePredicate(r.db.Name()))
 			db = db.Where(titleLikeExpr, "%"+escapeLikeKeyword(kw)+"%")
 		}
 		return db

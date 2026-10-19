@@ -89,7 +89,7 @@ func TestNextcloudScopedFirstLoginActualLDAPSAndProductionRoutes(t *testing.T) {
 	listener, err := net.Listen("tcp", "0.0.0.0:8089")
 	require.NoError(t, err)
 	server := &http.Server{Handler: r, ReadHeaderTimeout: 5 * time.Second}
-	defer server.Close()
+	defer func() { require.NoError(t, server.Close()) }()
 	go func() { _ = server.Serve(listener) }()
 	scopedFirstLoginWrite(
 		t,

@@ -6,6 +6,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/types"
 )
 
+// KnowledgeCollectionInputReader captures and rechecks knowledge collection selection inputs.
 type KnowledgeCollectionInputReader interface {
 	CaptureKnowledgeCollectionInputs(
 		context.Context,

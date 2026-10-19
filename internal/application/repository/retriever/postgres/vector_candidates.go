@@ -26,19 +26,19 @@ func (g *pgRepository) RetrieveVectorCandidates(
 	}
 	dim := len(p.Embedding)
 	query := fmt.Sprintf(
-		`SELECT candidates.id, candidates.chunk_id, candidates.knowledge_id, candidates.knowledge_base_id, (1-candidates.distance) AS score
-		FROM (
-			SELECT e.id,e.chunk_id,e.knowledge_id,e.knowledge_base_id,
-				e.embedding::halfvec(%[1]d) <=> ?::halfvec(%[1]d) AS distance
-			FROM embeddings e
-			JOIN knowledges kg ON kg.id=e.knowledge_id AND kg.knowledge_base_id=e.knowledge_base_id
-			JOIN knowledge_bases kb ON kb.id=kg.knowledge_base_id AND kb.tenant_id=kg.tenant_id
-			WHERE e.dimension=? AND kg.tenant_id=? AND kb.tenant_id=?
-			AND kg.deleted_at IS NULL AND kb.deleted_at IS NULL
-			AND kb.id IN ? AND kg.id IN ? AND kg.parse_status=? AND kg.enable_status=?
-			AND (e.is_enabled IS NULL OR e.is_enabled=?)
-			ORDER BY e.embedding::halfvec(%[1]d) <=> ?::halfvec(%[1]d), e.id ASC LIMIT ?
-		) candidates ORDER BY candidates.distance ASC,candidates.id ASC`,
+		("SELECT candidates.id, candidates.chunk_id, candidates.knowledge_id, candid" +
+			"ates.knowledge_base_id, (1-candidates.distance) AS score\n\t\tFROM (\n\t\t" +
+			"\tSELECT e.id,e.chunk_id,e.knowledge_id,e.knowledge_base_id,\n\t\t\t\te.em" +
+			"bedding::halfvec(%[1]d) <=> ?::halfvec(%[1]d) AS distance\n\t\t\tFROM embe" +
+			"ddings e\n\t\t\tJOIN knowledges kg ON kg.id=e.knowledge_id AND kg.knowledg" +
+			"e_base_id=e.knowledge_base_id\n\t\t\tJOIN knowledge_bases kb ON kb.id=kg.k" +
+			"nowledge_base_id AND kb.tenant_id=kg.tenant_id\n\t\t\tWHERE e.dimension=? " +
+			"AND kg.tenant_id=? AND kb.tenant_id=?\n\t\t\tAND kg.deleted_at IS NULL AND" +
+			" kb.deleted_at IS NULL\n\t\t\tAND kb.id IN ? AND kg.id IN ? AND kg.parse_s" +
+			"tatus=? AND kg.enable_status=?\n\t\t\tAND (e.is_enabled IS NULL OR e.is_en" +
+			"abled=?)\n\t\t\tORDER BY e.embedding::halfvec(%[1]d) <=> ?::halfvec(%[1]d)" +
+			", e.id ASC LIMIT ?\n\t\t) candidates ORDER BY candidates.distance ASC,cand" +
+			"idates.id ASC"),
 		dim,
 	)
 	vector := pgvector.NewHalfVector(p.Embedding)

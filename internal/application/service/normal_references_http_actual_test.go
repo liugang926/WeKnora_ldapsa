@@ -313,11 +313,12 @@ func runNormalReferencesActualHTTP(t *testing.T, pg bool, modes ...string) {
 		server.URL+"/knowledge-chat/"+f.Session.ID,
 		"application/json",
 		strings.NewReader(
-			"{\"query\":\"current employee policy\",\"knowledge_base_ids\":[\"kb\"],\"summary_model_id\":\"normal-reference-model\",\"disable_title\":true}",
+			("{\"query\":\"current employee policy\",\"knowledge_base_ids\":[\"kb\"],\"s" +
+				"ummary_model_id\":\"normal-reference-model\",\"disable_title\":true}"),
 		),
 	)
 	require.NoError(t, err)
-	defer response.Body.Close()
+	defer func() { require.NoError(t, response.Body.Close()) }()
 	if mode == "producer-stop" {
 		remaining := 8*time.Second - time.Since(started)
 		require.Positive(t, remaining, "the unchanged HTTP deadline still bounds startup")
@@ -343,7 +344,7 @@ func runNormalReferencesActualHTTP(t *testing.T, pg bool, modes ...string) {
 			stopResponse.StatusCode,
 			"actual owner-authorized StopSession route publishes the Redis stop event",
 		)
-		stopResponse.Body.Close()
+		require.NoError(t, stopResponse.Body.Close())
 	}
 	var body bytes.Buffer
 	_, err = body.ReadFrom(response.Body)
@@ -401,7 +402,8 @@ func runNormalReferencesActualHTTP(t *testing.T, pg bool, modes ...string) {
 						t,
 						completionErr,
 						access.ErrNextcloudPublicationDenied,
-						"every completed attempt ended with the same original-boundary denial after both delivery loops exited",
+						("every completed attempt ended with the same original-boundary denial after" +
+							" both delivery loops exited"),
 					)
 				}
 			case <-time.After(3 * time.Second):

@@ -21,7 +21,7 @@ func installMachineOnboardingSchema(t *testing.T, db, migration *gorm.DB) {
 			return
 		}
 		path := "../../../migrations/sqlite/000084_nextcloud_machine_tasks.up.sql"
-		if db.Dialector.Name() == "postgres" {
+		if db.Name() == "postgres" {
 			path = "../../../migrations/versioned/000165_nextcloud_machine_tasks.up.sql"
 		}
 		ddl, err := os.ReadFile(path)
@@ -38,7 +38,7 @@ func installMachineOnboardingSchema(t *testing.T, db, migration *gorm.DB) {
 	}
 	require.NoError(t, db.AutoMigrate(&types.AuthToken{}, &types.WikiPage{}))
 	directory, onboarding, closure, manager := "sqlite", "000074_nextcloud_onboarding", "000081_nextcloud_target_closure", "000083_nextcloud_current_manager_purpose"
-	if db.Dialector.Name() == "postgres" {
+	if db.Name() == "postgres" {
 		directory, onboarding, closure, manager = "versioned", "000155_nextcloud_onboarding", "000162_nextcloud_target_closure", "000164_nextcloud_current_manager_purpose"
 	}
 	ddl, err := os.ReadFile("../../../migrations/" + directory + "/" + onboarding + ".up.sql")
@@ -80,7 +80,7 @@ func installSourceCurrentControlSchema(t *testing.T, db, migration *gorm.DB) {
 		"000079_nextcloud_recovery_build_leases",
 		"000080_nextcloud_graph_recovery_fence",
 	}
-	if db.Dialector.Name() == "postgres" {
+	if db.Name() == "postgres" {
 		directory = "versioned"
 		names = []string{
 			"000113_nextcloud_event_inbox",

@@ -372,7 +372,8 @@ func (s *OriginalBodyRetentionStore) captureField(
 	e = bodyInternal(
 		tx,
 	).Clauses(clause.Locking{Strength: "UPDATE"}).
-		Where("tenant_id=? AND origin_domain_sha256=? AND body_sha256=? AND storage_kind=? AND state='live'", scope.Tenant, domainSHA, sha, d.Mode).
+		Where(("tenant_id=? AND origin_domain_sha256=? AND body_sha256=? AND storage_kind=" +
+			"? AND state='live'"), scope.Tenant, domainSHA, sha, d.Mode).
 		Order("created_at_ms,id").
 		Take(&body).
 		Error
@@ -413,7 +414,7 @@ func (s *OriginalBodyRetentionStore) captureField(
 		slot = uuid.NewString()
 	}
 	ref := bodyRefString(slot, id, sha)
-	if d.Mode == "vault" && tx.Dialector.Name() == "postgres" {
+	if d.Mode == "vault" && tx.Name() == "postgres" {
 		// JSON columns canonicalize object references in PostgreSQL; text fields
 		// preserve exact producer bytes. Authority compares the actual stored form.
 		if jsonCol, e := originalBodyColumnIsJSON(tx, d.Table, col); e != nil {
@@ -580,6 +581,7 @@ func (s *OriginalBodyRetentionStore) Inventory(ctx context.Context, limit int) (
 
 var originalBodyCallbackMu sync.Mutex
 
+// InstallOriginalBodyRetentionCallbacks installs original body retention callbacks.
 // Register real producer/read callbacks once. They are inactive before the
 // migration and use the caller's transaction, including SQLite pool size one.
 func InstallOriginalBodyRetentionCallbacks(db *gorm.DB) error {
@@ -887,7 +889,7 @@ var _ = strings.Contains
 
 func originalBodySchemaPresent(tx *gorm.DB) bool {
 	var count int64
-	if tx.Dialector.Name() == "sqlite" {
+	if tx.Name() == "sqlite" {
 		return bodyInternal(
 			tx,
 		).Raw("SELECT count(*) FROM sqlite_master WHERE type='table' AND name='original_body_payloads'").
@@ -895,10 +897,11 @@ func originalBodySchemaPresent(tx *gorm.DB) bool {
 			Error == nil &&
 			count == 1
 	}
-	if tx.Dialector.Name() == "postgres" {
+	if tx.Name() == "postgres" {
 		return bodyInternal(
 			tx,
-		).Raw("SELECT count(*) FROM information_schema.tables WHERE table_schema=current_schema() AND table_name='original_body_payloads'").
+		).Raw(("SELECT count(*) FROM information_schema.tables WHERE table_schema=current_"+
+			"schema() AND table_name='original_body_payloads'")).
 			Scan(&count).
 			Error == nil &&
 			count == 1
@@ -911,7 +914,7 @@ func originalBodySchemaPresent(tx *gorm.DB) bool {
 // this only deduplicates storage and creates an additional incoming owner.
 // It cannot introduce cached text, cross-tenant sharing, or a purged body ID.
 func (s *OriginalBodyRetentionStore) ShareOriginalBodyFieldInTx(
-	ctx context.Context,
+	_ context.Context,
 	tx *gorm.DB,
 	bodyID, table, key, col string,
 ) error {

@@ -56,7 +56,8 @@ func onboardingBlankTargetMetadata(tx *gorm.DB, tenant uint64, id string) (*type
 		VectorStoreID          *string
 	}
 	if err := tx.Table("knowledge_bases").
-		Select("id,tenant_id,type,is_temporary,ever_had_nextcloud_source,generated_profile IS NOT NULL AS has_profile,vector_store_id").
+		Select(("id,tenant_id,type,is_temporary,ever_had_nextcloud_source,generated_profile" +
+			" IS NOT NULL AS has_profile,vector_store_id")).
 		Where("tenant_id=? AND id=? AND deleted_at IS NULL", tenant, id).
 		Take(&row).
 		Error; err != nil {
@@ -133,7 +134,8 @@ func writeOnboardingConfigurationClone(
 	}
 	if req.Mode == "existing" {
 		if q := tx.Exec(
-			"UPDATE knowledge_bases SET ever_had_nextcloud_source=ever_had_nextcloud_source WHERE tenant_id=? AND id=? AND deleted_at IS NULL",
+			("UPDATE knowledge_bases SET ever_had_nextcloud_source=ever_had_nextcloud_so" +
+				"urce WHERE tenant_id=? AND id=? AND deleted_at IS NULL"),
 			c.TenantID,
 			req.KnowledgeBaseID,
 		); q.Error != nil ||

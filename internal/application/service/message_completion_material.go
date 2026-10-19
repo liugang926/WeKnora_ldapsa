@@ -32,9 +32,9 @@ func (s *messageService) bindInitialMessageMaterial(ctx context.Context, assista
 			guard.snapshot.Proofs[0].MessageID == user &&
 			guard.snapshot.Messages[0].Role == "user" &&
 			guard.snapshot.Messages[0].RequestID == request {
-			copy := *guard.snapshot.Proofs[0]
-			proof = &copy
-			session = copy.SessionID
+			copied := *guard.snapshot.Proofs[0]
+			proof = &copied
+			session = copied.SessionID
 		}
 		guard.mu.Unlock()
 	}
@@ -86,8 +86,8 @@ func (s *messageService) markCompletionInputsLocked(
 		for _, proof := range guard.snapshot.Proofs {
 			sources = append(sources, proof.SourceLineage)
 			if proof.MessageID == binding.Initial.MessageID {
-				copy := *proof
-				initial = &copy
+				copied2 := *proof
+				initial = &copied2
 			}
 		}
 	}

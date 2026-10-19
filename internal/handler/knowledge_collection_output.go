@@ -12,6 +12,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// ConfigureKnowledgeHandlerCollectionOutput configures the knowledge handler collection output boundary.
 func ConfigureKnowledgeHandlerCollectionOutput(
 	h *KnowledgeHandler,
 	authorizer *service.KnowledgeCollectionOutputAuthorizer,
@@ -54,7 +55,7 @@ func (w *knowledgeCollectionAuthorizationWriter) deny(err error) {
 	}
 	w.Header().Del("Content-Type")
 	w.Header().Del("Content-Length")
-	w.ResponseWriter.WriteHeader(status)
+	w.WriteHeader(status)
 	w.ResponseWriter.WriteHeaderNow()
 }
 
@@ -83,8 +84,8 @@ func (w *knowledgeCollectionAuthorizationWriter) WriteHeaderNow() {
 }
 
 func (h *KnowledgeHandler) respondKnowledgeCollection(
-	c *gin.Context,
-	ctx context.Context,
+	ctx context.Context, c *gin.Context,
+
 	scopes []types.KnowledgeSearchScope,
 	request types.KnowledgeCollectionSelectionRequest,
 	scope access.LineageReadScope,
@@ -101,18 +102,18 @@ func (h *KnowledgeHandler) respondKnowledgeCollection(
 	}()
 	plan, err := h.collectionOutputAuthorizer.FAQResultReadPlan(ctx, scopes)
 	if err != nil {
-		c.Error(knowledgeOutputHTTPError(err))
+		_ = c.Error(knowledgeOutputHTTPError(err))
 		return
 	}
 	fence, err := acquireFAQReadPlanLeases(ctx, h.contentLeases, plan.Scopes, plan.SourceLineage, h.leaseHeartbeat)
 	if err != nil {
-		c.Error(err)
+		_ = c.Error(err)
 		return
 	}
 	fences = append(fences, fence)
 	ctx, err = repository.WithFAQImportOutputReadSetPlan(fence.Context(ctx), plan)
 	if err != nil {
-		c.Error(knowledgeOutputHTTPError(err))
+		_ = c.Error(knowledgeOutputHTTPError(err))
 		return
 	}
 
@@ -173,8 +174,8 @@ func (h *KnowledgeHandler) respondKnowledgeCollection(
 }
 
 func (h *KnowledgeHandler) searchKnowledgeCollection(
-	c *gin.Context,
-	ctx context.Context,
+	ctx context.Context, c *gin.Context,
+
 	keyword string,
 	offset, limit int,
 	fileTypes []string,
@@ -231,8 +232,9 @@ func (h *KnowledgeHandler) searchKnowledgeCollection(
 		return
 	}
 	h.respondKnowledgeCollection(
-		c,
-		ctx,
+
+		ctx, c,
+
 		scopes,
 		types.KnowledgeCollectionSelectionRequest{
 			Mode:      "search",

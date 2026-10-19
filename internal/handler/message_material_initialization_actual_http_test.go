@@ -150,11 +150,12 @@ func TestMessageMaterialActualHTTPInitializationWaitsForAdmission(t *testing.T) 
 				server.URL+"/knowledge-chat/"+f.parent.SessionID,
 				"application/json",
 				strings.NewReader(
-					`{"query":"actual new delayed user question","summary_model_id":"actual-http-tail-model","disable_title":true}`,
+					("{\"query\":\"actual new delayed user question\",\"summary_model_id\":\"act" +
+						"ual-http-tail-model\",\"disable_title\":true}"),
 				),
 			)
 			require.NoError(t, err)
-			defer response.Body.Close()
+			defer func() { require.NoError(t, response.Body.Close()) }()
 			body, err := io.ReadAll(response.Body)
 			require.NoError(t, err, "the actual HTTP receiver must terminate without client timeout")
 			if mode == "ready" || mode == "steer_schema_ready" {
@@ -171,7 +172,8 @@ func TestMessageMaterialActualHTTPInitializationWaitsForAdmission(t *testing.T) 
 						f.db.Table("message_completion_input_manifests c").
 							Joins("JOIN message_material_admissions a ON a.id=c.assistant_admission_id").
 							Joins("JOIN messages m ON m.id=a.message_id").
-							Where("m.request_id='actual-initialization-request' AND m.role='assistant' AND m.is_completed=true").
+							Where(("m.request_id='actual-initialization-request' AND m.role='assistant' AND m." +
+								"is_completed=true")).
 							Count(&manifests).
 							Error,
 					)

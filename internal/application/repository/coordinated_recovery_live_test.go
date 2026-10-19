@@ -380,7 +380,8 @@ func TestPostgresCoordinatedRecoveryLiveNextcloud(t *testing.T) {
 	require.NoError(
 		t,
 		db.Exec(
-			"UPDATE nextcloud_content_fences SET state='open' WHERE tenant_id=? AND knowledge_base_id=? AND knowledge_id=?",
+			("UPDATE nextcloud_content_fences SET state='open' WHERE tenant_id=? AND kno"+
+				"wledge_base_id=? AND knowledge_id=?"),
 			7,
 			f.KB,
 			old.ID,

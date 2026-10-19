@@ -9,6 +9,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/types"
 )
 
+// FreezeSourceModelOptions copies model options before input control validation.
 // Detach all wire-visible nested values before authorization. An authorizer
 // or another owner of the original options/maps must not alter the model
 // payload after its receipt was checked. Internal scalar routing metadata is
@@ -34,6 +35,7 @@ func FreezeSourceModelOptions(options *Options) (*Options, error) {
 	return &snapshot, nil
 }
 
+// FreezeSourceModelMessages copies model messages before input control validation.
 func FreezeSourceModelMessages(messages []Message) ([]Message, error) {
 	for _, message := range messages {
 		if err := validateProviderArtifactValue(reflect.ValueOf(message.ReasoningMetadata), 0); err != nil {

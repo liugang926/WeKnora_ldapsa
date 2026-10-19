@@ -14,6 +14,7 @@ import (
 	"github.com/hibiken/asynq"
 )
 
+// NextcloudStateDispatcher dispatches persisted source state notifications.
 type NextcloudStateDispatcher struct {
 	store    *repository.NextcloudProcessingStateStore
 	enqueuer interfaces.TaskEnqueuer
@@ -22,6 +23,7 @@ type NextcloudStateDispatcher struct {
 	done     chan struct{}
 }
 
+// NewNextcloudStateDispatcher constructs the configured NextcloudStateDispatcher.
 func NewNextcloudStateDispatcher(
 	store *repository.NextcloudProcessingStateStore,
 	enqueuer interfaces.TaskEnqueuer,
@@ -29,6 +31,7 @@ func NewNextcloudStateDispatcher(
 	return &NextcloudStateDispatcher{store: store, enqueuer: enqueuer}
 }
 
+// Start starts persisted source state dispatch.
 func (d *NextcloudStateDispatcher) Start() {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -82,6 +85,7 @@ func (d *NextcloudStateDispatcher) Start() {
 	}()
 }
 
+// Stop stops persisted source state dispatch.
 func (d *NextcloudStateDispatcher) Stop() {
 	d.mu.Lock()
 	cancel, done := d.cancel, d.done
@@ -96,7 +100,7 @@ func (d *NextcloudStateDispatcher) Stop() {
 	}
 }
 
-func (d *NextcloudStateDispatcher) deliver(ctx context.Context, now time.Time) {
+func (d *NextcloudStateDispatcher) deliver(ctx context.Context, _ time.Time) {
 	for ctx.Err() == nil {
 		ids, err := d.store.DueDeliveries(ctx, time.Now().UTC())
 		if err != nil {

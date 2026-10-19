@@ -68,13 +68,13 @@ type privacyEmbeddingSpy struct {
 func (s *privacyEmbeddingSpy) GetModelName() string { return "controlled" }
 func (s *privacyEmbeddingSpy) GetModelID() string   { return "controlled" }
 func (s *privacyEmbeddingSpy) GetDimensions() int   { return 1 }
-func (s *privacyEmbeddingSpy) Embed(ctx context.Context, text string) ([]float32, error) {
+func (s *privacyEmbeddingSpy) Embed(ctx context.Context, _ string) ([]float32, error) {
 	s.ctx = ctx
 	s.recording = trace.SpanFromContext(ctx).IsRecording()
 	return []float32{1}, nil
 }
 
-func (s *privacyEmbeddingSpy) BatchEmbed(ctx context.Context, texts []string) ([][]float32, error) {
+func (s *privacyEmbeddingSpy) BatchEmbed(ctx context.Context, _ []string) ([][]float32, error) {
 	s.ctx = ctx
 	s.recording = trace.SpanFromContext(ctx).IsRecording()
 	return [][]float32{{1}}, nil

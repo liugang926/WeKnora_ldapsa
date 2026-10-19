@@ -8,6 +8,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/Tencent/WeKnora/internal/application/access"
+	"github.com/Tencent/WeKnora/internal/application/repository"
+	"github.com/Tencent/WeKnora/internal/application/service"
 	"github.com/Tencent/WeKnora/internal/middleware"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
@@ -100,34 +103,102 @@ func TestSharedAgentScopesAgreeAcrossListSearchAndBatch(t *testing.T) {
 			agents := &scopedAgentStub{
 				agent: &types.CustomAgent{
 					ID:       "agent",
-					TenantID: 2,
+					TenantID: 9,
 					Config:   types.CustomAgentConfig{KBSelectionMode: tt.mode, KnowledgeBases: tt.ids},
 				},
 			}
 			kbs := &scopedKBStub{kbs: []*types.KnowledgeBase{
-				{ID: "a", TenantID: 2, Type: types.KnowledgeBaseTypeDocument},
-				{ID: "b", TenantID: 2, Type: types.KnowledgeBaseTypeDocument},
+				{ID: "a", TenantID: 9, Type: types.KnowledgeBaseTypeDocument},
+				{ID: "b", TenantID: 9, Type: types.KnowledgeBaseTypeDocument},
 				{ID: "foreign", TenantID: 3, Type: types.KnowledgeBaseTypeDocument},
 				nil,
 			}}
 			knowledges := &scopedKnowledgeStub{knowledges: []*types.Knowledge{
-				{ID: "a", TenantID: 2, KnowledgeBaseID: "a"},
-				{ID: "b", TenantID: 2, KnowledgeBaseID: "b"},
+				{ID: "a", TenantID: 9, KnowledgeBaseID: "a"},
+				{ID: "b", TenantID: 9, KnowledgeBaseID: "b"},
 				{ID: "foreign", TenantID: 3, KnowledgeBaseID: "a"},
 				nil,
 			}}
-			kh := &KnowledgeHandler{kgService: knowledges, kbService: kbs, agentShareService: agents}
+			kh, db, store, groups, shares, _ := collectionHTTPFixture(t)
+			// Author new local fixture documents through the actual origin writer;
+			// shared-agent selection must not certify a cached row or title later.
+			for _, kb := range kbs.kbs[:2] {
+				kb.Name = "Actual shared fixture KB " + kb.ID
+				ctx := collectionHumanInputContext(9)
+				require.NoError(
+					t,
+					store.CreateKnowledgeBaseWithInput(
+						repository.WithIndependentKnowledgeBaseNameInput(
+							repository.WithIndependentKnowledgeInput(ctx),
+							"",
+							kb.Name,
+						),
+						kb,
+					),
+				)
+				row := &types.Knowledge{
+					ID: kb.ID, TenantID: 9, KnowledgeBaseID: kb.ID,
+					Type: types.KnowledgeTypeManual, Title: "Actual shared original test " + kb.ID,
+					Channel: "web", Source: "manual", ParseStatus: types.ParseStatusCompleted, EnableStatus: "enabled",
+					Metadata:       types.JSON(`{"manual":{"content":"actual shared original body","version":1}}`),
+					CustomMetadata: types.JSON(`{}`),
+				}
+				_, err := store.CreateKnowledgeWithInput(
+					repository.WithIndependentKnowledgeInput(ctx),
+					row,
+					row.Metadata,
+				)
+				require.NoError(t, err)
+				for index, prior := range knowledges.knowledges {
+					if prior != nil && prior.ID == row.ID && prior.TenantID == row.TenantID {
+						knowledges.knowledges[index] = row
+					}
+				}
+			}
+			if tt.restricted {
+				require.NoError(
+					t,
+					db.Model(&types.TenantAPIKey{}).
+						Where("id = ?", 1).
+						Update("knowledge_base_ids", types.StringArray{"b"}).
+						Error,
+				)
+			}
+			kh.kgService, kh.kbService, kh.agentShareService = knowledges, kbs, agents
+			guard := access.NewNextcloudSourceLineageGuard(
+				nil,
+				collectionHTTPKB{db: db},
+				shares,
+				agents,
+				groups,
+				nil,
+				store,
+			)
+			ConfigureKnowledgeHandlerCollectionOutput(kh, service.NewKnowledgeCollectionOutputAuthorizer(store, guard))
+			ConfigureKnowledgeHandlerOutputLineage(kh, service.NewKnowledgeOutputAuthorizer(store, guard))
 			bh := &KnowledgeBaseHandler{service: kbs, agentShareService: agents}
 			r := gin.New()
 			r.Use(middleware.ErrorHandler(), func(c *gin.Context) {
-				c.Set(types.TenantIDContextKey.String(), uint64(1))
+				c.Set(types.TenantIDContextKey.String(), uint64(7))
 				c.Set(types.UserIDContextKey.String(), "user")
-				ctx := context.WithValue(c.Request.Context(), types.TenantIDContextKey, uint64(1))
+				ctx := types.WithCaller(
+					c.Request.Context(),
+					types.Caller{TenantID: 7, UserID: "user", Role: types.TenantRoleAdmin},
+				)
+				ctx = types.WithPrincipal(ctx, types.Principal{Type: types.PrincipalWebUser, ID: "user"})
+				ctx = types.WithExecutionTenant(ctx, 7)
 				if tt.restricted {
 					ctx = types.WithTenantAPIKeyScope(
 						ctx,
-						types.TenantAPIKeyScope{KnowledgeBaseIDs: types.StringArray{"b"}},
+						types.TenantAPIKeyScope{
+							KeyID:            1,
+							ScopeType:        types.APIKeyScopeTenant,
+							Capabilities:     types.StringArray{string(types.APIKeyCapabilityRetrieve)},
+							KnowledgeBaseIDs: types.StringArray{"b"},
+						},
 					)
+					ctx = types.WithCaller(ctx, types.Caller{TenantID: 7, Role: types.TenantRoleViewer})
+					ctx = types.WithPrincipal(ctx, types.Principal{Type: types.PrincipalAPITenant, ID: "7"})
 				}
 				c.Request = c.Request.WithContext(ctx)
 				c.Next()
@@ -141,7 +212,7 @@ func TestSharedAgentScopesAgreeAcrossListSearchAndBatch(t *testing.T) {
 					w,
 					httptest.NewRequest(
 						http.MethodGet,
-						path+"?agent_id=agent&agent_source_tenant_id=2&keyword=test&ids=a&ids=b",
+						path+"?agent_id=agent&agent_source_tenant_id=9&keyword=test&ids=a&ids=b",
 						nil,
 					),
 				)
@@ -158,8 +229,8 @@ func TestSharedAgentScopesAgreeAcrossListSearchAndBatch(t *testing.T) {
 				}
 				require.ElementsMatch(t, tt.expected, ids, path)
 			}
-			require.Equal(t, uint64(1), agents.caller)
-			require.Equal(t, uint64(2), agents.source)
+			require.Equal(t, uint64(7), agents.caller)
+			require.Equal(t, uint64(9), agents.source)
 			if types.NewSharedAgentKBScope(agents.agent).IsEmpty() {
 				require.Zero(t, kbs.calls)
 				require.Zero(t, knowledges.batchCalls)

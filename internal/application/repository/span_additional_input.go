@@ -68,6 +68,7 @@ func (s *KnowledgeInputProvenanceStore) captureSpanAdditionalOriginalInput(
 	return lineage, nil
 }
 
+// WithSpanAutoTagOriginalInput binds span auto tag original input.
 func WithSpanAutoTagOriginalInput(
 	ctx context.Context,
 	store *KnowledgeInputProvenanceStore,
@@ -82,15 +83,15 @@ func WithSpanAutoTagOriginalInput(
 	if err != nil {
 		return ctx, err
 	}
-	var copy types.KnowledgeAutoTagInputSnapshot
-	if json.Unmarshal(data, &copy) != nil {
+	var copied types.KnowledgeAutoTagInputSnapshot
+	if json.Unmarshal(data, &copied) != nil {
 		return ctx, ErrKnowledgeInputChanged
 	}
 	input := &types.SpanAdditionalOriginalInput{
 		Kind:        spanAutoTagAdditionalKind,
-		ID:          copy.ManifestID,
-		InputDigest: copy.InputDigest,
-		AutoTag:     &copy,
+		ID:          copied.ManifestID,
+		InputDigest: copied.InputDigest,
+		AutoTag:     &copied,
 	}
 	return context.WithValue(
 		ctx,
@@ -221,7 +222,8 @@ func verifyAutoTagOwnRelationResult(tx *gorm.DB, saved, actual *types.KnowledgeA
 	}
 	k := saved.Original.Knowledge
 	var receipt knowledgeDisplayInputOrigin
-	if err := tx.Where("kind='relations' AND row_id = ? AND tenant_id = ? AND knowledge_base_id = ? AND revision = ?", k.ID, k.TenantID, k.KnowledgeBaseID, actual.RelationProof.Revision).
+	if err := tx.Where(("kind='relations' AND row_id = ? AND tenant_id = ? AND knowledge_base_id = " +
+		"? AND revision = ?"), k.ID, k.TenantID, k.KnowledgeBaseID, actual.RelationProof.Revision).
 		Take(&receipt).
 		Error; err != nil {
 		return err
@@ -278,4 +280,5 @@ func verifyAutoTagOwnRelationResult(tx *gorm.DB, saved, actual *types.KnowledgeA
 	return nil
 }
 
+// ErrSpanAdditionalInputUnknown reports a span additional input unknown condition.
 var ErrSpanAdditionalInputUnknown = errors.New("span original additional input is unknown")

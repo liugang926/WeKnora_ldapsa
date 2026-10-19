@@ -50,7 +50,7 @@ func TestNextcloudKBReadRetirementBetweenSearchAndHydration(t *testing.T) {
 	guard, err := BeginNextcloudKBRead(context.Background(), store,
 		[]NextcloudKBReadScope{{TenantID: 7, KBID: "kb-1"}})
 	require.NoError(t, err)
-	defer guard.Close()
+	defer func() { require.NoError(t, guard.Close()) }()
 	knowledge := nextcloudReadTestKnowledge(t)
 	scope, marked, err := NextcloudKnowledgeLeaseScope(knowledge)
 	require.NoError(t, err)
@@ -176,7 +176,7 @@ func TestNextcloudKBReadContextForKeepsCurrentAuthorityAndCancellation(t *testin
 			}
 			guard, err := BeginNextcloudKBRead(base, store, []NextcloudKBReadScope{{TenantID: 7, KBID: "kb-1"}})
 			require.NoError(t, err)
-			defer guard.Close()
+			defer func() { require.NoError(t, guard.Close()) }()
 			knowledge := nextcloudReadTestKnowledge(t)
 			require.NoError(t, guard.PinKnowledge(knowledge))
 			type currentSelectionKey struct{}

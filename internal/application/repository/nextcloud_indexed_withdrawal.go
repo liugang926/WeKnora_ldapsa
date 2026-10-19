@@ -112,7 +112,7 @@ func revokeIndexedEventConnection(tx *gorm.DB, pair NextcloudSourcePairing, now 
 func (r *NextcloudSourcePairingRepository) BeginIndexedSourceWithdrawal(
 	ctx context.Context, pair NextcloudSourcePairing, proposed NextcloudIndexedWithdrawal,
 ) (NextcloudIndexedWithdrawal, error) {
-	if r.db.Dialector.Name() != "postgres" || proposed.OperationID == "" ||
+	if r.db.Name() != "postgres" || proposed.OperationID == "" ||
 		proposed.PairOperationID != pair.OperationID || proposed.TenantID != pair.TenantID ||
 		proposed.KnowledgeBaseID != pair.KnowledgeBaseID || proposed.DataSourceID != pair.DataSourceID ||
 		proposed.InstanceID != pair.InstanceID || proposed.BindingID != pair.BindingID ||
@@ -262,7 +262,7 @@ func (r *NextcloudSourcePairingRepository) RefreshIndexedWithdrawalInventory(
 	ctx context.Context, row NextcloudIndexedWithdrawal,
 ) (NextcloudIndexedWithdrawalStatus, error) {
 	status := NextcloudIndexedWithdrawalStatus{NextcloudIndexedWithdrawal: row, LogicalWithdrawn: true}
-	if r.db.Dialector.Name() != "postgres" {
+	if r.db.Name() != "postgres" {
 		return status, ErrNextcloudSourcePairingConflict
 	}
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -286,12 +286,14 @@ func (r *NextcloudSourcePairingRepository) RefreshIndexedWithdrawalInventory(
 		}{
 			{
 				"knowledge",
-				`SELECT id AS object_ref, id AS knowledge_id FROM knowledges WHERE tenant_id = ? AND knowledge_base_id = ?`,
+				("SELECT id AS object_ref, id AS knowledge_id FROM knowledges WHERE tenant_i" +
+					"d = ? AND knowledge_base_id = ?"),
 				[]any{row.TenantID, row.KnowledgeBaseID},
 			},
 			{
 				"source_file",
-				`SELECT id || ':' || file_path AS object_ref, id AS knowledge_id FROM knowledges WHERE tenant_id = ? AND knowledge_base_id = ? AND file_path <> ''`,
+				("SELECT id || ':' || file_path AS object_ref, id AS knowledge_id FROM knowl" +
+					"edges WHERE tenant_id = ? AND knowledge_base_id = ? AND file_path <> ''"),
 				[]any{row.TenantID, row.KnowledgeBaseID},
 			},
 			{
@@ -301,17 +303,23 @@ func (r *NextcloudSourcePairingRepository) RefreshIndexedWithdrawalInventory(
 			},
 			{
 				"gc_job",
-				`SELECT id AS object_ref, knowledge_id FROM nextcloud_gc_jobs WHERE tenant_id = ? AND knowledge_base_id = ? AND datasource_id = ?`,
+				("SELECT id AS object_ref, knowledge_id FROM nextcloud_gc_jobs WHERE tenant_" +
+					"id = ? AND knowledge_base_id = ? AND datasource_id = ?"),
 				[]any{row.TenantID, row.KnowledgeBaseID, row.DataSourceID},
 			},
 			{
 				"gc_item",
-				`SELECT i.job_id || ':' || i.kind || ':' || i.object_ref AS object_ref, j.knowledge_id FROM nextcloud_gc_items i JOIN nextcloud_gc_jobs j ON j.id = i.job_id WHERE j.tenant_id = ? AND j.knowledge_base_id = ? AND j.datasource_id = ?`,
+				("SELECT i.job_id || ':' || i.kind || ':' || i.object_ref AS object_ref, j.k" +
+					"nowledge_id FROM nextcloud_gc_items i JOIN nextcloud_gc_jobs j ON j.id = i" +
+					".job_id WHERE j.tenant_id = ? AND j.knowledge_base_id = ? AND j.datasource" +
+					"_id = ?"),
 				[]any{row.TenantID, row.KnowledgeBaseID, row.DataSourceID},
 			},
 			{
 				"source_version",
-				`SELECT external_id AS object_ref, candidate_knowledge_id AS knowledge_id FROM nextcloud_source_versions WHERE tenant_id = ? AND knowledge_base_id = ? AND datasource_id = ?`,
+				("SELECT external_id AS object_ref, candidate_knowledge_id AS knowledge_id F" +
+					"ROM nextcloud_source_versions WHERE tenant_id = ? AND knowledge_base_id = " +
+					"? AND datasource_id = ?"),
 				[]any{row.TenantID, row.KnowledgeBaseID, row.DataSourceID},
 			},
 			// The mutable source-version row names only the latest candidate. Keep
@@ -320,7 +328,9 @@ func (r *NextcloudSourcePairingRepository) RefreshIndexedWithdrawalInventory(
 			// pre-ledger history and external backends are still unknown.
 			{
 				"source_revision",
-				`SELECT jsonb_build_array(external_id, revision)::text AS object_ref, candidate_knowledge_id AS knowledge_id FROM nextcloud_source_revisions WHERE tenant_id = ? AND knowledge_base_id = ? AND datasource_id = ?`,
+				("SELECT jsonb_build_array(external_id, revision)::text AS object_ref, candi" +
+					"date_knowledge_id AS knowledge_id FROM nextcloud_source_revisions WHERE te" +
+					"nant_id = ? AND knowledge_base_id = ? AND datasource_id = ?"),
 				[]any{row.TenantID, row.KnowledgeBaseID, row.DataSourceID},
 			},
 			{
@@ -371,7 +381,8 @@ func (r *NextcloudSourcePairingRepository) RefreshIndexedWithdrawalInventory(
 				ImageInfo   string
 			}
 			if err := tx.Table("chunks").Select("id, knowledge_id, image_info").
-				Where("tenant_id = ? AND knowledge_base_id = ? AND id > ? AND image_info IS NOT NULL AND image_info <> ''",
+				Where(("tenant_id = ? AND knowledge_base_id = ? AND id > ? AND image_info IS NOT N" +
+					"ULL AND image_info <> ''"),
 					row.TenantID, row.KnowledgeBaseID, lastChunkID).
 				Order("id ASC").Limit(500).Find(&imageRows).Error; err != nil {
 				return err

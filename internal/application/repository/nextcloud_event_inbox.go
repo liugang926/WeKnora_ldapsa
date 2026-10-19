@@ -121,7 +121,7 @@ func (r *NextcloudEventInboxRepository) IngestSigned(
 	}
 	var receivedID int64
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if tx.Dialector.Name() == "sqlite" {
+		if tx.Name() == "sqlite" {
 			// SQLite ignores SELECT FOR UPDATE. Acquire its write lock before
 			// reading the paired source so a concurrent source reconfiguration
 			// cannot slip between our identity check and durable receipt.

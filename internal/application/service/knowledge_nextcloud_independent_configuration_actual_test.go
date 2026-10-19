@@ -34,7 +34,9 @@ func TestNextcloudIndependentConfigurationLegacyPairActualSQLite(t *testing.T) {
 						var count int64
 						require.NoError(
 							t,
-							m.f.db.Raw("SELECT COUNT(*) FROM original_body_leases l JOIN original_body_field_heads h ON h.body_id=l.body_id WHERE h.source_table='knowledge_bases' AND h.row_key=? AND l.kind='read' AND l.released_at_ms IS NULL", config.ID).
+							m.f.db.Raw(("SELECT COUNT(*) FROM original_body_leases l JOIN original_body_field_heads"+
+								" h ON h.body_id=l.body_id WHERE h.source_table='knowledge_bases' AND h.row"+
+								"_key=? AND l.kind='read' AND l.released_at_ms IS NULL"), config.ID).
 								Scan(&count).
 								Error,
 						)
@@ -84,7 +86,10 @@ func TestNextcloudIndependentConfigurationLegacyPairActualSQLite(t *testing.T) {
 					require.NoError(
 						t,
 						m.f.db.Exec(
-							"UPDATE original_body_leases SET owner_id=? WHERE lease_id IN (SELECT l.lease_id FROM original_body_leases l JOIN original_body_field_heads h ON h.body_id=l.body_id WHERE h.source_table='knowledge_bases' AND h.row_key=? AND l.kind='read' AND l.released_at_ms IS NULL)",
+							("UPDATE original_body_leases SET owner_id=? WHERE lease_id IN (SELECT l.lea"+
+								"se_id FROM original_body_leases l JOIN original_body_field_heads h ON h.bo"+
+								"dy_id=l.body_id WHERE h.source_table='knowledge_bases' AND h.row_key=? AND"+
+								" l.kind='read' AND l.released_at_ms IS NULL)"),
 							"different-lease-owner",
 							config.ID,
 						).Error,
@@ -166,9 +171,9 @@ func TestNextcloudIndependentConfigurationPublicReaderNoWorkerPurposeActualSQLit
 
 func TestNextcloudIndependentConfigurationLeaseCheckpointRenewalActualSQLite(t *testing.T) {
 	m := newMachinePipelineFixture(t, false)
-	ctx, close, err := m.f.store.BeginNextcloudOriginalFetchConfigurationRead(context.Background(), m.ds)
+	ctx, closeRead, err := m.f.store.BeginNextcloudOriginalFetchConfigurationRead(context.Background(), m.ds)
 	require.NoError(t, err)
-	defer close()
+	defer closeRead()
 	// The bounded ownership lifecycle is covered above. The actual lease
 	// renewal port is exercised without a long sleep or a model invocation.
 	require.NoError(t, repository.CheckScopedOnboardingConfigurationReads(ctx))

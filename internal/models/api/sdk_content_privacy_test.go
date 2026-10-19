@@ -45,8 +45,13 @@ func sourcePrivacySDKWires() []privacySDKWire {
 					openaicompletions.Config{Endpoint: endpoint, Settings: catalog.DefaultOpenAICompletions()},
 				)
 			},
-			response: `{"choices":[{"index":0,"message":{"role":"assistant","content":"LABEL_RESPONSE","reasoning_content":"LABEL_REASONING"},"finish_reason":"stop"}]}`,
-			stream:   "data: " + `{"choices":[{"index":0,"delta":{"reasoning_content":"LABEL_REASONING","content":"LABEL_RESPONSE","tool_calls":[{"index":0,"id":"LABEL_TOOL_ID","type":"function","function":{"name":"LABEL_TOOL_NAME","arguments":"{}"}}]},"finish_reason":"tool_calls"}]}` + "\n\ndata: [DONE]\n\n",
+			response: ("{\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\"" +
+				":\"LABEL_RESPONSE\",\"reasoning_content\":\"LABEL_REASONING\"},\"finish_re" +
+				"ason\":\"stop\"}]}"),
+			stream: "data: " + ("{\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\"LABEL_REASON" +
+				"ING\",\"content\":\"LABEL_RESPONSE\",\"tool_calls\":[{\"index\":0,\"id\":" +
+				"\"LABEL_TOOL_ID\",\"type\":\"function\",\"function\":{\"name\":\"LABEL_TOO" +
+				"L_NAME\",\"arguments\":\"{}\"}}]},\"finish_reason\":\"tool_calls\"}]}") + "\n\ndata: [DONE]\n\n",
 		},
 		{
 			name: "openairesponses",
@@ -55,12 +60,21 @@ func sourcePrivacySDKWires() []privacySDKWire {
 					openairesponses.Config{Endpoint: endpoint, Settings: catalog.DefaultOpenAIResponses()},
 				)
 			},
-			response: `{"id":"controlled-response","status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"LABEL_RESPONSE"}]}]}`,
-			stream: "data: " + `{"type":"response.reasoning_summary_text.delta","item_id":"reasoning","output_index":0,"summary_index":0,"delta":"LABEL_REASONING"}` + "\n\n" +
-				"data: " + `{"type":"response.output_text.delta","item_id":"message","output_index":1,"delta":"LABEL_RESPONSE"}` + "\n\n" +
-				"data: " + `{"type":"response.output_item.added","output_index":2,"item":{"type":"function_call","id":"function","call_id":"LABEL_TOOL_ID","name":"LABEL_TOOL_NAME","arguments":""}}` + "\n\n" +
-				"data: " + `{"type":"response.output_item.done","output_index":2,"item":{"type":"function_call","id":"function","call_id":"LABEL_TOOL_ID","name":"LABEL_TOOL_NAME","arguments":"{}","status":"completed"}}` + "\n\n" +
-				"data: " + `{"type":"response.completed","response":{"id":"controlled-response","status":"completed","output":[]}}` + "\n\n",
+			response: ("{\"id\":\"controlled-response\",\"status\":\"completed\",\"output\":[{\"ty" +
+				"pe\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_te" +
+				"xt\",\"text\":\"LABEL_RESPONSE\"}]}]}"),
+			stream: "data: " + ("{\"type\":\"response.reasoning_summary_text.delta\",\"item_id\":\"reasonin" +
+				"g\",\"output_index\":0,\"summary_index\":0,\"delta\":\"LABEL_REASONING\"}") + "\n\n" +
+				"data: " + ("{\"type\":\"response.output_text.delta\",\"item_id\":\"message\",\"output_" +
+				"index\":1,\"delta\":\"LABEL_RESPONSE\"}") + "\n\n" +
+				"data: " + ("{\"type\":\"response.output_item.added\",\"output_index\":2,\"item\":{\"ty" +
+				"pe\":\"function_call\",\"id\":\"function\",\"call_id\":\"LABEL_TOOL_ID\"," +
+				"\"name\":\"LABEL_TOOL_NAME\",\"arguments\":\"\"}}") + "\n\n" +
+				"data: " + ("{\"type\":\"response.output_item.done\",\"output_index\":2,\"item\":{\"typ" +
+				"e\":\"function_call\",\"id\":\"function\",\"call_id\":\"LABEL_TOOL_ID\",\"" +
+				"name\":\"LABEL_TOOL_NAME\",\"arguments\":\"{}\",\"status\":\"completed\"}}") + "\n\n" +
+				"data: " + ("{\"type\":\"response.completed\",\"response\":{\"id\":\"controlled-respons" +
+				"e\",\"status\":\"completed\",\"output\":[]}}") + "\n\n",
 		},
 		{
 			name: "anthropicmessages",
@@ -69,18 +83,29 @@ func sourcePrivacySDKWires() []privacySDKWire {
 					anthropicmessages.Config{Endpoint: endpoint, Settings: catalog.DefaultAnthropicMessages()},
 				)
 			},
-			response: `{"id":"controlled-response","type":"message","role":"assistant","content":[{"type":"text","text":"LABEL_RESPONSE"}],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}`,
-			stream: "data: " + `{"type":"message_start","message":{"usage":{"input_tokens":1,"output_tokens":0}}}` + "\n\n" +
-				"data: " + `{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}` + "\n\n" +
-				"data: " + `{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"LABEL_REASONING"}}` + "\n\n" +
+			response: ("{\"id\":\"controlled-response\",\"type\":\"message\",\"role\":\"assistant" +
+				"\",\"content\":[{\"type\":\"text\",\"text\":\"LABEL_RESPONSE\"}],\"stop_re" +
+				"ason\":\"end_turn\",\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}"),
+			stream: "data: " + ("{\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":1,\"o" +
+				"utput_tokens\":0}}}") + "\n\n" +
+				"data: " + ("{\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":" +
+				"\"thinking\",\"thinking\":\"\"}}") + "\n\n" +
+				"data: " + ("{\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"thinki" +
+				"ng_delta\",\"thinking\":\"LABEL_REASONING\"}}") + "\n\n" +
 				"data: " + `{"type":"content_block_stop","index":0}` + "\n\n" +
-				"data: " + `{"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}}` + "\n\n" +
-				"data: " + `{"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"LABEL_RESPONSE"}}` + "\n\n" +
+				"data: " + ("{\"type\":\"content_block_start\",\"index\":1,\"content_block\":{\"type\":" +
+				"\"text\",\"text\":\"\"}}") + "\n\n" +
+				"data: " + ("{\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"text_d" +
+				"elta\",\"text\":\"LABEL_RESPONSE\"}}") + "\n\n" +
 				"data: " + `{"type":"content_block_stop","index":1}` + "\n\n" +
-				"data: " + `{"type":"content_block_start","index":2,"content_block":{"type":"tool_use","id":"LABEL_TOOL_ID","name":"LABEL_TOOL_NAME","input":{}}}` + "\n\n" +
-				"data: " + `{"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"{}"}}` + "\n\n" +
+				"data: " + ("{\"type\":\"content_block_start\",\"index\":2,\"content_block\":{\"type\":" +
+				"\"tool_use\",\"id\":\"LABEL_TOOL_ID\",\"name\":\"LABEL_TOOL_NAME\",\"input" +
+				"\":{}}}") + "\n\n" +
+				"data: " + ("{\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_" +
+				"json_delta\",\"partial_json\":\"{}\"}}") + "\n\n" +
 				"data: " + `{"type":"content_block_stop","index":2}` + "\n\n" +
-				"data: " + `{"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":1}}` + "\n\n" +
+				"data: " + ("{\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\"},\"usa" +
+				"ge\":{\"output_tokens\":1}}") + "\n\n" +
 				"data: " + `{"type":"message_stop"}` + "\n\n",
 		},
 		{
@@ -90,8 +115,12 @@ func sourcePrivacySDKWires() []privacySDKWire {
 					googlegenai.Config{Endpoint: endpoint, Settings: catalog.DefaultGoogleGenerativeAI()},
 				)
 			},
-			response: `{"candidates":[{"content":{"role":"model","parts":[{"text":"LABEL_RESPONSE"}]},"finishReason":"STOP"}]}`,
-			stream:   "data: " + `{"candidates":[{"content":{"role":"model","parts":[{"text":"LABEL_REASONING","thought":true},{"text":"LABEL_RESPONSE"},{"functionCall":{"id":"LABEL_TOOL_ID","name":"LABEL_TOOL_NAME","args":{}}}]},"finishReason":"STOP"}]}` + "\n\n",
+			response: ("{\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"L" +
+				"ABEL_RESPONSE\"}]},\"finishReason\":\"STOP\"}]}"),
+			stream: "data: " + ("{\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"L" +
+				"ABEL_REASONING\",\"thought\":true},{\"text\":\"LABEL_RESPONSE\"},{\"functi" +
+				"onCall\":{\"id\":\"LABEL_TOOL_ID\",\"name\":\"LABEL_TOOL_NAME\",\"args\":{" +
+				"}}}]},\"finishReason\":\"STOP\"}]}") + "\n\n",
 		},
 	}
 }

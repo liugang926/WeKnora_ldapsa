@@ -756,9 +756,9 @@ func (h *KnowledgeHandler) GetKnowledge(c *gin.Context) {
 		return
 	}
 
-	ctx, closeFAQRead, faqReadErr := h.beginFAQKnowledgePreRead(c, ctx, []string{id})
+	ctx, closeFAQRead, faqReadErr := h.beginFAQKnowledgePreRead(ctx, c, []string{id})
 	if faqReadErr != nil {
-		c.Error(faqReadErr)
+		_ = c.Error(faqReadErr)
 		return
 	}
 	defer closeFAQRead()
@@ -780,7 +780,7 @@ func (h *KnowledgeHandler) GetKnowledge(c *gin.Context) {
 		_ = c.Error(err)
 		return
 	}
-	leases, err := h.beginNextcloudRead(c, effCtx, []*types.Knowledge{knowledge})
+	leases, err := h.beginNextcloudRead(effCtx, c, []*types.Knowledge{knowledge})
 	if err != nil {
 		_ = c.Error(err)
 		return
@@ -1097,8 +1097,9 @@ func (h *KnowledgeHandler) ListKnowledge(c *gin.Context) {
 	}
 	if h.collectionOutputAuthorizer != nil {
 		h.respondKnowledgeCollection(
-			c,
-			ctx,
+
+			ctx, c,
+
 			[]types.KnowledgeSearchScope{{TenantID: effectiveTenantID, KBID: kbID}},
 			types.KnowledgeCollectionSelectionRequest{Mode: "list", Filter: filter, Page: pagination},
 			access.LineageReadScope{},
@@ -1140,7 +1141,7 @@ func (h *KnowledgeHandler) ListKnowledge(c *gin.Context) {
 		_ = c.Error(err)
 		return
 	}
-	leases, err := h.beginNextcloudRead(c, ctx, items)
+	leases, err := h.beginNextcloudRead(ctx, c, items)
 	if err != nil {
 		_ = c.Error(err)
 		return
@@ -1218,8 +1219,9 @@ func (h *KnowledgeHandler) ListKnowledgeFolders(c *gin.Context) {
 	}
 	if h.collectionOutputAuthorizer != nil {
 		h.respondKnowledgeCollection(
-			c,
-			ctx,
+
+			ctx, c,
+
 			[]types.KnowledgeSearchScope{{TenantID: effectiveTenantID, KBID: kbID}},
 			types.KnowledgeCollectionSelectionRequest{Mode: "folders"},
 			access.LineageReadScope{},
@@ -1739,7 +1741,7 @@ func (h *KnowledgeHandler) DownloadKnowledgeFile(c *gin.Context) {
 		return
 	}
 	logger.Infof(ctx, "Retrieving knowledge file, ID: %s", secutils.SanitizeForLog(id))
-	leases, err := h.beginNextcloudRead(c, effCtx, []*types.Knowledge{knowledge})
+	leases, err := h.beginNextcloudRead(effCtx, c, []*types.Knowledge{knowledge})
 	if err != nil {
 		_ = c.Error(err)
 		return
@@ -1828,7 +1830,7 @@ func (h *KnowledgeHandler) PreviewKnowledgeFile(c *gin.Context) {
 		_ = c.Error(err)
 		return
 	}
-	leases, err := h.beginNextcloudRead(c, effCtx, []*types.Knowledge{knowledge})
+	leases, err := h.beginNextcloudRead(effCtx, c, []*types.Knowledge{knowledge})
 	if err != nil {
 		_ = c.Error(err)
 		return
@@ -1949,9 +1951,9 @@ func (h *KnowledgeHandler) GetKnowledgeBatch(c *gin.Context) {
 		}
 	}
 
-	ctx, closeFAQRead, faqReadErr := h.beginFAQKnowledgePreRead(c, ctx, req.IDs)
+	ctx, closeFAQRead, faqReadErr := h.beginFAQKnowledgePreRead(ctx, c, req.IDs)
 	if faqReadErr != nil {
-		c.Error(faqReadErr)
+		_ = c.Error(faqReadErr)
 		return
 	}
 	defer closeFAQRead()
@@ -2040,7 +2042,7 @@ func (h *KnowledgeHandler) GetKnowledgeBatch(c *gin.Context) {
 		_ = c.Error(err)
 		return
 	}
-	leases, err := h.beginNextcloudRead(c, ctx, knowledges)
+	leases, err := h.beginNextcloudRead(ctx, c, knowledges)
 	if err != nil {
 		_ = c.Error(err)
 		return
@@ -2569,7 +2571,7 @@ func (h *KnowledgeHandler) SearchKnowledge(c *gin.Context) {
 		return
 	}
 	if h.collectionOutputAuthorizer != nil {
-		h.searchKnowledgeCollection(c, ctx, keyword, offset, limit, fileTypes)
+		h.searchKnowledgeCollection(ctx, c, keyword, offset, limit, fileTypes)
 		return
 	}
 
@@ -2640,7 +2642,7 @@ func (h *KnowledgeHandler) SearchKnowledge(c *gin.Context) {
 			c.Error(errors.NewInternalServerError("Failed to search knowledge").WithDetails(err.Error()))
 			return
 		}
-		h.respondKnowledgeSearch(c, ctx, knowledges, hasMore, total)
+		h.respondKnowledgeSearch(ctx, c, knowledges, hasMore, total)
 		return
 	}
 
@@ -2667,7 +2669,7 @@ func (h *KnowledgeHandler) SearchKnowledge(c *gin.Context) {
 			c.Error(errors.NewInternalServerError("Failed to search knowledge").WithDetails(err.Error()))
 			return
 		}
-		h.respondKnowledgeSearch(c, ctx, knowledges, hasMore, total)
+		h.respondKnowledgeSearch(ctx, c, knowledges, hasMore, total)
 		return
 	}
 
@@ -2678,7 +2680,7 @@ func (h *KnowledgeHandler) SearchKnowledge(c *gin.Context) {
 		c.Error(errors.NewInternalServerError("Failed to search knowledge").WithDetails(err.Error()))
 		return
 	}
-	h.respondKnowledgeSearch(c, ctx, knowledges, hasMore, total)
+	h.respondKnowledgeSearch(ctx, c, knowledges, hasMore, total)
 }
 
 // MoveKnowledgeRequest defines the request for moving knowledge items
@@ -2831,7 +2833,7 @@ func (h *KnowledgeHandler) MoveKnowledge(c *gin.Context) {
 			return
 		}
 		if knowledge.ParseStatus != types.ParseStatusCompleted {
-			c.Error(
+			_ = c.Error(
 				errors.NewBadRequestError(
 					fmt.Sprintf(
 						"Knowledge item %s is not in completed status (current: %s)",

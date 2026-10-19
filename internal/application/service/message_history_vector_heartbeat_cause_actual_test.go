@@ -19,8 +19,7 @@ import (
 // Only the external NC source and models are controlled. The same production
 // heartbeat checkpoint is invoked once, without a fabricated error or proof.
 func heldHistoryHeartbeatInputs(
-	t *testing.T,
-	ctx context.Context,
+	ctx context.Context, t *testing.T,
 ) ([]*MessageMaterialGuard, []*historyVectorMaterialBridge) {
 	t.Helper()
 	slot, ok := ctx.Value(messageMaterialOutputKey{}).(*messageMaterialOutputSlot)
@@ -52,9 +51,8 @@ func awaitHistoryHeartbeatCancel(t *testing.T, bridges []*historyVectorMaterialB
 // immutable parent admission and original hydration ports as production. No
 // SearchResult, body, source proof or cancellation cause is manufactured here.
 func actualHeartbeatHydratedInputs(
-	t *testing.T,
+	ctx context.Context, t *testing.T,
 	f *historyVectorActualFixture,
-	ctx context.Context,
 ) (*historyVectorMaterialBridge, []*types.SearchResult, []string) {
 	t.Helper()
 	owner := types.SessionOwnerIDFromContext(ctx)
@@ -127,7 +125,7 @@ func TestHistoryVectorActualSQLHeartbeatSourceDenialRetainsTypedHTTPRefusal(t *t
 	response := f.httpSearch(t, func(ctx context.Context, result *types.MessageSearchResult) {
 		require.Equal(t, 2, result.Total)
 		require.NoError(t, CheckMessageMaterialOutputBoundary(ctx))
-		guards, bridges := heldHistoryHeartbeatInputs(t, ctx)
+		guards, bridges := heldHistoryHeartbeatInputs(ctx, t)
 		lookups, ranks, streams := f.models.lookups.Load(), f.models.rankCalls.Load(), f.models.chatter.streams.Load()
 		f.m.allow.Store(false)
 		for _, guard := range guards {
@@ -179,8 +177,8 @@ func TestHistoryVectorActualSQLHeartbeatNonemptySourceDenialRetainsTypedModelRef
 	response := f.httpSearch(t, func(ctx context.Context, result *types.MessageSearchResult) {
 		require.Equal(t, 2, result.Total)
 		require.NoError(t, CheckMessageMaterialOutputBoundary(ctx))
-		bridge, results, documents := actualHeartbeatHydratedInputs(t, f, ctx)
-		guards, bridges := heldHistoryHeartbeatInputs(t, ctx)
+		bridge, results, documents := actualHeartbeatHydratedInputs(ctx, t, f)
+		guards, bridges := heldHistoryHeartbeatInputs(ctx, t)
 		lookups, ranks, streams := f.models.lookups.Load(), f.models.rankCalls.Load(), f.models.chatter.streams.Load()
 		f.m.allow.Store(false)
 		for _, guard := range guards {
@@ -230,7 +228,7 @@ func TestHistoryVectorActualSQLHeartbeatReleasedOriginalLeaseRemainsUnavailable(
 	f := newHistoryVectorActualFixture(t)
 	response := f.httpSearch(t, func(ctx context.Context, result *types.MessageSearchResult) {
 		require.Equal(t, 2, result.Total)
-		guards, bridges := heldHistoryHeartbeatInputs(t, ctx)
+		guards, bridges := heldHistoryHeartbeatInputs(ctx, t)
 		guard := guards[0]
 		require.NotEmpty(t, guard.leases)
 		require.NoError(t, f.messages.materialStore.ContentLeaseStore().ReleaseLease(f.base, guard.leases[0].ID))
@@ -267,11 +265,11 @@ func TestHistoryVectorActualSQLHeartbeatNonemptyUnknownRefusesModel(t *testing.T
 			producer, releaseModel, external := retainMessageMaterialProducer(ctx)
 			require.True(t, external)
 			defer releaseModel()
-			bridge, results, documents := actualHeartbeatHydratedInputs(t, f, producer)
+			bridge, results, documents := actualHeartbeatHydratedInputs(producer, t, f)
 			markMessageMaterialReady(ctx)
 			releaseModel()
 			require.NoError(t, check(), "actual nonempty retained inputs must be admitted before caller/lease failure")
-			guards, bridges := heldHistoryHeartbeatInputs(t, ctx)
+			guards, bridges := heldHistoryHeartbeatInputs(ctx, t)
 			lookups, ranks, streams := f.models.lookups.Load(), f.models.rankCalls.Load(), f.models.chatter.streams.Load()
 			switch mode {
 			case "original-lease-released":

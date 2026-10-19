@@ -895,7 +895,7 @@ func TestEnsureReady_NilCtx_Rejected(t *testing.T) {
 		once:    make(map[int]*sync.Once),
 		initErr: make(map[int]error),
 	}
-	err := r.ensureReady(nil, 768) //nolint:staticcheck — explicit nil ctx test
+	err := r.ensureReady(nil, 768) //nolint:staticcheck // explicit nil ctx test
 	if err == nil || !strings.Contains(err.Error(), "non-nil ctx") {
 		t.Errorf("nil ctx: want error about non-nil ctx, got %v", err)
 	}
@@ -945,9 +945,16 @@ func TestEnsureReady_ConcurrentCallers_SingleCreate(t *testing.T) {
 	repo := &Repository{
 		client:    newTestClient(t, ts.URL),
 		baseIndex: "weknora_test",
-		cfg:       internalCfg{shards: 1, replicas: 0, knnEngine: "lucene", hnswM: 16, hnswEFConstruction: 100, efSearch: 100},
-		once:      make(map[int]*sync.Once),
-		initErr:   make(map[int]error),
+		cfg: internalCfg{
+			shards:             1,
+			replicas:           0,
+			knnEngine:          "lucene",
+			hnswM:              16,
+			hnswEFConstruction: 100,
+			efSearch:           100,
+		},
+		once:    make(map[int]*sync.Once),
+		initErr: make(map[int]error),
 	}
 
 	var wg sync.WaitGroup
@@ -974,9 +981,16 @@ func TestEnsureReady_PerDimensionIsolation(t *testing.T) {
 	repo := &Repository{
 		client:    newTestClient(t, ts.URL),
 		baseIndex: "weknora_test",
-		cfg:       internalCfg{shards: 1, replicas: 0, knnEngine: "lucene", hnswM: 16, hnswEFConstruction: 100, efSearch: 100},
-		once:      make(map[int]*sync.Once),
-		initErr:   make(map[int]error),
+		cfg: internalCfg{
+			shards:             1,
+			replicas:           0,
+			knnEngine:          "lucene",
+			hnswM:              16,
+			hnswEFConstruction: 100,
+			efSearch:           100,
+		},
+		once:    make(map[int]*sync.Once),
+		initErr: make(map[int]error),
 	}
 
 	for _, dim := range []int{768, 1024, 1536} {
@@ -1009,7 +1023,10 @@ func (h *errorHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.indexPutsAttempted.Add(1)
 		w.WriteHeader(h.statusForIndexPut)
 		// Write a minimal OS error response so wrapTransport can parse it.
-		errBody := `{"error":{"type":"server_error","reason":"simulated"},"status":` + fmt.Sprintf("%d", h.statusForIndexPut) + `}`
+		errBody := `{"error":{"type":"server_error","reason":"simulated"},"status":` + fmt.Sprintf(
+			"%d",
+			h.statusForIndexPut,
+		) + `}`
 		_, _ = w.Write([]byte(errBody))
 	default:
 		w.WriteHeader(http.StatusOK)
@@ -1026,9 +1043,16 @@ func TestEnsureReady_TransientError_NotCached(t *testing.T) {
 	repo := &Repository{
 		client:    newTestClient(t, ts.URL),
 		baseIndex: "weknora_test",
-		cfg:       internalCfg{shards: 1, replicas: 0, knnEngine: "lucene", hnswM: 16, hnswEFConstruction: 100, efSearch: 100},
-		once:      make(map[int]*sync.Once),
-		initErr:   make(map[int]error),
+		cfg: internalCfg{
+			shards:             1,
+			replicas:           0,
+			knnEngine:          "lucene",
+			hnswM:              16,
+			hnswEFConstruction: 100,
+			efSearch:           100,
+		},
+		once:    make(map[int]*sync.Once),
+		initErr: make(map[int]error),
 	}
 
 	// First call fails with transient 5xx.

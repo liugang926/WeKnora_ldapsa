@@ -70,7 +70,9 @@ func collectionNextcloudHTTPStateFixture(
 		require.NotEmpty(t, r.Header.Get("X-WeKnora-Signature"))
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/capabilities"):
-			fmt.Fprint(w, `{"protocol_version":"1","instance_id":"instance"}`)
+			if _, err := fmt.Fprint(w, `{"protocol_version":"1","instance_id":"instance"}`); err != nil {
+				t.Errorf("write fixture response: %v", err)
+			}
 		case strings.HasSuffix(r.URL.Path, "/publication-check"):
 			w.WriteHeader(http.StatusNoContent)
 		case strings.HasSuffix(r.URL.Path, "/authorize"):
@@ -81,13 +83,23 @@ func collectionNextcloudHTTPStateFixture(
 				}
 				require.NoError(t, json.NewDecoder(r.Body).Decode(&request))
 				if request.FileID == 78 && (change == "tag-deny-source-b" || call > 4) {
-					fmt.Fprint(w, `{"allow":false,"reason":"source_not_readable","checked_at":1780000000}`)
+					if _, err := fmt.Fprint(
+						w,
+						`{"allow":false,"reason":"source_not_readable","checked_at":1780000000}`,
+					); err != nil {
+						t.Errorf("write fixture response: %v", err)
+					}
 					return
 				}
 			}
 			if change == "deny_excluded_before_filter" || change == "personal_revoke_before_write" && call >= 3 ||
 				change == "personal_revoke_after_auto" && call >= 4 {
-				fmt.Fprint(w, `{"allow":false,"reason":"source_not_readable","checked_at":1780000000}`)
+				if _, err := fmt.Fprint(
+					w,
+					`{"allow":false,"reason":"source_not_readable","checked_at":1780000000}`,
+				); err != nil {
+					t.Errorf("write fixture response: %v", err)
+				}
 				return
 			}
 			if change == "source_withdraw_during_final_remote" && call == 3 ||
@@ -98,10 +110,13 @@ func collectionNextcloudHTTPStateFixture(
 						RetireKnowledge(context.Background(), repository.NextcloudContentScope{TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: "source", DataSourceID: "ds", ExternalID: "nextcloud:instance:77"}),
 				)
 			}
-			fmt.Fprint(
+			if _, err := fmt.Fprint(
 				w,
-				`{"allow":true,"reason":"authorized","policy_revision":"isolated-rev","source_etag":"original-etag","checked_at":1780000000}`,
-			)
+				("{\"allow\":true,\"reason\":\"authorized\",\"policy_revision\":\"isolated-r" +
+					"ev\",\"source_etag\":\"original-etag\",\"checked_at\":1780000000}"),
+			); err != nil {
+				t.Errorf("write fixture response: %v", err)
+			}
 		default:
 			http.NotFound(w, r)
 		}

@@ -38,8 +38,10 @@ func (s *NextcloudSyncRecoveryStore) UnstartedBefore(
 	load := func(after bool) ([]types.SyncLog, error) {
 		query := s.db.WithContext(ctx).Model(&types.SyncLog{}).
 			Where("status = ? AND recovery_version = 1 AND recovery_trigger IN ?", types.SyncLogStatusRunning, []string{"manual", "schedule"}).
-			Where("queue_task_id = 'dssync:' || sync_logs.id AND worker_started_at IS NULL AND worker_active = ? AND started_at <= ?", false, cutoff).
-			Where(`EXISTS (SELECT 1 FROM data_sources ds WHERE ds.id = sync_logs.data_source_id AND ds.type = ?)`, types.ConnectorTypeNextcloud)
+			Where(("queue_task_id = 'dssync:' || sync_logs.id AND worker_started_at IS NULL AN"+
+				"D worker_active = ? AND started_at <= ?"), false, cutoff).
+			Where(("EXISTS (SELECT 1 FROM data_sources ds WHERE ds.id = sync_logs.data_source_" +
+				"id AND ds.type = ?)"), types.ConnectorTypeNextcloud)
 		if after {
 			query = query.Where(
 				"(started_at > ? OR (started_at = ? AND id > ?))",
@@ -89,7 +91,8 @@ func (s *NextcloudSyncRecoveryStore) FailMissing(
 	result := s.db.WithContext(ctx).Model(&types.SyncLog{}).
 		Where("id = ? AND data_source_id = ? AND tenant_id = ?", log.ID, log.DataSourceID, log.TenantID).
 		Where("status = ? AND recovery_version = 1 AND recovery_trigger = ?", types.SyncLogStatusRunning, log.RecoveryTrigger).
-		Where("queue_task_id = ? AND worker_started_at IS NULL AND worker_active = ? AND started_at <= ?", log.QueueTaskID, false, cutoff).
+		Where(("queue_task_id = ? AND worker_started_at IS NULL AND worker_active = ? AND " +
+			"started_at <= ?"), log.QueueTaskID, false, cutoff).
 		Updates(map[string]any{
 			"status":      types.SyncLogStatusFailed,
 			"finished_at": now, "error_message": "sync_task_absent_before_worker_start",

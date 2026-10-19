@@ -69,7 +69,7 @@ type enrichmentTestVLM struct {
 	beforeReturn func()
 }
 
-func (m *enrichmentTestVLM) Predict(_ context.Context, images [][]byte, prompt string) (string, error) {
+func (m *enrichmentTestVLM) Predict(_ context.Context, _ [][]byte, prompt string) (string, error) {
 	m.calls++
 	if m.beforeReturn != nil {
 		m.beforeReturn()
@@ -162,7 +162,7 @@ type enrichmentTestFixture struct {
 func newEnrichmentTestFixture(t *testing.T, pg bool, fullDirectorySchema ...bool) *enrichmentTestFixture {
 	t.Helper()
 	store, db, ctx := autoTagActualFixture(t, pg)
-	db.Config.Logger = gormlogger.Default.LogMode(gormlogger.Silent)
+	db.Logger = gormlogger.Default.LogMode(gormlogger.Silent)
 	require.NoError(
 		t,
 		db.AutoMigrate(
@@ -196,7 +196,8 @@ func newEnrichmentTestFixture(t *testing.T, pg bool, fullDirectorySchema ...bool
 			require.NoError(
 				t,
 				directoryMigration.Exec(
-					"CREATE FUNCTION uuid_generate_v4() RETURNS uuid LANGUAGE sql AS $$ SELECT public.uuid_generate_v4() $$",
+					("CREATE FUNCTION uuid_generate_v4() RETURNS uuid LANGUAGE sql AS $$ SELECT " +
+						"public.uuid_generate_v4() $$"),
 				).Error,
 			)
 			directoryPath = "../../../migrations/versioned/000109_directory_group_access.up.sql"
@@ -369,8 +370,9 @@ func newEnrichmentTestFixture(t *testing.T, pg bool, fullDirectorySchema ...bool
 	}
 	cfg := &config.Config{
 		Conversation: &config.ConversationConfig{
-			GenerateSummaryPrompt:   "Summarize in {{language}}",
-			GenerateQuestionsPrompt: "Generate {{question_count}} questions for {{doc_name}}: {{content}} {{context}} in {{language}}",
+			GenerateSummaryPrompt: "Summarize in {{language}}",
+			GenerateQuestionsPrompt: ("Generate {{question_count}} questions for {{doc_name}}: {{content}} {{cont" +
+				"ext}} in {{language}}"),
 		},
 	}
 	require.NoError(t, config.BindIndependentEnrichmentPromptLiteral(cfg, "summary", "Summarize in {{language}}"))
@@ -725,7 +727,8 @@ func runEnrichmentRejectedChanges(t *testing.T, pg bool) {
 						t,
 						f.db.Model(&types.Chunk{}).
 							Where("id = ?", f.chunks[1].ID).
-							Update("metadata", types.JSON(`{"generated_questions":[{"id":"forged","question":"Cached unproved question"}]}`)).
+							Update("metadata", types.JSON(("{\"generated_questions\":[{\"id\":\"forged\",\"question\":\"Cached unprove"+
+								"d question\"}]}"))).
 							Error,
 					)
 					require.NoError(

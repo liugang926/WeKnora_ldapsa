@@ -17,6 +17,7 @@ import (
 	"gorm.io/gorm/clause"
 )
 
+// NextcloudOnboardingManagerPurpose represents nextcloud onboarding manager purpose repository data.
 // A successful explicit pairing action records its actual manager separately
 // from the immutable original onboarding actor. These metadata facts contain
 // no ordinary role, membership, browser user, token or model/read permission.
@@ -42,6 +43,7 @@ type NextcloudOnboardingManagerPurpose struct {
 	CreatedAtMS          int64
 }
 
+// TableName returns the persisted table name.
 func (NextcloudOnboardingManagerPurpose) TableName() string {
 	return "nextcloud_onboarding_manager_purposes"
 }
@@ -69,7 +71,8 @@ func onboardingManagerPairMetadata(
 	c types.NextcloudOnboardingCredential,
 ) (NextcloudSourcePairing, error) {
 	var pair NextcloudSourcePairing
-	if err := tx.Where("operation_id=? AND tenant_id=? AND knowledge_base_id=? AND nextcloud_instance_id=? AND binding_id=? AND state='active'", op.OperationID, op.TenantID, op.KnowledgeBaseID, op.InstanceID, op.BindingID).
+	if err := tx.Where(("operation_id=? AND tenant_id=? AND knowledge_base_id=? AND nextcloud_insta" +
+		"nce_id=? AND binding_id=? AND state='active'"), op.OperationID, op.TenantID, op.KnowledgeBaseID, op.InstanceID, op.BindingID).
 		Take(&pair).
 		Error; err != nil {
 		return pair, types.ErrSourceLineageUnknown
@@ -79,7 +82,8 @@ func onboardingManagerPairMetadata(
 	}
 	var ds types.DataSource
 	if err := tx.Select("id,tenant_id,knowledge_base_id,type,status,config").
-		Where("id=? AND tenant_id=? AND knowledge_base_id=? AND type=? AND status=? AND deleted_at IS NULL", pair.DataSourceID, op.TenantID, op.KnowledgeBaseID, types.ConnectorTypeNextcloud, types.DataSourceStatusActive).
+		Where(("id=? AND tenant_id=? AND knowledge_base_id=? AND type=? AND status=? AND d" +
+			"eleted_at IS NULL"), pair.DataSourceID, op.TenantID, op.KnowledgeBaseID, types.ConnectorTypeNextcloud, types.DataSourceStatusActive).
 		Take(&ds).
 		Error; err != nil {
 		return pair, err
@@ -139,7 +143,8 @@ func authorizeOnboardingManagerPurpose(
 	}
 	var actual types.DataSource
 	if err := tx.Select("id,tenant_id,knowledge_base_id,type,status,config").
-		Where("id=? AND tenant_id=? AND knowledge_base_id=? AND status=? AND deleted_at IS NULL", p.DataSourceID, p.TenantID, p.KnowledgeBaseID, types.DataSourceStatusActive).
+		Where(("id=? AND tenant_id=? AND knowledge_base_id=? AND status=? AND deleted_at I" +
+			"S NULL"), p.DataSourceID, p.TenantID, p.KnowledgeBaseID, types.DataSourceStatusActive).
 		Take(&actual).
 		Error; err != nil {
 		return err
@@ -244,7 +249,8 @@ func (s *NextcloudOnboardingStore) RecordPairManagerPurpose(
 			return err
 		}
 		var op types.NextcloudOnboardingOperation
-		if err := tx.Select("operation_id,credential_id,tenant_id,instance_id,binding_id,knowledge_base_id,processing_template_id,actor_directory_id,request_sha256,state").
+		if err := tx.Select(("operation_id,credential_id,tenant_id,instance_id,binding_id,knowledge_base" +
+			"_id,processing_template_id,actor_directory_id,request_sha256,state")).
 			Where("operation_id=? AND state='active'", permit.Operation.OperationID).
 			Take(&op).
 			Error; err != nil {
@@ -364,7 +370,8 @@ func ValidateNextcloudOnboardingManagerPurposeCoverageInTx(tx *gorm.DB, instance
 		return types.ErrSourceLineageUnknown
 	}
 	var operations []types.NextcloudOnboardingOperation
-	if err := tx.Select("operation_id,credential_id,tenant_id,instance_id,binding_id,knowledge_base_id,processing_template_id,actor_directory_id,request_sha256,state").
+	if err := tx.Select(("operation_id,credential_id,tenant_id,instance_id,binding_id,knowledge_base" +
+		"_id,processing_template_id,actor_directory_id,request_sha256,state")).
 		Where("instance_id=? AND state='active'", instance).
 		Find(&operations).
 		Error; err != nil {

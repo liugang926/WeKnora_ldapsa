@@ -22,7 +22,7 @@ func TestNextcloudSourceHealthRequiresAdminSessionAndScopesTenant(t *testing.T) 
 	sqlDB, err := db.DB()
 	require.NoError(t, err)
 	sqlDB.SetMaxOpenConns(1)
-	defer sqlDB.Close()
+	defer func() { require.NoError(t, sqlDB.Close()) }()
 	require.NoError(t, db.AutoMigrate(&types.DataSource{}, &types.SyncLog{},
 		&repository.NextcloudSourcePairing{}, &repository.NextcloudSourcePairingAbort{}))
 	require.NoError(t, db.Exec(`CREATE TABLE knowledges (id TEXT, tenant_id INTEGER,

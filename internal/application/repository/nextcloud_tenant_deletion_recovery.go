@@ -12,10 +12,12 @@ import (
 	"gorm.io/gorm/clause"
 )
 
+// ErrNextcloudRecoveryUnknownOperation reports a nextcloud recovery unknown operation condition.
 // Missing restored provenance never means the independently retained deletion
 // may be ignored. Apply fails closed and persists its existing global gate.
 var ErrNextcloudRecoveryUnknownOperation = errors.New("nextcloud recovery permanent fact has no local operation")
 
+// NextcloudRecoveryTenantDeletion represents nextcloud recovery tenant deletion repository data.
 type NextcloudRecoveryTenantDeletion struct {
 	Tenant       types.NextcloudTenantDeletionObservation `json:"tenant"`
 	OriginSHA256 string                                   `json:"origin_sha256"`

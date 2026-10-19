@@ -26,6 +26,7 @@ type (
 	}
 )
 
+// ScopedOnboardingConfigurationRead represents scoped onboarding configuration read repository data.
 type ScopedOnboardingConfigurationRead interface {
 	Context(context.Context) context.Context
 	Checkpoint(context.Context) error
@@ -87,6 +88,7 @@ func scopedOnboardingConfigurationPurposeInTx(ctx context.Context, tx *gorm.DB, 
 	return purpose.checkInTx(ctx, tx)
 }
 
+// NextcloudOnboardingConfigurationStore returns the nextcloud onboarding configuration store result.
 func (s *KnowledgeInputProvenanceStore) NextcloudOnboardingConfigurationStore() *NextcloudOnboardingStore {
 	if s == nil || s.db == nil {
 		return nil
@@ -148,31 +150,31 @@ func (s *KnowledgeInputProvenanceStore) beginScopedConfigurationPurpose(
 		scopedOnboardingConfigurationReadKey{},
 		slot,
 	)
-	close := func() { CloseScopedOnboardingConfigurationReads(current) }
+	closeRead := func() { CloseScopedOnboardingConfigurationReads(current) }
 	if _, err := scopedOnboardingConfigurationPurposeFromContext(current, purpose.tenant, purpose.kb); err != nil {
-		close()
+		closeRead()
 		return ctx, noop, err
 	}
 	lineage, err := s.scopedConfigurationLineageMetadata(current, purpose.tenant, purpose.kb)
 	if err != nil {
-		close()
+		closeRead()
 		return ctx, noop, err
 	}
 	beginner, ok := s.originalInputSources.(scopedOnboardingConfigurationSourceBeginner)
 	if !ok {
-		close()
+		closeRead()
 		return ctx, noop, types.ErrSourceLineageUnknown
 	}
 	current, _, err = beginner.BeginKnowledgeConfigurationSources(current, purpose.tenant, purpose.kb, lineage)
 	if err != nil {
-		close()
+		closeRead()
 		return ctx, noop, err
 	}
 	if current == nil {
-		close()
+		closeRead()
 		return ctx, noop, types.ErrSourceLineageUnknown
 	}
-	return current, close, nil
+	return current, closeRead, nil
 }
 
 // This is a metadata/control check, separate from the config-byte lease. A
@@ -188,7 +190,8 @@ func scopedConfigurationPairInTx(
 	if err := requireNextcloudTargetOpenInTx(tx, tenant, kb); err != nil {
 		return pair, 0, err
 	}
-	if err := tx.Where("tenant_id = ? AND knowledge_base_id = ? AND datasource_id = ? AND state = 'active'", tenant, kb, datasource).
+	if err := tx.Where(("tenant_id = ? AND knowledge_base_id = ? AND datasource_id = ? AND state = " +
+		"'active'"), tenant, kb, datasource).
 		Take(&pair).
 		Error; err != nil {
 		return pair, 0, err
@@ -202,7 +205,8 @@ func scopedConfigurationPairInTx(
 	}
 	var ds types.DataSource
 	if err := tx.Select("id", "tenant_id", "knowledge_base_id", "type", "status", "config").
-		Where("id = ? AND tenant_id = ? AND knowledge_base_id = ? AND type = ? AND status = ? AND deleted_at IS NULL", datasource, tenant, kb, types.ConnectorTypeNextcloud, types.DataSourceStatusActive).
+		Where(("id = ? AND tenant_id = ? AND knowledge_base_id = ? AND type = ? AND status" +
+			" = ? AND deleted_at IS NULL"), datasource, tenant, kb, types.ConnectorTypeNextcloud, types.DataSourceStatusActive).
 		Take(&ds).
 		Error; err != nil {
 		return pair, 0, err
@@ -256,7 +260,8 @@ func (s *KnowledgeInputProvenanceStore) BeginNextcloudOriginalFetchConfiguration
 		var actual types.DataSource
 		if err := tx.WithContext(current).
 			Select("id", "tenant_id", "knowledge_base_id", "type", "status", "config").
-			Where("id = ? AND tenant_id = ? AND knowledge_base_id = ? AND type = ? AND status = ?", id, tenant, kb, types.ConnectorTypeNextcloud, types.DataSourceStatusActive).
+			Where(("id = ? AND tenant_id = ? AND knowledge_base_id = ? AND type = ? AND status" +
+				" = ?"), id, tenant, kb, types.ConnectorTypeNextcloud, types.DataSourceStatusActive).
 			Take(&actual).
 			Error; err != nil {
 			return err
@@ -346,10 +351,13 @@ func (s *KnowledgeInputProvenanceStore) BeginNextcloudBuildConfigurationRead(
 			DataSourceID    string
 			ExternalID      string
 		}
-		projection := "id,tenant_id,knowledge_base_id,channel,json_extract(metadata,'$.datasource_id') AS data_source_id,json_extract(metadata,'$.external_id') AS external_id"
-		switch tx.Dialector.Name() {
+		projection := ("id,tenant_id,knowledge_base_id,channel,json_extract(metadata,'$.datasource" +
+			"_id') AS data_source_id,json_extract(metadata,'$.external_id') AS external" +
+			"_id")
+		switch tx.Name() {
 		case "postgres":
-			projection = "id,tenant_id,knowledge_base_id,channel,metadata->>'datasource_id' AS data_source_id,metadata->>'external_id' AS external_id"
+			projection = ("id,tenant_id,knowledge_base_id,channel,metadata->>'datasource_id' AS data_" +
+				"source_id,metadata->>'external_id' AS external_id")
 		case "sqlite":
 		default:
 			return ErrKnowledgeInputChanged
@@ -385,6 +393,7 @@ func (s *KnowledgeInputProvenanceStore) BeginNextcloudBuildConfigurationRead(
 	)
 }
 
+// HoldScopedOnboardingConfigurationRead returns the hold scoped onboarding configuration read result.
 func HoldScopedOnboardingConfigurationRead(
 	ctx context.Context,
 	tenant uint64,
@@ -399,7 +408,7 @@ func HoldScopedOnboardingConfigurationRead(
 	if !ok || slot == nil || slot.tenant != tenant || slot.kb != kb || read == nil {
 		return types.ErrSourceLineageUnknown
 	}
-	copy, err := types.UnionSourceLineage(lineage)
+	copied, err := types.UnionSourceLineage(lineage)
 	if err != nil {
 		return err
 	}
@@ -408,10 +417,11 @@ func HoldScopedOnboardingConfigurationRead(
 	if slot.closed || slot.read != nil {
 		return ErrKnowledgeInputChanged
 	}
-	slot.lineage, slot.read = copy, read
+	slot.lineage, slot.read = copied, read
 	return nil
 }
 
+// CheckScopedOnboardingConfigurationSources checks scoped onboarding configuration sources.
 // A configuration check must match the original configuration's full source
 // union. A build may also check its subset after the separately verified exact
 // unpublished source is removed. Other inherited inputs keep public guards.
@@ -475,6 +485,7 @@ func CheckScopedOnboardingConfigurationSources(
 	return true, read.Checkpoint(ctx)
 }
 
+// CloseScopedOnboardingConfigurationReads returns the close scoped onboarding configuration reads result.
 func CloseScopedOnboardingConfigurationReads(ctx context.Context) {
 	if ctx == nil {
 		return
@@ -498,6 +509,7 @@ func CloseScopedOnboardingConfigurationReads(ctx context.Context) {
 	}
 }
 
+// NextcloudBuildConfigurationReadRequired returns the nextcloud build configuration read required result.
 func NextcloudBuildConfigurationReadRequired(ctx context.Context) bool {
 	if ctx == nil {
 		return false
@@ -506,6 +518,7 @@ func NextcloudBuildConfigurationReadRequired(ctx context.Context) bool {
 	return present
 }
 
+// CheckScopedOnboardingConfigurationReads checks scoped onboarding configuration reads.
 // Check before loading any original configuration/body snapshot. The guard's
 // own recheck is deliberately nonrecursive: it reads metadata, then freshly
 // authorized leased configuration bytes, without calling this snapshot API.

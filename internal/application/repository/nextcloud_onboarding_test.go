@@ -82,7 +82,11 @@ func onboardingDB(t *testing.T) (*gorm.DB, *repo.NextcloudOnboardingStore, types
 			&repo.NextcloudSourcePairingAbort{},
 		),
 	)
-	for _, sql := range []string{"CREATE UNIQUE INDEX policies_key ON resource_access_policies(tenant_id,resource_type,resource_id)", "CREATE TABLE wiki_pages(tenant_id INTEGER,knowledge_base_id TEXT)", "CREATE TABLE nextcloud_source_tombstones(tenant_id INTEGER,scope_type TEXT,scope_id TEXT)", "CREATE TABLE nextcloud_event_connections(connection_id TEXT PRIMARY KEY,tenant_id BIGINT,knowledge_base_id TEXT,nextcloud_instance_id TEXT,binding_id TEXT,datasource_id TEXT,status TEXT)"} {
+	for _, sql := range []string{("CREATE UNIQUE INDEX policies_key ON resource_access_policies(tenant_id,res" +
+		"ource_type,resource_id)"), "CREATE TABLE wiki_pages(tenant_id INTEGER,knowledge_base_id TEXT)", ("CREATE TABLE nextcloud_source_tombstones(tenant_id INTEGER,scope_type TEXT" +
+		",scope_id TEXT)"), ("CREATE TABLE nextcloud_event_connections(connection_id TEXT PRIMARY KEY,te" +
+		"nant_id BIGINT,knowledge_base_id TEXT,nextcloud_instance_id TEXT,binding_i" +
+		"d TEXT,datasource_id TEXT,status TEXT)")} {
 		require.NoError(t, db.Exec(sql).Error)
 	}
 	require.NoError(t, db.Create(&types.Tenant{ID: 7, Name: "onboarding-owner"}).Error)
@@ -659,7 +663,8 @@ func TestNextcloudOnboardingAuthorityEpochSupersedesPairingReceipt(t *testing.T)
 	require.NoError(
 		t,
 		db.Exec(
-			"CREATE TABLE nextcloud_source_status_epochs(connection_id TEXT PRIMARY KEY,publication_epoch BIGINT,pair_operation_id TEXT,verified_at BIGINT)",
+			("CREATE TABLE nextcloud_source_status_epochs(connection_id TEXT PRIMARY KEY" +
+				",publication_epoch BIGINT,pair_operation_id TEXT,verified_at BIGINT)"),
 		).Error,
 	)
 	var pair repo.NextcloudSourcePairing
@@ -667,7 +672,8 @@ func TestNextcloudOnboardingAuthorityEpochSupersedesPairingReceipt(t *testing.T)
 	require.NoError(
 		t,
 		db.Exec(
-			"INSERT INTO nextcloud_event_connections(connection_id,tenant_id,knowledge_base_id,datasource_id,status) VALUES(?,?,?,?,?)",
+			("INSERT INTO nextcloud_event_connections(connection_id,tenant_id,knowledge_"+
+				"base_id,datasource_id,status) VALUES(?,?,?,?,?)"),
 			"conn",
 			uint64(7),
 			kb.ID,

@@ -18,22 +18,41 @@ func ownedHistoryKnowledgeControlQuery(tx *gorm.DB, tenant uint64, kbID, owner s
 	q := tx.Table("knowledge_input_material_receipts r").
 		Joins("JOIN knowledge_input_admissions a ON a.admission_id=r.admission_id AND a.knowledge_id=r.row_id").
 		Joins("JOIN knowledge_input_history_parents h ON h.admission_id=a.admission_id AND h.tenant_id=a.tenant_id").
-		Joins("JOIN knowledges k ON k.id=a.knowledge_id AND k.knowledge_base_id=a.knowledge_base_id AND k.tenant_id=a.tenant_id AND k.deleted_at IS NULL").
-		Joins("JOIN knowledge_bases kb ON kb.id=k.knowledge_base_id AND kb.tenant_id=k.tenant_id AND kb.deleted_at IS NULL").
-		Joins("JOIN messages m ON m.id=h.assistant_message_id AND m.session_id=h.session_id AND m.request_id=h.request_id AND m.knowledge_id=k.id AND m.deleted_at IS NULL AND m.role='assistant' AND m.is_completed=?", true).
-		Joins("JOIN messages u ON u.id=h.user_message_id AND u.session_id=h.session_id AND u.request_id=h.request_id AND u.deleted_at IS NULL AND u.role='user' AND u.is_completed=?", true).
+		Joins(("JOIN knowledges k ON k.id=a.knowledge_id AND k.knowledge_base_id=a.knowled"+
+			"ge_base_id AND k.tenant_id=a.tenant_id AND k.deleted_at IS NULL")).
+		Joins(("JOIN knowledge_bases kb ON kb.id=k.knowledge_base_id AND kb.tenant_id=k.te"+
+			"nant_id AND kb.deleted_at IS NULL")).
+		Joins(("JOIN messages m ON m.id=h.assistant_message_id AND m.session_id=h.session_"+
+			"id AND m.request_id=h.request_id AND m.knowledge_id=k.id AND m.deleted_at "+
+			"IS NULL AND m.role='assistant' AND m.is_completed=?"), true).
+		Joins(("JOIN messages u ON u.id=h.user_message_id AND u.session_id=h.session_id AN"+
+			"D u.request_id=h.request_id AND u.deleted_at IS NULL AND u.role='user' AND"+
+			" u.is_completed=?"), true).
 		Joins("JOIN sessions s ON s.id=h.session_id AND s.tenant_id=a.tenant_id AND s.deleted_at IS NULL").
 		Joins("JOIN message_session_owner_versions so ON so.session_id=s.id AND so.revision>0").
 		Joins("JOIN message_material_receipts mr ON mr.message_id=m.id").
-		Joins("JOIN message_material_admissions ma ON ma.id=mr.admission_id AND ma.message_id=m.id AND ma.session_id=s.id AND ma.tenant_id=s.tenant_id AND ma.owner_id=s.user_id AND ma.owner_revision=so.revision AND ma.generation_id<>''").
+		Joins(("JOIN message_material_admissions ma ON ma.id=mr.admission_id AND ma.messag" +
+			"e_id=m.id AND ma.session_id=s.id AND ma.tenant_id=s.tenant_id AND ma.owner" +
+			"_id=s.user_id AND ma.owner_revision=so.revision AND ma.generation_id<>''")).
 		Joins("JOIN message_material_versions mv ON mv.message_id=m.id AND mv.revision=ma.revision AND mv.revision>0").
-		Joins("JOIN message_generation_origins mo ON mo.id=ma.generation_id AND mo.message_id=m.id AND mo.session_id=s.id AND mo.tenant_id=s.tenant_id AND mo.owner_id=s.user_id AND mo.owner_revision=so.revision AND mo.request_id=h.request_id AND mo.role='assistant'").
-		Joins("JOIN knowledge_input_message_versions mh ON mh.message_id=m.id AND mh.revision=h.assistant_revision AND mh.revision>0").
+		Joins(("JOIN message_generation_origins mo ON mo.id=ma.generation_id AND mo.messag" +
+			"e_id=m.id AND mo.session_id=s.id AND mo.tenant_id=s.tenant_id AND mo.owner" +
+			"_id=s.user_id AND mo.owner_revision=so.revision AND mo.request_id=h.reques" +
+			"t_id AND mo.role='assistant'")).
+		Joins(("JOIN knowledge_input_message_versions mh ON mh.message_id=m.id AND mh.revi" +
+			"sion=h.assistant_revision AND mh.revision>0")).
 		Joins("JOIN message_material_receipts ur ON ur.message_id=u.id").
-		Joins("JOIN message_material_admissions ua ON ua.id=ur.admission_id AND ua.message_id=u.id AND ua.session_id=s.id AND ua.tenant_id=s.tenant_id AND ua.owner_id=s.user_id AND ua.owner_revision=so.revision AND ua.generation_id<>''").
-		Joins("JOIN message_material_versions uv ON uv.message_id=u.id AND uv.revision=ua.revision AND uv.revision=h.user_revision AND uv.revision>0").
-		Joins("JOIN message_generation_origins uo ON uo.id=ua.generation_id AND uo.message_id=u.id AND uo.session_id=s.id AND uo.tenant_id=s.tenant_id AND uo.owner_id=s.user_id AND uo.owner_revision=so.revision AND uo.request_id=h.request_id AND uo.role='user'").
-		Where("r.row_kind='knowledge' AND a.origin_kind='history' AND a.tenant_id=? AND a.knowledge_base_id=? AND s.user_id=?", tenant, kbID, owner)
+		Joins(("JOIN message_material_admissions ua ON ua.id=ur.admission_id AND ua.messag" +
+			"e_id=u.id AND ua.session_id=s.id AND ua.tenant_id=s.tenant_id AND ua.owner" +
+			"_id=s.user_id AND ua.owner_revision=so.revision AND ua.generation_id<>''")).
+		Joins(("JOIN message_material_versions uv ON uv.message_id=u.id AND uv.revision=ua" +
+			".revision AND uv.revision=h.user_revision AND uv.revision>0")).
+		Joins(("JOIN message_generation_origins uo ON uo.id=ua.generation_id AND uo.messag" +
+			"e_id=u.id AND uo.session_id=s.id AND uo.tenant_id=s.tenant_id AND uo.owner" +
+			"_id=s.user_id AND uo.owner_revision=so.revision AND uo.request_id=h.reques" +
+			"t_id AND uo.role='user'")).
+		Where(("r.row_kind='knowledge' AND a.origin_kind='history' AND a.tenant_id=? AND a" +
+			".knowledge_base_id=? AND s.user_id=?"), tenant, kbID, owner)
 	if len(sessionIDs) > 0 {
 		q = q.Where("s.id IN ?", sessionIDs)
 	}

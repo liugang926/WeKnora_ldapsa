@@ -52,7 +52,7 @@ func (a messageLineageHistoryAdmission) OriginalHistoryRepository(
 	if err != nil {
 		return nil, err
 	}
-	copy, err := cloneCollection(rows)
+	copied, err := cloneCollection(rows)
 	if err != nil {
 		return nil, err
 	}
@@ -60,17 +60,17 @@ func (a messageLineageHistoryAdmission) OriginalHistoryRepository(
 		if row == nil {
 			continue
 		}
-		copy[i].SourceLineage, _ = types.UnionSourceLineage(row.SourceLineage)
-		copy[i].ExecutionContext = row.ExecutionContext
-		copy[i].AgentTenantID = row.AgentTenantID
-		copy[i].RenderedContent = row.RenderedContent
-		copy[i].ContextCheckpoint, err = cloneCollection(row.ContextCheckpoint)
+		copied[i].SourceLineage, _ = types.UnionSourceLineage(row.SourceLineage)
+		copied[i].ExecutionContext = row.ExecutionContext
+		copied[i].AgentTenantID = row.AgentTenantID
+		copied[i].RenderedContent = row.RenderedContent
+		copied[i].ContextCheckpoint, err = cloneCollection(row.ContextCheckpoint)
 		if err != nil {
 			return nil, err
 		}
 	}
 
-	return agentOriginalHistoryRepository{MessageRepository: actual.messageRepo, rows: copy}, nil
+	return agentOriginalHistoryRepository{MessageRepository: actual.messageRepo, rows: copied}, nil
 }
 
 type agentHistoryCurrentRequestKey struct{}
@@ -111,7 +111,7 @@ func (r agentOriginalHistoryRepository) ListMessagesBySessionBeforeCursor(
 			continue
 		}
 		if (!before.IsZero() || beforeID != "") &&
-			!(row.CreatedAt.Before(before) || row.CreatedAt.Equal(before) && row.ID < beforeID) {
+			!row.CreatedAt.Before(before) && (!row.CreatedAt.Equal(before) || row.ID >= beforeID) {
 			continue
 		}
 		selected = append(selected, row)

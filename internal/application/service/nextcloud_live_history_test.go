@@ -22,9 +22,9 @@ type documentLiveHistory struct {
 }
 
 func prepareDocumentLiveHistory(
-	t *testing.T,
+	ctx context.Context, t *testing.T,
 	m *machinePipelineFixture,
-	ctx context.Context,
+
 	query string,
 ) *documentLiveHistory {
 	t.Helper()
@@ -82,8 +82,8 @@ func prepareDocumentLiveHistory(
 }
 
 func (h *documentLiveHistory) complete(
-	t *testing.T,
-	ctx context.Context,
+	ctx context.Context, t *testing.T,
+
 	answer string,
 	lineage *types.SourceLineage,
 ) func() {

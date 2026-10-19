@@ -11,7 +11,8 @@ import (
 
 func TestAgentMCPIndependentTransportActualSessionAndMaterial(t *testing.T) {
 	for _, mutation := range []string{
-		"none", "scoped-session", "principal", "owner", "original-body-aba", "unbound-user", "other-agent", "other-agent-tenant",
+		"none", "scoped-session", "principal", "owner", "original-body-aba", "unbound-user",
+		"other-agent", "other-agent-tenant",
 		"completed-assistant", "changed-agent-config", "other-independent-session", "other-scoped-session",
 	} {
 		t.Run(mutation, func(t *testing.T) {

@@ -18,6 +18,7 @@ type (
 	actualSteerHTTPInputBoundary struct{ Digest string }
 )
 
+// WithActualSteerHTTPInput attaches the actual injected HTTP input receipt to a context.
 func WithActualSteerHTTPInput(ctx context.Context, request *types.SteerAuthoredRequest) (context.Context, error) {
 	if request == nil {
 		return ctx, types.ErrSourceLineageUnknown
@@ -68,8 +69,8 @@ func (s *messageService) BeginSteerMaterialRead(
 	ctx context.Context,
 	request *types.SteerMaterialRequest,
 ) (*types.SteerMaterialSnapshot, func() error, func(), error) {
-	snapshot, _, check, close, err := s.beginSteerMaterialRead(ctx, request)
-	return snapshot, check, close, err
+	snapshot, _, check, closeRead, err := s.beginSteerMaterialRead(ctx, request)
+	return snapshot, check, closeRead, err
 }
 
 func (s *messageService) beginSteerMaterialRead(
@@ -92,7 +93,7 @@ func (s *messageService) beginSteerMaterialRead(
 	var once sync.Once
 	closed := false
 	var mu sync.Mutex
-	close := func() {
+	closeRead2 := func() {
 		once.Do(func() {
 			mu.Lock()
 			closed = true
@@ -112,7 +113,7 @@ func (s *messageService) beginSteerMaterialRead(
 		lease, err := s.materialStore.ContentLeaseStore().
 			AcquireKBRead(ctx, scope.TenantID, scope.KBID, owner, 2*time.Minute)
 		if err != nil {
-			close()
+			closeRead2()
 			return nil, ctx, nil, nil, err
 		}
 		leases = append(leases, lease)
@@ -123,35 +124,35 @@ func (s *messageService) beginSteerMaterialRead(
 		lease, err := s.materialStore.ContentLeaseStore().
 			UpgradeKBRead(ctx, kb.ID, repository.NextcloudContentScope{TenantID: source.TenantID, KnowledgeBaseID: source.KnowledgeBaseID, KnowledgeID: source.KnowledgeID, DataSourceID: source.DataSourceID, ExternalID: source.ExternalID}, owner, 2*time.Minute)
 		if err != nil {
-			close()
+			closeRead2()
 			return nil, ctx, nil, nil, err
 		}
 		leases = append(leases, lease)
 		if uint64(lease.Epoch) != source.Revision {
-			close()
+			closeRead2()
 			return nil, ctx, nil, nil, repository.ErrKnowledgeInputChanged
 		}
 	}
 	if len(leases) > 0 {
 		ctx, err = repository.WithFAQReadLeaseCoverage(ctx, leases)
 		if err != nil {
-			close()
+			closeRead2()
 			return nil, ctx, nil, nil, err
 		}
 	}
 	ctx, err = repository.WithSteerMaterialReadPlan(ctx, plan, bodyLeases)
 	if err != nil {
-		close()
+		closeRead2()
 		return nil, ctx, nil, nil, err
 	}
 	snapshot, err := s.materialStore.CaptureSteerMaterial(ctx, plan)
 	if err != nil {
-		close()
+		closeRead2()
 		return nil, ctx, nil, nil, err
 	}
 	expectedBody, err := steerSnapshotBody(snapshot)
 	if err != nil {
-		close()
+		closeRead2()
 		return nil, ctx, nil, nil, err
 	}
 	check := func() error {
@@ -197,10 +198,10 @@ func (s *messageService) beginSteerMaterialRead(
 		return s.sourceLineageGuard.Check(ctx, plan.SourceLineage, access.LineageReadScope{})
 	}
 	if err := check(); err != nil {
-		close()
+		closeRead2()
 		return nil, ctx, nil, nil, err
 	}
-	return snapshot, ctx, check, close, nil
+	return snapshot, ctx, check, closeRead2, nil
 }
 
 func steerSnapshotBody(snapshot *types.SteerMaterialSnapshot) ([]byte, error) {
@@ -474,7 +475,7 @@ func (s *messageService) ConsumeActualSteerIntoMessage(
 	// Shared producer/HTTP ownership now retains this exact new user's bodies,
 	// including its original steer parent. The queue read can release.
 	closeSteer()
-	close := func() {}
+	closeRead3 := func() {}
 	check := func() error {
 		if err := s.materialStore.CheckSteerConsumption(retainedCtx, proof); err != nil {
 			return err
@@ -485,8 +486,8 @@ func (s *messageService) ConsumeActualSteerIntoMessage(
 		return CheckMessageMaterialOutputBoundary(context.WithValue(retainedCtx, messageMaterialOutputKey{}, slot))
 	}
 	if err := check(); err != nil {
-		close()
+		closeRead3()
 		return nil, nil, nil, nil, err
 	}
-	return message, proof, check, close, nil
+	return message, proof, check, closeRead3, nil
 }

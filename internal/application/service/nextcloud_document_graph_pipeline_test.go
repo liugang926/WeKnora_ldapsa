@@ -374,7 +374,8 @@ func runDocumentGraphPipeline(t *testing.T, path string, inspect ...func(*machin
 			)
 		}
 		t.Log(
-			"actual LDAPS reader can read processed output before NC share removal; retained document/chunk output and new admin read denied after removal",
+			("actual LDAPS reader can read processed output before NC share removal; ret" +
+				"ained document/chunk output and new admin read denied after removal"),
 		)
 
 	}
@@ -391,6 +392,8 @@ func runDocumentGraphPipeline(t *testing.T, path string, inspect ...func(*machin
 		return
 	}
 	t.Log(
-		"actual HTTP sync -> saved original -> parser/chunker -> SQLite vector+FTS rows -> enqueued extraction -> fenced SQL graph -> published stage/outbox; controlled source and models",
+		("actual HTTP sync -> saved original -> parser/chunker -> SQLite vector+FTS " +
+			"rows -> enqueued extraction -> fenced SQL graph -> published stage/outbox;" +
+			" controlled source and models"),
 	)
 }

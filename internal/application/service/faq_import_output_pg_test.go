@@ -25,7 +25,7 @@ func TestFAQPostgresActualImportProgressResultAndABA(t *testing.T) {
 		},
 	}
 	task, err := s.UpsertFAQEntries(
-		faqInputContext(t, ctx, types.FAQInputOperation{Kind: "import", Batch: batch}),
+		faqInputContext(ctx, t, types.FAQInputOperation{Kind: "import", Batch: batch}),
 		"kb",
 		batch,
 	)
@@ -53,7 +53,7 @@ func TestFAQPostgresActualImportProgressResultAndABA(t *testing.T) {
 	require.NoError(
 		t,
 		s.UpdateLastFAQImportResultDisplayStatus(
-			faqInputContext(t, ctx, types.FAQInputOperation{Kind: "display-status", DisplayStatus: "close"}),
+			faqInputContext(ctx, t, types.FAQInputOperation{Kind: "display-status", DisplayStatus: "close"}),
 			"kb",
 			"close",
 		),

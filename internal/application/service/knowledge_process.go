@@ -1766,7 +1766,7 @@ func (s *knowledgeService) ProcessQuestionGeneration(ctx context.Context, t *asy
 // payload.ChunkID and take the per-chunk path instead.
 func (s *knowledgeService) processQuestionGenerationForKnowledge(
 	ctx context.Context,
-	t *asynq.Task,
+	_ *asynq.Task,
 	payload types.QuestionGenerationPayload,
 ) (retErr error) {
 	taskStartedAt := time.Now()
@@ -2192,7 +2192,7 @@ func (s *knowledgeService) processQuestionGenerationForKnowledge(
 // are indexed in a single embedding BatchIndex call.
 func (s *knowledgeService) processQuestionGenerationForChunks(
 	ctx context.Context,
-	t *asynq.Task,
+	_ *asynq.Task,
 	payload types.QuestionGenerationPayload,
 ) (retErr error) {
 	taskStartedAt := time.Now()

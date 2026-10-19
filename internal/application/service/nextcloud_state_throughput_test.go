@@ -6,7 +6,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -41,7 +40,7 @@ func TestNextcloudStateTenThousandMetadataHTTPDurableACKThroughput(t *testing.T)
 	receiverSQL, err := receiver.DB()
 	require.NoError(t, err)
 	receiverSQL.SetMaxOpenConns(1)
-	defer receiverSQL.Close()
+	defer func() { require.NoError(t, receiverSQL.Close()) }()
 	require.NoError(
 		t,
 		receiver.Exec(
@@ -88,7 +87,10 @@ func TestNextcloudStateTenThousandMetadataHTTPDurableACKThroughput(t *testing.T)
 		}
 		received.Add(1)
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{"event_id": payload.EventID, "status": "accepted", "persisted": true})
+		if err := json.NewEncoder(w).
+			Encode(map[string]any{"event_id": payload.EventID, "status": "accepted", "persisted": true}); err != nil {
+			t.Errorf("encode fixture response: %v", err)
+		}
 	}))
 	defer server.Close()
 	t.Setenv("WEKNORA_NEXTCLOUD_DEV_HTTP", "1")
@@ -256,13 +258,12 @@ func TestNextcloudStateTenThousandMetadataHTTPDurableACKThroughput(t *testing.T)
 		receiver.Table("state_inbox").Select("received_at").Order("received_at").Offset(9499).Limit(1).Scan(&p95).Error,
 	)
 	t.Logf("p95_receiver_persist_lag_ms=%d dispatch_cadence_upper_bound_ms=5000", p95-started.UnixMilli())
-	t.Log(
-		fmt.Sprintf(
-			"metadata_rows=10000 exact_persisted_acks=%d elapsed_ms=%d throughput_per_second=%.1f entire_batch_sender_lag_ms=%d; includes actual HTTP, HMAC, sender DB and receiver FULL SQLite commits; excludes Nextcloud Files/LDAP costs and document bodies",
-			persisted,
-			elapsed.Milliseconds(),
-			10000/elapsed.Seconds(),
-			elapsed.Milliseconds(),
-		),
-	)
+	t.Logf(("metadata_rows=10000 exact_persisted_acks=%d elapsed_ms=%d throughput_per_s" +
+		"econd=%.1f entire_batch_sender_lag_ms=%d; includes actual HTTP, HMAC, send" +
+		"er DB and receiver FULL SQLite commits; excludes Nextcloud Files/LDAP cost" +
+		"s and document bodies"),
+		persisted,
+		elapsed.Milliseconds(),
+		10000/elapsed.Seconds(),
+		elapsed.Milliseconds())
 }

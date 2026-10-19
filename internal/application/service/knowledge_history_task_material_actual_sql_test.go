@@ -35,9 +35,9 @@ func historyActualQueuedTask(t *testing.T, f *historyVectorActualFixture, kind, 
 }
 
 func historyActualRunEnrichmentEntry(
-	t *testing.T,
+	ctx context.Context, t *testing.T,
 	f *historyVectorActualFixture,
-	ctx context.Context,
+
 	task *asynq.Task,
 ) error {
 	t.Helper()
@@ -139,7 +139,7 @@ func TestHistoryKnowledgeTaskActualSQLChangedOriginalRefusesBeforeModel(t *testi
 			beforeCalls := f.m.f.model.calls
 			beforeLookups := len(f.models.enrichmentGuards)
 			for _, task := range tasks {
-				require.Error(t, historyActualRunEnrichmentEntry(t, f, context.Background(), task), task.Type())
+				require.Error(t, historyActualRunEnrichmentEntry(context.Background(), t, f, task), task.Type())
 				require.Equal(t, beforeCalls, f.m.f.model.calls, "refused originals must never reach any model")
 				require.Len(
 					t,
@@ -179,7 +179,7 @@ func TestHistoryKnowledgeTaskActualSQLClosesOnlyItsAcquiredGuard(t *testing.T) {
 		task := historyActualQueuedTask(t, f, kind, proof.KnowledgeID)
 		require.Error(
 			t,
-			historyActualRunEnrichmentEntry(t, f, caller, task),
+			historyActualRunEnrichmentEntry(caller, t, f, task),
 			"a closed original guard context must stop the entry",
 		)
 	}

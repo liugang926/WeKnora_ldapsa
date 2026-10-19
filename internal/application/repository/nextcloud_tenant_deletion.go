@@ -10,6 +10,7 @@ import (
 	"gorm.io/gorm"
 )
 
+// NextcloudTenantDeletion represents nextcloud tenant deletion repository data.
 // The immutable owner tombstone survives a previous KB closure and closes only
 // this Tenant's automation namespace. Source originals and repair keys remain.
 type NextcloudTenantDeletion struct {
@@ -20,7 +21,9 @@ type NextcloudTenantDeletion struct {
 	RecoveryPlanSHA256 string
 }
 
+// TableName returns the persisted table name.
 func (NextcloudTenantDeletion) TableName() string { return "nextcloud_onboarding_tenant_deletions" }
+
 func tenantDeletionID(tenant uint64, deletion int64) string {
 	return recoverySHA(
 		[]byte("weknora-tenant-deleted-v1\n" + strconv.FormatUint(tenant, 10) + "\n" + strconv.FormatInt(deletion, 10)),
@@ -69,6 +72,7 @@ func retainActualTenantDeletionInTx(tx *gorm.DB, tenant uint64) error {
 	).Error
 }
 
+// TenantDeletionObservation returns the tenant deletion observation result.
 // Safe metadata is available through the existing operation GET, including a
 // retired historical operation. Only current original-actor/delegation authority
 // permits observation after Tenant membership has been removed.

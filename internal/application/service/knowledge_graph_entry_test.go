@@ -48,7 +48,8 @@ func (m *graphEntryModel) Chat(
 		m.call(msg, options)
 	}
 	return &types.ChatResponse{
-		Content: `[{"entity":"shared","entity_attributes":["actual graph fact"]},{"entity1":"shared","entity2":"target","relation":"KNOWS"}]`,
+		Content: ("[{\"entity\":\"shared\",\"entity_attributes\":[\"actual graph fact\"]},{\"" +
+			"entity1\":\"shared\",\"entity2\":\"target\",\"relation\":\"KNOWS\"}]"),
 	}, nil
 }
 
@@ -261,8 +262,8 @@ func graphAdmittedInput(
 }
 
 func graphExtractTask(
-	t *testing.T,
-	ctx context.Context,
+	ctx context.Context, t *testing.T,
+
 	store *repository.KnowledgeInputProvenanceStore,
 	repo interfaces.RetrieveGraphRepository,
 	namespace types.NameSpace,
@@ -304,7 +305,7 @@ func TestKnowledgeGraphActualSQLTaskNeo4jAgentOrdinaryEntry(t *testing.T) {
 		require.Contains(t, messages[0].Content, "actual human config attribute")
 		require.Contains(t, messages[0].Content, "actual human extra instruction")
 	}}
-	require.NoError(t, graphExtractTask(t, buildCtx, store, repo, namespace, proof, model))
+	require.NoError(t, graphExtractTask(buildCtx, t, store, repo, namespace, proof, model))
 	targets := types.SearchTargets{
 		&types.SearchTarget{
 			Type:            types.SearchTargetTypeKnowledgeBase,
@@ -372,7 +373,7 @@ func TestKnowledgeGraphActualSQLConfigMutationAndHardDeleteDenyOriginalGraph(t *
 		t.Run(mode, func(t *testing.T) {
 			db, store, repo, namespace, bases, _ := graphSQLNeoFixture(t)
 			ctx, proof := graphAdmittedInput(t, db, store, namespace)
-			require.NoError(t, graphExtractTask(t, ctx, store, repo, namespace, proof, &graphEntryModel{}))
+			require.NoError(t, graphExtractTask(ctx, t, store, repo, namespace, proof, &graphEntryModel{}))
 			switch mode {
 			case "config rollback":
 				require.NoError(
@@ -440,7 +441,7 @@ func TestKnowledgeGraphActualSQLModelOutputWithdrawalWritesNothing(t *testing.T)
 				Error,
 		)
 	}}
-	err := graphExtractTask(t, ctx, store, repo, namespace, proof, model)
+	err := graphExtractTask(ctx, t, store, repo, namespace, proof, model)
 	require.Error(t, err)
 	require.False(t, errors.Is(err, context.Canceled))
 	graph, err := repo.SearchNode(context.Background(), namespace, []string{"shared"})
@@ -487,7 +488,7 @@ func graphNextcloudSource(
 	t.Helper()
 	t.Setenv("SYSTEM_AES_KEY", "0123456789abcdef0123456789abcdef")
 	server := httptest.NewServer(
-		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNoContent) }),
+		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }),
 	)
 	t.Cleanup(server.Close)
 	t.Setenv("WEKNORA_NEXTCLOUD_DEV_HTTP", "1")
@@ -614,7 +615,7 @@ func graphNextcloudSource(
 func TestKnowledgeGraphActualNextcloudStagingExtractionPublicationAndWithdrawal(t *testing.T) {
 	db, store, repo, namespace, bases, knowledge := graphSQLNeoFixture(t)
 	ctx, proof, doc := graphNextcloudSource(t, db, store, namespace, "77", namespace.Knowledge, "original-etag")
-	require.NoError(t, graphExtractTask(t, ctx, store, repo, namespace, proof, &graphEntryModel{}))
+	require.NoError(t, graphExtractTask(ctx, t, store, repo, namespace, proof, &graphEntryModel{}))
 	sourceRepo := repository.NewKnowledgeRepository(db)
 	doc.ParseStatus = types.ParseStatusCompleted
 	doc.EnableStatus = "enabled"
@@ -675,7 +676,7 @@ func TestKnowledgeGraphActualNextcloudStagingExtractionPublicationAndWithdrawal(
 	require.Nil(t, denied)
 }
 
-func publishGraphSource(t *testing.T, ctx context.Context, db *gorm.DB, doc *types.Knowledge) {
+func publishGraphSource(ctx context.Context, t *testing.T, db *gorm.DB, doc *types.Knowledge) {
 	t.Helper()
 	repo := repository.NewKnowledgeRepository(db)
 	doc.ParseStatus = types.ParseStatusCompleted
@@ -692,12 +693,12 @@ func TestKnowledgeGraphActualSQLMergedDocumentsRetainEverySourceDuringRead(t *te
 	db, store, repo, namespace, bases, _ := graphSQLNeoFixture(t)
 	sourceA := types.NameSpace{KnowledgeBase: namespace.KnowledgeBase, Knowledge: "source-a"}
 	ctxA, proofA, docA := graphNextcloudSource(t, db, store, sourceA, "77", sourceA.Knowledge, "etag-a")
-	require.NoError(t, graphExtractTask(t, ctxA, store, repo, sourceA, proofA, &graphEntryModel{}))
-	publishGraphSource(t, ctxA, db, docA)
+	require.NoError(t, graphExtractTask(ctxA, t, store, repo, sourceA, proofA, &graphEntryModel{}))
+	publishGraphSource(ctxA, t, db, docA)
 	sourceB := types.NameSpace{KnowledgeBase: namespace.KnowledgeBase, Knowledge: "source-b"}
 	ctxB, proofB, docB := graphNextcloudSource(t, db, store, sourceB, "78", sourceB.Knowledge, "etag-b")
-	require.NoError(t, graphExtractTask(t, ctxB, store, repo, sourceB, proofB, &graphEntryModel{}))
-	publishGraphSource(t, ctxB, db, docB)
+	require.NoError(t, graphExtractTask(ctxB, t, store, repo, sourceB, proofB, &graphEntryModel{}))
+	publishGraphSource(ctxB, t, db, docB)
 	checker := repository.NewKnowledgeRepository(db).(interface {
 		RecheckNextcloudSourceLineage(context.Context, *types.SourceLineage) (bool, error)
 	})
@@ -774,7 +775,7 @@ func TestKnowledgeGraphActualSQLUnusedGeneratedDescriptionDoesNotDisableGraph(t 
 	db, store, repo, namespace, bases, _ := graphSQLNeoFixture(t)
 	ctx, proof := graphAdmittedInput(t, db, store, namespace)
 	require.Equal(t, types.KnowledgeBuildProjectionGraph, proof.Projection)
-	require.NoError(t, graphExtractTask(t, ctx, store, repo, namespace, proof, &graphEntryModel{}))
+	require.NoError(t, graphExtractTask(ctx, t, store, repo, namespace, proof, &graphEntryModel{}))
 	var doc types.Knowledge
 	require.NoError(t, db.Where("id = ?", namespace.Knowledge).Take(&doc).Error)
 	doc.Description = "new generated description never used by graph model"
@@ -804,12 +805,13 @@ func TestKnowledgeGraphActualSQLUnusedGeneratedDescriptionDoesNotDisableGraph(t 
 func TestKnowledgeGraphActualNextcloudOldTupleCannotBorrowFreshChunkReceipt(t *testing.T) {
 	db, store, repo, namespace, bases, _ := graphSQLNeoFixture(t)
 	ctx, proof, doc := graphNextcloudSource(t, db, store, namespace, "77", namespace.Knowledge, "original-etag")
-	require.NoError(t, graphExtractTask(t, ctx, store, repo, namespace, proof, &graphEntryModel{}))
-	publishGraphSource(t, ctx, db, doc)
+	require.NoError(t, graphExtractTask(ctx, t, store, repo, namespace, proof, &graphEntryModel{}))
+	publishGraphSource(ctx, t, db, doc)
 	require.NoError(
 		t,
 		db.Exec(
-			"UPDATE nextcloud_content_fences SET epoch=epoch+1 WHERE tenant_id=7 AND knowledge_base_id=? AND knowledge_id=?",
+			("UPDATE nextcloud_content_fences SET epoch=epoch+1 WHERE tenant_id=7 AND kn"+
+				"owledge_base_id=? AND knowledge_id=?"),
 			namespace.KnowledgeBase,
 			doc.ID,
 		).Error,
@@ -884,8 +886,8 @@ func (m *graphConversationModel) GetModelName() string { return "local-conversat
 func TestKnowledgeGraphActualWriterAgentCitationFreeNextTurnWithdrawal(t *testing.T) {
 	db, store, repo, namespace, bases, knowledge := graphSQLNeoFixture(t)
 	buildCtx, proof, doc := graphNextcloudSource(t, db, store, namespace, "77", namespace.Knowledge, "original-etag")
-	require.NoError(t, graphExtractTask(t, buildCtx, store, repo, namespace, proof, &graphEntryModel{}))
-	publishGraphSource(t, buildCtx, db, doc)
+	require.NoError(t, graphExtractTask(buildCtx, t, store, repo, namespace, proof, &graphEntryModel{}))
+	publishGraphSource(buildCtx, t, db, doc)
 	checker := repository.NewKnowledgeRepository(db).(interface {
 		RecheckNextcloudSourceLineage(context.Context, *types.SourceLineage) (bool, error)
 	})
@@ -970,7 +972,7 @@ func TestKnowledgeGraphActualWriterAgentCitationFreeNextTurnWithdrawal(t *testin
 func TestKnowledgeGraphActualSQLUnusedKBDescriptionDoesNotRestampOrDisableGraph(t *testing.T) {
 	db, store, repo, namespace, bases, _ := graphSQLNeoFixture(t)
 	ctx, proof := graphAdmittedInput(t, db, store, namespace)
-	require.NoError(t, graphExtractTask(t, ctx, store, repo, namespace, proof, &graphEntryModel{}))
+	require.NoError(t, graphExtractTask(ctx, t, store, repo, namespace, proof, &graphEntryModel{}))
 	require.NoError(
 		t,
 		db.Model(&types.KnowledgeBase{}).

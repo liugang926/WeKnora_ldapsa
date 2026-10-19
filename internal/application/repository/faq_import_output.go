@@ -21,6 +21,7 @@ type faqImportOutputAdmission struct {
 	MaterialRevision                                                                            uint64
 }
 
+// PeekFAQImportProgressScope reads faqimport progress scope.
 // Only original receipt identities are inspected here. Callers must acquire
 // the selected KB read lease and still perform complete input/source checks.
 func (s *KnowledgeInputProvenanceStore) PeekFAQImportProgressScope(
@@ -52,6 +53,7 @@ func (s *KnowledgeInputProvenanceStore) PeekFAQImportProgressScope(
 	return types.KnowledgeSearchScope{TenantID: row.TenantID, KBID: row.KnowledgeBaseID}, nil
 }
 
+// PeekFAQImportOutputReadPlan reads faqimport output read plan.
 func (s *KnowledgeInputProvenanceStore) PeekFAQImportOutputReadPlan(
 	ctx context.Context,
 	request types.FAQImportOutputReadRequest,
@@ -78,7 +80,8 @@ func (s *KnowledgeInputProvenanceStore) peekFAQImportOutputReadPlanInTx(
 		TenantID, Revision                                                                       uint64
 	}
 	err = tx.Table("faq_import_output_heads h").
-		Select("a.id,a.session_id,a.tenant_id,a.knowledge_base_id,a.knowledge_id,a.task_id,a.kind,a.source_lineage,a.original_inputs,h.revision").
+		Select(("a.id,a.session_id,a.tenant_id,a.knowledge_base_id,a.knowledge_id,a.task_id" +
+			",a.kind,a.source_lineage,a.original_inputs,h.revision")).
 		Joins("JOIN faq_import_output_admissions a ON a.id=h.admission_id AND a.output_key=h.output_key").
 		Where("h.output_key=? AND a.tenant_id=? AND a.kind=?", key, request.TenantID, request.Kind).
 		Take(&row).
@@ -179,6 +182,7 @@ func (faqImportOutputAdmission) TableName() string { return "faq_import_output_a
 
 type faqImportOutputReadPlanKey struct{}
 
+// WithFAQImportOutputReadPlan binds faqimport output read plan.
 func WithFAQImportOutputReadPlan(ctx context.Context, plan *types.FAQImportOutputReadPlan) (context.Context, error) {
 	if plan == nil || plan.AdmissionID == "" || plan.MetadataDigest == "" || len(plan.Scopes) == 0 {
 		return ctx, types.ErrSourceLineageUnknown
@@ -187,15 +191,15 @@ func WithFAQImportOutputReadPlan(ctx context.Context, plan *types.FAQImportOutpu
 	if err != nil {
 		return ctx, err
 	}
-	var copy types.FAQImportOutputReadPlan
-	if err := json.Unmarshal(encoded, &copy); err != nil {
+	var copied types.FAQImportOutputReadPlan
+	if err := json.Unmarshal(encoded, &copied); err != nil {
 		return ctx, err
 	}
-	ctx, err = WithMessageMaterialReadPlans(ctx, copy.MessagePlans)
+	ctx, err = WithMessageMaterialReadPlans(ctx, copied.MessagePlans)
 	if err != nil {
 		return ctx, err
 	}
-	return context.WithValue(ctx, faqImportOutputReadPlanKey{}, &copy), nil
+	return context.WithValue(ctx, faqImportOutputReadPlanKey{}, &copied), nil
 }
 
 type faqImportOutputHead struct {
@@ -282,6 +286,7 @@ func sealFAQImportOutputInTx(
 		Error
 }
 
+// SealFAQImportProgress seals faqimport progress.
 // Only the actual worker/request session may mint a progress output. Redis,
 // current metadata and client-provided receipts are never original evidence.
 func (s *KnowledgeInputProvenanceStore) SealFAQImportProgress(
@@ -316,6 +321,7 @@ func (s *KnowledgeInputProvenanceStore) SealFAQImportProgress(
 	}, knowledgeDisplayWriteOptions(s.db))
 }
 
+// PublishFAQImportResult publishes faqimport result.
 // Result and its output receipt commit atomically. Counts are supplied only by
 // the trusted worker over the already admitted complete candidate manifest.
 func (s *KnowledgeInputProvenanceStore) PublishFAQImportResult(
@@ -501,6 +507,7 @@ func (s *KnowledgeInputProvenanceStore) captureFAQImportOutputInTx(
 	return snapshot, nil
 }
 
+// CaptureFAQImportOutputInputs captures faqimport output inputs.
 func (s *KnowledgeInputProvenanceStore) CaptureFAQImportOutputInputs(
 	ctx context.Context,
 	req types.FAQImportOutputReadRequest,
@@ -514,6 +521,7 @@ func (s *KnowledgeInputProvenanceStore) CaptureFAQImportOutputInputs(
 	return snapshot, err
 }
 
+// RecheckFAQImportOutputInputs rechecks faqimport output inputs.
 func (s *KnowledgeInputProvenanceStore) RecheckFAQImportOutputInputs(
 	ctx context.Context,
 	snapshot *types.FAQImportOutputSnapshot,
@@ -533,6 +541,7 @@ func (s *KnowledgeInputProvenanceStore) RecheckFAQImportOutputInputs(
 	})
 }
 
+// UpdateFAQImportResultDisplayWithInput updates faqimport result display with input.
 // A display-only edit preserves every retained counter/body's original
 // producer. An unknown legacy result cannot be signed by this new request.
 func (s *KnowledgeInputProvenanceStore) UpdateFAQImportResultDisplayWithInput(

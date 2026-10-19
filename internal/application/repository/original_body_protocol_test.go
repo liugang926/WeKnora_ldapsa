@@ -74,7 +74,9 @@ func bodyProtocolFixture(t *testing.T, pg bool, ownedKeys ...[]byte) (*gorm.DB, 
 					KnowledgeBaseID: "kb",
 					Type:            types.KnowledgeTypeManual,
 					Metadata: types.JSON(
-						`{"datasource_id":"stable-source","external_id":"stable-file","manual":{"content":"manual original body","other":"preserved"},"pointer":"preserved"}`,
+						("{\"datasource_id\":\"stable-source\",\"external_id\":\"stable-file\",\"man" +
+							"ual\":{\"content\":\"manual original body\",\"other\":\"preserved\"},\"poi" +
+							"nter\":\"preserved\"}"),
 					),
 				},
 			).Error,
@@ -134,7 +136,7 @@ func bodyProtocolDeleted(t *testing.T, db *gorm.DB, id string, old bool) {
 	if old {
 		expr = "datetime('now','-2 hours')"
 	}
-	if db.Dialector.Name() == "postgres" {
+	if db.Name() == "postgres" {
 		expr = "CURRENT_TIMESTAMP-INTERVAL '30 minutes'"
 		if old {
 			expr = "CURRENT_TIMESTAMP-INTERVAL '2 hours'"
@@ -213,7 +215,7 @@ func bodyProtocolFailedACK(t *testing.T, pg bool) {
 	require.NoError(t, db.Callback().Update().Before("gorm:update").Register("body_ack_failure", func(tx *gorm.DB) {
 		if tx.Statement.Table == "original_body_payloads" {
 			if data, ok := tx.Statement.Dest.(map[string]any); ok && data["state"] == "purged" {
-				tx.AddError(fail)
+				_ = tx.AddError(fail)
 			}
 		}
 	}))
@@ -286,7 +288,8 @@ func bodyProtocolDatabaseRollback(t *testing.T, pg bool) {
 		var tables []string
 		require.NoError(
 			t,
-			db.Raw("SELECT table_name FROM information_schema.tables WHERE table_schema=? AND table_type='BASE TABLE' ORDER BY table_name", schema).
+			db.Raw(("SELECT table_name FROM information_schema.tables WHERE table_schema=? AND "+
+				"table_type='BASE TABLE' ORDER BY table_name"), schema).
 				Scan(&tables).
 				Error,
 		)
@@ -471,7 +474,8 @@ func bodyProtocolSourceWindows(t *testing.T, pg bool) {
 			require.NoError(
 				t,
 				db.Exec(
-					"UPDATE knowledges SET channel='nextcloud',parse_status='completed',pending_subtasks_count=0 WHERE id='one'",
+					("UPDATE knowledges SET channel='nextcloud',parse_status='completed',pending" +
+						"_subtasks_count=0 WHERE id='one'"),
 				).Error,
 			)
 			now, e := nextcloudLeaseNowMS(bodyInternal(db))

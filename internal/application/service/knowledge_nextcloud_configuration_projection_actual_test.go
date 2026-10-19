@@ -25,18 +25,18 @@ type workerConfigurationQueryAudit struct {
 	unrelatedReads atomic.Int64
 }
 
-func (a *workerConfigurationQueryAudit) LogMode(level logger.LogLevel) logger.Interface { return a }
+func (a *workerConfigurationQueryAudit) LogMode(_ logger.LogLevel) logger.Interface { return a }
 
 func (a *workerConfigurationQueryAudit) Trace(
-	ctx context.Context,
-	begin time.Time,
+	_ context.Context,
+	_ time.Time,
 	query func() (string, int64),
-	err error,
+	_ error,
 ) {
 	sql, _ := query()
 	lower := strings.ReplaceAll(strings.ToLower(sql), "`", "\"")
 	if !strings.HasPrefix(strings.TrimSpace(lower), "select") ||
-		!(strings.Contains(lower, `from "knowledge_bases"`) || strings.Contains(lower, "from knowledge_bases")) {
+		!strings.Contains(lower, `from "knowledge_bases"`) && !strings.Contains(lower, "from knowledge_bases") {
 		return
 	}
 	projection := strings.SplitN(lower, " from ", 2)[0]
@@ -56,9 +56,9 @@ func (a *workerConfigurationQueryAudit) Trace(
 
 func TestNextcloudWorkerConfigurationProjectionActualSQLite(t *testing.T) {
 	m := newMachinePipelineFixture(t, false)
-	ctx, close, err := m.f.store.BeginNextcloudOriginalFetchConfigurationRead(context.Background(), m.ds)
+	ctx, closeRead, err := m.f.store.BeginNextcloudOriginalFetchConfigurationRead(context.Background(), m.ds)
 	require.NoError(t, err)
-	defer close()
+	defer closeRead()
 	audit := &workerConfigurationQueryAudit{Interface: m.f.db.Logger}
 	previous := m.f.db.Logger
 	m.f.db.Logger = audit
@@ -98,9 +98,9 @@ func TestNextcloudSourceBoundConfigurationProjectionDenyBeforeBodyActualSQLite(t
 		t.Run(mode, func(t *testing.T) {
 			decision := &atomic.Int32{}
 			m, _ := newScopedConfigurationWorkerFixture(t, decision)
-			ctx, close, err := m.f.store.BeginNextcloudOriginalFetchConfigurationRead(context.Background(), m.ds)
+			ctx, closeRead2, err := m.f.store.BeginNextcloudOriginalFetchConfigurationRead(context.Background(), m.ds)
 			require.NoError(t, err)
-			defer close()
+			defer closeRead2()
 			audit := &workerConfigurationQueryAudit{Interface: m.f.db.Logger}
 			previous := m.f.db.Logger
 			m.f.db.Logger = audit

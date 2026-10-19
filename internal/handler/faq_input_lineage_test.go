@@ -132,7 +132,7 @@ func (r faqHTTPTenants) GetTenantByID(context.Context, uint64) (*types.Tenant, e
 
 type faqHTTPKB struct{ collectionHTTPKB }
 
-func (s faqHTTPKB) HybridSearch(ctx context.Context, kb string, _ types.SearchParams) ([]*types.SearchResult, error) {
+func (s faqHTTPKB) HybridSearch(_ context.Context, kb string, _ types.SearchParams) ([]*types.SearchResult, error) {
 	var chunks []*types.Chunk
 	err := s.db.Where("knowledge_base_id=? AND chunk_type='faq' AND is_enabled=?", kb, true).
 		Order("id").
@@ -237,7 +237,7 @@ func faqActualHTTPFixture(
 	return h, tag, db, store, queue, engine, ctx
 }
 
-func serveFAQHTTP(h *FAQHandler, ctx context.Context, method, url, body string) *httptest.ResponseRecorder {
+func serveFAQHTTP(ctx context.Context, h *FAQHandler, method, url, body string) *httptest.ResponseRecorder {
 	r := documentHandlerRouter()
 	r.Use(func(c *gin.Context) { c.Request = c.Request.WithContext(ctx); c.Next() })
 	r.POST("/knowledge-bases/:id/faq/entry", h.CreateEntry)
@@ -260,8 +260,9 @@ func serveFAQHTTP(h *FAQHandler, ctx context.Context, method, url, body string) 
 func TestFAQActualHTTPCreateImportUpdateListSearchAndTagCount(t *testing.T) {
 	h, tag, db, _, queue, engine, ctx := faqActualHTTPFixture(t)
 	w := serveFAQHTTP(
-		h,
-		ctx,
+
+		ctx, h,
+
 		http.MethodPost,
 		"/knowledge-bases/kb/faq/entry",
 		`{"standard_question":"real FAQ first","answers":["actual first answer"]}`,
@@ -269,19 +270,21 @@ func TestFAQActualHTTPCreateImportUpdateListSearchAndTagCount(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	var first types.Chunk
 	require.NoError(t, db.Where("chunk_type='faq'").Take(&first).Error)
-	w = serveFAQHTTP(h, ctx, http.MethodGet, fmt.Sprintf("/knowledge-bases/kb/faq/entries/%d", first.SeqID), "")
+	w = serveFAQHTTP(ctx, h, http.MethodGet, fmt.Sprintf("/knowledge-bases/kb/faq/entries/%d", first.SeqID), "")
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	w = serveFAQHTTP(
-		h,
-		ctx,
+
+		ctx, h,
+
 		http.MethodPut,
 		fmt.Sprintf("/knowledge-bases/kb/faq/entries/%d", first.SeqID),
 		`{"standard_question":"real FAQ first edited","answers":["edited answer"]}`,
 	)
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	w = serveFAQHTTP(
-		h,
-		ctx,
+
+		ctx, h,
+
 		http.MethodPost,
 		"/knowledge-bases/kb/faq/entries",
 		`{"mode":"append","entries":[{"standard_question":"real FAQ imported","answers":["imported answer"]}]}`,
@@ -289,16 +292,16 @@ func TestFAQActualHTTPCreateImportUpdateListSearchAndTagCount(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	require.Len(t, queue.tasks, 1)
 	require.NoError(t, h.knowledgeService.ProcessFAQImport(context.Background(), queue.tasks[0]))
-	w = serveFAQHTTP(h, ctx, http.MethodGet, "/knowledge-bases/kb/faq/entries?page_size=1", "")
+	w = serveFAQHTTP(ctx, h, http.MethodGet, "/knowledge-bases/kb/faq/entries?page_size=1", "")
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	require.Contains(t, w.Body.String(), `"total":2`)
-	w = serveFAQHTTP(h, ctx, http.MethodPost, "/knowledge-bases/kb/faq/search", `{"query_text":"FAQ"}`)
+	w = serveFAQHTTP(ctx, h, http.MethodPost, "/knowledge-bases/kb/faq/search", `{"query_text":"FAQ"}`)
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	require.Contains(t, w.Body.String(), "imported answer")
-	w = serveTagHTTP(tag, ctx, http.MethodGet, "/knowledge-bases/kb/tags", "")
+	w = serveTagHTTP(ctx, tag, http.MethodGet, "/knowledge-bases/kb/tags", "")
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	require.Contains(t, w.Body.String(), `"chunk_count":1`)
-	w = serveFAQHTTP(h, ctx, http.MethodGet, "/knowledge-bases/kb/faq/entries/export?format=json", "")
+	w = serveFAQHTTP(ctx, h, http.MethodGet, "/knowledge-bases/kb/faq/entries/export?format=json", "")
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	require.Contains(t, w.Body.String(), "imported answer")
 	require.Equal(t, 3, engine.calls)
@@ -310,8 +313,9 @@ func TestFAQActualHTTPProducerActorRevokedDuringModelClosesReceipt(t *testing.T)
 		require.NoError(t, db.Model(&types.User{}).Where("id='user'").Update("is_active", false).Error)
 	}
 	w := serveFAQHTTP(
-		h,
-		ctx,
+
+		ctx, h,
+
 		http.MethodPost,
 		"/knowledge-bases/kb/faq/entry",
 		`{"standard_question":"revoked actor question","answers":["must not publish"]}`,

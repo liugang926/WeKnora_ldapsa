@@ -13,6 +13,8 @@ type SourceLineageRead struct {
 	Lineage *types.SourceLineage
 	Scope   LineageReadScope
 }
+
+// SourceLineageAuthorizer checks current authority for retained source references.
 type SourceLineageAuthorizer interface {
 	Check(context.Context, *types.SourceLineage, LineageReadScope) error
 	CheckBatch(context.Context, []SourceLineageRead) error
@@ -46,11 +48,11 @@ func (g *NextcloudSourceLineageGuard) CheckBatch(ctx context.Context, reads []So
 			if target == nil {
 				continue
 			}
-			copy := *target
-			copy.KnowledgeIDs = append([]string(nil), target.KnowledgeIDs...)
-			copy.TagIDs = append([]string(nil), target.TagIDs...)
-			copy.ScopeTagIDs = append([]string(nil), target.ScopeTagIDs...)
-			scope.Targets[i] = &copy
+			copied := *target
+			copied.KnowledgeIDs = append([]string(nil), target.KnowledgeIDs...)
+			copied.TagIDs = append([]string(nil), target.TagIDs...)
+			copied.ScopeTagIDs = append([]string(nil), target.ScopeTagIDs...)
+			scope.Targets[i] = &copied
 		}
 		frozen = append(frozen, SourceLineageRead{Lineage: lineage, Scope: scope})
 	}

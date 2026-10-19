@@ -47,7 +47,8 @@ func TestSessionTextLineageAtomicTitleWritePreservesLegacyAndManualCAS(t *testin
 	require.NoError(
 		t,
 		db.Exec(
-			`CREATE TRIGGER reject_title_proof BEFORE UPDATE OF title_source_lineage ON sessions BEGIN SELECT RAISE(ABORT, 'injected title proof failure'); END`,
+			("CREATE TRIGGER reject_title_proof BEFORE UPDATE OF title_source_lineage ON" +
+				" sessions BEGIN SELECT RAISE(ABORT, 'injected title proof failure'); END"),
 		).Error,
 	)
 	_, err = repo.SaveGeneratedSessionTitle(

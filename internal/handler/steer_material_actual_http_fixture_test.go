@@ -106,7 +106,7 @@ func (m *actualSteerHTTPObservedMessages) ConsumeActualSteerIntoMessage(
 	if m.beforeConsume != nil {
 		m.once.Do(func() { m.beforeConsume(input) })
 	}
-	message, proof, check, close, err := m.actualSteerHTTPPort.ConsumeActualSteerIntoMessage(
+	message, proof, check, closeRead, err := m.actualSteerHTTPPort.ConsumeActualSteerIntoMessage(
 		ctx,
 		input,
 		run,
@@ -116,7 +116,7 @@ func (m *actualSteerHTTPObservedMessages) ConsumeActualSteerIntoMessage(
 	if err == nil && m.afterConsume != nil {
 		m.once.Do(func() { m.afterConsume(message, proof) })
 	}
-	return message, proof, check, close, err
+	return message, proof, check, closeRead, err
 }
 
 func (m *actualSteerHTTPObservedMessages) ConsumeActualSteerFollowUpIntoMessage(
@@ -131,7 +131,7 @@ func (m *actualSteerHTTPObservedMessages) ConsumeActualSteerFollowUpIntoMessage(
 	if m.consumeContext != nil {
 		ctx = m.consumeContext(ctx)
 	}
-	message, proof, check, close, err := m.actualSteerHTTPPort.ConsumeActualSteerFollowUpIntoMessage(
+	message, proof, check, closeRead2, err := m.actualSteerHTTPPort.ConsumeActualSteerFollowUpIntoMessage(
 		ctx,
 		input,
 		run,
@@ -144,7 +144,7 @@ func (m *actualSteerHTTPObservedMessages) ConsumeActualSteerFollowUpIntoMessage(
 	if err == nil && m.afterConsume != nil {
 		m.once.Do(func() { m.afterConsume(message, proof) })
 	}
-	return message, proof, check, close, err
+	return message, proof, check, closeRead2, err
 }
 
 func (m *actualSteerHTTPObservedMessages) CreateActualSteerFollowUpAssistant(
@@ -213,7 +213,8 @@ func (m *actualSteerHTTPModel) ChatStream(
 				require.True(m.t, ok, "the actual query uses the production runtime scaffold")
 				require.Regexp(
 					m.t,
-					`^<runtime_context scope="this_turn">\n  <current_time>[0-9]{4}-[0-9]{2}-[0-9]{2}</current_time>\n  <session>`+regexp.QuoteMeta(
+					("^<runtime_context scope=\"this_turn\">\\n  <current_time>[0-9]{4}-[0-9]{2}"+
+						"-[0-9]{2}</current_time>\\n  <session>")+regexp.QuoteMeta(
 						m.f.parent.SessionID,
 					)+`</session>\n$`,
 					envelope,
@@ -238,8 +239,8 @@ func (m *actualSteerHTTPModel) ChatStream(
 	}
 	require.True(m.t, parentSeen, "actual Agent rounds preserve admitted saved history")
 	require.Equal(m.t, call > 1, steerSeen, "the next actual model call receives the exact canonical steer input")
-	copy := append([]chat.Message(nil), input...)
-	m.inputs = append(m.inputs, copy)
+	copied := append([]chat.Message(nil), input...)
+	m.inputs = append(m.inputs, copied)
 	out := make(chan types.StreamResponse, 1)
 	if call == 1 {
 		close(m.ready)
@@ -339,7 +340,8 @@ func assertActualSteerBodyLease(t *testing.T, db *gorm.DB, steerID string, held 
 	t.Helper()
 	query := db.Table("original_body_leases l").Where("l.kind='read' AND l.released_at_ms IS NULL")
 	if steerID != "" {
-		query = query.Joins("JOIN original_body_field_heads h ON h.body_id=l.body_id AND h.source_table='steer_authored_origins'").
+		query = query.Joins(("JOIN original_body_field_heads h ON h.body_id=l.body_id AND h.source_table" +
+			"='steer_authored_origins'")).
 			Joins("JOIN steer_authored_origins o ON o.id=h.row_key").
 			Where("o.steer_id=?", steerID)
 	}
@@ -444,10 +446,11 @@ func newActualSteerHTTPFixture(t *testing.T, controlled bool) *actualHTTPTailFix
 		closeInput = inputLease.Close
 	}
 	f.parent = produceNativeSavedReplayMessage(
-		t,
+
+		parentCtx, t,
 		f.db,
 		f.messages,
-		parentCtx,
+
 		"ACTUAL ORIGINAL RETAINED PARENT",
 		lineage,
 	)

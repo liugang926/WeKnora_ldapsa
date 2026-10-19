@@ -51,7 +51,7 @@ func TestMessageMaterialActualHTTPProducerReadSingleConnection(t *testing.T) {
 	require.NoError(t, db.Exec("CREATE TABLE im_channel_sessions(id TEXT,session_id TEXT,platform TEXT)").Error)
 	sqlDB, err := db.DB()
 	require.NoError(t, err)
-	defer sqlDB.Close()
+	defer func() { require.NoError(t, sqlDB.Close()) }()
 	sqlDB.SetMaxOpenConns(1)
 	sqlDB.SetMaxIdleConns(1)
 	installHTTPCurrentNextcloudControls(t, db)

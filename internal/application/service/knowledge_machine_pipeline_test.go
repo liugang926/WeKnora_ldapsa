@@ -344,25 +344,38 @@ func newMachinePipelineFixtureWithSource(
 		require.NotEmpty(t, r.Header.Get("X-WeKnora-Nonce"))
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/capabilities"):
-			fmt.Fprint(w, `{"protocol_version":"1","instance_id":"instance"}`)
+			if _, err := fmt.Fprint(w, `{"protocol_version":"1","instance_id":"instance"}`); err != nil {
+				t.Errorf("write fixture response: %v", err)
+			}
 		case strings.HasSuffix(r.URL.Path, "/bindings"):
-			fmt.Fprint(
+			if _, err := fmt.Fprint(
 				w,
-				`{"bindings":[{"id":"binding","name":"independent configuration","root_file_id":7,"publication_state":"active","publication_epoch":1}]}`,
-			)
+				("{\"bindings\":[{\"id\":\"binding\",\"name\":\"independent configuration\"," +
+					"\"root_file_id\":7,\"publication_state\":\"active\",\"publication_epoch\":" +
+					"1}]}"),
+			); err != nil {
+				t.Errorf("write fixture response: %v", err)
+			}
 		case strings.HasSuffix(r.URL.Path, "/manifest"):
-			fmt.Fprintf(
+			if _, err := fmt.Fprintf(
 				w,
-				`{"generation":"generation","complete":true,"next_cursor":null,"items":[{"file_id":77,"etag":"actual-etag","name":"source.md","path":"source.md","mime_type":"text/markdown","size":%d,"mtime":1700000000}]}`,
+				("{\"generation\":\"generation\",\"complete\":true,\"next_cursor\":null,\"it" +
+					"ems\":[{\"file_id\":77,\"etag\":\"actual-etag\",\"name\":\"source.md\",\"p" +
+					"ath\":\"source.md\",\"mime_type\":\"text/markdown\",\"size\":%d,\"mtime\":" +
+					"1700000000}]}"),
 				len(artifact),
-			)
+			); err != nil {
+				t.Errorf("write fixture response: %v", err)
+			}
 		case strings.HasSuffix(r.URL.Path, "/changes"):
 			http.NotFound(w, r)
 		case strings.HasSuffix(r.URL.Path, "/content"):
 			require.Equal(t, `"actual-etag"`, r.Header.Get("If-Match"))
 			w.Header().Set("ETag", `"actual-etag"`)
 			w.Header().Set("Content-Type", "text/markdown")
-			fmt.Fprint(w, artifact)
+			if _, err := fmt.Fprint(w, artifact); err != nil {
+				t.Errorf("write fixture response: %v", err)
+			}
 		case strings.HasSuffix(r.URL.Path, "/publication-check"):
 			if unavailableAfterCompletion.Load() {
 				var completed int64
@@ -394,12 +407,17 @@ func newMachinePipelineFixtureWithSource(
 		case strings.HasSuffix(r.URL.Path, "/authorize"):
 			authorizeCalls.Add(1)
 			if !allow.Load() || !personal.Load() {
-				fmt.Fprint(w, `{"allow":false,"reason":"withdrawn","checked_at":1780000000}`)
+				if _, err := fmt.Fprint(w, `{"allow":false,"reason":"withdrawn","checked_at":1780000000}`); err != nil {
+					t.Errorf("write fixture response: %v", err)
+				}
 			} else {
-				fmt.Fprint(
+				if _, err := fmt.Fprint(
 					w,
-					`{"allow":true,"reason":"authorized","policy_revision":"original","source_etag":"actual-etag","checked_at":1780000000}`,
-				)
+					("{\"allow\":true,\"reason\":\"authorized\",\"policy_revision\":\"original\"" +
+						",\"source_etag\":\"actual-etag\",\"checked_at\":1780000000}"),
+				); err != nil {
+					t.Errorf("write fixture response: %v", err)
+				}
 			}
 		default:
 			http.NotFound(w, r)
@@ -588,15 +606,22 @@ func (m *machinePipelineFixture) ingest(t *testing.T) *types.Knowledge {
 		Status:       types.SyncLogStatusRunning,
 		StartedAt:    time.Now().UTC(),
 	}
-	require.NoError(t, m.source.syncLogRepo.Create(context.Background(), log))
+	ctx := context.Background()
+	if m.authenticated {
+		ctx = m.f.ctx
+	}
+	require.NoError(t, m.source.syncLogRepo.Create(ctx, log))
 	require.NoError(
 		t,
 		m.source.ProcessSync(
-			context.Background(),
+			ctx,
 			enrichmentTask(
 				t,
 				types.TypeDataSourceSync,
-				types.DataSourceSyncPayload{DataSourceID: m.ds.ID, TenantID: 7, SyncLogID: log.ID, ForceFull: true},
+				types.DataSourceSyncPayload{
+					DataSourceID: m.ds.ID, TenantID: 7, SyncLogID: log.ID, ForceFull: true,
+					Initiator: types.TaskInitiatorFromContext(ctx),
+				},
 			),
 		),
 	)
@@ -643,7 +668,7 @@ func (m *machinePipelineFixture) run(t *testing.T, task *asynq.Task) error {
 	if e != nil {
 		return e
 	}
-	defer leases.ReleaseLease(context.Background(), lease.ID)
+	defer func() { require.NoError(t, leases.ReleaseLease(context.Background(), lease.ID)) }()
 	if e = leases.WaitForCurrentSourceVersion(context.Background(), scope, lease, m.etag, time.Second); e != nil {
 		return e
 	}
@@ -740,7 +765,7 @@ func runKnowledgeMachineActualPipeline(t *testing.T, pg bool) {
 		time.Minute,
 	)
 	require.NoError(t, e)
-	defer leases.ReleaseLease(context.Background(), lease.ID)
+	defer func() { require.NoError(t, leases.ReleaseLease(context.Background(), lease.ID)) }()
 	rag, e := repository.NewRAGChunkSnapshotReader(m.f.db, m.f.store).
 		HydrateRAGChunkSnapshots(m.f.ctx, []types.RAGChunkReadRequest{{TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: row.ID, ChunkIDs: []string{chunks[0].ID}, Lease: &types.RAGExactReadLease{ID: lease.ID, TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: row.ID, Kind: string(lease.Kind), Epoch: lease.Epoch, OwnerID: lease.OwnerID, ExpiresAt: lease.ExpiresAt}}})
 	require.NoError(t, e)
@@ -1114,7 +1139,9 @@ func runKnowledgeMachineQuestionsAndProfile(t *testing.T, pg bool) {
 	kb.QuestionGenerationConfig = &types.QuestionGenerationConfig{Enabled: true, QuestionCount: 2}
 	require.NoError(t, m.f.store.UpdateKnowledgeBaseWithInput(repository.WithIndependentKnowledgeInput(m.f.ctx), &kb))
 	m.f.model.detectQuestions = true
-	m.f.model.response = `{"summary":"A complete generated summary","gist":"Generated original profile title","topics":["actual topic"],"doc_type":"guide","typical_question":"What is this actual topic?"}`
+	m.f.model.response = ("{\"summary\":\"A complete generated summary\",\"gist\":\"Generated origina" +
+		"l profile title\",\"topics\":[\"actual topic\"],\"doc_type\":\"guide\",\"t" +
+		"ypical_question\":\"What is this actual topic?\"}")
 	row := m.ingest(t)
 	for i := 0; i < len(m.f.queue.tasks); i++ {
 		require.NoError(t, m.run(t, m.f.queue.tasks[i]), m.f.queue.tasks[i].Type())

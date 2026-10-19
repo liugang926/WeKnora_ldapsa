@@ -52,6 +52,7 @@ type KnowledgeAutoTagService struct {
 	lineageChecker  knowledgeOutputLineageChecker
 }
 
+// ConfigureKnowledgeAutoTagInputProvenance configures the knowledge auto tag input provenance boundary.
 func ConfigureKnowledgeAutoTagInputProvenance(
 	handler interfaces.TaskHandler,
 	store *repository.KnowledgeInputProvenanceStore,

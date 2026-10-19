@@ -116,7 +116,11 @@ func TestNextcloudGCActualAdminHTTPPreviewAndCurrentRevocation(t *testing.T) {
 			require.NoError(
 				t,
 				db.Exec(
-					`INSERT INTO nextcloud_gc_jobs(id,tenant_id,knowledge_base_id,datasource_id,external_id,knowledge_id,reason,state,not_before,original_not_before,next_attempt_at,last_error_code,created_at,updated_at) VALUES ('owned',7,'kb','ds','external','retired','retired','blocked',?,?,?,'content_lease_coverage_unverified',?,?)`,
+					("INSERT INTO nextcloud_gc_jobs(id,tenant_id,knowledge_base_id,datasource_id"+
+						",external_id,knowledge_id,reason,state,not_before,original_not_before,next"+
+						"_attempt_at,last_error_code,created_at,updated_at) VALUES ('owned',7,'kb',"+
+						"'ds','external','retired','retired','blocked',?,?,?,'content_lease_coverag"+
+						"e_unverified',?,?)"),
 					now,
 					now.Add(7*24*time.Hour),
 					now,
@@ -127,7 +131,9 @@ func TestNextcloudGCActualAdminHTTPPreviewAndCurrentRevocation(t *testing.T) {
 			require.NoError(
 				t,
 				db.Exec(
-					`INSERT INTO nextcloud_gc_items(job_id,kind,object_ref,state,estimated_bytes,confirmed_released_bytes,created_at,updated_at) VALUES ('owned','source_file','storage://private-secret','blocked',100,0,?,?)`,
+					("INSERT INTO nextcloud_gc_items(job_id,kind,object_ref,state,estimated_byte"+
+						"s,confirmed_released_bytes,created_at,updated_at) VALUES ('owned','source_"+
+						"file','storage://private-secret','blocked',100,0,?,?)"),
 					now,
 					now,
 				).Error,

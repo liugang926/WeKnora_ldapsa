@@ -16,9 +16,9 @@ func TestPostgresSpanOriginalStartEndCoherentCaptureAndFinalMutation(t *testing.
 	ctx, k, _, _ := createAdmittedManual(t, store, db)
 	installSpanInputs(t, db)
 	repo := NewKnowledgeSpanRepository(db)
-	root := startOriginalSpan(t, repo, ctx, k.ID, 1, "root", "", types.SpanKindRoot)
-	child := startOriginalSpan(t, repo, ctx, k.ID, 1, "child", root.SpanID, types.SpanKindGeneration)
-	finishOriginalSpan(t, repo, ctx, child)
+	root := startOriginalSpan(ctx, t, repo, k.ID, 1, "root", "", types.SpanKindRoot)
+	child := startOriginalSpan(ctx, t, repo, k.ID, 1, "child", root.SpanID, types.SpanKindGeneration)
+	finishOriginalSpan(ctx, t, repo, child)
 	baseline := captureOriginalSpans(t, store, k, 1)
 	fired := false
 	name := "span_original_changed_after_header"

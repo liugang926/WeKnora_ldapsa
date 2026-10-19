@@ -21,10 +21,10 @@ func TestLocalGCReplacementIsMovedAndRestoredWithoutUnlink(t *testing.T) {
 	require.NoError(t, os.WriteFile(path, []byte("old source"), 0o600))
 	root, _, _, e := s.capacityRoot()
 	require.NoError(t, e)
-	defer unix.Close(root)
+	defer func() { require.NoError(t, unix.Close(root)) }()
 	parent, e := unix.Open(filepath.Dir(path), unix.O_RDONLY|unix.O_DIRECTORY, 0)
 	require.NoError(t, e)
-	defer unix.Close(parent)
+	defer func() { require.NoError(t, unix.Close(parent)) }()
 	var original unix.Stat_t
 	require.NoError(t, unix.Fstatat(parent, filepath.Base(path), &original, unix.AT_SYMLINK_NOFOLLOW))
 	replacement := path + ".new"
@@ -72,15 +72,15 @@ func TestLocalGCHoldingReceiptResumesExactInode(t *testing.T) {
 	require.NoError(t, os.WriteFile(path, []byte("held bytes"), 0o600))
 	root, _, _, e := s.capacityRoot()
 	require.NoError(t, e)
-	defer unix.Close(root)
+	defer func() { require.NoError(t, unix.Close(root)) }()
 	parent, e := unix.Open(filepath.Dir(path), unix.O_RDONLY|unix.O_DIRECTORY, 0)
 	require.NoError(t, e)
-	defer unix.Close(parent)
+	defer func() { require.NoError(t, unix.Close(parent)) }()
 	var st unix.Stat_t
 	require.NoError(t, unix.Fstatat(parent, "legacy.txt", &st, unix.AT_SYMLINK_NOFOLLOW))
 	holding, e := gcQuarantineDirectory(root)
 	require.NoError(t, e)
-	defer unix.Close(holding)
+	defer func() { require.NoError(t, unix.Close(holding)) }()
 	receipt, obj := gcHoldingNames("local://7/old/legacy.txt")
 	require.NoError(
 		t,

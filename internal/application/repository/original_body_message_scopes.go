@@ -23,8 +23,11 @@ type originalBodyLeaseScope struct {
 
 func (originalBodyLeaseScope) TableName() string { return "original_body_lease_scopes" }
 
-const originalBodyLeaseScopeDDL = `CREATE TABLE IF NOT EXISTS original_body_lease_scopes(body_id TEXT NOT NULL REFERENCES original_body_payloads(id),tenant_id BIGINT NOT NULL,knowledge_base_id TEXT NOT NULL,PRIMARY KEY(body_id,tenant_id,knowledge_base_id))`
+const originalBodyLeaseScopeDDL = ("CREATE TABLE IF NOT EXISTS original_body_lease_scopes(body_id TEXT NOT NUL" +
+	"L REFERENCES original_body_payloads(id),tenant_id BIGINT NOT NULL,knowledg" +
+	"e_base_id TEXT NOT NULL,PRIMARY KEY(body_id,tenant_id,knowledge_base_id))")
 
+// UpgradeLeaseScopeSchema returns the upgrade lease scope schema result.
 // Explicit offline forward schema step for already-installed unpublished
 // migration 152/71. It never backfills scope markers from current pointers.
 func (s *OriginalBodyRetentionStore) UpgradeLeaseScopeSchema() error {
@@ -35,9 +38,11 @@ func (s *OriginalBodyRetentionStore) UpgradeLeaseScopeSchema() error {
 		if e := tx.Exec(originalBodyLeaseScopeDDL).Error; e != nil {
 			return e
 		}
-		if tx.Dialector.Name() == "postgres" {
+		if tx.Name() == "postgres" {
 			if e := tx.Exec(
-				`CREATE OR REPLACE FUNCTION original_body_lease_scope_immutable() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'immutable original body lease scope'; END $$`,
+				("CREATE OR REPLACE FUNCTION original_body_lease_scope_immutable() RETURNS t" +
+					"rigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'immutable original bo" +
+					"dy lease scope'; END $$"),
 			).Error; e != nil {
 				return e
 			}
@@ -47,17 +52,20 @@ func (s *OriginalBodyRetentionStore) UpgradeLeaseScopeSchema() error {
 				return e
 			}
 			return tx.Exec(
-				`CREATE TRIGGER original_body_lease_scope_immutable BEFORE UPDATE OR DELETE ON original_body_lease_scopes FOR EACH ROW EXECUTE FUNCTION original_body_lease_scope_immutable()`,
+				("CREATE TRIGGER original_body_lease_scope_immutable BEFORE UPDATE OR DELETE" +
+					" ON original_body_lease_scopes FOR EACH ROW EXECUTE FUNCTION original_body" +
+					"_lease_scope_immutable()"),
 			).Error
 		}
-		if tx.Dialector.Name() != "sqlite" {
+		if tx.Name() != "sqlite" {
 			return ErrOriginalBodyUnavailable
 		}
 		for _, event := range []string{"UPDATE", "DELETE"} {
 			if e := tx.Exec(
 				"CREATE TRIGGER IF NOT EXISTS original_body_lease_scope_immutable_" + strings.ToLower(
 					event,
-				) + " BEFORE " + event + " ON original_body_lease_scopes BEGIN SELECT RAISE(ABORT,'immutable original body lease scope'); END",
+				) + " BEFORE " + event + (" ON original_body_lease_scopes BEGIN SELECT RAISE(ABORT,'immutable origina" +
+					"l body lease scope'); END"),
 			).Error; e != nil {
 				return e
 			}
@@ -351,7 +359,8 @@ func (s *KnowledgeInputProvenanceStore) AcquireMessageBodyReadLeases(
 				var heads []originalBodyFieldHead
 				if e := bodyInternal(
 					tx,
-				).Where("(source_table='messages' AND row_key=?) OR (source_table='message_generation_origins' AND row_key=?)", control.ID, control.GenerationID).
+				).Where(("(source_table='messages' AND row_key=?) OR (source_table='message_generati" +
+					"on_origins' AND row_key=?)"), control.ID, control.GenerationID).
 					Find(&heads).
 					Error; e != nil {
 					return e
@@ -361,7 +370,11 @@ func (s *KnowledgeInputProvenanceStore) AcquireMessageBodyReadLeases(
 					tx,
 				).Table("original_body_field_heads h").
 					Select("h.*").
-					Where("(h.source_table='message_fork_parent_origins' AND h.row_key=?) OR (h.source_table='message_generated_field_admissions' AND h.row_key IN (SELECT a.id FROM message_generated_field_admissions a JOIN message_generated_field_receipts r ON r.admission_id=a.id AND r.message_id=a.message_id AND r.field=a.field WHERE a.message_id=?))", control.GenerationID, control.ID)
+					Where(("(h.source_table='message_fork_parent_origins' AND h.row_key=?) OR (h.sourc" +
+						"e_table='message_generated_field_admissions' AND h.row_key IN (SELECT a.id" +
+						" FROM message_generated_field_admissions a JOIN message_generated_field_re" +
+						"ceipts r ON r.admission_id=a.id AND r.message_id=a.message_id AND r.field=" +
+						"a.field WHERE a.message_id=?))"), control.GenerationID, control.ID)
 				if tx.Migrator().HasTable("message_generated_field_admissions") &&
 					tx.Migrator().HasTable("message_fork_parent_origins") {
 					if e := query.Find(&copies).Error; e != nil {
@@ -388,6 +401,7 @@ func (s *KnowledgeInputProvenanceStore) AcquireMessageBodyReadLeases(
 	return ids, err
 }
 
+// RenewLease renews lease.
 func (s *OriginalBodyRetentionStore) RenewLease(ctx context.Context, id string, ttl time.Duration) error {
 	if id == "" || ttl <= 0 || ttl > 30*time.Minute {
 		return ErrOriginalBodyUnavailable
@@ -439,6 +453,7 @@ func (s *OriginalBodyRetentionStore) RenewLease(ctx context.Context, id string, 
 	})
 }
 
+// RenewMessageBodyReadLease renews message body read lease.
 func (s *KnowledgeInputProvenanceStore) RenewMessageBodyReadLease(
 	ctx context.Context,
 	id string,
@@ -447,6 +462,7 @@ func (s *KnowledgeInputProvenanceStore) RenewMessageBodyReadLease(
 	return NewOriginalBodyRetentionStore(s.db).RenewLease(ctx, id, ttl)
 }
 
+// ReleaseMessageBodyReadLease releases message body read lease.
 func (s *KnowledgeInputProvenanceStore) ReleaseMessageBodyReadLease(ctx context.Context, id string) error {
 	return NewOriginalBodyRetentionStore(s.db).ReleaseLease(ctx, id)
 }
@@ -461,8 +477,11 @@ func verifyBodyLeaseScopeSchema(db *gorm.DB) error {
 		}
 	}
 	var count int64
-	if db.Dialector.Name() == "postgres" {
-		if e := db.Raw("SELECT count(*) FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE c.relname='original_body_lease_scopes' AND n.nspname=current_schema() AND t.tgname='original_body_lease_scope_immutable' AND t.tgenabled<>'D'").
+	if db.Name() == "postgres" {
+		if e := db.Raw(("SELECT count(*) FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid JOIN " +
+			"pg_namespace n ON n.oid=c.relnamespace WHERE c.relname='original_body_leas" +
+			"e_scopes' AND n.nspname=current_schema() AND t.tgname='original_body_lease" +
+			"_scope_immutable' AND t.tgenabled<>'D'")).
 			Scan(&count).
 			Error; e != nil {
 			return e
@@ -470,8 +489,10 @@ func verifyBodyLeaseScopeSchema(db *gorm.DB) error {
 		if count != 1 {
 			return ErrOriginalBodyUnavailable
 		}
-	} else if db.Dialector.Name() == "sqlite" {
-		if e := db.Raw("SELECT count(*) FROM sqlite_master WHERE type='trigger' AND tbl_name='original_body_lease_scopes' AND name IN ('original_body_lease_scope_immutable_update','original_body_lease_scope_immutable_delete')").
+	} else if db.Name() == "sqlite" {
+		if e := db.Raw(("SELECT count(*) FROM sqlite_master WHERE type='trigger' AND tbl_name='orig" +
+			"inal_body_lease_scopes' AND name IN ('original_body_lease_scope_immutable_" +
+			"update','original_body_lease_scope_immutable_delete')")).
 			Scan(&count).
 			Error; e != nil {
 			return e

@@ -15,6 +15,7 @@ import (
 
 const independentConfigurationReadTTL = 2 * time.Minute
 
+// NextcloudIndependentConfigurationRead represents nextcloud independent configuration read repository data.
 // Empty source lineage removes external source authorization, never physical
 // protection. This capability needs the real fetch/build purpose and original
 // config manifest, including on a generic pair with no onboarding operation.
@@ -35,6 +36,7 @@ type NextcloudIndependentConfigurationRead struct {
 	closed     bool
 }
 
+// BeginScopedIndependentConfigurationRead begins scoped independent configuration read.
 func (s *KnowledgeInputProvenanceStore) BeginScopedIndependentConfigurationRead(
 	ctx context.Context,
 	tenant uint64,
@@ -120,7 +122,8 @@ func (r *NextcloudIndependentConfigurationRead) checkMetadataInTx(ctx context.Co
 		return ErrKnowledgeInputChanged
 	}
 	var origin knowledgeConfigurationInputOrigin
-	if err := tx.Where("origin_id = ? AND tenant_id = ? AND knowledge_base_id = ? AND config_revision = ?", r.origin.OriginID, r.tenant, r.kb, revision).
+	if err := tx.Where(("origin_id = ? AND tenant_id = ? AND knowledge_base_id = ? AND config_revis" +
+		"ion = ?"), r.origin.OriginID, r.tenant, r.kb, revision).
 		Take(&origin).
 		Error; err != nil {
 		return err
@@ -180,6 +183,7 @@ func (r *NextcloudIndependentConfigurationRead) checkInTx(ctx context.Context, t
 	return err
 }
 
+// ConfigurationProjection returns the configuration projection result.
 // Return one independently decoded body snapshot from the guarded transaction.
 // Original-input proof callers use the InTx variant with their existing pool-1
 // transaction; neither method recursively enters a body snapshot.
@@ -198,6 +202,7 @@ func (r *NextcloudIndependentConfigurationRead) ConfigurationProjection(
 	return current, err
 }
 
+// ConfigurationProjectionInTx returns the configuration projection in tx result.
 func (r *NextcloudIndependentConfigurationRead) ConfigurationProjectionInTx(
 	ctx context.Context,
 	tx *gorm.DB,
@@ -257,6 +262,7 @@ func (r *NextcloudIndependentConfigurationRead) failureLocked(ctx context.Contex
 	return nil
 }
 
+// Checkpoint checks point.
 func (r *NextcloudIndependentConfigurationRead) Checkpoint(ctx context.Context) error {
 	if r == nil || ctx == nil {
 		return types.ErrSourceLineageUnknown
@@ -283,6 +289,7 @@ func (r *NextcloudIndependentConfigurationRead) Checkpoint(ctx context.Context) 
 	return nil
 }
 
+// Context returns the context result.
 func (r *NextcloudIndependentConfigurationRead) Context(ctx context.Context) context.Context {
 	if r == nil || ctx == nil {
 		return nil
@@ -343,6 +350,7 @@ func (r *NextcloudIndependentConfigurationRead) startHeartbeat() {
 	}()
 }
 
+// Close returns the close result.
 func (r *NextcloudIndependentConfigurationRead) Close() error {
 	if r == nil {
 		return nil

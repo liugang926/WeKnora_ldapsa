@@ -28,8 +28,8 @@ func TestLiveSSEProducerErrorInitializationTimeoutNeverWritesUnadmittedControl(t
 	message := &types.Message{Role: "assistant", RequestID: "request"}
 	router := gin.New()
 	router.GET("/stream", func(c *gin.Context) {
-		ctx, attach, check, close := applicationservice.BeginMessageMaterialHTTPBoundary(c.Request.Context())
-		defer close()
+		ctx, attach, check, closeRead := applicationservice.BeginMessageMaterialHTTPBoundary(c.Request.Context())
+		defer closeRead()
 		require.ErrorIs(t, check(), applicationservice.ErrMessageMaterialHTTPInitializing)
 		phase := &liveMaterialWritePhase{
 			MaterialCheck:          check,
@@ -55,7 +55,7 @@ func TestLiveSSEProducerErrorInitializationTimeoutNeverWritesUnadmittedControl(t
 	client := &http.Client{Timeout: time.Second}
 	response, err := client.Get(server.URL + "/stream")
 	require.NoError(t, err)
-	defer response.Body.Close()
+	defer func() { require.NoError(t, response.Body.Close()) }()
 	body, err := io.ReadAll(response.Body)
 	require.NoError(t, err)
 	require.Contains(t, string(body), `"response_type":"error"`)

@@ -46,7 +46,7 @@ func configurationOriginalBodySourcesClosed(tx *gorm.DB, lineageText string, now
 func (s *OriginalBodyRetentionStore) configurationOriginalBodyCurrent(
 	tx *gorm.DB,
 	head originalBodyFieldHead,
-	row map[string]any,
+	_ map[string]any,
 	now int64,
 ) (bool, int64, error) {
 	if head.AdmissionID == "" {
@@ -170,7 +170,8 @@ func configurationOriginalBodyDependentKBs(
 			if e := bodyInternal(
 				tx,
 			).Model(&originalBodyFieldHead{}).
-				Where("source_table='knowledge_bases' AND tenant_id=? AND row_key=? AND admission_id=?", origin.TenantID, origin.KnowledgeBaseID, origin.OriginID).
+				Where(("source_table='knowledge_bases' AND tenant_id=? AND row_key=? AND admission" +
+					"_id=?"), origin.TenantID, origin.KnowledgeBaseID, origin.OriginID).
 				Count(&n).
 				Error; e != nil {
 				return nil, e

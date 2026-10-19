@@ -34,7 +34,7 @@ func (r *sessionRepository) SaveGeneratedSessionTitle(
 		}
 		originalProof = value
 	}
-	if r.db.Dialector.Name() == "postgres" {
+	if r.db.Name() == "postgres" {
 		query = query.Where("title_source_lineage IS NOT DISTINCT FROM ?", originalProof)
 	} else {
 		query = query.Where("title_source_lineage IS ?", originalProof)
@@ -48,9 +48,15 @@ func (r *sessionRepository) SaveGeneratedSessionTitle(
 // before a title match can affect client items/pagination/total.
 func sessionTitleCandidatePredicate(dialect string) string {
 	if dialect == "postgres" {
-		return "s.title_source_lineage IS NOT NULL AND s.title_source_lineage->'version' = '1'::jsonb AND s.title_source_lineage->>'state' = 'complete' AND jsonb_typeof(s.title_source_lineage->'sources') = 'array'"
+		return ("s.title_source_lineage IS NOT NULL AND s.title_source_lineage->'version' =" +
+			" '1'::jsonb AND s.title_source_lineage->>'state' = 'complete' AND jsonb_ty" +
+			"peof(s.title_source_lineage->'sources') = 'array'")
 	}
-	return "CASE WHEN s.title_source_lineage IS NOT NULL AND json_valid(s.title_source_lineage) THEN json_type(s.title_source_lineage, '$.version') = 'integer' AND json_extract(s.title_source_lineage, '$.version') = 1 AND json_extract(s.title_source_lineage, '$.state') = 'complete' AND json_type(s.title_source_lineage, '$.sources') = 'array' ELSE 0 END"
+	return ("CASE WHEN s.title_source_lineage IS NOT NULL AND json_valid(s.title_source" +
+		"_lineage) THEN json_type(s.title_source_lineage, '$.version') = 'integer' " +
+		"AND json_extract(s.title_source_lineage, '$.version') = 1 AND json_extract" +
+		"(s.title_source_lineage, '$.state') = 'complete' AND json_type(s.title_sou" +
+		"rce_lineage, '$.sources') = 'array' ELSE 0 END")
 }
 
 func (r *sessionRepository) ListSessionTitleCandidates(

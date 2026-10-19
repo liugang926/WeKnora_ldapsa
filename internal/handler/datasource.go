@@ -673,6 +673,7 @@ func (h *DataSourceHandler) GetAvailableConnectors(c *gin.Context) {
 	c.JSON(http.StatusOK, connectors)
 }
 
+// PublishTargetMigrationCandidates publishes candidates under the current target migration controls.
 func (h *DataSourceHandler) PublishTargetMigrationCandidates(
 	ctx context.Context,
 	row repository.NextcloudTargetMigration,

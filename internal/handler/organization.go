@@ -808,7 +808,7 @@ func (h *OrganizationHandler) SubmitJoinRequest(c *gin.Context) {
 
 	// Check if organization requires approval
 	if !org.RequireApproval {
-		c.Error(
+		_ = c.Error(
 			apperrors.NewValidationError("This organization does not require approval. Use the join endpoint instead."),
 		)
 		return
@@ -1033,7 +1033,7 @@ func (h *OrganizationHandler) LeaveOrganization(c *gin.Context) {
 
 	isOwnerTenant := org.OwnerTenantID != 0 && org.OwnerTenantID == tenantID
 	if isOwnerTenant || (org.OwnerTenantID == 0 && org.OwnerID == userID) {
-		c.Error(
+		_ = c.Error(
 			apperrors.NewForbiddenError(
 				"Organization owner cannot leave. Please transfer ownership or delete the organization.",
 			),
@@ -1221,7 +1221,7 @@ func (h *OrganizationHandler) ShareKnowledgeBase(c *gin.Context) {
 	if err != nil {
 		logger.Errorf(ctx, "Failed to share knowledge base: %v", err)
 		if errors.Is(err, service.ErrOrgRoleCannotShare) {
-			c.Error(
+			_ = c.Error(
 				apperrors.NewForbiddenError("Only editors and admins can share knowledge bases to this organization"),
 			)
 			return
@@ -1566,9 +1566,10 @@ func (h *OrganizationHandler) ShareAgent(c *gin.Context) {
 			return
 		}
 		if errors.Is(err, service.ErrAgentNotConfigured) {
-			c.Error(
+			_ = c.Error(
 				apperrors.NewValidationError(
-					"Agent is not fully configured. Please set the chat model, and set the rerank model if the knowledge_search tool is enabled in agent settings.",
+					("Agent is not fully configured. Please set the chat model, and set the rera" +
+						"nk model if the knowledge_search tool is enabled in agent settings."),
 				),
 			)
 			return

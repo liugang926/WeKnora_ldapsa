@@ -5,6 +5,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 )
 
+// ConfigureMessageMaterialProvenance configures the message material provenance boundary.
 func ConfigureMessageMaterialProvenance(
 	messages interfaces.MessageService,
 	store *repository.KnowledgeInputProvenanceStore,

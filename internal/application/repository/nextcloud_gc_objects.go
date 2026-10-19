@@ -164,7 +164,7 @@ func (s *NextcloudGCStore) claimObject(
 			claim.code = "source_identity_changed"
 			return nil
 		}
-		if tx.Dialector.Name() == "postgres" {
+		if tx.Name() == "postgres" {
 			// A claim committed first leaves a deleting item that withdrawal
 			// must wait out; a withdrawal committed first prevents new claims.
 			if job.TenantID != identity.TenantID || job.KnowledgeBaseID != identity.KnowledgeBaseID ||

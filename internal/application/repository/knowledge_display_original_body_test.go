@@ -45,7 +45,7 @@ func runKnowledgeDisplayOriginalBody(t *testing.T, pg bool) {
 	t.Run("actual_alias_cache_and_original_revision", func(t *testing.T) {
 		store, db, ctx, tags, knowledge, k := displayTestFixture(t, pg)
 		initializeDisplayOriginalBody(t, db, pg)
-		tag := displayTag(t, tags, ctx, "body-display-tag")
+		tag := displayTag(ctx, t, tags, "body-display-tag")
 		require.NoError(
 			t,
 			knowledge.SetKnowledgeTags(
@@ -70,7 +70,8 @@ func runKnowledgeDisplayOriginalBody(t *testing.T, pg bool) {
 		var raw []string
 		require.NoError(
 			t,
-			db.Raw("SELECT actual_input FROM knowledge_display_input_origins WHERE row_id=? OR (row_id=? AND kind='relations')", tag.ID, k.ID).
+			db.Raw(("SELECT actual_input FROM knowledge_display_input_origins WHERE row_id=? OR"+
+				" (row_id=? AND kind='relations')"), tag.ID, k.ID).
 				Scan(&raw).
 				Error,
 		)

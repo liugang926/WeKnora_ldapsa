@@ -79,7 +79,7 @@ func (*faqInputEngine) BatchUpdateChunkEnabledStatus(context.Context, map[string
 }
 func (*faqInputEngine) BatchUpdateChunkTagID(context.Context, map[string]string) error   { return nil }
 func (*faqInputEngine) DeleteByChunkIDList(context.Context, []string, int, string) error { return nil }
-func faqInputContext(t *testing.T, ctx context.Context, op types.FAQInputOperation) context.Context {
+func faqInputContext(ctx context.Context, t *testing.T, op types.FAQInputOperation) context.Context {
 	t.Helper()
 	marked, err := repository.WithIndependentFAQInput(ctx, "kb", op)
 	require.NoError(t, err)
@@ -95,7 +95,7 @@ func TestFAQActualCreateUpdateRetainsIndependentOtherEntries(t *testing.T) {
 				Answers:          []string{"first actual answer"},
 			}
 			a, err := s.CreateFAQEntry(
-				faqInputContext(t, ctx, types.FAQInputOperation{Kind: "create", Entry: first}),
+				faqInputContext(ctx, t, types.FAQInputOperation{Kind: "create", Entry: first}),
 				"kb",
 				first,
 			)
@@ -105,7 +105,7 @@ func TestFAQActualCreateUpdateRetainsIndependentOtherEntries(t *testing.T) {
 				Answers:          []string{"second actual answer"},
 			}
 			b, err := s.CreateFAQEntry(
-				faqInputContext(t, ctx, types.FAQInputOperation{Kind: "create", Entry: second}),
+				faqInputContext(ctx, t, types.FAQInputOperation{Kind: "create", Entry: second}),
 				"kb",
 				second,
 			)
@@ -117,7 +117,7 @@ func TestFAQActualCreateUpdateRetainsIndependentOtherEntries(t *testing.T) {
 			require.NoError(t, err)
 			first.Answers = []string{"updated first answer"}
 			_, err = s.UpdateFAQEntry(
-				faqInputContext(t, ctx, types.FAQInputOperation{Kind: "update", Entry: first, EntrySeqID: a.ID}),
+				faqInputContext(ctx, t, types.FAQInputOperation{Kind: "update", Entry: first, EntrySeqID: a.ID}),
 				"kb",
 				a.ID,
 				first,
@@ -156,7 +156,7 @@ func TestFAQOriginalBodyControlsAndMembershipABAReject(t *testing.T) {
 				Answers:          []string{"original answer"},
 			}
 			created, err := s.CreateFAQEntry(
-				faqInputContext(t, ctx, types.FAQInputOperation{Kind: "create", Entry: entry}),
+				faqInputContext(ctx, t, types.FAQInputOperation{Kind: "create", Entry: entry}),
 				"kb",
 				entry,
 			)
@@ -179,7 +179,8 @@ func TestFAQOriginalBodyControlsAndMembershipABAReject(t *testing.T) {
 				require.NoError(t, db.Model(&types.KnowledgeBase{}).Where("id='kb'").Update(field, nil).Error)
 			} else {
 				before := map[string]any{"content": chunk.Content, "metadata": chunk.Metadata, "is_enabled": chunk.IsEnabled, "flags": chunk.Flags, "seq_id": chunk.SeqID, "deleted_at": nil}[field]
-				after := map[string]any{"content": "temporary foreign body", "metadata": types.JSON(`{"standard_question":"foreign question","answers":["foreign answer"]}`), "is_enabled": false, "flags": 0, "seq_id": chunk.SeqID + 123, "deleted_at": "2026-10-09 01:00:00"}[field]
+				after := map[string]any{"content": "temporary foreign body", "metadata": types.JSON(("{\"standard_question\":\"foreign question\",\"answers\":[\"foreign answer" +
+					"\"]}")), "is_enabled": false, "flags": 0, "seq_id": chunk.SeqID + 123, "deleted_at": "2026-10-09 01:00:00"}[field]
 				require.NoError(t, db.Model(&types.Chunk{}).Where("id=?", chunk.ID).Update(field, after).Error)
 				require.NoError(
 					t,
@@ -203,7 +204,7 @@ func TestFAQActualImportWorkerAndPartialLegacyRejection(t *testing.T) {
 		},
 	}
 	_, err := s.UpsertFAQEntries(
-		faqInputContext(t, ctx, types.FAQInputOperation{Kind: "import", Batch: batch}),
+		faqInputContext(ctx, t, types.FAQInputOperation{Kind: "import", Batch: batch}),
 		"kb",
 		batch,
 	)
@@ -226,7 +227,7 @@ func TestFAQActualImportWorkerAndPartialLegacyRejection(t *testing.T) {
 	require.NoError(
 		t,
 		s.UpdateFAQEntryFieldsBatch(
-			faqInputContext(t, ctx, types.FAQInputOperation{Kind: "fields", Fields: patch}),
+			faqInputContext(ctx, t, types.FAQInputOperation{Kind: "fields", Fields: patch}),
 			"kb",
 			patch,
 		),
@@ -247,7 +248,7 @@ func TestFAQActualImportWorkerAndPartialLegacyRejection(t *testing.T) {
 	require.Error(
 		t,
 		s.UpdateFAQEntryFieldsBatch(
-			faqInputContext(t, ctx, types.FAQInputOperation{Kind: "fields", Fields: patch}),
+			faqInputContext(ctx, t, types.FAQInputOperation{Kind: "fields", Fields: patch}),
 			"kb",
 			patch,
 		),
@@ -265,7 +266,7 @@ func TestFAQImportCurrentActorRevokeBeforeWorker(t *testing.T) {
 		Entries: []types.FAQEntryPayload{{StandardQuestion: "must never be written", Answers: []string{"secret"}}},
 	}
 	_, err := s.UpsertFAQEntries(
-		faqInputContext(t, ctx, types.FAQInputOperation{Kind: "import", Batch: batch}),
+		faqInputContext(ctx, t, types.FAQInputOperation{Kind: "import", Batch: batch}),
 		"kb",
 		batch,
 	)

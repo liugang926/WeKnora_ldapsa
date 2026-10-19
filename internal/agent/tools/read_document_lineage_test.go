@@ -140,9 +140,9 @@ func actualAgentDocumentFixture(t *testing.T) (*ReadDocumentTool, *leasedAgentKn
 	oldKnowledge := *k
 	oldKnowledge.Title = "stale index title"
 	for i, c := range chunks {
-		copy := *c
-		copy.Content = "stale index poison"
-		chunks[i] = &copy
+		copied := *c
+		copied.Content = "stale index poison"
+		chunks[i] = &copied
 	}
 	svc := &leasedAgentKnowledgeService{
 		readDocKnowledgeService: &readDocKnowledgeService{docs: map[string]*types.Knowledge{"doc": &oldKnowledge}},

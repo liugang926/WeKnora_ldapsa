@@ -129,7 +129,7 @@ func (s *KnowledgeInputProvenanceStore) CreateKnowledgeBaseWithInput(
 		if err := tx.Where("id = ? AND tenant_id = ?", kb.ID, kb.TenantID).Take(&actual).Error; err != nil {
 			return err
 		}
-		if err := admitKnowledgeBaseNameInput(tx, ctx, nil, &actual, s.displayAuthorityFactory); err != nil {
+		if err := admitKnowledgeBaseNameInput(ctx, tx, nil, &actual, s.displayAuthorityFactory); err != nil {
 			return err
 		}
 		return admitKnowledgeConfigurationOrigin(tx, &actual, origin)
@@ -212,7 +212,7 @@ func (s *KnowledgeInputProvenanceStore) UpdateKnowledgeBaseWithInput(
 		}
 		oldDigest, _ := knowledgeConfigurationOriginDigest(&old)
 		newDigest, _ := knowledgeConfigurationOriginDigest(&actual)
-		if err := admitKnowledgeBaseNameInput(tx, ctx, &old, &actual, s.displayAuthorityFactory); err != nil {
+		if err := admitKnowledgeBaseNameInput(ctx, tx, &old, &actual, s.displayAuthorityFactory); err != nil {
 			return err
 		}
 		if oldDigest == newDigest {

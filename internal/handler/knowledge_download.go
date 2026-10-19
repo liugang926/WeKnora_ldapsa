@@ -123,7 +123,7 @@ func (h *KnowledgeHandler) BatchDownloadKnowledge(c *gin.Context) {
 	for _, entry := range entries {
 		readItems = append(readItems, byID[entry.ID])
 	}
-	leases, err := h.beginNextcloudRead(c, ctx, readItems)
+	leases, err := h.beginNextcloudRead(ctx, c, readItems)
 	if err != nil {
 		_ = c.Error(err)
 		return

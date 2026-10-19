@@ -62,6 +62,7 @@ func TestNextcloudLiveOwnedRootAuthorizationAndContentRevision(t *testing.T) {
 	require.True(t, current.Allow)
 	require.Equal(t, f.Revision, current.SourceContentRevision)
 	t.Log(
-		"actual Nextcloud signed machine HTTP with live LDAP: allowed Alice root/current file; denied Bob root and legacy content revision",
+		("actual Nextcloud signed machine HTTP with live LDAP: allowed Alice root/cu" +
+			"rrent file; denied Bob root and legacy content revision"),
 	)
 }

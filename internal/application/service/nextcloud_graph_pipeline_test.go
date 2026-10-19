@@ -61,7 +61,8 @@ func scopedGraphFixtureDatabase(t *testing.T) *gorm.DB {
 	require.NoError(
 		t,
 		db.Exec(
-			"CREATE UNIQUE INDEX knowledge_processing_spans_scope_identity ON knowledge_processing_spans(knowledge_id,attempt,span_id)",
+			("CREATE UNIQUE INDEX knowledge_processing_spans_scope_identity ON knowledge" +
+				"_processing_spans(knowledge_id,attempt,span_id)"),
 		).Error,
 	)
 	for _, name := range []string{"000031_nextcloud_source_versions", "000045_nextcloud_source_revisions", "000046_nextcloud_content_leases", "000047_nextcloud_candidate_retry", "000053_knowledge_input_provenance", "000054_knowledge_configuration_history_inputs", "000055_knowledge_actual_config_controls", "000056_knowledge_original_worker_actor", "000057_processing_span_original_inputs", "000032_nextcloud_event_inbox", "000038_nextcloud_gc", "000040_nextcloud_gc_object_claim", "000041_nextcloud_gc_derived_inventory", "000068_nextcloud_local_derived_gc", "000075_nextcloud_processing_state", "000077_nextcloud_content_revision", "000064_nextcloud_publication_recovery", "000076_nextcloud_directory_migrations", "000078_nextcloud_control_recovery", "000079_nextcloud_recovery_build_leases", "000080_nextcloud_graph_recovery_fence"} {
@@ -130,12 +131,12 @@ func scopedGraphPipelineFixture(
 }
 
 func pipelineExtractTask(
-	t *testing.T,
+	ctx context.Context, t *testing.T,
 	db *gorm.DB,
 	inputs *repository.KnowledgeInputProvenanceStore,
 	state *repository.NextcloudProcessingStateStore,
 	provider *repository.ScopedSQLGraphRepository,
-	ctx context.Context,
+
 	proof *types.KnowledgeBuildInputProof,
 	doc *types.Knowledge,
 	model *graphEntryModel,
@@ -172,7 +173,7 @@ func pipelineExtractTask(
 func TestNextcloudActualExtractionScopedGraphBackendAndPersistedResult(t *testing.T) {
 	db, inputs, state, provider, ctx, proof, doc := scopedGraphPipelineFixture(t, true)
 	model := &graphEntryModel{}
-	require.NoError(t, pipelineExtractTask(t, db, inputs, state, provider, ctx, proof, doc, model))
+	require.NoError(t, pipelineExtractTask(ctx, t, db, inputs, state, provider, proof, doc, model))
 	require.Equal(t, 1, model.calls)
 	var tasks []struct {
 		State     string
@@ -208,7 +209,7 @@ func TestNextcloudActualExtractionScopedGraphBackendAndPersistedResult(t *testin
 	require.NoError(t, err)
 	require.Len(t, graph.Node, 2)
 	require.Len(t, graph.Relation, 1)
-	require.NoError(t, pipelineExtractTask(t, db, inputs, state, provider, ctx, proof, doc, model))
+	require.NoError(t, pipelineExtractTask(ctx, t, db, inputs, state, provider, proof, doc, model))
 	require.Equal(t, 1, model.calls, "redelivery observes durable operation ACK without asking model again")
 	var count int
 	require.NoError(
@@ -227,7 +228,7 @@ func TestNextcloudActualExtractionWithdrawalBeforeProviderCommitWritesNothing(t 
 				RetireKnowledge(context.Background(), repository.NextcloudContentScope{TenantID: 7, KnowledgeBaseID: doc.KnowledgeBaseID, KnowledgeID: doc.ID, DataSourceID: "ds-77", ExternalID: "nextcloud:instance:77"}),
 		)
 	}}
-	require.Error(t, pipelineExtractTask(t, db, inputs, state, provider, ctx, proof, doc, model))
+	require.Error(t, pipelineExtractTask(ctx, t, db, inputs, state, provider, proof, doc, model))
 	var count int64
 	require.NoError(t, db.Table("nextcloud_graph_records").Count(&count).Error)
 	require.Zero(t, count)

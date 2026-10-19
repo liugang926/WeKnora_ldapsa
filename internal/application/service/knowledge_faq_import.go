@@ -412,7 +412,9 @@ func (s *knowledgeService) saveFAQImportResultToDatabase(ctx context.Context,
 
 	logger.Infof(
 		ctx,
-		"Saved FAQ import result to database: knowledge_id=%s, task_id=%s, total=%d, success=%d, added=%d, merged=%d, failed=%d, partial_failed=%d, skipped=%d",
+		("Saved FAQ import result to database: knowledge_id=%s, task_id=%s, total=%d" +
+			", success=%d, added=%d, merged=%d, failed=%d, partial_failed=%d, skipped=%" +
+			"d"),
 		payload.KnowledgeID,
 		payload.TaskID,
 		originalTotalEntries,
@@ -1455,7 +1457,8 @@ func (s *knowledgeService) calculateReplaceOperations(ctx context.Context,
 				if enabledChanged || recommendedChanged || answerStrategyChanged {
 					logger.Infof(
 						ctx,
-						"FAQ entry operational fields changed (enabled: %v->%v, recommended: %v->%v, answerStrategy changed: %v), will update",
+						("FAQ entry operational fields changed (enabled: %v->%v, recommended: %v->%v" +
+							", answerStrategy changed: %v), will update"),
 						existingChunk.IsEnabled,
 						ewh.entry.IsEnabled,
 						existingChunk.Flags.HasFlag(types.ChunkFlagRecommended),

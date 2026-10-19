@@ -51,6 +51,7 @@ func originalArtifactConfigDigest(cfg config) string {
 	return hex.EncodeToString(digest[:])
 }
 
+// VerifyOriginalArtifactConfiguration checks the configuration bound to an original artifact.
 func VerifyOriginalArtifactConfiguration(source *types.DataSourceConfig, input OriginalFetchedArtifactInput) error {
 	cfg, err := parseConfig(source)
 	if err != nil {
@@ -68,6 +69,7 @@ func sealFetchedArtifact(item *types.FetchedItem, cfg config) {
 	item.OriginalArtifact = originalFetchedArtifact{input: input, digest: input.ArtifactSHA256}
 }
 
+// VerifyOriginalFetchedArtifact checks fetched bytes against their original artifact receipt.
 func VerifyOriginalFetchedArtifact(item *types.FetchedItem) (OriginalFetchedArtifactInput, error) {
 	if item == nil {
 		return OriginalFetchedArtifactInput{}, errors.New("actual Nextcloud artifact is missing")

@@ -56,7 +56,8 @@ func (r *sqliteRepository) saveRowsAtomic(
 				return e
 			}
 			if e := tx.Exec(
-				"INSERT INTO lite_embeddings_fts(rowid,content,source_id,chunk_id,knowledge_id,knowledge_base_id) VALUES(?,?,?,?,?,?)",
+				("INSERT INTO lite_embeddings_fts(rowid,content,source_id,chunk_id,knowledge" +
+					"_id,knowledge_base_id) VALUES(?,?,?,?,?,?)"),
 				row.ID,
 				tokenizeCJKBigram(row.Content),
 				row.SourceID,

@@ -165,11 +165,13 @@ func TestKnowledgeEnrichmentTemplateHTTPActualAdminAndParents(t *testing.T) {
 			h, db, model, _ := templateHTTPFixture(t)
 			method := http.MethodPut
 			url := "/knowledge-bases/kb/enrichment-templates/summary"
-			body := `{"content":"actual newly typed template","source_lineage":{"status":"complete","sources":[]},"actor":{"role":"admin"}}`
+			body := ("{\"content\":\"actual newly typed template\",\"source_lineage\":{\"status" +
+				"\":\"complete\",\"sources\":[]},\"actor\":{\"role\":\"admin\"}}")
 			if mode == "actual derived parents" || mode == "forged cached parent" {
 				method = http.MethodPost
 				url += "/generate"
-				body = `{"knowledge_ids":["template-parent"],"content":"forged cached body","original_input":{"known":true}}`
+				body = ("{\"knowledge_ids\":[\"template-parent\"],\"content\":\"forged cached body" +
+					"\",\"original_input\":{\"known\":true}}")
 			}
 			if mode == "forged cached parent" {
 				body = `{"knowledge_ids":["missing"],"content":"forged cached body"}`

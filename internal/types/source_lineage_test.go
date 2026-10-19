@@ -112,7 +112,8 @@ func TestSourceLineageCodecLegacyAndErrorsResetToUnknown(t *testing.T) {
 	}
 	for _, raw := range []string{
 		`null`, `{`, `{}`, `{"version":1,"state":"complete"}`, `{"version":1,"state":"complete","sources":null}`,
-		`{"version":1,"state":"complete","sources":[],"unexpected":"field"}`, `{"version":1,"state":"complete","sources":[]} {}`,
+		("{\"version\":1,\"state\":\"complete\",\"sources\":[],\"unexpected\":\"fiel" +
+			"d\"}"), `{"version":1,"state":"complete","sources":[]} {}`,
 	} {
 		loaded = *good
 		if err := loaded.Scan(raw); err == nil || !errors.Is(loaded.RequireComplete(), ErrSourceLineageUnknown) {

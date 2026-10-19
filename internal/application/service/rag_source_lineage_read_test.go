@@ -24,8 +24,8 @@ type ragReadRepo struct {
 }
 
 func (r ragReadRepo) GetMessage(context.Context, string, string) (*types.Message, error) {
-	copy := *r.row
-	return &copy, nil
+	copied := *r.row
+	return &copied, nil
 }
 
 type ragReadSessions struct{ interfaces.SessionRepository }

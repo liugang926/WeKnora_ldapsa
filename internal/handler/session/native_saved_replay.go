@@ -225,13 +225,13 @@ func (w *nativeSavedReplayWriter) beforeWrite() error {
 }
 
 func (w *nativeSavedReplayWriter) deny(err error) {
-	if w.ResponseWriter.Written() {
+	if w.Written() {
 		return
 	}
 	app, _ := errors.IsAppError(nativeSavedReplayHTTPError(err))
 	w.ResponseWriter.Header().Del("Content-Type")
 	w.ResponseWriter.Header().Del("Content-Length")
-	w.ResponseWriter.WriteHeader(app.HTTPCode)
+	w.WriteHeader(app.HTTPCode)
 	w.ResponseWriter.WriteHeaderNow()
 }
 

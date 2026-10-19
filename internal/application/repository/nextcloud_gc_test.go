@@ -230,7 +230,8 @@ func TestNextcloudGCObjectLeaseAllowsCrashRecoveryWithoutDoubleCredit(t *testing
 	require.NoError(
 		t,
 		db.Exec(
-			"UPDATE nextcloud_content_fences SET claim_until_ms=1 WHERE tenant_id=7 AND knowledge_base_id='kb' AND knowledge_id='old'",
+			("UPDATE nextcloud_content_fences SET claim_until_ms=1 WHERE tenant_id=7 AND" +
+				" knowledge_base_id='kb' AND knowledge_id='old'"),
 		).Error,
 	)
 	recovered, err := store.claimObject(ctx, job.ID, "source_file", ref, now.Add(11*time.Minute))
@@ -569,7 +570,8 @@ func TestNextcloudGCTombstoneSkipsOrdinarySafetyWindow(t *testing.T) {
 	store, db := nextcloudGCTestDB(t)
 	nextcloudGCTestSource(t, db, "old", "resource://source", now)
 	require.NoError(t, db.Model(&nextcloudSourceVersion{}).
-		Where("tenant_id = ? AND knowledge_base_id = ? AND datasource_id = ? AND external_id = ?", 7, "kb", "ds", "node").
+		Where(("tenant_id = ? AND knowledge_base_id = ? AND datasource_id = ? AND external"+
+			"_id = ?"), 7, "kb", "ds", "node").
 		Updates(map[string]any{"state": "tombstone", "candidate_knowledge_id": ""}).Error)
 	created, err := store.InventoryRetired(ctx, now, 100)
 	require.NoError(t, err)
@@ -597,7 +599,8 @@ func TestNextcloudGCBlocksCandidateThatBecameCurrent(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, created)
 	require.NoError(t, db.Model(&nextcloudSourceVersion{}).
-		Where("tenant_id = ? AND knowledge_base_id = ? AND datasource_id = ? AND external_id = ?", 7, "kb", "ds", "node").
+		Where(("tenant_id = ? AND knowledge_base_id = ? AND datasource_id = ? AND external"+
+			"_id = ?"), 7, "kb", "ds", "node").
 		Update("candidate_knowledge_id", "old").Error)
 	_, err = store.RunDue(ctx, now, 100)
 	require.NoError(t, err)

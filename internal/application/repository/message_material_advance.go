@@ -23,6 +23,7 @@ type messageProducerAdvance struct {
 
 func (messageProducerAdvance) TableName() string { return "message_producer_advances" }
 
+// WithMessageProducerAdvance binds message producer advance.
 func (s *KnowledgeInputProvenanceStore) WithMessageProducerAdvance(
 	ctx context.Context,
 	message *types.Message,
@@ -64,26 +65,35 @@ func (s *KnowledgeInputProvenanceStore) sealMessageProducerAdvanceInTx(
 	).Error
 }
 
+// UpgradeMessageProducerAdvanceSchema returns the upgrade message producer advance schema result.
 func UpgradeMessageProducerAdvanceSchema(db *gorm.DB) error {
 	if db.Migrator().HasTable("message_producer_advances") {
 		return nil
 	}
 	ddl := messageProducerAdvanceSQLiteDDL
-	if db.Dialector.Name() == "postgres" {
+	if db.Name() == "postgres" {
 		ddl = messageProducerAdvancePostgresDDL
-	} else if db.Dialector.Name() != "sqlite" {
+	} else if db.Name() != "sqlite" {
 		return types.ErrSourceLineageUnknown
 	}
 	return db.Transaction(func(tx *gorm.DB) error { return tx.Exec(ddl).Error })
 }
 
-const messageProducerAdvanceSQLiteDDL = `
-CREATE TABLE message_producer_advances(admission_id TEXT PRIMARY KEY REFERENCES message_material_admissions(id),message_id TEXT NOT NULL,session_id TEXT NOT NULL,generation_id TEXT NOT NULL,previous_admission_id TEXT NOT NULL,previous_revision BIGINT NOT NULL,previous_membership BIGINT NOT NULL,result_revision BIGINT NOT NULL);
-CREATE TRIGGER message_producer_advances_immutable_update BEFORE UPDATE ON message_producer_advances BEGIN SELECT RAISE(ABORT,'immutable actual message producer advance'); END;
-CREATE TRIGGER message_producer_advances_immutable_delete BEFORE DELETE ON message_producer_advances BEGIN SELECT RAISE(ABORT,'immutable actual message producer advance'); END;
-`
+const messageProducerAdvanceSQLiteDDL = ("\nCREATE TABLE message_producer_advances(admission_id TEXT PRIMARY KEY REF" +
+	"ERENCES message_material_admissions(id),message_id TEXT NOT NULL,session_i" +
+	"d TEXT NOT NULL,generation_id TEXT NOT NULL,previous_admission_id TEXT NOT" +
+	" NULL,previous_revision BIGINT NOT NULL,previous_membership BIGINT NOT NUL" +
+	"L,result_revision BIGINT NOT NULL);\nCREATE TRIGGER message_producer_advan" +
+	"ces_immutable_update BEFORE UPDATE ON message_producer_advances BEGIN SELE" +
+	"CT RAISE(ABORT,'immutable actual message producer advance'); END;\nCREATE " +
+	"TRIGGER message_producer_advances_immutable_delete BEFORE DELETE ON messag" +
+	"e_producer_advances BEGIN SELECT RAISE(ABORT,'immutable actual message pro" +
+	"ducer advance'); END;\n")
 
-const messageProducerAdvancePostgresDDL = `
-CREATE TABLE message_producer_advances(admission_id TEXT PRIMARY KEY REFERENCES message_material_admissions(id),message_id TEXT NOT NULL,session_id TEXT NOT NULL,generation_id TEXT NOT NULL,previous_admission_id TEXT NOT NULL,previous_revision BIGINT NOT NULL,previous_membership BIGINT NOT NULL,result_revision BIGINT NOT NULL);
-CREATE TRIGGER message_producer_advances_immutable BEFORE UPDATE OR DELETE ON message_producer_advances FOR EACH ROW EXECUTE FUNCTION message_material_immutable();
-`
+const messageProducerAdvancePostgresDDL = ("\nCREATE TABLE message_producer_advances(admission_id TEXT PRIMARY KEY REF" +
+	"ERENCES message_material_admissions(id),message_id TEXT NOT NULL,session_i" +
+	"d TEXT NOT NULL,generation_id TEXT NOT NULL,previous_admission_id TEXT NOT" +
+	" NULL,previous_revision BIGINT NOT NULL,previous_membership BIGINT NOT NUL" +
+	"L,result_revision BIGINT NOT NULL);\nCREATE TRIGGER message_producer_advan" +
+	"ces_immutable BEFORE UPDATE OR DELETE ON message_producer_advances FOR EAC" +
+	"H ROW EXECUTE FUNCTION message_material_immutable();\n")

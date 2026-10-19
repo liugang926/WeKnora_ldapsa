@@ -10,6 +10,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/types"
 )
 
+// RecoveryControlState describes current source recovery controls.
 // A current exact scoped machine observation, never an administrator-supplied boolean.
 type RecoveryControlState struct {
 	InstanceID       string `json:"instance_id"`
@@ -22,6 +23,7 @@ type RecoveryControlState struct {
 	InventorySHA256  string `json:"control_inventory_sha256"`
 }
 
+// InspectRecoveryControls reads the current source recovery controls.
 func InspectRecoveryControls(ctx context.Context, source *types.DataSourceConfig) (RecoveryControlState, error) {
 	var out RecoveryControlState
 	cfg, err := parseConfig(source)

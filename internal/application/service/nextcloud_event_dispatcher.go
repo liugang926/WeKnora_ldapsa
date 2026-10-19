@@ -131,7 +131,7 @@ func (d *NextcloudEventDispatcher) runOnce(ctx context.Context, now time.Time) {
 	}
 }
 
-func (d *NextcloudEventDispatcher) dispatchCandidateRetry(ctx context.Context,
+func (d *NextcloudEventDispatcher) dispatchCandidateRetry(_ context.Context,
 	claim repository.NextcloudCandidateRetryClaim,
 ) error {
 	payload := types.DataSourceSyncPayload{

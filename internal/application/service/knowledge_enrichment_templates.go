@@ -14,6 +14,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 )
 
+// KnowledgeEnrichmentTemplateService creates and reads templates with retained input provenance.
 // New templates live in their KB's proved original configuration. Model
 // outputs inherit every template source through the actual artifact admission.
 type KnowledgeEnrichmentTemplateService struct {
@@ -24,6 +25,7 @@ type KnowledgeEnrichmentTemplateService struct {
 	leases    readlease.NextcloudReadLeaseStore
 }
 
+// NewKnowledgeEnrichmentTemplateService constructs the configured KnowledgeEnrichmentTemplateService.
 func NewKnowledgeEnrichmentTemplateService(
 	store *repository.KnowledgeInputProvenanceStore,
 	knowledge interfaces.KnowledgeRepository,
@@ -53,6 +55,7 @@ func (s *KnowledgeEnrichmentTemplateService) checkConfiguration(ctx context.Cont
 	)
 }
 
+// SetIndependentTemplate records an explicitly independent enrichment template input.
 func (s *KnowledgeEnrichmentTemplateService) SetIndependentTemplate(
 	ctx context.Context,
 	tenant uint64,
@@ -64,6 +67,7 @@ func (s *KnowledgeEnrichmentTemplateService) SetIndependentTemplate(
 	return s.store.WriteIndependentKnowledgeEnrichmentTemplate(ctx, tenant, kb, purpose, content)
 }
 
+// InstallCodeTemplate records an image-owned enrichment template input.
 func (s *KnowledgeEnrichmentTemplateService) InstallCodeTemplate(
 	ctx context.Context,
 	tenant uint64,
@@ -100,7 +104,10 @@ func (s *KnowledgeEnrichmentTemplateService) GenerateDerivedTemplate(
 	if err != nil {
 		return nil, err
 	}
-	defer lease.Close()
+	defer func() {
+		// Only read pins are released here; cleanup does not publish protected material.
+		_ = lease.Close()
+	}()
 	ctx = lease.Context()
 	parents := []*types.ChunkOutputInputSnapshot{}
 	seen := map[string]bool{}
@@ -156,7 +163,10 @@ func (s *KnowledgeEnrichmentTemplateService) GenerateDerivedTemplate(
 	if err != nil {
 		return nil, err
 	}
-	defer expanded.Close()
+	defer func() {
+		// Only read pins are released here; cleanup does not publish protected material.
+		_ = expanded.Close()
+	}()
 	ctx = expanded.Context()
 	ctx = context.WithValue(ctx, types.TenantInfoContextKey, input.Tenant)
 	model, err := s.models.GetChatModel(ctx, input.ModelID)
@@ -176,7 +186,8 @@ func (s *KnowledgeEnrichmentTemplateService) GenerateDerivedTemplate(
 		}
 	}
 	prompt := fmt.Sprintf(
-		"Create a concise %s generation instruction template using only these actual source inputs. Return only the instruction template.\n%s",
+		("Create a concise %s generation instruction template using only these actua" +
+			"l source inputs. Return only the instruction template.\n%s"),
 		purpose,
 		strings.Join(parts, "\n"),
 	)
@@ -258,6 +269,7 @@ func actualKnowledgeEnrichmentPrompt(cfg *config.Config, kb *types.KnowledgeBase
 	return cfg.Conversation.GenerateQuestionsPrompt
 }
 
+// KnowledgeEnrichmentTemplateReadSnapshot holds the original inputs of a template read.
 type KnowledgeEnrichmentTemplateReadSnapshot struct {
 	Content string
 	Check   func(context.Context) error
@@ -299,6 +311,7 @@ func (s *KnowledgeEnrichmentTemplateService) beginTemplateRead(
 	return lease, nil
 }
 
+// ReadTemplate captures an enrichment template and its original inputs.
 func (s *KnowledgeEnrichmentTemplateService) ReadTemplate(
 	ctx context.Context,
 	tenant uint64,

@@ -19,6 +19,7 @@ type knowledgeOriginalInputSourceVerifier struct {
 	checkBuild func(context.Context, *types.DataSourceConfig, string, string, int64, string, string) error
 }
 
+// ConfigureDataSourceOriginalInputSources configures the data source original input sources boundary.
 func ConfigureDataSourceOriginalInputSources(
 	source interfaces.DataSourceService,
 	store *repository.KnowledgeInputProvenanceStore,
@@ -28,6 +29,7 @@ func ConfigureDataSourceOriginalInputSources(
 	}
 }
 
+// NewKnowledgeOriginalInputSourceVerifier constructs the configured KnowledgeOriginalInputSourceVerifier.
 func NewKnowledgeOriginalInputSourceVerifier(
 	store *repository.KnowledgeInputProvenanceStore,
 	guard *access.NextcloudSourceLineageGuard,

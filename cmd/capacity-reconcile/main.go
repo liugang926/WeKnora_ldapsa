@@ -192,7 +192,7 @@ func run() (resultErr error) {
 		resolver := service.NewStorageBackendService(
 			backends, db, service.NewResourceCatalog(repository.NewResourceRepository(db)))
 		admission := service.NewNextcloudCapacityAdmission(store,
-			func(ctx context.Context, kb *types.KnowledgeBase) (interfaces.FileService, error) {
+			func(ctx context.Context, _ *types.KnowledgeBase) (interfaces.FileService, error) {
 				fs, provider, e := resolver.ResolveFileService(ctx, &tenant, r.BackendID, "local", *root)
 				if e != nil || provider != "local" {
 					return nil, repository.ErrNextcloudCapacityUnavailable

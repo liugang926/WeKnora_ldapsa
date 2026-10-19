@@ -3,6 +3,7 @@ package neo4j
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -11,6 +12,7 @@ import (
 	"github.com/neo4j/neo4j-go-driver/v6/neo4j"
 )
 
+// Neo4jRepository represents neo4j repository repository data.
 // Records are immutable extraction units. Collapsing equal display names is a
 // read projection, never a write that can erase an older generation's proof.
 type Neo4jRepository struct {
@@ -21,11 +23,11 @@ type Neo4jRepository struct {
 func NewNeo4jRepository(driver neo4j.Driver) interfaces.RetrieveGraphRepository {
 	return &Neo4jRepository{driver: driver, nodePrefix: "ENTITY"}
 }
-func _remove_hyphen(s string) string { return strings.ReplaceAll(s, "-", "_") }
+func _removeHyphen(s string) string { return strings.ReplaceAll(s, "-", "_") }
 func (n *Neo4jRepository) Labels(namespace types.NameSpace) []string {
 	labels := []string{}
 	for _, label := range namespace.Labels() {
-		labels = append(labels, n.nodePrefix+_remove_hyphen(label))
+		labels = append(labels, n.nodePrefix+_removeHyphen(label))
 	}
 	return labels
 }
@@ -38,7 +40,11 @@ func (n *Neo4jRepository) Label(namespace types.NameSpace) string {
 	return strings.Join(labels, ":")
 }
 
-func (n *Neo4jRepository) AddGraph(ctx context.Context, namespace types.NameSpace, graphs []*types.GraphData) error {
+func (n *Neo4jRepository) AddGraph(
+	ctx context.Context,
+	namespace types.NameSpace,
+	graphs []*types.GraphData,
+) (err error) {
 	if n.driver == nil || namespace.KnowledgeBase == "" || namespace.Knowledge == "" {
 		return types.ErrGraphSourceReceiptUnknown
 	}
@@ -122,8 +128,8 @@ func (n *Neo4jRepository) AddGraph(ctx context.Context, namespace types.NameSpac
 		}
 	}
 	session := n.driver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeWrite})
-	defer session.Close(ctx)
-	_, err := session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
+	defer func() { err = errors.Join(err, session.Close(ctx)) }()
+	_, err = session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
 		for _, receipt := range receipts {
 			if err := types.CheckGraphWriteAuthorization(ctx, receipt); err != nil {
 				return nil, err

@@ -56,7 +56,7 @@ func (r *NextcloudEventInboxRepository) SignedFileStatus(
 	var body []byte
 	var signature string
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if tx.Dialector.Name() == "sqlite" {
+		if tx.Name() == "sqlite" {
 			lock := tx.Exec(`UPDATE nextcloud_event_connections SET status = status
 				WHERE connection_id = ? AND status = 'active'`, request.ConnectionID)
 			if lock.Error != nil {

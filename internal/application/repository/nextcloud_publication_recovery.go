@@ -21,6 +21,7 @@ import (
 	"gorm.io/gorm"
 )
 
+// ErrNextcloudRecoveryDenied reports a nextcloud recovery denied condition.
 var ErrNextcloudRecoveryDenied = apperrors.NewProtocolError(
 	errors.New("nextcloud publication recovery evidence denied"), "Nextcloud publication recovery evidence denied",
 )
@@ -31,6 +32,7 @@ var (
 	recoveryStream = regexp.MustCompile(`^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$`)
 )
 
+// NextcloudRecoveryJournalEvent represents nextcloud recovery journal event repository data.
 type NextcloudRecoveryJournalEvent struct {
 	Sequence       string                           `json:"sequence"`
 	BindingID      string                           `json:"binding_id"`
@@ -42,6 +44,7 @@ type NextcloudRecoveryJournalEvent struct {
 	TenantDeletion *NextcloudRecoveryTenantDeletion `json:"tenant_deletion,omitempty"`
 }
 
+// NextcloudRecoveryPlan represents nextcloud recovery plan repository data.
 type NextcloudRecoveryPlan struct {
 	JournalEvents                       []NextcloudRecoveryJournalEvent    `json:"journal_events,omitempty"`
 	TargetClosures                      []NextcloudRecoveryTargetClosure   `json:"target_closures,omitempty"`
@@ -65,6 +68,7 @@ type NextcloudRecoveryPlan struct {
 	raw                                 string
 }
 
+// NextcloudRecoveryContentRevision represents nextcloud recovery content revision repository data.
 type NextcloudRecoveryContentRevision struct {
 	BindingID string `json:"binding_id"`
 	FileID    string `json:"file_id"`
@@ -72,16 +76,20 @@ type NextcloudRecoveryContentRevision struct {
 	Writing   bool   `json:"writing"`
 }
 
+// NextcloudRecoveryBinding represents nextcloud recovery binding repository data.
 type NextcloudRecoveryBinding struct {
 	BindingID    string `json:"binding_id"`
 	LastSequence string `json:"last_sequence"`
 }
+
+// NextcloudRecoveryFile represents nextcloud recovery file repository data.
 type NextcloudRecoveryFile struct {
 	BindingID    string `json:"binding_id"`
 	FileID       string `json:"file_id"`
 	LastSequence string `json:"last_sequence"`
 }
 
+// NextcloudRecoveryAnchor represents nextcloud recovery anchor repository data.
 type NextcloudRecoveryAnchor struct {
 	InstanceID          string `json:"instance_id"`
 	StreamID            string `json:"stream_id"`
@@ -90,6 +98,7 @@ type NextcloudRecoveryAnchor struct {
 	DatabaseChainSHA256 string `json:"database_chain_sha256"`
 }
 
+// NextcloudRecoveryPair represents nextcloud recovery pair repository data.
 // This tuple is always read from the pairing registry, never reconstructed from
 // client metadata. The externally pinned backup inventory binds every field.
 type NextcloudRecoveryPair struct {
@@ -106,6 +115,7 @@ type NextcloudRecoveryPair struct {
 	State            string `json:"state"`
 }
 
+// NextcloudRecoveryInventory represents nextcloud recovery inventory repository data.
 type NextcloudRecoveryInventory struct {
 	SchemaVersion     int                     `json:"schema_version"`
 	Anchor            NextcloudRecoveryAnchor `json:"anchor"`
@@ -113,6 +123,7 @@ type NextcloudRecoveryInventory struct {
 	SourceStateSHA256 string                  `json:"source_state_sha256"`
 }
 
+// NextcloudRecoveryReceipt represents nextcloud recovery receipt repository data.
 type NextcloudRecoveryReceipt struct {
 	PlanSHA256             string    `json:"plan_sha256" gorm:"primaryKey"`
 	InstanceID             string    `json:"instance_id"`
@@ -127,6 +138,7 @@ type NextcloudRecoveryReceipt struct {
 	ClosedAt               time.Time `json:"closed_at"`
 }
 
+// TableName returns the persisted table name.
 func (NextcloudRecoveryReceipt) TableName() string { return "nextcloud_publication_recovery_receipts" }
 
 type nextcloudRecoveryScope struct {
@@ -148,6 +160,7 @@ type nextcloudRecoveryScope struct {
 
 func (nextcloudRecoveryScope) TableName() string { return "nextcloud_publication_recovery_scopes" }
 
+// NextcloudRecoveryReconciliationReceipt represents nextcloud recovery reconciliation receipt repository data.
 type NextcloudRecoveryReconciliationReceipt struct {
 	PlanSHA256           string                     `json:"plan_sha256"`
 	OperationID          string                     `json:"operation_id"`
@@ -176,8 +189,10 @@ type nextcloudRecoveryRevision struct {
 	LegacyHistoryUnknown bool
 }
 
+// NextcloudPublicationRecoveryStore represents nextcloud publication recovery store repository data.
 type NextcloudPublicationRecoveryStore struct{ db *gorm.DB }
 
+// NewNextcloudPublicationRecoveryStore constructs nextcloud publication recovery store.
 func NewNextcloudPublicationRecoveryStore(db *gorm.DB) *NextcloudPublicationRecoveryStore {
 	return &NextcloudPublicationRecoveryStore{db}
 }
@@ -259,6 +274,7 @@ func recoveryStrictJSON(data []byte, out any) error {
 	return nil
 }
 
+// VerifyNextcloudRecoveryPlan verifies nextcloud recovery plan.
 // Verifies exactly the signed plan bytes emitted by the external Python journal.
 // Callers cannot manufacture a verified plan by filling an exported struct.
 func VerifyNextcloudRecoveryPlan(envelope, key []byte) (*NextcloudRecoveryPlan, error) {
@@ -526,7 +542,9 @@ func (s *NextcloudPublicationRecoveryStore) captureInTx(
 	// A source whose instance cannot be resolved cannot be classified as absent.
 	var unpaired int64
 	if e := tx.Table("data_sources ds").
-		Where("ds.type = ? AND ds.deleted_at IS NULL AND NOT EXISTS (SELECT 1 FROM nextcloud_source_pairings p WHERE p.datasource_id=ds.id AND p.tenant_id=ds.tenant_id AND p.knowledge_base_id=ds.knowledge_base_id)", types.ConnectorTypeNextcloud).
+		Where(("ds.type = ? AND ds.deleted_at IS NULL AND NOT EXISTS (SELECT 1 FROM nextcl" +
+			"oud_source_pairings p WHERE p.datasource_id=ds.id AND p.tenant_id=ds.tenan" +
+			"t_id AND p.knowledge_base_id=ds.knowledge_base_id)"), types.ConnectorTypeNextcloud).
 		Count(&unpaired).
 		Error; e != nil {
 		return nil, e
@@ -562,7 +580,8 @@ func (s *NextcloudPublicationRecoveryStore) captureInTx(
 			}
 		}
 		var ds types.DataSource
-		if e := tx.Where("id=? AND tenant_id=? AND knowledge_base_id=? AND type=? AND deleted_at IS NULL", p.DataSourceID, p.TenantID, p.KnowledgeBaseID, types.ConnectorTypeNextcloud).
+		if e := tx.Where(("id=? AND tenant_id=? AND knowledge_base_id=? AND type=? AND deleted_at IS " +
+			"NULL"), p.DataSourceID, p.TenantID, p.KnowledgeBaseID, types.ConnectorTypeNextcloud).
 			Take(&ds).
 			Error; e != nil {
 			return nil, ErrNextcloudRecoveryDenied
@@ -680,6 +699,7 @@ func (s *NextcloudPublicationRecoveryStore) captureInTx(
 	return inv, e
 }
 
+// DecodeNextcloudRecoveryInventory decodes nextcloud recovery inventory.
 func DecodeNextcloudRecoveryInventory(data []byte, pin string) (*NextcloudRecoveryInventory, error) {
 	if !recoveryHash.MatchString(pin) || recoverySHA(data) != pin {
 		return nil, ErrNextcloudRecoveryDenied
@@ -855,7 +875,9 @@ func (s *NextcloudPublicationRecoveryStore) Apply(
 			// Restored GC claims are as stale as restored workers. Revoke their epochs
 			// without touching objects; unknown external inventory cannot be collected.
 			if e := tx.Exec(
-				"UPDATE nextcloud_content_fences SET state='retired',epoch=epoch+1,claim_token='',claim_until_ms=NULL,retired_at_ms=?,updated_at_ms=? WHERE tenant_id=? AND knowledge_base_id=? AND state='deleting'",
+				("UPDATE nextcloud_content_fences SET state='retired',epoch=epoch+1,claim_to" +
+					"ken='',claim_until_ms=NULL,retired_at_ms=?,updated_at_ms=? WHERE tenant_id" +
+					"=? AND knowledge_base_id=? AND state='deleting'"),
 				nowMS,
 				nowMS,
 				pair.TenantID,
@@ -1145,7 +1167,8 @@ func (s *NextcloudPublicationRecoveryStore) Reconcile(
 			return nil
 		}
 		var currentDS types.DataSource
-		if e = tx.Where("id=? AND tenant_id=? AND knowledge_base_id=? AND status=? AND deleted_at IS NULL", scope.DataSourceID, scope.TenantID, scope.KnowledgeBaseID, types.DataSourceStatusPaused).
+		if e = tx.Where(("id=? AND tenant_id=? AND knowledge_base_id=? AND status=? AND deleted_at I" +
+			"S NULL"), scope.DataSourceID, scope.TenantID, scope.KnowledgeBaseID, types.DataSourceStatusPaused).
 			Take(&currentDS).
 			Error; e != nil {
 			return ErrNextcloudRecoveryDenied
@@ -1179,7 +1202,9 @@ func (s *NextcloudPublicationRecoveryStore) Reconcile(
 			return e
 		}
 		if e = tx.Exec(
-			"UPDATE nextcloud_content_fences SET state='open',epoch=epoch+1,retired_at_ms=NULL,updated_at_ms=? WHERE tenant_id=? AND knowledge_base_id=? AND knowledge_id='' AND state='retired'",
+			("UPDATE nextcloud_content_fences SET state='open',epoch=epoch+1,retired_at_" +
+				"ms=NULL,updated_at_ms=? WHERE tenant_id=? AND knowledge_base_id=? AND know" +
+				"ledge_id='' AND state='retired'"),
 			nowMS,
 			scope.TenantID,
 			scope.KnowledgeBaseID,
@@ -1247,7 +1272,8 @@ func (s *NextcloudPublicationRecoveryStore) checkRecoveryScopeInTx(tx *gorm.DB, 
 		}
 		var count int64
 		if e := tx.Model(&nextcloudSourceVersion{}).
-			Where("tenant_id=? AND knowledge_base_id=? AND datasource_id=? AND state<>'tombstone'", scope.TenantID, scope.KnowledgeBaseID, scope.DataSourceID).
+			Where(("tenant_id=? AND knowledge_base_id=? AND datasource_id=? AND state<>'tombst" +
+				"one'"), scope.TenantID, scope.KnowledgeBaseID, scope.DataSourceID).
 			Count(&count).
 			Error; e != nil {
 			return e
@@ -1257,7 +1283,8 @@ func (s *NextcloudPublicationRecoveryStore) checkRecoveryScopeInTx(tx *gorm.DB, 
 		}
 		if e := tx.Unscoped().
 			Model(&types.Knowledge{}).
-			Where("tenant_id=? AND knowledge_base_id=? AND channel=? AND COALESCE(metadata->>'nextcloud_etag','')<>''", scope.TenantID, scope.KnowledgeBaseID, types.ConnectorTypeNextcloud).
+			Where(("tenant_id=? AND knowledge_base_id=? AND channel=? AND COALESCE(metadata->>" +
+				"'nextcloud_etag','')<>''"), scope.TenantID, scope.KnowledgeBaseID, types.ConnectorTypeNextcloud).
 			Count(&count).
 			Error; e != nil {
 			return e

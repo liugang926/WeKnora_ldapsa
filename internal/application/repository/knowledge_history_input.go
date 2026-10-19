@@ -29,6 +29,7 @@ type knowledgeInputHistoryParents struct {
 
 func (knowledgeInputHistoryParents) TableName() string { return "knowledge_input_history_parents" }
 
+// ConfigureKnowledgeInputHistoryVerifier configures knowledge input history verifier.
 func ConfigureKnowledgeInputHistoryVerifier(
 	store *KnowledgeInputProvenanceStore,
 	verifier interfaces.MessageSourceLineageVerifier,
@@ -152,7 +153,7 @@ func (s *KnowledgeInputProvenanceStore) CreateCommittedHistoryKnowledgeInput(
 		return nil, types.ErrSourceLineageUnknown
 	}
 	options := &sql.TxOptions{}
-	if s.db.Dialector.Name() == "postgres" {
+	if s.db.Name() == "postgres" {
 		options.Isolation = sql.LevelRepeatableRead
 	}
 	var result *types.CommittedHistoryKnowledgeInput
@@ -316,6 +317,7 @@ func (s *KnowledgeInputProvenanceStore) CreateCommittedHistoryKnowledgeInput(
 }
 func nilHistoryInputError() error { return ErrKnowledgeInputChanged }
 
+// KnowledgeHistoryMaterialRequest returns the knowledge history material request result.
 func (s *KnowledgeInputProvenanceStore) KnowledgeHistoryMaterialRequest(
 	ctx context.Context,
 	proof *types.KnowledgeBuildInputProof,
@@ -350,6 +352,7 @@ func (s *KnowledgeInputProvenanceStore) KnowledgeHistoryMaterialRequest(
 	}, nil
 }
 
+// CheckKnowledgeHistoryOriginalSources checks knowledge history original sources.
 // Current source verification is deliberately outside the material SQL tx.
 // This method grants no original-body admission and cannot replace the tx-local
 // receipts, versions, owner and read-lease checks.

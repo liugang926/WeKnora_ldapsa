@@ -62,7 +62,10 @@ func actualLocalComposite(t *testing.T, db *gorm.DB, pg bool) *retriever.Composi
 		require.NoError(
 			t,
 			db.Exec(
-				`CREATE TABLE IF NOT EXISTS embeddings(id BIGSERIAL PRIMARY KEY,created_at TIMESTAMPTZ,updated_at TIMESTAMPTZ,source_id TEXT NOT NULL,source_type INTEGER NOT NULL,chunk_id TEXT,knowledge_id TEXT,knowledge_base_id TEXT,tag_id TEXT,content TEXT NOT NULL,dimension INTEGER NOT NULL,embedding `+kind+` NOT NULL,is_enabled BOOLEAN DEFAULT TRUE,UNIQUE(source_id,source_type))`,
+				("CREATE TABLE IF NOT EXISTS embeddings(id BIGSERIAL PRIMARY KEY,created_at "+
+					"TIMESTAMPTZ,updated_at TIMESTAMPTZ,source_id TEXT NOT NULL,source_type INT"+
+					"EGER NOT NULL,chunk_id TEXT,knowledge_id TEXT,knowledge_base_id TEXT,tag_i"+
+					"d TEXT,content TEXT NOT NULL,dimension INTEGER NOT NULL,embedding ")+kind+` NOT NULL,is_enabled BOOLEAN DEFAULT TRUE,UNIQUE(source_id,source_type))`,
 			).Error,
 		)
 		rows = pgindex.NewPostgresRetrieveEngineRepository(db)
@@ -149,7 +152,7 @@ func localDerivedActualPipeline(t *testing.T, pg bool, modes ...string) {
 		},
 	)
 	if mode == "body-retention" || mode == "body-inline-restore" {
-		setupActualBodyLocalGC(t, f, build, pg)
+		setupActualBodyLocalGC(build, t, f, pg)
 	}
 	info := &types.IndexInfo{
 		SourceID:        f.chunks[0].ID,
@@ -249,7 +252,10 @@ func localDerivedActualPipeline(t *testing.T, pg bool, modes ...string) {
 	require.NoError(
 		t,
 		f.db.Exec(
-			"INSERT INTO nextcloud_content_lease_coverage(tenant_id,knowledge_base_id,activated_at_ms,legacy_drained_at_ms,reader_revision,builder_revision) VALUES(7,'kb',?,?,'actual-local-pipeline-reader','actual-local-pipeline-builder')",
+			("INSERT INTO nextcloud_content_lease_coverage(tenant_id,knowledge_base_id,a"+
+				"ctivated_at_ms,legacy_drained_at_ms,reader_revision,builder_revision) VALU"+
+				"ES(7,'kb',?,?,'actual-local-pipeline-reader','actual-local-pipeline-builde"+
+				"r')"),
 			millis,
 			millis,
 		).Error,
@@ -264,14 +270,18 @@ func localDerivedActualPipeline(t *testing.T, pg bool, modes ...string) {
 			require.NoError(
 				t,
 				f.db.Exec(
-					"CREATE FUNCTION derived_receipt_crash() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'actual receipt failure'; END $$;CREATE TRIGGER derived_receipt_crash BEFORE INSERT ON nextcloud_derived_gc_receipts FOR EACH ROW EXECUTE FUNCTION derived_receipt_crash()",
+					("CREATE FUNCTION derived_receipt_crash() RETURNS trigger LANGUAGE plpgsql A" +
+						"S $$ BEGIN RAISE EXCEPTION 'actual receipt failure'; END $$;CREATE TRIGGER" +
+						" derived_receipt_crash BEFORE INSERT ON nextcloud_derived_gc_receipts FOR " +
+						"EACH ROW EXECUTE FUNCTION derived_receipt_crash()"),
 				).Error,
 			)
 		} else {
 			require.NoError(
 				t,
 				f.db.Exec(
-					"CREATE TRIGGER derived_receipt_crash BEFORE INSERT ON nextcloud_derived_gc_receipts BEGIN SELECT RAISE(ABORT,'actual receipt failure'); END",
+					("CREATE TRIGGER derived_receipt_crash BEFORE INSERT ON nextcloud_derived_gc" +
+						"_receipts BEGIN SELECT RAISE(ABORT,'actual receipt failure'); END"),
 				).Error,
 			)
 		}
@@ -301,9 +311,12 @@ func localDerivedActualPipeline(t *testing.T, pg bool, modes ...string) {
 		restoreSourceVersionForGCProbe(t, f.db, f.k.ID, scope.DataSourceID)
 	}
 	if mode == "unwitnessed-row" {
-		sql := "INSERT INTO " + table + "(source_id,source_type,chunk_id,knowledge_id,knowledge_base_id,content,dimension) VALUES('unwitnessed',0,'source-body',?,'kb','unknown',0)"
+		sql := "INSERT INTO " + table + ("(source_id,source_type,chunk_id,knowledge_id,knowledge_base_id,content,dim" +
+			"ension) VALUES('unwitnessed',0,'source-body',?,'kb','unknown',0)")
 		if pg {
-			sql = "INSERT INTO " + table + "(source_id,source_type,chunk_id,knowledge_id,knowledge_base_id,content,dimension,embedding) VALUES('unwitnessed',0,'source-body',?,'kb','unknown',3,'[0.2,0.3,0.4]')"
+			sql = "INSERT INTO " + table + ("(source_id,source_type,chunk_id,knowledge_id,knowledge_base_id,content,dim" +
+				"ension,embedding) VALUES('unwitnessed',0,'source-body',?,'kb','unknown',3," +
+				"'[0.2,0.3,0.4]')")
 		}
 		require.NoError(t, f.db.Exec(sql, f.k.ID).Error)
 	}
@@ -434,12 +447,13 @@ func TestPostgresOriginalBodyActualLocalDerived(t *testing.T) {
 	}
 }
 
-func setupActualBodyLocalGC(t *testing.T, f *enrichmentTestFixture, build context.Context, pg bool) {
+func setupActualBodyLocalGC(build context.Context, t *testing.T, f *enrichmentTestFixture, pg bool) {
 	require.NoError(t, f.db.AutoMigrate(&types.KnowledgeProcessingSpan{}))
 	require.NoError(
 		t,
 		f.db.Exec(
-			"CREATE UNIQUE INDEX IF NOT EXISTS body_span_scope_unique ON knowledge_processing_spans(knowledge_id,attempt,span_id)",
+			("CREATE UNIQUE INDEX IF NOT EXISTS body_span_scope_unique ON knowledge_proc" +
+				"essing_spans(knowledge_id,attempt,span_id)"),
 		).Error,
 	)
 	spanPath := "../../../migrations/sqlite/000057_processing_span_original_inputs.up.sql"
@@ -468,7 +482,7 @@ func setupActualBodyLocalGC(t *testing.T, f *enrichmentTestFixture, build contex
 	t.Setenv("WEKNORA_ORIGINAL_BODY_JOURNAL_KEY", key)
 	t.Setenv("WEKNORA_ORIGINAL_BODY_JOURNAL_PIN", pin)
 	require.NoError(t, repository.NewOriginalBodyRetentionStore(f.db).InitializeJournal())
-	inventoryKnownConfigurationOriginalBodyFixture(t, f.ctx, f.db, f.store)
+	inventoryKnownConfigurationOriginalBodyFixture(f.ctx, t, f.db, f.store)
 	require.NoError(t, f.db.AutoMigrate(&types.KnowledgeProcessingSpan{}))
 	original := repository.KnowledgeBuildInputProofFromContext(build)
 	material, err := f.store.CaptureKnowledgeBuildInputs(
@@ -574,7 +588,8 @@ func assertActualBodyLocalGC(t *testing.T, f *enrichmentTestFixture, gc *reposit
 	var raw string
 	require.NoError(
 		t,
-		f.db.Raw("SELECT COALESCE(CAST(input AS TEXT),'') || COALESCE(CAST(output AS TEXT),'') FROM knowledge_processing_spans WHERE knowledge_id=? LIMIT 1", f.k.ID).
+		f.db.Raw(("SELECT COALESCE(CAST(input AS TEXT),'') || COALESCE(CAST(output AS TEXT),'"+
+			"') FROM knowledge_processing_spans WHERE knowledge_id=? LIMIT 1"), f.k.ID).
 			Scan(&raw).
 			Error,
 	)
@@ -593,19 +608,22 @@ func assertActualBodyLocalGC(t *testing.T, f *enrichmentTestFixture, gc *reposit
 		require.NoError(
 			t,
 			f.db.Table("original_body_field_heads").
-				Where("source_table='knowledge_processing_spans' AND column_name='output' AND row_key IN (SELECT CAST(id AS TEXT) FROM knowledge_processing_spans WHERE name='actual-body-audit')").
+				Where(("source_table='knowledge_processing_spans' AND column_name='output' AND row" +
+					"_key IN (SELECT CAST(id AS TEXT) FROM knowledge_processing_spans WHERE nam" +
+					"e='actual-body-audit')")).
 				Take(&field).
 				Error,
 		)
 		var old string
 		require.NoError(
 			t,
-			f.db.Raw("SELECT CAST(output AS TEXT) FROM knowledge_processing_spans WHERE CAST(id AS TEXT)=?", field.RowKey).
+			f.db.Raw(("SELECT CAST(output AS TEXT) FROM knowledge_processing_spans WHERE CAST(id "+
+				"AS TEXT)=?"), field.RowKey).
 				Scan(&old).
 				Error,
 		)
 		restored := `{"summary_preview":"actual sensitive summary body"}`
-		if f.db.Dialector.Name() == "postgres" {
+		if f.db.Name() == "postgres" {
 			require.NoError(t, f.db.Raw("SELECT CAST(? AS jsonb)::text", restored).Scan(&restored).Error)
 		}
 		// Restore only physical bytes through the exact protocol guard, leaving
@@ -614,7 +632,9 @@ func assertActualBodyLocalGC(t *testing.T, f *enrichmentTestFixture, gc *reposit
 		require.NoError(
 			t,
 			f.db.Exec(
-				"INSERT INTO original_body_rewrite_authorities(source_table,row_key,column_name,body_id,old_value,new_value) VALUES('knowledge_processing_spans',?,'output',?,?,?)",
+				("INSERT INTO original_body_rewrite_authorities(source_table,row_key,column_"+
+					"name,body_id,old_value,new_value) VALUES('knowledge_processing_spans',?,'o"+
+					"utput',?,?,?)"),
 				field.RowKey,
 				field.BodyID,
 				old,
@@ -646,11 +666,12 @@ func assertActualBodyLocalGC(t *testing.T, f *enrichmentTestFixture, gc *reposit
 // not evidence of a full-volume recovery or a production restore bypass.
 func restoreSourceVersionForGCProbe(t *testing.T, db *gorm.DB, knowledge, datasource string) {
 	t.Helper()
-	update := "UPDATE nextcloud_source_versions SET state='published',candidate_knowledge_id=? WHERE tenant_id=7 AND knowledge_base_id='kb' AND datasource_id=?"
+	update := ("UPDATE nextcloud_source_versions SET state='published',candidate_knowledge" +
+		"_id=? WHERE tenant_id=7 AND knowledge_base_id='kb' AND datasource_id=?")
 	err := db.Exec(update, knowledge, datasource).Error
 	require.ErrorContains(t, err, "nextcloud_recovery_closed")
 	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
-		if db.Dialector.Name() == "postgres" {
+		if db.Name() == "postgres" {
 			if err := tx.Exec(
 				"ALTER TABLE nextcloud_source_versions DISABLE TRIGGER nextcloud_recovery_nextcloud_source_versions",
 			).Error; err != nil {
@@ -664,7 +685,8 @@ func restoreSourceVersionForGCProbe(t *testing.T, db *gorm.DB, knowledge, dataso
 			).Error
 		}
 		var ddl string
-		if err := tx.Raw("SELECT sql FROM sqlite_master WHERE type='trigger' AND name='nextcloud_recovery_nextcloud_source_versions_update'").
+		if err := tx.Raw(("SELECT sql FROM sqlite_master WHERE type='trigger' AND name='nextcloud_rec" +
+			"overy_nextcloud_source_versions_update'")).
 			Scan(&ddl).
 			Error; err != nil {
 			return err

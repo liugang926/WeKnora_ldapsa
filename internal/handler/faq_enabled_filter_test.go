@@ -78,14 +78,16 @@ func TestParseOptionalFAQEnabled(t *testing.T) {
 
 func TestFAQListEntriesPassesEnabledFilter(t *testing.T) {
 	h, _, _, _, _, _, ctx := faqActualHTTPFixture(t)
-	for _, body := range []string{`{"standard_question":"enabled original","answers":["enabled answer"],"is_enabled":true}`, `{"standard_question":"disabled original","answers":["disabled answer"],"is_enabled":false}`} {
-		w := serveFAQHTTP(h, ctx, http.MethodPost, "/knowledge-bases/kb/faq/entry", body)
+	for _, body := range []string{("{\"standard_question\":\"enabled original\",\"answers\":[\"enabled answer" +
+		"\"],\"is_enabled\":true}"), ("{\"standard_question\":\"disabled original\",\"answers\":[\"disabled answe" +
+		"r\"],\"is_enabled\":false}")} {
+		w := serveFAQHTTP(ctx, h, http.MethodPost, "/knowledge-bases/kb/faq/entry", body)
 		if w.Code != http.StatusOK {
 			t.Fatalf("create status=%d: %s", w.Code, w.Body.String())
 		}
 	}
 	for _, tc := range []struct{ query, total string }{{"", "2"}, {"?is_enabled=true", "1"}, {"?is_enabled=false", "1"}} {
-		w := serveFAQHTTP(h, ctx, http.MethodGet, "/knowledge-bases/kb/faq/entries"+tc.query, "")
+		w := serveFAQHTTP(ctx, h, http.MethodGet, "/knowledge-bases/kb/faq/entries"+tc.query, "")
 		if w.Code != http.StatusOK {
 			t.Fatalf("status=%d: %s", w.Code, w.Body.String())
 		}

@@ -9,7 +9,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// Only a verified durable Auto completion intent can re-emit this task. It
+// PrepareNextcloudAutoTagRecovery re-emits only a verified durable completion intent. It
 // reacquires the actual current build/configuration context, proves the old
 // immutable typed task input, and reuses a fixed ID across recovery scans.
 func (s *KnowledgeInputProvenanceStore) PrepareNextcloudAutoTagRecovery(ctx context.Context,
@@ -65,17 +65,17 @@ func (s *KnowledgeInputProvenanceStore) PrepareNextcloudAutoTagRecovery(ctx cont
 		releaseLease()
 		return nil, "", noop, err
 	}
-	close := func() { closeConfiguration(); releaseLease() }
+	closeRead := func() { closeConfiguration(); releaseLease() }
 	if err := s.VerifyKnowledgeAutoTagTaskInput(current, p); err != nil {
-		close()
+		closeRead()
 		return nil, "", noop, err
 	}
 	current = WithKnowledgeBuildInputProof(current, s, p.OriginalInput)
 	prepared, id, err := s.PrepareNextcloudMachineTask(current, types.TypeKnowledgeAutoTag, raw,
 		"nc-auto:"+p.TaskInput.ID)
 	if err != nil {
-		close()
+		closeRead()
 		return nil, "", noop, err
 	}
-	return prepared, id, close, nil
+	return prepared, id, closeRead, nil
 }

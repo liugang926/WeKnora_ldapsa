@@ -17,7 +17,7 @@ import (
 
 // ErrPublicationNotCurrent distinguishes a definitive source withdrawal from
 // a transport/server outage for durable consumers.
-var ErrPublicationNotCurrent = errors.New("Nextcloud publication is no longer current")
+var ErrPublicationNotCurrent = errors.New("nextcloud publication is no longer current")
 
 // CheckCurrentPublication asks the paired Nextcloud binding whether the exact
 // candidate version is still eligible. It uses only the configured instance

@@ -20,6 +20,7 @@ import (
 	"gorm.io/gorm/clause"
 )
 
+// ErrKnowledgeInputChanged reports a knowledge input changed condition.
 var ErrKnowledgeInputChanged = errors.New("original knowledge input changed or is unknown")
 
 type knowledgeInputAdmission struct {
@@ -104,11 +105,13 @@ type KnowledgeInputProvenanceStore struct {
 	originalInputSources    KnowledgeOriginalInputSourceVerifier
 }
 
+// NewKnowledgeInputProvenanceStore constructs knowledge input provenance store.
 func NewKnowledgeInputProvenanceStore(db *gorm.DB) *KnowledgeInputProvenanceStore {
 	_ = InstallOriginalBodyRetentionCallbacks(db)
 	return &KnowledgeInputProvenanceStore{db: db, messageBodyAvailability: CheckOriginalBodyAvailableInTx}
 }
 
+// KnowledgeInputArtifactMatches returns the knowledge input artifact matches result.
 func KnowledgeInputArtifactMatches(proof *types.KnowledgeBuildInputProof, input any) error {
 	if proof == nil || proof.Version != 1 || proof.SourceLineage.RequireComplete() != nil {
 		return types.ErrSourceLineageUnknown
@@ -157,7 +160,8 @@ func (s *KnowledgeInputProvenanceStore) UpdateKnowledgeWithInput(
 			return err
 		}
 		var previous knowledgeInputAdmission
-		if err := tx.Where("admission_id = ? AND tenant_id = ? AND knowledge_base_id = ? AND knowledge_id = ?", receipt.AdmissionID, old.TenantID, old.KnowledgeBaseID, old.ID).
+		if err := tx.Where(("admission_id = ? AND tenant_id = ? AND knowledge_base_id = ? AND knowledge" +
+			"_id = ?"), receipt.AdmissionID, old.TenantID, old.KnowledgeBaseID, old.ID).
 			Take(&previous).
 			Error; err != nil {
 			return err
@@ -190,6 +194,7 @@ func (s *KnowledgeInputProvenanceStore) UpdateKnowledgeWithInput(
 	return proof, err
 }
 
+// KnowledgeInputDigest returns the knowledge input digest result.
 func KnowledgeInputDigest(value any) (string, error) {
 	data, err := json.Marshal(value)
 	if err != nil {
@@ -653,8 +658,9 @@ func (s *KnowledgeInputProvenanceStore) admissionInTx(
 	return &a, kb, &lineage, nil
 }
 
+// ReadOrdinaryRAGInputLineage reads ordinary raginput lineage.
 func (s *KnowledgeInputProvenanceStore) ReadOrdinaryRAGInputLineage(
-	ctx context.Context,
+	_ context.Context,
 	tx *gorm.DB,
 	k *types.Knowledge,
 	c *types.Chunk,
@@ -701,7 +707,7 @@ func verifyKnowledgeInheritedSources(tx *gorm.DB, lineage *types.SourceLineage) 
 // ReadControlledRAGInputLineage binds each actual source chunk/header to its
 // original producer generation. A new publication cannot certify old SQL text.
 func (s *KnowledgeInputProvenanceStore) ReadControlledRAGInputLineage(
-	ctx context.Context,
+	_ context.Context,
 	tx *gorm.DB,
 	k *types.Knowledge,
 	c *types.Chunk,
@@ -770,7 +776,7 @@ func (s *KnowledgeInputProvenanceStore) snapshot(
 		// ordinary public snapshots retain their read-only contract.
 		options.ReadOnly = false
 	}
-	switch s.db.Dialector.Name() {
+	switch s.db.Name() {
 	case "postgres":
 		options.Isolation = sql.LevelRepeatableRead
 	case "sqlite":
@@ -792,6 +798,7 @@ func (s *KnowledgeInputProvenanceStore) snapshot(
 	return result, nil
 }
 
+// CaptureKnowledgeBuildInputs captures knowledge build inputs.
 func (s *KnowledgeInputProvenanceStore) CaptureKnowledgeBuildInputs(
 	ctx context.Context,
 	request types.KnowledgeBuildInputCaptureRequest,
@@ -802,6 +809,7 @@ func (s *KnowledgeInputProvenanceStore) CaptureKnowledgeBuildInputs(
 	return s.snapshot(ctx, request, false)
 }
 
+// RecheckKnowledgeBuildInputs rechecks knowledge build inputs.
 func (s *KnowledgeInputProvenanceStore) RecheckKnowledgeBuildInputs(
 	ctx context.Context,
 	proof *types.KnowledgeBuildInputProof,

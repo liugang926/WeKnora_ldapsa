@@ -47,9 +47,10 @@ func TestNextcloudQueuedDispatchWakesForNewHintAfterMatchingSyncCompletes(t *tes
 		bindingID, baseURL, configSHA).Error)
 	require.NoError(t, db.Exec(`INSERT INTO nextcloud_event_checkpoint (connection_id, received_id)
 		VALUES ('event-connection', 1)`).Error)
-	require.NoError(t, db.Exec(`INSERT INTO nextcloud_event_inbox
-		(connection_id, event_id, payload_sha256, event_type, file_id, etag, path, relative_path, state)
-		VALUES ('event-connection', 1, ?, 'upsert', 77, 'etag-v1', '/Published/file.md', 'file.md', 'dispatched')`, strings.Repeat("0", 64)).Error)
+	require.NoError(t, db.Exec(("INSERT INTO nextcloud_event_inbox\n\t\t(connection_id, event_id, payload_s"+
+		"ha256, event_type, file_id, etag, path, relative_path, state)\n\t\tVALUES "+
+		"('event-connection', 1, ?, 'upsert', 77, 'etag-v1', '/Published/file.md', "+
+		"'file.md', 'dispatched')"), strings.Repeat("0", 64)).Error)
 
 	now := time.Now().UTC().Truncate(time.Second)
 	startedAt := now.Add(-time.Minute)
@@ -79,9 +80,10 @@ func TestNextcloudQueuedDispatchWakesForNewHintAfterMatchingSyncCompletes(t *tes
 	candidates, err := inbox.DispatchCandidates(ctx, now)
 	require.NoError(t, err)
 	require.Empty(t, candidates, "a completed scan alone must not queue duplicate work")
-	require.NoError(t, db.Exec(`INSERT INTO nextcloud_event_inbox
-		(connection_id, event_id, payload_sha256, event_type, file_id, etag, path, relative_path, state)
-		VALUES ('event-connection', 2, ?, 'upsert', 77, 'etag-v2', '/Published/file.md', 'file.md', 'pending')`, strings.Repeat("1", 64)).Error)
+	require.NoError(t, db.Exec(("INSERT INTO nextcloud_event_inbox\n\t\t(connection_id, event_id, payload_s"+
+		"ha256, event_type, file_id, etag, path, relative_path, state)\n\t\tVALUES "+
+		"('event-connection', 2, ?, 'upsert', 77, 'etag-v2', '/Published/file.md', "+
+		"'file.md', 'pending')"), strings.Repeat("1", 64)).Error)
 	require.NoError(t, db.Exec(`UPDATE nextcloud_event_checkpoint SET received_id = 2
 		WHERE connection_id = 'event-connection'`).Error)
 	candidates, err = inbox.DispatchCandidates(ctx, now)

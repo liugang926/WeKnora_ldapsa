@@ -11,6 +11,7 @@ type graphOriginalInputVerifier struct {
 	reader interfaces.KnowledgeBuildInputReader
 }
 
+// NewGraphOriginalInputVerifier constructs the configured GraphOriginalInputVerifier.
 func NewGraphOriginalInputVerifier(reader interfaces.KnowledgeBuildInputReader) GraphOriginalInputVerifier {
 	return &graphOriginalInputVerifier{reader: reader}
 }
@@ -22,9 +23,9 @@ func (v *graphOriginalInputVerifier) RecheckGraphOriginalInputs(
 	if v == nil || v.reader == nil || receipt.Validate() != nil {
 		return types.ErrGraphSourceReceiptUnknown
 	}
-	copy, err := types.CopyGraphSourceReceipt(receipt)
+	copied, err := types.CopyGraphSourceReceipt(receipt)
 	if err != nil {
 		return err
 	}
-	return v.reader.RecheckKnowledgeBuildInputs(ctx, copy.OriginalInput)
+	return v.reader.RecheckKnowledgeBuildInputs(ctx, copied.OriginalInput)
 }

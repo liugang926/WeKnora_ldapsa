@@ -17,10 +17,12 @@ import (
 )
 
 var (
+	// ErrNextcloudTargetDeleted reports a nextcloud target deleted condition.
 	ErrNextcloudTargetDeleted    = errors.New("nextcloud_target_deleted")
 	ErrNextcloudTargetUnverified = errors.New("nextcloud_target_unverified")
 )
 
+// NextcloudTargetClosure represents nextcloud target closure repository data.
 // This immutable row closes an exact retained target. It is not pairing
 // retirement, a deletion command, a physical-GC receipt or permission to purge
 // source originals. Pair/credential/inventory rows remain for explicit repair.
@@ -38,6 +40,7 @@ type NextcloudTargetClosure struct {
 	RecoveryPlanSHA256 string
 }
 
+// TableName returns the persisted table name.
 func (NextcloudTargetClosure) TableName() string { return "nextcloud_onboarding_target_closures" }
 
 func targetClosureID(row NextcloudTargetClosure) string {
@@ -166,6 +169,7 @@ func lockNextcloudTargetTenantLiveInTx(tx *gorm.DB, tenant uint64) error {
 	return nil
 }
 
+// RequireTargetOpen returns the require target open result.
 func (s *NextcloudOnboardingStore) RequireTargetOpen(ctx context.Context, op types.NextcloudOnboardingOperation) error {
 	return requireNextcloudTargetOpenInTx(s.db.WithContext(ctx), op.TenantID, op.KnowledgeBaseID)
 }
@@ -201,7 +205,10 @@ func closeDeletedNextcloudTargetsInTx(tx *gorm.DB, tenant uint64, kb string) err
 			Where("p.tenant_id=? AND p.state IN ?", tenant, []string{"active", "pending"})
 		if tx.Migrator().HasTable("nextcloud_onboarding_operations") {
 			q = q.Where(
-				"NOT EXISTS(SELECT 1 FROM nextcloud_onboarding_operations o WHERE o.operation_id=p.operation_id AND o.tenant_id=p.tenant_id AND o.knowledge_base_id=p.knowledge_base_id AND o.instance_id=p.nextcloud_instance_id AND o.binding_id=p.binding_id)",
+				("NOT EXISTS(SELECT 1 FROM nextcloud_onboarding_operations o WHERE o.operati" +
+					"on_id=p.operation_id AND o.tenant_id=p.tenant_id AND o.knowledge_base_id=p" +
+					".knowledge_base_id AND o.instance_id=p.nextcloud_instance_id AND o.binding" +
+					"_id=p.binding_id)"),
 			)
 		}
 		if err := q.Count(&unknown).Error; err != nil {
@@ -217,7 +224,10 @@ func closeDeletedNextcloudTargetsInTx(tx *gorm.DB, tenant uint64, kb string) err
 		if tx.Migrator().HasTable("nextcloud_onboarding_operations") &&
 			tx.Migrator().HasTable("nextcloud_source_pairings") {
 			q = q.Where(
-				"NOT EXISTS(SELECT 1 FROM nextcloud_source_pairings p JOIN nextcloud_onboarding_operations o ON o.operation_id=p.operation_id AND o.tenant_id=p.tenant_id AND o.knowledge_base_id=p.knowledge_base_id WHERE p.datasource_id=d.id AND p.tenant_id=d.tenant_id AND p.knowledge_base_id=d.knowledge_base_id)",
+				("NOT EXISTS(SELECT 1 FROM nextcloud_source_pairings p JOIN nextcloud_onboar" +
+					"ding_operations o ON o.operation_id=p.operation_id AND o.tenant_id=p.tenan" +
+					"t_id AND o.knowledge_base_id=p.knowledge_base_id WHERE p.datasource_id=d.i" +
+					"d AND p.tenant_id=d.tenant_id AND p.knowledge_base_id=d.knowledge_base_id)"),
 			)
 		}
 		if err := q.Count(&unknown).Error; err != nil {
@@ -318,17 +328,26 @@ func closeDeletedNextcloudTargetsInTx(tx *gorm.DB, tenant uint64, kb string) err
 			Error; err != nil {
 			return err
 		}
-		if err := NewNextcloudContentLeaseStore(
-			tx,
-		).RetireKBInTx(tx.Statement.Context, tx, op.TenantID, op.KnowledgeBaseID); err != nil {
+		// The owner is already deleted while its row lock is held. Do not use
+		// the admission lock, which correctly refuses to keep a deleted target
+		// open. This exact transition takes the fence row lock and preserves the
+		// epoch of every already-closed fence, including deletion retries.
+		if err := tx.Exec(`UPDATE nextcloud_content_fences
+			SET state='retired', epoch=epoch+1, retired_at_ms=?, updated_at_ms=?
+			WHERE tenant_id=? AND knowledge_base_id=? AND knowledge_id='' AND state='open'`,
+			nowMS, nowMS, op.TenantID, op.KnowledgeBaseID).Error; err != nil {
 			return err
 		}
 		// Hide originals without erasing their bytes or immutable receipts. Only
 		// the old mutable successful-etag marker is invalidated for withdrawal.
 		if tx.Migrator().HasTable("knowledges") {
-			query := "UPDATE knowledges SET enable_status='disabled',metadata=json_set(COALESCE(metadata,'{}'),'$.nextcloud_etag','') WHERE tenant_id=? AND knowledge_base_id=?"
-			if tx.Dialector.Name() == "postgres" {
-				query = "UPDATE knowledges SET enable_status='disabled',metadata=jsonb_set(COALESCE(metadata,'{}'::jsonb),'{nextcloud_etag}',to_jsonb(''::text),true) WHERE tenant_id=? AND knowledge_base_id=?"
+			query := ("UPDATE knowledges SET enable_status='disabled',metadata=json_set(COALESCE(" +
+				"metadata,'{}'),'$.nextcloud_etag','') WHERE tenant_id=? AND knowledge_base" +
+				"_id=?")
+			if tx.Name() == "postgres" {
+				query = ("UPDATE knowledges SET enable_status='disabled',metadata=jsonb_set(COALESCE" +
+					"(metadata,'{}'::jsonb),'{nextcloud_etag}',to_jsonb(''::text),true) WHERE t" +
+					"enant_id=? AND knowledge_base_id=?")
 			}
 			if err := tx.Exec(query, op.TenantID, op.KnowledgeBaseID).Error; err != nil {
 				return err
@@ -345,7 +364,8 @@ func closeDeletedNextcloudTargetsInTx(tx *gorm.DB, tenant uint64, kb string) err
 		if tx.Migrator().HasTable("data_sources") && tx.Migrator().HasTable("nextcloud_source_pairings") {
 			ids := tx.Table("nextcloud_source_pairings").
 				Select("datasource_id").
-				Where("operation_id=? AND tenant_id=? AND knowledge_base_id=? AND nextcloud_instance_id=? AND binding_id=?", op.OperationID, op.TenantID, op.KnowledgeBaseID, op.InstanceID, op.BindingID)
+				Where(("operation_id=? AND tenant_id=? AND knowledge_base_id=? AND nextcloud_insta" +
+					"nce_id=? AND binding_id=?"), op.OperationID, op.TenantID, op.KnowledgeBaseID, op.InstanceID, op.BindingID)
 			if err := tx.Table("data_sources").
 				Where("id IN (?) AND tenant_id=? AND knowledge_base_id=?", ids, op.TenantID, op.KnowledgeBaseID).
 				Updates(map[string]any{"status": types.DataSourceStatusPaused, "sync_enabled": false}).
@@ -355,7 +375,8 @@ func closeDeletedNextcloudTargetsInTx(tx *gorm.DB, tenant uint64, kb string) err
 		}
 		if tx.Migrator().HasTable("nextcloud_event_connections") {
 			if err := tx.Table("nextcloud_event_connections").
-				Where("tenant_id=? AND knowledge_base_id=? AND nextcloud_instance_id=? AND binding_id=?", op.TenantID, op.KnowledgeBaseID, op.InstanceID, op.BindingID).
+				Where(("tenant_id=? AND knowledge_base_id=? AND nextcloud_instance_id=? AND bindin"+
+					"g_id=?"), op.TenantID, op.KnowledgeBaseID, op.InstanceID, op.BindingID).
 				Update("status", "revoked").
 				Error; err != nil {
 				return err
@@ -400,6 +421,7 @@ func closeDeletedNextcloudTargetsInTx(tx *gorm.DB, tenant uint64, kb string) err
 	return retainOwnerFact()
 }
 
+// TargetObservation returns the target observation result.
 func (s *NextcloudOnboardingStore) TargetObservation(
 	ctx context.Context,
 	c types.NextcloudOnboardingCredential,
@@ -497,7 +519,8 @@ func authorizeTargetClosureObserver(
 		return ErrNextcloudOnboardingDenied
 	}
 	var identity types.DirectoryIdentity
-	if err := tx.Where("directory_id=? AND object_guid=? AND status=? AND snapshot_version=(SELECT snapshot_version FROM directories WHERE id=?)", dir, guid, types.DirectoryObjectActive, dir).
+	if err := tx.Where(("directory_id=? AND object_guid=? AND status=? AND snapshot_version=(SELECT" +
+		" snapshot_version FROM directories WHERE id=?)"), dir, guid, types.DirectoryObjectActive, dir).
 		Take(&identity).
 		Error; err != nil {
 		return ErrNextcloudOnboardingDenied

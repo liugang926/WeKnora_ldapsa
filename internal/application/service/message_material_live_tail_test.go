@@ -68,7 +68,7 @@ func testMessageMaterialExternalTail(t *testing.T, postgres bool) {
 			}
 
 			require.NoError(t, repository.UpgradeMessageProducerAdvanceSchema(db))
-			_, prior := produceActualMessagePair(t, messages, ctx, session)
+			_, prior := produceActualMessagePair(ctx, t, messages, session)
 			currentUser, err := messages.CreateMessage(
 				ctx,
 				&types.Message{
@@ -85,8 +85,8 @@ func testMessageMaterialExternalTail(t *testing.T, postgres bool) {
 				&types.Message{SessionID: session.ID, RequestID: currentUser.RequestID, Role: "assistant"},
 			)
 			require.NoError(t, err)
-			ctx, attach, check, close := BeginMessageMaterialHTTPBoundary(ctx)
-			defer close()
+			ctx, attach, check, closeRead := BeginMessageMaterialHTTPBoundary(ctx)
+			defer closeRead()
 			ctx, release, external := retainMessageMaterialProducer(ctx)
 			defer release()
 			require.True(t, external)
@@ -191,7 +191,7 @@ func TestMessageMaterialActualCompletionSerializesHeartbeatAndHTTPCheck(t *testi
 		wg.Add(1)
 		go func() { defer wg.Done(); checks <- check() }()
 	}))
-	defer db.Callback().Update().Remove(name)
+	defer func() { require.NoError(t, db.Callback().Update().Remove(name)) }()
 	assistant.Content = "actual new serialized answer"
 	assistant.IsCompleted = true
 	assistant.SourceLineage, _ = types.NewCompleteSourceLineage()
@@ -209,7 +209,9 @@ func TestMessageMaterialActualProducerAdvanceForwardUpgradeNoLegacyAdmission(t *
 	require.NoError(
 		t,
 		db.Exec(
-			"DROP TRIGGER message_producer_advances_immutable_update; DROP TRIGGER message_producer_advances_immutable_delete; DROP TABLE message_producer_advances;",
+			("DROP TRIGGER message_producer_advances_immutable_update; DROP TRIGGER mess" +
+				"age_producer_advances_immutable_delete; DROP TABLE message_producer_advanc" +
+				"es;"),
 		).Error,
 	)
 	require.NoError(t, repository.UpgradeMessageProducerAdvanceSchema(db))

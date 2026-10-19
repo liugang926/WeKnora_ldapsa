@@ -11,10 +11,12 @@ import (
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 )
 
+// SetRAGChunkSnapshotReader configures the reader used to hydrate original chunk snapshots.
 func (t *ListDocumentsTool) SetRAGChunkSnapshotReader(reader interfaces.RAGChunkSnapshotReader) {
 	t.snapshotReader = reader
 }
 
+// ExecuteSourceLineage executes the tool with retained original input receipts.
 // Enumerate bounded candidate IDs, hydrate every actual metadata row, then
 // filter/sort/page/count those snapshots. Old titles and DB totals do not
 // become authenticated output by attaching a current file identity later.
@@ -50,7 +52,10 @@ func (t *ListDocumentsTool) ExecuteSourceLineage(
 		return nil, err
 	}
 	if guard != nil {
-		defer guard.Close()
+		defer func() {
+			// Only read pins are released here; cleanup does not publish protected material.
+			_ = guard.Close()
+		}()
 	}
 	ctx = readCtx
 	// The bound is a limit, not a permission to truncate a complete receipt.

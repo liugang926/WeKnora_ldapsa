@@ -156,9 +156,9 @@ func outputHTTPFixture(t *testing.T, admitted bool) (*KnowledgeHandler, *gorm.DB
 	script, err := os.ReadFile("../../migrations/sqlite/000053_knowledge_input_provenance.up.sql")
 	require.NoError(t, err)
 	require.NoError(t, db.Exec(string(script)).Error)
-	db.Config.DisableForeignKeyConstraintWhenMigrating = true
+	db.DisableForeignKeyConstraintWhenMigrating = true
 	require.NoError(t, db.AutoMigrate(&types.Session{}, &types.Message{}))
-	db.Config.DisableForeignKeyConstraintWhenMigrating = false
+	db.DisableForeignKeyConstraintWhenMigrating = false
 	script, err = os.ReadFile("../../migrations/sqlite/000054_knowledge_configuration_history_inputs.up.sql")
 	require.NoError(t, err)
 	require.NoError(t, db.Exec(string(script)).Error)

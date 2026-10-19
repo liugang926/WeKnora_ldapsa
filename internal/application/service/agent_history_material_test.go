@@ -22,7 +22,7 @@ import (
 
 func TestAgentHistoryActualOriginalReadLeaseLifetimeAndCheckpoint(t *testing.T) {
 	messages, _, _, db, ctx, session := messageMaterialActualFixture(t)
-	_, assistant := produceActualMessagePair(t, messages, ctx, session)
+	_, assistant := produceActualMessagePair(ctx, t, messages, session)
 	currentUser, err := messages.CreateMessage(
 		ctx,
 		&types.Message{
@@ -125,7 +125,7 @@ func TestAgentHistoryActualModelConsumesWithHeldLeasesAndBodyRevocation(t *testi
 	for _, revoke := range []bool{false, true} {
 		t.Run(map[bool]string{false: "positive", true: "body-revoke"}[revoke], func(t *testing.T) {
 			messages, _, _, db, ctx, session := messageMaterialActualFixture(t)
-			_, assistant := produceActualMessagePair(t, messages, ctx, session)
+			_, assistant := produceActualMessagePair(ctx, t, messages, session)
 			ctx = WithMessageMaterialOutputBoundary(ctx)
 			defer CloseMessageMaterialOutputBoundary(ctx)
 			history, _, err := LoadAgentHistory(
@@ -198,14 +198,16 @@ func TestAgentHistoryActualModelConsumesWithHeldLeasesAndBodyRevocation(t *testi
 }
 
 func TestAgentHistoryPostgresActualModelCheckpointAndParentRevokeSingleConnection(t *testing.T) {
-	kg, store, db, ctx := faqPostgresActualFixture(t)
+	machine := newMachinePipelineFixtureWithDocument(t, true, "unused authored fixture source", true)
+	kg, store, db, ctx := machine.f.s, machine.f.store, machine.f.db, machine.f.ctx
 	require.NoError(t, db.Exec("CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\"").Error)
 	require.NoError(t, db.Exec("ALTER TABLE messages ADD COLUMN artifacts JSONB").Error)
-	for _, name := range []string{"000103_message_artifacts_table.up.sql", "000107_message_artifacts_deleted_at.up.sql", "000127_nextcloud_content_leases.up.sql", "000151_message_original_materials.up.sql"} {
+	for _, name := range []string{"000103_message_artifacts_table.up.sql", "000107_message_artifacts_deleted_at.up.sql"} {
 		ddl, err := os.ReadFile("../../../migrations/versioned/" + name)
 		require.NoError(t, err)
 		require.NoError(t, db.Exec(string(ddl)).Error)
 	}
+	require.NoError(t, repository.InstallOriginalBodyRetentionTriggers(db))
 	sqlDB, err := db.DB()
 	require.NoError(t, err)
 	sqlDB.SetMaxOpenConns(1)
@@ -234,7 +236,7 @@ func TestAgentHistoryPostgresActualModelCheckpointAndParentRevokeSingleConnectio
 	ConfigureMessageMaterialProvenance(messages, store)
 	session := &types.Session{TenantID: 7, UserID: types.CallerFromContext(ctx).UserID}
 	require.NoError(t, db.Create(session).Error)
-	user, assistant := produceActualMessagePair(t, messages, ctx, session)
+	user, assistant := produceActualMessagePair(ctx, t, messages, session)
 	ctx = WithMessageMaterialOutputBoundary(ctx)
 	defer CloseMessageMaterialOutputBoundary(ctx)
 	history, _, err := LoadAgentHistory(
@@ -401,7 +403,7 @@ func TestMessageActualRAGPartialRendererImageThenFinalProducer(t *testing.T) {
 	ctx = context.WithValue(ctx, agentHistoryCurrentRequestKey{}, user.RequestID)
 	defer CloseMessageMaterialOutputBoundary(ctx)
 	source, _ := types.NewCompleteSourceLineage()
-	turn := types.NewRAGSourceLineage(func(checkCtx context.Context, lineage *types.SourceLineage) error {
+	turn := types.NewRAGSourceLineage(func(_ context.Context, lineage *types.SourceLineage) error {
 		if err := lineage.RequireComplete(); err != nil {
 			return err
 		}
@@ -500,7 +502,7 @@ func TestMessageActualFirstQAPersistedPlaceholderHistoryAndFinalStream(t *testin
 	ctx, _, finalCheck, closeHTTP := BeginMessageMaterialHTTPBoundary(ctx)
 	defer closeHTTP()
 	done := make(chan error, 1)
-	bus.On(event.EventAgentFinalAnswer, func(eventCtx context.Context, evt event.Event) error {
+	bus.On(event.EventAgentFinalAnswer, func(_ context.Context, evt event.Event) error {
 		data, ok := evt.Data.(event.AgentFinalAnswerData)
 		if !ok {
 			return nil
@@ -540,7 +542,7 @@ func TestMessageActualFirstQAPersistedPlaceholderHistoryAndFinalStream(t *testin
 
 func TestCommittedHistoryParentRequestReadsOnlyMetadataBeforeLease(t *testing.T) {
 	messages, _, store, db, ctx, session := messageMaterialActualFixture(t)
-	_, assistant := produceActualMessagePair(t, messages, ctx, session)
+	_, assistant := produceActualMessagePair(ctx, t, messages, session)
 	observed := false
 	name := "only-original-parent-control-metadata"
 	require.NoError(t, db.Callback().Query().Before("gorm:query").Register(name, func(tx *gorm.DB) {
@@ -553,7 +555,7 @@ func TestCommittedHistoryParentRequestReadsOnlyMetadataBeforeLease(t *testing.T)
 			require.NotEqual(t, "initial_input", field)
 		}
 	}))
-	defer db.Callback().Query().Remove(name)
+	defer func() { require.NoError(t, db.Callback().Query().Remove(name)) }()
 	req, err := store.CommittedMessageParentRequest(ctx, 7, session.ID, assistant.ID)
 	require.NoError(t, err)
 	require.Len(t, req.MessageIDs, 2)
@@ -564,7 +566,7 @@ func TestMessageMaterialModelBoundaryCancelExpiryAndCurrentRequestControlABA(t *
 	for _, change := range []string{"cancel", "expiry", "current-request-control-ABA"} {
 		t.Run(change, func(t *testing.T) {
 			messages, _, _, db, ctx, session := messageMaterialActualFixture(t)
-			_, assistant := produceActualMessagePair(t, messages, ctx, session)
+			_, assistant := produceActualMessagePair(ctx, t, messages, session)
 			current, err := messages.CreateMessage(
 				ctx,
 				&types.Message{SessionID: session.ID, RequestID: "current-model-request", Role: "assistant"},

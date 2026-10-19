@@ -59,7 +59,7 @@ func TestRAGSourceLineageMessageWriteFailureRollsBackBodyAndProof(t *testing.T) 
 		db.Callback().Update().After("gorm:update").Register("fail_second_atomic_update", func(tx *gorm.DB) {
 			updates++
 			if updates == 2 {
-				tx.AddError(injected)
+				_ = tx.AddError(injected)
 			}
 		}),
 	)
