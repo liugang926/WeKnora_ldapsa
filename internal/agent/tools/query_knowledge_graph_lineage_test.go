@@ -207,6 +207,8 @@ func TestKnowledgeGraphTypedToolUnknownOriginalBodyRefusesWholeResult(t *testing
 				t,
 				func(context.Context, *types.SourceLineage) error { return nil },
 			)
+			closed := 0
+			reader.snapshot.Close = func() error { closed++; return nil }
 			switch mode {
 			case "legacy":
 				reader.snapshot.Graph.Node[0].SourceReceipt = nil
@@ -231,6 +233,7 @@ func TestKnowledgeGraphTypedToolUnknownOriginalBodyRefusesWholeResult(t *testing
 			)
 			require.Error(t, err)
 			require.Nil(t, result)
+			require.Equal(t, 1, closed, "the original snapshot read pins close exactly once on every refusal")
 			require.Error(t, types.RAGSourceLineageFromContext(ctx).Snapshot().RequireComplete())
 		})
 	}

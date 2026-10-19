@@ -79,7 +79,7 @@ func (e *AgentEngine) streamLLMToEventBus(
 		return nil, e.rememberLineageFailure(types.ErrSourceLineageUnknown)
 	}
 	if e.toolRegistry != nil && opts != nil {
-		if err := e.addLineage(e.toolRegistry.DefinitionSourceLineageWithContext(ctx, opts.Tools)); err != nil {
+		if err := e.addLineage(e.modelToolDefinitionLineage(ctx, opts.Tools)); err != nil {
 			logger.Warn(ctx, "Agent input rejected at original tool definition boundary")
 			return nil, err
 		}

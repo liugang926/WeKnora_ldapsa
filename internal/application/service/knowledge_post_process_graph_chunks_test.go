@@ -1,12 +1,9 @@
 package service
 
 import (
-	"context"
-	"encoding/json"
 	"testing"
 
 	"github.com/Tencent/WeKnora/internal/types"
-	"github.com/hibiken/asynq"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -112,15 +109,10 @@ func TestKnowledgePostProcessGraphEnqueueSelection(t *testing.T) {
 		taskEnqueuer: queue,
 	}
 
-	payload, err := json.Marshal(types.KnowledgePostProcessPayload{
-		TenantID:        7,
-		KnowledgeID:     knowledgeID,
-		KnowledgeBaseID: kbID,
-	})
-	require.NoError(t, err)
-
-	err = service.Handle(context.Background(), asynq.NewTask(types.TypeKnowledgePostProcess, payload))
-	require.NoError(t, err)
+	f := attachPostProcessOriginalInputs(t, service, repo,
+		service.kbService.(*wikiEnqueueFailureKBService).kb, service.chunkRepo.(*wikiEnqueueFailureChunkRepo).chunks)
+	require.NoError(t, service.Handle(f.build, postProcessOriginalTask(t, f)))
+	assertPostProcessQueuedOriginals(t, f, queue)
 
 	assert.Equal(t, []string{"ocr-scanned", "text-prose"}, queue.extractChunkIDs)
 	assert.Equal(t, []string{

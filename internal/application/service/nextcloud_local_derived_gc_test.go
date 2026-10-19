@@ -328,9 +328,10 @@ func localDerivedActualPipeline(t *testing.T, pg bool, modes ...string) {
 		sql := "INSERT INTO " + table + ("(source_id,source_type,chunk_id,knowledge_id,knowledge_base_id,content,dim" +
 			"ension) VALUES('unwitnessed',0,'source-body',?,'kb','unknown',0)")
 		if pg {
-			sql = "INSERT INTO " + table + ("(source_id,source_type,chunk_id,knowledge_id,knowledge_base_id,content,dim" +
-				"ension,embedding) VALUES('unwitnessed',0,'source-body',?,'kb','unknown',3," +
-				"'[0.2,0.3,0.4]')")
+			sql = "INSERT INTO " + table +
+				("(source_id,source_type,chunk_id,knowledge_id,knowledge_base_id,content,dim" +
+					"ension,embedding) VALUES('unwitnessed',0,'source-body',?,'kb','unknown',3," +
+					"'[0.2,0.3,0.4]')")
 		}
 		require.NoError(t, f.db.Exec(sql, f.k.ID).Error)
 	}

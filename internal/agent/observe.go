@@ -897,6 +897,11 @@ func mcpCatalogDescriptionLen(ts []chat.Tool) int {
 
 // buildToolsForLLM builds the tools list for LLM function calling
 func (e *AgentEngine) buildToolsForLLM() []chat.Tool {
+	return e.modelContext.EncodeTools(e.rawToolsForLLM())
+}
+
+// rawToolsForLLM reads only the registry's currently eligible definitions.
+func (e *AgentEngine) rawToolsForLLM() []chat.Tool {
 	if e.toolRegistry == nil {
 		return nil
 	}
@@ -913,7 +918,7 @@ func (e *AgentEngine) buildToolsForLLM() []chat.Tool {
 		})
 	}
 
-	return e.modelContext.EncodeTools(tools)
+	return tools
 }
 
 // appendToolResults adds tool results to the in-turn message history following

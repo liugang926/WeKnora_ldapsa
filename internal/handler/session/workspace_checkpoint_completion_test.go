@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Tencent/WeKnora/internal/application/access"
 	"github.com/Tencent/WeKnora/internal/application/service"
 	"github.com/Tencent/WeKnora/internal/event"
 	"github.com/Tencent/WeKnora/internal/sandbox"
@@ -127,7 +128,7 @@ func TestQuickAnswerCompletionPersistsSandboxCheckpoint(t *testing.T) {
 	runner := &stubShellRunner{stdout: strings.Repeat("a", 40) + "\n"}
 	bus := event.NewEventBus()
 	message := &types.Message{
-		ID: "m1", SessionID: "s1", Role: "assistant", Content: "hello from quick answer",
+		ID: "m1", SessionID: "s1", Role: "assistant",
 	}
 	streamHandler := NewAgentStreamHandler(
 		context.Background(), "s1", "m1", "req1", 1, time.Now(),
@@ -135,6 +136,15 @@ func TestQuickAnswerCompletionPersistsSandboxCheckpoint(t *testing.T) {
 		nil, service.NewWorkspaceCheckpointer(runner), stubSandboxIDLookup{id: "sbx-1", ok: true},
 	)
 	streamHandler.Subscribe()
+	// The fixture's local producer owns these bytes. Seed the actual prefix
+	// before completion, then mirror the real QuickAnswer accumulation path.
+	require.NoError(t, bus.Emit(context.Background(), event.Event{
+		Type: event.EventAgentFinalAnswer, SourceLineage: literalLiveSSEFixtureLineage(t),
+		Data: event.AgentFinalAnswerData{Content: "hello from quick answer", Done: true},
+	}))
+	message.Content = streamHandler.finalAnswer
+	require.Equal(t, "hello from quick answer", message.Content)
+	require.NoError(t, message.SourceLineage.RequireComplete())
 
 	stub := &capturingMessageService{}
 	h := &Handler{messageService: stub}
@@ -149,4 +159,15 @@ func TestQuickAnswerCompletionPersistsSandboxCheckpoint(t *testing.T) {
 	require.Equal(t, "sbx-1", stub.checkpoint.SandboxID)
 	require.Equal(t, strings.Repeat("a", 40), stub.checkpoint.CommitSHA)
 	require.Equal(t, "hello from quick answer", stub.content, "complete event must not re-append the answer")
+}
+
+func TestQuickAnswerCheckpointRejectsUnknownProducerPrefix(t *testing.T) {
+	runner := &stubShellRunner{stdout: strings.Repeat("a", 40) + "\n"}
+	h, message := newCheckpointHandler(t, runner, stubSandboxIDLookup{id: "sbx-1", ok: true})
+	h.Subscribe()
+	require.ErrorIs(t, h.eventBus.Emit(context.Background(), event.Event{
+		Type: event.EventAgentComplete, Data: event.AgentCompleteData{MessageID: message.ID},
+	}), access.ErrNextcloudPublicationDenied)
+	require.Zero(t, runner.calls, "an unknown producer prefix cannot reach the checkpoint")
+	require.Nil(t, message.SandboxCheckpoint)
 }

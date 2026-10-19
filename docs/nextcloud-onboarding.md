@@ -4,7 +4,7 @@ This protocol creates **knowledge bases in an existing tenant**. It never create
 
 ## Initial operator configuration
 
-Apply the complete PostgreSQL `000155`–`000161` / SQLite `000074`–`000080` sequence before starting the new binary. They install onboarding, processing state, immutable directory migrations, content revisions, recovery controls, maintenance build permits and final graph recovery fences. Nextcloud requires app migrations `0023`–`0028`; migrate both owned databases before enabling workers. An operator installs one row in `nextcloud_onboarding_credentials` per trusted instance/tenant/template:
+Apply all packaged migrations through PostgreSQL `000165` / SQLite `000084` before starting this binary. The earlier onboarding sequence (`000155`–`000161` / `000074`–`000080`) alone is insufficient: the current release also requires the original-body retention and later lifecycle controls. Production must use the offline journal initialization/verification procedure in [the production runbook](../deploy/production/README.md), with application readers stopped. The matching Nextcloud plugin requires app migrations through `0029`; migrate both owned databases before enabling workers. An operator installs one row in `nextcloud_onboarding_credentials` per trusted instance/tenant/template:
 
 | Column | Configuration |
 | --- | --- |
@@ -46,7 +46,7 @@ Such a user may create a private session and use `/knowledge-chat/:session_id` o
 
 A Nextcloud rule has `targets:[{tenant_id,processing_template_id,credential_id}]`. The exact tenant/template pair is unique; one tenant can offer several approved templates with independent credentials. The rule's exact default pair must be allowed. An explicit tenant with an ambiguous omitted template is rejected. Browser-selected model IDs, raw processing configuration and credentials are never accepted. Nextcloud validates the returned candidate tenant/template against the chosen scoped credential and retains the immutable pair in its intent.
 
-Both new and witnessed blank KBs use the approved template's processing settings. Blank adoption retains ID, creator, title, description and creation time; a different immutable vector-store binding is rejected. Required graph mode cannot be enabled with graph extraction disabled. Model/backend checks prove active configured resources; actual source/model/provider failures remain visible and fail closed rather than being reported as successful processing.
+New KBs copy the approved template's processing settings. Adopting a witnessed virgin blank KB preserves its ID, metadata and existing processing/storage configuration; the integration validates that configuration instead of replacing it with the template. Nonempty, historically used or mixed-source KBs are ineligible. Required graph mode cannot be enabled with graph extraction disabled. Model/backend checks prove active configured resources; actual source/model/provider failures remain visible and fail closed rather than being reported as successful processing.
 
 ## Root rename and target migration
 

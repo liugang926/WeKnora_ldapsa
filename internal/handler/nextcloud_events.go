@@ -216,8 +216,8 @@ func validNextcloudKeyID(value string) bool {
 		return false
 	}
 	for _, ch := range value {
-		if !(ch >= 'A' &&
-			ch <= 'Z' || ch >= 'a' && ch <= 'z' || ch >= '0' && ch <= '9' || ch == '.' || ch == '_' || ch == '-') {
+		if (ch < 'A' || ch > 'Z') && (ch < 'a' || ch > 'z') && (ch < '0' || ch > '9') &&
+			ch != '.' && ch != '_' && ch != '-' {
 			return false
 		}
 	}

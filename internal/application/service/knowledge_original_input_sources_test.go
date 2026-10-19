@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -74,6 +75,7 @@ func sourceBuildFixture(
 		"000045_nextcloud_source_revisions",
 		"000046_nextcloud_content_leases",
 		"000047_nextcloud_candidate_retry",
+		"000069_datasource_name_inputs",
 	}
 	directory := "sqlite"
 	migration := f.db
@@ -83,6 +85,7 @@ func sourceBuildFixture(
 			"000126_nextcloud_source_revisions",
 			"000127_nextcloud_content_leases",
 			"000128_nextcloud_candidate_retry",
+			"000150_datasource_name_inputs",
 		}
 		directory = "versioned"
 		sqlDB, e := f.db.DB()
@@ -335,6 +338,28 @@ func runNextcloudOriginalBuildPurpose(t *testing.T, pg bool) {
 	} {
 		t.Run(mode, func(t *testing.T) {
 			f, ctx, original, allow, scope := sourceBuildFixture(t, pg)
+			// This legacy source-consumption fixture predates the retained
+			// configuration body protocol. Install its real schema and inventory
+			// only already-admitted configuration origins before opening a worker.
+			path := "../../../migrations/sqlite/000071_original_body_retention.up.sql"
+			if pg {
+				path = "../../../migrations/versioned/000152_original_body_retention.up.sql"
+			}
+			ddl, err := os.ReadFile(path)
+			require.NoError(t, err)
+			require.NoError(t, f.db.Exec(string(ddl)).Error)
+			installConfigurationOriginalBodyFixtureSchema(t, f.db, pg)
+			require.NoError(t, repository.InstallOriginalBodyRetentionTriggers(f.db))
+			require.NoError(t, repository.InstallOriginalBodyRetentionCallbacks(f.db))
+			dir := t.TempDir()
+			require.NoError(t, os.Chmod(dir, 0o700))
+			key, pin := filepath.Join(dir, "key"), filepath.Join(dir, "pin")
+			require.NoError(t, os.WriteFile(key, []byte(strings.Repeat("source-fixture-retention-key-", 3)), 0o600))
+			t.Setenv("WEKNORA_ORIGINAL_BODY_JOURNAL_DIRECTORY", dir)
+			t.Setenv("WEKNORA_ORIGINAL_BODY_JOURNAL_KEY", key)
+			t.Setenv("WEKNORA_ORIGINAL_BODY_JOURNAL_PIN", pin)
+			require.NoError(t, repository.NewOriginalBodyRetentionStore(f.db).InitializeJournal())
+			inventoryKnownConfigurationOriginalBodyFixture(f.ctx, t, f.db, f.store)
 			actual, e := f.store.CaptureKnowledgeEnrichmentInputs(
 				ctx,
 				types.KnowledgeBuildInputCaptureRequest{

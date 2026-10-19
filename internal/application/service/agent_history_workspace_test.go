@@ -283,7 +283,14 @@ func TestAgentHistoryAdmissionBothModesIsolateRetainedWorkspaceAtAgentQA(t *test
 					)
 				}
 				ctx := actualAgentHistoryRequest(t, svc, req)
-				require.NoError(t, svc.AgentQA(ctx, req, bus))
+				err := svc.AgentQA(ctx, req, bus)
+				unadmittedWorkspace := scenario == "legacy-no-source-state" && !multiTurn
+				if unadmittedWorkspace {
+					require.ErrorIs(t, err, access.ErrNextcloudPublicationUnavailable)
+					require.Zero(t, model.calls, "single-turn cannot stage an unadmitted retained workspace")
+				} else {
+					require.NoError(t, err)
+				}
 				require.Equal(
 					t,
 					multiTurn,
@@ -293,13 +300,22 @@ func TestAgentHistoryAdmissionBothModesIsolateRetainedWorkspaceAtAgentQA(t *test
 				// A global no-source fact cannot certify raw legacy history or sandbox bytes.
 				{
 					require.Zero(t, repo.attachmentLoads)
-					require.Zero(t, repo.pages)
-					require.Zero(t, repo.checkpointReads)
+					if scenario == "legacy-no-source-state" && multiTurn {
+						require.Equal(t, 1, repo.pages, "the literal legacy rows are rejected before model input")
+						require.Equal(t, 1, repo.checkpointReads)
+					} else {
+						require.Zero(t, repo.pages)
+						require.Zero(t, repo.checkpointReads)
+					}
 					require.Zero(t, files.reads)
 					require.Zero(t, shell.calls)
 					require.False(t, model.sawMarker)
 					require.NotContains(t, output.String(), protectedHistoryFileMarker)
-					require.Contains(t, output.String(), "new plain answer")
+					if unadmittedWorkspace {
+						require.NotContains(t, output.String(), "new plain answer")
+					} else {
+						require.Contains(t, output.String(), "new plain answer")
+					}
 					for _, tool := range []string{tools.ToolReadFile, tools.ToolShellExec, tools.ToolListSandboxFiles} {
 						require.NotContains(t, model.offered, tool)
 					}

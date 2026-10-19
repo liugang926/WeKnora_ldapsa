@@ -84,7 +84,6 @@ func faqAllReadLeaseFixture(t *testing.T, change string) *faqAllLeaseFixture {
 	bounded, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	t.Cleanup(cancel)
 	for _, file := range []string{
-		"000056_knowledge_original_worker_actor.up.sql",
 		"000060_tag_statistics_checkpoints.up.sql",
 		"000063_faq_original_entry_inputs.up.sql",
 	} {

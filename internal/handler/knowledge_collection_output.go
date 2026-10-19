@@ -100,21 +100,26 @@ func (h *KnowledgeHandler) respondKnowledgeCollection(
 			fence.Close()
 		}
 	}()
-	plan, err := h.collectionOutputAuthorizer.FAQResultReadPlan(ctx, scopes)
-	if err != nil {
-		_ = c.Error(knowledgeOutputHTTPError(err))
-		return
-	}
-	fence, err := acquireFAQReadPlanLeases(ctx, h.contentLeases, plan.Scopes, plan.SourceLineage, h.leaseHeartbeat)
-	if err != nil {
-		_ = c.Error(err)
-		return
-	}
-	fences = append(fences, fence)
-	ctx, err = repository.WithFAQImportOutputReadSetPlan(fence.Context(ctx), plan)
-	if err != nil {
-		_ = c.Error(knowledgeOutputHTTPError(err))
-		return
+	// An explicitly resolved empty selection consumes no FAQ/history input.
+	// Keep the actual collection capture and current actor/Agent checks below;
+	// the FAQ planner deliberately rejects unscoped material probes.
+	if len(scopes) > 0 {
+		plan, err := h.collectionOutputAuthorizer.FAQResultReadPlan(ctx, scopes)
+		if err != nil {
+			_ = c.Error(knowledgeOutputHTTPError(err))
+			return
+		}
+		fence, err := acquireFAQReadPlanLeases(ctx, h.contentLeases, plan.Scopes, plan.SourceLineage, h.leaseHeartbeat)
+		if err != nil {
+			_ = c.Error(err)
+			return
+		}
+		fences = append(fences, fence)
+		ctx, err = repository.WithFAQImportOutputReadSetPlan(fence.Context(ctx), plan)
+		if err != nil {
+			_ = c.Error(knowledgeOutputHTTPError(err))
+			return
+		}
 	}
 
 	guard, err := h.collectionOutputAuthorizer.Begin(ctx, types.KnowledgeCollectionReadRequest{Scopes: scopes}, scope)
@@ -159,11 +164,17 @@ func (h *KnowledgeHandler) respondKnowledgeCollection(
 			},
 		)
 	case "search":
+		// Preserve the empty-list wire contract without changing the retained
+		// selection or certifying any source-bearing value.
+		rows := selection.Knowledge
+		if rows == nil {
+			rows = []*types.Knowledge{}
+		}
 		c.JSON(
 			http.StatusOK,
 			gin.H{
 				"success":  true,
-				"data":     selection.Knowledge,
+				"data":     rows,
 				"has_more": selection.HasMore,
 				"total":    selection.Total,
 			},

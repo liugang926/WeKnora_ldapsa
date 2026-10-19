@@ -55,6 +55,9 @@ func TestQuickAnswerCompletionPersistsAfterGenerationCancellation(t *testing.T) 
 		ID: "local-literal-answer", Type: event.EventAgentFinalAnswer, SourceLineage: literal,
 		Data: event.AgentFinalAnswerData{Content: "already streamed answer", Done: true},
 	}))
+	// The quick-answer caller accumulates the already-accounted answer; the
+	// stream handler itself retains it in its answer segments until Complete.
+	message.Content = streamHandler.finalAnswer
 	require.Equal(t, "already streamed answer", message.Content)
 	require.NoError(t, message.SourceLineage.RequireComplete())
 	cancel()
@@ -135,6 +138,9 @@ func TestSharedImageCompletionWaitsForPersistedReferences(t *testing.T) {
 							Type: event.EventAgentFinalAnswer, SourceLineage: literal,
 							Data: event.AgentFinalAnswerData{Content: answer, Done: true},
 						}))
+						// Mirror the caller's exact accounted prefix, never a
+						// legacy/unknown prefilled message body.
+						message.Content = streamHandler.finalAnswer
 						h.completeQuickAnswerTurn(saveCtx, streamCtx, "", "")
 					} else {
 						require.NoError(t, bus.Emit(runCtx, event.Event{
@@ -149,7 +155,10 @@ func TestSharedImageCompletionWaitsForPersistedReferences(t *testing.T) {
 					if fail {
 						require.Zero(t, completed)
 						require.Equal(t, types.ResponseTypeError, last.Type)
-						require.Equal(t, "message_persistence", last.Data["stage"])
+						require.True(t, last.Done)
+						require.Equal(t, map[string]interface{}{"error_code": "generation_failed"}, last.Data)
+						require.NotContains(t, last.Content, "database unavailable")
+						require.Nil(t, messages.saved)
 					} else {
 						require.Equal(t, 1, completed)
 						require.Equal(t, types.ResponseTypeComplete, last.Type)

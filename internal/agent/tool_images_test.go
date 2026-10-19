@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestToolImagesReachNextModelTurnAfterAllReplies(t *testing.T) {
+func TestToolImageWireLayoutAndUnadmittedDescriptionRefusal(t *testing.T) {
 	step := types.AgentStep{ToolCalls: []types.ToolCall{
 		{ID: "shot", Name: "local_browser", Result: &types.ToolResult{
 			Success: true, Output: `{"width":1}`, Images: []string{"data:image/png;base64,YQ=="},
@@ -46,20 +46,33 @@ func TestToolImagesReachNextModelTurnAfterAllReplies(t *testing.T) {
 			require.Contains(t, messages[1].Content, "cannot view")
 			require.NotContains(t, messages[1].Content, "YQ==")
 		}
+		guard := newTestEngine(t, &mockChat{})
+		require.ErrorIs(t, guard.accountMessages(t.Context(), messages), ErrAgentSourceLineageDenied,
+			"wire formatting does not admit an unknown tool result for model input")
 	}
-	engine := &AgentEngine{imageDescriber: func(context.Context, []byte, string) (string, error) {
-		return "A chart", nil
-	}}
-	messages := engine.appendToolImages(t.Context(), engine.appendToolResults(nil, step), step)
-	require.Contains(t, messages[1].Content, "A chart")
-	require.Equal(t, `{"width":1}`, step.ToolCalls[0].Result.Output,
-		"model-only fallback must not alter persisted output")
-	engine.imageDescriber = func(context.Context, []byte, string) (string, error) {
-		return "", errors.New("unavailable")
+	for _, answer := range []struct {
+		name string
+		text string
+		err  error
+	}{
+		{name: "description", text: "A chart"},
+		{name: "failure", err: errors.New("unavailable")},
+		{name: "empty", text: "  "},
+	} {
+		t.Run(answer.name, func(t *testing.T) {
+			calls := 0
+			engine := newTestEngine(t, &mockChat{})
+			engine.imageDescriber = func(context.Context, []byte, string) (string, error) {
+				calls++
+				return answer.text, answer.err
+			}
+			messages := engine.appendToolImages(t.Context(), engine.appendToolResults(nil, step), step)
+			require.Zero(t, calls, "unadmitted image material must not reach a description provider")
+			require.ErrorIs(t, engine.lineageFailure(), ErrAgentSourceLineageDenied)
+			require.Len(t, messages, 3)
+			require.Equal(t, step.ToolCalls[0].Result.Output, messages[1].Content)
+			require.Equal(t, `{"width":1}`, step.ToolCalls[0].Result.Output,
+				"a refused description must not alter persisted output")
+		})
 	}
-	messages = engine.appendToolImages(t.Context(), engine.appendToolResults(nil, step), step)
-	require.Contains(t, messages[1].Content, "cannot view")
-	engine.imageDescriber = func(context.Context, []byte, string) (string, error) { return "  ", nil }
-	messages = engine.appendToolImages(t.Context(), engine.appendToolResults(nil, step), step)
-	require.Contains(t, messages[1].Content, "cannot view")
 }

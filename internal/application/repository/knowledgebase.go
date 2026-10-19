@@ -196,6 +196,9 @@ func (r *knowledgeBaseRepository) ListUserKBPinIDs(
 
 // UpdateKnowledgeBase updates a knowledge base
 func (r *knowledgeBaseRepository) UpdateKnowledgeBase(ctx context.Context, kb *types.KnowledgeBase) error {
+	if scopedWorkerConfigurationFullSaveDenied(ctx, kb) {
+		return ErrKnowledgeInputChanged
+	}
 	// A stale settings save must not clear provenance concurrently set by a
 	// Nextcloud data-source transaction. Only that transaction may set the flag.
 	return r.db.WithContext(ctx).Omit("ever_had_nextcloud_source").Save(kb).Error

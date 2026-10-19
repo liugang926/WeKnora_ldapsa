@@ -20,6 +20,7 @@ type guardedReplayMessages struct {
 	interfaces.MessageService
 	completed                  bool
 	historicalCalls, liveCalls int
+	expectedLineage            *types.SourceLineage
 }
 
 func (s *guardedReplayMessages) GetMessage(context.Context, string, string) (*types.Message, error) {
@@ -49,6 +50,9 @@ func (s *guardedReplayMessages) CheckMessagePublication(context.Context, *types.
 
 func (s *guardedReplayMessages) CheckLiveMessagePublication(_ context.Context, m *types.Message) error {
 	s.liveCalls++
+	if s.expectedLineage != nil && !samePublicationFixtureLineage(m.SourceLineage, s.expectedLineage) {
+		return access.ErrNextcloudPublicationDenied
+	}
 	if len(m.KnowledgeReferences) == 0 {
 		return access.ErrNextcloudPublicationDenied
 	}
@@ -64,6 +68,7 @@ type guardedReplayStream struct {
 	stubStreamManager
 	stopCalls   int
 	preparatory bool
+	lineage     *types.SourceLineage
 }
 
 func (s *guardedReplayStream) GetEvents(
@@ -83,15 +88,16 @@ func (s *guardedReplayStream) GetEvents(
 	if s.preparatory && offset == 1 {
 		return []interfaces.StreamEvent{
 			{
-				Type:    types.ResponseTypeToolResult,
-				Content: "authorized result",
+				SourceLineage: s.lineage,
+				Type:          types.ResponseTypeToolResult,
+				Content:       "authorized result",
 				Data: map[string]interface{}{
 					"tool_name": "search_knowledge",
 					"results":   []map[string]interface{}{{"knowledge_id": "current"}},
 				},
 			},
-			{Type: types.ResponseTypeAnswer, Content: "authorized answer"},
-			{Type: types.ResponseTypeComplete, Done: true},
+			{SourceLineage: s.lineage, Type: types.ResponseTypeAnswer, Content: "authorized answer"},
+			{SourceLineage: s.lineage, Type: types.ResponseTypeComplete, Done: true},
 		}, 4, nil
 	}
 	return s.stubStreamManager.GetEvents(ctx, session, id, offset)
@@ -116,20 +122,23 @@ func TestContinueStreamUnfinishedUsesLiveSourceToolResults(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	for _, scenario := range []string{"before-references", "after-tool-results", "completed"} {
 		t.Run(scenario, func(t *testing.T) {
-			messages := &guardedReplayMessages{completed: scenario == "completed"}
+			lineage := controlledLiveSSEFixtureLineage(t, "current")
+			messages := &guardedReplayMessages{completed: scenario == "completed", expectedLineage: lineage}
 			stream := &guardedReplayStream{
 				preparatory: scenario == "before-references",
+				lineage:     lineage,
 				stubStreamManager: stubStreamManager{events: []interfaces.StreamEvent{
 					{
-						Type:    types.ResponseTypeToolResult,
-						Content: "source output",
+						SourceLineage: lineage,
+						Type:          types.ResponseTypeToolResult,
+						Content:       "source output",
 						Data: map[string]interface{}{
 							"tool_name": "query_knowledge_graph",
 							"results":   []map[string]interface{}{{"knowledge_id": "current"}},
 						},
 					},
-					{Type: types.ResponseTypeAnswer, Content: "authorized answer"},
-					{Type: types.ResponseTypeComplete, Done: true},
+					{SourceLineage: lineage, Type: types.ResponseTypeAnswer, Content: "authorized answer"},
+					{SourceLineage: lineage, Type: types.ResponseTypeComplete, Done: true},
 				}},
 			}
 			h := &Handler{sessionService: &guardedOwnedSessions{}, messageService: messages, streamManager: stream}
@@ -139,8 +148,10 @@ func TestContinueStreamUnfinishedUsesLiveSourceToolResults(t *testing.T) {
 			w := httptest.NewRecorder()
 			r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/sessions/continue-stream/session?message_id=a", nil))
 			if scenario == "completed" {
-				require.Equal(t, http.StatusForbidden, w.Code)
-				require.Equal(t, 1, messages.historicalCalls)
+				// Completed rows require actual private original material, even when
+				// Redis frames carry the protocol fixture receipt. No legacy fallback.
+				require.Equal(t, http.StatusServiceUnavailable, w.Code)
+				require.Zero(t, messages.historicalCalls)
 				require.Zero(t, messages.liveCalls)
 			} else {
 				require.Equal(t, http.StatusOK, w.Code)
@@ -153,25 +164,30 @@ func TestContinueStreamUnfinishedUsesLiveSourceToolResults(t *testing.T) {
 }
 
 func TestLiveSSEGraphResultChecksNewDocumentAfterEarlierReference(t *testing.T) {
-	messages := &guardedReplayMessages{}
-	m := &types.Message{Role: "assistant", KnowledgeReferences: types.References{{KnowledgeID: "current"}}}
-	err := checkLiveStreamPublication(
-		context.Background(),
-		messages,
-		m,
-		[]interfaces.StreamEvent{
-			{
-				Type:    types.ResponseTypeToolResult,
-				Content: "revoked graph content",
-				Data: map[string]interface{}{
-					"tool_name": "query_knowledge_graph",
-					"results":   []map[string]interface{}{{"knowledge_id": "revoked"}},
-				},
+	current := controlledLiveSSEFixtureLineage(t, "current")
+	revoked := controlledLiveSSEFixtureLineage(t, "revoked")
+	expected, err := types.UnionSourceLineage(current, revoked)
+	require.NoError(t, err)
+	messages := &guardedReplayMessages{expectedLineage: expected}
+	m := &types.Message{
+		Role: "assistant", SourceLineage: current,
+		KnowledgeReferences: types.References{{KnowledgeID: "current"}},
+	}
+	err = checkLiveStreamPublication(
+		context.Background(), messages, m,
+		[]interfaces.StreamEvent{{
+			SourceLineage: revoked,
+			Type:          types.ResponseTypeToolResult, Content: "revoked graph content",
+			Data: map[string]interface{}{
+				"tool_name": "query_knowledge_graph",
+				"results":   []map[string]interface{}{{"knowledge_id": "revoked"}},
 			},
-		},
+		}},
 	)
 	require.ErrorIs(t, err, access.ErrNextcloudPublicationDenied)
+	require.Equal(t, 1, messages.liveCalls, "the new source must reach the current-authority checker")
 	require.Len(t, m.KnowledgeReferences, 1)
+	require.True(t, samePublicationFixtureLineage(m.SourceLineage, current))
 }
 
 func TestLiveSSEMissingVerifierFailsClosed(t *testing.T) {
@@ -236,18 +252,22 @@ func TestLiveSSEPreparatoryToolCallDoesNotBypassUnavailableVerifier(t *testing.T
 
 type revokeDuringReplayMessages struct {
 	stubMessageServiceForStream
-	checks int
+	checks          int
+	expectedLineage *types.SourceLineage
 }
 
 func (s *revokeDuringReplayMessages) GetMessageForStream(
 	_ context.Context,
 	session, id string,
 ) (*types.Message, error) {
-	return &types.Message{ID: id, SessionID: session, Role: "assistant", IsCompleted: true}, nil
+	return &types.Message{ID: id, SessionID: session, Role: "assistant"}, nil
 }
 
-func (s *revokeDuringReplayMessages) CheckMessagePublication(context.Context, *types.Message) error {
+func (s *revokeDuringReplayMessages) CheckMessagePublication(_ context.Context, m *types.Message) error {
 	s.checks++
+	if !samePublicationFixtureLineage(m.SourceLineage, s.expectedLineage) {
+		return access.ErrNextcloudPublicationDenied
+	}
 	if s.checks >= 2 {
 		return access.ErrNextcloudPublicationDenied
 	}
@@ -256,15 +276,17 @@ func (s *revokeDuringReplayMessages) CheckMessagePublication(context.Context, *t
 
 func TestContinueStreamRechecksBetweenFramesOfOneBatch(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	messages := &revokeDuringReplayMessages{}
+	lineage := controlledLiveSSEFixtureLineage(t, "current")
+	messages := &revokeDuringReplayMessages{expectedLineage: lineage}
 	stream := &stubStreamManager{events: []interfaces.StreamEvent{
-		{Type: types.ResponseTypeAnswer, Content: "first authorized frame"},
+		{SourceLineage: lineage, Type: types.ResponseTypeAnswer, Content: "first authorized frame"},
 		{
-			Type:    types.ResponseTypeToolResult,
-			Content: "later revoked output",
-			Data:    map[string]interface{}{"tool_name": "read_document", "knowledge_id": "current"},
+			SourceLineage: lineage,
+			Type:          types.ResponseTypeToolResult,
+			Content:       "later revoked output",
+			Data:          map[string]interface{}{"tool_name": "read_document", "knowledge_id": "current"},
 		},
-		{Type: types.ResponseTypeComplete, Done: true},
+		{SourceLineage: lineage, Type: types.ResponseTypeComplete, Done: true},
 	}}
 	h := &Handler{sessionService: &stubSessionService{}, messageService: messages, streamManager: stream}
 	r := gin.New()
@@ -274,6 +296,10 @@ func TestContinueStreamRechecksBetweenFramesOfOneBatch(t *testing.T) {
 	require.Contains(t, w.Body.String(), "first authorized frame")
 	require.NotContains(t, w.Body.String(), "later revoked output")
 	require.Equal(t, 2, messages.checks)
+}
+
+func (s *revokeDuringReplayMessages) CheckLiveMessagePublication(ctx context.Context, m *types.Message) error {
+	return s.CheckMessagePublication(ctx, m)
 }
 
 type classifySavedReplay struct{ interfaces.MessageService }
@@ -286,18 +312,22 @@ func (classifySavedReplay) CheckMessagePublication(_ context.Context, message *t
 }
 
 func TestContinueStreamPreservesSyntheticKnowledgeQATimeline(t *testing.T) {
+	// This codec timeline owns only the following local literal, with no source input.
+	lineage := literalLiveSSEFixtureLineage(t)
 	message := &types.Message{
-		Role:        "assistant",
-		IsCompleted: true,
+		Role:          "assistant",
+		IsCompleted:   true,
+		SourceLineage: lineage,
 		AgentSteps: types.AgentSteps{
 			{ToolCalls: []types.ToolCall{{ID: types.PipelineToolCallIDPrefix + "search-1", Name: "hybrid_search"}}},
 		},
 	}
 	events := []interfaces.StreamEvent{
 		{
-			Type:    types.ResponseTypeToolResult,
-			Data:    map[string]interface{}{"tool_call_id": "search-1", "tool_name": "hybrid_search"},
-			Content: "ordinary pipeline content",
+			SourceLineage: lineage,
+			Type:          types.ResponseTypeToolResult,
+			Data:          map[string]interface{}{"tool_call_id": "search-1", "tool_name": "hybrid_search"},
+			Content:       "ordinary pipeline content",
 		},
 	}
 	require.NoError(t, checkReplayPublication(context.Background(), classifySavedReplay{}, message, events))
@@ -305,8 +335,9 @@ func TestContinueStreamPreservesSyntheticKnowledgeQATimeline(t *testing.T) {
 
 func TestLiveSSEEmptyGraphResultStillRechecksEarlierSource(t *testing.T) {
 	evt := interfaces.StreamEvent{
-		Type:    types.ResponseTypeToolResult,
-		Content: "No relevant graph information found.",
+		SourceLineage: literalLiveSSEFixtureLineage(t),
+		Type:          types.ResponseTypeToolResult,
+		Content:       "No relevant graph information found.",
 		Data: map[string]interface{}{
 			"tool_name":          "query_knowledge_graph",
 			"success":            true,
@@ -319,7 +350,7 @@ func TestLiveSSEEmptyGraphResultStillRechecksEarlierSource(t *testing.T) {
 		},
 	}
 	require.True(t, contentlessKnowledgeToolResult(evt))
-	messages := &liveHistoryMessageService{}
+	messages := &liveHistoryMessageService{expectedLineage: literalLiveSSEFixtureLineage(t)}
 	require.NoError(
 		t,
 		checkLiveStreamPublication(
@@ -330,16 +361,24 @@ func TestLiveSSEEmptyGraphResultStillRechecksEarlierSource(t *testing.T) {
 		),
 	)
 	require.Equal(t, 1, messages.checks)
+	revoked := &liveHistoryMessageService{
+		denyAt: 1, expectedLineage: controlledLiveSSEFixtureLineage(t, "revoked"),
+	}
 	require.ErrorIs(
 		t,
 		checkLiveStreamPublication(
 			context.Background(),
-			&guardedReplayMessages{},
-			&types.Message{Role: "assistant", KnowledgeReferences: types.References{{KnowledgeID: "revoked"}}},
+			revoked,
+			&types.Message{
+				Role: "assistant", KnowledgeReferences: types.References{{KnowledgeID: "revoked"}},
+				SourceLineage: controlledLiveSSEFixtureLineage(t, "revoked"),
+			},
 			[]interfaces.StreamEvent{evt},
 		),
 		access.ErrNextcloudPublicationDenied,
 	)
+	require.Equal(t, 1, revoked.checks)
+	require.Equal(t, []string{"revoked"}, revoked.checkedSourceIDs)
 	evt.Content = "opaque graph secret"
 	require.False(t, contentlessKnowledgeToolResult(evt))
 	require.ErrorIs(

@@ -988,8 +988,8 @@ func (s *KnowledgeInputProvenanceStore) DeleteFAQChunks(ctx context.Context, ids
 			return err
 		}
 		if operation.Kind != "delete" &&
-			!(operation.Kind == "import" &&
-				operation.Batch != nil && operation.Batch.Mode == types.FAQBatchModeReplace) &&
+			(operation.Kind != "import" ||
+				operation.Batch == nil || operation.Batch.Mode != types.FAQBatchModeReplace) &&
 			operation.Kind != "create" {
 			return ErrKnowledgeInputChanged
 		}

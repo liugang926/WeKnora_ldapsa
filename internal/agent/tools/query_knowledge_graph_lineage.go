@@ -88,10 +88,11 @@ func (t *QueryKnowledgeGraphTool) ExecuteSourceLineage(
 			snapshot.Recheck == nil {
 			return nil, ErrToolSourceLineageUnavailable
 		}
-		defer func() {
+		defer func(closeSnapshot func() error) {
+			// Bind the original read-pin release before clone may reject and clear snapshot.
 			// Only read pins are released here; cleanup does not publish protected material.
-			_ = snapshot.Close()
-		}()
+			_ = closeSnapshot()
+		}(snapshot.Close)
 		snapshot, err = types.CloneKnowledgeGraphInputSnapshot(snapshot)
 		if err != nil {
 			return nil, err
