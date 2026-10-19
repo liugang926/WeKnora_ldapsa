@@ -13,7 +13,11 @@ import (
 // BeginSourceLineage is the mandatory ordinary RAG entry boundary. Only text,
 // persisted accounted history and trusted hydrated document results are covered.
 // Other adapters remain unknown until they supply their own dependency contract.
-func (e *EventManager) BeginSourceLineage(ctx context.Context, cm *types.ChatManage, scope access.LineageReadScope) (context.Context, error) {
+func (e *EventManager) BeginSourceLineage(
+	ctx context.Context,
+	cm *types.ChatManage,
+	scope access.LineageReadScope,
+) (context.Context, error) {
 	turn := types.NewRAGSourceLineage(func(ctx context.Context, lineage *types.SourceLineage) error {
 		if err := types.CheckHistoryMaterialLifetime(ctx); err != nil {
 			return err
@@ -108,7 +112,8 @@ func CheckSourceLineageInputs(ctx context.Context, cm *types.ChatManage) error {
 }
 
 func sourceLineagePluginError(err error) *PluginError {
-	if errors.Is(err, types.ErrSourceLineageUnknown) || errors.Is(err, types.ErrSourceLineageInvalid) || errors.Is(err, types.ErrSourceLineageLimit) {
+	if errors.Is(err, types.ErrSourceLineageUnknown) || errors.Is(err, types.ErrSourceLineageInvalid) ||
+		errors.Is(err, types.ErrSourceLineageLimit) {
 		err = access.ErrNextcloudPublicationDenied
 	}
 	return &PluginError{Err: err, Description: "Source input authorization failed", ErrorType: "source_lineage_failed"}

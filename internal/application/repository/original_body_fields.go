@@ -5,14 +5,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/google/uuid"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 	"os"
 	"reflect"
 	"strconv"
 	"strings"
 	"sync"
+
+	"github.com/google/uuid"
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type originalBodyFieldDescriptor struct {
@@ -42,9 +43,29 @@ var originalBodyFields = []originalBodyFieldDescriptor{
 	// Current entity columns keep their SQL search/storage representation. Their
 	// exact mirror receipts permit clearing only after actual lifecycle closure.
 	{"knowledge_processing_spans", "id", "inline", []string{"input", "output", "error_message", "error_detail"}},
-	{"knowledges", "id", "inline", []string{"title", "file_name", "description", "profile", "custom_metadata", "metadata.manual.content"}},
+	{
+		"knowledges",
+		"id",
+		"inline",
+		[]string{"title", "file_name", "description", "profile", "custom_metadata", "metadata.manual.content"},
+	},
 	{"chunks", "id", "inline", []string{"content", "source_content", "context_header", "metadata", "image_info"}},
-	{"messages", "id", "inline", []string{"content", "rendered_content", "context_checkpoint", "agent_trace", "agent_steps", "images", "attachments", "knowledge_references", "used_memories"}},
+	{
+		"messages",
+		"id",
+		"inline",
+		[]string{
+			"content",
+			"rendered_content",
+			"context_checkpoint",
+			"agent_trace",
+			"agent_steps",
+			"images",
+			"attachments",
+			"knowledge_references",
+			"used_memories",
+		},
+	},
 	{"sessions", "id", "inline", []string{"title", "description"}},
 	{"wiki_pages", "id", "unsupported", []string{"content", "summary", "page_metadata"}},
 	{"wiki_page_revisions", "id", "unsupported", []string{"content", "summary"}},
@@ -61,6 +82,7 @@ func bodyDescriptor(table string) (originalBodyFieldDescriptor, bool) {
 
 // Nested fields are exact JSON leaves. Whole metadata is never a body slot.
 func bodyFieldColumn(field string) string { return strings.Split(field, ".")[0] }
+
 func bodyFieldValue(row map[string]any, field string) (string, error) {
 	parts := strings.Split(field, ".")
 	raw := bodyText(row[parts[0]])
@@ -90,6 +112,7 @@ func bodyFieldValue(row map[string]any, field string) (string, error) {
 	}
 	return result, nil
 }
+
 func bodyNestedReplace(raw, field, old, replacement string) (string, error) {
 	if field == parentCopyBodyField {
 		return parentCopyReplace(raw, old, replacement)
@@ -115,6 +138,7 @@ func bodyNestedReplace(raw, field, old, replacement string) (string, error) {
 	data, e := json.Marshal(object)
 	return string(data), e
 }
+
 func bodyText(v any) string {
 	if v != nil {
 		value := reflect.ValueOf(v)
@@ -151,8 +175,22 @@ func bodySourceRow(tx *gorm.DB, d originalBodyFieldDescriptor, key string) (map[
 	}
 	return rows[0], nil
 }
-func bodyScopeFromRow(tx *gorm.DB, d originalBodyFieldDescriptor, key string, row map[string]any) (originalBodyScope, error) {
-	scope := originalBodyScope{Tenant: bodyUint(row["tenant_id"]), KB: bodyText(row["knowledge_base_id"]), Knowledge: bodyText(row["knowledge_id"]), OwnerKind: d.Table, OwnerID: key, AdmissionID: bodyText(row["admission_id"]), Lineage: bodyText(row["source_lineage"])}
+
+func bodyScopeFromRow(
+	tx *gorm.DB,
+	d originalBodyFieldDescriptor,
+	key string,
+	row map[string]any,
+) (originalBodyScope, error) {
+	scope := originalBodyScope{
+		Tenant:      bodyUint(row["tenant_id"]),
+		KB:          bodyText(row["knowledge_base_id"]),
+		Knowledge:   bodyText(row["knowledge_id"]),
+		OwnerKind:   d.Table,
+		OwnerID:     key,
+		AdmissionID: bodyText(row["admission_id"]),
+		Lineage:     bodyText(row["source_lineage"]),
+	}
 	if d.Table == "knowledges" {
 		scope.Knowledge = key
 	}
@@ -216,7 +254,13 @@ func bodyScopeFromRow(tx *gorm.DB, d originalBodyFieldDescriptor, key string, ro
 	}
 	return scope, nil
 }
-func (s *OriginalBodyRetentionStore) captureField(tx *gorm.DB, d originalBodyFieldDescriptor, key, col, raw string, scope originalBodyScope) error {
+
+func (s *OriginalBodyRetentionStore) captureField(
+	tx *gorm.DB,
+	d originalBodyFieldDescriptor,
+	key, col, raw string,
+	scope originalBodyScope,
+) error {
 	if e := s.checkJournalInTx(tx); e != nil {
 		return e
 	}
@@ -225,7 +269,11 @@ func (s *OriginalBodyRetentionStore) captureField(tx *gorm.DB, d originalBodyFie
 	}
 	if _, ok := bodyReference(raw); ok {
 		var head originalBodyFieldHead
-		if e := bodyInternal(tx).Where("source_table=? AND row_key=? AND column_name=?", d.Table, key, col).Take(&head).Error; e != nil {
+		if e := bodyInternal(
+			tx,
+		).Where("source_table=? AND row_key=? AND column_name=?", d.Table, key, col).
+			Take(&head).
+			Error; e != nil {
 			return ErrOriginalBodyUnavailable
 		}
 		if head.OriginalBodyRef != raw {
@@ -236,7 +284,12 @@ func (s *OriginalBodyRetentionStore) captureField(tx *gorm.DB, d originalBodyFie
 	sha := bodySHA([]byte(raw))
 	identity := bodyIdentity(d.Table, key, col, scope)
 	var prior originalBodyFieldHead
-	e := bodyInternal(tx).Clauses(clause.Locking{Strength: "UPDATE"}).Where("source_table=? AND row_key=? AND column_name=?", d.Table, key, col).Take(&prior).Error
+	e := bodyInternal(
+		tx,
+	).Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("source_table=? AND row_key=? AND column_name=?", d.Table, key, col).
+		Take(&prior).
+		Error
 	if e != nil && !errors.Is(e, gorm.ErrRecordNotFound) {
 		return e
 	}
@@ -249,7 +302,12 @@ func (s *OriginalBodyRetentionStore) captureField(tx *gorm.DB, d originalBodyFie
 			return ErrOriginalBodyUnavailable
 		}
 		var old originalBodyPayload
-		if e := bodyInternal(tx).Clauses(clause.Locking{Strength: "UPDATE"}).Where("id=?", prior.BodyID).Take(&old).Error; e != nil {
+		if e := bodyInternal(
+			tx,
+		).Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("id=?", prior.BodyID).
+			Take(&old).
+			Error; e != nil {
 			return e
 		}
 		if old.State != "live" {
@@ -258,11 +316,17 @@ func (s *OriginalBodyRetentionStore) captureField(tx *gorm.DB, d originalBodyFie
 		if e := s.checkExternalBody(old.ID); e != nil {
 			return e
 		}
-		if old.BodySHA256 == sha && (d.Table != "knowledge_bases" || (prior.AdmissionID == scope.AdmissionID && prior.SourceLineage == scope.Lineage)) {
+		if old.BodySHA256 == sha &&
+			(d.Table != "knowledge_bases" || (prior.AdmissionID == scope.AdmissionID && prior.SourceLineage == scope.Lineage)) {
 			if d.Table == "knowledge_bases" && scope.AdmissionID != "" {
 				var count int64
 				if tx.Migrator().HasTable(&knowledgeConfigurationOriginalBodyManifest{}) {
-					if e := bodyInternal(tx).Model(&knowledgeConfigurationOriginalBodyManifest{}).Where("origin_id=?", scope.AdmissionID).Count(&count).Error; e != nil {
+					if e := bodyInternal(
+						tx,
+					).Model(&knowledgeConfigurationOriginalBodyManifest{}).
+						Where("origin_id=?", scope.AdmissionID).
+						Count(&count).
+						Error; e != nil {
 						return e
 					}
 				}
@@ -290,7 +354,11 @@ func (s *OriginalBodyRetentionStore) captureField(tx *gorm.DB, d originalBodyFie
 		// A genuine producer change retires the prior representation. Cached
 		// originals are still checked by their own original producer before writing.
 		if old.RetiredAtMS == nil {
-			if e := bodyInternal(tx).Model(&old).Updates(map[string]any{"retired_at_ms": now, "body_deadline_ms": now + int64(3600000), "metadata_deadline_ms": now + int64(90*86400000)}).Error; e != nil {
+			if e := bodyInternal(
+				tx,
+			).Model(&old).
+				Updates(map[string]any{"retired_at_ms": now, "body_deadline_ms": now + int64(3600000), "metadata_deadline_ms": now + int64(90*86400000)}).
+				Error; e != nil {
 				return e
 			}
 		}
@@ -301,14 +369,30 @@ func (s *OriginalBodyRetentionStore) captureField(tx *gorm.DB, d originalBodyFie
 	}
 	domainSHA := bodySHA([]byte(fmt.Sprintf("%d/%s/%s/%s", scope.Tenant, scope.KB, scope.Knowledge, domain)))
 	var body originalBodyPayload
-	e = bodyInternal(tx).Clauses(clause.Locking{Strength: "UPDATE"}).Where("tenant_id=? AND origin_domain_sha256=? AND body_sha256=? AND storage_kind=? AND state='live'", scope.Tenant, domainSHA, sha, d.Mode).Order("created_at_ms,id").Take(&body).Error
+	e = bodyInternal(
+		tx,
+	).Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("tenant_id=? AND origin_domain_sha256=? AND body_sha256=? AND storage_kind=? AND state='live'", scope.Tenant, domainSHA, sha, d.Mode).
+		Order("created_at_ms,id").
+		Take(&body).
+		Error
 	if errors.Is(e, gorm.ErrRecordNotFound) {
 		id := uuid.NewString()
 		var payload *string
 		if d.Mode == "vault" {
 			payload = &raw
 		}
-		body = originalBodyPayload{ID: id, TenantID: scope.Tenant, BodySHA256: sha, OriginDomainSHA256: domainSHA, Payload: payload, BodyBytes: int64(len([]byte(raw))), StorageKind: d.Mode, State: "live", CreatedAtMS: now}
+		body = originalBodyPayload{
+			ID:                 id,
+			TenantID:           scope.Tenant,
+			BodySHA256:         sha,
+			OriginDomainSHA256: domainSHA,
+			Payload:            payload,
+			BodyBytes:          int64(len([]byte(raw))),
+			StorageKind:        d.Mode,
+			State:              "live",
+			CreatedAtMS:        now,
+		}
 		if e = bodyInternal(tx).Create(&body).Error; e != nil {
 			return e
 		}
@@ -340,8 +424,28 @@ func (s *OriginalBodyRetentionStore) captureField(tx *gorm.DB, d originalBodyFie
 			}
 		}
 	}
-	head := originalBodyFieldHead{SlotID: slot, SourceTable: d.Table, RowKey: key, ColumnName: col, TenantID: scope.Tenant, KnowledgeBaseID: scope.KB, KnowledgeID: scope.Knowledge, OwnerKind: scope.OwnerKind, OwnerID: scope.OwnerID, SourceIdentitySHA256: identity, BodyID: id, Revision: prior.Revision + 1, AdmissionID: scope.AdmissionID, SourceLineage: scope.Lineage, OriginalBodyRef: ref}
-	if e := bodyInternal(tx).Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "source_table"}, {Name: "row_key"}, {Name: "column_name"}}, UpdateAll: true}).Create(&head).Error; e != nil {
+	head := originalBodyFieldHead{
+		SlotID:               slot,
+		SourceTable:          d.Table,
+		RowKey:               key,
+		ColumnName:           col,
+		TenantID:             scope.Tenant,
+		KnowledgeBaseID:      scope.KB,
+		KnowledgeID:          scope.Knowledge,
+		OwnerKind:            scope.OwnerKind,
+		OwnerID:              scope.OwnerID,
+		SourceIdentitySHA256: identity,
+		BodyID:               id,
+		Revision:             prior.Revision + 1,
+		AdmissionID:          scope.AdmissionID,
+		SourceLineage:        scope.Lineage,
+		OriginalBodyRef:      ref,
+	}
+	if e := bodyInternal(
+		tx,
+	).Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "source_table"}, {Name: "row_key"}, {Name: "column_name"}}, UpdateAll: true}).
+		Create(&head).
+		Error; e != nil {
 		return e
 	}
 	if e := bodyInternal(tx).Table("original_body_field_revisions").Create(&head).Error; e != nil {
@@ -371,6 +475,7 @@ func (s *OriginalBodyRetentionStore) captureField(tx *gorm.DB, d originalBodyFie
 	}
 	return nil
 }
+
 func (s *OriginalBodyRetentionStore) recordBodyParents(tx *gorm.DB, id, raw string) error {
 	var data any
 	if json.Unmarshal([]byte(raw), &data) != nil {
@@ -393,11 +498,16 @@ func (s *OriginalBodyRetentionStore) recordBodyParents(tx *gorm.DB, id, raw stri
 				if e := bodyInternal(tx).Where("admission_id=?", admission).Take(&origin).Error; e != nil {
 					return ErrOriginalBodyUnavailable
 				}
-				if bodyText(v["knowledge_id"]) != origin.KnowledgeID || bodyText(v["knowledge_base_id"]) != origin.KnowledgeBaseID {
+				if bodyText(v["knowledge_id"]) != origin.KnowledgeID ||
+					bodyText(v["knowledge_base_id"]) != origin.KnowledgeBaseID {
 					return ErrOriginalBodyUnavailable
 				}
 				seen[admission] = true
-				if e := bodyInternal(tx).Clauses(clause.OnConflict{DoNothing: true}).Create(&originalBodyParentRef{BodyID: id, TenantID: origin.TenantID, KnowledgeBaseID: origin.KnowledgeBaseID, KnowledgeID: origin.KnowledgeID, AdmissionID: admission}).Error; e != nil {
+				if e := bodyInternal(
+					tx,
+				).Clauses(clause.OnConflict{DoNothing: true}).
+					Create(&originalBodyParentRef{BodyID: id, TenantID: origin.TenantID, KnowledgeBaseID: origin.KnowledgeBaseID, KnowledgeID: origin.KnowledgeID, AdmissionID: admission}).
+					Error; e != nil {
 					return e
 				}
 			}
@@ -425,7 +535,14 @@ func (s *OriginalBodyRetentionStore) Inventory(ctx context.Context, limit int) (
 			continue
 		}
 		var keys []string
-		if e := bodyInternal(s.db.WithContext(ctx)).Table(d.Table).Select("CAST(" + d.Key + " AS TEXT)").Order(d.Key).Limit(limit).Scan(&keys).Error; e != nil {
+		if e := bodyInternal(
+			s.db.WithContext(ctx),
+		).Table(d.Table).
+			Select("CAST(" + d.Key + " AS TEXT)").
+			Order(d.Key).
+			Limit(limit).
+			Scan(&keys).
+			Error; e != nil {
 			return count, e
 		}
 		for _, key := range keys {
@@ -473,7 +590,14 @@ func InstallOriginalBodyRetentionCallbacks(db *gorm.DB) error {
 	}
 	write := func(tx *gorm.DB) {
 		if os.Getenv("WEKNORA_BODY_CALLBACK_DEBUG") == "1" {
-			fmt.Fprintf(os.Stderr, "body callback table=%s type=%T internal=%v err=%v\n", tx.Statement.Table, tx.Statement.Dest, tx.Statement.Context.Value(originalBodyInternalKey{}), tx.Error)
+			fmt.Fprintf(
+				os.Stderr,
+				"body callback table=%s type=%T internal=%v err=%v\n",
+				tx.Statement.Table,
+				tx.Statement.Dest,
+				tx.Statement.Context.Value(originalBodyInternalKey{}),
+				tx.Error,
+			)
 		}
 		if tx.Error != nil {
 			return
@@ -487,14 +611,21 @@ func InstallOriginalBodyRetentionCallbacks(db *gorm.DB) error {
 		}
 		feature := originalBodySchemaPresent(tx)
 		if os.Getenv("WEKNORA_BODY_CALLBACK_DEBUG") == "1" {
-			fmt.Fprintf(os.Stderr, "body feature=%v table=%s schema=%v reflect=%v\n", feature, tx.Statement.Table, tx.Statement.Schema != nil, tx.Statement.ReflectValue.Kind())
+			fmt.Fprintf(
+				os.Stderr,
+				"body feature=%v table=%s schema=%v reflect=%v\n",
+				feature,
+				tx.Statement.Table,
+				tx.Statement.Schema != nil,
+				tx.Statement.ReflectValue.Kind(),
+			)
 		}
 		if !feature {
 			return
 		}
 		store := NewOriginalBodyRetentionStore(tx)
 		if e := store.captureStatement(tx, d); e != nil {
-			tx.AddError(e)
+			_ = tx.AddError(e)
 		}
 	}
 	read := func(tx *gorm.DB) {
@@ -517,17 +648,26 @@ func InstallOriginalBodyRetentionCallbacks(db *gorm.DB) error {
 		}
 		store := NewOriginalBodyRetentionStore(tx)
 		if e := store.resolveStatement(tx, d); e != nil {
-			tx.AddError(e)
+			_ = tx.AddError(e)
 		}
 	}
-	if e := db.Callback().Create().After("gorm:create").Before("gorm:save_after_associations").Register("original_body:capture", write); e != nil {
+	if e := db.Callback().
+		Create().
+		After("gorm:create").
+		Before("gorm:save_after_associations").
+		Register("original_body:capture", write); e != nil {
 		return e
 	}
-	if e := db.Callback().Update().After("gorm:update").Before("gorm:save_after_associations").Register("original_body:capture", write); e != nil {
+	if e := db.Callback().
+		Update().
+		After("gorm:update").
+		Before("gorm:save_after_associations").
+		Register("original_body:capture", write); e != nil {
 		return e
 	}
 	return db.Callback().Query().After("gorm:query").Before("gorm:after_query").Register("original_body:resolve", read)
 }
+
 func bodyVisit(value reflect.Value, fn func(reflect.Value) error) error {
 	for value.Kind() == reflect.Pointer || value.Kind() == reflect.Interface {
 		if value.IsNil() {
@@ -545,6 +685,7 @@ func bodyVisit(value reflect.Value, fn func(reflect.Value) error) error {
 	}
 	return fn(value)
 }
+
 func bodyRecordKey(tx *gorm.DB, d originalBodyFieldDescriptor, v reflect.Value) string {
 	if v.Kind() == reflect.Map {
 		found := v.MapIndex(reflect.ValueOf(d.Key))
@@ -564,6 +705,7 @@ func bodyRecordKey(tx *gorm.DB, d originalBodyFieldDescriptor, v reflect.Value) 
 	}
 	return ""
 }
+
 func (s *OriginalBodyRetentionStore) captureStatement(tx *gorm.DB, d originalBodyFieldDescriptor) error {
 	keys := map[string]bool{}
 	if e := bodyVisit(tx.Statement.ReflectValue, func(v reflect.Value) error {
@@ -577,7 +719,14 @@ func (s *OriginalBodyRetentionStore) captureStatement(tx *gorm.DB, d originalBod
 	if len(keys) == 0 {
 		if where, ok := tx.Statement.Clauses["WHERE"]; ok {
 			var ids []string
-			if e := bodyInternal(tx).Table(d.Table).Select("CAST(" + bodyQuoted(d.Key) + " AS TEXT)").Where(where.Expression).Limit(1001).Scan(&ids).Error; e != nil {
+			if e := bodyInternal(
+				tx,
+			).Table(d.Table).
+				Select("CAST(" + bodyQuoted(d.Key) + " AS TEXT)").
+				Where(where.Expression).
+				Limit(1001).
+				Scan(&ids).
+				Error; e != nil {
 				return e
 			}
 			if len(ids) > 1000 {
@@ -612,6 +761,7 @@ func (s *OriginalBodyRetentionStore) captureStatement(tx *gorm.DB, d originalBod
 	}
 	return nil
 }
+
 func bodySelectedField(tx *gorm.DB, column string) bool {
 	for _, omission := range tx.Statement.Omits {
 		if omission == "*" || omission == column {
@@ -638,6 +788,7 @@ func bodySelectedField(tx *gorm.DB, column string) bool {
 	}
 	return false
 }
+
 func (s *OriginalBodyRetentionStore) resolveStatement(tx *gorm.DB, d originalBodyFieldDescriptor) error {
 	selected := false
 	for _, field := range d.Columns {
@@ -737,10 +888,20 @@ var _ = strings.Contains
 func originalBodySchemaPresent(tx *gorm.DB) bool {
 	var count int64
 	if tx.Dialector.Name() == "sqlite" {
-		return bodyInternal(tx).Raw("SELECT count(*) FROM sqlite_master WHERE type='table' AND name='original_body_payloads'").Scan(&count).Error == nil && count == 1
+		return bodyInternal(
+			tx,
+		).Raw("SELECT count(*) FROM sqlite_master WHERE type='table' AND name='original_body_payloads'").
+			Scan(&count).
+			Error == nil &&
+			count == 1
 	}
 	if tx.Dialector.Name() == "postgres" {
-		return bodyInternal(tx).Raw("SELECT count(*) FROM information_schema.tables WHERE table_schema=current_schema() AND table_name='original_body_payloads'").Scan(&count).Error == nil && count == 1
+		return bodyInternal(
+			tx,
+		).Raw("SELECT count(*) FROM information_schema.tables WHERE table_schema=current_schema() AND table_name='original_body_payloads'").
+			Scan(&count).
+			Error == nil &&
+			count == 1
 	}
 	return false
 }
@@ -749,7 +910,11 @@ func originalBodySchemaPresent(tx *gorm.DB) bool {
 // producer has already persisted the same body bytes under its own authority;
 // this only deduplicates storage and creates an additional incoming owner.
 // It cannot introduce cached text, cross-tenant sharing, or a purged body ID.
-func (s *OriginalBodyRetentionStore) ShareOriginalBodyFieldInTx(ctx context.Context, tx *gorm.DB, bodyID, table, key, col string) error {
+func (s *OriginalBodyRetentionStore) ShareOriginalBodyFieldInTx(
+	ctx context.Context,
+	tx *gorm.DB,
+	bodyID, table, key, col string,
+) error {
 	d, ok := bodyDescriptor(table)
 	if !ok || d.Mode != "vault" {
 		return ErrOriginalBodyUnavailable
@@ -770,7 +935,12 @@ func (s *OriginalBodyRetentionStore) ShareOriginalBodyFieldInTx(ctx context.Cont
 		return e
 	}
 	var source originalBodyPayload
-	if e := bodyInternal(tx).Clauses(clause.Locking{Strength: "UPDATE"}).Where("id=?", bodyID).Take(&source).Error; e != nil {
+	if e := bodyInternal(
+		tx,
+	).Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("id=?", bodyID).
+		Take(&source).
+		Error; e != nil {
 		return e
 	}
 	if source.State != "live" || source.Payload == nil || bodySHA([]byte(*source.Payload)) != source.BodySHA256 {
@@ -788,7 +958,11 @@ func (s *OriginalBodyRetentionStore) ShareOriginalBodyFieldInTx(ctx context.Cont
 		return ErrOriginalBodyUnavailable
 	}
 	var target originalBodyFieldHead
-	if e := bodyInternal(tx).Where("source_table=? AND row_key=? AND column_name=?", table, key, col).Take(&target).Error; e != nil {
+	if e := bodyInternal(
+		tx,
+	).Where("source_table=? AND row_key=? AND column_name=?", table, key, col).
+		Take(&target).
+		Error; e != nil {
 		return e
 	}
 	ref, ok := bodyReference(bodyText(row[col]))
@@ -805,7 +979,12 @@ func (s *OriginalBodyRetentionStore) ShareOriginalBodyFieldInTx(ctx context.Cont
 	target.BodyID = source.ID
 	target.Revision++
 	target.OriginalBodyRef = bodyRefString(target.SlotID, source.ID, source.BodySHA256)
-	if e := bodyInternal(tx).Model(&originalBodyFieldHead{}).Where("slot_id=?", target.SlotID).Updates(map[string]any{"body_id": target.BodyID, "revision": target.Revision, "original_body_ref": target.OriginalBodyRef}).Error; e != nil {
+	if e := bodyInternal(
+		tx,
+	).Model(&originalBodyFieldHead{}).
+		Where("slot_id=?", target.SlotID).
+		Updates(map[string]any{"body_id": target.BodyID, "revision": target.Revision, "original_body_ref": target.OriginalBodyRef}).
+		Error; e != nil {
 		return e
 	}
 	if e := bodyInternal(tx).Table("original_body_field_revisions").Create(&target).Error; e != nil {

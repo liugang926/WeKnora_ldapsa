@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+
 	"github.com/Tencent/WeKnora/internal/application/access"
 	"github.com/Tencent/WeKnora/internal/application/repository"
 	"github.com/Tencent/WeKnora/internal/types"
@@ -14,7 +15,10 @@ type SpanOutputAuthorizer struct {
 	checker knowledgeOutputLineageChecker
 }
 
-func NewSpanOutputAuthorizer(store *repository.KnowledgeInputProvenanceStore, guard *access.NextcloudSourceLineageGuard) *SpanOutputAuthorizer {
+func NewSpanOutputAuthorizer(
+	store *repository.KnowledgeInputProvenanceStore,
+	guard *access.NextcloudSourceLineageGuard,
+) *SpanOutputAuthorizer {
 	return &SpanOutputAuthorizer{reader: store, checker: guard}
 }
 
@@ -40,7 +44,11 @@ func cloneSpanOutput(in *types.SpanOutputInputSnapshot) (*types.SpanOutputInputS
 	out.Receipt = in.Receipt
 	return &out, nil
 }
-func (a *SpanOutputAuthorizer) Begin(ctx context.Context, request types.SpanOutputReadRequest) (*SpanOutputGuard, error) {
+
+func (a *SpanOutputAuthorizer) Begin(
+	ctx context.Context,
+	request types.SpanOutputReadRequest,
+) (*SpanOutputGuard, error) {
 	if ctx == nil || a == nil || a.reader == nil || a.checker == nil {
 		return nil, access.ErrNextcloudPublicationUnavailable
 	}
@@ -52,25 +60,42 @@ func (a *SpanOutputAuthorizer) Begin(ctx context.Context, request types.SpanOutp
 	if err != nil {
 		return nil, err
 	}
-	if snapshot.TenantID != request.TenantID || snapshot.KnowledgeBaseID != request.KnowledgeBaseID || snapshot.KnowledgeID != request.KnowledgeID || request.Attempt > 0 && snapshot.Attempt != request.Attempt {
+	if snapshot.TenantID != request.TenantID || snapshot.KnowledgeBaseID != request.KnowledgeBaseID ||
+		snapshot.KnowledgeID != request.KnowledgeID ||
+		request.Attempt > 0 && snapshot.Attempt != request.Attempt {
 		return nil, types.ErrSourceLineageUnknown
 	}
 	body, err := json.Marshal(snapshot)
 	if err != nil {
 		return nil, err
 	}
-	g := &SpanOutputGuard{authorizer: a, snapshot: snapshot, body: string(body), scope: access.LineageReadScope{Targets: types.SearchTargets{&types.SearchTarget{Type: types.SearchTargetTypeKnowledgeBase, TenantID: request.TenantID, KnowledgeBaseID: request.KnowledgeBaseID}}}}
+	g := &SpanOutputGuard{
+		authorizer: a,
+		snapshot:   snapshot,
+		body:       string(body),
+		scope: access.LineageReadScope{
+			Targets: types.SearchTargets{
+				&types.SearchTarget{
+					Type:            types.SearchTargetTypeKnowledgeBase,
+					TenantID:        request.TenantID,
+					KnowledgeBaseID: request.KnowledgeBaseID,
+				},
+			},
+		},
+	}
 	if err := g.Check(ctx, snapshot); err != nil {
 		return nil, err
 	}
 	return g, nil
 }
+
 func (g *SpanOutputGuard) Snapshot() (*types.SpanOutputInputSnapshot, error) {
 	if g == nil {
 		return nil, types.ErrSourceLineageUnknown
 	}
 	return cloneSpanOutput(g.snapshot)
 }
+
 func (g *SpanOutputGuard) Check(ctx context.Context, published *types.SpanOutputInputSnapshot) error {
 	if ctx == nil || g == nil || g.authorizer == nil || g.authorizer.reader == nil || g.authorizer.checker == nil {
 		return access.ErrNextcloudPublicationUnavailable

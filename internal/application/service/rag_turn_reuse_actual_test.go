@@ -25,14 +25,32 @@ func runRAGPhysicalActualReusedTurn(t *testing.T, pg bool) {
 				require.NoError(t, m.run(t, m.f.queue.tasks[i]))
 			}
 			var chunks []*types.Chunk
-			require.NoError(t, m.f.db.Where("knowledge_id=? AND chunk_type=?", k.ID, types.ChunkTypeText).Find(&chunks).Error)
+			require.NoError(
+				t,
+				m.f.db.Where("knowledge_id=? AND chunk_type=?", k.ID, types.ChunkTypeText).Find(&chunks).Error,
+			)
 			require.NotEmpty(t, chunks)
-			engine := &fakeRetrieveEngineService{engineType: types.PostgresRetrieverEngineType, support: []types.RetrieverType{types.VectorRetrieverType},
-				canned: []*types.IndexWithScore{{ChunkID: chunks[0].ID, KnowledgeID: k.ID, Score: 1, Content: "untrusted index text"}}}
-			svc := &knowledgeBaseService{repo: repository.NewKnowledgeBaseRepository(m.f.db), kgRepo: m.f.s.repo, chunkRepo: m.f.s.chunkRepo,
-				contentLeases: m.f.store.ContentLeaseStore(), ragChunkSnapshots: repository.NewRAGChunkSnapshotReader(m.f.db, m.f.store), ragChunkLineageGuard: m.f.guard,
-				modelService: m.f.s.modelService, retrieveEngine: parentChildRetrieveRegistry{engine: engine},
-				publicationGuard: access.NewNextcloudPublicationGuard(repository.NewDirectoryRepository(m.f.db), repository.NewDataSourceRepository(m.f.db))}
+			engine := &fakeRetrieveEngineService{
+				engineType: types.PostgresRetrieverEngineType,
+				support:    []types.RetrieverType{types.VectorRetrieverType},
+				canned: []*types.IndexWithScore{
+					{ChunkID: chunks[0].ID, KnowledgeID: k.ID, Score: 1, Content: "untrusted index text"},
+				},
+			}
+			svc := &knowledgeBaseService{
+				repo:                 repository.NewKnowledgeBaseRepository(m.f.db),
+				kgRepo:               m.f.s.repo,
+				chunkRepo:            m.f.s.chunkRepo,
+				contentLeases:        m.f.store.ContentLeaseStore(),
+				ragChunkSnapshots:    repository.NewRAGChunkSnapshotReader(m.f.db, m.f.store),
+				ragChunkLineageGuard: m.f.guard,
+				modelService:         m.f.s.modelService,
+				retrieveEngine:       parentChildRetrieveRegistry{engine: engine},
+				publicationGuard: access.NewNextcloudPublicationGuard(
+					repository.NewDirectoryRepository(m.f.db),
+					repository.NewDataSourceRepository(m.f.db),
+				),
+			}
 			var tenant types.Tenant
 			require.NoError(t, m.f.db.Where("id=7").Take(&tenant).Error)
 			ctx := context.WithValue(m.f.ctx, types.TenantInfoContextKey, &tenant)
@@ -51,8 +69,14 @@ func runRAGPhysicalActualReusedTurn(t *testing.T, pg bool) {
 			chatpipeline.NewPluginFilterTopK(manager)
 			cm := &types.ChatManage{}
 			cm.TenantID, cm.RerankTopK = 7, 1
-			cm.SearchTargets = []*types.SearchTarget{{Type: types.SearchTargetTypeKnowledgeBase, TenantID: 7, KnowledgeBaseID: "kb"}}
-			params := types.SearchParams{QueryText: "actual original topic", QueryEmbedding: []float32{0.5}, MatchCount: 1}
+			cm.SearchTargets = []*types.SearchTarget{
+				{Type: types.SearchTargetTypeKnowledgeBase, TenantID: 7, KnowledgeBaseID: "kb"},
+			}
+			params := types.SearchParams{
+				QueryText:      "actual original topic",
+				QueryEmbedding: []float32{0.5},
+				MatchCount:     1,
+			}
 			// The holder may acquire its fence before the QA entry adds its
 			// lineage accumulator. Reuse must preserve that later accumulator.
 			readCtx := ctx
@@ -63,7 +87,11 @@ func runRAGPhysicalActualReusedTurn(t *testing.T, pg bool) {
 				defer finishTool()
 				if mode == "producer-borrowed" {
 					var err error
-					borrowed, err = readlease.BeginNextcloudKBRead(readCtx, m.f.store.ContentLeaseStore(), []readlease.NextcloudKBReadScope{{TenantID: 7, KBID: "kb"}})
+					borrowed, err = readlease.BeginNextcloudKBRead(
+						readCtx,
+						m.f.store.ContentLeaseStore(),
+						[]readlease.NextcloudKBReadScope{{TenantID: 7, KBID: "kb"}},
+					)
 					require.NoError(t, err)
 					defer borrowed.Close()
 					readCtx = borrowed.Context()
@@ -78,10 +106,20 @@ func runRAGPhysicalActualReusedTurn(t *testing.T, pg bool) {
 				}
 				finishTool()
 				releaseModel()
-				require.NoError(t, CheckMessageMaterialOutputBoundary(attach(ctx)), "HTTP sender retains the original read fence after tool context completion")
+				require.NoError(
+					t,
+					CheckMessageMaterialOutputBoundary(attach(ctx)),
+					"HTTP sender retains the original read fence after tool context completion",
+				)
 				releaseHTTP()
 				var active int64
-				require.NoError(t, m.f.db.Table("nextcloud_content_leases").Where("kind='read' AND released_at_ms IS NULL").Count(&active).Error)
+				require.NoError(
+					t,
+					m.f.db.Table("nextcloud_content_leases").
+						Where("kind='read' AND released_at_ms IS NULL").
+						Count(&active).
+						Error,
+				)
 				require.Zero(t, active)
 				return
 			}
@@ -106,13 +144,14 @@ func runRAGPhysicalActualReusedTurn(t *testing.T, pg bool) {
 			// Reuse the same turn fence from a current caller context, rather than
 			// the older context stored when the guard was created.
 			ctx = context.WithValue(ctx, ragReuseCurrentSelectorKey{}, "current selection")
-			if mode == "caller-cancelled" {
+			switch mode {
+			case "caller-cancelled":
 				var cancel context.CancelFunc
 				ctx, cancel = context.WithCancel(ctx)
 				cancel()
-			} else if mode == "source-revoked" {
+			case "source-revoked":
 				m.personal.Store(false)
-			} else if mode == "missing-proof" {
+			case "missing-proof":
 				first[0].SourceLineage = types.UnknownSourceLineage()
 			}
 			if mode != "search-and-merge" {
@@ -144,7 +183,13 @@ func runRAGPhysicalActualReusedTurn(t *testing.T, pg bool) {
 			require.Error(t, turn.Check(ctx), "an open read lease cannot prolong source access")
 			releaseHTTP()
 			var active int64
-			require.NoError(t, m.f.db.Table("nextcloud_content_leases").Where("kind='read' AND released_at_ms IS NULL").Count(&active).Error)
+			require.NoError(
+				t,
+				m.f.db.Table("nextcloud_content_leases").
+					Where("kind='read' AND released_at_ms IS NULL").
+					Count(&active).
+					Error,
+			)
 			require.Zero(t, active)
 		})
 	}

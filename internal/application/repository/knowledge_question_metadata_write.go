@@ -2,9 +2,10 @@ package repository
 
 import (
 	"context"
+	"reflect"
+
 	"github.com/Tencent/WeKnora/internal/types"
 	"gorm.io/gorm"
-	"reflect"
 )
 
 type questionMetadataOutput struct {
@@ -22,7 +23,12 @@ func questionMetadataIndependentBody(c *types.Chunk) (string, error) {
 // A span may retain an old input only through the exact immutable result of
 // that admission's question producer. An external metadata/body mutation has
 // no matching transition, including an ABA restored to the same JSON bytes.
-func verifyQuestionMetadataOwnResult(tx *gorm.DB, a *knowledgeInputAdmission, before, after *types.Chunk, beforeRevision, afterRevision uint64) error {
+func verifyQuestionMetadataOwnResult(
+	tx *gorm.DB,
+	a *knowledgeInputAdmission,
+	before, after *types.Chunk,
+	beforeRevision, afterRevision uint64,
+) error {
 	if !tx.Migrator().HasTable("knowledge_question_metadata_outputs") {
 		return ErrKnowledgeInputChanged
 	}
@@ -45,14 +51,20 @@ func verifyQuestionMetadataOwnResult(tx *gorm.DB, a *knowledgeInputAdmission, be
 	revision := beforeRevision
 	for step := 0; step < 128 && revision != afterRevision; step++ {
 		var result questionMetadataOutput
-		if err := tx.Where("chunk_id = ? AND admission_id = ? AND previous_revision = ? AND previous_metadata_digest = ?", before.ID, a.AdmissionID, revision, currentDigest).Order("result_revision ASC").Take(&result).Error; err != nil {
+		if err := tx.Where("chunk_id = ? AND admission_id = ? AND previous_revision = ? AND previous_metadata_digest = ?", before.ID, a.AdmissionID, revision, currentDigest).
+			Order("result_revision ASC").
+			Take(&result).
+			Error; err != nil {
 			return err
 		}
-		if result.ResultRevision <= revision || result.PreviousBodyDigest != oldBody || result.ResultBodyDigest != newBody {
+		if result.ResultRevision <= revision || result.PreviousBodyDigest != oldBody ||
+			result.ResultBodyDigest != newBody {
 			return ErrKnowledgeInputChanged
 		}
 		var input knowledgeProducerInput
-		if err := tx.Where("id = ? AND admission_id = ? AND purpose='question'", result.ProducerInputID, a.AdmissionID).Take(&input).Error; err != nil {
+		if err := tx.Where("id = ? AND admission_id = ? AND purpose='question'", result.ProducerInputID, a.AdmissionID).
+			Take(&input).
+			Error; err != nil {
 			return err
 		}
 		revision = result.ResultRevision
@@ -83,7 +95,13 @@ func (r *chunkRepository) UpdateKnowledgeGeneratedQuestionMetadata(ctx context.C
 			if c == nil {
 				return ErrKnowledgeInputChanged
 			}
-			if _, err := validateKnowledgeInputWrite(ctx, tx, c.TenantID, c.KnowledgeBaseID, c.KnowledgeID); err != nil {
+			if _, err := validateKnowledgeInputWrite(
+				ctx,
+				tx,
+				c.TenantID,
+				c.KnowledgeBaseID,
+				c.KnowledgeID,
+			); err != nil {
 				return err
 			}
 		}
@@ -96,7 +114,9 @@ func (r *chunkRepository) UpdateKnowledgeGeneratedQuestionMetadata(ctx context.C
 				return ErrKnowledgeInputChanged
 			}
 			var previous types.Chunk
-			if err := tx.Where("id = ? AND tenant_id = ? AND knowledge_id = ?", c.ID, c.TenantID, c.KnowledgeID).Take(&previous).Error; err != nil {
+			if err := tx.Where("id = ? AND tenant_id = ? AND knowledge_id = ?", c.ID, c.TenantID, c.KnowledgeID).
+				Take(&previous).
+				Error; err != nil {
 				return err
 			}
 			previousRevision, err := inputRowRevision(tx, "chunk", c.ID)
@@ -115,14 +135,17 @@ func (r *chunkRepository) UpdateKnowledgeGeneratedQuestionMetadata(ctx context.C
 			if err != nil || previousBody != resultBody {
 				return ErrKnowledgeInputChanged
 			}
-			result := tx.Model(&types.Chunk{}).Where("id = ? AND tenant_id = ? AND knowledge_base_id = ? AND knowledge_id = ? AND content_revision = ?", c.ID, c.TenantID, c.KnowledgeBaseID, c.KnowledgeID, c.ContentRevision).Update("metadata", c.Metadata)
+			result := tx.Model(&types.Chunk{}).
+				Where("id = ? AND tenant_id = ? AND knowledge_base_id = ? AND knowledge_id = ? AND content_revision = ?", c.ID, c.TenantID, c.KnowledgeBaseID, c.KnowledgeID, c.ContentRevision).
+				Update("metadata", c.Metadata)
 			if result.Error != nil {
 				return result.Error
 			}
 			if result.RowsAffected != 1 {
 				return ErrKnowledgeInputChanged
 			}
-			if !reflect.DeepEqual(previous.Metadata, c.Metadata) && tx.Migrator().HasTable("knowledge_question_metadata_outputs") {
+			if !reflect.DeepEqual(previous.Metadata, c.Metadata) &&
+				tx.Migrator().HasTable("knowledge_question_metadata_outputs") {
 				resultRevision, err := inputRowRevision(tx, "chunk", c.ID)
 				if err != nil {
 					return err
@@ -135,7 +158,19 @@ func (r *chunkRepository) UpdateKnowledgeGeneratedQuestionMetadata(ctx context.C
 				if original == nil {
 					return ErrKnowledgeInputChanged
 				}
-				if err := tx.Create(&questionMetadataOutput{ChunkID: c.ID, AdmissionID: original.AdmissionID, ProducerInputID: producer.proof.ID, PreviousRevision: previousRevision, PreviousMetadataDigest: previousDigest, PreviousBodyDigest: previousBody, ResultRevision: resultRevision, ResultMetadataDigest: resultDigest, ResultBodyDigest: resultBody}).Error; err != nil {
+				if err := tx.Create(
+					&questionMetadataOutput{
+						ChunkID:                c.ID,
+						AdmissionID:            original.AdmissionID,
+						ProducerInputID:        producer.proof.ID,
+						PreviousRevision:       previousRevision,
+						PreviousMetadataDigest: previousDigest,
+						PreviousBodyDigest:     previousBody,
+						ResultRevision:         resultRevision,
+						ResultMetadataDigest:   resultDigest,
+						ResultBodyDigest:       resultBody,
+					},
+				).Error; err != nil {
 					return err
 				}
 			}

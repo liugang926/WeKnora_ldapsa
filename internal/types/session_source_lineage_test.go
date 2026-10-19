@@ -2,14 +2,21 @@ package types
 
 import (
 	"encoding/json"
-	"github.com/stretchr/testify/require"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestSessionTextLineageDefaultSerializationRedactsRawRepositoryText(t *testing.T) {
 	empty, _ := NewCompleteSourceLineage()
 	for _, proof := range []*SourceLineage{nil, UnknownSourceLineage(), empty} {
-		row := Session{ID: "session", Title: "private title", Description: "private description", TitleSourceLineage: proof, DescriptionSourceLineage: proof}
+		row := Session{
+			ID:                       "session",
+			Title:                    "private title",
+			Description:              "private description",
+			TitleSourceLineage:       proof,
+			DescriptionSourceLineage: proof,
+		}
 		payload, err := json.Marshal(row)
 		require.NoError(t, err)
 		require.NotContains(t, string(payload), "private title")

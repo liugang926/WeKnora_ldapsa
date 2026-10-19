@@ -28,6 +28,7 @@ func (c *KnowledgeEnrichmentTemplates) Scan(value any) error {
 	}
 	return json.Unmarshal(data, c)
 }
+
 func (c *KnowledgeEnrichmentTemplates) Content(purpose string) string {
 	if c == nil {
 		return ""
@@ -40,6 +41,7 @@ func (c *KnowledgeEnrichmentTemplates) Content(purpose string) string {
 	}
 	return ""
 }
+
 func (c *KnowledgeEnrichmentTemplates) Set(purpose, content string) error {
 	if purpose == "summary" {
 		c.Summary = content

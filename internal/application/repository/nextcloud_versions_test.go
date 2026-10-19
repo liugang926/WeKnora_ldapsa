@@ -37,14 +37,17 @@ func newNextcloudVersionTestRepo(t *testing.T) (*knowledgeRepository, *gorm.DB) 
 	leaseSchema, err := os.ReadFile("../../../migrations/sqlite/000046_nextcloud_content_leases.up.sql")
 	require.NoError(t, err)
 	require.NoError(t, db.Exec(string(leaseSchema)).Error)
-	config, err := (&types.DataSourceConfig{Type: types.ConnectorTypeNextcloud,
+	config, err := (&types.DataSourceConfig{
+		Type:        types.ConnectorTypeNextcloud,
 		ResourceIDs: []string{"binding"},
 		Settings:    map[string]interface{}{"base_url": "https://nextcloud.example"},
 		Credentials: map[string]interface{}{"token": "test-machine-token", "key_id": "pair_test"},
 	}).ToJSON()
 	require.NoError(t, err)
-	ds := &types.DataSource{ID: "ds", TenantID: 7, KnowledgeBaseID: "kb",
-		Type: types.ConnectorTypeNextcloud, Status: types.DataSourceStatusActive, Config: config}
+	ds := &types.DataSource{
+		ID: "ds", TenantID: 7, KnowledgeBaseID: "kb",
+		Type: types.ConnectorTypeNextcloud, Status: types.DataSourceStatusActive, Config: config,
+	}
 	require.NoError(t, db.Create(ds).Error)
 	baseURL, configSHA, bindingID, err := NextcloudEventDataSourceIdentity(ds.Config)
 	require.NoError(t, err)
@@ -53,11 +56,14 @@ func newNextcloudVersionTestRepo(t *testing.T) (*knowledgeRepository, *gorm.DB) 
 		InstanceID: "instance", BindingID: bindingID, BaseURL: baseURL,
 		ConfigSHA: configSHA, State: "active",
 	}).Error)
-	return &knowledgeRepository{db: db,
+	return &knowledgeRepository{
+		db: db,
 		nextcloudPublicationCheck: func(context.Context, *types.DataSourceConfig,
-			string, string, int64, string, string) error {
+			string, string, int64, string, string,
+		) error {
 			return nil
-		}}, db
+		},
+	}, db
 }
 
 func insertNextcloudVersionTestKnowledge(t *testing.T, db *gorm.DB, id, etag, status, enabled string) *types.Knowledge {
@@ -119,9 +125,11 @@ func TestNextcloudPlainTextVersionRequiresRetrievableChunkBeforePublication(t *t
 	}
 	require.False(t, publish(), "completed parsing with zero chunks cannot publish text")
 
-	chunk := &types.Chunk{ID: uuid.NewString(), TenantID: 7, KnowledgeBaseID: "kb",
+	chunk := &types.Chunk{
+		ID: uuid.NewString(), TenantID: 7, KnowledgeBaseID: "kb",
 		KnowledgeID: candidate.ID, ChunkType: types.ChunkTypeParentText,
-		Content: "parent only", IsEnabled: true, IndexStatus: "ready"}
+		Content: "parent only", IsEnabled: true, IndexStatus: "ready",
+	}
 	require.NoError(t, db.Create(chunk).Error)
 	require.False(t, publish(), "parent chunks are context, not retrievable text")
 	require.NoError(t, db.Model(chunk).Updates(map[string]any{
@@ -335,9 +343,11 @@ func TestNextcloudEventAppliedAfterFreshManifestWithSettledChanges(t *testing.T)
 		types.ParseStatusCompleted, "enabled")
 	require.NoError(t, db.Model(&types.Knowledge{}).Where("id = ?", ready.ID).
 		Update("file_name", "file.md").Error)
-	require.NoError(t, db.Create(&nextcloudSourceVersion{TenantID: 7, KnowledgeBaseID: "kb",
+	require.NoError(t, db.Create(&nextcloudSourceVersion{
+		TenantID: 7, KnowledgeBaseID: "kb",
 		DataSourceID: "ds", ExternalID: "nextcloud:instance:77", DesiredETag: "etag-v2",
-		CandidateKnowledgeID: ready.ID, State: "published", UpdatedAt: time.Now().UTC()}).Error)
+		CandidateKnowledgeID: ready.ID, State: "published", UpdatedAt: time.Now().UTC(),
+	}).Error)
 	var source types.DataSource
 	require.NoError(t, db.Where("id = ?", "ds").Take(&source).Error)
 	baseURL, configSHA, bindingID, err := NextcloudEventDataSourceIdentity(source.Config)
@@ -355,8 +365,10 @@ func TestNextcloudEventAppliedAfterFreshManifestWithSettledChanges(t *testing.T)
 		VALUES ('event-connection', 1, ?, 'upsert', 77, 'etag-v2', '/Published/file.md', 'file.md', 'dispatched')`, strings.Repeat("0", 64)).Error)
 	now := time.Now().UTC()
 	startedAt := now.Add(-time.Minute)
-	log := &types.SyncLog{ID: "event-log", DataSourceID: "ds", TenantID: 7,
-		Status: types.SyncLogStatusSuccess, StartedAt: startedAt, FinishedAt: &now}
+	log := &types.SyncLog{
+		ID: "event-log", DataSourceID: "ds", TenantID: 7,
+		Status: types.SyncLogStatusSuccess, StartedAt: startedAt, FinishedAt: &now,
+	}
 	require.NoError(t, db.Create(log).Error)
 	require.NoError(t, db.Exec(`INSERT INTO nextcloud_event_dispatch
 		(connection_id, dispatched_id, target_event_id, state, last_sync_log_id, next_attempt_at)
@@ -386,7 +398,10 @@ func TestNextcloudEventAppliedAfterFreshManifestWithSettledChanges(t *testing.T)
 	require.NoError(t, err)
 	require.Nil(t, claim)
 	var dispatch nextcloudEventDispatchRow
-	require.NoError(t, db.Table("nextcloud_event_dispatch").Where("connection_id = ?", "event-connection").Take(&dispatch).Error)
+	require.NoError(
+		t,
+		db.Table("nextcloud_event_dispatch").Where("connection_id = ?", "event-connection").Take(&dispatch).Error,
+	)
 	require.Equal(t, "deletion_or_cursor_pending", dispatch.LastErrorCode)
 	require.Zero(t, dispatch.AppliedID)
 
@@ -399,11 +414,20 @@ func TestNextcloudEventAppliedAfterFreshManifestWithSettledChanges(t *testing.T)
 	claim, err = inbox.ClaimDispatch(ctx, "event-connection", now)
 	require.NoError(t, err)
 	require.Nil(t, claim)
-	require.NoError(t, db.Table("nextcloud_event_dispatch").Where("connection_id = ?", "event-connection").Take(&dispatch).Error)
+	require.NoError(
+		t,
+		db.Table("nextcloud_event_dispatch").Where("connection_id = ?", "event-connection").Take(&dispatch).Error,
+	)
 	require.Equal(t, "idle", dispatch.State)
 	require.Equal(t, int64(1), dispatch.AppliedID)
 	var receipt nextcloudEventInboxRow
-	require.NoError(t, db.Table("nextcloud_event_inbox").Where("connection_id = ? AND event_id = 1", "event-connection").Take(&receipt).Error)
+	require.NoError(
+		t,
+		db.Table("nextcloud_event_inbox").
+			Where("connection_id = ? AND event_id = 1", "event-connection").
+			Take(&receipt).
+			Error,
+	)
 	require.Equal(t, "applied", receipt.State)
 }
 
@@ -422,9 +446,11 @@ func TestNextcloudFailedFetchReclaimsWithoutPausingSource(t *testing.T) {
 	first, err := scheduler.CandidateRetryClaims(ctx, now)
 	require.NoError(t, err)
 	require.Len(t, first, 1)
-	require.NoError(t, db.Create(&types.SyncLog{ID: first[0].SyncLogID,
+	require.NoError(t, db.Create(&types.SyncLog{
+		ID:           first[0].SyncLogID,
 		DataSourceID: "ds", TenantID: 7, Status: types.SyncLogStatusFailed,
-		StartedAt: now, ErrorMessage: "temporary upstream 503"}).Error)
+		StartedAt: now, ErrorMessage: "temporary upstream 503",
+	}).Error)
 	var ds types.DataSource
 	require.NoError(t, db.Where("id = ?", "ds").Take(&ds).Error)
 	require.Equal(t, types.DataSourceStatusActive, ds.Status)
@@ -444,25 +470,31 @@ func TestNextcloudRetryScanPassesPausedAndMalformedRows(t *testing.T) {
 	require.NoError(t, db.AutoMigrate(&types.SyncLog{}))
 	var active types.DataSource
 	require.NoError(t, db.Where("id = ?", "ds").Take(&active).Error)
-	require.NoError(t, db.Create(&types.DataSource{ID: "a-paused", TenantID: 7,
+	require.NoError(t, db.Create(&types.DataSource{
+		ID: "a-paused", TenantID: 7,
 		KnowledgeBaseID: "kb", Type: types.ConnectorTypeNextcloud,
-		Status: types.DataSourceStatusPaused, Config: active.Config}).Error)
+		Status: types.DataSourceStatusPaused, Config: active.Config,
+	}).Error)
 	for i := 1; i <= 64; i++ {
 		fileID := strconv.Itoa(i)
 		paused := insertNextcloudVersionTestKnowledge(t, db, "paused-"+fileID, "",
 			types.ParseStatusFailed, "disabled")
-		require.NoError(t, db.Create(&nextcloudSourceVersion{TenantID: 7, KnowledgeBaseID: "kb",
+		require.NoError(t, db.Create(&nextcloudSourceVersion{
+			TenantID: 7, KnowledgeBaseID: "kb",
 			DataSourceID: "a-paused", ExternalID: "nextcloud:instance:" + fileID,
 			DesiredETag: "etag", CandidateKnowledgeID: paused.ID, State: "staging",
-			UpdatedAt: time.Now().UTC().Add(-time.Hour)}).Error)
+			UpdatedAt: time.Now().UTC().Add(-time.Hour),
+		}).Error)
 		malformed := insertNextcloudVersionTestKnowledge(t, db, "malformed-"+fileID, "",
 			types.ParseStatusFailed, "disabled")
 		// Its candidate metadata still names file 77, so this exact file is
 		// malformed but must not abort the whole retry scan.
-		require.NoError(t, db.Create(&nextcloudSourceVersion{TenantID: 7, KnowledgeBaseID: "kb",
+		require.NoError(t, db.Create(&nextcloudSourceVersion{
+			TenantID: 7, KnowledgeBaseID: "kb",
 			DataSourceID: "ds", ExternalID: "nextcloud:instance:" + fileID,
 			DesiredETag: "etag", CandidateKnowledgeID: malformed.ID, State: "staging",
-			UpdatedAt: time.Now().UTC().Add(-time.Hour)}).Error)
+			UpdatedAt: time.Now().UTC().Add(-time.Hour),
+		}).Error)
 	}
 	valid := insertNextcloudVersionTestKnowledge(t, db, "valid-77", "",
 		types.ParseStatusPending, "disabled")
@@ -508,11 +540,13 @@ func TestNextcloudRetryJobExpiresBeforeItsFutureBackoff(t *testing.T) {
 	require.NoError(t, db.Model(&types.Knowledge{}).Where("id = ?", failed.ID).
 		Update("parse_status", types.ParseStatusFailed).Error)
 	now := time.Now().UTC()
-	require.NoError(t, db.Create(&nextcloudCandidateRetryJob{TenantID: 7,
+	require.NoError(t, db.Create(&nextcloudCandidateRetryJob{
+		TenantID:        7,
 		KnowledgeBaseID: "kb", DataSourceID: "ds", ExternalID: "nextcloud:instance:77",
 		DesiredETag: "retry-etag", FailedCandidateID: failed.ID,
 		FirstStagedAt: now.Add(-25 * time.Hour), NextAttemptAt: now.Add(time.Hour),
-		State: "retry", UpdatedAt: now}).Error)
+		State: "retry", UpdatedAt: now,
+	}).Error)
 	claims, err := NewNextcloudEventInboxRepository(db).CandidateRetryClaims(ctx, now)
 	require.NoError(t, err)
 	require.Empty(t, claims)
@@ -666,7 +700,8 @@ func TestNextcloudPublicationRechecksSourceBeforeAndAfterCommit(t *testing.T) {
 		"nextcloud:instance:77", "etag-1", candidate.ID))
 	checks := 0
 	repo.nextcloudPublicationCheck = func(_ context.Context, source *types.DataSourceConfig,
-		instance, binding string, fileID int64, etag, path string) error {
+		instance, binding string, fileID int64, etag, path string,
+	) error {
 		checks++
 		require.Equal(t, []string{"binding"}, source.ResourceIDs)
 		require.Equal(t, "instance", instance)
@@ -769,7 +804,8 @@ func TestNextcloudPublicationRejectsRemoteChangeBetweenChecks(t *testing.T) {
 			defer server.Close()
 			t.Setenv("WEKNORA_NEXTCLOUD_DEV_HTTP", "1")
 			t.Setenv("WEKNORA_NEXTCLOUD_ALLOWED_ORIGINS", server.URL)
-			config, err := (&types.DataSourceConfig{Type: types.ConnectorTypeNextcloud,
+			config, err := (&types.DataSourceConfig{
+				Type:        types.ConnectorTypeNextcloud,
 				ResourceIDs: []string{"binding"},
 				Settings:    map[string]interface{}{"base_url": server.URL},
 				Credentials: map[string]interface{}{"token": "test-machine-token", "key_id": "pair_test"},
@@ -819,7 +855,8 @@ func TestNextcloudPublicationFailsClosedBeforeCommit(t *testing.T) {
 	require.NoError(t, repo.StageNextcloudVersion(ctx, 7, "kb", "ds",
 		"nextcloud:instance:77", "etag-1", candidate.ID))
 	repo.nextcloudPublicationCheck = func(context.Context, *types.DataSourceConfig,
-		string, string, int64, string, string) error {
+		string, string, int64, string, string,
+	) error {
 		return errors.New("source unavailable")
 	}
 	published, err := repo.PublishNextcloudVersion(ctx, candidate.ID)
@@ -836,7 +873,8 @@ func TestNextcloudPublicationClosesAfterConcurrentPairRetirement(t *testing.T) {
 		"nextcloud:instance:77", "etag-1", candidate.ID))
 	checks := 0
 	repo.nextcloudPublicationCheck = func(context.Context, *types.DataSourceConfig,
-		string, string, int64, string, string) error {
+		string, string, int64, string, string,
+	) error {
 		checks++
 		if checks == 2 {
 			require.NoError(t, db.Model(&NextcloudSourcePairing{}).
@@ -861,7 +899,8 @@ func TestNextcloudPublicationRejectsConcurrentStageAndPairClosure(t *testing.T) 
 				"nextcloud:instance:77", "old-etag", old.ID))
 			checks := 0
 			repo.nextcloudPublicationCheck = func(context.Context, *types.DataSourceConfig,
-				string, string, int64, string, string) error {
+				string, string, int64, string, string,
+			) error {
 				checks++
 				if concurrentChange == "new candidate" {
 					newer := insertNextcloudVersionTestKnowledge(t, db, "new", "", types.ParseStatusPending, "disabled")
@@ -999,12 +1038,18 @@ func TestSQLiteNextcloudVersionMigrationCreatesDurableUniqueCandidate(t *testing
 			require.NoError(t, db.Exec(statement).Error)
 		}
 	}
-	first := nextcloudSourceVersion{TenantID: 7, KnowledgeBaseID: "kb", DataSourceID: "ds",
-		ExternalID: "one", DesiredETag: "v1", CandidateKnowledgeID: "candidate", State: "staging"}
+	first := nextcloudSourceVersion{
+		TenantID: 7, KnowledgeBaseID: "kb", DataSourceID: "ds",
+		ExternalID: "one", DesiredETag: "v1", CandidateKnowledgeID: "candidate", State: "staging",
+	}
 	require.NoError(t, db.Omit("desired_content_revision").Create(&first).Error)
 	second := first
 	second.ExternalID = "two"
-	require.Error(t, db.Omit("desired_content_revision").Create(&second).Error, "one knowledge row cannot be desired by two source files")
+	require.Error(
+		t,
+		db.Omit("desired_content_revision").Create(&second).Error,
+		"one knowledge row cannot be desired by two source files",
+	)
 	second.CandidateKnowledgeID = ""
 	second.State = "tombstone"
 	require.NoError(t, db.Omit("desired_content_revision").Create(&second).Error)

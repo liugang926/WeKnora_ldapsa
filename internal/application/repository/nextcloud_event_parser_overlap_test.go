@@ -62,8 +62,10 @@ func newNextcloudPausedParserFixture(t *testing.T) nextcloudPausedParserFixture 
 	require.NoError(t, err)
 	require.NoError(t, db.Exec(`UPDATE nextcloud_event_connections
 		SET current_secret_ciphertext = ? WHERE connection_id = 'event-connection'`, ciphertext).Error)
-	return nextcloudPausedParserFixture{db: db, inbox: inbox, versions: versions,
-		lease: lease, now: now, bindingID: bindingID, secret: secret}
+	return nextcloudPausedParserFixture{
+		db: db, inbox: inbox, versions: versions,
+		lease: lease, now: now, bindingID: bindingID, secret: secret,
+	}
 }
 
 func (f nextcloudPausedParserFixture) receiveSignedVersion(t *testing.T, eventID int64, etag string) {
@@ -79,9 +81,11 @@ func (f nextcloudPausedParserFixture) receiveSignedVersion(t *testing.T, eventID
 		BindingID: f.bindingID, KeyID: "test-key", Nonce: "nonce-parser-" + etag,
 		Signature: mac.Sum(nil), CanonicalRequest: canonical,
 		AfterEventID: previous, Now: time.Now().UTC(),
-		Events: []NextcloudEventHint{{EventID: eventID,
+		Events: []NextcloudEventHint{{
+			EventID:       eventID,
 			PayloadSHA256: strings.Repeat("2", 64), EventType: "upsert",
-			FileID: overlapFileID(77), ETag: &etag, Path: &path, RelativePath: &relative}},
+			FileID: overlapFileID(77), ETag: &etag, Path: &path, RelativePath: &relative,
+		}},
 	})
 	require.NoError(t, err)
 	require.Equal(t, eventID, got)
@@ -95,8 +99,10 @@ func (f nextcloudPausedParserFixture) writeCursor(t *testing.T, eventID int64, e
 	require.NoError(t, f.db.Where("id = 'ds'").Take(&source).Error)
 	cursor, err := source.ParseSyncCursor()
 	require.NoError(t, err)
-	changeBytes, err := json.Marshal([]any{1, f.bindingID,
-		strconv.FormatInt(eventID, 10), strings.Repeat("0", 64)})
+	changeBytes, err := json.Marshal([]any{
+		1, f.bindingID,
+		strconv.FormatInt(eventID, 10), strings.Repeat("0", 64),
+	})
 	require.NoError(t, err)
 	cursor.LastSyncTime = at
 	cursor.ConnectorCursor["last_reconcile_at"] = at.Unix()
@@ -129,24 +135,30 @@ func TestNextcloudSignedV2OvertakesPausedV1AndAcksOnlyAfterV2Publication(t *test
 	require.NoError(t, f.inbox.PrepareDispatch(ctx, *claim, "v2-event-log", wakeAt))
 	require.NoError(t, f.inbox.FinishDispatch(ctx, *claim, "v2-event-log", wakeAt))
 	finished := wakeAt.Add(2 * time.Second)
-	require.NoError(t, f.db.Create(&types.SyncLog{ID: "v2-event-log", DataSourceID: "ds",
+	require.NoError(t, f.db.Create(&types.SyncLog{
+		ID: "v2-event-log", DataSourceID: "ds",
 		TenantID: 7, Status: types.SyncLogStatusSuccess,
-		StartedAt: wakeAt.Add(time.Second), FinishedAt: &finished}).Error)
+		StartedAt: wakeAt.Add(time.Second), FinishedAt: &finished,
+	}).Error)
 	newer := insertNextcloudVersionTestKnowledge(t, f.db, "v2-candidate", "",
 		types.ParseStatusProcessing, "disabled")
 	require.NoError(t, f.db.Model(newer).Update("file_name", "file.md").Error)
 	require.NoError(t, f.versions.StageNextcloudVersion(ctx, 7, "kb", "ds",
 		"nextcloud:instance:77", "etag-v2", newer.ID))
 	f.writeCursor(t, 2, "etag-v2", finished)
-	scope := NextcloudContentScope{TenantID: 7, KnowledgeBaseID: "kb",
-		KnowledgeID: "paused-v1", DataSourceID: "ds", ExternalID: "nextcloud:instance:77"}
+	scope := NextcloudContentScope{
+		TenantID: 7, KnowledgeBaseID: "kb",
+		KnowledgeID: "paused-v1", DataSourceID: "ds", ExternalID: "nextcloud:instance:77",
+	}
 	err = f.db.Transaction(func(tx *gorm.DB) error {
 		return NewNextcloudContentLeaseStore(f.db).ValidateBuildLeaseInTx(ctx, tx, f.lease, scope)
 	})
 	require.ErrorIs(t, err, ErrNextcloudContentLeaseDenied)
 	require.NoError(t, f.db.Model(&types.Knowledge{}).Where("id = 'paused-v1'").
-		Updates(map[string]any{"parse_status": types.ParseStatusCompleted,
-			"enable_status": "enabled"}).Error)
+		Updates(map[string]any{
+			"parse_status":  types.ParseStatusCompleted,
+			"enable_status": "enabled",
+		}).Error)
 	published, err := f.versions.PublishNextcloudVersion(ctx, "paused-v1")
 	require.NoError(t, err)
 	require.False(t, published, "late V1 parse cannot publish after V2 Stage")
@@ -156,8 +168,10 @@ func TestNextcloudSignedV2OvertakesPausedV1AndAcksOnlyAfterV2Publication(t *test
 	require.Zero(t, publicationDispatchRow(t, f.db).AppliedID,
 		"V2 source scan alone is not publication evidence")
 	require.NoError(t, f.db.Model(&types.Knowledge{}).Where("id = ?", newer.ID).
-		Updates(map[string]any{"parse_status": types.ParseStatusCompleted,
-			"enable_status": "enabled"}).Error)
+		Updates(map[string]any{
+			"parse_status":  types.ParseStatusCompleted,
+			"enable_status": "enabled",
+		}).Error)
 	published, err = f.versions.PublishNextcloudVersion(ctx, newer.ID)
 	require.NoError(t, err)
 	require.True(t, published)
@@ -182,9 +196,11 @@ func TestNextcloudPendingParserOverlapBudgetBlocksThirdGeneration(t *testing.T) 
 	require.NoError(t, f.inbox.PrepareDispatch(ctx, *claim, "v2-event-log", firstAt))
 	require.NoError(t, f.inbox.FinishDispatch(ctx, *claim, "v2-event-log", firstAt))
 	finished := firstAt.Add(2 * time.Second)
-	require.NoError(t, f.db.Create(&types.SyncLog{ID: "v2-event-log", DataSourceID: "ds",
+	require.NoError(t, f.db.Create(&types.SyncLog{
+		ID: "v2-event-log", DataSourceID: "ds",
 		TenantID: 7, Status: types.SyncLogStatusSuccess,
-		StartedAt: firstAt.Add(time.Second), FinishedAt: &finished}).Error)
+		StartedAt: firstAt.Add(time.Second), FinishedAt: &finished,
+	}).Error)
 	newer := insertNextcloudVersionTestKnowledge(t, f.db, "v2-pending", "",
 		types.ParseStatusProcessing, "disabled")
 	require.NoError(t, f.db.Model(newer).Update("file_name", "file.md").Error)

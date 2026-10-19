@@ -2,14 +2,15 @@ package service
 
 import (
 	"context"
-	"github.com/Tencent/WeKnora/internal/application/repository"
-	"github.com/Tencent/WeKnora/internal/types"
-	"github.com/stretchr/testify/require"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/Tencent/WeKnora/internal/application/repository"
+	"github.com/Tencent/WeKnora/internal/types"
+	"github.com/stretchr/testify/require"
 )
 
 func bodyActualFixture(t *testing.T, pg bool) (*enrichmentTestFixture, *repository.OriginalBodyRetentionStore) {
@@ -26,10 +27,10 @@ func bodyActualFixture(t *testing.T, pg bool) (*enrichmentTestFixture, *reposito
 	require.NoError(t, repository.InstallOriginalBodyRetentionTriggers(f.db))
 	require.NoError(t, repository.InstallOriginalBodyRetentionCallbacks(f.db))
 	dir := t.TempDir()
-	require.NoError(t, os.Chmod(dir, 0700))
+	require.NoError(t, os.Chmod(dir, 0o700))
 	key := filepath.Join(dir, "key")
 	pin := filepath.Join(dir, "pin")
-	require.NoError(t, os.WriteFile(key, []byte(strings.Repeat("owned-retention-key-", 3)), 0600))
+	require.NoError(t, os.WriteFile(key, []byte(strings.Repeat("owned-retention-key-", 3)), 0o600))
 	t.Setenv("WEKNORA_ORIGINAL_BODY_JOURNAL_DIRECTORY", dir)
 	t.Setenv("WEKNORA_ORIGINAL_BODY_JOURNAL_KEY", key)
 	t.Setenv("WEKNORA_ORIGINAL_BODY_JOURNAL_PIN", pin)
@@ -38,17 +39,32 @@ func bodyActualFixture(t *testing.T, pg bool) (*enrichmentTestFixture, *reposito
 	inventoryKnownConfigurationOriginalBodyFixture(t, f.ctx, f.db, f.store)
 	return f, store
 }
+
 func runOriginalBodyActualTagProducer(t *testing.T, pg bool) {
 	f, store := bodyActualFixture(t, pg)
 	require.True(t, f.db.Migrator().HasTable("original_body_payloads"))
 	proof := repository.KnowledgeBuildInputProofFromContext(f.build)
 	require.NotNil(t, proof)
-	snapshot, e := f.store.CaptureKnowledgeBuildInputs(f.build, types.KnowledgeBuildInputCaptureRequest{TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: f.k.ID, ChunkIDs: []string{f.chunks[0].ID}, Expected: proof})
+	snapshot, e := f.store.CaptureKnowledgeBuildInputs(
+		f.build,
+		types.KnowledgeBuildInputCaptureRequest{
+			TenantID:        7,
+			KnowledgeBaseID: "kb",
+			KnowledgeID:     f.k.ID,
+			ChunkIDs:        []string{f.chunks[0].ID},
+			Expected:        proof,
+		},
+	)
 	require.NoError(t, e)
 	tag, e := f.store.CaptureKnowledgeAutoTagInputs(f.ctx, snapshot.Proof)
 	require.NoError(t, e)
 	var raw string
-	require.NoError(t, f.db.Raw("SELECT actual_inputs FROM knowledge_auto_tag_input_manifests WHERE manifest_id=?", tag.ManifestID).Scan(&raw).Error)
+	require.NoError(
+		t,
+		f.db.Raw("SELECT actual_inputs FROM knowledge_auto_tag_input_manifests WHERE manifest_id=?", tag.ManifestID).
+			Scan(&raw).
+			Error,
+	)
 	var headCount, payloadCount int64
 	require.NoError(t, f.db.Table("original_body_field_heads").Count(&headCount).Error)
 	require.NoError(t, f.db.Table("original_body_payloads").Count(&payloadCount).Error)
@@ -94,18 +110,36 @@ func runOriginalBodyActualTagProducer(t *testing.T, pg bool) {
 	require.NoError(t, f.db.Raw(query, body.ID).Scan(&bytes).Error)
 	require.Zero(t, bytes)
 	var receipts int64
-	require.NoError(t, f.db.Table("original_body_purge_receipts").Where("body_id=? AND after_bytes=0", body.ID).Count(&receipts).Error)
+	require.NoError(
+		t,
+		f.db.Table("original_body_purge_receipts").Where("body_id=? AND after_bytes=0", body.ID).Count(&receipts).Error,
+	)
 	require.Equal(t, int64(1), receipts)
-	fresh := &types.Knowledge{ID: "new-current-original", TenantID: 7, KnowledgeBaseID: "kb", Type: "manual", Title: "new human original", Description: "new independent current body", Metadata: types.JSON(`{}`), CustomMetadata: types.JSON(`{}`)}
-	_, e = f.store.CreateKnowledgeWithInput(repository.WithIndependentKnowledgeInput(f.ctx), fresh, map[string]string{"title": fresh.Title, "description": fresh.Description})
+	fresh := &types.Knowledge{
+		ID:              "new-current-original",
+		TenantID:        7,
+		KnowledgeBaseID: "kb",
+		Type:            "manual",
+		Title:           "new human original",
+		Description:     "new independent current body",
+		Metadata:        types.JSON(`{}`),
+		CustomMetadata:  types.JSON(`{}`),
+	}
+	_, e = f.store.CreateKnowledgeWithInput(
+		repository.WithIndependentKnowledgeInput(f.ctx),
+		fresh,
+		map[string]string{"title": fresh.Title, "description": fresh.Description},
+	)
 	require.NoError(t, e)
 	var read types.Knowledge
 	require.NoError(t, f.db.Where("id=?", fresh.ID).Take(&read).Error)
 	require.Equal(t, fresh.Description, read.Description)
 }
+
 func TestOriginalBodyActualSQLiteTagProducer(t *testing.T) {
 	runOriginalBodyActualTagProducer(t, false)
 }
+
 func TestPostgresOriginalBodyActualTagProducer(t *testing.T) {
 	runOriginalBodyActualTagProducer(t, true)
 }

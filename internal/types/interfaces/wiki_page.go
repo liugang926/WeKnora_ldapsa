@@ -74,7 +74,13 @@ type WikiPageService interface {
 	// means a 40k-page KB no longer pays O(N) transport + rendering cost
 	// on every index open. See /wiki/index handler + WikiBrowser.vue for
 	// the consumer.
-	GetIndexView(ctx context.Context, kbID string, pageTypes []string, limit int, cursor string) (*types.WikiIndexResponse, error)
+	GetIndexView(
+		ctx context.Context,
+		kbID string,
+		pageTypes []string,
+		limit int,
+		cursor string,
+	) (*types.WikiIndexResponse, error)
 
 	// GetGraph returns the link graph data for visualization. The caller
 	// supplies a WikiGraphRequest describing the desired slice of the graph
@@ -151,7 +157,13 @@ type WikiPageService interface {
 	// FindSimilarPages performs a pg_trgm similarity search over
 	// page titles. Used by the dedup pre-filter to surface candidate
 	// merge targets server-side.
-	FindSimilarPages(ctx context.Context, kbID string, query string, pageTypes []string, limit int) ([]*types.WikiPageLite, error)
+	FindSimilarPages(
+		ctx context.Context,
+		kbID string,
+		query string,
+		pageTypes []string,
+		limit int,
+	) ([]*types.WikiPageLite, error)
 
 	// FindPagesByNormalizedTitle returns non-archived pages of pageType whose
 	// display title matches identity after the same whitespace/case fold used
@@ -162,7 +174,12 @@ type WikiPageService interface {
 	// FindPagesByNormalizedTitles is the batched form of
 	// FindPagesByNormalizedTitle. identities are already whitespace-stripped
 	// and lowercased; empty entries are ignored.
-	FindPagesByNormalizedTitles(ctx context.Context, kbID, pageType string, identities []string) ([]*types.WikiPageLite, error)
+	FindPagesByNormalizedTitles(
+		ctx context.Context,
+		kbID,
+		pageType string,
+		identities []string,
+	) ([]*types.WikiPageLite, error)
 
 	// ListDistinctCategoryPaths returns the existing wiki folder paths (split
 	// into segments), capped at maxPaths. Used by wiki ingest's taxonomy
@@ -185,11 +202,24 @@ type WikiPageService interface {
 	GetFolder(ctx context.Context, kbID string, id string) (*types.WikiFolder, error)
 	// CreateFolder creates a new (initially empty) folder under parentID and
 	// returns it. Fails if a sibling with the same name already exists.
-	CreateFolder(ctx context.Context, kbID string, tenantID uint64, parentID string, name string) (*types.WikiFolder, error)
+	CreateFolder(
+		ctx context.Context,
+		kbID string,
+		tenantID uint64,
+		parentID string,
+		name string,
+	) (*types.WikiFolder, error)
 	// RenameOrMoveFolder renames and/or reparents a folder, recomputing the
 	// materialized path/depth of the whole subtree and the cached paths of
 	// every page underneath. Returns the updated folder.
-	RenameOrMoveFolder(ctx context.Context, kbID string, id string, newName string, newParentID string, moveParent bool) (*types.WikiFolder, error)
+	RenameOrMoveFolder(
+		ctx context.Context,
+		kbID string,
+		id string,
+		newName string,
+		newParentID string,
+		moveParent bool,
+	) (*types.WikiFolder, error)
 	// DeleteFolder removes an empty folder. Fails if it still contains pages
 	// or child folders (the UI must move or delete contents first).
 	DeleteFolder(ctx context.Context, kbID string, id string) error
@@ -220,7 +250,13 @@ type WikiPageService interface {
 	// (newest first, content omitted) plus the total snapshot count and the
 	// page's current version. The current version itself has no revision
 	// row — it lives in wiki_pages.
-	ListRevisions(ctx context.Context, kbID string, slug string, limit int, offset int) (*types.WikiPageRevisionListResponse, error)
+	ListRevisions(
+		ctx context.Context,
+		kbID string,
+		slug string,
+		limit int,
+		offset int,
+	) (*types.WikiPageRevisionListResponse, error)
 
 	// GetRevision returns one historical snapshot (content included).
 	GetRevision(ctx context.Context, kbID string, slug string, version int) (*types.WikiPageRevision, error)
@@ -281,7 +317,13 @@ type WikiPageRepository interface {
 	// (slug/title/summary only) for the given page_type plus the total
 	// non-archived count. Used by the structured index API so reads do not
 	// have to materialize TEXT content for every wiki_pages row.
-	ListByTypeLight(ctx context.Context, kbID string, pageType string, limit int, offset int) ([]types.WikiIndexEntry, int64, error)
+	ListByTypeLight(
+		ctx context.Context,
+		kbID string,
+		pageType string,
+		limit int,
+		offset int,
+	) ([]types.WikiIndexEntry, int64, error)
 
 	// ListBySourceRef retrieves all wiki pages that reference a given source knowledge ID.
 	ListBySourceRef(ctx context.Context, kbID string, sourceKnowledgeID string) ([]*types.WikiPage, error)
@@ -327,7 +369,13 @@ type WikiPageRepository interface {
 	// is most similar to the query under pg_trgm. `pageTypes` empty
 	// defaults to entity+concept. Used by the dedup pre-filter to
 	// surface candidate merge targets server-side.
-	FindSimilarPages(ctx context.Context, kbID string, query string, pageTypes []string, limit int) ([]*types.WikiPageLite, error)
+	FindSimilarPages(
+		ctx context.Context,
+		kbID string,
+		query string,
+		pageTypes []string,
+		limit int,
+	) ([]*types.WikiPageLite, error)
 
 	// FindPagesByNormalizedTitle returns non-archived pages of pageType whose
 	// whitespace-stripped, lowercased title equals identity.
@@ -335,7 +383,12 @@ type WikiPageRepository interface {
 
 	// FindPagesByNormalizedTitles is the batched form of
 	// FindPagesByNormalizedTitle.
-	FindPagesByNormalizedTitles(ctx context.Context, kbID, pageType string, identities []string) ([]*types.WikiPageLite, error)
+	FindPagesByNormalizedTitles(
+		ctx context.Context,
+		kbID,
+		pageType string,
+		identities []string,
+	) ([]*types.WikiPageLite, error)
 
 	// ListDistinctCategoryPaths returns the materialized paths of existing
 	// wiki folders (split into segments), capped at maxPaths. Used by the
@@ -406,7 +459,13 @@ type WikiPageRepository interface {
 
 	// ListRevisions returns snapshots for a page newest-first (content
 	// column omitted) plus the total snapshot count.
-	ListRevisions(ctx context.Context, kbID string, pageID string, limit int, offset int) ([]*types.WikiPageRevision, int64, error)
+	ListRevisions(
+		ctx context.Context,
+		kbID string,
+		pageID string,
+		limit int,
+		offset int,
+	) ([]*types.WikiPageRevision, int64, error)
 
 	// GetRevision returns one snapshot with content.
 	GetRevision(ctx context.Context, kbID string, pageID string, version int) (*types.WikiPageRevision, error)

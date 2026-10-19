@@ -6,6 +6,8 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"os"
+
 	"github.com/Tencent/WeKnora/internal/application/repository"
 	"github.com/Tencent/WeKnora/internal/database"
 	sqlite_vec "github.com/asg017/sqlite-vec-go-bindings/cgo"
@@ -13,11 +15,11 @@ import (
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
-	"os"
 )
 
 func main() {
-	mode := flag.String("mode", "verify", "migrate, upgrade-scopes, init, reconcile, or verify; run with app/readers stopped")
+	mode := flag.String("mode", "verify",
+		"migrate, upgrade-scopes, init, reconcile, or verify; run with app/readers stopped")
 	driver := flag.String("driver", os.Getenv("DB_DRIVER"), "postgres or sqlite")
 	flag.Parse()
 	dsn := os.Getenv("WEKNORA_ORIGINAL_BODY_MAINTENANCE_DSN")
@@ -58,7 +60,8 @@ func main() {
 	if e != nil {
 		fail("database handle unavailable")
 	}
-	defer sql.Close()
+	// Closing the DB pool is cleanup after all checked SQL operations.
+	defer func() { _ = sql.Close() }()
 	sql.SetMaxOpenConns(1)
 	if !db.Migrator().HasTable("original_body_journal_heads") {
 		fail("original body migration required")

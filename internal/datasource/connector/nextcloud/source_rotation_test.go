@@ -23,9 +23,10 @@ func TestSourceRotationSignsNewCommitAndOldAbortWithExactAck(t *testing.T) {
 		key := "rot_6e35904269aa489ebd9b8754bf5beee1"
 		bearer := "Bearer new-secret"
 		state := "committed"
-		if action == "abort" {
+		switch action {
+		case "abort":
 			key, bearer, state = "pair_old", "Bearer old-secret", "aborted"
-		} else if action == "finalize" {
+		case "finalize":
 			state = "finalized"
 		}
 		require.Equal(t, key, r.Header.Get("X-WeKnora-Key-Id"))
@@ -42,22 +43,31 @@ func TestSourceRotationSignsNewCommitAndOldAbortWithExactAck(t *testing.T) {
 			"binding_id": "dev-published", "instance_id": body["instance_id"],
 			"tenant_id": body["tenant_id"], "knowledge_base_id": body["knowledge_base_id"],
 			"data_source_id": body["data_source_id"], "old_key_id": "pair_old",
-			"new_key_id": key, "state": state}, "changed": true})
+			"new_key_id": key, "state": state,
+		}, "changed": true})
 	}))
 	defer server.Close()
 	allowHTTPTestOrigin(t, server.URL)
-	newCfg := &types.DataSourceConfig{Type: types.ConnectorTypeNextcloud,
+	newCfg := &types.DataSourceConfig{
+		Type:     types.ConnectorTypeNextcloud,
 		Settings: map[string]interface{}{"base_url": server.URL},
-		Credentials: map[string]interface{}{"token": "new-secret",
-			"key_id": "rot_6e35904269aa489ebd9b8754bf5beee1"},
-		ResourceIDs: []string{"dev-published"}}
-	oldCfg := &types.DataSourceConfig{Type: types.ConnectorTypeNextcloud,
+		Credentials: map[string]interface{}{
+			"token":  "new-secret",
+			"key_id": "rot_6e35904269aa489ebd9b8754bf5beee1",
+		},
+		ResourceIDs: []string{"dev-published"},
+	}
+	oldCfg := &types.DataSourceConfig{
+		Type:        types.ConnectorTypeNextcloud,
 		Settings:    map[string]interface{}{"base_url": server.URL},
 		Credentials: map[string]interface{}{"token": "old-secret", "key_id": "pair_old"},
-		ResourceIDs: []string{"dev-published"}}
-	rotation := SourceRotation{OperationID: "6e359042-69aa-489e-bd9b-8754bf5beee1",
+		ResourceIDs: []string{"dev-published"},
+	}
+	rotation := SourceRotation{
+		OperationID:     "6e359042-69aa-489e-bd9b-8754bf5beee1",
 		PairOperationID: "pair-op", InstanceID: "instance-1", BindingID: "dev-published",
-		TenantID: 7, KnowledgeBaseID: "kb-1", DataSourceID: "source-1"}
+		TenantID: 7, KnowledgeBaseID: "kb-1", DataSourceID: "source-1",
+	}
 	require.NoError(t, CommitSourceRotation(context.Background(), newCfg, rotation))
 	require.NoError(t, FinalizeSourceRotation(context.Background(), newCfg, rotation))
 	require.NoError(t, AbortSourceRotation(context.Background(), oldCfg, rotation))

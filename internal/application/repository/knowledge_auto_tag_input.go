@@ -19,15 +19,38 @@ type knowledgeAutoTagManifest struct {
 
 func (knowledgeAutoTagManifest) TableName() string { return "knowledge_auto_tag_input_manifests" }
 
-func (s *KnowledgeInputProvenanceStore) captureKnowledgeAutoTagInTx(tx *gorm.DB, proof *types.KnowledgeBuildInputProof) (*types.KnowledgeAutoTagInputSnapshot, error) {
+func (s *KnowledgeInputProvenanceStore) captureKnowledgeAutoTagInTx(
+	tx *gorm.DB,
+	proof *types.KnowledgeBuildInputProof,
+) (*types.KnowledgeAutoTagInputSnapshot, error) {
 	if proof == nil || proof.BodyDigest == "" || proof.Projection != "" {
 		return nil, types.ErrSourceLineageUnknown
 	}
-	original, err := s.captureKnowledgeBuildSnapshotInTx(tx, types.KnowledgeBuildInputCaptureRequest{TenantID: proof.TenantID, KnowledgeBaseID: proof.KnowledgeBaseID, KnowledgeID: proof.KnowledgeID, ChunkIDs: proof.ChunkIDs, Expected: proof}, true)
+	original, err := s.captureKnowledgeBuildSnapshotInTx(
+		tx,
+		types.KnowledgeBuildInputCaptureRequest{
+			TenantID:        proof.TenantID,
+			KnowledgeBaseID: proof.KnowledgeBaseID,
+			KnowledgeID:     proof.KnowledgeID,
+			ChunkIDs:        proof.ChunkIDs,
+			Expected:        proof,
+		},
+		true,
+	)
 	if err != nil {
 		return nil, err
 	}
-	result := &types.KnowledgeAutoTagInputSnapshot{Original: &types.KnowledgeAutoTagOriginalInput{Knowledge: original.Knowledge, KnowledgeBase: original.KnowledgeBase, Chunks: original.Chunks, Proof: original.Proof}, Tags: []*types.KnowledgeTag{}, TagProofs: []*types.KnowledgeCollectionAuxiliaryProof{}, Relations: []*types.KnowledgeTagRelation{}}
+	result := &types.KnowledgeAutoTagInputSnapshot{
+		Original: &types.KnowledgeAutoTagOriginalInput{
+			Knowledge:     original.Knowledge,
+			KnowledgeBase: original.KnowledgeBase,
+			Chunks:        original.Chunks,
+			Proof:         original.Proof,
+		},
+		Tags:      []*types.KnowledgeTag{},
+		TagProofs: []*types.KnowledgeCollectionAuxiliaryProof{},
+		Relations: []*types.KnowledgeTagRelation{},
+	}
 	kb := original.KnowledgeBase
 	k := original.Knowledge
 	if k.Channel == types.ConnectorTypeNextcloud {
@@ -44,10 +67,17 @@ func (s *KnowledgeInputProvenanceStore) captureKnowledgeAutoTagInTx(tx *gorm.DB,
 	if err != nil {
 		return nil, err
 	}
-	if err := tx.Model(&types.KnowledgeTag{}).Where("tenant_id = ? AND knowledge_base_id = ?", kb.TenantID, kb.ID).Count(&result.TotalTags).Error; err != nil {
+	if err := tx.Model(&types.KnowledgeTag{}).
+		Where("tenant_id = ? AND knowledge_base_id = ?", kb.TenantID, kb.ID).
+		Count(&result.TotalTags).
+		Error; err != nil {
 		return nil, err
 	}
-	if err := tx.Where("tenant_id = ? AND knowledge_base_id = ?", kb.TenantID, kb.ID).Order("sort_order ASC,created_at DESC,seq_id DESC").Limit(500).Find(&result.Tags).Error; err != nil {
+	if err := tx.Where("tenant_id = ? AND knowledge_base_id = ?", kb.TenantID, kb.ID).
+		Order("sort_order ASC,created_at DESC,seq_id DESC").
+		Limit(500).
+		Find(&result.Tags).
+		Error; err != nil {
 		return nil, err
 	}
 	result.TagListRevision, err = knowledgeDisplayRevision(tx, "tag-list", kb.ID)
@@ -57,7 +87,14 @@ func (s *KnowledgeInputProvenanceStore) captureKnowledgeAutoTagInTx(tx *gorm.DB,
 	lineages := []*types.SourceLineage{proof.SourceLineage}
 	for _, tag := range result.Tags {
 		for _, field := range []string{"name", "sort_order"} {
-			p, err := readKnowledgeDisplayOrigin(tx, "tag-"+field, tag.ID, tag.TenantID, tag.KnowledgeBaseID, tagDisplayFieldValue(tag, field))
+			p, err := readKnowledgeDisplayOrigin(
+				tx,
+				"tag-"+field,
+				tag.ID,
+				tag.TenantID,
+				tag.KnowledgeBaseID,
+				tagDisplayFieldValue(tag, field),
+			)
 			if err != nil {
 				return nil, err
 			}
@@ -73,7 +110,14 @@ func (s *KnowledgeInputProvenanceStore) captureKnowledgeAutoTagInTx(tx *gorm.DB,
 		ids = append(ids, relation.TagID)
 	}
 	if len(ids) > 0 {
-		result.RelationProof, err = readKnowledgeDisplayOrigin(tx, "relations", k.ID, k.TenantID, k.KnowledgeBaseID, ids)
+		result.RelationProof, err = readKnowledgeDisplayOrigin(
+			tx,
+			"relations",
+			k.ID,
+			k.TenantID,
+			k.KnowledgeBaseID,
+			ids,
+		)
 		if err != nil {
 			return nil, err
 		}
@@ -88,7 +132,15 @@ func (s *KnowledgeInputProvenanceStore) captureKnowledgeAutoTagInTx(tx *gorm.DB,
 			return nil, err
 		}
 		lineage, _ := types.NewCompleteSourceLineage()
-		result.RelationProof = &types.KnowledgeCollectionAuxiliaryProof{Kind: "relations", ID: k.ID, TenantID: k.TenantID, KnowledgeBaseID: k.KnowledgeBaseID, Revision: revision, Digest: digest, SourceLineage: lineage}
+		result.RelationProof = &types.KnowledgeCollectionAuxiliaryProof{
+			Kind:            "relations",
+			ID:              k.ID,
+			TenantID:        k.TenantID,
+			KnowledgeBaseID: k.KnowledgeBaseID,
+			Revision:        revision,
+			Digest:          digest,
+			SourceLineage:   lineage,
+		}
 	}
 	result.SourceLineage, err = types.UnionSourceLineage(lineages...)
 	if err != nil {
@@ -107,7 +159,10 @@ func autoTagSnapshotDigest(snapshot *types.KnowledgeAutoTagInputSnapshot) (strin
 
 // CaptureKnowledgeAutoTagInputs persists the exact current material and every
 // original influencing producer in one RR/SQLite transaction before the model.
-func (s *KnowledgeInputProvenanceStore) CaptureKnowledgeAutoTagInputs(ctx context.Context, proof *types.KnowledgeBuildInputProof) (*types.KnowledgeAutoTagInputSnapshot, error) {
+func (s *KnowledgeInputProvenanceStore) CaptureKnowledgeAutoTagInputs(
+	ctx context.Context,
+	proof *types.KnowledgeBuildInputProof,
+) (*types.KnowledgeAutoTagInputSnapshot, error) {
 	if err := s.RecheckKnowledgeBuildInputs(ctx, proof); err != nil {
 		return nil, err
 	}
@@ -134,7 +189,11 @@ func (s *KnowledgeInputProvenanceStore) CaptureKnowledgeAutoTagInputs(ctx contex
 		if authority == nil || authority.db != tx {
 			return types.ErrSourceLineageUnknown
 		}
-		if _, err := authority.authorizeOriginalKnowledgeProducerWrite(ctx, result.Original.KnowledgeBase, proof); err != nil {
+		if _, err := authority.authorizeOriginalKnowledgeProducerWrite(
+			ctx,
+			result.Original.KnowledgeBase,
+			proof,
+		); err != nil {
 			return err
 		}
 		result.ManifestID = uuid.NewString()
@@ -150,12 +209,27 @@ func (s *KnowledgeInputProvenanceStore) CaptureKnowledgeAutoTagInputs(ctx contex
 		if err != nil {
 			return err
 		}
-		return tx.Create(&knowledgeAutoTagManifest{ManifestID: result.ManifestID, TenantID: proof.TenantID, KnowledgeBaseID: proof.KnowledgeBaseID, KnowledgeID: proof.KnowledgeID, AdmissionID: proof.AdmissionID, InputDigest: result.InputDigest, ActualInputs: string(data), SourceLineage: string(lineage)}).Error
+		return tx.Create(
+			&knowledgeAutoTagManifest{
+				ManifestID:      result.ManifestID,
+				TenantID:        proof.TenantID,
+				KnowledgeBaseID: proof.KnowledgeBaseID,
+				KnowledgeID:     proof.KnowledgeID,
+				AdmissionID:     proof.AdmissionID,
+				InputDigest:     result.InputDigest,
+				ActualInputs:    string(data),
+				SourceLineage:   string(lineage),
+			},
+		).Error
 	}, options)
 	return result, err
 }
 
-func (s *KnowledgeInputProvenanceStore) recheckKnowledgeAutoTagInTx(tx *gorm.DB, ctx context.Context, expected *types.KnowledgeAutoTagInputSnapshot) (*types.SourceLineage, error) {
+func (s *KnowledgeInputProvenanceStore) recheckKnowledgeAutoTagInTx(
+	tx *gorm.DB,
+	ctx context.Context,
+	expected *types.KnowledgeAutoTagInputSnapshot,
+) (*types.SourceLineage, error) {
 	if expected == nil || expected.ManifestID == "" || expected.Original == nil || expected.Original.Proof == nil {
 		return nil, types.ErrSourceLineageUnknown
 	}
@@ -183,7 +257,9 @@ func (s *KnowledgeInputProvenanceStore) recheckKnowledgeAutoTagInTx(tx *gorm.DB,
 		return nil, ErrKnowledgeInputChanged
 	}
 	proof := saved.Original.Proof
-	if manifest.TenantID != proof.TenantID || manifest.KnowledgeBaseID != proof.KnowledgeBaseID || manifest.KnowledgeID != proof.KnowledgeID || manifest.AdmissionID != proof.AdmissionID {
+	if manifest.TenantID != proof.TenantID || manifest.KnowledgeBaseID != proof.KnowledgeBaseID ||
+		manifest.KnowledgeID != proof.KnowledgeID ||
+		manifest.AdmissionID != proof.AdmissionID {
 		return nil, ErrKnowledgeInputChanged
 	}
 	actual, err := s.captureKnowledgeAutoTagInTx(tx, proof)
@@ -220,23 +296,35 @@ func (s *KnowledgeInputProvenanceStore) recheckKnowledgeAutoTagInTx(tx *gorm.DB,
 	if authority == nil || authority.db != tx {
 		return nil, types.ErrSourceLineageUnknown
 	}
-	if _, err := authority.authorizeOriginalKnowledgeProducerWrite(ctx, actual.Original.KnowledgeBase, proof); err != nil {
+	if _, err := authority.authorizeOriginalKnowledgeProducerWrite(
+		ctx,
+		actual.Original.KnowledgeBase,
+		proof,
+	); err != nil {
 		return nil, err
 	}
 	return actual.SourceLineage, nil
 }
 
-func (s *KnowledgeInputProvenanceStore) RecheckKnowledgeAutoTagInputs(ctx context.Context, expected *types.KnowledgeAutoTagInputSnapshot) error {
+func (s *KnowledgeInputProvenanceStore) RecheckKnowledgeAutoTagInputs(
+	ctx context.Context,
+	expected *types.KnowledgeAutoTagInputSnapshot,
+) error {
 	// The trusted producer's exact lease is fenced against retirement in this
 	// transaction. Fence locking uses no-op SQL writes; it is not a public read.
 	options := &sql.TxOptions{}
 	if s.db.Dialector.Name() == "postgres" {
 		options.Isolation = sql.LevelRepeatableRead
 	}
-	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error { _, err := s.recheckKnowledgeAutoTagInTx(tx, ctx, expected); return err }, options)
+	return s.db.WithContext(ctx).
+		Transaction(func(tx *gorm.DB) error { _, err := s.recheckKnowledgeAutoTagInTx(tx, ctx, expected); return err }, options)
 }
 
-func WithKnowledgeAutoTagInput(ctx context.Context, reader *KnowledgeInputProvenanceStore, snapshot *types.KnowledgeAutoTagInputSnapshot) (context.Context, error) {
+func WithKnowledgeAutoTagInput(
+	ctx context.Context,
+	reader *KnowledgeInputProvenanceStore,
+	snapshot *types.KnowledgeAutoTagInputSnapshot,
+) (context.Context, error) {
 	if reader == nil || snapshot == nil || snapshot.Original == nil {
 		return ctx, types.ErrSourceLineageUnknown
 	}
@@ -248,5 +336,14 @@ func WithKnowledgeAutoTagInput(ctx context.Context, reader *KnowledgeInputProven
 	if json.Unmarshal(data, &copy) != nil {
 		return ctx, ErrKnowledgeInputChanged
 	}
-	return context.WithValue(ctx, knowledgeDisplayRequestKey{}, knowledgeDisplayRequest{Kind: "derived", Original: cloneKnowledgeInputProof(snapshot.Original.Proof), AutoTag: &copy, AutoTagReader: reader}), nil
+	return context.WithValue(
+		ctx,
+		knowledgeDisplayRequestKey{},
+		knowledgeDisplayRequest{
+			Kind:          "derived",
+			Original:      cloneKnowledgeInputProof(snapshot.Original.Proof),
+			AutoTag:       &copy,
+			AutoTagReader: reader,
+		},
+	), nil
 }

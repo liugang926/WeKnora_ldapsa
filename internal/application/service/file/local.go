@@ -2,6 +2,7 @@ package file
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -23,6 +24,15 @@ type localFileService struct {
 }
 
 const localScheme = "local://"
+
+// A failed writable close must not publish a successful storage result. Keep
+// both errors when cleanup follows an earlier write failure.
+func closeLocalWrite(file io.Closer, path *string, resultErr *error) {
+	if err := file.Close(); err != nil {
+		*path = ""
+		*resultErr = errors.Join(*resultErr, err)
+	}
+}
 
 // CheckConnectivity verifies the local storage directory exists and is accessible.
 func (s *localFileService) CheckConnectivity(ctx context.Context) error {
@@ -51,7 +61,7 @@ func NewLocalFileService(baseDir, externalURL string) interfaces.FileService {
 // Returns the full file path or an error if saving fails
 func (s *localFileService) SaveFile(ctx context.Context,
 	file *multipart.FileHeader, tenantID uint64, knowledgeID string,
-) (string, error) {
+) (storedPath string, resultErr error) {
 	if types.CapacityWriteSessionFromContext(ctx) != nil {
 		return s.saveCapacityFile(ctx, file, tenantID, knowledgeID)
 	}
@@ -84,7 +94,7 @@ func (s *localFileService) SaveFile(ctx context.Context,
 		logger.Errorf(ctx, "Failed to open source file: %v", err)
 		return "", fmt.Errorf("failed to open file: %w", err)
 	}
-	defer src.Close()
+	defer func() { _ = src.Close() }() // Read-only source; no pending writes to commit.
 
 	// Create destination file for writing
 	logger.Info(ctx, "Creating destination file")
@@ -92,13 +102,13 @@ func (s *localFileService) SaveFile(ctx context.Context,
 	if err != nil {
 		return "", err
 	}
-	defer pathLock.Close()
+	defer closeLocalWrite(pathLock, &storedPath, &resultErr)
 	dst, err := s.createPhysicalFile(filePath)
 	if err != nil {
 		logger.Errorf(ctx, "Failed to create destination file: %v", err)
 		return "", fmt.Errorf("failed to create file: %w", err)
 	}
-	defer dst.Close()
+	defer closeLocalWrite(dst, &storedPath, &resultErr)
 
 	// Copy content from source to destination
 	logger.Info(ctx, "Copying file content")
@@ -143,7 +153,7 @@ func (s *localFileService) GetFile(ctx context.Context, filePath string) (io.Rea
 // DeleteFile removes a file from the local file system
 // Returns an error if deletion fails
 // 路径必须在 baseDir 下，防止路径遍历（如 ../../）
-func (s *localFileService) DeleteFile(ctx context.Context, filePath string) error {
+func (s *localFileService) DeleteFile(ctx context.Context, filePath string) (resultErr error) {
 	logger.Infof(ctx, "Deleting file: %s", filePath)
 
 	candidate := s.normalizePathForBase(filePath)
@@ -157,7 +167,7 @@ func (s *localFileService) DeleteFile(ctx context.Context, filePath string) erro
 	if lockErr != nil {
 		return lockErr
 	}
-	defer pathLock.Close()
+	defer func() { resultErr = errors.Join(resultErr, pathLock.Close()) }()
 	err = os.Remove(resolved)
 	if err != nil {
 		logger.Errorf(ctx, "Failed to delete file: %v", err)
@@ -174,7 +184,7 @@ func (s *localFileService) DeleteFile(ctx context.Context, filePath string) erro
 // never affects it. Returns ErrCrossBackendCopy when srcPath is not a local path.
 func (s *localFileService) CopyFile(ctx context.Context,
 	srcPath string, tenantID uint64, knowledgeID string,
-) (string, error) {
+) (storedPath string, resultErr error) {
 	// Only local paths are accepted. A provider scheme other than local://
 	// (e.g. s3://, minio://) means a cross-backend copy, which this service
 	// does not support. Legacy bare/absolute paths have no scheme and pass.
@@ -208,18 +218,18 @@ func (s *localFileService) CopyFile(ctx context.Context,
 	if err != nil {
 		return "", fmt.Errorf("failed to open source file: %w", err)
 	}
-	defer src.Close()
+	defer func() { _ = src.Close() }() // Read-only source; no pending writes to commit.
 
 	pathLock, err := s.physicalPathFence(dstPath)
 	if err != nil {
 		return "", err
 	}
-	defer pathLock.Close()
+	defer closeLocalWrite(pathLock, &storedPath, &resultErr)
 	dst, err := s.createPhysicalFile(dstPath)
 	if err != nil {
 		return "", fmt.Errorf("failed to create destination file: %w", err)
 	}
-	defer dst.Close()
+	defer closeLocalWrite(dst, &storedPath, &resultErr)
 
 	if _, err := io.Copy(dst, src); err != nil {
 		return "", fmt.Errorf("failed to copy file content: %w", err)
@@ -234,8 +244,21 @@ func (s *localFileService) CopyFile(ctx context.Context,
 // SaveBytes saves bytes data to a file and returns the file path
 // temp parameter is ignored for local storage (no auto-expiration support)
 // fileName 仅允许安全文件名，禁止路径遍历（如 ../../）
-func (s *localFileService) SaveBytes(ctx context.Context, data []byte, tenantID uint64, fileName string, temp bool) (string, error) {
-	logger.Infof(ctx, "Saving bytes data: fileName=%s, size=%d, tenantID=%d, temp=%v", fileName, len(data), tenantID, temp)
+func (s *localFileService) SaveBytes(
+	ctx context.Context,
+	data []byte,
+	tenantID uint64,
+	fileName string,
+	temp bool,
+) (storedPath string, resultErr error) {
+	logger.Infof(
+		ctx,
+		"Saving bytes data: fileName=%s, size=%d, tenantID=%d, temp=%v",
+		fileName,
+		len(data),
+		tenantID,
+		temp,
+	)
 
 	safeName, err := secutils.SafeFileName(fileName)
 	if err != nil {
@@ -261,12 +284,12 @@ func (s *localFileService) SaveBytes(ctx context.Context, data []byte, tenantID 
 	if lockErr != nil {
 		return "", lockErr
 	}
-	defer pathLock.Close()
+	defer closeLocalWrite(pathLock, &storedPath, &resultErr)
 	dst, createErr := s.createPhysicalFile(filePath)
 	if createErr != nil {
 		return "", createErr
 	}
-	defer dst.Close()
+	defer closeLocalWrite(dst, &storedPath, &resultErr)
 	if _, err := dst.Write(data); err != nil {
 		logger.Errorf(ctx, "Failed to write file: %v", err)
 		return "", fmt.Errorf("failed to write file: %w", err)

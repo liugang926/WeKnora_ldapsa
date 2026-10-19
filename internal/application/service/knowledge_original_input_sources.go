@@ -19,20 +19,39 @@ type knowledgeOriginalInputSourceVerifier struct {
 	checkBuild func(context.Context, *types.DataSourceConfig, string, string, int64, string, string) error
 }
 
-func ConfigureDataSourceOriginalInputSources(source interfaces.DataSourceService, store *repository.KnowledgeInputProvenanceStore) {
+func ConfigureDataSourceOriginalInputSources(
+	source interfaces.DataSourceService,
+	store *repository.KnowledgeInputProvenanceStore,
+) {
 	if s, ok := source.(*DataSourceService); ok {
 		s.sourceInputs = store
 	}
 }
 
-func NewKnowledgeOriginalInputSourceVerifier(store *repository.KnowledgeInputProvenanceStore, guard *access.NextcloudSourceLineageGuard, sources access.NextcloudDataSourceLookup, paths ...access.NextcloudSourcePathResolver) repository.KnowledgeOriginalInputSourceVerifier {
-	verifier := &knowledgeOriginalInputSourceVerifier{store: store, public: guard, sources: sources, checkBuild: nextcloud.CheckCurrentPublication}
+func NewKnowledgeOriginalInputSourceVerifier(
+	store *repository.KnowledgeInputProvenanceStore,
+	guard *access.NextcloudSourceLineageGuard,
+	sources access.NextcloudDataSourceLookup,
+	paths ...access.NextcloudSourcePathResolver,
+) repository.KnowledgeOriginalInputSourceVerifier {
+	verifier := &knowledgeOriginalInputSourceVerifier{
+		store:      store,
+		public:     guard,
+		sources:    sources,
+		checkBuild: nextcloud.CheckCurrentPublication,
+	}
 	if len(paths) == 1 {
 		verifier.paths = paths[0]
 	}
 	return verifier
 }
-func (v *knowledgeOriginalInputSourceVerifier) BeginKnowledgeConfigurationSources(ctx context.Context, tenant uint64, kb string, lineage *types.SourceLineage) (context.Context, func(), error) {
+
+func (v *knowledgeOriginalInputSourceVerifier) BeginKnowledgeConfigurationSources(
+	ctx context.Context,
+	tenant uint64,
+	kb string,
+	lineage *types.SourceLineage,
+) (context.Context, func(), error) {
 	noop := func() {}
 	if v == nil || v.store == nil || lineage.RequireComplete() != nil {
 		return ctx, noop, types.ErrSourceLineageUnknown
@@ -66,16 +85,40 @@ func (v *knowledgeOriginalInputSourceVerifier) BeginKnowledgeConfigurationSource
 	return current, func() { repository.CloseScopedOnboardingConfigurationReads(ctx) }, nil
 }
 
-func (v *knowledgeOriginalInputSourceVerifier) CheckKnowledgeConfigurationSources(ctx context.Context, tenant uint64, kb string, lineage *types.SourceLineage) error {
-	if handled, err := repository.CheckScopedOnboardingConfigurationSources(ctx, tenant, kb, lineage, false); handled || err != nil {
+func (v *knowledgeOriginalInputSourceVerifier) CheckKnowledgeConfigurationSources(
+	ctx context.Context,
+	tenant uint64,
+	kb string,
+	lineage *types.SourceLineage,
+) error {
+	if handled, err := repository.CheckScopedOnboardingConfigurationSources(
+		ctx,
+		tenant,
+		kb,
+		lineage,
+		false,
+	); handled ||
+		err != nil {
 		return err
 	}
 	if v == nil || v.public == nil {
 		return types.ErrSourceLineageUnknown
 	}
-	return v.public.Check(ctx, lineage, access.LineageReadScope{Targets: types.SearchTargets{&types.SearchTarget{Type: types.SearchTargetTypeKnowledgeBase, TenantID: tenant, KnowledgeBaseID: kb}}})
+	return v.public.Check(
+		ctx,
+		lineage,
+		access.LineageReadScope{
+			Targets: types.SearchTargets{
+				&types.SearchTarget{Type: types.SearchTargetTypeKnowledgeBase, TenantID: tenant, KnowledgeBaseID: kb},
+			},
+		},
+	)
 }
-func (v *knowledgeOriginalInputSourceVerifier) CheckKnowledgeOriginalInputSources(ctx context.Context, proof *types.KnowledgeBuildInputProof) error {
+
+func (v *knowledgeOriginalInputSourceVerifier) CheckKnowledgeOriginalInputSources(
+	ctx context.Context,
+	proof *types.KnowledgeBuildInputProof,
+) error {
 	if v == nil || v.store == nil || proof == nil || proof.SourceLineage.RequireComplete() != nil {
 		return types.ErrSourceLineageUnknown
 	}
@@ -94,7 +137,8 @@ func (v *knowledgeOriginalInputSourceVerifier) CheckKnowledgeOriginalInputSource
 		remaining := []types.SourceIdentity{}
 		found := false
 		for _, saved := range lineage.Sources {
-			if saved.TenantID != proof.TenantID || saved.KnowledgeBaseID != proof.KnowledgeBaseID || saved.KnowledgeID != proof.KnowledgeID {
+			if saved.TenantID != proof.TenantID || saved.KnowledgeBaseID != proof.KnowledgeBaseID ||
+				saved.KnowledgeID != proof.KnowledgeID {
 				remaining = append(remaining, saved)
 				continue
 			}
@@ -106,7 +150,10 @@ func (v *knowledgeOriginalInputSourceVerifier) CheckKnowledgeOriginalInputSource
 			if err != nil {
 				return err
 			}
-			if ds == nil || ds.ID != saved.DataSourceID || ds.TenantID != saved.TenantID || ds.KnowledgeBaseID != saved.KnowledgeBaseID || ds.Type != types.ConnectorTypeNextcloud || ds.Status != types.DataSourceStatusActive {
+			if ds == nil || ds.ID != saved.DataSourceID || ds.TenantID != saved.TenantID ||
+				ds.KnowledgeBaseID != saved.KnowledgeBaseID ||
+				ds.Type != types.ConnectorTypeNextcloud ||
+				ds.Status != types.DataSourceStatusActive {
 				return access.ErrNextcloudPublicationDenied
 			}
 			cfg, err := ds.ParseConfig()
@@ -124,12 +171,26 @@ func (v *knowledgeOriginalInputSourceVerifier) CheckKnowledgeOriginalInputSource
 			path := k.GetMetadata()["nextcloud_path"]
 			if v.paths != nil {
 				var err error
-				path, err = v.paths.ResolveCurrentSourcePath(ctx, saved.TenantID, saved.KnowledgeBaseID, saved.DataSourceID, path)
+				path, err = v.paths.ResolveCurrentSourcePath(
+					ctx,
+					saved.TenantID,
+					saved.KnowledgeBaseID,
+					saved.DataSourceID,
+					path,
+				)
 				if err != nil {
 					return err
 				}
 			}
-			if err := v.checkBuild(types.WithNextcloudContentRevision(ctx, k.GetMetadata()["nextcloud_content_revision"]), cfg, saved.InstanceID, saved.BindingID, id, saved.ETag, path); err != nil {
+			if err := v.checkBuild(
+				types.WithNextcloudContentRevision(ctx, k.GetMetadata()["nextcloud_content_revision"]),
+				cfg,
+				saved.InstanceID,
+				saved.BindingID,
+				id,
+				saved.ETag,
+				path,
+			); err != nil {
 				return err
 			}
 		}
@@ -137,7 +198,14 @@ func (v *knowledgeOriginalInputSourceVerifier) CheckKnowledgeOriginalInputSource
 			return access.ErrNextcloudPublicationDenied
 		}
 		lineage.Sources = remaining
-		if handled, err := repository.CheckScopedOnboardingConfigurationSources(ctx, proof.TenantID, proof.KnowledgeBaseID, lineage, true); handled || err != nil {
+		if handled, err := repository.CheckScopedOnboardingConfigurationSources(
+			ctx,
+			proof.TenantID,
+			proof.KnowledgeBaseID,
+			lineage,
+			true,
+		); handled ||
+			err != nil {
 			return err
 		}
 		// This exact staging source uses a machine build lease and signed source
@@ -150,5 +218,17 @@ func (v *knowledgeOriginalInputSourceVerifier) CheckKnowledgeOriginalInputSource
 	if v.public == nil {
 		return access.ErrNextcloudPublicationUnavailable
 	}
-	return v.public.Check(ctx, lineage, access.LineageReadScope{Targets: types.SearchTargets{&types.SearchTarget{Type: types.SearchTargetTypeKnowledgeBase, TenantID: proof.TenantID, KnowledgeBaseID: proof.KnowledgeBaseID}}})
+	return v.public.Check(
+		ctx,
+		lineage,
+		access.LineageReadScope{
+			Targets: types.SearchTargets{
+				&types.SearchTarget{
+					Type:            types.SearchTargetTypeKnowledgeBase,
+					TenantID:        proof.TenantID,
+					KnowledgeBaseID: proof.KnowledgeBaseID,
+				},
+			},
+		},
+	)
 }

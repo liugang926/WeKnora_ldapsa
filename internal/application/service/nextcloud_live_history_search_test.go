@@ -36,7 +36,12 @@ func (h *documentLiveHistory) checkKeywordSearch(t *testing.T, answer string) fu
 	})
 	require.NoError(t, err)
 	require.NotEqual(t, h.user.ID, control.ID)
-	require.NotContains(t, strings.ToLower(h.user.Content), "bob", "answer-only search must actually match the model-produced body")
+	require.NotContains(
+		t,
+		strings.ToLower(h.user.Content),
+		"bob",
+		"answer-only search must actually match the model-produced body",
+	)
 
 	search := func(ctx context.Context, query string, sessionIDs []string) *types.MessageSearchResult {
 		current := WithMessageMaterialOutputBoundary(ctx)
@@ -72,13 +77,21 @@ func (h *documentLiveHistory) checkKeywordSearch(t *testing.T, answer string) fu
 			require.Empty(t, group.SessionTitle, "a current title lineage header alone must not certify title bytes")
 			switch group.SessionID {
 			case h.session.ID:
-				require.False(t, revoked, "revoked answer and its matching question must be absent from cross-session search")
+				require.False(
+					t,
+					revoked,
+					"revoked answer and its matching question must be absent from cross-session search",
+				)
 				checkPair(group)
 				foundSource = true
 			case controlSession.ID:
 				require.Equal(t, h.user.RequestID, group.RequestID)
 				require.Equal(t, controlQuestion, group.QueryContent)
-				require.Empty(t, group.AnswerContent, "a same-request-id answer from a different session must never be attached")
+				require.Empty(
+					t,
+					group.AnswerContent,
+					"a same-request-id answer from a different session must never be attached",
+				)
 				foundControl = true
 			default:
 				t.Fatalf("unexpected cross-session search result session")
@@ -123,16 +136,38 @@ func (h *documentLiveHistory) checkKeywordSearch(t *testing.T, answer string) fu
 		"mutating grouped search output cannot leave original-row guards sufficient to publish")
 	retainedResult.Items[0].AnswerContent = originalProjection
 	require.NoError(t, CheckMessageMaterialOutputBoundary(retained))
-	foreign := types.WithCaller(h.ctx, types.Caller{TenantID: h.session.TenantID, UserID: "live-history-search-other-person", Role: types.TenantRoleViewer})
+	foreign := types.WithCaller(
+		h.ctx,
+		types.Caller{
+			TenantID: h.session.TenantID,
+			UserID:   "live-history-search-other-person",
+			Role:     types.TenantRoleViewer,
+		},
+	)
 	foreign = context.WithValue(foreign, types.UserIDContextKey, "live-history-search-other-person")
-	foreign = types.WithPrincipal(foreign, types.Principal{Type: types.PrincipalWebUser, ID: "live-history-search-other-person"})
+	foreign = types.WithPrincipal(
+		foreign,
+		types.Principal{Type: types.PrincipalWebUser, ID: "live-history-search-other-person"},
+	)
 	foreignResults := search(foreign, h.user.Content, nil)
-	require.Zero(t, foreignResults.Total, "cross-session search must remain restricted to the authenticated person's owned conversations")
-	t.Log("REAL_HISTORY_SEARCH real persisted RAG answer and question partner passed across owned sessions; shared request IDs remain separate")
+	require.Zero(
+		t,
+		foreignResults.Total,
+		"cross-session search must remain restricted to the authenticated person's owned conversations",
+	)
+	t.Log(
+		"REAL_HISTORY_SEARCH real persisted RAG answer and question partner passed across owned sessions; shared request IDs remain separate",
+	)
 	return func() {
-		require.Error(t, CheckMessageMaterialOutputBoundary(retained), "an already-loaded search answer must recheck actual current NC authority at output")
+		require.Error(
+			t,
+			CheckMessageMaterialOutputBoundary(retained),
+			"an already-loaded search answer must recheck actual current NC authority at output",
+		)
 		checkOwned(true)
 		CloseMessageMaterialOutputBoundary(retained)
-		t.Log("REAL_HISTORY_SEARCH actual NC share deletion filtered both direct answer hits and question partners; independent owned raw user history remains readable")
+		t.Log(
+			"REAL_HISTORY_SEARCH actual NC share deletion filtered both direct answer hits and question partners; independent owned raw user history remains readable",
+		)
 	}
 }

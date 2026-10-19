@@ -45,6 +45,7 @@ func (s *auxiliaryMetadataService) join(ctx context.Context, rows []*types.Knowl
 	s.last = rows
 	return nil
 }
+
 func (s *auxiliaryMetadataService) GetKnowledgeByID(ctx context.Context, id string) (*types.Knowledge, error) {
 	k, err := s.KnowledgeService.GetKnowledgeByID(ctx, id)
 	if err != nil {
@@ -53,7 +54,12 @@ func (s *auxiliaryMetadataService) GetKnowledgeByID(ctx context.Context, id stri
 	err = s.join(ctx, []*types.Knowledge{k})
 	return k, err
 }
-func (s *auxiliaryMetadataService) GetKnowledgeBatch(ctx context.Context, tenant uint64, ids []string) ([]*types.Knowledge, error) {
+
+func (s *auxiliaryMetadataService) GetKnowledgeBatch(
+	ctx context.Context,
+	tenant uint64,
+	ids []string,
+) ([]*types.Knowledge, error) {
 	rows, err := s.KnowledgeService.GetKnowledgeBatch(ctx, tenant, ids)
 	if err != nil {
 		return nil, err
@@ -66,7 +72,9 @@ func serveAuxiliaryMetadataHTTP(h *KnowledgeHandler, batch bool) *httptest.Respo
 	gin.SetMode(gin.TestMode)
 	r := documentHandlerRouter()
 	r.Use(func(c *gin.Context) {
-		c.Request = c.Request.WithContext(types.WithPrincipal(c.Request.Context(), types.Principal{Type: types.PrincipalWebUser, ID: "user"}))
+		c.Request = c.Request.WithContext(
+			types.WithPrincipal(c.Request.Context(), types.Principal{Type: types.PrincipalWebUser, ID: "user"}),
+		)
 		c.Next()
 	})
 	url := "/knowledge/match"
@@ -90,27 +98,86 @@ func TestKnowledgeOutputAuxiliaryActualHTTPExplicitMetadata(t *testing.T) {
 				knowledge := repository.NewKnowledgeRepository(db)
 				factory := func(tx *gorm.DB) *repository.KnowledgeInputProvenanceStore {
 					actual := repository.NewKnowledgeInputProvenanceStore(tx)
-					repository.ConfigureKnowledgeInputActorGroupAccess(actual, service.NewGroupAccessService(repository.NewGroupAccessRepository(tx)))
+					repository.ConfigureKnowledgeInputActorGroupAccess(
+						actual,
+						service.NewGroupAccessService(repository.NewGroupAccessRepository(tx)),
+					)
 					return actual
 				}
 				repository.ConfigureKnowledgeDisplayInputWriters(store, tags, knowledge, factory)
 				ctx := collectionHumanInputContext(7)
-				tag := &types.KnowledgeTag{ID: "tag", TenantID: 7, KnowledgeBaseID: "kb", Name: "original consumed tag", Color: "blue", SortOrder: 2}
-				createCtx := repository.WithIndependentKnowledgeTagCreateInput(ctx, "kb", tag.Name, tag.Color, tag.SortOrder)
+				tag := &types.KnowledgeTag{
+					ID:              "tag",
+					TenantID:        7,
+					KnowledgeBaseID: "kb",
+					Name:            "original consumed tag",
+					Color:           "blue",
+					SortOrder:       2,
+				}
+				createCtx := repository.WithIndependentKnowledgeTagCreateInput(
+					ctx,
+					"kb",
+					tag.Name,
+					tag.Color,
+					tag.SortOrder,
+				)
 				if change == "legacy_tag" {
 					createCtx = repository.WithIndependentKnowledgeInput(ctx)
 				}
 				require.NoError(t, tags.Create(createCtx, tag))
-				require.NoError(t, knowledge.SetKnowledgeTags(repository.WithIndependentKnowledgeTagAssignmentInput(ctx, map[string][]string{"match": {tag.ID}}), "match", []string{tag.ID}))
-				joined := &auxiliaryMetadataService{KnowledgeService: h.kgService, db: db, name: change == "original_tags_and_kb_name" || change == "name_aba_before_output"}
+				require.NoError(
+					t,
+					knowledge.SetKnowledgeTags(
+						repository.WithIndependentKnowledgeTagAssignmentInput(
+							ctx,
+							map[string][]string{"match": {tag.ID}},
+						),
+						"match",
+						[]string{tag.ID},
+					),
+				)
+				joined := &auxiliaryMetadataService{
+					KnowledgeService: h.kgService,
+					db:               db,
+					name:             change == "original_tags_and_kb_name" || change == "name_aba_before_output",
+				}
 				h.kgService = joined
-				guard := access.NewNextcloudSourceLineageGuard(nil, collectionHTTPKB{db: db}, shares, agents, groups, nil, store)
+				guard := access.NewNextcloudSourceLineageGuard(
+					nil,
+					collectionHTTPKB{db: db},
+					shares,
+					agents,
+					groups,
+					nil,
+					store,
+				)
 				ConfigureKnowledgeHandlerOutputLineage(h, service.NewKnowledgeOutputAuthorizer(store, guard))
 				if change == "unconsumed_name_and_unrelated_legacy" {
-					require.NoError(t, db.Model(&types.KnowledgeBase{}).Where("id='kb'").Update("name", "unproved unconsumed name").Error)
-					require.NoError(t, db.Create(&types.Knowledge{ID: "unrelated-legacy", TenantID: 7, KnowledgeBaseID: "kb", Type: "manual", Title: "unrelated unconsumed legacy body", Channel: "web", CustomMetadata: types.JSON(`{}`)}).Error)
+					require.NoError(
+						t,
+						db.Model(&types.KnowledgeBase{}).
+							Where("id='kb'").
+							Update("name", "unproved unconsumed name").
+							Error,
+					)
+					require.NoError(
+						t,
+						db.Create(
+							&types.Knowledge{
+								ID:              "unrelated-legacy",
+								TenantID:        7,
+								KnowledgeBaseID: "kb",
+								Type:            "manual",
+								Title:           "unrelated unconsumed legacy body",
+								Channel:         "web",
+								CustomMetadata:  types.JSON(`{}`),
+							},
+						).Error,
+					)
 				}
-				if change == "tag_aba_before_output" || change == "name_aba_before_output" || change == "relation_aba_before_output" || change == "wire_alias_before_output" {
+				if change == "tag_aba_before_output" || change == "name_aba_before_output" ||
+					change == "relation_aba_before_output" ||
+					change == "wire_alias_before_output" {
 					fired := false
 					groups.hook = func(call int) {
 						if fired || call < 5 {
@@ -119,15 +186,33 @@ func TestKnowledgeOutputAuxiliaryActualHTTPExplicitMetadata(t *testing.T) {
 						fired = true
 						switch change {
 						case "tag_aba_before_output":
-							require.NoError(t, db.Model(&types.KnowledgeTag{}).Where("id='tag'").Update("name", "changed").Error)
-							require.NoError(t, db.Model(&types.KnowledgeTag{}).Where("id='tag'").Update("name", tag.Name).Error)
+							require.NoError(
+								t,
+								db.Model(&types.KnowledgeTag{}).Where("id='tag'").Update("name", "changed").Error,
+							)
+							require.NoError(
+								t,
+								db.Model(&types.KnowledgeTag{}).Where("id='tag'").Update("name", tag.Name).Error,
+							)
 						case "name_aba_before_output":
-							require.NoError(t, db.Model(&types.KnowledgeBase{}).Where("id='kb'").Update("name", "changed").Error)
-							require.NoError(t, db.Model(&types.KnowledgeBase{}).Where("id='kb'").Update("name", "original human KB").Error)
+							require.NoError(
+								t,
+								db.Model(&types.KnowledgeBase{}).Where("id='kb'").Update("name", "changed").Error,
+							)
+							require.NoError(
+								t,
+								db.Model(&types.KnowledgeBase{}).
+									Where("id='kb'").
+									Update("name", "original human KB").
+									Error,
+							)
 						case "relation_aba_before_output":
 							var relation types.KnowledgeTagRelation
 							require.NoError(t, db.Where("knowledge_id='match'").Take(&relation).Error)
-							require.NoError(t, db.Where("knowledge_id='match'").Delete(&types.KnowledgeTagRelation{}).Error)
+							require.NoError(
+								t,
+								db.Where("knowledge_id='match'").Delete(&types.KnowledgeTagRelation{}).Error,
+							)
 							require.NoError(t, db.Create(&relation).Error)
 						case "wire_alias_before_output":
 							joined.last[0].Tags[0].Name = "unaccounted wire tag"
@@ -135,7 +220,8 @@ func TestKnowledgeOutputAuxiliaryActualHTTPExplicitMetadata(t *testing.T) {
 					}
 				}
 				w := serveAuxiliaryMetadataHTTP(h, batch)
-				positive := change == "original_tags" || change == "original_tags_and_kb_name" || change == "unconsumed_name_and_unrelated_legacy"
+				positive := change == "original_tags" || change == "original_tags_and_kb_name" ||
+					change == "unconsumed_name_and_unrelated_legacy"
 				if positive {
 					require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 					require.Contains(t, w.Body.String(), "original consumed tag")

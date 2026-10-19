@@ -18,7 +18,10 @@ func (t *ListDocumentsTool) SetRAGChunkSnapshotReader(reader interfaces.RAGChunk
 // Enumerate bounded candidate IDs, hydrate every actual metadata row, then
 // filter/sort/page/count those snapshots. Old titles and DB totals do not
 // become authenticated output by attaching a current file identity later.
-func (t *ListDocumentsTool) ExecuteSourceLineage(ctx context.Context, args json.RawMessage) (result *types.ToolResult, err error) {
+func (t *ListDocumentsTool) ExecuteSourceLineage(
+	ctx context.Context,
+	args json.RawMessage,
+) (result *types.ToolResult, err error) {
 	turn := types.RAGSourceLineageFromContext(ctx)
 	if turn == nil || t.snapshotReader == nil || t.knowledgeService == nil {
 		return nil, ErrToolSourceLineageUnavailable
@@ -65,7 +68,8 @@ func (t *ListDocumentsTool) ExecuteSourceLineage(ctx context.Context, args json.
 	var actual []*types.Knowledge
 	seen := map[string]bool{}
 	for _, candidate := range candidates {
-		if candidate == nil || seen[candidate.ID] || candidate.KnowledgeBaseID != kbID || candidate.TenantID != t.searchTargets.GetTenantIDForKB(kbID) {
+		if candidate == nil || seen[candidate.ID] || candidate.KnowledgeBaseID != kbID ||
+			candidate.TenantID != t.searchTargets.GetTenantIDForKB(kbID) {
 			return nil, ErrToolSourceLineageUnavailable
 		}
 		seen[candidate.ID] = true
@@ -78,7 +82,11 @@ func (t *ListDocumentsTool) ExecuteSourceLineage(ctx context.Context, args json.
 		}
 		capture := &documentLineageCapture{guard: guard, lineage: independentToolInput()}
 		captureCtx := context.WithValue(ctx, documentCaptureContextKey{}, capture)
-		hydrator := &ReadDocumentTool{knowledgeService: t.knowledgeService, searchTargets: t.searchTargets, snapshotReader: t.snapshotReader}
+		hydrator := &ReadDocumentTool{
+			knowledgeService: t.knowledgeService,
+			searchTargets:    t.searchTargets,
+			snapshotReader:   t.snapshotReader,
+		}
 		snapshot, err := hydrator.hydrateDocumentInputs(captureCtx, candidate, nil)
 		if err != nil {
 			return nil, err
@@ -119,16 +127,50 @@ func (t *ListDocumentsTool) ExecuteSourceLineage(ctx context.Context, args json.
 	start = min(start, count)
 	end := min(start+pageSize, count)
 	var output strings.Builder
-	fmt.Fprintf(&output, "<documents knowledge_base_id=\"%s\" total=\"%d\" page=\"%d\" page_size=\"%d\">\n", xmlEscape(kbID), count, page, pageSize)
+	fmt.Fprintf(
+		&output,
+		"<documents knowledge_base_id=\"%s\" total=\"%d\" page=\"%d\" page_size=\"%d\">\n",
+		xmlEscape(kbID),
+		count,
+		page,
+		pageSize,
+	)
 	documents := make([]map[string]any, 0, end-start)
 	for _, k := range filtered[start:end] {
 		// Generated descriptions and arbitrary metadata have separate writer
 		// contracts; this covered projection exposes actual file metadata only.
-		fmt.Fprintf(&output, "<document knowledge_id=\"%s\" title=\"%s\" file_name=\"%s\" file_type=\"%s\" />\n", xmlEscape(k.ID), xmlEscape(k.Title), xmlEscape(k.FileName), xmlEscape(k.FileType))
-		documents = append(documents, map[string]any{"knowledge_id": k.ID, "title": k.Title, "type": k.Type, "source": k.Source, "file_name": k.FileName, "file_type": k.FileType, "file_size": k.FileSize, "parse_status": k.ParseStatus, "is_faq": false})
+		fmt.Fprintf(
+			&output,
+			"<document knowledge_id=\"%s\" title=\"%s\" file_name=\"%s\" file_type=\"%s\" />\n",
+			xmlEscape(k.ID),
+			xmlEscape(k.Title),
+			xmlEscape(k.FileName),
+			xmlEscape(k.FileType),
+		)
+		documents = append(
+			documents,
+			map[string]any{
+				"knowledge_id": k.ID,
+				"title":        k.Title,
+				"type":         k.Type,
+				"source":       k.Source,
+				"file_name":    k.FileName,
+				"file_type":    k.FileType,
+				"file_size":    k.FileSize,
+				"parse_status": k.ParseStatus,
+				"is_faq":       false,
+			},
+		)
 	}
 	output.WriteString("</documents>")
-	data := map[string]any{"display_type": "document_info", "knowledge_base_id": kbID, "documents": documents, "total_docs": count, "page": page, "page_size": pageSize}
+	data := map[string]any{
+		"display_type":      "document_info",
+		"knowledge_base_id": kbID,
+		"documents":         documents,
+		"total_docs":        count,
+		"page":              page,
+		"page_size":         pageSize,
+	}
 	if keyword != "" {
 		data["keyword"] = keyword
 	}

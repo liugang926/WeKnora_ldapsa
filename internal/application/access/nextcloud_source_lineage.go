@@ -11,14 +11,26 @@ import (
 )
 
 type NextcloudLineageSnapshotLookup interface {
-	ResolveNextcloudSourceLineage(context.Context, uint64, string, string) (*types.Knowledge, types.SourceIdentity, error)
+	ResolveNextcloudSourceLineage(
+		context.Context,
+		uint64,
+		string,
+		string,
+	) (*types.Knowledge, types.SourceIdentity, error)
 	RecheckNextcloudSourceLineage(context.Context, *types.SourceLineage) (bool, error)
 }
 type LineageKnowledgeBaseLookup interface {
 	GetKnowledgeBaseByIDOnly(context.Context, string) (*types.KnowledgeBase, error)
 }
 type LineageGroupPermissionLookup interface {
-	EffectivePermission(context.Context, uint64, types.ResourceType, string, types.ResourceAction, time.Time) (types.EffectiveResourcePermission, error)
+	EffectivePermission(
+		context.Context,
+		uint64,
+		types.ResourceType,
+		string,
+		types.ResourceAction,
+		time.Time,
+	) (types.EffectiveResourcePermission, error)
 }
 
 type LineageCurrentReadActorLookup interface {
@@ -46,10 +58,23 @@ type NextcloudSourceLineageGuard struct {
 	currentReadActor LineageCurrentReadActorLookup
 }
 
-func NewNextcloudSourceLineageGuard(snapshots NextcloudLineageSnapshotLookup, kbs LineageKnowledgeBaseLookup,
-	shares KBShareLookup, agents AgentShareLookup, groups LineageGroupPermissionLookup, publication *NextcloudPublicationGuard, current ...LineageCurrentReadActorLookup,
+func NewNextcloudSourceLineageGuard(
+	snapshots NextcloudLineageSnapshotLookup,
+	kbs LineageKnowledgeBaseLookup,
+	shares KBShareLookup,
+	agents AgentShareLookup,
+	groups LineageGroupPermissionLookup,
+	publication *NextcloudPublicationGuard,
+	current ...LineageCurrentReadActorLookup,
 ) *NextcloudSourceLineageGuard {
-	g := &NextcloudSourceLineageGuard{snapshots: snapshots, kbs: kbs, shares: shares, agents: agents, groups: groups, publication: publication}
+	g := &NextcloudSourceLineageGuard{
+		snapshots:   snapshots,
+		kbs:         kbs,
+		shares:      shares,
+		agents:      agents,
+		groups:      groups,
+		publication: publication,
+	}
 	g.currentReadActor, _ = snapshots.(LineageCurrentReadActorLookup)
 	if len(current) == 1 {
 		g.currentReadActor = current[0]
@@ -57,7 +82,11 @@ func NewNextcloudSourceLineageGuard(snapshots NextcloudLineageSnapshotLookup, kb
 	return g
 }
 
-func (g *NextcloudSourceLineageGuard) Check(ctx context.Context, lineage *types.SourceLineage, scope LineageReadScope) error {
+func (g *NextcloudSourceLineageGuard) Check(
+	ctx context.Context,
+	lineage *types.SourceLineage,
+	scope LineageReadScope,
+) error {
 	if lineage.RequireComplete() != nil {
 		return ErrNextcloudPublicationDenied
 	}
@@ -83,11 +112,14 @@ func (g *NextcloudSourceLineageGuard) Check(ctx context.Context, lineage *types.
 	default:
 		return ErrNextcloudPublicationDenied
 	}
-	if principal.Type == types.PrincipalWebUser && (strings.TrimSpace(caller.UserID) == "" || principal.ID != caller.UserID || types.IsSyntheticUserID(caller.UserID)) {
+	if principal.Type == types.PrincipalWebUser &&
+		(strings.TrimSpace(caller.UserID) == "" || principal.ID != caller.UserID || types.IsSyntheticUserID(caller.UserID)) {
 		return ErrNextcloudPublicationDenied
 	}
 	if len(lineage.Sources) != 0 {
-		if principal.Type != types.PrincipalWebUser || principal.ID != caller.UserID || strings.TrimSpace(caller.UserID) == "" || types.IsSyntheticUserID(caller.UserID) {
+		if principal.Type != types.PrincipalWebUser || principal.ID != caller.UserID ||
+			strings.TrimSpace(caller.UserID) == "" ||
+			types.IsSyntheticUserID(caller.UserID) {
 			return ErrNextcloudPublicationDenied
 		}
 		if _, machine := types.TenantAPIKeyScopeFromContext(ctx); machine {
@@ -104,7 +136,14 @@ func (g *NextcloudSourceLineageGuard) Check(ctx context.Context, lineage *types.
 			return ErrNextcloudPublicationDenied
 		}
 		controlled[saved.KnowledgeBaseID] = saved.TenantID
-		targets = append(targets, &types.SearchTarget{Type: types.SearchTargetTypeKnowledgeBase, TenantID: saved.TenantID, KnowledgeBaseID: saved.KnowledgeBaseID})
+		targets = append(
+			targets,
+			&types.SearchTarget{
+				Type:            types.SearchTargetTypeKnowledgeBase,
+				TenantID:        saved.TenantID,
+				KnowledgeBaseID: saved.KnowledgeBaseID,
+			},
+		)
 	}
 	if err := g.checkCurrentKBReads(ctx, caller, targets, controlled, scope); err != nil {
 		return err
@@ -118,23 +157,37 @@ func (g *NextcloudSourceLineageGuard) Check(ctx context.Context, lineage *types.
 		}
 	}
 	for _, saved := range lineage.Sources {
-		knowledge, current, err := g.snapshots.ResolveNextcloudSourceLineage(ctx, saved.TenantID, saved.KnowledgeBaseID, saved.KnowledgeID)
+		knowledge, current, err := g.snapshots.ResolveNextcloudSourceLineage(
+			ctx,
+			saved.TenantID,
+			saved.KnowledgeBaseID,
+			saved.KnowledgeID,
+		)
 		if err != nil {
 			return apperrors.NewProtocolError(fmt.Errorf(
 				"%w: trusted lineage lookup",
 				ErrNextcloudPublicationUnavailable,
 			), fmt.Sprintf("%s: trusted lineage lookup", apperrors.PublicMessage(ErrNextcloudPublicationUnavailable)))
 		}
-		if current != saved || current.Validate() != nil || knowledge == nil || knowledge.ID != saved.KnowledgeID || knowledge.TenantID != saved.TenantID ||
-			knowledge.KnowledgeBaseID != saved.KnowledgeBaseID || knowledge.Channel != types.ConnectorTypeNextcloud || knowledge.DeletedAt.Valid ||
-			knowledge.ParseStatus != types.ParseStatusCompleted || knowledge.EnableStatus != "enabled" {
+		if current != saved || current.Validate() != nil || knowledge == nil || knowledge.ID != saved.KnowledgeID ||
+			knowledge.TenantID != saved.TenantID ||
+			knowledge.KnowledgeBaseID != saved.KnowledgeBaseID ||
+			knowledge.Channel != types.ConnectorTypeNextcloud ||
+			knowledge.DeletedAt.Valid ||
+			knowledge.ParseStatus != types.ParseStatusCompleted ||
+			knowledge.EnableStatus != "enabled" {
 			return ErrNextcloudPublicationDenied
 		}
 		if err := g.publication.CheckKnowledge(ctx, knowledge); err != nil {
 			return err
 		}
 		// Catch a local version/fence change while directory/Nextcloud calls ran.
-		_, after, err := g.snapshots.ResolveNextcloudSourceLineage(ctx, saved.TenantID, saved.KnowledgeBaseID, saved.KnowledgeID)
+		_, after, err := g.snapshots.ResolveNextcloudSourceLineage(
+			ctx,
+			saved.TenantID,
+			saved.KnowledgeBaseID,
+			saved.KnowledgeID,
+		)
 		if err != nil {
 			return apperrors.NewProtocolError(fmt.Errorf(
 				"%w: trusted lineage recheck",
@@ -180,7 +233,12 @@ func (g *NextcloudSourceLineageGuard) Check(ctx context.Context, lineage *types.
 
 // Resolve performs both trusted identity resolution and current authorization.
 // Producers must still union every actual input, not just displayed citations.
-func (g *NextcloudSourceLineageGuard) Resolve(ctx context.Context, tenantID uint64, kbID, knowledgeID string, scope LineageReadScope) (*types.SourceLineage, error) {
+func (g *NextcloudSourceLineageGuard) Resolve(
+	ctx context.Context,
+	tenantID uint64,
+	kbID, knowledgeID string,
+	scope LineageReadScope,
+) (*types.SourceLineage, error) {
 	if g == nil || g.snapshots == nil {
 		return types.UnknownSourceLineage(), ErrNextcloudPublicationUnavailable
 	}
@@ -204,8 +262,12 @@ func (g *NextcloudSourceLineageGuard) Resolve(ctx context.Context, tenantID uint
 	return lineage, nil
 }
 
-func (g *NextcloudSourceLineageGuard) checkCurrentKBReads(ctx context.Context, caller types.Caller, targets types.SearchTargets,
-	controlled map[string]uint64, scope LineageReadScope,
+func (g *NextcloudSourceLineageGuard) checkCurrentKBReads(
+	ctx context.Context,
+	caller types.Caller,
+	targets types.SearchTargets,
+	controlled map[string]uint64,
+	scope LineageReadScope,
 ) error {
 	// A selected shared Agent supplies configuration/system input even when a
 	// turn returns no KB target. Source-empty does not exempt its access check.
@@ -217,7 +279,13 @@ func (g *NextcloudSourceLineageGuard) checkCurrentKBReads(ctx context.Context, c
 			if g.agents == nil {
 				return ErrNextcloudPublicationUnavailable
 			}
-			agent, err := g.agents.GetSharedAgentForTenant(ctx, caller.TenantID, caller.Role, scope.AgentID, scope.AgentTenantID)
+			agent, err := g.agents.GetSharedAgentForTenant(
+				ctx,
+				caller.TenantID,
+				caller.Role,
+				scope.AgentID,
+				scope.AgentTenantID,
+			)
 			if err != nil {
 				return ErrNextcloudPublicationUnavailable
 			}
@@ -228,7 +296,14 @@ func (g *NextcloudSourceLineageGuard) checkCurrentKBReads(ctx context.Context, c
 		if g.groups == nil {
 			return ErrNextcloudPublicationUnavailable
 		}
-		use, err := g.groups.EffectivePermission(ctx, scope.AgentTenantID, types.GroupResourceTypeAgent, scope.AgentID, types.ResourceActionUse, time.Now().UTC())
+		use, err := g.groups.EffectivePermission(
+			ctx,
+			scope.AgentTenantID,
+			types.GroupResourceTypeAgent,
+			scope.AgentID,
+			types.ResourceActionUse,
+			time.Now().UTC(),
+		)
 		if err != nil {
 			return ErrNextcloudPublicationUnavailable
 		}
@@ -278,11 +353,18 @@ func (g *NextcloudSourceLineageGuard) checkCurrentKBReads(ctx context.Context, c
 			if g.agents == nil || scope.AgentTenantID == 0 {
 				return ErrNextcloudPublicationUnavailable
 			}
-			agent, err := g.agents.GetSharedAgentForTenant(ctx, caller.TenantID, caller.Role, scope.AgentID, scope.AgentTenantID)
+			agent, err := g.agents.GetSharedAgentForTenant(
+				ctx,
+				caller.TenantID,
+				caller.Role,
+				scope.AgentID,
+				scope.AgentTenantID,
+			)
 			if err != nil {
 				return ErrNextcloudPublicationUnavailable
 			}
-			allowed = agent != nil && agent.ID == scope.AgentID && agent.TenantID == scope.AgentTenantID && types.SharedAgentIncludesKB(agent, kb)
+			allowed = agent != nil && agent.ID == scope.AgentID && agent.TenantID == scope.AgentTenantID &&
+				types.SharedAgentIncludesKB(agent, kb)
 		} else if !allowed && g.agents != nil {
 			var err error
 			allowed, err = g.agents.TenantCanAccessKBViaSomeSharedAgent(ctx, caller.TenantID, caller.Role, kb)
@@ -298,7 +380,14 @@ func (g *NextcloudSourceLineageGuard) checkCurrentKBReads(ctx context.Context, c
 			return ErrNextcloudPublicationUnavailable
 		}
 		if g.groups != nil {
-			grant, err := g.groups.EffectivePermission(ctx, kb.TenantID, types.GroupResourceTypeKnowledgeBase, kb.ID, types.ResourceActionRead, time.Now().UTC())
+			grant, err := g.groups.EffectivePermission(
+				ctx,
+				kb.TenantID,
+				types.GroupResourceTypeKnowledgeBase,
+				kb.ID,
+				types.ResourceActionRead,
+				time.Now().UTC(),
+			)
 			if err != nil {
 				return ErrNextcloudPublicationUnavailable
 			}

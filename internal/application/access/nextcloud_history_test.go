@@ -23,7 +23,10 @@ type historicalSourceStub struct {
 	err  error
 }
 
-func (s historicalSourceStub) FindByKnowledgeBaseIncludingDeleted(_ context.Context, kbID string) ([]*types.DataSource, error) {
+func (s historicalSourceStub) FindByKnowledgeBaseIncludingDeleted(
+	_ context.Context,
+	kbID string,
+) ([]*types.DataSource, error) {
 	return s.byKB[kbID], s.err
 }
 
@@ -39,8 +42,11 @@ func TestNextcloudHistoryGuardRechecksSavedReference(t *testing.T) {
 		sources:   historicalSourceStub{}, publication: publication,
 	}
 	message := &types.Message{
-		Role: "assistant", Content: "saved source answer",
-		KnowledgeReferences: types.References{{KnowledgeID: knowledge.ID, KnowledgeChannel: types.ConnectorTypeNextcloud}},
+		Role:    "assistant",
+		Content: "saved source answer",
+		KnowledgeReferences: types.References{
+			{KnowledgeID: knowledge.ID, KnowledgeChannel: types.ConnectorTypeNextcloud},
+		},
 	}
 	if err := history.CheckMessage(ctx, message); err != nil {
 		t.Fatalf("current source grant should allow saved answer: %v", err)
@@ -148,18 +154,26 @@ type globallyMarkedLiveSources struct{ historicalSourceStub }
 func (globallyMarkedLiveSources) HasEverNextcloudSourceGlobally(context.Context) (bool, error) {
 	return true, nil
 }
+
 func TestNextcloudLiveAgentWithoutHistoryPreservesOrdinaryAnswer(t *testing.T) {
 	sources := globallyMarkedLiveSources{}
 	guard := &NextcloudHistoryGuard{sources: sources, instanceSources: sources}
 	ctx := types.WithCaller(context.Background(), types.Caller{TenantID: 12, UserID: "person"})
-	message := &types.Message{Role: "assistant", AgentID: "agent", AgentTenantID: 12, ExecutionContext: types.MessageExecutionContext{AgentKBSelectionMode: "none"}}
+	message := &types.Message{
+		Role:             "assistant",
+		AgentID:          "agent",
+		AgentTenantID:    12,
+		ExecutionContext: types.MessageExecutionContext{AgentKBSelectionMode: "none"},
+	}
 	if err := guard.CheckLiveMessage(ctx, message); err != nil {
 		t.Fatalf("ordinary live no-history turn denied: %v", err)
 	}
 	if err := guard.CheckMessage(ctx, message); !errors.Is(err, ErrNextcloudPublicationDenied) {
 		t.Fatalf("saved same shape must remain blocked: %v", err)
 	}
-	message.AgentSteps = types.AgentSteps{{ToolCalls: []types.ToolCall{{ID: types.PipelineToolCallIDPrefix + "step", Name: "search_knowledge"}}}}
+	message.AgentSteps = types.AgentSteps{
+		{ToolCalls: []types.ToolCall{{ID: types.PipelineToolCallIDPrefix + "step", Name: "search_knowledge"}}},
+	}
 	if err := guard.CheckMessage(ctx, message); err != nil {
 		t.Fatalf("ordinary synthetic KnowledgeQA timeline denied: %v", err)
 	}

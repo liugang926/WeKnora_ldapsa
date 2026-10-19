@@ -69,7 +69,8 @@ func (h *NextcloudSourcePairingHandler) BeginIndexedWithdrawal(c *gin.Context) {
 	status, err := h.repo.RefreshIndexedWithdrawalInventory(c.Request.Context(), row)
 	if err != nil {
 		c.JSON(http.StatusAccepted, gin.H{"withdrawal": repository.NextcloudIndexedWithdrawalStatus{
-			NextcloudIndexedWithdrawal: row, LogicalWithdrawn: true}, "error": "inventory_retry_required"})
+			NextcloudIndexedWithdrawal: row, LogicalWithdrawn: true,
+		}, "error": "inventory_retry_required"})
 		return
 	}
 	c.JSON(http.StatusAccepted, gin.H{"withdrawal": status})

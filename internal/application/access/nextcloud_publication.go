@@ -219,8 +219,15 @@ func (g *NextcloudPublicationGuard) CheckKnowledge(ctx context.Context, knowledg
 	if err != nil {
 		return ErrNextcloudPublicationDenied
 	}
-	decision, err := g.authorize(types.WithNextcloudContentRevision(ctx, importedRevision), config, instanceID, bindingID,
-		currentIdentity.DirectoryID, currentIdentity.ObjectGUID, fileID)
+	decision, err := g.authorize(
+		types.WithNextcloudContentRevision(ctx, importedRevision),
+		config,
+		instanceID,
+		bindingID,
+		currentIdentity.DirectoryID,
+		currentIdentity.ObjectGUID,
+		fileID,
+	)
 	if err != nil {
 		return apperrors.NewProtocolError(fmt.Errorf(
 			"%w: source check failed: %v",
@@ -266,7 +273,15 @@ func (g *NextcloudPublicationGuard) CheckKnowledge(ctx context.Context, knowledg
 		if err != nil {
 			return ErrNextcloudPublicationUnavailable
 		}
-		if err := g.checkPath(types.WithNextcloudContentRevision(ctx, importedRevision), config, instanceID, bindingID, fileID, importedETag, path); err != nil {
+		if err := g.checkPath(
+			types.WithNextcloudContentRevision(ctx, importedRevision),
+			config,
+			instanceID,
+			bindingID,
+			fileID,
+			importedETag,
+			path,
+		); err != nil {
 			return ErrNextcloudPublicationDenied
 		}
 	}
@@ -405,7 +420,11 @@ func publicationMetadataString(metadata map[string]json.RawMessage, key string) 
 // CheckSourceRoot gates KB labels and metadata before a complete document
 // listing exists, including an empty root. It retains the real principal and
 // NC/LDAPS checks; a target Owner/Admin or cached grant cannot bypass them.
-func (g *NextcloudPublicationGuard) CheckSourceRoot(ctx context.Context, ds *types.DataSource, instance, binding string) error {
+func (g *NextcloudPublicationGuard) CheckSourceRoot(
+	ctx context.Context,
+	ds *types.DataSource,
+	instance, binding string,
+) error {
 	if err := g.checkSourceControls(ctx, instance); err != nil {
 		return err
 	}
@@ -422,7 +441,14 @@ func (g *NextcloudPublicationGuard) CheckSourceRoot(ctx context.Context, ds *typ
 		return ErrNextcloudPublicationUnavailable
 	}
 	cfg.Type = ds.Type
-	if err := nextcloud.AuthorizeCurrentRoot(ctx, cfg, instance, binding, identity.DirectoryID, identity.ObjectGUID); err != nil {
+	if err := nextcloud.AuthorizeCurrentRoot(
+		ctx,
+		cfg,
+		instance,
+		binding,
+		identity.DirectoryID,
+		identity.ObjectGUID,
+	); err != nil {
 		return ErrNextcloudPublicationDenied
 	}
 	return g.checkSourceControls(ctx, instance)

@@ -12,7 +12,10 @@ func sameReadActorSelectors(before, after context.Context) bool {
 	callerAfter, capturedAfter := after.Value(types.CallerContextKey).(types.Caller)
 	principalBefore, principalCapturedBefore := before.Value(types.PrincipalContextKey).(types.Principal)
 	principalAfter, principalCapturedAfter := after.Value(types.PrincipalContextKey).(types.Principal)
-	if !capturedBefore || !capturedAfter || !principalCapturedBefore || !principalCapturedAfter || callerBefore.TenantID != callerAfter.TenantID || callerBefore.UserID != callerAfter.UserID || principalBefore != principalAfter {
+	if !capturedBefore || !capturedAfter || !principalCapturedBefore || !principalCapturedAfter ||
+		callerBefore.TenantID != callerAfter.TenantID ||
+		callerBefore.UserID != callerAfter.UserID ||
+		principalBefore != principalAfter {
 		return false
 	}
 	executionBefore, executionCaptured := types.TenantIDFromContext(before)
@@ -22,7 +25,8 @@ func sameReadActorSelectors(before, after context.Context) bool {
 	}
 	keyBefore, keyCapturedBefore := types.TenantAPIKeyScopeFromContext(before)
 	keyAfter, keyCapturedAfter := types.TenantAPIKeyScopeFromContext(after)
-	return keyCapturedBefore == keyCapturedAfter && (!keyCapturedBefore || keyBefore.KeyID == keyAfter.KeyID && keyBefore.ScopeType == keyAfter.ScopeType)
+	return keyCapturedBefore == keyCapturedAfter &&
+		(!keyCapturedBefore || keyBefore.KeyID == keyAfter.KeyID && keyBefore.ScopeType == keyAfter.ScopeType)
 }
 
 func (g *NextcloudSourceLineageGuard) refreshCurrentReadActor(ctx context.Context) (context.Context, error) {

@@ -19,18 +19,36 @@ import (
 
 func TestLiveSSEProducerErrorInitializationTimeoutNeverWritesUnadmittedControl(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	h := &Handler{messageService: &liveHistoryMessageService{}, streamManager: &stagedLiveStream{events: []interfaces.StreamEvent{{Type: types.ResponseTypeAgentQuery, Content: "UNADMITTED QUERY SECRET"}}}}
+	h := &Handler{
+		messageService: &liveHistoryMessageService{},
+		streamManager: &stagedLiveStream{
+			events: []interfaces.StreamEvent{{Type: types.ResponseTypeAgentQuery, Content: "UNADMITTED QUERY SECRET"}},
+		},
+	}
 	message := &types.Message{Role: "assistant", RequestID: "request"}
 	router := gin.New()
 	router.GET("/stream", func(c *gin.Context) {
 		ctx, attach, check, close := applicationservice.BeginMessageMaterialHTTPBoundary(c.Request.Context())
 		defer close()
 		require.ErrorIs(t, check(), applicationservice.ErrMessageMaterialHTTPInitializing)
-		phase := &liveMaterialWritePhase{MaterialCheck: check, InitializationDeadline: time.Now().Add(150 * time.Millisecond)}
+		phase := &liveMaterialWritePhase{
+			MaterialCheck:          check,
+			InitializationDeadline: time.Now().Add(150 * time.Millisecond),
+		}
 		ctx = context.WithValue(attach(ctx), liveMaterialWritePhaseKey{}, phase)
 		c.Writer = &nativeSavedReplayWriter{ResponseWriter: c.Writer, ctx: ctx, check: check}
 		rewriter := storageurl.NewStreamRewriter(storageurl.NewRequestRewriter(ctx, storageurl.ModeHandle, nil, nil))
-		h.handleAgentEventsForSSE(ctx, c, "session", "assistant", "request", event.NewEventBus(), false, rewriter, message)
+		h.handleAgentEventsForSSE(
+			ctx,
+			c,
+			"session",
+			"assistant",
+			"request",
+			event.NewEventBus(),
+			false,
+			rewriter,
+			message,
+		)
 	})
 	server := httptest.NewServer(router)
 	defer server.Close()

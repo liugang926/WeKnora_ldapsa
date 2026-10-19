@@ -33,14 +33,18 @@ func TestNextcloudSourceHealthRequiresAdminSessionAndScopesTenant(t *testing.T) 
 	require.NoError(t, db.Exec(`CREATE TABLE nextcloud_event_connections (connection_id TEXT,
 		tenant_id INTEGER, datasource_id TEXT, nextcloud_instance_id TEXT,
 		binding_id TEXT, created_at DATETIME)`).Error)
-	ds := &types.DataSource{ID: "health-source", TenantID: 7,
+	ds := &types.DataSource{
+		ID: "health-source", TenantID: 7,
 		KnowledgeBaseID: "health-kb", Type: types.ConnectorTypeNextcloud,
-		Status: types.DataSourceStatusActive, Config: []byte(`{"secret":"private-machine-token"}`)}
+		Status: types.DataSourceStatusActive, Config: []byte(`{"secret":"private-machine-token"}`),
+	}
 	require.NoError(t, db.Create(ds).Error)
-	pair := &repository.NextcloudSourcePairing{OperationID: uuid.NewString(),
-		TenantID: 7, KnowledgeBaseID: "health-kb", DataSourceID: ds.ID,
+	pair := &repository.NextcloudSourcePairing{
+		OperationID: uuid.NewString(),
+		TenantID:    7, KnowledgeBaseID: "health-kb", DataSourceID: ds.ID,
 		InstanceID: "instance", BindingID: "binding", State: "active",
-		BaseURL: "https://private.example.test"}
+		BaseURL: "https://private.example.test",
+	}
 	require.NoError(t, db.Create(pair).Error)
 	dsService := &stubDataSourceService{getDataSource: func(ctx context.Context, id string) (*types.DataSource, error) {
 		var row types.DataSource

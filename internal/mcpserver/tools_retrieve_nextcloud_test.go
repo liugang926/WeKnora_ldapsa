@@ -108,10 +108,14 @@ func (s *permissiveDocumentsForMCP) CheckKnowledgePublication(_ context.Context,
 
 func TestMCPListDocumentsNeverTrustsPermissiveCheckerForNextcloud(t *testing.T) {
 	service := &permissiveDocumentsForMCP{pagedDocumentsForMCP: &pagedDocumentsForMCP{docs: []*types.Knowledge{
-		{ID: "source-channel", TenantID: 1, KnowledgeBaseID: "kb-1", Channel: types.ConnectorTypeNextcloud,
-			Title: "private title"},
-		{ID: "source-metadata", TenantID: 1, KnowledgeBaseID: "kb-1", Title: "another private title",
-			Metadata: types.JSON(`{"nextcloud_file_id":"42"}`)},
+		{
+			ID: "source-channel", TenantID: 1, KnowledgeBaseID: "kb-1", Channel: types.ConnectorTypeNextcloud,
+			Title: "private title",
+		},
+		{
+			ID: "source-metadata", TenantID: 1, KnowledgeBaseID: "kb-1", Title: "another private title",
+			Metadata: types.JSON(`{"nextcloud_file_id":"42"}`),
+		},
 		{ID: "ordinary", TenantID: 1, KnowledgeBaseID: "kb-1", Title: "public title"},
 	}}}
 	srv := &Server{knowledgeService: service}
@@ -127,8 +131,14 @@ func TestMCPListDocumentsNeverTrustsPermissiveCheckerForNextcloud(t *testing.T) 
 func TestMCPListDocumentsFiltersNextcloudBeforePagination(t *testing.T) {
 	service := &pagedDocumentsForMCP{docs: []*types.Knowledge{
 		{ID: "ordinary-1", TenantID: 1, KnowledgeBaseID: "kb-1", Title: "first"},
-		{ID: "secret", TenantID: 1, KnowledgeBaseID: "kb-1", Channel: types.ConnectorTypeNextcloud,
-			Title: "secret Nextcloud title", Metadata: types.JSON(`{"datasource_id":"source-1","nextcloud_file_id":"42"}`)},
+		{
+			ID:              "secret",
+			TenantID:        1,
+			KnowledgeBaseID: "kb-1",
+			Channel:         types.ConnectorTypeNextcloud,
+			Title:           "secret Nextcloud title",
+			Metadata:        types.JSON(`{"datasource_id":"source-1","nextcloud_file_id":"42"}`),
+		},
 		{ID: "ordinary-2", TenantID: 1, KnowledgeBaseID: "kb-1", Title: "second"},
 	}}
 	srv := &Server{knowledgeService: service}
@@ -146,8 +156,10 @@ func TestMCPListDocumentsFiltersNextcloudBeforePagination(t *testing.T) {
 
 func TestMCPListDocumentsUsesMachineCallerForProductionChecker(t *testing.T) {
 	service := &checkedDocumentsForMCP{pagedDocumentsForMCP: &pagedDocumentsForMCP{docs: []*types.Knowledge{
-		{ID: "secret", TenantID: 1, KnowledgeBaseID: "kb-1", Channel: types.ConnectorTypeNextcloud,
-			Title: "secret Nextcloud title"},
+		{
+			ID: "secret", TenantID: 1, KnowledgeBaseID: "kb-1", Channel: types.ConnectorTypeNextcloud,
+			Title: "secret Nextcloud title",
+		},
 		{ID: "ordinary", TenantID: 1, KnowledgeBaseID: "kb-1", Title: "public title"},
 	}}}
 	srv := &Server{knowledgeService: service}

@@ -7,7 +7,11 @@ import (
 
 // ConfigureKnowledgeInputProvenance wires actual producer capture and writer
 // capabilities. They do not classify old rows or authorize caller grants.
-func ConfigureKnowledgeInputProvenance(knowledge interfaces.KnowledgeService, reader interfaces.KnowledgeBuildInputReader, writer interfaces.KnowledgeInputWriter) {
+func ConfigureKnowledgeInputProvenance(
+	knowledge interfaces.KnowledgeService,
+	reader interfaces.KnowledgeBuildInputReader,
+	writer interfaces.KnowledgeInputWriter,
+) {
 	if impl, ok := knowledge.(*knowledgeService); ok {
 		impl.knowledgeInputs = reader
 		impl.knowledgeInputWriter = writer
@@ -15,7 +19,10 @@ func ConfigureKnowledgeInputProvenance(knowledge interfaces.KnowledgeService, re
 	}
 }
 
-func ConfigureKnowledgeBaseInputProvenance(base interfaces.KnowledgeBaseService, writer interfaces.KnowledgeBaseInputWriter) {
+func ConfigureKnowledgeBaseInputProvenance(
+	base interfaces.KnowledgeBaseService,
+	writer interfaces.KnowledgeBaseInputWriter,
+) {
 	if impl, ok := base.(*knowledgeBaseService); ok {
 		impl.knowledgeInputWriter = writer
 	}

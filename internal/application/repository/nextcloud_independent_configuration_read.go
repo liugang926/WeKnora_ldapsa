@@ -35,7 +35,12 @@ type NextcloudIndependentConfigurationRead struct {
 	closed     bool
 }
 
-func (s *KnowledgeInputProvenanceStore) BeginScopedIndependentConfigurationRead(ctx context.Context, tenant uint64, kb string, lineage *types.SourceLineage) (*NextcloudIndependentConfigurationRead, error) {
+func (s *KnowledgeInputProvenanceStore) BeginScopedIndependentConfigurationRead(
+	ctx context.Context,
+	tenant uint64,
+	kb string,
+	lineage *types.SourceLineage,
+) (*NextcloudIndependentConfigurationRead, error) {
 	if s == nil || s.db == nil || ctx == nil || lineage.RequireComplete() != nil || len(lineage.Sources) != 0 {
 		return nil, types.ErrSourceLineageUnknown
 	}
@@ -47,15 +52,28 @@ func (s *KnowledgeInputProvenanceStore) BeginScopedIndependentConfigurationRead(
 	if err != nil {
 		return nil, err
 	}
-	if err := s.db.WithContext(ctx).Where("tenant_id = ? AND knowledge_base_id = ? AND config_revision = ?", tenant, kb, revision).Take(&origin).Error; err != nil {
+	if err := s.db.WithContext(ctx).
+		Where("tenant_id = ? AND knowledge_base_id = ? AND config_revision = ?", tenant, kb, revision).
+		Take(&origin).
+		Error; err != nil {
 		return nil, err
 	}
 	var saved types.SourceLineage
-	if json.Unmarshal([]byte(origin.SourceLineage), &saved) != nil || saved.RequireComplete() != nil || len(saved.Sources) != 0 || origin.OriginID == "" || origin.InputDigest == "" {
+	if json.Unmarshal([]byte(origin.SourceLineage), &saved) != nil || saved.RequireComplete() != nil ||
+		len(saved.Sources) != 0 ||
+		origin.OriginID == "" ||
+		origin.InputDigest == "" {
 		return nil, types.ErrSourceLineageUnknown
 	}
 	lifetime, cancel := context.WithCancelCause(ctx)
-	read := &NextcloudIndependentConfigurationRead{store: s, tenant: tenant, kb: kb, origin: origin, lifetime: lifetime, cancel: cancel}
+	read := &NextcloudIndependentConfigurationRead{
+		store:    s,
+		tenant:   tenant,
+		kb:       kb,
+		origin:   origin,
+		lifetime: lifetime,
+		cancel:   cancel,
+	}
 	fail := func(err error) (*NextcloudIndependentConfigurationRead, error) { _ = read.Close(); return nil, err }
 	// Plans are metadata only; bytes are selected only after their owned
 	// durable body leases and the enclosing actual KB scope are acquired.
@@ -63,15 +81,23 @@ func (s *KnowledgeInputProvenanceStore) BeginScopedIndependentConfigurationRead(
 	if err != nil {
 		return fail(err)
 	}
-	if read.plan.OriginID != origin.OriginID || read.plan.ConfigRevision != origin.ConfigRevision || read.plan.ConfigDigest != origin.InputDigest {
+	if read.plan.OriginID != origin.OriginID || read.plan.ConfigRevision != origin.ConfigRevision ||
+		read.plan.ConfigDigest != origin.InputDigest {
 		return fail(ErrKnowledgeInputChanged)
 	}
 	owner := "nc-independent-config:" + uuid.NewString()
-	read.broad, err = NewNextcloudContentLeaseStore(s.db).AcquireKBRead(lifetime, tenant, kb, owner, independentConfigurationReadTTL)
+	read.broad, err = NewNextcloudContentLeaseStore(
+		s.db,
+	).AcquireKBRead(lifetime, tenant, kb, owner, independentConfigurationReadTTL)
 	if err != nil {
 		return fail(err)
 	}
-	read.bodyLeases, err = s.AcquireKnowledgeConfigurationBodyReadLeases(lifetime, read.plan, owner, independentConfigurationReadTTL)
+	read.bodyLeases, err = s.AcquireKnowledgeConfigurationBodyReadLeases(
+		lifetime,
+		read.plan,
+		owner,
+		independentConfigurationReadTTL,
+	)
 	if err != nil {
 		return fail(err)
 	}
@@ -94,18 +120,29 @@ func (r *NextcloudIndependentConfigurationRead) checkMetadataInTx(ctx context.Co
 		return ErrKnowledgeInputChanged
 	}
 	var origin knowledgeConfigurationInputOrigin
-	if err := tx.Where("origin_id = ? AND tenant_id = ? AND knowledge_base_id = ? AND config_revision = ?", r.origin.OriginID, r.tenant, r.kb, revision).Take(&origin).Error; err != nil {
+	if err := tx.Where("origin_id = ? AND tenant_id = ? AND knowledge_base_id = ? AND config_revision = ?", r.origin.OriginID, r.tenant, r.kb, revision).
+		Take(&origin).
+		Error; err != nil {
 		return err
 	}
 	if !reflect.DeepEqual(origin, r.origin) {
 		return ErrKnowledgeInputChanged
 	}
 	var lineage types.SourceLineage
-	if json.Unmarshal([]byte(origin.SourceLineage), &lineage) != nil || lineage.RequireComplete() != nil || len(lineage.Sources) != 0 {
+	if json.Unmarshal([]byte(origin.SourceLineage), &lineage) != nil || lineage.RequireComplete() != nil ||
+		len(lineage.Sources) != 0 {
 		return types.ErrSourceLineageUnknown
 	}
-	leased := context.WithValue(ctx, faqReadLeaseCoverageKey{}, faqReadLeaseCoverage{Leases: []NextcloudContentLease{r.broad}})
-	if err := validateFAQReadLeaseCoverageInTx(tx.WithContext(leased), []types.KnowledgeSearchScope{{TenantID: r.tenant, KBID: r.kb}}, &lineage); err != nil {
+	leased := context.WithValue(
+		ctx,
+		faqReadLeaseCoverageKey{},
+		faqReadLeaseCoverage{Leases: []NextcloudContentLease{r.broad}},
+	)
+	if err := validateFAQReadLeaseCoverageInTx(
+		tx.WithContext(leased),
+		[]types.KnowledgeSearchScope{{TenantID: r.tenant, KBID: r.kb}},
+		&lineage,
+	); err != nil {
 		return err
 	}
 	if err := r.store.RecheckKnowledgeConfigurationBodyReadLeasesInTx(ctx, tx, r.plan, r.bodyLeases); err != nil {
@@ -114,12 +151,18 @@ func (r *NextcloudIndependentConfigurationRead) checkMetadataInTx(ctx context.Co
 	return nil
 }
 
-func (r *NextcloudIndependentConfigurationRead) projectionInTx(ctx context.Context, tx *gorm.DB) (*types.KnowledgeBase, error) {
+func (r *NextcloudIndependentConfigurationRead) projectionInTx(
+	ctx context.Context,
+	tx *gorm.DB,
+) (*types.KnowledgeBase, error) {
 	if err := r.checkMetadataInTx(ctx, tx); err != nil {
 		return nil, err
 	}
 	var current types.KnowledgeBase
-	if err := tx.Select(knowledgeWorkerConfigurationColumns).Where("id = ? AND tenant_id = ?", r.kb, r.tenant).Take(&current).Error; err != nil {
+	if err := tx.Select(knowledgeWorkerConfigurationColumns).
+		Where("id = ? AND tenant_id = ?", r.kb, r.tenant).
+		Take(&current).
+		Error; err != nil {
 		return nil, err
 	}
 	digest, err := knowledgeConfigurationOriginDigest(&current)
@@ -140,7 +183,9 @@ func (r *NextcloudIndependentConfigurationRead) checkInTx(ctx context.Context, t
 // Return one independently decoded body snapshot from the guarded transaction.
 // Original-input proof callers use the InTx variant with their existing pool-1
 // transaction; neither method recursively enters a body snapshot.
-func (r *NextcloudIndependentConfigurationRead) ConfigurationProjection(ctx context.Context) (*types.KnowledgeBase, error) {
+func (r *NextcloudIndependentConfigurationRead) ConfigurationProjection(
+	ctx context.Context,
+) (*types.KnowledgeBase, error) {
 	if err := r.Checkpoint(ctx); err != nil {
 		return nil, err
 	}
@@ -152,7 +197,11 @@ func (r *NextcloudIndependentConfigurationRead) ConfigurationProjection(ctx cont
 	})
 	return current, err
 }
-func (r *NextcloudIndependentConfigurationRead) ConfigurationProjectionInTx(ctx context.Context, tx *gorm.DB) (*types.KnowledgeBase, error) {
+
+func (r *NextcloudIndependentConfigurationRead) ConfigurationProjectionInTx(
+	ctx context.Context,
+	tx *gorm.DB,
+) (*types.KnowledgeBase, error) {
 	if r == nil || ctx == nil || tx == nil {
 		return nil, types.ErrSourceLineageUnknown
 	}
@@ -179,11 +228,19 @@ func (r *NextcloudIndependentConfigurationRead) ConfigurationProjectionInTx(ctx 
 }
 
 func (r *NextcloudIndependentConfigurationRead) renew(ctx context.Context) error {
-	if _, err := NewNextcloudContentLeaseStore(r.store.db).RenewLease(ctx, r.broad.ID, independentConfigurationReadTTL); err != nil {
+	if _, err := NewNextcloudContentLeaseStore(
+		r.store.db,
+	).RenewLease(ctx, r.broad.ID, independentConfigurationReadTTL); err != nil {
 		return err
 	}
-	return r.store.RecheckKnowledgeConfigurationBodyReadLeases(ctx, r.plan, r.bodyLeases, independentConfigurationReadTTL)
+	return r.store.RecheckKnowledgeConfigurationBodyReadLeases(
+		ctx,
+		r.plan,
+		r.bodyLeases,
+		independentConfigurationReadTTL,
+	)
 }
+
 func (r *NextcloudIndependentConfigurationRead) failureLocked(ctx context.Context) error {
 	if r.err != nil {
 		return r.err
@@ -199,6 +256,7 @@ func (r *NextcloudIndependentConfigurationRead) failureLocked(ctx context.Contex
 	}
 	return nil
 }
+
 func (r *NextcloudIndependentConfigurationRead) Checkpoint(ctx context.Context) error {
 	if r == nil || ctx == nil {
 		return types.ErrSourceLineageUnknown
@@ -216,7 +274,8 @@ func (r *NextcloudIndependentConfigurationRead) Checkpoint(ctx context.Context) 
 		r.cancel(err)
 		return err
 	}
-	if err := r.store.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error { return r.checkInTx(ctx, tx) }); err != nil {
+	if err := r.store.db.WithContext(ctx).
+		Transaction(func(tx *gorm.DB) error { return r.checkInTx(ctx, tx) }); err != nil {
 		r.err = err
 		r.cancel(err)
 		return err
@@ -250,6 +309,7 @@ func (r *NextcloudIndependentConfigurationRead) Context(ctx context.Context) con
 	}
 	return context.WithValue(current, faqReadLeaseCoverageKey{}, faqReadLeaseCoverage{Leases: all})
 }
+
 func (r *NextcloudIndependentConfigurationRead) startHeartbeat() {
 	r.stop, r.done = make(chan struct{}), make(chan struct{})
 	go func() {
@@ -282,6 +342,7 @@ func (r *NextcloudIndependentConfigurationRead) startHeartbeat() {
 		}
 	}()
 }
+
 func (r *NextcloudIndependentConfigurationRead) Close() error {
 	if r == nil {
 		return nil

@@ -10,14 +10,16 @@ import (
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 )
 
-type searchCaptureContextKey struct{}
-type searchLineageCapture struct {
-	guard     *readlease.NextcloudReadGuard
-	lineage   *types.SourceLineage
-	documents map[string]*types.Knowledge
-	err       error
-	mu        sync.Mutex
-}
+type (
+	searchCaptureContextKey struct{}
+	searchLineageCapture    struct {
+		guard     *readlease.NextcloudReadGuard
+		lineage   *types.SourceLineage
+		documents map[string]*types.Knowledge
+		err       error
+		mu        sync.Mutex
+	}
+)
 
 func markSearchLineageFailure(ctx context.Context, err error) {
 	if err == nil {
@@ -41,10 +43,15 @@ func searchCaptureFromContext(ctx context.Context) *searchLineageCapture {
 	capture, _ := ctx.Value(searchCaptureContextKey{}).(*searchLineageCapture)
 	return capture
 }
+
 func (t *SearchKnowledgeTool) SetRAGChunkSnapshotReader(reader interfaces.RAGChunkSnapshotReader) {
 	t.snapshotReader = reader
 }
-func (t *SearchKnowledgeTool) ExecuteSourceLineage(ctx context.Context, args json.RawMessage) (*types.ToolResult, error) {
+
+func (t *SearchKnowledgeTool) ExecuteSourceLineage(
+	ctx context.Context,
+	args json.RawMessage,
+) (*types.ToolResult, error) {
 	turn := types.RAGSourceLineageFromContext(ctx)
 	if turn == nil || t.snapshotReader == nil {
 		return nil, ErrToolSourceLineageUnavailable
@@ -69,7 +76,11 @@ func (t *SearchKnowledgeTool) ExecuteSourceLineage(ctx context.Context, args jso
 
 // Retrieval rows are ID hints. Rebuild all actual title/body fields before
 // rerank, MMR, snippets, filtering, headers, structured output or model input.
-func (t *SearchKnowledgeTool) hydrateActualSearchInputs(ctx context.Context, rows []*searchResultWithMeta, targets types.SearchTargets) (out []*searchResultWithMeta, err error) {
+func (t *SearchKnowledgeTool) hydrateActualSearchInputs(
+	ctx context.Context,
+	rows []*searchResultWithMeta,
+	targets types.SearchTargets,
+) (out []*searchResultWithMeta, err error) {
 	capture := searchCaptureFromContext(ctx)
 	defer func() {
 		if err != nil {
@@ -77,7 +88,9 @@ func (t *SearchKnowledgeTool) hydrateActualSearchInputs(ctx context.Context, row
 		}
 	}()
 	for _, row := range rows {
-		if row == nil || row.SearchResult == nil || row.ID == "" || row.KnowledgeID == "" || row.MatchType == types.MatchTypeGraph || row.MatchType == types.MatchTypeRelationChunk {
+		if row == nil || row.SearchResult == nil || row.ID == "" || row.KnowledgeID == "" ||
+			row.MatchType == types.MatchTypeGraph ||
+			row.MatchType == types.MatchTypeRelationChunk {
 			return nil, ErrToolSourceLineageUnavailable
 		}
 		k, err := t.knowledgeService.GetKnowledgeByIDOnly(ctx, row.KnowledgeID)
@@ -88,16 +101,29 @@ func (t *SearchKnowledgeTool) hydrateActualSearchInputs(ctx context.Context, row
 		if err != nil {
 			return nil, err
 		}
-		if k == nil || k.KnowledgeBaseID != row.KnowledgeBaseID || targets.GetTenantIDForKB(k.KnowledgeBaseID) != k.TenantID {
+		if k == nil || k.KnowledgeBaseID != row.KnowledgeBaseID ||
+			targets.GetTenantIDForKB(k.KnowledgeBaseID) != k.TenantID {
 			return nil, ErrToolSourceLineageUnavailable
 		}
 		if err := capture.guard.PinKnowledge(k); err != nil {
 			return nil, err
 		}
-		local := &documentLineageCapture{guard: capture.guard, lineage: independentToolInput(), metadataLineage: row.SourceLineage}
+		local := &documentLineageCapture{
+			guard:           capture.guard,
+			lineage:         independentToolInput(),
+			metadataLineage: row.SourceLineage,
+		}
 		readCtx := context.WithValue(ctx, documentCaptureContextKey{}, local)
-		hydrator := &ReadDocumentTool{knowledgeService: t.knowledgeService, searchTargets: targets, snapshotReader: t.snapshotReader}
-		snapshot, err := hydrator.hydrateDocumentInputs(readCtx, k, []*types.Chunk{{ID: row.ID, TenantID: k.TenantID, KnowledgeBaseID: k.KnowledgeBaseID, KnowledgeID: k.ID}})
+		hydrator := &ReadDocumentTool{
+			knowledgeService: t.knowledgeService,
+			searchTargets:    targets,
+			snapshotReader:   t.snapshotReader,
+		}
+		snapshot, err := hydrator.hydrateDocumentInputs(
+			readCtx,
+			k,
+			[]*types.Chunk{{ID: row.ID, TenantID: k.TenantID, KnowledgeBaseID: k.KnowledgeBaseID, KnowledgeID: k.ID}},
+		)
 		if err != nil {
 			return nil, err
 		}
@@ -106,10 +132,32 @@ func (t *SearchKnowledgeTool) hydrateActualSearchInputs(ctx context.Context, row
 		// Scores and matched/index text can belong to an older build. They are
 		// not copied into the covered projection; rerank scores are computed
 		// below from the actual title/body under the inherited input envelope.
-		actual := &types.SearchResult{ID: c.ID, Content: c.Content, KnowledgeID: k.ID, KnowledgeBaseID: k.KnowledgeBaseID, KnowledgeTitle: k.Title,
-			ChunkIndex: c.ChunkIndex, StartAt: c.StartAt, EndAt: c.EndAt, ChunkType: string(c.ChunkType), KnowledgeFilename: k.FileName,
-			KnowledgeSource: k.Source, KnowledgeChannel: k.Channel, SourceLineage: local.lineage, Metadata: map[string]string{}}
-		out = append(out, &searchResultWithMeta{SearchResult: actual, SourceQuery: row.SourceQuery, QueryType: row.QueryType, KnowledgeBaseID: k.KnowledgeBaseID, KnowledgeBaseType: types.KnowledgeBaseTypeDocument})
+		actual := &types.SearchResult{
+			ID:                c.ID,
+			Content:           c.Content,
+			KnowledgeID:       k.ID,
+			KnowledgeBaseID:   k.KnowledgeBaseID,
+			KnowledgeTitle:    k.Title,
+			ChunkIndex:        c.ChunkIndex,
+			StartAt:           c.StartAt,
+			EndAt:             c.EndAt,
+			ChunkType:         string(c.ChunkType),
+			KnowledgeFilename: k.FileName,
+			KnowledgeSource:   k.Source,
+			KnowledgeChannel:  k.Channel,
+			SourceLineage:     local.lineage,
+			Metadata:          map[string]string{},
+		}
+		out = append(
+			out,
+			&searchResultWithMeta{
+				SearchResult:      actual,
+				SourceQuery:       row.SourceQuery,
+				QueryType:         row.QueryType,
+				KnowledgeBaseID:   k.KnowledgeBaseID,
+				KnowledgeBaseType: types.KnowledgeBaseTypeDocument,
+			},
+		)
 		capture.documents[k.ID] = k
 		capture.lineage, err = types.UnionSourceLineage(capture.lineage, local.lineage)
 		if err != nil {
@@ -118,6 +166,7 @@ func (t *SearchKnowledgeTool) hydrateActualSearchInputs(ctx context.Context, row
 	}
 	return out, nil
 }
+
 func checkSearchModelBoundary(ctx context.Context) error {
 	if searchCaptureFromContext(ctx) == nil {
 		return nil

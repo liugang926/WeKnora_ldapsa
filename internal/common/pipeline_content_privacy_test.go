@@ -22,7 +22,7 @@ func TestSourceContentPipelineLogsSuppressBodiesAndPreserveOrdinary(t *testing.T
 	for _, emit := range []func(context.Context, string, string, map[string]interface{}){PipelineInfo, PipelineWarn, PipelineError} {
 		output.Reset()
 		emit(logprivacy.SuppressContent(ctx), "PRIVATE_STAGE", "PRIVATE_ACTION", fields)
-		require.Contains(t, output.String(), "content logging suppressed")
+		require.Empty(t, output.String(), "protected diagnostics never reach the caller's content logger")
 		require.NotContains(t, output.String(), "PRIVATE_")
 		require.Equal(t, "PRIVATE_VENDOR_BODY", err.Body)
 		require.Same(t, err, fields["error"])

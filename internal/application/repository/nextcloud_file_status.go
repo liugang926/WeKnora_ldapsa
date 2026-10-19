@@ -134,7 +134,8 @@ func (r *NextcloudEventInboxRepository) SignedFileStatus(
 }
 
 func readNextcloudFileVersionStatus(tx *gorm.DB, connection nextcloudEventConnection,
-	request SignedNextcloudFileStatusRequest, status *NextcloudFileStatus) error {
+	request SignedNextcloudFileStatusRequest, status *NextcloudFileStatus,
+) error {
 	externalID := "nextcloud:" + connection.NextcloudInstanceID + ":" + status.FileID
 	var version nextcloudSourceVersion
 	err := nextcloudVersionQuery(tx, connection.TenantID, connection.KnowledgeBaseID,
@@ -147,7 +148,9 @@ func readNextcloudFileVersionStatus(tx *gorm.DB, connection nextcloudEventConnec
 		return fmt.Errorf("read Nextcloud source version: %w", err)
 	}
 	var fences []nextcloudContentFence
-	if err := tx.Where("tenant_id=? AND knowledge_base_id=? AND knowledge_id IN ?", connection.TenantID, connection.KnowledgeBaseID, []string{"", version.CandidateKnowledgeID}).Find(&fences).Error; err != nil {
+	if err := tx.Where("tenant_id=? AND knowledge_base_id=? AND knowledge_id IN ?", connection.TenantID, connection.KnowledgeBaseID, []string{"", version.CandidateKnowledgeID}).
+		Find(&fences).
+		Error; err != nil {
 		return err
 	}
 	if len(fences) != 2 {
@@ -182,7 +185,9 @@ func readNextcloudFileVersionStatus(tx *gorm.DB, connection nextcloudEventConnec
 		nextcloudMetadataString(metadata, "nextcloud_target_etag") != version.DesiredETag {
 		return nil
 	}
-	candidateRevision, err := types.NormalizeNextcloudContentRevision(nextcloudMetadataString(metadata, "nextcloud_content_revision"))
+	candidateRevision, err := types.NormalizeNextcloudContentRevision(
+		nextcloudMetadataString(metadata, "nextcloud_content_revision"),
+	)
 	if err != nil || candidateRevision != status.SourceContentRevision {
 		return nil
 	}

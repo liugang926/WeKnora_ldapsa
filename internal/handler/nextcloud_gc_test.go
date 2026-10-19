@@ -20,7 +20,17 @@ func TestNextcloudGCAdminStatusIsTenantScopedAndHidesInventory(t *testing.T) {
 	_, db, actor, _, _, _ := collectionHTTPFixture(t)
 	var err error
 	require.NoError(t, db.AutoMigrate(&types.AuditLog{}))
-	require.NoError(t, db.Create(&types.TenantMember{UserID: "user", TenantID: 8, Role: types.TenantRoleAdmin, Status: types.TenantMemberStatusActive}).Error)
+	require.NoError(
+		t,
+		db.Create(
+			&types.TenantMember{
+				UserID:   "user",
+				TenantID: 8,
+				Role:     types.TenantRoleAdmin,
+				Status:   types.TenantMemberStatusActive,
+			},
+		).Error,
+	)
 	script, err := os.ReadFile("../../migrations/sqlite/000038_nextcloud_gc.up.sql")
 	require.NoError(t, err)
 	for _, statement := range strings.Split(string(script), ";") {
@@ -61,7 +71,13 @@ func TestNextcloudGCAdminStatusIsTenantScopedAndHidesInventory(t *testing.T) {
 		ctx := context.WithValue(req.Context(), types.TenantIDContextKey, tenant)
 		ctx = types.WithCaller(ctx, types.Caller{TenantID: tenant, UserID: "user", Role: role})
 		ctx = types.WithPrincipal(ctx, types.Principal{Type: types.PrincipalWebUser, ID: "user"})
-		require.NoError(t, db.Model(&types.TenantMember{}).Where("user_id=? AND tenant_id=?", "user", tenant).Update("role", role).Error)
+		require.NoError(
+			t,
+			db.Model(&types.TenantMember{}).
+				Where("user_id=? AND tenant_id=?", "user", tenant).
+				Update("role", role).
+				Error,
+		)
 		if apiKey {
 			ctx = types.WithTenantAPIKeyScope(ctx, types.TenantAPIKeyScope{KeyID: 1, FullAccess: true})
 		}
@@ -97,8 +113,25 @@ func TestNextcloudGCActualAdminHTTPPreviewAndCurrentRevocation(t *testing.T) {
 			require.NoError(t, e)
 			require.NoError(t, db.Exec(string(sql)).Error)
 			now := time.Now().UTC()
-			require.NoError(t, db.Exec(`INSERT INTO nextcloud_gc_jobs(id,tenant_id,knowledge_base_id,datasource_id,external_id,knowledge_id,reason,state,not_before,original_not_before,next_attempt_at,last_error_code,created_at,updated_at) VALUES ('owned',7,'kb','ds','external','retired','retired','blocked',?,?,?,'content_lease_coverage_unverified',?,?)`, now, now.Add(7*24*time.Hour), now, now, now).Error)
-			require.NoError(t, db.Exec(`INSERT INTO nextcloud_gc_items(job_id,kind,object_ref,state,estimated_bytes,confirmed_released_bytes,created_at,updated_at) VALUES ('owned','source_file','storage://private-secret','blocked',100,0,?,?)`, now, now).Error)
+			require.NoError(
+				t,
+				db.Exec(
+					`INSERT INTO nextcloud_gc_jobs(id,tenant_id,knowledge_base_id,datasource_id,external_id,knowledge_id,reason,state,not_before,original_not_before,next_attempt_at,last_error_code,created_at,updated_at) VALUES ('owned',7,'kb','ds','external','retired','retired','blocked',?,?,?,'content_lease_coverage_unverified',?,?)`,
+					now,
+					now.Add(7*24*time.Hour),
+					now,
+					now,
+					now,
+				).Error,
+			)
+			require.NoError(
+				t,
+				db.Exec(
+					`INSERT INTO nextcloud_gc_items(job_id,kind,object_ref,state,estimated_bytes,confirmed_released_bytes,created_at,updated_at) VALUES ('owned','source_file','storage://private-secret','blocked',100,0,?,?)`,
+					now,
+					now,
+				).Error,
+			)
 			ctx := collectionHumanInputContext(7)
 			ctx = types.WithPrincipal(ctx, types.Principal{Type: types.PrincipalWebUser, ID: "user"})
 			if mode == "disabled" {
@@ -108,7 +141,13 @@ func TestNextcloudGCActualAdminHTTPPreviewAndCurrentRevocation(t *testing.T) {
 				require.NoError(t, db.Where("tenant_id=7 AND user_id='user'").Delete(&types.TenantMember{}).Error)
 			}
 			if mode == "demoted" {
-				require.NoError(t, db.Model(&types.TenantMember{}).Where("tenant_id=7 AND user_id='user'").Update("role", types.TenantRoleViewer).Error)
+				require.NoError(
+					t,
+					db.Model(&types.TenantMember{}).
+						Where("tenant_id=7 AND user_id='user'").
+						Update("role", types.TenantRoleViewer).
+						Error,
+				)
 			}
 			if mode == "api-key" {
 				ctx = types.WithTenantAPIKeyScope(ctx, types.TenantAPIKeyScope{KeyID: 1, FullAccess: true})

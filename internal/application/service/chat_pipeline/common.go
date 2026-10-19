@@ -121,8 +121,14 @@ func withPromptCacheMetadata(
 // History is already filtered and truncated upstream by the load_history plugin.
 func AppendHistoryMessages(messages []chat.Message, history []*types.History) []chat.Message {
 	for _, history := range history {
-		messages = append(messages, chat.Message{Role: "user", Content: history.Query, SourceLineage: history.SourceLineage})
-		messages = append(messages, chat.Message{Role: "assistant", Content: history.Answer, SourceLineage: history.SourceLineage})
+		messages = append(
+			messages,
+			chat.Message{Role: "user", Content: history.Query, SourceLineage: history.SourceLineage},
+		)
+		messages = append(
+			messages,
+			chat.Message{Role: "assistant", Content: history.Answer, SourceLineage: history.SourceLineage},
+		)
 	}
 	return messages
 }

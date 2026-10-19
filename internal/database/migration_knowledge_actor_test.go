@@ -19,7 +19,12 @@ func checkKnowledgeActorMigration(t *testing.T, db *sql.DB) {
 	require.NoError(t, db.QueryRow("SELECT count(*) FROM knowledge_input_actor_selectors").Scan(&count))
 	require.Zero(t, count, "migration must not fabricate original actors for old admissions")
 	digest := strings.Repeat("a", 64)
-	_, err := db.Exec(`INSERT INTO knowledge_input_admissions(admission_id,tenant_id,knowledge_base_id,knowledge_id,build_generation,origin_kind,input_digest,root_digest,config_digest,config_revision,source_lineage) VALUES('actor-migration',7,'kb','actor-doc',1,'history',$1,$2,$3,1,'{"version":1,"state":"complete","sources":[]}')`, digest, digest, digest)
+	_, err := db.Exec(
+		`INSERT INTO knowledge_input_admissions(admission_id,tenant_id,knowledge_base_id,knowledge_id,build_generation,origin_kind,input_digest,root_digest,config_digest,config_revision,source_lineage) VALUES('actor-migration',7,'kb','actor-doc',1,'history',$1,$2,$3,1,'{"version":1,"state":"complete","sources":[]}')`,
+		digest,
+		digest,
+		digest,
+	)
 	require.NoError(t, err)
 	for _, statement := range []string{
 		`INSERT INTO knowledge_input_actor_selectors(admission_id,caller_tenant_id,user_id,principal_type,principal_id,api_key_id) VALUES('actor-migration',7,'','api_tenant','7',NULL)`,
@@ -29,9 +34,13 @@ func checkKnowledgeActorMigration(t *testing.T, db *sql.DB) {
 		_, err := db.Exec(statement)
 		require.Error(t, err, "malformed original selector must be rejected by SQL")
 	}
-	_, err = db.Exec(`INSERT INTO knowledge_input_actor_selectors(admission_id,caller_tenant_id,user_id,principal_type,principal_id) VALUES('actor-migration',3,'user','web_user','user')`)
+	_, err = db.Exec(
+		`INSERT INTO knowledge_input_actor_selectors(admission_id,caller_tenant_id,user_id,principal_type,principal_id) VALUES('actor-migration',3,'user','web_user','user')`,
+	)
 	require.NoError(t, err)
-	_, err = db.Exec(`UPDATE knowledge_input_actor_selectors SET caller_tenant_id=7 WHERE admission_id='actor-migration'`)
+	_, err = db.Exec(
+		`UPDATE knowledge_input_actor_selectors SET caller_tenant_id=7 WHERE admission_id='actor-migration'`,
+	)
 	require.Error(t, err, "caller workspace cannot be replaced by resource owner")
 	_, err = db.Exec(`DELETE FROM knowledge_input_actor_selectors WHERE admission_id='actor-migration'`)
 	require.Error(t, err, "original selector cannot be removed to bypass restoration")

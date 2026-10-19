@@ -5,7 +5,11 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func RegisterKnowledgeEnrichmentTemplateRoutes(r *gin.RouterGroup, h *handler.KnowledgeEnrichmentTemplateHandler, g *rbacGuards) {
+func RegisterKnowledgeEnrichmentTemplateRoutes(
+	r *gin.RouterGroup,
+	h *handler.KnowledgeEnrichmentTemplateHandler,
+	g *rbacGuards,
+) {
 	kb := r.Group("knowledge-bases")
 	kb.GET("/:id/enrichment-templates/:purpose", g.Admin(), g.KBAccessRead("id"), h.Read)
 	kb.PUT("/:id/enrichment-templates/:purpose", g.Admin(), g.KBAccessWrite("id"), h.Set)

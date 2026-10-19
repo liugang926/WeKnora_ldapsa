@@ -19,11 +19,13 @@ type RAGSourceLineage struct {
 	authorize func(context.Context, *SourceLineage) error
 }
 
+// NewRAGSourceLineage creates a turn accumulator with a current authorization checker.
 func NewRAGSourceLineage(authorize func(context.Context, *SourceLineage) error) *RAGSourceLineage {
 	lineage, _ := NewCompleteSourceLineage()
 	return &RAGSourceLineage{lineage: lineage, authorize: authorize}
 }
 
+// WithRAGSourceLineage attaches the turn accumulator and suppresses content telemetry.
 func WithRAGSourceLineage(ctx context.Context, turn *RAGSourceLineage) context.Context {
 	if turn != nil {
 		ctx = logprivacy.SuppressContent(ctx)
@@ -31,6 +33,7 @@ func WithRAGSourceLineage(ctx context.Context, turn *RAGSourceLineage) context.C
 	return context.WithValue(ctx, ragLineageContextKey{}, turn)
 }
 
+// RAGSourceLineageFromContext returns the attached turn accumulator.
 func RAGSourceLineageFromContext(ctx context.Context) *RAGSourceLineage {
 	if ctx == nil {
 		return nil
@@ -39,6 +42,7 @@ func RAGSourceLineageFromContext(ctx context.Context) *RAGSourceLineage {
 	return turn
 }
 
+// Add unions original input lineages into the shared turn accumulator.
 func (t *RAGSourceLineage) Add(inputs ...*SourceLineage) error {
 	if t == nil {
 		return ErrSourceLineageUnknown
@@ -69,16 +73,18 @@ func sameRAGSourceLineage(a, b *SourceLineage) bool {
 	return true
 }
 
+// Snapshot copies the accumulated lineage without granting current authorization.
 func (t *RAGSourceLineage) Snapshot() *SourceLineage {
 	if t == nil {
 		return nil
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	copy, _ := UnionSourceLineage(t.lineage)
-	return copy
+	snapshot, _ := UnionSourceLineage(t.lineage)
+	return snapshot
 }
 
+// Check authorizes a stable current snapshot of the accumulated lineage.
 func (t *RAGSourceLineage) Check(ctx context.Context) error {
 	_, err := t.CheckedSnapshot(ctx)
 	return err
@@ -116,5 +122,6 @@ func (t *RAGSourceLineage) CheckedSnapshot(ctx context.Context) (*SourceLineage,
 // source-independent answers. Source-aware passage/memory/suggestion adapters
 // are required before controlled or unknown answers may be copied there.
 func SourceIndependentDerivativesAllowed(message *Message) bool {
-	return message != nil && message.IsCompleted && message.SourceLineage.RequireComplete() == nil && len(message.SourceLineage.Sources) == 0
+	return message != nil && message.IsCompleted && message.SourceLineage.RequireComplete() == nil &&
+		len(message.SourceLineage.Sources) == 0
 }

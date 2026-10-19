@@ -31,15 +31,21 @@ type collectionHTTPKB struct {
 func (s collectionHTTPKB) GetKnowledgeBaseByID(ctx context.Context, id string) (*types.KnowledgeBase, error) {
 	return s.GetKnowledgeBaseByIDOnly(ctx, id)
 }
+
 func (s collectionHTTPKB) GetKnowledgeBaseByIDOnly(ctx context.Context, id string) (*types.KnowledgeBase, error) {
 	var kb types.KnowledgeBase
 	err := s.db.WithContext(ctx).Where("id = ?", id).Take(&kb).Error
 	return &kb, err
 }
+
 func (s collectionHTTPKB) ListKnowledgeBases(ctx context.Context) ([]*types.KnowledgeBase, error) {
 	return s.ListKnowledgeBasesByTenantID(ctx, types.CallerFromContext(ctx).TenantID)
 }
-func (s collectionHTTPKB) ListKnowledgeBasesByTenantID(ctx context.Context, tenant uint64) ([]*types.KnowledgeBase, error) {
+
+func (s collectionHTTPKB) ListKnowledgeBasesByTenantID(
+	ctx context.Context,
+	tenant uint64,
+) ([]*types.KnowledgeBase, error) {
 	var rows []*types.KnowledgeBase
 	err := s.db.WithContext(ctx).Where("tenant_id = ?", tenant).Find(&rows).Error
 	return rows, err
@@ -51,10 +57,20 @@ type collectionHTTPShare struct {
 	allowed bool
 }
 
-func (s *collectionHTTPShare) CheckTenantKBPermission(context.Context, string, uint64, types.TenantRole) (types.OrgMemberRole, bool, error) {
+func (s *collectionHTTPShare) CheckTenantKBPermission(
+	context.Context,
+	string,
+	uint64,
+	types.TenantRole,
+) (types.OrgMemberRole, bool, error) {
 	return types.OrgRoleViewer, s.allowed, nil
 }
-func (s *collectionHTTPShare) ListSharedKnowledgeBases(context.Context, uint64, types.TenantRole) ([]*types.SharedKnowledgeBaseInfo, error) {
+
+func (s *collectionHTTPShare) ListSharedKnowledgeBases(
+	context.Context,
+	uint64,
+	types.TenantRole,
+) ([]*types.SharedKnowledgeBaseInfo, error) {
 	if !s.allowed {
 		return nil, nil
 	}
@@ -67,66 +83,176 @@ type collectionHTTPAgents struct {
 	allowed bool
 }
 
-func (s *collectionHTTPAgents) GetSharedAgentForTenant(context.Context, uint64, types.TenantRole, string, ...uint64) (*types.CustomAgent, error) {
+func (s *collectionHTTPAgents) GetSharedAgentForTenant(
+	context.Context,
+	uint64,
+	types.TenantRole,
+	string,
+	...uint64,
+) (*types.CustomAgent, error) {
 	if !s.allowed {
 		return nil, nil
 	}
 	return s.agent, nil
 }
-func (s *collectionHTTPAgents) TenantCanAccessKBViaSomeSharedAgent(context.Context, uint64, types.TenantRole, *types.KnowledgeBase) (bool, error) {
+
+func (s *collectionHTTPAgents) TenantCanAccessKBViaSomeSharedAgent(
+	context.Context,
+	uint64,
+	types.TenantRole,
+	*types.KnowledgeBase,
+) (bool, error) {
 	return false, nil
 }
 
-func collectionHTTPFixture(t *testing.T) (*KnowledgeHandler, *gorm.DB, *repository.KnowledgeInputProvenanceStore, *outputHTTPGroups, *collectionHTTPShare, *collectionHTTPAgents) {
+func collectionHTTPFixture(
+	t *testing.T,
+) (*KnowledgeHandler, *gorm.DB, *repository.KnowledgeInputProvenanceStore, *outputHTTPGroups, *collectionHTTPShare, *collectionHTTPAgents) {
 	t.Helper()
-	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "collection.db")+"?_journal_mode=WAL&_busy_timeout=5000"), &gorm.Config{})
+	db, err := gorm.Open(
+		sqlite.Open(filepath.Join(t.TempDir(), "collection.db")+"?_journal_mode=WAL&_busy_timeout=5000"),
+		&gorm.Config{},
+	)
 	require.NoError(t, err)
 	sqlDB, err := db.DB()
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = sqlDB.Close() })
-	require.NoError(t, db.AutoMigrate(&types.KnowledgeBase{}, &types.Knowledge{}, &types.Chunk{}, &types.KnowledgeTag{}, &types.KnowledgeTagRelation{}))
+	require.NoError(
+		t,
+		db.AutoMigrate(
+			&types.KnowledgeBase{},
+			&types.Knowledge{},
+			&types.Chunk{},
+			&types.KnowledgeTag{},
+			&types.KnowledgeTagRelation{},
+		),
+	)
 	db.Config.DisableForeignKeyConstraintWhenMigrating = true
 	require.NoError(t, db.AutoMigrate(&types.Session{}, &types.Message{}))
-	require.NoError(t, db.AutoMigrate(&types.User{}, &types.TenantMember{}, &types.TenantAPIKey{}, &types.Directory{}, &types.DirectoryIdentity{}, &types.DirectoryGroup{}, &types.DirectoryGroupMembership{}, &types.TenantGroupRoleGrant{}, &types.ResourceAccessPolicy{}, &types.ResourceGroupGrant{}))
+	require.NoError(
+		t,
+		db.AutoMigrate(
+			&types.User{},
+			&types.TenantMember{},
+			&types.TenantAPIKey{},
+			&types.Directory{},
+			&types.DirectoryIdentity{},
+			&types.DirectoryGroup{},
+			&types.DirectoryGroupMembership{},
+			&types.TenantGroupRoleGrant{},
+			&types.ResourceAccessPolicy{},
+			&types.ResourceGroupGrant{},
+		),
+	)
 	db.Config.DisableForeignKeyConstraintWhenMigrating = false
-	require.NoError(t, db.Exec(`CREATE TABLE nextcloud_source_versions(candidate_knowledge_id TEXT); CREATE TABLE nextcloud_source_revisions(candidate_knowledge_id TEXT)`).Error)
+	for _, name := range []string{"000031_nextcloud_source_versions", "000045_nextcloud_source_revisions"} {
+		ddl, err := os.ReadFile("../../migrations/sqlite/" + name + ".up.sql")
+		require.NoError(t, err)
+		require.NoError(t, db.Exec(string(ddl)).Error)
+	}
 	for _, name := range []string{"000046_nextcloud_content_leases", "000053_knowledge_input_provenance", "000054_knowledge_configuration_history_inputs", "000055_knowledge_actual_config_controls", "000058_knowledge_collection_checkpoints", "000059_knowledge_collection_display_inputs"} {
 		path := "../../migrations/sqlite/" + name + ".up.sql"
 		script, err := os.ReadFile(path)
 		require.NoError(t, err)
 		require.NoError(t, db.Exec(string(script)).Error)
 	}
+	installHTTPCurrentNextcloudControls(t, db)
 	store := repository.NewKnowledgeInputProvenanceStore(db)
-	repository.ConfigureKnowledgeInputActorGroupAccess(store, service.NewGroupAccessService(repository.NewGroupAccessRepository(db)))
-	require.NoError(t, db.Create(&types.User{ID: "user", Username: "collection-user", Email: "collection@example.test", IsActive: true}).Error)
+	repository.ConfigureKnowledgeInputActorGroupAccess(
+		store,
+		service.NewGroupAccessService(repository.NewGroupAccessRepository(db)),
+	)
+	require.NoError(
+		t,
+		db.Create(
+			&types.User{ID: "user", Username: "collection-user", Email: "collection@example.test", IsActive: true},
+		).Error,
+	)
 	keyTenant := uint64(7)
-	require.NoError(t, db.Create(&types.TenantAPIKey{ID: 1, TenantID: &keyTenant, ScopeType: types.APIKeyScopeTenant, Name: "collection read", KeyHash: "collection-fixture-read-key", Capabilities: types.StringArray{string(types.APIKeyCapabilityRetrieve)}, KnowledgeBaseIDs: types.StringArray{"kb"}}).Error)
+	require.NoError(
+		t,
+		db.Create(
+			&types.TenantAPIKey{
+				ID:               1,
+				TenantID:         &keyTenant,
+				ScopeType:        types.APIKeyScopeTenant,
+				Name:             "collection read",
+				KeyHash:          "collection-fixture-read-key",
+				Capabilities:     types.StringArray{string(types.APIKeyCapabilityRetrieve)},
+				KnowledgeBaseIDs: types.StringArray{"kb"},
+			},
+		).Error,
+	)
 	for _, tenant := range []uint64{7, 9} {
-		require.NoError(t, db.Create(&types.TenantMember{UserID: "user", TenantID: tenant, Role: types.TenantRoleAdmin, Status: types.TenantMemberStatusActive}).Error)
+		require.NoError(
+			t,
+			db.Create(
+				&types.TenantMember{
+					UserID:   "user",
+					TenantID: tenant,
+					Role:     types.TenantRoleAdmin,
+					Status:   types.TenantMemberStatusActive,
+				},
+			).Error,
+		)
 	}
 	factory := func(tx *gorm.DB) *repository.KnowledgeInputProvenanceStore {
 		actual := repository.NewKnowledgeInputProvenanceStore(tx)
-		repository.ConfigureKnowledgeInputActorGroupAccess(actual, service.NewGroupAccessService(repository.NewGroupAccessRepository(tx)))
+		repository.ConfigureKnowledgeInputActorGroupAccess(
+			actual,
+			service.NewGroupAccessService(repository.NewGroupAccessRepository(tx)),
+		)
 		return actual
 	}
-	repository.ConfigureKnowledgeDisplayInputWriters(store, repository.NewKnowledgeTagRepository(db), repository.NewKnowledgeRepository(db), factory)
+	repository.ConfigureKnowledgeDisplayInputWriters(
+		store,
+		repository.NewKnowledgeTagRepository(db),
+		repository.NewKnowledgeRepository(db),
+		factory,
+	)
 	kb := &types.KnowledgeBase{ID: "kb", TenantID: 7, Name: "original human KB", Type: types.KnowledgeBaseTypeDocument}
-	sharedKB := &types.KnowledgeBase{ID: "shared-kb", TenantID: 9, Name: "original shared KB", Type: types.KnowledgeBaseTypeDocument}
+	sharedKB := &types.KnowledgeBase{
+		ID:       "shared-kb",
+		TenantID: 9,
+		Name:     "original shared KB",
+		Type:     types.KnowledgeBaseTypeDocument,
+	}
 	for _, base := range []*types.KnowledgeBase{kb, sharedKB} {
 		ctx := collectionHumanInputContext(base.TenantID)
-		require.NoError(t, store.CreateKnowledgeBaseWithInput(repository.WithIndependentKnowledgeBaseNameInput(repository.WithIndependentKnowledgeInput(ctx), "", base.Name), base))
+		require.NoError(
+			t,
+			store.CreateKnowledgeBaseWithInput(
+				repository.WithIndependentKnowledgeBaseNameInput(
+					repository.WithIndependentKnowledgeInput(ctx),
+					"",
+					base.Name,
+				),
+				base,
+			),
+		)
 	}
 	for _, k := range []*types.Knowledge{
 		{ID: "match", TenantID: 7, KnowledgeBaseID: "kb", Type: "manual", Title: "match original", FileName: "match.md", FileType: "md", FolderPath: "docs/spec", Channel: "web", Source: "manual", ParseStatus: types.ParseStatusCompleted, EnableStatus: "enabled", Metadata: types.JSON(`{"manual":{"content":"original body","version":1}}`), CustomMetadata: types.JSON(`{}`)},
 		{ID: "excluded", TenantID: 7, KnowledgeBaseID: "kb", Type: "manual", Title: "excluded original", FileName: "else.pdf", FileType: "pdf", FolderPath: "other", Channel: "web", Source: "manual", ParseStatus: types.ParseStatusCompleted, EnableStatus: "enabled", Metadata: types.JSON(`{"manual":{"content":"excluded body","version":1}}`), CustomMetadata: types.JSON(`{}`)},
 		{ID: "shared-match", TenantID: 9, KnowledgeBaseID: "shared-kb", Type: "manual", Title: "match shared original", FileName: "shared.md", FileType: "md", FolderPath: "shared", Channel: "web", Source: "manual", ParseStatus: types.ParseStatusCompleted, EnableStatus: "enabled", Metadata: types.JSON(`{"manual":{"content":"shared body","version":1}}`), CustomMetadata: types.JSON(`{}`)},
 	} {
-		_, err := store.CreateKnowledgeWithInput(repository.WithIndependentKnowledgeInput(context.Background()), k, k.Metadata)
+		_, err := store.CreateKnowledgeWithInput(
+			repository.WithIndependentKnowledgeInput(context.Background()),
+			k,
+			k.Metadata,
+		)
 		require.NoError(t, err)
 	}
 	kbs := collectionHTTPKB{db: db}
 	shares := &collectionHTTPShare{kb: sharedKB, allowed: true}
-	agents := &collectionHTTPAgents{agent: &types.CustomAgent{ID: "agent", TenantID: 9, Config: types.CustomAgentConfig{KBSelectionMode: "selected", KnowledgeBases: []string{"shared-kb"}}}, allowed: true}
+	agents := &collectionHTTPAgents{
+		agent: &types.CustomAgent{
+			ID:       "agent",
+			TenantID: 9,
+			Config:   types.CustomAgentConfig{KBSelectionMode: "selected", KnowledgeBases: []string{"shared-kb"}},
+		},
+		allowed: true,
+	}
 	groups := &outputHTTPGroups{allowed: true}
 	guard := access.NewNextcloudSourceLineageGuard(nil, kbs, shares, agents, groups, nil, store)
 	kg, err := newCollectionHTTPKnowledgeService(db, kbs, shares)
@@ -138,7 +264,10 @@ func collectionHTTPFixture(t *testing.T) (*KnowledgeHandler, *gorm.DB, *reposito
 }
 
 func collectionHumanInputContext(tenant uint64) context.Context {
-	ctx := types.WithCaller(context.Background(), types.Caller{TenantID: tenant, UserID: "user", Role: types.TenantRoleAdmin})
+	ctx := types.WithCaller(
+		context.Background(),
+		types.Caller{TenantID: tenant, UserID: "user", Role: types.TenantRoleAdmin},
+	)
 	ctx = types.WithPrincipal(ctx, types.Principal{Type: types.PrincipalWebUser, ID: "user"})
 	return types.WithExecutionTenant(ctx, tenant)
 }
@@ -150,10 +279,22 @@ func serveCollectionHTTP(h *KnowledgeHandler, url string, api bool) *httptest.Re
 		ctx := c.Request.Context()
 		if api {
 			ctx = types.WithCaller(ctx, types.Caller{TenantID: 7, Role: types.TenantRoleViewer})
-			ctx = types.WithTenantAPIKeyScope(ctx, types.TenantAPIKeyScope{KeyID: 1, ScopeType: types.APIKeyScopeTenant, Capabilities: types.StringArray{string(types.APIKeyCapabilityRetrieve)}, KnowledgeBaseIDs: types.StringArray{"kb"}})
+			ctx = types.WithTenantAPIKeyScope(
+				ctx,
+				types.TenantAPIKeyScope{
+					KeyID:            1,
+					ScopeType:        types.APIKeyScopeTenant,
+					Capabilities:     types.StringArray{string(types.APIKeyCapabilityRetrieve)},
+					KnowledgeBaseIDs: types.StringArray{"kb"},
+				},
+			)
 			ctx = types.WithPrincipal(ctx, types.Principal{Type: types.PrincipalAPITenant, ID: "7"})
 		} else {
-			ctx = context.WithValue(ctx, types.PrincipalContextKey, types.Principal{Type: types.PrincipalWebUser, ID: "user"})
+			ctx = context.WithValue(
+				ctx,
+				types.PrincipalContextKey,
+				types.Principal{Type: types.PrincipalWebUser, ID: "user"},
+			)
 		}
 		c.Request = c.Request.WithContext(ctx)
 		c.Next()
@@ -211,9 +352,23 @@ func TestKnowledgeCollectionHTTPWholeCandidatesAndFinalRemoteBoundary(t *testing
 				shares.allowed = false
 				url = "/knowledge/search?keyword=match&agent_id=agent&agent_source_tenant_id=9&limit=1"
 			}
-			if change == "unproved_excluded" {
-				require.NoError(t, db.Create(&types.Knowledge{ID: "legacy-excluded", TenantID: 7, KnowledgeBaseID: "kb", Title: "unaccounted secret", FileName: "hidden.pdf", Channel: "web", CustomMetadata: types.JSON(`{}`)}).Error)
-			} else if change == "final_grant_withdraw" {
+			switch change {
+			case "unproved_excluded":
+				require.NoError(
+					t,
+					db.Create(
+						&types.Knowledge{
+							ID:              "legacy-excluded",
+							TenantID:        7,
+							KnowledgeBaseID: "kb",
+							Title:           "unaccounted secret",
+							FileName:        "hidden.pdf",
+							Channel:         "web",
+							CustomMetadata:  types.JSON(`{}`),
+						},
+					).Error,
+				)
+			case "final_grant_withdraw":
 				queries := 0
 				name := "collection_final_grant_withdraw"
 				require.NoError(t, db.Callback().Query().After("gorm:query").Register(name, func(tx *gorm.DB) {
@@ -225,7 +380,7 @@ func TestKnowledgeCollectionHTTPWholeCandidatesAndFinalRemoteBoundary(t *testing
 					}
 				}))
 				t.Cleanup(func() { _ = db.Callback().Query().Remove(name) })
-			} else {
+			default:
 				fired := false
 				groups.hook = func(call int) {
 					if fired || call < 5 {
@@ -234,20 +389,53 @@ func TestKnowledgeCollectionHTTPWholeCandidatesAndFinalRemoteBoundary(t *testing
 					fired = true
 					switch change {
 					case "excluded_body":
-						require.NoError(t, db.Model(&types.Knowledge{}).Where("id='excluded'").Update("title", "unaccounted mutation").Error)
+						require.NoError(
+							t,
+							db.Model(&types.Knowledge{}).
+								Where("id='excluded'").
+								Update("title", "unaccounted mutation").
+								Error,
+						)
 					case "body_aba":
-						require.NoError(t, db.Model(&types.Knowledge{}).Where("id='excluded'").Update("title", "other").Error)
-						require.NoError(t, db.Model(&types.Knowledge{}).Where("id='excluded'").Update("title", "excluded original").Error)
+						require.NoError(
+							t,
+							db.Model(&types.Knowledge{}).Where("id='excluded'").Update("title", "other").Error,
+						)
+						require.NoError(
+							t,
+							db.Model(&types.Knowledge{}).
+								Where("id='excluded'").
+								Update("title", "excluded original").
+								Error,
+						)
 					case "insert", "insert_delete_aba":
-						require.NoError(t, db.Create(&types.Knowledge{ID: "inserted", TenantID: 7, KnowledgeBaseID: "kb", Title: "hidden insert", Channel: "web", CustomMetadata: types.JSON(`{}`)}).Error)
+						require.NoError(
+							t,
+							db.Create(
+								&types.Knowledge{
+									ID:              "inserted",
+									TenantID:        7,
+									KnowledgeBaseID: "kb",
+									Title:           "hidden insert",
+									Channel:         "web",
+									CustomMetadata:  types.JSON(`{}`),
+								},
+							).Error,
+						)
 						if change == "insert_delete_aba" {
 							require.NoError(t, db.Unscoped().Where("id='inserted'").Delete(&types.Knowledge{}).Error)
 						}
 					case "delete":
 						require.NoError(t, db.Unscoped().Where("id='excluded'").Delete(&types.Knowledge{}).Error)
 					case "config_aba":
-						require.NoError(t, db.Exec("UPDATE knowledge_bases SET summary_model_id='changed' WHERE id='kb'").Error)
-						require.NoError(t, db.Exec("UPDATE knowledge_bases SET summary_model_id='' WHERE id='kb'").Error)
+						require.NoError(
+							t,
+							db.Exec("UPDATE knowledge_bases SET summary_model_id='changed' WHERE id='kb'").Error,
+						)
+						require.NoError(
+							t,
+							db.Exec("UPDATE knowledge_bases SET summary_model_id='' WHERE id='kb'").Error,
+						)
 					case "withdraw_group":
 						groups.allowed = false
 					case "withdraw_share":
@@ -265,8 +453,42 @@ func TestKnowledgeCollectionHTTPWholeCandidatesAndFinalRemoteBoundary(t *testing
 	}
 }
 
-func newCollectionHTTPKnowledgeService(db *gorm.DB, kbs interfaces.KnowledgeBaseService, shares interfaces.KBShareService) (interfaces.KnowledgeService, error) {
-	return service.NewKnowledgeService(nil, repository.NewKnowledgeRepository(db), nil, kbs, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, shares, nil, nil, nil, nil, nil, nil, nil, nil)
+func newCollectionHTTPKnowledgeService(
+	db *gorm.DB,
+	kbs interfaces.KnowledgeBaseService,
+	shares interfaces.KBShareService,
+) (interfaces.KnowledgeService, error) {
+	return service.NewKnowledgeService(
+		nil,
+		repository.NewKnowledgeRepository(db),
+		nil,
+		kbs,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		shares,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+	)
 }
 
 func TestKnowledgeCollectionHTTPTenThousandCandidatesRemainUsable(t *testing.T) {
@@ -274,8 +496,24 @@ func TestKnowledgeCollectionHTTPTenThousandCandidatesRemainUsable(t *testing.T) 
 	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
 		store := repository.NewKnowledgeInputProvenanceStore(tx)
 		for i := 0; i < 9998; i++ {
-			k := &types.Knowledge{ID: fmt.Sprintf("scale-%05d", i), TenantID: 7, KnowledgeBaseID: "kb", Type: "manual", Title: "scale input", FileName: "scale.md", FileType: "md", Channel: "web", Source: "manual", ParseStatus: types.ParseStatusCompleted, CustomMetadata: types.JSON(`{}`)}
-			if _, err := store.CreateKnowledgeWithInput(repository.WithIndependentKnowledgeInput(context.Background()), k, "scale original body"); err != nil {
+			k := &types.Knowledge{
+				ID:              fmt.Sprintf("scale-%05d", i),
+				TenantID:        7,
+				KnowledgeBaseID: "kb",
+				Type:            "manual",
+				Title:           "scale input",
+				FileName:        "scale.md",
+				FileType:        "md",
+				Channel:         "web",
+				Source:          "manual",
+				ParseStatus:     types.ParseStatusCompleted,
+				CustomMetadata:  types.JSON(`{}`),
+			}
+			if _, err := store.CreateKnowledgeWithInput(
+				repository.WithIndependentKnowledgeInput(context.Background()),
+				k,
+				"scale original body",
+			); err != nil {
 				return err
 			}
 		}
@@ -297,19 +535,45 @@ func TestKnowledgeCollectionHTTPOriginalTagFilterAndDisplay(t *testing.T) {
 			knowledge := repository.NewKnowledgeRepository(db)
 			factory := func(tx *gorm.DB) *repository.KnowledgeInputProvenanceStore {
 				actual := repository.NewKnowledgeInputProvenanceStore(tx)
-				repository.ConfigureKnowledgeInputActorGroupAccess(actual, service.NewGroupAccessService(repository.NewGroupAccessRepository(tx)))
+				repository.ConfigureKnowledgeInputActorGroupAccess(
+					actual,
+					service.NewGroupAccessService(repository.NewGroupAccessRepository(tx)),
+				)
 				return actual
 			}
 			repository.ConfigureKnowledgeDisplayInputWriters(store, tags, knowledge, factory)
 			ctx := collectionHumanInputContext(7)
 			for _, tc := range []struct{ id, knowledge string }{{"tag-match", "match"}, {"tag-excluded", "excluded"}} {
-				tag := &types.KnowledgeTag{ID: tc.id, TenantID: 7, KnowledgeBaseID: "kb", Name: "original human " + tc.id, Color: "blue", SortOrder: 1}
-				createCtx := repository.WithIndependentKnowledgeTagCreateInput(ctx, "kb", tag.Name, tag.Color, tag.SortOrder)
+				tag := &types.KnowledgeTag{
+					ID:              tc.id,
+					TenantID:        7,
+					KnowledgeBaseID: "kb",
+					Name:            "original human " + tc.id,
+					Color:           "blue",
+					SortOrder:       1,
+				}
+				createCtx := repository.WithIndependentKnowledgeTagCreateInput(
+					ctx,
+					"kb",
+					tag.Name,
+					tag.Color,
+					tag.SortOrder,
+				)
 				if change == "legacy_excluded_tag" && tc.id == "tag-excluded" {
 					createCtx = repository.WithIndependentKnowledgeInput(ctx)
 				}
 				require.NoError(t, tags.Create(createCtx, tag))
-				require.NoError(t, knowledge.SetKnowledgeTags(repository.WithIndependentKnowledgeTagAssignmentInput(ctx, map[string][]string{tc.knowledge: {tag.ID}}), tc.knowledge, []string{tag.ID}))
+				require.NoError(
+					t,
+					knowledge.SetKnowledgeTags(
+						repository.WithIndependentKnowledgeTagAssignmentInput(
+							ctx,
+							map[string][]string{tc.knowledge: {tag.ID}},
+						),
+						tc.knowledge,
+						[]string{tag.ID},
+					),
+				)
 			}
 			if change == "excluded_tag_body_aba" || change == "excluded_relation_aba" {
 				fired := false
@@ -319,17 +583,33 @@ func TestKnowledgeCollectionHTTPOriginalTagFilterAndDisplay(t *testing.T) {
 					}
 					fired = true
 					if change == "excluded_tag_body_aba" {
-						require.NoError(t, db.Model(&types.KnowledgeTag{}).Where("id='tag-excluded'").Update("name", "changed").Error)
-						require.NoError(t, db.Model(&types.KnowledgeTag{}).Where("id='tag-excluded'").Update("name", "original human tag-excluded").Error)
+						require.NoError(
+							t,
+							db.Model(&types.KnowledgeTag{}).Where("id='tag-excluded'").Update("name", "changed").Error,
+						)
+						require.NoError(
+							t,
+							db.Model(&types.KnowledgeTag{}).
+								Where("id='tag-excluded'").
+								Update("name", "original human tag-excluded").
+								Error,
+						)
 					} else {
 						var relation types.KnowledgeTagRelation
 						require.NoError(t, db.Where("knowledge_id='excluded'").Take(&relation).Error)
-						require.NoError(t, db.Where("knowledge_id='excluded'").Delete(&types.KnowledgeTagRelation{}).Error)
+						require.NoError(
+							t,
+							db.Where("knowledge_id='excluded'").Delete(&types.KnowledgeTagRelation{}).Error,
+						)
 						require.NoError(t, db.Create(&relation).Error)
 					}
 				}
 			}
-			w := serveCollectionHTTP(h, "/knowledge-bases/kb/knowledge?tag_ids=tag-match&keyword=match&page_size=1", false)
+			w := serveCollectionHTTP(
+				h,
+				"/knowledge-bases/kb/knowledge?tag_ids=tag-match&keyword=match&page_size=1",
+				false,
+			)
 			if change == "positive" {
 				require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 				require.Contains(t, w.Body.String(), "original human tag-match")

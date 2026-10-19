@@ -10,7 +10,10 @@ import (
 // from an immutable admission. A nil request positively identifies an ordinary
 // producer; current knowledge JSON or caller-declared channel is not used.
 type KnowledgeHistoryMaterialRequestReader interface {
-	KnowledgeHistoryMaterialRequest(context.Context, *types.KnowledgeBuildInputProof) (*types.MessageMaterialReadRequest, error)
+	KnowledgeHistoryMaterialRequest(
+		context.Context,
+		*types.KnowledgeBuildInputProof,
+	) (*types.MessageMaterialReadRequest, error)
 }
 
 // KnowledgeHistoryTaskMaterialRestorer obtains actual parent guards for a

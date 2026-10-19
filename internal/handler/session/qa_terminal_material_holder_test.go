@@ -27,7 +27,11 @@ type terminalMaterialStream struct {
 	scopes [][2]string
 }
 
-func (s *terminalMaterialStream) AppendEvent(_ context.Context, session, message string, frame interfaces.StreamEvent) error {
+func (s *terminalMaterialStream) AppendEvent(
+	_ context.Context,
+	session, message string,
+	frame interfaces.StreamEvent,
+) error {
 	// Use the transport's JSON shape, retaining no caller-owned event maps.
 	raw, err := json.Marshal(frame)
 	if err != nil {
@@ -44,7 +48,11 @@ func (s *terminalMaterialStream) AppendEvent(_ context.Context, session, message
 	return nil
 }
 
-func (s *terminalMaterialStream) GetEvents(_ context.Context, _, _ string, offset int) ([]interfaces.StreamEvent, int, error) {
+func (s *terminalMaterialStream) GetEvents(
+	_ context.Context,
+	_, _ string,
+	offset int,
+) ([]interfaces.StreamEvent, int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return append([]interfaces.StreamEvent(nil), s.events[offset:]...), len(s.events), nil
@@ -54,10 +62,35 @@ func TestAgentStreamHandlerInternalErrorRejectsForeignRunScope(t *testing.T) {
 	streams := &terminalMaterialStream{}
 	bus := event.NewEventBus()
 	message := &types.Message{ID: "assistant", SessionID: "session", RequestID: "request", Role: "assistant"}
-	producer := NewAgentStreamHandler(context.Background(), "session", "assistant", "request", 7, time.Now(), message, streams, bus, nil, nil, nil)
+	producer := NewAgentStreamHandler(
+		context.Background(),
+		"session",
+		"assistant",
+		"request",
+		7,
+		time.Now(),
+		message,
+		streams,
+		bus,
+		nil,
+		nil,
+		nil,
+	)
 	producer.Subscribe()
 	for _, control := range [][2]string{{"foreign-session", "request"}, {"session", "foreign-request"}} {
-		require.ErrorIs(t, bus.Emit(context.Background(), event.Event{Type: event.EventError, SessionID: control[0], RequestID: control[1], Data: event.ErrorData{Error: "foreign private error"}}), access.ErrNextcloudPublicationDenied)
+		require.ErrorIs(
+			t,
+			bus.Emit(
+				context.Background(),
+				event.Event{
+					Type:      event.EventError,
+					SessionID: control[0],
+					RequestID: control[1],
+					Data:      event.ErrorData{Error: "foreign private error"},
+				},
+			),
+			access.ErrNextcloudPublicationDenied,
+		)
 	}
 	require.Empty(t, streams.events)
 	require.False(t, message.IsCompleted)
@@ -85,19 +118,49 @@ func TestLiveSSEProducerErrorWithRefusedOriginalMaterialHolder(t *testing.T) {
 				ctx = attach(ctx)
 				c.Writer = &nativeSavedReplayWriter{ResponseWriter: c.Writer, ctx: ctx, check: check}
 				bus := event.NewEventBus()
-				producer := NewAgentStreamHandler(ctx, "session", "assistant", "request", 7, time.Now(), message, streams, bus, nil, nil, nil)
+				producer := NewAgentStreamHandler(
+					ctx,
+					"session",
+					"assistant",
+					"request",
+					7,
+					time.Now(),
+					message,
+					streams,
+					bus,
+					nil,
+					nil,
+					nil,
+				)
 				producer.Subscribe()
 				if condition == "unknown_prefix" {
-					require.ErrorIs(t, bus.Emit(ctx, event.Event{Type: event.EventAgentThought, SourceLineage: types.UnknownSourceLineage(), Data: event.AgentThoughtData{Content: "private refused body"}}), access.ErrNextcloudPublicationDenied)
+					require.ErrorIs(
+						t,
+						bus.Emit(
+							ctx,
+							event.Event{
+								Type:          event.EventAgentThought,
+								SourceLineage: types.UnknownSourceLineage(),
+								Data:          event.AgentThoughtData{Content: "private refused body"},
+							},
+						),
+						access.ErrNextcloudPublicationDenied,
+					)
 				}
 				if condition == "source_revoked" {
-					require.ErrorIs(t, service.CheckLiveMessagePublication(ctx, message), access.ErrNextcloudPublicationDenied)
+					require.ErrorIs(
+						t,
+						service.CheckLiveMessagePublication(ctx, message),
+						access.ErrNextcloudPublicationDenied,
+					)
 				}
 				// executeQA emits this event after the service fails, without a
 				// generated-body receipt; do not fake assistant completion to close.
 				producerResult <- bus.Emit(ctx, event.Event{ID: "private diagnostic event ID", Type: event.EventError, SessionID: "session", RequestID: "request", Data: event.ErrorData{Error: "private diagnostic token=SECRET", Stage: "private source stage"}})
 				setSSEHeaders(c)
-				rewriter := storageurl.NewStreamRewriter(storageurl.NewRequestRewriter(ctx, storageurl.ModePublic, nil, nil))
+				rewriter := storageurl.NewStreamRewriter(
+					storageurl.NewRequestRewriter(ctx, storageurl.ModePublic, nil, nil),
+				)
 				rewriter.Push(ctx, "held", "private held source ![", false, nil)
 				h.handleAgentEventsForSSE(ctx, c, "session", "assistant", "request", bus, true, rewriter, message)
 			})
@@ -121,7 +184,11 @@ func TestLiveSSEProducerErrorWithRefusedOriginalMaterialHolder(t *testing.T) {
 			}
 			require.False(t, message.IsCompleted)
 			require.Empty(t, message.Content)
-			require.Error(t, message.SourceLineage.RequireComplete(), "static control must not mint an assistant body origin")
+			require.Error(
+				t,
+				message.SourceLineage.RequireComplete(),
+				"static control must not mint an assistant body origin",
+			)
 			streams.mu.Lock()
 			defer streams.mu.Unlock()
 			require.Len(t, streams.events, 1)
@@ -131,7 +198,11 @@ func TestLiveSSEProducerErrorWithRefusedOriginalMaterialHolder(t *testing.T) {
 			require.NoError(t, err)
 			require.NotContains(t, string(stored), "SECRET")
 			require.NotContains(t, string(stored), "private")
-			require.Error(t, streams.events[0].SourceLineage.RequireComplete(), "the code-origin terminal is not source-body authority")
+			require.Error(
+				t,
+				streams.events[0].SourceLineage.RequireComplete(),
+				"the code-origin terminal is not source-body authority",
+			)
 		})
 	}
 }

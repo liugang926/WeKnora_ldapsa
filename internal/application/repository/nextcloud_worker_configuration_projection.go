@@ -69,7 +69,8 @@ func checkScopedConfigurationProjections(slot *scopedOnboardingConfigurationRead
 }
 
 func pinScopedConfigurationProjection(slot *scopedOnboardingConfigurationReadSlot, kb *types.KnowledgeBase) error {
-	if kb == nil || kb.ID != slot.kb || kb.TenantID != slot.tenant || kb.Name != "" || kb.Description != "" || kb.GeneratedProfile != nil {
+	if kb == nil || kb.ID != slot.kb || kb.TenantID != slot.tenant || kb.Name != "" || kb.Description != "" ||
+		kb.GeneratedProfile != nil {
 		return ErrKnowledgeInputChanged
 	}
 	// The connector consumes its first projection for the whole sync. Each
@@ -89,7 +90,11 @@ func pinScopedConfigurationProjection(slot *scopedOnboardingConfigurationReadSlo
 
 // A private read slot changes only exact worker getters. No slot means the
 // ordinary public getter keeps its existing current authorization contract.
-func scopedWorkerConfigurationProjection(ctx context.Context, kb string, tenant uint64) (*types.KnowledgeBase, bool, error) {
+func scopedWorkerConfigurationProjection(
+	ctx context.Context,
+	kb string,
+	tenant uint64,
+) (*types.KnowledgeBase, bool, error) {
 	if ctx == nil {
 		return nil, false, nil
 	}
@@ -133,7 +138,12 @@ func scopedWorkerConfigurationProjection(ctx context.Context, kb string, tenant 
 	return projection, true, nil
 }
 
-func loadKnowledgeBuildConfiguration(ctx context.Context, db *gorm.DB, tenant uint64, kb string) (*types.KnowledgeBase, error) {
+func loadKnowledgeBuildConfiguration(
+	ctx context.Context,
+	db *gorm.DB,
+	tenant uint64,
+	kb string,
+) (*types.KnowledgeBase, error) {
 	if current, handled, err := scopedWorkerConfigurationProjection(ctx, kb, tenant); handled {
 		return current, err
 	}
@@ -175,7 +185,9 @@ func loadKnowledgeBuildConfigurationInTx(tx *gorm.DB, tenant uint64, kb string) 
 	if err != nil {
 		return nil, err
 	}
-	if current == nil || current.ID != kb || current.TenantID != tenant || current.Name != "" || current.Description != "" || current.GeneratedProfile != nil {
+	if current == nil || current.ID != kb || current.TenantID != tenant || current.Name != "" ||
+		current.Description != "" ||
+		current.GeneratedProfile != nil {
 		return nil, ErrKnowledgeInputChanged
 	}
 	return current, nil

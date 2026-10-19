@@ -77,9 +77,20 @@ func autoCompletionRunUntilPending(t *testing.T, m *machinePipelineFixture) (*ty
 	require.NotEmpty(t, p.CompletionInput)
 	require.NoError(t, m.f.store.VerifyKnowledgeAutoTagTaskInput(context.Background(), p))
 	var receipt autoCompletionBodyManifest
-	require.NoError(t, m.f.db.WithContext(m.f.ctx).Where("manifest_id=? AND tenant_id=? AND knowledge_base_id=? AND knowledge_id=?", p.CompletionInput, p.TenantID, p.KnowledgeBaseID, p.KnowledgeID).Take(&receipt).Error)
+	require.NoError(
+		t,
+		m.f.db.WithContext(m.f.ctx).
+			Where("manifest_id=? AND tenant_id=? AND knowledge_base_id=? AND knowledge_id=?", p.CompletionInput, p.TenantID, p.KnowledgeBaseID, p.KnowledgeID).
+			Take(&receipt).
+			Error,
+	)
 	require.Equal(t, p.CompletionInput, receipt.ManifestID)
-	require.NotContains(t, receipt.ActualInputs, "_original_body_version", "the actual Query callback resolves the live immutable body")
+	require.NotContains(
+		t,
+		receipt.ActualInputs,
+		"_original_body_version",
+		"the actual Query callback resolves the live immutable body",
+	)
 	require.Contains(t, receipt.ActualInputs, "Generated original profile title")
 	require.Contains(t, receipt.ActualInputs, "questions")
 	return row, op
@@ -103,7 +114,13 @@ func autoCompletionResume(t *testing.T, m *machinePipelineFixture, op types.Task
 	require.NoError(t, m.run(t, queue.tasks[0]), "a duplicate terminal delivery is idempotent")
 	require.Equal(t, 1, m.model.calls, "a duplicate cannot repeat model or tags")
 	var attached int64
-	require.NoError(t, m.f.db.Model(&types.KnowledgeTagRelation{}).Where("knowledge_id=? AND tag_id='machine-topic'", op.ScopeID).Count(&attached).Error)
+	require.NoError(
+		t,
+		m.f.db.Model(&types.KnowledgeTagRelation{}).
+			Where("knowledge_id=? AND tag_id='machine-topic'", op.ScopeID).
+			Count(&attached).
+			Error,
+	)
 	require.EqualValues(t, 1, attached)
 	count, err = RecoverKnowledgeAutoTagCompletions(context.Background(), m.f.store, queue, op.ScopeID)
 	require.NoError(t, err)
@@ -143,9 +160,11 @@ func runAutoCompletionDurability(t *testing.T, pg bool) {
 		})
 	}
 }
+
 func TestKnowledgeAutoCompletionDurabilitySQLitePoolOne(t *testing.T) {
 	runAutoCompletionDurability(t, false)
 }
+
 func TestPostgresKnowledgeAutoCompletionDurabilityPoolOne(t *testing.T) {
 	runAutoCompletionDurability(t, true)
 }
@@ -153,7 +172,7 @@ func TestPostgresKnowledgeAutoCompletionDurabilityPoolOne(t *testing.T) {
 func actualCompletionChildExit(t *testing.T, m *machinePipelineFixture, op types.TaskPendingOp, pg bool) {
 	t.Helper()
 	payload := filepath.Join(t.TempDir(), "actual-auto-payload.json")
-	require.NoError(t, os.WriteFile(payload, op.Payload, 0600))
+	require.NoError(t, os.WriteFile(payload, op.Payload, 0o600))
 	dsn := ""
 	dialect := "sqlite"
 	if pg {
@@ -170,7 +189,12 @@ func actualCompletionChildExit(t *testing.T, m *machinePipelineFixture, op types
 	binary, err := os.Executable()
 	require.NoError(t, err)
 	command := exec.Command(binary, "-test.run=^TestKnowledgeAutoCompletionCrashChild$", "-test.v")
-	command.Env = append(os.Environ(), "WEKNORA_AUTO_COMPLETION_CRASH_PAYLOAD="+payload, "WEKNORA_AUTO_COMPLETION_CRASH_DIALECT="+dialect, "WEKNORA_AUTO_COMPLETION_CRASH_DSN="+dsn)
+	command.Env = append(
+		os.Environ(),
+		"WEKNORA_AUTO_COMPLETION_CRASH_PAYLOAD="+payload,
+		"WEKNORA_AUTO_COMPLETION_CRASH_DIALECT="+dialect,
+		"WEKNORA_AUTO_COMPLETION_CRASH_DSN="+dsn,
+	)
 	output, err := command.CombinedOutput()
 	var exited *exec.ExitError
 	require.ErrorAs(t, err, &exited, string(output))
@@ -184,12 +208,13 @@ func actualCompletionChildExit(t *testing.T, m *machinePipelineFixture, op types
 	stale := time.Now().UTC().Add(-4 * time.Minute)
 	require.NoError(t, m.f.db.Model(&types.TaskPendingOp{}).Where("id=?", op.ID).Update("claimed_at", stale).Error)
 }
+
 func TestKnowledgeAutoCompletionCrashChild(t *testing.T) {
 	path := os.Getenv("WEKNORA_AUTO_COMPLETION_CRASH_PAYLOAD")
 	if path == "" {
 		return
 	}
-	var dialector gorm.Dialector = sqlite.Open(os.Getenv("WEKNORA_AUTO_COMPLETION_CRASH_DSN"))
+	dialector := sqlite.Open(os.Getenv("WEKNORA_AUTO_COMPLETION_CRASH_DSN"))
 	if os.Getenv("WEKNORA_AUTO_COMPLETION_CRASH_DIALECT") == "postgres" {
 		dialector = postgres.Open(os.Getenv("WEKNORA_AUTO_COMPLETION_CRASH_DSN"))
 	}
@@ -219,24 +244,51 @@ func runAutoCompletionWithdraw(t *testing.T, pg bool) {
 			case "source_withdraw":
 				m.allow.Store(false)
 			case "actor_withdraw":
-				require.NoError(t, m.f.db.Model(&types.User{}).Where("id='enrich-human'").Update("is_active", false).Error)
+				require.NoError(
+					t,
+					m.f.db.Model(&types.User{}).Where("id='enrich-human'").Update("is_active", false).Error,
+				)
 			case "model_ABA":
-				require.NoError(t, m.f.db.Model(&types.Model{}).Where("id='auto-model'").Update("name", "withdrawn").Error)
-				require.NoError(t, m.f.db.Model(&types.Model{}).Where("id='auto-model'").Update("name", "actual local auto mock").Error)
+				require.NoError(
+					t,
+					m.f.db.Model(&types.Model{}).Where("id='auto-model'").Update("name", "withdrawn").Error,
+				)
+				require.NoError(
+					t,
+					m.f.db.Model(&types.Model{}).
+						Where("id='auto-model'").
+						Update("name", "actual local auto mock").
+						Error,
+				)
 			case "tenant_ABA":
 				require.NoError(t, m.f.db.Model(&types.Tenant{}).Where("id=7").Update("status", "withdrawn").Error)
 				require.NoError(t, m.f.db.Model(&types.Tenant{}).Where("id=7").Update("status", "").Error)
 			case "body_ABA":
 				var c types.Chunk
-				require.NoError(t, m.f.db.Where("knowledge_id=? AND chunk_type=?", op.ScopeID, types.ChunkTypeText).Take(&c).Error)
-				require.NoError(t, m.f.db.Model(&types.Chunk{}).Where("id=?", c.ID).Update("content", "withdrawn").Error)
+				require.NoError(
+					t,
+					m.f.db.Where("knowledge_id=? AND chunk_type=?", op.ScopeID, types.ChunkTypeText).Take(&c).Error,
+				)
+				require.NoError(
+					t,
+					m.f.db.Model(&types.Chunk{}).Where("id=?", c.ID).Update("content", "withdrawn").Error,
+				)
 				require.NoError(t, m.f.db.Model(&types.Chunk{}).Where("id=?", c.ID).Update("content", c.Content).Error)
 			case "publication_etag_ABA", "publication_updated_at_ABA", "publication_metadata_ABA":
 				var k types.Knowledge
 				require.NoError(t, m.f.db.Where("id=?", op.ScopeID).Take(&k).Error)
 				if mutation == "publication_updated_at_ABA" {
-					require.NoError(t, m.f.db.Model(&types.Knowledge{}).Where("id=?", k.ID).Update("updated_at", k.UpdatedAt.Add(time.Second)).Error)
-					require.NoError(t, m.f.db.Model(&types.Knowledge{}).Where("id=?", k.ID).Update("updated_at", k.UpdatedAt).Error)
+					require.NoError(
+						t,
+						m.f.db.Model(&types.Knowledge{}).
+							Where("id=?", k.ID).
+							Update("updated_at", k.UpdatedAt.Add(time.Second)).
+							Error,
+					)
+					require.NoError(
+						t,
+						m.f.db.Model(&types.Knowledge{}).Where("id=?", k.ID).Update("updated_at", k.UpdatedAt).Error,
+					)
 				} else {
 					metadata := k.GetMetadata()
 					if mutation == "publication_etag_ABA" {
@@ -246,8 +298,14 @@ func runAutoCompletionWithdraw(t *testing.T, pg bool) {
 					}
 					data, err := json.Marshal(metadata)
 					require.NoError(t, err)
-					require.NoError(t, m.f.db.Model(&types.Knowledge{}).Where("id=?", k.ID).Update("metadata", types.JSON(data)).Error)
-					require.NoError(t, m.f.db.Model(&types.Knowledge{}).Where("id=?", k.ID).Update("metadata", k.Metadata).Error)
+					require.NoError(
+						t,
+						m.f.db.Model(&types.Knowledge{}).Where("id=?", k.ID).Update("metadata", types.JSON(data)).Error,
+					)
+					require.NoError(
+						t,
+						m.f.db.Model(&types.Knowledge{}).Where("id=?", k.ID).Update("metadata", k.Metadata).Error,
+					)
 				}
 			case "queue_forge":
 				var p types.KnowledgeAutoTagPayload
@@ -258,7 +316,13 @@ func runAutoCompletionWithdraw(t *testing.T, pg bool) {
 			require.Error(t, m.run(t, task))
 			require.Zero(t, m.model.calls)
 			var added int64
-			require.NoError(t, m.f.db.Model(&types.KnowledgeTagRelation{}).Where("knowledge_id=? AND tag_id='machine-topic'", op.ScopeID).Count(&added).Error)
+			require.NoError(
+				t,
+				m.f.db.Model(&types.KnowledgeTagRelation{}).
+					Where("knowledge_id=? AND tag_id='machine-topic'", op.ScopeID).
+					Count(&added).
+					Error,
+			)
 			require.Zero(t, added)
 			if mutation != "queue_forge" {
 				var saved types.TaskPendingOp
@@ -271,9 +335,11 @@ func runAutoCompletionWithdraw(t *testing.T, pg bool) {
 		})
 	}
 }
+
 func TestKnowledgeAutoCompletionWithdrawSQLitePoolOne(t *testing.T) {
 	runAutoCompletionWithdraw(t, false)
 }
+
 func TestPostgresKnowledgeAutoCompletionWithdrawPoolOne(t *testing.T) {
 	runAutoCompletionWithdraw(t, true)
 }
@@ -314,9 +380,11 @@ func runAutoCompletionActualRedis(t *testing.T, pg bool) {
 	require.Equal(t, 1, m.model.calls)
 	require.NoError(t, inspector.DeleteTask(delivered.Queue, delivered.ID))
 }
+
 func TestKnowledgeAutoCompletionActualRedisSQLite(t *testing.T) {
 	runAutoCompletionActualRedis(t, false)
 }
+
 func TestPostgresKnowledgeAutoCompletionActualRedis(t *testing.T) {
 	runAutoCompletionActualRedis(t, true)
 }
@@ -355,6 +423,7 @@ func runAutoCompletionProducerSQLFailure(t *testing.T, pg bool) {
 func TestKnowledgeAutoCompletionProducerSQLFailureSQLitePoolOne(t *testing.T) {
 	runAutoCompletionProducerSQLFailure(t, false)
 }
+
 func TestPostgresKnowledgeAutoCompletionProducerSQLFailurePoolOne(t *testing.T) {
 	runAutoCompletionProducerSQLFailure(t, true)
 }
@@ -377,23 +446,43 @@ func runAutoCompletionPublicationOutage(t *testing.T, pg bool) {
 			require.Error(t, lastErr, "actual signed publication transport returns HTTP503 after completion commits")
 			require.NoError(t, m.f.db.Where("id=?", row.ID).Take(row).Error)
 			require.Equal(t, types.ParseStatusCompleted, row.ParseStatus)
-			require.Empty(t, row.GetMetadata()["nextcloud_etag"], "source remains unpublished during unavailable verification")
+			require.Empty(
+				t,
+				row.GetMetadata()["nextcloud_etag"],
+				"source remains unpublished during unavailable verification",
+			)
 			var op types.TaskPendingOp
-			require.NoError(t, m.f.db.Where("scope_id=? AND task_type=?", row.ID, types.TypeKnowledgeAutoTag).Take(&op).Error)
+			require.NoError(
+				t,
+				m.f.db.Where("scope_id=? AND task_type=?", row.ID, types.TypeKnowledgeAutoTag).Take(&op).Error,
+			)
 			require.Equal(t, "auto_tag_completion", op.Op)
 			m.publicationUnavailableAfterCompletion.Store(false)
 			autoCompletionResume(t, m, op)
 			require.NoError(t, m.f.db.Where("id=?", row.ID).Take(row).Error)
 			require.Equal(t, "actual-etag", row.GetMetadata()["nextcloud_etag"])
 			var transition int64
-			require.NoError(t, m.f.db.Table("knowledge_auto_publication_transitions").Where("knowledge_id=?", row.ID).Count(&transition).Error)
-			require.EqualValues(t, 2*probe-1, transition, "recovery uses only contiguous real publish/unpublish SQL receipts")
+			require.NoError(
+				t,
+				m.f.db.Table("knowledge_auto_publication_transitions").
+					Where("knowledge_id=?", row.ID).
+					Count(&transition).
+					Error,
+			)
+			require.EqualValues(
+				t,
+				2*probe-1,
+				transition,
+				"recovery uses only contiguous real publish/unpublish SQL receipts",
+			)
 		})
 	}
 }
+
 func TestKnowledgeAutoCompletionPublicationOutageSQLitePoolOne(t *testing.T) {
 	runAutoCompletionPublicationOutage(t, false)
 }
+
 func TestPostgresKnowledgeAutoCompletionPublicationOutagePoolOne(t *testing.T) {
 	runAutoCompletionPublicationOutage(t, true)
 }
@@ -403,10 +492,34 @@ func TestPostgresKnowledgeAutoCompletionPublicationOutagePoolOne(t *testing.T) {
 // The normal signed sync/file admission seals these controls before parsing.
 type autoCompletionZeroEnrichmentSource struct{ interfaces.KnowledgeService }
 
-func (s autoCompletionZeroEnrichmentSource) CreateKnowledgeFromFile(ctx context.Context, kb string, file *multipart.FileHeader, metadata map[string]string, multimodal *bool, name string, tags []string, channel string, _ *types.KnowledgeProcessOverrides) (*types.Knowledge, error) {
+func (s autoCompletionZeroEnrichmentSource) CreateKnowledgeFromFile(
+	ctx context.Context,
+	kb string,
+	file *multipart.FileHeader,
+	metadata map[string]string,
+	multimodal *bool,
+	name string,
+	tags []string,
+	channel string,
+	_ *types.KnowledgeProcessOverrides,
+) (*types.Knowledge, error) {
 	disabled := false
-	return s.KnowledgeService.CreateKnowledgeFromFile(ctx, kb, file, metadata, multimodal, name, tags, channel, &types.KnowledgeProcessOverrides{SummaryEnabled: &disabled, QuestionGenerationConfig: &types.QuestionGenerationConfig{Enabled: false}})
+	return s.KnowledgeService.CreateKnowledgeFromFile(
+		ctx,
+		kb,
+		file,
+		metadata,
+		multimodal,
+		name,
+		tags,
+		channel,
+		&types.KnowledgeProcessOverrides{
+			SummaryEnabled:           &disabled,
+			QuestionGenerationConfig: &types.QuestionGenerationConfig{Enabled: false},
+		},
+	)
 }
+
 func runAutoCompletionZeroSubtasks(t *testing.T, pg bool) {
 	m := autoCompletionFixture(t, pg)
 	m.source.knowledgeService = autoCompletionZeroEnrichmentSource{m.f.s}
@@ -423,9 +536,11 @@ func runAutoCompletionZeroSubtasks(t *testing.T, pg bool) {
 	require.NoError(t, m.f.db.Where("scope_id=? AND task_type=?", row.ID, types.TypeKnowledgeAutoTag).Take(&op).Error)
 	autoCompletionResume(t, m, op)
 }
+
 func TestKnowledgeAutoCompletionZeroSubtasksSQLitePoolOne(t *testing.T) {
 	runAutoCompletionZeroSubtasks(t, false)
 }
+
 func TestPostgresKnowledgeAutoCompletionZeroSubtasksPoolOne(t *testing.T) {
 	runAutoCompletionZeroSubtasks(t, true)
 }
@@ -438,15 +553,31 @@ func runAutoCompletionClaimFence(t *testing.T, pg bool) {
 	require.NoError(t, json.Unmarshal(op.Payload, &p))
 	var replacement *time.Time
 	m.model.beforeReturn = func() {
-		require.NoError(t, m.f.db.Model(&types.TaskPendingOp{}).Where("id=?", op.ID).Update("claimed_at", time.Now().UTC().Add(-4*time.Minute)).Error)
+		require.NoError(
+			t,
+			m.f.db.Model(&types.TaskPendingOp{}).
+				Where("id=?", op.ID).
+				Update("claimed_at", time.Now().UTC().Add(-4*time.Minute)).
+				Error,
+		)
 		var err error
 		replacement, err = m.f.store.ClaimKnowledgeAutoTagCompletion(context.Background(), p)
 		require.NoError(t, err)
 		require.NotNil(t, replacement)
 	}
-	require.Error(t, m.run(t, asynq.NewTask(types.TypeKnowledgeAutoTag, op.Payload)), "a consumer whose claim expired cannot atomically publish tag relations")
+	require.Error(
+		t,
+		m.run(t, asynq.NewTask(types.TypeKnowledgeAutoTag, op.Payload)),
+		"a consumer whose claim expired cannot atomically publish tag relations",
+	)
 	var added int64
-	require.NoError(t, m.f.db.Model(&types.KnowledgeTagRelation{}).Where("knowledge_id=? AND tag_id='machine-topic'", op.ScopeID).Count(&added).Error)
+	require.NoError(
+		t,
+		m.f.db.Model(&types.KnowledgeTagRelation{}).
+			Where("knowledge_id=? AND tag_id='machine-topic'", op.ScopeID).
+			Count(&added).
+			Error,
+	)
 	require.Zero(t, added, "the losing claim rolls back tags and their producer receipt")
 	var current types.TaskPendingOp
 	require.NoError(t, m.f.db.Where("id=?", op.ID).Take(&current).Error)
@@ -456,12 +587,20 @@ func runAutoCompletionClaimFence(t *testing.T, pg bool) {
 	m.model.beforeReturn = nil
 	require.NoError(t, m.run(t, asynq.NewTask(types.TypeKnowledgeAutoTag, op.Payload)))
 	require.Equal(t, 2, m.model.calls, "only the replacement delivery may persist its model result")
-	require.NoError(t, m.f.db.Model(&types.KnowledgeTagRelation{}).Where("knowledge_id=? AND tag_id='machine-topic'", op.ScopeID).Count(&added).Error)
+	require.NoError(
+		t,
+		m.f.db.Model(&types.KnowledgeTagRelation{}).
+			Where("knowledge_id=? AND tag_id='machine-topic'", op.ScopeID).
+			Count(&added).
+			Error,
+	)
 	require.EqualValues(t, 1, added)
 }
+
 func TestKnowledgeAutoCompletionClaimFenceSQLitePoolOne(t *testing.T) {
 	runAutoCompletionClaimFence(t, false)
 }
+
 func TestPostgresKnowledgeAutoCompletionClaimFencePoolOne(t *testing.T) {
 	runAutoCompletionClaimFence(t, true)
 }

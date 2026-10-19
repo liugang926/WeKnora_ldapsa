@@ -30,9 +30,11 @@ func TestNextcloudQueuedDispatchWakesForNewHintAfterMatchingSyncCompletes(t *tes
 		types.ParseStatusCompleted, "enabled")
 	require.NoError(t, db.Model(&types.Knowledge{}).Where("id = ?", ready.ID).
 		Update("file_name", "file.md").Error)
-	require.NoError(t, db.Create(&nextcloudSourceVersion{TenantID: 7, KnowledgeBaseID: "kb",
+	require.NoError(t, db.Create(&nextcloudSourceVersion{
+		TenantID: 7, KnowledgeBaseID: "kb",
 		DataSourceID: "ds", ExternalID: "nextcloud:instance:77", DesiredETag: "etag-v1",
-		CandidateKnowledgeID: ready.ID, State: "published", UpdatedAt: time.Now().UTC()}).Error)
+		CandidateKnowledgeID: ready.ID, State: "published", UpdatedAt: time.Now().UTC(),
+	}).Error)
 	var source types.DataSource
 	require.NoError(t, db.Where("id = ?", "ds").Take(&source).Error)
 	baseURL, configSHA, bindingID, err := NextcloudEventDataSourceIdentity(source.Config)
@@ -51,8 +53,10 @@ func TestNextcloudQueuedDispatchWakesForNewHintAfterMatchingSyncCompletes(t *tes
 
 	now := time.Now().UTC().Truncate(time.Second)
 	startedAt := now.Add(-time.Minute)
-	require.NoError(t, db.Create(&types.SyncLog{ID: "first-event-log", DataSourceID: "ds",
-		TenantID: 7, Status: types.SyncLogStatusRunning, StartedAt: startedAt}).Error)
+	require.NoError(t, db.Create(&types.SyncLog{
+		ID: "first-event-log", DataSourceID: "ds",
+		TenantID: 7, Status: types.SyncLogStatusRunning, StartedAt: startedAt,
+	}).Error)
 	require.NoError(t, db.Exec(`INSERT INTO nextcloud_event_dispatch
 		(connection_id, dispatched_id, target_event_id, state, last_sync_log_id, next_attempt_at)
 		VALUES ('event-connection', 1, 1, 'queued', 'first-event-log', ?)`, now.Add(time.Minute)).Error)

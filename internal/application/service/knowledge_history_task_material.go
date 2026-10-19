@@ -11,13 +11,19 @@ import (
 
 // ConfigureKnowledgePostProcessHistoryMaterial attaches the actual knowledge
 // service after DI construction. No constructor dependency cycle is introduced.
-func ConfigureKnowledgePostProcessHistoryMaterial(handler interfaces.TaskHandler, knowledge interfaces.KnowledgeService) {
+func ConfigureKnowledgePostProcessHistoryMaterial(
+	handler interfaces.TaskHandler,
+	knowledge interfaces.KnowledgeService,
+) {
 	if post, ok := handler.(*KnowledgePostProcessService); ok {
 		post.historyMaterials, _ = knowledge.(interfaces.KnowledgeHistoryTaskMaterialRestorer)
 	}
 }
 
-func beginKnowledgeHistoryTaskMaterial(ctx context.Context, reader interfaces.KnowledgeBuildInputReader, restorer interfaces.KnowledgeHistoryTaskMaterialRestorer,
+func beginKnowledgeHistoryTaskMaterial(
+	ctx context.Context,
+	reader interfaces.KnowledgeBuildInputReader,
+	restorer interfaces.KnowledgeHistoryTaskMaterialRestorer,
 	proof *types.KnowledgeBuildInputProof,
 ) (context.Context, func(), error) {
 	noop := func() {}
@@ -59,7 +65,10 @@ func beginKnowledgeHistoryTaskMaterial(ctx context.Context, reader interfaces.Kn
 // BeginKnowledgeHistoryTaskMaterial opens a separate actual guard even when a
 // caller already has a sibling/earlier guard. That preserves its context and
 // ownership while bounding this worker's own leases to this exact admission.
-func (s *knowledgeService) BeginKnowledgeHistoryTaskMaterial(ctx context.Context, proof *types.KnowledgeBuildInputProof) (context.Context, func(), error) {
+func (s *knowledgeService) BeginKnowledgeHistoryTaskMaterial(
+	ctx context.Context,
+	proof *types.KnowledgeBuildInputProof,
+) (context.Context, func(), error) {
 	noop := func() {}
 	if ctx == nil || proof == nil || s.knowledgeInputs == nil {
 		return ctx, noop, types.ErrSourceLineageUnknown
@@ -85,7 +94,9 @@ func (s *knowledgeService) BeginKnowledgeHistoryTaskMaterial(ctx context.Context
 	if _, captured := ctx.Value(types.CallerContextKey).(types.Caller); !captured {
 		// A partially authenticated context is not a fresh worker. Do not
 		// replace its existing principal/key/user with the admission owner.
-		if ctx.Value(types.CallerContextKey) != nil || ctx.Value(types.PrincipalContextKey) != nil || ctx.Value(types.TenantAPIKeyScopeContextKey) != nil || ctx.Value(types.UserIDContextKey) != nil {
+		if ctx.Value(types.CallerContextKey) != nil || ctx.Value(types.PrincipalContextKey) != nil ||
+			ctx.Value(types.TenantAPIKeyScopeContextKey) != nil ||
+			ctx.Value(types.UserIDContextKey) != nil {
 			return ctx, noop, types.ErrSourceLineageUnknown
 		}
 		current, err = repository.RestoreKnowledgeBuildActorIfRequired(ctx, s.knowledgeInputs, proof)

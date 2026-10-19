@@ -206,6 +206,18 @@ func (s *agentService) CreateAgentEngine(
 			"enable the browser integration or update the input-bar selection")
 	}
 
+	// Capture original metadata before registry capability reads consume KB configuration.
+	promptInputs, err := s.prepareAgentPromptInputs(ctx, config)
+	if err != nil {
+		return nil, err
+	}
+	promptReady := false
+	defer func() {
+		if !promptReady {
+			_ = promptInputs.Close()
+		}
+	}()
+
 	// 2. Build tool registry
 	toolRegistry := tools.NewToolRegistry()
 	if config.MaxToolOutputChars > 0 {
@@ -228,8 +240,8 @@ func (s *agentService) CreateAgentEngine(
 	// tool definitions are published after describe, before the next model request.
 	toolRegistry.PrepareMCPTools(ctx)
 
-	// 3. Resolve knowledge base and selected document metadata
-	kbInfos, selectedDocs := s.resolveKBAndDocInfos(ctx, config)
+	// 3. Use the retained metadata checked again before the model boundary
+	kbInfos, selectedDocs := promptInputs.kbInfos, promptInputs.selectedDocs
 
 	// 4. Resolve system prompt template
 	systemPromptTemplate := ""
@@ -257,7 +269,21 @@ func (s *agentService) CreateAgentEngine(
 		pinnedMCP,
 		s.resolvePinnedSkillInfos(config),
 	)
-	engine.SetQuestionOrigin(s.resolveQuestionOriginInfo(ctx, config.QuestionOrigin, config.SearchTargets, kbInfos))
+	engine.SetQuestionOrigin(promptInputs.origin)
+	promptLineage, builtinCheck, err := s.builtinAgentPromptInput(
+		ctx,
+		config,
+		sessionID,
+		assistantMessageID,
+		systemPromptTemplate,
+	)
+	if err != nil {
+		return nil, err
+	}
+	if promptLineage != nil {
+		engine.SetSystemPromptSourceLineage(promptLineage)
+		promptInputs.builtinCheck = builtinCheck
+	}
 
 	// Non-vision chat models use the configured VLM to describe tool images.
 	// Vision chat models receive the original images after the tool replies.
@@ -307,6 +333,17 @@ func (s *agentService) CreateAgentEngine(
 		toolRegistry.RegisterTool(tools.NewBrowserSkillTool(s.browserSkill, scope, sessionID, instructions))
 	}
 
+	if len(promptInputs.bases) > 0 || len(promptInputs.documents) > 0 || builtinCheck != nil {
+		if _, err := holdAgentPromptInputs(ctx, promptInputs); err != nil {
+			return nil, err
+		}
+		promptReady = true
+		return &agentPromptInputEngine{AgentEngine: engine, inputs: promptInputs}, nil
+	}
+	if err := promptInputs.Close(); err != nil {
+		return nil, err
+	}
+	promptReady = true
 	return engine, nil
 }
 
@@ -417,35 +454,6 @@ func (s *agentService) registerMCPTools(
 			logger.Infof(ctx, "Registered %d MCP service(s) for on-demand discovery", registered)
 		}
 	}
-}
-
-// resolveKBAndDocInfos loads knowledge base metadata and selected document info for prompt.
-func (s *agentService) resolveKBAndDocInfos(
-	ctx context.Context,
-	config *types.AgentConfig,
-) ([]*agent.KnowledgeBaseInfo, []*agent.SelectedDocumentInfo) {
-	kbIDs, kbTenantMap := knowledgeBaseScopesForPrompt(config)
-	kbInfos, err := s.getKnowledgeBaseInfos(ctx, kbIDs, kbTenantMap)
-	if err != nil {
-		logger.Warnf(ctx, "Failed to get knowledge base details, using IDs only: %v", err)
-		kbInfos = make([]*agent.KnowledgeBaseInfo, 0, len(kbIDs))
-		for _, kbID := range kbIDs {
-			kbInfos = append(kbInfos, &agent.KnowledgeBaseInfo{
-				ID:          kbID,
-				Name:        kbID,
-				Description: "",
-				DocCount:    0,
-			})
-		}
-	}
-
-	selectedDocs, err := s.getSelectedDocumentInfos(ctx, config.KnowledgeIDs)
-	if err != nil {
-		logger.Warnf(ctx, "Failed to get selected document details: %v", err)
-		selectedDocs = []*agent.SelectedDocumentInfo{}
-	}
-
-	return kbInfos, selectedDocs
 }
 
 // registerSandboxFileTools registers list_sandbox_files / read_file /
@@ -1149,7 +1157,13 @@ func (s *agentService) registerTools(
 				config.WebSearchMaxResults,
 				config.WebSearchProviderID,
 			)
-			logger.Infof(ctx, "Registered web_search tool for session: %s, maxResults: %d, providerID: %s", sessionID, config.WebSearchMaxResults, config.WebSearchProviderID)
+			logger.Infof(
+				ctx,
+				"Registered web_search tool for session: %s, maxResults: %d, providerID: %s",
+				sessionID,
+				config.WebSearchMaxResults,
+				config.WebSearchProviderID,
+			)
 
 		case tools.ToolWebFetch:
 			toolToRegister = tools.NewWebFetchTool()
@@ -1257,7 +1271,11 @@ func (s *agentService) ValidateConfig(config *types.AgentConfig) error {
 // getKnowledgeBaseInfos retrieves detailed information for knowledge bases.
 // kbTenantMap carries the tenant each KB should be queried under (source tenant
 // for directly shared KBs); a missing entry falls back to the request tenant.
-func (s *agentService) getKnowledgeBaseInfos(ctx context.Context, kbIDs []string, kbTenantMap map[string]uint64) ([]*agent.KnowledgeBaseInfo, error) {
+func (s *agentService) getKnowledgeBaseInfos(
+	ctx context.Context,
+	kbIDs []string,
+	kbTenantMap map[string]uint64,
+) ([]*agent.KnowledgeBaseInfo, error) {
 	if len(kbIDs) == 0 {
 		return []*agent.KnowledgeBaseInfo{}, nil
 	}
@@ -1458,7 +1476,10 @@ func (s *agentService) resolveQuestionOriginInfo(
 	return info
 }
 
-func (s *agentService) getSelectedDocumentInfos(ctx context.Context, knowledgeIDs []string) ([]*agent.SelectedDocumentInfo, error) {
+func (s *agentService) getSelectedDocumentInfos(
+	ctx context.Context,
+	knowledgeIDs []string,
+) ([]*agent.SelectedDocumentInfo, error) {
 	if len(knowledgeIDs) == 0 {
 		return []*agent.SelectedDocumentInfo{}, nil
 	}

@@ -37,21 +37,34 @@ type machineSecretChat struct {
 	input    machineSecretModels
 }
 
-func (m machineSecretChat) Chat(ctx context.Context, messages []chat.Message, options *chat.ChatOptions) (*types.ChatResponse, error) {
+func (m machineSecretChat) Chat(
+	ctx context.Context,
+	messages []chat.Message,
+	options *chat.ChatOptions,
+) (*types.ChatResponse, error) {
 	for _, message := range messages {
-		require.False(m.input.t, strings.Contains(message.Content, m.input.secret) || strings.Contains(message.Content, m.input.appID), "routing credentials cannot enter the classification prompt")
+		require.False(
+			m.input.t,
+			strings.Contains(message.Content, m.input.secret) || strings.Contains(message.Content, m.input.appID),
+			"routing credentials cannot enter the classification prompt",
+		)
 	}
 	result, err := m.delegate.Chat(ctx, messages, options)
-	if m.input.mode == "credential ABA" {
+	switch m.input.mode {
+	case "credential ABA":
 		m.input.mutate()
-	} else if m.input.mode == "runtime context changed" {
+	case "runtime context changed":
 		tenant, _ := types.TenantInfoFromContext(ctx)
 		tenant.Credentials.WeKnoraCloud.AppSecret = "different isolated runtime secret"
 	}
 	return result, err
 }
 
-func (m machineSecretChat) ChatStream(ctx context.Context, messages []chat.Message, options *chat.ChatOptions) (<-chan types.StreamResponse, error) {
+func (m machineSecretChat) ChatStream(
+	ctx context.Context,
+	messages []chat.Message,
+	options *chat.ChatOptions,
+) (<-chan types.StreamResponse, error) {
 	return m.delegate.ChatStream(ctx, messages, options)
 }
 func (m machineSecretChat) GetModelName() string { return m.delegate.GetModelName() }
@@ -62,13 +75,30 @@ func runKnowledgeMachineSecretControls(t *testing.T, pg bool) {
 		t.Run(mode, func(t *testing.T) {
 			m := newMachinePipelineFixture(t, pg)
 			secret, appID := "isolated-never-retain-secret", "isolated-never-retain-app-id"
-			credentials := &types.CredentialsConfig{WeKnoraCloud: &types.WeKnoraCloudCredentials{AppID: appID, AppSecret: secret}}
+			credentials := &types.CredentialsConfig{
+				WeKnoraCloud: &types.WeKnoraCloudCredentials{AppID: appID, AppSecret: secret},
+			}
 			require.NoError(t, m.f.db.Model(&types.Tenant{}).Where("id=7").Update("credentials", credentials).Error)
-			m.auto.modelService = machineSecretModels{ModelService: machinePipelineModels{auto: m.model, summary: m.f.model}, t: t, mode: mode, secret: secret, appID: appID, mutate: func() {
-				changed := &types.CredentialsConfig{WeKnoraCloud: &types.WeKnoraCloudCredentials{AppID: appID, AppSecret: "different isolated SQL secret"}}
-				require.NoError(t, m.f.db.Model(&types.Tenant{}).Where("id=7").Update("credentials", changed).Error)
-				require.NoError(t, m.f.db.Model(&types.Tenant{}).Where("id=7").Update("credentials", credentials).Error)
-			}}
+			m.auto.modelService = machineSecretModels{
+				ModelService: machinePipelineModels{auto: m.model, summary: m.f.model},
+				t:            t,
+				mode:         mode,
+				secret:       secret,
+				appID:        appID,
+				mutate: func() {
+					changed := &types.CredentialsConfig{
+						WeKnoraCloud: &types.WeKnoraCloudCredentials{
+							AppID:     appID,
+							AppSecret: "different isolated SQL secret",
+						},
+					}
+					require.NoError(t, m.f.db.Model(&types.Tenant{}).Where("id=7").Update("credentials", changed).Error)
+					require.NoError(
+						t,
+						m.f.db.Model(&types.Tenant{}).Where("id=7").Update("credentials", credentials).Error,
+					)
+				},
+			}
 			row := m.ingest(t)
 			denied := false
 			for i := 0; i < len(m.f.queue.tasks); i++ {
@@ -80,7 +110,13 @@ func runKnowledgeMachineSecretControls(t *testing.T, pg bool) {
 			require.Equal(t, mode != "secret digest only", denied)
 			require.Equal(t, 1, m.model.calls)
 			var added int64
-			require.NoError(t, m.f.db.Model(&types.KnowledgeTagRelation{}).Where("knowledge_id = ? AND tag_id='machine-topic'", row.ID).Count(&added).Error)
+			require.NoError(
+				t,
+				m.f.db.Model(&types.KnowledgeTagRelation{}).
+					Where("knowledge_id = ? AND tag_id='machine-topic'", row.ID).
+					Count(&added).
+					Error,
+			)
 			if denied {
 				require.Zero(t, added)
 			} else {
@@ -91,7 +127,12 @@ func runKnowledgeMachineSecretControls(t *testing.T, pg bool) {
 				require.NoError(t, m.f.db.Table(table).Pluck("actual_inputs", &inputs).Error)
 				require.NotEmpty(t, inputs)
 				for _, input := range inputs {
-					require.False(t, strings.Contains(input, secret) || strings.Contains(input, appID) || strings.Contains(input, "tenant_input") || strings.Contains(input, "app_secret"), "immutable receipt must contain only credential/configuration digest and version")
+					require.False(
+						t,
+						strings.Contains(input, secret) || strings.Contains(input, appID) || strings.Contains(input, "tenant_input") ||
+							strings.Contains(input, "app_secret"),
+						"immutable receipt must contain only credential/configuration digest and version",
+					)
 				}
 			}
 		})
@@ -101,6 +142,7 @@ func runKnowledgeMachineSecretControls(t *testing.T, pg bool) {
 func TestKnowledgeMachineSecretControlsSQLite(t *testing.T) {
 	runKnowledgeMachineSecretControls(t, false)
 }
+
 func TestPostgresKnowledgeMachineSecretControls(t *testing.T) {
 	runKnowledgeMachineSecretControls(t, true)
 }

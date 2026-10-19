@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	apperrors "github.com/Tencent/WeKnora/internal/errors"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -17,10 +18,19 @@ const nextcloudContentLeasePruneMaxBatch = 1000
 
 var (
 	ErrNextcloudContentLeaseInvalid = errors.New("invalid Nextcloud content lease request")
-	ErrNextcloudContentLeaseDenied  = errors.New("Nextcloud content fence is closed")
-	ErrNextcloudContentLeaseExpired = errors.New("Nextcloud content lease expired or released")
-	ErrNextcloudContentGCBusy       = errors.New("Nextcloud content GC is blocked by an active lease or claim")
-	ErrNextcloudContentGCUncovered  = errors.New("Nextcloud content lease protocol coverage is unproven")
+	ErrNextcloudContentLeaseDenied  = apperrors.NewProtocolError(errors.New(
+		"nextcloud content fence is closed",
+	), "Nextcloud content fence is closed")
+	ErrNextcloudContentLeaseExpired = apperrors.NewProtocolError(errors.New(
+		"nextcloud content lease expired or released",
+	), "Nextcloud content lease expired or released")
+	ErrNextcloudContentGCBusy = apperrors.NewProtocolError(
+		errors.New(
+			("nextcloud content GC is blocked by an active lease or c" +
+				"laim")), "Nextcloud content GC is blocked by an active lease or claim")
+	ErrNextcloudContentGCUncovered = apperrors.NewProtocolError(errors.New(
+		"nextcloud content lease protocol coverage is unproven",
+	), "Nextcloud content lease protocol coverage is unproven")
 )
 
 type NextcloudContentLeaseKind string
@@ -150,7 +160,12 @@ func nextcloudLockKBFence(tx *gorm.DB, tenantID uint64, kbID string, nowMS int64
 	return fence, err
 }
 
-func nextcloudLockExactFence(tx *gorm.DB, scope NextcloudContentScope, nowMS int64, create bool) (nextcloudContentFence, error) {
+func nextcloudLockExactFence(
+	tx *gorm.DB,
+	scope NextcloudContentScope,
+	nowMS int64,
+	create bool,
+) (nextcloudContentFence, error) {
 	var fence nextcloudContentFence
 	if !scope.valid() {
 		return fence, ErrNextcloudContentLeaseInvalid
@@ -186,10 +201,12 @@ func nextcloudLockExactFence(tx *gorm.DB, scope NextcloudContentScope, nowMS int
 }
 
 func nextcloudLeasePublic(row nextcloudContentLeaseRow) NextcloudContentLease {
-	return NextcloudContentLease{ID: row.LeaseID, TenantID: row.TenantID,
+	return NextcloudContentLease{
+		ID: row.LeaseID, TenantID: row.TenantID,
 		KnowledgeBaseID: row.KnowledgeBaseID, KnowledgeID: row.KnowledgeID,
 		Kind: NextcloudContentLeaseKind(row.Kind), Epoch: row.Epoch,
-		OwnerID: row.OwnerID, ExpiresAt: time.UnixMilli(row.ExpiresAtMS).UTC()}
+		OwnerID: row.OwnerID, ExpiresAt: time.UnixMilli(row.ExpiresAtMS).UTC(),
+	}
 }
 
 // Call only while holding the KB sentinel lock. A claim that has expired is
@@ -206,9 +223,11 @@ func nextcloudActiveGCClaimInKB(tx *gorm.DB, tenantID uint64, kbID string, nowMS
 func nextcloudInsertLease(tx *gorm.DB, tenantID uint64, kbID, knowledgeID string,
 	kind NextcloudContentLeaseKind, epoch int64, owner string, nowMS, ttlMS int64,
 ) (NextcloudContentLease, error) {
-	row := nextcloudContentLeaseRow{LeaseID: uuid.NewString(), TenantID: tenantID,
+	row := nextcloudContentLeaseRow{
+		LeaseID: uuid.NewString(), TenantID: tenantID,
 		KnowledgeBaseID: kbID, KnowledgeID: knowledgeID, Kind: string(kind),
-		Epoch: epoch, OwnerID: owner, ExpiresAtMS: nowMS + ttlMS}
+		Epoch: epoch, OwnerID: owner, ExpiresAtMS: nowMS + ttlMS,
+	}
 	err := tx.Exec(`INSERT INTO nextcloud_content_leases
 		(lease_id, tenant_id, knowledge_base_id, knowledge_id, kind, epoch,
 		 owner_id, expires_at_ms, created_at_ms, updated_at_ms)
@@ -364,7 +383,14 @@ func (s *NextcloudContentLeaseStore) AcquireKnowledgeInTx(ctx context.Context,
 		return lease, ErrNextcloudContentLeaseDenied
 	}
 	if kind == NextcloudContentBuildLease {
-		allowed, e := NextcloudBuildControlsAllowed(ctx, tx, scope.TenantID, scope.KnowledgeBaseID, scope.DataSourceID, scope.KnowledgeID)
+		allowed, e := NextcloudBuildControlsAllowed(
+			ctx,
+			tx,
+			scope.TenantID,
+			scope.KnowledgeBaseID,
+			scope.DataSourceID,
+			scope.KnowledgeID,
+		)
 		if e != nil || !allowed {
 			if e == nil {
 				e = ErrNextcloudContentLeaseDenied
@@ -372,7 +398,17 @@ func (s *NextcloudContentLeaseStore) AcquireKnowledgeInTx(ctx context.Context,
 			return lease, e
 		}
 	}
-	lease, e = nextcloudInsertLease(tx, scope.TenantID, scope.KnowledgeBaseID, scope.KnowledgeID, kind, fence.Epoch, owner, nowMS, ttlMS)
+	lease, e = nextcloudInsertLease(
+		tx,
+		scope.TenantID,
+		scope.KnowledgeBaseID,
+		scope.KnowledgeID,
+		kind,
+		fence.Epoch,
+		owner,
+		nowMS,
+		ttlMS,
+	)
 	if e != nil {
 		return lease, e
 	}
@@ -485,10 +521,23 @@ func (s *NextcloudContentLeaseStore) RenewLease(ctx context.Context, id string,
 				return ErrNextcloudContentLeaseDenied
 			}
 			var exact nextcloudContentFence
-			if e := tx.Where("tenant_id=? AND knowledge_base_id=? AND knowledge_id=?", row.TenantID, row.KnowledgeBaseID, row.KnowledgeID).Take(&exact).Error; e != nil {
+			if e := tx.Where("tenant_id=? AND knowledge_base_id=? AND knowledge_id=?", row.TenantID, row.KnowledgeBaseID, row.KnowledgeID).
+				Take(&exact).
+				Error; e != nil {
 				return e
 			}
-			if e := nextcloudValidateRecoveryBuildLease(ctx, tx, nextcloudLeasePublic(row), NextcloudContentScope{TenantID: row.TenantID, KnowledgeBaseID: row.KnowledgeBaseID, KnowledgeID: row.KnowledgeID, DataSourceID: exact.DataSourceID, ExternalID: exact.ExternalID}); e != nil {
+			if e := nextcloudValidateRecoveryBuildLease(
+				ctx,
+				tx,
+				nextcloudLeasePublic(row),
+				NextcloudContentScope{
+					TenantID:        row.TenantID,
+					KnowledgeBaseID: row.KnowledgeBaseID,
+					KnowledgeID:     row.KnowledgeID,
+					DataSourceID:    exact.DataSourceID,
+					ExternalID:      exact.ExternalID,
+				},
+			); e != nil {
 				return e
 			}
 		}
@@ -609,12 +658,29 @@ func (s *NextcloudContentLeaseStore) RetireKnowledgeInTx(ctx context.Context,
 	// a retained generation. Create it already retired; never grant a lease.
 	if tx.Migrator().HasTable(&NextcloudTargetClosure{}) {
 		var closed int64
-		if e := tx.Model(&NextcloudTargetClosure{}).Where("tenant_id=? AND knowledge_base_id=?", scope.TenantID, scope.KnowledgeBaseID).Count(&closed).Error; e != nil {
+		if e := tx.Model(&NextcloudTargetClosure{}).
+			Where("tenant_id=? AND knowledge_base_id=?", scope.TenantID, scope.KnowledgeBaseID).
+			Count(&closed).
+			Error; e != nil {
 			return e
 		}
 		if closed > 0 {
-			row := map[string]any{"tenant_id": scope.TenantID, "knowledge_base_id": scope.KnowledgeBaseID, "knowledge_id": scope.KnowledgeID, "datasource_id": scope.DataSourceID, "external_id": scope.ExternalID, "epoch": 1, "state": "retired", "retired_at_ms": nowMS, "created_at_ms": nowMS, "updated_at_ms": nowMS}
-			if e := tx.Table("nextcloud_content_fences").Clauses(clause.OnConflict{DoNothing: true}).Create(row).Error; e != nil {
+			row := map[string]any{
+				"tenant_id":         scope.TenantID,
+				"knowledge_base_id": scope.KnowledgeBaseID,
+				"knowledge_id":      scope.KnowledgeID,
+				"datasource_id":     scope.DataSourceID,
+				"external_id":       scope.ExternalID,
+				"epoch":             1,
+				"state":             "retired",
+				"retired_at_ms":     nowMS,
+				"created_at_ms":     nowMS,
+				"updated_at_ms":     nowMS,
+			}
+			if e := tx.Table("nextcloud_content_fences").
+				Clauses(clause.OnConflict{DoNothing: true}).
+				Create(row).
+				Error; e != nil {
 				return e
 			}
 		}
@@ -803,8 +869,10 @@ func (s *NextcloudContentLeaseStore) ClaimKnowledgeGC(ctx context.Context,
 		if err := nextcloudRequireNoActiveContentLeases(tx, scope, nowMS); err != nil {
 			return err
 		}
-		claim = NextcloudContentGCClaim{Token: uuid.NewString(), Scope: scope,
-			Epoch: fence.Epoch + 1, ExpiresAt: time.UnixMilli(nowMS + ttlMS).UTC()}
+		claim = NextcloudContentGCClaim{
+			Token: uuid.NewString(), Scope: scope,
+			Epoch: fence.Epoch + 1, ExpiresAt: time.UnixMilli(nowMS + ttlMS).UTC(),
+		}
 		result := tx.Exec(`UPDATE nextcloud_content_fences
 			SET state = 'deleting', epoch = epoch + 1, claim_token = ?,
 				claim_until_ms = ?, updated_at_ms = ?

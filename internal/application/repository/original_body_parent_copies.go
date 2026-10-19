@@ -15,6 +15,7 @@ const parentCopyBodyField = "parent_materials.*.Messages"
 func parentCopyTable(table string) bool {
 	return table == "message_generated_field_admissions" || table == "message_fork_parent_origins"
 }
+
 func parentCopySnapshots(raw string) ([]*types.MessageMaterialSnapshot, error) {
 	var out []*types.MessageMaterialSnapshot
 	if strings.HasPrefix(strings.TrimSpace(raw), "{") {
@@ -72,7 +73,11 @@ func (v *parentCopyEvidence) addLineage(lineage *types.SourceLineage) error {
 		if _, found := v.sources[source]; !found {
 			var original knowledgeInputAdmission
 			var candidates []knowledgeInputAdmission
-			if v.tx.Where("tenant_id=? AND knowledge_base_id=? AND knowledge_id=? AND build_generation=? AND origin_kind='nextcloud'", source.TenantID, source.KnowledgeBaseID, source.KnowledgeID, source.Revision).Limit(2).Find(&candidates).Error != nil || len(candidates) != 1 {
+			if v.tx.Where("tenant_id=? AND knowledge_base_id=? AND knowledge_id=? AND build_generation=? AND origin_kind='nextcloud'", source.TenantID, source.KnowledgeBaseID, source.KnowledgeID, source.Revision).
+				Limit(2).
+				Find(&candidates).
+				Error != nil ||
+				len(candidates) != 1 {
 				return ErrOriginalBodyRetained
 			}
 			original = candidates[0]
@@ -100,7 +105,9 @@ func (v *parentCopyEvidence) addLineage(lineage *types.SourceLineage) error {
 			}
 			v.sources[source] = original
 		}
-		if err := v.addScope(originalBodyLeaseScope{TenantID: source.TenantID, KnowledgeBaseID: source.KnowledgeBaseID}); err != nil {
+		if err := v.addScope(
+			originalBodyLeaseScope{TenantID: source.TenantID, KnowledgeBaseID: source.KnowledgeBaseID},
+		); err != nil {
 			return err
 		}
 		if len(v.sources) > types.SourceLineageMaxSources {
@@ -110,7 +117,12 @@ func (v *parentCopyEvidence) addLineage(lineage *types.SourceLineage) error {
 	return nil
 }
 
-func (v *parentCopyEvidence) proof(snapshot *types.MessageMaterialSnapshot, proof *types.MessageMaterialProof, message *types.Message, depth int) error {
+func (v *parentCopyEvidence) proof(
+	snapshot *types.MessageMaterialSnapshot,
+	proof *types.MessageMaterialProof,
+	message *types.Message,
+	depth int,
+) error {
 	v.count++
 	if depth > 32 || v.count > 4096 || proof == nil || proof.AdmissionID == "" || proof.GenerationID == "" {
 		return ErrOriginalBodyRetained
@@ -123,16 +135,36 @@ func (v *parentCopyEvidence) proof(snapshot *types.MessageMaterialSnapshot, proo
 	if v.tx.Select(messageGenerationMetadataFields).Where("id=?", proof.GenerationID).Take(&origin).Error != nil {
 		return ErrOriginalBodyRetained
 	}
-	if fact.GenerationID != origin.ID || fact.MessageID != proof.MessageID || fact.SessionID != snapshot.Request.SessionID || proof.SessionID != fact.SessionID || fact.TenantID != snapshot.Request.TenantID || proof.TenantID != fact.TenantID || fact.OwnerID != snapshot.SessionOwnerID || fact.OwnerRevision != snapshot.SessionOwnerRevision || proof.OwnerID != fact.OwnerID || proof.OwnerRevision != fact.OwnerRevision || fact.Revision != proof.Revision || fact.BodyDigest != proof.BodyDigest || origin.MessageID != fact.MessageID || origin.TenantID != fact.TenantID || origin.SessionID != fact.SessionID || origin.OwnerID != fact.OwnerID || origin.OwnerRevision != fact.OwnerRevision {
+	if fact.GenerationID != origin.ID || fact.MessageID != proof.MessageID ||
+		fact.SessionID != snapshot.Request.SessionID ||
+		proof.SessionID != fact.SessionID ||
+		fact.TenantID != snapshot.Request.TenantID ||
+		proof.TenantID != fact.TenantID ||
+		fact.OwnerID != snapshot.SessionOwnerID ||
+		fact.OwnerRevision != snapshot.SessionOwnerRevision ||
+		proof.OwnerID != fact.OwnerID ||
+		proof.OwnerRevision != fact.OwnerRevision ||
+		fact.Revision != proof.Revision ||
+		fact.BodyDigest != proof.BodyDigest ||
+		origin.MessageID != fact.MessageID ||
+		origin.TenantID != fact.TenantID ||
+		origin.SessionID != fact.SessionID ||
+		origin.OwnerID != fact.OwnerID ||
+		origin.OwnerRevision != fact.OwnerRevision {
 		return ErrOriginalBodyRetained
 	}
 	var lineage types.SourceLineage
 	var execution types.MessageExecutionContext
-	if json.Unmarshal([]byte(fact.SourceLineage), &lineage) != nil || lineage.RequireComplete() != nil || json.Unmarshal([]byte(fact.ExecutionContext), &execution) != nil || !faqInputEqual(execution, proof.Execution) || fact.AgentID != proof.AgentID || fact.AgentTenantID != proof.AgentTenantID {
+	if json.Unmarshal([]byte(fact.SourceLineage), &lineage) != nil || lineage.RequireComplete() != nil ||
+		json.Unmarshal([]byte(fact.ExecutionContext), &execution) != nil ||
+		!faqInputEqual(execution, proof.Execution) ||
+		fact.AgentID != proof.AgentID ||
+		fact.AgentTenantID != proof.AgentTenantID {
 		return ErrOriginalBodyRetained
 	}
 	if message != nil {
-		if message.ID != fact.MessageID || message.SessionID != fact.SessionID || origin.Role != message.Role || origin.RequestID != message.RequestID {
+		if message.ID != fact.MessageID || message.SessionID != fact.SessionID || origin.Role != message.Role ||
+			origin.RequestID != message.RequestID {
 			return ErrOriginalBodyRetained
 		}
 		restored := *message
@@ -146,7 +178,12 @@ func (v *parentCopyEvidence) proof(snapshot *types.MessageMaterialSnapshot, proo
 		return err
 	}
 	var originalScopes []originalBodyLeaseScope
-	if err := v.tx.Table("original_body_lease_scopes s").Select("s.*").Joins("JOIN original_body_field_heads h ON h.body_id=s.body_id").Where("h.source_table='message_generation_origins' AND h.row_key=?", origin.ID).Find(&originalScopes).Error; err != nil {
+	if err := v.tx.Table("original_body_lease_scopes s").
+		Select("s.*").
+		Joins("JOIN original_body_field_heads h ON h.body_id=s.body_id").
+		Where("h.source_table='message_generation_origins' AND h.row_key=?", origin.ID).
+		Find(&originalScopes).
+		Error; err != nil {
 		return err
 	}
 	if bodyLeaseScopesComplete(originalScopes, fact.TenantID) {
@@ -202,13 +239,20 @@ func (v *parentCopyEvidence) proof(snapshot *types.MessageMaterialSnapshot, proo
 	if err != nil || !faqInputEqual(expectedLineage, proof.SourceLineage) {
 		return ErrOriginalBodyRetained
 	}
-	if message != nil && message.Role == "user" && (len(message.Images) > 0 && !covered["images"] || len(message.Attachments) > 0 && !covered["attachments"] || message.RenderedContent != "" && !covered["rendered_content"] || message.ContextCheckpoint != nil && !covered["context_checkpoint"] || len(message.AgentSteps) > 0 || len(message.KnowledgeReferences) > 0 || len(message.UsedMemories) > 0) {
+	if message != nil && message.Role == "user" &&
+		(len(message.Images) > 0 && !covered["images"] || len(message.Attachments) > 0 && !covered["attachments"] || message.RenderedContent != "" && !covered["rendered_content"] || message.ContextCheckpoint != nil && !covered["context_checkpoint"] || len(message.AgentSteps) > 0 || len(message.KnowledgeReferences) > 0 || len(message.UsedMemories) > 0) {
 		return ErrOriginalBodyRetained
 	}
 	return nil
 }
 
-func (v *parentCopyEvidence) generated(snapshot *types.MessageMaterialSnapshot, fact *messageMaterialAdmission, proof *types.MessageGeneratedFieldProof, message *types.Message, depth int) error {
+func (v *parentCopyEvidence) generated(
+	snapshot *types.MessageMaterialSnapshot,
+	fact *messageMaterialAdmission,
+	proof *types.MessageGeneratedFieldProof,
+	message *types.Message,
+	depth int,
+) error {
 	if depth > 32 || proof.AdmissionID == "" || v.visiting[proof.AdmissionID] {
 		return ErrOriginalBodyRetained
 	}
@@ -216,11 +260,17 @@ func (v *parentCopyEvidence) generated(snapshot *types.MessageMaterialSnapshot, 
 	if v.tx.Where("id=?", proof.AdmissionID).Take(&admission).Error != nil {
 		return ErrOriginalBodyRetained
 	}
-	if admission.MessageID != fact.MessageID || admission.GenerationID != fact.GenerationID || admission.SessionID != fact.SessionID || admission.TenantID != fact.TenantID || admission.Field != proof.Field || admission.FieldRevision != proof.Revision || admission.BodyDigest != proof.BodyDigest {
+	if admission.MessageID != fact.MessageID || admission.GenerationID != fact.GenerationID ||
+		admission.SessionID != fact.SessionID ||
+		admission.TenantID != fact.TenantID ||
+		admission.Field != proof.Field ||
+		admission.FieldRevision != proof.Revision ||
+		admission.BodyDigest != proof.BodyDigest {
 		return ErrOriginalBodyRetained
 	}
 	var lineage types.SourceLineage
-	if json.Unmarshal([]byte(admission.SourceLineage), &lineage) != nil || lineage.RequireComplete() != nil || !faqInputEqual(&lineage, proof.SourceLineage) {
+	if json.Unmarshal([]byte(admission.SourceLineage), &lineage) != nil || lineage.RequireComplete() != nil ||
+		!faqInputEqual(&lineage, proof.SourceLineage) {
 		return ErrOriginalBodyRetained
 	}
 	if message != nil {
@@ -270,7 +320,14 @@ func (v *parentCopyEvidence) generated(snapshot *types.MessageMaterialSnapshot, 
 		return ErrOriginalBodyRetained
 	}
 	var previous messageMaterialAdmission
-	if v.tx.Where("id=?", admission.PreviousAdmissionID).Take(&previous).Error != nil || previous.GenerationID != admission.GenerationID || previous.MessageID != admission.MessageID || previous.SessionID != admission.SessionID || previous.TenantID != admission.TenantID || previous.Revision != admission.PreviousRevision || admission.PreviousMembership == 0 || admission.ResultRevision < admission.PreviousRevision {
+	if v.tx.Where("id=?", admission.PreviousAdmissionID).Take(&previous).Error != nil ||
+		previous.GenerationID != admission.GenerationID ||
+		previous.MessageID != admission.MessageID ||
+		previous.SessionID != admission.SessionID ||
+		previous.TenantID != admission.TenantID ||
+		previous.Revision != admission.PreviousRevision ||
+		admission.PreviousMembership == 0 ||
+		admission.ResultRevision < admission.PreviousRevision {
 		return ErrOriginalBodyRetained
 	}
 	if len(parents) == 0 {
@@ -279,7 +336,15 @@ func (v *parentCopyEvidence) generated(snapshot *types.MessageMaterialSnapshot, 
 		// later generated callback's actor. Removing a later callback's parents
 		// must never turn a derived field into an original empty-scope field.
 		var original messageGenerationOrigin
-		if v.tx.Select(messageGenerationMetadataFields).Where("id=?", admission.GenerationID).Take(&original).Error != nil || original.Role != "user" || admission.Field != "images" && admission.Field != "attachments" || admission.Actor != original.Actor || len(lineage.Sources) != 0 || admission.ResultRevision != previous.Revision {
+		if v.tx.Select(messageGenerationMetadataFields).
+			Where("id=?", admission.GenerationID).
+			Take(&original).
+			Error != nil ||
+			original.Role != "user" ||
+			admission.Field != "images" && admission.Field != "attachments" ||
+			admission.Actor != original.Actor ||
+			len(lineage.Sources) != 0 ||
+			admission.ResultRevision != previous.Revision {
 			return ErrOriginalBodyRetained
 		}
 	}
@@ -288,7 +353,8 @@ func (v *parentCopyEvidence) generated(snapshot *types.MessageMaterialSnapshot, 
 			return err
 		}
 		for _, original := range parent.Proofs {
-			if original.MessageID == admission.MessageID && (original.AdmissionID != admission.PreviousAdmissionID || original.Revision != admission.PreviousRevision || parent.MembershipRevision != admission.PreviousMembership) {
+			if original.MessageID == admission.MessageID &&
+				(original.AdmissionID != admission.PreviousAdmissionID || original.Revision != admission.PreviousRevision || parent.MembershipRevision != admission.PreviousMembership) {
 				return ErrOriginalBodyRetained
 			}
 			// Every parent source must have been accounted by this immutable
@@ -323,7 +389,11 @@ func (v *parentCopyEvidence) generated(snapshot *types.MessageMaterialSnapshot, 
 }
 
 func (v *parentCopyEvidence) snapshot(snapshot *types.MessageMaterialSnapshot, requireBodies bool, depth int) error {
-	if depth > 32 || snapshot == nil || snapshot.Request.TenantID == 0 || snapshot.Request.SessionID == "" || snapshot.SessionOwnerID == "" || snapshot.SessionOwnerRevision == 0 || snapshot.MembershipRevision == 0 || snapshot.MetadataDigest == "" {
+	if depth > 32 || snapshot == nil || snapshot.Request.TenantID == 0 || snapshot.Request.SessionID == "" ||
+		snapshot.SessionOwnerID == "" ||
+		snapshot.SessionOwnerRevision == 0 ||
+		snapshot.MembershipRevision == 0 ||
+		snapshot.MetadataDigest == "" {
 		return ErrOriginalBodyRetained
 	}
 	byID := map[string]*types.Message{}
@@ -362,7 +432,12 @@ func (v *parentCopyEvidence) snapshot(snapshot *types.MessageMaterialSnapshot, r
 	return nil
 }
 
-func validateParentCopyEvidence(tx *gorm.DB, d originalBodyFieldDescriptor, key string, scope originalBodyScope) (*parentCopyEvidence, error) {
+func validateParentCopyEvidence(
+	tx *gorm.DB,
+	d originalBodyFieldDescriptor,
+	key string,
+	scope originalBodyScope,
+) (*parentCopyEvidence, error) {
 	row, err := bodySourceRow(tx, d, key)
 	if err != nil {
 		return nil, err
@@ -371,7 +446,13 @@ func validateParentCopyEvidence(tx *gorm.DB, d originalBodyFieldDescriptor, key 
 	if len(raw) > 8<<20 {
 		return nil, ErrOriginalBodyRetained
 	}
-	v := &parentCopyEvidence{tx: bodyInternal(tx), scopeKeys: map[originalBodyLeaseScope]bool{}, sources: map[types.SourceIdentity]knowledgeInputAdmission{}, visiting: map[string]bool{}, done: map[string]bool{}}
+	v := &parentCopyEvidence{
+		tx:        bodyInternal(tx),
+		scopeKeys: map[originalBodyLeaseScope]bool{},
+		sources:   map[types.SourceIdentity]knowledgeInputAdmission{},
+		visiting:  map[string]bool{},
+		done:      map[string]bool{},
+	}
 	if err := v.addScope(originalBodyLeaseScope{TenantID: scope.Tenant}); err != nil {
 		return nil, err
 	}
@@ -411,24 +492,11 @@ func parentCopyScopesMatch(bodyID string, actual, expected []originalBodyLeaseSc
 	return len(values) == len(expected)
 }
 
-func parentCopySourceRefsPresent(tx *gorm.DB, bodyID string, evidence *parentCopyEvidence) (bool, error) {
-	var refs []originalBodyParentRef
-	if err := bodyInternal(tx).Where("body_id=?", bodyID).Find(&refs).Error; err != nil {
-		return false, err
-	}
-	known := map[originalBodyParentRef]bool{}
-	for _, ref := range refs {
-		known[ref] = true
-	}
-	for _, original := range evidence.sources {
-		if !known[originalBodyParentRef{BodyID: bodyID, TenantID: original.TenantID, KnowledgeBaseID: original.KnowledgeBaseID, KnowledgeID: original.KnowledgeID, AdmissionID: original.AdmissionID}] {
-			return false, nil
-		}
-	}
-	return true, nil
-}
-
-func parentCopyScopeEvidence(tx *gorm.DB, head originalBodyFieldHead, stored []originalBodyLeaseScope) (*parentCopyEvidence, error) {
+func parentCopyScopeEvidence(
+	tx *gorm.DB,
+	head originalBodyFieldHead,
+	stored []originalBodyLeaseScope,
+) (*parentCopyEvidence, error) {
 	descriptor, ok := bodyDescriptor(head.SourceTable)
 	if !ok {
 		return nil, ErrOriginalBodyRetained
@@ -443,14 +511,13 @@ func parentCopyScopeEvidence(tx *gorm.DB, head originalBodyFieldHead, stored []o
 	return evidence, nil
 }
 
-func validateParentCopies(tx *gorm.DB, d originalBodyFieldDescriptor, key string, scope originalBodyScope) ([]originalBodyLeaseScope, error) {
-	v, err := validateParentCopyEvidence(tx, d, key, scope)
-	if err != nil {
-		return nil, err
-	}
-	return v.scopes, nil
-}
-func (s *OriginalBodyRetentionStore) recordParentCopyScopes(tx *gorm.DB, id string, d originalBodyFieldDescriptor, key string, scope originalBodyScope) error {
+func (s *OriginalBodyRetentionStore) recordParentCopyScopes(
+	tx *gorm.DB,
+	id string,
+	d originalBodyFieldDescriptor,
+	key string,
+	scope originalBodyScope,
+) error {
 	evidence, e := validateParentCopyEvidence(tx, d, key, scope)
 	if errors.Is(e, ErrOriginalBodyRetained) {
 		return nil
@@ -474,7 +541,13 @@ func (s *OriginalBodyRetentionStore) recordParentCopyScopes(tx *gorm.DB, id stri
 	for _, original := range evidence.sources {
 		// The journal's immutable parent-ref digest now names the actual original
 		// knowledge admission/build generation, rather than just its current KB.
-		ref := originalBodyParentRef{BodyID: id, TenantID: original.TenantID, KnowledgeBaseID: original.KnowledgeBaseID, KnowledgeID: original.KnowledgeID, AdmissionID: original.AdmissionID}
+		ref := originalBodyParentRef{
+			BodyID:          id,
+			TenantID:        original.TenantID,
+			KnowledgeBaseID: original.KnowledgeBaseID,
+			KnowledgeID:     original.KnowledgeID,
+			AdmissionID:     original.AdmissionID,
+		}
 		if e := bodyInternal(tx).Clauses(clause.OnConflict{DoNothing: true}).Create(&ref).Error; e != nil {
 			return e
 		}
@@ -484,6 +557,7 @@ func (s *OriginalBodyRetentionStore) recordParentCopyScopes(tx *gorm.DB, id stri
 	}
 	return bodyInternal(tx).Clauses(clause.OnConflict{DoNothing: true}).Create(&evidence.scopes).Error
 }
+
 func parentCopyReplace(raw, old, replacement string) (string, error) {
 	actual, e := legacyParentMessageBodies(raw)
 	if e != nil || actual != old {
@@ -516,6 +590,7 @@ func parentCopyReplace(raw, old, replacement string) (string, error) {
 	}
 	return string(out), e
 }
+
 func parentCopyMetadataSelect(tx *gorm.DB, column string, array bool) string {
 	if array {
 		if tx.Dialector.Name() == "postgres" {
@@ -538,7 +613,13 @@ func parentCopySourceDeadline(tx *gorm.DB, source types.SourceIdentity) (int64, 
 	if err != nil {
 		return 0, err
 	}
-	originalScope := NextcloudContentScope{TenantID: source.TenantID, KnowledgeBaseID: source.KnowledgeBaseID, KnowledgeID: source.KnowledgeID, DataSourceID: source.DataSourceID, ExternalID: source.ExternalID}
+	originalScope := NextcloudContentScope{
+		TenantID:        source.TenantID,
+		KnowledgeBaseID: source.KnowledgeBaseID,
+		KnowledgeID:     source.KnowledgeID,
+		DataSourceID:    source.DataSourceID,
+		ExternalID:      source.ExternalID,
+	}
 	if nextcloudRequireContentLeaseCoverage(bodyInternal(tx), originalScope, now) != nil {
 		return 0, ErrOriginalBodyRetained
 	}
@@ -546,13 +627,25 @@ func parentCopySourceDeadline(tx *gorm.DB, source types.SourceIdentity) (int64, 
 		return 0, ErrOriginalBodyRetained
 	}
 	var version nextcloudSourceVersion
-	if err := nextcloudVersionQuery(bodyInternal(tx).Clauses(clause.Locking{Strength: "UPDATE"}), source.TenantID, source.KnowledgeBaseID, source.DataSourceID, source.ExternalID).Take(&version).Error; err != nil {
+	if err := nextcloudVersionQuery(
+		bodyInternal(tx).Clauses(clause.Locking{Strength: "UPDATE"}),
+		source.TenantID,
+		source.KnowledgeBaseID,
+		source.DataSourceID,
+		source.ExternalID,
+	).Take(&version).
+		Error; err != nil {
 		return 0, ErrOriginalBodyRetained
 	}
 	withdrawn := false
 	if tx.Migrator().HasTable(&NextcloudIndexedWithdrawal{}) {
 		var count int64
-		if err := bodyInternal(tx).Model(&NextcloudIndexedWithdrawal{}).Where("tenant_id=? AND knowledge_base_id=? AND datasource_id=? AND state=?", source.TenantID, source.KnowledgeBaseID, source.DataSourceID, "withdrawn_inventory_incomplete").Count(&count).Error; err != nil {
+		if err := bodyInternal(
+			tx,
+		).Model(&NextcloudIndexedWithdrawal{}).
+			Where("tenant_id=? AND knowledge_base_id=? AND datasource_id=? AND state=?", source.TenantID, source.KnowledgeBaseID, source.DataSourceID, "withdrawn_inventory_incomplete").
+			Count(&count).
+			Error; err != nil {
 			return 0, err
 		}
 		withdrawn = count > 0
@@ -562,15 +655,28 @@ func parentCopySourceDeadline(tx *gorm.DB, source types.SourceIdentity) (int64, 
 	}
 	if !withdrawn && version.State != "tombstone" {
 		var current types.DataSource
-		if bodyInternal(tx).Where("id=? AND tenant_id=? AND knowledge_base_id=?", source.DataSourceID, source.TenantID, source.KnowledgeBaseID).Take(&current).Error != nil || current.Status != types.DataSourceStatusActive {
+		if bodyInternal(
+			tx,
+		).Where("id=? AND tenant_id=? AND knowledge_base_id=?", source.DataSourceID, source.TenantID, source.KnowledgeBaseID).
+			Take(&current).
+			Error != nil ||
+			current.Status != types.DataSourceStatusActive {
 			return 0, ErrOriginalBodyRetained
 		}
 	}
 	var fence nextcloudContentFence
-	if err := bodyInternal(tx).Clauses(clause.Locking{Strength: "UPDATE"}).Where("tenant_id=? AND knowledge_base_id=? AND knowledge_id=?", source.TenantID, source.KnowledgeBaseID, source.KnowledgeID).Take(&fence).Error; err != nil {
+	if err := bodyInternal(
+		tx,
+	).Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("tenant_id=? AND knowledge_base_id=? AND knowledge_id=?", source.TenantID, source.KnowledgeBaseID, source.KnowledgeID).
+		Take(&fence).
+		Error; err != nil {
 		return 0, ErrOriginalBodyRetained
 	}
-	if (fence.State != "retired" && fence.State != "deleted") || fence.RetiredAtMS == nil || fence.DataSourceID != source.DataSourceID || fence.ExternalID != source.ExternalID || fence.Epoch <= int64(source.Revision) {
+	if (fence.State != "retired" && fence.State != "deleted") || fence.RetiredAtMS == nil ||
+		fence.DataSourceID != source.DataSourceID ||
+		fence.ExternalID != source.ExternalID ||
+		fence.Epoch <= int64(source.Revision) {
 		return 0, ErrOriginalBodyRetained
 	}
 	deadline := *fence.RetiredAtMS
@@ -580,7 +686,12 @@ func parentCopySourceDeadline(tx *gorm.DB, source types.SourceIdentity) (int64, 
 	return deadline, nil
 }
 
-func (s *OriginalBodyRetentionStore) parentCopyCurrent(tx *gorm.DB, head originalBodyFieldHead, row map[string]any, now int64) (bool, int64, error) {
+func (s *OriginalBodyRetentionStore) parentCopyCurrent(
+	tx *gorm.DB,
+	head originalBodyFieldHead,
+	row map[string]any,
+	now int64,
+) (bool, int64, error) {
 	// Every recorded body head is checked by bodyEligibility. A missing
 	// current receipt alone never closes a historical consumer or shared owner.
 	var scopes []originalBodyLeaseScope
@@ -607,7 +718,12 @@ func (s *OriginalBodyRetentionStore) parentCopyCurrent(tx *gorm.DB, head origina
 	messageID := bodyText(row["message_id"])
 	if head.SourceTable == "message_fork_parent_origins" {
 		var origin messageGenerationOrigin
-		if e := bodyInternal(tx).Select(messageGenerationMetadataFields).Where("id=?", head.RowKey).Take(&origin).Error; e != nil {
+		if e := bodyInternal(
+			tx,
+		).Select(messageGenerationMetadataFields).
+			Where("id=?", head.RowKey).
+			Take(&origin).
+			Error; e != nil {
 			return true, 0, e
 		}
 		messageID = origin.MessageID
@@ -616,7 +732,14 @@ func (s *OriginalBodyRetentionStore) parentCopyCurrent(tx *gorm.DB, head origina
 		ID, SessionID string
 		DeletedAt     gorm.DeletedAt
 	}
-	e := bodyInternal(tx).Unscoped().Table("messages").Select("id,session_id,deleted_at").Where("id=?", messageID).Take(&message).Error
+	e := bodyInternal(
+		tx,
+	).Unscoped().
+		Table("messages").
+		Select("id,session_id,deleted_at").
+		Where("id=?", messageID).
+		Take(&message).
+		Error
 	if e != nil {
 		return true, 0, ErrOriginalBodyRetained
 	}
@@ -624,7 +747,14 @@ func (s *OriginalBodyRetentionStore) parentCopyCurrent(tx *gorm.DB, head origina
 		return false, max(message.DeletedAt.Time.UnixMilli()+3600000, dependencyDeadline), nil
 	}
 	var session struct{ DeletedAt gorm.DeletedAt }
-	if e := bodyInternal(tx).Unscoped().Table("sessions").Select("deleted_at").Where("id=?", message.SessionID).Take(&session).Error; e != nil {
+	if e := bodyInternal(
+		tx,
+	).Unscoped().
+		Table("sessions").
+		Select("deleted_at").
+		Where("id=?", message.SessionID).
+		Take(&session).
+		Error; e != nil {
 		return true, 0, ErrOriginalBodyRetained
 	}
 	if session.DeletedAt.Valid {

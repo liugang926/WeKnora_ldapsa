@@ -336,7 +336,12 @@ func (s *SessionRewindService) Rewind(
 	if material != nil {
 		material.stopOriginalHeartbeat()
 		if err = checkOriginal(); err == nil {
-			deleted, err = s.messages.(rewindMaterialMessageStore).DeleteMessagesFromMaterial(persistCtx, sessionID, rewindPoint.ID, material.snapshot)
+			deleted, err = s.messages.(rewindMaterialMessageStore).DeleteMessagesFromMaterial(
+				persistCtx,
+				sessionID,
+				rewindPoint.ID,
+				material.snapshot,
+			)
 		}
 	} else {
 		// Only the explicit service-package algorithm fixture port reaches here.
@@ -364,11 +369,13 @@ func (s *SessionRewindService) Rewind(
 	if material != nil {
 		receipt := repository.MessageRewindOutputReceiptFromContext(persistCtx)
 		result.CheckOriginalOutput = func() error {
-			if result.DeletedMessages != len(deleted) || result.WorkspaceReset != workspaceReset || result.Reason != reason {
+			if result.DeletedMessages != len(deleted) || result.WorkspaceReset != workspaceReset ||
+				result.Reason != reason {
 				return types.ErrSourceLineageUnknown
 			}
 			for _, lease := range material.leases {
-				if _, err := material.store.ContentLeaseStore().RenewLease(persistCtx, lease.ID, 2*time.Minute); err != nil {
+				if _, err := material.store.ContentLeaseStore().
+					RenewLease(persistCtx, lease.ID, 2*time.Minute); err != nil {
 					return err
 				}
 			}

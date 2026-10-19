@@ -164,6 +164,13 @@ func (e *AgentEngine) SetPinnedMentions(mcpServices []*PinnedMCPServiceInfo, ski
 	e.pinnedSkills = skills
 }
 
+// SetMCPIndependentTransportVerifier binds the service-owned current session
+// and material eligibility check. A missing verifier leaves MCP unavailable at
+// the accounted Agent boundary.
+func (e *AgentEngine) SetMCPIndependentTransportVerifier(check func(context.Context) error) {
+	agenttools.ConfigureMCPIndependentTransportVerifier(e.toolRegistry, check)
+}
+
 func (e *AgentEngine) systemPromptOptions(ctx context.Context) *BuildSystemPromptOptions {
 	e.renderedSkillsMetadataLineage = nil
 	opts := &BuildSystemPromptOptions{
@@ -929,8 +936,13 @@ func (e *AgentEngine) runReActIteration(
 		guards.sawPlainRound = true
 		guards.lastResponseContent = response.Content
 		if guards.consecutiveSameContent >= maxRepeatedResponseRounds {
-			logger.Warnf(ctx, "[Agent][Round-%d] Detected stuck loop: same content repeated %d times (finish=%s), stopping",
-				round, guards.consecutiveSameContent+1, response.FinishReason)
+			logger.Warnf(
+				ctx,
+				"[Agent][Round-%d] Detected stuck loop: same content repeated %d times (finish=%s), stopping",
+				round,
+				guards.consecutiveSameContent+1,
+				response.FinishReason,
+			)
 			e.finishStalledTurn(ctx, state, sessionID, response, false)
 			return iterOutcomeBreak, nil
 		}
@@ -1124,7 +1136,11 @@ func (e *AgentEngine) describeImages(ctx context.Context, imageDataURIs []string
 	var descriptions []string
 	for i, dataURI := range imageDataURIs {
 		if ctx.Err() != nil {
-			logger.Warnf(ctx, "[Agent] Context cancelled, skipping remaining %d tool result images", len(imageDataURIs)-i)
+			logger.Warnf(
+				ctx,
+				"[Agent] Context cancelled, skipping remaining %d tool result images",
+				len(imageDataURIs)-i,
+			)
 			break
 		}
 		imgBytes, err := decodeDataURIBytes(dataURI)

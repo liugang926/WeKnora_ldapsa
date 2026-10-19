@@ -93,8 +93,15 @@ func runSessionCadenceWith(
 	require.NoError(t, err)
 	settings := compaction.Settings{Enabled: true, MaxContextTokens: window, ReserveTokens: 16384}
 	compactor := compaction.New(summarizer, est, settings)
+	compactor.SetSourceLineageVerifier(func(_ context.Context, lineage *types.SourceLineage) error {
+		return lineage.RequireComplete()
+	})
 	repo := &cadenceRepo{}
-	system := chat.Message{Role: "system", Content: strings.Repeat("rule ", systemTokens)}
+	// This memory-only producer owns every literal below; no external tool or
+	// document content is admitted by this token-budget fixture.
+	independent, err := types.NewCompleteSourceLineage()
+	require.NoError(t, err)
+	system := chat.Message{Role: "system", Content: strings.Repeat("rule ", systemTokens), SourceLineage: independent}
 
 	var compacted []int
 	for i := 1; i <= turns; i++ {
@@ -107,14 +114,14 @@ func runSessionCadenceWith(
 		requireNoGapAfterCheckpoint(t, repo, history, i)
 
 		request := append(append([]chat.Message{system}, history...),
-			chat.Message{Role: "user", Content: fmt.Sprintf("question %d", i)})
+			chat.Message{Role: "user", Content: fmt.Sprintf("question %d", i), SourceLineage: independent})
 		if settings.ShouldCompact(est.EstimateMessages(request)) {
 			result, err := compactor.Compact(ctx, request, compaction.ReasonThreshold)
 			require.NoError(t, err)
 			compacted = append(compacted, i)
 			if cp := result.Checkpoint; cp != nil {
 				require.NoError(t, repo.UpdateMessageContextCheckpoint(ctx, "s1", cp.TurnID,
-					&types.ContextCheckpoint{Summary: cp.Summary}))
+					&types.ContextCheckpoint{Summary: cp.Summary, SourceLineage: cp.SourceLineage}))
 			}
 		}
 
@@ -123,12 +130,12 @@ func runSessionCadenceWith(
 		repo.rows = append(repo.rows,
 			&types.Message{
 				ID: fmt.Sprintf("u%03d", i), RequestID: req, Role: "user",
-				Content: fmt.Sprintf("question %d", i), CreatedAt: at,
+				Content: fmt.Sprintf("question %d", i), CreatedAt: at, SourceLineage: independent,
 			},
 			&types.Message{
 				ID: fmt.Sprintf("a%03d", i), RequestID: req, Role: "assistant", IsCompleted: true,
 				Content: strings.Repeat("word ", turnTokens), CreatedAt: at.Add(time.Second),
-				Usage: &types.TokenUsage{ContextTokenScale: scale},
+				Usage: &types.TokenUsage{ContextTokenScale: scale}, SourceLineage: independent,
 			},
 		)
 	}

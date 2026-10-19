@@ -74,8 +74,11 @@ func messageHistoryReadErrorOrNil(err error) error {
 	}
 	return messageHistoryReadError(err)
 }
+
 func messageHistoryReadError(err error) error {
-	if stderrors.Is(err, repository.ErrKnowledgeInputChanged) || stderrors.Is(err, types.ErrSourceLineageUnknown) || stderrors.Is(err, repository.ErrNextcloudContentGCUncovered) || stderrors.Is(err, gorm.ErrRecordNotFound) {
+	if stderrors.Is(err, repository.ErrKnowledgeInputChanged) || stderrors.Is(err, types.ErrSourceLineageUnknown) ||
+		stderrors.Is(err, repository.ErrNextcloudContentGCUncovered) ||
+		stderrors.Is(err, gorm.ErrRecordNotFound) {
 		return errors.NewServiceUnavailableError("Saved message original material is unavailable")
 	}
 
@@ -111,7 +114,10 @@ func (h *MessageHandler) LoadMessages(c *gin.Context) {
 	c.Request = c.Request.WithContext(ctx)
 	defer service.CloseMessageMaterialOutputBoundary(ctx)
 	prior := c.Writer
-	c.Writer = &knowledgeCollectionAuthorizationWriter{ResponseWriter: prior, check: func() error { return messageHistoryReadErrorOrNil(service.CheckMessageMaterialOutputBoundary(ctx)) }}
+	c.Writer = &knowledgeCollectionAuthorizationWriter{
+		ResponseWriter: prior,
+		check:          func() error { return messageHistoryReadErrorOrNil(service.CheckMessageMaterialOutputBoundary(ctx)) },
+	}
 	defer func() { c.Writer = prior }()
 
 	logger.Info(ctx, "Start loading messages")
@@ -280,7 +286,10 @@ func (h *MessageHandler) SearchMessages(c *gin.Context) {
 	c.Request = c.Request.WithContext(ctx)
 	defer service.CloseMessageMaterialOutputBoundary(ctx)
 	prior := c.Writer
-	c.Writer = &knowledgeCollectionAuthorizationWriter{ResponseWriter: prior, check: func() error { return messageHistoryReadErrorOrNil(service.CheckMessageMaterialOutputBoundary(ctx)) }}
+	c.Writer = &knowledgeCollectionAuthorizationWriter{
+		ResponseWriter: prior,
+		check:          func() error { return messageHistoryReadErrorOrNil(service.CheckMessageMaterialOutputBoundary(ctx)) },
+	}
 	defer func() { c.Writer = prior }()
 
 	logger.Info(ctx, "Start searching messages")

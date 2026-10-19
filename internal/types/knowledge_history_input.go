@@ -10,6 +10,7 @@ type CommittedHistoryKnowledgeInput struct {
 	User      *Message                  `json:"-"`
 }
 
+// CommittedHistoryKnowledgeInputRequest selects committed history using server-resolved parent IDs.
 type CommittedHistoryKnowledgeInputRequest struct {
 	TenantID           uint64 `json:"-"`
 	KnowledgeBaseID    string `json:"-"`

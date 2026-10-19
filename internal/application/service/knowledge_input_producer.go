@@ -22,7 +22,11 @@ func readOriginalUploadArtifact(file *multipart.FileHeader) ([]byte, error) {
 	return io.ReadAll(reader)
 }
 
-func (s *knowledgeService) createAdmittedKnowledge(ctx context.Context, k *types.Knowledge, input any) (context.Context, error) {
+func (s *knowledgeService) createAdmittedKnowledge(
+	ctx context.Context,
+	k *types.Knowledge,
+	input any,
+) (context.Context, error) {
 	if s.knowledgeInputWriter == nil {
 		return ctx, s.repo.CreateKnowledge(ctx, k)
 	}
@@ -51,7 +55,11 @@ func (s *knowledgeService) createAdmittedKnowledge(ctx context.Context, k *types
 	return repository.WithKnowledgeBuildInputProof(ctx, s.knowledgeInputs, proof), nil
 }
 
-func (s *knowledgeService) resumeKnowledgeInput(ctx context.Context, proof *types.KnowledgeBuildInputProof, input any) (context.Context, error) {
+func (s *knowledgeService) resumeKnowledgeInput(
+	ctx context.Context,
+	proof *types.KnowledgeBuildInputProof,
+	input any,
+) (context.Context, error) {
 	if s.knowledgeInputs == nil {
 		return ctx, nil
 	}
@@ -72,12 +80,16 @@ func (s *knowledgeService) resumeKnowledgeInput(ctx context.Context, proof *type
 	return repository.WithKnowledgeBuildInputProof(ctx, s.knowledgeInputs, proof), nil
 }
 
-func (s *knowledgeService) restoreKnowledgeTaskActor(ctx context.Context, proof *types.KnowledgeBuildInputProof) (context.Context, error) {
+func (s *knowledgeService) restoreKnowledgeTaskActor(
+	ctx context.Context,
+	proof *types.KnowledgeBuildInputProof,
+) (context.Context, error) {
 	current, err := repository.RestoreKnowledgeBuildActorIfRequired(ctx, s.knowledgeInputs, proof)
 	if err != nil {
 		return ctx, err
 	}
-	if s.historyMaterialMessages != nil && s.historyMaterialMessages.materialStore != nil && current.Value(historyMaterialGuardContextKey{}) == nil {
+	if s.historyMaterialMessages != nil && s.historyMaterialMessages.materialStore != nil &&
+		current.Value(historyMaterialGuardContextKey{}) == nil {
 		request, err := s.historyMaterialMessages.materialStore.KnowledgeHistoryMaterialRequest(current, proof)
 		if err != nil {
 			return ctx, err
@@ -94,6 +106,9 @@ func (s *knowledgeService) restoreKnowledgeTaskActor(ctx context.Context, proof 
 }
 
 func requireActualKnowledgeBuildInput(ctx context.Context) error {
+	if err := repository.CheckNextcloudMachineTaskExecution(ctx); err != nil {
+		return err
+	}
 	if err := repository.CheckNextcloudBuildLease(ctx); err != nil {
 		return err
 	}
@@ -106,35 +121,29 @@ func requireActualKnowledgeBuildInput(ctx context.Context) error {
 	return nil
 }
 
-func (s *knowledgeService) resumeKnowledgeTaskInput(ctx context.Context, proof *types.KnowledgeBuildInputProof) (context.Context, error) {
-	if s.knowledgeInputs == nil {
-		return ctx, nil
-	}
-	if proof == nil || proof.BodyDigest == "" || (proof.Projection != "" && proof.Projection != types.KnowledgeBuildProjectionEnrichment) {
-		return ctx, types.ErrSourceLineageUnknown
-	}
-	var actorErr error
-	ctx, actorErr = s.restoreKnowledgeTaskActor(ctx, proof)
-	if actorErr != nil {
-		return ctx, actorErr
-	}
-	if err := s.knowledgeInputs.RecheckKnowledgeBuildInputs(ctx, proof); err != nil {
-		return ctx, err
-	}
-	return repository.WithKnowledgeBuildInputProof(ctx, s.knowledgeInputs, proof), nil
-}
-
 // Actual input capture preserves the enqueued complete manifest. Callers may
 // select rows from it, but cannot authenticate a cached row or change its IDs.
-func (s *knowledgeService) captureKnowledgeTaskManifest(ctx context.Context) (*types.KnowledgeBuildInputSnapshot, error) {
+func (s *knowledgeService) captureKnowledgeTaskManifest(
+	ctx context.Context,
+) (*types.KnowledgeBuildInputSnapshot, error) {
 	if s.knowledgeInputs == nil {
 		return nil, nil
 	}
 	proof := repository.KnowledgeBuildInputProofFromContext(ctx)
-	if proof == nil || proof.BodyDigest == "" || (proof.Projection != "" && proof.Projection != types.KnowledgeBuildProjectionEnrichment) {
+	if proof == nil || proof.BodyDigest == "" ||
+		(proof.Projection != "" && proof.Projection != types.KnowledgeBuildProjectionEnrichment) {
 		return nil, types.ErrSourceLineageUnknown
 	}
-	return s.knowledgeInputs.CaptureKnowledgeBuildInputs(ctx, types.KnowledgeBuildInputCaptureRequest{TenantID: proof.TenantID, KnowledgeBaseID: proof.KnowledgeBaseID, KnowledgeID: proof.KnowledgeID, ChunkIDs: proof.ChunkIDs, Expected: proof})
+	return s.knowledgeInputs.CaptureKnowledgeBuildInputs(
+		ctx,
+		types.KnowledgeBuildInputCaptureRequest{
+			TenantID:        proof.TenantID,
+			KnowledgeBaseID: proof.KnowledgeBaseID,
+			KnowledgeID:     proof.KnowledgeID,
+			ChunkIDs:        proof.ChunkIDs,
+			Expected:        proof,
+		},
+	)
 }
 
 func actualManifestImageInfo(snapshot *types.KnowledgeBuildInputSnapshot, parentIDs []string) map[string]string {
@@ -158,7 +167,9 @@ func actualManifestImageInfo(snapshot *types.KnowledgeBuildInputSnapshot, parent
 		}
 		// MergeImageInfoJSON parses and deduplicates the actual captured child
 		// payloads. It does not query uncaptured or current image rows.
-		result[c.ParentChunkID] = searchutil.MergeImageInfoJSON(map[string]string{"previous": result[c.ParentChunkID], c.ID: c.ImageInfo})
+		result[c.ParentChunkID] = searchutil.MergeImageInfoJSON(
+			map[string]string{"previous": result[c.ParentChunkID], c.ID: c.ImageInfo},
+		)
 	}
 	return result
 }

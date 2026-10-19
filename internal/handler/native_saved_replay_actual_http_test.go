@@ -39,7 +39,11 @@ type nativeSavedReplayRedis struct {
 	reads int
 }
 
-func (s *nativeSavedReplayRedis) GetEvents(ctx context.Context, sessionID, messageID string, offset int) ([]interfaces.StreamEvent, int, error) {
+func (s *nativeSavedReplayRedis) GetEvents(
+	ctx context.Context,
+	sessionID, messageID string,
+	offset int,
+) ([]interfaces.StreamEvent, int, error) {
 	s.reads++
 	return s.StreamManager.GetEvents(ctx, sessionID, messageID, offset)
 }
@@ -76,7 +80,14 @@ func (s nativeSavedReplayFiles) GetFileURL(context.Context, string) (string, err
 	return "https://isolated.example.test/replay-image.png", nil
 }
 
-func configureNativeSavedReplayMessages(t *testing.T, db *gorm.DB, store *repository.KnowledgeInputProvenanceStore, kbs interfaces.KnowledgeBaseService, knowledge interfaces.KnowledgeService, guard *access.NextcloudSourceLineageGuard) interfaces.MessageService {
+func configureNativeSavedReplayMessages(
+	t *testing.T,
+	db *gorm.DB,
+	store *repository.KnowledgeInputProvenanceStore,
+	kbs interfaces.KnowledgeBaseService,
+	knowledge interfaces.KnowledgeService,
+	guard *access.NextcloudSourceLineageGuard,
+) interfaces.MessageService {
 	t.Helper()
 	require.NoError(t, db.Exec("ALTER TABLE messages ADD COLUMN artifacts TEXT").Error)
 	for _, name := range []string{"000023_message_artifacts_table.up.sql", "000026_message_artifacts_deleted_at.up.sql", "000070_message_original_materials.up.sql"} {
@@ -89,28 +100,91 @@ func configureNativeSavedReplayMessages(t *testing.T, db *gorm.DB, store *reposi
 	require.NoError(t, err)
 	sqlDB.SetMaxOpenConns(1)
 	sqlDB.SetMaxIdleConns(1)
-	messages := service.NewMessageService(repository.NewMessageRepository(db), repository.NewSessionRepository(db), nil, kbs, knowledge, nil, nil, nil, nil)
-	service.ConfigureMessageSourceLineage(messages, nil, &service.SessionForkService{}, &chatpipeline.EventManager{}, guard)
+	messages := service.NewMessageService(
+		repository.NewMessageRepository(db),
+		repository.NewSessionRepository(db),
+		nil,
+		kbs,
+		knowledge,
+		nil,
+		nil,
+		nil,
+		nil,
+	)
+	service.ConfigureMessageSourceLineage(
+		messages,
+		nil,
+		&service.SessionForkService{},
+		&chatpipeline.EventManager{},
+		guard,
+	)
 	service.ConfigureMessageMaterialProvenance(messages, store)
 	return messages
 }
 
-func produceNativeSavedReplayMessage(t *testing.T, db *gorm.DB, messages interfaces.MessageService, ctx context.Context, content string, lineage *types.SourceLineage) *types.Message {
+func produceNativeSavedReplayMessage(
+	t *testing.T,
+	db *gorm.DB,
+	messages interfaces.MessageService,
+	ctx context.Context,
+	content string,
+	lineage *types.SourceLineage,
+) *types.Message {
 	t.Helper()
 	session := &types.Session{TenantID: 7, UserID: types.CallerFromContext(ctx).UserID}
 	require.NoError(t, db.Create(session).Error)
-	question, err := messages.CreateMessage(ctx, &types.Message{SessionID: session.ID, RequestID: "native-original-turn", Role: "user", Content: "actual original native question", IsCompleted: true, ExecutionContext: types.MessageExecutionContext{KnowledgeBaseIDs: []string{"kb"}}})
+	question, err := messages.CreateMessage(
+		ctx,
+		&types.Message{
+			SessionID:        session.ID,
+			RequestID:        "native-original-turn",
+			Role:             "user",
+			Content:          "actual original native question",
+			IsCompleted:      true,
+			ExecutionContext: types.MessageExecutionContext{KnowledgeBaseIDs: []string{"kb"}},
+		},
+	)
 	require.NoError(t, err)
-	answer, err := messages.CreateMessage(ctx, &types.Message{SessionID: session.ID, RequestID: question.RequestID, Role: "assistant", ExecutionContext: question.ExecutionContext})
+	answer, err := messages.CreateMessage(
+		ctx,
+		&types.Message{
+			SessionID:        session.ID,
+			RequestID:        question.RequestID,
+			Role:             "assistant",
+			ExecutionContext: question.ExecutionContext,
+		},
+	)
 	require.NoError(t, err)
 	answer.Content, answer.SourceLineage, answer.IsCompleted = content, lineage, true
-	answer.AgentSteps = types.AgentSteps{{Thought: "actual original saved thought", ToolCalls: []types.ToolCall{{ID: "actual-tool", Name: "think", Args: map[string]interface{}{"thought": "actual original saved argument"}, Result: &types.ToolResult{Success: true, Output: "actual original saved result"}}}}}
-	answer.KnowledgeReferences = types.References{{ID: "original-ref", KnowledgeID: "match", KnowledgeBaseID: "kb", Content: "actual original saved reference"}}
+	answer.AgentSteps = types.AgentSteps{
+		{
+			Thought: "actual original saved thought",
+			ToolCalls: []types.ToolCall{
+				{
+					ID:     "actual-tool",
+					Name:   "think",
+					Args:   map[string]interface{}{"thought": "actual original saved argument"},
+					Result: &types.ToolResult{Success: true, Output: "actual original saved result"},
+				},
+			},
+		},
+	}
+	answer.KnowledgeReferences = types.References{
+		{ID: "original-ref", KnowledgeID: "match", KnowledgeBaseID: "kb", Content: "actual original saved reference"},
+	}
 	require.NoError(t, messages.UpdateMessage(ctx, answer))
 	return answer
 }
 
-func serveNativeSavedReplay(t *testing.T, db *gorm.DB, messages interfaces.MessageService, ctx context.Context, answer *types.Message, fileService interfaces.FileService, public bool) (*httptest.ResponseRecorder, *nativeSavedReplayRedis) {
+func serveNativeSavedReplay(
+	t *testing.T,
+	db *gorm.DB,
+	messages interfaces.MessageService,
+	ctx context.Context,
+	answer *types.Message,
+	fileService interfaces.FileService,
+	public bool,
+) (*httptest.ResponseRecorder, *nativeSavedReplayRedis) {
 	t.Helper()
 	mini := miniredis.RunT(t)
 	redis, err := stream.NewRedisStreamManager(mini.Addr(), "", "", 0, "native-replay-test", time.Minute)
@@ -174,15 +248,28 @@ func serveNativeSavedReplay(t *testing.T, db *gorm.DB, messages interfaces.Messa
 	if answer.SourceLineage != nil && len(answer.SourceLineage.Sources) > 0 {
 		source = answer.SourceLineage.Sources[0].KnowledgeID
 	}
-	router.ServeHTTP(nativeSavedReplayFinalWriter{ResponseRecorder: w, t: t, db: db, source: source}, httptest.NewRequest(http.MethodGet, url, nil))
+	router.ServeHTTP(
+		nativeSavedReplayFinalWriter{ResponseRecorder: w, t: t, db: db, source: source},
+		httptest.NewRequest(http.MethodGet, url, nil),
+	)
 	return w, streams
 }
 
-func nativeSavedReplayPlainFixture(t *testing.T) (*gorm.DB, *repository.KnowledgeInputProvenanceStore, interfaces.MessageService, context.Context) {
+func nativeSavedReplayPlainFixture(
+	t *testing.T,
+) (*gorm.DB, *repository.KnowledgeInputProvenanceStore, interfaces.MessageService, context.Context) {
 	t.Helper()
 	parent, db, store, _, _, _ := collectionHTTPFixture(t)
 	groups := service.NewGroupAccessService(repository.NewGroupAccessRepository(db))
-	guard := access.NewNextcloudSourceLineageGuard(repository.NewKnowledgeRepository(db).(access.NextcloudLineageSnapshotLookup), parent.kbService, nil, nil, groups, nil, store)
+	guard := access.NewNextcloudSourceLineageGuard(
+		repository.NewKnowledgeRepository(db).(access.NextcloudLineageSnapshotLookup),
+		parent.kbService,
+		nil,
+		nil,
+		groups,
+		nil,
+		store,
+	)
 	messages := configureNativeSavedReplayMessages(t, db, store, parent.kbService, parent.kgService, guard)
 	ctx := context.WithValue(collectionHumanInputContext(7), types.UserIDContextKey, "user")
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
@@ -203,9 +290,19 @@ func TestNativeSavedReplayActualPlainRedisReconnectAndLegacyReject(t *testing.T)
 	require.NotContains(t, w.Body.String(), "cached-unsafe.pdf")
 	require.Zero(t, streams.reads)
 	var live int64
-	require.NoError(t, db.Table("nextcloud_content_leases").Where("kind='read' AND released_at_ms IS NULL").Count(&live).Error)
+	require.NoError(
+		t,
+		db.Table("nextcloud_content_leases").Where("kind='read' AND released_at_ms IS NULL").Count(&live).Error,
+	)
 	require.Zero(t, live)
-	legacy := &types.Message{SessionID: answer.SessionID, RequestID: "legacy-turn", Role: "assistant", Content: "LEGACY CURRENT ROW SECRET", IsCompleted: true, SourceLineage: empty}
+	legacy := &types.Message{
+		SessionID:     answer.SessionID,
+		RequestID:     "legacy-turn",
+		Role:          "assistant",
+		Content:       "LEGACY CURRENT ROW SECRET",
+		IsCompleted:   true,
+		SourceLineage: empty,
+	}
 	require.NoError(t, db.Create(legacy).Error)
 	w, streams = serveNativeSavedReplay(t, db, messages, ctx, legacy, nil, false)
 	require.Equal(t, http.StatusServiceUnavailable, w.Code, w.Body.String())
@@ -218,16 +315,38 @@ func TestNativeSavedReplayActualFinalWriterRejectsBodyABAAndCurrentActor(t *test
 		t.Run(change, func(t *testing.T) {
 			db, _, messages, ctx := nativeSavedReplayPlainFixture(t)
 			empty, _ := types.NewCompleteSourceLineage()
-			answer := produceNativeSavedReplayMessage(t, db, messages, ctx, "SAVED SECRET ![image](resource://xifDo7NTSL300Lp1goVutw)", empty)
+			answer := produceNativeSavedReplayMessage(
+				t,
+				db,
+				messages,
+				ctx,
+				"SAVED SECRET ![image](resource://xifDo7NTSL300Lp1goVutw)",
+				empty,
+			)
 			observed := false
 			files := nativeSavedReplayFiles{beforeURL: func() {
 				observed = true
 				var live int64
-				require.NoError(t, db.Table("nextcloud_content_leases").Where("kind='read' AND released_at_ms IS NULL").Count(&live).Error)
+				require.NoError(
+					t,
+					db.Table("nextcloud_content_leases").
+						Where("kind='read' AND released_at_ms IS NULL").
+						Count(&live).
+						Error,
+				)
 				require.Positive(t, live)
 				if change == "body_aba" {
-					require.NoError(t, db.Model(&types.Message{}).Where("id=?", answer.ID).Update("content", "foreign transient").Error)
-					require.NoError(t, db.Model(&types.Message{}).Where("id=?", answer.ID).Update("content", answer.Content).Error)
+					require.NoError(
+						t,
+						db.Model(&types.Message{}).
+							Where("id=?", answer.ID).
+							Update("content", "foreign transient").
+							Error,
+					)
+					require.NoError(
+						t,
+						db.Model(&types.Message{}).Where("id=?", answer.ID).Update("content", answer.Content).Error,
+					)
 				} else {
 					require.NoError(t, db.Model(&types.User{}).Where("id='user'").Update("is_active", false).Error)
 				}
@@ -239,7 +358,10 @@ func TestNativeSavedReplayActualFinalWriterRejectsBodyABAAndCurrentActor(t *test
 			require.NotContains(t, w.Body.String(), `"response_type":"complete"`)
 			require.Zero(t, streams.reads)
 			var live int64
-			require.NoError(t, db.Table("nextcloud_content_leases").Where("kind='read' AND released_at_ms IS NULL").Count(&live).Error)
+			require.NoError(
+				t,
+				db.Table("nextcloud_content_leases").Where("kind='read' AND released_at_ms IS NULL").Count(&live).Error,
+			)
 			require.Zero(t, live)
 		})
 	}
@@ -249,8 +371,19 @@ func TestNativeSavedReplayActualSignedSourceAndFinalWriterRevoke(t *testing.T) {
 	f := faqAllReadLeaseFixture(t, "personal_revoke_before_write")
 	f.calls.Store(-10000)
 	ctx := context.WithValue(f.ctx, types.UserIDContextKey, "user")
-	messages := configureNativeSavedReplayMessages(t, f.db, f.store, f.knowledge.kbService, f.knowledge.kgService, f.guard)
-	request := types.FAQInputReadRequest{TenantID: 7, KnowledgeBaseID: "faq-derived", ChunkIDs: []string{f.entry.ChunkID}}
+	messages := configureNativeSavedReplayMessages(
+		t,
+		f.db,
+		f.store,
+		f.knowledge.kbService,
+		f.knowledge.kgService,
+		f.guard,
+	)
+	request := types.FAQInputReadRequest{
+		TenantID:        7,
+		KnowledgeBaseID: "faq-derived",
+		ChunkIDs:        []string{f.entry.ChunkID},
+	}
 	plan, err := f.store.PeekFAQInputReadPlan(ctx, request)
 	require.NoError(t, err)
 	inputLease, err := acquireFAQReadPlanLeases(ctx, f.store.ContentLeaseStore(), plan.Scopes, plan.SourceLineage, 0)
@@ -260,7 +393,14 @@ func TestNativeSavedReplayActualSignedSourceAndFinalWriterRevoke(t *testing.T) {
 	actual, err := f.store.CaptureFAQInputs(readCtx, request)
 	require.NoError(t, err)
 	require.Len(t, actual.Chunks, 1)
-	answer := produceNativeSavedReplayMessage(t, f.db, messages, readCtx, "CONTROLLED NATIVE SECRET: "+actual.Chunks[0].Content+" ![image](resource://xifDo7NTSL300Lp1goVutw)", actual.Proofs[0].SourceLineage)
+	answer := produceNativeSavedReplayMessage(
+		t,
+		f.db,
+		messages,
+		readCtx,
+		"CONTROLLED NATIVE SECRET: "+actual.Chunks[0].Content+" ![image](resource://xifDo7NTSL300Lp1goVutw)",
+		actual.Proofs[0].SourceLineage,
+	)
 	inputLease.Close()
 	w, streams := serveNativeSavedReplay(t, f.db, messages, ctx, answer, nil, false)
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
@@ -275,7 +415,13 @@ func TestNativeSavedReplayActualSignedSourceAndFinalWriterRevoke(t *testing.T) {
 	files := nativeSavedReplayFiles{beforeURL: func() {
 		observed = true
 		var exact int64
-		require.NoError(t, f.db.Table("nextcloud_content_leases").Where("kind='read' AND released_at_ms IS NULL AND knowledge_id='source'").Count(&exact).Error)
+		require.NoError(
+			t,
+			f.db.Table("nextcloud_content_leases").
+				Where("kind='read' AND released_at_ms IS NULL AND knowledge_id='source'").
+				Count(&exact).
+				Error,
+		)
 		require.Positive(t, exact)
 		f.calls.Store(2)
 	}}
@@ -286,6 +432,9 @@ func TestNativeSavedReplayActualSignedSourceAndFinalWriterRevoke(t *testing.T) {
 	require.NotContains(t, w.Body.String(), `"response_type":"complete"`)
 	require.Zero(t, streams.reads)
 	var live int64
-	require.NoError(t, f.db.Table("nextcloud_content_leases").Where("kind='read' AND released_at_ms IS NULL").Count(&live).Error)
+	require.NoError(
+		t,
+		f.db.Table("nextcloud_content_leases").Where("kind='read' AND released_at_ms IS NULL").Count(&live).Error,
+	)
 	require.Zero(t, live)
 }

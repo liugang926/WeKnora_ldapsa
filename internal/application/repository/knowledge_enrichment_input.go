@@ -30,9 +30,11 @@ func knowledgeEnrichmentRevision(tx *gorm.DB, kind, id string) (uint64, error) {
 	}
 	return row.Revision, nil
 }
+
 func knowledgeEnrichmentDocumentDigest(k *types.Knowledge) (string, error) {
 	return KnowledgeInputDigest(struct{ Root, Title, Folder string }{mustKnowledgeRootDigest(k), k.Title, k.FolderPath})
 }
+
 func knowledgeEnrichmentChunkDigest(c *types.Chunk) (string, error) {
 	return KnowledgeInputDigest(struct {
 		Tenant                                                              uint64
@@ -44,7 +46,10 @@ func knowledgeEnrichmentChunkDigest(c *types.Chunk) (string, error) {
 
 // CaptureKnowledgeEnrichmentInputs starts from the original private material
 // receipt. It cannot admit text from a caller-supplied cached document.
-func (s *KnowledgeInputProvenanceStore) CaptureKnowledgeEnrichmentInputs(ctx context.Context, request types.KnowledgeBuildInputCaptureRequest) (*types.KnowledgeBuildInputSnapshot, error) {
+func (s *KnowledgeInputProvenanceStore) CaptureKnowledgeEnrichmentInputs(
+	ctx context.Context,
+	request types.KnowledgeBuildInputCaptureRequest,
+) (*types.KnowledgeBuildInputSnapshot, error) {
 	if request.Expected == nil {
 		actual, err := s.CaptureKnowledgeOutputInputs(ctx, request)
 		if err != nil {
@@ -65,17 +70,17 @@ func (s *KnowledgeInputProvenanceStore) CaptureKnowledgeEnrichmentInputs(ctx con
 	return s.CaptureKnowledgeBuildInputs(ctx, request)
 }
 
-func knowledgeProducerModelDigest(tx *gorm.DB, snapshot *types.KnowledgeBuildInputSnapshot, purpose string) (string, error) {
+func knowledgeProducerModelDigest(
+	tx *gorm.DB,
+	snapshot *types.KnowledgeBuildInputSnapshot,
+	purpose string,
+) (string, error) {
 	kb, k := snapshot.KnowledgeBase, snapshot.Knowledge
 	routingRevision, err := knowledgeEnrichmentRevision(tx, "routing", kb.ID)
 	if err != nil {
 		return "", err
 	}
-	routingDigest, err := KnowledgeInputDigest(struct {
-		Vector, Storage *string
-		Provider        *types.StorageProviderConfig
-		Legacy          types.StorageConfig
-	}{kb.VectorStoreID, kb.StorageBackendID, kb.StorageProviderConfig, kb.StorageConfig})
+	routingDigest, err := knowledgeEnrichmentRoutingDigest(kb)
 	if err != nil {
 		return "", err
 	}
@@ -91,23 +96,15 @@ func knowledgeProducerModelDigest(tx *gorm.DB, snapshot *types.KnowledgeBuildInp
 	if err != nil {
 		return "", err
 	}
-	ids := []string{kb.SummaryModelID}
-	if purpose == "image" {
-		cfg := kb.VLMConfig
-		overrides, err := k.ProcessOverrides()
-		if err != nil {
-			return "", err
-		}
-		if overrides != nil && overrides.VLMConfig != nil {
-			cfg = *overrides.VLMConfig
-		}
-		ids = []string{cfg.ModelID}
-	}
-	if kb.NeedsEmbeddingModel() {
-		ids = append(ids, kb.EmbeddingModelID)
+	ids, err := knowledgeProducerModelIDs(kb, k, purpose)
+	if err != nil {
+		return "", err
 	}
 	sort.Strings(ids)
-	rows := []string{fmt.Sprintf("routing:%d:%s", routingRevision, routingDigest), fmt.Sprintf("tenant:%d:%s", tenantRevision, tenantDigest)}
+	rows := []string{
+		fmt.Sprintf("routing:%d:%s", routingRevision, routingDigest),
+		fmt.Sprintf("tenant:%d:%s", tenantRevision, tenantDigest),
+	}
 	seen := map[string]bool{}
 	for _, id := range ids {
 		if id == "" || seen[id] {
@@ -115,7 +112,9 @@ func knowledgeProducerModelDigest(tx *gorm.DB, snapshot *types.KnowledgeBuildInp
 		}
 		seen[id] = true
 		var model types.Model
-		if err := tx.Where("id = ? AND (tenant_id = ? OR is_builtin = ?)", id, k.TenantID, true).Take(&model).Error; err != nil {
+		if err := tx.Where("id = ? AND (tenant_id = ? OR is_builtin = ?)", id, k.TenantID, true).
+			Take(&model).
+			Error; err != nil {
 			return "", err
 		}
 		if model.DeletedAt.Valid {
@@ -134,6 +133,27 @@ func knowledgeProducerModelDigest(tx *gorm.DB, snapshot *types.KnowledgeBuildInp
 	return KnowledgeInputDigest(rows)
 }
 
+// Keep producer digest capture and transactional revision locks on the same
+// exact selected model IDs, including per-file image overrides and embedding.
+func knowledgeProducerModelIDs(kb *types.KnowledgeBase, k *types.Knowledge, purpose string) ([]string, error) {
+	ids := []string{kb.SummaryModelID}
+	if purpose == "image" {
+		cfg := kb.VLMConfig
+		overrides, err := k.ProcessOverrides()
+		if err != nil {
+			return nil, err
+		}
+		if overrides != nil && overrides.VLMConfig != nil {
+			cfg = *overrides.VLMConfig
+		}
+		ids = []string{cfg.ModelID}
+	}
+	if kb.NeedsEmbeddingModel() {
+		ids = append(ids, kb.EmbeddingModelID)
+	}
+	return ids, nil
+}
+
 func knowledgeProducerTenantDigest(tenant *types.Tenant) (string, error) {
 	return KnowledgeInputDigest(struct {
 		ID          uint64
@@ -147,7 +167,10 @@ func knowledgeProducerTenantDigest(tenant *types.Tenant) (string, error) {
 
 // The actual model/factory context is loaded after private receipt validation;
 // an old middleware TenantInfo pointer cannot certify a newly captured row.
-func (s *KnowledgeInputProvenanceStore) ReadKnowledgeProducerTenant(ctx context.Context, proof *types.KnowledgeBuildInputProof) (*types.Tenant, error) {
+func (s *KnowledgeInputProvenanceStore) ReadKnowledgeProducerTenant(
+	ctx context.Context,
+	proof *types.KnowledgeBuildInputProof,
+) (*types.Tenant, error) {
 	if proof == nil {
 		return nil, types.ErrSourceLineageUnknown
 	}
@@ -160,17 +183,26 @@ func (s *KnowledgeInputProvenanceStore) ReadKnowledgeProducerTenant(ctx context.
 
 // AdmitKnowledgeProducerInput persists the actual selected rows and exact
 // trusted runtime/task controls before enqueue or a synchronous model call.
-func (s *KnowledgeInputProvenanceStore) AdmitKnowledgeProducerInput(ctx context.Context, proof *types.KnowledgeBuildInputProof, purpose string, input any) (*types.KnowledgeProducerInputProof, error) {
-	if proof == nil || proof.Projection != types.KnowledgeBuildProjectionEnrichment || (purpose != "summary" && purpose != "question" && purpose != "image") {
-		return nil, fmt.Errorf("unknown original enrichment producer projection or purpose: %w", types.ErrSourceLineageUnknown)
+func (s *KnowledgeInputProvenanceStore) AdmitKnowledgeProducerInput(
+	ctx context.Context,
+	proof *types.KnowledgeBuildInputProof,
+	purpose string,
+	input any,
+) (*types.KnowledgeProducerInputProof, error) {
+	if proof == nil || proof.Projection != types.KnowledgeBuildProjectionEnrichment ||
+		(purpose != "summary" && purpose != "question" && purpose != "image") {
+		return nil, fmt.Errorf(
+			"unknown original enrichment producer projection or purpose: %w",
+			types.ErrSourceLineageUnknown,
+		)
 	}
-	caller := types.CallerFromContext(ctx)
-	_, hasPrincipal := ctx.Value(types.PrincipalContextKey).(types.Principal)
-	_, hasAPI := types.TenantAPIKeyScopeFromContext(ctx)
-	actualActor := caller.UserID != "" || hasPrincipal || hasAPI
+	actualActor := knowledgeActorContextPresent(ctx)
 	if actualActor {
 		var kb types.KnowledgeBase
-		if err := s.db.WithContext(ctx).Where("id = ? AND tenant_id = ?", proof.KnowledgeBaseID, proof.TenantID).Take(&kb).Error; err != nil {
+		if err := s.db.WithContext(ctx).
+			Where("id = ? AND tenant_id = ?", proof.KnowledgeBaseID, proof.TenantID).
+			Take(&kb).
+			Error; err != nil {
 			return nil, err
 		}
 		var err error
@@ -180,7 +212,10 @@ func (s *KnowledgeInputProvenanceStore) AdmitKnowledgeProducerInput(ctx context.
 		}
 	} else {
 		var kb types.KnowledgeBase
-		if err := s.db.WithContext(ctx).Where("id = ? AND tenant_id = ?", proof.KnowledgeBaseID, proof.TenantID).Take(&kb).Error; err != nil {
+		if err := s.db.WithContext(ctx).
+			Where("id = ? AND tenant_id = ?", proof.KnowledgeBaseID, proof.TenantID).
+			Take(&kb).
+			Error; err != nil {
 			return nil, err
 		}
 		if _, err := s.authorizeOriginalKnowledgeProducerWrite(ctx, &kb, proof); err != nil {
@@ -208,7 +243,18 @@ func (s *KnowledgeInputProvenanceStore) AdmitKnowledgeProducerInput(ctx context.
 	}
 	var result *types.KnowledgeProducerInputProof
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		snapshot, err := s.captureKnowledgeBuildSnapshotInTx(tx, types.KnowledgeBuildInputCaptureRequest{Projection: proof.Projection, TenantID: proof.TenantID, KnowledgeBaseID: proof.KnowledgeBaseID, KnowledgeID: proof.KnowledgeID, ChunkIDs: proof.ChunkIDs, Expected: proof}, true)
+		snapshot, err := s.captureKnowledgeBuildSnapshotInTx(
+			tx,
+			types.KnowledgeBuildInputCaptureRequest{
+				Projection:      proof.Projection,
+				TenantID:        proof.TenantID,
+				KnowledgeBaseID: proof.KnowledgeBaseID,
+				KnowledgeID:     proof.KnowledgeID,
+				ChunkIDs:        proof.ChunkIDs,
+				Expected:        proof,
+			},
+			true,
+		)
 		if err != nil {
 			return err
 		}
@@ -220,7 +266,15 @@ func (s *KnowledgeInputProvenanceStore) AdmitKnowledgeProducerInput(ctx context.
 		if err != nil {
 			return err
 		}
-		row := knowledgeProducerInput{ID: uuid.NewString(), AdmissionID: proof.AdmissionID, Purpose: purpose, InputDigest: digest, OriginalProof: string(data), ModelDigest: modelDigest, ActorSelector: actorJSON}
+		row := knowledgeProducerInput{
+			ID:            uuid.NewString(),
+			AdmissionID:   proof.AdmissionID,
+			Purpose:       purpose,
+			InputDigest:   digest,
+			OriginalProof: string(data),
+			ModelDigest:   modelDigest,
+			ActorSelector: actorJSON,
+		}
 		if err := tx.Create(&row).Error; err != nil {
 			return err
 		}
@@ -230,8 +284,15 @@ func (s *KnowledgeInputProvenanceStore) AdmitKnowledgeProducerInput(ctx context.
 	return result, err
 }
 
-func (s *KnowledgeInputProvenanceStore) recheckKnowledgeProducerInputInTx(ctx context.Context, tx *gorm.DB, original *types.KnowledgeBuildInputProof, proof *types.KnowledgeProducerInputProof, input any) error {
-	if proof == nil || original == nil || proof.ID == "" || original.Projection != types.KnowledgeBuildProjectionEnrichment {
+func (s *KnowledgeInputProvenanceStore) recheckKnowledgeProducerInputInTx(
+	ctx context.Context,
+	tx *gorm.DB,
+	original *types.KnowledgeBuildInputProof,
+	proof *types.KnowledgeProducerInputProof,
+	input any,
+) error {
+	if proof == nil || original == nil || proof.ID == "" ||
+		original.Projection != types.KnowledgeBuildProjectionEnrichment {
 		return types.ErrSourceLineageUnknown
 	}
 	digest, err := KnowledgeInputDigest(input)
@@ -243,10 +304,24 @@ func (s *KnowledgeInputProvenanceStore) recheckKnowledgeProducerInputInTx(ctx co
 		return err
 	}
 	var admitted types.KnowledgeBuildInputProof
-	if json.Unmarshal([]byte(saved.OriginalProof), &admitted) != nil || !reflect.DeepEqual(&admitted, original) || saved.Purpose != proof.Purpose || digest != saved.InputDigest || digest != proof.Digest {
+	if json.Unmarshal([]byte(saved.OriginalProof), &admitted) != nil || !reflect.DeepEqual(&admitted, original) ||
+		saved.Purpose != proof.Purpose ||
+		digest != saved.InputDigest ||
+		digest != proof.Digest {
 		return ErrKnowledgeInputChanged
 	}
-	snapshot, err := s.captureKnowledgeBuildSnapshotInTx(tx, types.KnowledgeBuildInputCaptureRequest{Projection: original.Projection, TenantID: original.TenantID, KnowledgeBaseID: original.KnowledgeBaseID, KnowledgeID: original.KnowledgeID, ChunkIDs: original.ChunkIDs, Expected: original}, true)
+	snapshot, err := s.captureKnowledgeBuildSnapshotInTx(
+		tx,
+		types.KnowledgeBuildInputCaptureRequest{
+			Projection:      original.Projection,
+			TenantID:        original.TenantID,
+			KnowledgeBaseID: original.KnowledgeBaseID,
+			KnowledgeID:     original.KnowledgeID,
+			ChunkIDs:        original.ChunkIDs,
+			Expected:        original,
+		},
+		true,
+	)
 	if err != nil {
 		return err
 	}
@@ -276,20 +351,33 @@ func (s *KnowledgeInputProvenanceStore) recheckKnowledgeProducerInputInTx(ctx co
 	}
 	return ctx.Err()
 }
-func (s *KnowledgeInputProvenanceStore) RecheckKnowledgeProducerInput(ctx context.Context, original *types.KnowledgeBuildInputProof, proof *types.KnowledgeProducerInputProof, input any) error {
+
+func (s *KnowledgeInputProvenanceStore) RecheckKnowledgeProducerInput(
+	ctx context.Context,
+	original *types.KnowledgeBuildInputProof,
+	proof *types.KnowledgeProducerInputProof,
+	input any,
+) error {
 	if err := s.RecheckKnowledgeBuildInputs(ctx, original); err != nil {
 		return err
 	}
-	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error { return s.recheckKnowledgeProducerInputInTx(ctx, tx, original, proof, input) })
+	return s.db.WithContext(ctx).
+		Transaction(func(tx *gorm.DB) error { return s.recheckKnowledgeProducerInputInTx(ctx, tx, original, proof, input) })
 }
 
-type knowledgeProducerInputContextKey struct{}
-type knowledgeProducerInputContext struct {
-	proof *types.KnowledgeProducerInputProof
-	input func() any
-}
+type (
+	knowledgeProducerInputContextKey struct{}
+	knowledgeProducerInputContext    struct {
+		proof *types.KnowledgeProducerInputProof
+		input func() any
+	}
+)
 
-func WithKnowledgeProducerInput(ctx context.Context, proof *types.KnowledgeProducerInputProof, input func() any) context.Context {
+func WithKnowledgeProducerInput(
+	ctx context.Context,
+	proof *types.KnowledgeProducerInputProof,
+	input func() any,
+) context.Context {
 	var copy *types.KnowledgeProducerInputProof
 	if proof != nil {
 		v := *proof
@@ -297,6 +385,7 @@ func WithKnowledgeProducerInput(ctx context.Context, proof *types.KnowledgeProdu
 	}
 	return context.WithValue(ctx, knowledgeProducerInputContextKey{}, knowledgeProducerInputContext{copy, input})
 }
+
 func CheckKnowledgeProducerInput(ctx context.Context) error {
 	guard, ok := ctx.Value(knowledgeProducerInputContextKey{}).(knowledgeProducerInputContext)
 	if !ok {
@@ -315,16 +404,21 @@ func CheckKnowledgeProducerInput(ctx context.Context) error {
 
 type knowledgeProducerActorContextKey struct{}
 
-type knowledgeCurrentProducerWriteKey struct{}
-type knowledgeCurrentProducerWrite struct {
-	actor  knowledgeBuildActorSelector
-	tenant uint64
-	kb     string
-}
+type (
+	knowledgeCurrentProducerWriteKey struct{}
+	knowledgeCurrentProducerWrite    struct {
+		actor  knowledgeBuildActorSelector
+		tenant uint64
+		kb     string
+	}
+)
 
 // AuthorizeKnowledgeCurrentProducerWrite is only called by the actual current
 // generation boundary. Its private marker cannot be acquired by a public read.
-func (s *KnowledgeInputProvenanceStore) AuthorizeKnowledgeCurrentProducerWrite(ctx context.Context, kb *types.KnowledgeBase) (context.Context, error) {
+func (s *KnowledgeInputProvenanceStore) AuthorizeKnowledgeCurrentProducerWrite(
+	ctx context.Context,
+	kb *types.KnowledgeBase,
+) (context.Context, error) {
 	actor, err := captureKnowledgeActorSelector(ctx, "")
 	if err != nil {
 		return ctx, err
@@ -333,26 +427,44 @@ func (s *KnowledgeInputProvenanceStore) AuthorizeKnowledgeCurrentProducerWrite(c
 	if err != nil {
 		return ctx, err
 	}
-	return context.WithValue(fresh, knowledgeCurrentProducerWriteKey{}, knowledgeCurrentProducerWrite{actor, kb.TenantID, kb.ID}), nil
+	return context.WithValue(
+		fresh,
+		knowledgeCurrentProducerWriteKey{},
+		knowledgeCurrentProducerWrite{actor, kb.TenantID, kb.ID},
+	), nil
 }
-func (s *KnowledgeInputProvenanceStore) refreshKnowledgeCurrentProducerWrite(ctx context.Context, marker knowledgeCurrentProducerWrite) (context.Context, error) {
+
+func (s *KnowledgeInputProvenanceStore) refreshKnowledgeCurrentProducerWrite(
+	ctx context.Context,
+	marker knowledgeCurrentProducerWrite,
+) (context.Context, error) {
 	fresh, err := s.restoreCurrentKnowledgeActor(ctx, marker.actor, marker.tenant)
 	if err != nil {
 		return ctx, err
 	}
 	var kb types.KnowledgeBase
-	if err := s.db.WithContext(fresh).Where("id = ? AND tenant_id = ?", marker.kb, marker.tenant).Take(&kb).Error; err != nil {
+	if err := s.db.WithContext(fresh).
+		Where("id = ? AND tenant_id = ?", marker.kb, marker.tenant).
+		Take(&kb).
+		Error; err != nil {
 		return ctx, err
 	}
 	return s.authorizeKnowledgeActorWrite(fresh, &kb)
 }
 
-func (s *KnowledgeInputProvenanceStore) RestoreKnowledgeProducerActor(ctx context.Context, original *types.KnowledgeBuildInputProof, producer *types.KnowledgeProducerInputProof) (context.Context, error) {
+func (s *KnowledgeInputProvenanceStore) RestoreKnowledgeProducerActor(
+	ctx context.Context,
+	original *types.KnowledgeBuildInputProof,
+	producer *types.KnowledgeProducerInputProof,
+) (context.Context, error) {
 	if original == nil || producer == nil {
 		return ctx, types.ErrSourceLineageUnknown
 	}
 	var row knowledgeProducerInput
-	if err := s.db.WithContext(ctx).Where("id = ? AND admission_id = ?", producer.ID, original.AdmissionID).Take(&row).Error; err != nil {
+	if err := s.db.WithContext(ctx).
+		Where("id = ? AND admission_id = ?", producer.ID, original.AdmissionID).
+		Take(&row).
+		Error; err != nil {
 		return ctx, err
 	}
 	if row.Purpose != producer.Purpose || row.InputDigest != producer.Digest {
@@ -370,7 +482,10 @@ func (s *KnowledgeInputProvenanceStore) RestoreKnowledgeProducerActor(ctx contex
 		return ctx, err
 	}
 	var kb types.KnowledgeBase
-	if err := s.db.WithContext(fresh).Where("id = ? AND tenant_id = ?", original.KnowledgeBaseID, original.TenantID).Take(&kb).Error; err != nil {
+	if err := s.db.WithContext(fresh).
+		Where("id = ? AND tenant_id = ?", original.KnowledgeBaseID, original.TenantID).
+		Take(&kb).
+		Error; err != nil {
 		return ctx, err
 	}
 	fresh, err = s.authorizeKnowledgeActorWrite(fresh, &kb)

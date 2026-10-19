@@ -25,12 +25,25 @@ func TestSourceContentAPIRequestAndStreamLogsRemainPrivate(t *testing.T) {
 	var logs bytes.Buffer
 	ctx := contentPrivacyLogContext(&logs)
 	private := logprivacy.SuppressContent(ctx)
-	LogRequest(private, "https://PRIVATE_SOURCE_ENDPOINT", "PRIVATE_SOURCE_MODEL", []byte(`{"content":"PRIVATE_SOURCE_REQUEST"}`), true)
+	LogRequest(
+		private,
+		"https://PRIVATE_SOURCE_ENDPOINT",
+		"PRIVATE_SOURCE_MODEL",
+		[]byte(`{"content":"PRIVATE_SOURCE_REQUEST"}`),
+		true,
+	)
 	a := NewStreamAssembler(private, "PRIVATE_SOURCE_MODEL")
 	ch := make(chan types.StreamResponse, 32)
 	a.Process(ch, Delta{Reasoning: "PRIVATE_SOURCE_REASONING"})
 	a.Process(ch, Delta{Content: "PRIVATE_SOURCE_OUTPUT"})
-	a.Process(ch, Delta{ToolCalls: []ToolCallDelta{{Index: 0, ID: "PRIVATE_SOURCE_TOOL_ID", Name: "PRIVATE_SOURCE_TOOL_NAME", Arguments: `{}`}}})
+	a.Process(
+		ch,
+		Delta{
+			ToolCalls: []ToolCallDelta{
+				{Index: 0, ID: "PRIVATE_SOURCE_TOOL_ID", Name: "PRIVATE_SOURCE_TOOL_NAME", Arguments: `{}`},
+			},
+		},
+	)
 	a.Fail(ch, errors.New("PRIVATE_SOURCE_PROVIDER_ERROR"))
 	var final types.StreamResponse
 	for len(ch) > 0 {
@@ -40,7 +53,7 @@ func TestSourceContentAPIRequestAndStreamLogsRemainPrivate(t *testing.T) {
 	require.Equal(t, "PRIVATE_SOURCE_PROVIDER_ERROR", final.Content, "the caller must still receive the original error")
 	require.True(t, final.Done)
 	require.NotContains(t, logs.String(), "PRIVATE_SOURCE")
-	require.Contains(t, logs.String(), "content logging suppressed")
+	require.Empty(t, logs.String(), "protected diagnostics never reach the caller's content logger")
 	logs.Reset()
 	LogRequest(ctx, "https://ordinary.example.test", "ordinary", []byte(`{"content":"PUBLIC_ORDINARY_REQUEST"}`), false)
 	ordinary := NewStreamAssembler(ctx, "ordinary")
@@ -62,10 +75,22 @@ func TestSourceContentRawDumpRequiresContextAndPreservesOrdinary(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "not-created")
 	t.Setenv("WEKNORA_LLM_STREAM_RAW_DUMP_DIR", dir)
 	ctx := logprivacy.SuppressContent(context.Background())
-	require.Nil(t, NewStreamPacketDumper(ctx, "PRIVATE_SOURCE_MODEL", map[string]string{"content": "PRIVATE_SOURCE_REQUEST"}))
-	require.Nil(t, NewStreamPacketDumper(nil, "missing-context", nil))
+	for _, blocked := range []struct {
+		name string
+		ctx  context.Context
+	}{
+		{name: "private-source", ctx: ctx},
+		{name: "missing-context"},
+	} {
+		require.Nil(t, NewStreamPacketDumper(blocked.ctx, blocked.name,
+			map[string]string{"content": "PRIVATE_SOURCE_REQUEST"}))
+	}
 	require.NoDirExists(t, dir, "suppression must precede mkdir and file creation")
-	ordinary := NewStreamPacketDumper(context.Background(), "ordinary", map[string]string{"content": "PUBLIC_ORDINARY_REQUEST"})
+	ordinary := NewStreamPacketDumper(
+		context.Background(),
+		"ordinary",
+		map[string]string{"content": "PUBLIC_ORDINARY_REQUEST"},
+	)
 	require.NotNil(t, ordinary)
 	ordinary.WritePacketRaw([]byte(`{"content":"PUBLIC_ORDINARY_RESPONSE"}`))
 	ordinary.Close()

@@ -27,7 +27,10 @@ func runRAGPhysicalActualShortSummary(t *testing.T, pg bool) {
 				var kb types.KnowledgeBase
 				require.NoError(t, m.f.db.Where("id='kb'").Take(&kb).Error)
 				kb.ChunkingConfig.ChunkSize, kb.ChunkingConfig.ChunkOverlap = 64, 0
-				require.NoError(t, m.f.store.UpdateKnowledgeBaseWithInput(repository.WithIndependentKnowledgeInput(m.f.ctx), &kb))
+				require.NoError(
+					t,
+					m.f.store.UpdateKnowledgeBaseWithInput(repository.WithIndependentKnowledgeInput(m.f.ctx), &kb),
+				)
 			}
 			k := m.ingest(t)
 			for i := 0; i < len(m.f.queue.tasks); i++ {
@@ -35,21 +38,51 @@ func runRAGPhysicalActualShortSummary(t *testing.T, pg bool) {
 			}
 			var text []*types.Chunk
 			var summary types.Chunk
-			require.NoError(t, m.f.db.Where("knowledge_id=? AND chunk_type=?", k.ID, types.ChunkTypeText).Order("chunk_index").Find(&text).Error)
+			require.NoError(
+				t,
+				m.f.db.Where("knowledge_id=? AND chunk_type=?", k.ID, types.ChunkTypeText).
+					Order("chunk_index").
+					Find(&text).
+					Error,
+			)
 			require.NotEmpty(t, text)
-			require.NoError(t, m.f.db.Where("knowledge_id=? AND chunk_type=?", k.ID, types.ChunkTypeSummary).Take(&summary).Error)
-			require.Equal(t, text[0].ID, summary.ParentChunkID, "actual generated summary associates with its original source text")
+			require.NoError(
+				t,
+				m.f.db.Where("knowledge_id=? AND chunk_type=?", k.ID, types.ChunkTypeSummary).Take(&summary).Error,
+			)
+			require.Equal(
+				t,
+				text[0].ID,
+				summary.ParentChunkID,
+				"actual generated summary associates with its original source text",
+			)
 			require.Less(t, utf8.RuneCountInString(text[0].Content), 350)
 			if mode == "text-neighbors" {
 				require.Greater(t, len(text), 1)
 				require.NotEmpty(t, text[0].NextChunkID)
 			}
-			engine := &fakeRetrieveEngineService{engineType: types.PostgresRetrieverEngineType, support: []types.RetrieverType{types.VectorRetrieverType},
-				canned: []*types.IndexWithScore{{ChunkID: text[0].ID, KnowledgeID: k.ID, Score: 1}, {ChunkID: summary.ID, KnowledgeID: k.ID, Score: .9}}}
-			svc := &knowledgeBaseService{repo: repository.NewKnowledgeBaseRepository(m.f.db), kgRepo: m.f.s.repo, chunkRepo: m.f.s.chunkRepo,
-				contentLeases: m.f.store.ContentLeaseStore(), ragChunkSnapshots: repository.NewRAGChunkSnapshotReader(m.f.db, m.f.store), ragChunkLineageGuard: m.f.guard,
-				modelService: m.f.s.modelService, retrieveEngine: parentChildRetrieveRegistry{engine: engine},
-				publicationGuard: access.NewNextcloudPublicationGuard(repository.NewDirectoryRepository(m.f.db), repository.NewDataSourceRepository(m.f.db))}
+			engine := &fakeRetrieveEngineService{
+				engineType: types.PostgresRetrieverEngineType,
+				support:    []types.RetrieverType{types.VectorRetrieverType},
+				canned: []*types.IndexWithScore{
+					{ChunkID: text[0].ID, KnowledgeID: k.ID, Score: 1},
+					{ChunkID: summary.ID, KnowledgeID: k.ID, Score: .9},
+				},
+			}
+			svc := &knowledgeBaseService{
+				repo:                 repository.NewKnowledgeBaseRepository(m.f.db),
+				kgRepo:               m.f.s.repo,
+				chunkRepo:            m.f.s.chunkRepo,
+				contentLeases:        m.f.store.ContentLeaseStore(),
+				ragChunkSnapshots:    repository.NewRAGChunkSnapshotReader(m.f.db, m.f.store),
+				ragChunkLineageGuard: m.f.guard,
+				modelService:         m.f.s.modelService,
+				retrieveEngine:       parentChildRetrieveRegistry{engine: engine},
+				publicationGuard: access.NewNextcloudPublicationGuard(
+					repository.NewDirectoryRepository(m.f.db),
+					repository.NewDataSourceRepository(m.f.db),
+				),
+			}
 			var tenant types.Tenant
 			require.NoError(t, m.f.db.Where("id=7").Take(&tenant).Error)
 			ctx := context.WithValue(m.f.ctx, types.TenantInfoContextKey, &tenant)
@@ -65,10 +98,21 @@ func runRAGPhysicalActualShortSummary(t *testing.T, pg bool) {
 			chatpipeline.ConfigureRAGChunkMergeHydration(manager, svc)
 			cm := &types.ChatManage{}
 			cm.TenantID = 7
-			cm.SearchTargets = []*types.SearchTarget{{Type: types.SearchTargetTypeKnowledgeBase, TenantID: 7, KnowledgeBaseID: "kb"}}
+			cm.SearchTargets = []*types.SearchTarget{
+				{Type: types.SearchTargetTypeKnowledgeBase, TenantID: 7, KnowledgeBaseID: "kb"},
+			}
 			ctx, err := manager.BeginSourceLineage(ctx, cm, access.LineageReadScope{Targets: cm.SearchTargets})
 			require.NoError(t, err)
-			rows, err := svc.HybridSearch(ctx, "kb", types.SearchParams{QueryText: "current employee policy", QueryEmbedding: []float32{.5}, MatchCount: 2, SkipContextEnrichment: true})
+			rows, err := svc.HybridSearch(
+				ctx,
+				"kb",
+				types.SearchParams{
+					QueryText:             "current employee policy",
+					QueryEmbedding:        []float32{.5},
+					MatchCount:            2,
+					SkipContextEnrichment: true,
+				},
+			)
 			require.NoError(t, err)
 			require.Len(t, rows, 2, "both actual short text and its generated summary were retrieved")
 			var summaryResult *types.SearchResult
@@ -85,7 +129,13 @@ func runRAGPhysicalActualShortSummary(t *testing.T, pg bool) {
 			case "missing-summary-proof":
 				summaryResult.SourceLineage = types.UnknownSourceLineage()
 			case "changed-stored-parent":
-				require.NoError(t, m.f.db.Model(&types.Chunk{}).Where("id=?", summary.ID).Update("parent_chunk_id", "unrelated-parent").Error)
+				require.NoError(
+					t,
+					m.f.db.Model(&types.Chunk{}).
+						Where("id=?", summary.ID).
+						Update("parent_chunk_id", "unrelated-parent").
+						Error,
+				)
 			case "forged-parent-selector":
 				summaryResult.ParentChunkID = "unrelated-parent"
 			case "changed-cached-summary":
@@ -97,18 +147,36 @@ func runRAGPhysicalActualShortSummary(t *testing.T, pg bool) {
 			require.Nil(t, manager.Trigger(ctx, types.CHUNK_MERGE, cm))
 			err = chatpipeline.CheckSourceLineageInputs(ctx, cm)
 			if mode != "short-summary" && mode != "text-neighbors" {
-				require.Error(t, err, "no changed body/relation or missing authorization may reach the next model stage")
+				require.Error(
+					t,
+					err,
+					"no changed body/relation or missing authorization may reach the next model stage",
+				)
 				return
 			}
-			require.NoError(t, err, "a production-generated summary's source association is not an unsupported image parent")
+			require.NoError(
+				t,
+				err,
+				"a production-generated summary's source association is not an unsupported image parent",
+			)
 			require.Len(t, cm.MergeResult, 2)
 			for _, row := range cm.MergeResult {
 				require.NoError(t, row.SourceLineage.RequireComplete())
 				if row.ID == summary.ID {
-					require.Equal(t, summary.Content, row.Content, "summary revalidation never appends its source parent body")
+					require.Equal(
+						t,
+						summary.Content,
+						row.Content,
+						"summary revalidation never appends its source parent body",
+					)
 				}
 				if mode == "text-neighbors" && row.ID == text[0].ID {
-					require.Contains(t, row.SubChunkID, text[0].NextChunkID, "actual neighbor was captured under the held source scope")
+					require.Contains(
+						t,
+						row.SubChunkID,
+						text[0].NextChunkID,
+						"actual neighbor was captured under the held source scope",
+					)
 				}
 			}
 			require.NoError(t, checkpoint())
@@ -123,6 +191,7 @@ func runRAGPhysicalActualShortSummary(t *testing.T, pg bool) {
 func TestRAGPhysicalActualShortSummarySQLite(t *testing.T) {
 	runRAGPhysicalActualShortSummary(t, false)
 }
+
 func TestPostgresRAGPhysicalActualShortSummary(t *testing.T) {
 	runRAGPhysicalActualShortSummary(t, true)
 }

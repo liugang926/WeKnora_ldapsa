@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+
 	"github.com/Tencent/WeKnora/internal/types"
 	"gorm.io/gorm"
 )
@@ -9,8 +10,14 @@ import (
 // AdvanceMessageMaterialAfterOwnFollowUpRow admits exactly one already sealed
 // owned insertion. Every prior candidate/control and original body proof stays
 // equal; the new request is excluded from the previous model's material.
-func (s *KnowledgeInputProvenanceStore) AdvanceMessageMaterialAfterOwnFollowUpRow(ctx context.Context, expected *types.MessageMaterialSnapshot, id, generation, admission, request, role string) (*types.MessageMaterialSnapshot, error) {
-	if expected == nil || id == "" || generation == "" || request == "" || request == expected.Request.ExcludeRequestID || role != "assistant" && role != "user" {
+func (s *KnowledgeInputProvenanceStore) AdvanceMessageMaterialAfterOwnFollowUpRow(
+	ctx context.Context,
+	expected *types.MessageMaterialSnapshot,
+	id, generation, admission, request, role string,
+) (*types.MessageMaterialSnapshot, error) {
+	if expected == nil || id == "" || generation == "" || request == "" ||
+		request == expected.Request.ExcludeRequestID ||
+		role != "assistant" && role != "user" {
 		return nil, types.ErrSourceLineageUnknown
 	}
 	var result *types.MessageMaterialSnapshot
@@ -20,10 +27,21 @@ func (s *KnowledgeInputProvenanceStore) AdvanceMessageMaterialAfterOwnFollowUpRo
 			return ErrKnowledgeInputChanged
 		}
 		var inserted types.MessageMaterialCandidateControl
-		if err := tx.Table("messages m").Select("m.id,m.request_id,m.role,m.is_completed AS complete,m.created_at,a.id AS admission_id,a.generation_id,a.revision,v.revision AS current_revision").Joins("JOIN message_material_receipts r ON r.message_id=m.id").Joins("JOIN message_material_admissions a ON a.id=r.admission_id AND a.message_id=m.id").Joins("JOIN message_material_versions v ON v.message_id=m.id").Where("m.id=? AND m.session_id=? AND m.deleted_at IS NULL", id, expected.Request.SessionID).Take(&inserted).Error; err != nil {
+		if err := tx.Table("messages m").
+			Select("m.id,m.request_id,m.role,m.is_completed AS complete,m.created_at,a.id AS admission_id,a.generation_id,a.revision,v.revision AS current_revision").
+			Joins("JOIN message_material_receipts r ON r.message_id=m.id").
+			Joins("JOIN message_material_admissions a ON a.id=r.admission_id AND a.message_id=m.id").
+			Joins("JOIN message_material_versions v ON v.message_id=m.id").
+			Where("m.id=? AND m.session_id=? AND m.deleted_at IS NULL", id, expected.Request.SessionID).
+			Take(&inserted).
+			Error; err != nil {
 			return err
 		}
-		if inserted.GenerationID != generation || inserted.RequestID != request || inserted.Role != role || inserted.Revision != 1 || inserted.CurrentRevision != 1 || inserted.Complete != (role == "user") || admission != "" && inserted.AdmissionID != admission {
+		if inserted.GenerationID != generation || inserted.RequestID != request || inserted.Role != role ||
+			inserted.Revision != 1 ||
+			inserted.CurrentRevision != 1 ||
+			inserted.Complete != (role == "user") ||
+			admission != "" && inserted.AdmissionID != admission {
 			return ErrKnowledgeInputChanged
 		}
 		req := expected.Request
@@ -39,7 +57,8 @@ func (s *KnowledgeInputProvenanceStore) AdvanceMessageMaterialAfterOwnFollowUpRo
 		if err != nil {
 			return err
 		}
-		if !faqInputEqual(old.Scopes, current.Scopes) || !faqInputEqual(old.SourceLineage, current.SourceLineage) || !faqInputEqual(old.ParentPlans, current.ParentPlans) {
+		if !faqInputEqual(old.Scopes, current.Scopes) || !faqInputEqual(old.SourceLineage, current.SourceLineage) ||
+			!faqInputEqual(old.ParentPlans, current.ParentPlans) {
 			return ErrKnowledgeInputChanged
 		}
 		controls := map[string]*types.MessageMaterialCandidateControl{}
@@ -59,7 +78,11 @@ func (s *KnowledgeInputProvenanceStore) AdvanceMessageMaterialAfterOwnFollowUpRo
 		} else if len(controls) != 0 {
 			return ErrKnowledgeInputChanged
 		}
-		isolated := context.WithValue(tx.Statement.Context, messageMaterialPlanKey{}, []*types.MessageMaterialReadPlan{})
+		isolated := context.WithValue(
+			tx.Statement.Context,
+			messageMaterialPlanKey{},
+			[]*types.MessageMaterialReadPlan{},
+		)
 		marked, err := WithMessageMaterialReadPlan(isolated, current)
 		if err != nil {
 			return err

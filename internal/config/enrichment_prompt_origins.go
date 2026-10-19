@@ -2,6 +2,7 @@ package config
 
 import (
 	_ "embed"
+
 	"github.com/Tencent/WeKnora/internal/types"
 	"gopkg.in/yaml.v3"
 )
@@ -29,7 +30,8 @@ func enrichmentPromptText(cfg *Config, purpose string) string {
 // It accepts the exact literal being installed, never arbitrary operator YAML
 // or a marker decoded from an HTTP body. A later edit invalidates the binding.
 func BindIndependentEnrichmentPromptLiteral(cfg *Config, purpose, literal string) error {
-	if cfg == nil || literal == "" || enrichmentPromptText(cfg, purpose) != literal || (purpose != "summary" && purpose != "question") {
+	if cfg == nil || literal == "" || enrichmentPromptText(cfg, purpose) != literal ||
+		(purpose != "summary" && purpose != "question") {
 		return types.ErrSourceLineageUnknown
 	}
 	if cfg.enrichmentPromptLiterals == nil {
@@ -50,11 +52,12 @@ func KnowledgeEnrichmentPromptLineage(cfg *Config, purpose string) (*types.Sourc
 		return types.NewCompleteSourceLineage()
 	}
 	var raw []byte
-	if purpose == "summary" {
+	switch purpose {
+	case "summary":
 		raw = enrichmentSummaryDefaults
-	} else if purpose == "question" {
+	case "question":
 		raw = enrichmentQuestionDefaults
-	} else {
+	default:
 		return nil, types.ErrSourceLineageUnknown
 	}
 	var defaults struct {

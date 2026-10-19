@@ -2,13 +2,17 @@ package repository
 
 import (
 	"context"
+
 	"github.com/Tencent/WeKnora/internal/types"
 	"gorm.io/gorm"
 )
 
 // This transfer requires an exact actual producer marker and immutable edge.
 // It updates one excluded control; no selected parent's body is re-certified.
-func (s *KnowledgeInputProvenanceStore) AdvanceMessageMaterialAfterOwnCompletion(ctx context.Context, expected *types.MessageMaterialSnapshot) (*types.MessageMaterialSnapshot, error) {
+func (s *KnowledgeInputProvenanceStore) AdvanceMessageMaterialAfterOwnCompletion(
+	ctx context.Context,
+	expected *types.MessageMaterialSnapshot,
+) (*types.MessageMaterialSnapshot, error) {
 	marker, ok := ctx.Value(messageProducerAdvanceKey{}).(messageProducerAdvanceBoundary)
 	if !ok || marker.Store != s || expected == nil || expected.Request.ExcludeRequestID == "" {
 		return nil, types.ErrSourceLineageUnknown
@@ -23,11 +27,18 @@ func (s *KnowledgeInputProvenanceStore) AdvanceMessageMaterialAfterOwnCompletion
 		if err != nil {
 			return err
 		}
-		if len(old.Controls) != len(actual.Controls) || !faqInputEqual(old.Scopes, actual.Scopes) || !faqInputEqual(old.SourceLineage, actual.SourceLineage) || !faqInputEqual(old.ParentPlans, actual.ParentPlans) {
+		if len(old.Controls) != len(actual.Controls) || !faqInputEqual(old.Scopes, actual.Scopes) ||
+			!faqInputEqual(old.SourceLineage, actual.SourceLineage) ||
+			!faqInputEqual(old.ParentPlans, actual.ParentPlans) {
 			return ErrKnowledgeInputChanged
 		}
 		var edge messageProducerAdvance
-		if err := tx.Table("message_producer_advances p").Select("p.*").Joins("JOIN message_material_receipts r ON r.admission_id=p.admission_id AND r.message_id=p.message_id").Where("p.message_id=? AND p.session_id=?", marker.MessageID, marker.SessionID).Take(&edge).Error; err != nil {
+		if err := tx.Table("message_producer_advances p").
+			Select("p.*").
+			Joins("JOIN message_material_receipts r ON r.admission_id=p.admission_id AND r.message_id=p.message_id").
+			Where("p.message_id=? AND p.session_id=?", marker.MessageID, marker.SessionID).
+			Take(&edge).
+			Error; err != nil {
 			return err
 		}
 		if edge.PreviousMembership != expected.MembershipRevision {
@@ -43,7 +54,14 @@ func (s *KnowledgeInputProvenanceStore) AdvanceMessageMaterialAfterOwnCompletion
 				continue
 			}
 			found = true
-			if before.RequestID != expected.Request.ExcludeRequestID || before.Role != "assistant" || before.Complete || !after.Complete || before.AdmissionID != edge.PreviousAdmissionID || before.Revision != edge.PreviousRevision || after.AdmissionID != edge.AdmissionID || after.Revision != edge.ResultRevision || before.GenerationID != edge.GenerationID || after.GenerationID != edge.GenerationID {
+			if before.RequestID != expected.Request.ExcludeRequestID || before.Role != "assistant" || before.Complete ||
+				!after.Complete ||
+				before.AdmissionID != edge.PreviousAdmissionID ||
+				before.Revision != edge.PreviousRevision ||
+				after.AdmissionID != edge.AdmissionID ||
+				after.Revision != edge.ResultRevision ||
+				before.GenerationID != edge.GenerationID ||
+				after.GenerationID != edge.GenerationID {
 				return ErrKnowledgeInputChanged
 			}
 			a, b := *before, *after
@@ -63,7 +81,9 @@ func (s *KnowledgeInputProvenanceStore) AdvanceMessageMaterialAfterOwnCompletion
 			return ErrKnowledgeInputChanged
 		}
 		var admission messageMaterialAdmission
-		if err := tx.Where("id=? AND message_id=?", edge.AdmissionID, marker.MessageID).Take(&admission).Error; err != nil {
+		if err := tx.Where("id=? AND message_id=?", edge.AdmissionID, marker.MessageID).
+			Take(&admission).
+			Error; err != nil {
 			return err
 		}
 		if admission.BodyDigest != marker.Digest {
@@ -74,7 +94,11 @@ func (s *KnowledgeInputProvenanceStore) AdvanceMessageMaterialAfterOwnCompletion
 				return err
 			}
 		}
-		isolated := context.WithValue(tx.Statement.Context, messageMaterialPlanKey{}, []*types.MessageMaterialReadPlan{})
+		isolated := context.WithValue(
+			tx.Statement.Context,
+			messageMaterialPlanKey{},
+			[]*types.MessageMaterialReadPlan{},
+		)
 		marked, err := WithMessageMaterialReadPlan(isolated, actual)
 		if err != nil {
 			return err

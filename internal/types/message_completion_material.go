@@ -1,5 +1,6 @@
 package types
 
+// MessageCompletionSteerParent contains metadata for one actual consumed completion parent.
 // Metadata-only actual completion parents. No message body is duplicated.
 type MessageCompletionSteerParent struct {
 	Consumption         *SteerConsumptionProof
@@ -10,6 +11,8 @@ type MessageCompletionSteerParent struct {
 	User                *MessageMaterialProof
 	SelectionDigest     string
 }
+
+// MessageCompletionInputManifest binds a completion to its admitted original parents.
 type MessageCompletionInputManifest struct {
 	Version                                                                                        int
 	Recipe                                                                                         string

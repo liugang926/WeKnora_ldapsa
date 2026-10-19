@@ -5,12 +5,13 @@ package file
 import (
 	"context"
 	"errors"
+	"strings"
+
 	"github.com/Tencent/WeKnora/internal/types"
 	"golang.org/x/sys/unix"
-	"strings"
 )
 
-func (s *localFileService) DeleteNextcloudObject(ctx context.Context, path string) (bool, error) {
+func (s *localFileService) DeleteNextcloudObject(ctx context.Context, path string) (unlinked bool, resultErr error) {
 	if e := ctx.Err(); e != nil {
 		return false, e
 	}
@@ -30,12 +31,12 @@ func (s *localFileService) DeleteNextcloudObject(ctx context.Context, path strin
 	if e != nil {
 		return false, e
 	}
-	defer unix.Close(root)
+	defer func() { _ = unix.Close(root) }() // Read-only directory; GC synchronizes mutations explicitly.
 	pathLock, e := s.physicalPathFence(path)
 	if e != nil {
 		return false, e
 	}
-	defer pathLock.Close()
+	defer func() { resultErr = errors.Join(resultErr, pathLock.Close()) }()
 	filename := parts[len(parts)-1]
 	if strings.HasPrefix(filename, "capacity-") {
 		if len(filename) < len("capacity-")+36 {
@@ -46,7 +47,7 @@ func (s *localFileService) DeleteNextcloudObject(ctx context.Context, path strin
 		if e != nil {
 			return false, e
 		}
-		defer lock.Close()
+		defer func() { resultErr = errors.Join(resultErr, lock.Close()) }()
 	}
 	if resumed, unlinked, e := gcResumeHolding(ctx, root, path); e != nil || resumed {
 		return unlinked, e
@@ -55,7 +56,7 @@ func (s *localFileService) DeleteNextcloudObject(ctx context.Context, path strin
 	opened := []int{}
 	defer func() {
 		for _, fd := range opened {
-			unix.Close(fd)
+			_ = unix.Close(fd) // Read-only directory descriptors; no pending writes.
 		}
 	}()
 	for _, part := range parts[:len(parts)-1] {
@@ -83,7 +84,7 @@ func (s *localFileService) DeleteNextcloudObject(ctx context.Context, path strin
 	if e != nil {
 		return false, e
 	}
-	defer unix.Close(fd)
+	defer func() { _ = unix.Close(fd) }() // Read-only pinned object; all mutation durability is explicit.
 	var actual unix.Stat_t
 	if e = unix.Fstat(fd, &actual); e != nil {
 		return false, e
@@ -96,6 +97,7 @@ func (s *localFileService) DeleteNextcloudObject(ctx context.Context, path strin
 	}
 	return gcQuarantineUnlink(ctx, root, current, filename, path, actual)
 }
+
 func (s *backendScopedFileService) DeleteNextcloudObject(ctx context.Context, path string) (bool, error) {
 	id, inner, ok := types.ParseStorageBackendPath(path)
 	if !ok || id != s.backendID {
@@ -103,6 +105,7 @@ func (s *backendScopedFileService) DeleteNextcloudObject(ctx context.Context, pa
 	}
 	return deleteWrappedGC(ctx, s.inner, inner)
 }
+
 func (s *resourceCatalogFileService) DeleteNextcloudObject(ctx context.Context, path string) (bool, error) {
 	return deleteWrappedGC(ctx, s.inner, path)
 }

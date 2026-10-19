@@ -7,6 +7,7 @@ import (
 	"time"
 )
 
+// SteerDelivery identifies whether authored input follows or interrupts the current turn.
 type SteerDelivery string
 
 const (
@@ -14,6 +15,8 @@ const (
 	SteerDeliveryInject SteerDelivery = "inject"
 )
 
+// SteerAuthoredRequest carries exact authenticated input from the HTTP enqueue producer.
+//
 // Only the authenticated HTTP enqueue producer supplies these exact authored
 // fields. Actor/source contexts are server capabilities, never JSON evidence;
 // repository writers still refresh authority and check the actual run origin.
@@ -38,6 +41,8 @@ func SteerCanonicalQuery(value string) string {
 	return strings.TrimSpace(value)
 }
 
+// SteerOriginalProof identifies immutable original authored material without embedding its body.
+//
 // The proof describes an immutable original; it never embeds input_body.
 // A body descriptor, digest, or source envelope alone is not read authority.
 type SteerOriginalProof struct {
@@ -53,6 +58,7 @@ type SteerOriginalProof struct {
 	CreatedAt                                                     time.Time
 }
 
+// SteerControlOperation identifies a control-only mutation of an original steer head.
 type SteerControlOperation string
 
 const (
@@ -64,6 +70,8 @@ const (
 	SteerControlRebind      SteerControlOperation = "rebind"
 )
 
+// SteerControlRequest names the exact original head consumed by a control-only mutation.
+//
 // Every mutation names its exact previous immutable head. Body/mention/channel
 // fields cannot be changed by this control-only producer.
 type SteerControlRequest struct {
@@ -77,6 +85,7 @@ type SteerControlRequest struct {
 	ConsumedUserMessageID                                         string
 }
 
+// SteerCandidateControl contains retained original selection and delivery controls.
 type SteerCandidateControl struct {
 	SteerID, OriginalAdmissionID, BodyDigest    string
 	HeadID                                      string
@@ -88,6 +97,7 @@ type SteerCandidateControl struct {
 	CreatedAt                                   time.Time
 }
 
+// SteerMaterialUse identifies the consumer of retained original steer material.
 type SteerMaterialUse string
 
 const (
@@ -96,6 +106,7 @@ const (
 	SteerMaterialFollowUp SteerMaterialUse = "follow_up"
 )
 
+// SteerMaterialRequest selects original steer material for a specific server-owned run.
 type SteerMaterialRequest struct {
 	TenantID                                 uint64
 	SessionID, RunMessageID, RunGenerationID string
@@ -103,6 +114,8 @@ type SteerMaterialRequest struct {
 	Use                                      SteerMaterialUse
 }
 
+// SteerMaterialPlan retains all original controls influencing material selection.
+//
 // Candidates include every original control that influenced selection,
 // including skipped/consumed candidates. Selection keeps their existing order;
 // no new queue ordinal or cached body is introduced by this plan.
@@ -118,6 +131,8 @@ type SteerMaterialPlan struct {
 	SourceLineage     *SourceLineage `json:"-"`
 }
 
+// SteerMaterialInput holds an original body after its plan, authority and lease checks.
+//
 // Typed original body becomes available only after plan/authority/lease checks.
 // HTTP/model adapters consume this value, never a Redis StreamEvent body.
 type SteerMaterialInput struct {
@@ -128,11 +143,14 @@ type SteerMaterialInput struct {
 	Channel        string
 }
 
+// SteerMaterialSnapshot pairs the original selection plan with authenticated input bodies.
 type SteerMaterialSnapshot struct {
 	Plan   *SteerMaterialPlan
 	Inputs []*SteerMaterialInput
 }
 
+// SteerConsumptionProof seals one atomic original-to-message and control transition.
+//
 // A consume writer seals this exact original→new-message/control transition
 // atomically. Own-insertion transfer cannot refresh unrelated parent controls.
 type SteerConsumptionProof struct {
@@ -143,6 +161,8 @@ type SteerConsumptionProof struct {
 	PreviousMembershipRevision, ResultMembershipRevision             uint64
 }
 
+// OriginalSteerSink persists original material while retaining its lineage and read checks.
+//
 // The actual production sink supplies original lineage and a retained read
 // checker after its atomic consume and own-insertion transfer. Model input is
 // built only after this succeeds; Redis maps are not proof capabilities.
@@ -153,5 +173,5 @@ type OriginalSteerSink interface {
 		sessionID, messageID, steerID, content string,
 		mentionedItems MentionedItems,
 		channel string,
-	) (userMessageID string, lineage *SourceLineage, check func() error, close func(), err error)
+	) (userMessageID string, lineage *SourceLineage, check func() error, closeMaterial func(), err error)
 }

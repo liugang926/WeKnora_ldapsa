@@ -2,10 +2,15 @@ package chatpipeline
 
 import (
 	"context"
+
 	"github.com/Tencent/WeKnora/internal/types"
 )
 
-func (p *PluginSearchEntity) onLineageEntitySearch(ctx context.Context, manage *types.ChatManage, next func() *PluginError) *PluginError {
+func (p *PluginSearchEntity) onLineageEntitySearch(
+	ctx context.Context,
+	manage *types.ChatManage,
+	next func() *PluginError,
+) *PluginError {
 	if len(manage.Entity) == 0 {
 		return next()
 	}
@@ -38,11 +43,18 @@ func (p *PluginSearchEntity) onLineageEntitySearch(ctx context.Context, manage *
 	// tenant. Do not substitute the original caller's tenant for shared sources.
 	targets := manage.SearchTargets
 	for _, namespace := range namespaces {
-		snapshot, err := p.graphReader.ReadKnowledgeGraphSnapshot(ctx, targets, namespace, append([]string(nil), manage.Entity...))
+		snapshot, err := p.graphReader.ReadKnowledgeGraphSnapshot(
+			ctx,
+			targets,
+			namespace,
+			append([]string(nil), manage.Entity...),
+		)
 		if err != nil {
 			return fail(err)
 		}
-		if snapshot == nil || snapshot.Graph == nil || snapshot.SourceLineage.RequireComplete() != nil || snapshot.Close == nil || snapshot.Recheck == nil {
+		if snapshot == nil || snapshot.Graph == nil || snapshot.SourceLineage.RequireComplete() != nil ||
+			snapshot.Close == nil ||
+			snapshot.Recheck == nil {
 			return fail(types.ErrGraphSourceReceiptUnknown)
 		}
 		defer snapshot.Close()

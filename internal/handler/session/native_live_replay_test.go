@@ -12,7 +12,14 @@ func TestNativeLiveMetadataPeekExpiryAndBodyIdentityRecheck(t *testing.T) {
 	for _, mode := range []string{"expired_after_peek", "body_changed_after_peek", "lineage_changed_after_peek", "closed_after_peek"} {
 		t.Run(mode, func(t *testing.T) {
 			body := []byte(`{"content":"native actual producer bytes"}`)
-			entry := nativeLiveFrame{Sequence: 1, Body: body, Digest: sha256.Sum256(body), Parents: []byte(`[{"metadata_digest":"original"}]`), Lineage: []byte(`{"version":1,"state":"complete","sources":[]}`), Expires: time.Now().Add(time.Minute)}
+			entry := nativeLiveFrame{
+				Sequence: 1,
+				Body:     body,
+				Digest:   sha256.Sum256(body),
+				Parents:  []byte(`[{"metadata_digest":"original"}]`),
+				Lineage:  []byte(`{"version":1,"state":"complete","sources":[]}`),
+				Expires:  time.Now().Add(time.Minute),
+			}
 			run := &nativeLiveRun{frames: []nativeLiveFrame{entry}, expires: time.Now().Add(time.Minute)}
 			metadata, err := run.read(0)
 			require.NoError(t, err)

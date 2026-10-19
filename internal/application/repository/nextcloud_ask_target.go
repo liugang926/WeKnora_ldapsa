@@ -7,15 +7,20 @@ import (
 	"regexp"
 	"strconv"
 
+	apperrors "github.com/Tencent/WeKnora/internal/errors"
 	"github.com/Tencent/WeKnora/internal/types"
 	"gorm.io/gorm"
 )
 
 var (
-	ErrNextcloudAskTargetNotFound    = errors.New("Nextcloud ask target not found")
-	ErrNextcloudAskTargetUnavailable = errors.New("Nextcloud ask target unavailable")
-	askSourceIDPattern               = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
-	askETagPattern                   = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,256}$`)
+	ErrNextcloudAskTargetNotFound = apperrors.NewProtocolError(
+		errors.New("nextcloud ask target not found"), "Nextcloud ask target not found",
+	)
+	ErrNextcloudAskTargetUnavailable = apperrors.NewProtocolError(errors.New(
+		"nextcloud ask target unavailable",
+	), "Nextcloud ask target unavailable")
+	askSourceIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
+	askETagPattern     = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,256}$`)
 )
 
 // NextcloudAskTargetRepository resolves an untrusted browser deep link to the

@@ -45,18 +45,30 @@ type KnowledgeEnrichmentTemplateInputSnapshot struct {
 type KnowledgeEnrichmentTemplateModelResult struct{ inputID, resultID, content string }
 
 func validKnowledgeTemplate(purpose, content string) error {
-	if (purpose != "summary" && purpose != "question") || strings.TrimSpace(content) == "" || !utf8.ValidString(content) || len(content) > 32768 {
+	if (purpose != "summary" && purpose != "question") || strings.TrimSpace(content) == "" ||
+		!utf8.ValidString(content) ||
+		len(content) > 32768 {
 		return ErrKnowledgeInputChanged
 	}
 	return nil
 }
+
 func (s *KnowledgeInputProvenanceStore) templateAuthority(tx *gorm.DB) *KnowledgeInputProvenanceStore {
 	if s.displayAuthorityFactory != nil {
 		return s.displayAuthorityFactory(tx)
 	}
-	return &KnowledgeInputProvenanceStore{db: tx, actorGroups: s.actorGroups, actorShares: s.actorShares, messageVerifier: s.messageVerifier}
+	return &KnowledgeInputProvenanceStore{
+		db:              tx,
+		actorGroups:     s.actorGroups,
+		actorShares:     s.actorShares,
+		messageVerifier: s.messageVerifier,
+	}
 }
-func (s *KnowledgeInputProvenanceStore) authorizeKnowledgeTemplateWrite(ctx context.Context, kb *types.KnowledgeBase) (context.Context, error) {
+
+func (s *KnowledgeInputProvenanceStore) authorizeKnowledgeTemplateWrite(
+	ctx context.Context,
+	kb *types.KnowledgeBase,
+) (context.Context, error) {
 	fresh, err := s.AuthorizeCurrentKnowledgeInputWrite(ctx, kb)
 	if err != nil {
 		return ctx, err
@@ -67,7 +79,12 @@ func (s *KnowledgeInputProvenanceStore) authorizeKnowledgeTemplateWrite(ctx cont
 	}
 	return fresh, nil
 }
-func (s *KnowledgeInputProvenanceStore) ReadKnowledgeTemplateConfiguration(ctx context.Context, tenant uint64, kbID string) (*types.KnowledgeBase, *types.SourceLineage, error) {
+
+func (s *KnowledgeInputProvenanceStore) ReadKnowledgeTemplateConfiguration(
+	ctx context.Context,
+	tenant uint64,
+	kbID string,
+) (*types.KnowledgeBase, *types.SourceLineage, error) {
 	var kb types.KnowledgeBase
 	if err := s.db.WithContext(ctx).Where("id = ? AND tenant_id = ?", kbID, tenant).Take(&kb).Error; err != nil {
 		return nil, nil, err
@@ -75,7 +92,12 @@ func (s *KnowledgeInputProvenanceStore) ReadKnowledgeTemplateConfiguration(ctx c
 	lineage, err := readKnowledgeConfigurationOrigin(s.db.WithContext(ctx), &kb)
 	return &kb, lineage, err
 }
-func (s *KnowledgeInputProvenanceStore) WriteIndependentKnowledgeEnrichmentTemplate(ctx context.Context, tenant uint64, kbID, purpose, content string) (*types.KnowledgeBase, error) {
+
+func (s *KnowledgeInputProvenanceStore) WriteIndependentKnowledgeEnrichmentTemplate(
+	ctx context.Context,
+	tenant uint64,
+	kbID, purpose, content string,
+) (*types.KnowledgeBase, error) {
 	if err := validKnowledgeTemplate(purpose, content); err != nil {
 		return nil, err
 	}
@@ -102,7 +124,10 @@ func (s *KnowledgeInputProvenanceStore) WriteIndependentKnowledgeEnrichmentTempl
 		if err := kb.EnrichmentTemplates.Set(purpose, content); err != nil {
 			return err
 		}
-		if err := tx.Model(&types.KnowledgeBase{}).Where("id = ? AND tenant_id = ?", kbID, tenant).Update("enrichment_templates", kb.EnrichmentTemplates).Error; err != nil {
+		if err := tx.Model(&types.KnowledgeBase{}).
+			Where("id = ? AND tenant_id = ?", kbID, tenant).
+			Update("enrichment_templates", kb.EnrichmentTemplates).
+			Error; err != nil {
 			return err
 		}
 		if err := tx.Where("id = ? AND tenant_id = ?", kbID, tenant).Take(&kb).Error; err != nil {
@@ -119,7 +144,11 @@ func (s *KnowledgeInputProvenanceStore) WriteIndependentKnowledgeEnrichmentTempl
 
 // The code boundary accepts an exact new literal and a known configuration;
 // it cannot adopt old unknown configuration fields or client origin markers.
-func (s *KnowledgeInputProvenanceStore) WriteCodeKnowledgeEnrichmentTemplate(ctx context.Context, tenant uint64, kbID, purpose, literal string) (*types.KnowledgeBase, error) {
+func (s *KnowledgeInputProvenanceStore) WriteCodeKnowledgeEnrichmentTemplate(
+	ctx context.Context,
+	tenant uint64,
+	kbID, purpose, literal string,
+) (*types.KnowledgeBase, error) {
 	if err := validKnowledgeTemplate(purpose, literal); err != nil {
 		return nil, err
 	}
@@ -139,7 +168,10 @@ func (s *KnowledgeInputProvenanceStore) WriteCodeKnowledgeEnrichmentTemplate(ctx
 		if err := kb.EnrichmentTemplates.Set(purpose, literal); err != nil {
 			return err
 		}
-		if err := tx.Model(&types.KnowledgeBase{}).Where("id = ? AND tenant_id = ?", kbID, tenant).Update("enrichment_templates", kb.EnrichmentTemplates).Error; err != nil {
+		if err := tx.Model(&types.KnowledgeBase{}).
+			Where("id = ? AND tenant_id = ?", kbID, tenant).
+			Update("enrichment_templates", kb.EnrichmentTemplates).
+			Error; err != nil {
 			return err
 		}
 		if err := tx.Where("id = ? AND tenant_id = ?", kbID, tenant).Take(&kb).Error; err != nil {
@@ -154,7 +186,12 @@ func (s *KnowledgeInputProvenanceStore) WriteCodeKnowledgeEnrichmentTemplate(ctx
 	return result, err
 }
 
-func (s *KnowledgeInputProvenanceStore) CaptureKnowledgeEnrichmentTemplateInputs(ctx context.Context, tenant uint64, kbID, purpose string, parents []*types.ChunkOutputInputSnapshot) (*KnowledgeEnrichmentTemplateInputSnapshot, error) {
+func (s *KnowledgeInputProvenanceStore) CaptureKnowledgeEnrichmentTemplateInputs(
+	ctx context.Context,
+	tenant uint64,
+	kbID, purpose string,
+	parents []*types.ChunkOutputInputSnapshot,
+) (*KnowledgeEnrichmentTemplateInputSnapshot, error) {
 	if len(parents) == 0 || len(parents) > 32 || (purpose != "summary" && purpose != "question") {
 		return nil, types.ErrSourceLineageUnknown
 	}
@@ -189,7 +226,10 @@ func (s *KnowledgeInputProvenanceStore) CaptureKnowledgeEnrichmentTemplateInputs
 		actual = append(actual, templateParentInput{parent.Knowledge, parent.Chunks, parent.Proof, parent.AllChunks})
 	}
 	var model types.Model
-	if err := s.db.WithContext(ctx).Where("id = ? AND (tenant_id = ? OR is_builtin = ?)", kb.SummaryModelID, tenant, true).Take(&model).Error; err != nil {
+	if err := s.db.WithContext(ctx).
+		Where("id = ? AND (tenant_id = ? OR is_builtin = ?)", kb.SummaryModelID, tenant, true).
+		Take(&model).
+		Error; err != nil {
 		return nil, err
 	}
 	modelDigest, err := KnowledgeInputDigest(&model)
@@ -236,13 +276,34 @@ func (s *KnowledgeInputProvenanceStore) CaptureKnowledgeEnrichmentTemplateInputs
 	if err != nil {
 		return nil, err
 	}
-	row := knowledgeTemplateInput{ID: uuid.NewString(), TenantID: tenant, KnowledgeBaseID: kbID, Purpose: purpose, ModelID: model.ID, ModelDigest: modelDigest, ModelRevision: modelRevision, ConfigDigest: configDigest, ConfigRevision: configRevision, TenantDigest: tenantDigest, TenantRevision: tenantRevision, ActorSelector: string(actorJSON), Parents: string(parentJSON), SourceLineage: string(lineageJSON), InputDigest: inputDigest}
+	row := knowledgeTemplateInput{
+		ID:              uuid.NewString(),
+		TenantID:        tenant,
+		KnowledgeBaseID: kbID,
+		Purpose:         purpose,
+		ModelID:         model.ID,
+		ModelDigest:     modelDigest,
+		ModelRevision:   modelRevision,
+		ConfigDigest:    configDigest,
+		ConfigRevision:  configRevision,
+		TenantDigest:    tenantDigest,
+		TenantRevision:  tenantRevision,
+		ActorSelector:   string(actorJSON),
+		Parents:         string(parentJSON),
+		SourceLineage:   string(lineageJSON),
+		InputDigest:     inputDigest,
+	}
 	if err := s.db.WithContext(ctx).Create(&row).Error; err != nil {
 		return nil, err
 	}
 	return &KnowledgeEnrichmentTemplateInputSnapshot{row.ID, row.ModelID, purpose, &tenantRow, parents, lineage}, nil
 }
-func (s *KnowledgeInputProvenanceStore) recheckTemplateInputInTx(ctx context.Context, tx *gorm.DB, id string) (*knowledgeTemplateInput, error) {
+
+func (s *KnowledgeInputProvenanceStore) recheckTemplateInputInTx(
+	ctx context.Context,
+	tx *gorm.DB,
+	id string,
+) (*knowledgeTemplateInput, error) {
 	var row knowledgeTemplateInput
 	if err := tx.Where("id = ?", id).Take(&row).Error; err != nil {
 		return nil, err
@@ -286,7 +347,9 @@ func (s *KnowledgeInputProvenanceStore) recheckTemplateInputInTx(ctx context.Con
 		return nil, err
 	}
 	var model types.Model
-	if err := tx.Where("id = ? AND (tenant_id = ? OR is_builtin = ?)", row.ModelID, row.TenantID, true).Take(&model).Error; err != nil {
+	if err := tx.Where("id = ? AND (tenant_id = ? OR is_builtin = ?)", row.ModelID, row.TenantID, true).
+		Take(&model).
+		Error; err != nil {
 		return nil, err
 	}
 	digest, err = KnowledgeInputDigest(&model)
@@ -324,13 +387,27 @@ func (s *KnowledgeInputProvenanceStore) recheckTemplateInputInTx(ctx context.Con
 		if p == nil || parent.Knowledge == nil {
 			return nil, ErrKnowledgeInputChanged
 		}
-		_, err := s.captureKnowledgeBuildSnapshotInTx(tx, types.KnowledgeBuildInputCaptureRequest{TenantID: p.TenantID, KnowledgeBaseID: p.KnowledgeBaseID, KnowledgeID: p.KnowledgeID, ChunkIDs: p.ChunkIDs, Expected: p}, true)
+		_, err := s.captureKnowledgeBuildSnapshotInTx(
+			tx,
+			types.KnowledgeBuildInputCaptureRequest{
+				TenantID:        p.TenantID,
+				KnowledgeBaseID: p.KnowledgeBaseID,
+				KnowledgeID:     p.KnowledgeID,
+				ChunkIDs:        p.ChunkIDs,
+				Expected:        p,
+			},
+			true,
+		)
 		if err != nil {
 			return nil, err
 		}
 		if parent.AllChunks {
 			var ids []string
-			if err := tx.Model(&types.Chunk{}).Where("tenant_id = ? AND knowledge_base_id = ? AND knowledge_id = ?", p.TenantID, p.KnowledgeBaseID, p.KnowledgeID).Order("id ASC").Pluck("id", &ids).Error; err != nil {
+			if err := tx.Model(&types.Chunk{}).
+				Where("tenant_id = ? AND knowledge_base_id = ? AND knowledge_id = ?", p.TenantID, p.KnowledgeBaseID, p.KnowledgeID).
+				Order("id ASC").
+				Pluck("id", &ids).
+				Error; err != nil {
 				return nil, err
 			}
 			if !reflect.DeepEqual(ids, p.ChunkIDs) {
@@ -340,6 +417,7 @@ func (s *KnowledgeInputProvenanceStore) recheckTemplateInputInTx(ctx context.Con
 	}
 	return &row, ctx.Err()
 }
+
 func (s *KnowledgeInputProvenanceStore) RecheckKnowledgeEnrichmentTemplateInputs(ctx context.Context, id string) error {
 	var row knowledgeTemplateInput
 	if err := s.db.WithContext(ctx).Where("id = ?", id).Take(&row).Error; err != nil {
@@ -350,16 +428,29 @@ func (s *KnowledgeInputProvenanceStore) RecheckKnowledgeEnrichmentTemplateInputs
 		return ErrKnowledgeInputChanged
 	}
 	for _, p := range parents {
-		if err := s.RecheckChunkOutputInputs(ctx, &types.ChunkOutputInputSnapshot{Knowledge: p.Knowledge, Chunks: p.Chunks, Proof: p.Proof, AllChunks: p.AllChunks}); err != nil {
+		if err := s.RecheckChunkOutputInputs(
+			ctx,
+			&types.ChunkOutputInputSnapshot{
+				Knowledge: p.Knowledge,
+				Chunks:    p.Chunks,
+				Proof:     p.Proof,
+				AllChunks: p.AllChunks,
+			},
+		); err != nil {
 			return err
 		}
 		if err := s.RecheckKnowledgeBuildInputs(ctx, p.Proof); err != nil {
 			return err
 		}
 	}
-	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error { _, err := s.recheckTemplateInputInTx(ctx, tx, id); return err }, knowledgeDisplayWriteOptions(s.db))
+	return s.db.WithContext(ctx).
+		Transaction(func(tx *gorm.DB) error { _, err := s.recheckTemplateInputInTx(ctx, tx, id); return err }, knowledgeDisplayWriteOptions(s.db))
 }
-func (s *KnowledgeInputProvenanceStore) CaptureKnowledgeTemplateModelResult(ctx context.Context, id, content string) (*KnowledgeEnrichmentTemplateModelResult, error) {
+
+func (s *KnowledgeInputProvenanceStore) CaptureKnowledgeTemplateModelResult(
+	ctx context.Context,
+	id, content string,
+) (*KnowledgeEnrichmentTemplateModelResult, error) {
 	if err := s.RecheckKnowledgeEnrichmentTemplateInputs(ctx, id); err != nil {
 		return nil, err
 	}
@@ -380,7 +471,11 @@ func (s *KnowledgeInputProvenanceStore) CaptureKnowledgeTemplateModelResult(ctx 
 	}
 	return &KnowledgeEnrichmentTemplateModelResult{id, result.ID, content}, nil
 }
-func (s *KnowledgeInputProvenanceStore) CommitDerivedKnowledgeEnrichmentTemplate(ctx context.Context, result *KnowledgeEnrichmentTemplateModelResult) (*types.KnowledgeBase, error) {
+
+func (s *KnowledgeInputProvenanceStore) CommitDerivedKnowledgeEnrichmentTemplate(
+	ctx context.Context,
+	result *KnowledgeEnrichmentTemplateModelResult,
+) (*types.KnowledgeBase, error) {
 	if result == nil {
 		return nil, types.ErrSourceLineageUnknown
 	}
@@ -426,7 +521,10 @@ func (s *KnowledgeInputProvenanceStore) CommitDerivedKnowledgeEnrichmentTemplate
 		if err := kb.EnrichmentTemplates.Set(row.Purpose, result.content); err != nil {
 			return err
 		}
-		if err := tx.Model(&types.KnowledgeBase{}).Where("id = ? AND tenant_id = ?", kb.ID, kb.TenantID).Update("enrichment_templates", kb.EnrichmentTemplates).Error; err != nil {
+		if err := tx.Model(&types.KnowledgeBase{}).
+			Where("id = ? AND tenant_id = ?", kb.ID, kb.TenantID).
+			Update("enrichment_templates", kb.EnrichmentTemplates).
+			Error; err != nil {
 			return err
 		}
 		if err := tx.Where("id = ?", kb.ID).Take(&kb).Error; err != nil {
@@ -441,10 +539,17 @@ func (s *KnowledgeInputProvenanceStore) CommitDerivedKnowledgeEnrichmentTemplate
 	return kbResult, err
 }
 
-func (s *KnowledgeInputProvenanceStore) AuthorizeKnowledgeTemplateConfigurationEdit(ctx context.Context, kb *types.KnowledgeBase) (context.Context, error) {
+func (s *KnowledgeInputProvenanceStore) AuthorizeKnowledgeTemplateConfigurationEdit(
+	ctx context.Context,
+	kb *types.KnowledgeBase,
+) (context.Context, error) {
 	return s.authorizeKnowledgeTemplateWrite(ctx, kb)
 }
-func (s *KnowledgeInputProvenanceStore) ReadKnowledgeEnrichmentTemplateInputs(ctx context.Context, id string) (*KnowledgeEnrichmentTemplateInputSnapshot, error) {
+
+func (s *KnowledgeInputProvenanceStore) ReadKnowledgeEnrichmentTemplateInputs(
+	ctx context.Context,
+	id string,
+) (*KnowledgeEnrichmentTemplateInputSnapshot, error) {
 	if err := s.RecheckKnowledgeEnrichmentTemplateInputs(ctx, id); err != nil {
 		return nil, err
 	}
@@ -458,7 +563,15 @@ func (s *KnowledgeInputProvenanceStore) ReadKnowledgeEnrichmentTemplateInputs(ct
 	}
 	parents := []*types.ChunkOutputInputSnapshot{}
 	for _, p := range saved {
-		parents = append(parents, &types.ChunkOutputInputSnapshot{Knowledge: p.Knowledge, Chunks: p.Chunks, Proof: p.Proof, AllChunks: p.AllChunks})
+		parents = append(
+			parents,
+			&types.ChunkOutputInputSnapshot{
+				Knowledge: p.Knowledge,
+				Chunks:    p.Chunks,
+				Proof:     p.Proof,
+				AllChunks: p.AllChunks,
+			},
+		)
 	}
 	var lineage types.SourceLineage
 	if json.Unmarshal([]byte(row.SourceLineage), &lineage) != nil {
@@ -471,7 +584,11 @@ func (s *KnowledgeInputProvenanceStore) ReadKnowledgeEnrichmentTemplateInputs(ct
 	return &KnowledgeEnrichmentTemplateInputSnapshot{row.ID, row.ModelID, row.Purpose, &tenant, parents, &lineage}, nil
 }
 
-func (s *KnowledgeInputProvenanceStore) KnowledgeTemplateConfigurationStamp(ctx context.Context, tenant uint64, id string) (uint64, string, error) {
+func (s *KnowledgeInputProvenanceStore) KnowledgeTemplateConfigurationStamp(
+	ctx context.Context,
+	tenant uint64,
+	id string,
+) (uint64, string, error) {
 	var kb types.KnowledgeBase
 	if err := s.db.WithContext(ctx).Where("id = ? AND tenant_id = ?", id, tenant).Take(&kb).Error; err != nil {
 		return 0, "", err

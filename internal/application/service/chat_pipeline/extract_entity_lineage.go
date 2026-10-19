@@ -2,10 +2,15 @@ package chatpipeline
 
 import (
 	"context"
+
 	"github.com/Tencent/WeKnora/internal/types"
 )
 
-func (p *PluginExtractEntity) onLineageExtractEntity(ctx context.Context, manage *types.ChatManage, next func() *PluginError) *PluginError {
+func (p *PluginExtractEntity) onLineageExtractEntity(
+	ctx context.Context,
+	manage *types.ChatManage,
+	next func() *PluginError,
+) *PluginError {
 	turn := types.RAGSourceLineageFromContext(ctx)
 	fail := func(err error) *PluginError {
 		if turn != nil {
@@ -35,12 +40,18 @@ func (p *PluginExtractEntity) onLineageExtractEntity(ctx context.Context, manage
 		return fail(err)
 	}
 	extractor := NewExtractor(model, p.template)
-	graph, err := extractor.ExtractSourceLineage(ctx, manage.Query, input, templateLineage, func(ctx context.Context, lineage *types.SourceLineage) error {
-		if err := turn.Add(lineage); err != nil {
-			return err
-		}
-		return turn.Check(ctx)
-	})
+	graph, err := extractor.ExtractSourceLineage(
+		ctx,
+		manage.Query,
+		input,
+		templateLineage,
+		func(ctx context.Context, lineage *types.SourceLineage) error {
+			if err := turn.Add(lineage); err != nil {
+				return err
+			}
+			return turn.Check(ctx)
+		},
+	)
 	if err != nil {
 		return fail(err)
 	}

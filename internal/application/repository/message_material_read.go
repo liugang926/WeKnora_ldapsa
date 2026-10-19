@@ -51,7 +51,10 @@ func WithMessageMaterialReadPlan(ctx context.Context, plan *types.MessageMateria
 	return context.WithValue(ctx, messageMaterialPlanKey{}, plans), nil
 }
 
-func (s *KnowledgeInputProvenanceStore) PeekMessageMaterialReadPlan(ctx context.Context, req types.MessageMaterialReadRequest) (*types.MessageMaterialReadPlan, error) {
+func (s *KnowledgeInputProvenanceStore) PeekMessageMaterialReadPlan(
+	ctx context.Context,
+	req types.MessageMaterialReadRequest,
+) (*types.MessageMaterialReadPlan, error) {
 	var result *types.MessageMaterialReadPlan
 	err := s.collectionTransaction(ctx, func(tx *gorm.DB) error {
 		var err error
@@ -61,14 +64,28 @@ func (s *KnowledgeInputProvenanceStore) PeekMessageMaterialReadPlan(ctx context.
 	return result, err
 }
 
-func (s *KnowledgeInputProvenanceStore) CommittedMessageParentRequest(ctx context.Context, tenant uint64, sessionID, assistantID string) (types.MessageMaterialReadRequest, error) {
+func (s *KnowledgeInputProvenanceStore) CommittedMessageParentRequest(
+	ctx context.Context,
+	tenant uint64,
+	sessionID, assistantID string,
+) (types.MessageMaterialReadRequest, error) {
 	req := types.MessageMaterialReadRequest{TenantID: tenant, SessionID: sessionID}
 	var origin messageGenerationOrigin
-	if err := s.db.WithContext(ctx).Select("request_id").Where("message_id=? AND session_id=? AND tenant_id=? AND role='assistant'", assistantID, sessionID, tenant).Take(&origin).Error; err != nil {
+	if err := s.db.WithContext(ctx).
+		Select("request_id").
+		Where("message_id=? AND session_id=? AND tenant_id=? AND role='assistant'", assistantID, sessionID, tenant).
+		Take(&origin).
+		Error; err != nil {
 		return req, err
 	}
 	var users []struct{ MessageID string }
-	if err := s.db.WithContext(ctx).Table("message_generation_origins").Select("message_id").Where("session_id=? AND tenant_id=? AND request_id=? AND role='user'", sessionID, tenant, origin.RequestID).Limit(2).Scan(&users).Error; err != nil {
+	if err := s.db.WithContext(ctx).
+		Table("message_generation_origins").
+		Select("message_id").
+		Where("session_id=? AND tenant_id=? AND request_id=? AND role='user'", sessionID, tenant, origin.RequestID).
+		Limit(2).
+		Scan(&users).
+		Error; err != nil {
 		return req, err
 	}
 	if len(users) != 1 {
@@ -79,7 +96,14 @@ func (s *KnowledgeInputProvenanceStore) CommittedMessageParentRequest(ctx contex
 	return req, nil
 }
 
-func (s *KnowledgeInputProvenanceStore) MessagePageMaterialRequest(ctx context.Context, tenant uint64, sessionID string, before time.Time, limit, page int, descending bool) (types.MessageMaterialReadRequest, error) {
+func (s *KnowledgeInputProvenanceStore) MessagePageMaterialRequest(
+	ctx context.Context,
+	tenant uint64,
+	sessionID string,
+	before time.Time,
+	limit, page int,
+	descending bool,
+) (types.MessageMaterialReadRequest, error) {
 	req := types.MessageMaterialReadRequest{TenantID: tenant, SessionID: sessionID, MessageIDs: []string{}}
 	q := s.db.WithContext(ctx).Table("messages").Select("id").Where("session_id=? AND deleted_at IS NULL", sessionID)
 	if !before.IsZero() {
@@ -106,7 +130,11 @@ func (s *KnowledgeInputProvenanceStore) MessagePageMaterialRequest(ctx context.C
 	sort.Strings(req.MessageIDs)
 	return req, nil
 }
-func (s *KnowledgeInputProvenanceStore) peekMessageMaterialReadPlanInTx(tx *gorm.DB, req types.MessageMaterialReadRequest) (*types.MessageMaterialReadPlan, error) {
+
+func (s *KnowledgeInputProvenanceStore) peekMessageMaterialReadPlanInTx(
+	tx *gorm.DB,
+	req types.MessageMaterialReadRequest,
+) (*types.MessageMaterialReadPlan, error) {
 	req.ExcludeRequestIDs = canonicalMessageMaterialExcludedRequests(req.ExcludeRequestIDs)
 	req.MessageIDs = append([]string{}, req.MessageIDs...)
 	sort.Strings(req.MessageIDs)
@@ -118,7 +146,11 @@ func (s *KnowledgeInputProvenanceStore) peekMessageMaterialReadPlanInTx(tx *gorm
 		TenantID   uint64
 		DeletedAt  gorm.DeletedAt
 	}
-	if err := tx.Table("sessions").Select("id,user_id,tenant_id,deleted_at").Where("id=? AND tenant_id=? AND deleted_at IS NULL", req.SessionID, req.TenantID).Take(&session).Error; err != nil {
+	if err := tx.Table("sessions").
+		Select("id,user_id,tenant_id,deleted_at").
+		Where("id=? AND tenant_id=? AND deleted_at IS NULL", req.SessionID, req.TenantID).
+		Take(&session).
+		Error; err != nil {
 		return nil, err
 	}
 	ownerRevision, err := messageVersion(tx, "message_session_owner_versions", "session_id", session.ID)
@@ -153,7 +185,12 @@ func (s *KnowledgeInputProvenanceStore) peekMessageMaterialReadPlanInTx(tx *gorm
 	// candidates excluded for completion/request/budget. No current header alone
 	// may supply those controls; a foreign partial write invalidates its receipt.
 	var controls []*types.MessageMaterialCandidateControl
-	cq := tx.Table("messages m").Select("m.id,m.request_id,m.role,m.is_completed AS complete,m.created_at,a.id AS admission_id,a.generation_id,a.revision,v.revision AS current_revision").Joins("LEFT JOIN message_material_receipts r ON r.message_id=m.id").Joins("LEFT JOIN message_material_admissions a ON a.id=r.admission_id AND a.message_id=m.id").Joins("LEFT JOIN message_material_versions v ON v.message_id=m.id").Where("m.session_id=? AND m.deleted_at IS NULL", req.SessionID)
+	cq := tx.Table("messages m").
+		Select("m.id,m.request_id,m.role,m.is_completed AS complete,m.created_at,a.id AS admission_id,a.generation_id,a.revision,v.revision AS current_revision").
+		Joins("LEFT JOIN message_material_receipts r ON r.message_id=m.id").
+		Joins("LEFT JOIN message_material_admissions a ON a.id=r.admission_id AND a.message_id=m.id").
+		Joins("LEFT JOIN message_material_versions v ON v.message_id=m.id").
+		Where("m.session_id=? AND m.deleted_at IS NULL", req.SessionID)
 	if !req.AllSession {
 		cq = cq.Where("m.id IN ?", req.MessageIDs)
 	}
@@ -161,7 +198,8 @@ func (s *KnowledgeInputProvenanceStore) peekMessageMaterialReadPlanInTx(tx *gorm
 		return nil, err
 	}
 	for _, control := range controls {
-		if control.AdmissionID == "" || control.GenerationID == "" || control.Revision == 0 || control.Revision != control.CurrentRevision {
+		if control.AdmissionID == "" || control.GenerationID == "" || control.Revision == 0 ||
+			control.Revision != control.CurrentRevision {
 			return nil, types.ErrSourceLineageUnknown
 		}
 	}
@@ -178,7 +216,12 @@ func (s *KnowledgeInputProvenanceStore) peekMessageMaterialReadPlanInTx(tx *gorm
 	}
 	for _, id := range ids {
 		var fact messageMaterialAdmission
-		if err := tx.Table("message_material_admissions a").Select("a.*").Joins("JOIN message_material_receipts r ON r.admission_id=a.id AND r.message_id=a.message_id").Where("a.message_id=? AND a.session_id=? AND a.tenant_id=?", id.ID, req.SessionID, req.TenantID).Take(&fact).Error; err != nil {
+		if err := tx.Table("message_material_admissions a").
+			Select("a.*").
+			Joins("JOIN message_material_receipts r ON r.admission_id=a.id AND r.message_id=a.message_id").
+			Where("a.message_id=? AND a.session_id=? AND a.tenant_id=?", id.ID, req.SessionID, req.TenantID).
+			Take(&fact).
+			Error; err != nil {
 			return nil, err
 		}
 		revision, err := messageVersion(tx, "message_material_versions", "message_id", id.ID)
@@ -211,14 +254,22 @@ func (s *KnowledgeInputProvenanceStore) peekMessageMaterialReadPlanInTx(tx *gorm
 		}
 		for _, knowledgeID := range execution.KnowledgeIDs {
 			var row struct{ KnowledgeBaseID string }
-			if err := tx.Table("knowledges").Select("knowledge_base_id").Where("id=? AND deleted_at IS NULL", knowledgeID).Take(&row).Error; err != nil {
+			if err := tx.Table("knowledges").
+				Select("knowledge_base_id").
+				Where("id=? AND deleted_at IS NULL", knowledgeID).
+				Take(&row).
+				Error; err != nil {
 				return nil, err
 			}
 			kbIDs = append(kbIDs, row.KnowledgeBaseID)
 		}
 		for _, kbID := range kbIDs {
 			var kb struct{ TenantID uint64 }
-			if err := tx.Table("knowledge_bases").Select("tenant_id").Where("id=? AND deleted_at IS NULL", kbID).Take(&kb).Error; err != nil {
+			if err := tx.Table("knowledge_bases").
+				Select("tenant_id").
+				Where("id=? AND deleted_at IS NULL", kbID).
+				Take(&kb).
+				Error; err != nil {
 				return nil, err
 			}
 			if err := add(kb.TenantID, kbID); err != nil {
@@ -238,7 +289,12 @@ func (s *KnowledgeInputProvenanceStore) peekMessageMaterialReadPlanInTx(tx *gorm
 		}
 		var fieldParents []struct{ ParentMaterials, SourceLineage string }
 		if tx.Migrator().HasTable("message_generated_field_admissions") {
-			if err := tx.Table("message_generated_field_admissions a").Select(parentCopyMetadataSelect(tx, "a.parent_materials", true)+" AS parent_materials,a.source_lineage").Joins("JOIN message_generated_field_receipts r ON r.admission_id=a.id AND r.message_id=a.message_id AND r.field=a.field").Where("a.message_id=?", id.ID).Scan(&fieldParents).Error; err != nil {
+			if err := tx.Table("message_generated_field_admissions a").
+				Select(parentCopyMetadataSelect(tx, "a.parent_materials", true)+" AS parent_materials,a.source_lineage").
+				Joins("JOIN message_generated_field_receipts r ON r.admission_id=a.id AND r.message_id=a.message_id AND r.field=a.field").
+				Where("a.message_id=?", id.ID).
+				Scan(&fieldParents).
+				Error; err != nil {
 				return nil, err
 			}
 		}
@@ -262,20 +318,30 @@ func (s *KnowledgeInputProvenanceStore) peekMessageMaterialReadPlanInTx(tx *gorm
 			}
 			for _, parent := range parents {
 				for _, proof := range parent.Proofs {
-					kbIDs := append(append([]string{}, proof.Execution.KnowledgeBaseIDs...), proof.Execution.AgentKnowledgeBaseIDs...)
+					kbIDs := append(
+						append([]string{}, proof.Execution.KnowledgeBaseIDs...),
+						proof.Execution.AgentKnowledgeBaseIDs...)
 					for _, tag := range proof.Execution.TagScopes {
 						kbIDs = append(kbIDs, tag.KnowledgeBaseID)
 					}
 					for _, knowledgeID := range proof.Execution.KnowledgeIDs {
 						var identity struct{ KnowledgeBaseID string }
-						if err := tx.Table("knowledges").Select("knowledge_base_id").Where("id=? AND deleted_at IS NULL", knowledgeID).Take(&identity).Error; err != nil {
+						if err := tx.Table("knowledges").
+							Select("knowledge_base_id").
+							Where("id=? AND deleted_at IS NULL", knowledgeID).
+							Take(&identity).
+							Error; err != nil {
 							return nil, err
 						}
 						kbIDs = append(kbIDs, identity.KnowledgeBaseID)
 					}
 					for _, kbID := range kbIDs {
 						var identity struct{ TenantID uint64 }
-						if err := tx.Table("knowledge_bases").Select("tenant_id").Where("id=? AND deleted_at IS NULL", kbID).Take(&identity).Error; err != nil {
+						if err := tx.Table("knowledge_bases").
+							Select("tenant_id").
+							Where("id=? AND deleted_at IS NULL", kbID).
+							Take(&identity).
+							Error; err != nil {
 							return nil, err
 						}
 						if err := add(identity.TenantID, kbID); err != nil {
@@ -287,7 +353,10 @@ func (s *KnowledgeInputProvenanceStore) peekMessageMaterialReadPlanInTx(tx *gorm
 		}
 		if tx.Migrator().HasTable("message_fork_parent_origins") {
 			var fork messageForkParentOrigin
-			err := tx.Select("generation_id,"+parentCopyMetadataSelect(tx, "parent_materials", false)+" AS parent_materials").Where("generation_id=?", fact.GenerationID).Take(&fork).Error
+			err := tx.Select("generation_id,"+parentCopyMetadataSelect(tx, "parent_materials", false)+" AS parent_materials").
+				Where("generation_id=?", fact.GenerationID).
+				Take(&fork).
+				Error
 			if err != nil && err != gorm.ErrRecordNotFound {
 				return nil, err
 			}
@@ -300,7 +369,10 @@ func (s *KnowledgeInputProvenanceStore) peekMessageMaterialReadPlanInTx(tx *gorm
 				if depth > 64 {
 					return nil, types.ErrSourceLineageLimit
 				}
-				nested, err := s.peekMessageMaterialReadPlanInTx(tx.WithContext(context.WithValue(tx.Statement.Context, messageParentPlanDepthKey{}, depth+1)), parent.Request)
+				nested, err := s.peekMessageMaterialReadPlanInTx(
+					tx.WithContext(context.WithValue(tx.Statement.Context, messageParentPlanDepthKey{}, depth+1)),
+					parent.Request,
+				)
 				if err != nil {
 					return nil, err
 				}
@@ -333,7 +405,13 @@ func (s *KnowledgeInputProvenanceStore) peekMessageMaterialReadPlanInTx(tx *gorm
 	if err != nil {
 		return nil, err
 	}
-	result := &types.MessageMaterialReadPlan{Request: req, MetadataDigest: digest, SourceLineage: lineage, Controls: controls, ParentPlans: parentPlans}
+	result := &types.MessageMaterialReadPlan{
+		Request:        req,
+		MetadataDigest: digest,
+		SourceLineage:  lineage,
+		Controls:       controls,
+		ParentPlans:    parentPlans,
+	}
 	for _, scope := range scopes {
 		result.Scopes = append(result.Scopes, scope)
 	}
@@ -345,7 +423,11 @@ func (s *KnowledgeInputProvenanceStore) peekMessageMaterialReadPlanInTx(tx *gorm
 	})
 	return result, nil
 }
-func (s *KnowledgeInputProvenanceStore) checkMessageMaterialPlanInTx(tx *gorm.DB, req types.MessageMaterialReadRequest) error {
+
+func (s *KnowledgeInputProvenanceStore) checkMessageMaterialPlanInTx(
+	tx *gorm.DB,
+	req types.MessageMaterialReadRequest,
+) error {
 	req.MessageIDs = append([]string{}, req.MessageIDs...)
 	sort.Strings(req.MessageIDs)
 	expected := findMessageMaterialReadPlan(tx.Statement.Context, req)
@@ -370,13 +452,21 @@ func (s *KnowledgeInputProvenanceStore) checkMessageMaterialPlanInTx(tx *gorm.DB
 
 // SQL-local authority runs on the caller's existing transaction. No global
 // message service/source HTTP/second database connection is called here.
-func (s *KnowledgeInputProvenanceStore) verifyMessageMaterialInTx(tx *gorm.DB, message *types.Message) (*types.MessageMaterialProof, error) {
+func (s *KnowledgeInputProvenanceStore) verifyMessageMaterialInTx(
+	tx *gorm.DB,
+	message *types.Message,
+) (*types.MessageMaterialProof, error) {
 	fresh, session, ownerRevision, err := s.currentMessageOwnerInTx(tx, message.SessionID)
 	if err != nil {
 		return nil, err
 	}
 	var fact messageMaterialAdmission
-	if err := tx.Table("message_material_admissions a").Select("a.*").Joins("JOIN message_material_receipts r ON r.admission_id=a.id AND r.message_id=a.message_id").Where("a.message_id=? AND a.session_id=? AND a.tenant_id=?", message.ID, session.ID, session.TenantID).Take(&fact).Error; err != nil {
+	if err := tx.Table("message_material_admissions a").
+		Select("a.*").
+		Joins("JOIN message_material_receipts r ON r.admission_id=a.id AND r.message_id=a.message_id").
+		Where("a.message_id=? AND a.session_id=? AND a.tenant_id=?", message.ID, session.ID, session.TenantID).
+		Take(&fact).
+		Error; err != nil {
 		return nil, err
 	}
 	if err := s.checkMessageOriginalBodyAvailability(tx, fact.GenerationID); err != nil {
@@ -400,7 +490,9 @@ func (s *KnowledgeInputProvenanceStore) verifyMessageMaterialInTx(tx *gorm.DB, m
 	if err != nil {
 		return nil, err
 	}
-	if !message.IsCompleted || fact.BodyDigest != digest || fact.Revision != revision || fact.OwnerID != session.UserID || fact.OwnerRevision != ownerRevision {
+	if !message.IsCompleted || fact.BodyDigest != digest || fact.Revision != revision ||
+		fact.OwnerID != session.UserID ||
+		fact.OwnerRevision != ownerRevision {
 		return nil, ErrKnowledgeInputChanged
 	}
 	var lineage types.SourceLineage
@@ -431,7 +523,13 @@ func (s *KnowledgeInputProvenanceStore) verifyMessageMaterialInTx(tx *gorm.DB, m
 			if authority.messageActorAgents == nil {
 				return nil, types.ErrSourceLineageUnknown
 			}
-			shared, err := authority.messageActorAgents.GetSharedAgentForTenant(fresh, types.CallerFromContext(fresh).TenantID, types.CallerFromContext(fresh).Role, fact.AgentID, fact.AgentTenantID)
+			shared, err := authority.messageActorAgents.GetSharedAgentForTenant(
+				fresh,
+				types.CallerFromContext(fresh).TenantID,
+				types.CallerFromContext(fresh).Role,
+				fact.AgentID,
+				fact.AgentTenantID,
+			)
 			if err != nil {
 				return nil, err
 			}
@@ -439,7 +537,14 @@ func (s *KnowledgeInputProvenanceStore) verifyMessageMaterialInTx(tx *gorm.DB, m
 				return nil, access.ErrForbidden
 			}
 		}
-		permission, err := authority.actorGroups.EffectivePermission(fresh, fact.AgentTenantID, types.GroupResourceTypeAgent, fact.AgentID, types.ResourceActionUse, time.Now().UTC())
+		permission, err := authority.actorGroups.EffectivePermission(
+			fresh,
+			fact.AgentTenantID,
+			types.GroupResourceTypeAgent,
+			fact.AgentID,
+			types.ResourceActionUse,
+			time.Now().UTC(),
+		)
 		if err != nil {
 			return nil, err
 		}
@@ -456,7 +561,11 @@ func (s *KnowledgeInputProvenanceStore) verifyMessageMaterialInTx(tx *gorm.DB, m
 	}
 	for _, id := range execution.KnowledgeIDs {
 		var row struct{ KnowledgeBaseID string }
-		if err := tx.Table("knowledges").Select("knowledge_base_id").Where("id=? AND deleted_at IS NULL", id).Take(&row).Error; err != nil {
+		if err := tx.Table("knowledges").
+			Select("knowledge_base_id").
+			Where("id=? AND deleted_at IS NULL", id).
+			Take(&row).
+			Error; err != nil {
 			return nil, err
 		}
 		kbIDs = append(kbIDs, row.KnowledgeBaseID)
@@ -470,9 +579,22 @@ func (s *KnowledgeInputProvenanceStore) verifyMessageMaterialInTx(tx *gorm.DB, m
 			return nil, err
 		}
 		caller := types.CallerFromContext(fresh)
-		_, err := access.ResolveKB(fresh, access.KBRequest{Caller: caller}, &kb, types.OrgRoleViewer, authority.actorShares, authority.messageActorAgents)
+		_, err := access.ResolveKB(
+			fresh,
+			access.KBRequest{Caller: caller},
+			&kb,
+			types.OrgRoleViewer,
+			authority.actorShares,
+			authority.messageActorAgents,
+		)
 		if err != nil && fact.AgentID != "" && authority.messageActorAgents != nil {
-			agent, e := authority.messageActorAgents.GetSharedAgentForTenant(fresh, caller.TenantID, caller.Role, fact.AgentID, fact.AgentTenantID)
+			agent, e := authority.messageActorAgents.GetSharedAgentForTenant(
+				fresh,
+				caller.TenantID,
+				caller.Role,
+				fact.AgentID,
+				fact.AgentTenantID,
+			)
 			if e == nil && agent != nil && types.SharedAgentIncludesKB(agent, &kb) {
 				err = nil
 			}
@@ -480,7 +602,14 @@ func (s *KnowledgeInputProvenanceStore) verifyMessageMaterialInTx(tx *gorm.DB, m
 		if err != nil {
 			return nil, err
 		}
-		permission, err := authority.actorGroups.EffectivePermission(fresh, kb.TenantID, types.GroupResourceTypeKnowledgeBase, kb.ID, types.ResourceActionRead, time.Now().UTC())
+		permission, err := authority.actorGroups.EffectivePermission(
+			fresh,
+			kb.TenantID,
+			types.GroupResourceTypeKnowledgeBase,
+			kb.ID,
+			types.ResourceActionRead,
+			time.Now().UTC(),
+		)
 		if err != nil {
 			return nil, err
 		}
@@ -493,9 +622,27 @@ func (s *KnowledgeInputProvenanceStore) verifyMessageMaterialInTx(tx *gorm.DB, m
 			return nil, err
 		}
 	}
-	return &types.MessageMaterialProof{AdmissionID: fact.ID, GenerationID: fact.GenerationID, MessageID: fact.MessageID, SessionID: fact.SessionID, TenantID: fact.TenantID, OwnerID: fact.OwnerID, OwnerRevision: fact.OwnerRevision, Revision: fact.Revision, BodyDigest: fact.BodyDigest, SourceLineage: &lineage, Execution: execution, AgentID: fact.AgentID, AgentTenantID: fact.AgentTenantID}, nil
+	return &types.MessageMaterialProof{
+		AdmissionID:   fact.ID,
+		GenerationID:  fact.GenerationID,
+		MessageID:     fact.MessageID,
+		SessionID:     fact.SessionID,
+		TenantID:      fact.TenantID,
+		OwnerID:       fact.OwnerID,
+		OwnerRevision: fact.OwnerRevision,
+		Revision:      fact.Revision,
+		BodyDigest:    fact.BodyDigest,
+		SourceLineage: &lineage,
+		Execution:     execution,
+		AgentID:       fact.AgentID,
+		AgentTenantID: fact.AgentTenantID,
+	}, nil
 }
-func (s *KnowledgeInputProvenanceStore) captureMessageMaterialInTx(tx *gorm.DB, req types.MessageMaterialReadRequest) (*types.MessageMaterialSnapshot, error) {
+
+func (s *KnowledgeInputProvenanceStore) captureMessageMaterialInTx(
+	tx *gorm.DB,
+	req types.MessageMaterialReadRequest,
+) (*types.MessageMaterialSnapshot, error) {
 	req.ExcludeRequestIDs = canonicalMessageMaterialExcludedRequests(req.ExcludeRequestIDs)
 	req.MessageIDs = append([]string{}, req.MessageIDs...)
 	sort.Strings(req.MessageIDs)
@@ -504,7 +651,11 @@ func (s *KnowledgeInputProvenanceStore) captureMessageMaterialInTx(tx *gorm.DB, 
 	}
 	// Resolve only receipt identities and availability before the first body read.
 	var generations []struct{ GenerationID string }
-	gq := tx.Table("message_material_admissions a").Select("a.generation_id").Joins("JOIN message_material_receipts r ON r.admission_id=a.id AND r.message_id=a.message_id").Joins("JOIN messages m ON m.id=a.message_id AND m.session_id=a.session_id").Where("a.session_id=? AND a.tenant_id=? AND m.deleted_at IS NULL", req.SessionID, req.TenantID)
+	gq := tx.Table("message_material_admissions a").
+		Select("a.generation_id").
+		Joins("JOIN message_material_receipts r ON r.admission_id=a.id AND r.message_id=a.message_id").
+		Joins("JOIN messages m ON m.id=a.message_id AND m.session_id=a.session_id").
+		Where("a.session_id=? AND a.tenant_id=? AND m.deleted_at IS NULL", req.SessionID, req.TenantID)
 	if !req.AllSession {
 		gq = gq.Where("a.message_id IN ?", req.MessageIDs)
 	}
@@ -527,7 +678,10 @@ func (s *KnowledgeInputProvenanceStore) captureMessageMaterialInTx(tx *gorm.DB, 
 	}
 	if tx.Migrator().HasTable("steer_consumption_origins") {
 		var steerParents []struct{ OriginID string }
-		query := tx.Table("steer_consumption_origins p").Select("p.origin_id").Joins("JOIN messages m ON m.id=p.user_message_id AND m.session_id=p.session_id").Where("p.session_id=? AND m.deleted_at IS NULL", req.SessionID)
+		query := tx.Table("steer_consumption_origins p").
+			Select("p.origin_id").
+			Joins("JOIN messages m ON m.id=p.user_message_id AND m.session_id=p.session_id").
+			Where("p.session_id=? AND m.deleted_at IS NULL", req.SessionID)
 		if !req.AllSession {
 			query = query.Where("p.user_message_id IN ?", req.MessageIDs)
 		}
@@ -545,13 +699,21 @@ func (s *KnowledgeInputProvenanceStore) captureMessageMaterialInTx(tx *gorm.DB, 
 		}
 		for _, parent := range steerParents {
 			var original steerAuthoredOrigin
-			if err := tx.Select(steerOriginMetadataFields).Where("id=?", parent.OriginID).Take(&original).Error; err != nil {
+			if err := tx.Select(steerOriginMetadataFields).
+				Where("id=?", parent.OriginID).
+				Take(&original).
+				Error; err != nil {
 				return nil, err
 			}
 			if err := checkSteerOriginalWindow(tx, &original); err != nil {
 				return nil, err
 			}
-			if err := CheckOriginalBodyAvailableInTx(tx.Statement.Context, tx, "steer_authored_origins", parent.OriginID); err != nil {
+			if err := CheckOriginalBodyAvailableInTx(
+				tx.Statement.Context,
+				tx,
+				"steer_authored_origins",
+				parent.OriginID,
+			); err != nil {
 				return nil, err
 			}
 		}
@@ -577,7 +739,14 @@ func (s *KnowledgeInputProvenanceStore) captureMessageMaterialInTx(tx *gorm.DB, 
 	if !req.AllSession {
 		q = q.Where("id IN ?", req.MessageIDs)
 	}
-	result := &types.MessageMaterialSnapshot{Request: req, SessionOwnerID: session.UserID, SessionOwnerRevision: ownerRevision, MembershipRevision: membership, Messages: []*types.Message{}, Proofs: []*types.MessageMaterialProof{}}
+	result := &types.MessageMaterialSnapshot{
+		Request:              req,
+		SessionOwnerID:       session.UserID,
+		SessionOwnerRevision: ownerRevision,
+		MembershipRevision:   membership,
+		Messages:             []*types.Message{},
+		Proofs:               []*types.MessageMaterialProof{},
+	}
 	var identities []struct{ ID, Role string }
 	if err := q.Model(&types.Message{}).Select("id,role").Order("created_at,id").Scan(&identities).Error; err != nil {
 		return nil, err
@@ -593,7 +762,11 @@ func (s *KnowledgeInputProvenanceStore) captureMessageMaterialInTx(tx *gorm.DB, 
 				Attachments     types.MessageAttachments
 				RenderedContent string
 			}
-			if err := tx.Table("messages").Select("images,attachments,rendered_content").Where("id=? AND session_id=?", message.ID, req.SessionID).Take(&extra).Error; err != nil {
+			if err := tx.Table("messages").
+				Select("images,attachments,rendered_content").
+				Where("id=? AND session_id=?", message.ID, req.SessionID).
+				Take(&extra).
+				Error; err != nil {
 				return nil, err
 			}
 			message.Images = extra.Images
@@ -616,7 +789,12 @@ func (s *KnowledgeInputProvenanceStore) captureMessageMaterialInTx(tx *gorm.DB, 
 		if req.IncludeOriginalUserFields && message.Role == "user" {
 			lineages := []*types.SourceLineage{proof.SourceLineage}
 			var rows []struct{ SourceLineage string }
-			if err := tx.Table("message_generated_field_admissions a").Select("a.source_lineage").Joins("JOIN message_generated_field_receipts r ON r.admission_id=a.id AND r.message_id=a.message_id AND r.field=a.field").Where("a.message_id=?", message.ID).Scan(&rows).Error; err != nil {
+			if err := tx.Table("message_generated_field_admissions a").
+				Select("a.source_lineage").
+				Joins("JOIN message_generated_field_receipts r ON r.admission_id=a.id AND r.message_id=a.message_id AND r.field=a.field").
+				Where("a.message_id=?", message.ID).
+				Scan(&rows).
+				Error; err != nil {
 				return nil, err
 			}
 			for _, row := range rows {
@@ -647,7 +825,11 @@ func (s *KnowledgeInputProvenanceStore) captureMessageMaterialInTx(tx *gorm.DB, 
 	result.MetadataDigest = expected.MetadataDigest
 	return result, nil
 }
-func (s *KnowledgeInputProvenanceStore) CaptureMessageMaterialInputs(ctx context.Context, req types.MessageMaterialReadRequest) (*types.MessageMaterialSnapshot, error) {
+
+func (s *KnowledgeInputProvenanceStore) CaptureMessageMaterialInputs(
+	ctx context.Context,
+	req types.MessageMaterialReadRequest,
+) (*types.MessageMaterialSnapshot, error) {
 	var result *types.MessageMaterialSnapshot
 	err := s.collectionTransaction(ctx, func(tx *gorm.DB) error {
 		var err error
@@ -656,7 +838,11 @@ func (s *KnowledgeInputProvenanceStore) CaptureMessageMaterialInputs(ctx context
 	})
 	return result, err
 }
-func (s *KnowledgeInputProvenanceStore) RecheckMessageMaterialInputs(ctx context.Context, expected *types.MessageMaterialSnapshot) error {
+
+func (s *KnowledgeInputProvenanceStore) RecheckMessageMaterialInputs(
+	ctx context.Context,
+	expected *types.MessageMaterialSnapshot,
+) error {
 	if expected == nil {
 		return types.ErrSourceLineageUnknown
 	}
@@ -675,7 +861,10 @@ func (s *KnowledgeInputProvenanceStore) RecheckMessageMaterialInputs(ctx context
 	})
 }
 
-func WithMessageMaterialReadPlans(ctx context.Context, plans []*types.MessageMaterialReadPlan) (context.Context, error) {
+func WithMessageMaterialReadPlans(
+	ctx context.Context,
+	plans []*types.MessageMaterialReadPlan,
+) (context.Context, error) {
 	var err error
 	for _, plan := range plans {
 		ctx, err = WithMessageMaterialReadPlan(ctx, plan)
@@ -685,11 +874,22 @@ func WithMessageMaterialReadPlans(ctx context.Context, plans []*types.MessageMat
 	}
 	return ctx, nil
 }
-func findMessageMaterialReadPlan(ctx context.Context, req types.MessageMaterialReadRequest) *types.MessageMaterialReadPlan {
+
+func findMessageMaterialReadPlan(
+	ctx context.Context,
+	req types.MessageMaterialReadRequest,
+) *types.MessageMaterialReadPlan {
 	plans, _ := ctx.Value(messageMaterialPlanKey{}).([]*types.MessageMaterialReadPlan)
 	for i := len(plans) - 1; i >= 0; i-- {
 		plan := plans[i]
-		if plan.Request.TenantID != req.TenantID || plan.Request.SessionID != req.SessionID || plan.Request.CompletedOnly != req.CompletedOnly || plan.Request.ExcludeRequestID != req.ExcludeRequestID || plan.Request.IncludeOriginalUserFields != req.IncludeOriginalUserFields || !faqInputEqual(canonicalMessageMaterialExcludedRequests(plan.Request.ExcludeRequestIDs), canonicalMessageMaterialExcludedRequests(req.ExcludeRequestIDs)) {
+		if plan.Request.TenantID != req.TenantID || plan.Request.SessionID != req.SessionID ||
+			plan.Request.CompletedOnly != req.CompletedOnly ||
+			plan.Request.ExcludeRequestID != req.ExcludeRequestID ||
+			plan.Request.IncludeOriginalUserFields != req.IncludeOriginalUserFields ||
+			!faqInputEqual(
+				canonicalMessageMaterialExcludedRequests(plan.Request.ExcludeRequestIDs),
+				canonicalMessageMaterialExcludedRequests(req.ExcludeRequestIDs),
+			) {
 			continue
 		}
 		covered := plan.Request.AllSession
@@ -712,12 +912,19 @@ func findMessageMaterialReadPlan(ctx context.Context, req types.MessageMaterialR
 	}
 	return nil
 }
-func (s *KnowledgeInputProvenanceStore) peekHistoryMaterialPlanForProofInTx(tx *gorm.DB, proof *types.KnowledgeBuildInputProof) (*types.MessageMaterialReadPlan, error) {
+
+func (s *KnowledgeInputProvenanceStore) peekHistoryMaterialPlanForProofInTx(
+	tx *gorm.DB,
+	proof *types.KnowledgeBuildInputProof,
+) (*types.MessageMaterialReadPlan, error) {
 	if proof == nil {
 		return nil, types.ErrSourceLineageUnknown
 	}
 	var admission knowledgeInputAdmission
-	if err := tx.Select("admission_id,tenant_id,knowledge_base_id,knowledge_id,origin_kind,input_digest,build_generation").Where("admission_id=? AND tenant_id=? AND knowledge_id=?", proof.AdmissionID, proof.TenantID, proof.KnowledgeID).Take(&admission).Error; err != nil {
+	if err := tx.Select("admission_id,tenant_id,knowledge_base_id,knowledge_id,origin_kind,input_digest,build_generation").
+		Where("admission_id=? AND tenant_id=? AND knowledge_id=?", proof.AdmissionID, proof.TenantID, proof.KnowledgeID).
+		Take(&admission).
+		Error; err != nil {
 		return nil, err
 	}
 	if admission.InputDigest != proof.InputDigest || admission.BuildGeneration != proof.BuildGeneration {
@@ -727,16 +934,33 @@ func (s *KnowledgeInputProvenanceStore) peekHistoryMaterialPlanForProofInTx(tx *
 		return nil, nil
 	}
 	var parent knowledgeInputHistoryParents
-	if err := tx.Where("admission_id=? AND tenant_id=?", admission.AdmissionID, admission.TenantID).Take(&parent).Error; err != nil {
+	if err := tx.Where("admission_id=? AND tenant_id=?", admission.AdmissionID, admission.TenantID).
+		Take(&parent).
+		Error; err != nil {
 		return nil, err
 	}
-	return s.peekMessageMaterialReadPlanInTx(tx, types.MessageMaterialReadRequest{TenantID: parent.TenantID, SessionID: parent.SessionID, MessageIDs: []string{parent.AssistantMessageID, parent.UserMessageID}})
+	return s.peekMessageMaterialReadPlanInTx(
+		tx,
+		types.MessageMaterialReadRequest{
+			TenantID:   parent.TenantID,
+			SessionID:  parent.SessionID,
+			MessageIDs: []string{parent.AssistantMessageID, parent.UserMessageID},
+		},
+	)
 }
 
 // Identity/control only: no saved text or checkpoint is read here.
-func (s *KnowledgeInputProvenanceStore) MessageRequestControl(ctx context.Context, sessionID, messageID string) (string, error) {
+func (s *KnowledgeInputProvenanceStore) MessageRequestControl(
+	ctx context.Context,
+	sessionID, messageID string,
+) (string, error) {
 	var row struct{ RequestID string }
-	err := s.db.WithContext(ctx).Table("messages").Select("request_id").Where("id=? AND session_id=? AND deleted_at IS NULL", messageID, sessionID).Take(&row).Error
+	err := s.db.WithContext(ctx).
+		Table("messages").
+		Select("request_id").
+		Where("id=? AND session_id=? AND deleted_at IS NULL", messageID, sessionID).
+		Take(&row).
+		Error
 	if err != nil {
 		return "", err
 	}
@@ -746,7 +970,10 @@ func (s *KnowledgeInputProvenanceStore) MessageRequestControl(ctx context.Contex
 	return row.RequestID, nil
 }
 
-func (s *KnowledgeInputProvenanceStore) AdvanceMessageMaterialAfterOwnFieldWrite(ctx context.Context, expected *types.MessageMaterialSnapshot) (*types.MessageMaterialSnapshot, error) {
+func (s *KnowledgeInputProvenanceStore) AdvanceMessageMaterialAfterOwnFieldWrite(
+	ctx context.Context,
+	expected *types.MessageMaterialSnapshot,
+) (*types.MessageMaterialSnapshot, error) {
 	boundary, ok := ctx.Value(messageGeneratedFieldKey{}).(messageGeneratedFieldBoundary)
 	if !ok || boundary.Store != s || expected == nil {
 		return nil, types.ErrSourceLineageUnknown
@@ -764,14 +991,25 @@ func (s *KnowledgeInputProvenanceStore) AdvanceMessageMaterialAfterOwnFieldWrite
 	var result *types.MessageMaterialSnapshot
 	err := s.collectionTransaction(ctx, func(tx *gorm.DB) error {
 		var receipt messageGeneratedFieldAdmission
-		if err := tx.Table("message_generated_field_admissions a").Select("a.*").Joins("JOIN message_generated_field_receipts r ON r.admission_id=a.id AND r.message_id=a.message_id AND r.field=a.field").Where("a.message_id=? AND a.session_id=? AND a.field=? AND a.body_digest=?", boundary.MessageID, boundary.SessionID, boundary.Field, boundary.Digest).Take(&receipt).Error; err != nil {
+		if err := tx.Table("message_generated_field_admissions a").
+			Select("a.*").
+			Joins("JOIN message_generated_field_receipts r ON r.admission_id=a.id AND r.message_id=a.message_id AND r.field=a.field").
+			Where("a.message_id=? AND a.session_id=? AND a.field=? AND a.body_digest=?", boundary.MessageID, boundary.SessionID, boundary.Field, boundary.Digest).
+			Take(&receipt).
+			Error; err != nil {
 			return err
 		}
-		currentMembership, err := messageVersion(tx, "message_session_membership_versions", "session_id", expected.Request.SessionID)
+		currentMembership, err := messageVersion(
+			tx,
+			"message_session_membership_versions",
+			"session_id",
+			expected.Request.SessionID,
+		)
 		if err != nil {
 			return err
 		}
-		if currentMembership != expected.MembershipRevision || receipt.PreviousMembership != expected.MembershipRevision {
+		if currentMembership != expected.MembershipRevision ||
+			receipt.PreviousMembership != expected.MembershipRevision {
 			return ErrKnowledgeInputChanged
 		}
 		targetMatched := false
@@ -829,7 +1067,12 @@ func (s *KnowledgeInputProvenanceStore) AdvanceMessageMaterialAfterOwnFieldWrite
 				continue
 			}
 			var fact messageMaterialAdmission
-			if err := tx.Table("message_material_admissions a").Select("a.*").Joins("JOIN message_material_receipts r ON r.admission_id=a.id AND r.message_id=a.message_id").Where("a.message_id=?", proof.MessageID).Take(&fact).Error; err != nil {
+			if err := tx.Table("message_material_admissions a").
+				Select("a.*").
+				Joins("JOIN message_material_receipts r ON r.admission_id=a.id AND r.message_id=a.message_id").
+				Where("a.message_id=?", proof.MessageID).
+				Take(&fact).
+				Error; err != nil {
 				return err
 			}
 			if fact.ID != proof.AdmissionID || fact.Revision != proof.Revision || fact.BodyDigest != proof.BodyDigest {
@@ -837,7 +1080,11 @@ func (s *KnowledgeInputProvenanceStore) AdvanceMessageMaterialAfterOwnFieldWrite
 			}
 		}
 
-		isolated := context.WithValue(tx.Statement.Context, messageMaterialPlanKey{}, []*types.MessageMaterialReadPlan{})
+		isolated := context.WithValue(
+			tx.Statement.Context,
+			messageMaterialPlanKey{},
+			[]*types.MessageMaterialReadPlan{},
+		)
 		marked, err := WithMessageMaterialReadPlan(isolated, actualPlan)
 		if err != nil {
 			return err
@@ -848,7 +1095,10 @@ func (s *KnowledgeInputProvenanceStore) AdvanceMessageMaterialAfterOwnFieldWrite
 	return result, err
 }
 
-func (s *KnowledgeInputProvenanceStore) MessageCompletionControl(ctx context.Context, sessionID, messageID string) (bool, error) {
+func (s *KnowledgeInputProvenanceStore) MessageCompletionControl(
+	ctx context.Context,
+	sessionID, messageID string,
+) (bool, error) {
 	var complete bool
 	err := s.collectionTransaction(ctx, func(tx *gorm.DB) error {
 		if _, _, _, err := s.currentMessageOwnerInTx(tx, sessionID); err != nil {
@@ -858,7 +1108,11 @@ func (s *KnowledgeInputProvenanceStore) MessageCompletionControl(ctx context.Con
 			ID          string
 			IsCompleted bool
 		}
-		if err := tx.Table("messages").Select("id,is_completed").Where("id=? AND session_id=? AND deleted_at IS NULL", messageID, sessionID).Take(&identity).Error; err != nil {
+		if err := tx.Table("messages").
+			Select("id,is_completed").
+			Where("id=? AND session_id=? AND deleted_at IS NULL", messageID, sessionID).
+			Take(&identity).
+			Error; err != nil {
 			return err
 		}
 		complete = identity.IsCompleted

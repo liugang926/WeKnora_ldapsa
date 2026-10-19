@@ -22,8 +22,10 @@ import (
 	"gorm.io/gorm"
 )
 
-var suggestionThinkBlock = regexp.MustCompile(`(?s)<think>.*?</think>`)
-var trailingCitationTags = regexp.MustCompile(`(?s)(?:\s*<(?:kb|web)>.*?</(?:kb|web)>)+\s*$`)
+var (
+	suggestionThinkBlock = regexp.MustCompile(`(?s)<think>.*?</think>`)
+	trailingCitationTags = regexp.MustCompile(`(?s)(?:\s*<(?:kb|web)>.*?</(?:kb|web)>)+\s*$`)
+)
 
 const (
 	suggestionHistoryRuneBudget        = 6000
@@ -77,7 +79,9 @@ func (s *messageSuggestionService) EnsureFollowUps(
 	if err != nil {
 		return nil, err
 	}
-	if !types.SourceIndependentDerivativesAllowed(message) || len(message.ExecutionContext.KnowledgeBaseIDs) > 0 || len(message.ExecutionContext.AgentKnowledgeBaseIDs) > 0 || len(message.ExecutionContext.KnowledgeIDs) > 0 {
+	if !types.SourceIndependentDerivativesAllowed(message) || len(message.ExecutionContext.KnowledgeBaseIDs) > 0 ||
+		len(message.ExecutionContext.AgentKnowledgeBaseIDs) > 0 ||
+		len(message.ExecutionContext.KnowledgeIDs) > 0 {
 		return nil, access.ErrNextcloudPublicationDenied
 	}
 	if message.Role != "assistant" || !message.IsCompleted {

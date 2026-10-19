@@ -163,7 +163,9 @@ func TestListKnowledgeFoldersRejectsUnverifiedNextcloudAggregates(t *testing.T) 
 	router.ServeHTTP(w, httptest.NewRequest(
 		http.MethodGet, "/knowledge-bases/kb-1/knowledge/folders", nil,
 	))
-	if w.Code != http.StatusForbidden || strings.Contains(w.Body.String(), "secret") {
+	// No collection verifier is configured: fail before reading aggregate rows.
+	if w.Code != http.StatusServiceUnavailable || strings.Contains(w.Body.String(), "secret") ||
+		!strings.Contains(w.Body.String(), "Original knowledge collection verifier is unavailable") {
 		t.Fatalf("folder aggregate leaked: status=%d body=%s", w.Code, w.Body.String())
 	}
 }

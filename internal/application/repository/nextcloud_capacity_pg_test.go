@@ -2,15 +2,19 @@ package repository
 
 import (
 	"context"
-	"github.com/Tencent/WeKnora/internal/types"
-	"github.com/stretchr/testify/require"
 	"os"
 	"testing"
+
+	"github.com/Tencent/WeKnora/internal/types"
+	"github.com/stretchr/testify/require"
 )
 
 func TestPostgresNextcloudCapacityConcurrentPhysicalAndQuota(t *testing.T) {
 	db := leaseTestPostgres(t)
-	require.NoError(t, db.AutoMigrate(&types.KnowledgeBase{}, &types.Knowledge{}, &types.StoredResource{}, &types.ResourceBinding{}))
+	require.NoError(
+		t,
+		db.AutoMigrate(&types.KnowledgeBase{}, &types.Knowledge{}, &types.StoredResource{}, &types.ResourceBinding{}),
+	)
 	sql, err := os.ReadFile("../../../migrations/versioned/000146_nextcloud_capacity_admission.up.sql")
 	require.NoError(t, err)
 	require.NoError(t, db.Exec(string(sql)).Error)

@@ -3,9 +3,10 @@ package event
 import (
 	"context"
 	"encoding/json"
-	"github.com/Tencent/WeKnora/internal/types"
 	"strings"
 	"testing"
+
+	"github.com/Tencent/WeKnora/internal/types"
 )
 
 func TestRAGSourceLineageAdapterPreservesInternalProof(t *testing.T) {
@@ -20,7 +21,10 @@ func TestRAGSourceLineageAdapterPreservesInternalProof(t *testing.T) {
 		}
 		return nil
 	})
-	if err := adapter.Emit(context.Background(), types.Event{Type: types.EventType(EventAgentFinalAnswer), SourceLineage: proof}); err != nil {
+	if err := adapter.Emit(
+		context.Background(),
+		types.Event{Type: types.EventType(EventAgentFinalAnswer), SourceLineage: proof},
+	); err != nil {
 		t.Fatal(err)
 	}
 	if !called {

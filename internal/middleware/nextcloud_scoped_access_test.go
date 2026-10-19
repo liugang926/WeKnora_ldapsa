@@ -21,10 +21,22 @@ type scopedRouteAccess struct {
 	role types.EffectiveTenantRole
 }
 
-func (s scopedRouteAccess) EffectiveTenantRole(context.Context, string, uint64, time.Time) (types.EffectiveTenantRole, error) {
+func (s scopedRouteAccess) EffectiveTenantRole(
+	context.Context,
+	string,
+	uint64,
+	time.Time,
+) (types.EffectiveTenantRole, error) {
 	return s.role, nil
 }
-func (s scopedRouteAccess) Authorize(_ context.Context, _ uint64, _ types.ResourceType, id string, _ types.ResourceAction) error {
+
+func (s scopedRouteAccess) Authorize(
+	_ context.Context,
+	_ uint64,
+	_ types.ResourceType,
+	id string,
+	_ types.ResourceAction,
+) error {
 	if id != "granted-kb" {
 		return errors.New("denied")
 	}
@@ -36,6 +48,7 @@ type scopedRouteSession struct{}
 func (scopedRouteSession) ScopedSession(_ context.Context, _ uint64, _ string, id string) (bool, error) {
 	return id == "private-qa", nil
 }
+
 func (scopedRouteSession) ScopedDocument(_ context.Context, _ uint64, id string) (string, error) {
 	if id == "current-source-document" {
 		return "granted-kb", nil
@@ -45,6 +58,7 @@ func (scopedRouteSession) ScopedDocument(_ context.Context, _ uint64, id string)
 	}
 	return "", errors.New("source unavailable")
 }
+
 func TestNextcloudScopedRoutesAllowExplicitQAAndBlockCrossResourceInputs(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	role := types.EffectiveTenantRole{TenantID: 7, Member: true, ScopedOnly: true, Role: types.TenantRoleViewer}
@@ -120,7 +134,12 @@ func TestNextcloudScopedRoutesAllowExplicitQAAndBlockCrossResourceInputs(t *test
 			r.ServeHTTP(w, httptest.NewRequest(test.method, test.path, strings.NewReader(test.body)))
 			require.Equal(t, test.status, w.Code)
 			if test.status == 200 && test.method == "POST" {
-				require.Equal(t, test.body, w.Body.String(), "scope checks must preserve the body for the real QA handler")
+				require.Equal(
+					t,
+					test.body,
+					w.Body.String(),
+					"scope checks must preserve the body for the real QA handler",
+				)
 			}
 		})
 	}

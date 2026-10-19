@@ -92,7 +92,11 @@ func (p *PluginExtractEntity) OnEvent(ctx context.Context,
 	// Also build a mapping from KnowledgeID to KnowledgeBaseID
 	knowledgeToKBMap := make(map[string]string)
 	if len(chatManage.KnowledgeIDs) > 0 {
-		knowledges, err := p.knowledgeService.GetKnowledgeBatchWithSharedAccess(ctx, chatManage.TenantID, chatManage.KnowledgeIDs)
+		knowledges, err := p.knowledgeService.GetKnowledgeBatchWithSharedAccess(
+			ctx,
+			chatManage.TenantID,
+			chatManage.KnowledgeIDs,
+		)
 		if err != nil {
 			logger.Errorf(ctx, "failed to get extraction knowledges")
 			return next()

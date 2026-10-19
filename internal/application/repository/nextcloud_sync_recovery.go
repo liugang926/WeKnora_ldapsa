@@ -25,7 +25,11 @@ func NewNextcloudSyncRecoveryStore(db *gorm.DB) *NextcloudSyncRecoveryStore {
 // UnstartedBefore rotates across eligible logs in stable (started_at, id)
 // order. Existing Redis tasks remain running, so repeatedly reading only the
 // oldest 100 would starve later missing tasks forever.
-func (s *NextcloudSyncRecoveryStore) UnstartedBefore(ctx context.Context, cutoff time.Time, limit int) ([]types.SyncLog, error) {
+func (s *NextcloudSyncRecoveryStore) UnstartedBefore(
+	ctx context.Context,
+	cutoff time.Time,
+	limit int,
+) ([]types.SyncLog, error) {
 	if limit <= 0 || limit > 100 {
 		limit = 100
 	}
@@ -37,7 +41,12 @@ func (s *NextcloudSyncRecoveryStore) UnstartedBefore(ctx context.Context, cutoff
 			Where("queue_task_id = 'dssync:' || sync_logs.id AND worker_started_at IS NULL AND worker_active = ? AND started_at <= ?", false, cutoff).
 			Where(`EXISTS (SELECT 1 FROM data_sources ds WHERE ds.id = sync_logs.data_source_id AND ds.type = ?)`, types.ConnectorTypeNextcloud)
 		if after {
-			query = query.Where("(started_at > ? OR (started_at = ? AND id > ?))", s.lastStartedAt, s.lastStartedAt, s.lastID)
+			query = query.Where(
+				"(started_at > ? OR (started_at = ? AND id > ?))",
+				s.lastStartedAt,
+				s.lastStartedAt,
+				s.lastID,
+			)
 		}
 		var logs []types.SyncLog
 		err := query.Order("started_at, id").Limit(limit).Find(&logs).Error
@@ -67,7 +76,11 @@ func (s *NextcloudSyncRecoveryStore) UnstartedBefore(ctx context.Context, cutoff
 // FailMissing releases one slot only after the caller proved the exact task is
 // absent. The worker's ClaimNextcloudSyncStart races this statement on the
 // same row: one wins, so no worker can read the source after release.
-func (s *NextcloudSyncRecoveryStore) FailMissing(ctx context.Context, log types.SyncLog, cutoff, now time.Time) (bool, error) {
+func (s *NextcloudSyncRecoveryStore) FailMissing(
+	ctx context.Context,
+	log types.SyncLog,
+	cutoff, now time.Time,
+) (bool, error) {
 	if log.ID == "" || log.DataSourceID == "" || log.TenantID == 0 ||
 		(log.RecoveryTrigger != "manual" && log.RecoveryTrigger != "schedule") ||
 		log.QueueTaskID != "dssync:"+log.ID {
@@ -77,7 +90,9 @@ func (s *NextcloudSyncRecoveryStore) FailMissing(ctx context.Context, log types.
 		Where("id = ? AND data_source_id = ? AND tenant_id = ?", log.ID, log.DataSourceID, log.TenantID).
 		Where("status = ? AND recovery_version = 1 AND recovery_trigger = ?", types.SyncLogStatusRunning, log.RecoveryTrigger).
 		Where("queue_task_id = ? AND worker_started_at IS NULL AND worker_active = ? AND started_at <= ?", log.QueueTaskID, false, cutoff).
-		Updates(map[string]any{"status": types.SyncLogStatusFailed,
-			"finished_at": now, "error_message": "sync_task_absent_before_worker_start"})
+		Updates(map[string]any{
+			"status":      types.SyncLogStatusFailed,
+			"finished_at": now, "error_message": "sync_task_absent_before_worker_start",
+		})
 	return result.RowsAffected == 1, result.Error
 }

@@ -328,7 +328,12 @@ func (r *wikiPageRepository) UpdateMeta(ctx context.Context, page *types.WikiPag
 // GetPageScopeByID resolves only ownership before the service's source policy.
 func (r *wikiPageRepository) GetPageScopeByID(ctx context.Context, id string) (string, error) {
 	var row struct{ KnowledgeBaseID string }
-	err := r.db.WithContext(ctx).Model(&types.WikiPage{}).Select("knowledge_base_id").Where("id = ?", id).Take(&row).Error
+	err := r.db.WithContext(ctx).
+		Model(&types.WikiPage{}).
+		Select("knowledge_base_id").
+		Where("id = ?", id).
+		Take(&row).
+		Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return "", ErrWikiPageNotFound
 	}
@@ -362,7 +367,10 @@ func (r *wikiPageRepository) GetBySlug(ctx context.Context, kbID string, slug st
 }
 
 // List retrieves wiki pages with filtering and pagination
-func (r *wikiPageRepository) List(ctx context.Context, req *types.WikiPageListRequest) ([]*types.WikiPage, int64, error) {
+func (r *wikiPageRepository) List(
+	ctx context.Context,
+	req *types.WikiPageListRequest,
+) ([]*types.WikiPage, int64, error) {
 	query := r.db.WithContext(ctx).Model(&types.WikiPage{}).
 		Where("knowledge_base_id = ?", req.KnowledgeBaseID)
 
@@ -507,7 +515,11 @@ func (r *wikiPageRepository) ListByTypeLight(
 
 // ListBySourceRef retrieves all wiki pages that reference a given source knowledge ID.
 // Handles both old format ("knowledgeID") and new format ("knowledgeID|title") in source_refs JSON array.
-func (r *wikiPageRepository) ListBySourceRef(ctx context.Context, kbID string, sourceKnowledgeID string) ([]*types.WikiPage, error) {
+func (r *wikiPageRepository) ListBySourceRef(
+	ctx context.Context,
+	kbID string,
+	sourceKnowledgeID string,
+) ([]*types.WikiPage, error) {
 	// Build the JSON needle safely so arbitrary IDs cannot break out of the
 	// quoted string (e.g. ids containing quotes or backslashes).
 	needle, err := json.Marshal([]string{sourceKnowledgeID})
@@ -553,7 +565,11 @@ func (r *wikiPageRepository) ListBySourceRef(ctx context.Context, kbID string, s
 // Backed by idx_wiki_pages_source_refs (GIN jsonb_path_ops) for the
 // containment branch and idx_wiki_pages_source_refs_text for the legacy
 // text-LIKE branch — both added in migration 000041.
-func (r *wikiPageRepository) ListSlugsBySourceRef(ctx context.Context, kbID string, sourceKnowledgeID string) ([]string, error) {
+func (r *wikiPageRepository) ListSlugsBySourceRef(
+	ctx context.Context,
+	kbID string,
+	sourceKnowledgeID string,
+) ([]string, error) {
 	needle, err := json.Marshal([]string{sourceKnowledgeID})
 	if err != nil {
 		return nil, fmt.Errorf("marshal source ref needle: %w", err)
@@ -1340,7 +1356,12 @@ func escapeLikePattern(s string) string {
 // see pages like "华为" or "Index" ahead of the actual 王新 page just
 // because they mention 王新 in their body and were updated more recently.
 // updated_at stays as the tiebreaker so same-rank ties stay deterministic.
-func (r *wikiPageRepository) Search(ctx context.Context, kbID string, query string, limit int) ([]*types.WikiPage, error) {
+func (r *wikiPageRepository) Search(
+	ctx context.Context,
+	kbID string,
+	query string,
+	limit int,
+) ([]*types.WikiPage, error) {
 	if limit <= 0 {
 		limit = 10
 	}
@@ -1415,7 +1436,12 @@ func (r *wikiPageRepository) CreateIssue(ctx context.Context, issue *types.WikiP
 	return r.db.WithContext(ctx).Create(issue).Error
 }
 
-func (r *wikiPageRepository) ListIssues(ctx context.Context, kbID string, slug string, status string) ([]*types.WikiPageIssue, error) {
+func (r *wikiPageRepository) ListIssues(
+	ctx context.Context,
+	kbID string,
+	slug string,
+	status string,
+) ([]*types.WikiPageIssue, error) {
 	query := r.db.WithContext(ctx).Where("knowledge_base_id = ?", kbID)
 	if slug != "" {
 		query = query.Where("slug = ?", slug)

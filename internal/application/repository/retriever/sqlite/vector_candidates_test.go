@@ -25,11 +25,27 @@ func TestNativeSQLiteVectorCandidatesFilterBeforeTopKAndNeverSelectBody(t *testi
 	for _, mode := range []string{"knowledge-base", "tenant", "owned-whitelist", "index-disabled", "knowledge-disabled"} {
 		t.Run(mode, func(t *testing.T) {
 			r := newSQLiteRetrieverTestRepository(t)
-			require.NoError(t, r.db.Exec(`CREATE TABLE knowledge_bases(id TEXT PRIMARY KEY,tenant_id BIGINT NOT NULL,deleted_at DATETIME);
-				CREATE TABLE knowledges(id TEXT PRIMARY KEY,tenant_id BIGINT NOT NULL,knowledge_base_id TEXT NOT NULL,parse_status TEXT NOT NULL,enable_status TEXT NOT NULL,deleted_at DATETIME)`).Error)
-			require.NoError(t, r.db.Exec("INSERT INTO knowledge_bases(id,tenant_id) VALUES('kb-target',7),('kb-other',7),('kb-foreign',8)").Error)
+			require.NoError(
+				t,
+				r.db.Exec(
+					`CREATE TABLE knowledge_bases(id TEXT PRIMARY KEY,tenant_id BIGINT NOT NULL,deleted_at DATETIME);
+				CREATE TABLE knowledges(id TEXT PRIMARY KEY,tenant_id BIGINT NOT NULL,knowledge_base_id TEXT NOT NULL,parse_status TEXT NOT NULL,enable_status TEXT NOT NULL,deleted_at DATETIME)`,
+				).Error,
+			)
+			require.NoError(
+				t,
+				r.db.Exec(
+					"INSERT INTO knowledge_bases(id,tenant_id) VALUES('kb-target',7),('kb-other',7),('kb-foreign',8)",
+				).Error,
+			)
 			blockerKB, blockerTenant, blockerEnabled, blockerKnowledgeEnabled := "kb-target", uint64(7), true, "enabled"
-			p := types.VectorCandidateParams{TenantID: 7, KnowledgeBaseIDs: []string{"kb-target"}, KnowledgeIDs: []string{"target", "blocker"}, Embedding: []float32{1, 0}, TopK: 1}
+			p := types.VectorCandidateParams{
+				TenantID:         7,
+				KnowledgeBaseIDs: []string{"kb-target"},
+				KnowledgeIDs:     []string{"target", "blocker"},
+				Embedding:        []float32{1, 0},
+				TopK:             1,
+			}
 			switch mode {
 			case "knowledge-base":
 				blockerKB = "kb-other"
@@ -43,8 +59,22 @@ func TestNativeSQLiteVectorCandidatesFilterBeforeTopKAndNeverSelectBody(t *testi
 			case "knowledge-disabled":
 				blockerKnowledgeEnabled = "disabled"
 			}
-			require.NoError(t, r.db.Exec("INSERT INTO knowledges(id,tenant_id,knowledge_base_id,parse_status,enable_status) VALUES('target',7,'kb-target','completed','enabled')").Error)
-			require.NoError(t, r.db.Exec("INSERT INTO knowledges(id,tenant_id,knowledge_base_id,parse_status,enable_status) VALUES(?,?,?,'completed',?)", "blocker", blockerTenant, blockerKB, blockerKnowledgeEnabled).Error)
+			require.NoError(
+				t,
+				r.db.Exec(
+					"INSERT INTO knowledges(id,tenant_id,knowledge_base_id,parse_status,enable_status) VALUES('target',7,'kb-target','completed','enabled')",
+				).Error,
+			)
+			require.NoError(
+				t,
+				r.db.Exec(
+					"INSERT INTO knowledges(id,tenant_id,knowledge_base_id,parse_status,enable_status) VALUES(?,?,?,'completed',?)",
+					"blocker",
+					blockerTenant,
+					blockerKB,
+					blockerKnowledgeEnabled,
+				).Error,
+			)
 			blocker := sqliteTestIndex("blocker-chunk", blockerKB, "blocker", "", blockerEnabled)
 			blocker.Content = "PRIVATE BLOCKER CONTENT NEVER SELECTED"
 			target := sqliteTestIndex("target-chunk", "kb-target", "target", "", true)
@@ -73,7 +103,13 @@ func TestNativeSQLiteVectorCandidatesFilterBeforeTopKAndNeverSelectBody(t *testi
 
 func TestNativeSQLiteVectorCandidatesMissingControlTablesAndEmptyWhitelistRefuse(t *testing.T) {
 	r := newSQLiteRetrieverTestRepository(t)
-	p := types.VectorCandidateParams{TenantID: 7, KnowledgeBaseIDs: []string{"kb"}, KnowledgeIDs: []string{"knowledge"}, Embedding: []float32{1, 0}, TopK: 1}
+	p := types.VectorCandidateParams{
+		TenantID:         7,
+		KnowledgeBaseIDs: []string{"kb"},
+		KnowledgeIDs:     []string{"knowledge"},
+		Embedding:        []float32{1, 0},
+		TopK:             1,
+	}
 	ctx := types.WithExecutionTenant(context.Background(), 7)
 	rows, err := r.RetrieveVectorCandidates(ctx, p)
 	require.ErrorIs(t, err, types.ErrVectorCandidateRetrievalUnavailable)

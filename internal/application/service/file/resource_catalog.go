@@ -121,7 +121,13 @@ func (s *resourceCatalogFileService) SaveFile(
 		return "", err
 	}
 	if knowledgeID != "" {
-		if err := s.catalog.Bind(ctx, ref, types.ResourceOwnerKnowledge, knowledgeID, types.ResourceRelationSourceFile); err != nil {
+		if err := s.catalog.Bind(
+			ctx,
+			ref,
+			types.ResourceOwnerKnowledge,
+			knowledgeID,
+			types.ResourceRelationSourceFile,
+		); err != nil {
 			if types.CapacityWriteSessionFromContext(ctx) == nil {
 				_ = s.DeleteFile(ctx, ref)
 			}
@@ -275,7 +281,13 @@ func (s *resourceCatalogFileService) CopyFile(
 		return "", err
 	}
 	if knowledgeID != "" {
-		if err := s.catalog.Bind(ctx, ref, types.ResourceOwnerKnowledge, knowledgeID, types.ResourceRelationSourceFile); err != nil {
+		if err := s.catalog.Bind(
+			ctx,
+			ref,
+			types.ResourceOwnerKnowledge,
+			knowledgeID,
+			types.ResourceRelationSourceFile,
+		); err != nil {
 			if types.CapacityWriteSessionFromContext(ctx) == nil {
 				_ = s.DeleteFile(ctx, ref)
 			}

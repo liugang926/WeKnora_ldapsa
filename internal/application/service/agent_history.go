@@ -474,7 +474,8 @@ func (s messageCheckpointSink) SaveContextCheckpoint(
 		if err != nil {
 			return err
 		}
-		ctx, err = store.MessageMaterialStore().WithActualMessageGeneratedField(ctx, s.sessionID, turnMessageID, "context_checkpoint", checkpoint, parents, checkpoint.SourceLineage)
+		ctx, err = store.MessageMaterialStore().
+			WithActualMessageGeneratedField(ctx, s.sessionID, turnMessageID, "context_checkpoint", checkpoint, parents, checkpoint.SourceLineage)
 		if err != nil {
 			return err
 		}

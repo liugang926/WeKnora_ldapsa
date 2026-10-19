@@ -4,12 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	apperrors "github.com/Tencent/WeKnora/internal/errors"
 	"os"
 	"path/filepath"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	apperrors "github.com/Tencent/WeKnora/internal/errors"
 
 	"github.com/Tencent/WeKnora/internal/application/readlease"
 	"github.com/Tencent/WeKnora/internal/application/repository"
@@ -95,9 +96,11 @@ func TestAgentReadDocumentLeaseAndMidReadRevocation(t *testing.T) {
 				chunkRepo.onList = func() {
 					chunkRepo.onList = nil
 					svc.revoked.Store(true)
-					scope := repository.NextcloudContentScope{TenantID: 7,
+					scope := repository.NextcloudContentScope{
+						TenantID:        7,
 						KnowledgeBaseID: "kb-1", KnowledgeID: "doc-1",
-						DataSourceID: "ds-1", ExternalID: "nextcloud:instance:41"}
+						DataSourceID: "ds-1", ExternalID: "nextcloud:instance:41",
+					}
 					require.NoError(t, store.RetireKnowledge(context.Background(), scope))
 				}
 			}
@@ -189,13 +192,19 @@ func graphLeaseFixture(t *testing.T) (*QueryKnowledgeGraphTool,
 		readDocKnowledgeService: knowledge, store: store,
 	}}
 	kb := &graphLeaseKBService{stubKnowledgeBaseService: &stubKnowledgeBaseService{
-		kb: &types.KnowledgeBase{ID: "kb-1", TenantID: 7,
-			ExtractConfig: &types.ExtractConfig{Enabled: true,
-				Nodes: []*types.GraphNode{{Name: "engine"}}}},
-		results: []*types.SearchResult{{ID: "chunk-1", KnowledgeID: doc.ID,
+		kb: &types.KnowledgeBase{
+			ID: "kb-1", TenantID: 7,
+			ExtractConfig: &types.ExtractConfig{
+				Enabled: true,
+				Nodes:   []*types.GraphNode{{Name: "engine"}},
+			},
+		},
+		results: []*types.SearchResult{{
+			ID: "chunk-1", KnowledgeID: doc.ID,
 			KnowledgeBaseID: doc.KnowledgeBaseID, KnowledgeTitle: doc.Title,
 			KnowledgeChannel: doc.Channel, Metadata: doc.GetMetadata(),
-			Content: "classified graph passage", Score: 0.9}},
+			Content: "classified graph passage", Score: 0.9,
+		}},
 	}}
 	targets := types.SearchTargets{
 		{Type: types.SearchTargetTypeKnowledgeBase, KnowledgeBaseID: "kb-1", TenantID: 7},
@@ -214,9 +223,11 @@ func TestQueryKnowledgeGraphHoldsLeaseThroughToolOutput(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			tool, svc, store, db, kb := graphLeaseFixture(t)
 			doc := svc.docs["doc-1"]
-			scope := repository.NextcloudContentScope{TenantID: 7,
+			scope := repository.NextcloudContentScope{
+				TenantID:        7,
 				KnowledgeBaseID: "kb-1", KnowledgeID: doc.ID,
-				DataSourceID: "ds-1", ExternalID: "nextcloud:instance:41"}
+				DataSourceID: "ds-1", ExternalID: "nextcloud:instance:41",
+			}
 			kb.onSearch = func(ctx context.Context) error {
 				guard := readlease.NextcloudReadGuardFromContext(ctx)
 				if guard == nil {
@@ -247,7 +258,10 @@ func TestQueryKnowledgeGraphHoldsLeaseThroughToolOutput(t *testing.T) {
 						"the outer graph lease must block a physical GC claim")
 				}
 			}
-			result, err := tool.Execute(context.Background(), json.RawMessage(`{"knowledge_base_ids":["kb-1"],"query":"engine"}`))
+			result, err := tool.Execute(
+				context.Background(),
+				json.RawMessage(`{"knowledge_base_ids":["kb-1"],"query":"engine"}`),
+			)
 			if retire {
 				require.Error(t, err)
 				require.False(t, result.Success)
@@ -280,7 +294,10 @@ func TestQueryKnowledgeGraphRejectsRevokedScopeBeforeOutput(t *testing.T) {
 		return guard.PinKnowledge(graphDoc)
 	}
 	svc.onGet = func(context.Context) { svc.revoked.Store(true) }
-	result, err := tool.Execute(context.Background(), json.RawMessage(`{"knowledge_base_ids":["kb-1"],"query":"engine"}`))
+	result, err := tool.Execute(
+		context.Background(),
+		json.RawMessage(`{"knowledge_base_ids":["kb-1"],"query":"engine"}`),
+	)
 	require.Error(t, err)
 	require.False(t, result.Success)
 	require.NotContains(t, result.Output, "classified graph passage")
@@ -295,9 +312,14 @@ func TestQueryKnowledgeGraphRejectsChangedGenerationBeforeOutput(t *testing.T) {
 	// Retrieval captured the old source tuple. A later successful publication
 	// must not authorize the old chunk text by pinning the replacement row.
 	svc.onGet = func(context.Context) {
-		svc.docs["doc-1"].Metadata = types.JSON(`{"datasource_id":"ds-1","external_id":"nextcloud:instance:replacement","nextcloud_file_id":"41"}`)
+		svc.docs["doc-1"].Metadata = types.JSON(
+			`{"datasource_id":"ds-1","external_id":"nextcloud:instance:replacement","nextcloud_file_id":"41"}`,
+		)
 	}
-	result, err := tool.Execute(context.Background(), json.RawMessage(`{"knowledge_base_ids":["kb-1"],"query":"engine"}`))
+	result, err := tool.Execute(
+		context.Background(),
+		json.RawMessage(`{"knowledge_base_ids":["kb-1"],"query":"engine"}`),
+	)
 	require.Error(t, err)
 	require.False(t, result.Success)
 	require.NotContains(t, result.Output, "classified graph passage")
@@ -310,14 +332,19 @@ func TestQueryKnowledgeGraphRejectsChangedGenerationBeforeOutput(t *testing.T) {
 func TestQueryKnowledgeGraphRejectsStaleSecondChunkOfSameDocument(t *testing.T) {
 	tool, svc, _, db, kb := graphLeaseFixture(t)
 	staleMetadata := kb.results[0].Metadata
-	svc.docs["doc-1"].Metadata = types.JSON(`{"datasource_id":"ds-1","external_id":"nextcloud:instance:replacement","nextcloud_file_id":"41"}`)
+	svc.docs["doc-1"].Metadata = types.JSON(
+		`{"datasource_id":"ds-1","external_id":"nextcloud:instance:replacement","nextcloud_file_id":"41"}`,
+	)
 	kb.results[0].Metadata = svc.docs["doc-1"].GetMetadata()
 	kb.results = append(kb.results, &types.SearchResult{
 		ID: "stale-chunk", KnowledgeID: "doc-1", KnowledgeBaseID: "kb-1",
 		KnowledgeTitle: "Engine Manual", KnowledgeChannel: types.ConnectorTypeNextcloud,
 		Metadata: staleMetadata, Content: "stale graph passage", Score: 0.5,
 	})
-	result, err := tool.Execute(context.Background(), json.RawMessage(`{"knowledge_base_ids":["kb-1"],"query":"engine"}`))
+	result, err := tool.Execute(
+		context.Background(),
+		json.RawMessage(`{"knowledge_base_ids":["kb-1"],"query":"engine"}`),
+	)
 	require.Error(t, err)
 	require.False(t, result.Success)
 	require.NotContains(t, result.Output, "stale graph passage")
@@ -330,15 +357,20 @@ func TestQueryKnowledgeGraphRejectsStaleSecondChunkOfSameDocument(t *testing.T) 
 
 func TestQueryKnowledgeGraphRejectsTagRevokedAfterInitialFilter(t *testing.T) {
 	tool, svc, _, db, _ := graphLeaseFixture(t)
-	tool.searchTargets = types.SearchTargets{{Type: types.SearchTargetTypeKnowledge,
-		KnowledgeBaseID: "kb-1", TenantID: 7, TagIDs: []string{"tag-1"}}}
+	tool.searchTargets = types.SearchTargets{{
+		Type:            types.SearchTargetTypeKnowledge,
+		KnowledgeBaseID: "kb-1", TenantID: 7, TagIDs: []string{"tag-1"},
+	}}
 	svc.tags = map[string][]*types.KnowledgeTag{
 		"doc-1": {{ID: "tag-1"}},
 	}
 	// The graph backend's first tag check succeeds. The final document reload
 	// runs after that filter and sees the tag removed before model output.
 	svc.onGet = func(context.Context) { delete(svc.tags, "doc-1") }
-	result, err := tool.Execute(context.Background(), json.RawMessage(`{"knowledge_base_ids":["kb-1"],"query":"engine"}`))
+	result, err := tool.Execute(
+		context.Background(),
+		json.RawMessage(`{"knowledge_base_ids":["kb-1"],"query":"engine"}`),
+	)
 	require.Error(t, err)
 	require.False(t, result.Success)
 	require.NotContains(t, result.Output, "classified graph passage")
@@ -350,7 +382,10 @@ func TestQueryKnowledgeGraphRejectsTagRevokedAfterInitialFilter(t *testing.T) {
 
 func TestQueryKnowledgeGraphRejectsOutOfScopeKBWithoutLease(t *testing.T) {
 	tool, _, _, db, _ := graphLeaseFixture(t)
-	result, err := tool.Execute(context.Background(), json.RawMessage(`{"knowledge_base_ids":["kb-outside"],"query":"engine"}`))
+	result, err := tool.Execute(
+		context.Background(),
+		json.RawMessage(`{"knowledge_base_ids":["kb-outside"],"query":"engine"}`),
+	)
 	require.Error(t, err)
 	require.False(t, result.Success)
 	var count int64
@@ -365,7 +400,10 @@ func TestQueryKnowledgeGraphRejectsNextcloudWithoutLeaseProvider(t *testing.T) {
 	kb.results[0].KnowledgeChannel = ""
 	kb.results[0].Metadata = nil
 	tool.scopeKnowledgeService = nil
-	result, err := tool.Execute(context.Background(), json.RawMessage(`{"knowledge_base_ids":["kb-1"],"query":"engine"}`))
+	result, err := tool.Execute(
+		context.Background(),
+		json.RawMessage(`{"knowledge_base_ids":["kb-1"],"query":"engine"}`),
+	)
 	require.Error(t, err)
 	require.False(t, result.Success)
 	require.NotContains(t, result.Output, "classified graph passage")
@@ -381,7 +419,10 @@ func TestQueryKnowledgeGraphUnscopedOrdinaryResultsRemainReadable(t *testing.T) 
 	svc.docs["doc-1"].Metadata = nil
 	kb.results[0].KnowledgeChannel = ""
 	kb.results[0].Metadata = nil
-	result, err := tool.Execute(context.Background(), json.RawMessage(`{"knowledge_base_ids":["kb-1"],"query":"engine"}`))
+	result, err := tool.Execute(
+		context.Background(),
+		json.RawMessage(`{"knowledge_base_ids":["kb-1"],"query":"engine"}`),
+	)
 	require.NoError(t, err)
 	require.True(t, result.Success)
 	require.Contains(t, result.Output, "classified graph passage")
@@ -406,7 +447,10 @@ func TestQueryKnowledgeGraphLegacyUnscopedNilService(t *testing.T) {
 				kb.results[0].KnowledgeChannel = ""
 				kb.results[0].Metadata = nil
 			}
-			result, err := tool.Execute(context.Background(), json.RawMessage(`{"knowledge_base_ids":["kb-1"],"query":"engine"}`))
+			result, err := tool.Execute(
+				context.Background(),
+				json.RawMessage(`{"knowledge_base_ids":["kb-1"],"query":"engine"}`),
+			)
 			require.NoError(t, err)
 			require.True(t, result.Success)
 		})
@@ -428,7 +472,10 @@ func TestQueryKnowledgeGraphNonProviderServiceRejectsOnlySourceRows(t *testing.T
 				kb.results[0].KnowledgeChannel = ""
 				kb.results[0].Metadata = nil
 			}
-			result, err := tool.Execute(context.Background(), json.RawMessage(`{"knowledge_base_ids":["kb-1"],"query":"engine"}`))
+			result, err := tool.Execute(
+				context.Background(),
+				json.RawMessage(`{"knowledge_base_ids":["kb-1"],"query":"engine"}`),
+			)
 			if source {
 				require.Error(t, err)
 				require.False(t, result.Success)

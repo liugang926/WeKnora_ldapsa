@@ -12,7 +12,12 @@ import (
 // Hold the selected KB through capture, predicate evaluation and actual HTTP
 // output. The original-input/current-source guards still authorize all data;
 // a lease prevents physical GC and never supplies a read permission.
-func beginCollectionHTTPRead(c *gin.Context, ctx context.Context, store *repository.NextcloudContentLeaseStore, kbID string) (context.Context, func(), error) {
+func beginCollectionHTTPRead(
+	c *gin.Context,
+	ctx context.Context,
+	store *repository.NextcloudContentLeaseStore,
+	kbID string,
+) (context.Context, func(), error) {
 	if store == nil {
 		return ctx, nil, errors.NewServiceUnavailableError("Collection content lease store unavailable")
 	}

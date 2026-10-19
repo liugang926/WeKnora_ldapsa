@@ -289,7 +289,12 @@ func (s *SessionForkService) Fork(
 	copied := copyMessagesInto(newSession.ID, history)
 	if material != nil {
 		if err = checkOriginal(); err == nil {
-			err = s.sessions.(forkMaterialSessionStore).CreateForkedFromMaterial(workCtx, newSession, copied, material.snapshot)
+			err = s.sessions.(forkMaterialSessionStore).CreateForkedFromMaterial(
+				workCtx,
+				newSession,
+				copied,
+				material.snapshot,
+			)
 		}
 	} else {
 		// Only the explicit algorithm fixture port can reach this branch.

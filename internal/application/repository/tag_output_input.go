@@ -3,17 +3,20 @@ package repository
 import (
 	"context"
 	"encoding/json"
+
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	"gorm.io/gorm"
 )
 
-type tagCommittedOutputKey struct{}
-type tagCommittedOutput struct {
-	snapshot  *types.TagOutputInputSnapshot
-	err       error
-	committed bool
-}
+type (
+	tagCommittedOutputKey struct{}
+	tagCommittedOutput    struct {
+		snapshot  *types.TagOutputInputSnapshot
+		err       error
+		committed bool
+	}
+)
 
 // A request-local private slot is populated only from the actual writer SQL
 // transaction and published only after commit. Partial edits cannot certify
@@ -21,6 +24,7 @@ type tagCommittedOutput struct {
 func WithTagCommittedOutput(ctx context.Context) context.Context {
 	return context.WithValue(ctx, tagCommittedOutputKey{}, &tagCommittedOutput{})
 }
+
 func TagCommittedOutput(ctx context.Context) (*types.TagOutputInputSnapshot, error) {
 	slot, ok := ctx.Value(tagCommittedOutputKey{}).(*tagCommittedOutput)
 	if !ok || !slot.committed {
@@ -31,6 +35,7 @@ func TagCommittedOutput(ctx context.Context) (*types.TagOutputInputSnapshot, err
 	}
 	return cloneTagOutput(slot.snapshot)
 }
+
 func cloneTagOutput[T any](in T) (T, error) {
 	var out T
 	b, e := json.Marshal(in)
@@ -40,6 +45,7 @@ func cloneTagOutput[T any](in T) (T, error) {
 	e = json.Unmarshal(b, &out)
 	return out, e
 }
+
 func tagOutputEqual(a, b any) bool {
 	x, e := json.Marshal(a)
 	if e != nil {
@@ -62,7 +68,14 @@ func captureTagFields(tx *gorm.DB, tags []*types.KnowledgeTag) ([]*types.Knowled
 	proofs := []*types.KnowledgeCollectionAuxiliaryProof{}
 	for _, tag := range tags {
 		for _, field := range []string{"name", "color", "sort_order"} {
-			proof, err := readKnowledgeDisplayOrigin(tx, "tag-"+field, tag.ID, tag.TenantID, tag.KnowledgeBaseID, tagDisplayFieldValue(tag, field))
+			proof, err := readKnowledgeDisplayOrigin(
+				tx,
+				"tag-"+field,
+				tag.ID,
+				tag.TenantID,
+				tag.KnowledgeBaseID,
+				tagDisplayFieldValue(tag, field),
+			)
 			if err != nil {
 				return nil, err
 			}
@@ -77,12 +90,30 @@ func captureTagFields(tx *gorm.DB, tags []*types.KnowledgeTag) ([]*types.Knowled
 			return nil, err
 		}
 		lineage, _ := types.NewCompleteSourceLineage()
-		proofs = append(proofs, &types.KnowledgeCollectionAuxiliaryProof{Kind: "tag-envelope", ID: tag.ID, TenantID: tag.TenantID, KnowledgeBaseID: tag.KnowledgeBaseID, Revision: revision, Digest: digest, SourceLineage: lineage})
+		proofs = append(
+			proofs,
+			&types.KnowledgeCollectionAuxiliaryProof{
+				Kind:            "tag-envelope",
+				ID:              tag.ID,
+				TenantID:        tag.TenantID,
+				KnowledgeBaseID: tag.KnowledgeBaseID,
+				Revision:        revision,
+				Digest:          digest,
+				SourceLineage:   lineage,
+			},
+		)
 	}
 	return proofs, nil
 }
-func (s *KnowledgeInputProvenanceStore) captureTagOutputInTx(tx *gorm.DB, req types.TagOutputReadRequest) (*types.TagOutputInputSnapshot, error) {
-	if err := s.checkFAQInputReadPlanInTx(tx, types.FAQInputReadRequest{TenantID: req.TenantID, KnowledgeBaseID: req.KnowledgeBaseID, AllEntries: true}); err != nil {
+
+func (s *KnowledgeInputProvenanceStore) captureTagOutputInTx(
+	tx *gorm.DB,
+	req types.TagOutputReadRequest,
+) (*types.TagOutputInputSnapshot, error) {
+	if err := s.checkFAQInputReadPlanInTx(
+		tx,
+		types.FAQInputReadRequest{TenantID: req.TenantID, KnowledgeBaseID: req.KnowledgeBaseID, AllEntries: true},
+	); err != nil {
 		return nil, err
 	}
 	if req.TenantID == 0 || req.KnowledgeBaseID == "" {
@@ -92,16 +123,27 @@ func (s *KnowledgeInputProvenanceStore) captureTagOutputInTx(tx *gorm.DB, req ty
 	if err := tx.Where("tenant_id=? AND id=?", req.TenantID, req.KnowledgeBaseID).Take(&kb).Error; err != nil {
 		return nil, err
 	}
-	result := &types.TagOutputInputSnapshot{Request: req, Tags: []*types.KnowledgeTag{}, TagProofs: []*types.KnowledgeCollectionAuxiliaryProof{}, Knowledge: []*types.KnowledgeCollectionCandidate{}, Chunks: []*types.TagOutputChunkCandidate{}}
+	result := &types.TagOutputInputSnapshot{
+		Request:   req,
+		Tags:      []*types.KnowledgeTag{},
+		TagProofs: []*types.KnowledgeCollectionAuxiliaryProof{},
+		Knowledge: []*types.KnowledgeCollectionCandidate{},
+		Chunks:    []*types.TagOutputChunkCandidate{},
+	}
 	if req.TagID != "" {
 		var tag types.KnowledgeTag
-		if err := tx.Where("tenant_id=? AND knowledge_base_id=? AND id=?", req.TenantID, req.KnowledgeBaseID, req.TagID).Take(&tag).Error; err != nil {
+		if err := tx.Where("tenant_id=? AND knowledge_base_id=? AND id=?", req.TenantID, req.KnowledgeBaseID, req.TagID).
+			Take(&tag).
+			Error; err != nil {
 			return nil, err
 		}
 		result.Tags = append(result.Tags, &tag)
 	} else {
 		var version struct{ Revision uint64 }
-		if err := tx.Table("knowledge_tag_statistics_scope_versions").Where("tenant_id=? AND knowledge_base_id=?", req.TenantID, req.KnowledgeBaseID).Take(&version).Error; err != nil {
+		if err := tx.Table("knowledge_tag_statistics_scope_versions").
+			Where("tenant_id=? AND knowledge_base_id=?", req.TenantID, req.KnowledgeBaseID).
+			Take(&version).
+			Error; err != nil {
 			return nil, err
 		}
 		if version.Revision == 0 {
@@ -136,7 +178,9 @@ func (s *KnowledgeInputProvenanceStore) captureTagOutputInTx(tx *gorm.DB, req ty
 	// Actual count SQL joins living knowledge membership and all living tagged
 	// chunks (including FAQ). Unrelated untagged rows are never authenticated as
 	// count producers. Keyset batches impose no whole-KB or chunk-count ceiling.
-	tagsQuery := tx.Model(&types.KnowledgeTag{}).Select("id").Where("tenant_id=? AND knowledge_base_id=?", req.TenantID, req.KnowledgeBaseID)
+	tagsQuery := tx.Model(&types.KnowledgeTag{}).
+		Select("id").
+		Where("tenant_id=? AND knowledge_base_id=?", req.TenantID, req.KnowledgeBaseID)
 	byKnowledge := map[string]*types.KnowledgeCollectionCandidate{}
 	last := ""
 	for {
@@ -170,7 +214,12 @@ func (s *KnowledgeInputProvenanceStore) captureTagOutputInTx(tx *gorm.DB, req ty
 	last = ""
 	for {
 		var rows []*types.Chunk
-		q := tx.Where("tenant_id=? AND knowledge_base_id=? AND tag_id IN (?)", req.TenantID, req.KnowledgeBaseID, tagsQuery)
+		q := tx.Where(
+			"tenant_id=? AND knowledge_base_id=? AND tag_id IN (?)",
+			req.TenantID,
+			req.KnowledgeBaseID,
+			tagsQuery,
+		)
 		if last != "" {
 			q = q.Where("id > ?", last)
 		}
@@ -207,7 +256,16 @@ func (s *KnowledgeInputProvenanceStore) captureTagOutputInTx(tx *gorm.DB, req ty
 			if err != nil {
 				return nil, err
 			}
-			result.Chunks = append(result.Chunks, &types.TagOutputChunkCandidate{Chunk: chunk, Revision: revision, Digest: digest, SourceLineage: lineage, OriginalKnowledgeInputs: parents})
+			result.Chunks = append(
+				result.Chunks,
+				&types.TagOutputChunkCandidate{
+					Chunk:                   chunk,
+					Revision:                revision,
+					Digest:                  digest,
+					SourceLineage:           lineage,
+					OriginalKnowledgeInputs: parents,
+				},
+			)
 		}
 		if len(rows) < 256 {
 			break
@@ -218,15 +276,31 @@ func (s *KnowledgeInputProvenanceStore) captureTagOutputInTx(tx *gorm.DB, req ty
 	for _, candidate := range result.Knowledge {
 		knowledge = append(knowledge, candidate.Knowledge)
 	}
-	result.Auxiliary, err = captureKnowledgeCollectionAuxiliaryWithNames(tx, []types.KnowledgeSearchScope{{TenantID: req.TenantID, KBID: req.KnowledgeBaseID}}, knowledge, map[string]bool{})
+	result.Auxiliary, err = captureKnowledgeCollectionAuxiliaryWithNames(
+		tx,
+		[]types.KnowledgeSearchScope{{TenantID: req.TenantID, KBID: req.KnowledgeBaseID}},
+		knowledge,
+		map[string]bool{},
+	)
 	return result, err
 }
-func (s *KnowledgeInputProvenanceStore) CaptureTagOutputInputs(ctx context.Context, req types.TagOutputReadRequest) (*types.TagOutputInputSnapshot, error) {
+
+func (s *KnowledgeInputProvenanceStore) CaptureTagOutputInputs(
+	ctx context.Context,
+	req types.TagOutputReadRequest,
+) (*types.TagOutputInputSnapshot, error) {
 	var result *types.TagOutputInputSnapshot
-	err := s.collectionTransaction(ctx, func(tx *gorm.DB) error { var err error; result, err = s.captureTagOutputInTx(tx, req); return err })
+	err := s.collectionTransaction(
+		ctx,
+		func(tx *gorm.DB) error { var err error; result, err = s.captureTagOutputInTx(tx, req); return err },
+	)
 	return result, err
 }
-func (s *KnowledgeInputProvenanceStore) recheckTagOutputInTx(tx *gorm.DB, snapshot *types.TagOutputInputSnapshot) error {
+
+func (s *KnowledgeInputProvenanceStore) recheckTagOutputInTx(
+	tx *gorm.DB,
+	snapshot *types.TagOutputInputSnapshot,
+) error {
 	if snapshot == nil {
 		return types.ErrSourceLineageUnknown
 	}
@@ -239,7 +313,13 @@ func (s *KnowledgeInputProvenanceStore) recheckTagOutputInTx(tx *gorm.DB, snapsh
 	}
 	return nil
 }
-func selectTagOutputInTx(ctx context.Context, tx *gorm.DB, snapshot *types.TagOutputInputSnapshot, req types.TagOutputSelectionRequest) (*types.TagOutputSelection, error) {
+
+func selectTagOutputInTx(
+	ctx context.Context,
+	tx *gorm.DB,
+	snapshot *types.TagOutputInputSnapshot,
+	req types.TagOutputSelectionRequest,
+) (*types.TagOutputSelection, error) {
 	if snapshot.Request.TagID != "" {
 		return nil, types.ErrSourceLineageUnknown
 	}
@@ -260,11 +340,23 @@ func selectTagOutputInTx(ctx context.Context, tx *gorm.DB, snapshot *types.TagOu
 	result := &types.TagOutputSelection{Request: req, Tags: []*types.KnowledgeTagWithStats{}, Total: total}
 	for _, tag := range tags {
 		c := counts[tag.ID]
-		result.Tags = append(result.Tags, &types.KnowledgeTagWithStats{KnowledgeTag: *tag, KnowledgeCount: c.KnowledgeCount, ChunkCount: c.ChunkCount})
+		result.Tags = append(
+			result.Tags,
+			&types.KnowledgeTagWithStats{
+				KnowledgeTag:   *tag,
+				KnowledgeCount: c.KnowledgeCount,
+				ChunkCount:     c.ChunkCount,
+			},
+		)
 	}
 	return result, nil
 }
-func (s *KnowledgeInputProvenanceStore) SelectTagOutputInputs(ctx context.Context, snapshot *types.TagOutputInputSnapshot, req types.TagOutputSelectionRequest) (*types.TagOutputSelection, error) {
+
+func (s *KnowledgeInputProvenanceStore) SelectTagOutputInputs(
+	ctx context.Context,
+	snapshot *types.TagOutputInputSnapshot,
+	req types.TagOutputSelectionRequest,
+) (*types.TagOutputSelection, error) {
 	var result *types.TagOutputSelection
 	err := s.collectionTransaction(ctx, func(tx *gorm.DB) error {
 		if err := s.recheckTagOutputInTx(tx, snapshot); err != nil {
@@ -276,7 +368,12 @@ func (s *KnowledgeInputProvenanceStore) SelectTagOutputInputs(ctx context.Contex
 	})
 	return result, err
 }
-func (s *KnowledgeInputProvenanceStore) RecheckTagOutputInputs(ctx context.Context, snapshot *types.TagOutputInputSnapshot, selection *types.TagOutputSelection) error {
+
+func (s *KnowledgeInputProvenanceStore) RecheckTagOutputInputs(
+	ctx context.Context,
+	snapshot *types.TagOutputInputSnapshot,
+	selection *types.TagOutputSelection,
+) error {
 	return s.collectionTransaction(ctx, func(tx *gorm.DB) error {
 		if err := s.recheckTagOutputInTx(tx, snapshot); err != nil {
 			return err

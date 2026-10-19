@@ -57,9 +57,12 @@ func (s SourceIdentity) Validate() error {
 		s.Revision == 0 || s.Revision > math.MaxInt64 {
 		return fmt.Errorf("%w: source provider, tenant or revision", ErrSourceLineageInvalid)
 	}
-	for _, id := range []string{s.KnowledgeBaseID, s.DataSourceID, s.PairOperationID,
-		s.InstanceID, s.BindingID, s.FileID, s.ExternalID, s.KnowledgeID} {
-		if id == "" || strings.TrimSpace(id) != id || !utf8.ValidString(id) || len(id) > 512 || strings.ContainsAny(id, "\x00\r\n") {
+	for _, id := range []string{
+		s.KnowledgeBaseID, s.DataSourceID, s.PairOperationID,
+		s.InstanceID, s.BindingID, s.FileID, s.ExternalID, s.KnowledgeID,
+	} {
+		if id == "" || strings.TrimSpace(id) != id || !utf8.ValidString(id) || len(id) > 512 ||
+			strings.ContainsAny(id, "\x00\r\n") {
 			return fmt.Errorf("%w: source identity", ErrSourceLineageInvalid)
 		}
 	}
@@ -68,7 +71,8 @@ func (s SourceIdentity) Validate() error {
 		s.ExternalID != "nextcloud:"+s.InstanceID+":"+s.FileID {
 		return fmt.Errorf("%w: source file identity", ErrSourceLineageInvalid)
 	}
-	if strings.TrimSpace(s.ETag) == "" || !utf8.ValidString(s.ETag) || len(s.ETag) > 4096 || strings.ContainsAny(s.ETag, "\x00\r\n") {
+	if strings.TrimSpace(s.ETag) == "" || !utf8.ValidString(s.ETag) || len(s.ETag) > 4096 ||
+		strings.ContainsAny(s.ETag, "\x00\r\n") {
 		return fmt.Errorf("%w: original ETag", ErrSourceLineageInvalid)
 	}
 	return nil
@@ -95,8 +99,10 @@ func NewCompleteSourceLineage(sources ...SourceIdentity) (*SourceLineage, error)
 	if len(sources) > SourceLineageMaxSources {
 		return UnknownSourceLineage(), ErrSourceLineageLimit
 	}
-	lineage := &SourceLineage{Version: SourceLineageVersion, State: SourceLineageComplete,
-		Sources: append([]SourceIdentity{}, sources...)}
+	lineage := &SourceLineage{
+		Version: SourceLineageVersion, State: SourceLineageComplete,
+		Sources: append([]SourceIdentity{}, sources...),
+	}
 	return UnionSourceLineage(lineage)
 }
 

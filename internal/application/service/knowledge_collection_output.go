@@ -15,7 +15,10 @@ type KnowledgeCollectionOutputAuthorizer struct {
 	checker knowledgeOutputLineageChecker
 }
 
-func NewKnowledgeCollectionOutputAuthorizer(store *repository.KnowledgeInputProvenanceStore, guard *access.NextcloudSourceLineageGuard) *KnowledgeCollectionOutputAuthorizer {
+func NewKnowledgeCollectionOutputAuthorizer(
+	store *repository.KnowledgeInputProvenanceStore,
+	guard *access.NextcloudSourceLineageGuard,
+) *KnowledgeCollectionOutputAuthorizer {
 	return &KnowledgeCollectionOutputAuthorizer{reader: store, checker: guard}
 }
 
@@ -36,7 +39,11 @@ func cloneCollection[T any](value T) (T, error) {
 	return copy, err
 }
 
-func (a *KnowledgeCollectionOutputAuthorizer) Begin(ctx context.Context, request types.KnowledgeCollectionReadRequest, scope access.LineageReadScope) (*KnowledgeCollectionOutputGuard, error) {
+func (a *KnowledgeCollectionOutputAuthorizer) Begin(
+	ctx context.Context,
+	request types.KnowledgeCollectionReadRequest,
+	scope access.LineageReadScope,
+) (*KnowledgeCollectionOutputGuard, error) {
 	if a == nil || a.reader == nil || a.checker == nil {
 		return nil, access.ErrNextcloudPublicationUnavailable
 	}
@@ -50,7 +57,14 @@ func (a *KnowledgeCollectionOutputAuthorizer) Begin(ctx context.Context, request
 	}
 	scope.Targets = types.SearchTargets{}
 	for _, checkpoint := range snapshot.Scopes {
-		scope.Targets = append(scope.Targets, &types.SearchTarget{Type: types.SearchTargetTypeKnowledgeBase, TenantID: checkpoint.Scope.TenantID, KnowledgeBaseID: checkpoint.Scope.KBID})
+		scope.Targets = append(
+			scope.Targets,
+			&types.SearchTarget{
+				Type:            types.SearchTargetTypeKnowledgeBase,
+				TenantID:        checkpoint.Scope.TenantID,
+				KnowledgeBaseID: checkpoint.Scope.KBID,
+			},
+		)
 	}
 	scope, err = cloneCollection(scope)
 	if err != nil {
@@ -144,7 +158,10 @@ func (g *KnowledgeCollectionOutputGuard) authorize(ctx context.Context) error {
 	return g.authorizer.checker.Check(ctx, lineage, scope)
 }
 
-func (g *KnowledgeCollectionOutputGuard) Select(ctx context.Context, request types.KnowledgeCollectionSelectionRequest) (*types.KnowledgeCollectionSelection, error) {
+func (g *KnowledgeCollectionOutputGuard) Select(
+	ctx context.Context,
+	request types.KnowledgeCollectionSelectionRequest,
+) (*types.KnowledgeCollectionSelection, error) {
 	if g == nil || g.authorizer == nil || g.selection != nil {
 		return nil, types.ErrSourceLineageUnknown
 	}
@@ -167,7 +184,10 @@ func (g *KnowledgeCollectionOutputGuard) Select(ctx context.Context, request typ
 	return selection, nil
 }
 
-func (g *KnowledgeCollectionOutputGuard) Check(ctx context.Context, selection *types.KnowledgeCollectionSelection) error {
+func (g *KnowledgeCollectionOutputGuard) Check(
+	ctx context.Context,
+	selection *types.KnowledgeCollectionSelection,
+) error {
 	if g == nil || g.authorizer == nil {
 		return access.ErrNextcloudPublicationUnavailable
 	}
@@ -212,7 +232,10 @@ func (g *KnowledgeCollectionOutputGuard) Check(ctx context.Context, selection *t
 	return checkBody()
 }
 
-func (a *KnowledgeCollectionOutputAuthorizer) FAQResultReadPlan(ctx context.Context, scopes []types.KnowledgeSearchScope) (*types.FAQImportOutputReadSetPlan, error) {
+func (a *KnowledgeCollectionOutputAuthorizer) FAQResultReadPlan(
+	ctx context.Context,
+	scopes []types.KnowledgeSearchScope,
+) (*types.FAQImportOutputReadSetPlan, error) {
 	if a == nil {
 		return nil, access.ErrNextcloudPublicationUnavailable
 	}

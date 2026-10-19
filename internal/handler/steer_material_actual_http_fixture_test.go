@@ -35,9 +35,11 @@ import (
 	"gorm.io/gorm"
 )
 
-const actualSteerHTTPPrefix = "actual-steer-original-http"
-const actualSteerHTTPQuery = "original steer guidance\nsecond original line\nthird original line"
-const actualSteerHTTPAnswer = "ACTUAL STEER FINAL ANSWER"
+const (
+	actualSteerHTTPPrefix = "actual-steer-original-http"
+	actualSteerHTTPQuery  = "original steer guidance\nsecond original line\nthird original line"
+	actualSteerHTTPAnswer = "ACTUAL STEER FINAL ANSWER"
+)
 
 // Embedding this actual public service port preserves native live publication
 // and original-body reads while the observation hook places a revocation at
@@ -56,12 +58,31 @@ type actualSteerHTTPPort interface {
 	CheckNativeLiveFramePublication(context.Context, *types.Message, *types.SourceLineage) error
 	BeginNativeLiveFrameSources(context.Context, *types.Message, *types.SourceLineage) (func() error, func(), error)
 	AdmitActualSteerInput(context.Context, *types.SteerAuthoredRequest) (*types.SteerMaterialInput, error)
-	BeginSteerMaterialRead(context.Context, *types.SteerMaterialRequest) (*types.SteerMaterialSnapshot, func() error, func(), error)
+	BeginSteerMaterialRead(
+		context.Context,
+		*types.SteerMaterialRequest,
+	) (*types.SteerMaterialSnapshot, func() error, func(), error)
 	ApplyActualSteerControl(context.Context, *types.SteerControlRequest) (*types.SteerCandidateControl, error)
 	CheckActualSteerControl(context.Context, *types.SteerCandidateControl) error
-	ConsumeActualSteerIntoMessage(context.Context, *types.SteerMaterialInput, string, string, string) (*types.Message, *types.SteerConsumptionProof, func() error, func(), error)
-	ConsumeActualSteerFollowUpIntoMessage(context.Context, *types.SteerMaterialInput, string, string, string) (*types.Message, *types.SteerConsumptionProof, func() error, func(), error)
-	CreateActualSteerFollowUpAssistant(context.Context, *types.SteerMaterialInput, *types.Message) (*types.Message, error)
+	ConsumeActualSteerIntoMessage(
+		context.Context,
+		*types.SteerMaterialInput,
+		string,
+		string,
+		string,
+	) (*types.Message, *types.SteerConsumptionProof, func() error, func(), error)
+	ConsumeActualSteerFollowUpIntoMessage(
+		context.Context,
+		*types.SteerMaterialInput,
+		string,
+		string,
+		string,
+	) (*types.Message, *types.SteerConsumptionProof, func() error, func(), error)
+	CreateActualSteerFollowUpAssistant(
+		context.Context,
+		*types.SteerMaterialInput,
+		*types.Message,
+	) (*types.Message, error)
 }
 
 type actualSteerHTTPObservedMessages struct {
@@ -76,19 +97,33 @@ type actualSteerHTTPObservedMessages struct {
 	consumes        atomic.Int64
 }
 
-func (m *actualSteerHTTPObservedMessages) ConsumeActualSteerIntoMessage(ctx context.Context, input *types.SteerMaterialInput, run, generation, request string) (*types.Message, *types.SteerConsumptionProof, func() error, func(), error) {
+func (m *actualSteerHTTPObservedMessages) ConsumeActualSteerIntoMessage(
+	ctx context.Context,
+	input *types.SteerMaterialInput,
+	run, generation, request string,
+) (*types.Message, *types.SteerConsumptionProof, func() error, func(), error) {
 	m.consumes.Add(1)
 	if m.beforeConsume != nil {
 		m.once.Do(func() { m.beforeConsume(input) })
 	}
-	message, proof, check, close, err := m.actualSteerHTTPPort.ConsumeActualSteerIntoMessage(ctx, input, run, generation, request)
+	message, proof, check, close, err := m.actualSteerHTTPPort.ConsumeActualSteerIntoMessage(
+		ctx,
+		input,
+		run,
+		generation,
+		request,
+	)
 	if err == nil && m.afterConsume != nil {
 		m.once.Do(func() { m.afterConsume(message, proof) })
 	}
 	return message, proof, check, close, err
 }
 
-func (m *actualSteerHTTPObservedMessages) ConsumeActualSteerFollowUpIntoMessage(ctx context.Context, input *types.SteerMaterialInput, run, generation, request string) (*types.Message, *types.SteerConsumptionProof, func() error, func(), error) {
+func (m *actualSteerHTTPObservedMessages) ConsumeActualSteerFollowUpIntoMessage(
+	ctx context.Context,
+	input *types.SteerMaterialInput,
+	run, generation, request string,
+) (*types.Message, *types.SteerConsumptionProof, func() error, func(), error) {
 	m.consumes.Add(1)
 	if m.beforeConsume != nil {
 		m.once.Do(func() { m.beforeConsume(input) })
@@ -96,7 +131,13 @@ func (m *actualSteerHTTPObservedMessages) ConsumeActualSteerFollowUpIntoMessage(
 	if m.consumeContext != nil {
 		ctx = m.consumeContext(ctx)
 	}
-	message, proof, check, close, err := m.actualSteerHTTPPort.ConsumeActualSteerFollowUpIntoMessage(ctx, input, run, generation, request)
+	message, proof, check, close, err := m.actualSteerHTTPPort.ConsumeActualSteerFollowUpIntoMessage(
+		ctx,
+		input,
+		run,
+		generation,
+		request,
+	)
 	if err != nil {
 		m.t.Logf("actual followup consume refused: %v", err)
 	}
@@ -106,7 +147,11 @@ func (m *actualSteerHTTPObservedMessages) ConsumeActualSteerFollowUpIntoMessage(
 	return message, proof, check, close, err
 }
 
-func (m *actualSteerHTTPObservedMessages) CreateActualSteerFollowUpAssistant(ctx context.Context, input *types.SteerMaterialInput, message *types.Message) (*types.Message, error) {
+func (m *actualSteerHTTPObservedMessages) CreateActualSteerFollowUpAssistant(
+	ctx context.Context,
+	input *types.SteerMaterialInput,
+	message *types.Message,
+) (*types.Message, error) {
 	if m.beforeAssistant != nil {
 		m.beforeAssistant(input, message)
 	}
@@ -139,7 +184,12 @@ func (m *actualSteerHTTPModel) GetModelID() string   { return "actual-http-tail-
 func (m *actualSteerHTTPModel) Chat(context.Context, []chat.Message, *chat.ChatOptions) (*types.ChatResponse, error) {
 	return nil, fmt.Errorf("the actual steer HTTP fixture uses only the local Agent streaming model")
 }
-func (m *actualSteerHTTPModel) ChatStream(ctx context.Context, input []chat.Message, _ *chat.ChatOptions) (<-chan types.StreamResponse, error) {
+
+func (m *actualSteerHTTPModel) ChatStream(
+	ctx context.Context,
+	input []chat.Message,
+	_ *chat.ChatOptions,
+) (<-chan types.StreamResponse, error) {
 	call := m.calls.Add(1)
 	if err := service.CheckMessageMaterialOutputBoundary(ctx); err != nil {
 		return nil, err
@@ -149,14 +199,25 @@ func (m *actualSteerHTTPModel) ChatStream(ctx context.Context, input []chat.Mess
 	for _, item := range input {
 		if item.Content == m.f.parent.Content {
 			parentSeen = true
-			require.Equal(m.t, m.f.parent.SourceLineage, item.SourceLineage, "saved history retains its actual original source envelope")
+			require.Equal(
+				m.t,
+				m.f.parent.SourceLineage,
+				item.SourceLineage,
+				"saved history retains its actual original source envelope",
+			)
 		}
 		if strings.Contains(item.Content, "original steer guidance") {
 			steerSeen = true
 			if m.followUp {
 				envelope, authored, ok := strings.Cut(item.Content, "</runtime_context>\n\n")
 				require.True(m.t, ok, "the actual query uses the production runtime scaffold")
-				require.Regexp(m.t, `^<runtime_context scope="this_turn">\n  <current_time>[0-9]{4}-[0-9]{2}-[0-9]{2}</current_time>\n  <session>`+regexp.QuoteMeta(m.f.parent.SessionID)+`</session>\n$`, envelope)
+				require.Regexp(
+					m.t,
+					`^<runtime_context scope="this_turn">\n  <current_time>[0-9]{4}-[0-9]{2}-[0-9]{2}</current_time>\n  <session>`+regexp.QuoteMeta(
+						m.f.parent.SessionID,
+					)+`</session>\n$`,
+					envelope,
+				)
 				require.Equal(m.t, actualSteerHTTPQuery, authored)
 			} else {
 				require.Equal(m.t, types.SteerMessageContent(actualSteerHTTPQuery), item.Content)
@@ -167,7 +228,12 @@ func (m *actualSteerHTTPModel) ChatStream(ctx context.Context, input []chat.Mess
 	}
 	if m.followUp && !parentSeen {
 		for _, item := range input {
-			m.t.Logf("actual successor model item role=%s bytes=%d source=%v", item.Role, len(item.Content), item.SourceLineage)
+			m.t.Logf(
+				"actual successor model item role=%s bytes=%d source=%v",
+				item.Role,
+				len(item.Content),
+				item.SourceLineage,
+			)
 		}
 	}
 	require.True(m.t, parentSeen, "actual Agent rounds preserve admitted saved history")
@@ -219,7 +285,12 @@ type actualSteerHTTPObservedSessions struct {
 	titleCalls *atomic.Int64
 }
 
-func (s *actualSteerHTTPObservedSessions) GenerateTitleAsync(ctx context.Context, session *types.Session, query, modelID string, bus *event.EventBus) {
+func (s *actualSteerHTTPObservedSessions) GenerateTitleAsync(
+	ctx context.Context,
+	session *types.Session,
+	query, modelID string,
+	bus *event.EventBus,
+) {
 	s.titleCalls.Add(1)
 	s.actualSteerHTTPSessionPort.GenerateTitleAsync(ctx, session, query, modelID, bus)
 }
@@ -239,7 +310,8 @@ type actualSteerHTTPWriter struct {
 }
 
 func (w *actualSteerHTTPWriter) Write(body []byte) (int, error) {
-	w.lastDerived = bytes.Contains(body, []byte(actualSteerHTTPAnswer)) || bytes.Contains(body, []byte(`"response_type":"complete"`))
+	w.lastDerived = bytes.Contains(body, []byte(actualSteerHTTPAnswer)) ||
+		bytes.Contains(body, []byte(`"response_type":"complete"`))
 	if w.lastDerived {
 		assertActualSteerBodyLease(w.t, w.f.db, w.steerID, true)
 		if w.f.source != "" {
@@ -254,6 +326,7 @@ func (w *actualSteerHTTPWriter) Write(body []byte) (int, error) {
 	}
 	return w.ResponseRecorder.Write(body)
 }
+
 func (w *actualSteerHTTPWriter) Flush() {
 	if w.lastDerived {
 		assertActualSteerBodyLease(w.t, w.f.db, w.steerID, true)
@@ -266,12 +339,18 @@ func assertActualSteerBodyLease(t *testing.T, db *gorm.DB, steerID string, held 
 	t.Helper()
 	query := db.Table("original_body_leases l").Where("l.kind='read' AND l.released_at_ms IS NULL")
 	if steerID != "" {
-		query = query.Joins("JOIN original_body_field_heads h ON h.body_id=l.body_id AND h.source_table='steer_authored_origins'").Joins("JOIN steer_authored_origins o ON o.id=h.row_key").Where("o.steer_id=?", steerID)
+		query = query.Joins("JOIN original_body_field_heads h ON h.body_id=l.body_id AND h.source_table='steer_authored_origins'").
+			Joins("JOIN steer_authored_origins o ON o.id=h.row_key").
+			Where("o.steer_id=?", steerID)
 	}
 	var count int64
 	require.NoError(t, query.Count(&count).Error)
 	if held {
-		require.Positive(t, count, "actual original body read leases remain live through the next model and final HTTP write")
+		require.Positive(
+			t,
+			count,
+			"actual original body read leases remain live through the next model and final HTTP write",
+		)
 	} else {
 		require.Zero(t, count, "all physical original body read leases close after HTTP and producer completion")
 	}
@@ -284,11 +363,35 @@ func newActualSteerHTTPFixture(t *testing.T, controlled bool) *actualHTTPTailFix
 	if controlled {
 		sourceFAQ = faqAllReadLeaseFixture(t, "personal_revoke_before_write")
 		sourceFAQ.calls.Store(-10000)
-		f = &actualHTTPTailFixture{db: sourceFAQ.db, store: sourceFAQ.store, kbs: sourceFAQ.knowledge.kbService, knowledge: sourceFAQ.knowledge.kgService, guard: sourceFAQ.guard, ctx: sourceFAQ.ctx, source: "source", revokeSource: func() { sourceFAQ.calls.Store(2) }}
+		f = &actualHTTPTailFixture{
+			db:           sourceFAQ.db,
+			store:        sourceFAQ.store,
+			kbs:          sourceFAQ.knowledge.kbService,
+			knowledge:    sourceFAQ.knowledge.kgService,
+			guard:        sourceFAQ.guard,
+			ctx:          sourceFAQ.ctx,
+			source:       "source",
+			revokeSource: func() { sourceFAQ.calls.Store(2) },
+		}
 	} else {
 		parent, db, store, _, _, _ := collectionHTTPFixture(t)
-		guard := access.NewNextcloudSourceLineageGuard(repository.NewKnowledgeRepository(db).(access.NextcloudLineageSnapshotLookup), parent.kbService, nil, nil, service.NewGroupAccessService(repository.NewGroupAccessRepository(db)), nil, store)
-		f = &actualHTTPTailFixture{db: db, store: store, kbs: parent.kbService, knowledge: parent.kgService, guard: guard, ctx: collectionHumanInputContext(7)}
+		guard := access.NewNextcloudSourceLineageGuard(
+			repository.NewKnowledgeRepository(db).(access.NextcloudLineageSnapshotLookup),
+			parent.kbService,
+			nil,
+			nil,
+			service.NewGroupAccessService(repository.NewGroupAccessRepository(db)),
+			nil,
+			store,
+		)
+		f = &actualHTTPTailFixture{
+			db:        db,
+			store:     store,
+			kbs:       parent.kbService,
+			knowledge: parent.kgService,
+			guard:     guard,
+			ctx:       collectionHumanInputContext(7),
+		}
 	}
 	f.ctx = context.WithValue(f.ctx, types.UserIDContextKey, "user")
 	f.ctx = context.WithValue(f.ctx, types.TenantInfoContextKey, &types.Tenant{ID: 7})
@@ -305,9 +408,9 @@ func newActualSteerHTTPFixture(t *testing.T, controlled bool) *actualHTTPTailFix
 	require.NoError(t, repository.InstallOriginalBodyRetentionTriggers(f.db))
 	require.NoError(t, repository.InstallOriginalBodyRetentionCallbacks(f.db))
 	dir := t.TempDir()
-	require.NoError(t, os.Chmod(dir, 0700))
+	require.NoError(t, os.Chmod(dir, 0o700))
 	key, pin := filepath.Join(dir, "key"), filepath.Join(dir, "pin")
-	require.NoError(t, os.WriteFile(key, []byte(strings.Repeat("actual-steer-owned-journal-key-", 3)), 0600))
+	require.NoError(t, os.WriteFile(key, []byte(strings.Repeat("actual-steer-owned-journal-key-", 3)), 0o600))
 	t.Setenv("WEKNORA_ORIGINAL_BODY_JOURNAL_DIRECTORY", dir)
 	t.Setenv("WEKNORA_ORIGINAL_BODY_JOURNAL_KEY", key)
 	t.Setenv("WEKNORA_ORIGINAL_BODY_JOURNAL_PIN", pin)
@@ -317,10 +420,20 @@ func newActualSteerHTTPFixture(t *testing.T, controlled bool) *actualHTTPTailFix
 	parentCtx := f.ctx
 	var closeInput func()
 	if controlled {
-		request := types.FAQInputReadRequest{TenantID: 7, KnowledgeBaseID: "faq-derived", ChunkIDs: []string{sourceFAQ.entry.ChunkID}}
+		request := types.FAQInputReadRequest{
+			TenantID:        7,
+			KnowledgeBaseID: "faq-derived",
+			ChunkIDs:        []string{sourceFAQ.entry.ChunkID},
+		}
 		plan, err := f.store.PeekFAQInputReadPlan(f.ctx, request)
 		require.NoError(t, err)
-		inputLease, err := acquireFAQReadPlanLeases(f.ctx, f.store.ContentLeaseStore(), plan.Scopes, plan.SourceLineage, 0)
+		inputLease, err := acquireFAQReadPlanLeases(
+			f.ctx,
+			f.store.ContentLeaseStore(),
+			plan.Scopes,
+			plan.SourceLineage,
+			0,
+		)
 		require.NoError(t, err)
 		parentCtx, err = repository.WithFAQInputReadPlan(inputLease.Context(f.ctx), plan)
 		require.NoError(t, err)
@@ -330,11 +443,21 @@ func newActualSteerHTTPFixture(t *testing.T, controlled bool) *actualHTTPTailFix
 		lineage = original.Proofs[0].SourceLineage
 		closeInput = inputLease.Close
 	}
-	f.parent = produceNativeSavedReplayMessage(t, f.db, f.messages, parentCtx, "ACTUAL ORIGINAL RETAINED PARENT", lineage)
+	f.parent = produceNativeSavedReplayMessage(
+		t,
+		f.db,
+		f.messages,
+		parentCtx,
+		"ACTUAL ORIGINAL RETAINED PARENT",
+		lineage,
+	)
 	if closeInput != nil {
 		closeInput()
 	}
-	require.NoError(t, f.db.Model(&types.Session{}).Where("id=?", f.parent.SessionID).Update("title", "Actual steer fixture").Error)
+	require.NoError(
+		t,
+		f.db.Model(&types.Session{}).Where("id=?", f.parent.SessionID).Update("title", "Actual steer fixture").Error,
+	)
 	require.NoError(t, f.db.AutoMigrate(&types.CustomAgent{}))
 	return f
 }
@@ -358,23 +481,113 @@ func actualSteerHTTPRouter(ctx context.Context, h *sessionhandler.Handler) *gin.
 	return router
 }
 
-func newActualSteerHTTPHandler(t *testing.T, f *actualHTTPTailFixture, model *actualSteerHTTPModel) (*sessionhandler.Handler, *actualSteerHTTPObservedMessages, *stream.RedisStreamManager, *redisclient.Client) {
+func newActualSteerHTTPHandler(
+	t *testing.T,
+	f *actualHTTPTailFixture,
+	model *actualSteerHTTPModel,
+) (*sessionhandler.Handler, *actualSteerHTTPObservedMessages, *stream.RedisStreamManager, *redisclient.Client) {
 	t.Helper()
 	disabled := false
-	custom := &types.CustomAgent{ID: "actual-steer-agent", Name: "Actual local steer agent", TenantID: 7, CreatedBy: "user", Config: types.CustomAgentConfig{AgentMode: types.AgentModeSmartReasoning, AgentType: types.AgentTypeCustom, ModelID: model.GetModelID(), SystemPrompt: "", KBSelectionMode: "none", MCPSelectionMode: "none", SkillsSelectionMode: "none", WebSearchProviderID: "unused", AllowedTools: []string{"read_document"}, MultiTurnEnabled: true, MemoryEnabled: &disabled, MaxIterations: 3}}
+	custom := &types.CustomAgent{
+		ID:        "actual-steer-agent",
+		Name:      "Actual local steer agent",
+		TenantID:  7,
+		CreatedBy: "user",
+		Config: types.CustomAgentConfig{
+			AgentMode:           types.AgentModeSmartReasoning,
+			AgentType:           types.AgentTypeCustom,
+			ModelID:             model.GetModelID(),
+			SystemPrompt:        "",
+			KBSelectionMode:     "none",
+			MCPSelectionMode:    "none",
+			SkillsSelectionMode: "none",
+			WebSearchProviderID: "unused",
+			AllowedTools:        []string{"read_document"},
+			MultiTurnEnabled:    true,
+			MemoryEnabled:       &disabled,
+			MaxIterations:       3,
+		},
+	}
 	require.NoError(t, f.db.Create(custom).Error)
 	models := actualSteerHTTPModels{steered: model}
-	cfg := &config.Config{Conversation: &config.ConversationConfig{MaxRounds: 3, Summary: &config.SummaryConfig{Prompt: "Actual operator configured prompt", ContextTemplate: "{{.Query}}"}}}
-	agents := service.NewAgentService(cfg, models, f.kbs, f.knowledge, nil, nil, nil, nil, event.NewEventBus(), f.db, nil, nil, nil, nil, f.messages, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	cfg := &config.Config{
+		Conversation: &config.ConversationConfig{
+			MaxRounds: 3,
+			Summary: &config.SummaryConfig{
+				Prompt:          "Actual operator configured prompt",
+				ContextTemplate: "{{.Query}}",
+			},
+		},
+	}
+	agents := service.NewAgentService(
+		cfg,
+		models,
+		f.kbs,
+		f.knowledge,
+		nil,
+		nil,
+		nil,
+		nil,
+		event.NewEventBus(),
+		f.db,
+		nil,
+		nil,
+		nil,
+		nil,
+		f.messages,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+	)
 	service.ConfigureAgentRAGChunkHydration(agents, repository.NewRAGChunkSnapshotReader(f.db, f.store))
 	manager := chatpipeline.NewEventManager()
 	messageRows := repository.NewMessageRepository(f.db)
 	repository.ConfigureMessageMaterialWriters(messageRows, f.store)
-	sessions := service.NewSessionService(cfg, repository.NewSessionRepository(f.db), messageRows, f.kbs, f.knowledge, nil, models, nil, manager, agents, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, service.NewSessionBusyGate(), nil, nil)
+	sessions := service.NewSessionService(
+		cfg,
+		repository.NewSessionRepository(f.db),
+		messageRows,
+		f.kbs,
+		f.knowledge,
+		nil,
+		models,
+		nil,
+		manager,
+		agents,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		service.NewSessionBusyGate(),
+		nil,
+		nil,
+	)
 	service.ConfigureMessageSourceLineage(f.messages, sessions, &service.SessionForkService{}, manager, f.guard)
 	groups := service.NewGroupAccessService(repository.NewGroupAccessRepository(f.db))
 	service.ConfigureSessionGroupAccess(sessions, groups)
-	customs := service.NewCustomAgentService(repository.NewCustomAgentRepository(f.db), nil, nil, nil, nil, nil, nil, nil)
+	customs := service.NewCustomAgentService(
+		repository.NewCustomAgentRepository(f.db),
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+	)
 	mini := miniredis.RunT(t)
 	redis, err := stream.NewRedisStreamManager(mini.Addr(), "", "", 0, actualSteerHTTPPrefix, time.Minute)
 	require.NoError(t, err)
@@ -389,8 +602,44 @@ func newActualSteerHTTPHandler(t *testing.T, f *actualHTTPTailFixture, model *ac
 	}
 	actualSessions, ok := sessions.(actualSteerHTTPSessionPort)
 	require.True(t, ok, "observe the real title producer without dropping the production turn/rewind guards")
-	observedSessions := &actualSteerHTTPObservedSessions{actualSteerHTTPSessionPort: actualSessions, titleCalls: &model.titleCalls}
-	h := sessionhandler.NewHandler(observedSessions, observed, nil, transport, cfg, f.kbs, customs, nil, nil, nil, nil, nil, nil, models, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, groups)
+	observedSessions := &actualSteerHTTPObservedSessions{
+		actualSteerHTTPSessionPort: actualSessions,
+		titleCalls:                 &model.titleCalls,
+	}
+	h := sessionhandler.NewHandler(
+		observedSessions,
+		observed,
+		nil,
+		transport,
+		cfg,
+		f.kbs,
+		customs,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		models,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		groups,
+	)
 	return h, observed, redis, raw
 }
 
@@ -412,7 +661,13 @@ func actualSteerHTTPRequest(router http.Handler, method, path string, body inter
 	return w
 }
 
-func forgeActualSteerHTTPMirror(t *testing.T, f *actualHTTPTailFixture, redis *stream.RedisStreamManager, raw *redisclient.Client, run, steerID string) {
+func forgeActualSteerHTTPMirror(
+	t *testing.T,
+	f *actualHTTPTailFixture,
+	redis *stream.RedisStreamManager,
+	raw *redisclient.Client,
+	run, steerID string,
+) {
 	t.Helper()
 	events, _, err := redis.GetSteerEvents(f.ctx, f.parent.SessionID, run, 0)
 	require.NoError(t, err)
@@ -421,7 +676,9 @@ func forgeActualSteerHTTPMirror(t *testing.T, f *actualHTTPTailFixture, redis *s
 	events[0].Content = "FORGED REDIS QUERY"
 	// Keep the same original source envelope and immutable control labels.
 	// None of them authorizes these copied fields or a cached user-row ID.
-	events[0].Data["mentioned_items"] = []interface{}{map[string]interface{}{"type": "file", "id": "forged-file", "name": "FORGED REDIS MENTION"}}
+	events[0].Data["mentioned_items"] = []interface{}{
+		map[string]interface{}{"type": "file", "id": "forged-file", "name": "FORGED REDIS MENTION"},
+	}
 	events[0].Data["channel"] = "FORGED REDIS CHANNEL"
 	events[0].Data["user_message_id"] = "FORGED REDIS USER ID"
 	encoded, err := json.Marshal(events[0])

@@ -809,7 +809,11 @@ func fetchAndStoreRemoteImage(
 	}
 
 	if whitelisted {
-		return &remoteImageResult{ArtifactDigest: actualImageDigest(data), MimeType: mimeType, KeepOriginalURL: true}, nil
+		return &remoteImageResult{
+			ArtifactDigest:  actualImageDigest(data),
+			MimeType:        mimeType,
+			KeepOriginalURL: true,
+		}, nil
 	}
 
 	ext := extFromMime(mimeType)
@@ -1017,7 +1021,11 @@ func (r *ImageResolver) ResolveRemoteImages(
 
 // downloadImage fetches an image from remoteURL using the provided SSRF-safe
 // client. It validates Content-Type and enforces maxRemoteImageSize.
-func downloadImage(ctx context.Context, client *http.Client, remoteURL string) (data []byte, mimeType string, err error) {
+func downloadImage(
+	ctx context.Context,
+	client *http.Client,
+	remoteURL string,
+) (data []byte, mimeType string, err error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, remoteURL, nil)
 	if err != nil {
 		return nil, "", fmt.Errorf("create request: %w", err)

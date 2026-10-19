@@ -696,7 +696,10 @@ func ValidateConfig(cfg *Config) error {
 		}
 		if strings.TrimSpace(cfg.OIDCAuth.DiscoveryURL) == "" &&
 			(strings.TrimSpace(cfg.OIDCAuth.AuthorizationEndpoint) == "" || strings.TrimSpace(cfg.OIDCAuth.TokenEndpoint) == "") {
-			errs = append(errs, "oidc_auth.discovery_url or both oidc_auth.authorization_endpoint and oidc_auth.token_endpoint are required when OIDC is enabled")
+			errs = append(
+				errs,
+				"oidc_auth.discovery_url or both oidc_auth.authorization_endpoint and oidc_auth.token_endpoint are required when OIDC is enabled",
+			)
 		}
 	}
 
@@ -767,7 +770,8 @@ func ValidateConfig(cfg *Config) error {
 		}
 
 		tenantMode := strings.TrimSpace(cfg.Auth.DefaultTenantMode)
-		if tenantMode != "" && tenantMode != AuthDefaultTenantModeCreatePersonal && tenantMode != AuthDefaultTenantModeTenantless {
+		if tenantMode != "" && tenantMode != AuthDefaultTenantModeCreatePersonal &&
+			tenantMode != AuthDefaultTenantModeTenantless {
 			errs = append(errs, fmt.Sprintf("auth.default_tenant_mode must be %q or %q, got %q",
 				AuthDefaultTenantModeCreatePersonal, AuthDefaultTenantModeTenantless, tenantMode))
 		}

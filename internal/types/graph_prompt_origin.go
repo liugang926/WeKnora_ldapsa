@@ -10,7 +10,11 @@ type GraphPromptTemplateOrigin struct {
 	SourceLineage *SourceLineage
 }
 
-func BindGraphPromptTemplateOrigin(template *PromptTemplateStructured, lineage *SourceLineage) (*PromptTemplateStructured, error) {
+// BindGraphPromptTemplateOrigin freezes an original template and its complete source lineage.
+func BindGraphPromptTemplateOrigin(
+	template *PromptTemplateStructured,
+	lineage *SourceLineage,
+) (*PromptTemplateStructured, error) {
 	if template == nil || lineage.RequireComplete() != nil {
 		return nil, ErrGraphSourceReceiptUnknown
 	}
@@ -22,15 +26,18 @@ func BindGraphPromptTemplateOrigin(template *PromptTemplateStructured, lineage *
 	if err := json.Unmarshal(encoded, &frozen); err != nil {
 		return nil, err
 	}
-	copy, err := UnionSourceLineage(lineage)
+	sources, err := UnionSourceLineage(lineage)
 	if err != nil {
 		return nil, err
 	}
-	frozen.SourceOrigin = &GraphPromptTemplateOrigin{Digest: GraphDigest(&frozen), SourceLineage: copy}
+	frozen.SourceOrigin = &GraphPromptTemplateOrigin{Digest: GraphDigest(&frozen), SourceLineage: sources}
 	return &frozen, nil
 }
+
+// GraphPromptTemplateLineage validates the frozen origin before returning its lineage.
 func GraphPromptTemplateLineage(template *PromptTemplateStructured) (*SourceLineage, error) {
-	if template == nil || template.SourceOrigin == nil || template.SourceOrigin.Digest != GraphDigest(template) || template.SourceOrigin.SourceLineage.RequireComplete() != nil {
+	if template == nil || template.SourceOrigin == nil || template.SourceOrigin.Digest != GraphDigest(template) ||
+		template.SourceOrigin.SourceLineage.RequireComplete() != nil {
 		return UnknownSourceLineage(), ErrGraphSourceReceiptUnknown
 	}
 	return UnionSourceLineage(template.SourceOrigin.SourceLineage)

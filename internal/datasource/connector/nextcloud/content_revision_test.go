@@ -28,7 +28,7 @@ func TestNextcloudSameETagHigherContentRevisionFetchesNewSnapshot(t *testing.T) 
 			}
 			w.Header().Set("ETag", "etag-collision")
 			w.Header().Set("X-Nextcloud-Content-Revision", revision)
-			w.Write([]byte(body))
+			writeNextcloudTestResponse(t, w, body)
 		default:
 			http.NotFound(w, r)
 		}
@@ -55,15 +55,18 @@ func TestNextcloudSameETagHigherContentRevisionFetchesNewSnapshot(t *testing.T) 
 	require.Error(t, err, "the private original-artifact issuer binds the independent content revision")
 	require.Equal(t, 2, downloads)
 }
+
 func TestNextcloudDownloadContentRevisionMismatchRejectsArtifact(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("ETag", "same")
 		w.Header().Set("X-Nextcloud-Content-Revision", "2")
-		w.Write([]byte("newer bytes"))
+		writeNextcloudTestResponse(t, w, "newer bytes")
 	}))
 	defer server.Close()
 	cfg, err := parseConfig(testConfig(t, server.URL))
 	require.NoError(t, err)
-	_, _, err = newClient(cfg).content(context.Background(), "dev-published", manifestItem{FileID: 41, ETag: "same", ContentRevision: "1", Name: "Notes.md", Size: 11})
+	_, _, err = newClient(
+		cfg,
+	).content(context.Background(), "dev-published", manifestItem{FileID: 41, ETag: "same", ContentRevision: "1", Name: "Notes.md", Size: 11})
 	require.Error(t, err)
 }

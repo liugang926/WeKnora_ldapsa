@@ -37,6 +37,7 @@ func (e documentHistoryVectorEmbedder) Embed(ctx context.Context, text string) (
 	e.queries.Add(1)
 	return e.Embedder.Embed(ctx, text)
 }
+
 func (m *documentHistoryVectorModels) GetEmbeddingModel(ctx context.Context, id string) (embedding.Embedder, error) {
 	provider, err := m.ModelService.GetEmbeddingModel(ctx, id)
 	if err != nil {
@@ -48,19 +49,40 @@ func (m *documentHistoryVectorModels) GetEmbeddingModel(ctx context.Context, id 
 // No synthetic assistant, provenance envelope, child material, chunks or
 // vector index is installed. IndexMessageToKB must select the real persisted
 // RAG answer and queue the real committed-parent DocumentProcess payload.
-func documentLiveHistoryVector(t *testing.T, m *machinePipelineFixture, live *documentLiveModels, base *knowledgeBaseService, history *documentLiveHistory, answer string) func() {
+func documentLiveHistoryVector(
+	t *testing.T,
+	m *machinePipelineFixture,
+	live *documentLiveModels,
+	base *knowledgeBaseService,
+	history *documentLiveHistory,
+	answer string,
+) func() {
 	t.Helper()
 	if os.Getenv("WEKNORA_DOCUMENT_GRAPH_HISTORY_VECTOR") != "1" {
 		return func() {}
 	}
 	require.NotNil(t, history)
 	require.NotNil(t, live, "history vector requires actual configured models")
-	require.Contains(t, strings.ToLower(live.embedder.GetModelName()), "bge", "this acceptance profile requires the existing real BGE model")
+	require.Contains(
+		t,
+		strings.ToLower(live.embedder.GetModelName()),
+		"bge",
+		"this acceptance profile requires the existing real BGE model",
+	)
 	db := m.f.db
 	pool, err := ants.NewPool(1)
 	require.NoError(t, err)
 	t.Cleanup(pool.Release)
-	models := &documentHistoryVectorModels{ModelService: NewModelService(repository.NewModelRepository(db), repository.NewKnowledgeBaseRepository(db), nil, nil, embedding.NewBatchEmbedder(pool), nil)}
+	models := &documentHistoryVectorModels{
+		ModelService: NewModelService(
+			repository.NewModelRepository(db),
+			repository.NewKnowledgeBaseRepository(db),
+			nil,
+			nil,
+			embedding.NewBatchEmbedder(pool),
+			nil,
+		),
+	}
 	base.modelService = models
 	base.groupAccess = NewGroupAccessService(repository.NewGroupAccessRepository(db))
 	m.f.s.kbService = base
@@ -70,22 +92,67 @@ func documentLiveHistoryVector(t *testing.T, m *machinePipelineFixture, live *do
 	ConfigureKnowledgePostProcessHistoryMaterial(m.f.post, m.f.s)
 	history.messages.kbService = base
 	history.messages.modelService = models
-	historyKB := &types.KnowledgeBase{ID: history.session.ID + "-vector-kb", TenantID: 7, Name: "Owned history vector acceptance", Type: types.KnowledgeBaseTypeDocument,
-		EmbeddingModelID: live.embeddingRow.ID, ChunkingConfig: types.ChunkingConfig{ChunkSize: 512}, IndexingStrategy: types.IndexingStrategy{VectorEnabled: true, KeywordEnabled: true}}
-	require.NoError(t, m.f.store.CreateKnowledgeBaseWithInput(repository.WithIndependentKnowledgeBaseNameInput(repository.WithIndependentKnowledgeInput(history.ctx), historyKB.ID, historyKB.Name), historyKB))
+	historyKB := &types.KnowledgeBase{
+		ID:               history.session.ID + "-vector-kb",
+		TenantID:         7,
+		Name:             "Owned history vector acceptance",
+		Type:             types.KnowledgeBaseTypeDocument,
+		EmbeddingModelID: live.embeddingRow.ID,
+		ChunkingConfig:   types.ChunkingConfig{ChunkSize: 512},
+		IndexingStrategy: types.IndexingStrategy{VectorEnabled: true, KeywordEnabled: true},
+	}
+	require.NoError(
+		t,
+		m.f.store.CreateKnowledgeBaseWithInput(
+			repository.WithIndependentKnowledgeBaseNameInput(
+				repository.WithIndependentKnowledgeInput(history.ctx),
+				historyKB.ID,
+				historyKB.Name,
+			),
+			historyKB,
+		),
+	)
 	var tenant types.Tenant
 	require.NoError(t, db.Where("id=7").Take(&tenant).Error)
-	tenant.ChatHistoryConfig = &types.ChatHistoryConfig{Enabled: true, KnowledgeBaseID: historyKB.ID, EmbeddingModelID: live.embeddingRow.ID}
+	tenant.ChatHistoryConfig = &types.ChatHistoryConfig{
+		Enabled:          true,
+		KnowledgeBaseID:  historyKB.ID,
+		EmbeddingModelID: live.embeddingRow.ID,
+	}
 	// A zero threshold means production default .15, so choose an explicit
 	// small positive threshold. No configured reranker exists in this model
 	// export: this profile certifies real BGE/native vector + hybrid only.
-	tenant.RetrievalConfig = &types.RetrievalConfig{EmbeddingTopK: 3, VectorThreshold: .01, RerankTopK: 3, RerankModelID: ""}
-	require.NoError(t, db.Model(&types.Tenant{}).Where("id=7").Updates(map[string]any{"chat_history_config": tenant.ChatHistoryConfig, "retrieval_config": tenant.RetrievalConfig}).Error)
+	tenant.RetrievalConfig = &types.RetrievalConfig{
+		EmbeddingTopK:   3,
+		VectorThreshold: .01,
+		RerankTopK:      3,
+		RerankModelID:   "",
+	}
+	require.NoError(
+		t,
+		db.Model(&types.Tenant{}).
+			Where("id=7").
+			Updates(map[string]any{"chat_history_config": tenant.ChatHistoryConfig, "retrieval_config": tenant.RetrievalConfig}).
+			Error,
+	)
 	history.ctx = context.WithValue(history.ctx, types.TenantInfoContextKey, &tenant)
 	queueStart := len(m.f.queue.tasks)
-	history.messages.IndexMessageToKB(history.ctx, "UNTRUSTED supplied question", "UNTRUSTED supplied answer", history.assistant.ID, history.session.ID)
+	history.messages.IndexMessageToKB(
+		history.ctx,
+		"UNTRUSTED supplied question",
+		"UNTRUSTED supplied answer",
+		history.assistant.ID,
+		history.session.ID,
+	)
 	var linked struct{ KnowledgeID string }
-	require.NoError(t, db.Table("messages").Select("knowledge_id").Where("id=? AND session_id=?", history.assistant.ID, history.session.ID).Take(&linked).Error)
+	require.NoError(
+		t,
+		db.Table("messages").
+			Select("knowledge_id").
+			Where("id=? AND session_id=?", history.assistant.ID, history.session.ID).
+			Take(&linked).
+			Error,
+	)
 	require.NotEmpty(t, linked.KnowledgeID, "real history producer must link its actual child")
 	processed, postProcessed := false, false
 	// This queue grows as the actual worker enqueues its next production
@@ -96,7 +163,12 @@ func documentLiveHistoryVector(t *testing.T, m *machinePipelineFixture, live *do
 			KnowledgeID string `json:"knowledge_id"`
 		}
 		require.NoError(t, json.Unmarshal(task.Payload(), &target))
-		require.Equal(t, linked.KnowledgeID, target.KnowledgeID, "the new queue suffix must belong to the actual history child")
+		require.Equal(
+			t,
+			linked.KnowledgeID,
+			target.KnowledgeID,
+			"the new queue suffix must belong to the actual history child",
+		)
 		switch task.Type() {
 		case types.TypeDocumentProcess:
 			var payload types.DocumentProcessPayload
@@ -105,8 +177,16 @@ func documentLiveHistoryVector(t *testing.T, m *machinePipelineFixture, live *do
 			require.NotNil(t, payload.OriginalInput)
 			require.NotEmpty(t, payload.OriginalInput.SourceLineage.Sources)
 			require.Equal(t, history.assistant.SourceLineage, payload.OriginalInput.SourceLineage)
-			require.True(t, strings.Contains(strings.Join(payload.Passages, "\n"), answer), "actual committed child must contain the persisted RAG answer")
-			require.False(t, strings.Contains(strings.Join(payload.Passages, "\n"), "UNTRUSTED"), "caller supplied text must never become history child material")
+			require.True(
+				t,
+				strings.Contains(strings.Join(payload.Passages, "\n"), answer),
+				"actual committed child must contain the persisted RAG answer",
+			)
+			require.False(
+				t,
+				strings.Contains(strings.Join(payload.Passages, "\n"), "UNTRUSTED"),
+				"caller supplied text must never become history child material",
+			)
 			// No fabricated NC build lease or creation-time parent guard.
 			require.NoError(t, m.f.s.ProcessDocument(context.Background(), task))
 			processed = true
@@ -143,19 +223,42 @@ func documentLiveHistoryVector(t *testing.T, m *machinePipelineFixture, live *do
 		current := WithMessageMaterialOutputBoundary(history.ctx)
 		defer CloseMessageMaterialOutputBoundary(current)
 		before := models.queries.Load()
-		result, err := history.messages.SearchMessages(current, &types.MessageSearchParams{Query: query, Mode: mode, Limit: 3, SessionIDs: []string{history.session.ID}})
+		result, err := history.messages.SearchMessages(
+			current,
+			&types.MessageSearchParams{Query: query, Mode: mode, Limit: 3, SessionIDs: []string{history.session.ID}},
+		)
 		if revoked {
-			require.ErrorIs(t, err, access.ErrNextcloudPublicationDenied, "known actual NC revocation is an explicit vector/hybrid error, never complete zero success")
+			require.ErrorIs(
+				t,
+				err,
+				access.ErrNextcloudPublicationDenied,
+				"known actual NC revocation is an explicit vector/hybrid error, never complete zero success",
+			)
 			require.Nil(t, result)
 			return
 		}
-		require.Greater(t, models.queries.Load(), before, "successful vector/hybrid search must use the real BGE query provider")
+		require.Greater(
+			t,
+			models.queries.Load(),
+			before,
+			"successful vector/hybrid search must use the real BGE query provider",
+		)
 		require.NoError(t, err)
 		require.Equal(t, 1, result.Total)
 		require.Len(t, result.Items, 1)
 		require.Equal(t, history.session.ID, result.Items[0].SessionID)
-		require.Equal(t, sha256.Sum256([]byte(history.user.Content)), sha256.Sum256([]byte(result.Items[0].QueryContent)), "history query must be the actual saved user body")
-		require.Equal(t, answerHash, sha256.Sum256([]byte(result.Items[0].AnswerContent)), "history answer must be the actual saved RAG body")
+		require.Equal(
+			t,
+			sha256.Sum256([]byte(history.user.Content)),
+			sha256.Sum256([]byte(result.Items[0].QueryContent)),
+			"history query must be the actual saved user body",
+		)
+		require.Equal(
+			t,
+			answerHash,
+			sha256.Sum256([]byte(result.Items[0].AnswerContent)),
+			"history answer must be the actual saved RAG body",
+		)
 		require.NoError(t, CheckMessageMaterialOutputBoundary(current))
 	}
 	for _, mode := range []types.MessageSearchMode{types.MessageSearchModeVector, types.MessageSearchModeHybrid} {
@@ -163,17 +266,29 @@ func documentLiveHistoryVector(t *testing.T, m *machinePipelineFixture, live *do
 	}
 	retained := WithMessageMaterialOutputBoundary(history.ctx)
 	t.Cleanup(func() { CloseMessageMaterialOutputBoundary(retained) })
-	result, err := history.messages.SearchMessages(retained, &types.MessageSearchParams{Query: query, Mode: types.MessageSearchModeVector, Limit: 3, SessionIDs: []string{history.session.ID}})
+	result, err := history.messages.SearchMessages(
+		retained,
+		&types.MessageSearchParams{
+			Query:      query,
+			Mode:       types.MessageSearchModeVector,
+			Limit:      3,
+			SessionIDs: []string{history.session.ID},
+		},
+	)
 	require.NoError(t, err)
 	require.Equal(t, 1, result.Total)
 	require.NoError(t, CheckMessageMaterialOutputBoundary(retained))
-	t.Log("REAL_HISTORY_VECTOR actual persisted RAG -> committed-history producer -> fresh-context DocumentProcess/post/finalize -> native BGE vector/hybrid positive passed; no reranker claim")
+	t.Log(
+		"REAL_HISTORY_VECTOR actual persisted RAG -> committed-history producer -> fresh-context DocumentProcess/post/finalize -> native BGE vector/hybrid positive passed; no reranker claim",
+	)
 	return func() {
 		require.ErrorIs(t, CheckMessageMaterialOutputBoundary(retained), access.ErrNextcloudPublicationDenied)
 		CloseMessageMaterialOutputBoundary(retained)
 		for _, mode := range []types.MessageSearchMode{types.MessageSearchModeVector, types.MessageSearchModeHybrid} {
 			search(mode, true)
 		}
-		t.Log("REAL_HISTORY_VECTOR actual NC revocation denied retained output and fresh native vector/hybrid attempts explicitly")
+		t.Log(
+			"REAL_HISTORY_VECTOR actual NC revocation denied retained output and fresh native vector/hybrid attempts explicitly",
+		)
 	}
 }

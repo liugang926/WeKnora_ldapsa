@@ -33,8 +33,10 @@ import (
 
 var historyVectorActualVecAuto sync.Once
 
-const historyVectorActualKB = "actual-history-search-kb"
-const historyVectorActualIndexPoison = "UNPROVEN_INDEX_BODY_MUST_NEVER_REACH_MODEL_OR_HTTP"
+const (
+	historyVectorActualKB          = "actual-history-search-kb"
+	historyVectorActualIndexPoison = "UNPROVEN_INDEX_BODY_MUST_NEVER_REACH_MODEL_OR_HTTP"
+)
 
 // Only external providers are controlled. Every message, admission, child,
 // chunk, index, source check and original read below uses production code.
@@ -47,7 +49,12 @@ func (historyVectorActualEmbedder) BatchEmbed(_ context.Context, texts []string)
 	}
 	return out, nil
 }
-func (e historyVectorActualEmbedder) BatchEmbedWithPool(ctx context.Context, _ embedding.Embedder, texts []string) ([][]float32, error) {
+
+func (e historyVectorActualEmbedder) BatchEmbedWithPool(
+	ctx context.Context,
+	_ embedding.Embedder,
+	texts []string,
+) ([][]float32, error) {
 	return e.BatchEmbed(ctx, texts)
 }
 
@@ -58,15 +65,30 @@ type historyVectorActualChat struct {
 
 func (c *historyVectorActualChat) GetModelID() string   { return "actual-history-chat" }
 func (c *historyVectorActualChat) GetModelName() string { return "controlled actual history chat" }
-func (c *historyVectorActualChat) Chat(context.Context, []chat.Message, *chat.ChatOptions) (*types.ChatResponse, error) {
+
+func (c *historyVectorActualChat) Chat(
+	context.Context,
+	[]chat.Message,
+	*chat.ChatOptions,
+) (*types.ChatResponse, error) {
 	return nil, fmt.Errorf("unexpected non-streaming producer")
 }
-func (c *historyVectorActualChat) ChatStream(_ context.Context, input []chat.Message, _ *chat.ChatOptions) (<-chan types.StreamResponse, error) {
+
+func (c *historyVectorActualChat) ChatStream(
+	_ context.Context,
+	input []chat.Message,
+	_ *chat.ChatOptions,
+) (<-chan types.StreamResponse, error) {
 	var text strings.Builder
 	for _, message := range input {
 		text.WriteString(message.Content)
 	}
-	require.Contains(c.t, text.String(), "Alice knows Bob", "actual source text must reach the production prompt before a controlled completion")
+	require.Contains(
+		c.t,
+		text.String(),
+		"Alice knows Bob",
+		"actual source text must reach the production prompt before a controlled completion",
+	)
 	c.streams.Add(1)
 	responses := make(chan types.StreamResponse, 1)
 	responses <- types.StreamResponse{ResponseType: types.ResponseTypeAnswer, Content: "Bob is named in the actual source used for this controlled completion.", Done: true}
@@ -88,16 +110,22 @@ type historyVectorActualModels struct {
 func (m *historyVectorActualModels) GetEmbeddingModel(context.Context, string) (embedding.Embedder, error) {
 	return historyVectorActualEmbedder{}, nil
 }
+
 func (m *historyVectorActualModels) GetChatModel(ctx context.Context, id string) (chat.Chat, error) {
 	if id == m.chatter.GetModelID() {
 		return m.chatter, nil
 	}
 	if guard, ok := ctx.Value(historyMaterialGuardContextKey{}).(*MessageMaterialGuard); ok {
-		require.NoError(m.t, guard.Recheck(), "actual original parents must be current before an enrichment model lookup")
+		require.NoError(
+			m.t,
+			guard.Recheck(),
+			"actual original parents must be current before an enrichment model lookup",
+		)
 		m.enrichmentGuards = append(m.enrichmentGuards, guard)
 	}
 	return m.ModelService.GetChatModel(ctx, id)
 }
+
 func (m *historyVectorActualModels) GetRerankModel(ctx context.Context, _ string) (rerank.Reranker, error) {
 	m.lookups.Add(1)
 	require.True(m.t, logprivacy.ContentSuppressed(ctx))
@@ -111,14 +139,23 @@ type historyVectorActualReranker struct{ models *historyVectorActualModels }
 
 func (r historyVectorActualReranker) GetModelID() string   { return "actual-history-rerank" }
 func (r historyVectorActualReranker) GetModelName() string { return "controlled actual history rerank" }
-func (r historyVectorActualReranker) Rerank(ctx context.Context, _ string, documents []string) ([]rerank.RankResult, error) {
+
+func (r historyVectorActualReranker) Rerank(
+	ctx context.Context,
+	_ string,
+	documents []string,
+) ([]rerank.RankResult, error) {
 	r.models.rankCalls.Add(1)
 	require.True(r.models.t, logprivacy.ContentSuppressed(ctx))
 	r.models.documents = append([]string{}, documents...)
 	out := make([]rerank.RankResult, len(documents))
 	for i := range documents {
 		require.NotContains(r.models.t, documents[i], historyVectorActualIndexPoison)
-		out[i] = rerank.RankResult{Index: i, RelevanceScore: 1 - float64(i)/1000, Document: rerank.DocumentInfo{Text: "PROVIDER_RETURNED_BODY_MUST_BE_IGNORED"}}
+		out[i] = rerank.RankResult{
+			Index:          i,
+			RelevanceScore: 1 - float64(i)/1000,
+			Document:       rerank.DocumentInfo{Text: "PROVIDER_RETURNED_BODY_MUST_BE_IGNORED"},
+		}
 	}
 	return out, nil
 }
@@ -145,17 +182,40 @@ func newHistoryVectorActualFixture(t *testing.T, options ...historyVectorActualO
 		option = options[0]
 	}
 	historyVectorActualVecAuto.Do(sqlite_vec.Auto)
-	m := newMachinePipelineFixtureWithDocument(t, false, "Project Cedar: Alice knows Bob. This actual connector document is used by the controlled RAG producer.", true, true)
+	m := newMachinePipelineFixtureWithDocument(
+		t,
+		false,
+		"Project Cedar: Alice knows Bob. This actual connector document is used by the controlled RAG producer.",
+		true,
+		true,
+	)
 	db := m.f.db
 	installDocumentOnboardingSchema(t, db)
 	collection, err := os.ReadFile("../../../migrations/sqlite/000058_knowledge_collection_checkpoints.up.sql")
 	require.NoError(t, err)
 	require.NoError(t, db.Exec(string(collection)).Error)
-	engines := types.RetrieverEngines{Engines: []types.RetrieverEngineParams{{RetrieverType: types.VectorRetrieverType, RetrieverEngineType: types.SQLiteRetrieverEngineType}, {RetrieverType: types.KeywordsRetrieverType, RetrieverEngineType: types.SQLiteRetrieverEngineType}}}
+	engines := types.RetrieverEngines{
+		Engines: []types.RetrieverEngineParams{
+			{RetrieverType: types.VectorRetrieverType, RetrieverEngineType: types.SQLiteRetrieverEngineType},
+			{RetrieverType: types.KeywordsRetrieverType, RetrieverEngineType: types.SQLiteRetrieverEngineType},
+		},
+	}
 	require.NoError(t, db.Model(&types.Tenant{}).Where("id=?", 7).Update("retriever_engines", engines).Error)
 	registry := retriever.NewRetrieveEngineRegistry(nil, nil)
-	require.NoError(t, registry.Register(retriever.NewKVHybridRetrieveEngine(sqlindex.NewSQLiteRetrieveEngineRepository(db), types.SQLiteRetrieverEngineType)))
-	models := &historyVectorActualModels{ModelService: m.f.s.modelService, t: t, chatter: &historyVectorActualChat{t: t}}
+	require.NoError(
+		t,
+		registry.Register(
+			retriever.NewKVHybridRetrieveEngine(
+				sqlindex.NewSQLiteRetrieveEngineRepository(db),
+				types.SQLiteRetrieverEngineType,
+			),
+		),
+	)
+	models := &historyVectorActualModels{
+		ModelService: m.f.s.modelService,
+		t:            t,
+		chatter:      &historyVectorActualChat{t: t},
+	}
 	m.f.s.modelService = models
 	m.f.s.retrieveEngine = registry
 	// Install the real producer material/sidecar protocol before sessions.
@@ -176,52 +236,160 @@ func newHistoryVectorActualFixture(t *testing.T, options ...historyVectorActualO
 	}
 	require.NoError(t, db.Where("id=?", source.ID).Take(source).Error)
 	require.Equal(t, types.ParseStatusCompleted, source.ParseStatus)
-	historyKB := &types.KnowledgeBase{ID: historyVectorActualKB, TenantID: 7, Name: "actual independent history KB", Type: types.KnowledgeBaseTypeDocument,
-		EmbeddingModelID: "embed", SummaryModelID: "summary", ChunkingConfig: types.ChunkingConfig{ChunkSize: 512, ChunkOverlap: 0}, IndexingStrategy: types.IndexingStrategy{VectorEnabled: true}}
+	historyKB := &types.KnowledgeBase{
+		ID:               historyVectorActualKB,
+		TenantID:         7,
+		Name:             "actual independent history KB",
+		Type:             types.KnowledgeBaseTypeDocument,
+		EmbeddingModelID: "embed",
+		SummaryModelID:   "summary",
+		ChunkingConfig:   types.ChunkingConfig{ChunkSize: 512, ChunkOverlap: 0},
+		IndexingStrategy: types.IndexingStrategy{VectorEnabled: true},
+	}
 	if option.Questions {
 		historyKB.QuestionGenerationConfig = &types.QuestionGenerationConfig{Enabled: true, QuestionCount: 1}
 		m.f.model.detectQuestions = true
 	}
 	admin := historyVectorActualCaller(t, m, "enrich-human", types.TenantRoleAdmin)
-	independent := repository.WithIndependentKnowledgeBaseNameInput(repository.WithIndependentKnowledgeInput(admin), historyKB.ID, historyKB.Name)
+	independent := repository.WithIndependentKnowledgeBaseNameInput(
+		repository.WithIndependentKnowledgeInput(admin),
+		historyKB.ID,
+		historyKB.Name,
+	)
 	require.NoError(t, m.f.store.CreateKnowledgeBaseWithInput(independent, historyKB))
 	// Use a non-manager with a real restricted target grant, so withdrawing
 	// only this grant is distinct from revoking original source/owner access.
-	require.NoError(t, db.Model(&types.TenantMember{}).Where("tenant_id=? AND user_id=?", 7, "enrich-human").Update("role", types.TenantRoleContributor).Error)
-	require.NoError(t, db.Create(&types.DirectoryGroup{ID: "history-target-group", DirectoryID: "machine-ad", ObjectGUID: "history-target-guid", DN: "cn=history-target", DisplayName: "history target", Status: types.DirectoryObjectActive, SnapshotVersion: 1}).Error)
-	require.NoError(t, db.Create(&types.DirectoryGroupMembership{DirectoryID: "machine-ad", GroupID: "history-target-group", IdentityID: "machine-ad-user", Source: types.DirectoryMembershipDirect, SnapshotVersion: 1}).Error)
-	require.NoError(t, db.Create(&types.ResourceAccessPolicy{ID: "history-target-policy", TenantID: 7, ResourceType: types.GroupResourceTypeKnowledgeBase, ResourceID: historyKB.ID, Mode: types.ResourceAccessRestricted}).Error)
-	require.NoError(t, db.Create(&types.ResourceGroupGrant{ID: "history-target-grant", TenantID: 7, ResourceType: types.GroupResourceTypeKnowledgeBase, ResourceID: historyKB.ID, DirectoryGroupID: "history-target-group", Permission: types.ResourcePermissionEdit, Origin: types.GrantOriginManual}).Error)
+	require.NoError(
+		t,
+		db.Model(&types.TenantMember{}).
+			Where("tenant_id=? AND user_id=?", 7, "enrich-human").
+			Update("role", types.TenantRoleContributor).
+			Error,
+	)
+	require.NoError(
+		t,
+		db.Create(
+			&types.DirectoryGroup{
+				ID:              "history-target-group",
+				DirectoryID:     "machine-ad",
+				ObjectGUID:      "history-target-guid",
+				DN:              "cn=history-target",
+				DisplayName:     "history target",
+				Status:          types.DirectoryObjectActive,
+				SnapshotVersion: 1,
+			},
+		).Error,
+	)
+	require.NoError(
+		t,
+		db.Create(
+			&types.DirectoryGroupMembership{
+				DirectoryID:     "machine-ad",
+				GroupID:         "history-target-group",
+				IdentityID:      "machine-ad-user",
+				Source:          types.DirectoryMembershipDirect,
+				SnapshotVersion: 1,
+			},
+		).Error,
+	)
+	require.NoError(
+		t,
+		db.Create(
+			&types.ResourceAccessPolicy{
+				ID:           "history-target-policy",
+				TenantID:     7,
+				ResourceType: types.GroupResourceTypeKnowledgeBase,
+				ResourceID:   historyKB.ID,
+				Mode:         types.ResourceAccessRestricted,
+			},
+		).Error,
+	)
+	require.NoError(
+		t,
+		db.Create(
+			&types.ResourceGroupGrant{
+				ID:               "history-target-grant",
+				TenantID:         7,
+				ResourceType:     types.GroupResourceTypeKnowledgeBase,
+				ResourceID:       historyKB.ID,
+				DirectoryGroupID: "history-target-group",
+				Permission:       types.ResourcePermissionEdit,
+				Origin:           types.GrantOriginManual,
+			},
+		).Error,
+	)
 	// Configure history only after producing source input; the source KB's
 	// own original configuration must not be changed to set up this search.
 	require.NoError(t, db.Model(&types.Tenant{}).Where("id=?", 7).Updates(map[string]any{
-		"chat_history_config": types.ChatHistoryConfig{Enabled: true, EmbeddingModelID: "embed", KnowledgeBaseID: historyKB.ID},
-		"retrieval_config":    types.RetrievalConfig{EmbeddingTopK: 20, VectorThreshold: .1, RerankModelID: "actual-history-rerank", RerankTopK: 20, RerankThreshold: .1},
+		"chat_history_config": types.ChatHistoryConfig{
+			Enabled:          true,
+			EmbeddingModelID: "embed",
+			KnowledgeBaseID:  historyKB.ID,
+		},
+		"retrieval_config": types.RetrievalConfig{
+			EmbeddingTopK:   20,
+			VectorThreshold: .1,
+			RerankModelID:   "actual-history-rerank",
+			RerankTopK:      20,
+			RerankThreshold: .1,
+		},
 	}).Error)
 	ctx := historyVectorActualCaller(t, m, "enrich-human", types.TenantRoleContributor)
 	groups := NewGroupAccessService(repository.NewGroupAccessRepository(db))
-	kb := &knowledgeBaseService{repo: repository.NewKnowledgeBaseRepository(db), kgRepo: m.f.s.repo, chunkRepo: m.f.s.chunkRepo,
-		contentLeases: m.f.store.ContentLeaseStore(), ragChunkSnapshots: repository.NewRAGChunkSnapshotReader(db, m.f.store), ragChunkLineageGuard: m.f.guard,
-		modelService: models, retrieveEngine: registry, groupAccess: groups,
-		publicationGuard: access.NewNextcloudPublicationGuard(repository.NewDirectoryRepository(db), repository.NewDataSourceRepository(db))}
+	kb := &knowledgeBaseService{
+		repo:                 repository.NewKnowledgeBaseRepository(db),
+		kgRepo:               m.f.s.repo,
+		chunkRepo:            m.f.s.chunkRepo,
+		contentLeases:        m.f.store.ContentLeaseStore(),
+		ragChunkSnapshots:    repository.NewRAGChunkSnapshotReader(db, m.f.store),
+		ragChunkLineageGuard: m.f.guard,
+		modelService:         models,
+		retrieveEngine:       registry,
+		groupAccess:          groups,
+		publicationGuard: access.NewNextcloudPublicationGuard(
+			repository.NewDirectoryRepository(db),
+			repository.NewDataSourceRepository(db),
+		),
+	}
 	m.f.s.publicationGuard = kb.publicationGuard
-	messages := &messageService{messageRepo: repository.NewMessageRepository(db), sessionRepo: repository.NewSessionRepository(db),
-		sourceLineageGuard: m.f.guard, kbService: kb, knowService: m.f.s, modelService: models}
+	messages := &messageService{
+		messageRepo: repository.NewMessageRepository(db), sessionRepo: repository.NewSessionRepository(db),
+		sourceLineageGuard: m.f.guard, kbService: kb, knowService: m.f.s, modelService: models,
+	}
 	ConfigureMessageMaterialProvenance(messages, m.f.store)
 	repository.ConfigureKnowledgeInputHistoryVerifier(m.f.store, messages)
 	ConfigureKnowledgePostProcessHistoryMaterial(m.f.post, m.f.s)
-	f := &historyVectorActualFixture{m: m, models: models, base: ctx, messages: messages, kb: kb, source: source, pauseEnrichment: option.PauseEnrichment}
+	f := &historyVectorActualFixture{
+		m:               m,
+		models:          models,
+		base:            ctx,
+		messages:        messages,
+		kb:              kb,
+		source:          source,
+		pauseEnrichment: option.PauseEnrichment,
+	}
 	for i := 0; i < 2; i++ {
 		f.produce(t, i)
 	}
 	require.EqualValues(t, 2, models.chatter.streams.Load())
 	// Corrupt only the untrusted index copy. The actual native candidate
 	// query has no body projection; original hydration must still succeed.
-	require.NoError(t, db.Table("lite_embeddings").Where("knowledge_base_id=?", historyKB.ID).Update("content", historyVectorActualIndexPoison).Error)
+	require.NoError(
+		t,
+		db.Table("lite_embeddings").
+			Where("knowledge_base_id=?", historyKB.ID).
+			Update("content", historyVectorActualIndexPoison).
+			Error,
+	)
 	return f
 }
 
-func historyVectorActualCaller(t *testing.T, m *machinePipelineFixture, user string, role types.TenantRole) context.Context {
+func historyVectorActualCaller(
+	t *testing.T,
+	m *machinePipelineFixture,
+	user string,
+	role types.TenantRole,
+) context.Context {
 	t.Helper()
 	ctx := types.WithExecutionTenant(context.Background(), 7)
 	ctx = types.WithCaller(ctx, types.Caller{TenantID: 7, UserID: user, Role: role})
@@ -236,11 +404,32 @@ func historyVectorActualCaller(t *testing.T, m *machinePipelineFixture, user str
 // are the only producers of the assistant receipts and child material.
 func (f *historyVectorActualFixture) produce(t *testing.T, index int) {
 	t.Helper()
-	session, err := f.messages.sessionRepo.Create(f.base, &types.Session{ID: fmt.Sprintf("actual-vector-session-%d", index), TenantID: 7, UserID: "enrich-human"})
+	session, err := f.messages.sessionRepo.Create(
+		f.base,
+		&types.Session{ID: fmt.Sprintf("actual-vector-session-%d", index), TenantID: 7, UserID: "enrich-human"},
+	)
 	require.NoError(t, err)
-	question, err := f.messages.CreateMessage(f.base, &types.Message{SessionID: session.ID, RequestID: "shared-request-across-two-sessions", Role: "user", Content: fmt.Sprintf("Original owned question %d: whom does Alice know?", index), IsCompleted: true, ExecutionContext: types.MessageExecutionContext{KnowledgeBaseIDs: []string{f.source.KnowledgeBaseID}}})
+	question, err := f.messages.CreateMessage(
+		f.base,
+		&types.Message{
+			SessionID:        session.ID,
+			RequestID:        "shared-request-across-two-sessions",
+			Role:             "user",
+			Content:          fmt.Sprintf("Original owned question %d: whom does Alice know?", index),
+			IsCompleted:      true,
+			ExecutionContext: types.MessageExecutionContext{KnowledgeBaseIDs: []string{f.source.KnowledgeBaseID}},
+		},
+	)
 	require.NoError(t, err)
-	answer, err := f.messages.CreateMessage(f.base, &types.Message{SessionID: session.ID, RequestID: question.RequestID, Role: "assistant", ExecutionContext: question.ExecutionContext})
+	answer, err := f.messages.CreateMessage(
+		f.base,
+		&types.Message{
+			SessionID:        session.ID,
+			RequestID:        question.RequestID,
+			Role:             "assistant",
+			ExecutionContext: question.ExecutionContext,
+		},
+	)
 	require.NoError(t, err)
 	producer := WithMessageMaterialOutputBoundary(f.base)
 	defer CloseMessageMaterialOutputBoundary(producer)
@@ -262,11 +451,26 @@ func (f *historyVectorActualFixture) produce(t *testing.T, index int) {
 	cm.Query = question.Content
 	cm.UserContent = question.Content
 	cm.ChatModelID = f.models.chatter.GetModelID()
-	cm.SearchTargets = types.SearchTargets{&types.SearchTarget{Type: types.SearchTargetTypeKnowledgeBase, TenantID: 7, KnowledgeBaseID: f.source.KnowledgeBaseID}}
-	cm.SummaryConfig = types.SummaryConfig{Prompt: "Answer from the actual document", ContextTemplate: "Question: {{query}}\nDocument: {{contexts}}", MaxTokens: 512, MaxCompletionTokens: 512}
+	cm.SearchTargets = types.SearchTargets{
+		&types.SearchTarget{
+			Type:            types.SearchTargetTypeKnowledgeBase,
+			TenantID:        7,
+			KnowledgeBaseID: f.source.KnowledgeBaseID,
+		},
+	}
+	cm.SummaryConfig = types.SummaryConfig{
+		Prompt:              "Answer from the actual document",
+		ContextTemplate:     "Question: {{query}}\nDocument: {{contexts}}",
+		MaxTokens:           512,
+		MaxCompletionTokens: 512,
+	}
 	producer, err = manager.BeginSourceLineage(producer, cm, access.LineageReadScope{Targets: cm.SearchTargets})
 	require.NoError(t, err)
-	rows, err := f.kb.HybridSearch(producer, f.source.KnowledgeBaseID, types.SearchParams{QueryText: question.Content, MatchCount: 3, SkipContextEnrichment: true})
+	rows, err := f.kb.HybridSearch(
+		producer,
+		f.source.KnowledgeBaseID,
+		types.SearchParams{QueryText: question.Content, MatchCount: 3, SkipContextEnrichment: true},
+	)
 	require.NoError(t, err)
 	require.NotEmpty(t, rows)
 	for _, row := range rows {
@@ -289,7 +493,14 @@ func (f *historyVectorActualFixture) produce(t *testing.T, index int) {
 		return nil
 	})
 	cm.EventBus = bus.AsEventBusInterface()
-	require.NoError(t, (&sessionService{eventManager: manager, groupAccess: f.kb.groupAccess}).KnowledgeQAByEvent(producer, cm, []types.EventType{types.INTO_CHAT_MESSAGE, types.CHAT_COMPLETION_STREAM}))
+	require.NoError(
+		t,
+		(&sessionService{eventManager: manager, groupAccess: f.kb.groupAccess}).KnowledgeQAByEvent(
+			producer,
+			cm,
+			[]types.EventType{types.INTO_CHAT_MESSAGE, types.CHAT_COMPLETION_STREAM},
+		),
+	)
 	require.True(t, done)
 	require.NotNil(t, finalLineage)
 	require.NoError(t, finalLineage.RequireComplete())
@@ -304,9 +515,24 @@ func (f *historyVectorActualFixture) produce(t *testing.T, index int) {
 	queueStart := len(f.m.f.queue.tasks)
 	var target types.KnowledgeBase
 	require.NoError(t, f.m.f.db.Where("id=? AND tenant_id=?", historyVectorActualKB, 7).Take(&target).Error)
-	grant, err := access.ResolveKB(f.base, access.KBRequest{Caller: types.CallerFromContext(f.base)}, &target, types.OrgRoleEditor, nil, nil)
+	grant, err := access.ResolveKB(
+		f.base,
+		access.KBRequest{Caller: types.CallerFromContext(f.base)},
+		&target,
+		types.OrgRoleEditor,
+		nil,
+		nil,
+	)
 	require.NoError(t, err)
-	child, err := f.m.f.s.CreateCommittedHistoryKnowledgeInput(grant.Context(f.base), types.CommittedHistoryKnowledgeInputRequest{TenantID: 7, KnowledgeBaseID: historyVectorActualKB, SessionID: session.ID, AssistantMessageID: answer.ID})
+	child, err := f.m.f.s.CreateCommittedHistoryKnowledgeInput(
+		grant.Context(f.base),
+		types.CommittedHistoryKnowledgeInputRequest{
+			TenantID:           7,
+			KnowledgeBaseID:    historyVectorActualKB,
+			SessionID:          session.ID,
+			AssistantMessageID: answer.ID,
+		},
+	)
 	require.NoError(t, err)
 	require.NotNil(t, child.Proof)
 	for i := queueStart; i < len(f.m.f.queue.tasks); i++ {
@@ -348,7 +574,8 @@ func (f *historyVectorActualFixture) produce(t *testing.T, index int) {
 func (f *historyVectorActualFixture) activeLeases(t *testing.T, kbID string) int64 {
 	t.Helper()
 	var count int64
-	q := f.m.f.db.Table("nextcloud_content_leases").Where("tenant_id=? AND released_at_ms IS NULL AND expires_at_ms>?", 7, time.Now().UnixMilli())
+	q := f.m.f.db.Table("nextcloud_content_leases").
+		Where("tenant_id=? AND released_at_ms IS NULL AND expires_at_ms>?", 7, time.Now().UnixMilli())
 	if kbID != "" {
 		q = q.Where("knowledge_base_id=?", kbID)
 	}
@@ -359,7 +586,10 @@ func (f *historyVectorActualFixture) activeLeases(t *testing.T, kbID string) int
 // These HTTP assertions exercise the actual service-owned output boundary and
 // JSON writer. Handler/JWT router coverage belongs in package handler, which
 // cannot be imported by a service-package test without an import cycle.
-func (f *historyVectorActualFixture) httpSearch(t *testing.T, afterModel func(context.Context, *types.MessageSearchResult)) *httptest.ResponseRecorder {
+func (f *historyVectorActualFixture) httpSearch(
+	t *testing.T,
+	afterModel func(context.Context, *types.MessageSearchResult),
+) *httptest.ResponseRecorder {
 	t.Helper()
 	response := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/messages/search", nil).WithContext(f.base)
@@ -368,14 +598,21 @@ func (f *historyVectorActualFixture) httpSearch(t *testing.T, afterModel func(co
 		defer releaseHTTP()
 		producer, releaseModel, external := retainMessageMaterialProducer(ctx)
 		require.True(t, external)
-		result, err := f.messages.SearchMessages(producer, &types.MessageSearchParams{Query: "Whom does Alice know?", Mode: types.MessageSearchModeVector, Limit: 20})
+		result, err := f.messages.SearchMessages(
+			producer,
+			&types.MessageSearchParams{Query: "Whom does Alice know?", Mode: types.MessageSearchModeVector, Limit: 20},
+		)
 		releaseModel()
 		if err != nil {
 			http.Error(w, "Search refused", http.StatusForbidden)
 			return
 		}
 		markMessageMaterialReady(ctx)
-		require.Positive(t, f.activeLeases(t, historyVectorActualKB), "child KB physical fence must outlive the model owner")
+		require.Positive(
+			t,
+			f.activeLeases(t, historyVectorActualKB),
+			"child KB physical fence must outlive the model owner",
+		)
 		if afterModel != nil {
 			afterModel(ctx, result)
 		}
@@ -398,14 +635,25 @@ func TestHistoryVectorActualSQLFreshMultiSessionOriginalsAndHTTPLease(t *testing
 		// Each capture requires its own exact actual parent plan. Re-reading
 		// both under the model context proves the union survives KB hydration.
 		for _, child := range f.children {
-			snapshot, err := f.messages.materialStore.CaptureKnowledgeOutputInputs(ctx, types.KnowledgeBuildInputCaptureRequest{TenantID: 7, KnowledgeBaseID: historyVectorActualKB, KnowledgeID: child.Knowledge.ID})
+			snapshot, err := f.messages.materialStore.CaptureKnowledgeOutputInputs(
+				ctx,
+				types.KnowledgeBuildInputCaptureRequest{
+					TenantID:        7,
+					KnowledgeBaseID: historyVectorActualKB,
+					KnowledgeID:     child.Knowledge.ID,
+				},
+			)
 			require.NoError(t, err)
 			require.Equal(t, child.Proof.AdmissionID, snapshot.Proof.AdmissionID)
 		}
 	}
 	response := f.httpSearch(t, func(ctx context.Context, result *types.MessageSearchResult) {
 		require.Equal(t, 2, result.Total)
-		require.NoError(t, CheckMessageMaterialOutputBoundary(ctx), "actual pool of one must complete final nonrecursive checks")
+		require.NoError(
+			t,
+			CheckMessageMaterialOutputBoundary(ctx),
+			"actual pool of one must complete final nonrecursive checks",
+		)
 	})
 	require.Equal(t, http.StatusOK, response.Code)
 	var result types.MessageSearchResult
@@ -442,7 +690,11 @@ func TestHistoryVectorActualSQLSourceRevokedDuringModelLookupRefusesHTTP(t *test
 	response := f.httpSearch(t, nil)
 	require.Equal(t, http.StatusForbidden, response.Code)
 	require.EqualValues(t, 1, f.models.lookups.Load())
-	require.Zero(t, f.models.rankCalls.Load(), "revoked actual source must be rechecked after model lookup and before any Rerank documents")
+	require.Zero(
+		t,
+		f.models.rankCalls.Load(),
+		"revoked actual source must be rechecked after model lookup and before any Rerank documents",
+	)
 	for _, answer := range f.answers {
 		require.NotContains(t, response.Body.String(), answer.Content)
 	}
@@ -466,7 +718,11 @@ func TestHistoryVectorActualSQLTargetOnlyGrantRevokedAtHTTPWriter(t *testing.T) 
 			require.Equal(t, answer.Content, row.Content)
 		}
 		require.NoError(t, CheckMessageMaterialOutputBoundary(read))
-		require.Error(t, CheckMessageMaterialOutputBoundary(ctx), "target-only current authorization must survive through the final sender checkpoint")
+		require.Error(
+			t,
+			CheckMessageMaterialOutputBoundary(ctx),
+			"target-only current authorization must survive through the final sender checkpoint",
+		)
 	})
 	require.Equal(t, http.StatusForbidden, response.Code)
 	require.EqualValues(t, 1, f.models.rankCalls.Load(), "this case revokes after successful model/service work")
@@ -481,10 +737,21 @@ func TestHistoryVectorActualSQLChildBodyChangedAtHTTPWriter(t *testing.T) {
 	response := f.httpSearch(t, func(ctx context.Context, result *types.MessageSearchResult) {
 		require.Equal(t, 2, result.Total)
 		var chunk types.Chunk
-		require.NoError(t, f.m.f.db.Where("knowledge_id=? AND chunk_type=?", f.children[0].Knowledge.ID, types.ChunkTypeText).Take(&chunk).Error)
+		require.NoError(
+			t,
+			f.m.f.db.Where("knowledge_id=? AND chunk_type=?", f.children[0].Knowledge.ID, types.ChunkTypeText).
+				Take(&chunk).
+				Error,
+		)
 		// An unadmitted SQL mutation changes the actual child's body/version,
 		// while original parent messages, source grants and owner remain valid.
-		require.NoError(t, f.m.f.db.Model(&types.Chunk{}).Where("id=?", chunk.ID).Update("content", "UNADMITTED CHILD REPLACEMENT").Error)
+		require.NoError(
+			t,
+			f.m.f.db.Model(&types.Chunk{}).
+				Where("id=?", chunk.ID).
+				Update("content", "UNADMITTED CHILD REPLACEMENT").
+				Error,
+		)
 		require.True(t, f.m.allow.Load())
 		require.Error(t, CheckMessageMaterialOutputBoundary(ctx), "final sender must recheck exact actual child body")
 	})
@@ -520,7 +787,11 @@ func TestHistoryVectorActualSQLRetainedBridgeCannotDropInputsAtHTTPWriter(t *tes
 					require.NotEmpty(t, bridge.children[id].Chunks)
 					bridge.children[id].Chunks[0].Content = "UNADMITTED RETAINED SNAPSHOT REPLACEMENT"
 				}
-				require.Error(t, CheckMessageMaterialOutputBoundary(ctx), "held inputs cannot weaken into capture-phase optional inputs")
+				require.Error(
+					t,
+					CheckMessageMaterialOutputBoundary(ctx),
+					"held inputs cannot weaken into capture-phase optional inputs",
+				)
 			})
 			require.Equal(t, http.StatusForbidden, response.Code)
 			for _, answer := range f.answers {
@@ -536,14 +807,20 @@ func TestHistoryVectorActualSQLCurrentOwnedMetadataRejectsOwnerABA(t *testing.T)
 	first := f.sessions[0]
 	// The same current owner string after ABA cannot replace the original
 	// admitted owner epoch. Filter its child before native TopK is evaluated.
-	require.NoError(t, f.m.f.db.Model(&types.Session{}).Where("id=?", first.ID).Update("user_id", "different-current-owner").Error)
+	require.NoError(
+		t,
+		f.m.f.db.Model(&types.Session{}).Where("id=?", first.ID).Update("user_id", "different-current-owner").Error,
+	)
 	require.NoError(t, f.m.f.db.Model(&types.Session{}).Where("id=?", first.ID).Update("user_id", "enrich-human").Error)
 	ids, err := f.messages.materialStore.OwnedHistoryKnowledgeIDs(f.base, 7, historyVectorActualKB, "enrich-human", nil)
 	require.NoError(t, err)
 	require.Equal(t, []string{f.children[1].Knowledge.ID}, ids)
 	current := WithMessageMaterialOutputBoundary(f.base)
 	defer CloseMessageMaterialOutputBoundary(current)
-	result, err := f.messages.SearchMessages(current, &types.MessageSearchParams{Query: "Whom does Alice know?", Mode: types.MessageSearchModeVector, Limit: 20})
+	result, err := f.messages.SearchMessages(
+		current,
+		&types.MessageSearchParams{Query: "Whom does Alice know?", Mode: types.MessageSearchModeVector, Limit: 20},
+	)
 	require.NoError(t, err)
 	require.Equal(t, 1, result.Total)
 	require.Equal(t, f.sessions[1].ID, result.Items[0].SessionID)

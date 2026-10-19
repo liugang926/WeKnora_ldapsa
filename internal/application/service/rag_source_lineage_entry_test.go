@@ -21,13 +21,22 @@ type ragEntryModel struct {
 	inputs [][]chat.Message
 }
 
-func (m *ragEntryModel) Chat(_ context.Context, messages []chat.Message, _ *chat.ChatOptions) (*types.ChatResponse, error) {
+func (m *ragEntryModel) Chat(
+	_ context.Context,
+	messages []chat.Message,
+	_ *chat.ChatOptions,
+) (*types.ChatResponse, error) {
 	m.mu.Lock()
 	m.inputs = append(m.inputs, messages)
 	m.mu.Unlock()
 	return &types.ChatResponse{Content: `{"rewrite_query":"paraphrase the prior answer","intent":"follow_up"}`}, nil
 }
-func (m *ragEntryModel) ChatStream(_ context.Context, messages []chat.Message, _ *chat.ChatOptions) (<-chan types.StreamResponse, error) {
+
+func (m *ragEntryModel) ChatStream(
+	_ context.Context,
+	messages []chat.Message,
+	_ *chat.ChatOptions,
+) (<-chan types.StreamResponse, error) {
 	m.mu.Lock()
 	m.inputs = append(m.inputs, messages)
 	m.mu.Unlock()
@@ -59,17 +68,34 @@ func (s *ragEntryMessages) GetRecentMessagesBySession(context.Context, string, i
 type ragEntryKnowledge struct{ interfaces.KnowledgeService }
 
 func (ragEntryKnowledge) GetKnowledgeByIDOnly(context.Context, string) (*types.Knowledge, error) {
-	return &types.Knowledge{ID: "knowledge", TenantID: 7, KnowledgeBaseID: "kb", Channel: types.ConnectorTypeNextcloud}, nil
+	return &types.Knowledge{
+		ID:              "knowledge",
+		TenantID:        7,
+		KnowledgeBaseID: "kb",
+		Channel:         types.ConnectorTypeNextcloud,
+	}, nil
 }
+
 func (ragEntryKnowledge) CheckKnowledgePublication(context.Context, *types.Knowledge) error {
 	return nil
 }
 
 func ragEntryProof(t *testing.T) *types.SourceLineage {
 	t.Helper()
-	proof, err := types.NewCompleteSourceLineage(types.SourceIdentity{Provider: types.ConnectorTypeNextcloud, TenantID: 7,
-		KnowledgeBaseID: "kb", DataSourceID: "ds", PairOperationID: "pair", InstanceID: "instance", BindingID: "binding",
-		FileID: "1", ExternalID: "nextcloud:instance:1", KnowledgeID: "knowledge", Revision: 2, ETag: "original"})
+	proof, err := types.NewCompleteSourceLineage(types.SourceIdentity{
+		Provider:        types.ConnectorTypeNextcloud,
+		TenantID:        7,
+		KnowledgeBaseID: "kb",
+		DataSourceID:    "ds",
+		PairOperationID: "pair",
+		InstanceID:      "instance",
+		BindingID:       "binding",
+		FileID:          "1",
+		ExternalID:      "nextcloud:instance:1",
+		KnowledgeID:     "knowledge",
+		Revision:        2,
+		ETag:            "original",
+	})
 	require.NoError(t, err)
 	return proof
 }
@@ -125,9 +151,20 @@ func TestRAGSourceLineageActualEntryKeepsCitationFreeNoSearchDependency(t *testi
 	noCitations := false
 	first.CitationEnabled = &noCitations
 	first.SummaryConfig.ContextTemplate = "{{query}}\n{{contexts}}"
-	first.MergeResult = []*types.SearchResult{{ID: "chunk", KnowledgeID: "knowledge", KnowledgeBaseID: "kb", Content: "private source detail", SourceLineage: proof}}
+	first.MergeResult = []*types.SearchResult{
+		{
+			ID:              "chunk",
+			KnowledgeID:     "knowledge",
+			KnowledgeBaseID: "kb",
+			Content:         "private source detail",
+			SourceLineage:   proof,
+		},
+	}
 	ctx, done := newTurn(first)
-	require.NoError(t, svc.KnowledgeQAByEvent(ctx, first, []types.EventType{types.INTO_CHAT_MESSAGE, types.CHAT_COMPLETION_STREAM}))
+	require.NoError(
+		t,
+		svc.KnowledgeQAByEvent(ctx, first, []types.EventType{types.INTO_CHAT_MESSAGE, types.CHAT_COMPLETION_STREAM}),
+	)
 	savedFirst := wait(done)
 	require.Equal(t, proof, savedFirst.SourceLineage)
 	require.NotContains(t, savedFirst.Content, "[1]")
@@ -136,13 +173,28 @@ func TestRAGSourceLineageActualEntryKeepsCitationFreeNoSearchDependency(t *testi
 	model.mu.Unlock()
 	// The later turn has no retrieval, no references and no selected KB. Its
 	// actual retained assistant prose still carries the original dependency.
-	history.rows = []*types.Message{{Role: "user", RequestID: "prior", Content: first.Query, CreatedAt: time.Now()}, savedFirst}
+	history.rows = []*types.Message{
+		{Role: "user", RequestID: "prior", Content: first.Query, CreatedAt: time.Now()},
+		savedFirst,
+	}
 	second := &types.ChatManage{}
 	second.SessionID, second.Query, second.UserContent, second.MaxRounds = "session", "paraphrase", "paraphrase", 1
 	second.EnableRewrite = true
 	second.CitationEnabled = &noCitations
 	ctx, done = newTurn(second)
-	require.NoError(t, svc.KnowledgeQAByEvent(ctx, second, []types.EventType{types.LOAD_HISTORY, types.QUERY_UNDERSTAND, types.INTO_CHAT_MESSAGE, types.CHAT_COMPLETION_STREAM}))
+	require.NoError(
+		t,
+		svc.KnowledgeQAByEvent(
+			ctx,
+			second,
+			[]types.EventType{
+				types.LOAD_HISTORY,
+				types.QUERY_UNDERSTAND,
+				types.INTO_CHAT_MESSAGE,
+				types.CHAT_COMPLETION_STREAM,
+			},
+		),
+	)
 	require.False(t, second.NeedsRetrieval(), "real rewrite intent did not take the no-search path")
 	savedSecond := wait(done)
 	require.Empty(t, savedSecond.KnowledgeReferences)
@@ -158,7 +210,11 @@ func TestRAGSourceLineageActualEntryKeepsCitationFreeNoSearchDependency(t *testi
 	third := &types.ChatManage{}
 	third.SessionID, third.Query, third.UserContent, third.MaxRounds = "session", "again", "again", 1
 	ctx, _ = newTurn(third)
-	require.ErrorIs(t, svc.KnowledgeQAByEvent(ctx, third, []types.EventType{types.LOAD_HISTORY, types.CHAT_COMPLETION_STREAM}), access.ErrNextcloudPublicationDenied)
+	require.ErrorIs(
+		t,
+		svc.KnowledgeQAByEvent(ctx, third, []types.EventType{types.LOAD_HISTORY, types.CHAT_COMPLETION_STREAM}),
+		access.ErrNextcloudPublicationDenied,
+	)
 	require.Equal(t, 3, model.calls(), "revoked historical prose reached a model")
 	require.ErrorIs(t, check(context.Background(), savedFirst.SourceLineage), access.ErrNextcloudPublicationDenied)
 	require.ErrorIs(t, check(context.Background(), savedSecond.SourceLineage), access.ErrNextcloudPublicationDenied)
@@ -190,8 +246,15 @@ func TestRAGSourceLineageActualModelBoundaryRejectsUncoveredInputs(t *testing.T)
 			case "caption":
 				cm.ImageDescription = "secret"
 			}
-			ctx := types.WithRAGSourceLineage(context.Background(), types.NewRAGSourceLineage(func(context.Context, *types.SourceLineage) error { return nil }))
-			err := (&sessionService{eventManager: manager}).KnowledgeQAByEvent(ctx, cm, []types.EventType{types.CHAT_COMPLETION_STREAM})
+			ctx := types.WithRAGSourceLineage(
+				context.Background(),
+				types.NewRAGSourceLineage(func(context.Context, *types.SourceLineage) error { return nil }),
+			)
+			err := (&sessionService{eventManager: manager}).KnowledgeQAByEvent(
+				ctx,
+				cm,
+				[]types.EventType{types.CHAT_COMPLETION_STREAM},
+			)
 			require.Error(t, err)
 			require.Equal(t, 0, model.calls())
 		})

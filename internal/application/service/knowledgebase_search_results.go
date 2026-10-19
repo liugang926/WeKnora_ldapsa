@@ -64,7 +64,12 @@ func (s *knowledgeBaseService) processSearchResults(ctx context.Context,
 		additionalChunkIDs := s.collectEnrichmentChunkIDs(ctx, allChunks, index)
 		if len(additionalChunkIDs) > 0 {
 			logger.Infof(ctx, "Fetching %d additional chunks", len(additionalChunkIDs))
-			additionalChunks, additionalLineages, err := s.hydrateRAGSearchChunks(ctx, ragEnrichmentChunkScopes(allChunks, additionalChunkIDs), knowledgeMap, ragKnowledgeReceiptMap(allChunks, lineages))
+			additionalChunks, additionalLineages, err := s.hydrateRAGSearchChunks(
+				ctx,
+				ragEnrichmentChunkScopes(allChunks, additionalChunkIDs),
+				knowledgeMap,
+				ragKnowledgeReceiptMap(allChunks, lineages),
+			)
 			if err != nil {
 				logger.Warnf(ctx, "Failed to fetch some additional chunks: %v", err)
 			} else {
@@ -79,7 +84,12 @@ func (s *knowledgeBaseService) processSearchResults(ctx context.Context,
 					parentIDs := s.collectParentChunkIDs(additionalChunks, index)
 					if len(parentIDs) > 0 {
 						logger.Infof(ctx, "Fetching %d second-level parent chunks", len(parentIDs))
-						parentChunks, parentLineages, err := s.hydrateRAGSearchChunks(ctx, ragEnrichmentChunkScopes(additionalChunks, parentIDs), knowledgeMap, ragKnowledgeReceiptMap(additionalChunks, lineages))
+						parentChunks, parentLineages, err := s.hydrateRAGSearchChunks(
+							ctx,
+							ragEnrichmentChunkScopes(additionalChunks, parentIDs),
+							knowledgeMap,
+							ragKnowledgeReceiptMap(additionalChunks, lineages),
+						)
 						if err != nil {
 							logger.Warnf(ctx, "Failed to fetch second-level parent chunks: %v", err)
 						} else {
@@ -287,7 +297,10 @@ func (s *knowledgeBaseService) assembleSearchResults(
 		if knowledge, ok := knowledgeMap[chunk.KnowledgeID]; ok {
 			matchType := idx.matchTypes[chunk.ID]
 			matchedContent := idx.matchedContents[chunk.ID]
-			searchResults = append(searchResults, s.buildSearchResult(chunk, knowledge, score, matchType, matchedContent))
+			searchResults = append(
+				searchResults,
+				s.buildSearchResult(chunk, knowledge, score, matchType, matchedContent),
+			)
 			addedChunkIDs[chunk.ID] = true
 		} else {
 			logger.Warnf(ctx, "Knowledge not found for chunk: %s, knowledge_id: %s", chunk.ID, chunk.KnowledgeID)
@@ -321,7 +334,10 @@ func (s *knowledgeBaseService) assembleSearchResults(
 					continue
 				}
 				matchedContent := idx.matchedContents[chunkID]
-				searchResults = append(searchResults, s.buildSearchResult(chunk, knowledge, score, matchType, matchedContent))
+				searchResults = append(
+					searchResults,
+					s.buildSearchResult(chunk, knowledge, score, matchType, matchedContent),
+				)
 			}
 		}
 	}

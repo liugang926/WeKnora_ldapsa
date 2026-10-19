@@ -40,22 +40,29 @@ type messageMaterialReceipt struct {
 
 func (messageMaterialReceipt) TableName() string { return "message_material_receipts" }
 
-type messageProducerBoundaryKey struct{}
-type messageProducerBoundary struct {
-	Store  *KnowledgeInputProvenanceStore
-	Digest string
-	Create bool
-}
+type (
+	messageProducerBoundaryKey struct{}
+	messageProducerBoundary    struct {
+		Store  *KnowledgeInputProvenanceStore
+		Digest string
+		Create bool
+	}
+)
 
 // This marker is minted only by the actual authenticated message service over
 // the new producer's exact arguments. A JSON field cannot carry it.
-func (s *KnowledgeInputProvenanceStore) WithMessageProducerInput(ctx context.Context, message *types.Message, create bool) (context.Context, error) {
+func (s *KnowledgeInputProvenanceStore) WithMessageProducerInput(
+	ctx context.Context,
+	message *types.Message,
+	create bool,
+) (context.Context, error) {
 	if message != nil && create {
 		if err := message.BeforeCreate(nil); err != nil {
 			return ctx, err
 		}
 	}
-	if message == nil || message.SessionID == "" || message.RequestID == "" || message.Role != "user" && message.Role != "assistant" {
+	if message == nil || message.SessionID == "" || message.RequestID == "" ||
+		message.Role != "user" && message.Role != "assistant" {
 		return ctx, types.ErrSourceLineageUnknown
 	}
 	digest, err := messageMaterialDigest(message)
@@ -64,6 +71,7 @@ func (s *KnowledgeInputProvenanceStore) WithMessageProducerInput(ctx context.Con
 	}
 	return context.WithValue(ctx, messageProducerBoundaryKey{}, messageProducerBoundary{s, digest, create}), nil
 }
+
 func messageMaterialDigest(message *types.Message) (string, error) {
 	if message == nil {
 		return "", types.ErrSourceLineageUnknown
@@ -93,6 +101,7 @@ func messageMaterialDigest(message *types.Message) (string, error) {
 		Context     *types.ContextCheckpoint
 	}{&body, body.SourceLineage, body.ExecutionContext, body.AgentTenantID, body.RenderedContent, body.ContextCheckpoint})
 }
+
 func messageVersion(tx *gorm.DB, table, column, id string) (uint64, error) {
 	var row struct{ Revision uint64 }
 	if err := tx.Table(table).Where(column+"=?", id).Take(&row).Error; err != nil {
@@ -103,6 +112,7 @@ func messageVersion(tx *gorm.DB, table, column, id string) (uint64, error) {
 	}
 	return row.Revision, nil
 }
+
 func (s *KnowledgeInputProvenanceStore) messageAuthorityInTx(tx *gorm.DB) (*KnowledgeInputProvenanceStore, error) {
 	if s.db != nil && s.db.Statement.ConnPool == tx.Statement.ConnPool && s.actorGroups != nil {
 		return s, nil
@@ -116,7 +126,11 @@ func (s *KnowledgeInputProvenanceStore) messageAuthorityInTx(tx *gorm.DB) (*Know
 	}
 	return actual, nil
 }
-func (s *KnowledgeInputProvenanceStore) currentMessageOwnerInTx(tx *gorm.DB, sessionID string) (context.Context, *types.Session, uint64, error) {
+
+func (s *KnowledgeInputProvenanceStore) currentMessageOwnerInTx(
+	tx *gorm.DB,
+	sessionID string,
+) (context.Context, *types.Session, uint64, error) {
 	var session types.Session
 	if err := tx.Select("id,user_id,tenant_id,deleted_at").Where("id=?", sessionID).Take(&session).Error; err != nil {
 		return nil, nil, 0, err
@@ -140,14 +154,20 @@ func (s *KnowledgeInputProvenanceStore) currentMessageOwnerInTx(tx *gorm.DB, ses
 	revision, err := messageVersion(tx, "message_session_owner_versions", "session_id", session.ID)
 	return fresh, &session, revision, err
 }
-func (s *KnowledgeInputProvenanceStore) beginMessageProducerInTx(tx *gorm.DB, message *types.Message, create bool) (*messageGenerationOrigin, error) {
+
+func (s *KnowledgeInputProvenanceStore) beginMessageProducerInTx(
+	tx *gorm.DB,
+	message *types.Message,
+	create bool,
+) (*messageGenerationOrigin, error) {
 	boundary, ok := tx.Statement.Context.Value(messageProducerBoundaryKey{}).(messageProducerBoundary)
 	digest, err := messageMaterialDigest(message)
 	if err != nil {
 		return nil, err
 	}
 	if advance, present := tx.Statement.Context.Value(messageProducerAdvanceKey{}).(messageProducerAdvanceBoundary); present {
-		if advance.Store != s || advance.MessageID != message.ID || advance.SessionID != message.SessionID || advance.Digest != digest {
+		if advance.Store != s || advance.MessageID != message.ID || advance.SessionID != message.SessionID ||
+			advance.Digest != digest {
 			return nil, ErrKnowledgeInputChanged
 		}
 	}
@@ -174,17 +194,34 @@ func (s *KnowledgeInputProvenanceStore) beginMessageProducerInTx(tx *gorm.DB, me
 		if err != nil {
 			return nil, err
 		}
-		row := &messageGenerationOrigin{ID: uuid.NewString(), MessageID: message.ID, SessionID: message.SessionID, TenantID: session.TenantID, OwnerID: session.UserID, OwnerRevision: ownerRevision, RequestID: message.RequestID, Role: message.Role, Actor: string(actorJSON), InitialInput: string(input)}
+		row := &messageGenerationOrigin{
+			ID:            uuid.NewString(),
+			MessageID:     message.ID,
+			SessionID:     message.SessionID,
+			TenantID:      session.TenantID,
+			OwnerID:       session.UserID,
+			OwnerRevision: ownerRevision,
+			RequestID:     message.RequestID,
+			Role:          message.Role,
+			Actor:         string(actorJSON),
+			InitialInput:  string(input),
+		}
 		if err := tx.Create(row).Error; err != nil {
 			return nil, err
 		}
 		return row, nil
 	}
 	var row messageGenerationOrigin
-	if err := tx.Select(messageGenerationMetadataFields).Where("message_id=? AND session_id=?", message.ID, message.SessionID).Take(&row).Error; err != nil {
+	if err := tx.Select(messageGenerationMetadataFields).
+		Where("message_id=? AND session_id=?", message.ID, message.SessionID).
+		Take(&row).
+		Error; err != nil {
 		return nil, err
 	}
-	if row.Actor != string(actorJSON) || row.RequestID != message.RequestID || row.Role != message.Role || row.OwnerID != session.UserID || row.OwnerRevision != ownerRevision || row.TenantID != session.TenantID {
+	if row.Actor != string(actorJSON) || row.RequestID != message.RequestID || row.Role != message.Role ||
+		row.OwnerID != session.UserID ||
+		row.OwnerRevision != ownerRevision ||
+		row.TenantID != session.TenantID {
 		return nil, ErrKnowledgeInputChanged
 	}
 	if err := s.validateMessageCompletionInputsInTx(tx, message); err != nil {
@@ -193,7 +230,12 @@ func (s *KnowledgeInputProvenanceStore) beginMessageProducerInTx(tx *gorm.DB, me
 	// A full producer update can advance only its own last immutable material.
 	// An unrelated partial write or ABA never becomes admitted by loading it.
 	var prior messageMaterialAdmission
-	if err := tx.Table("message_material_admissions a").Select("a.*").Joins("JOIN message_material_receipts r ON r.admission_id=a.id AND r.message_id=a.message_id").Where("a.message_id=? AND a.generation_id=?", message.ID, row.ID).Take(&prior).Error; err != nil {
+	if err := tx.Table("message_material_admissions a").
+		Select("a.*").
+		Joins("JOIN message_material_receipts r ON r.admission_id=a.id AND r.message_id=a.message_id").
+		Where("a.message_id=? AND a.generation_id=?", message.ID, row.ID).
+		Take(&prior).
+		Error; err != nil {
 		return nil, err
 	}
 	original, err := readMessageMaterialBodyInTx(tx, message.ID, message.SessionID, message.Role)
@@ -202,7 +244,12 @@ func (s *KnowledgeInputProvenanceStore) beginMessageProducerInTx(tx *gorm.DB, me
 	}
 	row.PreviousAdmissionID = prior.ID
 	row.PreviousRevision = prior.Revision
-	row.PreviousMembership, err = messageVersion(tx, "message_session_membership_versions", "session_id", message.SessionID)
+	row.PreviousMembership, err = messageVersion(
+		tx,
+		"message_session_membership_versions",
+		"session_id",
+		message.SessionID,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -224,7 +271,11 @@ func (s *KnowledgeInputProvenanceStore) beginMessageProducerInTx(tx *gorm.DB, me
 	if originalSources.RequireComplete() != nil {
 		// Only this generation's actual initial empty placeholder has no consumed
 		// body. A partial unknown completion cannot be certified by a later update.
-		if original.IsCompleted || original.Content != "" || len(original.AgentSteps) > 0 || len(original.KnowledgeReferences) > 0 || len(original.Images) > 0 || len(original.Attachments) > 0 || original.ContextCheckpoint != nil {
+		if original.IsCompleted || original.Content != "" || len(original.AgentSteps) > 0 ||
+			len(original.KnowledgeReferences) > 0 ||
+			len(original.Images) > 0 ||
+			len(original.Attachments) > 0 ||
+			original.ContextCheckpoint != nil {
 			return nil, types.ErrSourceLineageUnknown
 		}
 		empty, _ := types.NewCompleteSourceLineage()
@@ -238,7 +289,12 @@ func (s *KnowledgeInputProvenanceStore) beginMessageProducerInTx(tx *gorm.DB, me
 	}
 	return &row, nil
 }
-func (s *KnowledgeInputProvenanceStore) sealMessageMaterialInTx(tx *gorm.DB, origin *messageGenerationOrigin, message *types.Message) error {
+
+func (s *KnowledgeInputProvenanceStore) sealMessageMaterialInTx(
+	tx *gorm.DB,
+	origin *messageGenerationOrigin,
+	message *types.Message,
+) error {
 	// Incomplete or unknown material is recorded for this producer continuity,
 	// but saved-body readers still require completed, complete original lineage.
 	digest, err := messageMaterialDigest(message)
@@ -257,16 +313,33 @@ func (s *KnowledgeInputProvenanceStore) sealMessageMaterialInTx(tx *gorm.DB, ori
 	if err != nil {
 		return err
 	}
-	row := messageMaterialAdmission{ID: uuid.NewString(), GenerationID: origin.ID, MessageID: message.ID, SessionID: message.SessionID, TenantID: origin.TenantID, OwnerID: origin.OwnerID, OwnerRevision: origin.OwnerRevision, Revision: revision, BodyDigest: digest, SourceLineage: string(source), ExecutionContext: string(execution), AgentID: message.AgentID, AgentTenantID: message.AgentTenantID}
+	row := messageMaterialAdmission{
+		ID:               uuid.NewString(),
+		GenerationID:     origin.ID,
+		MessageID:        message.ID,
+		SessionID:        message.SessionID,
+		TenantID:         origin.TenantID,
+		OwnerID:          origin.OwnerID,
+		OwnerRevision:    origin.OwnerRevision,
+		Revision:         revision,
+		BodyDigest:       digest,
+		SourceLineage:    string(source),
+		ExecutionContext: string(execution),
+		AgentID:          message.AgentID,
+		AgentTenantID:    message.AgentTenantID,
+	}
 	if err := tx.Create(&row).Error; err != nil {
 		return err
 	}
-	if message.Role == "assistant" && message.IsCompleted && tx.Migrator().HasTable("message_completion_input_manifests") {
+	if message.Role == "assistant" && message.IsCompleted &&
+		tx.Migrator().HasTable("message_completion_input_manifests") {
 		if err := s.sealMessageCompletionInputsInTx(tx, origin, &row, message); err != nil {
 			return err
 		}
 	}
-	if err := tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "message_id"}}, DoUpdates: clause.AssignmentColumns([]string{"admission_id"})}).Create(&messageMaterialReceipt{message.ID, row.ID}).Error; err != nil {
+	if err := tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "message_id"}}, DoUpdates: clause.AssignmentColumns([]string{"admission_id"})}).
+		Create(&messageMaterialReceipt{message.ID, row.ID}).
+		Error; err != nil {
 		return err
 	}
 	if origin.PreviousAdmissionID != "" {
@@ -294,15 +367,24 @@ func ConfigureMessageMaterialAgentShares(store *KnowledgeInputProvenanceStore, a
 // original generation material.
 type MessageOriginalBodyAvailabilityCheck func(context.Context, *gorm.DB, string, string) error
 
-func ConfigureMessageOriginalBodyAvailability(store *KnowledgeInputProvenanceStore, check MessageOriginalBodyAvailabilityCheck) {
+func ConfigureMessageOriginalBodyAvailability(
+	store *KnowledgeInputProvenanceStore,
+	check MessageOriginalBodyAvailabilityCheck,
+) {
 	store.messageBodyAvailability = check
 }
+
 func (s *KnowledgeInputProvenanceStore) checkMessageOriginalBodyAvailability(tx *gorm.DB, generationID string) error {
 	if generationID == "" {
 		return types.ErrSourceLineageUnknown
 	}
 	if s.messageBodyAvailability != nil {
-		if err := s.messageBodyAvailability(tx.Statement.Context, tx, "message_generation_origins", generationID); err != nil {
+		if err := s.messageBodyAvailability(
+			tx.Statement.Context,
+			tx,
+			"message_generation_origins",
+			generationID,
+		); err != nil {
 			return stderrors.Join(types.ErrSourceLineageUnknown, err)
 		}
 		return nil

@@ -34,7 +34,12 @@ func historyActualQueuedTask(t *testing.T, f *historyVectorActualFixture, kind, 
 	return nil
 }
 
-func historyActualRunEnrichmentEntry(t *testing.T, f *historyVectorActualFixture, ctx context.Context, task *asynq.Task) error {
+func historyActualRunEnrichmentEntry(
+	t *testing.T,
+	f *historyVectorActualFixture,
+	ctx context.Context,
+	task *asynq.Task,
+) error {
 	t.Helper()
 	switch task.Type() {
 	case types.TypeKnowledgePostProcess:
@@ -52,7 +57,13 @@ func historyActualRunEnrichmentEntry(t *testing.T, f *historyVectorActualFixture
 func historyActualReadLeases(t *testing.T, f *historyVectorActualFixture) int64 {
 	t.Helper()
 	var count int64
-	require.NoError(t, f.m.f.db.Table("original_body_leases").Where("kind='read' AND released_at_ms IS NULL AND expires_at_ms>?", time.Now().UnixMilli()).Count(&count).Error)
+	require.NoError(
+		t,
+		f.m.f.db.Table("original_body_leases").
+			Where("kind='read' AND released_at_ms IS NULL AND expires_at_ms>?", time.Now().UnixMilli()).
+			Count(&count).
+			Error,
+	)
 	return count
 }
 
@@ -65,7 +76,12 @@ func TestHistoryKnowledgeTaskActualSQLFreshSummaryQuestionAndOwnedCleanup(t *tes
 		require.NoError(t, f.m.f.db.Where("id=?", child.Knowledge.ID).Take(&current).Error)
 		require.Equal(t, types.ParseStatusCompleted, current.ParseStatus)
 		var chunks []*types.Chunk
-		require.NoError(t, f.m.f.db.Where("knowledge_id=? AND chunk_type=?", child.Knowledge.ID, types.ChunkTypeText).Find(&chunks).Error)
+		require.NoError(
+			t,
+			f.m.f.db.Where("knowledge_id=? AND chunk_type=?", child.Knowledge.ID, types.ChunkTypeText).
+				Find(&chunks).
+				Error,
+		)
 		require.NotEmpty(t, chunks)
 		foundQuestions := false
 		for _, chunk := range chunks {
@@ -112,14 +128,25 @@ func TestHistoryKnowledgeTaskActualSQLChangedOriginalRefusesBeforeModel(t *testi
 			case "original-body-changed":
 				// This mutation does not create an admission. The existing real
 				// receipt/body/version must fail, even with source grants intact.
-				require.NoError(t, f.m.f.db.Model(&types.Message{}).Where("id=?", f.questions[0].ID).Update("content", "unadmitted replacement of an original question").Error)
+				require.NoError(
+					t,
+					f.m.f.db.Model(&types.Message{}).
+						Where("id=?", f.questions[0].ID).
+						Update("content", "unadmitted replacement of an original question").
+						Error,
+				)
 			}
 			beforeCalls := f.m.f.model.calls
 			beforeLookups := len(f.models.enrichmentGuards)
 			for _, task := range tasks {
 				require.Error(t, historyActualRunEnrichmentEntry(t, f, context.Background(), task), task.Type())
 				require.Equal(t, beforeCalls, f.m.f.model.calls, "refused originals must never reach any model")
-				require.Len(t, f.models.enrichmentGuards, beforeLookups, "refused originals must stop before model lookup")
+				require.Len(
+					t,
+					f.models.enrichmentGuards,
+					beforeLookups,
+					"refused originals must stop before model lookup",
+				)
 				require.Zero(t, f.activeLeases(t, ""), "failed opens must release physical leases")
 				require.Zero(t, historyActualReadLeases(t, f), "failed opens must release original body leases")
 			}
@@ -150,14 +177,21 @@ func TestHistoryKnowledgeTaskActualSQLClosesOnlyItsAcquiredGuard(t *testing.T) {
 	beforeCalls := f.m.f.model.calls
 	for _, kind := range []string{types.TypeKnowledgePostProcess, types.TypeSummaryGeneration, types.TypeQuestionGeneration} {
 		task := historyActualQueuedTask(t, f, kind, proof.KnowledgeID)
-		require.Error(t, historyActualRunEnrichmentEntry(t, f, caller, task), "a closed original guard context must stop the entry")
+		require.Error(
+			t,
+			historyActualRunEnrichmentEntry(t, f, caller, task),
+			"a closed original guard context must stop the entry",
+		)
 	}
 	require.Equal(t, beforeCalls, f.m.f.model.calls)
 	require.Zero(t, f.activeLeases(t, ""))
 	require.Zero(t, historyActualReadLeases(t, f))
 	// A partial authenticated context is not a fresh queue actor. It must
 	// never be replaced with the immutable history owner to make the read work.
-	partial := types.WithPrincipal(context.Background(), types.Principal{Type: types.PrincipalWebUser, ID: "another-current-principal"})
+	partial := types.WithPrincipal(
+		context.Background(),
+		types.Principal{Type: types.PrincipalWebUser, ID: "another-current-principal"},
+	)
 	_, closePartial, err := f.m.f.s.BeginKnowledgeHistoryTaskMaterial(partial, proof)
 	require.Error(t, err)
 	closePartial()

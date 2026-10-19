@@ -28,6 +28,7 @@ type RAGChunkReadRequest struct {
 	MetadataOnly    bool               `json:"-"`
 }
 
+// RAGChunkInputSnapshot holds an original chunk snapshot and its verified producer material.
 type RAGChunkInputSnapshot struct {
 	Knowledge     *Knowledge     `json:"-"`
 	Chunk         *Chunk         `json:"-"`

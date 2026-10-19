@@ -60,6 +60,7 @@ func (q *scopedFirstLoginQueue) Enqueue(task *asynq.Task, _ ...asynq.Option) (*a
 	q.tasks = append(q.tasks, task)
 	return &asynq.TaskInfo{}, nil
 }
+
 func (q *scopedFirstLoginQueue) pop() *asynq.Task {
 	q.mu.Lock()
 	defer q.mu.Unlock()
@@ -101,19 +102,24 @@ func scopedFirstLoginPrivateJSON(t *testing.T, path string, target any) {
 	t.Helper()
 	info, err := os.Stat(path)
 	require.NoError(t, err)
-	require.Zero(t, info.Mode().Perm()&0077)
+	require.Zero(t, info.Mode().Perm()&0o077)
 	raw, err := os.ReadFile(path)
 	require.NoError(t, err)
 	require.NoError(t, json.Unmarshal(raw, target))
 }
+
 func scopedFirstLoginWrite(t *testing.T, path string, value any) {
 	t.Helper()
 	raw, err := json.Marshal(value)
 	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(path, raw, 0600))
+	require.NoError(t, os.WriteFile(path, raw, 0o600))
 }
 
-func newScopedFirstLoginFoundation(t *testing.T, input scopedFirstLoginInput, fixture string) *scopedFirstLoginFoundation {
+func newScopedFirstLoginFoundation(
+	t *testing.T,
+	input scopedFirstLoginInput,
+	fixture string,
+) *scopedFirstLoginFoundation {
 	t.Helper()
 	sqlite_vec.Auto()
 	temp := t.TempDir()
@@ -125,20 +131,26 @@ func newScopedFirstLoginFoundation(t *testing.T, input scopedFirstLoginInput, fi
 	repoRoot, err := filepath.Abs("../..")
 	require.NoError(t, err)
 	require.NoError(t, os.Chdir(repoRoot))
-	require.NoError(t, database.RunMigrationsWithOptions("sqlite3://"+dbPath, database.MigrationOptions{SQLiteDBPath: dbPath}))
+	require.NoError(
+		t,
+		database.RunMigrationsWithOptions("sqlite3://"+dbPath, database.MigrationOptions{SQLiteDBPath: dbPath}),
+	)
 	require.NoError(t, os.Chdir(cwd))
-	db, err := gorm.Open(sqlite.Open(dbPath+"?_busy_timeout=5000"), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
+	db, err := gorm.Open(
+		sqlite.Open(dbPath+"?_busy_timeout=5000"),
+		&gorm.Config{Logger: logger.Default.LogMode(logger.Silent)},
+	)
 	require.NoError(t, err)
 	sqlDB, err := db.DB()
 	require.NoError(t, err)
 	sqlDB.SetMaxOpenConns(1)
 	t.Cleanup(func() { _ = sqlDB.Close() })
 	journal := filepath.Join(temp, "journal")
-	require.NoError(t, os.MkdirAll(journal, 0700))
+	require.NoError(t, os.MkdirAll(journal, 0o700))
 	key := make([]byte, 32)
 	_, err = rand.Read(key)
 	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(journal, "key"), key, 0600))
+	require.NoError(t, os.WriteFile(filepath.Join(journal, "key"), key, 0o600))
 	t.Setenv("WEKNORA_ORIGINAL_BODY_JOURNAL_DIRECTORY", journal)
 	t.Setenv("WEKNORA_ORIGINAL_BODY_JOURNAL_KEY", filepath.Join(journal, "key"))
 	t.Setenv("WEKNORA_ORIGINAL_BODY_JOURNAL_PIN", filepath.Join(journal, "pin"))
@@ -156,9 +168,45 @@ func newScopedFirstLoginFoundation(t *testing.T, input scopedFirstLoginInput, fi
 	require.NotEmpty(t, ldap.LoginPassword)
 	require.NotEmpty(t, ldap.ServerURL)
 	enabled := true
-	cfg := &config.Config{Tenant: &config.TenantConfig{EnableRBAC: &enabled}, Auth: &config.AuthConfig{}, Conversation: &config.ConversationConfig{GenerateSummaryPrompt: "Summarize in {{language}}", GenerateQuestionsPrompt: "Generate questions from {{content}}"}, Directory: &config.DirectoryConfig{Enabled: true, ManagementSource: config.DirectoryManagementFile, ID: input.Directory, ProviderDisplayName: "Owned PRD Samba AD", Servers: []config.DirectoryServerConfig{{URL: ldap.ServerURL, ServerName: ldap.ServerName, TLSMode: config.DirectoryTLSLDAPS}}, BindDN: ldap.BindDN, BindPassword: ldap.BindPassword, BaseDN: ldap.BaseDN, UserBaseDN: ldap.UserBaseDN, GroupBaseDN: ldap.GroupBaseDN, UserFilter: "(&(objectCategory=person)(objectClass=user))", GroupFilter: "(objectClass=group)", CAFile: fixture + ".ca", ConnectTimeout: 5 * time.Second, QueryTimeout: 10 * time.Second, PageSize: 100, ResultLimit: 1000, SyncInterval: 5 * time.Minute, StaleAfter: 15 * time.Minute}}
-	require.NoError(t, config.BindIndependentEnrichmentPromptLiteral(cfg, "summary", cfg.Conversation.GenerateSummaryPrompt))
-	require.NoError(t, config.BindIndependentEnrichmentPromptLiteral(cfg, "question", cfg.Conversation.GenerateQuestionsPrompt))
+	cfg := &config.Config{
+		Tenant: &config.TenantConfig{EnableRBAC: &enabled},
+		Auth:   &config.AuthConfig{},
+		Conversation: &config.ConversationConfig{
+			GenerateSummaryPrompt:   "Summarize in {{language}}",
+			GenerateQuestionsPrompt: "Generate questions from {{content}}",
+		},
+		Directory: &config.DirectoryConfig{
+			Enabled:             true,
+			ManagementSource:    config.DirectoryManagementFile,
+			ID:                  input.Directory,
+			ProviderDisplayName: "Owned PRD Samba AD",
+			Servers: []config.DirectoryServerConfig{
+				{URL: ldap.ServerURL, ServerName: ldap.ServerName, TLSMode: config.DirectoryTLSLDAPS},
+			},
+			BindDN:         ldap.BindDN,
+			BindPassword:   ldap.BindPassword,
+			BaseDN:         ldap.BaseDN,
+			UserBaseDN:     ldap.UserBaseDN,
+			GroupBaseDN:    ldap.GroupBaseDN,
+			UserFilter:     "(&(objectCategory=person)(objectClass=user))",
+			GroupFilter:    "(objectClass=group)",
+			CAFile:         fixture + ".ca",
+			ConnectTimeout: 5 * time.Second,
+			QueryTimeout:   10 * time.Second,
+			PageSize:       100,
+			ResultLimit:    1000,
+			SyncInterval:   5 * time.Minute,
+			StaleAfter:     15 * time.Minute,
+		},
+	}
+	require.NoError(
+		t,
+		config.BindIndependentEnrichmentPromptLiteral(cfg, "summary", cfg.Conversation.GenerateSummaryPrompt),
+	)
+	require.NoError(
+		t,
+		config.BindIndependentEnrichmentPromptLiteral(cfg, "question", cfg.Conversation.GenerateQuestionsPrompt),
+	)
 	groups := service.NewGroupAccessService(repository.NewGroupAccessRepository(db))
 	directories := repository.NewDirectoryRepository(db)
 	usersRepo := repository.NewUserRepository(db)
@@ -166,7 +214,16 @@ func newScopedFirstLoginFoundation(t *testing.T, input scopedFirstLoginInput, fi
 	tenants := service.NewTenantService(repository.NewTenantRepository(db), nil)
 	members := service.NewTenantMemberService(repository.NewTenantMemberRepository(db), nil, usersRepo, tokens)
 	users := service.NewUserService(cfg, usersRepo, tokens, tenants, members, nil, directories, groups)
-	runtime := service.NewDirectoryRuntimeService(cfg, service.NewDirectoryService(directories), directories, users, tenants, tokens, nil, members)
+	runtime := service.NewDirectoryRuntimeService(
+		cfg,
+		service.NewDirectoryService(directories),
+		directories,
+		users,
+		tenants,
+		tokens,
+		nil,
+		members,
+	)
 	service.ConfigureGroupAccessDirectoryRuntime(groups, runtime)
 	_, err = runtime.ManualSync(context.Background())
 	require.NoError(t, err, "actual complete LDAPS synchronization is required; no synthetic snapshot fallback")
@@ -176,9 +233,52 @@ func newScopedFirstLoginFoundation(t *testing.T, input scopedFirstLoginInput, fi
 	require.Nil(t, identity.UserID, "reader must never have logged into this WK database")
 	// This is an existing operator-owned workspace/template, not the new LDAP
 	// reader. Her login must not create a workspace or ordinary membership.
-	require.NoError(t, db.Create(&types.Tenant{ID: 77, Name: "Existing scoped fixture workspace", Business: "owned-first-login", Status: "active", RetrieverEngines: types.RetrieverEngines{Engines: []types.RetrieverEngineParams{{RetrieverType: types.VectorRetrieverType, RetrieverEngineType: types.SQLiteRetrieverEngineType}, {RetrieverType: types.KeywordsRetrieverType, RetrieverEngineType: types.SQLiteRetrieverEngineType}}}}).Error)
-	require.NoError(t, db.Create(&types.User{ID: "scoped-fixture-operator", Username: "scoped-fixture-operator", Email: "scoped-fixture-operator@example.test", TenantID: 77, IsActive: true}).Error)
-	require.NoError(t, db.Create(&types.TenantMember{TenantID: 77, UserID: "scoped-fixture-operator", Role: types.TenantRoleOwner, Status: types.TenantMemberStatusActive}).Error)
+	require.NoError(
+		t,
+		db.Create(
+			&types.Tenant{
+				ID:       77,
+				Name:     "Existing scoped fixture workspace",
+				Business: "owned-first-login",
+				Status:   "active",
+				RetrieverEngines: types.RetrieverEngines{
+					Engines: []types.RetrieverEngineParams{
+						{
+							RetrieverType:       types.VectorRetrieverType,
+							RetrieverEngineType: types.SQLiteRetrieverEngineType,
+						},
+						{
+							RetrieverType:       types.KeywordsRetrieverType,
+							RetrieverEngineType: types.SQLiteRetrieverEngineType,
+						},
+					},
+				},
+			},
+		).Error,
+	)
+	require.NoError(
+		t,
+		db.Create(
+			&types.User{
+				ID:       "scoped-fixture-operator",
+				Username: "scoped-fixture-operator",
+				Email:    "scoped-fixture-operator@example.test",
+				TenantID: 77,
+				IsActive: true,
+			},
+		).Error,
+	)
+	require.NoError(
+		t,
+		db.Create(
+			&types.TenantMember{
+				TenantID: 77,
+				UserID:   "scoped-fixture-operator",
+				Role:     types.TenantRoleOwner,
+				Status:   types.TenantMemberStatusActive,
+			},
+		).Error,
+	)
 	store := repository.NewKnowledgeInputProvenanceStore(db)
 	repo := repository.NewKnowledgeRepository(db)
 	chunks := repository.NewChunkRepository(db)
@@ -186,7 +286,10 @@ func newScopedFirstLoginFoundation(t *testing.T, input scopedFirstLoginInput, fi
 	repository.ConfigureKnowledgeInputActorGroupAccess(store, groups)
 	factory := func(tx *gorm.DB) *repository.KnowledgeInputProvenanceStore {
 		actual := repository.NewKnowledgeInputProvenanceStore(tx)
-		repository.ConfigureKnowledgeInputActorGroupAccess(actual, service.NewGroupAccessService(repository.NewGroupAccessRepository(tx)))
+		repository.ConfigureKnowledgeInputActorGroupAccess(
+			actual,
+			service.NewGroupAccessService(repository.NewGroupAccessRepository(tx)),
+		)
 		return actual
 	}
 	repository.ConfigureKnowledgeDisplayInputWriters(store, repository.NewKnowledgeTagRepository(db), repo, factory)
@@ -197,15 +300,40 @@ func newScopedFirstLoginFoundation(t *testing.T, input scopedFirstLoginInput, fi
 	public := access.NewNextcloudPublicationGuard(directories, sources)
 	leases := repository.NewNextcloudContentLeaseStore(db)
 	backend := "scoped-live-local"
-	require.NoError(t, db.Create(&types.StorageBackend{ID: backend, TenantID: 77, Name: "Owned local scoped source", Provider: "local", Status: types.StorageBackendStatusActive}).Error)
+	require.NoError(
+		t,
+		db.Create(
+			&types.StorageBackend{
+				ID:       backend,
+				TenantID: 77,
+				Name:     "Owned local scoped source",
+				Provider: "local",
+				Status:   types.StorageBackendStatusActive,
+			},
+		).Error,
+	)
 	catalog := service.NewResourceCatalog(repository.NewResourceRepository(db))
 	// Capacity admission measures the configured storage root before any upload.
-	require.NoError(t, os.MkdirAll(filepath.Join(temp, "files"), 0700))
-	files := storagefile.NewResourceCatalogFileService(storagefile.NewBackendScopedFileService(backend, storagefile.NewLocalFileService(filepath.Join(temp, "files"), "")), catalog, public)
+	require.NoError(t, os.MkdirAll(filepath.Join(temp, "files"), 0o700))
+	files := storagefile.NewResourceCatalogFileService(
+		storagefile.NewBackendScopedFileService(
+			backend,
+			storagefile.NewLocalFileService(filepath.Join(temp, "files"), ""),
+		),
+		catalog,
+		public,
+	)
 	pool, err := ants.NewPool(1)
 	require.NoError(t, err)
 	t.Cleanup(pool.Release)
-	modelService := service.NewModelService(repository.NewModelRepository(db), bases, nil, nil, embedding.NewBatchEmbedder(pool), tenants)
+	modelService := service.NewModelService(
+		repository.NewModelRepository(db),
+		bases,
+		nil,
+		nil,
+		embedding.NewBatchEmbedder(pool),
+		tenants,
+	)
 	var modelInput struct {
 		SourceAESKey string      `json:"source_aes_key"`
 		Embedding    types.Model `json:"embedding"`
@@ -227,17 +355,95 @@ func newScopedFirstLoginFoundation(t *testing.T, input scopedFirstLoginInput, fi
 	modelInput.SourceAESKey = ""
 	require.NoError(t, db.Create(&model).Error)
 	registry := retriever.NewRetrieveEngineRegistry(nil, nil)
-	require.NoError(t, registry.Register(retriever.NewKVHybridRetrieveEngine(sqlindex.NewSQLiteRetrieveEngineRepository(db), types.SQLiteRetrieverEngineType)))
+	require.NoError(
+		t,
+		registry.Register(
+			retriever.NewKVHybridRetrieveEngine(
+				sqlindex.NewSQLiteRetrieveEngineRepository(db),
+				types.SQLiteRetrieverEngineType,
+			),
+		),
+	)
 	queue := &scopedFirstLoginQueue{}
-	base := service.NewKnowledgeBaseService(bases, repo, chunks, nil, nil, modelService, registry, nil, repository.NewTenantRepository(db), files, nil, nil, queue, nil, nil, sources, repository.NewSyncLogRepository(db), nil, nil, catalog, nil, public, leases)
+	base := service.NewKnowledgeBaseService(
+		bases,
+		repo,
+		chunks,
+		nil,
+		nil,
+		modelService,
+		registry,
+		nil,
+		repository.NewTenantRepository(db),
+		files,
+		nil,
+		nil,
+		queue,
+		nil,
+		nil,
+		sources,
+		repository.NewSyncLogRepository(db),
+		nil,
+		nil,
+		catalog,
+		nil,
+		public,
+		leases,
+	)
 	service.ConfigureKnowledgeBaseInputProvenance(base, store)
 	service.ConfigureKnowledgeBaseGroupAccess(base, groups)
-	guard := access.NewNextcloudSourceLineageGuard(repo.(access.NextcloudLineageSnapshotLookup), base, nil, nil, groups, public, store)
-	repository.ConfigureKnowledgeOriginalInputSourceVerifier(store, service.NewKnowledgeOriginalInputSourceVerifier(store, guard, sources, repository.NewNextcloudOnboardingStore(db)))
+	guard := access.NewNextcloudSourceLineageGuard(
+		repo.(access.NextcloudLineageSnapshotLookup),
+		base,
+		nil,
+		nil,
+		groups,
+		public,
+		store,
+	)
+	repository.ConfigureKnowledgeOriginalInputSourceVerifier(
+		store,
+		service.NewKnowledgeOriginalInputSourceVerifier(
+			store,
+			guard,
+			sources,
+			repository.NewNextcloudOnboardingStore(db),
+		),
+	)
 	service.ConfigureKnowledgeBaseRAGChunkHydration(base, repository.NewRAGChunkSnapshotReader(db, store), guard)
 	span := service.NewSpanTracker(repository.NewKnowledgeSpanRepository(db), db)
 	chunkService := service.NewChunkService(chunks, repo, bases, modelService, registry, nil, queue, span)
-	knowledge, err := service.NewKnowledgeService(cfg, repo, nil, base, repository.NewTenantRepository(db), tenants, chunkService, chunks, repository.NewKnowledgeTagRepository(db), nil, files, nil, catalog, modelService, queue, nil, nil, registry, nil, nil, nil, nil, nil, nil, nil, span, nil, public, leases)
+	knowledge, err := service.NewKnowledgeService(
+		cfg,
+		repo,
+		nil,
+		base,
+		repository.NewTenantRepository(db),
+		tenants,
+		chunkService,
+		chunks,
+		repository.NewKnowledgeTagRepository(db),
+		nil,
+		files,
+		nil,
+		catalog,
+		modelService,
+		queue,
+		nil,
+		nil,
+		registry,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		span,
+		nil,
+		public,
+		leases,
+	)
 	require.NoError(t, err)
 	service.ConfigureKnowledgeInputProvenance(knowledge, store, store)
 	service.ConfigureKnowledgeGroupAccess(knowledge, groups)
@@ -250,37 +456,176 @@ func newScopedFirstLoginFoundation(t *testing.T, input scopedFirstLoginInput, fi
 	service.ConfigureNextcloudPostProcessLedger(post, repository.NewNextcloudProcessingStateStore(db))
 	connectors := datasource.NewConnectorRegistry()
 	require.NoError(t, connectors.Register(nc.NewConnector()))
-	source := service.NewDataSourceService(sources, repository.NewSyncLogRepository(db), knowledge, base, queue, connectors, nil, repository.NewTenantRepository(db), nil, nil, repository.NewNextcloudEventInboxRepository(db), pairs)
+	source := service.NewDataSourceService(
+		sources,
+		repository.NewSyncLogRepository(db),
+		knowledge,
+		base,
+		queue,
+		connectors,
+		nil,
+		repository.NewTenantRepository(db),
+		nil,
+		nil,
+		repository.NewNextcloudEventInboxRepository(db),
+		pairs,
+	)
 	service.ConfigureDataSourceOriginalInputSources(source, store)
-	service.ConfigureDataSourceCapacityAdmission(source, service.NewNextcloudCapacityAdmission(repository.NewNextcloudCapacityStore(db), func(context.Context, *types.KnowledgeBase) (interfaces.FileService, error) { return files, nil }))
-	admin := types.WithExecutionTenant(types.WithPrincipal(types.WithCaller(context.Background(), types.Caller{TenantID: 77, UserID: "scoped-fixture-operator", Role: types.TenantRoleOwner}), types.Principal{Type: types.PrincipalWebUser, ID: "scoped-fixture-operator"}), 77)
-	template := &types.KnowledgeBase{ID: "scoped-login-template", TenantID: 77, Name: "Owned source template", Type: types.KnowledgeBaseTypeDocument, EmbeddingModelID: model.ID, StorageBackendID: &backend, ChunkingConfig: types.ChunkingConfig{ChunkSize: 512}, IndexingStrategy: types.IndexingStrategy{VectorEnabled: true, KeywordEnabled: true}}
-	require.NoError(t, store.CreateKnowledgeBaseWithInput(repository.WithIndependentKnowledgeBaseNameInput(repository.WithIndependentKnowledgeInput(admin), template.ID, template.Name), template))
-	unrelated := &types.KnowledgeBase{ID: "scoped-login-unrelated", TenantID: 77, Name: "Unrelated inherit KB", Type: types.KnowledgeBaseTypeDocument, EmbeddingModelID: model.ID, StorageBackendID: &backend, IndexingStrategy: template.IndexingStrategy}
-	require.NoError(t, store.CreateKnowledgeBaseWithInput(repository.WithIndependentKnowledgeBaseNameInput(repository.WithIndependentKnowledgeInput(admin), unrelated.ID, unrelated.Name), unrelated))
+	service.ConfigureDataSourceCapacityAdmission(
+		source,
+		service.NewNextcloudCapacityAdmission(
+			repository.NewNextcloudCapacityStore(db),
+			func(context.Context, *types.KnowledgeBase) (interfaces.FileService, error) { return files, nil },
+		),
+	)
+	admin := types.WithExecutionTenant(
+		types.WithPrincipal(
+			types.WithCaller(
+				context.Background(),
+				types.Caller{TenantID: 77, UserID: "scoped-fixture-operator", Role: types.TenantRoleOwner},
+			),
+			types.Principal{Type: types.PrincipalWebUser, ID: "scoped-fixture-operator"},
+		),
+		77,
+	)
+	template := &types.KnowledgeBase{
+		ID:               "scoped-login-template",
+		TenantID:         77,
+		Name:             "Owned source template",
+		Type:             types.KnowledgeBaseTypeDocument,
+		EmbeddingModelID: model.ID,
+		StorageBackendID: &backend,
+		ChunkingConfig:   types.ChunkingConfig{ChunkSize: 512},
+		IndexingStrategy: types.IndexingStrategy{VectorEnabled: true, KeywordEnabled: true},
+	}
+	require.NoError(
+		t,
+		store.CreateKnowledgeBaseWithInput(
+			repository.WithIndependentKnowledgeBaseNameInput(
+				repository.WithIndependentKnowledgeInput(admin),
+				template.ID,
+				template.Name,
+			),
+			template,
+		),
+	)
+	unrelated := &types.KnowledgeBase{
+		ID:               "scoped-login-unrelated",
+		TenantID:         77,
+		Name:             "Unrelated inherit KB",
+		Type:             types.KnowledgeBaseTypeDocument,
+		EmbeddingModelID: model.ID,
+		StorageBackendID: &backend,
+		IndexingStrategy: template.IndexingStrategy,
+	}
+	require.NoError(
+		t,
+		store.CreateKnowledgeBaseWithInput(
+			repository.WithIndependentKnowledgeBaseNameInput(
+				repository.WithIndependentKnowledgeInput(admin),
+				unrelated.ID,
+				unrelated.Name,
+			),
+			unrelated,
+		),
+	)
 	credentialHash := sha256.Sum256([]byte(input.Token))
-	require.NoError(t, db.Create(&types.NextcloudOnboardingCredential{ID: input.Credential, TokenSHA256: hex.EncodeToString(credentialHash[:]), InstanceID: input.Instance, BaseURL: input.BaseURL, TenantID: 77, DirectoryID: input.Directory, TemplateKBID: template.ID, Enabled: true, MaxKnowledgeBases: 2}).Error)
-	require.NoError(t, db.Create(&types.NextcloudOnboardingDelegation{TenantID: 77, DirectoryID: input.Directory, ObjectGUID: input.OwnerGUID}).Error)
+	require.NoError(
+		t,
+		db.Create(
+			&types.NextcloudOnboardingCredential{
+				ID:                input.Credential,
+				TokenSHA256:       hex.EncodeToString(credentialHash[:]),
+				InstanceID:        input.Instance,
+				BaseURL:           input.BaseURL,
+				TenantID:          77,
+				DirectoryID:       input.Directory,
+				TemplateKBID:      template.ID,
+				Enabled:           true,
+				MaxKnowledgeBases: 2,
+			},
+		).Error,
+	)
+	require.NoError(
+		t,
+		db.Create(
+			&types.NextcloudOnboardingDelegation{
+				TenantID:    77,
+				DirectoryID: input.Directory,
+				ObjectGUID:  input.OwnerGUID,
+			},
+		).Error,
+	)
 	onboarding := repository.NewNextcloudOnboardingStore(db)
 	sourceHandler := handler.NewDataSourceHandler(source, base)
 	handler.ConfigureDataSourceGroupAccess(sourceHandler, groups)
-	onboardHandler := handler.NewNextcloudOnboardingHandler(onboarding, handler.NewNextcloudSourcePairingHandler(pairs, sourceHandler), repository.NewNextcloudEventInboxRepository(db))
+	onboardHandler := handler.NewNextcloudOnboardingHandler(
+		onboarding,
+		handler.NewNextcloudSourcePairingHandler(pairs, sourceHandler),
+		repository.NewNextcloudEventInboxRepository(db),
+	)
 	kh := handler.NewKnowledgeHandler(cfg, knowledge, base, nil, nil, queue, repository.NewKnowledgeSpanRepository(db))
 	handler.ConfigureKnowledgeHandlerGroupAccess(kh, groups)
 	handler.ConfigureKnowledgeHandlerPublicationGuard(kh, public)
 	handler.ConfigureKnowledgeHandlerContentLeaseStore(kh, leases)
 	handler.ConfigureKnowledgeHandlerOutputLineage(kh, service.NewKnowledgeOutputAuthorizer(store, guard))
 	handler.ConfigureKnowledgeHandlerCollectionOutput(kh, service.NewKnowledgeCollectionOutputAuthorizer(store, guard))
-	kbh := handler.NewKnowledgeBaseHandler(cfg, base, knowledge, nil, nil, queue, nil, users, files, nil, nil, groups, sources, leases)
+	kbh := handler.NewKnowledgeBaseHandler(
+		cfg,
+		base,
+		knowledge,
+		nil,
+		nil,
+		queue,
+		nil,
+		users,
+		files,
+		nil,
+		nil,
+		groups,
+		sources,
+		leases,
+	)
 	handler.ConfigureKnowledgeBaseSourceMetadataGuard(kbh, public, pairs)
-	return &scopedFirstLoginFoundation{db: db, cfg: cfg, store: store, groups: groups, runtime: runtime, users: users, tenants: tenants, members: members, source: source, knowledge: knowledge, base: base, queue: queue, post: post, chunks: chunks, knowledgeRepo: repo, public: public, guard: guard, leases: leases, onboarding: onboarding, onboardingHandler: onboardHandler, knowledgeHandler: kh, baseHandler: kbh, ldap: ldap}
+	return &scopedFirstLoginFoundation{
+		db:                db,
+		cfg:               cfg,
+		store:             store,
+		groups:            groups,
+		runtime:           runtime,
+		users:             users,
+		tenants:           tenants,
+		members:           members,
+		source:            source,
+		knowledge:         knowledge,
+		base:              base,
+		queue:             queue,
+		post:              post,
+		chunks:            chunks,
+		knowledgeRepo:     repo,
+		public:            public,
+		guard:             guard,
+		leases:            leases,
+		onboarding:        onboarding,
+		onboardingHandler: onboardHandler,
+		knowledgeHandler:  kh,
+		baseHandler:       kbh,
+		ldap:              ldap,
+	}
 }
 
 func (f *scopedFirstLoginFoundation) processSource(t *testing.T, input scopedFirstLoginInput) *types.Knowledge {
 	t.Helper()
-	log := &types.SyncLog{ID: "scoped-first-login-sync", DataSourceID: input.DataSourceID, TenantID: 77, Status: types.SyncLogStatusRunning}
+	log := &types.SyncLog{
+		ID:           "scoped-first-login-sync",
+		DataSourceID: input.DataSourceID,
+		TenantID:     77,
+		Status:       types.SyncLogStatusRunning,
+	}
 	require.NoError(t, repository.NewSyncLogRepository(f.db).Create(context.Background(), log))
-	payload, err := json.Marshal(types.DataSourceSyncPayload{TenantID: 77, DataSourceID: input.DataSourceID, SyncLogID: log.ID, ForceFull: true})
+	payload, err := json.Marshal(
+		types.DataSourceSyncPayload{TenantID: 77, DataSourceID: input.DataSourceID, SyncLogID: log.ID, ForceFull: true},
+	)
 	require.NoError(t, err)
 	_, err = f.queue.Enqueue(asynq.NewTask(types.TypeDataSourceSync, payload))
 	require.NoError(t, err)
@@ -311,19 +656,40 @@ func (f *scopedFirstLoginFoundation) processSource(t *testing.T, input scopedFir
 		default:
 			t.Fatalf("unexpected actual first-login source task %s", task.Type())
 		}
-		require.NoError(t, wrapNextcloudBuild(f.leases, f.knowledgeRepo, f.chunks, run)(context.Background(), task), "actual first-login source worker")
+		require.NoError(
+			t,
+			wrapNextcloudBuild(f.leases, f.knowledgeRepo, f.chunks, run)(context.Background(), task),
+			"actual first-login source worker",
+		)
 	}
 	var rows []*types.Knowledge
-	require.NoError(t, f.db.Where("knowledge_base_id=? AND channel=?", input.KnowledgeBaseID, types.ConnectorTypeNextcloud).Find(&rows).Error)
+	require.NoError(
+		t,
+		f.db.Where("knowledge_base_id=? AND channel=?", input.KnowledgeBaseID, types.ConnectorTypeNextcloud).
+			Find(&rows).
+			Error,
+	)
 	require.Len(t, rows, 1)
 	row := rows[0]
 	require.Equal(t, types.ParseStatusCompleted, row.ParseStatus)
 	require.Equal(t, "enabled", row.EnableStatus)
 	require.Equal(t, fmt.Sprintf("nextcloud:%s:%d", input.Instance, input.FileID), row.GetMetadata()["external_id"])
 	var chunks, indexed int64
-	require.NoError(t, f.db.Model(&types.Chunk{}).Where("tenant_id=? AND knowledge_base_id=? AND knowledge_id=?", 77, input.KnowledgeBaseID, row.ID).Count(&chunks).Error)
+	require.NoError(
+		t,
+		f.db.Model(&types.Chunk{}).
+			Where("tenant_id=? AND knowledge_base_id=? AND knowledge_id=?", 77, input.KnowledgeBaseID, row.ID).
+			Count(&chunks).
+			Error,
+	)
 	require.Positive(t, chunks)
-	require.NoError(t, f.db.Table("lite_embeddings").Where("knowledge_base_id=? AND knowledge_id=? AND dimension>0", input.KnowledgeBaseID, row.ID).Count(&indexed).Error)
+	require.NoError(
+		t,
+		f.db.Table("lite_embeddings").
+			Where("knowledge_base_id=? AND knowledge_id=? AND dimension>0", input.KnowledgeBaseID, row.ID).
+			Count(&indexed).
+			Error,
+	)
 	require.Positive(t, indexed, "real configured embedding must persist its native index")
 	return row
 }

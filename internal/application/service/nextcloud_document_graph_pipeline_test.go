@@ -43,6 +43,7 @@ type documentGraphLive struct {
 func TestNextcloudDocumentToSQLIndexGraphAndCurrentState(t *testing.T) {
 	runDocumentGraphPipeline(t, "")
 }
+
 func TestNextcloudLiveDocumentToGraphAndInbox(t *testing.T) {
 	path := os.Getenv("WEKNORA_DOCUMENT_GRAPH_LIVE_FIXTURE")
 	if path == "" {
@@ -50,6 +51,7 @@ func TestNextcloudLiveDocumentToGraphAndInbox(t *testing.T) {
 	}
 	runDocumentGraphPipeline(t, path)
 }
+
 func runDocumentGraphPipeline(t *testing.T, path string, inspect ...func(*machinePipelineFixture, *types.Knowledge)) {
 	localDerivedVecAuto.Do(sqlite_vec.Auto)
 	var live documentGraphLive
@@ -60,19 +62,45 @@ func runDocumentGraphPipeline(t *testing.T, path string, inspect ...func(*machin
 		require.NoError(t, json.Unmarshal(raw, &live))
 		live.Pair.TenantID = 7
 		require.NotEmpty(t, live.Pair.KnowledgeBaseID)
-		source = &machinePipelineSource{Pair: live.Pair, Token: live.Token, ExternalID: live.ExternalID, ETag: live.ETag, Prepared: func(pair *repository.NextcloudSourcePairing) {
-			raw, err := json.Marshal(pair)
-			require.NoError(t, err)
-			require.NoError(t, os.WriteFile(path+".ready", raw, 0600))
-			require.Eventually(t, func() bool { _, err := os.Stat(path + ".committed"); return err == nil }, 45*time.Second, 100*time.Millisecond)
-		}}
+		source = &machinePipelineSource{
+			Pair:       live.Pair,
+			Token:      live.Token,
+			ExternalID: live.ExternalID,
+			ETag:       live.ETag,
+			Prepared: func(pair *repository.NextcloudSourcePairing) {
+				raw, err := json.Marshal(pair)
+				require.NoError(t, err)
+				require.NoError(t, os.WriteFile(path+".ready", raw, 0o600))
+				require.Eventually(
+					t,
+					func() bool { _, err := os.Stat(path + ".committed"); return err == nil },
+					45*time.Second,
+					100*time.Millisecond,
+				)
+			},
+		}
 	}
-	m := newMachinePipelineFixtureWithSource(t, false, "Actual original document about its topic, with enough text for chunking and retrieval.", source, os.Getenv("WEKNORA_DOCUMENT_GRAPH_HISTORY") == "1")
+	m := newMachinePipelineFixtureWithSource(
+		t,
+		false,
+		"Actual original document about its topic, with enough text for chunking and retrieval.",
+		source,
+		os.Getenv("WEKNORA_DOCUMENT_GRAPH_HISTORY") == "1",
+	)
 	if source != nil {
 		require.NotEmpty(t, live.Directory)
 		require.NotEmpty(t, live.GUID)
-		require.NoError(t, m.f.db.Model(&types.Directory{}).Where("id=?", "machine-ad").Update("id", live.Directory).Error)
-		require.NoError(t, m.f.db.Model(&types.DirectoryIdentity{}).Where("id=?", "machine-ad-user").Updates(map[string]any{"directory_id": live.Directory, "object_guid": live.GUID}).Error)
+		require.NoError(
+			t,
+			m.f.db.Model(&types.Directory{}).Where("id=?", "machine-ad").Update("id", live.Directory).Error,
+		)
+		require.NoError(
+			t,
+			m.f.db.Model(&types.DirectoryIdentity{}).
+				Where("id=?", "machine-ad-user").
+				Updates(map[string]any{"directory_id": live.Directory, "object_guid": live.GUID}).
+				Error,
+		)
 	}
 	connection, instance, secret := "actual-document-graph-connection", "instance", "0123456789abcdef0123456789abcdef"
 	if source != nil {
@@ -92,7 +120,15 @@ func runDocumentGraphPipeline(t *testing.T, path string, inspect ...func(*machin
 	}}
 	require.NoError(t, db.Model(&types.Tenant{}).Where("id=?", 7).Update("retriever_engines", engines).Error)
 	registry := retriever.NewRetrieveEngineRegistry(nil, nil)
-	require.NoError(t, registry.Register(retriever.NewKVHybridRetrieveEngine(sqlindex.NewSQLiteRetrieveEngineRepository(db), types.SQLiteRetrieverEngineType)))
+	require.NoError(
+		t,
+		registry.Register(
+			retriever.NewKVHybridRetrieveEngine(
+				sqlindex.NewSQLiteRetrieveEngineRepository(db),
+				types.SQLiteRetrieverEngineType,
+			),
+		),
+	)
 	m.f.s.retrieveEngine = registry
 	m.f.s.modelService = documentGraphModels{machinePipelineModels{auto: m.model, summary: m.f.model}}
 	liveModels, liveTemplate := loadDocumentLiveModels(t)
@@ -109,7 +145,12 @@ func runDocumentGraphPipeline(t *testing.T, path string, inspect ...func(*machin
 	}
 	var kb types.KnowledgeBase
 	require.NoError(t, db.Where("id=?", m.ds.KnowledgeBaseID).Take(&kb).Error)
-	kb.IndexingStrategy = types.IndexingStrategy{VectorEnabled: true, KeywordEnabled: true, GraphEnabled: true, GraphRequired: true}
+	kb.IndexingStrategy = types.IndexingStrategy{
+		VectorEnabled:  true,
+		KeywordEnabled: true,
+		GraphEnabled:   true,
+		GraphRequired:  true,
+	}
 	kb.ExtractConfig = &types.ExtractConfig{Enabled: true, Tags: []string{"KNOWS"}}
 	if liveModels != nil {
 		kb.EmbeddingModelID = liveModels.embeddingRow.ID
@@ -123,12 +164,20 @@ func runDocumentGraphPipeline(t *testing.T, path string, inspect ...func(*machin
 	require.NoError(t, err)
 	encrypted, err := utils.EncryptAESGCM(secret, utils.GetAESKey())
 	require.NoError(t, err)
-	require.NoError(t, db.Table("nextcloud_event_connections").Create(map[string]any{"connection_id": connection, "tenant_id": 7, "knowledge_base_id": m.ds.KnowledgeBaseID, "datasource_id": m.ds.ID, "nextcloud_instance_id": instance, "binding_id": binding, "datasource_base_url": base, "datasource_config_sha256": configSHA, "status": "active", "current_key_id": "current", "current_secret_ciphertext": encrypted}).Error)
+	require.NoError(
+		t,
+		db.Table("nextcloud_event_connections").
+			Create(map[string]any{"connection_id": connection, "tenant_id": 7, "knowledge_base_id": m.ds.KnowledgeBaseID, "datasource_id": m.ds.ID, "nextcloud_instance_id": instance, "binding_id": binding, "datasource_base_url": base, "datasource_config_sha256": configSHA, "status": "active", "current_key_id": "current", "current_secret_ciphertext": encrypted}).
+			Error,
+	)
 	require.NoError(t, state.RefreshSourceEpoch(context.Background(), connection))
 	row := m.ingest(t)
 	model := &graphEntryModel{}
 	empty, _ := types.NewCompleteSourceLineage()
-	template, err := types.BindGraphPromptTemplateOrigin(&types.PromptTemplateStructured{Description: "extract entities and edges %s"}, empty)
+	template, err := types.BindGraphPromptTemplateOrigin(
+		&types.PromptTemplateStructured{Description: "extract entities and edges %s"},
+		empty,
+	)
 	require.NoError(t, err)
 	var graphModels interfaces.ModelService = &graphEntryModels{model: model}
 	graphCalls := func() int { return model.calls }
@@ -137,7 +186,14 @@ func runDocumentGraphPipeline(t *testing.T, path string, inspect ...func(*machin
 		graphModels = documentLiveGraphModels{liveModels}
 		graphCalls = func() int { return int(liveModels.graph.calls.Load()) }
 	}
-	handler := &ChunkExtractService{buildInputs: m.f.store, template: template, modelService: graphModels, graphEngine: provider, processingLedger: state, knowledgeRepo: m.f.s.repo}
+	handler := &ChunkExtractService{
+		buildInputs:      m.f.store,
+		template:         template,
+		modelService:     graphModels,
+		graphEngine:      provider,
+		processingLedger: state,
+		knowledgeRepo:    m.f.s.repo,
+	}
 	graphTasks := 0
 	for i := 0; i < len(m.f.queue.tasks); i++ {
 		task := m.f.queue.tasks[i]
@@ -150,9 +206,21 @@ func runDocumentGraphPipeline(t *testing.T, path string, inspect ...func(*machin
 		require.NoError(t, json.Unmarshal(task.Payload(), &payload))
 		require.Equal(t, row.ID, payload.KnowledgeID)
 		require.NotNil(t, payload.OriginalInput)
-		scope := repository.NextcloudContentScope{TenantID: 7, KnowledgeBaseID: m.ds.KnowledgeBaseID, KnowledgeID: row.ID, DataSourceID: m.ds.ID, ExternalID: m.externalID}
+		scope := repository.NextcloudContentScope{
+			TenantID:        7,
+			KnowledgeBaseID: m.ds.KnowledgeBaseID,
+			KnowledgeID:     row.ID,
+			DataSourceID:    m.ds.ID,
+			ExternalID:      m.externalID,
+		}
 		leases := repository.NewNextcloudContentLeaseStore(db)
-		lease, err := leases.AcquireKnowledge(context.Background(), scope, repository.NextcloudContentBuildLease, "actual-enqueued-graph", time.Minute)
+		lease, err := leases.AcquireKnowledge(
+			context.Background(),
+			scope,
+			repository.NextcloudContentBuildLease,
+			"actual-enqueued-graph",
+			time.Minute,
+		)
 		require.NoError(t, err)
 		ctx := repository.WithNextcloudBuildLease(context.Background(), leases, lease, scope)
 		require.NoError(t, handler.Handle(ctx, task))
@@ -195,9 +263,15 @@ func runDocumentGraphPipeline(t *testing.T, path string, inspect ...func(*machin
 		dispatcher := NewNextcloudStateDispatcher(state, nil)
 		dispatcher.deliver(context.Background(), time.Now().UTC())
 		var delivered int64
-		require.NoError(t, db.Table("nextcloud_status_outbox").Where("event_id=? AND state='delivered'", status.EventID).Count(&delivered).Error)
+		require.NoError(
+			t,
+			db.Table("nextcloud_status_outbox").
+				Where("event_id=? AND state='delivered'", status.EventID).
+				Count(&delivered).
+				Error,
+		)
 		require.EqualValues(t, 1, delivered)
-		require.NoError(t, os.WriteFile(path+".result", []byte(persisted.PayloadJSON), 0600))
+		require.NoError(t, os.WriteFile(path+".result", []byte(persisted.PayloadJSON), 0o600))
 		// The same derived output is read with a nominal WK admin actor whose
 		// actual source identity is checked over signed HTTP against NC/LDAPS.
 		output, err := NewKnowledgeOutputAuthorizer(m.f.store, m.f.guard).Begin(m.f.ctx, []*types.Knowledge{row})
@@ -205,7 +279,10 @@ func runDocumentGraphPipeline(t *testing.T, path string, inspect ...func(*machin
 		require.NoError(t, output.Check(m.f.ctx, []*types.Knowledge{row}))
 		var chunk types.Chunk
 		require.NoError(t, db.Where("knowledge_id=?", row.ID).Take(&chunk).Error)
-		chunks, err := NewChunkOutputAuthorizer(m.f.store, m.f.guard).Begin(m.f.ctx, types.ChunkOutputReadRequest{TenantID: 7, KnowledgeBaseID: m.ds.KnowledgeBaseID, KnowledgeID: row.ID, ChunkIDs: []string{chunk.ID}})
+		chunks, err := NewChunkOutputAuthorizer(
+			m.f.store,
+			m.f.guard,
+		).Begin(m.f.ctx, types.ChunkOutputReadRequest{TenantID: 7, KnowledgeBaseID: m.ds.KnowledgeBaseID, KnowledgeID: row.ID, ChunkIDs: []string{chunk.ID}})
 		require.NoError(t, err)
 		snapshot, err := chunks.Snapshot()
 		require.NoError(t, err)
@@ -228,20 +305,30 @@ func runDocumentGraphPipeline(t *testing.T, path string, inspect ...func(*machin
 			require.NoError(t, err)
 			require.NoError(t, original.Close())
 			bodySHA := sha256.Sum256(originalBytes)
-			descriptor := map[string]any{"database": databasePath, "file_root": m.base, "knowledge_id": row.ID,
-				"knowledge_base_id": row.KnowledgeBaseID, "user_id": "enrich-human", "file_path": row.FilePath, "body_sha256": hex.EncodeToString(bodySHA[:]), "history_session_id": m.liveHistorySessionID,
-				"history_vector_kb_id": m.liveHistoryVectorKBID, "history_vector_knowledge_id": m.liveHistoryVectorKnowledgeID,
-				"history_vector_embedding_model_id": m.liveHistoryVectorEmbeddingID, "history_vector_answer_sha256": m.liveHistoryVectorAnswerSHA256,
-				"environment": map[string]string{}}
+			descriptor := map[string]any{
+				"database":                          databasePath,
+				"file_root":                         m.base,
+				"knowledge_id":                      row.ID,
+				"knowledge_base_id":                 row.KnowledgeBaseID,
+				"user_id":                           "enrich-human",
+				"file_path":                         row.FilePath,
+				"body_sha256":                       hex.EncodeToString(bodySHA[:]),
+				"history_session_id":                m.liveHistorySessionID,
+				"history_vector_kb_id":              m.liveHistoryVectorKBID,
+				"history_vector_knowledge_id":       m.liveHistoryVectorKnowledgeID,
+				"history_vector_embedding_model_id": m.liveHistoryVectorEmbeddingID,
+				"history_vector_answer_sha256":      m.liveHistoryVectorAnswerSHA256,
+				"environment":                       map[string]string{},
+			}
 			environment := descriptor["environment"].(map[string]string)
 			for _, key := range []string{"SYSTEM_AES_KEY", "WEKNORA_NEXTCLOUD_DEV_HTTP", "WEKNORA_NEXTCLOUD_ALLOWED_ORIGINS", "WEKNORA_ORIGINAL_BODY_JOURNAL_DIRECTORY", "WEKNORA_ORIGINAL_BODY_JOURNAL_KEY", "WEKNORA_ORIGINAL_BODY_JOURNAL_PIN"} {
 				environment[key] = os.Getenv(key)
 			}
 			encoded, err := json.Marshal(descriptor)
 			require.NoError(t, err)
-			require.NoError(t, os.WriteFile(path+".http-input", encoded, 0600))
+			require.NoError(t, os.WriteFile(path+".http-input", encoded, 0o600))
 		}
-		require.NoError(t, os.WriteFile(path+".access-ready", []byte("ready"), 0600))
+		require.NoError(t, os.WriteFile(path+".access-ready", []byte("ready"), 0o600))
 		revokeWait := 90 * time.Second
 		if os.Getenv("WEKNORA_DOCUMENT_GRAPH_JWT") == "1" {
 			// HTTP positives get 90s, followed by NC's bounded revoke command.
@@ -253,8 +340,17 @@ func runDocumentGraphPipeline(t *testing.T, path string, inspect ...func(*machin
 		if os.Getenv("WEKNORA_DOCUMENT_GRAPH_HISTORY_VECTOR") == "1" {
 			revokeWait = 240 * time.Second
 		}
-		require.Eventually(t, func() bool { _, err := os.Stat(path + ".revoked"); return err == nil }, revokeWait, 100*time.Millisecond)
-		require.Error(t, output.Check(m.f.ctx, []*types.Knowledge{row}), "retained document output must recheck current source access")
+		require.Eventually(
+			t,
+			func() bool { _, err := os.Stat(path + ".revoked"); return err == nil },
+			revokeWait,
+			100*time.Millisecond,
+		)
+		require.Error(
+			t,
+			output.Check(m.f.ctx, []*types.Knowledge{row}),
+			"retained document output must recheck current source access",
+		)
 		require.Error(t, chunks.Check(m.f.ctx, snapshot), "retained chunks must recheck current source access")
 		_, err = NewKnowledgeOutputAuthorizer(m.f.store, m.f.guard).Begin(m.f.ctx, []*types.Knowledge{row})
 		require.Error(t, err, "nominal WK admin must not bypass actual LDAP source revocation")
@@ -262,7 +358,7 @@ func runDocumentGraphPipeline(t *testing.T, path string, inspect ...func(*machin
 			checkRAGRevoked()
 		}
 		if os.Getenv("WEKNORA_DOCUMENT_GRAPH_HTTP") == "1" {
-			require.NoError(t, os.WriteFile(path+".source-checked", []byte("checked"), 0600))
+			require.NoError(t, os.WriteFile(path+".source-checked", []byte("checked"), 0o600))
 			httpDoneWait := 60 * time.Second
 			if os.Getenv("WEKNORA_DOCUMENT_GRAPH_HISTORY_SEARCH") == "1" {
 				httpDoneWait = 120 * time.Second
@@ -270,15 +366,31 @@ func runDocumentGraphPipeline(t *testing.T, path string, inspect ...func(*machin
 			if os.Getenv("WEKNORA_DOCUMENT_GRAPH_HISTORY_VECTOR") == "1" {
 				httpDoneWait = 180 * time.Second
 			}
-			require.Eventually(t, func() bool { _, err := os.Stat(path + ".http-done"); return err == nil }, httpDoneWait, 100*time.Millisecond)
+			require.Eventually(
+				t,
+				func() bool { _, err := os.Stat(path + ".http-done"); return err == nil },
+				httpDoneWait,
+				100*time.Millisecond,
+			)
 		}
-		t.Log("actual LDAPS reader can read processed output before NC share removal; retained document/chunk output and new admin read denied after removal")
+		t.Log(
+			"actual LDAPS reader can read processed output before NC share removal; retained document/chunk output and new admin read denied after removal",
+		)
 
 	}
 	if liveModels != nil {
 		require.Positive(t, liveModels.summary.calls.Load(), "actual summary provider must run")
-		t.Logf("REAL_MODEL_PIPELINE embedding=%s dimension=%d chat=%s summary_calls=%d graph_calls=%d", liveModels.embeddingRow.Name, dimensions, liveModels.chatRow.Name, liveModels.summary.calls.Load(), liveModels.graph.calls.Load())
+		t.Logf(
+			"REAL_MODEL_PIPELINE embedding=%s dimension=%d chat=%s summary_calls=%d graph_calls=%d",
+			liveModels.embeddingRow.Name,
+			dimensions,
+			liveModels.chatRow.Name,
+			liveModels.summary.calls.Load(),
+			liveModels.graph.calls.Load(),
+		)
 		return
 	}
-	t.Log("actual HTTP sync -> saved original -> parser/chunker -> SQLite vector+FTS rows -> enqueued extraction -> fenced SQL graph -> published stage/outbox; controlled source and models")
+	t.Log(
+		"actual HTTP sync -> saved original -> parser/chunker -> SQLite vector+FTS rows -> enqueued extraction -> fenced SQL graph -> published stage/outbox; controlled source and models",
+	)
 }

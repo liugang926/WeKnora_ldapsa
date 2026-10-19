@@ -18,7 +18,10 @@ import (
 // These tests use the actual connector/RAG/history/child/native-index fixture.
 // Only the external NC source and models are controlled. The same production
 // heartbeat checkpoint is invoked once, without a fabricated error or proof.
-func heldHistoryHeartbeatInputs(t *testing.T, ctx context.Context) ([]*MessageMaterialGuard, []*historyVectorMaterialBridge) {
+func heldHistoryHeartbeatInputs(
+	t *testing.T,
+	ctx context.Context,
+) ([]*MessageMaterialGuard, []*historyVectorMaterialBridge) {
 	t.Helper()
 	slot, ok := ctx.Value(messageMaterialOutputKey{}).(*messageMaterialOutputSlot)
 	require.True(t, ok)
@@ -33,6 +36,7 @@ func heldHistoryHeartbeatInputs(t *testing.T, ctx context.Context) ([]*MessageMa
 	}
 	return guards, bridges
 }
+
 func awaitHistoryHeartbeatCancel(t *testing.T, bridges []*historyVectorMaterialBridge) {
 	t.Helper()
 	for _, bridge := range bridges {
@@ -47,14 +51,28 @@ func awaitHistoryHeartbeatCancel(t *testing.T, bridges []*historyVectorMaterialB
 // Obtain nonempty model inputs through the same server-owned native candidate,
 // immutable parent admission and original hydration ports as production. No
 // SearchResult, body, source proof or cancellation cause is manufactured here.
-func actualHeartbeatHydratedInputs(t *testing.T, f *historyVectorActualFixture, ctx context.Context) (*historyVectorMaterialBridge, []*types.SearchResult, []string) {
+func actualHeartbeatHydratedInputs(
+	t *testing.T,
+	f *historyVectorActualFixture,
+	ctx context.Context,
+) (*historyVectorMaterialBridge, []*types.SearchResult, []string) {
 	t.Helper()
 	owner := types.SessionOwnerIDFromContext(ctx)
-	params := &types.MessageSearchParams{Query: f.questions[0].Content, OwnerID: owner, Mode: types.MessageSearchModeVector, Limit: 20}
+	params := &types.MessageSearchParams{
+		Query:   f.questions[0].Content,
+		OwnerID: owner,
+		Mode:    types.MessageSearchModeVector,
+		Limit:   20,
+	}
 	owned, err := f.messages.materialStore.OwnedHistoryKnowledgeIDs(ctx, 7, historyVectorActualKB, owner, nil)
 	require.NoError(t, err)
 	require.NotEmpty(t, owned)
-	candidates, err := f.kb.SearchHistoryVectorCandidates(ctx, historyVectorActualKB, owned, types.SearchParams{QueryText: params.Query, MatchCount: 20, VectorThreshold: .1, DisableKeywordsMatch: true})
+	candidates, err := f.kb.SearchHistoryVectorCandidates(
+		ctx,
+		historyVectorActualKB,
+		owned,
+		types.SearchParams{QueryText: params.Query, MatchCount: 20, VectorThreshold: .1, DisableKeywordsMatch: true},
+	)
 	require.NoError(t, err)
 	require.NotEmpty(t, candidates)
 	selected := map[string]bool{}
@@ -67,7 +85,14 @@ func actualHeartbeatHydratedInputs(t *testing.T, f *historyVectorActualFixture, 
 		ids = append(ids, id)
 	}
 	sort.Strings(ids)
-	parents, err := f.messages.materialStore.PeekOwnedHistoryKnowledgeParentPlans(ctx, 7, historyVectorActualKB, owner, ids, nil)
+	parents, err := f.messages.materialStore.PeekOwnedHistoryKnowledgeParentPlans(
+		ctx,
+		7,
+		historyVectorActualKB,
+		owner,
+		ids,
+		nil,
+	)
 	require.NoError(t, err)
 	require.Len(t, parents, len(ids))
 	bridge, err := f.messages.beginHistoryVectorMaterialBridge(ctx, params, historyVectorActualKB, parents)
@@ -82,11 +107,18 @@ func actualHeartbeatHydratedInputs(t *testing.T, f *historyVectorActualFixture, 
 	require.NoError(t, bridge.Checkpoint(bridge.Context()))
 	return bridge, results, documents
 }
+
 func requireHeartbeatLeasesReleased(t *testing.T, f *historyVectorActualFixture) {
 	t.Helper()
 	require.Zero(t, f.activeLeases(t, ""))
 	var bodies int64
-	require.NoError(t, f.m.f.db.Table("original_body_leases").Where("released_at_ms IS NULL AND expires_at_ms>?", time.Now().UnixMilli()).Count(&bodies).Error)
+	require.NoError(
+		t,
+		f.m.f.db.Table("original_body_leases").
+			Where("released_at_ms IS NULL AND expires_at_ms>?", time.Now().UnixMilli()).
+			Count(&bodies).
+			Error,
+	)
 	require.Zero(t, bodies)
 }
 
@@ -107,7 +139,15 @@ func TestHistoryVectorActualSQLHeartbeatSourceDenialRetainsTypedHTTPRefusal(t *t
 			require.ErrorIs(t, context.Cause(bridge.Context()), access.ErrNextcloudPublicationDenied)
 		}
 		for _, bridge := range bridges {
-			_, err := runHistoryVectorRerank(bridge.Context(), &types.RetrievalConfig{RerankModelID: "retained-denial"}, "retained source", nil, nil, func() error { return bridge.Checkpoint(bridge.Context()) }, f.models.GetRerankModel)
+			_, err := runHistoryVectorRerank(
+				bridge.Context(),
+				&types.RetrievalConfig{RerankModelID: "retained-denial"},
+				"retained source",
+				nil,
+				nil,
+				func() error { return bridge.Checkpoint(bridge.Context()) },
+				f.models.GetRerankModel,
+			)
 			require.ErrorIs(t, err, access.ErrNextcloudPublicationDenied)
 		}
 		// The external HTTP owner itself is still alive. Only the actual owned
@@ -124,7 +164,13 @@ func TestHistoryVectorActualSQLHeartbeatSourceDenialRetainsTypedHTTPRefusal(t *t
 	}
 	require.Zero(t, f.activeLeases(t, ""))
 	var bodies int64
-	require.NoError(t, f.m.f.db.Table("original_body_leases").Where("released_at_ms IS NULL AND expires_at_ms>?", time.Now().UnixMilli()).Count(&bodies).Error)
+	require.NoError(
+		t,
+		f.m.f.db.Table("original_body_leases").
+			Where("released_at_ms IS NULL AND expires_at_ms>?", time.Now().UnixMilli()).
+			Count(&bodies).
+			Error,
+	)
 	require.Zero(t, bodies)
 }
 
@@ -145,7 +191,15 @@ func TestHistoryVectorActualSQLHeartbeatNonemptySourceDenialRetainsTypedModelRef
 		for _, bridge := range bridges {
 			require.ErrorIs(t, context.Cause(bridge.Context()), access.ErrNextcloudPublicationDenied)
 		}
-		out, err := runHistoryVectorRerank(bridge.Context(), &types.RetrievalConfig{RerankModelID: "actual-history-rerank"}, f.questions[0].Content, results, documents, func() error { return bridge.Checkpoint(bridge.Context()) }, f.models.GetRerankModel)
+		out, err := runHistoryVectorRerank(
+			bridge.Context(),
+			&types.RetrievalConfig{RerankModelID: "actual-history-rerank"},
+			f.questions[0].Content,
+			results,
+			documents,
+			func() error { return bridge.Checkpoint(bridge.Context()) },
+			f.models.GetRerankModel,
+		)
 		require.ErrorIs(t, err, access.ErrNextcloudPublicationDenied)
 		require.Nil(t, out)
 		// The external HTTP owner itself is still alive. Only the actual owned
@@ -162,7 +216,13 @@ func TestHistoryVectorActualSQLHeartbeatNonemptySourceDenialRetainsTypedModelRef
 	}
 	require.Zero(t, f.activeLeases(t, ""))
 	var bodies int64
-	require.NoError(t, f.m.f.db.Table("original_body_leases").Where("released_at_ms IS NULL AND expires_at_ms>?", time.Now().UnixMilli()).Count(&bodies).Error)
+	require.NoError(
+		t,
+		f.m.f.db.Table("original_body_leases").
+			Where("released_at_ms IS NULL AND expires_at_ms>?", time.Now().UnixMilli()).
+			Count(&bodies).
+			Error,
+	)
 	require.Zero(t, bodies)
 }
 
@@ -216,7 +276,10 @@ func TestHistoryVectorActualSQLHeartbeatNonemptyUnknownRefusesModel(t *testing.T
 			switch mode {
 			case "original-lease-released":
 				require.NotEmpty(t, guards[0].leases)
-				require.NoError(t, f.messages.materialStore.ContentLeaseStore().ReleaseLease(f.base, guards[0].leases[0].ID))
+				require.NoError(
+					t,
+					f.messages.materialStore.ContentLeaseStore().ReleaseLease(f.base, guards[0].leases[0].ID),
+				)
 				require.ErrorIs(t, guards[0].heartbeatRecheck(), repository.ErrNextcloudContentLeaseExpired)
 				require.NoError(t, ctx.Err(), "the caller remains live after an original lease failure")
 			case "caller-cancelled":
@@ -240,7 +303,15 @@ func TestHistoryVectorActualSQLHeartbeatNonemptyUnknownRefusesModel(t *testing.T
 					require.ErrorIs(t, context.Cause(held.Context()), context.DeadlineExceeded)
 				}
 			}
-			out, err := runHistoryVectorRerank(bridge.Context(), &types.RetrievalConfig{RerankModelID: "actual-history-rerank"}, f.questions[0].Content, results, documents, func() error { return bridge.Checkpoint(bridge.Context()) }, f.models.GetRerankModel)
+			out, err := runHistoryVectorRerank(
+				bridge.Context(),
+				&types.RetrievalConfig{RerankModelID: "actual-history-rerank"},
+				f.questions[0].Content,
+				results,
+				documents,
+				func() error { return bridge.Checkpoint(bridge.Context()) },
+				f.models.GetRerankModel,
+			)
 			require.ErrorIs(t, err, access.ErrNextcloudPublicationUnavailable)
 			require.NotErrorIs(t, err, access.ErrNextcloudPublicationDenied)
 			require.Nil(t, out)

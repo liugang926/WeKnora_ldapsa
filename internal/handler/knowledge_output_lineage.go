@@ -13,7 +13,11 @@ import (
 	"gorm.io/gorm"
 )
 
-func bindKnowledgeOutputFile(ctx context.Context, knowledge *types.Knowledge, file io.ReadCloser) (io.ReadCloser, error) {
+func bindKnowledgeOutputFile(
+	ctx context.Context,
+	knowledge *types.Knowledge,
+	file io.ReadCloser,
+) (io.ReadCloser, error) {
 	guard := service.KnowledgeOutputGuardFromContext(ctx)
 	if guard == nil {
 		return file, nil

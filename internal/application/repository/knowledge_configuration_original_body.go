@@ -17,7 +17,20 @@ import (
 // These exact SQL representations comprise knowledgeConfigDigest's actual
 // JSON controls and templates. IDs, storage credentials, names and computed
 // generated profiles have independent metadata/material protocols.
-var knowledgeConfigurationOriginalBodyColumns = []string{"chunking_config", "image_processing_config", "vlm_config", "asr_config", "extract_config", "faq_config", "question_generation_config", "auto_tag_config", "profile_config", "wiki_config", "indexing_strategy", "enrichment_templates"}
+var knowledgeConfigurationOriginalBodyColumns = []string{
+	"chunking_config",
+	"image_processing_config",
+	"vlm_config",
+	"asr_config",
+	"extract_config",
+	"faq_config",
+	"question_generation_config",
+	"auto_tag_config",
+	"profile_config",
+	"wiki_config",
+	"indexing_strategy",
+	"enrichment_templates",
+}
 
 type knowledgeConfigurationOriginalBodyManifest struct {
 	OriginID                                                               string `gorm:"primaryKey"`
@@ -44,24 +57,51 @@ type KnowledgeConfigurationOriginalBodyReadPlan struct {
 	leaseOwners               map[string]string
 }
 
-func configurationOriginalBodyCurrentOrigin(tx *gorm.DB, tenant uint64, kb string) (knowledgeConfigurationInputOrigin, error) {
+func configurationOriginalBodyCurrentOrigin(
+	tx *gorm.DB,
+	tenant uint64,
+	kb string,
+) (knowledgeConfigurationInputOrigin, error) {
 	var fact knowledgeConfigurationInputOrigin
-	if !tx.Migrator().HasTable("knowledge_config_input_origins") || !tx.Migrator().HasTable("knowledge_configuration_control_versions") {
+	// This also runs from a GORM create callback. Start a fresh statement on
+	// the same SQL transaction so schema probes cannot inherit INSERT binds.
+	controls := bodyInternal(tx)
+	if !controls.Migrator().HasTable("knowledge_config_input_origins") ||
+		!controls.Migrator().HasTable("knowledge_configuration_control_versions") {
 		return fact, gorm.ErrRecordNotFound
 	}
-	err := bodyInternal(tx).Table("knowledge_config_input_origins o").Select("o.*").Joins("JOIN knowledge_configuration_control_versions v ON v.knowledge_base_id=o.knowledge_base_id AND v.revision=o.config_revision").Where("o.tenant_id=? AND o.knowledge_base_id=?", tenant, kb).Take(&fact).Error
+	err := bodyInternal(
+		tx,
+	).Table("knowledge_config_input_origins o").
+		Select("o.*").
+		Joins("JOIN knowledge_configuration_control_versions v ON v.knowledge_base_id=o.knowledge_base_id AND v.revision=o.config_revision").
+		Where("o.tenant_id=? AND o.knowledge_base_id=?", tenant, kb).
+		Take(&fact).
+		Error
 	return fact, err
 }
+
 func configurationOriginalBodyManifestDigest(m knowledgeConfigurationOriginalBodyManifest) (string, error) {
 	m.ManifestSHA256 = ""
 	return KnowledgeInputDigest(m)
 }
+
 func configurationOriginalBodyHeads(tx *gorm.DB, tenant uint64, kb string) ([]originalBodyFieldHead, error) {
 	var heads []originalBodyFieldHead
-	err := bodyInternal(tx).Where("source_table='knowledge_bases' AND row_key=? AND tenant_id=?", kb, tenant).Order("column_name").Find(&heads).Error
+	err := bodyInternal(
+		tx,
+	).Where("source_table='knowledge_bases' AND row_key=? AND tenant_id=?", kb, tenant).
+		Order("column_name").
+		Find(&heads).
+		Error
 	return heads, err
 }
-func configurationOriginalBodyCatalogComplete(m knowledgeConfigurationOriginalBodyManifest, heads []originalBodyFieldHead, fact knowledgeConfigurationInputOrigin) bool {
+
+func configurationOriginalBodyCatalogComplete(
+	m knowledgeConfigurationOriginalBodyManifest,
+	heads []originalBodyFieldHead,
+	fact knowledgeConfigurationInputOrigin,
+) bool {
 	var empty []string
 	if json.Unmarshal([]byte(m.EmptyColumnsJSON), &empty) != nil {
 		return false
@@ -77,9 +117,23 @@ func configurationOriginalBodyCatalogComplete(m knowledgeConfigurationOriginalBo
 		}
 		seen[column] = true
 	}
-	scope := originalBodyScope{Tenant: fact.TenantID, KB: fact.KnowledgeBaseID, OwnerKind: "knowledge_bases", OwnerID: fact.KnowledgeBaseID}
+	scope := originalBodyScope{
+		Tenant:    fact.TenantID,
+		KB:        fact.KnowledgeBaseID,
+		OwnerKind: "knowledge_bases",
+		OwnerID:   fact.KnowledgeBaseID,
+	}
 	for _, head := range heads {
-		if !allowed[head.ColumnName] || seen[head.ColumnName] || head.SourceTable != "knowledge_bases" || head.RowKey != fact.KnowledgeBaseID || head.TenantID != fact.TenantID || head.KnowledgeBaseID != fact.KnowledgeBaseID || head.KnowledgeID != "" || head.OwnerKind != scope.OwnerKind || head.OwnerID != scope.OwnerID || head.AdmissionID != fact.OriginID || head.SourceLineage != fact.SourceLineage || head.SourceIdentitySHA256 != bodyIdentity("knowledge_bases", head.RowKey, head.ColumnName, scope) {
+		if !allowed[head.ColumnName] || seen[head.ColumnName] || head.SourceTable != "knowledge_bases" ||
+			head.RowKey != fact.KnowledgeBaseID ||
+			head.TenantID != fact.TenantID ||
+			head.KnowledgeBaseID != fact.KnowledgeBaseID ||
+			head.KnowledgeID != "" ||
+			head.OwnerKind != scope.OwnerKind ||
+			head.OwnerID != scope.OwnerID ||
+			head.AdmissionID != fact.OriginID ||
+			head.SourceLineage != fact.SourceLineage ||
+			head.SourceIdentitySHA256 != bodyIdentity("knowledge_bases", head.RowKey, head.ColumnName, scope) {
 			return false
 		}
 		ref, ok := bodyReference(head.OriginalBodyRef)
@@ -94,7 +148,11 @@ func configurationOriginalBodyCatalogComplete(m knowledgeConfigurationOriginalBo
 // Called after the actual producer persisted its immutable origin, or by the
 // explicit offline storage inventory after verifying those same original
 // bytes against the previously persisted origin. Never creates an input origin.
-func bindKnowledgeConfigurationOriginalBodiesInTx(tx *gorm.DB, kb *types.KnowledgeBase, fact knowledgeConfigurationInputOrigin) error {
+func bindKnowledgeConfigurationOriginalBodiesInTx(
+	tx *gorm.DB,
+	kb *types.KnowledgeBase,
+	fact knowledgeConfigurationInputOrigin,
+) error {
 	if !originalBodySchemaPresent(tx) {
 		return nil
 	}
@@ -113,7 +171,14 @@ func bindKnowledgeConfigurationOriginalBodiesInTx(tx *gorm.DB, kb *types.Knowled
 	if err != nil {
 		return err
 	}
-	scope := originalBodyScope{Tenant: kb.TenantID, KB: kb.ID, OwnerKind: d.Table, OwnerID: kb.ID, AdmissionID: fact.OriginID, Lineage: fact.SourceLineage}
+	scope := originalBodyScope{
+		Tenant:      kb.TenantID,
+		KB:          kb.ID,
+		OwnerKind:   d.Table,
+		OwnerID:     kb.ID,
+		AdmissionID: fact.OriginID,
+		Lineage:     fact.SourceLineage,
+	}
 	store := NewOriginalBodyRetentionStore(tx)
 	empty := []string{}
 	for _, column := range d.Columns {
@@ -126,18 +191,34 @@ func bindKnowledgeConfigurationOriginalBodiesInTx(tx *gorm.DB, kb *types.Knowled
 			// The real producer has removed this representation. Retain its immutable
 			// revision and deadline, while removing only the obsolete current pointer.
 			var prior originalBodyFieldHead
-			if err := bodyInternal(tx).Where("source_table=? AND row_key=? AND column_name=?", d.Table, kb.ID, column).Take(&prior).Error; err == nil {
+			if err := bodyInternal(
+				tx,
+			).Where("source_table=? AND row_key=? AND column_name=?", d.Table, kb.ID, column).
+				Take(&prior).
+				Error; err == nil {
 				now, err := nextcloudLeaseNowMS(bodyInternal(tx))
 				if err != nil {
 					return err
 				}
-				if err := bodyInternal(tx).Model(&originalBodyPayload{}).Where("id=? AND retired_at_ms IS NULL", prior.BodyID).Updates(map[string]any{"retired_at_ms": now, "body_deadline_ms": now + 3600000, "metadata_deadline_ms": now + 90*86400000}).Error; err != nil {
+				if err := bodyInternal(
+					tx,
+				).Model(&originalBodyPayload{}).
+					Where("id=? AND retired_at_ms IS NULL", prior.BodyID).
+					Updates(map[string]any{"retired_at_ms": now, "body_deadline_ms": now + 3600000, "metadata_deadline_ms": now + 90*86400000}).
+					Error; err != nil {
 					return err
 				}
-				if err := bodyInternal(tx).Where("slot_id=?", prior.SlotID).Delete(&originalBodyFieldHead{}).Error; err != nil {
+				if err := bodyInternal(
+					tx,
+				).Where("slot_id=?", prior.SlotID).
+					Delete(&originalBodyFieldHead{}).
+					Error; err != nil {
 					return err
 				}
-			} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+			} else if !errors.Is(
+				err,
+				gorm.ErrRecordNotFound,
+			) {
 				return err
 			}
 			continue
@@ -175,7 +256,16 @@ func bindKnowledgeConfigurationOriginalBodiesInTx(tx *gorm.DB, kb *types.Knowled
 	if err != nil {
 		return err
 	}
-	manifest := knowledgeConfigurationOriginalBodyManifest{OriginID: fact.OriginID, TenantID: kb.TenantID, KnowledgeBaseID: kb.ID, ConfigRevision: fact.ConfigRevision, ConfigDigest: fact.InputDigest, HeadsJSON: string(encoded), EmptyColumnsJSON: string(empties), ParentsJSON: string(parentJSON)}
+	manifest := knowledgeConfigurationOriginalBodyManifest{
+		OriginID:         fact.OriginID,
+		TenantID:         kb.TenantID,
+		KnowledgeBaseID:  kb.ID,
+		ConfigRevision:   fact.ConfigRevision,
+		ConfigDigest:     fact.InputDigest,
+		HeadsJSON:        string(encoded),
+		EmptyColumnsJSON: string(empties),
+		ParentsJSON:      string(parentJSON),
+	}
 	manifest.ManifestSHA256, err = configurationOriginalBodyManifestDigest(manifest)
 	if err != nil {
 		return err
@@ -187,7 +277,11 @@ func bindKnowledgeConfigurationOriginalBodiesInTx(tx *gorm.DB, kb *types.Knowled
 // unknown configuration cannot acquire lineage or a new origin here. Missing
 // schema, digest mismatch, external purge/rollback or missing parent receipts
 // refuses the whole transaction and leaves it an observable blocker.
-func (s *KnowledgeInputProvenanceStore) InventoryKnownKnowledgeConfigurationOriginalBodies(ctx context.Context, tenant uint64, kbID string) error {
+func (s *KnowledgeInputProvenanceStore) InventoryKnownKnowledgeConfigurationOriginalBodies(
+	ctx context.Context,
+	tenant uint64,
+	kbID string,
+) error {
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if !originalBodySchemaPresent(tx) || !tx.Migrator().HasTable(&knowledgeConfigurationOriginalBodyManifest{}) {
 			return ErrOriginalBodyUnavailable
@@ -197,7 +291,13 @@ func (s *KnowledgeInputProvenanceStore) InventoryKnownKnowledgeConfigurationOrig
 			return ErrOriginalBodyUnavailable
 		}
 		var actual types.KnowledgeBase
-		if err := bodyInternal(tx).Unscoped().Clauses(clause.Locking{Strength: "UPDATE"}).Where("id=? AND tenant_id=?", kbID, tenant).Take(&actual).Error; err != nil {
+		if err := bodyInternal(
+			tx,
+		).Unscoped().
+			Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("id=? AND tenant_id=?", kbID, tenant).
+			Take(&actual).
+			Error; err != nil {
 			return err
 		}
 		actualDigest, err := knowledgeConfigurationOriginDigest(&actual)
@@ -208,11 +308,13 @@ func (s *KnowledgeInputProvenanceStore) InventoryKnownKnowledgeConfigurationOrig
 		err = bodyInternal(tx).Where("origin_id=?", fact.OriginID).Take(&prior).Error
 		if err == nil {
 			digest, e := configurationOriginalBodyManifestDigest(prior)
-			if e != nil || digest != prior.ManifestSHA256 || prior.ConfigDigest != fact.InputDigest || prior.ConfigRevision != fact.ConfigRevision {
+			if e != nil || digest != prior.ManifestSHA256 || prior.ConfigDigest != fact.InputDigest ||
+				prior.ConfigRevision != fact.ConfigRevision {
 				return ErrOriginalBodyUnavailable
 			}
 			var bound []originalBodyFieldHead
-			if json.Unmarshal([]byte(prior.HeadsJSON), &bound) != nil || !configurationOriginalBodyCatalogComplete(prior, bound, fact) {
+			if json.Unmarshal([]byte(prior.HeadsJSON), &bound) != nil ||
+				!configurationOriginalBodyCatalogComplete(prior, bound, fact) {
 				return ErrOriginalBodyUnavailable
 			}
 			heads, e := configurationOriginalBodyHeads(tx, tenant, kbID)
@@ -242,7 +344,11 @@ func recordConfigurationOriginalBodyParents(tx *gorm.DB, bodyID string, scope or
 			return ErrOriginalBodyUnavailable
 		}
 		var admission knowledgeInputAdmission
-		if bodyInternal(tx).Where("admission_id=? AND tenant_id=? AND knowledge_base_id=? AND knowledge_id=?", receipt.AdmissionID, source.TenantID, source.KnowledgeBaseID, source.KnowledgeID).Take(&admission).Error != nil {
+		if bodyInternal(
+			tx,
+		).Where("admission_id=? AND tenant_id=? AND knowledge_base_id=? AND knowledge_id=?", receipt.AdmissionID, source.TenantID, source.KnowledgeBaseID, source.KnowledgeID).
+			Take(&admission).
+			Error != nil {
 			return ErrOriginalBodyUnavailable
 		}
 		var admitted types.SourceLineage
@@ -259,7 +365,13 @@ func recordConfigurationOriginalBodyParents(tx *gorm.DB, bodyID string, scope or
 		if !exact {
 			return ErrOriginalBodyUnavailable
 		}
-		parent := originalBodyParentRef{BodyID: bodyID, TenantID: source.TenantID, KnowledgeBaseID: source.KnowledgeBaseID, KnowledgeID: source.KnowledgeID, AdmissionID: admission.AdmissionID}
+		parent := originalBodyParentRef{
+			BodyID:          bodyID,
+			TenantID:        source.TenantID,
+			KnowledgeBaseID: source.KnowledgeBaseID,
+			KnowledgeID:     source.KnowledgeID,
+			AdmissionID:     admission.AdmissionID,
+		}
 		if err := bodyInternal(tx).Clauses(clause.OnConflict{DoNothing: true}).Create(&parent).Error; err != nil {
 			return err
 		}
@@ -268,7 +380,11 @@ func recordConfigurationOriginalBodyParents(tx *gorm.DB, bodyID string, scope or
 }
 
 // Metadata-only plan: no knowledge_bases config or template body is selected.
-func (s *KnowledgeInputProvenanceStore) KnowledgeConfigurationBodyReadPlan(ctx context.Context, tenant uint64, kb string) (*KnowledgeConfigurationOriginalBodyReadPlan, error) {
+func (s *KnowledgeInputProvenanceStore) KnowledgeConfigurationBodyReadPlan(
+	ctx context.Context,
+	tenant uint64,
+	kb string,
+) (*KnowledgeConfigurationOriginalBodyReadPlan, error) {
 	var result *KnowledgeConfigurationOriginalBodyReadPlan
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		fact, err := configurationOriginalBodyCurrentOrigin(tx, tenant, kb)
@@ -279,15 +395,21 @@ func (s *KnowledgeInputProvenanceStore) KnowledgeConfigurationBodyReadPlan(ctx c
 			return ErrOriginalBodyUnavailable
 		}
 		var m knowledgeConfigurationOriginalBodyManifest
-		if err := bodyInternal(tx).Where("origin_id=? AND tenant_id=? AND knowledge_base_id=?", fact.OriginID, tenant, kb).Take(&m).Error; err != nil {
+		if err := bodyInternal(
+			tx,
+		).Where("origin_id=? AND tenant_id=? AND knowledge_base_id=?", fact.OriginID, tenant, kb).
+			Take(&m).
+			Error; err != nil {
 			return ErrOriginalBodyUnavailable
 		}
 		digest, err := configurationOriginalBodyManifestDigest(m)
-		if err != nil || digest != m.ManifestSHA256 || m.ConfigRevision != fact.ConfigRevision || m.ConfigDigest != fact.InputDigest {
+		if err != nil || digest != m.ManifestSHA256 || m.ConfigRevision != fact.ConfigRevision ||
+			m.ConfigDigest != fact.InputDigest {
 			return ErrOriginalBodyUnavailable
 		}
 		var saved []originalBodyFieldHead
-		if json.Unmarshal([]byte(m.HeadsJSON), &saved) != nil || !configurationOriginalBodyCatalogComplete(m, saved, fact) {
+		if json.Unmarshal([]byte(m.HeadsJSON), &saved) != nil ||
+			!configurationOriginalBodyCatalogComplete(m, saved, fact) {
 			return ErrOriginalBodyUnavailable
 		}
 		actual, err := configurationOriginalBodyHeads(tx, tenant, kb)
@@ -298,7 +420,16 @@ func (s *KnowledgeInputProvenanceStore) KnowledgeConfigurationBodyReadPlan(ctx c
 		if err != nil {
 			return err
 		}
-		plan := &KnowledgeConfigurationOriginalBodyReadPlan{TenantID: tenant, KnowledgeBaseID: kb, OriginID: fact.OriginID, ConfigRevision: fact.ConfigRevision, ConfigDigest: fact.InputDigest, manifest: m, heads: saved, parents: parents}
+		plan := &KnowledgeConfigurationOriginalBodyReadPlan{
+			TenantID:        tenant,
+			KnowledgeBaseID: kb,
+			OriginID:        fact.OriginID,
+			ConfigRevision:  fact.ConfigRevision,
+			ConfigDigest:    fact.InputDigest,
+			manifest:        m,
+			heads:           saved,
+			parents:         parents,
+		}
 		seen := map[string]bool{}
 		for _, head := range saved {
 			if head.AdmissionID != fact.OriginID || head.SourceLineage != fact.SourceLineage {
@@ -309,7 +440,15 @@ func (s *KnowledgeInputProvenanceStore) KnowledgeConfigurationBodyReadPlan(ctx c
 			}
 			seen[head.BodyID] = true
 			var body originalBodyPayload
-			if err := bodyInternal(tx).Select("id,tenant_id,body_sha256,origin_domain_sha256,body_bytes,state,purge_epoch,storage_kind").Where("id=?", head.BodyID).Take(&body).Error; err != nil || body.State != "live" || body.StorageKind != "inline" || body.TenantID != tenant || body.BodyBytes <= 0 || body.OriginDomainSHA256 != bodySHA([]byte(fmt.Sprintf("%d/%s/%s/%s", tenant, kb, "", "admission/"+fact.OriginID))) {
+			if err := bodyInternal(
+				tx,
+			).Select("id,tenant_id,body_sha256,origin_domain_sha256,body_bytes,state,purge_epoch,storage_kind").
+				Where("id=?", head.BodyID).
+				Take(&body).
+				Error; err != nil || body.State != "live" || body.StorageKind != "inline" || body.TenantID != tenant || body.BodyBytes <= 0 ||
+				body.OriginDomainSHA256 != bodySHA(
+					[]byte(fmt.Sprintf("%d/%s/%s/%s", tenant, kb, "", "admission/"+fact.OriginID)),
+				) {
 				return ErrOriginalBodyUnavailable
 			}
 			ref, ok := bodyReference(head.OriginalBodyRef)
@@ -324,7 +463,12 @@ func (s *KnowledgeInputProvenanceStore) KnowledgeConfigurationBodyReadPlan(ctx c
 	return result, err
 }
 
-func (s *KnowledgeInputProvenanceStore) RecheckKnowledgeConfigurationBodyReadLeasesInTx(ctx context.Context, tx *gorm.DB, plan *KnowledgeConfigurationOriginalBodyReadPlan, ids []string) error {
+func (s *KnowledgeInputProvenanceStore) RecheckKnowledgeConfigurationBodyReadLeasesInTx(
+	ctx context.Context,
+	tx *gorm.DB,
+	plan *KnowledgeConfigurationOriginalBodyReadPlan,
+	ids []string,
+) error {
 	if plan == nil {
 		return ErrOriginalBodyUnavailable
 	}
@@ -336,7 +480,14 @@ func (s *KnowledgeInputProvenanceStore) RecheckKnowledgeConfigurationBodyReadLea
 	plan.leaseMu.Unlock()
 	return s.recheckKnowledgeConfigurationBodyReadLeasesInTx(ctx, tx, plan, ids, owners)
 }
-func (s *KnowledgeInputProvenanceStore) recheckKnowledgeConfigurationBodyReadLeasesInTx(ctx context.Context, tx *gorm.DB, plan *KnowledgeConfigurationOriginalBodyReadPlan, ids []string, owners map[string]string) error {
+
+func (s *KnowledgeInputProvenanceStore) recheckKnowledgeConfigurationBodyReadLeasesInTx(
+	ctx context.Context,
+	tx *gorm.DB,
+	plan *KnowledgeConfigurationOriginalBodyReadPlan,
+	ids []string,
+	owners map[string]string,
+) error {
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
@@ -344,7 +495,8 @@ func (s *KnowledgeInputProvenanceStore) recheckKnowledgeConfigurationBodyReadLea
 		return ErrOriginalBodyUnavailable
 	}
 	fact, err := configurationOriginalBodyCurrentOrigin(tx, plan.TenantID, plan.KnowledgeBaseID)
-	if err != nil || fact.OriginID != plan.OriginID || fact.ConfigRevision != plan.ConfigRevision || fact.InputDigest != plan.ConfigDigest {
+	if err != nil || fact.OriginID != plan.OriginID || fact.ConfigRevision != plan.ConfigRevision ||
+		fact.InputDigest != plan.ConfigDigest {
 		return ErrOriginalBodyUnavailable
 	}
 	var m knowledgeConfigurationOriginalBodyManifest
@@ -370,17 +522,43 @@ func (s *KnowledgeInputProvenanceStore) recheckKnowledgeConfigurationBodyReadLea
 	}
 	for i, original := range plan.bodies {
 		var body originalBodyPayload
-		if bodyInternal(tx).Select("id,tenant_id,body_sha256,origin_domain_sha256,body_bytes,state,purge_epoch,storage_kind").Where("id=?", original.ID).Take(&body).Error != nil || body.ID != original.ID || body.TenantID != original.TenantID || body.BodySHA256 != original.BodySHA256 || body.OriginDomainSHA256 != original.OriginDomainSHA256 || body.BodyBytes != original.BodyBytes || body.State != "live" || body.PurgeEpoch != original.PurgeEpoch || body.StorageKind != original.StorageKind {
+		if bodyInternal(
+			tx,
+		).Select("id,tenant_id,body_sha256,origin_domain_sha256,body_bytes,state,purge_epoch,storage_kind").
+			Where("id=?", original.ID).
+			Take(&body).
+			Error != nil ||
+			body.ID != original.ID ||
+			body.TenantID != original.TenantID ||
+			body.BodySHA256 != original.BodySHA256 ||
+			body.OriginDomainSHA256 != original.OriginDomainSHA256 ||
+			body.BodyBytes != original.BodyBytes ||
+			body.State != "live" ||
+			body.PurgeEpoch != original.PurgeEpoch ||
+			body.StorageKind != original.StorageKind {
 			return ErrOriginalBodyUnavailable
 		}
 		var lease originalBodyLease
-		if bodyInternal(tx).Where("lease_id=? AND body_id=? AND kind='read' AND released_at_ms IS NULL AND expires_at_ms>?", ids[i], original.ID, now).Take(&lease).Error != nil || owners[ids[i]] == "" || lease.OwnerID != owners[ids[i]] || lease.Epoch != original.PurgeEpoch {
+		if bodyInternal(
+			tx,
+		).Where("lease_id=? AND body_id=? AND kind='read' AND released_at_ms IS NULL AND expires_at_ms>?", ids[i], original.ID, now).
+			Take(&lease).
+			Error != nil ||
+			owners[ids[i]] == "" ||
+			lease.OwnerID != owners[ids[i]] ||
+			lease.Epoch != original.PurgeEpoch {
 			return ErrOriginalBodyUnavailable
 		}
 	}
 	return CheckOriginalBodyAvailableInTx(ctx, tx, "knowledge_bases", plan.KnowledgeBaseID)
 }
-func (s *KnowledgeInputProvenanceStore) AcquireKnowledgeConfigurationBodyReadLeases(ctx context.Context, plan *KnowledgeConfigurationOriginalBodyReadPlan, owner string, ttl time.Duration) ([]string, error) {
+
+func (s *KnowledgeInputProvenanceStore) AcquireKnowledgeConfigurationBodyReadLeases(
+	ctx context.Context,
+	plan *KnowledgeConfigurationOriginalBodyReadPlan,
+	owner string,
+	ttl time.Duration,
+) ([]string, error) {
 	if plan == nil || owner == "" || ttl <= 0 || ttl > 30*time.Minute {
 		return nil, ErrOriginalBodyUnavailable
 	}
@@ -411,7 +589,13 @@ func (s *KnowledgeInputProvenanceStore) AcquireKnowledgeConfigurationBodyReadLea
 	plan.leaseMu.Unlock()
 	return ids, nil
 }
-func (s *KnowledgeInputProvenanceStore) RecheckKnowledgeConfigurationBodyReadLeases(ctx context.Context, plan *KnowledgeConfigurationOriginalBodyReadPlan, ids []string, ttl time.Duration) error {
+
+func (s *KnowledgeInputProvenanceStore) RecheckKnowledgeConfigurationBodyReadLeases(
+	ctx context.Context,
+	plan *KnowledgeConfigurationOriginalBodyReadPlan,
+	ids []string,
+	ttl time.Duration,
+) error {
 	if ttl <= 0 || ttl > 30*time.Minute {
 		return ErrOriginalBodyUnavailable
 	}
@@ -424,7 +608,11 @@ func (s *KnowledgeInputProvenanceStore) RecheckKnowledgeConfigurationBodyReadLea
 			return err
 		}
 		for _, id := range ids {
-			q := bodyInternal(tx).Model(&originalBodyLease{}).Where("lease_id=? AND released_at_ms IS NULL AND expires_at_ms>?", id, now).Update("expires_at_ms", now+ttl.Milliseconds())
+			q := bodyInternal(
+				tx,
+			).Model(&originalBodyLease{}).
+				Where("lease_id=? AND released_at_ms IS NULL AND expires_at_ms>?", id, now).
+				Update("expires_at_ms", now+ttl.Milliseconds())
 			if q.Error != nil {
 				return q.Error
 			}
@@ -450,21 +638,32 @@ func verifyConfigurationOriginalBodyInventoryInTx(tx *gorm.DB, tenant uint64, kb
 	}
 	fact, err := configurationOriginalBodyCurrentOrigin(tx, tenant, kb)
 	if errors.Is(err, gorm.ErrRecordNotFound) && len(heads) > 0 && heads[0].AdmissionID != "" {
-		err = bodyInternal(tx).Where("origin_id=? AND tenant_id=? AND knowledge_base_id=?", heads[0].AdmissionID, tenant, kb).Take(&fact).Error
+		err = bodyInternal(
+			tx,
+		).Where("origin_id=? AND tenant_id=? AND knowledge_base_id=?", heads[0].AdmissionID, tenant, kb).
+			Take(&fact).
+			Error
 	}
 	if err != nil {
 		return ErrOriginalBodyUnavailable
 	}
 	var m knowledgeConfigurationOriginalBodyManifest
-	if bodyInternal(tx).Where("origin_id=? AND tenant_id=? AND knowledge_base_id=?", fact.OriginID, tenant, kb).Take(&m).Error != nil {
+	if bodyInternal(
+		tx,
+	).Where("origin_id=? AND tenant_id=? AND knowledge_base_id=?", fact.OriginID, tenant, kb).
+		Take(&m).
+		Error != nil {
 		return ErrOriginalBodyUnavailable
 	}
 	digest, err := configurationOriginalBodyManifestDigest(m)
-	if err != nil || digest != m.ManifestSHA256 || m.ConfigRevision != fact.ConfigRevision || m.ConfigDigest != fact.InputDigest {
+	if err != nil || digest != m.ManifestSHA256 || m.ConfigRevision != fact.ConfigRevision ||
+		m.ConfigDigest != fact.InputDigest {
 		return ErrOriginalBodyUnavailable
 	}
 	var bound []originalBodyFieldHead
-	if json.Unmarshal([]byte(m.HeadsJSON), &bound) != nil || !configurationOriginalBodyCatalogComplete(m, bound, fact) || !sameOriginalBodyHeads(bound, heads) {
+	if json.Unmarshal([]byte(m.HeadsJSON), &bound) != nil ||
+		!configurationOriginalBodyCatalogComplete(m, bound, fact) ||
+		!sameOriginalBodyHeads(bound, heads) {
 		return ErrOriginalBodyUnavailable
 	}
 	_, err = configurationOriginalBodySavedParents(tx, m, heads, fact, false)
@@ -482,14 +681,25 @@ func configurationOriginalBodyParents(tx *gorm.DB, heads []originalBodyFieldHead
 	}
 	parents := []originalBodyParentRef{}
 	if len(bodies) > 0 {
-		if err := bodyInternal(tx).Where("body_id IN ?", bodies).Order("body_id,tenant_id,knowledge_base_id,knowledge_id,admission_id").Find(&parents).Error; err != nil {
+		if err := bodyInternal(
+			tx,
+		).Where("body_id IN ?", bodies).
+			Order("body_id,tenant_id,knowledge_base_id,knowledge_id,admission_id").
+			Find(&parents).
+			Error; err != nil {
 			return nil, err
 		}
 	}
 	return parents, nil
 }
 
-func configurationOriginalBodyParentCoverage(tx *gorm.DB, parents []originalBodyParentRef, heads []originalBodyFieldHead, fact knowledgeConfigurationInputOrigin, requireCurrent bool) error {
+func configurationOriginalBodyParentCoverage(
+	tx *gorm.DB,
+	parents []originalBodyParentRef,
+	heads []originalBodyFieldHead,
+	fact knowledgeConfigurationInputOrigin,
+	requireCurrent bool,
+) error {
 	var lineage types.SourceLineage
 	if json.Unmarshal([]byte(fact.SourceLineage), &lineage) != nil || lineage.RequireComplete() != nil {
 		return ErrOriginalBodyUnavailable
@@ -508,7 +718,11 @@ func configurationOriginalBodyParentCoverage(tx *gorm.DB, parents []originalBody
 		}
 		seen[parent] = true
 		var admission knowledgeInputAdmission
-		if bodyInternal(tx).Where("admission_id=? AND tenant_id=? AND knowledge_base_id=? AND knowledge_id=?", parent.AdmissionID, parent.TenantID, parent.KnowledgeBaseID, parent.KnowledgeID).Take(&admission).Error != nil {
+		if bodyInternal(
+			tx,
+		).Where("admission_id=? AND tenant_id=? AND knowledge_base_id=? AND knowledge_id=?", parent.AdmissionID, parent.TenantID, parent.KnowledgeBaseID, parent.KnowledgeID).
+			Take(&admission).
+			Error != nil {
 			return ErrOriginalBodyUnavailable
 		}
 		var admitted types.SourceLineage
@@ -517,7 +731,8 @@ func configurationOriginalBodyParentCoverage(tx *gorm.DB, parents []originalBody
 		}
 		exact := false
 		for _, source := range lineage.Sources {
-			if source.TenantID != parent.TenantID || source.KnowledgeBaseID != parent.KnowledgeBaseID || source.KnowledgeID != parent.KnowledgeID {
+			if source.TenantID != parent.TenantID || source.KnowledgeBaseID != parent.KnowledgeBaseID ||
+				source.KnowledgeID != parent.KnowledgeID {
 				continue
 			}
 			for _, original := range admitted.Sources {
@@ -532,7 +747,11 @@ func configurationOriginalBodyParentCoverage(tx *gorm.DB, parents []originalBody
 		}
 		if requireCurrent {
 			var receipt knowledgeInputMaterialReceipt
-			if bodyInternal(tx).Where("row_kind='knowledge' AND row_id=? AND admission_id=?", parent.KnowledgeID, parent.AdmissionID).Take(&receipt).Error != nil {
+			if bodyInternal(
+				tx,
+			).Where("row_kind='knowledge' AND row_id=? AND admission_id=?", parent.KnowledgeID, parent.AdmissionID).
+				Take(&receipt).
+				Error != nil {
 				return ErrOriginalBodyUnavailable
 			}
 		}
@@ -543,7 +762,9 @@ func configurationOriginalBodyParentCoverage(tx *gorm.DB, parents []originalBody
 		for _, source := range lineage.Sources {
 			matches := 0
 			for _, parent := range parents {
-				if parent.BodyID == body && parent.TenantID == source.TenantID && parent.KnowledgeBaseID == source.KnowledgeBaseID && parent.KnowledgeID == source.KnowledgeID {
+				if parent.BodyID == body && parent.TenantID == source.TenantID &&
+					parent.KnowledgeBaseID == source.KnowledgeBaseID &&
+					parent.KnowledgeID == source.KnowledgeID {
 					matches++
 				}
 			}
@@ -555,7 +776,13 @@ func configurationOriginalBodyParentCoverage(tx *gorm.DB, parents []originalBody
 	return nil
 }
 
-func configurationOriginalBodySavedParents(tx *gorm.DB, m knowledgeConfigurationOriginalBodyManifest, heads []originalBodyFieldHead, fact knowledgeConfigurationInputOrigin, requireCurrent bool) ([]originalBodyParentRef, error) {
+func configurationOriginalBodySavedParents(
+	tx *gorm.DB,
+	m knowledgeConfigurationOriginalBodyManifest,
+	heads []originalBodyFieldHead,
+	fact knowledgeConfigurationInputOrigin,
+	requireCurrent bool,
+) ([]originalBodyParentRef, error) {
 	var saved []originalBodyParentRef
 	if json.Unmarshal([]byte(m.ParentsJSON), &saved) != nil || saved == nil {
 		return nil, ErrOriginalBodyUnavailable

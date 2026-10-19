@@ -76,7 +76,10 @@ func (r *knowledgeRepository) GetKnowledgeByID(
 	id string,
 ) (*types.Knowledge, error) {
 	var knowledge types.Knowledge
-	if err := r.db.WithContext(ctx).Where("tenant_id = ? AND id = ?", tenantID, id).First(&knowledge).Error; err != nil {
+	if err := r.db.WithContext(ctx).
+		Where("tenant_id = ? AND id = ?", tenantID, id).
+		First(&knowledge).
+		Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, ErrKnowledgeNotFound
 		}
@@ -352,10 +355,22 @@ func (r *knowledgeRepository) UpdateKnowledge(ctx context.Context, knowledge *ty
 	}
 	if _, guarded := ctx.Value(knowledgeBuildInputKey{}).(knowledgeBuildInputContext); guarded {
 		err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-			if err := ValidateNextcloudBuildWrite(ctx, tx, knowledge.TenantID, knowledge.KnowledgeBaseID, knowledge.ID); err != nil {
+			if err := ValidateNextcloudBuildWrite(
+				ctx,
+				tx,
+				knowledge.TenantID,
+				knowledge.KnowledgeBaseID,
+				knowledge.ID,
+			); err != nil {
 				return err
 			}
-			admission, err := validateKnowledgeInputWrite(ctx, tx, knowledge.TenantID, knowledge.KnowledgeBaseID, knowledge.ID)
+			admission, err := validateKnowledgeInputWrite(
+				ctx,
+				tx,
+				knowledge.TenantID,
+				knowledge.KnowledgeBaseID,
+				knowledge.ID,
+			)
 			if err != nil {
 				return err
 			}
@@ -380,7 +395,9 @@ func (r *knowledgeRepository) UpdateKnowledge(ctx context.Context, knowledge *ty
 				}
 			}
 			var actual types.Knowledge
-			if err := tx.Where("id = ? AND tenant_id = ? AND knowledge_base_id = ?", knowledge.ID, knowledge.TenantID, knowledge.KnowledgeBaseID).Take(&actual).Error; err != nil {
+			if err := tx.Where("id = ? AND tenant_id = ? AND knowledge_base_id = ?", knowledge.ID, knowledge.TenantID, knowledge.KnowledgeBaseID).
+				Take(&actual).
+				Error; err != nil {
 				return err
 			}
 			return sealKnowledgeInputMaterial(tx, admission.AdmissionID, &actual, nil)
@@ -497,7 +514,10 @@ func (r *knowledgeRepository) CheckKnowledgeExists(
 			if err != nil {
 				return false, nil, err
 			}
-			query = query.Where("COALESCE(NULLIF(metadata->>'nextcloud_content_revision',''),'0')=?", expectedContentRevision)
+			query = query.Where(
+				"COALESCE(NULLIF(metadata->>'nextcloud_content_revision',''),'0')=?",
+				expectedContentRevision,
+			)
 			if params.DataSourceID == "" || params.ExternalID == "" {
 				return false, nil, apperrors.NewProtocolError(
 					errors.New(
@@ -720,13 +740,28 @@ func (r *knowledgeRepository) UpdateKnowledgeColumns(
 			return ErrKnowledgeInputChanged
 		}
 		return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-			if err := ValidateNextcloudBuildWrite(ctx, tx, guard.proof.TenantID, guard.proof.KnowledgeBaseID, id); err != nil {
+			if err := ValidateNextcloudBuildWrite(
+				ctx,
+				tx,
+				guard.proof.TenantID,
+				guard.proof.KnowledgeBaseID,
+				id,
+			); err != nil {
 				return err
 			}
-			if _, err := validateKnowledgeInputWrite(ctx, tx, guard.proof.TenantID, guard.proof.KnowledgeBaseID, id); err != nil {
+			if _, err := validateKnowledgeInputWrite(
+				ctx,
+				tx,
+				guard.proof.TenantID,
+				guard.proof.KnowledgeBaseID,
+				id,
+			); err != nil {
 				return err
 			}
-			return tx.Model(&types.Knowledge{}).Where("id = ? AND tenant_id = ? AND knowledge_base_id = ?", id, guard.proof.TenantID, guard.proof.KnowledgeBaseID).Updates(values).Error
+			return tx.Model(&types.Knowledge{}).
+				Where("id = ? AND tenant_id = ? AND knowledge_base_id = ?", id, guard.proof.TenantID, guard.proof.KnowledgeBaseID).
+				Updates(values).
+				Error
 		})
 	}
 	_, hasMetadata := values["metadata"]
@@ -823,13 +858,21 @@ func (r *knowledgeRepository) FinalizeSubtask(
 			if guard.proof == nil || guard.proof.KnowledgeID != id {
 				return ErrKnowledgeInputChanged
 			}
-			if _, err := validateKnowledgeInputWrite(ctx, tx, guard.proof.TenantID, guard.proof.KnowledgeBaseID, id); err != nil {
+			if _, err := validateKnowledgeInputWrite(
+				ctx,
+				tx,
+				guard.proof.TenantID,
+				guard.proof.KnowledgeBaseID,
+				id,
+			); err != nil {
 				return err
 			}
 		}
 		if operation, ok := types.GraphWriteOperationFromContext(ctx); ok {
 			var task nextcloudGraphTask
-			if err := tx.Where("operation_id=? AND knowledge_id=? AND attempt=? AND chunk_id=?", operation.ID, id, operation.Attempt, operation.ChunkID).Take(&task).Error; err != nil {
+			if err := tx.Where("operation_id=? AND knowledge_id=? AND attempt=? AND chunk_id=?", operation.ID, id, operation.Attempt, operation.ChunkID).
+				Take(&task).
+				Error; err != nil {
 				return err
 			}
 			if err := validateNextcloudGraphTask(ctx, tx, task); err != nil {
@@ -891,7 +934,11 @@ func (r *knowledgeRepository) FinalizeSubtask(
 	if guard, ok := ctx.Value(nextcloudBuildContextKey{}).(nextcloudBuildContext); ok {
 		writeErr = r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 			if _, graph := types.GraphWriteOperationFromContext(ctx); graph {
-				if err := lockNextcloudGraphKnowledgeBase(tx, guard.scope.TenantID, guard.scope.KnowledgeBaseID); err != nil {
+				if err := lockNextcloudGraphKnowledgeBase(
+					tx,
+					guard.scope.TenantID,
+					guard.scope.KnowledgeBaseID,
+				); err != nil {
 					return err
 				}
 			}
@@ -1205,7 +1252,11 @@ func (r *knowledgeRepository) SearchKnowledge(
 	// If keyword is provided, filter by file_name or title (case-insensitive).
 	if keyword != "" {
 		escaped := strings.ToLower(escapeLikeKeyword(keyword))
-		query = query.Where("(LOWER(knowledges.file_name) LIKE ? OR LOWER(knowledges.title) LIKE ?)", "%"+escaped+"%", "%"+escaped+"%")
+		query = query.Where(
+			"(LOWER(knowledges.file_name) LIKE ? OR LOWER(knowledges.title) LIKE ?)",
+			"%"+escaped+"%",
+			"%"+escaped+"%",
+		)
 	}
 
 	// If fileTypes is provided, filter by file extension or type
@@ -1312,7 +1363,10 @@ func (r *knowledgeRepository) SearchKnowledgeInScopes(
 		placeholders[i] = "(?,?)"
 		args = append(args, s.TenantID, s.KBID)
 	}
-	scopeCondition := "(knowledges.tenant_id, knowledges.knowledge_base_id) IN (" + strings.Join(placeholders, ",") + ")"
+	scopeCondition := "(knowledges.tenant_id, knowledges.knowledge_base_id) IN (" + strings.Join(
+		placeholders,
+		",",
+	) + ")"
 
 	query := r.db.WithContext(ctx).
 		Table("knowledges").
@@ -1324,7 +1378,11 @@ func (r *knowledgeRepository) SearchKnowledgeInScopes(
 
 	if keyword != "" {
 		escaped := strings.ToLower(escapeLikeKeyword(keyword))
-		query = query.Where("(LOWER(knowledges.file_name) LIKE ? OR LOWER(knowledges.title) LIKE ?)", "%"+escaped+"%", "%"+escaped+"%")
+		query = query.Where(
+			"(LOWER(knowledges.file_name) LIKE ? OR LOWER(knowledges.title) LIKE ?)",
+			"%"+escaped+"%",
+			"%"+escaped+"%",
+		)
 	}
 
 	if len(fileTypes) > 0 {
@@ -1444,13 +1502,21 @@ func nextcloudDuplicateProcessingConfigCurrent(tx *gorm.DB, k *types.Knowledge) 
 		return false, err
 	}
 	var admissions []knowledgeInputAdmission
-	if err := tx.Where("knowledge_id=? AND tenant_id=? AND knowledge_base_id=?", k.ID, k.TenantID, k.KnowledgeBaseID).Order("build_generation DESC").Limit(1).Find(&admissions).Error; err != nil {
+	if err := tx.Where("knowledge_id=? AND tenant_id=? AND knowledge_base_id=?", k.ID, k.TenantID, k.KnowledgeBaseID).
+		Order("build_generation DESC").
+		Limit(1).
+		Find(&admissions).
+		Error; err != nil {
 		return false, err
 	}
 	if len(admissions) == 0 {
-		if tx.Migrator().HasTable("nextcloud_original_upload_inputs") && (k.ParseStatus == types.ParseStatusPending || k.ParseStatus == types.ParseStatusProcessing || k.ParseStatus == types.ParseStatusFinalizing) {
+		if tx.Migrator().HasTable("nextcloud_original_upload_inputs") &&
+			(k.ParseStatus == types.ParseStatusPending || k.ParseStatus == types.ParseStatusProcessing || k.ParseStatus == types.ParseStatusFinalizing) {
 			var original struct{ ConfigRevision uint64 }
-			err := tx.Table("nextcloud_original_upload_inputs").Where("knowledge_id=? AND tenant_id=? AND knowledge_base_id=?", k.ID, k.TenantID, k.KnowledgeBaseID).Take(&original).Error
+			err := tx.Table("nextcloud_original_upload_inputs").
+				Where("knowledge_id=? AND tenant_id=? AND knowledge_base_id=?", k.ID, k.TenantID, k.KnowledgeBaseID).
+				Take(&original).
+				Error
 			if err == nil {
 				revision, err := knowledgeConfigurationControlRevision(tx, k.KnowledgeBaseID)
 				return original.ConfigRevision == revision, err

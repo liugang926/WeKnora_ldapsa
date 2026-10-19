@@ -17,8 +17,30 @@ func ragSnapshotPostgresFixture(t *testing.T) (*knowledgeRepository, *gorm.DB, [
 	t.Helper()
 	t.Setenv("SYSTEM_AES_KEY", "0123456789abcdef0123456789abcdef")
 	db := leaseTestPostgres(t)
-	require.NoError(t, db.AutoMigrate(&types.Knowledge{}, &types.KnowledgeBase{}, &types.Chunk{}, &nextcloudSourceVersion{}, &types.DataSource{}, &NextcloudSourcePairing{}, &nextcloudCandidateRetryJob{}))
-	require.NoError(t, db.Create(&types.KnowledgeBase{ID: "kb", TenantID: 7, Name: "source", EmbeddingModelID: "embed", SummaryModelID: "summary"}).Error)
+	require.NoError(
+		t,
+		db.AutoMigrate(
+			&types.Knowledge{},
+			&types.KnowledgeBase{},
+			&types.Chunk{},
+			&nextcloudSourceVersion{},
+			&types.DataSource{},
+			&NextcloudSourcePairing{},
+			&nextcloudCandidateRetryJob{},
+		),
+	)
+	require.NoError(
+		t,
+		db.Create(
+			&types.KnowledgeBase{
+				ID:               "kb",
+				TenantID:         7,
+				Name:             "source",
+				EmbeddingModelID: "embed",
+				SummaryModelID:   "summary",
+			},
+		).Error,
+	)
 	sqlDB, err := db.DB()
 	require.NoError(t, err)
 	migrations, err := gorm.Open(postgres.New(postgres.Config{Conn: sqlDB, PreferSimpleProtocol: true}), &gorm.Config{})
@@ -28,15 +50,40 @@ func ragSnapshotPostgresFixture(t *testing.T) (*knowledgeRepository, *gorm.DB, [
 	require.NoError(t, migrations.Exec(string(script)).Error)
 	config, err := (&types.DataSourceConfig{Type: types.ConnectorTypeNextcloud, ResourceIDs: []string{"binding"}, Settings: map[string]interface{}{"base_url": "https://nextcloud.example"}, Credentials: map[string]interface{}{"token": "test-token", "key_id": "test_key"}}).ToJSON()
 	require.NoError(t, err)
-	ds := &types.DataSource{ID: "ds", TenantID: 7, KnowledgeBaseID: "kb", Type: types.ConnectorTypeNextcloud, Status: types.DataSourceStatusActive, Config: config}
+	ds := &types.DataSource{
+		ID:              "ds",
+		TenantID:        7,
+		KnowledgeBaseID: "kb",
+		Type:            types.ConnectorTypeNextcloud,
+		Status:          types.DataSourceStatusActive,
+		Config:          config,
+	}
 	require.NoError(t, db.Create(ds).Error)
 	require.NoError(t, db.Where("id='ds'").Take(ds).Error)
 	base, sha, binding, err := NextcloudEventDataSourceIdentity(ds.Config)
 	require.NoError(t, err)
-	require.NoError(t, db.Create(&NextcloudSourcePairing{OperationID: "pair", TenantID: 7, KnowledgeBaseID: "kb", DataSourceID: "ds", InstanceID: "instance", BindingID: binding, BaseURL: base, ConfigSHA: sha, State: "active"}).Error)
-	repo := &knowledgeRepository{db: db, nextcloudPublicationCheck: func(context.Context, *types.DataSourceConfig, string, string, int64, string, string) error {
-		return nil
-	}}
+	require.NoError(
+		t,
+		db.Create(
+			&NextcloudSourcePairing{
+				OperationID:     "pair",
+				TenantID:        7,
+				KnowledgeBaseID: "kb",
+				DataSourceID:    "ds",
+				InstanceID:      "instance",
+				BindingID:       binding,
+				BaseURL:         base,
+				ConfigSHA:       sha,
+				State:           "active",
+			},
+		).Error,
+	)
+	repo := &knowledgeRepository{
+		db: db,
+		nextcloudPublicationCheck: func(context.Context, *types.DataSourceConfig, string, string, int64, string, string) error {
+			return nil
+		},
+	}
 	var requests []RAGChunkReadRequest
 	for i, file := range []string{"77", "78"} {
 		id := []string{"doc-a", "doc-b"}[i]
@@ -48,15 +95,46 @@ func ragSnapshotPostgresFixture(t *testing.T) (*knowledgeRepository, *gorm.DB, [
 		require.NoError(t, err)
 		k.Metadata = types.JSON(encoded)
 		require.NoError(t, db.Model(k).Update("metadata", k.Metadata).Error)
-		chunk := &types.Chunk{ID: "chunk-" + id, TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: id, Content: "actual " + id, ChunkType: types.ChunkTypeText, IsEnabled: true, IndexStatus: "ready"}
+		chunk := &types.Chunk{
+			ID:              "chunk-" + id,
+			TenantID:        7,
+			KnowledgeBaseID: "kb",
+			KnowledgeID:     id,
+			Content:         "actual " + id,
+			ChunkType:       types.ChunkTypeText,
+			IsEnabled:       true,
+			IndexStatus:     "ready",
+		}
 		require.NoError(t, db.Create(chunk).Error)
-		require.NoError(t, repo.StageNextcloudVersion(context.Background(), 7, "kb", "ds", "nextcloud:instance:"+file, "etag-"+file, id))
+		require.NoError(
+			t,
+			repo.StageNextcloudVersion(
+				context.Background(),
+				7,
+				"kb",
+				"ds",
+				"nextcloud:instance:"+file,
+				"etag-"+file,
+				id,
+			),
+		)
 		published, err := repo.PublishNextcloudVersion(context.Background(), id)
 		require.NoError(t, err)
 		require.True(t, published)
-		lease, err := NewNextcloudContentLeaseStore(db).AcquireKnowledge(context.Background(), NextcloudContentScope{TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: id, DataSourceID: "ds", ExternalID: "nextcloud:instance:" + file}, NextcloudContentReadLease, "reader-"+id, time.Minute)
+		lease, err := NewNextcloudContentLeaseStore(
+			db,
+		).AcquireKnowledge(context.Background(), NextcloudContentScope{TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: id, DataSourceID: "ds", ExternalID: "nextcloud:instance:" + file}, NextcloudContentReadLease, "reader-"+id, time.Minute)
 		require.NoError(t, err)
-		requests = append(requests, RAGChunkReadRequest{TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: id, ChunkIDs: []string{chunk.ID}, Lease: ragTestReadToken(lease)})
+		requests = append(
+			requests,
+			RAGChunkReadRequest{
+				TenantID:        7,
+				KnowledgeBaseID: "kb",
+				KnowledgeID:     id,
+				ChunkIDs:        []string{chunk.ID},
+				Lease:           ragTestReadToken(lease),
+			},
+		)
 	}
 	return repo, db, requests
 }
@@ -78,10 +156,25 @@ func TestPostgresRAGChunkSnapshotCoherentCaptureAndWithdrawalBeforeRelease(t *te
 		}
 		fired = true
 		// Another connection commits withdrawal after the first document read.
-		require.NoError(t, store.RetireKnowledge(context.Background(), NextcloudContentScope{TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: "doc-b", DataSourceID: "ds", ExternalID: "nextcloud:instance:78"}))
+		require.NoError(
+			t,
+			store.RetireKnowledge(
+				context.Background(),
+				NextcloudContentScope{
+					TenantID:        7,
+					KnowledgeBaseID: "kb",
+					KnowledgeID:     "doc-b",
+					DataSourceID:    "ds",
+					ExternalID:      "nextcloud:instance:78",
+				},
+			),
+		)
 	}))
 	t.Cleanup(func() { _ = db.Callback().Query().Remove(callbackName) })
-	rows, err := reader.HydrateRAGChunkSnapshots(context.WithValue(context.Background(), ragSnapshotPauseKey{}, true), requests)
+	rows, err := reader.HydrateRAGChunkSnapshots(
+		context.WithValue(context.Background(), ragSnapshotPauseKey{}, true),
+		requests,
+	)
 	require.NoError(t, err)
 	require.True(t, fired)
 	require.Len(t, rows, 2, "one RR snapshot, not a mixed pair of generations")
@@ -91,7 +184,12 @@ func TestPostgresRAGChunkSnapshotCoherentCaptureAndWithdrawalBeforeRelease(t *te
 	require.NoError(t, err)
 	require.False(t, current, "release/model authorization must reject the committed withdrawal")
 	_, err = store.RenewLease(context.Background(), requests[1].Lease.ID, time.Minute)
-	require.ErrorIs(t, err, ErrNextcloudContentLeaseDenied, "the mandatory lease checkpoint suppresses captured old material")
+	require.ErrorIs(
+		t,
+		err,
+		ErrNextcloudContentLeaseDenied,
+		"the mandatory lease checkpoint suppresses captured old material",
+	)
 	rows, err = reader.HydrateRAGChunkSnapshots(context.Background(), requests)
 	require.Error(t, err)
 	require.Nil(t, rows, "a denied second source cannot return a partial first result")

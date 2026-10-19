@@ -27,19 +27,29 @@ type enumerationOverrideKnowledgeService struct {
 	total int64
 }
 
-func (s *enumerationOverrideKnowledgeService) ListPagedKnowledgeByKnowledgeBaseID(ctx context.Context, kb string, page *types.Pagination, filter types.KnowledgeListFilter) (*types.PageResult, error) {
+func (s *enumerationOverrideKnowledgeService) ListPagedKnowledgeByKnowledgeBaseID(
+	ctx context.Context,
+	kb string,
+	page *types.Pagination,
+	filter types.KnowledgeListFilter,
+) (*types.PageResult, error) {
 	result, err := s.readDocKnowledgeService.ListPagedKnowledgeByKnowledgeBaseID(ctx, kb, page, filter)
 	if result != nil {
 		result.Total = s.total
 	}
 	return result, err
 }
+
 func TestAgentLineageListActualMetadataBeforeFilterPageCountAndHeader(t *testing.T) {
 	tool, _ := actualAgentListFixture(t)
 	turn, ctx := toolTurn()
 	r := NewToolRegistry()
 	r.RegisterTool(tool)
-	result, err := r.ExecuteToolWithSourceLineage(ctx, ToolListDocuments, json.RawMessage(`{"knowledge_base_id":"kb","keyword":"authoritative"}`))
+	result, err := r.ExecuteToolWithSourceLineage(
+		ctx,
+		ToolListDocuments,
+		json.RawMessage(`{"knowledge_base_id":"kb","keyword":"authoritative"}`),
+	)
 	require.NoError(t, err)
 	require.True(t, result.Success)
 	require.Contains(t, result.Output, "authoritative title")
@@ -52,11 +62,16 @@ func TestAgentLineageListActualMetadataBeforeFilterPageCountAndHeader(t *testing
 	require.Equal(t, "original", result.SourceLineage.Sources[0].ETag)
 	require.Equal(t, result.SourceLineage, turn.Snapshot())
 	// A source inspected for filtering still influences the no-match result.
-	missing, err := r.ExecuteToolWithSourceLineage(ctx, ToolListDocuments, json.RawMessage(`{"knowledge_base_id":"kb","keyword":"no matching title"}`))
+	missing, err := r.ExecuteToolWithSourceLineage(
+		ctx,
+		ToolListDocuments,
+		json.RawMessage(`{"knowledge_base_id":"kb","keyword":"no matching title"}`),
+	)
 	require.NoError(t, err)
 	require.Equal(t, 0, missing.Data["total_docs"])
 	require.Equal(t, result.SourceLineage, missing.SourceLineage)
 }
+
 func TestAgentLineageListRevokedMetadataOrIncompleteEnumerationReturnsNothing(t *testing.T) {
 	for _, kind := range []string{"revoked", "incomplete", "overflow"} {
 		t.Run(kind, func(t *testing.T) {
@@ -67,18 +82,26 @@ func TestAgentLineageListRevokedMetadataOrIncompleteEnumerationReturnsNothing(t 
 			case "incomplete":
 				tool.knowledgeService = &enumerationOverrideKnowledgeService{leasedAgentKnowledgeService: svc, total: 2}
 			case "overflow":
-				tool.knowledgeService = &enumerationOverrideKnowledgeService{leasedAgentKnowledgeService: svc, total: listDocumentsScopeCap + 1}
+				tool.knowledgeService = &enumerationOverrideKnowledgeService{
+					leasedAgentKnowledgeService: svc,
+					total:                       listDocumentsScopeCap + 1,
+				}
 			}
 			turn, ctx := toolTurn()
 			r := NewToolRegistry()
 			r.RegisterTool(tool)
-			result, err := r.ExecuteToolWithSourceLineage(ctx, ToolListDocuments, json.RawMessage(`{"knowledge_base_id":"kb"}`))
+			result, err := r.ExecuteToolWithSourceLineage(
+				ctx,
+				ToolListDocuments,
+				json.RawMessage(`{"knowledge_base_id":"kb"}`),
+			)
 			require.Error(t, err)
 			require.Nil(t, result)
 			require.Error(t, turn.Check(ctx))
 		})
 	}
 }
+
 func TestAgentLineageListTrustedStructuredEmptyDoesNotClearEarlierSources(t *testing.T) {
 	tool, svc := actualAgentListFixture(t)
 	turn, ctx := toolTurn()
@@ -93,7 +116,11 @@ func TestAgentLineageListTrustedStructuredEmptyDoesNotClearEarlierSources(t *tes
 	require.Equal(t, first.SourceLineage, turn.Snapshot())
 	// Current grants remain mandatory for an empty structured page.
 	svc.revoked.Store(true)
-	result, err := r.ExecuteToolWithSourceLineage(context.WithoutCancel(ctx), ToolListDocuments, json.RawMessage(`{"knowledge_base_id":"kb"}`))
+	result, err := r.ExecuteToolWithSourceLineage(
+		context.WithoutCancel(ctx),
+		ToolListDocuments,
+		json.RawMessage(`{"knowledge_base_id":"kb"}`),
+	)
 	require.Error(t, err)
 	require.Nil(t, result)
 }

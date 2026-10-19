@@ -82,7 +82,11 @@ func (l *langfuseEmbedder) BatchEmbed(ctx context.Context, texts []string) ([][]
 	return result, err
 }
 
-func (l *langfuseEmbedder) BatchEmbedWithPool(ctx context.Context, model Embedder, texts []string) ([][]float32, error) {
+func (l *langfuseEmbedder) BatchEmbedWithPool(
+	ctx context.Context,
+	model Embedder,
+	texts []string,
+) ([][]float32, error) {
 	if logprivacy.ContentSuppressed(ctx) || types.RAGSourceLineageFromContext(ctx) != nil {
 		return l.inner.BatchEmbedWithPool(ctx, l.inner, texts)
 	}

@@ -15,17 +15,23 @@ import (
 	"gorm.io/gorm/clause"
 )
 
-type faqInputBoundaryKey struct{}
-type faqInputBoundary struct {
-	KB, Digest     string
-	Origin         knowledgeInputOrigin
-	OriginalInputs []*types.KnowledgeBuildInputProof
-}
-type faqInputSessionKey struct{}
-type faqInputSession struct {
-	ID    string
-	Store *KnowledgeInputProvenanceStore
-}
+type (
+	faqInputBoundaryKey struct{}
+	faqInputBoundary    struct {
+		KB, Digest     string
+		Origin         knowledgeInputOrigin
+		OriginalInputs []*types.KnowledgeBuildInputProof
+	}
+)
+
+type (
+	faqInputSessionKey struct{}
+	faqInputSession    struct {
+		ID    string
+		Store *KnowledgeInputProvenanceStore
+	}
+)
+
 type faqInputSessionRow struct {
 	ID                                                                                                                               string `gorm:"primaryKey"`
 	TenantID                                                                                                                         uint64
@@ -64,7 +70,11 @@ func (faqCatalogOrigin) TableName() string { return "faq_catalog_input_origins" 
 
 func (faqEntryMaterial) TableName() string { return "faq_entry_material_receipts" }
 
-func WithIndependentFAQInput(ctx context.Context, kb string, operation types.FAQInputOperation) (context.Context, error) {
+func WithIndependentFAQInput(
+	ctx context.Context,
+	kb string,
+	operation types.FAQInputOperation,
+) (context.Context, error) {
 	if operation.Batch != nil && operation.Batch.Mode == "" {
 		copied := *operation.Batch
 		copied.Mode = types.FAQBatchModeAppend
@@ -75,28 +85,43 @@ func WithIndependentFAQInput(ctx context.Context, kb string, operation types.FAQ
 		return ctx, err
 	}
 	lineage, _ := types.NewCompleteSourceLineage()
-	return context.WithValue(ctx, faqInputBoundaryKey{}, faqInputBoundary{KB: kb, Digest: digest, Origin: knowledgeInputOrigin{lineage, "human"}}), nil
+	return context.WithValue(
+		ctx,
+		faqInputBoundaryKey{},
+		faqInputBoundary{KB: kb, Digest: digest, Origin: knowledgeInputOrigin{lineage, "human"}},
+	), nil
 }
 
 // The caller supplies the original model manifest, not a newly minted current
 // lineage claim. This bridge captures and rechecks the actual original rows.
 // WithDerivedFAQInput is the one-manifest form. The manifest must cover all
 // actually consumed model text/config/selection inputs. It is not a citation.
-func (s *KnowledgeInputProvenanceStore) WithDerivedFAQInput(ctx context.Context, kb string, operation types.FAQInputOperation, original *types.KnowledgeBuildInputProof) (context.Context, error) {
+func (s *KnowledgeInputProvenanceStore) WithDerivedFAQInput(
+	ctx context.Context,
+	kb string,
+	operation types.FAQInputOperation,
+	original *types.KnowledgeBuildInputProof,
+) (context.Context, error) {
 	return s.WithDerivedFAQInputs(ctx, kb, operation, []*types.KnowledgeBuildInputProof{original})
 }
 
 // WithDerivedFAQInputs retains each complete original material receipt. A
 // future generator must supply every consumed parent, including non-output
 // candidates and prompt/config/history artifacts. Unknown parents are closed.
-func (s *KnowledgeInputProvenanceStore) WithDerivedFAQInputs(ctx context.Context, kb string, operation types.FAQInputOperation, originals []*types.KnowledgeBuildInputProof) (context.Context, error) {
+func (s *KnowledgeInputProvenanceStore) WithDerivedFAQInputs(
+	ctx context.Context,
+	kb string,
+	operation types.FAQInputOperation,
+	originals []*types.KnowledgeBuildInputProof,
+) (context.Context, error) {
 	if len(originals) == 0 || len(originals) > 4096 {
 		return ctx, types.ErrSourceLineageUnknown
 	}
 	proofs := make([]*types.KnowledgeBuildInputProof, 0, len(originals))
 	lineages := make([]*types.SourceLineage, 0, len(originals))
 	for _, original := range originals {
-		if original == nil || original.BodyDigest == "" || original.Projection != "" || original.SourceLineage.RequireComplete() != nil {
+		if original == nil || original.BodyDigest == "" || original.Projection != "" ||
+			original.SourceLineage.RequireComplete() != nil {
 			return ctx, types.ErrSourceLineageUnknown
 		}
 		copy := cloneKnowledgeInputProof(original)
@@ -108,7 +133,17 @@ func (s *KnowledgeInputProvenanceStore) WithDerivedFAQInputs(ctx context.Context
 			if err != nil {
 				return err
 			}
-			_, err = authority.captureKnowledgeBuildSnapshotInTx(tx, types.KnowledgeBuildInputCaptureRequest{TenantID: copy.TenantID, KnowledgeBaseID: copy.KnowledgeBaseID, KnowledgeID: copy.KnowledgeID, ChunkIDs: copy.ChunkIDs, Expected: copy}, true)
+			_, err = authority.captureKnowledgeBuildSnapshotInTx(
+				tx,
+				types.KnowledgeBuildInputCaptureRequest{
+					TenantID:        copy.TenantID,
+					KnowledgeBaseID: copy.KnowledgeBaseID,
+					KnowledgeID:     copy.KnowledgeID,
+					ChunkIDs:        copy.ChunkIDs,
+					Expected:        copy,
+				},
+				true,
+			)
 			return err
 		}); err != nil {
 			return ctx, err
@@ -124,7 +159,16 @@ func (s *KnowledgeInputProvenanceStore) WithDerivedFAQInputs(ctx context.Context
 	if err != nil {
 		return ctx, err
 	}
-	return context.WithValue(ctx, faqInputBoundaryKey{}, faqInputBoundary{KB: kb, Digest: digest, Origin: knowledgeInputOrigin{lineage, "derived"}, OriginalInputs: proofs}), nil
+	return context.WithValue(
+		ctx,
+		faqInputBoundaryKey{},
+		faqInputBoundary{
+			KB:             kb,
+			Digest:         digest,
+			Origin:         knowledgeInputOrigin{lineage, "derived"},
+			OriginalInputs: proofs,
+		},
+	), nil
 }
 
 func faqEntryDigest(chunk *types.Chunk) (string, error) {
@@ -135,6 +179,7 @@ func faqEntryDigest(chunk *types.Chunk) (string, error) {
 		SourceContent, ContextHeader string
 	}{chunk, chunk.SourceContent, chunk.ContextHeader})
 }
+
 func faqRowRevision(tx *gorm.DB, id string) (uint64, error) {
 	var row struct{ Revision uint64 }
 	if err := tx.Table("faq_input_row_versions").Where("chunk_id=?", id).Take(&row).Error; err != nil {
@@ -145,7 +190,11 @@ func faqRowRevision(tx *gorm.DB, id string) (uint64, error) {
 	}
 	return row.Revision, nil
 }
-func (s *KnowledgeInputProvenanceStore) readFAQEntryInputInTx(tx *gorm.DB, chunk *types.Chunk) (*types.FAQEntryInputProof, error) {
+
+func (s *KnowledgeInputProvenanceStore) readFAQEntryInputInTx(
+	tx *gorm.DB,
+	chunk *types.Chunk,
+) (*types.FAQEntryInputProof, error) {
 	if chunk == nil || chunk.ChunkType != types.ChunkTypeFAQ {
 		return nil, types.ErrSourceLineageUnknown
 	}
@@ -154,7 +203,9 @@ func (s *KnowledgeInputProvenanceStore) readFAQEntryInputInTx(tx *gorm.DB, chunk
 		return nil, err
 	}
 	var admission faqEntryAdmission
-	if err := tx.Where("id=? AND chunk_id=? AND knowledge_id=? AND knowledge_base_id=? AND tenant_id=?", receipt.AdmissionID, chunk.ID, chunk.KnowledgeID, chunk.KnowledgeBaseID, chunk.TenantID).Take(&admission).Error; err != nil {
+	if err := tx.Where("id=? AND chunk_id=? AND knowledge_id=? AND knowledge_base_id=? AND tenant_id=?", receipt.AdmissionID, chunk.ID, chunk.KnowledgeID, chunk.KnowledgeBaseID, chunk.TenantID).
+		Take(&admission).
+		Error; err != nil {
 		return nil, err
 	}
 	digest, err := faqEntryDigest(chunk)
@@ -201,10 +252,27 @@ func (s *KnowledgeInputProvenanceStore) readFAQEntryInputInTx(tx *gorm.DB, chunk
 	if err != nil {
 		return nil, err
 	}
-	return &types.FAQEntryInputProof{AdmissionID: admission.ID, SessionID: admission.SessionID, TenantID: admission.TenantID, KnowledgeBaseID: admission.KnowledgeBaseID, KnowledgeID: admission.KnowledgeID, ChunkID: admission.ChunkID, InputDigest: admission.InputDigest, ConfigDigest: admission.ConfigDigest, ConfigRevision: admission.ConfigRevision, Revision: revision, BodyDigest: digest, SourceLineage: &lineage, OriginalKnowledgeInputs: parents}, nil
+	return &types.FAQEntryInputProof{
+		AdmissionID:             admission.ID,
+		SessionID:               admission.SessionID,
+		TenantID:                admission.TenantID,
+		KnowledgeBaseID:         admission.KnowledgeBaseID,
+		KnowledgeID:             admission.KnowledgeID,
+		ChunkID:                 admission.ChunkID,
+		InputDigest:             admission.InputDigest,
+		ConfigDigest:            admission.ConfigDigest,
+		ConfigRevision:          admission.ConfigRevision,
+		Revision:                revision,
+		BodyDigest:              digest,
+		SourceLineage:           &lineage,
+		OriginalKnowledgeInputs: parents,
+	}, nil
 }
 
-func (s *KnowledgeInputProvenanceStore) ReadFAQEntryInputLineage(tx *gorm.DB, chunk *types.Chunk) (*types.SourceLineage, error) {
+func (s *KnowledgeInputProvenanceStore) ReadFAQEntryInputLineage(
+	tx *gorm.DB,
+	chunk *types.Chunk,
+) (*types.SourceLineage, error) {
 	proof, err := s.readFAQEntryInputInTx(tx, chunk)
 	if err != nil {
 		return nil, err
@@ -212,7 +280,10 @@ func (s *KnowledgeInputProvenanceStore) ReadFAQEntryInputLineage(tx *gorm.DB, ch
 	return types.UnionSourceLineage(proof.SourceLineage)
 }
 
-func (s *KnowledgeInputProvenanceStore) captureFAQInputsInTx(tx *gorm.DB, req types.FAQInputReadRequest) (*types.FAQInputSnapshot, error) {
+func (s *KnowledgeInputProvenanceStore) captureFAQInputsInTx(
+	tx *gorm.DB,
+	req types.FAQInputReadRequest,
+) (*types.FAQInputSnapshot, error) {
 	if err := s.checkFAQInputReadPlanInTx(tx, req); err != nil {
 		return nil, err
 	}
@@ -235,9 +306,22 @@ func (s *KnowledgeInputProvenanceStore) captureFAQInputsInTx(tx *gorm.DB, req ty
 	if err != nil {
 		return nil, err
 	}
-	snapshot := &types.FAQInputSnapshot{KnowledgeBase: &kb, Request: req, ConfigDigest: configDigest, ConfigRevision: configRevision, ConfigLineage: configLineage, Chunks: []*types.Chunk{}, Proofs: []*types.FAQEntryInputProof{}, Tags: []*types.KnowledgeTag{}, TagProofs: []*types.KnowledgeCollectionAuxiliaryProof{}}
+	snapshot := &types.FAQInputSnapshot{
+		KnowledgeBase:  &kb,
+		Request:        req,
+		ConfigDigest:   configDigest,
+		ConfigRevision: configRevision,
+		ConfigLineage:  configLineage,
+		Chunks:         []*types.Chunk{},
+		Proofs:         []*types.FAQEntryInputProof{},
+		Tags:           []*types.KnowledgeTag{},
+		TagProofs:      []*types.KnowledgeCollectionAuxiliaryProof{},
+	}
 	if req.AllEntries {
-		if err := tx.Where("tenant_id=? AND knowledge_base_id=?", req.TenantID, req.KnowledgeBaseID).Order("id ASC").Find(&snapshot.Tags).Error; err != nil {
+		if err := tx.Where("tenant_id=? AND knowledge_base_id=?", req.TenantID, req.KnowledgeBaseID).
+			Order("id ASC").
+			Find(&snapshot.Tags).
+			Error; err != nil {
 			return nil, err
 		}
 		snapshot.TagProofs, err = captureTagFields(tx, snapshot.Tags)
@@ -247,13 +331,18 @@ func (s *KnowledgeInputProvenanceStore) captureFAQInputsInTx(tx *gorm.DB, req ty
 	}
 	if req.AllEntries {
 		var version struct{ Revision uint64 }
-		if err := tx.Table("faq_input_scope_versions").Where("tenant_id=? AND knowledge_base_id=?", req.TenantID, req.KnowledgeBaseID).Take(&version).Error; err != nil {
+		if err := tx.Table("faq_input_scope_versions").
+			Where("tenant_id=? AND knowledge_base_id=?", req.TenantID, req.KnowledgeBaseID).
+			Take(&version).
+			Error; err != nil {
 			return nil, err
 		}
 		snapshot.ScopeRevision = version.Revision
 	}
 	var catalogs []*types.Knowledge
-	if err := tx.Where("tenant_id=? AND knowledge_base_id=? AND type=?", req.TenantID, req.KnowledgeBaseID, types.KnowledgeTypeFAQ).Find(&catalogs).Error; err != nil {
+	if err := tx.Where("tenant_id=? AND knowledge_base_id=? AND type=?", req.TenantID, req.KnowledgeBaseID, types.KnowledgeTypeFAQ).
+		Find(&catalogs).
+		Error; err != nil {
 		return nil, err
 	}
 	if len(catalogs) > 1 {
@@ -275,10 +364,15 @@ func (s *KnowledgeInputProvenanceStore) captureFAQInputsInTx(tx *gorm.DB, req ty
 		return nil, err
 	}
 	var catalogVersion struct{ Revision uint64 }
-	if err := tx.Table("faq_catalog_control_versions").Where("knowledge_id=?", k.ID).Take(&catalogVersion).Error; err != nil {
+	if err := tx.Table("faq_catalog_control_versions").
+		Where("knowledge_id=?", k.ID).
+		Take(&catalogVersion).
+		Error; err != nil {
 		return nil, err
 	}
-	if catalogOrigin.ProducerID != "faq-catalog-fixed-code-v1" || catalogOrigin.OriginKind != "trusted_code" || catalogOrigin.InputDigest != codeDigest || catalogOrigin.Revision != catalogVersion.Revision {
+	if catalogOrigin.ProducerID != "faq-catalog-fixed-code-v1" || catalogOrigin.OriginKind != "trusted_code" ||
+		catalogOrigin.InputDigest != codeDigest ||
+		catalogOrigin.Revision != catalogVersion.Revision {
 		return nil, ErrKnowledgeInputChanged
 	}
 	if _, _, _, err := s.admissionInTx(tx, k, nil); err != nil {
@@ -294,8 +388,19 @@ func (s *KnowledgeInputProvenanceStore) captureFAQInputsInTx(tx *gorm.DB, req ty
 	}
 	// Header output bookkeeping does not influence FAQ entries. Original
 	// semantic header material and its monotonic revision stay in the snapshot.
-	snapshot.Knowledge = &types.Knowledge{ID: k.ID, TenantID: k.TenantID, KnowledgeBaseID: k.KnowledgeBaseID, Type: k.Type}
-	q := tx.Where("tenant_id=? AND knowledge_base_id=? AND knowledge_id=? AND chunk_type=?", req.TenantID, req.KnowledgeBaseID, k.ID, types.ChunkTypeFAQ)
+	snapshot.Knowledge = &types.Knowledge{
+		ID:              k.ID,
+		TenantID:        k.TenantID,
+		KnowledgeBaseID: k.KnowledgeBaseID,
+		Type:            k.Type,
+	}
+	q := tx.Where(
+		"tenant_id=? AND knowledge_base_id=? AND knowledge_id=? AND chunk_type=?",
+		req.TenantID,
+		req.KnowledgeBaseID,
+		k.ID,
+		types.ChunkTypeFAQ,
+	)
 	if !req.AllEntries {
 		q = q.Where("id IN (?)", req.ChunkIDs)
 	}
@@ -321,7 +426,10 @@ func (s *KnowledgeInputProvenanceStore) captureFAQInputsInTx(tx *gorm.DB, req ty
 		ids = append(ids, id)
 	}
 	if len(ids) > 0 && !req.AllEntries {
-		if err := tx.Where("id IN (?) AND tenant_id=? AND knowledge_base_id=?", ids, req.TenantID, req.KnowledgeBaseID).Order("id ASC").Find(&snapshot.Tags).Error; err != nil {
+		if err := tx.Where("id IN (?) AND tenant_id=? AND knowledge_base_id=?", ids, req.TenantID, req.KnowledgeBaseID).
+			Order("id ASC").
+			Find(&snapshot.Tags).
+			Error; err != nil {
 			return nil, err
 		}
 		if len(snapshot.Tags) != len(ids) {
@@ -335,11 +443,18 @@ func (s *KnowledgeInputProvenanceStore) captureFAQInputsInTx(tx *gorm.DB, req ty
 	return snapshot, nil
 }
 
-func (s *KnowledgeInputProvenanceStore) CaptureFAQInputs(ctx context.Context, req types.FAQInputReadRequest) (*types.FAQInputSnapshot, error) {
+func (s *KnowledgeInputProvenanceStore) CaptureFAQInputs(
+	ctx context.Context,
+	req types.FAQInputReadRequest,
+) (*types.FAQInputSnapshot, error) {
 	var snapshot *types.FAQInputSnapshot
-	err := s.collectionTransaction(ctx, func(tx *gorm.DB) error { var err error; snapshot, err = s.captureFAQInputsInTx(tx, req); return err })
+	err := s.collectionTransaction(
+		ctx,
+		func(tx *gorm.DB) error { var err error; snapshot, err = s.captureFAQInputsInTx(tx, req); return err },
+	)
 	return snapshot, err
 }
+
 func (s *KnowledgeInputProvenanceStore) recheckFAQInputsInTx(tx *gorm.DB, snapshot *types.FAQInputSnapshot) error {
 	if snapshot == nil {
 		return types.ErrSourceLineageUnknown
@@ -368,6 +483,7 @@ func faqInputEqual(a, b any) bool {
 	right, err := KnowledgeInputDigest(b)
 	return err == nil && left == right
 }
+
 func (s *KnowledgeInputProvenanceStore) RecheckFAQInputs(ctx context.Context, snapshot *types.FAQInputSnapshot) error {
 	return s.collectionTransaction(ctx, func(tx *gorm.DB) error { return s.recheckFAQInputsInTx(tx, snapshot) })
 }
@@ -392,7 +508,11 @@ func FAQInputLineages(snapshot *types.FAQInputSnapshot) ([]*types.SourceLineage,
 	return lineages, nil
 }
 
-func (s *KnowledgeInputProvenanceStore) BeginFAQInput(ctx context.Context, kb *types.KnowledgeBase, operation types.FAQInputOperation) (context.Context, string, error) {
+func (s *KnowledgeInputProvenanceStore) BeginFAQInput(
+	ctx context.Context,
+	kb *types.KnowledgeBase,
+	operation types.FAQInputOperation,
+) (context.Context, string, error) {
 	boundary, ok := ctx.Value(faqInputBoundaryKey{}).(faqInputBoundary)
 	digest, err := KnowledgeInputDigest(operation)
 	if err != nil {
@@ -411,7 +531,10 @@ func (s *KnowledgeInputProvenanceStore) BeginFAQInput(ctx context.Context, kb *t
 		return ctx, "", err
 	}
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		snapshot, err := s.captureFAQInputsInTx(tx, types.FAQInputReadRequest{TenantID: kb.TenantID, KnowledgeBaseID: kb.ID, AllEntries: true})
+		snapshot, err := s.captureFAQInputsInTx(
+			tx,
+			types.FAQInputReadRequest{TenantID: kb.TenantID, KnowledgeBaseID: kb.ID, AllEntries: true},
+		)
 		if err != nil {
 			return err
 		}
@@ -453,7 +576,19 @@ func (s *KnowledgeInputProvenanceStore) BeginFAQInput(ctx context.Context, kb *t
 		if err != nil {
 			return err
 		}
-		session := &faqInputSessionRow{ID: id, TenantID: kb.TenantID, KnowledgeBaseID: kb.ID, Operation: operation.Kind, InputDigest: digest, InputBody: string(body), OriginKind: boundary.Origin.kind, SourceLineage: string(encoded), OriginalInputs: string(parentBody), OriginalSnapshot: string(material), CurrentSnapshot: string(material)}
+		session := &faqInputSessionRow{
+			ID:               id,
+			TenantID:         kb.TenantID,
+			KnowledgeBaseID:  kb.ID,
+			Operation:        operation.Kind,
+			InputDigest:      digest,
+			InputBody:        string(body),
+			OriginKind:       boundary.Origin.kind,
+			SourceLineage:    string(encoded),
+			OriginalInputs:   string(parentBody),
+			OriginalSnapshot: string(material),
+			CurrentSnapshot:  string(material),
+		}
 		if _, err := s.readFAQOriginalKnowledgeInputsInTx(tx, session); err != nil {
 			return err
 		}
@@ -469,12 +604,20 @@ func (s *KnowledgeInputProvenanceStore) BeginFAQInput(ctx context.Context, kb *t
 	return context.WithValue(ctx, faqInputSessionKey{}, faqInputSession{id, s}), id, nil
 }
 
-func (s *KnowledgeInputProvenanceStore) RestoreFAQInput(ctx context.Context, id string, kb *types.KnowledgeBase, operation types.FAQInputOperation) (context.Context, error) {
+func (s *KnowledgeInputProvenanceStore) RestoreFAQInput(
+	ctx context.Context,
+	id string,
+	kb *types.KnowledgeBase,
+	operation types.FAQInputOperation,
+) (context.Context, error) {
 	var session faqInputSessionRow
 	if id == "" {
 		return ctx, types.ErrSourceLineageUnknown
 	}
-	if err := s.db.WithContext(ctx).Where("id=? AND tenant_id=? AND knowledge_base_id=?", id, kb.TenantID, kb.ID).Take(&session).Error; err != nil {
+	if err := s.db.WithContext(ctx).
+		Where("id=? AND tenant_id=? AND knowledge_base_id=?", id, kb.TenantID, kb.ID).
+		Take(&session).
+		Error; err != nil {
 		return ctx, err
 	}
 	digest, err := KnowledgeInputDigest(operation)
@@ -500,7 +643,10 @@ func (s *KnowledgeInputProvenanceStore) RestoreFAQInput(ctx context.Context, id 
 	return ctx, s.CheckFAQInput(ctx)
 }
 
-func (s *KnowledgeInputProvenanceStore) faqSessionInTx(ctx context.Context, tx *gorm.DB) (*faqInputSessionRow, *types.FAQInputSnapshot, error) {
+func (s *KnowledgeInputProvenanceStore) faqSessionInTx(
+	ctx context.Context,
+	tx *gorm.DB,
+) (*faqInputSessionRow, *types.FAQInputSnapshot, error) {
 	active, ok := ctx.Value(faqInputSessionKey{}).(faqInputSession)
 	if !ok || active.Store != s || active.ID == "" {
 		return nil, nil, types.ErrSourceLineageUnknown
@@ -531,6 +677,7 @@ func (s *KnowledgeInputProvenanceStore) faqSessionInTx(ctx context.Context, tx *
 	}
 	return &session, &snapshot, nil
 }
+
 func (s *KnowledgeInputProvenanceStore) CheckFAQInput(ctx context.Context) error {
 	active, ok := ctx.Value(faqInputSessionKey{}).(faqInputSession)
 	if !ok || active.Store != s {
@@ -577,7 +724,11 @@ func (s *KnowledgeInputProvenanceStore) WriteFAQChunks(ctx context.Context, chun
 			known[c.ID] = c
 		}
 		for _, c := range chunks {
-			if c == nil || c.ID == "" || c.TenantID != session.TenantID || c.KnowledgeBaseID != session.KnowledgeBaseID || c.ChunkType != types.ChunkTypeFAQ || snapshot.Knowledge == nil || c.KnowledgeID != snapshot.Knowledge.ID {
+			if c == nil || c.ID == "" || c.TenantID != session.TenantID ||
+				c.KnowledgeBaseID != session.KnowledgeBaseID ||
+				c.ChunkType != types.ChunkTypeFAQ ||
+				snapshot.Knowledge == nil ||
+				c.KnowledgeID != snapshot.Knowledge.ID {
 				return ErrKnowledgeInputChanged
 			}
 			if create == (known[c.ID] != nil) {
@@ -624,7 +775,10 @@ func (s *KnowledgeInputProvenanceStore) WriteFAQChunks(ctx context.Context, chun
 			for _, c := range chunks {
 				desired := controls[c.ID]
 				if c.IsEnabled != desired.Enabled || c.Flags != desired.Flags {
-					if err := tx.Model(&types.Chunk{}).Where("id=?", c.ID).Updates(map[string]any{"is_enabled": desired.Enabled, "flags": desired.Flags}).Error; err != nil {
+					if err := tx.Model(&types.Chunk{}).
+						Where("id=?", c.ID).
+						Updates(map[string]any{"is_enabled": desired.Enabled, "flags": desired.Flags}).
+						Error; err != nil {
 						return err
 					}
 				}
@@ -646,7 +800,18 @@ func (s *KnowledgeInputProvenanceStore) WriteFAQChunks(ctx context.Context, chun
 			if err != nil {
 				return err
 			}
-			admission := faqEntryAdmission{ID: uuid.NewString(), SessionID: session.ID, TenantID: session.TenantID, KnowledgeBaseID: session.KnowledgeBaseID, KnowledgeID: c.KnowledgeID, ChunkID: c.ID, InputDigest: session.InputDigest, ConfigDigest: snapshot.ConfigDigest, ConfigRevision: snapshot.ConfigRevision, SourceLineage: string(encoded)}
+			admission := faqEntryAdmission{
+				ID:              uuid.NewString(),
+				SessionID:       session.ID,
+				TenantID:        session.TenantID,
+				KnowledgeBaseID: session.KnowledgeBaseID,
+				KnowledgeID:     c.KnowledgeID,
+				ChunkID:         c.ID,
+				InputDigest:     session.InputDigest,
+				ConfigDigest:    snapshot.ConfigDigest,
+				ConfigRevision:  snapshot.ConfigRevision,
+				SourceLineage:   string(encoded),
+			}
 			if err := tx.Create(&admission).Error; err != nil {
 				return err
 			}
@@ -658,18 +823,28 @@ func (s *KnowledgeInputProvenanceStore) WriteFAQChunks(ctx context.Context, chun
 			if err != nil {
 				return err
 			}
-			if err := tx.Clauses(clause.OnConflict{UpdateAll: true}).Create(&faqEntryMaterial{c.ID, admission.ID, revision, digest}).Error; err != nil {
+			if err := tx.Clauses(clause.OnConflict{UpdateAll: true}).
+				Create(&faqEntryMaterial{c.ID, admission.ID, revision, digest}).
+				Error; err != nil {
 				return err
 			}
 		}
 		return s.advanceFAQSessionInTx(tx, session)
 	}, knowledgeDisplayWriteOptions(s.db))
 }
+
 func (s *KnowledgeInputProvenanceStore) advanceFAQSessionInTx(tx *gorm.DB, session *faqInputSessionRow) error {
 	if err := s.advanceFAQReadPlanAfterOwnWriteInTx(tx, session); err != nil {
 		return err
 	}
-	snapshot, err := s.captureFAQInputsInTx(tx, types.FAQInputReadRequest{TenantID: session.TenantID, KnowledgeBaseID: session.KnowledgeBaseID, AllEntries: true})
+	snapshot, err := s.captureFAQInputsInTx(
+		tx,
+		types.FAQInputReadRequest{
+			TenantID:        session.TenantID,
+			KnowledgeBaseID: session.KnowledgeBaseID,
+			AllEntries:      true,
+		},
+	)
 	if err != nil {
 		return err
 	}
@@ -683,7 +858,9 @@ func (s *KnowledgeInputProvenanceStore) advanceFAQSessionInTx(tx *gorm.DB, sessi
 // CreateFAQCatalog admits only this fixed server header. Entry bodies keep
 // their own receipts and never inherit an empty origin from this header.
 func (s *KnowledgeInputProvenanceStore) CreateFAQCatalog(ctx context.Context, k *types.Knowledge) error {
-	if k.Type != types.KnowledgeTypeFAQ || k.Title != "FAQ" || k.Description != "FAQ 条目容器" || k.Channel != types.ChannelWeb || k.Source != types.KnowledgeTypeFAQ {
+	if k.Type != types.KnowledgeTypeFAQ || k.Title != "FAQ" || k.Description != "FAQ 条目容器" ||
+		k.Channel != types.ChannelWeb ||
+		k.Source != types.KnowledgeTypeFAQ {
 		return ErrKnowledgeInputChanged
 	}
 	active, ok := ctx.Value(faqInputSessionKey{}).(faqInputSession)
@@ -714,7 +891,14 @@ func (s *KnowledgeInputProvenanceStore) CreateFAQCatalog(ctx context.Context, k 
 		lineage, _ := types.NewCompleteSourceLineage()
 		// Explicit fixed-code artifact, carried as derived because the generic
 		// admission schema has no code kind. No request/entry text is included.
-		_, err = s.admitInTx(ctx, tx, k, &kb, struct{ Producer, Title, Description string }{"faq-catalog-fixed-code-v1", k.Title, k.Description}, knowledgeInputOrigin{lineage, "derived"})
+		_, err = s.admitInTx(
+			ctx,
+			tx,
+			k,
+			&kb,
+			struct{ Producer, Title, Description string }{"faq-catalog-fixed-code-v1", k.Title, k.Description},
+			knowledgeInputOrigin{lineage, "derived"},
+		)
 		if err != nil {
 			return err
 		}
@@ -723,20 +907,41 @@ func (s *KnowledgeInputProvenanceStore) CreateFAQCatalog(ctx context.Context, k 
 			return err
 		}
 		var catalogVersion struct{ Revision uint64 }
-		if err := tx.Table("faq_catalog_control_versions").Where("knowledge_id=?", k.ID).Take(&catalogVersion).Error; err != nil {
+		if err := tx.Table("faq_catalog_control_versions").
+			Where("knowledge_id=?", k.ID).
+			Take(&catalogVersion).
+			Error; err != nil {
 			return err
 		}
-		if err := tx.Create(&faqCatalogOrigin{k.ID, "faq-catalog-fixed-code-v1", "trusted_code", codeDigest, catalogVersion.Revision}).Error; err != nil {
+		if err := tx.Create(
+			&faqCatalogOrigin{k.ID, "faq-catalog-fixed-code-v1", "trusted_code", codeDigest, catalogVersion.Revision},
+		).Error; err != nil {
 			return err
 		}
 		return s.advanceFAQSessionInTx(tx, session)
 	}, knowledgeDisplayWriteOptions(s.db))
 }
+
 func faqCatalogCodeDigest(k *types.Knowledge) (string, error) {
-	if k.Type != types.KnowledgeTypeFAQ || k.Title != "FAQ" || k.Description != "FAQ 条目容器" || k.Source != types.KnowledgeTypeFAQ || k.Channel != types.ChannelWeb || k.ParseStatus != "completed" || k.EnableStatus != "enabled" {
+	if k.Type != types.KnowledgeTypeFAQ || k.Title != "FAQ" || k.Description != "FAQ 条目容器" ||
+		k.Source != types.KnowledgeTypeFAQ ||
+		k.Channel != types.ChannelWeb ||
+		k.ParseStatus != "completed" ||
+		k.EnableStatus != "enabled" {
 		return "", ErrKnowledgeInputChanged
 	}
-	return KnowledgeInputDigest(struct{ Producer, Title, Description, Type, Source, Channel, ParseStatus, EnableStatus string }{"faq-catalog-fixed-code-v1", k.Title, k.Description, k.Type, k.Source, k.Channel, k.ParseStatus, k.EnableStatus})
+	return KnowledgeInputDigest(
+		struct{ Producer, Title, Description, Type, Source, Channel, ParseStatus, EnableStatus string }{
+			"faq-catalog-fixed-code-v1",
+			k.Title,
+			k.Description,
+			k.Type,
+			k.Source,
+			k.Channel,
+			k.ParseStatus,
+			k.EnableStatus,
+		},
+	)
 }
 
 func (s *KnowledgeInputProvenanceStore) DeleteFAQChunks(ctx context.Context, ids []string) error {
@@ -756,7 +961,9 @@ func (s *KnowledgeInputProvenanceStore) DeleteFAQChunks(ctx context.Context, ids
 		if err := json.Unmarshal([]byte(session.InputBody), &operation); err != nil {
 			return err
 		}
-		if operation.Kind != "delete" && !(operation.Kind == "import" && operation.Batch != nil && operation.Batch.Mode == types.FAQBatchModeReplace) && operation.Kind != "create" {
+		if operation.Kind != "delete" &&
+			!(operation.Kind == "import" && operation.Batch != nil && operation.Batch.Mode == types.FAQBatchModeReplace) &&
+			operation.Kind != "create" {
 			return ErrKnowledgeInputChanged
 		}
 		selected := map[int64]bool{}
@@ -772,7 +979,8 @@ func (s *KnowledgeInputProvenanceStore) DeleteFAQChunks(ctx context.Context, ids
 				if operation.Kind == "delete" && !selected[c.SeqID] {
 					return ErrKnowledgeInputChanged
 				}
-				if operation.Kind == "create" && (proofs[c.ID] == nil || proofs[c.ID].SessionID != session.ID || c.Status != int(types.ChunkStatusStored)) {
+				if operation.Kind == "create" &&
+					(proofs[c.ID] == nil || proofs[c.ID].SessionID != session.ID || c.Status != int(types.ChunkStatusStored)) {
 					return ErrKnowledgeInputChanged
 				}
 			}
@@ -781,7 +989,9 @@ func (s *KnowledgeInputProvenanceStore) DeleteFAQChunks(ctx context.Context, ids
 		if len(wanted) > 0 {
 			return ErrKnowledgeInputChanged
 		}
-		if err := tx.Where("id IN (?) AND tenant_id=? AND knowledge_base_id=? AND chunk_type=?", ids, session.TenantID, session.KnowledgeBaseID, types.ChunkTypeFAQ).Delete(&types.Chunk{}).Error; err != nil {
+		if err := tx.Where("id IN (?) AND tenant_id=? AND knowledge_base_id=? AND chunk_type=?", ids, session.TenantID, session.KnowledgeBaseID, types.ChunkTypeFAQ).
+			Delete(&types.Chunk{}).
+			Error; err != nil {
 			return err
 		}
 		return s.advanceFAQSessionInTx(tx, session)
@@ -830,7 +1040,10 @@ func (s *KnowledgeInputProvenanceStore) faqAuthorityInTx(tx *gorm.DB) (*Knowledg
 	return &authority, nil
 }
 
-func (s *KnowledgeInputProvenanceStore) readFAQOriginalKnowledgeInputsInTx(tx *gorm.DB, session *faqInputSessionRow) ([]*types.KnowledgeBuildInputProof, error) {
+func (s *KnowledgeInputProvenanceStore) readFAQOriginalKnowledgeInputsInTx(
+	tx *gorm.DB,
+	session *faqInputSessionRow,
+) ([]*types.KnowledgeBuildInputProof, error) {
 	var parents []*types.KnowledgeBuildInputProof
 	if err := json.Unmarshal([]byte(session.OriginalInputs), &parents); err != nil {
 		return nil, err
@@ -850,10 +1063,30 @@ func (s *KnowledgeInputProvenanceStore) readFAQOriginalKnowledgeInputsInTx(tx *g
 		if p == nil || p.BodyDigest == "" || p.Projection != "" || p.SourceLineage.RequireComplete() != nil {
 			return nil, types.ErrSourceLineageUnknown
 		}
-		if _, err := authority.captureKnowledgeBuildSnapshotInTx(tx, types.KnowledgeBuildInputCaptureRequest{TenantID: p.TenantID, KnowledgeBaseID: p.KnowledgeBaseID, KnowledgeID: p.KnowledgeID, ChunkIDs: p.ChunkIDs, Expected: p}, true); err != nil {
+		if _, err := authority.captureKnowledgeBuildSnapshotInTx(
+			tx,
+			types.KnowledgeBuildInputCaptureRequest{
+				TenantID:        p.TenantID,
+				KnowledgeBaseID: p.KnowledgeBaseID,
+				KnowledgeID:     p.KnowledgeID,
+				ChunkIDs:        p.ChunkIDs,
+				Expected:        p,
+			},
+			true,
+		); err != nil {
 			return nil, err
 		}
-		readCtx := types.WithAPIKeyOperationRequirement(tx.Statement.Context, types.APIKeyOperationRequirement{RequireFullAccess: true, Capabilities: []types.APIKeyCapability{types.APIKeyCapabilityRetrieve, types.APIKeyCapabilityChat, types.APIKeyCapabilityMessageHistory}})
+		readCtx := types.WithAPIKeyOperationRequirement(
+			tx.Statement.Context,
+			types.APIKeyOperationRequirement{
+				RequireFullAccess: true,
+				Capabilities: []types.APIKeyCapability{
+					types.APIKeyCapabilityRetrieve,
+					types.APIKeyCapabilityChat,
+					types.APIKeyCapabilityMessageHistory,
+				},
+			},
+		)
 		readCtx, err := authority.RefreshCurrentReadActor(readCtx)
 		if err != nil {
 			return nil, err
@@ -862,10 +1095,24 @@ func (s *KnowledgeInputProvenanceStore) readFAQOriginalKnowledgeInputsInTx(tx *g
 		if err := tx.Where("id=? AND tenant_id=?", p.KnowledgeBaseID, p.TenantID).Take(&kb).Error; err != nil {
 			return nil, err
 		}
-		if _, err := access.ResolveKB(readCtx, access.KBRequest{Caller: types.CallerFromContext(readCtx)}, &kb, types.OrgRoleViewer, authority.actorShares, nil); err != nil {
+		if _, err := access.ResolveKB(
+			readCtx,
+			access.KBRequest{Caller: types.CallerFromContext(readCtx)},
+			&kb,
+			types.OrgRoleViewer,
+			authority.actorShares,
+			nil,
+		); err != nil {
 			return nil, err
 		}
-		permission, err := authority.actorGroups.EffectivePermission(readCtx, kb.TenantID, types.GroupResourceTypeKnowledgeBase, kb.ID, types.ResourceActionRead, time.Now().UTC())
+		permission, err := authority.actorGroups.EffectivePermission(
+			readCtx,
+			kb.TenantID,
+			types.GroupResourceTypeKnowledgeBase,
+			kb.ID,
+			types.ResourceActionRead,
+			time.Now().UTC(),
+		)
 		if err != nil {
 			return nil, err
 		}
@@ -875,7 +1122,10 @@ func (s *KnowledgeInputProvenanceStore) readFAQOriginalKnowledgeInputsInTx(tx *g
 	}
 	return parents, nil
 }
-func (s *KnowledgeInputProvenanceStore) FAQSessionOriginalKnowledgeInputs(ctx context.Context) ([]*types.KnowledgeBuildInputProof, error) {
+
+func (s *KnowledgeInputProvenanceStore) FAQSessionOriginalKnowledgeInputs(
+	ctx context.Context,
+) ([]*types.KnowledgeBuildInputProof, error) {
 	active, ok := ctx.Value(faqInputSessionKey{}).(faqInputSession)
 	if !ok || active.Store != s {
 		return nil, types.ErrSourceLineageUnknown
@@ -895,7 +1145,10 @@ func (s *KnowledgeInputProvenanceStore) FAQSessionOriginalKnowledgeInputs(ctx co
 // Tag resolution is part of the exact FAQ operation. New names/defaults are
 // written with their actual operation's union, and only that own addition may
 // advance the original candidate manifest.
-func (s *KnowledgeInputProvenanceStore) ResolveFAQInputTag(ctx context.Context, entry *types.FAQEntryPayload) (string, error) {
+func (s *KnowledgeInputProvenanceStore) ResolveFAQInputTag(
+	ctx context.Context,
+	entry *types.FAQEntryPayload,
+) (string, error) {
 	if err := s.CheckFAQInput(ctx); err != nil {
 		return "", err
 	}
@@ -944,7 +1197,14 @@ func (s *KnowledgeInputProvenanceStore) ResolveFAQInputTag(ctx context.Context, 
 			}
 		}
 		now := time.Now()
-		tag := &types.KnowledgeTag{ID: uuid.NewString(), TenantID: session.TenantID, KnowledgeBaseID: session.KnowledgeBaseID, Name: name, CreatedAt: now, UpdatedAt: now}
+		tag := &types.KnowledgeTag{
+			ID:              uuid.NewString(),
+			TenantID:        session.TenantID,
+			KnowledgeBaseID: session.KnowledgeBaseID,
+			Name:            name,
+			CreatedAt:       now,
+			UpdatedAt:       now,
+		}
 		if name == types.UntaggedTagName {
 			tag.SortOrder = -1
 		}
@@ -952,7 +1212,9 @@ func (s *KnowledgeInputProvenanceStore) ResolveFAQInputTag(ctx context.Context, 
 			return err
 		}
 		var kb types.KnowledgeBase
-		if err := tx.Where("id=? AND tenant_id=?", session.KnowledgeBaseID, session.TenantID).Take(&kb).Error; err != nil {
+		if err := tx.Where("id=? AND tenant_id=?", session.KnowledgeBaseID, session.TenantID).
+			Take(&kb).
+			Error; err != nil {
 			return err
 		}
 		var lineage types.SourceLineage
@@ -971,7 +1233,17 @@ func (s *KnowledgeInputProvenanceStore) ResolveFAQInputTag(ctx context.Context, 
 			}{"faq-default-tag-fixed-code-v1", types.UntaggedTagName, "", -1}
 		}
 		for _, field := range []string{"name", "color", "sort_order"} {
-			if err := admitKnowledgeDisplayOrigin(tx, ctx, "tag-"+field, tag.ID, &kb, tagDisplayFieldValue(tag, field), tagInput, &lineage, originKind); err != nil {
+			if err := admitKnowledgeDisplayOrigin(
+				tx,
+				ctx,
+				"tag-"+field,
+				tag.ID,
+				&kb,
+				tagDisplayFieldValue(tag, field),
+				tagInput,
+				&lineage,
+				originKind,
+			); err != nil {
 				return err
 			}
 		}

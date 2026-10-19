@@ -69,10 +69,19 @@ func TestWikiIDScopeBeforeBodyAndOrdinaryUsable(t *testing.T) {
 	repo := repository.NewWikiPageRepository(db)
 	ctx := context.Background()
 	ordinary := NewWikiPageService(repo, nil, wikiOrdinaryTestPolicy{}, nil, nil)
-	page, err := ordinary.CreatePage(ctx, &types.WikiPage{ID: "owned", TenantID: 1, KnowledgeBaseID: "kb", Slug: "s", Content: "secret"})
+	page, err := ordinary.CreatePage(
+		ctx,
+		&types.WikiPage{ID: "owned", TenantID: 1, KnowledgeBaseID: "kb", Slug: "s", Content: "secret"},
+	)
 	require.NoError(t, err)
 	var queries []string
-	require.NoError(t, db.Callback().Query().After("gorm:query").Register("wiki_query_inventory", func(tx *gorm.DB) { queries = append(queries, tx.Statement.SQL.String()) }))
+	require.NoError(
+		t,
+		db.Callback().
+			Query().
+			After("gorm:query").
+			Register("wiki_query_inventory", func(tx *gorm.DB) { queries = append(queries, tx.Statement.SQL.String()) }),
+	)
 	denied := NewWikiPageService(repo, nil, wikiSourceRejectTestPolicy{}, nil, nil)
 	_, err = denied.GetPageByID(ctx, page.ID)
 	require.ErrorIs(t, err, ErrNextcloudDerivedContent)
@@ -95,11 +104,27 @@ func TestWikiMetadataCannotRelabelProtectedOwner(t *testing.T) {
 	require.NoError(t, db.AutoMigrate(&types.WikiPage{}))
 	repo := repository.NewWikiPageRepository(db)
 	ctx := context.Background()
-	require.NoError(t, repo.Create(ctx, &types.WikiPage{ID: "owned", TenantID: 1, KnowledgeBaseID: "protected", Slug: "s", Status: "published", Content: "secret"}))
+	require.NoError(
+		t,
+		repo.Create(
+			ctx,
+			&types.WikiPage{
+				ID:              "owned",
+				TenantID:        1,
+				KnowledgeBaseID: "protected",
+				Slug:            "s",
+				Status:          "published",
+				Content:         "secret",
+			},
+		),
+	)
 	svc := NewWikiPageService(repo, nil, wikiOrdinaryTestPolicy{}, nil, nil)
 	err = svc.UpdatePageMeta(ctx, &types.WikiPage{ID: "owned", KnowledgeBaseID: "ordinary", Status: "archived"})
 	require.ErrorIs(t, err, ErrNextcloudDerivedContent)
-	require.Error(t, repo.UpdateMeta(ctx, &types.WikiPage{ID: "owned", KnowledgeBaseID: "ordinary", Status: "archived"}))
+	require.Error(
+		t,
+		repo.UpdateMeta(ctx, &types.WikiPage{ID: "owned", KnowledgeBaseID: "ordinary", Status: "archived"}),
+	)
 	got, err := repo.GetByID(ctx, "owned")
 	require.NoError(t, err)
 	require.Equal(t, "published", got.Status)

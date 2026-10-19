@@ -32,7 +32,17 @@ func TestRawUserInputLineageActualRequestWriterAdmitsOnlyPureText(t *testing.T) 
 			if mode == "attachment" {
 				attachments = types.MessageAttachments{{FileName: "opaque attachment"}}
 			}
-			created, err := handler.createUserMessage(context.Background(), "session", "original raw request text", "request", nil, images, attachments, "web", nil)
+			created, err := handler.createUserMessage(
+				context.Background(),
+				"session",
+				"original raw request text",
+				"request",
+				nil,
+				images,
+				attachments,
+				"web",
+				nil,
+			)
 			require.NoError(t, err)
 			require.Equal(t, "original raw request text", created.Content)
 			require.True(t, created.IsCompleted)

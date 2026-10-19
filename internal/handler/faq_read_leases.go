@@ -16,7 +16,13 @@ import (
 // Acquire broad scopes in a stable order before any material capture, then
 // upgrade every immutable controlled parent generation while the broad leases
 // remain held. Publication/current actor checks remain independent.
-func acquireFAQReadPlanLeases(ctx context.Context, store nextcloudHTTPReadLeaseStore, scopes []types.KnowledgeSearchScope, lineage *types.SourceLineage, heartbeat time.Duration) (*nextcloudHTTPReadLeases, error) {
+func acquireFAQReadPlanLeases(
+	ctx context.Context,
+	store nextcloudHTTPReadLeaseStore,
+	scopes []types.KnowledgeSearchScope,
+	lineage *types.SourceLineage,
+	heartbeat time.Duration,
+) (*nextcloudHTTPReadLeases, error) {
 	if store == nil {
 		return nil, errors.NewServiceUnavailableError("FAQ content lease store unavailable")
 	}
@@ -34,7 +40,13 @@ func acquireFAQReadPlanLeases(ctx context.Context, store nextcloudHTTPReadLeaseS
 		heartbeat = nextcloudHTTPReadLeaseHeartbeat
 	}
 	leaseCtx, cancel := context.WithCancel(ctx)
-	group := &nextcloudHTTPReadLeases{store: store, ctx: leaseCtx, cancel: cancel, heartbeat: heartbeat, rows: []repository.NextcloudContentLease{}}
+	group := &nextcloudHTTPReadLeases{
+		store:     store,
+		ctx:       leaseCtx,
+		cancel:    cancel,
+		heartbeat: heartbeat,
+		rows:      []repository.NextcloudContentLease{},
+	}
 	owner := uuid.NewString()
 	broad := map[types.KnowledgeSearchScope]repository.NextcloudContentLease{}
 	for _, scope := range scopes {
@@ -72,7 +84,19 @@ func acquireFAQReadPlanLeases(ctx context.Context, store nextcloudHTTPReadLeaseS
 			group.Close()
 			return nil, errors.NewServiceUnavailableError("FAQ exact content lease upgrade unavailable")
 		}
-		row, err := upgrader.UpgradeKBRead(leaseCtx, parent.ID, repository.NextcloudContentScope{TenantID: source.TenantID, KnowledgeBaseID: source.KnowledgeBaseID, KnowledgeID: source.KnowledgeID, DataSourceID: source.DataSourceID, ExternalID: source.ExternalID}, owner, nextcloudHTTPReadLeaseTTL)
+		row, err := upgrader.UpgradeKBRead(
+			leaseCtx,
+			parent.ID,
+			repository.NextcloudContentScope{
+				TenantID:        source.TenantID,
+				KnowledgeBaseID: source.KnowledgeBaseID,
+				KnowledgeID:     source.KnowledgeID,
+				DataSourceID:    source.DataSourceID,
+				ExternalID:      source.ExternalID,
+			},
+			owner,
+			nextcloudHTTPReadLeaseTTL,
+		)
 		if err != nil {
 			group.Close()
 			return nil, nextcloudHTTPLeaseError(err)
@@ -96,9 +120,13 @@ func acquireFAQReadPlanLeases(ctx context.Context, store nextcloudHTTPReadLeaseS
 
 func bindFAQHTTPLeaseWriter(c *gin.Context, group *nextcloudHTTPReadLeases) func() {
 	prior := c.Writer
-	c.Writer = &knowledgeCollectionAuthorizationWriter{ResponseWriter: prior, check: func() error { return nextcloudHTTPLeaseErrorOrNil(group.Verify()) }}
+	c.Writer = &knowledgeCollectionAuthorizationWriter{
+		ResponseWriter: prior,
+		check:          func() error { return nextcloudHTTPLeaseErrorOrNil(group.Verify()) },
+	}
 	return func() { c.Writer = prior; group.Close() }
 }
+
 func nextcloudHTTPLeaseErrorOrNil(err error) error {
 	if err == nil {
 		return nil
@@ -106,7 +134,12 @@ func nextcloudHTTPLeaseErrorOrNil(err error) error {
 	return nextcloudHTTPLeaseError(err)
 }
 
-func beginFAQHTTPRead(c *gin.Context, ctx context.Context, a *service.FAQOutputAuthorizer, kb string) (context.Context, func(), error) {
+func beginFAQHTTPRead(
+	c *gin.Context,
+	ctx context.Context,
+	a *service.FAQOutputAuthorizer,
+	kb string,
+) (context.Context, func(), error) {
 	tenant, ok := types.TenantIDFromContext(ctx)
 	if !ok || tenant == 0 {
 		return ctx, nil, knowledgeOutputHTTPError(types.ErrSourceLineageUnknown)
@@ -127,7 +160,12 @@ func beginFAQHTTPRead(c *gin.Context, ctx context.Context, a *service.FAQOutputA
 	return marked, bindFAQHTTPLeaseWriter(c, group), nil
 }
 
-func beginFAQProgressHTTPRead(c *gin.Context, ctx context.Context, a *service.FAQOutputAuthorizer, task string) (context.Context, func(), error) {
+func beginFAQProgressHTTPRead(
+	c *gin.Context,
+	ctx context.Context,
+	a *service.FAQOutputAuthorizer,
+	task string,
+) (context.Context, func(), error) {
 	plan, err := a.ProgressReadPlan(ctx, task)
 	if err != nil {
 		return ctx, nil, knowledgeOutputHTTPError(err)
@@ -148,7 +186,11 @@ type faqKnowledgePreReadKey struct{}
 
 // Resolve FAQ result identities and pin their parents before the ordinary
 // knowledge service loads the result JSON. beginNextcloudRead reuses this group.
-func (h *KnowledgeHandler) beginFAQKnowledgePreRead(c *gin.Context, ctx context.Context, ids []string) (context.Context, func(), error) {
+func (h *KnowledgeHandler) beginFAQKnowledgePreRead(
+	c *gin.Context,
+	ctx context.Context,
+	ids []string,
+) (context.Context, func(), error) {
 	if h.outputAuthorizer == nil {
 		return ctx, func() {}, nil
 	}
@@ -174,7 +216,12 @@ func (h *KnowledgeHandler) beginFAQKnowledgePreRead(c *gin.Context, ctx context.
 	return ctx, bindFAQHTTPLeaseWriter(c, group), nil
 }
 
-func beginFAQTagHTTPRead(c *gin.Context, ctx context.Context, a *service.TagOutputAuthorizer, kb string) (context.Context, func(), error) {
+func beginFAQTagHTTPRead(
+	c *gin.Context,
+	ctx context.Context,
+	a *service.TagOutputAuthorizer,
+	kb string,
+) (context.Context, func(), error) {
 	tenant, ok := types.TenantIDFromContext(ctx)
 	if !ok || tenant == 0 {
 		return ctx, nil, knowledgeOutputHTTPError(types.ErrSourceLineageUnknown)

@@ -21,7 +21,12 @@ import (
 // PushProcessingState reuses the connector's operator-approved fixed origin
 // and no-redirect transport. Status HMAC uses a purpose-derived event key,
 // never a content bearer, personal token, or model output.
-func PushProcessingState(ctx context.Context, ds *types.DataSourceConfig, connection, keyID, eventID string, key, body []byte) error {
+func PushProcessingState(
+	ctx context.Context,
+	ds *types.DataSourceConfig,
+	connection, keyID, eventID string,
+	key, body []byte,
+) error {
 	cfg, err := parseConfig(ds)
 	if err != nil {
 		return err
@@ -40,7 +45,14 @@ func PushProcessingState(ctx context.Context, ds *types.DataSourceConfig, connec
 	nonce := hex.EncodeToString(nonceBytes)
 	timestamp := strconv.FormatInt(time.Now().UTC().Unix(), 10)
 	sum := sha256.Sum256(body)
-	canonical := StatePushCanonical(req.URL.EscapedPath(), hex.EncodeToString(sum[:]), timestamp, nonce, connection, keyID)
+	canonical := StatePushCanonical(
+		req.URL.EscapedPath(),
+		hex.EncodeToString(sum[:]),
+		timestamp,
+		nonce,
+		connection,
+		keyID,
+	)
 	mac := hmac.New(sha256.New, key)
 	mac.Write(canonical)
 	req.Header.Set("Content-Type", "application/json")
@@ -70,5 +82,20 @@ func PushProcessingState(ctx context.Context, ds *types.DataSourceConfig, connec
 }
 
 func StatePushCanonical(path, bodyHash, timestamp, nonce, connection, keyID string) []byte {
-	return []byte(strings.Join([]string{"weknora-state-push-hmac-sha256-v2", http.MethodPost, path, "", bodyHash, timestamp, nonce, connection, keyID}, "\n"))
+	return []byte(
+		strings.Join(
+			[]string{
+				"weknora-state-push-hmac-sha256-v2",
+				http.MethodPost,
+				path,
+				"",
+				bodyHash,
+				timestamp,
+				nonce,
+				connection,
+				keyID,
+			},
+			"\n",
+		),
+	)
 }

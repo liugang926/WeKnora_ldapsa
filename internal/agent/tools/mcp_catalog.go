@@ -13,6 +13,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/Tencent/WeKnora/internal/agent/approval"
+	"github.com/Tencent/WeKnora/internal/mcp"
 	"github.com/Tencent/WeKnora/internal/types"
 )
 
@@ -129,26 +130,30 @@ type (
 // Only its server snapshots mutate; the executable registry stays fixed.
 // No credential-bearing service object is serialized to the model.
 type MCPCatalog struct {
-	tenantID       uint64
-	principal      string
-	oauthPrincipal string
-	servers        map[string]*mcpCatalogServer
-	described      sync.Map // Definition references successfully returned by describe in this engine.
-	historyNames   sync.Map // Function names already used in this session's history.
-	historyRefs    sync.Map // call_mcp_tool refs already used in this session's history.
-	preloadOnce    sync.Once
-	preloadDone    chan struct{}
-	load           mcpCatalogLoader
-	lookup         MCPServiceLookup
-	gate           approval.MCPApproval
+	transport                    *mcp.MCPManager
+	independentTransportVerifier func(context.Context) error
+	sourceDescribed              sync.Map
+	tenantID                     uint64
+	principal                    string
+	oauthPrincipal               string
+	servers                      map[string]*mcpCatalogServer
+	described                    sync.Map // Definition references successfully returned by describe in this engine.
+	historyNames                 sync.Map // Function names already used in this session's history.
+	historyRefs                  sync.Map // call_mcp_tool refs already used in this session's history.
+	preloadOnce                  sync.Once
+	preloadDone                  chan struct{}
+	load                         mcpCatalogLoader
+	lookup                       MCPServiceLookup
+	gate                         approval.MCPApproval
 }
 
 type mcpCatalogServer struct {
-	loadLock chan struct{} // Context-aware serialization of slow discovery.
-	mu       sync.Mutex
-	service  *types.MCPService
-	tools    []*MCPTool
-	status   string
+	loadLock     chan struct{} // Context-aware serialization of slow discovery.
+	mu           sync.Mutex
+	service      *types.MCPService
+	tools        []*MCPTool
+	status       string
+	sourceConfig []byte
 }
 
 type mcpServerSummary struct {
@@ -211,9 +216,10 @@ func newMCPCatalog(
 		}
 		if _, exists := c.servers[service.ID]; !exists {
 			c.servers[service.ID] = &mcpCatalogServer{
-				service:  service,
-				status:   "not_loaded",
-				loadLock: make(chan struct{}, 1),
+				service:      service,
+				status:       "not_loaded",
+				loadLock:     make(chan struct{}, 1),
+				sourceConfig: mcpSourceJSON(service),
 			}
 		}
 	}
@@ -354,6 +360,7 @@ func (s *mcpCatalogServer) store(service *types.MCPService, tools []*MCPTool, st
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.service, s.tools, s.status = service, tools, status
+	s.sourceConfig = mcpSourceJSON(service)
 }
 
 func mcpToolRef(tool *MCPTool) string {
@@ -434,6 +441,7 @@ type MCPDiscoverTool struct {
 	catalog          *MCPCatalog
 	directExposure   bool
 	advertiseSources bool
+	sourceBase       types.FunctionDefinition
 }
 
 // Description advertises source-level guidance alongside direct tools, just
@@ -503,8 +511,9 @@ func (s *mcpCatalogServer) summary(id string) mcpServerSummary {
 // MCPCallTool resolves catalog references and invokes their MCP targets.
 type MCPCallTool struct {
 	BaseTool
-	catalog  *MCPCatalog
-	registry *ToolRegistry
+	catalog    *MCPCatalog
+	registry   *ToolRegistry
+	sourceBase types.FunctionDefinition
 }
 
 // Parameters advertises only references whose complete definitions are in the
@@ -569,13 +578,13 @@ func installMCPCatalog(registry *ToolRegistry, c *MCPCatalog) {
 	// a valid call even with providers that reject empty enum definitions.
 	discoveryParameters := mcpSchemaWithEnum(mcpDiscoverySchema, "server_id", ids)
 	registry.RegisterTool(
-		&MCPDiscoverTool{
+		bindMCPDiscoverSource(&MCPDiscoverTool{
 			BaseTool: NewBaseTool(ToolDiscoverMCPTools, description, discoveryParameters),
 			catalog:  c,
-		},
+		}),
 	)
 	registry.RegisterTool(
-		&MCPCallTool{
+		bindMCPCallSource(&MCPCallTool{
 			BaseTool: NewBaseTool(
 				ToolCallMCPTool,
 				"Call an authorized MCP tool using tool_ref returned by discover_mcp_tools. Read its "+
@@ -586,7 +595,7 @@ func installMCPCatalog(registry *ToolRegistry, c *MCPCatalog) {
 			),
 			catalog:  c,
 			registry: registry,
-		},
+		}),
 	)
 }
 

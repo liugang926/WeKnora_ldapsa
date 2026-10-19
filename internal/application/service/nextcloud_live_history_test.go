@@ -21,7 +21,12 @@ type documentLiveHistory struct {
 	user, assistant *types.Message
 }
 
-func prepareDocumentLiveHistory(t *testing.T, m *machinePipelineFixture, ctx context.Context, query string) *documentLiveHistory {
+func prepareDocumentLiveHistory(
+	t *testing.T,
+	m *machinePipelineFixture,
+	ctx context.Context,
+	query string,
+) *documentLiveHistory {
 	t.Helper()
 	if os.Getenv("WEKNORA_DOCUMENT_GRAPH_HISTORY") != "1" {
 		return nil
@@ -37,7 +42,13 @@ func prepareDocumentLiveHistory(t *testing.T, m *machinePipelineFixture, ctx con
 	}
 	require.NoError(t, repository.InstallOriginalBodyRetentionTriggers(db))
 	require.NoError(t, repository.UpgradeMessageProducerAdvanceSchema(db))
-	messages := &messageService{messageRepo: repository.NewMessageRepository(db), sessionRepo: repository.NewSessionRepository(db), sourceLineageGuard: m.f.guard, kbService: m.f.s.kbService, knowService: m.f.s}
+	messages := &messageService{
+		messageRepo:        repository.NewMessageRepository(db),
+		sessionRepo:        repository.NewSessionRepository(db),
+		sourceLineageGuard: m.f.guard,
+		kbService:          m.f.s.kbService,
+		knowService:        m.f.s,
+	}
 	ConfigureMessageMaterialProvenance(messages, m.f.store)
 	repository.ConfigureMessageOriginalBodyAvailability(m.f.store, repository.CheckOriginalBodyAvailableInTx)
 	ctx = context.WithValue(ctx, types.UserIDContextKey, types.CallerFromContext(ctx).UserID)
@@ -45,13 +56,37 @@ func prepareDocumentLiveHistory(t *testing.T, m *machinePipelineFixture, ctx con
 	require.NoError(t, db.Create(session).Error)
 	m.liveHistorySessionID = session.ID
 	execution := types.MessageExecutionContext{KnowledgeBaseIDs: []string{m.ds.KnowledgeBaseID}}
-	user, err := messages.CreateMessage(ctx, &types.Message{SessionID: session.ID, RequestID: "live-rag-history-turn", Role: "user", Content: query, IsCompleted: true, ExecutionContext: execution})
+	user, err := messages.CreateMessage(
+		ctx,
+		&types.Message{
+			SessionID:        session.ID,
+			RequestID:        "live-rag-history-turn",
+			Role:             "user",
+			Content:          query,
+			IsCompleted:      true,
+			ExecutionContext: execution,
+		},
+	)
 	require.NoError(t, err)
-	assistant, err := messages.CreateMessage(ctx, &types.Message{SessionID: session.ID, RequestID: user.RequestID, Role: "assistant", ExecutionContext: execution})
+	assistant, err := messages.CreateMessage(
+		ctx,
+		&types.Message{
+			SessionID:        session.ID,
+			RequestID:        user.RequestID,
+			Role:             "assistant",
+			ExecutionContext: execution,
+		},
+	)
 	require.NoError(t, err)
 	return &documentLiveHistory{messages: messages, ctx: ctx, session: session, user: user, assistant: assistant}
 }
-func (h *documentLiveHistory) complete(t *testing.T, ctx context.Context, answer string, lineage *types.SourceLineage) func() {
+
+func (h *documentLiveHistory) complete(
+	t *testing.T,
+	ctx context.Context,
+	answer string,
+	lineage *types.SourceLineage,
+) func() {
 	t.Helper()
 	if h == nil {
 		return func() {}
@@ -100,7 +135,11 @@ func (h *documentLiveHistory) complete(t *testing.T, ctx context.Context, answer
 	checkSearchRevoked := h.checkKeywordSearch(t, answer)
 	t.Log("REAL_HISTORY actual streamed answer persisted with original material proof; detail/list/recent reads passed")
 	return func() {
-		require.Error(t, CheckMessageMaterialOutputBoundary(read), "retained historical body must recheck current source authority")
+		require.Error(
+			t,
+			CheckMessageMaterialOutputBoundary(read),
+			"retained historical body must recheck current source authority",
+		)
 		current := WithMessageMaterialOutputBoundary(h.ctx)
 		denied, e := h.messages.GetMessage(current, h.session.ID, h.assistant.ID)
 		require.Error(t, e)

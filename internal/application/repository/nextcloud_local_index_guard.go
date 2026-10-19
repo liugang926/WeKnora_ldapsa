@@ -3,10 +3,11 @@ package repository
 import (
 	"context"
 	"errors"
+	"sort"
+
 	"github.com/Tencent/WeKnora/internal/types"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
-	"sort"
 )
 
 // Shared by the SQLite metadata/FTS/vec0 transaction. Ordinary unrelated rows
@@ -46,16 +47,29 @@ func GuardNextcloudLocalIndexWrites(ctx context.Context, tx *gorm.DB, infos []*t
 		if !NextcloudBuildLeasePresent(ctx, k.TenantID, k.KnowledgeBaseID, k.ID) {
 			return ErrNextcloudContentLeaseInvalid
 		}
+		if e = LockNextcloudIndexKnowledgeBaseInTx(ctx, tx, k.TenantID, k.KnowledgeBaseID, k.ID); e != nil {
+			return e
+		}
 		if e = ValidateNextcloudBuildWrite(ctx, tx, k.TenantID, k.KnowledgeBaseID, k.ID); e != nil {
 			return e
 		}
 		metadata := k.GetMetadata()
 		var source nextcloudSourceVersion
-		if e = nextcloudVersionQuery(tx.Clauses(clause.Locking{Strength: "UPDATE"}), k.TenantID, k.KnowledgeBaseID, metadata["datasource_id"], metadata["external_id"]).Take(&source).Error; e != nil {
+		if e = nextcloudVersionQuery(
+			tx.Clauses(clause.Locking{Strength: "UPDATE"}),
+			k.TenantID,
+			k.KnowledgeBaseID,
+			metadata["datasource_id"],
+			metadata["external_id"],
+		).Take(&source).
+			Error; e != nil {
 			return e
 		}
 		if source.State == "tombstone" || source.CandidateKnowledgeID != k.ID {
 			return ErrNextcloudContentLeaseDenied
+		}
+		if e = ValidateNextcloudIndexInputWriteInTx(ctx, tx, k.TenantID, k.KnowledgeBaseID, k.ID); e != nil {
+			return e
 		}
 	}
 	return nil

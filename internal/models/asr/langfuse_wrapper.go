@@ -21,7 +21,11 @@ type langfuseASR struct {
 func (l *langfuseASR) GetModelName() string { return l.inner.GetModelName() }
 func (l *langfuseASR) GetModelID() string   { return l.inner.GetModelID() }
 
-func (l *langfuseASR) Transcribe(ctx context.Context, audioBytes []byte, fileName string) (*TranscriptionResult, error) {
+func (l *langfuseASR) Transcribe(
+	ctx context.Context,
+	audioBytes []byte,
+	fileName string,
+) (*TranscriptionResult, error) {
 	if logprivacy.ContentSuppressed(ctx) || types.RAGSourceLineageFromContext(ctx) != nil {
 		return l.inner.Transcribe(ctx, audioBytes, fileName)
 	}

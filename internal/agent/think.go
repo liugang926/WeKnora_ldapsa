@@ -79,7 +79,7 @@ func (e *AgentEngine) streamLLMToEventBus(
 		return nil, e.rememberLineageFailure(types.ErrSourceLineageUnknown)
 	}
 	if e.toolRegistry != nil && opts != nil {
-		if err := e.addLineage(e.toolRegistry.DefinitionSourceLineage(opts.Tools)); err != nil {
+		if err := e.addLineage(e.toolRegistry.DefinitionSourceLineageWithContext(ctx, opts.Tools)); err != nil {
 			logger.Warn(ctx, "Agent input rejected at original tool definition boundary")
 			return nil, err
 		}
@@ -193,7 +193,10 @@ func (e *AgentEngine) streamLLMToEventBus(
 	result.ReasoningContent += thinkingTail
 	if emitFunc != nil {
 		if thinkingTail != "" {
-			emitFunc(&types.StreamResponse{ResponseType: types.ResponseTypeThinking, Content: thinkingTail}, result.Content)
+			emitFunc(
+				&types.StreamResponse{ResponseType: types.ResponseTypeThinking, Content: thinkingTail},
+				result.Content,
+			)
 		}
 		if answerTail != "" {
 			emitFunc(&types.StreamResponse{ResponseType: types.ResponseTypeAnswer, Content: answerTail}, result.Content)
@@ -665,8 +668,13 @@ func (e *AgentEngine) callLLMWithRetry(
 		// Early signal for natural-stop path: this round will be analyzed as a
 		// likely final answer (no tool call branch).
 		if isNaturalStopFinishReason(response.FinishReason) {
-			logger.Infof(ctx, "[Agent][Round-%d] Natural-stop candidate detected (finish=%s, tool_calls=0, content=%d chars)",
-				round, response.FinishReason, len(response.Content))
+			logger.Infof(
+				ctx,
+				"[Agent][Round-%d] Natural-stop candidate detected (finish=%s, tool_calls=0, content=%d chars)",
+				round,
+				response.FinishReason,
+				len(response.Content),
+			)
 		}
 	}
 	if response.Content != "" {

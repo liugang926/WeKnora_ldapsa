@@ -38,7 +38,11 @@ func (p *PluginMerge) mergeSequentialChunks(
 			groups = append(groups, mergedGroup{result: current, lastIndex: current.ChunkIndex})
 			continue
 		case mergeExtend:
-			lastChunk.Content = appendTrustedContent(lastChunk.Content, current.Content, lastChunk.EndAt-current.StartAt)
+			lastChunk.Content = appendTrustedContent(
+				lastChunk.Content,
+				current.Content,
+				lastChunk.EndAt-current.StartAt,
+			)
 			lastChunk.EndAt = current.EndAt
 			recordMergedChild(ctx, knowledgeID, lastChunk, current, "image_merge")
 		case mergeSubsume:

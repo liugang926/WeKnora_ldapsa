@@ -9,14 +9,22 @@ import (
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 )
 
-func ConfigureFAQInputProvenance(knowledge interfaces.KnowledgeService, store *repository.KnowledgeInputProvenanceStore, guard *access.NextcloudSourceLineageGuard) {
+func ConfigureFAQInputProvenance(
+	knowledge interfaces.KnowledgeService,
+	store *repository.KnowledgeInputProvenanceStore,
+	guard *access.NextcloudSourceLineageGuard,
+) {
 	if s, ok := knowledge.(*knowledgeService); ok {
 		s.faqInputs = store
 		s.faqLineageChecker = guard
 	}
 }
 
-func (s *knowledgeService) beginFAQInput(ctx context.Context, kb *types.KnowledgeBase, operation types.FAQInputOperation) (context.Context, error) {
+func (s *knowledgeService) beginFAQInput(
+	ctx context.Context,
+	kb *types.KnowledgeBase,
+	operation types.FAQInputOperation,
+) (context.Context, error) {
 	if s.faqInputs == nil {
 		if s.knowledgeInputs != nil {
 			return ctx, types.ErrSourceLineageUnknown
@@ -72,19 +80,57 @@ func (s *knowledgeService) checkFAQInput(ctx context.Context) error {
 		}
 	}
 	empty, _ := types.NewCompleteSourceLineage()
-	if err := s.faqLineageChecker.Check(ctx, empty, access.LineageReadScope{Targets: types.SearchTargets{&types.SearchTarget{Type: types.SearchTargetTypeKnowledgeBase, TenantID: snapshot.Request.TenantID, KnowledgeBaseID: snapshot.Request.KnowledgeBaseID}}}); err != nil {
+	if err := s.faqLineageChecker.Check(
+		ctx,
+		empty,
+		access.LineageReadScope{
+			Targets: types.SearchTargets{
+				&types.SearchTarget{
+					Type:            types.SearchTargetTypeKnowledgeBase,
+					TenantID:        snapshot.Request.TenantID,
+					KnowledgeBaseID: snapshot.Request.KnowledgeBaseID,
+				},
+			},
+		},
+	); err != nil {
 		return err
 	}
 	return s.faqInputs.CheckFAQInput(ctx)
 }
 
-func checkFAQOriginalKnowledgeScopes(ctx context.Context, checker knowledgeOutputLineageChecker, parents []*types.KnowledgeBuildInputProof) error {
+func checkFAQOriginalKnowledgeScopes(
+	ctx context.Context,
+	checker knowledgeOutputLineageChecker,
+	parents []*types.KnowledgeBuildInputProof,
+) error {
 	for _, p := range parents {
 		if p == nil || p.SourceLineage.RequireComplete() != nil {
 			return types.ErrSourceLineageUnknown
 		}
-		readonly := types.WithAPIKeyOperationRequirement(ctx, types.APIKeyOperationRequirement{RequireFullAccess: true, Capabilities: []types.APIKeyCapability{types.APIKeyCapabilityRetrieve, types.APIKeyCapabilityChat, types.APIKeyCapabilityMessageHistory}})
-		if err := checker.Check(readonly, p.SourceLineage, access.LineageReadScope{Targets: types.SearchTargets{&types.SearchTarget{Type: types.SearchTargetTypeKnowledgeBase, TenantID: p.TenantID, KnowledgeBaseID: p.KnowledgeBaseID}}}); err != nil {
+		readonly := types.WithAPIKeyOperationRequirement(
+			ctx,
+			types.APIKeyOperationRequirement{
+				RequireFullAccess: true,
+				Capabilities: []types.APIKeyCapability{
+					types.APIKeyCapabilityRetrieve,
+					types.APIKeyCapabilityChat,
+					types.APIKeyCapabilityMessageHistory,
+				},
+			},
+		)
+		if err := checker.Check(
+			readonly,
+			p.SourceLineage,
+			access.LineageReadScope{
+				Targets: types.SearchTargets{
+					&types.SearchTarget{
+						Type:            types.SearchTargetTypeKnowledgeBase,
+						TenantID:        p.TenantID,
+						KnowledgeBaseID: p.KnowledgeBaseID,
+					},
+				},
+			},
+		); err != nil {
 			return err
 		}
 	}

@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"errors"
+
 	"github.com/Tencent/WeKnora/internal/types"
 )
 
@@ -11,7 +12,8 @@ import (
 func (s *NextcloudOnboardingStore) ScopedDocument(ctx context.Context, tenant uint64, id string) (string, error) {
 	var k types.Knowledge
 	if err := s.db.WithContext(ctx).Select("id", "tenant_id", "knowledge_base_id", "channel").
-		Where("id=? AND tenant_id=? AND channel=?", id, tenant, types.ConnectorTypeNextcloud).Take(&k).Error; err != nil {
+		Where("id=? AND tenant_id=? AND channel=?", id, tenant, types.ConnectorTypeNextcloud).
+		Take(&k).Error; err != nil {
 		return "", err
 	}
 	var count int64

@@ -16,8 +16,28 @@ func tenantRecoveryPlan(t *testing.T) (NextcloudRecoveryPlan, NextcloudRecoveryT
 	p, _ := targetRecoveryPlan(t)
 	now := time.Now().Unix()
 	deletion := (now - 10) * 1000
-	proof := NextcloudRecoveryTenantDeletion{OriginSHA256: strings.Repeat("e", 64), Tenant: types.NextcloudTenantDeletionObservation{Schema: "weknora-nextcloud-tenant-deletion-v1", State: "tenant_deleted", OperationID: "7c0253d2-43bd-4fdb-b05f-048d52c2e766", InstanceID: "instance", BindingID: "binding", TenantID: "7", DeletionID: tenantDeletionID(7, deletion), DeletionTimeMS: fmt.Sprint(deletion), ClosedAt: fmt.Sprint(now - 9)}}
-	event := NextcloudRecoveryJournalEvent{Sequence: "6", BindingID: "binding", Kind: "tenant_deleted", SourceRevision: "0", CreatedAt: now, TenantDeletion: &proof}
+	proof := NextcloudRecoveryTenantDeletion{
+		OriginSHA256: strings.Repeat("e", 64),
+		Tenant: types.NextcloudTenantDeletionObservation{
+			Schema:         "weknora-nextcloud-tenant-deletion-v1",
+			State:          "tenant_deleted",
+			OperationID:    "7c0253d2-43bd-4fdb-b05f-048d52c2e766",
+			InstanceID:     "instance",
+			BindingID:      "binding",
+			TenantID:       "7",
+			DeletionID:     tenantDeletionID(7, deletion),
+			DeletionTimeMS: fmt.Sprint(deletion),
+			ClosedAt:       fmt.Sprint(now - 9),
+		},
+	}
+	event := NextcloudRecoveryJournalEvent{
+		Sequence:       "6",
+		BindingID:      "binding",
+		Kind:           "tenant_deleted",
+		SourceRevision: "0",
+		CreatedAt:      now,
+		TenantDeletion: &proof,
+	}
 	lines := []string{p.CheckpointDatabaseChainSHA256, "6", "binding", "-", "tenant_deleted", "0", fmt.Sprint(now)}
 	chain := recoverySHA([]byte(strings.Join(append(lines, tenantDeletionJournalLines(proof)...), "\n")))
 	p.JournalEvents = []NextcloudRecoveryJournalEvent{event}
@@ -28,6 +48,7 @@ func tenantRecoveryPlan(t *testing.T) (NextcloudRecoveryPlan, NextcloudRecoveryT
 	p.DatabasePrefixHashes["6"] = chain
 	return p, proof
 }
+
 func TestNextcloudTenantRecoveryIndependentHistoryAndHash(t *testing.T) {
 	key := []byte(strings.Repeat("k", 32))
 	p, proof := tenantRecoveryPlan(t)

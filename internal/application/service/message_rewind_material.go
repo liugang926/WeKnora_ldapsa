@@ -11,14 +11,23 @@ import (
 // source plan and actual current authority in its delete transaction, and
 // returns only cleanup metadata. It never reloads deleted message bodies.
 type rewindMaterialMessageStore interface {
-	DeleteMessagesFromMaterial(context.Context, string, string, *types.MessageMaterialSnapshot) ([]*types.Message, error)
+	DeleteMessagesFromMaterial(
+		context.Context,
+		string,
+		string,
+		*types.MessageMaterialSnapshot,
+	) ([]*types.Message, error)
 }
 
 type rewindAlgorithmMaterialReader interface {
 	rewindAlgorithmMaterial()
 }
 
-func (s *SessionRewindService) beginRewindMessageMaterial(ctx context.Context, tenant uint64, sessionID, pointID string) (*types.Message, []*types.Message, *MessageMaterialGuard, error) {
+func (s *SessionRewindService) beginRewindMessageMaterial(
+	ctx context.Context,
+	tenant uint64,
+	sessionID, pointID string,
+) (*types.Message, []*types.Message, *MessageMaterialGuard, error) {
 	actual, ok := s.knowledge.(*messageService)
 	if !ok {
 		if _, algorithm := s.messages.(rewindAlgorithmMaterialReader); algorithm {
@@ -41,7 +50,8 @@ func (s *SessionRewindService) beginRewindMessageMaterial(ctx context.Context, t
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	if point == nil || point.ID != pointID || request.TenantID != tenant || request.SessionID != sessionID || !request.AllSession {
+	if point == nil || point.ID != pointID || request.TenantID != tenant || request.SessionID != sessionID ||
+		!request.AllSession {
 		return nil, nil, nil, access.ErrNextcloudPublicationDenied
 	}
 	if point.Role != "user" && point.Role != "assistant" {
@@ -63,7 +73,9 @@ func (s *SessionRewindService) beginRewindMessageMaterial(ctx context.Context, t
 			return nil, nil, nil, access.ErrNextcloudPublicationDenied
 		}
 		if original.ID == point.ID {
-			if original.Role != point.Role || original.RequestID != point.RequestID || original.IsCompleted != point.Complete || !original.CreatedAt.Equal(point.CreatedAt) {
+			if original.Role != point.Role || original.RequestID != point.RequestID ||
+				original.IsCompleted != point.Complete ||
+				!original.CreatedAt.Equal(point.CreatedAt) {
 				guard.Close()
 				return nil, nil, nil, access.ErrNextcloudPublicationDenied
 			}
@@ -91,7 +103,14 @@ func (s *SessionRewindService) beginRewindMessageMaterial(ctx context.Context, t
 		guard.Close()
 		return nil, nil, nil, access.ErrNextcloudPublicationDenied
 	}
-	metadataPoint := &types.Message{ID: point.ID, SessionID: sessionID, RequestID: point.RequestID, Role: point.Role, IsCompleted: point.Complete, CreatedAt: point.CreatedAt}
+	metadataPoint := &types.Message{
+		ID:          point.ID,
+		SessionID:   sessionID,
+		RequestID:   point.RequestID,
+		Role:        point.Role,
+		IsCompleted: point.Complete,
+		CreatedAt:   point.CreatedAt,
+	}
 	return metadataPoint, history, guard, nil
 }
 

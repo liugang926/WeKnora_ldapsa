@@ -32,9 +32,15 @@ type historyActualStorageFaultService struct {
 	fault error
 }
 
-func (s historyActualStorageFaultService) SearchMessages(context.Context, *types.MessageSearchParams) (*types.MessageSearchResult, error) {
+func (s historyActualStorageFaultService) SearchMessages(
+	context.Context,
+	*types.MessageSearchParams,
+) (*types.MessageSearchResult, error) {
 	// A partial cached result must never be serialized alongside an error.
-	return &types.MessageSearchResult{Total: 1, Items: []*types.MessageSearchGroupItem{{AnswerContent: "PRIVATE_PARTIAL_BODY_MUST_NEVER_BE_WRITTEN"}}}, s.fault
+	return &types.MessageSearchResult{
+		Total: 1,
+		Items: []*types.MessageSearchGroupItem{{AnswerContent: "PRIVATE_PARTIAL_BODY_MUST_NEVER_BE_WRITTEN"}},
+	}, s.fault
 }
 
 // Generate real SQLite driver faults through independent connections. No error
@@ -85,7 +91,10 @@ func TestMessageHistoryActualSQLiteStorageFaultReturnsUnavailableWithoutBody(t *
 	gin.SetMode(gin.TestMode)
 	t.Run("native-missing-current-control-tables", func(t *testing.T) {
 		sqlite_vec.Auto()
-		db, err := gorm.Open(gormsqlite.Open(filepath.Join(t.TempDir(), "native-empty.db")), &gorm.Config{Logger: gormlogger.Default.LogMode(gormlogger.Silent)})
+		db, err := gorm.Open(
+			gormsqlite.Open(filepath.Join(t.TempDir(), "native-empty.db")),
+			&gorm.Config{Logger: gormlogger.Default.LogMode(gormlogger.Silent)},
+		)
 		require.NoError(t, err)
 		sqlDB, err := db.DB()
 		require.NoError(t, err)
@@ -94,11 +103,25 @@ func TestMessageHistoryActualSQLiteStorageFaultReturnsUnavailableWithoutBody(t *
 		require.True(t, ok)
 		// The actual index namespace exists and is empty; current authority tables
 		// are missing. This state is unavailable, not a complete zero-result page.
-		require.NoError(t, db.Exec("CREATE VIRTUAL TABLE vec_embeddings_2 USING vec0(embedding float[2] distance_metric=cosine)").Error)
+		require.NoError(
+			t,
+			db.Exec(
+				"CREATE VIRTUAL TABLE vec_embeddings_2 USING vec0(embedding float[2] distance_metric=cosine)",
+			).Error,
+		)
 		require.True(t, db.Migrator().HasTable("lite_embeddings"))
 		require.False(t, db.Migrator().HasTable("knowledges"))
 		require.False(t, db.Migrator().HasTable("knowledge_bases"))
-		rows, fault := native.RetrieveVectorCandidates(types.WithExecutionTenant(context.Background(), 7), types.VectorCandidateParams{TenantID: 7, KnowledgeBaseIDs: []string{"owned-kb-selector"}, KnowledgeIDs: []string{"owned-knowledge-selector"}, Embedding: []float32{1, 0}, TopK: 1})
+		rows, fault := native.RetrieveVectorCandidates(
+			types.WithExecutionTenant(context.Background(), 7),
+			types.VectorCandidateParams{
+				TenantID:         7,
+				KnowledgeBaseIDs: []string{"owned-kb-selector"},
+				KnowledgeIDs:     []string{"owned-knowledge-selector"},
+				Embedding:        []float32{1, 0},
+				TopK:             1,
+			},
+		)
 		require.Nil(t, rows)
 		require.ErrorIs(t, fault, types.ErrVectorCandidateRetrievalUnavailable)
 		for _, knownDenied := range []bool{false, true} {
@@ -110,8 +133,15 @@ func TestMessageHistoryActualSQLiteStorageFaultReturnsUnavailableWithoutBody(t *
 			}
 			router := gin.New()
 			router.Use(middleware.ErrorHandler())
-			router.POST("/api/v1/messages/search", NewMessageHandler(historyActualStorageFaultService{fault: returned}, nil, nil).SearchMessages)
-			request := httptest.NewRequest(http.MethodPost, "/api/v1/messages/search", strings.NewReader(`{"query":"owned user query","mode":"hybrid"}`))
+			router.POST(
+				"/api/v1/messages/search",
+				NewMessageHandler(historyActualStorageFaultService{fault: returned}, nil, nil).SearchMessages,
+			)
+			request := httptest.NewRequest(
+				http.MethodPost,
+				"/api/v1/messages/search",
+				strings.NewReader(`{"query":"owned user query","mode":"hybrid"}`),
+			)
 			request.Header.Set("Content-Type", "application/json")
 			response := httptest.NewRecorder()
 			router.ServeHTTP(response, request)
@@ -136,14 +166,26 @@ func TestMessageHistoryActualSQLiteStorageFaultReturnsUnavailableWithoutBody(t *
 				}
 				router := gin.New()
 				router.Use(middleware.ErrorHandler())
-				router.POST("/api/v1/messages/search", NewMessageHandler(historyActualStorageFaultService{fault: returned}, nil, nil).SearchMessages)
-				request := httptest.NewRequest(http.MethodPost, "/api/v1/messages/search", strings.NewReader(`{"query":"owned user query","mode":"hybrid"}`))
+				router.POST(
+					"/api/v1/messages/search",
+					NewMessageHandler(historyActualStorageFaultService{fault: returned}, nil, nil).SearchMessages,
+				)
+				request := httptest.NewRequest(
+					http.MethodPost,
+					"/api/v1/messages/search",
+					strings.NewReader(`{"query":"owned user query","mode":"hybrid"}`),
+				)
 				request.Header.Set("Content-Type", "application/json")
 				response := httptest.NewRecorder()
 				router.ServeHTTP(response, request)
 				require.Equal(t, expected, response.Code)
 				require.NotContains(t, response.Body.String(), "PRIVATE_PARTIAL_BODY_MUST_NEVER_BE_WRITTEN")
-				require.NotContains(t, response.Body.String(), fault.Error(), "driver details are not public history output")
+				require.NotContains(
+					t,
+					response.Body.String(),
+					fault.Error(),
+					"driver details are not public history output",
+				)
 			}
 		})
 	}

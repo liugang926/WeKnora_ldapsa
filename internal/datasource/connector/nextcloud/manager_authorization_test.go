@@ -16,7 +16,17 @@ import (
 )
 
 func TestAuthorizeCurrentManagerBindsPurposeAndFreshCurrentDecision(t *testing.T) {
-	scope := ManagerAuthorizationScope{InstanceID: "instance-1", OperationID: "operation-1", TenantID: "7", KnowledgeBaseID: "kb-1", DataSourceID: "ds-1", ProcessingTemplateID: "approved-template", DirectoryID: "ad-1", ObjectGUID: "00112233-4455-6677-8899-aabbccddeeff", PurposeSHA256: strings.Repeat("1", 64)}
+	scope := ManagerAuthorizationScope{
+		InstanceID:           "instance-1",
+		OperationID:          "operation-1",
+		TenantID:             "7",
+		KnowledgeBaseID:      "kb-1",
+		DataSourceID:         "ds-1",
+		ProcessingTemplateID: "approved-template",
+		DirectoryID:          "ad-1",
+		ObjectGUID:           "00112233-4455-6677-8899-aabbccddeeff",
+		PurposeSHA256:        strings.Repeat("1", 64),
+	}
 	for _, tc := range []struct {
 		name   string
 		status int
@@ -62,7 +72,15 @@ func TestAuthorizeCurrentManagerBindsPurposeAndFreshCurrentDecision(t *testing.T
 					t.Error("machine request lacks fresh nonce")
 				}
 				nonces[nonce] = true
-				canonical, err := machineCanonicalRequest(r.Method, r.URL.EscapedPath(), r.URL.RawQuery, raw, r.Header.Get("X-WeKnora-Timestamp"), nonce, r.Header.Get("X-WeKnora-Key-Id"))
+				canonical, err := machineCanonicalRequest(
+					r.Method,
+					r.URL.EscapedPath(),
+					r.URL.RawQuery,
+					raw,
+					r.Header.Get("X-WeKnora-Timestamp"),
+					nonce,
+					r.Header.Get("X-WeKnora-Key-Id"),
+				)
 				if err != nil {
 					t.Error(err)
 				}

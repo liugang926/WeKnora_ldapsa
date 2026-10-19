@@ -7,7 +7,7 @@ import (
 
 type historyMaterialLifetimeKey struct{}
 
-// A request-local actual material checker. It does not grant source or actor
+// HistoryMaterialLifetime is a request-local actual material checker. It does not grant source or actor
 // access; those checks remain independent in each original producer guard.
 type HistoryMaterialLifetime struct {
 	Check func() error
@@ -15,9 +15,16 @@ type HistoryMaterialLifetime struct {
 	once  sync.Once
 }
 
-func WithHistoryMaterialLifetime(ctx context.Context, check func() error, close func()) context.Context {
-	return context.WithValue(ctx, historyMaterialLifetimeKey{}, &HistoryMaterialLifetime{Check: check, Close: close})
+// WithHistoryMaterialLifetime attaches request-local material checks and cleanup.
+func WithHistoryMaterialLifetime(ctx context.Context, check func() error, closeMaterial func()) context.Context {
+	return context.WithValue(
+		ctx,
+		historyMaterialLifetimeKey{},
+		&HistoryMaterialLifetime{Check: check, Close: closeMaterial},
+	)
 }
+
+// CheckHistoryMaterialLifetime checks any attached material lifetime.
 func CheckHistoryMaterialLifetime(ctx context.Context) error {
 	holder, _ := ctx.Value(historyMaterialLifetimeKey{}).(*HistoryMaterialLifetime)
 	if holder == nil {
@@ -28,6 +35,8 @@ func CheckHistoryMaterialLifetime(ctx context.Context) error {
 	}
 	return holder.Check()
 }
+
+// CloseHistoryMaterialLifetime closes attached material once.
 func CloseHistoryMaterialLifetime(ctx context.Context) {
 	holder, _ := ctx.Value(historyMaterialLifetimeKey{}).(*HistoryMaterialLifetime)
 	if holder != nil {

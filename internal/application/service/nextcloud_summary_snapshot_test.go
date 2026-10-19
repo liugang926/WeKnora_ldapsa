@@ -14,14 +14,29 @@ import (
 func TestProcessedSummarySnapshotRequiresPersistedProducerReceipt(t *testing.T) {
 	runDocumentGraphPipeline(t, "", func(m *machinePipelineFixture, knowledge *types.Knowledge) {
 		var summary types.Chunk
-		require.NoError(t, m.f.db.Where("knowledge_id=? AND chunk_type=?", knowledge.ID, types.ChunkTypeSummary).Take(&summary).Error)
-		guard, err := readlease.BeginNextcloudKBRead(m.f.ctx, m.f.store.ContentLeaseStore(), []readlease.NextcloudKBReadScope{{TenantID: 7, KBID: knowledge.KnowledgeBaseID}})
+		require.NoError(
+			t,
+			m.f.db.Where("knowledge_id=? AND chunk_type=?", knowledge.ID, types.ChunkTypeSummary).Take(&summary).Error,
+		)
+		guard, err := readlease.BeginNextcloudKBRead(
+			m.f.ctx,
+			m.f.store.ContentLeaseStore(),
+			[]readlease.NextcloudKBReadScope{{TenantID: 7, KBID: knowledge.KnowledgeBaseID}},
+		)
 		require.NoError(t, err)
 		defer guard.Close()
 		require.NoError(t, guard.PinKnowledge(knowledge))
 		lease, err := guard.ExactLease(knowledge)
 		require.NoError(t, err)
-		requests := []types.RAGChunkReadRequest{{TenantID: 7, KnowledgeBaseID: knowledge.KnowledgeBaseID, KnowledgeID: knowledge.ID, ChunkIDs: []string{summary.ID}, Lease: lease}}
+		requests := []types.RAGChunkReadRequest{
+			{
+				TenantID:        7,
+				KnowledgeBaseID: knowledge.KnowledgeBaseID,
+				KnowledgeID:     knowledge.ID,
+				ChunkIDs:        []string{summary.ID},
+				Lease:           lease,
+			},
+		}
 		reader := repository.NewRAGChunkSnapshotReader(m.f.db, m.f.store)
 		rows, err := reader.HydrateRAGChunkSnapshots(guard.Context(), requests)
 		require.NoError(t, err)
@@ -30,13 +45,17 @@ func TestProcessedSummarySnapshotRequiresPersistedProducerReceipt(t *testing.T) 
 		require.NoError(t, rows[0].SourceLineage.RequireComplete())
 		require.Equal(t, summary.Content, rows[0].Chunk.Content)
 		// A current publication pin is not the summary's original producer proof.
-		legacy, err := repository.NewRAGChunkSnapshotReader(m.f.db, nil).HydrateRAGChunkSnapshots(guard.Context(), requests)
+		legacy, err := repository.NewRAGChunkSnapshotReader(m.f.db, nil).
+			HydrateRAGChunkSnapshots(guard.Context(), requests)
 		require.NoError(t, err)
 		require.Len(t, legacy, 1)
 		require.NoError(t, legacy[0].SourceLineage.RequireComplete())
 		require.False(t, legacy[0].ProducerMaterialVerified)
 		// Losing the actual receipt cannot be repaired by current source identity.
-		deleted := m.f.db.Exec("DELETE FROM knowledge_input_material_receipts WHERE row_kind='chunk' AND row_id=?", summary.ID)
+		deleted := m.f.db.Exec(
+			"DELETE FROM knowledge_input_material_receipts WHERE row_kind='chunk' AND row_id=?",
+			summary.ID,
+		)
 		require.NoError(t, deleted.Error)
 		require.EqualValues(t, 1, deleted.RowsAffected)
 		missing, err := reader.HydrateRAGChunkSnapshots(guard.Context(), requests)

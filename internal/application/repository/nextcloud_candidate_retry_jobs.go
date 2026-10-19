@@ -202,7 +202,10 @@ func candidateRetryDelay(externalID, candidateID string, attempt int) time.Durat
 	return base + time.Duration(hash.Sum64()%(jitterSeconds+1))*time.Second
 }
 
-func (r *NextcloudEventInboxRepository) CandidateRetryClaims(ctx context.Context, now time.Time) ([]NextcloudCandidateRetryClaim, error) {
+func (r *NextcloudEventInboxRepository) CandidateRetryClaims(
+	ctx context.Context,
+	now time.Time,
+) ([]NextcloudCandidateRetryClaim, error) {
 	claims := make([]NextcloudCandidateRetryClaim, 0, 8)
 	var after *nextcloudCandidateFailure
 	for {
@@ -275,7 +278,9 @@ func (r *NextcloudEventInboxRepository) claimCandidateRetry(ctx context.Context,
 		var candidate types.Knowledge
 		if err := tx.Where("id = ? AND tenant_id = ? AND knowledge_base_id = ? AND channel = ? AND parse_status = ? AND deleted_at IS NULL",
 			version.CandidateKnowledgeID, version.TenantID, version.KnowledgeBaseID,
-			types.ConnectorTypeNextcloud, types.ParseStatusFailed).Take(&candidate).Error; err != nil {
+			types.ConnectorTypeNextcloud, types.ParseStatusFailed).
+			Take(&candidate).
+			Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return nil
 			}
@@ -284,7 +289,9 @@ func (r *NextcloudEventInboxRepository) claimCandidateRetry(ctx context.Context,
 		var ds types.DataSource
 		if err := tx.Where("id = ? AND tenant_id = ? AND knowledge_base_id = ? AND type = ? AND status = ? AND deleted_at IS NULL",
 			version.DataSourceID, version.TenantID, version.KnowledgeBaseID,
-			types.ConnectorTypeNextcloud, types.DataSourceStatusActive).Take(&ds).Error; err != nil {
+			types.ConnectorTypeNextcloud, types.DataSourceStatusActive).
+			Take(&ds).
+			Error; err != nil {
 			return nil // Paused or removed sources cannot enqueue retry work.
 		}
 		baseURL, configSHA, bindingID, err := NextcloudEventDataSourceIdentity(ds.Config)
@@ -316,11 +323,20 @@ func (r *NextcloudEventInboxRepository) claimCandidateRetry(ctx context.Context,
 			version.TenantID, version.KnowledgeBaseID, version.DataSourceID, version.ExternalID)
 		jobErr := query.Take(&job).Error
 		if errors.Is(jobErr, gorm.ErrRecordNotFound) {
-			job = nextcloudCandidateRetryJob{TenantID: version.TenantID,
-				KnowledgeBaseID: version.KnowledgeBaseID, DataSourceID: version.DataSourceID,
-				ExternalID: version.ExternalID, DesiredETag: version.DesiredETag,
-				FailedCandidateID: version.CandidateKnowledgeID, FirstStagedAt: version.UpdatedAt,
-				NextAttemptAt: candidate.UpdatedAt.Add(candidateRetryDelay(version.ExternalID, version.CandidateKnowledgeID, 1)), State: "retry", UpdatedAt: now}
+			job = nextcloudCandidateRetryJob{
+				TenantID:          version.TenantID,
+				KnowledgeBaseID:   version.KnowledgeBaseID,
+				DataSourceID:      version.DataSourceID,
+				ExternalID:        version.ExternalID,
+				DesiredETag:       version.DesiredETag,
+				FailedCandidateID: version.CandidateKnowledgeID,
+				FirstStagedAt:     version.UpdatedAt,
+				NextAttemptAt: candidate.UpdatedAt.Add(
+					candidateRetryDelay(version.ExternalID, version.CandidateKnowledgeID, 1),
+				),
+				State:     "retry",
+				UpdatedAt: now,
+			}
 			insert := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&job)
 			if insert.Error != nil {
 				return insert.Error
@@ -337,7 +353,9 @@ func (r *NextcloudEventInboxRepository) claimCandidateRetry(ctx context.Context,
 			}
 			job.DesiredETag = version.DesiredETag
 			job.FailedCandidateID = version.CandidateKnowledgeID
-			job.NextAttemptAt = candidate.UpdatedAt.Add(candidateRetryDelay(version.ExternalID, version.CandidateKnowledgeID, job.AttemptCount+1))
+			job.NextAttemptAt = candidate.UpdatedAt.Add(
+				candidateRetryDelay(version.ExternalID, version.CandidateKnowledgeID, job.AttemptCount+1),
+			)
 			job.State, job.LeaseToken, job.LeaseUntil, job.SyncLogID = "retry", nil, nil, nil
 			job.LastErrorCode = ""
 			if err := tx.Save(&job).Error; err != nil {
@@ -345,8 +363,10 @@ func (r *NextcloudEventInboxRepository) claimCandidateRetry(ctx context.Context,
 			}
 		}
 		if now.Sub(job.FirstStagedAt) >= nextcloudAutomaticCandidateRetryWindow {
-			return tx.Model(&job).Updates(map[string]any{"state": "manual", "lease_token": nil,
-				"lease_until": nil, "last_error_code": "candidate_retry_exhausted", "updated_at": now}).Error
+			return tx.Model(&job).Updates(map[string]any{
+				"state": "manual", "lease_token": nil,
+				"lease_until": nil, "last_error_code": "candidate_retry_exhausted", "updated_at": now,
+			}).Error
 		}
 		if job.State == "manual" || now.Before(job.NextAttemptAt) {
 			return nil
@@ -361,10 +381,14 @@ func (r *NextcloudEventInboxRepository) claimCandidateRetry(ctx context.Context,
 			}
 			if status == "running" {
 				if now.Sub(started) >= 150*time.Minute {
-					return tx.Model(&job).Updates(map[string]any{"state": "manual", "lease_token": nil,
-						"lease_until": nil, "last_error_code": "sync_stale_manual_review", "updated_at": now}).Error
+					return tx.Model(&job).Updates(map[string]any{
+						"state": "manual", "lease_token": nil,
+						"lease_until": nil, "last_error_code": "sync_stale_manual_review", "updated_at": now,
+					}).Error
 				}
-				return tx.Model(&job).Updates(map[string]any{"lease_until": now.Add(3 * time.Minute), "updated_at": now}).Error
+				return tx.Model(&job).
+					Updates(map[string]any{"lease_until": now.Add(3 * time.Minute), "updated_at": now}).
+					Error
 			}
 		}
 		var running int64
@@ -385,19 +409,28 @@ func (r *NextcloudEventInboxRepository) claimCandidateRetry(ctx context.Context,
 			return nil
 		}
 		token, logID := uuid.NewString(), uuid.NewString()
-		if err := tx.Model(&job).Updates(map[string]any{"state": "leased", "lease_token": token,
-			"lease_until": now.Add(3 * time.Minute), "sync_log_id": logID,
-			"attempt_count":   job.AttemptCount + 1,
-			"next_attempt_at": now.Add(candidateRetryDelay(version.ExternalID, version.CandidateKnowledgeID, job.AttemptCount+1)),
-			"last_error_code": "", "updated_at": now}).Error; err != nil {
+		if err := tx.Model(&job).Updates(map[string]any{
+			"state":         "leased",
+			"lease_token":   token,
+			"lease_until":   now.Add(3 * time.Minute),
+			"sync_log_id":   logID,
+			"attempt_count": job.AttemptCount + 1,
+			"next_attempt_at": now.Add(
+				candidateRetryDelay(version.ExternalID, version.CandidateKnowledgeID, job.AttemptCount+1),
+			),
+			"last_error_code": "",
+			"updated_at":      now,
+		}).Error; err != nil {
 			return err
 		}
-		claim = &NextcloudCandidateRetryClaim{TenantID: version.TenantID, KnowledgeBaseID: version.KnowledgeBaseID,
+		claim = &NextcloudCandidateRetryClaim{
+			TenantID: version.TenantID, KnowledgeBaseID: version.KnowledgeBaseID,
 			DataSourceID: version.DataSourceID, ExternalID: version.ExternalID,
 			DesiredETag: version.DesiredETag, FailedCandidateID: version.CandidateKnowledgeID,
 			InstanceID: pair.InstanceID, BindingID: pair.BindingID,
 			ConfigSHA: pair.ConfigSHA, PairOperationID: pair.OperationID,
-			PairingEpoch: pair.PublicationEpoch, LeaseToken: token, SyncLogID: logID}
+			PairingEpoch: pair.PublicationEpoch, LeaseToken: token, SyncLogID: logID,
+		}
 		return nil
 	})
 	return claim, err
@@ -415,8 +448,11 @@ func (r *NextcloudEventInboxRepository) ValidateCandidateRetryTask(ctx context.C
 	}
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var job nextcloudCandidateRetryJob
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("tenant_id = ? AND knowledge_base_id = ? AND datasource_id = ? AND external_id = ?",
-			claim.TenantID, claim.KnowledgeBaseID, claim.DataSourceID, claim.ExternalID).Take(&job).Error; err != nil {
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("tenant_id = ? AND knowledge_base_id = ? AND datasource_id = ? AND external_id = ?",
+				claim.TenantID, claim.KnowledgeBaseID, claim.DataSourceID, claim.ExternalID).
+			Take(&job).
+			Error; err != nil {
 			return ErrNextcloudEventScope
 		}
 		now := time.Now().UTC()
@@ -430,7 +466,9 @@ func (r *NextcloudEventInboxRepository) ValidateCandidateRetryTask(ctx context.C
 		var ds types.DataSource
 		if err := tx.Where("id = ? AND tenant_id = ? AND knowledge_base_id = ? AND type = ? AND status = ? AND deleted_at IS NULL",
 			claim.DataSourceID, claim.TenantID, claim.KnowledgeBaseID,
-			types.ConnectorTypeNextcloud, types.DataSourceStatusActive).Take(&ds).Error; err != nil {
+			types.ConnectorTypeNextcloud, types.DataSourceStatusActive).
+			Take(&ds).
+			Error; err != nil {
 			return ErrNextcloudEventScope
 		}
 		baseURL, configSHA, bindingID, err := NextcloudEventDataSourceIdentity(ds.Config)
@@ -454,14 +492,20 @@ func (r *NextcloudEventInboxRepository) ValidateCandidateRetryTask(ctx context.C
 				return ErrNextcloudEventScope
 			}
 			var count int64
-			if err := tx.Model(&types.Knowledge{}).Where("id = ? AND tenant_id = ? AND knowledge_base_id = ? AND parse_status = ?",
-				claim.FailedCandidateID, claim.TenantID, claim.KnowledgeBaseID,
-				types.ParseStatusFailed).Count(&count).Error; err != nil || count != 1 {
+			if err := tx.Model(&types.Knowledge{}).
+				Where("id = ? AND tenant_id = ? AND knowledge_base_id = ? AND parse_status = ?",
+					claim.FailedCandidateID, claim.TenantID, claim.KnowledgeBaseID,
+					types.ParseStatusFailed).
+				Count(&count).
+				Error; err != nil ||
+				count != 1 {
 				return ErrNextcloudEventScope
 			}
 		}
-		return tx.Model(&job).Updates(map[string]any{"lease_until": now.Add(3 * time.Minute),
-			"updated_at": now}).Error
+		return tx.Model(&job).Updates(map[string]any{
+			"lease_until": now.Add(3 * time.Minute),
+			"updated_at":  now,
+		}).Error
 	})
 }
 
@@ -481,7 +525,9 @@ func (r *NextcloudSourcePairingRepository) RetryFailedCandidate(ctx context.Cont
 		var ds types.DataSource
 		if err := tx.Where("id = ? AND tenant_id = ? AND knowledge_base_id = ? AND type = ? AND status = ? AND deleted_at IS NULL",
 			pair.DataSourceID, pair.TenantID, pair.KnowledgeBaseID,
-			types.ConnectorTypeNextcloud, types.DataSourceStatusActive).Take(&ds).Error; err != nil {
+			types.ConnectorTypeNextcloud, types.DataSourceStatusActive).
+			Take(&ds).
+			Error; err != nil {
 			return ErrNextcloudSourcePairingConflict
 		}
 		baseURL, configSHA, bindingID, err := NextcloudEventDataSourceIdentity(ds.Config)
@@ -507,7 +553,9 @@ func (r *NextcloudSourcePairingRepository) RetryFailedCandidate(ctx context.Cont
 		var candidate types.Knowledge
 		if err := tx.Where("id = ? AND tenant_id = ? AND knowledge_base_id = ? AND channel = ? AND parse_status = ? AND deleted_at IS NULL",
 			candidateID, pair.TenantID, pair.KnowledgeBaseID,
-			types.ConnectorTypeNextcloud, types.ParseStatusFailed).Take(&candidate).Error; err != nil {
+			types.ConnectorTypeNextcloud, types.ParseStatusFailed).
+			Take(&candidate).
+			Error; err != nil {
 			return ErrNextcloudSourcePairingConflict
 		}
 		metadata, err := nextcloudMetadata(&candidate)
@@ -538,15 +586,25 @@ func (r *NextcloudSourcePairingRepository) RetryFailedCandidate(ctx context.Cont
 			pair.DataSourceID, externalID).Update("updated_at", now).Error; err != nil {
 			return err
 		}
-		job = nextcloudCandidateRetryJob{TenantID: pair.TenantID, KnowledgeBaseID: pair.KnowledgeBaseID,
+		job = nextcloudCandidateRetryJob{
+			TenantID: pair.TenantID, KnowledgeBaseID: pair.KnowledgeBaseID,
 			DataSourceID: pair.DataSourceID, ExternalID: externalID, DesiredETag: etag,
 			FailedCandidateID: candidateID, FirstStagedAt: now, NextAttemptAt: now,
-			State: "retry", UpdatedAt: now}
-		return tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "tenant_id"},
-			{Name: "knowledge_base_id"}, {Name: "datasource_id"}, {Name: "external_id"}},
-			DoUpdates: clause.AssignmentColumns([]string{"desired_etag", "failed_candidate_id", "first_staged_at",
+			State: "retry", UpdatedAt: now,
+		}
+		return tx.Clauses(clause.OnConflict{
+			Columns: []clause.Column{
+				{Name: "tenant_id"},
+				{Name: "knowledge_base_id"},
+				{Name: "datasource_id"},
+				{Name: "external_id"},
+			},
+			DoUpdates: clause.AssignmentColumns([]string{
+				"desired_etag", "failed_candidate_id", "first_staged_at",
 				"attempt_count", "next_attempt_at", "state", "lease_token", "lease_until",
-				"sync_log_id", "last_error_code", "updated_at"})}).Create(&job).Error
+				"sync_log_id", "last_error_code", "updated_at",
+			}),
+		}).Create(&job).Error
 	})
 }
 
@@ -574,7 +632,9 @@ func (r *NextcloudSourcePairingRepository) FailedCandidateRetryStatus(ctx contex
 		var ds types.DataSource
 		if err := tx.Where("id = ? AND tenant_id = ? AND knowledge_base_id = ? AND type = ? AND status = ? AND deleted_at IS NULL",
 			pair.DataSourceID, pair.TenantID, pair.KnowledgeBaseID,
-			types.ConnectorTypeNextcloud, types.DataSourceStatusActive).Take(&ds).Error; err != nil {
+			types.ConnectorTypeNextcloud, types.DataSourceStatusActive).
+			Take(&ds).
+			Error; err != nil {
 			return ErrNextcloudSourcePairingConflict
 		}
 		base, hash, binding, err := NextcloudEventDataSourceIdentity(ds.Config)
@@ -590,7 +650,9 @@ func (r *NextcloudSourcePairingRepository) FailedCandidateRetryStatus(ctx contex
 		var candidate types.Knowledge
 		if err := tx.Where("id = ? AND tenant_id = ? AND knowledge_base_id = ? AND channel = ? AND parse_status = ? AND deleted_at IS NULL",
 			version.CandidateKnowledgeID, pair.TenantID, pair.KnowledgeBaseID,
-			types.ConnectorTypeNextcloud, types.ParseStatusFailed).Take(&candidate).Error; err != nil {
+			types.ConnectorTypeNextcloud, types.ParseStatusFailed).
+			Take(&candidate).
+			Error; err != nil {
 			return ErrNextcloudSourcePairingConflict
 		}
 		metadata, err := nextcloudMetadata(&candidate)

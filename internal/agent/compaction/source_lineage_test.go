@@ -11,14 +11,29 @@ import (
 )
 
 func compactionIdentity(file, etag string, epoch uint64) types.SourceIdentity {
-	return types.SourceIdentity{Provider: "nextcloud", TenantID: 12, KnowledgeBaseID: "kb", DataSourceID: "ds", PairOperationID: "pair", InstanceID: "instance", BindingID: "binding", FileID: file, ExternalID: "nextcloud:instance:" + file, KnowledgeID: "k-" + file, Revision: epoch, ETag: etag}
+	return types.SourceIdentity{
+		Provider:        "nextcloud",
+		TenantID:        12,
+		KnowledgeBaseID: "kb",
+		DataSourceID:    "ds",
+		PairOperationID: "pair",
+		InstanceID:      "instance",
+		BindingID:       "binding",
+		FileID:          file,
+		ExternalID:      "nextcloud:instance:" + file,
+		KnowledgeID:     "k-" + file,
+		Revision:        epoch,
+		ETag:            etag,
+	}
 }
+
 func compactionComplete(t *testing.T, identities ...types.SourceIdentity) *types.SourceLineage {
 	t.Helper()
 	l, err := types.NewCompleteSourceLineage(identities...)
 	require.NoError(t, err)
 	return l
 }
+
 func accountedStoredTurns(t *testing.T, a, b *types.SourceLineage) []chat.Message {
 	return []chat.Message{
 		{Role: "system", Content: "literal system", SourceLineage: compactionComplete(t)},
@@ -29,6 +44,7 @@ func accountedStoredTurns(t *testing.T, a, b *types.SourceLineage) []chat.Messag
 		{Role: "user", Content: "fresh raw question", SourceLineage: compactionComplete(t)},
 	}
 }
+
 func TestAgentLineageCompactionCompleteCheckpointAndRawFailureInherit(t *testing.T) {
 	a := compactionComplete(t, compactionIdentity("1", "original", 7))
 	b := compactionComplete(t, compactionIdentity("1", "new", 8), compactionIdentity("2", "second", 5))
@@ -42,7 +58,9 @@ func TestAgentLineageCompactionCompleteCheckpointAndRawFailureInherit(t *testing
 			settings := testSettings()
 			settings.KeepRecentTokens = 250
 			c := New(llm, newEstimator(t), settings)
-			c.SetSourceLineageVerifier(func(_ context.Context, l *types.SourceLineage) error { return l.RequireComplete() })
+			c.SetSourceLineageVerifier(
+				func(_ context.Context, l *types.SourceLineage) error { return l.RequireComplete() },
+			)
 			result, err := c.Compact(context.Background(), accountedStoredTurns(t, a, b), ReasonThreshold)
 			require.NoError(t, err)
 			require.NotNil(t, result.Checkpoint)
@@ -58,6 +76,7 @@ func TestAgentLineageCompactionCompleteCheckpointAndRawFailureInherit(t *testing
 		})
 	}
 }
+
 func TestAgentLineageCompactionSplitAndPreviousSummaryInheritBeforeOmission(t *testing.T) {
 	a := compactionComplete(t, compactionIdentity("1", "original", 7))
 	b := compactionComplete(t, compactionIdentity("2", "second", 5))
@@ -90,11 +109,16 @@ type revokeSummaryModel struct {
 	revoked *bool
 }
 
-func (m *revokeSummaryModel) ChatStream(ctx context.Context, messages []chat.Message, opts *chat.ChatOptions) (<-chan types.StreamResponse, error) {
+func (m *revokeSummaryModel) ChatStream(
+	ctx context.Context,
+	messages []chat.Message,
+	opts *chat.ChatOptions,
+) (<-chan types.StreamResponse, error) {
 	stream, err := m.stubChat.ChatStream(ctx, messages, opts)
 	*m.revoked = true
 	return stream, err
 }
+
 func TestAgentLineageCompactionRevocationCannotFallBackToReadableRawArchive(t *testing.T) {
 	l := compactionComplete(t, compactionIdentity("1", "original", 7))
 	revoked := false
@@ -111,6 +135,7 @@ func TestAgentLineageCompactionRevocationCannotFallBackToReadableRawArchive(t *t
 	require.Nil(t, result)
 	require.Equal(t, 1, model.calls)
 }
+
 func TestAgentLineageCompactionLegacyUnknownAndMissingVerifierBlockBeforeModel(t *testing.T) {
 	l := compactionComplete(t)
 	messages := accountedStoredTurns(t, l, l)
@@ -119,7 +144,9 @@ func TestAgentLineageCompactionLegacyUnknownAndMissingVerifierBlockBeforeModel(t
 			model := &stubChat{response: "must not run"}
 			c := New(model, newEstimator(t), testSettings())
 			if !missing {
-				c.SetSourceLineageVerifier(func(_ context.Context, l *types.SourceLineage) error { return l.RequireComplete() })
+				c.SetSourceLineageVerifier(
+					func(_ context.Context, l *types.SourceLineage) error { return l.RequireComplete() },
+				)
 				messages[2].SourceLineage = nil
 			}
 			result, err := c.Compact(context.Background(), messages, ReasonThreshold)

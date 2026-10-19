@@ -36,7 +36,12 @@ type originalAgentSteerSink struct {
 	receivedChannel  string
 }
 
-func (s *originalAgentSteerSink) PollSteer(context.Context, string, string, int) ([]map[string]interface{}, int, error) {
+func (s *originalAgentSteerSink) PollSteer(
+	context.Context,
+	string,
+	string,
+	int,
+) ([]map[string]interface{}, int, error) {
 	if s.pollErr != nil {
 		return nil, 0, s.pollErr
 	}
@@ -46,7 +51,15 @@ func (s *originalAgentSteerSink) PollSteer(context.Context, string, string, int)
 	return s.events, len(s.events), nil
 }
 
-func (s *originalAgentSteerSink) PersistSteerMessage(context.Context, string, string, string, string, types.MentionedItems, string) string {
+func (s *originalAgentSteerSink) PersistSteerMessage(
+	context.Context,
+	string,
+	string,
+	string,
+	string,
+	types.MentionedItems,
+	string,
+) string {
 	s.legacyCalls++
 	return "cached-body-row"
 }
@@ -108,7 +121,9 @@ func TestAgentSteerOriginalMaterialCanonicalInputPreservesParentUnionAndLifetime
 	sink := validOriginalAgentSteerSink(t)
 	sink.lineage = agentComplete(t, steer)
 	sink.events[0]["content"] = "  original\r\nquoted\rtext  "
-	sink.events[0]["mentioned_items"] = []interface{}{map[string]interface{}{"type": "file", "id": "knowledge-2", "name": "original mention"}}
+	sink.events[0]["mentioned_items"] = []interface{}{
+		map[string]interface{}{"type": "file", "id": "knowledge-2", "name": "original mention"},
+	}
 	sink.events[0]["channel"] = "api"
 	checks, closes := 0, 0
 	sink.check = func() error {
@@ -180,7 +195,10 @@ func TestAgentSteerOriginalMaterialMalformedCapabilitiesPoisonNextModel(t *testi
 		{"missing check", func(s *originalAgentSteerSink) { s.check = nil }},
 		{"missing close", func(s *originalAgentSteerSink) { s.close = nil }},
 		{"consume rejected", func(s *originalAgentSteerSink) { s.persistErr = errors.New("original rejected") }},
-		{"live guard rejected", func(s *originalAgentSteerSink) { s.check = func() error { return errors.New("original revoked") } }},
+		{
+			"live guard rejected",
+			func(s *originalAgentSteerSink) { s.check = func() error { return errors.New("original revoked") } },
+		},
 		{"poll rejected", func(s *originalAgentSteerSink) { s.pollErr = errors.New("original selection rejected") }},
 	}
 	for _, tc := range cases {
@@ -193,7 +211,10 @@ func TestAgentSteerOriginalMaterialMalformedCapabilitiesPoisonNextModel(t *testi
 			messages := []chat.Message{{Role: "user", Content: "task", SourceLineage: agentComplete(t)}}
 			state := &types.AgentState{}
 			published := 0
-			e.eventBus.On(event.EventUserMessageInjected, func(context.Context, event.Event) error { published++; return nil })
+			e.eventBus.On(
+				event.EventUserMessageInjected,
+				func(context.Context, event.Event) error { published++; return nil },
+			)
 
 			require.Zero(t, e.drainSteerMessages(context.Background(), state, &messages, "session", "run"))
 			require.Len(t, messages, 1)
@@ -215,11 +236,20 @@ func TestAgentSteerOriginalMaterialMalformedCapabilitiesPoisonNextModel(t *testi
 // A named member deliberately does not inherit fakeSteerSink's private marker.
 type unaccountedAgentSteerSink struct{ queue fakeSteerSink }
 
-func (s *unaccountedAgentSteerSink) PollSteer(ctx context.Context, session, run string, offset int) ([]map[string]interface{}, int, error) {
+func (s *unaccountedAgentSteerSink) PollSteer(
+	ctx context.Context,
+	session, run string,
+	offset int,
+) ([]map[string]interface{}, int, error) {
 	return s.queue.PollSteer(ctx, session, run, offset)
 }
 
-func (s *unaccountedAgentSteerSink) PersistSteerMessage(ctx context.Context, session, run, steer, content string, mentions types.MentionedItems, channel string) string {
+func (s *unaccountedAgentSteerSink) PersistSteerMessage(
+	ctx context.Context,
+	session, run, steer, content string,
+	mentions types.MentionedItems,
+	channel string,
+) string {
 	return s.queue.PersistSteerMessage(ctx, session, run, steer, content, mentions, channel)
 }
 
@@ -308,7 +338,12 @@ func TestAgentSteerOriginalGuardRevocationAtModelOutputBlocksCollectedText(t *te
 	messages := []chat.Message{{Role: "user", Content: "task", SourceLineage: agentComplete(t)}}
 	require.Equal(t, 1, e.drainSteerMessages(context.Background(), &types.AgentState{}, &messages, "session", "run"))
 	collected := 0
-	result, err := e.streamLLMToEventBus(context.Background(), messages, nil, func(*types.StreamResponse, string) { collected++ })
+	result, err := e.streamLLMToEventBus(
+		context.Background(),
+		messages,
+		nil,
+		func(*types.StreamResponse, string) { collected++ },
+	)
 	require.ErrorIs(t, err, ErrAgentSourceLineageDenied)
 	require.Nil(t, result)
 	require.Equal(t, 1, model.callCount)
@@ -332,7 +367,13 @@ func TestAgentSteerOriginalGuardRevocationAtPublicationBlocksOutput(t *testing.T
 	published := 0
 	e.eventBus.On(event.EventAgentFinalAnswer, func(context.Context, event.Event) error { published++; return nil })
 	revoked = true
-	err := e.emitEvent(context.Background(), event.Event{Type: event.EventAgentFinalAnswer, Data: event.AgentFinalAnswerData{Content: "revoked source prose"}})
+	err := e.emitEvent(
+		context.Background(),
+		event.Event{
+			Type: event.EventAgentFinalAnswer,
+			Data: event.AgentFinalAnswerData{Content: "revoked source prose"},
+		},
+	)
 	require.ErrorIs(t, err, ErrAgentSourceLineageDenied)
 	require.Zero(t, published)
 	revoked = false

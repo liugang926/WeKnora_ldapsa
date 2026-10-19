@@ -1,9 +1,10 @@
 package handler
 
 import (
+	"testing"
+
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/stretchr/testify/require"
-	"testing"
 )
 
 func TestNextcloudKBMetadataWhitelistsUnknownCountsAndBodyFallback(t *testing.T) {

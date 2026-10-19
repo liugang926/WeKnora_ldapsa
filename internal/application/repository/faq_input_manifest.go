@@ -16,10 +16,19 @@ func faqInputMetadata(entry *types.FAQEntryPayload) *types.FAQChunkMetadata {
 	if entry.AnswerStrategy != nil && *entry.AnswerStrategy != "" {
 		strategy = *entry.AnswerStrategy
 	}
-	meta := &types.FAQChunkMetadata{StandardQuestion: strings.TrimSpace(entry.StandardQuestion), SimilarQuestions: entry.SimilarQuestions, NegativeQuestions: entry.NegativeQuestions, Answers: entry.Answers, AnswerStrategy: strategy, Version: 1, Source: "faq"}
+	meta := &types.FAQChunkMetadata{
+		StandardQuestion:  strings.TrimSpace(entry.StandardQuestion),
+		SimilarQuestions:  entry.SimilarQuestions,
+		NegativeQuestions: entry.NegativeQuestions,
+		Answers:           entry.Answers,
+		AnswerStrategy:    strategy,
+		Version:           1,
+		Source:            "faq",
+	}
 	meta.Sanitize()
 	return meta
 }
+
 func faqOriginalContent(meta *types.FAQChunkMetadata, kb *types.KnowledgeBase) string {
 	copy := *kb
 	copy.EnsureDefaults()
@@ -39,15 +48,18 @@ func faqOriginalContent(meta *types.FAQChunkMetadata, kb *types.KnowledgeBase) s
 	}
 	return b.String()
 }
+
 func faqComparable(c *types.Chunk) *types.Chunk {
 	copy := *c
 	copy.CreatedAt = time.Time{}
 	copy.UpdatedAt = time.Time{}
 	return &copy
 }
+
 func faqUnionStrings(a, b []string) []string {
 	return types.SanitizeStrings(append(append([]string{}, a...), b...))
 }
+
 func faqManifestTag(snapshot *types.FAQInputSnapshot, entry *types.FAQEntryPayload) (string, error) {
 	name := strings.TrimSpace(entry.TagName)
 	if name == "" {
@@ -60,7 +72,12 @@ func faqManifestTag(snapshot *types.FAQInputSnapshot, entry *types.FAQEntryPaylo
 	}
 	return "", ErrKnowledgeInputChanged
 }
-func faqManifestFieldPatch(snapshot *types.FAQInputSnapshot, chunk *types.Chunk, patch types.FAQEntryFieldsUpdate) error {
+
+func faqManifestFieldPatch(
+	snapshot *types.FAQInputSnapshot,
+	chunk *types.Chunk,
+	patch types.FAQEntryFieldsUpdate,
+) error {
 	if patch.IsEnabled != nil {
 		chunk.IsEnabled = *patch.IsEnabled
 	}
@@ -90,7 +107,12 @@ func faqManifestFieldPatch(snapshot *types.FAQInputSnapshot, chunk *types.Chunk,
 // The immutable original input and original catalog determine every permitted
 // write. Rechecking arbitrary current text or accepting a projection cannot
 // authorize a new body. Own later status updates are a separate exact case.
-func validateFAQProducerOutputs(session *faqInputSessionRow, current *types.FAQInputSnapshot, outputs []*types.Chunk, create bool) error {
+func validateFAQProducerOutputs(
+	session *faqInputSessionRow,
+	current *types.FAQInputSnapshot,
+	outputs []*types.Chunk,
+	create bool,
+) error {
 	var op types.FAQInputOperation
 	if err := json.Unmarshal([]byte(session.InputBody), &op); err != nil {
 		return err
@@ -113,10 +135,13 @@ func validateFAQProducerOutputs(session *faqInputSessionRow, current *types.FAQI
 	}
 	for _, out := range outputs {
 		if previous := currentRows[out.ID]; previous != nil && !create {
-			if p := currentProofs[out.ID]; p != nil && p.SessionID == session.ID && previous.Status == int(types.ChunkStatusStored) && out.Status == int(types.ChunkStatusIndexed) {
+			if p := currentProofs[out.ID]; p != nil && p.SessionID == session.ID &&
+				previous.Status == int(types.ChunkStatusStored) &&
+				out.Status == int(types.ChunkStatusIndexed) {
 				expected := faqComparable(previous)
 				expected.Status = out.Status
-				if faqInputEqual(expected, faqComparable(out)) && expected.SourceContent == out.SourceContent && expected.ContextHeader == out.ContextHeader {
+				if faqInputEqual(expected, faqComparable(out)) && expected.SourceContent == out.SourceContent &&
+					expected.ContextHeader == out.ContextHeader {
 					continue
 				}
 			}
@@ -145,7 +170,18 @@ func validateFAQProducerOutputs(session *faqInputSessionRow, current *types.FAQI
 			if err != nil {
 				return err
 			}
-			expected = &types.Chunk{ID: out.ID, TenantID: session.TenantID, KnowledgeBaseID: session.KnowledgeBaseID, KnowledgeID: out.KnowledgeID, ChunkType: types.ChunkTypeFAQ, TagID: tag, IsEnabled: true, Flags: types.ChunkFlagRecommended, Status: int(types.ChunkStatusStored), IndexStatus: "ready"}
+			expected = &types.Chunk{
+				ID:              out.ID,
+				TenantID:        session.TenantID,
+				KnowledgeBaseID: session.KnowledgeBaseID,
+				KnowledgeID:     out.KnowledgeID,
+				ChunkType:       types.ChunkTypeFAQ,
+				TagID:           tag,
+				IsEnabled:       true,
+				Flags:           types.ChunkFlagRecommended,
+				Status:          int(types.ChunkStatusStored),
+				IndexStatus:     "ready",
+			}
 			if entry.ID != nil && *entry.ID > 0 {
 				expected.SeqID = *entry.ID
 			}
@@ -307,11 +343,16 @@ func validateFAQProducerOutputs(session *faqInputSessionRow, current *types.FAQI
 				return ErrKnowledgeInputChanged
 			}
 		}
-		if !faqInputEqual(faqComparable(expected), faqComparable(out)) || expected.SourceContent != out.SourceContent || expected.ContextHeader != out.ContextHeader {
+		if !faqInputEqual(faqComparable(expected), faqComparable(out)) || expected.SourceContent != out.SourceContent ||
+			expected.ContextHeader != out.ContextHeader {
 			a, b := reflect.ValueOf(*faqComparable(expected)), reflect.ValueOf(*faqComparable(out))
 			for i := 0; i < a.NumField(); i++ {
 				if !reflect.DeepEqual(a.Field(i).Interface(), b.Field(i).Interface()) {
-					return fmt.Errorf("%w: FAQ producer field %s changed", ErrKnowledgeInputChanged, a.Type().Field(i).Name)
+					return fmt.Errorf(
+						"%w: FAQ producer field %s changed",
+						ErrKnowledgeInputChanged,
+						a.Type().Field(i).Name,
+					)
 				}
 			}
 			return ErrKnowledgeInputChanged
@@ -319,6 +360,7 @@ func validateFAQProducerOutputs(session *faqInputSessionRow, current *types.FAQI
 	}
 	return nil
 }
+
 func faqChunkStandard(c *types.Chunk) string {
 	meta, err := c.FAQMetadata()
 	if err != nil || meta == nil {
@@ -326,6 +368,7 @@ func faqChunkStandard(c *types.Chunk) string {
 	}
 	return meta.StandardQuestion
 }
+
 func sortedFAQManifestTags(values map[int64]types.FAQEntryFieldsUpdate) []int64 {
 	ids := make([]int64, 0, len(values))
 	for id := range values {

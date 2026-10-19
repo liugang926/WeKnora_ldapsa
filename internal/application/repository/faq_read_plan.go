@@ -11,11 +11,13 @@ import (
 	"gorm.io/gorm"
 )
 
-type faqInputReadPlanKey struct{}
-type faqInputReadPlanBinding struct {
-	sync.Mutex
-	Plan *types.FAQInputReadPlan
-}
+type (
+	faqInputReadPlanKey     struct{}
+	faqInputReadPlanBinding struct {
+		sync.Mutex
+		Plan *types.FAQInputReadPlan
+	}
+)
 
 func WithFAQInputReadPlan(ctx context.Context, plan *types.FAQInputReadPlan) (context.Context, error) {
 	if plan == nil || plan.MetadataDigest == "" || len(plan.Scopes) == 0 {
@@ -36,7 +38,10 @@ func WithFAQInputReadPlan(ctx context.Context, plan *types.FAQInputReadPlan) (co
 	return context.WithValue(ctx, faqInputReadPlanKey{}, &faqInputReadPlanBinding{Plan: &actual}), nil
 }
 
-func (s *KnowledgeInputProvenanceStore) PeekFAQInputReadPlan(ctx context.Context, request types.FAQInputReadRequest) (*types.FAQInputReadPlan, error) {
+func (s *KnowledgeInputProvenanceStore) PeekFAQInputReadPlan(
+	ctx context.Context,
+	request types.FAQInputReadRequest,
+) (*types.FAQInputReadPlan, error) {
 	var plan *types.FAQInputReadPlan
 	err := s.collectionTransaction(ctx, func(tx *gorm.DB) error {
 		var err error
@@ -46,18 +51,33 @@ func (s *KnowledgeInputProvenanceStore) PeekFAQInputReadPlan(ctx context.Context
 	return plan, err
 }
 
-func (s *KnowledgeInputProvenanceStore) PeekFAQTagReadPlan(ctx context.Context, tenant uint64, kb string) (*types.FAQInputReadPlan, error) {
+func (s *KnowledgeInputProvenanceStore) PeekFAQTagReadPlan(
+	ctx context.Context,
+	tenant uint64,
+	kb string,
+) (*types.FAQInputReadPlan, error) {
 	var row struct{ Type string }
-	if err := s.db.WithContext(ctx).Table("knowledge_bases").Select("type").Where("tenant_id=? AND id=? AND deleted_at IS NULL", tenant, kb).Take(&row).Error; err != nil {
+	if err := s.db.WithContext(ctx).
+		Table("knowledge_bases").
+		Select("type").
+		Where("tenant_id=? AND id=? AND deleted_at IS NULL", tenant, kb).
+		Take(&row).
+		Error; err != nil {
 		return nil, err
 	}
 	if row.Type != types.KnowledgeBaseTypeFAQ {
 		return nil, nil
 	}
-	return s.PeekFAQInputReadPlan(ctx, types.FAQInputReadRequest{TenantID: tenant, KnowledgeBaseID: kb, AllEntries: true})
+	return s.PeekFAQInputReadPlan(
+		ctx,
+		types.FAQInputReadRequest{TenantID: tenant, KnowledgeBaseID: kb, AllEntries: true},
+	)
 }
 
-func (s *KnowledgeInputProvenanceStore) checkFAQInputReadPlanInTx(tx *gorm.DB, request types.FAQInputReadRequest) error {
+func (s *KnowledgeInputProvenanceStore) checkFAQInputReadPlanInTx(
+	tx *gorm.DB,
+	request types.FAQInputReadRequest,
+) error {
 	binding, ok := tx.Statement.Context.Value(faqInputReadPlanKey{}).(*faqInputReadPlanBinding)
 	if !ok {
 		return nil
@@ -65,7 +85,8 @@ func (s *KnowledgeInputProvenanceStore) checkFAQInputReadPlanInTx(tx *gorm.DB, r
 	binding.Lock()
 	defer binding.Unlock()
 	expected := binding.Plan
-	if expected == nil || expected.Request.TenantID != request.TenantID || expected.Request.KnowledgeBaseID != request.KnowledgeBaseID {
+	if expected == nil || expected.Request.TenantID != request.TenantID ||
+		expected.Request.KnowledgeBaseID != request.KnowledgeBaseID {
 		return ErrKnowledgeInputChanged
 	}
 	if !expected.Request.AllEntries && !faqInputEqual(expected.Request, request) {
@@ -83,7 +104,10 @@ func (s *KnowledgeInputProvenanceStore) checkFAQInputReadPlanInTx(tx *gorm.DB, r
 
 // Only an actual own producer's atomic write recipe may advance its request's
 // plan. Foreign body/membership changes still fail the original pre-write check.
-func (s *KnowledgeInputProvenanceStore) advanceFAQReadPlanAfterOwnWriteInTx(tx *gorm.DB, session *faqInputSessionRow) error {
+func (s *KnowledgeInputProvenanceStore) advanceFAQReadPlanAfterOwnWriteInTx(
+	tx *gorm.DB,
+	session *faqInputSessionRow,
+) error {
 	binding, ok := tx.Statement.Context.Value(faqInputReadPlanKey{}).(*faqInputReadPlanBinding)
 	if !ok {
 		return nil
@@ -108,7 +132,10 @@ func (s *KnowledgeInputProvenanceStore) advanceFAQReadPlanAfterOwnWriteInTx(tx *
 // This probe selects row IDs, revisions and immutable source/parent envelopes.
 // Entry text, FAQ metadata, tag names, prompt/config body and parent chunks are
 // read only after the caller acquires all scopes and binds the returned plan.
-func (s *KnowledgeInputProvenanceStore) peekFAQInputReadPlanInTx(tx *gorm.DB, request types.FAQInputReadRequest) (*types.FAQInputReadPlan, error) {
+func (s *KnowledgeInputProvenanceStore) peekFAQInputReadPlanInTx(
+	tx *gorm.DB,
+	request types.FAQInputReadRequest,
+) (*types.FAQInputReadPlan, error) {
 	if request.TenantID == 0 || request.KnowledgeBaseID == "" {
 		return nil, types.ErrSourceLineageUnknown
 	}
@@ -142,7 +169,12 @@ func (s *KnowledgeInputProvenanceStore) peekFAQInputReadPlanInTx(tx *gorm.DB, re
 		return nil, err
 	}
 	var config knowledgeConfigurationInputOrigin
-	err := tx.Table("knowledge_config_input_origins o").Select("o.*").Joins("JOIN knowledge_configuration_control_versions v ON v.knowledge_base_id=o.knowledge_base_id AND v.revision=o.config_revision").Where("o.tenant_id=? AND o.knowledge_base_id=?", request.TenantID, request.KnowledgeBaseID).Take(&config).Error
+	err := tx.Table("knowledge_config_input_origins o").
+		Select("o.*").
+		Joins("JOIN knowledge_configuration_control_versions v ON v.knowledge_base_id=o.knowledge_base_id AND v.revision=o.config_revision").
+		Where("o.tenant_id=? AND o.knowledge_base_id=?", request.TenantID, request.KnowledgeBaseID).
+		Take(&config).
+		Error
 	if err != nil {
 		return nil, err
 	}
@@ -152,7 +184,10 @@ func (s *KnowledgeInputProvenanceStore) peekFAQInputReadPlanInTx(tx *gorm.DB, re
 	var scopeRevision uint64
 	if request.AllEntries {
 		var version struct{ Revision uint64 }
-		if err := tx.Table("faq_input_scope_versions").Where("tenant_id=? AND knowledge_base_id=?", request.TenantID, request.KnowledgeBaseID).Take(&version).Error; err != nil {
+		if err := tx.Table("faq_input_scope_versions").
+			Where("tenant_id=? AND knowledge_base_id=?", request.TenantID, request.KnowledgeBaseID).
+			Take(&version).
+			Error; err != nil {
 			return nil, err
 		}
 		scopeRevision = version.Revision
@@ -161,14 +196,23 @@ func (s *KnowledgeInputProvenanceStore) peekFAQInputReadPlanInTx(tx *gorm.DB, re
 		ID                        string
 		Revision, ControlRevision uint64
 	}
-	if err := tx.Table("knowledges k").Select("k.id,v.revision,cv.revision AS control_revision").Joins("LEFT JOIN knowledge_input_row_versions v ON v.row_kind='knowledge' AND v.row_id=k.id").Joins("LEFT JOIN faq_catalog_control_versions cv ON cv.knowledge_id=k.id").Where("k.tenant_id=? AND k.knowledge_base_id=? AND k.type=? AND k.deleted_at IS NULL", request.TenantID, request.KnowledgeBaseID, types.KnowledgeTypeFAQ).Order("k.id").Scan(&catalogs).Error; err != nil {
+	if err := tx.Table("knowledges k").
+		Select("k.id,v.revision,cv.revision AS control_revision").
+		Joins("LEFT JOIN knowledge_input_row_versions v ON v.row_kind='knowledge' AND v.row_id=k.id").
+		Joins("LEFT JOIN faq_catalog_control_versions cv ON cv.knowledge_id=k.id").
+		Where("k.tenant_id=? AND k.knowledge_base_id=? AND k.type=? AND k.deleted_at IS NULL", request.TenantID, request.KnowledgeBaseID, types.KnowledgeTypeFAQ).
+		Order("k.id").
+		Scan(&catalogs).
+		Error; err != nil {
 		return nil, err
 	}
 	if len(catalogs) > 1 {
 		return nil, ErrKnowledgeInputChanged
 	}
 	var entries []struct{ ID, KnowledgeID, TagID string }
-	q := tx.Table("chunks").Select("id,knowledge_id,tag_id").Where("tenant_id=? AND knowledge_base_id=? AND chunk_type=? AND deleted_at IS NULL", request.TenantID, request.KnowledgeBaseID, types.ChunkTypeFAQ)
+	q := tx.Table("chunks").
+		Select("id,knowledge_id,tag_id").
+		Where("tenant_id=? AND knowledge_base_id=? AND chunk_type=? AND deleted_at IS NULL", request.TenantID, request.KnowledgeBaseID, types.ChunkTypeFAQ)
 	if !request.AllEntries {
 		q = q.Where("id IN ?", request.ChunkIDs)
 	}
@@ -187,7 +231,15 @@ func (s *KnowledgeInputProvenanceStore) peekFAQInputReadPlanInTx(tx *gorm.DB, re
 		for _, entry := range entries {
 			ids = append(ids, entry.ID)
 		}
-		err := tx.Table("faq_entry_material_receipts m").Select("m.chunk_id,m.admission_id,m.revision,m.body_digest,a.session_id,a.knowledge_id,a.source_lineage,s.original_inputs,v.revision AS current_revision").Joins("JOIN faq_entry_input_admissions a ON a.id=m.admission_id AND a.chunk_id=m.chunk_id").Joins("JOIN faq_input_sessions s ON s.id=a.session_id").Joins("JOIN faq_input_row_versions v ON v.chunk_id=m.chunk_id").Where("m.chunk_id IN ? AND a.tenant_id=? AND a.knowledge_base_id=?", ids, request.TenantID, request.KnowledgeBaseID).Order("m.chunk_id").Scan(&proofs).Error
+		err := tx.Table("faq_entry_material_receipts m").
+			Select("m.chunk_id,m.admission_id,m.revision,m.body_digest,a.session_id,a.knowledge_id,a.source_lineage,s.original_inputs,v.revision AS current_revision").
+			Joins("JOIN faq_entry_input_admissions a ON a.id=m.admission_id AND a.chunk_id=m.chunk_id").
+			Joins("JOIN faq_input_sessions s ON s.id=a.session_id").
+			Joins("JOIN faq_input_row_versions v ON v.chunk_id=m.chunk_id").
+			Where("m.chunk_id IN ? AND a.tenant_id=? AND a.knowledge_base_id=?", ids, request.TenantID, request.KnowledgeBaseID).
+			Order("m.chunk_id").
+			Scan(&proofs).
+			Error
 		if err != nil {
 			return nil, err
 		}
@@ -223,7 +275,8 @@ func (s *KnowledgeInputProvenanceStore) peekFAQInputReadPlanInTx(tx *gorm.DB, re
 				}
 				lineages = append(lineages, historyPlan.SourceLineage)
 			}
-			if parent == nil || parent.BodyDigest == "" || parent.Projection != "" || parent.SourceLineage.RequireComplete() != nil {
+			if parent == nil || parent.BodyDigest == "" || parent.Projection != "" ||
+				parent.SourceLineage.RequireComplete() != nil {
 				return nil, types.ErrSourceLineageUnknown
 			}
 			if err := add(parent.TenantID, parent.KnowledgeBaseID); err != nil {
@@ -241,7 +294,11 @@ func (s *KnowledgeInputProvenanceStore) peekFAQInputReadPlanInTx(tx *gorm.DB, re
 		ID, Kind, OriginID, SourceLineage string
 		Revision                          uint64
 	}
-	tagQuery := tx.Table("knowledge_tags t").Select("t.id,v.kind,o.origin_id,o.source_lineage,v.revision").Joins("JOIN knowledge_display_versions v ON v.kind IN ('tag-name','tag-color','tag-sort_order','tag-envelope') AND v.row_id=t.id").Joins("JOIN knowledge_display_input_origins o ON o.kind=v.kind AND o.row_id=t.id AND o.revision=v.revision").Where("t.tenant_id=? AND t.knowledge_base_id=?", request.TenantID, request.KnowledgeBaseID)
+	tagQuery := tx.Table("knowledge_tags t").
+		Select("t.id,v.kind,o.origin_id,o.source_lineage,v.revision").
+		Joins("JOIN knowledge_display_versions v ON v.kind IN ('tag-name','tag-color','tag-sort_order','tag-envelope') AND v.row_id=t.id").
+		Joins("JOIN knowledge_display_input_origins o ON o.kind=v.kind AND o.row_id=t.id AND o.revision=v.revision").
+		Where("t.tenant_id=? AND t.knowledge_base_id=?", request.TenantID, request.KnowledgeBaseID)
 	if !request.AllEntries {
 		ids := make([]string, 0, len(entries))
 		for _, entry := range entries {
@@ -272,7 +329,12 @@ func (s *KnowledgeInputProvenanceStore) peekFAQInputReadPlanInTx(tx *gorm.DB, re
 	if err != nil {
 		return nil, err
 	}
-	plan := &types.FAQInputReadPlan{Request: request, MetadataDigest: digest, SourceLineage: lineage, MessagePlans: messagePlans}
+	plan := &types.FAQInputReadPlan{
+		Request:        request,
+		MetadataDigest: digest,
+		SourceLineage:  lineage,
+		MessagePlans:   messagePlans,
+	}
 	keys := make([]string, 0, len(scopes))
 	for key := range scopes {
 		keys = append(keys, key)

@@ -12,6 +12,7 @@ func SuppressContent(ctx context.Context) context.Context {
 	return context.WithValue(ctx, contentSuppressedKey{}, true)
 }
 
+// ContentSuppressed reports whether this context forbids content telemetry.
 func ContentSuppressed(ctx context.Context) bool {
 	if ctx == nil {
 		return false

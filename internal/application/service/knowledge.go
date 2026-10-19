@@ -487,9 +487,24 @@ func (s *knowledgeService) isKnowledgeAborted(
 		return true, types.ParseStatusDeleting
 	}
 	if types.IsBackgroundTask(ctx) {
-		if err := s.revalidateBackgroundKBAccess(
-			ctx, tenantID, knowledge.KnowledgeBaseID, types.ResourceActionEdit,
-		); err != nil {
+		// Only the exact live document execution may continue without a browser
+		// actor. A lease, channel, source selector or another task's receipt cannot
+		// replace the ordinary ACL checkpoint for this knowledge.
+		machine, machineErr := repository.CheckNextcloudDocumentMachineTaskWrite(
+			ctx,
+			tenantID,
+			knowledge.KnowledgeBaseID,
+			knowledgeID,
+		)
+		if err := func() error {
+			if machineErr != nil {
+				return machineErr
+			}
+			if machine {
+				return nil
+			}
+			return s.revalidateBackgroundKBAccess(ctx, tenantID, knowledge.KnowledgeBaseID, types.ResourceActionEdit)
+		}(); err != nil {
 			// A revoked actor must stop without entering the deleting branch,
 			// which would remove chunks that may now belong to someone else.
 			logger.Warnf(ctx, "Knowledge processing authorization no longer valid: %v", err)
@@ -873,7 +888,15 @@ func (s *knowledgeService) UpdateKnowledge(ctx context.Context, knowledge *types
 		return err
 	}
 	if metadataChanged && record.SummaryStatus != "" && record.SummaryStatus != types.SummaryStatusNone {
-		if err := enqueueSummaryRefresh(ctx, s.repo, s.task, s.kbService, s.tracker(), record, s.prepareSummaryGenerationPayload); err != nil {
+		if err := enqueueSummaryRefresh(
+			ctx,
+			s.repo,
+			s.task,
+			s.kbService,
+			s.tracker(),
+			record,
+			s.prepareSummaryGenerationPayload,
+		); err != nil {
 			logger.Warnf(ctx, "Metadata saved but summary refresh enqueue failed for %s: %v", record.ID, err)
 		} else {
 			logger.Infof(ctx, "Enqueued summary refresh after metadata update, knowledge ID: %s", record.ID)
@@ -1056,7 +1079,10 @@ func (s *knowledgeService) setAndAttachKnowledgeTags(
 }
 
 // GetKnowledgeTags returns tags for multiple knowledge IDs.
-func (s *knowledgeService) GetKnowledgeTags(ctx context.Context, knowledgeIDs []string) (map[string][]*types.KnowledgeTag, error) {
+func (s *knowledgeService) GetKnowledgeTags(
+	ctx context.Context,
+	knowledgeIDs []string,
+) (map[string][]*types.KnowledgeTag, error) {
 	return s.repo.GetKnowledgeTags(ctx, knowledgeIDs)
 }
 
@@ -1169,7 +1195,12 @@ func (s *knowledgeService) UpdateKnowledgeTagBatch(
 
 // SearchKnowledge searches knowledge items by keyword across the tenant and shared knowledge bases.
 // fileTypes: optional list of file extensions to filter by (e.g., ["csv", "xlsx"])
-func (s *knowledgeService) SearchKnowledge(ctx context.Context, keyword string, offset, limit int, fileTypes []string) ([]*types.Knowledge, bool, int64, error) {
+func (s *knowledgeService) SearchKnowledge(
+	ctx context.Context,
+	keyword string,
+	offset, limit int,
+	fileTypes []string,
+) ([]*types.Knowledge, bool, int64, error) {
 	caller := types.CallerFromContext(ctx)
 	tenantID := caller.TenantID
 	if tenantID == 0 {
@@ -1198,7 +1229,8 @@ func (s *knowledgeService) SearchKnowledge(ctx context.Context, keyword string, 
 			sharedList, err := s.kbShareService.ListSharedKnowledgeBases(ctx, tenantID, callerTenantRole)
 			if err == nil {
 				for _, info := range sharedList {
-					if info != nil && info.KnowledgeBase != nil && info.KnowledgeBase.Type == types.KnowledgeBaseTypeDocument {
+					if info != nil && info.KnowledgeBase != nil &&
+						info.KnowledgeBase.Type == types.KnowledgeBaseTypeDocument {
 						scopes = append(scopes, types.KnowledgeSearchScope{
 							TenantID: info.SourceTenantID,
 							KBID:     info.KnowledgeBase.ID,
@@ -1223,7 +1255,13 @@ func (s *knowledgeService) SearchKnowledge(ctx context.Context, keyword string, 
 }
 
 // SearchKnowledgeForScopes searches knowledge within the given scopes (e.g. for shared agent context).
-func (s *knowledgeService) SearchKnowledgeForScopes(ctx context.Context, scopes []types.KnowledgeSearchScope, keyword string, offset, limit int, fileTypes []string) ([]*types.Knowledge, bool, int64, error) {
+func (s *knowledgeService) SearchKnowledgeForScopes(
+	ctx context.Context,
+	scopes []types.KnowledgeSearchScope,
+	keyword string,
+	offset, limit int,
+	fileTypes []string,
+) ([]*types.Knowledge, bool, int64, error) {
 	if len(scopes) == 0 {
 		return nil, false, 0, nil
 	}

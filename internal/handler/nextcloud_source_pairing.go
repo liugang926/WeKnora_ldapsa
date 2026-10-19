@@ -16,8 +16,10 @@ import (
 	"github.com/google/uuid"
 )
 
-var sourcePairKeyPattern = regexp.MustCompile(`^pair_[0-9a-f]{32}$`)
-var sourceRotationKeyPattern = regexp.MustCompile(`^rot_[0-9a-f]{32}$`)
+var (
+	sourcePairKeyPattern     = regexp.MustCompile(`^pair_[0-9a-f]{32}$`)
+	sourceRotationKeyPattern = regexp.MustCompile(`^rot_[0-9a-f]{32}$`)
+)
 
 type NextcloudSourcePairingHandler struct {
 	repo             *repository.NextcloudSourcePairingRepository
@@ -33,14 +35,17 @@ type NextcloudSourcePairingHandler struct {
 }
 
 func NewNextcloudSourcePairingHandler(repo *repository.NextcloudSourcePairingRepository,
-	dataSource *DataSourceHandler) *NextcloudSourcePairingHandler {
-	return &NextcloudSourcePairingHandler{repo: repo, dataSource: dataSource,
+	dataSource *DataSourceHandler,
+) *NextcloudSourcePairingHandler {
+	return &NextcloudSourcePairingHandler{
+		repo: repo, dataSource: dataSource,
 		inspect: nextcloud.InspectPairing, commit: nextcloud.CommitSourcePairing,
 		abort:        nextcloud.AbortSourcePairing,
 		rotateCommit: nextcloud.CommitSourceRotation, rotateFinalize: nextcloud.FinalizeSourceRotation,
 		rotateAbort:      nextcloud.AbortSourceRotation,
 		readDecommission: nextcloud.ReadSourceDecommission,
-		ackDecommission:  nextcloud.AcknowledgeEmptySourceDecommission}
+		ackDecommission:  nextcloud.AcknowledgeEmptySourceDecommission,
+	}
 }
 
 func (h *NextcloudSourcePairingHandler) admin(c *gin.Context) (uint64, bool) {
@@ -99,14 +104,21 @@ func (h *NextcloudSourcePairingHandler) Pair(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_source_pairing_request"})
 		return
 	}
-	if _, status, message := h.dataSource.getOwnedKnowledgeBase(c.Request.Context(), tenantID, req.KnowledgeBaseID, types.ResourceActionEdit); status != http.StatusOK {
+	if _, status, message := h.dataSource.getOwnedKnowledgeBase(
+		c.Request.Context(),
+		tenantID,
+		req.KnowledgeBaseID,
+		types.ResourceActionEdit,
+	); status != http.StatusOK {
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
-	config := &types.DataSourceConfig{Type: types.ConnectorTypeNextcloud,
+	config := &types.DataSourceConfig{
+		Type:        types.ConnectorTypeNextcloud,
 		Credentials: map[string]interface{}{"token": req.Token, "key_id": req.KeyID},
 		ResourceIDs: []string{req.BindingID},
-		Settings:    map[string]interface{}{"base_url": req.BaseURL}}
+		Settings:    map[string]interface{}{"base_url": req.BaseURL},
+	}
 	identity, err := h.inspect(c.Request.Context(), config)
 	if err != nil || identity.InstanceID != req.InstanceID || identity.BindingID != req.BindingID ||
 		identity.PublicationState != "active" || identity.PublicationEpoch != *req.PublicationEpoch {
@@ -116,7 +128,8 @@ func (h *NextcloudSourcePairingHandler) Pair(c *gin.Context) {
 	pair, created, err := h.repo.PrepareSourcePairing(c.Request.Context(), repository.NextcloudSourcePairing{
 		OperationID: req.OperationID, TenantID: tenantID, KnowledgeBaseID: req.KnowledgeBaseID,
 		InstanceID: identity.InstanceID, BindingID: identity.BindingID, BaseURL: identity.BaseURL,
-		PublicationEpoch: *req.PublicationEpoch, KeyID: req.KeyID}, req.Token)
+		PublicationEpoch: *req.PublicationEpoch, KeyID: req.KeyID,
+	}, req.Token)
 	if err != nil {
 		sourcePairingError(c, err)
 		return
@@ -139,7 +152,9 @@ func sourcePairingError(c *gin.Context, err error) {
 	}
 }
 
-func (h *NextcloudSourcePairingHandler) authorizedPair(c *gin.Context) (repository.NextcloudSourcePairing, *types.DataSource, bool) {
+func (h *NextcloudSourcePairingHandler) authorizedPair(
+	c *gin.Context,
+) (repository.NextcloudSourcePairing, *types.DataSource, bool) {
 	tenantID, ok := h.admin(c)
 	if !ok {
 		return repository.NextcloudSourcePairing{}, nil, false
@@ -150,7 +165,12 @@ func (h *NextcloudSourcePairingHandler) authorizedPair(c *gin.Context) (reposito
 		return pair, nil, false
 	}
 	if pair.State != "aborted" {
-		if _, status, message := h.dataSource.getOwnedKnowledgeBase(c.Request.Context(), tenantID, pair.KnowledgeBaseID, types.ResourceActionEdit); status != http.StatusOK {
+		if _, status, message := h.dataSource.getOwnedKnowledgeBase(
+			c.Request.Context(),
+			tenantID,
+			pair.KnowledgeBaseID,
+			types.ResourceActionEdit,
+		); status != http.StatusOK {
 			c.JSON(status, gin.H{"error": message})
 			return pair, nil, false
 		}
@@ -281,8 +301,10 @@ func (h *NextcloudSourcePairingHandler) RetryFailedCandidate(c *gin.Context) {
 		sourcePairingError(c, err)
 		return
 	}
-	c.JSON(http.StatusAccepted, gin.H{"state": "retry_scheduled", "file_id": c.Param("file_id"),
-		"source_etag": req.SourceETag, "candidate_id": req.CandidateID})
+	c.JSON(http.StatusAccepted, gin.H{
+		"state": "retry_scheduled", "file_id": c.Param("file_id"),
+		"source_etag": req.SourceETag, "candidate_id": req.CandidateID,
+	})
 }
 
 // Abort keeps the paused source intact until Nextcloud confirms the exact
@@ -338,12 +360,15 @@ func (h *NextcloudSourcePairingHandler) Abort(c *gin.Context) {
 }
 
 func (h *NextcloudSourcePairingHandler) commitPending(c *gin.Context, pair repository.NextcloudSourcePairing,
-	config *types.DataSourceConfig, created bool) {
+	config *types.DataSourceConfig, created bool,
+) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 20*time.Second)
 	defer cancel()
-	err := h.commit(ctx, config, nextcloud.SourcePairingCommit{OperationID: pair.OperationID,
-		InstanceID: pair.InstanceID, BindingID: pair.BindingID, TenantID: pair.TenantID,
-		KnowledgeBaseID: pair.KnowledgeBaseID, DataSourceID: pair.DataSourceID})
+	err := h.commit(ctx, config, nextcloud.SourcePairingCommit{
+		OperationID: pair.OperationID,
+		InstanceID:  pair.InstanceID, BindingID: pair.BindingID, TenantID: pair.TenantID,
+		KnowledgeBaseID: pair.KnowledgeBaseID, DataSourceID: pair.DataSourceID,
+	})
 	if err != nil {
 		code := "remote_outcome_uncertain"
 		status := http.StatusAccepted

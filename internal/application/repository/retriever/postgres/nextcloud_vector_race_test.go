@@ -79,21 +79,27 @@ func nextcloudVectorKnowledge(t *testing.T, db *gorm.DB, id, channel string) {
 	t.Helper()
 	meta := map[string]string{}
 	if channel == types.ConnectorTypeNextcloud {
-		meta = map[string]string{"datasource_id": "ds", "external_id": "nextcloud:instance:77",
-			"nextcloud_etag": "", "nextcloud_target_etag": ""}
+		meta = map[string]string{
+			"datasource_id": "ds", "external_id": "nextcloud:instance:77",
+			"nextcloud_etag": "", "nextcloud_target_etag": "",
+		}
 	}
 	encoded, err := json.Marshal(meta)
 	require.NoError(t, err)
-	require.NoError(t, db.Create(&types.Knowledge{ID: id, TenantID: 7,
+	require.NoError(t, db.Create(&types.Knowledge{
+		ID: id, TenantID: 7,
 		KnowledgeBaseID: "kb", Channel: channel, Type: "file",
 		ParseStatus: types.ParseStatusCompleted, EnableStatus: "enabled",
-		Metadata: types.JSON(encoded)}).Error)
+		Metadata: types.JSON(encoded),
+	}).Error)
 }
 
 func nextcloudVectorInfo(knowledgeID, sourceID string) *types.IndexInfo {
-	return &types.IndexInfo{KnowledgeID: knowledgeID, KnowledgeBaseID: "kb",
+	return &types.IndexInfo{
+		KnowledgeID: knowledgeID, KnowledgeBaseID: "kb",
 		SourceID: sourceID, ChunkID: sourceID, SourceType: types.ChunkSourceType,
-		Content: "ORCHID-QUARTZ-2749", IsEnabled: true}
+		Content: "ORCHID-QUARTZ-2749", IsEnabled: true,
+	}
 }
 
 func nextcloudVectorEmbedding(sourceIDs ...string) map[string]any {
@@ -105,8 +111,10 @@ func nextcloudVectorEmbedding(sourceIDs ...string) map[string]any {
 }
 
 func nextcloudVectorTestScope(id string) apprepo.NextcloudContentScope {
-	return apprepo.NextcloudContentScope{TenantID: 7, KnowledgeBaseID: "kb",
-		KnowledgeID: id, DataSourceID: "ds", ExternalID: "nextcloud:instance:77"}
+	return apprepo.NextcloudContentScope{
+		TenantID: 7, KnowledgeBaseID: "kb",
+		KnowledgeID: id, DataSourceID: "ds", ExternalID: "nextcloud:instance:77",
+	}
 }
 
 func nextcloudVectorStage(t *testing.T, db *gorm.DB, etag, id string) {
@@ -116,7 +124,11 @@ func nextcloudVectorStage(t *testing.T, db *gorm.DB, etag, id string) {
 		"nextcloud:instance:77", etag, id))
 }
 
-func nextcloudVectorLease(t *testing.T, db *gorm.DB, id string) (context.Context, *apprepo.NextcloudContentLeaseStore, apprepo.NextcloudContentLease) {
+func nextcloudVectorLease(
+	t *testing.T,
+	db *gorm.DB,
+	id string,
+) (context.Context, *apprepo.NextcloudContentLeaseStore, apprepo.NextcloudContentLease) {
 	t.Helper()
 	store := apprepo.NewNextcloudContentLeaseStore(db)
 	lease, err := store.AcquireKnowledge(context.Background(), nextcloudVectorTestScope(id),
@@ -128,6 +140,11 @@ func nextcloudVectorLease(t *testing.T, db *gorm.DB, id string) (context.Context
 
 func TestNextcloudPGVectorWriteAndStageSerialize(t *testing.T) {
 	db := nextcloudVectorTestDB(t)
+	require.NoError(t, db.AutoMigrate(&types.KnowledgeBase{}))
+	require.NoError(t, db.Create(&types.KnowledgeBase{
+		ID: "kb", TenantID: 7, Name: "Actual vector fence owner", Type: types.KnowledgeBaseTypeDocument,
+		EverHadNextcloudSource: true,
+	}).Error)
 	ctx := context.Background()
 	nextcloudVectorKnowledge(t, db, "old", types.ConnectorTypeNextcloud)
 	nextcloudVectorStage(t, db, "etag-old", "old")
@@ -190,6 +207,7 @@ func TestNextcloudPGVectorWriteAndStageSerialize(t *testing.T) {
 	var late int64
 	require.NoError(t, db.Table("embeddings").Where("source_id = ?", "late-chunk").Count(&late).Error)
 	require.Zero(t, late)
+	require.NoError(t, leases.ReleaseLease(ctx, lease.ID), "the completed worker releases its obsolete build lease")
 	created, err := apprepo.NewNextcloudGCStore(db).InventoryRetired(ctx, time.Now().UTC(), 10)
 	require.NoError(t, err)
 	require.Equal(t, 1, created)
@@ -237,9 +255,11 @@ func TestNextcloudPGVectorInventoryCrashRetryAndExactClaimDelete(t *testing.T) {
 	require.NoError(t, db.Table("nextcloud_gc_items").Where("kind = 'postgres_embedding'").Count(&receipts).Error)
 	require.Equal(t, int64(2), vectors)
 	require.Equal(t, int64(2), receipts)
-	retrieve := types.RetrieveParams{RetrieverType: types.VectorRetrieverType,
-		Embedding: []float32{1, 0}, KnowledgeBaseIDs: []string{"kb"},
-		KnowledgeIDs: []string{"old"}, TopK: 5, Threshold: 0}
+	retrieve := types.RetrieveParams{
+		RetrieverType: types.VectorRetrieverType,
+		Embedding:     []float32{1, 0}, KnowledgeBaseIDs: []string{"kb"},
+		KnowledgeIDs: []string{"old"}, TopK: 5, Threshold: 0,
+	}
 	before, err := repo.VectorRetrieve(ctx, retrieve)
 	require.NoError(t, err)
 	require.Len(t, before, 1)
@@ -405,6 +425,9 @@ func TestNextcloudPGVectorSameCandidateETagFencesOldLeaseAndOrdinaryWrites(t *te
 	require.ErrorIs(t, repo.Save(ctx, nextcloudVectorInfo("same", "unleased"),
 		nextcloudVectorEmbedding("unleased")), apprepo.ErrNextcloudContentLeaseInvalid)
 	var leaked int64
-	require.NoError(t, db.Table("embeddings").Where("source_id IN ?", []string{"stale", "unleased"}).Count(&leaked).Error)
+	require.NoError(
+		t,
+		db.Table("embeddings").Where("source_id IN ?", []string{"stale", "unleased"}).Count(&leaked).Error,
+	)
 	require.Zero(t, leaked)
 }

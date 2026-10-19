@@ -22,7 +22,11 @@ func TestNextcloudStatePushActualHTTPPersistenceACKAndFixedOrigin(t *testing.T) 
 			event := "durable-event"
 			body := []byte(`{"event_id":"durable-event","schema_version":2}`)
 			var calls atomic.Int32
-			destination := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { calls.Add(1); w.WriteHeader(http.StatusOK) }))
+			destination := httptest.NewServer(
+				http.HandlerFunc(
+					func(w http.ResponseWriter, r *http.Request) { calls.Add(1); w.WriteHeader(http.StatusOK) },
+				),
+			)
 			defer destination.Close()
 			source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				require.Equal(t, http.MethodPost, r.Method)
@@ -33,15 +37,32 @@ func TestNextcloudStatePushActualHTTPPersistenceACKAndFixedOrigin(t *testing.T) 
 				require.Equal(t, body, raw)
 				digest := sha256.Sum256(raw)
 				mac := hmac.New(sha256.New, key)
-				mac.Write(StatePushCanonical(r.URL.EscapedPath(), hex.EncodeToString(digest[:]), r.Header.Get("X-WeKnora-Timestamp"), r.Header.Get("X-WeKnora-Nonce"), r.Header.Get("X-WeKnora-Connection-Id"), r.Header.Get("X-WeKnora-Key-Id")))
+				mac.Write(
+					StatePushCanonical(
+						r.URL.EscapedPath(),
+						hex.EncodeToString(digest[:]),
+						r.Header.Get("X-WeKnora-Timestamp"),
+						r.Header.Get("X-WeKnora-Nonce"),
+						r.Header.Get("X-WeKnora-Connection-Id"),
+						r.Header.Get("X-WeKnora-Key-Id"),
+					),
+				)
 				require.Equal(t, hex.EncodeToString(mac.Sum(nil)), r.Header.Get("X-WeKnora-Signature"))
 				switch result {
 				case "accepted":
-					io.WriteString(w, `{"status":"accepted","persisted":true,"event_id":"durable-event"}`)
+					writeNextcloudTestResponse(
+						t,
+						w,
+						`{"status":"accepted","persisted":true,"event_id":"durable-event"}`,
+					)
 				case "wrong_event":
-					io.WriteString(w, `{"status":"accepted","persisted":true,"event_id":"other"}`)
+					writeNextcloudTestResponse(t, w, `{"status":"accepted","persisted":true,"event_id":"other"}`)
 				case "unpersisted":
-					io.WriteString(w, `{"status":"accepted","persisted":false,"event_id":"durable-event"}`)
+					writeNextcloudTestResponse(
+						t,
+						w,
+						`{"status":"accepted","persisted":false,"event_id":"durable-event"}`,
+					)
 				case "redirect":
 					http.Redirect(w, r, destination.URL, http.StatusTemporaryRedirect)
 				default:
@@ -51,7 +72,12 @@ func TestNextcloudStatePushActualHTTPPersistenceACKAndFixedOrigin(t *testing.T) 
 			defer source.Close()
 			t.Setenv("WEKNORA_NEXTCLOUD_DEV_HTTP", "1")
 			t.Setenv("WEKNORA_NEXTCLOUD_ALLOWED_ORIGINS", source.URL)
-			cfg := &types.DataSourceConfig{Type: types.ConnectorTypeNextcloud, Settings: map[string]any{"base_url": source.URL}, Credentials: map[string]any{"token": "content-key-stays-private", "key_id": "machine-test"}, ResourceIDs: []string{"binding"}}
+			cfg := &types.DataSourceConfig{
+				Type:        types.ConnectorTypeNextcloud,
+				Settings:    map[string]any{"base_url": source.URL},
+				Credentials: map[string]any{"token": "content-key-stays-private", "key_id": "machine-test"},
+				ResourceIDs: []string{"binding"},
+			}
 			err := PushProcessingState(context.Background(), cfg, "connection-000001", "status-key", event, key, body)
 			if result == "accepted" {
 				require.NoError(t, err)

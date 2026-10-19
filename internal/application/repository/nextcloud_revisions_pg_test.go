@@ -23,11 +23,11 @@ func TestPostgresNextcloudSourceRevisionUpgradeAndIndexedFence(t *testing.T) {
 	}
 	admin, err := sql.Open("pgx", dsn)
 	require.NoError(t, err)
-	defer admin.Close()
+	defer func() { require.NoError(t, admin.Close()) }()
 	schema := "source_revisions_" + strings.ReplaceAll(uuid.NewString()[:8], "-", "")
 	_, err = admin.Exec(`CREATE SCHEMA "` + schema + `"`)
 	require.NoError(t, err)
-	defer admin.Exec(`DROP SCHEMA "` + schema + `" CASCADE`)
+	defer func() { _, err := admin.Exec(`DROP SCHEMA "` + schema + `" CASCADE`); require.NoError(t, err) }()
 	u, err := url.Parse(dsn)
 	require.NoError(t, err)
 	q := u.Query()
@@ -35,7 +35,7 @@ func TestPostgresNextcloudSourceRevisionUpgradeAndIndexedFence(t *testing.T) {
 	u.RawQuery = q.Encode()
 	db, err := sql.Open("pgx", u.String())
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() { require.NoError(t, db.Close()) }()
 	db.SetMaxOpenConns(12)
 	_, err = db.Exec(`CREATE TABLE nextcloud_source_pairings (
 		operation_id TEXT PRIMARY KEY, knowledge_base_id TEXT NOT NULL,

@@ -12,7 +12,12 @@ import (
 // current authorization. Both successful and citation-free model responses
 // inherit the full body/config/control input union. No model-supplied receipt
 // or claim of independence is accepted.
-func (e *Extractor) ExtractSourceLineage(ctx context.Context, content string, contentLineage, templateLineage *types.SourceLineage, check func(context.Context, *types.SourceLineage) error) (*types.GraphData, error) {
+func (e *Extractor) ExtractSourceLineage(
+	ctx context.Context,
+	content string,
+	contentLineage, templateLineage *types.SourceLineage,
+	check func(context.Context, *types.SourceLineage) error,
+) (*types.GraphData, error) {
 	lineage, err := types.UnionSourceLineage(contentLineage, templateLineage)
 	if err != nil || lineage.RequireComplete() != nil || check == nil {
 		return nil, types.ErrGraphSourceReceiptUnknown

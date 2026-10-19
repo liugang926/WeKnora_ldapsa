@@ -16,15 +16,21 @@ import (
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/utils"
 	"github.com/stretchr/testify/require"
-	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
 
-func processingStateFixture(t *testing.T, required bool) (*NextcloudProcessingStateStore, *gorm.DB, context.Context, *types.Knowledge, *types.Chunk, *KnowledgeInputProvenanceStore) {
+func processingStateFixture(
+	t *testing.T,
+	required bool,
+) (*NextcloudProcessingStateStore, *gorm.DB, context.Context, *types.Knowledge, *types.Chunk, *KnowledgeInputProvenanceStore) {
 	t.Helper()
 	return processingStateFixtureBackend(t, required, false)
 }
-func processingStateFixtureBackend(t *testing.T, required, pg bool) (*NextcloudProcessingStateStore, *gorm.DB, context.Context, *types.Knowledge, *types.Chunk, *KnowledgeInputProvenanceStore) {
+
+func processingStateFixtureBackend(
+	t *testing.T,
+	required, pg bool,
+) (*NextcloudProcessingStateStore, *gorm.DB, context.Context, *types.Knowledge, *types.Chunk, *KnowledgeInputProvenanceStore) {
 	t.Helper()
 	var inputs *KnowledgeInputProvenanceStore
 	var db *gorm.DB
@@ -33,104 +39,154 @@ func processingStateFixtureBackend(t *testing.T, required, pg bool) (*NextcloudP
 	} else {
 		inputs, db = knowledgeInputFixture(t)
 	}
-	migrationDB := db
-	if pg {
-		sqlDB, err := db.DB()
-		require.NoError(t, err)
-		migrationDB, err = gorm.Open(postgres.New(postgres.Config{Conn: sqlDB, PreferSimpleProtocol: true}), &gorm.Config{})
-		require.NoError(t, err)
-	}
 	candidateID := "candidate"
 	if pg {
 		candidateID = "doc-a"
 	}
 
-	base := &types.KnowledgeBase{ID: "kb", TenantID: 7, Name: "source", EmbeddingModelID: "embed", SummaryModelID: "summary", IndexingStrategy: types.IndexingStrategy{GraphEnabled: true, GraphRequired: required}, ExtractConfig: &types.ExtractConfig{Enabled: true, Tags: []string{"KNOWS"}}}
-	require.NoError(t, inputs.ReplaceKnowledgeBaseConfigurationWithInput(WithIndependentKnowledgeInput(context.Background()), base))
-	require.NoError(t, db.AutoMigrate(&types.KnowledgeProcessingSpan{}, &nextcloudGCJob{}, &nextcloudGCItem{}))
-	eventMigration := "../../../migrations/sqlite/000032_nextcloud_event_inbox.up.sql"
-	if pg {
-		eventMigration = "../../../migrations/versioned/000113_nextcloud_event_inbox.up.sql"
+	base := &types.KnowledgeBase{
+		ID:               "kb",
+		TenantID:         7,
+		Name:             "source",
+		EmbeddingModelID: "embed",
+		SummaryModelID:   "summary",
+		IndexingStrategy: types.IndexingStrategy{GraphEnabled: true, GraphRequired: required},
+		ExtractConfig:    &types.ExtractConfig{Enabled: true, Tags: []string{"KNOWS"}},
 	}
-	script, err := os.ReadFile(eventMigration)
-	require.NoError(t, err)
-	require.NoError(t, migrationDB.Exec(string(script)).Error)
-	stateMigration := "../../../migrations/sqlite/000075_nextcloud_processing_state.up.sql"
-	if pg {
-		stateMigration = "../../../migrations/versioned/000156_nextcloud_processing_state.up.sql"
-	}
-	script, err = os.ReadFile(stateMigration)
-	require.NoError(t, err)
-	if db.Migrator().HasColumn(&types.DataSource{}, "sync_enabled") {
-		script = []byte(strings.SplitN(string(script), "\n", 2)[1])
-	}
-	require.NoError(t, migrationDB.Exec(string(script)).Error)
-	for _, suffix := range []string{"nextcloud_publication_recovery", "nextcloud_directory_migrations", "nextcloud_control_recovery", "nextcloud_recovery_build_leases", "nextcloud_graph_recovery_fence"} {
-		number := map[string]string{"nextcloud_publication_recovery": "000064", "nextcloud_directory_migrations": "000076", "nextcloud_control_recovery": "000078", "nextcloud_recovery_build_leases": "000079", "nextcloud_graph_recovery_fence": "000080"}[suffix]
-		dir := "sqlite"
-		if pg {
-			dir = "versioned"
-			number = map[string]string{"nextcloud_publication_recovery": "000145", "nextcloud_directory_migrations": "000157", "nextcloud_control_recovery": "000159", "nextcloud_recovery_build_leases": "000160", "nextcloud_graph_recovery_fence": "000161"}[suffix]
-		}
-		b, e := os.ReadFile("../../../migrations/" + dir + "/" + number + "_" + suffix + ".up.sql")
-		require.NoError(t, e)
-		require.NoError(t, migrationDB.Exec(string(b)).Error)
-	}
-	// Current Session fields require the complete production target controls.
-	// Keep the existing source/version records; missing controls must not be
-	// bypassed just because this fixture predates the onboarding migration.
-	require.NoError(t, db.AutoMigrate(&types.Tenant{}, &types.AuthToken{}, &types.WikiPage{}))
-	controlDir := "sqlite"
-	controlNames := []string{"000074_nextcloud_onboarding", "000081_nextcloud_target_closure", "000083_nextcloud_current_manager_purpose"}
-	if pg {
-		controlDir = "versioned"
-		controlNames = []string{"000155_nextcloud_onboarding", "000162_nextcloud_target_closure", "000164_nextcloud_current_manager_purpose"}
-	}
-	for _, name := range controlNames {
-		ddl, err := os.ReadFile("../../../migrations/" + controlDir + "/" + name + ".up.sql")
-		require.NoError(t, err)
-		if db.Migrator().HasColumn("sessions", "nextcloud_scoped") {
-			ddl = []byte(strings.Replace(string(ddl), "ALTER TABLE sessions ADD COLUMN nextcloud_scoped BOOLEAN NOT NULL DEFAULT FALSE;", "", 1))
-		}
-		require.NoError(t, migrationDB.Exec(string(ddl)).Error)
-	}
+	require.NoError(
+		t,
+		inputs.ReplaceKnowledgeBaseConfigurationWithInput(WithIndependentKnowledgeInput(context.Background()), base),
+	)
+	// The shared input fixture already installs the actual current control schema.
+	require.NoError(t, db.AutoMigrate(&types.AuthToken{}))
 	var ds types.DataSource
 	require.NoError(t, db.Where("id='ds'").Take(&ds).Error)
 	baseURL, sha, binding, err := NextcloudEventDataSourceIdentity(ds.Config)
 	require.NoError(t, err)
 	encrypted, err := utils.EncryptAESGCM("0123456789abcdef0123456789abcdef", utils.GetAESKey())
 	require.NoError(t, err)
-	require.NoError(t, db.Table("nextcloud_event_connections").Create(map[string]any{"connection_id": "connection-0000001", "tenant_id": 7, "knowledge_base_id": "kb", "datasource_id": "ds", "nextcloud_instance_id": "instance", "binding_id": binding, "datasource_base_url": baseURL, "datasource_config_sha256": sha, "status": "active", "current_key_id": "current", "current_secret_ciphertext": encrypted}).Error)
+	require.NoError(
+		t,
+		db.Table("nextcloud_event_connections").
+			Create(map[string]any{"connection_id": "connection-0000001", "tenant_id": 7, "knowledge_base_id": "kb", "datasource_id": "ds", "nextcloud_instance_id": "instance", "binding_id": binding, "datasource_base_url": baseURL, "datasource_config_sha256": sha, "status": "active", "current_key_id": "current", "current_secret_ciphertext": encrypted}).
+			Error,
+	)
 	repo := NewKnowledgeRepository(db).(*knowledgeRepository)
-	require.NoError(t, repo.StageNextcloudVersion(context.Background(), 7, "kb", "ds", "nextcloud:instance:77", "original-etag", candidateID))
+	require.NoError(
+		t,
+		repo.StageNextcloudVersion(
+			context.Background(),
+			7,
+			"kb",
+			"ds",
+			"nextcloud:instance:77",
+			"original-etag",
+			candidateID,
+		),
+	)
 	var k types.Knowledge
 	require.NoError(t, db.Where("id=?", candidateID).Take(&k).Error)
-	require.NoError(t, db.Model(&k).Updates(map[string]any{"parse_status": types.ParseStatusFinalizing, "enable_status": "disabled", "pending_subtasks_count": 1, "file_name": "file.md", "title": "file.md", "file_hash": "test-file-hash", "file_type": "md", "file_size": 20}).Error)
+	require.NoError(
+		t,
+		db.Model(&k).
+			Updates(map[string]any{"parse_status": types.ParseStatusFinalizing, "enable_status": "disabled", "pending_subtasks_count": 1, "file_name": "file.md", "title": "file.md", "file_hash": "test-file-hash", "file_type": "md", "file_size": 20}).
+			Error,
+	)
 	require.NoError(t, db.Where("id=?", k.ID).Take(&k).Error)
-	scope := NextcloudContentScope{TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: k.ID, DataSourceID: "ds", ExternalID: "nextcloud:instance:77"}
+	scope := NextcloudContentScope{
+		TenantID:        7,
+		KnowledgeBaseID: "kb",
+		KnowledgeID:     k.ID,
+		DataSourceID:    "ds",
+		ExternalID:      "nextcloud:instance:77",
+	}
 	leases := NewNextcloudContentLeaseStore(db)
-	lease, err := leases.AcquireKnowledge(context.Background(), scope, NextcloudContentBuildLease, "actual-test-worker", time.Minute)
+	lease, err := leases.AcquireKnowledge(
+		context.Background(),
+		scope,
+		NextcloudContentBuildLease,
+		"actual-test-worker",
+		time.Minute,
+	)
 	require.NoError(t, err)
 	ctx := WithNextcloudBuildLease(context.Background(), leases, lease, scope)
 	proof, err := inputs.AdmitNextcloudBuildInputs(ctx, []byte("real source artifact"))
 	require.NoError(t, err)
 	ctx = WithKnowledgeBuildInputProof(ctx, inputs, proof)
-	chunk := &types.Chunk{ID: "graph-source-chunk", TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: k.ID, Content: "Alice knows Bob", ChunkType: types.ChunkTypeText, IsEnabled: true, IndexStatus: "ready", Metadata: types.JSON(`{}`)}
+	chunk := &types.Chunk{
+		ID:              "graph-source-chunk",
+		TenantID:        7,
+		KnowledgeBaseID: "kb",
+		KnowledgeID:     k.ID,
+		Content:         "Alice knows Bob",
+		ChunkType:       types.ChunkTypeText,
+		IsEnabled:       true,
+		IndexStatus:     "ready",
+		Metadata:        types.JSON(`{}`),
+	}
 	require.NoError(t, NewChunkRepository(db).CreateChunks(ctx, []*types.Chunk{chunk}))
 	now := time.Now().UTC()
-	require.NoError(t, db.Create(&types.KnowledgeProcessingSpan{KnowledgeID: k.ID, Attempt: 1, SpanID: "root", Name: "root", Kind: types.SpanKindRoot, Status: types.SpanStatusRunning, StartedAt: &now}).Error)
+	require.NoError(
+		t,
+		db.Create(
+			&types.KnowledgeProcessingSpan{
+				KnowledgeID: k.ID,
+				Attempt:     1,
+				SpanID:      "root",
+				Name:        "root",
+				Kind:        types.SpanKindRoot,
+				Status:      types.SpanStatusRunning,
+				StartedAt:   &now,
+			},
+		).Error,
+	)
 	state := NewNextcloudProcessingStateStore(db)
 	require.NoError(t, state.PlanGraph(ctx, &k, 1, []*types.Chunk{chunk}, true, required))
 	return state, db, ctx, &k, chunk, inputs
 }
-func boundProcessingGraph(t *testing.T, ctx context.Context, k *types.Knowledge, c *types.Chunk, inputs *KnowledgeInputProvenanceStore) (context.Context, *types.GraphData) {
+
+func boundProcessingGraph(
+	t *testing.T,
+	ctx context.Context,
+	k *types.Knowledge,
+	c *types.Chunk,
+	inputs *KnowledgeInputProvenanceStore,
+) (context.Context, *types.GraphData) {
 	t.Helper()
-	snap, err := inputs.CaptureKnowledgeBuildInputs(ctx, types.KnowledgeBuildInputCaptureRequest{Projection: types.KnowledgeBuildProjectionGraph, TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: k.ID, ChunkIDs: []string{c.ID}})
+	snap, err := inputs.CaptureKnowledgeBuildInputs(
+		ctx,
+		types.KnowledgeBuildInputCaptureRequest{
+			Projection:      types.KnowledgeBuildProjectionGraph,
+			TenantID:        7,
+			KnowledgeBaseID: "kb",
+			KnowledgeID:     k.ID,
+			ChunkIDs:        []string{c.ID},
+		},
+	)
 	require.NoError(t, err)
 	ctx = WithKnowledgeBuildInputProof(ctx, inputs, snap.Proof)
 	namespace := types.NameSpace{KnowledgeBase: "kb", Knowledge: k.ID}
-	graph := &types.GraphData{WireDigest: types.GraphDigest("actual model wire"), SourceLineage: snap.Proof.SourceLineage, Node: []*types.GraphNode{{Name: "Alice", Chunks: []string{c.ID}, Attributes: []string{"person"}}, {Name: "Bob", Chunks: []string{c.ID}, Attributes: []string{"person"}}}, Relation: []*types.GraphRelation{{Node1: "Alice", Node2: "Bob", Type: "KNOWS"}}}
-	receipt := &types.GraphSourceReceipt{OriginalInput: snap.Proof, Version: 1, TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: k.ID, BuildGeneration: snap.Proof.BuildGeneration, InputDigest: snap.Proof.InputDigest, ConfigDigest: types.GraphDigest("model configuration"), WireDigest: graph.WireDigest, SourceLineage: graph.SourceLineage}
+	graph := &types.GraphData{
+		WireDigest:    types.GraphDigest("actual model wire"),
+		SourceLineage: snap.Proof.SourceLineage,
+		Node: []*types.GraphNode{
+			{Name: "Alice", Chunks: []string{c.ID}, Attributes: []string{"person"}},
+			{Name: "Bob", Chunks: []string{c.ID}, Attributes: []string{"person"}},
+		},
+		Relation: []*types.GraphRelation{{Node1: "Alice", Node2: "Bob", Type: "KNOWS"}},
+	}
+	receipt := &types.GraphSourceReceipt{
+		OriginalInput:   snap.Proof,
+		Version:         1,
+		TenantID:        7,
+		KnowledgeBaseID: "kb",
+		KnowledgeID:     k.ID,
+		BuildGeneration: snap.Proof.BuildGeneration,
+		InputDigest:     snap.Proof.InputDigest,
+		ConfigDigest:    types.GraphDigest("model configuration"),
+		WireDigest:      graph.WireDigest,
+		SourceLineage:   graph.SourceLineage,
+	}
 	for _, n := range graph.Node {
 		n.SourceReceipt, err = types.BindGraphSourceReceipt(receipt, types.GraphNodeBodyDigest(namespace, n))
 		require.NoError(t, err)
@@ -141,12 +197,16 @@ func boundProcessingGraph(t *testing.T, ctx context.Context, k *types.Knowledge,
 	}
 	graph.SourceReceipt, err = types.BindGraphSourceReceipt(receipt, types.GraphDataBodyDigest(namespace, graph))
 	require.NoError(t, err)
-	ctx = types.WithGraphWriteOperation(ctx, types.GraphWriteOperation{ID: NextcloudGraphOperationID(7, k.ID, 1, c.ID), Attempt: 1, ChunkID: c.ID})
+	ctx = types.WithGraphWriteOperation(
+		ctx,
+		types.GraphWriteOperation{ID: NextcloudGraphOperationID(7, k.ID, 1, c.ID), Attempt: 1, ChunkID: c.ID},
+	)
 	ctx = types.WithGraphWriteAuthorization(ctx, func(ctx context.Context, receipt *types.GraphSourceReceipt) error {
 		return inputs.RecheckKnowledgeBuildInputs(ctx, receipt.OriginalInput)
 	})
 	return ctx, graph
 }
+
 func loadProcessingState(t *testing.T, db *gorm.DB) NextcloudFileStateV2 {
 	t.Helper()
 	var row nextcloudFileStateRow
@@ -155,6 +215,7 @@ func loadProcessingState(t *testing.T, db *gorm.DB) NextcloudFileStateV2 {
 	require.NoError(t, json.Unmarshal([]byte(row.PayloadJSON), &out))
 	return out
 }
+
 func TestNextcloudGraphActualSQLProviderDurableStateAndIdempotentTask(t *testing.T) {
 	state, db, ctx, k, chunk, inputs := processingStateFixture(t, true)
 	done, err := state.StartGraph(ctx, 7, k.ID, 1, chunk.ID)
@@ -162,7 +223,10 @@ func TestNextcloudGraphActualSQLProviderDurableStateAndIdempotentTask(t *testing
 	require.False(t, done)
 	ctx, graph := boundProcessingGraph(t, ctx, k, chunk, inputs)
 	provider := NewScopedSQLGraphRepository(db, nil)
-	require.NoError(t, provider.AddGraph(ctx, types.NameSpace{KnowledgeBase: "kb", Knowledge: k.ID}, []*types.GraphData{graph}))
+	require.NoError(
+		t,
+		provider.AddGraph(ctx, types.NameSpace{KnowledgeBase: "kb", Knowledge: k.ID}, []*types.GraphData{graph}),
+	)
 	status := loadProcessingState(t, db)
 	require.Equal(t, "succeeded", status.Graph.State)
 	require.Equal(t, 1, status.Graph.Expected)
@@ -174,19 +238,34 @@ func TestNextcloudGraphActualSQLProviderDurableStateAndIdempotentTask(t *testing
 	require.Len(t, graphRead.Node, 2)
 	require.Len(t, graphRead.Relation, 1)
 	require.NoError(t, graphRead.SourceLineage.RequireComplete())
-	require.NoError(t, provider.AddGraph(ctx, types.NameSpace{KnowledgeBase: "kb", Knowledge: k.ID}, []*types.GraphData{graph}))
+	require.NoError(
+		t,
+		provider.AddGraph(ctx, types.NameSpace{KnowledgeBase: "kb", Knowledge: k.ID}, []*types.GraphData{graph}),
+	)
 	done, err = state.StartGraph(ctx, 7, k.ID, 1, chunk.ID)
 	require.NoError(t, err)
 	require.True(t, done, "ACK lost must reuse persisted op rather than regenerate nodes")
 	var n int64
 	require.NoError(t, db.Model(&nextcloudGraphRecord{}).Count(&n).Error)
 	require.EqualValues(t, 1, n)
-	require.Error(t, db.Model(&nextcloudGraphRecord{}).Where("operation_id=?", NextcloudGraphOperationID(7, k.ID, 1, chunk.ID)).Update("body_json", "{}").Error, "target records are immutable")
-	require.Error(t, provider.DelGraph(ctx, []types.NameSpace{{KnowledgeBase: "kb", Knowledge: k.ID}}), "unscoped deletion cannot bypass actual GC claim")
+	require.Error(
+		t,
+		db.Model(&nextcloudGraphRecord{}).
+			Where("operation_id=?", NextcloudGraphOperationID(7, k.ID, 1, chunk.ID)).
+			Update("body_json", "{}").
+			Error,
+		"target records are immutable",
+	)
+	require.Error(
+		t,
+		provider.DelGraph(ctx, []types.NameSpace{{KnowledgeBase: "kb", Knowledge: k.ID}}),
+		"unscoped deletion cannot bypass actual GC claim",
+	)
 	ready, err := nextcloudRequiredGraphReady(db, k)
 	require.NoError(t, err)
 	require.True(t, ready)
 }
+
 func TestNextcloudGraphActualSQLRetirementAndAttemptFence(t *testing.T) {
 	for _, change := range []string{"retire", "attempt", "config", "lease"} {
 		t.Run(change, func(t *testing.T) {
@@ -196,21 +275,51 @@ func TestNextcloudGraphActualSQLRetirementAndAttemptFence(t *testing.T) {
 			ctx, graph := boundProcessingGraph(t, ctx, k, chunk, inputs)
 			switch change {
 			case "retire":
-				require.NoError(t, NewNextcloudContentLeaseStore(db).RetireKnowledge(context.Background(), NextcloudContentScope{TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: k.ID, DataSourceID: "ds", ExternalID: "nextcloud:instance:77"}))
+				require.NoError(
+					t,
+					NewNextcloudContentLeaseStore(
+						db,
+					).RetireKnowledge(context.Background(), NextcloudContentScope{TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: k.ID, DataSourceID: "ds", ExternalID: "nextcloud:instance:77"}),
+				)
 			case "attempt":
-				require.NoError(t, db.Create(&types.KnowledgeProcessingSpan{KnowledgeID: k.ID, Attempt: 2, SpanID: "root-new", Name: "root", Kind: types.SpanKindRoot, Status: types.SpanStatusRunning}).Error)
+				require.NoError(
+					t,
+					db.Create(
+						&types.KnowledgeProcessingSpan{
+							KnowledgeID: k.ID,
+							Attempt:     2,
+							SpanID:      "root-new",
+							Name:        "root",
+							Kind:        types.SpanKindRoot,
+							Status:      types.SpanStatusRunning,
+						},
+					).Error,
+				)
 			case "config":
-				require.NoError(t, db.Exec("UPDATE knowledge_bases SET summary_model_id='new-model' WHERE id='kb'").Error)
+				require.NoError(
+					t,
+					db.Exec("UPDATE knowledge_bases SET summary_model_id='new-model' WHERE id='kb'").Error,
+				)
 			case "lease":
-				require.NoError(t, db.Exec("UPDATE nextcloud_content_leases SET expires_at_ms=1 WHERE kind='build'").Error)
+				require.NoError(
+					t,
+					db.Exec("UPDATE nextcloud_content_leases SET expires_at_ms=1 WHERE kind='build'").Error,
+				)
 			}
-			require.Error(t, NewScopedSQLGraphRepository(db, nil).AddGraph(ctx, types.NameSpace{KnowledgeBase: "kb", Knowledge: k.ID}, []*types.GraphData{graph}))
+			require.Error(
+				t,
+				NewScopedSQLGraphRepository(
+					db,
+					nil,
+				).AddGraph(ctx, types.NameSpace{KnowledgeBase: "kb", Knowledge: k.ID}, []*types.GraphData{graph}),
+			)
 			var n int64
 			require.NoError(t, db.Model(&nextcloudGraphRecord{}).Count(&n).Error)
 			require.Zero(t, n)
 		})
 	}
 }
+
 func TestNextcloudStateOutboxRevisionFreshnessAndSupersededDelivery(t *testing.T) {
 	state, db, ctx, k, chunk, _ := processingStateFixture(t, false)
 	before := loadProcessingState(t, db)
@@ -234,14 +343,23 @@ func TestNextcloudStateOutboxRevisionFreshnessAndSupersededDelivery(t *testing.T
 	ready, err := nextcloudRequiredGraphReady(db, k)
 	require.NoError(t, err)
 	require.True(t, ready, "optional graph failure keeps document publication independent")
-	require.NoError(t, db.Exec("UPDATE nextcloud_graph_tasks SET state='succeeded',persisted=TRUE WHERE knowledge_id=?", k.ID).Error)
+	require.NoError(
+		t,
+		db.Exec("UPDATE nextcloud_graph_tasks SET state='succeeded',persisted=TRUE WHERE knowledge_id=?", k.ID).Error,
+	)
 	fake := loadProcessingState(t, db)
 	require.Equal(t, "failed", fake.Graph.State, "unsent generic row mutation does not mint state")
 	require.NoError(t, state.Capture(ctx, 7, "kb", "ds", "nextcloud:instance:77", true))
 	verified := loadProcessingState(t, db)
-	require.Equal(t, "unverified", verified.Graph.State, "counter success without actual provider ACK cannot report success")
+	require.Equal(
+		t,
+		"unverified",
+		verified.Graph.State,
+		"counter success without actual provider ACK cannot report success",
+	)
 	require.False(t, verified.Graph.Persisted)
 }
+
 func TestNextcloudStateV2CrossLanguageSigningFixture(t *testing.T) {
 	raw, err := os.ReadFile("testdata/nextcloud-stage-status-v2-signatures.json")
 	require.NoError(t, err)
@@ -255,13 +373,54 @@ func TestNextcloudStateV2CrossLanguageSigningFixture(t *testing.T) {
 		mac.Write([]byte(s))
 		return hex.EncodeToString(mac.Sum(nil))
 	}
-	require.Equal(t, v["response_signature"], signature(string(NextcloudFileStateResponseCanonical(SignedNextcloudFileStatusRequest{SignedNextcloudEventStatusRequest: SignedNextcloudEventStatusRequest{ConnectionID: "connection-0000001", KeyID: v["key_id"], Nonce: v["nonce"]}, RequestSignature: v["request_signature"]}, []byte(v["body"])))))
-	require.Equal(t, v["push_signature"], signature(string(nextcloud.StatePushCanonical(v["push_path"], hex.EncodeToString(sum[:]), v["timestamp"], v["nonce"], "connection-0000001", v["key_id"]))))
+	require.Equal(
+		t,
+		v["response_signature"],
+		signature(
+			string(
+				NextcloudFileStateResponseCanonical(
+					SignedNextcloudFileStatusRequest{
+						SignedNextcloudEventStatusRequest: SignedNextcloudEventStatusRequest{
+							ConnectionID: "connection-0000001",
+							KeyID:        v["key_id"],
+							Nonce:        v["nonce"],
+						},
+						RequestSignature: v["request_signature"],
+					},
+					[]byte(v["body"]),
+				),
+			),
+		),
+	)
+	require.Equal(
+		t,
+		v["push_signature"],
+		signature(
+			string(
+				nextcloud.StatePushCanonical(
+					v["push_path"],
+					hex.EncodeToString(sum[:]),
+					v["timestamp"],
+					v["nonce"],
+					"connection-0000001",
+					v["key_id"],
+				),
+			),
+		),
+	)
 }
 
 func TestNextcloudSameETagHigherContentRevisionCannotReuseCandidate(t *testing.T) {
 	_, db, ctx, k, _, _ := processingStateFixture(t, false)
-	params := &types.KnowledgeCheckParams{Type: "file", FileHash: "test-file-hash", FileType: "md", DataSourceID: "ds", ExternalID: "nextcloud:instance:77", NextcloudTargetETag: "original-etag", NextcloudContentRevision: "0"}
+	params := &types.KnowledgeCheckParams{
+		Type:                     "file",
+		FileHash:                 "test-file-hash",
+		FileType:                 "md",
+		DataSourceID:             "ds",
+		ExternalID:               "nextcloud:instance:77",
+		NextcloudTargetETag:      "original-etag",
+		NextcloudContentRevision: "0",
+	}
 	exists, _, err := NewKnowledgeRepository(db).CheckKnowledgeExists(ctx, 7, "kb", params)
 	require.NoError(t, err)
 	require.True(t, exists)
@@ -312,9 +471,27 @@ func TestNextcloudPlannedGraphPayloadCrashRecoveryIsExactAndFenced(t *testing.T)
 	missing, err := state.UnpreparedGraphChunks(ctx, 7, k.ID, 1)
 	require.NoError(t, err)
 	require.Equal(t, []string{chunk.ID}, missing)
-	snapshot, err := inputs.CaptureKnowledgeBuildInputs(ctx, types.KnowledgeBuildInputCaptureRequest{Projection: types.KnowledgeBuildProjectionGraph, TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: k.ID, ChunkIDs: []string{chunk.ID}})
+	snapshot, err := inputs.CaptureKnowledgeBuildInputs(
+		ctx,
+		types.KnowledgeBuildInputCaptureRequest{
+			Projection:      types.KnowledgeBuildProjectionGraph,
+			TenantID:        7,
+			KnowledgeBaseID: "kb",
+			KnowledgeID:     k.ID,
+			ChunkIDs:        []string{chunk.ID},
+		},
+	)
 	require.NoError(t, err)
-	wire, err := json.Marshal(types.ExtractChunkPayload{TenantID: 7, KnowledgeID: k.ID, Attempt: 1, ChunkID: chunk.ID, ModelID: "controlled", OriginalInput: snapshot.Proof})
+	wire, err := json.Marshal(
+		types.ExtractChunkPayload{
+			TenantID:      7,
+			KnowledgeID:   k.ID,
+			Attempt:       1,
+			ChunkID:       chunk.ID,
+			ModelID:       "controlled",
+			OriginalInput: snapshot.Proof,
+		},
+	)
 	require.NoError(t, err)
 	require.NoError(t, state.RecordGraphPayload(ctx, 7, k.ID, 1, chunk.ID, wire))
 	// Restored stale rows precede this valid intent. The bounded page must
@@ -336,7 +513,12 @@ func TestNextcloudPlannedGraphPayloadCrashRecoveryIsExactAndFenced(t *testing.T)
 	require.NoError(t, err)
 	require.Len(t, intents, 1)
 	require.Equal(t, wire, intents[0].Payload)
-	require.NoError(t, NewNextcloudContentLeaseStore(db).RetireKnowledge(context.Background(), NextcloudContentScope{TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: k.ID, DataSourceID: "ds", ExternalID: "nextcloud:instance:77"}))
+	require.NoError(
+		t,
+		NewNextcloudContentLeaseStore(
+			db,
+		).RetireKnowledge(context.Background(), NextcloudContentScope{TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: k.ID, DataSourceID: "ds", ExternalID: "nextcloud:instance:77"}),
+	)
 	intents, err = state.PendingGraphQueueIntents(ctx, time.Now())
 	require.NoError(t, err)
 	require.Empty(t, intents, "old-generation queue replay stays closed")
@@ -347,16 +529,42 @@ func TestNextcloudActualGraphExactGCReceiptAndUnknownCoverage(t *testing.T) {
 	_, err := state.StartGraph(ctx, 7, k.ID, 1, chunk.ID)
 	require.NoError(t, err)
 	ctx, graph := boundProcessingGraph(t, ctx, k, chunk, inputs)
-	require.NoError(t, NewScopedSQLGraphRepository(db, nil).AddGraph(ctx, types.NameSpace{KnowledgeBase: "kb", Knowledge: k.ID}, []*types.GraphData{graph}))
+	require.NoError(
+		t,
+		NewScopedSQLGraphRepository(
+			db,
+			nil,
+		).AddGraph(ctx, types.NameSpace{KnowledgeBase: "kb", Knowledge: k.ID}, []*types.GraphData{graph}),
+	)
 	migration, err := os.ReadFile("../../../migrations/sqlite/000068_nextcloud_local_derived_gc.up.sql")
 	require.NoError(t, err)
 	require.NoError(t, db.Exec(string(migration)).Error)
-	scope := NextcloudContentScope{TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: k.ID, DataSourceID: "ds", ExternalID: "nextcloud:instance:77"}
+	scope := NextcloudContentScope{
+		TenantID:        7,
+		KnowledgeBaseID: "kb",
+		KnowledgeID:     k.ID,
+		DataSourceID:    "ds",
+		ExternalID:      "nextcloud:instance:77",
+	}
 	leases := NewNextcloudContentLeaseStore(db)
-	require.NoError(t, NewKnowledgeRepository(db).(*knowledgeRepository).TombstoneNextcloudVersion(context.Background(), 7, "kb", "ds", scope.ExternalID))
+	require.NoError(
+		t,
+		NewKnowledgeRepository(db).(*knowledgeRepository).TombstoneNextcloudVersion(
+			context.Background(),
+			7,
+			"kb",
+			"ds",
+			scope.ExternalID,
+		),
+	)
 	notBefore := leaseTestNotBefore(t, db, scope)
 	_, err = leases.ClaimKnowledgeGC(context.Background(), scope, notBefore, time.Minute)
-	require.ErrorIs(t, err, ErrNextcloudContentGCUncovered, "recovery/unobserved coverage cannot authorize graph deletion")
+	require.ErrorIs(
+		t,
+		err,
+		ErrNextcloudContentGCUncovered,
+		"recovery/unobserved coverage cannot authorize graph deletion",
+	)
 	// The test explicitly establishes covered/drained synthetic participants;
 	// production never installs this marker as part of state or GC automation.
 	leaseTestCoverKB(t, db, scope)
@@ -366,10 +574,23 @@ func TestNextcloudActualGraphExactGCReceiptAndUnknownCoverage(t *testing.T) {
 	require.NoError(t, leases.ReleaseLease(context.Background(), guard.lease.ID))
 	claim, err := leases.ClaimKnowledgeGC(context.Background(), scope, notBefore, time.Minute)
 	require.NoError(t, err)
-	job := nextcloudGCJob{ID: "actual-graph-gc", TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: k.ID, DataSourceID: "ds", ExternalID: scope.ExternalID, State: "running", NotBefore: notBefore, OriginalNotBefore: notBefore}
+	job := nextcloudGCJob{
+		ID:                "actual-graph-gc",
+		TenantID:          7,
+		KnowledgeBaseID:   "kb",
+		KnowledgeID:       k.ID,
+		DataSourceID:      "ds",
+		ExternalID:        scope.ExternalID,
+		State:             "running",
+		NotBefore:         notBefore,
+		OriginalNotBefore: notBefore,
+	}
 	require.NoError(t, db.Create(&job).Error)
 	op := NextcloudGraphOperationID(7, k.ID, 1, chunk.ID)
-	require.NoError(t, db.Create(&nextcloudGCItem{JobID: job.ID, Kind: "scoped_sql_graph", ObjectRef: op, State: "pending"}).Error)
+	require.NoError(
+		t,
+		db.Create(&nextcloudGCItem{JobID: job.ID, Kind: "scoped_sql_graph", ObjectRef: op, State: "pending"}).Error,
+	)
 	gc := NewNextcloudGCStore(db)
 	bad := job
 	bad.KnowledgeID = "other-candidate"
@@ -385,7 +606,10 @@ func TestNextcloudActualGraphExactGCReceiptAndUnknownCoverage(t *testing.T) {
 	require.NoError(t, db.Table("nextcloud_graph_records").Count(&records).Error)
 	require.Zero(t, records)
 	var receipt nextcloudDerivedGCReceipt
-	require.NoError(t, db.Where("job_id=? AND item_kind='scoped_sql_graph' AND object_ref=?", job.ID, op).Take(&receipt).Error)
+	require.NoError(
+		t,
+		db.Where("job_id=? AND item_kind='scoped_sql_graph' AND object_ref=?", job.ID, op).Take(&receipt).Error,
+	)
 	require.EqualValues(t, 1, receipt.DeletedRows)
 	require.Equal(t, claim.Token, receipt.ClaimToken)
 	require.Equal(t, claim.Epoch, receipt.ClaimEpoch)
@@ -404,7 +628,13 @@ func TestNextcloudClosedRecoveryControlsCannotReportPublishedOrDeliverOldReady(t
 	_, err := state.StartGraph(ctx, 7, k.ID, 1, chunk.ID)
 	require.NoError(t, err)
 	ctx, graph := boundProcessingGraph(t, ctx, k, chunk, inputs)
-	require.NoError(t, NewScopedSQLGraphRepository(db, nil).AddGraph(ctx, types.NameSpace{KnowledgeBase: "kb", Knowledge: k.ID}, []*types.GraphData{graph}))
+	require.NoError(
+		t,
+		NewScopedSQLGraphRepository(
+			db,
+			nil,
+		).AddGraph(ctx, types.NameSpace{KnowledgeBase: "kb", Knowledge: k.ID}, []*types.GraphData{graph}),
+	)
 	directoryDDL, err := os.ReadFile("../../../migrations/sqlite/000076_nextcloud_directory_migrations.up.sql")
 	require.NoError(t, err)
 	if !db.Migrator().HasTable("nextcloud_root_migrations") {
@@ -415,7 +645,18 @@ func TestNextcloudClosedRecoveryControlsCannotReportPublishedOrDeliverOldReady(t
 	if !db.Migrator().HasTable("nextcloud_control_recovery_gates") {
 		require.NoError(t, db.Exec(string(script)).Error)
 	}
-	require.NoError(t, db.Create(&nextcloudControlRecoveryGate{InstanceID: "instance", PlanSHA256: strings.Repeat("a", 64), InventorySHA256: strings.Repeat("b", 64), Closed: true, ClosedAt: time.Now()}).Error)
+	require.NoError(
+		t,
+		db.Create(
+			&nextcloudControlRecoveryGate{
+				InstanceID:      "instance",
+				PlanSHA256:      strings.Repeat("a", 64),
+				InventorySHA256: strings.Repeat("b", 64),
+				Closed:          true,
+				ClosedAt:        time.Now(),
+			},
+		).Error,
+	)
 	require.NoError(t, state.Capture(ctx, 7, "kb", "ds", "nextcloud:instance:77", true))
 	status := loadProcessingState(t, db)
 	require.Equal(t, "unverified", status.PublicationState)
@@ -423,11 +664,17 @@ func TestNextcloudClosedRecoveryControlsCannotReportPublishedOrDeliverOldReady(t
 	require.Equal(t, "publication_recovery_closed", status.ErrorCode)
 	require.Equal(t, "succeeded", status.Graph.State)
 	require.True(t, status.Graph.Persisted, "a stage result is independent of human publication")
-	current, err := state.DeliveryCurrent(ctx, NextcloudStatusDelivery{State: NextcloudFileStateV2{InstanceID: "instance", PublicationState: "published"}})
+	current, err := state.DeliveryCurrent(
+		ctx,
+		NextcloudStatusDelivery{State: NextcloudFileStateV2{InstanceID: "instance", PublicationState: "published"}},
+	)
 	require.NoError(t, err)
 	require.False(t, current, "old ready event is fenced even before compensator mints new blocked metadata")
 	var originalTask nextcloudGraphTask
-	require.NoError(t, db.Where("operation_id=?", NextcloudGraphOperationID(7, k.ID, 1, chunk.ID)).Take(&originalTask).Error)
+	require.NoError(
+		t,
+		db.Where("operation_id=?", NextcloudGraphOperationID(7, k.ID, 1, chunk.ID)).Take(&originalTask).Error,
+	)
 	rawTask := originalTask
 	rawTask.ChunkID = "raw-target-probe"
 	rawTask.OperationID = NextcloudGraphOperationID(7, k.ID, 1, rawTask.ChunkID)
@@ -437,7 +684,24 @@ func TestNextcloudClosedRecoveryControlsCannotReportPublishedOrDeliverOldReady(t
 	require.NoError(t, db.Create(&rawTask).Error)
 	lease, _, err := NextcloudBuildInputLease(ctx)
 	require.NoError(t, err)
-	rawRecord := nextcloudGraphRecord{OperationID: rawTask.OperationID, TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: k.ID, Backend: NextcloudGraphBackend, Generation: lease.Epoch, BuildLeaseID: lease.ID, BodyJSON: "{}", BodySHA256: recoverySHA([]byte("{}")), NodeCount: 0, EdgeCount: 0, CommittedAt: time.Now().Unix()}
-	require.ErrorContains(t, db.Create(&rawRecord).Error, "nextcloud_graph_recovery_permit_required", "actual provider target SQL rejects a previously valid lease without a bounded maintenance permit")
-
+	rawRecord := nextcloudGraphRecord{
+		OperationID:     rawTask.OperationID,
+		TenantID:        7,
+		KnowledgeBaseID: "kb",
+		KnowledgeID:     k.ID,
+		Backend:         NextcloudGraphBackend,
+		Generation:      lease.Epoch,
+		BuildLeaseID:    lease.ID,
+		BodyJSON:        "{}",
+		BodySHA256:      recoverySHA([]byte("{}")),
+		NodeCount:       0,
+		EdgeCount:       0,
+		CommittedAt:     time.Now().Unix(),
+	}
+	require.ErrorContains(
+		t,
+		db.Create(&rawRecord).Error,
+		"nextcloud_graph_recovery_permit_required",
+		"actual provider target SQL rejects a previously valid lease without a bounded maintenance permit",
+	)
 }

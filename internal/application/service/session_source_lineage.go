@@ -60,7 +60,10 @@ func (s *sessionService) authorizeSessionText(ctx context.Context, session *type
 	return &copy, nil
 }
 
-func (s *sessionService) authorizeSessionTexts(ctx context.Context, sessions []*types.Session) ([]*types.Session, error) {
+func (s *sessionService) authorizeSessionTexts(
+	ctx context.Context,
+	sessions []*types.Session,
+) ([]*types.Session, error) {
 	out := make([]*types.Session, 0, len(sessions))
 	union, _ := types.NewCompleteSourceLineage()
 	for _, row := range sessions {
@@ -98,10 +101,21 @@ type sessionTitleCandidates interface {
 	ListSessionTitleCandidates(context.Context, *types.SessionListQuery) ([]*types.SessionListItem, error)
 }
 type sessionTitleWriter interface {
-	SaveGeneratedSessionTitle(context.Context, uint64, string, string, types.SessionTitleSnapshot, string, *types.SourceLineage) (int64, error)
+	SaveGeneratedSessionTitle(
+		context.Context,
+		uint64,
+		string,
+		string,
+		types.SessionTitleSnapshot,
+		string,
+		*types.SourceLineage,
+	) (int64, error)
 }
 
-func (s *sessionService) authorizedTitleMatches(ctx context.Context, query *types.SessionListQuery) ([]*types.SessionListItem, error) {
+func (s *sessionService) authorizedTitleMatches(
+	ctx context.Context,
+	query *types.SessionListQuery,
+) ([]*types.SessionListItem, error) {
 	reader, ok := s.sessionRepo.(sessionTitleCandidates)
 	if !ok {
 		return nil, access.ErrNextcloudPublicationUnavailable

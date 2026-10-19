@@ -12,7 +12,11 @@ func TestDocumentSummaryProjectionRequiresProducerMaterial(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			lineage, err := types.NewCompleteSourceLineage()
 			require.NoError(t, err)
-			snapshot := types.RAGChunkInputSnapshot{Chunk: &types.Chunk{ChunkType: types.ChunkTypeSummary}, SourceLineage: lineage, ProducerMaterialVerified: true}
+			snapshot := types.RAGChunkInputSnapshot{
+				Chunk:                    &types.Chunk{ChunkType: types.ChunkTypeSummary},
+				SourceLineage:            lineage,
+				ProducerMaterialVerified: true,
+			}
 			switch mode {
 			case "text":
 				snapshot.Chunk.ChunkType = types.ChunkTypeText

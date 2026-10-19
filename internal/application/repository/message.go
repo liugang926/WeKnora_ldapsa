@@ -206,7 +206,12 @@ func (r *messageRepository) ListMessagesBySessionAfterTime(
 }
 
 // ListMessagesBySessionAfterCursor uses a stable tie-breaker for memory paging.
-func (r *messageRepository) ListMessagesBySessionAfterCursor(ctx context.Context, sessionID string, cursor types.MemoryMessageCursor, limit int) ([]*types.Message, error) {
+func (r *messageRepository) ListMessagesBySessionAfterCursor(
+	ctx context.Context,
+	sessionID string,
+	cursor types.MemoryMessageCursor,
+	limit int,
+) ([]*types.Message, error) {
 	var messages []*types.Message
 	query := r.db.WithContext(ctx).Where("session_id = ?", sessionID)
 	if !cursor.At.IsZero() || cursor.ID != "" {
@@ -302,7 +307,8 @@ func (r *messageRepository) UpdateMessage(ctx context.Context, message *types.Me
 				return err
 			}
 		}
-		if origin != nil && origin.PriorSources != nil && message.Role == "user" && message.SourceLineage.RequireComplete() != nil {
+		if origin != nil && origin.PriorSources != nil && message.Role == "user" &&
+			message.SourceLineage.RequireComplete() != nil {
 			message.SourceLineage = origin.PriorSources
 		}
 		if origin != nil && origin.PriorSources != nil && message.SourceLineage.RequireComplete() == nil {
@@ -321,7 +327,8 @@ func (r *messageRepository) UpdateMessage(ctx context.Context, message *types.Me
 		// transaction must not pair a new body with a skipped old proof. Separate
 		// checkpoint updates retain their own lineage and are preserved here.
 		if err := tx.Model(&types.Message{}).Where("id = ? AND session_id = ?", message.ID, message.SessionID).
-			Select("content", "is_completed", "source_lineage", "agent_steps", "knowledge_references", "updated_at", "is_fallback").Updates(message).Error; err != nil {
+			Select("content", "is_completed", "source_lineage", "agent_steps", "knowledge_references", "updated_at", "is_fallback").
+			Updates(message).Error; err != nil {
 			return err
 		}
 		if err := writeMessageArtifacts(tx, message); err != nil {
@@ -567,7 +574,11 @@ func (r *messageRepository) GetKnowledgeIDsBySessionID(
 // UpdateMessageImages updates only the images JSONB column for a message.
 // Uses Select to force GORM to include the column even when struct-based
 // Updates would otherwise skip custom Valuer types.
-func (r *messageRepository) UpdateMessageImages(ctx context.Context, sessionID, messageID string, images types.MessageImages) error {
+func (r *messageRepository) UpdateMessageImages(
+	ctx context.Context,
+	sessionID, messageID string,
+	images types.MessageImages,
+) error {
 	if _, ok := ctx.Value(messageGeneratedFieldKey{}).(messageGeneratedFieldBoundary); ok {
 		return r.writeGeneratedField(ctx, sessionID, messageID, "images", images)
 	}
@@ -578,7 +589,11 @@ func (r *messageRepository) UpdateMessageImages(ctx context.Context, sessionID, 
 }
 
 // UpdateMessageRenderedContent updates only the rendered_content column for a message.
-func (r *messageRepository) UpdateMessageRenderedContent(ctx context.Context, sessionID, messageID string, renderedContent string) error {
+func (r *messageRepository) UpdateMessageRenderedContent(
+	ctx context.Context,
+	sessionID, messageID string,
+	renderedContent string,
+) error {
 	if _, ok := ctx.Value(messageGeneratedFieldKey{}).(messageGeneratedFieldBoundary); ok {
 		return r.writeGeneratedField(ctx, sessionID, messageID, "rendered_content", renderedContent)
 	}

@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+
 	"gorm.io/gorm"
 )
 
@@ -13,9 +14,18 @@ func nextcloudCurrentSourcePath(ctx context.Context, db *gorm.DB, tenant uint64,
 	}
 	return NewNextcloudOnboardingStore(db).ResolveCurrentSourcePath(ctx, tenant, kb, ds, path)
 }
-func nextcloudRootEpochAuthorized(ctx context.Context, db *gorm.DB, tenant uint64, kb, ds, path string, oldEpoch, currentEpoch int64) (bool, error) {
+
+func nextcloudRootEpochAuthorized(
+	ctx context.Context,
+	db *gorm.DB,
+	tenant uint64,
+	kb, ds, path string,
+	oldEpoch, currentEpoch int64,
+) (bool, error) {
 	if !db.Migrator().HasTable("nextcloud_root_migrations") {
 		return false, nil
 	}
-	return NewNextcloudOnboardingStore(db).RootMigrationAuthorizesEpoch(ctx, tenant, kb, ds, path, oldEpoch, currentEpoch)
+	return NewNextcloudOnboardingStore(
+		db,
+	).RootMigrationAuthorizesEpoch(ctx, tenant, kb, ds, path, oldEpoch, currentEpoch)
 }

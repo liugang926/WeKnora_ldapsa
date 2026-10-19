@@ -17,14 +17,22 @@ type outputInputReaderFixture struct {
 	afterRecheck      func([]*types.KnowledgeBuildInputProof)
 }
 
-func (f *outputInputReaderFixture) CaptureKnowledgeOutputInputs(context.Context, types.KnowledgeBuildInputCaptureRequest) (*types.KnowledgeBuildInputSnapshot, error) {
+func (f *outputInputReaderFixture) CaptureKnowledgeOutputInputs(
+	context.Context,
+	types.KnowledgeBuildInputCaptureRequest,
+) (*types.KnowledgeBuildInputSnapshot, error) {
 	f.captures++
 	return f.snapshot, nil
 }
+
 func (f *outputInputReaderFixture) RecheckKnowledgeBuildInputs(context.Context, *types.KnowledgeBuildInputProof) error {
 	return nil
 }
-func (f *outputInputReaderFixture) RecheckKnowledgeOutputInputs(_ context.Context, proofs []*types.KnowledgeBuildInputProof) error {
+
+func (f *outputInputReaderFixture) RecheckKnowledgeOutputInputs(
+	_ context.Context,
+	proofs []*types.KnowledgeBuildInputProof,
+) error {
 	for _, proof := range proofs {
 		if proof.AdmissionID != f.expectedAdmission {
 			return repository.ErrKnowledgeInputChanged
@@ -38,7 +46,11 @@ func (f *outputInputReaderFixture) RecheckKnowledgeOutputInputs(_ context.Contex
 
 type outputCheckerFunc func(context.Context, *types.SourceLineage, access.LineageReadScope) error
 
-func (f outputCheckerFunc) Check(ctx context.Context, lineage *types.SourceLineage, scope access.LineageReadScope) error {
+func (f outputCheckerFunc) Check(
+	ctx context.Context,
+	lineage *types.SourceLineage,
+	scope access.LineageReadScope,
+) error {
 	return f(ctx, lineage, scope)
 }
 
@@ -46,9 +58,36 @@ func outputAuthorizerFixture(t *testing.T) (*KnowledgeOutputAuthorizer, *outputI
 	t.Helper()
 	lineage, err := types.NewCompleteSourceLineage()
 	require.NoError(t, err)
-	row := &types.Knowledge{ID: "document", TenantID: 7, KnowledgeBaseID: "kb", Type: "manual", Title: "authored title", Metadata: types.JSON(`{"manual":{"content":"actual authored body"}}`)}
-	reader := &outputInputReaderFixture{snapshot: &types.KnowledgeBuildInputSnapshot{Knowledge: row, Proof: &types.KnowledgeBuildInputProof{Version: 1, TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: "document", AdmissionID: "original-admission", BuildGeneration: 1, BodyDigest: "actual-material-digest", SourceLineage: lineage}}, expectedAdmission: "original-admission"}
-	a := &KnowledgeOutputAuthorizer{reader: reader, checker: outputCheckerFunc(func(context.Context, *types.SourceLineage, access.LineageReadScope) error { return nil })}
+	row := &types.Knowledge{
+		ID:              "document",
+		TenantID:        7,
+		KnowledgeBaseID: "kb",
+		Type:            "manual",
+		Title:           "authored title",
+		Metadata:        types.JSON(`{"manual":{"content":"actual authored body"}}`),
+	}
+	reader := &outputInputReaderFixture{
+		snapshot: &types.KnowledgeBuildInputSnapshot{
+			Knowledge: row,
+			Proof: &types.KnowledgeBuildInputProof{
+				Version:         1,
+				TenantID:        7,
+				KnowledgeBaseID: "kb",
+				KnowledgeID:     "document",
+				AdmissionID:     "original-admission",
+				BuildGeneration: 1,
+				BodyDigest:      "actual-material-digest",
+				SourceLineage:   lineage,
+			},
+		},
+		expectedAdmission: "original-admission",
+	}
+	a := &KnowledgeOutputAuthorizer{
+		reader: reader,
+		checker: outputCheckerFunc(
+			func(context.Context, *types.SourceLineage, access.LineageReadScope) error { return nil },
+		),
+	}
 	return a, reader, row
 }
 
@@ -85,14 +124,16 @@ func TestKnowledgeOutputLineageRechecksCurrentGrantsAtEveryBoundary(t *testing.T
 func TestKnowledgeOutputLineageCallbacksCannotMutateRetainedAuthority(t *testing.T) {
 	a, reader, row := outputAuthorizerFixture(t)
 	checks := 0
-	a.checker = outputCheckerFunc(func(_ context.Context, lineage *types.SourceLineage, scope access.LineageReadScope) error {
-		checks++
-		require.NoError(t, lineage.RequireComplete())
-		require.Equal(t, "kb", scope.Targets[0].KnowledgeBaseID)
-		lineage.State = types.SourceLineageUnknown
-		scope.Targets[0].KnowledgeBaseID = "other"
-		return nil
-	})
+	a.checker = outputCheckerFunc(
+		func(_ context.Context, lineage *types.SourceLineage, scope access.LineageReadScope) error {
+			checks++
+			require.NoError(t, lineage.RequireComplete())
+			require.Equal(t, "kb", scope.Targets[0].KnowledgeBaseID)
+			lineage.State = types.SourceLineageUnknown
+			scope.Targets[0].KnowledgeBaseID = "other"
+			return nil
+		},
+	)
 	reader.afterRecheck = func(proofs []*types.KnowledgeBuildInputProof) { proofs[0].AdmissionID = "callback mutation" }
 	g, err := a.Begin(context.Background(), []*types.Knowledge{row})
 	require.NoError(t, err)

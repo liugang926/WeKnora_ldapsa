@@ -275,7 +275,15 @@ type fileState struct {
 }
 
 func (i manifestItem) state() fileState {
-	return fileState{ContentRevision: i.ContentRevision, ETag: i.ETag, Name: i.Name, Path: i.Path, MimeType: i.MimeType, Size: i.Size, MTime: i.MTime}
+	return fileState{
+		ContentRevision: i.ContentRevision,
+		ETag:            i.ETag,
+		Name:            i.Name,
+		Path:            i.Path,
+		MimeType:        i.MimeType,
+		Size:            i.Size,
+		MTime:           i.MTime,
+	}
 }
 
 type syncState struct {

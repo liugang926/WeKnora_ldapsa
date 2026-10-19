@@ -2,6 +2,7 @@ package interfaces
 
 import (
 	"context"
+
 	"github.com/Tencent/WeKnora/internal/types"
 )
 
@@ -9,7 +10,10 @@ import (
 // producer context. Recheck verifies the original proof at every model/write/
 // transaction-output boundary; it never mints a replacement for old text.
 type KnowledgeBuildInputReader interface {
-	CaptureKnowledgeBuildInputs(context.Context, types.KnowledgeBuildInputCaptureRequest) (*types.KnowledgeBuildInputSnapshot, error)
+	CaptureKnowledgeBuildInputs(
+		context.Context,
+		types.KnowledgeBuildInputCaptureRequest,
+	) (*types.KnowledgeBuildInputSnapshot, error)
 	RecheckKnowledgeBuildInputs(context.Context, *types.KnowledgeBuildInputProof) error
 }
 

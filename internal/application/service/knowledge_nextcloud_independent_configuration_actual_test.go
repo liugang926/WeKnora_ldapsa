@@ -25,28 +25,70 @@ func TestNextcloudIndependentConfigurationLegacyPairActualSQLite(t *testing.T) {
 			require.NoError(t, err)
 			require.Empty(t, lineage.Sources)
 			observed := false
-			m.f.s.modelService = scopedConfigurationObservingModels{ModelService: m.f.s.modelService, summary: &scopedConfigurationObservingChat{delegate: m.f.model, before: func(ctx context.Context, _ []chat.Message) {
-				observed = true
-				var count int64
-				require.NoError(t, m.f.db.Raw("SELECT COUNT(*) FROM original_body_leases l JOIN original_body_field_heads h ON h.body_id=l.body_id WHERE h.source_table='knowledge_bases' AND h.row_key=? AND l.kind='read' AND l.released_at_ms IS NULL", config.ID).Scan(&count).Error)
-				require.Positive(t, count, "independent config bytes use real body leases throughout the model")
-				require.Empty(t, types.CallerFromContext(ctx).UserID)
-			}}}
+			m.f.s.modelService = scopedConfigurationObservingModels{
+				ModelService: m.f.s.modelService,
+				summary: &scopedConfigurationObservingChat{
+					delegate: m.f.model,
+					before: func(ctx context.Context, _ []chat.Message) {
+						observed = true
+						var count int64
+						require.NoError(
+							t,
+							m.f.db.Raw("SELECT COUNT(*) FROM original_body_leases l JOIN original_body_field_heads h ON h.body_id=l.body_id WHERE h.source_table='knowledge_bases' AND h.row_key=? AND l.kind='read' AND l.released_at_ms IS NULL", config.ID).
+								Scan(&count).
+								Error,
+						)
+						require.Positive(t, count, "independent config bytes use real body leases throughout the model")
+						require.Empty(t, types.CallerFromContext(ctx).UserID)
+					},
+				},
+			}
 			if mode == "configuration ABA during model" {
 				m.f.model.beforeReturn = func() {
-					require.NoError(t, m.f.db.Model(&types.KnowledgeBase{}).Where("id = ?", config.ID).Update("summary_model_id", "temporary-altered-model").Error)
-					require.NoError(t, m.f.db.Model(&types.KnowledgeBase{}).Where("id = ?", config.ID).Update("summary_model_id", config.SummaryModelID).Error)
+					require.NoError(
+						t,
+						m.f.db.Model(&types.KnowledgeBase{}).
+							Where("id = ?", config.ID).
+							Update("summary_model_id", "temporary-altered-model").
+							Error,
+					)
+					require.NoError(
+						t,
+						m.f.db.Model(&types.KnowledgeBase{}).
+							Where("id = ?", config.ID).
+							Update("summary_model_id", config.SummaryModelID).
+							Error,
+					)
 				}
 			}
 			if mode == "pair ABA during model" {
 				m.f.model.beforeReturn = func() {
-					require.NoError(t, m.f.db.Exec("UPDATE nextcloud_source_pairings SET state='pending' WHERE datasource_id=?", m.ds.ID).Error)
-					require.NoError(t, m.f.db.Exec("UPDATE nextcloud_source_pairings SET state='active' WHERE datasource_id=?", m.ds.ID).Error)
+					require.NoError(
+						t,
+						m.f.db.Exec(
+							"UPDATE nextcloud_source_pairings SET state='pending' WHERE datasource_id=?",
+							m.ds.ID,
+						).Error,
+					)
+					require.NoError(
+						t,
+						m.f.db.Exec(
+							"UPDATE nextcloud_source_pairings SET state='active' WHERE datasource_id=?",
+							m.ds.ID,
+						).Error,
+					)
 				}
 			}
 			if mode == "body lease owner changed during model" {
 				m.f.model.beforeReturn = func() {
-					require.NoError(t, m.f.db.Exec("UPDATE original_body_leases SET owner_id=? WHERE lease_id IN (SELECT l.lease_id FROM original_body_leases l JOIN original_body_field_heads h ON h.body_id=l.body_id WHERE h.source_table='knowledge_bases' AND h.row_key=? AND l.kind='read' AND l.released_at_ms IS NULL)", "different-lease-owner", config.ID).Error)
+					require.NoError(
+						t,
+						m.f.db.Exec(
+							"UPDATE original_body_leases SET owner_id=? WHERE lease_id IN (SELECT l.lease_id FROM original_body_leases l JOIN original_body_field_heads h ON h.body_id=l.body_id WHERE h.source_table='knowledge_bases' AND h.row_key=? AND l.kind='read' AND l.released_at_ms IS NULL)",
+							"different-lease-owner",
+							config.ID,
+						).Error,
+					)
 				}
 			}
 			row := m.ingest(t)
@@ -68,7 +110,10 @@ func TestNextcloudIndependentConfigurationLegacyPairActualSQLite(t *testing.T) {
 				require.Empty(t, row.Description, "changed independent config/body authority cannot commit output")
 			}
 			var live int64
-			require.NoError(t, m.f.db.Table("original_body_leases").Where("kind='read' AND released_at_ms IS NULL").Count(&live).Error)
+			require.NoError(
+				t,
+				m.f.db.Table("original_body_leases").Where("kind='read' AND released_at_ms IS NULL").Count(&live).Error,
+			)
 			require.Zero(t, live)
 		})
 	}
@@ -84,9 +129,18 @@ func TestNextcloudIndependentConfigurationOwnedScopeCancellationActualSQLite(t *
 	require.NoError(t, err)
 	require.NoError(t, repository.CheckScopedOnboardingConfigurationReads(child))
 	closeChild()
-	require.NoError(t, repository.CheckScopedOnboardingConfigurationReads(ctx), "closing a fresh read must preserve the caller's sibling")
+	require.NoError(
+		t,
+		repository.CheckScopedOnboardingConfigurationReads(ctx),
+		"closing a fresh read must preserve the caller's sibling",
+	)
 	cancel()
-	require.ErrorIs(t, repository.CheckScopedOnboardingConfigurationReads(context.WithoutCancel(ctx)), context.Canceled, "detached contexts cannot revive canceled original worker authority")
+	require.ErrorIs(
+		t,
+		repository.CheckScopedOnboardingConfigurationReads(context.WithoutCancel(ctx)),
+		context.Canceled,
+		"detached contexts cannot revive canceled original worker authority",
+	)
 }
 
 // An empty public manifest is still not a configuration-read purpose.
@@ -94,11 +148,19 @@ func TestNextcloudIndependentConfigurationPublicReaderNoWorkerPurposeActualSQLit
 	m := newMachinePipelineFixture(t, false)
 	lineage, err := types.NewCompleteSourceLineage()
 	require.NoError(t, err)
-	read, err := m.f.store.BeginScopedIndependentConfigurationRead(context.Background(), 7, m.ds.KnowledgeBaseID, lineage)
+	read, err := m.f.store.BeginScopedIndependentConfigurationRead(
+		context.Background(),
+		7,
+		m.ds.KnowledgeBaseID,
+		lineage,
+	)
 	require.ErrorIs(t, err, types.ErrSourceLineageUnknown)
 	require.Nil(t, read)
 	var leases int64
-	require.NoError(t, m.f.db.Table("original_body_leases").Where("kind='read' AND released_at_ms IS NULL").Count(&leases).Error)
+	require.NoError(
+		t,
+		m.f.db.Table("original_body_leases").Where("kind='read' AND released_at_ms IS NULL").Count(&leases).Error,
+	)
 	require.Zero(t, leases)
 }
 
@@ -114,7 +176,10 @@ func TestNextcloudIndependentConfigurationLeaseCheckpointRenewalActualSQLite(t *
 		LeaseID     string
 		ExpiresAtMS int64
 	}
-	require.NoError(t, m.f.db.Table("original_body_leases").Where("kind='read' AND released_at_ms IS NULL").Find(&leases).Error)
+	require.NoError(
+		t,
+		m.f.db.Table("original_body_leases").Where("kind='read' AND released_at_ms IS NULL").Find(&leases).Error,
+	)
 	require.NotEmpty(t, leases)
 	for _, lease := range leases {
 		require.Greater(t, lease.ExpiresAtMS, time.Now().UnixMilli())

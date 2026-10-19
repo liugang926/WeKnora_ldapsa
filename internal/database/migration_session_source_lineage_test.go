@@ -2,15 +2,12 @@ package database
 
 import (
 	"database/sql"
-	"github.com/golang-migrate/migrate/v4"
-	"github.com/stretchr/testify/require"
-	"net/url"
 	"os"
 	"path/filepath"
-	"strconv"
-	"strings"
 	"testing"
-	"time"
+
+	"github.com/golang-migrate/migrate/v4"
+	"github.com/stretchr/testify/require"
 )
 
 func TestSessionTextLineageSQLiteUpgradeFrom51LeavesLegacyUnknown(t *testing.T) {
@@ -20,7 +17,9 @@ func TestSessionTextLineageSQLiteUpgradeFrom51LeavesLegacyUnknown(t *testing.T) 
 	path := filepath.Join(t.TempDir(), "title.db")
 	require.NoError(t, RunMigrationsWithOptions("sqlite3://unused", MigrationOptions{SQLiteDBPath: path}))
 	db := openSQLiteDB(t, path)
-	_, err := db.Exec(`INSERT INTO sessions(id,tenant_id,title,description) VALUES('legacy',7,'legacy secret title','legacy secret description')`)
+	_, err := db.Exec(
+		`INSERT INTO sessions(id,tenant_id,title,description) VALUES('legacy',7,'legacy secret title','legacy secret description')`,
+	)
 	require.NoError(t, err)
 	// Exercise this precise prior upgrade even after newer migrations exist.
 	current := copySQLiteMigrationsThrough(t, root, 52)
@@ -31,7 +30,11 @@ func TestSessionTextLineageSQLiteUpgradeFrom51LeavesLegacyUnknown(t *testing.T) 
 	require.False(t, dirty)
 	var title, description string
 	var titleProof, descriptionProof sql.NullString
-	require.NoError(t, db.QueryRow(`SELECT title,description,title_source_lineage,description_source_lineage FROM sessions WHERE id='legacy'`).Scan(&title, &description, &titleProof, &descriptionProof))
+	require.NoError(
+		t,
+		db.QueryRow(`SELECT title,description,title_source_lineage,description_source_lineage FROM sessions WHERE id='legacy'`).
+			Scan(&title, &description, &titleProof, &descriptionProof),
+	)
 	require.Equal(t, "legacy secret title", title)
 	require.Equal(t, "legacy secret description", description)
 	require.False(t, titleProof.Valid)
@@ -52,17 +55,7 @@ func TestSessionTextLineagePostgresUpgradeFrom132LeavesLegacyUnknown(t *testing.
 	base, err := sql.Open("postgres", dsn)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = base.Close() })
-	schema := "session_title_" + strconv.FormatInt(time.Now().UnixNano(), 10)
-	_, err = base.Exec("CREATE SCHEMA " + schema)
-	require.NoError(t, err)
-	t.Cleanup(func() { _, err := base.Exec("DROP SCHEMA " + schema + " CASCADE"); require.NoError(t, err) })
-	isolate := postgresSchemaDSN(t, dsn, schema)
-	parsed, err := url.Parse(isolate)
-	require.NoError(t, err)
-	query := parsed.Query()
-	query.Set("options", strings.TrimSpace(query.Get("options")+" -c app.skip_embedding=true"))
-	parsed.RawQuery = query.Encode()
-	isolate = parsed.String()
+	isolate := postgresLineageDatabaseDSN(t, base, dsn)
 	db, err := sql.Open("postgres", isolate)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = db.Close() })
@@ -70,12 +63,18 @@ func TestSessionTextLineagePostgresUpgradeFrom132LeavesLegacyUnknown(t *testing.
 	require.NoError(t, err)
 	t.Cleanup(func() { _, _ = m.Close() })
 	require.NoError(t, m.Migrate(132))
-	_, err = db.Exec(`INSERT INTO sessions(id,tenant_id,title,description) VALUES('legacy',7,'legacy secret title','legacy secret description')`)
+	_, err = db.Exec(
+		`INSERT INTO sessions(id,tenant_id,title,description) VALUES('legacy',7,'legacy secret title','legacy secret description')`,
+	)
 	require.NoError(t, err)
 	require.NoError(t, m.Migrate(133))
 	requirePostgresMigrationVersion(t, db, 133)
 	var titleProof, descriptionProof sql.NullString
-	require.NoError(t, db.QueryRow(`SELECT title_source_lineage,description_source_lineage FROM sessions WHERE id='legacy'`).Scan(&titleProof, &descriptionProof))
+	require.NoError(
+		t,
+		db.QueryRow(`SELECT title_source_lineage,description_source_lineage FROM sessions WHERE id='legacy'`).
+			Scan(&titleProof, &descriptionProof),
+	)
 	require.False(t, titleProof.Valid)
 	require.False(t, descriptionProof.Valid)
 	requireSessionTitleRevisionMonotonic(t, db)

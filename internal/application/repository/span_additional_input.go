@@ -9,23 +9,44 @@ import (
 	"gorm.io/gorm"
 )
 
-const spanAutoTagAdditionalKind = "auto_tag_classifier"
-const autoTagProducerSpanName = "postprocess.auto_tag"
+const (
+	spanAutoTagAdditionalKind = "auto_tag_classifier"
+	autoTagProducerSpanName   = "postprocess.auto_tag"
+)
 
-type spanAdditionalInputContextKey struct{}
-type spanAdditionalInputContext struct {
-	reader spanAdditionalOriginalInputVerifier
-	input  *types.SpanAdditionalOriginalInput
-}
+type (
+	spanAdditionalInputContextKey struct{}
+	spanAdditionalInputContext    struct {
+		reader spanAdditionalOriginalInputVerifier
+		input  *types.SpanAdditionalOriginalInput
+	}
+)
 
 // The matcher only accepts an original private persisted producer manifest.
 // A current display value or a complete client-declared envelope is not proof.
 type spanAdditionalOriginalInputVerifier interface {
-	verifySpanAdditionalOriginalInput(*gorm.DB, *types.SpanAdditionalOriginalInput, *types.KnowledgeBuildInputProof, bool) (*types.SourceLineage, error)
-	captureSpanAdditionalOriginalInput(context.Context, *gorm.DB, *types.SpanAdditionalOriginalInput, *types.KnowledgeBuildInputProof, bool) (*types.SourceLineage, error)
+	verifySpanAdditionalOriginalInput(
+		*gorm.DB,
+		*types.SpanAdditionalOriginalInput,
+		*types.KnowledgeBuildInputProof,
+		bool,
+	) (*types.SourceLineage, error)
+	captureSpanAdditionalOriginalInput(
+		context.Context,
+		*gorm.DB,
+		*types.SpanAdditionalOriginalInput,
+		*types.KnowledgeBuildInputProof,
+		bool,
+	) (*types.SourceLineage, error)
 }
 
-func (s *KnowledgeInputProvenanceStore) captureSpanAdditionalOriginalInput(ctx context.Context, tx *gorm.DB, input *types.SpanAdditionalOriginalInput, original *types.KnowledgeBuildInputProof, allowOwnResult bool) (*types.SourceLineage, error) {
+func (s *KnowledgeInputProvenanceStore) captureSpanAdditionalOriginalInput(
+	ctx context.Context,
+	tx *gorm.DB,
+	input *types.SpanAdditionalOriginalInput,
+	original *types.KnowledgeBuildInputProof,
+	allowOwnResult bool,
+) (*types.SourceLineage, error) {
 	lineage, err := s.verifySpanAdditionalOriginalInput(tx, input, original, allowOwnResult)
 	if err != nil {
 		return nil, err
@@ -37,14 +58,24 @@ func (s *KnowledgeInputProvenanceStore) captureSpanAdditionalOriginalInput(ctx c
 	if authority == nil || authority.db != tx {
 		return nil, types.ErrSourceLineageUnknown
 	}
-	if _, err := authority.authorizeOriginalKnowledgeProducerWrite(ctx, input.AutoTag.Original.KnowledgeBase, original); err != nil {
+	if _, err := authority.authorizeOriginalKnowledgeProducerWrite(
+		ctx,
+		input.AutoTag.Original.KnowledgeBase,
+		original,
+	); err != nil {
 		return nil, err
 	}
 	return lineage, nil
 }
 
-func WithSpanAutoTagOriginalInput(ctx context.Context, store *KnowledgeInputProvenanceStore, snapshot *types.KnowledgeAutoTagInputSnapshot) (context.Context, error) {
-	if store == nil || snapshot == nil || snapshot.ManifestID == "" || snapshot.InputDigest == "" || snapshot.Original == nil || snapshot.Original.Proof == nil {
+func WithSpanAutoTagOriginalInput(
+	ctx context.Context,
+	store *KnowledgeInputProvenanceStore,
+	snapshot *types.KnowledgeAutoTagInputSnapshot,
+) (context.Context, error) {
+	if store == nil || snapshot == nil || snapshot.ManifestID == "" || snapshot.InputDigest == "" ||
+		snapshot.Original == nil ||
+		snapshot.Original.Proof == nil {
 		return ctx, types.ErrSourceLineageUnknown
 	}
 	data, err := json.Marshal(snapshot)
@@ -55,8 +86,17 @@ func WithSpanAutoTagOriginalInput(ctx context.Context, store *KnowledgeInputProv
 	if json.Unmarshal(data, &copy) != nil {
 		return ctx, ErrKnowledgeInputChanged
 	}
-	input := &types.SpanAdditionalOriginalInput{Kind: spanAutoTagAdditionalKind, ID: copy.ManifestID, InputDigest: copy.InputDigest, AutoTag: &copy}
-	return context.WithValue(ctx, spanAdditionalInputContextKey{}, spanAdditionalInputContext{reader: store, input: input}), nil
+	input := &types.SpanAdditionalOriginalInput{
+		Kind:        spanAutoTagAdditionalKind,
+		ID:          copy.ManifestID,
+		InputDigest: copy.InputDigest,
+		AutoTag:     &copy,
+	}
+	return context.WithValue(
+		ctx,
+		spanAdditionalInputContextKey{},
+		spanAdditionalInputContext{reader: store, input: input},
+	), nil
 }
 
 func spanAdditionalInputMatches(a, b *types.SpanAdditionalOriginalInput) error {
@@ -77,8 +117,18 @@ func spanAdditionalInputMatches(a, b *types.SpanAdditionalOriginalInput) error {
 	return nil
 }
 
-func (s *KnowledgeInputProvenanceStore) verifySpanAdditionalOriginalInput(tx *gorm.DB, input *types.SpanAdditionalOriginalInput, original *types.KnowledgeBuildInputProof, allowOwnResult bool) (*types.SourceLineage, error) {
-	if input == nil || input.Kind != spanAutoTagAdditionalKind || input.AutoTag == nil || input.ID != input.AutoTag.ManifestID || input.InputDigest != input.AutoTag.InputDigest || input.AutoTag.Original == nil || input.AutoTag.Original.Proof == nil || original == nil {
+func (s *KnowledgeInputProvenanceStore) verifySpanAdditionalOriginalInput(
+	tx *gorm.DB,
+	input *types.SpanAdditionalOriginalInput,
+	original *types.KnowledgeBuildInputProof,
+	allowOwnResult bool,
+) (*types.SourceLineage, error) {
+	if input == nil || input.Kind != spanAutoTagAdditionalKind || input.AutoTag == nil ||
+		input.ID != input.AutoTag.ManifestID ||
+		input.InputDigest != input.AutoTag.InputDigest ||
+		input.AutoTag.Original == nil ||
+		input.AutoTag.Original.Proof == nil ||
+		original == nil {
 		return nil, types.ErrSourceLineageUnknown
 	}
 	before, err := KnowledgeInputDigest(original)
@@ -92,7 +142,11 @@ func (s *KnowledgeInputProvenanceStore) verifySpanAdditionalOriginalInput(tx *go
 	return s.verifyKnowledgeAutoTagOriginalModelInputsInTx(tx, input.AutoTag, allowOwnResult)
 }
 
-func (s *KnowledgeInputProvenanceStore) verifyKnowledgeAutoTagOriginalModelInputsInTx(tx *gorm.DB, expected *types.KnowledgeAutoTagInputSnapshot, allowOwnResult bool) (*types.SourceLineage, error) {
+func (s *KnowledgeInputProvenanceStore) verifyKnowledgeAutoTagOriginalModelInputsInTx(
+	tx *gorm.DB,
+	expected *types.KnowledgeAutoTagInputSnapshot,
+	allowOwnResult bool,
+) (*types.SourceLineage, error) {
 	if expected == nil || expected.Original == nil || expected.Original.Proof == nil || expected.ManifestID == "" {
 		return nil, types.ErrSourceLineageUnknown
 	}
@@ -113,11 +167,14 @@ func (s *KnowledgeInputProvenanceStore) verifyKnowledgeAutoTagOriginalModelInput
 		return nil, ErrKnowledgeInputChanged
 	}
 	digest, err := autoTagSnapshotDigest(&saved)
-	if err != nil || digest != manifest.InputDigest || digest != expected.InputDigest || saved.Original == nil || saved.Original.Proof == nil {
+	if err != nil || digest != manifest.InputDigest || digest != expected.InputDigest || saved.Original == nil ||
+		saved.Original.Proof == nil {
 		return nil, ErrKnowledgeInputChanged
 	}
 	proof := saved.Original.Proof
-	if manifest.TenantID != proof.TenantID || manifest.KnowledgeBaseID != proof.KnowledgeBaseID || manifest.KnowledgeID != proof.KnowledgeID || manifest.AdmissionID != proof.AdmissionID {
+	if manifest.TenantID != proof.TenantID || manifest.KnowledgeBaseID != proof.KnowledgeBaseID ||
+		manifest.KnowledgeID != proof.KnowledgeID ||
+		manifest.AdmissionID != proof.AdmissionID {
 		return nil, ErrKnowledgeInputChanged
 	}
 	actual, err := s.captureKnowledgeAutoTagInTx(tx, proof)
@@ -158,19 +215,23 @@ func (s *KnowledgeInputProvenanceStore) verifyKnowledgeAutoTagOriginalModelInput
 }
 
 func verifyAutoTagOwnRelationResult(tx *gorm.DB, saved, actual *types.KnowledgeAutoTagInputSnapshot) error {
-	if saved.RelationProof == nil || actual.RelationProof == nil || saved.RelationProof.Revision == actual.RelationProof.Revision {
+	if saved.RelationProof == nil || actual.RelationProof == nil ||
+		saved.RelationProof.Revision == actual.RelationProof.Revision {
 		return ErrKnowledgeInputChanged
 	}
 	k := saved.Original.Knowledge
 	var receipt knowledgeDisplayInputOrigin
-	if err := tx.Where("kind='relations' AND row_id = ? AND tenant_id = ? AND knowledge_base_id = ? AND revision = ?", k.ID, k.TenantID, k.KnowledgeBaseID, actual.RelationProof.Revision).Take(&receipt).Error; err != nil {
+	if err := tx.Where("kind='relations' AND row_id = ? AND tenant_id = ? AND knowledge_base_id = ? AND revision = ?", k.ID, k.TenantID, k.KnowledgeBaseID, actual.RelationProof.Revision).
+		Take(&receipt).
+		Error; err != nil {
 		return err
 	}
 	if receipt.OriginKind != "derived" {
 		return ErrKnowledgeInputChanged
 	}
 	var request knowledgeDisplayRequest
-	if json.Unmarshal([]byte(receipt.ActualInput), &request) != nil || request.Kind != "derived" || request.AutoTag == nil {
+	if json.Unmarshal([]byte(receipt.ActualInput), &request) != nil || request.Kind != "derived" ||
+		request.AutoTag == nil {
 		return ErrKnowledgeInputChanged
 	}
 	left, err := KnowledgeInputDigest(request.AutoTag)

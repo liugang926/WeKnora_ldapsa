@@ -3,6 +3,10 @@ package service
 import (
 	"context"
 	"fmt"
+	"os"
+	"testing"
+	"time"
+
 	"github.com/Tencent/WeKnora/internal/agent"
 	"github.com/Tencent/WeKnora/internal/application/access"
 	"github.com/Tencent/WeKnora/internal/application/repository"
@@ -10,9 +14,6 @@ import (
 	"github.com/Tencent/WeKnora/internal/config"
 	"github.com/Tencent/WeKnora/internal/event"
 	"github.com/Tencent/WeKnora/internal/models/chat"
-	"os"
-	"testing"
-	"time"
 
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/stretchr/testify/require"
@@ -22,39 +23,77 @@ import (
 func TestAgentHistoryActualOriginalReadLeaseLifetimeAndCheckpoint(t *testing.T) {
 	messages, _, _, db, ctx, session := messageMaterialActualFixture(t)
 	_, assistant := produceActualMessagePair(t, messages, ctx, session)
-	currentUser, err := messages.CreateMessage(ctx, &types.Message{SessionID: session.ID, RequestID: "current-unconsumed-turn", Role: "user", Content: "new current question", IsCompleted: true})
+	currentUser, err := messages.CreateMessage(
+		ctx,
+		&types.Message{
+			SessionID:   session.ID,
+			RequestID:   "current-unconsumed-turn",
+			Role:        "user",
+			Content:     "new current question",
+			IsCompleted: true,
+		},
+	)
 	require.NoError(t, err)
-	_, err = messages.CreateMessage(ctx, &types.Message{SessionID: session.ID, RequestID: currentUser.RequestID, Role: "assistant"})
+	_, err = messages.CreateMessage(
+		ctx,
+		&types.Message{SessionID: session.ID, RequestID: currentUser.RequestID, Role: "assistant"},
+	)
 	require.NoError(t, err)
 	ctx = WithMessageMaterialOutputBoundary(ctx)
 	ctx = context.WithValue(ctx, agentHistoryCurrentRequestKey{}, currentUser.RequestID)
 	defer CloseMessageMaterialOutputBoundary(ctx)
-	debugRepo, debugErr := (messageLineageHistoryAdmission{verifier: messages}).OriginalHistoryRepository(ctx, session.ID)
+	debugRepo, debugErr := (messageLineageHistoryAdmission{verifier: messages}).OriginalHistoryRepository(
+		ctx,
+		session.ID,
+	)
 	require.NoError(t, debugErr, "original capture")
 	require.NoError(t, CheckMessageMaterialOutputBoundary(ctx), "after original capture")
 	debugRows, debugErr := debugRepo.ListMessagesBySessionBeforeCursor(ctx, session.ID, time.Time{}, "", 200)
 	require.NoError(t, debugErr, "first original cursor")
 	require.Len(t, debugRows, 2)
-	history, _, err := LoadAgentHistory(ctx, messages.messageRepo, session.ID, 8000, false, messageLineageHistoryAdmission{verifier: messages})
+	history, _, err := LoadAgentHistory(
+		ctx,
+		messages.messageRepo,
+		session.ID,
+		8000,
+		false,
+		messageLineageHistoryAdmission{verifier: messages},
+	)
 	require.NoError(t, err)
 	require.Len(t, history, 2)
 	require.Equal(t, assistant.Content, history[1].Content)
 	require.NoError(t, CheckMessageMaterialOutputBoundary(ctx))
 	var live int64
-	require.NoError(t, db.Table("nextcloud_content_leases").Where("kind='read' AND released_at_ms IS NULL").Count(&live).Error)
+	require.NoError(
+		t,
+		db.Table("nextcloud_content_leases").Where("kind='read' AND released_at_ms IS NULL").Count(&live).Error,
+	)
 	require.Positive(t, live)
-	cp := &types.ContextCheckpoint{Summary: "actual deterministic compaction of original captured answer", SourceLineage: assistant.SourceLineage}
+	cp := &types.ContextCheckpoint{
+		Summary:       "actual deterministic compaction of original captured answer",
+		SourceLineage: assistant.SourceLineage,
+	}
 	sink := messageCheckpointSink{repo: messages.messageRepo, sessionID: session.ID}
 	require.NoError(t, sink.SaveContextCheckpoint(ctx, assistant.ID, cp))
 	require.NoError(t, CheckMessageMaterialOutputBoundary(ctx))
 	fresh := WithMessageMaterialOutputBoundary(ctx)
 	defer CloseMessageMaterialOutputBoundary(fresh)
-	replay, _, err := LoadAgentHistory(fresh, messages.messageRepo, session.ID, 8000, false, messageLineageHistoryAdmission{verifier: messages})
+	replay, _, err := LoadAgentHistory(
+		fresh,
+		messages.messageRepo,
+		session.ID,
+		8000,
+		false,
+		messageLineageHistoryAdmission{verifier: messages},
+	)
 	require.NoError(t, err)
 	require.NotEmpty(t, replay)
 	require.Contains(t, replay[0].Content, cp.Summary)
 	require.NoError(t, db.Model(&types.Message{}).Where("id=?", assistant.ID).Update("content", "foreign body").Error)
-	require.NoError(t, db.Model(&types.Message{}).Where("id=?", assistant.ID).Update("content", assistant.Content).Error)
+	require.NoError(
+		t,
+		db.Model(&types.Message{}).Where("id=?", assistant.ID).Update("content", assistant.Content).Error,
+	)
 	require.Error(t, CheckMessageMaterialOutputBoundary(ctx))
 }
 
@@ -67,7 +106,12 @@ func (m materialLeaseChat) Chat(context.Context, []chat.Message, *chat.ChatOptio
 }
 func (m materialLeaseChat) GetModelName() string { return "deterministic-owned-model" }
 func (m materialLeaseChat) GetModelID() string   { return "deterministic-owned-model" }
-func (m materialLeaseChat) ChatStream(ctx context.Context, input []chat.Message, _ *chat.ChatOptions) (<-chan types.StreamResponse, error) {
+
+func (m materialLeaseChat) ChatStream(
+	ctx context.Context,
+	input []chat.Message,
+	_ *chat.ChatOptions,
+) (<-chan types.StreamResponse, error) {
 	if err := m.callback(ctx, input); err != nil {
 		return nil, err
 	}
@@ -76,6 +120,7 @@ func (m materialLeaseChat) ChatStream(ctx context.Context, input []chat.Message,
 	close(out)
 	return out, nil
 }
+
 func TestAgentHistoryActualModelConsumesWithHeldLeasesAndBodyRevocation(t *testing.T) {
 	for _, revoke := range []bool{false, true} {
 		t.Run(map[bool]string{false: "positive", true: "body-revoke"}[revoke], func(t *testing.T) {
@@ -83,13 +128,26 @@ func TestAgentHistoryActualModelConsumesWithHeldLeasesAndBodyRevocation(t *testi
 			_, assistant := produceActualMessagePair(t, messages, ctx, session)
 			ctx = WithMessageMaterialOutputBoundary(ctx)
 			defer CloseMessageMaterialOutputBoundary(ctx)
-			history, _, err := LoadAgentHistory(ctx, messages.messageRepo, session.ID, 8000, false, messageLineageHistoryAdmission{verifier: messages})
+			history, _, err := LoadAgentHistory(
+				ctx,
+				messages.messageRepo,
+				session.ID,
+				8000,
+				false,
+				messageLineageHistoryAdmission{verifier: messages},
+			)
 			require.NoError(t, err)
 			called := false
 			model := materialLeaseChat{callback: func(_ context.Context, input []chat.Message) error {
 				called = true
 				var live int64
-				require.NoError(t, db.Table("nextcloud_content_leases").Where("kind='read' AND released_at_ms IS NULL").Count(&live).Error)
+				require.NoError(
+					t,
+					db.Table("nextcloud_content_leases").
+						Where("kind='read' AND released_at_ms IS NULL").
+						Count(&live).
+						Error,
+				)
 				require.Positive(t, live)
 				found := false
 				for _, message := range input {
@@ -99,11 +157,23 @@ func TestAgentHistoryActualModelConsumesWithHeldLeasesAndBodyRevocation(t *testi
 				}
 				require.True(t, found)
 				if revoke {
-					require.NoError(t, db.Model(&types.Message{}).Where("id=?", assistant.ID).Update("content", "foreign body").Error)
+					require.NoError(
+						t,
+						db.Model(&types.Message{}).Where("id=?", assistant.ID).Update("content", "foreign body").Error,
+					)
 				}
 				return nil
 			}}
-			engine := agent.NewAgentEngine(&types.AgentConfig{MaxIterations: 2, Temperature: 0.1}, model, nil, event.NewEventBus(), nil, nil, session.ID, "")
+			engine := agent.NewAgentEngine(
+				&types.AgentConfig{MaxIterations: 2, Temperature: 0.1},
+				model,
+				nil,
+				event.NewEventBus(),
+				nil,
+				nil,
+				session.ID,
+				"",
+			)
 			require.NotNil(t, engine)
 			engine.SetSourceLineageVerifier(func(_ context.Context, lineage *types.SourceLineage) error {
 				if err := lineage.RequireComplete(); err != nil {
@@ -145,26 +215,59 @@ func TestAgentHistoryPostgresActualModelCheckpointAndParentRevokeSingleConnectio
 	defer cancel()
 	kbs := &knowledgeBaseService{repo: repository.NewKnowledgeBaseRepository(db)}
 	groups := NewGroupAccessService(repository.NewGroupAccessRepository(db))
-	sourceGuard := access.NewNextcloudSourceLineageGuard(kg.repo.(access.NextcloudLineageSnapshotLookup), kbs, nil, nil, groups, nil, store)
-	messages := &messageService{messageRepo: repository.NewMessageRepository(db), sessionRepo: repository.NewSessionRepository(db), sourceLineageGuard: sourceGuard, kbService: kbs, knowService: kg}
+	sourceGuard := access.NewNextcloudSourceLineageGuard(
+		kg.repo.(access.NextcloudLineageSnapshotLookup),
+		kbs,
+		nil,
+		nil,
+		groups,
+		nil,
+		store,
+	)
+	messages := &messageService{
+		messageRepo:        repository.NewMessageRepository(db),
+		sessionRepo:        repository.NewSessionRepository(db),
+		sourceLineageGuard: sourceGuard,
+		kbService:          kbs,
+		knowService:        kg,
+	}
 	ConfigureMessageMaterialProvenance(messages, store)
 	session := &types.Session{TenantID: 7, UserID: types.CallerFromContext(ctx).UserID}
 	require.NoError(t, db.Create(session).Error)
 	user, assistant := produceActualMessagePair(t, messages, ctx, session)
 	ctx = WithMessageMaterialOutputBoundary(ctx)
 	defer CloseMessageMaterialOutputBoundary(ctx)
-	history, _, err := LoadAgentHistory(ctx, messages.messageRepo, session.ID, 8000, false, messageLineageHistoryAdmission{verifier: messages})
+	history, _, err := LoadAgentHistory(
+		ctx,
+		messages.messageRepo,
+		session.ID,
+		8000,
+		false,
+		messageLineageHistoryAdmission{verifier: messages},
+	)
 	require.NoError(t, err)
 	require.Len(t, history, 2)
 	called := false
 	model := materialLeaseChat{callback: func(context.Context, []chat.Message) error {
 		called = true
 		var count int64
-		require.NoError(t, db.Table("nextcloud_content_leases").Where("kind='read' AND released_at_ms IS NULL").Count(&count).Error)
+		require.NoError(
+			t,
+			db.Table("nextcloud_content_leases").Where("kind='read' AND released_at_ms IS NULL").Count(&count).Error,
+		)
 		require.Positive(t, count)
 		return nil
 	}}
-	engine := agent.NewAgentEngine(&types.AgentConfig{MaxIterations: 2}, model, nil, event.NewEventBus(), nil, nil, session.ID, "")
+	engine := agent.NewAgentEngine(
+		&types.AgentConfig{MaxIterations: 2},
+		model,
+		nil,
+		event.NewEventBus(),
+		nil,
+		nil,
+		session.ID,
+		"",
+	)
 	empty, _ := types.NewCompleteSourceLineage()
 	engine.SetSystemPromptSourceLineage(empty)
 	engine.SetUserInputSourceLineage(empty)
@@ -180,22 +283,51 @@ func TestAgentHistoryPostgresActualModelCheckpointAndParentRevokeSingleConnectio
 	require.NoError(t, err)
 	require.True(t, called)
 	cp := &types.ContextCheckpoint{Summary: "actual PostgreSQL compaction", SourceLineage: assistant.SourceLineage}
-	require.NoError(t, (messageCheckpointSink{repo: messages.messageRepo, sessionID: session.ID}).SaveContextCheckpoint(ctx, assistant.ID, cp))
+	require.NoError(
+		t,
+		(messageCheckpointSink{repo: messages.messageRepo, sessionID: session.ID}).SaveContextCheckpoint(
+			ctx,
+			assistant.ID,
+			cp,
+		),
+	)
 	require.NoError(t, CheckMessageMaterialOutputBoundary(ctx))
 	require.NoError(t, db.Model(&types.Message{}).Where("id=?", user.ID).Update("content", "foreign parent").Error)
 	require.NoError(t, db.Model(&types.Message{}).Where("id=?", user.ID).Update("content", user.Content).Error)
 	require.Error(t, CheckMessageMaterialOutputBoundary(ctx))
 	fresh := WithMessageMaterialOutputBoundary(ctx)
 	defer CloseMessageMaterialOutputBoundary(fresh)
-	_, _, err = LoadAgentHistory(fresh, messages.messageRepo, session.ID, 8000, false, messageLineageHistoryAdmission{verifier: messages})
+	_, _, err = LoadAgentHistory(
+		fresh,
+		messages.messageRepo,
+		session.ID,
+		8000,
+		false,
+		messageLineageHistoryAdmission{verifier: messages},
+	)
 	require.Error(t, err)
 }
 
 func TestAgentHistoryActualHumanAttachmentOriginalAndUnknownGeneratedFieldReject(t *testing.T) {
 	messages, _, _, db, ctx, session := messageMaterialActualFixture(t)
-	user, err := messages.CreateMessage(ctx, &types.Message{SessionID: session.ID, RequestID: "new-uploaded-human-input", Role: "user", Content: "actual attachment question", IsCompleted: true, Attachments: types.MessageAttachments{{FileName: "actual.txt", Content: "actual newly submitted attachment content"}}})
+	user, err := messages.CreateMessage(
+		ctx,
+		&types.Message{
+			SessionID:   session.ID,
+			RequestID:   "new-uploaded-human-input",
+			Role:        "user",
+			Content:     "actual attachment question",
+			IsCompleted: true,
+			Attachments: types.MessageAttachments{
+				{FileName: "actual.txt", Content: "actual newly submitted attachment content"},
+			},
+		},
+	)
 	require.NoError(t, err)
-	assistant, err := messages.CreateMessage(ctx, &types.Message{SessionID: session.ID, RequestID: user.RequestID, Role: "assistant"})
+	assistant, err := messages.CreateMessage(
+		ctx,
+		&types.Message{SessionID: session.ID, RequestID: user.RequestID, Role: "assistant"},
+	)
 	require.NoError(t, err)
 	assistant.Content = "actual answer"
 	assistant.IsCompleted = true
@@ -203,25 +335,67 @@ func TestAgentHistoryActualHumanAttachmentOriginalAndUnknownGeneratedFieldReject
 	require.NoError(t, messages.UpdateMessage(ctx, assistant))
 	ctx = WithMessageMaterialOutputBoundary(ctx)
 	defer CloseMessageMaterialOutputBoundary(ctx)
-	history, _, err := LoadAgentHistory(ctx, messages.messageRepo, session.ID, 8000, false, messageLineageHistoryAdmission{verifier: messages})
+	history, _, err := LoadAgentHistory(
+		ctx,
+		messages.messageRepo,
+		session.ID,
+		8000,
+		false,
+		messageLineageHistoryAdmission{verifier: messages},
+	)
 	require.NoError(t, err)
 	require.Len(t, history, 2)
 	require.Contains(t, history[0].Content, user.Attachments[0].Content)
-	require.NoError(t, messages.UpdateMessageRenderedContent(ctx, session.ID, user.ID, "uncertified generated rendering"))
+	require.NoError(
+		t,
+		messages.UpdateMessageRenderedContent(ctx, session.ID, user.ID, "uncertified generated rendering"),
+	)
 	fresh := WithMessageMaterialOutputBoundary(ctx)
 	defer CloseMessageMaterialOutputBoundary(fresh)
-	_, _, err = LoadAgentHistory(fresh, messages.messageRepo, session.ID, 8000, false, messageLineageHistoryAdmission{verifier: messages})
+	_, _, err = LoadAgentHistory(
+		fresh,
+		messages.messageRepo,
+		session.ID,
+		8000,
+		false,
+		messageLineageHistoryAdmission{verifier: messages},
+	)
 	require.Error(t, err)
 	var exists int64
-	require.NoError(t, db.Table("message_generated_field_admissions").Where("message_id=? AND field='rendered_content'", user.ID).Count(&exists).Error)
+	require.NoError(
+		t,
+		db.Table("message_generated_field_admissions").
+			Where("message_id=? AND field='rendered_content'", user.ID).
+			Count(&exists).
+			Error,
+	)
 	require.Zero(t, exists)
 }
 
 func TestMessageActualRAGPartialRendererImageThenFinalProducer(t *testing.T) {
 	messages, _, _, _, ctx, session := messageMaterialActualFixture(t)
-	user, err := messages.CreateMessage(ctx, &types.Message{SessionID: session.ID, RequestID: "actual-rag-partials", Role: "user", Content: "actual human query", IsCompleted: true, Images: types.MessageImages{{URL: "https://owned.invalid/new-human-image"}}, ExecutionContext: types.MessageExecutionContext{KnowledgeBaseIDs: []string{"kb"}}})
+	user, err := messages.CreateMessage(
+		ctx,
+		&types.Message{
+			SessionID:        session.ID,
+			RequestID:        "actual-rag-partials",
+			Role:             "user",
+			Content:          "actual human query",
+			IsCompleted:      true,
+			Images:           types.MessageImages{{URL: "https://owned.invalid/new-human-image"}},
+			ExecutionContext: types.MessageExecutionContext{KnowledgeBaseIDs: []string{"kb"}},
+		},
+	)
 	require.NoError(t, err)
-	assistant, err := messages.CreateMessage(ctx, &types.Message{SessionID: session.ID, RequestID: user.RequestID, Role: "assistant", ExecutionContext: user.ExecutionContext})
+	assistant, err := messages.CreateMessage(
+		ctx,
+		&types.Message{
+			SessionID:        session.ID,
+			RequestID:        user.RequestID,
+			Role:             "assistant",
+			ExecutionContext: user.ExecutionContext,
+		},
+	)
 	require.NoError(t, err)
 	ctx = WithMessageMaterialOutputBoundary(ctx)
 	ctx = context.WithValue(ctx, agentHistoryCurrentRequestKey{}, user.RequestID)
@@ -238,7 +412,10 @@ func TestMessageActualRAGPartialRendererImageThenFinalProducer(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, original.Images, 1)
 	// Actual pipeline setters use the checked turn and original read snapshots.
-	require.NoError(t, messages.UpdateMessageRenderedContent(ctx, session.ID, user.ID, "actual deterministic rendered query"))
+	require.NoError(
+		t,
+		messages.UpdateMessageRenderedContent(ctx, session.ID, user.ID, "actual deterministic rendered query"),
+	)
 	images := append(types.MessageImages{}, original.Images...)
 	images[0].Caption = "actual deterministic generated image caption"
 	require.NoError(t, messages.UpdateMessageImages(ctx, session.ID, user.ID, images))
@@ -250,7 +427,15 @@ func TestMessageActualRAGPartialRendererImageThenFinalProducer(t *testing.T) {
 	// A new original reader gets the exact independently admitted user fields.
 	fresh := WithMessageMaterialOutputBoundary(ctx)
 	defer CloseMessageMaterialOutputBoundary(fresh)
-	rows, err := messages.admittedMessages(fresh, types.MessageMaterialReadRequest{TenantID: 7, SessionID: session.ID, MessageIDs: []string{user.ID}, IncludeOriginalUserFields: true})
+	rows, err := messages.admittedMessages(
+		fresh,
+		types.MessageMaterialReadRequest{
+			TenantID:                  7,
+			SessionID:                 session.ID,
+			MessageIDs:                []string{user.ID},
+			IncludeOriginalUserFields: true,
+		},
+	)
 	require.NoError(t, err)
 	require.Equal(t, images[0].Caption, rows[0].Images[0].Caption)
 	require.Equal(t, "actual deterministic rendered query", rows[0].RenderedContent)
@@ -258,11 +443,28 @@ func TestMessageActualRAGPartialRendererImageThenFinalProducer(t *testing.T) {
 
 func TestMessageActualFirstQAPersistedPlaceholderHistoryAndFinalStream(t *testing.T) {
 	messages, _, _, db, ctx, session := messageMaterialActualFixture(t)
-	user, err := messages.CreateMessage(ctx, &types.Message{SessionID: session.ID, RequestID: "first-actual-qa-turn", Role: "user", Content: "first actual human question", IsCompleted: true})
+	user, err := messages.CreateMessage(
+		ctx,
+		&types.Message{
+			SessionID:   session.ID,
+			RequestID:   "first-actual-qa-turn",
+			Role:        "user",
+			Content:     "first actual human question",
+			IsCompleted: true,
+		},
+	)
 	require.NoError(t, err)
-	assistant, err := messages.CreateMessage(ctx, &types.Message{SessionID: session.ID, RequestID: user.RequestID, Role: "assistant"})
+	assistant, err := messages.CreateMessage(
+		ctx,
+		&types.Message{SessionID: session.ID, RequestID: user.RequestID, Role: "assistant"},
+	)
 	require.NoError(t, err)
-	cfg := &config.Config{Conversation: &config.ConversationConfig{MaxRounds: 3, Summary: &config.SummaryConfig{Prompt: "actual configured code prompt", ContextTemplate: "{{.Query}}"}}}
+	cfg := &config.Config{
+		Conversation: &config.ConversationConfig{
+			MaxRounds: 3,
+			Summary:   &config.SummaryConfig{Prompt: "actual configured code prompt", ContextTemplate: "{{.Query}}"},
+		},
+	}
 	called := false
 	model := materialLeaseChat{callback: func(modelCtx context.Context, input []chat.Message) error {
 		called = true
@@ -275,13 +477,24 @@ func TestMessageActualFirstQAPersistedPlaceholderHistoryAndFinalStream(t *testin
 		require.GreaterOrEqual(t, count, int64(2))
 		return nil
 	}}
-	models := &stubModelService{chatModel: model, modelsByID: map[string]*types.Model{"actual-first-qa-model": {ID: "actual-first-qa-model", TenantID: 7, Type: types.ModelTypeKnowledgeQA}}}
+	models := &stubModelService{
+		chatModel: model,
+		modelsByID: map[string]*types.Model{
+			"actual-first-qa-model": {ID: "actual-first-qa-model", TenantID: 7, Type: types.ModelTypeKnowledgeQA},
+		},
+	}
 	manager := chatpipeline.NewEventManager()
 	chatpipeline.ConfigureSourceLineage(manager, messages.sourceLineageGuard.(*access.NextcloudSourceLineageGuard))
 	chatpipeline.NewPluginLoadHistory(manager, messages, cfg)
 	chatpipeline.NewPluginMemoryRecall(manager, nil)
 	chatpipeline.NewPluginChatCompletionStream(manager, models)
-	service := &sessionService{cfg: cfg, modelService: models, eventManager: manager, lineageVerifier: messages, sourceLineageGuard: messages.sourceLineageGuard}
+	service := &sessionService{
+		cfg:                cfg,
+		modelService:       models,
+		eventManager:       manager,
+		lineageVerifier:    messages,
+		sourceLineageGuard: messages.sourceLineageGuard,
+	}
 	bus := event.NewEventBus()
 	require.NoError(t, repository.UpgradeMessageProducerAdvanceSchema(db))
 	ctx, _, finalCheck, closeHTTP := BeginMessageMaterialHTTPBoundary(ctx)
@@ -302,7 +515,14 @@ func TestMessageActualFirstQAPersistedPlaceholderHistoryAndFinalStream(t *testin
 		}
 		return nil
 	})
-	req := &types.QARequest{Session: session, Query: user.Content, UserMessageID: user.ID, AssistantMessageID: assistant.ID, SummaryModelID: "actual-first-qa-model", TurnLeaseHeld: true}
+	req := &types.QARequest{
+		Session:            session,
+		Query:              user.Content,
+		UserMessageID:      user.ID,
+		AssistantMessageID: assistant.ID,
+		SummaryModelID:     "actual-first-qa-model",
+		TurnLeaseHeld:      true,
+	}
 	require.NoError(t, service.KnowledgeQA(ctx, req, bus))
 	select {
 	case err := <-done:
@@ -345,23 +565,48 @@ func TestMessageMaterialModelBoundaryCancelExpiryAndCurrentRequestControlABA(t *
 		t.Run(change, func(t *testing.T) {
 			messages, _, _, db, ctx, session := messageMaterialActualFixture(t)
 			_, assistant := produceActualMessagePair(t, messages, ctx, session)
-			current, err := messages.CreateMessage(ctx, &types.Message{SessionID: session.ID, RequestID: "current-model-request", Role: "assistant"})
+			current, err := messages.CreateMessage(
+				ctx,
+				&types.Message{SessionID: session.ID, RequestID: "current-model-request", Role: "assistant"},
+			)
 			require.NoError(t, err)
 			ctx, cancel := context.WithCancel(ctx)
 			defer cancel()
 			ctx = WithMessageMaterialOutputBoundary(ctx)
 			ctx = context.WithValue(ctx, agentHistoryCurrentRequestKey{}, current.RequestID)
 			defer CloseMessageMaterialOutputBoundary(ctx)
-			_, _, err = LoadAgentHistory(ctx, messages.messageRepo, session.ID, 8000, false, messageLineageHistoryAdmission{verifier: messages})
+			_, _, err = LoadAgentHistory(
+				ctx,
+				messages.messageRepo,
+				session.ID,
+				8000,
+				false,
+				messageLineageHistoryAdmission{verifier: messages},
+			)
 			require.NoError(t, err)
 			switch change {
 			case "cancel":
 				cancel()
 			case "expiry":
-				require.NoError(t, db.Table("nextcloud_content_leases").Where("kind='read' AND released_at_ms IS NULL").Update("expires_at_ms", 1).Error)
+				require.NoError(
+					t,
+					db.Table("nextcloud_content_leases").
+						Where("kind='read' AND released_at_ms IS NULL").
+						Update("expires_at_ms", 1).
+						Error,
+				)
 			case "current-request-control-ABA":
-				require.NoError(t, db.Model(&types.Message{}).Where("id=?", current.ID).Update("request_id", "foreign-selection-control").Error)
-				require.NoError(t, db.Model(&types.Message{}).Where("id=?", current.ID).Update("request_id", current.RequestID).Error)
+				require.NoError(
+					t,
+					db.Model(&types.Message{}).
+						Where("id=?", current.ID).
+						Update("request_id", "foreign-selection-control").
+						Error,
+				)
+				require.NoError(
+					t,
+					db.Model(&types.Message{}).Where("id=?", current.ID).Update("request_id", current.RequestID).Error,
+				)
 			}
 			require.Error(t, CheckMessageMaterialOutputBoundary(ctx), assistant.ID)
 		})

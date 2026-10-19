@@ -14,7 +14,12 @@ import (
 
 // searchHistoryVectorViaNativeBridge is the integration target for the
 // existing vectorSearchViaKB method. No text-bearing legacy search is used.
-func (s *messageService) searchHistoryVectorViaNativeBridge(ctx context.Context, params *types.MessageSearchParams, kbID string, rc *types.RetrievalConfig) ([]*types.MessageSearchResultItem, map[string][]*types.Message, error) {
+func (s *messageService) searchHistoryVectorViaNativeBridge(
+	ctx context.Context,
+	params *types.MessageSearchParams,
+	kbID string,
+	rc *types.RetrievalConfig,
+) ([]*types.MessageSearchResultItem, map[string][]*types.Message, error) {
 	if ctx == nil || params == nil || s.materialStore == nil {
 		return nil, nil, access.ErrNextcloudPublicationUnavailable
 	}
@@ -33,7 +38,12 @@ func (s *messageService) searchHistoryVectorViaNativeBridge(ctx context.Context,
 	if len(ownedIDs) == 0 {
 		return []*types.MessageSearchResultItem{}, map[string][]*types.Message{}, nil
 	}
-	search := types.SearchParams{QueryText: params.Query, MatchCount: min(rc.GetEffectiveEmbeddingTopK(), historySearchMaximumResults), VectorThreshold: rc.GetEffectiveVectorThreshold(), DisableKeywordsMatch: true}
+	search := types.SearchParams{
+		QueryText:            params.Query,
+		MatchCount:           min(rc.GetEffectiveEmbeddingTopK(), historySearchMaximumResults),
+		VectorThreshold:      rc.GetEffectiveVectorThreshold(),
+		DisableKeywordsMatch: true,
+	}
 	candidates, err := kb.SearchHistoryVectorCandidates(ctx, kbID, ownedIDs, search)
 	if err != nil {
 		return nil, nil, err
@@ -56,7 +66,14 @@ func (s *messageService) searchHistoryVectorViaNativeBridge(ctx context.Context,
 		ids = append(ids, id)
 	}
 	sort.Strings(ids)
-	parents, err := s.materialStore.PeekOwnedHistoryKnowledgeParentPlans(ctx, tenant, kbID, params.OwnerID, ids, params.SessionIDs)
+	parents, err := s.materialStore.PeekOwnedHistoryKnowledgeParentPlans(
+		ctx,
+		tenant,
+		kbID,
+		params.OwnerID,
+		ids,
+		params.SessionIDs,
+	)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -98,7 +115,13 @@ func (s *messageService) searchHistoryVectorViaNativeBridge(ctx context.Context,
 
 // The bridge authorizes every actual original and child snapshot. The common
 // model boundary additionally rejects mutation of the already-hydrated input.
-func (s *messageService) rerankHistoryVectorResults(ctx context.Context, bridge *historyVectorMaterialBridge, rc *types.RetrievalConfig, query string, results []*types.SearchResult) ([]*types.SearchResult, error) {
+func (s *messageService) rerankHistoryVectorResults(
+	ctx context.Context,
+	bridge *historyVectorMaterialBridge,
+	rc *types.RetrievalConfig,
+	query string,
+	results []*types.SearchResult,
+) ([]*types.SearchResult, error) {
 	if bridge == nil || bridge.service != s {
 		return nil, access.ErrNextcloudPublicationUnavailable
 	}
@@ -126,8 +149,14 @@ func (s *messageService) rerankHistoryVectorResults(ctx context.Context, bridge 
 // of provider stalls/revocation/lookup mutation without creating fake proof.
 // A provider failure is explicit; hybrid callers must not claim a full empty
 // vector search or silently downgrade to keyword success.
-func runHistoryVectorRerank(ctx context.Context, rc *types.RetrievalConfig, query string, results []*types.SearchResult, documents []string,
-	current func() error, load func(context.Context, string) (rerank.Reranker, error),
+func runHistoryVectorRerank(
+	ctx context.Context,
+	rc *types.RetrievalConfig,
+	query string,
+	results []*types.SearchResult,
+	documents []string,
+	current func() error,
+	load func(context.Context, string) (rerank.Reranker, error),
 ) ([]*types.SearchResult, error) {
 	if current == nil || ctx == nil || len(results) != len(documents) || len(results) > maxRetrievalPoolSize {
 		return nil, access.ErrNextcloudPublicationUnavailable
@@ -221,7 +250,8 @@ func runHistoryVectorRerank(ctx context.Context, rc *types.RetrievalConfig, quer
 	// whole malformed response so invalid indexes cannot panic or hide hits.
 	seen := map[int]bool{}
 	for _, rank := range ranks {
-		if rank.Index < 0 || rank.Index >= len(results) || seen[rank.Index] || math.IsNaN(rank.RelevanceScore) || math.IsInf(rank.RelevanceScore, 0) {
+		if rank.Index < 0 || rank.Index >= len(results) || seen[rank.Index] || math.IsNaN(rank.RelevanceScore) ||
+			math.IsInf(rank.RelevanceScore, 0) {
 			return nil, access.ErrNextcloudPublicationUnavailable
 		}
 		seen[rank.Index] = true

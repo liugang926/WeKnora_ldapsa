@@ -12,11 +12,13 @@ type APIKeyOperationRequirement struct {
 	Capabilities      []APIKeyCapability
 }
 
+// WithAPIKeyOperationRequirement attaches the trusted route capability policy.
 func WithAPIKeyOperationRequirement(ctx context.Context, requirement APIKeyOperationRequirement) context.Context {
 	requirement.Capabilities = append([]APIKeyCapability(nil), requirement.Capabilities...)
 	return context.WithValue(ctx, apiKeyOperationRequirementKey{}, requirement)
 }
 
+// APIKeyOperationRequirementFromContext returns a copy of the trusted route capability policy.
 func APIKeyOperationRequirementFromContext(ctx context.Context) (APIKeyOperationRequirement, bool) {
 	if ctx == nil {
 		return APIKeyOperationRequirement{}, false
@@ -26,6 +28,7 @@ func APIKeyOperationRequirementFromContext(ctx context.Context) (APIKeyOperation
 	return r, ok
 }
 
+// Allows rechecks the exact route policy against the current key scope.
 func (r APIKeyOperationRequirement) Allows(scope TenantAPIKeyScope) bool {
 	if r.PlatformOnly && (!scope.IsPlatform() || len(r.Capabilities) == 0) {
 		return false

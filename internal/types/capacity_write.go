@@ -5,6 +5,7 @@ import (
 	"io"
 )
 
+// CapacityWriteSession records the exact server-admitted storage write lifecycle.
 // Only server-side Nextcloud admission installs this context. It is not a
 // reader principal and grants no permission to delete a physical resource.
 type CapacityWriteSession interface {
@@ -19,14 +20,18 @@ type CapacityWriteSession interface {
 }
 type capacityWriteKey struct{}
 
+// WithCapacityWriteSession attaches the server-admitted storage session.
 func WithCapacityWriteSession(ctx context.Context, s CapacityWriteSession) context.Context {
 	return context.WithValue(ctx, capacityWriteKey{}, s)
 }
+
+// CapacityWriteSessionFromContext returns the admitted write session, if present.
 func CapacityWriteSessionFromContext(ctx context.Context) CapacityWriteSession {
 	s, _ := ctx.Value(capacityWriteKey{}).(CapacityWriteSession)
 	return s
 }
 
+// CapacityLocalObject describes one exact physical object during capacity reconciliation.
 type CapacityLocalObject struct {
 	Token, TenantKnowledgeID, BackendID, PhysicalPath, RootIdentity, ScopeID, ObjectIdentity string
 	Size                                                                                     int64

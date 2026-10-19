@@ -81,7 +81,14 @@ func (g *NextcloudSourceLineageGuard) CheckBatch(ctx context.Context, reads []So
 				return ErrNextcloudPublicationDenied
 			}
 			controlled[source.KnowledgeBaseID] = source.TenantID
-			targets = append(targets, &types.SearchTarget{Type: types.SearchTargetTypeKnowledgeBase, TenantID: source.TenantID, KnowledgeBaseID: source.KnowledgeBaseID})
+			targets = append(
+				targets,
+				&types.SearchTarget{
+					Type:            types.SearchTargetTypeKnowledgeBase,
+					TenantID:        source.TenantID,
+					KnowledgeBaseID: source.KnowledgeBaseID,
+				},
+			)
 		}
 		if err := g.checkCurrentKBReads(ctx, caller, targets, controlled, read.Scope); err != nil {
 			return err
@@ -94,7 +101,9 @@ func (g *NextcloudSourceLineageGuard) CheckBatch(ctx context.Context, reads []So
 	if err != nil {
 		return err
 	}
-	if current.ID != initial.ID || current.DirectoryID != initial.DirectoryID || current.ObjectGUID != initial.ObjectGUID || *current.UserID != *initial.UserID {
+	if current.ID != initial.ID || current.DirectoryID != initial.DirectoryID ||
+		current.ObjectGUID != initial.ObjectGUID ||
+		*current.UserID != *initial.UserID {
 		return ErrNextcloudPublicationDenied
 	}
 	matches, err := g.snapshots.RecheckNextcloudSourceLineage(ctx, union)

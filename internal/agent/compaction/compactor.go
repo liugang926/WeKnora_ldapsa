@@ -100,6 +100,7 @@ func (c *Compactor) SetSourceLineageVerifier(check func(context.Context, *types.
 		c.lineageVerifier = check
 	}
 }
+
 func (c *Compactor) checkLineage(ctx context.Context, l *types.SourceLineage) error {
 	if err := l.RequireComplete(); err != nil {
 		return err
@@ -178,7 +179,13 @@ func (c *Compactor) summarizeHistory(ctx context.Context, p *Preparation) (strin
 		instructions = updateSummarizationInstructions
 	}
 	text, err := c.summarize(
-		ctx, p.MessagesToSummarize, p.OmittedHistory, p.PreviousSummary, instructions, c.settings.summaryBudget(), p.HistorySourceLineage,
+		ctx,
+		p.MessagesToSummarize,
+		p.OmittedHistory,
+		p.PreviousSummary,
+		instructions,
+		c.settings.summaryBudget(),
+		p.HistorySourceLineage,
 	)
 	if err != nil {
 		// The previous summary is still the best record of everything
@@ -198,7 +205,13 @@ func (c *Compactor) appendTurnPrefix(ctx context.Context, p *Preparation, histor
 	}
 	degraded := false
 	prefix, err := c.summarize(
-		ctx, p.TurnPrefixMessages, p.OmittedTurnPrefix, "", turnPrefixInstructions, c.settings.turnPrefixBudget(), lineageOf(independentSummaryInput(), p.TurnPrefixMessages),
+		ctx,
+		p.TurnPrefixMessages,
+		p.OmittedTurnPrefix,
+		"",
+		turnPrefixInstructions,
+		c.settings.turnPrefixBudget(),
+		lineageOf(independentSummaryInput(), p.TurnPrefixMessages),
 	)
 	if err != nil {
 		degraded = true
@@ -234,7 +247,11 @@ func (c *Compactor) summarize(
 	}
 	request := []chat.Message{
 		{Role: "system", Content: summarizationSystemPrompt, SourceLineage: independentSummaryInput()},
-		{Role: "user", Content: buildSummarizationPrompt(messages, omitted, previousSummary, instructions), SourceLineage: lineage},
+		{
+			Role:          "user",
+			Content:       buildSummarizationPrompt(messages, omitted, previousSummary, instructions),
+			SourceLineage: lineage,
+		},
 	}
 	opts := &chat.ChatOptions{
 		Temperature:    0.3, // low temperature for factual summarization

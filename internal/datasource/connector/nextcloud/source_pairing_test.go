@@ -24,9 +24,11 @@ func TestCommitSourcePairingSignsAndChecksExactAck(t *testing.T) {
 		var body map[string]string
 		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
 		require.Equal(t, "7", body["tenant_id"])
-		pair := map[string]any{"operation_id": body["operation_id"], "instance_id": body["instance_id"],
+		pair := map[string]any{
+			"operation_id": body["operation_id"], "instance_id": body["instance_id"],
 			"binding_id": "dev-published", "tenant_id": body["tenant_id"],
-			"knowledge_base_id": body["knowledge_base_id"], "data_source_id": body["data_source_id"], "state": "active"}
+			"knowledge_base_id": body["knowledge_base_id"], "data_source_id": body["data_source_id"], "state": "active",
+		}
 		if wrongAck {
 			pair["data_source_id"] = "another-source"
 		}
@@ -34,13 +36,20 @@ func TestCommitSourcePairingSignsAndChecksExactAck(t *testing.T) {
 	}))
 	defer server.Close()
 	allowHTTPTestOrigin(t, server.URL)
-	config := &types.DataSourceConfig{Type: types.ConnectorTypeNextcloud,
-		Settings:    map[string]interface{}{"base_url": server.URL},
-		Credentials: map[string]interface{}{"token": "pairing-token", "key_id": "pair_82d622251eb647ad92642759e33dfa03"},
-		ResourceIDs: []string{"dev-published"}}
-	pair := SourcePairingCommit{OperationID: "82d62225-1eb6-47ad-9264-2759e33dfa03",
-		InstanceID: "instance-1", BindingID: "dev-published", TenantID: 7,
-		KnowledgeBaseID: "kb-1", DataSourceID: "source-1"}
+	config := &types.DataSourceConfig{
+		Type:     types.ConnectorTypeNextcloud,
+		Settings: map[string]interface{}{"base_url": server.URL},
+		Credentials: map[string]interface{}{
+			"token":  "pairing-token",
+			"key_id": "pair_82d622251eb647ad92642759e33dfa03",
+		},
+		ResourceIDs: []string{"dev-published"},
+	}
+	pair := SourcePairingCommit{
+		OperationID: "82d62225-1eb6-47ad-9264-2759e33dfa03",
+		InstanceID:  "instance-1", BindingID: "dev-published", TenantID: 7,
+		KnowledgeBaseID: "kb-1", DataSourceID: "source-1",
+	}
 	require.NoError(t, CommitSourcePairing(context.Background(), config, pair))
 	require.NoError(t, CommitSourcePairing(context.Background(), config, pair), "unchanged ACK is idempotent")
 	wrongAck = true
@@ -72,14 +81,20 @@ func TestAbortSourcePairingSignsExactIntentAndRejectsWrongAck(t *testing.T) {
 	}))
 	defer server.Close()
 	allowHTTPTestOrigin(t, server.URL)
-	config := &types.DataSourceConfig{Type: types.ConnectorTypeNextcloud,
+	config := &types.DataSourceConfig{
+		Type:     types.ConnectorTypeNextcloud,
 		Settings: map[string]interface{}{"base_url": server.URL},
-		Credentials: map[string]interface{}{"token": "pairing-token",
-			"key_id": "pair_82d622251eb647ad92642759e33dfa03"},
-		ResourceIDs: []string{"dev-published"}}
-	pair := SourcePairingCommit{OperationID: "82d62225-1eb6-47ad-9264-2759e33dfa03",
-		InstanceID: "instance-1", BindingID: "dev-published", TenantID: 7,
-		KnowledgeBaseID: "kb-1", DataSourceID: "source-1"}
+		Credentials: map[string]interface{}{
+			"token":  "pairing-token",
+			"key_id": "pair_82d622251eb647ad92642759e33dfa03",
+		},
+		ResourceIDs: []string{"dev-published"},
+	}
+	pair := SourcePairingCommit{
+		OperationID: "82d62225-1eb6-47ad-9264-2759e33dfa03",
+		InstanceID:  "instance-1", BindingID: "dev-published", TenantID: 7,
+		KnowledgeBaseID: "kb-1", DataSourceID: "source-1",
+	}
 	require.NoError(t, AbortSourcePairing(context.Background(), config, pair))
 	wrongAck = true
 	require.ErrorContains(t, AbortSourcePairing(context.Background(), config, pair), "tuple mismatch")

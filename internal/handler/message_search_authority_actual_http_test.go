@@ -33,7 +33,19 @@ func TestHistorySearchActualHTTPTransactionAuthorityFactory(t *testing.T) {
 		Logger:                                   gormlogger.Default.LogMode(gormlogger.Silent),
 	})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&types.User{}, &types.TenantMember{}, &types.TenantAPIKey{}, &types.KnowledgeBase{}, &types.Knowledge{}, &types.Chunk{}, &types.Session{}, &types.Message{}))
+	require.NoError(
+		t,
+		db.AutoMigrate(
+			&types.User{},
+			&types.TenantMember{},
+			&types.TenantAPIKey{},
+			&types.KnowledgeBase{},
+			&types.Knowledge{},
+			&types.Chunk{},
+			&types.Session{},
+			&types.Message{},
+		),
+	)
 	require.NoError(t, db.Exec("PRAGMA journal_mode=WAL").Error)
 	require.NoError(t, db.Exec("ALTER TABLE messages ADD COLUMN artifacts TEXT").Error)
 	for _, file := range []string{"000023_message_artifacts_table.up.sql", "000026_message_artifacts_deleted_at.up.sql", "000028_directory_group_access.up.sql", "000046_nextcloud_content_leases.up.sql", "000070_message_original_materials.up.sql"} {
@@ -41,6 +53,7 @@ func TestHistorySearchActualHTTPTransactionAuthorityFactory(t *testing.T) {
 		require.NoError(t, err)
 		require.NoError(t, db.Exec(string(ddl)).Error)
 	}
+	installHTTPCurrentNextcloudControls(t, db)
 	sqlDB, err := db.DB()
 	require.NoError(t, err)
 	defer sqlDB.Close()
@@ -50,26 +63,73 @@ func TestHistorySearchActualHTTPTransactionAuthorityFactory(t *testing.T) {
 	knowledge := repository.NewKnowledgeRepository(db)
 	kbs := collectionHTTPKB{db: db}
 	configureFactory := func(store *repository.KnowledgeInputProvenanceStore) {
-		repository.ConfigureKnowledgeDisplayInputWriters(store, nil, knowledge, func(tx *gorm.DB) *repository.KnowledgeInputProvenanceStore {
-			actual := repository.NewKnowledgeInputProvenanceStore(tx)
-			repository.ConfigureKnowledgeInputActorGroupAccess(actual, service.NewGroupAccessService(repository.NewGroupAccessRepository(tx)))
-			return actual
-		})
+		repository.ConfigureKnowledgeDisplayInputWriters(
+			store,
+			nil,
+			knowledge,
+			func(tx *gorm.DB) *repository.KnowledgeInputProvenanceStore {
+				actual := repository.NewKnowledgeInputProvenanceStore(tx)
+				repository.ConfigureKnowledgeInputActorGroupAccess(
+					actual,
+					service.NewGroupAccessService(repository.NewGroupAccessRepository(tx)),
+				)
+				return actual
+			},
+		)
 	}
 	newMessages := func(store *repository.KnowledgeInputProvenanceStore) interfaces.MessageService {
 		repository.ConfigureKnowledgeInputActorGroupAccess(store, groups)
-		guard := access.NewNextcloudSourceLineageGuard(knowledge.(access.NextcloudLineageSnapshotLookup), kbs, nil, nil, groups, nil, store)
-		messages := service.NewMessageService(repository.NewMessageRepository(db), repository.NewSessionRepository(db), nil, kbs, nil, nil, nil, nil, nil)
+		guard := access.NewNextcloudSourceLineageGuard(
+			knowledge.(access.NextcloudLineageSnapshotLookup),
+			kbs,
+			nil,
+			nil,
+			groups,
+			nil,
+			store,
+		)
+		messages := service.NewMessageService(
+			repository.NewMessageRepository(db),
+			repository.NewSessionRepository(db),
+			nil,
+			kbs,
+			nil,
+			nil,
+			nil,
+			nil,
+			nil,
+		)
 		service.ConfigureMessageMaterialProvenance(messages, store)
-		service.ConfigureMessageSourceLineage(messages, nil, &service.SessionForkService{}, chatpipeline.NewEventManager(), guard)
+		service.ConfigureMessageSourceLineage(
+			messages,
+			nil,
+			&service.SessionForkService{},
+			chatpipeline.NewEventManager(),
+			guard,
+		)
 		return messages
 	}
 	producerStore := repository.NewKnowledgeInputProvenanceStore(db)
 	configureFactory(producerStore)
 	producer := newMessages(producerStore)
 	for _, id := range []string{"history-author", "history-other-reader"} {
-		require.NoError(t, db.Create(&types.User{ID: id, TenantID: 7, Username: id, Email: id + "@isolated.test", IsActive: true}).Error)
-		require.NoError(t, db.Create(&types.TenantMember{UserID: id, TenantID: 7, Role: types.TenantRoleContributor, Status: types.TenantMemberStatusActive}).Error)
+		require.NoError(
+			t,
+			db.Create(
+				&types.User{ID: id, TenantID: 7, Username: id, Email: id + "@isolated.test", IsActive: true},
+			).Error,
+		)
+		require.NoError(
+			t,
+			db.Create(
+				&types.TenantMember{
+					UserID:   id,
+					TenantID: 7,
+					Role:     types.TenantRoleContributor,
+					Status:   types.TenantMemberStatusActive,
+				},
+			).Error,
+		)
 	}
 	readerContext := func(id string) context.Context {
 		ctx := types.WithExecutionTenant(context.Background(), 7)
@@ -101,7 +161,9 @@ func TestHistorySearchActualHTTPTransactionAuthorityFactory(t *testing.T) {
 	})
 	router.POST("/messages/search", NewMessageHandler(reader, nil, nil).SearchMessages)
 	search := func() (*httptest.ResponseRecorder, types.MessageSearchResult) {
-		encoded, err := json.Marshal(map[string]any{"query": query, "mode": "keyword", "limit": 20, "session_ids": []string{session.ID}})
+		encoded, err := json.Marshal(
+			map[string]any{"query": query, "mode": "keyword", "limit": 20, "session_ids": []string{session.ID}},
+		)
 		require.NoError(t, err)
 		request := httptest.NewRequest(http.MethodPost, "/messages/search", bytes.NewReader(encoded))
 		request.Header.Set("Content-Type", "application/json")
@@ -141,7 +203,15 @@ func TestHistorySearchActualHTTPTransactionAuthorityFactory(t *testing.T) {
 	// changing output bytes cannot leave original-row receipts sufficient.
 	boundary := service.WithMessageMaterialOutputBoundary(ctx)
 	defer service.CloseMessageMaterialOutputBoundary(boundary)
-	projection, err := reader.SearchMessages(boundary, &types.MessageSearchParams{Query: query, Mode: types.MessageSearchModeKeyword, Limit: 20, SessionIDs: []string{session.ID}})
+	projection, err := reader.SearchMessages(
+		boundary,
+		&types.MessageSearchParams{
+			Query:      query,
+			Mode:       types.MessageSearchModeKeyword,
+			Limit:      20,
+			SessionIDs: []string{session.ID},
+		},
+	)
 	require.NoError(t, err)
 	require.Equal(t, 1, projection.Total)
 	require.NoError(t, service.CheckMessageMaterialOutputBoundary(boundary))
@@ -151,6 +221,9 @@ func TestHistorySearchActualHTTPTransactionAuthorityFactory(t *testing.T) {
 	require.NoError(t, service.CheckMessageMaterialOutputBoundary(boundary))
 	service.CloseMessageMaterialOutputBoundary(boundary)
 	var live int64
-	require.NoError(t, db.Table("nextcloud_content_leases").Where("kind='read' AND released_at_ms IS NULL").Count(&live).Error)
+	require.NoError(
+		t,
+		db.Table("nextcloud_content_leases").Where("kind='read' AND released_at_ms IS NULL").Count(&live).Error,
+	)
 	require.Zero(t, live, "HTTP and explicit output guards must release their physical leases")
 }

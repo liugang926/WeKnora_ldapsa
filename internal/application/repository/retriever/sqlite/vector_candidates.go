@@ -13,7 +13,10 @@ import (
 // RetrieveVectorCandidates supports only a native index sharing the control
 // database. A remote/native store without current KB/knowledge control tables
 // is unavailable, never a reason to read its content-bearing Retrieve path.
-func (r *sqliteRepository) RetrieveVectorCandidates(ctx context.Context, p types.VectorCandidateParams) ([]*types.VectorIndexCandidate, error) {
+func (r *sqliteRepository) RetrieveVectorCandidates(
+	ctx context.Context,
+	p types.VectorCandidateParams,
+) ([]*types.VectorIndexCandidate, error) {
 	if err := types.ValidateVectorCandidateParams(ctx, p); err != nil {
 		return nil, err
 	}
@@ -26,7 +29,8 @@ func (r *sqliteRepository) RetrieveVectorCandidates(ctx context.Context, p types
 	}
 	// This read port does not provision a new dimension table or index.
 	table := vecTableName(len(p.Embedding))
-	if !r.db.Migrator().HasTable(table) || !r.db.Migrator().HasTable("knowledges") || !r.db.Migrator().HasTable("knowledge_bases") {
+	if !r.db.Migrator().HasTable(table) || !r.db.Migrator().HasTable("knowledges") ||
+		!r.db.Migrator().HasTable("knowledge_bases") {
 		return nil, types.ErrVectorCandidateRetrievalUnavailable
 	}
 	query := fmt.Sprintf(`SELECT v.rowid, v.distance, e.chunk_id, e.knowledge_id, e.knowledge_base_id
@@ -44,7 +48,10 @@ func (r *sqliteRepository) RetrieveVectorCandidates(ctx context.Context, p types
 		Distance                              float64
 		ChunkID, KnowledgeID, KnowledgeBaseID string
 	}
-	if err := r.db.WithContext(ctx).Raw(query, queryBlob, p.TopK, p.TenantID, p.TenantID, p.KnowledgeBaseIDs, p.KnowledgeIDs, types.ParseStatusCompleted, "enabled").Scan(&rows).Error; err != nil {
+	if err := r.db.WithContext(ctx).
+		Raw(query, queryBlob, p.TopK, p.TenantID, p.TenantID, p.KnowledgeBaseIDs, p.KnowledgeIDs, types.ParseStatusCompleted, "enabled").
+		Scan(&rows).
+		Error; err != nil {
 		return nil, types.ErrVectorCandidateRetrievalUnavailable
 	}
 	out := make([]*types.VectorIndexCandidate, 0, len(rows))
@@ -56,7 +63,16 @@ func (r *sqliteRepository) RetrieveVectorCandidates(ctx context.Context, p types
 		if p.Threshold > 0 && score < p.Threshold {
 			continue
 		}
-		out = append(out, &types.VectorIndexCandidate{IndexID: fmt.Sprintf("%d", row.Rowid), ChunkID: row.ChunkID, KnowledgeID: row.KnowledgeID, KnowledgeBaseID: row.KnowledgeBaseID, Score: score})
+		out = append(
+			out,
+			&types.VectorIndexCandidate{
+				IndexID:         fmt.Sprintf("%d", row.Rowid),
+				ChunkID:         row.ChunkID,
+				KnowledgeID:     row.KnowledgeID,
+				KnowledgeBaseID: row.KnowledgeBaseID,
+				Score:           score,
+			},
+		)
 	}
 	return out, nil
 }

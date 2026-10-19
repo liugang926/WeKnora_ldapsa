@@ -724,7 +724,12 @@ func (s *sessionService) DeleteAllSessions(ctx context.Context) error {
 				}
 				if len(knowledgeIDs) > 0 {
 					if err := deleteReferencedKnowledge(bgCtx, s.knowledgeService, "", knowledgeIDs); err != nil {
-						logger.Warnf(bgCtx, "Failed to delete chat history knowledge for session %s: %v", sessionID, err)
+						logger.Warnf(
+							bgCtx,
+							"Failed to delete chat history knowledge for session %s: %v",
+							sessionID,
+							err,
+						)
 					}
 				}
 			}(session.ID)
@@ -898,7 +903,11 @@ func (s *sessionService) GenerateTitle(ctx context.Context,
 	if visible.Title != "" {
 		return visible.Title, nil
 	}
-	originalTitle := types.SessionTitleSnapshot{Text: stored.Title, Revision: stored.TitleRevision, SourceLineage: stored.TitleSourceLineage}
+	originalTitle := types.SessionTitleSnapshot{
+		Text:          stored.Title,
+		Revision:      stored.TitleRevision,
+		SourceLineage: stored.TitleSourceLineage,
+	}
 
 	// Skip if title already exists
 	session.Title = ""
@@ -961,9 +970,12 @@ func (s *sessionService) GenerateTitle(ctx context.Context,
 	}
 
 	// Prepare messages for title generation
-	titlePrompt := types.RenderPromptPlaceholders(s.cfg.Conversation.GenerateSessionTitlePrompt, types.PlaceholderValues{
-		"language": types.LanguageNameFromContext(ctx),
-	})
+	titlePrompt := types.RenderPromptPlaceholders(
+		s.cfg.Conversation.GenerateSessionTitlePrompt,
+		types.PlaceholderValues{
+			"language": types.LanguageNameFromContext(ctx),
+		},
+	)
 	var chatMessages []chat.Message
 	chatMessages = append(chatMessages,
 		chat.Message{Role: "system", Content: titlePrompt},
@@ -1011,7 +1023,15 @@ func (s *sessionService) GenerateTitle(ctx context.Context,
 	if !ok {
 		return "", access.ErrNextcloudPublicationUnavailable
 	}
-	written, writeErr := titleWriter.SaveGeneratedSessionTitle(ctx, session.TenantID, session.UserID, session.ID, originalTitle, title, titleLineage)
+	written, writeErr := titleWriter.SaveGeneratedSessionTitle(
+		ctx,
+		session.TenantID,
+		session.UserID,
+		session.ID,
+		originalTitle,
+		title,
+		titleLineage,
+	)
 	err = writeErr
 	if err == nil && written != 1 {
 		err = access.ErrNextcloudPublicationDenied
@@ -1103,7 +1123,12 @@ func (s *sessionService) GenerateTitleAsync(
 					"session_id": session.ID,
 				})
 			} else {
-				logger.Infof(bgCtx, "Title update event emitted successfully, session ID: %s, title: %s", session.ID, title)
+				logger.Infof(
+					bgCtx,
+					"Title update event emitted successfully, session ID: %s, title: %s",
+					session.ID,
+					title,
+				)
 			}
 		}
 	}()

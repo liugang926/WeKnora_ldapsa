@@ -68,6 +68,7 @@ func cloneSkillsMetadata(metadata []*skills.SkillMetadata) []*skills.SkillMetada
 	}
 	return copy
 }
+
 func (e *AgentEngine) skillsMetadataInputLineage(metadata []*skills.SkillMetadata) *types.SourceLineage {
 	actual, err := json.Marshal(metadata)
 	if err != nil || e.skillsMetadataBinding == nil || !bytes.Equal(actual, e.skillsMetadataBinding) {

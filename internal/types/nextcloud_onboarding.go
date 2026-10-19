@@ -16,8 +16,10 @@ type NextcloudOnboardingCredential struct {
 	MaxKnowledgeBases int    `json:"max_knowledge_bases"`
 }
 
+// TableName returns the persistent table for this source control record.
 func (NextcloudOnboardingCredential) TableName() string { return "nextcloud_onboarding_credentials" }
 
+// NextcloudOnboardingDelegation authorizes one directory actor without adding workspace membership.
 // Delegation does not create workspace membership or give source writers admin.
 type NextcloudOnboardingDelegation struct {
 	TenantID    uint64 `gorm:"primaryKey"`
@@ -25,8 +27,10 @@ type NextcloudOnboardingDelegation struct {
 	ObjectGUID  string `gorm:"primaryKey"`
 }
 
+// TableName returns the persistent table for this source control record.
 func (NextcloudOnboardingDelegation) TableName() string { return "nextcloud_onboarding_delegations" }
 
+// NextcloudOnboardingOperation records the exact recoverable source onboarding request.
 type NextcloudOnboardingOperation struct {
 	OperationID          string     `json:"operation_id" gorm:"primaryKey"`
 	CredentialID         string     `json:"-"`
@@ -50,8 +54,10 @@ type NextcloudOnboardingOperation struct {
 	UpdatedAt            time.Time  `json:"updated_at"`
 }
 
+// TableName returns the persistent table for this source control record.
 func (NextcloudOnboardingOperation) TableName() string { return "nextcloud_onboarding_operations" }
 
+// NextcloudOnboardingRequest selects one instance, actor, target and processing template.
 type NextcloudOnboardingRequest struct {
 	OperationID          string `json:"operation_id"`
 	TenantID             uint64 `json:"tenant_id"`
@@ -65,12 +71,15 @@ type NextcloudOnboardingRequest struct {
 	ProcessingTemplateID string `json:"processing_template_id"`
 }
 
+// NextcloudGrantSubject names one original Nextcloud sharing relation.
 type NextcloudGrantSubject struct {
 	Kind             string `json:"kind"`
 	DirectoryID      string `json:"directory_id"`
 	ObjectGUID       string `json:"object_guid"`
 	SourceRelationID string `json:"source_relation_id"`
 }
+
+// NextcloudGrantSnapshot carries a complete versioned source sharing snapshot.
 type NextcloudGrantSnapshot struct {
 	PermissionVersion uint64                  `json:"permission_version"`
 	PublicationEpoch  int64                   `json:"publication_epoch"`
@@ -78,6 +87,7 @@ type NextcloudGrantSnapshot struct {
 	Subjects          []NextcloudGrantSubject `json:"subjects"`
 }
 
+// NextcloudSourceGrant retains one sharing relation without creating workspace membership.
 // Each relation is retained separately, even when two relations grant the same
 // principal. No row is projected to tenant_members or tenant_group_role_grants.
 type NextcloudSourceGrant struct {
@@ -94,8 +104,10 @@ type NextcloudSourceGrant struct {
 	Origin            string
 }
 
+// TableName returns the persistent table for this source control record.
 func (NextcloudSourceGrant) TableName() string { return "nextcloud_source_grants" }
 
+// NextcloudScopedGrantMatch identifies a matching scoped knowledge-base grant.
 type NextcloudScopedGrantMatch struct {
 	TenantID        uint64
 	KnowledgeBaseID string

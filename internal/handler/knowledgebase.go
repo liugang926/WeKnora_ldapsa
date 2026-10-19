@@ -598,7 +598,10 @@ func (h *KnowledgeBaseHandler) CreateKnowledgeBase(c *gin.Context) {
 
 	logger.Infof(ctx, "Creating knowledge base, name: %s", secutils.SanitizeForLog(req.Name))
 	// Create knowledge base using the service
-	kb, err := h.service.CreateKnowledgeBase(repository.WithIndependentKnowledgeBaseNameInput(repository.WithIndependentKnowledgeInput(ctx), "", req.Name), &req)
+	kb, err := h.service.CreateKnowledgeBase(
+		repository.WithIndependentKnowledgeBaseNameInput(repository.WithIndependentKnowledgeInput(ctx), "", req.Name),
+		&req,
+	)
 	if err != nil {
 		// Surface typed AppErrors (notably the 400-class codes
 		// ErrVectorStoreBindingInvalid and ErrVectorStoreUnavailable
@@ -971,7 +974,13 @@ func (h *KnowledgeBaseHandler) UpdateKnowledgeBase(c *gin.Context) {
 		secutils.SanitizeForLog(id), secutils.SanitizeForLog(req.Name))
 
 	// Update the knowledge base
-	kb, err := h.service.UpdateKnowledgeBase(repository.WithIndependentKnowledgeBaseNameInput(repository.WithIndependentKnowledgeInput(ctx), id, req.Name), id, req.Name, req.Description, req.Config)
+	kb, err := h.service.UpdateKnowledgeBase(
+		repository.WithIndependentKnowledgeBaseNameInput(repository.WithIndependentKnowledgeInput(ctx), id, req.Name),
+		id,
+		req.Name,
+		req.Description,
+		req.Config,
+	)
 	if err != nil {
 		logger.ErrorWithFields(ctx, err, nil)
 		c.Error(apperrors.NewInternalServerError(err.Error()))
@@ -1294,9 +1303,13 @@ func (h *KnowledgeBaseHandler) DuplicateKnowledgeBase(c *gin.Context) {
 		return
 	}
 	if sourceKB.TenantID != callerTenantID {
-		logger.Warnf(ctx,
+		logger.Warnf(
+			ctx,
 			"Knowledge base duplicate rejected: source belongs to another tenant, source_id: %s, caller_tenant: %d, kb_tenant: %d",
-			secutils.SanitizeForLog(sourceID), callerTenantID, sourceKB.TenantID)
+			secutils.SanitizeForLog(sourceID),
+			callerTenantID,
+			sourceKB.TenantID,
+		)
 		c.Error(errors.NewForbiddenError("No permission to duplicate this knowledge base"))
 		return
 	}

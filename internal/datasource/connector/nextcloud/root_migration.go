@@ -37,7 +37,11 @@ type RootMigration struct {
 	State              string `json:"state"`
 }
 
-func ReadRootMigration(ctx context.Context, source *types.DataSourceConfig, binding, operation string) (RootMigration, error) {
+func ReadRootMigration(
+	ctx context.Context,
+	source *types.DataSourceConfig,
+	binding, operation string,
+) (RootMigration, error) {
 	var out RootMigration
 	cfg, err := parseConfig(source)
 	if err != nil {
@@ -63,12 +67,18 @@ func ReadRootMigration(ctx context.Context, source *types.DataSourceConfig, bind
 		return out, err
 	}
 	out = answer.Migration
-	if out.BindingID != binding || out.OperationID != operation || (out.State != "observed" && out.State != "finalized") {
+	if out.BindingID != binding || out.OperationID != operation ||
+		(out.State != "observed" && out.State != "finalized") {
 		return out, fmt.Errorf("root migration tuple mismatch")
 	}
 	return out, nil
 }
-func AcknowledgeRootMigration(ctx context.Context, source *types.DataSourceConfig, proof RootMigration) (RootMigration, error) {
+
+func AcknowledgeRootMigration(
+	ctx context.Context,
+	source *types.DataSourceConfig,
+	proof RootMigration,
+) (RootMigration, error) {
 	cfg, err := parseConfig(source)
 	if err != nil {
 		return RootMigration{}, err
@@ -78,7 +88,12 @@ func AcknowledgeRootMigration(ctx context.Context, source *types.DataSourceConfi
 	if err != nil {
 		return RootMigration{}, err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, cli.endpointURL("/bindings/"+proof.BindingID+"/root-migrations/"+proof.OperationID+"/ack", nil), bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodPost,
+		cli.endpointURL("/bindings/"+proof.BindingID+"/root-migrations/"+proof.OperationID+"/ack", nil),
+		bytes.NewReader(body),
+	)
 	if err != nil {
 		return RootMigration{}, err
 	}

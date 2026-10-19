@@ -256,15 +256,21 @@ func TestFetchStreamEmitsOneContentAtATimeAfterCompleteManifest(t *testing.T) {
 		case apiPath + "/bindings/dev-published/manifest":
 			pages.Add(1)
 			if r.URL.Query().Get("cursor") == "" {
-				writeJSON(w, map[string]interface{}{"generation": "g1", "complete": false,
-					"next_cursor": "page-2", "items": testManifest("etag-41")["items"]})
+				writeJSON(w, map[string]interface{}{
+					"generation": "g1", "complete": false,
+					"next_cursor": "page-2", "items": testManifest("etag-41")["items"],
+				})
 				return
 			}
-			second := map[string]interface{}{"file_id": 42, "etag": "etag-42", "name": "Other.md",
+			second := map[string]interface{}{
+				"file_id": 42, "etag": "etag-42", "name": "Other.md",
 				"path": "/Published/Other.md", "mime_type": "text/markdown", "size": 5,
-				"mtime": 1700000000, "url": "https://files.example/index.php/f/42"}
-			writeJSON(w, map[string]interface{}{"generation": "g1", "complete": true,
-				"next_cursor": nil, "items": []map[string]interface{}{second}})
+				"mtime": 1700000000, "url": "https://files.example/index.php/f/42",
+			}
+			writeJSON(w, map[string]interface{}{
+				"generation": "g1", "complete": true,
+				"next_cursor": nil, "items": []map[string]interface{}{second},
+			})
 		case apiPath + "/bindings/dev-published/files/41/content":
 			if pages.Load() != 2 || observed.Load() != 1 || emitted.Load() != 0 {
 				t.Errorf("first download before preflight: pages=%d observed=%d emitted=%d",
@@ -308,8 +314,10 @@ func TestFetchStreamIncompleteManifestNeverEmits(t *testing.T) {
 			http.NotFound(w, r)
 		case apiPath + "/bindings/dev-published/manifest":
 			if r.URL.Query().Get("cursor") == "" {
-				writeJSON(w, map[string]interface{}{"generation": "g1", "complete": false,
-					"next_cursor": "page-2", "items": testManifest("etag-1")["items"]})
+				writeJSON(w, map[string]interface{}{
+					"generation": "g1", "complete": false,
+					"next_cursor": "page-2", "items": testManifest("etag-1")["items"],
+				})
 			} else {
 				http.Error(w, "unavailable", http.StatusServiceUnavailable)
 			}
@@ -417,11 +425,17 @@ func TestFetchStreamEmitFailureStopsWithoutCursor(t *testing.T) {
 		case apiPath + "/bindings/dev-published/changes":
 			http.NotFound(w, r)
 		case apiPath + "/bindings/dev-published/manifest":
-			second := map[string]interface{}{"file_id": 42, "etag": "etag-42", "name": "Other.md",
+			second := map[string]interface{}{
+				"file_id": 42, "etag": "etag-42", "name": "Other.md",
 				"path": "/Published/Other.md", "mime_type": "text/markdown", "size": 5,
-				"mtime": 1700000000, "url": "https://files.example/index.php/f/42"}
-			writeJSON(w, map[string]interface{}{"generation": "g1", "complete": true,
-				"next_cursor": nil, "items": []interface{}{testManifest("etag-41")["items"].([]map[string]interface{})[0], second}})
+				"mtime": 1700000000, "url": "https://files.example/index.php/f/42",
+			}
+			writeJSON(w, map[string]interface{}{
+				"generation":  "g1",
+				"complete":    true,
+				"next_cursor": nil,
+				"items":       []interface{}{testManifest("etag-41")["items"].([]map[string]interface{})[0], second},
+			})
 		case apiPath + "/bindings/dev-published/files/41/content":
 			w.Header().Set("ETag", "etag-41")
 			_, _ = w.Write([]byte("first"))

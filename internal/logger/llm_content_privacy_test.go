@@ -1,3 +1,4 @@
+// Package logger tests request-local restrictions on content telemetry.
 package logger
 
 import (
@@ -16,7 +17,12 @@ func TestSourceContentDebugLoggingAndDetachedContextsAreSuppressed(t *testing.T)
 	previousEnabled, previousDir := llmDebug.enabled, llmDebug.dir
 	llmDebug.enabled, llmDebug.dir = true, dir
 	t.Cleanup(func() { llmDebug.enabled, llmDebug.dir = previousEnabled, previousDir })
-	private := &LLMCallRecord{CallType: "source", Model: "private-model", Sections: []RecordSection{{Title: "Input", Content: "PRIVATE_SOURCE_BODY_AND_ENTITY"}}, Error: "PRIVATE_SOURCE_ERROR_AND_CREDENTIAL"}
+	private := &LLMCallRecord{
+		CallType: "source",
+		Model:    "private-model",
+		Sections: []RecordSection{{Title: "Input", Content: "PRIVATE_SOURCE_BODY_AND_ENTITY"}},
+		Error:    "PRIVATE_SOURCE_ERROR_AND_CREDENTIAL",
+	}
 	ctx := logprivacy.SuppressContent(context.Background())
 	rag := types.WithRAGSourceLineage(context.Background(), types.NewRAGSourceLineage(nil))
 	for _, current := range []context.Context{ctx, rag, CloneContext(ctx), CloneContextWithoutTrace(ctx), CloneContext(rag), CloneContextWithoutTrace(rag)} {
@@ -26,7 +32,13 @@ func TestSourceContentDebugLoggingAndDetachedContextsAreSuppressed(t *testing.T)
 	entries, err := os.ReadDir(dir)
 	require.NoError(t, err)
 	require.Empty(t, entries, "private source calls must not create a debug file")
-	LLMDebugLog(context.Background(), &LLMCallRecord{CallType: "ordinary", Sections: []RecordSection{{Title: "Input", Content: "PUBLIC_ORDINARY_INPUT"}}})
+	LLMDebugLog(
+		context.Background(),
+		&LLMCallRecord{
+			CallType: "ordinary",
+			Sections: []RecordSection{{Title: "Input", Content: "PUBLIC_ORDINARY_INPUT"}},
+		},
+	)
 	entries, err = os.ReadDir(dir)
 	require.NoError(t, err)
 	require.Len(t, entries, 1, "ordinary debug logging must remain enabled")

@@ -12,7 +12,11 @@ import (
 
 // SQL is authoritative for automatic classification delivery in both Redis
 // and Lite mode. A failed enqueue and a crashed consumer remain recoverable.
-func startKnowledgeAutoTagCompletionRecovery(store *repository.KnowledgeInputProvenanceStore, queue interfaces.TaskEnqueuer, cleaner interfaces.ResourceCleaner) {
+func startKnowledgeAutoTagCompletionRecovery(
+	store *repository.KnowledgeInputProvenanceStore,
+	queue interfaces.TaskEnqueuer,
+	cleaner interfaces.ResourceCleaner,
+) {
 	if store == nil || queue == nil || cleaner == nil {
 		return
 	}

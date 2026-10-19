@@ -14,7 +14,10 @@ import (
 // sides of the nearest-neighbor query project only native control IDs/score.
 // Exact tenant/KB/owned knowledge filters apply before LIMIT. Missing control
 // tables (e.g. a separate remote vector database) refuse this optional port.
-func (g *pgRepository) RetrieveVectorCandidates(ctx context.Context, p types.VectorCandidateParams) ([]*types.VectorIndexCandidate, error) {
+func (g *pgRepository) RetrieveVectorCandidates(
+	ctx context.Context,
+	p types.VectorCandidateParams,
+) ([]*types.VectorIndexCandidate, error) {
 	if err := types.ValidateVectorCandidateParams(ctx, p); err != nil {
 		return nil, err
 	}
@@ -22,7 +25,8 @@ func (g *pgRepository) RetrieveVectorCandidates(ctx context.Context, p types.Vec
 		return nil, types.ErrVectorCandidateRetrievalUnavailable
 	}
 	dim := len(p.Embedding)
-	query := fmt.Sprintf(`SELECT candidates.id, candidates.chunk_id, candidates.knowledge_id, candidates.knowledge_base_id, (1-candidates.distance) AS score
+	query := fmt.Sprintf(
+		`SELECT candidates.id, candidates.chunk_id, candidates.knowledge_id, candidates.knowledge_base_id, (1-candidates.distance) AS score
 		FROM (
 			SELECT e.id,e.chunk_id,e.knowledge_id,e.knowledge_base_id,
 				e.embedding::halfvec(%[1]d) <=> ?::halfvec(%[1]d) AS distance
@@ -34,14 +38,19 @@ func (g *pgRepository) RetrieveVectorCandidates(ctx context.Context, p types.Vec
 			AND kb.id IN ? AND kg.id IN ? AND kg.parse_status=? AND kg.enable_status=?
 			AND (e.is_enabled IS NULL OR e.is_enabled=?)
 			ORDER BY e.embedding::halfvec(%[1]d) <=> ?::halfvec(%[1]d), e.id ASC LIMIT ?
-		) candidates ORDER BY candidates.distance ASC,candidates.id ASC`, dim)
+		) candidates ORDER BY candidates.distance ASC,candidates.id ASC`,
+		dim,
+	)
 	vector := pgvector.NewHalfVector(p.Embedding)
 	var rows []struct {
 		ID                                    uint
 		ChunkID, KnowledgeID, KnowledgeBaseID string
 		Score                                 float64
 	}
-	if err := g.db.WithContext(ctx).Raw(query, vector, dim, p.TenantID, p.TenantID, p.KnowledgeBaseIDs, p.KnowledgeIDs, types.ParseStatusCompleted, "enabled", true, vector, p.TopK).Scan(&rows).Error; err != nil {
+	if err := g.db.WithContext(ctx).
+		Raw(query, vector, dim, p.TenantID, p.TenantID, p.KnowledgeBaseIDs, p.KnowledgeIDs, types.ParseStatusCompleted, "enabled", true, vector, p.TopK).
+		Scan(&rows).
+		Error; err != nil {
 		return nil, types.ErrVectorCandidateRetrievalUnavailable
 	}
 	out := make([]*types.VectorIndexCandidate, 0, len(rows))
@@ -52,7 +61,16 @@ func (g *pgRepository) RetrieveVectorCandidates(ctx context.Context, p types.Vec
 		if p.Threshold > 0 && row.Score < p.Threshold {
 			continue
 		}
-		out = append(out, &types.VectorIndexCandidate{IndexID: fmt.Sprintf("%d", row.ID), ChunkID: row.ChunkID, KnowledgeID: row.KnowledgeID, KnowledgeBaseID: row.KnowledgeBaseID, Score: row.Score})
+		out = append(
+			out,
+			&types.VectorIndexCandidate{
+				IndexID:         fmt.Sprintf("%d", row.ID),
+				ChunkID:         row.ChunkID,
+				KnowledgeID:     row.KnowledgeID,
+				KnowledgeBaseID: row.KnowledgeBaseID,
+				Score:           row.Score,
+			},
+		)
 	}
 	return out, nil
 }

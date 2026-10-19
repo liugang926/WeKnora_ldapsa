@@ -13,6 +13,8 @@ type MessageMaterialProof struct {
 	AgentID                                                              string
 	AgentTenantID                                                        uint64
 }
+
+// MessageMaterialReadRequest defines the exact original message material to read.
 type MessageMaterialReadRequest struct {
 	TenantID                  uint64
 	SessionID                 string
@@ -23,6 +25,8 @@ type MessageMaterialReadRequest struct {
 	ExcludeRequestID          string
 	ExcludeRequestIDs         []string `json:"ExcludeRequestIDs,omitempty"`
 }
+
+// MessageMaterialReadPlan pins controls before guarded body reads.
 type MessageMaterialReadPlan struct {
 	ParentPlans    []*MessageMaterialReadPlan
 	Request        MessageMaterialReadRequest
@@ -31,6 +35,8 @@ type MessageMaterialReadPlan struct {
 	Scopes         []KnowledgeSearchScope
 	SourceLineage  *SourceLineage
 }
+
+// MessageMaterialSnapshot captures guarded original messages and their proofs.
 type MessageMaterialSnapshot struct {
 	Request                                  MessageMaterialReadRequest
 	MetadataDigest                           string
@@ -40,6 +46,7 @@ type MessageMaterialSnapshot struct {
 	Proofs                                   []*MessageMaterialProof
 }
 
+// MessageMaterialCandidateControl describes immutable candidate control metadata.
 type MessageMaterialCandidateControl struct {
 	ID, RequestID, Role, AdmissionID, GenerationID string
 	Complete                                       bool
@@ -47,6 +54,7 @@ type MessageMaterialCandidateControl struct {
 	Revision, CurrentRevision                      uint64
 }
 
+// MessageGeneratedFieldProof binds a generated field to its admitted source lineage.
 type MessageGeneratedFieldProof struct {
 	AdmissionID, Field, BodyDigest string
 	Revision                       uint64

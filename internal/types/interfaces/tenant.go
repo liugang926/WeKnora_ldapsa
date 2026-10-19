@@ -33,7 +33,13 @@ type TenantService interface {
 	// callers are responsible for resolving GB→bytes.
 	BulkSetStorageQuota(ctx context.Context, quotaBytes int64) (int64, error)
 	// SearchTenants searches tenants with pagination and filters
-	SearchTenants(ctx context.Context, keyword string, tenantID uint64, page, pageSize int) ([]*types.Tenant, int64, error)
+	SearchTenants(
+		ctx context.Context,
+		keyword string,
+		tenantID uint64,
+		page,
+		pageSize int,
+	) ([]*types.Tenant, int64, error)
 	// GetTenantByIDForUser gets a tenant by ID with permission check
 	GetTenantByIDForUser(ctx context.Context, tenantID uint64, userID string) (*types.Tenant, error)
 	// GetWeKnoraCloudCredentials returns the decrypted WeKnoraCloud credentials for the current tenant.
@@ -51,7 +57,13 @@ type TenantRepository interface {
 	// ListTenants lists all tenants
 	ListTenants(ctx context.Context) ([]*types.Tenant, error)
 	// SearchTenants searches tenants with pagination and filters
-	SearchTenants(ctx context.Context, keyword string, tenantID uint64, page, pageSize int) ([]*types.Tenant, int64, error)
+	SearchTenants(
+		ctx context.Context,
+		keyword string,
+		tenantID uint64,
+		page,
+		pageSize int,
+	) ([]*types.Tenant, int64, error)
 	// UpdateTenant updates a tenant
 	UpdateTenant(ctx context.Context, tenant *types.Tenant) error
 	// DeleteTenant deletes a tenant

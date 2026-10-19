@@ -1010,10 +1010,11 @@ func redactHistoryKBResults(llmContext []chat.Message) []chat.Message {
 			redacted = append(redacted, chat.Message{
 				SourceLineage: msg.SourceLineage,
 				Role:          msg.Role,
-				Content:       "[Previous retrieval result omitted — knowledge base may have changed. Please perform a fresh search.]",
-				ToolCallID:    msg.ToolCallID,
-				Name:          msg.Name,
-				TurnID:        msg.TurnID,
+				Content: "[Previous retrieval result omitted — knowledge base may have changed. " +
+					"Please perform a fresh search.]",
+				ToolCallID: msg.ToolCallID,
+				Name:       msg.Name,
+				TurnID:     msg.TurnID,
 			})
 		} else {
 			redacted = append(redacted, msg)
@@ -1048,9 +1049,16 @@ func (e *AgentEngine) buildMessagesWithLLMContext(
 	if len(llmContext) > 0 {
 		sanitized := HistoryAsSent(llmContext, e.config.RetainRetrievalHistory)
 		if e.config.RetainRetrievalHistory {
-			logger.Infof(context.Background(), "Retaining full retrieval history in context (RetainRetrievalHistory=true)")
+			logger.Infof(
+				context.Background(),
+				"Retaining full retrieval history in context (RetainRetrievalHistory=true)",
+			)
 		} else {
-			logger.Infof(context.Background(), "Added %d history messages to context (KB tool results redacted)", len(llmContext))
+			logger.Infof(
+				context.Background(),
+				"Added %d history messages to context (KB tool results redacted)",
+				len(llmContext),
+			)
 		}
 
 		for _, msg := range sanitized {

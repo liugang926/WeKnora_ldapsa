@@ -1,10 +1,11 @@
 package config
 
 import (
-	"github.com/stretchr/testify/require"
-	"gopkg.in/yaml.v3"
 	"os"
 	"testing"
+
+	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 )
 
 func TestKnowledgeEnrichmentActualDefaultPromptFilesHaveCodeOrigins(t *testing.T) {

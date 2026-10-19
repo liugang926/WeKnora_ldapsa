@@ -21,7 +21,8 @@ func TestPostgresNextcloudActualGraphProviderCommitSerializesRetirement(t *testi
 	release := make(chan struct{})
 	name := "pause_graph_provider_actual_commit"
 	require.NoError(t, db.Callback().Create().Before("gorm:create").Register(name, func(tx *gorm.DB) {
-		if tx.Statement.Table == "nextcloud_graph_records" && tx.Statement.Context.Value(graphCommitPauseKey{}) == true {
+		if tx.Statement.Table == "nextcloud_graph_records" &&
+			tx.Statement.Context.Value(graphCommitPauseKey{}) == true {
 			close(admitted)
 			<-release
 		}
@@ -48,7 +49,14 @@ func TestPostgresNextcloudActualGraphProviderCommitSerializesRetirement(t *testi
 	close(release)
 	require.NoError(t, <-written)
 	require.NoError(t, <-retired)
-	require.Error(t, NewScopedSQLGraphRepository(db, nil).AddGraph(ctx, types.NameSpace{KnowledgeBase: "kb", Knowledge: k.ID}, []*types.GraphData{graph}), "released generation cannot commit again")
+	require.Error(
+		t,
+		NewScopedSQLGraphRepository(
+			db,
+			nil,
+		).AddGraph(ctx, types.NameSpace{KnowledgeBase: "kb", Knowledge: k.ID}, []*types.GraphData{graph}),
+		"released generation cannot commit again",
+	)
 	require.NoError(t, state.Capture(context.Background(), 7, "kb", "ds", "nextcloud:instance:77", true))
 	status := loadProcessingState(t, db)
 	require.Equal(t, "cancelled", status.Graph.State)

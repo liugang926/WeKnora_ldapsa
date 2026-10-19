@@ -9,8 +9,10 @@ import (
 	"gorm.io/gorm"
 )
 
-const historyKnowledgeCandidateMaximumIDs = 16384
-const historyKnowledgeCandidateMaximumPlans = 500
+const (
+	historyKnowledgeCandidateMaximumIDs   = 16384
+	historyKnowledgeCandidateMaximumPlans = 500
+)
 
 func ownedHistoryKnowledgeControlQuery(tx *gorm.DB, tenant uint64, kbID, owner string, sessionIDs []string) *gorm.DB {
 	q := tx.Table("knowledge_input_material_receipts r").
@@ -38,9 +40,16 @@ func ownedHistoryKnowledgeControlQuery(tx *gorm.DB, tenant uint64, kbID, owner s
 	return q
 }
 
-func validateHistoryKnowledgeControlSelector(ctx context.Context, tenant uint64, kbID, owner string, sessionIDs []string) error {
+func validateHistoryKnowledgeControlSelector(
+	ctx context.Context,
+	tenant uint64,
+	kbID, owner string,
+	sessionIDs []string,
+) error {
 	current, ok := types.TenantIDFromContext(ctx)
-	if !ok || tenant == 0 || current != tenant || kbID == "" || len(kbID) > 128 || owner == "" || types.SessionOwnerIDFromContext(ctx) != owner || len(sessionIDs) > 100 {
+	if !ok || tenant == 0 || current != tenant || kbID == "" || len(kbID) > 128 || owner == "" ||
+		types.SessionOwnerIDFromContext(ctx) != owner ||
+		len(sessionIDs) > 100 {
 		return types.ErrSourceLineageUnknown
 	}
 	for _, id := range sessionIDs {
@@ -59,14 +68,29 @@ func validateHistoryKnowledgeControlSelector(ctx context.Context, tenant uint64,
 // controls before native TopK. Assistant history revisions include its legal
 // child-pointer write; user revisions cover raw authored fields only, so
 // unconsumed generated user fields do not invalidate an otherwise valid child.
-func (s *KnowledgeInputProvenanceStore) OwnedHistoryKnowledgeIDs(ctx context.Context, tenant uint64, kbID, owner string, sessionIDs []string) ([]string, error) {
+func (s *KnowledgeInputProvenanceStore) OwnedHistoryKnowledgeIDs(
+	ctx context.Context,
+	tenant uint64,
+	kbID, owner string,
+	sessionIDs []string,
+) ([]string, error) {
 	if err := validateHistoryKnowledgeControlSelector(ctx, tenant, kbID, owner, sessionIDs); err != nil {
 		return nil, err
 	}
 	var out []string
 	err := s.collectionTransaction(ctx, func(tx *gorm.DB) error {
 		var rows []struct{ KnowledgeID string }
-		if err := ownedHistoryKnowledgeControlQuery(tx, tenant, kbID, owner, sessionIDs).Select("a.knowledge_id").Order("a.knowledge_id").Limit(historyKnowledgeCandidateMaximumIDs + 1).Scan(&rows).Error; err != nil {
+		if err := ownedHistoryKnowledgeControlQuery(
+			tx,
+			tenant,
+			kbID,
+			owner,
+			sessionIDs,
+		).Select("a.knowledge_id").
+			Order("a.knowledge_id").
+			Limit(historyKnowledgeCandidateMaximumIDs + 1).
+			Scan(&rows).
+			Error; err != nil {
 			return err
 		}
 		if len(rows) > historyKnowledgeCandidateMaximumIDs {
@@ -84,7 +108,12 @@ func (s *KnowledgeInputProvenanceStore) OwnedHistoryKnowledgeIDs(ctx context.Con
 // selects message/content, original checkpoint, title or child material JSON.
 // Actual current owner/source/body-lease admission is performed subsequently
 // by beginMessageMaterialRead; these plans cannot substitute for that guard.
-func (s *KnowledgeInputProvenanceStore) PeekOwnedHistoryKnowledgeParentPlans(ctx context.Context, tenant uint64, kbID, owner string, knowledgeIDs, sessionIDs []string) ([]*types.HistoryKnowledgeParentPlan, error) {
+func (s *KnowledgeInputProvenanceStore) PeekOwnedHistoryKnowledgeParentPlans(
+	ctx context.Context,
+	tenant uint64,
+	kbID, owner string,
+	knowledgeIDs, sessionIDs []string,
+) ([]*types.HistoryKnowledgeParentPlan, error) {
 	if err := validateHistoryKnowledgeControlSelector(ctx, tenant, kbID, owner, sessionIDs); err != nil {
 		return nil, err
 	}
@@ -103,12 +132,28 @@ func (s *KnowledgeInputProvenanceStore) PeekOwnedHistoryKnowledgeParentPlans(ctx
 	var out []*types.HistoryKnowledgeParentPlan
 	err := s.collectionTransaction(ctx, func(tx *gorm.DB) error {
 		var rows []knowledgeInputAdmission
-		if err := ownedHistoryKnowledgeControlQuery(tx, tenant, kbID, owner, sessionIDs).Where("a.knowledge_id IN ?", ids).
-			Select("a.admission_id,a.tenant_id,a.knowledge_base_id,a.knowledge_id,a.input_digest,a.build_generation").Order("a.knowledge_id").Scan(&rows).Error; err != nil {
+		if err := ownedHistoryKnowledgeControlQuery(
+			tx,
+			tenant,
+			kbID,
+			owner,
+			sessionIDs,
+		).Where("a.knowledge_id IN ?", ids).
+			Select("a.admission_id,a.tenant_id,a.knowledge_base_id,a.knowledge_id,a.input_digest,a.build_generation").
+			Order("a.knowledge_id").
+			Scan(&rows).
+			Error; err != nil {
 			return err
 		}
 		for _, row := range rows {
-			proof := &types.KnowledgeBuildInputProof{AdmissionID: row.AdmissionID, TenantID: row.TenantID, KnowledgeBaseID: row.KnowledgeBaseID, KnowledgeID: row.KnowledgeID, InputDigest: row.InputDigest, BuildGeneration: row.BuildGeneration}
+			proof := &types.KnowledgeBuildInputProof{
+				AdmissionID:     row.AdmissionID,
+				TenantID:        row.TenantID,
+				KnowledgeBaseID: row.KnowledgeBaseID,
+				KnowledgeID:     row.KnowledgeID,
+				InputDigest:     row.InputDigest,
+				BuildGeneration: row.BuildGeneration,
+			}
 			plan, err := s.peekHistoryMaterialPlanForProofInTx(tx, proof)
 			if err != nil {
 				return err
@@ -116,7 +161,16 @@ func (s *KnowledgeInputProvenanceStore) PeekOwnedHistoryKnowledgeParentPlans(ctx
 			if plan == nil {
 				return ErrKnowledgeInputChanged
 			}
-			out = append(out, &types.HistoryKnowledgeParentPlan{KnowledgeID: row.KnowledgeID, AdmissionID: row.AdmissionID, InputDigest: row.InputDigest, BuildGeneration: row.BuildGeneration, MessagePlan: plan})
+			out = append(
+				out,
+				&types.HistoryKnowledgeParentPlan{
+					KnowledgeID:     row.KnowledgeID,
+					AdmissionID:     row.AdmissionID,
+					InputDigest:     row.InputDigest,
+					BuildGeneration: row.BuildGeneration,
+					MessagePlan:     plan,
+				},
+			)
 		}
 		return nil
 	})

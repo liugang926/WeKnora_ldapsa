@@ -3,10 +3,11 @@ package access
 import (
 	"context"
 	"encoding/json"
+	"testing"
+
 	"github.com/Tencent/WeKnora/internal/datasource/connector/nextcloud"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/stretchr/testify/require"
-	"testing"
 )
 
 func TestNextcloudSourceLineageBatchRejectsEarlierReadChangedDuringLaterRemote(t *testing.T) {
@@ -26,7 +27,13 @@ func TestNextcloudSourceLineageBatchRejectsEarlierReadChangedDuringLaterRemote(t
 	encoded, err := json.Marshal(metadata)
 	require.NoError(t, err)
 	secondKnowledge.Metadata = types.JSON(encoded)
-	snapshots := &reviewLineageSnapshots{knowledge: map[string]*types.Knowledge{first.KnowledgeID: single.knowledge, second.KnowledgeID: &secondKnowledge}, identity: map[string]types.SourceIdentity{first.KnowledgeID: first, second.KnowledgeID: second}}
+	snapshots := &reviewLineageSnapshots{
+		knowledge: map[string]*types.Knowledge{
+			first.KnowledgeID:  single.knowledge,
+			second.KnowledgeID: &secondKnowledge,
+		},
+		identity: map[string]types.SourceIdentity{first.KnowledgeID: first, second.KnowledgeID: second},
+	}
 	guard.snapshots = snapshots
 	secondProof, err := types.NewCompleteSourceLineage(second)
 	require.NoError(t, err)
@@ -41,7 +48,11 @@ func TestNextcloudSourceLineageBatchRejectsEarlierReadChangedDuringLaterRemote(t
 		}
 		return nextcloud.AuthorizationDecision{Allow: true, SourceETag: first.ETag}, nil
 	}
-	require.ErrorIs(t, guard.CheckBatch(ctx, []SourceLineageRead{{Lineage: firstProof}, {Lineage: secondProof}}), ErrNextcloudPublicationDenied)
+	require.ErrorIs(
+		t,
+		guard.CheckBatch(ctx, []SourceLineageRead{{Lineage: firstProof}, {Lineage: secondProof}}),
+		ErrNextcloudPublicationDenied,
+	)
 	require.True(t, changed, "later actual source authorization did not commit the earlier revision change")
 }
 
@@ -50,5 +61,12 @@ func TestNextcloudSourceLineageBatchKeepsEmptySelectedAgentAuthorization(t *test
 	empty, _ := types.NewCompleteSourceLineage()
 	guard.agents = &lineageAgentsStub{allowed: false}
 	ctx = types.WithCaller(ctx, types.Caller{TenantID: 99, UserID: "person-1", Role: types.TenantRoleViewer})
-	require.ErrorIs(t, guard.CheckBatch(ctx, []SourceLineageRead{{Lineage: empty, Scope: LineageReadScope{AgentID: "agent-1", AgentTenantID: 12}}}), ErrNextcloudPublicationDenied)
+	require.ErrorIs(
+		t,
+		guard.CheckBatch(
+			ctx,
+			[]SourceLineageRead{{Lineage: empty, Scope: LineageReadScope{AgentID: "agent-1", AgentTenantID: 12}}},
+		),
+		ErrNextcloudPublicationDenied,
+	)
 }

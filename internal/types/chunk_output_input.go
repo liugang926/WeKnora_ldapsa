@@ -10,6 +10,8 @@ type ChunkOutputReadRequest struct {
 	ChunkIDs        []string
 	AllChunks       bool
 }
+
+// ChunkOutputInputSnapshot holds the authenticated original chunk output and its retained proof.
 type ChunkOutputInputSnapshot struct {
 	Knowledge *Knowledge                `json:"-"`
 	Chunks    []*Chunk                  `json:"-"`

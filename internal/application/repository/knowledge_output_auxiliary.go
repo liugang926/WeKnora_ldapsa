@@ -11,18 +11,29 @@ import (
 	"gorm.io/gorm"
 )
 
-func (s *KnowledgeInputProvenanceStore) captureKnowledgeOutputAuxiliaryInTx(tx *gorm.DB, proofs []*types.KnowledgeBuildInputProof, selections []types.KnowledgeOutputDisplaySelection) (*types.KnowledgeOutputAuxiliaryInputSnapshot, error) {
+func (s *KnowledgeInputProvenanceStore) captureKnowledgeOutputAuxiliaryInTx(
+	tx *gorm.DB,
+	proofs []*types.KnowledgeBuildInputProof,
+	selections []types.KnowledgeOutputDisplaySelection,
+) (*types.KnowledgeOutputAuxiliaryInputSnapshot, error) {
 	if len(proofs) > 4096 || len(selections) > len(proofs) {
 		return nil, types.ErrSourceLineageLimit
 	}
-	result := &types.KnowledgeOutputAuxiliaryInputSnapshot{Proofs: proofs, Selections: selections, Knowledge: []*types.Knowledge{}}
+	result := &types.KnowledgeOutputAuxiliaryInputSnapshot{
+		Proofs:     proofs,
+		Selections: selections,
+		Knowledge:  []*types.Knowledge{},
+	}
 	byID := map[string]*types.Knowledge{}
 	for _, proof := range proofs {
-		if proof == nil || proof.Projection != "" || len(proof.ChunkIDs) != 0 || proof.BodyDigest == "" || byID[proof.KnowledgeID] != nil {
+		if proof == nil || proof.Projection != "" || len(proof.ChunkIDs) != 0 || proof.BodyDigest == "" ||
+			byID[proof.KnowledgeID] != nil {
 			return nil, types.ErrSourceLineageUnknown
 		}
 		var k types.Knowledge
-		if err := tx.Where("id = ? AND tenant_id = ? AND knowledge_base_id = ?", proof.KnowledgeID, proof.TenantID, proof.KnowledgeBaseID).Take(&k).Error; err != nil {
+		if err := tx.Where("id = ? AND tenant_id = ? AND knowledge_base_id = ?", proof.KnowledgeID, proof.TenantID, proof.KnowledgeBaseID).
+			Take(&k).
+			Error; err != nil {
 			return nil, err
 		}
 		a, _, lineage, err := s.admissionInTx(tx, &k, proof)
@@ -45,7 +56,9 @@ func (s *KnowledgeInputProvenanceStore) captureKnowledgeOutputAuxiliaryInTx(tx *
 	scopeSet := map[types.KnowledgeSearchScope]bool{}
 	for _, selection := range selections {
 		k := byID[selection.KnowledgeID]
-		if k == nil || selection.TenantID != k.TenantID || selection.KnowledgeBaseID != k.KnowledgeBaseID || seen[k.ID] || !selection.Tags && !selection.KnowledgeBaseName {
+		if k == nil || selection.TenantID != k.TenantID || selection.KnowledgeBaseID != k.KnowledgeBaseID ||
+			seen[k.ID] ||
+			!selection.Tags && !selection.KnowledgeBaseName {
 			return nil, ErrKnowledgeInputChanged
 		}
 		seen[k.ID] = true
@@ -75,7 +88,11 @@ func (s *KnowledgeInputProvenanceStore) captureKnowledgeOutputAuxiliaryInTx(tx *
 // Both original document receipts and the actual consumed joined producers
 // are bound in one RR/SQLite snapshot. Current display strings cannot seal an
 // older material body or widen the explicit document membership.
-func (s *KnowledgeInputProvenanceStore) CaptureKnowledgeOutputAuxiliary(ctx context.Context, proofs []*types.KnowledgeBuildInputProof, selections []types.KnowledgeOutputDisplaySelection) (*types.KnowledgeOutputAuxiliaryInputSnapshot, error) {
+func (s *KnowledgeInputProvenanceStore) CaptureKnowledgeOutputAuxiliary(
+	ctx context.Context,
+	proofs []*types.KnowledgeBuildInputProof,
+	selections []types.KnowledgeOutputDisplaySelection,
+) (*types.KnowledgeOutputAuxiliaryInputSnapshot, error) {
 	var result *types.KnowledgeOutputAuxiliaryInputSnapshot
 	err := s.collectionTransaction(ctx, func(tx *gorm.DB) error {
 		var err error
@@ -85,7 +102,10 @@ func (s *KnowledgeInputProvenanceStore) CaptureKnowledgeOutputAuxiliary(ctx cont
 	return result, err
 }
 
-func (s *KnowledgeInputProvenanceStore) RecheckKnowledgeOutputAuxiliary(ctx context.Context, snapshot *types.KnowledgeOutputAuxiliaryInputSnapshot) error {
+func (s *KnowledgeInputProvenanceStore) RecheckKnowledgeOutputAuxiliary(
+	ctx context.Context,
+	snapshot *types.KnowledgeOutputAuxiliaryInputSnapshot,
+) error {
 	if snapshot == nil {
 		return types.ErrSourceLineageUnknown
 	}

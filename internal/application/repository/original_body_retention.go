@@ -7,15 +7,20 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
+
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
-	"time"
 )
 
-var ErrOriginalBodyUnavailable = errors.New("original body is unavailable or retention evidence changed")
-var ErrOriginalBodyRetained = errors.New("original body has a current owner, lease, unexpired recovery or unknown copy")
+var (
+	ErrOriginalBodyUnavailable = errors.New("original body is unavailable or retention evidence changed")
+	ErrOriginalBodyRetained    = errors.New(
+		"original body has a current owner, lease, unexpired recovery or unknown copy",
+	)
+)
 
 type originalBodyPayload struct {
 	ID                                              string `gorm:"primaryKey"`
@@ -91,7 +96,9 @@ func NewOriginalBodyRetentionStore(db *gorm.DB) *OriginalBodyRetentionStore {
 }
 func bodySHA(data []byte) string { sum := sha256.Sum256(data); return hex.EncodeToString(sum[:]) }
 func bodyInternal(tx *gorm.DB) *gorm.DB {
-	return tx.Session(&gorm.Session{NewDB: true, Context: context.WithValue(tx.Statement.Context, originalBodyInternalKey{}, true)})
+	return tx.Session(
+		&gorm.Session{NewDB: true, Context: context.WithValue(tx.Statement.Context, originalBodyInternalKey{}, true)},
+	)
 }
 
 type originalBodyInternalKey struct{}
@@ -118,7 +125,12 @@ func sameOriginalBodyHeads(before, after []originalBodyFieldHead) bool {
 	return true
 }
 
-func checkOriginalBodyAvailableForHeads(ctx context.Context, tx *gorm.DB, table, rowID string, captured []originalBodyFieldHead) error {
+func checkOriginalBodyAvailableForHeads(
+	ctx context.Context,
+	tx *gorm.DB,
+	table, rowID string,
+	captured []originalBodyFieldHead,
+) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -182,7 +194,12 @@ func checkOriginalBodyAvailableForHeads(ctx context.Context, tx *gorm.DB, table,
 	}
 	return ctx.Err()
 }
-func (s *OriginalBodyRetentionStore) resolveInTx(tx *gorm.DB, head originalBodyFieldHead, ref originalBodyReference) (string, error) {
+
+func (s *OriginalBodyRetentionStore) resolveInTx(
+	tx *gorm.DB,
+	head originalBodyFieldHead,
+	ref originalBodyReference,
+) (string, error) {
 	if ref.Version != 1 || ref.SlotID != head.SlotID || ref.BodyID != head.BodyID {
 		return "", ErrOriginalBodyUnavailable
 	}
@@ -193,7 +210,8 @@ func (s *OriginalBodyRetentionStore) resolveInTx(tx *gorm.DB, head originalBodyF
 	if e := bodyInternal(tx).Where("id=?", ref.BodyID).Take(&body).Error; e != nil {
 		return "", e
 	}
-	if body.State != "live" || body.BodySHA256 != ref.SHA256 || body.Payload == nil || bodySHA([]byte(*body.Payload)) != body.BodySHA256 {
+	if body.State != "live" || body.BodySHA256 != ref.SHA256 || body.Payload == nil ||
+		bodySHA([]byte(*body.Payload)) != body.BodySHA256 {
 		return "", ErrOriginalBodyUnavailable
 	}
 	if e := s.checkExternalBody(body.ID); e != nil {
@@ -201,7 +219,12 @@ func (s *OriginalBodyRetentionStore) resolveInTx(tx *gorm.DB, head originalBodyF
 	}
 	return *body.Payload, nil
 }
-func (s *OriginalBodyRetentionStore) AcquireLease(ctx context.Context, bodyID, kind, owner string, ttl time.Duration) (string, error) {
+
+func (s *OriginalBodyRetentionStore) AcquireLease(
+	ctx context.Context,
+	bodyID, kind, owner string,
+	ttl time.Duration,
+) (string, error) {
 	if bodyID == "" || owner == "" || (kind != "read" && kind != "build") || ttl <= 0 || ttl > 30*time.Minute {
 		return "", ErrOriginalBodyUnavailable
 	}
@@ -213,7 +236,12 @@ func (s *OriginalBodyRetentionStore) AcquireLease(ctx context.Context, bodyID, k
 	})
 	return id, err
 }
-func (s *OriginalBodyRetentionStore) acquireLeaseInTx(tx *gorm.DB, bodyID, kind, owner string, ttl time.Duration) (string, error) {
+
+func (s *OriginalBodyRetentionStore) acquireLeaseInTx(
+	tx *gorm.DB,
+	bodyID, kind, owner string,
+	ttl time.Duration,
+) (string, error) {
 	if e := s.checkJournalInTx(tx); e != nil {
 		return "", e
 	}
@@ -221,7 +249,13 @@ func (s *OriginalBodyRetentionStore) acquireLeaseInTx(tx *gorm.DB, bodyID, kind,
 		return "", e
 	}
 	var body originalBodyPayload
-	if e := bodyInternal(tx).Select("id,state,purge_epoch").Clauses(clause.Locking{Strength: "UPDATE"}).Where("id=?", bodyID).Take(&body).Error; e != nil {
+	if e := bodyInternal(
+		tx,
+	).Select("id,state,purge_epoch").
+		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("id=?", bodyID).
+		Take(&body).
+		Error; e != nil {
 		return "", e
 	}
 	if body.State != "live" {
@@ -232,28 +266,53 @@ func (s *OriginalBodyRetentionStore) acquireLeaseInTx(tx *gorm.DB, bodyID, kind,
 		return "", e
 	}
 	id := uuid.NewString()
-	return id, bodyInternal(tx).Create(&originalBodyLease{LeaseID: id, BodyID: bodyID, Kind: kind, OwnerID: owner, Epoch: body.PurgeEpoch, ExpiresAtMS: now + ttl.Milliseconds()}).Error
+	return id, bodyInternal(
+		tx,
+	).Create(&originalBodyLease{LeaseID: id, BodyID: bodyID, Kind: kind, OwnerID: owner, Epoch: body.PurgeEpoch, ExpiresAtMS: now + ttl.Milliseconds()}).
+		Error
 }
+
 func (s *OriginalBodyRetentionStore) ReleaseLease(ctx context.Context, id string) error {
 	now, e := nextcloudLeaseNowMS(bodyInternal(s.db))
 	if e != nil {
 		return e
 	}
-	return bodyInternal(s.db.WithContext(ctx)).Model(&originalBodyLease{}).Where("lease_id=? AND released_at_ms IS NULL", id).Update("released_at_ms", now).Error
+	return bodyInternal(
+		s.db.WithContext(ctx),
+	).Model(&originalBodyLease{}).
+		Where("lease_id=? AND released_at_ms IS NULL", id).
+		Update("released_at_ms", now).
+		Error
 }
+
 func bodyRefString(slot, id, sha string) string {
 	b, _ := json.Marshal(originalBodyReference{1, slot, id, sha})
 	return string(b)
 }
+
 func bodyReference(raw string) (originalBodyReference, bool) {
 	var ref originalBodyReference
 	e := json.Unmarshal([]byte(raw), &ref)
 	return ref, e == nil && ref.Version == 1 && ref.SlotID != "" && ref.BodyID != "" && ref.SHA256 != ""
 }
+
 func bodyIdentity(table, key, col string, scope originalBodyScope) string {
-	return bodySHA([]byte(fmt.Sprintf("%s\x00%s\x00%s\x00%d\x00%s\x00%s\x00%s\x00%s", table, key, col, scope.Tenant, scope.KB, scope.Knowledge, scope.OwnerKind, scope.OwnerID)))
+	return bodySHA(
+		[]byte(
+			fmt.Sprintf(
+				"%s\x00%s\x00%s\x00%d\x00%s\x00%s\x00%s\x00%s",
+				table,
+				key,
+				col,
+				scope.Tenant,
+				scope.KB,
+				scope.Knowledge,
+				scope.OwnerKind,
+				scope.OwnerID,
+			),
+		),
+	)
 }
-func originalBodyTimePointer(v int64) *int64 { return &v }
 
 var _ = types.ConnectorTypeNextcloud
 

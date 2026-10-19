@@ -33,7 +33,11 @@ func (s *sessionService) KnowledgeQA(
 		ctx = WithMessageMaterialOutputBoundary(ctx)
 		releaseProducer = func() { CloseMessageMaterialOutputBoundary(ctx) }
 	}
-	ctx = types.WithHistoryMaterialLifetime(ctx, func() error { return CheckMessageMaterialOutputBoundary(ctx) }, releaseProducer)
+	ctx = types.WithHistoryMaterialLifetime(
+		ctx,
+		func() error { return CheckMessageMaterialOutputBoundary(ctx) },
+		releaseProducer,
+	)
 	handoff := false
 	defer func() {
 		if !handoff {
@@ -51,7 +55,12 @@ func (s *sessionService) KnowledgeQA(
 			if _, err := native.GetMessage(ctx, req.Session.ID, req.UserMessageID); err != nil {
 				return err
 			}
-			if err := native.bindInitialMessageMaterial(ctx, req.AssistantMessageID, req.UserMessageID, requestID); err != nil {
+			if err := native.bindInitialMessageMaterial(
+				ctx,
+				req.AssistantMessageID,
+				req.UserMessageID,
+				requestID,
+			); err != nil {
 				return err
 			}
 		}
@@ -429,7 +438,11 @@ func (s *sessionService) resolveKnowledgeBasesFromAgent(
 			if capFilter.IsEmpty() {
 				return true
 			}
-			return tools.KBSatisfiesAgentRequirements(kb.Capabilities(), customAgent.Config.AgentMode, customAgent.Config.AllowedTools)
+			return tools.KBSatisfiesAgentRequirements(
+				kb.Capabilities(),
+				customAgent.Config.AgentMode,
+				customAgent.Config.AllowedTools,
+			)
 		}
 
 		// Get own knowledge bases (uses ctx TenantID = agent's tenant)
@@ -479,8 +492,12 @@ func (s *sessionService) resolveKnowledgeBasesFromAgent(
 				}
 			}
 		} else {
-			logger.Infof(ctx, "Shared agent detected (session tenant %d != agent tenant %d): skipping user's shared KBs",
-				sessionTenantID, customAgent.TenantID)
+			logger.Infof(
+				ctx,
+				"Shared agent detected (session tenant %d != agent tenant %d): skipping user's shared KBs",
+				sessionTenantID,
+				customAgent.TenantID,
+			)
 		}
 
 		if ownSkipped+sharedSkipped > 0 {
@@ -491,7 +508,11 @@ func (s *sessionService) resolveKnowledgeBasesFromAgent(
 		logger.Infof(ctx, "KBSelectionMode=all: loaded %d knowledge bases (own + shared)", len(kbIDs))
 		return kbIDs
 	case "selected":
-		logger.Infof(ctx, "KBSelectionMode=selected: using %d configured knowledge bases", len(customAgent.Config.KnowledgeBases))
+		logger.Infof(
+			ctx,
+			"KBSelectionMode=selected: using %d configured knowledge bases",
+			len(customAgent.Config.KnowledgeBases),
+		)
 		return customAgent.Config.KnowledgeBases
 	case "none":
 		logger.Infof(ctx, "KBSelectionMode=none: no knowledge bases configured")
@@ -499,7 +520,11 @@ func (s *sessionService) resolveKnowledgeBasesFromAgent(
 	default:
 		// Default to "selected" behavior for backward compatibility
 		if len(customAgent.Config.KnowledgeBases) > 0 {
-			logger.Infof(ctx, "KBSelectionMode not set: using %d configured knowledge bases", len(customAgent.Config.KnowledgeBases))
+			logger.Infof(
+				ctx,
+				"KBSelectionMode not set: using %d configured knowledge bases",
+				len(customAgent.Config.KnowledgeBases),
+			)
 		}
 		return customAgent.Config.KnowledgeBases
 	}
@@ -640,7 +665,11 @@ func (s *sessionService) buildSearchTargets(
 
 		useDocumentTagResolution := kb == nil || kb.Type != types.KnowledgeBaseTypeFAQ
 		if kb == nil {
-			logger.Warnf(ctx, "Knowledge base metadata missing for tag scope, kb_id=%s, using document tag resolution", kbID)
+			logger.Warnf(
+				ctx,
+				"Knowledge base metadata missing for tag scope, kb_id=%s, using document tag resolution",
+				kbID,
+			)
 		}
 		if useDocumentTagResolution {
 			tagKnowledgeIDs, err := s.knowledgeService.ListKnowledgeIDsByTagIDs(ctx, kbTenant, kbID, tagIDs)
@@ -824,7 +853,11 @@ func (s *sessionService) KnowledgeQAByEvent(ctx context.Context,
 
 	if types.RAGSourceLineageFromContext(ctx) == nil {
 		var err error
-		ctx, err = s.eventManager.BeginSourceLineage(ctx, chatManage, access.LineageReadScope{Targets: chatManage.SearchTargets})
+		ctx, err = s.eventManager.BeginSourceLineage(
+			ctx,
+			chatManage,
+			access.LineageReadScope{Targets: chatManage.SearchTargets},
+		)
 		if err != nil {
 			return err
 		}
@@ -911,7 +944,13 @@ func (s *sessionService) KnowledgeQAByEvent(ctx context.Context,
 			}
 		}
 		if understandProgress != nil && eventType == types.QUERY_UNDERSTAND {
-			if emitErr := chatpipeline.EndQueryUnderstandProgress(stageCtx, chatManage, understandProgress, understandStart, err); emitErr != nil {
+			if emitErr := chatpipeline.EndQueryUnderstandProgress(
+				stageCtx,
+				chatManage,
+				understandProgress,
+				understandStart,
+				err,
+			); emitErr != nil {
 				return emitErr
 			}
 			understandProgress = nil
@@ -924,7 +963,13 @@ func (s *sessionService) KnowledgeQAByEvent(ctx context.Context,
 		// tool_call pending — so the frontend keeps spinning on "正在检索知识库"
 		// forever even though the fallback answer has already streamed.
 		if retrievalProgress != nil && chatpipeline.ShouldCloseRetrievalProgress(eventType, lastRetrievalStage, err) {
-			if emitErr := chatpipeline.EndRetrievalProgress(stageCtx, chatManage, retrievalProgress, retrievalStart, err); emitErr != nil {
+			if emitErr := chatpipeline.EndRetrievalProgress(
+				stageCtx,
+				chatManage,
+				retrievalProgress,
+				retrievalStart,
+				err,
+			); emitErr != nil {
 				return emitErr
 			}
 			retrievalProgress = nil
@@ -1013,8 +1058,14 @@ func (s *sessionService) SearchKnowledge(ctx context.Context,
 	knowledgeBaseIDs []string, knowledgeIDs []string, tagScopes []types.TagScope, query string,
 ) ([]*types.SearchResult, error) {
 	logger.Info(ctx, "Start knowledge base search without LLM summary")
-	logger.Infof(ctx, "Knowledge base search parameters, knowledge base IDs: %v, knowledge IDs: %v, tag scopes: %d, query: %s",
-		knowledgeBaseIDs, knowledgeIDs, len(tagScopes), query)
+	logger.Infof(
+		ctx,
+		"Knowledge base search parameters, knowledge base IDs: %v, knowledge IDs: %v, tag scopes: %d, query: %s",
+		knowledgeBaseIDs,
+		knowledgeIDs,
+		len(tagScopes),
+		query,
+	)
 
 	// Get tenant ID from context
 	tenantID, ok := types.TenantIDFromContext(ctx)
@@ -1222,7 +1273,9 @@ func prepareFallbackMessages(
 	if len(messages) > 0 && messages[0].Role == "system" {
 		messages[0].Content = strings.TrimRight(messages[0].Content, " \t\r\n") + registry.ProtocolPrompt()
 	} else {
-		messages = append([]chat.Message{{Role: "system", Content: strings.TrimSpace(registry.ProtocolPrompt())}}, messages...)
+		messages = append(
+			[]chat.Message{{Role: "system", Content: strings.TrimSpace(registry.ProtocolPrompt())}},
+			messages...)
 	}
 	return registry.EncodeMessages(messages), registry
 }
@@ -1476,7 +1529,11 @@ func (s *sessionService) resolveWebSearchProviderID(ctx context.Context, req *ty
 	}
 	// 2. Tenant default
 	if s.webSearchProviderRepo != nil {
-		if defaultProvider, err := s.webSearchProviderRepo.GetDefault(ctx, tenantID); err == nil && defaultProvider != nil {
+		if defaultProvider, err := s.webSearchProviderRepo.GetDefault(
+			ctx,
+			tenantID,
+		); err == nil &&
+			defaultProvider != nil {
 			return defaultProvider.ID
 		}
 	}

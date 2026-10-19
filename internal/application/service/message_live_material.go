@@ -3,25 +3,32 @@ package service
 import (
 	"context"
 	"encoding/json"
-	"github.com/Tencent/WeKnora/internal/application/access"
-	"github.com/Tencent/WeKnora/internal/application/repository"
-	"github.com/Tencent/WeKnora/internal/types"
-	"github.com/google/uuid"
 	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/Tencent/WeKnora/internal/application/access"
+	"github.com/Tencent/WeKnora/internal/application/repository"
+	"github.com/Tencent/WeKnora/internal/types"
+	"github.com/google/uuid"
 )
 
 // Original live producer holder. Its metadata snapshots are private native
 // values, never reconstructed from Redis frames or current message bodies.
-func (s *messageService) MessageNativeLiveIdentity(ctx context.Context, session, message string) (*types.Message, string, error) {
+func (s *messageService) MessageNativeLiveIdentity(
+	ctx context.Context,
+	session, message string,
+) (*types.Message, string, error) {
 	if s.materialStore == nil {
 		return nil, "", access.ErrNextcloudPublicationUnavailable
 	}
 	return s.materialStore.MessageLiveControl(ctx, session, message)
 }
-func (s *messageService) CaptureNativeLiveMaterialParents(ctx context.Context) ([]*types.MessageMaterialSnapshot, error) {
+
+func (s *messageService) CaptureNativeLiveMaterialParents(
+	ctx context.Context,
+) ([]*types.MessageMaterialSnapshot, error) {
 	parents, err := messageMaterialBoundarySnapshots(ctx)
 	if err != nil {
 		return nil, err
@@ -31,7 +38,11 @@ func (s *messageService) CaptureNativeLiveMaterialParents(ctx context.Context) (
 	}
 	return parents, nil
 }
-func (s *messageService) BeginNativeLiveMaterialReceiver(ctx context.Context, parents []*types.MessageMaterialSnapshot) (func() error, func(), error) {
+
+func (s *messageService) BeginNativeLiveMaterialReceiver(
+	ctx context.Context,
+	parents []*types.MessageMaterialSnapshot,
+) (func() error, func(), error) {
 	if s.materialStore == nil || s.sourceLineageGuard == nil || len(parents) == 0 {
 		return nil, nil, access.ErrNextcloudPublicationUnavailable
 	}
@@ -98,7 +109,11 @@ func messageLiveParentEqual(a, b *types.MessageMaterialSnapshot) bool {
 
 // A registered frame uses the actual immutable producer execution selectors.
 // Current receiver permissions are reloaded independently from the producer.
-func (s *messageService) CheckNativeLiveFramePublication(ctx context.Context, control *types.Message, lineage *types.SourceLineage) error {
+func (s *messageService) CheckNativeLiveFramePublication(
+	ctx context.Context,
+	control *types.Message,
+	lineage *types.SourceLineage,
+) error {
 	if control == nil || lineage.RequireComplete() != nil {
 		return access.ErrNextcloudPublicationDenied
 	}
@@ -107,7 +122,11 @@ func (s *messageService) CheckNativeLiveFramePublication(ctx context.Context, co
 	return s.CheckLiveMessagePublication(ctx, &actual)
 }
 
-func (s *messageService) CheckNativeLiveIdentity(ctx context.Context, original *types.Message, generation string) error {
+func (s *messageService) CheckNativeLiveIdentity(
+	ctx context.Context,
+	original *types.Message,
+	generation string,
+) error {
 	if original == nil || generation == "" {
 		return types.ErrSourceLineageUnknown
 	}
@@ -140,7 +159,11 @@ func (s *messageService) CheckNativeLiveIdentity(ctx context.Context, original *
 	return nil
 }
 
-func (s *messageService) BeginNativeLiveFrameSources(ctx context.Context, control *types.Message, lineage *types.SourceLineage) (func() error, func(), error) {
+func (s *messageService) BeginNativeLiveFrameSources(
+	ctx context.Context,
+	control *types.Message,
+	lineage *types.SourceLineage,
+) (func() error, func(), error) {
 	originalLineage, err := types.UnionSourceLineage(lineage)
 	if err != nil {
 		return nil, nil, err
@@ -206,7 +229,19 @@ func (s *messageService) BeginNativeLiveFrameSources(ctx context.Context, contro
 	}
 	for _, source := range lineage.Sources {
 		kb := broad[types.KnowledgeSearchScope{TenantID: source.TenantID, KBID: source.KnowledgeBaseID}]
-		lease, err := store.UpgradeKBRead(ctx, kb.ID, repository.NextcloudContentScope{TenantID: source.TenantID, KnowledgeBaseID: source.KnowledgeBaseID, KnowledgeID: source.KnowledgeID, DataSourceID: source.DataSourceID, ExternalID: source.ExternalID}, owner, 2*time.Minute)
+		lease, err := store.UpgradeKBRead(
+			ctx,
+			kb.ID,
+			repository.NextcloudContentScope{
+				TenantID:        source.TenantID,
+				KnowledgeBaseID: source.KnowledgeBaseID,
+				KnowledgeID:     source.KnowledgeID,
+				DataSourceID:    source.DataSourceID,
+				ExternalID:      source.ExternalID,
+			},
+			owner,
+			2*time.Minute,
+		)
 		if err != nil {
 			close()
 			return nil, nil, err

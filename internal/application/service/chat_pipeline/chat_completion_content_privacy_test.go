@@ -47,10 +47,20 @@ type callerPrivacyFailureModel struct{ err error }
 
 func (m *callerPrivacyFailureModel) GetModelName() string { return "controlled" }
 func (m *callerPrivacyFailureModel) GetModelID() string   { return "controlled" }
-func (m *callerPrivacyFailureModel) Chat(context.Context, []chat.Message, *chat.ChatOptions) (*types.ChatResponse, error) {
+
+func (m *callerPrivacyFailureModel) Chat(
+	context.Context,
+	[]chat.Message,
+	*chat.ChatOptions,
+) (*types.ChatResponse, error) {
 	return nil, m.err
 }
-func (m *callerPrivacyFailureModel) ChatStream(context.Context, []chat.Message, *chat.ChatOptions) (<-chan types.StreamResponse, error) {
+
+func (m *callerPrivacyFailureModel) ChatStream(
+	context.Context,
+	[]chat.Message,
+	*chat.ChatOptions,
+) (<-chan types.StreamResponse, error) {
 	return nil, m.err
 }
 
@@ -76,7 +86,7 @@ func TestSourceContentCompletionErrorLogsPreserveOriginalFailure(t *testing.T) {
 			require.Equal(t, ErrModelCall.Description, result.Description)
 			if private {
 				require.NotContains(t, output.String(), original.Body)
-				require.Contains(t, output.String(), "content logging suppressed")
+				require.Empty(t, output.String(), "protected diagnostics never reach the caller's content logger")
 			} else {
 				require.Contains(t, output.String(), original.Body)
 			}
@@ -88,9 +98,17 @@ func TestSourceContentCompletionStreamErrorLogPreservesFailureControl(t *testing
 	for _, private := range []bool{true, false} {
 		ctx, output := callerPrivacyContext(private)
 		if private {
-			ctx = types.WithRAGSourceLineage(ctx, types.NewRAGSourceLineage(func(context.Context, *types.SourceLineage) error { return nil }))
+			ctx = types.WithRAGSourceLineage(
+				ctx,
+				types.NewRAGSourceLineage(func(context.Context, *types.SourceLineage) error { return nil }),
+			)
 		}
-		model := &openStreamChat{closeStream: true, chunks: []types.StreamResponse{{ResponseType: types.ResponseTypeError, Content: "PRIVATE_VENDOR_STREAM_FAILURE", Done: true}}}
+		model := &openStreamChat{
+			closeStream: true,
+			chunks: []types.StreamResponse{
+				{ResponseType: types.ResponseTypeError, Content: "PRIVATE_VENDOR_STREAM_FAILURE", Done: true},
+			},
+		}
 		bus := &syncEventBus{}
 		manage := &types.ChatManage{}
 		manage.EventBus = bus
@@ -105,9 +123,19 @@ func TestSourceContentCompletionStreamErrorLogPreservesFailureControl(t *testing
 			}
 			require.NotContains(t, output.String(), "PRIVATE_VENDOR_STREAM_FAILURE")
 		} else {
-			require.Eventually(t, func() bool { return bytes.Contains([]byte(output.String()), []byte("PRIVATE_VENDOR_STREAM_FAILURE")) }, 2*time.Second, time.Millisecond)
+			require.Eventually(
+				t,
+				func() bool { return bytes.Contains([]byte(output.String()), []byte("PRIVATE_VENDOR_STREAM_FAILURE")) },
+				2*time.Second,
+				time.Millisecond,
+			)
 		}
-		require.Eventually(t, func() bool { bus.mu.Lock(); defer bus.mu.Unlock(); return len(bus.events) > 0 }, 2*time.Second, time.Millisecond)
+		require.Eventually(
+			t,
+			func() bool { bus.mu.Lock(); defer bus.mu.Unlock(); return len(bus.events) > 0 },
+			2*time.Second,
+			time.Millisecond,
+		)
 		require.Empty(t, bus.finalAnswerContents())
 		require.Equal(t, "PRIVATE_VENDOR_STREAM_FAILURE", model.chunks[0].Content)
 	}

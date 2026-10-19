@@ -1,5 +1,7 @@
 package types
 
+// FAQImportOutputReadRequest selects an original import output under trusted server scope.
+//
 // The receipt is private server state. Progress and LastFAQImportResult are
 // independent outputs; a catalog header's fixed code origin certifies neither.
 type FAQImportOutputReadRequest struct {
@@ -9,6 +11,8 @@ type FAQImportOutputReadRequest struct {
 	TaskID          string
 	Kind            string
 }
+
+// FAQImportOutputSnapshot holds the retained original import result and its influencing inputs.
 type FAQImportOutputSnapshot struct {
 	Request                 FAQImportOutputReadRequest
 	AdmissionID             string
@@ -21,6 +25,8 @@ type FAQImportOutputSnapshot struct {
 	Progress                *FAQImportProgress
 	Result                  *FAQImportResult
 }
+
+// FAQImportOutputReadPlan describes the metadata and scopes required before reading an import output.
 type FAQImportOutputReadPlan struct {
 	MessagePlans   []*MessageMaterialReadPlan
 	Request        FAQImportOutputReadRequest
@@ -31,6 +37,8 @@ type FAQImportOutputReadPlan struct {
 	SourceLineage  *SourceLineage
 }
 
+// FAQImportOutputReadSetPlan plans all original import results selected by a scoped output.
+//
 // A metadata-only plan for every actual FAQ result in scoped/explicit-ID outputs.
 type FAQImportOutputReadSetPlan struct {
 	MessagePlans    []*MessageMaterialReadPlan

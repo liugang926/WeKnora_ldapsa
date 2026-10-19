@@ -48,10 +48,12 @@ func (h *NextcloudSourcePairingHandler) Rotate(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_source_rotation_request"})
 		return
 	}
-	config := &types.DataSourceConfig{Type: types.ConnectorTypeNextcloud,
+	config := &types.DataSourceConfig{
+		Type:        types.ConnectorTypeNextcloud,
 		Credentials: map[string]interface{}{"token": req.Token, "key_id": req.NewKeyID},
 		ResourceIDs: []string{pair.BindingID},
-		Settings:    map[string]interface{}{"base_url": pair.BaseURL}}
+		Settings:    map[string]interface{}{"base_url": pair.BaseURL},
+	}
 	identity, err := h.inspect(c.Request.Context(), config)
 	if err != nil || identity.InstanceID != pair.InstanceID ||
 		identity.BindingID != pair.BindingID || identity.BaseURL != pair.BaseURL ||
@@ -60,11 +62,13 @@ func (h *NextcloudSourcePairingHandler) Rotate(c *gin.Context) {
 		return
 	}
 	rotation, created, err := h.repo.PrepareSourceRotation(c.Request.Context(),
-		repository.NextcloudSourceRotation{OperationID: req.OperationID,
+		repository.NextcloudSourceRotation{
+			OperationID:     req.OperationID,
 			PairOperationID: pair.OperationID, TenantID: pair.TenantID,
 			KnowledgeBaseID: pair.KnowledgeBaseID, DataSourceID: pair.DataSourceID,
 			InstanceID: pair.InstanceID, BindingID: pair.BindingID,
-			NewKeyID: req.NewKeyID}, req.Token)
+			NewKeyID: req.NewKeyID,
+		}, req.Token)
 	if err != nil {
 		sourcePairingError(c, err)
 		return
@@ -149,10 +153,12 @@ func (h *NextcloudSourcePairingHandler) AbortRotation(c *gin.Context) {
 	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 20*time.Second)
 	defer cancel()
-	tuple := nextcloud.SourceRotation{OperationID: rotation.OperationID,
+	tuple := nextcloud.SourceRotation{
+		OperationID:     rotation.OperationID,
 		PairOperationID: rotation.PairOperationID, InstanceID: rotation.InstanceID,
 		BindingID: rotation.BindingID, TenantID: rotation.TenantID,
-		KnowledgeBaseID: rotation.KnowledgeBaseID, DataSourceID: rotation.DataSourceID}
+		KnowledgeBaseID: rotation.KnowledgeBaseID, DataSourceID: rotation.DataSourceID,
+	}
 	if err := h.rotateAbort(ctx, oldConfig, tuple); err != nil {
 		h.rotationFailure(c, rotation, err, "remote_abort")
 		return
@@ -169,13 +175,16 @@ func (h *NextcloudSourcePairingHandler) AbortRotation(c *gin.Context) {
 }
 
 func (h *NextcloudSourcePairingHandler) continueRotation(c *gin.Context,
-	rotation repository.NextcloudSourceRotation, config *types.DataSourceConfig, created bool) {
+	rotation repository.NextcloudSourceRotation, config *types.DataSourceConfig, created bool,
+) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 20*time.Second)
 	defer cancel()
-	tuple := nextcloud.SourceRotation{OperationID: rotation.OperationID,
+	tuple := nextcloud.SourceRotation{
+		OperationID:     rotation.OperationID,
 		PairOperationID: rotation.PairOperationID, InstanceID: rotation.InstanceID,
 		BindingID: rotation.BindingID, TenantID: rotation.TenantID,
-		KnowledgeBaseID: rotation.KnowledgeBaseID, DataSourceID: rotation.DataSourceID}
+		KnowledgeBaseID: rotation.KnowledgeBaseID, DataSourceID: rotation.DataSourceID,
+	}
 	if rotation.State == "pending" {
 		if err := h.rotateCommit(ctx, config, tuple); err != nil {
 			h.rotationFailure(c, rotation, err, "remote_commit")
@@ -213,16 +222,17 @@ func (h *NextcloudSourcePairingHandler) continueRotation(c *gin.Context,
 }
 
 func (h *NextcloudSourcePairingHandler) rotationFailure(c *gin.Context,
-	rotation repository.NextcloudSourceRotation, err error, stage string) {
+	rotation repository.NextcloudSourceRotation, err error, stage string,
+) {
 	code := stage + "_outcome_uncertain"
 	status := http.StatusAccepted
 	var remote *nextcloud.SourcePairingRemoteError
 	if errors.As(err, &remote) {
-		if remote.StatusCode == http.StatusUnauthorized || remote.StatusCode == http.StatusForbidden ||
-			remote.StatusCode == http.StatusConflict {
+		switch remote.StatusCode {
+		case http.StatusUnauthorized, http.StatusForbidden, http.StatusConflict:
 			code = stage + "_conflict"
 			status = http.StatusConflict
-		} else if remote.StatusCode == http.StatusLocked {
+		case http.StatusLocked:
 			code = "publication_stopped"
 		}
 	}

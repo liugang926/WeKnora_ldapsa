@@ -50,5 +50,9 @@ func TestMessageParentLineageBatchNeverUsesRawUserLegacyExemption(t *testing.T) 
 	}), access.ErrNextcloudPublicationDenied)
 	require.ErrorIs(t, svc.CheckMessagePublications(context.Background(), nil), access.ErrNextcloudPublicationDenied)
 	svc.sourceLineageGuard = nil
-	require.ErrorIs(t, svc.CheckMessagePublications(context.Background(), []*types.Message{{Role: "assistant", SourceLineage: empty}}), access.ErrNextcloudPublicationUnavailable)
+	require.ErrorIs(
+		t,
+		svc.CheckMessagePublications(context.Background(), []*types.Message{{Role: "assistant", SourceLineage: empty}}),
+		access.ErrNextcloudPublicationUnavailable,
+	)
 }

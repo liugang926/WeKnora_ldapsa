@@ -39,7 +39,9 @@ func (r *knowledgeRepository) SetKnowledgeTags(
 				return err
 			}
 			var actualKB types.KnowledgeBase
-			if err := tx.Where("id = ? AND tenant_id = ?", k.KnowledgeBaseID, k.TenantID).Take(&actualKB).Error; err != nil {
+			if err := tx.Where("id = ? AND tenant_id = ?", k.KnowledgeBaseID, k.TenantID).
+				Take(&actualKB).
+				Error; err != nil {
 				return err
 			}
 			kb = &actualKB
@@ -48,7 +50,8 @@ func (r *knowledgeRepository) SetKnowledgeTags(
 				if !exists {
 					assigned, exists = request.Assignments[""]
 					proof := KnowledgeBuildInputProofFromContext(ctx)
-					if !exists || proof == nil || proof.KnowledgeID != k.ID || proof.TenantID != k.TenantID || proof.KnowledgeBaseID != k.KnowledgeBaseID {
+					if !exists || proof == nil || proof.KnowledgeID != k.ID || proof.TenantID != k.TenantID ||
+						proof.KnowledgeBaseID != k.KnowledgeBaseID {
 						return ErrKnowledgeInputChanged
 					}
 					if _, _, _, err := NewKnowledgeInputProvenanceStore(tx).admissionInTx(tx, &k, proof); err != nil {
@@ -76,7 +79,14 @@ func (r *knowledgeRepository) SetKnowledgeTags(
 				}
 			}
 			if retained {
-				proof, err := readKnowledgeDisplayOrigin(tx, "relations", knowledgeID, k.TenantID, k.KnowledgeBaseID, priorIDs)
+				proof, err := readKnowledgeDisplayOrigin(
+					tx,
+					"relations",
+					knowledgeID,
+					k.TenantID,
+					k.KnowledgeBaseID,
+					priorIDs,
+				)
 				if err != nil {
 					return err
 				}
@@ -88,7 +98,10 @@ func (r *knowledgeRepository) SetKnowledgeTags(
 			ids := normalizedKnowledgeDisplayTagIDs(tagIDs)
 			if len(ids) > 0 {
 				var count int64
-				if err := tx.Model(&types.KnowledgeTag{}).Where("id IN ? AND tenant_id = ? AND knowledge_base_id = ?", ids, k.TenantID, k.KnowledgeBaseID).Count(&count).Error; err != nil {
+				if err := tx.Model(&types.KnowledgeTag{}).
+					Where("id IN ? AND tenant_id = ? AND knowledge_base_id = ?", ids, k.TenantID, k.KnowledgeBaseID).
+					Count(&count).
+					Error; err != nil {
 					return err
 				}
 				if count != int64(len(ids)) {
@@ -100,10 +113,23 @@ func (r *knowledgeRepository) SetKnowledgeTags(
 			if !marked {
 				return nil
 			}
-			if err := tx.Exec("UPDATE knowledge_display_versions SET revision = revision + 1 WHERE kind = 'relations' AND row_id = ?", knowledgeID).Error; err != nil {
+			if err := tx.Exec(
+				"UPDATE knowledge_display_versions SET revision = revision + 1 WHERE kind = 'relations' AND row_id = ?",
+				knowledgeID,
+			).Error; err != nil {
 				return err
 			}
-			return admitKnowledgeDisplayOrigin(tx, actor, "relations", knowledgeID, kb, normalizedKnowledgeDisplayTagIDs(tagIDs), request, lineage, origin)
+			return admitKnowledgeDisplayOrigin(
+				tx,
+				actor,
+				"relations",
+				knowledgeID,
+				kb,
+				normalizedKnowledgeDisplayTagIDs(tagIDs),
+				request,
+				lineage,
+				origin,
+			)
 		}
 		// Delete all existing tag relations for this knowledge
 		if err := tx.Where("knowledge_id = ?", knowledgeID).
@@ -179,7 +205,12 @@ func (r *knowledgeRepository) AddKnowledgeTagRelations(
 			return err
 		}
 		if knowledgeCount != 1 {
-			return fmt.Errorf("knowledge %s does not belong to tenant %d and knowledge base %s", knowledgeID, tenantID, kbID)
+			return fmt.Errorf(
+				"knowledge %s does not belong to tenant %d and knowledge base %s",
+				knowledgeID,
+				tenantID,
+				kbID,
+			)
 		}
 
 		var tagCount int64
@@ -242,7 +273,17 @@ func (r *knowledgeRepository) AddKnowledgeTagRelations(
 			return nil
 		}
 		allIDs := normalizedKnowledgeDisplayTagIDs(append(priorIDs, unique...))
-		if err := admitKnowledgeDisplayOrigin(tx, actor, "relations", knowledgeID, &kb, allIDs, request, lineage, origin); err != nil {
+		if err := admitKnowledgeDisplayOrigin(
+			tx,
+			actor,
+			"relations",
+			knowledgeID,
+			&kb,
+			allIDs,
+			request,
+			lineage,
+			origin,
+		); err != nil {
 			return err
 		}
 		return finishAutoTagCompletionInTx(ctx, tx)

@@ -19,7 +19,14 @@ func configurationOriginalBodySourcesClosed(tx *gorm.DB, lineageText string, now
 	for _, source := range lineage.Sources {
 		// Only retained positive lifecycle state can close a derived body. Missing
 		// rows or a remote authorization error are not a fabricated deletion fact.
-		d, current, err := store.bodyKnowledgeDeadline(tx, source.TenantID, source.KnowledgeBaseID, source.KnowledgeID, "", now)
+		d, current, err := store.bodyKnowledgeDeadline(
+			tx,
+			source.TenantID,
+			source.KnowledgeBaseID,
+			source.KnowledgeID,
+			"",
+			now,
+		)
 		if err != nil {
 			return false, 0, err
 		}
@@ -35,12 +42,22 @@ func configurationOriginalBodySourcesClosed(tx *gorm.DB, lineageText string, now
 	}
 	return closed, deadline, nil
 }
-func (s *OriginalBodyRetentionStore) configurationOriginalBodyCurrent(tx *gorm.DB, head originalBodyFieldHead, row map[string]any, now int64) (bool, int64, error) {
+
+func (s *OriginalBodyRetentionStore) configurationOriginalBodyCurrent(
+	tx *gorm.DB,
+	head originalBodyFieldHead,
+	row map[string]any,
+	now int64,
+) (bool, int64, error) {
 	if head.AdmissionID == "" {
 		return true, 0, nil
 	} // Unknown legacy is an explicit retained body.
 	var origin knowledgeConfigurationInputOrigin
-	if err := bodyInternal(tx).Where("origin_id=? AND tenant_id=? AND knowledge_base_id=?", head.AdmissionID, head.TenantID, head.KnowledgeBaseID).Take(&origin).Error; err != nil {
+	if err := bodyInternal(
+		tx,
+	).Where("origin_id=? AND tenant_id=? AND knowledge_base_id=?", head.AdmissionID, head.TenantID, head.KnowledgeBaseID).
+		Take(&origin).
+		Error; err != nil {
 		return true, 0, err
 	}
 	if origin.SourceLineage != head.SourceLineage {
@@ -54,11 +71,13 @@ func (s *OriginalBodyRetentionStore) configurationOriginalBodyCurrent(tx *gorm.D
 		return true, 0, ErrOriginalBodyUnavailable
 	}
 	digest, err := configurationOriginalBodyManifestDigest(manifest)
-	if err != nil || digest != manifest.ManifestSHA256 || manifest.ConfigDigest != origin.InputDigest || manifest.ConfigRevision != origin.ConfigRevision {
+	if err != nil || digest != manifest.ManifestSHA256 || manifest.ConfigDigest != origin.InputDigest ||
+		manifest.ConfigRevision != origin.ConfigRevision {
 		return true, 0, ErrOriginalBodyUnavailable
 	}
 	var bound []originalBodyFieldHead
-	if json.Unmarshal([]byte(manifest.HeadsJSON), &bound) != nil || !configurationOriginalBodyCatalogComplete(manifest, bound, origin) {
+	if json.Unmarshal([]byte(manifest.HeadsJSON), &bound) != nil ||
+		!configurationOriginalBodyCatalogComplete(manifest, bound, origin) {
 		return true, 0, ErrOriginalBodyUnavailable
 	}
 	actual, err := configurationOriginalBodyHeads(tx, head.TenantID, head.KnowledgeBaseID)
@@ -86,7 +105,13 @@ func (s *OriginalBodyRetentionStore) configurationOriginalBodyCurrent(tx *gorm.D
 		return false, deadline, nil
 	}
 	var kb types.KnowledgeBase
-	if err := bodyInternal(tx).Unscoped().Select("id,tenant_id,deleted_at").Where("id=? AND tenant_id=?", head.RowKey, head.TenantID).Take(&kb).Error; err != nil {
+	if err := bodyInternal(
+		tx,
+	).Unscoped().
+		Select("id,tenant_id,deleted_at").
+		Where("id=? AND tenant_id=?", head.RowKey, head.TenantID).
+		Take(&kb).
+		Error; err != nil {
 		return true, 0, err
 	}
 	if kb.DeletedAt.Valid {
@@ -100,7 +125,10 @@ type configurationOriginalBodyDependentKB struct {
 	KnowledgeBaseID string
 }
 
-func configurationOriginalBodyDependentKBs(tx *gorm.DB, job nextcloudGCJob) ([]configurationOriginalBodyDependentKB, error) {
+func configurationOriginalBodyDependentKBs(
+	tx *gorm.DB,
+	job nextcloudGCJob,
+) ([]configurationOriginalBodyDependentKB, error) {
 	if !tx.Migrator().HasTable("knowledge_config_input_origins") {
 		return nil, nil
 	}
@@ -116,7 +144,10 @@ func configurationOriginalBodyDependentKBs(tx *gorm.DB, job nextcloudGCJob) ([]c
 		}
 		dependent := false
 		for _, source := range lineage.Sources {
-			if source.TenantID == job.TenantID && source.KnowledgeBaseID == job.KnowledgeBaseID && source.KnowledgeID == job.KnowledgeID && source.DataSourceID == job.DataSourceID && source.ExternalID == job.ExternalID {
+			if source.TenantID == job.TenantID && source.KnowledgeBaseID == job.KnowledgeBaseID &&
+				source.KnowledgeID == job.KnowledgeID &&
+				source.DataSourceID == job.DataSourceID &&
+				source.ExternalID == job.ExternalID {
 				dependent = true
 				break
 			}
@@ -136,7 +167,12 @@ func configurationOriginalBodyDependentKBs(tx *gorm.DB, job nextcloudGCJob) ([]c
 			// retained head still binds that old generation; never infer supersession
 			// from a missing current provenance fact alone.
 			var n int64
-			if e := bodyInternal(tx).Model(&originalBodyFieldHead{}).Where("source_table='knowledge_bases' AND tenant_id=? AND row_key=? AND admission_id=?", origin.TenantID, origin.KnowledgeBaseID, origin.OriginID).Count(&n).Error; e != nil {
+			if e := bodyInternal(
+				tx,
+			).Model(&originalBodyFieldHead{}).
+				Where("source_table='knowledge_bases' AND tenant_id=? AND row_key=? AND admission_id=?", origin.TenantID, origin.KnowledgeBaseID, origin.OriginID).
+				Count(&n).
+				Error; e != nil {
 				return nil, e
 			}
 			if n == 0 {
@@ -155,7 +191,11 @@ func configurationOriginalBodyDependentKBs(tx *gorm.DB, job nextcloudGCJob) ([]c
 		if bodyInternal(tx).Where("origin_id=?", origin.OriginID).Take(&manifest).Error != nil {
 			return nil, ErrOriginalBodyUnavailable
 		}
-		if err := verifyConfigurationOriginalBodyInventoryInTx(tx, origin.TenantID, origin.KnowledgeBaseID); err != nil {
+		if err := verifyConfigurationOriginalBodyInventoryInTx(
+			tx,
+			origin.TenantID,
+			origin.KnowledgeBaseID,
+		); err != nil {
 			return nil, err
 		}
 		seen[configurationOriginalBodyDependentKB{origin.TenantID, origin.KnowledgeBaseID}] = true
@@ -183,7 +223,13 @@ func configurationOriginalBodyDependentTemplateInputs(tx *gorm.DB, job nextcloud
 		SourceLineage string
 	}
 	// Parents is the vault body and is deliberately absent from this selector.
-	if err := bodyInternal(tx).Table("knowledge_enrichment_template_inputs").Select("id,tenant_id,source_lineage").Order("id").Find(&rows).Error; err != nil {
+	if err := bodyInternal(
+		tx,
+	).Table("knowledge_enrichment_template_inputs").
+		Select("id,tenant_id,source_lineage").
+		Order("id").
+		Find(&rows).
+		Error; err != nil {
 		return nil, err
 	}
 	ids := []string{}
@@ -193,7 +239,10 @@ func configurationOriginalBodyDependentTemplateInputs(tx *gorm.DB, job nextcloud
 			return nil, ErrOriginalBodyUnavailable
 		}
 		for _, source := range lineage.Sources {
-			if source.TenantID == job.TenantID && source.KnowledgeBaseID == job.KnowledgeBaseID && source.KnowledgeID == job.KnowledgeID && source.DataSourceID == job.DataSourceID && source.ExternalID == job.ExternalID {
+			if source.TenantID == job.TenantID && source.KnowledgeBaseID == job.KnowledgeBaseID &&
+				source.KnowledgeID == job.KnowledgeID &&
+				source.DataSourceID == job.DataSourceID &&
+				source.ExternalID == job.ExternalID {
 				if row.TenantID != job.TenantID {
 					return nil, ErrNextcloudContentGCUncovered
 				}

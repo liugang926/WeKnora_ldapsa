@@ -79,9 +79,11 @@ func TestNextcloudAskTargetRejectsPublishedTextWithNoRetrievableChunk(t *testing
 		return err
 	}
 	require.ErrorIs(t, find(), ErrNextcloudAskTargetNotFound)
-	chunk := &types.Chunk{ID: "chunk-77", TenantID: 7, KnowledgeBaseID: "kb",
+	chunk := &types.Chunk{
+		ID: "chunk-77", TenantID: 7, KnowledgeBaseID: "kb",
 		KnowledgeID: "candidate", ChunkType: types.ChunkTypeText,
-		Content: "current text", IsEnabled: true, IndexStatus: "ready"}
+		Content: "current text", IsEnabled: true, IndexStatus: "ready",
+	}
 	require.NoError(t, db.Create(chunk).Error)
 	require.NoError(t, find())
 	require.NoError(t, db.Model(chunk).Update("index_status", "failed").Error)

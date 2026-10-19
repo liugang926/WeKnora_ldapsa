@@ -11,13 +11,15 @@ import (
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 )
 
-type documentCaptureContextKey struct{}
-type documentLineageCapture struct {
-	guard           *readlease.NextcloudReadGuard
-	lineage         *types.SourceLineage
-	metadataLineage *types.SourceLineage
-	err             error
-}
+type (
+	documentCaptureContextKey struct{}
+	documentLineageCapture    struct {
+		guard           *readlease.NextcloudReadGuard
+		lineage         *types.SourceLineage
+		metadataLineage *types.SourceLineage
+		err             error
+	}
+)
 
 func documentCaptureFromContext(ctx context.Context) *documentLineageCapture {
 	capture, _ := ctx.Value(documentCaptureContextKey{}).(*documentLineageCapture)
@@ -32,6 +34,7 @@ type hydratedDocumentInputs struct {
 func (t *ReadDocumentTool) SetRAGChunkSnapshotReader(reader interfaces.RAGChunkSnapshotReader) {
 	t.snapshotReader = reader
 }
+
 func (r *ToolRegistry) SetRAGChunkSnapshotReader(reader interfaces.RAGChunkSnapshotReader) {
 	for _, tool := range r.tools {
 		if adapter, ok := tool.(interface {
@@ -73,7 +76,11 @@ func (t *ReadDocumentTool) ExecuteSourceLineage(ctx context.Context, args json.R
 	return result, err
 }
 
-func (t *ReadDocumentTool) hydrateDocumentInputs(ctx context.Context, k *types.Knowledge, chunks []*types.Chunk) (out *hydratedDocumentInputs, err error) {
+func (t *ReadDocumentTool) hydrateDocumentInputs(
+	ctx context.Context,
+	k *types.Knowledge,
+	chunks []*types.Chunk,
+) (out *hydratedDocumentInputs, err error) {
 	capture := documentCaptureFromContext(ctx)
 	turn := types.RAGSourceLineageFromContext(ctx)
 	defer func() {
@@ -93,7 +100,14 @@ func (t *ReadDocumentTool) hydrateDocumentInputs(ctx context.Context, k *types.K
 	if err != nil {
 		return nil, err
 	}
-	request := types.RAGChunkReadRequest{TenantID: k.TenantID, KnowledgeBaseID: k.KnowledgeBaseID, KnowledgeID: k.ID, Lease: lease, MetadataOnly: len(chunks) == 0, ExpectedLineage: capture.metadataLineage}
+	request := types.RAGChunkReadRequest{
+		TenantID:        k.TenantID,
+		KnowledgeBaseID: k.KnowledgeBaseID,
+		KnowledgeID:     k.ID,
+		Lease:           lease,
+		MetadataOnly:    len(chunks) == 0,
+		ExpectedLineage: capture.metadataLineage,
+	}
 	for _, c := range chunks {
 		if c == nil || c.KnowledgeID != k.ID || c.KnowledgeBaseID != k.KnowledgeBaseID || c.TenantID != k.TenantID {
 			return nil, ErrToolSourceLineageUnavailable
@@ -109,7 +123,8 @@ func (t *ReadDocumentTool) hydrateDocumentInputs(ctx context.Context, k *types.K
 	}
 	out = &hydratedDocumentInputs{}
 	for i, snapshot := range snapshots {
-		if snapshot.Knowledge == nil || snapshot.Knowledge.ID != k.ID || snapshot.Knowledge.TenantID != k.TenantID || snapshot.Knowledge.KnowledgeBaseID != k.KnowledgeBaseID {
+		if snapshot.Knowledge == nil || snapshot.Knowledge.ID != k.ID || snapshot.Knowledge.TenantID != k.TenantID ||
+			snapshot.Knowledge.KnowledgeBaseID != k.KnowledgeBaseID {
 			return nil, ErrToolSourceLineageUnavailable
 		}
 		if err := snapshot.SourceLineage.RequireComplete(); err != nil {
@@ -118,7 +133,8 @@ func (t *ReadDocumentTool) hydrateDocumentInputs(ctx context.Context, k *types.K
 
 		if len(chunks) > 0 {
 			c := snapshot.Chunk
-			if c == nil || c.ID != chunks[i].ID || c.TenantID != k.TenantID || c.KnowledgeBaseID != k.KnowledgeBaseID || c.KnowledgeID != k.ID {
+			if c == nil || c.ID != chunks[i].ID || c.TenantID != k.TenantID || c.KnowledgeBaseID != k.KnowledgeBaseID ||
+				c.KnowledgeID != k.ID {
 				return nil, ErrToolSourceLineageUnavailable
 			}
 			if err := validateDocumentChunkProjection(snapshot); err != nil {
@@ -143,7 +159,13 @@ func (t *ReadDocumentTool) hydrateDocumentInputs(ctx context.Context, k *types.K
 			return nil, err
 		}
 	}
-	if err := finishAgentRead(ctx, t.knowledgeService, t.searchTargets, capture.guard, []*types.Knowledge{out.Knowledge}); err != nil {
+	if err := finishAgentRead(
+		ctx,
+		t.knowledgeService,
+		t.searchTargets,
+		capture.guard,
+		[]*types.Knowledge{out.Knowledge},
+	); err != nil {
 		return nil, err
 	}
 	if err := turn.Check(ctx); err != nil {
@@ -162,8 +184,10 @@ func validateDocumentChunkProjection(snapshot types.RAGChunkInputSnapshot) error
 	}
 	// Generated summaries need an exact producer receipt. Older readers that
 	// can only pin current source identity retain the original text-only scope.
-	supported := c.ChunkType == types.ChunkTypeText || (c.ChunkType == types.ChunkTypeSummary && snapshot.ProducerMaterialVerified)
-	if !supported || (strings.TrimSpace(c.ImageInfo) != "" && strings.TrimSpace(c.ImageInfo) != "[]") || (len(c.Metadata) > 0 && strings.TrimSpace(string(c.Metadata)) != "{}") {
+	supported := c.ChunkType == types.ChunkTypeText ||
+		(c.ChunkType == types.ChunkTypeSummary && snapshot.ProducerMaterialVerified)
+	if !supported || (strings.TrimSpace(c.ImageInfo) != "" && strings.TrimSpace(c.ImageInfo) != "[]") ||
+		(len(c.Metadata) > 0 && strings.TrimSpace(string(c.Metadata)) != "{}") {
 		return errors.New("document chunk enrichment lineage adapter is unavailable")
 	}
 	return nil

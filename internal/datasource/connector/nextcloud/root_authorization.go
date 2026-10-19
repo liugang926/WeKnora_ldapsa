@@ -14,8 +14,16 @@ import (
 	"github.com/Tencent/WeKnora/internal/types"
 )
 
-func AuthorizeCurrentRoot(ctx context.Context, source *types.DataSourceConfig, instance, binding, directory, guid string) error {
-	if source == nil || source.Type != types.ConnectorTypeNextcloud || instance == "" || !validBindingID(binding) || !authorizationDirectoryIDPattern.MatchString(directory) || !authorizationGUIDPattern.MatchString(guid) || len(source.ResourceIDs) != 1 || source.ResourceIDs[0] != binding {
+func AuthorizeCurrentRoot(
+	ctx context.Context,
+	source *types.DataSourceConfig,
+	instance, binding, directory, guid string,
+) error {
+	if source == nil || source.Type != types.ConnectorTypeNextcloud || instance == "" || !validBindingID(binding) ||
+		!authorizationDirectoryIDPattern.MatchString(directory) ||
+		!authorizationGUIDPattern.MatchString(guid) ||
+		len(source.ResourceIDs) != 1 ||
+		source.ResourceIDs[0] != binding {
 		return fmt.Errorf("invalid Nextcloud root authorization identity")
 	}
 	cfg, err := parseConfig(source)
@@ -33,7 +41,12 @@ func AuthorizeCurrentRoot(ctx context.Context, source *types.DataSourceConfig, i
 	if err != nil {
 		return err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, cli.endpointURL("/bindings/"+binding+"/authorize-root", nil), bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodPost,
+		cli.endpointURL("/bindings/"+binding+"/authorize-root", nil),
+		bytes.NewReader(body),
+	)
 	if err != nil {
 		return err
 	}
@@ -63,10 +76,23 @@ func AuthorizeCurrentRoot(ctx context.Context, source *types.DataSourceConfig, i
 		PolicyRevision   string `json:"policy_revision"`
 		CheckedAt        int64  `json:"checked_at"`
 	}
-	if json.Unmarshal(raw, &wire) != nil || wire.Allow == nil || !*wire.Allow || wire.Reason != "authorized" || wire.BindingID != binding || wire.DirectoryID != directory || strings.ToLower(wire.ObjectGUID) != strings.ToLower(guid) || wire.PublicationEpoch == "" || wire.PolicyRevision == "" || wire.CheckedAt <= 0 || wire.CheckedAt < time.Now().Add(-5*time.Minute).Unix() || wire.CheckedAt > time.Now().Add(5*time.Minute).Unix() {
+	if json.Unmarshal(raw, &wire) != nil || wire.Allow == nil || !*wire.Allow || wire.Reason != "authorized" ||
+		wire.BindingID != binding ||
+		wire.DirectoryID != directory ||
+		strings.ToLower(wire.ObjectGUID) != strings.ToLower(guid) ||
+		wire.PublicationEpoch == "" ||
+		wire.PolicyRevision == "" ||
+		wire.CheckedAt <= 0 ||
+		wire.CheckedAt < time.Now().Add(-5*time.Minute).Unix() ||
+		wire.CheckedAt > time.Now().Add(5*time.Minute).Unix() {
 		return fmt.Errorf("Nextcloud root authorization denied")
 	}
-	if n, err := strconv.ParseInt(wire.PublicationEpoch, 10, 64); err != nil || n < 0 || strconv.FormatInt(n, 10) != wire.PublicationEpoch {
+	if n, err := strconv.ParseInt(
+		wire.PublicationEpoch,
+		10,
+		64,
+	); err != nil || n < 0 ||
+		strconv.FormatInt(n, 10) != wire.PublicationEpoch {
 		return fmt.Errorf("invalid Nextcloud root publication epoch")
 	}
 	return nil

@@ -2,9 +2,10 @@ package repository
 
 import (
 	"context"
+	"testing"
+
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/stretchr/testify/require"
-	"testing"
 )
 
 func TestNextcloudGlobalHistoryAdmissionIncludesAllPersistentEvidence(t *testing.T) {
@@ -14,11 +15,21 @@ func TestNextcloudGlobalHistoryAdmissionIncludesAllPersistentEvidence(t *testing
 			require.NoError(t, db.Exec("INSERT INTO knowledge_bases(id, tenant_id) VALUES('kb', 99)").Error)
 			switch kind {
 			case "source-soft-deleted-other-tenant":
-				ds := &types.DataSource{ID: "ds", TenantID: 99, KnowledgeBaseID: "kb", Type: types.ConnectorTypeNextcloud}
+				ds := &types.DataSource{
+					ID:              "ds",
+					TenantID:        99,
+					KnowledgeBaseID: "kb",
+					Type:            types.ConnectorTypeNextcloud,
+				}
 				require.NoError(t, db.Create(ds).Error)
 				require.NoError(t, db.Delete(ds).Error)
 			case "sticky-deleted-kb":
-				require.NoError(t, db.Exec("UPDATE knowledge_bases SET ever_had_nextcloud_source=TRUE, deleted_at=CURRENT_TIMESTAMP").Error)
+				require.NoError(
+					t,
+					db.Exec(
+						"UPDATE knowledge_bases SET ever_had_nextcloud_source=TRUE, deleted_at=CURRENT_TIMESTAMP",
+					).Error,
+				)
 			case "pairing":
 				require.NoError(t, db.Create(&NextcloudSourcePairing{OperationID: "pair"}).Error)
 			case "abort":
@@ -45,10 +56,28 @@ func TestNextcloudGlobalHistoryAdmissionIncludesAllPersistentEvidence(t *testing
 
 func TestNextcloudHistoryTombstoneSurvivesAllBusinessEvidenceDeletion(t *testing.T) {
 	db := provenanceTestDB(t)
-	require.NoError(t, db.Exec("INSERT INTO knowledge_bases(id, tenant_id, ever_had_nextcloud_source) VALUES('kb',99,TRUE)").Error)
-	require.NoError(t, db.Create(&types.DataSource{ID: "ds", TenantID: 99, KnowledgeBaseID: "kb", Type: types.ConnectorTypeNextcloud}).Error)
-	require.NoError(t, db.Create(&NextcloudSourcePairing{OperationID: "pair", TenantID: 99, KnowledgeBaseID: "kb", DataSourceID: "ds"}).Error)
-	require.NoError(t, db.Exec("INSERT INTO nextcloud_source_tombstones VALUES (99, 'tenant', '99'), (99, 'knowledge_base', 'kb')").Error)
+	require.NoError(
+		t,
+		db.Exec("INSERT INTO knowledge_bases(id, tenant_id, ever_had_nextcloud_source) VALUES('kb',99,TRUE)").Error,
+	)
+	require.NoError(
+		t,
+		db.Create(
+			&types.DataSource{ID: "ds", TenantID: 99, KnowledgeBaseID: "kb", Type: types.ConnectorTypeNextcloud},
+		).Error,
+	)
+	require.NoError(
+		t,
+		db.Create(
+			&NextcloudSourcePairing{OperationID: "pair", TenantID: 99, KnowledgeBaseID: "kb", DataSourceID: "ds"},
+		).Error,
+	)
+	require.NoError(
+		t,
+		db.Exec(
+			"INSERT INTO nextcloud_source_tombstones VALUES (99, 'tenant', '99'), (99, 'knowledge_base', 'kb')",
+		).Error,
+	)
 	require.NoError(t, db.Exec("DELETE FROM nextcloud_source_pairings").Error)
 	require.NoError(t, db.Exec("DELETE FROM data_sources").Error)
 	require.NoError(t, db.Exec("DELETE FROM knowledge_bases").Error)
@@ -82,11 +111,24 @@ func TestNextcloudScopedHistoryRetainsDeletedKBAndPairingEvidence(t *testing.T) 
 			require.NoError(t, db.Exec("INSERT INTO knowledge_bases(id,tenant_id) VALUES('kb',99)").Error)
 			switch kind {
 			case "sticky":
-				require.NoError(t, db.Exec("UPDATE knowledge_bases SET ever_had_nextcloud_source=TRUE,deleted_at=CURRENT_TIMESTAMP").Error)
+				require.NoError(
+					t,
+					db.Exec(
+						"UPDATE knowledge_bases SET ever_had_nextcloud_source=TRUE,deleted_at=CURRENT_TIMESTAMP",
+					).Error,
+				)
 			case "pairing":
-				require.NoError(t, db.Create(&NextcloudSourcePairing{OperationID: "p", KnowledgeBaseID: "kb", TenantID: 99}).Error)
+				require.NoError(
+					t,
+					db.Create(&NextcloudSourcePairing{OperationID: "p", KnowledgeBaseID: "kb", TenantID: 99}).Error,
+				)
 			case "abort":
-				require.NoError(t, db.Create(&NextcloudSourcePairingAbort{OperationID: "p", KnowledgeBaseID: "kb", TenantID: 99}).Error)
+				require.NoError(
+					t,
+					db.Create(
+						&NextcloudSourcePairingAbort{OperationID: "p", KnowledgeBaseID: "kb", TenantID: 99},
+					).Error,
+				)
 			}
 			repo := &DataSourceRepository{db: db}
 			ever, err := repo.HasEverNextcloudSourceForKnowledgeBase(context.Background(), "kb")

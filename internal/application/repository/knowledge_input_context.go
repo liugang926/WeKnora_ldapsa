@@ -9,12 +9,15 @@ import (
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 )
 
-type knowledgeInputOriginKey struct{}
-type knowledgeBuildInputKey struct{}
-type knowledgeInputOrigin struct {
-	lineage *types.SourceLineage
-	kind    string
-}
+type (
+	knowledgeInputOriginKey struct{}
+	knowledgeBuildInputKey  struct{}
+	knowledgeInputOrigin    struct {
+		lineage *types.SourceLineage
+		kind    string
+	}
+)
+
 type knowledgeBuildInputContext struct {
 	reader    interfaces.KnowledgeBuildInputReader
 	proof     *types.KnowledgeBuildInputProof
@@ -57,12 +60,20 @@ func cloneKnowledgeInputProof(proof *types.KnowledgeBuildInputProof) *types.Know
 	return &copy
 }
 
-func WithKnowledgeBuildInputProof(ctx context.Context, reader interfaces.KnowledgeBuildInputReader, proof *types.KnowledgeBuildInputProof) context.Context {
+func WithKnowledgeBuildInputProof(
+	ctx context.Context,
+	reader interfaces.KnowledgeBuildInputReader,
+	proof *types.KnowledgeBuildInputProof,
+) context.Context {
 	if proof != nil && proof.SourceLineage != nil &&
 		(proof.SourceLineage.State != types.SourceLineageComplete || len(proof.SourceLineage.Sources) > 0) {
 		ctx = logprivacy.SuppressContent(ctx)
 	}
-	return context.WithValue(ctx, knowledgeBuildInputKey{}, knowledgeBuildInputContext{reader, cloneKnowledgeInputProof(proof), ctx})
+	return context.WithValue(
+		ctx,
+		knowledgeBuildInputKey{},
+		knowledgeBuildInputContext{reader, cloneKnowledgeInputProof(proof), ctx},
+	)
 }
 
 func KnowledgeBuildInputProofFromContext(ctx context.Context) *types.KnowledgeBuildInputProof {

@@ -29,6 +29,7 @@ func (n *Neo4jRepository) Labels(namespace types.NameSpace) []string {
 	}
 	return labels
 }
+
 func (n *Neo4jRepository) Label(namespace types.NameSpace) string {
 	labels := n.Labels(namespace)
 	for i := range labels {
@@ -63,7 +64,10 @@ func (n *Neo4jRepository) AddGraph(ctx context.Context, namespace types.NameSpac
 		if err != nil {
 			return err
 		}
-		controlRows = append(controlRows, map[string]any{"key": controlKey, "kg": namespace.Knowledge, "kb": namespace.KnowledgeBase, "receipt": controlReceipt, "body": string(graphBody)})
+		controlRows = append(controlRows, map[string]any{
+			"key": controlKey, "kg": namespace.Knowledge, "kb": namespace.KnowledgeBase,
+			"receipt": controlReceipt, "body": string(graphBody),
+		})
 		receipts = append(receipts, graph.SourceReceipt)
 		keys := map[string]string{}
 		for _, node := range graph.Node {
@@ -82,7 +86,11 @@ func (n *Neo4jRepository) AddGraph(ctx context.Context, namespace types.NameSpac
 			}
 			key := types.GraphDigest(encoded)
 			keys[node.Name] = key
-			nodeRows = append(nodeRows, map[string]any{"input_key": controlKey, "key": key, "name": node.Name, "kg": namespace.Knowledge, "kb": namespace.KnowledgeBase, "chunks": node.Chunks, "attributes": node.Attributes, "receipt": encoded})
+			nodeRows = append(nodeRows, map[string]any{
+				"input_key": controlKey, "key": key, "name": node.Name,
+				"kg": namespace.Knowledge, "kb": namespace.KnowledgeBase,
+				"chunks": node.Chunks, "attributes": node.Attributes, "receipt": encoded,
+			})
 			receipts = append(receipts, node.SourceReceipt)
 		}
 		for _, edge := range graph.Relation {
@@ -101,7 +109,10 @@ func (n *Neo4jRepository) AddGraph(ctx context.Context, namespace types.NameSpac
 			if err != nil {
 				return err
 			}
-			edgeRows = append(edgeRows, map[string]any{"input_key": controlKey, "key": types.GraphDigest(encoded), "source": source, "target": target, "kind": edge.Type, "receipt": encoded, "kg": namespace.Knowledge, "kb": namespace.KnowledgeBase})
+			edgeRows = append(edgeRows, map[string]any{
+				"input_key": controlKey, "key": types.GraphDigest(encoded), "source": source, "target": target,
+				"kind": edge.Type, "receipt": encoded, "kg": namespace.Knowledge, "kb": namespace.KnowledgeBase,
+			})
 			receipts = append(receipts, edge.SourceReceipt)
 		}
 	}
@@ -118,7 +129,10 @@ func (n *Neo4jRepository) AddGraph(ctx context.Context, namespace types.NameSpac
 				return nil, err
 			}
 		}
-		controls, err := tx.Run(ctx, `UNWIND $data AS row MERGE (g:WEKNORA_GRAPH_INPUT {receipt_key:row.key}) ON CREATE SET g.kb=row.kb,g.kg=row.kg,g._source_receipt=row.receipt,g.body=row.body RETURN g`, map[string]any{"data": controlRows})
+		controls, err := tx.Run(ctx, `UNWIND $data AS row
+			MERGE (g:WEKNORA_GRAPH_INPUT {receipt_key:row.key})
+			ON CREATE SET g.kb=row.kb,g.kg=row.kg,g._source_receipt=row.receipt,g.body=row.body RETURN g`,
+			map[string]any{"data": controlRows})
 		if err != nil {
 			return nil, err
 		}
@@ -140,7 +154,10 @@ func (n *Neo4jRepository) AddGraph(ctx context.Context, namespace types.NameSpac
 		if count != len(controlRows) {
 			return nil, types.ErrGraphSourceReceiptUnknown
 		}
-		nodes, err := tx.Run(ctx, `UNWIND $data AS row MERGE (n:`+n.Label(namespace)+` {receipt_key:row.key}) ON CREATE SET n.name=row.name,n.kg=row.kg,n.kb=row.kb,n.chunks=row.chunks,n.attributes=row.attributes,n._source_receipt=row.receipt,n._input_key=row.input_key RETURN n`, map[string]any{"data": nodeRows})
+		nodes, err := tx.Run(ctx, `UNWIND $data AS row MERGE (n:`+n.Label(namespace)+` {receipt_key:row.key})
+			ON CREATE SET n.name=row.name,n.kg=row.kg,n.kb=row.kb,n.chunks=row.chunks,
+			 n.attributes=row.attributes,n._source_receipt=row.receipt,n._input_key=row.input_key RETURN n`,
+			map[string]any{"data": nodeRows})
 		if err != nil {
 			return nil, err
 		}
@@ -162,7 +179,12 @@ func (n *Neo4jRepository) AddGraph(ctx context.Context, namespace types.NameSpac
 		if count != len(nodeRows) {
 			return nil, types.ErrGraphSourceReceiptUnknown
 		}
-		edges, err := tx.Run(ctx, `UNWIND $data AS row MATCH (s:`+n.Label(namespace)+` {receipt_key:row.source}),(t:`+n.Label(namespace)+` {receipt_key:row.target}) MERGE (s)-[r:WEKNORA_REL {receipt_key:row.key}]->(t) ON CREATE SET r.kind=row.kind,r.kg=row.kg,r.kb=row.kb,r._source_receipt=row.receipt,r._input_key=row.input_key RETURN r,s,t`, map[string]any{"data": edgeRows})
+		edges, err := tx.Run(ctx, `UNWIND $data AS row
+			MATCH (s:`+n.Label(namespace)+` {receipt_key:row.source}),
+			 (t:`+n.Label(namespace)+` {receipt_key:row.target})
+			MERGE (s)-[r:WEKNORA_REL {receipt_key:row.key}]->(t)
+			ON CREATE SET r.kind=row.kind,r.kg=row.kg,r.kb=row.kb,
+			 r._source_receipt=row.receipt,r._input_key=row.input_key RETURN r,s,t`, map[string]any{"data": edgeRows})
 		if err != nil {
 			return nil, err
 		}
@@ -211,7 +233,8 @@ func (n *Neo4jRepository) DelGraph(ctx context.Context, namespaces []types.NameS
 			if namespace.KnowledgeBase == "" {
 				return nil, types.ErrGraphSourceReceiptUnknown
 			}
-			result, err := tx.Run(ctx, `MATCH (n:`+n.Label(namespace)+`) WHERE $kg='' OR n.kg=$kg DETACH DELETE n`, map[string]any{"kg": namespace.Knowledge})
+			result, err := tx.Run(ctx, `MATCH (n:`+n.Label(namespace)+`) WHERE $kg='' OR n.kg=$kg DETACH DELETE n`,
+				map[string]any{"kg": namespace.Knowledge})
 			if err != nil {
 				return nil, err
 			}
@@ -220,7 +243,8 @@ func (n *Neo4jRepository) DelGraph(ctx context.Context, namespaces []types.NameS
 			}
 		}
 		for _, namespace := range namespaces {
-			result, err := tx.Run(ctx, `MATCH (g:WEKNORA_GRAPH_INPUT {kb:$kb}) WHERE $kg='' OR g.kg=$kg DELETE g`, map[string]any{"kb": namespace.KnowledgeBase, "kg": namespace.Knowledge})
+			result, err := tx.Run(ctx, `MATCH (g:WEKNORA_GRAPH_INPUT {kb:$kb}) WHERE $kg='' OR g.kg=$kg DELETE g`,
+				map[string]any{"kb": namespace.KnowledgeBase, "kg": namespace.Knowledge})
 			if err != nil {
 				return nil, err
 			}
@@ -235,7 +259,9 @@ func (n *Neo4jRepository) DelGraph(ctx context.Context, namespaces []types.NameS
 
 const graphReadLimit = 4096
 
-func (n *Neo4jRepository) SearchNode(ctx context.Context, namespace types.NameSpace, names []string) (*types.GraphData, error) {
+func (n *Neo4jRepository) SearchNode(
+	ctx context.Context, namespace types.NameSpace, names []string,
+) (*types.GraphData, error) {
 	if n.driver == nil || namespace.KnowledgeBase == "" {
 		return nil, types.ErrGraphSourceReceiptUnknown
 	}
@@ -245,7 +271,9 @@ func (n *Neo4jRepository) SearchNode(ctx context.Context, namespace types.NameSp
 		empty, _ := types.NewCompleteSourceLineage()
 		graph := &types.GraphData{SourceLineage: empty}
 		controlKeys := map[string]*types.GraphSourceReceipt{}
-		controls, err := tx.Run(ctx, `MATCH (g:WEKNORA_GRAPH_INPUT {kb:$kb}) WHERE $kg='' OR g.kg=$kg RETURN g LIMIT $limit`, map[string]any{"kb": namespace.KnowledgeBase, "kg": namespace.Knowledge, "limit": graphReadLimit + 1})
+		controls, err := tx.Run(ctx, `MATCH (g:WEKNORA_GRAPH_INPUT {kb:$kb})
+			WHERE $kg='' OR g.kg=$kg RETURN g LIMIT $limit`,
+			map[string]any{"kb": namespace.KnowledgeBase, "kg": namespace.Knowledge, "limit": graphReadLimit + 1})
 		if err != nil {
 			return nil, err
 		}
@@ -278,7 +306,11 @@ func (n *Neo4jRepository) SearchNode(ctx context.Context, namespace types.NameSp
 		if err := controls.Err(); err != nil {
 			return nil, err
 		}
-		result, err := tx.Run(ctx, `MATCH (n:`+n.Label(namespace)+`) WHERE ($kg='' OR n.kg=$kg) OPTIONAL MATCH (n)-[r]-(m:`+n.Label(namespace)+`) RETURN n,r,m,startNode(r) AS source,endNode(r) AS target,ANY(text IN $names WHERE n.name CONTAINS text) AS matched LIMIT $limit`, map[string]any{"kg": namespace.Knowledge, "names": names, "limit": graphReadLimit + 1})
+		result, err := tx.Run(ctx, `MATCH (n:`+n.Label(namespace)+`) WHERE ($kg='' OR n.kg=$kg)
+			OPTIONAL MATCH (n)-[r]-(m:`+n.Label(namespace)+`)
+			RETURN n,r,m,startNode(r) AS source,endNode(r) AS target,
+			 ANY(text IN $names WHERE n.name CONTAINS text) AS matched LIMIT $limit`,
+			map[string]any{"kg": namespace.Knowledge, "names": names, "limit": graphReadLimit + 1})
 		if err != nil {
 			return nil, err
 		}
@@ -294,7 +326,8 @@ func (n *Neo4jRepository) SearchNode(ctx context.Context, namespace types.NameSp
 			if err != nil || !sameControlProof(controlKeys[inputKey], node.SourceReceipt) {
 				return types.ErrGraphSourceReceiptUnknown
 			}
-			if node.SourceReceipt.KnowledgeBaseID != namespace.KnowledgeBase || (namespace.Knowledge != "" && node.SourceReceipt.KnowledgeID != namespace.Knowledge) {
+			if node.SourceReceipt.KnowledgeBaseID != namespace.KnowledgeBase ||
+				(namespace.Knowledge != "" && node.SourceReceipt.KnowledgeID != namespace.Knowledge) {
 				return types.ErrGraphSourceReceiptUnknown
 			}
 			graph.InputReceipts = append(graph.InputReceipts, node.SourceReceipt)
@@ -383,6 +416,7 @@ func (n *Neo4jRepository) SearchNode(ctx context.Context, namespace types.NameSp
 	}
 	return graph, nil
 }
+
 func stringProperty(props map[string]any, key string) (string, error) {
 	value, ok := props[key].(string)
 	if !ok {
@@ -390,6 +424,7 @@ func stringProperty(props map[string]any, key string) (string, error) {
 	}
 	return value, nil
 }
+
 func stringListProperty(props map[string]any, key string) ([]string, error) {
 	v, ok := props[key].([]any)
 	if !ok {
@@ -405,6 +440,7 @@ func stringListProperty(props map[string]any, key string) ([]string, error) {
 	}
 	return values, nil
 }
+
 func decodeNode(raw neo4j.Node) (*types.GraphNode, error) {
 	name, err := stringProperty(raw.Props, "name")
 	if err != nil {
@@ -444,6 +480,7 @@ func decodeNode(raw neo4j.Node) (*types.GraphNode, error) {
 	}
 	return node, nil
 }
+
 func decodeEdge(raw neo4j.Relationship, source, target neo4j.Node) (*types.GraphRelation, error) {
 	if raw.Type != "WEKNORA_REL" {
 		return nil, types.ErrGraphSourceReceiptUnknown
@@ -491,6 +528,7 @@ func decodeEdge(raw neo4j.Relationship, source, target neo4j.Node) (*types.Graph
 	}
 	return edge, nil
 }
+
 func listI2listS(list []any) []string {
 	result := make([]string, len(list))
 	for i, v := range list {
@@ -534,6 +572,12 @@ func decodeControl(raw neo4j.Node) (*types.GraphSourceReceipt, error) {
 	}
 	return receipt, nil
 }
+
 func sameControlProof(control, child *types.GraphSourceReceipt) bool {
-	return control != nil && child != nil && control.TenantID == child.TenantID && control.KnowledgeBaseID == child.KnowledgeBaseID && control.KnowledgeID == child.KnowledgeID && control.BuildGeneration == child.BuildGeneration && control.InputDigest == child.InputDigest && control.ConfigDigest == child.ConfigDigest && control.WireDigest == child.WireDigest && types.GraphDigest(control.OriginalInput) == types.GraphDigest(child.OriginalInput) && types.GraphDigest(control.SourceLineage) == types.GraphDigest(child.SourceLineage)
+	return control != nil && child != nil && control.TenantID == child.TenantID &&
+		control.KnowledgeBaseID == child.KnowledgeBaseID && control.KnowledgeID == child.KnowledgeID &&
+		control.BuildGeneration == child.BuildGeneration && control.InputDigest == child.InputDigest &&
+		control.ConfigDigest == child.ConfigDigest && control.WireDigest == child.WireDigest &&
+		types.GraphDigest(control.OriginalInput) == types.GraphDigest(child.OriginalInput) &&
+		types.GraphDigest(control.SourceLineage) == types.GraphDigest(child.SourceLineage)
 }

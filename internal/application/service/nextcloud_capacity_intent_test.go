@@ -4,6 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"mime/multipart"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+
 	"github.com/Tencent/WeKnora/internal/application/repository"
 	storagefile "github.com/Tencent/WeKnora/internal/application/service/file"
 	"github.com/Tencent/WeKnora/internal/types"
@@ -14,12 +21,6 @@ import (
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
-	"mime/multipart"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"strings"
-	"testing"
 )
 
 type capacityFailureCatalog struct {
@@ -27,7 +28,12 @@ type capacityFailureCatalog struct {
 	fail bool
 }
 
-func (c *capacityFailureCatalog) Register(ctx context.Context, tenant uint64, path string, meta interfaces.ResourceRegistration) (string, error) {
+func (c *capacityFailureCatalog) Register(
+	ctx context.Context,
+	tenant uint64,
+	path string,
+	meta interfaces.ResourceRegistration,
+) (string, error) {
 	if c.fail {
 		return "", errors.New("actual catalog registration unavailable")
 	}
@@ -44,12 +50,31 @@ type capacityIntentKnowledge struct {
 }
 
 func (k *capacityIntentKnowledge) GetRepository() interfaces.KnowledgeRepository { return k.repo }
-func (k *capacityIntentKnowledge) CreateKnowledgeFromFile(ctx context.Context, kb string, h *multipart.FileHeader, metadata map[string]string, _ *bool, _ string, _ []string, _ string, _ *types.KnowledgeProcessOverrides) (*types.Knowledge, error) {
+
+func (k *capacityIntentKnowledge) CreateKnowledgeFromFile(
+	ctx context.Context,
+	kb string,
+	h *multipart.FileHeader,
+	metadata map[string]string,
+	_ *bool,
+	_ string,
+	_ []string,
+	_ string,
+	_ *types.KnowledgeProcessOverrides,
+) (*types.Knowledge, error) {
 	if k.mode == "duplicate" {
 		return k.candidate, types.NewDuplicateFileError(k.candidate)
 	}
 	bytes, _ := json.Marshal(metadata)
-	row := &types.Knowledge{ID: uuid.NewString(), TenantID: 7, KnowledgeBaseID: kb, Channel: types.ConnectorTypeNextcloud, Type: "file", Metadata: bytes, ParseStatus: types.ParseStatusPending}
+	row := &types.Knowledge{
+		ID:              uuid.NewString(),
+		TenantID:        7,
+		KnowledgeBaseID: kb,
+		Channel:         types.ConnectorTypeNextcloud,
+		Type:            "file",
+		Metadata:        bytes,
+		ParseStatus:     types.ParseStatusPending,
+	}
 	if e := k.db.Create(row).Error; e != nil {
 		return nil, e
 	}
@@ -113,10 +138,27 @@ func newCapacityIntentFixture(t *testing.T, pg bool) *capacityIntentFixture {
 	require.NoError(t, e)
 	sql.SetMaxOpenConns(4)
 	t.Cleanup(func() { _ = sql.Close() })
-	require.NoError(t, f.db.AutoMigrate(&types.KnowledgeBase{}, &types.Knowledge{}, &types.StoredResource{}, &types.ResourceBinding{}, &types.ResourceAccessGrant{}, &types.Tenant{}, &types.StorageBackend{}))
-	migrations := []string{"sqlite/000065_nextcloud_capacity_admission", "sqlite/000067_nextcloud_capacity_write_intents"}
+	require.NoError(
+		t,
+		f.db.AutoMigrate(
+			&types.KnowledgeBase{},
+			&types.Knowledge{},
+			&types.StoredResource{},
+			&types.ResourceBinding{},
+			&types.ResourceAccessGrant{},
+			&types.Tenant{},
+			&types.StorageBackend{},
+		),
+	)
+	migrations := []string{
+		"sqlite/000065_nextcloud_capacity_admission",
+		"sqlite/000067_nextcloud_capacity_write_intents",
+	}
 	if pg {
-		migrations = []string{"versioned/000146_nextcloud_capacity_admission", "versioned/000148_nextcloud_capacity_write_intents"}
+		migrations = []string{
+			"versioned/000146_nextcloud_capacity_admission",
+			"versioned/000148_nextcloud_capacity_write_intents",
+		}
 	}
 	for _, name := range migrations {
 		b, e := os.ReadFile("../../../migrations/" + name + ".up.sql")
@@ -126,25 +168,61 @@ func newCapacityIntentFixture(t *testing.T, pg bool) *capacityIntentFixture {
 	backend := "backend"
 	f.kb = &types.KnowledgeBase{ID: "kb", TenantID: 7, StorageBackendID: &backend}
 	require.NoError(t, f.db.Create(f.kb).Error)
-	require.NoError(t, f.db.Create(&types.Tenant{ID: 7, Name: "owned capacity fixture", DefaultStorageBackendID: &backend}).Error)
-	require.NoError(t, f.db.Create(&types.StorageBackend{ID: backend, TenantID: 7, Name: "owned local backend", Provider: "local", Status: types.StorageBackendStatusActive}).Error)
+	require.NoError(
+		t,
+		f.db.Create(&types.Tenant{ID: 7, Name: "owned capacity fixture", DefaultStorageBackendID: &backend}).Error,
+	)
+	require.NoError(
+		t,
+		f.db.Create(
+			&types.StorageBackend{
+				ID:       backend,
+				TenantID: 7,
+				Name:     "owned local backend",
+				Provider: "local",
+				Status:   types.StorageBackendStatusActive,
+			},
+		).Error,
+	)
 	f.store = repository.NewNextcloudCapacityStore(f.db)
 	f.catalog = &capacityFailureCatalog{ResourceCatalog: NewResourceCatalog(repository.NewResourceRepository(f.db))}
-	f.fs = storagefile.NewResourceCatalogFileService(storagefile.NewBackendScopedFileService(backend, storagefile.NewLocalFileService(f.base, "")), f.catalog)
-	f.admission = NewNextcloudCapacityAdmission(f.store, func(context.Context, *types.KnowledgeBase) (interfaces.FileService, error) { return f.fs, nil })
+	f.fs = storagefile.NewResourceCatalogFileService(
+		storagefile.NewBackendScopedFileService(backend, storagefile.NewLocalFileService(f.base, "")),
+		f.catalog,
+	)
+	f.admission = NewNextcloudCapacityAdmission(
+		f.store,
+		func(context.Context, *types.KnowledgeBase) (interfaces.FileService, error) { return f.fs, nil },
+	)
 	return f
 }
-func (f *capacityIntentFixture) ingest(t *testing.T, mode string, stageErr, admitErr error) (*capacityIntentKnowledge, error) {
+
+func (f *capacityIntentFixture) ingest(
+	t *testing.T,
+	mode string,
+	stageErr, admitErr error,
+) (*capacityIntentKnowledge, error) {
 	t.Helper()
 	version := &deletionLookupKnowledgeRepo{stageErr: stageErr, admitErr: admitErr}
 	knowledge := &capacityIntentKnowledge{repo: version, db: f.db, fs: f.fs, mode: mode}
-	source := &DataSourceService{knowledgeService: knowledge, kbService: &processSyncKBService{kb: f.kb}, capacityAdmission: f.admission}
+	source := &DataSourceService{
+		knowledgeService:  knowledge,
+		kbService:         &processSyncKBService{kb: f.kb},
+		capacityAdmission: f.admission,
+	}
 	if f.item == nil {
 		f.item = capacityNextcloudFetchedItem(t, "actual retained original source bytes", true)
 	}
-	_, e := source.ingestNextcloudItem(context.Background(), &types.DataSource{ID: "ds", TenantID: 7, KnowledgeBaseID: "kb"}, f.item, capacityNextcloudMetadata(f.item), nil)
+	_, e := source.ingestNextcloudItem(
+		context.Background(),
+		&types.DataSource{ID: "ds", TenantID: 7, KnowledgeBaseID: "kb"},
+		f.item,
+		capacityNextcloudMetadata(f.item),
+		nil,
+	)
 	return knowledge, e
 }
+
 func capacityIntentIngestionContract(t *testing.T, pg bool) {
 	for _, mode := range []string{"before-io", "partial", "register-fail", "stage-fail", "success"} {
 		t.Run(mode, func(t *testing.T) {
@@ -195,8 +273,16 @@ func capacityIntentIngestionContract(t *testing.T, pg bool) {
 				} else {
 					require.Zero(t, i.OrphanChargeBytes)
 				}
-				require.Error(t, f.store.ValidateWriter(ctx, &r, i.WriterID, i.PhysicalPath, i.KnowledgeID), "late writer/catalog after charge must fail")
-				require.NoError(t, f.admission.Reconcile(ctx, f.kb, &r), "an identical actual observation is idempotent")
+				require.Error(
+					t,
+					f.store.ValidateWriter(ctx, &r, i.WriterID, i.PhysicalPath, i.KnowledgeID),
+					"late writer/catalog after charge must fail",
+				)
+				require.NoError(
+					t,
+					f.admission.Reconcile(ctx, f.kb, &r),
+					"an identical actual observation is idempotent",
+				)
 				wrong := r
 				wrong.BackendID = "foreign"
 				require.Error(t, f.admission.Reconcile(ctx, f.kb, &wrong))
@@ -217,11 +303,29 @@ func capacityIntentIngestionContract(t *testing.T, pg bool) {
 			if mode == "partial" || mode == "before-io" || mode == "register-fail" {
 				f.catalog.fail = false
 				quota := int64(len("actual retained original source bytes")) + status.OrphanChargeBytes
-				require.NoError(t, f.store.SetPolicy(ctx, repository.NextcloudCapacityPolicy{TenantID: 7, KnowledgeBaseID: "kb", RetentionQuotaBytes: quota, WarningPercent: 80, PausePercent: 90}))
+				require.NoError(
+					t,
+					f.store.SetPolicy(
+						ctx,
+						repository.NextcloudCapacityPolicy{
+							TenantID:            7,
+							KnowledgeBaseID:     "kb",
+							RetentionQuotaBytes: quota,
+							WarningPercent:      80,
+							PausePercent:        90,
+						},
+					),
+				)
 				_, retryErr := f.ingest(t, "success", nil, nil)
 				require.NoError(t, retryErr)
 				var pending int64
-				require.NoError(t, f.db.Model(&repository.NextcloudCapacityReservation{}).Where("state='pending'").Count(&pending).Error)
+				require.NoError(
+					t,
+					f.db.Model(&repository.NextcloudCapacityReservation{}).
+						Where("state='pending'").
+						Count(&pending).
+						Error,
+				)
 				require.Zero(t, pending)
 				finalStatus, statusErr := f.store.Status(ctx, 7, "kb", "backend", mustCapacityMeasure(t, f.fs))
 				require.NoError(t, statusErr)
@@ -234,8 +338,18 @@ func capacityIntentIngestionContract(t *testing.T, pg bool) {
 				version := &deletionLookupKnowledgeRepo{}
 				k.mode = "duplicate"
 				k.repo = version
-				source := &DataSourceService{knowledgeService: k, kbService: &processSyncKBService{kb: f.kb}, capacityAdmission: f.admission}
-				_, e = source.ingestNextcloudItem(ctx, &types.DataSource{ID: "ds", TenantID: 7, KnowledgeBaseID: "kb"}, f.item, capacityNextcloudMetadata(f.item), nil)
+				source := &DataSourceService{
+					knowledgeService:  k,
+					kbService:         &processSyncKBService{kb: f.kb},
+					capacityAdmission: f.admission,
+				}
+				_, e = source.ingestNextcloudItem(
+					ctx,
+					&types.DataSource{ID: "ds", TenantID: 7, KnowledgeBaseID: "kb"},
+					f.item,
+					capacityNextcloudMetadata(f.item),
+					nil,
+				)
 				require.NoError(t, e)
 				var count int64
 				require.NoError(t, f.db.Model(&repository.NextcloudCapacityWriteIntent{}).Count(&count).Error)
@@ -259,8 +373,18 @@ func TestCapacityIntentWriterFenceAndUnknown(t *testing.T) {
 	require.NoError(t, e)
 	_, e = f.fs.SaveFile(writeCtx, header, 7, "candidate")
 	require.NoError(t, e)
-	require.Error(t, f.admission.Reconcile(ctx, f.kb, r), "actual current writer OS fence must prevent reconciliation even if expired")
-	require.NoError(t, f.db.Model(&repository.NextcloudCapacityReservation{}).Where("token=?", r.Token).Update("lease_until_ms", 1).Error)
+	require.Error(
+		t,
+		f.admission.Reconcile(ctx, f.kb, r),
+		"actual current writer OS fence must prevent reconciliation even if expired",
+	)
+	require.NoError(
+		t,
+		f.db.Model(&repository.NextcloudCapacityReservation{}).
+			Where("token=?", r.Token).
+			Update("lease_until_ms", 1).
+			Error,
+	)
 	require.Error(t, f.admission.Reconcile(ctx, f.kb, r))
 	i, e := f.store.Intent(ctx, r)
 	require.NoError(t, e)
@@ -275,6 +399,7 @@ func TestCapacityIntentWriterFenceAndUnknown(t *testing.T) {
 	require.Error(t, f.store.CancelUnstarted(ctx, legacy))
 	require.Error(t, f.admission.Reconcile(ctx, f.kb, legacy))
 }
+
 func mustCapacityMeasure(t *testing.T, fs interfaces.FileService) types.StorageCapacity {
 	m, e := fs.(interfaces.StorageCapacityProvider).MeasureStorageCapacity(context.Background())
 	require.NoError(t, e)
@@ -287,7 +412,7 @@ func TestCapacityIntentAbsentLinkedRootSharedAndScope(t *testing.T) {
 	r, e := f.admission.Begin(ctx, f.kb, "ds", "node", "etag", 6)
 	require.NoError(t, e)
 	writeCtx := f.admission.WriteContext(ctx, r)
-	require.NoError(t, os.MkdirAll(filepath.Join(f.base, "7"), 0700))
+	require.NoError(t, os.MkdirAll(filepath.Join(f.base, "7"), 0o700))
 	outside := t.TempDir()
 	require.NoError(t, os.Symlink(outside, filepath.Join(f.base, "7", "candidate")))
 	header, e := bytesToFileHeader([]byte("actual"), "file.txt")
@@ -314,9 +439,15 @@ func TestCapacityIntentAbsentLinkedRootSharedAndScope(t *testing.T) {
 	s.lock = nil
 	s.closed = true
 	s.mutex.Unlock()
-	changed := NewNextcloudCapacityAdmission(f2.store, func(context.Context, *types.KnowledgeBase) (interfaces.FileService, error) {
-		return storagefile.NewBackendScopedFileService("backend", storagefile.NewLocalFileService(t.TempDir(), "")), nil
-	})
+	changed := NewNextcloudCapacityAdmission(
+		f2.store,
+		func(context.Context, *types.KnowledgeBase) (interfaces.FileService, error) {
+			return storagefile.NewBackendScopedFileService(
+				"backend",
+				storagefile.NewLocalFileService(t.TempDir(), ""),
+			), nil
+		},
+	)
 	require.Error(t, changed.Reconcile(ctx, f2.kb, r2))
 	require.NoError(t, f2.db.Where("token=?", r2.Token).Take(r2).Error)
 	require.Equal(t, "pending", r2.State)
@@ -324,10 +455,24 @@ func TestCapacityIntentAbsentLinkedRootSharedAndScope(t *testing.T) {
 	var actual types.StoredResource
 	require.NoError(t, f2.db.Where("physical_path LIKE ?", "%capacity-"+r2.Token+"%").Take(&actual).Error)
 	backend := "backend"
-	require.NoError(t, f2.db.Create(&types.KnowledgeBase{ID: "other-kb", TenantID: 7, StorageBackendID: &backend}).Error)
+	require.NoError(
+		t,
+		f2.db.Create(&types.KnowledgeBase{ID: "other-kb", TenantID: 7, StorageBackendID: &backend}).Error,
+	)
 	other := types.Knowledge{ID: "other-owner", TenantID: 7, KnowledgeBaseID: "other-kb", FilePath: path}
 	require.NoError(t, f2.db.Create(&other).Error)
-	require.NoError(t, f2.db.Create(&types.ResourceBinding{ResourceID: actual.ID, TenantID: 7, OwnerType: "knowledge", OwnerID: other.ID, Relation: "source_file"}).Error)
+	require.NoError(
+		t,
+		f2.db.Create(
+			&types.ResourceBinding{
+				ResourceID: actual.ID,
+				TenantID:   7,
+				OwnerType:  "knowledge",
+				OwnerID:    other.ID,
+				Relation:   "source_file",
+			},
+		).Error,
+	)
 	require.NoError(t, f2.admission.Reconcile(ctx, f2.kb, r2))
 	require.NoError(t, f2.db.Where("id=?", actual.ID).Take(&actual).Error)
 	require.Equal(t, "active", actual.State)
@@ -348,9 +493,15 @@ func TestCapacityIntentAbsentLinkedRootSharedAndScope(t *testing.T) {
 	f2.admission.End(writeMissing, missing, f2.kb)
 	require.NoError(t, f2.db.Where("token=?", missing.Token).Take(missing).Error)
 	require.Equal(t, "cancelled", missing.State)
-	unsupported := NewNextcloudCapacityAdmission(f2.store, func(context.Context, *types.KnowledgeBase) (interfaces.FileService, error) {
-		return capacityMeasuredFile{FileService: &createKnowledgeFileServiceStub{}, measurement: mustCapacityMeasure(t, f2.fs)}, nil
-	})
+	unsupported := NewNextcloudCapacityAdmission(
+		f2.store,
+		func(context.Context, *types.KnowledgeBase) (interfaces.FileService, error) {
+			return capacityMeasuredFile{
+				FileService: &createKnowledgeFileServiceStub{},
+				measurement: mustCapacityMeasure(t, f2.fs),
+			}, nil
+		},
+	)
 	_, e = unsupported.Begin(ctx, f2.kb, "ds", "unknown", "etag", 1)
 	require.Error(t, e)
 }
@@ -361,9 +512,9 @@ func TestCapacityIntentCannotAdoptExistingLegacyObject(t *testing.T) {
 	r, e := f.admission.Begin(ctx, f.kb, "ds", "node", "etag", 6)
 	require.NoError(t, e)
 	dir := filepath.Join(f.base, "7", "candidate")
-	require.NoError(t, os.MkdirAll(dir, 0700))
+	require.NoError(t, os.MkdirAll(dir, 0o700))
 	physical := filepath.Join(dir, "capacity-"+r.Token+".txt")
-	require.NoError(t, os.WriteFile(physical, []byte("legacy"), 0600))
+	require.NoError(t, os.WriteFile(physical, []byte("legacy"), 0o600))
 	writeCtx := f.admission.WriteContext(ctx, r)
 	h, e := bytesToFileHeader([]byte("actual"), "file.txt")
 	require.NoError(t, e)
@@ -426,9 +577,11 @@ func capacityConcurrentWriterContract(t *testing.T, pg bool) {
 	require.NoError(t, f.db.Where("token=?", r.Token).Take(r).Error)
 	require.Equal(t, "committed", r.State)
 }
+
 func TestCapacityIntentConcurrentActualWritersSQLite(t *testing.T) {
 	capacityConcurrentWriterContract(t, false)
 }
+
 func TestPostgresCapacityIntentConcurrentActualWriters(t *testing.T) {
 	capacityConcurrentWriterContract(t, true)
 }
@@ -448,15 +601,21 @@ func TestCapacityCrashChild(t *testing.T) {
 		db, e = gorm.Open(sqlite.Open(d.DSN), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
 	}
 	require.NoError(t, e)
-	fs := storagefile.NewResourceCatalogFileService(storagefile.NewBackendScopedFileService("backend", storagefile.NewLocalFileService(d.Base, "")), NewResourceCatalog(repository.NewResourceRepository(db)))
-	a := NewNextcloudCapacityAdmission(repository.NewNextcloudCapacityStore(db), func(context.Context, *types.KnowledgeBase) (interfaces.FileService, error) { return fs, nil })
+	fs := storagefile.NewResourceCatalogFileService(
+		storagefile.NewBackendScopedFileService("backend", storagefile.NewLocalFileService(d.Base, "")),
+		NewResourceCatalog(repository.NewResourceRepository(db)),
+	)
+	a := NewNextcloudCapacityAdmission(
+		repository.NewNextcloudCapacityStore(db),
+		func(context.Context, *types.KnowledgeBase) (interfaces.FileService, error) { return fs, nil },
+	)
 	backend := "backend"
 	kb := &types.KnowledgeBase{ID: "kb", TenantID: 7, StorageBackendID: &backend}
 	r, e := a.Begin(context.Background(), kb, "ds", "crash-node", "etag", 32)
 	require.NoError(t, e)
 	raw, e := json.Marshal(r)
 	require.NoError(t, e)
-	require.NoError(t, os.WriteFile(d.Output, raw, 0600))
+	require.NoError(t, os.WriteFile(d.Output, raw, 0o600))
 	h, e := bytesToFileHeader([]byte("crash"), "source.txt")
 	require.NoError(t, e)
 	h.Size = 32
@@ -464,6 +623,7 @@ func TestCapacityCrashChild(t *testing.T) {
 	require.Error(t, e)
 	os.Exit(77) // No End/defer: leaves a durable partial object and writing intent.
 }
+
 func capacityCrashContract(t *testing.T, pg bool) {
 	f := newCapacityIntentFixture(t, pg)
 	dir := t.TempDir()
@@ -471,7 +631,7 @@ func capacityCrashContract(t *testing.T, pg bool) {
 	output := filepath.Join(dir, "reservation")
 	b, e := json.Marshal(map[string]string{"Driver": f.driver, "DSN": f.dsn, "Base": f.base, "Output": output})
 	require.NoError(t, e)
-	require.NoError(t, os.WriteFile(descriptor, b, 0600))
+	require.NoError(t, os.WriteFile(descriptor, b, 0o600))
 	child := exec.Command(os.Args[0], "-test.run=^TestCapacityCrashChild$", "-test.v")
 	child.Env = append(os.Environ(), "WEKNORA_CAPACITY_CRASH_CHILD=1", "WEKNORA_CAPACITY_CRASH_DESCRIPTOR="+descriptor)
 	err := child.Run()
@@ -487,16 +647,21 @@ func capacityCrashContract(t *testing.T, pg bool) {
 	require.Equal(t, "writing", i.State)
 	if cli := os.Getenv("WEKNORA_CAPACITY_RECONCILE_CLI"); cli != "" {
 		private := t.TempDir()
-		require.NoError(t, os.Chmod(private, 0700))
-		args := []string{"--mode=reconcile", "--reservation-token=" + r.Token, "--local-storage-base-dir=" + f.base, "--output=" + filepath.Join(private, "receipt")}
+		require.NoError(t, os.Chmod(private, 0o700))
+		args := []string{
+			"--mode=reconcile",
+			"--reservation-token=" + r.Token,
+			"--local-storage-base-dir=" + f.base,
+			"--output=" + filepath.Join(private, "receipt"),
+		}
 		if f.driver == "postgres" {
 			dsnFile := filepath.Join(private, "dsn")
-			require.NoError(t, os.WriteFile(dsnFile, []byte(f.dsn), 0600))
+			require.NoError(t, os.WriteFile(dsnFile, []byte(f.dsn), 0o600))
 			args = append(args, "--postgres-connection-file="+dsnFile)
 		} else {
 			path := strings.Split(f.dsn, "?")[0]
-			require.NoError(t, os.Chmod(path, 0600))
-			require.NoError(t, os.Chmod(filepath.Dir(path), 0700))
+			require.NoError(t, os.Chmod(path, 0o600))
+			require.NoError(t, os.Chmod(filepath.Dir(path), 0o700))
 			args = append(args, "--sqlite-db="+path)
 		}
 		command := exec.Command(cli, args...)
@@ -511,7 +676,19 @@ func capacityCrashContract(t *testing.T, pg bool) {
 	require.NoError(t, e)
 	require.Equal(t, int64(5), i.OrphanChargeBytes)
 	require.Error(t, f.store.ValidateWriter(context.Background(), &r, i.WriterID, i.PhysicalPath, i.KnowledgeID))
-	require.NoError(t, f.store.SetPolicy(context.Background(), repository.NextcloudCapacityPolicy{TenantID: 7, KnowledgeBaseID: "kb", RetentionQuotaBytes: 42, WarningPercent: 80, PausePercent: 90}))
+	require.NoError(
+		t,
+		f.store.SetPolicy(
+			context.Background(),
+			repository.NextcloudCapacityPolicy{
+				TenantID:            7,
+				KnowledgeBaseID:     "kb",
+				RetentionQuotaBytes: 42,
+				WarningPercent:      80,
+				PausePercent:        90,
+			},
+		),
+	)
 	_, e = f.ingest(t, "success", nil, nil)
 	require.NoError(t, e, "crash partial bytes must not retain an inflated full reservation forever")
 }

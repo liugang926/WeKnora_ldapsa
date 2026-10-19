@@ -37,8 +37,10 @@ func TestKBEditorCannotRepointPairedNextcloudAndLeakBearer(t *testing.T) {
 		ResourceIDs: []string{"dev-published"},
 	}).ToJSON()
 	require.NoError(t, err)
-	stored := &types.DataSource{ID: "paired", TenantID: 7, KnowledgeBaseID: "kb",
-		Type: types.ConnectorTypeNextcloud, Config: storedConfig}
+	stored := &types.DataSource{
+		ID: "paired", TenantID: 7, KnowledgeBaseID: "kb",
+		Type: types.ConnectorTypeNextcloud, Config: storedConfig,
+	}
 	proposedConfig, err := (&types.DataSourceConfig{
 		Type:        types.ConnectorTypeNextcloud,
 		Settings:    map[string]interface{}{"base_url": attacker.URL},

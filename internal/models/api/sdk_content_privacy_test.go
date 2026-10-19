@@ -41,7 +41,9 @@ func sourcePrivacySDKWires() []privacySDKWire {
 		{
 			name: "openaicompletions",
 			newClient: func(endpoint api.Endpoint) privacySDKChat {
-				return openaicompletions.New(openaicompletions.Config{Endpoint: endpoint, Settings: catalog.DefaultOpenAICompletions()})
+				return openaicompletions.New(
+					openaicompletions.Config{Endpoint: endpoint, Settings: catalog.DefaultOpenAICompletions()},
+				)
 			},
 			response: `{"choices":[{"index":0,"message":{"role":"assistant","content":"LABEL_RESPONSE","reasoning_content":"LABEL_REASONING"},"finish_reason":"stop"}]}`,
 			stream:   "data: " + `{"choices":[{"index":0,"delta":{"reasoning_content":"LABEL_REASONING","content":"LABEL_RESPONSE","tool_calls":[{"index":0,"id":"LABEL_TOOL_ID","type":"function","function":{"name":"LABEL_TOOL_NAME","arguments":"{}"}}]},"finish_reason":"tool_calls"}]}` + "\n\ndata: [DONE]\n\n",
@@ -49,7 +51,9 @@ func sourcePrivacySDKWires() []privacySDKWire {
 		{
 			name: "openairesponses",
 			newClient: func(endpoint api.Endpoint) privacySDKChat {
-				return openairesponses.New(openairesponses.Config{Endpoint: endpoint, Settings: catalog.DefaultOpenAIResponses()})
+				return openairesponses.New(
+					openairesponses.Config{Endpoint: endpoint, Settings: catalog.DefaultOpenAIResponses()},
+				)
 			},
 			response: `{"id":"controlled-response","status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"LABEL_RESPONSE"}]}]}`,
 			stream: "data: " + `{"type":"response.reasoning_summary_text.delta","item_id":"reasoning","output_index":0,"summary_index":0,"delta":"LABEL_REASONING"}` + "\n\n" +
@@ -61,7 +65,9 @@ func sourcePrivacySDKWires() []privacySDKWire {
 		{
 			name: "anthropicmessages",
 			newClient: func(endpoint api.Endpoint) privacySDKChat {
-				return anthropicmessages.New(anthropicmessages.Config{Endpoint: endpoint, Settings: catalog.DefaultAnthropicMessages()})
+				return anthropicmessages.New(
+					anthropicmessages.Config{Endpoint: endpoint, Settings: catalog.DefaultAnthropicMessages()},
+				)
 			},
 			response: `{"id":"controlled-response","type":"message","role":"assistant","content":[{"type":"text","text":"LABEL_RESPONSE"}],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}`,
 			stream: "data: " + `{"type":"message_start","message":{"usage":{"input_tokens":1,"output_tokens":0}}}` + "\n\n" +
@@ -80,7 +86,9 @@ func sourcePrivacySDKWires() []privacySDKWire {
 		{
 			name: "googlegenai",
 			newClient: func(endpoint api.Endpoint) privacySDKChat {
-				return googlegenai.New(googlegenai.Config{Endpoint: endpoint, Settings: catalog.DefaultGoogleGenerativeAI()})
+				return googlegenai.New(
+					googlegenai.Config{Endpoint: endpoint, Settings: catalog.DefaultGoogleGenerativeAI()},
+				)
 			},
 			response: `{"candidates":[{"content":{"role":"model","parts":[{"text":"LABEL_RESPONSE"}]},"finishReason":"STOP"}]}`,
 			stream:   "data: " + `{"candidates":[{"content":{"role":"model","parts":[{"text":"LABEL_REASONING","thought":true},{"text":"LABEL_RESPONSE"},{"functionCall":{"id":"LABEL_TOOL_ID","name":"LABEL_TOOL_NAME","args":{}}}]},"finishReason":"STOP"}]}` + "\n\n",
@@ -117,7 +125,14 @@ func TestSourceContentSDKActualHTTPStreamAndNonstream(t *testing.T) {
 				_, _ = w.Write([]byte(strings.ReplaceAll(response, "LABEL", label)))
 			}))
 			defer server.Close()
-			client := wire.newClient(api.Endpoint{URL: server.URL, Model: "controlled-model", Auth: api.BearerAuth("owned-sdk-fixture"), Client: server.Client()})
+			client := wire.newClient(
+				api.Endpoint{
+					URL:    server.URL,
+					Model:  "controlled-model",
+					Auth:   api.BearerAuth("owned-sdk-fixture"),
+					Client: server.Client(),
+				},
+			)
 			for _, mode := range []string{"private-marker", "private-lineage", "ordinary"} {
 				t.Run(mode, func(t *testing.T) {
 					var logs bytes.Buffer
@@ -165,11 +180,16 @@ func TestSourceContentSDKActualHTTPStreamAndNonstream(t *testing.T) {
 					current := append([]string(nil), requests[len(requests)-2:]...)
 					mu.Unlock()
 					for _, request := range current {
-						require.Contains(t, request, label+"_PROMPT", "privacy affects diagnostics, never outbound model input")
+						require.Contains(
+							t,
+							request,
+							label+"_PROMPT",
+							"privacy affects diagnostics, never outbound model input",
+						)
 					}
 					if mode != "ordinary" {
 						require.NotContains(t, logs.String(), "PRIVATE_SOURCE")
-						require.Contains(t, logs.String(), "content logging suppressed")
+						require.Empty(t, logs.String(), "protected diagnostics never reach the caller's content logger")
 						require.NoDirExists(t, dir)
 					} else {
 						require.Contains(t, logs.String(), "PUBLIC_ORDINARY_PROMPT")

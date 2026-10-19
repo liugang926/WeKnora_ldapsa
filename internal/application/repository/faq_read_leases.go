@@ -8,8 +8,10 @@ import (
 	"gorm.io/gorm"
 )
 
-type faqReadLeaseCoverageKey struct{}
-type faqReadLeaseCoverage struct{ Leases []NextcloudContentLease }
+type (
+	faqReadLeaseCoverageKey struct{}
+	faqReadLeaseCoverage    struct{ Leases []NextcloudContentLease }
+)
 
 // IDs here are private server state. Every capture verifies their actual SQL
 // row, owner, scope, epoch, expiry and open fence in its existing transaction.
@@ -27,7 +29,11 @@ func WithFAQReadLeaseCoverage(ctx context.Context, leases []NextcloudContentLeas
 	return context.WithValue(ctx, faqReadLeaseCoverageKey{}, faqReadLeaseCoverage{actual}), nil
 }
 
-func validateFAQReadLeaseCoverageInTx(tx *gorm.DB, scopes []types.KnowledgeSearchScope, lineage *types.SourceLineage) error {
+func validateFAQReadLeaseCoverageInTx(
+	tx *gorm.DB,
+	scopes []types.KnowledgeSearchScope,
+	lineage *types.SourceLineage,
+) error {
 	coverage, ok := tx.Statement.Context.Value(faqReadLeaseCoverageKey{}).(faqReadLeaseCoverage)
 	if !ok || len(coverage.Leases) == 0 || lineage.RequireComplete() != nil {
 		return ErrNextcloudContentGCUncovered
@@ -43,11 +49,19 @@ func validateFAQReadLeaseCoverageInTx(tx *gorm.DB, scopes []types.KnowledgeSearc
 		if err := tx.Where("lease_id=?", given.ID).Take(&row).Error; err != nil {
 			return ErrNextcloudContentLeaseExpired
 		}
-		if row.Kind != string(NextcloudContentReadLease) || row.ReleasedAtMS != nil || row.ExpiresAtMS <= now || row.OwnerID != given.OwnerID || row.TenantID != given.TenantID || row.KnowledgeBaseID != given.KnowledgeBaseID || row.KnowledgeID != given.KnowledgeID || row.Epoch != given.Epoch {
+		if row.Kind != string(NextcloudContentReadLease) || row.ReleasedAtMS != nil || row.ExpiresAtMS <= now ||
+			row.OwnerID != given.OwnerID ||
+			row.TenantID != given.TenantID ||
+			row.KnowledgeBaseID != given.KnowledgeBaseID ||
+			row.KnowledgeID != given.KnowledgeID ||
+			row.Epoch != given.Epoch {
 			return ErrNextcloudContentLeaseExpired
 		}
 		var kb nextcloudContentFence
-		if err := tx.Where("tenant_id=? AND knowledge_base_id=? AND knowledge_id=''", row.TenantID, row.KnowledgeBaseID).Take(&kb).Error; err != nil || kb.State != "open" {
+		if err := tx.Where("tenant_id=? AND knowledge_base_id=? AND knowledge_id=''", row.TenantID, row.KnowledgeBaseID).
+			Take(&kb).
+			Error; err != nil ||
+			kb.State != "open" {
 			return ErrNextcloudContentLeaseDenied
 		}
 		key := fmt.Sprintf("%d:%s", row.TenantID, row.KnowledgeBaseID)
@@ -58,10 +72,16 @@ func validateFAQReadLeaseCoverageInTx(tx *gorm.DB, scopes []types.KnowledgeSearc
 			broad[key] = true
 		} else {
 			var fence nextcloudContentFence
-			if err := tx.Where("tenant_id=? AND knowledge_base_id=? AND knowledge_id=?", row.TenantID, row.KnowledgeBaseID, row.KnowledgeID).Take(&fence).Error; err != nil || fence.State != "open" || fence.Epoch != row.Epoch {
+			if err := tx.Where("tenant_id=? AND knowledge_base_id=? AND knowledge_id=?", row.TenantID, row.KnowledgeBaseID, row.KnowledgeID).
+				Take(&fence).
+				Error; err != nil ||
+				fence.State != "open" ||
+				fence.Epoch != row.Epoch {
 				return ErrNextcloudContentLeaseDenied
 			}
-			exact[fmt.Sprintf("%s:%s:%s:%s", key, row.KnowledgeID, fence.DataSourceID, fence.ExternalID)] = uint64(row.Epoch)
+			exact[fmt.Sprintf("%s:%s:%s:%s", key, row.KnowledgeID, fence.DataSourceID, fence.ExternalID)] = uint64(
+				row.Epoch,
+			)
 		}
 	}
 	for _, scope := range scopes {
@@ -70,7 +90,14 @@ func validateFAQReadLeaseCoverageInTx(tx *gorm.DB, scopes []types.KnowledgeSearc
 		}
 	}
 	for _, source := range lineage.Sources {
-		key := fmt.Sprintf("%d:%s:%s:%s:%s", source.TenantID, source.KnowledgeBaseID, source.KnowledgeID, source.DataSourceID, source.ExternalID)
+		key := fmt.Sprintf(
+			"%d:%s:%s:%s:%s",
+			source.TenantID,
+			source.KnowledgeBaseID,
+			source.KnowledgeID,
+			source.DataSourceID,
+			source.ExternalID,
+		)
 		if exact[key] != source.Revision {
 			return ErrNextcloudContentGCUncovered
 		}

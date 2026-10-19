@@ -195,7 +195,11 @@ func (r *ToolRegistry) execute(ctx context.Context, tool types.Tool, args json.R
 	// Validate parameters against the tool's JSON Schema before execution.
 	// This catches invalid arguments early, avoiding a wasted tool execution + LLM round.
 	var validationErrs []ValidationError
-	if validator, ok := tool.(interface{ ValidateArguments(json.RawMessage) error }); ok {
+	validationTool := tool
+	if accounted, ok := tool.(*lineageToolExecutor); ok {
+		validationTool = accounted.Tool
+	}
+	if validator, ok := validationTool.(interface{ ValidateArguments(json.RawMessage) error }); ok {
 		if err := validator.ValidateArguments(args); err != nil {
 			validationErrs = []ValidationError{{Message: err.Error()}}
 		}
@@ -231,7 +235,7 @@ func (r *ToolRegistry) execute(ctx context.Context, tool types.Tool, args json.R
 	// Publish the ceiling so budget-aware tools can shape a batched result
 	// themselves; the truncation below stays as the fallback for the rest.
 	maxOutput := r.getMaxToolOutput()
-	if provider, ok := tool.(outputLimitProvider); ok {
+	if provider, ok := validationTool.(outputLimitProvider); ok {
 		if toolLimit := provider.OutputLimitChars(args); toolLimit > maxOutput {
 			maxOutput = toolLimit
 		}

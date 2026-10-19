@@ -85,7 +85,10 @@ func requirePostgresSourceLineageUpgrade(t *testing.T, dsn string) {
 	require.Equal(t, "absent", snapshotPostgresPublicEmbedding(t, db),
 		"the fixture must start without the parent's embedding table")
 	var skipEmbedding bool
-	require.NoError(t, db.QueryRow(`SELECT COALESCE(current_setting('app.skip_embedding', true), '') = 'true'`).Scan(&skipEmbedding))
+	require.NoError(
+		t,
+		db.QueryRow(`SELECT COALESCE(current_setting('app.skip_embedding', true), '') = 'true'`).Scan(&skipEmbedding),
+	)
 	t.Logf("fixture embedding migrations enabled: %t", !skipEmbedding)
 	m, err := migrate.New("file://"+filepath.Join(root, "migrations/versioned"), isolatedDSN)
 	require.NoError(t, err)
@@ -201,7 +204,13 @@ func lineageMigrationExec(t *testing.T, db *sql.DB, dialect, query string, args 
 func seedSourceLineageLegacy(t *testing.T, db *sql.DB, dialect string) {
 	t.Helper()
 	for _, id := range []int{7, 8, 9} {
-		lineageMigrationExec(t, db, dialect, `INSERT INTO tenants(id, name, business) VALUES (?, 'lineage', 'test')`, id)
+		lineageMigrationExec(
+			t,
+			db,
+			dialect,
+			`INSERT INTO tenants(id, name, business) VALUES (?, 'lineage', 'test')`,
+			id,
+		)
 	}
 	lineageMigrationExec(t, db, dialect, `INSERT INTO messages(id, request_id, session_id, role, content)
 		VALUES ('legacy-answer', 'req', 'session', 'assistant', 'legacy copied answer')`)
@@ -240,42 +249,70 @@ func requireSourceTombstone(t *testing.T, db *sql.DB, dialect string, tenant int
 func requireSourceLineageMigrationBehavior(t *testing.T, db *sql.DB, dialect string) {
 	t.Helper()
 	var legacyNull bool
-	require.NoError(t, db.QueryRow(`SELECT source_lineage IS NULL FROM messages WHERE id = 'legacy-answer'`).Scan(&legacyNull))
+	require.NoError(
+		t,
+		db.QueryRow(`SELECT source_lineage IS NULL FROM messages WHERE id = 'legacy-answer'`).Scan(&legacyNull),
+	)
 	require.True(t, legacyNull, "migration must not certify old answers")
 	for _, scope := range []struct {
 		tenant   int
 		kind, id string
 	}{
-		{7, "tenant", "7"}, {7, "knowledge_base", "legacy-kb"}, {7, "datasource", "legacy-source"}, {7, "pair", "legacy-pair"},
-		{9, "tenant", "9"}, {9, "knowledge_base", "orphan-kb"}, {9, "datasource", "orphan-source"},
-		{9, "knowledge_base", "marker-only-kb"}, {7, "knowledge_base", "metadata-only-kb"},
+		{7, "tenant", "7"},
+		{7, "knowledge_base", "legacy-kb"},
+		{7, "datasource", "legacy-source"},
+		{7, "pair", "legacy-pair"},
+		{9, "tenant", "9"},
+		{9, "knowledge_base", "orphan-kb"},
+		{9, "datasource", "orphan-source"},
+		{9, "knowledge_base", "marker-only-kb"},
+		{7, "knowledge_base", "metadata-only-kb"},
 		{7, "datasource", "deleted-metadata-source"},
 	} {
 		requireSourceTombstone(t, db, dialect, scope.tenant, scope.kind, scope.id, 1)
 	}
 	requireSourceTombstone(t, db, dialect, 8, "tenant", "8", 0) // absence remains unknown
-	for _, invalid := range []string{`{}`, `{"version":1,"sources":[]}`, `{"version":2,"state":"complete","sources":[]}`,
-		`{"version":1,"state":"complete","sources":null}`, `{"version":1,"state":"complete","sources":[],"extra":true} trailing`} {
-		_, err := db.Exec(lineageMigrationQuery(dialect, `UPDATE messages SET source_lineage = ? WHERE id = 'legacy-answer'`), invalid)
+	for _, invalid := range []string{
+		`{}`, `{"version":1,"sources":[]}`, `{"version":2,"state":"complete","sources":[]}`,
+		`{"version":1,"state":"complete","sources":null}`, `{"version":1,"state":"complete","sources":[],"extra":true} trailing`,
+	} {
+		_, err := db.Exec(
+			lineageMigrationQuery(dialect, `UPDATE messages SET source_lineage = ? WHERE id = 'legacy-answer'`),
+			invalid,
+		)
 		require.Error(t, err, invalid)
 	}
 	lineageMigrationExec(t, db, dialect, `UPDATE messages SET source_lineage = ? WHERE id = 'legacy-answer'`,
 		`{"version":1,"state":"unknown","sources":[]}`)
 	// Complete empty is representable, but no producer or read path is enabled by
 	// this schema test. It is not a claim that the legacy content is independent.
-	lineageMigrationExec(t, db, dialect, `INSERT INTO messages(id, request_id, session_id, role, content, source_lineage)
-		VALUES ('typed-answer', 'req2', 'session', 'assistant', 'ordinary', ?)`, `{"version":1,"state":"complete","sources":[]}`)
+	lineageMigrationExec(
+		t,
+		db,
+		dialect,
+		`INSERT INTO messages(id, request_id, session_id, role, content, source_lineage)
+		VALUES ('typed-answer', 'req2', 'session', 'assistant', 'ordinary', ?)`,
+		`{"version":1,"state":"complete","sources":[]}`,
+	)
 	_, err := db.Exec(`UPDATE nextcloud_source_tombstones SET scope_id = 'changed' WHERE tenant_id = 7`)
 	require.ErrorContains(t, err, "nextcloud_source_tombstones_immutable")
 	_, err = db.Exec(`DELETE FROM nextcloud_source_tombstones WHERE tenant_id = 7`)
 	require.ErrorContains(t, err, "nextcloud_source_tombstones_immutable")
 	if dialect == "sqlite" {
 		var original string
-		require.NoError(t, db.QueryRow(`SELECT recorded_at FROM nextcloud_source_tombstones WHERE tenant_id = 7 AND scope_type = 'tenant'`).Scan(&original))
+		require.NoError(
+			t,
+			db.QueryRow(`SELECT recorded_at FROM nextcloud_source_tombstones WHERE tenant_id = 7 AND scope_type = 'tenant'`).
+				Scan(&original),
+		)
 		lineageMigrationExec(t, db, dialect, `INSERT OR REPLACE INTO nextcloud_source_tombstones
 			(tenant_id, scope_type, scope_id, recorded_at) VALUES (7, 'tenant', '7', '2099-01-01')`)
 		var stillOriginal string
-		require.NoError(t, db.QueryRow(`SELECT recorded_at FROM nextcloud_source_tombstones WHERE tenant_id = 7 AND scope_type = 'tenant'`).Scan(&stillOriginal))
+		require.NoError(
+			t,
+			db.QueryRow(`SELECT recorded_at FROM nextcloud_source_tombstones WHERE tenant_id = 7 AND scope_type = 'tenant'`).
+				Scan(&stillOriginal),
+		)
 		require.Equal(t, original, stillOriginal, "REPLACE must not rewrite the first fact")
 	}
 	// Delete/recreate business scope without deleting its independent fact.
@@ -298,8 +335,13 @@ func requireSourceLineageMigrationBehavior(t *testing.T, db *sql.DB, dialect str
 	require.NoError(t, err)
 	require.NoError(t, tx.Rollback())
 	requireSourceTombstone(t, db, dialect, 8, "tenant", "8", 0)
-	lineageMigrationExec(t, db, dialect, `INSERT INTO data_sources (id, tenant_id, knowledge_base_id, name, type, config, status)
-		VALUES ('new-source', 8, 'new-kb', 'new', 'nextcloud', '{}', 'paused')`)
+	lineageMigrationExec(
+		t,
+		db,
+		dialect,
+		`INSERT INTO data_sources (id, tenant_id, knowledge_base_id, name, type, config, status)
+		VALUES ('new-source', 8, 'new-kb', 'new', 'nextcloud', '{}', 'paused')`,
+	)
 	requireSourceTombstone(t, db, dialect, 8, "tenant", "8", 1)
 	requireSourceTombstone(t, db, dialect, 8, "datasource", "new-source", 1)
 	lineageMigrationExec(t, db, dialect, `DELETE FROM data_sources WHERE id = 'new-source'`)

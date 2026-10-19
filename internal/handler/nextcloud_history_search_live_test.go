@@ -42,7 +42,10 @@ func addDocumentLiveHistorySearch(t *testing.T, router *gin.Engine, db *gorm.DB,
 		router.Use(func(c *gin.Context) {
 			ctx := c.Request.Context()
 			var tenant types.Tenant
-			if err := db.WithContext(ctx).Where("id=?", types.MustTenantIDFromContext(ctx)).Take(&tenant).Error; err != nil {
+			if err := db.WithContext(ctx).
+				Where("id=?", types.MustTenantIDFromContext(ctx)).
+				Take(&tenant).
+				Error; err != nil {
 				c.AbortWithStatus(http.StatusServiceUnavailable)
 				return
 			}
@@ -54,16 +57,43 @@ func addDocumentLiveHistorySearch(t *testing.T, router *gin.Engine, db *gorm.DB,
 	if vectorModels != nil {
 		models = vectorModels
 	}
-	messages := service.NewMessageService(repository.NewMessageRepository(db), repository.NewSessionRepository(db), nil, kbs, knowledge, models, nil, sources, publication)
+	messages := service.NewMessageService(
+		repository.NewMessageRepository(db),
+		repository.NewSessionRepository(db),
+		nil,
+		kbs,
+		knowledge,
+		models,
+		nil,
+		sources,
+		publication,
+	)
 	service.ConfigureMessageMaterialProvenance(messages, store)
-	service.ConfigureMessageSourceLineage(messages, nil, &service.SessionForkService{}, chatpipeline.NewEventManager(), guard)
+	service.ConfigureMessageSourceLineage(
+		messages,
+		nil,
+		&service.SessionForkService{},
+		chatpipeline.NewEventManager(),
+		guard,
+	)
 	repository.ConfigureMessageOriginalBodyAvailability(store, repository.CheckOriginalBodyAvailableInTx)
 	h := NewMessageHandler(messages, nil, nil)
 	router.POST("/messages/search", h.SearchMessages)
 	var checkVector func(bool)
 	if vector != nil {
 		checkVector = documentHistoryVectorHTTPCheck(t, router, db, token, sessionID, vector, vectorModels)
-		documentHistoryVectorUnavailableAuthority(t, router, db, guard, publication, sources, kbs, models, token, sessionID)
+		documentHistoryVectorUnavailableAuthority(
+			t,
+			router,
+			db,
+			guard,
+			publication,
+			sources,
+			kbs,
+			models,
+			token,
+			sessionID,
+		)
 	}
 	return func(revoked bool) {
 		if checkVector != nil {
@@ -78,7 +108,14 @@ func addDocumentLiveHistorySearch(t *testing.T, router *gin.Engine, db *gorm.DB,
 		}
 		for _, item := range []struct{ name, query string }{{"answer", "Bob"}, {"question_partner", "Who does Alice know on Project Cedar?"}} {
 			t.Run("jwt_history_search_"+stage+"_"+item.name, func(t *testing.T) {
-				body, err := json.Marshal(map[string]any{"query": item.query, "mode": "keyword", "limit": 20, "session_ids": []string{sessionID}})
+				body, err := json.Marshal(
+					map[string]any{
+						"query":       item.query,
+						"mode":        "keyword",
+						"limit":       20,
+						"session_ids": []string{sessionID},
+					},
+				)
 				require.NoError(t, err)
 				request := httptest.NewRequest(http.MethodPost, "/messages/search", bytes.NewReader(body))
 				request.Header.Set("Content-Type", "application/json")

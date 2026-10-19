@@ -34,7 +34,12 @@ func (m *templateHTTPModels) Chat(context.Context, []chat.Message, *chat.ChatOpt
 	}
 	return &types.ChatResponse{Content: "actual derived instruction"}, nil
 }
-func (m *templateHTTPModels) ChatStream(context.Context, []chat.Message, *chat.ChatOptions) (<-chan types.StreamResponse, error) {
+
+func (m *templateHTTPModels) ChatStream(
+	context.Context,
+	[]chat.Message,
+	*chat.ChatOptions,
+) (<-chan types.StreamResponse, error) {
 	return nil, nil
 }
 func (m *templateHTTPModels) GetModelName() string { return "local template fixture" }
@@ -54,7 +59,9 @@ func (w *templateHTTPBoundaryWriter) Header() http.Header {
 	return w.ResponseWriter.Header()
 }
 
-func templateHTTPFixture(t *testing.T) (*KnowledgeEnrichmentTemplateHandler, *gorm.DB, *templateHTTPModels, *outputHTTPGroups) {
+func templateHTTPFixture(
+	t *testing.T,
+) (*KnowledgeEnrichmentTemplateHandler, *gorm.DB, *templateHTTPModels, *outputHTTPGroups) {
 	t.Helper()
 	_, db, store, groups, _, _ := collectionHTTPFixture(t)
 	require.NoError(t, db.AutoMigrate(&types.Model{}, &types.Tenant{}))
@@ -70,24 +77,73 @@ func templateHTTPFixture(t *testing.T) (*KnowledgeEnrichmentTemplateHandler, *go
 	kb.SummaryModelID = "template-model"
 	require.NoError(t, store.UpdateKnowledgeBaseWithInput(repository.WithIndependentKnowledgeInput(ctx), &kb))
 	require.NoError(t, db.Create(&types.Tenant{ID: 7, Status: "active"}).Error)
-	require.NoError(t, db.Create(&types.Model{ID: "template-model", TenantID: 7, Name: "local model", Status: types.ModelStatusActive}).Error)
+	require.NoError(
+		t,
+		db.Create(
+			&types.Model{ID: "template-model", TenantID: 7, Name: "local model", Status: types.ModelStatusActive},
+		).Error,
+	)
 	bases := collectionHTTPKB{db: db}
 	knowledge := repository.NewKnowledgeRepository(db)
 	repository.ConfigureKnowledgeCurrentReadActor(knowledge, store)
-	guard := access.NewNextcloudSourceLineageGuard(knowledge.(access.NextcloudLineageSnapshotLookup), bases, nil, nil, groups, nil, store)
-	repository.ConfigureKnowledgeOriginalInputSourceVerifier(store, service.NewKnowledgeOriginalInputSourceVerifier(store, guard, nil))
-	parent := &types.Knowledge{ID: "template-parent", TenantID: 7, KnowledgeBaseID: "kb", Type: types.KnowledgeTypeManual, Channel: "web", Source: "manual", Title: "actual parent", ParseStatus: types.ParseStatusCompleted, EnableStatus: "enabled", Metadata: types.JSON(`{"manual":{"content":"actual source body"}}`), CustomMetadata: types.JSON(`{}`)}
-	proof, e := store.CreateKnowledgeWithInput(repository.WithIndependentKnowledgeInput(ctx), parent, "actual source body")
+	guard := access.NewNextcloudSourceLineageGuard(
+		knowledge.(access.NextcloudLineageSnapshotLookup),
+		bases,
+		nil,
+		nil,
+		groups,
+		nil,
+		store,
+	)
+	repository.ConfigureKnowledgeOriginalInputSourceVerifier(
+		store,
+		service.NewKnowledgeOriginalInputSourceVerifier(store, guard, nil),
+	)
+	parent := &types.Knowledge{
+		ID:              "template-parent",
+		TenantID:        7,
+		KnowledgeBaseID: "kb",
+		Type:            types.KnowledgeTypeManual,
+		Channel:         "web",
+		Source:          "manual",
+		Title:           "actual parent",
+		ParseStatus:     types.ParseStatusCompleted,
+		EnableStatus:    "enabled",
+		Metadata:        types.JSON(`{"manual":{"content":"actual source body"}}`),
+		CustomMetadata:  types.JSON(`{}`),
+	}
+	proof, e := store.CreateKnowledgeWithInput(
+		repository.WithIndependentKnowledgeInput(ctx),
+		parent,
+		"actual source body",
+	)
 	require.NoError(t, e)
-	require.NoError(t, repository.NewChunkRepository(db).CreateChunks(repository.WithKnowledgeBuildInputProof(ctx, store, proof), []*types.Chunk{{ID: "template-parent-chunk", TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: parent.ID, Content: "actual source body", IsEnabled: true, ChunkType: types.ChunkTypeText, Metadata: types.JSON(`{}`)}}))
+	require.NoError(
+		t,
+		repository.NewChunkRepository(db).
+			CreateChunks(repository.WithKnowledgeBuildInputProof(ctx, store, proof), []*types.Chunk{{ID: "template-parent-chunk", TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: parent.ID, Content: "actual source body", IsEnabled: true, ChunkType: types.ChunkTypeText, Metadata: types.JSON(`{}`)}}),
+	)
 	models := &templateHTTPModels{}
-	svc := service.NewKnowledgeEnrichmentTemplateService(store, knowledge, models, guard, repository.NewNextcloudContentLeaseStore(db))
+	svc := service.NewKnowledgeEnrichmentTemplateService(
+		store,
+		knowledge,
+		models,
+		guard,
+		repository.NewNextcloudContentLeaseStore(db),
+	)
 	return NewKnowledgeEnrichmentTemplateHandler(svc, bases), db, models, groups
 }
-func serveTemplateHTTP(h *KnowledgeEnrichmentTemplateHandler, method, url, body string, change func()) *httptest.ResponseRecorder {
+
+func serveTemplateHTTP(
+	h *KnowledgeEnrichmentTemplateHandler,
+	method, url, body string,
+	change func(),
+) *httptest.ResponseRecorder {
 	r := documentHandlerRouter()
 	r.Use(func(c *gin.Context) {
-		c.Request = c.Request.WithContext(types.WithPrincipal(c.Request.Context(), types.Principal{Type: types.PrincipalWebUser, ID: "user"}))
+		c.Request = c.Request.WithContext(
+			types.WithPrincipal(c.Request.Context(), types.Principal{Type: types.PrincipalWebUser, ID: "user"}),
+		)
 		if change != nil {
 			c.Writer = &templateHTTPBoundaryWriter{ResponseWriter: c.Writer, change: change}
 		}
@@ -102,6 +158,7 @@ func serveTemplateHTTP(h *KnowledgeEnrichmentTemplateHandler, method, url, body 
 	r.ServeHTTP(w, req)
 	return w
 }
+
 func TestKnowledgeEnrichmentTemplateHTTPActualAdminAndParents(t *testing.T) {
 	for _, mode := range []string{"actual edit", "actual derived parents", "forged cached parent", "current admin revoked", "cross scope"} {
 		t.Run(mode, func(t *testing.T) {
@@ -118,7 +175,13 @@ func TestKnowledgeEnrichmentTemplateHTTPActualAdminAndParents(t *testing.T) {
 				body = `{"knowledge_ids":["missing"],"content":"forged cached body"}`
 			}
 			if mode == "current admin revoked" {
-				require.NoError(t, db.Model(&types.TenantMember{}).Where("user_id='user' AND tenant_id=7").Update("role", types.TenantRoleViewer).Error)
+				require.NoError(
+					t,
+					db.Model(&types.TenantMember{}).
+						Where("user_id='user' AND tenant_id=7").
+						Update("role", types.TenantRoleViewer).
+						Error,
+				)
 			}
 			if mode == "cross scope" {
 				url = "/knowledge-bases/shared-kb/enrichment-templates/summary"
@@ -149,11 +212,18 @@ func TestKnowledgeEnrichmentTemplateHTTPActualAdminAndParents(t *testing.T) {
 		})
 	}
 }
+
 func TestKnowledgeEnrichmentTemplateHTTPFinalWriteRecheck(t *testing.T) {
 	for _, mode := range []string{"grant withdrawn", "current actor revoked", "config ABA"} {
 		t.Run(mode, func(t *testing.T) {
 			h, db, _, groups := templateHTTPFixture(t)
-			w := serveTemplateHTTP(h, http.MethodPut, "/knowledge-bases/kb/enrichment-templates/summary", `{"content":"private actual template bytes"}`, nil)
+			w := serveTemplateHTTP(
+				h,
+				http.MethodPut,
+				"/knowledge-bases/kb/enrichment-templates/summary",
+				`{"content":"private actual template bytes"}`,
+				nil,
+			)
 			require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 			fired := false
 			change := func() {
@@ -164,8 +234,14 @@ func TestKnowledgeEnrichmentTemplateHTTPFinalWriteRecheck(t *testing.T) {
 				case "current actor revoked":
 					require.NoError(t, db.Model(&types.User{}).Where("id='user'").Update("is_active", false).Error)
 				case "config ABA":
-					require.NoError(t, db.Exec("UPDATE knowledge_bases SET summary_model_id='changed' WHERE id='kb'").Error)
-					require.NoError(t, db.Exec("UPDATE knowledge_bases SET summary_model_id='template-model' WHERE id='kb'").Error)
+					require.NoError(
+						t,
+						db.Exec("UPDATE knowledge_bases SET summary_model_id='changed' WHERE id='kb'").Error,
+					)
+					require.NoError(
+						t,
+						db.Exec("UPDATE knowledge_bases SET summary_model_id='template-model' WHERE id='kb'").Error,
+					)
 				}
 			}
 			w = serveTemplateHTTP(h, http.MethodGet, "/knowledge-bases/kb/enrichment-templates/summary", "", change)

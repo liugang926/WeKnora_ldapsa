@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -24,6 +25,27 @@ func (t *publicationProtocolCallbackTool) Execute(context.Context, json.RawMessa
 	return t.run()
 }
 
+func (t *publicationProtocolCallbackTool) ExecuteSourceLineage(
+	ctx context.Context, args json.RawMessage,
+) (*types.ToolResult, error) {
+	result, err := t.Execute(ctx, args)
+	if result != nil {
+		// Every value in this callback is a literal owned by the protocol test.
+		result.SourceLineage = independentAgentInput()
+	}
+	return result, err
+}
+
+func (t *publicationProtocolCallbackTool) DefinitionSourceLineageFor(
+	actual types.FunctionDefinition,
+) *types.SourceLineage {
+	if actual.Name != agenttools.ToolReadDocument || actual.Description != "owned protocol fixture" ||
+		!bytes.Equal(actual.Parameters, json.RawMessage(`{"type":"object"}`)) {
+		return types.UnknownSourceLineage()
+	}
+	return independentAgentInput()
+}
+
 func TestRunToolCallPublicationDeniedKeepsPublicProtocolAndDropsProtectedOutput(t *testing.T) {
 	cause := errors.Unwrap(access.ErrNextcloudPublicationDenied)
 	require.NotNil(t, cause, "the test requires the new production typed sentinel, not old AA semantics")
@@ -33,6 +55,10 @@ func TestRunToolCallPublicationDeniedKeepsPublicProtocolAndDropsProtectedOutput(
 	const protectedMarker = "PROTECTED_OWNED_AGENT_PROTOCOL_MARKER"
 	model := &mockChat{}
 	engine := newTestEngine(t, model)
+	engine.SetSourceLineageVerifier(func(_ context.Context, lineage *types.SourceLineage) error {
+		return lineage.RequireComplete()
+	})
+	ctx := types.WithRAGSourceLineage(context.Background(), engine.turnLineage)
 	engine.toolRegistry = agenttools.NewToolRegistry()
 	calls := 0
 	var callbackError error
@@ -56,7 +82,7 @@ func TestRunToolCallPublicationDeniedKeepsPublicProtocolAndDropsProtectedOutput(
 		return nil
 	})
 	step := &types.AgentStep{}
-	engine.executeSingleToolCall(context.Background(), types.LLMToolCall{
+	engine.executeSingleToolCall(ctx, types.LLMToolCall{
 		ID: "owned-protocol-call", Function: types.FunctionCall{
 			Name: agenttools.ToolReadDocument, Arguments: `{"id":"doc-1"}`,
 		},

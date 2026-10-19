@@ -269,7 +269,12 @@ func (s *userService) Register(ctx context.Context, req *types.RegisterRequest) 
 		logger.Errorf(ctx, "Failed to create user: %v", err)
 		if createdTenant != nil {
 			if rollbackErr := s.tenantService.DeleteTenant(ctx, createdTenant.ID); rollbackErr != nil {
-				logger.Errorf(ctx, "Failed to roll back tenant %d after user creation failure: %v", createdTenant.ID, rollbackErr)
+				logger.Errorf(
+					ctx,
+					"Failed to roll back tenant %d after user creation failure: %v",
+					createdTenant.ID,
+					rollbackErr,
+				)
 			}
 		}
 		return nil, errors.New("failed to create user")
@@ -529,7 +534,10 @@ func synthFallbackMembership(user *types.User, activeTenant *types.Tenant) []typ
 }
 
 // GetOIDCAuthorizationURL builds the OIDC authorization URL.
-func (s *userService) GetOIDCAuthorizationURL(ctx context.Context, redirectURI string) (*types.OIDCAuthURLResponse, error) {
+func (s *userService) GetOIDCAuthorizationURL(
+	ctx context.Context,
+	redirectURI string,
+) (*types.OIDCAuthURLResponse, error) {
 	cfg, err := s.getOIDCConfig(ctx)
 	if err != nil {
 		return nil, err
@@ -1724,7 +1732,11 @@ func (s *userService) applyOIDCDiscoveryDocument(ctx context.Context, cfg *confi
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
-		return fmt.Errorf("OIDC discovery request failed: status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(body)))
+		return fmt.Errorf(
+			"OIDC discovery request failed: status=%d body=%s",
+			resp.StatusCode,
+			strings.TrimSpace(string(body)),
+		)
 	}
 
 	var doc oidcDiscoveryDocument
@@ -1749,7 +1761,11 @@ func (s *userService) applyOIDCDiscoveryDocument(ctx context.Context, cfg *confi
 	return nil
 }
 
-func (s *userService) exchangeOIDCCode(ctx context.Context, cfg *config.OIDCAuthConfig, code, redirectURI string) (*oidcTokenResponse, error) {
+func (s *userService) exchangeOIDCCode(
+	ctx context.Context,
+	cfg *config.OIDCAuthConfig,
+	code, redirectURI string,
+) (*oidcTokenResponse, error) {
 	if err := validateOIDCEndpoint("token", cfg.TokenEndpoint, true); err != nil {
 		return nil, err
 	}
@@ -1788,7 +1804,11 @@ func (s *userService) exchangeOIDCCode(ctx context.Context, cfg *config.OIDCAuth
 	return &tokenResp, nil
 }
 
-func (s *userService) resolveOIDCUserInfo(ctx context.Context, cfg *config.OIDCAuthConfig, tokenResp *oidcTokenResponse) (*types.OIDCUserInfo, error) {
+func (s *userService) resolveOIDCUserInfo(
+	ctx context.Context,
+	cfg *config.OIDCAuthConfig,
+	tokenResp *oidcTokenResponse,
+) (*types.OIDCUserInfo, error) {
 	claims := map[string]interface{}{}
 	verifiedFromIDToken := false
 
@@ -1846,7 +1866,10 @@ func (s *userService) resolveOIDCUserInfo(ctx context.Context, cfg *config.OIDCA
 	return info, nil
 }
 
-func (s *userService) fetchOIDCUserInfo(ctx context.Context, endpoint, accessToken string) (map[string]interface{}, error) {
+func (s *userService) fetchOIDCUserInfo(
+	ctx context.Context,
+	endpoint, accessToken string,
+) (map[string]interface{}, error) {
 	if err := validateOIDCEndpoint("userinfo", endpoint, true); err != nil {
 		return nil, err
 	}

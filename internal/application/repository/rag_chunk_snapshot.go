@@ -15,8 +15,10 @@ import (
 // RAGChunkReadRequest identifies server-resolved rows, never supplied text.
 // Lease is the original exact read lease held before content hydration.
 // ExpectedLineage is required when augmenting an already captured result.
-type RAGChunkReadRequest = types.RAGChunkReadRequest
-type RAGChunkInputSnapshot = types.RAGChunkInputSnapshot
+type (
+	RAGChunkReadRequest   = types.RAGChunkReadRequest
+	RAGChunkInputSnapshot = types.RAGChunkInputSnapshot
+)
 
 // OrdinaryRAGInputProofLookup is a trusted server dependency. Implementations
 // must read persisted producer provenance in tx and bind it to these exact
@@ -28,7 +30,13 @@ type OrdinaryRAGInputProofLookup interface {
 }
 
 type ControlledRAGInputProofLookup interface {
-	ReadControlledRAGInputLineage(context.Context, *gorm.DB, *types.Knowledge, *types.Chunk, *types.SourceLineage) (*types.SourceLineage, error)
+	ReadControlledRAGInputLineage(
+		context.Context,
+		*gorm.DB,
+		*types.Knowledge,
+		*types.Chunk,
+		*types.SourceLineage,
+	) (*types.SourceLineage, error)
 }
 
 type RAGChunkSnapshotLookup = interfaces.RAGChunkSnapshotReader
@@ -47,7 +55,10 @@ func NewRAGChunkSnapshotReader(db *gorm.DB, ordinary OrdinaryRAGInputProofLookup
 // can never receive the current publication's identity through this API.
 // The caller still authorizes current grants/publication and verifies leases
 // after hydration and before every model/output boundary.
-func (r *RAGChunkSnapshotReader) HydrateRAGChunkSnapshots(ctx context.Context, requests []RAGChunkReadRequest) ([]RAGChunkInputSnapshot, error) {
+func (r *RAGChunkSnapshotReader) HydrateRAGChunkSnapshots(
+	ctx context.Context,
+	requests []RAGChunkReadRequest,
+) ([]RAGChunkInputSnapshot, error) {
 	if ctx == nil || r == nil || r.db == nil {
 		return nil, ErrNextcloudLineageSnapshotStore
 	}
@@ -75,18 +86,27 @@ func (r *RAGChunkSnapshotReader) HydrateRAGChunkSnapshots(ctx context.Context, r
 		resolver := &knowledgeRepository{db: tx}
 		seen := map[string]bool{}
 		for _, request := range requests {
-			if request.TenantID == 0 || request.TenantID > math.MaxInt64 || request.KnowledgeBaseID == "" || request.KnowledgeID == "" || (len(request.ChunkIDs) == 0 && !request.MetadataOnly) || (len(request.ChunkIDs) != 0 && request.MetadataOnly) {
+			if request.TenantID == 0 || request.TenantID > math.MaxInt64 || request.KnowledgeBaseID == "" ||
+				request.KnowledgeID == "" ||
+				(len(request.ChunkIDs) == 0 && !request.MetadataOnly) ||
+				(len(request.ChunkIDs) != 0 && request.MetadataOnly) {
 				return ErrNextcloudLineageSnapshotDenied
 			}
 			var knowledge types.Knowledge
-			if err := tx.Where("id = ? AND tenant_id = ? AND knowledge_base_id = ?", request.KnowledgeID, request.TenantID, request.KnowledgeBaseID).Take(&knowledge).Error; err != nil {
+			if err := tx.Where("id = ? AND tenant_id = ? AND knowledge_base_id = ?", request.KnowledgeID, request.TenantID, request.KnowledgeBaseID).
+				Take(&knowledge).
+				Error; err != nil {
 				return lineageSnapshotReadError(err)
 			}
-			if !request.MetadataOnly && (knowledge.ParseStatus != types.ParseStatusCompleted || knowledge.EnableStatus != "enabled") {
+			if !request.MetadataOnly &&
+				(knowledge.ParseStatus != types.ParseStatusCompleted || knowledge.EnableStatus != "enabled") {
 				return ErrNextcloudLineageSnapshotDenied
 			}
 			var kb types.KnowledgeBase
-			if err := tx.Select("id", "tenant_id", "deleted_at").Where("id = ? AND tenant_id = ?", request.KnowledgeBaseID, request.TenantID).Take(&kb).Error; err != nil {
+			if err := tx.Select("id", "tenant_id", "deleted_at").
+				Where("id = ? AND tenant_id = ?", request.KnowledgeBaseID, request.TenantID).
+				Take(&kb).
+				Error; err != nil {
 				return lineageSnapshotReadError(err)
 			}
 			controlled, err := ragKnowledgeIsControlled(tx, &knowledge)
@@ -95,7 +115,12 @@ func (r *RAGChunkSnapshotReader) HydrateRAGChunkSnapshots(ctx context.Context, r
 			}
 			var sourceLineage *types.SourceLineage
 			if controlled {
-				current, identity, err := resolver.resolveNextcloudSourceLineageInTx(tx, request.TenantID, request.KnowledgeBaseID, request.KnowledgeID)
+				current, identity, err := resolver.resolveNextcloudSourceLineageInTx(
+					tx,
+					request.TenantID,
+					request.KnowledgeBaseID,
+					request.KnowledgeID,
+				)
 				if err != nil {
 					return err
 				}
@@ -113,7 +138,9 @@ func (r *RAGChunkSnapshotReader) HydrateRAGChunkSnapshots(ctx context.Context, r
 					}
 					originalFound := false
 					for _, original := range request.ExpectedLineage.Sources {
-						if original.TenantID == identity.TenantID && original.KnowledgeBaseID == identity.KnowledgeBaseID && original.KnowledgeID == identity.KnowledgeID {
+						if original.TenantID == identity.TenantID &&
+							original.KnowledgeBaseID == identity.KnowledgeBaseID &&
+							original.KnowledgeID == identity.KnowledgeID {
 							if original != identity {
 								return ErrNextcloudLineageSnapshotDenied
 							}
@@ -140,7 +167,9 @@ func (r *RAGChunkSnapshotReader) HydrateRAGChunkSnapshots(ctx context.Context, r
 						return types.ErrSourceLineageLimit
 					}
 					chunk = &types.Chunk{}
-					if err := tx.Where("id = ? AND tenant_id = ? AND knowledge_base_id = ? AND knowledge_id = ?", id, request.TenantID, request.KnowledgeBaseID, request.KnowledgeID).Take(chunk).Error; err != nil {
+					if err := tx.Where("id = ? AND tenant_id = ? AND knowledge_base_id = ? AND knowledge_id = ?", id, request.TenantID, request.KnowledgeBaseID, request.KnowledgeID).
+						Take(chunk).
+						Error; err != nil {
 						return lineageSnapshotReadError(err)
 					}
 					if !chunk.IsEnabled || chunk.IndexStatus == "processing" || chunk.IndexStatus == "failed" {
@@ -197,7 +226,15 @@ func (r *RAGChunkSnapshotReader) HydrateRAGChunkSnapshots(ctx context.Context, r
 					return err
 				}
 				copyKnowledge := knowledge
-				out = append(out, RAGChunkInputSnapshot{Knowledge: &copyKnowledge, Chunk: chunk, SourceLineage: copyLineage, ProducerMaterialVerified: materialVerified && copyLineage.RequireComplete() == nil})
+				out = append(
+					out,
+					RAGChunkInputSnapshot{
+						Knowledge:                &copyKnowledge,
+						Chunk:                    chunk,
+						SourceLineage:            copyLineage,
+						ProducerMaterialVerified: materialVerified && copyLineage.RequireComplete() == nil,
+					},
+				)
 			}
 		}
 		return nil
@@ -215,16 +252,24 @@ func ragKnowledgeIsControlled(tx *gorm.DB, knowledge *types.Knowledge) (bool, er
 			return false, ErrNextcloudLineageSnapshotDenied
 		}
 	}
-	if knowledge.Channel == types.ConnectorTypeNextcloud || metadata["nextcloud_instance_id"] != nil || metadata["nextcloud_binding_id"] != nil || metadata["nextcloud_file_id"] != nil {
+	if knowledge.Channel == types.ConnectorTypeNextcloud || metadata["nextcloud_instance_id"] != nil ||
+		metadata["nextcloud_binding_id"] != nil ||
+		metadata["nextcloud_file_id"] != nil {
 		return true, nil
 	}
 	// An erased channel/metadata marker must not recertify a retained source row
 	// as ordinary. This is exact-document positive evidence, not a never proof.
 	var versions, revisions int64
-	if err := tx.Table("nextcloud_source_versions").Where("candidate_knowledge_id = ?", knowledge.ID).Count(&versions).Error; err != nil {
+	if err := tx.Table("nextcloud_source_versions").
+		Where("candidate_knowledge_id = ?", knowledge.ID).
+		Count(&versions).
+		Error; err != nil {
 		return false, lineageSnapshotReadError(err)
 	}
-	if err := tx.Table("nextcloud_source_revisions").Where("candidate_knowledge_id = ?", knowledge.ID).Count(&revisions).Error; err != nil {
+	if err := tx.Table("nextcloud_source_revisions").
+		Where("candidate_knowledge_id = ?", knowledge.ID).
+		Count(&revisions).
+		Error; err != nil {
 		return false, lineageSnapshotReadError(err)
 	}
 	return versions > 0 || revisions > 0, nil
@@ -232,8 +277,12 @@ func ragKnowledgeIsControlled(tx *gorm.DB, knowledge *types.Knowledge) (bool, er
 
 func verifyRAGExactLease(tx *gorm.DB, request RAGChunkReadRequest, identity types.SourceIdentity) error {
 	lease := request.Lease
-	if lease == nil || lease.ID == "" || lease.OwnerID == "" || lease.Kind != string(NextcloudContentReadLease) || lease.Epoch <= 0 ||
-		lease.TenantID != request.TenantID || lease.KnowledgeBaseID != request.KnowledgeBaseID || lease.KnowledgeID != request.KnowledgeID || uint64(lease.Epoch) != identity.Revision {
+	if lease == nil || lease.ID == "" || lease.OwnerID == "" || lease.Kind != string(NextcloudContentReadLease) ||
+		lease.Epoch <= 0 ||
+		lease.TenantID != request.TenantID ||
+		lease.KnowledgeBaseID != request.KnowledgeBaseID ||
+		lease.KnowledgeID != request.KnowledgeID ||
+		uint64(lease.Epoch) != identity.Revision {
 		return ErrNextcloudContentLeaseDenied
 	}
 	var row nextcloudContentLeaseRow
@@ -244,8 +293,13 @@ func verifyRAGExactLease(tx *gorm.DB, request RAGChunkReadRequest, identity type
 	if err != nil {
 		return fmt.Errorf("%w: lease clock", ErrNextcloudLineageSnapshotStore)
 	}
-	if row.TenantID != lease.TenantID || row.KnowledgeBaseID != lease.KnowledgeBaseID || row.KnowledgeID != lease.KnowledgeID ||
-		row.Kind != string(lease.Kind) || row.OwnerID != lease.OwnerID || row.Epoch != lease.Epoch || row.ReleasedAtMS != nil || row.ExpiresAtMS <= nowMS {
+	if row.TenantID != lease.TenantID || row.KnowledgeBaseID != lease.KnowledgeBaseID ||
+		row.KnowledgeID != lease.KnowledgeID ||
+		row.Kind != string(lease.Kind) ||
+		row.OwnerID != lease.OwnerID ||
+		row.Epoch != lease.Epoch ||
+		row.ReleasedAtMS != nil ||
+		row.ExpiresAtMS <= nowMS {
 		return ErrNextcloudContentLeaseDenied
 	}
 	return nil

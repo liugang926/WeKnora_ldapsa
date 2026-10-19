@@ -30,7 +30,6 @@ import (
 const nativeRunningOriginal = "NATIVE RUNNING ORIGINAL SECRET ![image](resource://xifDo7NTSL300Lp1goVutw)"
 
 type nativeRunningModel struct {
-	actualHTTPTailBaseChat
 	f      *actualHTTPTailFixture
 	t      *testing.T
 	finish chan struct{}
@@ -42,7 +41,12 @@ func (m *nativeRunningModel) GetModelID() string   { return "actual-http-tail-mo
 func (m *nativeRunningModel) Chat(context.Context, []chat.Message, *chat.ChatOptions) (*types.ChatResponse, error) {
 	return nil, fmt.Errorf("unexpected non-stream call")
 }
-func (m *nativeRunningModel) ChatStream(ctx context.Context, input []chat.Message, _ *chat.ChatOptions) (<-chan types.StreamResponse, error) {
+
+func (m *nativeRunningModel) ChatStream(
+	ctx context.Context,
+	input []chat.Message,
+	_ *chat.ChatOptions,
+) (<-chan types.StreamResponse, error) {
 	if err := types.CheckHistoryMaterialLifetime(ctx); err != nil {
 		return nil, err
 	}
@@ -83,7 +87,11 @@ type nativeRunningReader struct {
 	reads atomic.Int64
 }
 
-func (m *nativeRunningReader) GetEvents(ctx context.Context, session, message string, offset int) ([]interfaces.StreamEvent, int, error) {
+func (m *nativeRunningReader) GetEvents(
+	ctx context.Context,
+	session, message string,
+	offset int,
+) ([]interfaces.StreamEvent, int, error) {
 	m.reads.Add(1)
 	return m.StreamManager.GetEvents(ctx, session, message, offset)
 }
@@ -103,9 +111,50 @@ func (w *nativeRunningWriter) Write(body []byte) (int, error) {
 	return n, err
 }
 
-func nativeRunningHandler(f *actualHTTPTailFixture, sessions interfaces.SessionService, streams interfaces.StreamManager, cfg *config.Config, models interfaces.ModelService, files interfaces.FileService) *sessionhandler.Handler {
-	return sessionhandler.NewHandler(sessions, f.messages, nil, streams, cfg, nil, nil, nil, nil, nil, files, nil, nil, models, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+func nativeRunningHandler(
+	f *actualHTTPTailFixture,
+	sessions interfaces.SessionService,
+	streams interfaces.StreamManager,
+	cfg *config.Config,
+	models interfaces.ModelService,
+	files interfaces.FileService,
+) *sessionhandler.Handler {
+	return sessionhandler.NewHandler(
+		sessions,
+		f.messages,
+		nil,
+		streams,
+		cfg,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		files,
+		nil,
+		nil,
+		models,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+	)
 }
+
 func nativeRunningRouter(ctx context.Context, h *sessionhandler.Handler) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
@@ -128,13 +177,46 @@ func TestNativeLiveReplayActualPausedProducerReceiverAndRedisForgery(t *testing.
 			model := &nativeRunningModel{f: f, t: t, finish: make(chan struct{})}
 			t.Cleanup(model.release)
 			models := nativeRunningModels{paused: model}
-			cfg := &config.Config{Conversation: &config.ConversationConfig{MaxRounds: 3, Summary: &config.SummaryConfig{Prompt: "Actual operator configured plain chat prompt", ContextTemplate: "{{.Query}}"}}}
+			cfg := &config.Config{
+				Conversation: &config.ConversationConfig{
+					MaxRounds: 3,
+					Summary: &config.SummaryConfig{
+						Prompt:          "Actual operator configured plain chat prompt",
+						ContextTemplate: "{{.Query}}",
+					},
+				},
+			}
 			manager := chatpipeline.NewEventManager()
 			chatpipeline.ConfigureSourceLineage(manager, f.guard)
 			chatpipeline.NewPluginLoadHistory(manager, f.messages, cfg)
 			chatpipeline.NewPluginMemoryRecall(manager, nil)
 			chatpipeline.NewPluginChatCompletionStream(manager, models)
-			sessions := service.NewSessionService(cfg, repository.NewSessionRepository(f.db), repository.NewMessageRepository(f.db), nil, f.knowledge, nil, models, nil, manager, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, service.NewSessionBusyGate(), nil, nil)
+			sessions := service.NewSessionService(
+				cfg,
+				repository.NewSessionRepository(f.db),
+				repository.NewMessageRepository(f.db),
+				nil,
+				f.knowledge,
+				nil,
+				models,
+				nil,
+				manager,
+				nil,
+				nil,
+				nil,
+				nil,
+				nil,
+				nil,
+				nil,
+				nil,
+				nil,
+				nil,
+				nil,
+				nil,
+				service.NewSessionBusyGate(),
+				nil,
+				nil,
+			)
 			service.ConfigureMessageSourceLineage(f.messages, sessions, &service.SessionForkService{}, manager, f.guard)
 			mini := miniredis.RunT(t)
 			redis, err := stream.NewRedisStreamManager(mini.Addr(), "", "", 0, "native-running-actual", time.Minute)
@@ -142,12 +224,19 @@ func TestNativeLiveReplayActualPausedProducerReceiverAndRedisForgery(t *testing.
 			t.Cleanup(func() { _ = redis.Close() })
 			firstCtx, firstCancel := context.WithCancel(f.ctx)
 			defer firstCancel()
-			first := &nativeRunningWriter{ResponseRecorder: httptest.NewRecorder(), seen: make(chan struct{}), cancel: firstCancel}
+			first := &nativeRunningWriter{
+				ResponseRecorder: httptest.NewRecorder(),
+				seen:             make(chan struct{}),
+				cancel:           firstCancel,
+			}
 			firstDone := make(chan struct{})
 			firstHandler := nativeRunningHandler(f, sessions, redis, cfg, models, nil)
 			go func() {
 				defer close(firstDone)
-				nativeRunningRouter(firstCtx, firstHandler).ServeHTTP(first, httptest.NewRequest(http.MethodPost, "/knowledge-chat/"+f.parent.SessionID, strings.NewReader(`{"query":"current native question","summary_model_id":"actual-http-tail-model","disable_title":true}`)))
+				nativeRunningRouter(
+					firstCtx,
+					firstHandler,
+				).ServeHTTP(first, httptest.NewRequest(http.MethodPost, "/knowledge-chat/"+f.parent.SessionID, strings.NewReader(`{"query":"current native question","summary_model_id":"actual-http-tail-model","disable_title":true}`)))
 			}()
 			select {
 			case <-first.seen:
@@ -164,11 +253,31 @@ func TestNativeLiveReplayActualPausedProducerReceiverAndRedisForgery(t *testing.
 				ID          string
 				IsCompleted bool
 			}
-			require.NoError(t, f.db.Table("messages").Select("id,is_completed").Where("session_id=? AND role='assistant' AND request_id<>?", f.parent.SessionID, f.parent.RequestID).Take(&current).Error)
+			require.NoError(
+				t,
+				f.db.Table("messages").
+					Select("id,is_completed").
+					Where("session_id=? AND role='assistant' AND request_id<>?", f.parent.SessionID, f.parent.RequestID).
+					Take(&current).
+					Error,
+			)
 			require.False(t, current.IsCompleted)
 			// This transport-only forged body has the same source envelope. It
 			// never acquires an original native producer receipt.
-			require.NoError(t, redis.AppendEvent(f.ctx, f.parent.SessionID, current.ID, interfaces.StreamEvent{ID: "forged-redis-frame", Type: types.ResponseTypeAnswer, Content: "FORGED REDIS BODY SECRET", SourceLineage: f.parent.SourceLineage}))
+			require.NoError(
+				t,
+				redis.AppendEvent(
+					f.ctx,
+					f.parent.SessionID,
+					current.ID,
+					interfaces.StreamEvent{
+						ID:            "forged-redis-frame",
+						Type:          types.ResponseTypeAnswer,
+						Content:       "FORGED REDIS BODY SECRET",
+						SourceLineage: f.parent.SourceLineage,
+					},
+				),
+			)
 			reader := &nativeRunningReader{StreamManager: redis}
 			observed := false
 			files := &actualHTTPTailFiles{beforeURL: func(context.Context) {
@@ -176,8 +285,20 @@ func TestNativeLiveReplayActualPausedProducerReceiverAndRedisForgery(t *testing.
 				observed = true
 				switch mode {
 				case "parent_aba":
-					require.NoError(t, f.db.Model(&types.Message{}).Where("id=?", f.parent.ID).Update("content", "foreign transient parent").Error)
-					require.NoError(t, f.db.Model(&types.Message{}).Where("id=?", f.parent.ID).Update("content", f.parent.Content).Error)
+					require.NoError(
+						t,
+						f.db.Model(&types.Message{}).
+							Where("id=?", f.parent.ID).
+							Update("content", "foreign transient parent").
+							Error,
+					)
+					require.NoError(
+						t,
+						f.db.Model(&types.Message{}).
+							Where("id=?", f.parent.ID).
+							Update("content", f.parent.Content).
+							Error,
+					)
 				case "actor_revoke":
 					require.NoError(t, f.db.Model(&types.User{}).Where("id='user'").Update("is_active", false).Error)
 				case "source_revoke":
@@ -186,8 +307,15 @@ func TestNativeLiveReplayActualPausedProducerReceiverAndRedisForgery(t *testing.
 			}}
 			secondCtx, secondCancel := context.WithCancel(f.ctx)
 			defer secondCancel()
-			second := &nativeRunningWriter{ResponseRecorder: httptest.NewRecorder(), seen: make(chan struct{}), cancel: secondCancel}
-			nativeRunningRouter(secondCtx, nativeRunningHandler(f, sessions, reader, cfg, models, files)).ServeHTTP(second, httptest.NewRequest(http.MethodGet, "/sessions/continue-stream/"+f.parent.SessionID+"?message_id="+current.ID+"&resource_urls=public", nil))
+			second := &nativeRunningWriter{
+				ResponseRecorder: httptest.NewRecorder(),
+				seen:             make(chan struct{}),
+				cancel:           secondCancel,
+			}
+			nativeRunningRouter(
+				secondCtx,
+				nativeRunningHandler(f, sessions, reader, cfg, models, files),
+			).ServeHTTP(second, httptest.NewRequest(http.MethodGet, "/sessions/continue-stream/"+f.parent.SessionID+"?message_id="+current.ID+"&resource_urls=public", nil))
 			require.True(t, observed, "actual native replay must acquire scopes before its public URL rewrite")
 			require.Zero(t, reader.reads.Load(), "running replay cannot load Redis frame bodies")
 			require.NotContains(t, second.Body.String(), "FORGED REDIS BODY SECRET")
@@ -202,7 +330,10 @@ func TestNativeLiveReplayActualPausedProducerReceiverAndRedisForgery(t *testing.
 					return err == nil && count == 1
 				}, 5*time.Second, 20*time.Millisecond)
 				completed := httptest.NewRecorder()
-				nativeRunningRouter(f.ctx, nativeRunningHandler(f, sessions, reader, cfg, models, nil)).ServeHTTP(completed, httptest.NewRequest(http.MethodGet, "/sessions/continue-stream/"+f.parent.SessionID+"?message_id="+current.ID, nil))
+				nativeRunningRouter(
+					f.ctx,
+					nativeRunningHandler(f, sessions, reader, cfg, models, nil),
+				).ServeHTTP(completed, httptest.NewRequest(http.MethodGet, "/sessions/continue-stream/"+f.parent.SessionID+"?message_id="+current.ID, nil))
 				require.Contains(t, completed.Body.String(), "NATIVE RUNNING FINISHED")
 				require.Contains(t, completed.Body.String(), `"response_type":"complete"`)
 			} else {
@@ -211,7 +342,10 @@ func TestNativeLiveReplayActualPausedProducerReceiverAndRedisForgery(t *testing.
 			}
 			require.Eventually(t, func() bool {
 				var live int64
-				err := f.db.Table("nextcloud_content_leases").Where("kind='read' AND released_at_ms IS NULL").Count(&live).Error
+				err := f.db.Table("nextcloud_content_leases").
+					Where("kind='read' AND released_at_ms IS NULL").
+					Count(&live).
+					Error
 				return err == nil && live == 0
 			}, 5*time.Second, 20*time.Millisecond)
 		})
@@ -220,19 +354,53 @@ func TestNativeLiveReplayActualPausedProducerReceiverAndRedisForgery(t *testing.
 
 func TestNativeLiveReplayActualMissingRegistryDeniesSameSourceCachedBody(t *testing.T) {
 	f := newActualHTTPTailFixture(t, false)
-	question, err := f.messages.CreateMessage(f.ctx, &types.Message{SessionID: f.parent.SessionID, RequestID: "unregistered-native-run", Role: "user", Content: "actual new question", IsCompleted: true})
+	question, err := f.messages.CreateMessage(
+		f.ctx,
+		&types.Message{
+			SessionID:   f.parent.SessionID,
+			RequestID:   "unregistered-native-run",
+			Role:        "user",
+			Content:     "actual new question",
+			IsCompleted: true,
+		},
+	)
 	require.NoError(t, err)
-	answer, err := f.messages.CreateMessage(f.ctx, &types.Message{SessionID: question.SessionID, RequestID: question.RequestID, Role: "assistant"})
+	answer, err := f.messages.CreateMessage(
+		f.ctx,
+		&types.Message{SessionID: question.SessionID, RequestID: question.RequestID, Role: "assistant"},
+	)
 	require.NoError(t, err)
 	mini := miniredis.RunT(t)
 	redis, err := stream.NewRedisStreamManager(mini.Addr(), "", "", 0, "unregistered-native", time.Minute)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = redis.Close() })
-	require.NoError(t, redis.AppendEvent(f.ctx, answer.SessionID, answer.ID, interfaces.StreamEvent{Type: types.ResponseTypeAnswer, Content: "UNKNOWN SAME SOURCE BODY SECRET", SourceLineage: f.parent.SourceLineage}))
+	require.NoError(
+		t,
+		redis.AppendEvent(
+			f.ctx,
+			answer.SessionID,
+			answer.ID,
+			interfaces.StreamEvent{
+				Type:          types.ResponseTypeAnswer,
+				Content:       "UNKNOWN SAME SOURCE BODY SECRET",
+				SourceLineage: f.parent.SourceLineage,
+			},
+		),
+	)
 	reader := &nativeRunningReader{StreamManager: redis}
-	h := nativeRunningHandler(f, nativeSavedReplaySessions{repo: repository.NewSessionRepository(f.db)}, reader, nil, nil, nil)
+	h := nativeRunningHandler(
+		f,
+		nativeSavedReplaySessions{repo: repository.NewSessionRepository(f.db)},
+		reader,
+		nil,
+		nil,
+		nil,
+	)
 	w := httptest.NewRecorder()
-	nativeRunningRouter(f.ctx, h).ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/sessions/continue-stream/"+answer.SessionID+"?message_id="+answer.ID, nil))
+	nativeRunningRouter(
+		f.ctx,
+		h,
+	).ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/sessions/continue-stream/"+answer.SessionID+"?message_id="+answer.ID, nil))
 	require.Equal(t, http.StatusServiceUnavailable, w.Code, w.Body.String())
 	require.NotContains(t, w.Body.String(), "SECRET")
 	require.Zero(t, reader.reads.Load())

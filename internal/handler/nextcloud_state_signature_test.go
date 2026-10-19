@@ -19,6 +19,14 @@ func TestNextcloudStateV2RequestCrossLanguageFixture(t *testing.T) {
 	require.NoError(t, json.Unmarshal(raw, &fixture))
 	key := repository.NextcloudStateSigningKey([]byte(fixture["secret"]))
 	mac := hmac.New(sha256.New, key)
-	mac.Write(nextcloudFileStateV2CanonicalRequest(fixture["query"], fixture["timestamp"], fixture["nonce"], "connection-0000001", fixture["key_id"]))
+	mac.Write(
+		nextcloudFileStateV2CanonicalRequest(
+			fixture["query"],
+			fixture["timestamp"],
+			fixture["nonce"],
+			"connection-0000001",
+			fixture["key_id"],
+		),
+	)
 	require.Equal(t, fixture["request_signature"], hex.EncodeToString(mac.Sum(nil)))
 }

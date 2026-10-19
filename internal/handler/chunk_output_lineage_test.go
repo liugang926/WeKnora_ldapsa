@@ -23,15 +23,38 @@ type chunkOutputHTTPService struct {
 func (s chunkOutputHTTPService) GetChunkByIDOnly(context.Context, string) (*types.Chunk, error) {
 	return s.hint, nil
 }
-func chunkOutputHTTPFixture(t *testing.T) (*ChunkHandler, *gorm.DB, *types.Knowledge, *outputHTTPGroups, *repository.KnowledgeInputProvenanceStore, context.Context) {
+
+func chunkOutputHTTPFixture(
+	t *testing.T,
+) (*ChunkHandler, *gorm.DB, *types.Knowledge, *outputHTTPGroups, *repository.KnowledgeInputProvenanceStore, context.Context) {
 	t.Helper()
 	base, db, k, groups := outputHTTPFixture(t, true)
 	store := repository.NewKnowledgeInputProvenanceStore(db)
-	repository.ConfigureKnowledgeInputActorGroupAccess(store, service.NewGroupAccessService(repository.NewGroupAccessRepository(db)))
-	actual, err := store.CaptureKnowledgeOutputInputs(context.Background(), types.KnowledgeBuildInputCaptureRequest{TenantID: k.TenantID, KnowledgeBaseID: k.KnowledgeBaseID, KnowledgeID: k.ID})
+	repository.ConfigureKnowledgeInputActorGroupAccess(
+		store,
+		service.NewGroupAccessService(repository.NewGroupAccessRepository(db)),
+	)
+	actual, err := store.CaptureKnowledgeOutputInputs(
+		context.Background(),
+		types.KnowledgeBuildInputCaptureRequest{
+			TenantID:        k.TenantID,
+			KnowledgeBaseID: k.KnowledgeBaseID,
+			KnowledgeID:     k.ID,
+		},
+	)
 	require.NoError(t, err)
 	buildCtx := repository.WithKnowledgeBuildInputProof(context.Background(), store, actual.Proof)
-	chunk := &types.Chunk{ID: "actual-chunk", TenantID: k.TenantID, KnowledgeBaseID: k.KnowledgeBaseID, KnowledgeID: k.ID, Content: "actual original chunk body", ChunkType: types.ChunkTypeText, IsEnabled: true, IndexStatus: "ready", Metadata: types.JSON(`{}`)}
+	chunk := &types.Chunk{
+		ID:              "actual-chunk",
+		TenantID:        k.TenantID,
+		KnowledgeBaseID: k.KnowledgeBaseID,
+		KnowledgeID:     k.ID,
+		Content:         "actual original chunk body",
+		ChunkType:       types.ChunkTypeText,
+		IsEnabled:       true,
+		IndexStatus:     "ready",
+		Metadata:        types.JSON(`{}`),
+	}
 	require.NoError(t, repository.NewChunkRepository(db).CreateChunks(buildCtx, []*types.Chunk{chunk}))
 	var kb types.KnowledgeBase
 	require.NoError(t, db.Where("id = ?", k.KnowledgeBaseID).Take(&kb).Error)
@@ -40,6 +63,7 @@ func chunkOutputHTTPFixture(t *testing.T) (*ChunkHandler, *gorm.DB, *types.Knowl
 	ConfigureChunkHandlerOutputLineage(h, service.NewChunkOutputAuthorizer(store, guard))
 	return h, db, k, groups, store, buildCtx
 }
+
 func serveChunkOutput(h *ChunkHandler, path string) *httptest.ResponseRecorder {
 	gin.SetMode(gin.TestMode)
 	router := documentHandlerRouter()
@@ -55,12 +79,24 @@ func serveChunkOutput(h *ChunkHandler, path string) *httptest.ResponseRecorder {
 	router.ServeHTTP(w, httptest.NewRequest("GET", path, nil))
 	return w
 }
+
 func TestChunkOutputHTTPActualOriginalBodyReplacesServiceHint(t *testing.T) {
 	h, _, _, _, _, _ := chunkOutputHTTPFixture(t)
-	ctx := types.WithCaller(context.WithValue(context.Background(), types.TenantIDContextKey, uint64(7)), types.Caller{TenantID: 7, UserID: "user"})
+	ctx := types.WithCaller(
+		context.WithValue(context.Background(), types.TenantIDContextKey, uint64(7)),
+		types.Caller{TenantID: 7, UserID: "user"},
+	)
 	ctx = types.WithPrincipal(ctx, types.Principal{Type: types.PrincipalWebUser, ID: "user"})
 	ctx = types.WithExecutionTenant(ctx, 7)
-	_, originalErr := h.outputAuthorizer.Begin(ctx, types.ChunkOutputReadRequest{TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: "document", ChunkIDs: []string{"actual-chunk"}})
+	_, originalErr := h.outputAuthorizer.Begin(
+		ctx,
+		types.ChunkOutputReadRequest{
+			TenantID:        7,
+			KnowledgeBaseID: "kb",
+			KnowledgeID:     "document",
+			ChunkIDs:        []string{"actual-chunk"},
+		},
+	)
 	require.NoError(t, originalErr, "actual fixture material/actor authority before any cached service hint")
 	fake := *h.service.(chunkOutputHTTPService).hint
 	fake.Content = "stale cached body must not be restamped"
@@ -72,24 +108,45 @@ func TestChunkOutputHTTPActualOriginalBodyReplacesServiceHint(t *testing.T) {
 	require.NotContains(t, w.Body.String(), "stale cached body")
 	require.NotContains(t, w.Body.String(), "source_lineage")
 }
+
 func TestChunkOutputHTTPNonmatchingLegacyCandidateClosesBeforePageAndCount(t *testing.T) {
 	h, db, k, _, _, _ := chunkOutputHTTPFixture(t)
-	require.NoError(t, db.Create(&types.Chunk{ID: "legacy-hidden-image", TenantID: k.TenantID, KnowledgeBaseID: k.KnowledgeBaseID, KnowledgeID: k.ID, Content: "hidden unproved source", ChunkType: types.ChunkTypeImageCaption, IsEnabled: true, IndexStatus: "ready"}).Error)
+	require.NoError(
+		t,
+		db.Create(
+			&types.Chunk{
+				ID:              "legacy-hidden-image",
+				TenantID:        k.TenantID,
+				KnowledgeBaseID: k.KnowledgeBaseID,
+				KnowledgeID:     k.ID,
+				Content:         "hidden unproved source",
+				ChunkType:       types.ChunkTypeImageCaption,
+				IsEnabled:       true,
+				IndexStatus:     "ready",
+			},
+		).Error,
+	)
 	w := serveChunkOutput(h, "/chunks/document?page=1&page_size=1")
 	require.Equal(t, 403, w.Code, w.Body.String())
 	require.NotContains(t, w.Body.String(), "original chunk body")
 	require.NotContains(t, w.Body.String(), "hidden unproved source")
 	require.NotContains(t, w.Body.String(), `"total"`)
 }
+
 func TestChunkOutputHTTPFreshCandidatesNormalPageAndTotal(t *testing.T) {
 	h, db, k, _, _, ctx := chunkOutputHTTPFixture(t)
-	require.NoError(t, repository.NewChunkRepository(db).CreateChunks(ctx, []*types.Chunk{{ID: "second-text", TenantID: k.TenantID, KnowledgeBaseID: k.KnowledgeBaseID, KnowledgeID: k.ID, Content: "second accounted chunk", ChunkType: types.ChunkTypeText, ChunkIndex: 2, IsEnabled: true, IndexStatus: "ready"}, {ID: "accounted-image", TenantID: k.TenantID, KnowledgeBaseID: k.KnowledgeBaseID, KnowledgeID: k.ID, Content: "accounted image body", ChunkType: types.ChunkTypeImageCaption, IsEnabled: true, IndexStatus: "ready"}}))
+	require.NoError(
+		t,
+		repository.NewChunkRepository(db).
+			CreateChunks(ctx, []*types.Chunk{{ID: "second-text", TenantID: k.TenantID, KnowledgeBaseID: k.KnowledgeBaseID, KnowledgeID: k.ID, Content: "second accounted chunk", ChunkType: types.ChunkTypeText, ChunkIndex: 2, IsEnabled: true, IndexStatus: "ready"}, {ID: "accounted-image", TenantID: k.TenantID, KnowledgeBaseID: k.KnowledgeBaseID, KnowledgeID: k.ID, Content: "accounted image body", ChunkType: types.ChunkTypeImageCaption, IsEnabled: true, IndexStatus: "ready"}}),
+	)
 	w := serveChunkOutput(h, "/chunks/document?page=2&page_size=1")
 	require.Equal(t, 200, w.Code, w.Body.String())
 	require.Contains(t, w.Body.String(), "second accounted chunk")
 	require.Contains(t, w.Body.String(), `"total":2`)
 	require.NotContains(t, w.Body.String(), "accounted image body")
 }
+
 func TestChunkOutputHTTPGrantOrOriginalBodyChangedAtFinalBoundaryClosed(t *testing.T) {
 	for _, mode := range []string{"grant", "body ABA", "deleted"} {
 		t.Run(mode, func(t *testing.T) {
@@ -100,8 +157,17 @@ func TestChunkOutputHTTPGrantOrOriginalBodyChangedAtFinalBoundaryClosed(t *testi
 					case "grant":
 						groups.allowed = false
 					case "body ABA":
-						require.NoError(t, db.Model(&types.Chunk{}).Where("id = 'actual-chunk'").Update("content", "changed").Error)
-						require.NoError(t, db.Model(&types.Chunk{}).Where("id = 'actual-chunk'").Update("content", "actual original chunk body").Error)
+						require.NoError(
+							t,
+							db.Model(&types.Chunk{}).Where("id = 'actual-chunk'").Update("content", "changed").Error,
+						)
+						require.NoError(
+							t,
+							db.Model(&types.Chunk{}).
+								Where("id = 'actual-chunk'").
+								Update("content", "actual original chunk body").
+								Error,
+						)
 					case "deleted":
 						require.NoError(t, db.Unscoped().Where("id = 'actual-chunk'").Delete(&types.Chunk{}).Error)
 					}

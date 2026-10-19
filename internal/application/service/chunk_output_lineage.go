@@ -15,7 +15,10 @@ type ChunkOutputAuthorizer struct {
 	checker knowledgeOutputLineageChecker
 }
 
-func NewChunkOutputAuthorizer(store *repository.KnowledgeInputProvenanceStore, guard *access.NextcloudSourceLineageGuard) *ChunkOutputAuthorizer {
+func NewChunkOutputAuthorizer(
+	store *repository.KnowledgeInputProvenanceStore,
+	guard *access.NextcloudSourceLineageGuard,
+) *ChunkOutputAuthorizer {
 	return &ChunkOutputAuthorizer{reader: store, checker: guard}
 }
 
@@ -48,8 +51,14 @@ func cloneChunkOutputSnapshot(in *types.ChunkOutputInputSnapshot) (*types.ChunkO
 	if err := json.Unmarshal(data, &out); err != nil {
 		return nil, err
 	}
-	return &types.ChunkOutputInputSnapshot{Knowledge: out.Knowledge, Chunks: out.Chunks, Proof: out.Proof, AllChunks: out.AllChunks}, nil
+	return &types.ChunkOutputInputSnapshot{
+		Knowledge: out.Knowledge,
+		Chunks:    out.Chunks,
+		Proof:     out.Proof,
+		AllChunks: out.AllChunks,
+	}, nil
 }
+
 func chunkOutputSnapshotBody(snapshot *types.ChunkOutputInputSnapshot) (string, error) {
 	if snapshot == nil {
 		return "", types.ErrSourceLineageUnknown
@@ -61,7 +70,11 @@ func chunkOutputSnapshotBody(snapshot *types.ChunkOutputInputSnapshot) (string, 
 	}{snapshot.Knowledge, snapshot.Chunks, snapshot.AllChunks})
 	return string(data), err
 }
-func (a *ChunkOutputAuthorizer) Begin(ctx context.Context, request types.ChunkOutputReadRequest) (*ChunkOutputGuard, error) {
+
+func (a *ChunkOutputAuthorizer) Begin(
+	ctx context.Context,
+	request types.ChunkOutputReadRequest,
+) (*ChunkOutputGuard, error) {
 	if a == nil || a.reader == nil || a.checker == nil || ctx == nil {
 		return nil, access.ErrNextcloudPublicationUnavailable
 	}
@@ -73,25 +86,44 @@ func (a *ChunkOutputAuthorizer) Begin(ctx context.Context, request types.ChunkOu
 	if err != nil {
 		return nil, err
 	}
-	if snapshot.Proof.Projection != "" || snapshot.Proof.BodyDigest == "" || snapshot.Proof.SourceLineage.RequireComplete() != nil || snapshot.Knowledge.TenantID != request.TenantID || snapshot.Knowledge.KnowledgeBaseID != request.KnowledgeBaseID || snapshot.Knowledge.ID != request.KnowledgeID {
+	if snapshot.Proof.Projection != "" || snapshot.Proof.BodyDigest == "" ||
+		snapshot.Proof.SourceLineage.RequireComplete() != nil ||
+		snapshot.Knowledge.TenantID != request.TenantID ||
+		snapshot.Knowledge.KnowledgeBaseID != request.KnowledgeBaseID ||
+		snapshot.Knowledge.ID != request.KnowledgeID {
 		return nil, types.ErrSourceLineageUnknown
 	}
 	body, err := chunkOutputSnapshotBody(snapshot)
 	if err != nil {
 		return nil, err
 	}
-	g := &ChunkOutputGuard{authorizer: a, snapshot: snapshot, body: body, scope: access.LineageReadScope{Targets: types.SearchTargets{&types.SearchTarget{Type: types.SearchTargetTypeKnowledgeBase, TenantID: request.TenantID, KnowledgeBaseID: request.KnowledgeBaseID}}}}
+	g := &ChunkOutputGuard{
+		authorizer: a,
+		snapshot:   snapshot,
+		body:       body,
+		scope: access.LineageReadScope{
+			Targets: types.SearchTargets{
+				&types.SearchTarget{
+					Type:            types.SearchTargetTypeKnowledgeBase,
+					TenantID:        request.TenantID,
+					KnowledgeBaseID: request.KnowledgeBaseID,
+				},
+			},
+		},
+	}
 	if err := g.Check(ctx, snapshot); err != nil {
 		return nil, err
 	}
 	return g, nil
 }
+
 func (g *ChunkOutputGuard) Snapshot() (*types.ChunkOutputInputSnapshot, error) {
 	if g == nil {
 		return nil, types.ErrSourceLineageUnknown
 	}
 	return cloneChunkOutputSnapshot(g.snapshot)
 }
+
 func (g *ChunkOutputGuard) SourceLineage() *types.SourceLineage {
 	if g == nil || g.snapshot == nil {
 		return types.UnknownSourceLineage()
@@ -99,6 +131,7 @@ func (g *ChunkOutputGuard) SourceLineage() *types.SourceLineage {
 	copy, _ := types.UnionSourceLineage(g.snapshot.Proof.SourceLineage)
 	return copy
 }
+
 func (g *ChunkOutputGuard) Check(ctx context.Context, published *types.ChunkOutputInputSnapshot) error {
 	if ctx == nil || g == nil || g.authorizer == nil || g.authorizer.reader == nil || g.authorizer.checker == nil {
 		return access.ErrNextcloudPublicationUnavailable

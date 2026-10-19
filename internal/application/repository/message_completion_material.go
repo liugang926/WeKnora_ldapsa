@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"encoding/json"
+
 	"github.com/Tencent/WeKnora/internal/types"
 	"gorm.io/gorm"
 )
@@ -16,14 +17,20 @@ func (messageCompletionInputManifestRow) TableName() string {
 	return "message_completion_input_manifests"
 }
 
-type messageCompletionInputKey struct{}
-type messageCompletionInputBoundary struct {
-	Store    *KnowledgeInputProvenanceStore
-	Manifest *types.MessageCompletionInputManifest
-}
+type (
+	messageCompletionInputKey      struct{}
+	messageCompletionInputBoundary struct {
+		Store    *KnowledgeInputProvenanceStore
+		Manifest *types.MessageCompletionInputManifest
+	}
+)
 
-func (s *KnowledgeInputProvenanceStore) WithActualMessageCompletionInputs(ctx context.Context, manifest *types.MessageCompletionInputManifest) (context.Context, error) {
-	if manifest == nil || manifest.Initial == nil || manifest.Recipe != "history-initial-and-consumed-steer-v1" || manifest.SourceLineage.RequireComplete() != nil {
+func (s *KnowledgeInputProvenanceStore) WithActualMessageCompletionInputs(
+	ctx context.Context,
+	manifest *types.MessageCompletionInputManifest,
+) (context.Context, error) {
+	if manifest == nil || manifest.Initial == nil || manifest.Recipe != "history-initial-and-consumed-steer-v1" ||
+		manifest.SourceLineage.RequireComplete() != nil {
 		return ctx, types.ErrSourceLineageUnknown
 	}
 	body, err := json.Marshal(manifest)
@@ -36,7 +43,13 @@ func (s *KnowledgeInputProvenanceStore) WithActualMessageCompletionInputs(ctx co
 	}
 	return context.WithValue(ctx, messageCompletionInputKey{}, messageCompletionInputBoundary{s, &copy}), nil
 }
-func (s *KnowledgeInputProvenanceStore) sealMessageCompletionInputsInTx(tx *gorm.DB, origin *messageGenerationOrigin, admission *messageMaterialAdmission, message *types.Message) error {
+
+func (s *KnowledgeInputProvenanceStore) sealMessageCompletionInputsInTx(
+	tx *gorm.DB,
+	origin *messageGenerationOrigin,
+	admission *messageMaterialAdmission,
+	message *types.Message,
+) error {
 	boundary, ok := tx.Statement.Context.Value(messageCompletionInputKey{}).(messageCompletionInputBoundary)
 	if !ok {
 		return nil
@@ -45,7 +58,12 @@ func (s *KnowledgeInputProvenanceStore) sealMessageCompletionInputsInTx(tx *gorm
 		return types.ErrSourceLineageUnknown
 	}
 	manifest := boundary.Manifest
-	if manifest.AssistantMessageID != message.ID || manifest.AssistantGenerationID != origin.ID || manifest.SessionID != message.SessionID || manifest.RequestID != message.RequestID || manifest.OwnerID != origin.OwnerID || manifest.OwnerRevision != origin.OwnerRevision || manifest.TenantID != origin.TenantID {
+	if manifest.AssistantMessageID != message.ID || manifest.AssistantGenerationID != origin.ID ||
+		manifest.SessionID != message.SessionID ||
+		manifest.RequestID != message.RequestID ||
+		manifest.OwnerID != origin.OwnerID ||
+		manifest.OwnerRevision != origin.OwnerRevision ||
+		manifest.TenantID != origin.TenantID {
 		return ErrKnowledgeInputChanged
 	}
 	manifest.AssistantAdmissionID = admission.ID

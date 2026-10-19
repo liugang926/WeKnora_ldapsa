@@ -31,9 +31,7 @@ import (
 
 const actualHTTPTailAnswer = "LIVE HTTP SECRET ![image](resource://xifDo7NTSL300Lp1goVutw)"
 
-type actualHTTPTailBaseChat interface{ chat.Chat }
 type actualHTTPTailModel struct {
-	actualHTTPTailBaseChat
 	t      *testing.T
 	db     *gorm.DB
 	parent *types.Message
@@ -45,7 +43,12 @@ func (m *actualHTTPTailModel) GetModelID() string   { return "actual-http-tail-m
 func (m *actualHTTPTailModel) Chat(context.Context, []chat.Message, *chat.ChatOptions) (*types.ChatResponse, error) {
 	return nil, fmt.Errorf("this actual HTTP fixture must only use its local streaming channel")
 }
-func (m *actualHTTPTailModel) ChatStream(ctx context.Context, input []chat.Message, _ *chat.ChatOptions) (<-chan types.StreamResponse, error) {
+
+func (m *actualHTTPTailModel) ChatStream(
+	ctx context.Context,
+	input []chat.Message,
+	_ *chat.ChatOptions,
+) (<-chan types.StreamResponse, error) {
 	m.calls.Add(1)
 	if err := types.CheckHistoryMaterialLifetime(ctx); err != nil {
 		return nil, err
@@ -70,8 +73,14 @@ type actualHTTPTailModels struct {
 }
 
 func (m actualHTTPTailModels) GetModelByID(context.Context, string) (*types.Model, error) {
-	return &types.Model{ID: "actual-http-tail-model", TenantID: 7, Type: types.ModelTypeKnowledgeQA, Status: types.ModelStatusActive}, nil
+	return &types.Model{
+		ID:       "actual-http-tail-model",
+		TenantID: 7,
+		Type:     types.ModelTypeKnowledgeQA,
+		Status:   types.ModelStatusActive,
+	}, nil
 }
+
 func (m actualHTTPTailModels) GetChatModel(context.Context, string) (chat.Chat, error) {
 	return m.model, nil
 }
@@ -110,7 +119,8 @@ type actualHTTPTailWriter struct {
 }
 
 func (w *actualHTTPTailWriter) Write(body []byte) (int, error) {
-	answer := bytes.Contains(body, []byte(`"response_type":"answer"`)) && bytes.Contains(body, []byte("LIVE HTTP SECRET"))
+	answer := bytes.Contains(body, []byte(`"response_type":"answer"`)) &&
+		bytes.Contains(body, []byte("LIVE HTTP SECRET"))
 	complete := bytes.Contains(body, []byte(`"response_type":"complete"`))
 	if bytes.Contains(body, []byte("data:")) {
 		w.lastDerivedWrite = false
@@ -131,8 +141,19 @@ func (w *actualHTTPTailWriter) Write(body []byte) (int, error) {
 	if complete {
 		w.completionWrites++
 		var persisted int64
-		require.NoError(w.t, w.db.Model(&types.Message{}).Where("session_id=? AND role='assistant' AND request_id<>? AND is_completed=true", w.session, w.parentRequest).Count(&persisted).Error)
-		require.EqualValues(w.t, 1, persisted, "actual completed producer seal and control transfer must precede HTTP complete")
+		require.NoError(
+			w.t,
+			w.db.Model(&types.Message{}).
+				Where("session_id=? AND role='assistant' AND request_id<>? AND is_completed=true", w.session, w.parentRequest).
+				Count(&persisted).
+				Error,
+		)
+		require.EqualValues(
+			w.t,
+			1,
+			persisted,
+			"actual completed producer seal and control transfer must precede HTTP complete",
+		)
 	}
 	n, err := w.ResponseRecorder.Write(body)
 	if answer && w.afterAnswerWrite != nil {
@@ -140,6 +161,7 @@ func (w *actualHTTPTailWriter) Write(body []byte) (int, error) {
 	}
 	return n, err
 }
+
 func (w *actualHTTPTailWriter) Flush() {
 	if w.lastDerivedWrite {
 		assertActualHTTPTailLeases(w.t, w.db, true, w.source)
@@ -162,7 +184,11 @@ func assertActualHTTPTailLeases(t *testing.T, db *gorm.DB, held bool, source str
 	} else {
 		require.Eventually(t, func() bool {
 			var pending int64
-			return db.Table("nextcloud_content_leases").Where("kind='read' AND released_at_ms IS NULL").Count(&pending).Error == nil && pending == 0
+			return db.Table("nextcloud_content_leases").
+				Where("kind='read' AND released_at_ms IS NULL").
+				Count(&pending).
+				Error == nil &&
+				pending == 0
 		}, 2*time.Second, 10*time.Millisecond, "HTTP release must preserve an active producer until it finishes, then all leases close")
 	}
 }
@@ -184,7 +210,15 @@ func newActualHTTPTailFixture(t *testing.T, controlled bool) *actualHTTPTailFixt
 	t.Helper()
 	if !controlled {
 		parent, db, store, _, _, _ := collectionHTTPFixture(t)
-		guard := access.NewNextcloudSourceLineageGuard(repository.NewKnowledgeRepository(db).(access.NextcloudLineageSnapshotLookup), parent.kbService, nil, nil, service.NewGroupAccessService(repository.NewGroupAccessRepository(db)), nil, store)
+		guard := access.NewNextcloudSourceLineageGuard(
+			repository.NewKnowledgeRepository(db).(access.NextcloudLineageSnapshotLookup),
+			parent.kbService,
+			nil,
+			nil,
+			service.NewGroupAccessService(repository.NewGroupAccessRepository(db)),
+			nil,
+			store,
+		)
 		messages := configureNativeSavedReplayMessages(t, db, store, parent.kbService, parent.kgService, guard)
 		require.NoError(t, repository.UpgradeMessageProducerAdvanceSchema(db))
 		ctx := context.WithValue(collectionHumanInputContext(7), types.UserIDContextKey, "user")
@@ -192,14 +226,34 @@ func newActualHTTPTailFixture(t *testing.T, controlled bool) *actualHTTPTailFixt
 		t.Cleanup(cancel)
 		empty, _ := types.NewCompleteSourceLineage()
 		original := produceNativeSavedReplayMessage(t, db, messages, ctx, "ACTUAL LIVE PARENT SECRET", empty)
-		return &actualHTTPTailFixture{db: db, store: store, messages: messages, kbs: parent.kbService, knowledge: parent.kgService, guard: guard, ctx: ctx, parent: original}
+		return &actualHTTPTailFixture{
+			db:        db,
+			store:     store,
+			messages:  messages,
+			kbs:       parent.kbService,
+			knowledge: parent.kgService,
+			guard:     guard,
+			ctx:       ctx,
+			parent:    original,
+		}
 	}
 	f := faqAllReadLeaseFixture(t, "personal_revoke_before_write")
 	f.calls.Store(-10000)
 	ctx := context.WithValue(f.ctx, types.UserIDContextKey, "user")
-	messages := configureNativeSavedReplayMessages(t, f.db, f.store, f.knowledge.kbService, f.knowledge.kgService, f.guard)
+	messages := configureNativeSavedReplayMessages(
+		t,
+		f.db,
+		f.store,
+		f.knowledge.kbService,
+		f.knowledge.kgService,
+		f.guard,
+	)
 	require.NoError(t, repository.UpgradeMessageProducerAdvanceSchema(f.db))
-	request := types.FAQInputReadRequest{TenantID: 7, KnowledgeBaseID: "faq-derived", ChunkIDs: []string{f.entry.ChunkID}}
+	request := types.FAQInputReadRequest{
+		TenantID:        7,
+		KnowledgeBaseID: "faq-derived",
+		ChunkIDs:        []string{f.entry.ChunkID},
+	}
 	plan, err := f.store.PeekFAQInputReadPlan(ctx, request)
 	require.NoError(t, err)
 	inputLease, err := acquireFAQReadPlanLeases(ctx, f.store.ContentLeaseStore(), plan.Scopes, plan.SourceLineage, 0)
@@ -209,22 +263,79 @@ func newActualHTTPTailFixture(t *testing.T, controlled bool) *actualHTTPTailFixt
 	original, err := f.store.CaptureFAQInputs(readCtx, request)
 	require.NoError(t, err)
 	require.Len(t, original.Chunks, 1)
-	prior := produceNativeSavedReplayMessage(t, f.db, messages, readCtx, "ACTUAL LIVE PARENT SECRET: "+original.Chunks[0].Content, original.Proofs[0].SourceLineage)
+	prior := produceNativeSavedReplayMessage(
+		t,
+		f.db,
+		messages,
+		readCtx,
+		"ACTUAL LIVE PARENT SECRET: "+original.Chunks[0].Content,
+		original.Proofs[0].SourceLineage,
+	)
 	inputLease.Close()
-	return &actualHTTPTailFixture{db: f.db, store: f.store, messages: messages, kbs: f.knowledge.kbService, knowledge: f.knowledge.kgService, guard: f.guard, ctx: ctx, parent: prior, source: "source", revokeSource: func() { f.calls.Store(2) }}
+	return &actualHTTPTailFixture{
+		db:           f.db,
+		store:        f.store,
+		messages:     messages,
+		kbs:          f.knowledge.kbService,
+		knowledge:    f.knowledge.kgService,
+		guard:        f.guard,
+		ctx:          ctx,
+		parent:       prior,
+		source:       "source",
+		revokeSource: func() { f.calls.Store(2) },
+	}
 }
 
-func serveActualHTTPTail(t *testing.T, f *actualHTTPTailFixture, beforeURL func(context.Context), afterWrite func(), cancelHTTP bool) (*actualHTTPTailWriter, *actualHTTPTailModel, *actualHTTPTailFiles) {
+func serveActualHTTPTail(
+	t *testing.T,
+	f *actualHTTPTailFixture,
+	beforeURL func(context.Context),
+	afterWrite func(),
+	cancelHTTP bool,
+) (*actualHTTPTailWriter, *actualHTTPTailModel, *actualHTTPTailFiles) {
 	t.Helper()
 	model := &actualHTTPTailModel{t: t, db: f.db, parent: f.parent}
 	models := actualHTTPTailModels{model: model}
-	cfg := &config.Config{Conversation: &config.ConversationConfig{MaxRounds: 3, Summary: &config.SummaryConfig{Prompt: "Actual operator configured plain chat prompt", ContextTemplate: "{{.Query}}"}}}
+	cfg := &config.Config{
+		Conversation: &config.ConversationConfig{
+			MaxRounds: 3,
+			Summary: &config.SummaryConfig{
+				Prompt:          "Actual operator configured plain chat prompt",
+				ContextTemplate: "{{.Query}}",
+			},
+		},
+	}
 	manager := chatpipeline.NewEventManager()
 	chatpipeline.ConfigureSourceLineage(manager, f.guard)
 	chatpipeline.NewPluginLoadHistory(manager, f.messages, cfg)
 	chatpipeline.NewPluginMemoryRecall(manager, nil)
 	chatpipeline.NewPluginChatCompletionStream(manager, models)
-	sessions := service.NewSessionService(cfg, repository.NewSessionRepository(f.db), repository.NewMessageRepository(f.db), nil, f.knowledge, nil, models, nil, manager, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, service.NewSessionBusyGate(), nil, nil)
+	sessions := service.NewSessionService(
+		cfg,
+		repository.NewSessionRepository(f.db),
+		repository.NewMessageRepository(f.db),
+		nil,
+		f.knowledge,
+		nil,
+		models,
+		nil,
+		manager,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		service.NewSessionBusyGate(),
+		nil,
+		nil,
+	)
 	service.ConfigureMessageSourceLineage(f.messages, sessions, &service.SessionForkService{}, manager, f.guard)
 	mini := miniredis.RunT(t)
 	redis, err := stream.NewRedisStreamManager(mini.Addr(), "", "", 0, "actual-http-tail", time.Minute)
@@ -234,7 +345,11 @@ func serveActualHTTPTail(t *testing.T, f *actualHTTPTailFixture, beforeURL func(
 	defer requestCancel()
 	files := &actualHTTPTailFiles{beforeURL: func(ctx context.Context) {
 		assertActualHTTPTailLeases(t, f.db, true, f.source)
-		require.NoError(t, service.CheckMessageMaterialOutputBoundary(ctx), "public URL rewriting must receive the same actual shared original holder")
+		require.NoError(
+			t,
+			service.CheckMessageMaterialOutputBoundary(ctx),
+			"public URL rewriting must receive the same actual shared original holder",
+		)
 		if beforeURL != nil {
 			beforeURL(ctx)
 		}
@@ -242,7 +357,40 @@ func serveActualHTTPTail(t *testing.T, f *actualHTTPTailFixture, beforeURL func(
 			requestCancel()
 		}
 	}}
-	h := sessionhandler.NewHandler(sessions, f.messages, nil, redis, cfg, nil, nil, nil, nil, nil, files, nil, nil, models, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	h := sessionhandler.NewHandler(
+		sessions,
+		f.messages,
+		nil,
+		redis,
+		cfg,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		files,
+		nil,
+		nil,
+		models,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+	)
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	router.Use(middleware.ErrorHandler())
@@ -253,8 +401,25 @@ func serveActualHTTPTail(t *testing.T, f *actualHTTPTailFixture, beforeURL func(
 		c.Next()
 	})
 	router.POST("/knowledge-chat/:session_id", h.KnowledgeQA)
-	w := &actualHTTPTailWriter{ResponseRecorder: httptest.NewRecorder(), t: t, db: f.db, session: f.parent.SessionID, parentRequest: f.parent.RequestID, source: f.source, afterAnswerWrite: afterWrite}
-	router.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/knowledge-chat/"+f.parent.SessionID+"?resource_urls=public", strings.NewReader(`{"query":"actual current human question","summary_model_id":"actual-http-tail-model","disable_title":true}`)))
+	w := &actualHTTPTailWriter{
+		ResponseRecorder: httptest.NewRecorder(),
+		t:                t,
+		db:               f.db,
+		session:          f.parent.SessionID,
+		parentRequest:    f.parent.RequestID,
+		source:           f.source,
+		afterAnswerWrite: afterWrite,
+	}
+	router.ServeHTTP(
+		w,
+		httptest.NewRequest(
+			http.MethodPost,
+			"/knowledge-chat/"+f.parent.SessionID+"?resource_urls=public",
+			strings.NewReader(
+				`{"query":"actual current human question","summary_model_id":"actual-http-tail-model","disable_title":true}`,
+			),
+		),
+	)
 	return w, model, files
 }
 
@@ -286,8 +451,20 @@ func TestMessageMaterialActualLiveHTTPRewriteRejectsBodyActorSourceAndCancel(t *
 				observed = true
 				switch mode {
 				case "body_aba":
-					require.NoError(t, f.db.Model(&types.Message{}).Where("id=?", f.parent.ID).Update("content", "foreign transient parent body").Error)
-					require.NoError(t, f.db.Model(&types.Message{}).Where("id=?", f.parent.ID).Update("content", f.parent.Content).Error)
+					require.NoError(
+						t,
+						f.db.Model(&types.Message{}).
+							Where("id=?", f.parent.ID).
+							Update("content", "foreign transient parent body").
+							Error,
+					)
+					require.NoError(
+						t,
+						f.db.Model(&types.Message{}).
+							Where("id=?", f.parent.ID).
+							Update("content", f.parent.Content).
+							Error,
+					)
 				case "actor_revoke":
 					require.NoError(t, f.db.Model(&types.User{}).Where("id='user'").Update("is_active", false).Error)
 				case "source_revoke":
@@ -317,7 +494,12 @@ func TestMessageMaterialActualLiveHTTPRecheckBetweenWriteAndFlush(t *testing.T) 
 	}, false)
 	require.True(t, observed)
 	require.EqualValues(t, 1, model.calls.Load())
-	require.Contains(t, w.Body.String(), "LIVE HTTP SECRET", "a later revocation cannot retract an already authorized write")
+	require.Contains(
+		t,
+		w.Body.String(),
+		"LIVE HTTP SECRET",
+		"a later revocation cannot retract an already authorized write",
+	)
 	require.NotContains(t, w.Body.String(), `"response_type":"complete"`)
 	require.Positive(t, w.answerWrites)
 	require.Zero(t, w.completionWrites)

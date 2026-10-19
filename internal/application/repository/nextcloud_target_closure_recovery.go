@@ -26,8 +26,24 @@ var targetClosureKnowledgeBaseID = regexp.MustCompile(`^[A-Za-z0-9._-]{1,128}$`)
 
 func targetClosureJournalLines(proof NextcloudRecoveryTargetClosure) []string {
 	t := proof.Target
-	return []string{proof.RootFileID, proof.RootKey, t.Schema, t.State, t.Reason, t.OperationID, t.InstanceID, t.BindingID, t.TenantID, t.KnowledgeBaseID, t.OperationRevision, t.ClosureID, t.DeletionTimeMS, t.ClosedAt}
+	return []string{
+		proof.RootFileID,
+		proof.RootKey,
+		t.Schema,
+		t.State,
+		t.Reason,
+		t.OperationID,
+		t.InstanceID,
+		t.BindingID,
+		t.TenantID,
+		t.KnowledgeBaseID,
+		t.OperationRevision,
+		t.ClosureID,
+		t.DeletionTimeMS,
+		t.ClosedAt,
+	}
 }
+
 func canonicalPositiveTargetNumber(v string) (int64, error) {
 	n, err := strconv.ParseInt(v, 10, 64)
 	if err != nil || n <= 0 || strconv.FormatInt(n, 10) != v {
@@ -35,6 +51,7 @@ func canonicalPositiveTargetNumber(v string) (int64, error) {
 	}
 	return n, nil
 }
+
 func validateRecoveryTargetClosure(raw json.RawMessage, instance string) (NextcloudRecoveryTargetClosure, error) {
 	var proof NextcloudRecoveryTargetClosure
 	var object map[string]json.RawMessage
@@ -57,10 +74,30 @@ func validateRecoveryTargetClosure(raw json.RawMessage, instance string) (Nextcl
 	deletion, de := canonicalPositiveTargetNumber(t.DeletionTimeMS)
 	closed, ce := canonicalPositiveTargetNumber(t.ClosedAt)
 	_, fe := canonicalPositiveTargetNumber(proof.RootFileID)
-	if te != nil || re != nil || de != nil || ce != nil || fe != nil || closed > math.MaxInt64/1000 || closed < deletion/1000 || closed > time.Now().Unix()+300 || t.Schema != "weknora-nextcloud-target-v1" || t.State != "target_deleted" || t.InstanceID != instance || !recoveryStream.MatchString(t.OperationID) || !recoveryID.MatchString(t.BindingID) || !targetClosureKnowledgeBaseID.MatchString(t.KnowledgeBaseID) || (t.Reason != "tenant_deleted" && t.Reason != "knowledge_base_deleted") || !recoveryHash.MatchString(t.ClosureID) || proof.RootKey != recoverySHA([]byte("nextcloud-filecache-root-v1\x00"+proof.RootFileID)) {
+	if te != nil || re != nil || de != nil || ce != nil || fe != nil || closed > math.MaxInt64/1000 ||
+		closed < deletion/1000 ||
+		closed > time.Now().Unix()+300 ||
+		t.Schema != "weknora-nextcloud-target-v1" ||
+		t.State != "target_deleted" ||
+		t.InstanceID != instance ||
+		!recoveryStream.MatchString(t.OperationID) ||
+		!recoveryID.MatchString(t.BindingID) ||
+		!targetClosureKnowledgeBaseID.MatchString(t.KnowledgeBaseID) ||
+		(t.Reason != "tenant_deleted" && t.Reason != "knowledge_base_deleted") ||
+		!recoveryHash.MatchString(t.ClosureID) ||
+		proof.RootKey != recoverySHA([]byte("nextcloud-filecache-root-v1\x00"+proof.RootFileID)) {
 		return proof, ErrNextcloudRecoveryDenied
 	}
-	row := NextcloudTargetClosure{OperationID: t.OperationID, TenantID: uint64(tenant), KnowledgeBaseID: t.KnowledgeBaseID, InstanceID: t.InstanceID, BindingID: t.BindingID, OperationRevision: uint64(revision), Reason: t.Reason, DeletionTimeMS: deletion}
+	row := NextcloudTargetClosure{
+		OperationID:       t.OperationID,
+		TenantID:          uint64(tenant),
+		KnowledgeBaseID:   t.KnowledgeBaseID,
+		InstanceID:        t.InstanceID,
+		BindingID:         t.BindingID,
+		OperationRevision: uint64(revision),
+		Reason:            t.Reason,
+		DeletionTimeMS:    deletion,
+	}
 	if targetClosureID(row) != t.ClosureID {
 		return proof, ErrNextcloudRecoveryDenied
 	}
@@ -99,7 +136,10 @@ func validateRecoveryTargetClosures(fields map[string]json.RawMessage, p *Nextcl
 			}
 			continue
 		}
-		if event.TargetClosure == nil || event.FileID != nil || event.BindingID != event.TargetClosure.Target.BindingID || event.SourceRevision != event.TargetClosure.Target.OperationRevision || !seenOps[event.TargetClosure.Target.OperationID] {
+		if event.TargetClosure == nil || event.FileID != nil ||
+			event.BindingID != event.TargetClosure.Target.BindingID ||
+			event.SourceRevision != event.TargetClosure.Target.OperationRevision ||
+			!seenOps[event.TargetClosure.Target.OperationID] {
 			return ErrNextcloudRecoveryDenied
 		}
 		found := false
@@ -136,13 +176,15 @@ func applyRecoveryTargetClosuresInTx(ctx context.Context, tx *gorm.DB, p *Nextcl
 			return err
 		}
 		tenant, _ := canonicalPositiveTargetNumber(t.TenantID)
-		if op.TenantID != uint64(tenant) || op.KnowledgeBaseID != t.KnowledgeBaseID || op.InstanceID != t.InstanceID || op.BindingID != t.BindingID {
+		if op.TenantID != uint64(tenant) || op.KnowledgeBaseID != t.KnowledgeBaseID || op.InstanceID != t.InstanceID ||
+			op.BindingID != t.BindingID {
 			return ErrNextcloudRecoveryDenied
 		}
 		var existing NextcloudTargetClosure
 		err = tx.Where("operation_id=?", op.OperationID).Take(&existing).Error
 		if err == nil {
-			if !validTargetClosure(existing, op) || existing.ClosureID != t.ClosureID || strconv.FormatInt(existing.ClosedAtMS/1000, 10) != t.ClosedAt {
+			if !validTargetClosure(existing, op) || existing.ClosureID != t.ClosureID ||
+				strconv.FormatInt(existing.ClosedAtMS/1000, 10) != t.ClosedAt {
 				return ErrNextcloudRecoveryDenied
 			}
 			continue
@@ -158,7 +200,9 @@ func applyRecoveryTargetClosuresInTx(ctx context.Context, tx *gorm.DB, p *Nextcl
 		if uint64(revision) > newRevision {
 			newRevision = uint64(revision)
 		}
-		q := tx.Model(&types.NextcloudOnboardingOperation{}).Where("operation_id=? AND revision=?", op.OperationID, op.Revision).Updates(map[string]any{"revision": newRevision, "permission_version": op.PermissionVersion + 1, "permission_synced_at": nil, "updated_at": time.Now().UTC()})
+		q := tx.Model(&types.NextcloudOnboardingOperation{}).
+			Where("operation_id=? AND revision=?", op.OperationID, op.Revision).
+			Updates(map[string]any{"revision": newRevision, "permission_version": op.PermissionVersion + 1, "permission_synced_at": nil, "updated_at": time.Now().UTC()})
 		if q.Error != nil {
 			return q.Error
 		}
@@ -175,13 +219,21 @@ func applyRecoveryTargetClosuresInTx(ctx context.Context, tx *gorm.DB, p *Nextcl
 			return err
 		}
 		if tx.Migrator().HasTable("nextcloud_event_connections") {
-			if err = tx.Table("nextcloud_event_connections").Where("tenant_id=? AND knowledge_base_id=? AND nextcloud_instance_id=? AND binding_id=?", op.TenantID, op.KnowledgeBaseID, op.InstanceID, op.BindingID).Update("status", "revoked").Error; err != nil {
+			if err = tx.Table("nextcloud_event_connections").
+				Where("tenant_id=? AND knowledge_base_id=? AND nextcloud_instance_id=? AND binding_id=?", op.TenantID, op.KnowledgeBaseID, op.InstanceID, op.BindingID).
+				Update("status", "revoked").
+				Error; err != nil {
 				return err
 			}
 		}
 		if tx.Migrator().HasTable("data_sources") && tx.Migrator().HasTable("nextcloud_source_pairings") {
-			ids := tx.Table("nextcloud_source_pairings").Select("datasource_id").Where("operation_id=? AND tenant_id=? AND knowledge_base_id=?", op.OperationID, op.TenantID, op.KnowledgeBaseID)
-			if err = tx.Table("data_sources").Where("id IN (?) AND tenant_id=? AND knowledge_base_id=?", ids, op.TenantID, op.KnowledgeBaseID).Updates(map[string]any{"status": types.DataSourceStatusPaused, "sync_enabled": false}).Error; err != nil {
+			ids := tx.Table("nextcloud_source_pairings").
+				Select("datasource_id").
+				Where("operation_id=? AND tenant_id=? AND knowledge_base_id=?", op.OperationID, op.TenantID, op.KnowledgeBaseID)
+			if err = tx.Table("data_sources").
+				Where("id IN (?) AND tenant_id=? AND knowledge_base_id=?", ids, op.TenantID, op.KnowledgeBaseID).
+				Updates(map[string]any{"status": types.DataSourceStatusPaused, "sync_enabled": false}).
+				Error; err != nil {
 				return err
 			}
 		}
@@ -191,7 +243,19 @@ func applyRecoveryTargetClosuresInTx(ctx context.Context, tx *gorm.DB, p *Nextcl
 		if closedMS < deletion {
 			closedMS = deletion
 		}
-		row := NextcloudTargetClosure{OperationID: op.OperationID, ClosureID: t.ClosureID, TenantID: op.TenantID, KnowledgeBaseID: op.KnowledgeBaseID, InstanceID: op.InstanceID, BindingID: op.BindingID, OperationRevision: uint64(revision), Reason: t.Reason, DeletionTimeMS: deletion, ClosedAtMS: closedMS, RecoveryPlanSHA256: p.digest}
+		row := NextcloudTargetClosure{
+			OperationID:        op.OperationID,
+			ClosureID:          t.ClosureID,
+			TenantID:           op.TenantID,
+			KnowledgeBaseID:    op.KnowledgeBaseID,
+			InstanceID:         op.InstanceID,
+			BindingID:          op.BindingID,
+			OperationRevision:  uint64(revision),
+			Reason:             t.Reason,
+			DeletionTimeMS:     deletion,
+			ClosedAtMS:         closedMS,
+			RecoveryPlanSHA256: p.digest,
+		}
 		if err = tx.Create(&row).Error; err != nil {
 			return err
 		}

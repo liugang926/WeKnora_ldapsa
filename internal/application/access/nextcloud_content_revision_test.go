@@ -26,7 +26,12 @@ func TestNextcloudPublicationSameETagHigherContentRevisionClosesRead(t *testing.
 	}
 	require.NoError(t, guard.CheckKnowledge(ctx, k))
 	revision = "2"
-	require.ErrorIs(t, guard.CheckKnowledge(ctx, k), ErrNextcloudPublicationDenied, "same raw ETag must not extend old byte-version access")
+	require.ErrorIs(
+		t,
+		guard.CheckKnowledge(ctx, k),
+		ErrNextcloudPublicationDenied,
+		"same raw ETag must not extend old byte-version access",
+	)
 }
 
 type recoveryClosedSourceLookup struct {
@@ -37,6 +42,7 @@ type recoveryClosedSourceLookup struct {
 func (s *recoveryClosedSourceLookup) InstanceControlsClosed(context.Context, string) (bool, error) {
 	return s.closed, nil
 }
+
 func TestNextcloudActualOwnerReadControlsClosedBeforeAndAfterSourceProof(t *testing.T) {
 	guard, ctx, k := publicationFixture(t)
 	lookup := &recoveryClosedSourceLookup{NextcloudDataSourceLookup: guard.dataSources, closed: true}
@@ -44,7 +50,12 @@ func TestNextcloudActualOwnerReadControlsClosedBeforeAndAfterSourceProof(t *test
 	caller := ctx.Value(types.CallerContextKey).(types.Caller)
 	caller.Role = types.TenantRoleOwner
 	ctx = types.WithCaller(ctx, caller)
-	require.ErrorIs(t, guard.CheckKnowledge(ctx, k), ErrNextcloudPublicationDenied, "a normal Owner cannot expose a new source candidate while final recovery controls are closed")
+	require.ErrorIs(
+		t,
+		guard.CheckKnowledge(ctx, k),
+		ErrNextcloudPublicationDenied,
+		"a normal Owner cannot expose a new source candidate while final recovery controls are closed",
+	)
 	lookup.closed = false
 	require.NoError(t, guard.CheckKnowledge(ctx, k))
 	original := guard.authorize
@@ -53,5 +64,10 @@ func TestNextcloudActualOwnerReadControlsClosedBeforeAndAfterSourceProof(t *test
 		lookup.closed = true
 		return decision, err
 	}
-	require.ErrorIs(t, guard.CheckKnowledge(ctx, k), ErrNextcloudPublicationDenied, "a close concurrent with live source authorization invalidates the allow")
+	require.ErrorIs(
+		t,
+		guard.CheckKnowledge(ctx, k),
+		ErrNextcloudPublicationDenied,
+		"a close concurrent with live source authorization invalidates the allow",
+	)
 }

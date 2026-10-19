@@ -3,11 +3,12 @@ package handler
 import (
 	"context"
 	stderrors "errors"
-	"github.com/Tencent/WeKnora/internal/application/repository"
-	"github.com/Tencent/WeKnora/internal/application/service"
 	"io"
 	"net/http"
 	"strconv"
+
+	"github.com/Tencent/WeKnora/internal/application/repository"
+	"github.com/Tencent/WeKnora/internal/application/service"
 
 	"github.com/Tencent/WeKnora/internal/errors"
 	"github.com/Tencent/WeKnora/internal/logger"
@@ -139,8 +140,19 @@ func (h *TagHandler) CreateTag(c *gin.Context) {
 		return
 	}
 
-	tag, err := h.tagService.CreateTag(repository.WithIndependentKnowledgeTagCreateInput(ctx, kbID, secutils.SanitizeForLog(req.Name), secutils.SanitizeForLog(req.Color), req.SortOrder), kbID,
-		secutils.SanitizeForLog(req.Name), secutils.SanitizeForLog(req.Color), req.SortOrder)
+	tag, err := h.tagService.CreateTag(
+		repository.WithIndependentKnowledgeTagCreateInput(
+			ctx,
+			kbID,
+			secutils.SanitizeForLog(req.Name),
+			secutils.SanitizeForLog(req.Color),
+			req.SortOrder,
+		),
+		kbID,
+		secutils.SanitizeForLog(req.Name),
+		secutils.SanitizeForLog(req.Color),
+		req.SortOrder,
+	)
 	if err != nil {
 		logger.ErrorWithFields(ctx, err, map[string]interface{}{
 			"kb_id": kbID,
@@ -191,7 +203,13 @@ func (h *TagHandler) UpdateTag(c *gin.Context) {
 		return
 	}
 
-	tag, err := h.tagService.UpdateTag(repository.WithIndependentKnowledgeTagUpdateInput(ctx, tagID, req.Name, req.Color, req.SortOrder), tagID, req.Name, req.Color, req.SortOrder)
+	tag, err := h.tagService.UpdateTag(
+		repository.WithIndependentKnowledgeTagUpdateInput(ctx, tagID, req.Name, req.Color, req.SortOrder),
+		tagID,
+		req.Name,
+		req.Color,
+		req.SortOrder,
+	)
 	if err != nil {
 		logger.ErrorWithFields(ctx, err, map[string]interface{}{
 			"tag_id": tagID,

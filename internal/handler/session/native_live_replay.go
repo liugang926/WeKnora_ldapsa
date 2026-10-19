@@ -16,8 +16,10 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-const nativeLiveFrameTTL = 2 * time.Minute
-const nativeLiveMaxBytes = 8 << 20
+const (
+	nativeLiveFrameTTL = 2 * time.Minute
+	nativeLiveMaxBytes = 8 << 20
+)
 
 type nativeLiveMaterialService interface {
 	HasOriginalMessageMaterialStore() bool
@@ -96,7 +98,11 @@ type nativeLiveAppender struct {
 	registrationErr error
 }
 
-func (h *Handler) nativeLiveStreamManager(ctx context.Context, tenant uint64, session, message, request string) interfaces.StreamManager {
+func (h *Handler) nativeLiveStreamManager(
+	ctx context.Context,
+	tenant uint64,
+	session, message, request string,
+) interfaces.StreamManager {
 	actual, ok := h.messageService.(nativeLiveMaterialService)
 	if !ok || !actual.HasOriginalMessageMaterialStore() {
 		return h.streamManager
@@ -107,7 +113,9 @@ func (h *Handler) nativeLiveStreamManager(ctx context.Context, tenant uint64, se
 		appender.registrationErr = err
 		return appender
 	}
-	if control == nil || control.IsCompleted || control.Role != "assistant" || control.RequestID != request || generation == "" || nativeLiveOwner(ctx) == "" {
+	if control == nil || control.IsCompleted || control.Role != "assistant" || control.RequestID != request ||
+		generation == "" ||
+		nativeLiveOwner(ctx) == "" {
 		appender.registrationErr = access.ErrNextcloudPublicationUnavailable
 		return appender
 	}
@@ -158,7 +166,11 @@ func cloneNativeLiveControl(original *types.Message) (*types.Message, error) {
 	return copy.Body, nil
 }
 
-func (a *nativeLiveAppender) AppendEvent(ctx context.Context, session, message string, frame interfaces.StreamEvent) error {
+func (a *nativeLiveAppender) AppendEvent(
+	ctx context.Context,
+	session, message string,
+	frame interfaces.StreamEvent,
+) error {
 	// Completed rows have their own saved-original receipt and replay path.
 	if frame.Type == types.ResponseTypeComplete {
 		if a.registrationErr != nil {
@@ -171,7 +183,8 @@ func (a *nativeLiveAppender) AppendEvent(ctx context.Context, session, message s
 		if err != nil {
 			return err
 		}
-		if current == nil || !current.IsCompleted || generation != a.run.key.Generation || current.RequestID != a.run.key.Request {
+		if current == nil || !current.IsCompleted || generation != a.run.key.Generation ||
+			current.RequestID != a.run.key.Request {
 			return access.ErrNextcloudPublicationDenied
 		}
 		err = a.StreamManager.AppendEvent(ctx, session, message, frame)
@@ -191,7 +204,14 @@ func (a *nativeLiveAppender) AppendEvent(ctx context.Context, session, message s
 	if static {
 		// Only a fixed code-origin terminal recipe enters the native registry.
 		// The raw provider/error metadata is never stored as authenticated bytes.
-		frame = interfaces.StreamEvent{ID: frame.ID, Type: types.ResponseTypeError, Content: "Generation could not complete; please retry after checking access", Done: true, Timestamp: time.Now(), Data: map[string]interface{}{"error_code": "generation_failed"}}
+		frame = interfaces.StreamEvent{
+			ID:        frame.ID,
+			Type:      types.ResponseTypeError,
+			Content:   "Generation could not complete; please retry after checking access",
+			Done:      true,
+			Timestamp: time.Now(),
+			Data:      map[string]interface{}{"error_code": "generation_failed"},
+		}
 	} else {
 		if frame.SourceLineage.RequireComplete() != nil {
 			return access.ErrNextcloudPublicationDenied
@@ -212,7 +232,11 @@ func (a *nativeLiveAppender) AppendEvent(ctx context.Context, session, message s
 		if err := a.service.CheckNativeLiveIdentity(a.producer, a.run.control, a.run.key.Generation); err != nil {
 			return err
 		}
-		if err := a.service.CheckNativeLiveFramePublication(a.producer, a.run.control, frame.SourceLineage); err != nil {
+		if err := a.service.CheckNativeLiveFramePublication(
+			a.producer,
+			a.run.control,
+			frame.SourceLineage,
+		); err != nil {
 			return err
 		}
 	}
@@ -233,7 +257,8 @@ func (a *nativeLiveAppender) AppendEvent(ctx context.Context, session, message s
 	}
 	run := a.run
 	run.mu.Lock()
-	if run.closed || time.Now().After(run.expires) || run.bytes+len(body)+len(parentBytes)+len(lineageBytes) > nativeLiveMaxBytes {
+	if run.closed || time.Now().After(run.expires) ||
+		run.bytes+len(body)+len(parentBytes)+len(lineageBytes) > nativeLiveMaxBytes {
 		run.mu.Unlock()
 		eraseNativeLiveRun(run)
 		return access.ErrNextcloudPublicationUnavailable
@@ -255,7 +280,18 @@ func (a *nativeLiveAppender) AppendEvent(ctx context.Context, session, message s
 				run.frames[i].Lineage = nil
 			}
 		}
-		run.frames = append(kept, nativeLiveFrame{Sequence: run.sequence, Body: body, Digest: sha256.Sum256(body), Parents: parentBytes, Lineage: lineageBytes, StaticTerminal: static, Expires: now.Add(nativeLiveFrameTTL)})
+		run.frames = append(
+			kept,
+			nativeLiveFrame{
+				Sequence:       run.sequence,
+				Body:           body,
+				Digest:         sha256.Sum256(body),
+				Parents:        parentBytes,
+				Lineage:        lineageBytes,
+				StaticTerminal: static,
+				Expires:        now.Add(nativeLiveFrameTTL),
+			},
+		)
 		run.bytes += len(body) + len(parentBytes) + len(lineageBytes)
 		run.expires = now.Add(nativeLiveFrameTTL)
 		run.timer.Reset(nativeLiveFrameTTL)
@@ -297,7 +333,11 @@ func (run *nativeLiveRun) readBody(metadata nativeLiveFrame) ([]byte, error) {
 		if current.Sequence != metadata.Sequence {
 			continue
 		}
-		if time.Now().After(current.Expires) || current.Digest != metadata.Digest || !current.Expires.Equal(metadata.Expires) || !bytes.Equal(current.Parents, metadata.Parents) || !bytes.Equal(current.Lineage, metadata.Lineage) || current.StaticTerminal != metadata.StaticTerminal {
+		if time.Now().After(current.Expires) || current.Digest != metadata.Digest ||
+			!current.Expires.Equal(metadata.Expires) ||
+			!bytes.Equal(current.Parents, metadata.Parents) ||
+			!bytes.Equal(current.Lineage, metadata.Lineage) ||
+			current.StaticTerminal != metadata.StaticTerminal {
 			return nil, access.ErrNextcloudPublicationDenied
 		}
 		if sha256.Sum256(current.Body) != current.Digest {
@@ -308,7 +348,12 @@ func (run *nativeLiveRun) readBody(metadata nativeLiveFrame) ([]byte, error) {
 	return nil, access.ErrNextcloudPublicationUnavailable
 }
 
-func (h *Handler) tryNativeLiveReplay(ctx context.Context, c *gin.Context, session, message string, rewriter *storageurl.StreamRewriter) bool {
+func (h *Handler) tryNativeLiveReplay(
+	ctx context.Context,
+	c *gin.Context,
+	session, message string,
+	rewriter *storageurl.StreamRewriter,
+) bool {
 	actual, ok := h.messageService.(nativeLiveMaterialService)
 	if !ok || !actual.HasOriginalMessageMaterialStore() {
 		return false

@@ -27,7 +27,15 @@ func TestSessionTitleReviewSameTextAndABACannotSatisfyOriginalSnapshot(t *testin
 			}
 			require.NoError(t, db.Model(&types.Session{}).Where("id = ?", row.ID).Update("title", "original").Error)
 			empty, _ := types.NewCompleteSourceLineage()
-			written, err := repo.SaveGeneratedSessionTitle(context.Background(), 7, "reader", row.ID, expected, "async replacement", empty)
+			written, err := repo.SaveGeneratedSessionTitle(
+				context.Background(),
+				7,
+				"reader",
+				row.ID,
+				expected,
+				"async replacement",
+				empty,
+			)
 			require.NoError(t, err)
 			require.Zero(t, written)
 			stored, err := repo.Get(context.Background(), 7, "reader", row.ID)
@@ -61,21 +69,57 @@ func TestSessionTitleReviewPostgresOriginalProofAndRevisionCAS(t *testing.T) {
 		} else {
 			wrong.SourceLineage = nil
 		}
-		written, err := repo.SaveGeneratedSessionTitle(context.Background(), 7, "reader", row.ID, wrong, "wrong proof", empty)
+		written, err := repo.SaveGeneratedSessionTitle(
+			context.Background(),
+			7,
+			"reader",
+			row.ID,
+			wrong,
+			"wrong proof",
+			empty,
+		)
 		require.NoError(t, err)
 		require.Zero(t, written)
-		written, err = repo.SaveGeneratedSessionTitle(context.Background(), 7, "other owner", row.ID, expected, "wrong owner", empty)
+		written, err = repo.SaveGeneratedSessionTitle(
+			context.Background(),
+			7,
+			"other owner",
+			row.ID,
+			expected,
+			"wrong owner",
+			empty,
+		)
 		require.NoError(t, err)
 		require.Zero(t, written)
 		require.NoError(t, db.Model(&types.Session{}).Where("id = ?", row.ID).Update("title", row.Title).Error)
-		written, err = repo.SaveGeneratedSessionTitle(context.Background(), 7, "reader", row.ID, expected, "stale async title", empty)
+		written, err = repo.SaveGeneratedSessionTitle(
+			context.Background(),
+			7,
+			"reader",
+			row.ID,
+			expected,
+			"stale async title",
+			empty,
+		)
 		require.NoError(t, err)
 		require.Zero(t, written)
 		current, err := repo.Get(context.Background(), 7, "reader", row.ID)
 		require.NoError(t, err)
 		require.Equal(t, expected.Revision+1, current.TitleRevision)
-		fresh := types.SessionTitleSnapshot{Text: current.Title, Revision: current.TitleRevision, SourceLineage: current.TitleSourceLineage}
-		written, err = repo.SaveGeneratedSessionTitle(context.Background(), 7, "reader", row.ID, fresh, "fresh async title", empty)
+		fresh := types.SessionTitleSnapshot{
+			Text:          current.Title,
+			Revision:      current.TitleRevision,
+			SourceLineage: current.TitleSourceLineage,
+		}
+		written, err = repo.SaveGeneratedSessionTitle(
+			context.Background(),
+			7,
+			"reader",
+			row.ID,
+			fresh,
+			"fresh async title",
+			empty,
+		)
 		require.NoError(t, err)
 		require.EqualValues(t, 1, written)
 		current, err = repo.Get(context.Background(), 7, "reader", row.ID)

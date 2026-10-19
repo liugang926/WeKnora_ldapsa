@@ -39,11 +39,12 @@ func privatePath(path string) error {
 			return e
 		}
 		stat, ok := info.Sys().(*syscall.Stat_t)
-		expected := os.FileMode(0600)
+		expected := os.FileMode(0o600)
 		if p == filepath.Dir(path) {
-			expected = 0700
+			expected = 0o700
 		}
-		if !ok || int(stat.Uid) != os.Geteuid() || info.Mode().Perm() != expected || (p == path && (!info.Mode().IsRegular() || stat.Nlink != 1)) {
+		if !ok || int(stat.Uid) != os.Geteuid() || info.Mode().Perm() != expected ||
+			(p == path && (!info.Mode().IsRegular() || stat.Nlink != 1)) {
 			return errors.New("private DB owner file required")
 		}
 	}
@@ -59,16 +60,19 @@ func privateFile(path string) ([]byte, error) {
 		return nil, e
 	}
 	f := os.NewFile(uintptr(fd), path)
-	defer f.Close()
+	// The file is read-only; close cannot affect any persisted output.
+	defer func() { _ = f.Close() }()
 	return ioReadBounded(f)
 }
+
 func ioReadBounded(f *os.File) ([]byte, error) {
 	info, e := f.Stat()
 	if e != nil {
 		return nil, e
 	}
 	stat, ok := info.Sys().(*syscall.Stat_t)
-	if !ok || int(stat.Uid) != os.Geteuid() || info.Mode().Perm() != 0600 || !info.Mode().IsRegular() || stat.Nlink != 1 || info.Size() > 16<<20 {
+	if !ok || int(stat.Uid) != os.Geteuid() || info.Mode().Perm() != 0o600 ||
+		!info.Mode().IsRegular() || stat.Nlink != 1 || info.Size() > 16<<20 {
 		return nil, errors.New("unsafe private input")
 	}
 	data, e := io.ReadAll(io.LimitReader(f, 16<<20+1))
@@ -77,6 +81,7 @@ func ioReadBounded(f *os.File) ([]byte, error) {
 	}
 	return data, nil
 }
+
 func reservePrivate(path string) (*os.File, error) {
 	if !filepath.IsAbs(path) {
 		return nil, errors.New("absolute private output required")
@@ -91,27 +96,29 @@ func reservePrivate(path string) (*os.File, error) {
 		return nil, e
 	}
 	stat, ok := info.Sys().(*syscall.Stat_t)
-	if !ok || int(stat.Uid) != os.Geteuid() || info.Mode().Perm() != 0700 {
+	if !ok || int(stat.Uid) != os.Geteuid() || info.Mode().Perm() != 0o700 {
 		return nil, errors.New("private owned output directory required")
 	}
-	fd, e := syscall.Open(path, syscall.O_WRONLY|syscall.O_CREAT|syscall.O_EXCL|syscall.O_NOFOLLOW, 0600)
+	fd, e := syscall.Open(path, syscall.O_WRONLY|syscall.O_CREAT|syscall.O_EXCL|syscall.O_NOFOLLOW, 0o600)
 	if e != nil {
 		return nil, e
 	}
 	return os.NewFile(uintptr(fd), path), nil
 }
-func writePrivate(path string, data []byte) error {
+
+func writePrivate(path string, data []byte) (resultErr error) {
 	f, e := reservePrivate(path)
 	if e != nil {
 		return e
 	}
-	defer f.Close()
+	defer func() { resultErr = errors.Join(resultErr, f.Close()) }()
 	if _, e = f.Write(data); e != nil {
 		return e
 	}
 	return f.Sync()
 }
-func run() error {
+
+func run() (resultErr error) {
 	mode := flag.String("mode", "", "capture, apply, reconcile, snapshot or reopen-controls")
 	dbFile := flag.String("sqlite-db", "", "owned stopped SQLite database")
 	connectionFile := flag.String("postgres-connection-file", "", "private owner-only PostgreSQL DSN file")
@@ -127,7 +134,8 @@ func run() error {
 	prefix := flag.String("checkpoint-database-chain-sha256", "", "external checkpoint database prefix")
 	receipt := flag.String("plan-sha256", "", "closure receipt digest")
 	operation := flag.String("pair-operation-id", "", "original persisted pair operation")
-	credentialID := flag.String("onboarding-credential-id", "", "explicit scoped credential to reauthorize after control reconciliation")
+	credentialID := flag.String("onboarding-credential-id", "",
+		"explicit scoped credential to reauthorize after control reconciliation")
 	controlPin := flag.String("control-inventory-sha256", "", "independently pinned current control metadata digest")
 	actorDir := flag.String("actor-directory-id", "", "current authorized maintenance actor directory")
 	actorGUID := flag.String("actor-object-guid", "", "current authorized maintenance actor GUID")
@@ -142,8 +150,11 @@ func run() error {
 		return outputErr
 	}
 	completedOutput := false
+	outputClosed := false
 	defer func() {
-		outputHandle.Close()
+		if !outputClosed {
+			resultErr = errors.Join(resultErr, outputHandle.Close())
+		}
 		if !completedOutput {
 			_ = os.Remove(*output)
 		}
@@ -173,11 +184,13 @@ func run() error {
 	if e != nil {
 		return e
 	}
-	defer sqlDB.Close()
+	// Closing the DB pool is cleanup after all checked SQL operations.
+	defer func() { _ = sqlDB.Close() }()
 	sqlDB.SetMaxOpenConns(1)
 	if *connectionFile != "" {
 		var owner bool
-		if e = db.Raw("SELECT current_user = pg_get_userbyid(datdba) FROM pg_database WHERE datname=current_database()").Scan(&owner).Error; e != nil || !owner {
+		if e = db.Raw("SELECT current_user = pg_get_userbyid(datdba) " +
+			"FROM pg_database WHERE datname=current_database()").Scan(&owner).Error; e != nil || !owner {
 			return errors.New("database owner role required")
 		}
 	}
@@ -187,7 +200,10 @@ func run() error {
 	var value any
 	switch *mode {
 	case "capture":
-		value, e = store.Capture(ctx, repository.NextcloudRecoveryAnchor{InstanceID: *instance, StreamID: *stream, RecordSHA256: *record, Sequence: *sequence, DatabaseChainSHA256: *prefix})
+		value, e = store.Capture(ctx, repository.NextcloudRecoveryAnchor{
+			InstanceID: *instance, StreamID: *stream, RecordSHA256: *record,
+			Sequence: *sequence, DatabaseChainSHA256: *prefix,
+		})
 	case "apply":
 		key, er := privateFile(*keyFile)
 		if er != nil {
@@ -213,7 +229,8 @@ func run() error {
 	case "reconcile":
 		value, e = store.Reconcile(ctx, *receipt, *operation)
 	case "reauthorize-onboarding":
-		value, e = store.ReauthorizeOnboardingCredential(ctx, *receipt, *credentialID, *controlPin, *actorDir, *actorGUID)
+		value, e = store.ReauthorizeOnboardingCredential(
+			ctx, *receipt, *credentialID, *controlPin, *actorDir, *actorGUID)
 	case "reopen-controls":
 		key, er := privateFile(*keyFile)
 		if er != nil {
@@ -265,11 +282,17 @@ func run() error {
 	if e = outputHandle.Sync(); e != nil {
 		return e
 	}
+	e = outputHandle.Close()
+	outputClosed = true
+	if e != nil {
+		return e
+	}
 	completedOutput = true
 	hash := sha256.Sum256(data)
 	fmt.Println("evidence_sha256=" + hex.EncodeToString(hash[:]))
 	return nil
 }
+
 func main() {
 	if e := run(); e != nil {
 		fmt.Fprintln(os.Stderr, "Publication recovery refused; inspect retained evidence and maintenance owner context")

@@ -16,14 +16,20 @@ import (
 	"time"
 
 	"github.com/Tencent/WeKnora/internal/datasource/connector/nextcloud"
+	apperrors "github.com/Tencent/WeKnora/internal/errors"
 	"github.com/Tencent/WeKnora/internal/types"
 	"gorm.io/gorm"
 )
 
-var ErrNextcloudRecoveryDenied = errors.New("Nextcloud publication recovery evidence denied")
-var recoveryHash = regexp.MustCompile(`^[a-f0-9]{64}$`)
-var recoveryID = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
-var recoveryStream = regexp.MustCompile(`^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$`)
+var ErrNextcloudRecoveryDenied = apperrors.NewProtocolError(
+	errors.New("nextcloud publication recovery evidence denied"), "Nextcloud publication recovery evidence denied",
+)
+
+var (
+	recoveryHash   = regexp.MustCompile(`^[a-f0-9]{64}$`)
+	recoveryID     = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
+	recoveryStream = regexp.MustCompile(`^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$`)
+)
 
 type NextcloudRecoveryJournalEvent struct {
 	Sequence       string                           `json:"sequence"`
@@ -183,6 +189,7 @@ func recoveryJSONSHA(v any) (string, error) {
 	}
 	return recoverySHA(b), nil
 }
+
 func recoverySequence(v string) (int64, error) {
 	n, e := strconv.ParseInt(v, 10, 64)
 	if e != nil || n < 0 || strconv.FormatInt(n, 10) != v {
@@ -291,7 +298,12 @@ func VerifyNextcloudRecoveryPlan(envelope, key []byte) (*NextcloudRecoveryPlan, 
 		return nil, e
 	}
 	end, e := recoverySequence(p.ThroughSequence)
-	if e != nil || end < start || end-start > 1000000 || p.SchemaVersion != 1 || !recoveryID.MatchString(p.InstanceID) || len(p.InstanceID) > 64 || !recoveryStream.MatchString(p.StreamID) || !p.AuthoritativeReconciliationRequired || p.IngressReopenPermitted {
+	if e != nil || end < start || end-start > 1000000 || p.SchemaVersion != 1 ||
+		!recoveryID.MatchString(p.InstanceID) ||
+		len(p.InstanceID) > 64 ||
+		!recoveryStream.MatchString(p.StreamID) ||
+		!p.AuthoritativeReconciliationRequired ||
+		p.IngressReopenPermitted {
 		return nil, ErrNextcloudRecoveryDenied
 	}
 	for _, v := range []string{p.CheckpointRecordSHA256, p.RecoveryRecordSHA256, p.CheckpointDatabaseChainSHA256, p.ThroughDatabaseChainSHA256} {
@@ -299,7 +311,9 @@ func VerifyNextcloudRecoveryPlan(envelope, key []byte) (*NextcloudRecoveryPlan, 
 			return nil, ErrNextcloudRecoveryDenied
 		}
 	}
-	if len(p.DatabasePrefixHashes) != int(end-start+1) || p.DatabasePrefixHashes[p.CheckpointSequence] != p.CheckpointDatabaseChainSHA256 || p.DatabasePrefixHashes[p.ThroughSequence] != p.ThroughDatabaseChainSHA256 {
+	if len(p.DatabasePrefixHashes) != int(end-start+1) ||
+		p.DatabasePrefixHashes[p.CheckpointSequence] != p.CheckpointDatabaseChainSHA256 ||
+		p.DatabasePrefixHashes[p.ThroughSequence] != p.ThroughDatabaseChainSHA256 {
 		return nil, ErrNextcloudRecoveryDenied
 	}
 	for i := start; i <= end; i++ {
@@ -354,10 +368,21 @@ func VerifyNextcloudRecoveryPlan(envelope, key []byte) (*NextcloudRecoveryPlan, 
 					return nil, ErrNextcloudRecoveryDenied
 				}
 			}
-			if len(rows[i]) != expectedKeys || se != nil || seq != start+int64(i)+1 || re != nil || !recoveryID.MatchString(event.BindingID) || event.CreatedAt < 0 || !validKind {
+			if len(rows[i]) != expectedKeys || se != nil || seq != start+int64(i)+1 || re != nil ||
+				!recoveryID.MatchString(event.BindingID) ||
+				event.CreatedAt < 0 ||
+				!validKind {
 				return nil, ErrNextcloudRecoveryDenied
 			}
-			lines := []string{chain, event.Sequence, event.BindingID, file, event.Kind, event.SourceRevision, strconv.FormatInt(event.CreatedAt, 10)}
+			lines := []string{
+				chain,
+				event.Sequence,
+				event.BindingID,
+				file,
+				event.Kind,
+				event.SourceRevision,
+				strconv.FormatInt(event.CreatedAt, 10),
+			}
 			if event.Kind == "target_deleted" {
 				lines = append(lines, targetClosureJournalLines(*event.TargetClosure)...)
 				closed, _ := canonicalPositiveTargetNumber(event.TargetClosure.Target.ClosedAt)
@@ -396,7 +421,9 @@ func VerifyNextcloudRecoveryPlan(envelope, key []byte) (*NextcloudRecoveryPlan, 
 	for _, f := range p.WithdrawFiles {
 		seq, e := recoverySequence(f.LastSequence)
 		fid, fe := recoverySequence(f.FileID)
-		if e != nil || fe != nil || fid < 1 || seq <= start || seq > end || bindings[f.BindingID] < seq || f.BindingID < previous || (f.BindingID == previous && f.FileID <= previousFile) {
+		if e != nil || fe != nil || fid < 1 || seq <= start || seq > end || bindings[f.BindingID] < seq ||
+			f.BindingID < previous ||
+			(f.BindingID == previous && f.FileID <= previousFile) {
 			return nil, ErrNextcloudRecoveryDenied
 		}
 		previous = f.BindingID
@@ -410,7 +437,8 @@ func VerifyNextcloudRecoveryPlan(envelope, key []byte) (*NextcloudRecoveryPlan, 
 			return nil, ErrNextcloudRecoveryDenied
 		}
 		for _, row := range rows {
-			if len(row) != 4 || (!bytes.Equal(bytes.TrimSpace(row["writing"]), []byte("true")) && !bytes.Equal(bytes.TrimSpace(row["writing"]), []byte("false"))) {
+			if len(row) != 4 ||
+				(!bytes.Equal(bytes.TrimSpace(row["writing"]), []byte("true")) && !bytes.Equal(bytes.TrimSpace(row["writing"]), []byte("false"))) {
 				return nil, ErrNextcloudRecoveryDenied
 			}
 		}
@@ -418,7 +446,9 @@ func VerifyNextcloudRecoveryPlan(envelope, key []byte) (*NextcloudRecoveryPlan, 
 	for _, f := range p.LatestContentRevisions {
 		fid, e := recoverySequence(f.FileID)
 		_, re := recoverySequence(f.Revision)
-		if e != nil || re != nil || fid < 1 || bindings[f.BindingID] == 0 || !recoveryID.MatchString(f.BindingID) || f.BindingID < previous || (f.BindingID == previous && f.FileID <= previousFile) {
+		if e != nil || re != nil || fid < 1 || bindings[f.BindingID] == 0 || !recoveryID.MatchString(f.BindingID) ||
+			f.BindingID < previous ||
+			(f.BindingID == previous && f.FileID <= previousFile) {
 			return nil, ErrNextcloudRecoveryDenied
 		}
 		previous, previousFile = f.BindingID, f.FileID
@@ -429,13 +459,30 @@ func VerifyNextcloudRecoveryPlan(envelope, key []byte) (*NextcloudRecoveryPlan, 
 }
 
 func recoveryPair(p NextcloudSourcePairing) NextcloudRecoveryPair {
-	return NextcloudRecoveryPair{p.OperationID, p.TenantID, p.KnowledgeBaseID, p.DataSourceID, p.InstanceID, p.BindingID, p.BaseURL, p.ConfigSHA, p.PublicationEpoch, p.KeyID, p.State}
+	return NextcloudRecoveryPair{
+		p.OperationID,
+		p.TenantID,
+		p.KnowledgeBaseID,
+		p.DataSourceID,
+		p.InstanceID,
+		p.BindingID,
+		p.BaseURL,
+		p.ConfigSHA,
+		p.PublicationEpoch,
+		p.KeyID,
+		p.State,
+	}
 }
 
 // Capture inventories the actual local DB. It must be retained and independently
 // pinned outside restored volumes together with the external checkpoint anchor.
-func (s *NextcloudPublicationRecoveryStore) Capture(ctx context.Context, anchor NextcloudRecoveryAnchor) (*NextcloudRecoveryInventory, error) {
-	if !recoveryID.MatchString(anchor.InstanceID) || !recoveryStream.MatchString(anchor.StreamID) || !recoveryHash.MatchString(anchor.RecordSHA256) || !recoveryHash.MatchString(anchor.DatabaseChainSHA256) {
+func (s *NextcloudPublicationRecoveryStore) Capture(
+	ctx context.Context,
+	anchor NextcloudRecoveryAnchor,
+) (*NextcloudRecoveryInventory, error) {
+	if !recoveryID.MatchString(anchor.InstanceID) || !recoveryStream.MatchString(anchor.StreamID) ||
+		!recoveryHash.MatchString(anchor.RecordSHA256) ||
+		!recoveryHash.MatchString(anchor.DatabaseChainSHA256) {
 		return nil, ErrNextcloudRecoveryDenied
 	}
 	if _, e := recoverySequence(anchor.Sequence); e != nil {
@@ -444,7 +491,10 @@ func (s *NextcloudPublicationRecoveryStore) Capture(ctx context.Context, anchor 
 	var result *NextcloudRecoveryInventory
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var pairs []NextcloudSourcePairing
-		if e := tx.Where("nextcloud_instance_id=?", anchor.InstanceID).Order("operation_id").Find(&pairs).Error; e != nil {
+		if e := tx.Where("nextcloud_instance_id=?", anchor.InstanceID).
+			Order("operation_id").
+			Find(&pairs).
+			Error; e != nil {
 			return e
 		}
 		now, e := nextcloudLeaseNowMS(tx)
@@ -462,7 +512,10 @@ func (s *NextcloudPublicationRecoveryStore) Capture(ctx context.Context, anchor 
 	return result, err
 }
 
-func (s *NextcloudPublicationRecoveryStore) captureInTx(tx *gorm.DB, a NextcloudRecoveryAnchor) (*NextcloudRecoveryInventory, error) {
+func (s *NextcloudPublicationRecoveryStore) captureInTx(
+	tx *gorm.DB,
+	a NextcloudRecoveryAnchor,
+) (*NextcloudRecoveryInventory, error) {
 	var pairs []NextcloudSourcePairing
 	if e := recoveryPairCurrentQuery(tx, a.InstanceID).Order("operation_id").Find(&pairs).Error; e != nil {
 		return nil, e
@@ -472,7 +525,10 @@ func (s *NextcloudPublicationRecoveryStore) captureInTx(tx *gorm.DB, a Nextcloud
 	}
 	// A source whose instance cannot be resolved cannot be classified as absent.
 	var unpaired int64
-	if e := tx.Table("data_sources ds").Where("ds.type = ? AND ds.deleted_at IS NULL AND NOT EXISTS (SELECT 1 FROM nextcloud_source_pairings p WHERE p.datasource_id=ds.id AND p.tenant_id=ds.tenant_id AND p.knowledge_base_id=ds.knowledge_base_id)", types.ConnectorTypeNextcloud).Count(&unpaired).Error; e != nil {
+	if e := tx.Table("data_sources ds").
+		Where("ds.type = ? AND ds.deleted_at IS NULL AND NOT EXISTS (SELECT 1 FROM nextcloud_source_pairings p WHERE p.datasource_id=ds.id AND p.tenant_id=ds.tenant_id AND p.knowledge_base_id=ds.knowledge_base_id)", types.ConnectorTypeNextcloud).
+		Count(&unpaired).
+		Error; e != nil {
 		return nil, e
 	}
 	if unpaired != 0 {
@@ -481,22 +537,34 @@ func (s *NextcloudPublicationRecoveryStore) captureInTx(tx *gorm.DB, a Nextcloud
 	inv := &NextcloudRecoveryInventory{SchemaVersion: 1, Anchor: a, Pairs: make([]NextcloudRecoveryPair, 0, len(pairs))}
 	states := make([]any, 0, len(pairs))
 	for _, p := range pairs {
-		if p.TenantID == 0 || p.TenantID > math.MaxInt64 || p.OperationID == "" || p.KnowledgeBaseID == "" || p.DataSourceID == "" || p.PublicationEpoch < 0 || p.KeyID == "" || (p.State != "active" && p.State != "pending") {
+		if p.TenantID == 0 || p.TenantID > math.MaxInt64 || p.OperationID == "" || p.KnowledgeBaseID == "" ||
+			p.DataSourceID == "" ||
+			p.PublicationEpoch < 0 ||
+			p.KeyID == "" ||
+			(p.State != "active" && p.State != "pending") {
 			return nil, ErrNextcloudRecoveryDenied
 		}
 		var kb types.KnowledgeBase
-		if e := tx.Unscoped().Select("id", "tenant_id", "deleted_at").Where("id=? AND tenant_id=?", p.KnowledgeBaseID, p.TenantID).Take(&kb).Error; e != nil {
+		if e := tx.Unscoped().
+			Select("id", "tenant_id", "deleted_at").
+			Where("id=? AND tenant_id=?", p.KnowledgeBaseID, p.TenantID).
+			Take(&kb).
+			Error; e != nil {
 			return nil, ErrNextcloudRecoveryDenied
 		}
 		if kb.DeletedAt.Valid {
 			var op types.NextcloudOnboardingOperation
 			var closure NextcloudTargetClosure
-			if tx.Where("operation_id=?", p.OperationID).Take(&op).Error != nil || tx.Where("operation_id=?", p.OperationID).Take(&closure).Error != nil || !validTargetClosure(closure, op) {
+			if tx.Where("operation_id=?", p.OperationID).Take(&op).Error != nil ||
+				tx.Where("operation_id=?", p.OperationID).Take(&closure).Error != nil ||
+				!validTargetClosure(closure, op) {
 				return nil, ErrNextcloudRecoveryDenied
 			}
 		}
 		var ds types.DataSource
-		if e := tx.Where("id=? AND tenant_id=? AND knowledge_base_id=? AND type=? AND deleted_at IS NULL", p.DataSourceID, p.TenantID, p.KnowledgeBaseID, types.ConnectorTypeNextcloud).Take(&ds).Error; e != nil {
+		if e := tx.Where("id=? AND tenant_id=? AND knowledge_base_id=? AND type=? AND deleted_at IS NULL", p.DataSourceID, p.TenantID, p.KnowledgeBaseID, types.ConnectorTypeNextcloud).
+			Take(&ds).
+			Error; e != nil {
 			return nil, ErrNextcloudRecoveryDenied
 		}
 		base, hash, binding, e := NextcloudEventDataSourceIdentity(ds.Config)
@@ -505,15 +573,23 @@ func (s *NextcloudPublicationRecoveryStore) captureInTx(tx *gorm.DB, a Nextcloud
 		if parsed != nil {
 			configuredKey, _ = parsed.Credentials["key_id"].(string)
 		}
-		if parseErr != nil || configuredKey != p.KeyID || e != nil || base != p.BaseURL || hash != p.ConfigSHA || binding != p.BindingID {
+		if parseErr != nil || configuredKey != p.KeyID || e != nil || base != p.BaseURL || hash != p.ConfigSHA ||
+			binding != p.BindingID {
 			return nil, ErrNextcloudRecoveryDenied
 		}
 		var versions []nextcloudSourceVersion
-		if e = tx.Where("tenant_id=? AND knowledge_base_id=? AND datasource_id=?", p.TenantID, p.KnowledgeBaseID, p.DataSourceID).Order("external_id").Find(&versions).Error; e != nil {
+		if e = tx.Where("tenant_id=? AND knowledge_base_id=? AND datasource_id=?", p.TenantID, p.KnowledgeBaseID, p.DataSourceID).
+			Order("external_id").
+			Find(&versions).
+			Error; e != nil {
 			return nil, e
 		}
 		var revisions []nextcloudRecoveryRevision
-		if e = tx.Table("nextcloud_source_revisions").Where("tenant_id=? AND knowledge_base_id=? AND datasource_id=?", p.TenantID, p.KnowledgeBaseID, p.DataSourceID).Order("external_id,revision").Find(&revisions).Error; e != nil {
+		if e = tx.Table("nextcloud_source_revisions").
+			Where("tenant_id=? AND knowledge_base_id=? AND datasource_id=?", p.TenantID, p.KnowledgeBaseID, p.DataSourceID).
+			Order("external_id,revision").
+			Find(&revisions).
+			Error; e != nil {
 			return nil, e
 		}
 		latest := map[string]nextcloudRecoveryRevision{}
@@ -526,7 +602,10 @@ func (s *NextcloudPublicationRecoveryStore) captureInTx(tx *gorm.DB, a Nextcloud
 		}
 		for _, version := range versions {
 			revision, ok := latest[version.ExternalID]
-			if !ok || revision.DesiredETag != version.DesiredETag || revision.CandidateKnowledgeID != version.CandidateKnowledgeID || revision.State != version.State || !revision.SourceUpdatedAt.Equal(version.UpdatedAt) {
+			if !ok || revision.DesiredETag != version.DesiredETag ||
+				revision.CandidateKnowledgeID != version.CandidateKnowledgeID ||
+				revision.State != version.State ||
+				!revision.SourceUpdatedAt.Equal(version.UpdatedAt) {
 				return nil, ErrNextcloudRecoveryDenied
 			}
 		}
@@ -534,7 +613,11 @@ func (s *NextcloudPublicationRecoveryStore) captureInTx(tx *gorm.DB, a Nextcloud
 			return nil, ErrNextcloudRecoveryDenied
 		}
 		var rows []types.Knowledge
-		if e = tx.Unscoped().Where("tenant_id=? AND knowledge_base_id=? AND channel=?", p.TenantID, p.KnowledgeBaseID, types.ConnectorTypeNextcloud).Order("id").Find(&rows).Error; e != nil {
+		if e = tx.Unscoped().
+			Where("tenant_id=? AND knowledge_base_id=? AND channel=?", p.TenantID, p.KnowledgeBaseID, types.ConnectorTypeNextcloud).
+			Order("id").
+			Find(&rows).
+			Error; e != nil {
 			return nil, e
 		}
 		rowIDs := map[string]bool{}
@@ -542,7 +625,11 @@ func (s *NextcloudPublicationRecoveryStore) captureInTx(tx *gorm.DB, a Nextcloud
 		for _, k := range rows {
 			m, e := strictLineageKnowledgeMetadata(k.Metadata)
 			fid, fe := recoverySequence(m["nextcloud_file_id"])
-			if e != nil || fe != nil || fid < 1 || m["datasource_id"] != p.DataSourceID || m["nextcloud_instance_id"] != p.InstanceID || m["nextcloud_binding_id"] != p.BindingID || m["source_resource_id"] != p.BindingID || m["external_id"] != "nextcloud:"+p.InstanceID+":"+m["nextcloud_file_id"] {
+			if e != nil || fe != nil || fid < 1 || m["datasource_id"] != p.DataSourceID ||
+				m["nextcloud_instance_id"] != p.InstanceID ||
+				m["nextcloud_binding_id"] != p.BindingID ||
+				m["source_resource_id"] != p.BindingID ||
+				m["external_id"] != "nextcloud:"+p.InstanceID+":"+m["nextcloud_file_id"] {
 				return nil, ErrNextcloudRecoveryDenied
 			}
 			rowIDs[k.ID] = true
@@ -558,12 +645,16 @@ func (s *NextcloudPublicationRecoveryStore) captureInTx(tx *gorm.DB, a Nextcloud
 		for _, v := range versions {
 			suffix := strings.TrimPrefix(v.ExternalID, "nextcloud:"+p.InstanceID+":")
 			fid, fe := recoverySequence(suffix)
-			if fe != nil || fid < 1 || suffix == v.ExternalID || (v.CandidateKnowledgeID != "" && !rowIDs[v.CandidateKnowledgeID]) {
+			if fe != nil || fid < 1 || suffix == v.ExternalID ||
+				(v.CandidateKnowledgeID != "" && !rowIDs[v.CandidateKnowledgeID]) {
 				return nil, ErrNextcloudRecoveryDenied
 			}
 		}
 		var fences []nextcloudContentFence
-		if e = tx.Where("tenant_id=? AND knowledge_base_id=?", p.TenantID, p.KnowledgeBaseID).Order("knowledge_id").Find(&fences).Error; e != nil {
+		if e = tx.Where("tenant_id=? AND knowledge_base_id=?", p.TenantID, p.KnowledgeBaseID).
+			Order("knowledge_id").
+			Find(&fences).
+			Error; e != nil {
 			return nil, e
 		}
 		inv.Pairs = append(inv.Pairs, recoveryPair(p))
@@ -594,7 +685,8 @@ func DecodeNextcloudRecoveryInventory(data []byte, pin string) (*NextcloudRecove
 		return nil, ErrNextcloudRecoveryDenied
 	}
 	var inv NextcloudRecoveryInventory
-	if recoveryStrictJSON(data, &inv) != nil || inv.SchemaVersion != 1 || len(inv.Pairs) == 0 || !recoveryHash.MatchString(inv.SourceStateSHA256) {
+	if recoveryStrictJSON(data, &inv) != nil || inv.SchemaVersion != 1 || len(inv.Pairs) == 0 ||
+		!recoveryHash.MatchString(inv.SourceStateSHA256) {
 		return nil, ErrNextcloudRecoveryDenied
 	}
 	return &inv, nil
@@ -602,7 +694,12 @@ func DecodeNextcloudRecoveryInventory(data []byte, pin string) (*NextcloudRecove
 
 // Apply retires every restored pair for the anchored instance, including pairs
 // untouched by the replay interval. It preserves rows and physical objects.
-func (s *NextcloudPublicationRecoveryStore) Apply(ctx context.Context, p *NextcloudRecoveryPlan, inv *NextcloudRecoveryInventory, pin string) (*NextcloudRecoveryReceipt, error) {
+func (s *NextcloudPublicationRecoveryStore) Apply(
+	ctx context.Context,
+	p *NextcloudRecoveryPlan,
+	inv *NextcloudRecoveryInventory,
+	pin string,
+) (*NextcloudRecoveryReceipt, error) {
 	if p == nil || p.digest == "" || p.raw == "" || recoverySHA([]byte(p.raw)) != p.digest || inv == nil {
 		return nil, ErrNextcloudRecoveryDenied
 	}
@@ -616,7 +713,11 @@ func (s *NextcloudPublicationRecoveryStore) Apply(ctx context.Context, p *Nextcl
 		return nil, ErrNextcloudRecoveryDenied
 	}
 	ih, e := recoveryJSONSHA(inv)
-	if e != nil || ih != pin || inv.SchemaVersion != 1 || inv.Anchor.InstanceID != p.InstanceID || inv.Anchor.StreamID != p.StreamID || inv.Anchor.RecordSHA256 != p.CheckpointRecordSHA256 || inv.Anchor.Sequence != p.CheckpointSequence || inv.Anchor.DatabaseChainSHA256 != p.CheckpointDatabaseChainSHA256 {
+	if e != nil || ih != pin || inv.SchemaVersion != 1 || inv.Anchor.InstanceID != p.InstanceID ||
+		inv.Anchor.StreamID != p.StreamID ||
+		inv.Anchor.RecordSHA256 != p.CheckpointRecordSHA256 ||
+		inv.Anchor.Sequence != p.CheckpointSequence ||
+		inv.Anchor.DatabaseChainSHA256 != p.CheckpointDatabaseChainSHA256 {
 		return nil, ErrNextcloudRecoveryDenied
 	}
 	var result NextcloudRecoveryReceipt
@@ -633,7 +734,9 @@ func (s *NextcloudPublicationRecoveryStore) Apply(ctx context.Context, p *Nextcl
 			}
 		}
 		var existing NextcloudRecoveryReceipt
-		er := tx.Where("instance_id=? AND stream_id=? AND checkpoint_record_sha256=?", p.InstanceID, p.StreamID, p.CheckpointRecordSHA256).Take(&existing).Error
+		er := tx.Where("instance_id=? AND stream_id=? AND checkpoint_record_sha256=?", p.InstanceID, p.StreamID, p.CheckpointRecordSHA256).
+			Take(&existing).
+			Error
 		if er == nil {
 			if existing.PlanSHA256 != p.digest || existing.InventorySHA256 != pin {
 				return ErrNextcloudRecoveryDenied
@@ -653,7 +756,10 @@ func (s *NextcloudPublicationRecoveryStore) Apply(ctx context.Context, p *Nextcl
 			return er
 		}
 		var prior int64
-		if e := tx.Model(&NextcloudRecoveryReceipt{}).Where("instance_id=? AND (stream_id<>? OR through_sequence>?)", p.InstanceID, p.StreamID, mustRecoverySequence(p.CheckpointSequence)).Count(&prior).Error; e != nil {
+		if e := tx.Model(&NextcloudRecoveryReceipt{}).
+			Where("instance_id=? AND (stream_id<>? OR through_sequence>?)", p.InstanceID, p.StreamID, mustRecoverySequence(p.CheckpointSequence)).
+			Count(&prior).
+			Error; e != nil {
 			return e
 		}
 		if prior != 0 {
@@ -675,13 +781,29 @@ func (s *NextcloudPublicationRecoveryStore) Apply(ctx context.Context, p *Nextcl
 		// source registry and pinned inventory have matched. They authorize nothing.
 		now := time.Now().UTC().Truncate(time.Microsecond)
 		leases := NewNextcloudContentLeaseStore(s.db)
-		result = NextcloudRecoveryReceipt{p.digest, p.InstanceID, p.StreamID, p.CheckpointRecordSHA256, p.RecoveryRecordSHA256, mustRecoverySequence(p.CheckpointSequence), mustRecoverySequence(p.ThroughSequence), pin, p.raw, len(inv.Pairs), now}
+		result = NextcloudRecoveryReceipt{
+			p.digest,
+			p.InstanceID,
+			p.StreamID,
+			p.CheckpointRecordSHA256,
+			p.RecoveryRecordSHA256,
+			mustRecoverySequence(p.CheckpointSequence),
+			mustRecoverySequence(p.ThroughSequence),
+			pin,
+			p.raw,
+			len(inv.Pairs),
+			now,
+		}
 		if e := tx.Create(&result).Error; e != nil {
 			return e
 		}
 		for _, pair := range inv.Pairs {
 			var rows []types.Knowledge
-			if e := tx.Unscoped().Where("tenant_id=? AND knowledge_base_id=? AND channel=?", pair.TenantID, pair.KnowledgeBaseID, types.ConnectorTypeNextcloud).Order("id").Find(&rows).Error; e != nil {
+			if e := tx.Unscoped().
+				Where("tenant_id=? AND knowledge_base_id=? AND channel=?", pair.TenantID, pair.KnowledgeBaseID, types.ConnectorTypeNextcloud).
+				Order("id").
+				Find(&rows).
+				Error; e != nil {
 				return e
 			}
 			for _, row := range rows {
@@ -689,7 +811,13 @@ func (s *NextcloudPublicationRecoveryStore) Apply(ctx context.Context, p *Nextcl
 				if e != nil {
 					return e
 				}
-				scope := NextcloudContentScope{pair.TenantID, pair.KnowledgeBaseID, row.ID, pair.DataSourceID, metadata["external_id"]}
+				scope := NextcloudContentScope{
+					pair.TenantID,
+					pair.KnowledgeBaseID,
+					row.ID,
+					pair.DataSourceID,
+					metadata["external_id"],
+				}
 				if e = leases.RetireKnowledgeInTx(ctx, tx, scope); e != nil {
 					return e
 				}
@@ -697,15 +825,27 @@ func (s *NextcloudPublicationRecoveryStore) Apply(ctx context.Context, p *Nextcl
 					return e
 				}
 			}
-			if e := tx.Model(&nextcloudSourceVersion{}).Where("tenant_id=? AND knowledge_base_id=? AND datasource_id=?", pair.TenantID, pair.KnowledgeBaseID, pair.DataSourceID).Updates(map[string]any{"state": "tombstone", "candidate_knowledge_id": "", "desired_etag": "", "updated_at": now}).Error; e != nil {
+			if e := tx.Model(&nextcloudSourceVersion{}).
+				Where("tenant_id=? AND knowledge_base_id=? AND datasource_id=?", pair.TenantID, pair.KnowledgeBaseID, pair.DataSourceID).
+				Updates(map[string]any{"state": "tombstone", "candidate_knowledge_id": "", "desired_etag": "", "updated_at": now}).
+				Error; e != nil {
 				return e
 			}
 			for _, file := range p.WithdrawFiles {
 				if file.BindingID != pair.BindingID {
 					continue
 				}
-				v := nextcloudSourceVersion{TenantID: pair.TenantID, KnowledgeBaseID: pair.KnowledgeBaseID, DataSourceID: pair.DataSourceID, ExternalID: "nextcloud:" + pair.InstanceID + ":" + file.FileID, State: "tombstone", UpdatedAt: now}
-				if e := tx.Where("tenant_id=? AND knowledge_base_id=? AND datasource_id=? AND external_id=?", v.TenantID, v.KnowledgeBaseID, v.DataSourceID, v.ExternalID).FirstOrCreate(&v).Error; e != nil {
+				v := nextcloudSourceVersion{
+					TenantID:        pair.TenantID,
+					KnowledgeBaseID: pair.KnowledgeBaseID,
+					DataSourceID:    pair.DataSourceID,
+					ExternalID:      "nextcloud:" + pair.InstanceID + ":" + file.FileID,
+					State:           "tombstone",
+					UpdatedAt:       now,
+				}
+				if e := tx.Where("tenant_id=? AND knowledge_base_id=? AND datasource_id=? AND external_id=?", v.TenantID, v.KnowledgeBaseID, v.DataSourceID, v.ExternalID).
+					FirstOrCreate(&v).
+					Error; e != nil {
 					return e
 				}
 			}
@@ -714,29 +854,52 @@ func (s *NextcloudPublicationRecoveryStore) Apply(ctx context.Context, p *Nextcl
 			}
 			// Restored GC claims are as stale as restored workers. Revoke their epochs
 			// without touching objects; unknown external inventory cannot be collected.
-			if e := tx.Exec("UPDATE nextcloud_content_fences SET state='retired',epoch=epoch+1,claim_token='',claim_until_ms=NULL,retired_at_ms=?,updated_at_ms=? WHERE tenant_id=? AND knowledge_base_id=? AND state='deleting'", nowMS, nowMS, pair.TenantID, pair.KnowledgeBaseID).Error; e != nil {
+			if e := tx.Exec(
+				"UPDATE nextcloud_content_fences SET state='retired',epoch=epoch+1,claim_token='',claim_until_ms=NULL,retired_at_ms=?,updated_at_ms=? WHERE tenant_id=? AND knowledge_base_id=? AND state='deleting'",
+				nowMS,
+				nowMS,
+				pair.TenantID,
+				pair.KnowledgeBaseID,
+			).Error; e != nil {
 				return e
 			}
-			if e := tx.Exec("DELETE FROM nextcloud_content_lease_coverage WHERE tenant_id=? AND knowledge_base_id=?", pair.TenantID, pair.KnowledgeBaseID).Error; e != nil {
+			if e := tx.Exec(
+				"DELETE FROM nextcloud_content_lease_coverage WHERE tenant_id=? AND knowledge_base_id=?",
+				pair.TenantID,
+				pair.KnowledgeBaseID,
+			).Error; e != nil {
 				return e
 			}
-			if e := tx.Model(&types.DataSource{}).Where("id=? AND tenant_id=?", pair.DataSourceID, pair.TenantID).Update("status", types.DataSourceStatusPaused).Error; e != nil {
+			if e := tx.Model(&types.DataSource{}).
+				Where("id=? AND tenant_id=?", pair.DataSourceID, pair.TenantID).
+				Update("status", types.DataSourceStatusPaused).
+				Error; e != nil {
 				return e
 			}
-			if e := tx.Model(&types.SyncLog{}).Where("data_source_id=? AND tenant_id=? AND status=?", pair.DataSourceID, pair.TenantID, types.SyncLogStatusRunning).Updates(map[string]any{"status": types.SyncLogStatusCanceled, "finished_at": now, "worker_active": false, "worker_attempt_token": "", "error_message": "publication_recovery_closed"}).Error; e != nil {
+			if e := tx.Model(&types.SyncLog{}).
+				Where("data_source_id=? AND tenant_id=? AND status=?", pair.DataSourceID, pair.TenantID, types.SyncLogStatusRunning).
+				Updates(map[string]any{"status": types.SyncLogStatusCanceled, "finished_at": now, "worker_active": false, "worker_attempt_token": "", "error_message": "publication_recovery_closed"}).
+				Error; e != nil {
 				return e
 			}
-			if e := tx.Table("nextcloud_candidate_retry_jobs").Where("datasource_id=? AND tenant_id=?", pair.DataSourceID, pair.TenantID).Updates(map[string]any{"state": "manual", "lease_token": nil, "lease_until": nil, "sync_log_id": nil, "last_error_code": "publication_recovery_closed", "updated_at": now}).Error; e != nil {
+			if e := tx.Table("nextcloud_candidate_retry_jobs").
+				Where("datasource_id=? AND tenant_id=?", pair.DataSourceID, pair.TenantID).
+				Updates(map[string]any{"state": "manual", "lease_token": nil, "lease_until": nil, "sync_log_id": nil, "last_error_code": "publication_recovery_closed", "updated_at": now}).
+				Error; e != nil {
 				return e
 			}
 			var kbFence nextcloudContentFence
-			if e := tx.Where("tenant_id=? AND knowledge_base_id=? AND knowledge_id=''", pair.TenantID, pair.KnowledgeBaseID).Take(&kbFence).Error; e != nil {
+			if e := tx.Where("tenant_id=? AND knowledge_base_id=? AND knowledge_id=''", pair.TenantID, pair.KnowledgeBaseID).
+				Take(&kbFence).
+				Error; e != nil {
 				return e
 			}
 			retired := make([]nextcloudRecoveryRetiredGeneration, 0, len(rows))
 			for _, row := range rows {
 				var fence nextcloudContentFence
-				if e := tx.Where("tenant_id=? AND knowledge_base_id=? AND knowledge_id=?", pair.TenantID, pair.KnowledgeBaseID, row.ID).Take(&fence).Error; e != nil {
+				if e := tx.Where("tenant_id=? AND knowledge_base_id=? AND knowledge_id=?", pair.TenantID, pair.KnowledgeBaseID, row.ID).
+					Take(&fence).
+					Error; e != nil {
 					return e
 				}
 				if fence.State == "open" {
@@ -752,7 +915,21 @@ func (s *NextcloudPublicationRecoveryStore) Apply(ctx context.Context, p *Nextcl
 			if e != nil {
 				return e
 			}
-			if e = tx.Create(&nextcloudRecoveryScope{PlanSHA256: p.digest, OperationID: pair.OperationID, TenantID: pair.TenantID, KnowledgeBaseID: pair.KnowledgeBaseID, DataSourceID: pair.DataSourceID, InstanceID: pair.InstanceID, BindingID: pair.BindingID, PairSHA256: pairHash, RetiredGenerationsJSON: string(retiredJSON), ClosedKBEpoch: kbFence.Epoch, State: "closed"}).Error; e != nil {
+			if e = tx.Create(
+				&nextcloudRecoveryScope{
+					PlanSHA256:             p.digest,
+					OperationID:            pair.OperationID,
+					TenantID:               pair.TenantID,
+					KnowledgeBaseID:        pair.KnowledgeBaseID,
+					DataSourceID:           pair.DataSourceID,
+					InstanceID:             pair.InstanceID,
+					BindingID:              pair.BindingID,
+					PairSHA256:             pairHash,
+					RetiredGenerationsJSON: string(retiredJSON),
+					ClosedKBEpoch:          kbFence.Epoch,
+					State:                  "closed",
+				},
+			).Error; e != nil {
 				return e
 			}
 		}
@@ -786,7 +963,12 @@ func (s *NextcloudPublicationRecoveryStore) Apply(ctx context.Context, p *Nextcl
 	return &result, nil
 }
 func mustRecoverySequence(v string) int64 { n, _ := recoverySequence(v); return n }
-func (s *NextcloudPublicationRecoveryStore) checkReceiptScopes(tx *gorm.DB, r NextcloudRecoveryReceipt, inv *NextcloudRecoveryInventory) error {
+
+func (s *NextcloudPublicationRecoveryStore) checkReceiptScopes(
+	tx *gorm.DB,
+	r NextcloudRecoveryReceipt,
+	inv *NextcloudRecoveryInventory,
+) error {
 	var scopes []nextcloudRecoveryScope
 	if e := tx.Where("plan_sha256=?", r.PlanSHA256).Find(&scopes).Error; e != nil {
 		return e
@@ -796,7 +978,9 @@ func (s *NextcloudPublicationRecoveryStore) checkReceiptScopes(tx *gorm.DB, r Ne
 	}
 	for _, pair := range inv.Pairs {
 		var current NextcloudSourcePairing
-		if e := tx.Where("operation_id=? AND tenant_id=?", pair.OperationID, pair.TenantID).Take(&current).Error; e != nil {
+		if e := tx.Where("operation_id=? AND tenant_id=?", pair.OperationID, pair.TenantID).
+			Take(&current).
+			Error; e != nil {
 			return ErrNextcloudRecoveryDenied
 		}
 		currentHash, _ := recoveryJSONSHA(recoveryPair(current))
@@ -829,13 +1013,19 @@ func (s *NextcloudPublicationRecoveryStore) checkReceiptScopes(tx *gorm.DB, r Ne
 // impersonation can supply its identity/complete-manifest evidence. This permits
 // NEW generations. Global ingress and authoritative directory checks remain an
 // independent cross-service recovery gate.
-func (s *NextcloudPublicationRecoveryStore) Reconcile(ctx context.Context, planSHA, operationID string) (*NextcloudRecoveryReconciliationReceipt, error) {
+func (s *NextcloudPublicationRecoveryStore) Reconcile(
+	ctx context.Context,
+	planSHA, operationID string,
+) (*NextcloudRecoveryReconciliationReceipt, error) {
 	var scope nextcloudRecoveryScope
 	var receipt NextcloudRecoveryReceipt
 	if !recoveryHash.MatchString(planSHA) || operationID == "" {
 		return nil, ErrNextcloudRecoveryDenied
 	}
-	if e := s.db.WithContext(ctx).Where("plan_sha256=? AND operation_id=?", planSHA, operationID).Take(&scope).Error; e != nil {
+	if e := s.db.WithContext(ctx).
+		Where("plan_sha256=? AND operation_id=?", planSHA, operationID).
+		Take(&scope).
+		Error; e != nil {
 		return nil, ErrNextcloudRecoveryDenied
 	}
 	if e := s.db.WithContext(ctx).Where("plan_sha256=?", planSHA).Take(&receipt).Error; e != nil {
@@ -843,14 +1033,20 @@ func (s *NextcloudPublicationRecoveryStore) Reconcile(ctx context.Context, planS
 	}
 	var pair NextcloudSourcePairing
 	var ds types.DataSource
-	if e := s.db.WithContext(ctx).Where("operation_id=? AND tenant_id=?", operationID, scope.TenantID).Take(&pair).Error; e != nil {
+	if e := s.db.WithContext(ctx).
+		Where("operation_id=? AND tenant_id=?", operationID, scope.TenantID).
+		Take(&pair).
+		Error; e != nil {
 		return nil, ErrNextcloudRecoveryDenied
 	}
 	hash, _ := recoveryJSONSHA(recoveryPair(pair))
 	if hash != scope.PairSHA256 || pair.State != "active" {
 		return nil, ErrNextcloudRecoveryDenied
 	}
-	if e := s.db.WithContext(ctx).Where("id=? AND tenant_id=? AND knowledge_base_id=? AND deleted_at IS NULL", scope.DataSourceID, scope.TenantID, scope.KnowledgeBaseID).Take(&ds).Error; e != nil {
+	if e := s.db.WithContext(ctx).
+		Where("id=? AND tenant_id=? AND knowledge_base_id=? AND deleted_at IS NULL", scope.DataSourceID, scope.TenantID, scope.KnowledgeBaseID).
+		Take(&ds).
+		Error; e != nil {
 		return nil, e
 	}
 	base, configSHA, binding, e := NextcloudEventDataSourceIdentity(ds.Config)
@@ -862,7 +1058,14 @@ func (s *NextcloudPublicationRecoveryStore) Reconcile(ctx context.Context, planS
 		return nil, e
 	}
 	cfg.Type = types.ConnectorTypeNextcloud
-	remotePair := nextcloud.SourcePairingCommit{OperationID: pair.OperationID, InstanceID: pair.InstanceID, BindingID: pair.BindingID, TenantID: pair.TenantID, KnowledgeBaseID: pair.KnowledgeBaseID, DataSourceID: pair.DataSourceID}
+	remotePair := nextcloud.SourcePairingCommit{
+		OperationID:     pair.OperationID,
+		InstanceID:      pair.InstanceID,
+		BindingID:       pair.BindingID,
+		TenantID:        pair.TenantID,
+		KnowledgeBaseID: pair.KnowledgeBaseID,
+		DataSourceID:    pair.DataSourceID,
+	}
 	if e = nextcloud.CommitSourcePairing(ctx, cfg, remotePair); e != nil {
 		return nil, e
 	}
@@ -870,7 +1073,10 @@ func (s *NextcloudPublicationRecoveryStore) Reconcile(ctx context.Context, planS
 	if e != nil {
 		return nil, e
 	}
-	if observed.Identity.InstanceID != pair.InstanceID || observed.Identity.BindingID != pair.BindingID || observed.Identity.BaseURL != pair.BaseURL || observed.Identity.PublicationState != "active" || observed.Identity.PublicationEpoch <= pair.PublicationEpoch {
+	if observed.Identity.InstanceID != pair.InstanceID || observed.Identity.BindingID != pair.BindingID ||
+		observed.Identity.BaseURL != pair.BaseURL ||
+		observed.Identity.PublicationState != "active" ||
+		observed.Identity.PublicationEpoch <= pair.PublicationEpoch {
 		return nil, ErrNextcloudRecoveryDenied
 	}
 	var plan NextcloudRecoveryPlan
@@ -897,7 +1103,13 @@ func (s *NextcloudPublicationRecoveryStore) Reconcile(ctx context.Context, planS
 	if e = nextcloud.CommitSourcePairing(ctx, cfg, remotePair); e != nil {
 		return nil, e
 	}
-	result := &NextcloudRecoveryReconciliationReceipt{PlanSHA256: planSHA, OperationID: operationID, PairSHA256: scope.PairSHA256, ReconciliationSHA256: evidenceSHA, Manifest: observed}
+	result := &NextcloudRecoveryReconciliationReceipt{
+		PlanSHA256:           planSHA,
+		OperationID:          operationID,
+		PairSHA256:           scope.PairSHA256,
+		ReconciliationSHA256: evidenceSHA,
+		Manifest:             observed,
+	}
 	e = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		nowMS, e := nextcloudLeaseNowMS(tx)
 		if e != nil {
@@ -923,7 +1135,8 @@ func (s *NextcloudPublicationRecoveryStore) Reconcile(ctx context.Context, planS
 			return e
 		}
 		if current.State == "reconciled" {
-			if current.ReconciliationSHA256 != evidenceSHA || current.ReconciledAt == nil || current.ReconciliationJSON == "" {
+			if current.ReconciliationSHA256 != evidenceSHA || current.ReconciledAt == nil ||
+				current.ReconciliationJSON == "" {
 				return ErrNextcloudRecoveryDenied
 			}
 			if recoveryStrictJSON([]byte(current.ReconciliationJSON), result) != nil {
@@ -932,7 +1145,9 @@ func (s *NextcloudPublicationRecoveryStore) Reconcile(ctx context.Context, planS
 			return nil
 		}
 		var currentDS types.DataSource
-		if e = tx.Where("id=? AND tenant_id=? AND knowledge_base_id=? AND status=? AND deleted_at IS NULL", scope.DataSourceID, scope.TenantID, scope.KnowledgeBaseID, types.DataSourceStatusPaused).Take(&currentDS).Error; e != nil {
+		if e = tx.Where("id=? AND tenant_id=? AND knowledge_base_id=? AND status=? AND deleted_at IS NULL", scope.DataSourceID, scope.TenantID, scope.KnowledgeBaseID, types.DataSourceStatusPaused).
+			Take(&currentDS).
+			Error; e != nil {
 			return ErrNextcloudRecoveryDenied
 		}
 		currentBase, currentSHA, currentBinding, e := NextcloudEventDataSourceIdentity(currentDS.Config)
@@ -944,7 +1159,11 @@ func (s *NextcloudPublicationRecoveryStore) Reconcile(ctx context.Context, planS
 		}
 		// Leave unknown physical/GC coverage blocked after rollback. Reconciliation
 		// must not turn retirement into permission to erase unobserved copies.
-		if e = tx.Exec("DELETE FROM nextcloud_content_lease_coverage WHERE tenant_id=? AND knowledge_base_id=?", scope.TenantID, scope.KnowledgeBaseID).Error; e != nil {
+		if e = tx.Exec(
+			"DELETE FROM nextcloud_content_lease_coverage WHERE tenant_id=? AND knowledge_base_id=?",
+			scope.TenantID,
+			scope.KnowledgeBaseID,
+		).Error; e != nil {
 			return e
 		}
 		now := time.Now().UTC().Truncate(time.Microsecond)
@@ -953,15 +1172,25 @@ func (s *NextcloudPublicationRecoveryStore) Reconcile(ctx context.Context, planS
 		if e != nil {
 			return e
 		}
-		if e = tx.Model(&nextcloudRecoveryScope{}).Where("plan_sha256=? AND operation_id=? AND state='closed'", planSHA, operationID).Updates(map[string]any{"state": "reconciled", "reconciliation_sha256": evidenceSHA, "reconciliation_json": string(resultJSON), "reconciled_at": now}).Error; e != nil {
+		if e = tx.Model(&nextcloudRecoveryScope{}).
+			Where("plan_sha256=? AND operation_id=? AND state='closed'", planSHA, operationID).
+			Updates(map[string]any{"state": "reconciled", "reconciliation_sha256": evidenceSHA, "reconciliation_json": string(resultJSON), "reconciled_at": now}).
+			Error; e != nil {
 			return e
 		}
-		if e = tx.Exec("UPDATE nextcloud_content_fences SET state='open',epoch=epoch+1,retired_at_ms=NULL,updated_at_ms=? WHERE tenant_id=? AND knowledge_base_id=? AND knowledge_id='' AND state='retired'", nowMS, scope.TenantID, scope.KnowledgeBaseID).Error; e != nil {
+		if e = tx.Exec(
+			"UPDATE nextcloud_content_fences SET state='open',epoch=epoch+1,retired_at_ms=NULL,updated_at_ms=? WHERE tenant_id=? AND knowledge_base_id=? AND knowledge_id='' AND state='retired'",
+			nowMS,
+			scope.TenantID,
+			scope.KnowledgeBaseID,
+		).Error; e != nil {
 			return e
 		}
 		// Reset stale deletion cursors: old generations stay tombstoned; the next
 		// sync must download and stage the current authoritative files as new IDs.
-		update := tx.Model(&types.DataSource{}).Where("id=? AND tenant_id=? AND status=?", scope.DataSourceID, scope.TenantID, types.DataSourceStatusPaused).Updates(map[string]any{"status": types.DataSourceStatusActive, "last_sync_cursor": nil})
+		update := tx.Model(&types.DataSource{}).
+			Where("id=? AND tenant_id=? AND status=?", scope.DataSourceID, scope.TenantID, types.DataSourceStatusPaused).
+			Updates(map[string]any{"status": types.DataSourceStatusActive, "last_sync_cursor": nil})
 		if update.Error != nil {
 			return update.Error
 		}
@@ -980,14 +1209,18 @@ func (s *NextcloudPublicationRecoveryStore) Reconcile(ctx context.Context, planS
 // retry checks the retired generations and monotone KB epoch persisted at close.
 func (s *NextcloudPublicationRecoveryStore) checkRecoveryScopeInTx(tx *gorm.DB, scope nextcloudRecoveryScope) error {
 	var retired []nextcloudRecoveryRetiredGeneration
-	if scope.ClosedKBEpoch <= 0 || scope.RetiredGenerationsJSON == "" || recoveryStrictJSON([]byte(scope.RetiredGenerationsJSON), &retired) != nil {
+	if scope.ClosedKBEpoch <= 0 || scope.RetiredGenerationsJSON == "" ||
+		recoveryStrictJSON([]byte(scope.RetiredGenerationsJSON), &retired) != nil {
 		return ErrNextcloudRecoveryDenied
 	}
 	var kb nextcloudContentFence
-	if e := tx.Where("tenant_id=? AND knowledge_base_id=? AND knowledge_id=''", scope.TenantID, scope.KnowledgeBaseID).Take(&kb).Error; e != nil {
+	if e := tx.Where("tenant_id=? AND knowledge_base_id=? AND knowledge_id=''", scope.TenantID, scope.KnowledgeBaseID).
+		Take(&kb).
+		Error; e != nil {
 		return ErrNextcloudRecoveryDenied
 	}
-	if kb.Epoch < scope.ClosedKBEpoch || (scope.State == "closed" && kb.State == "open") || (scope.State == "reconciled" && kb.Epoch <= scope.ClosedKBEpoch) {
+	if kb.Epoch < scope.ClosedKBEpoch || (scope.State == "closed" && kb.State == "open") ||
+		(scope.State == "reconciled" && kb.Epoch <= scope.ClosedKBEpoch) {
 		return ErrNextcloudRecoveryDenied
 	}
 	for _, generation := range retired {
@@ -995,7 +1228,9 @@ func (s *NextcloudPublicationRecoveryStore) checkRecoveryScopeInTx(tx *gorm.DB, 
 		if generation.KnowledgeID == "" || generation.Epoch <= 0 {
 			return ErrNextcloudRecoveryDenied
 		}
-		if e := tx.Where("tenant_id=? AND knowledge_base_id=? AND knowledge_id=? AND datasource_id=?", scope.TenantID, scope.KnowledgeBaseID, generation.KnowledgeID, scope.DataSourceID).Take(&f).Error; e != nil {
+		if e := tx.Where("tenant_id=? AND knowledge_base_id=? AND knowledge_id=? AND datasource_id=?", scope.TenantID, scope.KnowledgeBaseID, generation.KnowledgeID, scope.DataSourceID).
+			Take(&f).
+			Error; e != nil {
 			return ErrNextcloudRecoveryDenied
 		}
 		if f.State == "open" || f.Epoch < generation.Epoch {
@@ -1004,23 +1239,36 @@ func (s *NextcloudPublicationRecoveryStore) checkRecoveryScopeInTx(tx *gorm.DB, 
 	}
 	if scope.State == "closed" {
 		var ds types.DataSource
-		if e := tx.Where("id=? AND tenant_id=? AND knowledge_base_id=? AND deleted_at IS NULL", scope.DataSourceID, scope.TenantID, scope.KnowledgeBaseID).Take(&ds).Error; e != nil || ds.Status != types.DataSourceStatusPaused {
+		if e := tx.Where("id=? AND tenant_id=? AND knowledge_base_id=? AND deleted_at IS NULL", scope.DataSourceID, scope.TenantID, scope.KnowledgeBaseID).
+			Take(&ds).
+			Error; e != nil ||
+			ds.Status != types.DataSourceStatusPaused {
 			return ErrNextcloudRecoveryDenied
 		}
 		var count int64
-		if e := tx.Model(&nextcloudSourceVersion{}).Where("tenant_id=? AND knowledge_base_id=? AND datasource_id=? AND state<>'tombstone'", scope.TenantID, scope.KnowledgeBaseID, scope.DataSourceID).Count(&count).Error; e != nil {
+		if e := tx.Model(&nextcloudSourceVersion{}).
+			Where("tenant_id=? AND knowledge_base_id=? AND datasource_id=? AND state<>'tombstone'", scope.TenantID, scope.KnowledgeBaseID, scope.DataSourceID).
+			Count(&count).
+			Error; e != nil {
 			return e
 		}
 		if count != 0 {
 			return ErrNextcloudRecoveryDenied
 		}
-		if e := tx.Unscoped().Model(&types.Knowledge{}).Where("tenant_id=? AND knowledge_base_id=? AND channel=? AND COALESCE(metadata->>'nextcloud_etag','')<>''", scope.TenantID, scope.KnowledgeBaseID, types.ConnectorTypeNextcloud).Count(&count).Error; e != nil {
+		if e := tx.Unscoped().
+			Model(&types.Knowledge{}).
+			Where("tenant_id=? AND knowledge_base_id=? AND channel=? AND COALESCE(metadata->>'nextcloud_etag','')<>''", scope.TenantID, scope.KnowledgeBaseID, types.ConnectorTypeNextcloud).
+			Count(&count).
+			Error; e != nil {
 			return e
 		}
 		if count != 0 {
 			return ErrNextcloudRecoveryDenied
 		}
-		if e := tx.Model(&types.SyncLog{}).Where("tenant_id=? AND data_source_id=? AND status=?", scope.TenantID, scope.DataSourceID, types.SyncLogStatusRunning).Count(&count).Error; e != nil {
+		if e := tx.Model(&types.SyncLog{}).
+			Where("tenant_id=? AND data_source_id=? AND status=?", scope.TenantID, scope.DataSourceID, types.SyncLogStatusRunning).
+			Count(&count).
+			Error; e != nil {
 			return e
 		}
 		if count != 0 {

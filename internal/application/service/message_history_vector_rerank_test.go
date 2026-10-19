@@ -26,23 +26,44 @@ func (r historyVectorBoundaryReranker) Rerank(ctx context.Context, q string, d [
 
 func TestHistoryVectorRerankBoundaryChecksLookupAndCall(t *testing.T) {
 	var events []string
-	results := []*types.SearchResult{{ID: "c1", KnowledgeID: "k1", KnowledgeBaseID: "kb", Content: "actual child text", Score: .4}}
+	results := []*types.SearchResult{
+		{ID: "c1", KnowledgeID: "k1", KnowledgeBaseID: "kb", Content: "actual child text", Score: .4},
+	}
 	check := func() error { events = append(events, "check"); return nil }
 	load := func(ctx context.Context, id string) (rerank.Reranker, error) {
 		events = append(events, "lookup")
 		if !logprivacy.ContentSuppressed(ctx) {
 			t.Fatal("lookup must suppress content")
 		}
-		return historyVectorBoundaryReranker{call: func(ctx context.Context, q string, d []string) ([]rerank.RankResult, error) {
-			events = append(events, "rerank")
-			if !logprivacy.ContentSuppressed(ctx) || q != "query" || !reflect.DeepEqual(d, []string{"actual child text"}) {
-				t.Fatal("model boundary changed original input")
-			}
-			return []rerank.RankResult{{Index: 0, RelevanceScore: .9, Document: rerank.DocumentInfo{Text: "provider replacement must be ignored"}}}, nil
-		}}, nil
+		return historyVectorBoundaryReranker{
+			call: func(ctx context.Context, q string, d []string) ([]rerank.RankResult, error) {
+				events = append(events, "rerank")
+				if !logprivacy.ContentSuppressed(ctx) || q != "query" ||
+					!reflect.DeepEqual(d, []string{"actual child text"}) {
+					t.Fatal("model boundary changed original input")
+				}
+				return []rerank.RankResult{
+					{
+						Index:          0,
+						RelevanceScore: .9,
+						Document:       rerank.DocumentInfo{Text: "provider replacement must be ignored"},
+					},
+				}, nil
+			},
+		}, nil
 	}
-	out, err := runHistoryVectorRerank(context.Background(), &types.RetrievalConfig{RerankModelID: "r", RerankThreshold: .2}, "query", results, []string{"actual child text"}, check, load)
-	if err != nil || len(out) != 1 || out[0].Content != "actual child text" || out[0].Score != .9 || out[0] == results[0] || results[0].Score != .4 {
+	out, err := runHistoryVectorRerank(
+		context.Background(),
+		&types.RetrievalConfig{RerankModelID: "r", RerankThreshold: .2},
+		"query",
+		results,
+		[]string{"actual child text"},
+		check,
+		load,
+	)
+	if err != nil || len(out) != 1 || out[0].Content != "actual child text" || out[0].Score != .9 ||
+		out[0] == results[0] ||
+		results[0].Score != .4 {
 		t.Fatalf("authorized projection mismatch: rows=%d err=%v", len(out), err)
 	}
 	wanted := []string{"check", "lookup", "check", "check", "rerank", "check", "check"}
@@ -90,20 +111,30 @@ func TestHistoryVectorRerankBoundaryRejectsRevocationAndLookupMutation(t *testin
 				if test.lookupError {
 					return nil, errors.New("controlled lookup failure")
 				}
-				return historyVectorBoundaryReranker{call: func(context.Context, string, []string) ([]rerank.RankResult, error) {
-					calls++
-					if test.callMutate {
-						results[0].Content = "unproved model replacement"
-					} else if test.afterCall {
-						current = false
-					}
-					if test.callError {
-						return nil, errors.New("controlled model failure")
-					}
-					return []rerank.RankResult{{Index: 0, RelevanceScore: 1}}, nil
-				}}, nil
+				return historyVectorBoundaryReranker{
+					call: func(context.Context, string, []string) ([]rerank.RankResult, error) {
+						calls++
+						if test.callMutate {
+							results[0].Content = "unproved model replacement"
+						} else if test.afterCall {
+							current = false
+						}
+						if test.callError {
+							return nil, errors.New("controlled model failure")
+						}
+						return []rerank.RankResult{{Index: 0, RelevanceScore: 1}}, nil
+					},
+				}, nil
 			}
-			out, err := runHistoryVectorRerank(context.Background(), &types.RetrievalConfig{RerankModelID: "r"}, "q", results, []string{"actual"}, check, load)
+			out, err := runHistoryVectorRerank(
+				context.Background(),
+				&types.RetrievalConfig{RerankModelID: "r"},
+				"q",
+				results,
+				[]string{"actual"},
+				check,
+				load,
+			)
 			var want error = access.ErrNextcloudPublicationDenied
 			if test.mutate || test.callMutate {
 				want = repository.ErrKnowledgeInputChanged
@@ -138,9 +169,19 @@ func TestHistoryVectorRerankBoundaryRejectsMalformedProviderIndexes(t *testing.T
 		t.Run(test.name, func(t *testing.T) {
 			results := []*types.SearchResult{{ID: "c", KnowledgeID: "k", Content: "actual"}}
 			load := func(context.Context, string) (rerank.Reranker, error) {
-				return historyVectorBoundaryReranker{call: func(context.Context, string, []string) ([]rerank.RankResult, error) { return test.ranks, nil }}, nil
+				return historyVectorBoundaryReranker{
+					call: func(context.Context, string, []string) ([]rerank.RankResult, error) { return test.ranks, nil },
+				}, nil
 			}
-			out, err := runHistoryVectorRerank(context.Background(), &types.RetrievalConfig{RerankModelID: "r"}, "q", results, []string{"actual"}, func() error { return nil }, load)
+			out, err := runHistoryVectorRerank(
+				context.Background(),
+				&types.RetrievalConfig{RerankModelID: "r"},
+				"q",
+				results,
+				[]string{"actual"},
+				func() error { return nil },
+				load,
+			)
 			if !errors.Is(err, access.ErrNextcloudPublicationUnavailable) || len(out) != 0 {
 				t.Fatalf("invalid provider output accepted: %v", err)
 			}
@@ -157,11 +198,21 @@ func TestHistoryVectorRerankBoundaryErrorsCannotBecomeEmptySuccess(t *testing.T)
 				if stage == "lookup" {
 					return nil, errors.New("controlled failure")
 				}
-				return historyVectorBoundaryReranker{call: func(context.Context, string, []string) ([]rerank.RankResult, error) {
-					return nil, errors.New("controlled failure")
-				}}, nil
+				return historyVectorBoundaryReranker{
+					call: func(context.Context, string, []string) ([]rerank.RankResult, error) {
+						return nil, errors.New("controlled failure")
+					},
+				}, nil
 			}
-			out, err := runHistoryVectorRerank(context.Background(), &types.RetrievalConfig{RerankModelID: "r"}, "q", results, []string{"actual"}, func() error { checks++; return nil }, load)
+			out, err := runHistoryVectorRerank(
+				context.Background(),
+				&types.RetrievalConfig{RerankModelID: "r"},
+				"q",
+				results,
+				[]string{"actual"},
+				func() error { checks++; return nil },
+				load,
+			)
 			if !errors.Is(err, access.ErrNextcloudPublicationUnavailable) || len(out) != 0 {
 				t.Fatalf("failure became empty success: %v", err)
 			}

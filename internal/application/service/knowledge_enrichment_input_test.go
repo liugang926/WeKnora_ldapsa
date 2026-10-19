@@ -35,7 +35,11 @@ type enrichmentTestModel struct {
 	response        string
 }
 
-func (m *enrichmentTestModel) Chat(_ context.Context, messages []chat.Message, _ *chat.ChatOptions) (*types.ChatResponse, error) {
+func (m *enrichmentTestModel) Chat(
+	_ context.Context,
+	messages []chat.Message,
+	_ *chat.ChatOptions,
+) (*types.ChatResponse, error) {
 	m.calls++
 	if m.beforeReturn != nil {
 		m.beforeReturn()
@@ -49,7 +53,12 @@ func (m *enrichmentTestModel) Chat(_ context.Context, messages []chat.Message, _
 	}
 	return &types.ChatResponse{Content: text}, nil
 }
-func (m *enrichmentTestModel) ChatStream(context.Context, []chat.Message, *chat.ChatOptions) (<-chan types.StreamResponse, error) {
+
+func (m *enrichmentTestModel) ChatStream(
+	context.Context,
+	[]chat.Message,
+	*chat.ChatOptions,
+) (<-chan types.StreamResponse, error) {
 	return nil, nil
 }
 func (m *enrichmentTestModel) GetModelName() string { return "local mock" }
@@ -85,9 +94,11 @@ type enrichmentTestModels struct {
 func (m enrichmentTestModels) GetChatModel(context.Context, string) (chat.Chat, error) {
 	return m.chat, nil
 }
+
 func (m enrichmentTestModels) GetVLMModel(context.Context, string) (vlm.VLM, error) {
 	return m.vision, nil
 }
+
 func (m enrichmentTestModels) GetEmbeddingModel(context.Context, string) (embedding.Embedder, error) {
 	return parentChildEmbedder{}, nil
 }
@@ -102,6 +113,7 @@ func (b enrichmentTestBases) GetKnowledgeBaseByID(ctx context.Context, id string
 	err := b.db.WithContext(ctx).Where("id = ?", id).Take(&row).Error
 	return &row, err
 }
+
 func (b enrichmentTestBases) GetKnowledgeBaseByIDOnly(ctx context.Context, id string) (*types.KnowledgeBase, error) {
 	return b.GetKnowledgeBaseByID(ctx, id)
 }
@@ -115,6 +127,7 @@ func (c enrichmentTestChunks) GetRepository() interfaces.ChunkRepository { retur
 func (c enrichmentTestChunks) ListChunksByKnowledgeID(ctx context.Context, id string) ([]*types.Chunk, error) {
 	return c.repo.ListChunksByKnowledgeID(ctx, 7, id)
 }
+
 func (c enrichmentTestChunks) GetChunkByIDOnly(ctx context.Context, id string) (*types.Chunk, error) {
 	return c.repo.GetChunkByID(ctx, 7, id)
 }
@@ -150,7 +163,17 @@ func newEnrichmentTestFixture(t *testing.T, pg bool, fullDirectorySchema ...bool
 	t.Helper()
 	store, db, ctx := autoTagActualFixture(t, pg)
 	db.Config.Logger = gormlogger.Default.LogMode(gormlogger.Silent)
-	require.NoError(t, db.AutoMigrate(&types.Tenant{}, &types.User{}, &types.TenantMember{}, &types.TenantAPIKey{}, &types.Model{}, &types.KnowledgeTagRelation{}))
+	require.NoError(
+		t,
+		db.AutoMigrate(
+			&types.Tenant{},
+			&types.User{},
+			&types.TenantMember{},
+			&types.TenantAPIKey{},
+			&types.Model{},
+			&types.KnowledgeTagRelation{},
+		),
+	)
 	if len(fullDirectorySchema) > 0 && fullDirectorySchema[0] {
 		// The periodic HTTP mode exercises actual ApplySnapshot writes. Its
 		// directory relations/unique constraints must come from production DDL
@@ -160,11 +183,22 @@ func newEnrichmentTestFixture(t *testing.T, pg bool, fullDirectorySchema ...bool
 		if pg {
 			pool, err := db.DB()
 			require.NoError(t, err)
-			directoryMigration, err = gorm.Open(postgres.New(postgres.Config{Conn: pool, PreferSimpleProtocol: true}), &gorm.Config{Logger: gormlogger.Default.LogMode(gormlogger.Silent)})
+			directoryMigration, err = gorm.Open(
+				postgres.New(postgres.Config{Conn: pool, PreferSimpleProtocol: true}),
+				&gorm.Config{Logger: gormlogger.Default.LogMode(gormlogger.Silent)},
+			)
 			require.NoError(t, err)
-			require.NoError(t, directoryMigration.Exec("CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\" WITH SCHEMA public").Error)
+			require.NoError(
+				t,
+				directoryMigration.Exec("CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\" WITH SCHEMA public").Error,
+			)
 			require.NoError(t, directoryMigration.Exec("ALTER EXTENSION \"uuid-ossp\" SET SCHEMA public").Error)
-			require.NoError(t, directoryMigration.Exec("CREATE FUNCTION uuid_generate_v4() RETURNS uuid LANGUAGE sql AS $$ SELECT public.uuid_generate_v4() $$").Error)
+			require.NoError(
+				t,
+				directoryMigration.Exec(
+					"CREATE FUNCTION uuid_generate_v4() RETURNS uuid LANGUAGE sql AS $$ SELECT public.uuid_generate_v4() $$",
+				).Error,
+			)
 			directoryPath = "../../../migrations/versioned/000109_directory_group_access.up.sql"
 		}
 		ddl, err := os.ReadFile(directoryPath)
@@ -172,7 +206,18 @@ func newEnrichmentTestFixture(t *testing.T, pg bool, fullDirectorySchema ...bool
 		require.NoError(t, directoryMigration.Exec(string(ddl)).Error)
 		require.NoError(t, db.AutoMigrate(&types.AuthToken{}))
 	} else {
-		require.NoError(t, db.AutoMigrate(&types.Directory{}, &types.DirectoryIdentity{}, &types.DirectoryGroup{}, &types.DirectoryGroupMembership{}, &types.TenantGroupRoleGrant{}, &types.ResourceAccessPolicy{}, &types.ResourceGroupGrant{}))
+		require.NoError(
+			t,
+			db.AutoMigrate(
+				&types.Directory{},
+				&types.DirectoryIdentity{},
+				&types.DirectoryGroup{},
+				&types.DirectoryGroupMembership{},
+				&types.TenantGroupRoleGrant{},
+				&types.ResourceAccessPolicy{},
+				&types.ResourceGroupGrant{},
+			),
+		)
 	}
 	migration := db
 	path := "../../../migrations/sqlite/000062_knowledge_enrichment_inputs.up.sql"
@@ -190,9 +235,31 @@ func newEnrichmentTestFixture(t *testing.T, pg bool, fullDirectorySchema ...bool
 		require.NoError(t, e)
 		require.NoError(t, migration.Exec(string(data)).Error)
 	}
-	require.NoError(t, db.Create(&types.User{ID: "enrich-human", Username: "enrich-human", Email: "enrich@example.test", IsActive: true}).Error)
-	require.NoError(t, db.Create(&types.TenantMember{TenantID: 7, UserID: "enrich-human", Role: types.TenantRoleAdmin, Status: types.TenantMemberStatusActive}).Error)
-	tenantRecord := &types.Tenant{ID: 7, RetrieverEngines: types.RetrieverEngines{Engines: []types.RetrieverEngineParams{{RetrieverType: types.VectorRetrieverType, RetrieverEngineType: types.PostgresRetrieverEngineType}}}}
+	require.NoError(
+		t,
+		db.Create(
+			&types.User{ID: "enrich-human", Username: "enrich-human", Email: "enrich@example.test", IsActive: true},
+		).Error,
+	)
+	require.NoError(
+		t,
+		db.Create(
+			&types.TenantMember{
+				TenantID: 7,
+				UserID:   "enrich-human",
+				Role:     types.TenantRoleAdmin,
+				Status:   types.TenantMemberStatusActive,
+			},
+		).Error,
+	)
+	tenantRecord := &types.Tenant{
+		ID: 7,
+		RetrieverEngines: types.RetrieverEngines{
+			Engines: []types.RetrieverEngineParams{
+				{RetrieverType: types.VectorRetrieverType, RetrieverEngineType: types.PostgresRetrieverEngineType},
+			},
+		},
+	}
 	require.NoError(t, db.Save(tenantRecord).Error)
 	ctx = types.WithCaller(ctx, types.Caller{TenantID: 7, UserID: "enrich-human", Role: types.TenantRoleAdmin})
 	ctx = types.WithPrincipal(ctx, types.Principal{Type: types.PrincipalWebUser, ID: "enrich-human"})
@@ -200,11 +267,19 @@ func newEnrichmentTestFixture(t *testing.T, pg bool, fullDirectorySchema ...bool
 	repository.ConfigureKnowledgeInputActorGroupAccess(store, groups)
 	knowledge := repository.NewKnowledgeRepository(db)
 	tags := repository.NewKnowledgeTagRepository(db)
-	repository.ConfigureKnowledgeDisplayInputWriters(store, tags, knowledge, func(tx *gorm.DB) *repository.KnowledgeInputProvenanceStore {
-		actual := repository.NewKnowledgeInputProvenanceStore(tx)
-		repository.ConfigureKnowledgeInputActorGroupAccess(actual, NewGroupAccessService(repository.NewGroupAccessRepository(tx)))
-		return actual
-	})
+	repository.ConfigureKnowledgeDisplayInputWriters(
+		store,
+		tags,
+		knowledge,
+		func(tx *gorm.DB) *repository.KnowledgeInputProvenanceStore {
+			actual := repository.NewKnowledgeInputProvenanceStore(tx)
+			repository.ConfigureKnowledgeInputActorGroupAccess(
+				actual,
+				NewGroupAccessService(repository.NewGroupAccessRepository(tx)),
+			)
+			return actual
+		},
+	)
 	repository.ConfigureKnowledgeCurrentReadActor(knowledge, store)
 	kb := &types.KnowledgeBase{}
 	require.NoError(t, db.Where("id='kb'").Take(kb).Error)
@@ -219,15 +294,60 @@ func newEnrichmentTestFixture(t *testing.T, pg bool, fullDirectorySchema ...bool
 	ctx, authErr = store.AuthorizeCurrentKnowledgeInputWrite(ctx, kb)
 	require.NoError(t, authErr)
 	for _, id := range []string{"summary", "embed", "vision"} {
-		require.NoError(t, db.Create(&types.Model{ID: id, TenantID: 7, Name: "local " + id, Source: types.ModelSourceRemote, Status: types.ModelStatusActive}).Error)
+		require.NoError(
+			t,
+			db.Create(
+				&types.Model{
+					ID:       id,
+					TenantID: 7,
+					Name:     "local " + id,
+					Source:   types.ModelSourceRemote,
+					Status:   types.ModelStatusActive,
+				},
+			).Error,
+		)
 	}
-	k := &types.Knowledge{ID: "enrichment-doc", TenantID: 7, KnowledgeBaseID: "kb", Type: types.KnowledgeTypeManual, Channel: "web", Source: "manual", Title: "actual title", Metadata: types.JSON(`{"manual":{"content":"original human full document"}}`), CustomMetadata: types.JSON(`{"project":"original context"}`), ParseStatus: types.ParseStatusFinalizing, EnableStatus: "enabled", PendingSubtasksCount: 1, SummaryStatus: types.SummaryStatusPending}
-	proof, e := store.CreateKnowledgeWithInput(repository.WithIndependentKnowledgeInput(ctx), k, "original human full document")
+	k := &types.Knowledge{
+		ID:                   "enrichment-doc",
+		TenantID:             7,
+		KnowledgeBaseID:      "kb",
+		Type:                 types.KnowledgeTypeManual,
+		Channel:              "web",
+		Source:               "manual",
+		Title:                "actual title",
+		Metadata:             types.JSON(`{"manual":{"content":"original human full document"}}`),
+		CustomMetadata:       types.JSON(`{"project":"original context"}`),
+		ParseStatus:          types.ParseStatusFinalizing,
+		EnableStatus:         "enabled",
+		PendingSubtasksCount: 1,
+		SummaryStatus:        types.SummaryStatusPending,
+	}
+	proof, e := store.CreateKnowledgeWithInput(
+		repository.WithIndependentKnowledgeInput(ctx),
+		k,
+		"original human full document",
+	)
 	require.NoError(t, e)
 	build := repository.WithKnowledgeBuildInputProof(ctx, store, proof)
 	chunks := []*types.Chunk{}
 	for i, id := range []string{"text-one", "text-two"} {
-		chunks = append(chunks, &types.Chunk{ID: id, TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: k.ID, Content: strings.Repeat("Actual human document with enough content to summarize safely. ", 3), ChunkType: types.ChunkTypeText, ChunkIndex: i, StartAt: i * 180, EndAt: (i + 1) * 180, IsEnabled: true, IndexStatus: "ready", Metadata: types.JSON(`{}`)})
+		chunks = append(
+			chunks,
+			&types.Chunk{
+				ID:              id,
+				TenantID:        7,
+				KnowledgeBaseID: "kb",
+				KnowledgeID:     k.ID,
+				Content:         strings.Repeat("Actual human document with enough content to summarize safely. ", 3),
+				ChunkType:       types.ChunkTypeText,
+				ChunkIndex:      i,
+				StartAt:         i * 180,
+				EndAt:           (i + 1) * 180,
+				IsEnabled:       true,
+				IndexStatus:     "ready",
+				Metadata:        types.JSON(`{}`),
+			},
+		)
 	}
 	chunks[0].NextChunkID = chunks[1].ID
 	chunks[1].PreChunkID = chunks[0].ID
@@ -238,16 +358,64 @@ func newEnrichmentTestFixture(t *testing.T, pg bool, fullDirectorySchema ...bool
 	queue := &knowledgeInputQueue{}
 	engine := &enrichmentTestEngine{&parentChildRetrieveEngine{}}
 	bases := enrichmentTestBases{db: db}
-	tenant := &types.Tenant{ID: 7, Status: "active", RetrieverEngines: types.RetrieverEngines{Engines: []types.RetrieverEngineParams{{RetrieverType: types.VectorRetrieverType, RetrieverEngineType: types.PostgresRetrieverEngineType}}}}
-	cfg := &config.Config{Conversation: &config.ConversationConfig{GenerateSummaryPrompt: "Summarize in {{language}}", GenerateQuestionsPrompt: "Generate {{question_count}} questions for {{doc_name}}: {{content}} {{context}} in {{language}}"}}
+	tenant := &types.Tenant{
+		ID:     7,
+		Status: "active",
+		RetrieverEngines: types.RetrieverEngines{
+			Engines: []types.RetrieverEngineParams{
+				{RetrieverType: types.VectorRetrieverType, RetrieverEngineType: types.PostgresRetrieverEngineType},
+			},
+		},
+	}
+	cfg := &config.Config{
+		Conversation: &config.ConversationConfig{
+			GenerateSummaryPrompt:   "Summarize in {{language}}",
+			GenerateQuestionsPrompt: "Generate {{question_count}} questions for {{doc_name}}: {{content}} {{context}} in {{language}}",
+		},
+	}
 	require.NoError(t, config.BindIndependentEnrichmentPromptLiteral(cfg, "summary", "Summarize in {{language}}"))
-	require.NoError(t, config.BindIndependentEnrichmentPromptLiteral(cfg, "question", "Generate {{question_count}} questions for {{doc_name}}: {{content}} {{context}} in {{language}}"))
-	s := &knowledgeService{config: cfg, repo: knowledge, chunkRepo: chunkRepo, chunkService: enrichmentTestChunks{repo: chunkRepo}, kbService: bases, modelService: enrichmentTestModels{chat: model, vision: vision}, tenantRepo: knowledgeInputTenantRepo{tenant: tenant}, retrieveEngine: parentChildRetrieveRegistry{engine: engine}, task: queue, knowledgeInputs: store, knowledgeInputWriter: store}
-	guard := access.NewNextcloudSourceLineageGuard(knowledge.(access.NextcloudLineageSnapshotLookup), bases, nil, nil, groups, nil)
-	repository.ConfigureKnowledgeOriginalInputSourceVerifier(store, NewKnowledgeOriginalInputSourceVerifier(store, guard, nil))
-	post := &KnowledgePostProcessService{chunkRepo: chunkRepo, taskEnqueuer: queue, knowledgeInputs: store, enrichmentConfig: cfg}
+	require.NoError(
+		t,
+		config.BindIndependentEnrichmentPromptLiteral(
+			cfg,
+			"question",
+			"Generate {{question_count}} questions for {{doc_name}}: {{content}} {{context}} in {{language}}",
+		),
+	)
+	s := &knowledgeService{
+		config:               cfg,
+		repo:                 knowledge,
+		chunkRepo:            chunkRepo,
+		chunkService:         enrichmentTestChunks{repo: chunkRepo},
+		kbService:            bases,
+		modelService:         enrichmentTestModels{chat: model, vision: vision},
+		tenantRepo:           knowledgeInputTenantRepo{tenant: tenant},
+		retrieveEngine:       parentChildRetrieveRegistry{engine: engine},
+		task:                 queue,
+		knowledgeInputs:      store,
+		knowledgeInputWriter: store,
+	}
+	guard := access.NewNextcloudSourceLineageGuard(
+		knowledge.(access.NextcloudLineageSnapshotLookup),
+		bases,
+		nil,
+		nil,
+		groups,
+		nil,
+	)
+	repository.ConfigureKnowledgeOriginalInputSourceVerifier(
+		store,
+		NewKnowledgeOriginalInputSourceVerifier(store, guard, nil),
+	)
+	post := &KnowledgePostProcessService{
+		chunkRepo:        chunkRepo,
+		taskEnqueuer:     queue,
+		knowledgeInputs:  store,
+		enrichmentConfig: cfg,
+	}
 	return &enrichmentTestFixture{db, store, s, post, ctx, build, k, chunks, queue, model, vision, guard, engine}
 }
+
 func assertEnrichmentReadable(t *testing.T, f *enrichmentTestFixture, ids []string) {
 	t.Helper()
 	var k types.Knowledge
@@ -260,17 +428,22 @@ func assertEnrichmentReadable(t *testing.T, f *enrichmentTestFixture, ids []stri
 	kg, e := NewKnowledgeOutputAuthorizer(f.store, f.guard).Begin(f.ctx, []*types.Knowledge{&k})
 	require.NoError(t, e)
 	require.NoError(t, kg.Check(f.ctx, []*types.Knowledge{&k}))
-	cg, e := NewChunkOutputAuthorizer(f.store, f.guard).Begin(f.ctx, types.ChunkOutputReadRequest{TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: k.ID, ChunkIDs: ids})
+	cg, e := NewChunkOutputAuthorizer(
+		f.store,
+		f.guard,
+	).Begin(f.ctx, types.ChunkOutputReadRequest{TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: k.ID, ChunkIDs: ids})
 	require.NoError(t, e)
 	snapshot, e := cg.Snapshot()
 	require.NoError(t, e)
 	require.NoError(t, cg.Check(f.ctx, snapshot))
-	rows, e := repository.NewRAGChunkSnapshotReader(f.db, f.store).HydrateRAGChunkSnapshots(f.ctx, []types.RAGChunkReadRequest{{TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: k.ID, ChunkIDs: ids}})
+	rows, e := repository.NewRAGChunkSnapshotReader(f.db, f.store).
+		HydrateRAGChunkSnapshots(f.ctx, []types.RAGChunkReadRequest{{TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: k.ID, ChunkIDs: ids}})
 	require.NoError(t, e)
 	for _, row := range rows {
 		require.NoError(t, row.SourceLineage.RequireComplete())
 	}
 }
+
 func enrichmentTask(t *testing.T, kind string, p any) *asynq.Task {
 	t.Helper()
 	data, e := json.Marshal(p)
@@ -281,7 +454,19 @@ func enrichmentTask(t *testing.T, kind string, p any) *asynq.Task {
 func runEnrichmentOriginalRoutes(t *testing.T, pg bool) {
 	t.Run("summary enqueue generate refresh readable", func(t *testing.T) {
 		f := newEnrichmentTestFixture(t, pg)
-		require.True(t, f.post.enqueueSummaryGenerationTask(f.build, types.KnowledgePostProcessPayload{TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: f.k.ID, Language: "en-US"}, 0))
+		require.True(
+			t,
+			f.post.enqueueSummaryGenerationTask(
+				f.build,
+				types.KnowledgePostProcessPayload{
+					TenantID:        7,
+					KnowledgeBaseID: "kb",
+					KnowledgeID:     f.k.ID,
+					Language:        "en-US",
+				},
+				0,
+			),
+		)
 		require.NoError(t, f.s.ProcessSummaryGeneration(context.Background(), f.queue.tasks[0]))
 		require.Equal(t, 1, f.model.calls)
 		require.NoError(t, f.s.RequestKnowledgeSummaryRefresh(f.ctx, f.k.ID))
@@ -298,14 +483,52 @@ func runEnrichmentOriginalRoutes(t *testing.T, pg bool) {
 	t.Run("legacy question whole document and batch and regenerate readable", func(t *testing.T) {
 		f := newEnrichmentTestFixture(t, pg)
 		f.model.questions = true
-		actual, e := f.store.CaptureKnowledgeEnrichmentInputs(f.build, types.KnowledgeBuildInputCaptureRequest{TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: f.k.ID, ChunkIDs: enrichmentInputChunkIDs(f.chunks)})
+		actual, e := f.store.CaptureKnowledgeEnrichmentInputs(
+			f.build,
+			types.KnowledgeBuildInputCaptureRequest{
+				TenantID:        7,
+				KnowledgeBaseID: "kb",
+				KnowledgeID:     f.k.ID,
+				ChunkIDs:        enrichmentInputChunkIDs(f.chunks),
+			},
+		)
 		require.NoError(t, e)
-		p := types.QuestionGenerationPayload{OriginalInput: actual.Proof, TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: f.k.ID, QuestionCount: 2, Language: "en-US"}
-		p.ProducerInput, e = f.store.AdmitKnowledgeProducerInput(f.build, actual.Proof, "question", questionProducerControls(f.s.config, p))
+		p := types.QuestionGenerationPayload{
+			OriginalInput:   actual.Proof,
+			TenantID:        7,
+			KnowledgeBaseID: "kb",
+			KnowledgeID:     f.k.ID,
+			QuestionCount:   2,
+			Language:        "en-US",
+		}
+		p.ProducerInput, e = f.store.AdmitKnowledgeProducerInput(
+			f.build,
+			actual.Proof,
+			"question",
+			questionProducerControls(f.s.config, p),
+		)
 		require.NoError(t, e)
-		require.NoError(t, f.s.ProcessQuestionGeneration(context.Background(), enrichmentTask(t, types.TypeQuestionGeneration, p)))
+		require.NoError(
+			t,
+			f.s.ProcessQuestionGeneration(context.Background(), enrichmentTask(t, types.TypeQuestionGeneration, p)),
+		)
 		require.Equal(t, 2, f.model.calls)
-		require.Equal(t, 1, f.post.enqueueQuestionGenerationTasks(f.build, types.KnowledgePostProcessPayload{TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: f.k.ID, Language: "en-US"}, types.QuestionGenerationConfig{Enabled: true, QuestionCount: 2}, 0, f.chunks))
+		require.Equal(
+			t,
+			1,
+			f.post.enqueueQuestionGenerationTasks(
+				f.build,
+				types.KnowledgePostProcessPayload{
+					TenantID:        7,
+					KnowledgeBaseID: "kb",
+					KnowledgeID:     f.k.ID,
+					Language:        "en-US",
+				},
+				types.QuestionGenerationConfig{Enabled: true, QuestionCount: 2},
+				0,
+				f.chunks,
+			),
+		)
 		require.NoError(t, f.s.ProcessQuestionGeneration(context.Background(), f.queue.tasks[len(f.queue.tasks)-1]))
 		require.Equal(t, 4, f.model.calls)
 		generated, e := f.s.RegenerateChunkQuestions(f.ctx, f.chunks[0].ID)
@@ -318,12 +541,46 @@ func runEnrichmentOriginalRoutes(t *testing.T, pg bool) {
 		f := newEnrichmentTestFixture(t, pg)
 		imageBytes := []byte("actual original parser image bytes")
 		d := sha256.Sum256(imageBytes)
-		actual, e := f.store.CaptureKnowledgeEnrichmentInputs(f.build, types.KnowledgeBuildInputCaptureRequest{TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: f.k.ID, ChunkIDs: []string{f.chunks[0].ID}})
+		actual, e := f.store.CaptureKnowledgeEnrichmentInputs(
+			f.build,
+			types.KnowledgeBuildInputCaptureRequest{
+				TenantID:        7,
+				KnowledgeBaseID: "kb",
+				KnowledgeID:     f.k.ID,
+				ChunkIDs:        []string{f.chunks[0].ID},
+			},
+		)
 		require.NoError(t, e)
-		p := types.ImageMultimodalPayload{OriginalInput: actual.Proof, TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: f.k.ID, ChunkID: f.chunks[0].ID, ImageURL: "local://actual.png", ImageDigest: hex.EncodeToString(d[:]), EnableOCR: true, EnableCaption: true, Language: "en-US"}
-		p.ProducerInput, e = f.store.AdmitKnowledgeProducerInput(f.build, actual.Proof, "image", imageProducerControls(p))
+		p := types.ImageMultimodalPayload{
+			OriginalInput:   actual.Proof,
+			TenantID:        7,
+			KnowledgeBaseID: "kb",
+			KnowledgeID:     f.k.ID,
+			ChunkID:         f.chunks[0].ID,
+			ImageURL:        "local://actual.png",
+			ImageDigest:     hex.EncodeToString(d[:]),
+			EnableOCR:       true,
+			EnableCaption:   true,
+			Language:        "en-US",
+		}
+		p.ProducerInput, e = f.store.AdmitKnowledgeProducerInput(
+			f.build,
+			actual.Proof,
+			"image",
+			imageProducerControls(p),
+		)
 		require.NoError(t, e)
-		svc := &ImageMultimodalService{knowledgeInputs: f.store, knowledgeRepo: f.s.repo, chunkService: f.s.chunkService, kbService: f.s.kbService, modelService: f.s.modelService, tenantRepo: f.s.tenantRepo, retrieveEngine: f.s.retrieveEngine, fileSvc: &enrichmentTestFiles{data: imageBytes}, taskEnqueuer: f.queue}
+		svc := &ImageMultimodalService{
+			knowledgeInputs: f.store,
+			knowledgeRepo:   f.s.repo,
+			chunkService:    f.s.chunkService,
+			kbService:       f.s.kbService,
+			modelService:    f.s.modelService,
+			tenantRepo:      f.s.tenantRepo,
+			retrieveEngine:  f.s.retrieveEngine,
+			fileSvc:         &enrichmentTestFiles{data: imageBytes},
+			taskEnqueuer:    f.queue,
+		}
 		require.NoError(t, svc.Handle(context.Background(), enrichmentTask(t, types.TypeImageMultimodal, p)))
 		require.Equal(t, 2, f.vision.calls)
 		children, e := f.s.chunkRepo.ListChunksByParentIDs(context.Background(), 7, []string{f.chunks[0].ID})
@@ -350,47 +607,149 @@ func runEnrichmentRejectedChanges(t *testing.T, pg bool) {
 		t.Run(mode, func(t *testing.T) {
 			f := newEnrichmentTestFixture(t, pg)
 			f.model.questions = true
-			require.Equal(t, 1, f.post.enqueueQuestionGenerationTasks(f.build, types.KnowledgePostProcessPayload{TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: f.k.ID, Language: "en-US"}, types.QuestionGenerationConfig{Enabled: true, QuestionCount: 2}, 0, f.chunks))
+			require.Equal(
+				t,
+				1,
+				f.post.enqueueQuestionGenerationTasks(
+					f.build,
+					types.KnowledgePostProcessPayload{
+						TenantID:        7,
+						KnowledgeBaseID: "kb",
+						KnowledgeID:     f.k.ID,
+						Language:        "en-US",
+					},
+					types.QuestionGenerationConfig{Enabled: true, QuestionCount: 2},
+					0,
+					f.chunks,
+				),
+			)
 			var p types.QuestionGenerationPayload
 			require.NoError(t, json.Unmarshal(f.queue.tasks[0].Payload(), &p))
 			mutate := func() {
 				switch mode {
 				case "body ABA":
-					require.NoError(t, f.db.Model(&types.Chunk{}).Where("id = ?", f.chunks[1].ID).Update("content", "changed neighbor body").Error)
-					require.NoError(t, f.db.Model(&types.Chunk{}).Where("id = ?", f.chunks[1].ID).Update("content", f.chunks[1].Content).Error)
+					require.NoError(
+						t,
+						f.db.Model(&types.Chunk{}).
+							Where("id = ?", f.chunks[1].ID).
+							Update("content", "changed neighbor body").
+							Error,
+					)
+					require.NoError(
+						t,
+						f.db.Model(&types.Chunk{}).
+							Where("id = ?", f.chunks[1].ID).
+							Update("content", f.chunks[1].Content).
+							Error,
+					)
 				case "metadata ABA":
-					require.NoError(t, f.db.Model(&types.Knowledge{}).Where("id = ?", f.k.ID).Update("custom_metadata", types.JSON(`{"project":"changed"}`)).Error)
-					require.NoError(t, f.db.Model(&types.Knowledge{}).Where("id = ?", f.k.ID).Update("custom_metadata", f.k.CustomMetadata).Error)
+					require.NoError(
+						t,
+						f.db.Model(&types.Knowledge{}).
+							Where("id = ?", f.k.ID).
+							Update("custom_metadata", types.JSON(`{"project":"changed"}`)).
+							Error,
+					)
+					require.NoError(
+						t,
+						f.db.Model(&types.Knowledge{}).
+							Where("id = ?", f.k.ID).
+							Update("custom_metadata", f.k.CustomMetadata).
+							Error,
+					)
 				case "neighbor ABA":
-					require.NoError(t, f.db.Model(&types.Chunk{}).Where("id = ?", f.chunks[0].ID).Update("next_chunk_id", "other").Error)
-					require.NoError(t, f.db.Model(&types.Chunk{}).Where("id = ?", f.chunks[0].ID).Update("next_chunk_id", f.chunks[0].NextChunkID).Error)
+					require.NoError(
+						t,
+						f.db.Model(&types.Chunk{}).
+							Where("id = ?", f.chunks[0].ID).
+							Update("next_chunk_id", "other").
+							Error,
+					)
+					require.NoError(
+						t,
+						f.db.Model(&types.Chunk{}).
+							Where("id = ?", f.chunks[0].ID).
+							Update("next_chunk_id", f.chunks[0].NextChunkID).
+							Error,
+					)
 				case "enable ABA":
-					require.NoError(t, f.db.Model(&types.Chunk{}).Where("id = ?", f.chunks[1].ID).Update("is_enabled", false).Error)
-					require.NoError(t, f.db.Model(&types.Chunk{}).Where("id = ?", f.chunks[1].ID).Update("is_enabled", true).Error)
+					require.NoError(
+						t,
+						f.db.Model(&types.Chunk{}).Where("id = ?", f.chunks[1].ID).Update("is_enabled", false).Error,
+					)
+					require.NoError(
+						t,
+						f.db.Model(&types.Chunk{}).Where("id = ?", f.chunks[1].ID).Update("is_enabled", true).Error,
+					)
 				case "config ABA":
-					require.NoError(t, f.db.Model(&types.KnowledgeBase{}).Where("id='kb'").Update("summary_model_id", "changed").Error)
-					require.NoError(t, f.db.Model(&types.KnowledgeBase{}).Where("id='kb'").Update("summary_model_id", "summary").Error)
+					require.NoError(
+						t,
+						f.db.Model(&types.KnowledgeBase{}).Where("id='kb'").Update("summary_model_id", "changed").Error,
+					)
+					require.NoError(
+						t,
+						f.db.Model(&types.KnowledgeBase{}).Where("id='kb'").Update("summary_model_id", "summary").Error,
+					)
 				case "model ABA":
 					require.NoError(t, f.db.Model(&types.Model{}).Where("id='summary'").Update("name", "changed").Error)
-					require.NoError(t, f.db.Model(&types.Model{}).Where("id='summary'").Update("name", "local summary").Error)
+					require.NoError(
+						t,
+						f.db.Model(&types.Model{}).Where("id='summary'").Update("name", "local summary").Error,
+					)
 				case "tenant routing ABA":
 					require.NoError(t, f.db.Model(&types.Tenant{}).Where("id=7").Update("status", "disabled").Error)
 					require.NoError(t, f.db.Model(&types.Tenant{}).Where("id=7").Update("status", "active").Error)
 				case "KB binding ABA":
-					require.NoError(t, f.db.Model(&types.KnowledgeBase{}).Where("id='kb'").Update("storage_backend_id", "other").Error)
-					require.NoError(t, f.db.Model(&types.KnowledgeBase{}).Where("id='kb'").Update("storage_backend_id", nil).Error)
+					require.NoError(
+						t,
+						f.db.Model(&types.KnowledgeBase{}).Where("id='kb'").Update("storage_backend_id", "other").Error,
+					)
+					require.NoError(
+						t,
+						f.db.Model(&types.KnowledgeBase{}).Where("id='kb'").Update("storage_backend_id", nil).Error,
+					)
 				case "generic summary ABA":
-					require.NoError(t, f.db.Model(&types.Knowledge{}).Where("id = ?", f.k.ID).Update("description", "unproved other summary").Error)
-					require.NoError(t, f.db.Model(&types.Knowledge{}).Where("id = ?", f.k.ID).Update("description", "").Error)
+					require.NoError(
+						t,
+						f.db.Model(&types.Knowledge{}).
+							Where("id = ?", f.k.ID).
+							Update("description", "unproved other summary").
+							Error,
+					)
+					require.NoError(
+						t,
+						f.db.Model(&types.Knowledge{}).Where("id = ?", f.k.ID).Update("description", "").Error,
+					)
 				case "generic questions ABA":
-					require.NoError(t, f.db.Model(&types.Chunk{}).Where("id = ?", f.chunks[1].ID).Update("metadata", types.JSON(`{"generated_questions":[{"id":"forged","question":"Cached unproved question"}]}`)).Error)
-					require.NoError(t, f.db.Model(&types.Chunk{}).Where("id = ?", f.chunks[1].ID).Update("metadata", types.JSON(`{}`)).Error)
+					require.NoError(
+						t,
+						f.db.Model(&types.Chunk{}).
+							Where("id = ?", f.chunks[1].ID).
+							Update("metadata", types.JSON(`{"generated_questions":[{"id":"forged","question":"Cached unproved question"}]}`)).
+							Error,
+					)
+					require.NoError(
+						t,
+						f.db.Model(&types.Chunk{}).
+							Where("id = ?", f.chunks[1].ID).
+							Update("metadata", types.JSON(`{}`)).
+							Error,
+					)
 				case "runtime template":
 					f.s.config.Conversation.GenerateQuestionsPrompt = "changed runtime prompt"
 				case "user revoked":
-					require.NoError(t, f.db.Model(&types.User{}).Where("id='enrich-human'").Update("is_active", false).Error)
+					require.NoError(
+						t,
+						f.db.Model(&types.User{}).Where("id='enrich-human'").Update("is_active", false).Error,
+					)
 				case "role revoked":
-					require.NoError(t, f.db.Model(&types.TenantMember{}).Where("user_id='enrich-human'").Update("role", types.TenantRoleViewer).Error)
+					require.NoError(
+						t,
+						f.db.Model(&types.TenantMember{}).
+							Where("user_id='enrich-human'").
+							Update("role", types.TenantRoleViewer).
+							Error,
+					)
 				}
 			}
 			ctx := context.Background()
@@ -438,10 +797,33 @@ func runEnrichmentRejectedChanges(t *testing.T, pg bool) {
 			f := newEnrichmentTestFixture(t, pg)
 			image := []byte("actual original image bytes")
 			d := sha256.Sum256(image)
-			actual, e := f.store.CaptureKnowledgeEnrichmentInputs(f.build, types.KnowledgeBuildInputCaptureRequest{TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: f.k.ID, ChunkIDs: []string{f.chunks[0].ID}})
+			actual, e := f.store.CaptureKnowledgeEnrichmentInputs(
+				f.build,
+				types.KnowledgeBuildInputCaptureRequest{
+					TenantID:        7,
+					KnowledgeBaseID: "kb",
+					KnowledgeID:     f.k.ID,
+					ChunkIDs:        []string{f.chunks[0].ID},
+				},
+			)
 			require.NoError(t, e)
-			p := types.ImageMultimodalPayload{OriginalInput: actual.Proof, TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: f.k.ID, ChunkID: f.chunks[0].ID, ImageURL: "local://actual.png", ImageDigest: hex.EncodeToString(d[:]), EnableOCR: true, EnableCaption: true}
-			p.ProducerInput, e = f.store.AdmitKnowledgeProducerInput(f.build, actual.Proof, "image", imageProducerControls(p))
+			p := types.ImageMultimodalPayload{
+				OriginalInput:   actual.Proof,
+				TenantID:        7,
+				KnowledgeBaseID: "kb",
+				KnowledgeID:     f.k.ID,
+				ChunkID:         f.chunks[0].ID,
+				ImageURL:        "local://actual.png",
+				ImageDigest:     hex.EncodeToString(d[:]),
+				EnableOCR:       true,
+				EnableCaption:   true,
+			}
+			p.ProducerInput, e = f.store.AdmitKnowledgeProducerInput(
+				f.build,
+				actual.Proof,
+				"image",
+				imageProducerControls(p),
+			)
 			require.NoError(t, e)
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
@@ -453,12 +835,25 @@ func runEnrichmentRejectedChanges(t *testing.T, pg bool) {
 				p.ImageSourceType = "scanned_pdf"
 			case "source revoke during OCR":
 				f.vision.beforeReturn = func() {
-					require.NoError(t, f.db.Model(&types.User{}).Where("id='enrich-human'").Update("is_active", false).Error)
+					require.NoError(
+						t,
+						f.db.Model(&types.User{}).Where("id='enrich-human'").Update("is_active", false).Error,
+					)
 				}
 			case "cancel during OCR":
 				f.vision.beforeReturn = cancel
 			}
-			svc := &ImageMultimodalService{knowledgeInputs: f.store, knowledgeRepo: f.s.repo, chunkService: f.s.chunkService, kbService: f.s.kbService, modelService: f.s.modelService, tenantRepo: f.s.tenantRepo, retrieveEngine: f.s.retrieveEngine, fileSvc: files, taskEnqueuer: f.queue}
+			svc := &ImageMultimodalService{
+				knowledgeInputs: f.store,
+				knowledgeRepo:   f.s.repo,
+				chunkService:    f.s.chunkService,
+				kbService:       f.s.kbService,
+				modelService:    f.s.modelService,
+				tenantRepo:      f.s.tenantRepo,
+				retrieveEngine:  f.s.retrieveEngine,
+				fileSvc:         files,
+				taskEnqueuer:    f.queue,
+			}
 			require.Error(t, svc.Handle(ctx, enrichmentTask(t, types.TypeImageMultimodal, p)))
 			if mode == "bytes mismatch" || mode == "image control forged" {
 				require.Zero(t, f.vision.calls)
@@ -466,16 +861,21 @@ func runEnrichmentRejectedChanges(t *testing.T, pg bool) {
 				require.Equal(t, 1, f.vision.calls)
 			}
 			var count int64
-			require.NoError(t, f.db.Model(&types.Chunk{}).Where("parent_chunk_id = ?", f.chunks[0].ID).Count(&count).Error)
+			require.NoError(
+				t,
+				f.db.Model(&types.Chunk{}).Where("parent_chunk_id = ?", f.chunks[0].ID).Count(&count).Error,
+			)
 			require.Zero(t, count)
 			require.Empty(t, f.engine.indexed)
 			require.Empty(t, f.queue.tasks)
 		})
 	}
 }
+
 func TestKnowledgeEnrichmentRejectedChangesSQLite(t *testing.T) {
 	runEnrichmentRejectedChanges(t, false)
 }
+
 func TestPostgresKnowledgeEnrichmentRejectedChanges(t *testing.T) {
 	runEnrichmentRejectedChanges(t, true)
 }
@@ -483,9 +883,27 @@ func TestPostgresKnowledgeEnrichmentRejectedChanges(t *testing.T) {
 func runEnrichmentCurrentWriters(t *testing.T, pg bool) {
 	t.Run("new actor regenerates original content after old actor revoked", func(t *testing.T) {
 		f := newEnrichmentTestFixture(t, pg)
-		require.NoError(t, f.db.Create(&types.User{ID: "new-writer", Username: "new-writer", Email: "new@example.test", IsActive: true}).Error)
-		require.NoError(t, f.db.Create(&types.TenantMember{TenantID: 7, UserID: "new-writer", Role: types.TenantRoleContributor, Status: types.TenantMemberStatusActive}).Error)
-		ctx := types.WithCaller(types.WithExecutionTenant(context.Background(), 7), types.Caller{TenantID: 7, UserID: "new-writer", Role: types.TenantRoleContributor})
+		require.NoError(
+			t,
+			f.db.Create(
+				&types.User{ID: "new-writer", Username: "new-writer", Email: "new@example.test", IsActive: true},
+			).Error,
+		)
+		require.NoError(
+			t,
+			f.db.Create(
+				&types.TenantMember{
+					TenantID: 7,
+					UserID:   "new-writer",
+					Role:     types.TenantRoleContributor,
+					Status:   types.TenantMemberStatusActive,
+				},
+			).Error,
+		)
+		ctx := types.WithCaller(
+			types.WithExecutionTenant(context.Background(), 7),
+			types.Caller{TenantID: 7, UserID: "new-writer", Role: types.TenantRoleContributor},
+		)
 		ctx = types.WithPrincipal(ctx, types.Principal{Type: types.PrincipalWebUser, ID: "new-writer"})
 		require.NoError(t, f.db.Model(&types.User{}).Where("id='enrich-human'").Update("is_active", false).Error)
 		require.NoError(t, f.s.RequestKnowledgeSummaryRefresh(ctx, f.k.ID))
@@ -508,11 +926,29 @@ func runEnrichmentCurrentWriters(t *testing.T, pg bool) {
 		t.Run(name, func(t *testing.T) {
 			f := newEnrichmentTestFixture(t, pg)
 			tenant := uint64(7)
-			key := &types.TenantAPIKey{TenantID: &tenant, ScopeType: types.APIKeyScopeTenant, Name: "local ingest fixture", KeyHash: "fixture-not-a-real-key", KnowledgeBaseIDs: types.StringArray{"kb"}, Capabilities: types.StringArray{string(types.APIKeyCapabilityIngest)}}
+			key := &types.TenantAPIKey{
+				TenantID:         &tenant,
+				ScopeType:        types.APIKeyScopeTenant,
+				Name:             "local ingest fixture",
+				KeyHash:          "fixture-not-a-real-key",
+				KnowledgeBaseIDs: types.StringArray{"kb"},
+				Capabilities:     types.StringArray{string(types.APIKeyCapabilityIngest)},
+			}
 			require.NoError(t, f.db.Create(key).Error)
-			ctx := types.WithCaller(types.WithExecutionTenant(context.Background(), 7), types.Caller{TenantID: 7, Role: types.TenantRoleViewer})
+			ctx := types.WithCaller(
+				types.WithExecutionTenant(context.Background(), 7),
+				types.Caller{TenantID: 7, Role: types.TenantRoleViewer},
+			)
 			ctx = types.WithPrincipal(ctx, types.Principal{Type: types.PrincipalAPITenant, ID: "7"})
-			ctx = types.WithTenantAPIKeyScope(ctx, types.TenantAPIKeyScope{KeyID: key.ID, ScopeType: key.ScopeType, KnowledgeBaseIDs: key.KnowledgeBaseIDs, Capabilities: key.Capabilities})
+			ctx = types.WithTenantAPIKeyScope(
+				ctx,
+				types.TenantAPIKeyScope{
+					KeyID:            key.ID,
+					ScopeType:        key.ScopeType,
+					KnowledgeBaseIDs: key.KnowledgeBaseIDs,
+					Capabilities:     key.Capabilities,
+				},
+			)
 			_, e := f.store.RefreshCurrentReadActor(ctx)
 			require.Error(t, e)
 			if revoke {

@@ -6,8 +6,10 @@ import (
 	"math"
 )
 
-var ErrVectorCandidateRetrievalUnavailable = errors.New("native vector candidate retrieval unavailable")
-var ErrVectorCandidateScope = errors.New("invalid native vector candidate scope")
+var (
+	ErrVectorCandidateRetrievalUnavailable = errors.New("native vector candidate retrieval unavailable")
+	ErrVectorCandidateScope                = errors.New("invalid native vector candidate scope")
+)
 
 // VectorCandidateParams is private server state. TenantID and both nonempty
 // selector sets must come from current authorized KB rows and owned-message
@@ -34,11 +36,13 @@ type VectorIndexCandidate struct {
 	Score           float64
 }
 
+// VectorCandidateResult contains metadata-only candidates returned by a selected vector backend.
 type VectorCandidateResult struct {
 	RetrieverEngineType RetrieverEngineType
 	Candidates          []*VectorIndexCandidate
 }
 
+// ValidateVectorCandidateParams checks trusted tenant scope and bounded vector candidate selectors.
 func ValidateVectorCandidateParams(ctx context.Context, p VectorCandidateParams) error {
 	tenant, ok := TenantIDFromContext(ctx)
 	if !ok || tenant != p.TenantID || p.TenantID == 0 || p.TenantID > math.MaxInt64 ||

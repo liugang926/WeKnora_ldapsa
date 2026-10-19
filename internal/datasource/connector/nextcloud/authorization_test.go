@@ -43,7 +43,7 @@ func TestAuthorizeCurrentFileUsesAuthenticatedSourceContract(t *testing.T) {
 			if r.Method != http.MethodGet {
 				t.Errorf("capabilities used %s", r.Method)
 			}
-			fmt.Fprint(w, `{"protocol_version":"1","instance_id":"instance-1"}`)
+			writeNextcloudTestResponse(t, w, `{"protocol_version":"1","instance_id":"instance-1"}`)
 		case apiPath + "/bindings/binding-1/authorize":
 			if r.Method != http.MethodPost {
 				t.Errorf("authorize used %s", r.Method)
@@ -67,10 +67,15 @@ func TestAuthorizeCurrentFileUsesAuthenticatedSourceContract(t *testing.T) {
 			if !hmac.Equal(mac.Sum(nil), mustDecodeHex(t, r.Header.Get("X-WeKnora-Signature"))) {
 				t.Error("authorization POST signature did not bind the raw body")
 			}
-			if payload["directory_id"] != "ad-1" || payload["object_guid"] != guid || payload["file_id"] != float64(42) {
+			if payload["directory_id"] != "ad-1" || payload["object_guid"] != guid ||
+				payload["file_id"] != float64(42) {
 				t.Errorf("unexpected payload: %#v", payload)
 			}
-			fmt.Fprint(w, `{"allow":true,"reason":"authorized","policy_revision":"rev-1","source_etag":"etag-42","checked_at":1780000000}`)
+			writeNextcloudTestResponse(
+				t,
+				w,
+				`{"allow":true,"reason":"authorized","policy_revision":"rev-1","source_etag":"etag-42","checked_at":1780000000}`,
+			)
 		default:
 			http.NotFound(w, r)
 		}
@@ -78,7 +83,8 @@ func TestAuthorizeCurrentFileUsesAuthenticatedSourceContract(t *testing.T) {
 	defer server.Close()
 	decision, err := AuthorizeCurrentFile(context.Background(), authorizationConfig(t, server.URL),
 		"instance-1", "binding-1", "ad-1", guid, 42)
-	if err != nil || !decision.Allow || decision.PolicyRevision != "rev-1" || decision.SourceETag != "etag-42" || requests != 2 {
+	if err != nil || !decision.Allow || decision.PolicyRevision != "rev-1" || decision.SourceETag != "etag-42" ||
+		requests != 2 {
 		t.Fatalf("decision=%+v err=%v requests=%d", decision, err, requests)
 	}
 }
@@ -107,13 +113,17 @@ func TestAuthorizeCurrentFileRejectsChangedInstanceAndBadResponses(t *testing.T)
 					if tc.instanceID != "" {
 						instanceID = tc.instanceID
 					}
-					fmt.Fprintf(w, `{"protocol_version":"1","instance_id":%q}`, instanceID)
+					writeNextcloudTestResponse(
+						t,
+						w,
+						fmt.Sprintf(`{"protocol_version":"1","instance_id":%q}`, instanceID),
+					)
 					return
 				}
 				if tc.statusCode != 0 {
 					w.WriteHeader(tc.statusCode)
 				}
-				fmt.Fprint(w, tc.response)
+				writeNextcloudTestResponse(t, w, tc.response)
 			}))
 			defer server.Close()
 			decision, err := AuthorizeCurrentFile(context.Background(), authorizationConfig(t, server.URL),
@@ -128,10 +138,14 @@ func TestAuthorizeCurrentFileRejectsChangedInstanceAndBadResponses(t *testing.T)
 func TestAuthorizeCurrentFilePreservesExplicitDeny(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == apiPath+"/capabilities" {
-			fmt.Fprint(w, `{"protocol_version":"1","instance_id":"instance-1"}`)
+			writeNextcloudTestResponse(t, w, `{"protocol_version":"1","instance_id":"instance-1"}`)
 			return
 		}
-		fmt.Fprint(w, `{"allow":false,"reason":"publication_withdrawn","policy_revision":null,"checked_at":1780000000}`)
+		writeNextcloudTestResponse(
+			t,
+			w,
+			`{"allow":false,"reason":"publication_withdrawn","policy_revision":null,"checked_at":1780000000}`,
+		)
 	}))
 	defer server.Close()
 	decision, err := AuthorizeCurrentFile(context.Background(), authorizationConfig(t, server.URL),

@@ -12,7 +12,10 @@ import (
 
 // RecheckKnowledgeOutputInputs checks the entire original output set in one
 // database snapshot. Per-row transactions cannot establish a coherent page.
-func (s *KnowledgeInputProvenanceStore) RecheckKnowledgeOutputInputs(ctx context.Context, proofs []*types.KnowledgeBuildInputProof) error {
+func (s *KnowledgeInputProvenanceStore) RecheckKnowledgeOutputInputs(
+	ctx context.Context,
+	proofs []*types.KnowledgeBuildInputProof,
+) error {
 	if ctx == nil || s == nil || s.db == nil {
 		return types.ErrSourceLineageUnknown
 	}
@@ -32,11 +35,15 @@ func (s *KnowledgeInputProvenanceStore) RecheckKnowledgeOutputInputs(ctx context
 	}
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		for _, proof := range proofs {
-			if proof == nil || proof.Projection != "" || proof.BodyDigest == "" || proof.SourceLineage.RequireComplete() != nil || len(proof.ChunkIDs) > 4096 {
+			if proof == nil || proof.Projection != "" || proof.BodyDigest == "" ||
+				proof.SourceLineage.RequireComplete() != nil ||
+				len(proof.ChunkIDs) > 4096 {
 				return types.ErrSourceLineageUnknown
 			}
 			var k types.Knowledge
-			if err := tx.Where("id = ? AND tenant_id = ? AND knowledge_base_id = ?", proof.KnowledgeID, proof.TenantID, proof.KnowledgeBaseID).Take(&k).Error; err != nil {
+			if err := tx.Where("id = ? AND tenant_id = ? AND knowledge_base_id = ?", proof.KnowledgeID, proof.TenantID, proof.KnowledgeBaseID).
+				Take(&k).
+				Error; err != nil {
 				return err
 			}
 			admission, _, _, err := s.admissionInTx(tx, &k, proof)
@@ -55,7 +62,9 @@ func (s *KnowledgeInputProvenanceStore) RecheckKnowledgeOutputInputs(ctx context
 					return ErrKnowledgeInputChanged
 				}
 				var chunk types.Chunk
-				if err := tx.Where("id = ? AND tenant_id = ? AND knowledge_base_id = ? AND knowledge_id = ?", id, k.TenantID, k.KnowledgeBaseID, k.ID).Take(&chunk).Error; err != nil {
+				if err := tx.Where("id = ? AND tenant_id = ? AND knowledge_base_id = ? AND knowledge_id = ?", id, k.TenantID, k.KnowledgeBaseID, k.ID).
+					Take(&chunk).
+					Error; err != nil {
 					return err
 				}
 				if err := verifyKnowledgeInputMaterial(tx, admission, &k, &chunk); err != nil {

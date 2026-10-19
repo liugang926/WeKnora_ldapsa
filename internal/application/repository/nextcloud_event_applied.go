@@ -86,7 +86,12 @@ func nextcloudChangeCursorID(raw, bindingID string) (int64, bool) {
 	return id, err == nil && id >= 0
 }
 
-func nextcloudDispatchPublicationProof(tx *gorm.DB, connection nextcloudEventConnection, appliedEventID, targetEventID int64, syncStartedAt time.Time) (nextcloudApplyProof, error) {
+func nextcloudDispatchPublicationProof(
+	tx *gorm.DB,
+	connection nextcloudEventConnection,
+	appliedEventID, targetEventID int64,
+	syncStartedAt time.Time,
+) (nextcloudApplyProof, error) {
 	var source types.DataSource
 	if err := tx.Select("last_sync_cursor").Where("id = ?", connection.DatasourceID).Take(&source).Error; err != nil {
 		return nextcloudApplyRetry, err
@@ -309,7 +314,8 @@ func nextcloudLatestHintBarriers(tx *gorm.DB, connection nextcloudEventConnectio
 // the current signed payload. Report them for manual review after the short
 // parser handoff window instead of retrying an impossible proof forever.
 func nextcloudHintRangeUnprovable(tx *gorm.DB, connectionID string,
-	appliedEventID, targetEventID int64) (bool, error) {
+	appliedEventID, targetEventID int64,
+) (bool, error) {
 	var broad int64
 	if err := tx.Table("nextcloud_event_inbox").Where(
 		"connection_id = ? AND event_id > ? AND event_id <= ? AND file_id IS NULL AND event_type NOT IN ?",
@@ -357,7 +363,8 @@ func nextcloudHintRangeUnprovable(tx *gorm.DB, connectionID string,
 }
 
 func nextcloudHintRangeNeedsTwoScans(tx *gorm.DB, connection nextcloudEventConnection,
-	appliedEventID, targetEventID int64) (bool, error) {
+	appliedEventID, targetEventID int64,
+) (bool, error) {
 	var count int64
 	if err := tx.Table("nextcloud_event_inbox").Where(
 		"connection_id = ? AND event_id > ? AND event_id <= ? AND event_type IN ?",

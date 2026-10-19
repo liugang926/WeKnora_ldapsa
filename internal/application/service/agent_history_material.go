@@ -22,7 +22,10 @@ type agentOriginalHistoryRepository struct {
 	rows []*types.Message
 }
 
-func (a messageLineageHistoryAdmission) OriginalHistoryRepository(ctx context.Context, sessionID string) (interfaces.MessageRepository, error) {
+func (a messageLineageHistoryAdmission) OriginalHistoryRepository(
+	ctx context.Context,
+	sessionID string,
+) (interfaces.MessageRepository, error) {
 	actual, ok := a.verifier.(*messageService)
 	if !ok || actual.materialStore == nil {
 		return nil, access.ErrNextcloudPublicationUnavailable
@@ -35,7 +38,17 @@ func (a messageLineageHistoryAdmission) OriginalHistoryRepository(ctx context.Co
 		return nil, access.ErrNextcloudPublicationDenied
 	}
 	exclude, _ := ctx.Value(agentHistoryCurrentRequestKey{}).(string)
-	rows, err := actual.admittedMessages(ctx, types.MessageMaterialReadRequest{TenantID: tenant, SessionID: sessionID, AllSession: true, CompletedOnly: true, ExcludeRequestID: exclude, IncludeOriginalUserFields: true})
+	rows, err := actual.admittedMessages(
+		ctx,
+		types.MessageMaterialReadRequest{
+			TenantID:                  tenant,
+			SessionID:                 sessionID,
+			AllSession:                true,
+			CompletedOnly:             true,
+			ExcludeRequestID:          exclude,
+			IncludeOriginalUserFields: true,
+		},
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -62,7 +75,10 @@ func (a messageLineageHistoryAdmission) OriginalHistoryRepository(ctx context.Co
 
 type agentHistoryCurrentRequestKey struct{}
 
-func (r agentOriginalHistoryRepository) GetLatestContextCheckpoint(ctx context.Context, sessionID string) (*types.Message, error) {
+func (r agentOriginalHistoryRepository) GetLatestContextCheckpoint(
+	ctx context.Context,
+	sessionID string,
+) (*types.Message, error) {
 	if err := CheckMessageMaterialOutputBoundary(ctx); err != nil {
 		return nil, err
 	}
@@ -71,13 +87,21 @@ func (r agentOriginalHistoryRepository) GetLatestContextCheckpoint(ctx context.C
 		if row.SessionID != sessionID || row.Role != "assistant" || row.ContextCheckpoint == nil {
 			continue
 		}
-		if newest == nil || row.CreatedAt.After(newest.CreatedAt) || row.CreatedAt.Equal(newest.CreatedAt) && row.ID > newest.ID {
+		if newest == nil || row.CreatedAt.After(newest.CreatedAt) ||
+			row.CreatedAt.Equal(newest.CreatedAt) && row.ID > newest.ID {
 			newest = row
 		}
 	}
 	return newest, nil
 }
-func (r agentOriginalHistoryRepository) ListMessagesBySessionBeforeCursor(ctx context.Context, sessionID string, before time.Time, beforeID string, limit int) ([]*types.Message, error) {
+
+func (r agentOriginalHistoryRepository) ListMessagesBySessionBeforeCursor(
+	ctx context.Context,
+	sessionID string,
+	before time.Time,
+	beforeID string,
+	limit int,
+) ([]*types.Message, error) {
 	if err := CheckMessageMaterialOutputBoundary(ctx); err != nil {
 		return nil, err
 	}
@@ -86,7 +110,8 @@ func (r agentOriginalHistoryRepository) ListMessagesBySessionBeforeCursor(ctx co
 		if row.SessionID != sessionID {
 			continue
 		}
-		if (!before.IsZero() || beforeID != "") && !(row.CreatedAt.Before(before) || row.CreatedAt.Equal(before) && row.ID < beforeID) {
+		if (!before.IsZero() || beforeID != "") &&
+			!(row.CreatedAt.Before(before) || row.CreatedAt.Equal(before) && row.ID < beforeID) {
 			continue
 		}
 		selected = append(selected, row)
@@ -103,7 +128,11 @@ func (r agentOriginalHistoryRepository) ListMessagesBySessionBeforeCursor(ctx co
 	return selected, nil
 }
 
-func admittedAgentSessionAttachments(ctx context.Context, verifier interfaces.MessageSourceLineageVerifier, sessionID string) (types.MessageAttachments, error) {
+func admittedAgentSessionAttachments(
+	ctx context.Context,
+	verifier interfaces.MessageSourceLineageVerifier,
+	sessionID string,
+) (types.MessageAttachments, error) {
 	actual, ok := verifier.(*messageService)
 	if !ok || actual.materialStore == nil {
 		return nil, access.ErrNextcloudPublicationUnavailable
@@ -113,7 +142,17 @@ func admittedAgentSessionAttachments(ctx context.Context, verifier interfaces.Me
 		return nil, access.ErrNextcloudPublicationDenied
 	}
 	exclude, _ := ctx.Value(agentHistoryCurrentRequestKey{}).(string)
-	rows, err := actual.admittedMessages(ctx, types.MessageMaterialReadRequest{TenantID: tenant, SessionID: sessionID, AllSession: true, CompletedOnly: true, ExcludeRequestID: exclude, IncludeOriginalUserFields: true})
+	rows, err := actual.admittedMessages(
+		ctx,
+		types.MessageMaterialReadRequest{
+			TenantID:                  tenant,
+			SessionID:                 sessionID,
+			AllSession:                true,
+			CompletedOnly:             true,
+			ExcludeRequestID:          exclude,
+			IncludeOriginalUserFields: true,
+		},
+	)
 	if err != nil {
 		return nil, err
 	}

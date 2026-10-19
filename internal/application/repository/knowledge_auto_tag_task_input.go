@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"encoding/json"
+
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -13,8 +14,14 @@ type autoTagActualTaskInput struct {
 	Payload types.KnowledgeAutoTagPayload
 }
 
-func (s *KnowledgeInputProvenanceStore) AdmitKnowledgeAutoTagTaskInput(ctx context.Context, p types.KnowledgeAutoTagPayload) (*types.KnowledgeAutoTagTaskInputProof, error) {
-	if p.TaskInput != nil || p.OriginalInput == nil || p.OriginalInput.BodyDigest == "" || p.TenantID != p.OriginalInput.TenantID || p.KnowledgeBaseID != p.OriginalInput.KnowledgeBaseID || p.KnowledgeID != p.OriginalInput.KnowledgeID {
+func (s *KnowledgeInputProvenanceStore) AdmitKnowledgeAutoTagTaskInput(
+	ctx context.Context,
+	p types.KnowledgeAutoTagPayload,
+) (*types.KnowledgeAutoTagTaskInputProof, error) {
+	if p.TaskInput != nil || p.OriginalInput == nil || p.OriginalInput.BodyDigest == "" ||
+		p.TenantID != p.OriginalInput.TenantID ||
+		p.KnowledgeBaseID != p.OriginalInput.KnowledgeBaseID ||
+		p.KnowledgeID != p.OriginalInput.KnowledgeID {
 		return nil, types.ErrSourceLineageUnknown
 	}
 	if err := s.RecheckKnowledgeBuildInputs(ctx, p.OriginalInput); err != nil {
@@ -35,7 +42,17 @@ func (s *KnowledgeInputProvenanceStore) AdmitKnowledgeAutoTagTaskInput(ctx conte
 	}
 	id := uuid.NewString()
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		actual, err := s.captureKnowledgeBuildSnapshotInTx(tx, types.KnowledgeBuildInputCaptureRequest{TenantID: p.TenantID, KnowledgeBaseID: p.KnowledgeBaseID, KnowledgeID: p.KnowledgeID, ChunkIDs: p.OriginalInput.ChunkIDs, Expected: p.OriginalInput}, true)
+		actual, err := s.captureKnowledgeBuildSnapshotInTx(
+			tx,
+			types.KnowledgeBuildInputCaptureRequest{
+				TenantID:        p.TenantID,
+				KnowledgeBaseID: p.KnowledgeBaseID,
+				KnowledgeID:     p.KnowledgeID,
+				ChunkIDs:        p.OriginalInput.ChunkIDs,
+				Expected:        p.OriginalInput,
+			},
+			true,
+		)
 		if err != nil {
 			return err
 		}
@@ -46,22 +63,44 @@ func (s *KnowledgeInputProvenanceStore) AdmitKnowledgeAutoTagTaskInput(ctx conte
 		if authority == nil || authority.db != tx {
 			return types.ErrSourceLineageUnknown
 		}
-		if _, err := authority.authorizeOriginalKnowledgeProducerWrite(ctx, actual.KnowledgeBase, p.OriginalInput); err != nil {
+		if _, err := authority.authorizeOriginalKnowledgeProducerWrite(
+			ctx,
+			actual.KnowledgeBase,
+			p.OriginalInput,
+		); err != nil {
 			return err
 		}
-		return tx.Create(&knowledgeAutoTagManifest{ManifestID: id, TenantID: p.TenantID, KnowledgeBaseID: p.KnowledgeBaseID, KnowledgeID: p.KnowledgeID, AdmissionID: p.OriginalInput.AdmissionID, InputDigest: digest, ActualInputs: string(data), SourceLineage: string(lineage)}).Error
+		return tx.Create(
+			&knowledgeAutoTagManifest{
+				ManifestID:      id,
+				TenantID:        p.TenantID,
+				KnowledgeBaseID: p.KnowledgeBaseID,
+				KnowledgeID:     p.KnowledgeID,
+				AdmissionID:     p.OriginalInput.AdmissionID,
+				InputDigest:     digest,
+				ActualInputs:    string(data),
+				SourceLineage:   string(lineage),
+			},
+		).Error
 	}, knowledgeDisplayWriteOptions(s.db))
 	if err != nil {
 		return nil, err
 	}
 	return &types.KnowledgeAutoTagTaskInputProof{ID: id, Digest: digest}, nil
 }
-func (s *KnowledgeInputProvenanceStore) VerifyKnowledgeAutoTagTaskInput(ctx context.Context, p types.KnowledgeAutoTagPayload) error {
+
+func (s *KnowledgeInputProvenanceStore) VerifyKnowledgeAutoTagTaskInput(
+	ctx context.Context,
+	p types.KnowledgeAutoTagPayload,
+) error {
 	if p.TaskInput == nil || p.OriginalInput == nil {
 		return types.ErrSourceLineageUnknown
 	}
 	var row knowledgeAutoTagManifest
-	if err := s.db.WithContext(ctx).Where("manifest_id = ? AND tenant_id = ? AND knowledge_base_id = ? AND knowledge_id = ? AND admission_id = ?", p.TaskInput.ID, p.TenantID, p.KnowledgeBaseID, p.KnowledgeID, p.OriginalInput.AdmissionID).Take(&row).Error; err != nil {
+	if err := s.db.WithContext(ctx).
+		Where("manifest_id = ? AND tenant_id = ? AND knowledge_base_id = ? AND knowledge_id = ? AND admission_id = ?", p.TaskInput.ID, p.TenantID, p.KnowledgeBaseID, p.KnowledgeID, p.OriginalInput.AdmissionID).
+		Take(&row).
+		Error; err != nil {
 		return err
 	}
 	if p.TaskInput.Digest != row.InputDigest {

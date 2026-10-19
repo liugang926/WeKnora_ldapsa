@@ -20,8 +20,15 @@ import (
 )
 
 // ListFAQEntries lists FAQ entries under a FAQ knowledge base.
-func (s *knowledgeService) ListFAQEntries(ctx context.Context,
-	kbID string, page *types.Pagination, tagUUIDs []string, legacyTagSeqID int64, keyword string, searchField string, sortOrder string,
+func (s *knowledgeService) ListFAQEntries(
+	ctx context.Context,
+	kbID string,
+	page *types.Pagination,
+	tagUUIDs []string,
+	legacyTagSeqID int64,
+	keyword string,
+	searchField string,
+	sortOrder string,
 	isEnabled *bool,
 ) (*types.PageResult, error) {
 	if page == nil {
@@ -68,7 +75,16 @@ func (s *knowledgeService) ListFAQEntries(ctx context.Context,
 
 	chunkType := []types.ChunkType{types.ChunkTypeFAQ}
 	chunks, total, err := s.chunkRepo.ListPagedChunksByKnowledgeID(
-		ctx, effectiveTenantID, faqKnowledge.ID, page, chunkType, tagUUIDs, keyword, searchField, sortOrder, types.KnowledgeTypeFAQ,
+		ctx,
+		effectiveTenantID,
+		faqKnowledge.ID,
+		page,
+		chunkType,
+		tagUUIDs,
+		keyword,
+		searchField,
+		sortOrder,
+		types.KnowledgeTypeFAQ,
 		isEnabled,
 	)
 	if err != nil {
@@ -467,7 +483,8 @@ func (s *knowledgeService) UpdateFAQEntry(ctx context.Context,
 		// 增量删除：只删除被移除的相似问索引
 		oldSimilarQuestionCount := len(oldSimilarQuestions)
 		newSimilarQuestionCount := len(meta.SimilarQuestions)
-		if questionIndexMode == types.FAQQuestionIndexModeSeparate && oldSimilarQuestionCount > newSimilarQuestionCount {
+		if questionIndexMode == types.FAQQuestionIndexModeSeparate &&
+			oldSimilarQuestionCount > newSimilarQuestionCount {
 			retrieveEngine, engineErr := retriever.CreateRetrieveEngineForKB(
 				ctx, s.retrieveEngine, s.ownership, types.MustTenantIDFromContext(ctx), kb.VectorStoreID)
 			if engineErr == nil {
@@ -476,8 +493,17 @@ func (s *knowledgeService) UpdateFAQEntry(ctx context.Context,
 					sourceIDsToDelete = append(sourceIDsToDelete, fmt.Sprintf("%s-%d", chunk.ID, i))
 				}
 				if len(sourceIDsToDelete) > 0 {
-					logger.Debugf(ctx, "UpdateFAQEntry: incremental delete %d obsolete source IDs", len(sourceIDsToDelete))
-					if delErr := retrieveEngine.DeleteBySourceIDList(ctx, sourceIDsToDelete, embeddingModel.GetDimensions(), types.KnowledgeTypeFAQ); delErr != nil {
+					logger.Debugf(
+						ctx,
+						"UpdateFAQEntry: incremental delete %d obsolete source IDs",
+						len(sourceIDsToDelete),
+					)
+					if delErr := retrieveEngine.DeleteBySourceIDList(
+						ctx,
+						sourceIDsToDelete,
+						embeddingModel.GetDimensions(),
+						types.KnowledgeTypeFAQ,
+					); delErr != nil {
 						logger.Warnf(ctx, "UpdateFAQEntry: failed to delete obsolete source IDs: %v", delErr)
 					}
 				}
@@ -485,7 +511,15 @@ func (s *knowledgeService) UpdateFAQEntry(ctx context.Context,
 		}
 
 		// 使用 needDelete=false，因为 EFPutDocument 会自动覆盖相同 SourceID 的文档
-		if err := s.indexFAQChunks(ctx, kb, faqKnowledge, []*types.Chunk{chunk}, embeddingModel, false, false); err != nil {
+		if err := s.indexFAQChunks(
+			ctx,
+			kb,
+			faqKnowledge,
+			[]*types.Chunk{chunk},
+			embeddingModel,
+			false,
+			false,
+		); err != nil {
 			return nil, err
 		}
 	}
@@ -533,7 +567,11 @@ func (s *knowledgeService) AddSimilarQuestions(ctx context.Context,
 		return nil, err
 	}
 
-	ctx, err = s.beginFAQInput(ctx, kb, types.FAQInputOperation{Kind: "similar", EntrySeqID: entrySeqID, Questions: questions})
+	ctx, err = s.beginFAQInput(
+		ctx,
+		kb,
+		types.FAQInputOperation{Kind: "similar", EntrySeqID: entrySeqID, Questions: questions},
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -652,7 +690,15 @@ func (s *knowledgeService) AddSimilarQuestions(ctx context.Context,
 		}
 	} else {
 		// Combined mode, re-index the whole entry
-		if err := s.indexFAQChunks(ctx, kb, faqKnowledge, []*types.Chunk{chunk}, embeddingModel, false, false); err != nil {
+		if err := s.indexFAQChunks(
+			ctx,
+			kb,
+			faqKnowledge,
+			[]*types.Chunk{chunk},
+			embeddingModel,
+			false,
+			false,
+		); err != nil {
 			return nil, err
 		}
 	}
@@ -1722,7 +1768,11 @@ func faqChunkQuestion(chunk *types.Chunk) string {
 	return strings.TrimSpace(chunk.Content)
 }
 
-func (s *knowledgeService) chunkToFAQEntry(chunk *types.Chunk, kb *types.KnowledgeBase, tagSeqIDMap map[string]int64) (*types.FAQEntry, error) {
+func (s *knowledgeService) chunkToFAQEntry(
+	chunk *types.Chunk,
+	kb *types.KnowledgeBase,
+	tagSeqIDMap map[string]int64,
+) (*types.FAQEntry, error) {
 	meta, err := chunk.FAQMetadata()
 	if err != nil {
 		return nil, err
@@ -1958,7 +2008,11 @@ func hashQuestion(question string) string {
 // resolveTagID resolves tag ID (UUID) from payload, prioritizing tag_id (seq_id) over tag_name
 // If no tag is specified, creates or finds the "未分类" tag
 // Returns the internal UUID of the tag
-func (s *knowledgeService) resolveTagID(ctx context.Context, kbID string, payload *types.FAQEntryPayload) (string, error) {
+func (s *knowledgeService) resolveTagID(
+	ctx context.Context,
+	kbID string,
+	payload *types.FAQEntryPayload,
+) (string, error) {
 	if s.faqInputs != nil {
 		return s.faqInputs.ResolveFAQInputTag(ctx, payload)
 	}

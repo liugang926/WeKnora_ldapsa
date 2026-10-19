@@ -26,20 +26,30 @@ type workerConfigurationQueryAudit struct {
 }
 
 func (a *workerConfigurationQueryAudit) LogMode(level logger.LogLevel) logger.Interface { return a }
-func (a *workerConfigurationQueryAudit) Trace(ctx context.Context, begin time.Time, query func() (string, int64), err error) {
+
+func (a *workerConfigurationQueryAudit) Trace(
+	ctx context.Context,
+	begin time.Time,
+	query func() (string, int64),
+	err error,
+) {
 	sql, _ := query()
 	lower := strings.ReplaceAll(strings.ToLower(sql), "`", "\"")
-	if !strings.HasPrefix(strings.TrimSpace(lower), "select") || !(strings.Contains(lower, `from "knowledge_bases"`) || strings.Contains(lower, "from knowledge_bases")) {
+	if !strings.HasPrefix(strings.TrimSpace(lower), "select") ||
+		!(strings.Contains(lower, `from "knowledge_bases"`) || strings.Contains(lower, "from knowledge_bases")) {
 		return
 	}
 	projection := strings.SplitN(lower, " from ", 2)[0]
 	if strings.Contains(projection, "count(") {
 		return
 	}
-	if strings.Contains(projection, "*") || strings.Contains(projection, "\"name\"") || strings.Contains(projection, "\"description\"") || strings.Contains(projection, "generated_profile") {
+	if strings.Contains(projection, "*") || strings.Contains(projection, "\"name\"") ||
+		strings.Contains(projection, "\"description\"") ||
+		strings.Contains(projection, "generated_profile") {
 		a.unrelatedReads.Add(1)
 	}
-	if strings.Contains(projection, "chunking_config") || strings.Contains(projection, "enrichment_templates") || strings.Contains(projection, "*") {
+	if strings.Contains(projection, "chunking_config") || strings.Contains(projection, "enrichment_templates") ||
+		strings.Contains(projection, "*") {
 		a.bodyReads.Add(1)
 	}
 }
@@ -67,8 +77,17 @@ func TestNextcloudWorkerConfigurationProjectionActualSQLite(t *testing.T) {
 	require.Zero(t, audit.unrelatedReads.Load(), "worker configuration queries never hydrate unrelated KB body columns")
 	_, err = bases.GetKnowledgeBaseByIDAndTenant(ctx, first.ID, 8)
 	require.Error(t, err)
-	require.ErrorIs(t, bases.UpdateKnowledgeBase(ctx, first), repository.ErrKnowledgeInputChanged, "partial config projection cannot clear unrelated fields through Save")
-	require.ErrorIs(t, m.f.store.UpdateKnowledgeBaseWithInput(repository.WithIndependentKnowledgeInput(ctx), first), repository.ErrKnowledgeInputChanged)
+	require.ErrorIs(
+		t,
+		bases.UpdateKnowledgeBase(ctx, first),
+		repository.ErrKnowledgeInputChanged,
+		"partial config projection cannot clear unrelated fields through Save",
+	)
+	require.ErrorIs(
+		t,
+		m.f.store.UpdateKnowledgeBaseWithInput(repository.WithIndependentKnowledgeInput(ctx), first),
+		repository.ErrKnowledgeInputChanged,
+	)
 	first.SummaryModelID = "mutated-primary-sync-control"
 	require.ErrorIs(t, repository.CheckScopedOnboardingConfigurationReads(ctx), repository.ErrKnowledgeInputChanged)
 	require.NotEqual(t, first.SummaryModelID, second.SummaryModelID)
@@ -94,7 +113,11 @@ func TestNextcloudSourceBoundConfigurationProjectionDenyBeforeBodyActualSQLite(t
 			row, err := repository.NewKnowledgeBaseRepository(m.f.db).GetKnowledgeBaseByID(ctx, m.ds.KnowledgeBaseID)
 			require.Error(t, err)
 			require.Nil(t, row)
-			require.Zero(t, audit.bodyReads.Load(), "current source deny/unknown is checked before target config body SELECT")
+			require.Zero(
+				t,
+				audit.bodyReads.Load(),
+				"current source deny/unknown is checked before target config body SELECT",
+			)
 			require.Zero(t, audit.unrelatedReads.Load())
 		})
 	}
@@ -119,9 +142,14 @@ func (b *workerRememberingBases) GetKnowledgeBaseByID(ctx context.Context, id st
 	}
 	return row, err
 }
-func (b *workerRememberingBases) GetKnowledgeBaseByIDOnly(ctx context.Context, id string) (*types.KnowledgeBase, error) {
+
+func (b *workerRememberingBases) GetKnowledgeBaseByIDOnly(
+	ctx context.Context,
+	id string,
+) (*types.KnowledgeBase, error) {
 	return b.GetKnowledgeBaseByID(ctx, id)
 }
+
 func (b *workerRememberingBases) lastProjection() *types.KnowledgeBase {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -134,10 +162,30 @@ type workerPerFileMutationService struct {
 	observed error
 }
 
-func (s *workerPerFileMutationService) CreateKnowledgeFromFile(ctx context.Context, kb string, file *multipart.FileHeader, metadata map[string]string, multimodal *bool, name string, tags []string, channel string, overrides *types.KnowledgeProcessOverrides) (*types.Knowledge, error) {
+func (s *workerPerFileMutationService) CreateKnowledgeFromFile(
+	ctx context.Context,
+	kb string,
+	file *multipart.FileHeader,
+	metadata map[string]string,
+	multimodal *bool,
+	name string,
+	tags []string,
+	channel string,
+	overrides *types.KnowledgeProcessOverrides,
+) (*types.Knowledge, error) {
 	s.bases.mutate.Store(true)
 	defer s.bases.mutate.Store(false)
-	row, err := s.KnowledgeService.CreateKnowledgeFromFile(ctx, kb, file, metadata, multimodal, name, tags, channel, overrides)
+	row, err := s.KnowledgeService.CreateKnowledgeFromFile(
+		ctx,
+		kb,
+		file,
+		metadata,
+		multimodal,
+		name,
+		tags,
+		channel,
+		overrides,
+	)
 	s.observed = err
 	return row, err
 }
@@ -151,12 +199,33 @@ func TestNextcloudWorkerPerFileProjectionMutationActualSQLite(t *testing.T) {
 	// The first actual ProcessSync projection remains intact. Only the later
 	// real CreateKnowledgeFromFile getter is changed. The production original
 	// fetched artifact, fields and immutable receipt/writer still run unchanged.
-	log := &types.SyncLog{ID: uuid.NewString(), DataSourceID: m.ds.ID, TenantID: 7, Status: types.SyncLogStatusRunning, StartedAt: time.Now().UTC()}
+	log := &types.SyncLog{
+		ID:           uuid.NewString(),
+		DataSourceID: m.ds.ID,
+		TenantID:     7,
+		Status:       types.SyncLogStatusRunning,
+		StartedAt:    time.Now().UTC(),
+	}
 	require.NoError(t, m.source.syncLogRepo.Create(context.Background(), log))
-	_ = m.source.ProcessSync(context.Background(), enrichmentTask(t, types.TypeDataSourceSync, types.DataSourceSyncPayload{DataSourceID: m.ds.ID, TenantID: 7, SyncLogID: log.ID, ForceFull: true}))
-	require.ErrorIs(t, mutating.observed, repository.ErrKnowledgeInputChanged, "later per-file pointers need their actual config digest, not only the first sync pointer")
+	_ = m.source.ProcessSync(
+		context.Background(),
+		enrichmentTask(
+			t,
+			types.TypeDataSourceSync,
+			types.DataSourceSyncPayload{DataSourceID: m.ds.ID, TenantID: 7, SyncLogID: log.ID, ForceFull: true},
+		),
+	)
+	require.ErrorIs(
+		t,
+		mutating.observed,
+		repository.ErrKnowledgeInputChanged,
+		"later per-file pointers need their actual config digest, not only the first sync pointer",
+	)
 	var count int64
-	require.NoError(t, m.f.db.Model(&types.Knowledge{}).Where("knowledge_base_id=?", m.ds.KnowledgeBaseID).Count(&count).Error)
+	require.NoError(
+		t,
+		m.f.db.Model(&types.Knowledge{}).Where("knowledge_base_id=?", m.ds.KnowledgeBaseID).Count(&count).Error,
+	)
 	require.Zero(t, count)
 	require.Zero(t, m.f.model.calls)
 }

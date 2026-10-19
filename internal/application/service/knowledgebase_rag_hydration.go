@@ -15,7 +15,11 @@ import (
 // ConfigureKnowledgeBaseRAGChunkHydration is wired by trusted DI. A missing
 // reader keeps result provenance unknown; it never certifies old text through
 // a current knowledge-ID lookup.
-func ConfigureKnowledgeBaseRAGChunkHydration(base interfaces.KnowledgeBaseService, reader interfaces.RAGChunkSnapshotReader, guard *access.NextcloudSourceLineageGuard) {
+func ConfigureKnowledgeBaseRAGChunkHydration(
+	base interfaces.KnowledgeBaseService,
+	reader interfaces.RAGChunkSnapshotReader,
+	guard *access.NextcloudSourceLineageGuard,
+) {
 	if impl, ok := base.(*knowledgeBaseService); ok {
 		impl.ragChunkSnapshots = reader
 		impl.ragChunkLineageGuard = guard
@@ -33,14 +37,22 @@ func WithRAGChunkReadScope(ctx context.Context, scope access.LineageReadScope) c
 // HydrateRAGChunkAugmentations is the parent/neighbor read boundary. It returns
 // fresh actual material while requiring the original document receipt. Old
 // history results with no receipt remain unknown rather than being restamped.
-func (s *knowledgeBaseService) HydrateRAGChunkAugmentations(ctx context.Context, original *types.SearchResult, ids []string) ([]types.RAGChunkInputSnapshot, error) {
+func (s *knowledgeBaseService) HydrateRAGChunkAugmentations(
+	ctx context.Context,
+	original *types.SearchResult,
+	ids []string,
+) ([]types.RAGChunkInputSnapshot, error) {
 	if original == nil || original.SourceLineage.RequireComplete() != nil {
 		return nil, types.ErrSourceLineageUnknown
 	}
 	if s.ragChunkSnapshots == nil {
 		return nil, access.ErrNextcloudPublicationUnavailable
 	}
-	knowledgeMap, err := s.fetchKnowledgeDataWithShared(ctx, types.MustTenantIDFromContext(ctx), []string{original.KnowledgeID})
+	knowledgeMap, err := s.fetchKnowledgeDataWithShared(
+		ctx,
+		types.MustTenantIDFromContext(ctx),
+		[]string{original.KnowledgeID},
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -78,8 +90,16 @@ func (s *knowledgeBaseService) HydrateRAGChunkAugmentations(ctx context.Context,
 	if err != nil {
 		return nil, err
 	}
-	rows, err := s.ragChunkSnapshots.HydrateRAGChunkSnapshots(ctx, []types.RAGChunkReadRequest{{TenantID: knowledge.TenantID,
-		KnowledgeBaseID: knowledge.KnowledgeBaseID, KnowledgeID: knowledge.ID, ChunkIDs: ids, Lease: lease, ExpectedLineage: original.SourceLineage}})
+	rows, err := s.ragChunkSnapshots.HydrateRAGChunkSnapshots(ctx, []types.RAGChunkReadRequest{
+		{
+			TenantID:        knowledge.TenantID,
+			KnowledgeBaseID: knowledge.KnowledgeBaseID,
+			KnowledgeID:     knowledge.ID,
+			ChunkIDs:        ids,
+			Lease:           lease,
+			ExpectedLineage: original.SourceLineage,
+		},
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -92,7 +112,10 @@ func (s *knowledgeBaseService) HydrateRAGChunkAugmentations(ctx context.Context,
 	return rows, nil
 }
 
-func (s *knowledgeBaseService) accountRAGInputSnapshots(ctx context.Context, snapshots []types.RAGChunkInputSnapshot) error {
+func (s *knowledgeBaseService) accountRAGInputSnapshots(
+	ctx context.Context,
+	snapshots []types.RAGChunkInputSnapshot,
+) error {
 	if len(snapshots) == 0 {
 		return nil
 	}
@@ -101,8 +124,10 @@ func (s *knowledgeBaseService) accountRAGInputSnapshots(ctx context.Context, sna
 	for _, snapshot := range snapshots {
 		inputs = append(inputs, snapshot.SourceLineage)
 		if snapshot.Knowledge != nil {
-			scope.Targets = append(scope.Targets, &types.SearchTarget{Type: types.SearchTargetTypeKnowledgeBase,
-				TenantID: snapshot.Knowledge.TenantID, KnowledgeBaseID: snapshot.Knowledge.KnowledgeBaseID})
+			scope.Targets = append(scope.Targets, &types.SearchTarget{
+				Type:     types.SearchTargetTypeKnowledgeBase,
+				TenantID: snapshot.Knowledge.TenantID, KnowledgeBaseID: snapshot.Knowledge.KnowledgeBaseID,
+			})
 		}
 	}
 	union, err := types.UnionSourceLineage(inputs...)
@@ -168,8 +193,14 @@ func (s *knowledgeBaseService) hydrateRAGSearchChunks(ctx context.Context, byKno
 		if err != nil {
 			return nil, nil, err
 		}
-		requests = append(requests, repository.RAGChunkReadRequest{TenantID: knowledge.TenantID,
-			KnowledgeBaseID: knowledge.KnowledgeBaseID, KnowledgeID: knowledge.ID, ChunkIDs: byKnowledge[id], Lease: lease, ExpectedLineage: expected[id]})
+		requests = append(requests, repository.RAGChunkReadRequest{
+			TenantID:        knowledge.TenantID,
+			KnowledgeBaseID: knowledge.KnowledgeBaseID,
+			KnowledgeID:     knowledge.ID,
+			ChunkIDs:        byKnowledge[id],
+			Lease:           lease,
+			ExpectedLineage: expected[id],
+		})
 	}
 	snapshots, err := s.ragChunkSnapshots.HydrateRAGChunkSnapshots(ctx, requests)
 	if err != nil {
@@ -236,7 +267,10 @@ func ragEnrichmentChunkScopes(chunks []*types.Chunk, wanted []string) map[string
 	return byKnowledge
 }
 
-func ragKnowledgeReceiptMap(chunks []*types.Chunk, lineages map[string]*types.SourceLineage) map[string]*types.SourceLineage {
+func ragKnowledgeReceiptMap(
+	chunks []*types.Chunk,
+	lineages map[string]*types.SourceLineage,
+) map[string]*types.SourceLineage {
 	byKnowledge := map[string]*types.SourceLineage{}
 	for _, chunk := range chunks {
 		prior, found := byKnowledge[chunk.KnowledgeID]

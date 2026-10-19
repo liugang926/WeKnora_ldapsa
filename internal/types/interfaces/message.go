@@ -101,7 +101,12 @@ type MessageRepository interface {
 		ctx context.Context, sessionID string, afterTime time.Time, limit int,
 	) ([]*types.Message, error)
 	// ListMessagesBySessionAfterCursor uses (created_at, id) for lossless paging.
-	ListMessagesBySessionAfterCursor(ctx context.Context, sessionID string, cursor types.MemoryMessageCursor, limit int) ([]*types.Message, error)
+	ListMessagesBySessionAfterCursor(
+		ctx context.Context,
+		sessionID string,
+		cursor types.MemoryMessageCursor,
+		limit int,
+	) ([]*types.Message, error)
 	// ListMessagesBySessionBeforeCursor pages a session backwards: up to limit
 	// messages sorting strictly before (before, beforeID), newest first. A zero
 	// cursor starts from the newest message.
@@ -145,7 +150,14 @@ type MessageRepository interface {
 	// SearchMessagesByKeyword searches messages by keyword across sessions for a tenant
 	// OwnedSessionIDs narrows a set of session ids to the ones this person owns.
 	OwnedSessionIDs(ctx context.Context, tenantID uint64, ownerID string, sessionIDs []string) (map[string]bool, error)
-	SearchMessagesByKeyword(ctx context.Context, tenantID uint64, ownerID, keyword string, sessionIDs []string, limit int) ([]*types.MessageWithSession, error)
+	SearchMessagesByKeyword(
+		ctx context.Context,
+		tenantID uint64,
+		ownerID,
+		keyword string,
+		sessionIDs []string,
+		limit int,
+	) ([]*types.MessageWithSession, error)
 	// GetMessagesByKnowledgeIDs retrieves messages by their associated Knowledge IDs
 	GetMessagesByKnowledgeIDs(ctx context.Context, knowledgeIDs []string) ([]*types.MessageWithSession, error)
 	// GetMessagesByRequestIDs retrieves messages by request ID inside one session

@@ -34,6 +34,7 @@ type secondaryMetadataKBs struct {
 func (s secondaryMetadataKBs) GetKnowledgeBaseByID(_ context.Context, id string) (*types.KnowledgeBase, error) {
 	return s.GetKnowledgeBaseByIDOnly(context.Background(), id)
 }
+
 func (s secondaryMetadataKBs) GetKnowledgeBaseByIDOnly(_ context.Context, id string) (*types.KnowledgeBase, error) {
 	for _, kb := range s.kbs {
 		if kb.ID == id {
@@ -42,19 +43,37 @@ func (s secondaryMetadataKBs) GetKnowledgeBaseByIDOnly(_ context.Context, id str
 	}
 	return nil, errors.New("missing KB")
 }
+
 func (s secondaryMetadataKBs) ListKnowledgeBases(context.Context) ([]*types.KnowledgeBase, error) {
 	return s.kbs, nil
 }
+
 func secondaryMetadataFixture() ([]*types.KnowledgeBase, *KnowledgeBaseHandler) {
 	kbs := []*types.KnowledgeBase{
 		{ID: "ordinary", TenantID: 7, Name: "Ordinary target", Type: types.KnowledgeBaseTypeDocument},
-		{ID: "source-marker", TenantID: 7, Name: "Retired source marker", Type: types.KnowledgeBaseTypeDocument, EverHadNextcloudSource: true},
-		{ID: "source-inventory", TenantID: 7, Name: "Source root private", Type: types.KnowledgeBaseTypeDocument, Description: "retired body"},
+		{
+			ID:                     "source-marker",
+			TenantID:               7,
+			Name:                   "Retired source marker",
+			Type:                   types.KnowledgeBaseTypeDocument,
+			EverHadNextcloudSource: true,
+		},
+		{
+			ID:          "source-inventory",
+			TenantID:    7,
+			Name:        "Source root private",
+			Type:        types.KnowledgeBaseTypeDocument,
+			Description: "retired body",
+		},
 		{ID: "inventory-offline", TenantID: 7, Name: "Unknown source private", Type: types.KnowledgeBaseTypeDocument},
 		{ID: "ordinary-target", TenantID: 7, Name: "Allowed ordinary target", Type: types.KnowledgeBaseTypeDocument},
 	}
-	return kbs, &KnowledgeBaseHandler{service: secondaryMetadataKBs{kbs: kbs}, dataSourceRepo: secondaryMetadataSources{}}
+	return kbs, &KnowledgeBaseHandler{
+		service:        secondaryMetadataKBs{kbs: kbs},
+		dataSourceRepo: secondaryMetadataSources{},
+	}
 }
+
 func TestNextcloudSecondaryMetadataMoveTargetsExcludeManagedSources(t *testing.T) {
 	_, h := secondaryMetadataFixture()
 	for _, sourceID := range []string{"ordinary", "source-inventory", "source-marker"} {
@@ -76,7 +95,11 @@ func TestNextcloudSecondaryMetadataMoveTargetsExcludeManagedSources(t *testing.T
 
 type secondaryMetadataShares struct{ organizationGroupShareStub }
 
-func (secondaryMetadataShares) ListSharedKnowledgeBaseIDsByOrganizations(context.Context, []string, uint64) (map[string][]string, error) {
+func (secondaryMetadataShares) ListSharedKnowledgeBaseIDsByOrganizations(
+	context.Context,
+	[]string,
+	uint64,
+) (map[string][]string, error) {
 	return map[string][]string{"org-1": {"ordinary", "source-marker", "source-inventory", "inventory-offline"}}, nil
 }
 
@@ -87,9 +110,16 @@ type secondaryMetadataAgents struct {
 func (secondaryMetadataAgents) CountByOrganizations(context.Context, []string) (map[string]int64, error) {
 	return map[string]int64{}, nil
 }
-func (secondaryMetadataAgents) ListSharedAgentsInOrganizations(context.Context, []string, uint64, types.TenantRole) (map[string][]*types.OrganizationSharedAgentItem, error) {
+
+func (secondaryMetadataAgents) ListSharedAgentsInOrganizations(
+	context.Context,
+	[]string,
+	uint64,
+	types.TenantRole,
+) (map[string][]*types.OrganizationSharedAgentItem, error) {
 	return map[string][]*types.OrganizationSharedAgentItem{}, nil
 }
+
 func TestNextcloudSecondaryMetadataSharedListsAndCountsExcludeManagedSources(t *testing.T) {
 	kbs, kbHandler := secondaryMetadataFixture()
 	shares := secondaryMetadataShares{}
@@ -98,7 +128,12 @@ func TestNextcloudSecondaryMetadataSharedListsAndCountsExcludeManagedSources(t *
 		shares.shared = append(shares.shared, info)
 		shares.inOrg = append(shares.inOrg, &types.OrganizationSharedKnowledgeBaseItem{SharedKnowledgeBaseInfo: *info})
 	}
-	h := &OrganizationHandler{orgService: organizationGroupOrgStub{}, shareService: shares, agentShareService: secondaryMetadataAgents{}, kbService: secondaryMetadataKBs{kbs: kbs}}
+	h := &OrganizationHandler{
+		orgService:        organizationGroupOrgStub{},
+		shareService:      shares,
+		agentShareService: secondaryMetadataAgents{},
+		kbService:         secondaryMetadataKBs{kbs: kbs},
+	}
 	ConfigureOrganizationSourceMetadataGuard(h, kbHandler)
 	for _, invoke := range []func(*gin.Context){h.ListSharedKnowledgeBases, h.ListOrganizationSharedKnowledgeBases} {
 		c, w := newOrganizationGroupContext(t)

@@ -223,7 +223,15 @@ func (s *groupAccessService) ListEffectiveTenantRoles(
 		}
 		for _, match := range matches {
 			if !seen[match.TenantID] {
-				roles = append(roles, types.EffectiveTenantRole{TenantID: match.TenantID, Member: true, Role: types.TenantRoleViewer, ScopedOnly: true})
+				roles = append(
+					roles,
+					types.EffectiveTenantRole{
+						TenantID:   match.TenantID,
+						Member:     true,
+						Role:       types.TenantRoleViewer,
+						ScopedOnly: true,
+					},
+				)
 				seen[match.TenantID] = true
 			}
 		}
@@ -364,7 +372,11 @@ func (s *groupAccessService) EffectivePermission(
 				return types.EffectiveResourcePermission{}, err
 			}
 			if managed {
-				return types.EffectiveResourcePermission{Action: action, Mode: types.ResourceAccessRestricted, Reason: "nextcloud_directory_disabled"}, nil
+				return types.EffectiveResourcePermission{
+					Action: action,
+					Mode:   types.ResourceAccessRestricted,
+					Reason: "nextcloud_directory_disabled",
+				}, nil
 			}
 		}
 		return types.EffectiveResourcePermission{
@@ -420,7 +432,8 @@ func (s *groupAccessService) effectivePermissionWithMode(
 			if err != nil {
 				return result, err
 			}
-			if role.ScopedOnly && (mode == types.ResourceAccessInherit || resourceType != types.GroupResourceTypeKnowledgeBase || action != types.ResourceActionRead) {
+			if role.ScopedOnly &&
+				(mode == types.ResourceAccessInherit || resourceType != types.GroupResourceTypeKnowledgeBase || action != types.ResourceActionRead) {
 				result.Reason = "scoped_knowledge_base_only"
 				return result, nil
 			}
@@ -506,7 +519,8 @@ func (s *groupAccessService) effectivePermissionWithMode(
 		result.Reason = "management_requires_owner_or_admin"
 		return result, nil
 	}
-	if s.nextcloudScopes != nil && resourceType == types.GroupResourceTypeKnowledgeBase && action == types.ResourceActionRead {
+	if s.nextcloudScopes != nil && resourceType == types.GroupResourceTypeKnowledgeBase &&
+		action == types.ResourceActionRead {
 		matches, err := s.nextcloudScopes.ScopedMatches(ctx, caller.UserID, tenantID, resourceID, now)
 		if err != nil {
 			return result, err

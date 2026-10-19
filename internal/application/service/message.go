@@ -263,7 +263,15 @@ func (s *messageService) GetMessage(ctx context.Context, sessionID string, messa
 
 	if s.materialStore != nil {
 		_, model := ctx.Value(agentHistoryCurrentRequestKey{}).(string)
-		rows, err := s.admittedMessages(ctx, types.MessageMaterialReadRequest{TenantID: tenantID, SessionID: sessionID, MessageIDs: []string{messageID}, IncludeOriginalUserFields: model})
+		rows, err := s.admittedMessages(
+			ctx,
+			types.MessageMaterialReadRequest{
+				TenantID:                  tenantID,
+				SessionID:                 sessionID,
+				MessageIDs:                []string{messageID},
+				IncludeOriginalUserFields: model,
+			},
+		)
 		if err != nil {
 			return nil, err
 		}
@@ -292,7 +300,10 @@ func (s *messageService) GetMessage(ctx context.Context, sessionID string, messa
 // GetMessageForControl is an owner-only metadata lookup used to stop or steer
 // a running turn. It never returns saved content, tool outputs or references,
 // and does not require permission to read content that may have been revoked.
-func (s *messageService) GetMessageForControl(ctx context.Context, sessionID, messageID string) (*types.Message, error) {
+func (s *messageService) GetMessageForControl(
+	ctx context.Context,
+	sessionID, messageID string,
+) (*types.Message, error) {
 	if s.materialStore != nil {
 		return s.materialStore.MessageOwnedControlMetadata(ctx, sessionID, messageID)
 	}
@@ -315,7 +326,15 @@ func (s *messageService) GetMessageForControl(ctx context.Context, sessionID, me
 	if message == nil || message.ID != messageID || message.SessionID != sessionID {
 		return nil, access.ErrNextcloudPublicationDenied
 	}
-	return &types.Message{ID: message.ID, SessionID: message.SessionID, RequestID: message.RequestID, Role: message.Role, IsCompleted: message.IsCompleted, AgentID: message.AgentID, AgentTenantID: message.AgentTenantID}, nil
+	return &types.Message{
+		ID:            message.ID,
+		SessionID:     message.SessionID,
+		RequestID:     message.RequestID,
+		Role:          message.Role,
+		IsCompleted:   message.IsCompleted,
+		AgentID:       message.AgentID,
+		AgentTenantID: message.AgentTenantID,
+	}, nil
 }
 
 // GetMessageForStream is private to the guarded SSE sender. Public saved
@@ -516,7 +535,11 @@ func (s *messageService) UpdateMessage(ctx context.Context, message *types.Messa
 }
 
 // UpdateMessageImages updates only the images JSONB column for a message.
-func (s *messageService) UpdateMessageImages(ctx context.Context, sessionID, messageID string, images types.MessageImages) error {
+func (s *messageService) UpdateMessageImages(
+	ctx context.Context,
+	sessionID, messageID string,
+	images types.MessageImages,
+) error {
 	marked, actual, err := s.actualGeneratedMessageFieldContext(ctx, sessionID, messageID, "images", images)
 	if err != nil {
 		return err
@@ -531,8 +554,18 @@ func (s *messageService) UpdateMessageImages(ctx context.Context, sessionID, mes
 }
 
 // UpdateMessageRenderedContent updates the rendered_content column for a user message.
-func (s *messageService) UpdateMessageRenderedContent(ctx context.Context, sessionID, messageID string, renderedContent string) error {
-	marked, actual, err := s.actualGeneratedMessageFieldContext(ctx, sessionID, messageID, "rendered_content", renderedContent)
+func (s *messageService) UpdateMessageRenderedContent(
+	ctx context.Context,
+	sessionID, messageID string,
+	renderedContent string,
+) error {
+	marked, actual, err := s.actualGeneratedMessageFieldContext(
+		ctx,
+		sessionID,
+		messageID,
+		"rendered_content",
+		renderedContent,
+	)
 	if err != nil {
 		return err
 	}
@@ -732,9 +765,12 @@ func (s *messageService) IndexMessageToKB(ctx context.Context, _ string, _ strin
 	}}); err != nil {
 		return
 	}
-	result, err := writer.CreateCommittedHistoryKnowledgeInput(grant.Context(ctx), types.CommittedHistoryKnowledgeInputRequest{
-		TenantID: tenantID, KnowledgeBaseID: kb.ID, SessionID: sessionID, AssistantMessageID: messageID,
-	})
+	result, err := writer.CreateCommittedHistoryKnowledgeInput(
+		grant.Context(ctx),
+		types.CommittedHistoryKnowledgeInputRequest{
+			TenantID: tenantID, KnowledgeBaseID: kb.ID, SessionID: sessionID, AssistantMessageID: messageID,
+		},
+	)
 	if err != nil {
 		logger.Warnf(ctx, "Failed to index message to chat history KB: %v", err)
 		return
@@ -742,7 +778,12 @@ func (s *messageService) IndexMessageToKB(ctx context.Context, _ string, _ strin
 	if result == nil || result.Knowledge == nil {
 		return
 	}
-	logger.Infof(ctx, "Message indexed to chat history KB: knowledge_id=%s, message_id=%s", result.Knowledge.ID, messageID)
+	logger.Infof(
+		ctx,
+		"Message indexed to chat history KB: knowledge_id=%s, message_id=%s",
+		result.Knowledge.ID,
+		messageID,
+	)
 }
 
 // describeChatHistorySkip reports which chat-history precondition is missing,
@@ -925,14 +966,18 @@ func normalizeArtifactFileTypes(in []string) []string {
 // SearchMessages searches the authenticated person's owned conversations.
 // Native vector candidates are admitted through original message and child
 // guards before hydration or reranking, under the configured history KB.
-func (s *messageService) SearchMessages(ctx context.Context, params *types.MessageSearchParams) (*types.MessageSearchResult, error) {
+func (s *messageService) SearchMessages(
+	ctx context.Context,
+	params *types.MessageSearchParams,
+) (*types.MessageSearchResult, error) {
 	if params == nil || params.Query == "" {
 		return nil, access.ErrNextcloudPublicationDenied
 	}
 	if params.Mode == "" {
 		params.Mode = types.MessageSearchModeHybrid
 	}
-	if params.Mode != types.MessageSearchModeKeyword && params.Mode != types.MessageSearchModeVector && params.Mode != types.MessageSearchModeHybrid {
+	if params.Mode != types.MessageSearchModeKeyword && params.Mode != types.MessageSearchModeVector &&
+		params.Mode != types.MessageSearchModeHybrid {
 		return nil, access.ErrNextcloudPublicationDenied
 	}
 	if params.Mode == types.MessageSearchModeVector && params.Cursor != "" {
@@ -987,7 +1032,8 @@ func (s *messageService) SearchMessages(ctx context.Context, params *types.Messa
 	}
 
 	// Step 2: Vector search via chat history knowledge base (if configured)
-	if params.Cursor == "" && (params.Mode == types.MessageSearchModeVector || params.Mode == types.MessageSearchModeHybrid) {
+	if params.Cursor == "" &&
+		(params.Mode == types.MessageSearchModeVector || params.Mode == types.MessageSearchModeHybrid) {
 		var vectorPairs map[string][]*types.Message
 		vectorResults, vectorPairs, err = s.vectorSearchViaKB(ctx, params)
 		for key, rows := range vectorPairs {
@@ -1064,7 +1110,7 @@ func (s *messageService) filterHistoricalSearchPairs(
 		if item == nil || item.Role != "assistant" {
 			continue
 		}
-		if err := s.CheckMessagePublication(ctx, &item.MessageWithSession.Message); err != nil {
+		if err := s.CheckMessagePublication(ctx, &item.Message); err != nil {
 			if !errors.Is(err, access.ErrNextcloudPublicationDenied) {
 				return nil, err
 			}
@@ -1085,7 +1131,11 @@ func (s *messageService) filterHistoricalSearchPairs(
 				if s.sourceLineageGuard == nil {
 					return nil, access.ErrNextcloudPublicationUnavailable
 				}
-				if err := s.sourceLineageGuard.Check(ctx, item.SessionTitleSourceLineage, access.LineageReadScope{}); err != nil {
+				if err := s.sourceLineageGuard.Check(
+					ctx,
+					item.SessionTitleSourceLineage,
+					access.LineageReadScope{},
+				); err != nil {
 					if !errors.Is(err, access.ErrNextcloudPublicationDenied) {
 						return nil, err
 					}
@@ -1093,10 +1143,10 @@ func (s *messageService) filterHistoricalSearchPairs(
 				}
 			}
 			if item.Role == "user" {
-				item.MessageWithSession.Message = *rawUserContentOnly([]*types.Message{&item.MessageWithSession.Message})[0]
+				item.Message = *rawUserContentOnly([]*types.Message{&item.Message})[0]
 			}
 			filtered = append(filtered, item)
-			batchMessages = append(batchMessages, &item.MessageWithSession.Message)
+			batchMessages = append(batchMessages, &item.Message)
 			if item.SessionTitle != "" && item.SessionTitleSourceLineage.RequireComplete() == nil {
 				batchTitles = append(batchTitles, access.SourceLineageRead{Lineage: item.SessionTitleSourceLineage})
 			}
@@ -1149,13 +1199,21 @@ func (s *messageService) restrictToOwnedSessions(
 
 // vectorSearchViaKB discovers native metadata candidates, admits their actual
 // original message inputs and child bodies, then rechecks each model boundary.
-func (s *messageService) vectorSearchViaKB(ctx context.Context, params *types.MessageSearchParams) ([]*types.MessageSearchResultItem, map[string][]*types.Message, error) {
+func (s *messageService) vectorSearchViaKB(
+	ctx context.Context,
+	params *types.MessageSearchParams,
+) ([]*types.MessageSearchResultItem, map[string][]*types.Message, error) {
 	cfg := s.getChatHistoryConfig(ctx)
 	if cfg == nil {
 		return nil, nil, nil // Chat history KB not configured, skip vector search
 	}
 
-	items, pairs, err := s.searchHistoryVectorViaNativeBridge(ctx, params, cfg.KnowledgeBaseID, s.getRetrievalConfig(ctx))
+	items, pairs, err := s.searchHistoryVectorViaNativeBridge(
+		ctx,
+		params,
+		cfg.KnowledgeBaseID,
+		s.getRetrievalConfig(ctx),
+	)
 	if err != nil {
 		return nil, nil, apperrors.NewProtocolError(
 			fmt.Errorf("KB hybrid search failed: %w", err),
@@ -1179,7 +1237,10 @@ func convertKeywordResults(results []*types.MessageWithSession) []*types.Message
 }
 
 // rrfMerge merges keyword and vector search results using Reciprocal Rank Fusion (RRF)
-func rrfMerge(keywordResults []*types.MessageWithSession, vectorResults []*types.MessageSearchResultItem) []*types.MessageSearchResultItem {
+func rrfMerge(
+	keywordResults []*types.MessageWithSession,
+	vectorResults []*types.MessageSearchResultItem,
+) []*types.MessageSearchResultItem {
 	const k = 60.0
 
 	type scoredMsg struct {
@@ -1238,7 +1299,10 @@ func rrfMerge(keywordResults []*types.MessageWithSession, vectorResults []*types
 // fetchPartnerMessages looks at the search results and, for each request_id that
 // has only one role (Q-only or A-only), fetches the partner message from DB so
 // that groupByRequestID can produce complete Q&A pairs.
-func (s *messageService) fetchPartnerMessages(ctx context.Context, items []*types.MessageSearchResultItem) []*types.MessageSearchResultItem {
+func (s *messageService) fetchPartnerMessages(
+	ctx context.Context,
+	items []*types.MessageSearchResultItem,
+) []*types.MessageSearchResultItem {
 	// Collect request_ids and track which roles we already have
 	type roleSet struct {
 		hasUser      bool
@@ -1339,7 +1403,7 @@ func groupByRequestID(items []*types.MessageSearchResultItem) []*types.MessageSe
 		// Assign content based on role
 		switch item.Role {
 		case "user":
-			g.users = append(g.users, &item.MessageWithSession.Message)
+			g.users = append(g.users, &item.Message)
 		case "assistant":
 			g.item.AnswerContent = item.Content
 		}

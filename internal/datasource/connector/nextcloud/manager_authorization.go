@@ -16,10 +16,12 @@ import (
 	"github.com/Tencent/WeKnora/internal/types"
 )
 
-var ErrManagerAuthorizationDenied = errors.New("Nextcloud manager authorization denied")
-var ErrManagerAuthorizationUnavailable = errors.New("Nextcloud manager authorization unavailable")
-var managerSHA256Pattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
-var managerControlIDPattern = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,256}$`)
+var (
+	ErrManagerAuthorizationDenied      = errors.New("Nextcloud manager authorization denied")
+	ErrManagerAuthorizationUnavailable = errors.New("Nextcloud manager authorization unavailable")
+	managerSHA256Pattern               = regexp.MustCompile(`^[0-9a-f]{64}$`)
+	managerControlIDPattern            = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,256}$`)
+)
 
 // ManagerAuthorizationScope is the exact immutable WK manager purpose scope.
 // This endpoint proves management only; it never grants file READ or a WK role.
@@ -47,6 +49,7 @@ func managerNonnegativeInteger(value string) bool {
 	n, err := strconv.ParseUint(value, 10, 64)
 	return err == nil && strconv.FormatUint(n, 10) == value
 }
+
 func managerPositiveInteger(value string) bool {
 	return value != "0" && managerNonnegativeInteger(value)
 }
@@ -54,13 +57,29 @@ func managerPositiveInteger(value string) bool {
 // AuthorizeCurrentManager performs a new signed request on every invocation.
 // Explicit, fully bound 403 is denied; transport, stale/malformed echoes and
 // missing capabilities are unavailable, never an implicit allow or empty read.
-func AuthorizeCurrentManager(ctx context.Context, source *types.DataSourceConfig, binding string, scope ManagerAuthorizationScope) (ManagerAuthorizationDecision, error) {
+func AuthorizeCurrentManager(
+	ctx context.Context,
+	source *types.DataSourceConfig,
+	binding string,
+	scope ManagerAuthorizationScope,
+) (ManagerAuthorizationDecision, error) {
 	unavailable := func() (ManagerAuthorizationDecision, error) {
 		return ManagerAuthorizationDecision{}, ErrManagerAuthorizationUnavailable
 	}
-	if ctx == nil || source == nil || source.Type != types.ConnectorTypeNextcloud || !validBindingID(binding) || len(binding) > 128 || len(source.ResourceIDs) != 1 || source.ResourceIDs[0] != binding ||
-		!managerControlIDPattern.MatchString(scope.InstanceID) || !managerControlIDPattern.MatchString(scope.OperationID) || !managerPositiveInteger(scope.TenantID) || !managerControlIDPattern.MatchString(scope.KnowledgeBaseID) || !managerControlIDPattern.MatchString(scope.DataSourceID) || !managerControlIDPattern.MatchString(scope.ProcessingTemplateID) ||
-		!authorizationDirectoryIDPattern.MatchString(scope.DirectoryID) || !authorizationGUIDPattern.MatchString(scope.ObjectGUID) || scope.ObjectGUID != strings.ToLower(scope.ObjectGUID) || !managerSHA256Pattern.MatchString(scope.PurposeSHA256) {
+	if ctx == nil || source == nil || source.Type != types.ConnectorTypeNextcloud || !validBindingID(binding) ||
+		len(binding) > 128 ||
+		len(source.ResourceIDs) != 1 ||
+		source.ResourceIDs[0] != binding ||
+		!managerControlIDPattern.MatchString(scope.InstanceID) ||
+		!managerControlIDPattern.MatchString(scope.OperationID) ||
+		!managerPositiveInteger(scope.TenantID) ||
+		!managerControlIDPattern.MatchString(scope.KnowledgeBaseID) ||
+		!managerControlIDPattern.MatchString(scope.DataSourceID) ||
+		!managerControlIDPattern.MatchString(scope.ProcessingTemplateID) ||
+		!authorizationDirectoryIDPattern.MatchString(scope.DirectoryID) ||
+		!authorizationGUIDPattern.MatchString(scope.ObjectGUID) ||
+		scope.ObjectGUID != strings.ToLower(scope.ObjectGUID) ||
+		!managerSHA256Pattern.MatchString(scope.PurposeSHA256) {
 		return unavailable()
 	}
 	cfg, err := parseConfig(source)
@@ -78,7 +97,12 @@ func AuthorizeCurrentManager(ctx context.Context, source *types.DataSourceConfig
 	if err != nil {
 		return unavailable()
 	}
-	req, err := http.NewRequestWithContext(bounded, http.MethodPost, cli.endpointURL("/bindings/"+binding+"/authorize-manager", nil), bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(
+		bounded,
+		http.MethodPost,
+		cli.endpointURL("/bindings/"+binding+"/authorize-manager", nil),
+		bytes.NewReader(body),
+	)
 	if err != nil {
 		return unavailable()
 	}
@@ -114,7 +138,10 @@ func AuthorizeCurrentManager(ctx context.Context, source *types.DataSourceConfig
 		PolicyRevision   string `json:"policy_revision"`
 		CheckedAt        int64  `json:"checked_at"`
 	}
-	if json.Unmarshal(raw, &wire) != nil || wire.Allow == nil || wire.ManagerAuthorizationScope != scope || wire.BindingID != binding || wire.CheckedAt < time.Now().Add(-10*time.Second).Unix() || wire.CheckedAt > time.Now().Add(5*time.Second).Unix() {
+	if json.Unmarshal(raw, &wire) != nil || wire.Allow == nil || wire.ManagerAuthorizationScope != scope ||
+		wire.BindingID != binding ||
+		wire.CheckedAt < time.Now().Add(-10*time.Second).Unix() ||
+		wire.CheckedAt > time.Now().Add(5*time.Second).Unix() {
 		return unavailable()
 	}
 	if response.StatusCode == http.StatusForbidden {
@@ -123,11 +150,22 @@ func AuthorizeCurrentManager(ctx context.Context, source *types.DataSourceConfig
 		}
 		return ManagerAuthorizationDecision{}, ErrManagerAuthorizationDenied
 	}
-	if !*wire.Allow || wire.Reason != "authorized" || !managerPositiveInteger(wire.RootFileID) || !managerControlIDPattern.MatchString(wire.RuleID) || !managerPositiveInteger(wire.RuleRevision) || !managerNonnegativeInteger(wire.PublicationEpoch) || !managerSHA256Pattern.MatchString(wire.PolicyRevision) {
+	if !*wire.Allow || wire.Reason != "authorized" || !managerPositiveInteger(wire.RootFileID) ||
+		!managerControlIDPattern.MatchString(wire.RuleID) ||
+		!managerPositiveInteger(wire.RuleRevision) ||
+		!managerNonnegativeInteger(wire.PublicationEpoch) ||
+		!managerSHA256Pattern.MatchString(wire.PolicyRevision) {
 		return unavailable()
 	}
 	if err := bounded.Err(); err != nil {
 		return ManagerAuthorizationDecision{}, fmt.Errorf("%w: request expired", ErrManagerAuthorizationUnavailable)
 	}
-	return ManagerAuthorizationDecision{wire.RootFileID, wire.RuleID, wire.RuleRevision, wire.PublicationEpoch, wire.PolicyRevision, wire.CheckedAt}, nil
+	return ManagerAuthorizationDecision{
+		wire.RootFileID,
+		wire.RuleID,
+		wire.RuleRevision,
+		wire.PublicationEpoch,
+		wire.PolicyRevision,
+		wire.CheckedAt,
+	}, nil
 }

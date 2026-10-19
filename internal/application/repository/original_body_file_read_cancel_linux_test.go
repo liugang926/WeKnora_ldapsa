@@ -28,29 +28,33 @@ func runOriginalBodyFileReadCancelActual(t *testing.T, pg bool) {
 			_ = unix.Close(fd)
 		}
 	}()
-	require.NoError(t, db.Callback().Query().After("gorm:query").Register("actual-journal-key-read-cancel", func(tx *gorm.DB) {
-		if armed || tx.Statement.Table != "original_body_payloads" {
-			return
-		}
-		armed = true
-		var err error
-		fd, err = unix.InotifyInit1(unix.IN_CLOEXEC)
-		require.NoError(t, err)
-		_, err = unix.InotifyAddWatch(fd, store.journal.paths.KeyPath, unix.IN_ACCESS)
-		require.NoError(t, err)
-		ready := make(chan struct{})
-		go func() {
-			close(ready)
-			buf := make([]byte, 4096)
-			n, err := unix.Read(fd, buf)
-			if err == nil && n >= unix.SizeofInotifyEvent && binary.LittleEndian.Uint32(buf[4:8])&unix.IN_ACCESS != 0 {
-				cancel()
-				close(access)
+	require.NoError(
+		t,
+		db.Callback().Query().After("gorm:query").Register("actual-journal-key-read-cancel", func(tx *gorm.DB) {
+			if armed || tx.Statement.Table != "original_body_payloads" {
+				return
 			}
-		}()
-		<-ready
-	}))
-	defer db.Callback().Query().Remove("actual-journal-key-read-cancel")
+			armed = true
+			var err error
+			fd, err = unix.InotifyInit1(unix.IN_CLOEXEC)
+			require.NoError(t, err)
+			_, err = unix.InotifyAddWatch(fd, store.journal.paths.KeyPath, unix.IN_ACCESS)
+			require.NoError(t, err)
+			ready := make(chan struct{})
+			go func() {
+				close(ready)
+				buf := make([]byte, 4096)
+				n, err := unix.Read(fd, buf)
+				if err == nil && n >= unix.SizeofInotifyEvent &&
+					binary.LittleEndian.Uint32(buf[4:8])&unix.IN_ACCESS != 0 {
+					cancel()
+					close(access)
+				}
+			}()
+			<-ready
+		}),
+	)
+	defer func() { require.NoError(t, db.Callback().Query().Remove("actual-journal-key-read-cancel")) }()
 	err := CheckOriginalBodyAvailableInTx(ctx, db, "knowledge_auto_tag_input_manifests", "actual-read-cancel")
 	require.True(t, armed, "the payload query armed the real journal-key read observer")
 	select {
@@ -58,15 +62,24 @@ func runOriginalBodyFileReadCancelActual(t *testing.T, pg bool) {
 	case <-time.After(time.Second):
 		t.Fatal("real journal-key read access was not observed")
 	}
-	require.ErrorIs(t, err, context.Canceled, "cancellation during the observed real journal-key file read cannot return body success")
+	require.ErrorIs(
+		t,
+		err,
+		context.Canceled,
+		"cancellation during the observed real journal-key file read cannot return body success",
+	)
 	var state string
-	require.NoError(t, bodyInternal(db).Table("original_body_payloads").Select("state").Where("id=?", bodyID).Scan(&state).Error)
+	require.NoError(
+		t,
+		bodyInternal(db).Table("original_body_payloads").Select("state").Where("id=?", bodyID).Scan(&state).Error,
+	)
 	require.Equal(t, "live", state, "cancel rejection never fabricates a purge/absence receipt")
 }
 
 func TestOriginalBodyFileReadCancelActualSQLite(t *testing.T) {
 	runOriginalBodyFileReadCancelActual(t, false)
 }
+
 func TestPostgresOriginalBodyFileReadCancelActual(t *testing.T) {
 	runOriginalBodyFileReadCancelActual(t, true)
 }

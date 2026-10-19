@@ -23,7 +23,11 @@ type faqImportOutputAdmission struct {
 
 // Only original receipt identities are inspected here. Callers must acquire
 // the selected KB read lease and still perform complete input/source checks.
-func (s *KnowledgeInputProvenanceStore) PeekFAQImportProgressScope(ctx context.Context, tenant uint64, task string) (types.KnowledgeSearchScope, error) {
+func (s *KnowledgeInputProvenanceStore) PeekFAQImportProgressScope(
+	ctx context.Context,
+	tenant uint64,
+	task string,
+) (types.KnowledgeSearchScope, error) {
 	key, err := faqImportOutputKey(types.FAQImportOutputReadRequest{TenantID: tenant, TaskID: task, Kind: "progress"})
 	if err != nil {
 		return types.KnowledgeSearchScope{}, err
@@ -32,7 +36,13 @@ func (s *KnowledgeInputProvenanceStore) PeekFAQImportProgressScope(ctx context.C
 		TenantID        uint64
 		KnowledgeBaseID string
 	}
-	err = s.db.WithContext(ctx).Table("faq_import_output_heads h").Select("a.tenant_id,a.knowledge_base_id").Joins("JOIN faq_import_output_admissions a ON a.id=h.admission_id AND a.output_key=h.output_key").Where("h.output_key=? AND a.tenant_id=? AND a.task_id=? AND a.kind='progress'", key, tenant, task).Take(&row).Error
+	err = s.db.WithContext(ctx).
+		Table("faq_import_output_heads h").
+		Select("a.tenant_id,a.knowledge_base_id").
+		Joins("JOIN faq_import_output_admissions a ON a.id=h.admission_id AND a.output_key=h.output_key").
+		Where("h.output_key=? AND a.tenant_id=? AND a.task_id=? AND a.kind='progress'", key, tenant, task).
+		Take(&row).
+		Error
 	if err != nil || row.TenantID != tenant || row.KnowledgeBaseID == "" {
 		if err == nil {
 			err = ErrKnowledgeInputChanged
@@ -41,7 +51,11 @@ func (s *KnowledgeInputProvenanceStore) PeekFAQImportProgressScope(ctx context.C
 	}
 	return types.KnowledgeSearchScope{TenantID: row.TenantID, KBID: row.KnowledgeBaseID}, nil
 }
-func (s *KnowledgeInputProvenanceStore) PeekFAQImportOutputReadPlan(ctx context.Context, request types.FAQImportOutputReadRequest) (*types.FAQImportOutputReadPlan, error) {
+
+func (s *KnowledgeInputProvenanceStore) PeekFAQImportOutputReadPlan(
+	ctx context.Context,
+	request types.FAQImportOutputReadRequest,
+) (*types.FAQImportOutputReadPlan, error) {
 	var plan *types.FAQImportOutputReadPlan
 	err := s.collectionTransaction(ctx, func(tx *gorm.DB) error {
 		var err error
@@ -50,8 +64,11 @@ func (s *KnowledgeInputProvenanceStore) PeekFAQImportOutputReadPlan(ctx context.
 	})
 	return plan, err
 }
-func (s *KnowledgeInputProvenanceStore) peekFAQImportOutputReadPlanInTx(tx *gorm.DB, request types.FAQImportOutputReadRequest) (*types.FAQImportOutputReadPlan, error) {
 
+func (s *KnowledgeInputProvenanceStore) peekFAQImportOutputReadPlanInTx(
+	tx *gorm.DB,
+	request types.FAQImportOutputReadRequest,
+) (*types.FAQImportOutputReadPlan, error) {
 	key, err := faqImportOutputKey(request)
 	if err != nil {
 		return nil, err
@@ -60,7 +77,12 @@ func (s *KnowledgeInputProvenanceStore) peekFAQImportOutputReadPlanInTx(tx *gorm
 		ID, SessionID, KnowledgeBaseID, KnowledgeID, TaskID, Kind, SourceLineage, OriginalInputs string
 		TenantID, Revision                                                                       uint64
 	}
-	err = tx.Table("faq_import_output_heads h").Select("a.id,a.session_id,a.tenant_id,a.knowledge_base_id,a.knowledge_id,a.task_id,a.kind,a.source_lineage,a.original_inputs,h.revision").Joins("JOIN faq_import_output_admissions a ON a.id=h.admission_id AND a.output_key=h.output_key").Where("h.output_key=? AND a.tenant_id=? AND a.kind=?", key, request.TenantID, request.Kind).Take(&row).Error
+	err = tx.Table("faq_import_output_heads h").
+		Select("a.id,a.session_id,a.tenant_id,a.knowledge_base_id,a.knowledge_id,a.task_id,a.kind,a.source_lineage,a.original_inputs,h.revision").
+		Joins("JOIN faq_import_output_admissions a ON a.id=h.admission_id AND a.output_key=h.output_key").
+		Where("h.output_key=? AND a.tenant_id=? AND a.kind=?", key, request.TenantID, request.Kind).
+		Take(&row).
+		Error
 	if err != nil {
 		return nil, err
 	}
@@ -135,7 +157,14 @@ func (s *KnowledgeInputProvenanceStore) peekFAQImportOutputReadPlanInTx(tx *gorm
 	if err != nil {
 		return nil, err
 	}
-	plan := &types.FAQImportOutputReadPlan{Request: actualRequest, AdmissionID: row.ID, HeadRevision: row.Revision, MetadataDigest: digest, SourceLineage: complete, MessagePlans: messagePlans}
+	plan := &types.FAQImportOutputReadPlan{
+		Request:        actualRequest,
+		AdmissionID:    row.ID,
+		HeadRevision:   row.Revision,
+		MetadataDigest: digest,
+		SourceLineage:  complete,
+		MessagePlans:   messagePlans,
+	}
 	keys := make([]string, 0, len(scopes))
 	for key := range scopes {
 		keys = append(keys, key)
@@ -192,6 +221,7 @@ func faqImportOutputKey(req types.FAQImportOutputReadRequest) (string, error) {
 	}
 	return "", types.ErrSourceLineageUnknown
 }
+
 func faqImportResultRevision(tx *gorm.DB, knowledgeID string) (uint64, error) {
 	var row struct{ Revision uint64 }
 	if err := tx.Table("faq_import_result_versions").Where("knowledge_id=?", knowledgeID).Take(&row).Error; err != nil {
@@ -202,8 +232,22 @@ func faqImportResultRevision(tx *gorm.DB, knowledgeID string) (uint64, error) {
 	}
 	return row.Revision, nil
 }
-func sealFAQImportOutputInTx(tx *gorm.DB, session *faqInputSessionRow, kind, knowledgeID, taskID string, value any, materialRevision uint64) error {
-	key, err := faqImportOutputKey(types.FAQImportOutputReadRequest{TenantID: session.TenantID, KnowledgeID: knowledgeID, TaskID: taskID, Kind: kind})
+
+func sealFAQImportOutputInTx(
+	tx *gorm.DB,
+	session *faqInputSessionRow,
+	kind, knowledgeID, taskID string,
+	value any,
+	materialRevision uint64,
+) error {
+	key, err := faqImportOutputKey(
+		types.FAQImportOutputReadRequest{
+			TenantID:    session.TenantID,
+			KnowledgeID: knowledgeID,
+			TaskID:      taskID,
+			Kind:        kind,
+		},
+	)
 	if err != nil {
 		return err
 	}
@@ -215,16 +259,35 @@ func sealFAQImportOutputInTx(tx *gorm.DB, session *faqInputSessionRow, kind, kno
 	if err != nil {
 		return err
 	}
-	admission := faqImportOutputAdmission{ID: uuid.NewString(), OutputKey: key, SessionID: session.ID, TenantID: session.TenantID, KnowledgeBaseID: session.KnowledgeBaseID, KnowledgeID: knowledgeID, TaskID: taskID, Kind: kind, BodyDigest: digest, Body: string(body), SourceLineage: session.SourceLineage, OriginalInputs: session.OriginalInputs, MaterialRevision: materialRevision}
+	admission := faqImportOutputAdmission{
+		ID:               uuid.NewString(),
+		OutputKey:        key,
+		SessionID:        session.ID,
+		TenantID:         session.TenantID,
+		KnowledgeBaseID:  session.KnowledgeBaseID,
+		KnowledgeID:      knowledgeID,
+		TaskID:           taskID,
+		Kind:             kind,
+		BodyDigest:       digest,
+		Body:             string(body),
+		SourceLineage:    session.SourceLineage,
+		OriginalInputs:   session.OriginalInputs,
+		MaterialRevision: materialRevision,
+	}
 	if err := tx.Create(&admission).Error; err != nil {
 		return err
 	}
-	return tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "output_key"}}, DoUpdates: clause.Assignments(map[string]any{"admission_id": admission.ID, "revision": gorm.Expr("faq_import_output_heads.revision+1")})}).Create(&faqImportOutputHead{OutputKey: key, AdmissionID: admission.ID, Revision: 1}).Error
+	return tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "output_key"}}, DoUpdates: clause.Assignments(map[string]any{"admission_id": admission.ID, "revision": gorm.Expr("faq_import_output_heads.revision+1")})}).
+		Create(&faqImportOutputHead{OutputKey: key, AdmissionID: admission.ID, Revision: 1}).
+		Error
 }
 
 // Only the actual worker/request session may mint a progress output. Redis,
 // current metadata and client-provided receipts are never original evidence.
-func (s *KnowledgeInputProvenanceStore) SealFAQImportProgress(ctx context.Context, progress *types.FAQImportProgress) error {
+func (s *KnowledgeInputProvenanceStore) SealFAQImportProgress(
+	ctx context.Context,
+	progress *types.FAQImportProgress,
+) error {
 	if progress == nil || progress.TaskID == "" {
 		return types.ErrSourceLineageUnknown
 	}
@@ -236,14 +299,17 @@ func (s *KnowledgeInputProvenanceStore) SealFAQImportProgress(ctx context.Contex
 		if err != nil {
 			return err
 		}
-		if session.Operation != "import" || progress.KBID != session.KnowledgeBaseID || snapshot.Knowledge == nil || progress.KnowledgeID != snapshot.Knowledge.ID {
+		if session.Operation != "import" || progress.KBID != session.KnowledgeBaseID || snapshot.Knowledge == nil ||
+			progress.KnowledgeID != snapshot.Knowledge.ID {
 			return ErrKnowledgeInputChanged
 		}
 		var operation types.FAQInputOperation
 		if err := json.Unmarshal([]byte(session.InputBody), &operation); err != nil {
 			return err
 		}
-		if operation.Batch == nil || progress.Total != len(operation.Batch.Entries) || operation.Batch.DryRun != progress.DryRun || operation.Batch.TaskID != "" && operation.Batch.TaskID != progress.TaskID {
+		if operation.Batch == nil || progress.Total != len(operation.Batch.Entries) ||
+			operation.Batch.DryRun != progress.DryRun ||
+			operation.Batch.TaskID != "" && operation.Batch.TaskID != progress.TaskID {
 			return ErrKnowledgeInputChanged
 		}
 		return sealFAQImportOutputInTx(tx, session, "progress", progress.KnowledgeID, progress.TaskID, progress, 0)
@@ -252,7 +318,12 @@ func (s *KnowledgeInputProvenanceStore) SealFAQImportProgress(ctx context.Contex
 
 // Result and its output receipt commit atomically. Counts are supplied only by
 // the trusted worker over the already admitted complete candidate manifest.
-func (s *KnowledgeInputProvenanceStore) PublishFAQImportResult(ctx context.Context, knowledgeID string, result *types.FAQImportResult, progress *types.FAQImportProgress) error {
+func (s *KnowledgeInputProvenanceStore) PublishFAQImportResult(
+	ctx context.Context,
+	knowledgeID string,
+	result *types.FAQImportResult,
+	progress *types.FAQImportProgress,
+) error {
 	if result == nil || progress == nil {
 		return types.ErrSourceLineageUnknown
 	}
@@ -264,38 +335,64 @@ func (s *KnowledgeInputProvenanceStore) PublishFAQImportResult(ctx context.Conte
 		if err != nil {
 			return err
 		}
-		if session.Operation != "import" || snapshot.Knowledge == nil || snapshot.Knowledge.ID != knowledgeID || progress.KnowledgeID != knowledgeID || result.TaskID != progress.TaskID {
+		if session.Operation != "import" || snapshot.Knowledge == nil || snapshot.Knowledge.ID != knowledgeID ||
+			progress.KnowledgeID != knowledgeID ||
+			result.TaskID != progress.TaskID {
 			return ErrKnowledgeInputChanged
 		}
 		var operation types.FAQInputOperation
 		if err := json.Unmarshal([]byte(session.InputBody), &operation); err != nil {
 			return err
 		}
-		if operation.Batch == nil || result.TotalEntries != len(operation.Batch.Entries) || result.ImportMode != operation.Batch.Mode || result.SuccessCount != progress.SuccessCount || result.FailedCount != progress.FailedCount || result.PartialFailedCount != progress.PartialFailedCount || result.MergedCount != progress.MergedCount || result.AddedCount != progress.AddedCount || result.SkippedCount != progress.SkippedCount || result.FailedEntriesURL != progress.FailedEntriesURL || result.DisplayStatus != "open" {
+		if operation.Batch == nil || result.TotalEntries != len(operation.Batch.Entries) ||
+			result.ImportMode != operation.Batch.Mode ||
+			result.SuccessCount != progress.SuccessCount ||
+			result.FailedCount != progress.FailedCount ||
+			result.PartialFailedCount != progress.PartialFailedCount ||
+			result.MergedCount != progress.MergedCount ||
+			result.AddedCount != progress.AddedCount ||
+			result.SkippedCount != progress.SkippedCount ||
+			result.FailedEntriesURL != progress.FailedEntriesURL ||
+			result.DisplayStatus != "open" {
 			return ErrKnowledgeInputChanged
 		}
 		var knowledge types.Knowledge
-		if err := tx.Where("id=? AND tenant_id=? AND knowledge_base_id=? AND type=?", knowledgeID, session.TenantID, session.KnowledgeBaseID, types.KnowledgeTypeFAQ).Take(&knowledge).Error; err != nil {
+		if err := tx.Where("id=? AND tenant_id=? AND knowledge_base_id=? AND type=?", knowledgeID, session.TenantID, session.KnowledgeBaseID, types.KnowledgeTypeFAQ).
+			Take(&knowledge).
+			Error; err != nil {
 			return err
 		}
 		if err := knowledge.SetLastFAQImportResult(result); err != nil {
 			return err
 		}
-		if err := tx.Model(&knowledge).Update("last_faq_import_result", knowledge.LastFAQImportResult).Error; err != nil {
+		if err := tx.Model(&knowledge).
+			Update("last_faq_import_result", knowledge.LastFAQImportResult).
+			Error; err != nil {
 			return err
 		}
 		revision, err := faqImportResultRevision(tx, knowledgeID)
 		if err != nil {
 			return err
 		}
-		if err := sealFAQImportOutputInTx(tx, session, "result", knowledgeID, result.TaskID, result, revision); err != nil {
+		if err := sealFAQImportOutputInTx(
+			tx,
+			session,
+			"result",
+			knowledgeID,
+			result.TaskID,
+			result,
+			revision,
+		); err != nil {
 			return err
 		}
 		return s.advanceFAQSessionInTx(tx, session)
 	}, knowledgeDisplayWriteOptions(s.db))
 }
 
-func (s *KnowledgeInputProvenanceStore) captureFAQImportOutputInTx(tx *gorm.DB, req types.FAQImportOutputReadRequest) (*types.FAQImportOutputSnapshot, error) {
+func (s *KnowledgeInputProvenanceStore) captureFAQImportOutputInTx(
+	tx *gorm.DB,
+	req types.FAQImportOutputReadRequest,
+) (*types.FAQImportOutputSnapshot, error) {
 	if err := s.checkFAQImportOutputReadPlanInTx(tx, req); err != nil {
 		return nil, err
 	}
@@ -309,17 +406,23 @@ func (s *KnowledgeInputProvenanceStore) captureFAQImportOutputInTx(tx *gorm.DB, 
 		return nil, err
 	}
 	var admission faqImportOutputAdmission
-	if err := tx.Where("id=? AND output_key=? AND tenant_id=? AND kind=?", head.AdmissionID, key, req.TenantID, req.Kind).Take(&admission).Error; err != nil {
+	if err := tx.Where("id=? AND output_key=? AND tenant_id=? AND kind=?", head.AdmissionID, key, req.TenantID, req.Kind).
+		Take(&admission).
+		Error; err != nil {
 		return nil, err
 	}
-	if head.Revision == 0 || req.KnowledgeBaseID != "" && req.KnowledgeBaseID != admission.KnowledgeBaseID || req.KnowledgeID != "" && req.KnowledgeID != admission.KnowledgeID {
+	if head.Revision == 0 || req.KnowledgeBaseID != "" && req.KnowledgeBaseID != admission.KnowledgeBaseID ||
+		req.KnowledgeID != "" && req.KnowledgeID != admission.KnowledgeID {
 		return nil, ErrKnowledgeInputChanged
 	}
 	var producer faqInputSessionRow
-	if err := tx.Where("id=? AND tenant_id=? AND knowledge_base_id=?", admission.SessionID, admission.TenantID, admission.KnowledgeBaseID).Take(&producer).Error; err != nil {
+	if err := tx.Where("id=? AND tenant_id=? AND knowledge_base_id=?", admission.SessionID, admission.TenantID, admission.KnowledgeBaseID).
+		Take(&producer).
+		Error; err != nil {
 		return nil, err
 	}
-	if producer.Operation != "import" || producer.SourceLineage != admission.SourceLineage || producer.OriginalInputs != admission.OriginalInputs {
+	if producer.Operation != "import" || producer.SourceLineage != admission.SourceLineage ||
+		producer.OriginalInputs != admission.OriginalInputs {
 		return nil, ErrKnowledgeInputChanged
 	}
 	parents, err := s.readFAQOriginalKnowledgeInputsInTx(tx, &producer)
@@ -340,14 +443,24 @@ func (s *KnowledgeInputProvenanceStore) captureFAQImportOutputInTx(tx *gorm.DB, 
 	actualReq.KnowledgeBaseID = admission.KnowledgeBaseID
 	actualReq.KnowledgeID = admission.KnowledgeID
 	actualReq.TaskID = admission.TaskID
-	snapshot := &types.FAQImportOutputSnapshot{Request: actualReq, AdmissionID: admission.ID, SessionID: admission.SessionID, HeadRevision: head.Revision, MaterialRevision: admission.MaterialRevision, BodyDigest: admission.BodyDigest, SourceLineage: &lineage, OriginalKnowledgeInputs: parents}
+	snapshot := &types.FAQImportOutputSnapshot{
+		Request:                 actualReq,
+		AdmissionID:             admission.ID,
+		SessionID:               admission.SessionID,
+		HeadRevision:            head.Revision,
+		MaterialRevision:        admission.MaterialRevision,
+		BodyDigest:              admission.BodyDigest,
+		SourceLineage:           &lineage,
+		OriginalKnowledgeInputs: parents,
+	}
 	var value any
 	if req.Kind == "progress" {
 		snapshot.Progress = &types.FAQImportProgress{}
 		if err := json.Unmarshal([]byte(admission.Body), snapshot.Progress); err != nil {
 			return nil, err
 		}
-		if snapshot.Progress.TaskID != admission.TaskID || snapshot.Progress.KBID != admission.KnowledgeBaseID || snapshot.Progress.KnowledgeID != admission.KnowledgeID {
+		if snapshot.Progress.TaskID != admission.TaskID || snapshot.Progress.KBID != admission.KnowledgeBaseID ||
+			snapshot.Progress.KnowledgeID != admission.KnowledgeID {
 			return nil, ErrKnowledgeInputChanged
 		}
 		value = snapshot.Progress
@@ -357,7 +470,9 @@ func (s *KnowledgeInputProvenanceStore) captureFAQImportOutputInTx(tx *gorm.DB, 
 			return nil, err
 		}
 		var knowledge types.Knowledge
-		if err := tx.Where("id=? AND tenant_id=? AND knowledge_base_id=? AND type=?", admission.KnowledgeID, admission.TenantID, admission.KnowledgeBaseID, types.KnowledgeTypeFAQ).Take(&knowledge).Error; err != nil {
+		if err := tx.Where("id=? AND tenant_id=? AND knowledge_base_id=? AND type=?", admission.KnowledgeID, admission.TenantID, admission.KnowledgeBaseID, types.KnowledgeTypeFAQ).
+			Take(&knowledge).
+			Error; err != nil {
 			return nil, err
 		}
 		revision, err := faqImportResultRevision(tx, knowledge.ID)
@@ -385,7 +500,11 @@ func (s *KnowledgeInputProvenanceStore) captureFAQImportOutputInTx(tx *gorm.DB, 
 	}
 	return snapshot, nil
 }
-func (s *KnowledgeInputProvenanceStore) CaptureFAQImportOutputInputs(ctx context.Context, req types.FAQImportOutputReadRequest) (*types.FAQImportOutputSnapshot, error) {
+
+func (s *KnowledgeInputProvenanceStore) CaptureFAQImportOutputInputs(
+	ctx context.Context,
+	req types.FAQImportOutputReadRequest,
+) (*types.FAQImportOutputSnapshot, error) {
 	var snapshot *types.FAQImportOutputSnapshot
 	err := s.collectionTransaction(ctx, func(tx *gorm.DB) error {
 		var err error
@@ -394,7 +513,11 @@ func (s *KnowledgeInputProvenanceStore) CaptureFAQImportOutputInputs(ctx context
 	})
 	return snapshot, err
 }
-func (s *KnowledgeInputProvenanceStore) RecheckFAQImportOutputInputs(ctx context.Context, snapshot *types.FAQImportOutputSnapshot) error {
+
+func (s *KnowledgeInputProvenanceStore) RecheckFAQImportOutputInputs(
+	ctx context.Context,
+	snapshot *types.FAQImportOutputSnapshot,
+) error {
 	if snapshot == nil {
 		return types.ErrSourceLineageUnknown
 	}
@@ -412,7 +535,11 @@ func (s *KnowledgeInputProvenanceStore) RecheckFAQImportOutputInputs(ctx context
 
 // A display-only edit preserves every retained counter/body's original
 // producer. An unknown legacy result cannot be signed by this new request.
-func (s *KnowledgeInputProvenanceStore) UpdateFAQImportResultDisplayWithInput(ctx context.Context, original *types.FAQImportOutputSnapshot, status string) error {
+func (s *KnowledgeInputProvenanceStore) UpdateFAQImportResultDisplayWithInput(
+	ctx context.Context,
+	original *types.FAQImportOutputSnapshot,
+	status string,
+) error {
 	if original == nil || original.Result == nil || status != "open" && status != "close" {
 		return types.ErrSourceLineageUnknown
 	}
@@ -421,10 +548,14 @@ func (s *KnowledgeInputProvenanceStore) UpdateFAQImportResultDisplayWithInput(ct
 	if err != nil {
 		return err
 	}
-	if !ok || boundary.Origin.kind != "human" || boundary.KB != original.Request.KnowledgeBaseID || boundary.Digest != digest {
+	if !ok || boundary.Origin.kind != "human" || boundary.KB != original.Request.KnowledgeBaseID ||
+		boundary.Digest != digest {
 		return types.ErrSourceLineageUnknown
 	}
-	ctx, err = s.AuthorizeCurrentKnowledgeInputWrite(ctx, &types.KnowledgeBase{ID: original.Request.KnowledgeBaseID, TenantID: original.Request.TenantID})
+	ctx, err = s.AuthorizeCurrentKnowledgeInputWrite(
+		ctx,
+		&types.KnowledgeBase{ID: original.Request.KnowledgeBaseID, TenantID: original.Request.TenantID},
+	)
 	if err != nil {
 		return err
 	}
@@ -443,23 +574,38 @@ func (s *KnowledgeInputProvenanceStore) UpdateFAQImportResultDisplayWithInput(ct
 		result := *actual.Result
 		result.DisplayStatus = status
 		var knowledge types.Knowledge
-		if err := tx.Where("id=? AND tenant_id=? AND knowledge_base_id=?", actual.Request.KnowledgeID, actual.Request.TenantID, actual.Request.KnowledgeBaseID).Take(&knowledge).Error; err != nil {
+		if err := tx.Where("id=? AND tenant_id=? AND knowledge_base_id=?", actual.Request.KnowledgeID, actual.Request.TenantID, actual.Request.KnowledgeBaseID).
+			Take(&knowledge).
+			Error; err != nil {
 			return err
 		}
 		if err := knowledge.SetLastFAQImportResult(&result); err != nil {
 			return err
 		}
-		if err := tx.Model(&knowledge).Update("last_faq_import_result", knowledge.LastFAQImportResult).Error; err != nil {
+		if err := tx.Model(&knowledge).
+			Update("last_faq_import_result", knowledge.LastFAQImportResult).
+			Error; err != nil {
 			return err
 		}
 		revision, err := faqImportResultRevision(tx, knowledge.ID)
 		if err != nil {
 			return err
 		}
-		if err := sealFAQImportOutputInTx(tx, &producer, "result", knowledge.ID, result.TaskID, &result, revision); err != nil {
+		if err := sealFAQImportOutputInTx(
+			tx,
+			&producer,
+			"result",
+			knowledge.ID,
+			result.TaskID,
+			&result,
+			revision,
+		); err != nil {
 			return err
 		}
-		progress, err := s.captureFAQImportOutputInTx(tx, types.FAQImportOutputReadRequest{TenantID: producer.TenantID, TaskID: result.TaskID, Kind: "progress"})
+		progress, err := s.captureFAQImportOutputInTx(
+			tx,
+			types.FAQImportOutputReadRequest{TenantID: producer.TenantID, TaskID: result.TaskID, Kind: "progress"},
+		)
 		if err != nil {
 			return err
 		}

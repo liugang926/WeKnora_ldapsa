@@ -13,7 +13,10 @@ import (
 	"github.com/hibiken/asynq"
 )
 
-func (s *knowledgeService) CreateCommittedHistoryKnowledgeInput(ctx context.Context, request types.CommittedHistoryKnowledgeInputRequest) (*types.CommittedHistoryKnowledgeInput, error) {
+func (s *knowledgeService) CreateCommittedHistoryKnowledgeInput(
+	ctx context.Context,
+	request types.CommittedHistoryKnowledgeInputRequest,
+) (*types.CommittedHistoryKnowledgeInput, error) {
 	writer, ok := s.knowledgeInputWriter.(interfaces.CommittedHistoryKnowledgeInputWriter)
 	if !ok || s.knowledgeInputs == nil {
 		return nil, types.ErrSourceLineageUnknown
@@ -32,7 +35,12 @@ func (s *knowledgeService) CreateCommittedHistoryKnowledgeInput(ctx context.Cont
 	if s.historyMaterialMessages == nil || s.historyMaterialMessages.materialStore == nil {
 		return nil, types.ErrSourceLineageUnknown
 	}
-	parentRequest, err := s.historyMaterialMessages.materialStore.CommittedMessageParentRequest(ctx, request.TenantID, request.SessionID, request.AssistantMessageID)
+	parentRequest, err := s.historyMaterialMessages.materialStore.CommittedMessageParentRequest(
+		ctx,
+		request.TenantID,
+		request.SessionID,
+		request.AssistantMessageID,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -54,7 +62,16 @@ func (s *knowledgeService) CreateCommittedHistoryKnowledgeInput(ctx context.Cont
 		return nil, err
 	}
 	eff := ResolveProcessConfig(kb, nil)
-	payload := types.DocumentProcessPayload{OriginalInput: result.Proof, TenantID: request.TenantID, KnowledgeBaseID: kb.ID, KnowledgeID: result.Knowledge.ID, Passages: result.Passages, EnableQuestionGeneration: eff.QuestionGenerationConfig.Enabled, QuestionCount: eff.QuestionGenerationConfig.QuestionCount, Language: types.LanguageFromContextOrDefault(ctx)}
+	payload := types.DocumentProcessPayload{
+		OriginalInput:            result.Proof,
+		TenantID:                 request.TenantID,
+		KnowledgeBaseID:          kb.ID,
+		KnowledgeID:              result.Knowledge.ID,
+		Passages:                 result.Passages,
+		EnableQuestionGeneration: eff.QuestionGenerationConfig.Enabled,
+		QuestionCount:            eff.QuestionGenerationConfig.QuestionCount,
+		Language:                 types.LanguageFromContextOrDefault(ctx),
+	}
 	langfuse.InjectTracing(ctx, &payload)
 	data, err := json.Marshal(payload)
 	if err != nil {

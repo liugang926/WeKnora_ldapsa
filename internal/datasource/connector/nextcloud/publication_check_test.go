@@ -73,8 +73,10 @@ func TestCheckCurrentPublicationSignsExactPairedVersion(t *testing.T) {
 }
 
 func TestCheckCurrentPublicationFailsClosed(t *testing.T) {
-	for _, status := range []int{http.StatusOK, http.StatusConflict, http.StatusNotFound,
-		http.StatusLocked, http.StatusServiceUnavailable, http.StatusFound} {
+	for _, status := range []int{
+		http.StatusOK, http.StatusConflict, http.StatusNotFound,
+		http.StatusLocked, http.StatusServiceUnavailable, http.StatusFound,
+	} {
 		t.Run(http.StatusText(status), func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(status)

@@ -19,6 +19,7 @@ type KnowledgeBuildInputProof struct {
 	SourceLineage   *SourceLineage `json:"source_lineage"`
 }
 
+// KnowledgeBuildInputCaptureRequest selects an original admitted projection to capture.
 type KnowledgeBuildInputCaptureRequest struct {
 	Projection      string
 	TenantID        uint64
@@ -29,9 +30,10 @@ type KnowledgeBuildInputCaptureRequest struct {
 	Expected *KnowledgeBuildInputProof
 }
 
+// KnowledgeBuildProjectionGraph identifies the graph model input projection.
 const KnowledgeBuildProjectionGraph = "graph_model_inputs"
 
-// Enrichment authenticates all document/model input fields while generated
+// KnowledgeBuildProjectionEnrichment authenticates all document/model input fields while generated
 // summary and question outputs retain the same immutable original admission.
 const KnowledgeBuildProjectionEnrichment = "enrichment_model_inputs"
 
@@ -43,7 +45,7 @@ type KnowledgeProducerInputProof struct {
 	Digest  string `json:"digest"`
 }
 
-// Snapshot includes actual persisted material/config used for model input.
+// KnowledgeBuildInputSnapshot includes actual persisted material/config used for model input.
 // Chunk metadata, titles and graph/config controls belong in its body digest.
 type KnowledgeBuildInputSnapshot struct {
 	Knowledge     *Knowledge                `json:"-"`

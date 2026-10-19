@@ -17,9 +17,16 @@ import (
 	"gorm.io/gorm/clause"
 )
 
-func (r *NextcloudEventInboxRepository) SignedFileStateV2(ctx context.Context, request SignedNextcloudFileStatusRequest) ([]byte, string, error) {
+func (r *NextcloudEventInboxRepository) SignedFileStateV2(
+	ctx context.Context,
+	request SignedNextcloudFileStatusRequest,
+) ([]byte, string, error) {
 	var conn nextcloudEventConnection
-	if err := r.db.WithContext(ctx).Table("nextcloud_event_connections").Where("connection_id=? AND status='active'", request.ConnectionID).Take(&conn).Error; err != nil {
+	if err := r.db.WithContext(ctx).
+		Table("nextcloud_event_connections").
+		Where("connection_id=? AND status='active'", request.ConnectionID).
+		Take(&conn).
+		Error; err != nil {
 		return nil, "", ErrNextcloudEventUnauthorized
 	}
 	secret, err := nextcloudEventResponseSecret(conn, request.KeyID)
@@ -38,7 +45,11 @@ func (r *NextcloudEventInboxRepository) SignedFileStateV2(ctx context.Context, r
 	var responseSignature string
 	err = r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var conn nextcloudEventConnection
-		if err := tx.Table("nextcloud_event_connections").Clauses(clause.Locking{Strength: "UPDATE"}).Where("connection_id=? AND status='active'", request.ConnectionID).Take(&conn).Error; err != nil {
+		if err := tx.Table("nextcloud_event_connections").
+			Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("connection_id=? AND status='active'", request.ConnectionID).
+			Take(&conn).
+			Error; err != nil {
 			return ErrNextcloudEventUnauthorized
 		}
 		secret, err := nextcloudEventResponseSecret(conn, request.KeyID)
@@ -54,10 +65,15 @@ func (r *NextcloudEventInboxRepository) SignedFileStateV2(ctx context.Context, r
 		if err := checkNextcloudEventDataSource(tx, conn); err != nil {
 			return err
 		}
-		if err := tx.Table("nextcloud_event_nonces").Where("connection_id=? AND expires_at<?", conn.ConnectionID, request.Now).Delete(nil).Error; err != nil {
+		if err := tx.Table("nextcloud_event_nonces").
+			Where("connection_id=? AND expires_at<?", conn.ConnectionID, request.Now).
+			Delete(nil).
+			Error; err != nil {
 			return err
 		}
-		insert := tx.Table("nextcloud_event_nonces").Clauses(clause.OnConflict{DoNothing: true}).Create(map[string]any{"connection_id": conn.ConnectionID, "key_id": request.KeyID, "nonce": request.Nonce, "expires_at": request.Now.Add(601 * time.Second)})
+		insert := tx.Table("nextcloud_event_nonces").
+			Clauses(clause.OnConflict{DoNothing: true}).
+			Create(map[string]any{"connection_id": conn.ConnectionID, "key_id": request.KeyID, "nonce": request.Nonce, "expires_at": request.Now.Add(601 * time.Second)})
 		if insert.Error != nil {
 			return insert.Error
 		}
@@ -66,19 +82,34 @@ func (r *NextcloudEventInboxRepository) SignedFileStateV2(ctx context.Context, r
 		}
 		file := strconv.FormatInt(request.FileID, 10)
 		external := "nextcloud:" + conn.NextcloudInstanceID + ":" + file
-		if err := captureNextcloudStateInTx(ctx, tx, conn.TenantID, conn.KnowledgeBaseID, conn.DatasourceID, external, true); err != nil {
+		if err := captureNextcloudStateInTx(
+			ctx,
+			tx,
+			conn.TenantID,
+			conn.KnowledgeBaseID,
+			conn.DatasourceID,
+			external,
+			true,
+		); err != nil {
 			return err
 		}
 		var pair NextcloudSourcePairing
-		if err := tx.Where("tenant_id=? AND knowledge_base_id=? AND datasource_id=? AND state='active'", conn.TenantID, conn.KnowledgeBaseID, conn.DatasourceID).Take(&pair).Error; err != nil {
+		if err := tx.Where("tenant_id=? AND knowledge_base_id=? AND datasource_id=? AND state='active'", conn.TenantID, conn.KnowledgeBaseID, conn.DatasourceID).
+			Take(&pair).
+			Error; err != nil {
 			return err
 		}
 		var epoch struct{ PublicationEpoch int64 }
-		if err := tx.Table("nextcloud_source_status_epochs").Where("connection_id=?", conn.ConnectionID).Take(&epoch).Error; err != nil {
+		if err := tx.Table("nextcloud_source_status_epochs").
+			Where("connection_id=?", conn.ConnectionID).
+			Take(&epoch).
+			Error; err != nil {
 			return err
 		}
 		var row nextcloudFileStateRow
-		if err := tx.Where("connection_id=? AND file_id=? AND publication_epoch=?", conn.ConnectionID, file, epoch.PublicationEpoch).Take(&row).Error; err != nil {
+		if err := tx.Where("connection_id=? AND file_id=? AND publication_epoch=?", conn.ConnectionID, file, epoch.PublicationEpoch).
+			Take(&row).
+			Error; err != nil {
 			return err
 		}
 		var state NextcloudFileStateV2
@@ -113,59 +144,100 @@ type NextcloudStatusDelivery struct {
 func (s *NextcloudProcessingStateStore) DueDeliveries(ctx context.Context, now time.Time) ([]string, error) {
 	// Supersession is durable and local. A lost ACK for an older heartbeat need
 	// not hold newer verified snapshots or real stage changes behind retries.
-	if err := s.db.WithContext(ctx).Exec("UPDATE nextcloud_status_outbox SET state='superseded' WHERE state='pending' AND EXISTS(SELECT 1 FROM nextcloud_file_states f WHERE f.connection_id=nextcloud_status_outbox.connection_id AND f.file_id=nextcloud_status_outbox.file_id AND f.publication_epoch=nextcloud_status_outbox.publication_epoch AND f.latest_event_id<>nextcloud_status_outbox.event_id)").Error; err != nil {
+	if err := s.db.WithContext(ctx).
+		Exec("UPDATE nextcloud_status_outbox SET state='superseded' WHERE state='pending' AND EXISTS(SELECT 1 FROM nextcloud_file_states f WHERE f.connection_id=nextcloud_status_outbox.connection_id AND f.file_id=nextcloud_status_outbox.file_id AND f.publication_epoch=nextcloud_status_outbox.publication_epoch AND f.latest_event_id<>nextcloud_status_outbox.event_id)").
+		Error; err != nil {
 		return nil, err
 	}
-	if err := s.db.WithContext(ctx).Exec("UPDATE nextcloud_status_outbox SET state='superseded' WHERE state='pending' AND EXISTS(SELECT 1 FROM nextcloud_source_status_epochs e WHERE e.connection_id=nextcloud_status_outbox.connection_id AND e.publication_epoch>nextcloud_status_outbox.publication_epoch)").Error; err != nil {
+	if err := s.db.WithContext(ctx).
+		Exec("UPDATE nextcloud_status_outbox SET state='superseded' WHERE state='pending' AND EXISTS(SELECT 1 FROM nextcloud_source_status_epochs e WHERE e.connection_id=nextcloud_status_outbox.connection_id AND e.publication_epoch>nextcloud_status_outbox.publication_epoch)").
+		Error; err != nil {
 		return nil, err
 	}
 	var ids []string
-	err := s.db.WithContext(ctx).Model(&nextcloudStatusOutboxRow{}).Where("state='pending' AND next_attempt_at<=?", now.Unix()).Order("priority DESC,created_at,event_id").Limit(500).Pluck("event_id", &ids).Error
+	err := s.db.WithContext(ctx).
+		Model(&nextcloudStatusOutboxRow{}).
+		Where("state='pending' AND next_attempt_at<=?", now.Unix()).
+		Order("priority DESC,created_at,event_id").
+		Limit(500).
+		Pluck("event_id", &ids).
+		Error
 	return ids, err
 }
 
-func (s *NextcloudProcessingStateStore) PrepareDelivery(ctx context.Context, event string) (NextcloudStatusDelivery, error) {
+func (s *NextcloudProcessingStateStore) PrepareDelivery(
+	ctx context.Context,
+	event string,
+) (NextcloudStatusDelivery, error) {
 	var delivery NextcloudStatusDelivery
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var out nextcloudStatusOutboxRow
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("event_id=? AND state='pending'", event).Take(&out).Error; err != nil {
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("event_id=? AND state='pending'", event).
+			Take(&out).
+			Error; err != nil {
 			return err
 		}
 		var conn nextcloudEventConnection
-		if err := tx.Table("nextcloud_event_connections").Where("connection_id=? AND status='active'", out.ConnectionID).Take(&conn).Error; err != nil {
+		if err := tx.Table("nextcloud_event_connections").
+			Where("connection_id=? AND status='active'", out.ConnectionID).
+			Take(&conn).
+			Error; err != nil {
 			return ErrNextcloudEventScope
 		}
 		if err := checkNextcloudEventDataSource(tx, conn); err != nil {
 			return err
 		}
 		var current nextcloudFileStateRow
-		if err := tx.Where("connection_id=? AND file_id=? AND publication_epoch=?", out.ConnectionID, out.FileID, out.PublicationEpoch).Take(&current).Error; err != nil {
+		if err := tx.Where("connection_id=? AND file_id=? AND publication_epoch=?", out.ConnectionID, out.FileID, out.PublicationEpoch).
+			Take(&current).
+			Error; err != nil {
 			return err
 		}
 		var pair NextcloudSourcePairing
-		if err := tx.Where("tenant_id=? AND knowledge_base_id=? AND datasource_id=? AND state='active'", conn.TenantID, conn.KnowledgeBaseID, conn.DatasourceID).Take(&pair).Error; err != nil {
+		if err := tx.Where("tenant_id=? AND knowledge_base_id=? AND datasource_id=? AND state='active'", conn.TenantID, conn.KnowledgeBaseID, conn.DatasourceID).
+			Take(&pair).
+			Error; err != nil {
 			return err
 		}
 		var epoch struct{ PublicationEpoch int64 }
-		if err := tx.Table("nextcloud_source_status_epochs").Where("connection_id=?", conn.ConnectionID).Take(&epoch).Error; err != nil {
+		if err := tx.Table("nextcloud_source_status_epochs").
+			Where("connection_id=?", conn.ConnectionID).
+			Take(&epoch).
+			Error; err != nil {
 			if !errors.Is(err, gorm.ErrRecordNotFound) {
 				return err
 			}
 			epoch.PublicationEpoch = pair.PublicationEpoch
 		}
 		var version nextcloudSourceVersion
-		if err := nextcloudVersionQuery(tx, conn.TenantID, conn.KnowledgeBaseID, conn.DatasourceID, "nextcloud:"+conn.NextcloudInstanceID+":"+out.FileID).Take(&version).Error; err != nil {
+		if err := nextcloudVersionQuery(
+			tx,
+			conn.TenantID,
+			conn.KnowledgeBaseID,
+			conn.DatasourceID,
+			"nextcloud:"+conn.NextcloudInstanceID+":"+out.FileID,
+		).Take(&version).
+			Error; err != nil {
 			return err
 		}
 		var state NextcloudFileStateV2
 		if err := json.Unmarshal([]byte(out.PayloadJSON), &state); err != nil {
 			return err
 		}
-		if current.LatestEventID != out.EventID || current.HeadRevision != out.HeadRevision || current.StatusRevision != out.StatusRevision || epoch.PublicationEpoch != out.PublicationEpoch || state.PairOperationID != pair.OperationID || state.SourceETag != version.DesiredETag || state.SourceContentRevision != func() string {
-			revision, _ := types.NormalizeNextcloudContentRevision(version.DesiredContentRevision)
-			return revision
-		}() || state.KnowledgeID != nil && *state.KnowledgeID != version.CandidateKnowledgeID {
-			if err := tx.Model(&out).Updates(map[string]any{"state": "superseded", "last_error_code": "state_head_superseded"}).Error; err != nil {
+		if current.LatestEventID != out.EventID || current.HeadRevision != out.HeadRevision ||
+			current.StatusRevision != out.StatusRevision ||
+			epoch.PublicationEpoch != out.PublicationEpoch ||
+			state.PairOperationID != pair.OperationID ||
+			state.SourceETag != version.DesiredETag ||
+			state.SourceContentRevision != func() string {
+				revision, _ := types.NormalizeNextcloudContentRevision(version.DesiredContentRevision)
+				return revision
+			}() ||
+			state.KnowledgeID != nil && *state.KnowledgeID != version.CandidateKnowledgeID {
+			if err := tx.Model(&out).
+				Updates(map[string]any{"state": "superseded", "last_error_code": "state_head_superseded"}).
+				Error; err != nil {
 				return err
 			}
 			return nil
@@ -182,29 +254,49 @@ func (s *NextcloudProcessingStateStore) PrepareDelivery(ctx context.Context, eve
 		if err != nil {
 			return err
 		}
-		delivery = NextcloudStatusDelivery{EventID: event, ConnectionID: conn.ConnectionID, KeyID: conn.CurrentKeyID, Config: cfg, SigningKey: NextcloudStateSigningKey(secret), Body: []byte(out.PayloadJSON)}
+		delivery = NextcloudStatusDelivery{
+			EventID:      event,
+			ConnectionID: conn.ConnectionID,
+			KeyID:        conn.CurrentKeyID,
+			Config:       cfg,
+			SigningKey:   NextcloudStateSigningKey(secret),
+			Body:         []byte(out.PayloadJSON),
+		}
 		return nil
 	})
 	return delivery, err
 }
-func (s *NextcloudProcessingStateStore) FinishDelivery(ctx context.Context, event string, acked bool, now time.Time) error {
+
+func (s *NextcloudProcessingStateStore) FinishDelivery(
+	ctx context.Context,
+	event string,
+	acked bool,
+	now time.Time,
+) error {
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var out nextcloudStatusOutboxRow
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("event_id=? AND state='pending'", event).Take(&out).Error; err != nil {
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("event_id=? AND state='pending'", event).
+			Take(&out).
+			Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return nil
 			}
 			return err
 		}
 		var current nextcloudFileStateRow
-		if err := tx.Where("connection_id=? AND file_id=? AND publication_epoch=?", out.ConnectionID, out.FileID, out.PublicationEpoch).Take(&current).Error; err != nil {
+		if err := tx.Where("connection_id=? AND file_id=? AND publication_epoch=?", out.ConnectionID, out.FileID, out.PublicationEpoch).
+			Take(&current).
+			Error; err != nil {
 			return err
 		}
 		if current.HeadRevision != out.HeadRevision || current.StatusRevision != out.StatusRevision {
 			return tx.Model(&out).Update("state", "superseded").Error
 		}
 		if acked {
-			return tx.Model(&out).Updates(map[string]any{"state": "delivered", "delivered_at": now.Unix(), "last_error_code": ""}).Error
+			return tx.Model(&out).
+				Updates(map[string]any{"state": "delivered", "delivered_at": now.Unix(), "last_error_code": ""}).
+				Error
 		}
 		attempts := out.Attempts + 1
 		delay := int64(5)
@@ -214,7 +306,9 @@ func (s *NextcloudProcessingStateStore) FinishDelivery(ctx context.Context, even
 		if delay > 300 {
 			delay = 300
 		}
-		return tx.Model(&out).Updates(map[string]any{"attempts": attempts, "next_attempt_at": now.Unix() + delay, "last_error_code": "state_delivery_failed"}).Error
+		return tx.Model(&out).
+			Updates(map[string]any{"attempts": attempts, "next_attempt_at": now.Unix() + delay, "last_error_code": "state_delivery_failed"}).
+			Error
 	})
 }
 
@@ -222,11 +316,18 @@ func (s *NextcloudProcessingStateStore) FinishDelivery(ctx context.Context, even
 // source status generation. An old pairing receipt cannot restamp a resumed root.
 func (s *NextcloudProcessingStateStore) RefreshSourceEpoch(ctx context.Context, connectionID string) error {
 	var conn nextcloudEventConnection
-	if err := s.db.WithContext(ctx).Table("nextcloud_event_connections").Where("connection_id=? AND status='active'", connectionID).Take(&conn).Error; err != nil {
+	if err := s.db.WithContext(ctx).
+		Table("nextcloud_event_connections").
+		Where("connection_id=? AND status='active'", connectionID).
+		Take(&conn).
+		Error; err != nil {
 		return err
 	}
 	var ds types.DataSource
-	if err := s.db.WithContext(ctx).Where("id=? AND tenant_id=?", conn.DatasourceID, conn.TenantID).Take(&ds).Error; err != nil {
+	if err := s.db.WithContext(ctx).
+		Where("id=? AND tenant_id=?", conn.DatasourceID, conn.TenantID).
+		Take(&ds).
+		Error; err != nil {
 		return err
 	}
 	cfg, err := ds.ParseConfig()
@@ -240,7 +341,9 @@ func (s *NextcloudProcessingStateStore) RefreshSourceEpoch(ctx context.Context, 
 	if err != nil {
 		return err
 	}
-	if identity.InstanceID != conn.NextcloudInstanceID || identity.BindingID != conn.BindingID || identity.BaseURL != conn.DatasourceBaseURL || identity.PublicationEpoch < 0 {
+	if identity.InstanceID != conn.NextcloudInstanceID || identity.BindingID != conn.BindingID ||
+		identity.BaseURL != conn.DatasourceBaseURL ||
+		identity.PublicationEpoch < 0 {
 		return ErrNextcloudEventScope
 	}
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -248,7 +351,9 @@ func (s *NextcloudProcessingStateStore) RefreshSourceEpoch(ctx context.Context, 
 			return err
 		}
 		var pair NextcloudSourcePairing
-		if err := tx.Where("tenant_id=? AND knowledge_base_id=? AND datasource_id=? AND state='active'", conn.TenantID, conn.KnowledgeBaseID, conn.DatasourceID).Take(&pair).Error; err != nil {
+		if err := tx.Where("tenant_id=? AND knowledge_base_id=? AND datasource_id=? AND state='active'", conn.TenantID, conn.KnowledgeBaseID, conn.DatasourceID).
+			Take(&pair).
+			Error; err != nil {
 			return err
 		}
 		var old struct {
@@ -262,12 +367,20 @@ func (s *NextcloudProcessingStateStore) RefreshSourceEpoch(ctx context.Context, 
 		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 			return err
 		}
-		return tx.Table("nextcloud_source_status_epochs").Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "connection_id"}}, DoUpdates: clause.AssignmentColumns([]string{"publication_epoch", "pair_operation_id", "verified_at"})}).Create(map[string]any{"connection_id": connectionID, "publication_epoch": identity.PublicationEpoch, "pair_operation_id": pair.OperationID, "verified_at": time.Now().UTC().Unix()}).Error
+		return tx.Table("nextcloud_source_status_epochs").
+			Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "connection_id"}}, DoUpdates: clause.AssignmentColumns([]string{"publication_epoch", "pair_operation_id", "verified_at"})}).
+			Create(map[string]any{"connection_id": connectionID, "publication_epoch": identity.PublicationEpoch, "pair_operation_id": pair.OperationID, "verified_at": time.Now().UTC().Unix()}).
+			Error
 	})
 }
+
 func (s *NextcloudProcessingStateStore) RefreshSources(ctx context.Context) error {
 	var ids []string
-	if err := s.db.WithContext(ctx).Table("nextcloud_event_connections").Where("status='active'").Pluck("connection_id", &ids).Error; err != nil {
+	if err := s.db.WithContext(ctx).
+		Table("nextcloud_event_connections").
+		Where("status='active'").
+		Pluck("connection_id", &ids).
+		Error; err != nil {
 		return err
 	}
 	for _, id := range ids {
@@ -280,13 +393,20 @@ func (s *NextcloudProcessingStateStore) RefreshSources(ctx context.Context) erro
 
 func NextcloudFileStateResponseCanonical(request SignedNextcloudFileStatusRequest, body []byte) []byte {
 	sum := sha256.Sum256(body)
-	return []byte("weknora-file-status-hmac-sha256-v2\n" + request.RequestSignature + "\n" + hex.EncodeToString(sum[:]) + "\n" + request.ConnectionID + "\n" + request.KeyID + "\n" + request.Nonce)
+	return []byte(
+		"weknora-file-status-hmac-sha256-v2\n" + request.RequestSignature + "\n" + hex.EncodeToString(
+			sum[:],
+		) + "\n" + request.ConnectionID + "\n" + request.KeyID + "\n" + request.Nonce,
+	)
 }
 
 // PrepareDeliveryBatch amortizes connection/pair/credential validation while
 // retaining one exact current-head check immediately before each HTTP send.
 // Receiver and ACK checks remain independent of this preparation snapshot.
-func (s *NextcloudProcessingStateStore) PrepareDeliveryBatch(ctx context.Context, ids []string) ([]NextcloudStatusDelivery, error) {
+func (s *NextcloudProcessingStateStore) PrepareDeliveryBatch(
+	ctx context.Context,
+	ids []string,
+) ([]NextcloudStatusDelivery, error) {
 	if len(ids) == 0 {
 		return nil, nil
 	}
@@ -307,7 +427,10 @@ func (s *NextcloudProcessingStateStore) PrepareDeliveryBatch(ctx context.Context
 			scope, ok := scopes[out.ConnectionID]
 			if !ok {
 				var conn nextcloudEventConnection
-				if err := tx.Table("nextcloud_event_connections").Where("connection_id=? AND status='active'", out.ConnectionID).Take(&conn).Error; err != nil {
+				if err := tx.Table("nextcloud_event_connections").
+					Where("connection_id=? AND status='active'", out.ConnectionID).
+					Take(&conn).
+					Error; err != nil {
 					badScopes[out.ConnectionID] = true
 					retryIDs = append(retryIDs, out.EventID)
 					continue
@@ -318,7 +441,9 @@ func (s *NextcloudProcessingStateStore) PrepareDeliveryBatch(ctx context.Context
 					continue
 				}
 				var ds types.DataSource
-				if err := tx.Where("id=? AND tenant_id=?", conn.DatasourceID, conn.TenantID).Take(&ds).Error; err != nil {
+				if err := tx.Where("id=? AND tenant_id=?", conn.DatasourceID, conn.TenantID).
+					Take(&ds).
+					Error; err != nil {
 					return err
 				}
 				cfg, err := ds.ParseConfig()
@@ -329,7 +454,14 @@ func (s *NextcloudProcessingStateStore) PrepareDeliveryBatch(ctx context.Context
 				if err != nil {
 					return err
 				}
-				scope = NextcloudStatusDelivery{ConnectionID: conn.ConnectionID, KeyID: conn.CurrentKeyID, Config: cfg, SigningKey: NextcloudStateSigningKey(secret), ConfigSHA: conn.DatasourceConfigSHA256, SecretCiphertext: conn.CurrentSecretCiphertext}
+				scope = NextcloudStatusDelivery{
+					ConnectionID:     conn.ConnectionID,
+					KeyID:            conn.CurrentKeyID,
+					Config:           cfg,
+					SigningKey:       NextcloudStateSigningKey(secret),
+					ConfigSHA:        conn.DatasourceConfigSHA256,
+					SecretCiphertext: conn.CurrentSecretCiphertext,
+				}
 				scopes[out.ConnectionID] = scope
 			}
 			var state NextcloudFileStateV2
@@ -342,13 +474,20 @@ func (s *NextcloudProcessingStateStore) PrepareDeliveryBatch(ctx context.Context
 			result = append(result, scope)
 		}
 		if len(retryIDs) > 0 {
-			return tx.Model(&nextcloudStatusOutboxRow{}).Where("event_id IN ? AND state='pending'", retryIDs).Updates(map[string]any{"next_attempt_at": time.Now().UTC().Add(5 * time.Second).Unix(), "attempts": gorm.Expr("attempts+1"), "last_error_code": "state_connection_unavailable"}).Error
+			return tx.Model(&nextcloudStatusOutboxRow{}).
+				Where("event_id IN ? AND state='pending'", retryIDs).
+				Updates(map[string]any{"next_attempt_at": time.Now().UTC().Add(5 * time.Second).Unix(), "attempts": gorm.Expr("attempts+1"), "last_error_code": "state_connection_unavailable"}).
+				Error
 		}
 		return nil
 	})
 	return result, err
 }
-func (s *NextcloudProcessingStateStore) DeliveryCurrent(ctx context.Context, delivery NextcloudStatusDelivery) (bool, error) {
+
+func (s *NextcloudProcessingStateStore) DeliveryCurrent(
+	ctx context.Context,
+	delivery NextcloudStatusDelivery,
+) (bool, error) {
 	state := delivery.State
 	if state.PublicationState == "published" {
 		closed, err := nextcloudControlsClosed(s.db.WithContext(ctx), state.InstanceID)
@@ -361,7 +500,15 @@ func (s *NextcloudProcessingStateStore) DeliveryCurrent(ctx context.Context, del
 		knowledge = *state.KnowledgeID
 	}
 	var count int64
-	query := s.db.WithContext(ctx).Table("nextcloud_status_outbox o").Joins("JOIN nextcloud_file_states f ON f.connection_id=o.connection_id AND f.file_id=o.file_id AND f.publication_epoch=o.publication_epoch AND f.latest_event_id=o.event_id AND f.head_revision=o.head_revision AND f.status_revision=o.status_revision").Joins("JOIN nextcloud_event_connections c ON c.connection_id=o.connection_id AND c.status='active'").Joins("JOIN data_sources d ON d.id=c.datasource_id AND d.tenant_id=c.tenant_id AND d.knowledge_base_id=c.knowledge_base_id AND d.type='nextcloud' AND d.status='active' AND d.deleted_at IS NULL").Joins("JOIN nextcloud_source_pairings p ON p.tenant_id=c.tenant_id AND p.knowledge_base_id=c.knowledge_base_id AND p.datasource_id=c.datasource_id AND p.state='active'").Joins("LEFT JOIN nextcloud_source_status_epochs e ON e.connection_id=c.connection_id").Joins("JOIN nextcloud_source_versions v ON v.tenant_id=c.tenant_id AND v.knowledge_base_id=c.knowledge_base_id AND v.datasource_id=c.datasource_id AND v.external_id=('nextcloud:' || c.nextcloud_instance_id || ':' || o.file_id)").Where("o.event_id=? AND o.state='pending' AND c.current_key_id=? AND c.current_secret_ciphertext=? AND c.datasource_config_sha256=? AND p.operation_id=? AND COALESCE(e.publication_epoch,p.publication_epoch)=o.publication_epoch AND v.desired_etag=? AND COALESCE(v.candidate_knowledge_id,'')=?", delivery.EventID, delivery.KeyID, delivery.SecretCiphertext, delivery.ConfigSHA, state.PairOperationID, state.SourceETag, knowledge)
+	query := s.db.WithContext(ctx).
+		Table("nextcloud_status_outbox o").
+		Joins("JOIN nextcloud_file_states f ON f.connection_id=o.connection_id AND f.file_id=o.file_id AND f.publication_epoch=o.publication_epoch AND f.latest_event_id=o.event_id AND f.head_revision=o.head_revision AND f.status_revision=o.status_revision").
+		Joins("JOIN nextcloud_event_connections c ON c.connection_id=o.connection_id AND c.status='active'").
+		Joins("JOIN data_sources d ON d.id=c.datasource_id AND d.tenant_id=c.tenant_id AND d.knowledge_base_id=c.knowledge_base_id AND d.type='nextcloud' AND d.status='active' AND d.deleted_at IS NULL").
+		Joins("JOIN nextcloud_source_pairings p ON p.tenant_id=c.tenant_id AND p.knowledge_base_id=c.knowledge_base_id AND p.datasource_id=c.datasource_id AND p.state='active'").
+		Joins("LEFT JOIN nextcloud_source_status_epochs e ON e.connection_id=c.connection_id").
+		Joins("JOIN nextcloud_source_versions v ON v.tenant_id=c.tenant_id AND v.knowledge_base_id=c.knowledge_base_id AND v.datasource_id=c.datasource_id AND v.external_id=('nextcloud:' || c.nextcloud_instance_id || ':' || o.file_id)").
+		Where("o.event_id=? AND o.state='pending' AND c.current_key_id=? AND c.current_secret_ciphertext=? AND c.datasource_config_sha256=? AND p.operation_id=? AND COALESCE(e.publication_epoch,p.publication_epoch)=o.publication_epoch AND v.desired_etag=? AND COALESCE(v.candidate_knowledge_id,'')=?", delivery.EventID, delivery.KeyID, delivery.SecretCiphertext, delivery.ConfigSHA, state.PairOperationID, state.SourceETag, knowledge)
 	if s.contentRevisionSupported {
 		query = query.Where("v.desired_content_revision=?", state.SourceContentRevision)
 	} else if state.SourceContentRevision != "0" {
@@ -370,13 +517,26 @@ func (s *NextcloudProcessingStateStore) DeliveryCurrent(ctx context.Context, del
 	err := query.Count(&count).Error
 	return count == 1, err
 }
-func (s *NextcloudProcessingStateStore) AcknowledgeCurrentDelivery(ctx context.Context, event string, now time.Time) error {
-	return s.db.WithContext(ctx).Exec("UPDATE nextcloud_status_outbox SET state=CASE WHEN EXISTS(SELECT 1 FROM nextcloud_file_states f WHERE f.connection_id=nextcloud_status_outbox.connection_id AND f.file_id=nextcloud_status_outbox.file_id AND f.publication_epoch=nextcloud_status_outbox.publication_epoch AND f.latest_event_id=nextcloud_status_outbox.event_id AND f.head_revision=nextcloud_status_outbox.head_revision AND f.status_revision=nextcloud_status_outbox.status_revision) THEN 'delivered' ELSE 'superseded' END,delivered_at=?,last_error_code='' WHERE event_id=? AND state='pending'", now.Unix(), event).Error
+
+func (s *NextcloudProcessingStateStore) AcknowledgeCurrentDelivery(
+	ctx context.Context,
+	event string,
+	now time.Time,
+) error {
+	return s.db.WithContext(ctx).
+		Exec("UPDATE nextcloud_status_outbox SET state=CASE WHEN EXISTS(SELECT 1 FROM nextcloud_file_states f WHERE f.connection_id=nextcloud_status_outbox.connection_id AND f.file_id=nextcloud_status_outbox.file_id AND f.publication_epoch=nextcloud_status_outbox.publication_epoch AND f.latest_event_id=nextcloud_status_outbox.event_id AND f.head_revision=nextcloud_status_outbox.head_revision AND f.status_revision=nextcloud_status_outbox.status_revision) THEN 'delivered' ELSE 'superseded' END,delivered_at=?,last_error_code='' WHERE event_id=? AND state='pending'", now.Unix(), event).
+		Error
 }
 
-func (s *NextcloudProcessingStateStore) AcknowledgeCurrentDeliveries(ctx context.Context, events []string, now time.Time) error {
+func (s *NextcloudProcessingStateStore) AcknowledgeCurrentDeliveries(
+	ctx context.Context,
+	events []string,
+	now time.Time,
+) error {
 	if len(events) == 0 {
 		return nil
 	}
-	return s.db.WithContext(ctx).Exec("UPDATE nextcloud_status_outbox SET state=CASE WHEN EXISTS(SELECT 1 FROM nextcloud_file_states f WHERE f.connection_id=nextcloud_status_outbox.connection_id AND f.file_id=nextcloud_status_outbox.file_id AND f.publication_epoch=nextcloud_status_outbox.publication_epoch AND f.latest_event_id=nextcloud_status_outbox.event_id AND f.head_revision=nextcloud_status_outbox.head_revision AND f.status_revision=nextcloud_status_outbox.status_revision) THEN 'delivered' ELSE 'superseded' END,delivered_at=?,last_error_code='' WHERE event_id IN ? AND state='pending'", now.Unix(), events).Error
+	return s.db.WithContext(ctx).
+		Exec("UPDATE nextcloud_status_outbox SET state=CASE WHEN EXISTS(SELECT 1 FROM nextcloud_file_states f WHERE f.connection_id=nextcloud_status_outbox.connection_id AND f.file_id=nextcloud_status_outbox.file_id AND f.publication_epoch=nextcloud_status_outbox.publication_epoch AND f.latest_event_id=nextcloud_status_outbox.event_id AND f.head_revision=nextcloud_status_outbox.head_revision AND f.status_revision=nextcloud_status_outbox.status_revision) THEN 'delivered' ELSE 'superseded' END,delivered_at=?,last_error_code='' WHERE event_id IN ? AND state='pending'", now.Unix(), events).
+		Error
 }

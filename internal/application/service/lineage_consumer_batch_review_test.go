@@ -2,10 +2,11 @@ package service
 
 import (
 	"context"
+	"testing"
+
 	"github.com/Tencent/WeKnora/internal/application/access"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/stretchr/testify/require"
-	"testing"
 )
 
 type consumerBatchReviewPolicy struct {
@@ -15,7 +16,11 @@ type consumerBatchReviewPolicy struct {
 	scopes   []string
 }
 
-func (p *consumerBatchReviewPolicy) Check(_ context.Context, lineage *types.SourceLineage, scope access.LineageReadScope) error {
+func (p *consumerBatchReviewPolicy) Check(
+	_ context.Context,
+	lineage *types.SourceLineage,
+	scope access.LineageReadScope,
+) error {
 	p.scopes = append(p.scopes, scope.AgentID)
 	if lineage.RequireComplete() != nil {
 		return access.ErrNextcloudPublicationDenied
@@ -33,6 +38,7 @@ func (p *consumerBatchReviewPolicy) Check(_ context.Context, lineage *types.Sour
 	}
 	return nil
 }
+
 func (p *consumerBatchReviewPolicy) CheckBatch(ctx context.Context, reads []access.SourceLineageRead) error {
 	p.batches++
 	for _, read := range reads {
@@ -42,6 +48,7 @@ func (p *consumerBatchReviewPolicy) CheckBatch(ctx context.Context, reads []acce
 	}
 	return nil
 }
+
 func consumerBatchReviewProof(t *testing.T, file string) *types.SourceLineage {
 	proof := ragEntryProof(t)
 	proof.Sources[0].FileID = file
@@ -50,10 +57,16 @@ func consumerBatchReviewProof(t *testing.T, file string) *types.SourceLineage {
 	require.NoError(t, proof.Validate())
 	return proof
 }
+
 func TestLineageConsumerReviewSingleTitleFinalUnionRejectsEarlierRevocation(t *testing.T) {
 	policy := &consumerBatchReviewPolicy{}
 	svc := &sessionService{sourceLineageGuard: policy}
-	row := &types.Session{Title: "secret A", Description: "secret B", TitleSourceLineage: consumerBatchReviewProof(t, "1"), DescriptionSourceLineage: consumerBatchReviewProof(t, "2")}
+	row := &types.Session{
+		Title:                    "secret A",
+		Description:              "secret B",
+		TitleSourceLineage:       consumerBatchReviewProof(t, "1"),
+		DescriptionSourceLineage: consumerBatchReviewProof(t, "2"),
+	}
 	got, err := svc.authorizeSessionText(context.Background(), row)
 	require.True(t, policy.sawB, "mutation callback did not run")
 	require.True(t, policy.revokedA)
@@ -61,12 +74,25 @@ func TestLineageConsumerReviewSingleTitleFinalUnionRejectsEarlierRevocation(t *t
 	require.Nil(t, got)
 	require.Greater(t, policy.batches, 0)
 }
+
 func TestLineageConsumerReviewHistoryFinalBatchRetainsEachAgentScope(t *testing.T) {
 	policy := &consumerBatchReviewPolicy{}
 	svc := &messageService{sourceLineageGuard: policy}
 	rows := []*types.Message{
-		{Role: "assistant", Content: "secret A", AgentID: "agent-a", AgentTenantID: 7, SourceLineage: consumerBatchReviewProof(t, "1")},
-		{Role: "assistant", Content: "secret B", AgentID: "agent-b", AgentTenantID: 7, SourceLineage: consumerBatchReviewProof(t, "2")},
+		{
+			Role:          "assistant",
+			Content:       "secret A",
+			AgentID:       "agent-a",
+			AgentTenantID: 7,
+			SourceLineage: consumerBatchReviewProof(t, "1"),
+		},
+		{
+			Role:          "assistant",
+			Content:       "secret B",
+			AgentID:       "agent-b",
+			AgentTenantID: 7,
+			SourceLineage: consumerBatchReviewProof(t, "2"),
+		},
 	}
 	got, err := svc.filterHistoryMessages(context.Background(), rows)
 	require.True(t, policy.sawB)
@@ -77,12 +103,25 @@ func TestLineageConsumerReviewHistoryFinalBatchRetainsEachAgentScope(t *testing.
 	require.Contains(t, policy.scopes, "agent-a")
 	require.Contains(t, policy.scopes, "agent-b")
 }
+
 func TestLineageConsumerReviewSearchFinalBatchRejectsEarlierTitleRevocation(t *testing.T) {
 	policy := &consumerBatchReviewPolicy{}
 	svc := &messageService{sourceLineageGuard: policy}
 	rows := []*types.MessageSearchResultItem{
-		{MessageWithSession: types.MessageWithSession{Message: types.Message{Role: "user", Content: "own A"}, SessionTitle: "secret A", SessionTitleSourceLineage: consumerBatchReviewProof(t, "1")}},
-		{MessageWithSession: types.MessageWithSession{Message: types.Message{Role: "user", Content: "own B"}, SessionTitle: "secret B", SessionTitleSourceLineage: consumerBatchReviewProof(t, "2")}},
+		{
+			MessageWithSession: types.MessageWithSession{
+				Message:                   types.Message{Role: "user", Content: "own A"},
+				SessionTitle:              "secret A",
+				SessionTitleSourceLineage: consumerBatchReviewProof(t, "1"),
+			},
+		},
+		{
+			MessageWithSession: types.MessageWithSession{
+				Message:                   types.Message{Role: "user", Content: "own B"},
+				SessionTitle:              "secret B",
+				SessionTitleSourceLineage: consumerBatchReviewProof(t, "2"),
+			},
+		},
 	}
 	got, err := svc.filterHistoricalSearchPairs(context.Background(), rows)
 	require.True(t, policy.sawB)

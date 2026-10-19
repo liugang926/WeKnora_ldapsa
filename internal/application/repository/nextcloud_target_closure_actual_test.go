@@ -16,7 +16,20 @@ import (
 )
 
 func targetProofHash(target types.NextcloudTargetObservation) string {
-	raw := strings.Join([]string{"weknora-target-deleted-v1", target.OperationID, target.TenantID, target.KnowledgeBaseID, target.InstanceID, target.BindingID, target.OperationRevision, target.Reason, target.DeletionTimeMS}, "\n")
+	raw := strings.Join(
+		[]string{
+			"weknora-target-deleted-v1",
+			target.OperationID,
+			target.TenantID,
+			target.KnowledgeBaseID,
+			target.InstanceID,
+			target.BindingID,
+			target.OperationRevision,
+			target.Reason,
+			target.DeletionTimeMS,
+		},
+		"\n",
+	)
 	hash := sha256.Sum256([]byte(raw))
 	return hex.EncodeToString(hash[:])
 }
@@ -25,7 +38,17 @@ func TestNextcloudTargetDeletedTenantTransactionRetainsExitEvidence(t *testing.T
 	db, store, c := onboardingDB(t)
 	ctx := context.Background()
 	require.NoError(t, db.Create(&types.Tenant{ID: 9, Name: "other"}).Error)
-	require.NoError(t, db.Create(&types.TenantMember{TenantID: 9, UserID: "outside", Role: types.TenantRoleOwner, Status: types.TenantMemberStatusActive}).Error)
+	require.NoError(
+		t,
+		db.Create(
+			&types.TenantMember{
+				TenantID: 9,
+				UserID:   "outside",
+				Role:     types.TenantRoleOwner,
+				Status:   types.TenantMemberStatusActive,
+			},
+		).Error,
+	)
 	var operations []types.NextcloudOnboardingOperation
 	for _, id := range []string{"delete-tenant-one", "delete-tenant-two"} {
 		kb := freshOnboardingKB(id)
@@ -33,7 +56,26 @@ func TestNextcloudTargetDeletedTenantTransactionRetainsExitEvidence(t *testing.T
 		op, err := store.Reserve(ctx, c, onboardingRequest(c, uuid.NewString(), id))
 		require.NoError(t, err)
 		activateOnboarding(t, db, store, op)
-		require.NoError(t, store.ApplyGrantSnapshot(ctx, op, types.NextcloudGrantSnapshot{PermissionVersion: 1, PublicationEpoch: 1, Complete: true, Subjects: []types.NextcloudGrantSubject{{Kind: "user", DirectoryID: c.DirectoryID, ObjectGUID: "guid-reader", SourceRelationID: "share"}}}))
+		require.NoError(
+			t,
+			store.ApplyGrantSnapshot(
+				ctx,
+				op,
+				types.NextcloudGrantSnapshot{
+					PermissionVersion: 1,
+					PublicationEpoch:  1,
+					Complete:          true,
+					Subjects: []types.NextcloudGrantSubject{
+						{
+							Kind:             "user",
+							DirectoryID:      c.DirectoryID,
+							ObjectGUID:       "guid-reader",
+							SourceRelationID: "share",
+						},
+					},
+				},
+			),
+		)
 		operations = append(operations, op)
 	}
 	require.NoError(t, repo.NewTenantRepository(db).DeleteTenant(ctx, 7))
@@ -60,12 +102,20 @@ func TestNextcloudTargetDeletedTenantTransactionRetainsExitEvidence(t *testing.T
 		require.NoError(t, err)
 		require.Empty(t, matches)
 		require.Error(t, store.MarkActive(ctx, op))
-		require.Error(t, store.ApplyGrantSnapshot(ctx, op, types.NextcloudGrantSnapshot{PermissionVersion: 2, PublicationEpoch: 1, Complete: true}))
+		require.Error(
+			t,
+			store.ApplyGrantSnapshot(
+				ctx,
+				op,
+				types.NextcloudGrantSnapshot{PermissionVersion: 2, PublicationEpoch: 1, Complete: true},
+			),
+		)
 		_, err = store.SetSyncEnabled(ctx, op, true, op.Revision)
 		require.Error(t, err)
 		_, _, err = repo.NewNextcloudSourcePairingRepository(db).PrepareSourcePairing(ctx, pair, "handoff-token")
 		require.Error(t, err)
-		_, err = repo.NewNextcloudContentLeaseStore(db).AcquireKBRead(ctx, 7, old.KnowledgeBaseID, "new-reader", time.Minute)
+		_, err = repo.NewNextcloudContentLeaseStore(db).
+			AcquireKBRead(ctx, 7, old.KnowledgeBaseID, "new-reader", time.Minute)
 		require.Error(t, err)
 		_, err = store.TargetObservation(ctx, c, op, c.DirectoryID, "guid-reader")
 		require.ErrorIs(t, err, repo.ErrNextcloudOnboardingDenied)
@@ -97,7 +147,26 @@ func TestNextcloudTargetDeletedKBIsExactAndMissingIsNotDeletion(t *testing.T) {
 		op, err := store.Reserve(ctx, c, onboardingRequest(c, uuid.NewString(), id))
 		require.NoError(t, err)
 		activateOnboarding(t, db, store, op)
-		require.NoError(t, store.ApplyGrantSnapshot(ctx, op, types.NextcloudGrantSnapshot{PermissionVersion: 1, PublicationEpoch: 1, Complete: true, Subjects: []types.NextcloudGrantSubject{{Kind: "group", DirectoryID: c.DirectoryID, ObjectGUID: "guid-engineering", SourceRelationID: "same-group-share"}}}))
+		require.NoError(
+			t,
+			store.ApplyGrantSnapshot(
+				ctx,
+				op,
+				types.NextcloudGrantSnapshot{
+					PermissionVersion: 1,
+					PublicationEpoch:  1,
+					Complete:          true,
+					Subjects: []types.NextcloudGrantSubject{
+						{
+							Kind:             "group",
+							DirectoryID:      c.DirectoryID,
+							ObjectGUID:       "guid-engineering",
+							SourceRelationID: "same-group-share",
+						},
+					},
+				},
+			),
+		)
 		ops = append(ops, op)
 	}
 	// The existing service forbids generic deletion of a live source. This tests
@@ -131,7 +200,18 @@ func TestNextcloudTargetDeleteUnknownLegacySourceRollsBack(t *testing.T) {
 	ctx := context.Background()
 	kb := freshOnboardingKB("legacy-source")
 	createOnboardingTemplate(t, db, &kb)
-	require.NoError(t, db.Create(&types.DataSource{ID: "legacy", TenantID: 7, KnowledgeBaseID: kb.ID, Type: types.ConnectorTypeNextcloud, Status: types.DataSourceStatusPaused}).Error)
+	require.NoError(
+		t,
+		db.Create(
+			&types.DataSource{
+				ID:              "legacy",
+				TenantID:        7,
+				KnowledgeBaseID: kb.ID,
+				Type:            types.ConnectorTypeNextcloud,
+				Status:          types.DataSourceStatusPaused,
+			},
+		).Error,
+	)
 	require.Error(t, repo.NewTenantRepository(db).DeleteTenant(ctx, 7))
 	var tenant types.Tenant
 	require.NoError(t, db.Where("id=7").Take(&tenant).Error)
@@ -215,7 +295,13 @@ func TestNextcloudRetiredHistoricalOperationObservesOnlyDeletedOwner(t *testing.
 	createOnboardingTemplate(t, db, &kb)
 	op, err := store.Reserve(ctx, c, onboardingRequest(c, uuid.NewString(), kb.ID))
 	require.NoError(t, err)
-	require.NoError(t, db.Model(&types.NextcloudOnboardingOperation{}).Where("operation_id=?", op.OperationID).Update("state", "retired").Error)
+	require.NoError(
+		t,
+		db.Model(&types.NextcloudOnboardingOperation{}).
+			Where("operation_id=?", op.OperationID).
+			Update("state", "retired").
+			Error,
+	)
 	require.NoError(t, repo.NewTenantRepository(db).DeleteTenant(ctx, 7))
 	op, err = store.Operation(ctx, c, op.OperationID)
 	require.NoError(t, err)

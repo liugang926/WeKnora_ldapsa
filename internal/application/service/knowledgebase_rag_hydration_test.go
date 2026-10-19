@@ -24,21 +24,62 @@ type ragHydrationActualReader struct {
 	lineage *types.SourceLineage
 }
 
-func (r *ragHydrationActualReader) HydrateRAGChunkSnapshots(_ context.Context, requests []types.RAGChunkReadRequest) ([]types.RAGChunkInputSnapshot, error) {
+func (r *ragHydrationActualReader) HydrateRAGChunkSnapshots(
+	_ context.Context,
+	requests []types.RAGChunkReadRequest,
+) ([]types.RAGChunkInputSnapshot, error) {
 	r.request = requests
-	return []types.RAGChunkInputSnapshot{{Knowledge: &types.Knowledge{ID: "doc", TenantID: 7, KnowledgeBaseID: "kb", Title: "actual snapshot header", Channel: "web", EnableStatus: "enabled", ParseStatus: types.ParseStatusCompleted},
-		Chunk: &types.Chunk{ID: "chunk", TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: "doc", Content: "actual snapshot body", ChunkType: types.ChunkTypeText, ImageInfo: "[]", IsEnabled: true, IndexStatus: "ready"}, SourceLineage: r.lineage}}, nil
+	return []types.RAGChunkInputSnapshot{
+		{
+			Knowledge: &types.Knowledge{
+				ID:              "doc",
+				TenantID:        7,
+				KnowledgeBaseID: "kb",
+				Title:           "actual snapshot header",
+				Channel:         "web",
+				EnableStatus:    "enabled",
+				ParseStatus:     types.ParseStatusCompleted,
+			},
+			Chunk: &types.Chunk{
+				ID:              "chunk",
+				TenantID:        7,
+				KnowledgeBaseID: "kb",
+				KnowledgeID:     "doc",
+				Content:         "actual snapshot body",
+				ChunkType:       types.ChunkTypeText,
+				ImageInfo:       "[]",
+				IsEnabled:       true,
+				IndexStatus:     "ready",
+			},
+			SourceLineage: r.lineage,
+		},
+	}, nil
 }
 
-func ragHydrationServiceFixture(t *testing.T, lineage *types.SourceLineage, authorize func(context.Context, *types.SourceLineage) error) (*knowledgeBaseService, context.Context, *ragHydrationActualReader) {
+func ragHydrationServiceFixture(
+	t *testing.T,
+	lineage *types.SourceLineage,
+	authorize func(context.Context, *types.SourceLineage) error,
+) (*knowledgeBaseService, context.Context, *ragHydrationActualReader) {
 	t.Helper()
 	ctx := types.WithCaller(context.Background(), types.Caller{TenantID: 7, UserID: "person"})
 	ctx = types.WithExecutionTenant(ctx, 7)
 	ctx = types.WithPrincipal(ctx, types.Principal{Type: types.PrincipalWebUser, ID: "person"})
 	ctx = types.WithRAGSourceLineage(ctx, types.NewRAGSourceLineage(authorize))
 	reader := &ragHydrationActualReader{lineage: lineage}
-	s := &knowledgeBaseService{kgRepo: &ragHydrationKnowledgeRepo{knowledge: &types.Knowledge{ID: "doc", TenantID: 7, KnowledgeBaseID: "kb", Title: "old cached metadata", Channel: "web"}}, ragChunkSnapshots: reader,
-		searchPublicationCheck: func(context.Context, *types.Knowledge) error { return nil }}
+	s := &knowledgeBaseService{
+		kgRepo: &ragHydrationKnowledgeRepo{
+			knowledge: &types.Knowledge{
+				ID:              "doc",
+				TenantID:        7,
+				KnowledgeBaseID: "kb",
+				Title:           "old cached metadata",
+				Channel:         "web",
+			},
+		},
+		ragChunkSnapshots:      reader,
+		searchPublicationCheck: func(context.Context, *types.Knowledge) error { return nil },
+	}
 	return s, ctx, reader
 }
 
@@ -46,12 +87,22 @@ func TestRAGChunkHydrationIgnoresCachedIndexTextAndAccountsBeforeResult(t *testi
 	lineage, err := types.NewCompleteSourceLineage()
 	require.NoError(t, err)
 	checks := 0
-	s, ctx, reader := ragHydrationServiceFixture(t, lineage, func(_ context.Context, actual *types.SourceLineage) error {
-		checks++
-		require.NoError(t, actual.RequireComplete())
-		return nil
-	})
-	rows, err := s.processSearchResults(ctx, []*types.IndexWithScore{{KnowledgeID: "doc", ChunkID: "chunk", Content: "old index text must not be restamped", Score: 1}}, true)
+	s, ctx, reader := ragHydrationServiceFixture(
+		t,
+		lineage,
+		func(_ context.Context, actual *types.SourceLineage) error {
+			checks++
+			require.NoError(t, actual.RequireComplete())
+			return nil
+		},
+	)
+	rows, err := s.processSearchResults(
+		ctx,
+		[]*types.IndexWithScore{
+			{KnowledgeID: "doc", ChunkID: "chunk", Content: "old index text must not be restamped", Score: 1},
+		},
+		true,
+	)
 	require.NoError(t, err)
 	require.Len(t, rows, 1)
 	require.Equal(t, "actual snapshot body", rows[0].Content)
@@ -72,8 +123,16 @@ func TestRAGChunkHydrationUnknownAndLateRevocationReturnNoProgressMaterial(t *te
 				lineage, err = types.NewCompleteSourceLineage()
 				require.NoError(t, err)
 			}
-			s, ctx, _ := ragHydrationServiceFixture(t, lineage, func(context.Context, *types.SourceLineage) error { return denied })
-			rows, err := s.processSearchResults(ctx, []*types.IndexWithScore{{KnowledgeID: "doc", ChunkID: "chunk", Content: "cached text", Score: 1}}, true)
+			s, ctx, _ := ragHydrationServiceFixture(
+				t,
+				lineage,
+				func(context.Context, *types.SourceLineage) error { return denied },
+			)
+			rows, err := s.processSearchResults(
+				ctx,
+				[]*types.IndexWithScore{{KnowledgeID: "doc", ChunkID: "chunk", Content: "cached text", Score: 1}},
+				true,
+			)
 			require.Error(t, err)
 			require.Nil(t, rows)
 			if mode == "late revocation" {

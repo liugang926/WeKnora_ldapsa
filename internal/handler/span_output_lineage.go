@@ -2,13 +2,14 @@ package handler
 
 import (
 	"context"
+	"net/http"
+	"strconv"
+	"strings"
+
 	"github.com/Tencent/WeKnora/internal/application/service"
 	"github.com/Tencent/WeKnora/internal/errors"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/gin-gonic/gin"
-	"net/http"
-	"strconv"
-	"strings"
 )
 
 // ServeOriginalKnowledgeSpans is the production GetKnowledgeSpans hook. The
@@ -49,7 +50,15 @@ func ServeOriginalKnowledgeSpans(h *KnowledgeHandler, c *gin.Context, a *service
 			return
 		}
 	}
-	guard, err := a.Begin(ctx, types.SpanOutputReadRequest{TenantID: knowledge.TenantID, KnowledgeBaseID: knowledge.KnowledgeBaseID, KnowledgeID: knowledge.ID, Attempt: attempt})
+	guard, err := a.Begin(
+		ctx,
+		types.SpanOutputReadRequest{
+			TenantID:        knowledge.TenantID,
+			KnowledgeBaseID: knowledge.KnowledgeBaseID,
+			KnowledgeID:     knowledge.ID,
+			Attempt:         attempt,
+		},
+	)
 	if err != nil {
 		_ = c.Error(knowledgeOutputHTTPError(err))
 		return
@@ -76,10 +85,25 @@ func ServeOriginalKnowledgeSpans(h *KnowledgeHandler, c *gin.Context, a *service
 		}
 	}
 	markSynthetic(tree)
-	resp := gin.H{"knowledge_id": knowledge.ID, "attempt": snapshot.Attempt, "latest_attempt": snapshot.LatestAttempt, "parse_status": parseStatus, "current_attempt": snapshot.Attempt, "current_stage": current, "trace": tree}
+	resp := gin.H{
+		"knowledge_id":    knowledge.ID,
+		"attempt":         snapshot.Attempt,
+		"latest_attempt":  snapshot.LatestAttempt,
+		"parse_status":    parseStatus,
+		"current_attempt": snapshot.Attempt,
+		"current_stage":   current,
+		"trace":           tree,
+	}
 	// A current knowledge.ErrorMessage cannot certify an old attempt's error.
 	if lastError != nil && lastError.ContentProvenance == "complete" {
-		resp["last_error"] = knowledgeSpansLastError(snapshot.Attempt, snapshot.LatestAttempt, knowledge.ParseStatus, "", knowledge.UpdatedAt, lastError)
+		resp["last_error"] = knowledgeSpansLastError(
+			snapshot.Attempt,
+			snapshot.LatestAttempt,
+			knowledge.ParseStatus,
+			"",
+			knowledge.UpdatedAt,
+			lastError,
+		)
 	}
 	if err := guard.Check(ctx, snapshot); err != nil {
 		_ = c.Error(knowledgeOutputHTTPError(err))

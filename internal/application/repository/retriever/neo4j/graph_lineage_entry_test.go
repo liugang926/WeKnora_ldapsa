@@ -24,7 +24,11 @@ type localGraphModel struct {
 	output       string
 }
 
-func (m *localGraphModel) Chat(_ context.Context, messages []chat.Message, options *chat.ChatOptions) (*types.ChatResponse, error) {
+func (m *localGraphModel) Chat(
+	_ context.Context,
+	messages []chat.Message,
+	options *chat.ChatOptions,
+) (*types.ChatResponse, error) {
 	m.messages = messages
 	m.options = options
 	if m.beforeReturn != nil {
@@ -32,12 +36,20 @@ func (m *localGraphModel) Chat(_ context.Context, messages []chat.Message, optio
 	}
 	return &types.ChatResponse{Content: m.output}, nil
 }
-func (m *localGraphModel) ChatStream(context.Context, []chat.Message, *chat.ChatOptions) (<-chan types.StreamResponse, error) {
+
+func (m *localGraphModel) ChatStream(
+	context.Context,
+	[]chat.Message,
+	*chat.ChatOptions,
+) (<-chan types.StreamResponse, error) {
 	panic("unused local model method")
 }
 func (m *localGraphModel) GetModelID() string   { return "local-graph-stub" }
 func (m *localGraphModel) GetModelName() string { return "local-graph-stub" }
-func neoGraphFixture(t *testing.T) (context.Context, neo4j.Driver, interfaces.RetrieveGraphRepository, types.NameSpace) {
+
+func neoGraphFixture(
+	t *testing.T,
+) (context.Context, neo4j.Driver, interfaces.RetrieveGraphRepository, types.NameSpace) {
 	t.Helper()
 	dsn := os.Getenv("WEKNORA_KG_TEST_NEO4J_URI")
 	if dsn == "" {
@@ -48,23 +60,61 @@ func neoGraphFixture(t *testing.T) (context.Context, neo4j.Driver, interfaces.Re
 	require.NoError(t, err)
 	require.NoError(t, driver.VerifyConnectivity(ctx))
 	repo := graphrepo.NewNeo4jRepository(driver)
-	namespace := types.NameSpace{KnowledgeBase: "kg_lineage_" + strings.ReplaceAll(uuid.NewString(), "-", ""), Knowledge: "doc"}
+	namespace := types.NameSpace{
+		KnowledgeBase: "kg_lineage_" + strings.ReplaceAll(uuid.NewString(), "-", ""),
+		Knowledge:     "doc",
+	}
 	t.Cleanup(func() {
 		require.NoError(t, repo.DelGraph(ctx, []types.NameSpace{{KnowledgeBase: namespace.KnowledgeBase}}))
 		require.NoError(t, driver.Close(ctx))
 	})
 	return ctx, driver, repo, namespace
 }
+
 func graphTestLineage(t *testing.T, namespace types.NameSpace, file, etag string, epoch uint64) *types.SourceLineage {
 	t.Helper()
-	lineage, err := types.NewCompleteSourceLineage(types.SourceIdentity{Provider: types.ConnectorTypeNextcloud, TenantID: 7, KnowledgeBaseID: namespace.KnowledgeBase, KnowledgeID: namespace.Knowledge, DataSourceID: "ds", PairOperationID: "pair", InstanceID: "instance", BindingID: "binding", FileID: file, ExternalID: "nextcloud:instance:" + file, ETag: etag, Revision: epoch})
+	lineage, err := types.NewCompleteSourceLineage(
+		types.SourceIdentity{
+			Provider:        types.ConnectorTypeNextcloud,
+			TenantID:        7,
+			KnowledgeBaseID: namespace.KnowledgeBase,
+			KnowledgeID:     namespace.Knowledge,
+			DataSourceID:    "ds",
+			PairOperationID: "pair",
+			InstanceID:      "instance",
+			BindingID:       "binding",
+			FileID:          file,
+			ExternalID:      "nextcloud:instance:" + file,
+			ETag:            etag,
+			Revision:        epoch,
+		},
+	)
 	require.NoError(t, err)
 	return lineage
 }
-func extractGraph(t *testing.T, ctx context.Context, namespace types.NameSpace, body, config *types.SourceLineage, chunk string, authorize func(context.Context, *types.SourceLineage) error) *types.GraphData {
+
+func extractGraph(
+	t *testing.T,
+	ctx context.Context,
+	namespace types.NameSpace,
+	body, config *types.SourceLineage,
+	chunk string,
+	authorize func(context.Context, *types.SourceLineage) error,
+) *types.GraphData {
 	t.Helper()
-	model := &localGraphModel{output: "```json\n[{\"entity\":\"shared\",\"entity_attributes\":[\"extracted fact\"]},{\"entity1\":\"shared\",\"entity2\":\"target\",\"relation\":\"REL\"}]\n```"}
-	template := &types.PromptTemplateStructured{Description: "custom extraction instructions %s", Tags: []string{"REL"}, Examples: []types.GraphData{{Text: "actual config example", Node: []*types.GraphNode{{Name: "example", Attributes: []string{"example fact"}}}}}}
+	model := &localGraphModel{
+		output: "```json\n[{\"entity\":\"shared\",\"entity_attributes\":[\"extracted fact\"]},{\"entity1\":\"shared\",\"entity2\":\"target\",\"relation\":\"REL\"}]\n```",
+	}
+	template := &types.PromptTemplateStructured{
+		Description: "custom extraction instructions %s",
+		Tags:        []string{"REL"},
+		Examples: []types.GraphData{
+			{
+				Text: "actual config example",
+				Node: []*types.GraphNode{{Name: "example", Attributes: []string{"example fact"}}},
+			},
+		},
+	}
 	extractor := chatpipeline.NewExtractor(model, template)
 	graph, err := extractor.ExtractSourceLineage(ctx, "actual source input", body, config, authorize)
 	require.NoError(t, err)
@@ -73,8 +123,31 @@ func extractGraph(t *testing.T, ctx context.Context, namespace types.NameSpace, 
 	require.Contains(t, model.messages[0].Content, "REL")
 	require.Equal(t, 8192, model.options.MaxTokens)
 	require.Equal(t, graph.SourceLineage, model.messages[0].SourceLineage)
-	proof := &types.KnowledgeBuildInputProof{Version: 1, TenantID: 7, KnowledgeBaseID: namespace.KnowledgeBase, KnowledgeID: namespace.Knowledge, AdmissionID: "local-original-admission", BuildGeneration: 1, InputDigest: types.GraphDigest(chunk), ConfigDigest: types.GraphDigest(template), BodyDigest: types.GraphDigest("actual source input"), ChunkIDs: []string{chunk}, SourceLineage: graph.SourceLineage}
-	base := &types.GraphSourceReceipt{OriginalInput: proof, Version: 1, TenantID: 7, KnowledgeBaseID: namespace.KnowledgeBase, KnowledgeID: namespace.Knowledge, BuildGeneration: 1, InputDigest: types.GraphDigest(chunk), ConfigDigest: types.GraphDigest(template), WireDigest: graph.WireDigest, SourceLineage: graph.SourceLineage}
+	proof := &types.KnowledgeBuildInputProof{
+		Version:         1,
+		TenantID:        7,
+		KnowledgeBaseID: namespace.KnowledgeBase,
+		KnowledgeID:     namespace.Knowledge,
+		AdmissionID:     "local-original-admission",
+		BuildGeneration: 1,
+		InputDigest:     types.GraphDigest(chunk),
+		ConfigDigest:    types.GraphDigest(template),
+		BodyDigest:      types.GraphDigest("actual source input"),
+		ChunkIDs:        []string{chunk},
+		SourceLineage:   graph.SourceLineage,
+	}
+	base := &types.GraphSourceReceipt{
+		OriginalInput:   proof,
+		Version:         1,
+		TenantID:        7,
+		KnowledgeBaseID: namespace.KnowledgeBase,
+		KnowledgeID:     namespace.Knowledge,
+		BuildGeneration: 1,
+		InputDigest:     types.GraphDigest(chunk),
+		ConfigDigest:    types.GraphDigest(template),
+		WireDigest:      graph.WireDigest,
+		SourceLineage:   graph.SourceLineage,
+	}
 	for _, node := range graph.Node {
 		node.Chunks = []string{chunk}
 		if node.Attributes == nil {
@@ -91,6 +164,7 @@ func extractGraph(t *testing.T, ctx context.Context, namespace types.NameSpace, 
 	require.NoError(t, err)
 	return graph
 }
+
 func TestKnowledgeGraphExtractorNeo4jOriginalUnionEntry(t *testing.T) {
 	ctx, _, repo, namespace := neoGraphFixture(t)
 	a := graphTestLineage(t, namespace, "77", "original-etag", 1)
@@ -104,7 +178,10 @@ func TestKnowledgeGraphExtractorNeo4jOriginalUnionEntry(t *testing.T) {
 		}
 		return nil
 	}
-	ctx = types.WithGraphWriteAuthorization(ctx, func(ctx context.Context, r *types.GraphSourceReceipt) error { return authorize(ctx, r.SourceLineage) })
+	ctx = types.WithGraphWriteAuthorization(
+		ctx,
+		func(ctx context.Context, r *types.GraphSourceReceipt) error { return authorize(ctx, r.SourceLineage) },
+	)
 	first := extractGraph(t, ctx, namespace, a, b, "chunk-a", authorize)
 	require.NoError(t, repo.AddGraph(ctx, namespace, []*types.GraphData{first}))
 	secondNamespace := types.NameSpace{KnowledgeBase: namespace.KnowledgeBase, Knowledge: "other-doc"}
@@ -125,17 +202,39 @@ func TestKnowledgeGraphExtractorNeo4jOriginalUnionEntry(t *testing.T) {
 	none, err := repo.SearchNode(ctx, types.NameSpace{KnowledgeBase: namespace.KnowledgeBase}, []string{"absent"})
 	require.NoError(t, err)
 	require.Empty(t, none.Node)
-	require.Len(t, none.SourceLineage.Sources, 3, "predicates inspect source-derived names before empty-result filtering")
+	require.Len(
+		t,
+		none.SourceLineage.Sources,
+		3,
+		"predicates inspect source-derived names before empty-result filtering",
+	)
 	require.Error(t, authorize(ctx, none.SourceLineage))
 }
+
 func TestKnowledgeGraphSameFileEpochsNeverRestamped(t *testing.T) {
 	ctx, _, repo, namespace := neoGraphFixture(t)
 	empty, _ := types.NewCompleteSourceLineage()
 	check := func(context.Context, *types.SourceLineage) error { return nil }
 	ctx = types.WithGraphWriteAuthorization(ctx, func(context.Context, *types.GraphSourceReceipt) error { return nil })
-	old := extractGraph(t, ctx, namespace, graphTestLineage(t, namespace, "77", "old-etag", 1), empty, "old-chunk", check)
+	old := extractGraph(
+		t,
+		ctx,
+		namespace,
+		graphTestLineage(t, namespace, "77", "old-etag", 1),
+		empty,
+		"old-chunk",
+		check,
+	)
 	require.NoError(t, repo.AddGraph(ctx, namespace, []*types.GraphData{old}))
-	fresh := extractGraph(t, ctx, namespace, graphTestLineage(t, namespace, "77", "fresh-etag", 2), empty, "fresh-chunk", check)
+	fresh := extractGraph(
+		t,
+		ctx,
+		namespace,
+		graphTestLineage(t, namespace, "77", "fresh-etag", 2),
+		empty,
+		"fresh-chunk",
+		check,
+	)
 	require.NoError(t, repo.AddGraph(ctx, namespace, []*types.GraphData{fresh}))
 	graph, err := repo.SearchNode(ctx, namespace, []string{"shared"})
 	require.NoError(t, err)
@@ -148,10 +247,19 @@ func TestKnowledgeGraphSameFileEpochsNeverRestamped(t *testing.T) {
 		}
 	}
 }
+
 func TestKnowledgeGraphWriteWithdrawalRollsBackAllUnits(t *testing.T) {
 	ctx, _, repo, namespace := neoGraphFixture(t)
 	empty, _ := types.NewCompleteSourceLineage()
-	graph := extractGraph(t, ctx, namespace, empty, empty, "ordinary-chunk", func(context.Context, *types.SourceLineage) error { return nil })
+	graph := extractGraph(
+		t,
+		ctx,
+		namespace,
+		empty,
+		empty,
+		"ordinary-chunk",
+		func(context.Context, *types.SourceLineage) error { return nil },
+	)
 	calls := 0
 	denied := errors.New("input generation withdrawn inside write transaction")
 	ctx = types.WithGraphWriteAuthorization(ctx, func(context.Context, *types.GraphSourceReceipt) error {
@@ -167,13 +275,25 @@ func TestKnowledgeGraphWriteWithdrawalRollsBackAllUnits(t *testing.T) {
 	require.Empty(t, read.Node)
 	require.Empty(t, read.Relation)
 }
+
 func TestKnowledgeGraphLegacyOrChangedBodyCannotBorrowChunkProof(t *testing.T) {
 	for _, mode := range []string{"legacy", "changed body", "orphan legacy"} {
 		t.Run(mode, func(t *testing.T) {
 			ctx, driver, repo, namespace := neoGraphFixture(t)
 			empty, _ := types.NewCompleteSourceLineage()
-			graph := extractGraph(t, ctx, namespace, empty, empty, "current-chunk", func(context.Context, *types.SourceLineage) error { return nil })
-			ctx = types.WithGraphWriteAuthorization(ctx, func(context.Context, *types.GraphSourceReceipt) error { return nil })
+			graph := extractGraph(
+				t,
+				ctx,
+				namespace,
+				empty,
+				empty,
+				"current-chunk",
+				func(context.Context, *types.SourceLineage) error { return nil },
+			)
+			ctx = types.WithGraphWriteAuthorization(
+				ctx,
+				func(context.Context, *types.GraphSourceReceipt) error { return nil },
+			)
 			require.NoError(t, repo.AddGraph(ctx, namespace, []*types.GraphData{graph}))
 			session := driver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeWrite})
 			defer session.Close(ctx)
@@ -205,11 +325,43 @@ func TestKnowledgeGraphEmptyModelOutputRetainsOriginalControlReceipt(t *testing.
 	model := &localGraphModel{output: "[]"}
 	template := &types.PromptTemplateStructured{Description: "literal instructions"}
 	extractor := chatpipeline.NewExtractor(model, template)
-	graph, err := extractor.ExtractSourceLineage(ctx, "actual source that extracted no nodes", lineage, empty, func(context.Context, *types.SourceLineage) error { return nil })
+	graph, err := extractor.ExtractSourceLineage(
+		ctx,
+		"actual source that extracted no nodes",
+		lineage,
+		empty,
+		func(context.Context, *types.SourceLineage) error { return nil },
+	)
 	require.NoError(t, err)
 	require.Empty(t, graph.Node)
-	proof := &types.KnowledgeBuildInputProof{Version: 1, TenantID: 7, KnowledgeBaseID: namespace.KnowledgeBase, KnowledgeID: namespace.Knowledge, AdmissionID: "original-empty-model-input", BuildGeneration: 1, InputDigest: types.GraphDigest("empty-source-input"), ConfigDigest: types.GraphDigest(template), BodyDigest: types.GraphDigest("actual source that extracted no nodes"), ChunkIDs: []string{"source-chunk"}, SourceLineage: lineage}
-	graph.SourceReceipt, err = types.BindGraphSourceReceipt(&types.GraphSourceReceipt{OriginalInput: proof, Version: 1, TenantID: 7, KnowledgeBaseID: namespace.KnowledgeBase, KnowledgeID: namespace.Knowledge, BuildGeneration: 1, InputDigest: proof.InputDigest, ConfigDigest: proof.ConfigDigest, WireDigest: graph.WireDigest, SourceLineage: lineage}, types.GraphDataBodyDigest(namespace, graph))
+	proof := &types.KnowledgeBuildInputProof{
+		Version:         1,
+		TenantID:        7,
+		KnowledgeBaseID: namespace.KnowledgeBase,
+		KnowledgeID:     namespace.Knowledge,
+		AdmissionID:     "original-empty-model-input",
+		BuildGeneration: 1,
+		InputDigest:     types.GraphDigest("empty-source-input"),
+		ConfigDigest:    types.GraphDigest(template),
+		BodyDigest:      types.GraphDigest("actual source that extracted no nodes"),
+		ChunkIDs:        []string{"source-chunk"},
+		SourceLineage:   lineage,
+	}
+	graph.SourceReceipt, err = types.BindGraphSourceReceipt(
+		&types.GraphSourceReceipt{
+			OriginalInput:   proof,
+			Version:         1,
+			TenantID:        7,
+			KnowledgeBaseID: namespace.KnowledgeBase,
+			KnowledgeID:     namespace.Knowledge,
+			BuildGeneration: 1,
+			InputDigest:     proof.InputDigest,
+			ConfigDigest:    proof.ConfigDigest,
+			WireDigest:      graph.WireDigest,
+			SourceLineage:   lineage,
+		},
+		types.GraphDataBodyDigest(namespace, graph),
+	)
 	require.NoError(t, err)
 	ctx = types.WithGraphWriteAuthorization(ctx, func(context.Context, *types.GraphSourceReceipt) error { return nil })
 	require.NoError(t, repo.AddGraph(ctx, namespace, []*types.GraphData{graph}))
@@ -220,16 +372,29 @@ func TestKnowledgeGraphEmptyModelOutputRetainsOriginalControlReceipt(t *testing.
 	require.Equal(t, lineage, read.SourceLineage)
 	require.Len(t, read.InputReceipts, 1)
 }
+
 func TestKnowledgeGraphOrphanChildrenCannotOutliveTheirInputReceipt(t *testing.T) {
 	ctx, driver, repo, namespace := neoGraphFixture(t)
 	empty, _ := types.NewCompleteSourceLineage()
-	graph := extractGraph(t, ctx, namespace, empty, empty, "chunk", func(context.Context, *types.SourceLineage) error { return nil })
+	graph := extractGraph(
+		t,
+		ctx,
+		namespace,
+		empty,
+		empty,
+		"chunk",
+		func(context.Context, *types.SourceLineage) error { return nil },
+	)
 	ctx = types.WithGraphWriteAuthorization(ctx, func(context.Context, *types.GraphSourceReceipt) error { return nil })
 	require.NoError(t, repo.AddGraph(ctx, namespace, []*types.GraphData{graph}))
 	session := driver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeWrite})
 	defer session.Close(ctx)
 	_, err := session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
-		result, err := tx.Run(ctx, `MATCH (g:WEKNORA_GRAPH_INPUT {kb:$kb}) DELETE g`, map[string]any{"kb": namespace.KnowledgeBase})
+		result, err := tx.Run(
+			ctx,
+			`MATCH (g:WEKNORA_GRAPH_INPUT {kb:$kb}) DELETE g`,
+			map[string]any{"kb": namespace.KnowledgeBase},
+		)
 		if err != nil {
 			return nil, err
 		}

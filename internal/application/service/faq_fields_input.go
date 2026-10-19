@@ -8,7 +8,11 @@ import (
 	"github.com/Tencent/WeKnora/internal/types"
 )
 
-func (s *knowledgeService) updateFAQFieldsWithInput(ctx context.Context, kb *types.KnowledgeBase, req *types.FAQEntryFieldsBatchUpdate) error {
+func (s *knowledgeService) updateFAQFieldsWithInput(
+	ctx context.Context,
+	kb *types.KnowledgeBase,
+	req *types.FAQEntryFieldsBatchUpdate,
+) error {
 	plan, err := s.planFAQFields(ctx, kb, req)
 	if err != nil {
 		return err
@@ -71,7 +75,13 @@ func (s *knowledgeService) updateFAQFieldsWithInput(ctx context.Context, kb *typ
 	if len(enabled) == 0 && len(tags) == 0 {
 		return nil
 	}
-	engine, err := retriever.CreateRetrieveEngineForKB(ctx, s.retrieveEngine, s.ownership, kb.TenantID, kb.VectorStoreID)
+	engine, err := retriever.CreateRetrieveEngineForKB(
+		ctx,
+		s.retrieveEngine,
+		s.ownership,
+		kb.TenantID,
+		kb.VectorStoreID,
+	)
 	if err != nil {
 		return err
 	}

@@ -31,9 +31,13 @@ func knowledgeConfigurationOriginDigest(kb *types.KnowledgeBase) (string, error)
 		KB, Type, Config string
 	}{kb.TenantID, kb.ID, kb.Type, config})
 }
+
 func knowledgeConfigurationControlRevision(tx *gorm.DB, id string) (uint64, error) {
 	var row struct{ Revision uint64 }
-	if err := tx.Table("knowledge_configuration_control_versions").Where("knowledge_base_id = ?", id).Take(&row).Error; err != nil {
+	if err := tx.Table("knowledge_configuration_control_versions").
+		Where("knowledge_base_id = ?", id).
+		Take(&row).
+		Error; err != nil {
 		return 0, err
 	}
 	if row.Revision == 0 {
@@ -48,7 +52,9 @@ func readKnowledgeConfigurationOrigin(tx *gorm.DB, kb *types.KnowledgeBase) (*ty
 		return nil, err
 	}
 	var fact knowledgeConfigurationInputOrigin
-	if err := tx.Where("tenant_id = ? AND knowledge_base_id = ? AND config_revision = ?", kb.TenantID, kb.ID, revision).Take(&fact).Error; err != nil {
+	if err := tx.Where("tenant_id = ? AND knowledge_base_id = ? AND config_revision = ?", kb.TenantID, kb.ID, revision).
+		Take(&fact).
+		Error; err != nil {
 		return nil, err
 	}
 	digest, err := knowledgeConfigurationOriginDigest(kb)
@@ -70,6 +76,7 @@ func readKnowledgeConfigurationOrigin(tx *gorm.DB, kb *types.KnowledgeBase) (*ty
 	}
 	return &lineage, nil
 }
+
 func admitKnowledgeConfigurationOrigin(tx *gorm.DB, kb *types.KnowledgeBase, origin knowledgeInputOrigin) error {
 	if err := origin.lineage.RequireComplete(); err != nil {
 		return err
@@ -89,7 +96,15 @@ func admitKnowledgeConfigurationOrigin(tx *gorm.DB, kb *types.KnowledgeBase, ori
 	if err != nil {
 		return err
 	}
-	fact := knowledgeConfigurationInputOrigin{uuid.NewString(), kb.TenantID, kb.ID, revision, origin.kind, digest, string(encoded)}
+	fact := knowledgeConfigurationInputOrigin{
+		uuid.NewString(),
+		kb.TenantID,
+		kb.ID,
+		revision,
+		origin.kind,
+		digest,
+		string(encoded),
+	}
 	if err := tx.Create(&fact).Error; err != nil {
 		return err
 	}
@@ -98,7 +113,10 @@ func admitKnowledgeConfigurationOrigin(tx *gorm.DB, kb *types.KnowledgeBase, ori
 
 // CreateKnowledgeBaseWithInput binds the actual new human/code/derived config
 // in the same transaction as creation. It cannot adopt an old raw config.
-func (s *KnowledgeInputProvenanceStore) CreateKnowledgeBaseWithInput(ctx context.Context, kb *types.KnowledgeBase) error {
+func (s *KnowledgeInputProvenanceStore) CreateKnowledgeBaseWithInput(
+	ctx context.Context,
+	kb *types.KnowledgeBase,
+) error {
 	origin, ok := ctx.Value(knowledgeInputOriginKey{}).(knowledgeInputOrigin)
 	if !ok {
 		return types.ErrSourceLineageUnknown
@@ -121,7 +139,10 @@ func (s *KnowledgeInputProvenanceStore) CreateKnowledgeBaseWithInput(ctx context
 // ReplaceKnowledgeBaseConfigurationWithInput is exclusively a trusted full
 // replacement producer. Passing a freshly loaded legacy object is not a human
 // input boundary. Partial settings edits use the preserving method below.
-func (s *KnowledgeInputProvenanceStore) ReplaceKnowledgeBaseConfigurationWithInput(ctx context.Context, kb *types.KnowledgeBase) error {
+func (s *KnowledgeInputProvenanceStore) ReplaceKnowledgeBaseConfigurationWithInput(
+	ctx context.Context,
+	kb *types.KnowledgeBase,
+) error {
 	if scopedWorkerConfigurationFullSaveDenied(ctx, kb) {
 		return ErrKnowledgeInputChanged
 	}
@@ -147,7 +168,10 @@ func (s *KnowledgeInputProvenanceStore) ReplaceKnowledgeBaseConfigurationWithInp
 
 // UpdateKnowledgeBaseWithInput preserves the original provenance of retained
 // fields. A name-only edit cannot declare legacy examples source-independent.
-func (s *KnowledgeInputProvenanceStore) UpdateKnowledgeBaseWithInput(ctx context.Context, kb *types.KnowledgeBase) error {
+func (s *KnowledgeInputProvenanceStore) UpdateKnowledgeBaseWithInput(
+	ctx context.Context,
+	kb *types.KnowledgeBase,
+) error {
 	if scopedWorkerConfigurationFullSaveDenied(ctx, kb) {
 		return ErrKnowledgeInputChanged
 	}

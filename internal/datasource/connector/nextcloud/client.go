@@ -74,7 +74,12 @@ func (c *client) endpointURL(endpoint string, query url.Values) string {
 	return u.String()
 }
 
-func (c *client) request(ctx context.Context, endpoint string, query url.Values, ifMatch ...string) (*http.Response, error) {
+func (c *client) request(
+	ctx context.Context,
+	endpoint string,
+	query url.Values,
+	ifMatch ...string,
+) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.endpointURL(endpoint, query), nil)
 	if err != nil {
 		return nil, err
@@ -99,7 +104,12 @@ func (c *client) request(ctx context.Context, endpoint string, query url.Values,
 	return resp, nil
 }
 
-func (c *client) get(ctx context.Context, endpoint string, query url.Values, ifMatch ...string) (*http.Response, error) {
+func (c *client) get(
+	ctx context.Context,
+	endpoint string,
+	query url.Values,
+	ifMatch ...string,
+) (*http.Response, error) {
 	resp, err := c.request(ctx, endpoint, query, ifMatch...)
 	if err != nil {
 		return nil, err
@@ -176,7 +186,12 @@ func (c *client) changes(ctx context.Context, bindingID, oldCursor string) (chan
 			}
 			// The recovery cursor is not authoritative until a complete manifest
 			// has been processed and its downstream result committed.
-			return changeScan{Supported: true, NeedsReconcile: true, ForceAllContent: true, Cursor: conflict.NextCursor}, nil
+			return changeScan{
+				Supported:       true,
+				NeedsReconcile:  true,
+				ForceAllContent: true,
+				Cursor:          conflict.NextCursor,
+			}, nil
 		}
 		if resp.StatusCode != http.StatusOK {
 			closeNextcloudResponseBody(ctx, resp.Body)
@@ -236,12 +251,16 @@ func (c *client) changes(ctx context.Context, bindingID, oldCursor string) (chan
 		seen[page.NextCursor] = true
 		cursor = page.NextCursor
 		if !*page.HasMore {
-			return changeScan{Supported: true, NeedsReconcile: len(page.Items) > 0 || pageNum > 0,
-				Cursor: cursor, ChangedFiles: changedFiles, ForceAllContent: forceAllContent}, nil
+			return changeScan{
+				Supported: true, NeedsReconcile: len(page.Items) > 0 || pageNum > 0,
+				Cursor: cursor, ChangedFiles: changedFiles, ForceAllContent: forceAllContent,
+			}, nil
 		}
 	}
-	return changeScan{Supported: true, NeedsReconcile: true, Cursor: cursor,
-		ChangedFiles: changedFiles, ForceAllContent: true}, nil
+	return changeScan{
+		Supported: true, NeedsReconcile: true, Cursor: cursor,
+		ChangedFiles: changedFiles, ForceAllContent: true,
+	}, nil
 }
 
 type changeScan struct {
@@ -275,7 +294,7 @@ func validChangeCursor(cursor string) bool {
 		return false
 	}
 	for _, c := range cursor {
-		if !(c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '_' || c == '-') {
+		if (c < 'A' || c > 'Z') && (c < 'a' || c > 'z') && (c < '0' || c > '9') && c != '_' && c != '-' {
 			return false
 		}
 	}
@@ -474,7 +493,10 @@ func (c *client) content(ctx context.Context, bindingID string, item manifestIte
 	}
 	actualRevision, err := types.NormalizeNextcloudContentRevision(resp.Header.Get("X-Nextcloud-Content-Revision"))
 	if err != nil || actualRevision != revision {
-		return nil, "", fmt.Errorf("%w: Nextcloud content revision changed during download", datasource.ErrRetryableSource)
+		return nil, "", fmt.Errorf(
+			"%w: Nextcloud content revision changed during download",
+			datasource.ErrRetryableSource,
+		)
 	}
 	contentType := strings.TrimSpace(resp.Header.Get("Content-Type"))
 	if contentType == "" {

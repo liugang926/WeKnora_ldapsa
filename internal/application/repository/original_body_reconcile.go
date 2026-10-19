@@ -3,10 +3,11 @@ package repository
 import (
 	"context"
 	"errors"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 	"sort"
 	"strings"
+
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // ReconcileExternalPurge replays verified external decisions after a failed
@@ -38,11 +39,22 @@ func (s *OriginalBodyRetentionStore) ReconcileExternalPurge(ctx context.Context)
 				return ErrOriginalBodyUnavailable
 			}
 			var heads []originalBodyFieldHead
-			if e := bodyInternal(tx).Table("original_body_field_revisions").Where("body_id=?", body.ID).Order("source_table,row_key,column_name,revision").Find(&heads).Error; e != nil {
+			if e := bodyInternal(
+				tx,
+			).Table("original_body_field_revisions").
+				Where("body_id=?", body.ID).
+				Order("source_table,row_key,column_name,revision").
+				Find(&heads).
+				Error; e != nil {
 				return e
 			}
 			var parents []originalBodyParentRef
-			if e := bodyInternal(tx).Where("body_id=?", body.ID).Order("tenant_id,knowledge_base_id,knowledge_id,admission_id").Find(&parents).Error; e != nil {
+			if e := bodyInternal(
+				tx,
+			).Where("body_id=?", body.ID).
+				Order("tenant_id,knowledge_base_id,knowledge_id,admission_id").
+				Find(&parents).
+				Error; e != nil {
 				return e
 			}
 			fields := []string{}
@@ -114,7 +126,12 @@ func (s *OriginalBodyRetentionStore) ReconcileExternalPurge(ctx context.Context)
 				return ErrOriginalBodyRetained
 			}
 			var active int64
-			if e := bodyInternal(tx).Model(&originalBodyLease{}).Where("body_id=? AND released_at_ms IS NULL AND expires_at_ms>?", body.ID, now).Count(&active).Error; e != nil {
+			if e := bodyInternal(
+				tx,
+			).Model(&originalBodyLease{}).
+				Where("body_id=? AND released_at_ms IS NULL AND expires_at_ms>?", body.ID, now).
+				Count(&active).
+				Error; e != nil {
 				return e
 			}
 			if active != 0 {
@@ -174,16 +191,36 @@ func (s *OriginalBodyRetentionStore) ReconcileExternalPurge(ctx context.Context)
 					cleared++
 				}
 			}
-			if e := bodyInternal(tx).Model(&body).Updates(map[string]any{"state": "purged", "payload": nil, "purge_epoch": event.PurgeEpoch, "body_deadline_ms": event.BodyDeadlineMS, "metadata_deadline_ms": event.MetadataDeadlineMS}).Error; e != nil {
+			if e := bodyInternal(
+				tx,
+			).Model(&body).
+				Updates(map[string]any{"state": "purged", "payload": nil, "purge_epoch": event.PurgeEpoch, "body_deadline_ms": event.BodyDeadlineMS, "metadata_deadline_ms": event.MetadataDeadlineMS}).
+				Error; e != nil {
 				return e
 			}
-			receipt := originalBodyPurgeReceipt{BodyID: body.ID, BodySHA256: event.BodySHA256, ScopeSHA256: event.ScopeSHA256, BeforeBytes: event.BeforeBytes, AfterBytes: 0, ClearedFields: cleared, JournalSequence: event.Sequence, JournalHeadSHA256: event.HeadSHA256, PurgeToken: "external-replay", PurgeEpoch: event.PurgeEpoch, CompletedAtMS: now}
+			receipt := originalBodyPurgeReceipt{
+				BodyID:            body.ID,
+				BodySHA256:        event.BodySHA256,
+				ScopeSHA256:       event.ScopeSHA256,
+				BeforeBytes:       event.BeforeBytes,
+				AfterBytes:        0,
+				ClearedFields:     cleared,
+				JournalSequence:   event.Sequence,
+				JournalHeadSHA256: event.HeadSHA256,
+				PurgeToken:        "external-replay",
+				PurgeEpoch:        event.PurgeEpoch,
+				CompletedAtMS:     now,
+			}
 			if e := bodyInternal(tx).Create(&receipt).Error; e != nil {
 				return e
 			}
 			count++
 		}
-		return bodyInternal(tx).Model(&head).Updates(map[string]any{"sequence": pin.Sequence, "head_sha256": pin.HeadSHA256}).Error
+		return bodyInternal(
+			tx,
+		).Model(&head).
+			Updates(map[string]any{"sequence": pin.Sequence, "head_sha256": pin.HeadSHA256}).
+			Error
 	})
 	return count, e
 }

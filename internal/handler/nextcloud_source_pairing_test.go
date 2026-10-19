@@ -44,8 +44,10 @@ func TestNextcloudSourcePairingPendingRetryWithoutSecretReadback(t *testing.T) {
 	h := NewNextcloudSourcePairingHandler(repository.NewNextcloudSourcePairingRepository(db),
 		NewDataSourceHandler(dsService, kbService))
 	h.inspect = func(context.Context, *types.DataSourceConfig) (nextcloud.PairingIdentity, error) {
-		return nextcloud.PairingIdentity{InstanceID: "instance-1", BindingID: "dev-published",
-			BaseURL: "https://nextcloud.example.test", PublicationState: "active", PublicationEpoch: 0}, nil
+		return nextcloud.PairingIdentity{
+			InstanceID: "instance-1", BindingID: "dev-published",
+			BaseURL: "https://nextcloud.example.test", PublicationState: "active", PublicationEpoch: 0,
+		}, nil
 	}
 	commitAttempts := 0
 	h.commit = func(_ context.Context, _ *types.DataSourceConfig, pair nextcloud.SourcePairingCommit) error {
@@ -71,10 +73,12 @@ func TestNextcloudSourcePairingPendingRetryWithoutSecretReadback(t *testing.T) {
 	router.POST(base, h.Pair)
 	router.GET(base+"/:operation_id", h.Status)
 	router.POST(base+"/:operation_id/retry", h.Retry)
-	body := map[string]any{"knowledge_base_id": "kb-paired", "base_url": "https://nextcloud.example.test",
+	body := map[string]any{
+		"knowledge_base_id": "kb-paired", "base_url": "https://nextcloud.example.test",
 		"binding_id": "dev-published", "operation_id": "82D62225-1EB6-47AD-9264-2759E33DFA03",
 		"instance_id": "instance-1", "publication_epoch": 0,
-		"key_id": "pair_82d622251eb647ad92642759e33dfa03", "token": "one-time-pairing-token"}
+		"key_id": "pair_82d622251eb647ad92642759e33dfa03", "token": "one-time-pairing-token",
+	}
 	encoded, err := json.Marshal(body)
 	require.NoError(t, err)
 	request := func(method, path string, requestBody []byte, tenantID uint64, role types.TenantRole) *httptest.ResponseRecorder {
@@ -154,7 +158,8 @@ func TestNextcloudSourcePairingAbortWaitsForRemoteAckAndKeepsIdempotentStatus(t 
 	h := NewNextcloudSourcePairingHandler(repo, NewDataSourceHandler(dsService, kbService))
 	attempts := 0
 	h.abort = func(_ context.Context, config *types.DataSourceConfig,
-		intent nextcloud.SourcePairingCommit) error {
+		intent nextcloud.SourcePairingCommit,
+	) error {
 		attempts++
 		require.Equal(t, pair.OperationID, intent.OperationID)
 		require.Equal(t, pair.DataSourceID, intent.DataSourceID)

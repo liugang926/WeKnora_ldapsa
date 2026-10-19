@@ -16,6 +16,13 @@ func TestPostgresDirectoryMigrationUpgradeAndRollback(t *testing.T) {
 	if dsn == "" {
 		t.Skip("set WEKNORA_MIGRATION_TEST_POSTGRES_DSN to a disposable PostgreSQL database")
 	}
+	base, err := sql.Open("postgres", dsn)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, base.Close()) })
+	// Later production migrations intentionally refuse downgrade. Exercise
+	// the LDAP 108/109 roundtrip in its own database instead of downgrading
+	// the shared fixture through retained source and manager history.
+	dsn = postgresLineageDatabaseDSN(t, base, dsn)
 	root := sqliteRepoRoot(t)
 	chdirAndRestore(t, root)
 	m, err := migrate.New("file://migrations/versioned", dsn)

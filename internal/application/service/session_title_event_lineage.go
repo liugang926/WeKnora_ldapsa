@@ -10,7 +10,11 @@ import (
 // The title returned by GenerateTitle can be a previously committed title.
 // Bind the emitted text to the committed original proof; the event sink cannot
 // infer that it was generated from today's raw user query.
-func (s *sessionService) committedSessionTitleEventLineage(ctx context.Context, session *types.Session, title string) (*types.SourceLineage, error) {
+func (s *sessionService) committedSessionTitleEventLineage(
+	ctx context.Context,
+	session *types.Session,
+	title string,
+) (*types.SourceLineage, error) {
 	stored, err := loadSessionForRead(ctx, s.sessionRepo, session.TenantID, sessionUserIDFromContext(ctx), session.ID)
 	if err != nil {
 		return nil, err

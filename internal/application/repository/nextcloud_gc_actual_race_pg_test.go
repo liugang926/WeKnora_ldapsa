@@ -2,37 +2,43 @@ package repository
 
 import (
 	"context"
+	"os"
+	"testing"
+	"time"
+
 	filesvc "github.com/Tencent/WeKnora/internal/application/service/file"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
-	"os"
-	"testing"
-	"time"
 )
 
 func TestPostgresNextcloudActualGCProviderTransactionSerializesRestore(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	store, db, jobID, _, path := gcActualObjectFixture(t, true)
-	provider := filesvc.NewBackendScopedFileService("backend", filesvc.NewLocalFileService(path[:len(path)-len("/7/old/source.txt")], ""))
+	provider := filesvc.NewBackendScopedFileService(
+		"backend",
+		filesvc.NewLocalFileService(path[:len(path)-len("/7/old/source.txt")], ""),
+	)
 	deleter := provider.(interfaces.NextcloudPhysicalGCDeleter)
 	entered := make(chan struct{})
 	proceed := make(chan struct{})
 	calls := 0
-	store.ConfigureLocalDeletePreparation(func(context.Context, *types.StoredResource) (func(context.Context) (bool, error), error) {
-		return func(ioCtx context.Context) (bool, error) {
-			calls++
-			close(entered)
-			select {
-			case <-proceed:
-			case <-ioCtx.Done():
-				return false, ioCtx.Err()
-			}
-			return deleter.DeleteNextcloudObject(ioCtx, "storage://backend/local://7/old/source.txt")
-		}, nil
-	})
+	store.ConfigureLocalDeletePreparation(
+		func(context.Context, *types.StoredResource) (func(context.Context) (bool, error), error) {
+			return func(ioCtx context.Context) (bool, error) {
+				calls++
+				close(entered)
+				select {
+				case <-proceed:
+				case <-ioCtx.Done():
+					return false, ioCtx.Err()
+				}
+				return deleter.DeleteNextcloudObject(ioCtx, "storage://backend/local://7/old/source.txt")
+			}, nil
+		},
+	)
 	done := make(chan error, 1)
 	go func() { _, e := store.RunDue(ctx, time.Now().Add(time.Second), 10); done <- e }()
 	select {
@@ -53,7 +59,12 @@ func TestPostgresNextcloudActualGCProviderTransactionSerializesRestore(t *testin
 	blocked := false
 	for time.Now().Before(deadline) {
 		var waiting int64
-		require.NoError(t, db.Raw("SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE 'UPDATE knowledge_bases%'").Scan(&waiting).Error)
+		require.NoError(
+			t,
+			db.Raw("SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE 'UPDATE knowledge_bases%'").
+				Scan(&waiting).
+				Error,
+		)
 		if waiting > 0 {
 			blocked = true
 			break

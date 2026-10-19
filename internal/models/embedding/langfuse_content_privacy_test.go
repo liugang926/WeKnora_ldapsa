@@ -31,7 +31,17 @@ func privacyTelemetryManager(t *testing.T, payload *strings.Builder, mu *sync.Mu
 		w.Header().Set("Content-Type", "application/x-protobuf")
 		w.WriteHeader(http.StatusOK)
 	}))
-	cfg := langfuse.Config{Enabled: true, Host: server.URL, PublicKey: "owned-public", SecretKey: "owned-secret", FlushAt: 100, QueueSize: 128, FlushInterval: time.Hour, RequestTimeout: time.Second, SampleRate: 1}
+	cfg := langfuse.Config{
+		Enabled:        true,
+		Host:           server.URL,
+		PublicKey:      "owned-public",
+		SecretKey:      "owned-secret",
+		FlushAt:        100,
+		QueueSize:      128,
+		FlushInterval:  time.Hour,
+		RequestTimeout: time.Second,
+		SampleRate:     1,
+	}
 	mgr, err := langfuse.Init(cfg)
 	require.NoError(t, err)
 	t.Cleanup(func() {
@@ -42,8 +52,12 @@ func privacyTelemetryManager(t *testing.T, payload *strings.Builder, mu *sync.Mu
 	})
 	return mgr
 }
+
 func privacyContexts() []context.Context {
-	return []context.Context{logprivacy.SuppressContent(context.Background()), types.WithRAGSourceLineage(context.Background(), types.NewRAGSourceLineage(nil))}
+	return []context.Context{
+		logprivacy.SuppressContent(context.Background()),
+		types.WithRAGSourceLineage(context.Background(), types.NewRAGSourceLineage(nil)),
+	}
 }
 
 type privacyEmbeddingSpy struct {
@@ -59,14 +73,21 @@ func (s *privacyEmbeddingSpy) Embed(ctx context.Context, text string) ([]float32
 	s.recording = trace.SpanFromContext(ctx).IsRecording()
 	return []float32{1}, nil
 }
+
 func (s *privacyEmbeddingSpy) BatchEmbed(ctx context.Context, texts []string) ([][]float32, error) {
 	s.ctx = ctx
 	s.recording = trace.SpanFromContext(ctx).IsRecording()
 	return [][]float32{{1}}, nil
 }
-func (s *privacyEmbeddingSpy) BatchEmbedWithPool(ctx context.Context, model Embedder, texts []string) ([][]float32, error) {
+
+func (s *privacyEmbeddingSpy) BatchEmbedWithPool(
+	ctx context.Context,
+	model Embedder,
+	texts []string,
+) ([][]float32, error) {
 	return model.BatchEmbed(ctx, texts)
 }
+
 func TestSourceContentEmbeddingTelemetryBypassPreservesOrdinary(t *testing.T) {
 	var payload strings.Builder
 	var mu sync.Mutex

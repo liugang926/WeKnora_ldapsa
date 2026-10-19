@@ -70,10 +70,19 @@ func TestKnowledgeOutputFileActualHTTPBytesAndRevocation(t *testing.T) {
 				if change == "withdraw_during_read" {
 					input.onRead = func() { groups.allowed = false }
 				}
-				h.kgService = outputHTTPFiles{publicationHandlerKnowledge: publicationHandlerKnowledge{row: row}, input: input}
+				h.kgService = outputHTTPFiles{
+					publicationHandlerKnowledge: publicationHandlerKnowledge{row: row},
+					input:                       input,
+				}
 				r := documentHandlerRouter()
 				r.Use(func(c *gin.Context) {
-					c.Request = c.Request.WithContext(context.WithValue(c.Request.Context(), types.PrincipalContextKey, types.Principal{Type: types.PrincipalWebUser, ID: "user"}))
+					c.Request = c.Request.WithContext(
+						context.WithValue(
+							c.Request.Context(),
+							types.PrincipalContextKey,
+							types.Principal{Type: types.PrincipalWebUser, ID: "user"},
+						),
+					)
 					c.Next()
 				})
 				if route == "download" {
@@ -114,7 +123,14 @@ type outputHTTPGroups struct {
 	hook    func(int)
 }
 
-func (g *outputHTTPGroups) EffectivePermission(context.Context, uint64, types.ResourceType, string, types.ResourceAction, time.Time) (types.EffectiveResourcePermission, error) {
+func (g *outputHTTPGroups) EffectivePermission(
+	context.Context,
+	uint64,
+	types.ResourceType,
+	string,
+	types.ResourceAction,
+	time.Time,
+) (types.EffectiveResourcePermission, error) {
 	g.calls++
 	if g.hook != nil {
 		g.hook(g.calls)
@@ -132,7 +148,11 @@ func outputHTTPFixture(t *testing.T, admitted bool) (*KnowledgeHandler, *gorm.DB
 	require.NoError(t, db.AutoMigrate(&types.KnowledgeBase{}, &types.Knowledge{}, &types.Chunk{}))
 	// These empty local observation tables are not used as a source-free
 	// proof. Only the explicit human admission below may certify this row.
-	require.NoError(t, db.Exec(`CREATE TABLE nextcloud_source_versions(candidate_knowledge_id TEXT); CREATE TABLE nextcloud_source_revisions(candidate_knowledge_id TEXT)`).Error)
+	for _, name := range []string{"000031_nextcloud_source_versions", "000045_nextcloud_source_revisions"} {
+		ddl, err := os.ReadFile("../../migrations/sqlite/" + name + ".up.sql")
+		require.NoError(t, err)
+		require.NoError(t, db.Exec(string(ddl)).Error)
+	}
 	script, err := os.ReadFile("../../migrations/sqlite/000053_knowledge_input_provenance.up.sql")
 	require.NoError(t, err)
 	require.NoError(t, db.Exec(string(script)).Error)
@@ -146,12 +166,29 @@ func outputHTTPFixture(t *testing.T, admitted bool) (*KnowledgeHandler, *gorm.DB
 	require.NoError(t, err)
 	require.NoError(t, db.Exec(string(script)).Error)
 	kb := &types.KnowledgeBase{ID: "kb", TenantID: 7, Name: "human KB", Type: types.KnowledgeBaseTypeDocument}
-	k := &types.Knowledge{ID: "document", TenantID: 7, KnowledgeBaseID: kb.ID, Type: types.KnowledgeTypeManual,
-		Channel: "web", Source: "manual", Title: "owned-output-title", Metadata: types.JSON(`{"manual":{"content":"owned-output-body","version":1}}`), CustomMetadata: types.JSON(`{}`)}
+	k := &types.Knowledge{
+		ID:              "document",
+		TenantID:        7,
+		KnowledgeBaseID: kb.ID,
+		Type:            types.KnowledgeTypeManual,
+		Channel:         "web",
+		Source:          "manual",
+		Title:           "owned-output-title",
+		Metadata:        types.JSON(`{"manual":{"content":"owned-output-body","version":1}}`),
+		CustomMetadata:  types.JSON(`{}`),
+	}
+	installHTTPCurrentNextcloudControls(t, db)
 	store := repository.NewKnowledgeInputProvenanceStore(db)
-	require.NoError(t, store.CreateKnowledgeBaseWithInput(repository.WithIndependentKnowledgeInput(context.Background()), kb))
+	require.NoError(
+		t,
+		store.CreateKnowledgeBaseWithInput(repository.WithIndependentKnowledgeInput(context.Background()), kb),
+	)
 	if admitted {
-		_, err = store.CreateKnowledgeWithInput(repository.WithIndependentKnowledgeInput(context.Background()), k, "owned-output-body")
+		_, err = store.CreateKnowledgeWithInput(
+			repository.WithIndependentKnowledgeInput(context.Background()),
+			k,
+			"owned-output-body",
+		)
 	} else {
 		err = db.Create(k).Error
 	}
@@ -161,9 +198,34 @@ func outputHTTPFixture(t *testing.T, admitted bool) (*KnowledgeHandler, *gorm.DB
 	script, err = os.ReadFile("../../migrations/sqlite/000028_directory_group_access.up.sql")
 	require.NoError(t, err)
 	require.NoError(t, db.Exec(string(script)).Error)
-	require.NoError(t, db.Create(&types.User{ID: "user", TenantID: 7, Username: "actor", Email: "actor@example.test", PasswordHash: "unused-fixture", IsActive: true}).Error)
-	require.NoError(t, db.Create(&types.TenantMember{UserID: "user", TenantID: 7, Role: types.TenantRoleContributor, Status: types.TenantMemberStatusActive}).Error)
-	repository.ConfigureKnowledgeInputActorGroupAccess(store, service.NewGroupAccessService(repository.NewGroupAccessRepository(db)))
+	require.NoError(
+		t,
+		db.Create(
+			&types.User{
+				ID:           "user",
+				TenantID:     7,
+				Username:     "actor",
+				Email:        "actor@example.test",
+				PasswordHash: "unused-fixture",
+				IsActive:     true,
+			},
+		).Error,
+	)
+	require.NoError(
+		t,
+		db.Create(
+			&types.TenantMember{
+				UserID:   "user",
+				TenantID: 7,
+				Role:     types.TenantRoleContributor,
+				Status:   types.TenantMemberStatusActive,
+			},
+		).Error,
+	)
+	repository.ConfigureKnowledgeInputActorGroupAccess(
+		store,
+		service.NewGroupAccessService(repository.NewGroupAccessRepository(db)),
+	)
 	groups := &outputHTTPGroups{allowed: true}
 	guard := access.NewNextcloudSourceLineageGuard(nil, outputHTTPKB{row: kb}, nil, nil, groups, nil, store)
 	h := &KnowledgeHandler{kgService: publicationHandlerKnowledge{row: k}, kbService: outputHTTPKB{row: kb}}
@@ -175,7 +237,11 @@ func serveKnowledgeOutputHTTP(h *KnowledgeHandler) *httptest.ResponseRecorder {
 	gin.SetMode(gin.TestMode)
 	r := documentHandlerRouter()
 	r.Use(func(c *gin.Context) {
-		ctx := context.WithValue(c.Request.Context(), types.PrincipalContextKey, types.Principal{Type: types.PrincipalWebUser, ID: "user"})
+		ctx := context.WithValue(
+			c.Request.Context(),
+			types.PrincipalContextKey,
+			types.Principal{Type: types.PrincipalWebUser, ID: "user"},
+		)
 		c.Request = c.Request.WithContext(ctx)
 		c.Next()
 	})

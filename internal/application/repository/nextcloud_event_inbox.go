@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	apperrors "github.com/Tencent/WeKnora/internal/errors"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/utils"
 	"gorm.io/gorm"
@@ -21,9 +22,16 @@ import (
 // These errors contain no credentials or source paths and are safe to map to
 // a machine response. The incoming events are hints, never delete commands.
 var (
-	ErrNextcloudEventUnauthorized = errors.New("Nextcloud event credential is invalid")
-	ErrNextcloudEventScope        = errors.New("Nextcloud event connection is no longer bound to this data source")
-	ErrNextcloudEventConflict     = errors.New("Nextcloud event batch conflicts with the durable inbox")
+	ErrNextcloudEventUnauthorized = apperrors.NewProtocolError(errors.New(
+		"nextcloud event credential is invalid",
+	), "Nextcloud event credential is invalid")
+	ErrNextcloudEventScope = apperrors.NewProtocolError(
+		errors.New(
+			("nextcloud event connection is no longer bound to this d" +
+				"ata source")), "Nextcloud event connection is no longer bound to this data source")
+	ErrNextcloudEventConflict = apperrors.NewProtocolError(errors.New(
+		"nextcloud event batch conflicts with the durable inbox",
+	), "Nextcloud event batch conflicts with the durable inbox")
 )
 
 type NextcloudEventHint struct {
@@ -94,7 +102,10 @@ type nextcloudEventInboxRow struct {
 // the receipt watermark. A 202 response from its caller means only that the
 // inbox transaction committed. It does not acknowledge source reconciliation,
 // parsing, or publication.
-func (r *NextcloudEventInboxRepository) IngestSigned(ctx context.Context, batch SignedNextcloudEventBatch) (int64, error) {
+func (r *NextcloudEventInboxRepository) IngestSigned(
+	ctx context.Context,
+	batch SignedNextcloudEventBatch,
+) (int64, error) {
 	if batch.AfterEventID < 0 || len(batch.Events) == 0 || len(batch.Events) > 200 {
 		return 0, ErrNextcloudEventConflict
 	}

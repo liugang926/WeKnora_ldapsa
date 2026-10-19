@@ -8,7 +8,10 @@ import (
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 )
 
-func (a *FAQOutputAuthorizer) BeginImportOutput(ctx context.Context, request types.FAQImportOutputReadRequest) (*FAQOutputGuard, error) {
+func (a *FAQOutputAuthorizer) BeginImportOutput(
+	ctx context.Context,
+	request types.FAQImportOutputReadRequest,
+) (*FAQOutputGuard, error) {
 	if a == nil || a.store == nil || a.checker == nil {
 		return nil, access.ErrNextcloudPublicationUnavailable
 	}
@@ -23,6 +26,7 @@ func (a *FAQOutputAuthorizer) BeginImportOutput(ctx context.Context, request typ
 	guard := &FAQOutputGuard{authorizer: a, importOutput: snapshot}
 	return guard, guard.Recheck(ctx)
 }
+
 func (a *FAQOutputAuthorizer) ProgressReadScope(ctx context.Context, task string) (types.KnowledgeSearchScope, error) {
 	if a == nil || a.store == nil {
 		return types.KnowledgeSearchScope{}, access.ErrNextcloudPublicationUnavailable
@@ -33,7 +37,11 @@ func (a *FAQOutputAuthorizer) ProgressReadScope(ctx context.Context, task string
 	}
 	return a.store.PeekFAQImportProgressScope(ctx, tenant, task)
 }
-func (a *FAQOutputAuthorizer) ProgressReadPlan(ctx context.Context, task string) (*types.FAQImportOutputReadPlan, error) {
+
+func (a *FAQOutputAuthorizer) ProgressReadPlan(
+	ctx context.Context,
+	task string,
+) (*types.FAQImportOutputReadPlan, error) {
 	if a == nil || a.store == nil {
 		return nil, access.ErrNextcloudPublicationUnavailable
 	}
@@ -41,12 +49,22 @@ func (a *FAQOutputAuthorizer) ProgressReadPlan(ctx context.Context, task string)
 	if !ok || tenant == 0 {
 		return nil, types.ErrSourceLineageUnknown
 	}
-	return a.store.PeekFAQImportOutputReadPlan(ctx, types.FAQImportOutputReadRequest{TenantID: tenant, TaskID: task, Kind: "progress"})
+	return a.store.PeekFAQImportOutputReadPlan(
+		ctx,
+		types.FAQImportOutputReadRequest{TenantID: tenant, TaskID: task, Kind: "progress"},
+	)
 }
+
 func (g *FAQOutputGuard) recheckImportOutput(ctx context.Context) error {
 	return checkFAQImportOutputReceipt(ctx, g.authorizer.store, g.authorizer.checker, g.importOutput)
 }
-func checkFAQImportOutputReceipt(ctx context.Context, reader interfaces.FAQImportOutputInputReader, checker knowledgeOutputLineageChecker, snapshot *types.FAQImportOutputSnapshot) error {
+
+func checkFAQImportOutputReceipt(
+	ctx context.Context,
+	reader interfaces.FAQImportOutputInputReader,
+	checker knowledgeOutputLineageChecker,
+	snapshot *types.FAQImportOutputSnapshot,
+) error {
 	if snapshot == nil || snapshot.SourceLineage.RequireComplete() != nil {
 		return types.ErrSourceLineageUnknown
 	}
@@ -58,7 +76,19 @@ func checkFAQImportOutputReceipt(ctx context.Context, reader interfaces.FAQImpor
 		if err != nil {
 			return err
 		}
-		if err := checker.Check(ctx, lineage, access.LineageReadScope{Targets: types.SearchTargets{&types.SearchTarget{Type: types.SearchTargetTypeKnowledgeBase, TenantID: snapshot.Request.TenantID, KnowledgeBaseID: snapshot.Request.KnowledgeBaseID}}}); err != nil {
+		if err := checker.Check(
+			ctx,
+			lineage,
+			access.LineageReadScope{
+				Targets: types.SearchTargets{
+					&types.SearchTarget{
+						Type:            types.SearchTargetTypeKnowledgeBase,
+						TenantID:        snapshot.Request.TenantID,
+						KnowledgeBaseID: snapshot.Request.KnowledgeBaseID,
+					},
+				},
+			},
+		); err != nil {
 			return err
 		}
 		copy, err := cloneCollection(snapshot)
@@ -71,6 +101,7 @@ func checkFAQImportOutputReceipt(ctx context.Context, reader interfaces.FAQImpor
 	}
 	return nil
 }
+
 func (g *FAQOutputGuard) ImportProgress() (*types.FAQImportProgress, error) {
 	if g == nil || g.importOutput == nil || g.importOutput.Progress == nil {
 		return nil, types.ErrSourceLineageUnknown
@@ -78,13 +109,19 @@ func (g *FAQOutputGuard) ImportProgress() (*types.FAQImportProgress, error) {
 	return cloneCollection(g.importOutput.Progress)
 }
 
-func (s *knowledgeService) getAdmittedFAQImportProgress(ctx context.Context, taskID string) (*types.FAQImportProgress, error) {
+func (s *knowledgeService) getAdmittedFAQImportProgress(
+	ctx context.Context,
+	taskID string,
+) (*types.FAQImportProgress, error) {
 	tenant, ok := types.TenantIDFromContext(ctx)
 	if !ok || tenant == 0 {
 		return nil, types.ErrSourceLineageUnknown
 	}
 	authorizer := &FAQOutputAuthorizer{s.faqInputs, s.faqLineageChecker}
-	guard, err := authorizer.BeginImportOutput(ctx, types.FAQImportOutputReadRequest{TenantID: tenant, TaskID: taskID, Kind: "progress"})
+	guard, err := authorizer.BeginImportOutput(
+		ctx,
+		types.FAQImportOutputReadRequest{TenantID: tenant, TaskID: taskID, Kind: "progress"},
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -96,6 +133,7 @@ func (s *knowledgeService) getAdmittedFAQImportProgress(ctx context.Context, tas
 	// A new metadata read cannot authenticate legacy fields or another job.
 	return progress, guard.Bind(ctx, progress)
 }
+
 func applyFAQImportResultToProgress(progress *types.FAQImportProgress, result *types.FAQImportResult) {
 	progress.SuccessCount = result.SuccessCount
 	progress.FailedCount = result.FailedCount

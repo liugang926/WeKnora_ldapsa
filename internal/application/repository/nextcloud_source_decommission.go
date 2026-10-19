@@ -144,8 +144,10 @@ func (r *NextcloudSourcePairingRepository) BeginEmptySourceDecommission(
 		// Explicitly inspect persisted event receipts, dispatch leases and
 		// checkpoints too. Their foreign keys make them impossible when the
 		// connection count above is zero; a failed join still fails closed.
-		for _, table := range []string{"nextcloud_event_inbox", "nextcloud_event_dispatch",
-			"nextcloud_event_checkpoint"} {
+		for _, table := range []string{
+			"nextcloud_event_inbox", "nextcloud_event_dispatch",
+			"nextcloud_event_checkpoint",
+		} {
 			var count int64
 			if err := tx.Table(table+" AS item").Joins(
 				"JOIN nextcloud_event_connections AS connection ON connection.connection_id = item.connection_id").
@@ -216,9 +218,11 @@ func (r *NextcloudSourcePairingRepository) RecordEmptyDecommissionAck(
 		}
 		updated := tx.Model(&NextcloudSourceDecommission{}).
 			Where("operation_id = ? AND state = 'prepared'", row.OperationID).
-			Updates(map[string]any{"state": "acknowledged",
+			Updates(map[string]any{
+				"state":            "acknowledged",
 				"inventory_sha256": EmptyNextcloudInventorySHA256,
-				"updated_at":       time.Now().UTC()})
+				"updated_at":       time.Now().UTC(),
+			})
 		if updated.Error != nil {
 			return updated.Error
 		}

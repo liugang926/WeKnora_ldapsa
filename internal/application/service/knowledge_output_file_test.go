@@ -54,9 +54,9 @@ func TestKnowledgeOutputFileActualArtifactSnapshotAndRange(t *testing.T) {
 				require.Equal(t, body[len(body)-1:], tail)
 			}
 			snapshot := file.(*knowledgeOutputFileSnapshot)
-			info, err := os.Stat(snapshot.File.Name())
+			info, err := os.Stat(snapshot.Name())
 			require.NoError(t, err)
-			require.Equal(t, os.FileMode(0600), info.Mode().Perm())
+			require.Equal(t, os.FileMode(0o600), info.Mode().Perm())
 			require.NoError(t, file.Close())
 			require.NoError(t, file.Close())
 			_, err = os.Stat(snapshot.directory)

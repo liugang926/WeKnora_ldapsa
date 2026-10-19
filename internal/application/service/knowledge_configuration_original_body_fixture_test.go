@@ -26,7 +26,12 @@ func installConfigurationOriginalBodyFixtureSchema(t *testing.T, db *gorm.DB, pg
 
 // Fixture maintenance preserves existing immutable producer origins. It is
 // intentionally separate from request reading and cannot adopt unknown rows.
-func inventoryKnownConfigurationOriginalBodyFixture(t *testing.T, ctx context.Context, db *gorm.DB, store *repository.KnowledgeInputProvenanceStore) {
+func inventoryKnownConfigurationOriginalBodyFixture(
+	t *testing.T,
+	ctx context.Context,
+	db *gorm.DB,
+	store *repository.KnowledgeInputProvenanceStore,
+) {
 	t.Helper()
 	if !db.Migrator().HasTable("knowledge_config_input_origins") {
 		return
@@ -35,8 +40,19 @@ func inventoryKnownConfigurationOriginalBodyFixture(t *testing.T, ctx context.Co
 		TenantID        uint64
 		KnowledgeBaseID string
 	}
-	require.NoError(t, db.Table("knowledge_config_input_origins o").Select("o.tenant_id,o.knowledge_base_id").Joins("JOIN knowledge_configuration_control_versions v ON v.knowledge_base_id=o.knowledge_base_id AND v.revision=o.config_revision").Order("o.tenant_id,o.knowledge_base_id").Find(&scopes).Error)
+	require.NoError(
+		t,
+		db.Table("knowledge_config_input_origins o").
+			Select("o.tenant_id,o.knowledge_base_id").
+			Joins("JOIN knowledge_configuration_control_versions v ON v.knowledge_base_id=o.knowledge_base_id AND v.revision=o.config_revision").
+			Order("o.tenant_id,o.knowledge_base_id").
+			Find(&scopes).
+			Error,
+	)
 	for _, scope := range scopes {
-		require.NoError(t, store.InventoryKnownKnowledgeConfigurationOriginalBodies(ctx, scope.TenantID, scope.KnowledgeBaseID))
+		require.NoError(
+			t,
+			store.InventoryKnownKnowledgeConfigurationOriginalBodies(ctx, scope.TenantID, scope.KnowledgeBaseID),
+		)
 	}
 }

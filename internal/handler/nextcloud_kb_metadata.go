@@ -2,15 +2,21 @@ package handler
 
 import (
 	"context"
+
 	"github.com/Tencent/WeKnora/internal/application/access"
 	"github.com/Tencent/WeKnora/internal/application/repository"
 	"github.com/Tencent/WeKnora/internal/types"
 )
 
-func ConfigureKnowledgeBaseSourceMetadataGuard(h *KnowledgeBaseHandler, guard *access.NextcloudPublicationGuard, pairs *repository.NextcloudSourcePairingRepository) {
+func ConfigureKnowledgeBaseSourceMetadataGuard(
+	h *KnowledgeBaseHandler,
+	guard *access.NextcloudPublicationGuard,
+	pairs *repository.NextcloudSourcePairingRepository,
+) {
 	h.sourceMetadataGuard = guard
 	h.sourceMetadataPairs = pairs
 }
+
 func (h *KnowledgeBaseHandler) checkSourceKBMetadata(ctx context.Context, kb *types.KnowledgeBase) (bool, error) {
 	if kb == nil {
 		return false, access.ErrNextcloudPublicationDenied
@@ -31,7 +37,8 @@ func (h *KnowledgeBaseHandler) checkSourceKBMetadata(ctx context.Context, kb *ty
 			continue
 		}
 		sourceCount++
-		if source.TenantID != kb.TenantID || source.KnowledgeBaseID != kb.ID || h.sourceMetadataGuard == nil || h.sourceMetadataPairs == nil {
+		if source.TenantID != kb.TenantID || source.KnowledgeBaseID != kb.ID || h.sourceMetadataGuard == nil ||
+			h.sourceMetadataPairs == nil {
 			return true, access.ErrNextcloudPublicationDenied
 		}
 		pair, actual, err := h.sourceMetadataPairs.ActiveSourcePairingForDataSource(ctx, kb.TenantID, source.ID)
@@ -51,6 +58,7 @@ func (h *KnowledgeBaseHandler) checkSourceKBMetadata(ctx context.Context, kb *ty
 	}
 	return sourceCount > 0, nil
 }
+
 func sourceKBStatsUnverified(response interface{}) interface{} {
 	// Return only whitelisted source metadata even when ordinary response
 	// serialization falls back to the original KB struct.
@@ -99,6 +107,7 @@ func (h *KnowledgeBaseHandler) ordinaryKBMetadataAllowed(ctx context.Context, kb
 	}
 	return true
 }
+
 func ConfigureOrganizationSourceMetadataGuard(h *OrganizationHandler, kb *KnowledgeBaseHandler) {
 	if h != nil {
 		h.sourceMetadata = kb

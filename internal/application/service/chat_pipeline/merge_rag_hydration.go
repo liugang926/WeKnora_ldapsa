@@ -3,6 +3,7 @@ package chatpipeline
 import (
 	"bytes"
 	"context"
+
 	"github.com/Tencent/WeKnora/internal/searchutil"
 	"github.com/Tencent/WeKnora/internal/types"
 )
@@ -28,7 +29,11 @@ func unknownMergeInput(ctx context.Context, original *types.SearchResult) {
 // Missing original history provenance or an opaque enrichment cannot be
 // refreshed by document ID. Unknown poisons the prefix before later model or
 // progress output; a missing capability does not read any new source body.
-func (p *PluginMerge) hydrateMergeInput(ctx context.Context, original *types.SearchResult, ids []string) []*types.Chunk {
+func (p *PluginMerge) hydrateMergeInput(
+	ctx context.Context,
+	original *types.SearchResult,
+	ids []string,
+) []*types.Chunk {
 	if p.ragChunks == nil || original == nil || original.SourceLineage.RequireComplete() != nil {
 		unknownMergeInput(ctx, original)
 		return nil
@@ -95,7 +100,9 @@ func (p *PluginMerge) resolveCapturedParents(ctx context.Context, results []*typ
 		result.Content = searchutil.JoinChunkContent(parent.Content, result.Content, "\n\n")
 		result.ContentRewritten = true
 		if parent.ImageInfo != "" {
-			result.ImageInfo = searchutil.MergeImageInfoJSON(map[string]string{"hit": result.ImageInfo, "parent": parent.ImageInfo})
+			result.ImageInfo = searchutil.MergeImageInfoJSON(
+				map[string]string{"hit": result.ImageInfo, "parent": parent.ImageInfo},
+			)
 		}
 		if !containsID(result.SubChunkID, result.ID) {
 			result.SubChunkID = append(result.SubChunkID, result.ID)
@@ -104,9 +111,13 @@ func (p *PluginMerge) resolveCapturedParents(ctx context.Context, results []*typ
 	return results
 }
 
-func (p *PluginMerge) expandCapturedNeighbors(ctx context.Context, results []*types.SearchResult) []*types.SearchResult {
+func (p *PluginMerge) expandCapturedNeighbors(
+	ctx context.Context,
+	results []*types.SearchResult,
+) []*types.SearchResult {
 	for _, result := range results {
-		if result == nil || result.ChunkType != types.ChunkTypeText || result.ID == "" || result.Content == "" || runeLen(result.Content) >= 350 {
+		if result == nil || result.ChunkType != types.ChunkTypeText || result.ID == "" || result.Content == "" ||
+			runeLen(result.Content) >= 350 {
 			continue
 		}
 		rows := p.hydrateMergeInput(ctx, result, []string{result.ID})

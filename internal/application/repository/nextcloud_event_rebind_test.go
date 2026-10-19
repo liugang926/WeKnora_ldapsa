@@ -15,17 +15,21 @@ func TestNextcloudRotationOnlyChangesMachineCredential(t *testing.T) {
 		if extraSetting {
 			settings["unrelated"] = true
 		}
-		value := &types.DataSourceConfig{Type: types.ConnectorTypeNextcloud,
+		value := &types.DataSourceConfig{
+			Type:        types.ConnectorTypeNextcloud,
 			Credentials: map[string]interface{}{"token": token, "key_id": keyID},
-			ResourceIDs: []string{"binding-one"}, Settings: settings}
+			ResourceIDs: []string{"binding-one"}, Settings: settings,
+		}
 		blob, err := value.ToJSON()
 		require.NoError(t, err)
 		return blob
 	}
 	old := config("old-machine-token", "pair_old", false)
 	new := config("new-machine-token", "rot_new", false)
-	rotation := NextcloudSourceRotation{OldKeyID: "pair_old", NewKeyID: "rot_new",
-		OldConfig: old, NewConfig: new}
+	rotation := NextcloudSourceRotation{
+		OldKeyID: "pair_old", NewKeyID: "rot_new",
+		OldConfig: old, NewConfig: new,
+	}
 	require.True(t, nextcloudRotationOnlyChangesMachineKey(rotation))
 	rotation.NewConfig = config("new-machine-token", "rot_new", true)
 	require.False(t, nextcloudRotationOnlyChangesMachineKey(rotation), "unrelated settings edit cannot rebind")

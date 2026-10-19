@@ -2,37 +2,81 @@ package service
 
 import (
 	"context"
+	"os"
+	"testing"
+	"time"
+
 	"github.com/Tencent/WeKnora/internal/application/repository"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
-	"os"
-	"testing"
-	"time"
 )
 
-func steerMaterialActualFixture(t *testing.T, pg bool) (*messageService, *repository.KnowledgeInputProvenanceStore, *gorm.DB, context.Context, *types.Session, *types.Message) {
-	messages, _, store, db, ctx, session, _ := messageBodyIntegrationFixture(t, pg, func(db *gorm.DB, _ *repository.KnowledgeInputProvenanceStore, _ context.Context) {
-		path := "../../../migrations/sqlite/000073_steer_original_materials.up.sql"
-		if pg {
-			path = "../../../migrations/versioned/000154_steer_original_materials.up.sql"
-		}
-		ddl, err := os.ReadFile(path)
-		require.NoError(t, err)
-		require.NoError(t, db.Exec(string(ddl)).Error)
-	})
+func steerMaterialActualFixture(
+	t *testing.T,
+	pg bool,
+) (*messageService, *repository.KnowledgeInputProvenanceStore, *gorm.DB, context.Context, *types.Session, *types.Message) {
+	messages, _, store, db, ctx, session, _ := messageBodyIntegrationFixture(
+		t,
+		pg,
+		func(db *gorm.DB, _ *repository.KnowledgeInputProvenanceStore, _ context.Context) {
+			path := "../../../migrations/sqlite/000073_steer_original_materials.up.sql"
+			if pg {
+				path = "../../../migrations/versioned/000154_steer_original_materials.up.sql"
+			}
+			ddl, err := os.ReadFile(path)
+			require.NoError(t, err)
+			require.NoError(t, db.Exec(string(ddl)).Error)
+		},
+	)
 	repository.ConfigureMessageOriginalBodyAvailability(store, repository.CheckOriginalBodyAvailableInTx)
-	user, err := messages.CreateMessage(ctx, &types.Message{SessionID: session.ID, RequestID: "actual-steer-running", Role: "user", Content: "actual initial query", IsCompleted: true, ExecutionContext: types.MessageExecutionContext{KnowledgeBaseIDs: []string{"kb"}}})
+	user, err := messages.CreateMessage(
+		ctx,
+		&types.Message{
+			SessionID:        session.ID,
+			RequestID:        "actual-steer-running",
+			Role:             "user",
+			Content:          "actual initial query",
+			IsCompleted:      true,
+			ExecutionContext: types.MessageExecutionContext{KnowledgeBaseIDs: []string{"kb"}},
+		},
+	)
 	require.NoError(t, err)
-	run, err := messages.CreateMessage(ctx, &types.Message{SessionID: session.ID, RequestID: user.RequestID, Role: "assistant", ExecutionContext: user.ExecutionContext})
+	run, err := messages.CreateMessage(
+		ctx,
+		&types.Message{
+			SessionID:        session.ID,
+			RequestID:        user.RequestID,
+			Role:             "assistant",
+			ExecutionContext: user.ExecutionContext,
+		},
+	)
 	require.NoError(t, err)
 	return messages, store, db, ctx, session, run
 }
-func actualSteerInput(t *testing.T, messages *messageService, ctx context.Context, session *types.Session, run *types.Message) (*types.SteerMaterialInput, context.Context) {
+
+func actualSteerInput(
+	t *testing.T,
+	messages *messageService,
+	ctx context.Context,
+	session *types.Session,
+	run *types.Message,
+) (*types.SteerMaterialInput, context.Context) {
 	_, generation, err := messages.MessageNativeLiveIdentity(ctx, session.ID, run.ID)
 	require.NoError(t, err)
-	request := &types.SteerAuthoredRequest{TenantID: session.TenantID, SessionID: session.ID, RunMessageID: run.ID, RunGenerationID: generation, RunRequestID: run.RequestID, ClientSteerID: uuid.NewString(), Query: "  actual authored\r\nsteer guidance  ", MentionedItems: types.MentionedItems{{ID: "human-literal-name", Name: "actual typed display name", Type: "kb", KBName: "human authored KB name"}}}
+	request := &types.SteerAuthoredRequest{
+		TenantID:        session.TenantID,
+		SessionID:       session.ID,
+		RunMessageID:    run.ID,
+		RunGenerationID: generation,
+		RunRequestID:    run.RequestID,
+		ClientSteerID:   uuid.NewString(),
+		Query:           "  actual authored\r\nsteer guidance  ",
+		MentionedItems: types.MentionedItems{
+			{ID: "human-literal-name", Name: "actual typed display name", Type: "kb", KBName: "human authored KB name"},
+		},
+	}
 	marked, err := WithActualSteerHTTPInput(ctx, request)
 	require.NoError(t, err)
 	input, err := messages.AdmitActualSteerInput(marked, request)
@@ -40,17 +84,40 @@ func actualSteerInput(t *testing.T, messages *messageService, ctx context.Contex
 	require.Equal(t, "actual authored\nsteer guidance", input.Query)
 	return input, marked
 }
+
 func TestSteerMaterialActualAuthoredVaultReadPromoteAndActorControlABA(t *testing.T) {
 	for _, change := range []string{"positive", "control_aba", "actor_revoke"} {
 		t.Run(change, func(t *testing.T) {
 			messages, _, db, ctx, session, run := steerMaterialActualFixture(t, false)
 			input, _ := actualSteerInput(t, messages, ctx, session, run)
 			var storage string
-			require.NoError(t, db.Raw("SELECT input_body FROM steer_authored_origins WHERE id=?", input.Proof.OriginID).Scan(&storage).Error)
+			require.NoError(
+				t,
+				db.Raw("SELECT input_body FROM steer_authored_origins WHERE id=?", input.Proof.OriginID).
+					Scan(&storage).
+					Error,
+			)
 			require.NotContains(t, storage, input.Query)
-			next, err := messages.ApplyActualSteerControl(ctx, &types.SteerControlRequest{TenantID: session.TenantID, SessionID: session.ID, SteerID: input.Proof.SteerID, OriginalAdmissionID: input.Proof.OriginID, ExpectedHeadID: input.Control.HeadID, ExpectedRevision: input.Control.Revision, Operation: types.SteerControlPromote})
+			next, err := messages.ApplyActualSteerControl(
+				ctx,
+				&types.SteerControlRequest{
+					TenantID:            session.TenantID,
+					SessionID:           session.ID,
+					SteerID:             input.Proof.SteerID,
+					OriginalAdmissionID: input.Proof.OriginID,
+					ExpectedHeadID:      input.Control.HeadID,
+					ExpectedRevision:    input.Control.Revision,
+					Operation:           types.SteerControlPromote,
+				},
+			)
 			require.NoError(t, err)
-			request := &types.SteerMaterialRequest{TenantID: session.TenantID, SessionID: session.ID, RunMessageID: run.ID, RunGenerationID: input.Proof.OriginRunGenerationID, Use: types.SteerMaterialInject}
+			request := &types.SteerMaterialRequest{
+				TenantID:        session.TenantID,
+				SessionID:       session.ID,
+				RunMessageID:    run.ID,
+				RunGenerationID: input.Proof.OriginRunGenerationID,
+				Use:             types.SteerMaterialInject,
+			}
 			snapshot, check, close, err := messages.BeginSteerMaterialRead(ctx, request)
 			require.NoError(t, err)
 			defer close()
@@ -60,11 +127,26 @@ func TestSteerMaterialActualAuthoredVaultReadPromoteAndActorControlABA(t *testin
 			require.NoError(t, check())
 			switch change {
 			case "control_aba":
-				require.NoError(t, db.Table("steer_control_heads").Where("origin_id=?", input.Proof.OriginID).Update("head_id", input.Control.HeadID).Error)
-				require.NoError(t, db.Table("steer_control_heads").Where("origin_id=?", input.Proof.OriginID).Update("head_id", next.HeadID).Error)
+				require.NoError(
+					t,
+					db.Table("steer_control_heads").
+						Where("origin_id=?", input.Proof.OriginID).
+						Update("head_id", input.Control.HeadID).
+						Error,
+				)
+				require.NoError(
+					t,
+					db.Table("steer_control_heads").
+						Where("origin_id=?", input.Proof.OriginID).
+						Update("head_id", next.HeadID).
+						Error,
+				)
 				require.Error(t, check())
 			case "actor_revoke":
-				require.NoError(t, db.Model(&types.User{}).Where("id=?", session.UserID).Update("is_active", false).Error)
+				require.NoError(
+					t,
+					db.Model(&types.User{}).Where("id=?", session.UserID).Update("is_active", false).Error,
+				)
 				require.Error(t, check())
 			default:
 				require.NoError(t, check())
@@ -102,13 +184,24 @@ func TestSteerMaterialActualRollbackRefusesProofDeletion(t *testing.T) {
 			require.NoError(t, err)
 			require.Error(t, db.Exec(string(migration)).Error)
 			for _, table := range []string{"steer_authored_origins", "steer_control_admissions", "steer_control_heads", "steer_consumption_origins", "message_completion_input_manifests"} {
-				require.True(t, db.Migrator().HasTable(table), "rollback must preserve original and negative-control proof tables")
+				require.True(
+					t,
+					db.Migrator().HasTable(table),
+					"rollback must preserve original and negative-control proof tables",
+				)
 			}
 			var count int64
-			require.NoError(t, db.Table("steer_authored_origins").Where("id=?", input.Proof.OriginID).Count(&count).Error)
+			require.NoError(
+				t,
+				db.Table("steer_authored_origins").Where("id=?", input.Proof.OriginID).Count(&count).Error,
+			)
 			require.EqualValues(t, 1, count)
 			require.NoError(t, messages.CheckActualSteerControl(ctx, deleted))
-			require.Error(t, messages.CheckActualSteerControl(ctx, input.Control), "refused downgrade must not revive the initial control")
+			require.Error(
+				t,
+				messages.CheckActualSteerControl(ctx, input.Control),
+				"refused downgrade must not revive the initial control",
+			)
 			_, err = messages.ApplyActualSteerControl(ctx, &types.SteerControlRequest{
 				TenantID: session.TenantID, SessionID: session.ID, SteerID: input.Proof.SteerID,
 				OriginalAdmissionID: input.Proof.OriginID, ExpectedHeadID: deleted.HeadID,
@@ -118,9 +211,11 @@ func TestSteerMaterialActualRollbackRefusesProofDeletion(t *testing.T) {
 		})
 	}
 }
+
 func TestSteerMaterialActualConsumeOwnInsertionAndModelGuard(t *testing.T) {
 	runSteerActualConsume(t, false)
 }
+
 func TestSteerMaterialPostgresActualConsumeOwnInsertionAndModelGuard(t *testing.T) {
 	runSteerActualConsume(t, true)
 }
@@ -138,24 +233,48 @@ func TestSteerMaterialActualFollowUpKeepsOriginalAndBindsExactNewInitial(t *test
 			defer closeOld()
 			ctx = context.WithValue(ctx, agentHistoryCurrentRequestKey{}, old.RequestID)
 			var initial types.Message
-			require.NoError(t, db.Where("session_id=? AND request_id=? AND role='user'", session.ID, old.RequestID).Take(&initial).Error)
+			require.NoError(
+				t,
+				db.Where("session_id=? AND request_id=? AND role='user'", session.ID, old.RequestID).
+					Take(&initial).
+					Error,
+			)
 			_, err := messages.GetMessage(ctx, session.ID, initial.ID)
 			require.NoError(t, err)
 			require.NoError(t, messages.bindInitialMessageMaterial(ctx, old.ID, initial.ID, old.RequestID))
 			_, err = messages.admittedMessagePage(ctx, session.ID, time.Time{}, 20, 1, false)
 			require.NoError(t, err)
 			markMessageMaterialReady(ctx)
-			next, err := messages.CreateActualSteerFollowUpAssistant(ctx, input, &types.Message{SessionID: session.ID, RequestID: uuid.NewString(), Role: "assistant", ExecutionContext: old.ExecutionContext})
+			next, err := messages.CreateActualSteerFollowUpAssistant(
+				ctx,
+				input,
+				&types.Message{
+					SessionID:        session.ID,
+					RequestID:        uuid.NewString(),
+					Role:             "assistant",
+					ExecutionContext: old.ExecutionContext,
+				},
+			)
 			require.NoError(t, err)
 			_, generation, err := messages.MessageNativeLiveIdentity(ctx, session.ID, next.ID)
 			require.NoError(t, err)
-			user, proof, check, closeInput, err := messages.ConsumeActualSteerFollowUpIntoMessage(ctx, input, next.ID, generation, next.RequestID)
+			user, proof, check, closeInput, err := messages.ConsumeActualSteerFollowUpIntoMessage(
+				ctx,
+				input,
+				next.ID,
+				generation,
+				next.RequestID,
+			)
 			require.NoError(t, err)
 			defer closeInput()
 			require.NoError(t, check())
 			require.Equal(t, input.Query, user.Content)
 			require.NotEqual(t, old.RequestID, user.RequestID)
-			require.NoError(t, CheckMessageMaterialOutputBoundary(ctx), "two exact owned transitions preserve all old witnesses")
+			require.NoError(
+				t,
+				CheckMessageMaterialOutputBoundary(ctx),
+				"two exact owned transitions preserve all old witnesses",
+			)
 			nextCtx := WithMessageMaterialOutputBoundary(MessageMaterialOwnerContext(ctx))
 			defer CloseMessageMaterialOutputBoundary(nextCtx)
 			_, err = messages.GetMessage(nextCtx, session.ID, user.ID)
@@ -164,34 +283,90 @@ func TestSteerMaterialActualFollowUpKeepsOriginalAndBindsExactNewInitial(t *test
 			slot := nextCtx.Value(messageMaterialOutputKey{}).(*messageMaterialOutputSlot)
 			require.Equal(t, proof.UserAdmissionID, slot.Completion.Initial.AdmissionID)
 			var origin struct{ OriginRunMessageID string }
-			require.NoError(t, db.Table("steer_authored_origins").Select("origin_run_message_id").Where("id=?", input.Proof.OriginID).Take(&origin).Error)
+			require.NoError(
+				t,
+				db.Table("steer_authored_origins").
+					Select("origin_run_message_id").
+					Where("id=?", input.Proof.OriginID).
+					Take(&origin).
+					Error,
+			)
 			require.Equal(t, old.ID, origin.OriginRunMessageID)
-			_, err = messages.ApplyActualSteerControl(base, &types.SteerControlRequest{TenantID: 7, SessionID: session.ID, SteerID: input.Proof.SteerID, OriginalAdmissionID: input.Proof.OriginID, ExpectedHeadID: proof.ResultHeadID, ExpectedRevision: proof.ResultRevision, Operation: types.SteerControlDiscard})
+			_, err = messages.ApplyActualSteerControl(
+				base,
+				&types.SteerControlRequest{
+					TenantID:            7,
+					SessionID:           session.ID,
+					SteerID:             input.Proof.SteerID,
+					OriginalAdmissionID: input.Proof.OriginID,
+					ExpectedHeadID:      proof.ResultHeadID,
+					ExpectedRevision:    proof.ResultRevision,
+					Operation:           types.SteerControlDiscard,
+				},
+			)
 			require.NoError(t, err)
-			require.Error(t, check(), "a real internally consistent appended control cannot reuse the sealed consumed head")
+			require.Error(
+				t,
+				check(),
+				"a real internally consistent appended control cannot reuse the sealed consumed head",
+			)
 			require.Error(t, CheckMessageMaterialOutputBoundary(nextCtx))
 		})
 	}
 }
+
 func runSteerActualConsume(t *testing.T, pg bool) {
 	messages, _, db, ctx, session, run := steerMaterialActualFixture(t, pg)
 	input, _ := actualSteerInput(t, messages, ctx, session, run)
-	_, err := messages.ApplyActualSteerControl(ctx, &types.SteerControlRequest{TenantID: session.TenantID, SessionID: session.ID, SteerID: input.Proof.SteerID, OriginalAdmissionID: input.Proof.OriginID, ExpectedHeadID: input.Control.HeadID, ExpectedRevision: 1, Operation: types.SteerControlPromote})
+	_, err := messages.ApplyActualSteerControl(
+		ctx,
+		&types.SteerControlRequest{
+			TenantID:            session.TenantID,
+			SessionID:           session.ID,
+			SteerID:             input.Proof.SteerID,
+			OriginalAdmissionID: input.Proof.OriginID,
+			ExpectedHeadID:      input.Control.HeadID,
+			ExpectedRevision:    1,
+			Operation:           types.SteerControlPromote,
+		},
+	)
 	require.NoError(t, err)
-	snapshot, _, closeQueue, err := messages.BeginSteerMaterialRead(ctx, &types.SteerMaterialRequest{TenantID: session.TenantID, SessionID: session.ID, RunMessageID: run.ID, RunGenerationID: input.Proof.OriginRunGenerationID, Use: types.SteerMaterialInject})
+	snapshot, _, closeQueue, err := messages.BeginSteerMaterialRead(
+		ctx,
+		&types.SteerMaterialRequest{
+			TenantID:        session.TenantID,
+			SessionID:       session.ID,
+			RunMessageID:    run.ID,
+			RunGenerationID: input.Proof.OriginRunGenerationID,
+			Use:             types.SteerMaterialInject,
+		},
+	)
 	require.NoError(t, err)
 	defer closeQueue()
 	ctx = WithMessageMaterialOutputBoundary(ctx)
 	defer CloseMessageMaterialOutputBoundary(ctx)
 	ctx = context.WithValue(ctx, agentHistoryCurrentRequestKey{}, run.RequestID)
 	var initial struct{ ID string }
-	require.NoError(t, db.Table("messages").Select("id").Where("session_id=? AND request_id=? AND role='user'", session.ID, run.RequestID).Take(&initial).Error)
+	require.NoError(
+		t,
+		db.Table("messages").
+			Select("id").
+			Where("session_id=? AND request_id=? AND role='user'", session.ID, run.RequestID).
+			Take(&initial).
+			Error,
+	)
 	_, err = messages.GetMessage(ctx, session.ID, initial.ID)
 	require.NoError(t, err)
 	require.NoError(t, messages.bindInitialMessageMaterial(ctx, run.ID, initial.ID, run.RequestID))
 	_, err = messages.admittedMessagePage(ctx, session.ID, time.Time{}, 20, 1, false)
 	require.NoError(t, err)
-	message, proof, check, close, err := messages.ConsumeActualSteerIntoMessage(ctx, snapshot.Inputs[0], run.ID, input.Proof.OriginRunGenerationID, run.RequestID)
+	message, proof, check, close, err := messages.ConsumeActualSteerIntoMessage(
+		ctx,
+		snapshot.Inputs[0],
+		run.ID,
+		input.Proof.OriginRunGenerationID,
+		run.RequestID,
+	)
 	require.NoError(t, err)
 	defer close()
 	require.Equal(t, input.Query, message.Content)
@@ -199,9 +374,18 @@ func runSteerActualConsume(t *testing.T, pg bool) {
 	require.NoError(t, check())
 	require.NoError(t, CheckMessageMaterialOutputBoundary(ctx))
 	var heads int64
-	require.NoError(t, db.Table("steer_consumption_origins").Where("origin_id=?", input.Proof.OriginID).Count(&heads).Error)
+	require.NoError(
+		t,
+		db.Table("steer_consumption_origins").Where("origin_id=?", input.Proof.OriginID).Count(&heads).Error,
+	)
 	require.EqualValues(t, 1, heads)
-	again, _, checkAgain, closeAgain, err := messages.ConsumeActualSteerIntoMessage(ctx, snapshot.Inputs[0], run.ID, input.Proof.OriginRunGenerationID, run.RequestID)
+	again, _, checkAgain, closeAgain, err := messages.ConsumeActualSteerIntoMessage(
+		ctx,
+		snapshot.Inputs[0],
+		run.ID,
+		input.Proof.OriginRunGenerationID,
+		run.RequestID,
+	)
 	require.NoError(t, err)
 	defer closeAgain()
 	require.Equal(t, message.ID, again.ID)
@@ -213,11 +397,21 @@ func runSteerActualConsume(t *testing.T, pg bool) {
 	down, err := os.ReadFile(downPath)
 	require.NoError(t, err)
 	require.Error(t, db.Exec(string(down)).Error)
-	require.NoError(t, messages.materialStore.CheckSteerConsumption(ctx, proof), "refused downgrade retains the exact original consumption proof")
+	require.NoError(
+		t,
+		messages.materialStore.CheckSteerConsumption(ctx, proof),
+		"refused downgrade retains the exact original consumption proof",
+	)
 	require.NoError(t, check())
-	require.NoError(t, db.Table("steer_consumption_origins").Where("origin_id=?", input.Proof.OriginID).Count(&heads).Error)
+	require.NoError(
+		t,
+		db.Table("steer_consumption_origins").Where("origin_id=?", input.Proof.OriginID).Count(&heads).Error,
+	)
 	require.EqualValues(t, 1, heads)
-	require.NoError(t, db.Model(&types.Message{}).Where("id=?", message.ID).Update("content", "foreign transient steer body").Error)
+	require.NoError(
+		t,
+		db.Model(&types.Message{}).Where("id=?", message.ID).Update("content", "foreign transient steer body").Error,
+	)
 	require.NoError(t, db.Model(&types.Message{}).Where("id=?", message.ID).Update("content", message.Content).Error)
 	require.Error(t, check())
 }
@@ -226,7 +420,17 @@ func TestSteerMaterialActualAuthoredRetryRawMentionAndChannelCannotBeReSigned(t 
 	messages, _, _, ctx, session, run := steerMaterialActualFixture(t, false)
 	_, generation, err := messages.MessageNativeLiveIdentity(ctx, session.ID, run.ID)
 	require.NoError(t, err)
-	request := &types.SteerAuthoredRequest{TenantID: 7, SessionID: session.ID, RunMessageID: run.ID, RunGenerationID: generation, RunRequestID: run.RequestID, ClientSteerID: uuid.NewString(), Query: "actual raw retry", Channel: "web", MentionedItems: types.MentionedItems{{ID: "id", Name: "raw first name", Type: "kb"}}}
+	request := &types.SteerAuthoredRequest{
+		TenantID:        7,
+		SessionID:       session.ID,
+		RunMessageID:    run.ID,
+		RunGenerationID: generation,
+		RunRequestID:    run.RequestID,
+		ClientSteerID:   uuid.NewString(),
+		Query:           "actual raw retry",
+		Channel:         "web",
+		MentionedItems:  types.MentionedItems{{ID: "id", Name: "raw first name", Type: "kb"}},
+	}
 	marked, err := WithActualSteerHTTPInput(ctx, request)
 	require.NoError(t, err)
 	original, err := messages.AdmitActualSteerInput(marked, request)
@@ -249,13 +453,32 @@ func TestSteerMaterialActualAuthoredRetryRawMentionAndChannelCannotBeReSigned(t 
 	_, err = messages.AdmitActualSteerInput(ctx, request)
 	require.Error(t, err, "raw current args without actual HTTP capability cannot be admitted")
 }
+
 func TestSteerMaterialActualUnseenCandidateControlAndMissingBodyLeaseReject(t *testing.T) {
 	messages, store, db, ctx, session, run := steerMaterialActualFixture(t, false)
 	first, _ := actualSteerInput(t, messages, ctx, session, run)
 	second, _ := actualSteerInput(t, messages, ctx, session, run)
-	promoted, err := messages.ApplyActualSteerControl(ctx, &types.SteerControlRequest{TenantID: 7, SessionID: session.ID, SteerID: first.Proof.SteerID, OriginalAdmissionID: first.Proof.OriginID, ExpectedHeadID: first.Control.HeadID, ExpectedRevision: 1, Operation: types.SteerControlPromote})
+	promoted, err := messages.ApplyActualSteerControl(
+		ctx,
+		&types.SteerControlRequest{
+			TenantID:            7,
+			SessionID:           session.ID,
+			SteerID:             first.Proof.SteerID,
+			OriginalAdmissionID: first.Proof.OriginID,
+			ExpectedHeadID:      first.Control.HeadID,
+			ExpectedRevision:    1,
+			Operation:           types.SteerControlPromote,
+		},
+	)
 	require.NoError(t, err)
-	request := &types.SteerMaterialRequest{TenantID: 7, SessionID: session.ID, RunMessageID: run.ID, RunGenerationID: first.Proof.OriginRunGenerationID, Use: types.SteerMaterialInject, SteerIDs: []string{first.Proof.SteerID}}
+	request := &types.SteerMaterialRequest{
+		TenantID:        7,
+		SessionID:       session.ID,
+		RunMessageID:    run.ID,
+		RunGenerationID: first.Proof.OriginRunGenerationID,
+		Use:             types.SteerMaterialInject,
+		SteerIDs:        []string{first.Proof.SteerID},
+	}
 	plan, err := store.PeekSteerMaterialPlan(ctx, request)
 	require.NoError(t, err)
 	require.Len(t, plan.CandidateControls, 2)
@@ -269,26 +492,58 @@ func TestSteerMaterialActualUnseenCandidateControlAndMissingBodyLeaseReject(t *t
 	defer close()
 	require.Len(t, snapshot.Inputs, 1)
 	require.Equal(t, promoted.HeadID, snapshot.Inputs[0].Control.HeadID)
-	require.NoError(t, db.Table("steer_control_heads").Where("origin_id=?", second.Proof.OriginID).Update("head_id", first.Control.HeadID).Error)
-	require.NoError(t, db.Table("steer_control_heads").Where("origin_id=?", second.Proof.OriginID).Update("head_id", second.Control.HeadID).Error)
+	require.NoError(
+		t,
+		db.Table("steer_control_heads").
+			Where("origin_id=?", second.Proof.OriginID).
+			Update("head_id", first.Control.HeadID).
+			Error,
+	)
+	require.NoError(
+		t,
+		db.Table("steer_control_heads").
+			Where("origin_id=?", second.Proof.OriginID).
+			Update("head_id", second.Control.HeadID).
+			Error,
+	)
 	require.Error(t, check(), "an unseen selection candidate ABA cannot be projected away")
 }
 
 func TestSteerMaterialActualNoKBVaultLeaseBlocksPurgeThenJournalDeniesOldInput(t *testing.T) {
 	messages, _, db, ctx, session, run := steerMaterialActualFixture(t, false)
 	input, _ := actualSteerInput(t, messages, ctx, session, run)
-	request := &types.SteerMaterialRequest{TenantID: 7, SessionID: session.ID, RunMessageID: run.ID, RunGenerationID: input.Proof.OriginRunGenerationID, Use: types.SteerMaterialPending}
+	request := &types.SteerMaterialRequest{
+		TenantID:        7,
+		SessionID:       session.ID,
+		RunMessageID:    run.ID,
+		RunGenerationID: input.Proof.OriginRunGenerationID,
+		Use:             types.SteerMaterialPending,
+	}
 	snapshot, check, close, err := messages.BeginSteerMaterialRead(ctx, request)
 	require.NoError(t, err)
 	require.Len(t, snapshot.Inputs, 1)
 	require.NoError(t, check())
 	var bodyID string
-	require.NoError(t, db.Raw("SELECT body_id FROM original_body_field_heads WHERE source_table='steer_authored_origins' AND row_key=?", input.Proof.OriginID).Scan(&bodyID).Error)
+	require.NoError(
+		t,
+		db.Raw("SELECT body_id FROM original_body_field_heads WHERE source_table='steer_authored_origins' AND row_key=?", input.Proof.OriginID).
+			Scan(&bodyID).
+			Error,
+	)
 	require.NotEmpty(t, bodyID)
 	var marker int64
-	require.NoError(t, db.Table("original_body_lease_scopes").Where("body_id=? AND tenant_id=7 AND knowledge_base_id=''", bodyID).Count(&marker).Error)
+	require.NoError(
+		t,
+		db.Table("original_body_lease_scopes").
+			Where("body_id=? AND tenant_id=7 AND knowledge_base_id=''", bodyID).
+			Count(&marker).
+			Error,
+	)
 	require.EqualValues(t, 1, marker)
-	require.NoError(t, db.Exec("UPDATE sessions SET deleted_at=datetime('now','-2 hours') WHERE id=?", session.ID).Error)
+	require.NoError(
+		t,
+		db.Exec("UPDATE sessions SET deleted_at=datetime('now','-2 hours') WHERE id=?", session.ID).Error,
+	)
 	retention := repository.NewOriginalBodyRetentionStore(db)
 	_, err = retention.PurgeDue(context.Background(), 100)
 	require.NoError(t, err)
@@ -302,7 +557,12 @@ func TestSteerMaterialActualNoKBVaultLeaseBlocksPurgeThenJournalDeniesOldInput(t
 	require.NoError(t, db.Raw("SELECT state FROM original_body_payloads WHERE id=?", bodyID).Scan(&state).Error)
 	require.Equal(t, "purged", state)
 	require.Error(t, db.Transaction(func(tx *gorm.DB) error {
-		return repository.CheckOriginalBodyAvailableInTx(context.Background(), tx, "steer_authored_origins", input.Proof.OriginID)
+		return repository.CheckOriginalBodyAvailableInTx(
+			context.Background(),
+			tx,
+			"steer_authored_origins",
+			input.Proof.OriginID,
+		)
 	}))
 	var payload *string
 	require.NoError(t, db.Raw("SELECT payload FROM original_body_payloads WHERE id=?", bodyID).Scan(&payload).Error)

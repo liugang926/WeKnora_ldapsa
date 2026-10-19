@@ -24,7 +24,7 @@ type knowledgeOutputFileSnapshot struct {
 
 func (f *knowledgeOutputFileSnapshot) Close() error {
 	f.once.Do(func() {
-		f.err = errors.Join(f.File.Close(), os.Remove(f.File.Name()), os.Remove(f.directory))
+		f.err = errors.Join(f.File.Close(), os.Remove(f.Name()), os.Remove(f.directory))
 	})
 	return f.err
 }
@@ -33,7 +33,11 @@ func (f *knowledgeOutputFileSnapshot) Close() error {
 // the process. Its digest must match the retained original input, not current
 // filename/hash metadata. The returned private file supports HTTP ranges and
 // is removed on Close; permission/proof guards still apply to its delivery.
-func (g *KnowledgeOutputGuard) BindFile(ctx context.Context, row *types.Knowledge, input io.ReadCloser) (io.ReadSeekCloser, error) {
+func (g *KnowledgeOutputGuard) BindFile(
+	ctx context.Context,
+	row *types.Knowledge,
+	input io.ReadCloser,
+) (io.ReadSeekCloser, error) {
 	if input == nil {
 		return nil, types.ErrSourceLineageUnknown
 	}
@@ -54,7 +58,7 @@ func (g *KnowledgeOutputGuard) BindFile(ctx context.Context, row *types.Knowledg
 	if err != nil {
 		return nil, err
 	}
-	file, err := os.OpenFile(directory+"/artifact", os.O_CREATE|os.O_EXCL|os.O_RDWR, 0600)
+	file, err := os.OpenFile(directory+"/artifact", os.O_CREATE|os.O_EXCL|os.O_RDWR, 0o600)
 	if err != nil {
 		_ = os.Remove(directory)
 		return nil, err

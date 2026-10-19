@@ -134,8 +134,12 @@ func enqueueSummaryRefresh(
 		markFailed()
 		return err
 	}
-	task := asynq.NewTask(types.TypeSummaryGeneration, payloadBytes,
+	task, err := newKnowledgeQueueTask(ctx, nil, types.TypeSummaryGeneration, payloadBytes,
 		asynq.Queue(types.QueueSummary), asynq.MaxRetry(3), asynq.Timeout(30*time.Minute))
+	if err != nil {
+		markFailed()
+		return err
+	}
 	_ = repo.UpdateKnowledgeColumn(ctx, knowledge.ID, "summary_status", types.SummaryStatusPending)
 	if _, err = taskEnqueuer.Enqueue(task); err != nil {
 		markFailed()
@@ -154,5 +158,13 @@ func (s *knowledgeService) RequestKnowledgeSummaryRefresh(
 	if err != nil {
 		return err
 	}
-	return enqueueSummaryRefresh(ctx, s.repo, s.task, s.kbService, s.tracker(), knowledge, s.prepareSummaryGenerationPayload)
+	return enqueueSummaryRefresh(
+		ctx,
+		s.repo,
+		s.task,
+		s.kbService,
+		s.tracker(),
+		knowledge,
+		s.prepareSummaryGenerationPayload,
+	)
 }

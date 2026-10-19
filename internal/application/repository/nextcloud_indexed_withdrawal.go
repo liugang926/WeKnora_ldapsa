@@ -86,15 +86,19 @@ func revokeIndexedEventConnection(tx *gorm.DB, pair NextcloudSourcePairing, now 
 	result := tx.Table("nextcloud_event_connections").
 		Where("connection_id = ? AND tenant_id = ? AND datasource_id = ? AND status = 'active'",
 			connection.ConnectionID, pair.TenantID, pair.DataSourceID).
-		Updates(map[string]any{"status": "revoked", "previous_key_id": nil,
+		Updates(map[string]any{
+			"status": "revoked", "previous_key_id": nil,
 			"previous_secret_ciphertext": nil, "previous_valid_until": nil,
-			"updated_at": now})
+			"updated_at": now,
+		})
 	if result.Error != nil || result.RowsAffected != 1 {
 		return ErrNextcloudSourcePairingConflict
 	}
 	result = tx.Table("nextcloud_event_dispatch").Where("connection_id = ?", connection.ConnectionID).
-		Updates(map[string]any{"state": "blocked", "lease_token": nil,
-			"lease_until": nil, "last_error_code": "source_withdrawn", "updated_at": now})
+		Updates(map[string]any{
+			"state": "blocked", "lease_token": nil,
+			"lease_until": nil, "last_error_code": "source_withdrawn", "updated_at": now,
+		})
 	if result.Error != nil || result.RowsAffected != 1 {
 		return ErrNextcloudSourcePairingConflict
 	}
@@ -149,12 +153,18 @@ func (r *NextcloudSourcePairingRepository) BeginIndexedSourceWithdrawal(
 		var liveRotation int64
 		if err := tx.Table("nextcloud_source_rotations").
 			Where("pair_operation_id = ? AND state IN ?", pair.OperationID,
-				[]string{"pending", "committed", "switched"}).Count(&liveRotation).Error; err != nil || liveRotation != 0 {
+				[]string{
+					"pending",
+					"committed",
+					"switched",
+				}).
+			Count(&liveRotation).Error; err != nil || liveRotation != 0 {
 			return ErrNextcloudSourcePairingConflict
 		}
 		var emptyDecommission int64
 		if err := tx.Model(&NextcloudSourceDecommission{}).
-			Where("pair_operation_id = ?", pair.OperationID).Count(&emptyDecommission).Error; err != nil || emptyDecommission != 0 {
+			Where("pair_operation_id = ?", pair.OperationID).
+			Count(&emptyDecommission).Error; err != nil || emptyDecommission != 0 {
 			return ErrNextcloudSourcePairingConflict
 		}
 		var source types.DataSource
@@ -205,7 +215,8 @@ func (r *NextcloudSourcePairingRepository) BeginIndexedSourceWithdrawal(
 		if err := tx.Table("nextcloud_gc_items AS i").Joins(
 			"JOIN nextcloud_gc_jobs AS j ON j.id = i.job_id").
 			Where("j.tenant_id = ? AND j.knowledge_base_id = ? AND j.datasource_id = ? AND i.state = 'deleting'",
-				pair.TenantID, pair.KnowledgeBaseID, pair.DataSourceID).Count(&deleting).Error; err != nil || deleting != 0 {
+				pair.TenantID, pair.KnowledgeBaseID, pair.DataSourceID).
+			Count(&deleting).Error; err != nil || deleting != 0 {
 			return ErrNextcloudSourcePairingConflict
 		}
 		if err := tx.Model(&types.DataSource{}).Where("id = ?", source.ID).
@@ -273,18 +284,50 @@ func (r *NextcloudSourcePairingRepository) RefreshIndexedWithdrawalInventory(
 			kind, sql string
 			args      []any
 		}{
-			{"knowledge", `SELECT id AS object_ref, id AS knowledge_id FROM knowledges WHERE tenant_id = ? AND knowledge_base_id = ?`, []any{row.TenantID, row.KnowledgeBaseID}},
-			{"source_file", `SELECT id || ':' || file_path AS object_ref, id AS knowledge_id FROM knowledges WHERE tenant_id = ? AND knowledge_base_id = ? AND file_path <> ''`, []any{row.TenantID, row.KnowledgeBaseID}},
-			{"chunk", `SELECT id AS object_ref, knowledge_id FROM chunks WHERE tenant_id = ? AND knowledge_base_id = ?`, []any{row.TenantID, row.KnowledgeBaseID}},
-			{"gc_job", `SELECT id AS object_ref, knowledge_id FROM nextcloud_gc_jobs WHERE tenant_id = ? AND knowledge_base_id = ? AND datasource_id = ?`, []any{row.TenantID, row.KnowledgeBaseID, row.DataSourceID}},
-			{"gc_item", `SELECT i.job_id || ':' || i.kind || ':' || i.object_ref AS object_ref, j.knowledge_id FROM nextcloud_gc_items i JOIN nextcloud_gc_jobs j ON j.id = i.job_id WHERE j.tenant_id = ? AND j.knowledge_base_id = ? AND j.datasource_id = ?`, []any{row.TenantID, row.KnowledgeBaseID, row.DataSourceID}},
-			{"source_version", `SELECT external_id AS object_ref, candidate_knowledge_id AS knowledge_id FROM nextcloud_source_versions WHERE tenant_id = ? AND knowledge_base_id = ? AND datasource_id = ?`, []any{row.TenantID, row.KnowledgeBaseID, row.DataSourceID}},
+			{
+				"knowledge",
+				`SELECT id AS object_ref, id AS knowledge_id FROM knowledges WHERE tenant_id = ? AND knowledge_base_id = ?`,
+				[]any{row.TenantID, row.KnowledgeBaseID},
+			},
+			{
+				"source_file",
+				`SELECT id || ':' || file_path AS object_ref, id AS knowledge_id FROM knowledges WHERE tenant_id = ? AND knowledge_base_id = ? AND file_path <> ''`,
+				[]any{row.TenantID, row.KnowledgeBaseID},
+			},
+			{
+				"chunk",
+				`SELECT id AS object_ref, knowledge_id FROM chunks WHERE tenant_id = ? AND knowledge_base_id = ?`,
+				[]any{row.TenantID, row.KnowledgeBaseID},
+			},
+			{
+				"gc_job",
+				`SELECT id AS object_ref, knowledge_id FROM nextcloud_gc_jobs WHERE tenant_id = ? AND knowledge_base_id = ? AND datasource_id = ?`,
+				[]any{row.TenantID, row.KnowledgeBaseID, row.DataSourceID},
+			},
+			{
+				"gc_item",
+				`SELECT i.job_id || ':' || i.kind || ':' || i.object_ref AS object_ref, j.knowledge_id FROM nextcloud_gc_items i JOIN nextcloud_gc_jobs j ON j.id = i.job_id WHERE j.tenant_id = ? AND j.knowledge_base_id = ? AND j.datasource_id = ?`,
+				[]any{row.TenantID, row.KnowledgeBaseID, row.DataSourceID},
+			},
+			{
+				"source_version",
+				`SELECT external_id AS object_ref, candidate_knowledge_id AS knowledge_id FROM nextcloud_source_versions WHERE tenant_id = ? AND knowledge_base_id = ? AND datasource_id = ?`,
+				[]any{row.TenantID, row.KnowledgeBaseID, row.DataSourceID},
+			},
 			// The mutable source-version row names only the latest candidate. Keep
 			// every later observed revision, including one whose knowledge row
 			// was already hard-deleted. This remains an incomplete copy inventory:
 			// pre-ledger history and external backends are still unknown.
-			{"source_revision", `SELECT jsonb_build_array(external_id, revision)::text AS object_ref, candidate_knowledge_id AS knowledge_id FROM nextcloud_source_revisions WHERE tenant_id = ? AND knowledge_base_id = ? AND datasource_id = ?`, []any{row.TenantID, row.KnowledgeBaseID, row.DataSourceID}},
-			{"sync_log", `SELECT id AS object_ref, '' AS knowledge_id FROM sync_logs WHERE data_source_id = ?`, []any{row.DataSourceID}},
+			{
+				"source_revision",
+				`SELECT jsonb_build_array(external_id, revision)::text AS object_ref, candidate_knowledge_id AS knowledge_id FROM nextcloud_source_revisions WHERE tenant_id = ? AND knowledge_base_id = ? AND datasource_id = ?`,
+				[]any{row.TenantID, row.KnowledgeBaseID, row.DataSourceID},
+			},
+			{
+				"sync_log",
+				`SELECT id AS object_ref, '' AS knowledge_id FROM sync_logs WHERE data_source_id = ?`,
+				[]any{row.DataSourceID},
+			},
 		}
 		for _, q := range queries {
 			if err := tx.Exec(`INSERT INTO nextcloud_indexed_withdrawal_items
@@ -296,9 +339,11 @@ func (r *NextcloudSourcePairingRepository) RefreshIndexedWithdrawalInventory(
 				return fmt.Errorf("inventory %s: %w", q.kind, err)
 			}
 		}
-		blockers := []nextcloudIndexedWithdrawalItem{{OperationID: row.OperationID,
-			Kind: "unverified_external_index", ObjectRef: row.KnowledgeBaseID,
-			ObservedAt: time.Now().UTC()}}
+		blockers := []nextcloudIndexedWithdrawalItem{{
+			OperationID: row.OperationID,
+			Kind:        "unverified_external_index", ObjectRef: row.KnowledgeBaseID,
+			ObservedAt: time.Now().UTC(),
+		}}
 		if tx.Migrator().HasTable("embeddings") {
 			if err := tx.Exec(`INSERT INTO nextcloud_indexed_withdrawal_items
 				(operation_id, kind, object_ref, knowledge_id)
@@ -309,9 +354,11 @@ func (r *NextcloudSourcePairingRepository) RefreshIndexedWithdrawalInventory(
 				return err
 			}
 		} else {
-			blockers = append(blockers, nextcloudIndexedWithdrawalItem{OperationID: row.OperationID,
-				Kind: "missing_local_embedding_table", ObjectRef: row.KnowledgeBaseID,
-				ObservedAt: time.Now().UTC()})
+			blockers = append(blockers, nextcloudIndexedWithdrawalItem{
+				OperationID: row.OperationID,
+				Kind:        "missing_local_embedding_table", ObjectRef: row.KnowledgeBaseID,
+				ObservedAt: time.Now().UTC(),
+			})
 		}
 		if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&blockers).Error; err != nil {
 			return err
@@ -339,7 +386,8 @@ func (r *NextcloudSourcePairingRepository) RefreshIndexedWithdrawalInventory(
 				if err := json.Unmarshal([]byte(chunk.ImageInfo), &images); err != nil {
 					imageItems = append(imageItems, nextcloudIndexedWithdrawalItem{
 						OperationID: row.OperationID, Kind: "invalid_image_inventory",
-						ObjectRef: chunk.ID, KnowledgeID: chunk.KnowledgeID, ObservedAt: observedAt})
+						ObjectRef: chunk.ID, KnowledgeID: chunk.KnowledgeID, ObservedAt: observedAt,
+					})
 					continue
 				}
 				for _, image := range images {
@@ -349,7 +397,8 @@ func (r *NextcloudSourcePairingRepository) RefreshIndexedWithdrawalInventory(
 					imageItems = append(imageItems, nextcloudIndexedWithdrawalItem{
 						OperationID: row.OperationID, Kind: "extracted_image",
 						ObjectRef: chunk.ID + ":" + image.URL, KnowledgeID: chunk.KnowledgeID,
-						ObservedAt: observedAt})
+						ObservedAt: observedAt,
+					})
 				}
 			}
 			if len(imageItems) != 0 {

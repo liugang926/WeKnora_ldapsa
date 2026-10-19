@@ -38,7 +38,8 @@ func AbortSourceRotation(ctx context.Context, oldSource *types.DataSourceConfig,
 }
 
 func sourceRotationRequest(ctx context.Context, source *types.DataSourceConfig, rotation SourceRotation,
-	action, expectedState string) error {
+	action, expectedState string,
+) error {
 	if rotation.OperationID == "" || rotation.PairOperationID == "" || rotation.InstanceID == "" ||
 		!validBindingID(rotation.BindingID) || rotation.TenantID == 0 ||
 		rotation.KnowledgeBaseID == "" || rotation.DataSourceID == "" {
@@ -60,8 +61,10 @@ func sourceRotationRequest(ctx context.Context, source *types.DataSourceConfig, 
 		TenantID        string `json:"tenant_id"`
 		KnowledgeBaseID string `json:"knowledge_base_id"`
 		DataSourceID    string `json:"data_source_id"`
-	}{rotation.OperationID, rotation.PairOperationID, rotation.InstanceID,
-		strconv.FormatUint(rotation.TenantID, 10), rotation.KnowledgeBaseID, rotation.DataSourceID}
+	}{
+		rotation.OperationID, rotation.PairOperationID, rotation.InstanceID,
+		strconv.FormatUint(rotation.TenantID, 10), rotation.KnowledgeBaseID, rotation.DataSourceID,
+	}
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return err

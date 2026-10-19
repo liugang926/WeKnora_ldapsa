@@ -36,29 +36,47 @@ func (s *OriginalBodyRetentionStore) UpgradeLeaseScopeSchema() error {
 			return e
 		}
 		if tx.Dialector.Name() == "postgres" {
-			if e := tx.Exec(`CREATE OR REPLACE FUNCTION original_body_lease_scope_immutable() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'immutable original body lease scope'; END $$`).Error; e != nil {
+			if e := tx.Exec(
+				`CREATE OR REPLACE FUNCTION original_body_lease_scope_immutable() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'immutable original body lease scope'; END $$`,
+			).Error; e != nil {
 				return e
 			}
-			if e := tx.Exec(`DROP TRIGGER IF EXISTS original_body_lease_scope_immutable ON original_body_lease_scopes`).Error; e != nil {
+			if e := tx.Exec(
+				`DROP TRIGGER IF EXISTS original_body_lease_scope_immutable ON original_body_lease_scopes`,
+			).Error; e != nil {
 				return e
 			}
-			return tx.Exec(`CREATE TRIGGER original_body_lease_scope_immutable BEFORE UPDATE OR DELETE ON original_body_lease_scopes FOR EACH ROW EXECUTE FUNCTION original_body_lease_scope_immutable()`).Error
+			return tx.Exec(
+				`CREATE TRIGGER original_body_lease_scope_immutable BEFORE UPDATE OR DELETE ON original_body_lease_scopes FOR EACH ROW EXECUTE FUNCTION original_body_lease_scope_immutable()`,
+			).Error
 		}
 		if tx.Dialector.Name() != "sqlite" {
 			return ErrOriginalBodyUnavailable
 		}
 		for _, event := range []string{"UPDATE", "DELETE"} {
-			if e := tx.Exec("CREATE TRIGGER IF NOT EXISTS original_body_lease_scope_immutable_" + strings.ToLower(event) + " BEFORE " + event + " ON original_body_lease_scopes BEGIN SELECT RAISE(ABORT,'immutable original body lease scope'); END").Error; e != nil {
+			if e := tx.Exec(
+				"CREATE TRIGGER IF NOT EXISTS original_body_lease_scope_immutable_" + strings.ToLower(
+					event,
+				) + " BEFORE " + event + " ON original_body_lease_scopes BEGIN SELECT RAISE(ABORT,'immutable original body lease scope'); END",
+			).Error; e != nil {
 				return e
 			}
 		}
 		return nil
 	})
 }
-func (s *OriginalBodyRetentionStore) recordMessageLeaseScopes(tx *gorm.DB, id string, d originalBodyFieldDescriptor, key, raw string, scope originalBodyScope) error {
+
+func (s *OriginalBodyRetentionStore) recordMessageLeaseScopes(
+	tx *gorm.DB,
+	id string,
+	d originalBodyFieldDescriptor,
+	key, raw string,
+	scope originalBodyScope,
+) error {
 	if d.Table == "steer_authored_origins" {
 		boundary, actual := tx.Statement.Context.Value(steerAuthoredProducerKey{}).(steerAuthoredProducerBoundary)
-		if !actual || boundary.ID != key || boundary.Lineage.RequireComplete() != nil || len(boundary.Lineage.Sources) != 0 {
+		if !actual || boundary.ID != key || boundary.Lineage.RequireComplete() != nil ||
+			len(boundary.Lineage.Sources) != 0 {
 			return ErrOriginalBodyUnavailable
 		}
 		var input steerAuthoredBody
@@ -72,7 +90,10 @@ func (s *OriginalBodyRetentionStore) recordMessageLeaseScopes(tx *gorm.DB, id st
 		if digest != boundary.BodyDigest {
 			return ErrOriginalBodyUnavailable
 		}
-		return bodyInternal(tx).Create(&originalBodyLeaseScope{BodyID: id, TenantID: scope.Tenant, KnowledgeBaseID: ""}).Error
+		return bodyInternal(
+			tx,
+		).Create(&originalBodyLeaseScope{BodyID: id, TenantID: scope.Tenant, KnowledgeBaseID: ""}).
+			Error
 	}
 	if d.Table != "messages" && d.Table != "message_generation_origins" {
 		return nil
@@ -126,7 +147,13 @@ func (s *OriginalBodyRetentionStore) recordMessageLeaseScopes(tx *gorm.DB, id st
 			TenantID uint64
 			ID       string
 		}
-		if e := bodyInternal(tx).Table("knowledge_bases").Select("tenant_id,id").Where("id=?", kb).Take(&actual).Error; e != nil {
+		if e := bodyInternal(
+			tx,
+		).Table("knowledge_bases").
+			Select("tenant_id,id").
+			Where("id=?", kb).
+			Take(&actual).
+			Error; e != nil {
 			return e
 		}
 		if actual.TenantID == 0 {
@@ -139,7 +166,13 @@ func (s *OriginalBodyRetentionStore) recordMessageLeaseScopes(tx *gorm.DB, id st
 			TenantID        uint64
 			KnowledgeBaseID string
 		}
-		if e := bodyInternal(tx).Table("knowledges").Select("tenant_id,knowledge_base_id").Where("id=?", knowledgeID).Take(&knowledge).Error; e != nil {
+		if e := bodyInternal(
+			tx,
+		).Table("knowledges").
+			Select("tenant_id,knowledge_base_id").
+			Where("id=?", knowledgeID).
+			Take(&knowledge).
+			Error; e != nil {
 			return e
 		}
 		if knowledge.TenantID == 0 || knowledge.KnowledgeBaseID == "" {
@@ -156,7 +189,14 @@ func (s *OriginalBodyRetentionStore) recordMessageLeaseScopes(tx *gorm.DB, id st
 		for _, parent := range generated.Parents {
 			for _, proof := range parent.Proofs {
 				var original []originalBodyLeaseScope
-				if e := bodyInternal(tx).Table("original_body_lease_scopes s").Select("s.*").Joins("JOIN original_body_field_heads h ON h.body_id=s.body_id").Where("h.source_table='message_generation_origins' AND h.row_key=?", proof.GenerationID).Find(&original).Error; e != nil {
+				if e := bodyInternal(
+					tx,
+				).Table("original_body_lease_scopes s").
+					Select("s.*").
+					Joins("JOIN original_body_field_heads h ON h.body_id=s.body_id").
+					Where("h.source_table='message_generation_origins' AND h.row_key=?", proof.GenerationID).
+					Find(&original).
+					Error; e != nil {
 					return e
 				}
 				if !bodyLeaseScopesComplete(original, proof.TenantID) {
@@ -173,10 +213,21 @@ func (s *OriginalBodyRetentionStore) recordMessageLeaseScopes(tx *gorm.DB, id st
 	}
 	return bodyInternal(tx).Clauses(clause.OnConflict{DoNothing: true}).Create(&rows).Error
 }
-func originalBodyScopeDigest(tx *gorm.DB, body originalBodyPayload, fields []string, parents []originalBodyParentRef) (string, error) {
+
+func originalBodyScopeDigest(
+	tx *gorm.DB,
+	body originalBodyPayload,
+	fields []string,
+	parents []originalBodyParentRef,
+) (string, error) {
 	sort.Strings(fields)
 	var scopes []originalBodyLeaseScope
-	if e := bodyInternal(tx).Where("body_id=?", body.ID).Order("tenant_id,knowledge_base_id").Find(&scopes).Error; e != nil {
+	if e := bodyInternal(
+		tx,
+	).Where("body_id=?", body.ID).
+		Order("tenant_id,knowledge_base_id").
+		Find(&scopes).
+		Error; e != nil {
 		return "", e
 	}
 	// Preserve the old authenticated format for old events without scope rows.
@@ -202,7 +253,13 @@ func originalBodyScopeDigest(tx *gorm.DB, body originalBodyPayload, fields []str
 // AcquireMessageBodyReadLeases performs metadata verification and exact body
 // ID claims before the first original/material body read, on one caller-owned
 // transaction. Parent plans are included without loading their message bytes.
-func (s *KnowledgeInputProvenanceStore) AcquireMessageBodyReadLeases(ctx context.Context, plan *types.MessageMaterialReadPlan, owner string, ttl time.Duration, existing ...[]string) ([]string, error) {
+func (s *KnowledgeInputProvenanceStore) AcquireMessageBodyReadLeases(
+	ctx context.Context,
+	plan *types.MessageMaterialReadPlan,
+	owner string,
+	ttl time.Duration,
+	existing ...[]string,
+) ([]string, error) {
 	if !originalBodySchemaPresent(s.db) {
 		return nil, nil
 	}
@@ -225,7 +282,12 @@ func (s *KnowledgeInputProvenanceStore) AcquireMessageBodyReadLeases(ctx context
 				return e
 			}
 			var active []originalBodyLease
-			if e := bodyInternal(tx).Select("body_id").Where("lease_id IN ? AND kind='read' AND released_at_ms IS NULL AND expires_at_ms>?", existing[0], now).Find(&active).Error; e != nil {
+			if e := bodyInternal(
+				tx,
+			).Select("body_id").
+				Where("lease_id IN ? AND kind='read' AND released_at_ms IS NULL AND expires_at_ms>?", existing[0], now).
+				Find(&active).
+				Error; e != nil {
 				return e
 			}
 			for _, lease := range active {
@@ -242,19 +304,32 @@ func (s *KnowledgeInputProvenanceStore) AcquireMessageBodyReadLeases(ctx context
 			for _, control := range current.Controls {
 				if tx.Migrator().HasTable("steer_consumption_origins") {
 					var parents []struct{ OriginID string }
-					if e := bodyInternal(tx).Table("steer_consumption_origins").Select("origin_id").Where("user_message_id=?", control.ID).Scan(&parents).Error; e != nil {
+					if e := bodyInternal(
+						tx,
+					).Table("steer_consumption_origins").
+						Select("origin_id").
+						Where("user_message_id=?", control.ID).
+						Scan(&parents).
+						Error; e != nil {
 						return e
 					}
 					for _, parent := range parents {
 						var original steerAuthoredOrigin
-						if e := tx.Select(steerOriginMetadataFields).Where("id=?", parent.OriginID).Take(&original).Error; e != nil {
+						if e := tx.Select(steerOriginMetadataFields).
+							Where("id=?", parent.OriginID).
+							Take(&original).
+							Error; e != nil {
 							return e
 						}
 						if e := checkSteerOriginalWindow(tx, &original); e != nil {
 							return e
 						}
 						var steerHeads []originalBodyFieldHead
-						if e := bodyInternal(tx).Where("source_table='steer_authored_origins' AND row_key=?", parent.OriginID).Find(&steerHeads).Error; e != nil {
+						if e := bodyInternal(
+							tx,
+						).Where("source_table='steer_authored_origins' AND row_key=?", parent.OriginID).
+							Find(&steerHeads).
+							Error; e != nil {
 							return e
 						}
 						if len(steerHeads) == 0 {
@@ -274,12 +349,21 @@ func (s *KnowledgeInputProvenanceStore) AcquireMessageBodyReadLeases(ctx context
 					}
 				}
 				var heads []originalBodyFieldHead
-				if e := bodyInternal(tx).Where("(source_table='messages' AND row_key=?) OR (source_table='message_generation_origins' AND row_key=?)", control.ID, control.GenerationID).Find(&heads).Error; e != nil {
+				if e := bodyInternal(
+					tx,
+				).Where("(source_table='messages' AND row_key=?) OR (source_table='message_generation_origins' AND row_key=?)", control.ID, control.GenerationID).
+					Find(&heads).
+					Error; e != nil {
 					return e
 				}
 				var copies []originalBodyFieldHead
-				query := bodyInternal(tx).Table("original_body_field_heads h").Select("h.*").Where("(h.source_table='message_fork_parent_origins' AND h.row_key=?) OR (h.source_table='message_generated_field_admissions' AND h.row_key IN (SELECT a.id FROM message_generated_field_admissions a JOIN message_generated_field_receipts r ON r.admission_id=a.id AND r.message_id=a.message_id AND r.field=a.field WHERE a.message_id=?))", control.GenerationID, control.ID)
-				if tx.Migrator().HasTable("message_generated_field_admissions") && tx.Migrator().HasTable("message_fork_parent_origins") {
+				query := bodyInternal(
+					tx,
+				).Table("original_body_field_heads h").
+					Select("h.*").
+					Where("(h.source_table='message_fork_parent_origins' AND h.row_key=?) OR (h.source_table='message_generated_field_admissions' AND h.row_key IN (SELECT a.id FROM message_generated_field_admissions a JOIN message_generated_field_receipts r ON r.admission_id=a.id AND r.message_id=a.message_id AND r.field=a.field WHERE a.message_id=?))", control.GenerationID, control.ID)
+				if tx.Migrator().HasTable("message_generated_field_admissions") &&
+					tx.Migrator().HasTable("message_fork_parent_origins") {
 					if e := query.Find(&copies).Error; e != nil {
 						return e
 					}
@@ -303,6 +387,7 @@ func (s *KnowledgeInputProvenanceStore) AcquireMessageBodyReadLeases(ctx context
 	})
 	return ids, err
 }
+
 func (s *OriginalBodyRetentionStore) RenewLease(ctx context.Context, id string, ttl time.Duration) error {
 	if id == "" || ttl <= 0 || ttl > 30*time.Minute {
 		return ErrOriginalBodyUnavailable
@@ -316,11 +401,21 @@ func (s *OriginalBodyRetentionStore) RenewLease(ctx context.Context, id string, 
 			return e
 		}
 		var lease originalBodyLease
-		if e := bodyInternal(tx).Where("lease_id=? AND released_at_ms IS NULL AND expires_at_ms>?", id, now).Take(&lease).Error; e != nil {
+		if e := bodyInternal(
+			tx,
+		).Where("lease_id=? AND released_at_ms IS NULL AND expires_at_ms>?", id, now).
+			Take(&lease).
+			Error; e != nil {
 			return e
 		}
 		var body originalBodyPayload
-		if e := bodyInternal(tx).Select("id,state,purge_epoch").Clauses(clause.Locking{Strength: "UPDATE"}).Where("id=?", lease.BodyID).Take(&body).Error; e != nil {
+		if e := bodyInternal(
+			tx,
+		).Select("id,state,purge_epoch").
+			Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("id=?", lease.BodyID).
+			Take(&body).
+			Error; e != nil {
 			return e
 		}
 		if body.State != "live" || body.PurgeEpoch != lease.Epoch {
@@ -329,7 +424,11 @@ func (s *OriginalBodyRetentionStore) RenewLease(ctx context.Context, id string, 
 		if e := s.checkExternalBody(body.ID); e != nil {
 			return e
 		}
-		result := bodyInternal(tx).Model(&originalBodyLease{}).Where("lease_id=? AND released_at_ms IS NULL AND expires_at_ms>?", id, now).Update("expires_at_ms", now+ttl.Milliseconds())
+		result := bodyInternal(
+			tx,
+		).Model(&originalBodyLease{}).
+			Where("lease_id=? AND released_at_ms IS NULL AND expires_at_ms>?", id, now).
+			Update("expires_at_ms", now+ttl.Milliseconds())
 		if result.Error != nil {
 			return result.Error
 		}
@@ -339,9 +438,15 @@ func (s *OriginalBodyRetentionStore) RenewLease(ctx context.Context, id string, 
 		return nil
 	})
 }
-func (s *KnowledgeInputProvenanceStore) RenewMessageBodyReadLease(ctx context.Context, id string, ttl time.Duration) error {
+
+func (s *KnowledgeInputProvenanceStore) RenewMessageBodyReadLease(
+	ctx context.Context,
+	id string,
+	ttl time.Duration,
+) error {
 	return NewOriginalBodyRetentionStore(s.db).RenewLease(ctx, id, ttl)
 }
+
 func (s *KnowledgeInputProvenanceStore) ReleaseMessageBodyReadLease(ctx context.Context, id string) error {
 	return NewOriginalBodyRetentionStore(s.db).ReleaseLease(ctx, id)
 }
@@ -357,14 +462,18 @@ func verifyBodyLeaseScopeSchema(db *gorm.DB) error {
 	}
 	var count int64
 	if db.Dialector.Name() == "postgres" {
-		if e := db.Raw("SELECT count(*) FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE c.relname='original_body_lease_scopes' AND n.nspname=current_schema() AND t.tgname='original_body_lease_scope_immutable' AND t.tgenabled<>'D'").Scan(&count).Error; e != nil {
+		if e := db.Raw("SELECT count(*) FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE c.relname='original_body_lease_scopes' AND n.nspname=current_schema() AND t.tgname='original_body_lease_scope_immutable' AND t.tgenabled<>'D'").
+			Scan(&count).
+			Error; e != nil {
 			return e
 		}
 		if count != 1 {
 			return ErrOriginalBodyUnavailable
 		}
 	} else if db.Dialector.Name() == "sqlite" {
-		if e := db.Raw("SELECT count(*) FROM sqlite_master WHERE type='trigger' AND tbl_name='original_body_lease_scopes' AND name IN ('original_body_lease_scope_immutable_update','original_body_lease_scope_immutable_delete')").Scan(&count).Error; e != nil {
+		if e := db.Raw("SELECT count(*) FROM sqlite_master WHERE type='trigger' AND tbl_name='original_body_lease_scopes' AND name IN ('original_body_lease_scope_immutable_update','original_body_lease_scope_immutable_delete')").
+			Scan(&count).
+			Error; e != nil {
 			return e
 		}
 		if count != 2 {

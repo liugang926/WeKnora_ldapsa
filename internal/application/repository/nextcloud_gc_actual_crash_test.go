@@ -3,6 +3,13 @@ package repository
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
 	filesvc "github.com/Tencent/WeKnora/internal/application/service/file"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
@@ -11,12 +18,6 @@ import (
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"strings"
-	"testing"
-	"time"
 )
 
 type gcCrashDescriptor struct{ DSN, Driver, Base, Phase string }
@@ -39,21 +40,24 @@ func TestNextcloudActualGCCrashChild(t *testing.T) {
 	store := NewNextcloudGCStore(db)
 	provider := filesvc.NewBackendScopedFileService("backend", filesvc.NewLocalFileService(d.Base, ""))
 	deleter := provider.(interfaces.NextcloudPhysicalGCDeleter)
-	store.ConfigureLocalDeletePreparation(func(context.Context, *types.StoredResource) (func(context.Context) (bool, error), error) {
-		if d.Phase == "claim" {
-			os.Exit(77)
-		}
-		return func(ctx context.Context) (bool, error) {
-			_, e := deleter.DeleteNextcloudObject(ctx, "storage://backend/local://7/old/source.txt")
-			require.NoError(t, e)
-			os.Exit(78)
-			return false, nil
-		}, nil
-	})
+	store.ConfigureLocalDeletePreparation(
+		func(context.Context, *types.StoredResource) (func(context.Context) (bool, error), error) {
+			if d.Phase == "claim" {
+				os.Exit(77)
+			}
+			return func(ctx context.Context) (bool, error) {
+				_, e := deleter.DeleteNextcloudObject(ctx, "storage://backend/local://7/old/source.txt")
+				require.NoError(t, e)
+				os.Exit(78)
+				return false, nil
+			}, nil
+		},
+	)
 	_, e = store.RunDue(context.Background(), time.Now().Add(time.Second), 10)
 	require.NoError(t, e)
 	t.Fatal("crash boundary was not reached")
 }
+
 func gcActualProcessCrash(t *testing.T, pg bool) {
 	for _, phase := range []string{"claim", "unlink"} {
 		t.Run(phase, func(t *testing.T) {
@@ -76,7 +80,18 @@ func gcActualProcessCrash(t *testing.T, pg bool) {
 				require.NoError(t, e)
 				sql.SetMaxOpenConns(1)
 				t.Cleanup(func() { _ = sql.Close() })
-				require.NoError(t, db.AutoMigrate(&types.Knowledge{}, &types.Chunk{}, &nextcloudSourceVersion{}, &nextcloudGCJob{}, &nextcloudGCItem{}, &types.StoredResource{}, &types.ResourceBinding{}))
+				require.NoError(
+					t,
+					db.AutoMigrate(
+						&types.Knowledge{},
+						&types.Chunk{},
+						&nextcloudSourceVersion{},
+						&nextcloudGCJob{},
+						&nextcloudGCItem{},
+						&types.StoredResource{},
+						&types.ResourceBinding{},
+					),
+				)
 				gcObjectTestLeaseSchema(t, db)
 				ref = nextcloudGCTestLocalResource(t, db, strings.Repeat("q", 22), "old")
 				now := time.Now().UTC()
@@ -89,14 +104,14 @@ func gcActualProcessCrash(t *testing.T, pg bool) {
 				jobID = job.ID
 				base := t.TempDir()
 				path = filepath.Join(base, "7", "old", "source.txt")
-				require.NoError(t, os.MkdirAll(filepath.Dir(path), 0700))
-				require.NoError(t, os.WriteFile(path, []byte("persisted-source-object"), 0600))
+				require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o700))
+				require.NoError(t, os.WriteFile(path, []byte("persisted-source-object"), 0o600))
 			}
 			base := filepath.Dir(filepath.Dir(filepath.Dir(path)))
 			descriptor := filepath.Join(t.TempDir(), "descriptor")
 			b, e := json.Marshal(gcCrashDescriptor{DSN: dsn, Driver: driver, Base: base, Phase: phase})
 			require.NoError(t, e)
-			require.NoError(t, os.WriteFile(descriptor, b, 0600))
+			require.NoError(t, os.WriteFile(descriptor, b, 0o600))
 			child := exec.Command(os.Args[0], "-test.run=^TestNextcloudActualGCCrashChild$")
 			child.Env = append(os.Environ(), "WEKNORA_GC_CRASH_CHILD=1", "WEKNORA_GC_CRASH_DESCRIPTOR="+descriptor)
 			err := child.Run()
@@ -114,19 +129,32 @@ func gcActualProcessCrash(t *testing.T, pg bool) {
 			leases := NewNextcloudContentLeaseStore(db)
 			_, e = leases.AcquireKBRead(context.Background(), 7, "kb", "late-live-claim", time.Minute)
 			require.ErrorIs(t, e, ErrNextcloudContentLeaseDenied)
-			require.NoError(t, db.Model(&nextcloudGCItem{}).Where("job_id=? AND kind='source_file'", jobID).Update("lease_until", time.Now().Add(-time.Second)).Error)
-			require.NoError(t, db.Exec("UPDATE nextcloud_content_fences SET claim_until_ms=1 WHERE tenant_id=7 AND knowledge_base_id='kb' AND knowledge_id='old'").Error)
+			require.NoError(
+				t,
+				db.Model(&nextcloudGCItem{}).
+					Where("job_id=? AND kind='source_file'", jobID).
+					Update("lease_until", time.Now().Add(-time.Second)).
+					Error,
+			)
+			require.NoError(
+				t,
+				db.Exec(
+					"UPDATE nextcloud_content_fences SET claim_until_ms=1 WHERE tenant_id=7 AND knowledge_base_id='kb' AND knowledge_id='old'",
+				).Error,
+			)
 			reader, e := leases.AcquireKBRead(context.Background(), 7, "kb", "expired-claim-reader", time.Minute)
 			require.NoError(t, e)
 			provider := filesvc.NewBackendScopedFileService("backend", filesvc.NewLocalFileService(base, ""))
 			deleter := provider.(interfaces.NextcloudPhysicalGCDeleter)
 			calls := 0
-			store.ConfigureLocalDeletePreparation(func(context.Context, *types.StoredResource) (func(context.Context) (bool, error), error) {
-				return func(ctx context.Context) (bool, error) {
-					calls++
-					return deleter.DeleteNextcloudObject(ctx, "storage://backend/local://7/old/source.txt")
-				}, nil
-			})
+			store.ConfigureLocalDeletePreparation(
+				func(context.Context, *types.StoredResource) (func(context.Context) (bool, error), error) {
+					return func(ctx context.Context) (bool, error) {
+						calls++
+						return deleter.DeleteNextcloudObject(ctx, "storage://backend/local://7/old/source.txt")
+					}, nil
+				},
+			)
 			_, e = store.RunDue(context.Background(), time.Now().Add(time.Hour), 10)
 			require.NoError(t, e)
 			require.Zero(t, calls, "expired token cannot outrun a newly admitted broad reader")
@@ -144,7 +172,10 @@ func gcActualProcessCrash(t *testing.T, pg bool) {
 			_, e = os.Stat(path)
 			require.ErrorIs(t, e, os.ErrNotExist)
 			var fence nextcloudContentFence
-			require.NoError(t, db.Where("tenant_id=7 AND knowledge_base_id='kb' AND knowledge_id='old'").Take(&fence).Error)
+			require.NoError(
+				t,
+				db.Where("tenant_id=7 AND knowledge_base_id='kb' AND knowledge_id='old'").Take(&fence).Error,
+			)
 			require.Equal(t, "retired", fence.State)
 			require.Empty(t, fence.ClaimToken)
 			_ = ref

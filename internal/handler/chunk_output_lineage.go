@@ -16,6 +16,7 @@ func ConfigureChunkHandlerOutputLineage(h *ChunkHandler, authorizer *service.Chu
 		h.outputAuthorizer = authorizer
 	}
 }
+
 func (h *ChunkHandler) getOriginalChunkOutput(c *gin.Context) {
 	ctx := c.Request.Context()
 	id := c.Param("id")
@@ -37,7 +38,8 @@ func (h *ChunkHandler) getOriginalChunkOutput(c *gin.Context) {
 		_ = c.Error(err)
 		return
 	}
-	if knowledge.ID != hint.KnowledgeID || knowledge.KnowledgeBaseID != hint.KnowledgeBaseID || knowledge.TenantID != hint.TenantID {
+	if knowledge.ID != hint.KnowledgeID || knowledge.KnowledgeBaseID != hint.KnowledgeBaseID ||
+		knowledge.TenantID != hint.TenantID {
 		_ = c.Error(knowledgeOutputHTTPError(types.ErrSourceLineageUnknown))
 		return
 	}
@@ -48,7 +50,15 @@ func (h *ChunkHandler) getOriginalChunkOutput(c *gin.Context) {
 	}
 	defer leases.Close()
 	ctx = leases.Context(ctx)
-	guard, err := h.outputAuthorizer.Begin(ctx, types.ChunkOutputReadRequest{TenantID: knowledge.TenantID, KnowledgeBaseID: knowledge.KnowledgeBaseID, KnowledgeID: knowledge.ID, ChunkIDs: []string{id}})
+	guard, err := h.outputAuthorizer.Begin(
+		ctx,
+		types.ChunkOutputReadRequest{
+			TenantID:        knowledge.TenantID,
+			KnowledgeBaseID: knowledge.KnowledgeBaseID,
+			KnowledgeID:     knowledge.ID,
+			ChunkIDs:        []string{id},
+		},
+	)
 	if err != nil {
 		_ = c.Error(knowledgeOutputHTTPError(err))
 		return
@@ -71,6 +81,7 @@ func (h *ChunkHandler) getOriginalChunkOutput(c *gin.Context) {
 	})()
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": snapshot.Chunks[0]})
 }
+
 func (h *ChunkHandler) listOriginalChunkOutputs(c *gin.Context) {
 	ctx := c.Request.Context()
 	id := c.Param("knowledge_id")
@@ -108,7 +119,15 @@ func (h *ChunkHandler) listOriginalChunkOutputs(c *gin.Context) {
 	if pagination.PageSize > 100 {
 		pagination.PageSize = 100
 	}
-	guard, err := h.outputAuthorizer.Begin(ctx, types.ChunkOutputReadRequest{TenantID: knowledge.TenantID, KnowledgeBaseID: knowledge.KnowledgeBaseID, KnowledgeID: knowledge.ID, AllChunks: true})
+	guard, err := h.outputAuthorizer.Begin(
+		ctx,
+		types.ChunkOutputReadRequest{
+			TenantID:        knowledge.TenantID,
+			KnowledgeBaseID: knowledge.KnowledgeBaseID,
+			KnowledgeID:     knowledge.ID,
+			AllChunks:       true,
+		},
+	)
 	if err != nil {
 		_ = c.Error(knowledgeOutputHTTPError(err))
 		return
@@ -170,5 +189,8 @@ func (h *ChunkHandler) listOriginalChunkOutputs(c *gin.Context) {
 		_, err := h.loadPublishedKnowledge(checkCtx, id)
 		return err
 	})()
-	c.JSON(http.StatusOK, gin.H{"success": true, "data": page, "total": total, "page": pagination.Page, "page_size": pagination.PageSize})
+	c.JSON(
+		http.StatusOK,
+		gin.H{"success": true, "data": page, "total": total, "page": pagination.Page, "page_size": pagination.PageSize},
+	)
 }

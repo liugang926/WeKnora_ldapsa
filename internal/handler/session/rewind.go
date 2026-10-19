@@ -128,7 +128,11 @@ func (h *Handler) RewindSession(c *gin.Context) {
 	}
 	if result != nil && result.CheckOriginalOutput != nil {
 		prior := c.Writer
-		c.Writer = &nativeSavedReplayWriter{ResponseWriter: prior, ctx: c.Request.Context(), check: result.CheckOriginalOutput}
+		c.Writer = &nativeSavedReplayWriter{
+			ResponseWriter: prior,
+			ctx:            c.Request.Context(),
+			check:          result.CheckOriginalOutput,
+		}
 		defer func() { c.Writer = prior }()
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": result})

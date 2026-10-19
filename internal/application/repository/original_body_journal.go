@@ -7,27 +7,31 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/google/uuid"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 	"os"
 	"path/filepath"
 	"strconv"
 	"syscall"
+
+	"github.com/google/uuid"
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
-type OriginalBodyJournalPaths struct{ Directory, KeyPath, PinPath string }
-type originalBodyJournal struct{ paths OriginalBodyJournalPaths }
-type originalBodyJournalEvent struct {
-	Sequence                                                                  int64  `json:"sequence"`
-	PreviousSHA256                                                            string `json:"previous_sha256"`
-	BodyID, BodySHA256, ScopeSHA256                                           string
-	JournalID                                                                 string
-	TenantID                                                                  uint64
-	Fields                                                                    []string
-	BeforeBytes, BodyDeadlineMS, MetadataDeadlineMS, RecordedAtMS, PurgeEpoch int64
-	Signature, HeadSHA256                                                     string
-}
+type (
+	OriginalBodyJournalPaths struct{ Directory, KeyPath, PinPath string }
+	originalBodyJournal      struct{ paths OriginalBodyJournalPaths }
+	originalBodyJournalEvent struct {
+		Sequence                                                                  int64  `json:"sequence"`
+		PreviousSHA256                                                            string `json:"previous_sha256"`
+		BodyID, BodySHA256, ScopeSHA256                                           string
+		JournalID                                                                 string
+		TenantID                                                                  uint64
+		Fields                                                                    []string
+		BeforeBytes, BodyDeadlineMS, MetadataDeadlineMS, RecordedAtMS, PurgeEpoch int64
+		Signature, HeadSHA256                                                     string
+	}
+)
+
 type originalBodyJournalPin struct {
 	Sequence                         int64
 	HeadSHA256, Signature, JournalID string
@@ -41,15 +45,21 @@ type originalBodyJournalHead struct {
 
 func (originalBodyJournalHead) TableName() string { return "original_body_journal_heads" }
 func originalBodyJournalFromEnv() *originalBodyJournal {
-	p := OriginalBodyJournalPaths{os.Getenv("WEKNORA_ORIGINAL_BODY_JOURNAL_DIRECTORY"), os.Getenv("WEKNORA_ORIGINAL_BODY_JOURNAL_KEY"), os.Getenv("WEKNORA_ORIGINAL_BODY_JOURNAL_PIN")}
+	p := OriginalBodyJournalPaths{
+		os.Getenv("WEKNORA_ORIGINAL_BODY_JOURNAL_DIRECTORY"),
+		os.Getenv("WEKNORA_ORIGINAL_BODY_JOURNAL_KEY"),
+		os.Getenv("WEKNORA_ORIGINAL_BODY_JOURNAL_PIN"),
+	}
 	if p.Directory == "" && p.KeyPath == "" && p.PinPath == "" {
 		return nil
 	}
 	return &originalBodyJournal{p}
 }
+
 func (s *OriginalBodyRetentionStore) ConfigureJournal(paths OriginalBodyJournalPaths) {
 	s.journal = &originalBodyJournal{paths}
 }
+
 func bodyPrivateFile(path string, mode os.FileMode) ([]byte, error) {
 	if !filepath.IsAbs(path) {
 		return nil, ErrOriginalBodyUnavailable
@@ -73,6 +83,7 @@ func bodyPrivateFile(path string, mode os.FileMode) ([]byte, error) {
 	}
 	return os.ReadFile(path)
 }
+
 func (j *originalBodyJournal) key() ([]byte, error) {
 	if j == nil {
 		return nil, ErrOriginalBodyUnavailable
@@ -82,39 +93,43 @@ func (j *originalBodyJournal) key() ([]byte, error) {
 		return nil, ErrOriginalBodyUnavailable
 	}
 	st, e := os.Lstat(resolved)
-	if e != nil || !st.IsDir() || st.Mode().Perm() != 0700 {
+	if e != nil || !st.IsDir() || st.Mode().Perm() != 0o700 {
 		return nil, ErrOriginalBodyUnavailable
 	}
 	if actual, ok := st.Sys().(*syscall.Stat_t); !ok || int(actual.Uid) != os.Geteuid() {
 		return nil, ErrOriginalBodyUnavailable
 	}
-	key, e := bodyPrivateFile(j.paths.KeyPath, 0600)
+	key, e := bodyPrivateFile(j.paths.KeyPath, 0o600)
 	if e != nil || len(key) < 32 {
 		return nil, ErrOriginalBodyUnavailable
 	}
 	return key, nil
 }
+
 func bodyMAC(key, data []byte) string {
 	m := hmac.New(sha256.New, key)
 	m.Write(data)
 	return hex.EncodeToString(m.Sum(nil))
 }
+
 func bodyEventCore(event originalBodyJournalEvent) []byte {
 	event.Signature = ""
 	event.HeadSHA256 = ""
 	b, _ := json.Marshal(event)
 	return b
 }
+
 func bodyPinMAC(key []byte, p originalBodyJournalPin) string {
 	return bodyMAC(key, []byte("body-pin-v1\n"+p.JournalID+"\n"+strconv.FormatInt(p.Sequence, 10)+"\n"+p.HeadSHA256))
 }
+
 func (j *originalBodyJournal) read() ([]originalBodyJournalEvent, originalBodyJournalPin, error) {
 	var pin originalBodyJournalPin
 	key, e := j.key()
 	if e != nil {
 		return nil, pin, e
 	}
-	raw, e := bodyPrivateFile(filepath.Join(j.paths.Directory, "purge-ledger.json"), 0600)
+	raw, e := bodyPrivateFile(filepath.Join(j.paths.Directory, "purge-ledger.json"), 0o600)
 	if e != nil {
 		return nil, pin, e
 	}
@@ -124,7 +139,8 @@ func (j *originalBodyJournal) read() ([]originalBodyJournalEvent, originalBodyJo
 	}
 	head := ""
 	for n, event := range events {
-		if event.Sequence != int64(n+1) || event.PreviousSHA256 != head || !hmac.Equal([]byte(event.Signature), []byte(bodyMAC(key, bodyEventCore(event)))) {
+		if event.Sequence != int64(n+1) || event.PreviousSHA256 != head ||
+			!hmac.Equal([]byte(event.Signature), []byte(bodyMAC(key, bodyEventCore(event)))) {
 			return nil, pin, ErrOriginalBodyUnavailable
 		}
 		head = bodySHA(append(bodyEventCore(event), []byte(event.Signature)...))
@@ -132,11 +148,13 @@ func (j *originalBodyJournal) read() ([]originalBodyJournalEvent, originalBodyJo
 			return nil, pin, ErrOriginalBodyUnavailable
 		}
 	}
-	raw, e = bodyPrivateFile(j.paths.PinPath, 0600)
+	raw, e = bodyPrivateFile(j.paths.PinPath, 0o600)
 	if e != nil {
 		return nil, pin, e
 	}
-	if json.Unmarshal(raw, &pin) != nil || pin.JournalID == "" || pin.Sequence < 0 || pin.Sequence > int64(len(events)) || !hmac.Equal([]byte(pin.Signature), []byte(bodyPinMAC(key, pin))) {
+	if json.Unmarshal(raw, &pin) != nil || pin.JournalID == "" || pin.Sequence < 0 ||
+		pin.Sequence > int64(len(events)) ||
+		!hmac.Equal([]byte(pin.Signature), []byte(bodyPinMAC(key, pin))) {
 		return nil, pin, ErrOriginalBodyUnavailable
 	}
 	for _, event := range events {
@@ -163,13 +181,14 @@ func (j *originalBodyJournal) read() ([]originalBodyJournalEvent, originalBodyJo
 	}
 	return events, pin, nil
 }
+
 func bodyWritePrivateAtomic(path string, data []byte) error {
 	parent, e := filepath.EvalSymlinks(filepath.Dir(path))
 	if e != nil || parent != filepath.Dir(path) {
 		return ErrOriginalBodyUnavailable
 	}
 	if st, e := os.Lstat(path); e == nil {
-		if !st.Mode().IsRegular() || st.Mode().Perm() != 0600 {
+		if !st.Mode().IsRegular() || st.Mode().Perm() != 0o600 {
 			return ErrOriginalBodyUnavailable
 		}
 	} else if !errors.Is(e, os.ErrNotExist) {
@@ -180,18 +199,15 @@ func bodyWritePrivateAtomic(path string, data []byte) error {
 		return e
 	}
 	name := temp.Name()
-	defer os.Remove(name)
-	if e = temp.Chmod(0600); e != nil {
-		temp.Close()
-		return e
+	defer func() { _ = os.Remove(name) }()
+	if e = temp.Chmod(0o600); e != nil {
+		return errors.Join(e, temp.Close())
 	}
 	if _, e = temp.Write(data); e != nil {
-		temp.Close()
-		return e
+		return errors.Join(e, temp.Close())
 	}
 	if e = temp.Sync(); e != nil {
-		temp.Close()
-		return e
+		return errors.Join(e, temp.Close())
 	}
 	if e = temp.Close(); e != nil {
 		return e
@@ -203,8 +219,7 @@ func bodyWritePrivateAtomic(path string, data []byte) error {
 	if e != nil {
 		return e
 	}
-	defer dir.Close()
-	return dir.Sync()
+	return errors.Join(dir.Sync(), dir.Close())
 }
 
 // Explicit owned initialization; a conflicting marker/file is never adopted.
@@ -252,9 +267,15 @@ func (s *OriginalBodyRetentionStore) InitializeJournal() error {
 		if e := bodyWritePrivateAtomic(s.journal.paths.PinPath, data); e != nil {
 			return e
 		}
-		return bodyInternal(tx).Model(&head).Where("sequence=0 AND journal_id='' AND head_sha256=''").Update("journal_id", pin.JournalID).Error
+		return bodyInternal(
+			tx,
+		).Model(&head).
+			Where("sequence=0 AND journal_id='' AND head_sha256=''").
+			Update("journal_id", pin.JournalID).
+			Error
 	})
 }
+
 func (s *OriginalBodyRetentionStore) checkJournalInTx(tx *gorm.DB) error {
 	var head originalBodyJournalHead
 	if e := bodyInternal(tx).Where("id=1").Take(&head).Error; e != nil {
@@ -272,6 +293,7 @@ func (s *OriginalBodyRetentionStore) checkJournalInTx(tx *gorm.DB) error {
 	}
 	return nil
 }
+
 func (s *OriginalBodyRetentionStore) checkExternalBody(id string) error {
 	if s.journal == nil {
 		return nil
@@ -287,8 +309,9 @@ func (s *OriginalBodyRetentionStore) checkExternalBody(id string) error {
 	}
 	return nil
 }
+
 func (j *originalBodyJournal) append(event originalBodyJournalEvent) (originalBodyJournalEvent, error) {
-	events, pin, e := j.read()
+	_, _, e := j.read()
 	if e != nil {
 		return event, e
 	}
@@ -296,15 +319,15 @@ func (j *originalBodyJournal) append(event originalBodyJournalEvent) (originalBo
 	if e != nil {
 		return event, e
 	}
-	lock, e := os.OpenFile(filepath.Join(j.paths.Directory, "writer.lock"), os.O_CREATE|os.O_RDWR, 0600)
+	lock, e := os.OpenFile(filepath.Join(j.paths.Directory, "writer.lock"), os.O_CREATE|os.O_RDWR, 0o600)
 	if e != nil {
 		return event, e
 	}
-	defer lock.Close()
+	defer func() { _ = lock.Close() }()
 	if e = syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); e != nil {
 		return event, e
 	}
-	events, pin, e = j.read()
+	events, pin, e := j.read()
 	if e != nil {
 		return event, e
 	}

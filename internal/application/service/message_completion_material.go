@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+
 	"github.com/Tencent/WeKnora/internal/types"
 )
 
@@ -27,7 +28,10 @@ func (s *messageService) bindInitialMessageMaterial(ctx context.Context, assista
 	session := ""
 	for _, guard := range slot.Guards {
 		guard.mu.Lock()
-		if len(guard.snapshot.Proofs) == 1 && len(guard.snapshot.Messages) == 1 && guard.snapshot.Proofs[0].MessageID == user && guard.snapshot.Messages[0].Role == "user" && guard.snapshot.Messages[0].RequestID == request {
+		if len(guard.snapshot.Proofs) == 1 && len(guard.snapshot.Messages) == 1 &&
+			guard.snapshot.Proofs[0].MessageID == user &&
+			guard.snapshot.Messages[0].Role == "user" &&
+			guard.snapshot.Messages[0].RequestID == request {
 			copy := *guard.snapshot.Proofs[0]
 			proof = &copy
 			session = copy.SessionID
@@ -50,11 +54,21 @@ func (s *messageService) bindInitialMessageMaterial(ctx context.Context, assista
 		}
 		return nil
 	}
-	slot.Completion = &messageCompletionBinding{Assistant: assistant, Generation: generation, Request: request, Initial: proof, Steers: []*types.MessageCompletionSteerParent{}}
+	slot.Completion = &messageCompletionBinding{
+		Assistant:  assistant,
+		Generation: generation,
+		Request:    request,
+		Initial:    proof,
+		Steers:     []*types.MessageCompletionSteerParent{},
+	}
 	return nil
 }
 
-func (s *messageService) markCompletionInputsLocked(ctx context.Context, slot *messageMaterialOutputSlot, message *types.Message) (context.Context, error) {
+func (s *messageService) markCompletionInputsLocked(
+	ctx context.Context,
+	slot *messageMaterialOutputSlot,
+	message *types.Message,
+) (context.Context, error) {
 	binding := slot.Completion
 	if binding == nil || binding.Assistant != message.ID || binding.Request != message.RequestID {
 		return ctx, types.ErrSourceLineageUnknown
@@ -87,6 +101,20 @@ func (s *messageService) markCompletionInputsLocked(ctx context.Context, slot *m
 	if err != nil {
 		return ctx, err
 	}
-	manifest := &types.MessageCompletionInputManifest{Version: 1, Recipe: "history-initial-and-consumed-steer-v1", AssistantMessageID: binding.Assistant, AssistantGenerationID: binding.Generation, SessionID: initial.SessionID, RequestID: binding.Request, OwnerID: initial.OwnerID, TenantID: initial.TenantID, OwnerRevision: initial.OwnerRevision, Initial: initial, Steers: binding.Steers, Inputs: snapshots, SourceLineage: source}
+	manifest := &types.MessageCompletionInputManifest{
+		Version:               1,
+		Recipe:                "history-initial-and-consumed-steer-v1",
+		AssistantMessageID:    binding.Assistant,
+		AssistantGenerationID: binding.Generation,
+		SessionID:             initial.SessionID,
+		RequestID:             binding.Request,
+		OwnerID:               initial.OwnerID,
+		TenantID:              initial.TenantID,
+		OwnerRevision:         initial.OwnerRevision,
+		Initial:               initial,
+		Steers:                binding.Steers,
+		Inputs:                snapshots,
+		SourceLineage:         source,
+	}
 	return s.materialStore.WithActualMessageCompletionInputs(ctx, manifest)
 }

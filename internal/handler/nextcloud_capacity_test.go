@@ -2,17 +2,18 @@ package handler
 
 import (
 	"context"
+	"net/http/httptest"
+	"os"
+	"strings"
+	"testing"
+	"time"
+
 	"github.com/Tencent/WeKnora/internal/application/repository"
 	"github.com/Tencent/WeKnora/internal/application/service"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
-	"net/http/httptest"
-	"os"
-	"strings"
-	"testing"
-	"time"
 )
 
 type capacityHTTPFile struct {
@@ -25,8 +26,14 @@ func (f *capacityHTTPFile) MeasureStorageCapacity(context.Context) (types.Storag
 	if f.hook != nil {
 		f.hook()
 	}
-	return types.StorageCapacity{ScopeID: strings.Repeat("a", 64), TotalBytes: 100000, AvailableBytes: f.available, MeasuredAt: time.Now().UTC()}, nil
+	return types.StorageCapacity{
+		ScopeID:        strings.Repeat("a", 64),
+		TotalBytes:     100000,
+		AvailableBytes: f.available,
+		MeasuredAt:     time.Now().UTC(),
+	}, nil
 }
+
 func TestNextcloudCapacityActualAdminHTTPStatusAndPolicy(t *testing.T) {
 	for _, mode := range []string{"normal", "paused", "set-policy", "disabled", "late-disabled", "api-key", "cross-tenant"} {
 		t.Run(mode, func(t *testing.T) {
@@ -39,7 +46,10 @@ func TestNextcloudCapacityActualAdminHTTPStatusAndPolicy(t *testing.T) {
 			require.NoError(t, err)
 			require.NoError(t, db.Exec(string(sql)).Error)
 			backend := "backend"
-			require.NoError(t, db.Model(&types.KnowledgeBase{}).Where("id='kb'").Update("storage_backend_id", backend).Error)
+			require.NoError(
+				t,
+				db.Model(&types.KnowledgeBase{}).Where("id='kb'").Update("storage_backend_id", backend).Error,
+			)
 			provider := &capacityHTTPFile{available: 90000}
 			if mode == "paused" {
 				provider.available = 9000
@@ -53,13 +63,27 @@ func TestNextcloudCapacityActualAdminHTTPStatusAndPolicy(t *testing.T) {
 				}
 			}
 			store := repository.NewNextcloudCapacityStore(db)
-			admission := service.NewNextcloudCapacityAdmission(store, func(context.Context, *types.KnowledgeBase) (interfaces.FileService, error) { return provider, nil })
+			admission := service.NewNextcloudCapacityAdmission(
+				store,
+				func(context.Context, *types.KnowledgeBase) (interfaces.FileService, error) { return provider, nil },
+			)
 			h := NewNextcloudCapacityHandler(store, actor, collectionHTTPKB{db: db}, admission)
 			r := documentHandlerRouter()
 			r.Use(func(c *gin.Context) {
-				ctx := types.WithPrincipal(c.Request.Context(), types.Principal{Type: types.PrincipalWebUser, ID: "user"})
+				ctx := types.WithPrincipal(
+					c.Request.Context(),
+					types.Principal{Type: types.PrincipalWebUser, ID: "user"},
+				)
 				if mode == "api-key" {
-					ctx = types.WithTenantAPIKeyScope(ctx, types.TenantAPIKeyScope{KeyID: 1, ScopeType: types.APIKeyScopeTenant, Capabilities: types.StringArray{string(types.APIKeyCapabilityRetrieve)}, KnowledgeBaseIDs: types.StringArray{"kb"}})
+					ctx = types.WithTenantAPIKeyScope(
+						ctx,
+						types.TenantAPIKeyScope{
+							KeyID:            1,
+							ScopeType:        types.APIKeyScopeTenant,
+							Capabilities:     types.StringArray{string(types.APIKeyCapabilityRetrieve)},
+							KnowledgeBaseIDs: types.StringArray{"kb"},
+						},
+					)
 					ctx = types.WithCaller(ctx, types.Caller{TenantID: 7, Role: types.TenantRoleViewer})
 					ctx = types.WithPrincipal(ctx, types.Principal{Type: types.PrincipalAPITenant, ID: "7"})
 				}

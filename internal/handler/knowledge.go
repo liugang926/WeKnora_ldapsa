@@ -220,7 +220,9 @@ func (h *KnowledgeHandler) requireKBLegacyOwnershipOrAdmin(c *gin.Context, kbID 
 
 // validateKnowledgeBaseAccess validates access permissions to a knowledge base
 // using the ":id" URL path parameter. It delegates to validateKnowledgeBaseAccessWithKBID.
-func (h *KnowledgeHandler) validateKnowledgeBaseAccess(c *gin.Context) (*types.KnowledgeBase, string, uint64, types.OrgMemberRole, error) {
+func (h *KnowledgeHandler) validateKnowledgeBaseAccess(
+	c *gin.Context,
+) (*types.KnowledgeBase, string, uint64, types.OrgMemberRole, error) {
 	kbID := secutils.SanitizeForLog(c.Param("id"))
 	return h.validateKnowledgeBaseAccessWithKBID(c, kbID)
 }
@@ -515,7 +517,20 @@ func (h *KnowledgeHandler) CreateKnowledgeFromFile(c *gin.Context) {
 	channel := c.PostForm("channel")
 
 	// Create knowledge entry from the file
-	knowledge, err := h.kgService.CreateKnowledgeFromFile(repository.WithIndependentKnowledgeTagAssignmentInput(repository.WithIndependentKnowledgeInput(ctx), map[string][]string{"": tagIDs}), kbID, file, metadata, enableMultimodel, customFileName, tagIDs, channel, processOverrides)
+	knowledge, err := h.kgService.CreateKnowledgeFromFile(
+		repository.WithIndependentKnowledgeTagAssignmentInput(
+			repository.WithIndependentKnowledgeInput(ctx),
+			map[string][]string{"": tagIDs},
+		),
+		kbID,
+		file,
+		metadata,
+		enableMultimodel,
+		customFileName,
+		tagIDs,
+		channel,
+		processOverrides,
+	)
 	// Check for duplicate knowledge error
 	if err != nil {
 		if h.handleDuplicateKnowledgeError(c, err, knowledge, "file") {
@@ -612,7 +627,16 @@ func (h *KnowledgeHandler) CreateKnowledgeFromURL(c *gin.Context) {
 
 	// Create knowledge entry from the URL
 	knowledge, err := h.kgService.CreateKnowledgeFromURL(
-		ctx, kbID, req.URL, req.FileName, req.FileType, req.EnableMultimodel, req.Title, req.TagIDs, req.Channel, req.ProcessConfig,
+		ctx,
+		kbID,
+		req.URL,
+		req.FileName,
+		req.FileType,
+		req.EnableMultimodel,
+		req.Title,
+		req.TagIDs,
+		req.Channel,
+		req.ProcessConfig,
 	)
 	// Check for duplicate knowledge error
 	if err != nil {
@@ -678,7 +702,15 @@ func (h *KnowledgeHandler) CreateManualKnowledge(c *gin.Context) {
 		return
 	}
 
-	knowledge, err := h.kgService.CreateKnowledgeFromManual(repository.WithIndependentKnowledgeTagAssignmentInput(repository.WithIndependentKnowledgeInput(ctx), map[string][]string{"": req.TagIDs}), kbID, &req, req.Channel)
+	knowledge, err := h.kgService.CreateKnowledgeFromManual(
+		repository.WithIndependentKnowledgeTagAssignmentInput(
+			repository.WithIndependentKnowledgeInput(ctx),
+			map[string][]string{"": req.TagIDs},
+		),
+		kbID,
+		&req,
+		req.Channel,
+	)
 	if err != nil {
 		if appErr, ok := errors.IsAppError(err); ok {
 			c.Error(appErr)
@@ -1064,7 +1096,13 @@ func (h *KnowledgeHandler) ListKnowledge(c *gin.Context) {
 		return
 	}
 	if h.collectionOutputAuthorizer != nil {
-		h.respondKnowledgeCollection(c, ctx, []types.KnowledgeSearchScope{{TenantID: effectiveTenantID, KBID: kbID}}, types.KnowledgeCollectionSelectionRequest{Mode: "list", Filter: filter, Page: pagination}, access.LineageReadScope{})
+		h.respondKnowledgeCollection(
+			c,
+			ctx,
+			[]types.KnowledgeSearchScope{{TenantID: effectiveTenantID, KBID: kbID}},
+			types.KnowledgeCollectionSelectionRequest{Mode: "list", Filter: filter, Page: pagination},
+			access.LineageReadScope{},
+		)
 		return
 	}
 
@@ -1179,7 +1217,13 @@ func (h *KnowledgeHandler) ListKnowledgeFolders(c *gin.Context) {
 		return
 	}
 	if h.collectionOutputAuthorizer != nil {
-		h.respondKnowledgeCollection(c, ctx, []types.KnowledgeSearchScope{{TenantID: effectiveTenantID, KBID: kbID}}, types.KnowledgeCollectionSelectionRequest{Mode: "folders"}, access.LineageReadScope{})
+		h.respondKnowledgeCollection(
+			c,
+			ctx,
+			[]types.KnowledgeSearchScope{{TenantID: effectiveTenantID, KBID: kbID}},
+			types.KnowledgeCollectionSelectionRequest{Mode: "folders"},
+			access.LineageReadScope{},
+		)
 		return
 	}
 	// Folder names and counts are aggregated before document-level policy can
@@ -2389,7 +2433,11 @@ func (h *KnowledgeHandler) UpdateKnowledgeTagBatch(c *gin.Context) {
 		return
 	}
 
-	if err := h.kgService.UpdateKnowledgeTagBatch(repository.WithIndependentKnowledgeTagAssignmentInput(ctx, req.Updates), authorizedKBID, req.Updates); err != nil {
+	if err := h.kgService.UpdateKnowledgeTagBatch(
+		repository.WithIndependentKnowledgeTagAssignmentInput(ctx, req.Updates),
+		authorizedKBID,
+		req.Updates,
+	); err != nil {
 		logger.ErrorWithFields(ctx, err, nil)
 		c.Error(err)
 		return
@@ -2579,7 +2627,14 @@ func (h *KnowledgeHandler) SearchKnowledge(c *gin.Context) {
 			})
 			return
 		}
-		knowledges, hasMore, total, err := h.kgService.SearchKnowledgeForScopes(ctx, scopes, keyword, offset, limit, fileTypes)
+		knowledges, hasMore, total, err := h.kgService.SearchKnowledgeForScopes(
+			ctx,
+			scopes,
+			keyword,
+			offset,
+			limit,
+			fileTypes,
+		)
 		if err != nil {
 			logger.ErrorWithFields(ctx, err, nil)
 			c.Error(errors.NewInternalServerError("Failed to search knowledge").WithDetails(err.Error()))
@@ -2599,7 +2654,14 @@ func (h *KnowledgeHandler) SearchKnowledge(c *gin.Context) {
 			})
 			return
 		}
-		knowledges, hasMore, total, err := h.kgService.SearchKnowledgeForScopes(ctx, scopes, keyword, offset, limit, fileTypes)
+		knowledges, hasMore, total, err := h.kgService.SearchKnowledgeForScopes(
+			ctx,
+			scopes,
+			keyword,
+			offset,
+			limit,
+			fileTypes,
+		)
 		if err != nil {
 			logger.ErrorWithFields(ctx, err, nil)
 			c.Error(errors.NewInternalServerError("Failed to search knowledge").WithDetails(err.Error()))
@@ -2769,7 +2831,15 @@ func (h *KnowledgeHandler) MoveKnowledge(c *gin.Context) {
 			return
 		}
 		if knowledge.ParseStatus != types.ParseStatusCompleted {
-			c.Error(errors.NewBadRequestError(fmt.Sprintf("Knowledge item %s is not in completed status (current: %s)", kID, knowledge.ParseStatus)))
+			c.Error(
+				errors.NewBadRequestError(
+					fmt.Sprintf(
+						"Knowledge item %s is not in completed status (current: %s)",
+						kID,
+						knowledge.ParseStatus,
+					),
+				),
+			)
 			return
 		}
 	}
@@ -2804,8 +2874,15 @@ func (h *KnowledgeHandler) MoveKnowledge(c *gin.Context) {
 		return
 	}
 
-	logger.Infof(ctx, "MoveKnowledge: task enqueued: %s, asynq_id: %s, source: %s, target: %s, count: %d",
-		taskID, info.ID, secutils.SanitizeForLog(req.SourceKBID), secutils.SanitizeForLog(req.TargetKBID), len(req.KnowledgeIDs))
+	logger.Infof(
+		ctx,
+		"MoveKnowledge: task enqueued: %s, asynq_id: %s, source: %s, target: %s, count: %d",
+		taskID,
+		info.ID,
+		secutils.SanitizeForLog(req.SourceKBID),
+		secutils.SanitizeForLog(req.TargetKBID),
+		len(req.KnowledgeIDs),
+	)
 
 	// Save initial progress
 	initialProgress := &types.KnowledgeMoveProgress{
@@ -3072,7 +3149,10 @@ func filterKnowledgesByKBAllowSet(knowledges []*types.Knowledge, allowed map[str
 	return filtered
 }
 
-func filterKnowledgeSearchScopesForAPIKey(ctx context.Context, scopes []types.KnowledgeSearchScope) []types.KnowledgeSearchScope {
+func filterKnowledgeSearchScopesForAPIKey(
+	ctx context.Context,
+	scopes []types.KnowledgeSearchScope,
+) []types.KnowledgeSearchScope {
 	allowed := tenantAPIKeyAllowedKBSet(ctx)
 	if allowed == nil {
 		return scopes

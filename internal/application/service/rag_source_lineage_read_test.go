@@ -46,7 +46,14 @@ func TestRAGSourceLineageActualMessageReadDeniesLegacyAndOpaqueGeneratedFields(t
 	empty, _ := types.NewCompleteSourceLineage()
 	for _, kind := range []string{"legacy NULL", "unknown", "checkpoint", "caption", "artifact", "complete plain"} {
 		t.Run(kind, func(t *testing.T) {
-			row := &types.Message{ID: "message", SessionID: "session", Role: "assistant", Content: "generated body", IsCompleted: true, SourceLineage: empty}
+			row := &types.Message{
+				ID:            "message",
+				SessionID:     "session",
+				Role:          "assistant",
+				Content:       "generated body",
+				IsCompleted:   true,
+				SourceLineage: empty,
+			}
 			switch kind {
 			case "legacy NULL":
 				row.SourceLineage = nil
@@ -59,7 +66,19 @@ func TestRAGSourceLineageActualMessageReadDeniesLegacyAndOpaqueGeneratedFields(t
 			case "artifact":
 				row.Artifacts = types.MessageArtifacts{{FileName: "copied title"}}
 			}
-			svc := &messageService{messageRepo: ragReadRepo{row: row}, sessionRepo: ragReadSessions{}, sourceLineageGuard: access.NewNextcloudSourceLineageGuard(nil, nil, nil, nil, nil, nil, ragReadActorFixture{})}
+			svc := &messageService{
+				messageRepo: ragReadRepo{row: row},
+				sessionRepo: ragReadSessions{},
+				sourceLineageGuard: access.NewNextcloudSourceLineageGuard(
+					nil,
+					nil,
+					nil,
+					nil,
+					nil,
+					nil,
+					ragReadActorFixture{},
+				),
+			}
 			got, err := svc.GetMessage(ragReadContext(), "session", "message")
 			if kind == "complete plain" {
 				require.NoError(t, err)
@@ -73,9 +92,18 @@ func TestRAGSourceLineageActualMessageReadDeniesLegacyAndOpaqueGeneratedFields(t
 }
 
 func TestRAGSourceLineageActualUserReadRetainsOnlyAuthoredContent(t *testing.T) {
-	row := &types.Message{ID: "message", SessionID: "session", Role: "user", Content: "authored question", RenderedContent: "copied source",
-		Images: types.MessageImages{{URL: "resource://secret", Caption: "copied source"}}, Artifacts: types.MessageArtifacts{{FileName: "secret"}},
-		ContextCheckpoint: &types.ContextCheckpoint{Summary: "copied summary"}}
+	row := &types.Message{
+		ID:              "message",
+		SessionID:       "session",
+		Role:            "user",
+		Content:         "authored question",
+		RenderedContent: "copied source",
+		Images: types.MessageImages{
+			{URL: "resource://secret", Caption: "copied source"},
+		},
+		Artifacts:         types.MessageArtifacts{{FileName: "secret"}},
+		ContextCheckpoint: &types.ContextCheckpoint{Summary: "copied summary"},
+	}
 	svc := &messageService{messageRepo: ragReadRepo{row: row}, sessionRepo: ragReadSessions{}}
 	got, err := svc.GetMessage(ragReadContext(), "session", "message")
 	require.NoError(t, err)

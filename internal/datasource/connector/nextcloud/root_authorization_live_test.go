@@ -36,7 +36,12 @@ func TestNextcloudLiveOwnedRootAuthorizationAndContentRevision(t *testing.T) {
 	require.NotEmpty(t, base)
 	t.Setenv("WEKNORA_NEXTCLOUD_DEV_HTTP", "1")
 	t.Setenv("WEKNORA_NEXTCLOUD_ALLOWED_ORIGINS", base)
-	cfg := &types.DataSourceConfig{Type: types.ConnectorTypeNextcloud, ResourceIDs: []string{f.Binding}, Settings: map[string]any{"base_url": base}, Credentials: map[string]any{"key_id": f.Key, "token": f.Token}}
+	cfg := &types.DataSourceConfig{
+		Type:        types.ConnectorTypeNextcloud,
+		ResourceIDs: []string{f.Binding},
+		Settings:    map[string]any{"base_url": base},
+		Credentials: map[string]any{"key_id": f.Key, "token": f.Token},
+	}
 	require.NoError(t, AuthorizeCurrentRoot(context.Background(), cfg, f.Instance, f.Binding, f.Directory, f.Alice))
 	require.Error(t, AuthorizeCurrentRoot(context.Background(), cfg, f.Instance, f.Binding, f.Directory, f.Bob))
 	file, err := strconv.ParseInt(f.File, 10, 64)
@@ -44,9 +49,19 @@ func TestNextcloudLiveOwnedRootAuthorizationAndContentRevision(t *testing.T) {
 	old, err := AuthorizeCurrentFile(context.Background(), cfg, f.Instance, f.Binding, f.Directory, f.Alice, file)
 	require.NoError(t, err)
 	require.False(t, old.Allow, "legacy request revision zero cannot read current nonzero bytes")
-	current, err := AuthorizeCurrentFile(types.WithNextcloudContentRevision(context.Background(), f.Revision), cfg, f.Instance, f.Binding, f.Directory, f.Alice, file)
+	current, err := AuthorizeCurrentFile(
+		types.WithNextcloudContentRevision(context.Background(), f.Revision),
+		cfg,
+		f.Instance,
+		f.Binding,
+		f.Directory,
+		f.Alice,
+		file,
+	)
 	require.NoError(t, err)
 	require.True(t, current.Allow)
 	require.Equal(t, f.Revision, current.SourceContentRevision)
-	t.Log("actual Nextcloud signed machine HTTP with live LDAP: allowed Alice root/current file; denied Bob root and legacy content revision")
+	t.Log(
+		"actual Nextcloud signed machine HTTP with live LDAP: allowed Alice root/current file; denied Bob root and legacy content revision",
+	)
 }

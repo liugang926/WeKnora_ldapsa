@@ -5,8 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"github.com/Tencent/WeKnora/internal/event"
 	"reflect"
+
+	"github.com/Tencent/WeKnora/internal/event"
 
 	"github.com/Tencent/WeKnora/internal/models/chat"
 	"github.com/Tencent/WeKnora/internal/types"
@@ -23,6 +24,10 @@ type SourceLineageTool interface {
 
 type SourceLineageDefinitionProvider interface {
 	DefinitionSourceLineageFor(types.FunctionDefinition) *types.SourceLineage
+}
+
+type ContextSourceLineageDefinitionProvider interface {
+	DefinitionSourceLineageForContext(context.Context, types.FunctionDefinition) *types.SourceLineage
 }
 
 type lineageToolExecutor struct {
@@ -46,12 +51,15 @@ func definitionForTool(tool interface {
 	Name() string
 	Description() string
 	Parameters() json.RawMessage
-}) types.FunctionDefinition {
+},
+) types.FunctionDefinition {
 	return types.FunctionDefinition{Name: tool.Name(), Description: tool.Description(), Parameters: tool.Parameters()}
 }
+
 func sameDefinition(a, b types.FunctionDefinition) bool {
 	return a.Name == b.Name && a.Description == b.Description && bytes.Equal(a.Parameters, b.Parameters)
 }
+
 func definitionLineage(tool types.Tool, actual types.FunctionDefinition) *types.SourceLineage {
 	// Bind every actual wire field before consulting a receipt. A same-name
 	// function is not a trusted projection of the registered definition.
@@ -98,6 +106,24 @@ var trustedLiteralDefinitions = func() map[reflect.Type]types.FunctionDefinition
 }()
 
 func (r *ToolRegistry) DefinitionSourceLineage(definitions []chat.Tool) *types.SourceLineage {
+	return r.DefinitionSourceLineageWithContext(nil, definitions)
+}
+
+func definitionLineageWithContext(ctx context.Context, tool types.Tool,
+	actual types.FunctionDefinition,
+) *types.SourceLineage {
+	if !sameDefinition(actual, definitionForTool(tool)) {
+		return types.UnknownSourceLineage()
+	}
+	if provider, ok := tool.(ContextSourceLineageDefinitionProvider); ok {
+		return provider.DefinitionSourceLineageForContext(ctx, actual)
+	}
+	return definitionLineage(tool, actual)
+}
+
+func (r *ToolRegistry) DefinitionSourceLineageWithContext(
+	ctx context.Context, definitions []chat.Tool,
+) *types.SourceLineage {
 	inputs := []*types.SourceLineage{independentToolInput()}
 	for _, definition := range definitions {
 		tool, err := r.GetTool(definition.Function.Name)
@@ -109,7 +135,18 @@ func (r *ToolRegistry) DefinitionSourceLineage(definitions []chat.Tool) *types.S
 			inputs = append(inputs, types.UnknownSourceLineage())
 			continue
 		}
-		inputs = append(inputs, definitionLineage(tool, types.FunctionDefinition{Name: definition.Function.Name, Description: definition.Function.Description, Parameters: definition.Function.Parameters}))
+		inputs = append(
+			inputs,
+			definitionLineageWithContext(
+				ctx,
+				tool,
+				types.FunctionDefinition{
+					Name:        definition.Function.Name,
+					Description: definition.Function.Description,
+					Parameters:  definition.Function.Parameters,
+				},
+			),
+		)
 	}
 	l, _ := types.UnionSourceLineage(inputs...)
 	return l
@@ -117,7 +154,11 @@ func (r *ToolRegistry) DefinitionSourceLineage(definitions []chat.Tool) *types.S
 
 // ExecuteToolWithSourceLineage gates before executing an uncovered producer.
 // An empty opaque result is not retrospectively promoted to source-free.
-func (r *ToolRegistry) ExecuteToolWithSourceLineage(ctx context.Context, name string, args json.RawMessage) (*types.ToolResult, error) {
+func (r *ToolRegistry) ExecuteToolWithSourceLineage(
+	ctx context.Context,
+	name string,
+	args json.RawMessage,
+) (*types.ToolResult, error) {
 	turn := types.RAGSourceLineageFromContext(ctx)
 	if turn == nil {
 		return nil, ErrToolSourceLineageUnavailable
@@ -131,7 +172,7 @@ func (r *ToolRegistry) ExecuteToolWithSourceLineage(ctx context.Context, name st
 		_ = turn.Add(types.UnknownSourceLineage())
 		return nil, ErrToolSourceLineageUnavailable
 	}
-	if err := turn.Add(definitionLineage(tool, definitionForTool(tool))); err != nil {
+	if err := turn.Add(definitionLineageWithContext(ctx, tool, definitionForTool(tool))); err != nil {
 		return nil, err
 	}
 	if err := turn.Check(ctx); err != nil {
@@ -153,13 +194,17 @@ func (r *ToolRegistry) ExecuteToolWithSourceLineage(ctx context.Context, name st
 
 // These two producers only transform model-supplied control arguments and
 // code-owned diagnostics; the enclosing turn preserves the model input union.
-func (t *SequentialThinkingTool) ExecuteSourceLineage(ctx context.Context, args json.RawMessage) (*types.ToolResult, error) {
+func (t *SequentialThinkingTool) ExecuteSourceLineage(
+	ctx context.Context,
+	args json.RawMessage,
+) (*types.ToolResult, error) {
 	result, err := t.Execute(ctx, args)
 	if result != nil {
 		result.SourceLineage = independentToolInput()
 	}
 	return result, err
 }
+
 func (t *TodoWriteTool) ExecuteSourceLineage(ctx context.Context, args json.RawMessage) (*types.ToolResult, error) {
 	result, err := t.Execute(ctx, args)
 	if result != nil {

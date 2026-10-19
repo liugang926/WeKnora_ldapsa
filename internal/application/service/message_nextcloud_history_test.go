@@ -16,7 +16,10 @@ type messageHistorySources struct {
 	err  error
 }
 
-func (s messageHistorySources) FindByKnowledgeBaseIncludingDeleted(_ context.Context, kbID string) ([]*types.DataSource, error) {
+func (s messageHistorySources) FindByKnowledgeBaseIncludingDeleted(
+	_ context.Context,
+	kbID string,
+) ([]*types.DataSource, error) {
 	return s.byKB[kbID], s.err
 }
 
@@ -32,10 +35,14 @@ func TestHistoryFilteringRemovesRevokedAnswerAndSearchPartner(t *testing.T) {
 	s := &messageService{historyGuard: access.NewNextcloudHistoryGuard(nil, sources, nil)}
 	ctx := context.Background()
 	question := &types.Message{ID: "q", SessionID: "session", RequestID: "turn", Role: "user", Content: "question"}
-	answer := &types.Message{ID: "a", SessionID: "session", RequestID: "turn", Role: "assistant", Content: "secret answer",
-		ExecutionContext: types.MessageExecutionContext{KnowledgeBaseIDs: []string{"source-kb"}}}
-	ordinary := &types.Message{ID: "ordinary", SessionID: "session", RequestID: "other", Role: "assistant", Content: "ordinary answer",
-		ExecutionContext: types.MessageExecutionContext{KnowledgeBaseIDs: []string{"web-kb"}}}
+	answer := &types.Message{
+		ID: "a", SessionID: "session", RequestID: "turn", Role: "assistant", Content: "secret answer",
+		ExecutionContext: types.MessageExecutionContext{KnowledgeBaseIDs: []string{"source-kb"}},
+	}
+	ordinary := &types.Message{
+		ID: "ordinary", SessionID: "session", RequestID: "other", Role: "assistant", Content: "ordinary answer",
+		ExecutionContext: types.MessageExecutionContext{KnowledgeBaseIDs: []string{"web-kb"}},
+	}
 	filtered, err := s.filterHistoryMessages(ctx, []*types.Message{question, answer, ordinary})
 	if err != nil || len(filtered) != 2 || filtered[0] != question || filtered[1] != ordinary {
 		t.Fatalf("history filter = %#v, err=%v", filtered, err)
@@ -75,15 +82,25 @@ type legacyHistorySourceLookup struct {
 	interfaces.DataSourceRepository
 }
 
-func (legacyHistorySourceLookup) FindByKnowledgeBaseIncludingDeleted(context.Context, string) ([]*types.DataSource, error) {
+func (legacyHistorySourceLookup) FindByKnowledgeBaseIncludingDeleted(
+	context.Context,
+	string,
+) ([]*types.DataSource, error) {
 	return nil, nil
 }
+
 func (legacyHistorySourceLookup) HasEverNextcloudSourceForTenant(context.Context, uint64) (bool, error) {
 	return false, nil
 }
+
 func TestHistoryFilteringNeedsDurableKBSourceVerifier(t *testing.T) {
 	s := &messageService{historyGuard: access.NewNextcloudHistoryGuard(nil, legacyHistorySourceLookup{}, nil)}
-	_, err := s.filterHistoryMessages(context.Background(), []*types.Message{{Role: "assistant", ExecutionContext: types.MessageExecutionContext{KnowledgeBaseIDs: []string{"kb"}}}})
+	_, err := s.filterHistoryMessages(
+		context.Background(),
+		[]*types.Message{
+			{Role: "assistant", ExecutionContext: types.MessageExecutionContext{KnowledgeBaseIDs: []string{"kb"}}},
+		},
+	)
 	if !errors.Is(err, access.ErrNextcloudPublicationUnavailable) {
 		t.Fatalf("legacy DS-only verifier admitted saved broad history: %v", err)
 	}

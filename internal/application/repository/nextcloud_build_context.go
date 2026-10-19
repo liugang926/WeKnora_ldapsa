@@ -77,7 +77,10 @@ func ValidateNextcloudBuildWrite(ctx context.Context, tx *gorm.DB,
 	if guard.validator == nil {
 		return ErrNextcloudContentLeaseInvalid
 	}
-	return guard.validator.ValidateBuildLeaseInTx(ctx, tx, guard.lease, guard.scope)
+	if err := guard.validator.ValidateBuildLeaseInTx(ctx, tx, guard.lease, guard.scope); err != nil {
+		return err
+	}
+	return ValidateNextcloudMachineTaskWriteInTx(ctx, tx, tenantID, kbID, knowledgeID)
 }
 
 // CheckNextcloudBuildIdentity is a cheap batch preflight; the caller still

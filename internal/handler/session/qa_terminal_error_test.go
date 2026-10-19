@@ -25,14 +25,37 @@ func TestLiveSSEProducerErrorClosesWithoutSuccessOrHeldSourceTail(t *testing.T) 
 			}
 			lineage, err := types.NewCompleteSourceLineage()
 			require.NoError(t, err)
-			streams := &stagedLiveStream{events: []interfaces.StreamEvent{{SourceLineage: lineage, ID: "producer-error", Type: types.ResponseTypeError, Content: "private response body token=SECRET", Done: true, Data: map[string]interface{}{"error": "private response body"}}}}
+			streams := &stagedLiveStream{
+				events: []interfaces.StreamEvent{
+					{
+						SourceLineage: lineage,
+						ID:            "producer-error",
+						Type:          types.ResponseTypeError,
+						Content:       "private response body token=SECRET",
+						Done:          true,
+						Data:          map[string]interface{}{"error": "private response body"},
+					},
+				},
+			}
 			h := &Handler{messageService: service, streamManager: streams}
 			r := gin.New()
 			r.GET("/stream", func(c *gin.Context) {
 				ctx := c.Request.Context()
-				rewriter := storageurl.NewStreamRewriter(storageurl.NewRequestRewriter(ctx, storageurl.ModePublic, nil, nil))
+				rewriter := storageurl.NewStreamRewriter(
+					storageurl.NewRequestRewriter(ctx, storageurl.ModePublic, nil, nil),
+				)
 				rewriter.Push(ctx, "answer:held", "private held source ![", false, nil)
-				h.handleAgentEventsForSSE(ctx, c, "session", "assistant", "request", event.NewEventBus(), true, rewriter, &types.Message{Role: "assistant", RequestID: "request"})
+				h.handleAgentEventsForSSE(
+					ctx,
+					c,
+					"session",
+					"assistant",
+					"request",
+					event.NewEventBus(),
+					true,
+					rewriter,
+					&types.Message{Role: "assistant", RequestID: "request"},
+				)
 			})
 			server := httptest.NewServer(r)
 			defer server.Close()

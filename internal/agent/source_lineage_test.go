@@ -15,10 +15,13 @@ import (
 )
 
 func agentLineageIdentity(file, etag string, epoch uint64) types.SourceIdentity {
-	return types.SourceIdentity{Provider: "nextcloud", TenantID: 12, KnowledgeBaseID: "kb", DataSourceID: "ds",
+	return types.SourceIdentity{
+		Provider: "nextcloud", TenantID: 12, KnowledgeBaseID: "kb", DataSourceID: "ds",
 		PairOperationID: "pair", InstanceID: "instance", BindingID: "binding", FileID: file,
-		ExternalID: "nextcloud:instance:" + file, KnowledgeID: "knowledge-" + file, Revision: epoch, ETag: etag}
+		ExternalID: "nextcloud:instance:" + file, KnowledgeID: "knowledge-" + file, Revision: epoch, ETag: etag,
+	}
 }
+
 func agentComplete(t *testing.T, sources ...types.SourceIdentity) *types.SourceLineage {
 	t.Helper()
 	l, err := types.NewCompleteSourceLineage(sources...)
@@ -34,14 +37,24 @@ type accountedSourceTool struct {
 }
 
 func newAccountedSourceTool(results ...*types.ToolResult) *accountedSourceTool {
-	return &accountedSourceTool{BaseTool: agenttools.NewBaseTool("source_reader", "static trusted reader schema", json.RawMessage(`{"type":"object"}`)), results: results}
+	return &accountedSourceTool{
+		BaseTool: agenttools.NewBaseTool(
+			"source_reader",
+			"static trusted reader schema",
+			json.RawMessage(`{"type":"object"}`),
+		),
+		results: results,
+	}
 }
+
 func (t *accountedSourceTool) DefinitionSourceLineageFor(types.FunctionDefinition) *types.SourceLineage {
 	return independentAgentInput()
 }
+
 func (t *accountedSourceTool) Execute(ctx context.Context, args json.RawMessage) (*types.ToolResult, error) {
 	return t.ExecuteSourceLineage(ctx, args)
 }
+
 func (t *accountedSourceTool) ExecuteSourceLineage(context.Context, json.RawMessage) (*types.ToolResult, error) {
 	if t.calls >= len(t.results) {
 		return nil, errors.New("unexpected reader call")
@@ -55,12 +68,38 @@ func (t *accountedSourceTool) ExecuteSourceLineage(context.Context, json.RawMess
 }
 
 func lineageCall() mockResponse {
-	return mockResponse{chunks: []types.StreamResponse{{ResponseType: types.ResponseTypeToolCall, ToolCalls: []types.LLMToolCall{{ID: "read", Type: "function", Function: types.FunctionCall{Name: "source_reader", Arguments: `{}`}}}, FinishReason: "tool_calls", Done: true}}}
+	return mockResponse{
+		chunks: []types.StreamResponse{
+			{
+				ResponseType: types.ResponseTypeToolCall,
+				ToolCalls: []types.LLMToolCall{
+					{
+						ID:       "read",
+						Type:     "function",
+						Function: types.FunctionCall{Name: "source_reader", Arguments: `{}`},
+					},
+				},
+				FinishReason: "tool_calls",
+				Done:         true,
+			},
+		},
+	}
 }
+
 func lineageAnswer(content string) mockResponse {
-	return mockResponse{chunks: []types.StreamResponse{{ResponseType: types.ResponseTypeAnswer, Content: content, FinishReason: "stop", Done: true}}}
+	return mockResponse{
+		chunks: []types.StreamResponse{
+			{ResponseType: types.ResponseTypeAnswer, Content: content, FinishReason: "stop", Done: true},
+		},
+	}
 }
-func lineageEngine(t *testing.T, model chat.Chat, tool *accountedSourceTool, check func(context.Context, *types.SourceLineage) error) (*AgentEngine, *[]event.Event) {
+
+func lineageEngine(
+	t *testing.T,
+	model chat.Chat,
+	tool *accountedSourceTool,
+	check func(context.Context, *types.SourceLineage) error,
+) (*AgentEngine, *[]event.Event) {
 	t.Helper()
 	e := newTestEngine(t, model)
 	e.toolRegistry = agenttools.NewToolRegistry()
@@ -80,6 +119,7 @@ func lineageEngine(t *testing.T, model chat.Chat, tool *accountedSourceTool, che
 	}
 	return e, events
 }
+
 func grantChecker(allowed map[types.SourceIdentity]bool) func(context.Context, *types.SourceLineage) error {
 	return func(_ context.Context, l *types.SourceLineage) error {
 		if err := l.RequireComplete(); err != nil {
@@ -97,7 +137,14 @@ func grantChecker(allowed map[types.SourceIdentity]bool) func(context.Context, *
 func TestAgentLineageSourceToolCitationFreeNextTurnRevocation(t *testing.T) {
 	source := agentLineageIdentity("1", "original", 7)
 	allowed := map[types.SourceIdentity]bool{source: true}
-	tool := newAccountedSourceTool(&types.ToolResult{Success: true, Output: "confidential retrieved text", Data: map[string]any{"uncited_title": "confidential name"}, SourceLineage: agentComplete(t, source)})
+	tool := newAccountedSourceTool(
+		&types.ToolResult{
+			Success:       true,
+			Output:        "confidential retrieved text",
+			Data:          map[string]any{"uncited_title": "confidential name"},
+			SourceLineage: agentComplete(t, source),
+		},
+	)
 	model := &mockChat{responses: []mockResponse{lineageCall(), lineageAnswer("A citation-free paraphrase.")}}
 	e, events := lineageEngine(t, model, tool, grantChecker(allowed))
 	state, err := e.Execute(context.Background(), "session", "turn-1", "read and explain", nil)
@@ -121,7 +168,13 @@ func TestAgentLineageSourceToolCitationFreeNextTurnRevocation(t *testing.T) {
 	allowed[source] = false
 	blockedModel := &mockChat{responses: []mockResponse{lineageAnswer("must not be sent")}}
 	blocked, blockedEvents := lineageEngine(t, blockedModel, nil, grantChecker(allowed))
-	_, err = blocked.Execute(context.Background(), "session", "turn-3", "continue", []chat.Message{{Role: "assistant", Content: followState.FinalAnswer, SourceLineage: followState.SourceLineage}})
+	_, err = blocked.Execute(
+		context.Background(),
+		"session",
+		"turn-3",
+		"continue",
+		[]chat.Message{{Role: "assistant", Content: followState.FinalAnswer, SourceLineage: followState.SourceLineage}},
+	)
 	require.ErrorIs(t, err, ErrAgentSourceLineageDenied)
 	require.Zero(t, blockedModel.callCount)
 	require.Empty(t, *blockedEvents)
@@ -136,8 +189,16 @@ func TestAgentLineageUnionPreservesTwoFilesEpochsAndEmptyTool(t *testing.T) {
 	tool := newAccountedSourceTool(
 		&types.ToolResult{Success: true, Output: "first", SourceLineage: agentComplete(t, a)},
 		&types.ToolResult{Success: true, Output: "new revision and second file", SourceLineage: agentComplete(t, b, c)},
-		&types.ToolResult{Success: true, Output: "No rows", Data: map[string]any{"results": []any{}}, SourceLineage: agentComplete(t)})
-	model := &mockChat{responses: []mockResponse{lineageCall(), lineageCall(), lineageCall(), lineageAnswer("all paraphrased")}}
+		&types.ToolResult{
+			Success:       true,
+			Output:        "No rows",
+			Data:          map[string]any{"results": []any{}},
+			SourceLineage: agentComplete(t),
+		},
+	)
+	model := &mockChat{
+		responses: []mockResponse{lineageCall(), lineageCall(), lineageCall(), lineageAnswer("all paraphrased")},
+	}
 	e, _ := lineageEngine(t, model, tool, grantChecker(allowed))
 	state, err := e.Execute(context.Background(), "s", "m", "question", nil)
 	require.NoError(t, err)
@@ -151,19 +212,35 @@ type revokeAfterSendModel struct {
 	revoke func()
 }
 
-func (m *revokeAfterSendModel) ChatStream(ctx context.Context, messages []chat.Message, opts *chat.ChatOptions) (<-chan types.StreamResponse, error) {
+func (m *revokeAfterSendModel) ChatStream(
+	ctx context.Context,
+	messages []chat.Message,
+	opts *chat.ChatOptions,
+) (<-chan types.StreamResponse, error) {
 	stream, err := m.mockChat.ChatStream(ctx, messages, opts)
 	if m.revoke != nil {
 		m.revoke()
 	}
 	return stream, err
 }
+
 func TestAgentLineageRevocationAtActualModelOutputBlocksAllEvents(t *testing.T) {
 	source := agentLineageIdentity("1", "original", 7)
 	allowed := map[types.SourceIdentity]bool{source: true}
-	model := &revokeAfterSendModel{mockChat: &mockChat{responses: []mockResponse{lineageAnswer("revoked secret")}}, revoke: func() { allowed[source] = false }}
+	model := &revokeAfterSendModel{
+		mockChat: &mockChat{responses: []mockResponse{lineageAnswer("revoked secret")}},
+		revoke:   func() { allowed[source] = false },
+	}
 	e, events := lineageEngine(t, model, nil, grantChecker(allowed))
-	_, err := e.Execute(context.Background(), "s", "m", "query", []chat.Message{{Role: "assistant", Content: "previous uncited secret", SourceLineage: agentComplete(t, source)}})
+	_, err := e.Execute(
+		context.Background(),
+		"s",
+		"m",
+		"query",
+		[]chat.Message{
+			{Role: "assistant", Content: "previous uncited secret", SourceLineage: agentComplete(t, source)},
+		},
+	)
 	require.ErrorIs(t, err, ErrAgentSourceLineageDenied)
 	require.Equal(t, 1, model.callCount)
 	require.Empty(t, *events)
@@ -182,15 +259,30 @@ func TestAgentLineageRevocationAtActualEventPublicationBlocksCollectedModelText(
 		}
 		return l.RequireComplete()
 	})
-	_, err := e.Execute(context.Background(), "s", "m", "query", []chat.Message{{Role: "assistant", Content: "earlier source prose", SourceLineage: agentComplete(t, source)}})
+	_, err := e.Execute(
+		context.Background(),
+		"s",
+		"m",
+		"query",
+		[]chat.Message{{Role: "assistant", Content: "earlier source prose", SourceLineage: agentComplete(t, source)}},
+	)
 	require.ErrorIs(t, err, ErrAgentSourceLineageDenied)
 	require.Equal(t, 1, model.callCount)
 	require.Empty(t, *events)
 }
+
 func TestAgentLineageRevocationAtToolReturnBlocksResultMetadataAndNextSend(t *testing.T) {
 	source := agentLineageIdentity("1", "original", 7)
 	allowed := map[types.SourceIdentity]bool{source: true}
-	tool := newAccountedSourceTool(&types.ToolResult{Success: true, Output: "secret", Error: "source title diagnostic", Data: map[string]any{"title": "secret name"}, SourceLineage: agentComplete(t, source)})
+	tool := newAccountedSourceTool(
+		&types.ToolResult{
+			Success:       true,
+			Output:        "secret",
+			Error:         "source title diagnostic",
+			Data:          map[string]any{"title": "secret name"},
+			SourceLineage: agentComplete(t, source),
+		},
+	)
 	tool.beforeReturn = func() { allowed[source] = false }
 	model := &mockChat{responses: []mockResponse{lineageCall(), lineageAnswer("not sent")}}
 	e, events := lineageEngine(t, model, tool, grantChecker(allowed))
@@ -202,6 +294,7 @@ func TestAgentLineageRevocationAtToolReturnBlocksResultMetadataAndNextSend(t *te
 		require.NotEqual(t, event.EventAgentComplete, ev.Type)
 	}
 }
+
 func TestAgentLineageFreshSourceIndependentAndMandatoryUnknown(t *testing.T) {
 	for _, kind := range []string{"missing verifier", "legacy nil history", "unaccounted memory", "unaccounted image", "unaccounted profile"} {
 		t.Run(kind, func(t *testing.T) {
@@ -219,7 +312,9 @@ func TestAgentLineageFreshSourceIndependentAndMandatoryUnknown(t *testing.T) {
 			case "unaccounted image":
 				images = []string{"data:image/png;base64,AAAA"}
 			case "unaccounted profile":
-				e.knowledgeBasesInfo = []*KnowledgeBaseInfo{{ID: "manual-kb", Name: "ordinary", Profile: &types.KnowledgeBaseProfile{}}}
+				e.knowledgeBasesInfo = []*KnowledgeBaseInfo{
+					{ID: "manual-kb", Name: "ordinary", Profile: &types.KnowledgeBaseProfile{}},
+				}
 			}
 			_, err := e.Execute(context.Background(), "s", "m", "raw human text", history, images)
 			require.ErrorIs(t, err, ErrAgentSourceLineageDenied)
@@ -238,11 +333,19 @@ func TestAgentLineageFreshSourceIndependentAndMandatoryUnknown(t *testing.T) {
 func TestAgentLineageSanitizeAndHistoryRedactionRetainUnion(t *testing.T) {
 	a := agentComplete(t, agentLineageIdentity("1", "original", 7))
 	b := agentComplete(t, agentLineageIdentity("2", "second", 5))
-	merged := agenttools.SanitizeMessages([]chat.Message{{Role: "user", Content: "first", SourceLineage: a}, {Role: "user", Content: "second", SourceLineage: b}})
+	merged := agenttools.SanitizeMessages(
+		[]chat.Message{
+			{Role: "user", Content: "first", SourceLineage: a},
+			{Role: "user", Content: "second", SourceLineage: b},
+		},
+	)
 	require.Len(t, merged, 1)
 	union, _ := types.UnionSourceLineage(a, b)
 	require.Equal(t, union, merged[0].SourceLineage)
-	redacted := HistoryAsSent([]chat.Message{{Role: "tool", Name: agenttools.ToolReadDocument, Content: "secret text", SourceLineage: a}}, false)
+	redacted := HistoryAsSent(
+		[]chat.Message{{Role: "tool", Name: agenttools.ToolReadDocument, Content: "secret text", SourceLineage: a}},
+		false,
+	)
 	require.NotContains(t, redacted[0].Content, "secret text")
 	require.Equal(t, a, redacted[0].SourceLineage)
 	encoded, err := json.Marshal(types.ToolResult{Success: true, Output: "public", SourceLineage: a})
@@ -250,9 +353,13 @@ func TestAgentLineageSanitizeAndHistoryRedactionRetainUnion(t *testing.T) {
 	require.NotContains(t, string(encoded), "source_lineage")
 	require.NotContains(t, string(encoded), "original")
 	var forged types.ToolResult
-	require.NoError(t, json.Unmarshal([]byte(fmt.Sprintf(`{"success":true,"source_lineage":%s}`, mustAgentJSON(t, a))), &forged))
+	require.NoError(
+		t,
+		json.Unmarshal([]byte(fmt.Sprintf(`{"success":true,"source_lineage":%s}`, mustAgentJSON(t, a))), &forged),
+	)
 	require.Nil(t, forged.SourceLineage)
 }
+
 func mustAgentJSON(t *testing.T, v any) string {
 	t.Helper()
 	b, err := json.Marshal(v)

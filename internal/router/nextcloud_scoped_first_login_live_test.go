@@ -55,11 +55,28 @@ func TestNextcloudScopedFirstLoginActualLDAPSAndProductionRoutes(t *testing.T) {
 	r.POST("/api/v1/integrations/nextcloud/events", eventHandler.Receive)
 	r.Use(middleware.Auth(f.tenants, f.users, f.members, nil, f.cfg, f.groups))
 	r.Use(middleware.RequireNextcloudScopedRoutes(f.groups, f.onboarding))
-	guards := newRBACGuards(f.cfg, f.baseHandler, nil, f.knowledgeHandler, nil, nil, f.base, f.knowledge, nil, nil, nil, f.groups)
+	guards := newRBACGuards(
+		f.cfg,
+		f.baseHandler,
+		nil,
+		f.knowledgeHandler,
+		nil,
+		nil,
+		f.base,
+		f.knowledge,
+		nil,
+		nil,
+		nil,
+		f.groups,
+	)
 	v1 := r.Group("/api/v1")
 	v1.Use(guards.apiKeyAuthorizer.Middleware())
 	RegisterAuthRoutes(v1, handler.NewAuthHandler(f.cfg, f.users, f.tenants, nil, nil, f.runtime), guards)
-	v1.POST("/auth/ldap/login", middleware.DirectoryAuthRateLimit(nil), handler.NewDirectoryHandler(f.runtime).LDAPLogin)
+	v1.POST(
+		"/auth/ldap/login",
+		middleware.DirectoryAuthRateLimit(nil),
+		handler.NewDirectoryHandler(f.runtime).LDAPLogin,
+	)
 	RegisterKnowledgeBaseRoutes(v1, f.baseHandler, guards)
 	RegisterKnowledgeRoutes(v1, f.knowledgeHandler, guards)
 	// These are the actual registrars. Scoped requests must stop before these
@@ -74,8 +91,17 @@ func TestNextcloudScopedFirstLoginActualLDAPSAndProductionRoutes(t *testing.T) {
 	server := &http.Server{Handler: r, ReadHeaderTimeout: 5 * time.Second}
 	defer server.Close()
 	go func() { _ = server.Serve(listener) }()
-	scopedFirstLoginWrite(t, fixture+".ready", map[string]any{"actual_ldaps_snapshot": true, "directory": input.Directory, "reader_guid": input.ReaderGUID})
-	require.Eventually(t, func() bool { _, err := os.Stat(fixture + ".committed"); return err == nil }, 90*time.Second, 100*time.Millisecond)
+	scopedFirstLoginWrite(
+		t,
+		fixture+".ready",
+		map[string]any{"actual_ldaps_snapshot": true, "directory": input.Directory, "reader_guid": input.ReaderGUID},
+	)
+	require.Eventually(
+		t,
+		func() bool { _, err := os.Stat(fixture + ".committed"); return err == nil },
+		90*time.Second,
+		100*time.Millisecond,
+	)
 	scopedFirstLoginPrivateJSON(t, fixture, &input)
 	var op types.NextcloudOnboardingOperation
 	require.NoError(t, f.db.Where("operation_id=?", input.Operation).Take(&op).Error)
@@ -87,8 +113,18 @@ func TestNextcloudScopedFirstLoginActualLDAPSAndProductionRoutes(t *testing.T) {
 	require.NotNil(t, identity)
 	require.Nil(t, identity.UserID)
 	var preloginGrants int64
-	require.NoError(t, f.db.Model(&types.NextcloudSourceGrant{}).Where("operation_id=? AND origin=? AND kind=? AND principal_id=?", op.OperationID, "nextcloud", "user", identity.ID).Count(&preloginGrants).Error)
-	require.Positive(t, preloginGrants, "actual NC complete permission publication must grant the unlinked directory identity")
+	require.NoError(
+		t,
+		f.db.Model(&types.NextcloudSourceGrant{}).
+			Where("operation_id=? AND origin=? AND kind=? AND principal_id=?", op.OperationID, "nextcloud", "user", identity.ID).
+			Count(&preloginGrants).
+			Error,
+	)
+	require.Positive(
+		t,
+		preloginGrants,
+		"actual NC complete permission publication must grant the unlinked directory identity",
+	)
 	row := f.processSource(t, input)
 	var tenantCount int64
 	require.NoError(t, f.db.Model(&types.Tenant{}).Count(&tenantCount).Error)
@@ -102,7 +138,9 @@ func TestNextcloudScopedFirstLoginActualLDAPSAndProductionRoutes(t *testing.T) {
 		r.ServeHTTP(out, req)
 		return out
 	}
-	loginBody, err := json.Marshal(map[string]string{"identifier": f.ldap.LoginIdentifier, "password": f.ldap.LoginPassword})
+	loginBody, err := json.Marshal(
+		map[string]string{"identifier": f.ldap.LoginIdentifier, "password": f.ldap.LoginPassword},
+	)
 	require.NoError(t, err)
 	login := request(http.MethodPost, "/api/v1/auth/ldap/login", "", string(loginBody))
 	require.Equal(t, http.StatusOK, login.Code, "real LDAP login must succeed")
@@ -148,7 +186,12 @@ func TestNextcloudScopedFirstLoginActualLDAPSAndProductionRoutes(t *testing.T) {
 		allowed := request(http.MethodGet, "/api/v1/knowledge/"+row.ID+"/preview", response.Token, "")
 		require.Equal(t, http.StatusOK, allowed.Code)
 		digest := sha256.Sum256(allowed.Body.Bytes())
-		require.Equal(t, input.FileSHA256, hex.EncodeToString(digest[:]), "production preview must return the actual unchanged NC original")
+		require.Equal(
+			t,
+			input.FileSHA256,
+			hex.EncodeToString(digest[:]),
+			"production preview must return the actual unchanged NC original",
+		)
 		detail := request(http.MethodGet, "/api/v1/knowledge-bases/"+input.KnowledgeBaseID, response.Token, "")
 		require.Equal(t, http.StatusOK, detail.Code)
 		listed := request(http.MethodGet, "/api/v1/knowledge-bases", response.Token, "")
@@ -166,7 +209,12 @@ func TestNextcloudScopedFirstLoginActualLDAPSAndProductionRoutes(t *testing.T) {
 			require.Equal(t, http.StatusForbidden, denied.Code, url)
 			require.NotContains(t, denied.Body.String(), "SCOPED_FIRST_LOGIN_ORIGINAL")
 		}
-		deniedHistory := request(http.MethodPost, "/api/v1/messages/search", response.Token, `{"query":"SCOPED_FIRST_LOGIN_ORIGINAL","mode":"keyword"}`)
+		deniedHistory := request(
+			http.MethodPost,
+			"/api/v1/messages/search",
+			response.Token,
+			`{"query":"SCOPED_FIRST_LOGIN_ORIGINAL","mode":"keyword"}`,
+		)
 		require.Equal(t, http.StatusForbidden, deniedHistory.Code)
 		noMembership()
 	}
@@ -179,8 +227,24 @@ func TestNextcloudScopedFirstLoginActualLDAPSAndProductionRoutes(t *testing.T) {
 	_, err = f.runtime.ManualSync(context.Background())
 	require.NoError(t, err)
 	noMembership()
-	scopedFirstLoginWrite(t, fixture+".positive", map[string]any{"actual_ldaps_login": true, "scoped_only": true, "ordinary_membership_count": 0, "user_id": user.ID, "knowledge_id": row.ID, "body_sha256": input.FileSHA256})
-	require.Eventually(t, func() bool { _, err := os.Stat(fixture + ".revoked"); return err == nil }, 90*time.Second, 100*time.Millisecond)
+	scopedFirstLoginWrite(
+		t,
+		fixture+".positive",
+		map[string]any{
+			"actual_ldaps_login":        true,
+			"scoped_only":               true,
+			"ordinary_membership_count": 0,
+			"user_id":                   user.ID,
+			"knowledge_id":              row.ID,
+			"body_sha256":               input.FileSHA256,
+		},
+	)
+	require.Eventually(
+		t,
+		func() bool { _, err := os.Stat(fixture + ".revoked"); return err == nil },
+		90*time.Second,
+		100*time.Millisecond,
+	)
 	// NC share removal changes source READ, not the active LDAP account. A real
 	// identity token can remain valid while current scoped resource access ends.
 	validated, tenantAfter, err := f.users.ValidateToken(context.Background(), response.Token)
@@ -198,8 +262,36 @@ func TestNextcloudScopedFirstLoginActualLDAPSAndProductionRoutes(t *testing.T) {
 	}
 	for _, table := range []string{"nextcloud_content_leases", "original_body_leases"} {
 		var n int64
-		require.NoError(t, f.db.Table(table).Where("released_at_ms IS NULL AND expires_at_ms>?", time.Now().UnixMilli()).Count(&n).Error)
+		require.NoError(
+			t,
+			f.db.Table(table).
+				Where("released_at_ms IS NULL AND expires_at_ms>?", time.Now().UnixMilli()).
+				Count(&n).
+				Error,
+		)
 		require.Zero(t, n, "actual output guards must release every physical/body lease")
 	}
-	scopedFirstLoginWrite(t, fixture+".result", map[string]any{"status": "PASS", "directory": input.Directory, "reader_guid": input.ReaderGUID, "user_id": user.ID, "knowledge_base_id": input.KnowledgeBaseID, "knowledge_id": row.ID, "body_sha256": input.FileSHA256, "actual_ldaps_bind": true, "prelogin_ledger": true, "scoped_only": true, "ordinary_membership_count": 0, "rbac_enabled_and_disabled_fenced": true, "old_jwt_identity_valid_after_source_revoked": true, "known_revoke_http": 403, "lease_count": 0, "actual_embedding_only": true, "graph_reranker_qa_claim": false})
+	scopedFirstLoginWrite(
+		t,
+		fixture+".result",
+		map[string]any{
+			"status":                           "PASS",
+			"directory":                        input.Directory,
+			"reader_guid":                      input.ReaderGUID,
+			"user_id":                          user.ID,
+			"knowledge_base_id":                input.KnowledgeBaseID,
+			"knowledge_id":                     row.ID,
+			"body_sha256":                      input.FileSHA256,
+			"actual_ldaps_bind":                true,
+			"prelogin_ledger":                  true,
+			"scoped_only":                      true,
+			"ordinary_membership_count":        0,
+			"rbac_enabled_and_disabled_fenced": true,
+			"old_jwt_identity_valid_after_source_revoked": true,
+			"known_revoke_http":                           403,
+			"lease_count":                                 0,
+			"actual_embedding_only":                       true,
+			"graph_reranker_qa_claim":                     false,
+		},
+	)
 }

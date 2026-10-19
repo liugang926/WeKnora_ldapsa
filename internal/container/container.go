@@ -501,16 +501,26 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	must(container.Provide(service.NewNextcloudEventDispatcher))
 	must(container.Provide(repository.NewNextcloudGCStore))
 	must(container.Provide(repository.NewNextcloudCapacityStore))
-	must(container.Provide(func(tenants interfaces.TenantRepository, storage interfaces.StorageBackendResolver) service.NextcloudCapacityFileResolver {
-		return func(ctx context.Context, kb *types.KnowledgeBase) (interfaces.FileService, error) {
-			tenant, err := tenants.GetTenantByID(ctx, kb.TenantID)
-			if err != nil || tenant == nil || kb.StorageBackendID == nil {
-				return nil, repository.ErrNextcloudCapacityUnavailable
-			}
-			fileService, _, err := storage.ResolveFileService(ctx, tenant, *kb.StorageBackendID, "", strings.TrimSpace(os.Getenv("LOCAL_STORAGE_BASE_DIR")))
-			return fileService, err
-		}
-	}))
+	must(
+		container.Provide(
+			func(tenants interfaces.TenantRepository, storage interfaces.StorageBackendResolver) service.NextcloudCapacityFileResolver {
+				return func(ctx context.Context, kb *types.KnowledgeBase) (interfaces.FileService, error) {
+					tenant, err := tenants.GetTenantByID(ctx, kb.TenantID)
+					if err != nil || tenant == nil || kb.StorageBackendID == nil {
+						return nil, repository.ErrNextcloudCapacityUnavailable
+					}
+					fileService, _, err := storage.ResolveFileService(
+						ctx,
+						tenant,
+						*kb.StorageBackendID,
+						"",
+						strings.TrimSpace(os.Getenv("LOCAL_STORAGE_BASE_DIR")),
+					)
+					return fileService, err
+				}
+			},
+		),
+	)
 	must(container.Provide(service.NewNextcloudCapacityAdmission))
 
 	must(container.Provide(repository.NewNextcloudContentLeaseStore))
@@ -529,7 +539,11 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	must(container.Provide(func(store *repository.KnowledgeInputProvenanceStore) interfaces.KnowledgeBuildInputReader {
 		return store
 	}))
-	must(container.Provide(func(store *repository.KnowledgeInputProvenanceStore) interfaces.KnowledgeInputWriter { return store }))
+	must(
+		container.Provide(
+			func(store *repository.KnowledgeInputProvenanceStore) interfaces.KnowledgeInputWriter { return store },
+		),
+	)
 	must(container.Provide(func(store *repository.KnowledgeInputProvenanceStore) interfaces.KnowledgeBaseInputWriter {
 		return store
 	}))
@@ -539,43 +553,88 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	must(container.Provide(service.NewKnowledgeCollectionOutputAuthorizer))
 	must(container.Provide(service.NewTagOutputAuthorizer))
 	must(container.Provide(service.NewFAQOutputAuthorizer))
-	must(container.Provide(func(store *repository.KnowledgeInputProvenanceStore, knowledge interfaces.KnowledgeRepository, models interfaces.ModelService, guard *access.NextcloudSourceLineageGuard, leases *repository.NextcloudContentLeaseStore) *service.KnowledgeEnrichmentTemplateService {
-		return service.NewKnowledgeEnrichmentTemplateService(store, knowledge, models, guard, leases)
-	}))
+	must(
+		container.Provide(
+			func(store *repository.KnowledgeInputProvenanceStore, knowledge interfaces.KnowledgeRepository, models interfaces.ModelService, guard *access.NextcloudSourceLineageGuard, leases *repository.NextcloudContentLeaseStore) *service.KnowledgeEnrichmentTemplateService {
+				return service.NewKnowledgeEnrichmentTemplateService(store, knowledge, models, guard, leases)
+			},
+		),
+	)
 	must(container.Provide(service.NewGraphOriginalInputVerifier))
 	must(container.Provide(service.NewKnowledgeGraphLineageReader))
-	must(container.Provide(func(db *gorm.DB, store *repository.KnowledgeInputProvenanceStore) interfaces.RAGChunkSnapshotReader {
-		return repository.NewRAGChunkSnapshotReader(db, store)
-	}))
-	must(container.Invoke(func(store *repository.KnowledgeInputProvenanceStore, groups interfaces.GroupAccessService, shares interfaces.KBShareService) {
-		repository.ConfigureKnowledgeInputActorGroupAccess(store, groups)
-		repository.ConfigureKnowledgeInputActorShares(store, shares)
-	}))
-	must(container.Invoke(func(store *repository.KnowledgeInputProvenanceStore, tags interfaces.KnowledgeTagRepository, knowledge interfaces.KnowledgeRepository, sources interfaces.DataSourceRepository, pairs *repository.NextcloudSourcePairingRepository) {
-		repository.ConfigureKnowledgeCurrentReadActor(knowledge, store)
-		factory := func(tx *gorm.DB) *repository.KnowledgeInputProvenanceStore {
-			authority := repository.NewKnowledgeInputProvenanceStore(tx)
-			repository.ConfigureKnowledgeInputActorGroupAccess(authority, service.NewGroupAccessService(repository.NewGroupAccessRepository(tx)))
-			repository.ConfigureKnowledgeInputActorShares(authority, service.NewKBShareService(repository.NewKBShareRepository(tx), repository.NewOrganizationRepository(tx), repository.NewKnowledgeBaseRepository(tx), repository.NewKnowledgeRepository(tx), repository.NewDataSourceRepository(tx), repository.NewChunkRepository(tx), nil))
-			repository.ConfigureMessageMaterialAgentShares(authority, service.NewAgentShareService(repository.NewAgentShareRepository(tx), repository.NewTenantDisabledSharedAgentRepository(tx), repository.NewOrganizationRepository(tx), repository.NewCustomAgentRepository(tx), repository.NewUserRepository(tx), repository.NewWebSearchProviderRepository(tx), repository.NewKnowledgeBaseRepository(tx), repository.NewKnowledgeRepository(tx), repository.NewDataSourceRepository(tx)))
-			return authority
-		}
-		repository.ConfigureKnowledgeDisplayInputWriters(store, tags, knowledge, factory)
-		repository.ConfigureDataSourceNameInputWriters(sources, pairs, factory)
-	}))
+	must(
+		container.Provide(
+			func(db *gorm.DB, store *repository.KnowledgeInputProvenanceStore) interfaces.RAGChunkSnapshotReader {
+				return repository.NewRAGChunkSnapshotReader(db, store)
+			},
+		),
+	)
+	must(
+		container.Invoke(
+			func(store *repository.KnowledgeInputProvenanceStore, groups interfaces.GroupAccessService, shares interfaces.KBShareService) {
+				repository.ConfigureKnowledgeInputActorGroupAccess(store, groups)
+				repository.ConfigureKnowledgeInputActorShares(store, shares)
+			},
+		),
+	)
+	must(
+		container.Invoke(
+			func(store *repository.KnowledgeInputProvenanceStore, tags interfaces.KnowledgeTagRepository, knowledge interfaces.KnowledgeRepository, sources interfaces.DataSourceRepository, pairs *repository.NextcloudSourcePairingRepository) {
+				repository.ConfigureKnowledgeCurrentReadActor(knowledge, store)
+				factory := func(tx *gorm.DB) *repository.KnowledgeInputProvenanceStore {
+					authority := repository.NewKnowledgeInputProvenanceStore(tx)
+					repository.ConfigureKnowledgeInputActorGroupAccess(
+						authority,
+						service.NewGroupAccessService(repository.NewGroupAccessRepository(tx)),
+					)
+					repository.ConfigureKnowledgeInputActorShares(
+						authority,
+						service.NewKBShareService(
+							repository.NewKBShareRepository(tx),
+							repository.NewOrganizationRepository(tx),
+							repository.NewKnowledgeBaseRepository(tx),
+							repository.NewKnowledgeRepository(tx),
+							repository.NewDataSourceRepository(tx),
+							repository.NewChunkRepository(tx),
+							nil,
+						),
+					)
+					repository.ConfigureMessageMaterialAgentShares(
+						authority,
+						service.NewAgentShareService(
+							repository.NewAgentShareRepository(tx),
+							repository.NewTenantDisabledSharedAgentRepository(tx),
+							repository.NewOrganizationRepository(tx),
+							repository.NewCustomAgentRepository(tx),
+							repository.NewUserRepository(tx),
+							repository.NewWebSearchProviderRepository(tx),
+							repository.NewKnowledgeBaseRepository(tx),
+							repository.NewKnowledgeRepository(tx),
+							repository.NewDataSourceRepository(tx),
+						),
+					)
+					return authority
+				}
+				repository.ConfigureKnowledgeDisplayInputWriters(store, tags, knowledge, factory)
+				repository.ConfigureDataSourceNameInputWriters(sources, pairs, factory)
+			},
+		),
+	)
 	must(container.Invoke(func(p struct {
 		dig.In
 		Handler interfaces.TaskHandler `name:"knowledgeAutoTag"`
 		Store   *repository.KnowledgeInputProvenanceStore
 		Guard   *access.NextcloudSourceLineageGuard
-	}) {
+	},
+	) {
 		service.ConfigureKnowledgeAutoTagInputProvenance(p.Handler, p.Store, p.Guard)
 	}))
 	must(container.Invoke(func(p struct {
 		dig.In
 		Handler interfaces.TaskHandler `name:"chunkExtractor"`
 		State   *repository.NextcloudProcessingStateStore
-	}) {
+	},
+	) {
 		service.ConfigureNextcloudChunkExtractLedger(p.Handler, p.State)
 	}))
 	must(container.Invoke(service.ConfigureDataSourceCapacityAdmission))
@@ -585,13 +644,22 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	must(container.Invoke(service.ConfigureChunkSummaryInputProvenance))
 	must(container.Invoke(func(p struct {
 		dig.In
+		Handler interfaces.TaskHandler `name:"dataTableSummary"`
+		Store   *repository.KnowledgeInputProvenanceStore
+	},
+	) {
+		service.ConfigureDataTableInputProvenance(p.Handler, p.Store)
+	}))
+	must(container.Invoke(func(p struct {
+		dig.In
 		Handler   interfaces.TaskHandler `name:"knowledgePostProcess"`
 		Store     *repository.KnowledgeInputProvenanceStore
 		Knowledge interfaces.KnowledgeRepository
 		Service   interfaces.KnowledgeService
 		Config    *config.Config
 		State     *repository.NextcloudProcessingStateStore
-	}) {
+	},
+	) {
 		service.ConfigureNextcloudPostProcessLedger(p.Handler, p.State)
 		service.ConfigureKnowledgePostProcessInputProvenance(p.Handler, p.Store)
 		service.ConfigureKnowledgePostProcessHistoryMaterial(p.Handler, p.Service)
@@ -602,12 +670,20 @@ func BuildContainer(container *dig.Container) *dig.Container {
 		dig.In
 		Handler interfaces.TaskHandler `name:"imageMultimodal"`
 		Store   *repository.KnowledgeInputProvenanceStore
-	}) {
+	},
+	) {
 		service.ConfigureImageMultimodalInputProvenance(p.Handler, p.Store)
 	}))
-	must(container.Invoke(func(store *repository.KnowledgeInputProvenanceStore, guard *access.NextcloudSourceLineageGuard, sources interfaces.DataSourceRepository, paths *repository.NextcloudOnboardingStore) {
-		repository.ConfigureKnowledgeOriginalInputSourceVerifier(store, service.NewKnowledgeOriginalInputSourceVerifier(store, guard, sources, paths))
-	}))
+	must(
+		container.Invoke(
+			func(store *repository.KnowledgeInputProvenanceStore, guard *access.NextcloudSourceLineageGuard, sources interfaces.DataSourceRepository, paths *repository.NextcloudOnboardingStore) {
+				repository.ConfigureKnowledgeOriginalInputSourceVerifier(
+					store,
+					service.NewKnowledgeOriginalInputSourceVerifier(store, guard, sources, paths),
+				)
+			},
+		),
+	)
 
 	must(container.Invoke(service.ConfigureKnowledgeBaseInputProvenance))
 	must(container.Invoke(service.ConfigureMessageSourceLineage))
@@ -2118,43 +2194,45 @@ func startNextcloudGC(
 	storage interfaces.StorageBackendResolver,
 	cleaner interfaces.ResourceCleaner,
 ) {
-	gc.ConfigureLocalDeletePreparation(func(ctx context.Context, resource *types.StoredResource) (func(context.Context) (bool, error), error) {
-		if resource == nil || resource.TenantID == 0 || resource.Provider != "local" ||
-			resource.State != types.ResourceStateDeleting || resource.StorageBackendID == "" {
-			return nil, apperrors.NewProtocolError(errors.New(
-				"nextcloud GC resource is not a scoped local deletion claim"),
-				"Nextcloud GC resource is not a scoped local deletion claim")
-		}
-		backendID, inner, ok := types.ParseStorageBackendPath(resource.PhysicalPath)
-		if !ok || backendID != resource.StorageBackendID ||
-			!strings.HasPrefix(inner, fmt.Sprintf("local://%d/", resource.TenantID)) {
-			return nil, apperrors.NewProtocolError(errors.New(
-				"nextcloud GC local path does not match owner backend"),
-				"Nextcloud GC local path does not match owner backend")
-		}
-		tenant, err := tenants.GetTenantByID(ctx, resource.TenantID)
-		if err != nil || tenant == nil {
-			return nil, apperrors.NewProtocolError(errors.New(
-				"nextcloud GC resource tenant unavailable"),
-				"Nextcloud GC resource tenant unavailable")
-		}
-		fileService, provider, err := storage.ResolveFileService(ctx, tenant,
-			resource.StorageBackendID, "local", strings.TrimSpace(os.Getenv("LOCAL_STORAGE_BASE_DIR")))
-		if err != nil || fileService == nil || provider != "local" {
-			return nil, apperrors.NewProtocolError(errors.New(
-				"nextcloud GC local backend unavailable"),
-				"Nextcloud GC local backend unavailable")
-		}
-		providerGC, ok := fileService.(interfaces.NextcloudPhysicalGCDeleter)
-		if !ok {
-			return nil, apperrors.NewProtocolError(errors.New(
-				"nextcloud GC secure local provider unavailable"),
-				"Nextcloud GC secure local provider unavailable")
-		}
-		return func(ioCtx context.Context) (bool, error) {
-			return providerGC.DeleteNextcloudObject(ioCtx, resource.PhysicalPath)
-		}, nil
-	})
+	gc.ConfigureLocalDeletePreparation(
+		func(ctx context.Context, resource *types.StoredResource) (func(context.Context) (bool, error), error) {
+			if resource == nil || resource.TenantID == 0 || resource.Provider != "local" ||
+				resource.State != types.ResourceStateDeleting || resource.StorageBackendID == "" {
+				return nil, apperrors.NewProtocolError(errors.New(
+					"nextcloud GC resource is not a scoped local deletion claim"),
+					"Nextcloud GC resource is not a scoped local deletion claim")
+			}
+			backendID, inner, ok := types.ParseStorageBackendPath(resource.PhysicalPath)
+			if !ok || backendID != resource.StorageBackendID ||
+				!strings.HasPrefix(inner, fmt.Sprintf("local://%d/", resource.TenantID)) {
+				return nil, apperrors.NewProtocolError(errors.New(
+					"nextcloud GC local path does not match owner backend"),
+					"Nextcloud GC local path does not match owner backend")
+			}
+			tenant, err := tenants.GetTenantByID(ctx, resource.TenantID)
+			if err != nil || tenant == nil {
+				return nil, apperrors.NewProtocolError(errors.New(
+					"nextcloud GC resource tenant unavailable"),
+					"Nextcloud GC resource tenant unavailable")
+			}
+			fileService, provider, err := storage.ResolveFileService(ctx, tenant,
+				resource.StorageBackendID, "local", strings.TrimSpace(os.Getenv("LOCAL_STORAGE_BASE_DIR")))
+			if err != nil || fileService == nil || provider != "local" {
+				return nil, apperrors.NewProtocolError(errors.New(
+					"nextcloud GC local backend unavailable"),
+					"Nextcloud GC local backend unavailable")
+			}
+			providerGC, ok := fileService.(interfaces.NextcloudPhysicalGCDeleter)
+			if !ok {
+				return nil, apperrors.NewProtocolError(errors.New(
+					"nextcloud GC secure local provider unavailable"),
+					"Nextcloud GC secure local provider unavailable")
+			}
+			return func(ioCtx context.Context) (bool, error) {
+				return providerGC.DeleteNextcloudObject(ioCtx, resource.PhysicalPath)
+			}, nil
+		},
+	)
 	stop := make(chan struct{})
 	run := func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)

@@ -23,7 +23,10 @@ type KnowledgeOutputAuthorizer struct {
 	checker knowledgeOutputLineageChecker
 }
 
-func NewKnowledgeOutputAuthorizer(reader *repository.KnowledgeInputProvenanceStore, guard *access.NextcloudSourceLineageGuard) *KnowledgeOutputAuthorizer {
+func NewKnowledgeOutputAuthorizer(
+	reader *repository.KnowledgeInputProvenanceStore,
+	guard *access.NextcloudSourceLineageGuard,
+) *KnowledgeOutputAuthorizer {
 	return &KnowledgeOutputAuthorizer{reader: reader, checker: guard}
 }
 
@@ -65,11 +68,13 @@ func knowledgeOutputKey(k *types.Knowledge) string {
 }
 
 func knowledgeOutputHasFAQResult(k *types.Knowledge) bool {
-	return k != nil && len(k.LastFAQImportResult) > 0 && !bytes.Equal(bytes.TrimSpace(k.LastFAQImportResult), []byte("null"))
+	return k != nil && len(k.LastFAQImportResult) > 0 &&
+		!bytes.Equal(bytes.TrimSpace(k.LastFAQImportResult), []byte("null"))
 }
 
 func knowledgeOutputBody(k *types.Knowledge) (string, error) {
-	if k == nil || len(k.Tags) > 0 || k.KnowledgeBaseName != "" || k.ErrorMessage != "" || knowledgeOutputHasFAQResult(k) && k.Type != types.KnowledgeTypeFAQ {
+	if k == nil || len(k.Tags) > 0 || k.KnowledgeBaseName != "" || k.ErrorMessage != "" ||
+		knowledgeOutputHasFAQResult(k) && k.Type != types.KnowledgeTypeFAQ {
 		// Joined tag and KB display producers need their own original proof;
 		// the document's origin cannot certify unrelated generated strings.
 		return "", types.ErrSourceLineageUnknown
@@ -162,7 +167,14 @@ func (a *KnowledgeOutputAuthorizer) Begin(ctx context.Context, rows []*types.Kno
 			}
 			continue
 		}
-		actual, err := a.reader.CaptureKnowledgeOutputInputs(ctx, types.KnowledgeBuildInputCaptureRequest{TenantID: row.TenantID, KnowledgeBaseID: row.KnowledgeBaseID, KnowledgeID: row.ID})
+		actual, err := a.reader.CaptureKnowledgeOutputInputs(
+			ctx,
+			types.KnowledgeBuildInputCaptureRequest{
+				TenantID:        row.TenantID,
+				KnowledgeBaseID: row.KnowledgeBaseID,
+				KnowledgeID:     row.ID,
+			},
+		)
 		if err != nil {
 			return nil, err
 		}
@@ -196,7 +208,15 @@ func (a *KnowledgeOutputAuthorizer) Begin(ctx context.Context, rows []*types.Kno
 			if !ok {
 				return nil, types.ErrSourceLineageUnknown
 			}
-			result, err := reader.CaptureFAQImportOutputInputs(ctx, types.FAQImportOutputReadRequest{TenantID: row.TenantID, KnowledgeBaseID: row.KnowledgeBaseID, KnowledgeID: row.ID, Kind: "result"})
+			result, err := reader.CaptureFAQImportOutputInputs(
+				ctx,
+				types.FAQImportOutputReadRequest{
+					TenantID:        row.TenantID,
+					KnowledgeBaseID: row.KnowledgeBaseID,
+					KnowledgeID:     row.ID,
+					Kind:            "result",
+				},
+			)
 			if err != nil {
 				return nil, err
 			}
@@ -216,7 +236,16 @@ func (a *KnowledgeOutputAuthorizer) Begin(ctx context.Context, rows []*types.Kno
 		g.entries[key] = knowledgeOutputEntry{body: supplied, baseBody: base, proof: proof}
 		g.proofs = append(g.proofs, proof)
 		if len(row.Tags) > 0 || row.KnowledgeBaseName != "" {
-			displaySelections = append(displaySelections, types.KnowledgeOutputDisplaySelection{TenantID: row.TenantID, KnowledgeBaseID: row.KnowledgeBaseID, KnowledgeID: row.ID, Tags: len(row.Tags) > 0, KnowledgeBaseName: row.KnowledgeBaseName != ""})
+			displaySelections = append(
+				displaySelections,
+				types.KnowledgeOutputDisplaySelection{
+					TenantID:          row.TenantID,
+					KnowledgeBaseID:   row.KnowledgeBaseID,
+					KnowledgeID:       row.ID,
+					Tags:              len(row.Tags) > 0,
+					KnowledgeBaseName: row.KnowledgeBaseName != "",
+				},
+			)
 		}
 		g.lineage, err = types.UnionSourceLineage(g.lineage, proof.SourceLineage)
 		if err != nil {
@@ -225,7 +254,14 @@ func (a *KnowledgeOutputAuthorizer) Begin(ctx context.Context, rows []*types.Kno
 		target := fmt.Sprintf("%d:%s", row.TenantID, row.KnowledgeBaseID)
 		if !targets[target] {
 			targets[target] = true
-			g.scope.Targets = append(g.scope.Targets, &types.SearchTarget{Type: types.SearchTargetTypeKnowledgeBase, TenantID: row.TenantID, KnowledgeBaseID: row.KnowledgeBaseID})
+			g.scope.Targets = append(
+				g.scope.Targets,
+				&types.SearchTarget{
+					Type:            types.SearchTargetTypeKnowledgeBase,
+					TenantID:        row.TenantID,
+					KnowledgeBaseID: row.KnowledgeBaseID,
+				},
+			)
 		}
 	}
 	if len(displaySelections) > 0 {
@@ -411,7 +447,10 @@ func (g *KnowledgeOutputGuard) checkFAQResults(ctx context.Context) error {
 	return nil
 }
 
-func (a *KnowledgeOutputAuthorizer) FAQResultReadPlan(ctx context.Context, ids []string) (*types.FAQImportOutputReadSetPlan, error) {
+func (a *KnowledgeOutputAuthorizer) FAQResultReadPlan(
+	ctx context.Context,
+	ids []string,
+) (*types.FAQImportOutputReadSetPlan, error) {
 	if a == nil {
 		return nil, access.ErrNextcloudPublicationUnavailable
 	}

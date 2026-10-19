@@ -123,7 +123,17 @@ func (h *FAQHandler) ListEntries(c *gin.Context) {
 	}
 	defer closeRead()
 
-	result, err := h.knowledgeService.ListFAQEntries(ctx, kbID, &page, tagUUIDs, legacyTagSeqID, keyword, searchField, sortOrder, isEnabled)
+	result, err := h.knowledgeService.ListFAQEntries(
+		ctx,
+		kbID,
+		&page,
+		tagUUIDs,
+		legacyTagSeqID,
+		keyword,
+		searchField,
+		sortOrder,
+		isEnabled,
+	)
 	if err != nil {
 		logger.ErrorWithFields(ctx, err, nil)
 		c.Error(err)
@@ -287,7 +297,11 @@ func (h *FAQHandler) UpdateEntry(c *gin.Context) {
 		return
 	}
 
-	ctx, inputErr := repository.WithIndependentFAQInput(ctx, kbID, types.FAQInputOperation{Kind: "update", Entry: &req, EntrySeqID: entrySeqID})
+	ctx, inputErr := repository.WithIndependentFAQInput(
+		ctx,
+		kbID,
+		types.FAQInputOperation{Kind: "update", Entry: &req, EntrySeqID: entrySeqID},
+	)
 	if inputErr != nil {
 		c.Error(knowledgeOutputHTTPError(inputErr))
 		return
@@ -333,7 +347,11 @@ func (h *FAQHandler) UpdateEntryTagBatch(c *gin.Context) {
 		}
 		fields.ByID[id] = types.FAQEntryFieldsUpdate{TagID: &value}
 	}
-	ctx, inputErr := repository.WithIndependentFAQInput(ctx, kbID, types.FAQInputOperation{Kind: "fields", Fields: fields})
+	ctx, inputErr := repository.WithIndependentFAQInput(
+		ctx,
+		kbID,
+		types.FAQInputOperation{Kind: "fields", Fields: fields},
+	)
 	if inputErr != nil {
 		c.Error(knowledgeOutputHTTPError(inputErr))
 		return
@@ -371,7 +389,11 @@ func (h *FAQHandler) UpdateEntryFieldsBatch(c *gin.Context) {
 		c.Error(errors.NewBadRequestError("请求参数不合法").WithDetails(err.Error()))
 		return
 	}
-	ctx, inputErr := repository.WithIndependentFAQInput(ctx, kbID, types.FAQInputOperation{Kind: "fields", Fields: &req})
+	ctx, inputErr := repository.WithIndependentFAQInput(
+		ctx,
+		kbID,
+		types.FAQInputOperation{Kind: "fields", Fields: &req},
+	)
 	if inputErr != nil {
 		c.Error(knowledgeOutputHTTPError(inputErr))
 		return
@@ -410,7 +432,11 @@ func (h *FAQHandler) DeleteEntries(c *gin.Context) {
 		return
 	}
 
-	ctx, inputErr := repository.WithIndependentFAQInput(ctx, kbID, types.FAQInputOperation{Kind: "delete", DeleteIDs: req.IDs})
+	ctx, inputErr := repository.WithIndependentFAQInput(
+		ctx,
+		kbID,
+		types.FAQInputOperation{Kind: "delete", DeleteIDs: req.IDs},
+	)
 	if inputErr != nil {
 		c.Error(knowledgeOutputHTTPError(inputErr))
 		return
@@ -638,7 +664,11 @@ func (h *FAQHandler) UpdateLastImportResultDisplayStatus(c *gin.Context) {
 		return
 	}
 
-	ctx, inputErr := repository.WithIndependentFAQInput(ctx, kbID, types.FAQInputOperation{Kind: "display-status", DisplayStatus: req.DisplayStatus})
+	ctx, inputErr := repository.WithIndependentFAQInput(
+		ctx,
+		kbID,
+		types.FAQInputOperation{Kind: "display-status", DisplayStatus: req.DisplayStatus},
+	)
 	if inputErr != nil {
 		c.Error(knowledgeOutputHTTPError(inputErr))
 		return
@@ -695,7 +725,11 @@ func (h *FAQHandler) AddSimilarQuestions(c *gin.Context) {
 		return
 	}
 
-	ctx, inputErr := repository.WithIndependentFAQInput(ctx, kbID, types.FAQInputOperation{Kind: "similar", EntrySeqID: entrySeqID, Questions: req.SimilarQuestions})
+	ctx, inputErr := repository.WithIndependentFAQInput(
+		ctx,
+		kbID,
+		types.FAQInputOperation{Kind: "similar", EntrySeqID: entrySeqID, Questions: req.SimilarQuestions},
+	)
 	if inputErr != nil {
 		c.Error(knowledgeOutputHTTPError(inputErr))
 		return

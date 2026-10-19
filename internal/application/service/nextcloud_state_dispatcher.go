@@ -22,9 +22,13 @@ type NextcloudStateDispatcher struct {
 	done     chan struct{}
 }
 
-func NewNextcloudStateDispatcher(store *repository.NextcloudProcessingStateStore, enqueuer interfaces.TaskEnqueuer) *NextcloudStateDispatcher {
+func NewNextcloudStateDispatcher(
+	store *repository.NextcloudProcessingStateStore,
+	enqueuer interfaces.TaskEnqueuer,
+) *NextcloudStateDispatcher {
 	return &NextcloudStateDispatcher{store: store, enqueuer: enqueuer}
 }
+
 func (d *NextcloudStateDispatcher) Start() {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -91,6 +95,7 @@ func (d *NextcloudStateDispatcher) Stop() {
 		<-done
 	}
 }
+
 func (d *NextcloudStateDispatcher) deliver(ctx context.Context, now time.Time) {
 	for ctx.Err() == nil {
 		ids, err := d.store.DueDeliveries(ctx, time.Now().UTC())
@@ -129,7 +134,15 @@ func (d *NextcloudStateDispatcher) deliver(ctx context.Context, now time.Time) {
 					err = errors.New("state_head_fenced")
 				}
 				if err == nil {
-					err = nextcloud.PushProcessingState(ctx, delivery.Config, delivery.ConnectionID, delivery.KeyID, delivery.EventID, delivery.SigningKey, delivery.Body)
+					err = nextcloud.PushProcessingState(
+						ctx,
+						delivery.Config,
+						delivery.ConnectionID,
+						delivery.KeyID,
+						delivery.EventID,
+						delivery.SigningKey,
+						delivery.Body,
+					)
 				}
 				fctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 				defer cancel()
@@ -159,9 +172,21 @@ func (d *NextcloudStateDispatcher) retryGraphQueues(ctx context.Context, now tim
 		return
 	}
 	for _, intent := range intents {
-		task := asynq.NewTask(types.TypeChunkExtract, intent.Payload, asynq.TaskID("nc-graph:"+intent.OperationID), asynq.Queue(types.QueueGraph), asynq.MaxRetry(3), asynq.Timeout(30*time.Minute))
+		task := asynq.NewTask(
+			types.TypeChunkExtract,
+			intent.Payload,
+			asynq.TaskID("nc-graph:"+intent.OperationID),
+			asynq.Queue(types.QueueGraph),
+			asynq.MaxRetry(3),
+			asynq.Timeout(30*time.Minute),
+		)
 		_, err := d.enqueuer.Enqueue(task)
-		if err := d.store.FinishGraphEnqueue(ctx, intent.OperationID, err == nil || errors.Is(err, asynq.ErrTaskIDConflict), now); err != nil {
+		if err := d.store.FinishGraphEnqueue(
+			ctx,
+			intent.OperationID,
+			err == nil || errors.Is(err, asynq.ErrTaskIDConflict),
+			now,
+		); err != nil {
 			logger.Warn(ctx, "Nextcloud graph enqueue ACK unavailable")
 		}
 	}

@@ -4,9 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/Tencent/WeKnora/internal/types"
 	"io"
 	"net/http"
+
+	"github.com/Tencent/WeKnora/internal/types"
 )
 
 // A current exact scoped machine observation, never an administrator-supplied boolean.
@@ -44,7 +45,9 @@ func InspectRecoveryControls(ctx context.Context, source *types.DataSourceConfig
 	if err = decoder.Decode(&out); err != nil {
 		return out, err
 	}
-	if out.BindingID != selected[0] || out.InstanceID == "" || out.PublicationEpoch < 0 || len(out.ChainSHA256) != 64 || len(out.InventorySHA256) != 64 || out.ControlsClosed {
+	if out.BindingID != selected[0] || out.InstanceID == "" || out.PublicationEpoch < 0 || len(out.ChainSHA256) != 64 ||
+		len(out.InventorySHA256) != 64 ||
+		out.ControlsClosed {
 		return out, fmt.Errorf("recovery controls remain closed")
 	}
 	return out, nil

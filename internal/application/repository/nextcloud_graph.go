@@ -80,6 +80,7 @@ func NextcloudGraphOperationID(tenant uint64, knowledge string, attempt int, chu
 		Chunk     string
 	}{NextcloudGraphBackend, tenant, knowledge, attempt, chunk})
 }
+
 func nextcloudGraphConfig(kb *types.KnowledgeBase) string {
 	return types.GraphDigest(struct {
 		Index   types.IndexingStrategy
@@ -88,7 +89,13 @@ func nextcloudGraphConfig(kb *types.KnowledgeBase) string {
 	}{kb.IndexingStrategy, kb.ExtractConfig, kb.SummaryModelID})
 }
 
-func (s *NextcloudProcessingStateStore) PlanGraph(ctx context.Context, k *types.Knowledge, attempt int, chunks []*types.Chunk, enabled, required bool) error {
+func (s *NextcloudProcessingStateStore) PlanGraph(
+	ctx context.Context,
+	k *types.Knowledge,
+	attempt int,
+	chunks []*types.Chunk,
+	enabled, required bool,
+) error {
 	if k == nil || k.Channel != types.ConnectorTypeNextcloud {
 		return nil
 	}
@@ -125,13 +132,18 @@ func (s *NextcloudProcessingStateStore) PlanGraph(ctx context.Context, k *types.
 			return ErrNextcloudContentLeaseDenied
 		}
 		var prior []nextcloudGraphTask
-		if err := tx.Where("tenant_id=? AND knowledge_id=? AND attempt=?", k.TenantID, k.ID, attempt).Find(&prior).Error; err != nil {
+		if err := tx.Where("tenant_id=? AND knowledge_id=? AND attempt=?", k.TenantID, k.ID, attempt).
+			Find(&prior).
+			Error; err != nil {
 			return err
 		}
 		ids := map[string]bool{}
 		if enabled {
 			for _, chunk := range chunks {
-				if chunk == nil || chunk.TenantID != k.TenantID || chunk.KnowledgeID != k.ID || chunk.KnowledgeBaseID != k.KnowledgeBaseID || chunk.ID == "" || ids[chunk.ID] {
+				if chunk == nil || chunk.TenantID != k.TenantID || chunk.KnowledgeID != k.ID ||
+					chunk.KnowledgeBaseID != k.KnowledgeBaseID ||
+					chunk.ID == "" ||
+					ids[chunk.ID] {
 					return ErrKnowledgeInputChanged
 				}
 				ids[chunk.ID] = true
@@ -146,7 +158,10 @@ func (s *NextcloudProcessingStateStore) PlanGraph(ctx context.Context, k *types.
 		var plan nextcloudGraphPlan
 		planErr := tx.Where("tenant_id=? AND knowledge_id=? AND attempt=?", k.TenantID, k.ID, attempt).Take(&plan).Error
 		if planErr == nil {
-			if plan.ManifestDigest != manifestDigest || plan.ConfigDigest != nextcloudGraphConfig(&kb) || plan.Expected != len(ids) || plan.Enabled != enabled || plan.Required != required {
+			if plan.ManifestDigest != manifestDigest || plan.ConfigDigest != nextcloudGraphConfig(&kb) ||
+				plan.Expected != len(ids) ||
+				plan.Enabled != enabled ||
+				plan.Required != required {
 				return ErrKnowledgeInputChanged
 			}
 			return nil
@@ -154,7 +169,18 @@ func (s *NextcloudProcessingStateStore) PlanGraph(ctx context.Context, k *types.
 		if !errors.Is(planErr, gorm.ErrRecordNotFound) {
 			return planErr
 		}
-		plan = nextcloudGraphPlan{TenantID: k.TenantID, KnowledgeID: k.ID, Attempt: attempt, KnowledgeBaseID: k.KnowledgeBaseID, Expected: len(ids), Enabled: enabled, Required: required, ConfigDigest: nextcloudGraphConfig(&kb), ManifestDigest: manifestDigest, CreatedAt: time.Now().UTC().Unix()}
+		plan = nextcloudGraphPlan{
+			TenantID:        k.TenantID,
+			KnowledgeID:     k.ID,
+			Attempt:         attempt,
+			KnowledgeBaseID: k.KnowledgeBaseID,
+			Expected:        len(ids),
+			Enabled:         enabled,
+			Required:        required,
+			ConfigDigest:    nextcloudGraphConfig(&kb),
+			ManifestDigest:  manifestDigest,
+			CreatedAt:       time.Now().UTC().Unix(),
+		}
 		if err := tx.Create(&plan).Error; err != nil {
 			return err
 		}
@@ -163,14 +189,28 @@ func (s *NextcloudProcessingStateStore) PlanGraph(ctx context.Context, k *types.
 				return ErrKnowledgeInputChanged
 			}
 			for _, task := range prior {
-				if !ids[task.ChunkID] || task.BuildEpoch != lease.Epoch || task.ConfigDigest != nextcloudGraphConfig(&kb) {
+				if !ids[task.ChunkID] || task.BuildEpoch != lease.Epoch ||
+					task.ConfigDigest != nextcloudGraphConfig(&kb) {
 					return ErrKnowledgeInputChanged
 				}
 			}
 			return nil
 		}
 		for id := range ids {
-			task := nextcloudGraphTask{OperationID: NextcloudGraphOperationID(k.TenantID, k.ID, attempt, id), TenantID: k.TenantID, KnowledgeBaseID: k.KnowledgeBaseID, KnowledgeID: k.ID, Attempt: attempt, ChunkID: id, BuildEpoch: lease.Epoch, ConfigDigest: nextcloudGraphConfig(&kb), ConfigRevision: configRevision, State: "pending", QueueState: "unprepared", CreatedAt: time.Now().UTC().Unix()}
+			task := nextcloudGraphTask{
+				OperationID:     NextcloudGraphOperationID(k.TenantID, k.ID, attempt, id),
+				TenantID:        k.TenantID,
+				KnowledgeBaseID: k.KnowledgeBaseID,
+				KnowledgeID:     k.ID,
+				Attempt:         attempt,
+				ChunkID:         id,
+				BuildEpoch:      lease.Epoch,
+				ConfigDigest:    nextcloudGraphConfig(&kb),
+				ConfigRevision:  configRevision,
+				State:           "pending",
+				QueueState:      "unprepared",
+				CreatedAt:       time.Now().UTC().Unix(),
+			}
 			if err := tx.Create(&task).Error; err != nil {
 				return err
 			}
@@ -178,6 +218,7 @@ func (s *NextcloudProcessingStateStore) PlanGraph(ctx context.Context, k *types.
 		return CaptureNextcloudKnowledgeStateInTx(ctx, tx, k.ID)
 	})
 }
+
 func validateNextcloudGraphTask(ctx context.Context, tx *gorm.DB, task nextcloudGraphTask) error {
 	if !NextcloudBuildLeasePresent(ctx, task.TenantID, task.KnowledgeBaseID, task.KnowledgeID) {
 		return ErrNextcloudContentLeaseDenied
@@ -192,7 +233,14 @@ func validateNextcloudGraphTask(ctx context.Context, tx *gorm.DB, task nextcloud
 	if err != nil || lease.Epoch != task.BuildEpoch {
 		return ErrNextcloudContentLeaseDenied
 	}
-	allowed, err := NextcloudBuildControlsAllowed(ctx, tx, task.TenantID, task.KnowledgeBaseID, scope.DataSourceID, task.KnowledgeID)
+	allowed, err := NextcloudBuildControlsAllowed(
+		ctx,
+		tx,
+		task.TenantID,
+		task.KnowledgeBaseID,
+		scope.DataSourceID,
+		task.KnowledgeID,
+	)
 	if err != nil {
 		return err
 	}
@@ -200,7 +248,11 @@ func validateNextcloudGraphTask(ctx context.Context, tx *gorm.DB, task nextcloud
 		return ErrNextcloudContentLeaseDenied
 	}
 	var attempt int
-	if err := tx.Model(&types.KnowledgeProcessingSpan{}).Where("knowledge_id=?", task.KnowledgeID).Select("COALESCE(MAX(attempt),0)").Scan(&attempt).Error; err != nil {
+	if err := tx.Model(&types.KnowledgeProcessingSpan{}).
+		Where("knowledge_id=?", task.KnowledgeID).
+		Select("COALESCE(MAX(attempt),0)").
+		Scan(&attempt).
+		Error; err != nil {
 		return err
 	}
 	if attempt != task.Attempt {
@@ -222,11 +274,20 @@ func validateNextcloudGraphTask(ctx context.Context, tx *gorm.DB, task nextcloud
 	}
 	return nil
 }
-func (s *NextcloudProcessingStateStore) StartGraph(ctx context.Context, tenant uint64, knowledge string, attempt int, chunk string) (bool, error) {
+
+func (s *NextcloudProcessingStateStore) StartGraph(
+	ctx context.Context,
+	tenant uint64,
+	knowledge string,
+	attempt int,
+	chunk string,
+) (bool, error) {
 	done := false
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var task nextcloudGraphTask
-		if err := tx.Where("operation_id=?", NextcloudGraphOperationID(tenant, knowledge, attempt, chunk)).Take(&task).Error; err != nil {
+		if err := tx.Where("operation_id=?", NextcloudGraphOperationID(tenant, knowledge, attempt, chunk)).
+			Take(&task).
+			Error; err != nil {
 			return err
 		}
 		if err := validateNextcloudGraphTask(ctx, tx, task); err != nil {
@@ -234,7 +295,9 @@ func (s *NextcloudProcessingStateStore) StartGraph(ctx context.Context, tenant u
 		}
 		if task.Persisted && (task.State == "succeeded" || task.State == "succeeded_empty") {
 			var record nextcloudGraphRecord
-			if err := tx.Where("operation_id=? AND backend=? AND generation=?", task.OperationID, NextcloudGraphBackend, task.BuildEpoch).Take(&record).Error; err != nil {
+			if err := tx.Where("operation_id=? AND backend=? AND generation=?", task.OperationID, NextcloudGraphBackend, task.BuildEpoch).
+				Take(&record).
+				Error; err != nil {
 				return err
 			}
 			if recoverySHA([]byte(record.BodyJSON)) != record.BodySHA256 {
@@ -246,17 +309,29 @@ func (s *NextcloudProcessingStateStore) StartGraph(ctx context.Context, tenant u
 		if task.State == "cancelled" || task.State == "skipped" {
 			return ErrNextcloudContentLeaseDenied
 		}
-		if err := tx.Model(&task).Updates(map[string]any{"state": "running", "error_code": "", "completed_at": nil}).Error; err != nil {
+		if err := tx.Model(&task).
+			Updates(map[string]any{"state": "running", "error_code": "", "completed_at": nil}).
+			Error; err != nil {
 			return err
 		}
 		return CaptureNextcloudKnowledgeStateInTx(ctx, tx, knowledge)
 	})
 	return done, err
 }
-func (s *NextcloudProcessingStateStore) FailGraph(ctx context.Context, tenant uint64, knowledge string, attempt int, chunk, code string, terminal bool) error {
+
+func (s *NextcloudProcessingStateStore) FailGraph(
+	ctx context.Context,
+	tenant uint64,
+	knowledge string,
+	attempt int,
+	chunk, code string,
+	terminal bool,
+) error {
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var task nextcloudGraphTask
-		if err := tx.Where("operation_id=?", NextcloudGraphOperationID(tenant, knowledge, attempt, chunk)).Take(&task).Error; err != nil {
+		if err := tx.Where("operation_id=?", NextcloudGraphOperationID(tenant, knowledge, attempt, chunk)).
+			Take(&task).
+			Error; err != nil {
 			return err
 		}
 		if err := validateNextcloudGraphTask(ctx, tx, task); err != nil {
@@ -266,7 +341,12 @@ func (s *NextcloudProcessingStateStore) FailGraph(ctx context.Context, tenant ui
 			return nil
 		}
 		// Never copy model errors, endpoint URLs or stack traces into state.
-		allowed := map[string]bool{"graph_enqueue_failed": true, "graph_input_unverified": true, "graph_extraction_failed": true, "graph_persistence_failed": true}
+		allowed := map[string]bool{
+			"graph_enqueue_failed":     true,
+			"graph_input_unverified":   true,
+			"graph_extraction_failed":  true,
+			"graph_persistence_failed": true,
+		}
 		if !allowed[code] {
 			code = "graph_extraction_failed"
 		}
@@ -277,20 +357,30 @@ func (s *NextcloudProcessingStateStore) FailGraph(ctx context.Context, tenant ui
 			now := time.Now().UTC().Unix()
 			completed = &now
 		}
-		if err := tx.Model(&task).Updates(map[string]any{"state": state, "error_code": code, "completed_at": completed}).Error; err != nil {
+		if err := tx.Model(&task).
+			Updates(map[string]any{"state": state, "error_code": code, "completed_at": completed}).
+			Error; err != nil {
 			return err
 		}
 		return CaptureNextcloudKnowledgeStateInTx(ctx, tx, knowledge)
 	})
 }
-func readNextcloudGraphState(tx *gorm.DB, k *types.Knowledge, attempt int, enabled, required bool) (NextcloudGraphState, error) {
+
+func readNextcloudGraphState(
+	tx *gorm.DB,
+	k *types.Knowledge,
+	attempt int,
+	enabled, required bool,
+) (NextcloudGraphState, error) {
 	out := NextcloudGraphState{Enabled: enabled, Required: required, State: "not_enabled"}
 	if !enabled {
 		return out, nil
 	}
 	out.State = "pending"
 	var tasks []nextcloudGraphTask
-	if err := tx.Where("tenant_id=? AND knowledge_id=? AND attempt=?", k.TenantID, k.ID, attempt).Find(&tasks).Error; err != nil {
+	if err := tx.Where("tenant_id=? AND knowledge_id=? AND attempt=?", k.TenantID, k.ID, attempt).
+		Find(&tasks).
+		Error; err != nil {
 		return out, err
 	}
 	var plan nextcloudGraphPlan
@@ -300,7 +390,8 @@ func readNextcloudGraphState(tx *gorm.DB, k *types.Knowledge, attempt int, enabl
 		if err := tx.Where("id=? AND tenant_id=?", k.KnowledgeBaseID, k.TenantID).Take(&currentKB).Error; err != nil {
 			return out, err
 		}
-		if plan.ConfigDigest != nextcloudGraphConfig(&currentKB) || plan.Enabled != enabled || plan.Required != required {
+		if plan.ConfigDigest != nextcloudGraphConfig(&currentKB) || plan.Enabled != enabled ||
+			plan.Required != required {
 			out.Expected = plan.Expected
 			out.Pending = plan.Expected
 			out.State = "unverified"
@@ -355,7 +446,9 @@ func readNextcloudGraphState(tx *gorm.DB, k *types.Knowledge, attempt int, enabl
 				continue
 			}
 			var record nextcloudGraphRecord
-			recordErr := tx.Where("operation_id=? AND backend=? AND generation=?", task.OperationID, NextcloudGraphBackend, task.BuildEpoch).Take(&record).Error
+			recordErr := tx.Where("operation_id=? AND backend=? AND generation=?", task.OperationID, NextcloudGraphBackend, task.BuildEpoch).
+				Take(&record).
+				Error
 			validRecord := recordErr == nil
 			if validRecord {
 				_, recordErr = decodeScopedGraphRecord(record)
@@ -363,7 +456,18 @@ func readNextcloudGraphState(tx *gorm.DB, k *types.Knowledge, attempt int, enabl
 				if validRecord {
 					graph, _ := decodeScopedGraphRecord(record)
 					store := NewKnowledgeInputProvenanceStore(tx)
-					_, recordErr = store.captureKnowledgeBuildSnapshotInTx(tx, types.KnowledgeBuildInputCaptureRequest{Projection: types.KnowledgeBuildProjectionGraph, TenantID: k.TenantID, KnowledgeBaseID: k.KnowledgeBaseID, KnowledgeID: k.ID, ChunkIDs: graph.SourceReceipt.OriginalInput.ChunkIDs, Expected: graph.SourceReceipt.OriginalInput}, true)
+					_, recordErr = store.captureKnowledgeBuildSnapshotInTx(
+						tx,
+						types.KnowledgeBuildInputCaptureRequest{
+							Projection:      types.KnowledgeBuildProjectionGraph,
+							TenantID:        k.TenantID,
+							KnowledgeBaseID: k.KnowledgeBaseID,
+							KnowledgeID:     k.ID,
+							ChunkIDs:        graph.SourceReceipt.OriginalInput.ChunkIDs,
+							Expected:        graph.SourceReceipt.OriginalInput,
+						},
+						true,
+					)
 					validRecord = recordErr == nil
 				}
 			}
@@ -430,7 +534,12 @@ type ScopedSQLGraphRepository struct {
 func NewScopedSQLGraphRepository(db *gorm.DB, fallback interfaces.RetrieveGraphRepository) *ScopedSQLGraphRepository {
 	return &ScopedSQLGraphRepository{db: db, fallback: fallback}
 }
-func (s *ScopedSQLGraphRepository) AddGraph(ctx context.Context, namespace types.NameSpace, graphs []*types.GraphData) error {
+
+func (s *ScopedSQLGraphRepository) AddGraph(
+	ctx context.Context,
+	namespace types.NameSpace,
+	graphs []*types.GraphData,
+) error {
 	operation, source := types.GraphWriteOperationFromContext(ctx)
 	if !source {
 		for _, graph := range graphs {
@@ -478,7 +587,18 @@ func (s *ScopedSQLGraphRepository) AddGraph(ctx context.Context, namespace types
 		if err := tx.Where("operation_id=?", operation.ID).Take(&task).Error; err != nil {
 			return err
 		}
-		if operation.ID != NextcloudGraphOperationID(task.TenantID, task.KnowledgeID, operation.Attempt, operation.ChunkID) || task.Attempt != operation.Attempt || task.ChunkID != operation.ChunkID || namespace.KnowledgeBase != task.KnowledgeBaseID || namespace.Knowledge != task.KnowledgeID || graph.SourceReceipt.TenantID != task.TenantID || graph.SourceReceipt.BuildGeneration != uint64(task.BuildEpoch) {
+		if operation.ID != NextcloudGraphOperationID(
+			task.TenantID,
+			task.KnowledgeID,
+			operation.Attempt,
+			operation.ChunkID,
+		) ||
+			task.Attempt != operation.Attempt ||
+			task.ChunkID != operation.ChunkID ||
+			namespace.KnowledgeBase != task.KnowledgeBaseID ||
+			namespace.Knowledge != task.KnowledgeID ||
+			graph.SourceReceipt.TenantID != task.TenantID ||
+			graph.SourceReceipt.BuildGeneration != uint64(task.BuildEpoch) {
 			return types.ErrGraphSourceReceiptUnknown
 		}
 		// This takes the same KB/exact locks as retirement and physical GC. A
@@ -486,13 +606,20 @@ func (s *ScopedSQLGraphRepository) AddGraph(ctx context.Context, namespace types
 		if err := validateNextcloudGraphTask(ctx, tx, task); err != nil {
 			return err
 		}
-		if _, err := validateKnowledgeInputWrite(ctx, tx, task.TenantID, task.KnowledgeBaseID, task.KnowledgeID); err != nil {
+		if _, err := validateKnowledgeInputWrite(
+			ctx,
+			tx,
+			task.TenantID,
+			task.KnowledgeBaseID,
+			task.KnowledgeID,
+		); err != nil {
 			return err
 		}
 		var old nextcloudGraphRecord
 		err := tx.Where("operation_id=?", operation.ID).Take(&old).Error
 		if err == nil {
-			if old.BodySHA256 != recoverySHA(raw) || old.Generation != task.BuildEpoch || old.Backend != NextcloudGraphBackend {
+			if old.BodySHA256 != recoverySHA(raw) || old.Generation != task.BuildEpoch ||
+				old.Backend != NextcloudGraphBackend {
 				return types.ErrGraphSourceReceiptUnknown
 			}
 			return nil
@@ -505,18 +632,41 @@ func (s *ScopedSQLGraphRepository) AddGraph(ctx context.Context, namespace types
 		if err != nil {
 			return err
 		}
-		record := nextcloudGraphRecord{OperationID: operation.ID, TenantID: task.TenantID, KnowledgeBaseID: task.KnowledgeBaseID, KnowledgeID: task.KnowledgeID, Backend: NextcloudGraphBackend, BuildLeaseID: lease.ID, Generation: task.BuildEpoch, BodyJSON: string(raw), BodySHA256: recoverySHA(raw), NodeCount: len(graph.Node), EdgeCount: len(graph.Relation), CommittedAt: now}
+		record := nextcloudGraphRecord{
+			OperationID:     operation.ID,
+			TenantID:        task.TenantID,
+			KnowledgeBaseID: task.KnowledgeBaseID,
+			KnowledgeID:     task.KnowledgeID,
+			Backend:         NextcloudGraphBackend,
+			BuildLeaseID:    lease.ID,
+			Generation:      task.BuildEpoch,
+			BodyJSON:        string(raw),
+			BodySHA256:      recoverySHA(raw),
+			NodeCount:       len(graph.Node),
+			EdgeCount:       len(graph.Relation),
+			CommittedAt:     now,
+		}
 		if err := tx.Create(&record).Error; err != nil {
 			return err
 		}
-		if err := RecordNextcloudDerivedArtifactInTx(ctx, tx, task.KnowledgeID, task.KnowledgeBaseID, "scoped_sql_graph", operation.ID, 0); err != nil {
+		if err := RecordNextcloudDerivedArtifactInTx(
+			ctx,
+			tx,
+			task.KnowledgeID,
+			task.KnowledgeBaseID,
+			"scoped_sql_graph",
+			operation.ID,
+			0,
+		); err != nil {
 			return err
 		}
 		state := "succeeded"
 		if len(graph.Node) == 0 && len(graph.Relation) == 0 {
 			state = "succeeded_empty"
 		}
-		if err := tx.Model(&task).Updates(map[string]any{"state": state, "persisted": true, "error_code": "", "completed_at": now}).Error; err != nil {
+		if err := tx.Model(&task).
+			Updates(map[string]any{"state": state, "persisted": true, "error_code": "", "completed_at": now}).
+			Error; err != nil {
 			return err
 		}
 		var v nextcloudSourceVersion
@@ -526,12 +676,15 @@ func (s *ScopedSQLGraphRepository) AddGraph(ctx context.Context, namespace types
 		return captureNextcloudStateInTx(ctx, tx, v.TenantID, v.KnowledgeBaseID, v.DataSourceID, v.ExternalID, true)
 	})
 }
+
 func (s *ScopedSQLGraphRepository) DelGraph(ctx context.Context, namespaces []types.NameSpace) error {
 	// Source graph deletion belongs to the existing exact GC claim protocol.
 	for _, namespace := range namespaces {
 		var count int64
 		if s.db.Migrator().HasTable("nextcloud_graph_records") {
-			query := s.db.WithContext(ctx).Model(&nextcloudGraphRecord{}).Where("knowledge_base_id=?", namespace.KnowledgeBase)
+			query := s.db.WithContext(ctx).
+				Model(&nextcloudGraphRecord{}).
+				Where("knowledge_base_id=?", namespace.KnowledgeBase)
 			if namespace.Knowledge != "" {
 				query = query.Where("knowledge_id=?", namespace.Knowledge)
 			}
@@ -548,7 +701,12 @@ func (s *ScopedSQLGraphRepository) DelGraph(ctx context.Context, namespaces []ty
 	}
 	return s.fallback.DelGraph(ctx, namespaces)
 }
-func (s *ScopedSQLGraphRepository) SearchNode(ctx context.Context, namespace types.NameSpace, names []string) (*types.GraphData, error) {
+
+func (s *ScopedSQLGraphRepository) SearchNode(
+	ctx context.Context,
+	namespace types.NameSpace,
+	names []string,
+) (*types.GraphData, error) {
 	var rows []nextcloudGraphRecord
 	if s.db.Migrator().HasTable("nextcloud_graph_records") {
 		q := s.db.WithContext(ctx).Where("knowledge_base_id=?", namespace.KnowledgeBase)
@@ -580,7 +738,10 @@ func (s *ScopedSQLGraphRepository) SearchNode(ctx context.Context, namespace typ
 		if err := json.Unmarshal([]byte(row.BodyJSON), &body); err != nil {
 			return nil, err
 		}
-		if body.Graph == nil || body.Receipt == nil || len(body.Nodes) != len(body.Graph.Node) || len(body.Edges) != len(body.Graph.Relation) || len(body.Attributes) != len(body.Graph.Node) || len(body.Chunks) != len(body.Graph.Node) {
+		if body.Graph == nil || body.Receipt == nil || len(body.Nodes) != len(body.Graph.Node) ||
+			len(body.Edges) != len(body.Graph.Relation) ||
+			len(body.Attributes) != len(body.Graph.Node) ||
+			len(body.Chunks) != len(body.Graph.Node) {
 			return nil, types.ErrGraphSourceReceiptUnknown
 		}
 		graph := body.Graph
@@ -631,6 +792,7 @@ func (s *ScopedSQLGraphRepository) SearchNode(ctx context.Context, namespace typ
 	}
 	return out, nil
 }
+
 func stringsContains(a, b string) bool {
 	for i := 0; i+len(b) <= len(a); i++ {
 		if a[i:i+len(b)] == b {
@@ -676,15 +838,21 @@ func nextcloudRequiredGraphReady(tx *gorm.DB, k *types.Knowledge) (bool, error) 
 		return true, nil
 	}
 	var attempt int
-	if err := tx.Model(&types.KnowledgeProcessingSpan{}).Where("knowledge_id=?", k.ID).Select("COALESCE(MAX(attempt),0)").Scan(&attempt).Error; err != nil {
+	if err := tx.Model(&types.KnowledgeProcessingSpan{}).
+		Where("knowledge_id=?", k.ID).
+		Select("COALESCE(MAX(attempt),0)").
+		Scan(&attempt).
+		Error; err != nil {
 		return false, err
 	}
 	state, err := readNextcloudGraphState(tx, k, attempt, kb.IsGraphEnabled(), true)
 	return state.Persisted && (state.State == "succeeded" || state.State == "succeeded_empty"), err
 }
 
-var _ interfaces.RetrieveGraphRepository = (*ScopedSQLGraphRepository)(nil)
-var _ types.NextcloudProcessingLedger = (*NextcloudProcessingStateStore)(nil)
+var (
+	_ interfaces.RetrieveGraphRepository = (*ScopedSQLGraphRepository)(nil)
+	_ types.NextcloudProcessingLedger    = (*NextcloudProcessingStateStore)(nil)
+)
 
 func decodeScopedGraphRecord(row nextcloudGraphRecord) (*types.GraphData, error) {
 	if row.Backend != NextcloudGraphBackend || recoverySHA([]byte(row.BodyJSON)) != row.BodySHA256 {
@@ -694,7 +862,12 @@ func decodeScopedGraphRecord(row nextcloudGraphRecord) (*types.GraphData, error)
 	if err := json.Unmarshal([]byte(row.BodyJSON), &body); err != nil {
 		return nil, err
 	}
-	if body.Graph == nil || body.Receipt == nil || len(body.Nodes) != len(body.Graph.Node) || len(body.Edges) != len(body.Graph.Relation) || len(body.Attributes) != len(body.Graph.Node) || len(body.Chunks) != len(body.Graph.Node) || body.Receipt.TenantID != row.TenantID || body.Receipt.BuildGeneration != uint64(row.Generation) {
+	if body.Graph == nil || body.Receipt == nil || len(body.Nodes) != len(body.Graph.Node) ||
+		len(body.Edges) != len(body.Graph.Relation) ||
+		len(body.Attributes) != len(body.Graph.Node) ||
+		len(body.Chunks) != len(body.Graph.Node) ||
+		body.Receipt.TenantID != row.TenantID ||
+		body.Receipt.BuildGeneration != uint64(row.Generation) {
 		return nil, types.ErrGraphSourceReceiptUnknown
 	}
 	graph := body.Graph
@@ -712,16 +885,28 @@ func decodeScopedGraphRecord(row nextcloudGraphRecord) (*types.GraphData, error)
 	if _, err := types.ValidateGraphMaterial(graph); err != nil {
 		return nil, err
 	}
-	if err := types.CheckGraphDataReceipt(types.NameSpace{KnowledgeBase: row.KnowledgeBaseID, Knowledge: row.KnowledgeID}, graph); err != nil {
+	if err := types.CheckGraphDataReceipt(
+		types.NameSpace{KnowledgeBase: row.KnowledgeBaseID, Knowledge: row.KnowledgeID},
+		graph,
+	); err != nil {
 		return nil, err
 	}
 	return graph, nil
 }
 
-func (s *NextcloudProcessingStateStore) RecordGraphPayload(ctx context.Context, tenant uint64, knowledge string, attempt int, chunk string, payload []byte) error {
+func (s *NextcloudProcessingStateStore) RecordGraphPayload(
+	ctx context.Context,
+	tenant uint64,
+	knowledge string,
+	attempt int,
+	chunk string,
+	payload []byte,
+) error {
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var task nextcloudGraphTask
-		if err := tx.Where("operation_id=?", NextcloudGraphOperationID(tenant, knowledge, attempt, chunk)).Take(&task).Error; err != nil {
+		if err := tx.Where("operation_id=?", NextcloudGraphOperationID(tenant, knowledge, attempt, chunk)).
+			Take(&task).
+			Error; err != nil {
 			return err
 		}
 		if err := validateNextcloudGraphTask(ctx, tx, task); err != nil {
@@ -734,18 +919,34 @@ func (s *NextcloudProcessingStateStore) RecordGraphPayload(ctx context.Context, 
 			return nil
 		}
 		var wire types.ExtractChunkPayload
-		if json.Unmarshal(payload, &wire) != nil || wire.TenantID != tenant || wire.KnowledgeID != knowledge || wire.Attempt != attempt || wire.ChunkID != chunk || wire.OriginalInput == nil || wire.OriginalInput.BuildGeneration != uint64(task.BuildEpoch) {
+		if json.Unmarshal(payload, &wire) != nil || wire.TenantID != tenant || wire.KnowledgeID != knowledge ||
+			wire.Attempt != attempt ||
+			wire.ChunkID != chunk ||
+			wire.OriginalInput == nil ||
+			wire.OriginalInput.BuildGeneration != uint64(task.BuildEpoch) {
 			return ErrKnowledgeInputChanged
 		}
 		return tx.Model(&task).Updates(map[string]any{"payload_json": string(payload), "queue_state": "pending"}).Error
 	})
 }
-func (s *NextcloudProcessingStateStore) MarkGraphQueued(ctx context.Context, tenant uint64, knowledge string, attempt int, chunk string, accepted bool) error {
+
+func (s *NextcloudProcessingStateStore) MarkGraphQueued(
+	ctx context.Context,
+	tenant uint64,
+	knowledge string,
+	attempt int,
+	chunk string,
+	accepted bool,
+) error {
 	state := "pending"
 	if accepted {
 		state = "queued"
 	}
-	return s.db.WithContext(ctx).Model(&nextcloudGraphTask{}).Where("operation_id=? AND payload_json<>''", NextcloudGraphOperationID(tenant, knowledge, attempt, chunk)).Update("queue_state", state).Error
+	return s.db.WithContext(ctx).
+		Model(&nextcloudGraphTask{}).
+		Where("operation_id=? AND payload_json<>''", NextcloudGraphOperationID(tenant, knowledge, attempt, chunk)).
+		Update("queue_state", state).
+		Error
 }
 
 type NextcloudGraphQueueIntent struct {
@@ -753,11 +954,15 @@ type NextcloudGraphQueueIntent struct {
 	Payload     []byte
 }
 
-func (s *NextcloudProcessingStateStore) PendingGraphQueueIntents(ctx context.Context, now time.Time) ([]NextcloudGraphQueueIntent, error) {
+func (s *NextcloudProcessingStateStore) PendingGraphQueueIntents(
+	ctx context.Context,
+	now time.Time,
+) ([]NextcloudGraphQueueIntent, error) {
 	var tasks []nextcloudGraphTask
 	// Reject permanently stale queue heads in the bounded selection itself,
 	// so retired or superseded tasks cannot occupy every compensation page.
-	query := s.db.WithContext(ctx).Where("queue_state='pending' AND payload_json<>'' AND queue_next_at<=? AND state IN ('pending','running')", now.Unix()).
+	query := s.db.WithContext(ctx).
+		Where("queue_state='pending' AND payload_json<>'' AND queue_next_at<=? AND state IN ('pending','running')", now.Unix()).
 		Where(`EXISTS(SELECT 1 FROM nextcloud_content_fences f JOIN nextcloud_content_fences kb ON kb.tenant_id=f.tenant_id AND kb.knowledge_base_id=f.knowledge_base_id AND kb.knowledge_id='' JOIN nextcloud_source_versions v ON v.tenant_id=f.tenant_id AND v.knowledge_base_id=f.knowledge_base_id AND v.datasource_id=f.datasource_id AND v.external_id=f.external_id JOIN data_sources d ON d.id=v.datasource_id AND d.tenant_id=v.tenant_id AND d.knowledge_base_id=v.knowledge_base_id WHERE f.tenant_id=nextcloud_graph_tasks.tenant_id AND f.knowledge_base_id=nextcloud_graph_tasks.knowledge_base_id AND f.knowledge_id=nextcloud_graph_tasks.knowledge_id AND f.state='open' AND kb.state='open' AND f.epoch=nextcloud_graph_tasks.build_epoch AND v.candidate_knowledge_id=f.knowledge_id AND v.state IN ('staging','published') AND d.status='active' AND d.deleted_at IS NULL)`).
 		Where(`attempt=(SELECT MAX(attempt) FROM knowledge_processing_spans WHERE knowledge_id=nextcloud_graph_tasks.knowledge_id) AND config_revision=(SELECT revision FROM knowledge_configuration_control_versions WHERE knowledge_base_id=nextcloud_graph_tasks.knowledge_base_id)`)
 	if err := query.Order("created_at,operation_id").Limit(100).Find(&tasks).Error; err != nil {
@@ -767,36 +972,62 @@ func (s *NextcloudProcessingStateStore) PendingGraphQueueIntents(ctx context.Con
 	for _, task := range tasks {
 		err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 			var kb types.KnowledgeBase
-			if err := tx.Where("id=? AND tenant_id=?", task.KnowledgeBaseID, task.TenantID).Take(&kb).Error; err != nil {
+			if err := tx.Where("id=? AND tenant_id=?", task.KnowledgeBaseID, task.TenantID).
+				Take(&kb).
+				Error; err != nil {
 				return err
 			}
-			candidate, ready, err := (&knowledgeRepository{db: tx}).publicationCandidateMode(tx, task.KnowledgeID, false, true)
+			candidate, ready, err := (&knowledgeRepository{db: tx}).publicationCandidateMode(
+				tx,
+				task.KnowledgeID,
+				false,
+				true,
+			)
 			if err != nil {
 				return err
 			}
-			allowed, err := NextcloudBuildControlsAllowed(ctx, tx, task.TenantID, task.KnowledgeBaseID, candidate.version.DataSourceID, task.KnowledgeID)
+			allowed, err := NextcloudBuildControlsAllowed(
+				ctx,
+				tx,
+				task.TenantID,
+				task.KnowledgeBaseID,
+				candidate.version.DataSourceID,
+				task.KnowledgeID,
+			)
 			if err != nil {
 				return err
 			}
 			if !allowed {
 				return ErrNextcloudContentLeaseDenied
 			}
-			if !ready || candidate.version.CandidateKnowledgeID != task.KnowledgeID || nextcloudGraphConfig(&kb) != task.ConfigDigest {
+			if !ready || candidate.version.CandidateKnowledgeID != task.KnowledgeID ||
+				nextcloudGraphConfig(&kb) != task.ConfigDigest {
 				return ErrNextcloudContentLeaseDenied
 			}
 			var fence nextcloudContentFence
-			if err := tx.Where("tenant_id=? AND knowledge_base_id=? AND knowledge_id=? AND state='open' AND epoch=?", task.TenantID, task.KnowledgeBaseID, task.KnowledgeID, task.BuildEpoch).Take(&fence).Error; err != nil {
+			if err := tx.Where("tenant_id=? AND knowledge_base_id=? AND knowledge_id=? AND state='open' AND epoch=?", task.TenantID, task.KnowledgeBaseID, task.KnowledgeID, task.BuildEpoch).
+				Take(&fence).
+				Error; err != nil {
 				return err
 			}
 			return nil
 		})
 		if err == nil {
-			intents = append(intents, NextcloudGraphQueueIntent{OperationID: task.OperationID, Payload: []byte(task.PayloadJSON)})
+			intents = append(
+				intents,
+				NextcloudGraphQueueIntent{OperationID: task.OperationID, Payload: []byte(task.PayloadJSON)},
+			)
 		}
 	}
 	return intents, nil
 }
-func (s *NextcloudProcessingStateStore) FinishGraphEnqueue(ctx context.Context, operation string, accepted bool, now time.Time) error {
+
+func (s *NextcloudProcessingStateStore) FinishGraphEnqueue(
+	ctx context.Context,
+	operation string,
+	accepted bool,
+	now time.Time,
+) error {
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var task nextcloudGraphTask
 		if err := tx.Where("operation_id=? AND queue_state='pending'", operation).Take(&task).Error; err != nil {
@@ -816,12 +1047,18 @@ func (s *NextcloudProcessingStateStore) FinishGraphEnqueue(ctx context.Context, 
 		if delay > 300 {
 			delay = 300
 		}
-		return tx.Model(&task).Updates(map[string]any{"queue_attempts": attempts, "queue_next_at": now.Unix() + delay, "error_code": "graph_enqueue_failed"}).Error
+		return tx.Model(&task).
+			Updates(map[string]any{"queue_attempts": attempts, "queue_next_at": now.Unix() + delay, "error_code": "graph_enqueue_failed"}).
+			Error
 	})
 }
 
 func lockNextcloudGraphKnowledgeBase(tx *gorm.DB, tenant uint64, kb string) error {
-	result := tx.Exec("UPDATE knowledge_bases SET ever_had_nextcloud_source=ever_had_nextcloud_source WHERE tenant_id=? AND id=?", tenant, kb)
+	result := tx.Exec(
+		"UPDATE knowledge_bases SET ever_had_nextcloud_source=ever_had_nextcloud_source WHERE tenant_id=? AND id=?",
+		tenant,
+		kb,
+	)
 	if result.Error != nil {
 		return result.Error
 	}
@@ -834,11 +1071,19 @@ func lockNextcloudGraphKnowledgeBase(tx *gorm.DB, tenant uint64, kb string) erro
 // UnpreparedGraphChunks recovers a crash after the frozen plan/finalizing
 // handoff but before payload persistence. It never reconstructs inputs from a
 // model response: the retrying parser must capture the actual current proof.
-func (s *NextcloudProcessingStateStore) UnpreparedGraphChunks(ctx context.Context, tenant uint64, knowledge string, attempt int) ([]string, error) {
+func (s *NextcloudProcessingStateStore) UnpreparedGraphChunks(
+	ctx context.Context,
+	tenant uint64,
+	knowledge string,
+	attempt int,
+) ([]string, error) {
 	result := []string{}
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var tasks []nextcloudGraphTask
-		if err := tx.Where("tenant_id=? AND knowledge_id=? AND attempt=? AND state='pending' AND queue_state='unprepared' AND payload_json='' AND finalized=FALSE", tenant, knowledge, attempt).Order("chunk_id").Find(&tasks).Error; err != nil {
+		if err := tx.Where("tenant_id=? AND knowledge_id=? AND attempt=? AND state='pending' AND queue_state='unprepared' AND payload_json='' AND finalized=FALSE", tenant, knowledge, attempt).
+			Order("chunk_id").
+			Find(&tasks).
+			Error; err != nil {
 			return err
 		}
 		for _, task := range tasks {

@@ -4,9 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/Tencent/WeKnora/internal/application/readlease"
 	"sort"
 	"strings"
+
+	"github.com/Tencent/WeKnora/internal/application/readlease"
 
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
@@ -15,6 +16,7 @@ import (
 func (t *QueryKnowledgeGraphTool) SetKnowledgeGraphSnapshotReader(reader interfaces.KnowledgeGraphSnapshotReader) {
 	t.graphReader = reader
 }
+
 func (r *ToolRegistry) SetKnowledgeGraphSnapshotReader(reader interfaces.KnowledgeGraphSnapshotReader) {
 	for _, tool := range r.tools {
 		if adapter, ok := tool.(interface {
@@ -27,7 +29,10 @@ func (r *ToolRegistry) SetKnowledgeGraphSnapshotReader(reader interfaces.Knowled
 
 // This adapter returns actual graph nodes and edges. ExtractConfig examples
 // are model inputs of the writer; they are never displayed as retrieved graph.
-func (t *QueryKnowledgeGraphTool) ExecuteSourceLineage(ctx context.Context, args json.RawMessage) (out *types.ToolResult, err error) {
+func (t *QueryKnowledgeGraphTool) ExecuteSourceLineage(
+	ctx context.Context,
+	args json.RawMessage,
+) (out *types.ToolResult, err error) {
 	turn := types.RAGSourceLineageFromContext(ctx)
 	defer func() {
 		if err != nil && turn != nil {
@@ -63,11 +68,18 @@ func (t *QueryKnowledgeGraphTool) ExecuteSourceLineage(ctx context.Context, args
 	edges := map[string]*types.GraphRelation{}
 	results := map[string]*types.SearchResult{}
 	for _, id := range input.KnowledgeBaseIDs {
-		snapshot, err := t.graphReader.ReadKnowledgeGraphSnapshot(ctx, t.searchTargets, types.NameSpace{KnowledgeBase: id}, []string{input.Query})
+		snapshot, err := t.graphReader.ReadKnowledgeGraphSnapshot(
+			ctx,
+			t.searchTargets,
+			types.NameSpace{KnowledgeBase: id},
+			[]string{input.Query},
+		)
 		if err != nil {
 			return nil, err
 		}
-		if snapshot == nil || snapshot.Graph == nil || snapshot.SourceLineage.RequireComplete() != nil || snapshot.Close == nil || snapshot.Recheck == nil {
+		if snapshot == nil || snapshot.Graph == nil || snapshot.SourceLineage.RequireComplete() != nil ||
+			snapshot.Close == nil ||
+			snapshot.Recheck == nil {
 			return nil, ErrToolSourceLineageUnavailable
 		}
 		defer snapshot.Close()
@@ -95,7 +107,13 @@ func (t *QueryKnowledgeGraphTool) ExecuteSourceLineage(ctx context.Context, args
 		}
 		// The raw contributor proofs are checked before display-name collapse.
 		for _, node := range snapshot.Graph.Node {
-			allowed, err := searchTargetsAllowKnowledgeID(ctx, t.searchTargets, node.SourceReceipt.KnowledgeID, node.SourceReceipt.KnowledgeBaseID, t.scopeKnowledgeService)
+			allowed, err := searchTargetsAllowKnowledgeID(
+				ctx,
+				t.searchTargets,
+				node.SourceReceipt.KnowledgeID,
+				node.SourceReceipt.KnowledgeBaseID,
+				t.scopeKnowledgeService,
+			)
 			if err != nil || !allowed {
 				return nil, ErrToolSourceLineageUnavailable
 			}
@@ -129,7 +147,7 @@ func (t *QueryKnowledgeGraphTool) ExecuteSourceLineage(ctx context.Context, args
 	graphNodes := []map[string]any{}
 	for _, name := range names {
 		attributes := uniqueStrings(nodes[name])
-		output.WriteString(fmt.Sprintf("Entity: %s\n", name))
+		_, _ = fmt.Fprintf(&output, "Entity: %s\n", name)
 		for _, attribute := range attributes {
 			output.WriteString("  " + attribute + "\n")
 		}
@@ -143,7 +161,7 @@ func (t *QueryKnowledgeGraphTool) ExecuteSourceLineage(ctx context.Context, args
 	graphEdges := []map[string]any{}
 	for _, key := range edgeKeys {
 		edge := edges[key]
-		output.WriteString(fmt.Sprintf("%s --[%s]--> %s\n", edge.Node1, edge.Type, edge.Node2))
+		_, _ = fmt.Fprintf(&output, "%s --[%s]--> %s\n", edge.Node1, edge.Type, edge.Node2)
 		graphEdges = append(graphEdges, map[string]any{"source": edge.Node1, "target": edge.Node2, "type": edge.Type})
 	}
 	ids := []string{}
@@ -154,7 +172,7 @@ func (t *QueryKnowledgeGraphTool) ExecuteSourceLineage(ctx context.Context, args
 	chunks := []*types.SearchResult{}
 	for _, id := range ids {
 		chunks = append(chunks, results[id])
-		output.WriteString(fmt.Sprintf("\nSource: %s\n%s\n", results[id].KnowledgeTitle, results[id].Content))
+		_, _ = fmt.Fprintf(&output, "\nSource: %s\n%s\n", results[id].KnowledgeTitle, results[id].Content)
 	}
 	if len(names) == 0 && len(edgeKeys) == 0 {
 		output.WriteString("No relevant graph information found.\n")
@@ -175,13 +193,45 @@ func (t *QueryKnowledgeGraphTool) ExecuteSourceLineage(ctx context.Context, args
 	}
 	formatted := []map[string]any{}
 	for i, result := range chunks {
-		formatted = append(formatted, map[string]any{"result_index": i + 1, "chunk_id": result.ID, "chunk_index": result.ChunkIndex, "chunk_type": result.ChunkType, "knowledge_id": result.KnowledgeID, "knowledge_base_id": result.KnowledgeBaseID, "knowledge_title": result.KnowledgeTitle, "content": result.Content, "match_type": types.MatchTypeGraph, "score": result.Score})
+		formatted = append(
+			formatted,
+			map[string]any{
+				"result_index":      i + 1,
+				"chunk_id":          result.ID,
+				"chunk_index":       result.ChunkIndex,
+				"chunk_type":        result.ChunkType,
+				"knowledge_id":      result.KnowledgeID,
+				"knowledge_base_id": result.KnowledgeBaseID,
+				"knowledge_title":   result.KnowledgeTitle,
+				"content":           result.Content,
+				"match_type":        types.MatchTypeGraph,
+				"score":             result.Score,
+			},
+		)
 	}
 	graphData := map[string]any{"nodes": graphNodes, "edges": graphEdges}
-	return &types.ToolResult{Success: true, Output: output.String(), Data: map[string]any{"knowledge_base_ids": input.KnowledgeBaseIDs, "query": input.Query, "graph": graphData, "graph_data": graphData, "results": formatted, "count": len(formatted), "display_type": "graph_query_results"}, SourceLineage: lineage}, nil
+	return &types.ToolResult{
+		Success: true,
+		Output:  output.String(),
+		Data: map[string]any{
+			"knowledge_base_ids": input.KnowledgeBaseIDs,
+			"query":              input.Query,
+			"graph":              graphData,
+			"graph_data":         graphData,
+			"results":            formatted,
+			"count":              len(formatted),
+			"display_type":       "graph_query_results",
+		},
+		SourceLineage: lineage,
+	}, nil
 }
 
-func (t *QueryKnowledgeGraphTool) finishLineageGraphRead(ctx context.Context, targets types.SearchTargets, guard *readlease.NextcloudReadGuard, results []*types.SearchResult) error {
+func (t *QueryKnowledgeGraphTool) finishLineageGraphRead(
+	ctx context.Context,
+	targets types.SearchTargets,
+	guard *readlease.NextcloudReadGuard,
+	results []*types.SearchResult,
+) error {
 	documents := []*types.Knowledge{}
 	seen := map[string]bool{}
 	for _, result := range results {
@@ -193,7 +243,13 @@ func (t *QueryKnowledgeGraphTool) finishLineageGraphRead(ctx context.Context, ta
 		}
 		seen[result.KnowledgeID] = true
 		k, err := t.scopeKnowledgeService.GetKnowledgeByIDOnly(ctx, result.KnowledgeID)
-		if err != nil || k == nil || k.ID != result.KnowledgeID || k.TenantID != targets.GetTenantIDForKB(result.KnowledgeBaseID) || k.KnowledgeBaseID != result.KnowledgeBaseID || k.Title != result.KnowledgeTitle || k.FileName != result.KnowledgeFilename || k.Source != result.KnowledgeSource || k.Channel != result.KnowledgeChannel {
+		if err != nil || k == nil || k.ID != result.KnowledgeID ||
+			k.TenantID != targets.GetTenantIDForKB(result.KnowledgeBaseID) ||
+			k.KnowledgeBaseID != result.KnowledgeBaseID ||
+			k.Title != result.KnowledgeTitle ||
+			k.FileName != result.KnowledgeFilename ||
+			k.Source != result.KnowledgeSource ||
+			k.Channel != result.KnowledgeChannel {
 			return ErrToolSourceLineageUnavailable
 		}
 		allowed, err := searchTargetsAllowKnowledgeID(ctx, targets, k.ID, k.KnowledgeBaseID, t.scopeKnowledgeService)

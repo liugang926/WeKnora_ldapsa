@@ -623,7 +623,11 @@ func resolveAPIPrincipal(ctx context.Context, tenant *types.Tenant, header http.
 			ID:   strconv.FormatUint(tenantID, 10) + ":" + externalUserID,
 		}, nil
 	case types.APIPrincipalModeSignedToken:
-		externalUserID, err := verifyExternalUserJWT(header.Get(defaultExternalUserTokenHeader), tenantID, cfg.HMACSecret)
+		externalUserID, err := verifyExternalUserJWT(
+			header.Get(defaultExternalUserTokenHeader),
+			tenantID,
+			cfg.HMACSecret,
+		)
 		if err != nil || externalUserID == "" {
 			logger.Warnf(ctx, "invalid external user token for tenant=%d: %v", tenantID, err)
 			return types.Principal{}, fmt.Errorf("%w: %w", errInvalidExternalUserToken, err)

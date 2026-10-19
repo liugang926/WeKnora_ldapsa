@@ -10,5 +10,12 @@ import (
 // owned-session controls before native candidate retrieval or parent bodies.
 type HistoryKnowledgeCandidateControlReader interface {
 	OwnedHistoryKnowledgeIDs(context.Context, uint64, string, string, []string) ([]string, error)
-	PeekOwnedHistoryKnowledgeParentPlans(context.Context, uint64, string, string, []string, []string) ([]*types.HistoryKnowledgeParentPlan, error)
+	PeekOwnedHistoryKnowledgeParentPlans(
+		context.Context,
+		uint64,
+		string,
+		string,
+		[]string,
+		[]string,
+	) ([]*types.HistoryKnowledgeParentPlan, error)
 }

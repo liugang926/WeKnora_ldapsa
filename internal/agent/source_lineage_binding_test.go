@@ -23,7 +23,10 @@ func (s *lineageMetadataSource) DiscoverSkills() ([]*skills.SkillMetadata, error
 
 func TestAgentLineageSkillMetadataCannotBorrowSystemReceiptAtActualSend(t *testing.T) {
 	source := agentLineageIdentity("1", "original", 7)
-	for _, kind := range []string{"system only positive", "unknown skill with empty system receipt", "skill receipt positive", "metadata changed after receipt"} {
+	for _, kind := range []string{
+		"system only positive", "unknown skill with empty system receipt",
+		"skill receipt positive", "metadata changed after receipt",
+	} {
 		t.Run(kind, func(t *testing.T) {
 			model := &mockChat{responses: []mockResponse{lineageAnswer("hello")}}
 			e, _ := lineageEngine(t, model, nil, grantChecker(map[types.SourceIdentity]bool{source: true}))
@@ -31,10 +34,14 @@ func TestAgentLineageSkillMetadataCannotBorrowSystemReceiptAtActualSend(t *testi
 			e.SetSystemPromptSourceLineage(agentComplete(t))
 			if kind != "system only positive" {
 				fixtureTool := newAccountedSourceTool()
-				fixtureTool.BaseTool = agenttools.NewBaseTool("read_file", "literal fixture metadata loader", json.RawMessage(`{"type":"object"}`))
+				fixtureTool.BaseTool = agenttools.NewBaseTool(
+					"read_file", "literal fixture metadata loader", json.RawMessage(`{"type":"object"}`))
 				e.toolRegistry.RegisterTool(fixtureTool)
-				metadata := &skills.SkillMetadata{Name: "copied-skill", Description: "source-derived confidential skill metadata"}
-				manager := skills.NewManager(&skills.ManagerConfig{Enabled: true}, nil).WithTenantSource(&lineageMetadataSource{metadata: metadata})
+				metadata := &skills.SkillMetadata{
+					Name: "copied-skill", Description: "source-derived confidential skill metadata",
+				}
+				manager := skills.NewManager(&skills.ManagerConfig{Enabled: true}, nil).
+					WithTenantSource(&lineageMetadataSource{metadata: metadata})
 				require.NoError(t, manager.Initialize(context.Background()))
 				e.SetSkillsManager(manager)
 				if kind == "skill receipt positive" || kind == "metadata changed after receipt" {
@@ -87,7 +94,9 @@ func TestAgentLineageActualWireDefinitionMutationClosesBeforeModel(t *testing.T)
 				t.Cleanup(func() { copy(tool.Parameters(), original) })
 				tools[0].Function.Parameters[0] = ' '
 			}
-			_, err := e.streamLLMToEventBus(context.Background(), []chat.Message{{Role: "user", Content: "raw human", SourceLineage: agentComplete(t)}}, &chat.ChatOptions{Tools: tools}, nil)
+			_, err := e.streamLLMToEventBus(context.Background(), []chat.Message{
+				{Role: "user", Content: "raw human", SourceLineage: agentComplete(t)},
+			}, &chat.ChatOptions{Tools: tools}, nil)
 			if kind == "literal positive" {
 				require.NoError(t, err)
 				require.Equal(t, 1, model.callCount)

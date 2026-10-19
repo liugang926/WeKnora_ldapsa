@@ -2,6 +2,7 @@ package chatpipeline
 
 import (
 	"context"
+
 	"github.com/Tencent/WeKnora/internal/models/api"
 
 	"github.com/Tencent/WeKnora/internal/types"

@@ -15,7 +15,10 @@ func (f explicitCurrentReadActorFake) RefreshCurrentReadActor(ctx context.Contex
 }
 
 func TestSourceLineageCurrentActorCapabilityMandatoryAndOriginalSelectorBound(t *testing.T) {
-	ctx := types.WithCaller(context.Background(), types.Caller{TenantID: 7, UserID: "actual-selector", Role: types.TenantRoleViewer})
+	ctx := types.WithCaller(
+		context.Background(),
+		types.Caller{TenantID: 7, UserID: "actual-selector", Role: types.TenantRoleViewer},
+	)
 	ctx = types.WithPrincipal(ctx, types.Principal{Type: types.PrincipalWebUser, ID: "actual-selector"})
 	ctx = types.WithExecutionTenant(ctx, 9)
 	empty, _ := types.NewCompleteSourceLineage()
@@ -26,9 +29,15 @@ func TestSourceLineageCurrentActorCapabilityMandatoryAndOriginalSelectorBound(t 
 			fake := explicitCurrentReadActorFake(func(current context.Context) (context.Context, error) {
 				switch change {
 				case "caller-tenant":
-					return types.WithCaller(current, types.Caller{TenantID: 9, UserID: "actual-selector", Role: types.TenantRoleOwner}), nil
+					return types.WithCaller(
+						current,
+						types.Caller{TenantID: 9, UserID: "actual-selector", Role: types.TenantRoleOwner},
+					), nil
 				case "principal":
-					return types.WithPrincipal(current, types.Principal{Type: types.PrincipalWebUser, ID: "resource-owner"}), nil
+					return types.WithPrincipal(
+						current,
+						types.Principal{Type: types.PrincipalWebUser, ID: "resource-owner"},
+					), nil
 				default:
 					return types.WithExecutionTenant(current, 7), nil
 				}

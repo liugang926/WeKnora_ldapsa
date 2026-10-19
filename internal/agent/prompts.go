@@ -95,6 +95,8 @@ type KnowledgeBaseInfo struct {
 	Type          string // Knowledge base type: "document" or "faq"
 	Description   string
 	DocCount      int
+	// OmitDocumentMetadata suppresses unconsumed collection statistics and previews.
+	OmitDocumentMetadata bool
 	// Capabilities lists the retrieval surfaces this KB exposes. Any subset of
 	// {"wiki", "chunks"}. "chunks" is present when the KB has vector and/or
 	// keyword (BM25) indexing enabled. This is the *deterministic* source of
@@ -149,14 +151,20 @@ func formatKnowledgeBaseList(kbInfos []*KnowledgeBaseInfo) string {
 		if kbType == "" {
 			kbType = "document"
 		}
-		fmt.Fprintf(&b, "<knowledge_base id=\"%s\" name=\"%s\" type=\"%s\" doc_count=\"%d\" capabilities=\"%s\">\n",
-			escapeXMLAttr(kb.ID), escapeXMLAttr(formatDocSummary(kb.Name, 160)), escapeXMLAttr(kbType), kb.DocCount,
-			escapeXMLAttr(strings.Join(kb.Capabilities, ",")))
+		if kb.OmitDocumentMetadata {
+			fmt.Fprintf(&b, "<knowledge_base id=\"%s\" name=\"%s\" type=\"%s\" capabilities=\"%s\">\n",
+				escapeXMLAttr(kb.ID), escapeXMLAttr(formatDocSummary(kb.Name, 160)), escapeXMLAttr(kbType),
+				escapeXMLAttr(strings.Join(kb.Capabilities, ",")))
+		} else {
+			fmt.Fprintf(&b, "<knowledge_base id=\"%s\" name=\"%s\" type=\"%s\" doc_count=\"%d\" capabilities=\"%s\">\n",
+				escapeXMLAttr(kb.ID), escapeXMLAttr(formatDocSummary(kb.Name, 160)), escapeXMLAttr(kbType), kb.DocCount,
+				escapeXMLAttr(strings.Join(kb.Capabilities, ",")))
+		}
 		if kb.Description != "" {
 			fmt.Fprintf(&b, "<description>%s</description>\n", escapeXMLAttr(formatDocSummary(kb.Description, 240)))
 		}
 		writeKnowledgeBaseProfile(&b, kb.Profile)
-		if len(kb.RecentDocs) > 0 {
+		if !kb.OmitDocumentMetadata && len(kb.RecentDocs) > 0 {
 			b.WriteString("<recent_documents>\n")
 			for j, doc := range kb.RecentDocs {
 				if j >= 2 {

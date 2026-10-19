@@ -117,7 +117,20 @@ func validateProviderArtifactValue(value reflect.Value, depth int) error {
 			}
 		}
 		return nil
-	case reflect.Bool, reflect.String, reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64, reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Float32, reflect.Float64:
+	case reflect.Bool,
+		reflect.String,
+		reflect.Int,
+		reflect.Int8,
+		reflect.Int16,
+		reflect.Int32,
+		reflect.Int64,
+		reflect.Uint,
+		reflect.Uint8,
+		reflect.Uint16,
+		reflect.Uint32,
+		reflect.Uint64,
+		reflect.Float32,
+		reflect.Float64:
 		return nil
 	default:
 		return fmt.Errorf("%w: unsupported provider artifact value", types.ErrSourceLineageUnknown)

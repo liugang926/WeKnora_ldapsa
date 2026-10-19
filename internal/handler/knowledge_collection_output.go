@@ -12,7 +12,10 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func ConfigureKnowledgeHandlerCollectionOutput(h *KnowledgeHandler, authorizer *service.KnowledgeCollectionOutputAuthorizer) {
+func ConfigureKnowledgeHandlerCollectionOutput(
+	h *KnowledgeHandler,
+	authorizer *service.KnowledgeCollectionOutputAuthorizer,
+) {
 	if h != nil {
 		h.collectionOutputAuthorizer = authorizer
 	}
@@ -27,7 +30,10 @@ func (h *KnowledgeHandler) requireKnowledgeCollectionOutput(c *gin.Context) bool
 }
 
 type knowledgeCollectionScopeResolver interface {
-	ResolveKnowledgeCollectionScopes(context.Context, []types.KnowledgeSearchScope) ([]types.KnowledgeSearchScope, error)
+	ResolveKnowledgeCollectionScopes(
+		context.Context,
+		[]types.KnowledgeSearchScope,
+	) ([]types.KnowledgeSearchScope, error)
 }
 
 // This writer guards ordinary, source-empty and Nextcloud collections alike.
@@ -39,18 +45,19 @@ type knowledgeCollectionAuthorizationWriter struct {
 }
 
 func (w *knowledgeCollectionAuthorizationWriter) deny(err error) {
-	if w.ResponseWriter.Written() {
+	if w.Written() {
 		return
 	}
 	status := http.StatusForbidden
 	if app, ok := errors.IsAppError(err); ok {
 		status = app.HTTPCode
 	}
-	w.ResponseWriter.Header().Del("Content-Type")
-	w.ResponseWriter.Header().Del("Content-Length")
+	w.Header().Del("Content-Type")
+	w.Header().Del("Content-Length")
 	w.ResponseWriter.WriteHeader(status)
 	w.ResponseWriter.WriteHeaderNow()
 }
+
 func (w *knowledgeCollectionAuthorizationWriter) Write(body []byte) (int, error) {
 	if err := w.check(); err != nil {
 		w.deny(err)
@@ -58,6 +65,7 @@ func (w *knowledgeCollectionAuthorizationWriter) Write(body []byte) (int, error)
 	}
 	return w.ResponseWriter.Write(body)
 }
+
 func (w *knowledgeCollectionAuthorizationWriter) WriteString(body string) (int, error) {
 	if err := w.check(); err != nil {
 		w.deny(err)
@@ -65,6 +73,7 @@ func (w *knowledgeCollectionAuthorizationWriter) WriteString(body string) (int, 
 	}
 	return w.ResponseWriter.WriteString(body)
 }
+
 func (w *knowledgeCollectionAuthorizationWriter) WriteHeaderNow() {
 	if err := w.check(); err != nil {
 		w.deny(err)
@@ -73,7 +82,13 @@ func (w *knowledgeCollectionAuthorizationWriter) WriteHeaderNow() {
 	w.ResponseWriter.WriteHeaderNow()
 }
 
-func (h *KnowledgeHandler) respondKnowledgeCollection(c *gin.Context, ctx context.Context, scopes []types.KnowledgeSearchScope, request types.KnowledgeCollectionSelectionRequest, scope access.LineageReadScope) {
+func (h *KnowledgeHandler) respondKnowledgeCollection(
+	c *gin.Context,
+	ctx context.Context,
+	scopes []types.KnowledgeSearchScope,
+	request types.KnowledgeCollectionSelectionRequest,
+	scope access.LineageReadScope,
+) {
 	var fences []*nextcloudHTTPReadLeases
 	if h.contentLeases == nil {
 		_ = c.Error(errors.NewServiceUnavailableError("Collection content lease store unavailable"))
@@ -132,15 +147,38 @@ func (h *KnowledgeHandler) respondKnowledgeCollection(c *gin.Context, ctx contex
 	defer func() { c.Writer = prior }()
 	switch request.Mode {
 	case "list":
-		c.JSON(http.StatusOK, gin.H{"success": true, "data": selection.Knowledge, "total": selection.Total, "page": selection.Page, "page_size": selection.PageSize})
+		c.JSON(
+			http.StatusOK,
+			gin.H{
+				"success":   true,
+				"data":      selection.Knowledge,
+				"total":     selection.Total,
+				"page":      selection.Page,
+				"page_size": selection.PageSize,
+			},
+		)
 	case "search":
-		c.JSON(http.StatusOK, gin.H{"success": true, "data": selection.Knowledge, "has_more": selection.HasMore, "total": selection.Total})
+		c.JSON(
+			http.StatusOK,
+			gin.H{
+				"success":  true,
+				"data":     selection.Knowledge,
+				"has_more": selection.HasMore,
+				"total":    selection.Total,
+			},
+		)
 	case "folders":
 		c.JSON(http.StatusOK, gin.H{"success": true, "data": selection.Folders})
 	}
 }
 
-func (h *KnowledgeHandler) searchKnowledgeCollection(c *gin.Context, ctx context.Context, keyword string, offset, limit int, fileTypes []string) {
+func (h *KnowledgeHandler) searchKnowledgeCollection(
+	c *gin.Context,
+	ctx context.Context,
+	keyword string,
+	offset, limit int,
+	fileTypes []string,
+) {
 	resolver, ok := h.kgService.(knowledgeCollectionScopeResolver)
 	if !ok {
 		_ = c.Error(errors.NewServiceUnavailableError("Cannot resolve original knowledge collection scope"))
@@ -192,5 +230,17 @@ func (h *KnowledgeHandler) searchKnowledgeCollection(c *gin.Context, ctx context
 		_ = c.Error(err)
 		return
 	}
-	h.respondKnowledgeCollection(c, ctx, scopes, types.KnowledgeCollectionSelectionRequest{Mode: "search", Keyword: keyword, Offset: offset, Limit: limit, FileTypes: fileTypes}, readScope)
+	h.respondKnowledgeCollection(
+		c,
+		ctx,
+		scopes,
+		types.KnowledgeCollectionSelectionRequest{
+			Mode:      "search",
+			Keyword:   keyword,
+			Offset:    offset,
+			Limit:     limit,
+			FileTypes: fileTypes,
+		},
+		readScope,
+	)
 }

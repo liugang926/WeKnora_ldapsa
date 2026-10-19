@@ -281,7 +281,9 @@ func (e *AgentEngine) failTruncatedToolCalls(
 			Name:             tc.Function.Name,
 			Args:             map[string]any{"_raw": tc.Function.Arguments},
 			ProviderMetadata: tc.ProviderMetadata,
-			Result:           &types.ToolResult{SourceLineage: independentAgentInput(), Success: false, Error: truncatedArgumentsError},
+			Result: &types.ToolResult{
+				SourceLineage: independentAgentInput(), Success: false, Error: truncatedArgumentsError,
+			},
 		}
 		step.ToolCalls = append(step.ToolCalls, toolCall)
 		e.emitToolOutcome(ctx, toolCall, iteration, sessionID)
@@ -436,7 +438,9 @@ func (e *AgentEngine) runToolCall(
 				Name:             tc.Function.Name,
 				Args:             map[string]any{"_raw": argsStr},
 				ProviderMetadata: tc.ProviderMetadata,
-				Result:           &types.ToolResult{SourceLineage: independentAgentInput(), Success: false, Error: truncatedArgumentsError},
+				Result: &types.ToolResult{
+					SourceLineage: independentAgentInput(), Success: false, Error: truncatedArgumentsError,
+				},
 			}
 		}
 		logger.Warnf(ctx, "%s Repaired malformed JSON arguments", toolTag)
@@ -579,8 +583,14 @@ func (e *AgentEngine) runToolCall(
 		// A refused/unaccounted result cannot become a source-free diagnostic.
 		if result == nil || result.SourceLineage.RequireComplete() != nil {
 			e.rememberLineageFailure(err)
-			return types.ToolCall{ID: tc.ID, Name: tc.Function.Name, Args: args,
-				Result: &types.ToolResult{Success: false, Error: ErrAgentSourceLineageDenied.Error(), SourceLineage: types.UnknownSourceLineage()}}
+			return types.ToolCall{
+				ID: tc.ID, Name: tc.Function.Name, Args: args,
+				Result: &types.ToolResult{
+					Success:       false,
+					Error:         ErrAgentSourceLineageDenied.Error(),
+					SourceLineage: types.UnknownSourceLineage(),
+				},
+			}
 		}
 		logger.Errorf(ctx, "%s Failed in %dms: %v", toolTag, duration, err)
 		toolCall.Result = &types.ToolResult{

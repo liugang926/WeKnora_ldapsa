@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+
 	"github.com/Tencent/WeKnora/internal/models/api"
 
 	"github.com/Tencent/WeKnora/internal/event"
@@ -155,8 +156,15 @@ func (p *PluginChatCompletionStream) OnEvent(ctx context.Context,
 			// A pure code-origin failure control contains no provider/body/ref
 			// data and never certifies the incomplete assistant. Its private bus
 			// and exact session bind it to this owned producer instance.
-			_ = eventBus.Emit(ctx, types.Event{Type: types.EventType(event.EventError), SessionID: chatManage.SessionID,
-				Data: event.ErrorData{Stage: "source_output", Error: "Source output could not complete", SessionID: chatManage.SessionID}})
+			_ = eventBus.Emit(ctx, types.Event{
+				Type:      types.EventType(event.EventError),
+				SessionID: chatManage.SessionID,
+				Data: event.ErrorData{
+					Stage:     "source_output",
+					Error:     "Source output could not complete",
+					SessionID: chatManage.SessionID,
+				},
+			})
 			cancelLineage()
 		}
 		answerDecoder := modelContext.StreamDecoder()
@@ -325,7 +333,6 @@ func (p *PluginChatCompletionStream) OnEvent(ctx context.Context,
 						return
 					}
 					if response.Done {
-						answerCompleted = true
 						// The successful producer terminal is Done, not a later
 						// provider EOF. Stop this owned child stream and release its
 						// source/body pins even if the provider keeps the channel open.

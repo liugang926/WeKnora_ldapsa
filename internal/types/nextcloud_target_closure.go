@@ -1,5 +1,6 @@
 package types
 
+// NextcloudTargetObservation reports authenticated server state using exact decimal strings.
 // Target observations are returned only by the existing authenticated server
 // operation status. Decimal strings preserve exact integers in PHP/JSON.
 type NextcloudTargetObservation struct {
@@ -17,6 +18,7 @@ type NextcloudTargetObservation struct {
 	ClosedAt          string `json:"closed_at"`
 }
 
+// NextcloudTenantDeletionObservation anchors a tenant deletion independently of prior target closure.
 // A tenant deletion is independent of any prior target closure. The anchor
 // operation supplies the authenticated observer scope; it does not mutate the
 // old target receipt or claim that a migrated root belongs to the deleted owner.

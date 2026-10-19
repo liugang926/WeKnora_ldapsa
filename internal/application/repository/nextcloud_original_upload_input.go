@@ -25,16 +25,19 @@ type nextcloudOriginalUploadInput struct {
 
 func (nextcloudOriginalUploadInput) TableName() string { return "nextcloud_original_upload_inputs" }
 
-type nextcloudFetchedArtifactKey struct{}
-type nextcloudOriginalUploadBuildKey struct{}
-type nextcloudOriginalFetchKey struct{}
-type nextcloudOriginalFetch struct {
-	TenantID                                                        uint64
-	KB, DataSourceID                                                string
-	SourceRevision, ConfigRevision, RoutingRevision, TenantRevision uint64
-	ConfigDigest, RoutingDigest, TenantDigest                       string
-	Name                                                            *types.DataSourceNameInputProof
-}
+type (
+	nextcloudFetchedArtifactKey     struct{}
+	nextcloudOriginalUploadBuildKey struct{}
+	nextcloudOriginalFetchKey       struct{}
+	nextcloudOriginalFetch          struct {
+		TenantID                                                        uint64
+		KB, DataSourceID                                                string
+		SourceRevision, ConfigRevision, RoutingRevision, TenantRevision uint64
+		ConfigDigest, RoutingDigest, TenantDigest                       string
+		Name                                                            *types.DataSourceNameInputProof
+	}
+)
+
 type nextcloudOriginalUploadActual struct {
 	Artifact                          nextcloud.OriginalFetchedArtifactInput
 	PairOperation, ConfigSHA, BaseURL string
@@ -49,8 +52,17 @@ type nextcloudOriginalDocumentTaskControls struct {
 }
 type nextcloudOriginalDocumentControlsKey struct{}
 
-func WithNextcloudOriginalDocumentControls(ctx context.Context, language, fileName, fileType string, multimodal, questions bool, count int) context.Context {
-	return context.WithValue(ctx, nextcloudOriginalDocumentControlsKey{}, nextcloudOriginalDocumentTaskControls{language, fileName, fileType, multimodal, questions, count})
+func WithNextcloudOriginalDocumentControls(
+	ctx context.Context,
+	language, fileName, fileType string,
+	multimodal, questions bool,
+	count int,
+) context.Context {
+	return context.WithValue(
+		ctx,
+		nextcloudOriginalDocumentControlsKey{},
+		nextcloudOriginalDocumentTaskControls{language, fileName, fileType, multimodal, questions, count},
+	)
 }
 
 type nextcloudFetchedArtifactContext struct {
@@ -59,7 +71,12 @@ type nextcloudFetchedArtifactContext struct {
 	InitialTagIDs []string
 }
 
-func WithNextcloudOriginalFetchedArtifact(ctx context.Context, dsID string, item *types.FetchedItem, tagIDs []string) (context.Context, error) {
+func WithNextcloudOriginalFetchedArtifact(
+	ctx context.Context,
+	dsID string,
+	item *types.FetchedItem,
+	tagIDs []string,
+) (context.Context, error) {
 	actual, err := nextcloud.VerifyOriginalFetchedArtifact(item)
 	if err != nil {
 		return ctx, err
@@ -67,20 +84,33 @@ func WithNextcloudOriginalFetchedArtifact(ctx context.Context, dsID string, item
 	if dsID == "" {
 		return ctx, ErrKnowledgeInputChanged
 	}
-	return context.WithValue(ctx, nextcloudFetchedArtifactKey{}, nextcloudFetchedArtifactContext{actual, dsID, normalizedKnowledgeDisplayTagIDs(tagIDs)}), nil
+	return context.WithValue(
+		ctx,
+		nextcloudFetchedArtifactKey{},
+		nextcloudFetchedArtifactContext{actual, dsID, normalizedKnowledgeDisplayTagIDs(tagIDs)},
+	), nil
 }
 
 // BindNextcloudOriginalFetch starts before connector transport. Its monotonic
 // controls remain fixed while actual signed content bytes are fetched.
-func (s *KnowledgeInputProvenanceStore) BindNextcloudOriginalFetch(ctx context.Context, kb *types.KnowledgeBase, ds *types.DataSource) (context.Context, error) {
-	if kb == nil || ds == nil || kb.ID != ds.KnowledgeBaseID || kb.TenantID != ds.TenantID || ds.Type != types.ConnectorTypeNextcloud {
+func (s *KnowledgeInputProvenanceStore) BindNextcloudOriginalFetch(
+	ctx context.Context,
+	kb *types.KnowledgeBase,
+	ds *types.DataSource,
+) (context.Context, error) {
+	if kb == nil || ds == nil || kb.ID != ds.KnowledgeBaseID || kb.TenantID != ds.TenantID ||
+		ds.Type != types.ConnectorTypeNextcloud {
 		return ctx, ErrKnowledgeInputChanged
 	}
 	if err := CheckScopedOnboardingConfigurationReads(ctx); err != nil {
 		return ctx, err
 	}
 	var actual types.DataSource
-	if err := s.db.WithContext(ctx).Select("id", "tenant_id", "knowledge_base_id", "type", "status", "config", "name").Where("id = ? AND tenant_id = ? AND knowledge_base_id = ? AND status = ?", ds.ID, ds.TenantID, ds.KnowledgeBaseID, types.DataSourceStatusActive).Take(&actual).Error; err != nil {
+	if err := s.db.WithContext(ctx).
+		Select("id", "tenant_id", "knowledge_base_id", "type", "status", "config", "name").
+		Where("id = ? AND tenant_id = ? AND knowledge_base_id = ? AND status = ?", ds.ID, ds.TenantID, ds.KnowledgeBaseID, types.DataSourceStatusActive).
+		Take(&actual).
+		Error; err != nil {
 		return ctx, err
 	}
 	a, err := KnowledgeInputDigest(ds.Config)
@@ -149,7 +179,18 @@ func (s *KnowledgeInputProvenanceStore) BindNextcloudOriginalFetch(ctx context.C
 	if err != nil {
 		return ctx, err
 	}
-	value := nextcloudOriginalFetch{TenantID: kb.TenantID, KB: kb.ID, DataSourceID: ds.ID, SourceRevision: sourceRev, ConfigRevision: configRev, RoutingRevision: routingRev, TenantRevision: tenantRev, ConfigDigest: digest, RoutingDigest: routingDigest, TenantDigest: tenantDigest}
+	value := nextcloudOriginalFetch{
+		TenantID:        kb.TenantID,
+		KB:              kb.ID,
+		DataSourceID:    ds.ID,
+		SourceRevision:  sourceRev,
+		ConfigRevision:  configRev,
+		RoutingRevision: routingRev,
+		TenantRevision:  tenantRev,
+		ConfigDigest:    digest,
+		RoutingDigest:   routingDigest,
+		TenantDigest:    tenantDigest,
+	}
 	value.Name, err = readDataSourceNameInput(s.db.WithContext(ctx), &actual)
 	if err != nil {
 		return ctx, err
@@ -157,7 +198,13 @@ func (s *KnowledgeInputProvenanceStore) BindNextcloudOriginalFetch(ctx context.C
 	ctx = context.WithValue(ctx, types.TenantInfoContextKey, &tenant)
 	return context.WithValue(ctx, nextcloudOriginalFetchKey{}, value), nil
 }
-func (s *KnowledgeInputProvenanceStore) verifyNextcloudOriginalFetchInTx(tx *gorm.DB, ctx context.Context, kb *types.KnowledgeBase, ds string) error {
+
+func (s *KnowledgeInputProvenanceStore) verifyNextcloudOriginalFetchInTx(
+	tx *gorm.DB,
+	ctx context.Context,
+	kb *types.KnowledgeBase,
+	ds string,
+) error {
 	original, ok := ctx.Value(nextcloudOriginalFetchKey{}).(nextcloudOriginalFetch)
 	if !ok || original.TenantID != kb.TenantID || original.KB != kb.ID || original.DataSourceID != ds {
 		return ErrKnowledgeInputChanged
@@ -199,6 +246,7 @@ func (s *KnowledgeInputProvenanceStore) verifyNextcloudOriginalFetchInTx(tx *gor
 	}
 	return nil
 }
+
 func nextcloudUploadSourceRevision(tx *gorm.DB, id string) (uint64, error) {
 	var row struct{ Revision uint64 }
 	err := tx.Table("nextcloud_upload_source_versions").Where("datasource_id = ?", id).Take(&row).Error
@@ -207,6 +255,7 @@ func nextcloudUploadSourceRevision(tx *gorm.DB, id string) (uint64, error) {
 	}
 	return row.Revision, err
 }
+
 func originalUploadRootDigest(k *types.Knowledge) (string, error) {
 	root, err := knowledgeRootDigest(k)
 	if err != nil {
@@ -214,14 +263,22 @@ func originalUploadRootDigest(k *types.Knowledge) (string, error) {
 	}
 	return KnowledgeInputDigest(struct{ Root, Title, Folder string }{root, k.Title, k.FolderPath})
 }
+
 func knowledgeEnrichmentRoutingDigest(kb *types.KnowledgeBase) (string, error) {
+	// The immutable origin must bind the persisted legacy COS credentials too.
+	legacy := kb.StorageConfig //nolint:staticcheck // Existing COS receipts require the legacy column.
 	return KnowledgeInputDigest(struct {
 		Vector, Storage *string
 		Provider        *types.StorageProviderConfig
-		Legacy          types.StorageConfig
-	}{kb.VectorStoreID, kb.StorageBackendID, kb.StorageProviderConfig, kb.StorageConfig})
+		Legacy          any
+	}{kb.VectorStoreID, kb.StorageBackendID, kb.StorageProviderConfig, legacy})
 }
-func originalUploadSourceInTx(tx *gorm.DB, k *types.Knowledge, input nextcloudFetchedArtifactContext) (*types.DataSource, *NextcloudSourcePairing, error) {
+
+func originalUploadSourceInTx(
+	tx *gorm.DB,
+	k *types.Knowledge,
+	input nextcloudFetchedArtifactContext,
+) (*types.DataSource, *NextcloudSourcePairing, error) {
 	meta := k.GetMetadata()
 	a := input.Actual
 	currentRevision, err := types.NormalizeNextcloudContentRevision(meta["nextcloud_content_revision"])
@@ -232,11 +289,21 @@ func originalUploadSourceInTx(tx *gorm.DB, k *types.Knowledge, input nextcloudFe
 	if err != nil || currentRevision != artifactRevision {
 		return nil, nil, ErrKnowledgeInputChanged
 	}
-	if k.Channel != types.ConnectorTypeNextcloud || k.Type != "file" || k.ID == "" || k.FileName != a.FileName || meta["datasource_id"] != input.DataSourceID || meta["external_id"] != a.ExternalID || meta["source_resource_id"] != a.BindingID || meta["nextcloud_instance_id"] != a.InstanceID || meta["nextcloud_binding_id"] != a.BindingID || meta["nextcloud_file_id"] != a.FileID || meta["nextcloud_target_etag"] != a.ETag || meta["nextcloud_path"] != a.Path {
+	if k.Channel != types.ConnectorTypeNextcloud || k.Type != "file" || k.ID == "" || k.FileName != a.FileName ||
+		meta["datasource_id"] != input.DataSourceID ||
+		meta["external_id"] != a.ExternalID ||
+		meta["source_resource_id"] != a.BindingID ||
+		meta["nextcloud_instance_id"] != a.InstanceID ||
+		meta["nextcloud_binding_id"] != a.BindingID ||
+		meta["nextcloud_file_id"] != a.FileID ||
+		meta["nextcloud_target_etag"] != a.ETag ||
+		meta["nextcloud_path"] != a.Path {
 		return nil, nil, ErrKnowledgeInputChanged
 	}
 	var ds types.DataSource
-	if err := tx.Where("id = ? AND tenant_id = ? AND knowledge_base_id = ? AND type = ? AND status = ?", input.DataSourceID, k.TenantID, k.KnowledgeBaseID, types.ConnectorTypeNextcloud, types.DataSourceStatusActive).Take(&ds).Error; err != nil {
+	if err := tx.Where("id = ? AND tenant_id = ? AND knowledge_base_id = ? AND type = ? AND status = ?", input.DataSourceID, k.TenantID, k.KnowledgeBaseID, types.ConnectorTypeNextcloud, types.DataSourceStatusActive).
+		Take(&ds).
+		Error; err != nil {
 		return nil, nil, err
 	}
 	base, hash, binding, err := NextcloudEventDataSourceIdentity(ds.Config)
@@ -252,10 +319,14 @@ func originalUploadSourceInTx(tx *gorm.DB, k *types.Knowledge, input nextcloudFe
 		return nil, nil, err
 	}
 	var pair NextcloudSourcePairing
-	if err := tx.Where("datasource_id = ? AND tenant_id = ? AND knowledge_base_id = ? AND state = 'active'", ds.ID, ds.TenantID, ds.KnowledgeBaseID).Take(&pair).Error; err != nil {
+	if err := tx.Where("datasource_id = ? AND tenant_id = ? AND knowledge_base_id = ? AND state = 'active'", ds.ID, ds.TenantID, ds.KnowledgeBaseID).
+		Take(&pair).
+		Error; err != nil {
 		return nil, nil, err
 	}
-	if pair.InstanceID != a.InstanceID || pair.BindingID != a.BindingID || binding != a.BindingID || pair.ConfigSHA != hash || pair.BaseURL != base {
+	if pair.InstanceID != a.InstanceID || pair.BindingID != a.BindingID || binding != a.BindingID ||
+		pair.ConfigSHA != hash ||
+		pair.BaseURL != base {
 		return nil, nil, ErrKnowledgeInputChanged
 	}
 	return &ds, &pair, nil
@@ -267,7 +338,12 @@ type originalUploadConfigurationSourceVerifier interface {
 
 // CheckNextcloudOriginalUploadInput requires the opaque actual connector read
 // and independently checks its signed current source before physical storage.
-func (s *KnowledgeInputProvenanceStore) CheckNextcloudOriginalUploadInput(ctx context.Context, kb *types.KnowledgeBase, k *types.Knowledge, input []byte) error {
+func (s *KnowledgeInputProvenanceStore) CheckNextcloudOriginalUploadInput(
+	ctx context.Context,
+	kb *types.KnowledgeBase,
+	k *types.Knowledge,
+	input []byte,
+) error {
 	if err := CheckScopedOnboardingConfigurationReads(ctx); err != nil {
 		return err
 	}
@@ -287,7 +363,12 @@ func (s *KnowledgeInputProvenanceStore) CheckNextcloudOriginalUploadInput(ctx co
 	if err != nil {
 		return err
 	}
-	if err := s.verifyNextcloudOriginalFetchInTx(s.db.WithContext(ctx), ctx, current, original.DataSourceID); err != nil {
+	if err := s.verifyNextcloudOriginalFetchInTx(
+		s.db.WithContext(ctx),
+		ctx,
+		current,
+		original.DataSourceID,
+	); err != nil {
 		return err
 	}
 	wanted, err := knowledgeConfigDigest(kb, k)
@@ -320,12 +401,26 @@ func (s *KnowledgeInputProvenanceStore) CheckNextcloudOriginalUploadInput(ctx co
 	if err != nil {
 		return err
 	}
-	if err := nextcloud.CheckCurrentPublication(types.WithNextcloudContentRevision(ctx, original.Actual.ContentRevision), cfg, original.Actual.InstanceID, original.Actual.BindingID, fileID, original.Actual.ETag, original.Actual.Path); err != nil {
+	if err := nextcloud.CheckCurrentPublication(
+		types.WithNextcloudContentRevision(ctx, original.Actual.ContentRevision),
+		cfg,
+		original.Actual.InstanceID,
+		original.Actual.BindingID,
+		fileID,
+		original.Actual.ETag,
+		original.Actual.Path,
+	); err != nil {
 		return err
 	}
 	return s.verifyNextcloudOriginalFetchInTx(s.db.WithContext(ctx), ctx, current, original.DataSourceID)
 }
-func (s *KnowledgeInputProvenanceStore) CreateNextcloudKnowledgeWithOriginalUpload(ctx context.Context, kb *types.KnowledgeBase, k *types.Knowledge, input []byte) error {
+
+func (s *KnowledgeInputProvenanceStore) CreateNextcloudKnowledgeWithOriginalUpload(
+	ctx context.Context,
+	kb *types.KnowledgeBase,
+	k *types.Knowledge,
+	input []byte,
+) error {
 	if err := s.CheckNextcloudOriginalUploadInput(ctx, kb, k, input); err != nil {
 		return err
 	}
@@ -385,7 +480,14 @@ func (s *KnowledgeInputProvenanceStore) CreateNextcloudKnowledgeWithOriginalUplo
 			return err
 		}
 		fetch := ctx.Value(nextcloudOriginalFetchKey{}).(nextcloudOriginalFetch)
-		actual := nextcloudOriginalUploadActual{Artifact: original.Actual, PairOperation: pair.OperationID, ConfigSHA: pair.ConfigSHA, BaseURL: pair.BaseURL, InitialTagIDs: original.InitialTagIDs, Name: fetch.Name}
+		actual := nextcloudOriginalUploadActual{
+			Artifact:      original.Actual,
+			PairOperation: pair.OperationID,
+			ConfigSHA:     pair.ConfigSHA,
+			BaseURL:       pair.BaseURL,
+			InitialTagIDs: original.InitialTagIDs,
+			Name:          fetch.Name,
+		}
 		controls, ok := ctx.Value(nextcloudOriginalDocumentControlsKey{}).(nextcloudOriginalDocumentTaskControls)
 		if !ok {
 			return types.ErrSourceLineageUnknown
@@ -399,12 +501,38 @@ func (s *KnowledgeInputProvenanceStore) CreateNextcloudKnowledgeWithOriginalUplo
 		if err != nil {
 			return err
 		}
-		return tx.Create(&nextcloudOriginalUploadInput{KnowledgeID: k.ID, TenantID: k.TenantID, KnowledgeBaseID: k.KnowledgeBaseID, DataSourceID: original.DataSourceID, SourceRevision: revision, ConfigRevision: configRevision, ConfigDigest: configDigest, RootDigest: root, RootRevision: rootRevision, ArtifactDigest: original.Actual.ArtifactSHA256, ActualInputs: string(encoded), InputDigest: digest, RoutingRevision: fetch.RoutingRevision, RoutingDigest: fetch.RoutingDigest, TenantRevision: fetch.TenantRevision, TenantDigest: fetch.TenantDigest}).Error
+		return tx.Create(
+			&nextcloudOriginalUploadInput{
+				KnowledgeID:     k.ID,
+				TenantID:        k.TenantID,
+				KnowledgeBaseID: k.KnowledgeBaseID,
+				DataSourceID:    original.DataSourceID,
+				SourceRevision:  revision,
+				ConfigRevision:  configRevision,
+				ConfigDigest:    configDigest,
+				RootDigest:      root,
+				RootRevision:    rootRevision,
+				ArtifactDigest:  original.Actual.ArtifactSHA256,
+				ActualInputs:    string(encoded),
+				InputDigest:     digest,
+				RoutingRevision: fetch.RoutingRevision,
+				RoutingDigest:   fetch.RoutingDigest,
+				TenantRevision:  fetch.TenantRevision,
+				TenantDigest:    fetch.TenantDigest,
+			},
+		).Error
 	}, knowledgeDisplayWriteOptions(s.db))
 }
 
-func (s *KnowledgeInputProvenanceStore) VerifyNextcloudOriginalDocumentTask(ctx context.Context, p types.DocumentProcessPayload) error {
-	original := &types.KnowledgeBuildInputProof{TenantID: p.TenantID, KnowledgeBaseID: p.KnowledgeBaseID, KnowledgeID: p.KnowledgeID}
+func (s *KnowledgeInputProvenanceStore) VerifyNextcloudOriginalDocumentTask(
+	ctx context.Context,
+	p types.DocumentProcessPayload,
+) error {
+	original := &types.KnowledgeBuildInputProof{
+		TenantID:        p.TenantID,
+		KnowledgeBaseID: p.KnowledgeBaseID,
+		KnowledgeID:     p.KnowledgeID,
+	}
 	actual, err := readOriginalUploadActual(s.db.WithContext(ctx), original)
 	if err != nil {
 		return err
@@ -412,7 +540,14 @@ func (s *KnowledgeInputProvenanceStore) VerifyNextcloudOriginalDocumentTask(ctx 
 	if actual.TaskControls == nil || p.URL != "" || len(p.Passages) > 0 {
 		return ErrKnowledgeInputChanged
 	}
-	controls := nextcloudOriginalDocumentTaskControls{p.Language, p.FileName, p.FileType, p.EnableMultimodel, p.EnableQuestionGeneration, p.QuestionCount}
+	controls := nextcloudOriginalDocumentTaskControls{
+		p.Language,
+		p.FileName,
+		p.FileType,
+		p.EnableMultimodel,
+		p.EnableQuestionGeneration,
+		p.QuestionCount,
+	}
 	wanted, err := KnowledgeInputDigest(actual.TaskControls)
 	if err != nil {
 		return err
@@ -422,7 +557,10 @@ func (s *KnowledgeInputProvenanceStore) VerifyNextcloudOriginalDocumentTask(ctx 
 		return ErrKnowledgeInputChanged
 	}
 	var k types.Knowledge
-	if err := s.db.WithContext(ctx).Where("id = ? AND tenant_id = ? AND knowledge_base_id = ?", p.KnowledgeID, p.TenantID, p.KnowledgeBaseID).Take(&k).Error; err != nil {
+	if err := s.db.WithContext(ctx).
+		Where("id = ? AND tenant_id = ? AND knowledge_base_id = ?", p.KnowledgeID, p.TenantID, p.KnowledgeBaseID).
+		Take(&k).
+		Error; err != nil {
 		return err
 	}
 	if p.FilePath != k.FilePath || p.FilePath == "" {
@@ -430,9 +568,18 @@ func (s *KnowledgeInputProvenanceStore) VerifyNextcloudOriginalDocumentTask(ctx 
 	}
 	return nil
 }
-func (s *KnowledgeInputProvenanceStore) verifyOriginalUploadInTx(tx *gorm.DB, k *types.Knowledge, input []byte, path string, initial bool) (*nextcloudOriginalUploadInput, error) {
+
+func (s *KnowledgeInputProvenanceStore) verifyOriginalUploadInTx(
+	tx *gorm.DB,
+	k *types.Knowledge,
+	input []byte,
+	path string,
+	initial bool,
+) (*nextcloudOriginalUploadInput, error) {
 	var receipt nextcloudOriginalUploadInput
-	if err := tx.Where("knowledge_id = ? AND tenant_id = ? AND knowledge_base_id = ?", k.ID, k.TenantID, k.KnowledgeBaseID).Take(&receipt).Error; err != nil {
+	if err := tx.Where("knowledge_id = ? AND tenant_id = ? AND knowledge_base_id = ?", k.ID, k.TenantID, k.KnowledgeBaseID).
+		Take(&receipt).
+		Error; err != nil {
 		return nil, err
 	}
 	var actual nextcloudOriginalUploadActual
@@ -443,11 +590,16 @@ func (s *KnowledgeInputProvenanceStore) verifyOriginalUploadInTx(tx *gorm.DB, k 
 	if err != nil || digest != receipt.InputDigest {
 		return nil, ErrKnowledgeInputChanged
 	}
-	_, pair, err := originalUploadSourceInTx(tx, k, nextcloudFetchedArtifactContext{Actual: actual.Artifact, DataSourceID: receipt.DataSourceID})
+	_, pair, err := originalUploadSourceInTx(
+		tx,
+		k,
+		nextcloudFetchedArtifactContext{Actual: actual.Artifact, DataSourceID: receipt.DataSourceID},
+	)
 	if err != nil {
 		return nil, err
 	}
-	if actual.PairOperation != pair.OperationID || actual.BaseURL != pair.BaseURL || actual.ConfigSHA != pair.ConfigSHA {
+	if actual.PairOperation != pair.OperationID || actual.BaseURL != pair.BaseURL ||
+		actual.ConfigSHA != pair.ConfigSHA {
 		return nil, ErrKnowledgeInputChanged
 	}
 	revision, err := nextcloudUploadSourceRevision(tx, receipt.DataSourceID)
@@ -505,13 +657,21 @@ func (s *KnowledgeInputProvenanceStore) verifyOriginalUploadInTx(tx *gorm.DB, k 
 	}
 	return &receipt, nil
 }
-func (s *KnowledgeInputProvenanceStore) AdmitNextcloudBuildInputsFromOriginalUpload(ctx context.Context, input []byte, path string) (*types.KnowledgeBuildInputProof, error) {
+
+func (s *KnowledgeInputProvenanceStore) AdmitNextcloudBuildInputsFromOriginalUpload(
+	ctx context.Context,
+	input []byte,
+	path string,
+) (*types.KnowledgeBuildInputProof, error) {
 	_, scope, err := NextcloudBuildInputLease(ctx)
 	if err != nil {
 		return nil, err
 	}
 	var k types.Knowledge
-	if err := s.db.WithContext(ctx).Where("id = ? AND tenant_id = ? AND knowledge_base_id = ?", scope.KnowledgeID, scope.TenantID, scope.KnowledgeBaseID).Take(&k).Error; err != nil {
+	if err := s.db.WithContext(ctx).
+		Where("id = ? AND tenant_id = ? AND knowledge_base_id = ?", scope.KnowledgeID, scope.TenantID, scope.KnowledgeBaseID).
+		Take(&k).
+		Error; err != nil {
 		return nil, err
 	}
 	receipt, err := s.verifyOriginalUploadInTx(s.db.WithContext(ctx), &k, input, path, true)
@@ -522,7 +682,11 @@ func (s *KnowledgeInputProvenanceStore) AdmitNextcloudBuildInputsFromOriginalUpl
 	if json.Unmarshal([]byte(receipt.ActualInputs), &actual) != nil {
 		return nil, ErrKnowledgeInputChanged
 	}
-	ds, _, err := originalUploadSourceInTx(s.db.WithContext(ctx), &k, nextcloudFetchedArtifactContext{Actual: actual.Artifact, DataSourceID: receipt.DataSourceID})
+	ds, _, err := originalUploadSourceInTx(
+		s.db.WithContext(ctx),
+		&k,
+		nextcloudFetchedArtifactContext{Actual: actual.Artifact, DataSourceID: receipt.DataSourceID},
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -535,7 +699,15 @@ func (s *KnowledgeInputProvenanceStore) AdmitNextcloudBuildInputsFromOriginalUpl
 	if err != nil {
 		return nil, err
 	}
-	if err := nextcloud.CheckCurrentPublication(types.WithNextcloudContentRevision(ctx, actual.Artifact.ContentRevision), cfg, actual.Artifact.InstanceID, actual.Artifact.BindingID, id, actual.Artifact.ETag, actual.Artifact.Path); err != nil {
+	if err := nextcloud.CheckCurrentPublication(
+		types.WithNextcloudContentRevision(ctx, actual.Artifact.ContentRevision),
+		cfg,
+		actual.Artifact.InstanceID,
+		actual.Artifact.BindingID,
+		id,
+		actual.Artifact.ETag,
+		actual.Artifact.Path,
+	); err != nil {
 		return nil, err
 	}
 	return s.AdmitNextcloudBuildInputs(context.WithValue(ctx, nextcloudOriginalUploadBuildKey{}, path), input)

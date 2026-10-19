@@ -3,15 +3,21 @@ package sqlite
 import (
 	"context"
 	"fmt"
+	"strconv"
+
 	apprepo "github.com/Tencent/WeKnora/internal/application/repository"
 	"github.com/Tencent/WeKnora/internal/types"
 	sqlite_vec "github.com/asg017/sqlite-vec-go-bindings/cgo"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
-	"strconv"
 )
 
-func (r *sqliteRepository) saveRowsAtomic(ctx context.Context, infos []*types.IndexInfo, rows []*sqliteEmbedding, embeddings [][]float32) error {
+func (r *sqliteRepository) saveRowsAtomic(
+	ctx context.Context,
+	infos []*types.IndexInfo,
+	rows []*sqliteEmbedding,
+	embeddings [][]float32,
+) error {
 	if r.initErr != nil {
 		return r.initErr
 	}
@@ -24,21 +30,40 @@ func (r *sqliteRepository) saveRowsAtomic(ctx context.Context, infos []*types.In
 				return e
 			}
 			if row.ID == 0 {
-				if e := tx.Where("source_id=? AND source_type=?", row.SourceID, row.SourceType).Take(row).Error; e != nil {
+				if e := tx.Where("source_id=? AND source_type=?", row.SourceID, row.SourceType).
+					Take(row).
+					Error; e != nil {
 					return e
 				}
 			}
-			if row.KnowledgeID != infos[i].KnowledgeID || row.KnowledgeBaseID != infos[i].KnowledgeBaseID || row.ChunkID != infos[i].ChunkID {
+			if row.KnowledgeID != infos[i].KnowledgeID || row.KnowledgeBaseID != infos[i].KnowledgeBaseID ||
+				row.ChunkID != infos[i].ChunkID {
 				return apprepo.ErrNextcloudContentLeaseDenied
 			}
-			if e := apprepo.RecordNextcloudDerivedArtifactInTx(ctx, tx, row.KnowledgeID, row.KnowledgeBaseID, "sqlite_embedding", strconv.FormatUint(uint64(row.ID), 10), int64(row.Dimension)); e != nil {
+			if e := apprepo.RecordNextcloudDerivedArtifactInTx(
+				ctx,
+				tx,
+				row.KnowledgeID,
+				row.KnowledgeBaseID,
+				"sqlite_embedding",
+				strconv.FormatUint(uint64(row.ID), 10),
+				int64(row.Dimension),
+			); e != nil {
 				return e
 			}
 			// Both the fulltext and vec0 rows share the same commit/rollback boundary.
 			if e := tx.Exec("DELETE FROM lite_embeddings_fts WHERE rowid=?", row.ID).Error; e != nil {
 				return e
 			}
-			if e := tx.Exec("INSERT INTO lite_embeddings_fts(rowid,content,source_id,chunk_id,knowledge_id,knowledge_base_id) VALUES(?,?,?,?,?,?)", row.ID, tokenizeCJKBigram(row.Content), row.SourceID, row.ChunkID, row.KnowledgeID, row.KnowledgeBaseID).Error; e != nil {
+			if e := tx.Exec(
+				"INSERT INTO lite_embeddings_fts(rowid,content,source_id,chunk_id,knowledge_id,knowledge_base_id) VALUES(?,?,?,?,?,?)",
+				row.ID,
+				tokenizeCJKBigram(row.Content),
+				row.SourceID,
+				row.ChunkID,
+				row.KnowledgeID,
+				row.KnowledgeBaseID,
+			).Error; e != nil {
 				return e
 			}
 			if row.Dimension > 0 {
@@ -46,7 +71,13 @@ func (r *sqliteRepository) saveRowsAtomic(ctx context.Context, infos []*types.In
 					return fmt.Errorf("invalid vector dimension")
 				}
 				table := vecTableName(row.Dimension)
-				if e := tx.Exec(fmt.Sprintf("CREATE VIRTUAL TABLE IF NOT EXISTS %s USING vec0(embedding float[%d] distance_metric=cosine)", table, row.Dimension)).Error; e != nil {
+				if e := tx.Exec(
+					fmt.Sprintf(
+						"CREATE VIRTUAL TABLE IF NOT EXISTS %s USING vec0(embedding float[%d] distance_metric=cosine)",
+						table,
+						row.Dimension,
+					),
+				).Error; e != nil {
 					return e
 				}
 				if e := tx.Exec(fmt.Sprintf("DELETE FROM %s WHERE rowid=?", table), row.ID).Error; e != nil {
@@ -56,7 +87,11 @@ func (r *sqliteRepository) saveRowsAtomic(ctx context.Context, infos []*types.In
 				if e != nil {
 					return e
 				}
-				if e = tx.Exec(fmt.Sprintf("INSERT INTO %s(rowid,embedding) VALUES(?,?)", table), row.ID, blob).Error; e != nil {
+				if e = tx.Exec(
+					fmt.Sprintf("INSERT INTO %s(rowid,embedding) VALUES(?,?)", table),
+					row.ID,
+					blob,
+				).Error; e != nil {
 					return e
 				}
 			}

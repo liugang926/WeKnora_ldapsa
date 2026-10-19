@@ -9,6 +9,14 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
+	"net/url"
+	"os"
+	"path/filepath"
+	"strings"
+	"syscall"
+	"time"
+
 	"github.com/Tencent/WeKnora/internal/application/repository"
 	"github.com/Tencent/WeKnora/internal/application/service"
 	"github.com/Tencent/WeKnora/internal/types"
@@ -17,13 +25,6 @@ import (
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
-	"io"
-	"net/url"
-	"os"
-	"path/filepath"
-	"strings"
-	"syscall"
-	"time"
 )
 
 func privatePath(path string) error {
@@ -40,11 +41,12 @@ func privatePath(path string) error {
 			return e
 		}
 		stat, ok := info.Sys().(*syscall.Stat_t)
-		expected := os.FileMode(0600)
+		expected := os.FileMode(0o600)
 		if p == filepath.Dir(path) {
-			expected = 0700
+			expected = 0o700
 		}
-		if !ok || int(stat.Uid) != os.Geteuid() || info.Mode().Perm() != expected || (p == path && (!info.Mode().IsRegular() || stat.Nlink != 1)) {
+		if !ok || int(stat.Uid) != os.Geteuid() || info.Mode().Perm() != expected ||
+			(p == path && (!info.Mode().IsRegular() || stat.Nlink != 1)) {
 			return errors.New("private DB owner file required")
 		}
 	}
@@ -60,16 +62,19 @@ func privateFile(path string) ([]byte, error) {
 		return nil, e
 	}
 	f := os.NewFile(uintptr(fd), path)
-	defer f.Close()
+	// The file is read-only; close cannot affect any persisted output.
+	defer func() { _ = f.Close() }()
 	return ioReadBounded(f)
 }
+
 func ioReadBounded(f *os.File) ([]byte, error) {
 	info, e := f.Stat()
 	if e != nil {
 		return nil, e
 	}
 	stat, ok := info.Sys().(*syscall.Stat_t)
-	if !ok || int(stat.Uid) != os.Geteuid() || info.Mode().Perm() != 0600 || !info.Mode().IsRegular() || stat.Nlink != 1 || info.Size() > 16<<20 {
+	if !ok || int(stat.Uid) != os.Geteuid() || info.Mode().Perm() != 0o600 ||
+		!info.Mode().IsRegular() || stat.Nlink != 1 || info.Size() > 16<<20 {
 		return nil, errors.New("unsafe private input")
 	}
 	data, e := io.ReadAll(io.LimitReader(f, 16<<20+1))
@@ -78,6 +83,7 @@ func ioReadBounded(f *os.File) ([]byte, error) {
 	}
 	return data, nil
 }
+
 func reservePrivate(path string) (*os.File, error) {
 	if !filepath.IsAbs(path) {
 		return nil, errors.New("absolute private output required")
@@ -92,27 +98,17 @@ func reservePrivate(path string) (*os.File, error) {
 		return nil, e
 	}
 	stat, ok := info.Sys().(*syscall.Stat_t)
-	if !ok || int(stat.Uid) != os.Geteuid() || info.Mode().Perm() != 0700 {
+	if !ok || int(stat.Uid) != os.Geteuid() || info.Mode().Perm() != 0o700 {
 		return nil, errors.New("private owned output directory required")
 	}
-	fd, e := syscall.Open(path, syscall.O_WRONLY|syscall.O_CREAT|syscall.O_EXCL|syscall.O_NOFOLLOW, 0600)
+	fd, e := syscall.Open(path, syscall.O_WRONLY|syscall.O_CREAT|syscall.O_EXCL|syscall.O_NOFOLLOW, 0o600)
 	if e != nil {
 		return nil, e
 	}
 	return os.NewFile(uintptr(fd), path), nil
 }
-func writePrivate(path string, data []byte) error {
-	f, e := reservePrivate(path)
-	if e != nil {
-		return e
-	}
-	defer f.Close()
-	if _, e = f.Write(data); e != nil {
-		return e
-	}
-	return f.Sync()
-}
-func run() error {
+
+func run() (resultErr error) {
 	mode := flag.String("mode", "", "inspect or reconcile")
 	sqlitePath := flag.String("sqlite-db", "", "private owned SQLite DB")
 	connection := flag.String("postgres-connection-file", "", "private owner-role DSN")
@@ -120,7 +116,8 @@ func run() error {
 	root := flag.String("local-storage-base-dir", "", "original configured local storage base")
 	output := flag.String("output", "", "new private output")
 	flag.Parse()
-	if *token == "" || *output == "" || (*mode != "inspect" && *mode != "reconcile") || (*sqlitePath == "") == (*connection == "") {
+	if *token == "" || *output == "" || (*mode != "inspect" && *mode != "reconcile") ||
+		(*sqlitePath == "") == (*connection == "") {
 		return errors.New("maintenance scope required")
 	}
 	out, e := reservePrivate(*output)
@@ -128,8 +125,11 @@ func run() error {
 		return e
 	}
 	complete := false
+	outputClosed := false
 	defer func() {
-		out.Close()
+		if !outputClosed {
+			resultErr = errors.Join(resultErr, out.Close())
+		}
 		if !complete {
 			_ = os.Remove(*output)
 		}
@@ -156,11 +156,13 @@ func run() error {
 	if e != nil {
 		return e
 	}
-	defer sql.Close()
+	// Closing the DB pool is cleanup after all checked SQL operations.
+	defer func() { _ = sql.Close() }()
 	sql.SetMaxOpenConns(2)
 	if *connection != "" {
 		var owner bool
-		if e = db.Raw("SELECT current_user=pg_get_userbyid(datdba) FROM pg_database WHERE datname=current_database()").Scan(&owner).Error; e != nil || !owner {
+		if e = db.Raw("SELECT current_user=pg_get_userbyid(datdba) " +
+			"FROM pg_database WHERE datname=current_database()").Scan(&owner).Error; e != nil || !owner {
 			return errors.New("database owner role required")
 		}
 	}
@@ -173,7 +175,8 @@ func run() error {
 	store := repository.NewNextcloudCapacityStore(db)
 	if *mode == "reconcile" {
 		var kb types.KnowledgeBase
-		if e = db.WithContext(ctx).Where("id=? AND tenant_id=?", r.KnowledgeBaseID, r.TenantID).Take(&kb).Error; e != nil {
+		if e = db.WithContext(ctx).Where("id=? AND tenant_id=?", r.KnowledgeBaseID, r.TenantID).
+			Take(&kb).Error; e != nil {
 			return e
 		}
 		var tenant types.Tenant
@@ -182,17 +185,20 @@ func run() error {
 		}
 		backends := repository.NewStorageBackendRepository(db)
 		backend, e := backends.GetByID(ctx, r.TenantID, r.BackendID)
-		if e != nil || backend == nil || backend.Provider != "local" || backend.Status != types.StorageBackendStatusActive {
+		if e != nil || backend == nil || backend.Provider != "local" ||
+			backend.Status != types.StorageBackendStatusActive {
 			return repository.ErrNextcloudCapacityUnavailable
 		}
-		resolver := service.NewStorageBackendService(backends, db, service.NewResourceCatalog(repository.NewResourceRepository(db)))
-		admission := service.NewNextcloudCapacityAdmission(store, func(ctx context.Context, kb *types.KnowledgeBase) (interfaces.FileService, error) {
-			fs, provider, e := resolver.ResolveFileService(ctx, &tenant, r.BackendID, "local", *root)
-			if e != nil || provider != "local" {
-				return nil, repository.ErrNextcloudCapacityUnavailable
-			}
-			return fs, nil
-		})
+		resolver := service.NewStorageBackendService(
+			backends, db, service.NewResourceCatalog(repository.NewResourceRepository(db)))
+		admission := service.NewNextcloudCapacityAdmission(store,
+			func(ctx context.Context, kb *types.KnowledgeBase) (interfaces.FileService, error) {
+				fs, provider, e := resolver.ResolveFileService(ctx, &tenant, r.BackendID, "local", *root)
+				if e != nil || provider != "local" {
+					return nil, repository.ErrNextcloudCapacityUnavailable
+				}
+				return fs, nil
+			})
 		if e = admission.Reconcile(ctx, &kb, &r); e != nil {
 			return e
 		}
@@ -226,14 +232,21 @@ func run() error {
 	if e = out.Sync(); e != nil {
 		return e
 	}
+	e = out.Close()
+	outputClosed = true
+	if e != nil {
+		return e
+	}
 	complete = true
 	digest := sha256.Sum256(b)
 	fmt.Println("evidence_sha256=" + hex.EncodeToString(digest[:]))
 	return nil
 }
+
 func main() {
 	if e := run(); e != nil {
-		fmt.Fprintln(os.Stderr, "Capacity reconciliation unavailable; retained charges and objects require owner review")
+		fmt.Fprintln(os.Stderr,
+			"Capacity reconciliation unavailable; retained charges and objects require owner review")
 		os.Exit(1)
 	}
 }

@@ -11,7 +11,10 @@ import (
 
 type faqImportReadSetPlanKey struct{}
 
-func WithFAQImportOutputReadSetPlan(ctx context.Context, plan *types.FAQImportOutputReadSetPlan) (context.Context, error) {
+func WithFAQImportOutputReadSetPlan(
+	ctx context.Context,
+	plan *types.FAQImportOutputReadSetPlan,
+) (context.Context, error) {
 	if plan == nil || plan.MetadataDigest == "" || plan.SourceLineage.RequireComplete() != nil {
 		return ctx, types.ErrSourceLineageUnknown
 	}
@@ -36,7 +39,11 @@ func WithFAQImportOutputReadSetPlan(ctx context.Context, plan *types.FAQImportOu
 	return context.WithValue(ctx, faqImportReadSetPlanKey{}, &actual), nil
 }
 
-func (s *KnowledgeInputProvenanceStore) PeekFAQImportOutputReadSetPlan(ctx context.Context, scopes []types.KnowledgeSearchScope, ids []string) (*types.FAQImportOutputReadSetPlan, error) {
+func (s *KnowledgeInputProvenanceStore) PeekFAQImportOutputReadSetPlan(
+	ctx context.Context,
+	scopes []types.KnowledgeSearchScope,
+	ids []string,
+) (*types.FAQImportOutputReadSetPlan, error) {
 	var plan *types.FAQImportOutputReadSetPlan
 	err := s.collectionTransaction(ctx, func(tx *gorm.DB) error {
 		var err error
@@ -49,7 +56,11 @@ func (s *KnowledgeInputProvenanceStore) PeekFAQImportOutputReadSetPlan(ctx conte
 // This is an existence/control probe, not a LastResult JSON/body read. Every
 // actual current producer is pinned, including results later excluded by the
 // ordinary collection selection. Unknown legacy result rows fail closed.
-func (s *KnowledgeInputProvenanceStore) peekFAQImportOutputReadSetPlanInTx(tx *gorm.DB, scopes []types.KnowledgeSearchScope, ids []string) (*types.FAQImportOutputReadSetPlan, error) {
+func (s *KnowledgeInputProvenanceStore) peekFAQImportOutputReadSetPlanInTx(
+	tx *gorm.DB,
+	scopes []types.KnowledgeSearchScope,
+	ids []string,
+) (*types.FAQImportOutputReadSetPlan, error) {
 	if len(scopes) == 0 && len(ids) == 0 {
 		return nil, types.ErrSourceLineageUnknown
 	}
@@ -62,7 +73,9 @@ func (s *KnowledgeInputProvenanceStore) peekFAQImportOutputReadSetPlanInTx(tx *g
 	})
 	ids = append([]string{}, ids...)
 	sort.Strings(ids)
-	q := tx.Table("knowledges k").Select("k.id,k.tenant_id,k.knowledge_base_id").Where("k.type=? AND k.deleted_at IS NULL AND k.last_faq_import_result IS NOT NULL AND CAST(k.last_faq_import_result AS TEXT) NOT IN ('','null')", types.KnowledgeTypeFAQ)
+	q := tx.Table("knowledges k").
+		Select("k.id,k.tenant_id,k.knowledge_base_id").
+		Where("k.type=? AND k.deleted_at IS NULL AND k.last_faq_import_result IS NOT NULL AND CAST(k.last_faq_import_result AS TEXT) NOT IN ('','null')", types.KnowledgeTypeFAQ)
 	if len(ids) > 0 {
 		q = q.Where("k.id IN ?", ids)
 	} else {
@@ -87,7 +100,12 @@ func (s *KnowledgeInputProvenanceStore) peekFAQImportOutputReadSetPlanInTx(tx *g
 	if err := q.Order("k.id").Scan(&rows).Error; err != nil {
 		return nil, err
 	}
-	plan := &types.FAQImportOutputReadSetPlan{KnowledgeScopes: scopes, KnowledgeIDs: ids, Plans: []*types.FAQImportOutputReadPlan{}, Scopes: append([]types.KnowledgeSearchScope{}, scopes...)}
+	plan := &types.FAQImportOutputReadSetPlan{
+		KnowledgeScopes: scopes,
+		KnowledgeIDs:    ids,
+		Plans:           []*types.FAQImportOutputReadPlan{},
+		Scopes:          append([]types.KnowledgeSearchScope{}, scopes...),
+	}
 	lineages := []*types.SourceLineage{}
 	for i := range rows {
 		row := rows[i]
@@ -96,7 +114,15 @@ func (s *KnowledgeInputProvenanceStore) peekFAQImportOutputReadSetPlanInTx(tx *g
 			return nil, err
 		}
 		rows[i].Revision = revision
-		current, err := s.peekFAQImportOutputReadPlanInTx(tx, types.FAQImportOutputReadRequest{TenantID: row.TenantID, KnowledgeBaseID: row.KnowledgeBaseID, KnowledgeID: row.ID, Kind: "result"})
+		current, err := s.peekFAQImportOutputReadPlanInTx(
+			tx,
+			types.FAQImportOutputReadRequest{
+				TenantID:        row.TenantID,
+				KnowledgeBaseID: row.KnowledgeBaseID,
+				KnowledgeID:     row.ID,
+				Kind:            "result",
+			},
+		)
 		if err != nil {
 			return nil, err
 		}
@@ -105,7 +131,11 @@ func (s *KnowledgeInputProvenanceStore) peekFAQImportOutputReadSetPlanInTx(tx *g
 		lineages = append(lineages, current.SourceLineage)
 	}
 	// Also probe the immutable saved-history parents of actual ordinary rows.
-	hq := tx.Table("knowledge_input_material_receipts r").Select("a.admission_id,a.tenant_id,a.knowledge_base_id,a.knowledge_id,a.input_digest,a.build_generation").Joins("JOIN knowledge_input_admissions a ON a.admission_id=r.admission_id AND a.knowledge_id=r.row_id").Joins("JOIN knowledges k ON k.id=a.knowledge_id AND k.deleted_at IS NULL").Where("r.row_kind='knowledge' AND a.origin_kind='history'")
+	hq := tx.Table("knowledge_input_material_receipts r").
+		Select("a.admission_id,a.tenant_id,a.knowledge_base_id,a.knowledge_id,a.input_digest,a.build_generation").
+		Joins("JOIN knowledge_input_admissions a ON a.admission_id=r.admission_id AND a.knowledge_id=r.row_id").
+		Joins("JOIN knowledges k ON k.id=a.knowledge_id AND k.deleted_at IS NULL").
+		Where("r.row_kind='knowledge' AND a.origin_kind='history'")
 	if len(ids) > 0 {
 		hq = hq.Where("k.id IN ?", ids)
 	} else {
@@ -125,7 +155,14 @@ func (s *KnowledgeInputProvenanceStore) peekFAQImportOutputReadSetPlanInTx(tx *g
 		return nil, err
 	}
 	for _, entry := range histories {
-		proof := &types.KnowledgeBuildInputProof{AdmissionID: entry.AdmissionID, TenantID: entry.TenantID, KnowledgeBaseID: entry.KnowledgeBaseID, KnowledgeID: entry.KnowledgeID, InputDigest: entry.InputDigest, BuildGeneration: entry.BuildGeneration}
+		proof := &types.KnowledgeBuildInputProof{
+			AdmissionID:     entry.AdmissionID,
+			TenantID:        entry.TenantID,
+			KnowledgeBaseID: entry.KnowledgeBaseID,
+			KnowledgeID:     entry.KnowledgeID,
+			InputDigest:     entry.InputDigest,
+			BuildGeneration: entry.BuildGeneration,
+		}
 		historyPlan, err := s.peekHistoryMaterialPlanForProofInTx(tx, proof)
 		if err != nil {
 			return nil, err
@@ -134,7 +171,10 @@ func (s *KnowledgeInputProvenanceStore) peekFAQImportOutputReadSetPlanInTx(tx *g
 			return nil, ErrKnowledgeInputChanged
 		}
 		plan.MessagePlans = append(plan.MessagePlans, historyPlan)
-		plan.Scopes = append(plan.Scopes, types.KnowledgeSearchScope{TenantID: proof.TenantID, KBID: proof.KnowledgeBaseID})
+		plan.Scopes = append(
+			plan.Scopes,
+			types.KnowledgeSearchScope{TenantID: proof.TenantID, KBID: proof.KnowledgeBaseID},
+		)
 		plan.Scopes = append(plan.Scopes, historyPlan.Scopes...)
 		lineages = append(lineages, historyPlan.SourceLineage)
 	}
@@ -187,13 +227,17 @@ func (s *KnowledgeInputProvenanceStore) checkFAQImportReadSetPlanInTx(tx *gorm.D
 	return validateFAQReadLeaseCoverageInTx(tx, actual.Scopes, actual.SourceLineage)
 }
 
-func (s *KnowledgeInputProvenanceStore) checkFAQImportOutputReadPlanInTx(tx *gorm.DB, req types.FAQImportOutputReadRequest) error {
+func (s *KnowledgeInputProvenanceStore) checkFAQImportOutputReadPlanInTx(
+	tx *gorm.DB,
+	req types.FAQImportOutputReadRequest,
+) error {
 	if err := s.checkFAQImportReadSetPlanInTx(tx); err != nil {
 		return err
 	}
 	if set, ok := tx.Statement.Context.Value(faqImportReadSetPlanKey{}).(*types.FAQImportOutputReadSetPlan); ok {
 		for _, plan := range set.Plans {
-			if plan.Request.Kind == req.Kind && plan.Request.TenantID == req.TenantID && plan.Request.KnowledgeID == req.KnowledgeID {
+			if plan.Request.Kind == req.Kind && plan.Request.TenantID == req.TenantID &&
+				plan.Request.KnowledgeID == req.KnowledgeID {
 				actual, err := s.peekFAQImportOutputReadPlanInTx(tx, req)
 				if err != nil {
 					return err

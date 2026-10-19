@@ -9,7 +9,10 @@ import (
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 )
 
-func (v *KeywordsVectorHybridRetrieveEngineService) RetrieveVectorCandidates(ctx context.Context, params types.VectorCandidateParams) ([]*types.VectorIndexCandidate, error) {
+func (v *KeywordsVectorHybridRetrieveEngineService) RetrieveVectorCandidates(
+	ctx context.Context,
+	params types.VectorCandidateParams,
+) ([]*types.VectorIndexCandidate, error) {
 	if err := types.ValidateVectorCandidateParams(ctx, params); err != nil {
 		return nil, err
 	}
@@ -23,7 +26,10 @@ func (v *KeywordsVectorHybridRetrieveEngineService) RetrieveVectorCandidates(ctx
 // RetrieveVectorCandidates follows the same selected vector backend as
 // Retrieve. Missing positive native capability is terminal: it never calls
 // the old content-bearing method, including after a native query error.
-func (c *CompositeRetrieveEngine) RetrieveVectorCandidates(ctx context.Context, params []types.VectorCandidateParams) ([]*types.VectorCandidateResult, error) {
+func (c *CompositeRetrieveEngine) RetrieveVectorCandidates(
+	ctx context.Context,
+	params []types.VectorCandidateParams,
+) ([]*types.VectorCandidateResult, error) {
 	var results []*types.VectorCandidateResult
 	for _, param := range params {
 		if err := types.ValidateVectorCandidateParams(ctx, param); err != nil {
@@ -42,7 +48,10 @@ func (c *CompositeRetrieveEngine) RetrieveVectorCandidates(ctx context.Context, 
 			if err != nil {
 				return nil, err
 			}
-			results = append(results, &types.VectorCandidateResult{RetrieverEngineType: info.retrieveEngine.EngineType(), Candidates: rows})
+			results = append(
+				results,
+				&types.VectorCandidateResult{RetrieverEngineType: info.retrieveEngine.EngineType(), Candidates: rows},
+			)
 			found = true
 			break
 		}

@@ -31,9 +31,11 @@ func TestNextcloudSyncRecoveryClaimAndReleaseRace(t *testing.T) {
 	logs := &SyncLogRepository{db: db}
 	store := NewNextcloudSyncRecoveryStore(db)
 	now := time.Now().UTC()
-	admitted := &types.SyncLog{ID: "new-log", DataSourceID: "ds", TenantID: 7,
+	admitted := &types.SyncLog{
+		ID: "new-log", DataSourceID: "ds", TenantID: 7,
 		Status: types.SyncLogStatusRunning, StartedAt: now.Add(-10 * time.Minute),
-		RecoveryVersion: 1, RecoveryTrigger: "manual"}
+		RecoveryVersion: 1, RecoveryTrigger: "manual",
+	}
 	require.NoError(t, logs.Create(ctx, admitted))
 	require.Equal(t, "dssync:new-log", admitted.QueueTaskID)
 	candidates, err := store.UnstartedBefore(ctx, now.Add(-5*time.Minute), 100)
@@ -66,11 +68,15 @@ func TestNextcloudSyncRecoveryReleaseFencesLateWorkerAndOldRows(t *testing.T) {
 	logs := &SyncLogRepository{db: db}
 	store := NewNextcloudSyncRecoveryStore(db)
 	now := time.Now().UTC()
-	old := &types.SyncLog{ID: "old-log", DataSourceID: "ds", TenantID: 7,
-		Status: types.SyncLogStatusRunning, StartedAt: now.Add(-time.Hour)}
-	current := &types.SyncLog{ID: "current-log", DataSourceID: "ds", TenantID: 7,
+	old := &types.SyncLog{
+		ID: "old-log", DataSourceID: "ds", TenantID: 7,
 		Status: types.SyncLogStatusRunning, StartedAt: now.Add(-time.Hour),
-		RecoveryVersion: 1, RecoveryTrigger: "schedule"}
+	}
+	current := &types.SyncLog{
+		ID: "current-log", DataSourceID: "ds", TenantID: 7,
+		Status: types.SyncLogStatusRunning, StartedAt: now.Add(-time.Hour),
+		RecoveryVersion: 1, RecoveryTrigger: "schedule",
+	}
 	// The live trigger permits one running log per source; use separate
 	// records without the production admission trigger in this focused DB.
 	require.NoError(t, logs.Create(ctx, old))
@@ -100,8 +106,10 @@ func TestNextcloudSyncRetryReclaimsOnlyReleasedExactTask(t *testing.T) {
 	ctx := context.Background()
 	db := nextcloudSyncRecoveryDB(t)
 	logs := &SyncLogRepository{db: db}
-	log := &types.SyncLog{ID: "retry-log", DataSourceID: "ds", TenantID: 7,
-		Status: types.SyncLogStatusRunning, RecoveryVersion: 1, RecoveryTrigger: "manual"}
+	log := &types.SyncLog{
+		ID: "retry-log", DataSourceID: "ds", TenantID: 7,
+		Status: types.SyncLogStatusRunning, RecoveryVersion: 1, RecoveryTrigger: "manual",
+	}
 	require.NoError(t, logs.Create(ctx, log))
 	first, err := logs.ClaimNextcloudSyncStart(ctx, log.ID, "ds", 7, "manual", log.QueueTaskID, 0)
 	require.NoError(t, err)
@@ -142,16 +150,20 @@ func TestNextcloudSyncRecoveryMalformedIDsCannotStarveValidAdmission(t *testing.
 	now := time.Now().UTC()
 	for i := 0; i < 101; i++ {
 		id := fmt.Sprintf("bad-%03d", i)
-		log := &types.SyncLog{ID: id, DataSourceID: "ds", TenantID: 7,
+		log := &types.SyncLog{
+			ID: id, DataSourceID: "ds", TenantID: 7,
 			Status: types.SyncLogStatusRunning, StartedAt: now.Add(-10 * time.Minute),
-			RecoveryVersion: 1, RecoveryTrigger: "manual"}
+			RecoveryVersion: 1, RecoveryTrigger: "manual",
+		}
 		require.NoError(t, logs.Create(ctx, log))
 		require.NoError(t, db.Model(&types.SyncLog{}).Where("id = ?", id).
 			Update("queue_task_id", "malformed").Error)
 	}
-	valid := &types.SyncLog{ID: "valid-after-bad", DataSourceID: "ds", TenantID: 7,
+	valid := &types.SyncLog{
+		ID: "valid-after-bad", DataSourceID: "ds", TenantID: 7,
 		Status: types.SyncLogStatusRunning, StartedAt: now.Add(-9 * time.Minute),
-		RecoveryVersion: 1, RecoveryTrigger: "schedule"}
+		RecoveryVersion: 1, RecoveryTrigger: "schedule",
+	}
 	require.NoError(t, logs.Create(ctx, valid))
 	candidates, err := store.UnstartedBefore(ctx, now.Add(-5*time.Minute), 100)
 	require.NoError(t, err)

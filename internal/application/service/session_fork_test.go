@@ -230,7 +230,10 @@ type fakeMessageStore struct {
 	liveArtifacts       []types.MessageArtifactRecord
 }
 
-func (f *fakeMessageStore) readForkAlgorithmMaterial(ctx context.Context, sessionID, pointID string) (*types.Message, []*types.Message, error) {
+func (f *fakeMessageStore) readForkAlgorithmMaterial(
+	ctx context.Context,
+	sessionID, pointID string,
+) (*types.Message, []*types.Message, error) {
 	point, err := f.GetMessage(ctx, sessionID, pointID)
 	if err != nil || point == nil {
 		return point, nil, err

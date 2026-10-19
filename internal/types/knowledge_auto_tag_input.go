@@ -1,8 +1,9 @@
 package types
 
+// KnowledgeAutoTagTaskInputProof identifies the original classification receipt.
 type KnowledgeAutoTagTaskInputProof struct{ ID, Digest string }
 
-// This server-only snapshot is persisted before the classification call. The
+// KnowledgeAutoTagInputSnapshot is a server-only snapshot persisted before the classification call. The
 // manifest includes every candidate name/control and every existing membership
 // that can affect classification, including candidates the model does not select.
 type KnowledgeAutoTagInputSnapshot struct {
@@ -25,6 +26,7 @@ type KnowledgeAutoTagInputSnapshot struct {
 	Tenant *Tenant `json:"-"`
 }
 
+// KnowledgeAutoTagOriginalInput holds the authenticated original classification material.
 type KnowledgeAutoTagOriginalInput struct {
 	Knowledge     *Knowledge
 	KnowledgeBase *KnowledgeBase

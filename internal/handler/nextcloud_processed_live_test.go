@@ -58,7 +58,10 @@ func TestNextcloudProcessedLiveHTTPReadAndRevocation(t *testing.T) {
 		t.Setenv(name, value)
 	}
 	sqlite_vec.Auto()
-	db, err := gorm.Open(sqlite.Open(input.Database+"?_busy_timeout=5000"), &gorm.Config{Logger: gormlogger.Default.LogMode(gormlogger.Silent)})
+	db, err := gorm.Open(
+		sqlite.Open(input.Database+"?_busy_timeout=5000"),
+		&gorm.Config{Logger: gormlogger.Default.LogMode(gormlogger.Silent)},
+	)
 	require.NoError(t, err)
 	sqlDB, err := db.DB()
 	require.NoError(t, err)
@@ -75,18 +78,70 @@ func TestNextcloudProcessedLiveHTTPReadAndRevocation(t *testing.T) {
 	repository.ConfigureKnowledgeInputActorGroupAccess(store, groups)
 	// Material reads resolve current authority on their existing SQL
 	// transaction, using the same factory as the production container.
-	repository.ConfigureKnowledgeDisplayInputWriters(store, nil, repo, func(tx *gorm.DB) *repository.KnowledgeInputProvenanceStore {
-		actual := repository.NewKnowledgeInputProvenanceStore(tx)
-		repository.ConfigureKnowledgeInputActorGroupAccess(actual, service.NewGroupAccessService(repository.NewGroupAccessRepository(tx)))
-		return actual
-	})
+	repository.ConfigureKnowledgeDisplayInputWriters(
+		store,
+		nil,
+		repo,
+		func(tx *gorm.DB) *repository.KnowledgeInputProvenanceStore {
+			actual := repository.NewKnowledgeInputProvenanceStore(tx)
+			repository.ConfigureKnowledgeInputActorGroupAccess(
+				actual,
+				service.NewGroupAccessService(repository.NewGroupAccessRepository(tx)),
+			)
+			return actual
+		},
+	)
 	repository.ConfigureKnowledgeCurrentReadActor(repo, store)
-	guard := access.NewNextcloudSourceLineageGuard(repo.(access.NextcloudLineageSnapshotLookup), kbs, nil, nil, groups, publication, store)
-	repository.ConfigureKnowledgeOriginalInputSourceVerifier(store, service.NewKnowledgeOriginalInputSourceVerifier(store, guard, sources))
+	guard := access.NewNextcloudSourceLineageGuard(
+		repo.(access.NextcloudLineageSnapshotLookup),
+		kbs,
+		nil,
+		nil,
+		groups,
+		publication,
+		store,
+	)
+	repository.ConfigureKnowledgeOriginalInputSourceVerifier(
+		store,
+		service.NewKnowledgeOriginalInputSourceVerifier(store, guard, sources),
+	)
 	catalog := service.NewResourceCatalog(repository.NewResourceRepository(db))
-	files := storagefile.NewResourceCatalogFileService(storagefile.NewBackendScopedFileService("machine-local", storagefile.NewLocalFileService(input.FileRoot, "")), catalog)
+	files := storagefile.NewResourceCatalogFileService(
+		storagefile.NewBackendScopedFileService("machine-local", storagefile.NewLocalFileService(input.FileRoot, "")),
+		catalog,
+	)
 	leases := repository.NewNextcloudContentLeaseStore(db)
-	kg, err := service.NewKnowledgeService(nil, repo, nil, kbs, nil, nil, nil, nil, nil, nil, files, nil, catalog, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, publication, leases)
+	kg, err := service.NewKnowledgeService(
+		nil,
+		repo,
+		nil,
+		kbs,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		files,
+		nil,
+		catalog,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		publication,
+		leases,
+	)
 	require.NoError(t, err)
 	h := &KnowledgeHandler{kgService: kg, kbService: kbs}
 	ConfigureKnowledgeHandlerGroupAccess(h, groups)
@@ -98,7 +153,10 @@ func TestNextcloudProcessedLiveHTTPReadAndRevocation(t *testing.T) {
 	human := true
 	router := gin.New()
 	router.Use(middleware.ErrorHandler(), func(c *gin.Context) {
-		ctx := types.WithCaller(c.Request.Context(), types.Caller{TenantID: 7, UserID: input.UserID, Role: types.TenantRoleAdmin})
+		ctx := types.WithCaller(
+			c.Request.Context(),
+			types.Caller{TenantID: 7, UserID: input.UserID, Role: types.TenantRoleAdmin},
+		)
 		ctx = types.WithPrincipal(ctx, types.Principal{Type: types.PrincipalWebUser, ID: input.UserID})
 		if !human {
 			ctx = types.WithCaller(ctx, types.Caller{TenantID: 7, Role: types.TenantRoleAdmin})
@@ -128,7 +186,16 @@ func TestNextcloudProcessedLiveHTTPReadAndRevocation(t *testing.T) {
 		members := service.NewTenantMemberService(repository.NewTenantMemberRepository(db), nil, users, tokens)
 		enforced := true
 		cfg := &config.Config{Tenant: &config.TenantConfig{EnableRBAC: &enforced}}
-		userService := service.NewUserService(cfg, users, tokens, tenants, members, nil, repository.NewDirectoryRepository(db), groups)
+		userService := service.NewUserService(
+			cfg,
+			users,
+			tokens,
+			tenants,
+			members,
+			nil,
+			repository.NewDirectoryRepository(db),
+			groups,
+		)
 		user, err := users.GetUserByID(context.Background(), input.UserID)
 		require.NoError(t, err)
 		accessToken, refreshToken, err = userService.GenerateTokens(context.Background(), user)
@@ -138,27 +205,56 @@ func TestNextcloudProcessedLiveHTTPReadAndRevocation(t *testing.T) {
 		require.Equal(t, input.UserID, validated.ID)
 		require.Equal(t, uint64(7), tenantID)
 		jwtRouter = gin.New()
-		jwtRouter.Use(middleware.ErrorHandler(), middleware.Auth(tenants, userService, members, nil, cfg, groups), func(c *gin.Context) {
-			jwtCaller = types.CallerFromContext(c.Request.Context())
-			jwtAuthenticated = true
-			c.Next()
-		})
+		jwtRouter.Use(
+			middleware.ErrorHandler(),
+			middleware.Auth(tenants, userService, members, nil, cfg, groups),
+			func(c *gin.Context) {
+				jwtCaller = types.CallerFromContext(c.Request.Context())
+				jwtAuthenticated = true
+				c.Next()
+			},
+		)
 		jwtRouter.GET("/knowledge/:id", h.GetKnowledge)
 		jwtRouter.GET("/knowledge/:id/preview", h.PreviewKnowledgeFile)
 		jwtRouter.GET("/knowledge/:id/download", h.DownloadKnowledgeFile)
 		jwtRouter.GET("/knowledge-bases/:id/knowledge", h.ListKnowledge)
-		if os.Getenv("WEKNORA_DOCUMENT_GRAPH_HISTORY_SEARCH") == "1" || os.Getenv("WEKNORA_DOCUMENT_GRAPH_HISTORY_VECTOR") == "1" {
+		if os.Getenv("WEKNORA_DOCUMENT_GRAPH_HISTORY_SEARCH") == "1" ||
+			os.Getenv("WEKNORA_DOCUMENT_GRAPH_HISTORY_VECTOR") == "1" {
 			var vector *documentHistoryVectorSpec
 			if os.Getenv("WEKNORA_DOCUMENT_GRAPH_HISTORY_VECTOR") == "1" {
-				vector = &documentHistoryVectorSpec{KnowledgeBaseID: input.HistoryVectorKBID, KnowledgeID: input.HistoryVectorKnowledgeID, EmbeddingModelID: input.HistoryVectorEmbeddingID, AnswerSHA256: input.HistoryVectorAnswerSHA256}
+				vector = &documentHistoryVectorSpec{
+					KnowledgeBaseID:  input.HistoryVectorKBID,
+					KnowledgeID:      input.HistoryVectorKnowledgeID,
+					EmbeddingModelID: input.HistoryVectorEmbeddingID,
+					AnswerSHA256:     input.HistoryVectorAnswerSHA256,
+				}
 			}
-			checkHistorySearch = addDocumentLiveHistorySearch(t, jwtRouter, db, store, guard, publication, sources, kbs, kg, input.HistorySessionID, accessToken, vector)
+			checkHistorySearch = addDocumentLiveHistorySearch(
+				t,
+				jwtRouter,
+				db,
+				store,
+				guard,
+				publication,
+				sources,
+				kbs,
+				kg,
+				input.HistorySessionID,
+				accessToken,
+				vector,
+			)
 		}
 	}
 	baseline := map[string][]string{}
 	for _, table := range []string{"nextcloud_content_leases", "original_body_leases"} {
 		var ids []string
-		require.NoError(t, db.Table(table).Where("released_at_ms IS NULL AND expires_at_ms > ?", time.Now().UnixMilli()).Pluck("lease_id", &ids).Error)
+		require.NoError(
+			t,
+			db.Table(table).
+				Where("released_at_ms IS NULL AND expires_at_ms > ?", time.Now().UnixMilli()).
+				Pluck("lease_id", &ids).
+				Error,
+		)
 		baseline[table] = ids
 	}
 	routes := []struct {
@@ -185,7 +281,12 @@ func TestNextcloudProcessedLiveHTTPReadAndRevocation(t *testing.T) {
 				w := &closeNotifyRecorder{ResponseRecorder: httptest.NewRecorder()}
 				jwtRouter.ServeHTTP(w, request)
 				require.Equal(t, status, w.Code, w.Body.String())
-				require.Equal(t, authenticated, jwtAuthenticated, "verify whether production authentication reached the content guard")
+				require.Equal(
+					t,
+					authenticated,
+					jwtAuthenticated,
+					"verify whether production authentication reached the content guard",
+				)
 				if authenticated {
 					require.Equal(t, input.UserID, jwtCaller.UserID)
 					require.Equal(t, uint64(7), jwtCaller.TenantID)
@@ -251,7 +352,7 @@ func TestNextcloudProcessedLiveHTTPReadAndRevocation(t *testing.T) {
 	if t.Failed() {
 		return
 	}
-	require.NoError(t, os.WriteFile(path+".http-positive", []byte("ready"), 0600))
+	require.NoError(t, os.WriteFile(path+".http-positive", []byte("ready"), 0o600))
 	revocationMarker := path + ".revoked"
 	if os.Getenv("WEKNORA_DOCUMENT_GRAPH_HISTORY_VECTOR") == "1" {
 		// The two test binaries share one SQLite file. Finish JWT denial
@@ -259,7 +360,12 @@ func TestNextcloudProcessedLiveHTTPReadAndRevocation(t *testing.T) {
 		// write transactions do not compete during this sequential profile.
 		revocationMarker = path + ".http-revoked"
 	}
-	require.Eventually(t, func() bool { _, err := os.Stat(revocationMarker); return err == nil }, 60*time.Second, 100*time.Millisecond)
+	require.Eventually(
+		t,
+		func() bool { _, err := os.Stat(revocationMarker); return err == nil },
+		60*time.Second,
+		100*time.Millisecond,
+	)
 	for _, route := range routes {
 		t.Run("revoked_"+route.Name, func(t *testing.T) {
 			w := &closeNotifyRecorder{ResponseRecorder: httptest.NewRecorder()}
@@ -284,15 +390,21 @@ func TestNextcloudProcessedLiveHTTPReadAndRevocation(t *testing.T) {
 		return
 	}
 	if os.Getenv("WEKNORA_DOCUMENT_GRAPH_HISTORY_VECTOR") == "1" {
-		require.NoError(t, os.WriteFile(path+".http-revocation-checked", []byte("passed"), 0600))
+		require.NoError(t, os.WriteFile(path+".http-revocation-checked", []byte("passed"), 0o600))
 	}
 	// The producer retains its own output guards; only its pre-existing lease
 	// IDs may remain. Newly acquired HTTP leases must all be released.
 	sourceWait := 30 * time.Second
-	if os.Getenv("WEKNORA_DOCUMENT_GRAPH_HISTORY_SEARCH") == "1" || os.Getenv("WEKNORA_DOCUMENT_GRAPH_HISTORY_VECTOR") == "1" {
+	if os.Getenv("WEKNORA_DOCUMENT_GRAPH_HISTORY_SEARCH") == "1" ||
+		os.Getenv("WEKNORA_DOCUMENT_GRAPH_HISTORY_VECTOR") == "1" {
 		sourceWait = 180 * time.Second
 	}
-	require.Eventually(t, func() bool { _, err := os.Stat(path + ".source-checked"); return err == nil }, sourceWait, 100*time.Millisecond)
+	require.Eventually(
+		t,
+		func() bool { _, err := os.Stat(path + ".source-checked"); return err == nil },
+		sourceWait,
+		100*time.Millisecond,
+	)
 	for table, ids := range baseline {
 		query := db.Table(table).Where("released_at_ms IS NULL AND expires_at_ms > ?", time.Now().UnixMilli())
 		if len(ids) > 0 {
@@ -302,5 +414,5 @@ func TestNextcloudProcessedLiveHTTPReadAndRevocation(t *testing.T) {
 		require.NoError(t, query.Count(&count).Error)
 		require.Zero(t, count, table)
 	}
-	require.NoError(t, os.WriteFile(path+".http-done", []byte("passed"), 0600))
+	require.NoError(t, os.WriteFile(path+".http-done", []byte("passed"), 0o600))
 }

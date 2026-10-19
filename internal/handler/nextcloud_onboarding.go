@@ -25,9 +25,20 @@ type NextcloudOnboardingHandler struct {
 	ackRoot  func(context.Context, *types.DataSourceConfig, nextcloud.RootMigration) (nextcloud.RootMigration, error)
 }
 
-func NewNextcloudOnboardingHandler(store *repository.NextcloudOnboardingStore, pairing *NextcloudSourcePairingHandler, inbox *repository.NextcloudEventInboxRepository) *NextcloudOnboardingHandler {
-	return &NextcloudOnboardingHandler{store: store, pairing: pairing, inbox: inbox, readRoot: nextcloud.ReadRootMigration, ackRoot: nextcloud.AcknowledgeRootMigration}
+func NewNextcloudOnboardingHandler(
+	store *repository.NextcloudOnboardingStore,
+	pairing *NextcloudSourcePairingHandler,
+	inbox *repository.NextcloudEventInboxRepository,
+) *NextcloudOnboardingHandler {
+	return &NextcloudOnboardingHandler{
+		store:    store,
+		pairing:  pairing,
+		inbox:    inbox,
+		readRoot: nextcloud.ReadRootMigration,
+		ackRoot:  nextcloud.AcknowledgeRootMigration,
+	}
 }
+
 func (h *NextcloudOnboardingHandler) credential(c *gin.Context) (types.NextcloudOnboardingCredential, bool) {
 	c.Header("Cache-Control", "no-store")
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 1<<20)
@@ -43,6 +54,7 @@ func (h *NextcloudOnboardingHandler) credential(c *gin.Context) (types.Nextcloud
 	}
 	return cred, true
 }
+
 func onboardingError(c *gin.Context, err error) {
 	status := http.StatusServiceUnavailable
 	if errors.Is(err, repository.ErrNextcloudOnboardingDenied) {
@@ -51,7 +63,8 @@ func onboardingError(c *gin.Context, err error) {
 	if errors.Is(err, repository.ErrNextcloudOnboardingNotFound) {
 		status = http.StatusNotFound
 	}
-	if errors.Is(err, repository.ErrNextcloudOnboardingConflict) || errors.Is(err, repository.ErrNextcloudKBBlankUnverified) {
+	if errors.Is(err, repository.ErrNextcloudOnboardingConflict) ||
+		errors.Is(err, repository.ErrNextcloudKBBlankUnverified) {
 		status = http.StatusConflict
 	}
 	code := "onboarding_unavailable"
@@ -73,17 +86,24 @@ func onboardingError(c *gin.Context, err error) {
 	}
 	c.JSON(status, gin.H{"error": code})
 }
+
 func (h *NextcloudOnboardingHandler) Candidates(c *gin.Context) {
 	cred, ok := h.credential(c)
 	if !ok {
 		return
 	}
 	tenant, err := strconv.ParseUint(c.Query("tenant_id"), 10, 64)
-	if err != nil || tenant != cred.TenantID || (c.Query("processing_template_id") != "" && c.Query("processing_template_id") != cred.TemplateKBID) {
+	if err != nil || tenant != cred.TenantID ||
+		(c.Query("processing_template_id") != "" && c.Query("processing_template_id") != cred.TemplateKBID) {
 		onboardingError(c, repository.ErrNextcloudOnboardingDenied)
 		return
 	}
-	rows, err := h.store.Candidates(c.Request.Context(), cred, c.Query("actor_directory_id"), c.Query("actor_object_guid"))
+	rows, err := h.store.Candidates(
+		c.Request.Context(),
+		cred,
+		c.Query("actor_directory_id"),
+		c.Query("actor_object_guid"),
+	)
 	if err != nil {
 		onboardingError(c, err)
 		return
@@ -93,8 +113,18 @@ func (h *NextcloudOnboardingHandler) Candidates(c *gin.Context) {
 		onboardingError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"candidates": rows, "processing_template_id": cred.TemplateKBID, "processing_template_name": descriptor["name"], "graph_mode": descriptor["graph_mode"], "tenant_id": cred.TenantID})
+	c.JSON(
+		http.StatusOK,
+		gin.H{
+			"candidates":               rows,
+			"processing_template_id":   cred.TemplateKBID,
+			"processing_template_name": descriptor["name"],
+			"graph_mode":               descriptor["graph_mode"],
+			"tenant_id":                cred.TenantID,
+		},
+	)
 }
+
 func (h *NextcloudOnboardingHandler) Create(c *gin.Context) {
 	cred, ok := h.credential(c)
 	if !ok {
@@ -115,7 +145,10 @@ func (h *NextcloudOnboardingHandler) Create(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, gin.H{"operation": op})
 }
-func (h *NextcloudOnboardingHandler) operation(c *gin.Context) (types.NextcloudOnboardingCredential, types.NextcloudOnboardingOperation, bool) {
+
+func (h *NextcloudOnboardingHandler) operation(
+	c *gin.Context,
+) (types.NextcloudOnboardingCredential, types.NextcloudOnboardingOperation, bool) {
 	cred, ok := h.credential(c)
 	if !ok {
 		return cred, types.NextcloudOnboardingOperation{}, false
@@ -160,6 +193,7 @@ func (h *NextcloudOnboardingHandler) operation(c *gin.Context) (types.NextcloudO
 	}
 	return cred, op, true
 }
+
 func (h *NextcloudOnboardingHandler) Status(c *gin.Context) {
 	cred, ok := h.credential(c)
 	if !ok {
@@ -170,7 +204,13 @@ func (h *NextcloudOnboardingHandler) Status(c *gin.Context) {
 		onboardingError(c, err)
 		return
 	}
-	tenantDeletion, err := h.store.TenantDeletionObservation(c.Request.Context(), cred, op, c.Query("actor_directory_id"), c.Query("actor_object_guid"))
+	tenantDeletion, err := h.store.TenantDeletionObservation(
+		c.Request.Context(),
+		cred,
+		op,
+		c.Query("actor_directory_id"),
+		c.Query("actor_object_guid"),
+	)
 	if err != nil {
 		onboardingError(c, err)
 		return
@@ -180,7 +220,13 @@ func (h *NextcloudOnboardingHandler) Status(c *gin.Context) {
 		onboardingError(c, err)
 		return
 	}
-	target, err := h.store.TargetObservation(c.Request.Context(), cred, op, c.Query("actor_directory_id"), c.Query("actor_object_guid"))
+	target, err := h.store.TargetObservation(
+		c.Request.Context(),
+		cred,
+		op,
+		c.Query("actor_directory_id"),
+		c.Query("actor_object_guid"),
+	)
 	if err != nil {
 		onboardingError(c, err)
 		return
@@ -208,25 +254,47 @@ func (h *NextcloudOnboardingHandler) Status(c *gin.Context) {
 		result["pairing"] = pair
 	}
 	if credential, err := h.store.EventCredential(c.Request.Context(), op); err == nil {
-		result["event_connection"] = gin.H{"connection_id": credential.ConnectionID, "key_id": credential.KeyID, "secret": credential.Secret, "receiver_url": nextcloudEventPath}
+		result["event_connection"] = gin.H{
+			"connection_id": credential.ConnectionID,
+			"key_id":        credential.KeyID,
+			"secret":        credential.Secret,
+			"receiver_url":  nextcloudEventPath,
+		}
 	}
 	c.JSON(http.StatusOK, result)
 }
+
 func (h *NextcloudOnboardingHandler) Pair(c *gin.Context) {
 	cred, op, ok := h.operation(c)
 	if !ok {
 		return
 	}
 	var req sourcePairingRequest
-	if c.ShouldBindJSON(&req) != nil || req.OperationID != op.OperationID || req.InstanceID != op.InstanceID || req.BindingID != op.BindingID || req.KnowledgeBaseID != op.KnowledgeBaseID || req.BaseURL != cred.BaseURL || req.PublicationEpoch == nil || *req.PublicationEpoch < 0 || !sourcePairKeyPattern.MatchString(req.KeyID) || req.KeyID != "pair_"+strings.ReplaceAll(op.OperationID, "-", "") {
+	if c.ShouldBindJSON(&req) != nil || req.OperationID != op.OperationID || req.InstanceID != op.InstanceID ||
+		req.BindingID != op.BindingID ||
+		req.KnowledgeBaseID != op.KnowledgeBaseID ||
+		req.BaseURL != cred.BaseURL ||
+		req.PublicationEpoch == nil ||
+		*req.PublicationEpoch < 0 ||
+		!sourcePairKeyPattern.MatchString(req.KeyID) ||
+		req.KeyID != "pair_"+strings.ReplaceAll(op.OperationID, "-", "") {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_source_pairing_request"})
 		return
 	}
-	config := &types.DataSourceConfig{Type: types.ConnectorTypeNextcloud, Credentials: map[string]interface{}{"token": req.Token, "key_id": req.KeyID}, ResourceIDs: []string{req.BindingID}, Settings: map[string]interface{}{"base_url": req.BaseURL}}
+	config := &types.DataSourceConfig{
+		Type:        types.ConnectorTypeNextcloud,
+		Credentials: map[string]interface{}{"token": req.Token, "key_id": req.KeyID},
+		ResourceIDs: []string{req.BindingID},
+		Settings:    map[string]interface{}{"base_url": req.BaseURL},
+	}
 	identity, err := h.pairing.inspect(c.Request.Context(), config)
 	currentPair, _, pairErr := h.pairing.repo.SourcePairing(c.Request.Context(), op.TenantID, op.OperationID)
-	activeRetry := pairErr == nil && currentPair.State == "active" && currentPair.PublicationEpoch == *req.PublicationEpoch
-	if err != nil || identity.InstanceID != op.InstanceID || identity.BindingID != op.BindingID || identity.BaseURL != cred.BaseURL || identity.PublicationState != "active" || (identity.PublicationEpoch != *req.PublicationEpoch && !(activeRetry && identity.PublicationEpoch >= *req.PublicationEpoch)) {
+	activeRetry := pairErr == nil && currentPair.State == "active" &&
+		currentPair.PublicationEpoch == *req.PublicationEpoch
+	if err != nil || identity.InstanceID != op.InstanceID || identity.BindingID != op.BindingID ||
+		identity.BaseURL != cred.BaseURL ||
+		identity.PublicationState != "active" ||
+		(identity.PublicationEpoch != *req.PublicationEpoch && !(activeRetry && identity.PublicationEpoch >= *req.PublicationEpoch)) {
 		c.JSON(http.StatusConflict, gin.H{"error": "nextcloud_prepared_binding_unavailable"})
 		return
 	}
@@ -239,13 +307,37 @@ func (h *NextcloudOnboardingHandler) Pair(c *gin.Context) {
 		onboardingError(c, err)
 		return
 	}
-	pair, _, err := h.pairing.repo.PrepareSourcePairing(producerCtx, repository.NextcloudSourcePairing{OperationID: op.OperationID, TenantID: op.TenantID, KnowledgeBaseID: op.KnowledgeBaseID, InstanceID: op.InstanceID, BindingID: op.BindingID, BaseURL: cred.BaseURL, PublicationEpoch: *req.PublicationEpoch, KeyID: req.KeyID}, req.Token)
+	pair, _, err := h.pairing.repo.PrepareSourcePairing(
+		producerCtx,
+		repository.NextcloudSourcePairing{
+			OperationID:      op.OperationID,
+			TenantID:         op.TenantID,
+			KnowledgeBaseID:  op.KnowledgeBaseID,
+			InstanceID:       op.InstanceID,
+			BindingID:        op.BindingID,
+			BaseURL:          cred.BaseURL,
+			PublicationEpoch: *req.PublicationEpoch,
+			KeyID:            req.KeyID,
+		},
+		req.Token,
+	)
 	if err != nil {
 		sourcePairingError(c, err)
 		return
 	}
 	if pair.State != "active" {
-		err = h.pairing.commit(c.Request.Context(), config, nextcloud.SourcePairingCommit{OperationID: pair.OperationID, InstanceID: pair.InstanceID, BindingID: pair.BindingID, TenantID: pair.TenantID, KnowledgeBaseID: pair.KnowledgeBaseID, DataSourceID: pair.DataSourceID})
+		err = h.pairing.commit(
+			c.Request.Context(),
+			config,
+			nextcloud.SourcePairingCommit{
+				OperationID:     pair.OperationID,
+				InstanceID:      pair.InstanceID,
+				BindingID:       pair.BindingID,
+				TenantID:        pair.TenantID,
+				KnowledgeBaseID: pair.KnowledgeBaseID,
+				DataSourceID:    pair.DataSourceID,
+			},
+		)
 		if err == nil {
 			err = h.pairing.repo.ActivateSourcePairing(c.Request.Context(), pair)
 		}
@@ -267,7 +359,20 @@ func (h *NextcloudOnboardingHandler) Pair(c *gin.Context) {
 	}
 	credential, err := h.store.EventCredential(c.Request.Context(), op)
 	if err != nil {
-		credential, err = h.inbox.Pair(c.Request.Context(), repository.NextcloudEventPairingIdentity{TenantID: op.TenantID, KnowledgeBaseID: op.KnowledgeBaseID, DatasourceID: pair.DataSourceID, NextcloudInstanceID: op.InstanceID, BindingID: op.BindingID, DatasourceBaseURL: pair.BaseURL, DatasourceConfigSHA: pair.ConfigSHA, PublicationEpoch: pair.PublicationEpoch, PublicationState: "active"})
+		credential, err = h.inbox.Pair(
+			c.Request.Context(),
+			repository.NextcloudEventPairingIdentity{
+				TenantID:            op.TenantID,
+				KnowledgeBaseID:     op.KnowledgeBaseID,
+				DatasourceID:        pair.DataSourceID,
+				NextcloudInstanceID: op.InstanceID,
+				BindingID:           op.BindingID,
+				DatasourceBaseURL:   pair.BaseURL,
+				DatasourceConfigSHA: pair.ConfigSHA,
+				PublicationEpoch:    pair.PublicationEpoch,
+				PublicationState:    "active",
+			},
+		)
 		if errors.Is(err, repository.ErrNextcloudEventConnectionExists) {
 			credential, err = h.store.EventCredential(c.Request.Context(), op)
 		}
@@ -276,8 +381,21 @@ func (h *NextcloudOnboardingHandler) Pair(c *gin.Context) {
 		c.JSON(http.StatusAccepted, gin.H{"operation": op, "pairing": pair, "error": "event_connection_pending"})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"operation": op, "pairing": pair, "event_connection": gin.H{"connection_id": credential.ConnectionID, "key_id": credential.KeyID, "secret": credential.Secret, "receiver_url": nextcloudEventPath}})
+	c.JSON(
+		http.StatusOK,
+		gin.H{
+			"operation": op,
+			"pairing":   pair,
+			"event_connection": gin.H{
+				"connection_id": credential.ConnectionID,
+				"key_id":        credential.KeyID,
+				"secret":        credential.Secret,
+				"receiver_url":  nextcloudEventPath,
+			},
+		},
+	)
 }
+
 func (h *NextcloudOnboardingHandler) Grants(c *gin.Context) {
 	_, op, ok := h.operation(c)
 	if !ok {
@@ -301,7 +419,9 @@ func (h *NextcloudOnboardingHandler) Grants(c *gin.Context) {
 		return
 	}
 	identity, err := h.pairing.inspect(c.Request.Context(), cfg)
-	if err != nil || identity.PublicationState != "active" || identity.PublicationEpoch != req.PublicationEpoch || identity.InstanceID != op.InstanceID || identity.BindingID != op.BindingID {
+	if err != nil || identity.PublicationState != "active" || identity.PublicationEpoch != req.PublicationEpoch ||
+		identity.InstanceID != op.InstanceID ||
+		identity.BindingID != op.BindingID {
 		onboardingError(c, repository.ErrNextcloudOnboardingConflict)
 		return
 	}
@@ -315,6 +435,7 @@ func (h *NextcloudOnboardingHandler) Grants(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, gin.H{"permission_version": req.PermissionVersion, "updated_at": time.Now().UTC()})
 }
+
 func (h *NextcloudOnboardingHandler) Sync(c *gin.Context) {
 	_, op, ok := h.operation(c)
 	if !ok {
@@ -405,7 +526,14 @@ func (h *NextcloudOnboardingHandler) TargetMigration(c *gin.Context) {
 	// The immutable retirement record permits ACK-loss retries even after NC
 	// removed the old binding. New handoffs require the signed stopped source.
 	if op.State == "retired" {
-		row, err := h.store.PrepareTargetMigration(c.Request.Context(), op, req.OperationID, req.NewOperationID, req.ActorDir, req.ActorGUID)
+		row, err := h.store.PrepareTargetMigration(
+			c.Request.Context(),
+			op,
+			req.OperationID,
+			req.NewOperationID,
+			req.ActorDir,
+			req.ActorGUID,
+		)
 		if err != nil {
 			onboardingError(c, err)
 			return
@@ -424,7 +552,8 @@ func (h *NextcloudOnboardingHandler) TargetMigration(c *gin.Context) {
 		return
 	}
 	identity, err := h.pairing.inspect(c.Request.Context(), cfg)
-	if err != nil || identity.PublicationState != "stopped" || identity.InstanceID != op.InstanceID || identity.BindingID != op.BindingID {
+	if err != nil || identity.PublicationState != "stopped" || identity.InstanceID != op.InstanceID ||
+		identity.BindingID != op.BindingID {
 		onboardingError(c, repository.ErrNextcloudOnboardingConflict)
 		return
 	}
@@ -432,13 +561,21 @@ func (h *NextcloudOnboardingHandler) TargetMigration(c *gin.Context) {
 		req.ActorDir = op.ActorDirectoryID
 		req.ActorGUID = op.ActorObjectGUID
 	}
-	row, err := h.store.PrepareTargetMigration(c.Request.Context(), op, req.OperationID, req.NewOperationID, req.ActorDir, req.ActorGUID)
+	row, err := h.store.PrepareTargetMigration(
+		c.Request.Context(),
+		op,
+		req.OperationID,
+		req.NewOperationID,
+		req.ActorDir,
+		req.ActorGUID,
+	)
 	if err != nil {
 		onboardingError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"migration": row})
 }
+
 func (h *NextcloudOnboardingHandler) FinalizeTargetMigration(c *gin.Context) {
 	_, op, ok := h.operation(c)
 	if !ok {

@@ -11,10 +11,25 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func actualAgentSearchFixture(t *testing.T, model rerank.Reranker) (*SearchKnowledgeTool, *stubKnowledgeBaseService, *leasedAgentKnowledgeService) {
+func actualAgentSearchFixture(
+	t *testing.T,
+	model rerank.Reranker,
+) (*SearchKnowledgeTool, *stubKnowledgeBaseService, *leasedAgentKnowledgeService) {
 	t.Helper()
 	read, svc, db := actualAgentDocumentFixture(t)
-	kbs := &stubKnowledgeBaseService{results: []*types.SearchResult{{ID: "c1", KnowledgeID: "doc", KnowledgeBaseID: "kb", Content: "stale index poison", KnowledgeTitle: "stale index title", KnowledgeCustomMetadata: "unaccounted stale copied source header", Score: 0.99}}}
+	kbs := &stubKnowledgeBaseService{
+		results: []*types.SearchResult{
+			{
+				ID:                      "c1",
+				KnowledgeID:             "doc",
+				KnowledgeBaseID:         "kb",
+				Content:                 "stale index poison",
+				KnowledgeTitle:          "stale index title",
+				KnowledgeCustomMetadata: "unaccounted stale copied source header",
+				Score:                   0.99,
+			},
+		},
+	}
 	search := NewSearchKnowledgeTool(kbs, svc, read.chunkService, read.searchTargets, model, nil)
 	search.SetRAGChunkSnapshotReader(repository.NewRAGChunkSnapshotReader(db, nil))
 	return search, kbs, svc
@@ -26,7 +41,11 @@ func TestAgentLineageSearchActualTextTitleReachRerankAndOutput(t *testing.T) {
 	turn, ctx := toolTurn()
 	r := NewToolRegistry()
 	r.RegisterTool(tool)
-	result, err := r.ExecuteToolWithSourceLineage(ctx, ToolSearchKnowledge, json.RawMessage(`{"query":"database","mode":"keyword"}`))
+	result, err := r.ExecuteToolWithSourceLineage(
+		ctx,
+		ToolSearchKnowledge,
+		json.RawMessage(`{"query":"database","mode":"keyword"}`),
+	)
 	require.NoError(t, err)
 	require.True(t, result.Success)
 	require.Equal(t, 1, ranker.calls)
@@ -50,6 +69,7 @@ func (m *revokeSearchReranker) Rerank(ctx context.Context, query string, docs []
 	m.svc.revoked.Store(true)
 	return result, err
 }
+
 func TestAgentLineageSearchRevocationAfterActualRerankReturnsNoSourceData(t *testing.T) {
 	tool, _, svc := actualAgentSearchFixture(t, nil)
 	model := &revokeSearchReranker{stubReranker: &stubReranker{scores: []float64{0.9}}, svc: svc}
@@ -63,26 +83,51 @@ func TestAgentLineageSearchRevocationAfterActualRerankReturnsNoSourceData(t *tes
 	ctx := types.WithRAGSourceLineage(context.Background(), turn)
 	r := NewToolRegistry()
 	r.RegisterTool(tool)
-	result, err := r.ExecuteToolWithSourceLineage(ctx, ToolSearchKnowledge, json.RawMessage(`{"query":"database","mode":"keyword"}`))
+	result, err := r.ExecuteToolWithSourceLineage(
+		ctx,
+		ToolSearchKnowledge,
+		json.RawMessage(`{"query":"database","mode":"keyword"}`),
+	)
 	require.Error(t, err)
 	require.Nil(t, result)
 	require.Equal(t, 1, model.calls)
 	require.Error(t, turn.Check(ctx))
 }
+
 func TestAgentLineageSearchEmptyResultRetainsPriorSourceAndGraphCandidateIsUnknown(t *testing.T) {
 	tool, kbs, _ := actualAgentSearchFixture(t, nil)
 	turn, ctx := toolTurn()
 	r := NewToolRegistry()
 	r.RegisterTool(tool)
-	first, err := r.ExecuteToolWithSourceLineage(ctx, ToolSearchKnowledge, json.RawMessage(`{"query":"database","mode":"keyword"}`))
+	first, err := r.ExecuteToolWithSourceLineage(
+		ctx,
+		ToolSearchKnowledge,
+		json.RawMessage(`{"query":"database","mode":"keyword"}`),
+	)
 	require.NoError(t, err)
 	kbs.results = nil
-	empty, err := r.ExecuteToolWithSourceLineage(ctx, ToolSearchKnowledge, json.RawMessage(`{"query":"no rows","mode":"keyword"}`))
+	empty, err := r.ExecuteToolWithSourceLineage(
+		ctx,
+		ToolSearchKnowledge,
+		json.RawMessage(`{"query":"no rows","mode":"keyword"}`),
+	)
 	require.NoError(t, err)
 	require.Empty(t, empty.SourceLineage.Sources)
 	require.Equal(t, first.SourceLineage, turn.Snapshot())
-	kbs.results = []*types.SearchResult{{ID: "c1", KnowledgeID: "doc", KnowledgeBaseID: "kb", Content: "opaque graph-derived old entity", MatchType: types.MatchTypeGraph}}
-	result, err := r.ExecuteToolWithSourceLineage(ctx, ToolSearchKnowledge, json.RawMessage(`{"query":"graph","mode":"keyword"}`))
+	kbs.results = []*types.SearchResult{
+		{
+			ID:              "c1",
+			KnowledgeID:     "doc",
+			KnowledgeBaseID: "kb",
+			Content:         "opaque graph-derived old entity",
+			MatchType:       types.MatchTypeGraph,
+		},
+	}
+	result, err := r.ExecuteToolWithSourceLineage(
+		ctx,
+		ToolSearchKnowledge,
+		json.RawMessage(`{"query":"graph","mode":"keyword"}`),
+	)
 	require.Error(t, err)
 	require.Nil(t, result)
 	require.Error(t, turn.Check(ctx))

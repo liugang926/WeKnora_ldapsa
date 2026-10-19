@@ -3,21 +3,27 @@ package repository
 import (
 	"context"
 	"encoding/json"
-	"github.com/Tencent/WeKnora/internal/types"
-	"gorm.io/gorm"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/Tencent/WeKnora/internal/types"
+	"gorm.io/gorm"
 )
 
-type steerMaterialPlanKey struct{}
-type steerReadBoundaryKey struct{}
-type steerReadBoundary struct {
-	Plan       *types.SteerMaterialPlan
-	BodyLeases []string
-}
+type (
+	steerReadBoundaryKey struct{}
+	steerReadBoundary    struct {
+		Plan       *types.SteerMaterialPlan
+		BodyLeases []string
+	}
+)
 
-func WithSteerMaterialReadPlan(ctx context.Context, plan *types.SteerMaterialPlan, bodyLeases []string) (context.Context, error) {
+func WithSteerMaterialReadPlan(
+	ctx context.Context,
+	plan *types.SteerMaterialPlan,
+	bodyLeases []string,
+) (context.Context, error) {
 	if plan == nil || plan.MetadataDigest == "" || plan.SourceLineage.RequireComplete() != nil {
 		return ctx, types.ErrSourceLineageUnknown
 	}
@@ -44,14 +50,29 @@ func WithSteerMaterialReadPlan(ctx context.Context, plan *types.SteerMaterialPla
 		}
 		copy.OriginalProofs[i].AgentTenantID = proof.AgentTenantID
 	}
-	return context.WithValue(ctx, steerReadBoundaryKey{}, steerReadBoundary{&copy, append([]string{}, bodyLeases...)}), nil
+	return context.WithValue(
+		ctx,
+		steerReadBoundaryKey{},
+		steerReadBoundary{&copy, append([]string{}, bodyLeases...)},
+	), nil
 }
-func (s *KnowledgeInputProvenanceStore) PeekSteerMaterialPlan(ctx context.Context, req *types.SteerMaterialRequest) (*types.SteerMaterialPlan, error) {
+
+func (s *KnowledgeInputProvenanceStore) PeekSteerMaterialPlan(
+	ctx context.Context,
+	req *types.SteerMaterialRequest,
+) (*types.SteerMaterialPlan, error) {
 	var result *types.SteerMaterialPlan
-	err := s.collectionTransaction(ctx, func(tx *gorm.DB) error { var err error; result, err = s.peekSteerMaterialPlanInTx(tx, req); return err })
+	err := s.collectionTransaction(
+		ctx,
+		func(tx *gorm.DB) error { var err error; result, err = s.peekSteerMaterialPlanInTx(tx, req); return err },
+	)
 	return result, err
 }
-func (s *KnowledgeInputProvenanceStore) peekSteerMaterialPlanInTx(tx *gorm.DB, req *types.SteerMaterialRequest) (*types.SteerMaterialPlan, error) {
+
+func (s *KnowledgeInputProvenanceStore) peekSteerMaterialPlanInTx(
+	tx *gorm.DB,
+	req *types.SteerMaterialRequest,
+) (*types.SteerMaterialPlan, error) {
 	if req == nil || req.TenantID == 0 || req.SessionID == "" || req.RunMessageID == "" || req.RunGenerationID == "" {
 		return nil, types.ErrSourceLineageUnknown
 	}
@@ -73,10 +94,24 @@ func (s *KnowledgeInputProvenanceStore) peekSteerMaterialPlanInTx(tx *gorm.DB, r
 		return nil, ErrKnowledgeInputChanged
 	}
 	var origins []steerAuthoredOrigin
-	if err := tx.Table("steer_authored_origins o").Select("o."+strings.ReplaceAll(steerOriginMetadataFields, ",", ",o.")).Joins("JOIN steer_control_heads h ON h.origin_id=o.id").Joins("JOIN steer_control_admissions c ON c.id=h.head_id AND c.origin_id=o.id").Where("o.tenant_id=? AND o.session_id=? AND c.run_message_id=? AND c.run_generation_id=?", req.TenantID, req.SessionID, req.RunMessageID, req.RunGenerationID).Order("o.created_at_ms,o.id").Find(&origins).Error; err != nil {
+	if err := tx.Table("steer_authored_origins o").
+		Select("o."+strings.ReplaceAll(steerOriginMetadataFields, ",", ",o.")).
+		Joins("JOIN steer_control_heads h ON h.origin_id=o.id").
+		Joins("JOIN steer_control_admissions c ON c.id=h.head_id AND c.origin_id=o.id").
+		Where("o.tenant_id=? AND o.session_id=? AND c.run_message_id=? AND c.run_generation_id=?", req.TenantID, req.SessionID, req.RunMessageID, req.RunGenerationID).
+		Order("o.created_at_ms,o.id").
+		Find(&origins).
+		Error; err != nil {
 		return nil, err
 	}
-	result := &types.SteerMaterialPlan{Request: *req, OwnerID: session.UserID, OwnerRevision: ownerRev, CandidateControls: []*types.SteerCandidateControl{}, SelectedSteerIDs: []string{}, OriginalProofs: []*types.SteerOriginalProof{}}
+	result := &types.SteerMaterialPlan{
+		Request:           *req,
+		OwnerID:           session.UserID,
+		OwnerRevision:     ownerRev,
+		CandidateControls: []*types.SteerCandidateControl{},
+		SelectedSteerIDs:  []string{},
+		OriginalProofs:    []*types.SteerOriginalProof{},
+	}
 	sources := []*types.SourceLineage{}
 	metadata := []any{}
 	wanted := map[string]bool{}
@@ -148,7 +183,13 @@ func (s *KnowledgeInputProvenanceStore) peekSteerMaterialPlanInTx(tx *gorm.DB, r
 	})
 	return result, nil
 }
-func (s *KnowledgeInputProvenanceStore) AcquireSteerOriginalBodyLeases(ctx context.Context, plan *types.SteerMaterialPlan, owner string, ttl time.Duration) ([]string, error) {
+
+func (s *KnowledgeInputProvenanceStore) AcquireSteerOriginalBodyLeases(
+	ctx context.Context,
+	plan *types.SteerMaterialPlan,
+	owner string,
+	ttl time.Duration,
+) ([]string, error) {
 	if plan == nil || owner == "" || ttl <= 0 {
 		return nil, ErrOriginalBodyUnavailable
 	}
@@ -177,7 +218,11 @@ func (s *KnowledgeInputProvenanceStore) AcquireSteerOriginalBodyLeases(ctx conte
 				continue
 			}
 			var heads []originalBodyFieldHead
-			if err := bodyInternal(tx).Where("source_table='steer_authored_origins' AND row_key=?", proof.OriginID).Find(&heads).Error; err != nil {
+			if err := bodyInternal(
+				tx,
+			).Where("source_table='steer_authored_origins' AND row_key=?", proof.OriginID).
+				Find(&heads).
+				Error; err != nil {
 				return err
 			}
 			if len(heads) == 0 {
@@ -195,12 +240,23 @@ func (s *KnowledgeInputProvenanceStore) AcquireSteerOriginalBodyLeases(ctx conte
 	})
 	return ids, err
 }
-func (s *KnowledgeInputProvenanceStore) CaptureSteerMaterial(ctx context.Context, plan *types.SteerMaterialPlan) (*types.SteerMaterialSnapshot, error) {
+
+func (s *KnowledgeInputProvenanceStore) CaptureSteerMaterial(
+	ctx context.Context,
+	plan *types.SteerMaterialPlan,
+) (*types.SteerMaterialSnapshot, error) {
 	var result *types.SteerMaterialSnapshot
-	err := s.collectionTransaction(ctx, func(tx *gorm.DB) error { var err error; result, err = s.captureSteerMaterialInTx(tx, plan); return err })
+	err := s.collectionTransaction(
+		ctx,
+		func(tx *gorm.DB) error { var err error; result, err = s.captureSteerMaterialInTx(tx, plan); return err },
+	)
 	return result, err
 }
-func (s *KnowledgeInputProvenanceStore) captureSteerMaterialInTx(tx *gorm.DB, expected *types.SteerMaterialPlan) (*types.SteerMaterialSnapshot, error) {
+
+func (s *KnowledgeInputProvenanceStore) captureSteerMaterialInTx(
+	tx *gorm.DB,
+	expected *types.SteerMaterialPlan,
+) (*types.SteerMaterialSnapshot, error) {
 	boundary, ok := tx.Statement.Context.Value(steerReadBoundaryKey{}).(steerReadBoundary)
 	if !ok || expected == nil || boundary.Plan.MetadataDigest != expected.MetadataDigest {
 		return nil, ErrOriginalBodyUnavailable
@@ -231,17 +287,31 @@ func (s *KnowledgeInputProvenanceStore) captureSteerMaterialInTx(tx *gorm.DB, ex
 			continue
 		}
 		var head originalBodyFieldHead
-		if err := bodyInternal(tx).Where("source_table='steer_authored_origins' AND row_key=? AND column_name='input_body'", proof.OriginID).Take(&head).Error; err != nil {
+		if err := bodyInternal(
+			tx,
+		).Where("source_table='steer_authored_origins' AND row_key=? AND column_name='input_body'", proof.OriginID).
+			Take(&head).
+			Error; err != nil {
 			return nil, err
 		}
 		var count int64
-		if err := bodyInternal(tx).Model(&originalBodyLease{}).Where("lease_id IN ? AND body_id=? AND kind='read' AND released_at_ms IS NULL AND expires_at_ms>?", boundary.BodyLeases, head.BodyID, now).Count(&count).Error; err != nil {
+		if err := bodyInternal(
+			tx,
+		).Model(&originalBodyLease{}).
+			Where("lease_id IN ? AND body_id=? AND kind='read' AND released_at_ms IS NULL AND expires_at_ms>?", boundary.BodyLeases, head.BodyID, now).
+			Count(&count).
+			Error; err != nil {
 			return nil, err
 		}
 		if count == 0 {
 			return nil, ErrOriginalBodyUnavailable
 		}
-		if err := CheckOriginalBodyAvailableInTx(tx.Statement.Context, tx, "steer_authored_origins", proof.OriginID); err != nil {
+		if err := CheckOriginalBodyAvailableInTx(
+			tx.Statement.Context,
+			tx,
+			"steer_authored_origins",
+			proof.OriginID,
+		); err != nil {
 			return nil, err
 		}
 		var origin steerAuthoredOrigin
@@ -271,13 +341,20 @@ func (s *KnowledgeInputProvenanceStore) captureSteerMaterialInTx(tx *gorm.DB, ex
 	}
 	return result, nil
 }
-func (s *KnowledgeInputProvenanceStore) CheckSteerControl(ctx context.Context, expected *types.SteerCandidateControl) error {
+
+func (s *KnowledgeInputProvenanceStore) CheckSteerControl(
+	ctx context.Context,
+	expected *types.SteerCandidateControl,
+) error {
 	if expected == nil {
 		return types.ErrSourceLineageUnknown
 	}
 	return s.collectionTransaction(ctx, func(tx *gorm.DB) error {
 		var origin steerAuthoredOrigin
-		if err := tx.Select(steerOriginMetadataFields).Where("id=?", expected.OriginalAdmissionID).Take(&origin).Error; err != nil {
+		if err := tx.Select(steerOriginMetadataFields).
+			Where("id=?", expected.OriginalAdmissionID).
+			Take(&origin).
+			Error; err != nil {
 			return err
 		}
 		_, session, revision, err := s.currentMessageOwnerInTx(tx, origin.SessionID)

@@ -2,23 +2,26 @@ package service
 
 import (
 	"context"
+	"os"
+	"sync"
+	"testing"
+	"time"
+
 	"github.com/Tencent/WeKnora/internal/application/access"
 	"github.com/Tencent/WeKnora/internal/application/repository"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
-	"os"
-	"sync"
-	"testing"
-	"time"
 )
 
 func TestMessageMaterialActualExternalTailOwnCompletionAndBodyABA(t *testing.T) {
 	testMessageMaterialExternalTail(t, false)
 }
+
 func TestMessageMaterialPostgresExternalTailOwnCompletionAndBodyABA(t *testing.T) {
 	testMessageMaterialExternalTail(t, true)
 }
+
 func testMessageMaterialExternalTail(t *testing.T, postgres bool) {
 	for _, change := range []string{"positive", "parent-body-ABA", "expired-lease", "current-control-ABA"} {
 		t.Run(change, func(t *testing.T) {
@@ -42,8 +45,22 @@ func testMessageMaterialExternalTail(t *testing.T, postgres bool) {
 				defer cancel()
 				kbs := &knowledgeBaseService{repo: repository.NewKnowledgeBaseRepository(pgdb)}
 				groups := NewGroupAccessService(repository.NewGroupAccessRepository(pgdb))
-				sourceGuard := access.NewNextcloudSourceLineageGuard(kg.repo.(access.NextcloudLineageSnapshotLookup), kbs, nil, nil, groups, nil, store)
-				messages = &messageService{messageRepo: repository.NewMessageRepository(pgdb), sessionRepo: repository.NewSessionRepository(pgdb), sourceLineageGuard: sourceGuard, kbService: kbs, knowService: kg}
+				sourceGuard := access.NewNextcloudSourceLineageGuard(
+					kg.repo.(access.NextcloudLineageSnapshotLookup),
+					kbs,
+					nil,
+					nil,
+					groups,
+					nil,
+					store,
+				)
+				messages = &messageService{
+					messageRepo:        repository.NewMessageRepository(pgdb),
+					sessionRepo:        repository.NewSessionRepository(pgdb),
+					sourceLineageGuard: sourceGuard,
+					kbService:          kbs,
+					knowService:        kg,
+				}
 				ConfigureMessageMaterialProvenance(messages, store)
 				session = &types.Session{TenantID: 7, UserID: types.CallerFromContext(pgctx).UserID}
 				require.NoError(t, pgdb.Create(session).Error)
@@ -52,9 +69,21 @@ func testMessageMaterialExternalTail(t *testing.T, postgres bool) {
 
 			require.NoError(t, repository.UpgradeMessageProducerAdvanceSchema(db))
 			_, prior := produceActualMessagePair(t, messages, ctx, session)
-			currentUser, err := messages.CreateMessage(ctx, &types.Message{SessionID: session.ID, RequestID: "actual-http-tail-turn", Role: "user", Content: "actual new query", IsCompleted: true})
+			currentUser, err := messages.CreateMessage(
+				ctx,
+				&types.Message{
+					SessionID:   session.ID,
+					RequestID:   "actual-http-tail-turn",
+					Role:        "user",
+					Content:     "actual new query",
+					IsCompleted: true,
+				},
+			)
 			require.NoError(t, err)
-			current, err := messages.CreateMessage(ctx, &types.Message{SessionID: session.ID, RequestID: currentUser.RequestID, Role: "assistant"})
+			current, err := messages.CreateMessage(
+				ctx,
+				&types.Message{SessionID: session.ID, RequestID: currentUser.RequestID, Role: "assistant"},
+			)
 			require.NoError(t, err)
 			ctx, attach, check, close := BeginMessageMaterialHTTPBoundary(ctx)
 			defer close()
@@ -69,8 +98,14 @@ func testMessageMaterialExternalTail(t *testing.T, postgres bool) {
 			markMessageMaterialReady(ctx)
 			require.NoError(t, check())
 			if change == "current-control-ABA" {
-				require.NoError(t, db.Model(&types.Message{}).Where("id=?", current.ID).Update("request_id", "foreign request").Error)
-				require.NoError(t, db.Model(&types.Message{}).Where("id=?", current.ID).Update("request_id", current.RequestID).Error)
+				require.NoError(
+					t,
+					db.Model(&types.Message{}).Where("id=?", current.ID).Update("request_id", "foreign request").Error,
+				)
+				require.NoError(
+					t,
+					db.Model(&types.Message{}).Where("id=?", current.ID).Update("request_id", current.RequestID).Error,
+				)
 				current.Content = "actual new model answer"
 				current.IsCompleted = true
 				current.SourceLineage, _ = types.NewCompleteSourceLineage()
@@ -83,14 +118,30 @@ func testMessageMaterialExternalTail(t *testing.T, postgres bool) {
 			require.NoError(t, messages.UpdateMessage(ctx, current))
 			release()
 			require.NoError(t, CheckMessageMaterialOutputBoundary(attach(context.WithoutCancel(ctx))))
-			if change == "parent-body-ABA" {
-				require.NoError(t, db.Model(&types.Message{}).Where("id=?", prior.ID).Update("content", "unaccounted changed body").Error)
-				require.NoError(t, db.Model(&types.Message{}).Where("id=?", prior.ID).Update("content", prior.Content).Error)
+			switch change {
+			case "parent-body-ABA":
+				require.NoError(
+					t,
+					db.Model(&types.Message{}).
+						Where("id=?", prior.ID).
+						Update("content", "unaccounted changed body").
+						Error,
+				)
+				require.NoError(
+					t,
+					db.Model(&types.Message{}).Where("id=?", prior.ID).Update("content", prior.Content).Error,
+				)
 				require.Error(t, check())
-			} else if change == "expired-lease" {
-				require.NoError(t, db.Table("nextcloud_content_leases").Where("kind='read' AND released_at_ms IS NULL").Update("expires_at_ms", int64(1)).Error)
+			case "expired-lease":
+				require.NoError(
+					t,
+					db.Table("nextcloud_content_leases").
+						Where("kind='read' AND released_at_ms IS NULL").
+						Update("expires_at_ms", int64(1)).
+						Error,
+				)
 				require.Error(t, check())
-			} else {
+			default:
 				require.NoError(t, check())
 			}
 		})
@@ -99,9 +150,21 @@ func testMessageMaterialExternalTail(t *testing.T, postgres bool) {
 
 func TestMessageMaterialActualCompletionSerializesHeartbeatAndHTTPCheck(t *testing.T) {
 	messages, _, _, db, ctx, session := messageMaterialActualFixture(t)
-	user, err := messages.CreateMessage(ctx, &types.Message{SessionID: session.ID, RequestID: "serialized-live-completion", Role: "user", Content: "actual original live query", IsCompleted: true})
+	user, err := messages.CreateMessage(
+		ctx,
+		&types.Message{
+			SessionID:   session.ID,
+			RequestID:   "serialized-live-completion",
+			Role:        "user",
+			Content:     "actual original live query",
+			IsCompleted: true,
+		},
+	)
 	require.NoError(t, err)
-	assistant, err := messages.CreateMessage(ctx, &types.Message{SessionID: session.ID, RequestID: user.RequestID, Role: "assistant"})
+	assistant, err := messages.CreateMessage(
+		ctx,
+		&types.Message{SessionID: session.ID, RequestID: user.RequestID, Role: "assistant"},
+	)
 	require.NoError(t, err)
 	ctx, _, check, closeHTTP := BeginMessageMaterialHTTPBoundary(ctx)
 	defer closeHTTP()
@@ -143,7 +206,12 @@ func TestMessageMaterialActualCompletionSerializesHeartbeatAndHTTPCheck(t *testi
 
 func TestMessageMaterialActualProducerAdvanceForwardUpgradeNoLegacyAdmission(t *testing.T) {
 	_, _, _, db, _, _ := messageMaterialActualFixture(t)
-	require.NoError(t, db.Exec("DROP TRIGGER message_producer_advances_immutable_update; DROP TRIGGER message_producer_advances_immutable_delete; DROP TABLE message_producer_advances;").Error)
+	require.NoError(
+		t,
+		db.Exec(
+			"DROP TRIGGER message_producer_advances_immutable_update; DROP TRIGGER message_producer_advances_immutable_delete; DROP TABLE message_producer_advances;",
+		).Error,
+	)
 	require.NoError(t, repository.UpgradeMessageProducerAdvanceSchema(db))
 	require.NoError(t, repository.UpgradeMessageProducerAdvanceSchema(db))
 	var count int64

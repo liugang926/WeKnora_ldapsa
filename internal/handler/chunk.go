@@ -76,11 +76,6 @@ func (h *ChunkHandler) loadPublishedKnowledge(ctx context.Context, knowledgeID s
 	return knowledge, err
 }
 
-func (h *ChunkHandler) checkPublication(ctx *gin.Context, knowledgeID string) error {
-	_, err := h.loadPublishedKnowledge(ctx.Request.Context(), knowledgeID)
-	return err
-}
-
 // GetChunkByIDOnly godoc
 // @Summary      通过ID获取分块
 // @Description  仅通过分块ID获取分块详情（不需要knowledge_id）；支持共享知识库下的分块访问
@@ -293,7 +288,12 @@ func (h *ChunkHandler) RevertChunk(c *gin.Context) {
 	}
 	knowledge, getErr := h.kgService.GetKnowledgeByID(c.Request.Context(), knowledgeID)
 	if getErr != nil {
-		logger.Warnf(c.Request.Context(), "Chunk reverted but failed to reload summary status for %s: %v", knowledgeID, getErr)
+		logger.Warnf(
+			c.Request.Context(),
+			"Chunk reverted but failed to reload summary status for %s: %v",
+			knowledgeID,
+			getErr,
+		)
 	}
 	response := gin.H{"success": true, "data": updated}
 	if knowledge != nil {

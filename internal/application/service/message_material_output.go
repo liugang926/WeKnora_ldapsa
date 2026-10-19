@@ -15,27 +15,33 @@ import (
 
 // Initialization is not an authorization decision. HTTP may wait for this
 // state, but must still run the original/current checks once setup finishes.
-var ErrMessageMaterialHTTPInitializing = fmt.Errorf("%w: original message material initialization pending", access.ErrNextcloudPublicationUnavailable)
+var ErrMessageMaterialHTTPInitializing = fmt.Errorf(
+	"%w: original message material initialization pending",
+	access.ErrNextcloudPublicationUnavailable,
+)
 
-type messageMaterialOutputKey struct{}
-type messageMaterialExternalKey struct{}
-type messageMaterialOutputSlot struct {
-	OwnerContext       context.Context
-	mu                 sync.Mutex
-	Guards             []*MessageMaterialGuard
-	Completion         *messageCompletionBinding
-	PhysicalReads      []*readlease.NextcloudReadGuard
-	HistoryVectorReads []*historyVectorMaterialBridge
-	Bodies             []string
-	Outputs            [][]*types.Message
-	OutputBodies       []string
-	SearchOutputs      []*types.MessageSearchResult
-	SearchOutputBodies []string
-	Ready              bool
-	Failed             error
-	Refs               int
-	Closed             bool
-}
+type (
+	messageMaterialOutputKey   struct{}
+	messageMaterialExternalKey struct{}
+	messageMaterialOutputSlot  struct {
+		OwnerContext       context.Context
+		mu                 sync.Mutex
+		Guards             []*MessageMaterialGuard
+		Completion         *messageCompletionBinding
+		PhysicalReads      []*readlease.NextcloudReadGuard
+		AgentPromptReads   []*agentPromptInputGuard
+		HistoryVectorReads []*historyVectorMaterialBridge
+		Bodies             []string
+		Outputs            [][]*types.Message
+		OutputBodies       []string
+		SearchOutputs      []*types.MessageSearchResult
+		SearchOutputBodies []string
+		Ready              bool
+		Failed             error
+		Refs               int
+		Closed             bool
+	}
+)
 
 func WithMessageMaterialOutputBoundary(ctx context.Context) context.Context {
 	return context.WithValue(ctx, messageMaterialOutputKey{}, &messageMaterialOutputSlot{OwnerContext: ctx})
@@ -44,7 +50,9 @@ func WithMessageMaterialOutputBoundary(ctx context.Context) context.Context {
 // BeginMessageMaterialHTTPBoundary creates a private shared owner. The model
 // and the HTTP sender each retain one reference; only the last release closes
 // the actual original guards. No caller text or row header grants admission.
-func BeginMessageMaterialHTTPBoundary(ctx context.Context) (context.Context, func(context.Context) context.Context, func() error, func()) {
+func BeginMessageMaterialHTTPBoundary(
+	ctx context.Context,
+) (context.Context, func(context.Context) context.Context, func() error, func()) {
 	slot := &messageMaterialOutputSlot{Refs: 1, OwnerContext: ctx}
 	attach := func(target context.Context) context.Context {
 		target = context.WithValue(target, messageMaterialOutputKey{}, slot)
@@ -70,6 +78,7 @@ func BeginMessageMaterialHTTPBoundary(ctx context.Context) (context.Context, fun
 	close := func() { once.Do(func() { releaseExternalMessageMaterial(slot) }) }
 	return marked, attach, check, close
 }
+
 func releaseExternalMessageMaterial(slot *messageMaterialOutputSlot) {
 	slot.mu.Lock()
 	slot.Refs--
@@ -80,6 +89,7 @@ func releaseExternalMessageMaterial(slot *messageMaterialOutputSlot) {
 	slot.Closed = true
 	guards := append([]*MessageMaterialGuard{}, slot.Guards...)
 	physical := append([]*readlease.NextcloudReadGuard{}, slot.PhysicalReads...)
+	prompts := append([]*agentPromptInputGuard{}, slot.AgentPromptReads...)
 	slot.mu.Unlock()
 	for _, guard := range guards {
 		guard.Close()
@@ -87,7 +97,11 @@ func releaseExternalMessageMaterial(slot *messageMaterialOutputSlot) {
 	for _, guard := range physical {
 		_ = guard.Close()
 	}
+	for _, guard := range prompts {
+		_ = guard.Close()
+	}
 }
+
 func retainMessageMaterialProducer(ctx context.Context) (context.Context, func(), bool) {
 	slot, ok := ctx.Value(messageMaterialExternalKey{}).(*messageMaterialOutputSlot)
 	if !ok {
@@ -103,6 +117,7 @@ func retainMessageMaterialProducer(ctx context.Context) (context.Context, func()
 	var once sync.Once
 	return ctx, func() { once.Do(func() { releaseExternalMessageMaterial(slot) }) }, true
 }
+
 func markMessageMaterialReady(ctx context.Context) {
 	if slot, ok := ctx.Value(messageMaterialExternalKey{}).(*messageMaterialOutputSlot); ok {
 		slot.mu.Lock()
@@ -119,11 +134,15 @@ func CloseMessageMaterialOutputBoundary(ctx context.Context) {
 		}
 		guards := append([]*MessageMaterialGuard{}, slot.Guards...)
 		physical := append([]*readlease.NextcloudReadGuard{}, slot.PhysicalReads...)
+		prompts := append([]*agentPromptInputGuard{}, slot.AgentPromptReads...)
 		slot.mu.Unlock()
 		for _, guard := range guards {
 			guard.Close()
 		}
 		for _, guard := range physical {
+			_ = guard.Close()
+		}
+		for _, guard := range prompts {
 			_ = guard.Close()
 		}
 	}
@@ -167,7 +186,8 @@ func MessageMaterialIdleRecheckEligible(ctx context.Context) bool {
 			return false
 		}
 		guard.mu.Lock()
-		known := guard.ctx != nil && guard.ctx.Err() == nil && guard.plan != nil && guard.plan.SourceLineage.RequireComplete() == nil
+		known := guard.ctx != nil && guard.ctx.Err() == nil && guard.plan != nil &&
+			guard.plan.SourceLineage.RequireComplete() == nil
 		if known && guard.snapshot != nil {
 			for _, proof := range guard.snapshot.Proofs {
 				if proof == nil || proof.SourceLineage.RequireComplete() != nil {
@@ -214,6 +234,11 @@ func CheckMessageMaterialOutputBoundary(ctx context.Context) error {
 	}
 	if slot.Failed != nil {
 		return slot.Failed
+	}
+	for _, guard := range slot.AgentPromptReads {
+		if err := guard.CheckHeld(); err != nil {
+			return err
+		}
 	}
 	for _, guard := range slot.PhysicalReads {
 		if err := guard.Verify(); err != nil {
@@ -313,7 +338,10 @@ func holdRAGPhysicalReadGuard(ctx context.Context, guard *readlease.NextcloudRea
 
 // Borrowed request guards can close at their caller's return. A turn reuses
 // only a guard it owns, or acquires its own guard before touching any content.
-func ragTurnPhysicalReadGuard(ctx context.Context, scopes []readlease.NextcloudKBReadScope) (*readlease.NextcloudReadGuard, bool) {
+func ragTurnPhysicalReadGuard(
+	ctx context.Context,
+	scopes []readlease.NextcloudKBReadScope,
+) (*readlease.NextcloudReadGuard, bool) {
 	slot, ok := ctx.Value(messageMaterialOutputKey{}).(*messageMaterialOutputSlot)
 	if !ok {
 		return nil, false
@@ -327,14 +355,31 @@ func ragTurnPhysicalReadGuard(ctx context.Context, scopes []readlease.NextcloudK
 	}
 	return nil, true
 }
-func (s *messageService) admittedMessagePage(ctx context.Context, sessionID string, before time.Time, limit, page int, descending bool) ([]*types.Message, error) {
+
+func (s *messageService) admittedMessagePage(
+	ctx context.Context,
+	sessionID string,
+	before time.Time,
+	limit, page int,
+	descending bool,
+) ([]*types.Message, error) {
 	tenant, ok := sessionTenantIDForLookup(ctx)
 	if !ok {
 		return nil, access.ErrNextcloudPublicationDenied
 	}
 	exclude, _ := ctx.Value(agentHistoryCurrentRequestKey{}).(string)
 	if exclude != "" {
-		return s.admittedMessages(ctx, types.MessageMaterialReadRequest{TenantID: tenant, SessionID: sessionID, AllSession: true, CompletedOnly: true, ExcludeRequestID: exclude, IncludeOriginalUserFields: true})
+		return s.admittedMessages(
+			ctx,
+			types.MessageMaterialReadRequest{
+				TenantID:                  tenant,
+				SessionID:                 sessionID,
+				AllSession:                true,
+				CompletedOnly:             true,
+				ExcludeRequestID:          exclude,
+				IncludeOriginalUserFields: true,
+			},
+		)
 	}
 	request, err := s.materialStore.MessagePageMaterialRequest(ctx, tenant, sessionID, before, limit, page, descending)
 	if err != nil {
@@ -345,7 +390,11 @@ func (s *messageService) admittedMessagePage(ctx context.Context, sessionID stri
 	}
 	return s.admittedMessages(ctx, request)
 }
-func (s *messageService) admittedMessages(ctx context.Context, request types.MessageMaterialReadRequest) ([]*types.Message, error) {
+
+func (s *messageService) admittedMessages(
+	ctx context.Context,
+	request types.MessageMaterialReadRequest,
+) ([]*types.Message, error) {
 	guard, err := s.beginMessageMaterialRead(ctx, request)
 	if err != nil {
 		return nil, err
@@ -353,7 +402,11 @@ func (s *messageService) admittedMessages(ctx context.Context, request types.Mes
 	return s.bindAdmittedMessageGuard(ctx, guard, request)
 }
 
-func (s *messageService) bindAdmittedMessageGuard(ctx context.Context, guard *MessageMaterialGuard, request types.MessageMaterialReadRequest) ([]*types.Message, error) {
+func (s *messageService) bindAdmittedMessageGuard(
+	ctx context.Context,
+	guard *MessageMaterialGuard,
+	request types.MessageMaterialReadRequest,
+) ([]*types.Message, error) {
 	if slot, ok := ctx.Value(messageMaterialOutputKey{}).(*messageMaterialOutputSlot); ok {
 		body, err := messageBoundaryBodyDigest(guard.snapshot.Messages)
 		if err != nil {
@@ -499,12 +552,26 @@ func messageBoundaryBodyDigest(messages []*types.Message) ([]byte, error) {
 			values = append(values, material{})
 			continue
 		}
-		values = append(values, material{message, message.SourceLineage, message.ExecutionContext, message.AgentTenantID, message.RenderedContent, message.ContextCheckpoint})
+		values = append(
+			values,
+			material{
+				message,
+				message.SourceLineage,
+				message.ExecutionContext,
+				message.AgentTenantID,
+				message.RenderedContent,
+				message.ContextCheckpoint,
+			},
+		)
 	}
 	return json.Marshal(values)
 }
 
-func (s *messageService) actualGeneratedMessageFieldContext(ctx context.Context, session, message, field string, value any) (context.Context, bool, error) {
+func (s *messageService) actualGeneratedMessageFieldContext(
+	ctx context.Context,
+	session, message, field string,
+	value any,
+) (context.Context, bool, error) {
 	turn := types.RAGSourceLineageFromContext(ctx)
 	if turn == nil {
 		return ctx, false, nil
@@ -528,7 +595,10 @@ func (s *messageService) actualGeneratedMessageFieldContext(ctx context.Context,
 	return ctx, true, err
 }
 
-func (s *messageService) beginMessageMaterialCompletion(ctx context.Context, message *types.Message) (context.Context, func(error) error, error) {
+func (s *messageService) beginMessageMaterialCompletion(
+	ctx context.Context,
+	message *types.Message,
+) (context.Context, func(error) error, error) {
 	slot, ok := ctx.Value(messageMaterialOutputKey{}).(*messageMaterialOutputSlot)
 	if !ok || message == nil || message.Role != "assistant" || !message.IsCompleted {
 		return ctx, nil, nil

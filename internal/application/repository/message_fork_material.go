@@ -11,7 +11,11 @@ import (
 	"gorm.io/gorm"
 )
 
-func (s *KnowledgeInputProvenanceStore) MessageForkMaterialRequest(ctx context.Context, tenant uint64, sourceID, pointID string) (*types.MessageMaterialCandidateControl, types.MessageMaterialReadRequest, error) {
+func (s *KnowledgeInputProvenanceStore) MessageForkMaterialRequest(
+	ctx context.Context,
+	tenant uint64,
+	sourceID, pointID string,
+) (*types.MessageMaterialCandidateControl, types.MessageMaterialReadRequest, error) {
 	request := types.MessageMaterialReadRequest{TenantID: tenant, SessionID: sourceID, IncludeOriginalUserFields: true}
 	var point *types.MessageMaterialCandidateControl
 	err := s.collectionTransaction(ctx, func(tx *gorm.DB) error {
@@ -19,14 +23,23 @@ func (s *KnowledgeInputProvenanceStore) MessageForkMaterialRequest(ctx context.C
 			return err
 		}
 		var current types.MessageMaterialCandidateControl
-		if err := tx.Table("messages").Select("id,request_id,role,is_completed AS complete,created_at").Where("id=? AND session_id=? AND deleted_at IS NULL", pointID, sourceID).Take(&current).Error; err != nil {
+		if err := tx.Table("messages").
+			Select("id,request_id,role,is_completed AS complete,created_at").
+			Where("id=? AND session_id=? AND deleted_at IS NULL", pointID, sourceID).
+			Take(&current).
+			Error; err != nil {
 			return err
 		}
 		if current.Role != "assistant" && current.Role != "user" {
 			return types.ErrSourceLineageUnknown
 		}
 		var rows []struct{ ID string }
-		if err := tx.Table("messages").Select("id").Where("session_id=? AND deleted_at IS NULL AND (created_at < ? OR (created_at = ? AND id <= ?))", sourceID, current.CreatedAt, current.CreatedAt, current.ID).Order("created_at,id").Scan(&rows).Error; err != nil {
+		if err := tx.Table("messages").
+			Select("id").
+			Where("session_id=? AND deleted_at IS NULL AND (created_at < ? OR (created_at = ? AND id <= ?))", sourceID, current.CreatedAt, current.CreatedAt, current.ID).
+			Order("created_at,id").
+			Scan(&rows).
+			Error; err != nil {
 			return err
 		}
 		for _, row := range rows {
@@ -46,7 +59,12 @@ type messageForkParentOrigin struct {
 
 func (messageForkParentOrigin) TableName() string { return "message_fork_parent_origins" }
 
-func (r *sessionRepository) CreateForkedFromMaterial(ctx context.Context, session *types.Session, copies []*types.Message, parent *types.MessageMaterialSnapshot) error {
+func (r *sessionRepository) CreateForkedFromMaterial(
+	ctx context.Context,
+	session *types.Session,
+	copies []*types.Message,
+	parent *types.MessageMaterialSnapshot,
+) error {
 	if session == nil || parent == nil {
 		return types.ErrSourceLineageUnknown
 	}
@@ -73,7 +91,9 @@ func (r *sessionRepository) CreateForkedFromMaterial(ctx context.Context, sessio
 		if err != nil {
 			return err
 		}
-		if session.UserID != source.UserID || session.TenantID != source.TenantID || session.ID == source.ID || session.ID == "" || session.ForkedFromMessageID == "" {
+		if session.UserID != source.UserID || session.TenantID != source.TenantID || session.ID == source.ID ||
+			session.ID == "" ||
+			session.ForkedFromMessageID == "" {
 			return ErrKnowledgeInputChanged
 		}
 		var point *types.Message
@@ -87,7 +107,8 @@ func (r *sessionRepository) CreateForkedFromMaterial(ctx context.Context, sessio
 		}
 		selected := []*types.Message{}
 		for _, message := range actual.Messages {
-			if message.CreatedAt.After(point.CreatedAt) || message.CreatedAt.Equal(point.CreatedAt) && message.ID > point.ID {
+			if message.CreatedAt.After(point.CreatedAt) ||
+				message.CreatedAt.Equal(point.CreatedAt) && message.ID > point.ID {
 				return ErrKnowledgeInputChanged
 			}
 			if point.Role == "user" && message.ID == point.ID {
@@ -102,7 +123,9 @@ func (r *sessionRepository) CreateForkedFromMaterial(ctx context.Context, sessio
 		ids := map[string]bool{}
 		for i, copy := range copies {
 			original := selected[i]
-			if copy == nil || copy.ID == "" || copy.ID == original.ID || ids[copy.ID] || copy.SessionID != session.ID || copy.KnowledgeID != "" || len(copy.Artifacts) > 0 {
+			if copy == nil || copy.ID == "" || copy.ID == original.ID || ids[copy.ID] || copy.SessionID != session.ID ||
+				copy.KnowledgeID != "" ||
+				len(copy.Artifacts) > 0 {
 				return ErrKnowledgeInputChanged
 			}
 			ids[copy.ID] = true
@@ -153,7 +176,18 @@ func (r *sessionRepository) CreateForkedFromMaterial(ctx context.Context, sessio
 			if err != nil {
 				return err
 			}
-			origin := messageGenerationOrigin{ID: uuid.NewString(), MessageID: copy.ID, SessionID: copy.SessionID, TenantID: session.TenantID, OwnerID: session.UserID, OwnerRevision: ownerRevision, RequestID: copy.RequestID, Role: copy.Role, Actor: string(actorJSON), InitialInput: string(initial)}
+			origin := messageGenerationOrigin{
+				ID:            uuid.NewString(),
+				MessageID:     copy.ID,
+				SessionID:     copy.SessionID,
+				TenantID:      session.TenantID,
+				OwnerID:       session.UserID,
+				OwnerRevision: ownerRevision,
+				RequestID:     copy.RequestID,
+				Role:          copy.Role,
+				Actor:         string(actorJSON),
+				InitialInput:  string(initial),
+			}
 			if err := tx.Create(&origin).Error; err != nil {
 				return err
 			}
@@ -178,13 +212,18 @@ type messageForkMaterialHolder struct {
 	Prewrite func() error
 }
 
-func WithMessageForkMaterialStore(ctx context.Context, store *KnowledgeInputProvenanceStore, checks ...func() error) context.Context {
+func WithMessageForkMaterialStore(
+	ctx context.Context,
+	store *KnowledgeInputProvenanceStore,
+	checks ...func() error,
+) context.Context {
 	var check func() error
 	if len(checks) == 1 {
 		check = checks[0]
 	}
 	return context.WithValue(ctx, messageForkStoreKey{}, messageForkMaterialHolder{store, check})
 }
+
 func messageForkCoveredEqual(a, b *types.Message) bool {
 	encodedA, _ := json.Marshal(struct {
 		Body        *types.Message
@@ -240,27 +279,47 @@ func (s *KnowledgeInputProvenanceStore) verifyMessageForkParentsInTx(tx *gorm.DB
 			return err
 		}
 		var current messageMaterialAdmission
-		if err := tx.Table("message_material_admissions a").Select("a.*").Joins("JOIN message_material_receipts r ON r.admission_id=a.id AND r.message_id=a.message_id").Where("a.message_id=? AND a.session_id=? AND a.tenant_id=?", proof.MessageID, proof.SessionID, proof.TenantID).Take(&current).Error; err != nil {
+		if err := tx.Table("message_material_admissions a").
+			Select("a.*").
+			Joins("JOIN message_material_receipts r ON r.admission_id=a.id AND r.message_id=a.message_id").
+			Where("a.message_id=? AND a.session_id=? AND a.tenant_id=?", proof.MessageID, proof.SessionID, proof.TenantID).
+			Take(&current).
+			Error; err != nil {
 			return err
 		}
 		revision, err := messageVersion(tx, "message_material_versions", "message_id", proof.MessageID)
 		if err != nil {
 			return err
 		}
-		if current.ID != proof.AdmissionID || current.Revision != proof.Revision || revision != proof.Revision || current.BodyDigest != proof.BodyDigest {
+		if current.ID != proof.AdmissionID || current.Revision != proof.Revision || revision != proof.Revision ||
+			current.BodyDigest != proof.BodyDigest {
 			return ErrKnowledgeInputChanged
 		}
 	}
 	return nil
 }
 
-func (s *KnowledgeInputProvenanceStore) copyForkFieldOriginsInTx(tx *gorm.DB, origin *messageGenerationOrigin, copy, source *types.Message) error {
+func (s *KnowledgeInputProvenanceStore) copyForkFieldOriginsInTx(
+	tx *gorm.DB,
+	origin *messageGenerationOrigin,
+	copy, source *types.Message,
+) error {
 	var fields []messageGeneratedFieldAdmission
-	if err := tx.Table("message_generated_field_admissions a").Select("a.*").Joins("JOIN message_generated_field_receipts r ON r.admission_id=a.id AND r.message_id=a.message_id AND r.field=a.field").Where("a.message_id=? AND a.session_id=?", source.ID, source.SessionID).Find(&fields).Error; err != nil {
+	if err := tx.Table("message_generated_field_admissions a").
+		Select("a.*").
+		Joins("JOIN message_generated_field_receipts r ON r.admission_id=a.id AND r.message_id=a.message_id AND r.field=a.field").
+		Where("a.message_id=? AND a.session_id=?", source.ID, source.SessionID).
+		Find(&fields).
+		Error; err != nil {
 		return err
 	}
 	var host messageMaterialAdmission
-	if err := tx.Table("message_material_admissions a").Select("a.*").Joins("JOIN message_material_receipts r ON r.admission_id=a.id AND r.message_id=a.message_id").Where("a.message_id=?", copy.ID).Take(&host).Error; err != nil {
+	if err := tx.Table("message_material_admissions a").
+		Select("a.*").
+		Joins("JOIN message_material_receipts r ON r.admission_id=a.id AND r.message_id=a.message_id").
+		Where("a.message_id=?", copy.ID).
+		Take(&host).
+		Error; err != nil {
 		return err
 	}
 	membership, err := messageVersion(tx, "message_session_membership_versions", "session_id", copy.SessionID)

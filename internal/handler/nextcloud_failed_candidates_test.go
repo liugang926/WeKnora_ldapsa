@@ -22,23 +22,34 @@ func TestNextcloudFailedCandidateAdminAndTenantBoundary(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&types.DataSource{}, &repository.NextcloudSourcePairing{},
 		&repository.NextcloudSourcePairingAbort{}))
-	config, err := (&types.DataSourceConfig{Type: types.ConnectorTypeNextcloud,
+	config, err := (&types.DataSourceConfig{
+		Type:        types.ConnectorTypeNextcloud,
 		ResourceIDs: []string{"binding"}, Settings: map[string]interface{}{"base_url": "https://nextcloud.example"},
-		Credentials: map[string]interface{}{"token": "secret", "key_id": "pair_test"}}).ToJSON()
+		Credentials: map[string]interface{}{"token": "secret", "key_id": "pair_test"},
+	}).ToJSON()
 	require.NoError(t, err)
-	ds := &types.DataSource{ID: "ds", TenantID: 7, KnowledgeBaseID: "kb", Type: types.ConnectorTypeNextcloud,
-		Status: types.DataSourceStatusActive, Config: config}
+	ds := &types.DataSource{
+		ID: "ds", TenantID: 7, KnowledgeBaseID: "kb", Type: types.ConnectorTypeNextcloud,
+		Status: types.DataSourceStatusActive, Config: config,
+	}
 	require.NoError(t, db.Create(ds).Error)
 	base, hash, binding, err := repository.NextcloudEventDataSourceIdentity(ds.Config)
 	require.NoError(t, err)
 	op := uuid.NewString()
-	require.NoError(t, db.Create(&repository.NextcloudSourcePairing{OperationID: op, TenantID: 7,
+	require.NoError(t, db.Create(&repository.NextcloudSourcePairing{
+		OperationID: op, TenantID: 7,
 		KnowledgeBaseID: "kb", DataSourceID: "ds", InstanceID: "instance", BindingID: binding,
-		BaseURL: base, ConfigSHA: hash, State: "active"}).Error)
-	h := NewNextcloudSourcePairingHandler(repository.NewNextcloudSourcePairingRepository(db),
-		NewDataSourceHandler(&stubDataSourceService{}, &stubKBServiceForDS{getByID: func(_ context.Context, id string) (*types.KnowledgeBase, error) {
-			return &types.KnowledgeBase{ID: id, TenantID: 7}, nil
-		}}))
+		BaseURL: base, ConfigSHA: hash, State: "active",
+	}).Error)
+	h := NewNextcloudSourcePairingHandler(
+		repository.NewNextcloudSourcePairingRepository(db),
+		NewDataSourceHandler(
+			&stubDataSourceService{},
+			&stubKBServiceForDS{getByID: func(_ context.Context, id string) (*types.KnowledgeBase, error) {
+				return &types.KnowledgeBase{ID: id, TenantID: 7}, nil
+			}},
+		),
+	)
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
@@ -50,9 +61,16 @@ func TestNextcloudFailedCandidateAdminAndTenantBoundary(t *testing.T) {
 	listPath := "/api/v1/datasource/nextcloud-source-pairings/by-datasource/ds/failed-candidates"
 	retryPath := "/api/v1/datasource/nextcloud-source-pairings/" + op + "/candidates/77/retry"
 	router.GET("/api/v1/datasource/nextcloud-source-pairings/by-datasource/:id/failed-candidates", h.FailedCandidates)
-	router.POST("/api/v1/datasource/nextcloud-source-pairings/:operation_id/candidates/:file_id/retry", h.RetryFailedCandidate)
+	router.POST(
+		"/api/v1/datasource/nextcloud-source-pairings/:operation_id/candidates/:file_id/retry",
+		h.RetryFailedCandidate,
+	)
 	request := func(method, path string, tenant uint64, role types.TenantRole) *httptest.ResponseRecorder {
-		req := httptest.NewRequest(method, path, bytes.NewBufferString(`{"source_etag":"etag","candidate_id":"candidate"}`))
+		req := httptest.NewRequest(
+			method,
+			path,
+			bytes.NewBufferString(`{"source_etag":"etag","candidate_id":"candidate"}`),
+		)
 		req.Header.Set("Content-Type", "application/json")
 		ctx := context.WithValue(req.Context(), types.TenantIDContextKey, tenant)
 		ctx = context.WithValue(ctx, types.TenantRoleContextKey, role)

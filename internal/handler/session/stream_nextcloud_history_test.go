@@ -19,7 +19,10 @@ type replayHistoryMessageService struct {
 	checked []string
 }
 
-func (s *replayHistoryMessageService) GetMessage(_ context.Context, sessionID, messageID string) (*types.Message, error) {
+func (s *replayHistoryMessageService) GetMessage(
+	_ context.Context,
+	sessionID, messageID string,
+) (*types.Message, error) {
 	return &types.Message{ID: messageID, SessionID: sessionID, RequestID: "turn", Role: "assistant"}, nil
 }
 
@@ -61,7 +64,8 @@ func TestContinueStreamChecksReferencesBeforeFirstSSEFrame(t *testing.T) {
 	if len(svc.checked) != 1 || svc.checked[0] != "nextcloud-document" {
 		t.Fatalf("SSE references were not checked: %v", svc.checked)
 	}
-	if body := w.Body.String(); strings.Contains(body, "secret answer") || strings.Contains(body, "nextcloud-document") {
+	if body := w.Body.String(); strings.Contains(body, "secret answer") ||
+		strings.Contains(body, "nextcloud-document") {
 		t.Fatalf("replay leaked source content: %s", body)
 	}
 }

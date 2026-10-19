@@ -52,7 +52,12 @@ func TestNextcloudLiveOriginalExtractionProviderAndStatusInbox(t *testing.T) {
 	t.Setenv("SYSTEM_AES_KEY", "0123456789abcdef0123456789abcdef")
 	t.Setenv("WEKNORA_NEXTCLOUD_DEV_HTTP", "1")
 	t.Setenv("WEKNORA_NEXTCLOUD_ALLOWED_ORIGINS", "http://nextcloud")
-	cfg := &types.DataSourceConfig{Type: types.ConnectorTypeNextcloud, ResourceIDs: []string{f.Binding}, Settings: map[string]any{"base_url": "http://nextcloud"}, Credentials: map[string]any{"key_id": f.Key, "token": f.Token}}
+	cfg := &types.DataSourceConfig{
+		Type:        types.ConnectorTypeNextcloud,
+		ResourceIDs: []string{f.Binding},
+		Settings:    map[string]any{"base_url": "http://nextcloud"},
+		Credentials: map[string]any{"key_id": f.Key, "token": f.Token},
+	}
 	fetched, _, err := nextcloud.NewConnector().FetchIncremental(context.Background(), cfg, nil)
 	require.NoError(t, err)
 	var item *types.FetchedItem
@@ -67,16 +72,54 @@ func TestNextcloudLiveOriginalExtractionProviderAndStatusInbox(t *testing.T) {
 	require.Equal(t, f.ETag, item.Metadata["nextcloud_etag"])
 	db := scopedGraphFixtureDatabase(t)
 	inputs := repository.NewKnowledgeInputProvenanceStore(db)
-	kb := &types.KnowledgeBase{ID: f.Pair.KB, TenantID: 7, Name: "owned actual source", SummaryModelID: "local-graph-model", IndexingStrategy: types.IndexingStrategy{GraphEnabled: true, GraphRequired: true}, ExtractConfig: &types.ExtractConfig{Enabled: true, Tags: []string{"KNOWS"}}}
-	require.NoError(t, inputs.CreateKnowledgeBaseWithInput(repository.WithIndependentKnowledgeInput(context.Background()), kb))
+	kb := &types.KnowledgeBase{
+		ID:               f.Pair.KB,
+		TenantID:         7,
+		Name:             "owned actual source",
+		SummaryModelID:   "local-graph-model",
+		IndexingStrategy: types.IndexingStrategy{GraphEnabled: true, GraphRequired: true},
+		ExtractConfig:    &types.ExtractConfig{Enabled: true, Tags: []string{"KNOWS"}},
+	}
+	require.NoError(
+		t,
+		inputs.CreateKnowledgeBaseWithInput(repository.WithIndependentKnowledgeInput(context.Background()), kb),
+	)
 	blob, err := cfg.ToJSON()
 	require.NoError(t, err)
-	require.NoError(t, db.Create(&types.DataSource{ID: f.Pair.DS, TenantID: 7, KnowledgeBaseID: kb.ID, Type: types.ConnectorTypeNextcloud, Status: types.DataSourceStatusActive, Config: blob}).Error)
+	require.NoError(
+		t,
+		db.Create(
+			&types.DataSource{
+				ID:              f.Pair.DS,
+				TenantID:        7,
+				KnowledgeBaseID: kb.ID,
+				Type:            types.ConnectorTypeNextcloud,
+				Status:          types.DataSourceStatusActive,
+				Config:          blob,
+			},
+		).Error,
+	)
 	base, configSHA, binding, err := repository.NextcloudEventDataSourceIdentity(blob)
 	require.NoError(t, err)
 	epoch, err := strconv.ParseInt(f.Epoch, 10, 64)
 	require.NoError(t, err)
-	require.NoError(t, db.Create(&repository.NextcloudSourcePairing{OperationID: f.Pair.Operation, TenantID: 7, KnowledgeBaseID: kb.ID, DataSourceID: f.Pair.DS, InstanceID: f.Instance, BindingID: binding, BaseURL: base, ConfigSHA: configSHA, State: "active", PublicationEpoch: epoch}).Error)
+	require.NoError(
+		t,
+		db.Create(
+			&repository.NextcloudSourcePairing{
+				OperationID:      f.Pair.Operation,
+				TenantID:         7,
+				KnowledgeBaseID:  kb.ID,
+				DataSourceID:     f.Pair.DS,
+				InstanceID:       f.Instance,
+				BindingID:        binding,
+				BaseURL:          base,
+				ConfigSHA:        configSHA,
+				State:            "active",
+				PublicationEpoch: epoch,
+			},
+		).Error,
+	)
 	item.Metadata["source_resource_id"] = item.SourceResourceID
 	item.Metadata["datasource_id"] = f.Pair.DS
 	item.Metadata["external_id"] = item.ExternalID
@@ -84,7 +127,19 @@ func TestNextcloudLiveOriginalExtractionProviderAndStatusInbox(t *testing.T) {
 	item.Metadata["nextcloud_etag"] = ""
 	metadata, err := json.Marshal(item.Metadata)
 	require.NoError(t, err)
-	doc := &types.Knowledge{ID: "actual-root-graph-document-" + strconv.FormatInt(time.Now().UnixMilli(), 10), TenantID: 7, KnowledgeBaseID: kb.ID, Title: item.FileName, FileName: item.FileName, Type: "file", Channel: types.ConnectorTypeNextcloud, Metadata: metadata, ParseStatus: types.ParseStatusFinalizing, EnableStatus: "enabled", PendingSubtasksCount: 1}
+	doc := &types.Knowledge{
+		ID:                   "actual-root-graph-document-" + strconv.FormatInt(time.Now().UnixMilli(), 10),
+		TenantID:             7,
+		KnowledgeBaseID:      kb.ID,
+		Title:                item.FileName,
+		FileName:             item.FileName,
+		Type:                 "file",
+		Channel:              types.ConnectorTypeNextcloud,
+		Metadata:             metadata,
+		ParseStatus:          types.ParseStatusFinalizing,
+		EnableStatus:         "enabled",
+		PendingSubtasksCount: 1,
+	}
 	require.NoError(t, db.Create(doc).Error)
 	repo := repository.NewKnowledgeRepository(db)
 	require.NoError(t, repo.(interface {
@@ -92,8 +147,20 @@ func TestNextcloudLiveOriginalExtractionProviderAndStatusInbox(t *testing.T) {
 	}).StageNextcloudVersion(context.Background(), 7, kb.ID, f.Pair.DS, item.ExternalID, f.ETag, doc.ID))
 	require.NoError(t, db.Where("id=?", doc.ID).Take(doc).Error)
 	leases := repository.NewNextcloudContentLeaseStore(db)
-	scope := repository.NextcloudContentScope{TenantID: 7, KnowledgeBaseID: kb.ID, KnowledgeID: doc.ID, DataSourceID: f.Pair.DS, ExternalID: item.ExternalID}
-	lease, err := leases.AcquireKnowledge(context.Background(), scope, repository.NextcloudContentBuildLease, "actual-live-graph-build", time.Minute)
+	scope := repository.NextcloudContentScope{
+		TenantID:        7,
+		KnowledgeBaseID: kb.ID,
+		KnowledgeID:     doc.ID,
+		DataSourceID:    f.Pair.DS,
+		ExternalID:      item.ExternalID,
+	}
+	lease, err := leases.AcquireKnowledge(
+		context.Background(),
+		scope,
+		repository.NextcloudContentBuildLease,
+		"actual-live-graph-build",
+		time.Minute,
+	)
 	require.NoError(t, err)
 	defer leases.ReleaseLease(context.Background(), lease.ID)
 	ctx := repository.WithNextcloudBuildLease(context.Background(), leases, lease, scope)
@@ -103,7 +170,17 @@ func TestNextcloudLiveOriginalExtractionProviderAndStatusInbox(t *testing.T) {
 	require.NoError(t, repository.RecordNextcloudDerivedBackendSelection(ctx, nil))
 	// Plain text is the controlled parser's exact chunk. It is actually stored
 	// through the protected provider; embedding is explicitly skipped.
-	chunk := &types.Chunk{ID: doc.ID + "-chunk", TenantID: 7, KnowledgeBaseID: kb.ID, KnowledgeID: doc.ID, Content: string(item.Content), ChunkType: types.ChunkTypeText, IsEnabled: true, IndexStatus: "ready", Metadata: types.JSON(`{}`)}
+	chunk := &types.Chunk{
+		ID:              doc.ID + "-chunk",
+		TenantID:        7,
+		KnowledgeBaseID: kb.ID,
+		KnowledgeID:     doc.ID,
+		Content:         string(item.Content),
+		ChunkType:       types.ChunkTypeText,
+		IsEnabled:       true,
+		IndexStatus:     "ready",
+		Metadata:        types.JSON(`{}`),
+	}
 	require.NoError(t, repository.NewChunkRepository(db).CreateChunks(ctx, []*types.Chunk{chunk}))
 	tracker := NewSpanTracker(repository.NewKnowledgeSpanRepository(db), db)
 	_, attempt, openErr := tracker.OpenAttempt(ctx, doc.ID, "controlled-text-parser")
@@ -119,7 +196,12 @@ func TestNextcloudLiveOriginalExtractionProviderAndStatusInbox(t *testing.T) {
 	}
 	encrypted, err := utils.EncryptAESGCM(f.Secret, utils.GetAESKey())
 	require.NoError(t, err)
-	require.NoError(t, db.Table("nextcloud_event_connections").Create(map[string]any{"connection_id": f.Connection, "tenant_id": 7, "knowledge_base_id": kb.ID, "datasource_id": f.Pair.DS, "nextcloud_instance_id": f.Instance, "binding_id": binding, "datasource_base_url": base, "datasource_config_sha256": configSHA, "status": "active", "current_key_id": "current", "current_secret_ciphertext": encrypted}).Error)
+	require.NoError(
+		t,
+		db.Table("nextcloud_event_connections").
+			Create(map[string]any{"connection_id": f.Connection, "tenant_id": 7, "knowledge_base_id": kb.ID, "datasource_id": f.Pair.DS, "nextcloud_instance_id": f.Instance, "binding_id": binding, "datasource_base_url": base, "datasource_config_sha256": configSHA, "status": "active", "current_key_id": "current", "current_secret_ciphertext": encrypted}).
+			Error,
+	)
 	state := repository.NewNextcloudProcessingStateStore(db)
 	require.NoError(t, state.RefreshSourceEpoch(ctx, f.Connection))
 	require.NoError(t, state.PlanGraph(ctx, doc, 1, []*types.Chunk{chunk}, true, true))
@@ -132,23 +214,60 @@ func TestNextcloudLiveOriginalExtractionProviderAndStatusInbox(t *testing.T) {
 	require.NoError(t, err)
 	headSeed++
 	var initial struct{ PayloadJSON string }
-	require.NoError(t, db.Table("nextcloud_file_states").Where("connection_id=? AND file_id=?", f.Connection, f.File).Take(&initial).Error)
+	require.NoError(
+		t,
+		db.Table("nextcloud_file_states").
+			Where("connection_id=? AND file_id=?", f.Connection, f.File).
+			Take(&initial).
+			Error,
+	)
 	var initialState repository.NextcloudFileStateV2
 	require.NoError(t, json.Unmarshal([]byte(initial.PayloadJSON), &initialState))
 	initialState.HeadRevision = strconv.FormatInt(headSeed, 10)
 	initialState.StatusRevision = strconv.FormatInt(statusSeed, 10)
 	initialBody, err := json.Marshal(initialState)
 	require.NoError(t, err)
-	require.NoError(t, db.Table("nextcloud_file_states").Where("connection_id=? AND file_id=?", f.Connection, f.File).Updates(map[string]any{"head_revision": headSeed, "status_revision": statusSeed, "payload_json": string(initialBody)}).Error)
+	require.NoError(
+		t,
+		db.Table("nextcloud_file_states").
+			Where("connection_id=? AND file_id=?", f.Connection, f.File).
+			Updates(map[string]any{"head_revision": headSeed, "status_revision": statusSeed, "payload_json": string(initialBody)}).
+			Error,
+	)
 
-	snapshot, err := inputs.CaptureKnowledgeBuildInputs(ctx, types.KnowledgeBuildInputCaptureRequest{Projection: types.KnowledgeBuildProjectionGraph, TenantID: 7, KnowledgeBaseID: kb.ID, KnowledgeID: doc.ID, ChunkIDs: []string{chunk.ID}})
+	snapshot, err := inputs.CaptureKnowledgeBuildInputs(
+		ctx,
+		types.KnowledgeBuildInputCaptureRequest{
+			Projection:      types.KnowledgeBuildProjectionGraph,
+			TenantID:        7,
+			KnowledgeBaseID: kb.ID,
+			KnowledgeID:     doc.ID,
+			ChunkIDs:        []string{chunk.ID},
+		},
+	)
 	require.NoError(t, err)
 	model := &graphEntryModel{}
-	require.NoError(t, pipelineExtractTask(t, db, inputs, state, repository.NewScopedSQLGraphRepository(db, nil), ctx, snapshot.Proof, doc, model))
+	require.NoError(
+		t,
+		pipelineExtractTask(
+			t,
+			db,
+			inputs,
+			state,
+			repository.NewScopedSQLGraphRepository(db, nil),
+			ctx,
+			snapshot.Proof,
+			doc,
+			model,
+		),
+	)
 	require.Equal(t, 1, model.calls)
 	require.NoError(t, state.Capture(ctx, 7, kb.ID, f.Pair.DS, item.ExternalID, true))
 	var row struct{ PayloadJSON string }
-	require.NoError(t, db.Table("nextcloud_file_states").Where("connection_id=? AND file_id=?", f.Connection, f.File).Take(&row).Error)
+	require.NoError(
+		t,
+		db.Table("nextcloud_file_states").Where("connection_id=? AND file_id=?", f.Connection, f.File).Take(&row).Error,
+	)
 	var result repository.NextcloudFileStateV2
 	require.NoError(t, json.Unmarshal([]byte(row.PayloadJSON), &result))
 	require.Equal(t, "succeeded", result.Graph.State)
@@ -159,12 +278,31 @@ func TestNextcloudLiveOriginalExtractionProviderAndStatusInbox(t *testing.T) {
 	dispatcher := NewNextcloudStateDispatcher(state, nil)
 	dispatcher.deliver(ctx, time.Now().UTC())
 	var delivered int64
-	require.NoError(t, db.Table("nextcloud_status_outbox").Where("event_id=? AND state='delivered'", result.EventID).Count(&delivered).Error)
+	require.NoError(
+		t,
+		db.Table("nextcloud_status_outbox").
+			Where("event_id=? AND state='delivered'", result.EventID).
+			Count(&delivered).
+			Error,
+	)
 	require.EqualValues(t, 1, delivered)
-	require.NoError(t, nextcloud.PushProcessingState(ctx, cfg, f.Connection, "current", result.EventID, repository.NextcloudStateSigningKey([]byte(f.Secret)), []byte(row.PayloadJSON)))
+	require.NoError(
+		t,
+		nextcloud.PushProcessingState(
+			ctx,
+			cfg,
+			f.Connection,
+			"current",
+			result.EventID,
+			repository.NextcloudStateSigningKey([]byte(f.Secret)),
+			[]byte(row.PayloadJSON),
+		),
+	)
 	out := os.Getenv("WEKNORA_NEXTCLOUD_GRAPH_LIVE_RESULT")
 	if out != "" {
-		require.NoError(t, os.WriteFile(out, []byte(row.PayloadJSON), 0600))
+		require.NoError(t, os.WriteFile(out, []byte(row.PayloadJSON), 0o600))
 	}
-	t.Log("fixture sender DB rebuilt from exact durable owned checkpoint; actual NC original bytes -> controlled text parse/model -> real scoped SQL graph commit+ledger -> durable signed NC inbox ACK; exact duplicate event ACK passed")
+	t.Log(
+		"fixture sender DB rebuilt from exact durable owned checkpoint; actual NC original bytes -> controlled text parse/model -> real scoped SQL graph commit+ledger -> durable signed NC inbox ACK; exact duplicate event ACK passed",
+	)
 }

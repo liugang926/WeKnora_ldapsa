@@ -137,7 +137,14 @@ func (s *continuePollPublicationStreams) GetEvents(
 	if s.pollError {
 		return nil, offset, errors.New("fictional event-store read failure")
 	}
-	return []interfaces.StreamEvent{{ID: "fictional-complete", Type: types.ResponseTypeComplete, Done: true, SourceLineage: s.messages.fixtureLineage}}, 2, nil
+	return []interfaces.StreamEvent{
+		{
+			ID:            "fictional-complete",
+			Type:          types.ResponseTypeComplete,
+			Done:          true,
+			SourceLineage: s.messages.fixtureLineage,
+		},
+	}, 2, nil
 }
 
 func TestContinueStreamPollFailureRechecksHeldPublication(t *testing.T) {

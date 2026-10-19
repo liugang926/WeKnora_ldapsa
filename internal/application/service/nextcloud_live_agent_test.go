@@ -21,7 +21,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func documentLiveAgent(t *testing.T, m *machinePipelineFixture, models *documentLiveModels, kbs *knowledgeBaseService) func() {
+func documentLiveAgent(
+	t *testing.T,
+	m *machinePipelineFixture,
+	models *documentLiveModels,
+	kbs *knowledgeBaseService,
+) func() {
 	t.Helper()
 	if os.Getenv("WEKNORA_DOCUMENT_GRAPH_AGENT") != "1" {
 		return func() {}
@@ -41,10 +46,25 @@ func documentLiveAgent(t *testing.T, m *machinePipelineFixture, models *document
 	require.True(t, external)
 	t.Cleanup(releaseModel)
 	markMessageMaterialReady(ctx)
-	targets := types.SearchTargets{&types.SearchTarget{Type: types.SearchTargetTypeKnowledgeBase, TenantID: 7, KnowledgeBaseID: m.ds.KnowledgeBaseID}}
+	targets := types.SearchTargets{
+		&types.SearchTarget{
+			Type:            types.SearchTargetTypeKnowledgeBase,
+			TenantID:        7,
+			KnowledgeBaseID: m.ds.KnowledgeBaseID,
+		},
+	}
 	scope := access.LineageReadScope{Targets: targets}
 	verify := func(ctx context.Context, l *types.SourceLineage) error { return m.f.guard.Check(ctx, l, scope) }
-	chunks := NewChunkService(m.f.s.chunkRepo, m.f.s.repo, repository.NewKnowledgeBaseRepository(m.f.db), models, m.f.s.retrieveEngine, nil, nil, nil)
+	chunks := NewChunkService(
+		m.f.s.chunkRepo,
+		m.f.s.repo,
+		repository.NewKnowledgeBaseRepository(m.f.db),
+		models,
+		m.f.s.retrieveEngine,
+		nil,
+		nil,
+		nil,
+	)
 	registry := agenttools.NewToolRegistry()
 	registry.RegisterTool(agenttools.NewSearchKnowledgeTool(kbs, m.f.s, chunks, targets, nil, nil))
 	registry.RegisterTool(agenttools.NewReadDocumentTool(m.f.s, chunks, targets))
@@ -53,15 +73,44 @@ func documentLiveAgent(t *testing.T, m *machinePipelineFixture, models *document
 		// Diagnostic only; the final acceptance run omits this preflight so
 		// the model's first tool call starts with a fresh physical-read slot.
 		probe := agenttools.NewSearchKnowledgeTool(kbs, m.f.s, chunks, targets, nil, nil)
-		probe.SetRAGChunkSnapshotReader(documentAgentSnapshotDiagnostic{t, repository.NewRAGChunkSnapshotReader(m.f.db, m.f.store)})
+		probe.SetRAGChunkSnapshotReader(
+			documentAgentSnapshotDiagnostic{t, repository.NewRAGChunkSnapshotReader(m.f.db, m.f.store)},
+		)
 		probeCtx := types.WithRAGSourceLineage(ctx, types.NewRAGSourceLineage(verify))
-		_, probeErr := probe.ExecuteSourceLineage(probeCtx, json.RawMessage(`{"query":"Who does Alice know on Project Cedar?","limit":3}`))
+		_, probeErr := probe.ExecuteSourceLineage(
+			probeCtx,
+			json.RawMessage(`{"query":"Who does Alice know on Project Cedar?","limit":3}`),
+		)
 		require.NoError(t, probeErr, "actual search tool preflight before the model loop")
 	}
 	independent, _ := types.NewCompleteSourceLineage()
 	thinking, citations := false, false
 	makeEngine := func() *agent.AgentEngine {
-		engine := agent.NewAgentEngine(&types.AgentConfig{MaxIterations: 5, Temperature: 0.1, Thinking: &thinking, CitationEnabled: &citations, MaxCompletionTokens: 512, SearchTargets: targets}, models.summary, registry, event.NewEventBus(), []*agent.KnowledgeBaseInfo{{ID: m.ds.KnowledgeBaseID, Name: "Owned acceptance document collection", Type: "document", Capabilities: []string{"chunks"}, SourceLineage: independent}}, nil, "live-owned-agent", "")
+		engine := agent.NewAgentEngine(
+			&types.AgentConfig{
+				MaxIterations:       5,
+				Temperature:         0.1,
+				Thinking:            &thinking,
+				CitationEnabled:     &citations,
+				MaxCompletionTokens: 512,
+				SearchTargets:       targets,
+			},
+			models.summary,
+			registry,
+			event.NewEventBus(),
+			[]*agent.KnowledgeBaseInfo{
+				{
+					ID:            m.ds.KnowledgeBaseID,
+					Name:          "Owned acceptance document collection",
+					Type:          "document",
+					Capabilities:  []string{"chunks"},
+					SourceLineage: independent,
+				},
+			},
+			nil,
+			"live-owned-agent",
+			"",
+		)
 		require.NotNil(t, engine)
 		engine.SetSourceLineageVerifier(verify)
 		return engine
@@ -76,7 +125,8 @@ func documentLiveAgent(t *testing.T, m *machinePipelineFixture, models *document
 	used := map[string]bool{}
 	for _, step := range result.RoundSteps {
 		for _, call := range step.ToolCalls {
-			if call.ExecutionName() == agenttools.ToolSearchKnowledge || call.ExecutionName() == agenttools.ToolReadDocument {
+			if call.ExecutionName() == agenttools.ToolSearchKnowledge ||
+				call.ExecutionName() == agenttools.ToolReadDocument {
 				require.NotNil(t, call.Result)
 				require.True(t, call.Result.Success)
 				require.NoError(t, call.Result.SourceLineage.RequireComplete())
@@ -90,15 +140,27 @@ func documentLiveAgent(t *testing.T, m *machinePipelineFixture, models *document
 	require.NoError(t, check())
 	releaseModel()
 	require.NoError(t, CheckMessageMaterialOutputBoundary(attach(ctx)))
-	t.Log("REAL_AGENT actual model selected search_knowledge and read_document, real tool outputs and final answer carry source dependencies")
+	t.Log(
+		"REAL_AGENT actual model selected search_knowledge and read_document, real tool outputs and final answer carry source dependencies",
+	)
 	return func() {
 		require.Error(t, verify(ctx, result.SourceLineage))
 		calls := models.summary.streams.Load()
 		syncCalls := models.summary.calls.Load()
 		_, err := makeEngine().Execute(ctx, "live-owned-agent", "live-agent-after-revoke", "Explain the previous answer again.", []chat.Message{{Role: "assistant", Content: result.FinalAnswer, SourceLineage: result.SourceLineage}})
 		require.Error(t, err)
-		require.Equal(t, calls, models.summary.streams.Load(), "revoked Agent history must be rejected before model call")
-		require.Equal(t, syncCalls, models.summary.calls.Load(), "revoked Agent history must not reach non-streaming model either")
+		require.Equal(
+			t,
+			calls,
+			models.summary.streams.Load(),
+			"revoked Agent history must be rejected before model call",
+		)
+		require.Equal(
+			t,
+			syncCalls,
+			models.summary.calls.Load(),
+			"revoked Agent history must not reach non-streaming model either",
+		)
 		t.Log("REAL_AGENT revoked source history rejected before either model entrypoint")
 		releaseHTTP()
 	}
@@ -111,13 +173,24 @@ type documentAgentSnapshotDiagnostic struct {
 	inner interfaces.RAGChunkSnapshotReader
 }
 
-func (d documentAgentSnapshotDiagnostic) HydrateRAGChunkSnapshots(ctx context.Context, requests []types.RAGChunkReadRequest) ([]types.RAGChunkInputSnapshot, error) {
+func (d documentAgentSnapshotDiagnostic) HydrateRAGChunkSnapshots(
+	ctx context.Context,
+	requests []types.RAGChunkReadRequest,
+) ([]types.RAGChunkInputSnapshot, error) {
 	rows, err := d.inner.HydrateRAGChunkSnapshots(ctx, requests)
 	for _, row := range rows {
 		if c := row.Chunk; c != nil {
 			metadata := strings.TrimSpace(string(c.Metadata))
 			images := strings.TrimSpace(c.ImageInfo)
-			d.t.Logf("AGENT_SNAPSHOT text=%t summary=%t metadata_empty=%t metadata_null=%t images_empty=%t lineage_complete=%t", c.ChunkType == types.ChunkTypeText, c.ChunkType == types.ChunkTypeSummary, metadata == "" || metadata == "{}", metadata == "null", images == "" || images == "[]", row.SourceLineage.RequireComplete() == nil)
+			d.t.Logf(
+				"AGENT_SNAPSHOT text=%t summary=%t metadata_empty=%t metadata_null=%t images_empty=%t lineage_complete=%t",
+				c.ChunkType == types.ChunkTypeText,
+				c.ChunkType == types.ChunkTypeSummary,
+				metadata == "" || metadata == "{}",
+				metadata == "null",
+				images == "" || images == "[]",
+				row.SourceLineage.RequireComplete() == nil,
+			)
 		}
 	}
 	return rows, err

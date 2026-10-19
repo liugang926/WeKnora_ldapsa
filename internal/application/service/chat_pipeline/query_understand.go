@@ -4,9 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/Tencent/WeKnora/internal/models/api"
 	"regexp"
 	"strings"
+
+	"github.com/Tencent/WeKnora/internal/models/api"
 
 	"github.com/Tencent/WeKnora/internal/config"
 	"github.com/Tencent/WeKnora/internal/models/chat"
@@ -202,7 +203,12 @@ func (p *PluginQueryUnderstand) updateUserMessageImageCaption(ctx context.Contex
 
 	msg.Images[0].Caption = chatManage.ImageDescription
 
-	if err := p.messageService.UpdateMessageImages(ctx, chatManage.SessionID, chatManage.UserMessageID, msg.Images); err != nil {
+	if err := p.messageService.UpdateMessageImages(
+		ctx,
+		chatManage.SessionID,
+		chatManage.UserMessageID,
+		msg.Images,
+	); err != nil {
 		pipelineWarn(ctx, "QueryUnderstand", "update_image_caption", map[string]interface{}{
 			"session_id":      chatManage.SessionID,
 			"user_message_id": chatManage.UserMessageID,
@@ -212,7 +218,10 @@ func (p *PluginQueryUnderstand) updateUserMessageImageCaption(ctx context.Contex
 }
 
 // loadHistory fetches and processes conversation history for rewrite context.
-func (p *PluginQueryUnderstand) loadHistory(ctx context.Context, chatManage *types.ChatManage) ([]*types.History, error) {
+func (p *PluginQueryUnderstand) loadHistory(
+	ctx context.Context,
+	chatManage *types.ChatManage,
+) ([]*types.History, error) {
 	// Honor the multi-turn-disabled signal: chatManage.MaxRounds == 0 is set
 	// explicitly by applyAgentOverridesToChatManage when the custom agent has
 	// MultiTurnEnabled=false. We must not silently fall back to the global
@@ -246,7 +255,11 @@ func (p *PluginQueryUnderstand) loadHistory(ctx context.Context, chatManage *typ
 
 // selectModel picks the model for query understanding. When images are present
 // it prefers a vision-capable model. Returns (model, useImages).
-func (p *PluginQueryUnderstand) selectModel(ctx context.Context, chatManage *types.ChatManage, hasImages bool) (chat.Chat, bool) {
+func (p *PluginQueryUnderstand) selectModel(
+	ctx context.Context,
+	chatManage *types.ChatManage,
+	hasImages bool,
+) (chat.Chat, bool) {
 	if hasImages {
 		if chatManage.ChatModelSupportsVision {
 			m, err := p.modelService.GetChatModel(ctx, chatManage.ChatModelID)

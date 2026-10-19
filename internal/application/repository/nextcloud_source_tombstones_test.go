@@ -30,7 +30,9 @@ func TestNextcloudSourceTombstoneLookupNeverCertifiesAbsence(t *testing.T) {
 	if err != nil || state != NextcloudSourcePresenceUnknown {
 		t.Fatal("missing evidence must be unknown", state, err)
 	}
-	if err := db.Exec(`INSERT INTO nextcloud_source_tombstones VALUES (7, 'tenant', '7'), (7, 'knowledge_base', 'kb')`).Error; err != nil {
+	if err := db.Exec(
+		`INSERT INTO nextcloud_source_tombstones VALUES (7, 'tenant', '7'), (7, 'knowledge_base', 'kb')`,
+	).Error; err != nil {
 		t.Fatal(err)
 	}
 	state, err = repo.LookupNextcloudSourcePresence(ctx, 7, "knowledge_base", "kb")

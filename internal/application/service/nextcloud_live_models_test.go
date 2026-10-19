@@ -36,18 +36,24 @@ type documentLiveChat struct {
 	streams  atomic.Int64
 }
 
-func (m *documentLiveChat) Chat(ctx context.Context, messages []chat.Message, options *chat.ChatOptions) (*types.ChatResponse, error) {
+func (m *documentLiveChat) Chat(
+	ctx context.Context,
+	messages []chat.Message,
+	options *chat.ChatOptions,
+) (*types.ChatResponse, error) {
 	m.calls.Add(1)
 	ctx, cancel := context.WithTimeout(ctx, 40*time.Second)
 	defer cancel()
 	return m.provider.Chat(ctx, messages, options)
 }
+
 func (m *documentLiveModels) GetEmbeddingModel(_ context.Context, id string) (embedding.Embedder, error) {
 	if id != m.embeddingRow.ID {
 		return nil, fmt.Errorf("unexpected live embedding model ID")
 	}
 	return m.embedder, nil
 }
+
 func (m *documentLiveModels) GetChatModel(_ context.Context, id string) (chat.Chat, error) {
 	if id != m.chatRow.ID {
 		return nil, fmt.Errorf("unexpected live chat model ID")
@@ -56,7 +62,12 @@ func (m *documentLiveModels) GetChatModel(_ context.Context, id string) (chat.Ch
 }
 func (m *documentLiveChat) GetModelID() string   { return m.provider.GetModelID() }
 func (m *documentLiveChat) GetModelName() string { return m.provider.GetModelName() }
-func (m *documentLiveChat) ChatStream(ctx context.Context, messages []chat.Message, options *chat.ChatOptions) (<-chan types.StreamResponse, error) {
+
+func (m *documentLiveChat) ChatStream(
+	ctx context.Context,
+	messages []chat.Message,
+	options *chat.ChatOptions,
+) (<-chan types.StreamResponse, error) {
 	m.streams.Add(1)
 	return m.provider.ChatStream(ctx, messages, options)
 }
@@ -69,6 +80,7 @@ func (m documentLiveGraphModels) GetChatModel(_ context.Context, id string) (cha
 	}
 	return m.graph, nil
 }
+
 func loadDocumentLiveModels(t *testing.T) (*documentLiveModels, *types.PromptTemplateStructured) {
 	t.Helper()
 	path := os.Getenv("WEKNORA_DOCUMENT_GRAPH_MODEL_CONFIG")
@@ -77,7 +89,7 @@ func loadDocumentLiveModels(t *testing.T) (*documentLiveModels, *types.PromptTem
 	}
 	info, err := os.Stat(path)
 	require.NoError(t, err)
-	require.Zero(t, info.Mode().Perm()&0077, "model config must be private")
+	require.Zero(t, info.Mode().Perm()&0o077, "model config must be private")
 	raw, err := os.ReadFile(path)
 	require.NoError(t, err)
 	var rows struct {
@@ -110,11 +122,21 @@ func loadDocumentLiveModels(t *testing.T) (*documentLiveModels, *types.PromptTem
 	pool, err := ants.NewPool(1)
 	require.NoError(t, err)
 	t.Cleanup(pool.Release)
-	embedder, err := embedding.NewEmbedder(embedding.ConfigFromModel(&rows.Embedding, "", ""), embedding.NewBatchEmbedder(pool), nil)
+	embedder, err := embedding.NewEmbedder(
+		embedding.ConfigFromModel(&rows.Embedding, "", ""),
+		embedding.NewBatchEmbedder(pool),
+		nil,
+	)
 	require.NoError(t, err)
 	provider, err := chat.NewChat(chat.ConfigFromModel(&rows.Chat, "", ""), nil)
 	require.NoError(t, err)
-	models := &documentLiveModels{embeddingRow: rows.Embedding, chatRow: rows.Chat, embedder: embedder, summary: &documentLiveChat{provider: provider}, graph: &documentLiveChat{provider: provider}}
+	models := &documentLiveModels{
+		embeddingRow: rows.Embedding,
+		chatRow:      rows.Chat,
+		embedder:     embedder,
+		summary:      &documentLiveChat{provider: provider},
+		graph:        &documentLiveChat{provider: provider},
+	}
 	raw, err = os.ReadFile("../../../config/config.yaml")
 	require.NoError(t, err)
 	var cfg config.Config

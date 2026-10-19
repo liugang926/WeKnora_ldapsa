@@ -2,13 +2,9 @@ package database
 
 import (
 	"database/sql"
-	"net/url"
 	"os"
 	"path/filepath"
-	"strconv"
-	"strings"
 	"testing"
-	"time"
 
 	"github.com/golang-migrate/migrate/v4"
 	"github.com/stretchr/testify/require"
@@ -31,7 +27,8 @@ func TestSQLiteSteerOriginalUpgradeFrom72PreservesUnknownHistory(t *testing.T) {
 	require.False(t, dirty)
 	seedPreSteerUnknownHistory(t, db)
 
-	chdirAndRestore(t, root)
+	current := copySQLiteMigrationsThrough(t, root, 73)
+	chdirAndRestore(t, current)
 	require.NoError(t, RunMigrationsWithOptions("sqlite3://unused", MigrationOptions{SQLiteDBPath: path}))
 	version, dirty = sqliteMigrationState(t, db)
 	require.Equal(t, 73, version)
@@ -45,7 +42,11 @@ func TestSQLiteSteerOriginalUpgradeFrom72PreservesUnknownHistory(t *testing.T) {
 	require.ErrorContains(t, m.Steps(-1), "steer_original_schema_rollback_forbidden")
 	requireSteerOriginalSchema(t, db, "sqlite")
 	requirePreSteerHistoryStillUnknown(t, db)
-	require.ErrorContains(t, RunMigrationsWithOptions("sqlite3://unused", MigrationOptions{SQLiteDBPath: path}), "dirty")
+	require.ErrorContains(
+		t,
+		RunMigrationsWithOptions("sqlite3://unused", MigrationOptions{SQLiteDBPath: path}),
+		"dirty",
+	)
 }
 
 func TestPostgresSteerOriginalUpgradeFrom153PreservesUnknownHistory(t *testing.T) {
@@ -57,20 +58,7 @@ func TestPostgresSteerOriginalUpgradeFrom153PreservesUnknownHistory(t *testing.T
 	base, err := sql.Open("postgres", dsn)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = base.Close() })
-	schema := "steer_upgrade_" + strconv.FormatInt(time.Now().UnixNano(), 10)
-	_, err = base.Exec("CREATE SCHEMA " + schema)
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		_, err := base.Exec("DROP SCHEMA " + schema + " CASCADE")
-		require.NoError(t, err)
-	})
-	isolated := postgresSchemaDSN(t, dsn, schema)
-	parsed, err := url.Parse(isolated)
-	require.NoError(t, err)
-	query := parsed.Query()
-	query.Set("options", strings.TrimSpace(query.Get("options")+" -c app.skip_embedding=true"))
-	parsed.RawQuery = query.Encode()
-	isolated = parsed.String()
+	isolated := postgresLineageDatabaseDSN(t, base, dsn)
 	db, err := sql.Open("postgres", isolated)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = db.Close() })

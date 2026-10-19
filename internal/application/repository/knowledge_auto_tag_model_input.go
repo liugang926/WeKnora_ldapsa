@@ -2,9 +2,10 @@ package repository
 
 import (
 	"fmt"
+	"strings"
+
 	"github.com/Tencent/WeKnora/internal/types"
 	"gorm.io/gorm"
-	"strings"
 )
 
 func knowledgeAutoTagModelInputs(tx *gorm.DB, kb *types.KnowledgeBase) (string, *types.Tenant, error) {
@@ -19,7 +20,9 @@ func knowledgeAutoTagModelInputs(tx *gorm.DB, kb *types.KnowledgeBase) (string, 
 		return "", nil, nil
 	}
 	var model types.Model
-	if err := tx.Where("id = ? AND (tenant_id = ? OR is_builtin = ?)", id, kb.TenantID, true).Take(&model).Error; err != nil {
+	if err := tx.Where("id = ? AND (tenant_id = ? OR is_builtin = ?)", id, kb.TenantID, true).
+		Take(&model).
+		Error; err != nil {
 		return "", nil, err
 	}
 	if model.Status != types.ModelStatusActive {

@@ -1,12 +1,13 @@
 package handler
 
 import (
+	"net/http"
+
 	"github.com/Tencent/WeKnora/internal/application/service"
 	"github.com/Tencent/WeKnora/internal/errors"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	"github.com/gin-gonic/gin"
-	"net/http"
 )
 
 type KnowledgeEnrichmentTemplateHandler struct {
@@ -14,7 +15,10 @@ type KnowledgeEnrichmentTemplateHandler struct {
 	bases   interfaces.KnowledgeBaseService
 }
 
-func NewKnowledgeEnrichmentTemplateHandler(s *service.KnowledgeEnrichmentTemplateService, bases interfaces.KnowledgeBaseService) *KnowledgeEnrichmentTemplateHandler {
+func NewKnowledgeEnrichmentTemplateHandler(
+	s *service.KnowledgeEnrichmentTemplateService,
+	bases interfaces.KnowledgeBaseService,
+) *KnowledgeEnrichmentTemplateHandler {
 	return &KnowledgeEnrichmentTemplateHandler{s, bases}
 }
 
@@ -103,7 +107,10 @@ func (h *KnowledgeEnrichmentTemplateHandler) Read(c *gin.Context) {
 
 	defer snapshot.Close()
 	prior := c.Writer
-	c.Writer = &knowledgeCollectionAuthorizationWriter{ResponseWriter: prior, check: func() error { return knowledgeOutputHTTPError(snapshot.Check(c.Request.Context())) }}
+	c.Writer = &knowledgeCollectionAuthorizationWriter{
+		ResponseWriter: prior,
+		check:          func() error { return knowledgeOutputHTTPError(snapshot.Check(c.Request.Context())) },
+	}
 	defer func() { c.Writer = prior }()
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": gin.H{"purpose": purpose, "content": snapshot.Content}})
 }

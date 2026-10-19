@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+
 	"github.com/Tencent/WeKnora/internal/application/access"
 	"github.com/Tencent/WeKnora/internal/application/repository"
 	"github.com/Tencent/WeKnora/internal/types"
@@ -17,13 +18,25 @@ func MessageMaterialOwnerContext(ctx context.Context) context.Context {
 	return context.WithoutCancel(ctx)
 }
 
-func (s *messageService) advanceFollowUpMaterialRowLocked(ctx context.Context, slot *messageMaterialOutputSlot, id, generation, admission, request, role string) error {
+func (s *messageService) advanceFollowUpMaterialRowLocked(
+	ctx context.Context,
+	slot *messageMaterialOutputSlot,
+	id, generation, admission, request, role string,
+) error {
 	for i, guard := range slot.Guards {
 		guard.mu.Lock()
 		marked, err := repository.WithMessageMaterialReadPlan(guard.ctx, guard.plan)
 		if err == nil {
 			var updated *types.MessageMaterialSnapshot
-			updated, err = s.materialStore.AdvanceMessageMaterialAfterOwnFollowUpRow(marked, guard.snapshot, id, generation, admission, request, role)
+			updated, err = s.materialStore.AdvanceMessageMaterialAfterOwnFollowUpRow(
+				marked,
+				guard.snapshot,
+				id,
+				generation,
+				admission,
+				request,
+				role,
+			)
 			if err == nil {
 				var plan *types.MessageMaterialReadPlan
 				plan, err = s.materialStore.PeekMessageMaterialReadPlan(marked, updated.Request)
@@ -49,8 +62,14 @@ func (s *messageService) advanceFollowUpMaterialRowLocked(ctx context.Context, s
 	return nil
 }
 
-func (s *messageService) CreateActualSteerFollowUpAssistant(ctx context.Context, input *types.SteerMaterialInput, message *types.Message) (*types.Message, error) {
-	if input == nil || input.Control == nil || message == nil || message.Role != "assistant" || message.IsCompleted || message.Content != "" || message.RequestID == input.Control.RunRequestID {
+func (s *messageService) CreateActualSteerFollowUpAssistant(
+	ctx context.Context,
+	input *types.SteerMaterialInput,
+	message *types.Message,
+) (*types.Message, error) {
+	if input == nil || input.Control == nil || message == nil || message.Role != "assistant" || message.IsCompleted ||
+		message.Content != "" ||
+		message.RequestID == input.Control.RunRequestID {
 		return nil, types.ErrSourceLineageUnknown
 	}
 	slot, ok := ctx.Value(messageMaterialOutputKey{}).(*messageMaterialOutputSlot)
@@ -59,7 +78,10 @@ func (s *messageService) CreateActualSteerFollowUpAssistant(ctx context.Context,
 	}
 	slot.mu.Lock()
 	defer slot.mu.Unlock()
-	if slot.Closed || slot.Failed != nil || !slot.Ready || slot.Completion == nil || slot.Completion.Assistant != input.Control.RunMessageID || slot.Completion.Generation != input.Control.RunGenerationID || slot.Completion.Request != input.Control.RunRequestID {
+	if slot.Closed || slot.Failed != nil || !slot.Ready || slot.Completion == nil ||
+		slot.Completion.Assistant != input.Control.RunMessageID ||
+		slot.Completion.Generation != input.Control.RunGenerationID ||
+		slot.Completion.Request != input.Control.RunRequestID {
 		return nil, types.ErrSourceLineageUnknown
 	}
 	for _, guard := range slot.Guards {
@@ -77,7 +99,15 @@ func (s *messageService) CreateActualSteerFollowUpAssistant(ctx context.Context,
 		slot.Failed = err
 		return nil, err
 	}
-	if err := s.advanceFollowUpMaterialRowLocked(ctx, slot, created.ID, generation, "", created.RequestID, "assistant"); err != nil {
+	if err := s.advanceFollowUpMaterialRowLocked(
+		ctx,
+		slot,
+		created.ID,
+		generation,
+		"",
+		created.RequestID,
+		"assistant",
+	); err != nil {
 		return nil, err
 	}
 	return created, nil
@@ -86,7 +116,11 @@ func (s *messageService) CreateActualSteerFollowUpAssistant(ctx context.Context,
 // ConsumeActualSteerFollowUpIntoMessage derives the successor's real initial
 // user from the old authored receipt. The old model gets no new input: only
 // the exact owned assistant and consumed user advance its membership witness.
-func (s *messageService) ConsumeActualSteerFollowUpIntoMessage(ctx context.Context, input *types.SteerMaterialInput, run, generation, request string) (*types.Message, *types.SteerConsumptionProof, func() error, func(), error) {
+func (s *messageService) ConsumeActualSteerFollowUpIntoMessage(
+	ctx context.Context,
+	input *types.SteerMaterialInput,
+	run, generation, request string,
+) (*types.Message, *types.SteerConsumptionProof, func() error, func(), error) {
 	if input == nil || input.Proof == nil || input.Control == nil || s.materialStore == nil {
 		return nil, nil, nil, nil, types.ErrSourceLineageUnknown
 	}
@@ -95,7 +129,12 @@ func (s *messageService) ConsumeActualSteerFollowUpIntoMessage(ctx context.Conte
 		return nil, nil, nil, nil, access.ErrNextcloudPublicationUnavailable
 	}
 	slot.mu.Lock()
-	if slot.Closed || slot.Failed != nil || !slot.Ready || slot.Completion == nil || slot.Completion.Assistant != input.Control.RunMessageID || slot.Completion.Generation != input.Control.RunGenerationID || slot.Completion.Request != input.Control.RunRequestID || slot.Completion.Assistant == run || slot.Completion.Request == request {
+	if slot.Closed || slot.Failed != nil || !slot.Ready || slot.Completion == nil ||
+		slot.Completion.Assistant != input.Control.RunMessageID ||
+		slot.Completion.Generation != input.Control.RunGenerationID ||
+		slot.Completion.Request != input.Control.RunRequestID ||
+		slot.Completion.Assistant == run ||
+		slot.Completion.Request == request {
 		slot.mu.Unlock()
 		return nil, nil, nil, nil, types.ErrSourceLineageUnknown
 	}
@@ -110,7 +149,17 @@ func (s *messageService) ConsumeActualSteerFollowUpIntoMessage(ctx context.Conte
 	if err := CheckMessageMaterialOutputBoundary(ctx); err != nil {
 		return nil, nil, nil, nil, err
 	}
-	snapshot, readCtx, checkOriginal, closeOriginal, err := s.beginSteerMaterialRead(ctx, &types.SteerMaterialRequest{TenantID: input.Proof.TenantID, SessionID: input.Proof.SessionID, RunMessageID: input.Control.RunMessageID, RunGenerationID: input.Control.RunGenerationID, SteerIDs: []string{input.Proof.SteerID}, Use: types.SteerMaterialFollowUp})
+	snapshot, readCtx, checkOriginal, closeOriginal, err := s.beginSteerMaterialRead(
+		ctx,
+		&types.SteerMaterialRequest{
+			TenantID:        input.Proof.TenantID,
+			SessionID:       input.Proof.SessionID,
+			RunMessageID:    input.Control.RunMessageID,
+			RunGenerationID: input.Control.RunGenerationID,
+			SteerIDs:        []string{input.Proof.SteerID},
+			Use:             types.SteerMaterialFollowUp,
+		},
+	)
 	if err != nil {
 		return nil, nil, nil, nil, err
 	}
@@ -134,7 +183,15 @@ func (s *messageService) ConsumeActualSteerFollowUpIntoMessage(ctx context.Conte
 		slot.mu.Unlock()
 		return nil, nil, nil, nil, fmt.Errorf("followup exact original consumption: %w", err)
 	}
-	err = s.advanceFollowUpMaterialRowLocked(ctx, slot, message.ID, proof.UserGenerationID, proof.UserAdmissionID, request, "user")
+	err = s.advanceFollowUpMaterialRowLocked(
+		ctx,
+		slot,
+		message.ID,
+		proof.UserGenerationID,
+		proof.UserAdmissionID,
+		request,
+		"user",
+	)
 	slot.mu.Unlock()
 	if err != nil {
 		return nil, nil, nil, nil, fmt.Errorf("followup exact user membership transfer: %w", err)
@@ -142,7 +199,15 @@ func (s *messageService) ConsumeActualSteerFollowUpIntoMessage(ctx context.Conte
 	if err := CheckMessageMaterialOutputBoundary(ctx); err != nil {
 		return nil, nil, nil, nil, err
 	}
-	guard, err := s.beginMessageMaterialRead(MessageMaterialOwnerContext(ctx), types.MessageMaterialReadRequest{TenantID: input.Proof.TenantID, SessionID: input.Proof.SessionID, MessageIDs: []string{message.ID}, IncludeOriginalUserFields: true})
+	guard, err := s.beginMessageMaterialRead(
+		MessageMaterialOwnerContext(ctx),
+		types.MessageMaterialReadRequest{
+			TenantID:                  input.Proof.TenantID,
+			SessionID:                 input.Proof.SessionID,
+			MessageIDs:                []string{message.ID},
+			IncludeOriginalUserFields: true,
+		},
+	)
 	if err != nil {
 		return nil, nil, nil, nil, fmt.Errorf("followup original initial read: %w", err)
 	}

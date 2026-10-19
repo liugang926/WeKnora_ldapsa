@@ -49,7 +49,12 @@ type directoryPeriodicHTTPModel struct {
 
 func (m *directoryPeriodicHTTPModel) GetModelID() string   { return "normal-reference-model" }
 func (m *directoryPeriodicHTTPModel) GetModelName() string { return "actual periodic directory stream" }
-func (m *directoryPeriodicHTTPModel) Chat(context.Context, []chat.Message, *chat.ChatOptions) (*types.ChatResponse, error) {
+
+func (m *directoryPeriodicHTTPModel) Chat(
+	context.Context,
+	[]chat.Message,
+	*chat.ChatOptions,
+) (*types.ChatResponse, error) {
 	return nil, fmt.Errorf("periodic directory test must enter the real final streaming producer")
 }
 
@@ -59,13 +64,22 @@ func (m *directoryPeriodicHTTPModel) recordError(err error) {
 	m.operationErr = err
 }
 
-func (m *directoryPeriodicHTTPModel) ChatStream(ctx context.Context, input []chat.Message, _ *chat.ChatOptions) (<-chan types.StreamResponse, error) {
+func (m *directoryPeriodicHTTPModel) ChatStream(
+	ctx context.Context,
+	input []chat.Message,
+	_ *chat.ChatOptions,
+) (<-chan types.StreamResponse, error) {
 	m.calls.Add(1)
 	if err := types.CheckHistoryMaterialLifetime(ctx); err != nil {
 		return nil, err
 	}
 	for _, message := range input {
-		require.Equal(m.t, m.f.Lineage, message.SourceLineage, "the actual collector still uses the captured complete original source union")
+		require.Equal(
+			m.t,
+			m.f.Lineage,
+			message.SourceLineage,
+			"the actual collector still uses the captured complete original source union",
+		)
 		if strings.Contains(message.Content, "Current employee policy") {
 			m.inputFound.Store(true)
 		}
@@ -172,7 +186,12 @@ func (m *directoryPeriodicHTTPModel) ChatStream(ctx context.Context, input []cha
 func runDirectoryPeriodicActualHTTP(t *testing.T, pg bool) {
 	for _, mode := range []string{"unchanged_complete_sync", "disabled", "out_of_scope", "unlinked"} {
 		t.Run(mode, func(t *testing.T) {
-			model := &directoryPeriodicHTTPModel{t: t, mode: mode, abandon: make(chan struct{}), transportReturned: make(chan struct{})}
+			model := &directoryPeriodicHTTPModel{
+				t:                 t,
+				mode:              mode,
+				abandon:           make(chan struct{}),
+				transportReturned: make(chan struct{}),
+			}
 			f := service.NewNormalReferencesHTTPFixtureForTest(t, pg, model, "directory-periodic")
 			model.f = f
 			// This mode installs the real 28/109 directory schema and auxiliary
@@ -189,18 +208,48 @@ func runDirectoryPeriodicActualHTTP(t *testing.T, pg bool) {
 			require.True(t, ok)
 			require.Equal(t, f.Session.UserID, capturedCaller.UserID)
 			apply := func(ctx context.Context, enabled, present bool) error {
-				snapshot := &types.DirectorySnapshot{DirectoryID: identity.DirectoryID, Complete: true, PaginationComplete: true,
-					StartedAt: time.Now().UTC(), Trigger: types.DirectorySyncTriggerScheduled,
-					Groups: []types.DirectoryGroupSnapshot{{ObjectGUID: periodicDirectoryGroupGUID, ObjectSID: "S-1-5-21-1000-2000", DN: "cn=Periodic Readers,dc=example,dc=test", SAMAccountName: "periodic-readers"}},
+				snapshot := &types.DirectorySnapshot{
+					DirectoryID:        identity.DirectoryID,
+					Complete:           true,
+					PaginationComplete: true,
+					StartedAt:          time.Now().UTC(),
+					Trigger:            types.DirectorySyncTriggerScheduled,
+					Groups: []types.DirectoryGroupSnapshot{
+						{
+							ObjectGUID:     periodicDirectoryGroupGUID,
+							ObjectSID:      "S-1-5-21-1000-2000",
+							DN:             "cn=Periodic Readers,dc=example,dc=test",
+							SAMAccountName: "periodic-readers",
+						},
+					},
 				}
 				if present {
-					snapshot.Identities = []types.DirectoryIdentitySnapshot{{ObjectGUID: identity.ObjectGUID, ObjectSID: "S-1-5-21-1000-1000", DN: "cn=Alice,dc=example,dc=test", SAMAccountName: "alice", Enabled: enabled}}
-					snapshot.Memberships = []types.DirectoryMembershipSnapshot{{GroupObjectGUID: periodicDirectoryGroupGUID, UserObjectGUID: identity.ObjectGUID, Direct: true, Source: types.DirectoryMembershipDirect}}
+					snapshot.Identities = []types.DirectoryIdentitySnapshot{
+						{
+							ObjectGUID:     identity.ObjectGUID,
+							ObjectSID:      "S-1-5-21-1000-1000",
+							DN:             "cn=Alice,dc=example,dc=test",
+							SAMAccountName: "alice",
+							Enabled:        enabled,
+						},
+					}
+					snapshot.Memberships = []types.DirectoryMembershipSnapshot{
+						{
+							GroupObjectGUID: periodicDirectoryGroupGUID,
+							UserObjectGUID:  identity.ObjectGUID,
+							Direct:          true,
+							Source:          types.DirectoryMembershipDirect,
+						},
+					}
 				}
 				_, err := directoryService.ApplySnapshot(ctx, snapshot)
 				return err
 			}
-			require.NoError(t, apply(f.Ctx, true, true), "baseline complete directory input is applied through the production service")
+			require.NoError(
+				t,
+				apply(f.Ctx, true, true),
+				"baseline complete directory input is applied through the production service",
+			)
 			_, baseline, err := directories.GetUserLoginSnapshot(f.Ctx, f.Session.UserID)
 			require.NoError(t, err)
 			require.NotNil(t, baseline)
@@ -211,7 +260,13 @@ func runDirectoryPeriodicActualHTTP(t *testing.T, pg bool) {
 			require.NoError(t, err)
 			require.Len(t, groups, 1)
 			groupRepo := repository.NewGroupAccessRepository(f.DB)
-			grant := &types.TenantGroupRoleGrant{TenantID: 7, DirectoryGroupID: groups[0].ID, Role: types.TenantRoleViewer, Origin: types.GrantOriginDirectory, CreatedBy: f.Session.UserID}
+			grant := &types.TenantGroupRoleGrant{
+				TenantID:         7,
+				DirectoryGroupID: groups[0].ID,
+				Role:             types.TenantRoleViewer,
+				Origin:           types.GrantOriginDirectory,
+				CreatedBy:        f.Session.UserID,
+			}
 			_, err = groupRepo.UpsertTenantGroupRoleGrant(f.Ctx, grant)
 			require.NoError(t, err)
 			model.apply = apply
@@ -219,9 +274,45 @@ func runDirectoryPeriodicActualHTTP(t *testing.T, pg bool) {
 			mini := miniredis.RunT(t)
 			redis, err := stream.NewRedisStreamManager(mini.Addr(), "", "", 0, "periodic-directory-actual", time.Minute)
 			require.NoError(t, err)
-			observed := &normalReferencesObservedStreamForTest{RedisStreamManager: redis, watcher: make(chan context.Context, 1)}
+			observed := &normalReferencesObservedStreamForTest{
+				RedisStreamManager: redis,
+				watcher:            make(chan context.Context, 1),
+			}
 			model.stream = observed
-			h := sessionhandler.NewHandler(f.Sessions, f.Messages, nil, observed, f.Config, f.KBs, nil, nil, nil, nil, nil, nil, nil, f.Models, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+			h := sessionhandler.NewHandler(
+				f.Sessions,
+				f.Messages,
+				nil,
+				observed,
+				f.Config,
+				f.KBs,
+				nil,
+				nil,
+				nil,
+				nil,
+				nil,
+				nil,
+				nil,
+				f.Models,
+				nil,
+				nil,
+				nil,
+				nil,
+				nil,
+				nil,
+				nil,
+				nil,
+				nil,
+				nil,
+				nil,
+				nil,
+				nil,
+				nil,
+				nil,
+				nil,
+				nil,
+				nil,
+			)
 			gin.SetMode(gin.TestMode)
 			router := gin.New()
 			router.Use(middleware.ErrorHandler())
@@ -233,7 +324,11 @@ func runDirectoryPeriodicActualHTTP(t *testing.T, pg bool) {
 			})
 			router.POST("/knowledge-chat/:session_id", h.KnowledgeQA)
 			httpReturned := make(chan struct{})
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { defer close(httpReturned); router.ServeHTTP(w, r) }))
+			server := httptest.NewServer(
+				http.HandlerFunc(
+					func(w http.ResponseWriter, r *http.Request) { defer close(httpReturned); router.ServeHTTP(w, r) },
+				),
+			)
 			t.Cleanup(func() {
 				// Failed-test transport cleanup runs before httptest.Close, and
 				// is never counted as production cancellation/lease termination.
@@ -245,7 +340,13 @@ func runDirectoryPeriodicActualHTTP(t *testing.T, pg bool) {
 			})
 			client := &http.Client{Timeout: 8 * time.Second}
 			started := time.Now()
-			response, err := client.Post(server.URL+"/knowledge-chat/"+f.Session.ID, "application/json", strings.NewReader("{\"query\":\"current employee policy\",\"knowledge_base_ids\":[\"kb\"],\"summary_model_id\":\"normal-reference-model\",\"disable_title\":true}"))
+			response, err := client.Post(
+				server.URL+"/knowledge-chat/"+f.Session.ID,
+				"application/json",
+				strings.NewReader(
+					"{\"query\":\"current employee policy\",\"knowledge_base_ids\":[\"kb\"],\"summary_model_id\":\"normal-reference-model\",\"disable_title\":true}",
+				),
+			)
 			require.NoError(t, err)
 			defer response.Body.Close()
 			var body bytes.Buffer
@@ -265,8 +366,16 @@ func runDirectoryPeriodicActualHTTP(t *testing.T, pg bool) {
 			wait(model.transportReturned, "actual provider transport")
 			assert.Eventually(t, func() bool {
 				var source, bodies int64
-				return f.DB.Table("nextcloud_content_leases").Where("kind='read' AND released_at_ms IS NULL").Count(&source).Error == nil &&
-					f.DB.Table("original_body_leases").Where("kind='read' AND released_at_ms IS NULL").Count(&bodies).Error == nil && source == 0 && bodies == 0
+				return f.DB.Table("nextcloud_content_leases").
+					Where("kind='read' AND released_at_ms IS NULL").
+					Count(&source).
+					Error == nil &&
+					f.DB.Table("original_body_leases").
+						Where("kind='read' AND released_at_ms IS NULL").
+						Count(&bodies).
+						Error == nil &&
+					source == 0 &&
+					bodies == 0
 			}, 3*time.Second, 10*time.Millisecond, "actual producer/sender release all original pins before fixture cleanup")
 			model.mu.Lock()
 			operationErr := model.operationErr
@@ -282,8 +391,22 @@ func runDirectoryPeriodicActualHTTP(t *testing.T, pg bool) {
 			assert.True(t, present)
 			assert.Equal(t, capturedPrincipal, principal)
 			var completed, manifests int64
-			require.NoError(t, f.DB.Model(&types.Message{}).Where("session_id=? AND role='assistant' AND is_completed=true", f.Session.ID).Count(&completed).Error)
-			require.NoError(t, f.DB.Table("message_completion_input_manifests c").Joins("JOIN message_material_receipts r ON r.admission_id=c.assistant_admission_id").Joins("JOIN messages m ON m.id=r.message_id").Where("m.session_id=? AND m.role='assistant'", f.Session.ID).Count(&manifests).Error)
+			require.NoError(
+				t,
+				f.DB.Model(&types.Message{}).
+					Where("session_id=? AND role='assistant' AND is_completed=true", f.Session.ID).
+					Count(&completed).
+					Error,
+			)
+			require.NoError(
+				t,
+				f.DB.Table("message_completion_input_manifests c").
+					Joins("JOIN message_material_receipts r ON r.admission_id=c.assistant_admission_id").
+					Joins("JOIN messages m ON m.id=r.message_id").
+					Where("m.session_id=? AND m.role='assistant'", f.Session.ID).
+					Count(&manifests).
+					Error,
+			)
 			text := body.String()
 			if mode == "unchanged_complete_sync" {
 				assert.EqualValues(t, 1, completed)
@@ -325,7 +448,13 @@ func runDirectoryPeriodicActualHTTP(t *testing.T, pg bool) {
 				// Calls racing an already-started check are recorded, not called
 				// evidence of post-withdrawal exposure. Final failed production
 				// leaves no source-bearing frame/completed body/manifest.
-				t.Logf("safe periodic metadata: epochs=%d source_calls_at_fault=%d source_calls_terminal=%d empty_polls=%d", model.syncedEpochs.Load(), model.sourceCallsAtFault.Load(), f.SourceAuthorizeCalls(), observed.emptyPolls.Load())
+				t.Logf(
+					"safe periodic metadata: epochs=%d source_calls_at_fault=%d source_calls_terminal=%d empty_polls=%d",
+					model.syncedEpochs.Load(),
+					model.sourceCallsAtFault.Load(),
+					f.SourceAuthorizeCalls(),
+					observed.emptyPolls.Load(),
+				)
 			}
 		})
 	}
@@ -334,6 +463,7 @@ func runDirectoryPeriodicActualHTTP(t *testing.T, pg bool) {
 func TestDirectoryPeriodicSyncActualHTTPSQLite(t *testing.T) {
 	runDirectoryPeriodicActualHTTP(t, false)
 }
+
 func TestPostgresDirectoryPeriodicSyncActualHTTP(t *testing.T) {
 	runDirectoryPeriodicActualHTTP(t, true)
 }

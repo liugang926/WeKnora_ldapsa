@@ -15,10 +15,12 @@ import (
 	"github.com/Tencent/WeKnora/internal/types"
 )
 
-var _ datasource.Connector = (*Connector)(nil)
-var _ datasource.FullSyncWithCursor = (*Connector)(nil)
-var _ datasource.StreamingConnector = (*Connector)(nil)
-var _ datasource.FullStreamingConnector = (*Connector)(nil)
+var (
+	_ datasource.Connector              = (*Connector)(nil)
+	_ datasource.FullSyncWithCursor     = (*Connector)(nil)
+	_ datasource.StreamingConnector     = (*Connector)(nil)
+	_ datasource.FullStreamingConnector = (*Connector)(nil)
+)
 
 // A Nextcloud stream must report its live source identity before any item can
 // be written. The service uses it to fence revoked event tasks and cloned
@@ -116,7 +118,11 @@ func (*Connector) Validate(ctx context.Context, ds *types.DataSourceConfig) erro
 	return err
 }
 
-func (*Connector) ListResources(ctx context.Context, ds *types.DataSourceConfig, parentID string) ([]types.Resource, error) {
+func (*Connector) ListResources(
+	ctx context.Context,
+	ds *types.DataSourceConfig,
+	parentID string,
+) ([]types.Resource, error) {
 	if parentID != "" {
 		return []types.Resource{}, nil
 	}
@@ -149,7 +155,11 @@ func (*Connector) ResolveResourceAncestors(context.Context, *types.DataSourceCon
 	return []string{}, nil
 }
 
-func (c *Connector) FetchAll(ctx context.Context, ds *types.DataSourceConfig, resourceIDs []string) ([]types.FetchedItem, error) {
+func (c *Connector) FetchAll(
+	ctx context.Context,
+	ds *types.DataSourceConfig,
+	resourceIDs []string,
+) ([]types.FetchedItem, error) {
 	if len(resourceIDs) == 0 && ds != nil {
 		resourceIDs = ds.ResourceIDs
 	}
@@ -284,7 +294,12 @@ func (c *Connector) walk(
 			if binding.ID == selected[0] {
 				found = true
 				if observer, ok := h.(publicationEpochStreamHandler); ok {
-					if err := observer.ObserveNextcloudPublicationEpoch(ctx, cap.InstanceID, binding.ID, binding.PublicationEpoch); err != nil {
+					if err := observer.ObserveNextcloudPublicationEpoch(
+						ctx,
+						cap.InstanceID,
+						binding.ID,
+						binding.PublicationEpoch,
+					); err != nil {
 						return nil, nil, err
 					}
 				}
@@ -327,7 +342,8 @@ func (c *Connector) walk(
 		previous.LastContentAuditAt > now.Unix() ||
 		now.Sub(time.Unix(previous.LastContentAuditAt, 0)) >= cfg.reconcileInterval
 	forceAllContent := forceContentAudit || previous.ImportPolicy != policy
-	forceManifest := requireManifest || len(failedCandidates) > 0 || forceContentAudit || previous.LastReconcileAt <= 0 ||
+	forceManifest := requireManifest || len(failedCandidates) > 0 || forceContentAudit ||
+		previous.LastReconcileAt <= 0 ||
 		previous.LastReconcileAt > now.Unix() ||
 		now.Sub(time.Unix(previous.LastReconcileAt, 0)) >= cfg.reconcileInterval ||
 		previous.ImportPolicy != policy
@@ -446,7 +462,9 @@ func (c *Connector) walk(
 			if err != nil {
 				return nil, nil, err
 			}
-			if err := emit(fetchedItem(cap.InstanceID, bindingID, generations[bindingID], file, content, contentType, cfg)); err != nil {
+			if err := emit(
+				fetchedItem(cap.InstanceID, bindingID, generations[bindingID], file, content, contentType, cfg),
+			); err != nil {
 				return nil, nil, err
 			}
 			current[id] = state
@@ -555,7 +573,13 @@ func deletedItem(instanceID, bindingID, id string, state fileState) types.Fetche
 	}
 }
 
-func fetchedItem(instanceID, bindingID, generation string, file manifestItem, content []byte, contentType string, originalCfg ...config) types.FetchedItem {
+func fetchedItem(
+	instanceID, bindingID, generation string,
+	file manifestItem,
+	content []byte,
+	contentType string,
+	originalCfg ...config,
+) types.FetchedItem {
 	updatedAt := time.Time{}
 	if file.MTime > 0 {
 		updatedAt = time.Unix(file.MTime, 0).UTC()
@@ -588,10 +612,4 @@ func fetchedItem(instanceID, bindingID, generation string, file manifestItem, co
 		sealFetchedArtifact(&item, originalCfg[0])
 	}
 	return item
-}
-
-func revisionEqual(a, b string) bool {
-	a, ae := types.NormalizeNextcloudContentRevision(a)
-	b, be := types.NormalizeNextcloudContentRevision(b)
-	return ae == nil && be == nil && a == b
 }

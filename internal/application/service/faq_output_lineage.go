@@ -23,7 +23,10 @@ func faqOutputBodiesEqual(a, b any) bool {
 	return err == nil && left == right
 }
 
-func NewFAQOutputAuthorizer(store *repository.KnowledgeInputProvenanceStore, guard *access.NextcloudSourceLineageGuard) *FAQOutputAuthorizer {
+func NewFAQOutputAuthorizer(
+	store *repository.KnowledgeInputProvenanceStore,
+	guard *access.NextcloudSourceLineageGuard,
+) *FAQOutputAuthorizer {
 	return &FAQOutputAuthorizer{store, guard}
 }
 
@@ -33,12 +36,15 @@ type FAQOutputGuard struct {
 	importOutput *types.FAQImportOutputSnapshot
 	body         string
 }
-type faqOutputBoundaryKey struct{}
-type faqOutputBoundary struct{ guard *FAQOutputGuard }
+type (
+	faqOutputBoundaryKey struct{}
+	faqOutputBoundary    struct{ guard *FAQOutputGuard }
+)
 
 func WithFAQOutputBoundary(ctx context.Context) context.Context {
 	return context.WithValue(ctx, faqOutputBoundaryKey{}, &faqOutputBoundary{})
 }
+
 func FAQOutputGuardFromContext(ctx context.Context) *FAQOutputGuard {
 	slot, _ := ctx.Value(faqOutputBoundaryKey{}).(*faqOutputBoundary)
 	if slot == nil {
@@ -62,6 +68,7 @@ func (a *FAQOutputAuthorizer) Begin(ctx context.Context, req types.FAQInputReadR
 	g := &FAQOutputGuard{authorizer: a, snapshot: snapshot}
 	return g, g.Recheck(ctx)
 }
+
 func (g *FAQOutputGuard) Recheck(ctx context.Context) error {
 	if g == nil || g.authorizer == nil || ctx == nil {
 		return access.ErrNextcloudPublicationUnavailable
@@ -78,7 +85,11 @@ func (g *FAQOutputGuard) Recheck(ctx context.Context) error {
 	}
 	for round := 0; round < 2; round++ {
 		for _, proof := range g.snapshot.Proofs {
-			if err := checkFAQOriginalKnowledgeScopes(ctx, g.authorizer.checker, proof.OriginalKnowledgeInputs); err != nil {
+			if err := checkFAQOriginalKnowledgeScopes(
+				ctx,
+				g.authorizer.checker,
+				proof.OriginalKnowledgeInputs,
+			); err != nil {
 				return err
 			}
 		}
@@ -92,7 +103,19 @@ func (g *FAQOutputGuard) Recheck(ctx context.Context) error {
 			}
 		}
 		empty, _ := types.NewCompleteSourceLineage()
-		if err := g.authorizer.checker.Check(ctx, empty, access.LineageReadScope{Targets: types.SearchTargets{&types.SearchTarget{Type: types.SearchTargetTypeKnowledgeBase, TenantID: g.snapshot.Request.TenantID, KnowledgeBaseID: g.snapshot.Request.KnowledgeBaseID}}}); err != nil {
+		if err := g.authorizer.checker.Check(
+			ctx,
+			empty,
+			access.LineageReadScope{
+				Targets: types.SearchTargets{
+					&types.SearchTarget{
+						Type:            types.SearchTargetTypeKnowledgeBase,
+						TenantID:        g.snapshot.Request.TenantID,
+						KnowledgeBaseID: g.snapshot.Request.KnowledgeBaseID,
+					},
+				},
+			},
+		); err != nil {
 			return err
 		}
 		copy, err := cloneCollection(g.snapshot)
@@ -105,6 +128,7 @@ func (g *FAQOutputGuard) Recheck(ctx context.Context) error {
 	}
 	return nil
 }
+
 func (g *FAQOutputGuard) CheckChunks(ctx context.Context, chunks []*types.Chunk) error {
 	if g == nil {
 		return access.ErrNextcloudPublicationUnavailable
@@ -114,12 +138,15 @@ func (g *FAQOutputGuard) CheckChunks(ctx context.Context, chunks []*types.Chunk)
 		byID[chunk.ID] = chunk
 	}
 	for _, chunk := range chunks {
-		if chunk == nil || byID[chunk.ID] == nil || !faqOutputBodiesEqual(byID[chunk.ID], chunk) || byID[chunk.ID].SourceContent != chunk.SourceContent || byID[chunk.ID].ContextHeader != chunk.ContextHeader {
+		if chunk == nil || byID[chunk.ID] == nil || !faqOutputBodiesEqual(byID[chunk.ID], chunk) ||
+			byID[chunk.ID].SourceContent != chunk.SourceContent ||
+			byID[chunk.ID].ContextHeader != chunk.ContextHeader {
 			return repository.ErrKnowledgeInputChanged
 		}
 	}
 	return g.Recheck(ctx)
 }
+
 func (g *FAQOutputGuard) KnowledgeBase() (*types.KnowledgeBase, error) {
 	if g == nil || g.snapshot == nil {
 		return nil, types.ErrSourceLineageUnknown
@@ -130,6 +157,7 @@ func (g *FAQOutputGuard) KnowledgeBase() (*types.KnowledgeBase, error) {
 	}
 	return kb, err
 }
+
 func (g *FAQOutputGuard) Entries(ctx context.Context, s *knowledgeService, entries []*types.FAQEntry) error {
 	kb, err := g.KnowledgeBase()
 	if err != nil {
@@ -177,7 +205,13 @@ func (g *FAQOutputGuard) Entries(ctx context.Context, s *knowledgeService, entri
 	}
 	return g.Recheck(ctx)
 }
-func (s *knowledgeService) bindFAQEntryOutput(ctx context.Context, kb *types.KnowledgeBase, chunk *types.Chunk, entry *types.FAQEntry) error {
+
+func (s *knowledgeService) bindFAQEntryOutput(
+	ctx context.Context,
+	kb *types.KnowledgeBase,
+	chunk *types.Chunk,
+	entry *types.FAQEntry,
+) error {
 	guard, err := s.beginFAQOutput(ctx, kb, []string{chunk.ID}, false)
 	if err != nil {
 		return err
@@ -189,6 +223,7 @@ func (s *knowledgeService) bindFAQEntryOutput(ctx context.Context, kb *types.Kno
 	}
 	return bindFAQOutput(ctx, guard, entry)
 }
+
 func (g *FAQOutputGuard) Bind(ctx context.Context, value any) error {
 	if err := g.Recheck(ctx); err != nil {
 		return err
@@ -203,6 +238,7 @@ func (g *FAQOutputGuard) Bind(ctx context.Context, value any) error {
 	}
 	return nil
 }
+
 func (g *FAQOutputGuard) Check(ctx context.Context, value any) error {
 	if g == nil || g.body == "" {
 		return access.ErrNextcloudPublicationUnavailable
@@ -216,15 +252,25 @@ func (g *FAQOutputGuard) Check(ctx context.Context, value any) error {
 	}
 	return g.Recheck(ctx)
 }
-func (s *knowledgeService) beginFAQOutput(ctx context.Context, kb *types.KnowledgeBase, ids []string, all bool) (*FAQOutputGuard, error) {
+
+func (s *knowledgeService) beginFAQOutput(
+	ctx context.Context,
+	kb *types.KnowledgeBase,
+	ids []string,
+	all bool,
+) (*FAQOutputGuard, error) {
 	if s.faqInputs == nil {
 		if s.knowledgeInputs != nil {
 			return nil, types.ErrSourceLineageUnknown
 		}
 		return nil, nil
 	}
-	return (&FAQOutputAuthorizer{s.faqInputs, s.faqLineageChecker}).Begin(ctx, types.FAQInputReadRequest{TenantID: kb.TenantID, KnowledgeBaseID: kb.ID, ChunkIDs: ids, AllEntries: all})
+	return (&FAQOutputAuthorizer{s.faqInputs, s.faqLineageChecker}).Begin(
+		ctx,
+		types.FAQInputReadRequest{TenantID: kb.TenantID, KnowledgeBaseID: kb.ID, ChunkIDs: ids, AllEntries: all},
+	)
 }
+
 func bindFAQOutput(ctx context.Context, guard *FAQOutputGuard, value any) error {
 	if guard == nil {
 		return nil
@@ -232,7 +278,10 @@ func bindFAQOutput(ctx context.Context, guard *FAQOutputGuard, value any) error 
 	return guard.Bind(ctx, value)
 }
 
-func (a *FAQOutputAuthorizer) ReadPlan(ctx context.Context, request types.FAQInputReadRequest) (*types.FAQInputReadPlan, error) {
+func (a *FAQOutputAuthorizer) ReadPlan(
+	ctx context.Context,
+	request types.FAQInputReadRequest,
+) (*types.FAQInputReadPlan, error) {
 	if a == nil || a.store == nil {
 		return nil, access.ErrNextcloudPublicationUnavailable
 	}

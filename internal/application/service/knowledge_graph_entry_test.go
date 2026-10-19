@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	nextcloudconnector "github.com/Tencent/WeKnora/internal/datasource/connector/nextcloud"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -13,6 +12,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	nextcloudconnector "github.com/Tencent/WeKnora/internal/datasource/connector/nextcloud"
 
 	"github.com/Tencent/WeKnora/internal/agent"
 	"github.com/Tencent/WeKnora/internal/agent/tools"
@@ -37,14 +38,25 @@ type graphEntryModel struct {
 	calls int
 }
 
-func (m *graphEntryModel) Chat(_ context.Context, msg []chat.Message, options *chat.ChatOptions) (*types.ChatResponse, error) {
+func (m *graphEntryModel) Chat(
+	_ context.Context,
+	msg []chat.Message,
+	options *chat.ChatOptions,
+) (*types.ChatResponse, error) {
 	m.calls++
 	if m.call != nil {
 		m.call(msg, options)
 	}
-	return &types.ChatResponse{Content: `[{"entity":"shared","entity_attributes":["actual graph fact"]},{"entity1":"shared","entity2":"target","relation":"KNOWS"}]`}, nil
+	return &types.ChatResponse{
+		Content: `[{"entity":"shared","entity_attributes":["actual graph fact"]},{"entity1":"shared","entity2":"target","relation":"KNOWS"}]`,
+	}, nil
 }
-func (m *graphEntryModel) ChatStream(context.Context, []chat.Message, *chat.ChatOptions) (<-chan types.StreamResponse, error) {
+
+func (m *graphEntryModel) ChatStream(
+	context.Context,
+	[]chat.Message,
+	*chat.ChatOptions,
+) (<-chan types.StreamResponse, error) {
 	panic("unused local stub")
 }
 func (m *graphEntryModel) GetModelID() string   { return "local-graph-model" }
@@ -70,7 +82,13 @@ func (b *graphEntryBases) GetKnowledgeBaseByIDOnly(ctx context.Context, id strin
 	err := b.db.WithContext(ctx).Where("id = ?", id).Take(&kb).Error
 	return &kb, err
 }
-func (b *graphEntryBases) ReadKnowledgeGraphSnapshot(ctx context.Context, targets types.SearchTargets, namespace types.NameSpace, names []string) (*types.KnowledgeGraphInputSnapshot, error) {
+
+func (b *graphEntryBases) ReadKnowledgeGraphSnapshot(
+	ctx context.Context,
+	targets types.SearchTargets,
+	namespace types.NameSpace,
+	names []string,
+) (*types.KnowledgeGraphInputSnapshot, error) {
 	return b.reader.ReadKnowledgeGraphSnapshot(ctx, targets, namespace, names)
 }
 
@@ -85,79 +103,198 @@ func (k *graphEntryKnowledge) GetKnowledgeByIDOnly(ctx context.Context, id strin
 	err := k.db.WithContext(ctx).Where("id = ?", id).Take(&doc).Error
 	return &doc, err
 }
-func (k *graphEntryKnowledge) BeginNextcloudRead(ctx context.Context, targets types.SearchTargets) (*readlease.NextcloudReadGuard, error) {
+
+func (k *graphEntryKnowledge) BeginNextcloudRead(
+	ctx context.Context,
+	targets types.SearchTargets,
+) (*readlease.NextcloudReadGuard, error) {
 	scopes := []readlease.NextcloudKBReadScope{}
 	for _, target := range targets {
 		scopes = append(scopes, readlease.NextcloudKBReadScope{TenantID: target.TenantID, KBID: target.KnowledgeBaseID})
 	}
 	return readlease.BeginNextcloudKBRead(ctx, k.leases, scopes)
 }
+
 func (k *graphEntryKnowledge) CheckNextcloudReadTargets(context.Context, types.SearchTargets) error {
 	return nil
 }
+
 func (k *graphEntryKnowledge) GetKnowledgeTags(context.Context, []string) (map[string][]*types.KnowledgeTag, error) {
 	return map[string][]*types.KnowledgeTag{}, nil
 }
+
 func (k *graphEntryKnowledge) ListKnowledgeIDsByTagIDs(context.Context, uint64, string, []string) ([]string, error) {
 	return nil, nil
 }
-func graphSQLNeoFixture(t *testing.T) (*gorm.DB, *repository.KnowledgeInputProvenanceStore, interfaces.RetrieveGraphRepository, types.NameSpace, *graphEntryBases, *graphEntryKnowledge) {
+
+func graphSQLNeoFixture(
+	t *testing.T,
+) (*gorm.DB, *repository.KnowledgeInputProvenanceStore, interfaces.RetrieveGraphRepository, types.NameSpace, *graphEntryBases, *graphEntryKnowledge) {
 	t.Helper()
 	dsn := os.Getenv("WEKNORA_KG_TEST_NEO4J_URI")
 	if dsn == "" {
 		t.Skip("owned Neo4j fixture is not configured")
 	}
-	db, err := gorm.Open(sqlite.Open("file:"+filepath.Join(t.TempDir(), "graph.db")+"?_busy_timeout=5000"), &gorm.Config{})
+	db, err := gorm.Open(
+		sqlite.Open("file:"+filepath.Join(t.TempDir(), "graph.db")+"?_busy_timeout=5000"),
+		&gorm.Config{},
+	)
 	require.NoError(t, err)
 	sqlDB, err := db.DB()
 	require.NoError(t, err)
 	sqlDB.SetMaxOpenConns(1)
 	t.Cleanup(func() { _ = sqlDB.Close() })
-	require.NoError(t, db.AutoMigrate(&types.KnowledgeBase{}, &types.Knowledge{}, &types.Chunk{}, &types.Message{}, &types.DataSource{}, &repository.NextcloudSourcePairing{}))
+	require.NoError(
+		t,
+		db.AutoMigrate(
+			&types.KnowledgeBase{},
+			&types.Knowledge{},
+			&types.Chunk{},
+			&types.Message{},
+			&types.DataSource{},
+			&repository.NextcloudSourcePairing{},
+		),
+	)
 	for _, version := range []string{"000031_nextcloud_source_versions", "000045_nextcloud_source_revisions", "000046_nextcloud_content_leases", "000047_nextcloud_candidate_retry", "000053_knowledge_input_provenance", "000054_knowledge_configuration_history_inputs", "000055_knowledge_actual_config_controls"} {
 		script, err := os.ReadFile("../../../migrations/sqlite/" + version + ".up.sql")
 		require.NoError(t, err)
 		require.NoError(t, db.Exec(string(script)).Error)
 	}
-	namespace := types.NameSpace{KnowledgeBase: "graph_sql_" + strings.ReplaceAll(uuid.NewString(), "-", ""), Knowledge: "human-doc"}
-	kb := &types.KnowledgeBase{ID: namespace.KnowledgeBase, TenantID: 7, Name: "trusted human KB", SummaryModelID: "local-graph-model", ExtractConfig: &types.ExtractConfig{Enabled: true, Tags: []string{"KNOWS"}, Text: "actual human config example", Nodes: []*types.GraphNode{{Name: "config entity", Attributes: []string{"actual human config attribute"}}}, CustomInstructions: "actual human extra instruction"}}
+	namespace := types.NameSpace{
+		KnowledgeBase: "graph_sql_" + strings.ReplaceAll(uuid.NewString(), "-", ""),
+		Knowledge:     "human-doc",
+	}
+	kb := &types.KnowledgeBase{
+		ID:             namespace.KnowledgeBase,
+		TenantID:       7,
+		Name:           "trusted human KB",
+		SummaryModelID: "local-graph-model",
+		ExtractConfig: &types.ExtractConfig{
+			Enabled: true,
+			Tags:    []string{"KNOWS"},
+			Text:    "actual human config example",
+			Nodes: []*types.GraphNode{
+				{Name: "config entity", Attributes: []string{"actual human config attribute"}},
+			},
+			CustomInstructions: "actual human extra instruction",
+		},
+	}
 	store := repository.NewKnowledgeInputProvenanceStore(db)
-	require.NoError(t, store.CreateKnowledgeBaseWithInput(repository.WithIndependentKnowledgeInput(context.Background()), kb))
+	require.NoError(
+		t,
+		store.CreateKnowledgeBaseWithInput(repository.WithIndependentKnowledgeInput(context.Background()), kb),
+	)
 	driver, err := neo4j.NewDriver(dsn, neo4j.NoAuth())
 	require.NoError(t, err)
 	require.NoError(t, driver.VerifyConnectivity(context.Background()))
 	repo := graphrepo.NewNeo4jRepository(driver)
 	t.Cleanup(func() {
-		require.NoError(t, repo.DelGraph(context.Background(), []types.NameSpace{{KnowledgeBase: namespace.KnowledgeBase}}))
+		require.NoError(
+			t,
+			repo.DelGraph(context.Background(), []types.NameSpace{{KnowledgeBase: namespace.KnowledgeBase}}),
+		)
 		require.NoError(t, driver.Close(context.Background()))
 	})
 	knowledge := &graphEntryKnowledge{db: db, leases: repository.NewNextcloudContentLeaseStore(db)}
 	bases := &graphEntryBases{db: db}
-	bases.reader = NewKnowledgeGraphLineageReader(knowledge, bases, repo, repository.NewRAGChunkSnapshotReader(db, store), NewGraphOriginalInputVerifier(store))
+	bases.reader = NewKnowledgeGraphLineageReader(
+		knowledge,
+		bases,
+		repo,
+		repository.NewRAGChunkSnapshotReader(db, store),
+		NewGraphOriginalInputVerifier(store),
+	)
 	return db, store, repo, namespace, bases, knowledge
 }
-func graphAdmittedInput(t *testing.T, db *gorm.DB, store *repository.KnowledgeInputProvenanceStore, namespace types.NameSpace) (context.Context, *types.KnowledgeBuildInputProof) {
+
+func graphAdmittedInput(
+	t *testing.T,
+	db *gorm.DB,
+	store *repository.KnowledgeInputProvenanceStore,
+	namespace types.NameSpace,
+) (context.Context, *types.KnowledgeBuildInputProof) {
 	t.Helper()
-	doc := &types.Knowledge{ID: namespace.Knowledge, TenantID: 7, KnowledgeBaseID: namespace.KnowledgeBase, Type: types.KnowledgeTypeManual, Channel: "web", Source: "manual", Title: "actual SQL title", ParseStatus: types.ParseStatusCompleted, EnableStatus: "enabled", CustomMetadata: types.JSON(`{}`), Metadata: types.JSON(`{"manual":{"content":"original human body","version":1}}`)}
-	proof, err := store.CreateKnowledgeWithInput(repository.WithIndependentKnowledgeInput(context.Background()), doc, "original human body")
+	doc := &types.Knowledge{
+		ID:              namespace.Knowledge,
+		TenantID:        7,
+		KnowledgeBaseID: namespace.KnowledgeBase,
+		Type:            types.KnowledgeTypeManual,
+		Channel:         "web",
+		Source:          "manual",
+		Title:           "actual SQL title",
+		ParseStatus:     types.ParseStatusCompleted,
+		EnableStatus:    "enabled",
+		CustomMetadata:  types.JSON(`{}`),
+		Metadata:        types.JSON(`{"manual":{"content":"original human body","version":1}}`),
+	}
+	proof, err := store.CreateKnowledgeWithInput(
+		repository.WithIndependentKnowledgeInput(context.Background()),
+		doc,
+		"original human body",
+	)
 	require.NoError(t, err)
 	ctx := repository.WithKnowledgeBuildInputProof(context.Background(), store, proof)
-	chunk := &types.Chunk{ID: namespace.Knowledge + "-chunk", TenantID: 7, KnowledgeBaseID: namespace.KnowledgeBase, KnowledgeID: namespace.Knowledge, Content: "actual admitted parsed SQL body", ChunkType: types.ChunkTypeText, IsEnabled: true, IndexStatus: "ready", Metadata: types.JSON(`{}`)}
+	chunk := &types.Chunk{
+		ID:              namespace.Knowledge + "-chunk",
+		TenantID:        7,
+		KnowledgeBaseID: namespace.KnowledgeBase,
+		KnowledgeID:     namespace.Knowledge,
+		Content:         "actual admitted parsed SQL body",
+		ChunkType:       types.ChunkTypeText,
+		IsEnabled:       true,
+		IndexStatus:     "ready",
+		Metadata:        types.JSON(`{}`),
+	}
 	require.NoError(t, repository.NewChunkRepository(db).CreateChunks(ctx, []*types.Chunk{chunk}))
-	snapshot, err := store.CaptureKnowledgeBuildInputs(ctx, types.KnowledgeBuildInputCaptureRequest{Projection: types.KnowledgeBuildProjectionGraph, TenantID: 7, KnowledgeBaseID: namespace.KnowledgeBase, KnowledgeID: namespace.Knowledge, ChunkIDs: []string{chunk.ID}})
+	snapshot, err := store.CaptureKnowledgeBuildInputs(
+		ctx,
+		types.KnowledgeBuildInputCaptureRequest{
+			Projection:      types.KnowledgeBuildProjectionGraph,
+			TenantID:        7,
+			KnowledgeBaseID: namespace.KnowledgeBase,
+			KnowledgeID:     namespace.Knowledge,
+			ChunkIDs:        []string{chunk.ID},
+		},
+	)
 	require.NoError(t, err)
 	return ctx, snapshot.Proof
 }
-func graphExtractTask(t *testing.T, ctx context.Context, store *repository.KnowledgeInputProvenanceStore, repo interfaces.RetrieveGraphRepository, namespace types.NameSpace, proof *types.KnowledgeBuildInputProof, model *graphEntryModel) error {
+
+func graphExtractTask(
+	t *testing.T,
+	ctx context.Context,
+	store *repository.KnowledgeInputProvenanceStore,
+	repo interfaces.RetrieveGraphRepository,
+	namespace types.NameSpace,
+	proof *types.KnowledgeBuildInputProof,
+	model *graphEntryModel,
+) error {
 	t.Helper()
 	empty, _ := types.NewCompleteSourceLineage()
-	template, err := types.BindGraphPromptTemplateOrigin(&types.PromptTemplateStructured{Description: "code-owned local graph protocol %s"}, empty)
+	template, err := types.BindGraphPromptTemplateOrigin(
+		&types.PromptTemplateStructured{Description: "code-owned local graph protocol %s"},
+		empty,
+	)
 	require.NoError(t, err)
-	svc := &ChunkExtractService{buildInputs: store, template: template, modelService: &graphEntryModels{model: model}, graphEngine: repo}
-	payload, err := json.Marshal(types.ExtractChunkPayload{TenantID: 7, KnowledgeID: namespace.Knowledge, ChunkID: namespace.Knowledge + "-chunk", ModelID: "local-graph-model", OriginalInput: proof})
+	svc := &ChunkExtractService{
+		buildInputs:  store,
+		template:     template,
+		modelService: &graphEntryModels{model: model},
+		graphEngine:  repo,
+	}
+	payload, err := json.Marshal(
+		types.ExtractChunkPayload{
+			TenantID:      7,
+			KnowledgeID:   namespace.Knowledge,
+			ChunkID:       namespace.Knowledge + "-chunk",
+			ModelID:       "local-graph-model",
+			OriginalInput: proof,
+		},
+	)
 	require.NoError(t, err)
 	return svc.Handle(ctx, asynq.NewTask(types.TypeChunkExtract, payload))
 }
+
 func TestKnowledgeGraphActualSQLTaskNeo4jAgentOrdinaryEntry(t *testing.T) {
 	db, store, repo, namespace, bases, knowledge := graphSQLNeoFixture(t)
 	buildCtx, proof := graphAdmittedInput(t, db, store, namespace)
@@ -168,24 +305,40 @@ func TestKnowledgeGraphActualSQLTaskNeo4jAgentOrdinaryEntry(t *testing.T) {
 		require.Contains(t, messages[0].Content, "actual human extra instruction")
 	}}
 	require.NoError(t, graphExtractTask(t, buildCtx, store, repo, namespace, proof, model))
-	targets := types.SearchTargets{&types.SearchTarget{Type: types.SearchTargetTypeKnowledgeBase, TenantID: 7, KnowledgeBaseID: namespace.KnowledgeBase}}
+	targets := types.SearchTargets{
+		&types.SearchTarget{
+			Type:            types.SearchTargetTypeKnowledgeBase,
+			TenantID:        7,
+			KnowledgeBaseID: namespace.KnowledgeBase,
+		},
+	}
 	ctx := types.WithCaller(context.Background(), types.Caller{TenantID: 3, UserID: "original-person"})
 	ctx = types.WithPrincipal(ctx, types.Principal{Type: types.PrincipalWebUser, ID: "original-person"})
 	ctx = types.WithExecutionTenant(ctx, 7)
-	ctx = types.WithRAGSourceLineage(ctx, types.NewRAGSourceLineage(func(ctx context.Context, lineage *types.SourceLineage) error {
-		caller, _ := ctx.Value(types.CallerContextKey).(types.Caller)
-		require.Equal(t, uint64(3), caller.TenantID)
-		require.Equal(t, uint64(7), types.MustTenantIDFromContext(ctx))
-		return lineage.RequireComplete()
-	}))
-	snapshot, readErr := bases.reader.ReadKnowledgeGraphSnapshot(ctx, targets, types.NameSpace{KnowledgeBase: namespace.KnowledgeBase}, []string{"shared"})
+	ctx = types.WithRAGSourceLineage(
+		ctx,
+		types.NewRAGSourceLineage(func(ctx context.Context, lineage *types.SourceLineage) error {
+			caller, _ := ctx.Value(types.CallerContextKey).(types.Caller)
+			require.Equal(t, uint64(3), caller.TenantID)
+			require.Equal(t, uint64(7), types.MustTenantIDFromContext(ctx))
+			return lineage.RequireComplete()
+		}),
+	)
+	snapshot, readErr := bases.reader.ReadKnowledgeGraphSnapshot(
+		ctx,
+		targets,
+		types.NameSpace{KnowledgeBase: namespace.KnowledgeBase},
+		[]string{"shared"},
+	)
 	require.NoError(t, readErr, "actual reader entry")
 	require.NotNil(t, snapshot)
 	require.NoError(t, snapshot.Close())
 	tool := tools.NewQueryKnowledgeGraphTool(bases, targets).WithKnowledgeScope(knowledge)
 	registry := tools.NewToolRegistry()
 	registry.RegisterTool(tool)
-	args, _ := json.Marshal(tools.QueryKnowledgeGraphInput{KnowledgeBaseIDs: []string{namespace.KnowledgeBase}, Query: "shared"})
+	args, _ := json.Marshal(
+		tools.QueryKnowledgeGraphInput{KnowledgeBaseIDs: []string{namespace.KnowledgeBase}, Query: "shared"},
+	)
 	result, err := registry.ExecuteToolWithSourceLineage(ctx, tools.ToolQueryKnowledgeGraph, args)
 	require.NoError(t, err)
 	require.Contains(t, result.Output, "actual graph fact")
@@ -193,14 +346,27 @@ func TestKnowledgeGraphActualSQLTaskNeo4jAgentOrdinaryEntry(t *testing.T) {
 	require.Contains(t, result.Output, "actual SQL title")
 	require.Empty(t, result.SourceLineage.Sources)
 	manager := chatpipeline.NewEventManager()
-	chatpipeline.NewPluginSearchEntity(manager, repo, repository.NewChunkRepository(db), repository.NewKnowledgeRepository(db), bases)
-	manage := &types.ChatManage{PipelineRequest: types.PipelineRequest{SearchTargets: targets}, PipelineState: types.PipelineState{Entity: []string{"shared"}, EntityKBIDs: []string{namespace.KnowledgeBase}}}
+	chatpipeline.NewPluginSearchEntity(
+		manager,
+		repo,
+		repository.NewChunkRepository(db),
+		repository.NewKnowledgeRepository(db),
+		bases,
+	)
+	manage := &types.ChatManage{
+		PipelineRequest: types.PipelineRequest{SearchTargets: targets},
+		PipelineState: types.PipelineState{
+			Entity:      []string{"shared"},
+			EntityKBIDs: []string{namespace.KnowledgeBase},
+		},
+	}
 	require.Nil(t, manager.Trigger(ctx, types.ENTITY_SEARCH, manage))
 	require.Len(t, manage.SearchResult, 1)
 	require.Contains(t, manage.SearchResult[0].Content, "actual admitted parsed SQL body")
 	require.NotNil(t, manage.GraphResult)
 	require.Equal(t, 1, model.calls)
 }
+
 func TestKnowledgeGraphActualSQLConfigMutationAndHardDeleteDenyOriginalGraph(t *testing.T) {
 	for _, mode := range []string{"config rollback", "chunk rollback", "hard delete"} {
 		t.Run(mode, func(t *testing.T) {
@@ -209,28 +375,70 @@ func TestKnowledgeGraphActualSQLConfigMutationAndHardDeleteDenyOriginalGraph(t *
 			require.NoError(t, graphExtractTask(t, ctx, store, repo, namespace, proof, &graphEntryModel{}))
 			switch mode {
 			case "config rollback":
-				require.NoError(t, db.Model(&types.KnowledgeBase{}).Where("id = ?", namespace.KnowledgeBase).Update("summary_model_id", "changed").Error)
-				require.NoError(t, db.Model(&types.KnowledgeBase{}).Where("id = ?", namespace.KnowledgeBase).Update("summary_model_id", "local-graph-model").Error)
+				require.NoError(
+					t,
+					db.Model(&types.KnowledgeBase{}).
+						Where("id = ?", namespace.KnowledgeBase).
+						Update("summary_model_id", "changed").
+						Error,
+				)
+				require.NoError(
+					t,
+					db.Model(&types.KnowledgeBase{}).
+						Where("id = ?", namespace.KnowledgeBase).
+						Update("summary_model_id", "local-graph-model").
+						Error,
+				)
 			case "chunk rollback":
-				require.NoError(t, db.Model(&types.Chunk{}).Where("knowledge_id = ?", namespace.Knowledge).Update("content", "changed").Error)
-				require.NoError(t, db.Model(&types.Chunk{}).Where("knowledge_id = ?", namespace.Knowledge).Update("content", "actual admitted parsed SQL body").Error)
+				require.NoError(
+					t,
+					db.Model(&types.Chunk{}).
+						Where("knowledge_id = ?", namespace.Knowledge).
+						Update("content", "changed").
+						Error,
+				)
+				require.NoError(
+					t,
+					db.Model(&types.Chunk{}).
+						Where("knowledge_id = ?", namespace.Knowledge).
+						Update("content", "actual admitted parsed SQL body").
+						Error,
+				)
 			case "hard delete":
 				require.NoError(t, db.Unscoped().Where("id = ?", namespace.Knowledge).Delete(&types.Knowledge{}).Error)
 			}
 			turn := types.NewRAGSourceLineage(func(context.Context, *types.SourceLineage) error { return nil })
 			readCtx := types.WithRAGSourceLineage(types.WithExecutionTenant(context.Background(), 7), turn)
-			snapshot, err := bases.reader.ReadKnowledgeGraphSnapshot(readCtx, types.SearchTargets{&types.SearchTarget{Type: types.SearchTargetTypeKnowledgeBase, TenantID: 7, KnowledgeBaseID: namespace.KnowledgeBase}}, types.NameSpace{KnowledgeBase: namespace.KnowledgeBase}, []string{"shared"})
+			snapshot, err := bases.reader.ReadKnowledgeGraphSnapshot(
+				readCtx,
+				types.SearchTargets{
+					&types.SearchTarget{
+						Type:            types.SearchTargetTypeKnowledgeBase,
+						TenantID:        7,
+						KnowledgeBaseID: namespace.KnowledgeBase,
+					},
+				},
+				types.NameSpace{KnowledgeBase: namespace.KnowledgeBase},
+				[]string{"shared"},
+			)
 			require.Error(t, err)
 			require.Nil(t, snapshot)
 			require.Error(t, turn.Snapshot().RequireComplete())
 		})
 	}
 }
+
 func TestKnowledgeGraphActualSQLModelOutputWithdrawalWritesNothing(t *testing.T) {
 	db, store, repo, namespace, _, _ := graphSQLNeoFixture(t)
 	ctx, proof := graphAdmittedInput(t, db, store, namespace)
 	model := &graphEntryModel{call: func([]chat.Message, *chat.ChatOptions) {
-		require.NoError(t, db.Model(&types.KnowledgeBase{}).Where("id = ?", namespace.KnowledgeBase).Update("summary_model_id", "withdrawn during model").Error)
+		require.NoError(
+			t,
+			db.Model(&types.KnowledgeBase{}).
+				Where("id = ?", namespace.KnowledgeBase).
+				Update("summary_model_id", "withdrawn during model").
+				Error,
+		)
 	}}
 	err := graphExtractTask(t, ctx, store, repo, namespace, proof, model)
 	require.Error(t, err)
@@ -258,35 +466,116 @@ func (k *graphEntryKnowledge) CheckKnowledgePublication(ctx context.Context, doc
 	if err != nil {
 		return err
 	}
-	return nextcloudconnector.CheckCurrentPublication(ctx, cfg, metadata["nextcloud_instance_id"], metadata["nextcloud_binding_id"], file, metadata["nextcloud_etag"], metadata["nextcloud_path"])
+	return nextcloudconnector.CheckCurrentPublication(
+		ctx,
+		cfg,
+		metadata["nextcloud_instance_id"],
+		metadata["nextcloud_binding_id"],
+		file,
+		metadata["nextcloud_etag"],
+		metadata["nextcloud_path"],
+	)
 }
-func graphNextcloudSource(t *testing.T, db *gorm.DB, store *repository.KnowledgeInputProvenanceStore, namespace types.NameSpace, fileID, document, etag string) (context.Context, *types.KnowledgeBuildInputProof, *types.Knowledge) {
+
+func graphNextcloudSource(
+	t *testing.T,
+	db *gorm.DB,
+	store *repository.KnowledgeInputProvenanceStore,
+	namespace types.NameSpace,
+	fileID, document, etag string,
+) (context.Context, *types.KnowledgeBuildInputProof, *types.Knowledge) {
 	t.Helper()
 	t.Setenv("SYSTEM_AES_KEY", "0123456789abcdef0123456789abcdef")
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNoContent) }))
+	server := httptest.NewServer(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNoContent) }),
+	)
 	t.Cleanup(server.Close)
 	t.Setenv("WEKNORA_NEXTCLOUD_DEV_HTTP", "1")
-	t.Setenv("WEKNORA_NEXTCLOUD_ALLOWED_ORIGINS", strings.Trim(os.Getenv("WEKNORA_NEXTCLOUD_ALLOWED_ORIGINS")+","+server.URL, ","))
+	t.Setenv(
+		"WEKNORA_NEXTCLOUD_ALLOWED_ORIGINS",
+		strings.Trim(os.Getenv("WEKNORA_NEXTCLOUD_ALLOWED_ORIGINS")+","+server.URL, ","),
+	)
 	bindingID := "binding-" + fileID
 	config, err := (&types.DataSourceConfig{Type: types.ConnectorTypeNextcloud, ResourceIDs: []string{bindingID}, Settings: map[string]interface{}{"base_url": server.URL}, Credentials: map[string]interface{}{"token": "local-only-machine-token", "key_id": "pair_test"}}).ToJSON()
 	require.NoError(t, err)
 	dsID := "ds-" + fileID
-	require.NoError(t, db.Create(&types.DataSource{ID: dsID, TenantID: 7, KnowledgeBaseID: namespace.KnowledgeBase, Type: types.ConnectorTypeNextcloud, Status: types.DataSourceStatusActive, Config: config}).Error)
+	require.NoError(
+		t,
+		db.Create(
+			&types.DataSource{
+				ID:              dsID,
+				TenantID:        7,
+				KnowledgeBaseID: namespace.KnowledgeBase,
+				Type:            types.ConnectorTypeNextcloud,
+				Status:          types.DataSourceStatusActive,
+				Config:          config,
+			},
+		).Error,
+	)
 	base, configSHA, binding, err := repository.NextcloudEventDataSourceIdentity(config)
 	require.NoError(t, err)
-	require.NoError(t, db.Create(&repository.NextcloudSourcePairing{OperationID: uuid.NewString(), TenantID: 7, KnowledgeBaseID: namespace.KnowledgeBase, DataSourceID: dsID, InstanceID: "instance", BindingID: binding, BaseURL: base, ConfigSHA: configSHA, State: "active"}).Error)
-	metadata, err := json.Marshal(map[string]string{"datasource_id": dsID, "external_id": "nextcloud:instance:" + fileID, "nextcloud_instance_id": "instance", "nextcloud_binding_id": bindingID, "nextcloud_file_id": fileID, "nextcloud_etag": "", "source_resource_id": bindingID, "nextcloud_path": "file.md"})
+	require.NoError(
+		t,
+		db.Create(
+			&repository.NextcloudSourcePairing{
+				OperationID:     uuid.NewString(),
+				TenantID:        7,
+				KnowledgeBaseID: namespace.KnowledgeBase,
+				DataSourceID:    dsID,
+				InstanceID:      "instance",
+				BindingID:       binding,
+				BaseURL:         base,
+				ConfigSHA:       configSHA,
+				State:           "active",
+			},
+		).Error,
+	)
+	metadata, err := json.Marshal(
+		map[string]string{
+			"datasource_id":         dsID,
+			"external_id":           "nextcloud:instance:" + fileID,
+			"nextcloud_instance_id": "instance",
+			"nextcloud_binding_id":  bindingID,
+			"nextcloud_file_id":     fileID,
+			"nextcloud_etag":        "",
+			"source_resource_id":    bindingID,
+			"nextcloud_path":        "file.md",
+		},
+	)
 	require.NoError(t, err)
-	doc := &types.Knowledge{ID: document, TenantID: 7, KnowledgeBaseID: namespace.KnowledgeBase, Title: "source " + fileID, FileName: "file.md", Type: "file", Channel: types.ConnectorTypeNextcloud, Metadata: metadata, ParseStatus: types.ParseStatusFinalizing, EnableStatus: "disabled"}
+	doc := &types.Knowledge{
+		ID:              document,
+		TenantID:        7,
+		KnowledgeBaseID: namespace.KnowledgeBase,
+		Title:           "source " + fileID,
+		FileName:        "file.md",
+		Type:            "file",
+		Channel:         types.ConnectorTypeNextcloud,
+		Metadata:        metadata,
+		ParseStatus:     types.ParseStatusFinalizing,
+		EnableStatus:    "disabled",
+	}
 	require.NoError(t, db.Create(doc).Error)
 	repo := repository.NewKnowledgeRepository(db)
 	require.NoError(t, repo.(interface {
 		StageNextcloudVersion(context.Context, uint64, string, string, string, string, string) error
 	}).StageNextcloudVersion(context.Background(), 7, namespace.KnowledgeBase, dsID, "nextcloud:instance:"+fileID, etag, document))
 	require.NoError(t, db.Where("id = ?", doc.ID).Take(doc).Error)
-	scope := repository.NextcloudContentScope{TenantID: 7, KnowledgeBaseID: namespace.KnowledgeBase, KnowledgeID: document, DataSourceID: dsID, ExternalID: "nextcloud:instance:" + fileID}
+	scope := repository.NextcloudContentScope{
+		TenantID:        7,
+		KnowledgeBaseID: namespace.KnowledgeBase,
+		KnowledgeID:     document,
+		DataSourceID:    dsID,
+		ExternalID:      "nextcloud:instance:" + fileID,
+	}
 	leases := repository.NewNextcloudContentLeaseStore(db)
-	lease, err := leases.AcquireKnowledge(context.Background(), scope, repository.NextcloudContentBuildLease, "original-build-"+fileID, time.Minute)
+	lease, err := leases.AcquireKnowledge(
+		context.Background(),
+		scope,
+		repository.NextcloudContentBuildLease,
+		"original-build-"+fileID,
+		time.Minute,
+	)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = leases.ReleaseLease(context.Background(), lease.ID) })
 	ctx := repository.WithNextcloudBuildLease(context.Background(), leases, lease, scope)
@@ -296,12 +585,32 @@ func graphNextcloudSource(t *testing.T, db *gorm.DB, store *repository.Knowledge
 	if db.Migrator().HasTable("nextcloud_derived_backend_plans") {
 		require.NoError(t, repository.RecordNextcloudDerivedBackendSelection(ctx, nil))
 	}
-	chunk := &types.Chunk{ID: document + "-chunk", TenantID: 7, KnowledgeBaseID: namespace.KnowledgeBase, KnowledgeID: document, Content: "actual admitted source body " + fileID, ChunkType: types.ChunkTypeText, IsEnabled: true, IndexStatus: "ready", Metadata: types.JSON(`{}`)}
+	chunk := &types.Chunk{
+		ID:              document + "-chunk",
+		TenantID:        7,
+		KnowledgeBaseID: namespace.KnowledgeBase,
+		KnowledgeID:     document,
+		Content:         "actual admitted source body " + fileID,
+		ChunkType:       types.ChunkTypeText,
+		IsEnabled:       true,
+		IndexStatus:     "ready",
+		Metadata:        types.JSON(`{}`),
+	}
 	require.NoError(t, repository.NewChunkRepository(db).CreateChunks(ctx, []*types.Chunk{chunk}))
-	snapshot, err := store.CaptureKnowledgeBuildInputs(ctx, types.KnowledgeBuildInputCaptureRequest{Projection: types.KnowledgeBuildProjectionGraph, TenantID: 7, KnowledgeBaseID: namespace.KnowledgeBase, KnowledgeID: document, ChunkIDs: []string{chunk.ID}})
+	snapshot, err := store.CaptureKnowledgeBuildInputs(
+		ctx,
+		types.KnowledgeBuildInputCaptureRequest{
+			Projection:      types.KnowledgeBuildProjectionGraph,
+			TenantID:        7,
+			KnowledgeBaseID: namespace.KnowledgeBase,
+			KnowledgeID:     document,
+			ChunkIDs:        []string{chunk.ID},
+		},
+	)
 	require.NoError(t, err)
 	return ctx, snapshot.Proof, doc
 }
+
 func TestKnowledgeGraphActualNextcloudStagingExtractionPublicationAndWithdrawal(t *testing.T) {
 	db, store, repo, namespace, bases, knowledge := graphSQLNeoFixture(t)
 	ctx, proof, doc := graphNextcloudSource(t, db, store, namespace, "77", namespace.Knowledge, "original-etag")
@@ -330,20 +639,38 @@ func TestKnowledgeGraphActualNextcloudStagingExtractionPublicationAndWithdrawal(
 		return nil
 	})
 	readCtx := types.WithRAGSourceLineage(types.WithExecutionTenant(context.Background(), 7), turn)
-	targets := types.SearchTargets{&types.SearchTarget{Type: types.SearchTargetTypeKnowledgeBase, TenantID: 7, KnowledgeBaseID: namespace.KnowledgeBase}}
+	targets := types.SearchTargets{
+		&types.SearchTarget{
+			Type:            types.SearchTargetTypeKnowledgeBase,
+			TenantID:        7,
+			KnowledgeBaseID: namespace.KnowledgeBase,
+		},
+	}
 	tool := tools.NewQueryKnowledgeGraphTool(bases, targets).WithKnowledgeScope(knowledge)
 	registry := tools.NewToolRegistry()
 	registry.RegisterTool(tool)
-	args, _ := json.Marshal(tools.QueryKnowledgeGraphInput{KnowledgeBaseIDs: []string{namespace.KnowledgeBase}, Query: "shared"})
+	args, _ := json.Marshal(
+		tools.QueryKnowledgeGraphInput{KnowledgeBaseIDs: []string{namespace.KnowledgeBase}, Query: "shared"},
+	)
 	result, err := registry.ExecuteToolWithSourceLineage(readCtx, tools.ToolQueryKnowledgeGraph, args)
 	require.NoError(t, err)
 	require.Contains(t, result.Output, "actual admitted source body 77")
 	require.Len(t, result.SourceLineage.Sources, 1)
 	require.Equal(t, "original-etag", result.SourceLineage.Sources[0].ETag)
 	require.Equal(t, proof.SourceLineage.Sources[0].Revision, result.SourceLineage.Sources[0].Revision)
-	scope := repository.NextcloudContentScope{TenantID: 7, KnowledgeBaseID: namespace.KnowledgeBase, KnowledgeID: doc.ID, DataSourceID: doc.GetMetadata()["datasource_id"], ExternalID: doc.GetMetadata()["external_id"]}
+	scope := repository.NextcloudContentScope{
+		TenantID:        7,
+		KnowledgeBaseID: namespace.KnowledgeBase,
+		KnowledgeID:     doc.ID,
+		DataSourceID:    doc.GetMetadata()["datasource_id"],
+		ExternalID:      doc.GetMetadata()["external_id"],
+	}
 	require.NoError(t, repository.NewNextcloudContentLeaseStore(db).RetireKnowledge(context.Background(), scope))
-	denied, err := registry.ExecuteToolWithSourceLineage(context.WithoutCancel(readCtx), tools.ToolQueryKnowledgeGraph, args)
+	denied, err := registry.ExecuteToolWithSourceLineage(
+		context.WithoutCancel(readCtx),
+		tools.ToolQueryKnowledgeGraph,
+		args,
+	)
 	require.Error(t, err)
 	require.Nil(t, denied)
 }
@@ -360,6 +687,7 @@ func publishGraphSource(t *testing.T, ctx context.Context, db *gorm.DB, doc *typ
 	require.NoError(t, err)
 	require.True(t, published)
 }
+
 func TestKnowledgeGraphActualSQLMergedDocumentsRetainEverySourceDuringRead(t *testing.T) {
 	db, store, repo, namespace, bases, _ := graphSQLNeoFixture(t)
 	sourceA := types.NameSpace{KnowledgeBase: namespace.KnowledgeBase, Knowledge: "source-a"}
@@ -374,19 +702,33 @@ func TestKnowledgeGraphActualSQLMergedDocumentsRetainEverySourceDuringRead(t *te
 		RecheckNextcloudSourceLineage(context.Context, *types.SourceLineage) (bool, error)
 	})
 	newRead := func() context.Context {
-		return types.WithRAGSourceLineage(types.WithExecutionTenant(context.Background(), 7), types.NewRAGSourceLineage(func(ctx context.Context, lineage *types.SourceLineage) error {
-			ok, err := checker.RecheckNextcloudSourceLineage(ctx, lineage)
-			if err != nil {
-				return err
-			}
-			if !ok {
-				return types.ErrSourceLineageUnknown
-			}
-			return nil
-		}))
+		return types.WithRAGSourceLineage(
+			types.WithExecutionTenant(context.Background(), 7),
+			types.NewRAGSourceLineage(func(ctx context.Context, lineage *types.SourceLineage) error {
+				ok, err := checker.RecheckNextcloudSourceLineage(ctx, lineage)
+				if err != nil {
+					return err
+				}
+				if !ok {
+					return types.ErrSourceLineageUnknown
+				}
+				return nil
+			}),
+		)
 	}
-	targets := types.SearchTargets{&types.SearchTarget{Type: types.SearchTargetTypeKnowledgeBase, TenantID: 7, KnowledgeBaseID: namespace.KnowledgeBase}}
-	snapshot, err := bases.reader.ReadKnowledgeGraphSnapshot(newRead(), targets, types.NameSpace{KnowledgeBase: namespace.KnowledgeBase}, []string{"shared"})
+	targets := types.SearchTargets{
+		&types.SearchTarget{
+			Type:            types.SearchTargetTypeKnowledgeBase,
+			TenantID:        7,
+			KnowledgeBaseID: namespace.KnowledgeBase,
+		},
+	}
+	snapshot, err := bases.reader.ReadKnowledgeGraphSnapshot(
+		newRead(),
+		targets,
+		types.NameSpace{KnowledgeBase: namespace.KnowledgeBase},
+		[]string{"shared"},
+	)
 	require.NoError(t, err)
 	require.Len(t, snapshot.Graph.Node, 4, "equal names retain both raw originals before presentation collapse")
 	require.Len(t, snapshot.SourceLineage.Sources, 2)
@@ -394,10 +736,19 @@ func TestKnowledgeGraphActualSQLMergedDocumentsRetainEverySourceDuringRead(t *te
 	require.NoError(t, snapshot.Close())
 	wrapped := &graphReadWithdrawalRepository{RetrieveGraphRepository: repo, withdraw: func() {
 		metadata := docB.GetMetadata()
-		require.NoError(t, repository.NewNextcloudContentLeaseStore(db).RetireKnowledge(context.Background(), repository.NextcloudContentScope{TenantID: 7, KnowledgeBaseID: namespace.KnowledgeBase, KnowledgeID: docB.ID, DataSourceID: metadata["datasource_id"], ExternalID: metadata["external_id"]}))
+		require.NoError(
+			t,
+			repository.NewNextcloudContentLeaseStore(db).
+				RetireKnowledge(context.Background(), repository.NextcloudContentScope{TenantID: 7, KnowledgeBaseID: namespace.KnowledgeBase, KnowledgeID: docB.ID, DataSourceID: metadata["datasource_id"], ExternalID: metadata["external_id"]}),
+		)
 	}}
 	bases.reader.graph = wrapped
-	withdrawn, err := bases.reader.ReadKnowledgeGraphSnapshot(newRead(), targets, types.NameSpace{KnowledgeBase: namespace.KnowledgeBase}, []string{"shared"})
+	withdrawn, err := bases.reader.ReadKnowledgeGraphSnapshot(
+		newRead(),
+		targets,
+		types.NameSpace{KnowledgeBase: namespace.KnowledgeBase},
+		[]string{"shared"},
+	)
 	require.Error(t, err)
 	require.Nil(t, withdrawn)
 }
@@ -407,7 +758,11 @@ type graphReadWithdrawalRepository struct {
 	withdraw func()
 }
 
-func (r *graphReadWithdrawalRepository) SearchNode(ctx context.Context, namespace types.NameSpace, names []string) (*types.GraphData, error) {
+func (r *graphReadWithdrawalRepository) SearchNode(
+	ctx context.Context,
+	namespace types.NameSpace,
+	names []string,
+) (*types.GraphData, error) {
 	graph, err := r.RetrieveGraphRepository.SearchNode(ctx, namespace, names)
 	if err == nil && r.withdraw != nil {
 		r.withdraw()
@@ -425,8 +780,22 @@ func TestKnowledgeGraphActualSQLUnusedGeneratedDescriptionDoesNotDisableGraph(t 
 	doc.Description = "new generated description never used by graph model"
 	require.NoError(t, repository.NewKnowledgeRepository(db).UpdateKnowledge(ctx, &doc))
 	require.NoError(t, store.RecheckKnowledgeBuildInputs(context.Background(), proof))
-	readCtx := types.WithRAGSourceLineage(types.WithExecutionTenant(context.Background(), 7), types.NewRAGSourceLineage(func(context.Context, *types.SourceLineage) error { return nil }))
-	snapshot, err := bases.reader.ReadKnowledgeGraphSnapshot(readCtx, types.SearchTargets{&types.SearchTarget{Type: types.SearchTargetTypeKnowledgeBase, TenantID: 7, KnowledgeBaseID: namespace.KnowledgeBase}}, types.NameSpace{KnowledgeBase: namespace.KnowledgeBase}, []string{"shared"})
+	readCtx := types.WithRAGSourceLineage(
+		types.WithExecutionTenant(context.Background(), 7),
+		types.NewRAGSourceLineage(func(context.Context, *types.SourceLineage) error { return nil }),
+	)
+	snapshot, err := bases.reader.ReadKnowledgeGraphSnapshot(
+		readCtx,
+		types.SearchTargets{
+			&types.SearchTarget{
+				Type:            types.SearchTargetTypeKnowledgeBase,
+				TenantID:        7,
+				KnowledgeBaseID: namespace.KnowledgeBase,
+			},
+		},
+		types.NameSpace{KnowledgeBase: namespace.KnowledgeBase},
+		[]string{"shared"},
+	)
 	require.NoError(t, err)
 	require.Len(t, snapshot.Chunks, 1)
 	require.NoError(t, snapshot.Close())
@@ -437,17 +806,49 @@ func TestKnowledgeGraphActualNextcloudOldTupleCannotBorrowFreshChunkReceipt(t *t
 	ctx, proof, doc := graphNextcloudSource(t, db, store, namespace, "77", namespace.Knowledge, "original-etag")
 	require.NoError(t, graphExtractTask(t, ctx, store, repo, namespace, proof, &graphEntryModel{}))
 	publishGraphSource(t, ctx, db, doc)
-	require.NoError(t, db.Exec("UPDATE nextcloud_content_fences SET epoch=epoch+1 WHERE tenant_id=7 AND knowledge_base_id=? AND knowledge_id=?", namespace.KnowledgeBase, doc.ID).Error)
+	require.NoError(
+		t,
+		db.Exec(
+			"UPDATE nextcloud_content_fences SET epoch=epoch+1 WHERE tenant_id=7 AND knowledge_base_id=? AND knowledge_id=?",
+			namespace.KnowledgeBase,
+			doc.ID,
+		).Error,
+	)
 	versionRepo := repository.NewKnowledgeRepository(db).(interface {
 		StageNextcloudVersion(context.Context, uint64, string, string, string, string, string) error
 	})
-	require.NoError(t, versionRepo.StageNextcloudVersion(context.Background(), 7, namespace.KnowledgeBase, doc.GetMetadata()["datasource_id"], doc.GetMetadata()["external_id"], "new-etag", doc.ID))
+	require.NoError(
+		t,
+		versionRepo.StageNextcloudVersion(
+			context.Background(),
+			7,
+			namespace.KnowledgeBase,
+			doc.GetMetadata()["datasource_id"],
+			doc.GetMetadata()["external_id"],
+			"new-etag",
+			doc.ID,
+		),
+	)
 	raw, err := repo.SearchNode(context.Background(), namespace, []string{"shared"})
 	require.NoError(t, err)
 	require.Equal(t, "original-etag", raw.SourceLineage.Sources[0].ETag)
 	require.Equal(t, proof.SourceLineage.Sources[0].Revision, raw.SourceLineage.Sources[0].Revision)
-	readCtx := types.WithRAGSourceLineage(types.WithExecutionTenant(context.Background(), 7), types.NewRAGSourceLineage(func(context.Context, *types.SourceLineage) error { return nil }))
-	snapshot, err := bases.reader.ReadKnowledgeGraphSnapshot(readCtx, types.SearchTargets{&types.SearchTarget{Type: types.SearchTargetTypeKnowledgeBase, TenantID: 7, KnowledgeBaseID: namespace.KnowledgeBase}}, types.NameSpace{KnowledgeBase: namespace.KnowledgeBase}, []string{"shared"})
+	readCtx := types.WithRAGSourceLineage(
+		types.WithExecutionTenant(context.Background(), 7),
+		types.NewRAGSourceLineage(func(context.Context, *types.SourceLineage) error { return nil }),
+	)
+	snapshot, err := bases.reader.ReadKnowledgeGraphSnapshot(
+		readCtx,
+		types.SearchTargets{
+			&types.SearchTarget{
+				Type:            types.SearchTargetTypeKnowledgeBase,
+				TenantID:        7,
+				KnowledgeBaseID: namespace.KnowledgeBase,
+			},
+		},
+		types.NameSpace{KnowledgeBase: namespace.KnowledgeBase},
+		[]string{"shared"},
+	)
 	require.Error(t, err)
 	require.Nil(t, snapshot)
 }
@@ -461,7 +862,12 @@ type graphConversationModel struct {
 func (m *graphConversationModel) Chat(context.Context, []chat.Message, *chat.ChatOptions) (*types.ChatResponse, error) {
 	panic("unexpected nonstream model call")
 }
-func (m *graphConversationModel) ChatStream(_ context.Context, messages []chat.Message, _ *chat.ChatOptions) (<-chan types.StreamResponse, error) {
+
+func (m *graphConversationModel) ChatStream(
+	_ context.Context,
+	messages []chat.Message,
+	_ *chat.ChatOptions,
+) (<-chan types.StreamResponse, error) {
 	m.calls = append(m.calls, messages)
 	m.round++
 	ch := make(chan types.StreamResponse, 1)
@@ -493,12 +899,35 @@ func TestKnowledgeGraphActualWriterAgentCitationFreeNextTurnWithdrawal(t *testin
 		}
 		return nil
 	}
-	targets := types.SearchTargets{&types.SearchTarget{Type: types.SearchTargetTypeKnowledgeBase, TenantID: 7, KnowledgeBaseID: namespace.KnowledgeBase}}
+	targets := types.SearchTargets{
+		&types.SearchTarget{
+			Type:            types.SearchTargetTypeKnowledgeBase,
+			TenantID:        7,
+			KnowledgeBaseID: namespace.KnowledgeBase,
+		},
+	}
 	registry := tools.NewToolRegistry()
 	registry.RegisterTool(tools.NewQueryKnowledgeGraphTool(bases, targets).WithKnowledgeScope(knowledge))
 	empty, _ := types.NewCompleteSourceLineage()
 	makeEngine := func(model *graphConversationModel) *agent.AgentEngine {
-		engine := agent.NewAgentEngine(&types.AgentConfig{MaxIterations: 5, Temperature: .3}, model, registry, event.NewEventBus(), []*agent.KnowledgeBaseInfo{{ID: namespace.KnowledgeBase, Name: "code-owned selector", Type: "document", Capabilities: []string{"chunks"}, SourceLineage: empty}}, nil, "session", "")
+		engine := agent.NewAgentEngine(
+			&types.AgentConfig{MaxIterations: 5, Temperature: .3},
+			model,
+			registry,
+			event.NewEventBus(),
+			[]*agent.KnowledgeBaseInfo{
+				{
+					ID:            namespace.KnowledgeBase,
+					Name:          "code-owned selector",
+					Type:          "document",
+					Capabilities:  []string{"chunks"},
+					SourceLineage: empty,
+				},
+			},
+			nil,
+			"session",
+			"",
+		)
 		require.NotNil(t, engine)
 		engine.SetSourceLineageVerifier(check)
 		return engine
@@ -519,13 +948,21 @@ func TestKnowledgeGraphActualWriterAgentCitationFreeNextTurnWithdrawal(t *testin
 	require.Contains(t, rendered, "actual graph fact")
 	require.Contains(t, rendered, "KNOWS")
 	followModel := &graphConversationModel{}
-	follow, err := makeEngine(followModel).Execute(ctx, "session", "turn2", "explain again", []chat.Message{{Role: "assistant", Content: first.FinalAnswer, SourceLineage: first.SourceLineage}})
+	follow, err := makeEngine(
+		followModel,
+	).Execute(ctx, "session", "turn2", "explain again", []chat.Message{{Role: "assistant", Content: first.FinalAnswer, SourceLineage: first.SourceLineage}})
 	require.NoError(t, err)
 	require.Equal(t, first.SourceLineage, follow.SourceLineage)
 	metadata := doc.GetMetadata()
-	require.NoError(t, repository.NewNextcloudContentLeaseStore(db).RetireKnowledge(context.Background(), repository.NextcloudContentScope{TenantID: 7, KnowledgeBaseID: namespace.KnowledgeBase, KnowledgeID: doc.ID, DataSourceID: metadata["datasource_id"], ExternalID: metadata["external_id"]}))
+	require.NoError(
+		t,
+		repository.NewNextcloudContentLeaseStore(db).
+			RetireKnowledge(context.Background(), repository.NextcloudContentScope{TenantID: 7, KnowledgeBaseID: namespace.KnowledgeBase, KnowledgeID: doc.ID, DataSourceID: metadata["datasource_id"], ExternalID: metadata["external_id"]}),
+	)
 	blockedModel := &graphConversationModel{}
-	_, err = makeEngine(blockedModel).Execute(ctx, "session", "turn3", "continue", []chat.Message{{Role: "assistant", Content: follow.FinalAnswer, SourceLineage: follow.SourceLineage}})
+	_, err = makeEngine(
+		blockedModel,
+	).Execute(ctx, "session", "turn3", "continue", []chat.Message{{Role: "assistant", Content: follow.FinalAnswer, SourceLineage: follow.SourceLineage}})
 	require.ErrorIs(t, err, agent.ErrAgentSourceLineageDenied)
 	require.Empty(t, blockedModel.calls)
 }
@@ -534,10 +971,30 @@ func TestKnowledgeGraphActualSQLUnusedKBDescriptionDoesNotRestampOrDisableGraph(
 	db, store, repo, namespace, bases, _ := graphSQLNeoFixture(t)
 	ctx, proof := graphAdmittedInput(t, db, store, namespace)
 	require.NoError(t, graphExtractTask(t, ctx, store, repo, namespace, proof, &graphEntryModel{}))
-	require.NoError(t, db.Model(&types.KnowledgeBase{}).Where("id = ?", namespace.KnowledgeBase).Update("description", "unused generated KB description").Error)
+	require.NoError(
+		t,
+		db.Model(&types.KnowledgeBase{}).
+			Where("id = ?", namespace.KnowledgeBase).
+			Update("description", "unused generated KB description").
+			Error,
+	)
 	require.NoError(t, store.RecheckKnowledgeBuildInputs(context.Background(), proof))
-	readCtx := types.WithRAGSourceLineage(types.WithExecutionTenant(context.Background(), 7), types.NewRAGSourceLineage(func(context.Context, *types.SourceLineage) error { return nil }))
-	snapshot, err := bases.reader.ReadKnowledgeGraphSnapshot(readCtx, types.SearchTargets{&types.SearchTarget{Type: types.SearchTargetTypeKnowledgeBase, TenantID: 7, KnowledgeBaseID: namespace.KnowledgeBase}}, types.NameSpace{KnowledgeBase: namespace.KnowledgeBase}, []string{"shared"})
+	readCtx := types.WithRAGSourceLineage(
+		types.WithExecutionTenant(context.Background(), 7),
+		types.NewRAGSourceLineage(func(context.Context, *types.SourceLineage) error { return nil }),
+	)
+	snapshot, err := bases.reader.ReadKnowledgeGraphSnapshot(
+		readCtx,
+		types.SearchTargets{
+			&types.SearchTarget{
+				Type:            types.SearchTargetTypeKnowledgeBase,
+				TenantID:        7,
+				KnowledgeBaseID: namespace.KnowledgeBase,
+			},
+		},
+		types.NameSpace{KnowledgeBase: namespace.KnowledgeBase},
+		[]string{"shared"},
+	)
 	require.NoError(t, err)
 	require.Equal(t, proof.InputDigest, snapshot.Graph.Node[0].SourceReceipt.InputDigest)
 	require.NoError(t, snapshot.Close())

@@ -3,6 +3,13 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"strings"
+	"testing"
+	"time"
+
 	"github.com/Tencent/WeKnora/internal/application/access"
 	"github.com/Tencent/WeKnora/internal/application/repository"
 	"github.com/Tencent/WeKnora/internal/application/service"
@@ -10,15 +17,11 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
-	"net/http"
-	"net/http/httptest"
-	"os"
-	"strings"
-	"testing"
-	"time"
 )
 
-func tagHTTPFixture(t *testing.T) (*TagHandler, *gorm.DB, *repository.KnowledgeInputProvenanceStore, *outputHTTPGroups) {
+func tagHTTPFixture(
+	t *testing.T,
+) (*TagHandler, *gorm.DB, *repository.KnowledgeInputProvenanceStore, *outputHTTPGroups) {
 	t.Helper()
 	_, db, store, groups, shares, agents := collectionHTTPFixture(t)
 	b, e := os.ReadFile("../../migrations/sqlite/000060_tag_statistics_checkpoints.up.sql")
@@ -30,21 +33,44 @@ func tagHTTPFixture(t *testing.T) (*TagHandler, *gorm.DB, *repository.KnowledgeI
 	repository.ConfigureKnowledgeInputActorGroupAccess(store, actualGroups)
 	factory := func(tx *gorm.DB) *repository.KnowledgeInputProvenanceStore {
 		actual := repository.NewKnowledgeInputProvenanceStore(tx)
-		repository.ConfigureKnowledgeInputActorGroupAccess(actual, service.NewGroupAccessService(repository.NewGroupAccessRepository(tx)))
+		repository.ConfigureKnowledgeInputActorGroupAccess(
+			actual,
+			service.NewGroupAccessService(repository.NewGroupAccessRepository(tx)),
+		)
 		return actual
 	}
 	repository.ConfigureKnowledgeDisplayInputWriters(store, tagRepo, kgRepo, factory)
 	kb := collectionHTTPKB{db: db}
-	svc, e := service.NewKnowledgeTagService(kb, tagRepo, kgRepo, repository.NewChunkRepository(db), nil, nil, nil, nil, shares, nil, nil)
+	svc, e := service.NewKnowledgeTagService(
+		kb,
+		tagRepo,
+		kgRepo,
+		repository.NewChunkRepository(db),
+		nil,
+		nil,
+		nil,
+		nil,
+		shares,
+		nil,
+		nil,
+	)
 	require.NoError(t, e)
 	h := NewTagHandler(svc, tagRepo, repository.NewChunkRepository(db))
 	guard := access.NewNextcloudSourceLineageGuard(nil, kb, shares, agents, groups, nil, store)
 	ConfigureTagHandlerOutputLineage(h, service.NewTagOutputAuthorizer(store, guard))
 	return h, db, store, groups
 }
+
 func serveTagHTTP(h *TagHandler, ctx context.Context, method, url, body string) *httptest.ResponseRecorder {
 	if method != http.MethodGet {
-		grant, err := access.ResolveKB(ctx, access.KBRequest{Caller: types.CallerFromContext(ctx)}, &types.KnowledgeBase{ID: "kb", TenantID: 7}, types.OrgRoleEditor, nil, nil)
+		grant, err := access.ResolveKB(
+			ctx,
+			access.KBRequest{Caller: types.CallerFromContext(ctx)},
+			&types.KnowledgeBase{ID: "kb", TenantID: 7},
+			types.OrgRoleEditor,
+			nil,
+			nil,
+		)
 		if err == nil {
 			ctx = grant.Context(ctx)
 		}
@@ -60,10 +86,17 @@ func serveTagHTTP(h *TagHandler, ctx context.Context, method, url, body string) 
 	r.ServeHTTP(w, req)
 	return w
 }
+
 func TestTagOutputActualHTTPCRUDAndList(t *testing.T) {
 	h, db, store, _ := tagHTTPFixture(t)
 	ctx := collectionHumanInputContext(7)
-	w := serveTagHTTP(h, ctx, http.MethodPost, "/knowledge-bases/kb/tags", `{"name":"actual public name","color":"blue","sort_order":2}`)
+	w := serveTagHTTP(
+		h,
+		ctx,
+		http.MethodPost,
+		"/knowledge-bases/kb/tags",
+		`{"name":"actual public name","color":"blue","sort_order":2}`,
+	)
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	require.Contains(t, w.Body.String(), "actual public name")
 	var tag types.KnowledgeTag
@@ -72,31 +105,74 @@ func TestTagOutputActualHTTPCRUDAndList(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	require.Contains(t, w.Body.String(), "actual public name")
 	knowledge := repository.NewKnowledgeRepository(db)
-	repository.ConfigureKnowledgeDisplayInputWriters(store, h.tagRepo, knowledge, func(tx *gorm.DB) *repository.KnowledgeInputProvenanceStore {
-		actual := repository.NewKnowledgeInputProvenanceStore(tx)
-		repository.ConfigureKnowledgeInputActorGroupAccess(actual, service.NewGroupAccessService(repository.NewGroupAccessRepository(tx)))
-		return actual
-	})
-	require.NoError(t, knowledge.SetKnowledgeTags(repository.WithIndependentKnowledgeTagAssignmentInput(ctx, map[string][]string{"match": {tag.ID}}), "match", []string{tag.ID}))
-	actual, e := store.CaptureKnowledgeOutputInputs(ctx, types.KnowledgeBuildInputCaptureRequest{TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: "match"})
+	repository.ConfigureKnowledgeDisplayInputWriters(
+		store,
+		h.tagRepo,
+		knowledge,
+		func(tx *gorm.DB) *repository.KnowledgeInputProvenanceStore {
+			actual := repository.NewKnowledgeInputProvenanceStore(tx)
+			repository.ConfigureKnowledgeInputActorGroupAccess(
+				actual,
+				service.NewGroupAccessService(repository.NewGroupAccessRepository(tx)),
+			)
+			return actual
+		},
+	)
+	require.NoError(
+		t,
+		knowledge.SetKnowledgeTags(
+			repository.WithIndependentKnowledgeTagAssignmentInput(ctx, map[string][]string{"match": {tag.ID}}),
+			"match",
+			[]string{tag.ID},
+		),
+	)
+	actual, e := store.CaptureKnowledgeOutputInputs(
+		ctx,
+		types.KnowledgeBuildInputCaptureRequest{TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: "match"},
+	)
 	require.NoError(t, e)
-	chunk := &types.Chunk{ID: "tag-faq", TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: "match", ChunkType: types.ChunkTypeFAQ, Content: "actual FAQ", TagID: tag.ID}
-	require.NoError(t, repository.NewChunkRepository(db).CreateChunks(repository.WithKnowledgeBuildInputProof(ctx, store, actual.Proof), []*types.Chunk{chunk}))
+	chunk := &types.Chunk{
+		ID:              "tag-faq",
+		TenantID:        7,
+		KnowledgeBaseID: "kb",
+		KnowledgeID:     "match",
+		ChunkType:       types.ChunkTypeFAQ,
+		Content:         "actual FAQ",
+		TagID:           tag.ID,
+	}
+	require.NoError(
+		t,
+		repository.NewChunkRepository(db).
+			CreateChunks(repository.WithKnowledgeBuildInputProof(ctx, store, actual.Proof), []*types.Chunk{chunk}),
+	)
 	w = serveTagHTTP(h, ctx, http.MethodGet, "/knowledge-bases/kb/tags?page_size=1&keyword=public", "")
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	require.Contains(t, w.Body.String(), `"knowledge_count":1`)
 	require.Contains(t, w.Body.String(), `"chunk_count":1`)
 }
+
 func TestTagOutputActualHTTPUnknownRetainedAndMissingVerifier(t *testing.T) {
 	h, db, _, _ := tagHTTPFixture(t)
 	ctx := collectionHumanInputContext(7)
-	tag := &types.KnowledgeTag{ID: "legacy-tag", TenantID: 7, KnowledgeBaseID: "kb", Name: "unknown retained secret", Color: "red", SortOrder: 2}
+	tag := &types.KnowledgeTag{
+		ID:              "legacy-tag",
+		TenantID:        7,
+		KnowledgeBaseID: "kb",
+		Name:            "unknown retained secret",
+		Color:           "red",
+		SortOrder:       2,
+	}
 	require.NoError(t, db.Create(tag).Error)
 	w := serveTagHTTP(h, ctx, http.MethodPut, "/knowledge-bases/kb/tags/legacy-tag", `{"color":"green"}`)
 	require.Equal(t, http.StatusForbidden, w.Code, w.Body.String())
 	require.NotContains(t, w.Body.String(), tag.Name)
 	require.NoError(t, db.Where("id='legacy-tag'").Take(tag).Error)
-	require.Equal(t, "green", tag.Color, "the actual authorized partial edit committed; response still cannot disclose retained unknown Name")
+	require.Equal(
+		t,
+		"green",
+		tag.Color,
+		"the actual authorized partial edit committed; response still cannot disclose retained unknown Name",
+	)
 	w = serveTagHTTP(h, ctx, http.MethodGet, "/knowledge-bases/kb/tags?keyword=absent", "")
 	require.Equal(t, http.StatusForbidden, w.Code, w.Body.String())
 	require.NotContains(t, w.Body.String(), tag.Name)
@@ -104,21 +180,50 @@ func TestTagOutputActualHTTPUnknownRetainedAndMissingVerifier(t *testing.T) {
 	w = serveTagHTTP(h, ctx, http.MethodPost, "/knowledge-bases/kb/tags", `{"name":"new"}`)
 	require.Equal(t, http.StatusServiceUnavailable, w.Code, w.Body.String())
 }
+
 func TestTagOutputActualHTTPRevokeBeforeWrite(t *testing.T) {
 	for _, mode := range []string{"group", "web", "api", "tag-ABA", "relation-ABA", "chunk-ABA", "missing-actor"} {
 		t.Run(mode, func(t *testing.T) {
 			h, db, store, groups := tagHTTPFixture(t)
 			ctx := collectionHumanInputContext(7)
-			tag := &types.KnowledgeTag{ID: "checked-tag", TenantID: 7, KnowledgeBaseID: "kb", Name: "private returned tag", Color: "blue", SortOrder: 2}
-			require.NoError(t, h.tagRepo.Create(repository.WithIndependentKnowledgeTagCreateInput(ctx, "kb", tag.Name, tag.Color, tag.SortOrder), tag))
+			tag := &types.KnowledgeTag{
+				ID:              "checked-tag",
+				TenantID:        7,
+				KnowledgeBaseID: "kb",
+				Name:            "private returned tag",
+				Color:           "blue",
+				SortOrder:       2,
+			}
+			require.NoError(
+				t,
+				h.tagRepo.Create(
+					repository.WithIndependentKnowledgeTagCreateInput(ctx, "kb", tag.Name, tag.Color, tag.SortOrder),
+					tag,
+				),
+			)
 			var key *types.TenantAPIKey
 			if mode == "api" {
 				tenant := uint64(7)
-				key = &types.TenantAPIKey{TenantID: &tenant, ScopeType: types.APIKeyScopeTenant, Name: "tag read key", KeyHash: "tag-read-key", Capabilities: types.StringArray{string(types.APIKeyCapabilityRetrieve)}, KnowledgeBaseIDs: types.StringArray{"kb"}}
+				key = &types.TenantAPIKey{
+					TenantID:         &tenant,
+					ScopeType:        types.APIKeyScopeTenant,
+					Name:             "tag read key",
+					KeyHash:          "tag-read-key",
+					Capabilities:     types.StringArray{string(types.APIKeyCapabilityRetrieve)},
+					KnowledgeBaseIDs: types.StringArray{"kb"},
+				}
 				require.NoError(t, db.Create(key).Error)
 				ctx = types.WithCaller(ctx, types.Caller{TenantID: 7, Role: types.TenantRoleViewer})
 				ctx = types.WithPrincipal(ctx, types.Principal{Type: types.PrincipalAPITenant, ID: "7"})
-				ctx = types.WithTenantAPIKeyScope(ctx, types.TenantAPIKeyScope{KeyID: key.ID, ScopeType: key.ScopeType, Capabilities: key.Capabilities, KnowledgeBaseIDs: key.KnowledgeBaseIDs})
+				ctx = types.WithTenantAPIKeyScope(
+					ctx,
+					types.TenantAPIKeyScope{
+						KeyID:            key.ID,
+						ScopeType:        key.ScopeType,
+						Capabilities:     key.Capabilities,
+						KnowledgeBaseIDs: key.KnowledgeBaseIDs,
+					},
+				)
 			}
 			if mode == "missing-actor" {
 				guard := access.NewNextcloudSourceLineageGuard(nil, collectionHTTPKB{db: db}, nil, nil, groups, nil)
@@ -146,7 +251,13 @@ func TestTagOutputActualHTTPRevokeBeforeWrite(t *testing.T) {
 					require.NoError(t, db.Create(r).Error)
 					require.NoError(t, db.Delete(r).Error)
 				case "chunk-ABA":
-					c := &types.Chunk{ID: "transient", TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: "match", TagID: tag.ID}
+					c := &types.Chunk{
+						ID:              "transient",
+						TenantID:        7,
+						KnowledgeBaseID: "kb",
+						KnowledgeID:     "match",
+						TagID:           tag.ID,
+					}
 					require.NoError(t, db.Create(c).Error)
 					require.NoError(t, db.Unscoped().Delete(c).Error)
 				}
@@ -182,27 +293,96 @@ func TestTagOutputActualHTTPSignedSourceDependencies(t *testing.T) {
 			knowledge := repository.NewKnowledgeRepository(db)
 			factory := func(tx *gorm.DB) *repository.KnowledgeInputProvenanceStore {
 				actual := repository.NewKnowledgeInputProvenanceStore(tx)
-				repository.ConfigureKnowledgeInputActorGroupAccess(actual, service.NewGroupAccessService(repository.NewGroupAccessRepository(tx)))
+				repository.ConfigureKnowledgeInputActorGroupAccess(
+					actual,
+					service.NewGroupAccessService(repository.NewGroupAccessRepository(tx)),
+				)
 				return actual
 			}
 			repository.ConfigureKnowledgeDisplayInputWriters(store, tags, knowledge, factory)
 			ctx := collectionHumanInputContext(7)
-			original, e := store.CaptureKnowledgeOutputInputs(ctx, types.KnowledgeBuildInputCaptureRequest{TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: "source"})
+			original, e := store.CaptureKnowledgeOutputInputs(
+				ctx,
+				types.KnowledgeBuildInputCaptureRequest{TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: "source"},
+			)
 			require.NoError(t, e)
 			producer, e := repository.WithDerivedKnowledgeDisplayInput(ctx, original.Proof)
 			require.NoError(t, e)
-			derived := &types.KnowledgeTag{ID: "derived-source-tag", TenantID: 7, KnowledgeBaseID: "kb", Name: "private source-derived tag name", Color: "blue", SortOrder: 2}
+			derived := &types.KnowledgeTag{
+				ID:              "derived-source-tag",
+				TenantID:        7,
+				KnowledgeBaseID: "kb",
+				Name:            "private source-derived tag name",
+				Color:           "blue",
+				SortOrder:       2,
+			}
 			require.NoError(t, tags.Create(producer, derived))
-			ordinary := &types.KnowledgeTag{ID: "ordinary-tag", TenantID: 7, KnowledgeBaseID: "kb", Name: "ordinary selected tag", Color: "gray", SortOrder: -1}
-			require.NoError(t, tags.Create(repository.WithIndependentKnowledgeTagCreateInput(ctx, "kb", ordinary.Name, ordinary.Color, ordinary.SortOrder), ordinary))
+			ordinary := &types.KnowledgeTag{
+				ID:              "ordinary-tag",
+				TenantID:        7,
+				KnowledgeBaseID: "kb",
+				Name:            "ordinary selected tag",
+				Color:           "gray",
+				SortOrder:       -1,
+			}
+			require.NoError(
+				t,
+				tags.Create(
+					repository.WithIndependentKnowledgeTagCreateInput(
+						ctx,
+						"kb",
+						ordinary.Name,
+						ordinary.Color,
+						ordinary.SortOrder,
+					),
+					ordinary,
+				),
+			)
 			var ds types.DataSource
 			require.NoError(t, db.Where("id='ds'").Take(&ds).Error)
 			user := "user"
 			now := time.Now().UTC()
-			dir := collectionDirectory{identity: &types.DirectoryIdentity{ID: "identity", DirectoryID: "ad-1", ObjectGUID: "00112233-4455-6677-8899-aabbccddeeff", UserID: &user, Status: types.DirectoryObjectActive, SnapshotVersion: 1}, directory: &types.Directory{ID: "ad-1", Protocol: types.DirectoryProtocolAD, Enabled: true, SnapshotVersion: 1, LastSuccessfulSyncAt: &now, StaleAfterSeconds: 900}}
+			dir := collectionDirectory{
+				identity: &types.DirectoryIdentity{
+					ID:              "identity",
+					DirectoryID:     "ad-1",
+					ObjectGUID:      "00112233-4455-6677-8899-aabbccddeeff",
+					UserID:          &user,
+					Status:          types.DirectoryObjectActive,
+					SnapshotVersion: 1,
+				},
+				directory: &types.Directory{
+					ID:                   "ad-1",
+					Protocol:             types.DirectoryProtocolAD,
+					Enabled:              true,
+					SnapshotVersion:      1,
+					LastSuccessfulSyncAt: &now,
+					StaleAfterSeconds:    900,
+				},
+			}
 			publication := access.NewNextcloudPublicationGuard(dir, publicationHandlerSources{source: &ds})
-			guard := access.NewNextcloudSourceLineageGuard(knowledge.(access.NextcloudLineageSnapshotLookup), collectionHTTPKB{db: db}, kh.kbShareService, kh.agentShareService, actualGroups, publication, store)
-			svc, e := service.NewKnowledgeTagService(collectionHTTPKB{db: db}, tags, knowledge, repository.NewChunkRepository(db), nil, nil, nil, nil, kh.kbShareService, nil, nil)
+			guard := access.NewNextcloudSourceLineageGuard(
+				knowledge.(access.NextcloudLineageSnapshotLookup),
+				collectionHTTPKB{db: db},
+				kh.kbShareService,
+				kh.agentShareService,
+				actualGroups,
+				publication,
+				store,
+			)
+			svc, e := service.NewKnowledgeTagService(
+				collectionHTTPKB{db: db},
+				tags,
+				knowledge,
+				repository.NewChunkRepository(db),
+				nil,
+				nil,
+				nil,
+				nil,
+				kh.kbShareService,
+				nil,
+				nil,
+			)
 			require.NoError(t, e)
 			h := NewTagHandler(svc, tags, repository.NewChunkRepository(db))
 			ConfigureTagHandlerOutputLineage(h, service.NewTagOutputAuthorizer(store, guard))
@@ -244,7 +424,10 @@ func TestTagOutputActualHTTPAllOriginalNameSources(t *testing.T) {
 			knowledge := repository.NewKnowledgeRepository(db)
 			factory := func(tx *gorm.DB) *repository.KnowledgeInputProvenanceStore {
 				actual := repository.NewKnowledgeInputProvenanceStore(tx)
-				repository.ConfigureKnowledgeInputActorGroupAccess(actual, service.NewGroupAccessService(repository.NewGroupAccessRepository(tx)))
+				repository.ConfigureKnowledgeInputActorGroupAccess(
+					actual,
+					service.NewGroupAccessService(repository.NewGroupAccessRepository(tx)),
+				)
 				return actual
 			}
 			repository.ConfigureKnowledgeDisplayInputWriters(store, tags, knowledge, factory)
@@ -269,20 +452,42 @@ func TestTagOutputActualHTTPAllOriginalNameSources(t *testing.T) {
 				StageNextcloudVersion(context.Context, uint64, string, string, string, string, string) error
 				PublishNextcloudVersion(context.Context, string) (bool, error)
 			})
-			require.NoError(t, versions.StageNextcloudVersion(ctx, 7, "kb", "ds", "nextcloud:instance:78", "original-etag", second.ID))
-			scope := repository.NextcloudContentScope{TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: second.ID, DataSourceID: "ds", ExternalID: "nextcloud:instance:78"}
+			require.NoError(
+				t,
+				versions.StageNextcloudVersion(ctx, 7, "kb", "ds", "nextcloud:instance:78", "original-etag", second.ID),
+			)
+			scope := repository.NextcloudContentScope{
+				TenantID:        7,
+				KnowledgeBaseID: "kb",
+				KnowledgeID:     second.ID,
+				DataSourceID:    "ds",
+				ExternalID:      "nextcloud:instance:78",
+			}
 			leases := repository.NewNextcloudContentLeaseStore(db)
-			lease, e := leases.AcquireKnowledge(ctx, scope, repository.NextcloudContentBuildLease, "tag-second-source-build", time.Minute)
+			lease, e := leases.AcquireKnowledge(
+				ctx,
+				scope,
+				repository.NextcloudContentBuildLease,
+				"tag-second-source-build",
+				time.Minute,
+			)
 			require.NoError(t, e)
 			build := repository.WithNextcloudBuildLease(ctx, leases, lease, scope)
 			proof, e := store.AdmitNextcloudBuildInputs(build, []byte("actual second original source bytes"))
 			require.NoError(t, e)
 			build = repository.WithKnowledgeBuildInputProof(build, store, proof)
-			require.NoError(t, repository.NewChunkRepository(db).CreateChunks(build, []*types.Chunk{{ID: "source-b-chunk", TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: second.ID, Content: "actual second source parsed text", ChunkType: types.ChunkTypeText, IsEnabled: true, IndexStatus: "ready"}}))
+			require.NoError(
+				t,
+				repository.NewChunkRepository(db).
+					CreateChunks(build, []*types.Chunk{{ID: "source-b-chunk", TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: second.ID, Content: "actual second source parsed text", ChunkType: types.ChunkTypeText, IsEnabled: true, IndexStatus: "ready"}}),
+			)
 			require.NoError(t, db.Where("id=?", second.ID).Take(&second).Error)
 			second.ParseStatus = types.ParseStatusCompleted
 			second.EnableStatus = "enabled"
-			require.NoError(t, knowledge.UpdateKnowledge(repository.WithKnowledgeBuildInputProof(build, store, proof), &second))
+			require.NoError(
+				t,
+				knowledge.UpdateKnowledge(repository.WithKnowledgeBuildInputProof(build, store, proof), &second),
+			)
 			published, e := versions.PublishNextcloudVersion(build, second.ID)
 			require.NoError(t, e)
 			require.True(t, published)
@@ -295,23 +500,81 @@ func TestTagOutputActualHTTPAllOriginalNameSources(t *testing.T) {
 			require.NoError(t, e)
 			derivedCtx, e := repository.WithDerivedKnowledgeInput(ctx, inherited)
 			require.NoError(t, e)
-			combined := &types.Knowledge{ID: "combined-tag-input", TenantID: 7, KnowledgeBaseID: "kb", Type: types.KnowledgeTypeManual, Channel: "web", CustomMetadata: types.JSON(`{}`)}
-			original, e := store.CreateKnowledgeWithInput(derivedCtx, combined, "actual consumed original A and B fields")
+			combined := &types.Knowledge{
+				ID:              "combined-tag-input",
+				TenantID:        7,
+				KnowledgeBaseID: "kb",
+				Type:            types.KnowledgeTypeManual,
+				Channel:         "web",
+				CustomMetadata:  types.JSON(`{}`),
+			}
+			original, e := store.CreateKnowledgeWithInput(
+				derivedCtx,
+				combined,
+				"actual consumed original A and B fields",
+			)
 			require.NoError(t, e)
 			producer, e := repository.WithDerivedKnowledgeDisplayInput(ctx, original)
 			require.NoError(t, e)
-			tag := &types.KnowledgeTag{ID: "both-source-tag", TenantID: 7, KnowledgeBaseID: "kb", Name: "private name from both original A and B", Color: "blue", SortOrder: 2}
+			tag := &types.KnowledgeTag{
+				ID:              "both-source-tag",
+				TenantID:        7,
+				KnowledgeBaseID: "kb",
+				Name:            "private name from both original A and B",
+				Color:           "blue",
+				SortOrder:       2,
+			}
 			require.NoError(t, tags.Create(producer, tag))
-			captured, e := store.CaptureTagOutputInputs(ctx, types.TagOutputReadRequest{TenantID: 7, KnowledgeBaseID: "kb", TagID: tag.ID})
+			captured, e := store.CaptureTagOutputInputs(
+				ctx,
+				types.TagOutputReadRequest{TenantID: 7, KnowledgeBaseID: "kb", TagID: tag.ID},
+			)
 			require.NoError(t, e)
 			require.Equal(t, inherited, captured.TagProofs[0].SourceLineage)
 			var ds types.DataSource
 			require.NoError(t, db.Where("id='ds'").Take(&ds).Error)
 			user := "user"
 			now := time.Now().UTC()
-			dir := collectionDirectory{identity: &types.DirectoryIdentity{ID: "identity", DirectoryID: "ad-1", ObjectGUID: "00112233-4455-6677-8899-aabbccddeeff", UserID: &user, Status: types.DirectoryObjectActive, SnapshotVersion: 1}, directory: &types.Directory{ID: "ad-1", Protocol: types.DirectoryProtocolAD, Enabled: true, SnapshotVersion: 1, LastSuccessfulSyncAt: &now, StaleAfterSeconds: 900}}
-			guard := access.NewNextcloudSourceLineageGuard(resolver, collectionHTTPKB{db: db}, kh.kbShareService, kh.agentShareService, actualGroups, access.NewNextcloudPublicationGuard(dir, publicationHandlerSources{source: &ds}), store)
-			svc, e := service.NewKnowledgeTagService(collectionHTTPKB{db: db}, tags, knowledge, repository.NewChunkRepository(db), nil, nil, nil, nil, kh.kbShareService, nil, nil)
+			dir := collectionDirectory{
+				identity: &types.DirectoryIdentity{
+					ID:              "identity",
+					DirectoryID:     "ad-1",
+					ObjectGUID:      "00112233-4455-6677-8899-aabbccddeeff",
+					UserID:          &user,
+					Status:          types.DirectoryObjectActive,
+					SnapshotVersion: 1,
+				},
+				directory: &types.Directory{
+					ID:                   "ad-1",
+					Protocol:             types.DirectoryProtocolAD,
+					Enabled:              true,
+					SnapshotVersion:      1,
+					LastSuccessfulSyncAt: &now,
+					StaleAfterSeconds:    900,
+				},
+			}
+			guard := access.NewNextcloudSourceLineageGuard(
+				resolver,
+				collectionHTTPKB{db: db},
+				kh.kbShareService,
+				kh.agentShareService,
+				actualGroups,
+				access.NewNextcloudPublicationGuard(dir, publicationHandlerSources{source: &ds}),
+				store,
+			)
+			svc, e := service.NewKnowledgeTagService(
+				collectionHTTPKB{db: db},
+				tags,
+				knowledge,
+				repository.NewChunkRepository(db),
+				nil,
+				nil,
+				nil,
+				nil,
+				kh.kbShareService,
+				nil,
+				nil,
+			)
 			require.NoError(t, e)
 			h := NewTagHandler(svc, tags, repository.NewChunkRepository(db))
 			ConfigureTagHandlerOutputLineage(h, service.NewTagOutputAuthorizer(store, guard))
@@ -332,6 +595,7 @@ func TestTagOutputActualHTTPAllOriginalNameSources(t *testing.T) {
 		})
 	}
 }
+
 func TestTagOutputActualHTTPCreatedCommittedThenUserRevoked(t *testing.T) {
 	h, db, _, groups := tagHTTPFixture(t)
 	ctx := collectionHumanInputContext(7)
@@ -342,7 +606,13 @@ func TestTagOutputActualHTTPCreatedCommittedThenUserRevoked(t *testing.T) {
 			require.NoError(t, db.Model(&types.User{}).Where("id='user'").Update("is_active", false).Error)
 		}
 	}
-	w := serveTagHTTP(h, ctx, http.MethodPost, "/knowledge-bases/kb/tags", `{"name":"new committed private tag","color":"blue","sort_order":2}`)
+	w := serveTagHTTP(
+		h,
+		ctx,
+		http.MethodPost,
+		"/knowledge-bases/kb/tags",
+		`{"name":"new committed private tag","color":"blue","sort_order":2}`,
+	)
 	require.True(t, fired)
 	require.Equal(t, http.StatusForbidden, w.Code, w.Body.String())
 	require.NotContains(t, w.Body.String(), "new committed private tag")

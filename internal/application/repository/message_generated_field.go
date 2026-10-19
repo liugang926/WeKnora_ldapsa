@@ -26,18 +26,27 @@ type messageGeneratedFieldReceipt struct {
 
 func (messageGeneratedFieldReceipt) TableName() string { return "message_generated_field_receipts" }
 
-type messageGeneratedFieldKey struct{}
-type messageGeneratedFieldBoundary struct {
-	Store                               *KnowledgeInputProvenanceStore
-	MessageID, SessionID, Field, Digest string
-	Parents                             []*types.MessageMaterialSnapshot
-	Sources                             *types.SourceLineage
-}
+type (
+	messageGeneratedFieldKey      struct{}
+	messageGeneratedFieldBoundary struct {
+		Store                               *KnowledgeInputProvenanceStore
+		MessageID, SessionID, Field, Digest string
+		Parents                             []*types.MessageMaterialSnapshot
+		Sources                             *types.SourceLineage
+	}
+)
 
 // Only the actual model/checkpoint callback binds its exact value and original
 // consumed material. It cannot be decoded from a request or current row.
-func (s *KnowledgeInputProvenanceStore) WithActualMessageGeneratedField(ctx context.Context, session, message, field string, value any, parents []*types.MessageMaterialSnapshot, lineage *types.SourceLineage) (context.Context, error) {
-	if session == "" || message == "" || field != "context_checkpoint" && field != "rendered_content" && field != "images" {
+func (s *KnowledgeInputProvenanceStore) WithActualMessageGeneratedField(
+	ctx context.Context,
+	session, message, field string,
+	value any,
+	parents []*types.MessageMaterialSnapshot,
+	lineage *types.SourceLineage,
+) (context.Context, error) {
+	if session == "" || message == "" ||
+		field != "context_checkpoint" && field != "rendered_content" && field != "images" {
 		return ctx, types.ErrSourceLineageUnknown
 	}
 	if lineage.RequireComplete() != nil {
@@ -74,16 +83,25 @@ func (s *KnowledgeInputProvenanceStore) WithActualMessageGeneratedField(ctx cont
 	if err = json.Unmarshal(encoded, &copy); err != nil {
 		return ctx, err
 	}
-	return context.WithValue(ctx, messageGeneratedFieldKey{}, messageGeneratedFieldBoundary{s, message, session, field, digest, copy, sources}), nil
+	return context.WithValue(
+		ctx,
+		messageGeneratedFieldKey{},
+		messageGeneratedFieldBoundary{s, message, session, field, digest, copy, sources},
+	), nil
 }
 
-func (r *messageRepository) writeGeneratedField(ctx context.Context, sessionID, messageID, field string, value any) error {
+func (r *messageRepository) writeGeneratedField(
+	ctx context.Context,
+	sessionID, messageID, field string,
+	value any,
+) error {
 	if r.materialStore == nil {
 		return types.ErrSourceLineageUnknown
 	}
 	store := r.materialStore
 	boundary, ok := ctx.Value(messageGeneratedFieldKey{}).(messageGeneratedFieldBoundary)
-	if !ok || boundary.Store != store || boundary.SessionID != sessionID || boundary.MessageID != messageID || boundary.Field != field {
+	if !ok || boundary.Store != store || boundary.SessionID != sessionID || boundary.MessageID != messageID ||
+		boundary.Field != field {
 		return types.ErrSourceLineageUnknown
 	}
 	digest, err := KnowledgeInputDigest(value)
@@ -111,7 +129,10 @@ func (r *messageRepository) writeGeneratedField(ctx context.Context, sessionID, 
 			return err
 		}
 		var origin messageGenerationOrigin
-		if err := tx.Select(messageGenerationMetadataFields).Where("message_id=? AND session_id=? AND tenant_id=?", messageID, sessionID, session.TenantID).Take(&origin).Error; err != nil {
+		if err := tx.Select(messageGenerationMetadataFields).
+			Where("message_id=? AND session_id=? AND tenant_id=?", messageID, sessionID, session.TenantID).
+			Take(&origin).
+			Error; err != nil {
 			return err
 		}
 		if origin.OwnerID != session.UserID || origin.OwnerRevision != ownerRev {
@@ -121,7 +142,12 @@ func (r *messageRepository) writeGeneratedField(ctx context.Context, sessionID, 
 			return err
 		}
 		var previous messageMaterialAdmission
-		if err := tx.Table("message_material_admissions a").Select("a.*").Joins("JOIN message_material_receipts r ON r.admission_id=a.id AND r.message_id=a.message_id").Where("a.message_id=?", messageID).Take(&previous).Error; err != nil {
+		if err := tx.Table("message_material_admissions a").
+			Select("a.*").
+			Joins("JOIN message_material_receipts r ON r.admission_id=a.id AND r.message_id=a.message_id").
+			Where("a.message_id=?", messageID).
+			Take(&previous).
+			Error; err != nil {
 			return err
 		}
 		previousMembership, err := messageVersion(tx, "message_session_membership_versions", "session_id", sessionID)
@@ -158,7 +184,10 @@ func (r *messageRepository) writeGeneratedField(ctx context.Context, sessionID, 
 			return err
 		}
 		if original.Role == "assistant" {
-			if err := tx.Model(&types.Message{}).Where("id=?", messageID).Update("source_lineage", types.JSON(sourceJSON)).Error; err != nil {
+			if err := tx.Model(&types.Message{}).
+				Where("id=?", messageID).
+				Update("source_lineage", types.JSON(sourceJSON)).
+				Error; err != nil {
 				return err
 			}
 		}
@@ -188,11 +217,29 @@ func (r *messageRepository) writeGeneratedField(ctx context.Context, sessionID, 
 		if err != nil {
 			return err
 		}
-		admission := messageGeneratedFieldAdmission{FieldRevision: fieldRevision, PreviousAdmissionID: previous.ID, PreviousRevision: previous.Revision, PreviousMembership: previousMembership, ResultRevision: resultRevision, ID: uuid.NewString(), MessageID: messageID, GenerationID: origin.ID, SessionID: sessionID, TenantID: session.TenantID, Field: field, BodyDigest: digest, SourceLineage: string(sourceJSON), ParentMaterials: string(parentJSON), Actor: string(actorJSON)}
+		admission := messageGeneratedFieldAdmission{
+			FieldRevision:       fieldRevision,
+			PreviousAdmissionID: previous.ID,
+			PreviousRevision:    previous.Revision,
+			PreviousMembership:  previousMembership,
+			ResultRevision:      resultRevision,
+			ID:                  uuid.NewString(),
+			MessageID:           messageID,
+			GenerationID:        origin.ID,
+			SessionID:           sessionID,
+			TenantID:            session.TenantID,
+			Field:               field,
+			BodyDigest:          digest,
+			SourceLineage:       string(sourceJSON),
+			ParentMaterials:     string(parentJSON),
+			Actor:               string(actorJSON),
+		}
 		if err := tx.Create(&admission).Error; err != nil {
 			return err
 		}
-		if err := tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "message_id"}, {Name: "field"}}, DoUpdates: clause.AssignmentColumns([]string{"admission_id"})}).Create(&messageGeneratedFieldReceipt{messageID, field, admission.ID}).Error; err != nil {
+		if err := tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "message_id"}, {Name: "field"}}, DoUpdates: clause.AssignmentColumns([]string{"admission_id"})}).
+			Create(&messageGeneratedFieldReceipt{messageID, field, admission.ID}).
+			Error; err != nil {
 			return err
 		}
 		var actual types.Message
@@ -211,7 +258,11 @@ func (r *messageRepository) writeGeneratedField(ctx context.Context, sessionID, 
 // A real forward upgrade for installations that already completed old 151/70.
 // The bundled fresh migration remains authoritative for clean installations.
 func UpgradeMessageGeneratedFieldSchema(db *gorm.DB) error {
-	if db.Migrator().HasTable("message_generated_field_admissions") && db.Migrator().HasTable("message_generated_field_versions") && db.Migrator().HasTable("message_generated_field_receipts") && db.Migrator().HasTable("message_fork_parent_origins") && db.Migrator().HasColumn(&messageGeneratedFieldAdmission{}, "field_revision") {
+	if db.Migrator().HasTable("message_generated_field_admissions") &&
+		db.Migrator().HasTable("message_generated_field_versions") &&
+		db.Migrator().HasTable("message_generated_field_receipts") &&
+		db.Migrator().HasTable("message_fork_parent_origins") &&
+		db.Migrator().HasColumn(&messageGeneratedFieldAdmission{}, "field_revision") {
 		return nil
 	}
 	if db.Migrator().HasTable("message_generated_field_admissions") {
@@ -227,7 +278,9 @@ func UpgradeMessageGeneratedFieldSchema(db *gorm.DB) error {
 		if err := tx.Exec(ddl).Error; err != nil {
 			return err
 		}
-		return tx.Exec("INSERT INTO message_generated_field_versions(message_id,field,revision) SELECT id,'images',1 FROM messages UNION ALL SELECT id,'attachments',1 FROM messages UNION ALL SELECT id,'rendered_content',1 FROM messages UNION ALL SELECT id,'context_checkpoint',1 FROM messages").Error
+		return tx.Exec(
+			"INSERT INTO message_generated_field_versions(message_id,field,revision) SELECT id,'images',1 FROM messages UNION ALL SELECT id,'attachments',1 FROM messages UNION ALL SELECT id,'rendered_content',1 FROM messages UNION ALL SELECT id,'context_checkpoint',1 FROM messages",
+		).Error
 	})
 }
 
@@ -248,6 +301,7 @@ CREATE TABLE message_fork_parent_origins(generation_id TEXT PRIMARY KEY REFERENC
 CREATE TRIGGER message_fork_parent_origins_immutable_update BEFORE UPDATE ON message_fork_parent_origins BEGIN SELECT RAISE(ABORT,'immutable original fork parents'); END;
 CREATE TRIGGER message_fork_parent_origins_immutable_delete BEFORE DELETE ON message_fork_parent_origins BEGIN SELECT RAISE(ABORT,'immutable original fork parents'); END;
 `
+
 const messageGeneratedFieldsPostgresUpgrade = `-- Actual generated fields have independent immutable parents and material.
 CREATE TABLE message_generated_field_admissions(id TEXT PRIMARY KEY,message_id TEXT NOT NULL,generation_id TEXT NOT NULL,session_id TEXT NOT NULL,tenant_id BIGINT NOT NULL,field TEXT NOT NULL,body_digest TEXT NOT NULL,source_lineage TEXT NOT NULL,parent_materials TEXT NOT NULL,actor TEXT NOT NULL,previous_admission_id TEXT NOT NULL,previous_revision BIGINT NOT NULL,previous_membership BIGINT NOT NULL,result_revision BIGINT NOT NULL,field_revision BIGINT NOT NULL);
 CREATE TABLE message_generated_field_receipts(message_id TEXT NOT NULL,field TEXT NOT NULL,admission_id TEXT NOT NULL REFERENCES message_generated_field_admissions(id),PRIMARY KEY(message_id,field));
@@ -268,7 +322,12 @@ func (s *KnowledgeInputProvenanceStore) verifyGeneratedMessageFieldsInTx(tx *gor
 		return e
 	}
 	var fields []messageGeneratedFieldAdmission
-	if err := tx.Table("message_generated_field_admissions a").Select("a.*").Joins("JOIN message_generated_field_receipts r ON r.admission_id=a.id AND r.message_id=a.message_id AND r.field=a.field").Where("a.message_id=? AND a.session_id=?", message.ID, message.SessionID).Find(&fields).Error; err != nil {
+	if err := tx.Table("message_generated_field_admissions a").
+		Select("a.*").
+		Joins("JOIN message_generated_field_receipts r ON r.admission_id=a.id AND r.message_id=a.message_id AND r.field=a.field").
+		Where("a.message_id=? AND a.session_id=?", message.ID, message.SessionID).
+		Find(&fields).
+		Error; err != nil {
 		return err
 	}
 	for _, field := range fields {
@@ -321,7 +380,12 @@ func (s *KnowledgeInputProvenanceStore) verifyGeneratedMessageFieldsInTx(tx *gor
 			if session.UserID != parent.SessionOwnerID || ownerRevision != parent.SessionOwnerRevision {
 				return ErrKnowledgeInputChanged
 			}
-			membership, err := messageVersion(tx, "message_session_membership_versions", "session_id", parent.Request.SessionID)
+			membership, err := messageVersion(
+				tx,
+				"message_session_membership_versions",
+				"session_id",
+				parent.Request.SessionID,
+			)
 			if err != nil {
 				return err
 			}
@@ -339,14 +403,21 @@ func (s *KnowledgeInputProvenanceStore) verifyGeneratedMessageFieldsInTx(tx *gor
 					continue
 				}
 				var current messageMaterialAdmission
-				if err := tx.Table("message_material_admissions a").Select("a.*").Joins("JOIN message_material_receipts r ON r.admission_id=a.id AND r.message_id=a.message_id").Where("a.message_id=? AND a.tenant_id=? AND a.session_id=?", proof.MessageID, proof.TenantID, proof.SessionID).Take(&current).Error; err != nil {
+				if err := tx.Table("message_material_admissions a").
+					Select("a.*").
+					Joins("JOIN message_material_receipts r ON r.admission_id=a.id AND r.message_id=a.message_id").
+					Where("a.message_id=? AND a.tenant_id=? AND a.session_id=?", proof.MessageID, proof.TenantID, proof.SessionID).
+					Take(&current).
+					Error; err != nil {
 					return err
 				}
 				revision, err := messageVersion(tx, "message_material_versions", "message_id", proof.MessageID)
 				if err != nil {
 					return err
 				}
-				if current.ID != proof.AdmissionID || current.BodyDigest != proof.BodyDigest || current.Revision != proof.Revision || revision != proof.Revision {
+				if current.ID != proof.AdmissionID || current.BodyDigest != proof.BodyDigest ||
+					current.Revision != proof.Revision ||
+					revision != proof.Revision {
 					return ErrKnowledgeInputChanged
 				}
 			}
@@ -384,12 +455,21 @@ func (s *KnowledgeInputProvenanceStore) verifyGeneratedMessageFieldsInTx(tx *gor
 
 // New actual human creation certifies only the exact submitted raw fields.
 // A later generated caption/render/checkpoint requires its own model callback.
-func (s *KnowledgeInputProvenanceStore) sealInitialUserFieldsInTx(tx *gorm.DB, origin *messageGenerationOrigin, message *types.Message) error {
+func (s *KnowledgeInputProvenanceStore) sealInitialUserFieldsInTx(
+	tx *gorm.DB,
+	origin *messageGenerationOrigin,
+	message *types.Message,
+) error {
 	if message.Role != "user" {
 		return nil
 	}
 	var previous messageMaterialAdmission
-	if err := tx.Table("message_material_admissions a").Select("a.*").Joins("JOIN message_material_receipts r ON r.admission_id=a.id AND r.message_id=a.message_id").Where("a.message_id=?", message.ID).Take(&previous).Error; err != nil {
+	if err := tx.Table("message_material_admissions a").
+		Select("a.*").
+		Joins("JOIN message_material_receipts r ON r.admission_id=a.id AND r.message_id=a.message_id").
+		Where("a.message_id=?", message.ID).
+		Take(&previous).
+		Error; err != nil {
 		return err
 	}
 	membership, err := messageVersion(tx, "message_session_membership_versions", "session_id", message.SessionID)
@@ -413,7 +493,23 @@ func (s *KnowledgeInputProvenanceStore) sealInitialUserFieldsInTx(tx *gorm.DB, o
 		if err != nil {
 			return err
 		}
-		admission := messageGeneratedFieldAdmission{FieldRevision: fieldRevision, ID: uuid.NewString(), MessageID: message.ID, GenerationID: origin.ID, SessionID: message.SessionID, TenantID: origin.TenantID, Field: entry.Name, BodyDigest: digest, SourceLineage: string(source), ParentMaterials: "[]", Actor: origin.Actor, PreviousAdmissionID: previous.ID, PreviousRevision: previous.Revision, PreviousMembership: membership, ResultRevision: previous.Revision}
+		admission := messageGeneratedFieldAdmission{
+			FieldRevision:       fieldRevision,
+			ID:                  uuid.NewString(),
+			MessageID:           message.ID,
+			GenerationID:        origin.ID,
+			SessionID:           message.SessionID,
+			TenantID:            origin.TenantID,
+			Field:               entry.Name,
+			BodyDigest:          digest,
+			SourceLineage:       string(source),
+			ParentMaterials:     "[]",
+			Actor:               origin.Actor,
+			PreviousAdmissionID: previous.ID,
+			PreviousRevision:    previous.Revision,
+			PreviousMembership:  membership,
+			ResultRevision:      previous.Revision,
+		}
 		if err := tx.Create(&admission).Error; err != nil {
 			return err
 		}
@@ -426,7 +522,10 @@ func (s *KnowledgeInputProvenanceStore) sealInitialUserFieldsInTx(tx *gorm.DB, o
 
 func messageGeneratedFieldVersion(tx *gorm.DB, message, field string) (uint64, error) {
 	var row struct{ Revision uint64 }
-	if err := tx.Table("message_generated_field_versions").Where("message_id=? AND field=?", message, field).Take(&row).Error; err != nil {
+	if err := tx.Table("message_generated_field_versions").
+		Where("message_id=? AND field=?", message, field).
+		Take(&row).
+		Error; err != nil {
 		return 0, err
 	}
 	if row.Revision == 0 {
@@ -434,9 +533,16 @@ func messageGeneratedFieldVersion(tx *gorm.DB, message, field string) (uint64, e
 	}
 	return row.Revision, nil
 }
+
 func messageGeneratedFieldProofs(tx *gorm.DB, message string) ([]*types.MessageGeneratedFieldProof, error) {
 	var rows []messageGeneratedFieldAdmission
-	if err := tx.Table("message_generated_field_admissions a").Select("a.*").Joins("JOIN message_generated_field_receipts r ON r.admission_id=a.id AND r.message_id=a.message_id AND r.field=a.field").Where("a.message_id=?", message).Order("a.field").Find(&rows).Error; err != nil {
+	if err := tx.Table("message_generated_field_admissions a").
+		Select("a.*").
+		Joins("JOIN message_generated_field_receipts r ON r.admission_id=a.id AND r.message_id=a.message_id AND r.field=a.field").
+		Where("a.message_id=?", message).
+		Order("a.field").
+		Find(&rows).
+		Error; err != nil {
 		return nil, err
 	}
 	proofs := []*types.MessageGeneratedFieldProof{}
@@ -445,7 +551,16 @@ func messageGeneratedFieldProofs(tx *gorm.DB, message string) ([]*types.MessageG
 		if err := json.Unmarshal([]byte(row.SourceLineage), &source); err != nil {
 			return nil, err
 		}
-		proofs = append(proofs, &types.MessageGeneratedFieldProof{AdmissionID: row.ID, Field: row.Field, BodyDigest: row.BodyDigest, Revision: row.FieldRevision, SourceLineage: &source})
+		proofs = append(
+			proofs,
+			&types.MessageGeneratedFieldProof{
+				AdmissionID:   row.ID,
+				Field:         row.Field,
+				BodyDigest:    row.BodyDigest,
+				Revision:      row.FieldRevision,
+				SourceLineage: &source,
+			},
+		)
 	}
 	return proofs, nil
 }
@@ -459,7 +574,12 @@ func checkUnreceiptedMessageFieldsInTx(tx *gorm.DB, messageID string) error {
 		Revision    uint64
 		AdmissionID *string
 	}
-	if e := tx.Table("message_generated_field_versions v").Select("v.field,v.revision,r.admission_id").Joins("LEFT JOIN message_generated_field_receipts r ON r.message_id=v.message_id AND r.field=v.field").Where("v.message_id=?", messageID).Find(&rows).Error; e != nil {
+	if e := tx.Table("message_generated_field_versions v").
+		Select("v.field,v.revision,r.admission_id").
+		Joins("LEFT JOIN message_generated_field_receipts r ON r.message_id=v.message_id AND r.field=v.field").
+		Where("v.message_id=?", messageID).
+		Find(&rows).
+		Error; e != nil {
 		return e
 	}
 	if len(rows) != 4 {

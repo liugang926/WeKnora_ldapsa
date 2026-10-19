@@ -141,8 +141,15 @@ func (e *AgentEngine) drainSteerMessages(
 		if actual {
 			var check func() error
 			var close func()
-			userMessageID, lineage, check, close, err = actualSink.PersistSteerMaterial(ctx, sessionID, messageID, steerID, content,
-				types.MentionedItemsFromRaw(evt["mentioned_items"]), getString(evt, "channel"))
+			userMessageID, lineage, check, close, err = actualSink.PersistSteerMaterial(
+				ctx,
+				sessionID,
+				messageID,
+				steerID,
+				content,
+				types.MentionedItemsFromRaw(evt["mentioned_items"]),
+				getString(evt, "channel"),
+			)
 			if err != nil {
 				e.rememberLineageFailure(err)
 				return injected
@@ -181,7 +188,9 @@ func (e *AgentEngine) drainSteerMessages(
 			e.rememberLineageFailure(types.ErrSourceLineageUnknown)
 			return injected
 		}
-		*messagesPtr = append(*messagesPtr, chat.Message{Role: "user", Content: types.SteerMessageContent(content), SourceLineage: lineage})
+		*messagesPtr = append(*messagesPtr, chat.Message{
+			Role: "user", Content: types.SteerMessageContent(content), SourceLineage: lineage,
+		})
 		state.PendingSteerMessages = append(state.PendingSteerMessages, userMessageID)
 		err = e.emitEvent(ctx, event.Event{
 			ID:        generateEventID("injected"),

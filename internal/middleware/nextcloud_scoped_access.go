@@ -24,7 +24,10 @@ type NextcloudScopedDocumentReader interface {
 // Source-only entrants can create a private QA session and query explicit
 // authorized KBs. Agent tools, arbitrary model inputs, attachments and general
 // tenant history remain closed until their own scoped contracts are validated.
-func RequireNextcloudScopedRoutes(groups interfaces.GroupAccessService, sessions ...NextcloudScopedSessionReader) gin.HandlerFunc {
+func RequireNextcloudScopedRoutes(
+	groups interfaces.GroupAccessService,
+	sessions ...NextcloudScopedSessionReader,
+) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if groups == nil {
 			c.Next()
@@ -60,7 +63,8 @@ func RequireNextcloudScopedRoutes(groups interfaces.GroupAccessService, sessions
 		personalAuth := path == "/api/v1/auth/me" && c.Request.Method == http.MethodGet ||
 			path == "/api/v1/auth/validate" && c.Request.Method == http.MethodGet ||
 			path == "/api/v1/auth/me/preferences" && c.Request.Method == http.MethodPut ||
-			(path == "/api/v1/auth/switch-tenant" || path == "/api/v1/auth/logout" || path == "/api/v1/auth/refresh") && c.Request.Method == http.MethodPost
+			(path == "/api/v1/auth/switch-tenant" || path == "/api/v1/auth/logout" || path == "/api/v1/auth/refresh") &&
+				c.Request.Method == http.MethodPost
 		if personalAuth {
 			c.Next()
 			return
@@ -94,7 +98,16 @@ func RequireNextcloudScopedRoutes(groups interfaces.GroupAccessService, sessions
 				WebSearch         bool              `json:"web_search_enabled"`
 				Browser           bool              `json:"local_browser_enabled"`
 			}
-			if json.Unmarshal(body, &request) != nil || request.AgentID != "" || request.AgentEnabled || request.ModelID != "" || len(request.Mentions) > 0 || len(request.MCP) > 0 || len(request.Skills) > 0 || len(request.Images) > 0 || len(request.AttachmentUploads) > 0 || len(request.AttachmentIDs) > 0 || request.WebSearch || request.Browser {
+			if json.Unmarshal(body, &request) != nil || request.AgentID != "" || request.AgentEnabled ||
+				request.ModelID != "" ||
+				len(request.Mentions) > 0 ||
+				len(request.MCP) > 0 ||
+				len(request.Skills) > 0 ||
+				len(request.Images) > 0 ||
+				len(request.AttachmentUploads) > 0 ||
+				len(request.AttachmentIDs) > 0 ||
+				request.WebSearch ||
+				request.Browser {
 				deny()
 				return
 			}
@@ -106,7 +119,13 @@ func RequireNextcloudScopedRoutes(groups interfaces.GroupAccessService, sessions
 				return
 			}
 			for _, kb := range request.KBIDs {
-				if groups.Authorize(ctx, tenant, types.GroupResourceTypeKnowledgeBase, kb, types.ResourceActionRead) != nil {
+				if groups.Authorize(
+					ctx,
+					tenant,
+					types.GroupResourceTypeKnowledgeBase,
+					kb,
+					types.ResourceActionRead,
+				) != nil {
 					deny()
 					return
 				}
@@ -134,9 +153,13 @@ func RequireNextcloudScopedRoutes(groups interfaces.GroupAccessService, sessions
 				}
 			}
 		}
-		sessionRoute := strings.HasPrefix(path, "/api/v1/sessions/") || strings.HasPrefix(path, "/api/v1/messages/") || qa
+		sessionRoute := strings.HasPrefix(path, "/api/v1/sessions/") || strings.HasPrefix(path, "/api/v1/messages/") ||
+			qa
 		if sessionRoute {
-			allowed := qa || path == "/api/v1/sessions/:id" && c.Request.Method == http.MethodGet || path == "/api/v1/sessions/:session_id/stop" || path == "/api/v1/sessions/continue-stream/:session_id" || path == "/api/v1/messages/:session_id/load"
+			allowed := qa || path == "/api/v1/sessions/:id" && c.Request.Method == http.MethodGet ||
+				path == "/api/v1/sessions/:session_id/stop" ||
+				path == "/api/v1/sessions/continue-stream/:session_id" ||
+				path == "/api/v1/messages/:session_id/load"
 			if !allowed || len(sessions) == 0 || sessions[0] == nil {
 				deny()
 				return
@@ -166,7 +189,8 @@ func RequireNextcloudScopedRoutes(groups interfaces.GroupAccessService, sessions
 			allowed = true
 		}
 
-		if !allowed || (c.Request.Method != http.MethodGet && !strings.Contains(path, "hybrid-search") && !strings.Contains(path, "/ask")) {
+		if !allowed ||
+			(c.Request.Method != http.MethodGet && !strings.Contains(path, "hybrid-search") && !strings.Contains(path, "/ask")) {
 			deny()
 			return
 		}

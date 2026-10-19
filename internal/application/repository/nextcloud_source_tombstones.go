@@ -7,6 +7,8 @@ import (
 	"math"
 	"strconv"
 	"strings"
+
+	apperrors "github.com/Tencent/WeKnora/internal/errors"
 )
 
 // NextcloudSourcePresence deliberately has no "never" state. Absence of
@@ -31,7 +33,12 @@ func (r *DataSourceRepository) LookupNextcloudSourcePresence(
 	switch scopeType {
 	case "tenant":
 		if scopeID != strconv.FormatUint(tenantID, 10) {
-			return NextcloudSourcePresenceUnknown, errors.New("Nextcloud tenant tombstone identity mismatch")
+			return NextcloudSourcePresenceUnknown, apperrors.NewProtocolError(
+				errors.New(
+					"nextcloud tenant tombstone identity mismatch",
+				),
+				"Nextcloud tenant tombstone identity mismatch",
+			)
 		}
 	case "knowledge_base", "datasource", "pair":
 	default:

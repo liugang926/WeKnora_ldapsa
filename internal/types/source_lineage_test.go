@@ -13,11 +13,13 @@ import (
 )
 
 func lineageTestIdentity(fileID, etag string) SourceIdentity {
-	return SourceIdentity{Provider: ConnectorTypeNextcloud, TenantID: 7,
+	return SourceIdentity{
+		Provider: ConnectorTypeNextcloud, TenantID: 7,
 		KnowledgeBaseID: "kb", DataSourceID: "ds", PairOperationID: "pair",
 		InstanceID: "instance", BindingID: "binding", FileID: fileID,
 		ExternalID: "nextcloud:instance:" + fileID, KnowledgeID: "knowledge-" + fileID,
-		Revision: 1, ETag: etag}
+		Revision: 1, ETag: etag,
+	}
 }
 
 func TestSourceLineageUnionKeepsOriginalRevisionsAndUnknown(t *testing.T) {
@@ -108,8 +110,10 @@ func TestSourceLineageCodecLegacyAndErrorsResetToUnknown(t *testing.T) {
 	if err := loaded.Scan(nil); err != nil || !errors.Is(loaded.RequireComplete(), ErrSourceLineageUnknown) {
 		t.Fatal("NULL must be unknown")
 	}
-	for _, raw := range []string{`null`, `{`, `{}`, `{"version":1,"state":"complete"}`, `{"version":1,"state":"complete","sources":null}`,
-		`{"version":1,"state":"complete","sources":[],"unexpected":"field"}`, `{"version":1,"state":"complete","sources":[]} {}`} {
+	for _, raw := range []string{
+		`null`, `{`, `{}`, `{"version":1,"state":"complete"}`, `{"version":1,"state":"complete","sources":null}`,
+		`{"version":1,"state":"complete","sources":[],"unexpected":"field"}`, `{"version":1,"state":"complete","sources":[]} {}`,
+	} {
 		loaded = *good
 		if err := loaded.Scan(raw); err == nil || !errors.Is(loaded.RequireComplete(), ErrSourceLineageUnknown) {
 			t.Fatalf("malformed data retained complete lineage: %q", raw)
@@ -121,7 +125,10 @@ func TestSourceLineageCodecLegacyAndErrorsResetToUnknown(t *testing.T) {
 	}
 	for _, fieldValue := range []string{"etag-original", "knowledge-1"} {
 		invalidUTF8 := strings.Replace(string(encoded.([]byte)), fieldValue, string([]byte{0xff}), 1)
-		if err := loaded.Scan(invalidUTF8); !errors.Is(err, ErrSourceLineageInvalid) || loaded.State != SourceLineageUnknown {
+		if err := loaded.Scan(
+			invalidUTF8,
+		); !errors.Is(err, ErrSourceLineageInvalid) ||
+			loaded.State != SourceLineageUnknown {
 			t.Fatal("database codec changed source identity/ETag by replacing invalid UTF-8")
 		}
 	}
@@ -163,7 +170,10 @@ func TestSourceLineageDuplicateJSONKeysRemainUnknown(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			loaded := *good
-			if err := loaded.Scan(raw); !errors.Is(err, ErrSourceLineageInvalid) || loaded.State != SourceLineageUnknown {
+			if err := loaded.Scan(
+				raw,
+			); !errors.Is(err, ErrSourceLineageInvalid) ||
+				loaded.State != SourceLineageUnknown {
 				t.Fatalf("ambiguous envelope became complete: %v / %#v", err, loaded)
 			}
 		})
@@ -193,7 +203,11 @@ func TestSourceLineageBoundsNeverTruncateACompleteSet(t *testing.T) {
 	if !errors.Is(err, ErrSourceLineageLimit) || out.State != SourceLineageUnknown {
 		t.Fatal("oversized set was certified", err)
 	}
-	oversize := &SourceLineage{Version: 1, State: SourceLineageComplete, Sources: make([]SourceIdentity, SourceLineageMaxSources+1)}
+	oversize := &SourceLineage{
+		Version: 1,
+		State:   SourceLineageComplete,
+		Sources: make([]SourceIdentity, SourceLineageMaxSources+1),
+	}
 	if !errors.Is(oversize.Validate(), ErrSourceLineageLimit) {
 		t.Fatal("source count bound missing")
 	}
@@ -207,7 +221,10 @@ func TestSourceLineageBoundsNeverTruncateACompleteSet(t *testing.T) {
 	}
 	// Direct UnmarshalJSON is used by Scan; encoding/json rejects invalid JSON
 	// before invoking it, so test the database boundary separately.
-	if err := loaded.Scan(strings.Repeat(" ", SourceLineageMaxBytes+1)); !errors.Is(err, ErrSourceLineageLimit) || loaded.State != SourceLineageUnknown {
+	if err := loaded.Scan(
+		strings.Repeat(" ", SourceLineageMaxBytes+1),
+	); !errors.Is(err, ErrSourceLineageLimit) ||
+		loaded.State != SourceLineageUnknown {
 		t.Fatal("oversized database envelope retained readable state")
 	}
 }
@@ -217,8 +234,13 @@ func TestSourceLineageRemainsInternalInPublicMessageJSON(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	message := Message{ID: "answer", Role: "assistant", Content: "safe answer",
-		SourceLineage: lineage, ContextCheckpoint: &ContextCheckpoint{Summary: "private summary", SourceLineage: lineage}}
+	message := Message{
+		ID:                "answer",
+		Role:              "assistant",
+		Content:           "safe answer",
+		SourceLineage:     lineage,
+		ContextCheckpoint: &ContextCheckpoint{Summary: "private summary", SourceLineage: lineage},
+	}
 	encoded, err := json.Marshal(message)
 	if err != nil {
 		t.Fatal(err)

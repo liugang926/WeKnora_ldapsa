@@ -18,6 +18,7 @@ type FAQEntryInputProof struct {
 	OriginalKnowledgeInputs []*KnowledgeBuildInputProof
 }
 
+// FAQInputReadRequest selects original FAQ entries under trusted server scope.
 type FAQInputReadRequest struct {
 	TenantID        uint64
 	KnowledgeBaseID string
@@ -25,6 +26,7 @@ type FAQInputReadRequest struct {
 	AllEntries      bool
 }
 
+// FAQInputSnapshot holds authenticated FAQ entries, configuration and tag inputs.
 type FAQInputSnapshot struct {
 	KnowledgeBase     *KnowledgeBase
 	Request           FAQInputReadRequest

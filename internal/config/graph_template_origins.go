@@ -2,6 +2,7 @@ package config
 
 import (
 	_ "embed"
+
 	"github.com/Tencent/WeKnora/internal/types"
 	"gopkg.in/yaml.v3"
 )
@@ -12,7 +13,10 @@ var builtInGraphTemplates []byte
 // BuiltInGraphTemplateOrigin only replaces an exact built-in projection with
 // its independent code literal. Arbitrary operator YAML cannot certify itself
 // as source-free, and its examples are never authenticated by chunk receipts.
-func BuiltInGraphTemplateOrigin(actual *types.PromptTemplateStructured, kind string) (*types.PromptTemplateStructured, error) {
+func BuiltInGraphTemplateOrigin(
+	actual *types.PromptTemplateStructured,
+	kind string,
+) (*types.PromptTemplateStructured, error) {
 	var defaults struct {
 		Extract *ExtractManagerConfig `yaml:"extract"`
 	}

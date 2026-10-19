@@ -23,20 +23,27 @@ type datasourceNameInput struct {
 
 func (datasourceNameInput) TableName() string { return "datasource_name_inputs" }
 
-type datasourceNameEditKey struct{}
-type datasourceNameEdit struct {
-	Name                     string
-	Kind                     string
-	PairOperation, BindingID string
-	Producer                 *nextcloudOnboardingProducerReceipt `json:"onboarding_producer,omitempty"`
-}
+type (
+	datasourceNameEditKey struct{}
+	datasourceNameEdit    struct {
+		Name                     string
+		Kind                     string
+		PairOperation, BindingID string
+		Producer                 *nextcloudOnboardingProducerReceipt `json:"onboarding_producer,omitempty"`
+	}
+)
 
 // WithIndependentDataSourceNameInput belongs only at an actual edit boundary.
 // Updating credentials/sync state without this marker cannot certify old text.
 func WithIndependentDataSourceNameInput(ctx context.Context, name string) context.Context {
 	return context.WithValue(ctx, datasourceNameEditKey{}, datasourceNameEdit{Name: name, Kind: "human"})
 }
-func ConfigureDataSourceNameInputWriters(ds interfaces.DataSourceRepository, pairs *NextcloudSourcePairingRepository, factory KnowledgeDisplayAuthorityFactory) {
+
+func ConfigureDataSourceNameInputWriters(
+	ds interfaces.DataSourceRepository,
+	pairs *NextcloudSourcePairingRepository,
+	factory KnowledgeDisplayAuthorityFactory,
+) {
 	if r, ok := ds.(*DataSourceRepository); ok {
 		r.nameAuthorityFactory = factory
 	}
@@ -44,12 +51,14 @@ func ConfigureDataSourceNameInputWriters(ds interfaces.DataSourceRepository, pai
 		pairs.nameAuthorityFactory = factory
 	}
 }
+
 func datasourceNameBody(ds *types.DataSource) any {
 	return struct {
 		ID, KB, Type, Name string
 		Tenant             uint64
 	}{ds.ID, ds.KnowledgeBaseID, ds.Type, ds.Name, ds.TenantID}
 }
+
 func datasourceNameRevision(tx *gorm.DB, id string) (uint64, error) {
 	var row struct{ Revision uint64 }
 	err := tx.Table("datasource_name_versions").Where("datasource_id = ?", id).Take(&row).Error
@@ -58,7 +67,13 @@ func datasourceNameRevision(tx *gorm.DB, id string) (uint64, error) {
 	}
 	return row.Revision, err
 }
-func admitDataSourceNameInput(tx *gorm.DB, ctx context.Context, ds *types.DataSource, factory KnowledgeDisplayAuthorityFactory) error {
+
+func admitDataSourceNameInput(
+	tx *gorm.DB,
+	ctx context.Context,
+	ds *types.DataSource,
+	factory KnowledgeDisplayAuthorityFactory,
+) error {
 	edit, marked := ctx.Value(datasourceNameEditKey{}).(datasourceNameEdit)
 	if !marked {
 		return nil
@@ -93,7 +108,8 @@ func admitDataSourceNameInput(tx *gorm.DB, ctx context.Context, ds *types.DataSo
 			return access.ErrForbidden
 		}
 	}
-	if edit.Kind != "human" && (edit.Kind != "pairing_configuration" || edit.BindingID == "" || edit.PairOperation == "" || edit.Name != "Nextcloud · "+edit.BindingID) {
+	if edit.Kind != "human" &&
+		(edit.Kind != "pairing_configuration" || edit.BindingID == "" || edit.PairOperation == "" || edit.Name != "Nextcloud · "+edit.BindingID) {
 		return ErrKnowledgeInputChanged
 	}
 	actual, err := json.Marshal(edit)
@@ -112,8 +128,21 @@ func admitDataSourceNameInput(tx *gorm.DB, ctx context.Context, ds *types.DataSo
 	if err != nil {
 		return err
 	}
-	return tx.Create(&datasourceNameInput{ID: uuid.NewString(), DataSourceID: ds.ID, TenantID: ds.TenantID, KnowledgeBaseID: ds.KnowledgeBaseID, Revision: revision, BodyDigest: body, OriginKind: edit.Kind, ActualInputs: string(actual), InputDigest: digest}).Error
+	return tx.Create(
+		&datasourceNameInput{
+			ID:              uuid.NewString(),
+			DataSourceID:    ds.ID,
+			TenantID:        ds.TenantID,
+			KnowledgeBaseID: ds.KnowledgeBaseID,
+			Revision:        revision,
+			BodyDigest:      body,
+			OriginKind:      edit.Kind,
+			ActualInputs:    string(actual),
+			InputDigest:     digest,
+		},
+	).Error
 }
+
 func readDataSourceNameInput(tx *gorm.DB, ds *types.DataSource) (*types.DataSourceNameInputProof, error) {
 	if ds == nil || ds.DeletedAt.Valid || ds.ID == "" || ds.TenantID == 0 || ds.KnowledgeBaseID == "" {
 		return nil, ErrKnowledgeInputChanged
@@ -127,32 +156,59 @@ func readDataSourceNameInput(tx *gorm.DB, ds *types.DataSource) (*types.DataSour
 		return nil, err
 	}
 	var receipt datasourceNameInput
-	if err := tx.Where("datasource_id = ? AND tenant_id = ? AND knowledge_base_id = ? AND revision = ? AND body_digest = ?", ds.ID, ds.TenantID, ds.KnowledgeBaseID, revision, body).Order("id").Take(&receipt).Error; err != nil {
+	if err := tx.Where("datasource_id = ? AND tenant_id = ? AND knowledge_base_id = ? AND revision = ? AND body_digest = ?", ds.ID, ds.TenantID, ds.KnowledgeBaseID, revision, body).
+		Order("id").
+		Take(&receipt).
+		Error; err != nil {
 		return nil, err
 	}
 	var actual datasourceNameEdit
-	if json.Unmarshal([]byte(receipt.ActualInputs), &actual) != nil || actual.Name != ds.Name || actual.Kind != receipt.OriginKind {
+	if json.Unmarshal([]byte(receipt.ActualInputs), &actual) != nil || actual.Name != ds.Name ||
+		actual.Kind != receipt.OriginKind {
 		return nil, ErrKnowledgeInputChanged
 	}
 	digest, err := KnowledgeInputDigest(actual)
 	if err != nil || digest != receipt.InputDigest {
 		return nil, ErrKnowledgeInputChanged
 	}
-	return &types.DataSourceNameInputProof{ID: receipt.ID, DataSourceID: ds.ID, TenantID: ds.TenantID, KnowledgeBaseID: ds.KnowledgeBaseID, Revision: revision, BodyDigest: body, InputDigest: digest, Name: actual.Name}, nil
+	return &types.DataSourceNameInputProof{
+		ID:              receipt.ID,
+		DataSourceID:    ds.ID,
+		TenantID:        ds.TenantID,
+		KnowledgeBaseID: ds.KnowledgeBaseID,
+		Revision:        revision,
+		BodyDigest:      body,
+		InputDigest:     digest,
+		Name:            actual.Name,
+	}, nil
 }
-func (s *KnowledgeInputProvenanceStore) ReadDataSourceNameInput(ctx context.Context, tenant uint64, kb, id string) (*types.DataSourceNameInputProof, error) {
+
+func (s *KnowledgeInputProvenanceStore) ReadDataSourceNameInput(
+	ctx context.Context,
+	tenant uint64,
+	kb, id string,
+) (*types.DataSourceNameInputProof, error) {
 	var ds types.DataSource
-	if err := s.db.WithContext(ctx).Where("id = ? AND tenant_id = ? AND knowledge_base_id = ?", id, tenant, kb).Take(&ds).Error; err != nil {
+	if err := s.db.WithContext(ctx).
+		Where("id = ? AND tenant_id = ? AND knowledge_base_id = ?", id, tenant, kb).
+		Take(&ds).
+		Error; err != nil {
 		return nil, err
 	}
 	return readDataSourceNameInput(s.db.WithContext(ctx), &ds)
 }
-func (s *KnowledgeInputProvenanceStore) recheckDataSourceNameInput(tx *gorm.DB, p *types.DataSourceNameInputProof) error {
+
+func (s *KnowledgeInputProvenanceStore) recheckDataSourceNameInput(
+	tx *gorm.DB,
+	p *types.DataSourceNameInputProof,
+) error {
 	if p == nil {
 		return ErrKnowledgeInputChanged
 	}
 	var ds types.DataSource
-	if err := tx.Where("id = ? AND tenant_id = ? AND knowledge_base_id = ?", p.DataSourceID, p.TenantID, p.KnowledgeBaseID).Take(&ds).Error; err != nil {
+	if err := tx.Where("id = ? AND tenant_id = ? AND knowledge_base_id = ?", p.DataSourceID, p.TenantID, p.KnowledgeBaseID).
+		Take(&ds).
+		Error; err != nil {
 		return err
 	}
 	actual, err := readDataSourceNameInput(tx, &ds)

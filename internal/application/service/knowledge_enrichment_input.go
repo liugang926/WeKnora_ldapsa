@@ -11,10 +11,27 @@ import (
 
 type knowledgeEnrichmentInputStore interface {
 	interfaces.KnowledgeBuildInputReader
-	CaptureKnowledgeEnrichmentInputs(context.Context, types.KnowledgeBuildInputCaptureRequest) (*types.KnowledgeBuildInputSnapshot, error)
-	AdmitKnowledgeProducerInput(context.Context, *types.KnowledgeBuildInputProof, string, any) (*types.KnowledgeProducerInputProof, error)
-	RecheckKnowledgeProducerInput(context.Context, *types.KnowledgeBuildInputProof, *types.KnowledgeProducerInputProof, any) error
-	RestoreKnowledgeProducerActor(context.Context, *types.KnowledgeBuildInputProof, *types.KnowledgeProducerInputProof) (context.Context, error)
+	CaptureKnowledgeEnrichmentInputs(
+		context.Context,
+		types.KnowledgeBuildInputCaptureRequest,
+	) (*types.KnowledgeBuildInputSnapshot, error)
+	AdmitKnowledgeProducerInput(
+		context.Context,
+		*types.KnowledgeBuildInputProof,
+		string,
+		any,
+	) (*types.KnowledgeProducerInputProof, error)
+	RecheckKnowledgeProducerInput(
+		context.Context,
+		*types.KnowledgeBuildInputProof,
+		*types.KnowledgeProducerInputProof,
+		any,
+	) error
+	RestoreKnowledgeProducerActor(
+		context.Context,
+		*types.KnowledgeBuildInputProof,
+		*types.KnowledgeProducerInputProof,
+	) (context.Context, error)
 	ReadKnowledgeProducerTenant(context.Context, *types.KnowledgeBuildInputProof) (*types.Tenant, error)
 }
 type enrichmentRuntime struct {
@@ -29,8 +46,15 @@ func currentEnrichmentRuntime(cfg *config.Config) enrichmentRuntime {
 	}
 	_, summaryErr := config.KnowledgeEnrichmentPromptLineage(cfg, "summary")
 	_, questionErr := config.KnowledgeEnrichmentPromptLineage(cfg, "question")
-	return enrichmentRuntime{cfg.Conversation.GenerateSummaryPrompt, cfg.Conversation.GenerateQuestionsPrompt, cfg.Conversation.Summary, summaryErr == nil, questionErr == nil}
+	return enrichmentRuntime{
+		cfg.Conversation.GenerateSummaryPrompt,
+		cfg.Conversation.GenerateQuestionsPrompt,
+		cfg.Conversation.Summary,
+		summaryErr == nil,
+		questionErr == nil,
+	}
 }
+
 func summaryProducerControls(cfg *config.Config, p types.SummaryGenerationPayload) any {
 	return struct {
 		Runtime          enrichmentRuntime
@@ -40,6 +64,7 @@ func summaryProducerControls(cfg *config.Config, p types.SummaryGenerationPayloa
 		Refresh          bool
 	}{currentEnrichmentRuntime(cfg), p.TenantID, p.KnowledgeBaseID, p.KnowledgeID, p.Language, p.Attempt, p.Refresh}
 }
+
 func questionProducerControls(cfg *config.Config, p types.QuestionGenerationPayload) any {
 	return struct {
 		Runtime                            enrichmentRuntime
@@ -49,6 +74,7 @@ func questionProducerControls(cfg *config.Config, p types.QuestionGenerationPayl
 		Count, Attempt, Batch              int
 	}{currentEnrichmentRuntime(cfg), p.TenantID, p.KnowledgeBaseID, p.KnowledgeID, p.Language, p.ChunkID, p.PrevChunkID, p.NextChunkID, p.ChunkIDs, p.QuestionCount, p.Attempt, p.BatchIndex}
 }
+
 func imageProducerControls(p types.ImageMultimodalPayload) any {
 	return struct {
 		Tenant                                               uint64
@@ -57,7 +83,14 @@ func imageProducerControls(p types.ImageMultimodalPayload) any {
 		Attempt, Index                                       int
 	}{p.TenantID, p.KnowledgeBaseID, p.KnowledgeID, p.ChunkID, p.ImageURL, p.ImageLocalPath, p.ImageDigest, p.Language, p.ImageSourceType, p.EnableOCR, p.EnableCaption, p.Attempt, p.ImageIndex}
 }
-func resumeKnowledgeEnrichment(ctx context.Context, reader interfaces.KnowledgeBuildInputReader, original *types.KnowledgeBuildInputProof, producer *types.KnowledgeProducerInputProof, input func() any) (context.Context, error) {
+
+func resumeKnowledgeEnrichment(
+	ctx context.Context,
+	reader interfaces.KnowledgeBuildInputReader,
+	original *types.KnowledgeBuildInputProof,
+	producer *types.KnowledgeProducerInputProof,
+	input func() any,
+) (context.Context, error) {
 	store, ok := reader.(knowledgeEnrichmentInputStore)
 	if !ok || original == nil || producer == nil || original.Projection != types.KnowledgeBuildProjectionEnrichment {
 		return ctx, types.ErrSourceLineageUnknown
@@ -79,7 +112,13 @@ func resumeKnowledgeEnrichment(ctx context.Context, reader interfaces.KnowledgeB
 	}
 	return ctx, nil
 }
-func (s *knowledgeService) captureFreshEnrichment(ctx context.Context, tenant uint64, kb, id string, ids []string) (context.Context, *types.KnowledgeBuildInputSnapshot, error) {
+
+func (s *knowledgeService) captureFreshEnrichment(
+	ctx context.Context,
+	tenant uint64,
+	kb, id string,
+	ids []string,
+) (context.Context, *types.KnowledgeBuildInputSnapshot, error) {
 	store, ok := s.knowledgeInputs.(knowledgeEnrichmentInputStore)
 	if !ok {
 		return ctx, nil, types.ErrSourceLineageUnknown
@@ -104,7 +143,16 @@ func (s *knowledgeService) captureFreshEnrichment(ctx context.Context, tenant ui
 			return ctx, nil, e2
 		}
 	}
-	snapshot, err := store.CaptureKnowledgeEnrichmentInputs(ctx, types.KnowledgeBuildInputCaptureRequest{TenantID: tenant, KnowledgeBaseID: kb, KnowledgeID: id, ChunkIDs: ids, Expected: repository.KnowledgeBuildInputProofFromContext(ctx)})
+	snapshot, err := store.CaptureKnowledgeEnrichmentInputs(
+		ctx,
+		types.KnowledgeBuildInputCaptureRequest{
+			TenantID:        tenant,
+			KnowledgeBaseID: kb,
+			KnowledgeID:     id,
+			ChunkIDs:        ids,
+			Expected:        repository.KnowledgeBuildInputProofFromContext(ctx),
+		},
+	)
 	if err != nil {
 		return ctx, nil, err
 	}
@@ -114,10 +162,12 @@ func (s *knowledgeService) captureFreshEnrichment(ctx context.Context, tenant ui
 	}
 	return ctx, snapshot, nil
 }
+
 func enrichmentInputChunkIDs(chunks []*types.Chunk) []string {
 	ids := []string{}
 	for _, c := range chunks {
-		if c != nil && (c.ChunkType == types.ChunkTypeText || c.ChunkType == types.ChunkTypeImageOCR || c.ChunkType == types.ChunkTypeImageCaption) {
+		if c != nil &&
+			(c.ChunkType == types.ChunkTypeText || c.ChunkType == types.ChunkTypeImageOCR || c.ChunkType == types.ChunkTypeImageCaption) {
 			ids = append(ids, c.ID)
 		}
 	}
@@ -131,7 +181,11 @@ func ConfigureKnowledgeEnrichmentRuntime(handler interfaces.TaskHandler, cfg *co
 		impl.enrichmentConfig = cfg
 	}
 }
-func (s *knowledgeService) prepareSummaryGenerationPayload(ctx context.Context, p *types.SummaryGenerationPayload) error {
+
+func (s *knowledgeService) prepareSummaryGenerationPayload(
+	ctx context.Context,
+	p *types.SummaryGenerationPayload,
+) error {
 	if s.knowledgeInputs == nil {
 		return nil
 	}
@@ -140,7 +194,13 @@ func (s *knowledgeService) prepareSummaryGenerationPayload(ctx context.Context, 
 	if err != nil {
 		return err
 	}
-	ctx, actual, err := s.captureFreshEnrichment(ctx, p.TenantID, p.KnowledgeBaseID, p.KnowledgeID, enrichmentInputChunkIDs(rows))
+	ctx, actual, err := s.captureFreshEnrichment(
+		ctx,
+		p.TenantID,
+		p.KnowledgeBaseID,
+		p.KnowledgeID,
+		enrichmentInputChunkIDs(rows),
+	)
 	if err != nil {
 		return err
 	}
@@ -149,6 +209,11 @@ func (s *knowledgeService) prepareSummaryGenerationPayload(ctx context.Context, 
 	}
 	p.OriginalInput = actual.Proof
 	store := s.knowledgeInputs.(knowledgeEnrichmentInputStore)
-	p.ProducerInput, err = store.AdmitKnowledgeProducerInput(ctx, actual.Proof, "summary", summaryProducerControls(s.config, *p))
+	p.ProducerInput, err = store.AdmitKnowledgeProducerInput(
+		ctx,
+		actual.Proof,
+		"summary",
+		summaryProducerControls(s.config, *p),
+	)
 	return err
 }

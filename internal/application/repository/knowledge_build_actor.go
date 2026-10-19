@@ -21,10 +21,31 @@ type knowledgeBuildActorSelector struct {
 	APIKeyID       *uint64
 }
 
-type knowledgeBuildActorContextKey struct{}
-type knowledgeBuildWritePurposeContextKey struct{}
+type (
+	knowledgeBuildActorContextKey        struct{}
+	knowledgeBuildWritePurposeContextKey struct{}
+)
 
-func (s *KnowledgeInputProvenanceStore) recheckKnowledgeWorkerActor(ctx context.Context, proof *types.KnowledgeBuildInputProof) error {
+// An empty production task deliberately masks ambient user authority. Its
+// unverified marker is not an actor selector; exact Nextcloud build/producer
+// receipts and their live private lease must authorize the machine path.
+// Every other presented actor context still takes the ordinary ACL path.
+func knowledgeActorContextPresent(ctx context.Context) bool {
+	caller := types.CallerFromContext(ctx)
+	principal, hasPrincipal := ctx.Value(types.PrincipalContextKey).(types.Principal)
+	_, hasAPI := types.TenantAPIKeyScopeFromContext(ctx)
+	if types.IsBackgroundTask(ctx) && caller == (types.Caller{Role: types.TenantRoleViewer}) && !hasAPI &&
+		hasPrincipal &&
+		principal == (types.Principal{Type: "background_unverified", ID: "task"}) {
+		return false
+	}
+	return caller.UserID != "" || hasPrincipal || hasAPI
+}
+
+func (s *KnowledgeInputProvenanceStore) recheckKnowledgeWorkerActor(
+	ctx context.Context,
+	proof *types.KnowledgeBuildInputProof,
+) error {
 	if marker, ok := ctx.Value(knowledgeCurrentProducerWriteKey{}).(knowledgeCurrentProducerWrite); ok {
 		if proof == nil || marker.tenant != proof.TenantID || marker.kb != proof.KnowledgeBaseID {
 			return ErrKnowledgeInputChanged
@@ -88,7 +109,13 @@ func captureKnowledgeActorSelector(ctx context.Context, admissionID string) (kno
 	}
 	caller, capturedCaller := ctx.Value(types.CallerContextKey).(types.Caller)
 	principal, ok := ctx.Value(types.PrincipalContextKey).(types.Principal)
-	selector := knowledgeBuildActorSelector{AdmissionID: admissionID, CallerTenantID: caller.TenantID, UserID: caller.UserID, PrincipalType: principal.Type, PrincipalID: principal.ID}
+	selector := knowledgeBuildActorSelector{
+		AdmissionID:    admissionID,
+		CallerTenantID: caller.TenantID,
+		UserID:         caller.UserID,
+		PrincipalType:  principal.Type,
+		PrincipalID:    principal.ID,
+	}
 	if !capturedCaller || !ok || !principal.Valid() || principal != principal.Normalize() || caller.TenantID == 0 {
 		return selector, types.ErrSourceLineageUnknown
 	}
@@ -112,7 +139,10 @@ func captureKnowledgeActorSelector(ctx context.Context, admissionID string) (kno
 	return selector, nil
 }
 
-func ConfigureKnowledgeInputActorGroupAccess(store *KnowledgeInputProvenanceStore, groups interfaces.GroupAccessService) {
+func ConfigureKnowledgeInputActorGroupAccess(
+	store *KnowledgeInputProvenanceStore,
+	groups interfaces.GroupAccessService,
+) {
 	store.actorGroups = groups
 }
 
@@ -123,7 +153,11 @@ func ConfigureKnowledgeInputActorShares(store *KnowledgeInputProvenanceStore, sh
 // RestoreKnowledgeBuildActorIfRequired is the trusted worker boundary. It
 // reloads the immutable actor selector for actor-bound original admissions;
 // ordinary and Nextcloud admissions keep their existing execution context.
-func RestoreKnowledgeBuildActorIfRequired(ctx context.Context, reader interfaces.KnowledgeBuildInputReader, proof *types.KnowledgeBuildInputProof) (context.Context, error) {
+func RestoreKnowledgeBuildActorIfRequired(
+	ctx context.Context,
+	reader interfaces.KnowledgeBuildInputReader,
+	proof *types.KnowledgeBuildInputProof,
+) (context.Context, error) {
 	if reader == nil || proof == nil {
 		return ctx, types.ErrSourceLineageUnknown
 	}
@@ -146,16 +180,26 @@ func RestoreKnowledgeBuildActorIfRequired(ctx context.Context, reader interfaces
 	return restorer.RestoreKnowledgeBuildActor(ctx, proof)
 }
 
-func (s *KnowledgeInputProvenanceStore) KnowledgeBuildActorRequired(ctx context.Context, proof *types.KnowledgeBuildInputProof) (bool, error) {
+func (s *KnowledgeInputProvenanceStore) KnowledgeBuildActorRequired(
+	ctx context.Context,
+	proof *types.KnowledgeBuildInputProof,
+) (bool, error) {
 	if proof == nil {
 		return false, types.ErrSourceLineageUnknown
 	}
 	var admission knowledgeInputAdmission
-	if err := s.db.WithContext(ctx).Where("admission_id = ? AND tenant_id = ? AND knowledge_base_id = ? AND knowledge_id = ?", proof.AdmissionID, proof.TenantID, proof.KnowledgeBaseID, proof.KnowledgeID).Take(&admission).Error; err != nil {
+	if err := s.db.WithContext(ctx).
+		Where("admission_id = ? AND tenant_id = ? AND knowledge_base_id = ? AND knowledge_id = ?", proof.AdmissionID, proof.TenantID, proof.KnowledgeBaseID, proof.KnowledgeID).
+		Take(&admission).
+		Error; err != nil {
 		return false, err
 	}
 	var count int64
-	if err := s.db.WithContext(ctx).Model(&knowledgeBuildActorSelector{}).Where("admission_id = ?", proof.AdmissionID).Count(&count).Error; err != nil {
+	if err := s.db.WithContext(ctx).
+		Model(&knowledgeBuildActorSelector{}).
+		Where("admission_id = ?", proof.AdmissionID).
+		Count(&count).
+		Error; err != nil {
 		return false, err
 	}
 	return admission.OriginKind == "history" || count == 1, nil
@@ -165,7 +209,10 @@ func (s *KnowledgeInputProvenanceStore) KnowledgeBuildActorRequired(ctx context.
 // active account/key/membership. Persisted roles or owner strings never grant
 // authority. KB/file/parent permissions are still freshly authorized by their
 // mandatory scoped guards after this reconstruction.
-func (s *KnowledgeInputProvenanceStore) RestoreKnowledgeBuildActor(ctx context.Context, proof *types.KnowledgeBuildInputProof) (context.Context, error) {
+func (s *KnowledgeInputProvenanceStore) RestoreKnowledgeBuildActor(
+	ctx context.Context,
+	proof *types.KnowledgeBuildInputProof,
+) (context.Context, error) {
 	if proof == nil || proof.AdmissionID == "" {
 		return ctx, types.ErrSourceLineageUnknown
 	}
@@ -174,7 +221,10 @@ func (s *KnowledgeInputProvenanceStore) RestoreKnowledgeBuildActor(ctx context.C
 		return ctx, err
 	}
 	var admission knowledgeInputAdmission
-	if err := s.db.WithContext(ctx).Where("admission_id = ? AND tenant_id = ? AND knowledge_base_id = ? AND knowledge_id = ?", proof.AdmissionID, proof.TenantID, proof.KnowledgeBaseID, proof.KnowledgeID).Take(&admission).Error; err != nil {
+	if err := s.db.WithContext(ctx).
+		Where("admission_id = ? AND tenant_id = ? AND knowledge_base_id = ? AND knowledge_id = ?", proof.AdmissionID, proof.TenantID, proof.KnowledgeBaseID, proof.KnowledgeID).
+		Take(&admission).
+		Error; err != nil {
 		return ctx, err
 	}
 	if admission.BuildGeneration != proof.BuildGeneration || admission.InputDigest != proof.InputDigest {
@@ -185,7 +235,10 @@ func (s *KnowledgeInputProvenanceStore) RestoreKnowledgeBuildActor(ctx context.C
 		return ctx, err
 	}
 	var kb types.KnowledgeBase
-	if err := s.db.WithContext(fresh).Where("id = ? AND tenant_id = ?", proof.KnowledgeBaseID, proof.TenantID).Take(&kb).Error; err != nil {
+	if err := s.db.WithContext(fresh).
+		Where("id = ? AND tenant_id = ?", proof.KnowledgeBaseID, proof.TenantID).
+		Take(&kb).
+		Error; err != nil {
 		return ctx, err
 	}
 	fresh, err = s.authorizeKnowledgeActorWrite(fresh, &kb)
@@ -200,7 +253,10 @@ func (s *KnowledgeInputProvenanceStore) RestoreKnowledgeBuildActor(ctx context.C
 // exact actor against a server-loaded KB. It never restores another admission's
 // actor. Bind this store and its group/share lookups to the writer transaction
 // when the authorized producer publishes a receipt in that transaction.
-func (s *KnowledgeInputProvenanceStore) AuthorizeCurrentKnowledgeInputWrite(ctx context.Context, kb *types.KnowledgeBase) (context.Context, error) {
+func (s *KnowledgeInputProvenanceStore) AuthorizeCurrentKnowledgeInputWrite(
+	ctx context.Context,
+	kb *types.KnowledgeBase,
+) (context.Context, error) {
 	if kb == nil || kb.ID == "" || kb.TenantID == 0 {
 		return ctx, ErrKnowledgeInputChanged
 	}
@@ -213,7 +269,10 @@ func (s *KnowledgeInputProvenanceStore) AuthorizeCurrentKnowledgeInputWrite(ctx 
 		return ctx, err
 	}
 	var actual types.KnowledgeBase
-	if err := s.db.WithContext(fresh).Where("id = ? AND tenant_id = ?", kb.ID, kb.TenantID).Take(&actual).Error; err != nil {
+	if err := s.db.WithContext(fresh).
+		Where("id = ? AND tenant_id = ?", kb.ID, kb.TenantID).
+		Take(&actual).
+		Error; err != nil {
 		return ctx, err
 	}
 	return s.authorizeKnowledgeActorWrite(fresh, &actual)
@@ -222,7 +281,11 @@ func (s *KnowledgeInputProvenanceStore) AuthorizeCurrentKnowledgeInputWrite(ctx 
 // authorizeOriginalKnowledgeProducerWrite is confined to derived producer
 // commits. The exact private Nextcloud lease and persisted original admission
 // authorize only this worker's generation; public readers never call it.
-func (s *KnowledgeInputProvenanceStore) authorizeOriginalKnowledgeProducerWrite(ctx context.Context, kb *types.KnowledgeBase, original *types.KnowledgeBuildInputProof) (context.Context, error) {
+func (s *KnowledgeInputProvenanceStore) authorizeOriginalKnowledgeProducerWrite(
+	ctx context.Context,
+	kb *types.KnowledgeBase,
+	original *types.KnowledgeBuildInputProof,
+) (context.Context, error) {
 	if kb == nil || original == nil || original.TenantID != kb.TenantID || original.KnowledgeBaseID != kb.ID {
 		return ctx, ErrKnowledgeInputChanged
 	}
@@ -230,14 +293,27 @@ func (s *KnowledgeInputProvenanceStore) authorizeOriginalKnowledgeProducerWrite(
 		return s.AuthorizeCurrentKnowledgeInputWrite(ctx, kb)
 	}
 	bound := KnowledgeBuildInputProofFromContext(ctx)
-	if bound == nil || bound.AdmissionID != original.AdmissionID || bound.InputDigest != original.InputDigest || bound.BuildGeneration != original.BuildGeneration || bound.KnowledgeID != original.KnowledgeID || bound.TenantID != original.TenantID || bound.KnowledgeBaseID != original.KnowledgeBaseID {
+	if bound == nil || bound.AdmissionID != original.AdmissionID || bound.InputDigest != original.InputDigest ||
+		bound.BuildGeneration != original.BuildGeneration ||
+		bound.KnowledgeID != original.KnowledgeID ||
+		bound.TenantID != original.TenantID ||
+		bound.KnowledgeBaseID != original.KnowledgeBaseID {
 		return ctx, ErrKnowledgeInputChanged
 	}
-	if err := ValidateNextcloudBuildWrite(ctx, s.db, original.TenantID, original.KnowledgeBaseID, original.KnowledgeID); err != nil {
+	if err := ValidateNextcloudBuildWrite(
+		ctx,
+		s.db,
+		original.TenantID,
+		original.KnowledgeBaseID,
+		original.KnowledgeID,
+	); err != nil {
 		return ctx, err
 	}
 	var k types.Knowledge
-	if err := s.db.WithContext(ctx).Where("id = ? AND tenant_id = ? AND knowledge_base_id = ?", original.KnowledgeID, original.TenantID, original.KnowledgeBaseID).Take(&k).Error; err != nil {
+	if err := s.db.WithContext(ctx).
+		Where("id = ? AND tenant_id = ? AND knowledge_base_id = ?", original.KnowledgeID, original.TenantID, original.KnowledgeBaseID).
+		Take(&k).
+		Error; err != nil {
 		return ctx, err
 	}
 	admission, _, _, err := s.admissionInTx(s.db.WithContext(ctx), &k, original)
@@ -253,7 +329,10 @@ func (s *KnowledgeInputProvenanceStore) authorizeOriginalKnowledgeProducerWrite(
 	return ctx, nil
 }
 
-func (s *KnowledgeInputProvenanceStore) authorizeKnowledgeActorWrite(ctx context.Context, kb *types.KnowledgeBase) (context.Context, error) {
+func (s *KnowledgeInputProvenanceStore) authorizeKnowledgeActorWrite(
+	ctx context.Context,
+	kb *types.KnowledgeBase,
+) (context.Context, error) {
 	caller := types.CallerFromContext(ctx)
 	if scope, ok := types.TenantAPIKeyScopeFromContext(ctx); ok {
 		if requirement, bound := types.APIKeyOperationRequirementFromContext(ctx); bound && !requirement.Allows(scope) {
@@ -276,7 +355,14 @@ func (s *KnowledgeInputProvenanceStore) authorizeKnowledgeActorWrite(ctx context
 	if s.actorGroups == nil {
 		return ctx, types.ErrSourceLineageUnknown
 	}
-	permission, err := s.actorGroups.EffectivePermission(ctx, kb.TenantID, types.GroupResourceTypeKnowledgeBase, kb.ID, types.ResourceActionEdit, time.Now().UTC())
+	permission, err := s.actorGroups.EffectivePermission(
+		ctx,
+		kb.TenantID,
+		types.GroupResourceTypeKnowledgeBase,
+		kb.ID,
+		types.ResourceActionEdit,
+		time.Now().UTC(),
+	)
 	if err != nil {
 		return ctx, err
 	}
@@ -292,13 +378,23 @@ func (s *KnowledgeInputProvenanceStore) authorizeKnowledgeActorWrite(ctx context
 			// This current, exact KB write has already been authorized. Its
 			// worker may inspect the original admitted inputs to complete the
 			// write. An HTTP request keeps its exact route capability policy.
-			fresh = types.WithAPIKeyOperationRequirement(fresh, types.APIKeyOperationRequirement{RequireFullAccess: true, Capabilities: []types.APIKeyCapability{types.APIKeyCapabilityIngest}})
+			fresh = types.WithAPIKeyOperationRequirement(
+				fresh,
+				types.APIKeyOperationRequirement{
+					RequireFullAccess: true,
+					Capabilities:      []types.APIKeyCapability{types.APIKeyCapabilityIngest},
+				},
+			)
 		}
 	}
 	return fresh, nil
 }
 
-func (s *KnowledgeInputProvenanceStore) restoreCurrentKnowledgeActor(ctx context.Context, actor knowledgeBuildActorSelector, executionTenant uint64) (context.Context, error) {
+func (s *KnowledgeInputProvenanceStore) restoreCurrentKnowledgeActor(
+	ctx context.Context,
+	actor knowledgeBuildActorSelector,
+	executionTenant uint64,
+) (context.Context, error) {
 	principal := types.Principal{Type: actor.PrincipalType, ID: actor.PrincipalID}
 	caller := types.Caller{TenantID: actor.CallerTenantID, UserID: actor.UserID, Role: types.TenantRoleViewer}
 	// Drop any cached request/task grants. They are not reconstructed authority.
@@ -314,7 +410,10 @@ func (s *KnowledgeInputProvenanceStore) restoreCurrentKnowledgeActor(ctx context
 			return ctx, ErrKnowledgeInputChanged
 		}
 		var user types.User
-		if err := s.db.WithContext(ctx).Where("id = ? AND is_active = ?", actor.UserID, true).Take(&user).Error; err != nil {
+		if err := s.db.WithContext(ctx).
+			Where("id = ? AND is_active = ?", actor.UserID, true).
+			Take(&user).
+			Error; err != nil {
 			return ctx, err
 		}
 		if s.actorGroups != nil {
@@ -328,7 +427,10 @@ func (s *KnowledgeInputProvenanceStore) restoreCurrentKnowledgeActor(ctx context
 			caller.Role = effective.Role
 		} else {
 			var member types.TenantMember
-			if err := s.db.WithContext(ctx).Where("user_id = ? AND tenant_id = ? AND status = ?", user.ID, actor.CallerTenantID, types.TenantMemberStatusActive).Take(&member).Error; err != nil {
+			if err := s.db.WithContext(ctx).
+				Where("user_id = ? AND tenant_id = ? AND status = ?", user.ID, actor.CallerTenantID, types.TenantMemberStatusActive).
+				Take(&member).
+				Error; err != nil {
 				return ctx, err
 			}
 			if !member.Role.IsValid() {
@@ -342,22 +444,34 @@ func (s *KnowledgeInputProvenanceStore) restoreCurrentKnowledgeActor(ctx context
 			return ctx, ErrKnowledgeInputChanged
 		}
 		var key types.TenantAPIKey
-		if err := s.db.WithContext(ctx).Where("id = ? AND tenant_id = ? AND revoked_at IS NULL", *actor.APIKeyID, actor.CallerTenantID).Take(&key).Error; err != nil {
+		if err := s.db.WithContext(ctx).
+			Where("id = ? AND tenant_id = ? AND revoked_at IS NULL", *actor.APIKeyID, actor.CallerTenantID).
+			Take(&key).
+			Error; err != nil {
 			return ctx, err
 		}
 		if key.IsPlatform() || key.ExpiresAt != nil && !key.ExpiresAt.After(time.Now().UTC()) {
 			return ctx, ErrKnowledgeInputChanged
 		}
-		if actor.PrincipalType == types.PrincipalAPITenant && actor.PrincipalID != fmt.Sprintf("%d", actor.CallerTenantID) {
+		if actor.PrincipalType == types.PrincipalAPITenant &&
+			actor.PrincipalID != fmt.Sprintf("%d", actor.CallerTenantID) {
 			return ctx, ErrKnowledgeInputChanged
 		}
 		if actor.PrincipalType == types.PrincipalAPIExternalUser {
 			prefix := fmt.Sprintf("%d:", actor.CallerTenantID)
-			if !strings.HasPrefix(actor.PrincipalID, prefix) || strings.TrimSpace(strings.TrimPrefix(actor.PrincipalID, prefix)) == "" {
+			if !strings.HasPrefix(actor.PrincipalID, prefix) ||
+				strings.TrimSpace(strings.TrimPrefix(actor.PrincipalID, prefix)) == "" {
 				return ctx, ErrKnowledgeInputChanged
 			}
 		}
-		scope := types.TenantAPIKeyScope{KeyID: key.ID, Name: key.Name, ScopeType: key.ScopeType, FullAccess: key.FullAccess, KnowledgeBaseIDs: key.KnowledgeBaseIDs, Capabilities: key.Capabilities}
+		scope := types.TenantAPIKeyScope{
+			KeyID:            key.ID,
+			Name:             key.Name,
+			ScopeType:        key.ScopeType,
+			FullAccess:       key.FullAccess,
+			KnowledgeBaseIDs: key.KnowledgeBaseIDs,
+			Capabilities:     key.Capabilities,
+		}
 		ctx = types.WithTenantAPIKeyScope(ctx, scope)
 		// Match the authenticated machine boundary: FullAccess is a current DB
 		// credential capability, rather than an invented workspace-owner user.

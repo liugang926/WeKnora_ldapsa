@@ -132,7 +132,10 @@ func (rc *qaRequestContext) buildQARequest() *types.QARequest {
 }
 
 // parseQARequest parses and validates a QA request, returns the request context
-func (h *Handler) parseQARequest(c *gin.Context, logPrefix string) (*qaRequestContext, *CreateKnowledgeQARequest, error) {
+func (h *Handler) parseQARequest(
+	c *gin.Context,
+	logPrefix string,
+) (*qaRequestContext, *CreateKnowledgeQARequest, error) {
 	receivedAt := time.Now()
 	ctx := logger.CloneContext(c.Request.Context())
 	requestID := secutils.SanitizeForLog(c.GetString(types.RequestIDContextKey.String()))
@@ -167,7 +170,12 @@ func (h *Handler) parseQARequest(c *gin.Context, logPrefix string) (*qaRequestCo
 		return nil, nil, err
 	}
 	if h.suggestionService != nil && request.SuggestionAttribution != nil {
-		if err := h.suggestionService.ValidateAttribution(ctx, sessionID, request.Query, request.SuggestionAttribution); err != nil {
+		if err := h.suggestionService.ValidateAttribution(
+			ctx,
+			sessionID,
+			request.Query,
+			request.SuggestionAttribution,
+		); err != nil {
 			return nil, nil, errors.NewBadRequestError("invalid suggestion attribution")
 		}
 	}
@@ -197,7 +205,12 @@ func (h *Handler) parseQARequest(c *gin.Context, logPrefix string) (*qaRequestCo
 	}
 
 	// Get custom agent if agent_id is provided. Backend resolves shared agent from share relation (no client-provided tenant).
-	customAgent, effectiveTenantID, sharedAgentReadOnly := h.resolveAgent(ctx, c, request.AgentID, request.AgentSourceTenantID)
+	customAgent, effectiveTenantID, sharedAgentReadOnly := h.resolveAgent(
+		ctx,
+		c,
+		request.AgentID,
+		request.AgentSourceTenantID,
+	)
 	if request.AgentSourceTenantID != 0 && customAgent == nil {
 		return nil, nil, errors.NewNotFoundError("Shared agent not found")
 	}
@@ -246,15 +259,27 @@ func (h *Handler) parseQARequest(c *gin.Context, logPrefix string) (*qaRequestCo
 	}
 
 	// Log merge results for debugging
-	logger.Infof(ctx, "[%s] @mention merge: request.KnowledgeBaseIDs=%v, request.MentionedItems=%d, merged kbIDs=%v, merged knowledgeIDs=%v",
-		logPrefix, request.KnowledgeBaseIDs, len(request.MentionedItems), kbIDs, knowledgeIDs)
+	logger.Infof(
+		ctx,
+		"[%s] @mention merge: request.KnowledgeBaseIDs=%v, request.MentionedItems=%d, merged kbIDs=%v, merged knowledgeIDs=%v",
+		logPrefix,
+		request.KnowledgeBaseIDs,
+		len(request.MentionedItems),
+		kbIDs,
+		knowledgeIDs,
+	)
 
 	// Process inline base64 images: decode and save to storage.
 	// VLM analysis for RAG paths is deferred to the pipeline rewrite step.
 	// For pure chat paths with non-vision models, VLM analysis runs here as fallback.
 	if len(request.Images) > 0 {
 		if customAgent == nil || !customAgent.Config.ImageUploadEnabled {
-			logger.Warnf(ctx, "[%s] Image upload is not enabled for this agent, rejecting %d images", logPrefix, len(request.Images))
+			logger.Warnf(
+				ctx,
+				"[%s] Image upload is not enabled for this agent, rejecting %d images",
+				logPrefix,
+				len(request.Images),
+			)
 			return nil, nil, errors.NewBadRequestError("Image upload is not enabled for this agent")
 		}
 		tenantID := c.GetUint64(types.TenantIDContextKey.String())
@@ -305,7 +330,11 @@ func (h *Handler) parseQARequest(c *gin.Context, logPrefix string) (*qaRequestCo
 			for _, att := range request.AttachmentUploads {
 				ext := strings.ToLower(filepath.Ext(att.FileName))
 				if engine := customAgent.Config.ResolveChatParserEngine(ext); engine != "" {
-					attachmentRuntimeCtx = context.WithValue(attachmentRuntimeCtx, types.ChatParserEngineContextKey, engine)
+					attachmentRuntimeCtx = context.WithValue(
+						attachmentRuntimeCtx,
+						types.ChatParserEngineContextKey,
+						engine,
+					)
 					break
 				}
 			}
@@ -322,7 +351,12 @@ func (h *Handler) parseQARequest(c *gin.Context, logPrefix string) (*qaRequestCo
 				defer wg.Done()
 
 				processed, err := h.attachmentProcessor.ProcessAttachment(
-					attachmentRuntimeCtx, decodedAttachments[idx], att.FileName, int64(len(decodedAttachments[idx])), tenantID, asrModelID,
+					attachmentRuntimeCtx,
+					decodedAttachments[idx],
+					att.FileName,
+					int64(len(decodedAttachments[idx])),
+					tenantID,
+					asrModelID,
 				)
 				if err != nil {
 					errChan <- fmt.Errorf("attachment %d processing failed: %w", idx+1, err)
@@ -382,13 +416,20 @@ func (h *Handler) parseQARequest(c *gin.Context, logPrefix string) (*qaRequestCo
 
 	mentionScopes := tagScopesFromMentionedItems(request.MentionedItems)
 	requestTagIDs := dedupRequestStrings(request.TagIDs)
-	if err := validateUnscopedTagIDs(orphanTagIDsForScope(requestTagIDs, mentionScopes), secutils.SanitizeForLogArray(kbIDs)); err != nil {
+	if err := validateUnscopedTagIDs(
+		orphanTagIDsForScope(requestTagIDs, mentionScopes),
+		secutils.SanitizeForLogArray(kbIDs),
+	); err != nil {
 		return nil, nil, errors.NewBadRequestError(err.Error())
 	}
 	tagScopes := mergeTagScopesFromRequestIDs(mentionScopes, requestTagIDs, secutils.SanitizeForLogArray(kbIDs))
 	tagIDs := dedupRequestStrings(append(request.TagIDs, mentionedIDsByType(request.MentionedItems, "tag")...))
-	mcpServiceIDs := dedupRequestStrings(append(request.MCPServiceIDs, mentionedIDsByType(request.MentionedItems, "mcp")...))
-	skillNames := dedupRequestStrings(append(request.SkillNames, mentionedIDsByType(request.MentionedItems, "skill")...))
+	mcpServiceIDs := dedupRequestStrings(
+		append(request.MCPServiceIDs, mentionedIDsByType(request.MentionedItems, "mcp")...),
+	)
+	skillNames := dedupRequestStrings(
+		append(request.SkillNames, mentionedIDsByType(request.MentionedItems, "skill")...),
+	)
 	executionContext, agentID, agentTenantID, modelID := buildMessageExecutionContext(
 		ctx,
 		customAgent,
@@ -686,7 +727,11 @@ func (h *Handler) authorizeKnowledgeBaseGroupAccess(ctx context.Context, ids []s
 }
 
 // mergeKnowledgeTargets merges request KB/knowledge IDs with @mentioned items into deduplicated slices.
-func mergeKnowledgeTargets(requestKBIDs []string, requestKnowledgeIDs []string, mentionedItems []MentionedItemRequest) (kbIDs []string, knowledgeIDs []string) {
+func mergeKnowledgeTargets(
+	requestKBIDs []string,
+	requestKnowledgeIDs []string,
+	mentionedItems []MentionedItemRequest,
+) (kbIDs []string, knowledgeIDs []string) {
 	kbIDSet := make(map[string]bool)
 	kbIDs = make([]string, 0, len(requestKBIDs)+len(mentionedItems))
 	for _, id := range requestKBIDs {
@@ -756,7 +801,11 @@ func (h *Handler) setupSSEStream(reqCtx *qaRequestContext, generateTitle bool, m
 	// Base context for async work: when using shared agent, use source tenant for model/KB/MCP resolution
 	baseCtx := reqCtx.ctx
 	if reqCtx.effectiveTenantID != 0 && h.tenantService != nil {
-		if tenant, err := h.tenantService.GetTenantByID(reqCtx.ctx, reqCtx.effectiveTenantID); err == nil && tenant != nil {
+		if tenant, err := h.tenantService.GetTenantByID(
+			reqCtx.ctx,
+			reqCtx.effectiveTenantID,
+		); err == nil &&
+			tenant != nil {
 			baseCtx = types.WithExecutionTenant(reqCtx.ctx, reqCtx.effectiveTenantID)
 			if reqCtx.customAgent != nil {
 				baseCtx = access.WithSharedAgent(baseCtx, reqCtx.customAgent)
@@ -790,8 +839,11 @@ func (h *Handler) setupSSEStream(reqCtx *qaRequestContext, generateTitle bool, m
 	var materialAttach func(context.Context) context.Context
 	var materialCheck func() error
 	var materialClose func()
-	if native, ok := h.messageService.(interface{ HasOriginalMessageMaterialStore() bool }); ok && native.HasOriginalMessageMaterialStore() {
-		asyncCtx, materialAttach, materialCheck, materialClose = applicationservice.BeginMessageMaterialHTTPBoundary(asyncCtx)
+	if native, ok := h.messageService.(interface{ HasOriginalMessageMaterialStore() bool }); ok &&
+		native.HasOriginalMessageMaterialStore() {
+		asyncCtx, materialAttach, materialCheck, materialClose = applicationservice.BeginMessageMaterialHTTPBoundary(
+			asyncCtx,
+		)
 	}
 
 	streamCtx := &sseStreamContext{
@@ -872,7 +924,12 @@ func (h *Handler) setupSSEStream(reqCtx *qaRequestContext, generateTitle bool, m
 		if reqCtx.customAgent != nil && reqCtx.customAgent.Config.ModelID != "" {
 			modelID = reqCtx.customAgent.Config.ModelID
 		}
-		logger.Infof(reqCtx.ctx, "Session has no title, starting async title generation, session ID: %s, model: %s", reqCtx.sessionID, modelID)
+		logger.Infof(
+			reqCtx.ctx,
+			"Session has no title, starting async title generation, session ID: %s, model: %s",
+			reqCtx.sessionID,
+			modelID,
+		)
 		h.sessionService.GenerateTitleAsync(asyncCtx, reqCtx.session, reqCtx.query, modelID, eventBus)
 	}
 
@@ -940,16 +997,27 @@ func (h *Handler) SearchKnowledge(c *gin.Context) {
 
 	mentionScopes := tagScopesFromMentionedItems(request.MentionedItems)
 	requestTagIDs := dedupRequestStrings(request.TagIDs)
-	if err := validateUnscopedTagIDs(orphanTagIDsForScope(requestTagIDs, mentionScopes), secutils.SanitizeForLogArray(knowledgeBaseIDs)); err != nil {
+	if err := validateUnscopedTagIDs(
+		orphanTagIDsForScope(requestTagIDs, mentionScopes),
+		secutils.SanitizeForLogArray(knowledgeBaseIDs),
+	); err != nil {
 		logger.Error(ctx, err.Error())
 		c.Error(errors.NewBadRequestError(err.Error()))
 		return
 	}
-	tagScopes := mergeTagScopesFromRequestIDs(mentionScopes, requestTagIDs, secutils.SanitizeForLogArray(knowledgeBaseIDs))
+	tagScopes := mergeTagScopesFromRequestIDs(
+		mentionScopes,
+		requestTagIDs,
+		secutils.SanitizeForLogArray(knowledgeBaseIDs),
+	)
 
 	if len(knowledgeBaseIDs) == 0 && len(request.KnowledgeIDs) == 0 && len(tagScopes) == 0 {
 		logger.Error(ctx, "No knowledge base IDs, knowledge IDs, or tag scopes provided")
-		c.Error(errors.NewBadRequestError("At least one knowledge_base_id, knowledge_base_ids, knowledge_ids, or scoped tag must be provided"))
+		c.Error(
+			errors.NewBadRequestError(
+				"At least one knowledge_base_id, knowledge_base_ids, knowledge_ids, or scoped tag must be provided",
+			),
+		)
 		return
 	}
 	if err := types.AuthorizeTenantAPIKeyKnowledgeTargets(ctx, knowledgeBaseIDs, request.KnowledgeIDs); err != nil {
@@ -986,7 +1054,13 @@ func (h *Handler) SearchKnowledge(c *gin.Context) {
 	}
 
 	// Directly call knowledge retrieval service without LLM summarization
-	searchResults, err := h.sessionService.SearchKnowledge(ctx, knowledgeBaseIDs, request.KnowledgeIDs, tagScopes, request.Query)
+	searchResults, err := h.sessionService.SearchKnowledge(
+		ctx,
+		knowledgeBaseIDs,
+		request.KnowledgeIDs,
+		tagScopes,
+		request.Query,
+	)
 	if err != nil {
 		logger.ErrorWithFields(ctx, err, nil)
 		_ = c.Error(errors.NewInternalServerError(errors.PublicMessage(err)))
@@ -1267,7 +1341,8 @@ func (h *Handler) executeQA(reqCtx *qaRequestContext, mode qaMode, generateTitle
 	if reqCtx.steerInputClose != nil {
 		defer reqCtx.steerInputClose()
 	}
-	if len(reqCtx.images) > 0 || len(reqCtx.attachments) > 0 || len(reqCtx.attachmentIDs) > 0 || reqCtx.questionOrigin != nil {
+	if len(reqCtx.images) > 0 || len(reqCtx.attachments) > 0 || len(reqCtx.attachmentIDs) > 0 ||
+		reqCtx.questionOrigin != nil {
 		if reqCtx.c != nil && !reqCtx.skipSSE {
 			_ = reqCtx.c.Error(errors.NewForbiddenError("Input source lineage is not available"))
 		}
@@ -1455,9 +1530,13 @@ func (h *Handler) executeQA(reqCtx *qaRequestContext, mode qaMode, generateTitle
 				if mode == qaModeAgent {
 					stageName = "Agent QA"
 				}
-				logger.ErrorWithFields(streamCtx.asyncCtx,
-					errors.NewInternalServerError(fmt.Sprintf("%s service panicked: %v\n%s", stageName, r, string(buf))),
-					map[string]interface{}{"session_id": sessionID})
+				logger.ErrorWithFields(
+					streamCtx.asyncCtx,
+					errors.NewInternalServerError(
+						fmt.Sprintf("%s service panicked: %v\n%s", stageName, r, string(buf)),
+					),
+					map[string]interface{}{"session_id": sessionID},
+				)
 			}
 			// Agent mode: complete the assistant message in defer (normal mode does it via event handler)
 			if mode == qaModeAgent {
@@ -1739,7 +1818,13 @@ func (h *Handler) resolveTemporaryAttachments(streamCtx *sseStreamContext, reqCt
 	var temporaryResult *types.TemporaryDocumentPromptResult
 	var resolveErr error
 	if len(readyIDs) > 0 {
-		temporaryResult, resolveErr = h.temporaryDocuments.ResolveForPrompt(ctx, tenantID, sessionID, readyIDs, reqCtx.query)
+		temporaryResult, resolveErr = h.temporaryDocuments.ResolveForPrompt(
+			ctx,
+			tenantID,
+			sessionID,
+			readyIDs,
+			reqCtx.query,
+		)
 	}
 
 	if toolCallID != "" {
@@ -1888,7 +1973,13 @@ func (h *Handler) hasPendingAttachments(ctx context.Context, tenantID uint64, se
 
 // waitForAttachments polls until no attachment is pending or the timeout / ctx
 // cancellation fires.
-func (h *Handler) waitForAttachments(ctx context.Context, tenantID uint64, sessionID string, ids []string, timeout time.Duration) {
+func (h *Handler) waitForAttachments(
+	ctx context.Context,
+	tenantID uint64,
+	sessionID string,
+	ids []string,
+	timeout time.Duration,
+) {
 	deadline := time.Now().Add(timeout)
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
@@ -1906,7 +1997,12 @@ func (h *Handler) waitForAttachments(ctx context.Context, tenantID uint64, sessi
 
 // partitionReadyAttachments splits the ids into ready ones and a count of those
 // skipped (missing, failed, or still parsing after the wait).
-func (h *Handler) partitionReadyAttachments(ctx context.Context, tenantID uint64, sessionID string, ids []string) (ready []string, skipped int) {
+func (h *Handler) partitionReadyAttachments(
+	ctx context.Context,
+	tenantID uint64,
+	sessionID string,
+	ids []string,
+) (ready []string, skipped int) {
 	for _, id := range ids {
 		doc, err := h.temporaryDocuments.Get(ctx, tenantID, sessionID, id)
 		if err != nil || doc == nil || doc.Status != types.TemporaryDocumentStatusReady {
@@ -2053,7 +2149,10 @@ func (h *Handler) completeAssistantMessage(
 	// Asynchronously index the Q&A pair into the chat history knowledge base for vector search.
 	// Use WithoutCancel so the goroutine survives after the HTTP request context is done.
 	bgCtx := context.WithoutCancel(ctx)
-	if indexCtx, ok := h.sessionTenantInfoContext(bgCtx); ok && types.SourceIndependentDerivativesAllowed(assistantMessage) {
+	if indexCtx, ok := h.sessionTenantInfoContext(
+		bgCtx,
+	); ok &&
+		types.SourceIndependentDerivativesAllowed(assistantMessage) {
 		go h.messageService.IndexMessageToKB(
 			indexCtx, userQuery, assistantMessage.Content, assistantMessage.ID, assistantMessage.SessionID)
 	}
@@ -2062,7 +2161,12 @@ func (h *Handler) completeAssistantMessage(
 			if _, err := h.suggestionService.EnsureFollowUps(
 				bgCtx, assistantMessage.SessionID, assistantMessage.ID, false,
 			); err != nil {
-				logger.Warnf(bgCtx, "follow-up suggestion generation failed for message %s: %v", assistantMessage.ID, err)
+				logger.Warnf(
+					bgCtx,
+					"follow-up suggestion generation failed for message %s: %v",
+					assistantMessage.ID,
+					err,
+				)
 			}
 		}()
 	}

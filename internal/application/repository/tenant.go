@@ -74,7 +74,12 @@ func (r *tenantRepository) ListTenants(ctx context.Context) ([]*types.Tenant, er
 }
 
 // SearchTenants searches tenants with pagination and filters
-func (r *tenantRepository) SearchTenants(ctx context.Context, keyword string, tenantID uint64, page, pageSize int) ([]*types.Tenant, int64, error) {
+func (r *tenantRepository) SearchTenants(
+	ctx context.Context,
+	keyword string,
+	tenantID uint64,
+	page, pageSize int,
+) ([]*types.Tenant, int64, error) {
 	var tenants []*types.Tenant
 	var total int64
 
@@ -128,7 +133,11 @@ func (r *tenantRepository) DeleteTenant(ctx context.Context, id uint64) error {
 			return err
 		}
 		var owner types.Tenant
-		if err := tx.Unscoped().Clauses(clause.Locking{Strength: "UPDATE"}).Where("id=?", id).Take(&owner).Error; err != nil {
+		if err := tx.Unscoped().
+			Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("id=?", id).
+			Take(&owner).
+			Error; err != nil {
 			return err
 		}
 		if !owner.DeletedAt.Valid {

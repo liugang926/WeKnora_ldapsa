@@ -2,16 +2,33 @@ package api
 
 import (
 	"encoding/json"
+	"testing"
+
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/stretchr/testify/require"
-	"testing"
 )
 
 func TestRAGSourceLineageWireSnapshotDetachesNestedValues(t *testing.T) {
 	proof, _ := types.NewCompleteSourceLineage()
-	messages := []Message{{Role: "user", Content: "original", Images: []string{"image"}, ReasoningMetadata: types.ProviderMetadata{"nested": json.RawMessage(`{"value":"original"}`)}, SourceLineage: proof, Kind: MessageKindCompactionSummary, TurnID: "turn"}}
+	messages := []Message{
+		{
+			Role:              "user",
+			Content:           "original",
+			Images:            []string{"image"},
+			ReasoningMetadata: types.ProviderMetadata{"nested": json.RawMessage(`{"value":"original"}`)},
+			SourceLineage:     proof,
+			Kind:              MessageKindCompactionSummary,
+			TurnID:            "turn",
+		},
+	}
 	thinking := true
-	options := &Options{Thinking: &thinking, Format: json.RawMessage(`{"schema":"original"}`), Tools: []Tool{{Type: "function", Function: FunctionDef{Name: "tool", Parameters: json.RawMessage(`{"original":true}`)}}}}
+	options := &Options{
+		Thinking: &thinking,
+		Format:   json.RawMessage(`{"schema":"original"}`),
+		Tools: []Tool{
+			{Type: "function", Function: FunctionDef{Name: "tool", Parameters: json.RawMessage(`{"original":true}`)}},
+		},
+	}
 	frozenMessages, err := FreezeSourceModelMessages(messages)
 	require.NoError(t, err)
 	frozenOptions, err := FreezeSourceModelOptions(options)

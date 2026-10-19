@@ -52,14 +52,21 @@ type KnowledgeAutoTagService struct {
 	lineageChecker  knowledgeOutputLineageChecker
 }
 
-func ConfigureKnowledgeAutoTagInputProvenance(handler interfaces.TaskHandler, store *repository.KnowledgeInputProvenanceStore, guard *access.NextcloudSourceLineageGuard) {
+func ConfigureKnowledgeAutoTagInputProvenance(
+	handler interfaces.TaskHandler,
+	store *repository.KnowledgeInputProvenanceStore,
+	guard *access.NextcloudSourceLineageGuard,
+) {
 	if impl, ok := handler.(*KnowledgeAutoTagService); ok {
 		impl.knowledgeInputs = store
 		impl.lineageChecker = guard
 	}
 }
 
-func (s *KnowledgeAutoTagService) checkAutoTagInput(ctx context.Context, snapshot *types.KnowledgeAutoTagInputSnapshot) error {
+func (s *KnowledgeAutoTagService) checkAutoTagInput(
+	ctx context.Context,
+	snapshot *types.KnowledgeAutoTagInputSnapshot,
+) error {
 	if s.knowledgeInputs == nil || s.lineageChecker == nil || snapshot == nil || snapshot.Original == nil {
 		return types.ErrSourceLineageUnknown
 	}
@@ -91,8 +98,22 @@ func (s *KnowledgeAutoTagService) checkAutoTagInput(ctx context.Context, snapsho
 			return err
 		}
 	}
-	scope := access.LineageReadScope{Targets: types.SearchTargets{&types.SearchTarget{Type: types.SearchTargetTypeKnowledgeBase, TenantID: snapshot.Original.Proof.TenantID, KnowledgeBaseID: snapshot.Original.Proof.KnowledgeBaseID}}}
-	if len(extra.Sources) > 0 || !repository.NextcloudBuildLeasePresent(ctx, snapshot.Original.Proof.TenantID, snapshot.Original.Proof.KnowledgeBaseID, snapshot.Original.Proof.KnowledgeID) {
+	scope := access.LineageReadScope{
+		Targets: types.SearchTargets{
+			&types.SearchTarget{
+				Type:            types.SearchTargetTypeKnowledgeBase,
+				TenantID:        snapshot.Original.Proof.TenantID,
+				KnowledgeBaseID: snapshot.Original.Proof.KnowledgeBaseID,
+			},
+		},
+	}
+	if len(extra.Sources) > 0 ||
+		!repository.NextcloudBuildLeasePresent(
+			ctx,
+			snapshot.Original.Proof.TenantID,
+			snapshot.Original.Proof.KnowledgeBaseID,
+			snapshot.Original.Proof.KnowledgeID,
+		) {
 		if err := s.lineageChecker.Check(ctx, extra, scope); err != nil {
 			return err
 		}
@@ -192,15 +213,30 @@ func (s *KnowledgeAutoTagService) Handle(ctx context.Context, task *asynq.Task) 
 			}
 			ctx = repository.WithKnowledgeAutoTagCompletion(ctx, payload, *claimedAt)
 			defer func() {
-				rejected := errors.Is(result, repository.ErrKnowledgeInputChanged) || errors.Is(result, types.ErrSourceLineageUnknown) || errors.Is(result, access.ErrForbidden) || errors.Is(result, access.ErrNextcloudPublicationDenied) || errors.Is(result, asynq.SkipRetry) || errors.Is(result, gorm.ErrRecordNotFound) || errors.Is(result, nextcloud.ErrPublicationNotCurrent)
+				rejected := errors.Is(result, repository.ErrKnowledgeInputChanged) ||
+					errors.Is(result, types.ErrSourceLineageUnknown) ||
+					errors.Is(result, access.ErrForbidden) ||
+					errors.Is(result, access.ErrNextcloudPublicationDenied) ||
+					errors.Is(result, asynq.SkipRetry) ||
+					errors.Is(result, gorm.ErrRecordNotFound) ||
+					errors.Is(result, nextcloud.ErrPublicationNotCurrent)
 				finishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 				defer cancel()
-				if err := s.knowledgeInputs.FinishKnowledgeAutoTagCompletion(finishCtx, payload, *claimedAt, result == nil, rejected); err != nil && result == nil {
+				if err := s.knowledgeInputs.FinishKnowledgeAutoTagCompletion(
+					finishCtx,
+					payload,
+					*claimedAt,
+					result == nil,
+					rejected,
+				); err != nil &&
+					result == nil {
 					result = err
 				}
 			}()
 		}
-		if payload.OriginalInput == nil || payload.OriginalInput.TenantID != payload.TenantID || payload.OriginalInput.KnowledgeBaseID != payload.KnowledgeBaseID || payload.OriginalInput.KnowledgeID != payload.KnowledgeID {
+		if payload.OriginalInput == nil || payload.OriginalInput.TenantID != payload.TenantID ||
+			payload.OriginalInput.KnowledgeBaseID != payload.KnowledgeBaseID ||
+			payload.OriginalInput.KnowledgeID != payload.KnowledgeID {
 			return types.ErrSourceLineageUnknown
 		}
 		var err error
@@ -280,7 +316,8 @@ func (s *KnowledgeAutoTagService) Handle(ctx context.Context, task *asynq.Task) 
 	if admitted != nil {
 		knowledge = admitted.Original.Knowledge
 	}
-	if knowledge == nil || knowledge.TenantID != payload.TenantID || knowledge.KnowledgeBaseID != payload.KnowledgeBaseID {
+	if knowledge == nil || knowledge.TenantID != payload.TenantID ||
+		knowledge.KnowledgeBaseID != payload.KnowledgeBaseID {
 		return skip("knowledge_not_in_scope", nil)
 	}
 	if knowledge.ParseStatus == types.ParseStatusCancelled ||

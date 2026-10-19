@@ -20,13 +20,18 @@ import (
 func TestNextcloudSourcePairingPrepareRetryAndActivate(t *testing.T) {
 	t.Setenv("SYSTEM_AES_KEY", "0123456789abcdef0123456789abcdef")
 	db := provenanceTestDB(t)
-	require.NoError(t, db.Exec(`INSERT INTO knowledge_bases (id, tenant_id) VALUES ('kb-paired', 7), ('kb-other', 7)`).Error)
+	require.NoError(
+		t,
+		db.Exec(`INSERT INTO knowledge_bases (id, tenant_id) VALUES ('kb-paired', 7), ('kb-other', 7)`).Error,
+	)
 	repo := NewNextcloudSourcePairingRepository(db)
 	ctx := context.Background()
-	proposal := NextcloudSourcePairing{OperationID: "82d62225-1eb6-47ad-9264-2759e33dfa03",
-		TenantID: 7, KnowledgeBaseID: "kb-paired", InstanceID: "instance-1",
+	proposal := NextcloudSourcePairing{
+		OperationID: "82d62225-1eb6-47ad-9264-2759e33dfa03",
+		TenantID:    7, KnowledgeBaseID: "kb-paired", InstanceID: "instance-1",
 		BindingID: "dev-published", BaseURL: "https://nextcloud.example.test",
-		PublicationEpoch: 0, KeyID: "pair_82d622251eb647ad92642759e33dfa03"}
+		PublicationEpoch: 0, KeyID: "pair_82d622251eb647ad92642759e33dfa03",
+	}
 	first, created, err := repo.PrepareSourcePairing(ctx, proposal, "one-time-pairing-token")
 	require.NoError(t, err)
 	require.True(t, created)
@@ -113,9 +118,11 @@ func TestNextcloudSourcePairingPostgresJSONBActivation(t *testing.T) {
 	migrationSQLDB.SetMaxOpenConns(1)
 	t.Cleanup(func() { _ = migrationSQLDB.Close() })
 	require.NoError(t, migrationDB.Exec("SET search_path TO "+schema).Error)
-	for _, name := range []string{"000116_nextcloud_source_pairing.up.sql",
+	for _, name := range []string{
+		"000116_nextcloud_source_pairing.up.sql",
 		"000117_nextcloud_source_pairing_guards.up.sql",
-		"000120_nextcloud_source_pairing_abort.up.sql"} {
+		"000120_nextcloud_source_pairing_abort.up.sql",
+	} {
 		migration, err := os.ReadFile("../../../migrations/versioned/" + name)
 		require.NoError(t, err)
 		require.NoError(t, migrationDB.Exec(string(migration)).Error)
@@ -220,10 +227,12 @@ func TestNextcloudPendingSourcePairingAbortReleasesEmptySourceAndRetainsTombston
 	require.NoError(t, db.Exec(`INSERT INTO knowledge_bases (id, tenant_id) VALUES ('kb-abort', 7)`).Error)
 	repo := NewNextcloudSourcePairingRepository(db)
 	ctx := context.Background()
-	proposal := NextcloudSourcePairing{OperationID: "9bb82a4e-5522-4b5a-bc7c-5e70b64b32c7",
-		TenantID: 7, KnowledgeBaseID: "kb-abort", InstanceID: "instance-1",
+	proposal := NextcloudSourcePairing{
+		OperationID: "9bb82a4e-5522-4b5a-bc7c-5e70b64b32c7",
+		TenantID:    7, KnowledgeBaseID: "kb-abort", InstanceID: "instance-1",
 		BindingID: "abort-binding", BaseURL: "https://nextcloud.example.test",
-		PublicationEpoch: 1, KeyID: "pair_9bb82a4e55224b5abc7c5e70b64b32c7"}
+		PublicationEpoch: 1, KeyID: "pair_9bb82a4e55224b5abc7c5e70b64b32c7",
+	}
 	pending, created, err := repo.PrepareSourcePairing(ctx, proposal, "one-time-abort-token")
 	require.NoError(t, err)
 	require.True(t, created)

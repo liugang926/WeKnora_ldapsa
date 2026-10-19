@@ -51,7 +51,10 @@ func collectionScopes(request types.KnowledgeCollectionReadRequest) ([]types.Kno
 
 func collectionRevision(tx *gorm.DB, scope types.KnowledgeSearchScope) (uint64, error) {
 	var row struct{ Revision uint64 }
-	if err := tx.Table("knowledge_collection_scope_versions").Where("tenant_id = ? AND knowledge_base_id = ?", scope.TenantID, scope.KBID).Take(&row).Error; err != nil {
+	if err := tx.Table("knowledge_collection_scope_versions").
+		Where("tenant_id = ? AND knowledge_base_id = ?", scope.TenantID, scope.KBID).
+		Take(&row).
+		Error; err != nil {
 		return 0, err
 	}
 	if row.Revision == 0 {
@@ -60,7 +63,12 @@ func collectionRevision(tx *gorm.DB, scope types.KnowledgeSearchScope) (uint64, 
 	return row.Revision, nil
 }
 
-func collectionProof(tx *gorm.DB, k *types.Knowledge, a *knowledgeInputAdmission, lineage *types.SourceLineage) (*types.KnowledgeBuildInputProof, error) {
+func collectionProof(
+	tx *gorm.DB,
+	k *types.Knowledge,
+	a *knowledgeInputAdmission,
+	lineage *types.SourceLineage,
+) (*types.KnowledgeBuildInputProof, error) {
 	digest, err := knowledgeMaterialDigest(k)
 	if err != nil {
 		return nil, err
@@ -69,22 +77,42 @@ func collectionProof(tx *gorm.DB, k *types.Knowledge, a *knowledgeInputAdmission
 	if err != nil {
 		return nil, err
 	}
-	body, err := KnowledgeInputDigest([]string{a.AdmissionID, a.RootDigest, a.ConfigDigest, digest, fmt.Sprint(revision)})
+	body, err := KnowledgeInputDigest(
+		[]string{a.AdmissionID, a.RootDigest, a.ConfigDigest, digest, fmt.Sprint(revision)},
+	)
 	if err != nil {
 		return nil, err
 	}
-	return &types.KnowledgeBuildInputProof{Version: 1, TenantID: k.TenantID, KnowledgeBaseID: k.KnowledgeBaseID, KnowledgeID: k.ID, AdmissionID: a.AdmissionID, BuildGeneration: a.BuildGeneration, InputDigest: a.InputDigest, ConfigDigest: a.ConfigDigest, BodyDigest: body, ChunkIDs: []string{}, SourceLineage: lineage}, nil
+	return &types.KnowledgeBuildInputProof{
+		Version:         1,
+		TenantID:        k.TenantID,
+		KnowledgeBaseID: k.KnowledgeBaseID,
+		KnowledgeID:     k.ID,
+		AdmissionID:     a.AdmissionID,
+		BuildGeneration: a.BuildGeneration,
+		InputDigest:     a.InputDigest,
+		ConfigDigest:    a.ConfigDigest,
+		BodyDigest:      body,
+		ChunkIDs:        []string{},
+		SourceLineage:   lineage,
+	}, nil
 }
 
 // No caller-provided predicate is evaluated here. All candidate bodies start
 // from their persisted original admission, including candidates that will not
 // be displayed and documents excluded by the subsequent operational filters.
-func (s *KnowledgeInputProvenanceStore) CaptureKnowledgeCollectionInputs(ctx context.Context, request types.KnowledgeCollectionReadRequest) (*types.KnowledgeCollectionInputSnapshot, error) {
+func (s *KnowledgeInputProvenanceStore) CaptureKnowledgeCollectionInputs(
+	ctx context.Context,
+	request types.KnowledgeCollectionReadRequest,
+) (*types.KnowledgeCollectionInputSnapshot, error) {
 	scopes, err := collectionScopes(request)
 	if err != nil {
 		return nil, err
 	}
-	result := &types.KnowledgeCollectionInputSnapshot{Scopes: []types.KnowledgeCollectionScopeCheckpoint{}, Candidates: []*types.KnowledgeCollectionCandidate{}}
+	result := &types.KnowledgeCollectionInputSnapshot{
+		Scopes:     []types.KnowledgeCollectionScopeCheckpoint{},
+		Candidates: []*types.KnowledgeCollectionCandidate{},
+	}
 	err = s.collectionTransaction(ctx, func(tx *gorm.DB) error {
 		if err := s.checkFAQImportReadSetPlanInTx(tx); err != nil {
 			return err
@@ -111,7 +139,16 @@ func (s *KnowledgeInputProvenanceStore) CaptureKnowledgeCollectionInputs(ctx con
 			if err != nil {
 				return err
 			}
-			result.Scopes = append(result.Scopes, types.KnowledgeCollectionScopeCheckpoint{Scope: scope, Revision: revision, ConfigurationRevision: configRevision, ConfigurationDigest: configDigest, ConfigurationLineage: configLineage})
+			result.Scopes = append(
+				result.Scopes,
+				types.KnowledgeCollectionScopeCheckpoint{
+					Scope:                 scope,
+					Revision:              revision,
+					ConfigurationRevision: configRevision,
+					ConfigurationDigest:   configDigest,
+					ConfigurationLineage:  configLineage,
+				},
+			)
 			// Batches bound SQL result hydration without imposing a permanent KB
 			// size ceiling. They all share this transaction's original snapshot.
 			last := ""
@@ -133,7 +170,10 @@ func (s *KnowledgeInputProvenanceStore) CaptureKnowledgeCollectionInputs(ctx con
 					if err != nil {
 						return err
 					}
-					result.Candidates = append(result.Candidates, &types.KnowledgeCollectionCandidate{Knowledge: k, Proof: proof})
+					result.Candidates = append(
+						result.Candidates,
+						&types.KnowledgeCollectionCandidate{Knowledge: k, Proof: proof},
+					)
 					candidates = append(candidates, k)
 				}
 				if len(rows) < 256 {
@@ -152,7 +192,10 @@ func (s *KnowledgeInputProvenanceStore) CaptureKnowledgeCollectionInputs(ctx con
 	return result, nil
 }
 
-func (s *KnowledgeInputProvenanceStore) recheckCollectionInTx(tx *gorm.DB, snapshot *types.KnowledgeCollectionInputSnapshot) error {
+func (s *KnowledgeInputProvenanceStore) recheckCollectionInTx(
+	tx *gorm.DB,
+	snapshot *types.KnowledgeCollectionInputSnapshot,
+) error {
 	if snapshot == nil {
 		return types.ErrSourceLineageUnknown
 	}
@@ -185,7 +228,8 @@ func (s *KnowledgeInputProvenanceStore) recheckCollectionInTx(tx *gorm.DB, snaps
 		if err != nil {
 			return err
 		}
-		if configRevision != checkpoint.ConfigurationRevision || configDigest != checkpoint.ConfigurationDigest || !reflect.DeepEqual(lineage, checkpoint.ConfigurationLineage) {
+		if configRevision != checkpoint.ConfigurationRevision || configDigest != checkpoint.ConfigurationDigest ||
+			!reflect.DeepEqual(lineage, checkpoint.ConfigurationLineage) {
 			return ErrKnowledgeInputChanged
 		}
 		last := ""
@@ -204,7 +248,8 @@ func (s *KnowledgeInputProvenanceStore) recheckCollectionInTx(tx *gorm.DB, snaps
 				}
 				entry := snapshot.Candidates[index]
 				index++
-				if entry == nil || entry.Knowledge == nil || entry.Proof == nil || entry.Proof.Projection != "" || len(entry.Proof.ChunkIDs) != 0 {
+				if entry == nil || entry.Knowledge == nil || entry.Proof == nil || entry.Proof.Projection != "" ||
+					len(entry.Proof.ChunkIDs) != 0 {
 					return types.ErrSourceLineageUnknown
 				}
 				old, err := json.Marshal(entry.Knowledge)
@@ -246,7 +291,12 @@ func (s *KnowledgeInputProvenanceStore) recheckCollectionInTx(tx *gorm.DB, snaps
 	return recheckKnowledgeCollectionAuxiliary(tx, scopes, candidates, snapshot.Auxiliary)
 }
 
-func (s *KnowledgeInputProvenanceStore) selectCollectionInTx(ctx context.Context, tx *gorm.DB, snapshot *types.KnowledgeCollectionInputSnapshot, request types.KnowledgeCollectionSelectionRequest) (*types.KnowledgeCollectionSelection, error) {
+func (s *KnowledgeInputProvenanceStore) selectCollectionInTx(
+	ctx context.Context,
+	tx *gorm.DB,
+	snapshot *types.KnowledgeCollectionInputSnapshot,
+	request types.KnowledgeCollectionSelectionRequest,
+) (*types.KnowledgeCollectionSelection, error) {
 	result := &types.KnowledgeCollectionSelection{Request: request, Knowledge: []*types.Knowledge{}}
 	repo := &knowledgeRepository{db: tx}
 	var err error
@@ -256,7 +306,13 @@ func (s *KnowledgeInputProvenanceStore) selectCollectionInTx(ctx context.Context
 			return nil, types.ErrSourceLineageUnknown
 		}
 		scope := snapshot.Scopes[0].Scope
-		result.Knowledge, result.Total, err = repo.ListPagedKnowledgeByKnowledgeBaseID(ctx, scope.TenantID, scope.KBID, &request.Page, request.Filter)
+		result.Knowledge, result.Total, err = repo.ListPagedKnowledgeByKnowledgeBaseID(
+			ctx,
+			scope.TenantID,
+			scope.KBID,
+			&request.Page,
+			request.Filter,
+		)
 		result.Page, result.PageSize = request.Page.GetPage(), request.Page.Limit()
 	case "folders":
 		if len(snapshot.Scopes) != 1 {
@@ -271,7 +327,14 @@ func (s *KnowledgeInputProvenanceStore) selectCollectionInTx(ctx context.Context
 		for _, checkpoint := range snapshot.Scopes {
 			scopes = append(scopes, checkpoint.Scope)
 		}
-		result.Knowledge, result.HasMore, result.Total, err = repo.SearchKnowledgeInScopes(ctx, scopes, request.Keyword, request.Offset, request.Limit, request.FileTypes)
+		result.Knowledge, result.HasMore, result.Total, err = repo.SearchKnowledgeInScopes(
+			ctx,
+			scopes,
+			request.Keyword,
+			request.Offset,
+			request.Limit,
+			request.FileTypes,
+		)
 	default:
 		return nil, types.ErrSourceLineageUnknown
 	}
@@ -284,8 +347,17 @@ func (s *KnowledgeInputProvenanceStore) selectCollectionInTx(ctx context.Context
 		// These asynchronous diagnostic producers do not have original material
 		// receipts. Their strings must not ride a document's admission.
 		k.ErrorMessage = ""
-		if k.Type == types.KnowledgeTypeFAQ && len(k.LastFAQImportResult) > 0 && string(k.LastFAQImportResult) != "null" {
-			proof, readErr := s.captureFAQImportOutputInTx(tx, types.FAQImportOutputReadRequest{TenantID: k.TenantID, KnowledgeBaseID: k.KnowledgeBaseID, KnowledgeID: k.ID, Kind: "result"})
+		if k.Type == types.KnowledgeTypeFAQ && len(k.LastFAQImportResult) > 0 &&
+			string(k.LastFAQImportResult) != "null" {
+			proof, readErr := s.captureFAQImportOutputInTx(
+				tx,
+				types.FAQImportOutputReadRequest{
+					TenantID:        k.TenantID,
+					KnowledgeBaseID: k.KnowledgeBaseID,
+					KnowledgeID:     k.ID,
+					Kind:            "result",
+				},
+			)
 			if readErr != nil {
 				return nil, readErr
 			}
@@ -308,7 +380,11 @@ func (s *KnowledgeInputProvenanceStore) selectCollectionInTx(ctx context.Context
 // Select is called only after the request's original candidates have passed
 // live authorization. Filtering, total, has_more and folder aggregation run in
 // the same local snapshot as the complete membership/material recheck.
-func (s *KnowledgeInputProvenanceStore) SelectKnowledgeCollectionInputs(ctx context.Context, snapshot *types.KnowledgeCollectionInputSnapshot, request types.KnowledgeCollectionSelectionRequest) (*types.KnowledgeCollectionSelection, error) {
+func (s *KnowledgeInputProvenanceStore) SelectKnowledgeCollectionInputs(
+	ctx context.Context,
+	snapshot *types.KnowledgeCollectionInputSnapshot,
+	request types.KnowledgeCollectionSelectionRequest,
+) (*types.KnowledgeCollectionSelection, error) {
 	var result *types.KnowledgeCollectionSelection
 	err := s.collectionTransaction(ctx, func(tx *gorm.DB) error {
 		if err := s.recheckCollectionInTx(tx, snapshot); err != nil {
@@ -321,7 +397,11 @@ func (s *KnowledgeInputProvenanceStore) SelectKnowledgeCollectionInputs(ctx cont
 	return result, err
 }
 
-func (s *KnowledgeInputProvenanceStore) RecheckKnowledgeCollectionInputs(ctx context.Context, snapshot *types.KnowledgeCollectionInputSnapshot, selection *types.KnowledgeCollectionSelection) error {
+func (s *KnowledgeInputProvenanceStore) RecheckKnowledgeCollectionInputs(
+	ctx context.Context,
+	snapshot *types.KnowledgeCollectionInputSnapshot,
+	selection *types.KnowledgeCollectionSelection,
+) error {
 	return s.collectionTransaction(ctx, func(tx *gorm.DB) error {
 		if err := s.recheckCollectionInTx(tx, snapshot); err != nil {
 			return err

@@ -22,11 +22,16 @@ type NextcloudTenantDeletion struct {
 
 func (NextcloudTenantDeletion) TableName() string { return "nextcloud_onboarding_tenant_deletions" }
 func tenantDeletionID(tenant uint64, deletion int64) string {
-	return recoverySHA([]byte("weknora-tenant-deleted-v1\n" + strconv.FormatUint(tenant, 10) + "\n" + strconv.FormatInt(deletion, 10)))
+	return recoverySHA(
+		[]byte("weknora-tenant-deleted-v1\n" + strconv.FormatUint(tenant, 10) + "\n" + strconv.FormatInt(deletion, 10)),
+	)
 }
+
 func validTenantDeletion(row NextcloudTenantDeletion) bool {
-	return row.TenantID > 0 && row.DeletionTimeMS > 0 && row.ClosedAtMS >= row.DeletionTimeMS && row.DeletionID == tenantDeletionID(row.TenantID, row.DeletionTimeMS)
+	return row.TenantID > 0 && row.DeletionTimeMS > 0 && row.ClosedAtMS >= row.DeletionTimeMS &&
+		row.DeletionID == tenantDeletionID(row.TenantID, row.DeletionTimeMS)
 }
+
 func retainActualTenantDeletionInTx(tx *gorm.DB, tenant uint64) error {
 	if !tx.Migrator().HasTable(&NextcloudTenantDeletion{}) {
 		return ErrNextcloudTargetUnverified
@@ -54,14 +59,27 @@ func retainActualTenantDeletionInTx(tx *gorm.DB, tenant uint64) error {
 	if closed < deletion {
 		closed = deletion
 	}
-	return tx.Create(&NextcloudTenantDeletion{TenantID: tenant, DeletionID: tenantDeletionID(tenant, deletion), DeletionTimeMS: deletion, ClosedAtMS: closed}).Error
+	return tx.Create(
+		&NextcloudTenantDeletion{
+			TenantID:       tenant,
+			DeletionID:     tenantDeletionID(tenant, deletion),
+			DeletionTimeMS: deletion,
+			ClosedAtMS:     closed,
+		},
+	).Error
 }
 
 // Safe metadata is available through the existing operation GET, including a
 // retired historical operation. Only current original-actor/delegation authority
 // permits observation after Tenant membership has been removed.
-func (s *NextcloudOnboardingStore) TenantDeletionObservation(ctx context.Context, c types.NextcloudOnboardingCredential, op types.NextcloudOnboardingOperation, dir, guid string) (*types.NextcloudTenantDeletionObservation, error) {
-	if c.ID != op.CredentialID || c.TenantID != op.TenantID || c.InstanceID != op.InstanceID || !s.db.Migrator().HasTable(&NextcloudTenantDeletion{}) {
+func (s *NextcloudOnboardingStore) TenantDeletionObservation(
+	ctx context.Context,
+	c types.NextcloudOnboardingCredential,
+	op types.NextcloudOnboardingOperation,
+	dir, guid string,
+) (*types.NextcloudTenantDeletionObservation, error) {
+	if c.ID != op.CredentialID || c.TenantID != op.TenantID || c.InstanceID != op.InstanceID ||
+		!s.db.Migrator().HasTable(&NextcloudTenantDeletion{}) {
 		return nil, ErrNextcloudTargetUnverified
 	}
 	if dir == "" && guid == "" {
@@ -82,7 +100,9 @@ func (s *NextcloudOnboardingStore) TenantDeletionObservation(ctx context.Context
 			return nil, err
 		}
 		// Repair only a retained positive real tombstone; absent rows never suffice.
-		if err = db.Transaction(func(tx *gorm.DB) error { return closeDeletedNextcloudTargetsInTx(tx, op.TenantID, "") }); err != nil {
+		if err = db.Transaction(
+			func(tx *gorm.DB) error { return closeDeletedNextcloudTargetsInTx(tx, op.TenantID, "") },
+		); err != nil {
 			return nil, err
 		}
 		err = db.Where("tenant_id=?", op.TenantID).Take(&row).Error
@@ -96,5 +116,15 @@ func (s *NextcloudOnboardingStore) TenantDeletionObservation(ctx context.Context
 	if err = authorizeTargetClosureObserver(db, c, op, dir, guid); err != nil {
 		return nil, err
 	}
-	return &types.NextcloudTenantDeletionObservation{Schema: "weknora-nextcloud-tenant-deletion-v1", State: "tenant_deleted", OperationID: op.OperationID, InstanceID: op.InstanceID, BindingID: op.BindingID, TenantID: strconv.FormatUint(op.TenantID, 10), DeletionID: row.DeletionID, DeletionTimeMS: strconv.FormatInt(row.DeletionTimeMS, 10), ClosedAt: strconv.FormatInt(row.ClosedAtMS/1000, 10)}, nil
+	return &types.NextcloudTenantDeletionObservation{
+		Schema:         "weknora-nextcloud-tenant-deletion-v1",
+		State:          "tenant_deleted",
+		OperationID:    op.OperationID,
+		InstanceID:     op.InstanceID,
+		BindingID:      op.BindingID,
+		TenantID:       strconv.FormatUint(op.TenantID, 10),
+		DeletionID:     row.DeletionID,
+		DeletionTimeMS: strconv.FormatInt(row.DeletionTimeMS, 10),
+		ClosedAt:       strconv.FormatInt(row.ClosedAtMS/1000, 10),
+	}, nil
 }

@@ -11,7 +11,10 @@ import (
 // The completed replay sender gets only original authenticated material. The
 // metadata probe never fetches text, references, steps, or checkpoint JSON.
 // A nil message represents an actual current running turn, not a legacy grant.
-func (s *messageService) BeginCompletedMessageMaterialReplay(ctx context.Context, sessionID, messageID string) (*types.Message, func() error, func(), error) {
+func (s *messageService) BeginCompletedMessageMaterialReplay(
+	ctx context.Context,
+	sessionID, messageID string,
+) (*types.Message, func() error, func(), error) {
 	if s.materialStore == nil || s.sourceLineageGuard == nil {
 		return nil, nil, nil, access.ErrNextcloudPublicationUnavailable
 	}
@@ -26,7 +29,10 @@ func (s *messageService) BeginCompletedMessageMaterialReplay(ctx context.Context
 	if !ok {
 		return nil, nil, nil, access.ErrNextcloudPublicationDenied
 	}
-	guard, err := s.beginMessageMaterialRead(ctx, types.MessageMaterialReadRequest{TenantID: tenant, SessionID: sessionID, MessageIDs: []string{messageID}})
+	guard, err := s.beginMessageMaterialRead(
+		ctx,
+		types.MessageMaterialReadRequest{TenantID: tenant, SessionID: sessionID, MessageIDs: []string{messageID}},
+	)
 	if err != nil {
 		return nil, nil, nil, err
 	}

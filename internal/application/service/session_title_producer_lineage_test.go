@@ -2,6 +2,10 @@ package service
 
 import (
 	"context"
+	"os"
+	"strings"
+	"testing"
+
 	"github.com/Tencent/WeKnora/internal/application/access"
 	"github.com/Tencent/WeKnora/internal/application/repository"
 	"github.com/Tencent/WeKnora/internal/config"
@@ -11,9 +15,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
-	"os"
-	"strings"
-	"testing"
 )
 
 type sessionTitleLineageModel struct {
@@ -21,7 +22,11 @@ type sessionTitleLineageModel struct {
 	mutate func()
 }
 
-func (m sessionTitleLineageModel) Chat(_ context.Context, messages []chat.Message, _ *chat.ChatOptions) (*types.ChatResponse, error) {
+func (m sessionTitleLineageModel) Chat(
+	_ context.Context,
+	messages []chat.Message,
+	_ *chat.ChatOptions,
+) (*types.ChatResponse, error) {
 	require.Len(m.t, messages, 2)
 	require.Equal(m.t, "raw human question", messages[1].Content)
 	for _, input := range messages {
@@ -34,7 +39,12 @@ func (m sessionTitleLineageModel) Chat(_ context.Context, messages []chat.Messag
 	}
 	return &types.ChatResponse{Content: "new model title"}, nil
 }
-func (m sessionTitleLineageModel) ChatStream(context.Context, []chat.Message, *chat.ChatOptions) (<-chan types.StreamResponse, error) {
+
+func (m sessionTitleLineageModel) ChatStream(
+	context.Context,
+	[]chat.Message,
+	*chat.ChatOptions,
+) (<-chan types.StreamResponse, error) {
 	panic("not streaming")
 }
 func (m sessionTitleLineageModel) GetModelName() string { return "title" }
@@ -66,17 +76,53 @@ func TestSessionTextLineageActualTitleModelWriterAndManualRace(t *testing.T) {
 			if manualRace {
 				model.mutate = func() {
 					if mutation == "different" {
-						require.NoError(t, db.Model(&types.Session{}).Where("id = ?", row.ID).Updates(map[string]any{"title": "manual title", "title_source_lineage": empty}).Error)
+						require.NoError(
+							t,
+							db.Model(&types.Session{}).
+								Where("id = ?", row.ID).
+								Updates(map[string]any{"title": "manual title", "title_source_lineage": empty}).
+								Error,
+						)
 					} else {
 						if mutation == "ABA" {
-							require.NoError(t, db.Model(&types.Session{}).Where("id = ?", row.ID).Update("title", "intermediate").Error)
+							require.NoError(
+								t,
+								db.Model(&types.Session{}).
+									Where("id = ?", row.ID).
+									Update("title", "intermediate").
+									Error,
+							)
 						}
-						require.NoError(t, db.Model(&types.Session{}).Where("id = ?", row.ID).Update("title", "legacy secret title").Error)
+						require.NoError(
+							t,
+							db.Model(&types.Session{}).
+								Where("id = ?", row.ID).
+								Update("title", "legacy secret title").
+								Error,
+						)
 					}
 				}
 			}
-			svc := &sessionService{sessionRepo: repository.NewSessionRepository(db), modelService: sessionTitleLineageModels{model: model}, cfg: &config.Config{Conversation: &config.ConversationConfig{}}, sourceLineageGuard: access.NewNextcloudSourceLineageGuard(nil, nil, nil, nil, nil, nil, ragReadActorFixture{})}
-			title, err := svc.GenerateTitle(ragReadContext(), row, []types.Message{{Role: "user", Content: "raw human question"}}, "title-model")
+			svc := &sessionService{
+				sessionRepo:  repository.NewSessionRepository(db),
+				modelService: sessionTitleLineageModels{model: model},
+				cfg:          &config.Config{Conversation: &config.ConversationConfig{}},
+				sourceLineageGuard: access.NewNextcloudSourceLineageGuard(
+					nil,
+					nil,
+					nil,
+					nil,
+					nil,
+					nil,
+					ragReadActorFixture{},
+				),
+			}
+			title, err := svc.GenerateTitle(
+				ragReadContext(),
+				row,
+				[]types.Message{{Role: "user", Content: "raw human question"}},
+				"title-model",
+			)
 			if manualRace {
 				require.ErrorIs(t, err, access.ErrNextcloudPublicationDenied)
 				require.Empty(t, title)

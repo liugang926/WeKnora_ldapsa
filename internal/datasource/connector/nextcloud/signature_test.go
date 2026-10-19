@@ -37,7 +37,9 @@ func TestMachineCanonicalVector(t *testing.T) {
 	key := sha256.Sum256([]byte("paired-secret"))
 	mac := hmac.New(sha256.New, key[:])
 	_, _ = mac.Write([]byte(canonical))
-	if got := hex.EncodeToString(mac.Sum(nil)); got != "204a5da882a867f96220bab1e17d1ed2df2503c288a290fa8c17b3262bb7cc01" {
+	if got := hex.EncodeToString(
+		mac.Sum(nil),
+	); got != "204a5da882a867f96220bab1e17d1ed2df2503c288a290fa8c17b3262bb7cc01" {
 		t.Fatalf("signature = %s", got)
 	}
 }

@@ -51,8 +51,10 @@ func acquireNextcloudHTTPKBReadLease(ctx context.Context, store nextcloudHTTPRea
 		heartbeat = nextcloudHTTPReadLeaseHeartbeat
 	}
 	leaseCtx, cancel := context.WithCancel(ctx)
-	group := &nextcloudHTTPReadLeases{store: store, ctx: leaseCtx, cancel: cancel,
-		heartbeat: heartbeat, rows: make([]repository.NextcloudContentLease, 0, 1)}
+	group := &nextcloudHTTPReadLeases{
+		store: store, ctx: leaseCtx, cancel: cancel,
+		heartbeat: heartbeat, rows: make([]repository.NextcloudContentLease, 0, 1),
+	}
 	row, err := store.AcquireKBRead(leaseCtx, tenantID, kbID, uuid.NewString(),
 		nextcloudHTTPReadLeaseTTL)
 	if err != nil {
@@ -140,8 +142,10 @@ func acquireNextcloudHTTPReadLeases(ctx context.Context, store nextcloudHTTPRead
 		heartbeat = nextcloudHTTPReadLeaseHeartbeat
 	}
 	leaseCtx, cancel := context.WithCancel(ctx)
-	group := &nextcloudHTTPReadLeases{store: store, ctx: leaseCtx, cancel: cancel,
-		heartbeat: heartbeat, rows: make([]repository.NextcloudContentLease, 0, len(scopes))}
+	group := &nextcloudHTTPReadLeases{
+		store: store, ctx: leaseCtx, cancel: cancel,
+		heartbeat: heartbeat, rows: make([]repository.NextcloudContentLease, 0, len(scopes)),
+	}
 	owner := uuid.NewString()
 	for _, scope := range scopes {
 		row, err := store.AcquireKnowledge(leaseCtx, scope, repository.NextcloudContentReadLease,
@@ -173,11 +177,11 @@ func attachNextcloudLeasedRequest(c *gin.Context, leases *nextcloudHTTPReadLease
 func (h *KnowledgeHandler) beginNextcloudRead(c *gin.Context, ctx context.Context,
 	knowledges []*types.Knowledge,
 ) (*nextcloudHTTPReadLeases, error) {
-
 	faqLeases, _ := ctx.Value(faqKnowledgePreReadKey{}).(*nextcloudHTTPReadLeases)
 	var ids []string
 	for _, row := range knowledges {
-		if row != nil && row.Type == types.KnowledgeTypeFAQ && len(row.LastFAQImportResult) > 0 && string(row.LastFAQImportResult) != "null" {
+		if row != nil && row.Type == types.KnowledgeTypeFAQ && len(row.LastFAQImportResult) > 0 &&
+			string(row.LastFAQImportResult) != "null" {
 			ids = append(ids, row.ID)
 		}
 	}
@@ -189,7 +193,13 @@ func (h *KnowledgeHandler) beginNextcloudRead(c *gin.Context, ctx context.Contex
 		if err != nil {
 			return nil, knowledgeOutputHTTPError(err)
 		}
-		faqLeases, err = acquireFAQReadPlanLeases(ctx, h.contentLeases, plan.Scopes, plan.SourceLineage, h.leaseHeartbeat)
+		faqLeases, err = acquireFAQReadPlanLeases(
+			ctx,
+			h.contentLeases,
+			plan.Scopes,
+			plan.SourceLineage,
+			h.leaseHeartbeat,
+		)
 		if err != nil {
 			return nil, err
 		}
@@ -524,7 +534,7 @@ func (w *nextcloudAuthorizationWriter) WriteHeaderNow() {
 }
 
 func (w *nextcloudAuthorizationWriter) denyWrite(err error) {
-	if w.ResponseWriter.Written() {
+	if w.Written() {
 		return
 	}
 	// Gin's JSON renderer can call Write without a preceding WriteHeaderNow.
@@ -534,8 +544,8 @@ func (w *nextcloudAuthorizationWriter) denyWrite(err error) {
 	if appErr, ok := errors.IsAppError(err); ok {
 		status = appErr.HTTPCode
 	}
-	w.ResponseWriter.Header().Del("Content-Type")
-	w.ResponseWriter.Header().Del("Content-Length")
+	w.Header().Del("Content-Type")
+	w.Header().Del("Content-Length")
 	w.ResponseWriter.WriteHeader(status)
 	w.ResponseWriter.WriteHeaderNow()
 }
@@ -544,7 +554,7 @@ func (w *nextcloudAuthorizationWriter) WriteHeader(code int) {
 	if err := w.beforeWrite(); err != nil {
 		// HEAD and Range responses may send file metadata without a body.
 		// Strip it when access changed between the handler check and headers.
-		header := w.ResponseWriter.Header()
+		header := w.Header()
 		header.Del("Content-Disposition")
 		header.Del("Content-Description")
 		header.Del("Content-Length")

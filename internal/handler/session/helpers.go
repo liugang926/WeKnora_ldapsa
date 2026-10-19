@@ -275,7 +275,15 @@ func createAgentQueryEvent(
 }
 
 // createUserMessage creates a user message and returns the created message.
-func (h *Handler) createUserMessage(ctx context.Context, sessionID, query, requestID string, mentionedItems types.MentionedItems, images types.MessageImages, attachments types.MessageAttachments, channel string, attribution *types.SuggestionAttribution) (*types.Message, error) {
+func (h *Handler) createUserMessage(
+	ctx context.Context,
+	sessionID, query, requestID string,
+	mentionedItems types.MentionedItems,
+	images types.MessageImages,
+	attachments types.MessageAttachments,
+	channel string,
+	attribution *types.SuggestionAttribution,
+) (*types.Message, error) {
 	// query is the original request.Query, before prompt rendering/rewrite.
 	// Only this explicit raw-text adapter may admit an independent user body;
 	// opaque image/attachment inputs keep their complete message proof unknown.
@@ -315,9 +323,18 @@ func (h *Handler) setupStreamHandler(
 	eventBus *event.EventBus,
 ) *AgentStreamHandler {
 	streamHandler := NewAgentStreamHandler(
-		ctx, sessionID, assistantMessageID, requestID, tenantID, receivedAt,
-		assistantMessage, h.nativeLiveStreamManager(ctx, tenantID, sessionID, assistantMessageID, requestID), eventBus, h.artifactCollector,
-		h.workspaceCheckpointer, h.sandboxIDLookup,
+		ctx,
+		sessionID,
+		assistantMessageID,
+		requestID,
+		tenantID,
+		receivedAt,
+		assistantMessage,
+		h.nativeLiveStreamManager(ctx, tenantID, sessionID, assistantMessageID, requestID),
+		eventBus,
+		h.artifactCollector,
+		h.workspaceCheckpointer,
+		h.sandboxIDLookup,
 	)
 	streamHandler.Subscribe()
 	return streamHandler
@@ -341,7 +358,12 @@ func (h *Handler) setupStopEventHandler(
 			context.WithoutCancel(ctx),
 			types.TenantIDContextKey, sessionTenantID,
 		)
-		h.completeAssistantMessage(updateCtx, assistantMessage, "", "") // empty query: stopped conversations are not indexed
+		h.completeAssistantMessage(
+			updateCtx,
+			assistantMessage,
+			"",
+			"",
+		) // empty query: stopped conversations are not indexed
 		return nil
 	})
 }

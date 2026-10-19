@@ -25,7 +25,8 @@ var ErrPublicationNotCurrent = errors.New("Nextcloud publication is no longer cu
 // so a successful response attests to the instance, binding, file, ETag and
 // path together. Every non-204 response or transport failure denies publish.
 func CheckCurrentPublication(ctx context.Context, source *types.DataSourceConfig,
-	instanceID, bindingID string, fileID int64, etag, path string) error {
+	instanceID, bindingID string, fileID int64, etag, path string,
+) error {
 	if source == nil || source.Type != types.ConnectorTypeNextcloud ||
 		len(source.ResourceIDs) != 1 || source.ResourceIDs[0] != bindingID ||
 		instanceID == "" || len(instanceID) > 256 || !validBindingID(bindingID) ||
@@ -70,7 +71,12 @@ func CheckCurrentPublication(ctx context.Context, source *types.DataSourceConfig
 	defer closeNextcloudResponseBody(ctx, resp.Body)
 	if resp.StatusCode != http.StatusNoContent {
 		switch resp.StatusCode {
-		case http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound, http.StatusConflict, http.StatusGone, http.StatusLocked:
+		case http.StatusUnauthorized,
+			http.StatusForbidden,
+			http.StatusNotFound,
+			http.StatusConflict,
+			http.StatusGone,
+			http.StatusLocked:
 			return fmt.Errorf("%w: status %d", ErrPublicationNotCurrent, resp.StatusCode)
 		}
 		return apperrors.NewProtocolError(fmt.Errorf("nextcloud publication check returned status %d",

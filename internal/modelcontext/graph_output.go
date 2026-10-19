@@ -24,7 +24,13 @@ func (r *sourceRegistry) modelKnowledgeGraphOutput(data map[string]interface{}, 
 		out.WriteString("  </entity>\n")
 	}
 	for _, edge := range mapsValue(graph["edges"]) {
-		fmt.Fprintf(&out, "  <relation source=\"%s\" target=\"%s\" type=\"%s\"/>\n", escapeAttr(stringValue(edge, "source")), escapeAttr(stringValue(edge, "target")), escapeAttr(stringValue(edge, "type")))
+		fmt.Fprintf(
+			&out,
+			"  <relation source=\"%s\" target=\"%s\" type=\"%s\"/>\n",
+			escapeAttr(stringValue(edge, "source")),
+			escapeAttr(stringValue(edge, "target")),
+			escapeAttr(stringValue(edge, "type")),
+		)
 	}
 	out.WriteString("</knowledge_graph>\n")
 	out.WriteString(r.modelKnowledgeOutput("graph", mapsValue(data["results"]), ""))

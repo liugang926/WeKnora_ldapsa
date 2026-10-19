@@ -4,10 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strconv"
+
 	"github.com/Tencent/WeKnora/internal/types"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
-	"strconv"
 )
 
 type nextcloudDerivedArtifact struct {
@@ -22,7 +23,12 @@ func (nextcloudDerivedArtifact) TableName() string { return "nextcloud_derived_w
 // Called in the actual row-write transaction. The immutable identity ledger is
 // exhaustive for this protocol's supported local writers; historic rows cannot
 // be backfilled from a later config, empty scan, or garbage-collection attempt.
-func RecordNextcloudDerivedArtifactInTx(ctx context.Context, tx *gorm.DB, knowledgeID, kbID, kind, ref string, dimension int64) error {
+func RecordNextcloudDerivedArtifactInTx(
+	ctx context.Context,
+	tx *gorm.DB,
+	knowledgeID, kbID, kind, ref string,
+	dimension int64,
+) error {
 	if !tx.Migrator().HasTable(&nextcloudDerivedArtifact{}) {
 		return nil
 	}
@@ -44,11 +50,14 @@ func RecordNextcloudDerivedArtifactInTx(ctx context.Context, tx *gorm.DB, knowle
 		return e
 	}
 	var plan nextcloudDerivedBackendPlan
-	if e = tx.Where("tenant_id=? AND knowledge_base_id=? AND knowledge_id=?", k.TenantID, kbID, knowledgeID).Take(&plan).Error; e != nil {
+	if e = tx.Where("tenant_id=? AND knowledge_base_id=? AND knowledge_id=?", k.TenantID, kbID, knowledgeID).
+		Take(&plan).
+		Error; e != nil {
 		return ErrNextcloudContentGCUncovered
 	}
 	var backend nextcloudBackendSelection
-	if recoverySHA([]byte(plan.BackendPlan)) != plan.PlanSHA256 || json.Unmarshal([]byte(plan.BackendPlan), &backend) != nil {
+	if recoverySHA([]byte(plan.BackendPlan)) != plan.PlanSHA256 ||
+		json.Unmarshal([]byte(plan.BackendPlan), &backend) != nil {
 		return ErrNextcloudContentLeaseDenied
 	}
 	if kind == "scoped_sql_graph" {
@@ -70,17 +79,35 @@ func RecordNextcloudDerivedArtifactInTx(ctx context.Context, tx *gorm.DB, knowle
 			return ErrNextcloudContentLeaseDenied
 		}
 	}
-	identity := strconv.FormatUint(k.TenantID, 10) + "\x00" + kbID + "\x00" + knowledgeID + "\x00" + kind + "\x00" + ref + "\x00" + strconv.FormatInt(dimension, 10) + "\x00" + plan.PlanSHA256
+	identity := strconv.FormatUint(
+		k.TenantID,
+		10,
+	) + "\x00" + kbID + "\x00" + knowledgeID + "\x00" + kind + "\x00" + ref + "\x00" + strconv.FormatInt(
+		dimension,
+		10,
+	) + "\x00" + plan.PlanSHA256
 	now, e := nextcloudLeaseNowMS(tx)
 	if e != nil {
 		return e
 	}
-	artifact := nextcloudDerivedArtifact{TenantID: k.TenantID, KnowledgeBaseID: kbID, KnowledgeID: knowledgeID, ItemKind: kind, ObjectRef: ref, PlanSHA256: plan.PlanSHA256, IdentitySHA256: recoverySHA([]byte(identity)), Dimension: dimension, WrittenAtMS: now}
+	artifact := nextcloudDerivedArtifact{
+		TenantID:        k.TenantID,
+		KnowledgeBaseID: kbID,
+		KnowledgeID:     knowledgeID,
+		ItemKind:        kind,
+		ObjectRef:       ref,
+		PlanSHA256:      plan.PlanSHA256,
+		IdentitySHA256:  recoverySHA([]byte(identity)),
+		Dimension:       dimension,
+		WrittenAtMS:     now,
+	}
 	if e = tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&artifact).Error; e != nil {
 		return e
 	}
 	var actual nextcloudDerivedArtifact
-	if e = tx.Where("tenant_id=? AND knowledge_base_id=? AND knowledge_id=? AND item_kind=? AND object_ref=?", k.TenantID, kbID, knowledgeID, kind, ref).Take(&actual).Error; e != nil {
+	if e = tx.Where("tenant_id=? AND knowledge_base_id=? AND knowledge_id=? AND item_kind=? AND object_ref=?", k.TenantID, kbID, knowledgeID, kind, ref).
+		Take(&actual).
+		Error; e != nil {
 		return e
 	}
 	if actual.IdentitySHA256 != artifact.IdentitySHA256 {
@@ -106,7 +133,8 @@ func guardNextcloudDerivedChunkReferences(tx *gorm.DB, chunks []*types.Chunk) er
 				return e
 			}
 			for _, owner := range owners {
-				if owner.TenantID != chunk.TenantID || owner.KnowledgeBaseID != chunk.KnowledgeBaseID || owner.KnowledgeID != chunk.KnowledgeID {
+				if owner.TenantID != chunk.TenantID || owner.KnowledgeBaseID != chunk.KnowledgeBaseID ||
+					owner.KnowledgeID != chunk.KnowledgeID {
 					return ErrNextcloudContentLeaseDenied
 				}
 			}

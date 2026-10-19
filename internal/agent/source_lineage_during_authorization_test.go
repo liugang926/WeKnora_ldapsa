@@ -19,11 +19,25 @@ func TestAgentLineageDuringAuthorizationMutationCannotChangeActualWireSnapshot(t
 			e.toolRegistry = agenttools.NewToolRegistry()
 			tool := agenttools.NewSequentialThinkingTool()
 			e.toolRegistry.RegisterTool(tool)
-			opts := &chat.ChatOptions{Tools: e.buildToolsForLLM(), PromptCacheKey: "server-session", CacheRetention: chat.CacheRetentionNone}
+			opts := &chat.ChatOptions{
+				Tools:          e.buildToolsForLLM(),
+				PromptCacheKey: "server-session",
+				CacheRetention: chat.CacheRetentionNone,
+			}
 			originalParameters := append(json.RawMessage(nil), tool.Parameters()...)
 			t.Cleanup(func() { copy(tool.Parameters(), originalParameters) })
 			trustedDescription := opts.Tools[0].Function.Description
-			messages := []chat.Message{{Role: "user", Content: "trusted raw text", SourceLineage: independentAgentInput(), MultiContent: []chat.MessageContentPart{{Type: "image_url", ImageURL: &chat.ImageURL{URL: "trusted-image"}}}, ReasoningMetadata: types.ProviderMetadata{"provider": json.RawMessage(`{"trusted":"original"}`)}}}
+			messages := []chat.Message{
+				{
+					Role:          "user",
+					Content:       "trusted raw text",
+					SourceLineage: independentAgentInput(),
+					MultiContent: []chat.MessageContentPart{
+						{Type: "image_url", ImageURL: &chat.ImageURL{URL: "trusted-image"}},
+					},
+					ReasoningMetadata: types.ProviderMetadata{"provider": json.RawMessage(`{"trusted":"original"}`)},
+				},
+			}
 			mutated := false
 			e.SetSourceLineageVerifier(func(_ context.Context, l *types.SourceLineage) error {
 				if !mutated {
@@ -56,10 +70,16 @@ func TestAgentLineageDuringAuthorizationMutationCannotChangeActualWireSnapshot(t
 		})
 	}
 }
+
 func TestAgentLineageOpaqueFormatInputIsUnknownBeforeModel(t *testing.T) {
 	model := &mockChat{responses: []mockResponse{lineageAnswer("must not call")}}
 	e, _ := lineageEngine(t, model, nil, grantChecker(map[types.SourceIdentity]bool{}))
-	_, err := e.streamLLMToEventBus(context.Background(), []chat.Message{{Role: "user", Content: "raw human", SourceLineage: independentAgentInput()}}, &chat.ChatOptions{Format: json.RawMessage(`{"description":"opaque source body"}`)}, nil)
+	_, err := e.streamLLMToEventBus(
+		context.Background(),
+		[]chat.Message{{Role: "user", Content: "raw human", SourceLineage: independentAgentInput()}},
+		&chat.ChatOptions{Format: json.RawMessage(`{"description":"opaque source body"}`)},
+		nil,
+	)
 	require.ErrorIs(t, err, ErrAgentSourceLineageDenied)
 	require.Zero(t, model.callCount)
 }
@@ -67,7 +87,19 @@ func TestAgentLineageOpaqueFormatInputIsUnknownBeforeModel(t *testing.T) {
 func TestAgentLineageUnsupportedProviderArtifactCannotSilentlyBecomeEmpty(t *testing.T) {
 	model := &mockChat{responses: []mockResponse{lineageAnswer("must not call")}}
 	e, _ := lineageEngine(t, model, nil, grantChecker(map[types.SourceIdentity]bool{}))
-	_, err := e.streamLLMToEventBus(context.Background(), []chat.Message{{Role: "assistant", Content: "source free claimed", SourceLineage: independentAgentInput(), ReasoningMetadata: types.ProviderMetadata{"provider": json.RawMessage(`{"opaque_source_body":`)}}}, nil, nil)
+	_, err := e.streamLLMToEventBus(
+		context.Background(),
+		[]chat.Message{
+			{
+				Role:              "assistant",
+				Content:           "source free claimed",
+				SourceLineage:     independentAgentInput(),
+				ReasoningMetadata: types.ProviderMetadata{"provider": json.RawMessage(`{"opaque_source_body":`)},
+			},
+		},
+		nil,
+		nil,
+	)
 	require.ErrorIs(t, err, ErrAgentSourceLineageDenied)
 	require.Zero(t, model.callCount)
 	require.Error(t, e.SourceLineageSnapshot().RequireComplete())

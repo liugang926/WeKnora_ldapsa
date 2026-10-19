@@ -3,10 +3,11 @@ package logger
 import (
 	"bytes"
 	"context"
+	"testing"
+
 	"github.com/Tencent/WeKnora/internal/logprivacy"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/require"
-	"testing"
 )
 
 type forbiddenLogValue struct{}

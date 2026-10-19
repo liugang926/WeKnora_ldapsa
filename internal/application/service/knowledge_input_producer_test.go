@@ -33,31 +33,89 @@ func (r knowledgeInputTenantRepo) GetTenantByID(context.Context, uint64) (*types
 }
 func (r knowledgeInputTenantRepo) AdjustStorageUsed(context.Context, uint64, int64) error { return nil }
 
-func knowledgeInputServiceFixture(t *testing.T) (*knowledgeService, *repository.KnowledgeInputProvenanceStore, *gorm.DB, *knowledgeInputQueue, context.Context) {
+func knowledgeInputServiceFixture(
+	t *testing.T,
+) (*knowledgeService, *repository.KnowledgeInputProvenanceStore, *gorm.DB, *knowledgeInputQueue, context.Context) {
 	t.Helper()
-	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "input.db")), &gorm.Config{DisableForeignKeyConstraintWhenMigrating: true})
+	db, err := gorm.Open(
+		sqlite.Open(filepath.Join(t.TempDir(), "input.db")),
+		&gorm.Config{DisableForeignKeyConstraintWhenMigrating: true},
+	)
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&types.KnowledgeBase{}, &types.Knowledge{}, &types.Chunk{}, &types.Session{}, &types.Message{}, &types.KnowledgeTag{}))
-	require.NoError(t, db.Exec("CREATE TABLE nextcloud_source_versions(candidate_knowledge_id TEXT); CREATE TABLE nextcloud_source_revisions(candidate_knowledge_id TEXT); CREATE TABLE knowledge_tag_relations(knowledge_id TEXT,tag_id TEXT)").Error)
+	require.NoError(
+		t,
+		db.AutoMigrate(
+			&types.KnowledgeBase{},
+			&types.Knowledge{},
+			&types.Chunk{},
+			&types.Session{},
+			&types.Message{},
+			&types.KnowledgeTag{},
+		),
+	)
+	require.NoError(
+		t,
+		db.Exec(
+			"CREATE TABLE nextcloud_source_versions(candidate_knowledge_id TEXT); CREATE TABLE nextcloud_source_revisions(candidate_knowledge_id TEXT); CREATE TABLE knowledge_tag_relations(knowledge_id TEXT,tag_id TEXT)",
+		).Error,
+	)
 	for _, file := range []string{"000053_knowledge_input_provenance.up.sql", "000054_knowledge_configuration_history_inputs.up.sql", "000055_knowledge_actual_config_controls.up.sql", "000056_knowledge_original_worker_actor.up.sql"} {
 		script, err := os.ReadFile(filepath.Join("../../../migrations/sqlite", file))
 		require.NoError(t, err)
 		require.NoError(t, db.Exec(string(script)).Error)
 	}
 	store := repository.NewKnowledgeInputProvenanceStore(db)
-	kb := &types.KnowledgeBase{ID: "kb", TenantID: 7, Name: "explicit human config", ChunkingConfig: types.ChunkingConfig{ChunkSize: 512, ChunkOverlap: 0}, IndexingStrategy: types.IndexingStrategy{VectorEnabled: true}, EmbeddingModelID: "embed"}
-	require.NoError(t, store.CreateKnowledgeBaseWithInput(repository.WithIndependentKnowledgeInput(context.Background()), kb))
-	tenant := &types.Tenant{ID: 7, RetrieverEngines: types.RetrieverEngines{Engines: []types.RetrieverEngineParams{{RetrieverType: types.VectorRetrieverType, RetrieverEngineType: types.PostgresRetrieverEngineType}}}}
+	kb := &types.KnowledgeBase{
+		ID:               "kb",
+		TenantID:         7,
+		Name:             "explicit human config",
+		ChunkingConfig:   types.ChunkingConfig{ChunkSize: 512, ChunkOverlap: 0},
+		IndexingStrategy: types.IndexingStrategy{VectorEnabled: true},
+		EmbeddingModelID: "embed",
+	}
+	require.NoError(
+		t,
+		store.CreateKnowledgeBaseWithInput(repository.WithIndependentKnowledgeInput(context.Background()), kb),
+	)
+	tenant := &types.Tenant{
+		ID: 7,
+		RetrieverEngines: types.RetrieverEngines{
+			Engines: []types.RetrieverEngineParams{
+				{RetrieverType: types.VectorRetrieverType, RetrieverEngineType: types.PostgresRetrieverEngineType},
+			},
+		},
+	}
 	ctx := types.WithExecutionTenant(context.Background(), 7)
 	ctx = context.WithValue(ctx, types.TenantInfoContextKey, tenant)
 	queue := &knowledgeInputQueue{}
-	s := &knowledgeService{repo: repository.NewKnowledgeRepository(db), chunkRepo: repository.NewChunkRepository(db), kbService: &createKnowledgeFileKBServiceStub{kb: kb}, fileSvc: &createKnowledgeFileServiceStub{}, task: queue, tenantRepo: knowledgeInputTenantRepo{tenant: tenant}, graphEngine: parentChildGraphRepo{}, retrieveEngine: parentChildRetrieveRegistry{engine: &parentChildRetrieveEngine{}}, modelService: parentChildModelService{embedder: parentChildEmbedder{}}, knowledgeInputs: store, knowledgeInputWriter: store}
+	s := &knowledgeService{
+		repo:                 repository.NewKnowledgeRepository(db),
+		chunkRepo:            repository.NewChunkRepository(db),
+		kbService:            &createKnowledgeFileKBServiceStub{kb: kb},
+		fileSvc:              &createKnowledgeFileServiceStub{},
+		task:                 queue,
+		tenantRepo:           knowledgeInputTenantRepo{tenant: tenant},
+		graphEngine:          parentChildGraphRepo{},
+		retrieveEngine:       parentChildRetrieveRegistry{engine: &parentChildRetrieveEngine{}},
+		modelService:         parentChildModelService{embedder: parentChildEmbedder{}},
+		knowledgeInputs:      store,
+		knowledgeInputWriter: store,
+	}
 	return s, store, db, queue, ctx
 }
 
 func TestKnowledgeInputManualActualEntryWorkerAndSearch(t *testing.T) {
 	s, store, db, queue, ctx := knowledgeInputServiceFixture(t)
-	knowledge, err := s.CreateKnowledgeFromManual(repository.WithIndependentKnowledgeInput(ctx), "kb", &types.ManualKnowledgePayload{Title: "original human title", Content: "actual human document text", Status: types.ManualKnowledgeStatusPublish}, "web")
+	knowledge, err := s.CreateKnowledgeFromManual(
+		repository.WithIndependentKnowledgeInput(ctx),
+		"kb",
+		&types.ManualKnowledgePayload{
+			Title:   "original human title",
+			Content: "actual human document text",
+			Status:  types.ManualKnowledgeStatusPublish,
+		},
+		"web",
+	)
 	require.NoError(t, err)
 	require.Len(t, queue.tasks, 1)
 	var payload types.ManualProcessPayload
@@ -74,14 +132,33 @@ func TestKnowledgeInputManualActualEntryWorkerAndSearch(t *testing.T) {
 	knowledge.EnableStatus = "enabled"
 	require.NoError(t, s.repo.UpdateKnowledge(workerCtx, knowledge))
 	reader := repository.NewRAGChunkSnapshotReader(db, store)
-	rows, err := reader.HydrateRAGChunkSnapshots(ctx, []types.RAGChunkReadRequest{{TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: knowledge.ID, ChunkIDs: []string{chunks[0].ID}}})
+	rows, err := reader.HydrateRAGChunkSnapshots(
+		ctx,
+		[]types.RAGChunkReadRequest{
+			{TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: knowledge.ID, ChunkIDs: []string{chunks[0].ID}},
+		},
+	)
 	require.NoError(t, err)
 	require.NoError(t, rows[0].SourceLineage.RequireComplete())
-	search := &knowledgeBaseService{kgRepo: s.repo, chunkRepo: s.chunkRepo, ragChunkSnapshots: reader, searchPublicationCheck: func(context.Context, *types.Knowledge) error { return nil }}
+	search := &knowledgeBaseService{
+		kgRepo:                 s.repo,
+		chunkRepo:              s.chunkRepo,
+		ragChunkSnapshots:      reader,
+		searchPublicationCheck: func(context.Context, *types.Knowledge) error { return nil },
+	}
 	searchCtx := types.WithCaller(ctx, types.Caller{TenantID: 7, UserID: "actual-human"})
 	searchCtx = types.WithPrincipal(searchCtx, types.Principal{Type: types.PrincipalWebUser, ID: "actual-human"})
-	searchCtx = types.WithRAGSourceLineage(searchCtx, types.NewRAGSourceLineage(func(_ context.Context, l *types.SourceLineage) error { return l.RequireComplete() }))
-	result, err := search.processSearchResults(searchCtx, []*types.IndexWithScore{{KnowledgeID: knowledge.ID, ChunkID: chunks[0].ID, Content: "forged stale index text", Score: 1}}, true)
+	searchCtx = types.WithRAGSourceLineage(
+		searchCtx,
+		types.NewRAGSourceLineage(func(_ context.Context, l *types.SourceLineage) error { return l.RequireComplete() }),
+	)
+	result, err := search.processSearchResults(
+		searchCtx,
+		[]*types.IndexWithScore{
+			{KnowledgeID: knowledge.ID, ChunkID: chunks[0].ID, Content: "forged stale index text", Score: 1},
+		},
+		true,
+	)
 	require.NoError(t, err)
 	require.Len(t, result, 1)
 	require.Equal(t, chunks[0].Content, result[0].Content)
@@ -93,7 +170,16 @@ func TestKnowledgeInputManualForgedJobAndConfigChangeNeverReadModel(t *testing.T
 	for _, mode := range []string{"artifact", "config"} {
 		t.Run(mode, func(t *testing.T) {
 			s, _, db, queue, ctx := knowledgeInputServiceFixture(t)
-			_, err := s.CreateKnowledgeFromManual(repository.WithIndependentKnowledgeInput(ctx), "kb", &types.ManualKnowledgePayload{Title: "human", Content: "original human body", Status: types.ManualKnowledgeStatusPublish}, "web")
+			_, err := s.CreateKnowledgeFromManual(
+				repository.WithIndependentKnowledgeInput(ctx),
+				"kb",
+				&types.ManualKnowledgePayload{
+					Title:   "human",
+					Content: "original human body",
+					Status:  types.ManualKnowledgeStatusPublish,
+				},
+				"web",
+			)
 			require.NoError(t, err)
 			var payload types.ManualProcessPayload
 			require.NoError(t, json.Unmarshal(queue.tasks[0].Payload(), &payload))

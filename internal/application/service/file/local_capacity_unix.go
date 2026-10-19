@@ -37,7 +37,7 @@ func (s *localFileService) MeasureStorageCapacity(ctx context.Context) (types.St
 	if err != nil {
 		return types.StorageCapacity{}, err
 	}
-	defer unix.Close(fd)
+	defer func() { _ = unix.Close(fd) }() // Read-only filesystem observation descriptor.
 	var fs unix.Statfs_t
 	if err = unix.Fstatfs(fd, &fs); err != nil {
 		return types.StorageCapacity{}, err
@@ -46,7 +46,8 @@ func (s *localFileService) MeasureStorageCapacity(ctx context.Context) (types.St
 	if err = unix.Fstat(fd, &st); err != nil {
 		return types.StorageCapacity{}, err
 	}
-	if fs.Bsize <= 0 || uint64(fs.Blocks) > uint64(math.MaxInt64)/uint64(fs.Bsize) || uint64(fs.Bavail) > uint64(math.MaxInt64)/uint64(fs.Bsize) {
+	if fs.Bsize <= 0 || uint64(fs.Blocks) > uint64(math.MaxInt64)/uint64(fs.Bsize) ||
+		uint64(fs.Bavail) > uint64(math.MaxInt64)/uint64(fs.Bsize) {
 		return types.StorageCapacity{}, fmt.Errorf("capacity measurement overflow")
 	}
 	total := int64(fs.Blocks) * int64(fs.Bsize)
@@ -55,5 +56,10 @@ func (s *localFileService) MeasureStorageCapacity(ctx context.Context) (types.St
 		return types.StorageCapacity{}, fmt.Errorf("invalid filesystem capacity")
 	}
 	digest := sha256.Sum256([]byte("local-filesystem:" + strconv.FormatUint(uint64(st.Dev), 10)))
-	return types.StorageCapacity{ScopeID: hex.EncodeToString(digest[:]), TotalBytes: total, AvailableBytes: available, MeasuredAt: time.Now().UTC()}, nil
+	return types.StorageCapacity{
+		ScopeID:        hex.EncodeToString(digest[:]),
+		TotalBytes:     total,
+		AvailableBytes: available,
+		MeasuredAt:     time.Now().UTC(),
+	}, nil
 }

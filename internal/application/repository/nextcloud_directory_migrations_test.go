@@ -15,8 +15,31 @@ import (
 )
 
 func rootMigrationProof(op types.NextcloudOnboardingOperation, source string) nextcloud.RootMigration {
-	return nextcloud.RootMigration{OperationID: uuid.NewString(), PairOperationID: op.OperationID, BindingID: op.BindingID, InstanceID: op.InstanceID, TenantID: "7", KnowledgeBaseID: op.KnowledgeBaseID, DataSourceID: source, RootFileID: "10", PhysicalRootKey: strings.Repeat("a", 64), StorageIdentity: strings.Repeat("b", 64), OldRootHash: strings.Repeat("c", 64), NewRootHash: strings.Repeat("d", 64), OldRootPath: "/owner/files/Original", NewRootPath: "/owner/files/Renamed", OldEpoch: "1", PreparedEpoch: "2", ResumeEpoch: "3", JournalStreamID: uuid.NewString(), JournalSequence: "5", JournalChainSHA256: strings.Repeat("e", 64), State: "observed"}
+	return nextcloud.RootMigration{
+		OperationID:        uuid.NewString(),
+		PairOperationID:    op.OperationID,
+		BindingID:          op.BindingID,
+		InstanceID:         op.InstanceID,
+		TenantID:           "7",
+		KnowledgeBaseID:    op.KnowledgeBaseID,
+		DataSourceID:       source,
+		RootFileID:         "10",
+		PhysicalRootKey:    strings.Repeat("a", 64),
+		StorageIdentity:    strings.Repeat("b", 64),
+		OldRootHash:        strings.Repeat("c", 64),
+		NewRootHash:        strings.Repeat("d", 64),
+		OldRootPath:        "/owner/files/Original",
+		NewRootPath:        "/owner/files/Renamed",
+		OldEpoch:           "1",
+		PreparedEpoch:      "2",
+		ResumeEpoch:        "3",
+		JournalStreamID:    uuid.NewString(),
+		JournalSequence:    "5",
+		JournalChainSHA256: strings.Repeat("e", 64),
+		State:              "observed",
+	}
 }
+
 func TestNextcloudRootMigrationClosesLeaseIDsPreservesContentEpochAndRetries(t *testing.T) {
 	// This lease-focused test uses the same SQLite dialect as the production
 	// single writer path. Real PG two-writer admission is covered separately.
@@ -34,14 +57,40 @@ func TestNextcloudRootMigrationClosesLeaseIDsPreservesContentEpochAndRetries(t *
 	if !db.Migrator().HasTable("nextcloud_content_fences") {
 		require.NoError(t, db.Exec(string(ddl)).Error)
 	}
-	require.NoError(t, db.Exec("CREATE TABLE nextcloud_graph_tasks(operation_id TEXT PRIMARY KEY,tenant_id BIGINT,knowledge_base_id TEXT,state TEXT,error_code TEXT,completed_at BIGINT)").Error)
-	require.NoError(t, db.Exec("CREATE TABLE nextcloud_graph_records(operation_id TEXT PRIMARY KEY,body_json TEXT,generation BIGINT)").Error)
-	require.NoError(t, db.Exec("INSERT INTO nextcloud_graph_records VALUES('persisted','immutable original graph receipt',1)").Error)
-	require.NoError(t, db.Exec("INSERT INTO nextcloud_graph_tasks VALUES('persisted',7,?,'succeeded','',1),('late',7,?,'running','',NULL)", kb.ID, kb.ID).Error)
+	require.NoError(
+		t,
+		db.Exec(
+			"CREATE TABLE nextcloud_graph_tasks(operation_id TEXT PRIMARY KEY,tenant_id BIGINT,knowledge_base_id TEXT,state TEXT,error_code TEXT,completed_at BIGINT)",
+		).Error,
+	)
+	require.NoError(
+		t,
+		db.Exec(
+			"CREATE TABLE nextcloud_graph_records(operation_id TEXT PRIMARY KEY,body_json TEXT,generation BIGINT)",
+		).Error,
+	)
+	require.NoError(
+		t,
+		db.Exec("INSERT INTO nextcloud_graph_records VALUES('persisted','immutable original graph receipt',1)").Error,
+	)
+	require.NoError(
+		t,
+		db.Exec(
+			"INSERT INTO nextcloud_graph_tasks VALUES('persisted',7,?,'succeeded','',1),('late',7,?,'running','',NULL)",
+			kb.ID,
+			kb.ID,
+		).Error,
+	)
 	var pair repo.NextcloudSourcePairing
 	require.NoError(t, db.Where("operation_id=?", op.OperationID).Take(&pair).Error)
 	leases := repo.NewNextcloudContentLeaseStore(db)
-	scope := repo.NextcloudContentScope{TenantID: 7, KnowledgeBaseID: kb.ID, KnowledgeID: "doc", DataSourceID: pair.DataSourceID, ExternalID: "nextcloud:" + c.InstanceID + ":11"}
+	scope := repo.NextcloudContentScope{
+		TenantID:        7,
+		KnowledgeBaseID: kb.ID,
+		KnowledgeID:     "doc",
+		DataSourceID:    pair.DataSourceID,
+		ExternalID:      "nextcloud:" + c.InstanceID + ":11",
+	}
 	build, err := leases.AcquireKnowledge(ctx, scope, repo.NextcloudContentBuildLease, "old-worker", time.Minute)
 	require.NoError(t, err)
 	read, err := leases.AcquireKnowledge(ctx, scope, repo.NextcloudContentReadLease, "old-reader", time.Minute)
@@ -56,7 +105,11 @@ func TestNextcloudRootMigrationClosesLeaseIDsPreservesContentEpochAndRetries(t *
 	require.Error(t, err)
 	_, err = leases.RenewLease(ctx, read.ID, time.Minute)
 	require.Error(t, err)
-	require.Error(t, leases.ValidateBuildLeaseInTx(ctx, db, build, scope), "late SQL/provider write cannot revive its original lease token")
+	require.Error(
+		t,
+		leases.ValidateBuildLeaseInTx(ctx, db, build, scope),
+		"late SQL/provider write cannot revive its original lease token",
+	)
 	var before struct {
 		Epoch int64
 		State string
@@ -87,17 +140,24 @@ func TestNextcloudRootMigrationClosesLeaseIDsPreservesContentEpochAndRetries(t *
 	require.Equal(t, build.Epoch, fresh.Epoch)
 	require.NotEqual(t, read.ID, fresh.ID)
 	var graph string
-	require.NoError(t, db.Table("nextcloud_graph_records").Select("body_json").Where("operation_id='persisted'").Scan(&graph).Error)
+	require.NoError(
+		t,
+		db.Table("nextcloud_graph_records").Select("body_json").Where("operation_id='persisted'").Scan(&graph).Error,
+	)
 	require.Equal(t, "immutable original graph receipt", graph)
 	var task string
 	require.NoError(t, db.Table("nextcloud_graph_tasks").Select("state").Where("operation_id='late'").Scan(&task).Error)
 	require.Equal(t, "cancelled", task)
-	require.NoError(t, db.Table("nextcloud_graph_tasks").Select("state").Where("operation_id='persisted'").Scan(&task).Error)
+	require.NoError(
+		t,
+		db.Table("nextcloud_graph_tasks").Select("state").Where("operation_id='persisted'").Scan(&task).Error,
+	)
 	require.Equal(t, "succeeded", task)
 	enabled, err := store.SyncEnabled(ctx, op)
 	require.NoError(t, err)
 	require.True(t, enabled, "only unchanged operator sync revision may recover its prior flag")
 }
+
 func TestNextcloudTargetMigrationIsOneWayAndWaitsForCompleteManifest(t *testing.T) {
 	t.Setenv("NEXTCLOUD_ONBOARDING_TEST_POSTGRES_DSN", "")
 	db, store, c := onboardingDB(t)
@@ -112,7 +172,14 @@ func TestNextcloudTargetMigrationIsOneWayAndWaitsForCompleteManifest(t *testing.
 		ops = append(ops, op)
 	}
 	activateOnboarding(t, db, store, ops[0])
-	snapshot := types.NextcloudGrantSnapshot{PermissionVersion: 1, PublicationEpoch: 1, Complete: true, Subjects: []types.NextcloudGrantSubject{{Kind: "user", DirectoryID: c.DirectoryID, ObjectGUID: "guid-reader", SourceRelationID: "share"}}}
+	snapshot := types.NextcloudGrantSnapshot{
+		PermissionVersion: 1,
+		PublicationEpoch:  1,
+		Complete:          true,
+		Subjects: []types.NextcloudGrantSubject{
+			{Kind: "user", DirectoryID: c.DirectoryID, ObjectGUID: "guid-reader", SourceRelationID: "share"},
+		},
+	}
 	require.NoError(t, store.ApplyGrantSnapshot(ctx, ops[0], snapshot))
 	migrationID := uuid.NewString()
 	move, err := store.PrepareTargetMigration(ctx, ops[0], migrationID, ops[1].OperationID, c.DirectoryID, "guid-owner")
@@ -120,7 +187,14 @@ func TestNextcloudTargetMigrationIsOneWayAndWaitsForCompleteManifest(t *testing.
 	require.Equal(t, "building", move.State)
 	require.NotEqual(t, move.OldKnowledgeBaseID, move.NewKnowledgeBaseID)
 	// Lost retirement ACK retries the same target and does not revoke another KB.
-	again, err := store.PrepareTargetMigration(ctx, ops[0], migrationID, ops[1].OperationID, c.DirectoryID, "guid-owner")
+	again, err := store.PrepareTargetMigration(
+		ctx,
+		ops[0],
+		migrationID,
+		ops[1].OperationID,
+		c.DirectoryID,
+		"guid-owner",
+	)
 	require.NoError(t, err)
 	require.Equal(t, move.OperationID, again.OperationID)
 	old, err := store.Operation(ctx, c, ops[0].OperationID)
@@ -137,8 +211,22 @@ func TestNextcloudTargetMigrationIsOneWayAndWaitsForCompleteManifest(t *testing.
 	activateOnboarding(t, db, store, ops[1])
 	require.NoError(t, store.ApplyGrantSnapshot(ctx, ops[1], snapshot))
 	// A nonempty remote manifest cannot activate an empty relational build.
-	require.NoError(t, db.Exec("CREATE TABLE nextcloud_source_versions(tenant_id BIGINT,knowledge_base_id TEXT,datasource_id TEXT,external_id TEXT,desired_etag TEXT,candidate_knowledge_id TEXT,state TEXT,updated_at DATETIME)").Error)
-	manifest := nextcloud.RecoveryManifest{Identity: nextcloud.PairingIdentity{InstanceID: c.InstanceID, BindingID: ops[1].BindingID, PublicationState: "active", PublicationEpoch: 1}, Generation: "complete-double-scan", Files: []nextcloud.RecoveryManifestFile{{FileID: 11, ETag: "v1", Path: "file.txt"}}}
+	require.NoError(
+		t,
+		db.Exec(
+			"CREATE TABLE nextcloud_source_versions(tenant_id BIGINT,knowledge_base_id TEXT,datasource_id TEXT,external_id TEXT,desired_etag TEXT,candidate_knowledge_id TEXT,state TEXT,updated_at DATETIME)",
+		).Error,
+	)
+	manifest := nextcloud.RecoveryManifest{
+		Identity: nextcloud.PairingIdentity{
+			InstanceID:       c.InstanceID,
+			BindingID:        ops[1].BindingID,
+			PublicationState: "active",
+			PublicationEpoch: 1,
+		},
+		Generation: "complete-double-scan",
+		Files:      []nextcloud.RecoveryManifestFile{{FileID: 11, ETag: "v1", Path: "file.txt"}},
+	}
 	_, err = store.FinalizeTargetMigration(ctx, ops[0], migrationID, manifest)
 	require.ErrorIs(t, err, repo.ErrNextcloudOnboardingConflict)
 	manifest.Files = nil

@@ -658,7 +658,9 @@ func (s *chunkService) rebuildParentContent(ctx context.Context, edited *types.C
 	replacements = selected
 	sort.Slice(replacements, func(i, j int) bool { return replacements[i].start > replacements[j].start })
 	for _, repl := range replacements {
-		baseRunes = append(append(append([]rune{}, baseRunes[:repl.start]...), []rune(repl.content)...), baseRunes[repl.end:]...)
+		baseRunes = append(
+			append(append([]rune{}, baseRunes[:repl.start]...), []rune(repl.content)...),
+			baseRunes[repl.end:]...)
 	}
 	parent.Content = string(baseRunes)
 	for _, conflict := range conflicts {
@@ -680,7 +682,13 @@ func (s *chunkService) syncChunkIndex(ctx context.Context, chunk *types.Chunk) e
 	if err != nil {
 		return err
 	}
-	engine, err := retriever.CreateRetrieveEngineForKB(ctx, s.retrieveEngine, s.ownership, chunk.TenantID, kb.VectorStoreID)
+	engine, err := retriever.CreateRetrieveEngineForKB(
+		ctx,
+		s.retrieveEngine,
+		s.ownership,
+		chunk.TenantID,
+		kb.VectorStoreID,
+	)
 	if err != nil {
 		return err
 	}
@@ -710,10 +718,17 @@ func (s *chunkService) syncChunkIndex(ctx context.Context, chunk *types.Chunk) e
 				continue
 			}
 			items = append(items, &types.IndexInfo{
-				Content: buildKnowledgeIndexContent(knowledge, question.Question), SourceID: types.GeneratedQuestionSourceID(chunk.ID, question.ID),
-				SourceType: types.ChunkSourceType, ChunkID: chunk.ID,
-				KnowledgeID: chunk.KnowledgeID, KnowledgeBaseID: chunk.KnowledgeBaseID,
-				KnowledgeType: kb.Type, IsEnabled: true,
+				Content: buildKnowledgeIndexContent(
+					knowledge,
+					question.Question,
+				),
+				SourceID:        types.GeneratedQuestionSourceID(chunk.ID, question.ID),
+				SourceType:      types.ChunkSourceType,
+				ChunkID:         chunk.ID,
+				KnowledgeID:     chunk.KnowledgeID,
+				KnowledgeBaseID: chunk.KnowledgeBaseID,
+				KnowledgeType:   kb.Type,
+				IsEnabled:       true,
 			})
 		}
 	}
@@ -849,7 +864,12 @@ func (s *chunkService) DeleteGeneratedQuestion(ctx context.Context, chunkID stri
 	}
 
 	// Delete the vector index by source ID
-	if err := retrieveEngine.DeleteBySourceIDList(ctx, []string{sourceID}, embeddingModel.GetDimensions(), kb.Type); err != nil {
+	if err := retrieveEngine.DeleteBySourceIDList(
+		ctx,
+		[]string{sourceID},
+		embeddingModel.GetDimensions(),
+		kb.Type,
+	); err != nil {
 		logger.Warnf(ctx, "Failed to delete vector index for question (may not exist): %v", err)
 		// Continue even if vector deletion fails - the question might not have been indexed
 	}

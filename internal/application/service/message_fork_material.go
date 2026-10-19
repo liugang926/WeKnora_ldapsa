@@ -19,7 +19,11 @@ type forkAlgorithmMaterialReader interface {
 	readForkAlgorithmMaterial(context.Context, string, string) (*types.Message, []*types.Message, error)
 }
 
-func (s *SessionForkService) beginForkMessageMaterial(ctx context.Context, tenant uint64, sessionID, pointID string) (*types.Message, []*types.Message, *MessageMaterialGuard, error) {
+func (s *SessionForkService) beginForkMessageMaterial(
+	ctx context.Context,
+	tenant uint64,
+	sessionID, pointID string,
+) (*types.Message, []*types.Message, *MessageMaterialGuard, error) {
 	actual, ok := s.lineageVerifier.(*messageService)
 	if !ok {
 		if algorithm, ok := s.messages.(forkAlgorithmMaterialReader); ok {
@@ -38,7 +42,8 @@ func (s *SessionForkService) beginForkMessageMaterial(ctx context.Context, tenan
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	if point == nil || point.ID != pointID || request.TenantID != tenant || request.SessionID != sessionID || request.AllSession {
+	if point == nil || point.ID != pointID || request.TenantID != tenant || request.SessionID != sessionID ||
+		request.AllSession {
 		return nil, nil, nil, access.ErrNextcloudPublicationDenied
 	}
 	if point.Role != "user" && point.Role != "assistant" {
@@ -62,7 +67,9 @@ func (s *SessionForkService) beginForkMessageMaterial(ctx context.Context, tenan
 			return nil, nil, nil, access.ErrNextcloudPublicationDenied
 		}
 		if original.ID == point.ID {
-			if original.Role != point.Role || original.RequestID != point.RequestID || original.IsCompleted != point.Complete || !original.CreatedAt.Equal(point.CreatedAt) {
+			if original.Role != point.Role || original.RequestID != point.RequestID ||
+				original.IsCompleted != point.Complete ||
+				!original.CreatedAt.Equal(point.CreatedAt) {
 				guard.Close()
 				return nil, nil, nil, access.ErrNextcloudPublicationDenied
 			}
@@ -85,7 +92,14 @@ func (s *SessionForkService) beginForkMessageMaterial(ctx context.Context, tenan
 		guard.Close()
 		return nil, nil, nil, access.ErrNextcloudPublicationDenied
 	}
-	metadataPoint := &types.Message{ID: point.ID, SessionID: sessionID, RequestID: point.RequestID, Role: point.Role, IsCompleted: point.Complete, CreatedAt: point.CreatedAt}
+	metadataPoint := &types.Message{
+		ID:          point.ID,
+		SessionID:   sessionID,
+		RequestID:   point.RequestID,
+		Role:        point.Role,
+		IsCompleted: point.Complete,
+		CreatedAt:   point.CreatedAt,
+	}
 	return metadataPoint, history, guard, nil
 }
 

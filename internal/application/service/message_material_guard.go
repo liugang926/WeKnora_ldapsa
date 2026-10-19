@@ -12,25 +12,30 @@ import (
 	"github.com/google/uuid"
 )
 
-type historyMaterialGuardContextKey struct{}
-type MessageMaterialGuard struct {
-	mu            sync.Mutex
-	store         *repository.KnowledgeInputProvenanceStore
-	verifier      *messageService
-	snapshot      *types.MessageMaterialSnapshot
-	plan          *types.MessageMaterialReadPlan
-	ctx           context.Context
-	cancel        context.CancelFunc
-	cancelCause   context.CancelCauseFunc
-	leases        []repository.NextcloudContentLease
-	bodyLeases    []string
-	stop          sync.WaitGroup
-	heartbeatStop chan struct{}
-	heartbeatOnce sync.Once
-	once          sync.Once
-}
+type (
+	historyMaterialGuardContextKey struct{}
+	MessageMaterialGuard           struct {
+		mu            sync.Mutex
+		store         *repository.KnowledgeInputProvenanceStore
+		verifier      *messageService
+		snapshot      *types.MessageMaterialSnapshot
+		plan          *types.MessageMaterialReadPlan
+		ctx           context.Context
+		cancel        context.CancelFunc
+		cancelCause   context.CancelCauseFunc
+		leases        []repository.NextcloudContentLease
+		bodyLeases    []string
+		stop          sync.WaitGroup
+		heartbeatStop chan struct{}
+		heartbeatOnce sync.Once
+		once          sync.Once
+	}
+)
 
-func (s *messageService) beginMessageMaterialRead(ctx context.Context, request types.MessageMaterialReadRequest) (*MessageMaterialGuard, error) {
+func (s *messageService) beginMessageMaterialRead(
+	ctx context.Context,
+	request types.MessageMaterialReadRequest,
+) (*MessageMaterialGuard, error) {
 	if s.materialStore == nil || s.sourceLineageGuard == nil {
 		return nil, access.ErrNextcloudPublicationUnavailable
 	}
@@ -40,7 +45,16 @@ func (s *messageService) beginMessageMaterialRead(ctx context.Context, request t
 	}
 	leaseCtx, cancelCause := context.WithCancelCause(ctx)
 	cancel := func() { cancelCause(context.Canceled) }
-	guard := &MessageMaterialGuard{store: s.materialStore, verifier: s, plan: plan, ctx: leaseCtx, cancel: cancel, cancelCause: cancelCause, leases: []repository.NextcloudContentLease{}, heartbeatStop: make(chan struct{})}
+	guard := &MessageMaterialGuard{
+		store:         s.materialStore,
+		verifier:      s,
+		plan:          plan,
+		ctx:           leaseCtx,
+		cancel:        cancel,
+		cancelCause:   cancelCause,
+		leases:        []repository.NextcloudContentLease{},
+		heartbeatStop: make(chan struct{}),
+	}
 	store := s.materialStore.ContentLeaseStore()
 	owner := uuid.NewString()
 	broad := map[types.KnowledgeSearchScope]repository.NextcloudContentLease{}
@@ -59,7 +73,19 @@ func (s *messageService) beginMessageMaterialRead(ctx context.Context, request t
 			guard.Close()
 			return nil, repository.ErrNextcloudContentGCUncovered
 		}
-		lease, err := store.UpgradeKBRead(leaseCtx, kb.ID, repository.NextcloudContentScope{TenantID: source.TenantID, KnowledgeBaseID: source.KnowledgeBaseID, KnowledgeID: source.KnowledgeID, DataSourceID: source.DataSourceID, ExternalID: source.ExternalID}, owner, 2*time.Minute)
+		lease, err := store.UpgradeKBRead(
+			leaseCtx,
+			kb.ID,
+			repository.NextcloudContentScope{
+				TenantID:        source.TenantID,
+				KnowledgeBaseID: source.KnowledgeBaseID,
+				KnowledgeID:     source.KnowledgeID,
+				DataSourceID:    source.DataSourceID,
+				ExternalID:      source.ExternalID,
+			},
+			owner,
+			2*time.Minute,
+		)
 		if err != nil {
 			guard.Close()
 			return nil, err
@@ -187,6 +213,7 @@ func (g *MessageMaterialGuard) Recheck() error {
 	}
 	return g.verifier.CheckMessagePublications(g.ctx, g.snapshot.Messages)
 }
+
 func (g *MessageMaterialGuard) Close() {
 	if g == nil {
 		return
@@ -218,7 +245,11 @@ func closeHistoryMaterialGuard(ctx context.Context) {
 // prepareOwnPlanGrowthLocked runs only after the immutable own-write transfer
 // has passed. New scopes belong to this guard, not a borrowed sibling/slot
 // context. Preserve its original caller/cancel values and its previous leases.
-func (g *MessageMaterialGuard) checkOwnPlanGrowthAuthorization(ctx, marked context.Context, plan *types.MessageMaterialReadPlan, updated *types.MessageMaterialSnapshot) error {
+func (g *MessageMaterialGuard) checkOwnPlanGrowthAuthorization(
+	ctx, marked context.Context,
+	plan *types.MessageMaterialReadPlan,
+	updated *types.MessageMaterialSnapshot,
+) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -230,9 +261,20 @@ func (g *MessageMaterialGuard) checkOwnPlanGrowthAuthorization(ctx, marked conte
 	}
 	targets := []*types.SearchTarget{}
 	for _, scope := range plan.Scopes {
-		targets = append(targets, &types.SearchTarget{Type: types.SearchTargetTypeKnowledgeBase, TenantID: scope.TenantID, KnowledgeBaseID: scope.KBID})
+		targets = append(
+			targets,
+			&types.SearchTarget{
+				Type:            types.SearchTargetTypeKnowledgeBase,
+				TenantID:        scope.TenantID,
+				KnowledgeBaseID: scope.KBID,
+			},
+		)
 	}
-	if err := g.verifier.sourceLineageGuard.Check(marked, plan.SourceLineage, access.LineageReadScope{Targets: targets}); err != nil {
+	if err := g.verifier.sourceLineageGuard.Check(
+		marked,
+		plan.SourceLineage,
+		access.LineageReadScope{Targets: targets},
+	); err != nil {
 		return err
 	}
 	if len(updated.Messages) > 0 {
@@ -254,7 +296,11 @@ func (g *MessageMaterialGuard) releaseAddedOwnBodyLeases(ids []string) {
 	}
 }
 
-func (g *MessageMaterialGuard) prepareOwnPlanGrowthLocked(ctx context.Context, plan *types.MessageMaterialReadPlan, updated *types.MessageMaterialSnapshot) (context.Context, []repository.NextcloudContentLease, func(), error) {
+func (g *MessageMaterialGuard) prepareOwnPlanGrowthLocked(
+	ctx context.Context,
+	plan *types.MessageMaterialReadPlan,
+	updated *types.MessageMaterialSnapshot,
+) (context.Context, []repository.NextcloudContentLease, func(), error) {
 	added := []repository.NextcloudContentLease{}
 	rollback := func() {
 		cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -284,7 +330,8 @@ func (g *MessageMaterialGuard) prepareOwnPlanGrowthLocked(ctx context.Context, p
 		if _, exists := broad[scope]; exists {
 			continue
 		}
-		lease, err := g.store.ContentLeaseStore().AcquireKBRead(g.ctx, scope.TenantID, scope.KBID, uuid.NewString(), 2*time.Minute)
+		lease, err := g.store.ContentLeaseStore().
+			AcquireKBRead(g.ctx, scope.TenantID, scope.KBID, uuid.NewString(), 2*time.Minute)
 		if err != nil {
 			return fail(err)
 		}
@@ -304,7 +351,11 @@ func (g *MessageMaterialGuard) prepareOwnPlanGrowthLocked(ctx context.Context, p
 			// The lease struct does not expose datasource/external ID. Its
 			// original owning plan supplies that full immutable source tuple;
 			// SQL coverage then verifies the fence tuple and epoch again.
-			if originalScope && lease.Kind == repository.NextcloudContentReadLease && lease.TenantID == source.TenantID && lease.KnowledgeBaseID == source.KnowledgeBaseID && lease.KnowledgeID == source.KnowledgeID && uint64(lease.Epoch) == source.Revision {
+			if originalScope && lease.Kind == repository.NextcloudContentReadLease &&
+				lease.TenantID == source.TenantID &&
+				lease.KnowledgeBaseID == source.KnowledgeBaseID &&
+				lease.KnowledgeID == source.KnowledgeID &&
+				uint64(lease.Epoch) == source.Revision {
 				found = true
 			}
 		}
@@ -315,7 +366,8 @@ func (g *MessageMaterialGuard) prepareOwnPlanGrowthLocked(ctx context.Context, p
 		if !exists {
 			return fail(repository.ErrNextcloudContentGCUncovered)
 		}
-		lease, err := g.store.ContentLeaseStore().UpgradeKBRead(g.ctx, kb.ID, repository.NextcloudContentScope{TenantID: source.TenantID, KnowledgeBaseID: source.KnowledgeBaseID, KnowledgeID: source.KnowledgeID, DataSourceID: source.DataSourceID, ExternalID: source.ExternalID}, kb.OwnerID, 2*time.Minute)
+		lease, err := g.store.ContentLeaseStore().
+			UpgradeKBRead(g.ctx, kb.ID, repository.NextcloudContentScope{TenantID: source.TenantID, KnowledgeBaseID: source.KnowledgeBaseID, KnowledgeID: source.KnowledgeID, DataSourceID: source.DataSourceID, ExternalID: source.ExternalID}, kb.OwnerID, 2*time.Minute)
 		if err != nil {
 			return fail(err)
 		}
@@ -416,11 +468,6 @@ func (g *MessageMaterialGuard) OriginalSnapshot() (*types.MessageMaterialSnapsho
 	return result, nil
 }
 
-func (g *MessageMaterialGuard) advanceOwnCompletion(ctx context.Context) error {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	return g.advanceOwnCompletionLocked(ctx)
-}
 func (g *MessageMaterialGuard) advanceOwnCompletionLocked(ctx context.Context) error {
 	updated, err := g.store.AdvanceMessageMaterialAfterOwnCompletion(ctx, g.snapshot)
 	if err != nil {

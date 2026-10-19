@@ -11,7 +11,12 @@ import (
 func TestKnowledgeOutputInputFreshActualMaterialRetainsOriginalReceipt(t *testing.T) {
 	store, db := knowledgeInputFixture(t)
 	_, k, chunk, admission := createAdmittedManual(t, store, db)
-	request := types.KnowledgeBuildInputCaptureRequest{TenantID: k.TenantID, KnowledgeBaseID: k.KnowledgeBaseID, KnowledgeID: k.ID, ChunkIDs: []string{chunk.ID}}
+	request := types.KnowledgeBuildInputCaptureRequest{
+		TenantID:        k.TenantID,
+		KnowledgeBaseID: k.KnowledgeBaseID,
+		KnowledgeID:     k.ID,
+		ChunkIDs:        []string{chunk.ID},
+	}
 	actual, err := store.CaptureKnowledgeOutputInputs(context.Background(), request)
 	require.NoError(t, err)
 	require.Equal(t, admission.AdmissionID, actual.Proof.AdmissionID)
@@ -39,7 +44,14 @@ func TestKnowledgeOutputInputUsesReceiptAdmissionRatherThanNewestOrigin(t *testi
 	decoy.InputDigest, err = KnowledgeInputDigest("unrelated original artifact")
 	require.NoError(t, err)
 	require.NoError(t, db.Create(&decoy).Error)
-	actual, err := store.CaptureKnowledgeOutputInputs(context.Background(), types.KnowledgeBuildInputCaptureRequest{TenantID: k.TenantID, KnowledgeBaseID: k.KnowledgeBaseID, KnowledgeID: k.ID})
+	actual, err := store.CaptureKnowledgeOutputInputs(
+		context.Background(),
+		types.KnowledgeBuildInputCaptureRequest{
+			TenantID:        k.TenantID,
+			KnowledgeBaseID: k.KnowledgeBaseID,
+			KnowledgeID:     k.ID,
+		},
+	)
 	require.NoError(t, err)
 	require.Equal(t, admission.AdmissionID, actual.Proof.AdmissionID)
 	require.Equal(t, admission.InputDigest, actual.Proof.InputDigest)
@@ -50,7 +62,12 @@ func TestKnowledgeOutputInputRejectsUnknownForeignAndMaterialABA(t *testing.T) {
 		t.Run(change, func(t *testing.T) {
 			store, db := knowledgeInputFixture(t)
 			_, k, chunk, _ := createAdmittedManual(t, store, db)
-			request := types.KnowledgeBuildInputCaptureRequest{TenantID: k.TenantID, KnowledgeBaseID: k.KnowledgeBaseID, KnowledgeID: k.ID, ChunkIDs: []string{chunk.ID}}
+			request := types.KnowledgeBuildInputCaptureRequest{
+				TenantID:        k.TenantID,
+				KnowledgeBaseID: k.KnowledgeBaseID,
+				KnowledgeID:     k.ID,
+				ChunkIDs:        []string{chunk.ID},
+			}
 			switch change {
 			case "foreign_tenant":
 				request.TenantID++
@@ -65,7 +82,13 @@ func TestKnowledgeOutputInputRejectsUnknownForeignAndMaterialABA(t *testing.T) {
 				require.NoError(t, db.Model(chunk).Update("content", "changed").Error)
 				require.NoError(t, db.Model(chunk).Update("content", "actual parsed body").Error)
 			case "legacy_receipt":
-				require.NoError(t, db.Table("knowledge_input_material_receipts").Where("row_kind = ? AND row_id = ?", "knowledge", k.ID).Delete(&knowledgeInputMaterialReceipt{}).Error)
+				require.NoError(
+					t,
+					db.Table("knowledge_input_material_receipts").
+						Where("row_kind = ? AND row_id = ?", "knowledge", k.ID).
+						Delete(&knowledgeInputMaterialReceipt{}).
+						Error,
+				)
 			}
 			actual, err := store.CaptureKnowledgeOutputInputs(context.Background(), request)
 			require.Error(t, err)
@@ -77,13 +100,32 @@ func TestKnowledgeOutputInputRejectsUnknownForeignAndMaterialABA(t *testing.T) {
 func TestKnowledgeOutputInputBatchKeepsEveryOriginalProof(t *testing.T) {
 	store, db := knowledgeInputFixture(t)
 	_, k, chunk, _ := createAdmittedManual(t, store, db)
-	actual, err := store.CaptureKnowledgeOutputInputs(context.Background(), types.KnowledgeBuildInputCaptureRequest{TenantID: k.TenantID, KnowledgeBaseID: k.KnowledgeBaseID, KnowledgeID: k.ID, ChunkIDs: []string{chunk.ID}})
+	actual, err := store.CaptureKnowledgeOutputInputs(
+		context.Background(),
+		types.KnowledgeBuildInputCaptureRequest{
+			TenantID:        k.TenantID,
+			KnowledgeBaseID: k.KnowledgeBaseID,
+			KnowledgeID:     k.ID,
+			ChunkIDs:        []string{chunk.ID},
+		},
+	)
 	require.NoError(t, err)
 	second := *k
 	second.ID = "second-manual"
-	_, err = store.CreateKnowledgeWithInput(WithIndependentKnowledgeInput(context.Background()), &second, "second authored text")
+	_, err = store.CreateKnowledgeWithInput(
+		WithIndependentKnowledgeInput(context.Background()),
+		&second,
+		"second authored text",
+	)
 	require.NoError(t, err)
-	other, err := store.CaptureKnowledgeOutputInputs(context.Background(), types.KnowledgeBuildInputCaptureRequest{TenantID: second.TenantID, KnowledgeBaseID: second.KnowledgeBaseID, KnowledgeID: second.ID})
+	other, err := store.CaptureKnowledgeOutputInputs(
+		context.Background(),
+		types.KnowledgeBuildInputCaptureRequest{
+			TenantID:        second.TenantID,
+			KnowledgeBaseID: second.KnowledgeBaseID,
+			KnowledgeID:     second.ID,
+		},
+	)
 	require.NoError(t, err)
 	proofs := []*types.KnowledgeBuildInputProof{actual.Proof, other.Proof}
 	require.NoError(t, store.RecheckKnowledgeOutputInputs(context.Background(), proofs))

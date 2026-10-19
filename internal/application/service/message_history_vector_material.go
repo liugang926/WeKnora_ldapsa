@@ -48,9 +48,17 @@ func historyVectorRequestKey(request types.MessageMaterialReadRequest) (string, 
 
 // Count control IDs before original bytes are read, including recursively
 // recorded input parents. This is a resource bound, never a truncated success.
-func historyVectorPlanBudget(plan *types.MessageMaterialReadPlan, tenant uint64, seen map[string]bool, depth int) error {
-	if plan == nil || depth > 32 || plan.MetadataDigest == "" || plan.Request.TenantID != tenant || plan.Request.SessionID == "" ||
-		plan.Request.AllSession || len(plan.Request.MessageIDs) == 0 || len(plan.Request.MessageIDs) > types.MessageSearchMaximumExchangeMessages {
+func historyVectorPlanBudget(
+	plan *types.MessageMaterialReadPlan,
+	tenant uint64,
+	seen map[string]bool,
+	depth int,
+) error {
+	if plan == nil || depth > 32 || plan.MetadataDigest == "" || plan.Request.TenantID != tenant ||
+		plan.Request.SessionID == "" ||
+		plan.Request.AllSession ||
+		len(plan.Request.MessageIDs) == 0 ||
+		len(plan.Request.MessageIDs) > types.MessageSearchMaximumExchangeMessages {
 		return types.ErrSourceLineageUnknown
 	}
 	for _, id := range plan.Request.MessageIDs {
@@ -73,8 +81,14 @@ func historyVectorPlanBudget(plan *types.MessageMaterialReadPlan, tenant uint64,
 // beginHistoryVectorMaterialBridge admits immutable history parents before
 // any child body is loaded. Current row JSON is never a source of provenance.
 // Guards transferred to the existing output slot remain there through HTTP.
-func (s *messageService) beginHistoryVectorMaterialBridge(ctx context.Context, params *types.MessageSearchParams, kbID string, parents []*types.HistoryKnowledgeParentPlan) (*historyVectorMaterialBridge, error) {
-	if ctx == nil || params == nil || s.materialStore == nil || s.sourceLineageGuard == nil || kbID == "" || len(parents) > maxRetrievalPoolSize {
+func (s *messageService) beginHistoryVectorMaterialBridge(
+	ctx context.Context,
+	params *types.MessageSearchParams,
+	kbID string,
+	parents []*types.HistoryKnowledgeParentPlan,
+) (*historyVectorMaterialBridge, error) {
+	if ctx == nil || params == nil || s.materialStore == nil || s.sourceLineageGuard == nil || kbID == "" ||
+		len(parents) > maxRetrievalPoolSize {
 		return nil, access.ErrNextcloudPublicationUnavailable
 	}
 	tenant, ok := types.TenantIDFromContext(ctx)
@@ -85,15 +99,25 @@ func (s *messageService) beginHistoryVectorMaterialBridge(ctx context.Context, p
 	if slot, ok := ctx.Value(messageMaterialOutputKey{}).(*messageMaterialOutputSlot); !ok || slot == nil {
 		return nil, access.ErrNextcloudPublicationUnavailable
 	}
-	b := &historyVectorMaterialBridge{service: s, tenant: tenant, owner: owner, kbID: kbID,
-		originals: map[string]*historyVectorOriginal{}, children: map[string]*types.KnowledgeBuildInputSnapshot{}, childBodies: map[string]string{}, hydrated: map[string]string{}}
+	b := &historyVectorMaterialBridge{
+		service:     s,
+		tenant:      tenant,
+		owner:       owner,
+		kbID:        kbID,
+		originals:   map[string]*historyVectorOriginal{},
+		children:    map[string]*types.KnowledgeBuildInputSnapshot{},
+		childBodies: map[string]string{},
+		hydrated:    map[string]string{},
+	}
 	allowedSessions := map[string]bool{}
 	for _, id := range params.SessionIDs {
 		allowedSessions[id] = true
 	}
 	seenMaterial := map[string]bool{}
 	for _, parent := range parents {
-		if parent == nil || parent.KnowledgeID == "" || parent.AdmissionID == "" || parent.InputDigest == "" || parent.BuildGeneration == 0 || b.originals[parent.KnowledgeID] != nil {
+		if parent == nil || parent.KnowledgeID == "" || parent.AdmissionID == "" || parent.InputDigest == "" ||
+			parent.BuildGeneration == 0 ||
+			b.originals[parent.KnowledgeID] != nil {
 			return nil, types.ErrSourceLineageUnknown
 		}
 		if err := historyVectorPlanBudget(parent.MessagePlan, tenant, seenMaterial, 0); err != nil {
@@ -116,7 +140,9 @@ func (s *messageService) beginHistoryVectorMaterialBridge(ctx context.Context, p
 		}
 		actualKey, err := historyVectorRequestKey(guard.plan.Request)
 		expectedKey, keyErr := historyVectorRequestKey(request)
-		if err != nil || keyErr != nil || actualKey != expectedKey || guard.plan.MetadataDigest != original.header.MessagePlan.MetadataDigest || guard.snapshot.SessionOwnerID != owner {
+		if err != nil || keyErr != nil || actualKey != expectedKey ||
+			guard.plan.MetadataDigest != original.header.MessagePlan.MetadataDigest ||
+			guard.snapshot.SessionOwnerID != owner {
 			guard.Close()
 			return nil, repository.ErrKnowledgeInputChanged
 		}
@@ -142,8 +168,10 @@ func (s *messageService) beginHistoryVectorMaterialBridge(ctx context.Context, p
 		// The immutable child may record its initial pair while the display
 		// exchange includes consumed steer inputs. The existing metadata-only
 		// partner port obtains a separately admitted complete current cohort.
-		candidate := &types.MessageSearchCandidate{ID: assistant.ID, SessionID: assistant.SessionID, RequestID: assistant.RequestID,
-			Role: assistant.Role, KnowledgeID: assistant.KnowledgeID, CreatedAt: assistant.CreatedAt}
+		candidate := &types.MessageSearchCandidate{
+			ID: assistant.ID, SessionID: assistant.SessionID, RequestID: assistant.RequestID,
+			Role: assistant.Role, KnowledgeID: assistant.KnowledgeID, CreatedAt: assistant.CreatedAt,
+		}
 		reader, ok := s.messageRepo.(historySearchCandidateReader)
 		if !ok {
 			return nil, access.ErrNextcloudPublicationUnavailable
@@ -165,7 +193,10 @@ func (s *messageService) beginHistoryVectorMaterialBridge(ctx context.Context, p
 		same := len(metadata) == len(parentIDs)
 		partnerIDs := map[string]bool{}
 		for _, row := range metadata {
-			if row == nil || row.ID == "" || row.SessionID != assistant.SessionID || row.RequestID != assistant.RequestID || partnerIDs[row.ID] || (row.Role != "user" && row.Role != "assistant") {
+			if row == nil || row.ID == "" || row.SessionID != assistant.SessionID ||
+				row.RequestID != assistant.RequestID ||
+				partnerIDs[row.ID] ||
+				(row.Role != "user" && row.Role != "assistant") {
 				return nil, access.ErrNextcloudPublicationDenied
 			}
 			partnerIDs[row.ID] = true
@@ -334,12 +365,15 @@ func (b *historyVectorMaterialBridge) recheckCurrentInputs() error {
 // bridge is held for output, every selected child and its KB authorizer must
 // remain present; deleting a retained snapshot cannot skip its final proof.
 func (b *historyVectorMaterialBridge) recheckHeldInputs() error {
-	if b == nil || b.kbCurrent == nil || len(b.originals) == 0 || len(b.children) != len(b.originals) || len(b.childBodies) != len(b.originals) {
+	if b == nil || b.kbCurrent == nil || len(b.originals) == 0 || len(b.children) != len(b.originals) ||
+		len(b.childBodies) != len(b.originals) {
 		return access.ErrNextcloudPublicationUnavailable
 	}
 	for id, original := range b.originals {
 		child := b.children[id]
-		if original == nil || original.guard == nil || original.assistant == nil || child == nil || child.Proof == nil || b.childBodies[id] == "" {
+		if original == nil || original.guard == nil || original.assistant == nil || child == nil ||
+			child.Proof == nil ||
+			b.childBodies[id] == "" {
 			return access.ErrNextcloudPublicationUnavailable
 		}
 	}
@@ -350,7 +384,8 @@ func (b *historyVectorMaterialBridge) recheckHeldInputs() error {
 // bridge. It retains current child/KB authorization, not a caller-supplied
 // callback, until the existing output owner's final release.
 func holdHistoryVectorMaterialOutput(ctx context.Context, bridge *historyVectorMaterialBridge) error {
-	if ctx == nil || bridge == nil || bridge.ctx == nil || bridge.kbCurrent == nil || len(bridge.originals) == 0 || len(bridge.children) != len(bridge.originals) {
+	if ctx == nil || bridge == nil || bridge.ctx == nil || bridge.kbCurrent == nil || len(bridge.originals) == 0 ||
+		len(bridge.children) != len(bridge.originals) {
 		return access.ErrNextcloudPublicationUnavailable
 	}
 	slot, ok := ctx.Value(messageMaterialOutputKey{}).(*messageMaterialOutputSlot)
@@ -374,14 +409,23 @@ func holdHistoryVectorMaterialOutput(ctx context.Context, bridge *historyVectorM
 	return nil
 }
 
-func (b *historyVectorMaterialBridge) captureChildren(ctx context.Context, candidates []*types.VectorIndexCandidate, physical *readlease.NextcloudReadGuard) error {
-	if physical == nil || !physical.Covers([]readlease.NextcloudKBReadScope{{TenantID: b.tenant, KBID: b.kbID}}) || len(candidates) > maxRetrievalPoolSize {
+func (b *historyVectorMaterialBridge) captureChildren(
+	ctx context.Context,
+	candidates []*types.VectorIndexCandidate,
+	physical *readlease.NextcloudReadGuard,
+) error {
+	if physical == nil || !physical.Covers([]readlease.NextcloudKBReadScope{{TenantID: b.tenant, KBID: b.kbID}}) ||
+		len(candidates) > maxRetrievalPoolSize {
 		return access.ErrNextcloudPublicationUnavailable
 	}
 	byKnowledge := map[string][]string{}
 	seen := map[string]bool{}
 	for _, candidate := range candidates {
-		if candidate == nil || candidate.KnowledgeBaseID != b.kbID || b.originals[candidate.KnowledgeID] == nil || candidate.IndexID == "" || candidate.ChunkID == "" || math.IsNaN(candidate.Score) || math.IsInf(candidate.Score, 0) {
+		if candidate == nil || candidate.KnowledgeBaseID != b.kbID || b.originals[candidate.KnowledgeID] == nil ||
+			candidate.IndexID == "" ||
+			candidate.ChunkID == "" ||
+			math.IsNaN(candidate.Score) ||
+			math.IsInf(candidate.Score, 0) {
 			return access.ErrNextcloudPublicationDenied
 		}
 		key := candidate.KnowledgeID + "\x00" + candidate.ChunkID
@@ -403,7 +447,8 @@ func (b *historyVectorMaterialBridge) captureChildren(ctx context.Context, candi
 		}
 		sort.Strings(chunkIDs)
 		child, err := b.service.materialStore.CaptureKnowledgeOutputInputs(ctx, types.KnowledgeBuildInputCaptureRequest{
-			TenantID: b.tenant, KnowledgeBaseID: b.kbID, KnowledgeID: id, ChunkIDs: chunkIDs})
+			TenantID: b.tenant, KnowledgeBaseID: b.kbID, KnowledgeID: id, ChunkIDs: chunkIDs,
+		})
 		if err != nil {
 			return err
 		}
@@ -421,7 +466,8 @@ func (b *historyVectorMaterialBridge) captureChildren(ctx context.Context, candi
 			wanted[chunkID] = true
 		}
 		for _, chunk := range child.Chunks {
-			if chunk == nil || !wanted[chunk.ID] || chunk.TenantID != b.tenant || chunk.KnowledgeBaseID != b.kbID || chunk.KnowledgeID != id {
+			if chunk == nil || !wanted[chunk.ID] || chunk.TenantID != b.tenant || chunk.KnowledgeBaseID != b.kbID ||
+				chunk.KnowledgeID != id {
 				return repository.ErrKnowledgeInputChanged
 			}
 			delete(wanted, chunk.ID)
@@ -448,6 +494,7 @@ func (b *historyVectorMaterialBridge) captureChildren(ctx context.Context, candi
 func historyVectorResultKey(result *types.SearchResult) string {
 	return result.KnowledgeID + "\x00" + result.ID
 }
+
 func historyVectorChildDigest(child *types.KnowledgeBuildInputSnapshot) (string, error) {
 	if child == nil {
 		return "", types.ErrSourceLineageUnknown
@@ -460,6 +507,7 @@ func historyVectorChildDigest(child *types.KnowledgeBuildInputSnapshot) (string,
 		Proof         *types.KnowledgeBuildInputProof
 	}{child.Knowledge, child.KnowledgeBase, child.Chunks, child.Proof})
 }
+
 func historyVectorResultDigest(result *types.SearchResult) (string, error) {
 	if result == nil {
 		return "", types.ErrSourceLineageUnknown
@@ -488,7 +536,10 @@ func (b *historyVectorMaterialBridge) originalChunk(result *types.SearchResult) 
 		return nil, repository.ErrKnowledgeInputChanged
 	}
 	for _, chunk := range child.Chunks {
-		if chunk.ID == result.ID && chunk.Content == result.Content && chunk.ContentRevision == result.ContentRevision && !result.ContentRewritten && result.MatchedContent == "" {
+		if chunk.ID == result.ID && chunk.Content == result.Content &&
+			chunk.ContentRevision == result.ContentRevision &&
+			!result.ContentRewritten &&
+			result.MatchedContent == "" {
 			return chunk, nil
 		}
 	}
@@ -539,7 +590,10 @@ func (b *historyVectorMaterialBridge) modelDocuments(results []*types.SearchResu
 
 // OwnedCandidates projects held original message/cohort bodies only. Child
 // chunk text and any provider-returned Document are never search output text.
-func (b *historyVectorMaterialBridge) OwnedCandidates(ctx context.Context, scores map[string]float64) ([]*types.MessageSearchResultItem, map[string][]*types.Message, error) {
+func (b *historyVectorMaterialBridge) OwnedCandidates(
+	ctx context.Context,
+	scores map[string]float64,
+) ([]*types.MessageSearchResultItem, map[string][]*types.Message, error) {
 	if err := b.Checkpoint(ctx); err != nil {
 		return nil, nil, err
 	}
@@ -552,7 +606,10 @@ func (b *historyVectorMaterialBridge) OwnedCandidates(ctx context.Context, score
 	sort.Strings(ids)
 	for _, id := range ids {
 		original := b.originals[id]
-		if original == nil || original.assistant == nil || original.assistant.KnowledgeID != id || b.children[id] == nil || math.IsNaN(scores[id]) || math.IsInf(scores[id], 0) {
+		if original == nil || original.assistant == nil || original.assistant.KnowledgeID != id ||
+			b.children[id] == nil ||
+			math.IsNaN(scores[id]) ||
+			math.IsInf(scores[id], 0) {
 			return nil, nil, access.ErrNextcloudPublicationDenied
 		}
 		// Copies prevent callers from mutating the guards' retained bodies.
@@ -580,7 +637,14 @@ func (b *historyVectorMaterialBridge) OwnedCandidates(ctx context.Context, score
 		if assistant == nil {
 			return nil, nil, access.ErrNextcloudPublicationDenied
 		}
-		items = append(items, &types.MessageSearchResultItem{MessageWithSession: types.MessageWithSession{Message: *assistant}, Score: scores[id], MatchType: "vector"})
+		items = append(
+			items,
+			&types.MessageSearchResultItem{
+				MessageWithSession: types.MessageWithSession{Message: *assistant},
+				Score:              scores[id],
+				MatchType:          "vector",
+			},
+		)
 		pairs[historySearchPairKey(assistant)] = rows
 	}
 	sort.SliceStable(items, func(i, j int) bool { return items[i].Score > items[j].Score })

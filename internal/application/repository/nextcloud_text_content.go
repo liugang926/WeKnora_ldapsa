@@ -33,6 +33,7 @@ func nextcloudHasRetrievableTextChunk(tx *gorm.DB, candidate *types.Knowledge) (
 		"tenant_id = ? AND knowledge_base_id = ? AND knowledge_id = ? AND deleted_at IS NULL AND chunk_type = ? AND is_enabled = ? AND index_status = ? AND TRIM(content) <> ''",
 		candidate.TenantID, candidate.KnowledgeBaseID, candidate.ID,
 		types.ChunkTypeText, true, "ready",
-	).Limit(1).Find(&chunk)
+	).
+		Limit(1).Find(&chunk)
 	return result.RowsAffected == 1, result.Error
 }

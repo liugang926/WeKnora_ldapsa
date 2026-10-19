@@ -26,11 +26,19 @@ func TestGroupAccessMissingOnboardingLedgerPreservesSchemaBoundary(t *testing.T)
 			case "legacy":
 				require.NoError(t, db.Exec("CREATE TABLE sessions(id TEXT PRIMARY KEY)").Error)
 			case "session":
-				require.NoError(t, db.Exec("CREATE TABLE sessions(id TEXT PRIMARY KEY, nextcloud_scoped BOOLEAN NOT NULL DEFAULT FALSE)").Error)
+				require.NoError(
+					t,
+					db.Exec(
+						"CREATE TABLE sessions(id TEXT PRIMARY KEY, nextcloud_scoped BOOLEAN NOT NULL DEFAULT FALSE)",
+					).Error,
+				)
 			case "credential":
 				require.NoError(t, db.Exec("CREATE TABLE nextcloud_onboarding_credentials(id TEXT PRIMARY KEY)").Error)
 			case "control":
-				require.NoError(t, db.Exec("CREATE TABLE nextcloud_control_recovery_gates(instance_id TEXT PRIMARY KEY)").Error)
+				require.NoError(
+					t,
+					db.Exec("CREATE TABLE nextcloud_control_recovery_gates(instance_id TEXT PRIMARY KEY)").Error,
+				)
 			}
 			require.NoError(t, db.Migrator().DropTable(&types.NextcloudOnboardingOperation{}))
 			access := repo.NewGroupAccessRepository(db).(interface {

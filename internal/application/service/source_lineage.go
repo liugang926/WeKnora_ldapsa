@@ -17,7 +17,13 @@ func NewSourceLineageGuard(knowledge interfaces.KnowledgeRepository, kbs interfa
 	return access.NewNextcloudSourceLineageGuard(snapshots, kbs, shares, agents, groups, publication)
 }
 
-func ConfigureMessageSourceLineage(messages interfaces.MessageService, sessions interfaces.SessionService, forks *SessionForkService, manager *chatpipeline.EventManager, guard *access.NextcloudSourceLineageGuard) {
+func ConfigureMessageSourceLineage(
+	messages interfaces.MessageService,
+	sessions interfaces.SessionService,
+	forks *SessionForkService,
+	manager *chatpipeline.EventManager,
+	guard *access.NextcloudSourceLineageGuard,
+) {
 	if impl, ok := messages.(*messageService); ok {
 		impl.sourceLineageGuard = guard
 	}
@@ -49,6 +55,7 @@ func (a messageLineageHistoryAdmission) CheckAgentHistoryReplay(ctx context.Cont
 	}
 	return nil
 }
+
 func (a messageLineageHistoryAdmission) CheckMessageSourceLineage(ctx context.Context, message *types.Message) error {
 	if a.verifier == nil {
 		return access.ErrNextcloudPublicationUnavailable
@@ -58,7 +65,10 @@ func (a messageLineageHistoryAdmission) CheckMessageSourceLineage(ctx context.Co
 
 // Saved execution selectors are reloaded solely for current grants. Source
 // evidence remains the original saved envelope and is never reconstructed.
-func (s *messageService) messageSourceLineageScope(ctx context.Context, message *types.Message) (access.LineageReadScope, error) {
+func (s *messageService) messageSourceLineageScope(
+	ctx context.Context,
+	message *types.Message,
+) (access.LineageReadScope, error) {
 	scope := access.LineageReadScope{AgentID: message.AgentID, AgentTenantID: message.AgentTenantID}
 	seen := map[string]bool{}
 	addKB := func(id string) error {
@@ -76,7 +86,10 @@ func (s *messageService) messageSourceLineageScope(ctx context.Context, message 
 		if kb.ID != id || kb.TenantID == 0 {
 			return access.ErrNextcloudPublicationDenied
 		}
-		scope.Targets = append(scope.Targets, &types.SearchTarget{Type: types.SearchTargetTypeKnowledgeBase, KnowledgeBaseID: id, TenantID: kb.TenantID})
+		scope.Targets = append(
+			scope.Targets,
+			&types.SearchTarget{Type: types.SearchTargetTypeKnowledgeBase, KnowledgeBaseID: id, TenantID: kb.TenantID},
+		)
 		return nil
 	}
 	for _, id := range append(append([]string{}, message.ExecutionContext.KnowledgeBaseIDs...), message.ExecutionContext.AgentKnowledgeBaseIDs...) {
@@ -125,13 +138,19 @@ func (s *messageService) checkTypedSourceLineage(ctx context.Context, message *t
 			return access.ErrNextcloudPublicationDenied
 		}
 	}
-	if len(message.Artifacts) > 0 || len(message.Attachments) > 0 || len(message.Images) > 0 || message.RenderedContent != "" || message.SandboxCheckpoint != nil {
+	if len(message.Artifacts) > 0 || len(message.Attachments) > 0 || len(message.Images) > 0 ||
+		message.RenderedContent != "" ||
+		message.SandboxCheckpoint != nil {
 		return access.ErrNextcloudPublicationDenied // These generated fields lack producer contracts.
 	}
 	return s.sourceLineageGuard.Check(ctx, lineage, scope)
 }
 
-func (s *messageService) checkMessageSourceLineageBatch(ctx context.Context, messages []*types.Message, titleReads []access.SourceLineageRead) error {
+func (s *messageService) checkMessageSourceLineageBatch(
+	ctx context.Context,
+	messages []*types.Message,
+	titleReads []access.SourceLineageRead,
+) error {
 	return s.checkMessageSourceLineageReadBatch(ctx, messages, titleReads, false)
 }
 
@@ -150,7 +169,12 @@ func (s *messageService) CheckMessagePublications(ctx context.Context, messages 
 	return s.checkMessageSourceLineageReadBatch(ctx, messages, nil, true)
 }
 
-func (s *messageService) checkMessageSourceLineageReadBatch(ctx context.Context, messages []*types.Message, titleReads []access.SourceLineageRead, includeRawUser bool) error {
+func (s *messageService) checkMessageSourceLineageReadBatch(
+	ctx context.Context,
+	messages []*types.Message,
+	titleReads []access.SourceLineageRead,
+	includeRawUser bool,
+) error {
 	reads := append([]access.SourceLineageRead{}, titleReads...)
 	for _, message := range messages {
 		if message == nil || message.Role == "user" && !includeRawUser {
@@ -188,9 +212,11 @@ func rawUserContentOnly(messages []*types.Message) []*types.Message {
 		// Preserve exactly the user's authored Content. Captions, rendered
 		// contexts, attachments, references and generated artifacts have no
 		// covered user-field producer in this phase.
-		copy := types.Message{ID: message.ID, SessionID: message.SessionID, RequestID: message.RequestID,
+		copy := types.Message{
+			ID: message.ID, SessionID: message.SessionID, RequestID: message.RequestID,
 			Role: message.Role, Content: message.Content, CreatedAt: message.CreatedAt, UpdatedAt: message.UpdatedAt,
-			IsCompleted: message.IsCompleted}
+			IsCompleted: message.IsCompleted,
+		}
 		out = append(out, &copy)
 	}
 	return out

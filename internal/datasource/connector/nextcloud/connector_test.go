@@ -49,8 +49,8 @@ func writeJSON(w http.ResponseWriter, value interface{}) {
 }
 
 func TestConnectorContractAndIncrementalETag(t *testing.T) {
-	var tag = "etag-1"
-	var body = "hello"
+	tag := "etag-1"
+	body := "hello"
 	var contentRequests int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if got := r.Header.Get("Authorization"); got != "Bearer test-token" {
@@ -99,7 +99,8 @@ func TestConnectorContractAndIncrementalETag(t *testing.T) {
 		t.Fatalf("Validate: %v", err)
 	}
 	resources, err := connector.ListResources(ctx, ds, "")
-	if err != nil || len(resources) != 1 || resources[0].ExternalID != "dev-published" || resources[0].Name != "Published" {
+	if err != nil || len(resources) != 1 || resources[0].ExternalID != "dev-published" ||
+		resources[0].Name != "Published" {
 		t.Fatalf("ListResources = %+v, %v", resources, err)
 	}
 	children, err := connector.ListResources(ctx, ds, "dev-published")
@@ -540,9 +541,25 @@ func TestPaginatedManifestCompletesBeforeDownload(t *testing.T) {
 		case apiPath + "/bindings/dev-published/manifest":
 			pages++
 			if r.URL.Query().Get("cursor") == "" {
-				writeJSON(w, map[string]interface{}{"generation": "g1", "complete": false, "next_cursor": "page-2", "items": testManifest("etag-1")["items"]})
+				writeJSON(
+					w,
+					map[string]interface{}{
+						"generation":  "g1",
+						"complete":    false,
+						"next_cursor": "page-2",
+						"items":       testManifest("etag-1")["items"],
+					},
+				)
 			} else if r.URL.Query().Get("cursor") == "page-2" {
-				writeJSON(w, map[string]interface{}{"generation": "g1", "complete": true, "next_cursor": nil, "items": []interface{}{}})
+				writeJSON(
+					w,
+					map[string]interface{}{
+						"generation":  "g1",
+						"complete":    true,
+						"next_cursor": nil,
+						"items":       []interface{}{},
+					},
+				)
 			} else {
 				t.Errorf("unexpected cursor %q", r.URL.Query().Get("cursor"))
 			}

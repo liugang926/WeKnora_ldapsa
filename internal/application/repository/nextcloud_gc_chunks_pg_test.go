@@ -60,11 +60,15 @@ func TestPostgresNextcloudExactChunkGCClaimScopeTimingAndAtomicReceipt(t *testin
 	store := NewNextcloudGCStore(db)
 	now := time.Now().UTC()
 	nextcloudGCTestSource(t, db, "old", "", now.Add(-2*time.Hour))
-	require.NoError(t, db.Create(&types.Chunk{ID: "chunk-old", TenantID: 7,
-		KnowledgeBaseID: "kb", KnowledgeID: "old", Content: "private body"}).Error)
-	require.NoError(t, db.Create(&types.ChunkRevision{ID: uuid.NewString(), TenantID: 7,
+	require.NoError(t, db.Create(&types.Chunk{
+		ID: "chunk-old", TenantID: 7,
+		KnowledgeBaseID: "kb", KnowledgeID: "old", Content: "private body",
+	}).Error)
+	require.NoError(t, db.Create(&types.ChunkRevision{
+		ID: uuid.NewString(), TenantID: 7,
 		KnowledgeBaseID: "kb", KnowledgeID: "old", ChunkID: "chunk-old",
-		Content: "previous private body"}).Error)
+		Content: "previous private body",
+	}).Error)
 	created, err := store.InventoryRetired(ctx, now, 10)
 	require.NoError(t, err)
 	require.Equal(t, 1, created)
@@ -74,8 +78,10 @@ func TestPostgresNextcloudExactChunkGCClaimScopeTimingAndAtomicReceipt(t *testin
 	var job nextcloudGCJob
 	require.NoError(t, db.Take(&job).Error)
 	require.Equal(t, "blocked", job.State)
-	scope := NextcloudContentScope{TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: "old",
-		DataSourceID: "ds", ExternalID: "node"}
+	scope := NextcloudContentScope{
+		TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: "old",
+		DataSourceID: "ds", ExternalID: "node",
+	}
 	leases := NewNextcloudContentLeaseStore(db)
 	reader, err := leases.AcquireKnowledge(ctx, scope, NextcloudContentReadLease, "pg-reader", time.Minute)
 	require.NoError(t, err)
@@ -91,10 +97,14 @@ func TestPostgresNextcloudExactChunkGCClaimScopeTimingAndAtomicReceipt(t *testin
 	require.NoError(t, err)
 
 	// Claim scope and the persisted item must both match the exact row.
-	require.NoError(t, db.Create(&types.Chunk{ID: "foreign", TenantID: 8,
-		KnowledgeBaseID: "kb", KnowledgeID: "old", Content: "another tenant"}).Error)
-	require.NoError(t, db.Create(&nextcloudGCItem{JobID: job.ID, Kind: "derived_chunk",
-		ObjectRef: "foreign", State: "blocked"}).Error)
+	require.NoError(t, db.Create(&types.Chunk{
+		ID: "foreign", TenantID: 8,
+		KnowledgeBaseID: "kb", KnowledgeID: "old", Content: "another tenant",
+	}).Error)
+	require.NoError(t, db.Create(&nextcloudGCItem{
+		JobID: job.ID, Kind: "derived_chunk",
+		ObjectRef: "foreign", State: "blocked",
+	}).Error)
 	require.ErrorIs(t, store.DeleteNextcloudExactChunkForGC(ctx, claim, job.ID, "foreign"),
 		ErrNextcloudContentLeaseDenied)
 	var count int64
@@ -102,13 +112,17 @@ func TestPostgresNextcloudExactChunkGCClaimScopeTimingAndAtomicReceipt(t *testin
 	require.Equal(t, int64(1), count)
 
 	otherJobID := uuid.NewString()
-	require.NoError(t, db.Create(&nextcloudGCJob{ID: otherJobID, TenantID: 8,
+	require.NoError(t, db.Create(&nextcloudGCJob{
+		ID: otherJobID, TenantID: 8,
 		KnowledgeBaseID: "kb", DataSourceID: "ds", ExternalID: "node",
 		KnowledgeID: "other", Reason: "retired", State: "blocked",
 		NotBefore: now.Add(-time.Hour), OriginalNotBefore: now,
-		NextAttemptAt: now}).Error)
-	require.NoError(t, db.Create(&nextcloudGCItem{JobID: otherJobID, Kind: "derived_chunk",
-		ObjectRef: "chunk-old", State: "blocked"}).Error)
+		NextAttemptAt: now,
+	}).Error)
+	require.NoError(t, db.Create(&nextcloudGCItem{
+		JobID: otherJobID, Kind: "derived_chunk",
+		ObjectRef: "chunk-old", State: "blocked",
+	}).Error)
 	require.ErrorIs(t, store.DeleteNextcloudExactChunkForGC(ctx, claim, otherJobID, "chunk-old"),
 		ErrNextcloudContentLeaseDenied)
 

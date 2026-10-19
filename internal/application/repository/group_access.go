@@ -427,12 +427,19 @@ func (r *groupAccessRepository) GetPermissionVersion(
 // removal is caught even when only this file is selected by a narrow build.
 var _ = time.Time{}
 
-func (r *groupAccessRepository) ScopedMatches(ctx context.Context, user string, tenant uint64, kb string, now time.Time) ([]types.NextcloudScopedGrantMatch, error) {
+func (r *groupAccessRepository) ScopedMatches(
+	ctx context.Context,
+	user string,
+	tenant uint64,
+	kb string,
+	now time.Time,
+) ([]types.NextcloudScopedGrantMatch, error) {
 	if available, err := r.nextcloudScopeSchema(ctx); !available || err != nil {
 		return nil, err
 	}
 	return NewNextcloudOnboardingStore(r.db).ScopedMatches(ctx, user, tenant, kb, now)
 }
+
 func (r *groupAccessRepository) TenantScoped(ctx context.Context, tenant uint64) (bool, error) {
 	if available, err := r.nextcloudScopeSchema(ctx); !available || err != nil {
 		return false, err

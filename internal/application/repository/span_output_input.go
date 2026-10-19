@@ -61,6 +61,7 @@ func spanBodyDigest(row *types.KnowledgeProcessingSpan) (string, error) {
 		ErrorDetail string
 	}{copy, row.ErrorDetail})
 }
+
 func spanRevision(tx *gorm.DB, id int64) (uint64, error) {
 	var v struct{ Revision uint64 }
 	err := tx.Table("knowledge_span_row_versions").Where("span_row_id = ?", id).Take(&v).Error
@@ -70,13 +71,19 @@ func spanRevision(tx *gorm.DB, id int64) (uint64, error) {
 	return v.Revision, err
 }
 
-func (r *knowledgeSpanRepository) attachSpanWriteTokens(ctx context.Context, rows []types.KnowledgeProcessingSpan) error {
+func (r *knowledgeSpanRepository) attachSpanWriteTokens(
+	ctx context.Context,
+	rows []types.KnowledgeProcessingSpan,
+) error {
 	if len(rows) == 0 || !r.db.Migrator().HasTable(&spanBodyReceipt{}) {
 		return nil
 	}
 	for i := range rows {
 		var receipt spanBodyReceipt
-		err := r.db.WithContext(ctx).Where("knowledge_id = ? AND attempt = ? AND span_id = ?", rows[i].KnowledgeID, rows[i].Attempt, rows[i].SpanID).Take(&receipt).Error
+		err := r.db.WithContext(ctx).
+			Where("knowledge_id = ? AND attempt = ? AND span_id = ?", rows[i].KnowledgeID, rows[i].Attempt, rows[i].SpanID).
+			Take(&receipt).
+			Error
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			continue
 		}
@@ -98,12 +105,21 @@ func (r *knowledgeSpanRepository) attachSpanWriteTokens(ctx context.Context, row
 	return nil
 }
 
-func captureSpanMaterials(ctx context.Context, tx *gorm.DB, store *KnowledgeInputProvenanceStore, original *types.KnowledgeBuildInputProof) (*spanMaterialInput, error) {
-	if original == nil || original.Projection != "" || original.AdmissionID == "" || original.SourceLineage.RequireComplete() != nil {
+func captureSpanMaterials(
+	ctx context.Context,
+	tx *gorm.DB,
+	store *KnowledgeInputProvenanceStore,
+	original *types.KnowledgeBuildInputProof,
+) (*spanMaterialInput, error) {
+	if original == nil || original.Projection != "" || original.AdmissionID == "" ||
+		original.SourceLineage.RequireComplete() != nil {
 		return nil, types.ErrSourceLineageUnknown
 	}
 	var k types.Knowledge
-	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ? AND tenant_id = ? AND knowledge_base_id = ?", original.KnowledgeID, original.TenantID, original.KnowledgeBaseID).Take(&k).Error; err != nil {
+	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("id = ? AND tenant_id = ? AND knowledge_base_id = ?", original.KnowledgeID, original.TenantID, original.KnowledgeBaseID).
+		Take(&k).
+		Error; err != nil {
 		return nil, err
 	}
 	a, kb, _, err := store.admissionInTx(tx, &k, original)
@@ -114,7 +130,11 @@ func captureSpanMaterials(ctx context.Context, tx *gorm.DB, store *KnowledgeInpu
 		return nil, ErrKnowledgeInputChanged
 	}
 	var chunks []*types.Chunk
-	if err := tx.Where("knowledge_id = ? AND tenant_id = ? AND knowledge_base_id = ?", k.ID, k.TenantID, k.KnowledgeBaseID).Order("id ASC").Limit(4097).Find(&chunks).Error; err != nil {
+	if err := tx.Where("knowledge_id = ? AND tenant_id = ? AND knowledge_base_id = ?", k.ID, k.TenantID, k.KnowledgeBaseID).
+		Order("id ASC").
+		Limit(4097).
+		Find(&chunks).
+		Error; err != nil {
 		return nil, err
 	}
 	if len(chunks) > 4096 {
@@ -130,12 +150,24 @@ func captureSpanMaterials(ctx context.Context, tx *gorm.DB, store *KnowledgeInpu
 			return nil, err
 		}
 	}
-	result := &spanMaterialInput{Knowledge: &k, KnowledgeBase: kb, Chunks: chunks, ChunkRevisions: revisions, Original: cloneKnowledgeInputProof(original)}
+	result := &spanMaterialInput{
+		Knowledge:      &k,
+		KnowledgeBase:  kb,
+		Chunks:         chunks,
+		ChunkRevisions: revisions,
+		Original:       cloneKnowledgeInputProof(original),
+	}
 	if extra, ok := ctx.Value(spanAdditionalInputContextKey{}).(spanAdditionalInputContext); ok {
 		if extra.reader == nil || extra.input == nil {
 			return nil, types.ErrSourceLineageUnknown
 		}
-		if _, err := extra.reader.captureSpanAdditionalOriginalInput(ctx, tx, extra.input, original, false); err != nil {
+		if _, err := extra.reader.captureSpanAdditionalOriginalInput(
+			ctx,
+			tx,
+			extra.input,
+			original,
+			false,
+		); err != nil {
 			return nil, err
 		}
 		data, err := json.Marshal(extra.input)
@@ -155,7 +187,11 @@ func captureSpanMaterials(ctx context.Context, tx *gorm.DB, store *KnowledgeInpu
 // actual controls. Generated knowledge titles may legitimately change within
 // that admission: their original bytes stay certified by the Begin snapshot.
 // Referenced chunk bodies/metadata keep exact original revision checks.
-func verifySpanMaterials(tx *gorm.DB, store *KnowledgeInputProvenanceStore, manifest *spanStartManifest) (*types.SourceLineage, error) {
+func verifySpanMaterials(
+	tx *gorm.DB,
+	store *KnowledgeInputProvenanceStore,
+	manifest *spanStartManifest,
+) (*types.SourceLineage, error) {
 	var saved spanMaterialInput
 	if err := json.Unmarshal([]byte(manifest.ActualInputs), &saved); err != nil {
 		return nil, err
@@ -164,7 +200,10 @@ func verifySpanMaterials(tx *gorm.DB, store *KnowledgeInputProvenanceStore, mani
 	if err != nil {
 		return nil, err
 	}
-	if digest != manifest.InputsDigest || saved.Knowledge == nil || saved.KnowledgeBase == nil || saved.Original == nil || saved.Original.Projection != "" || len(saved.Chunks) != len(saved.ChunkRevisions) {
+	if digest != manifest.InputsDigest || saved.Knowledge == nil || saved.KnowledgeBase == nil ||
+		saved.Original == nil ||
+		saved.Original.Projection != "" ||
+		len(saved.Chunks) != len(saved.ChunkRevisions) {
 		return nil, ErrKnowledgeInputChanged
 	}
 	if manifest.Name == autoTagProducerSpanName && len(saved.Additional) != 1 {
@@ -174,11 +213,15 @@ func verifySpanMaterials(tx *gorm.DB, store *KnowledgeInputProvenanceStore, mani
 	if err := json.Unmarshal([]byte(manifest.OriginalInput), &original); err != nil {
 		return nil, err
 	}
-	if !reflect.DeepEqual(&original, saved.Original) || original.KnowledgeID != manifest.KnowledgeID || original.AdmissionID == "" || original.SourceLineage.RequireComplete() != nil {
+	if !reflect.DeepEqual(&original, saved.Original) || original.KnowledgeID != manifest.KnowledgeID ||
+		original.AdmissionID == "" ||
+		original.SourceLineage.RequireComplete() != nil {
 		return nil, ErrKnowledgeInputChanged
 	}
 	var current types.Knowledge
-	if err := tx.Where("id = ? AND tenant_id = ? AND knowledge_base_id = ?", original.KnowledgeID, original.TenantID, original.KnowledgeBaseID).Take(&current).Error; err != nil {
+	if err := tx.Where("id = ? AND tenant_id = ? AND knowledge_base_id = ?", original.KnowledgeID, original.TenantID, original.KnowledgeBaseID).
+		Take(&current).
+		Error; err != nil {
 		return nil, err
 	}
 	a, _, lineage, err := store.admissionInTx(tx, &current, &original)
@@ -193,11 +236,15 @@ func verifySpanMaterials(tx *gorm.DB, store *KnowledgeInputProvenanceStore, mani
 		return nil, ErrKnowledgeInputChanged
 	}
 	for i, chunk := range saved.Chunks {
-		if chunk == nil || chunk.ID == "" || chunk.KnowledgeID != current.ID || chunk.KnowledgeBaseID != current.KnowledgeBaseID || chunk.TenantID != current.TenantID {
+		if chunk == nil || chunk.ID == "" || chunk.KnowledgeID != current.ID ||
+			chunk.KnowledgeBaseID != current.KnowledgeBaseID ||
+			chunk.TenantID != current.TenantID {
 			return nil, ErrKnowledgeInputChanged
 		}
 		var actual types.Chunk
-		if err := tx.Where("id = ? AND knowledge_id = ? AND tenant_id = ? AND knowledge_base_id = ?", chunk.ID, current.ID, current.TenantID, current.KnowledgeBaseID).Take(&actual).Error; err != nil {
+		if err := tx.Where("id = ? AND knowledge_id = ? AND tenant_id = ? AND knowledge_base_id = ?", chunk.ID, current.ID, current.TenantID, current.KnowledgeBaseID).
+			Take(&actual).
+			Error; err != nil {
 			return nil, err
 		}
 		if err := verifyKnowledgeInputMaterial(tx, a, &current, &actual); err != nil {
@@ -216,7 +263,14 @@ func verifySpanMaterials(tx *gorm.DB, store *KnowledgeInputProvenanceStore, mani
 			return nil, err
 		}
 		if before != after || revision != saved.ChunkRevisions[i] {
-			if err := verifyQuestionMetadataOwnResult(tx, a, chunk, &actual, saved.ChunkRevisions[i], revision); err != nil {
+			if err := verifyQuestionMetadataOwnResult(
+				tx,
+				a,
+				chunk,
+				&actual,
+				saved.ChunkRevisions[i],
+				revision,
+			); err != nil {
 				return nil, err
 			}
 		}
@@ -232,7 +286,10 @@ func verifySpanMaterials(tx *gorm.DB, store *KnowledgeInputProvenanceStore, mani
 	return types.UnionSourceLineage(lineages...)
 }
 
-func (r *knowledgeSpanRepository) upsertWithOriginalSpan(ctx context.Context, row *types.KnowledgeProcessingSpan) error {
+func (r *knowledgeSpanRepository) upsertWithOriginalSpan(
+	ctx context.Context,
+	row *types.KnowledgeProcessingSpan,
+) error {
 	if row == nil || row.KnowledgeID == "" || row.SpanID == "" {
 		return errors.New("span identity required")
 	}
@@ -259,25 +316,33 @@ func (r *knowledgeSpanRepository) upsertWithOriginalSpan(ctx context.Context, ro
 	store, _ := guard.reader.(*KnowledgeInputProvenanceStore)
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var existing types.KnowledgeProcessingSpan
-		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("knowledge_id = ? AND attempt = ? AND span_id = ?", row.KnowledgeID, row.Attempt, row.SpanID).Take(&existing).Error
+		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("knowledge_id = ? AND attempt = ? AND span_id = ?", row.KnowledgeID, row.Attempt, row.SpanID).
+			Take(&existing).
+			Error
 		found := err == nil
 		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 			return err
 		}
 		var receipt spanBodyReceipt
 		if found {
-			err = tx.Where("knowledge_id = ? AND attempt = ? AND span_id = ?", row.KnowledgeID, row.Attempt, row.SpanID).Take(&receipt).Error
+			err = tx.Where("knowledge_id = ? AND attempt = ? AND span_id = ?", row.KnowledgeID, row.Attempt, row.SpanID).
+				Take(&receipt).
+				Error
 			if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 				return err
 			}
 		}
 		begin := row.Status == types.SpanStatusRunning && row.FinishedAt == nil && row.WriteToken == ""
 		if begin && row.Name == autoTagProducerSpanName {
-			if extra, ok := ctx.Value(spanAdditionalInputContextKey{}).(spanAdditionalInputContext); !ok || extra.input == nil {
+			if extra, ok := ctx.Value(spanAdditionalInputContextKey{}).(spanAdditionalInputContext); !ok ||
+				extra.input == nil {
 				// An unproved auto Begin is operational only. In particular a
 				// later End carrying a document proof cannot sign old counters.
 				if receipt.RunToken != "" {
-					if err := tx.Where("knowledge_id = ? AND attempt = ? AND span_id = ?", row.KnowledgeID, row.Attempt, row.SpanID).Delete(&spanBodyReceipt{}).Error; err != nil {
+					if err := tx.Where("knowledge_id = ? AND attempt = ? AND span_id = ?", row.KnowledgeID, row.Attempt, row.SpanID).
+						Delete(&spanBodyReceipt{}).
+						Error; err != nil {
 						return err
 					}
 					receipt = spanBodyReceipt{}
@@ -293,25 +358,33 @@ func (r *knowledgeSpanRepository) upsertWithOriginalSpan(ctx context.Context, ro
 			if original.KnowledgeID != row.KnowledgeID || row.Attempt <= 0 || row.StartedAt == nil {
 				return ErrKnowledgeInputChanged
 			}
-			if found && (existing.ParentSpanID != row.ParentSpanID || existing.Name != row.Name || existing.Kind != row.Kind) {
+			if found &&
+				(existing.ParentSpanID != row.ParentSpanID || existing.Name != row.Name || existing.Kind != row.Kind) {
 				return ErrKnowledgeInputChanged
 			}
 			if row.Kind != types.SpanKindRoot {
 				var parent types.KnowledgeProcessingSpan
-				if row.ParentSpanID == "" || tx.Where("knowledge_id = ? AND attempt = ? AND span_id = ?", row.KnowledgeID, row.Attempt, row.ParentSpanID).Take(&parent).Error != nil {
+				if row.ParentSpanID == "" ||
+					tx.Where("knowledge_id = ? AND attempt = ? AND span_id = ?", row.KnowledgeID, row.Attempt, row.ParentSpanID).
+						Take(&parent).
+						Error != nil {
 					return types.ErrSourceLineageUnknown
 				}
 				if parent.Status == types.SpanStatusCancelled || parent.Status == types.SpanStatusFailed {
 					return ErrKnowledgeInputChanged
 				}
 				var parentReceipt spanBodyReceipt
-				err := tx.Where("knowledge_id = ? AND attempt = ? AND span_id = ?", parent.KnowledgeID, parent.Attempt, parent.SpanID).Take(&parentReceipt).Error
+				err := tx.Where("knowledge_id = ? AND attempt = ? AND span_id = ?", parent.KnowledgeID, parent.Attempt, parent.SpanID).
+					Take(&parentReceipt).
+					Error
 				if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 					return err
 				}
 				if err == nil {
 					var parentManifest spanStartManifest
-					if err := tx.Where("run_token = ?", parentReceipt.RunToken).Take(&parentManifest).Error; err != nil {
+					if err := tx.Where("run_token = ?", parentReceipt.RunToken).
+						Take(&parentManifest).
+						Error; err != nil {
 						return err
 					}
 					var parentOriginal types.KnowledgeBuildInputProof
@@ -329,7 +402,10 @@ func (r *knowledgeSpanRepository) upsertWithOriginalSpan(ctx context.Context, ro
 			}
 			if row.Kind == types.SpanKindRoot && !found {
 				var roots int64
-				if err := tx.Model(&types.KnowledgeProcessingSpan{}).Where("knowledge_id = ? AND attempt = ? AND kind = ?", row.KnowledgeID, row.Attempt, types.SpanKindRoot).Count(&roots).Error; err != nil {
+				if err := tx.Model(&types.KnowledgeProcessingSpan{}).
+					Where("knowledge_id = ? AND attempt = ? AND kind = ?", row.KnowledgeID, row.Attempt, types.SpanKindRoot).
+					Count(&roots).
+					Error; err != nil {
 					return err
 				}
 				if roots != 0 {
@@ -348,26 +424,47 @@ func (r *knowledgeSpanRepository) upsertWithOriginalSpan(ctx context.Context, ro
 			if err != nil {
 				return err
 			}
-			manifest = spanStartManifest{RunToken: uuid.NewString(), KnowledgeID: row.KnowledgeID, Attempt: row.Attempt, SpanID: row.SpanID, ParentSpanID: row.ParentSpanID, Name: row.Name, Kind: row.Kind, OriginalInput: string(proof), ActualInputs: string(data), InputsDigest: digest}
+			manifest = spanStartManifest{
+				RunToken:      uuid.NewString(),
+				KnowledgeID:   row.KnowledgeID,
+				Attempt:       row.Attempt,
+				SpanID:        row.SpanID,
+				ParentSpanID:  row.ParentSpanID,
+				Name:          row.Name,
+				Kind:          row.Kind,
+				OriginalInput: string(proof),
+				ActualInputs:  string(data),
+				InputsDigest:  digest,
+			}
 			if err := tx.Create(&manifest).Error; err != nil {
 				return err
 			}
 			row.WriteToken = manifest.RunToken
 		} else if receipt.RunToken != "" {
-			if original == nil || store == nil || row.WriteToken == "" || row.WriteToken != receipt.RunToken || original.Projection != "" {
+			if original == nil || store == nil || row.WriteToken == "" || row.WriteToken != receipt.RunToken ||
+				original.Projection != "" {
 				return ErrKnowledgeInputChanged
 			}
 			if err := tx.Where("run_token = ?", receipt.RunToken).Take(&manifest).Error; err != nil {
 				return err
 			}
-			if manifest.KnowledgeID != row.KnowledgeID || manifest.Attempt != row.Attempt || manifest.SpanID != row.SpanID || manifest.ParentSpanID != row.ParentSpanID || manifest.Name != row.Name || manifest.Kind != row.Kind {
+			if manifest.KnowledgeID != row.KnowledgeID || manifest.Attempt != row.Attempt ||
+				manifest.SpanID != row.SpanID ||
+				manifest.ParentSpanID != row.ParentSpanID ||
+				manifest.Name != row.Name ||
+				manifest.Kind != row.Kind {
 				return ErrKnowledgeInputChanged
 			}
 			var admitted types.KnowledgeBuildInputProof
 			if err := json.Unmarshal([]byte(manifest.OriginalInput), &admitted); err != nil {
 				return err
 			}
-			if original.AdmissionID != admitted.AdmissionID || original.InputDigest != admitted.InputDigest || original.ConfigDigest != admitted.ConfigDigest || original.BuildGeneration != admitted.BuildGeneration || original.TenantID != admitted.TenantID || original.KnowledgeBaseID != admitted.KnowledgeBaseID || !reflect.DeepEqual(original.SourceLineage, admitted.SourceLineage) {
+			if original.AdmissionID != admitted.AdmissionID || original.InputDigest != admitted.InputDigest ||
+				original.ConfigDigest != admitted.ConfigDigest ||
+				original.BuildGeneration != admitted.BuildGeneration ||
+				original.TenantID != admitted.TenantID ||
+				original.KnowledgeBaseID != admitted.KnowledgeBaseID ||
+				!reflect.DeepEqual(original.SourceLineage, admitted.SourceLineage) {
 				return ErrKnowledgeInputChanged
 			}
 			var saved spanMaterialInput
@@ -382,7 +479,13 @@ func (r *knowledgeSpanRepository) upsertWithOriginalSpan(ctx context.Context, ro
 				if err := spanAdditionalInputMatches(extra.input, saved.Additional[0]); err != nil {
 					return err
 				}
-				if _, err := extra.reader.captureSpanAdditionalOriginalInput(ctx, tx, extra.input, original, true); err != nil {
+				if _, err := extra.reader.captureSpanAdditionalOriginalInput(
+					ctx,
+					tx,
+					extra.input,
+					original,
+					true,
+				); err != nil {
 					return err
 				}
 			} else if hasExtra {
@@ -396,12 +499,14 @@ func (r *knowledgeSpanRepository) upsertWithOriginalSpan(ctx context.Context, ro
 			if err != nil {
 				return err
 			}
-			if digest != receipt.BodyDigest || revision != receipt.RowRevision || existing.Status != types.SpanStatusRunning {
+			if digest != receipt.BodyDigest || revision != receipt.RowRevision ||
+				existing.Status != types.SpanStatusRunning {
 				return ErrKnowledgeInputChanged
 			}
 			// PostgreSQL timestamps retain microseconds. Compare the persisted
 			// resolution; the repository seals the actual stored timestamp below.
-			if row.StartedAt == nil || existing.StartedAt == nil || row.StartedAt.UnixMicro() != existing.StartedAt.UnixMicro() {
+			if row.StartedAt == nil || existing.StartedAt == nil ||
+				row.StartedAt.UnixMicro() != existing.StartedAt.UnixMicro() {
 				return ErrKnowledgeInputChanged
 			}
 			for _, pair := range [][2]types.JSONMap{{row.Input, existing.Input}, {row.Metadata, existing.Metadata}} {
@@ -432,7 +537,10 @@ func (r *knowledgeSpanRepository) upsertWithOriginalSpan(ctx context.Context, ro
 			// A retry is a new Start. Nil input/output must clear old values;
 			// Upsert's ordinary sparse terminal updates intentionally preserve
 			// omitted content and must not accidentally seal the previous run.
-			if err := tx.Model(&types.KnowledgeProcessingSpan{}).Where("id = ?", existing.ID).Updates(map[string]any{"input": nil, "output": nil, "metadata": nil, "error_code": "", "error_message": "", "error_detail": ""}).Error; err != nil {
+			if err := tx.Model(&types.KnowledgeProcessingSpan{}).
+				Where("id = ?", existing.ID).
+				Updates(map[string]any{"input": nil, "output": nil, "metadata": nil, "error_code": "", "error_message": "", "error_detail": ""}).
+				Error; err != nil {
 				return err
 			}
 		}
@@ -443,7 +551,9 @@ func (r *knowledgeSpanRepository) upsertWithOriginalSpan(ctx context.Context, ro
 			return nil
 		}
 		var actual types.KnowledgeProcessingSpan
-		if err := tx.Where("knowledge_id = ? AND attempt = ? AND span_id = ?", row.KnowledgeID, row.Attempt, row.SpanID).Take(&actual).Error; err != nil {
+		if err := tx.Where("knowledge_id = ? AND attempt = ? AND span_id = ?", row.KnowledgeID, row.Attempt, row.SpanID).
+			Take(&actual).
+			Error; err != nil {
 			return err
 		}
 		digest, err := spanBodyDigest(&actual)
@@ -454,8 +564,17 @@ func (r *knowledgeSpanRepository) upsertWithOriginalSpan(ctx context.Context, ro
 		if err != nil {
 			return err
 		}
-		bound := spanBodyReceipt{KnowledgeID: row.KnowledgeID, Attempt: row.Attempt, SpanID: row.SpanID, RunToken: manifest.RunToken, RowRevision: revision, BodyDigest: digest}
-		return tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "knowledge_id"}, {Name: "attempt"}, {Name: "span_id"}}, DoUpdates: clause.AssignmentColumns([]string{"run_token", "row_revision", "body_digest"})}).Create(&bound).Error
+		bound := spanBodyReceipt{
+			KnowledgeID: row.KnowledgeID,
+			Attempt:     row.Attempt,
+			SpanID:      row.SpanID,
+			RunToken:    manifest.RunToken,
+			RowRevision: revision,
+			BodyDigest:  digest,
+		}
+		return tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "knowledge_id"}, {Name: "attempt"}, {Name: "span_id"}}, DoUpdates: clause.AssignmentColumns([]string{"run_token", "row_revision", "body_digest"})}).
+			Create(&bound).
+			Error
 	}, knowledgeDisplayWriteOptions(r.db))
 }
 
@@ -468,7 +587,12 @@ func spanStatusOnly(row types.KnowledgeProcessingSpan) types.KnowledgeProcessing
 	}
 	status := row.Status
 	switch status {
-	case types.SpanStatusPending, types.SpanStatusRunning, types.SpanStatusDone, types.SpanStatusFailed, types.SpanStatusSkipped, types.SpanStatusCancelled:
+	case types.SpanStatusPending,
+		types.SpanStatusRunning,
+		types.SpanStatusDone,
+		types.SpanStatusFailed,
+		types.SpanStatusSkipped,
+		types.SpanStatusCancelled:
 	default:
 		status = "unknown"
 	}
@@ -483,11 +607,28 @@ func spanStatusOnly(row types.KnowledgeProcessingSpan) types.KnowledgeProcessing
 			}
 		}
 	}
-	return types.KnowledgeProcessingSpan{KnowledgeID: row.KnowledgeID, Attempt: row.Attempt, SpanID: row.SpanID, ParentSpanID: row.ParentSpanID, Kind: kind, Name: name, Status: status, StartedAt: row.StartedAt, FinishedAt: row.FinishedAt, DurationMs: row.DurationMs, ContentProvenance: "unknown"}
+	return types.KnowledgeProcessingSpan{
+		KnowledgeID:       row.KnowledgeID,
+		Attempt:           row.Attempt,
+		SpanID:            row.SpanID,
+		ParentSpanID:      row.ParentSpanID,
+		Kind:              kind,
+		Name:              name,
+		Status:            status,
+		StartedAt:         row.StartedAt,
+		FinishedAt:        row.FinishedAt,
+		DurationMs:        row.DurationMs,
+		ContentProvenance: "unknown",
+	}
 }
 
-func (s *KnowledgeInputProvenanceStore) CaptureSpanOutputInputs(ctx context.Context, request types.SpanOutputReadRequest) (*types.SpanOutputInputSnapshot, error) {
-	if ctx == nil || s == nil || s.db == nil || request.TenantID == 0 || request.KnowledgeBaseID == "" || request.KnowledgeID == "" || request.Attempt < 0 {
+func (s *KnowledgeInputProvenanceStore) CaptureSpanOutputInputs(
+	ctx context.Context,
+	request types.SpanOutputReadRequest,
+) (*types.SpanOutputInputSnapshot, error) {
+	if ctx == nil || s == nil || s.db == nil || request.TenantID == 0 || request.KnowledgeBaseID == "" ||
+		request.KnowledgeID == "" ||
+		request.Attempt < 0 {
 		return nil, types.ErrSourceLineageUnknown
 	}
 	options := &sql.TxOptions{ReadOnly: true}
@@ -504,11 +645,17 @@ func (s *KnowledgeInputProvenanceStore) CaptureSpanOutputInputs(ctx context.Cont
 	var result *types.SpanOutputInputSnapshot
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var current types.Knowledge
-		if err := tx.Where("id = ? AND tenant_id = ? AND knowledge_base_id = ?", request.KnowledgeID, request.TenantID, request.KnowledgeBaseID).Take(&current).Error; err != nil {
+		if err := tx.Where("id = ? AND tenant_id = ? AND knowledge_base_id = ?", request.KnowledgeID, request.TenantID, request.KnowledgeBaseID).
+			Take(&current).
+			Error; err != nil {
 			return err
 		}
 		var latest int
-		if err := tx.Model(&types.KnowledgeProcessingSpan{}).Where("knowledge_id = ?", request.KnowledgeID).Select("COALESCE(MAX(attempt),0)").Row().Scan(&latest); err != nil {
+		if err := tx.Model(&types.KnowledgeProcessingSpan{}).
+			Where("knowledge_id = ?", request.KnowledgeID).
+			Select("COALESCE(MAX(attempt),0)").
+			Row().
+			Scan(&latest); err != nil {
 			return err
 		}
 		attempt := request.Attempt
@@ -517,7 +664,11 @@ func (s *KnowledgeInputProvenanceStore) CaptureSpanOutputInputs(ctx context.Cont
 		}
 		var rows []types.KnowledgeProcessingSpan
 		if attempt > 0 {
-			if err := tx.Where("knowledge_id = ? AND attempt = ?", current.ID, attempt).Order("id ASC").Limit(4097).Find(&rows).Error; err != nil {
+			if err := tx.Where("knowledge_id = ? AND attempt = ?", current.ID, attempt).
+				Order("id ASC").
+				Limit(4097).
+				Find(&rows).
+				Error; err != nil {
 				return err
 			}
 		}
@@ -530,7 +681,12 @@ func (s *KnowledgeInputProvenanceStore) CaptureSpanOutputInputs(ctx context.Cont
 			return err
 		}
 		if controlled {
-			_, identity, err := (&knowledgeRepository{db: tx}).resolveNextcloudSourceLineageInTx(tx, current.TenantID, current.KnowledgeBaseID, current.ID)
+			_, identity, err := (&knowledgeRepository{db: tx}).resolveNextcloudSourceLineageInTx(
+				tx,
+				current.TenantID,
+				current.KnowledgeBaseID,
+				current.ID,
+			)
 			if err != nil {
 				return err
 			}
@@ -560,7 +716,9 @@ func (s *KnowledgeInputProvenanceStore) CaptureSpanOutputInputs(ctx context.Cont
 			}
 			material = append(material, fmt.Sprintf("%d:%d:%s", row.ID, revision, digest))
 			var receipt spanBodyReceipt
-			err = tx.Where("knowledge_id = ? AND attempt = ? AND span_id = ?", row.KnowledgeID, row.Attempt, row.SpanID).Take(&receipt).Error
+			err = tx.Where("knowledge_id = ? AND attempt = ? AND span_id = ?", row.KnowledgeID, row.Attempt, row.SpanID).
+				Take(&receipt).
+				Error
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				projected = append(projected, spanStatusOnly(row))
 				continue
@@ -597,7 +755,11 @@ func (s *KnowledgeInputProvenanceStore) CaptureSpanOutputInputs(ctx context.Cont
 			if err := tx.Where("run_token = ?", receipt.RunToken).Take(&manifest).Error; err != nil {
 				return err
 			}
-			if manifest.KnowledgeID != row.KnowledgeID || manifest.Attempt != row.Attempt || manifest.SpanID != row.SpanID || manifest.Name != row.Name || manifest.Kind != row.Kind || manifest.ParentSpanID != row.ParentSpanID {
+			if manifest.KnowledgeID != row.KnowledgeID || manifest.Attempt != row.Attempt ||
+				manifest.SpanID != row.SpanID ||
+				manifest.Name != row.Name ||
+				manifest.Kind != row.Kind ||
+				manifest.ParentSpanID != row.ParentSpanID {
 				return ErrKnowledgeInputChanged
 			}
 			originalLineage, err := verifySpanMaterials(tx, s, &manifest)
@@ -624,21 +786,48 @@ func (s *KnowledgeInputProvenanceStore) CaptureSpanOutputInputs(ctx context.Cont
 		}
 		parseStatus := current.ParseStatus
 		switch parseStatus {
-		case types.ParseStatusPending, types.ParseStatusProcessing, types.ParseStatusFinalizing, types.ParseStatusCompleted, types.ParseStatusFailed, types.ParseStatusDeleting, types.ParseStatusCancelled:
+		case types.ParseStatusPending,
+			types.ParseStatusProcessing,
+			types.ParseStatusFinalizing,
+			types.ParseStatusCompleted,
+			types.ParseStatusFailed,
+			types.ParseStatusDeleting,
+			types.ParseStatusCancelled:
 		default:
 			parseStatus = "unknown"
 		}
-		result = &types.SpanOutputInputSnapshot{TenantID: request.TenantID, KnowledgeBaseID: request.KnowledgeBaseID, KnowledgeID: request.KnowledgeID, Attempt: attempt, LatestAttempt: latest, CurrentParseStatus: parseStatus, Rows: projected, SourceLineage: lineage, Receipt: digest}
+		result = &types.SpanOutputInputSnapshot{
+			TenantID:           request.TenantID,
+			KnowledgeBaseID:    request.KnowledgeBaseID,
+			KnowledgeID:        request.KnowledgeID,
+			Attempt:            attempt,
+			LatestAttempt:      latest,
+			CurrentParseStatus: parseStatus,
+			Rows:               projected,
+			SourceLineage:      lineage,
+			Receipt:            digest,
+		}
 		return nil
 	}, options)
 	return result, err
 }
 
-func (s *KnowledgeInputProvenanceStore) RecheckSpanOutputInputs(ctx context.Context, saved *types.SpanOutputInputSnapshot) error {
+func (s *KnowledgeInputProvenanceStore) RecheckSpanOutputInputs(
+	ctx context.Context,
+	saved *types.SpanOutputInputSnapshot,
+) error {
 	if saved == nil || saved.Receipt == "" || saved.SourceLineage.RequireComplete() != nil {
 		return types.ErrSourceLineageUnknown
 	}
-	current, err := s.CaptureSpanOutputInputs(ctx, types.SpanOutputReadRequest{TenantID: saved.TenantID, KnowledgeBaseID: saved.KnowledgeBaseID, KnowledgeID: saved.KnowledgeID, Attempt: saved.Attempt})
+	current, err := s.CaptureSpanOutputInputs(
+		ctx,
+		types.SpanOutputReadRequest{
+			TenantID:        saved.TenantID,
+			KnowledgeBaseID: saved.KnowledgeBaseID,
+			KnowledgeID:     saved.KnowledgeID,
+			Attempt:         saved.Attempt,
+		},
+	)
 	if err != nil {
 		return err
 	}

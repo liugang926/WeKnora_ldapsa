@@ -40,7 +40,8 @@ func (d SourceDecommission) sameIdentity(other SourceDecommission) bool {
 // ReadSourceDecommission verifies a stopped Nextcloud intent through the
 // exact source credential. A caller must compare every identity field.
 func ReadSourceDecommission(ctx context.Context, source *types.DataSourceConfig,
-	bindingID, operationID string) (SourceDecommission, error) {
+	bindingID, operationID string,
+) (SourceDecommission, error) {
 	var empty SourceDecommission
 	cfg, err := parseConfig(source)
 	if err != nil {
@@ -89,7 +90,8 @@ func ReadSourceDecommission(ctx context.Context, source *types.DataSourceConfig,
 // AcknowledgeEmptySourceDecommission sends an empty-inventory proof only after
 // the repository has durably paused and fenced the never-touched source.
 func AcknowledgeEmptySourceDecommission(ctx context.Context, source *types.DataSourceConfig,
-	intent SourceDecommission) error {
+	intent SourceDecommission,
+) error {
 	cfg, err := parseConfig(source)
 	if err != nil {
 		return err

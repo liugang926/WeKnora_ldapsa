@@ -22,11 +22,15 @@ func TestNextcloudExactChunkGCIsDormantScopedAndAtomicSQLite(t *testing.T) {
 	}
 	now := time.Now().UTC()
 	nextcloudGCTestSource(t, db, "old", "", now.Add(-2*time.Hour))
-	require.NoError(t, db.Create(&types.Chunk{ID: "chunk-old", TenantID: 7,
-		KnowledgeBaseID: "kb", KnowledgeID: "old", Content: "old content"}).Error)
-	require.NoError(t, db.Create(&types.ChunkRevision{ID: uuid.NewString(), TenantID: 7,
+	require.NoError(t, db.Create(&types.Chunk{
+		ID: "chunk-old", TenantID: 7,
+		KnowledgeBaseID: "kb", KnowledgeID: "old", Content: "old content",
+	}).Error)
+	require.NoError(t, db.Create(&types.ChunkRevision{
+		ID: uuid.NewString(), TenantID: 7,
 		KnowledgeBaseID: "kb", KnowledgeID: "old", ChunkID: "chunk-old",
-		Content: "earlier content"}).Error)
+		Content: "earlier content",
+	}).Error)
 	created, err := store.InventoryRetired(ctx, now, 10)
 	require.NoError(t, err)
 	require.Equal(t, 1, created)
@@ -36,8 +40,10 @@ func TestNextcloudExactChunkGCIsDormantScopedAndAtomicSQLite(t *testing.T) {
 	var job nextcloudGCJob
 	require.NoError(t, db.Take(&job).Error)
 	require.Equal(t, "blocked", job.State)
-	scope := NextcloudContentScope{TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: "old",
-		DataSourceID: "ds", ExternalID: "node"}
+	scope := NextcloudContentScope{
+		TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: "old",
+		DataSourceID: "ds", ExternalID: "node",
+	}
 	leases := NewNextcloudContentLeaseStore(db)
 	reader, err := leases.AcquireKnowledge(ctx, scope, NextcloudContentReadLease, "reader", time.Minute)
 	require.NoError(t, err)
@@ -69,10 +75,14 @@ func TestNextcloudExactChunkGCIsDormantScopedAndAtomicSQLite(t *testing.T) {
 	leaseTestCoverKB(t, db, scope)
 
 	// A forged item cannot authorize another tenant's chunk.
-	require.NoError(t, db.Create(&types.Chunk{ID: "foreign", TenantID: 8,
-		KnowledgeBaseID: "kb", KnowledgeID: "old", Content: "foreign content"}).Error)
-	require.NoError(t, db.Create(&nextcloudGCItem{JobID: job.ID, Kind: "derived_chunk",
-		ObjectRef: "foreign", State: "blocked"}).Error)
+	require.NoError(t, db.Create(&types.Chunk{
+		ID: "foreign", TenantID: 8,
+		KnowledgeBaseID: "kb", KnowledgeID: "old", Content: "foreign content",
+	}).Error)
+	require.NoError(t, db.Create(&nextcloudGCItem{
+		JobID: job.ID, Kind: "derived_chunk",
+		ObjectRef: "foreign", State: "blocked",
+	}).Error)
 	require.ErrorIs(t, store.DeleteNextcloudExactChunkForGC(ctx, claim, job.ID, "foreign"),
 		ErrNextcloudContentLeaseDenied)
 	var count int64
@@ -89,9 +99,11 @@ func TestNextcloudExactChunkGCIsDormantScopedAndAtomicSQLite(t *testing.T) {
 
 	// A revision with a mismatched scope cannot be swept under this receipt.
 	foreignRevision := uuid.NewString()
-	require.NoError(t, db.Create(&types.ChunkRevision{ID: foreignRevision, TenantID: 8,
+	require.NoError(t, db.Create(&types.ChunkRevision{
+		ID: foreignRevision, TenantID: 8,
 		KnowledgeBaseID: "kb", KnowledgeID: "old", ChunkID: "chunk-old",
-		Revision: 1, Content: "foreign revision"}).Error)
+		Revision: 1, Content: "foreign revision",
+	}).Error)
 	require.ErrorIs(t, store.DeleteNextcloudExactChunkForGC(ctx, claim, job.ID, "chunk-old"),
 		ErrNextcloudContentLeaseDenied)
 	require.NoError(t, db.Where("id = ?", foreignRevision).Delete(&types.ChunkRevision{}).Error)
@@ -140,14 +152,18 @@ func TestNextcloudExactChunkGCRequiresInventoriedImage(t *testing.T) {
 	}
 	now := time.Now().UTC()
 	nextcloudGCTestSource(t, db, "old", "", now.Add(-2*time.Hour))
-	require.NoError(t, db.Create(&types.Chunk{ID: "image-chunk", TenantID: 7,
-		KnowledgeBaseID: "kb", KnowledgeID: "old", ImageInfo: `[{"url":"resource://known"}]`}).Error)
+	require.NoError(t, db.Create(&types.Chunk{
+		ID: "image-chunk", TenantID: 7,
+		KnowledgeBaseID: "kb", KnowledgeID: "old", ImageInfo: `[{"url":"resource://known"}]`,
+	}).Error)
 	_, err = store.InventoryRetired(ctx, now, 10)
 	require.NoError(t, err)
 	var job nextcloudGCJob
 	require.NoError(t, db.Take(&job).Error)
-	scope := NextcloudContentScope{TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: "old",
-		DataSourceID: "ds", ExternalID: "node"}
+	scope := NextcloudContentScope{
+		TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: "old",
+		DataSourceID: "ds", ExternalID: "node",
+	}
 	leases := NewNextcloudContentLeaseStore(db)
 	require.NoError(t, leases.RetireKnowledge(ctx, scope))
 	leaseTestCoverKB(t, db, scope)

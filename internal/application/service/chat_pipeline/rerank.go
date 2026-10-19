@@ -5,10 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/Tencent/WeKnora/internal/application/access"
 	"math"
 	"regexp"
 	"strings"
+
+	"github.com/Tencent/WeKnora/internal/application/access"
 
 	"github.com/Tencent/WeKnora/internal/models/rerank"
 	"github.com/Tencent/WeKnora/internal/searchutil"
@@ -127,10 +128,19 @@ func (p *PluginRerank) OnEvent(ctx context.Context,
 		// Single rerank call with RewriteQuery, use threshold degradation if no results
 		originalThreshold := chatManage.RerankThreshold
 		var rerankErr error
-		rerankResp, rerankErr = p.rerank(ctx, chatManage, rerankModel, chatManage.RewriteQuery, passages, candidatesToRerank)
+		rerankResp, rerankErr = p.rerank(
+			ctx,
+			chatManage,
+			rerankModel,
+			chatManage.RewriteQuery,
+			passages,
+			candidatesToRerank,
+		)
 
 		if rerankErr != nil {
-			if errors.Is(rerankErr, access.ErrNextcloudPublicationDenied) || errors.Is(rerankErr, access.ErrNextcloudPublicationUnavailable) || errors.Is(rerankErr, types.ErrSourceLineageUnknown) {
+			if errors.Is(rerankErr, access.ErrNextcloudPublicationDenied) ||
+				errors.Is(rerankErr, access.ErrNextcloudPublicationUnavailable) ||
+				errors.Is(rerankErr, types.ErrSourceLineageUnknown) {
 				spanErr = rerankErr
 				return sourceLineagePluginError(rerankErr)
 			}
@@ -168,11 +178,20 @@ func (p *PluginRerank) OnEvent(ctx context.Context,
 				"reason":        "no results above original threshold, retrying with lower threshold",
 			})
 			chatManage.RerankThreshold = degradedThreshold
-			rerankResp, rerankErr = p.rerank(ctx, chatManage, rerankModel, chatManage.RewriteQuery, passages, candidatesToRerank)
+			rerankResp, rerankErr = p.rerank(
+				ctx,
+				chatManage,
+				rerankModel,
+				chatManage.RewriteQuery,
+				passages,
+				candidatesToRerank,
+			)
 			// Restore original threshold
 			chatManage.RerankThreshold = originalThreshold
 			if rerankErr != nil {
-				if errors.Is(rerankErr, access.ErrNextcloudPublicationDenied) || errors.Is(rerankErr, access.ErrNextcloudPublicationUnavailable) || errors.Is(rerankErr, types.ErrSourceLineageUnknown) {
+				if errors.Is(rerankErr, access.ErrNextcloudPublicationDenied) ||
+					errors.Is(rerankErr, access.ErrNextcloudPublicationUnavailable) ||
+					errors.Is(rerankErr, types.ErrSourceLineageUnknown) {
 					spanErr = rerankErr
 					return sourceLineagePluginError(rerankErr)
 				}

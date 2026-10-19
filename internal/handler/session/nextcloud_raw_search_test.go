@@ -88,18 +88,24 @@ func rawSearchSource(t *testing.T) (*types.Knowledge, *types.SearchResult) {
 		"nextcloud_instance_id": "instance", "nextcloud_file_id": "1",
 	})
 	require.NoError(t, err)
-	row := &types.Knowledge{ID: "doc-1", TenantID: 7, KnowledgeBaseID: "kb-1",
-		Channel: types.ConnectorTypeNextcloud, Metadata: types.JSON(metadata)}
-	result := &types.SearchResult{ID: "chunk-1", KnowledgeID: row.ID,
+	row := &types.Knowledge{
+		ID: "doc-1", TenantID: 7, KnowledgeBaseID: "kb-1",
+		Channel: types.ConnectorTypeNextcloud, Metadata: types.JSON(metadata),
+	}
+	result := &types.SearchResult{
+		ID: "chunk-1", KnowledgeID: row.ID,
 		KnowledgeBaseID: row.KnowledgeBaseID, KnowledgeChannel: row.Channel,
-		Metadata: row.GetMetadata(), Content: "private source chunk"}
+		Metadata: row.GetMetadata(), Content: "private source chunk",
+	}
 	return row, result
 }
 
 func rawSearchScope(row *types.Knowledge) repository.NextcloudContentScope {
-	return repository.NextcloudContentScope{TenantID: row.TenantID,
+	return repository.NextcloudContentScope{
+		TenantID:        row.TenantID,
 		KnowledgeBaseID: row.KnowledgeBaseID, KnowledgeID: row.ID,
-		DataSourceID: "source-1", ExternalID: "nextcloud:instance:1"}
+		DataSourceID: "source-1", ExternalID: "nextcloud:instance:1",
+	}
 }
 
 func rawSearchRetiredAt(t *testing.T, db *gorm.DB, row *types.Knowledge) time.Time {
@@ -145,9 +151,11 @@ func rawSearchHandler(row *types.Knowledge, result *types.SearchResult,
 ) (*Handler, *rawSearchSessionStub, *rawSearchKnowledgeStub) {
 	session := &rawSearchSessionStub{results: []*types.SearchResult{result}}
 	knowledge := &rawSearchKnowledgeStub{row: row}
-	h := &Handler{sessionService: session, searchKnowledgeService: knowledge,
+	h := &Handler{
+		sessionService: session, searchKnowledgeService: knowledge,
 		knowledgebaseService: &rawSearchKBStub{kb: &types.KnowledgeBase{ID: "kb-1", TenantID: 7}},
-		searchContentLeases:  store}
+		searchContentLeases:  store,
+	}
 	return h, session, knowledge
 }
 

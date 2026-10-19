@@ -20,7 +20,9 @@ const maxAuthorizationResponseBytes = 16 << 10
 
 var (
 	authorizationDirectoryIDPattern = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,128}$`)
-	authorizationGUIDPattern        = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+	authorizationGUIDPattern        = regexp.MustCompile(
+		`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`,
+	)
 	// Source checks are on a read path. A slow or unreachable source must deny
 	// promptly instead of holding an application request open for the sync timeout.
 	authorizationHTTPClient = &http.Client{
@@ -157,7 +159,12 @@ func AuthorizeCurrentFile(
 	if err != nil {
 		return AuthorizationDecision{}, err
 	}
-	decision := AuthorizationDecision{SourceContentRevision: revision, Allow: *wire.Allow, Reason: *wire.Reason, CheckedAt: *wire.CheckedAt}
+	decision := AuthorizationDecision{
+		SourceContentRevision: revision,
+		Allow:                 *wire.Allow,
+		Reason:                *wire.Reason,
+		CheckedAt:             *wire.CheckedAt,
+	}
 	if wire.PolicyRevision != nil {
 		decision.PolicyRevision = *wire.PolicyRevision
 	}

@@ -32,22 +32,46 @@ type KnowledgeGraphLineageReader struct {
 	originals GraphOriginalInputVerifier
 }
 
-func NewKnowledgeGraphLineageReader(knowledge interfaces.KnowledgeService, bases interfaces.KnowledgeBaseService, graph interfaces.RetrieveGraphRepository, chunks interfaces.RAGChunkSnapshotReader, originals GraphOriginalInputVerifier) *KnowledgeGraphLineageReader {
-	return &KnowledgeGraphLineageReader{knowledge: knowledge, bases: bases, graph: graph, chunks: chunks, originals: originals}
+func NewKnowledgeGraphLineageReader(
+	knowledge interfaces.KnowledgeService,
+	bases interfaces.KnowledgeBaseService,
+	graph interfaces.RetrieveGraphRepository,
+	chunks interfaces.RAGChunkSnapshotReader,
+	originals GraphOriginalInputVerifier,
+) *KnowledgeGraphLineageReader {
+	return &KnowledgeGraphLineageReader{
+		knowledge: knowledge,
+		bases:     bases,
+		graph:     graph,
+		chunks:    chunks,
+		originals: originals,
+	}
 }
+
 func ConfigureKnowledgeBaseGraphLineage(base interfaces.KnowledgeBaseService, reader *KnowledgeGraphLineageReader) {
 	if impl, ok := base.(*knowledgeBaseService); ok {
 		impl.graphLineageReader = reader
 	}
 }
-func (s *knowledgeBaseService) ReadKnowledgeGraphSnapshot(ctx context.Context, targets types.SearchTargets, namespace types.NameSpace, names []string) (*types.KnowledgeGraphInputSnapshot, error) {
+
+func (s *knowledgeBaseService) ReadKnowledgeGraphSnapshot(
+	ctx context.Context,
+	targets types.SearchTargets,
+	namespace types.NameSpace,
+	names []string,
+) (*types.KnowledgeGraphInputSnapshot, error) {
 	if s.graphLineageReader == nil {
 		return nil, types.ErrGraphSourceReceiptUnknown
 	}
 	return s.graphLineageReader.ReadKnowledgeGraphSnapshot(ctx, targets, namespace, names)
 }
 
-func (r *KnowledgeGraphLineageReader) ReadKnowledgeGraphSnapshot(ctx context.Context, targets types.SearchTargets, namespace types.NameSpace, names []string) (out *types.KnowledgeGraphInputSnapshot, err error) {
+func (r *KnowledgeGraphLineageReader) ReadKnowledgeGraphSnapshot(
+	ctx context.Context,
+	targets types.SearchTargets,
+	namespace types.NameSpace,
+	names []string,
+) (out *types.KnowledgeGraphInputSnapshot, err error) {
 	turn := types.RAGSourceLineageFromContext(ctx)
 	defer func() {
 		if err != nil && turn != nil {
@@ -55,7 +79,9 @@ func (r *KnowledgeGraphLineageReader) ReadKnowledgeGraphSnapshot(ctx context.Con
 		}
 	}()
 	provider, ok := r.knowledge.(graphReadLeaseProvider)
-	if !ok || r.bases == nil || r.graph == nil || r.chunks == nil || r.originals == nil || turn == nil || namespace.KnowledgeBase == "" || len(names) == 0 {
+	if !ok || r.bases == nil || r.graph == nil || r.chunks == nil || r.originals == nil || turn == nil ||
+		namespace.KnowledgeBase == "" ||
+		len(names) == 0 {
 		return nil, types.ErrGraphSourceReceiptUnknown
 	}
 	if err := turn.Check(ctx); err != nil {
@@ -69,7 +95,9 @@ func (r *KnowledgeGraphLineageReader) ReadKnowledgeGraphSnapshot(ctx context.Con
 	if err != nil {
 		return nil, err
 	}
-	scopes := types.SearchTargets{&types.SearchTarget{Type: types.SearchTargetTypeKnowledgeBase, TenantID: kb.TenantID, KnowledgeBaseID: kb.ID}}
+	scopes := types.SearchTargets{
+		&types.SearchTarget{Type: types.SearchTargetTypeKnowledgeBase, TenantID: kb.TenantID, KnowledgeBaseID: kb.ID},
+	}
 	ownedGuard := false
 	completed := false
 	guard := readlease.NextcloudReadGuardFromContext(ctx)
@@ -124,7 +152,10 @@ func (r *KnowledgeGraphLineageReader) ReadKnowledgeGraphSnapshot(ctx context.Con
 			return nil, err
 		}
 		k, err := r.knowledge.GetKnowledgeByIDOnly(ctx, receipt.KnowledgeID)
-		if err != nil || k == nil || k.TenantID != receipt.TenantID || k.KnowledgeBaseID != receipt.KnowledgeBaseID || k.DeletedAt.Valid || k.ParseStatus != types.ParseStatusCompleted || k.EnableStatus != "enabled" {
+		if err != nil || k == nil || k.TenantID != receipt.TenantID || k.KnowledgeBaseID != receipt.KnowledgeBaseID ||
+			k.DeletedAt.Valid ||
+			k.ParseStatus != types.ParseStatusCompleted ||
+			k.EnableStatus != "enabled" {
 			return nil, access.ErrNextcloudPublicationDenied
 		}
 		if allowed, err := r.allowed(ctx, targets, k.ID, k.KnowledgeBaseID); err != nil || !allowed {
@@ -149,7 +180,14 @@ func (r *KnowledgeGraphLineageReader) ReadKnowledgeGraphSnapshot(ctx context.Con
 	// Keep all underlying controlled sources pinned, including extraction
 	// examples/config dependencies from another document or effective tenant.
 	for _, source := range graph.SourceLineage.Sources {
-		scopes = append(scopes, &types.SearchTarget{Type: types.SearchTargetTypeKnowledgeBase, TenantID: source.TenantID, KnowledgeBaseID: source.KnowledgeBaseID})
+		scopes = append(
+			scopes,
+			&types.SearchTarget{
+				Type:            types.SearchTargetTypeKnowledgeBase,
+				TenantID:        source.TenantID,
+				KnowledgeBaseID: source.KnowledgeBaseID,
+			},
+		)
 	}
 	expanded, err := provider.BeginNextcloudRead(ctx, scopes)
 	if err != nil {
@@ -201,7 +239,17 @@ func (r *KnowledgeGraphLineageReader) ReadKnowledgeGraphSnapshot(ctx context.Con
 		if err != nil {
 			return nil, err
 		}
-		requests = append(requests, types.RAGChunkReadRequest{TenantID: k.TenantID, KnowledgeBaseID: k.KnowledgeBaseID, KnowledgeID: k.ID, ChunkIDs: ids[id], Lease: lease, ExpectedLineage: expected[id]})
+		requests = append(
+			requests,
+			types.RAGChunkReadRequest{
+				TenantID:        k.TenantID,
+				KnowledgeBaseID: k.KnowledgeBaseID,
+				KnowledgeID:     k.ID,
+				ChunkIDs:        ids[id],
+				Lease:           lease,
+				ExpectedLineage: expected[id],
+			},
+		)
 	}
 	rows := []types.RAGChunkInputSnapshot{}
 	if len(requests) > 0 {
@@ -217,11 +265,18 @@ func (r *KnowledgeGraphLineageReader) ReadKnowledgeGraphSnapshot(ctx context.Con
 	returned := map[string]bool{}
 	for _, row := range rows {
 		k, c := row.Knowledge, row.Chunk
-		if k == nil || c == nil || !seen[c.ID] || returned[c.ID] || c.KnowledgeID != k.ID || c.KnowledgeBaseID != k.KnowledgeBaseID || c.TenantID != k.TenantID || k.TenantID != kb.TenantID || k.KnowledgeBaseID != kb.ID || row.SourceLineage.RequireComplete() != nil {
+		if k == nil || c == nil || !seen[c.ID] || returned[c.ID] || c.KnowledgeID != k.ID ||
+			c.KnowledgeBaseID != k.KnowledgeBaseID ||
+			c.TenantID != k.TenantID ||
+			k.TenantID != kb.TenantID ||
+			k.KnowledgeBaseID != kb.ID ||
+			row.SourceLineage.RequireComplete() != nil {
 			return nil, types.ErrGraphSourceReceiptUnknown
 		}
 		returned[c.ID] = true
-		if c.ChunkType != types.ChunkTypeText || (strings.TrimSpace(c.ImageInfo) != "" && strings.TrimSpace(c.ImageInfo) != "[]") || (len(c.Metadata) > 0 && strings.TrimSpace(string(c.Metadata)) != "{}") {
+		if c.ChunkType != types.ChunkTypeText ||
+			(strings.TrimSpace(c.ImageInfo) != "" && strings.TrimSpace(c.ImageInfo) != "[]") ||
+			(len(c.Metadata) > 0 && strings.TrimSpace(string(c.Metadata)) != "{}") {
 			return nil, types.ErrGraphSourceReceiptUnknown
 		}
 		graph.SourceLineage, err = types.UnionSourceLineage(graph.SourceLineage, row.SourceLineage)
@@ -231,7 +286,28 @@ func (r *KnowledgeGraphLineageReader) ReadKnowledgeGraphSnapshot(ctx context.Con
 		if err := turn.Add(row.SourceLineage); err != nil {
 			return nil, err
 		}
-		results = append(results, &types.SearchResult{ID: c.ID, KnowledgeID: k.ID, KnowledgeBaseID: k.KnowledgeBaseID, KnowledgeTitle: k.Title, KnowledgeFilename: k.FileName, KnowledgeSource: k.Source, KnowledgeChannel: k.Channel, Content: c.Content, ContentRevision: c.ContentRevision, ChunkType: string(c.ChunkType), ChunkIndex: c.ChunkIndex, StartAt: c.StartAt, EndAt: c.EndAt, MatchType: types.MatchTypeGraph, Score: 1, SourceLineage: graph.SourceLineage, Metadata: map[string]string{}})
+		results = append(
+			results,
+			&types.SearchResult{
+				ID:                c.ID,
+				KnowledgeID:       k.ID,
+				KnowledgeBaseID:   k.KnowledgeBaseID,
+				KnowledgeTitle:    k.Title,
+				KnowledgeFilename: k.FileName,
+				KnowledgeSource:   k.Source,
+				KnowledgeChannel:  k.Channel,
+				Content:           c.Content,
+				ContentRevision:   c.ContentRevision,
+				ChunkType:         string(c.ChunkType),
+				ChunkIndex:        c.ChunkIndex,
+				StartAt:           c.StartAt,
+				EndAt:             c.EndAt,
+				MatchType:         types.MatchTypeGraph,
+				Score:             1,
+				SourceLineage:     graph.SourceLineage,
+				Metadata:          map[string]string{},
+			},
+		)
 	}
 	for _, receipt := range receipts {
 		if err := r.originals.RecheckGraphOriginalInputs(ctx, receipt); err != nil {
@@ -298,14 +374,26 @@ func (r *KnowledgeGraphLineageReader) ReadKnowledgeGraphSnapshot(ctx context.Con
 		return closeErr
 	}
 	completed = true
-	return &types.KnowledgeGraphInputSnapshot{Graph: graph, Chunks: results, SourceLineage: graph.SourceLineage, Recheck: recheck, Close: close}, nil
+	return &types.KnowledgeGraphInputSnapshot{
+		Graph:         graph,
+		Chunks:        results,
+		SourceLineage: graph.SourceLineage,
+		Recheck:       recheck,
+		Close:         close,
+	}, nil
 }
-func (r *KnowledgeGraphLineageReader) allowed(ctx context.Context, targets types.SearchTargets, knowledge, kb string) (bool, error) {
+
+func (r *KnowledgeGraphLineageReader) allowed(
+	ctx context.Context,
+	targets types.SearchTargets,
+	knowledge, kb string,
+) (bool, error) {
 	for _, target := range targets {
 		if target == nil || target.KnowledgeBaseID != kb {
 			continue
 		}
-		if target.Type == types.SearchTargetTypeKnowledgeBase && len(target.TagIDs) == 0 && len(target.ScopeTagIDs) == 0 {
+		if target.Type == types.SearchTargetTypeKnowledgeBase && len(target.TagIDs) == 0 &&
+			len(target.ScopeTagIDs) == 0 {
 			return true, nil
 		}
 		if slices.Contains(target.KnowledgeIDs, knowledge) {
@@ -326,7 +414,13 @@ func (r *KnowledgeGraphLineageReader) allowed(ctx context.Context, targets types
 	}
 	return false, nil
 }
-func (r *KnowledgeGraphLineageReader) namespaces(ctx context.Context, targets types.SearchTargets, wanted types.NameSpace, tenant uint64) ([]types.NameSpace, error) {
+
+func (r *KnowledgeGraphLineageReader) namespaces(
+	ctx context.Context,
+	targets types.SearchTargets,
+	wanted types.NameSpace,
+	tenant uint64,
+) ([]types.NameSpace, error) {
 	whole := false
 	ids := map[string]bool{}
 	for _, target := range targets {
@@ -336,7 +430,8 @@ func (r *KnowledgeGraphLineageReader) namespaces(ctx context.Context, targets ty
 		if target.TenantID != tenant {
 			return nil, access.ErrNextcloudPublicationDenied
 		}
-		if target.Type == types.SearchTargetTypeKnowledgeBase && len(target.TagIDs) == 0 && len(target.ScopeTagIDs) == 0 {
+		if target.Type == types.SearchTargetTypeKnowledgeBase && len(target.TagIDs) == 0 &&
+			len(target.ScopeTagIDs) == 0 {
 			whole = true
 		}
 		for _, id := range target.KnowledgeIDs {

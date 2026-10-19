@@ -13,12 +13,14 @@ import (
 
 func TestEmptyDecommissionSignsAndRequiresExactAck(t *testing.T) {
 	operationID := "be4c7f4d-5082-47fa-a54f-24ad09a05830"
-	intent := SourceDecommission{OperationID: operationID,
+	intent := SourceDecommission{
+		OperationID:     operationID,
 		PairOperationID: "1cf17b55-26a2-4c04-bc9a-9c47eaa561b7",
 		InstanceID:      "instance-1", BindingID: "dev-published", TenantID: "7",
 		KnowledgeBaseID: "kb-1", DataSourceID: "source-1",
 		KeyID:            "pair_1cf17b5526a24c04bc9a9c47eaa561b7",
-		PublicationEpoch: 1, State: "prepared"}
+		PublicationEpoch: 1, State: "prepared",
+	}
 	wrongAck := false
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(t, "Bearer pairing-token", r.Header.Get("Authorization"))
@@ -50,10 +52,12 @@ func TestEmptyDecommissionSignsAndRequiresExactAck(t *testing.T) {
 	}))
 	defer server.Close()
 	allowHTTPTestOrigin(t, server.URL)
-	config := &types.DataSourceConfig{Type: types.ConnectorTypeNextcloud,
+	config := &types.DataSourceConfig{
+		Type:        types.ConnectorTypeNextcloud,
 		Settings:    map[string]interface{}{"base_url": server.URL},
 		Credentials: map[string]interface{}{"token": "pairing-token", "key_id": intent.KeyID},
-		ResourceIDs: []string{intent.BindingID}}
+		ResourceIDs: []string{intent.BindingID},
+	}
 	read, err := ReadSourceDecommission(context.Background(), config, intent.BindingID, operationID)
 	require.NoError(t, err)
 	require.True(t, read.sameIdentity(intent))

@@ -14,6 +14,7 @@ func ConfigureFAQHandlerOutputLineage(h *FAQHandler, authorizer *service.FAQOutp
 		h.outputAuthorizer = authorizer
 	}
 }
+
 func (h *FAQHandler) requireFAQOutput(c *gin.Context) bool {
 	if h == nil || h.outputAuthorizer == nil {
 		c.Error(errors.NewServiceUnavailableError("Original FAQ output verifier is unavailable"))
@@ -21,6 +22,7 @@ func (h *FAQHandler) requireFAQOutput(c *gin.Context) bool {
 	}
 	return true
 }
+
 func (h *FAQHandler) writeFAQOutput(c *gin.Context, ctx context.Context, data any) {
 	guard := service.FAQOutputGuardFromContext(ctx)
 	if guard == nil {

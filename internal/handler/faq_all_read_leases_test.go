@@ -25,7 +25,14 @@ type faqLeaseObservationGroups struct {
 	Hook func(context.Context)
 }
 
-func (g *faqLeaseObservationGroups) EffectivePermission(ctx context.Context, tenant uint64, resource types.ResourceType, id string, action types.ResourceAction, now time.Time) (types.EffectiveResourcePermission, error) {
+func (g *faqLeaseObservationGroups) EffectivePermission(
+	ctx context.Context,
+	tenant uint64,
+	resource types.ResourceType,
+	id string,
+	action types.ResourceAction,
+	now time.Time,
+) (types.EffectiveResourcePermission, error) {
 	actual, err := g.GroupAccessService.EffectivePermission(ctx, tenant, resource, id, action, now)
 	if err == nil && g.Hook != nil {
 		g.Hook(ctx)
@@ -55,11 +62,19 @@ func faqAllReadLeaseFixture(t *testing.T, change string) *faqAllLeaseFixture {
 	store := repository.NewKnowledgeInputProvenanceStore(db)
 	groups := service.NewGroupAccessService(repository.NewGroupAccessRepository(db))
 	repository.ConfigureKnowledgeInputActorGroupAccess(store, groups)
-	repository.ConfigureKnowledgeDisplayInputWriters(store, repository.NewKnowledgeTagRepository(db), repository.NewKnowledgeRepository(db), func(tx *gorm.DB) *repository.KnowledgeInputProvenanceStore {
-		actual := repository.NewKnowledgeInputProvenanceStore(tx)
-		repository.ConfigureKnowledgeInputActorGroupAccess(actual, service.NewGroupAccessService(repository.NewGroupAccessRepository(tx)))
-		return actual
-	})
+	repository.ConfigureKnowledgeDisplayInputWriters(
+		store,
+		repository.NewKnowledgeTagRepository(db),
+		repository.NewKnowledgeRepository(db),
+		func(tx *gorm.DB) *repository.KnowledgeInputProvenanceStore {
+			actual := repository.NewKnowledgeInputProvenanceStore(tx)
+			repository.ConfigureKnowledgeInputActorGroupAccess(
+				actual,
+				service.NewGroupAccessService(repository.NewGroupAccessRepository(tx)),
+			)
+			return actual
+		},
+	)
 	sqlDB, err := db.DB()
 	require.NoError(t, err)
 	sqlDB.SetMaxOpenConns(1)
@@ -77,48 +92,166 @@ func faqAllReadLeaseFixture(t *testing.T, change string) *faqAllLeaseFixture {
 	deadline, _ := bounded.Deadline()
 	ctx, requestCancel := context.WithDeadline(ctx, deadline)
 	t.Cleanup(requestCancel)
-	kb := &types.KnowledgeBase{ID: "faq-derived", TenantID: 7, Type: types.KnowledgeBaseTypeFAQ, Name: "ordinary FAQ target", EmbeddingModelID: "embed"}
-	require.NoError(t, store.CreateKnowledgeBaseWithInput(repository.WithIndependentKnowledgeBaseNameInput(repository.WithIndependentKnowledgeInput(ctx), "", kb.Name), kb))
+	kb := &types.KnowledgeBase{
+		ID:               "faq-derived",
+		TenantID:         7,
+		Type:             types.KnowledgeBaseTypeFAQ,
+		Name:             "ordinary FAQ target",
+		EmbeddingModelID: "embed",
+	}
+	require.NoError(
+		t,
+		store.CreateKnowledgeBaseWithInput(
+			repository.WithIndependentKnowledgeBaseNameInput(
+				repository.WithIndependentKnowledgeInput(ctx),
+				"",
+				kb.Name,
+			),
+			kb,
+		),
+	)
 	var ds types.DataSource
 	require.NoError(t, db.Where("id='ds'").Take(&ds).Error)
 	user := "user"
 	now := time.Now().UTC()
-	directory := collectionDirectory{identity: &types.DirectoryIdentity{ID: "identity", DirectoryID: "ad-1", ObjectGUID: "00112233-4455-6677-8899-aabbccddeeff", UserID: &user, Status: types.DirectoryObjectActive, SnapshotVersion: 1}, directory: &types.Directory{ID: "ad-1", Protocol: types.DirectoryProtocolAD, Enabled: true, SnapshotVersion: 1, LastSuccessfulSyncAt: &now, StaleAfterSeconds: 900}}
+	directory := collectionDirectory{
+		identity: &types.DirectoryIdentity{
+			ID:              "identity",
+			DirectoryID:     "ad-1",
+			ObjectGUID:      "00112233-4455-6677-8899-aabbccddeeff",
+			UserID:          &user,
+			Status:          types.DirectoryObjectActive,
+			SnapshotVersion: 1,
+		},
+		directory: &types.Directory{
+			ID:                   "ad-1",
+			Protocol:             types.DirectoryProtocolAD,
+			Enabled:              true,
+			SnapshotVersion:      1,
+			LastSuccessfulSyncAt: &now,
+			StaleAfterSeconds:    900,
+		},
+	}
 	publication := access.NewNextcloudPublicationGuard(directory, publicationHandlerSources{source: &ds})
 	kbs := faqHTTPKB{collectionHTTPKB{db: db}}
 	knowledge := repository.NewKnowledgeRepository(db)
 	repository.ConfigureKnowledgeCurrentReadActor(knowledge, store)
 	observedGroups := &faqLeaseObservationGroups{GroupAccessService: groups}
-	guard := access.NewNextcloudSourceLineageGuard(knowledge.(access.NextcloudLineageSnapshotLookup), kbs, nil, nil, observedGroups, publication, store)
-	tenant := &types.Tenant{ID: 7, RetrieverEngines: types.RetrieverEngines{Engines: []types.RetrieverEngineParams{{RetrieverType: types.VectorRetrieverType, RetrieverEngineType: types.PostgresRetrieverEngineType}}}}
+	guard := access.NewNextcloudSourceLineageGuard(
+		knowledge.(access.NextcloudLineageSnapshotLookup),
+		kbs,
+		nil,
+		nil,
+		observedGroups,
+		publication,
+		store,
+	)
+	tenant := &types.Tenant{
+		ID: 7,
+		RetrieverEngines: types.RetrieverEngines{
+			Engines: []types.RetrieverEngineParams{
+				{RetrieverType: types.VectorRetrieverType, RetrieverEngineType: types.PostgresRetrieverEngineType},
+			},
+		},
+	}
 	ctx = context.WithValue(ctx, types.TenantInfoContextKey, tenant)
-	grant, err := access.ResolveKB(ctx, access.KBRequest{Caller: types.CallerFromContext(ctx)}, kb, types.OrgRoleEditor, nil, nil)
+	grant, err := access.ResolveKB(
+		ctx,
+		access.KBRequest{Caller: types.CallerFromContext(ctx)},
+		kb,
+		types.OrgRoleEditor,
+		nil,
+		nil,
+	)
 	require.NoError(t, err)
 	ctx = grant.Context(ctx)
 	queue := &faqHTTPQueue{}
 	engine := &faqHTTPEngine{}
-	kg, err := service.NewKnowledgeService(nil, knowledge, nil, kbs, faqHTTPTenants{tenant: tenant}, nil, nil, repository.NewChunkRepository(db), repository.NewKnowledgeTagRepository(db), nil, nil, nil, nil, faqHTTPModel{}, queue, nil, nil, faqHTTPRegistry{engine: engine}, nil, nil, nil, nil, nil, nil, nil, nil, nil, publication, nil)
+	kg, err := service.NewKnowledgeService(
+		nil,
+		knowledge,
+		nil,
+		kbs,
+		faqHTTPTenants{tenant: tenant},
+		nil,
+		nil,
+		repository.NewChunkRepository(db),
+		repository.NewKnowledgeTagRepository(db),
+		nil,
+		nil,
+		nil,
+		nil,
+		faqHTTPModel{},
+		queue,
+		nil,
+		nil,
+		faqHTTPRegistry{engine: engine},
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		publication,
+		nil,
+	)
 	require.NoError(t, err)
 	service.ConfigureKnowledgeInputProvenance(kg, store, store)
 	service.ConfigureFAQInputProvenance(kg, store, guard)
-	original, err := store.CaptureKnowledgeOutputInputs(ctx, types.KnowledgeBuildInputCaptureRequest{TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: "source", ChunkIDs: []string{"source-chunk"}})
+	original, err := store.CaptureKnowledgeOutputInputs(
+		ctx,
+		types.KnowledgeBuildInputCaptureRequest{
+			TenantID:        7,
+			KnowledgeBaseID: "kb",
+			KnowledgeID:     "source",
+			ChunkIDs:        []string{"source-chunk"},
+		},
+	)
 	require.NoError(t, err)
 	require.Len(t, original.Proof.SourceLineage.Sources, 1)
-	input := &types.FAQEntryPayload{StandardQuestion: "actual controlled derivative FAQ", Answers: []string{"source inherited FAQ answer"}}
-	derived, err := store.WithDerivedFAQInput(ctx, kb.ID, types.FAQInputOperation{Kind: "create", Entry: input}, original.Proof)
+	input := &types.FAQEntryPayload{
+		StandardQuestion: "actual controlled derivative FAQ",
+		Answers:          []string{"source inherited FAQ answer"},
+	}
+	derived, err := store.WithDerivedFAQInput(
+		ctx,
+		kb.ID,
+		types.FAQInputOperation{Kind: "create", Entry: input},
+		original.Proof,
+	)
 	require.NoError(t, err)
 	entry, err := kg.CreateFAQEntry(derived, kb.ID, input)
 	require.NoError(t, err)
 
-	batch := &types.FAQBatchUpsertPayload{Mode: types.FAQBatchModeAppend, Entries: []types.FAQEntryPayload{{StandardQuestion: "all leased import question", Answers: []string{"all leased import answer"}}}}
-	importCtx, err := store.WithDerivedFAQInputs(ctx, kb.ID, types.FAQInputOperation{Kind: "import", Batch: batch}, []*types.KnowledgeBuildInputProof{original.Proof})
+	batch := &types.FAQBatchUpsertPayload{
+		Mode: types.FAQBatchModeAppend,
+		Entries: []types.FAQEntryPayload{
+			{StandardQuestion: "all leased import question", Answers: []string{"all leased import answer"}},
+		},
+	}
+	importCtx, err := store.WithDerivedFAQInputs(
+		ctx,
+		kb.ID,
+		types.FAQInputOperation{Kind: "import", Batch: batch},
+		[]*types.KnowledgeBuildInputProof{original.Proof},
+	)
 	require.NoError(t, err)
 	task, err := kg.UpsertFAQEntries(importCtx, kb.ID, batch)
 	require.NoError(t, err)
 	require.NoError(t, kg.ProcessFAQImport(bounded, queue.tasks[0]))
 	// No fixture builder may be the reason a GC claim is blocked in this test.
 	var builds []struct{ LeaseID string }
-	require.NoError(t, db.Table("nextcloud_content_leases").Select("lease_id").Where("kind='build' AND released_at_ms IS NULL").Scan(&builds).Error)
+	require.NoError(
+		t,
+		db.Table("nextcloud_content_leases").
+			Select("lease_id").
+			Where("kind='build' AND released_at_ms IS NULL").
+			Scan(&builds).
+			Error,
+	)
 	for _, build := range builds {
 		require.NoError(t, store.ContentLeaseStore().ReleaseLease(ctx, build.LeaseID))
 	}
@@ -126,11 +259,15 @@ func faqAllReadLeaseFixture(t *testing.T, change string) *faqAllLeaseFixture {
 	ConfigureFAQHandlerOutputLineage(h, service.NewFAQOutputAuthorizer(store, guard))
 	knowledgeHandler := &KnowledgeHandler{kgService: kg, kbService: kbs}
 	ConfigureKnowledgeHandlerOutputLineage(knowledgeHandler, service.NewKnowledgeOutputAuthorizer(store, guard))
-	ConfigureKnowledgeHandlerCollectionOutput(knowledgeHandler, service.NewKnowledgeCollectionOutputAuthorizer(store, guard))
+	ConfigureKnowledgeHandlerCollectionOutput(
+		knowledgeHandler,
+		service.NewKnowledgeCollectionOutputAuthorizer(store, guard),
+	)
 	ConfigureKnowledgeHandlerContentLeaseStore(knowledgeHandler, store.ContentLeaseStore())
 	calls.Store(0)
 	return &faqAllLeaseFixture{h, knowledgeHandler, db, store, ctx, entry, task, engine, calls, observedGroups, guard}
 }
+
 func serveFAQKnowledgeLeaseHTTP(h *KnowledgeHandler, ctx context.Context, url string) *httptest.ResponseRecorder {
 	r := documentHandlerRouter()
 	r.Use(func(c *gin.Context) { c.Request = c.Request.WithContext(ctx); c.Next() })
@@ -141,16 +278,37 @@ func serveFAQKnowledgeLeaseHTTP(h *KnowledgeHandler, ctx context.Context, url st
 	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, url, nil))
 	return w
 }
+
 func TestFAQAllParentReadLeasesActualHTTPPositiveAndGCBarrier(t *testing.T) {
 	for _, route := range []string{"list", "get", "search", "export", "progress", "knowledge", "batch", "collection", "tags"} {
 		t.Run(route, func(t *testing.T) {
 			f := faqAllReadLeaseFixture(t, "allowed")
 			leases := f.store.ContentLeaseStore()
-			old := repository.NextcloudContentScope{TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: "retired-parent-neighbor", DataSourceID: "old-source", ExternalID: "nextcloud:instance:99"}
+			old := repository.NextcloudContentScope{
+				TenantID:        7,
+				KnowledgeBaseID: "kb",
+				KnowledgeID:     "retired-parent-neighbor",
+				DataSourceID:    "old-source",
+				ExternalID:      "nextcloud:instance:99",
+			}
 			require.NoError(t, leases.RetireKnowledge(f.ctx, old))
 			var retired int64
-			require.NoError(t, f.db.Table("nextcloud_content_fences").Where("knowledge_id=?", old.KnowledgeID).Select("retired_at_ms").Scan(&retired).Error)
-			require.NoError(t, f.db.Exec(`INSERT INTO nextcloud_content_lease_coverage VALUES(7,'kb',?,?,'FAQ-reader-test-contract','FAQ-builder-test-contract')`, retired, retired).Error)
+			require.NoError(
+				t,
+				f.db.Table("nextcloud_content_fences").
+					Where("knowledge_id=?", old.KnowledgeID).
+					Select("retired_at_ms").
+					Scan(&retired).
+					Error,
+			)
+			require.NoError(
+				t,
+				f.db.Exec(
+					`INSERT INTO nextcloud_content_lease_coverage VALUES(7,'kb',?,?,'FAQ-reader-test-contract','FAQ-builder-test-contract')`,
+					retired,
+					retired,
+				).Error,
+			)
 			observed := false
 			blocked := false
 			f.groups.Hook = func(ctx context.Context) {
@@ -161,47 +319,101 @@ func TestFAQAllParentReadLeasesActualHTTPPositiveAndGCBarrier(t *testing.T) {
 				require.ErrorIs(t, err, repository.ErrNextcloudContentGCBusy)
 				blocked = true
 			}
-			require.NoError(t, f.db.Callback().Query().Before("gorm:query").Register("FAQ_actual_parent_lease_observation", func(tx *gorm.DB) {
-				if tx.Statement.SkipHooks || tx.Statement.Table != "chunks" {
-					return
-				}
-				// Inspect the same transaction/connection as the actual body reader.
-				actual := tx.Session(&gorm.Session{NewDB: true, SkipHooks: true})
-				var count int64
-				require.NoError(t, actual.Table("nextcloud_content_leases").Where("kind='read' AND released_at_ms IS NULL AND knowledge_id='' AND knowledge_base_id IN ('kb','faq-derived')").Count(&count).Error)
-				require.Equal(t, int64(2), count)
-				require.NoError(t, actual.Table("nextcloud_content_leases").Where("kind='read' AND released_at_ms IS NULL AND knowledge_id='source'").Count(&count).Error)
-				require.Equal(t, int64(1), count)
-				observed = true
-			}))
+			require.NoError(
+				t,
+				f.db.Callback().
+					Query().
+					Before("gorm:query").
+					Register("FAQ_actual_parent_lease_observation", func(tx *gorm.DB) {
+						if tx.Statement.SkipHooks || tx.Statement.Table != "chunks" {
+							return
+						}
+						// Inspect the same transaction/connection as the actual body reader.
+						actual := tx.Session(&gorm.Session{NewDB: true, SkipHooks: true})
+						var count int64
+						require.NoError(
+							t,
+							actual.Table("nextcloud_content_leases").
+								Where("kind='read' AND released_at_ms IS NULL AND knowledge_id='' AND knowledge_base_id IN ('kb','faq-derived')").
+								Count(&count).
+								Error,
+						)
+						require.Equal(t, int64(2), count)
+						require.NoError(
+							t,
+							actual.Table("nextcloud_content_leases").
+								Where("kind='read' AND released_at_ms IS NULL AND knowledge_id='source'").
+								Count(&count).
+								Error,
+						)
+						require.Equal(t, int64(1), count)
+						observed = true
+					}),
+			)
 			var w *httptest.ResponseRecorder
 			switch route {
 			case "list":
 				w = serveFAQHTTP(f.h, f.ctx, http.MethodGet, "/knowledge-bases/faq-derived/faq/entries", "")
 			case "get":
-				w = serveFAQHTTP(f.h, f.ctx, http.MethodGet, fmt.Sprintf("/knowledge-bases/faq-derived/faq/entries/%d", f.entry.ID), "")
+				w = serveFAQHTTP(
+					f.h,
+					f.ctx,
+					http.MethodGet,
+					fmt.Sprintf("/knowledge-bases/faq-derived/faq/entries/%d", f.entry.ID),
+					"",
+				)
 			case "search":
-				w = serveFAQHTTP(f.h, f.ctx, http.MethodPost, "/knowledge-bases/faq-derived/faq/search", `{"query_text":"source"}`)
+				w = serveFAQHTTP(
+					f.h,
+					f.ctx,
+					http.MethodPost,
+					"/knowledge-bases/faq-derived/faq/search",
+					`{"query_text":"source"}`,
+				)
 			case "export":
-				w = serveFAQHTTP(f.h, f.ctx, http.MethodGet, "/knowledge-bases/faq-derived/faq/entries/export?format=json", "")
+				w = serveFAQHTTP(
+					f.h,
+					f.ctx,
+					http.MethodGet,
+					"/knowledge-bases/faq-derived/faq/entries/export?format=json",
+					"",
+				)
 			case "progress":
 				w = serveFAQHTTP(f.h, f.ctx, http.MethodGet, "/faq/import/progress/"+f.task, "")
 			case "knowledge":
 				w = serveFAQKnowledgeLeaseHTTP(f.knowledge, f.ctx, "/knowledge/"+f.entry.KnowledgeID)
 			case "tags":
-				tag := NewTagHandler(nil, repository.NewKnowledgeTagRepository(f.db), repository.NewChunkRepository(f.db))
+				tag := NewTagHandler(
+					nil,
+					repository.NewKnowledgeTagRepository(f.db),
+					repository.NewChunkRepository(f.db),
+				)
 				ConfigureTagHandlerOutputLineage(tag, service.NewTagOutputAuthorizer(f.store, f.guard))
 				w = serveTagHTTP(tag, f.ctx, http.MethodGet, "/knowledge-bases/faq-derived/tags", "")
 			case "batch":
-				w = serveFAQKnowledgeLeaseHTTP(f.knowledge, f.ctx, "/knowledge/batch?ids="+f.entry.KnowledgeID+"&kb_id=faq-derived")
+				w = serveFAQKnowledgeLeaseHTTP(
+					f.knowledge,
+					f.ctx,
+					"/knowledge/batch?ids="+f.entry.KnowledgeID+"&kb_id=faq-derived",
+				)
 			case "collection":
-				w = serveFAQKnowledgeLeaseHTTP(f.knowledge, f.ctx, "/knowledge-bases/faq-derived/knowledge?page_size=20")
+				w = serveFAQKnowledgeLeaseHTTP(
+					f.knowledge,
+					f.ctx,
+					"/knowledge-bases/faq-derived/knowledge?page_size=20",
+				)
 			}
 			require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 			require.True(t, observed)
 			require.True(t, blocked)
 			var count int64
-			require.NoError(t, f.db.Table("nextcloud_content_leases").Where("kind='read' AND released_at_ms IS NULL").Count(&count).Error)
+			require.NoError(
+				t,
+				f.db.Table("nextcloud_content_leases").
+					Where("kind='read' AND released_at_ms IS NULL").
+					Count(&count).
+					Error,
+			)
 			require.Zero(t, count)
 			_, err := leases.ClaimKnowledgeGC(f.ctx, old, time.UnixMilli(retired), time.Minute)
 			require.NoError(t, err)
@@ -231,11 +443,18 @@ func TestFAQAllParentPlansRequireRealLeasesAndRejectABA(t *testing.T) {
 	require.NoError(t, err)
 	_, err = f.store.CaptureFAQInputs(forged, request)
 	require.ErrorIs(t, err, repository.ErrNextcloudContentLeaseExpired)
-	require.NoError(t, f.db.Model(&types.Chunk{}).Where("knowledge_base_id='faq-derived'").Update("is_enabled", false).Error)
-	require.NoError(t, f.db.Model(&types.Chunk{}).Where("knowledge_base_id='faq-derived'").Update("is_enabled", true).Error)
+	require.NoError(
+		t,
+		f.db.Model(&types.Chunk{}).Where("knowledge_base_id='faq-derived'").Update("is_enabled", false).Error,
+	)
+	require.NoError(
+		t,
+		f.db.Model(&types.Chunk{}).Where("knowledge_base_id='faq-derived'").Update("is_enabled", true).Error,
+	)
 	_, err = f.store.CaptureFAQInputs(marked, request)
 	require.ErrorIs(t, err, repository.ErrKnowledgeInputChanged)
 }
+
 func TestFAQAllParentHTTPSourcePermissionRevokeWithOpenLeases(t *testing.T) {
 	for _, route := range []string{"list", "get", "search", "export", "progress", "knowledge", "batch", "collection", "tags"} {
 		t.Run(route, func(t *testing.T) {
@@ -244,7 +463,13 @@ func TestFAQAllParentHTTPSourcePermissionRevokeWithOpenLeases(t *testing.T) {
 			f.groups.Hook = func(ctx context.Context) {
 				observed = true
 				var count int64
-				require.NoError(t, f.db.Table("nextcloud_content_leases").Where("kind='read' AND released_at_ms IS NULL AND knowledge_id='source'").Count(&count).Error)
+				require.NoError(
+					t,
+					f.db.Table("nextcloud_content_leases").
+						Where("kind='read' AND released_at_ms IS NULL AND knowledge_id='source'").
+						Count(&count).
+						Error,
+				)
 				require.Equal(t, int64(1), count)
 			}
 			var w *httptest.ResponseRecorder
@@ -252,33 +477,76 @@ func TestFAQAllParentHTTPSourcePermissionRevokeWithOpenLeases(t *testing.T) {
 			case "list":
 				w = serveFAQHTTP(f.h, f.ctx, http.MethodGet, "/knowledge-bases/faq-derived/faq/entries", "")
 			case "get":
-				w = serveFAQHTTP(f.h, f.ctx, http.MethodGet, fmt.Sprintf("/knowledge-bases/faq-derived/faq/entries/%d", f.entry.ID), "")
+				w = serveFAQHTTP(
+					f.h,
+					f.ctx,
+					http.MethodGet,
+					fmt.Sprintf("/knowledge-bases/faq-derived/faq/entries/%d", f.entry.ID),
+					"",
+				)
 			case "search":
-				w = serveFAQHTTP(f.h, f.ctx, http.MethodPost, "/knowledge-bases/faq-derived/faq/search", `{"query_text":"source"}`)
+				w = serveFAQHTTP(
+					f.h,
+					f.ctx,
+					http.MethodPost,
+					"/knowledge-bases/faq-derived/faq/search",
+					`{"query_text":"source"}`,
+				)
 			case "export":
-				w = serveFAQHTTP(f.h, f.ctx, http.MethodGet, "/knowledge-bases/faq-derived/faq/entries/export?format=json", "")
+				w = serveFAQHTTP(
+					f.h,
+					f.ctx,
+					http.MethodGet,
+					"/knowledge-bases/faq-derived/faq/entries/export?format=json",
+					"",
+				)
 			case "progress":
 				w = serveFAQHTTP(f.h, f.ctx, http.MethodGet, "/faq/import/progress/"+f.task, "")
 			case "knowledge":
 				w = serveFAQKnowledgeLeaseHTTP(f.knowledge, f.ctx, "/knowledge/"+f.entry.KnowledgeID)
 			case "tags":
-				tag := NewTagHandler(nil, repository.NewKnowledgeTagRepository(f.db), repository.NewChunkRepository(f.db))
+				tag := NewTagHandler(
+					nil,
+					repository.NewKnowledgeTagRepository(f.db),
+					repository.NewChunkRepository(f.db),
+				)
 				ConfigureTagHandlerOutputLineage(tag, service.NewTagOutputAuthorizer(f.store, f.guard))
 				w = serveTagHTTP(tag, f.ctx, http.MethodGet, "/knowledge-bases/faq-derived/tags", "")
 			case "batch":
-				w = serveFAQKnowledgeLeaseHTTP(f.knowledge, f.ctx, "/knowledge/batch?ids="+f.entry.KnowledgeID+"&kb_id=faq-derived")
+				w = serveFAQKnowledgeLeaseHTTP(
+					f.knowledge,
+					f.ctx,
+					"/knowledge/batch?ids="+f.entry.KnowledgeID+"&kb_id=faq-derived",
+				)
 			case "collection":
-				w = serveFAQKnowledgeLeaseHTTP(f.knowledge, f.ctx, "/knowledge-bases/faq-derived/knowledge?page_size=20")
+				w = serveFAQKnowledgeLeaseHTTP(
+					f.knowledge,
+					f.ctx,
+					"/knowledge-bases/faq-derived/knowledge?page_size=20",
+				)
 			}
 			require.NotEqual(t, http.StatusOK, w.Code, w.Body.String())
 			require.True(t, observed)
 			require.NotContains(t, w.Body.String(), "source inherited FAQ answer")
 			require.NotContains(t, w.Body.String(), f.task)
 			var state string
-			require.NoError(t, f.db.Table("nextcloud_content_fences").Where("knowledge_id='source'").Select("state").Scan(&state).Error)
+			require.NoError(
+				t,
+				f.db.Table("nextcloud_content_fences").
+					Where("knowledge_id='source'").
+					Select("state").
+					Scan(&state).
+					Error,
+			)
 			require.Equal(t, "open", state)
 			var active int64
-			require.NoError(t, f.db.Table("nextcloud_content_leases").Where("kind='read' AND released_at_ms IS NULL").Count(&active).Error)
+			require.NoError(
+				t,
+				f.db.Table("nextcloud_content_leases").
+					Where("kind='read' AND released_at_ms IS NULL").
+					Count(&active).
+					Error,
+			)
 			require.Zero(t, active)
 		})
 	}
@@ -287,18 +555,60 @@ func TestFAQAllParentHTTPSourcePermissionRevokeWithOpenLeases(t *testing.T) {
 func configureFAQProductionSQLAuthority(db *gorm.DB, store *repository.KnowledgeInputProvenanceStore) {
 	build := func(tx *gorm.DB) *repository.KnowledgeInputProvenanceStore {
 		actual := repository.NewKnowledgeInputProvenanceStore(tx)
-		repository.ConfigureKnowledgeInputActorGroupAccess(actual, service.NewGroupAccessService(repository.NewGroupAccessRepository(tx)))
-		repository.ConfigureKnowledgeInputActorShares(actual, service.NewKBShareService(repository.NewKBShareRepository(tx), repository.NewOrganizationRepository(tx), repository.NewKnowledgeBaseRepository(tx), repository.NewKnowledgeRepository(tx), repository.NewDataSourceRepository(tx), repository.NewChunkRepository(tx), nil))
+		repository.ConfigureKnowledgeInputActorGroupAccess(
+			actual,
+			service.NewGroupAccessService(repository.NewGroupAccessRepository(tx)),
+		)
+		repository.ConfigureKnowledgeInputActorShares(
+			actual,
+			service.NewKBShareService(
+				repository.NewKBShareRepository(tx),
+				repository.NewOrganizationRepository(tx),
+				repository.NewKnowledgeBaseRepository(tx),
+				repository.NewKnowledgeRepository(tx),
+				repository.NewDataSourceRepository(tx),
+				repository.NewChunkRepository(tx),
+				nil,
+			),
+		)
 		return actual
 	}
-	repository.ConfigureKnowledgeInputActorGroupAccess(store, service.NewGroupAccessService(repository.NewGroupAccessRepository(db)))
-	repository.ConfigureKnowledgeInputActorShares(store, service.NewKBShareService(repository.NewKBShareRepository(db), repository.NewOrganizationRepository(db), repository.NewKnowledgeBaseRepository(db), repository.NewKnowledgeRepository(db), repository.NewDataSourceRepository(db), repository.NewChunkRepository(db), nil))
-	repository.ConfigureKnowledgeDisplayInputWriters(store, repository.NewKnowledgeTagRepository(db), repository.NewKnowledgeRepository(db), build)
+	repository.ConfigureKnowledgeInputActorGroupAccess(
+		store,
+		service.NewGroupAccessService(repository.NewGroupAccessRepository(db)),
+	)
+	repository.ConfigureKnowledgeInputActorShares(
+		store,
+		service.NewKBShareService(
+			repository.NewKBShareRepository(db),
+			repository.NewOrganizationRepository(db),
+			repository.NewKnowledgeBaseRepository(db),
+			repository.NewKnowledgeRepository(db),
+			repository.NewDataSourceRepository(db),
+			repository.NewChunkRepository(db),
+			nil,
+		),
+	)
+	repository.ConfigureKnowledgeDisplayInputWriters(
+		store,
+		repository.NewKnowledgeTagRepository(db),
+		repository.NewKnowledgeRepository(db),
+		build,
+	)
 }
+
 func TestFAQAllParentActualSharedReadSingleConnectionAndShareRevoke(t *testing.T) {
 	h, _, db, store, _, _, ctx := faqActualHTTPFixture(t)
 	db.Config.DisableForeignKeyConstraintWhenMigrating = true
-	require.NoError(t, db.AutoMigrate(&types.DataSource{}, &types.Organization{}, &types.OrganizationTenantMember{}, &types.KnowledgeBaseShare{}))
+	require.NoError(
+		t,
+		db.AutoMigrate(
+			&types.DataSource{},
+			&types.Organization{},
+			&types.OrganizationTenantMember{},
+			&types.KnowledgeBaseShare{},
+		),
+	)
 	configureFAQProductionSQLAuthority(db, store)
 	sqlDB, err := db.DB()
 	require.NoError(t, err)
@@ -308,21 +618,72 @@ func TestFAQAllParentActualSharedReadSingleConnectionAndShareRevoke(t *testing.T
 	defer cancel()
 	org := &types.Organization{ID: "actual-parent-org", Name: "actual parent share", OwnerID: "user", OwnerTenantID: 9}
 	require.NoError(t, db.Create(org).Error)
-	require.NoError(t, db.Create(&types.OrganizationTenantMember{ID: "actual-source-org-member", OrganizationID: org.ID, TenantID: 9, Role: types.OrgRoleAdmin}).Error)
-	require.NoError(t, db.Create(&types.OrganizationTenantMember{ID: "actual-recipient-org-member", OrganizationID: org.ID, TenantID: 7, Role: types.OrgRoleViewer}).Error)
-	require.NoError(t, db.Create(&types.KnowledgeBaseShare{ID: "actual-parent-share", KnowledgeBaseID: "shared-kb", OrganizationID: org.ID, SharedByUserID: "user", SourceTenantID: 9, Permission: types.OrgRoleViewer}).Error)
+	require.NoError(
+		t,
+		db.Create(
+			&types.OrganizationTenantMember{
+				ID:             "actual-source-org-member",
+				OrganizationID: org.ID,
+				TenantID:       9,
+				Role:           types.OrgRoleAdmin,
+			},
+		).Error,
+	)
+	require.NoError(
+		t,
+		db.Create(
+			&types.OrganizationTenantMember{
+				ID:             "actual-recipient-org-member",
+				OrganizationID: org.ID,
+				TenantID:       7,
+				Role:           types.OrgRoleViewer,
+			},
+		).Error,
+	)
+	require.NoError(
+		t,
+		db.Create(
+			&types.KnowledgeBaseShare{
+				ID:              "actual-parent-share",
+				KnowledgeBaseID: "shared-kb",
+				OrganizationID:  org.ID,
+				SharedByUserID:  "user",
+				SourceTenantID:  9,
+				Permission:      types.OrgRoleViewer,
+			},
+		).Error,
+	)
 	// The authenticated reader belongs only to the recipient workspace. The
 	// parent grant comes from real current organization/share records.
 	require.NoError(t, db.Where("tenant_id=9 AND user_id='user'").Delete(&types.TenantMember{}).Error)
-	parent, err := store.CaptureKnowledgeOutputInputs(ctx, types.KnowledgeBuildInputCaptureRequest{TenantID: 9, KnowledgeBaseID: "shared-kb", KnowledgeID: "shared-match"})
+	parent, err := store.CaptureKnowledgeOutputInputs(
+		ctx,
+		types.KnowledgeBuildInputCaptureRequest{TenantID: 9, KnowledgeBaseID: "shared-kb", KnowledgeID: "shared-match"},
+	)
 	require.NoError(t, err)
-	shares := service.NewKBShareService(repository.NewKBShareRepository(db), repository.NewOrganizationRepository(db), repository.NewKnowledgeBaseRepository(db), repository.NewKnowledgeRepository(db), repository.NewDataSourceRepository(db), repository.NewChunkRepository(db), nil)
+	shares := service.NewKBShareService(
+		repository.NewKBShareRepository(db),
+		repository.NewOrganizationRepository(db),
+		repository.NewKnowledgeBaseRepository(db),
+		repository.NewKnowledgeRepository(db),
+		repository.NewDataSourceRepository(db),
+		repository.NewChunkRepository(db),
+		nil,
+	)
 	groups := service.NewGroupAccessService(repository.NewGroupAccessRepository(db))
 	guard := access.NewNextcloudSourceLineageGuard(nil, collectionHTTPKB{db: db}, shares, nil, groups, nil, store)
 	service.ConfigureFAQInputProvenance(h.knowledgeService, store, guard)
 	ConfigureFAQHandlerOutputLineage(h, service.NewFAQOutputAuthorizer(store, guard))
-	input := &types.FAQEntryPayload{StandardQuestion: "actual shared parent FAQ", Answers: []string{"actual shared parent derived answer"}}
-	derived, err := store.WithDerivedFAQInputs(ctx, "kb", types.FAQInputOperation{Kind: "create", Entry: input}, []*types.KnowledgeBuildInputProof{parent.Proof})
+	input := &types.FAQEntryPayload{
+		StandardQuestion: "actual shared parent FAQ",
+		Answers:          []string{"actual shared parent derived answer"},
+	}
+	derived, err := store.WithDerivedFAQInputs(
+		ctx,
+		"kb",
+		types.FAQInputOperation{Kind: "create", Entry: input},
+		[]*types.KnowledgeBuildInputProof{parent.Proof},
+	)
 	require.NoError(t, err)
 	_, err = h.knowledgeService.CreateFAQEntry(derived, "kb", input)
 	require.NoError(t, err)
@@ -334,7 +695,10 @@ func TestFAQAllParentActualSharedReadSingleConnectionAndShareRevoke(t *testing.T
 	require.NotEqual(t, http.StatusOK, w.Code, w.Body.String())
 	require.NotContains(t, w.Body.String(), "actual shared parent derived answer")
 	var active int64
-	require.NoError(t, db.Table("nextcloud_content_leases").Where("kind='read' AND released_at_ms IS NULL").Count(&active).Error)
+	require.NoError(
+		t,
+		db.Table("nextcloud_content_leases").Where("kind='read' AND released_at_ms IS NULL").Count(&active).Error,
+	)
 	require.Zero(t, active)
 }
 
@@ -347,7 +711,13 @@ func TestFAQAllParentHTTPCurrentActorRevokeKeepsSourceFenceOpen(t *testing.T) {
 		}
 		observed = true
 		var active int64
-		require.NoError(t, f.db.Table("nextcloud_content_leases").Where("kind='read' AND released_at_ms IS NULL AND knowledge_id='source'").Count(&active).Error)
+		require.NoError(
+			t,
+			f.db.Table("nextcloud_content_leases").
+				Where("kind='read' AND released_at_ms IS NULL AND knowledge_id='source'").
+				Count(&active).
+				Error,
+		)
 		require.Equal(t, int64(1), active)
 		require.NoError(t, f.db.Model(&types.User{}).Where("id='user'").Update("is_active", false).Error)
 	}
@@ -356,9 +726,15 @@ func TestFAQAllParentHTTPCurrentActorRevokeKeepsSourceFenceOpen(t *testing.T) {
 	require.NotEqual(t, http.StatusOK, w.Code, w.Body.String())
 	require.NotContains(t, w.Body.String(), "all leased import answer")
 	var state string
-	require.NoError(t, f.db.Table("nextcloud_content_fences").Where("knowledge_id='source'").Select("state").Scan(&state).Error)
+	require.NoError(
+		t,
+		f.db.Table("nextcloud_content_fences").Where("knowledge_id='source'").Select("state").Scan(&state).Error,
+	)
 	require.Equal(t, "open", state)
 	var active int64
-	require.NoError(t, f.db.Table("nextcloud_content_leases").Where("kind='read' AND released_at_ms IS NULL").Count(&active).Error)
+	require.NoError(
+		t,
+		f.db.Table("nextcloud_content_leases").Where("kind='read' AND released_at_ms IS NULL").Count(&active).Error,
+	)
 	require.Zero(t, active)
 }

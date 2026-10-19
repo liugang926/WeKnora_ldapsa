@@ -19,17 +19,19 @@ import (
 // These request markers contain only the exact, typed values consumed at an
 // authenticated direct-input boundary. Neither persisted metadata nor a
 // generic independent ingestion marker can certify an old display value.
-type knowledgeDisplayRequestKey struct{}
-type knowledgeDisplayRequest struct {
-	Kind, ID, KB   string
-	Fields         map[string]any
-	Assignments    map[string][]string
-	Original       *types.KnowledgeBuildInputProof
-	AutoTag        *types.KnowledgeAutoTagInputSnapshot
-	AutoTagReader  *KnowledgeInputProvenanceStore `json:"-"`
-	DataSourceName *types.DataSourceNameInputProof
-	OriginalUpload string
-}
+type (
+	knowledgeDisplayRequestKey struct{}
+	knowledgeDisplayRequest    struct {
+		Kind, ID, KB   string
+		Fields         map[string]any
+		Assignments    map[string][]string
+		Original       *types.KnowledgeBuildInputProof
+		AutoTag        *types.KnowledgeAutoTagInputSnapshot
+		AutoTagReader  *KnowledgeInputProvenanceStore `json:"-"`
+		DataSourceName *types.DataSourceNameInputProof
+		OriginalUpload string
+	}
+)
 
 type KnowledgeDisplayAuthorityFactory func(*gorm.DB) *KnowledgeInputProvenanceStore
 
@@ -43,7 +45,12 @@ func knowledgeDisplayWriteOptions(db *gorm.DB) *sql.TxOptions {
 
 // ConfigureKnowledgeDisplayInputWriters supplies transaction-bound group and
 // organization lookups. A missing factory fails closed for marked writes.
-func ConfigureKnowledgeDisplayInputWriters(store *KnowledgeInputProvenanceStore, tags interfaces.KnowledgeTagRepository, knowledge interfaces.KnowledgeRepository, factory KnowledgeDisplayAuthorityFactory) {
+func ConfigureKnowledgeDisplayInputWriters(
+	store *KnowledgeInputProvenanceStore,
+	tags interfaces.KnowledgeTagRepository,
+	knowledge interfaces.KnowledgeRepository,
+	factory KnowledgeDisplayAuthorityFactory,
+) {
 	if factory != nil {
 		baseFactory := factory
 		factory = func(tx *gorm.DB) *KnowledgeInputProvenanceStore {
@@ -70,9 +77,27 @@ func WithIndependentKnowledgeTagCreateInput(ctx context.Context, kb, name, color
 	if strings.TrimSpace(name) == types.UntaggedTagName {
 		order = -1
 	}
-	return context.WithValue(ctx, knowledgeDisplayRequestKey{}, knowledgeDisplayRequest{Kind: "tag-create", KB: kb, Fields: map[string]any{"name": strings.TrimSpace(name), "color": strings.TrimSpace(color), "sort_order": order}})
+	return context.WithValue(
+		ctx,
+		knowledgeDisplayRequestKey{},
+		knowledgeDisplayRequest{
+			Kind: "tag-create",
+			KB:   kb,
+			Fields: map[string]any{
+				"name":       strings.TrimSpace(name),
+				"color":      strings.TrimSpace(color),
+				"sort_order": order,
+			},
+		},
+	)
 }
-func WithIndependentKnowledgeTagUpdateInput(ctx context.Context, id string, name, color *string, order *int) context.Context {
+
+func WithIndependentKnowledgeTagUpdateInput(
+	ctx context.Context,
+	id string,
+	name, color *string,
+	order *int,
+) context.Context {
 	fields := map[string]any{}
 	if name != nil {
 		fields["name"] = strings.TrimSpace(*name)
@@ -83,26 +108,47 @@ func WithIndependentKnowledgeTagUpdateInput(ctx context.Context, id string, name
 	if order != nil {
 		fields["sort_order"] = *order
 	}
-	return context.WithValue(ctx, knowledgeDisplayRequestKey{}, knowledgeDisplayRequest{Kind: "tag-update", ID: id, Fields: fields})
+	return context.WithValue(
+		ctx,
+		knowledgeDisplayRequestKey{},
+		knowledgeDisplayRequest{Kind: "tag-update", ID: id, Fields: fields},
+	)
 }
+
 func WithIndependentKnowledgeTagAssignmentInput(ctx context.Context, assignments map[string][]string) context.Context {
 	copy := map[string][]string{}
 	for id, tags := range assignments {
 		copy[id] = normalizedKnowledgeDisplayTagIDs(tags)
 	}
-	return context.WithValue(ctx, knowledgeDisplayRequestKey{}, knowledgeDisplayRequest{Kind: "relations", Assignments: copy})
+	return context.WithValue(
+		ctx,
+		knowledgeDisplayRequestKey{},
+		knowledgeDisplayRequest{Kind: "relations", Assignments: copy},
+	)
 }
+
 func WithIndependentKnowledgeBaseNameInput(ctx context.Context, id, name string) context.Context {
-	return context.WithValue(ctx, knowledgeDisplayRequestKey{}, knowledgeDisplayRequest{Kind: "kb-name", ID: id, Fields: map[string]any{"name": name}})
+	return context.WithValue(
+		ctx,
+		knowledgeDisplayRequestKey{},
+		knowledgeDisplayRequest{Kind: "kb-name", ID: id, Fields: map[string]any{"name": name}},
+	)
 }
 
 // A derived display producer keeps the checked original admission and its
 // complete dependency envelope. The writer rechecks it inside its SQL tx.
-func WithDerivedKnowledgeDisplayInput(ctx context.Context, proof *types.KnowledgeBuildInputProof) (context.Context, error) {
+func WithDerivedKnowledgeDisplayInput(
+	ctx context.Context,
+	proof *types.KnowledgeBuildInputProof,
+) (context.Context, error) {
 	if proof == nil || proof.Projection != "" || proof.SourceLineage.RequireComplete() != nil {
 		return ctx, types.ErrSourceLineageUnknown
 	}
-	return context.WithValue(ctx, knowledgeDisplayRequestKey{}, knowledgeDisplayRequest{Kind: "derived", Original: cloneKnowledgeInputProof(proof)}), nil
+	return context.WithValue(
+		ctx,
+		knowledgeDisplayRequestKey{},
+		knowledgeDisplayRequest{Kind: "derived", Original: cloneKnowledgeInputProof(proof)},
+	), nil
 }
 
 func normalizedKnowledgeDisplayTagIDs(ids []string) []string {
@@ -131,11 +177,13 @@ type knowledgeDisplayInputOrigin struct {
 
 func (knowledgeDisplayInputOrigin) TableName() string { return "knowledge_display_input_origins" }
 
-type knowledgeDisplayCacheKey struct{}
-type knowledgeDisplayCache struct {
-	versions map[string]uint64
-	origins  map[string]knowledgeDisplayInputOrigin
-}
+type (
+	knowledgeDisplayCacheKey struct{}
+	knowledgeDisplayCache    struct {
+		versions map[string]uint64
+		origins  map[string]knowledgeDisplayInputOrigin
+	}
+)
 
 func knowledgeDisplayCacheID(kind, id string) string { return kind + "\x00" + id }
 func cacheKnowledgeDisplayInputs(tx *gorm.DB, ids []string) (*gorm.DB, error) {
@@ -146,7 +194,10 @@ func cacheKnowledgeDisplayInputs(tx *gorm.DB, ids []string) (*gorm.DB, error) {
 			Kind, RowID string
 			Revision    uint64
 		}
-		if err := tx.Table("knowledge_display_versions").Where("row_id IN ?", ids[first:end]).Find(&versions).Error; err != nil {
+		if err := tx.Table("knowledge_display_versions").
+			Where("row_id IN ?", ids[first:end]).
+			Find(&versions).
+			Error; err != nil {
 			return nil, err
 		}
 		for _, v := range versions {
@@ -156,7 +207,13 @@ func cacheKnowledgeDisplayInputs(tx *gorm.DB, ids []string) (*gorm.DB, error) {
 		// Original inputs are body-vault references after migration 152. Keep
 		// the model schema and Query callbacks through this aliased batch read
 		// so the original-body resolver authenticates and hydrates each input.
-		if err := tx.Model(&knowledgeDisplayInputOrigin{}).Table("knowledge_display_input_origins o").Select("o.*").Joins("JOIN knowledge_display_versions v ON v.kind=o.kind AND v.row_id=o.row_id AND v.revision=o.revision").Where("o.row_id IN ?", ids[first:end]).Find(&origins).Error; err != nil {
+		if err := tx.Model(&knowledgeDisplayInputOrigin{}).
+			Table("knowledge_display_input_origins o").
+			Select("o.*").
+			Joins("JOIN knowledge_display_versions v ON v.kind=o.kind AND v.row_id=o.row_id AND v.revision=o.revision").
+			Where("o.row_id IN ?", ids[first:end]).
+			Find(&origins).
+			Error; err != nil {
 			return nil, err
 		}
 		for _, o := range origins {
@@ -174,7 +231,10 @@ func knowledgeDisplayRevision(tx *gorm.DB, kind, id string) (uint64, error) {
 		return 0, ErrKnowledgeInputChanged
 	}
 	var row struct{ Revision uint64 }
-	if err := tx.Table("knowledge_display_versions").Where("kind = ? AND row_id = ?", kind, id).Take(&row).Error; err != nil {
+	if err := tx.Table("knowledge_display_versions").
+		Where("kind = ? AND row_id = ?", kind, id).
+		Take(&row).
+		Error; err != nil {
 		return 0, err
 	}
 	if row.Revision == 0 {
@@ -192,7 +252,13 @@ func knowledgeDisplayBody(kind, id string, tenant uint64, kb string, value any) 
 	}{kind, id, tenant, kb, value}
 }
 
-func readKnowledgeDisplayOrigin(tx *gorm.DB, kind, id string, tenant uint64, kb string, value any) (*types.KnowledgeCollectionAuxiliaryProof, error) {
+func readKnowledgeDisplayOrigin(
+	tx *gorm.DB,
+	kind, id string,
+	tenant uint64,
+	kb string,
+	value any,
+) (*types.KnowledgeCollectionAuxiliaryProof, error) {
 	revision, err := knowledgeDisplayRevision(tx, kind, id)
 	if err != nil {
 		return nil, err
@@ -200,7 +266,8 @@ func readKnowledgeDisplayOrigin(tx *gorm.DB, kind, id string, tenant uint64, kb 
 	var origin knowledgeDisplayInputOrigin
 	if cache, ok := tx.Statement.Context.Value(knowledgeDisplayCacheKey{}).(*knowledgeDisplayCache); ok {
 		origin = cache.origins[knowledgeDisplayCacheID(kind, id)]
-		if origin.Kind != kind || origin.RowID != id || origin.Revision != revision || origin.TenantID != tenant || origin.KnowledgeBaseID != kb {
+		if origin.Kind != kind || origin.RowID != id || origin.Revision != revision || origin.TenantID != tenant ||
+			origin.KnowledgeBaseID != kb {
 			return nil, types.ErrSourceLineageUnknown
 		}
 	} else if err := tx.Where("kind = ? AND row_id = ? AND tenant_id = ? AND knowledge_base_id = ? AND revision = ?", kind, id, tenant, kb, revision).Take(&origin).Error; err != nil {
@@ -230,10 +297,26 @@ func readKnowledgeDisplayOrigin(tx *gorm.DB, kind, id string, tenant uint64, kb 
 	if err := verifyKnowledgeInheritedSources(tx, &lineage); err != nil {
 		return nil, err
 	}
-	return &types.KnowledgeCollectionAuxiliaryProof{Kind: kind, ID: id, TenantID: tenant, KnowledgeBaseID: kb, Revision: revision, Digest: digest, SourceLineage: &lineage}, nil
+	return &types.KnowledgeCollectionAuxiliaryProof{
+		Kind:            kind,
+		ID:              id,
+		TenantID:        tenant,
+		KnowledgeBaseID: kb,
+		Revision:        revision,
+		Digest:          digest,
+		SourceLineage:   &lineage,
+	}, nil
 }
 
-func admitKnowledgeDisplayOrigin(tx *gorm.DB, ctx context.Context, kind, id string, kb *types.KnowledgeBase, value, input any, lineage *types.SourceLineage, originKind string) error {
+func admitKnowledgeDisplayOrigin(
+	tx *gorm.DB,
+	ctx context.Context,
+	kind, id string,
+	kb *types.KnowledgeBase,
+	value, input any,
+	lineage *types.SourceLineage,
+	originKind string,
+) error {
 	if lineage.RequireComplete() != nil {
 		return types.ErrSourceLineageUnknown
 	}
@@ -268,10 +351,31 @@ func admitKnowledgeDisplayOrigin(tx *gorm.DB, ctx context.Context, kind, id stri
 	if err != nil {
 		return err
 	}
-	return tx.Create(&knowledgeDisplayInputOrigin{OriginID: uuid.NewString(), Kind: kind, RowID: id, TenantID: kb.TenantID, KnowledgeBaseID: kb.ID, Revision: revision, OriginKind: originKind, ActualInput: string(inputJSON), InputDigest: inputDigest, BodyDigest: digest, SourceLineage: string(lineageJSON), Actor: string(actorJSON)}).Error
+	return tx.Create(
+		&knowledgeDisplayInputOrigin{
+			OriginID:        uuid.NewString(),
+			Kind:            kind,
+			RowID:           id,
+			TenantID:        kb.TenantID,
+			KnowledgeBaseID: kb.ID,
+			Revision:        revision,
+			OriginKind:      originKind,
+			ActualInput:     string(inputJSON),
+			InputDigest:     inputDigest,
+			BodyDigest:      digest,
+			SourceLineage:   string(lineageJSON),
+			Actor:           string(actorJSON),
+		},
+	).Error
 }
 
-func knowledgeDisplayWriterOrigin(tx *gorm.DB, ctx context.Context, kb *types.KnowledgeBase, request knowledgeDisplayRequest, factory KnowledgeDisplayAuthorityFactory) (context.Context, *types.SourceLineage, string, error) {
+func knowledgeDisplayWriterOrigin(
+	tx *gorm.DB,
+	ctx context.Context,
+	kb *types.KnowledgeBase,
+	request knowledgeDisplayRequest,
+	factory KnowledgeDisplayAuthorityFactory,
+) (context.Context, *types.SourceLineage, string, error) {
 	if factory == nil {
 		return ctx, nil, "", types.ErrSourceLineageUnknown
 	}
@@ -292,11 +396,12 @@ func knowledgeDisplayWriterOrigin(tx *gorm.DB, ctx context.Context, kb *types.Kn
 		lineage, err := store.verifyNextcloudGroupingDisplayInput(tx, request)
 		return actual, lineage, "derived", err
 	}
-	if request.Kind == "kb-name" {
+	switch request.Kind {
+	case "kb-name":
 		actual, err = store.authorizeKnowledgeBaseNameInput(ctx, kb, request.ID == "")
-	} else if request.Kind == "derived" {
+	case "derived":
 		actual, err = store.authorizeOriginalKnowledgeProducerWrite(ctx, kb, request.Original)
-	} else {
+	default:
 		actual, err = store.AuthorizeCurrentKnowledgeInputWrite(ctx, kb)
 	}
 	if err != nil {
@@ -311,7 +416,9 @@ func knowledgeDisplayWriterOrigin(tx *gorm.DB, ctx context.Context, kb *types.Kn
 		return ctx, nil, "", ErrKnowledgeInputChanged
 	}
 	var k types.Knowledge
-	if err := tx.Where("id = ? AND tenant_id = ? AND knowledge_base_id = ?", proof.KnowledgeID, proof.TenantID, proof.KnowledgeBaseID).Take(&k).Error; err != nil {
+	if err := tx.Where("id = ? AND tenant_id = ? AND knowledge_base_id = ?", proof.KnowledgeID, proof.TenantID, proof.KnowledgeBaseID).
+		Take(&k).
+		Error; err != nil {
 		return ctx, nil, "", err
 	}
 	if _, _, _, err := store.admissionInTx(tx, &k, proof); err != nil {
@@ -319,7 +426,8 @@ func knowledgeDisplayWriterOrigin(tx *gorm.DB, ctx context.Context, kb *types.Kn
 	}
 	lineage, err := types.UnionSourceLineage(proof.SourceLineage)
 	if err == nil && request.AutoTag != nil {
-		if request.AutoTagReader == nil || request.AutoTag.Original == nil || !reflect.DeepEqual(request.AutoTag.Original.Proof, proof) {
+		if request.AutoTagReader == nil || request.AutoTag.Original == nil ||
+			!reflect.DeepEqual(request.AutoTag.Original.Proof, proof) {
 			return ctx, nil, "", ErrKnowledgeInputChanged
 		}
 		lineage, err = request.AutoTagReader.recheckKnowledgeAutoTagInTx(tx, actual, request.AutoTag)
@@ -327,7 +435,11 @@ func knowledgeDisplayWriterOrigin(tx *gorm.DB, ctx context.Context, kb *types.Kn
 	return actual, lineage, "derived", err
 }
 
-func (s *KnowledgeInputProvenanceStore) authorizeKnowledgeBaseNameInput(ctx context.Context, kb *types.KnowledgeBase, create bool) (context.Context, error) {
+func (s *KnowledgeInputProvenanceStore) authorizeKnowledgeBaseNameInput(
+	ctx context.Context,
+	kb *types.KnowledgeBase,
+	create bool,
+) (context.Context, error) {
 	actor, err := captureKnowledgeActorSelector(ctx, "")
 	if err != nil {
 		return ctx, err
@@ -355,7 +467,14 @@ func (s *KnowledgeInputProvenanceStore) authorizeKnowledgeBaseNameInput(ctx cont
 	if s.actorGroups == nil {
 		return ctx, types.ErrSourceLineageUnknown
 	}
-	permission, err := s.actorGroups.EffectivePermission(fresh, kb.TenantID, types.GroupResourceTypeKnowledgeBase, kb.ID, types.ResourceActionEdit, time.Now().UTC())
+	permission, err := s.actorGroups.EffectivePermission(
+		fresh,
+		kb.TenantID,
+		types.GroupResourceTypeKnowledgeBase,
+		kb.ID,
+		types.ResourceActionEdit,
+		time.Now().UTC(),
+	)
 	if err != nil {
 		return ctx, err
 	}
@@ -372,8 +491,13 @@ func (s *KnowledgeInputProvenanceStore) authorizeKnowledgeBaseNameInput(ctx cont
 	if err != nil {
 		return ctx, err
 	}
-	if _, machine := types.TenantAPIKeyScopeFromContext(fresh); !machine && caller.TenantID == kb.TenantID && !caller.Role.HasPermission(types.TenantRoleAdmin) && kb.CreatorID != caller.UserID {
-		matches, err := NewGroupAccessRepository(s.db).ListResourceGroupMatches(fresh, caller.UserID, kb.TenantID, types.GroupResourceTypeKnowledgeBase, kb.ID)
+	if _, machine := types.TenantAPIKeyScopeFromContext(
+		fresh,
+	); !machine && caller.TenantID == kb.TenantID && !caller.Role.HasPermission(types.TenantRoleAdmin) &&
+		kb.CreatorID != caller.UserID {
+		matches, err := NewGroupAccessRepository(
+			s.db,
+		).ListResourceGroupMatches(fresh, caller.UserID, kb.TenantID, types.GroupResourceTypeKnowledgeBase, kb.ID)
 		if err != nil {
 			return ctx, err
 		}
@@ -402,7 +526,13 @@ func tagDisplayFieldValue(tag *types.KnowledgeTag, field string) any {
 	return nil
 }
 
-func writeKnowledgeTagWithDisplayInput(db *gorm.DB, ctx context.Context, tag *types.KnowledgeTag, create bool, factory KnowledgeDisplayAuthorityFactory) error {
+func writeKnowledgeTagWithDisplayInput(
+	db *gorm.DB,
+	ctx context.Context,
+	tag *types.KnowledgeTag,
+	create bool,
+	factory KnowledgeDisplayAuthorityFactory,
+) error {
 	request, marked := ctx.Value(knowledgeDisplayRequestKey{}).(knowledgeDisplayRequest)
 	// Unmarked internal/legacy writes remain unknown. They can never reuse an
 	// old receipt because database versions advance on every material mutation.
@@ -419,7 +549,8 @@ func writeKnowledgeTagWithDisplayInput(db *gorm.DB, ctx context.Context, tag *ty
 		if err := tx.Where("id = ? AND tenant_id = ?", tag.KnowledgeBaseID, tag.TenantID).Take(&kb).Error; err != nil {
 			return err
 		}
-		if create && request.Kind != "derived" && request.Kind != "datasource-name-tag" && (request.Kind != "tag-create" || request.KB != kb.ID) {
+		if create && request.Kind != "derived" && request.Kind != "datasource-name-tag" &&
+			(request.Kind != "tag-create" || request.KB != kb.ID) {
 			return ErrKnowledgeInputChanged
 		}
 		if !create && request.Kind != "derived" && (request.Kind != "tag-update" || request.ID != tag.ID) {
@@ -431,7 +562,9 @@ func writeKnowledgeTagWithDisplayInput(db *gorm.DB, ctx context.Context, tag *ty
 		}
 		var old types.KnowledgeTag
 		if !create {
-			if err := tx.Where("id = ? AND tenant_id = ? AND knowledge_base_id = ?", tag.ID, tag.TenantID, tag.KnowledgeBaseID).Take(&old).Error; err != nil {
+			if err := tx.Where("id = ? AND tenant_id = ? AND knowledge_base_id = ?", tag.ID, tag.TenantID, tag.KnowledgeBaseID).
+				Take(&old).
+				Error; err != nil {
 				return err
 			}
 		}
@@ -464,13 +597,26 @@ func writeKnowledgeTagWithDisplayInput(db *gorm.DB, ctx context.Context, tag *ty
 			if !create && reflect.DeepEqual(value, tagDisplayFieldValue(&old, field)) {
 				continue
 			}
-			if err := admitKnowledgeDisplayOrigin(tx, actual, "tag-"+field, tag.ID, &kb, value, request, lineage, origin); err != nil {
+			if err := admitKnowledgeDisplayOrigin(
+				tx,
+				actual,
+				"tag-"+field,
+				tag.ID,
+				&kb,
+				value,
+				request,
+				lineage,
+				origin,
+			); err != nil {
 				return err
 			}
 		}
 		if _, wantsOutput := ctx.Value(tagCommittedOutputKey{}).(*tagCommittedOutput); wantsOutput {
 			actualStore := NewKnowledgeInputProvenanceStore(tx)
-			captured, captureErr = actualStore.captureTagOutputInTx(tx, types.TagOutputReadRequest{TenantID: tag.TenantID, KnowledgeBaseID: tag.KnowledgeBaseID, TagID: tag.ID})
+			captured, captureErr = actualStore.captureTagOutputInTx(
+				tx,
+				types.TagOutputReadRequest{TenantID: tag.TenantID, KnowledgeBaseID: tag.KnowledgeBaseID, TagID: tag.ID},
+			)
 		}
 		return nil
 	}, knowledgeDisplayWriteOptions(db))
@@ -483,7 +629,12 @@ func writeKnowledgeTagWithDisplayInput(db *gorm.DB, ctx context.Context, tag *ty
 // The KB configuration writer calls this in its actual create/update tx. Only
 // a supplied name input may establish a display origin; unrelated config edits
 // cannot sign the current legacy name or replace its original dependency.
-func admitKnowledgeBaseNameInput(tx *gorm.DB, ctx context.Context, old, actual *types.KnowledgeBase, factory KnowledgeDisplayAuthorityFactory) error {
+func admitKnowledgeBaseNameInput(
+	tx *gorm.DB,
+	ctx context.Context,
+	old, actual *types.KnowledgeBase,
+	factory KnowledgeDisplayAuthorityFactory,
+) error {
 	request, ok := ctx.Value(knowledgeDisplayRequestKey{}).(knowledgeDisplayRequest)
 	if !ok {
 		return nil
@@ -491,7 +642,8 @@ func admitKnowledgeBaseNameInput(tx *gorm.DB, ctx context.Context, old, actual *
 	if old != nil && old.Name == actual.Name {
 		return nil
 	}
-	if request.Kind != "derived" && (request.Kind != "kb-name" || request.ID != "" && request.ID != actual.ID || request.Fields["name"] != actual.Name) {
+	if request.Kind != "derived" &&
+		(request.Kind != "kb-name" || request.ID != "" && request.ID != actual.ID || request.Fields["name"] != actual.Name) {
 		return ErrKnowledgeInputChanged
 	}
 	actor, lineage, origin, err := knowledgeDisplayWriterOrigin(tx, ctx, actual, request, factory)

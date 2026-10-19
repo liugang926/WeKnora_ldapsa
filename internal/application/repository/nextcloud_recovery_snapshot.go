@@ -36,16 +36,26 @@ type NextcloudRecoveryPublishedSource struct {
 	IndexedChunkIDs       []string `json:"indexed_chunk_ids"`
 }
 
-func (s *NextcloudPublicationRecoveryStore) Snapshot(ctx context.Context, planSHA string, inv *NextcloudRecoveryInventory, pin string) (*NextcloudRecoverySnapshot, error) {
+func (s *NextcloudPublicationRecoveryStore) Snapshot(
+	ctx context.Context,
+	planSHA string,
+	inv *NextcloudRecoveryInventory,
+	pin string,
+) (*NextcloudRecoverySnapshot, error) {
 	if inv == nil || !recoveryHash.MatchString(planSHA) || !recoveryHash.MatchString(pin) {
 		return nil, ErrNextcloudRecoveryDenied
 	}
-	result := &NextcloudRecoverySnapshot{SchemaVersion: 1, Sources: make([]NextcloudRecoverySourceSnapshot, 0, len(inv.Pairs))}
+	result := &NextcloudRecoverySnapshot{
+		SchemaVersion: 1,
+		Sources:       make([]NextcloudRecoverySourceSnapshot, 0, len(inv.Pairs)),
+	}
 	e := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if e := tx.Where("plan_sha256=? AND inventory_sha256=?", planSHA, pin).Take(&result.Receipt).Error; e != nil {
 			return ErrNextcloudRecoveryDenied
 		}
-		if result.Receipt.InstanceID != inv.Anchor.InstanceID || result.Receipt.StreamID != inv.Anchor.StreamID || result.Receipt.CheckpointRecordSHA256 != inv.Anchor.RecordSHA256 || result.Receipt.PairCount != len(inv.Pairs) {
+		if result.Receipt.InstanceID != inv.Anchor.InstanceID || result.Receipt.StreamID != inv.Anchor.StreamID ||
+			result.Receipt.CheckpointRecordSHA256 != inv.Anchor.RecordSHA256 ||
+			result.Receipt.PairCount != len(inv.Pairs) {
 			return ErrNextcloudRecoveryDenied
 		}
 		var scopes []nextcloudRecoveryScope
@@ -62,14 +72,20 @@ func (s *NextcloudPublicationRecoveryStore) Snapshot(ctx context.Context, planSH
 
 		if tx.Migrator().HasTable(&nextcloudControlRecoveryGate{}) {
 			var gate nextcloudControlRecoveryGate
-			if err := tx.Where("instance_id=? AND plan_sha256=?", inv.Anchor.InstanceID, planSHA).Take(&gate).Error; err != nil {
+			if err := tx.Where("instance_id=? AND plan_sha256=?", inv.Anchor.InstanceID, planSHA).
+				Take(&gate).
+				Error; err != nil {
 				return ErrNextcloudRecoveryDenied
 			}
 			controls, err := nextcloudControlMetadataInventory(tx)
 			if err != nil {
 				return err
 			}
-			result.ControlState = map[string]any{"closed": gate.Closed, "metadata": controls, "sha256": onboardingDigest(controls)}
+			result.ControlState = map[string]any{
+				"closed":   gate.Closed,
+				"metadata": controls,
+				"sha256":   onboardingDigest(controls),
+			}
 		}
 
 		repo := &knowledgeRepository{db: tx, nextcloudRecoveryProbe: true}
@@ -93,7 +109,9 @@ func (s *NextcloudPublicationRecoveryStore) Snapshot(ctx context.Context, planSH
 				return e
 			}
 			var ds types.DataSource
-			if e = tx.Where("id=? AND tenant_id=? AND knowledge_base_id=? AND deleted_at IS NULL", p.DataSourceID, p.TenantID, p.KnowledgeBaseID).Take(&ds).Error; e != nil {
+			if e = tx.Where("id=? AND tenant_id=? AND knowledge_base_id=? AND deleted_at IS NULL", p.DataSourceID, p.TenantID, p.KnowledgeBaseID).
+				Take(&ds).
+				Error; e != nil {
 				return e
 			}
 			base, configSHA, binding, e := NextcloudEventDataSourceIdentity(ds.Config)
@@ -101,19 +119,31 @@ func (s *NextcloudPublicationRecoveryStore) Snapshot(ctx context.Context, planSH
 				return ErrNextcloudRecoveryDenied
 			}
 			var coverage int64
-			if e = tx.Table("nextcloud_content_lease_coverage").Where("tenant_id=? AND knowledge_base_id=?", p.TenantID, p.KnowledgeBaseID).Count(&coverage).Error; e != nil {
+			if e = tx.Table("nextcloud_content_lease_coverage").
+				Where("tenant_id=? AND knowledge_base_id=?", p.TenantID, p.KnowledgeBaseID).
+				Count(&coverage).
+				Error; e != nil {
 				return e
 			}
 			if coverage != 0 {
 				return ErrNextcloudRecoveryDenied
 			}
-			entry := NextcloudRecoverySourceSnapshot{Pair: pair, PairSHA256: sha, ScopeState: scope.State, SourceStatus: ds.Status, KBEpoch: fence.Epoch, RetiredGenerations: json.RawMessage(scope.RetiredGenerationsJSON), Published: []NextcloudRecoveryPublishedSource{}}
+			entry := NextcloudRecoverySourceSnapshot{
+				Pair:               pair,
+				PairSHA256:         sha,
+				ScopeState:         scope.State,
+				SourceStatus:       ds.Status,
+				KBEpoch:            fence.Epoch,
+				RetiredGenerations: json.RawMessage(scope.RetiredGenerationsJSON),
+				Published:          []NextcloudRecoveryPublishedSource{},
+			}
 			if scope.State == "reconciled" {
 				if ds.Status != types.DataSourceStatusActive || fence.State != "open" {
 					return ErrNextcloudRecoveryDenied
 				}
 				var reconciled NextcloudRecoveryReconciliationReceipt
-				if recoveryStrictJSON([]byte(scope.ReconciliationJSON), &reconciled) != nil || reconciled.ReconciliationSHA256 != scope.ReconciliationSHA256 {
+				if recoveryStrictJSON([]byte(scope.ReconciliationJSON), &reconciled) != nil ||
+					reconciled.ReconciliationSHA256 != scope.ReconciliationSHA256 {
 					return ErrNextcloudRecoveryDenied
 				}
 				entry.Reconciliation = &reconciled
@@ -124,7 +154,14 @@ func (s *NextcloudPublicationRecoveryStore) Snapshot(ctx context.Context, planSH
 				cfg.Type = types.ConnectorTypeNextcloud
 				// Signed live pair acknowledgement, double complete current manifest;
 				// a saved successful reconciliation cannot hide subsequent ACL drift.
-				remote := nextcloud.SourcePairingCommit{OperationID: p.OperationID, InstanceID: p.InstanceID, BindingID: p.BindingID, TenantID: p.TenantID, KnowledgeBaseID: p.KnowledgeBaseID, DataSourceID: p.DataSourceID}
+				remote := nextcloud.SourcePairingCommit{
+					OperationID:     p.OperationID,
+					InstanceID:      p.InstanceID,
+					BindingID:       p.BindingID,
+					TenantID:        p.TenantID,
+					KnowledgeBaseID: p.KnowledgeBaseID,
+					DataSourceID:    p.DataSourceID,
+				}
 				if e = nextcloud.CommitSourcePairing(ctx, cfg, remote); e != nil {
 					return e
 				}
@@ -141,11 +178,19 @@ func (s *NextcloudPublicationRecoveryStore) Snapshot(ctx context.Context, planSH
 					return e
 				}
 				var versions []nextcloudSourceVersion
-				if e = tx.Where("tenant_id=? AND knowledge_base_id=? AND datasource_id=? AND state='published'", p.TenantID, p.KnowledgeBaseID, p.DataSourceID).Order("external_id").Find(&versions).Error; e != nil {
+				if e = tx.Where("tenant_id=? AND knowledge_base_id=? AND datasource_id=? AND state='published'", p.TenantID, p.KnowledgeBaseID, p.DataSourceID).
+					Order("external_id").
+					Find(&versions).
+					Error; e != nil {
 					return e
 				}
 				for _, v := range versions {
-					k, _, e := repo.resolveNextcloudSourceLineageInTx(tx, p.TenantID, p.KnowledgeBaseID, v.CandidateKnowledgeID)
+					k, _, e := repo.resolveNextcloudSourceLineageInTx(
+						tx,
+						p.TenantID,
+						p.KnowledgeBaseID,
+						v.CandidateKnowledgeID,
+					)
 					if e != nil {
 						return e
 					}
@@ -154,14 +199,26 @@ func (s *NextcloudPublicationRecoveryStore) Snapshot(ctx context.Context, planSH
 						return e
 					}
 					var chunks []types.Chunk
-					if e = tx.Where("knowledge_id=? AND tenant_id=? AND knowledge_base_id=? AND is_enabled=? AND status=? AND index_status='ready'", k.ID, p.TenantID, p.KnowledgeBaseID, true, types.ChunkStatusIndexed).Order("id").Find(&chunks).Error; e != nil {
+					if e = tx.Where("knowledge_id=? AND tenant_id=? AND knowledge_base_id=? AND is_enabled=? AND status=? AND index_status='ready'", k.ID, p.TenantID, p.KnowledgeBaseID, true, types.ChunkStatusIndexed).
+						Order("id").
+						Find(&chunks).
+						Error; e != nil {
 						return e
 					}
 					ids := make([]string, 0, len(chunks))
 					for _, c := range chunks {
 						ids = append(ids, c.ID)
 					}
-					entry.Published = append(entry.Published, NextcloudRecoveryPublishedSource{KnowledgeID: k.ID, FileID: metadata["nextcloud_file_id"], ETag: metadata["nextcloud_etag"], IndexedChunkIDs: ids, SourceContentRevision: metadata["nextcloud_content_revision"]})
+					entry.Published = append(
+						entry.Published,
+						NextcloudRecoveryPublishedSource{
+							KnowledgeID:           k.ID,
+							FileID:                metadata["nextcloud_file_id"],
+							ETag:                  metadata["nextcloud_etag"],
+							IndexedChunkIDs:       ids,
+							SourceContentRevision: metadata["nextcloud_content_revision"],
+						},
+					)
 				}
 			}
 			result.Sources = append(result.Sources, entry)

@@ -20,17 +20,21 @@ import (
 	"gorm.io/gorm"
 )
 
-type liveMaterialWritePhaseKey struct{}
-type liveMaterialWritePhase struct {
-	RawControl             bool
-	MaterialCheck          func() error
-	InitializationDeadline time.Time
-	LastIdleMaterialCheck  time.Time
-	IdleMaterialReady      bool
-}
+type (
+	liveMaterialWritePhaseKey struct{}
+	liveMaterialWritePhase    struct {
+		RawControl             bool
+		MaterialCheck          func() error
+		InitializationDeadline time.Time
+		LastIdleMaterialCheck  time.Time
+		IdleMaterialReady      bool
+	}
+)
 
-const liveMaterialInitializationTimeout = 10 * time.Second
-const liveIdleMaterialRecheckInterval = time.Second
+const (
+	liveMaterialInitializationTimeout = 10 * time.Second
+	liveIdleMaterialRecheckInterval   = time.Second
+)
 
 // ContinueStream godoc
 // @Summary      继续流式响应
@@ -336,7 +340,10 @@ func checkReplayPublication(
 			name, _ := streamEvent.Data["tool_name"].(string)
 			id, _ := streamEvent.Data["tool_call_id"].(string)
 			if !types.IsPipelineToolCallID(id) && !syntheticHistoryStreamCall(message, id) && name != "final_answer" {
-				copy.AgentSteps = append(copy.AgentSteps, types.AgentStep{ToolCalls: []types.ToolCall{{ID: id, Name: name}}})
+				copy.AgentSteps = append(
+					copy.AgentSteps,
+					types.AgentStep{ToolCalls: []types.ToolCall{{ID: id, Name: name}}},
+				)
 			}
 		}
 	}
@@ -570,11 +577,14 @@ func (h *Handler) handleAgentEventsForSSE(
 					return
 				}
 			}
-			if phase, ok := ctx.Value(liveMaterialWritePhaseKey{}).(*liveMaterialWritePhase); ok && phase.MaterialCheck != nil {
+			if phase, ok := ctx.Value(liveMaterialWritePhaseKey{}).(*liveMaterialWritePhase); ok &&
+				phase.MaterialCheck != nil {
 				// No buffered/public-resource tail and no queued event may use
 				// the bounded idle cadence. It cannot authorize a future write.
-				idle := len(events) == 0 && !phase.RawControl && (resourceRewriter == nil || !resourceRewriter.Enabled())
-				eligible := idle && phase.IdleMaterialReady && applicationservice.MessageMaterialIdleRecheckEligible(ctx)
+				idle := len(events) == 0 && !phase.RawControl &&
+					(resourceRewriter == nil || !resourceRewriter.Enabled())
+				eligible := idle && phase.IdleMaterialReady &&
+					applicationservice.MessageMaterialIdleRecheckEligible(ctx)
 				if eligible && time.Since(phase.LastIdleMaterialCheck) < liveIdleMaterialRecheckInterval {
 					continue
 				}
@@ -681,7 +691,8 @@ func (h *Handler) handleAgentEventsForSSE(
 				}
 
 				if phase, ok := ctx.Value(liveMaterialWritePhaseKey{}).(*liveMaterialWritePhase); ok {
-					phase.RawControl = evt.Type == types.ResponseTypeAgentQuery || evt.Type == types.ResponseType(event.EventStop)
+					phase.RawControl = evt.Type == types.ResponseTypeAgentQuery ||
+						evt.Type == types.ResponseType(event.EventStop)
 				}
 				emitStreamEvent(ctx, c, evt, requestID, resourceRewriter)
 				if writer, ok := c.Writer.(*nativeSavedReplayWriter); ok && writer.denied != nil {
@@ -696,7 +707,11 @@ func (h *Handler) handleAgentEventsForSSE(
 			// Check if stream is completed - wait for title event only if needed and not already received
 			if streamCompleted {
 				if waitForTitle && !titleReceived {
-					log.Infof("Stream completed for session=%s, message=%s, waiting for title event", sessionID, assistantMessageID)
+					log.Infof(
+						"Stream completed for session=%s, message=%s, waiting for title event",
+						sessionID,
+						assistantMessageID,
+					)
 					// Wait up to 3 seconds for title event after completion
 					titleTimeout := time.After(3 * time.Second)
 				titleWaitLoop:
@@ -1052,7 +1067,12 @@ func stopLiveStreamForPublication(
 	}
 	// Do not flush the resource URL holdback buffer: its tail may itself be
 	// source-derived text from just before the publication was withdrawn.
-	emitStaticTerminalStreamError(c, requestID, "Current source access changed; generation stopped", "source_access_changed")
+	emitStaticTerminalStreamError(
+		c,
+		requestID,
+		"Current source access changed; generation stopped",
+		"source_access_changed",
+	)
 }
 
 // Original-material refusal closes the original owner before cancellation.
@@ -1073,7 +1093,12 @@ func stopLiveStreamForOriginalMaterial(
 }
 
 func emitSafeTerminalGenerationError(c *gin.Context, requestID string) {
-	emitStaticTerminalStreamError(c, requestID, "Generation could not complete; please retry after checking access", "generation_failed")
+	emitStaticTerminalStreamError(
+		c,
+		requestID,
+		"Generation could not complete; please retry after checking access",
+		"generation_failed",
+	)
 }
 
 func emitStaticTerminalStreamError(c *gin.Context, requestID, content, code string) {

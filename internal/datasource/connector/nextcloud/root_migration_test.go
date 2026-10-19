@@ -3,15 +3,27 @@ package nextcloud
 import (
 	"context"
 	"encoding/json"
-	"github.com/Tencent/WeKnora/internal/types"
-	"github.com/stretchr/testify/require"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/Tencent/WeKnora/internal/types"
+	"github.com/stretchr/testify/require"
 )
 
 func TestRootMigrationSignsExactSourceAndRejectsChangedAck(t *testing.T) {
-	proof := RootMigration{OperationID: "move", PairOperationID: "pair", BindingID: "root", InstanceID: "instance", TenantID: "7", KnowledgeBaseID: "kb", DataSourceID: "source", OldRootHash: "old", NewRootHash: "new", State: "observed"}
+	proof := RootMigration{
+		OperationID:     "move",
+		PairOperationID: "pair",
+		BindingID:       "root",
+		InstanceID:      "instance",
+		TenantID:        "7",
+		KnowledgeBaseID: "kb",
+		DataSourceID:    "source",
+		OldRootHash:     "old",
+		NewRootHash:     "new",
+		State:           "observed",
+	}
 	bad := false
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(t, "Bearer source-secret", r.Header.Get("Authorization"))
@@ -31,7 +43,15 @@ func TestRootMigrationSignsExactSourceAndRejectsChangedAck(t *testing.T) {
 	}))
 	defer server.Close()
 	allowHTTPTestOrigin(t, server.URL)
-	cfg := &types.DataSourceConfig{Type: types.ConnectorTypeNextcloud, ResourceIDs: []string{"root"}, Settings: map[string]interface{}{"base_url": server.URL}, Credentials: map[string]interface{}{"token": "source-secret", "key_id": "pair_01234567890123456789012345678901"}}
+	cfg := &types.DataSourceConfig{
+		Type:        types.ConnectorTypeNextcloud,
+		ResourceIDs: []string{"root"},
+		Settings:    map[string]interface{}{"base_url": server.URL},
+		Credentials: map[string]interface{}{
+			"token":  "source-secret",
+			"key_id": "pair_01234567890123456789012345678901",
+		},
+	}
 	got, err := ReadRootMigration(context.Background(), cfg, "root", "move")
 	require.NoError(t, err)
 	require.Equal(t, proof, got)

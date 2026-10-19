@@ -4,8 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"gorm.io/gorm"
 	"strings"
+
+	"gorm.io/gorm"
 )
 
 // gcOriginalBodyAuditMetadata preserves stable metadata fingerprints only
@@ -40,7 +41,11 @@ func gcOriginalBodyAuditMetadata(tx *gorm.DB, table, key string, row map[string]
 			return nil, e
 		}
 		var head originalBodyFieldHead
-		e = bodyInternal(tx).Where("source_table=? AND row_key=? AND column_name=?", table, key, field).Take(&head).Error
+		e = bodyInternal(
+			tx,
+		).Where("source_table=? AND row_key=? AND column_name=?", table, key, field).
+			Take(&head).
+			Error
 		if errors.Is(e, gorm.ErrRecordNotFound) {
 			if raw == "" || raw == "null" {
 				continue
@@ -48,7 +53,11 @@ func gcOriginalBodyAuditMetadata(tx *gorm.DB, table, key string, row map[string]
 			if e = store.captureField(tx, d, key, field, raw, scope); e != nil {
 				return nil, e
 			}
-			if e = bodyInternal(tx).Where("source_table=? AND row_key=? AND column_name=?", table, key, field).Take(&head).Error; e != nil {
+			if e = bodyInternal(
+				tx,
+			).Where("source_table=? AND row_key=? AND column_name=?", table, key, field).
+				Take(&head).
+				Error; e != nil {
 				return nil, e
 			}
 		} else if e != nil {
@@ -84,7 +93,13 @@ func gcOriginalBodyAuditMetadata(tx *gorm.DB, table, key string, row map[string]
 	return json.Marshal(metadata)
 }
 
-func (s *OriginalBodyRetentionStore) verifyFieldStorageInTx(tx *gorm.DB, d originalBodyFieldDescriptor, head originalBodyFieldHead, raw string, scope originalBodyScope) error {
+func (s *OriginalBodyRetentionStore) verifyFieldStorageInTx(
+	tx *gorm.DB,
+	d originalBodyFieldDescriptor,
+	head originalBodyFieldHead,
+	raw string,
+	scope originalBodyScope,
+) error {
 	if bodyIdentity(d.Table, head.RowKey, head.ColumnName, scope) != head.SourceIdentitySHA256 {
 		return ErrOriginalBodyUnavailable
 	}
@@ -132,7 +147,9 @@ func (s *OriginalBodyRetentionStore) verifyFieldStorageInTx(tx *gorm.DB, d origi
 	}
 	for _, event := range events {
 		if event.BodyID == body.ID {
-			if event.BodySHA256 != body.BodySHA256 || event.ScopeSHA256 != receipt.ScopeSHA256 || event.Sequence != receipt.JournalSequence || event.HeadSHA256 != receipt.JournalHeadSHA256 {
+			if event.BodySHA256 != body.BodySHA256 || event.ScopeSHA256 != receipt.ScopeSHA256 ||
+				event.Sequence != receipt.JournalSequence ||
+				event.HeadSHA256 != receipt.JournalHeadSHA256 {
 				return ErrOriginalBodyUnavailable
 			}
 			for _, identity := range event.Fields {
@@ -161,7 +178,10 @@ func (s *OriginalBodyRetentionStore) inventorySelectedJob(ctx context.Context, j
 			if !tx.Migrator().HasTable(table) {
 				continue
 			}
-			query := bodyInternal(tx).Table(table).Where("tenant_id=? AND knowledge_base_id=?", job.TenantID, job.KnowledgeBaseID)
+			query := bodyInternal(
+				tx,
+			).Table(table).
+				Where("tenant_id=? AND knowledge_base_id=?", job.TenantID, job.KnowledgeBaseID)
 			if table == "knowledges" {
 				query = query.Where("id=?", job.KnowledgeID)
 			} else {

@@ -311,7 +311,7 @@ func (r *directoryRepository) GetUserLoginSnapshot(
 		return nil, nil, fmt.Errorf("directory user login snapshot requires a user")
 	}
 	options := &sql.TxOptions{}
-	if r.db.Dialector.Name() == "postgres" {
+	if r.db.Name() == "postgres" {
 		// SELECT FOR SHARE is disallowed in a read-only PostgreSQL transaction.
 		options.Isolation = sql.LevelRepeatableRead
 	}
@@ -346,7 +346,12 @@ func (r *directoryRepository) GetUserLoginSnapshot(
 			var identity types.DirectoryIdentity
 			lookupErr := tx.Where(
 				"id = ? AND directory_id = ? AND object_guid = ? AND user_id = ? AND snapshot_version = ? AND status = ?",
-				linked.ID, directory.ID, linked.ObjectGUID, userID, directory.SnapshotVersion, types.DirectoryObjectActive,
+				linked.ID,
+				directory.ID,
+				linked.ObjectGUID,
+				userID,
+				directory.SnapshotVersion,
+				types.DirectoryObjectActive,
 			).First(&identity).Error
 			if errors.Is(lookupErr, gorm.ErrRecordNotFound) {
 				return ctx.Err()
@@ -387,7 +392,7 @@ func (r *directoryRepository) GetUserLoginSnapshot(
 		}
 		lastErr = err
 		var pgErr *pgconn.PgError
-		if r.db.Dialector.Name() != "postgres" || !errors.As(err, &pgErr) || pgErr.Code != "40001" {
+		if r.db.Name() != "postgres" || !errors.As(err, &pgErr) || pgErr.Code != "40001" {
 			return nil, nil, err
 		}
 		// Discard the complete attempt, including old identities/snapshot.

@@ -5,7 +5,10 @@ import (
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 )
 
-func ConfigureMessageMaterialProvenance(messages interfaces.MessageService, store *repository.KnowledgeInputProvenanceStore) {
+func ConfigureMessageMaterialProvenance(
+	messages interfaces.MessageService,
+	store *repository.KnowledgeInputProvenanceStore,
+) {
 	if actual, ok := messages.(*messageService); ok {
 		actual.materialStore = store
 		repository.ConfigureMessageMaterialWriters(actual.messageRepo, store)

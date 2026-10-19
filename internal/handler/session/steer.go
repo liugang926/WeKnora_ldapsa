@@ -914,7 +914,11 @@ func (h *Handler) kickNextRunFromSteerBacklog(
 			<-prevStreamCtx.producerDone
 		}
 		if _, algorithm, err := actualSteerService(h.messageService); !algorithm {
-			previous, readErr := h.messageService.GetMessage(followUp.ctx, prevReqCtx.sessionID, prevStreamCtx.assistantMessage.ID)
+			previous, readErr := h.messageService.GetMessage(
+				followUp.ctx,
+				prevReqCtx.sessionID,
+				prevStreamCtx.assistantMessage.ID,
+			)
 			if err != nil || readErr != nil || previous == nil || !previous.IsCompleted {
 				if followUp.steerInputClose != nil {
 					followUp.steerInputClose()

@@ -24,7 +24,13 @@ const (
 // lets retrieval tests force retirement or a failed renewal at a checkpoint.
 type NextcloudReadLeaseStore interface {
 	AcquireKBRead(context.Context, uint64, string, string, time.Duration) (repository.NextcloudContentLease, error)
-	UpgradeKBRead(context.Context, string, repository.NextcloudContentScope, string, time.Duration) (repository.NextcloudContentLease, error)
+	UpgradeKBRead(
+		context.Context,
+		string,
+		repository.NextcloudContentScope,
+		string,
+		time.Duration,
+	) (repository.NextcloudContentLease, error)
 	RenewLease(context.Context, string, time.Duration) (repository.NextcloudContentLease, error)
 	ReleaseLease(context.Context, string) error
 }
@@ -91,10 +97,12 @@ func BeginNextcloudKBRead(ctx context.Context, store NextcloudReadLeaseStore,
 		return ordered[i].KBID < ordered[j].KBID
 	})
 	leaseCtx, cancel := context.WithCancel(ctx)
-	g := &NextcloudReadGuard{store: store, parentCtx: ctx, ctx: leaseCtx, cancel: cancel,
+	g := &NextcloudReadGuard{
+		store: store, parentCtx: ctx, ctx: leaseCtx, cancel: cancel,
 		owner: uuid.NewString(), broad: make(map[NextcloudKBReadScope]string),
 		exact: make(map[repository.NextcloudContentScope]bool),
-		stop:  make(chan struct{}), stopped: make(chan struct{}), heartbeat: nextcloudReadHeartbeat}
+		stop:  make(chan struct{}), stopped: make(chan struct{}), heartbeat: nextcloudReadHeartbeat,
+	}
 	for _, scope := range ordered {
 		row, err := store.AcquireKBRead(leaseCtx, scope.TenantID, scope.KBID, g.owner, nextcloudReadTTL)
 		if err != nil {
@@ -201,9 +209,11 @@ func NextcloudKnowledgeLeaseScope(k *types.Knowledge) (repository.NextcloudConte
 	if k.TenantID == 0 || k.KnowledgeBaseID == "" || k.ID == "" {
 		return scope, true, repository.ErrNextcloudContentLeaseInvalid
 	}
-	return repository.NextcloudContentScope{TenantID: k.TenantID,
+	return repository.NextcloudContentScope{
+		TenantID:        k.TenantID,
 		KnowledgeBaseID: k.KnowledgeBaseID, KnowledgeID: k.ID,
-		DataSourceID: dsID, ExternalID: externalID}, true, nil
+		DataSourceID: dsID, ExternalID: externalID,
+	}, true, nil
 }
 
 // PinKnowledge converts a broad search lease into an exact generation fence
@@ -263,9 +273,19 @@ func (g *NextcloudReadGuard) ExactLease(k *types.Knowledge) (*types.RAGExactRead
 		return nil, repository.ErrNextcloudContentLeaseDenied
 	}
 	for _, row := range g.rows {
-		if row.KnowledgeID == scope.KnowledgeID && row.TenantID == scope.TenantID && row.KnowledgeBaseID == scope.KnowledgeBaseID && row.Kind == repository.NextcloudContentReadLease {
-			return &types.RAGExactReadLease{ID: row.ID, TenantID: row.TenantID, KnowledgeBaseID: row.KnowledgeBaseID,
-				KnowledgeID: row.KnowledgeID, Kind: string(row.Kind), Epoch: row.Epoch, OwnerID: row.OwnerID, ExpiresAt: row.ExpiresAt}, nil
+		if row.KnowledgeID == scope.KnowledgeID && row.TenantID == scope.TenantID &&
+			row.KnowledgeBaseID == scope.KnowledgeBaseID &&
+			row.Kind == repository.NextcloudContentReadLease {
+			return &types.RAGExactReadLease{
+				ID:              row.ID,
+				TenantID:        row.TenantID,
+				KnowledgeBaseID: row.KnowledgeBaseID,
+				KnowledgeID:     row.KnowledgeID,
+				Kind:            string(row.Kind),
+				Epoch:           row.Epoch,
+				OwnerID:         row.OwnerID,
+				ExpiresAt:       row.ExpiresAt,
+			}, nil
 		}
 	}
 	return nil, repository.ErrNextcloudContentLeaseDenied

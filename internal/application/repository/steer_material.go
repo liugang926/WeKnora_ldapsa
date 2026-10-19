@@ -4,11 +4,12 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"strings"
+	"time"
+
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
-	"strings"
-	"time"
 )
 
 type steerAuthoredOrigin struct {
@@ -44,13 +45,15 @@ type steerAuthoredBody struct {
 	Channel        string
 	Delivery       types.SteerDelivery
 }
-type steerAuthoredProducerKey struct{}
-type steerAuthoredProducerBoundary struct {
-	Store      *KnowledgeInputProvenanceStore
-	ID         string
-	BodyDigest string
-	Lineage    *types.SourceLineage
-}
+type (
+	steerAuthoredProducerKey      struct{}
+	steerAuthoredProducerBoundary struct {
+		Store      *KnowledgeInputProvenanceStore
+		ID         string
+		BodyDigest string
+		Lineage    *types.SourceLineage
+	}
+)
 
 const steerOriginMetadataFields = "id,steer_id,tenant_id,session_id,owner_id,owner_revision,origin_run_message_id,origin_run_generation_id,origin_run_request_id,actor,body_digest,canonical_digest,source_lineage,execution_context,agent_id,agent_tenant_id,created_at_ms"
 
@@ -107,14 +110,27 @@ func canonicalSteerBody(req *types.SteerAuthoredRequest) (steerAuthoredBody, err
 	if query == "" {
 		return steerAuthoredBody{}, types.ErrSourceLineageUnknown
 	}
-	return steerAuthoredBody{RawInput: append(json.RawMessage(nil), req.RawInput...), RawQuery: rawQuery, Query: query, MentionedItems: req.MentionedItems, Channel: channel, Delivery: delivery}, nil
+	return steerAuthoredBody{
+		RawInput:       append(json.RawMessage(nil), req.RawInput...),
+		RawQuery:       rawQuery,
+		Query:          query,
+		MentionedItems: req.MentionedItems,
+		Channel:        channel,
+		Delivery:       delivery,
+	}, nil
 }
-func (s *KnowledgeInputProvenanceStore) AdmitSteerAuthoredInput(ctx context.Context, req *types.SteerAuthoredRequest) (*types.SteerMaterialInput, error) {
+
+func (s *KnowledgeInputProvenanceStore) AdmitSteerAuthoredInput(
+	ctx context.Context,
+	req *types.SteerAuthoredRequest,
+) (*types.SteerMaterialInput, error) {
 	body, err := canonicalSteerBody(req)
 	if err != nil {
 		return nil, err
 	}
-	if req.TenantID == 0 || req.SessionID == "" || req.ClientSteerID == "" || req.RunMessageID == "" || req.RunGenerationID == "" || req.RunRequestID == "" {
+	if req.TenantID == 0 || req.SessionID == "" || req.ClientSteerID == "" || req.RunMessageID == "" ||
+		req.RunGenerationID == "" ||
+		req.RunRequestID == "" {
 		return nil, types.ErrSourceLineageUnknown
 	}
 	raw, err := json.Marshal(body)
@@ -142,16 +158,25 @@ func (s *KnowledgeInputProvenanceStore) AdmitSteerAuthoredInput(ctx context.Cont
 		if err != nil {
 			return err
 		}
-		if generation != req.RunGenerationID || run.RequestID != req.RunRequestID || run.IsCompleted || run.Role != "assistant" {
+		if generation != req.RunGenerationID || run.RequestID != req.RunRequestID || run.IsCompleted ||
+			run.Role != "assistant" {
 			return ErrKnowledgeInputChanged
 		}
 		var existing steerAuthoredOrigin
-		err = tx.Select(steerOriginMetadataFields).Where("tenant_id=? AND session_id=? AND steer_id=?", req.TenantID, req.SessionID, req.ClientSteerID).Take(&existing).Error
+		err = tx.Select(steerOriginMetadataFields).
+			Where("tenant_id=? AND session_id=? AND steer_id=?", req.TenantID, req.SessionID, req.ClientSteerID).
+			Take(&existing).
+			Error
 		if err == nil {
 			if err := checkSteerOriginalWindow(tx, &existing); err != nil {
 				return err
 			}
-			if err := CheckOriginalBodyAvailableInTx(tx.Statement.Context, tx, "steer_authored_origins", existing.ID); err != nil {
+			if err := CheckOriginalBodyAvailableInTx(
+				tx.Statement.Context,
+				tx,
+				"steer_authored_origins",
+				existing.ID,
+			); err != nil {
 				return err
 			}
 			if existing.BodyDigest != digest || existing.OwnerID != session.UserID {
@@ -168,7 +193,12 @@ func (s *KnowledgeInputProvenanceStore) AdmitSteerAuthoredInput(ctx context.Cont
 			return err
 		}
 		var pending []struct{ OriginID string }
-		if err := tx.Table("steer_control_heads h").Select("h.origin_id").Joins("JOIN steer_control_admissions c ON c.id=h.head_id AND c.origin_id=h.origin_id").Where("c.tenant_id=? AND c.session_id=? AND c.run_message_id=? AND c.run_generation_id=? AND c.consumed=false AND c.discarded=false AND c.deleted=false", req.TenantID, req.SessionID, run.ID, generation).Scan(&pending).Error; err != nil {
+		if err := tx.Table("steer_control_heads h").
+			Select("h.origin_id").
+			Joins("JOIN steer_control_admissions c ON c.id=h.head_id AND c.origin_id=h.origin_id").
+			Where("c.tenant_id=? AND c.session_id=? AND c.run_message_id=? AND c.run_generation_id=? AND c.consumed=false AND c.discarded=false AND c.deleted=false", req.TenantID, req.SessionID, run.ID, generation).
+			Scan(&pending).
+			Error; err != nil {
 			return err
 		}
 		for _, candidate := range pending {
@@ -197,12 +227,48 @@ func (s *KnowledgeInputProvenanceStore) AdmitSteerAuthoredInput(ctx context.Cont
 		if err != nil {
 			return err
 		}
-		origin := steerAuthoredOrigin{ID: uuid.NewString(), SteerID: req.ClientSteerID, TenantID: req.TenantID, SessionID: req.SessionID, OwnerID: session.UserID, OwnerRevision: ownerRevision, OriginRunMessageID: run.ID, OriginRunGenerationID: generation, OriginRunRequestID: run.RequestID, Actor: string(actorJSON), BodyDigest: digest, CanonicalDigest: canonicalDigest, SourceLineage: string(sourceJSON), ExecutionContext: string(executionJSON), AgentID: run.AgentID, AgentTenantID: run.AgentTenantID, InputBody: string(raw), CreatedAtMS: now}
-		marked := context.WithValue(tx.Statement.Context, steerAuthoredProducerKey{}, steerAuthoredProducerBoundary{s, origin.ID, digest, lineage})
+		origin := steerAuthoredOrigin{
+			ID:                    uuid.NewString(),
+			SteerID:               req.ClientSteerID,
+			TenantID:              req.TenantID,
+			SessionID:             req.SessionID,
+			OwnerID:               session.UserID,
+			OwnerRevision:         ownerRevision,
+			OriginRunMessageID:    run.ID,
+			OriginRunGenerationID: generation,
+			OriginRunRequestID:    run.RequestID,
+			Actor:                 string(actorJSON),
+			BodyDigest:            digest,
+			CanonicalDigest:       canonicalDigest,
+			SourceLineage:         string(sourceJSON),
+			ExecutionContext:      string(executionJSON),
+			AgentID:               run.AgentID,
+			AgentTenantID:         run.AgentTenantID,
+			InputBody:             string(raw),
+			CreatedAtMS:           now,
+		}
+		marked := context.WithValue(
+			tx.Statement.Context,
+			steerAuthoredProducerKey{},
+			steerAuthoredProducerBoundary{s, origin.ID, digest, lineage},
+		)
 		if err := tx.WithContext(marked).Create(&origin).Error; err != nil {
 			return err
 		}
-		control := steerControlAdmission{ID: uuid.NewString(), OriginID: origin.ID, TenantID: req.TenantID, SessionID: req.SessionID, SteerID: req.ClientSteerID, Revision: 1, Operation: "enqueue", RunMessageID: run.ID, RunGenerationID: generation, RunRequestID: run.RequestID, Delivery: string(body.Delivery), CreatedAtMS: now}
+		control := steerControlAdmission{
+			ID:              uuid.NewString(),
+			OriginID:        origin.ID,
+			TenantID:        req.TenantID,
+			SessionID:       req.SessionID,
+			SteerID:         req.ClientSteerID,
+			Revision:        1,
+			Operation:       "enqueue",
+			RunMessageID:    run.ID,
+			RunGenerationID: generation,
+			RunRequestID:    run.RequestID,
+			Delivery:        string(body.Delivery),
+			CreatedAtMS:     now,
+		}
 		if err := tx.Create(&control).Error; err != nil {
 			return err
 		}
@@ -214,7 +280,11 @@ func (s *KnowledgeInputProvenanceStore) AdmitSteerAuthoredInput(ctx context.Cont
 	})
 	return result, err
 }
-func (s *KnowledgeInputProvenanceStore) steerCurrentControlInTx(tx *gorm.DB, origin string) (*steerControlAdmission, error) {
+
+func (s *KnowledgeInputProvenanceStore) steerCurrentControlInTx(
+	tx *gorm.DB,
+	origin string,
+) (*steerControlAdmission, error) {
 	var head steerControlHead
 	if err := tx.Where("origin_id=?", origin).Take(&head).Error; err != nil {
 		return nil, err
@@ -235,10 +305,31 @@ func (s *KnowledgeInputProvenanceStore) steerCurrentControlInTx(tx *gorm.DB, ori
 	}
 	return &control, nil
 }
+
 func steerCandidate(control *steerControlAdmission, origin *steerAuthoredOrigin) *types.SteerCandidateControl {
-	return &types.SteerCandidateControl{SteerID: origin.SteerID, OriginalAdmissionID: origin.ID, BodyDigest: origin.BodyDigest, HeadID: control.ID, Revision: control.Revision, RunMessageID: control.RunMessageID, RunGenerationID: control.RunGenerationID, RunRequestID: control.RunRequestID, Delivery: types.SteerDelivery(control.Delivery), Consumed: control.Consumed, Discarded: control.Discarded, Deleted: control.Deleted, UserMessageID: control.UserMessageID, CreatedAt: time.UnixMilli(origin.CreatedAtMS)}
+	return &types.SteerCandidateControl{
+		SteerID:             origin.SteerID,
+		OriginalAdmissionID: origin.ID,
+		BodyDigest:          origin.BodyDigest,
+		HeadID:              control.ID,
+		Revision:            control.Revision,
+		RunMessageID:        control.RunMessageID,
+		RunGenerationID:     control.RunGenerationID,
+		RunRequestID:        control.RunRequestID,
+		Delivery:            types.SteerDelivery(control.Delivery),
+		Consumed:            control.Consumed,
+		Discarded:           control.Discarded,
+		Deleted:             control.Deleted,
+		UserMessageID:       control.UserMessageID,
+		CreatedAt:           time.UnixMilli(origin.CreatedAtMS),
+	}
 }
-func steerInputFromOriginal(origin *steerAuthoredOrigin, control *steerControlAdmission, body *steerAuthoredBody) (*types.SteerMaterialInput, error) {
+
+func steerInputFromOriginal(
+	origin *steerAuthoredOrigin,
+	control *steerControlAdmission,
+	body *steerAuthoredBody,
+) (*types.SteerMaterialInput, error) {
 	var source types.SourceLineage
 	if err := json.Unmarshal([]byte(origin.SourceLineage), &source); err != nil {
 		return nil, err
@@ -250,11 +341,37 @@ func steerInputFromOriginal(origin *steerAuthoredOrigin, control *steerControlAd
 	if err := json.Unmarshal([]byte(origin.ExecutionContext), &execution); err != nil {
 		return nil, err
 	}
-	proof := &types.SteerOriginalProof{AdmissionID: origin.ID, OriginID: origin.ID, SteerID: origin.SteerID, SessionID: origin.SessionID, OwnerID: origin.OwnerID, OriginRunMessageID: origin.OriginRunMessageID, OriginRunGenerationID: origin.OriginRunGenerationID, OriginRunRequestID: origin.OriginRunRequestID, TenantID: origin.TenantID, OwnerRevision: origin.OwnerRevision, BodyDigest: origin.BodyDigest, SourceLineage: &source, ExecutionContext: execution, AgentID: origin.AgentID, AgentTenantID: origin.AgentTenantID, CreatedAt: time.UnixMilli(origin.CreatedAtMS)}
-	return &types.SteerMaterialInput{Proof: proof, Control: steerCandidate(control, origin), Query: body.Query, MentionedItems: body.MentionedItems, Channel: body.Channel}, nil
+	proof := &types.SteerOriginalProof{
+		AdmissionID:           origin.ID,
+		OriginID:              origin.ID,
+		SteerID:               origin.SteerID,
+		SessionID:             origin.SessionID,
+		OwnerID:               origin.OwnerID,
+		OriginRunMessageID:    origin.OriginRunMessageID,
+		OriginRunGenerationID: origin.OriginRunGenerationID,
+		OriginRunRequestID:    origin.OriginRunRequestID,
+		TenantID:              origin.TenantID,
+		OwnerRevision:         origin.OwnerRevision,
+		BodyDigest:            origin.BodyDigest,
+		SourceLineage:         &source,
+		ExecutionContext:      execution,
+		AgentID:               origin.AgentID,
+		AgentTenantID:         origin.AgentTenantID,
+		CreatedAt:             time.UnixMilli(origin.CreatedAtMS),
+	}
+	return &types.SteerMaterialInput{
+		Proof:          proof,
+		Control:        steerCandidate(control, origin),
+		Query:          body.Query,
+		MentionedItems: body.MentionedItems,
+		Channel:        body.Channel,
+	}, nil
 }
 
-func (s *KnowledgeInputProvenanceStore) ApplySteerControl(ctx context.Context, req *types.SteerControlRequest) (*types.SteerCandidateControl, error) {
+func (s *KnowledgeInputProvenanceStore) ApplySteerControl(
+	ctx context.Context,
+	req *types.SteerControlRequest,
+) (*types.SteerCandidateControl, error) {
 	if req == nil {
 		return nil, types.ErrSourceLineageUnknown
 	}
@@ -268,7 +385,10 @@ func (s *KnowledgeInputProvenanceStore) ApplySteerControl(ctx context.Context, r
 			return ErrKnowledgeInputChanged
 		}
 		var origin steerAuthoredOrigin
-		if err := tx.Select(steerOriginMetadataFields).Where("id=? AND tenant_id=? AND session_id=? AND steer_id=?", req.OriginalAdmissionID, req.TenantID, req.SessionID, req.SteerID).Take(&origin).Error; err != nil {
+		if err := tx.Select(steerOriginMetadataFields).
+			Where("id=? AND tenant_id=? AND session_id=? AND steer_id=?", req.OriginalAdmissionID, req.TenantID, req.SessionID, req.SteerID).
+			Take(&origin).
+			Error; err != nil {
 			return err
 		}
 		if origin.OwnerID != session.UserID || origin.OwnerRevision != ownerRev {
@@ -328,7 +448,9 @@ func (s *KnowledgeInputProvenanceStore) ApplySteerControl(ctx context.Context, r
 		if err := tx.Create(&next).Error; err != nil {
 			return err
 		}
-		changed := tx.Model(&steerControlHead{}).Where("origin_id=? AND head_id=? AND revision=?", origin.ID, control.ID, control.Revision).Updates(map[string]any{"head_id": next.ID, "revision": next.Revision})
+		changed := tx.Model(&steerControlHead{}).
+			Where("origin_id=? AND head_id=? AND revision=?", origin.ID, control.ID, control.Revision).
+			Updates(map[string]any{"head_id": next.ID, "revision": next.Revision})
 		if changed.Error != nil {
 			return changed.Error
 		}

@@ -4,20 +4,21 @@ package file
 
 import (
 	"context"
-	"github.com/stretchr/testify/require"
-	"golang.org/x/sys/unix"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
+
+	"github.com/stretchr/testify/require"
+	"golang.org/x/sys/unix"
 )
 
 func TestLocalGCReplacementIsMovedAndRestoredWithoutUnlink(t *testing.T) {
 	base := t.TempDir()
 	s := &localFileService{baseDir: base}
 	path := filepath.Join(base, "7", "old", "1790000000000000000.txt")
-	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0700))
-	require.NoError(t, os.WriteFile(path, []byte("old source"), 0600))
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o700))
+	require.NoError(t, os.WriteFile(path, []byte("old source"), 0o600))
 	root, _, _, e := s.capacityRoot()
 	require.NoError(t, e)
 	defer unix.Close(root)
@@ -27,21 +28,29 @@ func TestLocalGCReplacementIsMovedAndRestoredWithoutUnlink(t *testing.T) {
 	var original unix.Stat_t
 	require.NoError(t, unix.Fstatat(parent, filepath.Base(path), &original, unix.AT_SYMLINK_NOFOLLOW))
 	replacement := path + ".new"
-	require.NoError(t, os.WriteFile(replacement, []byte("current replacement survives"), 0600))
+	require.NoError(t, os.WriteFile(replacement, []byte("current replacement survives"), 0o600))
 	require.NoError(t, os.Rename(replacement, path))
-	unlinked, e := gcQuarantineUnlink(context.Background(), root, parent, filepath.Base(path), "local://7/old/1790000000000000000.txt", original)
+	unlinked, e := gcQuarantineUnlink(
+		context.Background(),
+		root,
+		parent,
+		filepath.Base(path),
+		"local://7/old/1790000000000000000.txt",
+		original,
+	)
 	require.Error(t, e)
 	require.False(t, unlinked)
 	bytes, e := os.ReadFile(path)
 	require.NoError(t, e)
 	require.Equal(t, []byte("current replacement survives"), bytes)
 }
+
 func TestLocalGCPathFenceCoversLegacyActualWriter(t *testing.T) {
 	base := t.TempDir()
 	s := &localFileService{baseDir: base}
 	path := filepath.Join(base, "7", "old", "1790000000000000000.txt")
-	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0700))
-	require.NoError(t, os.WriteFile(path, []byte("held original"), 0600))
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o700))
+	require.NoError(t, os.WriteFile(path, []byte("held original"), 0o600))
 	fence, e := s.physicalPathFence(path)
 	require.NoError(t, e)
 	unlinked, e := s.DeleteNextcloudObject(context.Background(), "local://7/old/1790000000000000000.txt")
@@ -54,12 +63,13 @@ func TestLocalGCPathFenceCoversLegacyActualWriter(t *testing.T) {
 	_, e = os.Stat(path)
 	require.ErrorIs(t, e, os.ErrNotExist)
 }
+
 func TestLocalGCHoldingReceiptResumesExactInode(t *testing.T) {
 	base := t.TempDir()
 	s := &localFileService{baseDir: base}
 	path := filepath.Join(base, "7", "old", "legacy.txt")
-	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0700))
-	require.NoError(t, os.WriteFile(path, []byte("held bytes"), 0600))
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o700))
+	require.NoError(t, os.WriteFile(path, []byte("held bytes"), 0o600))
 	root, _, _, e := s.capacityRoot()
 	require.NoError(t, e)
 	defer unix.Close(root)
@@ -72,7 +82,14 @@ func TestLocalGCHoldingReceiptResumesExactInode(t *testing.T) {
 	require.NoError(t, e)
 	defer unix.Close(holding)
 	receipt, obj := gcHoldingNames("local://7/old/legacy.txt")
-	require.NoError(t, gcPersistMoveReceipt(holding, receipt, localGCMoveReceipt{"local://7/old/legacy.txt", uint64(st.Dev), uint64(st.Ino)}))
+	require.NoError(
+		t,
+		gcPersistMoveReceipt(
+			holding,
+			receipt,
+			localGCMoveReceipt{"local://7/old/legacy.txt", uint64(st.Dev), uint64(st.Ino)},
+		),
+	)
 	require.NoError(t, gcRenameExclusive(parent, "legacy.txt", holding, obj))
 	// A crash at this point loses no object identity and does not require an
 	// operator to certify a newly observed inode at the original pathname.
@@ -95,7 +112,14 @@ func TestLocalGCHoldingSubprocessCrash(t *testing.T) {
 		var st unix.Stat_t
 		require.NoError(t, unix.Fstatat(parent, "crash.txt", &st, unix.AT_SYMLINK_NOFOLLOW))
 		receipt, obj := gcHoldingNames("local://7/old/crash.txt")
-		require.NoError(t, gcPersistMoveReceipt(holding, receipt, localGCMoveReceipt{"local://7/old/crash.txt", uint64(st.Dev), uint64(st.Ino)}))
+		require.NoError(
+			t,
+			gcPersistMoveReceipt(
+				holding,
+				receipt,
+				localGCMoveReceipt{"local://7/old/crash.txt", uint64(st.Dev), uint64(st.Ino)},
+			),
+		)
 		require.NoError(t, gcRenameExclusive(parent, "crash.txt", holding, obj))
 		require.NoError(t, unix.Fsync(parent))
 		require.NoError(t, unix.Fsync(holding))
@@ -103,8 +127,8 @@ func TestLocalGCHoldingSubprocessCrash(t *testing.T) {
 	}
 	base := t.TempDir()
 	path := filepath.Join(base, "7", "old", "crash.txt")
-	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0700))
-	require.NoError(t, os.WriteFile(path, []byte("owned crash bytes"), 0600))
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o700))
+	require.NoError(t, os.WriteFile(path, []byte("owned crash bytes"), 0o600))
 	child := exec.Command(os.Args[0], "-test.run=^TestLocalGCHoldingSubprocessCrash$")
 	child.Env = append(os.Environ(), "WEKNORA_GC_HOLDING_CHILD="+base)
 	err := child.Run()

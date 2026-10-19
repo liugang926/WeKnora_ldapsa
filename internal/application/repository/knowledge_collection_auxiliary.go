@@ -11,14 +11,28 @@ import (
 // These helpers deliberately use their caller's RR/SQLite transaction. Each
 // producer keeps its own original bounded lineage; the collection authorizer
 // checks current caller/source permission for every proof separately.
-func captureKnowledgeCollectionAuxiliary(tx *gorm.DB, scopes []types.KnowledgeSearchScope, candidates []*types.Knowledge) (*types.KnowledgeCollectionAuxiliary, error) {
+func captureKnowledgeCollectionAuxiliary(
+	tx *gorm.DB,
+	scopes []types.KnowledgeSearchScope,
+	candidates []*types.Knowledge,
+) (*types.KnowledgeCollectionAuxiliary, error) {
 	return captureKnowledgeCollectionAuxiliaryWithNames(tx, scopes, candidates, nil)
 }
 
 // A nil name selector is the complete collection path. Explicit-ID metadata
 // uses a non-nil selector to verify only KB display names it actually consumed.
-func captureKnowledgeCollectionAuxiliaryWithNames(tx *gorm.DB, scopes []types.KnowledgeSearchScope, candidates []*types.Knowledge, consumeNames map[string]bool) (*types.KnowledgeCollectionAuxiliary, error) {
-	aux := &types.KnowledgeCollectionAuxiliary{Proofs: []*types.KnowledgeCollectionAuxiliaryProof{}, KnowledgeBaseNames: map[string]string{}, Tags: map[string][]*types.KnowledgeTag{}, Relations: []*types.KnowledgeTagRelation{}}
+func captureKnowledgeCollectionAuxiliaryWithNames(
+	tx *gorm.DB,
+	scopes []types.KnowledgeSearchScope,
+	candidates []*types.Knowledge,
+	consumeNames map[string]bool,
+) (*types.KnowledgeCollectionAuxiliary, error) {
+	aux := &types.KnowledgeCollectionAuxiliary{
+		Proofs:             []*types.KnowledgeCollectionAuxiliaryProof{},
+		KnowledgeBaseNames: map[string]string{},
+		Tags:               map[string][]*types.KnowledgeTag{},
+		Relations:          []*types.KnowledgeTagRelation{},
+	}
 	allowed := map[string]uint64{}
 	kbIDs := []string{}
 	for _, scope := range scopes {
@@ -42,7 +56,10 @@ func captureKnowledgeCollectionAuxiliaryWithNames(tx *gorm.DB, scopes []types.Kn
 	for first := 0; first < len(knowledgeIDs); first += 500 {
 		end := min(first+500, len(knowledgeIDs))
 		var rows []*types.KnowledgeTagRelation
-		if err := tx.Where("knowledge_id IN ?", knowledgeIDs[first:end]).Order("knowledge_id ASC,tag_id ASC").Find(&rows).Error; err != nil {
+		if err := tx.Where("knowledge_id IN ?", knowledgeIDs[first:end]).
+			Order("knowledge_id ASC,tag_id ASC").
+			Find(&rows).
+			Error; err != nil {
 			return nil, err
 		}
 		allRelations = append(allRelations, rows...)
@@ -123,11 +140,21 @@ func captureKnowledgeCollectionAuxiliaryWithNames(tx *gorm.DB, scopes []types.Kn
 			// An absent relation contains no source-bearing display value. Its
 			// monotonic version still binds membership, including add/delete ABA.
 			lineage, _ := types.NewCompleteSourceLineage()
-			digest, err := KnowledgeInputDigest(knowledgeDisplayBody("relations", k.ID, k.TenantID, k.KnowledgeBaseID, ids))
+			digest, err := KnowledgeInputDigest(
+				knowledgeDisplayBody("relations", k.ID, k.TenantID, k.KnowledgeBaseID, ids),
+			)
 			if err != nil {
 				return nil, err
 			}
-			membership = &types.KnowledgeCollectionAuxiliaryProof{Kind: "relations", ID: k.ID, TenantID: k.TenantID, KnowledgeBaseID: k.KnowledgeBaseID, Revision: revision, Digest: digest, SourceLineage: lineage}
+			membership = &types.KnowledgeCollectionAuxiliaryProof{
+				Kind:            "relations",
+				ID:              k.ID,
+				TenantID:        k.TenantID,
+				KnowledgeBaseID: k.KnowledgeBaseID,
+				Revision:        revision,
+				Digest:          digest,
+				SourceLineage:   lineage,
+			}
 		}
 		aux.Proofs = append(aux.Proofs, membership)
 		aux.Tags[k.ID] = []*types.KnowledgeTag{}
@@ -144,7 +171,14 @@ func captureKnowledgeCollectionAuxiliaryWithNames(tx *gorm.DB, scopes []types.Kn
 			}
 			seenTags[tag.ID] = true
 			for _, field := range []string{"name", "color", "sort_order"} {
-				proof, err := readKnowledgeDisplayOrigin(tx, "tag-"+field, tag.ID, tag.TenantID, tag.KnowledgeBaseID, tagDisplayFieldValue(&tag, field))
+				proof, err := readKnowledgeDisplayOrigin(
+					tx,
+					"tag-"+field,
+					tag.ID,
+					tag.TenantID,
+					tag.KnowledgeBaseID,
+					tagDisplayFieldValue(&tag, field),
+				)
 				if err != nil {
 					return nil, err
 				}
@@ -162,7 +196,18 @@ func captureKnowledgeCollectionAuxiliaryWithNames(tx *gorm.DB, scopes []types.Kn
 			if err != nil {
 				return nil, err
 			}
-			aux.Proofs = append(aux.Proofs, &types.KnowledgeCollectionAuxiliaryProof{Kind: "tag-envelope", ID: tag.ID, TenantID: tag.TenantID, KnowledgeBaseID: tag.KnowledgeBaseID, Revision: envelopeRevision, Digest: digest, SourceLineage: lineage})
+			aux.Proofs = append(
+				aux.Proofs,
+				&types.KnowledgeCollectionAuxiliaryProof{
+					Kind:            "tag-envelope",
+					ID:              tag.ID,
+					TenantID:        tag.TenantID,
+					KnowledgeBaseID: tag.KnowledgeBaseID,
+					Revision:        envelopeRevision,
+					Digest:          digest,
+					SourceLineage:   lineage,
+				},
+			)
 		}
 	}
 	sort.Slice(aux.Proofs, func(i, j int) bool {
@@ -182,7 +227,12 @@ func captureKnowledgeCollectionAuxiliaryWithNames(tx *gorm.DB, scopes []types.Kn
 	return aux, nil
 }
 
-func recheckKnowledgeCollectionAuxiliary(tx *gorm.DB, scopes []types.KnowledgeSearchScope, candidates []*types.Knowledge, expected *types.KnowledgeCollectionAuxiliary) error {
+func recheckKnowledgeCollectionAuxiliary(
+	tx *gorm.DB,
+	scopes []types.KnowledgeSearchScope,
+	candidates []*types.Knowledge,
+	expected *types.KnowledgeCollectionAuxiliary,
+) error {
 	if expected == nil {
 		return types.ErrSourceLineageUnknown
 	}

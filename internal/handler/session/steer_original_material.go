@@ -18,12 +18,31 @@ type actualSteerMaterialService interface {
 	HasOriginalMessageMaterialStore() bool
 	MessageNativeLiveIdentity(context.Context, string, string) (*types.Message, string, error)
 	AdmitActualSteerInput(context.Context, *types.SteerAuthoredRequest) (*types.SteerMaterialInput, error)
-	BeginSteerMaterialRead(context.Context, *types.SteerMaterialRequest) (*types.SteerMaterialSnapshot, func() error, func(), error)
+	BeginSteerMaterialRead(
+		context.Context,
+		*types.SteerMaterialRequest,
+	) (*types.SteerMaterialSnapshot, func() error, func(), error)
 	ApplyActualSteerControl(context.Context, *types.SteerControlRequest) (*types.SteerCandidateControl, error)
 	CheckActualSteerControl(context.Context, *types.SteerCandidateControl) error
-	ConsumeActualSteerIntoMessage(context.Context, *types.SteerMaterialInput, string, string, string) (*types.Message, *types.SteerConsumptionProof, func() error, func(), error)
-	ConsumeActualSteerFollowUpIntoMessage(context.Context, *types.SteerMaterialInput, string, string, string) (*types.Message, *types.SteerConsumptionProof, func() error, func(), error)
-	CreateActualSteerFollowUpAssistant(context.Context, *types.SteerMaterialInput, *types.Message) (*types.Message, error)
+	ConsumeActualSteerIntoMessage(
+		context.Context,
+		*types.SteerMaterialInput,
+		string,
+		string,
+		string,
+	) (*types.Message, *types.SteerConsumptionProof, func() error, func(), error)
+	ConsumeActualSteerFollowUpIntoMessage(
+		context.Context,
+		*types.SteerMaterialInput,
+		string,
+		string,
+		string,
+	) (*types.Message, *types.SteerConsumptionProof, func() error, func(), error)
+	CreateActualSteerFollowUpAssistant(
+		context.Context,
+		*types.SteerMaterialInput,
+		*types.Message,
+	) (*types.Message, error)
 }
 
 // Only explicit service-package algorithm fixtures can use the old Redis
@@ -40,7 +59,13 @@ func actualSteerService(messages interfaces.MessageService) (actualSteerMaterial
 	return nil, false, access.ErrNextcloudPublicationUnavailable
 }
 
-func beginActualSteerRead(ctx context.Context, actual actualSteerMaterialService, session, run string, use types.SteerMaterialUse, ids []string) (*types.SteerMaterialSnapshot, func() error, func(), error) {
+func beginActualSteerRead(
+	ctx context.Context,
+	actual actualSteerMaterialService,
+	session, run string,
+	use types.SteerMaterialUse,
+	ids []string,
+) (*types.SteerMaterialSnapshot, func() error, func(), error) {
 	control, generation, err := actual.MessageNativeLiveIdentity(ctx, session, run)
 	if err != nil {
 		return nil, nil, nil, err
@@ -48,7 +73,14 @@ func beginActualSteerRead(ctx context.Context, actual actualSteerMaterialService
 	if control == nil || generation == "" {
 		return nil, nil, nil, access.ErrNextcloudPublicationUnavailable
 	}
-	request := &types.SteerMaterialRequest{TenantID: types.MustTenantIDFromContext(ctx), SessionID: session, RunMessageID: run, RunGenerationID: generation, SteerIDs: ids, Use: use}
+	request := &types.SteerMaterialRequest{
+		TenantID:        types.MustTenantIDFromContext(ctx),
+		SessionID:       session,
+		RunMessageID:    run,
+		RunGenerationID: generation,
+		SteerIDs:        ids,
+		Use:             use,
+	}
 	snapshot, check, close, err := actual.BeginSteerMaterialRead(ctx, request)
 	if err != nil {
 		return nil, nil, nil, err
@@ -95,7 +127,13 @@ func steerMaterialMirror(input *types.SteerMaterialInput) interfaces.StreamEvent
 	return event
 }
 
-func (h *Handler) tryActualSteerEnqueue(c *gin.Context, ctx context.Context, session, run string, req *SteerMessageRequest, query, delivery string) bool {
+func (h *Handler) tryActualSteerEnqueue(
+	c *gin.Context,
+	ctx context.Context,
+	session, run string,
+	req *SteerMessageRequest,
+	query, delivery string,
+) bool {
 	actual, algorithm, err := actualSteerService(h.messageService)
 	if algorithm {
 		return false
@@ -137,7 +175,21 @@ func (h *Handler) tryActualSteerEnqueue(c *gin.Context, ctx context.Context, ses
 		_ = c.Error(nativeSavedReplayHTTPError(err))
 		return true
 	}
-	request := &types.SteerAuthoredRequest{RawInput: rawInput, TenantID: types.MustTenantIDFromContext(ctx), SessionID: session, RunMessageID: run, RunGenerationID: generation, RunRequestID: control.RequestID, ClientSteerID: steerID, Query: query, MentionedItems: convertMentionedItems(req.MentionedItems), Channel: channel, Delivery: types.SteerDelivery(delivery), ActorContext: ctx, SourceContext: ctx}
+	request := &types.SteerAuthoredRequest{
+		RawInput:        rawInput,
+		TenantID:        types.MustTenantIDFromContext(ctx),
+		SessionID:       session,
+		RunMessageID:    run,
+		RunGenerationID: generation,
+		RunRequestID:    control.RequestID,
+		ClientSteerID:   steerID,
+		Query:           query,
+		MentionedItems:  convertMentionedItems(req.MentionedItems),
+		Channel:         channel,
+		Delivery:        types.SteerDelivery(delivery),
+		ActorContext:    ctx,
+		SourceContext:   ctx,
+	}
 	ctx, err = applicationservice.WithActualSteerHTTPInput(ctx, request)
 	if err != nil {
 		_ = c.Error(nativeSavedReplayHTTPError(err))
@@ -153,16 +205,37 @@ func (h *Handler) tryActualSteerEnqueue(c *gin.Context, ctx context.Context, ses
 		return true
 	}
 	// Redis is a best-effort mirror of the original SQL admission/control.
-	_ = h.streamManager.AppendSteerEvents(ctx, session, input.Control.RunMessageID, []interfaces.StreamEvent{steerMaterialMirror(input)})
+	_ = h.streamManager.AppendSteerEvents(
+		ctx,
+		session,
+		input.Control.RunMessageID,
+		[]interfaces.StreamEvent{steerMaterialMirror(input)},
+	)
 	status := "queued"
 	if input.Control.Consumed {
 		status = "already_injected"
 	}
-	writeActualSteerJSON(c, func() error { return actual.CheckActualSteerControl(ctx, input.Control) }, nil, gin.H{"success": true, "status": status, "steer_id": input.Proof.SteerID, "delivery": input.Control.Delivery, "assistant_message_id": input.Control.RunMessageID})
+	writeActualSteerJSON(
+		c,
+		func() error { return actual.CheckActualSteerControl(ctx, input.Control) },
+		nil,
+		gin.H{
+			"success":              true,
+			"status":               status,
+			"steer_id":             input.Proof.SteerID,
+			"delivery":             input.Control.Delivery,
+			"assistant_message_id": input.Control.RunMessageID,
+		},
+	)
 	return true
 }
 
-func (h *Handler) tryActualSteerControl(c *gin.Context, ctx context.Context, session, run, steer string, operation types.SteerControlOperation) bool {
+func (h *Handler) tryActualSteerControl(
+	c *gin.Context,
+	ctx context.Context,
+	session, run, steer string,
+	operation types.SteerControlOperation,
+) bool {
 	actual, algorithm, err := actualSteerService(h.messageService)
 	if algorithm {
 		return false
@@ -175,7 +248,14 @@ func (h *Handler) tryActualSteerControl(c *gin.Context, ctx context.Context, ses
 		c.JSON(200, gin.H{"success": true, "status": "new_run"})
 		return true
 	}
-	snapshot, check, close, err := beginActualSteerRead(ctx, actual, session, run, types.SteerMaterialPending, []string{steer})
+	snapshot, check, close, err := beginActualSteerRead(
+		ctx,
+		actual,
+		session,
+		run,
+		types.SteerMaterialPending,
+		[]string{steer},
+	)
 	if err != nil {
 		_ = c.Error(nativeSavedReplayHTTPError(err))
 		return true
@@ -193,14 +273,33 @@ func (h *Handler) tryActualSteerControl(c *gin.Context, ctx context.Context, ses
 		return true
 	}
 	if selected.Consumed {
-		writeActualSteerJSON(c, check, nil, gin.H{"success": true, "status": "already_injected", "removed": false, "steer_id": steer})
+		writeActualSteerJSON(
+			c,
+			check,
+			nil,
+			gin.H{"success": true, "status": "already_injected", "removed": false, "steer_id": steer},
+		)
 		return true
 	}
 	if err := check(); err != nil {
 		_ = c.Error(nativeSavedReplayHTTPError(err))
 		return true
 	}
-	newControl, err := actual.ApplyActualSteerControl(ctx, &types.SteerControlRequest{TenantID: snapshot.Plan.Request.TenantID, SessionID: session, SteerID: steer, OriginalAdmissionID: selected.OriginalAdmissionID, ExpectedHeadID: selected.HeadID, ExpectedRevision: selected.Revision, Operation: operation, TargetRunMessageID: selected.RunMessageID, TargetRunGenerationID: selected.RunGenerationID, TargetRunRequestID: selected.RunRequestID})
+	newControl, err := actual.ApplyActualSteerControl(
+		ctx,
+		&types.SteerControlRequest{
+			TenantID:              snapshot.Plan.Request.TenantID,
+			SessionID:             session,
+			SteerID:               steer,
+			OriginalAdmissionID:   selected.OriginalAdmissionID,
+			ExpectedHeadID:        selected.HeadID,
+			ExpectedRevision:      selected.Revision,
+			Operation:             operation,
+			TargetRunMessageID:    selected.RunMessageID,
+			TargetRunGenerationID: selected.RunGenerationID,
+			TargetRunRequestID:    selected.RunRequestID,
+		},
+	)
 	if err != nil {
 		_ = c.Error(nativeSavedReplayHTTPError(err))
 		return true
@@ -212,9 +311,31 @@ func (h *Handler) tryActualSteerControl(c *gin.Context, ctx context.Context, ses
 	if operation == types.SteerControlDelete {
 		_, _ = h.streamManager.DeleteSteerEvent(ctx, session, run, steer)
 	} else {
-		_, _ = h.streamManager.UpdateSteerEventData(ctx, session, run, steer, map[string]interface{}{"delivery": string(newControl.Delivery), "control_head_id": newControl.HeadID, "control_revision": newControl.Revision})
+		_, _ = h.streamManager.UpdateSteerEventData(
+			ctx,
+			session,
+			run,
+			steer,
+			map[string]interface{}{
+				"delivery":         string(newControl.Delivery),
+				"control_head_id":  newControl.HeadID,
+				"control_revision": newControl.Revision,
+			},
+		)
 	}
-	writeActualSteerJSON(c, func() error { return actual.CheckActualSteerControl(ctx, newControl) }, nil, gin.H{"success": true, "status": "queued", "removed": newControl.Deleted, "steer_id": steer, "delivery": newControl.Delivery, "assistant_message_id": newControl.RunMessageID})
+	writeActualSteerJSON(
+		c,
+		func() error { return actual.CheckActualSteerControl(ctx, newControl) },
+		nil,
+		gin.H{
+			"success":              true,
+			"status":               "queued",
+			"removed":              newControl.Deleted,
+			"steer_id":             steer,
+			"delivery":             newControl.Delivery,
+			"assistant_message_id": newControl.RunMessageID,
+		},
+	)
 	return true
 }
 
@@ -243,7 +364,15 @@ func (h *Handler) tryActualSteerList(c *gin.Context, ctx context.Context, sessio
 			_ = c.Error(nativeSavedReplayHTTPError(access.ErrNextcloudPublicationUnavailable))
 			return true
 		}
-		items = append(items, map[string]interface{}{"steer_id": input.Proof.SteerID, "content": input.Query, "delivery": input.Control.Delivery, "mentioned_items": input.MentionedItems})
+		items = append(
+			items,
+			map[string]interface{}{
+				"steer_id":        input.Proof.SteerID,
+				"content":         input.Query,
+				"delivery":        input.Control.Delivery,
+				"mentioned_items": input.MentionedItems,
+			},
+		)
 	}
 	writeActualSteerJSON(c, check, close, gin.H{"success": true, "assistant_message_id": run, "items": items})
 	return true
@@ -255,7 +384,10 @@ type heldSteerMaterial struct {
 	close func()
 }
 
-func (s *steerSink) pollActualSteer(ctx context.Context, session, run string) ([]map[string]interface{}, int, bool, error) {
+func (s *steerSink) pollActualSteer(
+	ctx context.Context,
+	session, run string,
+) ([]map[string]interface{}, int, bool, error) {
 	actual, algorithm, err := actualSteerService(s.messageService)
 	if algorithm {
 		return nil, 0, false, nil
@@ -288,7 +420,17 @@ func (s *steerSink) pollActualSteer(ctx context.Context, session, run string) ([
 			continue
 		}
 		s.originalInputs[input.Proof.SteerID] = heldSteerMaterial{input, check, close}
-		out = append(out, map[string]interface{}{"id": input.Proof.SteerID, "content": input.Query, "mentioned_items": mentionedItemsToRaw(input.MentionedItems), "channel": input.Channel, "original_admission_id": input.Proof.AdmissionID, "control_revision": input.Control.Revision})
+		out = append(
+			out,
+			map[string]interface{}{
+				"id":                    input.Proof.SteerID,
+				"content":               input.Query,
+				"mentioned_items":       mentionedItemsToRaw(input.MentionedItems),
+				"channel":               input.Channel,
+				"original_admission_id": input.Proof.AdmissionID,
+				"control_revision":      input.Control.Revision,
+			},
+		)
 		break // One exact consume/head transfer per actual round drain.
 	}
 	s.originalPollCloses = append(s.originalPollCloses, close)
@@ -299,7 +441,12 @@ func (s *steerSink) pollActualSteer(ctx context.Context, session, run string) ([
 	return out, len(snapshot.Plan.CandidateControls), true, err
 }
 
-func (s *steerSink) PersistSteerMaterial(ctx context.Context, session, run, steer, content string, mentions types.MentionedItems, channel string) (string, *types.SourceLineage, func() error, func(), error) {
+func (s *steerSink) PersistSteerMaterial(
+	ctx context.Context,
+	session, run, steer, content string,
+	mentions types.MentionedItems,
+	channel string,
+) (string, *types.SourceLineage, func() error, func(), error) {
 	actual, algorithm, err := actualSteerService(s.messageService)
 	if algorithm {
 		id := s.PersistSteerMessage(ctx, session, run, steer, content, mentions, channel)
@@ -315,7 +462,15 @@ func (s *steerSink) PersistSteerMaterial(ctx context.Context, session, run, stee
 	s.mu.Lock()
 	held, found := s.originalInputs[steer]
 	s.mu.Unlock()
-	if !found || held.input == nil || !equalSteerOriginalFields(&types.SteerMaterialInput{Query: types.SteerCanonicalQuery(content), MentionedItems: mentions, Channel: channel}, held.input) {
+	if !found || held.input == nil ||
+		!equalSteerOriginalFields(
+			&types.SteerMaterialInput{
+				Query:          types.SteerCanonicalQuery(content),
+				MentionedItems: mentions,
+				Channel:        channel,
+			},
+			held.input,
+		) {
 		return "", nil, nil, nil, access.ErrNextcloudPublicationDenied
 	}
 	if err := held.check(); err != nil {
@@ -325,11 +480,18 @@ func (s *steerSink) PersistSteerMaterial(ctx context.Context, session, run, stee
 	if err != nil {
 		return "", nil, nil, nil, err
 	}
-	message, proof, check, close, err := actual.ConsumeActualSteerIntoMessage(ctx, held.input, run, generation, control.RequestID)
+	message, proof, check, close, err := actual.ConsumeActualSteerIntoMessage(
+		ctx,
+		held.input,
+		run,
+		generation,
+		control.RequestID,
+	)
 	if err != nil {
 		return "", nil, nil, nil, err
 	}
-	if message == nil || proof == nil || check == nil || close == nil || message.SourceLineage.RequireComplete() != nil {
+	if message == nil || proof == nil || check == nil || close == nil ||
+		message.SourceLineage.RequireComplete() != nil {
 		if close != nil {
 			close()
 		}
@@ -351,7 +513,18 @@ func (s *steerSink) PersistSteerMaterial(ctx context.Context, session, run, stee
 	for _, close := range pollCloses {
 		close()
 	}
-	_, _ = s.streamManager.UpdateSteerEventData(ctx, session, run, steer, map[string]interface{}{steerDataConsumed: true, steerDataUserMessageID: message.ID, "control_head_id": proof.ResultHeadID, "control_revision": proof.ResultRevision})
+	_, _ = s.streamManager.UpdateSteerEventData(
+		ctx,
+		session,
+		run,
+		steer,
+		map[string]interface{}{
+			steerDataConsumed:      true,
+			steerDataUserMessageID: message.ID,
+			"control_head_id":      proof.ResultHeadID,
+			"control_revision":     proof.ResultRevision,
+		},
+	)
 	lineage, _ := types.UnionSourceLineage(message.SourceLineage)
 	return message.ID, lineage, check, close, nil
 }
@@ -427,19 +600,47 @@ func (h *Handler) discardActualSteer(ctx context.Context, session, run string) (
 			return true, access.ErrNextcloudPublicationUnavailable
 		}
 		control := input.Control
-		after, err := actual.ApplyActualSteerControl(ctx, &types.SteerControlRequest{TenantID: snapshot.Plan.Request.TenantID, SessionID: session, SteerID: control.SteerID, OriginalAdmissionID: control.OriginalAdmissionID, ExpectedHeadID: control.HeadID, ExpectedRevision: control.Revision, Operation: types.SteerControlDiscard, TargetRunMessageID: run, TargetRunGenerationID: control.RunGenerationID, TargetRunRequestID: control.RunRequestID})
+		after, err := actual.ApplyActualSteerControl(
+			ctx,
+			&types.SteerControlRequest{
+				TenantID:              snapshot.Plan.Request.TenantID,
+				SessionID:             session,
+				SteerID:               control.SteerID,
+				OriginalAdmissionID:   control.OriginalAdmissionID,
+				ExpectedHeadID:        control.HeadID,
+				ExpectedRevision:      control.Revision,
+				Operation:             types.SteerControlDiscard,
+				TargetRunMessageID:    run,
+				TargetRunGenerationID: control.RunGenerationID,
+				TargetRunRequestID:    control.RunRequestID,
+			},
+		)
 		if err != nil {
 			return true, err
 		}
 		if after == nil {
 			return true, access.ErrNextcloudPublicationUnavailable
 		}
-		_, _ = h.streamManager.UpdateSteerEventData(ctx, session, run, control.SteerID, map[string]interface{}{steerDataConsumed: true, "control_head_id": after.HeadID, "control_revision": after.Revision})
+		_, _ = h.streamManager.UpdateSteerEventData(
+			ctx,
+			session,
+			run,
+			control.SteerID,
+			map[string]interface{}{
+				steerDataConsumed:  true,
+				"control_head_id":  after.HeadID,
+				"control_revision": after.Revision,
+			},
+		)
 	}
 	return true, nil
 }
 
-func (h *Handler) claimActualSteerFollowUp(ctx context.Context, previous *qaRequestContext, previousStream *sseStreamContext) (*qaRequestContext, bool, bool) {
+func (h *Handler) claimActualSteerFollowUp(
+	ctx context.Context,
+	previous *qaRequestContext,
+	previousStream *sseStreamContext,
+) (*qaRequestContext, bool, bool) {
 	actual, algorithm, err := actualSteerService(h.messageService)
 	if algorithm {
 		return nil, false, false
@@ -453,7 +654,14 @@ func (h *Handler) claimActualSteerFollowUp(ctx context.Context, previous *qaRequ
 	if previousStream.actualSteerClaimAttempted {
 		return nil, false, true
 	}
-	snapshot, check, close, err := beginActualSteerRead(ctx, actual, previous.sessionID, previousStream.assistantMessage.ID, types.SteerMaterialFollowUp, nil)
+	snapshot, check, close, err := beginActualSteerRead(
+		ctx,
+		actual,
+		previous.sessionID,
+		previousStream.assistantMessage.ID,
+		types.SteerMaterialFollowUp,
+		nil,
+	)
 	if err != nil {
 		return nil, false, true
 	}
@@ -486,7 +694,14 @@ func (h *Handler) claimActualSteerFollowUp(ctx context.Context, previous *qaRequ
 	h.applyFollowUpMentions(ctx, &follow, mentionedItemsToRaw(first.MentionedItems))
 	// The only ordinary Create here is the actual empty assistant producer.
 	// The user row is derived exclusively from the admitted authored receipt.
-	follow.assistantMessage = &types.Message{SessionID: previous.sessionID, RequestID: follow.requestID, Role: "assistant", ExecutionContext: previous.assistantMessage.ExecutionContext, AgentID: previous.assistantMessage.AgentID, AgentTenantID: previous.assistantMessage.AgentTenantID}
+	follow.assistantMessage = &types.Message{
+		SessionID:        previous.sessionID,
+		RequestID:        follow.requestID,
+		Role:             "assistant",
+		ExecutionContext: previous.assistantMessage.ExecutionContext,
+		AgentID:          previous.assistantMessage.AgentID,
+		AgentTenantID:    previous.assistantMessage.AgentTenantID,
+	}
 	created, err := actual.CreateActualSteerFollowUpAssistant(ctx, first, follow.assistantMessage)
 	if err != nil {
 		return nil, false, true
@@ -497,7 +712,13 @@ func (h *Handler) claimActualSteerFollowUp(ctx context.Context, previous *qaRequ
 		h.rollbackTurnMessages(ctx, &follow, false, true)
 		return nil, false, true
 	}
-	user, consumed, readCheck, readClose, err := actual.ConsumeActualSteerFollowUpIntoMessage(ctx, first, created.ID, generation, control.RequestID)
+	user, consumed, readCheck, readClose, err := actual.ConsumeActualSteerFollowUpIntoMessage(
+		ctx,
+		first,
+		created.ID,
+		generation,
+		control.RequestID,
+	)
 	if err != nil || user == nil || consumed == nil || readCheck == nil || readClose == nil {
 		if readClose != nil {
 			readClose()
@@ -512,27 +733,73 @@ func (h *Handler) claimActualSteerFollowUp(ctx context.Context, previous *qaRequ
 	follow.userCreatedAt = user.CreatedAt
 	if err := h.streamManager.ClaimLiveRun(ctx, previous.sessionID, created.ID, follow.requestID); err != nil {
 		readClose()
-		_, _ = actual.ApplyActualSteerControl(ctx, &types.SteerControlRequest{TenantID: first.Proof.TenantID, SessionID: previous.sessionID, SteerID: first.Proof.SteerID, OriginalAdmissionID: first.Proof.OriginID, ExpectedHeadID: consumed.ResultHeadID, ExpectedRevision: consumed.ResultRevision, Operation: types.SteerControlClaimFailed})
+		_, _ = actual.ApplyActualSteerControl(
+			ctx,
+			&types.SteerControlRequest{
+				TenantID:            first.Proof.TenantID,
+				SessionID:           previous.sessionID,
+				SteerID:             first.Proof.SteerID,
+				OriginalAdmissionID: first.Proof.OriginID,
+				ExpectedHeadID:      consumed.ResultHeadID,
+				ExpectedRevision:    consumed.ResultRevision,
+				Operation:           types.SteerControlClaimFailed,
+			},
+		)
 		return nil, false, true
 	}
 	// Subsequent QA receives its actual saved user receipt. Keep this original
 	// consume capability alive across the handoff; the producer context owns it.
 	follow.steerInputClose = readClose
 	context.AfterFunc(follow.ctx, readClose)
-	_, _ = h.streamManager.UpdateSteerEventData(ctx, previous.sessionID, previousStream.assistantMessage.ID, first.Proof.SteerID, map[string]interface{}{steerDataConsumed: true, steerDataUserMessageID: user.ID, "control_head_id": consumed.ResultHeadID, "control_revision": consumed.ResultRevision})
+	_, _ = h.streamManager.UpdateSteerEventData(
+		ctx,
+		previous.sessionID,
+		previousStream.assistantMessage.ID,
+		first.Proof.SteerID,
+		map[string]interface{}{
+			steerDataConsumed:      true,
+			steerDataUserMessageID: user.ID,
+			"control_head_id":      consumed.ResultHeadID,
+			"control_revision":     consumed.ResultRevision,
+		},
+	)
 	for _, input := range snapshot.Inputs[1:] {
 		if input == nil || input.Control == nil || input.Proof == nil {
 			continue
 		}
 		old := input.Control
-		after, err := actual.ApplyActualSteerControl(ctx, &types.SteerControlRequest{TenantID: snapshot.Plan.Request.TenantID, SessionID: previous.sessionID, SteerID: old.SteerID, OriginalAdmissionID: old.OriginalAdmissionID, ExpectedHeadID: old.HeadID, ExpectedRevision: old.Revision, Operation: types.SteerControlRebind, TargetRunMessageID: created.ID, TargetRunGenerationID: generation, TargetRunRequestID: follow.requestID})
+		after, err := actual.ApplyActualSteerControl(
+			ctx,
+			&types.SteerControlRequest{
+				TenantID:              snapshot.Plan.Request.TenantID,
+				SessionID:             previous.sessionID,
+				SteerID:               old.SteerID,
+				OriginalAdmissionID:   old.OriginalAdmissionID,
+				ExpectedHeadID:        old.HeadID,
+				ExpectedRevision:      old.Revision,
+				Operation:             types.SteerControlRebind,
+				TargetRunMessageID:    created.ID,
+				TargetRunGenerationID: generation,
+				TargetRunRequestID:    follow.requestID,
+			},
+		)
 		if err != nil || after == nil {
 			continue
 		}
 		mirror := *input
 		mirror.Control = after
-		_ = h.streamManager.AppendSteerEvents(ctx, previous.sessionID, created.ID, []interfaces.StreamEvent{steerMaterialMirror(&mirror)})
-		_, _ = h.streamManager.DeleteSteerEvent(ctx, previous.sessionID, previousStream.assistantMessage.ID, old.SteerID)
+		_ = h.streamManager.AppendSteerEvents(
+			ctx,
+			previous.sessionID,
+			created.ID,
+			[]interfaces.StreamEvent{steerMaterialMirror(&mirror)},
+		)
+		_, _ = h.streamManager.DeleteSteerEvent(
+			ctx,
+			previous.sessionID,
+			previousStream.assistantMessage.ID,
+			old.SteerID,
+		)
 	}
 	return &follow, true, true
 }

@@ -53,7 +53,10 @@ func (l *publicationSnapshotRaceLookup) transition(ctx context.Context) error {
 	return l.between(ctx)
 }
 
-func (l *publicationSnapshotRaceLookup) GetIdentityByUserID(ctx context.Context, userID string) ([]*types.DirectoryIdentity, error) {
+func (l *publicationSnapshotRaceLookup) GetIdentityByUserID(
+	ctx context.Context,
+	userID string,
+) ([]*types.DirectoryIdentity, error) {
 	rows, err := l.DirectoryRepository.GetIdentityByUserID(ctx, userID)
 	if err != nil {
 		return nil, err
@@ -65,7 +68,10 @@ func (l *publicationSnapshotRaceLookup) GetIdentityByUserID(ctx context.Context,
 	return rows, nil
 }
 
-func (l *publicationSnapshotRaceLookup) GetUserLoginSnapshot(ctx context.Context, userID string) ([]*types.DirectoryIdentity, *types.DirectoryLoginSnapshot, error) {
+func (l *publicationSnapshotRaceLookup) GetUserLoginSnapshot(
+	ctx context.Context,
+	userID string,
+) ([]*types.DirectoryIdentity, *types.DirectoryLoginSnapshot, error) {
 	// This old-view read measures the same N boundary as the baseline fixture.
 	// It is not returned as authority: the real atomic method reads after the
 	// committed transition and alone supplies the result to the future guard.
@@ -99,7 +105,10 @@ func publicationSnapshotActualDB(t *testing.T, pg bool) *gorm.DB {
 	var err error
 	migration := filepath.Join("..", "..", "..", "migrations", "sqlite", "000028_directory_group_access.up.sql")
 	if !pg {
-		db, err = gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "directory.db")+"?_foreign_keys=on&_busy_timeout=5000"), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
+		db, err = gorm.Open(
+			sqlite.Open(filepath.Join(t.TempDir(), "directory.db")+"?_foreign_keys=on&_busy_timeout=5000"),
+			&gorm.Config{Logger: logger.Default.LogMode(logger.Silent)},
+		)
 		require.NoError(t, err)
 		pool, err := db.DB()
 		require.NoError(t, err)
@@ -136,9 +145,15 @@ func publicationSnapshotActualDB(t *testing.T, pg bool) *gorm.DB {
 		require.NoError(t, err)
 		// Keep table lookup confined to the private schema while exposing the
 		// real UUID extension function required by the forward migration.
-		_, err = conn.ExecContext(context.Background(), `CREATE FUNCTION uuid_generate_v4() RETURNS uuid LANGUAGE sql AS 'SELECT public.uuid_generate_v4()'`)
+		_, err = conn.ExecContext(
+			context.Background(),
+			`CREATE FUNCTION uuid_generate_v4() RETURNS uuid LANGUAGE sql AS 'SELECT public.uuid_generate_v4()'`,
+		)
 		require.NoError(t, err)
-		db, err = gorm.Open(postgres.New(postgres.Config{Conn: conn, PreferSimpleProtocol: true}), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
+		db, err = gorm.Open(
+			postgres.New(postgres.Config{Conn: conn, PreferSimpleProtocol: true}),
+			&gorm.Config{Logger: logger.Default.LogMode(logger.Silent)},
+		)
 		require.NoError(t, err)
 		migration = filepath.Join("..", "..", "..", "migrations", "versioned", "000109_directory_group_access.up.sql")
 	}
@@ -171,9 +186,21 @@ func runPublicationDirectorySnapshotActual(t *testing.T, pg bool) {
 			}
 			directory := create("publication-directory")
 			snapshot := func(id string, enabled bool) *types.DirectorySnapshot {
-				return &types.DirectorySnapshot{DirectoryID: id, Complete: true, PaginationComplete: true,
-					Trigger: types.DirectorySyncTriggerScheduled, StartedAt: time.Now().UTC(),
-					Identities: []types.DirectoryIdentitySnapshot{{ObjectGUID: guid, ObjectSID: "S-1-5-21-1000", DN: "cn=Alice,dc=example,dc=test", SAMAccountName: "alice", Enabled: enabled}},
+				return &types.DirectorySnapshot{
+					DirectoryID:        id,
+					Complete:           true,
+					PaginationComplete: true,
+					Trigger:            types.DirectorySyncTriggerScheduled,
+					StartedAt:          time.Now().UTC(),
+					Identities: []types.DirectoryIdentitySnapshot{
+						{
+							ObjectGUID:     guid,
+							ObjectSID:      "S-1-5-21-1000",
+							DN:             "cn=Alice,dc=example,dc=test",
+							SAMAccountName: "alice",
+							Enabled:        enabled,
+						},
+					},
 				}
 			}
 			_, err := svc.ApplySnapshot(ctx, snapshot(directory.ID, true))
@@ -190,7 +217,8 @@ func runPublicationDirectorySnapshotActual(t *testing.T, pg bool) {
 			var sourceRequests atomic.Int64
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				sourceRequests.Add(1)
-				if r.Header.Get("Authorization") != "Bearer publication-test-secret" || r.Header.Get("X-WeKnora-Signature") == "" {
+				if r.Header.Get("Authorization") != "Bearer publication-test-secret" ||
+					r.Header.Get("X-WeKnora-Signature") == "" {
 					t.Error("source check omitted paired authentication")
 					w.WriteHeader(http.StatusUnauthorized)
 					return
@@ -205,12 +233,17 @@ func runPublicationDirectorySnapshotActual(t *testing.T, pg bool) {
 						ObjectGUID  string `json:"object_guid"`
 						FileID      int64  `json:"file_id"`
 					}
-					if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || payload.DirectoryID != directory.ID || payload.ObjectGUID != guid || payload.FileID != 42 {
+					if err := json.NewDecoder(r.Body).
+						Decode(&payload); err != nil || payload.DirectoryID != directory.ID || payload.ObjectGUID != guid ||
+						payload.FileID != 42 {
 						t.Error("source check did not use the exact current linked identity")
 						w.WriteHeader(http.StatusBadRequest)
 						return
 					}
-					fmt.Fprint(w, `{"allow":true,"reason":"authorized","policy_revision":"policy-1","source_etag":"etag-42","checked_at":1780000000}`)
+					fmt.Fprint(
+						w,
+						`{"allow":true,"reason":"authorized","policy_revision":"policy-1","source_etag":"etag-42","checked_at":1780000000}`,
+					)
 				default:
 					http.NotFound(w, r)
 				}
@@ -218,12 +251,41 @@ func runPublicationDirectorySnapshotActual(t *testing.T, pg bool) {
 			t.Cleanup(server.Close)
 			t.Setenv("WEKNORA_NEXTCLOUD_DEV_HTTP", "1")
 			t.Setenv("WEKNORA_NEXTCLOUD_ALLOWED_ORIGINS", server.URL)
-			config, err := json.Marshal(types.DataSourceConfig{Type: types.ConnectorTypeNextcloud, Settings: map[string]interface{}{"base_url": server.URL}, Credentials: map[string]interface{}{"token": "publication-test-secret"}, ResourceIDs: []string{"binding-1"}})
+			config, err := json.Marshal(
+				types.DataSourceConfig{
+					Type:        types.ConnectorTypeNextcloud,
+					Settings:    map[string]interface{}{"base_url": server.URL},
+					Credentials: map[string]interface{}{"token": "publication-test-secret"},
+					ResourceIDs: []string{"binding-1"},
+				},
+			)
 			require.NoError(t, err)
-			dataSource := &types.DataSource{ID: "publication-source", TenantID: 12, KnowledgeBaseID: "publication-kb", Type: types.ConnectorTypeNextcloud, Status: types.DataSourceStatusActive, Config: types.JSON(config)}
-			metadata, err := json.Marshal(map[string]string{"datasource_id": dataSource.ID, "external_id": "nextcloud:instance-1:42", "source_resource_id": "binding-1", "nextcloud_instance_id": "instance-1", "nextcloud_binding_id": "binding-1", "nextcloud_file_id": "42", "nextcloud_etag": "etag-42"})
+			dataSource := &types.DataSource{
+				ID:              "publication-source",
+				TenantID:        12,
+				KnowledgeBaseID: "publication-kb",
+				Type:            types.ConnectorTypeNextcloud,
+				Status:          types.DataSourceStatusActive,
+				Config:          types.JSON(config),
+			}
+			metadata, err := json.Marshal(
+				map[string]string{
+					"datasource_id":         dataSource.ID,
+					"external_id":           "nextcloud:instance-1:42",
+					"source_resource_id":    "binding-1",
+					"nextcloud_instance_id": "instance-1",
+					"nextcloud_binding_id":  "binding-1",
+					"nextcloud_file_id":     "42",
+					"nextcloud_etag":        "etag-42",
+				},
+			)
 			require.NoError(t, err)
-			knowledge := &types.Knowledge{TenantID: 12, KnowledgeBaseID: dataSource.KnowledgeBaseID, Channel: types.ConnectorTypeNextcloud, Metadata: types.JSON(metadata)}
+			knowledge := &types.Knowledge{
+				TenantID:        12,
+				KnowledgeBaseID: dataSource.KnowledgeBaseID,
+				Channel:         types.ConnectorTypeNextcloud,
+				Metadata:        types.JSON(metadata),
+			}
 			lookup := &publicationSnapshotRaceLookup{DirectoryRepository: repo}
 			if mode != "current" {
 				lookup.between = func(ctx context.Context) error {
@@ -239,7 +301,16 @@ func runPublicationDirectorySnapshotActual(t *testing.T, pg bool) {
 					case "unlinked":
 						return svc.UnlinkIdentity(ctx, identity.ID)
 					case "sync_failure":
-						_, err := repo.RecordSyncFailure(ctx, directory.ID, "test_failure", "controlled complete-sync failure", time.Now().UTC(), beforeVersion, before.Directory.ConfigVersion, types.DirectorySyncTriggerScheduled)
+						_, err := repo.RecordSyncFailure(
+							ctx,
+							directory.ID,
+							"test_failure",
+							"controlled complete-sync failure",
+							time.Now().UTC(),
+							beforeVersion,
+							before.Directory.ConfigVersion,
+							types.DirectorySyncTriggerScheduled,
+						)
 						return err
 					case "cross_directory_link":
 						other := create("second-publication-directory")
@@ -261,13 +332,25 @@ func runPublicationDirectorySnapshotActual(t *testing.T, pg bool) {
 			guard := appaccess.NewNextcloudPublicationGuard(lookup, publicationSnapshotSourceLookup{source: dataSource})
 			err = guard.CheckKnowledge(callerCtx, knowledge)
 			if mode == "current" || mode == "unchanged_complete_sync" {
-				require.NoError(t, err, "unchanged active principal must remain usable after a genuine complete snapshot")
+				require.NoError(
+					t,
+					err,
+					"unchanged active principal must remain usable after a genuine complete snapshot",
+				)
 				require.Equal(t, int64(1), sourceCalls.Load())
 				require.Equal(t, int64(2), sourceRequests.Load())
 			} else {
 				require.ErrorIs(t, err, appaccess.ErrNextcloudPublicationDenied)
-				require.Zero(t, sourceCalls.Load(), "a revoked, failed or ambiguous directory binding must not reach source HTTP")
-				require.Zero(t, sourceRequests.Load(), "a denied directory binding must not reach even capabilities HTTP")
+				require.Zero(
+					t,
+					sourceCalls.Load(),
+					"a revoked, failed or ambiguous directory binding must not reach source HTTP",
+				)
+				require.Zero(
+					t,
+					sourceRequests.Load(),
+					"a denied directory binding must not reach even capabilities HTTP",
+				)
 			}
 			if mode != "current" {
 				require.True(t, lookup.triggered, "the controlled production transition must actually happen")

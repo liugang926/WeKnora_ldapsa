@@ -30,7 +30,11 @@ func (s *hybridOutputKBService) GetKnowledgeBaseByIDOnly(context.Context, string
 	return s.kb, nil
 }
 
-func (s *hybridOutputKBService) HybridSearch(context.Context, string, types.SearchParams) ([]*types.SearchResult, error) {
+func (s *hybridOutputKBService) HybridSearch(
+	context.Context,
+	string,
+	types.SearchParams,
+) ([]*types.SearchResult, error) {
 	return s.results, nil
 }
 
@@ -88,9 +92,13 @@ func TestHybridSearchOutputBoundaryRejectsRevokedSource(t *testing.T) {
 		return nil
 	}
 	h := &KnowledgeBaseHandler{
-		service: &hybridOutputKBService{kb: &types.KnowledgeBase{ID: "kb-1", TenantID: 7},
-			results: []*types.SearchResult{{KnowledgeID: row.ID, KnowledgeBaseID: row.KnowledgeBaseID,
-				KnowledgeChannel: row.Channel, Metadata: row.GetMetadata(), Content: "source secret"}}},
+		service: &hybridOutputKBService{
+			kb: &types.KnowledgeBase{ID: "kb-1", TenantID: 7},
+			results: []*types.SearchResult{{
+				KnowledgeID: row.ID, KnowledgeBaseID: row.KnowledgeBaseID,
+				KnowledgeChannel: row.Channel, Metadata: row.GetMetadata(), Content: "source secret",
+			}},
+		},
 		knowledgeService: service, contentLeases: store,
 	}
 	w := runHybridOutputRequest(t, h)
@@ -114,9 +122,13 @@ func TestHybridSearchOutputBoundaryRejectsRevokedShare(t *testing.T) {
 		return nil
 	}
 	h := &KnowledgeBaseHandler{
-		service: &hybridOutputKBService{kb: &types.KnowledgeBase{ID: "kb-1", TenantID: 8},
-			results: []*types.SearchResult{{KnowledgeID: row.ID, KnowledgeBaseID: row.KnowledgeBaseID,
-				KnowledgeChannel: row.Channel, Metadata: row.GetMetadata(), Content: "shared secret"}}},
+		service: &hybridOutputKBService{
+			kb: &types.KnowledgeBase{ID: "kb-1", TenantID: 8},
+			results: []*types.SearchResult{{
+				KnowledgeID: row.ID, KnowledgeBaseID: row.KnowledgeBaseID,
+				KnowledgeChannel: row.Channel, Metadata: row.GetMetadata(), Content: "shared secret",
+			}},
+		},
 		knowledgeService: service, kbShareService: share, contentLeases: store,
 	}
 	w := runHybridOutputRequest(t, h)

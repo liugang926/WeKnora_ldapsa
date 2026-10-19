@@ -52,7 +52,11 @@ func (l *langfuseChat) Chat(ctx context.Context, messages []Message, opts *ChatO
 	return resp, err
 }
 
-func (l *langfuseChat) ChatStream(ctx context.Context, messages []Message, opts *ChatOptions) (<-chan types.StreamResponse, error) {
+func (l *langfuseChat) ChatStream(
+	ctx context.Context,
+	messages []Message,
+	opts *ChatOptions,
+) (<-chan types.StreamResponse, error) {
 	if logprivacy.ContentSuppressed(ctx) || types.RAGSourceLineageFromContext(ctx) != nil {
 		return l.inner.ChatStream(ctx, messages, opts)
 	}

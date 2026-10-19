@@ -5,27 +5,39 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
-	"github.com/google/uuid"
-	"gorm.io/gorm"
 	"io"
 	"sync"
 	"time"
+
+	"github.com/google/uuid"
+	"gorm.io/gorm"
 
 	"github.com/Tencent/WeKnora/internal/application/repository"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 )
 
-type NextcloudCapacityFileResolver func(context.Context, *types.KnowledgeBase) (interfaces.FileService, error)
-type NextcloudCapacityAdmission struct {
-	store   *repository.NextcloudCapacityStore
-	resolve NextcloudCapacityFileResolver
-}
+type (
+	NextcloudCapacityFileResolver func(context.Context, *types.KnowledgeBase) (interfaces.FileService, error)
+	NextcloudCapacityAdmission    struct {
+		store   *repository.NextcloudCapacityStore
+		resolve NextcloudCapacityFileResolver
+	}
+)
 
-func NewNextcloudCapacityAdmission(store *repository.NextcloudCapacityStore, resolve NextcloudCapacityFileResolver) *NextcloudCapacityAdmission {
+func NewNextcloudCapacityAdmission(
+	store *repository.NextcloudCapacityStore,
+	resolve NextcloudCapacityFileResolver,
+) *NextcloudCapacityAdmission {
 	return &NextcloudCapacityAdmission{store: store, resolve: resolve}
 }
-func (a *NextcloudCapacityAdmission) Begin(ctx context.Context, kb *types.KnowledgeBase, ds, external, etag string, bytes int64) (*repository.NextcloudCapacityReservation, error) {
+
+func (a *NextcloudCapacityAdmission) Begin(
+	ctx context.Context,
+	kb *types.KnowledgeBase,
+	ds, external, etag string,
+	bytes int64,
+) (*repository.NextcloudCapacityReservation, error) {
 	if a == nil || a.store == nil || a.resolve == nil || kb == nil || kb.StorageBackendID == nil {
 		return nil, repository.ErrNextcloudCapacityUnavailable
 	}
@@ -49,9 +61,23 @@ func (a *NextcloudCapacityAdmission) Begin(ctx context.Context, kb *types.Knowle
 		return nil, err
 	}
 	key := sha256.Sum256([]byte(ds + "\x00" + external + "\x00" + etag + "\x00" + uuid.NewString()))
-	return a.store.ReserveDurable(ctx, kb.TenantID, kb.ID, *kb.StorageBackendID, hex.EncodeToString(key[:]), bytes, measured)
+	return a.store.ReserveDurable(
+		ctx,
+		kb.TenantID,
+		kb.ID,
+		*kb.StorageBackendID,
+		hex.EncodeToString(key[:]),
+		bytes,
+		measured,
+	)
 }
-func (a *NextcloudCapacityAdmission) Finish(ctx context.Context, r *repository.NextcloudCapacityReservation, k string, ok bool) error {
+
+func (a *NextcloudCapacityAdmission) Finish(
+	ctx context.Context,
+	r *repository.NextcloudCapacityReservation,
+	k string,
+	ok bool,
+) error {
 	return a.store.Finish(ctx, r, k, ok)
 }
 
@@ -75,28 +101,44 @@ func (s *capacityWriteSession) RetainWriterLock(lock io.Closer) error {
 	s.lock = lock
 	return nil
 }
+
 func (s *capacityWriteSession) PrepareLocal(ctx context.Context, k, path, root, scope string, size int64) error {
 	return s.store.PrepareLocal(ctx, s.reservation, s.writer, k, path, root, scope, size)
 }
+
 func (s *capacityWriteSession) LocalCreated(ctx context.Context, path, identity string) error {
 	return s.store.LocalCreated(ctx, s.reservation, s.writer, path, identity)
 }
+
 func (s *capacityWriteSession) PhysicalWritten(ctx context.Context, path string, size int64, sha string) error {
 	return s.store.PhysicalWritten(ctx, s.reservation, s.writer, path, size, sha)
 }
+
 func (s *capacityWriteSession) ValidateCatalog(ctx context.Context, path, k string) error {
 	return s.store.ValidateWriter(ctx, s.reservation, s.writer, path, k)
 }
+
 func (s *capacityWriteSession) Cataloged(ctx context.Context, path, k, ref string) error {
 	return s.store.Cataloged(ctx, s.reservation, s.writer, path, k, ref)
 }
-func (a *NextcloudCapacityAdmission) WriteContext(ctx context.Context, r *repository.NextcloudCapacityReservation) context.Context {
-	return types.WithCapacityWriteSession(ctx, &capacityWriteSession{store: a.store, reservation: r, writer: uuid.NewString()})
+
+func (a *NextcloudCapacityAdmission) WriteContext(
+	ctx context.Context,
+	r *repository.NextcloudCapacityReservation,
+) context.Context {
+	return types.WithCapacityWriteSession(
+		ctx,
+		&capacityWriteSession{store: a.store, reservation: r, writer: uuid.NewString()},
+	)
 }
 
 // End runs on every ingestion exit, including failures before Stage. The
 // original-object writer lock spans storage, catalog, knowledge and staging.
-func (a *NextcloudCapacityAdmission) End(ctx context.Context, r *repository.NextcloudCapacityReservation, kb *types.KnowledgeBase) {
+func (a *NextcloudCapacityAdmission) End(
+	ctx context.Context,
+	r *repository.NextcloudCapacityReservation,
+	kb *types.KnowledgeBase,
+) {
 	session, ok := types.CapacityWriteSessionFromContext(ctx).(*capacityWriteSession)
 	if !ok {
 		return
@@ -118,8 +160,15 @@ func (a *NextcloudCapacityAdmission) End(ctx context.Context, r *repository.Next
 	// Reconciliation observes that exact object; errors leave its charge intact.
 	_ = a.Reconcile(cleanup, kb, r)
 }
-func (a *NextcloudCapacityAdmission) Reconcile(ctx context.Context, kb *types.KnowledgeBase, r *repository.NextcloudCapacityReservation) error {
-	if a == nil || kb == nil || r == nil || kb.TenantID != r.TenantID || kb.ID != r.KnowledgeBaseID || kb.StorageBackendID == nil || *kb.StorageBackendID != r.BackendID {
+
+func (a *NextcloudCapacityAdmission) Reconcile(
+	ctx context.Context,
+	kb *types.KnowledgeBase,
+	r *repository.NextcloudCapacityReservation,
+) error {
+	if a == nil || kb == nil || r == nil || kb.TenantID != r.TenantID || kb.ID != r.KnowledgeBaseID ||
+		kb.StorageBackendID == nil ||
+		*kb.StorageBackendID != r.BackendID {
 		return repository.ErrNextcloudCapacityUnavailable
 	}
 	intent, e := a.store.Intent(ctx, r)
@@ -137,16 +186,31 @@ func (a *NextcloudCapacityAdmission) Reconcile(ctx context.Context, kb *types.Kn
 	if !ok || !provider.SupportsLocalCapacityIntents() {
 		return repository.ErrNextcloudCapacityUnavailable
 	}
-	expected := types.CapacityLocalObject{Token: r.Token, TenantKnowledgeID: intent.KnowledgeID, BackendID: r.BackendID, PhysicalPath: intent.PhysicalPath, RootIdentity: intent.RootIdentity, ScopeID: r.ScopeID}
-	return provider.InspectCapacityIntent(ctx, expected, func(o types.CapacityLocalObject) error { return a.store.ReconcileLocal(ctx, r, intent, o) })
+	expected := types.CapacityLocalObject{
+		Token:             r.Token,
+		TenantKnowledgeID: intent.KnowledgeID,
+		BackendID:         r.BackendID,
+		PhysicalPath:      intent.PhysicalPath,
+		RootIdentity:      intent.RootIdentity,
+		ScopeID:           r.ScopeID,
+	}
+	return provider.InspectCapacityIntent(
+		ctx,
+		expected,
+		func(o types.CapacityLocalObject) error { return a.store.ReconcileLocal(ctx, r, intent, o) },
+	)
 }
+
 func ConfigureDataSourceCapacityAdmission(source interfaces.DataSourceService, admission *NextcloudCapacityAdmission) {
 	if service, ok := source.(*DataSourceService); ok {
 		service.capacityAdmission = admission
 	}
 }
 
-func (a *NextcloudCapacityAdmission) Status(ctx context.Context, kb *types.KnowledgeBase) (repository.NextcloudCapacityStatus, error) {
+func (a *NextcloudCapacityAdmission) Status(
+	ctx context.Context,
+	kb *types.KnowledgeBase,
+) (repository.NextcloudCapacityStatus, error) {
 	if a == nil || a.resolve == nil || kb == nil || kb.StorageBackendID == nil {
 		return repository.NextcloudCapacityStatus{}, repository.ErrNextcloudCapacityUnavailable
 	}

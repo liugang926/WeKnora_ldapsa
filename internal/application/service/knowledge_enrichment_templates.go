@@ -24,9 +24,16 @@ type KnowledgeEnrichmentTemplateService struct {
 	leases    readlease.NextcloudReadLeaseStore
 }
 
-func NewKnowledgeEnrichmentTemplateService(store *repository.KnowledgeInputProvenanceStore, knowledge interfaces.KnowledgeRepository, models interfaces.ModelService, guard *access.NextcloudSourceLineageGuard, leases readlease.NextcloudReadLeaseStore) *KnowledgeEnrichmentTemplateService {
+func NewKnowledgeEnrichmentTemplateService(
+	store *repository.KnowledgeInputProvenanceStore,
+	knowledge interfaces.KnowledgeRepository,
+	models interfaces.ModelService,
+	guard *access.NextcloudSourceLineageGuard,
+	leases readlease.NextcloudReadLeaseStore,
+) *KnowledgeEnrichmentTemplateService {
 	return &KnowledgeEnrichmentTemplateService{store, knowledge, models, guard, leases}
 }
+
 func (s *KnowledgeEnrichmentTemplateService) checkConfiguration(ctx context.Context, tenant uint64, kb string) error {
 	_, lineage, err := s.store.ReadKnowledgeTemplateConfiguration(ctx, tenant, kb)
 	if err != nil {
@@ -35,21 +42,44 @@ func (s *KnowledgeEnrichmentTemplateService) checkConfiguration(ctx context.Cont
 	if s.guard == nil {
 		return types.ErrSourceLineageUnknown
 	}
-	return s.guard.Check(ctx, lineage, access.LineageReadScope{Targets: types.SearchTargets{&types.SearchTarget{Type: types.SearchTargetTypeKnowledgeBase, TenantID: tenant, KnowledgeBaseID: kb}}})
+	return s.guard.Check(
+		ctx,
+		lineage,
+		access.LineageReadScope{
+			Targets: types.SearchTargets{
+				&types.SearchTarget{Type: types.SearchTargetTypeKnowledgeBase, TenantID: tenant, KnowledgeBaseID: kb},
+			},
+		},
+	)
 }
-func (s *KnowledgeEnrichmentTemplateService) SetIndependentTemplate(ctx context.Context, tenant uint64, kb, purpose, content string) (*types.KnowledgeBase, error) {
+
+func (s *KnowledgeEnrichmentTemplateService) SetIndependentTemplate(
+	ctx context.Context,
+	tenant uint64,
+	kb, purpose, content string,
+) (*types.KnowledgeBase, error) {
 	if err := s.checkConfiguration(ctx, tenant, kb); err != nil {
 		return nil, err
 	}
 	return s.store.WriteIndependentKnowledgeEnrichmentTemplate(ctx, tenant, kb, purpose, content)
 }
-func (s *KnowledgeEnrichmentTemplateService) InstallCodeTemplate(ctx context.Context, tenant uint64, kb, purpose, literal string) (*types.KnowledgeBase, error) {
+
+func (s *KnowledgeEnrichmentTemplateService) InstallCodeTemplate(
+	ctx context.Context,
+	tenant uint64,
+	kb, purpose, literal string,
+) (*types.KnowledgeBase, error) {
 	return s.store.WriteCodeKnowledgeEnrichmentTemplate(ctx, tenant, kb, purpose, literal)
 }
 
 // GenerateDerivedTemplate reads the selected parents itself. Clients choose
 // IDs, never supply cached parent content, digests, actor grants or lineage.
-func (s *KnowledgeEnrichmentTemplateService) GenerateDerivedTemplate(ctx context.Context, tenant uint64, kbID, purpose string, parentIDs []string) (*types.KnowledgeBase, error) {
+func (s *KnowledgeEnrichmentTemplateService) GenerateDerivedTemplate(
+	ctx context.Context,
+	tenant uint64,
+	kbID, purpose string,
+	parentIDs []string,
+) (*types.KnowledgeBase, error) {
 	if err := s.checkConfiguration(ctx, tenant, kbID); err != nil {
 		return nil, err
 	}
@@ -84,11 +114,31 @@ func (s *KnowledgeEnrichmentTemplateService) GenerateDerivedTemplate(ctx context
 		if err := lease.PinKnowledge(k); err != nil {
 			return nil, err
 		}
-		actual, err := s.store.CaptureChunkOutputInputs(ctx, types.ChunkOutputReadRequest{TenantID: k.TenantID, KnowledgeBaseID: k.KnowledgeBaseID, KnowledgeID: k.ID, AllChunks: true})
+		actual, err := s.store.CaptureChunkOutputInputs(
+			ctx,
+			types.ChunkOutputReadRequest{
+				TenantID:        k.TenantID,
+				KnowledgeBaseID: k.KnowledgeBaseID,
+				KnowledgeID:     k.ID,
+				AllChunks:       true,
+			},
+		)
 		if err != nil {
 			return nil, err
 		}
-		if err := s.guard.Check(ctx, actual.Proof.SourceLineage, access.LineageReadScope{Targets: types.SearchTargets{&types.SearchTarget{Type: types.SearchTargetTypeKnowledgeBase, TenantID: k.TenantID, KnowledgeBaseID: k.KnowledgeBaseID}}}); err != nil {
+		if err := s.guard.Check(
+			ctx,
+			actual.Proof.SourceLineage,
+			access.LineageReadScope{
+				Targets: types.SearchTargets{
+					&types.SearchTarget{
+						Type:            types.SearchTargetTypeKnowledgeBase,
+						TenantID:        k.TenantID,
+						KnowledgeBaseID: k.KnowledgeBaseID,
+					},
+				},
+			},
+		); err != nil {
 			return nil, err
 		}
 		parents = append(parents, actual)
@@ -115,12 +165,21 @@ func (s *KnowledgeEnrichmentTemplateService) GenerateDerivedTemplate(ctx context
 	}
 	parts := []string{}
 	for _, parent := range input.Parents {
-		parts = append(parts, parent.Knowledge.Title, parent.Knowledge.Description, parent.Knowledge.CustomMetadataText())
+		parts = append(
+			parts,
+			parent.Knowledge.Title,
+			parent.Knowledge.Description,
+			parent.Knowledge.CustomMetadataText(),
+		)
 		for _, c := range parent.Chunks {
 			parts = append(parts, c.Content, c.ImageInfo)
 		}
 	}
-	prompt := fmt.Sprintf("Create a concise %s generation instruction template using only these actual source inputs. Return only the instruction template.\n%s", purpose, strings.Join(parts, "\n"))
+	prompt := fmt.Sprintf(
+		"Create a concise %s generation instruction template using only these actual source inputs. Return only the instruction template.\n%s",
+		purpose,
+		strings.Join(parts, "\n"),
+	)
 	check := func() error {
 		if err := lease.Verify(); err != nil {
 			return err
@@ -129,7 +188,19 @@ func (s *KnowledgeEnrichmentTemplateService) GenerateDerivedTemplate(ctx context
 			return err
 		}
 
-		if err := s.guard.Check(ctx, input.Lineage, access.LineageReadScope{Targets: types.SearchTargets{&types.SearchTarget{Type: types.SearchTargetTypeKnowledgeBase, TenantID: tenant, KnowledgeBaseID: kbID}}}); err != nil {
+		if err := s.guard.Check(
+			ctx,
+			input.Lineage,
+			access.LineageReadScope{
+				Targets: types.SearchTargets{
+					&types.SearchTarget{
+						Type:            types.SearchTargetTypeKnowledgeBase,
+						TenantID:        tenant,
+						KnowledgeBaseID: kbID,
+					},
+				},
+			},
+		); err != nil {
 			return err
 		}
 		if err := expanded.Verify(); err != nil {
@@ -140,7 +211,11 @@ func (s *KnowledgeEnrichmentTemplateService) GenerateDerivedTemplate(ctx context
 	if err := check(); err != nil {
 		return nil, err
 	}
-	response, err := model.Chat(types.WithLLMCallMetadata(ctx, "enrichment_template", ""), []chat.Message{{Role: "user", Content: prompt}}, &chat.ChatOptions{Temperature: 0.2, MaxTokens: 2048})
+	response, err := model.Chat(
+		types.WithLLMCallMetadata(ctx, "enrichment_template", ""),
+		[]chat.Message{{Role: "user", Content: prompt}},
+		&chat.ChatOptions{Temperature: 0.2, MaxTokens: 2048},
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -167,6 +242,7 @@ func requireKnowledgeEnrichmentPromptOrigin(cfg *config.Config, kb *types.Knowle
 	_, err := config.KnowledgeEnrichmentPromptLineage(cfg, purpose)
 	return err
 }
+
 func actualKnowledgeEnrichmentPrompt(cfg *config.Config, kb *types.KnowledgeBase, purpose string) string {
 	if kb != nil {
 		if content := kb.EnrichmentTemplates.Content(purpose); content != "" {
@@ -188,7 +264,13 @@ type KnowledgeEnrichmentTemplateReadSnapshot struct {
 	Close   func() error
 }
 
-func (s *KnowledgeEnrichmentTemplateService) beginTemplateRead(ctx context.Context, tenant uint64, kbID string, lineage *types.SourceLineage, docs []*types.Knowledge) (*readlease.NextcloudReadGuard, error) {
+func (s *KnowledgeEnrichmentTemplateService) beginTemplateRead(
+	ctx context.Context,
+	tenant uint64,
+	kbID string,
+	lineage *types.SourceLineage,
+	docs []*types.Knowledge,
+) (*readlease.NextcloudReadGuard, error) {
 	scopes := []readlease.NextcloudKBReadScope{{TenantID: tenant, KBID: kbID}}
 	for _, k := range docs {
 		scopes = append(scopes, readlease.NextcloudKBReadScope{TenantID: k.TenantID, KBID: k.KnowledgeBaseID})
@@ -216,7 +298,12 @@ func (s *KnowledgeEnrichmentTemplateService) beginTemplateRead(ctx context.Conte
 	}
 	return lease, nil
 }
-func (s *KnowledgeEnrichmentTemplateService) ReadTemplate(ctx context.Context, tenant uint64, id, purpose string) (*KnowledgeEnrichmentTemplateReadSnapshot, error) {
+
+func (s *KnowledgeEnrichmentTemplateService) ReadTemplate(
+	ctx context.Context,
+	tenant uint64,
+	id, purpose string,
+) (*KnowledgeEnrichmentTemplateReadSnapshot, error) {
 	kb, lineage, err := s.store.ReadKnowledgeTemplateConfiguration(ctx, tenant, id)
 	if err != nil {
 		return nil, err

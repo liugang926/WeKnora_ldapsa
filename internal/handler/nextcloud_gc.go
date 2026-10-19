@@ -3,8 +3,9 @@ package handler
 import (
 	"context"
 	"errors"
-	"github.com/gin-gonic/gin"
 	"net/http"
+
+	"github.com/gin-gonic/gin"
 
 	"github.com/Tencent/WeKnora/internal/application/repository"
 	"github.com/Tencent/WeKnora/internal/types"
@@ -16,9 +17,13 @@ type NextcloudGCHandler struct {
 	actor *repository.KnowledgeInputProvenanceStore
 }
 
-func NewNextcloudGCHandler(store *repository.NextcloudGCStore, actor *repository.KnowledgeInputProvenanceStore) *NextcloudGCHandler {
+func NewNextcloudGCHandler(
+	store *repository.NextcloudGCStore,
+	actor *repository.KnowledgeInputProvenanceStore,
+) *NextcloudGCHandler {
 	return &NextcloudGCHandler{store, actor}
 }
+
 func (h *NextcloudGCHandler) authorize(c *gin.Context) (context.Context, uint64, bool) {
 	c.Header("Cache-Control", "no-store")
 	if h.actor == nil || h.store == nil {
@@ -36,12 +41,15 @@ func (h *NextcloudGCHandler) authorize(c *gin.Context) (context.Context, uint64,
 	}
 	caller := types.CallerFromContext(ctx)
 	principal, _ := types.PrincipalFromContext(ctx)
-	if caller.TenantID == 0 || caller.UserID == "" || principal.Type != types.PrincipalWebUser || principal.ID != caller.UserID || !caller.Role.HasPermission(types.TenantRoleAdmin) {
+	if caller.TenantID == 0 || caller.UserID == "" || principal.Type != types.PrincipalWebUser ||
+		principal.ID != caller.UserID ||
+		!caller.Role.HasPermission(types.TenantRoleAdmin) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "current_admin_session_required"})
 		return nil, 0, false
 	}
 	return ctx, caller.TenantID, true
 }
+
 func (h *NextcloudGCHandler) List(c *gin.Context) {
 	ctx, tenant, ok := h.authorize(c)
 	if !ok {
@@ -61,6 +69,7 @@ func (h *NextcloudGCHandler) List(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, gin.H{"jobs": jobs, "next_cursor": cursor})
 }
+
 func (h *NextcloudGCHandler) Preview(c *gin.Context) {
 	ctx, tenant, ok := h.authorize(c)
 	if !ok {
@@ -76,6 +85,7 @@ func (h *NextcloudGCHandler) Preview(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, gin.H{"preview": preview})
 }
+
 func (h *NextcloudGCHandler) Collect(c *gin.Context) {
 	ctx, tenant, ok := h.authorize(c)
 	if !ok {
@@ -91,6 +101,7 @@ func (h *NextcloudGCHandler) Collect(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, gin.H{"preview": preview})
 }
+
 func (h *NextcloudGCHandler) Retry(c *gin.Context) {
 	ctx, tenant, ok := h.authorize(c)
 	if !ok {
@@ -107,6 +118,7 @@ func (h *NextcloudGCHandler) Retry(c *gin.Context) {
 	}
 	c.JSON(http.StatusAccepted, gin.H{"status": "retry_scheduled"})
 }
+
 func (h *NextcloudGCHandler) failure(c *gin.Context, e error) {
 	switch {
 	case errors.Is(e, repository.ErrNextcloudGCAdmin):

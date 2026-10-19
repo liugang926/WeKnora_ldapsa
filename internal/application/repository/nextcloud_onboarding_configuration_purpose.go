@@ -13,15 +13,18 @@ import (
 
 // Only the connector's original fetch and the durable exact build lease may
 // create this purpose. It never supplies a Caller or a public read capability.
-type scopedOnboardingConfigurationPurposeKey struct{}
-type scopedOnboardingConfigurationReadKey struct{}
-type scopedOnboardingConfigurationPurpose struct {
-	tenant         uint64
-	kb, datasource string
-	parent         context.Context
-	check          func(context.Context) error
-	checkInTx      func(context.Context, *gorm.DB) error
-}
+type (
+	scopedOnboardingConfigurationPurposeKey struct{}
+	scopedOnboardingConfigurationReadKey    struct{}
+	scopedOnboardingConfigurationPurpose    struct {
+		originalFetch  bool
+		tenant         uint64
+		kb, datasource string
+		parent         context.Context
+		check          func(context.Context) error
+		checkInTx      func(context.Context, *gorm.DB) error
+	}
+)
 
 type ScopedOnboardingConfigurationRead interface {
 	Context(context.Context) context.Context
@@ -40,7 +43,12 @@ type scopedOnboardingConfigurationReadSlot struct {
 	err         error
 }
 type scopedOnboardingConfigurationSourceBeginner interface {
-	BeginKnowledgeConfigurationSources(context.Context, uint64, string, *types.SourceLineage) (context.Context, func(), error)
+	BeginKnowledgeConfigurationSources(
+		context.Context,
+		uint64,
+		string,
+		*types.SourceLineage,
+	) (context.Context, func(), error)
 }
 
 func scopedOnboardingConfigurationPurposeFromContext(ctx context.Context, tenant uint64, kb string) (string, error) {
@@ -48,7 +56,8 @@ func scopedOnboardingConfigurationPurposeFromContext(ctx context.Context, tenant
 		return "", types.ErrSourceLineageUnknown
 	}
 	purpose, ok := ctx.Value(scopedOnboardingConfigurationPurposeKey{}).(scopedOnboardingConfigurationPurpose)
-	if !ok || purpose.tenant != tenant || purpose.kb != kb || purpose.datasource == "" || purpose.check == nil || purpose.parent == nil {
+	if !ok || purpose.tenant != tenant || purpose.kb != kb || purpose.datasource == "" || purpose.check == nil ||
+		purpose.parent == nil {
 		return "", types.ErrSourceLineageUnknown
 	}
 	if err := ctx.Err(); err != nil {
@@ -65,7 +74,8 @@ func scopedOnboardingConfigurationPurposeFromContext(ctx context.Context, tenant
 
 func scopedOnboardingConfigurationPurposeInTx(ctx context.Context, tx *gorm.DB, tenant uint64, kb string) error {
 	purpose, ok := ctx.Value(scopedOnboardingConfigurationPurposeKey{}).(scopedOnboardingConfigurationPurpose)
-	if !ok || purpose.tenant != tenant || purpose.kb != kb || purpose.datasource == "" || purpose.parent == nil || purpose.checkInTx == nil {
+	if !ok || purpose.tenant != tenant || purpose.kb != kb || purpose.datasource == "" || purpose.parent == nil ||
+		purpose.checkInTx == nil {
 		return types.ErrSourceLineageUnknown
 	}
 	if err := ctx.Err(); err != nil {
@@ -86,12 +96,21 @@ func (s *KnowledgeInputProvenanceStore) NextcloudOnboardingConfigurationStore() 
 
 // This only reads the original receipt and monotonic controls. Configuration
 // text is loaded by the consumer after its source and physical guard is held.
-func (s *KnowledgeInputProvenanceStore) scopedConfigurationLineageMetadata(ctx context.Context, tenant uint64, kb string) (*types.SourceLineage, error) {
+func (s *KnowledgeInputProvenanceStore) scopedConfigurationLineageMetadata(
+	ctx context.Context,
+	tenant uint64,
+	kb string,
+) (*types.SourceLineage, error) {
 	var owner struct {
 		ID       string
 		TenantID uint64
 	}
-	if err := s.db.WithContext(ctx).Table("knowledge_bases").Select("id", "tenant_id").Where("id = ? AND tenant_id = ? AND deleted_at IS NULL", kb, tenant).Take(&owner).Error; err != nil {
+	if err := s.db.WithContext(ctx).
+		Table("knowledge_bases").
+		Select("id", "tenant_id").
+		Where("id = ? AND tenant_id = ? AND deleted_at IS NULL", kb, tenant).
+		Take(&owner).
+		Error; err != nil {
 		return nil, err
 	}
 	revision, err := knowledgeConfigurationControlRevision(s.db.WithContext(ctx), kb)
@@ -99,24 +118,36 @@ func (s *KnowledgeInputProvenanceStore) scopedConfigurationLineageMetadata(ctx c
 		return nil, err
 	}
 	var origin knowledgeConfigurationInputOrigin
-	if err := s.db.WithContext(ctx).Select("origin_id", "tenant_id", "knowledge_base_id", "config_revision", "source_lineage").Where("tenant_id = ? AND knowledge_base_id = ? AND config_revision = ?", tenant, kb, revision).Take(&origin).Error; err != nil {
+	if err := s.db.WithContext(ctx).
+		Select("origin_id", "tenant_id", "knowledge_base_id", "config_revision", "source_lineage").
+		Where("tenant_id = ? AND knowledge_base_id = ? AND config_revision = ?", tenant, kb, revision).
+		Take(&origin).
+		Error; err != nil {
 		return nil, err
 	}
 	var lineage types.SourceLineage
-	if origin.OriginID == "" || json.Unmarshal([]byte(origin.SourceLineage), &lineage) != nil || lineage.RequireComplete() != nil {
+	if origin.OriginID == "" || json.Unmarshal([]byte(origin.SourceLineage), &lineage) != nil ||
+		lineage.RequireComplete() != nil {
 		return nil, types.ErrSourceLineageUnknown
 	}
 	return types.UnionSourceLineage(&lineage)
 }
 
-func (s *KnowledgeInputProvenanceStore) beginScopedConfigurationPurpose(ctx context.Context, purpose scopedOnboardingConfigurationPurpose) (context.Context, func(), error) {
+func (s *KnowledgeInputProvenanceStore) beginScopedConfigurationPurpose(
+	ctx context.Context,
+	purpose scopedOnboardingConfigurationPurpose,
+) (context.Context, func(), error) {
 	noop := func() {}
 	if s == nil || s.db == nil || ctx == nil {
 		return ctx, noop, types.ErrSourceLineageUnknown
 	}
 	purpose.parent = ctx
 	slot := &scopedOnboardingConfigurationReadSlot{parent: ctx, tenant: purpose.tenant, kb: purpose.kb}
-	current := context.WithValue(context.WithValue(logprivacy.SuppressContent(ctx), scopedOnboardingConfigurationPurposeKey{}, purpose), scopedOnboardingConfigurationReadKey{}, slot)
+	current := context.WithValue(
+		context.WithValue(logprivacy.SuppressContent(ctx), scopedOnboardingConfigurationPurposeKey{}, purpose),
+		scopedOnboardingConfigurationReadKey{},
+		slot,
+	)
 	close := func() { CloseScopedOnboardingConfigurationReads(current) }
 	if _, err := scopedOnboardingConfigurationPurposeFromContext(current, purpose.tenant, purpose.kb); err != nil {
 		close()
@@ -148,12 +179,18 @@ func (s *KnowledgeInputProvenanceStore) beginScopedConfigurationPurpose(ctx cont
 // legacy independently configured real pair needs no onboarding actor, but its
 // exact current pairing, encrypted connector identity and recovery gate remain
 // mandatory. Call it before acquiring/hydrating a configuration body.
-func scopedConfigurationPairInTx(tx *gorm.DB, tenant uint64, kb, datasource string) (NextcloudSourcePairing, uint64, error) {
+func scopedConfigurationPairInTx(
+	tx *gorm.DB,
+	tenant uint64,
+	kb, datasource string,
+) (NextcloudSourcePairing, uint64, error) {
 	var pair NextcloudSourcePairing
 	if err := requireNextcloudTargetOpenInTx(tx, tenant, kb); err != nil {
 		return pair, 0, err
 	}
-	if err := tx.Where("tenant_id = ? AND knowledge_base_id = ? AND datasource_id = ? AND state = 'active'", tenant, kb, datasource).Take(&pair).Error; err != nil {
+	if err := tx.Where("tenant_id = ? AND knowledge_base_id = ? AND datasource_id = ? AND state = 'active'", tenant, kb, datasource).
+		Take(&pair).
+		Error; err != nil {
 		return pair, 0, err
 	}
 	closed, err := nextcloudControlsClosed(tx, pair.InstanceID)
@@ -164,11 +201,16 @@ func scopedConfigurationPairInTx(tx *gorm.DB, tenant uint64, kb, datasource stri
 		return pair, 0, ErrKnowledgeInputChanged
 	}
 	var ds types.DataSource
-	if err := tx.Select("id", "tenant_id", "knowledge_base_id", "type", "status", "config").Where("id = ? AND tenant_id = ? AND knowledge_base_id = ? AND type = ? AND status = ? AND deleted_at IS NULL", datasource, tenant, kb, types.ConnectorTypeNextcloud, types.DataSourceStatusActive).Take(&ds).Error; err != nil {
+	if err := tx.Select("id", "tenant_id", "knowledge_base_id", "type", "status", "config").
+		Where("id = ? AND tenant_id = ? AND knowledge_base_id = ? AND type = ? AND status = ? AND deleted_at IS NULL", datasource, tenant, kb, types.ConnectorTypeNextcloud, types.DataSourceStatusActive).
+		Take(&ds).
+		Error; err != nil {
 		return pair, 0, err
 	}
 	base, digest, binding, err := NextcloudEventDataSourceIdentity(ds.Config)
-	if err != nil || base != pair.BaseURL || digest != pair.ConfigSHA || binding != pair.BindingID || pair.OperationID == "" || pair.InstanceID == "" {
+	if err != nil || base != pair.BaseURL || digest != pair.ConfigSHA || binding != pair.BindingID ||
+		pair.OperationID == "" ||
+		pair.InstanceID == "" {
 		return pair, 0, ErrKnowledgeInputChanged
 	}
 	revision, err := nextcloudUploadSourceRevision(tx, datasource)
@@ -176,16 +218,29 @@ func scopedConfigurationPairInTx(tx *gorm.DB, tenant uint64, kb, datasource stri
 }
 
 func sameScopedConfigurationPair(a, b NextcloudSourcePairing) bool {
-	return a.OperationID == b.OperationID && a.TenantID == b.TenantID && a.KnowledgeBaseID == b.KnowledgeBaseID && a.DataSourceID == b.DataSourceID && a.InstanceID == b.InstanceID && a.BindingID == b.BindingID && a.BaseURL == b.BaseURL && a.ConfigSHA == b.ConfigSHA && a.PublicationEpoch == b.PublicationEpoch && a.KeyID == b.KeyID && a.State == b.State
+	return a.OperationID == b.OperationID && a.TenantID == b.TenantID && a.KnowledgeBaseID == b.KnowledgeBaseID &&
+		a.DataSourceID == b.DataSourceID &&
+		a.InstanceID == b.InstanceID &&
+		a.BindingID == b.BindingID &&
+		a.BaseURL == b.BaseURL &&
+		a.ConfigSHA == b.ConfigSHA &&
+		a.PublicationEpoch == b.PublicationEpoch &&
+		a.KeyID == b.KeyID &&
+		a.State == b.State
 }
 
 // BeginNextcloudOriginalFetchConfigurationRead is called by the actual sync
 // producer before GetKnowledgeBase/ResolveProcessConfig/connector transport.
 // A supplied object is matched to the actual active data source and its
 // monotonic original fetch version; UUIDs alone never create this purpose.
-func (s *KnowledgeInputProvenanceStore) BeginNextcloudOriginalFetchConfigurationRead(ctx context.Context, ds *types.DataSource) (context.Context, func(), error) {
+func (s *KnowledgeInputProvenanceStore) BeginNextcloudOriginalFetchConfigurationRead(
+	ctx context.Context,
+	ds *types.DataSource,
+) (context.Context, func(), error) {
 	noop := func() {}
-	if s == nil || s.db == nil || ds == nil || ds.TenantID == 0 || ds.KnowledgeBaseID == "" || ds.Type != types.ConnectorTypeNextcloud || ds.Status != types.DataSourceStatusActive {
+	if s == nil || s.db == nil || ds == nil || ds.TenantID == 0 || ds.KnowledgeBaseID == "" ||
+		ds.Type != types.ConnectorTypeNextcloud ||
+		ds.Status != types.DataSourceStatusActive {
 		return ctx, noop, ErrKnowledgeInputChanged
 	}
 	wanted, err := KnowledgeInputDigest(ds.Config)
@@ -199,7 +254,11 @@ func (s *KnowledgeInputProvenanceStore) BeginNextcloudOriginalFetchConfiguration
 	tenant, kb, id := ds.TenantID, ds.KnowledgeBaseID, ds.ID
 	checkInTx := func(current context.Context, tx *gorm.DB) error {
 		var actual types.DataSource
-		if err := tx.WithContext(current).Select("id", "tenant_id", "knowledge_base_id", "type", "status", "config").Where("id = ? AND tenant_id = ? AND knowledge_base_id = ? AND type = ? AND status = ?", id, tenant, kb, types.ConnectorTypeNextcloud, types.DataSourceStatusActive).Take(&actual).Error; err != nil {
+		if err := tx.WithContext(current).
+			Select("id", "tenant_id", "knowledge_base_id", "type", "status", "config").
+			Where("id = ? AND tenant_id = ? AND knowledge_base_id = ? AND type = ? AND status = ?", id, tenant, kb, types.ConnectorTypeNextcloud, types.DataSourceStatusActive).
+			Take(&actual).
+			Error; err != nil {
 			return err
 		}
 		digest, err := KnowledgeInputDigest(actual.Config)
@@ -218,14 +277,26 @@ func (s *KnowledgeInputProvenanceStore) BeginNextcloudOriginalFetchConfiguration
 	check := func(current context.Context) error {
 		return s.db.WithContext(current).Transaction(func(tx *gorm.DB) error { return checkInTx(current, tx) })
 	}
-	return s.beginScopedConfigurationPurpose(ctx, scopedOnboardingConfigurationPurpose{tenant: tenant, kb: kb, datasource: id, check: check, checkInTx: checkInTx})
+	return s.beginScopedConfigurationPurpose(
+		ctx,
+		scopedOnboardingConfigurationPurpose{
+			originalFetch: true,
+			tenant:        tenant,
+			kb:            kb,
+			datasource:    id,
+			check:         check,
+			checkInTx:     checkInTx,
+		},
+	)
 }
 
 // BeginNextcloudBuildConfigurationRead is a fresh worker boundary. It does
 // not accept an actor, a data-source selector or a client-provided purpose.
 // The real SQL lease store validates the durable row inside its own transaction
 // even if a caller supplied a different implementation in its context.
-func (s *KnowledgeInputProvenanceStore) BeginNextcloudBuildConfigurationRead(ctx context.Context) (context.Context, func(), error) {
+func (s *KnowledgeInputProvenanceStore) BeginNextcloudBuildConfigurationRead(
+	ctx context.Context,
+) (context.Context, func(), error) {
 	noop := func() {}
 	if ctx == nil {
 		return ctx, noop, types.ErrSourceLineageUnknown
@@ -240,7 +311,12 @@ func (s *KnowledgeInputProvenanceStore) BeginNextcloudBuildConfigurationRead(ctx
 	if err != nil {
 		return ctx, noop, err
 	}
-	pair, revision, err := scopedConfigurationPairInTx(s.db.WithContext(ctx), scope.TenantID, scope.KnowledgeBaseID, scope.DataSourceID)
+	pair, revision, err := scopedConfigurationPairInTx(
+		s.db.WithContext(ctx),
+		scope.TenantID,
+		scope.KnowledgeBaseID,
+		scope.DataSourceID,
+	)
 	if err != nil {
 		return ctx, noop, err
 	}
@@ -248,7 +324,12 @@ func (s *KnowledgeInputProvenanceStore) BeginNextcloudBuildConfigurationRead(ctx
 		if err := NewNextcloudContentLeaseStore(s.db).ValidateBuildLeaseInTx(current, tx, lease, scope); err != nil {
 			return err
 		}
-		currentPair, now, err := scopedConfigurationPairInTx(tx, scope.TenantID, scope.KnowledgeBaseID, scope.DataSourceID)
+		currentPair, now, err := scopedConfigurationPairInTx(
+			tx,
+			scope.TenantID,
+			scope.KnowledgeBaseID,
+			scope.DataSourceID,
+		)
 		if err != nil {
 			return err
 		}
@@ -273,10 +354,15 @@ func (s *KnowledgeInputProvenanceStore) BeginNextcloudBuildConfigurationRead(ctx
 		default:
 			return ErrKnowledgeInputChanged
 		}
-		if err := tx.Table("knowledges").Select(projection).Where("id = ? AND tenant_id = ? AND knowledge_base_id = ? AND deleted_at IS NULL", scope.KnowledgeID, scope.TenantID, scope.KnowledgeBaseID).Take(&k).Error; err != nil {
+		if err := tx.Table("knowledges").
+			Select(projection).
+			Where("id = ? AND tenant_id = ? AND knowledge_base_id = ? AND deleted_at IS NULL", scope.KnowledgeID, scope.TenantID, scope.KnowledgeBaseID).
+			Take(&k).
+			Error; err != nil {
 			return err
 		}
-		if k.Channel != types.ConnectorTypeNextcloud || k.DataSourceID != scope.DataSourceID || k.ExternalID != scope.ExternalID {
+		if k.Channel != types.ConnectorTypeNextcloud || k.DataSourceID != scope.DataSourceID ||
+			k.ExternalID != scope.ExternalID {
 			return ErrKnowledgeInputChanged
 		}
 		return nil
@@ -287,10 +373,25 @@ func (s *KnowledgeInputProvenanceStore) BeginNextcloudBuildConfigurationRead(ctx
 		}
 		return s.db.WithContext(current).Transaction(func(tx *gorm.DB) error { return checkInTx(current, tx) })
 	}
-	return s.beginScopedConfigurationPurpose(ctx, scopedOnboardingConfigurationPurpose{tenant: scope.TenantID, kb: scope.KnowledgeBaseID, datasource: scope.DataSourceID, check: check, checkInTx: checkInTx})
+	return s.beginScopedConfigurationPurpose(
+		ctx,
+		scopedOnboardingConfigurationPurpose{
+			tenant:     scope.TenantID,
+			kb:         scope.KnowledgeBaseID,
+			datasource: scope.DataSourceID,
+			check:      check,
+			checkInTx:  checkInTx,
+		},
+	)
 }
 
-func HoldScopedOnboardingConfigurationRead(ctx context.Context, tenant uint64, kb string, lineage *types.SourceLineage, read ScopedOnboardingConfigurationRead) error {
+func HoldScopedOnboardingConfigurationRead(
+	ctx context.Context,
+	tenant uint64,
+	kb string,
+	lineage *types.SourceLineage,
+	read ScopedOnboardingConfigurationRead,
+) error {
 	if _, err := scopedOnboardingConfigurationPurposeFromContext(ctx, tenant, kb); err != nil {
 		return err
 	}
@@ -314,7 +415,13 @@ func HoldScopedOnboardingConfigurationRead(ctx context.Context, tenant uint64, k
 // A configuration check must match the original configuration's full source
 // union. A build may also check its subset after the separately verified exact
 // unpublished source is removed. Other inherited inputs keep public guards.
-func CheckScopedOnboardingConfigurationSources(ctx context.Context, tenant uint64, kb string, lineage *types.SourceLineage, subset bool) (bool, error) {
+func CheckScopedOnboardingConfigurationSources(
+	ctx context.Context,
+	tenant uint64,
+	kb string,
+	lineage *types.SourceLineage,
+	subset bool,
+) (bool, error) {
 	if ctx == nil {
 		return false, types.ErrSourceLineageUnknown
 	}

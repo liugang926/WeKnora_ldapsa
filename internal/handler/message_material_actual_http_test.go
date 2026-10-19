@@ -23,9 +23,24 @@ import (
 )
 
 func TestMessageMaterialActualHTTPProducerReadSingleConnection(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "message.db")), &gorm.Config{DisableForeignKeyConstraintWhenMigrating: true})
+	db, err := gorm.Open(
+		sqlite.Open(filepath.Join(t.TempDir(), "message.db")),
+		&gorm.Config{DisableForeignKeyConstraintWhenMigrating: true},
+	)
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&types.User{}, &types.TenantMember{}, &types.TenantAPIKey{}, &types.KnowledgeBase{}, &types.Knowledge{}, &types.Chunk{}, &types.Session{}, &types.Message{}))
+	require.NoError(
+		t,
+		db.AutoMigrate(
+			&types.User{},
+			&types.TenantMember{},
+			&types.TenantAPIKey{},
+			&types.KnowledgeBase{},
+			&types.Knowledge{},
+			&types.Chunk{},
+			&types.Session{},
+			&types.Message{},
+		),
+	)
 	require.NoError(t, db.Exec("PRAGMA journal_mode=WAL").Error)
 	require.NoError(t, db.Exec("ALTER TABLE messages ADD COLUMN artifacts TEXT").Error)
 	for _, file := range []string{"000023_message_artifacts_table.up.sql", "000026_message_artifacts_deleted_at.up.sql", "000028_directory_group_access.up.sql", "000046_nextcloud_content_leases.up.sql", "000070_message_original_materials.up.sql"} {
@@ -39,26 +54,99 @@ func TestMessageMaterialActualHTTPProducerReadSingleConnection(t *testing.T) {
 	defer sqlDB.Close()
 	sqlDB.SetMaxOpenConns(1)
 	sqlDB.SetMaxIdleConns(1)
+	installHTTPCurrentNextcloudControls(t, db)
 	store := repository.NewKnowledgeInputProvenanceStore(db)
 	groups := service.NewGroupAccessService(repository.NewGroupAccessRepository(db))
 	repository.ConfigureKnowledgeInputActorGroupAccess(store, groups)
 	knowledge := repository.NewKnowledgeRepository(db)
 	kbrepo := repository.NewKnowledgeBaseRepository(db)
 	chunks := repository.NewChunkRepository(db)
-	repository.ConfigureKnowledgeDisplayInputWriters(store, nil, knowledge, func(tx *gorm.DB) *repository.KnowledgeInputProvenanceStore {
-		actual := repository.NewKnowledgeInputProvenanceStore(tx)
-		repository.ConfigureKnowledgeInputActorGroupAccess(actual, service.NewGroupAccessService(repository.NewGroupAccessRepository(tx)))
-		return actual
-	})
+	repository.ConfigureKnowledgeDisplayInputWriters(
+		store,
+		nil,
+		knowledge,
+		func(tx *gorm.DB) *repository.KnowledgeInputProvenanceStore {
+			actual := repository.NewKnowledgeInputProvenanceStore(tx)
+			repository.ConfigureKnowledgeInputActorGroupAccess(
+				actual,
+				service.NewGroupAccessService(repository.NewGroupAccessRepository(tx)),
+			)
+			return actual
+		},
+	)
 	leases := store.ContentLeaseStore()
-	kbs := service.NewKnowledgeBaseService(kbrepo, knowledge, chunks, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, leases)
-	sourceGuard := access.NewNextcloudSourceLineageGuard(knowledge.(access.NextcloudLineageSnapshotLookup), kbs, nil, nil, groups, nil, store)
-	messages := service.NewMessageService(repository.NewMessageRepository(db), repository.NewSessionRepository(db), nil, kbs, nil, nil, nil, nil, nil)
-	service.ConfigureMessageSourceLineage(messages, nil, &service.SessionForkService{}, &chatpipeline.EventManager{}, sourceGuard)
+	kbs := service.NewKnowledgeBaseService(
+		kbrepo,
+		knowledge,
+		chunks,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		leases,
+	)
+	sourceGuard := access.NewNextcloudSourceLineageGuard(
+		knowledge.(access.NextcloudLineageSnapshotLookup),
+		kbs,
+		nil,
+		nil,
+		groups,
+		nil,
+		store,
+	)
+	messages := service.NewMessageService(
+		repository.NewMessageRepository(db),
+		repository.NewSessionRepository(db),
+		nil,
+		kbs,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+	)
+	service.ConfigureMessageSourceLineage(
+		messages,
+		nil,
+		&service.SessionForkService{},
+		&chatpipeline.EventManager{},
+		sourceGuard,
+	)
 	service.ConfigureMessageMaterialProvenance(messages, store)
-	user := &types.User{ID: "actual-http-user", TenantID: 7, Username: "actual", Email: "actual@isolated.test", IsActive: true}
+	user := &types.User{
+		ID:       "actual-http-user",
+		TenantID: 7,
+		Username: "actual",
+		Email:    "actual@isolated.test",
+		IsActive: true,
+	}
 	require.NoError(t, db.Create(user).Error)
-	require.NoError(t, db.Create(&types.TenantMember{UserID: user.ID, TenantID: 7, Role: types.TenantRoleContributor, Status: types.TenantMemberStatusActive}).Error)
+	require.NoError(
+		t,
+		db.Create(
+			&types.TenantMember{
+				UserID:   user.ID,
+				TenantID: 7,
+				Role:     types.TenantRoleContributor,
+				Status:   types.TenantMemberStatusActive,
+			},
+		).Error,
+	)
 	kb := &types.KnowledgeBase{ID: "actual-http-kb", TenantID: 7, Name: "actual"}
 	require.NoError(t, db.Create(kb).Error)
 	ctx := types.WithExecutionTenant(context.Background(), 7)
@@ -69,9 +157,27 @@ func TestMessageMaterialActualHTTPProducerReadSingleConnection(t *testing.T) {
 	defer cancel()
 	session := &types.Session{TenantID: 7, UserID: user.ID}
 	require.NoError(t, db.Create(session).Error)
-	question, err := messages.CreateMessage(ctx, &types.Message{SessionID: session.ID, RequestID: "actual-http-turn", Role: "user", Content: "actual new human question", IsCompleted: true, ExecutionContext: types.MessageExecutionContext{KnowledgeBaseIDs: []string{kb.ID}}})
+	question, err := messages.CreateMessage(
+		ctx,
+		&types.Message{
+			SessionID:        session.ID,
+			RequestID:        "actual-http-turn",
+			Role:             "user",
+			Content:          "actual new human question",
+			IsCompleted:      true,
+			ExecutionContext: types.MessageExecutionContext{KnowledgeBaseIDs: []string{kb.ID}},
+		},
+	)
 	require.NoError(t, err)
-	answer, err := messages.CreateMessage(ctx, &types.Message{SessionID: session.ID, RequestID: question.RequestID, Role: "assistant", ExecutionContext: question.ExecutionContext})
+	answer, err := messages.CreateMessage(
+		ctx,
+		&types.Message{
+			SessionID:        session.ID,
+			RequestID:        question.RequestID,
+			Role:             "assistant",
+			ExecutionContext: question.ExecutionContext,
+		},
+	)
 	require.NoError(t, err)
 	answer.Content = "actual new generated saved answer"
 	answer.IsCompleted = true
@@ -100,7 +206,10 @@ func TestMessageMaterialActualHTTPProducerReadSingleConnection(t *testing.T) {
 	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
 	require.Contains(t, response.Body.String(), answer.Content)
 	var live int64
-	require.NoError(t, db.Table("nextcloud_content_leases").Where("kind='read' AND released_at_ms IS NULL").Count(&live).Error)
+	require.NoError(
+		t,
+		db.Table("nextcloud_content_leases").Where("kind='read' AND released_at_ms IS NULL").Count(&live).Error,
+	)
 	require.Zero(t, live)
 	require.NoError(t, db.Model(&types.Message{}).Where("id=?", answer.ID).Update("content", "foreign transient").Error)
 	require.NoError(t, db.Model(&types.Message{}).Where("id=?", answer.ID).Update("content", answer.Content).Error)
@@ -133,14 +242,48 @@ func TestMessageMaterialActualControlledSavedHTTPAndCurrentSourceRevoke(t *testi
 	require.Len(t, actual.Chunks, 1)
 	require.Len(t, actual.Proofs, 1)
 	require.Len(t, actual.Proofs[0].SourceLineage.Sources, 1)
-	messages := service.NewMessageService(repository.NewMessageRepository(f.db), repository.NewSessionRepository(f.db), nil, f.knowledge.kbService, f.knowledge.kgService, nil, nil, nil, nil)
-	service.ConfigureMessageSourceLineage(messages, nil, &service.SessionForkService{}, &chatpipeline.EventManager{}, f.guard)
+	messages := service.NewMessageService(
+		repository.NewMessageRepository(f.db),
+		repository.NewSessionRepository(f.db),
+		nil,
+		f.knowledge.kbService,
+		f.knowledge.kgService,
+		nil,
+		nil,
+		nil,
+		nil,
+	)
+	service.ConfigureMessageSourceLineage(
+		messages,
+		nil,
+		&service.SessionForkService{},
+		&chatpipeline.EventManager{},
+		f.guard,
+	)
 	service.ConfigureMessageMaterialProvenance(messages, f.store)
 	session := &types.Session{TenantID: 7, UserID: types.CallerFromContext(ctx).UserID}
 	require.NoError(t, f.db.Create(session).Error)
-	question, err := messages.CreateMessage(ctx, &types.Message{SessionID: session.ID, RequestID: "actual-controlled-message-turn", Role: "user", Content: "new human question", IsCompleted: true, ExecutionContext: types.MessageExecutionContext{KnowledgeBaseIDs: []string{"kb"}}})
+	question, err := messages.CreateMessage(
+		ctx,
+		&types.Message{
+			SessionID:        session.ID,
+			RequestID:        "actual-controlled-message-turn",
+			Role:             "user",
+			Content:          "new human question",
+			IsCompleted:      true,
+			ExecutionContext: types.MessageExecutionContext{KnowledgeBaseIDs: []string{"kb"}},
+		},
+	)
 	require.NoError(t, err)
-	answer, err := messages.CreateMessage(ctx, &types.Message{SessionID: session.ID, RequestID: question.RequestID, Role: "assistant", ExecutionContext: question.ExecutionContext})
+	answer, err := messages.CreateMessage(
+		ctx,
+		&types.Message{
+			SessionID:        session.ID,
+			RequestID:        question.RequestID,
+			Role:             "assistant",
+			ExecutionContext: question.ExecutionContext,
+		},
+	)
 	require.NoError(t, err)
 	// The deterministic producer consumes the actual captured original field.
 	answer.Content = "new saved derivative: " + actual.Chunks[0].Content
@@ -157,7 +300,9 @@ func TestMessageMaterialActualControlledSavedHTTPAndCurrentSourceRevoke(t *testi
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
 		c.Request = c.Request.WithContext(f.ctx)
-		c.Request = c.Request.WithContext(context.WithValue(c.Request.Context(), types.UserIDContextKey, types.CallerFromContext(f.ctx).UserID))
+		c.Request = c.Request.WithContext(
+			context.WithValue(c.Request.Context(), types.UserIDContextKey, types.CallerFromContext(f.ctx).UserID),
+		)
 		c.Next()
 		if len(c.Errors) > 0 && !c.Writer.Written() {
 			code := http.StatusInternalServerError
@@ -183,7 +328,13 @@ func TestMessageMaterialActualControlledSavedHTTPAndCurrentSourceRevoke(t *testi
 	f.groups.Hook = func(context.Context) {
 		observed = true
 		var count int64
-		require.NoError(t, f.db.Table("nextcloud_content_leases").Where("kind='read' AND released_at_ms IS NULL AND knowledge_id='source'").Count(&count).Error)
+		require.NoError(
+			t,
+			f.db.Table("nextcloud_content_leases").
+				Where("kind='read' AND released_at_ms IS NULL AND knowledge_id='source'").
+				Count(&count).
+				Error,
+		)
 		require.Positive(t, count)
 	}
 	f.calls.Store(2)
@@ -192,6 +343,9 @@ func TestMessageMaterialActualControlledSavedHTTPAndCurrentSourceRevoke(t *testi
 	require.NotContains(t, response.Body.String(), "new saved derivative")
 	require.True(t, observed)
 	var live int64
-	require.NoError(t, f.db.Table("nextcloud_content_leases").Where("kind='read' AND released_at_ms IS NULL").Count(&live).Error)
+	require.NoError(
+		t,
+		f.db.Table("nextcloud_content_leases").Where("kind='read' AND released_at_ms IS NULL").Count(&live).Error,
+	)
 	require.Zero(t, live)
 }

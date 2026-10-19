@@ -75,9 +75,21 @@ var queueDefinitions = []QueueDefinition{
 	{Name: QueueSummary, Pool: WorkerPoolEnrichment, Weight: 2, SharedWeight: 2, TaskTypes: []string{
 		TypeSummaryGeneration, TypeDataTableSummary, TypeKnowledgeAutoTag, TypeKnowledgeBaseProfile,
 	}},
-	{Name: QueueMultimodal, Pool: WorkerPoolEnrichment, Weight: 1, SharedWeight: 1, TaskTypes: []string{TypeImageMultimodal}},
+	{
+		Name:         QueueMultimodal,
+		Pool:         WorkerPoolEnrichment,
+		Weight:       1,
+		SharedWeight: 1,
+		TaskTypes:    []string{TypeImageMultimodal},
+	},
 	{Name: QueueGraph, Pool: WorkerPoolEnrichment, Weight: 1, SharedWeight: 1, TaskTypes: []string{TypeChunkExtract}},
-	{Name: QueueQuestion, Pool: WorkerPoolEnrichment, Weight: 1, SharedWeight: 1, TaskTypes: []string{TypeQuestionGeneration}},
+	{
+		Name:         QueueQuestion,
+		Pool:         WorkerPoolEnrichment,
+		Weight:       1,
+		SharedWeight: 1,
+		TaskTypes:    []string{TypeQuestionGeneration},
+	},
 	{Name: QueueMemory, Pool: WorkerPoolEnrichment, Weight: 1, SharedWeight: 1, TaskTypes: []string{TypeMemoryExtract}},
 	{Name: QueueSync, Pool: WorkerPoolMaintenance, Weight: 2, TaskTypes: []string{TypeDataSourceSync}},
 	{Name: QueueMaintenance, Pool: WorkerPoolMaintenance, Weight: 1, TaskTypes: []string{
@@ -176,9 +188,21 @@ func ResolveWorkerPoolConcurrency(read func(key, env string, fallback int) int) 
 		return value
 	}
 	allocation.Core = positive("asynq.core_concurrency", "WEKNORA_ASYNQ_CORE_CONCURRENCY", allocation.Core)
-	allocation.PostProcess = positive("asynq.postprocess_concurrency", "WEKNORA_ASYNQ_POSTPROCESS_CONCURRENCY", allocation.PostProcess)
-	allocation.Enrichment = positive("asynq.enrichment_concurrency", "WEKNORA_ASYNQ_ENRICHMENT_CONCURRENCY", allocation.Enrichment)
-	allocation.Maintenance = positive("asynq.maintenance_concurrency", "WEKNORA_ASYNQ_MAINTENANCE_CONCURRENCY", allocation.Maintenance)
+	allocation.PostProcess = positive(
+		"asynq.postprocess_concurrency",
+		"WEKNORA_ASYNQ_POSTPROCESS_CONCURRENCY",
+		allocation.PostProcess,
+	)
+	allocation.Enrichment = positive(
+		"asynq.enrichment_concurrency",
+		"WEKNORA_ASYNQ_ENRICHMENT_CONCURRENCY",
+		allocation.Enrichment,
+	)
+	allocation.Maintenance = positive(
+		"asynq.maintenance_concurrency",
+		"WEKNORA_ASYNQ_MAINTENANCE_CONCURRENCY",
+		allocation.Maintenance,
+	)
 	allocation.Shared = positive("asynq.shared_concurrency", "WEKNORA_ASYNQ_SHARED_CONCURRENCY", allocation.Shared)
 	allocation.Wiki = positive("asynq.wiki_concurrency", "WEKNORA_WIKI_ASYNQ_CONCURRENCY", allocation.Wiki)
 	return allocation

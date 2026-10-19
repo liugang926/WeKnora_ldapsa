@@ -9,7 +9,10 @@ import (
 
 // ConfigureKnowledgeCurrentReadActor binds the SQL lineage resolver to the
 // current account/key authority. A missing production capability is closed.
-func ConfigureKnowledgeCurrentReadActor(repo interfaces.KnowledgeRepository, current interfaces.CurrentReadActorRefresher) {
+func ConfigureKnowledgeCurrentReadActor(
+	repo interfaces.KnowledgeRepository,
+	current interfaces.CurrentReadActorRefresher,
+) {
 	if r, ok := repo.(*knowledgeRepository); ok {
 		r.currentReadActor = current
 	}
@@ -57,7 +60,14 @@ func (s *KnowledgeInputProvenanceStore) RefreshCurrentReadActor(ctx context.Cont
 		if !bound {
 			// Internal read producers have no HTTP route policy. They must
 			// still hold a real read/conversation capability, never ingest.
-			requirement = types.APIKeyOperationRequirement{RequireFullAccess: true, Capabilities: []types.APIKeyCapability{types.APIKeyCapabilityRetrieve, types.APIKeyCapabilityChat, types.APIKeyCapabilityMessageHistory}}
+			requirement = types.APIKeyOperationRequirement{
+				RequireFullAccess: true,
+				Capabilities: []types.APIKeyCapability{
+					types.APIKeyCapabilityRetrieve,
+					types.APIKeyCapabilityChat,
+					types.APIKeyCapabilityMessageHistory,
+				},
+			}
 		}
 		if !requirement.Allows(scope) {
 			return ctx, ErrKnowledgeInputChanged

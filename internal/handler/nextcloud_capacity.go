@@ -2,12 +2,13 @@ package handler
 
 import (
 	"context"
+	"net/http"
+
 	"github.com/Tencent/WeKnora/internal/application/repository"
 	"github.com/Tencent/WeKnora/internal/application/service"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	"github.com/gin-gonic/gin"
-	"net/http"
 )
 
 type NextcloudCapacityHandler struct {
@@ -17,9 +18,15 @@ type NextcloudCapacityHandler struct {
 	admission *service.NextcloudCapacityAdmission
 }
 
-func NewNextcloudCapacityHandler(s *repository.NextcloudCapacityStore, a *repository.KnowledgeInputProvenanceStore, k interfaces.KnowledgeBaseService, admission *service.NextcloudCapacityAdmission) *NextcloudCapacityHandler {
+func NewNextcloudCapacityHandler(
+	s *repository.NextcloudCapacityStore,
+	a *repository.KnowledgeInputProvenanceStore,
+	k interfaces.KnowledgeBaseService,
+	admission *service.NextcloudCapacityAdmission,
+) *NextcloudCapacityHandler {
 	return &NextcloudCapacityHandler{s, a, k, admission}
 }
+
 func (h *NextcloudCapacityHandler) authorize(c *gin.Context) (context.Context, *types.KnowledgeBase, bool) {
 	c.Header("Cache-Control", "no-store")
 	ctx, err := h.actor.RefreshCurrentReadActor(c.Request.Context())
@@ -40,6 +47,7 @@ func (h *NextcloudCapacityHandler) authorize(c *gin.Context) (context.Context, *
 	}
 	return ctx, kb, true
 }
+
 func (h *NextcloudCapacityHandler) Get(c *gin.Context) {
 	ctx, kb, ok := h.authorize(c)
 	if !ok {
@@ -55,6 +63,7 @@ func (h *NextcloudCapacityHandler) Get(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, gin.H{"capacity": status})
 }
+
 func (h *NextcloudCapacityHandler) Set(c *gin.Context) {
 	ctx, kb, ok := h.authorize(c)
 	if !ok {
@@ -65,7 +74,10 @@ func (h *NextcloudCapacityHandler) Set(c *gin.Context) {
 		Warning int   `json:"warning_percent"`
 		Pause   int   `json:"pause_percent"`
 	}
-	if err := c.ShouldBindJSON(&input); err != nil || input.Quota < 0 || input.Warning <= 0 || input.Warning >= input.Pause || input.Pause > 100 {
+	if err := c.ShouldBindJSON(
+		&input,
+	); err != nil || input.Quota < 0 || input.Warning <= 0 || input.Warning >= input.Pause ||
+		input.Pause > 100 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_capacity_policy"})
 		return
 	}
@@ -73,7 +85,16 @@ func (h *NextcloudCapacityHandler) Set(c *gin.Context) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "current_admin_session_required"})
 		return
 	}
-	err := h.store.SetPolicy(ctx, repository.NextcloudCapacityPolicy{TenantID: kb.TenantID, KnowledgeBaseID: kb.ID, RetentionQuotaBytes: input.Quota, WarningPercent: input.Warning, PausePercent: input.Pause})
+	err := h.store.SetPolicy(
+		ctx,
+		repository.NextcloudCapacityPolicy{
+			TenantID:            kb.TenantID,
+			KnowledgeBaseID:     kb.ID,
+			RetentionQuotaBytes: input.Quota,
+			WarningPercent:      input.Warning,
+			PausePercent:        input.Pause,
+		},
+	)
 	if err != nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "capacity_policy_unavailable"})
 		return

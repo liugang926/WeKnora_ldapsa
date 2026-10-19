@@ -39,8 +39,10 @@ func nextcloudReadTestKnowledge(t *testing.T) *types.Knowledge {
 		"nextcloud_file_id": "41",
 	})
 	require.NoError(t, err)
-	return &types.Knowledge{ID: "doc-1", TenantID: 7, KnowledgeBaseID: "kb-1",
-		Channel: types.ConnectorTypeNextcloud, Metadata: types.JSON(metadata)}
+	return &types.Knowledge{
+		ID: "doc-1", TenantID: 7, KnowledgeBaseID: "kb-1",
+		Channel: types.ConnectorTypeNextcloud, Metadata: types.JSON(metadata),
+	}
 }
 
 func TestNextcloudKBReadRetirementBetweenSearchAndHydration(t *testing.T) {
@@ -125,8 +127,10 @@ func TestNextcloudKBReadCancelDuringFailedRenew(t *testing.T) {
 	t.Run("external cancellation wins", func(t *testing.T) {
 		store, _ := nextcloudReadTestStore(t)
 		base, cancel := context.WithCancel(context.Background())
-		fault := &nextcloudReadFailedRenewStore{NextcloudReadLeaseStore: store,
-			beforeReturn: cancel}
+		fault := &nextcloudReadFailedRenewStore{
+			NextcloudReadLeaseStore: store,
+			beforeReturn:            cancel,
+		}
 		guard, err := BeginNextcloudKBRead(base, fault,
 			[]NextcloudKBReadScope{{TenantID: 7, KBID: "kb-1"}})
 		require.NoError(t, err)
@@ -177,7 +181,10 @@ func TestNextcloudKBReadContextForKeepsCurrentAuthorityAndCancellation(t *testin
 			require.NoError(t, guard.PinKnowledge(knowledge))
 			type currentSelectionKey struct{}
 			turn := types.NewRAGSourceLineage(func(context.Context, *types.SourceLineage) error { return nil })
-			current := types.WithRAGSourceLineage(context.WithValue(context.Background(), currentSelectionKey{}, "later selector"), turn)
+			current := types.WithRAGSourceLineage(
+				context.WithValue(context.Background(), currentSelectionKey{}, "later selector"),
+				turn,
+			)
 			current = types.WithCaller(current, types.Caller{TenantID: 7, UserID: "current-user"})
 			current, cancel := context.WithCancel(current)
 			defer cancel()

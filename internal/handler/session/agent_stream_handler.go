@@ -735,7 +735,8 @@ func (h *AgentStreamHandler) handleSessionTitle(ctx context.Context, evt event.E
 			"title":      data.Title,
 		},
 	}); err != nil {
-		logger.GetLogger(h.ctx).Warn("Append session title event to stream failed (stream may have ended)", "error", err)
+		logger.GetLogger(h.ctx).
+			Warn("Append session title event to stream failed (stream may have ended)", "error", err)
 	}
 
 	return nil

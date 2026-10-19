@@ -43,7 +43,11 @@ func (r *knowledgeBaseRepository) GetKnowledgeBaseByID(ctx context.Context, id s
 }
 
 // GetKnowledgeBaseByIDAndTenant gets a knowledge base by id only if it belongs to the given tenant (enforces tenant isolation)
-func (r *knowledgeBaseRepository) GetKnowledgeBaseByIDAndTenant(ctx context.Context, id string, tenantID uint64) (*types.KnowledgeBase, error) {
+func (r *knowledgeBaseRepository) GetKnowledgeBaseByIDAndTenant(
+	ctx context.Context,
+	id string,
+	tenantID uint64,
+) (*types.KnowledgeBase, error) {
 	if current, handled, err := scopedWorkerConfigurationProjection(ctx, id, tenantID); handled {
 		return current, err
 	}
@@ -58,7 +62,10 @@ func (r *knowledgeBaseRepository) GetKnowledgeBaseByIDAndTenant(ctx context.Cont
 }
 
 // GetKnowledgeBaseByIDs gets knowledge bases by multiple ids
-func (r *knowledgeBaseRepository) GetKnowledgeBaseByIDs(ctx context.Context, ids []string) ([]*types.KnowledgeBase, error) {
+func (r *knowledgeBaseRepository) GetKnowledgeBaseByIDs(
+	ctx context.Context,
+	ids []string,
+) ([]*types.KnowledgeBase, error) {
 	if ctx != nil && ctx.Value(scopedOnboardingConfigurationReadKey{}) != nil {
 		current := make([]*types.KnowledgeBase, 0, len(ids))
 		for _, id := range ids {

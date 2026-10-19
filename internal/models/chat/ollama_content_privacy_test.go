@@ -75,7 +75,12 @@ func TestSourceContentOllamaActualHTTPStreamErrorKeepsCallerAndSuppressesLog(t *
 			}
 			require.Equal(t, types.ResponseTypeError, last.ResponseType)
 			require.True(t, last.Done)
-			require.Contains(t, last.Content, label+"_PROVIDER_ERROR", "the original native provider error still reaches the caller")
+			require.Contains(
+				t,
+				last.Content,
+				label+"_PROVIDER_ERROR",
+				"the original native provider error still reaches the caller",
+			)
 			mu.Lock()
 			body := append([]byte(nil), requestBody...)
 			mu.Unlock()
@@ -86,9 +91,13 @@ func TestSourceContentOllamaActualHTTPStreamErrorKeepsCallerAndSuppressesLog(t *
 			require.Equal(t, "controlled", request["model"])
 			if mode != "ordinary" {
 				require.NotContains(t, logs.String(), "PRIVATE_SOURCE")
-				require.Contains(t, logs.String(), "content logging suppressed")
+				require.Empty(t, logs.String(), "protected diagnostics never reach the caller's content logger")
 			} else {
-				require.True(t, strings.Contains(logs.String(), "PUBLIC_ORDINARY_PROVIDER_ERROR"), "ordinary error diagnostics remain available")
+				require.True(
+					t,
+					strings.Contains(logs.String(), "PUBLIC_ORDINARY_PROVIDER_ERROR"),
+					"ordinary error diagnostics remain available",
+				)
 			}
 		})
 	}

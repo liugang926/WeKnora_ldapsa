@@ -2,8 +2,9 @@ package repository
 
 import (
 	"fmt"
-	"gorm.io/gorm"
 	"strings"
+
+	"gorm.io/gorm"
 )
 
 func bodyQuoted(id string) string        { return `"` + strings.ReplaceAll(id, `"`, `""`) + `"` }
@@ -21,6 +22,7 @@ func originalBodyColumnIsJSON(tx *gorm.DB, table, col string) (bool, error) {
 	}
 	return false, nil
 }
+
 func originalBodyRewrite(tx *gorm.DB, d originalBodyFieldDescriptor, key, col, id, old, new string) error {
 	internal := bodyInternal(tx)
 	if strings.Contains(col, ".") {
@@ -46,10 +48,24 @@ func originalBodyRewrite(tx *gorm.DB, d originalBodyFieldDescriptor, key, col, i
 		}
 		old, new, col = stored, updated, bodyFieldColumn(col)
 	}
-	if e := internal.Exec("INSERT INTO original_body_rewrite_authorities(source_table,row_key,column_name,body_id,old_value,new_value) VALUES(?,?,?,?,?,?)", d.Table, key, col, id, old, new).Error; e != nil {
+	if e := internal.Exec(
+		"INSERT INTO original_body_rewrite_authorities(source_table,row_key,column_name,body_id,old_value,new_value) VALUES(?,?,?,?,?,?)",
+		d.Table,
+		key,
+		col,
+		id,
+		old,
+		new,
+	).Error; e != nil {
 		return e
 	}
-	query := "UPDATE " + bodyQuoted(d.Table) + " SET " + bodyQuoted(col) + "=? WHERE CAST(" + bodyQuoted(d.Key) + " AS TEXT)=?"
+	query := "UPDATE " + bodyQuoted(
+		d.Table,
+	) + " SET " + bodyQuoted(
+		col,
+	) + "=? WHERE CAST(" + bodyQuoted(
+		d.Key,
+	) + " AS TEXT)=?"
 	result := internal.Exec(query, new, key)
 	if result.Error != nil {
 		return result.Error
@@ -57,7 +73,12 @@ func originalBodyRewrite(tx *gorm.DB, d originalBodyFieldDescriptor, key, col, i
 	if result.RowsAffected != 1 {
 		return ErrOriginalBodyUnavailable
 	}
-	return internal.Exec("DELETE FROM original_body_rewrite_authorities WHERE source_table=? AND row_key=? AND column_name=?", d.Table, key, col).Error
+	return internal.Exec(
+		"DELETE FROM original_body_rewrite_authorities WHERE source_table=? AND row_key=? AND column_name=?",
+		d.Table,
+		key,
+		col,
+	).Error
 }
 
 // Only a same-transaction, exact old bytes -> exact reference/empty-body move
@@ -97,7 +118,17 @@ func InstallOriginalBodyRetentionTriggers(db *gorm.DB) error {
 					eq = append(eq, "NEW."+bodyQuoted(other.Name())+" IS OLD."+bodyQuoted(other.Name()))
 				}
 			}
-			a := "EXISTS (SELECT 1 FROM original_body_rewrite_authorities a JOIN original_body_payloads p ON p.id=a.body_id WHERE a.source_table=" + bodySQLLiteral(d.Table) + " AND a.row_key=CAST(OLD." + bodyQuoted(d.Key) + " AS TEXT) AND a.column_name=" + bodySQLLiteral(col) + " AND a.old_value=OLD." + bodyQuoted(col) + " AND a.new_value=NEW." + bodyQuoted(col) + ")"
+			a := "EXISTS (SELECT 1 FROM original_body_rewrite_authorities a JOIN original_body_payloads p ON p.id=a.body_id WHERE a.source_table=" + bodySQLLiteral(
+				d.Table,
+			) + " AND a.row_key=CAST(OLD." + bodyQuoted(
+				d.Key,
+			) + " AS TEXT) AND a.column_name=" + bodySQLLiteral(
+				col,
+			) + " AND a.old_value=OLD." + bodyQuoted(
+				col,
+			) + " AND a.new_value=NEW." + bodyQuoted(
+				col,
+			) + ")"
 			permitted = append(permitted, "("+strings.Join(eq, " AND ")+" AND "+a+")")
 		}
 		if len(permitted) == 0 {
@@ -105,12 +136,17 @@ func InstallOriginalBodyRetentionTriggers(db *gorm.DB) error {
 		}
 		permit := strings.Join(permitted, " OR ")
 		var triggers []struct{ Name, SQL string }
-		if e := bodyInternal(db).Raw("SELECT name,sql FROM sqlite_master WHERE type='trigger' AND tbl_name=?", d.Table).Scan(&triggers).Error; e != nil {
+		if e := bodyInternal(
+			db,
+		).Raw("SELECT name,sql FROM sqlite_master WHERE type='trigger' AND tbl_name=?", d.Table).
+			Scan(&triggers).
+			Error; e != nil {
 			return e
 		}
 		for _, trigger := range triggers {
 			upper := strings.ToUpper(trigger.SQL)
-			if strings.Contains(upper, "ORIGINAL_BODY_REWRITE_AUTHORITIES") || !strings.Contains(upper, "UPDATE ON") && !strings.Contains(upper, "UPDATE OF ") {
+			if strings.Contains(upper, "ORIGINAL_BODY_REWRITE_AUTHORITIES") ||
+				!strings.Contains(upper, "UPDATE ON") && !strings.Contains(upper, "UPDATE OF ") {
 				continue
 			}
 			begin := strings.Index(upper, " BEGIN")
@@ -144,6 +180,7 @@ func InstallOriginalBodyRetentionTriggers(db *gorm.DB) error {
 	}
 	return nil
 }
+
 func installPostgresBodyRewrite(db *gorm.DB) error {
 	// Replacing one trigger function preserves every existing trigger binding.
 	// A wrapper calls the original function for all non-protocol writes; exact
@@ -167,7 +204,24 @@ func installPostgresBodyRewrite(db *gorm.DB) error {
 				continue
 			}
 			// to_jsonb(row)->> handles both text and canonical json/jsonb values.
-			conditions = append(conditions, "((to_jsonb(NEW)-"+bodySQLLiteral(col)+")=(to_jsonb(OLD)-"+bodySQLLiteral(col)+") AND EXISTS(SELECT 1 FROM original_body_rewrite_authorities a JOIN original_body_payloads p ON p.id=a.body_id WHERE a.source_table="+bodySQLLiteral(d.Table)+" AND a.row_key=to_jsonb(OLD)->>"+bodySQLLiteral(d.Key)+" AND a.column_name="+bodySQLLiteral(col)+" AND a.old_value=COALESCE(to_jsonb(OLD)->>"+bodySQLLiteral(col)+",'null') AND a.new_value=COALESCE(to_jsonb(NEW)->>"+bodySQLLiteral(col)+",'null')))")
+			conditions = append(
+				conditions,
+				"((to_jsonb(NEW)-"+bodySQLLiteral(
+					col,
+				)+")=(to_jsonb(OLD)-"+bodySQLLiteral(
+					col,
+				)+") AND EXISTS(SELECT 1 FROM original_body_rewrite_authorities a JOIN original_body_payloads p ON p.id=a.body_id WHERE a.source_table="+bodySQLLiteral(
+					d.Table,
+				)+" AND a.row_key=to_jsonb(OLD)->>"+bodySQLLiteral(
+					d.Key,
+				)+" AND a.column_name="+bodySQLLiteral(
+					col,
+				)+" AND a.old_value=COALESCE(to_jsonb(OLD)->>"+bodySQLLiteral(
+					col,
+				)+",'null') AND a.new_value=COALESCE(to_jsonb(NEW)->>"+bodySQLLiteral(
+					col,
+				)+",'null')))",
+			)
 		}
 		if len(conditions) == 0 {
 			continue
@@ -178,7 +232,8 @@ func installPostgresBodyRewrite(db *gorm.DB) error {
 			return e
 		}
 		for _, trigger := range triggers {
-			if strings.Contains(trigger.Function, "original_body_rewrite_authorities") || !strings.Contains(trigger.Definition, "UPDATE") {
+			if strings.Contains(trigger.Function, "original_body_rewrite_authorities") ||
+				!strings.Contains(trigger.Definition, "UPDATE") {
 				continue
 			}
 			// Clone the exact original trigger body to a per-trigger wrapper; inserting
@@ -197,9 +252,14 @@ func installPostgresBodyRewrite(db *gorm.DB) error {
 			if localBegin < 0 {
 				return fmt.Errorf("unsupported original body trigger language")
 			}
-			guarded := original[:localBegin] + "BEGIN IF TG_OP='UPDATE' AND (" + strings.Join(conditions, " OR ") + ") THEN RETURN NEW; END IF;" + original[localBegin+len("BEGIN"):]
+			guarded := original[:localBegin] + "BEGIN IF TG_OP='UPDATE' AND (" + strings.Join(
+				conditions,
+				" OR ",
+			) + ") THEN RETURN NEW; END IF;" + original[localBegin+len("BEGIN"):]
 			name := "original_body_" + bodySHA([]byte(d.Table + "/" + trigger.Name))[:20]
-			sql := "CREATE OR REPLACE FUNCTION " + bodyQuoted(name) + "() RETURNS trigger LANGUAGE plpgsql AS $body$ " + guarded + " $body$"
+			sql := "CREATE OR REPLACE FUNCTION " + bodyQuoted(
+				name,
+			) + "() RETURNS trigger LANGUAGE plpgsql AS $body$ " + guarded + " $body$"
 			if e := bodyInternal(db).Exec(sql).Error; e != nil {
 				return e
 			}
@@ -210,7 +270,9 @@ func installPostgresBodyRewrite(db *gorm.DB) error {
 			}
 			definition = definition[:exec] + " EXECUTE FUNCTION " + bodyQuoted(name) + "()"
 			if e := bodyInternal(db).Transaction(func(tx *gorm.DB) error {
-				if e := tx.Exec("DROP TRIGGER " + bodyQuoted(trigger.Name) + " ON " + bodyQuoted(d.Table)).Error; e != nil {
+				if e := tx.Exec(
+					"DROP TRIGGER " + bodyQuoted(trigger.Name) + " ON " + bodyQuoted(d.Table),
+				).Error; e != nil {
 					return e
 				}
 				return tx.Exec(definition).Error

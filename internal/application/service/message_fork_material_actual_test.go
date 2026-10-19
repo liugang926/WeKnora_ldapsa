@@ -24,7 +24,12 @@ type actualForkMaterialSessions struct {
 	writes      int
 }
 
-func (s *actualForkMaterialSessions) CreateForkedFromMaterial(ctx context.Context, session *types.Session, copies []*types.Message, snapshot *types.MessageMaterialSnapshot) error {
+func (s *actualForkMaterialSessions) CreateForkedFromMaterial(
+	ctx context.Context,
+	session *types.Session,
+	copies []*types.Message,
+	snapshot *types.MessageMaterialSnapshot,
+) error {
 	s.writes++
 	assertForkMaterialReadLeases(s.t, s.db, true)
 	require.NotEmpty(s.t, snapshot.Proofs)
@@ -54,26 +59,54 @@ func (s *actualForkMaterialSandbox) HasActiveTurn(ctx context.Context, sessionID
 func assertForkMaterialReadLeases(t *testing.T, db *gorm.DB, held bool) {
 	t.Helper()
 	var live int64
-	require.NoError(t, db.Table("nextcloud_content_leases").Where("kind='read' AND released_at_ms IS NULL").Count(&live).Error)
+	require.NoError(
+		t,
+		db.Table("nextcloud_content_leases").Where("kind='read' AND released_at_ms IS NULL").Count(&live).Error,
+	)
 	if held {
-		require.Positive(t, live, "actual fork material leases must cover system control checks and final atomic clone write")
+		require.Positive(
+			t,
+			live,
+			"actual fork material leases must cover system control checks and final atomic clone write",
+		)
 	} else {
 		require.Zero(t, live)
 	}
 }
 
-func actualForkMaterialFixture(t *testing.T) (*SessionForkService, *messageService, *repository.KnowledgeInputProvenanceStore, *gorm.DB, context.Context, *types.Session, *types.Message, *types.Message, *actualForkMaterialSessions, *actualForkMaterialSandbox) {
+func actualForkMaterialFixture(
+	t *testing.T,
+) (*SessionForkService, *messageService, *repository.KnowledgeInputProvenanceStore, *gorm.DB, context.Context, *types.Session, *types.Message, *types.Message, *actualForkMaterialSessions, *actualForkMaterialSandbox) {
 	t.Helper()
 	messages, _, store, db, ctx, session := messageMaterialActualFixture(t)
 	require.NoError(t, db.AutoMigrate(&types.ForkSnapshotLease{}))
 	base := time.Now().UTC().Add(-time.Minute)
-	user, err := messages.CreateMessage(ctx, &types.Message{SessionID: session.ID, RequestID: "actual-fork-request", Role: "user", Content: "actual original fork question", IsCompleted: true, CreatedAt: base, AgentTenantID: 7,
+	user, err := messages.CreateMessage(ctx, &types.Message{
+		SessionID:        session.ID,
+		RequestID:        "actual-fork-request",
+		Role:             "user",
+		Content:          "actual original fork question",
+		IsCompleted:      true,
+		CreatedAt:        base,
+		AgentTenantID:    7,
 		ExecutionContext: types.MessageExecutionContext{KnowledgeBaseIDs: []string{"kb"}},
 		Images:           types.MessageImages{{URL: "https://owned.example.test/human-image.png"}},
-		Attachments:      types.MessageAttachments{{ID: "actual-original-upload", FileName: "actual.txt", Content: "actual authored attachment body"}},
+		Attachments: types.MessageAttachments{
+			{ID: "actual-original-upload", FileName: "actual.txt", Content: "actual authored attachment body"},
+		},
 	})
 	require.NoError(t, err)
-	assistant, err := messages.CreateMessage(ctx, &types.Message{SessionID: session.ID, RequestID: user.RequestID, Role: "assistant", CreatedAt: base.Add(time.Second), AgentTenantID: 7, ExecutionContext: user.ExecutionContext})
+	assistant, err := messages.CreateMessage(
+		ctx,
+		&types.Message{
+			SessionID:        session.ID,
+			RequestID:        user.RequestID,
+			Role:             "assistant",
+			CreatedAt:        base.Add(time.Second),
+			AgentTenantID:    7,
+			ExecutionContext: user.ExecutionContext,
+		},
+	)
 	require.NoError(t, err)
 	assistant.Content = "actual original fork answer"
 	assistant.IsCompleted = true
@@ -84,7 +117,15 @@ func actualForkMaterialFixture(t *testing.T) (*SessionForkService, *messageServi
 	writer, ok := repo.(forkMaterialSessionStore)
 	require.True(t, ok, "production repository must supply the atomic original-material fork writer")
 	sessions := &actualForkMaterialSessions{SessionRepository: repo, writer: writer, t: t, db: db}
-	port := &actualForkMaterialSandbox{fakeForkSandboxPort: &fakeForkSandboxPort{boundID: "actual-fork-sandbox", bound: true, snapshotID: "actual-original-fork-snapshot"}, t: t, db: db}
+	port := &actualForkMaterialSandbox{
+		fakeForkSandboxPort: &fakeForkSandboxPort{
+			boundID:    "actual-fork-sandbox",
+			bound:      true,
+			snapshotID: "actual-original-fork-snapshot",
+		},
+		t:  t,
+		db: db,
+	}
 	fork := NewSessionForkService(sessions, messages.messageRepo, port)
 	fork.lineageVerifier = messages
 	return fork, messages, store, db, ctx, session, user, assistant, sessions, port
@@ -99,7 +140,15 @@ func TestMessageForkActualOriginalCloneAndSavedReadSingleConnection(t *testing.T
 	require.Equal(t, 1, sessions.writes)
 	require.Zero(t, port.snapshotCalls)
 	assertForkMaterialReadLeases(t, db, false)
-	guard, err := messages.beginMessageMaterialRead(ctx, types.MessageMaterialReadRequest{TenantID: 7, SessionID: result.SessionID, AllSession: true, IncludeOriginalUserFields: true})
+	guard, err := messages.beginMessageMaterialRead(
+		ctx,
+		types.MessageMaterialReadRequest{
+			TenantID:                  7,
+			SessionID:                 result.SessionID,
+			AllSession:                true,
+			IncludeOriginalUserFields: true,
+		},
+	)
 	require.NoError(t, err, "a legitimate new fork must remain readable through actual saved-original receipts")
 	require.Len(t, guard.snapshot.Messages, 2)
 	for index, original := range []*types.Message{user, assistant} {
@@ -123,7 +172,10 @@ func TestMessageForkActualOriginalCloneAndSavedReadSingleConnection(t *testing.T
 	require.NoError(t, guard.Recheck())
 	guard.Close()
 	var copiedArtifacts int64
-	require.NoError(t, db.Model(&types.MessageArtifactRecord{}).Where("session_id=?", result.SessionID).Count(&copiedArtifacts).Error)
+	require.NoError(
+		t,
+		db.Model(&types.MessageArtifactRecord{}).Where("session_id=?", result.SessionID).Count(&copiedArtifacts).Error,
+	)
 	require.Zero(t, copiedArtifacts)
 	assertForkMaterialReadLeases(t, db, false)
 }
@@ -149,26 +201,64 @@ func TestMessageForkActualLegacyAndUnknownGeneratedFieldRejectBeforeSnapshot(t *
 			switch mode {
 			case "legacy", "legacy_unknown_artifact":
 				lineage, _ := types.NewCompleteSourceLineage()
-				legacy := &types.Message{SessionID: source.ID, RequestID: "legacy-fork", Role: "assistant", Content: "legacy currentbody cannot be newly signed", SourceLineage: lineage, IsCompleted: true, CreatedAt: assistant.CreatedAt.Add(time.Second)}
+				legacy := &types.Message{
+					SessionID:     source.ID,
+					RequestID:     "legacy-fork",
+					Role:          "assistant",
+					Content:       "legacy currentbody cannot be newly signed",
+					SourceLineage: lineage,
+					IsCompleted:   true,
+					CreatedAt:     assistant.CreatedAt.Add(time.Second),
+				}
 				require.NoError(t, db.Create(legacy).Error)
 				point = legacy.ID
 				if mode == "legacy_unknown_artifact" {
-					records := types.NewMessageArtifactRecords(source.ID, legacy.ID, types.MessageArtifacts{{URL: "local://7/unknown-artifact", FileName: "unknown-cached-artifact.txt", SourcePath: "/workspace/unknown.txt"}})
+					records := types.NewMessageArtifactRecords(
+						source.ID,
+						legacy.ID,
+						types.MessageArtifacts{
+							{
+								URL:        "local://7/unknown-artifact",
+								FileName:   "unknown-cached-artifact.txt",
+								SourcePath: "/workspace/unknown.txt",
+							},
+						},
+					)
 					require.NoError(t, db.Create(&records).Error)
 				}
 			case "unknown_user_rendering":
-				require.NoError(t, db.Model(&types.Message{}).Where("id=?", user.ID).Update("rendered_content", "unknown generated current rendering").Error)
+				require.NoError(
+					t,
+					db.Model(&types.Message{}).
+						Where("id=?", user.ID).
+						Update("rendered_content", "unknown generated current rendering").
+						Error,
+				)
 			case "unknown_assistant_checkpoint":
-				checkpoint, err := json.Marshal(&types.SandboxCheckpoint{SandboxID: "unknown-current-sandbox", CommitSHA: "1234567890abcdef1234567890abcdef12345678"})
+				checkpoint, err := json.Marshal(
+					&types.SandboxCheckpoint{
+						SandboxID: "unknown-current-sandbox",
+						CommitSHA: "1234567890abcdef1234567890abcdef12345678",
+					},
+				)
 				require.NoError(t, err)
-				require.NoError(t, db.Model(&types.Message{}).Where("id=?", assistant.ID).Update("sandbox_checkpoint", string(checkpoint)).Error)
+				require.NoError(
+					t,
+					db.Model(&types.Message{}).
+						Where("id=?", assistant.ID).
+						Update("sandbox_checkpoint", string(checkpoint)).
+						Error,
+				)
 			}
 			_, err := fork.Fork(ctx, 7, source.UserID, source.ID, point, "")
 			require.Error(t, err)
 			require.Zero(t, sessions.writes)
 			require.Zero(t, port.snapshotCalls)
 			var children int64
-			require.NoError(t, db.Model(&types.Session{}).Where("parent_session_id=?", source.ID).Count(&children).Error)
+			require.NoError(
+				t,
+				db.Model(&types.Session{}).Where("parent_session_id=?", source.ID).Count(&children).Error,
+			)
 			require.Zero(t, children)
 			assertForkMaterialReadLeases(t, db, false)
 		})
@@ -186,13 +276,37 @@ func TestMessageForkActualSystemControlAndAtomicWriterRecheckOriginalAndCurrentA
 					changed = true
 					switch change {
 					case "body_aba":
-						require.NoError(t, db.Model(&types.Message{}).Where("id=?", assistant.ID).Update("content", "foreign transient fork body").Error)
-						require.NoError(t, db.Model(&types.Message{}).Where("id=?", assistant.ID).Update("content", assistant.Content).Error)
+						require.NoError(
+							t,
+							db.Model(&types.Message{}).
+								Where("id=?", assistant.ID).
+								Update("content", "foreign transient fork body").
+								Error,
+						)
+						require.NoError(
+							t,
+							db.Model(&types.Message{}).
+								Where("id=?", assistant.ID).
+								Update("content", assistant.Content).
+								Error,
+						)
 					case "owner_aba":
-						require.NoError(t, db.Model(&types.Session{}).Where("id=?", source.ID).Update("user_id", "foreign transient fork owner").Error)
-						require.NoError(t, db.Model(&types.Session{}).Where("id=?", source.ID).Update("user_id", source.UserID).Error)
+						require.NoError(
+							t,
+							db.Model(&types.Session{}).
+								Where("id=?", source.ID).
+								Update("user_id", "foreign transient fork owner").
+								Error,
+						)
+						require.NoError(
+							t,
+							db.Model(&types.Session{}).Where("id=?", source.ID).Update("user_id", source.UserID).Error,
+						)
 					case "actor_revoke":
-						require.NoError(t, db.Model(&types.User{}).Where("id=?", source.UserID).Update("is_active", false).Error)
+						require.NoError(
+							t,
+							db.Model(&types.User{}).Where("id=?", source.UserID).Update("is_active", false).Error,
+						)
 					}
 				}
 				if stage == "session_control" {
@@ -206,7 +320,10 @@ func TestMessageForkActualSystemControlAndAtomicWriterRecheckOriginalAndCurrentA
 				require.Empty(t, port.deleted)
 				require.Zero(t, port.snapshotCalls)
 				var children int64
-				require.NoError(t, db.Model(&types.Session{}).Where("parent_session_id=?", source.ID).Count(&children).Error)
+				require.NoError(
+					t,
+					db.Model(&types.Session{}).Where("parent_session_id=?", source.ID).Count(&children).Error,
+				)
 				require.Zero(t, children, "the final original-material denial must leave no partial destination")
 				assertForkMaterialReadLeases(t, db, false)
 			})
@@ -216,7 +333,16 @@ func TestMessageForkActualSystemControlAndAtomicWriterRecheckOriginalAndCurrentA
 
 func TestMessageForkNativeCopyPreservesHiddenMaterialAndDoesNotAliasOriginal(t *testing.T) {
 	lineage, _ := types.NewCompleteSourceLineage()
-	original := &types.Message{ID: "original", SessionID: "source", Content: "original body", SourceLineage: lineage, AgentTenantID: 7, RenderedContent: "original generated rendering", ExecutionContext: types.MessageExecutionContext{KnowledgeBaseIDs: []string{"original-scope"}}, ContextCheckpoint: &types.ContextCheckpoint{Summary: "original summary", SourceLineage: lineage}}
+	original := &types.Message{
+		ID:                "original",
+		SessionID:         "source",
+		Content:           "original body",
+		SourceLineage:     lineage,
+		AgentTenantID:     7,
+		RenderedContent:   "original generated rendering",
+		ExecutionContext:  types.MessageExecutionContext{KnowledgeBaseIDs: []string{"original-scope"}},
+		ContextCheckpoint: &types.ContextCheckpoint{Summary: "original summary", SourceLineage: lineage},
+	}
 	copy, err := cloneForkOriginalMessage(original)
 	require.NoError(t, err)
 	require.Equal(t, original.SourceLineage, copy.SourceLineage)
@@ -251,22 +377,61 @@ func TestMessageForkActualSignedSourceCloneAndFinalWriterRevoke(t *testing.T) {
 	sqlDB.SetMaxOpenConns(1)
 	sqlDB.SetMaxIdleConns(1)
 	ctx := context.WithValue(f.ctx, types.UserIDContextKey, "enrich-human")
-	guard := access.NewNextcloudSourceLineageGuard(f.s.repo.(access.NextcloudLineageSnapshotLookup), f.s.kbService, nil, nil, NewGroupAccessService(repository.NewGroupAccessRepository(f.db)), access.NewNextcloudPublicationGuard(repository.NewDirectoryRepository(f.db), repository.NewDataSourceRepository(f.db)), f.store)
-	messages := &messageService{messageRepo: repository.NewMessageRepository(f.db), sessionRepo: repository.NewSessionRepository(f.db), sourceLineageGuard: guard, kbService: f.s.kbService, knowService: f.s}
+	guard := access.NewNextcloudSourceLineageGuard(
+		f.s.repo.(access.NextcloudLineageSnapshotLookup),
+		f.s.kbService,
+		nil,
+		nil,
+		NewGroupAccessService(repository.NewGroupAccessRepository(f.db)),
+		access.NewNextcloudPublicationGuard(
+			repository.NewDirectoryRepository(f.db),
+			repository.NewDataSourceRepository(f.db),
+		),
+		f.store,
+	)
+	messages := &messageService{
+		messageRepo:        repository.NewMessageRepository(f.db),
+		sessionRepo:        repository.NewSessionRepository(f.db),
+		sourceLineageGuard: guard,
+		kbService:          f.s.kbService,
+		knowService:        f.s,
+	}
 	ConfigureMessageMaterialProvenance(messages, f.store)
-	lease, err := f.store.ContentLeaseStore().AcquireKnowledge(ctx, scope, repository.NextcloudContentReadLease, "actual-fork-original-read", time.Minute)
+	lease, err := f.store.ContentLeaseStore().
+		AcquireKnowledge(ctx, scope, repository.NextcloudContentReadLease, "actual-fork-original-read", time.Minute)
 	require.NoError(t, err)
 	readCtx, err := repository.WithFAQReadLeaseCoverage(ctx, []repository.NextcloudContentLease{lease})
 	require.NoError(t, err)
-	originals, err := repository.NewRAGChunkSnapshotReader(f.db, f.store).HydrateRAGChunkSnapshots(readCtx, []types.RAGChunkReadRequest{{TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: f.k.ID, ChunkIDs: []string{f.chunks[0].ID}, Lease: &types.RAGExactReadLease{ID: lease.ID, TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: f.k.ID, Kind: string(lease.Kind), Epoch: lease.Epoch, OwnerID: lease.OwnerID, ExpiresAt: lease.ExpiresAt}}})
+	originals, err := repository.NewRAGChunkSnapshotReader(f.db, f.store).
+		HydrateRAGChunkSnapshots(readCtx, []types.RAGChunkReadRequest{{TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: f.k.ID, ChunkIDs: []string{f.chunks[0].ID}, Lease: &types.RAGExactReadLease{ID: lease.ID, TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: f.k.ID, Kind: string(lease.Kind), Epoch: lease.Epoch, OwnerID: lease.OwnerID, ExpiresAt: lease.ExpiresAt}}})
 	require.NoError(t, err)
 	require.Len(t, originals, 1)
 	session := &types.Session{TenantID: 7, UserID: "enrich-human"}
 	require.NoError(t, f.db.Create(session).Error)
 	base := time.Now().UTC().Add(-time.Minute)
-	user, err := messages.CreateMessage(readCtx, &types.Message{SessionID: session.ID, RequestID: "actual-controlled-fork", Role: "user", Content: "actual controlled-source question", IsCompleted: true, CreatedAt: base, ExecutionContext: types.MessageExecutionContext{KnowledgeBaseIDs: []string{"kb"}}})
+	user, err := messages.CreateMessage(
+		readCtx,
+		&types.Message{
+			SessionID:        session.ID,
+			RequestID:        "actual-controlled-fork",
+			Role:             "user",
+			Content:          "actual controlled-source question",
+			IsCompleted:      true,
+			CreatedAt:        base,
+			ExecutionContext: types.MessageExecutionContext{KnowledgeBaseIDs: []string{"kb"}},
+		},
+	)
 	require.NoError(t, err)
-	assistant, err := messages.CreateMessage(readCtx, &types.Message{SessionID: session.ID, RequestID: user.RequestID, Role: "assistant", CreatedAt: base.Add(time.Second), ExecutionContext: user.ExecutionContext})
+	assistant, err := messages.CreateMessage(
+		readCtx,
+		&types.Message{
+			SessionID:        session.ID,
+			RequestID:        user.RequestID,
+			Role:             "assistant",
+			CreatedAt:        base.Add(time.Second),
+			ExecutionContext: user.ExecutionContext,
+		},
+	)
 	require.NoError(t, err)
 	assistant.Content = "CONTROLLED FORK ORIGINAL: " + originals[0].Chunk.Content
 	assistant.SourceLineage = originals[0].SourceLineage
@@ -277,7 +442,15 @@ func TestMessageForkActualSignedSourceCloneAndFinalWriterRevoke(t *testing.T) {
 	writer, ok := repo.(forkMaterialSessionStore)
 	require.True(t, ok)
 	sessions := &actualForkMaterialSessions{SessionRepository: repo, writer: writer, t: t, db: f.db}
-	port := &actualForkMaterialSandbox{fakeForkSandboxPort: &fakeForkSandboxPort{boundID: "actual-fork-sandbox", bound: true, snapshotID: "actual-controlled-fork-snapshot"}, t: t, db: f.db}
+	port := &actualForkMaterialSandbox{
+		fakeForkSandboxPort: &fakeForkSandboxPort{
+			boundID:    "actual-fork-sandbox",
+			bound:      true,
+			snapshotID: "actual-controlled-fork-snapshot",
+		},
+		t:  t,
+		db: f.db,
+	}
 	fork := NewSessionForkService(sessions, messages.messageRepo, port)
 	fork.lineageVerifier = messages
 	result, err := fork.Fork(ctx, 7, session.UserID, session.ID, assistant.ID, "")
@@ -298,7 +471,13 @@ func TestMessageForkActualSignedSourceCloneAndFinalWriterRevoke(t *testing.T) {
 		observed := false
 		revoke := func() {
 			var exact int64
-			require.NoError(t, f.db.Table("nextcloud_content_leases").Where("kind='read' AND released_at_ms IS NULL AND knowledge_id=?", f.k.ID).Count(&exact).Error)
+			require.NoError(
+				t,
+				f.db.Table("nextcloud_content_leases").
+					Where("kind='read' AND released_at_ms IS NULL AND knowledge_id=?", f.k.ID).
+					Count(&exact).
+					Error,
+			)
 			require.Positive(t, exact)
 			observed = true
 			allow.Store(false)

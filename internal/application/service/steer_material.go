@@ -4,16 +4,19 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sync"
+	"time"
+
 	"github.com/Tencent/WeKnora/internal/application/access"
 	"github.com/Tencent/WeKnora/internal/application/repository"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/google/uuid"
-	"sync"
-	"time"
 )
 
-type actualSteerHTTPInputKey struct{}
-type actualSteerHTTPInputBoundary struct{ Digest string }
+type (
+	actualSteerHTTPInputKey      struct{}
+	actualSteerHTTPInputBoundary struct{ Digest string }
+)
 
 func WithActualSteerHTTPInput(ctx context.Context, request *types.SteerAuthoredRequest) (context.Context, error) {
 	if request == nil {
@@ -25,7 +28,11 @@ func WithActualSteerHTTPInput(ctx context.Context, request *types.SteerAuthoredR
 	}
 	return context.WithValue(ctx, actualSteerHTTPInputKey{}, actualSteerHTTPInputBoundary{digest}), nil
 }
-func (s *messageService) AdmitActualSteerInput(ctx context.Context, request *types.SteerAuthoredRequest) (*types.SteerMaterialInput, error) {
+
+func (s *messageService) AdmitActualSteerInput(
+	ctx context.Context,
+	request *types.SteerAuthoredRequest,
+) (*types.SteerMaterialInput, error) {
 	if s.materialStore == nil {
 		return nil, access.ErrNextcloudPublicationUnavailable
 	}
@@ -39,23 +46,36 @@ func (s *messageService) AdmitActualSteerInput(ctx context.Context, request *typ
 	}
 	return s.materialStore.AdmitSteerAuthoredInput(ctx, request)
 }
-func (s *messageService) ApplyActualSteerControl(ctx context.Context, request *types.SteerControlRequest) (*types.SteerCandidateControl, error) {
+
+func (s *messageService) ApplyActualSteerControl(
+	ctx context.Context,
+	request *types.SteerControlRequest,
+) (*types.SteerCandidateControl, error) {
 	if s.materialStore == nil {
 		return nil, access.ErrNextcloudPublicationUnavailable
 	}
 	return s.materialStore.ApplySteerControl(ctx, request)
 }
+
 func (s *messageService) CheckActualSteerControl(ctx context.Context, control *types.SteerCandidateControl) error {
 	if s.materialStore == nil {
 		return access.ErrNextcloudPublicationUnavailable
 	}
 	return s.materialStore.CheckSteerControl(ctx, control)
 }
-func (s *messageService) BeginSteerMaterialRead(ctx context.Context, request *types.SteerMaterialRequest) (*types.SteerMaterialSnapshot, func() error, func(), error) {
+
+func (s *messageService) BeginSteerMaterialRead(
+	ctx context.Context,
+	request *types.SteerMaterialRequest,
+) (*types.SteerMaterialSnapshot, func() error, func(), error) {
 	snapshot, _, check, close, err := s.beginSteerMaterialRead(ctx, request)
 	return snapshot, check, close, err
 }
-func (s *messageService) beginSteerMaterialRead(ctx context.Context, request *types.SteerMaterialRequest) (*types.SteerMaterialSnapshot, context.Context, func() error, func(), error) {
+
+func (s *messageService) beginSteerMaterialRead(
+	ctx context.Context,
+	request *types.SteerMaterialRequest,
+) (*types.SteerMaterialSnapshot, context.Context, func() error, func(), error) {
 	if s.materialStore == nil || s.sourceLineageGuard == nil {
 		return nil, ctx, nil, nil, access.ErrNextcloudPublicationUnavailable
 	}
@@ -89,7 +109,8 @@ func (s *messageService) beginSteerMaterialRead(ctx context.Context, request *ty
 	}
 	broad := map[types.KnowledgeSearchScope]repository.NextcloudContentLease{}
 	for _, scope := range plan.Scopes {
-		lease, err := s.materialStore.ContentLeaseStore().AcquireKBRead(ctx, scope.TenantID, scope.KBID, owner, 2*time.Minute)
+		lease, err := s.materialStore.ContentLeaseStore().
+			AcquireKBRead(ctx, scope.TenantID, scope.KBID, owner, 2*time.Minute)
 		if err != nil {
 			close()
 			return nil, ctx, nil, nil, err
@@ -99,7 +120,8 @@ func (s *messageService) beginSteerMaterialRead(ctx context.Context, request *ty
 	}
 	for _, source := range plan.SourceLineage.Sources {
 		kb := broad[types.KnowledgeSearchScope{TenantID: source.TenantID, KBID: source.KnowledgeBaseID}]
-		lease, err := s.materialStore.ContentLeaseStore().UpgradeKBRead(ctx, kb.ID, repository.NextcloudContentScope{TenantID: source.TenantID, KnowledgeBaseID: source.KnowledgeBaseID, KnowledgeID: source.KnowledgeID, DataSourceID: source.DataSourceID, ExternalID: source.ExternalID}, owner, 2*time.Minute)
+		lease, err := s.materialStore.ContentLeaseStore().
+			UpgradeKBRead(ctx, kb.ID, repository.NextcloudContentScope{TenantID: source.TenantID, KnowledgeBaseID: source.KnowledgeBaseID, KnowledgeID: source.KnowledgeID, DataSourceID: source.DataSourceID, ExternalID: source.ExternalID}, owner, 2*time.Minute)
 		if err != nil {
 			close()
 			return nil, ctx, nil, nil, err
@@ -180,6 +202,7 @@ func (s *messageService) beginSteerMaterialRead(ctx context.Context, request *ty
 	}
 	return snapshot, ctx, check, close, nil
 }
+
 func steerSnapshotBody(snapshot *types.SteerMaterialSnapshot) ([]byte, error) {
 	type value struct {
 		Input       *types.SteerMaterialInput
@@ -189,12 +212,19 @@ func steerSnapshotBody(snapshot *types.SteerMaterialSnapshot) ([]byte, error) {
 	}
 	values := []value{}
 	for _, input := range snapshot.Inputs {
-		values = append(values, value{input, input.Proof.SourceLineage, input.Proof.ExecutionContext, input.Proof.AgentTenantID})
+		values = append(
+			values,
+			value{input, input.Proof.SourceLineage, input.Proof.ExecutionContext, input.Proof.AgentTenantID},
+		)
 	}
 	return json.Marshal(values)
 }
 
-func (s *messageService) ConsumeActualSteerIntoMessage(ctx context.Context, input *types.SteerMaterialInput, run, generation, request string) (*types.Message, *types.SteerConsumptionProof, func() error, func(), error) {
+func (s *messageService) ConsumeActualSteerIntoMessage(
+	ctx context.Context,
+	input *types.SteerMaterialInput,
+	run, generation, request string,
+) (*types.Message, *types.SteerConsumptionProof, func() error, func(), error) {
 	if input == nil || input.Proof == nil || s.materialStore == nil {
 		return nil, nil, nil, nil, types.ErrSourceLineageUnknown
 	}
@@ -204,10 +234,19 @@ func (s *messageService) ConsumeActualSteerIntoMessage(ctx context.Context, inpu
 	}
 	if existing != nil {
 		retainedCtx := ctx
-		if slot, ok := ctx.Value(messageMaterialOutputKey{}).(*messageMaterialOutputSlot); ok && slot.OwnerContext != nil {
+		if slot, ok := ctx.Value(messageMaterialOutputKey{}).(*messageMaterialOutputSlot); ok &&
+			slot.OwnerContext != nil {
 			retainedCtx = slot.OwnerContext
 		}
-		guard, err := s.beginMessageMaterialRead(retainedCtx, types.MessageMaterialReadRequest{TenantID: input.Proof.TenantID, SessionID: input.Proof.SessionID, MessageIDs: []string{existing.UserMessageID}, IncludeOriginalUserFields: true})
+		guard, err := s.beginMessageMaterialRead(
+			retainedCtx,
+			types.MessageMaterialReadRequest{
+				TenantID:                  input.Proof.TenantID,
+				SessionID:                 input.Proof.SessionID,
+				MessageIDs:                []string{existing.UserMessageID},
+				IncludeOriginalUserFields: true,
+			},
+		)
 		if err != nil {
 			return nil, nil, nil, nil, err
 		}
@@ -244,7 +283,17 @@ func (s *messageService) ConsumeActualSteerIntoMessage(ctx context.Context, inpu
 		}
 		return rows.Messages[0], existing, check, guard.Close, nil
 	}
-	snapshot, readCtx, oldCheck, closeSteer, err := s.beginSteerMaterialRead(ctx, &types.SteerMaterialRequest{TenantID: input.Proof.TenantID, SessionID: input.Proof.SessionID, RunMessageID: run, RunGenerationID: generation, SteerIDs: []string{input.Proof.SteerID}, Use: types.SteerMaterialInject})
+	snapshot, readCtx, oldCheck, closeSteer, err := s.beginSteerMaterialRead(
+		ctx,
+		&types.SteerMaterialRequest{
+			TenantID:        input.Proof.TenantID,
+			SessionID:       input.Proof.SessionID,
+			RunMessageID:    run,
+			RunGenerationID: generation,
+			SteerIDs:        []string{input.Proof.SteerID},
+			Use:             types.SteerMaterialInject,
+		},
+	)
 	if err != nil {
 		return nil, nil, nil, nil, err
 	}
@@ -262,7 +311,8 @@ func (s *messageService) ConsumeActualSteerIntoMessage(ctx context.Context, inpu
 		return nil, nil, nil, nil, types.ErrSourceLineageUnknown
 	}
 	slot.mu.Lock()
-	if slot.Completion == nil || slot.Completion.Assistant != run || slot.Completion.Generation != generation || slot.Completion.Request != request {
+	if slot.Completion == nil || slot.Completion.Assistant != run || slot.Completion.Generation != generation ||
+		slot.Completion.Request != request {
 		slot.mu.Unlock()
 		closeSteer()
 		return nil, nil, nil, nil, types.ErrSourceLineageUnknown
@@ -330,7 +380,13 @@ func (s *messageService) ConsumeActualSteerIntoMessage(ctx context.Context, inpu
 			closeSteer()
 			return nil, nil, nil, nil, err
 		}
-		bodyLeases, err := s.materialStore.AcquireMessageBodyReadLeases(marked, plan, uuid.NewString(), 2*time.Minute, guard.bodyLeases)
+		bodyLeases, err := s.materialStore.AcquireMessageBodyReadLeases(
+			marked,
+			plan,
+			uuid.NewString(),
+			2*time.Minute,
+			guard.bodyLeases,
+		)
 		if err != nil {
 			slot.Failed = err
 			release()
@@ -357,7 +413,15 @@ func (s *messageService) ConsumeActualSteerIntoMessage(ctx context.Context, inpu
 		closeSteer()
 		return nil, nil, nil, nil, types.ErrSourceLineageUnknown
 	}
-	userGuard, err := s.beginMessageMaterialRead(retainedCtx, types.MessageMaterialReadRequest{TenantID: input.Proof.TenantID, SessionID: input.Proof.SessionID, MessageIDs: []string{message.ID}, IncludeOriginalUserFields: true})
+	userGuard, err := s.beginMessageMaterialRead(
+		retainedCtx,
+		types.MessageMaterialReadRequest{
+			TenantID:                  input.Proof.TenantID,
+			SessionID:                 input.Proof.SessionID,
+			MessageIDs:                []string{message.ID},
+			IncludeOriginalUserFields: true,
+		},
+	)
 	if err != nil {
 		closeSteer()
 		return nil, nil, nil, nil, fmt.Errorf("actual steer new original user guard: %w", err)
@@ -377,7 +441,8 @@ func (s *messageService) ConsumeActualSteerIntoMessage(ctx context.Context, inpu
 	}
 	slot.Guards = append(slot.Guards, userGuard)
 	slot.Bodies = append(slot.Bodies, string(body))
-	if slot.Completion == nil || slot.Completion.Assistant != run || slot.Completion.Generation != generation || slot.Completion.Request != request {
+	if slot.Completion == nil || slot.Completion.Assistant != run || slot.Completion.Generation != generation ||
+		slot.Completion.Request != request {
 		slot.mu.Unlock()
 		closeSteer()
 		return nil, nil, nil, nil, types.ErrSourceLineageUnknown
@@ -393,7 +458,18 @@ func (s *messageService) ConsumeActualSteerIntoMessage(ctx context.Context, inpu
 		closeSteer()
 		return nil, nil, nil, nil, err
 	}
-	slot.Completion.Steers = append(slot.Completion.Steers, &types.MessageCompletionSteerParent{Consumption: proof, Original: input.Proof, OriginalSource: input.Proof.SourceLineage, OriginalExecution: input.Proof.ExecutionContext, OriginalAgentTenant: input.Proof.AgentTenantID, User: userGuard.snapshot.Proofs[0], SelectionDigest: selectionDigest})
+	slot.Completion.Steers = append(
+		slot.Completion.Steers,
+		&types.MessageCompletionSteerParent{
+			Consumption:         proof,
+			Original:            input.Proof,
+			OriginalSource:      input.Proof.SourceLineage,
+			OriginalExecution:   input.Proof.ExecutionContext,
+			OriginalAgentTenant: input.Proof.AgentTenantID,
+			User:                userGuard.snapshot.Proofs[0],
+			SelectionDigest:     selectionDigest,
+		},
+	)
 	slot.mu.Unlock()
 	// Shared producer/HTTP ownership now retains this exact new user's bodies,
 	// including its original steer parent. The queue read can release.

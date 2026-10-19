@@ -31,9 +31,12 @@ func onboardingDB(t *testing.T) (*gorm.DB, *repo.NextcloudOnboardingStore, types
 	var err error
 	if dsn := os.Getenv("NEXTCLOUD_ONBOARDING_TEST_POSTGRES_DSN"); dsn != "" {
 		dialect = "versioned"
-		db, err = gorm.Open(postgres.Open(dsn), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
+		db, err = gorm.Open(postgres.Open(dsn), &gorm.Config{Logger: logger.Default.LogMode(logger.Error)})
 	} else {
-		db, err = gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "onboarding.db")+"?_busy_timeout=5000"), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
+		db, err = gorm.Open(
+			sqlite.Open(filepath.Join(t.TempDir(), "onboarding.db")+"?_busy_timeout=5000"),
+			&gorm.Config{Logger: logger.Default.LogMode(logger.Error)},
+		)
 	}
 	require.NoError(t, err)
 	sqlDB, err := db.DB()
@@ -51,7 +54,34 @@ func onboardingDB(t *testing.T) (*gorm.DB, *repo.NextcloudOnboardingStore, types
 		t.Cleanup(func() { _ = sqlDB.Close() })
 	}
 
-	require.NoError(t, db.AutoMigrate(&types.User{}, &types.Message{}, &types.KnowledgeTag{}, &types.KnowledgeTagRelation{}, &types.Tenant{}, &types.Chunk{}, &types.KnowledgeBase{}, &types.Knowledge{}, &types.DataSource{}, &types.Model{}, &types.StorageBackend{}, &types.TenantMember{}, &types.ResourceAccessPolicy{}, &types.ResourceGroupGrant{}, &types.TenantGroupRoleGrant{}, &types.PermissionVersion{}, &types.Directory{}, &types.DirectoryIdentity{}, &types.DirectoryGroup{}, &types.DirectoryGroupMembership{}, &types.Session{}, &repo.NextcloudSourcePairing{}, &repo.NextcloudSourcePairingAbort{}))
+	require.NoError(
+		t,
+		db.AutoMigrate(
+			&types.User{},
+			&types.Session{},
+			&types.Message{},
+			&types.KnowledgeTag{},
+			&types.KnowledgeTagRelation{},
+			&types.Tenant{},
+			&types.Chunk{},
+			&types.KnowledgeBase{},
+			&types.Knowledge{},
+			&types.DataSource{},
+			&types.Model{},
+			&types.StorageBackend{},
+			&types.TenantMember{},
+			&types.ResourceAccessPolicy{},
+			&types.ResourceGroupGrant{},
+			&types.TenantGroupRoleGrant{},
+			&types.PermissionVersion{},
+			&types.Directory{},
+			&types.DirectoryIdentity{},
+			&types.DirectoryGroup{},
+			&types.DirectoryGroupMembership{},
+			&repo.NextcloudSourcePairing{},
+			&repo.NextcloudSourcePairingAbort{},
+		),
+	)
 	for _, sql := range []string{"CREATE UNIQUE INDEX policies_key ON resource_access_policies(tenant_id,resource_type,resource_id)", "CREATE TABLE wiki_pages(tenant_id INTEGER,knowledge_base_id TEXT)", "CREATE TABLE nextcloud_source_tombstones(tenant_id INTEGER,scope_type TEXT,scope_id TEXT)", "CREATE TABLE nextcloud_event_connections(connection_id TEXT PRIMARY KEY,tenant_id BIGINT,knowledge_base_id TEXT,nextcloud_instance_id TEXT,binding_id TEXT,datasource_id TEXT,status TEXT)"} {
 		require.NoError(t, db.Exec(sql).Error)
 	}
@@ -65,15 +95,51 @@ func onboardingDB(t *testing.T) (*gorm.DB, *repo.NextcloudOnboardingStore, types
 	}
 	migration, err := os.ReadFile(migrationPath)
 	require.NoError(t, err)
-	controls := []string{"../../../migrations/sqlite/000076_nextcloud_directory_migrations.up.sql", "../../../migrations/sqlite/000078_nextcloud_control_recovery.up.sql", "../../../migrations/sqlite/000046_nextcloud_content_leases.up.sql", "../../../migrations/sqlite/000081_nextcloud_target_closure.up.sql", "../../../migrations/sqlite/000083_nextcloud_current_manager_purpose.up.sql"}
+	controls := []string{
+		"../../../migrations/sqlite/000076_nextcloud_directory_migrations.up.sql",
+		"../../../migrations/sqlite/000078_nextcloud_control_recovery.up.sql",
+		"../../../migrations/sqlite/000046_nextcloud_content_leases.up.sql",
+		"../../../migrations/sqlite/000081_nextcloud_target_closure.up.sql",
+		"../../../migrations/sqlite/000083_nextcloud_current_manager_purpose.up.sql",
+		"../../../migrations/sqlite/000084_nextcloud_machine_tasks.up.sql",
+	}
 	if dialect == "versioned" {
-		controls = []string{"../../../migrations/versioned/000157_nextcloud_directory_migrations.up.sql", "../../../migrations/versioned/000159_nextcloud_control_recovery.up.sql", "../../../migrations/versioned/000127_nextcloud_content_leases.up.sql", "../../../migrations/versioned/000162_nextcloud_target_closure.up.sql", "../../../migrations/versioned/000164_nextcloud_current_manager_purpose.up.sql"}
+		controls = []string{
+			"../../../migrations/versioned/000157_nextcloud_directory_migrations.up.sql",
+			"../../../migrations/versioned/000159_nextcloud_control_recovery.up.sql",
+			"../../../migrations/versioned/000127_nextcloud_content_leases.up.sql",
+			"../../../migrations/versioned/000162_nextcloud_target_closure.up.sql",
+			"../../../migrations/versioned/000164_nextcloud_current_manager_purpose.up.sql",
+			"../../../migrations/versioned/000165_nextcloud_machine_tasks.up.sql",
+		}
 	}
 	// Producer/config/name fixtures use the actual immutable origin and body
 	// schema. No current template row is retroactively declared independent.
-	provenance := []string{"000053_knowledge_input_provenance.up.sql", "000054_knowledge_configuration_history_inputs.up.sql", "000055_knowledge_actual_config_controls.up.sql", "000056_knowledge_original_worker_actor.up.sql", "000059_knowledge_collection_display_inputs.up.sql", "000066_knowledge_enrichment_template_origins.up.sql", "000069_datasource_name_inputs.up.sql", "000071_original_body_retention.up.sql", "000082_knowledge_configuration_original_body.up.sql"}
+	provenance := []string{
+		"000053_knowledge_input_provenance.up.sql",
+		"000054_knowledge_configuration_history_inputs.up.sql",
+		"000055_knowledge_actual_config_controls.up.sql",
+		"000056_knowledge_original_worker_actor.up.sql",
+		"000059_knowledge_collection_display_inputs.up.sql",
+		"000062_knowledge_enrichment_inputs.up.sql",
+		"000066_knowledge_enrichment_template_origins.up.sql",
+		"000069_datasource_name_inputs.up.sql",
+		"000071_original_body_retention.up.sql",
+		"000082_knowledge_configuration_original_body.up.sql",
+	}
 	if dialect == "versioned" {
-		provenance = []string{"000134_knowledge_input_provenance.up.sql", "000135_knowledge_configuration_history_inputs.up.sql", "000136_knowledge_actual_config_controls.up.sql", "000137_knowledge_original_worker_actor.up.sql", "000140_knowledge_collection_display_inputs.up.sql", "000147_knowledge_enrichment_template_origins.up.sql", "000150_datasource_name_inputs.up.sql", "000152_original_body_retention.up.sql", "000163_knowledge_configuration_original_body.up.sql"}
+		provenance = []string{
+			"000134_knowledge_input_provenance.up.sql",
+			"000135_knowledge_configuration_history_inputs.up.sql",
+			"000136_knowledge_actual_config_controls.up.sql",
+			"000137_knowledge_original_worker_actor.up.sql",
+			"000140_knowledge_collection_display_inputs.up.sql",
+			"000143_knowledge_enrichment_inputs.up.sql",
+			"000147_knowledge_enrichment_template_origins.up.sql",
+			"000150_datasource_name_inputs.up.sql",
+			"000152_original_body_retention.up.sql",
+			"000163_knowledge_configuration_original_body.up.sql",
+		}
 	}
 	for _, name := range provenance {
 		part, e := os.ReadFile("../../../migrations/" + dialect + "/" + name)
@@ -82,7 +148,10 @@ func onboardingDB(t *testing.T) (*gorm.DB, *repo.NextcloudOnboardingStore, types
 		lines := strings.Split(string(part), "\n")
 		kept := make([]string, 0, len(lines))
 		for _, line := range lines {
-			if strings.HasPrefix(strings.TrimSpace(line), "ALTER TABLE knowledge_bases ADD COLUMN enrichment_templates ") {
+			if strings.HasPrefix(
+				strings.TrimSpace(line),
+				"ALTER TABLE knowledge_bases ADD COLUMN enrichment_templates ",
+			) {
 				continue
 			}
 			kept = append(kept, line)
@@ -100,7 +169,14 @@ func onboardingDB(t *testing.T) (*gorm.DB, *repo.NextcloudOnboardingStore, types
 	if dialect == "versioned" {
 		var schema string
 		require.NoError(t, db.Raw("SELECT current_schema()").Scan(&schema).Error)
-		migrationDB, err := gorm.Open(postgres.Open(os.Getenv("NEXTCLOUD_ONBOARDING_TEST_POSTGRES_DSN")+" search_path="+schema+" default_query_exec_mode=simple_protocol"), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
+		migrationDB, err := gorm.Open(
+			postgres.Open(
+				os.Getenv(
+					"NEXTCLOUD_ONBOARDING_TEST_POSTGRES_DSN",
+				)+" search_path="+schema+" default_query_exec_mode=simple_protocol",
+			),
+			&gorm.Config{Logger: logger.Default.LogMode(logger.Error)},
+		)
 		require.NoError(t, err)
 		migrationSQL, err := migrationDB.DB()
 		require.NoError(t, err)
@@ -111,30 +187,139 @@ func onboardingDB(t *testing.T) (*gorm.DB, *repo.NextcloudOnboardingStore, types
 		require.NoError(t, db.Exec(string(migration)).Error)
 	}
 	now := time.Now().UTC()
-	d := types.Directory{ID: "directory", Protocol: types.DirectoryProtocolAD, Enabled: true, LastSuccessfulSyncAt: &now, SnapshotVersion: 1}
+	d := types.Directory{
+		ID:                   "directory",
+		Protocol:             types.DirectoryProtocolAD,
+		Enabled:              true,
+		LastSuccessfulSyncAt: &now,
+		SnapshotVersion:      1,
+	}
 	require.NoError(t, db.Create(&d).Error)
 	owner := "owner"
 	reader := "reader"
-	require.NoError(t, db.Create(&types.User{ID: owner, Username: owner, Email: "owner@onboarding.test", TenantID: 7, IsActive: true}).Error)
-	require.NoError(t, db.Create(&types.User{ID: reader, Username: reader, Email: "reader@onboarding.test", IsActive: true}).Error)
-	require.NoError(t, db.Create(&types.DirectoryIdentity{ID: "i-owner", DirectoryID: d.ID, ObjectGUID: "guid-owner", UserID: &owner, Status: types.DirectoryObjectActive, SnapshotVersion: 1}).Error)
-	require.NoError(t, db.Create(&types.DirectoryIdentity{ID: "i-reader", DirectoryID: d.ID, ObjectGUID: "guid-reader", UserID: &reader, Status: types.DirectoryObjectActive, SnapshotVersion: 1}).Error)
-	require.NoError(t, db.Create(&types.DirectoryIdentity{ID: "i-unlogged", DirectoryID: d.ID, ObjectGUID: "guid-unlogged", Status: types.DirectoryObjectActive, SnapshotVersion: 1}).Error)
-	require.NoError(t, db.Create(&types.DirectoryGroup{ID: "g-engineering", DirectoryID: d.ID, ObjectGUID: "guid-engineering", Status: types.DirectoryObjectActive, SnapshotVersion: 1}).Error)
-	require.NoError(t, db.Create(&types.DirectoryGroupMembership{DirectoryID: d.ID, GroupID: "g-engineering", IdentityID: "i-reader", SnapshotVersion: 1, Source: types.DirectoryMembershipNested}).Error)
-	require.NoError(t, db.Create(&types.TenantMember{TenantID: 7, UserID: owner, Role: types.TenantRoleOwner, Status: types.TenantMemberStatusActive}).Error)
-	require.NoError(t, db.Create(&types.Model{ID: "embedding", TenantID: 7, Type: types.ModelTypeEmbedding, Status: types.ModelStatusActive}).Error)
-	require.NoError(t, db.Create(&types.StorageBackend{ID: "storage", TenantID: 7, Name: "local", Provider: "local", Status: types.StorageBackendStatusActive}).Error)
+	require.NoError(
+		t,
+		db.Create(
+			&types.User{ID: owner, Username: owner, Email: "owner@onboarding.test", TenantID: 7, IsActive: true},
+		).Error,
+	)
+	require.NoError(
+		t,
+		db.Create(
+			&types.User{ID: reader, TenantID: 7, Username: reader, Email: "reader@onboarding.test", IsActive: true},
+		).Error,
+	)
+	require.NoError(
+		t,
+		db.Create(
+			&types.DirectoryIdentity{
+				ID:              "i-owner",
+				DirectoryID:     d.ID,
+				ObjectGUID:      "guid-owner",
+				UserID:          &owner,
+				Status:          types.DirectoryObjectActive,
+				SnapshotVersion: 1,
+			},
+		).Error,
+	)
+	require.NoError(
+		t,
+		db.Create(
+			&types.DirectoryIdentity{
+				ID:              "i-reader",
+				DirectoryID:     d.ID,
+				ObjectGUID:      "guid-reader",
+				UserID:          &reader,
+				Status:          types.DirectoryObjectActive,
+				SnapshotVersion: 1,
+			},
+		).Error,
+	)
+	require.NoError(
+		t,
+		db.Create(
+			&types.DirectoryIdentity{
+				ID:              "i-unlogged",
+				DirectoryID:     d.ID,
+				ObjectGUID:      "guid-unlogged",
+				Status:          types.DirectoryObjectActive,
+				SnapshotVersion: 1,
+			},
+		).Error,
+	)
+	require.NoError(
+		t,
+		db.Create(
+			&types.DirectoryGroup{
+				ID:              "g-engineering",
+				DirectoryID:     d.ID,
+				ObjectGUID:      "guid-engineering",
+				Status:          types.DirectoryObjectActive,
+				SnapshotVersion: 1,
+			},
+		).Error,
+	)
+	require.NoError(
+		t,
+		db.Create(
+			&types.DirectoryGroupMembership{
+				DirectoryID:     d.ID,
+				GroupID:         "g-engineering",
+				IdentityID:      "i-reader",
+				SnapshotVersion: 1,
+				Source:          types.DirectoryMembershipNested,
+			},
+		).Error,
+	)
+	require.NoError(
+		t,
+		db.Create(
+			&types.TenantMember{
+				TenantID: 7,
+				UserID:   owner,
+				Role:     types.TenantRoleOwner,
+				Status:   types.TenantMemberStatusActive,
+			},
+		).Error,
+	)
+	require.NoError(
+		t,
+		db.Create(
+			&types.Model{ID: "embedding", TenantID: 7, Type: types.ModelTypeEmbedding, Status: types.ModelStatusActive},
+		).Error,
+	)
+	require.NoError(
+		t,
+		db.Create(
+			&types.StorageBackend{
+				ID:       "storage",
+				TenantID: 7,
+				Name:     "local",
+				Provider: "local",
+				Status:   types.StorageBackendStatusActive,
+			},
+		).Error,
+	)
 	h := sha256.Sum256([]byte("test-onboarding-server-credential-0123456789"))
-	cred := types.NextcloudOnboardingCredential{ID: "automation", TokenSHA256: hex.EncodeToString(h[:]), InstanceID: "nc-instance", BaseURL: "https://nc.example.test", TenantID: 7, DirectoryID: d.ID, TemplateKBID: "template", Enabled: true, MaxKnowledgeBases: 10}
+	cred := types.NextcloudOnboardingCredential{
+		ID:                "automation",
+		TokenSHA256:       hex.EncodeToString(h[:]),
+		InstanceID:        "nc-instance",
+		BaseURL:           "https://nc.example.test",
+		TenantID:          7,
+		DirectoryID:       d.ID,
+		TemplateKBID:      "template",
+		Enabled:           true,
+		MaxKnowledgeBases: 10,
+	}
 	require.NoError(t, db.Create(&cred).Error)
 	journal := t.TempDir()
-	require.NoError(t, os.Chmod(journal, 0700))
+	require.NoError(t, os.Chmod(journal, 0o700))
 	key := make([]byte, 32)
 	_, err = rand.Read(key)
 	require.NoError(t, err)
 	keyPath := filepath.Join(journal, "key")
-	require.NoError(t, os.WriteFile(keyPath, key, 0600))
+	require.NoError(t, os.WriteFile(keyPath, key, 0o600))
 	t.Setenv("WEKNORA_ORIGINAL_BODY_JOURNAL_DIRECTORY", journal)
 	t.Setenv("WEKNORA_ORIGINAL_BODY_JOURNAL_KEY", keyPath)
 	t.Setenv("WEKNORA_ORIGINAL_BODY_JOURNAL_PIN", filepath.Join(journal, "pin"))
@@ -154,39 +339,111 @@ func createOnboardingTemplate(t *testing.T, db *gorm.DB, kb *types.KnowledgeBase
 	store := repo.NewKnowledgeInputProvenanceStore(db)
 	factory := func(tx *gorm.DB) *repo.KnowledgeInputProvenanceStore {
 		actual := repo.NewKnowledgeInputProvenanceStore(tx)
-		repo.ConfigureKnowledgeInputActorGroupAccess(actual, service.NewGroupAccessService(repo.NewGroupAccessRepository(tx)))
+		repo.ConfigureKnowledgeInputActorGroupAccess(
+			actual,
+			service.NewGroupAccessService(repo.NewGroupAccessRepository(tx)),
+		)
 		return actual
 	}
-	repo.ConfigureKnowledgeDisplayInputWriters(store, repo.NewKnowledgeTagRepository(db), repo.NewKnowledgeRepository(db), factory)
-	admin := types.WithExecutionTenant(types.WithPrincipal(types.WithCaller(context.Background(), types.Caller{TenantID: 7, UserID: "owner", Role: types.TenantRoleOwner}), types.Principal{Type: types.PrincipalWebUser, ID: "owner"}), 7)
-	require.NoError(t, store.CreateKnowledgeBaseWithInput(repo.WithIndependentKnowledgeBaseNameInput(repo.WithIndependentKnowledgeInput(admin), kb.ID, kb.Name), kb))
+	repo.ConfigureKnowledgeDisplayInputWriters(
+		store,
+		repo.NewKnowledgeTagRepository(db),
+		repo.NewKnowledgeRepository(db),
+		factory,
+	)
+	admin := types.WithExecutionTenant(
+		types.WithPrincipal(
+			types.WithCaller(
+				context.Background(),
+				types.Caller{TenantID: 7, UserID: "owner", Role: types.TenantRoleOwner},
+			),
+			types.Principal{Type: types.PrincipalWebUser, ID: "owner"},
+		),
+		7,
+	)
+	require.NoError(
+		t,
+		store.CreateKnowledgeBaseWithInput(
+			repo.WithIndependentKnowledgeBaseNameInput(repo.WithIndependentKnowledgeInput(admin), kb.ID, kb.Name),
+			kb,
+		),
+	)
 }
 
 func freshOnboardingKB(id string) types.KnowledgeBase {
 	storage := "storage"
-	return types.KnowledgeBase{ID: id, TenantID: 7, Name: id, Type: "document", EmbeddingModelID: "embedding", StorageBackendID: &storage, IndexingStrategy: types.DefaultIndexingStrategy()}
+	return types.KnowledgeBase{
+		ID:               id,
+		TenantID:         7,
+		Name:             id,
+		Type:             "document",
+		EmbeddingModelID: "embedding",
+		StorageBackendID: &storage,
+		IndexingStrategy: types.DefaultIndexingStrategy(),
+	}
 }
+
 func onboardingRequest(c types.NextcloudOnboardingCredential, id, kb string) types.NextcloudOnboardingRequest {
-	return types.NextcloudOnboardingRequest{OperationID: id, TenantID: c.TenantID, InstanceID: c.InstanceID, BindingID: "binding-" + id, ActorDirectoryID: c.DirectoryID, ActorObjectGUID: "guid-owner", Mode: "existing", Name: "Root", KnowledgeBaseID: kb, ProcessingTemplateID: c.TemplateKBID}
+	return types.NextcloudOnboardingRequest{
+		OperationID:          id,
+		TenantID:             c.TenantID,
+		InstanceID:           c.InstanceID,
+		BindingID:            "binding-" + id,
+		ActorDirectoryID:     c.DirectoryID,
+		ActorObjectGUID:      "guid-owner",
+		Mode:                 "existing",
+		Name:                 "Root",
+		KnowledgeBaseID:      kb,
+		ProcessingTemplateID: c.TemplateKBID,
+	}
 }
-func activateOnboarding(t *testing.T, db *gorm.DB, store *repo.NextcloudOnboardingStore, op types.NextcloudOnboardingOperation) {
+
+func activateOnboarding(
+	t *testing.T,
+	db *gorm.DB,
+	store *repo.NextcloudOnboardingStore,
+	op types.NextcloudOnboardingOperation,
+) {
 	t.Helper()
 	pairer := repo.NewNextcloudSourcePairingRepository(db)
 	factory := func(tx *gorm.DB) *repo.KnowledgeInputProvenanceStore {
 		actual := repo.NewKnowledgeInputProvenanceStore(tx)
-		repo.ConfigureKnowledgeInputActorGroupAccess(actual, service.NewGroupAccessService(repo.NewGroupAccessRepository(tx)))
+		repo.ConfigureKnowledgeInputActorGroupAccess(
+			actual,
+			service.NewGroupAccessService(repo.NewGroupAccessRepository(tx)),
+		)
 		return actual
 	}
 	repo.ConfigureDataSourceNameInputWriters(repo.NewDataSourceRepository(db), pairer, factory)
 	var credential types.NextcloudOnboardingCredential
 	require.NoError(t, db.Where("id=?", op.CredentialID).Take(&credential).Error)
-	producer, err := store.BeginPairProducer(context.Background(), credential, op, op.ActorDirectoryID, op.ActorObjectGUID)
+	producer, err := store.BeginPairProducer(
+		context.Background(),
+		credential,
+		op,
+		op.ActorDirectoryID,
+		op.ActorObjectGUID,
+	)
 	require.NoError(t, err)
-	pair, _, err := pairer.PrepareSourcePairing(producer, repo.NextcloudSourcePairing{OperationID: op.OperationID, TenantID: op.TenantID, KnowledgeBaseID: op.KnowledgeBaseID, InstanceID: op.InstanceID, BindingID: op.BindingID, BaseURL: "https://nc.example.test", PublicationEpoch: 1, KeyID: "pair_" + op.OperationID}, "handoff-token")
+	pair, _, err := pairer.PrepareSourcePairing(
+		producer,
+		repo.NextcloudSourcePairing{
+			OperationID:      op.OperationID,
+			TenantID:         op.TenantID,
+			KnowledgeBaseID:  op.KnowledgeBaseID,
+			InstanceID:       op.InstanceID,
+			BindingID:        op.BindingID,
+			BaseURL:          "https://nc.example.test",
+			PublicationEpoch: 1,
+			KeyID:            "pair_" + op.OperationID,
+		},
+		"handoff-token",
+	)
 	require.NoError(t, err)
 	require.NoError(t, pairer.ActivateSourcePairing(context.Background(), pair))
 	require.NoError(t, store.MarkActive(context.Background(), op))
 }
+
 func TestNextcloudOnboardingBlankHistoryReservationAndRetry(t *testing.T) {
 	db, store, c := onboardingDB(t)
 	ctx := context.Background()
@@ -208,18 +465,25 @@ func TestNextcloudOnboardingBlankHistoryReservationAndRetry(t *testing.T) {
 	var n int64
 	require.NoError(t, db.Model(&types.Knowledge{}).Count(&n).Error)
 	require.Zero(t, n)
-	_, _, err = repo.NewNextcloudSourcePairingRepository(db).PrepareSourcePairing(ctx, repo.NextcloudSourcePairing{OperationID: uuid.NewString(), TenantID: 7, KnowledgeBaseID: kb.ID, InstanceID: c.InstanceID, BindingID: "wrong-root", BaseURL: c.BaseURL, PublicationEpoch: 1, KeyID: "wrong"}, "token")
+	_, _, err = repo.NewNextcloudSourcePairingRepository(db).
+		PrepareSourcePairing(ctx, repo.NextcloudSourcePairing{OperationID: uuid.NewString(), TenantID: 7, KnowledgeBaseID: kb.ID, InstanceID: c.InstanceID, BindingID: "wrong-root", BaseURL: c.BaseURL, PublicationEpoch: 1, KeyID: "wrong"}, "token")
 	require.ErrorIs(t, err, repo.ErrNextcloudSourcePairingConflict)
 	// Tenant containing unrelated business content is a valid target.
 	other := freshOnboardingKB("other")
 	require.NoError(t, db.Create(&other).Error)
-	require.NoError(t, db.Create(&types.Knowledge{ID: "other-document", TenantID: 7, KnowledgeBaseID: other.ID, Channel: "manual"}).Error)
+	require.NoError(
+		t,
+		db.Create(
+			&types.Knowledge{ID: "other-document", TenantID: 7, KnowledgeBaseID: other.ID, Channel: "manual"},
+		).Error,
+	)
 	create := onboardingRequest(c, uuid.NewString(), "")
 	create.Mode = "create"
 	op, err := store.Reserve(ctx, c, create)
 	require.NoError(t, err)
 	require.NotEqual(t, other.ID, op.KnowledgeBaseID)
 }
+
 func TestNextcloudOnboardingCompetingRootsAndConcurrentContent(t *testing.T) {
 	db, store, c := onboardingDB(t)
 	kb := freshOnboardingKB("contended")
@@ -252,9 +516,18 @@ func TestNextcloudOnboardingCompetingRootsAndConcurrentContent(t *testing.T) {
 	require.NoError(t, db.Create(&doc).Error)
 	require.NoError(t, db.Unscoped().Delete(&doc).Error)
 	_, err := store.Reserve(context.Background(), c, onboardingRequest(c, uuid.NewString(), touched.ID))
-	require.ErrorIs(t, err, repo.ErrNextcloudKBBlankUnverified, "even physically removed content cannot erase inventory history")
-	require.Error(t, db.Exec("UPDATE nextcloud_kb_blank_witnesses SET virgin=1 WHERE knowledge_base_id=?", touched.ID).Error)
+	require.ErrorIs(
+		t,
+		err,
+		repo.ErrNextcloudKBBlankUnverified,
+		"even physically removed content cannot erase inventory history",
+	)
+	require.Error(
+		t,
+		db.Exec("UPDATE nextcloud_kb_blank_witnesses SET virgin=1 WHERE knowledge_base_id=?", touched.ID).Error,
+	)
 }
+
 func TestNextcloudOnboardingLedgerScopeRevocationAndDirectoryFailure(t *testing.T) {
 	db, store, c := onboardingDB(t)
 	ctx := context.Background()
@@ -267,7 +540,16 @@ func TestNextcloudOnboardingLedgerScopeRevocationAndDirectoryFailure(t *testing.
 		activateOnboarding(t, db, store, op)
 		ops = append(ops, op)
 	}
-	snap := types.NextcloudGrantSnapshot{PermissionVersion: 1, PublicationEpoch: 1, Complete: true, Subjects: []types.NextcloudGrantSubject{{Kind: "user", DirectoryID: c.DirectoryID, ObjectGUID: "guid-reader", SourceRelationID: "direct-share"}, {Kind: "group", DirectoryID: c.DirectoryID, ObjectGUID: "guid-engineering", SourceRelationID: "team-base"}, {Kind: "user", DirectoryID: c.DirectoryID, ObjectGUID: "guid-unlogged", SourceRelationID: "not-yet-logged"}}}
+	snap := types.NextcloudGrantSnapshot{
+		PermissionVersion: 1,
+		PublicationEpoch:  1,
+		Complete:          true,
+		Subjects: []types.NextcloudGrantSubject{
+			{Kind: "user", DirectoryID: c.DirectoryID, ObjectGUID: "guid-reader", SourceRelationID: "direct-share"},
+			{Kind: "group", DirectoryID: c.DirectoryID, ObjectGUID: "guid-engineering", SourceRelationID: "team-base"},
+			{Kind: "user", DirectoryID: c.DirectoryID, ObjectGUID: "guid-unlogged", SourceRelationID: "not-yet-logged"},
+		},
+	}
 	for _, op := range ops {
 		require.NoError(t, store.ApplyGrantSnapshot(ctx, op, snap))
 	}
@@ -278,21 +560,55 @@ func TestNextcloudOnboardingLedgerScopeRevocationAndDirectoryFailure(t *testing.
 	require.True(t, role.ScopedOnly)
 	caller := types.WithCaller(ctx, types.Caller{TenantID: 7, UserID: "reader", Role: types.TenantRoleViewer})
 	caller = types.WithPrincipal(caller, types.Principal{Type: types.PrincipalWebUser, ID: "reader"})
-	require.NoError(t, access.Authorize(caller, 7, types.GroupResourceTypeKnowledgeBase, "root-a", types.ResourceActionRead))
-	require.ErrorIs(t, access.Authorize(caller, 7, types.GroupResourceTypeKnowledgeBase, "unrelated-inherit", types.ResourceActionRead), service.ErrResourceAccessDenied)
-	require.ErrorIs(t, access.Authorize(caller, 7, types.GroupResourceTypeAgent, "some-agent", types.ResourceActionUse), service.ErrResourceAccessDenied)
+	require.NoError(
+		t,
+		access.Authorize(caller, 7, types.GroupResourceTypeKnowledgeBase, "root-a", types.ResourceActionRead),
+	)
+	require.ErrorIs(
+		t,
+		access.Authorize(
+			caller,
+			7,
+			types.GroupResourceTypeKnowledgeBase,
+			"unrelated-inherit",
+			types.ResourceActionRead,
+		),
+		service.ErrResourceAccessDenied,
+	)
+	require.ErrorIs(
+		t,
+		access.Authorize(caller, 7, types.GroupResourceTypeAgent, "some-agent", types.ResourceActionUse),
+		service.ErrResourceAccessDenied,
+	)
 	snap.PermissionVersion = 2
 	snap.Complete = false
 	require.ErrorIs(t, store.ApplyGrantSnapshot(ctx, ops[0], snap), repo.ErrNextcloudOnboardingConflict)
 	snap.Complete = true
 	snap.Subjects = nil
 	require.NoError(t, store.ApplyGrantSnapshot(ctx, ops[0], snap))
-	require.ErrorIs(t, access.Authorize(caller, 7, types.GroupResourceTypeKnowledgeBase, "root-a", types.ResourceActionRead), service.ErrResourceAccessDenied)
-	require.NoError(t, access.Authorize(caller, 7, types.GroupResourceTypeKnowledgeBase, "root-b", types.ResourceActionRead))
+	require.ErrorIs(
+		t,
+		access.Authorize(caller, 7, types.GroupResourceTypeKnowledgeBase, "root-a", types.ResourceActionRead),
+		service.ErrResourceAccessDenied,
+	)
+	require.NoError(
+		t,
+		access.Authorize(caller, 7, types.GroupResourceTypeKnowledgeBase, "root-b", types.ResourceActionRead),
+	)
 	snap.PermissionVersion = 1
 	require.ErrorIs(t, store.ApplyGrantSnapshot(ctx, ops[0], snap), repo.ErrNextcloudOnboardingConflict)
-	require.NoError(t, db.Model(&types.Directory{}).Where("id = ?", c.DirectoryID).Update("last_sync_error", "ldaps_unreachable").Error)
-	require.ErrorIs(t, access.Authorize(caller, 7, types.GroupResourceTypeKnowledgeBase, "root-b", types.ResourceActionRead), service.ErrResourceAccessDenied)
+	require.NoError(
+		t,
+		db.Model(&types.Directory{}).
+			Where("id = ?", c.DirectoryID).
+			Update("last_sync_error", "ldaps_unreachable").
+			Error,
+	)
+	require.ErrorIs(
+		t,
+		access.Authorize(caller, 7, types.GroupResourceTypeKnowledgeBase, "root-b", types.ResourceActionRead),
+		service.ErrResourceAccessDenied,
+	)
 	role, err = access.EffectiveTenantRole(ctx, "reader", 7, time.Now())
 	require.NoError(t, err)
 	require.False(t, role.Member)
@@ -306,7 +622,10 @@ func TestNextcloudOnboardingSyncPauseCASIsRecoverable(t *testing.T) {
 	db, store, c := onboardingDB(t)
 	ctx := context.Background()
 	if !db.Migrator().HasColumn(&types.DataSource{}, "sync_enabled") {
-		require.NoError(t, db.Exec("ALTER TABLE data_sources ADD COLUMN sync_enabled BOOLEAN NOT NULL DEFAULT TRUE").Error)
+		require.NoError(
+			t,
+			db.Exec("ALTER TABLE data_sources ADD COLUMN sync_enabled BOOLEAN NOT NULL DEFAULT TRUE").Error,
+		)
 	}
 	kb := freshOnboardingKB("pausable")
 	createOnboardingTemplate(t, db, &kb)
@@ -337,12 +656,43 @@ func TestNextcloudOnboardingAuthorityEpochSupersedesPairingReceipt(t *testing.T)
 	op, err := store.Reserve(ctx, c, onboardingRequest(c, uuid.NewString(), kb.ID))
 	require.NoError(t, err)
 	activateOnboarding(t, db, store, op)
-	require.NoError(t, db.Exec("CREATE TABLE nextcloud_source_status_epochs(connection_id TEXT PRIMARY KEY,publication_epoch BIGINT,pair_operation_id TEXT,verified_at BIGINT)").Error)
+	require.NoError(
+		t,
+		db.Exec(
+			"CREATE TABLE nextcloud_source_status_epochs(connection_id TEXT PRIMARY KEY,publication_epoch BIGINT,pair_operation_id TEXT,verified_at BIGINT)",
+		).Error,
+	)
 	var pair repo.NextcloudSourcePairing
 	require.NoError(t, db.Where("operation_id=?", op.OperationID).Take(&pair).Error)
-	require.NoError(t, db.Exec("INSERT INTO nextcloud_event_connections(connection_id,tenant_id,knowledge_base_id,datasource_id,status) VALUES(?,?,?,?,?)", "conn", uint64(7), kb.ID, pair.DataSourceID, "active").Error)
-	require.NoError(t, db.Exec("INSERT INTO nextcloud_source_status_epochs VALUES(?,?,?,?)", "conn", int64(1), op.OperationID, time.Now().Unix()).Error)
-	snap := types.NextcloudGrantSnapshot{PermissionVersion: 1, PublicationEpoch: 1, Complete: true, Subjects: []types.NextcloudGrantSubject{{Kind: "user", DirectoryID: c.DirectoryID, ObjectGUID: "guid-reader", SourceRelationID: "share"}}}
+	require.NoError(
+		t,
+		db.Exec(
+			"INSERT INTO nextcloud_event_connections(connection_id,tenant_id,knowledge_base_id,datasource_id,status) VALUES(?,?,?,?,?)",
+			"conn",
+			uint64(7),
+			kb.ID,
+			pair.DataSourceID,
+			"active",
+		).Error,
+	)
+	require.NoError(
+		t,
+		db.Exec(
+			"INSERT INTO nextcloud_source_status_epochs VALUES(?,?,?,?)",
+			"conn",
+			int64(1),
+			op.OperationID,
+			time.Now().Unix(),
+		).Error,
+	)
+	snap := types.NextcloudGrantSnapshot{
+		PermissionVersion: 1,
+		PublicationEpoch:  1,
+		Complete:          true,
+		Subjects: []types.NextcloudGrantSubject{
+			{Kind: "user", DirectoryID: c.DirectoryID, ObjectGUID: "guid-reader", SourceRelationID: "share"},
+		},
+	}
 	require.NoError(t, store.ApplyGrantSnapshot(ctx, op, snap))
 	matches, err := store.ScopedMatches(ctx, "reader", 7, kb.ID, time.Now())
 	require.NoError(t, err)
@@ -351,7 +701,12 @@ func TestNextcloudOnboardingAuthorityEpochSupersedesPairingReceipt(t *testing.T)
 	matches, err = store.ScopedMatches(ctx, "reader", 7, kb.ID, time.Now())
 	require.NoError(t, err)
 	require.Empty(t, matches)
-	require.ErrorIs(t, store.ApplyGrantSnapshot(ctx, op, snap), repo.ErrNextcloudOnboardingConflict, "even exact old retries are fenced by the new authority epoch")
+	require.ErrorIs(
+		t,
+		store.ApplyGrantSnapshot(ctx, op, snap),
+		repo.ErrNextcloudOnboardingConflict,
+		"even exact old retries are fenced by the new authority epoch",
+	)
 	snap.PermissionVersion = 2
 	snap.PublicationEpoch = 3
 	require.NoError(t, store.ApplyGrantSnapshot(ctx, op, snap))
@@ -368,7 +723,10 @@ func TestNextcloudOnboardingPostgresConcurrentAdmission(t *testing.T) {
 	ctx := context.Background()
 	var schema string
 	require.NoError(t, db.Raw("SELECT current_schema()").Scan(&schema).Error)
-	peer, err := gorm.Open(postgres.Open(os.Getenv("NEXTCLOUD_ONBOARDING_TEST_POSTGRES_DSN")+" search_path="+schema), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
+	peer, err := gorm.Open(
+		postgres.Open(os.Getenv("NEXTCLOUD_ONBOARDING_TEST_POSTGRES_DSN")+" search_path="+schema),
+		&gorm.Config{Logger: logger.Default.LogMode(logger.Error)},
+	)
 	require.NoError(t, err)
 	peerSQL, err := peer.DB()
 	require.NoError(t, err)
@@ -428,7 +786,14 @@ func TestNextcloudOnboardingCurrentSchemaMissingControlsOrPairingFailsClosed(t *
 	op, err := store.Reserve(ctx, c, onboardingRequest(c, uuid.NewString(), kb.ID))
 	require.NoError(t, err)
 	activateOnboarding(t, db, store, op)
-	snapshot := types.NextcloudGrantSnapshot{PermissionVersion: 1, PublicationEpoch: 1, Complete: true, Subjects: []types.NextcloudGrantSubject{{Kind: "user", DirectoryID: c.DirectoryID, ObjectGUID: "guid-reader", SourceRelationID: "direct"}}}
+	snapshot := types.NextcloudGrantSnapshot{
+		PermissionVersion: 1,
+		PublicationEpoch:  1,
+		Complete:          true,
+		Subjects: []types.NextcloudGrantSubject{
+			{Kind: "user", DirectoryID: c.DirectoryID, ObjectGUID: "guid-reader", SourceRelationID: "direct"},
+		},
+	}
 	require.NoError(t, store.ApplyGrantSnapshot(ctx, op, snapshot))
 	ddl, err := os.ReadFile("../../../migrations/sqlite/000046_nextcloud_content_leases.up.sql")
 	require.NoError(t, err)
@@ -458,7 +823,17 @@ func TestNextcloudOnboardingCurrentSchemaMissingControlsOrPairingFailsClosed(t *
 func TestNextcloudOnboardingExistingBlankPreservesLegalConfigurationAtomically(t *testing.T) {
 	db, store, c := onboardingDB(t)
 	ctx := context.Background()
-	require.NoError(t, db.Create(&types.Model{ID: "graph-model", TenantID: 7, Type: types.ModelTypeKnowledgeQA, Status: types.ModelStatusActive}).Error)
+	require.NoError(
+		t,
+		db.Create(
+			&types.Model{
+				ID:       "graph-model",
+				TenantID: 7,
+				Type:     types.ModelTypeKnowledgeQA,
+				Status:   types.ModelStatusActive,
+			},
+		).Error,
+	)
 	for _, required := range []bool{false, true} {
 		template := freshOnboardingKB(uuid.NewString())
 		template.IndexingStrategy.GraphEnabled = true
