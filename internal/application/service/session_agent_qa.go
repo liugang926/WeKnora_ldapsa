@@ -46,7 +46,12 @@ func (s *sessionService) AgentQA(
 			if _, err := native.GetMessage(ctx, req.Session.ID, req.UserMessageID); err != nil {
 				return err
 			}
-			if err := native.bindInitialMessageMaterial(ctx, req.AssistantMessageID, req.UserMessageID, requestID); err != nil {
+			if err := native.bindInitialMessageMaterial(
+				ctx,
+				req.AssistantMessageID,
+				req.UserMessageID,
+				requestID,
+			); err != nil {
 				return err
 			}
 		}
@@ -75,8 +80,14 @@ func (s *sessionService) AgentQA(
 
 	// Resolve retrieval tenant using shared helper
 	agentTenantID := s.resolveRetrievalTenantID(ctx, req)
-	logger.Infof(ctx, "Start agent-based question answering, session ID: %s, agent tenant ID: %d, query: %s, session: %s",
-		sessionID, agentTenantID, req.Query, string(sessionJSON))
+	logger.Infof(
+		ctx,
+		"Start agent-based question answering, session ID: %s, agent tenant ID: %d, query: %s, session: %s",
+		sessionID,
+		agentTenantID,
+		req.Query,
+		string(sessionJSON),
+	)
 
 	var tenantInfo *types.Tenant
 	if v := ctx.Value(types.TenantInfoContextKey); v != nil {
@@ -161,7 +172,11 @@ func (s *sessionService) AgentQA(
 		// agentRequiresRerankModel() below already lets it pass.
 		rerankModelID := req.CustomAgent.Config.RerankModelID
 		if rerankModelID == "" {
-			logger.Warnf(ctx, "No rerank model configured for custom agent %s, but knowledge_search tool is enabled", req.CustomAgent.ID)
+			logger.Warnf(
+				ctx,
+				"No rerank model configured for custom agent %s, but knowledge_search tool is enabled",
+				req.CustomAgent.ID,
+			)
 			return errors.New("rerank model is not configured: please set rerank_model_id on the agent")
 		}
 
@@ -171,7 +186,10 @@ func (s *sessionService) AgentQA(
 			return fmt.Errorf("failed to get rerank model: %w", err)
 		}
 	} else {
-		logger.Infof(ctx, "knowledge_search is unavailable for the effective agent scope, skipping rerank model initialization")
+		logger.Infof(
+			ctx,
+			"knowledge_search is unavailable for the effective agent scope, skipping rerank model initialization",
+		)
 	}
 
 	// Load multi-turn history directly from DB (the single source of truth).
@@ -208,11 +226,24 @@ func (s *sessionService) AgentQA(
 	}
 	if historyAdmitted && agentConfig.MultiTurnEnabled {
 		budget := agent.HistoryTokenBudget(agentConfig)
-		llmContext, agentConfig.ContextTokenScale, err = LoadAgentHistory(ctx, s.messageRepo, sessionID, budget, agentConfig.RetainRetrievalHistory, messageLineageHistoryAdmission{verifier: s.lineageVerifier})
+		llmContext, agentConfig.ContextTokenScale, err = LoadAgentHistory(
+			ctx,
+			s.messageRepo,
+			sessionID,
+			budget,
+			agentConfig.RetainRetrievalHistory,
+			messageLineageHistoryAdmission{verifier: s.lineageVerifier},
+		)
 		if err != nil {
 			excludeHistoricalContext(err)
 		}
-		logger.Infof(ctx, "Loaded %d history messages from DB (budget=%d tokens, token scale=%.2f)", len(llmContext), budget, agentConfig.ContextTokenScale)
+		logger.Infof(
+			ctx,
+			"Loaded %d history messages from DB (budget=%d tokens, token scale=%.2f)",
+			len(llmContext),
+			budget,
+			agentConfig.ContextTokenScale,
+		)
 	} else {
 		llmContext = []chat.Message{}
 	}
@@ -253,7 +284,13 @@ func (s *sessionService) AgentQA(
 			if loadErr != nil {
 				return fmt.Errorf("load session attachments for sandbox staging: %w", loadErr)
 			}
-			stagedAttachments, err = stager.stageSessionAttachments(ctx, sessionID, agentConfig.SandboxConfigID, req.Session.TenantID, sessionAttachments)
+			stagedAttachments, err = stager.stageSessionAttachments(
+				ctx,
+				sessionID,
+				agentConfig.SandboxConfigID,
+				req.Session.TenantID,
+				sessionAttachments,
+			)
 			if err != nil {
 				return fmt.Errorf("restore session attachments into sandbox: %w", err)
 			}
@@ -282,7 +319,11 @@ func (s *sessionService) AgentQA(
 	if !ok || s.sourceLineageGuard == nil {
 		return access.ErrNextcloudPublicationUnavailable
 	}
-	lineageScope := access.LineageReadScope{Targets: agentConfig.SearchTargets, AgentID: req.CustomAgent.ID, AgentTenantID: req.CustomAgent.TenantID}
+	lineageScope := access.LineageReadScope{
+		Targets:       agentConfig.SearchTargets,
+		AgentID:       req.CustomAgent.ID,
+		AgentTenantID: req.CustomAgent.TenantID,
+	}
 	lineageEngine.SetSourceLineageVerifier(func(checkCtx context.Context, lineage *types.SourceLineage) error {
 		if err := CheckMessageMaterialOutputBoundary(ctx); err != nil {
 			return err
@@ -293,6 +334,11 @@ func (s *sessionService) AgentQA(
 		}
 		return s.sourceLineageGuard.Check(checkCtx, lineage, lineageScope)
 	})
+	if mcpEngine, ok := engine.(interface {
+		SetMCPIndependentTransportVerifier(func(context.Context) error)
+	}); ok {
+		mcpEngine.SetMCPIndependentTransportVerifier(s.agentMCPIndependentVerifier(ctx, req, agentConfig))
+	}
 	if s.groupAccess != nil {
 		guarded, ok := engine.(interface {
 			SetRoundGuard(func(context.Context) error)
@@ -342,7 +388,11 @@ func (s *sessionService) AgentQA(
 		logger.Infof(ctx, "Agent model supports vision, passing %d image(s) directly", len(agentImageURLs))
 	} else if req.ImageDescription != "" {
 		agentQuery = req.Query + "\n\n[用户上传图片内容]\n" + req.ImageDescription
-		logger.Infof(ctx, "Agent model does not support vision, appending image description (%d chars)", len(req.ImageDescription))
+		logger.Infof(
+			ctx,
+			"Agent model does not support vision, appending image description (%d chars)",
+			len(req.ImageDescription),
+		)
 	}
 	if req.QuotedContext != "" {
 		agentQuery += "\n\n" + req.QuotedContext
@@ -367,7 +417,14 @@ func (s *sessionService) AgentQA(
 	// Events will be emitted to EventBus and handled by the Handler layer
 	markMessageMaterialReady(ctx)
 	logger.Info(ctx, "Executing agent with streaming")
-	if _, err := engine.Execute(ctx, sessionID, req.AssistantMessageID, agentQuery, llmContext, agentImageURLs); err != nil {
+	if _, err := engine.Execute(
+		ctx,
+		sessionID,
+		req.AssistantMessageID,
+		agentQuery,
+		llmContext,
+		agentImageURLs,
+	); err != nil {
 		if ctx.Err() == nil {
 			RefuseMessageMaterialOutputBoundary(ctx)
 		}
@@ -514,8 +571,14 @@ func (s *sessionService) buildAgentConfig(
 		agentConfig.SystemPrompt = systemPrompt
 	}
 
-	logger.Infof(ctx, "Custom agent config applied: MaxIterations=%d, Temperature=%.2f, AllowedTools=%v, WebSearchEnabled=%v",
-		agentConfig.MaxIterations, agentConfig.Temperature, agentConfig.AllowedTools, agentConfig.WebSearchEnabled)
+	logger.Infof(
+		ctx,
+		"Custom agent config applied: MaxIterations=%d, Temperature=%.2f, AllowedTools=%v, WebSearchEnabled=%v",
+		agentConfig.MaxIterations,
+		agentConfig.Temperature,
+		agentConfig.AllowedTools,
+		agentConfig.WebSearchEnabled,
+	)
 
 	// Set web search max results from tenant config if not set (default: 5)
 	if agentConfig.WebSearchMaxResults == 0 {
@@ -527,7 +590,11 @@ func (s *sessionService) buildAgentConfig(
 
 	// Resolve web search provider ID: agent-level > tenant default (is_default=true)
 	if agentConfig.WebSearchProviderID == "" {
-		if defaultProvider, err := s.webSearchProviderRepo.GetDefault(ctx, tenantInfo.ID); err == nil && defaultProvider != nil {
+		if defaultProvider, err := s.webSearchProviderRepo.GetDefault(
+			ctx,
+			tenantInfo.ID,
+		); err == nil &&
+			defaultProvider != nil {
 			agentConfig.WebSearchProviderID = defaultProvider.ID
 		}
 	}
@@ -547,7 +614,13 @@ func (s *sessionService) buildAgentConfig(
 	}
 
 	// Build search targets using agent's tenant (handler has validated access for shared agent)
-	searchTargets, err := s.buildSearchTargets(ctx, agentTenantID, agentConfig.KnowledgeBases, agentConfig.KnowledgeIDs, req.TagScopes)
+	searchTargets, err := s.buildSearchTargets(
+		ctx,
+		agentTenantID,
+		agentConfig.KnowledgeBases,
+		agentConfig.KnowledgeIDs,
+		req.TagScopes,
+	)
 	if err != nil {
 		return nil, fmt.Errorf("build search targets: %w", err)
 	}

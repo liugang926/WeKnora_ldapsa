@@ -17,16 +17,44 @@ import (
 	"gorm.io/gorm"
 )
 
-const historySearchCandidateBudget = 200
-const historySearchMaximumResults = 100
+const (
+	historySearchCandidateBudget = 200
+	historySearchMaximumResults  = 100
+)
 
 var errHistorySearchPageMaterialBudget = errors.New("history search page material budget exhausted")
 
 type historySearchCandidateReader interface {
-	OwnedHistorySearchCandidatesByIDs(context.Context, uint64, string, []string, []string) ([]*types.MessageSearchCandidate, error)
-	ListOwnedHistorySearchCandidates(context.Context, uint64, string, []string, time.Time, string, int) ([]*types.MessageSearchCandidate, error)
-	HistorySearchPartnerCandidates(context.Context, uint64, string, *types.MessageSearchCandidate) ([]*types.MessageSearchCandidate, error)
-	OwnedHistorySearchCandidatesByKnowledgeIDs(context.Context, uint64, string, []string, []string, int) ([]*types.MessageSearchCandidate, error)
+	OwnedHistorySearchCandidatesByIDs(
+		context.Context,
+		uint64,
+		string,
+		[]string,
+		[]string,
+	) ([]*types.MessageSearchCandidate, error)
+	ListOwnedHistorySearchCandidates(
+		context.Context,
+		uint64,
+		string,
+		[]string,
+		time.Time,
+		string,
+		int,
+	) ([]*types.MessageSearchCandidate, error)
+	HistorySearchPartnerCandidates(
+		context.Context,
+		uint64,
+		string,
+		*types.MessageSearchCandidate,
+	) ([]*types.MessageSearchCandidate, error)
+	OwnedHistorySearchCandidatesByKnowledgeIDs(
+		context.Context,
+		uint64,
+		string,
+		[]string,
+		[]string,
+		int,
+	) ([]*types.MessageSearchCandidate, error)
 }
 
 type historySearchCursor struct {
@@ -63,8 +91,16 @@ func canonicalHistorySearchSessions(ids []string) []string {
 
 func historySearchCursorBinding(ctx context.Context, params *types.MessageSearchParams) historySearchCursor {
 	hash := sha256.Sum256([]byte(params.Query))
-	return historySearchCursor{Version: 1, Tenant: types.MustTenantIDFromContext(ctx), Owner: params.OwnerID,
-		QueryHash: hex.EncodeToString(hash[:]), Mode: params.Mode, SessionIDs: canonicalHistorySearchSessions(params.SessionIDs)}
+	return historySearchCursor{
+		Version: 1,
+		Tenant:  types.MustTenantIDFromContext(ctx),
+		Owner:   params.OwnerID,
+		QueryHash: hex.EncodeToString(
+			hash[:],
+		),
+		Mode:       params.Mode,
+		SessionIDs: canonicalHistorySearchSessions(params.SessionIDs),
+	}
 }
 
 // This cursor is a navigation position, never an authorization receipt. All
@@ -87,7 +123,14 @@ func decodeHistorySearchCursor(ctx context.Context, params *types.MessageSearchP
 	}
 	left, _ := json.Marshal(expected.SessionIDs)
 	right, _ := json.Marshal(actual.SessionIDs)
-	if actual.Version != expected.Version || actual.Tenant != expected.Tenant || actual.Owner != expected.Owner || actual.QueryHash != expected.QueryHash || actual.Mode != expected.Mode || string(left) != string(right) || actual.Before.IsZero() || actual.BeforeID == "" || len(actual.BeforeID) > 128 || len(actual.PendingIDs) > historySearchMaximumResults {
+	if actual.Version != expected.Version || actual.Tenant != expected.Tenant || actual.Owner != expected.Owner ||
+		actual.QueryHash != expected.QueryHash ||
+		actual.Mode != expected.Mode ||
+		string(left) != string(right) ||
+		actual.Before.IsZero() ||
+		actual.BeforeID == "" ||
+		len(actual.BeforeID) > 128 ||
+		len(actual.PendingIDs) > historySearchMaximumResults {
 		return expected, access.ErrNextcloudPublicationDenied
 	}
 	return actual, nil
@@ -101,18 +144,30 @@ func historySearchPairKey(message *types.Message) string {
 }
 
 func historySearchCandidateDenied(err error) bool {
-	return errors.Is(err, access.ErrNextcloudPublicationDenied) || errors.Is(err, types.ErrSourceLineageUnknown) || errors.Is(err, repository.ErrKnowledgeInputChanged) || errors.Is(err, gorm.ErrRecordNotFound)
+	return errors.Is(err, access.ErrNextcloudPublicationDenied) || errors.Is(err, types.ErrSourceLineageUnknown) ||
+		errors.Is(err, repository.ErrKnowledgeInputChanged) ||
+		errors.Is(err, gorm.ErrRecordNotFound)
 }
 
 // Read only the exact, small exchange after its immutable producer metadata
 // has supplied the real source/body generations and the read guard has taken
 // their leases. There is no SQL body lookup before this admission.
-func (s *messageService) beginHistorySearchPair(ctx context.Context, params *types.MessageSearchParams, candidate *types.MessageSearchCandidate, remaining *int) (*MessageMaterialGuard, *types.Message, error) {
+func (s *messageService) beginHistorySearchPair(
+	ctx context.Context,
+	params *types.MessageSearchParams,
+	candidate *types.MessageSearchCandidate,
+	remaining *int,
+) (*MessageMaterialGuard, *types.Message, error) {
 	reader, ok := s.messageRepo.(historySearchCandidateReader)
 	if !ok || s.materialStore == nil || s.sourceLineageGuard == nil {
 		return nil, nil, access.ErrNextcloudPublicationUnavailable
 	}
-	metadata, err := reader.HistorySearchPartnerCandidates(ctx, types.MustTenantIDFromContext(ctx), params.OwnerID, candidate)
+	metadata, err := reader.HistorySearchPartnerCandidates(
+		ctx,
+		types.MustTenantIDFromContext(ctx),
+		params.OwnerID,
+		candidate,
+	)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -126,11 +181,15 @@ func (s *messageService) beginHistorySearchPair(ctx context.Context, params *typ
 		return nil, nil, errHistorySearchPageMaterialBudget
 	}
 	*remaining -= len(metadata)
-	request := types.MessageMaterialReadRequest{TenantID: types.MustTenantIDFromContext(ctx), SessionID: candidate.SessionID}
+	request := types.MessageMaterialReadRequest{
+		TenantID:  types.MustTenantIDFromContext(ctx),
+		SessionID: candidate.SessionID,
+	}
 	assistantCount := 0
 	seen := make(map[string]bool)
 	for _, row := range metadata {
-		if row == nil || row.SessionID != candidate.SessionID || row.RequestID != candidate.RequestID || seen[row.ID] || (row.Role != "user" && row.Role != "assistant") {
+		if row == nil || row.SessionID != candidate.SessionID || row.RequestID != candidate.RequestID || seen[row.ID] ||
+			(row.Role != "user" && row.Role != "assistant") {
 			return nil, nil, access.ErrNextcloudPublicationDenied
 		}
 		seen[row.ID] = true
@@ -148,7 +207,9 @@ func (s *messageService) beginHistorySearchPair(ctx context.Context, params *typ
 	}
 	for _, row := range guard.snapshot.Messages {
 		if row != nil && row.ID == candidate.ID {
-			if row.SessionID != candidate.SessionID || row.RequestID != candidate.RequestID || row.Role != candidate.Role || !row.CreatedAt.Equal(candidate.CreatedAt) {
+			if row.SessionID != candidate.SessionID || row.RequestID != candidate.RequestID ||
+				row.Role != candidate.Role ||
+				!row.CreatedAt.Equal(candidate.CreatedAt) {
 				guard.Close()
 				return nil, nil, access.ErrNextcloudPublicationDenied
 			}
@@ -159,7 +220,10 @@ func (s *messageService) beginHistorySearchPair(ctx context.Context, params *typ
 	return nil, nil, access.ErrNextcloudPublicationDenied
 }
 
-func (s *messageService) fencedKeywordHistorySearch(ctx context.Context, params *types.MessageSearchParams) (*historyKeywordPage, error) {
+func (s *messageService) fencedKeywordHistorySearch(
+	ctx context.Context,
+	params *types.MessageSearchParams,
+) (*historyKeywordPage, error) {
 	reader, ok := s.messageRepo.(historySearchCandidateReader)
 	if !ok || s.materialStore == nil || s.sourceLineageGuard == nil {
 		return nil, access.ErrNextcloudPublicationUnavailable
@@ -170,12 +234,26 @@ func (s *messageService) fencedKeywordHistorySearch(ctx context.Context, params 
 	}
 	var pending []*types.MessageSearchCandidate
 	if len(cursor.PendingIDs) > 0 {
-		pending, err = reader.OwnedHistorySearchCandidatesByIDs(ctx, cursor.Tenant, cursor.Owner, params.SessionIDs, cursor.PendingIDs)
+		pending, err = reader.OwnedHistorySearchCandidatesByIDs(
+			ctx,
+			cursor.Tenant,
+			cursor.Owner,
+			params.SessionIDs,
+			cursor.PendingIDs,
+		)
 		if err != nil {
 			return nil, err
 		}
 	}
-	normal, err := reader.ListOwnedHistorySearchCandidates(ctx, cursor.Tenant, cursor.Owner, params.SessionIDs, cursor.Before, cursor.BeforeID, historySearchCandidateBudget+1-len(pending))
+	normal, err := reader.ListOwnedHistorySearchCandidates(
+		ctx,
+		cursor.Tenant,
+		cursor.Owner,
+		params.SessionIDs,
+		cursor.Before,
+		cursor.BeforeID,
+		historySearchCandidateBudget+1-len(pending),
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -202,8 +280,15 @@ func (s *messageService) fencedKeywordHistorySearch(ctx context.Context, params 
 			}
 			return nil, err
 		}
-		if !strings.Contains(strings.ToLower(original.Content), needle) {
+		rows, retained, err := s.retainAgentConversationCandidate(ctx, guard)
+		if err != nil {
 			guard.Close()
+			return nil, err
+		}
+		if !strings.Contains(strings.ToLower(original.Content), needle) {
+			if !retained {
+				guard.Close()
+			}
 			continue
 		}
 		// When both original fields match, only the newer matching row emits
@@ -211,18 +296,23 @@ func (s *messageService) fencedKeywordHistorySearch(ctx context.Context, params 
 		// without keeping an unbounded client/server seen-message inventory.
 		duplicate := false
 		for _, partner := range guard.snapshot.Messages {
-			if partner.ID != original.ID && strings.Contains(strings.ToLower(partner.Content), needle) && (partner.CreatedAt.After(original.CreatedAt) || (partner.CreatedAt.Equal(original.CreatedAt) && partner.ID > original.ID)) {
+			if partner.ID != original.ID && strings.Contains(strings.ToLower(partner.Content), needle) &&
+				(partner.CreatedAt.After(original.CreatedAt) || (partner.CreatedAt.Equal(original.CreatedAt) && partner.ID > original.ID)) {
 				duplicate = true
 				break
 			}
 		}
 		if duplicate {
-			guard.Close()
+			if !retained {
+				guard.Close()
+			}
 			continue
 		}
-		rows, err := s.bindAdmittedMessageGuard(ctx, guard, guard.snapshot.Request)
-		if err != nil {
-			return nil, err
+		if !retained {
+			rows, err = s.bindAdmittedMessageGuard(ctx, guard, guard.snapshot.Request)
+			if err != nil {
+				return nil, err
+			}
 		}
 		for _, row := range rows {
 			if row.ID == original.ID {
@@ -244,56 +334,12 @@ func (s *messageService) fencedKeywordHistorySearch(ctx context.Context, params 
 	return page, nil
 }
 
-func (s *messageService) fencedVectorHistoryCandidates(ctx context.Context, params *types.MessageSearchParams, scores map[string]float64) ([]*types.MessageSearchResultItem, map[string][]*types.Message, error) {
-	reader, ok := s.messageRepo.(historySearchCandidateReader)
-	if !ok || s.materialStore == nil || s.sourceLineageGuard == nil {
-		return nil, nil, access.ErrNextcloudPublicationUnavailable
-	}
-	ids := make([]string, 0, len(scores))
-	for id := range scores {
-		ids = append(ids, id)
-	}
-	sort.Strings(ids)
-	metadata, err := reader.OwnedHistorySearchCandidatesByKnowledgeIDs(ctx, types.MustTenantIDFromContext(ctx), params.OwnerID, params.SessionIDs, ids, historySearchMaximumResults)
-	if err != nil {
-		return nil, nil, err
-	}
-	pairs := make(map[string][]*types.Message)
-	var items []*types.MessageSearchResultItem
-	remaining := historySearchCandidateBudget
-	for _, candidate := range metadata {
-		guard, original, err := s.beginHistorySearchPair(ctx, params, candidate, &remaining)
-		if errors.Is(err, errHistorySearchPageMaterialBudget) {
-			return nil, nil, access.ErrNextcloudPublicationUnavailable
-		}
-		if err != nil {
-			if historySearchCandidateDenied(err) {
-				continue
-			}
-			return nil, nil, err
-		}
-		if original.KnowledgeID != candidate.KnowledgeID {
-			guard.Close()
-			return nil, nil, access.ErrNextcloudPublicationDenied
-		}
-		rows, err := s.bindAdmittedMessageGuard(ctx, guard, guard.snapshot.Request)
-		if err != nil {
-			return nil, nil, err
-		}
-		for _, row := range rows {
-			if row.ID == candidate.ID {
-				items = append(items, &types.MessageSearchResultItem{MessageWithSession: types.MessageWithSession{Message: *row}, Score: scores[candidate.KnowledgeID], MatchType: "vector"})
-				pairs[historySearchPairKey(row)] = rows
-			}
-		}
-	}
-	sort.SliceStable(items, func(i, j int) bool { return items[i].Score > items[j].Score })
-	return items, pairs, nil
-}
-
 // Expand partners only from the already-held original snapshots. Raw
 // GetMessagesByRequestIDs would reintroduce an unfenced SQL body read here.
-func expandHeldHistoricalSearchPairs(items []*types.MessageSearchResultItem, pairs map[string][]*types.Message) ([]*types.MessageSearchResultItem, error) {
+func expandHeldHistoricalSearchPairs(
+	items []*types.MessageSearchResultItem,
+	pairs map[string][]*types.Message,
+) ([]*types.MessageSearchResultItem, error) {
 	seen := make(map[string]bool)
 	for _, item := range items {
 		seen[item.ID] = true
@@ -307,7 +353,10 @@ func expandHeldHistoricalSearchPairs(items []*types.MessageSearchResultItem, pai
 		for _, row := range rows {
 			if !seen[row.ID] {
 				seen[row.ID] = true
-				out = append(out, &types.MessageSearchResultItem{MessageWithSession: types.MessageWithSession{Message: *row}})
+				out = append(
+					out,
+					&types.MessageSearchResultItem{MessageWithSession: types.MessageWithSession{Message: *row}},
+				)
 			}
 		}
 	}
