@@ -65,7 +65,29 @@ func scopedGraphFixtureDatabase(t *testing.T) *gorm.DB {
 				"_processing_spans(knowledge_id,attempt,span_id)"),
 		).Error,
 	)
-	for _, name := range []string{"000031_nextcloud_source_versions", "000045_nextcloud_source_revisions", "000046_nextcloud_content_leases", "000047_nextcloud_candidate_retry", "000053_knowledge_input_provenance", "000054_knowledge_configuration_history_inputs", "000055_knowledge_actual_config_controls", "000056_knowledge_original_worker_actor", "000057_processing_span_original_inputs", "000032_nextcloud_event_inbox", "000038_nextcloud_gc", "000040_nextcloud_gc_object_claim", "000041_nextcloud_gc_derived_inventory", "000068_nextcloud_local_derived_gc", "000075_nextcloud_processing_state", "000077_nextcloud_content_revision", "000064_nextcloud_publication_recovery", "000076_nextcloud_directory_migrations", "000078_nextcloud_control_recovery", "000079_nextcloud_recovery_build_leases", "000080_nextcloud_graph_recovery_fence"} {
+	for _, name := range []string{
+		"000031_nextcloud_source_versions",
+		"000045_nextcloud_source_revisions",
+		"000046_nextcloud_content_leases",
+		"000047_nextcloud_candidate_retry",
+		"000053_knowledge_input_provenance",
+		"000054_knowledge_configuration_history_inputs",
+		"000055_knowledge_actual_config_controls",
+		"000056_knowledge_original_worker_actor",
+		"000057_processing_span_original_inputs",
+		"000032_nextcloud_event_inbox",
+		"000038_nextcloud_gc",
+		"000040_nextcloud_gc_object_claim",
+		"000041_nextcloud_gc_derived_inventory",
+		"000068_nextcloud_local_derived_gc",
+		"000075_nextcloud_processing_state",
+		"000077_nextcloud_content_revision",
+		"000064_nextcloud_publication_recovery",
+		"000076_nextcloud_directory_migrations",
+		"000078_nextcloud_control_recovery",
+		"000079_nextcloud_recovery_build_leases",
+		"000080_nextcloud_graph_recovery_fence",
+	} {
 		script, err := os.ReadFile("../../../migrations/sqlite/" + name + ".up.sql")
 		require.NoError(t, err)
 		if name == "000075_nextcloud_processing_state" && db.Migrator().HasColumn(&types.DataSource{}, "sync_enabled") {
@@ -79,7 +101,15 @@ func scopedGraphFixtureDatabase(t *testing.T) *gorm.DB {
 func scopedGraphPipelineFixture(
 	t *testing.T,
 	required bool,
-) (*gorm.DB, *repository.KnowledgeInputProvenanceStore, *repository.NextcloudProcessingStateStore, *repository.ScopedSQLGraphRepository, context.Context, *types.KnowledgeBuildInputProof, *types.Knowledge) {
+) (
+	*gorm.DB,
+	*repository.KnowledgeInputProvenanceStore,
+	*repository.NextcloudProcessingStateStore,
+	*repository.ScopedSQLGraphRepository,
+	context.Context,
+	*types.KnowledgeBuildInputProof,
+	*types.Knowledge,
+) {
 	t.Helper()
 	db := scopedGraphFixtureDatabase(t)
 	inputs := repository.NewKnowledgeInputProvenanceStore(db)
@@ -120,7 +150,19 @@ func scopedGraphPipelineFixture(
 	require.NoError(
 		t,
 		db.Table("nextcloud_event_connections").
-			Create(map[string]any{"connection_id": "pipeline-connection-0001", "tenant_id": 7, "knowledge_base_id": kb.ID, "datasource_id": ds.ID, "nextcloud_instance_id": "instance", "binding_id": binding, "datasource_base_url": base, "datasource_config_sha256": configSHA, "status": "active", "current_key_id": "current", "current_secret_ciphertext": encrypted}).
+			Create(map[string]any{
+				"connection_id":             "pipeline-connection-0001",
+				"tenant_id":                 7,
+				"knowledge_base_id":         kb.ID,
+				"datasource_id":             ds.ID,
+				"nextcloud_instance_id":     "instance",
+				"binding_id":                binding,
+				"datasource_base_url":       base,
+				"datasource_config_sha256":  configSHA,
+				"status":                    "active",
+				"current_key_id":            "current",
+				"current_secret_ciphertext": encrypted,
+			}).
 			Error,
 	)
 	state := repository.NewNextcloudProcessingStateStore(db)
@@ -225,7 +267,13 @@ func TestNextcloudActualExtractionWithdrawalBeforeProviderCommitWritesNothing(t 
 		require.NoError(
 			t,
 			repository.NewNextcloudContentLeaseStore(db).
-				RetireKnowledge(context.Background(), repository.NextcloudContentScope{TenantID: 7, KnowledgeBaseID: doc.KnowledgeBaseID, KnowledgeID: doc.ID, DataSourceID: "ds-77", ExternalID: "nextcloud:instance:77"}),
+				RetireKnowledge(context.Background(), repository.NextcloudContentScope{
+					TenantID:        7,
+					KnowledgeBaseID: doc.KnowledgeBaseID,
+					KnowledgeID:     doc.ID,
+					DataSourceID:    "ds-77",
+					ExternalID:      "nextcloud:instance:77",
+				}),
 		)
 	}}
 	require.Error(t, pipelineExtractTask(ctx, t, db, inputs, state, provider, proof, doc, model))

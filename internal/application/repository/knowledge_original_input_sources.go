@@ -57,7 +57,12 @@ func (s *KnowledgeInputProvenanceStore) ReadOriginalNextcloudBuildSource(
 	}
 	var k types.Knowledge
 	err = s.db.WithContext(ctx).
-		Where("id = ? AND tenant_id = ? AND knowledge_base_id = ?", proof.KnowledgeID, proof.TenantID, proof.KnowledgeBaseID).
+		Where(
+			"id = ? AND tenant_id = ? AND knowledge_base_id = ?",
+			proof.KnowledgeID,
+			proof.TenantID,
+			proof.KnowledgeBaseID,
+		).
 		Take(&k).
 		Error
 	if err != nil {

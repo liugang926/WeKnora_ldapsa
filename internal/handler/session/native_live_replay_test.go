@@ -9,7 +9,12 @@ import (
 )
 
 func TestNativeLiveMetadataPeekExpiryAndBodyIdentityRecheck(t *testing.T) {
-	for _, mode := range []string{"expired_after_peek", "body_changed_after_peek", "lineage_changed_after_peek", "closed_after_peek"} {
+	for _, mode := range []string{
+		"expired_after_peek",
+		"body_changed_after_peek",
+		"lineage_changed_after_peek",
+		"closed_after_peek",
+	} {
 		t.Run(mode, func(t *testing.T) {
 			body := []byte(`{"content":"native actual producer bytes"}`)
 			entry := nativeLiveFrame{

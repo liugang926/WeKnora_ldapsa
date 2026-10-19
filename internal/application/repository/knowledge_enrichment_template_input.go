@@ -21,10 +21,19 @@ type templateParentInput struct {
 	AllChunks bool
 }
 type knowledgeTemplateInput struct {
-	ID                                                                                                                             string `gorm:"primaryKey"`
-	TenantID                                                                                                                       uint64
-	KnowledgeBaseID, Purpose, ModelID, ModelDigest, ConfigDigest, TenantDigest, ActorSelector, Parents, SourceLineage, InputDigest string
-	ModelRevision, ConfigRevision, TenantRevision                                                                                  uint64
+	ID                                            string `gorm:"primaryKey"`
+	TenantID                                      uint64
+	KnowledgeBaseID                               string
+	Purpose                                       string
+	ModelID                                       string
+	ModelDigest                                   string
+	ConfigDigest                                  string
+	TenantDigest                                  string
+	ActorSelector                                 string
+	Parents                                       string
+	SourceLineage                                 string
+	InputDigest                                   string
+	ModelRevision, ConfigRevision, TenantRevision uint64
 }
 
 func (knowledgeTemplateInput) TableName() string { return "knowledge_enrichment_template_inputs" }
@@ -411,7 +420,12 @@ func (s *KnowledgeInputProvenanceStore) recheckTemplateInputInTx(
 		if parent.AllChunks {
 			var ids []string
 			if err := tx.Model(&types.Chunk{}).
-				Where("tenant_id = ? AND knowledge_base_id = ? AND knowledge_id = ?", p.TenantID, p.KnowledgeBaseID, p.KnowledgeID).
+				Where(
+					"tenant_id = ? AND knowledge_base_id = ? AND knowledge_id = ?",
+					p.TenantID,
+					p.KnowledgeBaseID,
+					p.KnowledgeID,
+				).
 				Order("id ASC").
 				Pluck("id", &ids).
 				Error; err != nil {
@@ -452,7 +466,16 @@ func (s *KnowledgeInputProvenanceStore) RecheckKnowledgeEnrichmentTemplateInputs
 		}
 	}
 	return s.db.WithContext(ctx).
-		Transaction(func(tx *gorm.DB) error { _, err := s.recheckTemplateInputInTx(ctx, tx, id); return err }, knowledgeDisplayWriteOptions(s.db))
+		Transaction(func(tx *gorm.DB) error {
+			_, err := s.recheckTemplateInputInTx(
+				ctx,
+				tx,
+				id,
+			)
+			return err
+		}, knowledgeDisplayWriteOptions(
+			s.db,
+		))
 }
 
 // CaptureKnowledgeTemplateModelResult captures knowledge template model result.

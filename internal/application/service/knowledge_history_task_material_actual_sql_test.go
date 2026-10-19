@@ -175,7 +175,11 @@ func TestHistoryKnowledgeTaskActualSQLClosesOnlyItsAcquiredGuard(t *testing.T) {
 	require.NoError(t, borrowed.Recheck(), "worker cleanup must not close its caller's sibling guard")
 	borrowed.Close()
 	beforeCalls := f.m.f.model.calls
-	for _, kind := range []string{types.TypeKnowledgePostProcess, types.TypeSummaryGeneration, types.TypeQuestionGeneration} {
+	for _, kind := range []string{
+		types.TypeKnowledgePostProcess,
+		types.TypeSummaryGeneration,
+		types.TypeQuestionGeneration,
+	} {
 		task := historyActualQueuedTask(t, f, kind, proof.KnowledgeID)
 		require.Error(
 			t,

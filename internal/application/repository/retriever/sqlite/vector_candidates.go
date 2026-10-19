@@ -49,7 +49,17 @@ func (r *sqliteRepository) RetrieveVectorCandidates(
 		ChunkID, KnowledgeID, KnowledgeBaseID string
 	}
 	if err := r.db.WithContext(ctx).
-		Raw(query, queryBlob, p.TopK, p.TenantID, p.TenantID, p.KnowledgeBaseIDs, p.KnowledgeIDs, types.ParseStatusCompleted, "enabled").
+		Raw(
+			query,
+			queryBlob,
+			p.TopK,
+			p.TenantID,
+			p.TenantID,
+			p.KnowledgeBaseIDs,
+			p.KnowledgeIDs,
+			types.ParseStatusCompleted,
+			"enabled",
+		).
 		Scan(&rows).
 		Error; err != nil {
 		return nil, types.ErrVectorCandidateRetrievalUnavailable

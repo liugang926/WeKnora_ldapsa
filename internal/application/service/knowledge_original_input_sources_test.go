@@ -34,7 +34,13 @@ func sourceBuildFixture(
 	t *testing.T,
 	pg bool,
 	hooks ...sourceDerivedFixtureHook,
-) (*enrichmentTestFixture, context.Context, *types.KnowledgeBuildInputProof, *atomic.Bool, repository.NextcloudContentScope) {
+) (
+	*enrichmentTestFixture,
+	context.Context,
+	*types.KnowledgeBuildInputProof,
+	*atomic.Bool,
+	repository.NextcloudContentScope,
+) {
 	t.Helper()
 	t.Setenv("SYSTEM_AES_KEY", "0123456789abcdef0123456789abcdef")
 	f := newEnrichmentTestFixture(t, pg)
@@ -141,7 +147,11 @@ func sourceBuildFixture(
 	t.Cleanup(server.Close)
 	t.Setenv("WEKNORA_NEXTCLOUD_DEV_HTTP", "1")
 	t.Setenv("WEKNORA_NEXTCLOUD_ALLOWED_ORIGINS", server.URL)
-	config, e := (&types.DataSourceConfig{Type: types.ConnectorTypeNextcloud, ResourceIDs: []string{"binding-source"}, Settings: map[string]interface{}{"base_url": server.URL}, Credentials: map[string]interface{}{"token": "local-only-source-token", "key_id": "local_test"}}).ToJSON()
+	config, e := (&types.DataSourceConfig{Type: types.ConnectorTypeNextcloud, ResourceIDs: []string{
+		"binding-source",
+	}, Settings: map[string]interface{}{
+		"base_url": server.URL,
+	}, Credentials: map[string]interface{}{"token": "local-only-source-token", "key_id": "local_test"}}).ToJSON()
 	require.NoError(t, e)
 	ds := &types.DataSource{
 		ID:              "source-ds",
@@ -204,7 +214,15 @@ func sourceBuildFixture(
 	require.NoError(t, f.db.Create(k).Error)
 	require.NoError(t, f.s.repo.(interface {
 		StageNextcloudVersion(context.Context, uint64, string, string, string, string, string) error
-	}).StageNextcloudVersion(context.Background(), 7, "kb", ds.ID, "nextcloud:instance:77", "original-source-etag", k.ID))
+	}).StageNextcloudVersion(
+		context.Background(),
+		7,
+		"kb",
+		ds.ID,
+		"nextcloud:instance:77",
+		"original-source-etag",
+		k.ID,
+	))
 	require.NoError(t, f.db.Where("id = ?", k.ID).Take(k).Error)
 	scope := repository.NextcloudContentScope{
 		TenantID:        7,
@@ -308,7 +326,13 @@ func sourceBuildFixture(
 }
 
 func runNextcloudOriginalBuildPurpose(t *testing.T, pg bool) {
-	for _, mode := range []string{"normal build publish and guarded read", "remote source withdrawn during model", "stage epoch retired during model", "forged original artifact", "public staging read denied"} {
+	for _, mode := range []string{
+		"normal build publish and guarded read",
+		"remote source withdrawn during model",
+		"stage epoch retired during model",
+		"forged original artifact",
+		"public staging read denied",
+	} {
 		t.Run(mode, func(t *testing.T) {
 			f, ctx, original, allow, scope := sourceBuildFixture(t, pg)
 			actual, e := f.store.CaptureKnowledgeEnrichmentInputs(
@@ -397,7 +421,14 @@ func runNextcloudOriginalBuildPurpose(t *testing.T, pg bool) {
 			cg, e := NewChunkOutputAuthorizer(
 				f.store,
 				f.guard,
-			).Begin(f.ctx, types.ChunkOutputReadRequest{TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: current.ID, ChunkIDs: []string{f.chunks[0].ID}})
+			).Begin(f.ctx, types.ChunkOutputReadRequest{
+				TenantID:        7,
+				KnowledgeBaseID: "kb",
+				KnowledgeID:     current.ID,
+				ChunkIDs: []string{
+					f.chunks[0].ID,
+				},
+			})
 			require.NoError(t, e)
 			cs, e := cg.Snapshot()
 			require.NoError(t, e)
@@ -413,7 +444,24 @@ func runNextcloudOriginalBuildPurpose(t *testing.T, pg bool) {
 			require.NoError(t, e)
 			defer func() { require.NoError(t, leases.ReleaseLease(context.Background(), lease.ID)) }()
 			rows, e := repository.NewRAGChunkSnapshotReader(f.db, f.store).
-				HydrateRAGChunkSnapshots(f.ctx, []types.RAGChunkReadRequest{{TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: current.ID, ChunkIDs: []string{f.chunks[0].ID}, Lease: &types.RAGExactReadLease{ID: lease.ID, TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: current.ID, Kind: string(lease.Kind), Epoch: lease.Epoch, OwnerID: lease.OwnerID, ExpiresAt: lease.ExpiresAt}}})
+				HydrateRAGChunkSnapshots(f.ctx, []types.RAGChunkReadRequest{{
+					TenantID:        7,
+					KnowledgeBaseID: "kb",
+					KnowledgeID:     current.ID,
+					ChunkIDs: []string{
+						f.chunks[0].ID,
+					},
+					Lease: &types.RAGExactReadLease{
+						ID:              lease.ID,
+						TenantID:        7,
+						KnowledgeBaseID: "kb",
+						KnowledgeID:     current.ID,
+						Kind:            string(lease.Kind),
+						Epoch:           lease.Epoch,
+						OwnerID:         lease.OwnerID,
+						ExpiresAt:       lease.ExpiresAt,
+					},
+				}})
 			require.NoError(t, e)
 			require.NoError(t, rows[0].SourceLineage.RequireComplete())
 			allow.Store(false)

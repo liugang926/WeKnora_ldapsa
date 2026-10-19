@@ -395,7 +395,12 @@ func (r *knowledgeRepository) UpdateKnowledge(ctx context.Context, knowledge *ty
 				}
 			}
 			var actual types.Knowledge
-			if err := tx.Where("id = ? AND tenant_id = ? AND knowledge_base_id = ?", knowledge.ID, knowledge.TenantID, knowledge.KnowledgeBaseID).
+			if err := tx.Where(
+				"id = ? AND tenant_id = ? AND knowledge_base_id = ?",
+				knowledge.ID,
+				knowledge.TenantID,
+				knowledge.KnowledgeBaseID,
+			).
 				Take(&actual).
 				Error; err != nil {
 				return err
@@ -759,7 +764,12 @@ func (r *knowledgeRepository) UpdateKnowledgeColumns(
 				return err
 			}
 			return tx.Model(&types.Knowledge{}).
-				Where("id = ? AND tenant_id = ? AND knowledge_base_id = ?", id, guard.proof.TenantID, guard.proof.KnowledgeBaseID).
+				Where(
+					"id = ? AND tenant_id = ? AND knowledge_base_id = ?",
+					id,
+					guard.proof.TenantID,
+					guard.proof.KnowledgeBaseID,
+				).
 				Updates(values).
 				Error
 		})
@@ -870,7 +880,13 @@ func (r *knowledgeRepository) FinalizeSubtask(
 		}
 		if operation, ok := types.GraphWriteOperationFromContext(ctx); ok {
 			var task nextcloudGraphTask
-			if err := tx.Where("operation_id=? AND knowledge_id=? AND attempt=? AND chunk_id=?", operation.ID, id, operation.Attempt, operation.ChunkID).
+			if err := tx.Where(
+				"operation_id=? AND knowledge_id=? AND attempt=? AND chunk_id=?",
+				operation.ID,
+				id,
+				operation.Attempt,
+				operation.ChunkID,
+			).
 				Take(&task).
 				Error; err != nil {
 				return err
@@ -948,7 +964,9 @@ func (r *knowledgeRepository) FinalizeSubtask(
 			}
 			return write(tx)
 		})
-	} else if _, guarded := ctx.Value(knowledgeBuildInputKey{}).(knowledgeBuildInputContext); guarded || r.completionHandoff != nil {
+	} else if _, guarded := ctx.Value(
+		knowledgeBuildInputKey{},
+	).(knowledgeBuildInputContext); guarded || r.completionHandoff != nil {
 		writeErr = r.db.WithContext(ctx).Transaction(write)
 	} else {
 		writeErr = write(r.db.WithContext(ctx))
@@ -1512,7 +1530,8 @@ func nextcloudDuplicateProcessingConfigCurrent(tx *gorm.DB, k *types.Knowledge) 
 	}
 	if len(admissions) == 0 {
 		if tx.Migrator().HasTable("nextcloud_original_upload_inputs") &&
-			(k.ParseStatus == types.ParseStatusPending || k.ParseStatus == types.ParseStatusProcessing || k.ParseStatus == types.ParseStatusFinalizing) {
+			(k.ParseStatus == types.ParseStatusPending ||
+				k.ParseStatus == types.ParseStatusProcessing || k.ParseStatus == types.ParseStatusFinalizing) {
 			var original struct{ ConfigRevision uint64 }
 			err := tx.Table("nextcloud_original_upload_inputs").
 				Where("knowledge_id=? AND tenant_id=? AND knowledge_base_id=?", k.ID, k.TenantID, k.KnowledgeBaseID).

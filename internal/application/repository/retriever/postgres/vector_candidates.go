@@ -48,7 +48,20 @@ func (g *pgRepository) RetrieveVectorCandidates(
 		Score                                 float64
 	}
 	if err := g.db.WithContext(ctx).
-		Raw(query, vector, dim, p.TenantID, p.TenantID, p.KnowledgeBaseIDs, p.KnowledgeIDs, types.ParseStatusCompleted, "enabled", true, vector, p.TopK).
+		Raw(
+			query,
+			vector,
+			dim,
+			p.TenantID,
+			p.TenantID,
+			p.KnowledgeBaseIDs,
+			p.KnowledgeIDs,
+			types.ParseStatusCompleted,
+			"enabled",
+			true,
+			vector,
+			p.TopK,
+		).
 		Scan(&rows).
 		Error; err != nil {
 		return nil, types.ErrVectorCandidateRetrievalUnavailable

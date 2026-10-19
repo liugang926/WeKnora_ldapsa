@@ -134,7 +134,12 @@ func (s *KnowledgeInputProvenanceStore) captureTagOutputInTx(
 	}
 	if req.TagID != "" {
 		var tag types.KnowledgeTag
-		if err := tx.Where("tenant_id=? AND knowledge_base_id=? AND id=?", req.TenantID, req.KnowledgeBaseID, req.TagID).
+		if err := tx.Where(
+			"tenant_id=? AND knowledge_base_id=? AND id=?",
+			req.TenantID,
+			req.KnowledgeBaseID,
+			req.TagID,
+		).
 			Take(&tag).
 			Error; err != nil {
 			return nil, err

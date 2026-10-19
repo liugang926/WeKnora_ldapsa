@@ -27,7 +27,12 @@ func knowledgeBuildSourceIdentity(tx *gorm.DB, k *types.Knowledge, epoch uint64)
 		Error; err != nil {
 		return zero, err
 	}
-	if err := tx.Where("tenant_id = ? AND knowledge_base_id = ? AND knowledge_id = ?", k.TenantID, k.KnowledgeBaseID, k.ID).
+	if err := tx.Where(
+		"tenant_id = ? AND knowledge_base_id = ? AND knowledge_id = ?",
+		k.TenantID,
+		k.KnowledgeBaseID,
+		k.ID,
+	).
 		Take(&exact).
 		Error; err != nil {
 		return zero, err
@@ -89,7 +94,12 @@ func (s *KnowledgeInputProvenanceStore) AdmitNextcloudBuildInputs(
 			return err
 		}
 		var k types.Knowledge
-		if err := tx.Where("id = ? AND tenant_id = ? AND knowledge_base_id = ?", scope.KnowledgeID, scope.TenantID, scope.KnowledgeBaseID).
+		if err := tx.Where(
+			"id = ? AND tenant_id = ? AND knowledge_base_id = ?",
+			scope.KnowledgeID,
+			scope.TenantID,
+			scope.KnowledgeBaseID,
+		).
 			Take(&k).
 			Error; err != nil {
 			return err

@@ -434,7 +434,8 @@ func (s *groupAccessService) effectivePermissionWithMode(
 				return result, err
 			}
 			if role.ScopedOnly &&
-				(mode == types.ResourceAccessInherit || resourceType != types.GroupResourceTypeKnowledgeBase || action != types.ResourceActionRead) {
+				(mode == types.ResourceAccessInherit ||
+					resourceType != types.GroupResourceTypeKnowledgeBase || action != types.ResourceActionRead) {
 				result.Reason = "scoped_knowledge_base_only"
 				return result, nil
 			}

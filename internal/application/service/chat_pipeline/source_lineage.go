@@ -29,7 +29,9 @@ func (e *EventManager) BeginSourceLineage(
 	})
 	ctx = types.WithRAGSourceLineage(ctx, turn)
 	if cm == nil || len(cm.Images) > 0 || len(cm.Attachments) > 0 || cm.QuotedContext != "" ||
-		cm.ImageDescription != "" || cm.WebSearchEnabled || cm.DataAnalysisEnabled || len(cm.Entity) > 0 || cm.GraphResult != nil {
+		cm.ImageDescription != "" || cm.WebSearchEnabled || cm.DataAnalysisEnabled || len(
+		cm.Entity,
+	) > 0 || cm.GraphResult != nil {
 		_ = turn.Add(types.UnknownSourceLineage())
 	}
 	if err := CheckSourceLineageInputs(ctx, cm); err != nil {

@@ -150,7 +150,11 @@ func (s *NextcloudOnboardingStore) PrepareRootMigration(
 			}
 		}
 		if latest != nil &&
-			(latest.JournalStreamID != proof.JournalStreamID || latestSeq >= seq || latest.PhysicalRootKey != proof.PhysicalRootKey || latest.StorageIdentity != proof.StorageIdentity || latest.NewRootHash != proof.OldRootHash || latest.NewRootPath != proof.OldRootPath) {
+			(latest.JournalStreamID != proof.JournalStreamID ||
+				latestSeq >= seq ||
+				latest.PhysicalRootKey != proof.PhysicalRootKey ||
+				latest.StorageIdentity != proof.StorageIdentity ||
+				latest.NewRootHash != proof.OldRootHash || latest.NewRootPath != proof.OldRootPath) {
 			return ErrNextcloudOnboardingConflict
 		}
 		var ds types.DataSource
@@ -180,7 +184,11 @@ func (s *NextcloudOnboardingStore) PrepareRootMigration(
 				return err
 			}
 			if err = tx.Table("nextcloud_content_leases").
-				Where("tenant_id=? AND knowledge_base_id=? AND released_at_ms IS NULL", op.TenantID, op.KnowledgeBaseID).
+				Where(
+					"tenant_id=? AND knowledge_base_id=? AND released_at_ms IS NULL",
+					op.TenantID,
+					op.KnowledgeBaseID,
+				).
 				Updates(map[string]any{"released_at_ms": now, "updated_at_ms": now}).
 				Error; err != nil {
 				return err
@@ -188,8 +196,15 @@ func (s *NextcloudOnboardingStore) PrepareRootMigration(
 		}
 		if tx.Migrator().HasTable("nextcloud_graph_tasks") {
 			if err := tx.Table("nextcloud_graph_tasks").
-				Where("tenant_id=? AND knowledge_base_id=? AND state IN ?", op.TenantID, op.KnowledgeBaseID, []string{"pending", "running"}).
-				Updates(map[string]any{"state": "cancelled", "error_code": "root_migration", "completed_at": time.Now().Unix()}).
+				Where("tenant_id=? AND knowledge_base_id=? AND state IN ?", op.TenantID, op.KnowledgeBaseID, []string{
+					"pending",
+					"running",
+				}).
+				Updates(map[string]any{
+					"state":        "cancelled",
+					"error_code":   "root_migration",
+					"completed_at": time.Now().Unix(),
+				}).
 				Error; err != nil {
 				return err
 			}
@@ -283,9 +298,22 @@ func (s *NextcloudOnboardingStore) FinalizeRootMigration(
 			}
 			for _, id := range ids {
 				if err := tx.Table("nextcloud_source_status_epochs").
-					Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "connection_id"}}, DoUpdates: clause.Assignments(map[string]any{"publication_epoch": epoch, "pair_operation_id": op.OperationID, "verified_at": time.Now().Unix()}), Where: clause.Where{Exprs: []clause.Expression{clause.Expr{SQL: ("nextcloud_source_status_epochs.publication_epoch <= excluded.publication_e" +
-						"poch")}}}}).
-					Create(map[string]any{"connection_id": id, "publication_epoch": epoch, "pair_operation_id": op.OperationID, "verified_at": time.Now().Unix()}).
+					Clauses(clause.OnConflict{Columns: []clause.Column{{
+						Name: "connection_id",
+					}}, DoUpdates: clause.Assignments(map[string]any{
+						"publication_epoch": epoch,
+						"pair_operation_id": op.OperationID,
+						"verified_at":       time.Now().Unix(),
+					}), Where: clause.Where{Exprs: []clause.Expression{clause.Expr{
+						SQL: ("nextcloud_source_status_epochs.publication_epoch <= excluded.publication_e" +
+							"poch"),
+					}}}}).
+					Create(map[string]any{
+						"connection_id":     id,
+						"publication_epoch": epoch,
+						"pair_operation_id": op.OperationID,
+						"verified_at":       time.Now().Unix(),
+					}).
 					Error; err != nil {
 					return err
 				}
@@ -541,7 +569,11 @@ func (s *NextcloudOnboardingStore) PrepareTargetMigration(
 				return err
 			}
 			if err = tx.Table("nextcloud_content_leases").
-				Where("tenant_id=? AND knowledge_base_id=? AND released_at_ms IS NULL", old.TenantID, old.KnowledgeBaseID).
+				Where(
+					"tenant_id=? AND knowledge_base_id=? AND released_at_ms IS NULL",
+					old.TenantID,
+					old.KnowledgeBaseID,
+				).
 				Updates(map[string]any{"released_at_ms": now, "updated_at_ms": now}).
 				Error; err != nil {
 				return err
@@ -549,8 +581,15 @@ func (s *NextcloudOnboardingStore) PrepareTargetMigration(
 		}
 		if tx.Migrator().HasTable("nextcloud_graph_tasks") {
 			if err := tx.Table("nextcloud_graph_tasks").
-				Where("tenant_id=? AND knowledge_base_id=? AND state IN ?", old.TenantID, old.KnowledgeBaseID, []string{"pending", "running"}).
-				Updates(map[string]any{"state": "cancelled", "error_code": "target_migration", "completed_at": time.Now().Unix()}).
+				Where("tenant_id=? AND knowledge_base_id=? AND state IN ?", old.TenantID, old.KnowledgeBaseID, []string{
+					"pending",
+					"running",
+				}).
+				Updates(map[string]any{
+					"state":        "cancelled",
+					"error_code":   "target_migration",
+					"completed_at": time.Now().Unix(),
+				}).
 				Error; err != nil {
 				return err
 			}
@@ -559,7 +598,12 @@ func (s *NextcloudOnboardingStore) PrepareTargetMigration(
 		if tx.Migrator().HasTable("nextcloud_source_versions") {
 			var externalIDs []string
 			if err := tx.Table("nextcloud_source_versions").
-				Where("tenant_id=? AND knowledge_base_id=? AND datasource_id=?", old.TenantID, old.KnowledgeBaseID, pair.DataSourceID).
+				Where(
+					"tenant_id=? AND knowledge_base_id=? AND datasource_id=?",
+					old.TenantID,
+					old.KnowledgeBaseID,
+					pair.DataSourceID,
+				).
 				Order("external_id").
 				Pluck("external_id", &externalIDs).
 				Error; err != nil {
@@ -668,7 +712,16 @@ func (s *NextcloudOnboardingStore) FinalizeTargetMigration(
 		}
 		var versions []nextcloudSourceVersion
 		if err := tx.Table("nextcloud_source_versions").
-			Where("tenant_id=? AND knowledge_base_id=? AND datasource_id=? AND state IN ?", target.TenantID, target.KnowledgeBaseID, pair.DataSourceID, []string{"staging", "published"}).
+			Where(
+				"tenant_id=? AND knowledge_base_id=? AND datasource_id=? AND state IN ?",
+				target.TenantID,
+				target.KnowledgeBaseID,
+				pair.DataSourceID,
+				[]string{
+					"staging",
+					"published",
+				},
+			).
 			Find(&versions).
 			Error; err != nil {
 			return err
@@ -706,7 +759,11 @@ func (s *NextcloudOnboardingStore) FinalizeTargetMigration(
 			}
 		}
 		if err := tx.Model(&out).
-			Updates(map[string]any{"state": "active", "manifest_sha256": onboardingDigest(manifest), "updated_at": time.Now().UTC()}).
+			Updates(map[string]any{
+				"state":           "active",
+				"manifest_sha256": onboardingDigest(manifest),
+				"updated_at":      time.Now().UTC(),
+			}).
 			Error; err != nil {
 			return err
 		}

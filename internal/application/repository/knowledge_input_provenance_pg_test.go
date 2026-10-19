@@ -135,7 +135,14 @@ func TestPostgresKnowledgeInputConfigRollbackAndImmutableOrigin(t *testing.T) {
 	rows, err := NewRAGChunkSnapshotReader(
 		db,
 		store,
-	).HydrateRAGChunkSnapshots(ctx, []RAGChunkReadRequest{{TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: k.ID, ChunkIDs: []string{c.ID}}})
+	).HydrateRAGChunkSnapshots(ctx, []RAGChunkReadRequest{{
+		TenantID:        7,
+		KnowledgeBaseID: "kb",
+		KnowledgeID:     k.ID,
+		ChunkIDs: []string{
+			c.ID,
+		},
+	}})
 	require.NoError(t, err)
 	require.ErrorIs(t, rows[0].SourceLineage.RequireComplete(), types.ErrSourceLineageUnknown)
 }

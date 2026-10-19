@@ -427,7 +427,17 @@ func (f *onboardingOriginalActualFixture) pair(
 	f.bindings.Store(op.BindingID, true)
 	_, err = NewNextcloudEventInboxRepository(
 		f.db,
-	).Pair(context.Background(), NextcloudEventPairingIdentity{TenantID: 7, KnowledgeBaseID: op.KnowledgeBaseID, DatasourceID: pair.DataSourceID, NextcloudInstanceID: op.InstanceID, BindingID: op.BindingID, DatasourceBaseURL: pair.BaseURL, DatasourceConfigSHA: pair.ConfigSHA, PublicationEpoch: 1, PublicationState: "active"})
+	).Pair(context.Background(), NextcloudEventPairingIdentity{
+		TenantID:            7,
+		KnowledgeBaseID:     op.KnowledgeBaseID,
+		DatasourceID:        pair.DataSourceID,
+		NextcloudInstanceID: op.InstanceID,
+		BindingID:           op.BindingID,
+		DatasourceBaseURL:   pair.BaseURL,
+		DatasourceConfigSHA: pair.ConfigSHA,
+		PublicationEpoch:    1,
+		PublicationState:    "active",
+	})
 	require.NoError(t, err)
 	require.NoError(t, f.onboarding.RefreshGrantEpoch(context.Background(), op))
 	require.NoError(

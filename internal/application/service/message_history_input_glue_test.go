@@ -115,7 +115,21 @@ func (s *historyGlueWriter) CreateCommittedHistoryKnowledgeInput(
 
 func TestMessageHistoryInputActualIndexAdapterUsesOnlyServerIDsAndAtomicCapability(t *testing.T) {
 	empty, _ := types.NewCompleteSourceLineage()
-	for _, mode := range []string{"complete plain", "shared execution", "foreign caller", "legacy", "unknown", "controlled", "unfinished", "wrong role", "foreign target", "target revoked", "owner denied", "writer error", "missing capability"} {
+	for _, mode := range []string{
+		"complete plain",
+		"shared execution",
+		"foreign caller",
+		"legacy",
+		"unknown",
+		"controlled",
+		"unfinished",
+		"wrong role",
+		"foreign target",
+		"target revoked",
+		"owner denied",
+		"writer error",
+		"missing capability",
+	} {
 		t.Run(mode, func(t *testing.T) {
 			row := &types.Message{
 				ID:            "assistant",

@@ -145,6 +145,14 @@ administration, RAG evaluation and the reviewed automatic release path are retai
 Models and actual business pairing require administrator configuration and
 separate acceptance; exposing an integration route does not establish a pairing.
 
+The current administrator setup still requires operator-provisioned workspace/
+template-scoped onboarding credentials and directory rules. The directory sidebar
+can select configured spaces and select/create a KB; an address-and-authorization
+connection wizard with automatic credential provisioning is not implemented.
+Selecting an existing target currently requires a verified virgin, empty document
+KB. A KB with existing content, or mixed unrelated data sources, cannot be adopted
+by this release. Directory-scoped sharing does not grant workspace-wide membership.
+
 The operator explicitly chose this scope with the following optional limitations:
 
 - Image, attachment and quoted-context inputs; web search/fetch; long-term memory;

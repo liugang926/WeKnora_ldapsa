@@ -32,7 +32,10 @@ func TestKnowledgeCollectionHTTPHeartbeatDuringCaptureAndOutput(t *testing.T) {
 	require.NoError(
 		t,
 		db.Table("nextcloud_content_leases").
-			Where("expires_at_ms>created_at_ms+? AND released_at_ms IS NOT NULL", nextcloudHTTPReadLeaseTTL.Milliseconds()).
+			Where(
+				"expires_at_ms>created_at_ms+? AND released_at_ms IS NOT NULL",
+				nextcloudHTTPReadLeaseTTL.Milliseconds(),
+			).
 			Count(&updated).
 			Error,
 	)

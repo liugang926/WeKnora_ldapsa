@@ -164,7 +164,7 @@ type KnowledgeBase struct {
 
 // KnowledgeBaseConfig represents the knowledge base configuration
 type KnowledgeBaseConfig struct {
-	EnrichmentTemplates *KnowledgeEnrichmentTemplates `json:"enrichment_templates,omitempty" yaml:"enrichment_templates,omitempty"`
+	EnrichmentTemplates *KnowledgeEnrichmentTemplates `json:"enrichment_templates,omitempty" yaml:"enrichment_templates,omitempty"` //nolint:lll // Indivisible tags retain wire and reflection bytes.
 	// Chunking configuration
 	ChunkingConfig ChunkingConfig `yaml:"chunking_config"         json:"chunking_config"`
 	// Image processing configuration

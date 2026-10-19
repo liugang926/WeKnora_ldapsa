@@ -115,7 +115,12 @@ func (s *NextcloudPublicationRecoveryStore) Snapshot(
 				return e
 			}
 			var ds types.DataSource
-			if e = tx.Where("id=? AND tenant_id=? AND knowledge_base_id=? AND deleted_at IS NULL", p.DataSourceID, p.TenantID, p.KnowledgeBaseID).
+			if e = tx.Where(
+				"id=? AND tenant_id=? AND knowledge_base_id=? AND deleted_at IS NULL",
+				p.DataSourceID,
+				p.TenantID,
+				p.KnowledgeBaseID,
+			).
 				Take(&ds).
 				Error; e != nil {
 				return e
@@ -206,8 +211,15 @@ func (s *NextcloudPublicationRecoveryStore) Snapshot(
 						return e
 					}
 					var chunks []types.Chunk
-					if e = tx.Where(("knowledge_id=? AND tenant_id=? AND knowledge_base_id=? AND is_enabled=? AN" +
-						"D status=? AND index_status='ready'"), k.ID, p.TenantID, p.KnowledgeBaseID, true, types.ChunkStatusIndexed).
+					if e = tx.Where(
+						("knowledge_id=? AND tenant_id=? AND knowledge_base_id=? AND is_enabled=? AN" +
+							"D status=? AND index_status='ready'"),
+						k.ID,
+						p.TenantID,
+						p.KnowledgeBaseID,
+						true,
+						types.ChunkStatusIndexed,
+					).
 						Order("id").
 						Find(&chunks).
 						Error; e != nil {

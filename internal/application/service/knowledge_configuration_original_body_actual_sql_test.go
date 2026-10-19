@@ -200,7 +200,13 @@ func newConfigurationGCActualFixture(t *testing.T) *configurationGCActualFixture
 			Error,
 	)
 	require.True(t, virgin, "approved processing configuration is not imported document business content")
-	for _, table := range []string{"knowledges", "chunks", "data_sources", "wiki_pages", "nextcloud_onboarding_operations"} {
+	for _, table := range []string{
+		"knowledges",
+		"chunks",
+		"data_sources",
+		"wiki_pages",
+		"nextcloud_onboarding_operations",
+	} {
 		var n int64
 		require.NoError(t, db.Table(table).Where("tenant_id=? AND knowledge_base_id=?", 7, clone.ID).Count(&n).Error)
 		require.Zero(t, n, "config heads/manifests must not manufacture business rows in "+table)
@@ -349,7 +355,12 @@ func TestKnowledgeConfigurationActualSQLSourceTombstoneClearsCloneBodiesAfterRea
 		t,
 		db.Table("original_body_field_heads").
 			Select("body_id").
-			Where("source_table=? AND row_key=? AND column_name=?", "knowledge_enrichment_template_inputs", f.templateInputID, "parents").
+			Where(
+				"source_table=? AND row_key=? AND column_name=?",
+				"knowledge_enrichment_template_inputs",
+				f.templateInputID,
+				"parents",
+			).
 			Take(&templateHead).
 			Error,
 	)
@@ -378,9 +389,17 @@ func TestKnowledgeConfigurationActualSQLSourceTombstoneClearsCloneBodiesAfterRea
 	// Production activation remains gated on the separate full reader audit.
 	var nowMS int64
 	require.NoError(t, db.Raw("SELECT CAST((julianday('now') - 2440587.5)*86400000 AS INTEGER)").Scan(&nowMS).Error)
-	require.NoError(t, db.Exec(("INSERT INTO nextcloud_content_lease_coverage\n (tenant_id,knowledge_base_i"+
-		"d,activated_at_ms,legacy_drained_at_ms,reader_revision,builder_revision)\n"+
-		" VALUES (?,?,?,?,?,?)"), 7, f.history.source.KnowledgeBaseID, nowMS-1000, nowMS, "isolated-config-body-test", "isolated-config-body-test").Error)
+	require.NoError(t, db.Exec(
+		("INSERT INTO nextcloud_content_lease_coverage\n (tenant_id,knowledge_base_i"+
+			"d,activated_at_ms,legacy_drained_at_ms,reader_revision,builder_revision)\n"+
+			" VALUES (?,?,?,?,?,?)"),
+		7,
+		f.history.source.KnowledgeBaseID,
+		nowMS-1000,
+		nowMS,
+		"isolated-config-body-test",
+		"isolated-config-body-test",
+	).Error)
 	_, err = bodies.PurgeSelectedJob(f.admin, 7, job, 100)
 	require.NoError(t, err)
 	require.Equal(
@@ -482,7 +501,12 @@ func TestKnowledgeConfigurationActualSQLMissingManifestHeadCannotBeReadmittedByG
 		t,
 		db.Table("original_body_field_heads").
 			Select("slot_id,body_id").
-			Where("source_table=? AND row_key=? AND column_name=?", "knowledge_bases", f.clone.ID, "enrichment_templates").
+			Where(
+				"source_table=? AND row_key=? AND column_name=?",
+				"knowledge_bases",
+				f.clone.ID,
+				"enrichment_templates",
+			).
 			Take(&head).
 			Error,
 	)
@@ -558,7 +582,12 @@ func TestKnowledgeConfigurationActualSQLMissingOriginalParentsRefusesMetadataChe
 		t,
 		db.Table("original_body_field_heads").
 			Select("body_id").
-			Where("source_table=? AND row_key=? AND column_name=?", "knowledge_bases", f.clone.ID, "enrichment_templates").
+			Where(
+				"source_table=? AND row_key=? AND column_name=?",
+				"knowledge_bases",
+				f.clone.ID,
+				"enrichment_templates",
+			).
 			Take(&body).
 			Error,
 	)

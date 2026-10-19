@@ -12,12 +12,12 @@ import (
 	"gorm.io/gorm"
 )
 
-// RAGChunkInputSnapshot represents ragchunk input snapshot repository data.
-// RAGChunkReadRequest identifies server-resolved rows, never supplied text.
-// Lease is the original exact read lease held before content hydration.
-// ExpectedLineage is required when augmenting an already captured result.
 type (
-	RAGChunkReadRequest   = types.RAGChunkReadRequest
+	// RAGChunkReadRequest identifies server-resolved rows, never supplied text.
+	// Lease is the original exact read lease held before content hydration.
+	// ExpectedLineage is required when augmenting an already captured result.
+	RAGChunkReadRequest = types.RAGChunkReadRequest
+	// RAGChunkInputSnapshot contains the chunk reader's captured body and provenance.
 	RAGChunkInputSnapshot = types.RAGChunkInputSnapshot
 )
 
@@ -98,7 +98,12 @@ func (r *RAGChunkSnapshotReader) HydrateRAGChunkSnapshots(
 				return ErrNextcloudLineageSnapshotDenied
 			}
 			var knowledge types.Knowledge
-			if err := tx.Where("id = ? AND tenant_id = ? AND knowledge_base_id = ?", request.KnowledgeID, request.TenantID, request.KnowledgeBaseID).
+			if err := tx.Where(
+				"id = ? AND tenant_id = ? AND knowledge_base_id = ?",
+				request.KnowledgeID,
+				request.TenantID,
+				request.KnowledgeBaseID,
+			).
 				Take(&knowledge).
 				Error; err != nil {
 				return lineageSnapshotReadError(err)
@@ -172,7 +177,13 @@ func (r *RAGChunkSnapshotReader) HydrateRAGChunkSnapshots(
 						return types.ErrSourceLineageLimit
 					}
 					chunk = &types.Chunk{}
-					if err := tx.Where("id = ? AND tenant_id = ? AND knowledge_base_id = ? AND knowledge_id = ?", id, request.TenantID, request.KnowledgeBaseID, request.KnowledgeID).
+					if err := tx.Where(
+						"id = ? AND tenant_id = ? AND knowledge_base_id = ? AND knowledge_id = ?",
+						id,
+						request.TenantID,
+						request.KnowledgeBaseID,
+						request.KnowledgeID,
+					).
 						Take(chunk).
 						Error; err != nil {
 						return lineageSnapshotReadError(err)

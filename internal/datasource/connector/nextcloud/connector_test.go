@@ -522,7 +522,9 @@ func TestIncompleteCursorCannotDiscardDeletionEvidence(t *testing.T) {
 	}))
 	defer server.Close()
 	for _, old := range []*types.SyncCursor{
-		{ConnectorCursor: map[string]interface{}{"files": map[string]interface{}{"dev-published": map[string]interface{}{}}}},
+		{ConnectorCursor: map[string]interface{}{"files": map[string]interface{}{
+			"dev-published": map[string]interface{}{},
+		}}},
 		{ConnectorCursor: map[string]interface{}{"instance_id": "instance-1", "files": map[string]interface{}{}}},
 	} {
 		items, cursor, err := NewConnector().FetchIncremental(context.Background(), testConfig(t, server.URL), old)
@@ -604,7 +606,7 @@ func TestChangedContentETagRejectsCursor(t *testing.T) {
 
 func TestRedirectAndOversizeAreRejected(t *testing.T) {
 	var redirected int
-	target := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+	target := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
 		redirected++
 	}))
 	defer target.Close()

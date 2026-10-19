@@ -170,7 +170,13 @@ func TestHistoryVectorRerankBoundaryRejectsMalformedProviderIndexes(t *testing.T
 			results := []*types.SearchResult{{ID: "c", KnowledgeID: "k", Content: "actual"}}
 			load := func(context.Context, string) (rerank.Reranker, error) {
 				return historyVectorBoundaryReranker{
-					call: func(context.Context, string, []string) ([]rerank.RankResult, error) { return test.ranks, nil },
+					call: func(
+						context.Context,
+						string,
+						[]string,
+					) ([]rerank.RankResult, error) {
+						return test.ranks, nil
+					},
 				}, nil
 			}
 			out, err := runHistoryVectorRerank(

@@ -316,7 +316,12 @@ func (s *KnowledgeInputProvenanceStore) authorizeOriginalKnowledgeProducerWrite(
 	}
 	var k types.Knowledge
 	if err := s.db.WithContext(ctx).
-		Where("id = ? AND tenant_id = ? AND knowledge_base_id = ?", original.KnowledgeID, original.TenantID, original.KnowledgeBaseID).
+		Where(
+			"id = ? AND tenant_id = ? AND knowledge_base_id = ?",
+			original.KnowledgeID,
+			original.TenantID,
+			original.KnowledgeBaseID,
+		).
 		Take(&k).
 		Error; err != nil {
 		return ctx, err
@@ -433,7 +438,12 @@ func (s *KnowledgeInputProvenanceStore) restoreCurrentKnowledgeActor(
 		} else {
 			var member types.TenantMember
 			if err := s.db.WithContext(ctx).
-				Where("user_id = ? AND tenant_id = ? AND status = ?", user.ID, actor.CallerTenantID, types.TenantMemberStatusActive).
+				Where(
+					"user_id = ? AND tenant_id = ? AND status = ?",
+					user.ID,
+					actor.CallerTenantID,
+					types.TenantMemberStatusActive,
+				).
 				Take(&member).
 				Error; err != nil {
 				return ctx, err

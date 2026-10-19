@@ -74,7 +74,13 @@ func onboardingBlankTargetMetadata(tx *gorm.DB, tenant uint64, id string) (*type
 		n != 1 {
 		return nil, ErrNextcloudKBBlankUnverified
 	}
-	for _, table := range []string{"knowledges", "data_sources", "wiki_pages", "chunks", "nextcloud_onboarding_operations"} {
+	for _, table := range []string{
+		"knowledges",
+		"data_sources",
+		"wiki_pages",
+		"chunks",
+		"nextcloud_onboarding_operations",
+	} {
 		if err := tx.Table(table).
 			Where("tenant_id=? AND knowledge_base_id=?", tenant, id).
 			Count(&n).

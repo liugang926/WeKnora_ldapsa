@@ -40,7 +40,10 @@ func newHistoryCandidateActualFixture(t *testing.T) *historyCandidateActualFixtu
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	t.Cleanup(cancel)
 	require.NoError(t, db.AutoMigrate(&types.MessageArtifactRecord{}))
-	for _, name := range []string{"000070_message_original_materials.up.sql", "000073_steer_original_materials.up.sql"} {
+	for _, name := range []string{
+		"000070_message_original_materials.up.sql",
+		"000073_steer_original_materials.up.sql",
+	} {
 		script, err := os.ReadFile("../../../migrations/sqlite/" + name)
 		require.NoError(t, err)
 		require.NoError(t, db.Exec(string(script)).Error)
@@ -272,7 +275,14 @@ func (f *historyCandidateActualFixture) owned(t *testing.T, target, blocker *his
 		if strings.Contains(sql, "SELECT a.knowledge_id") {
 			selected = true
 			require.NotContains(t, sql, "PRIVATE")
-			for _, bodyColumn := range []string{".content", "initial_input", "rendered_content", "context_checkpoint", "parent_materials", ".title"} {
+			for _, bodyColumn := range []string{
+				".content",
+				"initial_input",
+				"rendered_content",
+				"context_checkpoint",
+				"parent_materials",
+				".title",
+			} {
 				require.NotContains(t, strings.ToLower(sql), bodyColumn)
 			}
 		}
@@ -436,7 +446,9 @@ func TestHistoryKnowledgeCandidateActualSQLiteOwnChildPointerAndRawUserFieldsRem
 		t,
 		f.db.Model(&types.Message{}).
 			Where("id=?", target.user.ID).
-			Updates(map[string]any{"rendered_content": "unconsumed generated expansion", "images": types.MessageImages{{Caption: "unconsumed generated caption"}}}).
+			Updates(map[string]any{"rendered_content": "unconsumed generated expansion", "images": types.MessageImages{{
+				Caption: "unconsumed generated caption",
+			}}}).
 			Error,
 	)
 	require.NoError(

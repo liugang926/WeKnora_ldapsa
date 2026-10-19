@@ -93,7 +93,11 @@ func TestSteerOriginalMaterialActualHTTPAgentHonorsDisableTitle(t *testing.T) {
 			var final types.Message
 			require.NoError(
 				t,
-				f.db.Where("session_id=? AND role='assistant' AND request_id<>?", f.parent.SessionID, f.parent.RequestID).
+				f.db.Where(
+					"session_id=? AND role='assistant' AND request_id<>?",
+					f.parent.SessionID,
+					f.parent.RequestID,
+				).
 					Take(&final).
 					Error,
 			)
@@ -113,7 +117,17 @@ func TestSteerOriginalMaterialActualHTTPAgentHonorsDisableTitle(t *testing.T) {
 }
 
 func TestSteerOriginalMaterialActualHTTPAgentRevocationBeforeConsumeAndBeforeNextModel(t *testing.T) {
-	for _, mode := range []string{"actor_before_consume", "control_aba_before_consume", "source_before_consume", "actor_after_persist", "control_aba_after_persist", "source_after_persist", "control_discard_before_consume", "control_discard_after_persist", "control_delete_after_persist"} {
+	for _, mode := range []string{
+		"actor_before_consume",
+		"control_aba_before_consume",
+		"source_before_consume",
+		"actor_after_persist",
+		"control_aba_after_persist",
+		"source_after_persist",
+		"control_discard_before_consume",
+		"control_discard_after_persist",
+		"control_delete_after_persist",
+	} {
 		t.Run(mode, func(t *testing.T) { runActualSteerHTTPAgent(t, strings.HasPrefix(mode, "source_"), mode) })
 	}
 }
@@ -123,7 +137,19 @@ func TestSteerOriginalMaterialActualHTTPAfterCreatesExactNewInitialAndCompletion
 }
 
 func TestSteerOriginalMaterialActualHTTPAfterRejectsCurrentOriginSlotAndControlChanges(t *testing.T) {
-	for _, mode := range []string{"old_run_aba", "new_run_aba", "unknown_slot", "unknown_origin", "changed_input", "control_append", "control_version_aba", "source_before_consume", "actor_before_consume", "source_after_consume", "claim_failed"} {
+	for _, mode := range []string{
+		"old_run_aba",
+		"new_run_aba",
+		"unknown_slot",
+		"unknown_origin",
+		"changed_input",
+		"control_append",
+		"control_version_aba",
+		"source_before_consume",
+		"actor_before_consume",
+		"source_after_consume",
+		"claim_failed",
+	} {
 		t.Run(mode, func(t *testing.T) { runActualSteerAfterHTTP(t, mode) })
 	}
 }
@@ -328,21 +354,35 @@ func runActualSteerAfterHTTP(t *testing.T, mode string) {
 		}
 		return
 	}
-	require.Eventually(t, func() bool {
-		var completed int64
-		return model.calls.Load() == 2 &&
-			f.db.Model(&types.Message{}).
-				Where("session_id=? AND role='assistant' AND request_id<>? AND is_completed=true", f.parent.SessionID, f.parent.RequestID).
-				Count(&completed).
-				Error == nil &&
-			completed == 2
-	}, 8*time.Second, 10*time.Millisecond, ("one legitimate after input creates one completed successor through the act" +
-		"ual public producer"))
+	require.Eventually(
+		t,
+		func() bool {
+			var completed int64
+			return model.calls.Load() == 2 &&
+				f.db.Model(&types.Message{}).
+					Where(
+						"session_id=? AND role='assistant' AND request_id<>? AND is_completed=true",
+						f.parent.SessionID,
+						f.parent.RequestID,
+					).
+					Count(&completed).
+					Error == nil &&
+				completed == 2
+		},
+		8*time.Second,
+		10*time.Millisecond,
+		("one legitimate after input creates one completed successor through the act" +
+			"ual public producer"),
+	)
 	require.EqualValues(t, 1, observed.consumes.Load())
 	var answers []types.Message
 	require.NoError(
 		t,
-		f.db.Where("session_id=? AND role='assistant' AND request_id<>? AND is_completed=true", f.parent.SessionID, f.parent.RequestID).
+		f.db.Where(
+			"session_id=? AND role='assistant' AND request_id<>? AND is_completed=true",
+			f.parent.SessionID,
+			f.parent.RequestID,
+		).
 			Find(&answers).
 			Error,
 	)
@@ -648,20 +688,26 @@ func runActualSteerHTTPAgent(t *testing.T, controlled bool, mode string) {
 			require.Equal(t, "api", users[1].Channel)
 		}
 	}
-	require.Eventually(t, func() bool {
-		var physical, sources int64
-		return f.db.Table("original_body_leases").
-			Where("kind='read' AND released_at_ms IS NULL").
-			Count(&physical).
-			Error == nil &&
-			physical == 0 &&
-			f.db.Table("nextcloud_content_leases").
+	require.Eventually(
+		t,
+		func() bool {
+			var physical, sources int64
+			return f.db.Table("original_body_leases").
 				Where("kind='read' AND released_at_ms IS NULL").
-				Count(&sources).
+				Count(&physical).
 				Error == nil &&
-			sources == 0
-	}, 3*time.Second, 10*time.Millisecond, ("actual producer and HTTP ownership close every source and original body re" +
-		"ad lease"))
+				physical == 0 &&
+				f.db.Table("nextcloud_content_leases").
+					Where("kind='read' AND released_at_ms IS NULL").
+					Count(&sources).
+					Error == nil &&
+				sources == 0
+		},
+		3*time.Second,
+		10*time.Millisecond,
+		("actual producer and HTTP ownership close every source and original body re" +
+			"ad lease"),
+	)
 	assertActualSteerBodyLease(t, f.db, "", false)
 	var completed types.Message
 	require.NoError(t, f.db.Where("id=?", run.ID).Take(&completed).Error)

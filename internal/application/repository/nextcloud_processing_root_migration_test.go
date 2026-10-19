@@ -78,7 +78,12 @@ func TestNextcloudRootMigrationPreservesTypedGraphOriginalInputsAndCurrentProbe(
 	require.NoError(
 		t,
 		db.Table("nextcloud_source_status_epochs").
-			Create(map[string]any{"connection_id": "connection-0000001", "publication_epoch": 2, "pair_operation_id": pair.OperationID, "verified_at": time.Now().Unix()}).
+			Create(map[string]any{
+				"connection_id":     "connection-0000001",
+				"publication_epoch": 2,
+				"pair_operation_id": pair.OperationID,
+				"verified_at":       time.Now().Unix(),
+			}).
 			Error,
 	)
 	var original types.Knowledge

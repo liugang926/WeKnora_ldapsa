@@ -16,7 +16,14 @@ import (
 func steerMaterialActualFixture(
 	t *testing.T,
 	pg bool,
-) (*messageService, *repository.KnowledgeInputProvenanceStore, *gorm.DB, context.Context, *types.Session, *types.Message) {
+) (
+	*messageService,
+	*repository.KnowledgeInputProvenanceStore,
+	*gorm.DB,
+	context.Context,
+	*types.Session,
+	*types.Message,
+) {
 	messages, _, store, db, ctx, session, _ := messageBodyIntegrationFixture(
 		t,
 		pg,
@@ -183,7 +190,13 @@ func TestSteerMaterialActualRollbackRefusesProofDeletion(t *testing.T) {
 			migration, err := os.ReadFile(path)
 			require.NoError(t, err)
 			require.Error(t, db.Exec(string(migration)).Error)
-			for _, table := range []string{"steer_authored_origins", "steer_control_admissions", "steer_control_heads", "steer_consumption_origins", "message_completion_input_manifests"} {
+			for _, table := range []string{
+				"steer_authored_origins",
+				"steer_control_admissions",
+				"steer_control_heads",
+				"steer_consumption_origins",
+				"message_completion_input_manifests",
+			} {
 				require.True(
 					t,
 					db.Migrator().HasTable(table),

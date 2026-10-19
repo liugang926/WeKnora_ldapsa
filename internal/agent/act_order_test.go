@@ -73,7 +73,12 @@ func TestParallelReadsRespectMutationBarriers(t *testing.T) {
 			types.LLMToolCall{ID: name, Function: types.FunctionCall{Name: name, Arguments: `{}`}},
 		)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	// This unit constructs every call and result locally; attach the real turn
+	// accumulator as Execute does before invoking the tool executor.
+	ctx, cancel := context.WithTimeout(
+		types.WithRAGSourceLineage(context.Background(), engine.turnLineage),
+		5*time.Second,
+	)
 	defer cancel()
 	step := &types.AgentStep{}
 	done := make(chan struct{})

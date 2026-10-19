@@ -205,8 +205,15 @@ func scopedConfigurationPairInTx(
 	}
 	var ds types.DataSource
 	if err := tx.Select("id", "tenant_id", "knowledge_base_id", "type", "status", "config").
-		Where(("id = ? AND tenant_id = ? AND knowledge_base_id = ? AND type = ? AND status" +
-			" = ? AND deleted_at IS NULL"), datasource, tenant, kb, types.ConnectorTypeNextcloud, types.DataSourceStatusActive).
+		Where(
+			("id = ? AND tenant_id = ? AND knowledge_base_id = ? AND type = ? AND status" +
+				" = ? AND deleted_at IS NULL"),
+			datasource,
+			tenant,
+			kb,
+			types.ConnectorTypeNextcloud,
+			types.DataSourceStatusActive,
+		).
 		Take(&ds).
 		Error; err != nil {
 		return pair, 0, err
@@ -364,7 +371,12 @@ func (s *KnowledgeInputProvenanceStore) BeginNextcloudBuildConfigurationRead(
 		}
 		if err := tx.Table("knowledges").
 			Select(projection).
-			Where("id = ? AND tenant_id = ? AND knowledge_base_id = ? AND deleted_at IS NULL", scope.KnowledgeID, scope.TenantID, scope.KnowledgeBaseID).
+			Where(
+				"id = ? AND tenant_id = ? AND knowledge_base_id = ? AND deleted_at IS NULL",
+				scope.KnowledgeID,
+				scope.TenantID,
+				scope.KnowledgeBaseID,
+			).
 			Take(&k).
 			Error; err != nil {
 			return err

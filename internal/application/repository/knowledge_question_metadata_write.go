@@ -9,8 +9,14 @@ import (
 )
 
 type questionMetadataOutput struct {
-	ChunkID, AdmissionID, ProducerInputID, PreviousMetadataDigest, PreviousBodyDigest, ResultMetadataDigest, ResultBodyDigest string
-	PreviousRevision, ResultRevision                                                                                          uint64
+	ChunkID                          string
+	AdmissionID                      string
+	ProducerInputID                  string
+	PreviousMetadataDigest           string
+	PreviousBodyDigest               string
+	ResultMetadataDigest             string
+	ResultBodyDigest                 string
+	PreviousRevision, ResultRevision uint64
 }
 
 func (questionMetadataOutput) TableName() string { return "knowledge_question_metadata_outputs" }

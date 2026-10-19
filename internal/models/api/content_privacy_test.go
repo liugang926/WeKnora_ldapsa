@@ -59,7 +59,12 @@ func TestSourceContentAPIRequestAndStreamLogsRemainPrivate(t *testing.T) {
 	ordinary := NewStreamAssembler(ctx, "ordinary")
 	ordinary.Process(ch, Delta{Reasoning: "PUBLIC_ORDINARY_REASONING", Content: "PUBLIC_ORDINARY_OUTPUT"})
 	ordinary.Fail(ch, errors.New("PUBLIC_ORDINARY_ERROR"))
-	for _, marker := range []string{"PUBLIC_ORDINARY_REQUEST", "PUBLIC_ORDINARY_REASONING", "PUBLIC_ORDINARY_OUTPUT", "PUBLIC_ORDINARY_ERROR"} {
+	for _, marker := range []string{
+		"PUBLIC_ORDINARY_REQUEST",
+		"PUBLIC_ORDINARY_REASONING",
+		"PUBLIC_ORDINARY_OUTPUT",
+		"PUBLIC_ORDINARY_ERROR",
+	} {
 		require.Contains(t, logs.String(), marker)
 	}
 	logs.Reset()

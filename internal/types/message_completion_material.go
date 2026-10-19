@@ -17,9 +17,10 @@ type MessageCompletionInputManifest struct {
 	Version                                                                                        int
 	Recipe                                                                                         string
 	AssistantMessageID, AssistantGenerationID, AssistantAdmissionID, SessionID, RequestID, OwnerID string
-	TenantID, OwnerRevision                                                                        uint64
-	Initial                                                                                        *MessageMaterialProof
-	Steers                                                                                         []*MessageCompletionSteerParent
-	Inputs                                                                                         []*MessageMaterialSnapshot
-	SourceLineage                                                                                  *SourceLineage
+
+	TenantID, OwnerRevision uint64
+	Initial                 *MessageMaterialProof
+	Steers                  []*MessageCompletionSteerParent
+	Inputs                  []*MessageMaterialSnapshot
+	SourceLineage           *SourceLineage
 }

@@ -43,10 +43,20 @@ func TestQuickAnswerCompletionPersistsAfterGenerationCancellation(t *testing.T) 
 	h := &Handler{messageService: messages, streamManager: stream}
 	bus := event.NewEventBus()
 	message := &types.Message{
-		ID: "m", SessionID: "s", Role: "assistant", Content: "already streamed answer", AgentTenantID: 2,
+		ID: "m", SessionID: "s", Role: "assistant", AgentTenantID: 2,
 	}
 	ctx, cancel := context.WithCancel(types.WithExecutionTenant(context.Background(), 1))
 	streamHandler := h.setupStreamHandler(ctx, "s", "m", "req", 1, time.Now(), message, bus)
+	// The local mock model owns these literal bytes. Use the actual producer
+	// handler before cancellation; pre-filling an unknown message is not proof.
+	literal, err := types.NewCompleteSourceLineage()
+	require.NoError(t, err)
+	require.NoError(t, bus.Emit(ctx, event.Event{
+		ID: "local-literal-answer", Type: event.EventAgentFinalAnswer, SourceLineage: literal,
+		Data: event.AgentFinalAnswerData{Content: "already streamed answer", Done: true},
+	}))
+	require.Equal(t, "already streamed answer", message.Content)
+	require.NoError(t, message.SourceLineage.RequireComplete())
 	cancel()
 	released := false
 	h.completeQuickAnswerTurn(ctx, &sseStreamContext{
@@ -57,6 +67,7 @@ func TestQuickAnswerCompletionPersistsAfterGenerationCancellation(t *testing.T) 
 	require.Equal(t, "already streamed answer", messages.saved.Content)
 	require.Equal(t, uint64(1), messages.tenant)
 	require.True(t, released)
+	require.NotEmpty(t, stream.events)
 	require.Equal(t, types.ResponseTypeComplete, stream.events[len(stream.events)-1].Type)
 }
 
@@ -113,18 +124,27 @@ func TestSharedImageCompletionWaitsForPersistedReferences(t *testing.T) {
 					messages.beforeSave = func() {
 						require.Zero(t, completed, "completion must not escape while the database write is pending")
 					}
+					// This mock model owns only the local literal URL and text.
+					// This is a persistence/notification unit, not an image
+					// generation, attachment or file-material adapter.
+					literal, err := types.NewCompleteSourceLineage()
+					require.NoError(t, err)
 					answer := "![host image](" + image + ")"
 					if quick {
-						message.Content = answer
+						require.NoError(t, bus.Emit(runCtx, event.Event{
+							Type: event.EventAgentFinalAnswer, SourceLineage: literal,
+							Data: event.AgentFinalAnswerData{Content: answer, Done: true},
+						}))
 						h.completeQuickAnswerTurn(saveCtx, streamCtx, "", "")
 					} else {
 						require.NoError(t, bus.Emit(runCtx, event.Event{
-							Type: event.EventAgentComplete,
+							Type: event.EventAgentComplete, SourceLineage: literal,
 							Data: event.AgentCompleteData{MessageID: "m", FinalAnswer: answer},
 						}))
 						require.Zero(t, completed)
 						h.completeStreamAssistantMessage(saveCtx, streamCtx, "", "")
 					}
+					require.NotEmpty(t, stream.events)
 					last := stream.events[len(stream.events)-1]
 					if fail {
 						require.Zero(t, completed)
@@ -141,4 +161,19 @@ func TestSharedImageCompletionWaitsForPersistedReferences(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestQuickAnswerUnknownPrefilledBodyCannotPublishCompletion(t *testing.T) {
+	streams := &imageCompletionStream{}
+	h := &Handler{messageService: &imageCompletionMessages{}, streamManager: streams}
+	bus := event.NewEventBus()
+	message := &types.Message{ID: "m", SessionID: "s", Role: "assistant", Content: "unknown prefilled private answer"}
+	ctx := types.WithExecutionTenant(context.Background(), 1)
+	h.setupStreamHandler(ctx, "s", "m", "req", 1, time.Now(), message, bus)
+	require.ErrorIs(t, bus.Emit(ctx, event.Event{
+		Type: event.EventAgentComplete,
+		Data: event.AgentCompleteData{MessageID: "m"},
+	}), access.ErrNextcloudPublicationDenied)
+	require.Empty(t, streams.events)
+	require.Error(t, message.SourceLineage.RequireComplete())
 }

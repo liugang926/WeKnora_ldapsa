@@ -199,7 +199,19 @@ func TestNextcloudLiveOriginalExtractionProviderAndStatusInbox(t *testing.T) {
 	require.NoError(
 		t,
 		db.Table("nextcloud_event_connections").
-			Create(map[string]any{"connection_id": f.Connection, "tenant_id": 7, "knowledge_base_id": kb.ID, "datasource_id": f.Pair.DS, "nextcloud_instance_id": f.Instance, "binding_id": binding, "datasource_base_url": base, "datasource_config_sha256": configSHA, "status": "active", "current_key_id": "current", "current_secret_ciphertext": encrypted}).
+			Create(map[string]any{
+				"connection_id":             f.Connection,
+				"tenant_id":                 7,
+				"knowledge_base_id":         kb.ID,
+				"datasource_id":             f.Pair.DS,
+				"nextcloud_instance_id":     f.Instance,
+				"binding_id":                binding,
+				"datasource_base_url":       base,
+				"datasource_config_sha256":  configSHA,
+				"status":                    "active",
+				"current_key_id":            "current",
+				"current_secret_ciphertext": encrypted,
+			}).
 			Error,
 	)
 	state := repository.NewNextcloudProcessingStateStore(db)
@@ -231,7 +243,11 @@ func TestNextcloudLiveOriginalExtractionProviderAndStatusInbox(t *testing.T) {
 		t,
 		db.Table("nextcloud_file_states").
 			Where("connection_id=? AND file_id=?", f.Connection, f.File).
-			Updates(map[string]any{"head_revision": headSeed, "status_revision": statusSeed, "payload_json": string(initialBody)}).
+			Updates(map[string]any{
+				"head_revision":   headSeed,
+				"status_revision": statusSeed,
+				"payload_json":    string(initialBody),
+			}).
 			Error,
 	)
 

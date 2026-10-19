@@ -9,7 +9,17 @@ import (
 )
 
 func TestNextcloudGlobalHistoryAdmissionIncludesAllPersistentEvidence(t *testing.T) {
-	for _, kind := range []string{"none", "source-soft-deleted-other-tenant", "sticky-deleted-kb", "pairing", "abort", "tombstone", "malformed-marker", "missing-table", "missing-tombstone-table"} {
+	for _, kind := range []string{
+		"none",
+		"source-soft-deleted-other-tenant",
+		"sticky-deleted-kb",
+		"pairing",
+		"abort",
+		"tombstone",
+		"malformed-marker",
+		"missing-table",
+		"missing-tombstone-table",
+	} {
 		t.Run(kind, func(t *testing.T) {
 			db := provenanceTestDB(t)
 			require.NoError(t, db.Exec("INSERT INTO knowledge_bases(id, tenant_id) VALUES('kb', 99)").Error)

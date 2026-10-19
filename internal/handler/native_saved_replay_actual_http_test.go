@@ -90,7 +90,11 @@ func configureNativeSavedReplayMessages(
 ) interfaces.MessageService {
 	t.Helper()
 	require.NoError(t, db.Exec("ALTER TABLE messages ADD COLUMN artifacts TEXT").Error)
-	for _, name := range []string{"000023_message_artifacts_table.up.sql", "000026_message_artifacts_deleted_at.up.sql", "000070_message_original_materials.up.sql"} {
+	for _, name := range []string{
+		"000023_message_artifacts_table.up.sql",
+		"000026_message_artifacts_deleted_at.up.sql",
+		"000070_message_original_materials.up.sql",
+	} {
 		ddl, err := os.ReadFile("../../migrations/sqlite/" + name)
 		require.NoError(t, err)
 		require.NoError(t, db.Exec(string(ddl)).Error)
@@ -195,7 +199,19 @@ func serveNativeSavedReplay(
 	for _, frame := range []interfaces.StreamEvent{
 		{Type: types.ResponseTypeAnswer, Content: "UNKNOWN CACHED SECRET"},
 		{Type: types.ResponseTypeToolResult, Content: "SOURCE ONLY CACHED SECRET", SourceLineage: answer.SourceLineage},
-		{Type: types.ResponseTypeComplete, Done: true, SourceLineage: answer.SourceLineage, Data: map[string]interface{}{"final_content": "CACHED FINAL SECRET", "artifacts": []map[string]interface{}{{"file_name": "cached-unsafe.pdf"}}}},
+		{
+			Type:          types.ResponseTypeComplete,
+			Done:          true,
+			SourceLineage: answer.SourceLineage,
+			Data: map[string]interface{}{
+				"final_content": "CACHED FINAL SECRET",
+				"artifacts": []map[string]interface{}{
+					{
+						"file_name": "cached-unsafe.pdf",
+					},
+				},
+			},
+		},
 	} {
 		require.NoError(t, redis.AppendEvent(ctx, answer.SessionID, answer.ID, frame))
 	}
@@ -283,7 +299,15 @@ func TestNativeSavedReplayActualPlainRedisReconnectAndLegacyReject(t *testing.T)
 	answer := produceNativeSavedReplayMessage(ctx, t, db, messages, "actual native saved answer", empty)
 	w, streams := serveNativeSavedReplay(ctx, t, db, messages, answer, nil, false)
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
-	for _, material := range []string{answer.Content, "actual original saved thought", "actual original saved argument", "actual original saved result", "actual original saved reference", `"final_content":"actual native saved answer"`, `"response_type":"complete"`} {
+	for _, material := range []string{
+		answer.Content,
+		"actual original saved thought",
+		"actual original saved argument",
+		"actual original saved result",
+		"actual original saved reference",
+		`"final_content":"actual native saved answer"`,
+		`"response_type":"complete"`,
+	} {
 		require.Contains(t, w.Body.String(), material)
 	}
 	require.NotContains(t, w.Body.String(), "CACHED")
@@ -408,7 +432,15 @@ func TestNativeSavedReplayActualSignedSourceAndFinalWriterRevoke(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	quotedContent, err := json.Marshal(answer.Content)
 	require.NoError(t, err)
-	for _, material := range []string{`"content":` + string(quotedContent), `"final_content":` + string(quotedContent), "actual original saved thought", "actual original saved argument", "actual original saved result", "actual original saved reference", `"response_type":"complete"`} {
+	for _, material := range []string{
+		`"content":` + string(quotedContent),
+		`"final_content":` + string(quotedContent),
+		"actual original saved thought",
+		"actual original saved argument",
+		"actual original saved result",
+		"actual original saved reference",
+		`"response_type":"complete"`,
+	} {
 		require.Contains(t, w.Body.String(), material)
 	}
 	require.NotContains(t, w.Body.String(), "CACHED")

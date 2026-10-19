@@ -86,7 +86,12 @@ func knowledgeInputServiceFixture(
 				"BLE knowledge_tag_relations(knowledge_id TEXT,tag_id TEXT)"),
 		).Error,
 	)
-	for _, file := range []string{"000053_knowledge_input_provenance.up.sql", "000054_knowledge_configuration_history_inputs.up.sql", "000055_knowledge_actual_config_controls.up.sql", "000056_knowledge_original_worker_actor.up.sql"} {
+	for _, file := range []string{
+		"000053_knowledge_input_provenance.up.sql",
+		"000054_knowledge_configuration_history_inputs.up.sql",
+		"000055_knowledge_actual_config_controls.up.sql",
+		"000056_knowledge_original_worker_actor.up.sql",
+	} {
 		script, err := os.ReadFile(filepath.Join("../../../migrations/sqlite", file))
 		require.NoError(t, err)
 		require.NoError(t, db.Exec(string(script)).Error)
@@ -215,7 +220,11 @@ func TestKnowledgeInputManualForgedJobAndConfigChangeNeverReadModel(t *testing.T
 			var original types.Knowledge
 			require.NoError(t, db.Where("id = ?", payload.KnowledgeID).Take(&original).Error)
 			before := map[string]int64{}
-			for _, table := range []string{"knowledge_input_row_versions", "knowledge_input_admissions", "knowledge_input_material_receipts"} {
+			for _, table := range []string{
+				"knowledge_input_row_versions",
+				"knowledge_input_admissions",
+				"knowledge_input_material_receipts",
+			} {
 				var count int64
 				require.NoError(t, db.Table(table).Count(&count).Error)
 				before[table] = count

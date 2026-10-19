@@ -15,7 +15,19 @@ import (
 // Real SQL admission and pairing writers, with controlled directory metadata.
 // This does not claim a live LDAP login or template-input clone acceptance.
 func TestNextcloudPairProducerExactScopeAndCurrentAuthority(t *testing.T) {
-	for _, scenario := range []string{"success", "unmarked", "nil-factory", "wrong-binding", "wrong-kb", "credential-revoked", "actor-disabled", "directory-failed", "directory-future", "operation-retired", "changed-credential"} {
+	for _, scenario := range []string{
+		"success",
+		"unmarked",
+		"nil-factory",
+		"wrong-binding",
+		"wrong-kb",
+		"credential-revoked",
+		"actor-disabled",
+		"directory-failed",
+		"directory-future",
+		"operation-retired",
+		"changed-credential",
+	} {
 		t.Run(scenario, func(t *testing.T) {
 			db, store, cred := onboardingDB(t)
 			require.NoError(

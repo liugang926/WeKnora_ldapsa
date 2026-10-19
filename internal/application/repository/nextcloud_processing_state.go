@@ -275,7 +275,13 @@ func captureNextcloudStateInTx(
 	if v.CandidateKnowledgeID != "" {
 		var k types.Knowledge
 		if err := tx.Unscoped().
-			Where("id=? AND tenant_id=? AND knowledge_base_id=? AND channel=?", v.CandidateKnowledgeID, tenant, kb, types.ConnectorTypeNextcloud).
+			Where(
+				"id=? AND tenant_id=? AND knowledge_base_id=? AND channel=?",
+				v.CandidateKnowledgeID,
+				tenant,
+				kb,
+				types.ConnectorTypeNextcloud,
+			).
 			Take(&k).
 			Error; err != nil {
 			return err
@@ -452,7 +458,12 @@ func captureNextcloudStateInTx(
 	// ACL projection and cleanup retain their independent source ledgers.
 	if tx.Migrator().HasTable("nextcloud_onboarding_operations") {
 		var op types.NextcloudOnboardingOperation
-		if err := tx.Where("instance_id=? AND binding_id=? AND knowledge_base_id=?", conn.NextcloudInstanceID, conn.BindingID, kb).
+		if err := tx.Where(
+			"instance_id=? AND binding_id=? AND knowledge_base_id=?",
+			conn.NextcloudInstanceID,
+			conn.BindingID,
+			kb,
+		).
 			Take(&op).
 			Error; err == nil {
 			out.PermissionRevision = strconv.FormatUint(op.PermissionVersion, 10)
@@ -561,7 +572,22 @@ func captureNextcloudStateInTx(
 	}
 	row.PayloadJSON = string(raw)
 	row.LatestEventID = out.EventID
-	if err := tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "connection_id"}, {Name: "file_id"}, {Name: "publication_epoch"}}, DoUpdates: clause.AssignmentColumns([]string{"head_revision", "status_revision", "config_revision", "head_identity", "config_digest", "payload_json", "body_digest", "last_verified_at", "occurred_at", "latest_event_id"})}).
+	if err := tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "connection_id"}, {
+		Name: "file_id",
+	}, {
+		Name: "publication_epoch",
+	}}, DoUpdates: clause.AssignmentColumns([]string{
+		"head_revision",
+		"status_revision",
+		"config_revision",
+		"head_identity",
+		"config_digest",
+		"payload_json",
+		"body_digest",
+		"last_verified_at",
+		"occurred_at",
+		"latest_event_id",
+	})}).
 		Create(&row).
 		Error; err != nil {
 		return err

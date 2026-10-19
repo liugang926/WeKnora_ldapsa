@@ -167,7 +167,19 @@ func runDocumentGraphPipeline(t *testing.T, path string, inspect ...func(*machin
 	require.NoError(
 		t,
 		db.Table("nextcloud_event_connections").
-			Create(map[string]any{"connection_id": connection, "tenant_id": 7, "knowledge_base_id": m.ds.KnowledgeBaseID, "datasource_id": m.ds.ID, "nextcloud_instance_id": instance, "binding_id": binding, "datasource_base_url": base, "datasource_config_sha256": configSHA, "status": "active", "current_key_id": "current", "current_secret_ciphertext": encrypted}).
+			Create(map[string]any{
+				"connection_id":             connection,
+				"tenant_id":                 7,
+				"knowledge_base_id":         m.ds.KnowledgeBaseID,
+				"datasource_id":             m.ds.ID,
+				"nextcloud_instance_id":     instance,
+				"binding_id":                binding,
+				"datasource_base_url":       base,
+				"datasource_config_sha256":  configSHA,
+				"status":                    "active",
+				"current_key_id":            "current",
+				"current_secret_ciphertext": encrypted,
+			}).
 			Error,
 	)
 	require.NoError(t, state.RefreshSourceEpoch(context.Background(), connection))
@@ -234,7 +246,14 @@ func runDocumentGraphPipeline(t *testing.T, path string, inspect ...func(*machin
 	require.Positive(t, graphTasks)
 	require.Equal(t, graphTasks, graphCalls())
 	var n int64
-	for _, table := range []string{"chunks", "lite_embeddings", "vec_embeddings_" + strconv.Itoa(dimensions), "lite_embeddings_fts", "nextcloud_graph_records", "nextcloud_status_outbox"} {
+	for _, table := range []string{
+		"chunks",
+		"lite_embeddings",
+		"vec_embeddings_" + strconv.Itoa(dimensions),
+		"lite_embeddings_fts",
+		"nextcloud_graph_records",
+		"nextcloud_status_outbox",
+	} {
 		require.NoError(t, db.Table(table).Count(&n).Error)
 		require.Positive(t, n, table)
 	}
@@ -282,7 +301,14 @@ func runDocumentGraphPipeline(t *testing.T, path string, inspect ...func(*machin
 		chunks, err := NewChunkOutputAuthorizer(
 			m.f.store,
 			m.f.guard,
-		).Begin(m.f.ctx, types.ChunkOutputReadRequest{TenantID: 7, KnowledgeBaseID: m.ds.KnowledgeBaseID, KnowledgeID: row.ID, ChunkIDs: []string{chunk.ID}})
+		).Begin(m.f.ctx, types.ChunkOutputReadRequest{
+			TenantID:        7,
+			KnowledgeBaseID: m.ds.KnowledgeBaseID,
+			KnowledgeID:     row.ID,
+			ChunkIDs: []string{
+				chunk.ID,
+			},
+		})
 		require.NoError(t, err)
 		snapshot, err := chunks.Snapshot()
 		require.NoError(t, err)
@@ -321,7 +347,14 @@ func runDocumentGraphPipeline(t *testing.T, path string, inspect ...func(*machin
 				"environment":                       map[string]string{},
 			}
 			environment := descriptor["environment"].(map[string]string)
-			for _, key := range []string{"SYSTEM_AES_KEY", "WEKNORA_NEXTCLOUD_DEV_HTTP", "WEKNORA_NEXTCLOUD_ALLOWED_ORIGINS", "WEKNORA_ORIGINAL_BODY_JOURNAL_DIRECTORY", "WEKNORA_ORIGINAL_BODY_JOURNAL_KEY", "WEKNORA_ORIGINAL_BODY_JOURNAL_PIN"} {
+			for _, key := range []string{
+				"SYSTEM_AES_KEY",
+				"WEKNORA_NEXTCLOUD_DEV_HTTP",
+				"WEKNORA_NEXTCLOUD_ALLOWED_ORIGINS",
+				"WEKNORA_ORIGINAL_BODY_JOURNAL_DIRECTORY",
+				"WEKNORA_ORIGINAL_BODY_JOURNAL_KEY",
+				"WEKNORA_ORIGINAL_BODY_JOURNAL_PIN",
+			} {
 				environment[key] = os.Getenv(key)
 			}
 			encoded, err := json.Marshal(descriptor)

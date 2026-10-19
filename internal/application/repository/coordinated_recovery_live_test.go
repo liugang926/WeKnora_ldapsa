@@ -72,13 +72,22 @@ func TestPostgresCoordinatedRecoveryLiveNextcloud(t *testing.T) {
 			&types.DirectoryGroupMembership{},
 		),
 	)
-	for _, name := range []string{"000112_nextcloud_source_versions", "000126_nextcloud_source_revisions", "000145_nextcloud_publication_recovery", "000158_nextcloud_content_revision"} {
+	for _, name := range []string{
+		"000112_nextcloud_source_versions",
+		"000126_nextcloud_source_revisions",
+		"000145_nextcloud_publication_recovery",
+		"000158_nextcloud_content_revision",
+	} {
 		b, e := os.ReadFile("../../../migrations/versioned/" + name + ".up.sql")
 		require.NoError(t, e)
 		simplePGExec(t, db, string(b))
 	}
 	require.NoError(t, db.Create(&types.KnowledgeBase{ID: f.KB, TenantID: 7, Name: "owned-coordinated-recovery"}).Error)
-	config, e := (&types.DataSourceConfig{Type: types.ConnectorTypeNextcloud, ResourceIDs: []string{f.Binding}, Settings: map[string]interface{}{"base_url": "http://nextcloud"}, Credentials: map[string]interface{}{"token": f.Token, "key_id": f.KeyID}}).ToJSON()
+	config, e := (&types.DataSourceConfig{Type: types.ConnectorTypeNextcloud, ResourceIDs: []string{
+		f.Binding,
+	}, Settings: map[string]interface{}{
+		"base_url": "http://nextcloud",
+	}, Credentials: map[string]interface{}{"token": f.Token, "key_id": f.KeyID}}).ToJSON()
 	require.NoError(t, e)
 	ds := types.DataSource{
 		ID:              f.DS,

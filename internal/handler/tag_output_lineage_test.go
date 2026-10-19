@@ -280,7 +280,12 @@ func TestTagOutputActualHTTPRevokeBeforeWrite(t *testing.T) {
 // transport, the production current-user resolver and production source guard.
 // The isolated directory snapshot and endpoint stand in for unavailable AD/NC.
 func TestTagOutputActualHTTPSignedSourceDependencies(t *testing.T) {
-	for _, mode := range []string{"allowed", "deny_excluded_before_filter", "personal_revoke_before_write", "source_withdraw_during_final_remote"} {
+	for _, mode := range []string{
+		"allowed",
+		"deny_excluded_before_filter",
+		"personal_revoke_before_write",
+		"source_withdraw_during_final_remote",
+	} {
 		t.Run(mode, func(t *testing.T) {
 			kh, calls := collectionNextcloudHTTPFixture(t, mode)
 			db := kh.kbService.(collectionHTTPKB).db
@@ -480,7 +485,16 @@ func TestTagOutputActualHTTPAllOriginalNameSources(t *testing.T) {
 			require.NoError(
 				t,
 				repository.NewChunkRepository(db).
-					CreateChunks(build, []*types.Chunk{{ID: "source-b-chunk", TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: second.ID, Content: "actual second source parsed text", ChunkType: types.ChunkTypeText, IsEnabled: true, IndexStatus: "ready"}}),
+					CreateChunks(build, []*types.Chunk{{
+						ID:              "source-b-chunk",
+						TenantID:        7,
+						KnowledgeBaseID: "kb",
+						KnowledgeID:     second.ID,
+						Content:         "actual second source parsed text",
+						ChunkType:       types.ChunkTypeText,
+						IsEnabled:       true,
+						IndexStatus:     "ready",
+					}}),
 			)
 			require.NoError(t, db.Where("id=?", second.ID).Take(&second).Error)
 			second.ParseStatus = types.ParseStatusCompleted

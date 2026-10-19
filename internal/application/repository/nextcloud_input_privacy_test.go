@@ -21,8 +21,13 @@ func TestNextcloudBuildContextsSuppressContentWithoutGrantingAccess(t *testing.T
 		lineage    *types.SourceLineage
 		suppressed bool
 	}{
-		{"ordinary", &types.SourceLineage{State: types.SourceLineageComplete, Sources: []types.SourceIdentity{}}, false},
-		{"protected", &types.SourceLineage{State: types.SourceLineageComplete, Sources: []types.SourceIdentity{{Provider: types.ConnectorTypeNextcloud}}}, true},
+		{"ordinary", &types.SourceLineage{
+			State:   types.SourceLineageComplete,
+			Sources: []types.SourceIdentity{},
+		}, false},
+		{"protected", &types.SourceLineage{State: types.SourceLineageComplete, Sources: []types.SourceIdentity{{
+			Provider: types.ConnectorTypeNextcloud,
+		}}}, true},
 		{"unknown", types.UnknownSourceLineage(), true},
 	} {
 		t.Run(item.name, func(t *testing.T) {

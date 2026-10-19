@@ -140,17 +140,41 @@ func TestNextcloudPublicationGuardFailsClosed(t *testing.T) {
 		want   error
 	}{
 		{"source denied", func(g *NextcloudPublicationGuard, _ *context.Context, _ *types.Knowledge) {
-			g.authorize = func(context.Context, *types.DataSourceConfig, string, string, string, string, int64) (nextcloud.AuthorizationDecision, error) {
+			g.authorize = func(
+				context.Context,
+				*types.DataSourceConfig,
+				string,
+				string,
+				string,
+				string,
+				int64,
+			) (nextcloud.AuthorizationDecision, error) {
 				return nextcloud.AuthorizationDecision{Allow: false, Reason: "source_not_readable"}, nil
 			}
 		}, ErrNextcloudPublicationDenied},
 		{"source unavailable", func(g *NextcloudPublicationGuard, _ *context.Context, _ *types.Knowledge) {
-			g.authorize = func(context.Context, *types.DataSourceConfig, string, string, string, string, int64) (nextcloud.AuthorizationDecision, error) {
+			g.authorize = func(
+				context.Context,
+				*types.DataSourceConfig,
+				string,
+				string,
+				string,
+				string,
+				int64,
+			) (nextcloud.AuthorizationDecision, error) {
 				return nextcloud.AuthorizationDecision{}, errors.New("network failure")
 			}
 		}, ErrNextcloudPublicationUnavailable},
 		{"source version changed", func(g *NextcloudPublicationGuard, _ *context.Context, _ *types.Knowledge) {
-			g.authorize = func(context.Context, *types.DataSourceConfig, string, string, string, string, int64) (nextcloud.AuthorizationDecision, error) {
+			g.authorize = func(
+				context.Context,
+				*types.DataSourceConfig,
+				string,
+				string,
+				string,
+				string,
+				int64,
+			) (nextcloud.AuthorizationDecision, error) {
 				return nextcloud.AuthorizationDecision{
 					Allow:      true,
 					Reason:     "authorized",

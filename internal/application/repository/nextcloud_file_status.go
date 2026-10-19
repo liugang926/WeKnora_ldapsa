@@ -148,7 +148,15 @@ func readNextcloudFileVersionStatus(tx *gorm.DB, connection nextcloudEventConnec
 		return fmt.Errorf("read Nextcloud source version: %w", err)
 	}
 	var fences []nextcloudContentFence
-	if err := tx.Where("tenant_id=? AND knowledge_base_id=? AND knowledge_id IN ?", connection.TenantID, connection.KnowledgeBaseID, []string{"", version.CandidateKnowledgeID}).
+	if err := tx.Where(
+		"tenant_id=? AND knowledge_base_id=? AND knowledge_id IN ?",
+		connection.TenantID,
+		connection.KnowledgeBaseID,
+		[]string{
+			"",
+			version.CandidateKnowledgeID,
+		},
+	).
 		Find(&fences).
 		Error; err != nil {
 		return err

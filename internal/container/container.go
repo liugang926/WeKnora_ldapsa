@@ -503,7 +503,10 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	must(container.Provide(repository.NewNextcloudCapacityStore))
 	must(
 		container.Provide(
-			func(tenants interfaces.TenantRepository, storage interfaces.StorageBackendResolver) service.NextcloudCapacityFileResolver {
+			func(
+				tenants interfaces.TenantRepository,
+				storage interfaces.StorageBackendResolver,
+			) service.NextcloudCapacityFileResolver {
 				return func(ctx context.Context, kb *types.KnowledgeBase) (interfaces.FileService, error) {
 					tenant, err := tenants.GetTenantByID(ctx, kb.TenantID)
 					if err != nil || tenant == nil || kb.StorageBackendID == nil {
@@ -555,7 +558,13 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	must(container.Provide(service.NewFAQOutputAuthorizer))
 	must(
 		container.Provide(
-			func(store *repository.KnowledgeInputProvenanceStore, knowledge interfaces.KnowledgeRepository, models interfaces.ModelService, guard *access.NextcloudSourceLineageGuard, leases *repository.NextcloudContentLeaseStore) *service.KnowledgeEnrichmentTemplateService {
+			func(
+				store *repository.KnowledgeInputProvenanceStore,
+				knowledge interfaces.KnowledgeRepository,
+				models interfaces.ModelService,
+				guard *access.NextcloudSourceLineageGuard,
+				leases *repository.NextcloudContentLeaseStore,
+			) *service.KnowledgeEnrichmentTemplateService {
 				return service.NewKnowledgeEnrichmentTemplateService(store, knowledge, models, guard, leases)
 			},
 		),
@@ -571,7 +580,11 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	)
 	must(
 		container.Invoke(
-			func(store *repository.KnowledgeInputProvenanceStore, groups interfaces.GroupAccessService, shares interfaces.KBShareService) {
+			func(
+				store *repository.KnowledgeInputProvenanceStore,
+				groups interfaces.GroupAccessService,
+				shares interfaces.KBShareService,
+			) {
 				repository.ConfigureKnowledgeInputActorGroupAccess(store, groups)
 				repository.ConfigureKnowledgeInputActorShares(store, shares)
 			},
@@ -579,7 +592,13 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	)
 	must(
 		container.Invoke(
-			func(store *repository.KnowledgeInputProvenanceStore, tags interfaces.KnowledgeTagRepository, knowledge interfaces.KnowledgeRepository, sources interfaces.DataSourceRepository, pairs *repository.NextcloudSourcePairingRepository) {
+			func(
+				store *repository.KnowledgeInputProvenanceStore,
+				tags interfaces.KnowledgeTagRepository,
+				knowledge interfaces.KnowledgeRepository,
+				sources interfaces.DataSourceRepository,
+				pairs *repository.NextcloudSourcePairingRepository,
+			) {
 				repository.ConfigureKnowledgeCurrentReadActor(knowledge, store)
 				factory := func(tx *gorm.DB) *repository.KnowledgeInputProvenanceStore {
 					authority := repository.NewKnowledgeInputProvenanceStore(tx)
@@ -676,7 +695,12 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	}))
 	must(
 		container.Invoke(
-			func(store *repository.KnowledgeInputProvenanceStore, guard *access.NextcloudSourceLineageGuard, sources interfaces.DataSourceRepository, paths *repository.NextcloudOnboardingStore) {
+			func(
+				store *repository.KnowledgeInputProvenanceStore,
+				guard *access.NextcloudSourceLineageGuard,
+				sources interfaces.DataSourceRepository,
+				paths *repository.NextcloudOnboardingStore,
+			) {
 				repository.ConfigureKnowledgeOriginalInputSourceVerifier(
 					store,
 					service.NewKnowledgeOriginalInputSourceVerifier(store, guard, sources, paths),

@@ -31,7 +31,12 @@ func runKnowledgeMachineQuestionSpanExternalMutation(t *testing.T, pg bool) {
 				require.NoError(t, m.run(t, task), task.Type())
 				completed[task.Type()]++
 			}
-			for _, kind := range []string{types.TypeDocumentProcess, types.TypeSummaryGeneration, types.TypeQuestionGeneration, types.TypeKnowledgeAutoTag} {
+			for _, kind := range []string{
+				types.TypeDocumentProcess,
+				types.TypeSummaryGeneration,
+				types.TypeQuestionGeneration,
+				types.TypeKnowledgeAutoTag,
+			} {
 				require.Positive(t, completed[kind], "actual pipeline must run %s", kind)
 			}
 			require.Equal(t, 2, m.f.model.calls)
@@ -110,7 +115,12 @@ func runKnowledgeMachineQuestionSpanExternalMutation(t *testing.T, pg bool) {
 			require.NoError(
 				t,
 				m.f.db.Table("knowledge_producer_inputs").
-					Where("id = ? AND admission_id = ? AND purpose = ?", originalResults[0].ProducerInputID, originalResults[0].AdmissionID, "question").
+					Where(
+						"id = ? AND admission_id = ? AND purpose = ?",
+						originalResults[0].ProducerInputID,
+						originalResults[0].AdmissionID,
+						"question",
+					).
 					Count(&questionInputs).
 					Error,
 			)

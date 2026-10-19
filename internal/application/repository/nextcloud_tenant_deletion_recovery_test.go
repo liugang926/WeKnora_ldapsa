@@ -56,7 +56,15 @@ func TestNextcloudTenantRecoveryIndependentHistoryAndHash(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, proof, verified.TenantDeletions[0])
 	require.Empty(t, verified.CloseBindings)
-	for _, name := range []string{"omit-history", "changed-owner", "changed-origin", "decimal-alias", "wrong-kind", "source-revision", "duplicate-namespace"} {
+	for _, name := range []string{
+		"omit-history",
+		"changed-owner",
+		"changed-origin",
+		"decimal-alias",
+		"wrong-kind",
+		"source-revision",
+		"duplicate-namespace",
+	} {
 		t.Run(name, func(t *testing.T) {
 			candidate, _ := tenantRecoveryPlan(t)
 			switch name {

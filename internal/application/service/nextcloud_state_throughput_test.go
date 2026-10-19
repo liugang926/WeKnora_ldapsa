@@ -136,7 +136,12 @@ func TestNextcloudStateTenThousandMetadataHTTPDurableACKThroughput(t *testing.T)
 	require.NoError(
 		t,
 		db.Table("nextcloud_source_status_epochs").
-			Create(map[string]any{"connection_id": "pipeline-connection-0001", "publication_epoch": 0, "pair_operation_id": pair.OperationID, "verified_at": now}).
+			Create(map[string]any{
+				"connection_id":     "pipeline-connection-0001",
+				"publication_epoch": 0,
+				"pair_operation_id": pair.OperationID,
+				"verified_at":       now,
+			}).
 			Error,
 	)
 	// These are declared metadata workloads, not fabricated parse/graph success.

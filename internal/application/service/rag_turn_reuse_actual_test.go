@@ -17,7 +17,15 @@ import (
 // Only the vector backend is controlled: it returns actual persisted chunk IDs,
 // whose text/provenance is captured by the real SQL snapshot reader.
 func runRAGPhysicalActualReusedTurn(t *testing.T, pg bool) {
-	for _, mode := range []string{"search-and-merge", "producer-finished", "producer-borrowed", "owner-cancelled", "source-revoked", "missing-proof", "caller-cancelled"} {
+	for _, mode := range []string{
+		"search-and-merge",
+		"producer-finished",
+		"producer-borrowed",
+		"owner-cancelled",
+		"source-revoked",
+		"missing-proof",
+		"caller-cancelled",
+	} {
 		t.Run(mode, func(t *testing.T) {
 			m := newMachinePipelineFixture(t, pg)
 			k := m.ingest(t)

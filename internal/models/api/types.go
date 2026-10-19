@@ -84,7 +84,8 @@ const MessageKindCompactionSummary MessageKind = "compaction_summary"
 
 // Message 表示聊天消息
 type Message struct {
-	SourceLineage *types.SourceLineage `json:"-"`                       // Internal input dependency metadata; never sent to a provider.
+	// Internal input dependency metadata; never sent to a provider.
+	SourceLineage *types.SourceLineage `json:"-"`
 	Role          string               `json:"role"`                    // 角色：system, user, assistant, tool
 	Content       string               `json:"content"`                 // 消息内容
 	MultiContent  []MessageContentPart `json:"multi_content,omitempty"` // 多内容消息（文本+图片）

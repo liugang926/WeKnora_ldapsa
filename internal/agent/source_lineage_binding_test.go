@@ -70,7 +70,14 @@ func TestAgentLineageSkillMetadataCannotBorrowSystemReceiptAtActualSend(t *testi
 }
 
 func TestAgentLineageActualWireDefinitionMutationClosesBeforeModel(t *testing.T) {
-	for _, kind := range []string{"description", "parameters", "outer type", "registered instance", "shared parameter bytes", "literal positive"} {
+	for _, kind := range []string{
+		"description",
+		"parameters",
+		"outer type",
+		"registered instance",
+		"shared parameter bytes",
+		"literal positive",
+	} {
 		t.Run(kind, func(t *testing.T) {
 			model := &mockChat{responses: []mockResponse{lineageAnswer("answer")}}
 			e, _ := lineageEngine(t, model, nil, grantChecker(map[types.SourceIdentity]bool{}))

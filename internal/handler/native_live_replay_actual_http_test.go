@@ -67,7 +67,11 @@ func (m *nativeRunningModel) ChatStream(
 			return
 		case <-m.finish:
 		}
-		output <- types.StreamResponse{ResponseType: types.ResponseTypeAnswer, Content: " NATIVE RUNNING FINISHED", Done: true}
+		output <- types.StreamResponse{
+			ResponseType: types.ResponseTypeAnswer,
+			Content:      " NATIVE RUNNING FINISHED",
+			Done:         true,
+		}
 	}()
 	return output, nil
 }
@@ -236,8 +240,14 @@ func TestNativeLiveReplayActualPausedProducerReceiverAndRedisForgery(t *testing.
 				nativeRunningRouter(
 					firstCtx,
 					firstHandler,
-				).ServeHTTP(first, httptest.NewRequest(http.MethodPost, "/knowledge-chat/"+f.parent.SessionID, strings.NewReader(("{\"query\":\"current native question\",\"summary_model_id\":\"actual-http-"+
-					"tail-model\",\"disable_title\":true}"))))
+				).ServeHTTP(first, httptest.NewRequest(
+					http.MethodPost,
+					"/knowledge-chat/"+f.parent.SessionID,
+					strings.NewReader(
+						("{\"query\":\"current native question\",\"summary_model_id\":\"actual-http-"+
+							"tail-model\",\"disable_title\":true}"),
+					),
+				))
 			}()
 			select {
 			case <-first.seen:
@@ -258,7 +268,11 @@ func TestNativeLiveReplayActualPausedProducerReceiverAndRedisForgery(t *testing.
 				t,
 				f.db.Table("messages").
 					Select("id,is_completed").
-					Where("session_id=? AND role='assistant' AND request_id<>?", f.parent.SessionID, f.parent.RequestID).
+					Where(
+						"session_id=? AND role='assistant' AND request_id<>?",
+						f.parent.SessionID,
+						f.parent.RequestID,
+					).
 					Take(&current).
 					Error,
 			)
@@ -316,7 +330,11 @@ func TestNativeLiveReplayActualPausedProducerReceiverAndRedisForgery(t *testing.
 			nativeRunningRouter(
 				secondCtx,
 				nativeRunningHandler(f, sessions, reader, cfg, models, files),
-			).ServeHTTP(second, httptest.NewRequest(http.MethodGet, "/sessions/continue-stream/"+f.parent.SessionID+"?message_id="+current.ID+"&resource_urls=public", nil))
+			).ServeHTTP(second, httptest.NewRequest(
+				http.MethodGet,
+				"/sessions/continue-stream/"+f.parent.SessionID+"?message_id="+current.ID+"&resource_urls=public",
+				nil,
+			))
 			require.True(t, observed, "actual native replay must acquire scopes before its public URL rewrite")
 			require.Zero(t, reader.reads.Load(), "running replay cannot load Redis frame bodies")
 			require.NotContains(t, second.Body.String(), "FORGED REDIS BODY SECRET")
@@ -334,7 +352,11 @@ func TestNativeLiveReplayActualPausedProducerReceiverAndRedisForgery(t *testing.
 				nativeRunningRouter(
 					f.ctx,
 					nativeRunningHandler(f, sessions, reader, cfg, models, nil),
-				).ServeHTTP(completed, httptest.NewRequest(http.MethodGet, "/sessions/continue-stream/"+f.parent.SessionID+"?message_id="+current.ID, nil))
+				).ServeHTTP(completed, httptest.NewRequest(
+					http.MethodGet,
+					"/sessions/continue-stream/"+f.parent.SessionID+"?message_id="+current.ID,
+					nil,
+				))
 				require.Contains(t, completed.Body.String(), "NATIVE RUNNING FINISHED")
 				require.Contains(t, completed.Body.String(), `"response_type":"complete"`)
 			} else {
@@ -401,7 +423,11 @@ func TestNativeLiveReplayActualMissingRegistryDeniesSameSourceCachedBody(t *test
 	nativeRunningRouter(
 		f.ctx,
 		h,
-	).ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/sessions/continue-stream/"+answer.SessionID+"?message_id="+answer.ID, nil))
+	).ServeHTTP(w, httptest.NewRequest(
+		http.MethodGet,
+		"/sessions/continue-stream/"+answer.SessionID+"?message_id="+answer.ID,
+		nil,
+	))
 	require.Equal(t, http.StatusServiceUnavailable, w.Code, w.Body.String())
 	require.NotContains(t, w.Body.String(), "SECRET")
 	require.Zero(t, reader.reads.Load())

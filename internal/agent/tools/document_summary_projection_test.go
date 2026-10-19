@@ -8,7 +8,16 @@ import (
 )
 
 func TestDocumentSummaryProjectionRequiresProducerMaterial(t *testing.T) {
-	for _, mode := range []string{"text", "unproved-summary", "proved-summary", "unknown-lineage", "image", "metadata", "unsupported-type", "missing-chunk"} {
+	for _, mode := range []string{
+		"text",
+		"unproved-summary",
+		"proved-summary",
+		"unknown-lineage",
+		"image",
+		"metadata",
+		"unsupported-type",
+		"missing-chunk",
+	} {
 		t.Run(mode, func(t *testing.T) {
 			lineage, err := types.NewCompleteSourceLineage()
 			require.NoError(t, err)

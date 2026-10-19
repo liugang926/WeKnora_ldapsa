@@ -135,7 +135,12 @@ func newScopedConfigurationWorkerSource(t *testing.T, decision *atomic.Int32) *h
 			require.Equal(t, "7", scope["tenant_id"])
 			require.Equal(t, scopedWorkerDirectory, scope["directory_id"])
 			require.Equal(t, scopedWorkerGUID, scope["object_guid"])
-			for _, key := range []string{"operation_id", "knowledge_base_id", "data_source_id", "processing_template_id"} {
+			for _, key := range []string{
+				"operation_id",
+				"knowledge_base_id",
+				"data_source_id",
+				"processing_template_id",
+			} {
 				require.NotEmpty(t, scope[key])
 			}
 			require.Len(t, scope["purpose_sha256"], 64)
@@ -144,7 +149,9 @@ func newScopedConfigurationWorkerSource(t *testing.T, decision *atomic.Int32) *h
 				response[key] = value
 			}
 			response["binding_id"], response["allow"], response["reason"] = binding, true, "authorized"
-			response["root_file_id"], response["rule_id"], response["rule_revision"] = "7", "controlled-actual-rule", "1"
+			response["root_file_id"], response["rule_id"], response["rule_revision"] = "7",
+				"controlled-actual-rule",
+				"1"
 			if binding == scopedWorkerTargetBinding {
 				response["root_file_id"] = "8"
 			}
@@ -239,7 +246,17 @@ func scopedWorkerActivate(
 	live, err := nextcloud.InspectPairing(context.Background(), cfg)
 	require.NoError(t, err)
 	_, err = repository.NewNextcloudEventInboxRepository(f.db).
-		Pair(context.Background(), repository.NextcloudEventPairingIdentity{TenantID: op.TenantID, KnowledgeBaseID: op.KnowledgeBaseID, DatasourceID: ds.ID, NextcloudInstanceID: live.InstanceID, BindingID: live.BindingID, DatasourceBaseURL: pair.BaseURL, DatasourceConfigSHA: pair.ConfigSHA, PublicationEpoch: live.PublicationEpoch, PublicationState: live.PublicationState})
+		Pair(context.Background(), repository.NextcloudEventPairingIdentity{
+			TenantID:            op.TenantID,
+			KnowledgeBaseID:     op.KnowledgeBaseID,
+			DatasourceID:        ds.ID,
+			NextcloudInstanceID: live.InstanceID,
+			BindingID:           live.BindingID,
+			DatasourceBaseURL:   pair.BaseURL,
+			DatasourceConfigSHA: pair.ConfigSHA,
+			PublicationEpoch:    live.PublicationEpoch,
+			PublicationState:    live.PublicationState,
+		})
 	require.NoError(t, err)
 	require.NoError(t, store.RefreshGrantEpoch(context.Background(), op))
 	require.NoError(
@@ -316,7 +333,11 @@ func newScopedConfigurationWorkerFixture(
 		ExternalID: "nextcloud:instance:77",
 		ETag:       "actual-etag",
 	}
-	live.BeforePrepare = func(f *enrichmentTestFixture, kb *types.KnowledgeBase, proposed *repository.NextcloudSourcePairing) (context.Context, error) {
+	live.BeforePrepare = func(
+		f *enrichmentTestFixture,
+		kb *types.KnowledgeBase,
+		proposed *repository.NextcloudSourcePairing,
+	) (context.Context, error) {
 		require.True(
 			t,
 			f.db.Migrator().HasTable("nextcloud_onboarding_operations"),
@@ -557,7 +578,13 @@ func (m scopedConfigurationObservingModels) GetChatModel(ctx context.Context, id
 }
 
 func TestNextcloudSourceBoundConfigurationFreshWorkerActualSQLite(t *testing.T) {
-	for _, mode := range []string{"positive", "revoked before fetch", "unknown before fetch", "revoked during model", "unknown during model"} {
+	for _, mode := range []string{
+		"positive",
+		"revoked before fetch",
+		"unknown before fetch",
+		"revoked during model",
+		"unknown during model",
+	} {
 		t.Run(mode, func(t *testing.T) {
 			decision := &atomic.Int32{}
 			m, _ := newScopedConfigurationWorkerFixture(t, decision)
@@ -620,7 +647,10 @@ func TestNextcloudSourceBoundConfigurationFreshWorkerActualSQLite(t *testing.T) 
 						require.NoError(
 							t,
 							m.f.db.Table("nextcloud_content_leases").
-								Where("knowledge_id = ? AND kind = 'read' AND released_at_ms IS NULL", sources.Sources[0].KnowledgeID).
+								Where(
+									"knowledge_id = ? AND kind = 'read' AND released_at_ms IS NULL",
+									sources.Sources[0].KnowledgeID,
+								).
 								Count(&reads).
 								Error,
 						)

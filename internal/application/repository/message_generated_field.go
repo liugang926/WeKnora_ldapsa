@@ -11,10 +11,18 @@ import (
 )
 
 type messageGeneratedFieldAdmission struct {
-	FieldRevision                                                                                                     uint64
-	ID                                                                                                                string `gorm:"primaryKey"`
-	MessageID, GenerationID, SessionID, Field, BodyDigest, SourceLineage, ParentMaterials, Actor, PreviousAdmissionID string
-	TenantID, PreviousRevision, PreviousMembership, ResultRevision                                                    uint64
+	FieldRevision                                                  uint64
+	ID                                                             string `gorm:"primaryKey"`
+	MessageID                                                      string
+	GenerationID                                                   string
+	SessionID                                                      string
+	Field                                                          string
+	BodyDigest                                                     string
+	SourceLineage                                                  string
+	ParentMaterials                                                string
+	Actor                                                          string
+	PreviousAdmissionID                                            string
+	TenantID, PreviousRevision, PreviousMembership, ResultRevision uint64
 }
 
 func (messageGeneratedFieldAdmission) TableName() string { return "message_generated_field_admissions" }
@@ -238,9 +246,11 @@ func (r *messageRepository) writeGeneratedField(
 		if err := tx.Create(&admission).Error; err != nil {
 			return err
 		}
-		if err := tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "message_id"}, {Name: "field"}}, DoUpdates: clause.AssignmentColumns([]string{"admission_id"})}).
-			Create(&messageGeneratedFieldReceipt{messageID, field, admission.ID}).
-			Error; err != nil {
+		if err := tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "message_id"}, {
+			Name: "field",
+		}}, DoUpdates: clause.AssignmentColumns([]string{"admission_id"})}).
+				Create(&messageGeneratedFieldReceipt{messageID, field, admission.ID}).
+				Error; err != nil {
 			return err
 		}
 		var actual types.Message
@@ -289,7 +299,8 @@ func UpgradeMessageGeneratedFieldSchema(db *gorm.DB) error {
 	})
 }
 
-const messageGeneratedFieldsSQLiteUpgrade = ("-- Actual generated fields have independent immutable parents and material" +
+const messageGeneratedFieldsSQLiteUpgrade = ("-- Actual generated fields have " +
+	"independent immutable parents and material" +
 	".\nCREATE TABLE message_generated_field_admissions(id TEXT PRIMARY KEY,mes" +
 	"sage_id TEXT NOT NULL,generation_id TEXT NOT NULL,session_id TEXT NOT NULL" +
 	",tenant_id BIGINT NOT NULL,field TEXT NOT NULL,body_digest TEXT NOT NULL,s" +
@@ -333,7 +344,8 @@ const messageGeneratedFieldsSQLiteUpgrade = ("-- Actual generated fields have in
 	"te BEFORE DELETE ON message_fork_parent_origins BEGIN SELECT RAISE(ABORT,'" +
 	"immutable original fork parents'); END;\n")
 
-const messageGeneratedFieldsPostgresUpgrade = ("-- Actual generated fields have independent immutable parents and material" +
+const messageGeneratedFieldsPostgresUpgrade = ("-- Actual generated fields have " +
+	"independent immutable parents and material" +
 	".\nCREATE TABLE message_generated_field_admissions(id TEXT PRIMARY KEY,mes" +
 	"sage_id TEXT NOT NULL,generation_id TEXT NOT NULL,session_id TEXT NOT NULL" +
 	",tenant_id BIGINT NOT NULL,field TEXT NOT NULL,body_digest TEXT NOT NULL,s" +
@@ -454,7 +466,12 @@ func (s *KnowledgeInputProvenanceStore) verifyGeneratedMessageFieldsInTx(tx *gor
 				if err := tx.Table("message_material_admissions a").
 					Select("a.*").
 					Joins("JOIN message_material_receipts r ON r.admission_id=a.id AND r.message_id=a.message_id").
-					Where("a.message_id=? AND a.tenant_id=? AND a.session_id=?", proof.MessageID, proof.TenantID, proof.SessionID).
+					Where(
+						"a.message_id=? AND a.tenant_id=? AND a.session_id=?",
+						proof.MessageID,
+						proof.TenantID,
+						proof.SessionID,
+					).
 					Take(&current).
 					Error; err != nil {
 					return err

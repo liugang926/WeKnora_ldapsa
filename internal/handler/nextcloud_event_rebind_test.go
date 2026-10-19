@@ -136,7 +136,10 @@ func TestNextcloudEventRebindFinalizedRotationHTTPAndRepository(t *testing.T) {
 				{"new publication epoch", "active", 2},
 			} {
 				t.Run(live.name, func(t *testing.T) {
-					h.inspect = func(ctx context.Context, cfg *types.DataSourceConfig) (nextcloud.PairingIdentity, error) {
+					h.inspect = func(
+						ctx context.Context,
+						cfg *types.DataSourceConfig,
+					) (nextcloud.PairingIdentity, error) {
 						identity, err := originalInspect(ctx, cfg)
 						identity.PublicationState = live.state
 						identity.PublicationEpoch = live.epoch

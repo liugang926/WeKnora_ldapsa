@@ -23,7 +23,10 @@ func collectionPostgresFixture(t *testing.T) (*KnowledgeInputProvenanceStore, *g
 	require.NoError(t, err)
 	migration, err := gorm.Open(postgres.New(postgres.Config{Conn: sqlDB, PreferSimpleProtocol: true}), &gorm.Config{})
 	require.NoError(t, err)
-	for _, name := range []string{"000139_knowledge_collection_checkpoints", "000140_knowledge_collection_display_inputs"} {
+	for _, name := range []string{
+		"000139_knowledge_collection_checkpoints",
+		"000140_knowledge_collection_display_inputs",
+	} {
 		script, err := os.ReadFile("../../../migrations/versioned/" + name + ".up.sql")
 		require.NoError(t, err)
 		require.NoError(t, migration.Exec(string(script)).Error)
@@ -146,7 +149,13 @@ func TestPostgresKnowledgeCollectionOriginalInputsAndProjection(t *testing.T) {
 type collectionPostgresPauseKey struct{}
 
 func TestPostgresKnowledgeCollectionRRWholeSetAndAbsenceABA(t *testing.T) {
-	for _, change := range []string{"non_returned_body", "body_aba", "membership_aba", "config_aba", "source_withdraw"} {
+	for _, change := range []string{
+		"non_returned_body",
+		"body_aba",
+		"membership_aba",
+		"config_aba",
+		"source_withdraw",
+	} {
 		t.Run(change, func(t *testing.T) {
 			store, db := collectionPostgresFixture(t)
 			ctx := context.Background()
@@ -195,7 +204,13 @@ func TestPostgresKnowledgeCollectionRRWholeSetAndAbsenceABA(t *testing.T) {
 						t,
 						NewNextcloudContentLeaseStore(
 							db,
-						).RetireKnowledge(context.Background(), NextcloudContentScope{TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: "doc-b", DataSourceID: "ds", ExternalID: "nextcloud:instance:78"}),
+						).RetireKnowledge(context.Background(), NextcloudContentScope{
+							TenantID:        7,
+							KnowledgeBaseID: "kb",
+							KnowledgeID:     "doc-b",
+							DataSourceID:    "ds",
+							ExternalID:      "nextcloud:instance:78",
+						}),
 					)
 				}
 			}))

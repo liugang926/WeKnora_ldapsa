@@ -198,11 +198,14 @@ func TestAgentHistoryActualModelConsumesWithHeldLeasesAndBodyRevocation(t *testi
 }
 
 func TestAgentHistoryPostgresActualModelCheckpointAndParentRevokeSingleConnection(t *testing.T) {
-	machine := newMachinePipelineFixtureWithDocument(t, true, "unused authored fixture source", true)
+	machine := newMachinePipelineFixtureWithDocument(t, true, "unused authored fixture source", true, true)
 	kg, store, db, ctx := machine.f.s, machine.f.store, machine.f.db, machine.f.ctx
 	require.NoError(t, db.Exec("CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\"").Error)
 	require.NoError(t, db.Exec("ALTER TABLE messages ADD COLUMN artifacts JSONB").Error)
-	for _, name := range []string{"000103_message_artifacts_table.up.sql", "000107_message_artifacts_deleted_at.up.sql"} {
+	for _, name := range []string{
+		"000103_message_artifacts_table.up.sql",
+		"000107_message_artifacts_deleted_at.up.sql",
+	} {
 		ddl, err := os.ReadFile("../../../migrations/versioned/" + name)
 		require.NoError(t, err)
 		require.NoError(t, db.Exec(string(ddl)).Error)
@@ -619,10 +622,25 @@ func TestMessageGeneratedFieldForwardUpgradeFromInstalledCore151(t *testing.T) {
 	_, _, store, db, _, _ := messageMaterialActualFixture(t)
 	// This fixture currently installed fresh70; remove only new owned schema to
 	// emulate the already-installed old core migration, retaining originals.
-	for _, name := range []string{"message_generated_field_insert", "message_generated_field_images", "message_generated_field_attachments", "message_generated_field_rendered_content", "message_generated_field_context_checkpoint", "message_fork_parent_origins_immutable_update", "message_fork_parent_origins_immutable_delete", "message_generated_field_admissions_immutable_update", "message_generated_field_admissions_immutable_delete"} {
+	for _, name := range []string{
+		"message_generated_field_insert",
+		"message_generated_field_images",
+		"message_generated_field_attachments",
+		"message_generated_field_rendered_content",
+		"message_generated_field_context_checkpoint",
+		"message_fork_parent_origins_immutable_update",
+		"message_fork_parent_origins_immutable_delete",
+		"message_generated_field_admissions_immutable_update",
+		"message_generated_field_admissions_immutable_delete",
+	} {
 		require.NoError(t, db.Exec("DROP TRIGGER IF EXISTS "+name).Error)
 	}
-	for _, table := range []string{"message_fork_parent_origins", "message_generated_field_receipts", "message_generated_field_admissions", "message_generated_field_versions"} {
+	for _, table := range []string{
+		"message_fork_parent_origins",
+		"message_generated_field_receipts",
+		"message_generated_field_admissions",
+		"message_generated_field_versions",
+	} {
 		require.NoError(t, db.Exec("DROP TABLE "+table).Error)
 	}
 	require.NoError(t, repository.UpgradeMessageGeneratedFieldSchema(db))

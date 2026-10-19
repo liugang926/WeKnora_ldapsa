@@ -95,7 +95,9 @@ func gcReadMoveReceipt(dir int, name string) (localGCMoveReceipt, error) {
 	if e = unix.Fstat(
 		fd,
 		&st,
-	); e != nil || st.Nlink != 1 || st.Mode&unix.S_IFMT != unix.S_IFREG || st.Mode&0o777 != 0o600 || int(st.Uid) != os.Geteuid() ||
+	); e != nil || st.Nlink != 1 || st.Mode&unix.S_IFMT != unix.S_IFREG || st.Mode&0o777 != 0o600 || int(
+		st.Uid,
+	) != os.Geteuid() ||
 		st.Size > 4096 {
 		return r, errors.New("GC holding receipt unavailable")
 	}

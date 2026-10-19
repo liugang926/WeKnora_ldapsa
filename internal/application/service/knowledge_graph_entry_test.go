@@ -130,7 +130,14 @@ func (k *graphEntryKnowledge) ListKnowledgeIDsByTagIDs(context.Context, uint64, 
 
 func graphSQLNeoFixture(
 	t *testing.T,
-) (*gorm.DB, *repository.KnowledgeInputProvenanceStore, interfaces.RetrieveGraphRepository, types.NameSpace, *graphEntryBases, *graphEntryKnowledge) {
+) (
+	*gorm.DB,
+	*repository.KnowledgeInputProvenanceStore,
+	interfaces.RetrieveGraphRepository,
+	types.NameSpace,
+	*graphEntryBases,
+	*graphEntryKnowledge,
+) {
 	t.Helper()
 	dsn := os.Getenv("WEKNORA_KG_TEST_NEO4J_URI")
 	if dsn == "" {
@@ -156,7 +163,15 @@ func graphSQLNeoFixture(
 			&repository.NextcloudSourcePairing{},
 		),
 	)
-	for _, version := range []string{"000031_nextcloud_source_versions", "000045_nextcloud_source_revisions", "000046_nextcloud_content_leases", "000047_nextcloud_candidate_retry", "000053_knowledge_input_provenance", "000054_knowledge_configuration_history_inputs", "000055_knowledge_actual_config_controls"} {
+	for _, version := range []string{
+		"000031_nextcloud_source_versions",
+		"000045_nextcloud_source_revisions",
+		"000046_nextcloud_content_leases",
+		"000047_nextcloud_candidate_retry",
+		"000053_knowledge_input_provenance",
+		"000054_knowledge_configuration_history_inputs",
+		"000055_knowledge_actual_config_controls",
+	} {
 		script, err := os.ReadFile("../../../migrations/sqlite/" + version + ".up.sql")
 		require.NoError(t, err)
 		require.NoError(t, db.Exec(string(script)).Error)
@@ -497,7 +512,11 @@ func graphNextcloudSource(
 		strings.Trim(os.Getenv("WEKNORA_NEXTCLOUD_ALLOWED_ORIGINS")+","+server.URL, ","),
 	)
 	bindingID := "binding-" + fileID
-	config, err := (&types.DataSourceConfig{Type: types.ConnectorTypeNextcloud, ResourceIDs: []string{bindingID}, Settings: map[string]interface{}{"base_url": server.URL}, Credentials: map[string]interface{}{"token": "local-only-machine-token", "key_id": "pair_test"}}).ToJSON()
+	config, err := (&types.DataSourceConfig{Type: types.ConnectorTypeNextcloud, ResourceIDs: []string{
+		bindingID,
+	}, Settings: map[string]interface{}{
+		"base_url": server.URL,
+	}, Credentials: map[string]interface{}{"token": "local-only-machine-token", "key_id": "pair_test"}}).ToJSON()
 	require.NoError(t, err)
 	dsID := "ds-" + fileID
 	require.NoError(
@@ -560,7 +579,15 @@ func graphNextcloudSource(
 	repo := repository.NewKnowledgeRepository(db)
 	require.NoError(t, repo.(interface {
 		StageNextcloudVersion(context.Context, uint64, string, string, string, string, string) error
-	}).StageNextcloudVersion(context.Background(), 7, namespace.KnowledgeBase, dsID, "nextcloud:instance:"+fileID, etag, document))
+	}).StageNextcloudVersion(
+		context.Background(),
+		7,
+		namespace.KnowledgeBase,
+		dsID,
+		"nextcloud:instance:"+fileID,
+		etag,
+		document,
+	))
 	require.NoError(t, db.Where("id = ?", doc.ID).Take(doc).Error)
 	scope := repository.NextcloudContentScope{
 		TenantID:        7,
@@ -740,7 +767,13 @@ func TestKnowledgeGraphActualSQLMergedDocumentsRetainEverySourceDuringRead(t *te
 		require.NoError(
 			t,
 			repository.NewNextcloudContentLeaseStore(db).
-				RetireKnowledge(context.Background(), repository.NextcloudContentScope{TenantID: 7, KnowledgeBaseID: namespace.KnowledgeBase, KnowledgeID: docB.ID, DataSourceID: metadata["datasource_id"], ExternalID: metadata["external_id"]}),
+				RetireKnowledge(context.Background(), repository.NextcloudContentScope{
+					TenantID:        7,
+					KnowledgeBaseID: namespace.KnowledgeBase,
+					KnowledgeID:     docB.ID,
+					DataSourceID:    metadata["datasource_id"],
+					ExternalID:      metadata["external_id"],
+				}),
 		)
 	}}
 	bases.reader.graph = wrapped
@@ -874,9 +907,21 @@ func (m *graphConversationModel) ChatStream(
 	m.round++
 	ch := make(chan types.StreamResponse, 1)
 	if m.useTool && m.round == 1 {
-		ch <- types.StreamResponse{ResponseType: types.ResponseTypeToolCall, ToolCalls: []types.LLMToolCall{{ID: "graph-read", Type: "function", Function: types.FunctionCall{Name: tools.ToolQueryKnowledgeGraph, Arguments: `{"knowledge_base_ids":["b1"],"query":"shared"}`}}}, Done: true, FinishReason: "tool_calls"}
+		ch <- types.StreamResponse{ResponseType: types.ResponseTypeToolCall, ToolCalls: []types.LLMToolCall{{
+			ID:   "graph-read",
+			Type: "function",
+			Function: types.FunctionCall{
+				Name:      tools.ToolQueryKnowledgeGraph,
+				Arguments: `{"knowledge_base_ids":["b1"],"query":"shared"}`,
+			},
+		}}, Done: true, FinishReason: "tool_calls"}
 	} else {
-		ch <- types.StreamResponse{ResponseType: types.ResponseTypeAnswer, Content: "A citation-free graph conclusion.", Done: true, FinishReason: "stop"}
+		ch <- types.StreamResponse{
+			ResponseType: types.ResponseTypeAnswer,
+			Content:      "A citation-free graph conclusion.",
+			Done:         true,
+			FinishReason: "stop",
+		}
 	}
 	close(ch)
 	return ch, nil
@@ -952,19 +997,33 @@ func TestKnowledgeGraphActualWriterAgentCitationFreeNextTurnWithdrawal(t *testin
 	followModel := &graphConversationModel{}
 	follow, err := makeEngine(
 		followModel,
-	).Execute(ctx, "session", "turn2", "explain again", []chat.Message{{Role: "assistant", Content: first.FinalAnswer, SourceLineage: first.SourceLineage}})
+	).Execute(ctx, "session", "turn2", "explain again", []chat.Message{{
+		Role:          "assistant",
+		Content:       first.FinalAnswer,
+		SourceLineage: first.SourceLineage,
+	}})
 	require.NoError(t, err)
 	require.Equal(t, first.SourceLineage, follow.SourceLineage)
 	metadata := doc.GetMetadata()
 	require.NoError(
 		t,
 		repository.NewNextcloudContentLeaseStore(db).
-			RetireKnowledge(context.Background(), repository.NextcloudContentScope{TenantID: 7, KnowledgeBaseID: namespace.KnowledgeBase, KnowledgeID: doc.ID, DataSourceID: metadata["datasource_id"], ExternalID: metadata["external_id"]}),
+			RetireKnowledge(context.Background(), repository.NextcloudContentScope{
+				TenantID:        7,
+				KnowledgeBaseID: namespace.KnowledgeBase,
+				KnowledgeID:     doc.ID,
+				DataSourceID:    metadata["datasource_id"],
+				ExternalID:      metadata["external_id"],
+			}),
 	)
 	blockedModel := &graphConversationModel{}
 	_, err = makeEngine(
 		blockedModel,
-	).Execute(ctx, "session", "turn3", "continue", []chat.Message{{Role: "assistant", Content: follow.FinalAnswer, SourceLineage: follow.SourceLineage}})
+	).Execute(ctx, "session", "turn3", "continue", []chat.Message{{
+		Role:          "assistant",
+		Content:       follow.FinalAnswer,
+		SourceLineage: follow.SourceLineage,
+	}})
 	require.ErrorIs(t, err, agent.ErrAgentSourceLineageDenied)
 	require.Empty(t, blockedModel.calls)
 }

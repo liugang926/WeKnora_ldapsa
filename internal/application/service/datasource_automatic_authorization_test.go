@@ -79,7 +79,11 @@ func automaticSourceFixture(t *testing.T, tableCSV ...bool) (*machinePipelineFix
 		KnowledgeBaseID: "kb", InstanceID: "instance", BindingID: scopedWorkerSourceBinding, BaseURL: server.URL,
 		PublicationEpoch: 1, KeyID: "actual_worker_source",
 	}, Token: "actual-worker-source", ExternalID: "nextcloud:instance:77", ETag: "actual-etag"}
-	live.BeforePrepare = func(f *enrichmentTestFixture, kb *types.KnowledgeBase, pair *apprepo.NextcloudSourcePairing) (context.Context, error) {
+	live.BeforePrepare = func(
+		f *enrichmentTestFixture,
+		kb *types.KnowledgeBase,
+		pair *apprepo.NextcloudSourcePairing,
+	) (context.Context, error) {
 		installScopedWorkerTemplateDDL(t, f)
 		require.NoError(
 			t,
@@ -343,14 +347,29 @@ func automaticSourcePayload(t *testing.T, m *machinePipelineFixture, trigger str
 		payload.NextcloudRetryETag, payload.NextcloudRetryCandidateID = "actual-etag", "automatic-failed-candidate"
 		payload.NextcloudRetryInstanceID, payload.NextcloudRetryBindingID = pair.InstanceID, pair.BindingID
 		payload.NextcloudRetryConfigSHA256, payload.NextcloudRetryPairOperationID = pair.ConfigSHA, pair.OperationID
-		payload.NextcloudRetryPairingEpoch, payload.NextcloudRetryLeaseToken = pair.PublicationEpoch, "automatic-owned-lease"
+		payload.NextcloudRetryPairingEpoch, payload.NextcloudRetryLeaseToken = pair.PublicationEpoch,
+			"automatic-owned-lease"
 	}
 	return payload
 }
 
 func TestNextcloudAutomaticRestrictedSyncRequiresCurrentManagedDispatch(t *testing.T) {
 	for _, trigger := range []string{"nextcloud_event", "nextcloud_candidate_retry"} {
-		for _, scenario := range []string{"current", "manager revoked", "manager revoked during fetch", "pair retired", "wrong task", "unknown attempt", "replayed attempt", "cross KB", "bad retry token", "manual", "schedule", "legacy unknown", "forged ordinary origin"} {
+		for _, scenario := range []string{
+			"current",
+			"manager revoked",
+			"manager revoked during fetch",
+			"pair retired",
+			"wrong task",
+			"unknown attempt",
+			"replayed attempt",
+			"cross KB",
+			"bad retry token",
+			"manual",
+			"schedule",
+			"legacy unknown",
+			"forged ordinary origin",
+		} {
 			if trigger == "nextcloud_event" && scenario == "bad retry token" {
 				continue
 			}

@@ -18,7 +18,14 @@ import (
 
 func messageMaterialActualFixture(
 	t *testing.T,
-) (*messageService, *knowledgeService, *repository.KnowledgeInputProvenanceStore, *gorm.DB, context.Context, *types.Session) {
+) (
+	*messageService,
+	*knowledgeService,
+	*repository.KnowledgeInputProvenanceStore,
+	*gorm.DB,
+	context.Context,
+	*types.Session,
+) {
 	t.Helper()
 	kg, store, db, ctx, _, _, _ := historyActorIntegrationFixture(t, "web")
 	closeHistoryMaterialGuard(ctx)
@@ -32,8 +39,18 @@ func messageMaterialActualFixture(
 	if !db.Migrator().HasColumn(&types.Message{}, "artifacts") {
 		require.NoError(t, db.Exec("ALTER TABLE messages ADD COLUMN artifacts TEXT").Error)
 	}
-	for _, name := range []string{"000023_message_artifacts_table.up.sql", "000026_message_artifacts_deleted_at.up.sql", "000046_nextcloud_content_leases.up.sql", "000070_message_original_materials.up.sql"} {
-		table := map[string]string{"000023_message_artifacts_table.up.sql": "message_artifacts", "000026_message_artifacts_deleted_at.up.sql": "message_artifacts", "000046_nextcloud_content_leases.up.sql": "nextcloud_content_leases", "000070_message_original_materials.up.sql": "message_generation_origins"}[name]
+	for _, name := range []string{
+		"000023_message_artifacts_table.up.sql",
+		"000026_message_artifacts_deleted_at.up.sql",
+		"000046_nextcloud_content_leases.up.sql",
+		"000070_message_original_materials.up.sql",
+	} {
+		table := map[string]string{
+			"000023_message_artifacts_table.up.sql":      "message_artifacts",
+			"000026_message_artifacts_deleted_at.up.sql": "message_artifacts",
+			"000046_nextcloud_content_leases.up.sql":     "nextcloud_content_leases",
+			"000070_message_original_materials.up.sql":   "message_generation_origins",
+		}[name]
 		if db.Migrator().HasTable(table) {
 			continue
 		}
@@ -214,7 +231,16 @@ func TestMessageMaterialActualProducerReadAndDerivedKnowledgeSingleConnection(t 
 }
 
 func TestMessageMaterialActualProducerLegacyAndBodyOwnerABAReject(t *testing.T) {
-	for _, change := range []string{"legacy", "content-ABA", "owner-ABA", "caller", "user-revoked", "member-revoked", "execution-ABA", "membership-ABA"} {
+	for _, change := range []string{
+		"legacy",
+		"content-ABA",
+		"owner-ABA",
+		"caller",
+		"user-revoked",
+		"member-revoked",
+		"execution-ABA",
+		"membership-ABA",
+	} {
 		t.Run(change, func(t *testing.T) {
 			messages, _, store, db, ctx, session := messageMaterialActualFixture(t)
 			_, assistant := produceActualMessagePair(ctx, t, messages, session)
@@ -244,7 +270,9 @@ func TestMessageMaterialActualProducerLegacyAndBodyOwnerABAReject(t *testing.T) 
 					t,
 					db.Model(&types.Message{}).
 						Where("id=?", assistant.ID).
-						Update("execution_context", types.MessageExecutionContext{KnowledgeBaseIDs: []string{"foreign-kb"}}).
+						Update("execution_context", types.MessageExecutionContext{KnowledgeBaseIDs: []string{
+							"foreign-kb",
+						}}).
 						Error,
 				)
 				require.NoError(
@@ -394,7 +422,12 @@ func TestMessageMaterialPostgresActualProducerReadDerivedKnowledgeSingleConnecti
 	kg.graphEngine = parentChildGraphRepo{}
 	require.NoError(t, db.Exec("CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\"").Error)
 	require.NoError(t, db.Exec("ALTER TABLE messages ADD COLUMN artifacts JSONB").Error)
-	for _, name := range []string{"000103_message_artifacts_table.up.sql", "000107_message_artifacts_deleted_at.up.sql", "000127_nextcloud_content_leases.up.sql", "000151_message_original_materials.up.sql"} {
+	for _, name := range []string{
+		"000103_message_artifacts_table.up.sql",
+		"000107_message_artifacts_deleted_at.up.sql",
+		"000127_nextcloud_content_leases.up.sql",
+		"000151_message_original_materials.up.sql",
+	} {
 		ddl, err := os.ReadFile("../../../migrations/versioned/" + name)
 		require.NoError(t, err)
 		require.NoError(t, db.Exec(string(ddl)).Error)

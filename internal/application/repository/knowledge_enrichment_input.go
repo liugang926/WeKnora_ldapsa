@@ -41,7 +41,25 @@ func knowledgeEnrichmentChunkDigest(c *types.Chunk) (string, error) {
 		KB, KG, ID, Content, Source, Header, Type, Parent, Pre, Next, Image string
 		Revision, Index, Start, End                                         int
 		Enabled                                                             bool
-	}{c.TenantID, c.KnowledgeBaseID, c.KnowledgeID, c.ID, c.Content, c.SourceContent, c.ContextHeader, c.ChunkType, c.ParentChunkID, c.PreChunkID, c.NextChunkID, c.ImageInfo, c.ContentRevision, c.ChunkIndex, c.StartAt, c.EndAt, c.IsEnabled})
+	}{
+		c.TenantID,
+		c.KnowledgeBaseID,
+		c.KnowledgeID,
+		c.ID,
+		c.Content,
+		c.SourceContent,
+		c.ContextHeader,
+		c.ChunkType,
+		c.ParentChunkID,
+		c.PreChunkID,
+		c.NextChunkID,
+		c.ImageInfo,
+		c.ContentRevision,
+		c.ChunkIndex,
+		c.StartAt,
+		c.EndAt,
+		c.IsEnabled,
+	})
 }
 
 // CaptureKnowledgeEnrichmentInputs starts from the original private material
@@ -162,7 +180,14 @@ func knowledgeProducerTenantDigest(tenant *types.Tenant) (string, error) {
 		Credentials *types.CredentialsConfig
 		Storage     *types.StorageEngineConfig
 		Default     *string
-	}{tenant.ID, tenant.Status, tenant.RetrieverEngines, tenant.Credentials, tenant.StorageEngineConfig, tenant.DefaultStorageBackendID})
+	}{
+		tenant.ID,
+		tenant.Status,
+		tenant.RetrieverEngines,
+		tenant.Credentials,
+		tenant.StorageEngineConfig,
+		tenant.DefaultStorageBackendID,
+	})
 }
 
 // ReadKnowledgeProducerTenant reads knowledge producer tenant.
@@ -364,7 +389,15 @@ func (s *KnowledgeInputProvenanceStore) RecheckKnowledgeProducerInput(
 		return err
 	}
 	return s.db.WithContext(ctx).
-		Transaction(func(tx *gorm.DB) error { return s.recheckKnowledgeProducerInputInTx(ctx, tx, original, proof, input) })
+		Transaction(func(tx *gorm.DB) error {
+			return s.recheckKnowledgeProducerInputInTx(
+				ctx,
+				tx,
+				original,
+				proof,
+				input,
+			)
+		})
 }
 
 type (

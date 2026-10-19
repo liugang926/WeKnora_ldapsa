@@ -20,7 +20,15 @@ func messageBodyIntegrationFixture(
 	t *testing.T,
 	pg bool,
 	before ...any,
-) (*messageService, *knowledgeService, *repository.KnowledgeInputProvenanceStore, *gorm.DB, context.Context, *types.Session, *repository.OriginalBodyRetentionStore) {
+) (
+	*messageService,
+	*knowledgeService,
+	*repository.KnowledgeInputProvenanceStore,
+	*gorm.DB,
+	context.Context,
+	*types.Session,
+	*repository.OriginalBodyRetentionStore,
+) {
 	t.Helper()
 	var messages *messageService
 	var kg *knowledgeService
@@ -45,7 +53,12 @@ func messageBodyIntegrationFixture(
 			).Error,
 		)
 		require.NoError(t, db.Exec("ALTER TABLE messages ADD COLUMN artifacts JSONB").Error)
-		for _, name := range []string{"000103_message_artifacts_table.up.sql", "000107_message_artifacts_deleted_at.up.sql", "000127_nextcloud_content_leases.up.sql", "000151_message_original_materials.up.sql"} {
+		for _, name := range []string{
+			"000103_message_artifacts_table.up.sql",
+			"000107_message_artifacts_deleted_at.up.sql",
+			"000127_nextcloud_content_leases.up.sql",
+			"000151_message_original_materials.up.sql",
+		} {
 			ddl, e := os.ReadFile("../../../migrations/versioned/" + name)
 			require.NoError(t, e)
 			require.NoError(t, db.Exec(string(ddl)).Error)
@@ -85,7 +98,13 @@ func messageBodyIntegrationFixture(
 		switch hook := before[0].(type) {
 		case func(*gorm.DB, *repository.KnowledgeInputProvenanceStore, context.Context):
 			hook(db, store, ctx)
-		case func(*messageService, *gorm.DB, *repository.KnowledgeInputProvenanceStore, context.Context, *types.Session):
+		case func(
+			*messageService,
+			*gorm.DB,
+			*repository.KnowledgeInputProvenanceStore,
+			context.Context,
+			*types.Session,
+		):
 			hook(messages, db, store, ctx, session)
 		default:
 			t.Fatal("unsupported actual before-body fixture hook")

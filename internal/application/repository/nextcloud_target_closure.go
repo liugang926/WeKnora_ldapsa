@@ -18,7 +18,8 @@ import (
 
 var (
 	// ErrNextcloudTargetDeleted reports a nextcloud target deleted condition.
-	ErrNextcloudTargetDeleted    = errors.New("nextcloud_target_deleted")
+	ErrNextcloudTargetDeleted = errors.New("nextcloud_target_deleted")
+	// ErrNextcloudTargetUnverified reports that the current target closure cannot be verified.
 	ErrNextcloudTargetUnverified = errors.New("nextcloud_target_unverified")
 )
 
@@ -346,7 +347,7 @@ func closeDeletedNextcloudTargetsInTx(tx *gorm.DB, tenant uint64, kb string) err
 				"_id=?")
 			if tx.Name() == "postgres" {
 				query = ("UPDATE knowledges SET enable_status='disabled',metadata=jsonb_set(COALESCE" +
-					"(metadata,'{}'::jsonb),'{nextcloud_etag}',to_jsonb(''::text),true) WHERE t" +
+					"(metadata::jsonb,'{}'::jsonb),'{nextcloud_etag}',to_jsonb(''::text),true) WHERE t" +
 					"enant_id=? AND knowledge_base_id=?")
 			}
 			if err := tx.Exec(query, op.TenantID, op.KnowledgeBaseID).Error; err != nil {
@@ -364,8 +365,15 @@ func closeDeletedNextcloudTargetsInTx(tx *gorm.DB, tenant uint64, kb string) err
 		if tx.Migrator().HasTable("data_sources") && tx.Migrator().HasTable("nextcloud_source_pairings") {
 			ids := tx.Table("nextcloud_source_pairings").
 				Select("datasource_id").
-				Where(("operation_id=? AND tenant_id=? AND knowledge_base_id=? AND nextcloud_insta" +
-					"nce_id=? AND binding_id=?"), op.OperationID, op.TenantID, op.KnowledgeBaseID, op.InstanceID, op.BindingID)
+				Where(
+					("operation_id=? AND tenant_id=? AND knowledge_base_id=? AND nextcloud_insta" +
+						"nce_id=? AND binding_id=?"),
+					op.OperationID,
+					op.TenantID,
+					op.KnowledgeBaseID,
+					op.InstanceID,
+					op.BindingID,
+				)
 			if err := tx.Table("data_sources").
 				Where("id IN (?) AND tenant_id=? AND knowledge_base_id=?", ids, op.TenantID, op.KnowledgeBaseID).
 				Updates(map[string]any{"status": types.DataSourceStatusPaused, "sync_enabled": false}).
@@ -389,7 +397,12 @@ func closeDeletedNextcloudTargetsInTx(tx *gorm.DB, tenant uint64, kb string) err
 		op.PermissionVersion++
 		q := tx.Model(&types.NextcloudOnboardingOperation{}).
 			Where("operation_id=? AND revision=?", op.OperationID, op.Revision-1).
-			Updates(map[string]any{"revision": op.Revision, "permission_version": op.PermissionVersion, "permission_synced_at": nil, "updated_at": time.Now().UTC()})
+			Updates(map[string]any{
+				"revision":             op.Revision,
+				"permission_version":   op.PermissionVersion,
+				"permission_synced_at": nil,
+				"updated_at":           time.Now().UTC(),
+			})
 		if q.Error != nil {
 			return q.Error
 		}
@@ -626,7 +639,9 @@ func requireNextcloudTargetClosureSchema(tx *gorm.DB) error {
 		tx.Migrator().HasTable(&NextcloudTargetClosure{}) ||
 		tx.Migrator().HasTable(&NextcloudTenantDeletion{})
 	if current &&
-		(!tx.Migrator().HasTable("nextcloud_onboarding_operations") || !tx.Migrator().HasTable(&NextcloudTargetClosure{}) || !tx.Migrator().HasTable(&NextcloudTenantDeletion{})) {
+		(!tx.Migrator().HasTable("nextcloud_onboarding_operations") || !tx.Migrator().HasTable(
+			&NextcloudTargetClosure{},
+		) || !tx.Migrator().HasTable(&NextcloudTenantDeletion{})) {
 		return ErrNextcloudTargetUnverified
 	}
 	return nil

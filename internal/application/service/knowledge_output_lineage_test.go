@@ -150,7 +150,15 @@ func TestKnowledgeOutputLineageRejectsWireMutationDuringAuthorization(t *testing
 }
 
 func TestKnowledgeOutputLineageRejectsUnknownForeignAndUncoveredFields(t *testing.T) {
-	for _, field := range []string{"unknown", "foreign_proof", "foreign_body", "joined_tag", "joined_kb", "unaccounted_error", "faq_report"} {
+	for _, field := range []string{
+		"unknown",
+		"foreign_proof",
+		"foreign_body",
+		"joined_tag",
+		"joined_kb",
+		"unaccounted_error",
+		"faq_report",
+	} {
 		t.Run(field, func(t *testing.T) {
 			a, reader, row := outputAuthorizerFixture(t)
 			switch field {

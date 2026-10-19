@@ -199,14 +199,21 @@ func (m *normalReferencesActualModel) ChatStream(
 				close(out)
 				return
 			}
-			out <- types.StreamResponse{ResponseType: types.ResponseTypeAnswer, Content: "CURRENT ADMITTED NORMAL ANSWER", Done: true}
+			out <- types.StreamResponse{
+				ResponseType: types.ResponseTypeAnswer,
+				Content:      "CURRENT ADMITTED NORMAL ANSWER",
+				Done:         true,
+			}
 			close(out)
 		}()
 		return out, nil
 	}
 
 	if m.mode == "model-error" {
-		out <- types.StreamResponse{ResponseType: types.ResponseTypeError, Content: "untrusted controlled provider diagnostic"}
+		out <- types.StreamResponse{
+			ResponseType: types.ResponseTypeError,
+			Content:      "untrusted controlled provider diagnostic",
+		}
 		close(out)
 		return out, nil
 	}
@@ -220,9 +227,17 @@ func (m *normalReferencesActualModel) ChatStream(
 		return out, nil
 	}
 	if m.mode == "thinking-refuse" {
-		out <- types.StreamResponse{ResponseType: types.ResponseTypeThinking, Content: "CONTROLLED CURRENT THINKING", Done: false}
+		out <- types.StreamResponse{
+			ResponseType: types.ResponseTypeThinking,
+			Content:      "CONTROLLED CURRENT THINKING",
+			Done:         false,
+		}
 	}
-	out <- types.StreamResponse{ResponseType: types.ResponseTypeAnswer, Content: "CURRENT ADMITTED NORMAL ANSWER", Done: true}
+	out <- types.StreamResponse{
+		ResponseType: types.ResponseTypeAnswer,
+		Content:      "CURRENT ADMITTED NORMAL ANSWER",
+		Done:         true,
+	}
 	if m.mode == "done-open" {
 		go func() { <-ctx.Done(); close(out) }()
 	} else {
@@ -613,13 +628,39 @@ func TestNormalReferencesActualHTTPSQLite(t *testing.T)   { runNormalReferencesA
 func TestPostgresNormalReferencesActualHTTP(t *testing.T) { runNormalReferencesActualHTTP(t, true) }
 
 func TestNormalReferencesActualHTTPBoundariesSQLite(t *testing.T) {
-	for _, mode := range []string{"source-before-refs", "actor-before-refs", "lease-before-refs", "unknown-prefix", "references-refuse", "empty-fixed", "empty-fixed-refuse", "source-after-start", "lease-after-start", "thinking-refuse", "done-open", "source-after-start-open"} {
+	for _, mode := range []string{
+		"source-before-refs",
+		"actor-before-refs",
+		"lease-before-refs",
+		"unknown-prefix",
+		"references-refuse",
+		"empty-fixed",
+		"empty-fixed-refuse",
+		"source-after-start",
+		"lease-after-start",
+		"thinking-refuse",
+		"done-open",
+		"source-after-start-open",
+	} {
 		t.Run(mode, func(t *testing.T) { runNormalReferencesActualHTTP(t, false, mode) })
 	}
 }
 
 func TestPostgresNormalReferencesActualHTTPBoundaries(t *testing.T) {
-	for _, mode := range []string{"source-before-refs", "actor-before-refs", "lease-before-refs", "unknown-prefix", "references-refuse", "empty-fixed", "empty-fixed-refuse", "source-after-start", "lease-after-start", "thinking-refuse", "done-open", "source-after-start-open"} {
+	for _, mode := range []string{
+		"source-before-refs",
+		"actor-before-refs",
+		"lease-before-refs",
+		"unknown-prefix",
+		"references-refuse",
+		"empty-fixed",
+		"empty-fixed-refuse",
+		"source-after-start",
+		"lease-after-start",
+		"thinking-refuse",
+		"done-open",
+		"source-after-start-open",
+	} {
 		t.Run(mode, func(t *testing.T) { runNormalReferencesActualHTTP(t, true, mode) })
 	}
 }

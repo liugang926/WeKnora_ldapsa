@@ -34,22 +34,70 @@ func TestAuthorizeCurrentManagerBindsPurposeAndFreshCurrentDecision(t *testing.T
 		want   error
 	}{
 		{name: "current allow", status: http.StatusOK},
-		{name: "new binding starts at epoch zero", status: http.StatusOK, mutate: func(v map[string]any) { v["publication_epoch"] = "0" }},
-		{name: "negative epoch", status: http.StatusOK, mutate: func(v map[string]any) { v["publication_epoch"] = "-1" }, want: ErrManagerAuthorizationUnavailable},
-		{name: "epoch canonical alias", status: http.StatusOK, mutate: func(v map[string]any) { v["publication_epoch"] = "00" }, want: ErrManagerAuthorizationUnavailable},
-		{name: "epoch uint overflow", status: http.StatusOK, mutate: func(v map[string]any) { v["publication_epoch"] = "18446744073709551616" }, want: ErrManagerAuthorizationUnavailable},
-		{name: "current delegate revoked", status: http.StatusForbidden, mutate: func(v map[string]any) { v["allow"] = false; v["reason"] = "manager_denied" }, want: ErrManagerAuthorizationDenied},
+		{
+			name:   "new binding starts at epoch zero",
+			status: http.StatusOK,
+			mutate: func(v map[string]any) { v["publication_epoch"] = "0" },
+		},
+		{
+			name:   "negative epoch",
+			status: http.StatusOK,
+			mutate: func(v map[string]any) { v["publication_epoch"] = "-1" },
+			want:   ErrManagerAuthorizationUnavailable,
+		},
+		{
+			name:   "epoch canonical alias",
+			status: http.StatusOK,
+			mutate: func(v map[string]any) { v["publication_epoch"] = "00" },
+			want:   ErrManagerAuthorizationUnavailable,
+		},
+		{
+			name:   "epoch uint overflow",
+			status: http.StatusOK,
+			mutate: func(v map[string]any) { v["publication_epoch"] = "18446744073709551616" },
+			want:   ErrManagerAuthorizationUnavailable,
+		},
+		{
+			name:   "current delegate revoked",
+			status: http.StatusForbidden,
+			mutate: func(v map[string]any) { v["allow"] = false; v["reason"] = "manager_denied" },
+			want:   ErrManagerAuthorizationDenied,
+		},
 		{name: "unknown authority", status: http.StatusServiceUnavailable, want: ErrManagerAuthorizationUnavailable},
-		{name: "unauthenticated is unavailable", status: http.StatusUnauthorized, want: ErrManagerAuthorizationUnavailable},
-		{name: "changed template", status: http.StatusOK, mutate: func(v map[string]any) { v["processing_template_id"] = "another" }, want: ErrManagerAuthorizationUnavailable},
-		{name: "changed immutable purpose", status: http.StatusOK, mutate: func(v map[string]any) { v["purpose_sha256"] = strings.Repeat("2", 64) }, want: ErrManagerAuthorizationUnavailable},
-		{name: "stale cached allow", status: http.StatusOK, mutate: func(v map[string]any) { v["checked_at"] = time.Now().Add(-30 * time.Second).Unix() }, want: ErrManagerAuthorizationUnavailable},
+		{
+			name:   "unauthenticated is unavailable",
+			status: http.StatusUnauthorized,
+			want:   ErrManagerAuthorizationUnavailable,
+		},
+		{
+			name:   "changed template",
+			status: http.StatusOK,
+			mutate: func(v map[string]any) { v["processing_template_id"] = "another" },
+			want:   ErrManagerAuthorizationUnavailable,
+		},
+		{
+			name:   "changed immutable purpose",
+			status: http.StatusOK,
+			mutate: func(v map[string]any) { v["purpose_sha256"] = strings.Repeat("2", 64) },
+			want:   ErrManagerAuthorizationUnavailable,
+		},
+		{
+			name:   "stale cached allow",
+			status: http.StatusOK,
+			mutate: func(v map[string]any) { v["checked_at"] = time.Now().Add(-30 * time.Second).Unix() },
+			want:   ErrManagerAuthorizationUnavailable,
+		},
 		{name: "unbound forbidden", status: http.StatusForbidden, mutate: func(v map[string]any) {
 			delete(v, "data_source_id")
 			v["allow"] = false
 			v["reason"] = "manager_denied"
 		}, want: ErrManagerAuthorizationUnavailable},
-		{name: "wrong numeric wire type", status: http.StatusOK, mutate: func(v map[string]any) { v["publication_epoch"] = 1 }, want: ErrManagerAuthorizationUnavailable},
+		{
+			name:   "wrong numeric wire type",
+			status: http.StatusOK,
+			mutate: func(v map[string]any) { v["publication_epoch"] = 1 },
+			want:   ErrManagerAuthorizationUnavailable,
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			nonces := map[string]bool{}

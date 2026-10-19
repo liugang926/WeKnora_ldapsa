@@ -100,8 +100,15 @@ func (s *KnowledgeInputProvenanceStore) VerifyKnowledgeAutoTagTaskInput(
 	}
 	var row knowledgeAutoTagManifest
 	if err := s.db.WithContext(ctx).
-		Where(("manifest_id = ? AND tenant_id = ? AND knowledge_base_id = ? AND knowledge_" +
-			"id = ? AND admission_id = ?"), p.TaskInput.ID, p.TenantID, p.KnowledgeBaseID, p.KnowledgeID, p.OriginalInput.AdmissionID).
+		Where(
+			("manifest_id = ? AND tenant_id = ? AND knowledge_base_id = ? AND knowledge_" +
+				"id = ? AND admission_id = ?"),
+			p.TaskInput.ID,
+			p.TenantID,
+			p.KnowledgeBaseID,
+			p.KnowledgeID,
+			p.OriginalInput.AdmissionID,
+		).
 		Take(&row).
 		Error; err != nil {
 		return err

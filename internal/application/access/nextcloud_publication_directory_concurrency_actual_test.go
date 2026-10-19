@@ -202,7 +202,10 @@ func publicationConcurrentActualFixture(t *testing.T) *publicationConcurrentFixt
 				FileID      int64  `json:"file_id"`
 			}
 			if err := json.NewDecoder(r.Body).
-				Decode(&payload); err != nil || payload.DirectoryID != f.directory.ID || payload.ObjectGUID != publicationConcurrentGUID ||
+				Decode(
+					&payload,
+				); err != nil || payload.DirectoryID != f.directory.ID ||
+				payload.ObjectGUID != publicationConcurrentGUID ||
 				payload.FileID != 42 {
 				t.Error("source call did not bind the exact current identity")
 				w.WriteHeader(http.StatusBadRequest)
@@ -272,7 +275,13 @@ func publicationConcurrentKnowledge(t *testing.T) *types.Knowledge {
 }
 
 func TestPostgresNextcloudPublicationDirectorySnapshotConcurrentTransactions(t *testing.T) {
-	for _, mode := range []string{"unchanged_complete_sync", "disabled", "out_of_scope", "directory_disabled", "link_phantom_point_in_time"} {
+	for _, mode := range []string{
+		"unchanged_complete_sync",
+		"disabled",
+		"out_of_scope",
+		"directory_disabled",
+		"link_phantom_point_in_time",
+	} {
 		t.Run(mode, func(t *testing.T) {
 			f := publicationConcurrentActualFixture(t)
 			writerRepo := apprepo.NewDirectoryRepository(f.writer)
@@ -505,9 +514,14 @@ func TestPostgresNextcloudPublicationDirectorySnapshotConcurrentTransactions(t *
 		// Timing alone, callback counts and a synthetic SQL error are insufficient.
 		require.Eventually(t, func() bool {
 			var blocked bool
-			err := f.observer.QueryRowContext(writerCtx, ("SELECT COALESCE(wait_event_type = 'Lock', false) AND $2 = ANY(pg_blocking_" +
-				"pids(pid)) FROM pg_stat_activity WHERE pid = $1 AND datname = current_data" +
-				"base() AND usename = current_user"), f.readerPID, f.writerPID).
+			err := f.observer.QueryRowContext(
+				writerCtx,
+				("SELECT COALESCE(wait_event_type = 'Lock', false) AND $2 = ANY(pg_blocking_" +
+					"pids(pid)) FROM pg_stat_activity WHERE pid = $1 AND datname = current_data" +
+					"base() AND usename = current_user"),
+				f.readerPID,
+				f.writerPID,
+			).
 				Scan(&blocked)
 			return err == nil && blocked
 		}, 3*time.Second, 5*time.Millisecond, "actual reader SHARE waits on the owned ApplySnapshot writer")

@@ -4053,7 +4053,11 @@ func (s *knowledgeService) ProcessDocument(ctx context.Context, t *asynq.Task) e
 	if knowledge.Channel == types.ConnectorTypeNextcloud && s.knowledgeInputs != nil {
 		verifier, ok := s.knowledgeInputs.(interface {
 			VerifyNextcloudOriginalDocumentTask(context.Context, types.DocumentProcessPayload) error
-			AdmitNextcloudBuildInputsFromOriginalUpload(context.Context, []byte, string) (*types.KnowledgeBuildInputProof, error)
+			AdmitNextcloudBuildInputsFromOriginalUpload(
+				context.Context,
+				[]byte,
+				string,
+			) (*types.KnowledgeBuildInputProof, error)
 			AttachNextcloudOriginalUploadTags(context.Context, *types.KnowledgeBuildInputProof) error
 		})
 		if !ok {
@@ -4605,7 +4609,11 @@ func (s *knowledgeService) convert(
 		if s.knowledgeInputs != nil {
 			if knowledge.Channel == types.ConnectorTypeNextcloud && payload.OriginalInput == nil {
 				admiter, ok := s.knowledgeInputs.(interface {
-					AdmitNextcloudBuildInputsFromOriginalUpload(context.Context, []byte, string) (*types.KnowledgeBuildInputProof, error)
+					AdmitNextcloudBuildInputsFromOriginalUpload(
+						context.Context,
+						[]byte,
+						string,
+					) (*types.KnowledgeBuildInputProof, error)
 				})
 				if !ok {
 					return nil, types.ErrSourceLineageUnknown

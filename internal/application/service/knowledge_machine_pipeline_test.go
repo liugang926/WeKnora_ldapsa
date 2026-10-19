@@ -73,22 +73,25 @@ func (m machinePipelineModels) GetEmbeddingModel(context.Context, string) (embed
 }
 
 type machinePipelineFixture struct {
-	liveHistorySessionID                                                                                             string
-	liveHistoryVectorKBID, liveHistoryVectorKnowledgeID, liveHistoryVectorEmbeddingID, liveHistoryVectorAnswerSHA256 string
-	externalID, etag                                                                                                 string
-	f                                                                                                                *enrichmentTestFixture
-	source                                                                                                           *DataSourceService
-	ds                                                                                                               *types.DataSource
-	allow                                                                                                            *atomic.Bool
-	auto                                                                                                             *KnowledgeAutoTagService
-	model                                                                                                            *machinePipelineAutoModel
-	files                                                                                                            interfaces.FileService
-	base                                                                                                             string
-	personal                                                                                                         *atomic.Bool
-	authenticated                                                                                                    bool
-	publicationUnavailableAfterCompletion                                                                            *atomic.Bool
-	publicationFailureProbe                                                                                          *atomic.Int64
-	publicationAuthorizeCalls                                                                                        *atomic.Int64
+	liveHistorySessionID                  string
+	liveHistoryVectorKBID                 string
+	liveHistoryVectorKnowledgeID          string
+	liveHistoryVectorEmbeddingID          string
+	liveHistoryVectorAnswerSHA256         string
+	externalID, etag                      string
+	f                                     *enrichmentTestFixture
+	source                                *DataSourceService
+	ds                                    *types.DataSource
+	allow                                 *atomic.Bool
+	auto                                  *KnowledgeAutoTagService
+	model                                 *machinePipelineAutoModel
+	files                                 interfaces.FileService
+	base                                  string
+	personal                              *atomic.Bool
+	authenticated                         bool
+	publicationUnavailableAfterCompletion *atomic.Bool
+	publicationFailureProbe               *atomic.Int64
+	publicationAuthorizeCalls             *atomic.Int64
 }
 
 func newMachinePipelineFixture(t *testing.T, pg bool) *machinePipelineFixture {
@@ -112,8 +115,12 @@ type machinePipelineSource struct {
 	Pair                    repository.NextcloudSourcePairing
 	Token, ExternalID, ETag string
 	Prepared                func(*repository.NextcloudSourcePairing)
-	BeforePrepare           func(*enrichmentTestFixture, *types.KnowledgeBase, *repository.NextcloudSourcePairing) (context.Context, error)
-	AfterActivate           func(*enrichmentTestFixture, *repository.NextcloudSourcePairing)
+	BeforePrepare           func(
+		*enrichmentTestFixture,
+		*types.KnowledgeBase,
+		*repository.NextcloudSourcePairing,
+	) (context.Context, error)
+	AfterActivate func(*enrichmentTestFixture, *repository.NextcloudSourcePairing)
 }
 
 func newMachinePipelineFixtureWithSource(
@@ -194,9 +201,13 @@ func newMachinePipelineFixtureWithSource(
 	if len(withMessageMaterials) > 0 && withMessageMaterials[0] {
 		// This optional ordinary-HTTP fixture follows the actual material chain
 		// before creating any session/message: 70→71→72→73 / 151→152→153→154.
-		message, body, steer := "000070_message_original_materials", "000071_original_body_retention", "000073_steer_original_materials"
+		message, body, steer := "000070_message_original_materials",
+			"000071_original_body_retention",
+			"000073_steer_original_materials"
 		if pg {
-			message, body, steer = "000151_message_original_materials", "000152_original_body_retention", "000154_steer_original_materials"
+			message, body, steer = "000151_message_original_materials",
+				"000152_original_body_retention",
+				"000154_steer_original_materials"
 		}
 		ordered := make([]string, 0, len(names)+2)
 		for _, name := range names {
@@ -546,7 +557,14 @@ func newMachinePipelineFixtureWithSource(
 	model := &machinePipelineAutoModel{}
 	models := machinePipelineModels{auto: model, summary: f.model}
 	f.s.modelService = models
-	auto := NewKnowledgeAutoTagService(f.s.repo, tags, f.s.kbService, f.s.chunkService, models, f.s.spanTracker).(*KnowledgeAutoTagService)
+	auto := NewKnowledgeAutoTagService(
+		f.s.repo,
+		tags,
+		f.s.kbService,
+		f.s.chunkService,
+		models,
+		f.s.spanTracker,
+	).(*KnowledgeAutoTagService)
 	ConfigureKnowledgeAutoTagInputProvenance(auto, f.store, f.guard)
 	f.post = &KnowledgePostProcessService{
 		knowledgeRepo:    f.s.repo,
@@ -744,7 +762,14 @@ func runKnowledgeMachineActualPipeline(t *testing.T, pg bool) {
 	cg, e := NewChunkOutputAuthorizer(
 		m.f.store,
 		m.f.guard,
-	).Begin(m.f.ctx, types.ChunkOutputReadRequest{TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: row.ID, ChunkIDs: []string{chunks[0].ID}})
+	).Begin(m.f.ctx, types.ChunkOutputReadRequest{
+		TenantID:        7,
+		KnowledgeBaseID: "kb",
+		KnowledgeID:     row.ID,
+		ChunkIDs: []string{
+			chunks[0].ID,
+		},
+	})
 	require.NoError(t, e)
 	chunkSnapshot, e := cg.Snapshot()
 	require.NoError(t, e)
@@ -767,7 +792,24 @@ func runKnowledgeMachineActualPipeline(t *testing.T, pg bool) {
 	require.NoError(t, e)
 	defer func() { require.NoError(t, leases.ReleaseLease(context.Background(), lease.ID)) }()
 	rag, e := repository.NewRAGChunkSnapshotReader(m.f.db, m.f.store).
-		HydrateRAGChunkSnapshots(m.f.ctx, []types.RAGChunkReadRequest{{TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: row.ID, ChunkIDs: []string{chunks[0].ID}, Lease: &types.RAGExactReadLease{ID: lease.ID, TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: row.ID, Kind: string(lease.Kind), Epoch: lease.Epoch, OwnerID: lease.OwnerID, ExpiresAt: lease.ExpiresAt}}})
+		HydrateRAGChunkSnapshots(m.f.ctx, []types.RAGChunkReadRequest{{
+			TenantID:        7,
+			KnowledgeBaseID: "kb",
+			KnowledgeID:     row.ID,
+			ChunkIDs: []string{
+				chunks[0].ID,
+			},
+			Lease: &types.RAGExactReadLease{
+				ID:              lease.ID,
+				TenantID:        7,
+				KnowledgeBaseID: "kb",
+				KnowledgeID:     row.ID,
+				Kind:            string(lease.Kind),
+				Epoch:           lease.Epoch,
+				OwnerID:         lease.OwnerID,
+				ExpiresAt:       lease.ExpiresAt,
+			},
+		}})
 	require.NoError(t, e)
 	require.Len(t, rag, 1)
 	require.NoError(t, rag[0].SourceLineage.RequireComplete())
@@ -806,7 +848,22 @@ func TestPostgresKnowledgeMachineActualPipeline(t *testing.T) {
 }
 
 func runKnowledgeMachineOriginalNegatives(t *testing.T, pg bool) {
-	for _, mode := range []string{"source withdrawn before parse", "name ABA before parse", "config ABA before parse", "pair ABA before parse", "actual stored bytes changed", "forged document language", "cross KB job", "no private build purpose", "source withdrawn during summary", "source withdrawn during auto", "name ABA during auto", "candidate ABA during auto", "chunk body ABA during auto", "lease retired during auto"} {
+	for _, mode := range []string{
+		"source withdrawn before parse",
+		"name ABA before parse",
+		"config ABA before parse",
+		"pair ABA before parse",
+		"actual stored bytes changed",
+		"forged document language",
+		"cross KB job",
+		"no private build purpose",
+		"source withdrawn during summary",
+		"source withdrawn during auto",
+		"name ABA during auto",
+		"candidate ABA during auto",
+		"chunk body ABA during auto",
+		"lease retired during auto",
+	} {
 		t.Run(mode, func(t *testing.T) {
 			m := newMachinePipelineFixture(t, pg)
 			row := m.ingest(t)
@@ -931,7 +988,13 @@ func runKnowledgeMachineOriginalNegatives(t *testing.T, pg bool) {
 					require.NoError(
 						t,
 						repository.NewNextcloudContentLeaseStore(m.f.db).
-							RetireKnowledge(context.Background(), repository.NextcloudContentScope{TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: row.ID, DataSourceID: m.ds.ID, ExternalID: "nextcloud:instance:77"}),
+							RetireKnowledge(context.Background(), repository.NextcloudContentScope{
+								TenantID:        7,
+								KnowledgeBaseID: "kb",
+								KnowledgeID:     row.ID,
+								DataSourceID:    m.ds.ID,
+								ExternalID:      "nextcloud:instance:77",
+							}),
 					)
 				}
 			}
@@ -975,7 +1038,15 @@ func TestPostgresKnowledgeMachineOriginalNegatives(t *testing.T) {
 }
 
 func runKnowledgeMachineAdditionalPublicSources(t *testing.T, pg bool) {
-	for _, mode := range []string{"real actor extra published source", "machine cannot borrow extra source grant", "additional personal source withdrawn", "actual user revoked", "auto payload forged", "auto model ABA", "auto tenant ABA"} {
+	for _, mode := range []string{
+		"real actor extra published source",
+		"machine cannot borrow extra source grant",
+		"additional personal source withdrawn",
+		"actual user revoked",
+		"auto payload forged",
+		"auto model ABA",
+		"auto tenant ABA",
+	} {
 		t.Run(mode, func(t *testing.T) {
 			m := newMachinePipelineFixture(t, pg)
 			row := m.ingest(t)
@@ -1168,7 +1239,14 @@ func runKnowledgeMachineQuestionsAndProfile(t *testing.T, pg bool) {
 	cg, e := NewChunkOutputAuthorizer(
 		m.f.store,
 		m.f.guard,
-	).Begin(m.f.ctx, types.ChunkOutputReadRequest{TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: row.ID, ChunkIDs: []string{chunks[0].ID}})
+	).Begin(m.f.ctx, types.ChunkOutputReadRequest{
+		TenantID:        7,
+		KnowledgeBaseID: "kb",
+		KnowledgeID:     row.ID,
+		ChunkIDs: []string{
+			chunks[0].ID,
+		},
+	})
 	require.NoError(t, e)
 	snapshot, e := cg.Snapshot()
 	require.NoError(t, e)

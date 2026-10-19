@@ -95,7 +95,13 @@ func TestNextcloudSourceRotationRecoversUncertainCommitAndFinalize(t *testing.T)
 		"/api/v1/datasource/nextcloud-source-pairings/:operation_id/rotations/:rotation_id/abort",
 		h.AbortRotation,
 	)
-	request := func(method, path string, body []byte, tenantID uint64, role types.TenantRole) *httptest.ResponseRecorder {
+	request := func(
+		method,
+		path string,
+		body []byte,
+		tenantID uint64,
+		role types.TenantRole,
+	) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(method, path, bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		ctx := context.WithValue(req.Context(), types.TenantIDContextKey, tenantID)

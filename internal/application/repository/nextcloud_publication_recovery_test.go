@@ -219,7 +219,13 @@ func recoveryClosureContract(t *testing.T, pg bool) {
 	require.NoError(t, e)
 	buildLease, e := NewNextcloudContentLeaseStore(
 		db,
-	).AcquireKnowledge(ctx, NextcloudContentScope{7, "kb", pending.ID, "ds", "nextcloud:instance:78"}, NextcloudContentBuildLease, "old-worker", time.Minute)
+	).AcquireKnowledge(ctx, NextcloudContentScope{
+		7,
+		"kb",
+		pending.ID,
+		"ds",
+		"nextcloud:instance:78",
+	}, NextcloudContentBuildLease, "old-worker", time.Minute)
 	require.NoError(t, e)
 	inv, e := store.Capture(ctx, recoveryTestAnchor())
 	require.NoError(t, e)
@@ -274,7 +280,13 @@ func recoveryClosureContract(t *testing.T, pg bool) {
 		t,
 		NewNextcloudContentLeaseStore(
 			db,
-		).ValidateBuildLeaseInTx(ctx, db, buildLease, NextcloudContentScope{7, "kb", pending.ID, "ds", "nextcloud:instance:78"}),
+		).ValidateBuildLeaseInTx(ctx, db, buildLease, NextcloudContentScope{
+			7,
+			"kb",
+			pending.ID,
+			"ds",
+			"nextcloud:instance:78",
+		}),
 		ErrNextcloudContentLeaseDenied,
 	)
 	var log types.SyncLog
@@ -310,7 +322,13 @@ func recoveryClosureContract(t *testing.T, pg bool) {
 	require.NotNil(t, retiredFence.RetiredAtMS)
 	_, e = NewNextcloudContentLeaseStore(
 		db,
-	).ClaimKnowledgeGC(ctx, NextcloudContentScope{7, "kb", old.ID, "ds", "nextcloud:instance:77"}, time.UnixMilli(*retiredFence.RetiredAtMS), time.Minute)
+	).ClaimKnowledgeGC(ctx, NextcloudContentScope{
+		7,
+		"kb",
+		old.ID,
+		"ds",
+		"nextcloud:instance:77",
+	}, time.UnixMilli(*retiredFence.RetiredAtMS), time.Minute)
 	require.ErrorIs(t, e, ErrNextcloudContentGCUncovered)
 	var scope nextcloudRecoveryScope
 	require.NoError(t, db.Where("plan_sha256=?", p.digest).Take(&scope).Error)
@@ -382,10 +400,25 @@ func recoveryNewGenerationContract(t *testing.T, pg bool) {
 			_ = json.NewEncoder(w).Encode(map[string]any{"protocol_version": "1", "instance_id": instance})
 		case strings.HasSuffix(req.URL.Path, "/bindings"):
 			_ = json.NewEncoder(w).
-				Encode(map[string]any{"bindings": []any{map[string]any{"id": "binding", "name": "owned", "root_file_id": 1, "publication_state": state, "publication_epoch": epoch}}})
+				Encode(map[string]any{"bindings": []any{map[string]any{
+					"id":                "binding",
+					"name":              "owned",
+					"root_file_id":      1,
+					"publication_state": state,
+					"publication_epoch": epoch,
+				}}})
 		case strings.HasSuffix(req.URL.Path, "/recovery-state"):
 			_ = json.NewEncoder(w).
-				Encode(map[string]any{"instance_id": "instance", "binding_id": "binding", "publication_epoch": epoch, "stream_id": recoveryTestAnchor().StreamID, "sequence": "7", "chain_sha256": strings.Repeat("d", 64), "controls_closed": false, "control_inventory_sha256": strings.Repeat("f", 64)})
+				Encode(map[string]any{
+					"instance_id":              "instance",
+					"binding_id":               "binding",
+					"publication_epoch":        epoch,
+					"stream_id":                recoveryTestAnchor().StreamID,
+					"sequence":                 "7",
+					"chain_sha256":             strings.Repeat("d", 64),
+					"controls_closed":          false,
+					"control_inventory_sha256": strings.Repeat("f", 64),
+				})
 		case strings.HasSuffix(req.URL.Path, "/manifest"):
 			manifestCalls++
 			g := generation
@@ -442,7 +475,11 @@ func recoveryNewGenerationContract(t *testing.T, pg bool) {
 		t,
 		db.Model(&NextcloudSourcePairing{}).
 			Where("datasource_id='ds'").
-			Updates(map[string]any{"datasource_base_url": base, "datasource_config_sha256": sha, "binding_id": binding}).
+			Updates(map[string]any{
+				"datasource_base_url":      base,
+				"datasource_config_sha256": sha,
+				"binding_id":               binding,
+			}).
 			Error,
 	)
 	store := NewNextcloudPublicationRecoveryStore(db)
@@ -616,7 +653,11 @@ func TestNextcloudRecoveryRejectsPinnedScopeAndPlanGaps(t *testing.T) {
 	raw, e := json.Marshal(p)
 	require.NoError(t, e)
 	key := []byte("0123456789abcdef0123456789abcdef")
-	for _, edit := range []func(map[string]any){func(v map[string]any) { delete(v["database_prefix_hashes"].(map[string]any), "6") }, func(v map[string]any) { v["through_sequence"] = "4" }, func(v map[string]any) { v["ingress_reopen_permitted"] = true }} {
+	for _, edit := range []func(map[string]any){
+		func(v map[string]any) { delete(v["database_prefix_hashes"].(map[string]any), "6") },
+		func(v map[string]any) { v["through_sequence"] = "4" },
+		func(v map[string]any) { v["ingress_reopen_permitted"] = true },
+	} {
 		var v map[string]any
 		require.NoError(t, json.Unmarshal(raw, &v))
 		edit(v)
@@ -740,7 +781,11 @@ func TestNextcloudRecoveryClosesUntouchedBindingsAndRejectsMissingScopes(t *test
 func TestNextcloudRecoveryRejectsDuplicateSignedFieldsAndRestoredHistoryGap(t *testing.T) {
 	key := []byte("0123456789abcdef0123456789abcdef")
 	plan := recoveryTestPlan(t, nil)
-	for _, raw := range []string{strings.Replace(plan.raw, `"instance_id":"instance"`, `"instance_id":"instance","instance_id":"instance"`, 1), strings.Replace(plan.raw, `"ingress_reopen_permitted":false`, `"ingress_reopen_permitted":null`, 1), strings.Replace(plan.raw, `,"ingress_reopen_permitted":false`, "", 1)} {
+	for _, raw := range []string{
+		strings.Replace(plan.raw, `"instance_id":"instance"`, `"instance_id":"instance","instance_id":"instance"`, 1),
+		strings.Replace(plan.raw, `"ingress_reopen_permitted":false`, `"ingress_reopen_permitted":null`, 1),
+		strings.Replace(plan.raw, `,"ingress_reopen_permitted":false`, "", 1),
+	} {
 		mac := hmac.New(sha256.New, key)
 		mac.Write([]byte(raw))
 		envelope, _ := json.Marshal(map[string]string{"plan": raw, "hmac_sha256": hex.EncodeToString(mac.Sum(nil))})

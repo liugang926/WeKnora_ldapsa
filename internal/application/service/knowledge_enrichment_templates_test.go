@@ -37,9 +37,28 @@ func applyEnrichmentTemplateMigration(t *testing.T, f *enrichmentTestFixture, pg
 		require.NoError(t, e)
 		require.NoError(t, migration.Exec(string(leaseData)).Error)
 	}
-	// Current Session columns require the actual scoped-source target controls
-	// before the template reader can acquire physical parent leases.
-	require.NoError(t, f.db.AutoMigrate(&types.DataSource{}))
+	// Current Session columns require the full original source/event tables
+	// before closure/onboarding triggers and physical parent reads are valid.
+	require.NoError(t, f.db.AutoMigrate(&types.DataSource{}, &types.SyncLog{}))
+	directory := "sqlite"
+	names := []string{
+		"000032_nextcloud_event_inbox",
+		"000035_nextcloud_source_pairing",
+		"000039_nextcloud_source_pairing_abort",
+	}
+	if pg {
+		directory = "versioned"
+		names = []string{
+			"000113_nextcloud_event_inbox",
+			"000116_nextcloud_source_pairing",
+			"000120_nextcloud_source_pairing_abort",
+		}
+	}
+	for _, name := range names {
+		ddl, err := os.ReadFile("../../../migrations/" + directory + "/" + name + ".up.sql")
+		require.NoError(t, err)
+		require.NoError(t, migration.Exec(string(ddl)).Error)
+	}
 	installMachineOnboardingSchema(t, f.db, migration)
 	if pg {
 		sqlDB, e := f.db.DB()
@@ -91,7 +110,16 @@ func newTemplateArtifact(t *testing.T, f *enrichmentTestFixture, id string) cont
 }
 
 func runKnowledgeTrustedTemplates(t *testing.T, pg bool) {
-	for _, mode := range []string{"new actual admin template", "new exact code template", "derived all actual parents", "parent body ABA", "model ABA", "admin revoke", "unknown old custom YAML", "old config no adoption"} {
+	for _, mode := range []string{
+		"new actual admin template",
+		"new exact code template",
+		"derived all actual parents",
+		"parent body ABA",
+		"model ABA",
+		"admin revoke",
+		"unknown old custom YAML",
+		"old config no adoption",
+	} {
 		t.Run(mode, func(t *testing.T) {
 			f := newEnrichmentTestFixture(t, pg)
 			applyEnrichmentTemplateMigration(t, f, pg)

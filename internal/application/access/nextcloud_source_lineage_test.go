@@ -215,7 +215,15 @@ func TestNextcloudSourceLineageRechecksFreshGrantsAndLocalVersionAfterRemoteAuth
 				)
 				ctx = types.WithExecutionTenant(ctx, 12)
 				// An old exact upstream context grant must not bypass fresh checks.
-				ctx = (&KBAccess{KnowledgeBase: &types.KnowledgeBase{ID: "kb-1", TenantID: 12}, Caller: types.CallerFromContext(ctx), EffectiveTenantID: 12, Permission: types.OrgRoleViewer}).WithGrant(
+				ctx = (&KBAccess{
+					KnowledgeBase: &types.KnowledgeBase{
+						ID:       "kb-1",
+						TenantID: 12,
+					},
+					Caller:            types.CallerFromContext(ctx),
+					EffectiveTenantID: 12,
+					Permission:        types.OrgRoleViewer,
+				}).WithGrant(
 					ctx,
 				)
 			}
@@ -228,7 +236,15 @@ func TestNextcloudSourceLineageRechecksFreshGrantsAndLocalVersionAfterRemoteAuth
 				scope.AgentID = "agent-1"
 				scope.AgentTenantID = 12
 			}
-			guard.publication.authorize = func(context.Context, *types.DataSourceConfig, string, string, string, string, int64) (nextcloud.AuthorizationDecision, error) {
+			guard.publication.authorize = func(
+				context.Context,
+				*types.DataSourceConfig,
+				string,
+				string,
+				string,
+				string,
+				int64,
+			) (nextcloud.AuthorizationDecision, error) {
 				switch changed {
 				case "KB directory grant":
 					groups.allowed = false
@@ -264,7 +280,22 @@ func TestNextcloudSourceLineageSharedEffectiveTenantRequiresCurrentCallerGrant(t
 }
 
 func TestNextcloudSourceLineageUnknownUnsupportedAndUnavailableDeny(t *testing.T) {
-	for _, name := range []string{"legacy NULL", "unknown", "overflow", "snapshot error", "KB error", "missing groups", "uncaptured caller", "machine", "web API key", "principal mismatch", "unknown principal", "source denied", "source error", "source etag changed"} {
+	for _, name := range []string{
+		"legacy NULL",
+		"unknown",
+		"overflow",
+		"snapshot error",
+		"KB error",
+		"missing groups",
+		"uncaptured caller",
+		"machine",
+		"web API key",
+		"principal mismatch",
+		"unknown principal",
+		"source denied",
+		"source error",
+		"source etag changed",
+	} {
 		t.Run(name, func(t *testing.T) {
 			guard, ctx, lineage, snapshots, _ := lineagePolicyFixture(t)
 			switch name {
@@ -291,15 +322,39 @@ func TestNextcloudSourceLineageUnknownUnsupportedAndUnavailableDeny(t *testing.T
 			case "unknown principal":
 				ctx = types.WithPrincipal(ctx, types.Principal{Type: "unsupported", ID: "person-1"})
 			case "source denied":
-				guard.publication.authorize = func(context.Context, *types.DataSourceConfig, string, string, string, string, int64) (nextcloud.AuthorizationDecision, error) {
+				guard.publication.authorize = func(
+					context.Context,
+					*types.DataSourceConfig,
+					string,
+					string,
+					string,
+					string,
+					int64,
+				) (nextcloud.AuthorizationDecision, error) {
 					return nextcloud.AuthorizationDecision{}, nil
 				}
 			case "source error":
-				guard.publication.authorize = func(context.Context, *types.DataSourceConfig, string, string, string, string, int64) (nextcloud.AuthorizationDecision, error) {
+				guard.publication.authorize = func(
+					context.Context,
+					*types.DataSourceConfig,
+					string,
+					string,
+					string,
+					string,
+					int64,
+				) (nextcloud.AuthorizationDecision, error) {
 					return nextcloud.AuthorizationDecision{}, errors.New("source offline")
 				}
 			case "source etag changed":
-				guard.publication.authorize = func(context.Context, *types.DataSourceConfig, string, string, string, string, int64) (nextcloud.AuthorizationDecision, error) {
+				guard.publication.authorize = func(
+					context.Context,
+					*types.DataSourceConfig,
+					string,
+					string,
+					string,
+					string,
+					int64,
+				) (nextcloud.AuthorizationDecision, error) {
 					return nextcloud.AuthorizationDecision{Allow: true, SourceETag: "new-etag"}, nil
 				}
 			}

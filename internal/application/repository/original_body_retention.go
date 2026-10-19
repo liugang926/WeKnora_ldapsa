@@ -18,7 +18,8 @@ import (
 var (
 	// ErrOriginalBodyUnavailable reports a original body unavailable condition.
 	ErrOriginalBodyUnavailable = errors.New("original body is unavailable or retention evidence changed")
-	ErrOriginalBodyRetained    = errors.New(
+	// ErrOriginalBodyRetained reports an owner, lease, or other retention blocker.
+	ErrOriginalBodyRetained = errors.New(
 		"original body has a current owner, lease, unexpired recovery or unknown copy",
 	)
 )
@@ -274,7 +275,14 @@ func (s *OriginalBodyRetentionStore) acquireLeaseInTx(
 	id := uuid.NewString()
 	return id, bodyInternal(
 		tx,
-	).Create(&originalBodyLease{LeaseID: id, BodyID: bodyID, Kind: kind, OwnerID: owner, Epoch: body.PurgeEpoch, ExpiresAtMS: now + ttl.Milliseconds()}).
+	).Create(&originalBodyLease{
+		LeaseID:     id,
+		BodyID:      bodyID,
+		Kind:        kind,
+		OwnerID:     owner,
+		Epoch:       body.PurgeEpoch,
+		ExpiresAtMS: now + ttl.Milliseconds(),
+	}).
 		Error
 }
 

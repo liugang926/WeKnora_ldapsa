@@ -42,7 +42,11 @@ func TestFAQActualControlledDerivativeHTTPAndTagCountWithdraw(t *testing.T) {
 	// a bounded context so a nested authority lookup cannot hang the suite.
 	bounded, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	for _, file := range []string{"000056_knowledge_original_worker_actor.up.sql", "000060_tag_statistics_checkpoints.up.sql", "000063_faq_original_entry_inputs.up.sql"} {
+	for _, file := range []string{
+		"000056_knowledge_original_worker_actor.up.sql",
+		"000060_tag_statistics_checkpoints.up.sql",
+		"000063_faq_original_entry_inputs.up.sql",
+	} {
 		ddl, err := os.ReadFile("../../migrations/sqlite/" + file)
 		require.NoError(t, err)
 		require.NoError(t, db.Exec(string(ddl)).Error)
@@ -265,7 +269,13 @@ func TestFAQActualControlledDerivativeHTTPAndTagCountWithdraw(t *testing.T) {
 	require.NoError(
 		t,
 		repository.NewNextcloudContentLeaseStore(db).
-			RetireKnowledge(context.Background(), repository.NextcloudContentScope{TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: "source", DataSourceID: "ds", ExternalID: "nextcloud:instance:77"}),
+			RetireKnowledge(context.Background(), repository.NextcloudContentScope{
+				TenantID:        7,
+				KnowledgeBaseID: "kb",
+				KnowledgeID:     "source",
+				DataSourceID:    "ds",
+				ExternalID:      "nextcloud:instance:77",
+			}),
 	)
 	w = serveFAQHTTP(ctx, h, http.MethodGet, "/knowledge-bases/faq-derived/faq/entries", "")
 	require.NotEqual(t, http.StatusOK, w.Code, w.Body.String())

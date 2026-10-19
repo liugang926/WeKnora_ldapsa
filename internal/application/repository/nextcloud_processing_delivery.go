@@ -74,7 +74,12 @@ func (r *NextcloudEventInboxRepository) SignedFileStateV2(
 		}
 		insert := tx.Table("nextcloud_event_nonces").
 			Clauses(clause.OnConflict{DoNothing: true}).
-			Create(map[string]any{"connection_id": conn.ConnectionID, "key_id": request.KeyID, "nonce": request.Nonce, "expires_at": request.Now.Add(601 * time.Second)})
+			Create(map[string]any{
+				"connection_id": conn.ConnectionID,
+				"key_id":        request.KeyID,
+				"nonce":         request.Nonce,
+				"expires_at":    request.Now.Add(601 * time.Second),
+			})
 		if insert.Error != nil {
 			return insert.Error
 		}
@@ -95,7 +100,12 @@ func (r *NextcloudEventInboxRepository) SignedFileStateV2(
 			return err
 		}
 		var pair NextcloudSourcePairing
-		if err := tx.Where("tenant_id=? AND knowledge_base_id=? AND datasource_id=? AND state='active'", conn.TenantID, conn.KnowledgeBaseID, conn.DatasourceID).
+		if err := tx.Where(
+			"tenant_id=? AND knowledge_base_id=? AND datasource_id=? AND state='active'",
+			conn.TenantID,
+			conn.KnowledgeBaseID,
+			conn.DatasourceID,
+		).
 			Take(&pair).
 			Error; err != nil {
 			return err
@@ -108,7 +118,12 @@ func (r *NextcloudEventInboxRepository) SignedFileStateV2(
 			return err
 		}
 		var row nextcloudFileStateRow
-		if err := tx.Where("connection_id=? AND file_id=? AND publication_epoch=?", conn.ConnectionID, file, epoch.PublicationEpoch).
+		if err := tx.Where(
+			"connection_id=? AND file_id=? AND publication_epoch=?",
+			conn.ConnectionID,
+			file,
+			epoch.PublicationEpoch,
+		).
 			Take(&row).
 			Error; err != nil {
 			return err
@@ -200,13 +215,23 @@ func (s *NextcloudProcessingStateStore) PrepareDelivery(
 			return err
 		}
 		var current nextcloudFileStateRow
-		if err := tx.Where("connection_id=? AND file_id=? AND publication_epoch=?", out.ConnectionID, out.FileID, out.PublicationEpoch).
+		if err := tx.Where(
+			"connection_id=? AND file_id=? AND publication_epoch=?",
+			out.ConnectionID,
+			out.FileID,
+			out.PublicationEpoch,
+		).
 			Take(&current).
 			Error; err != nil {
 			return err
 		}
 		var pair NextcloudSourcePairing
-		if err := tx.Where("tenant_id=? AND knowledge_base_id=? AND datasource_id=? AND state='active'", conn.TenantID, conn.KnowledgeBaseID, conn.DatasourceID).
+		if err := tx.Where(
+			"tenant_id=? AND knowledge_base_id=? AND datasource_id=? AND state='active'",
+			conn.TenantID,
+			conn.KnowledgeBaseID,
+			conn.DatasourceID,
+		).
 			Take(&pair).
 			Error; err != nil {
 			return err
@@ -297,7 +322,12 @@ func (s *NextcloudProcessingStateStore) FinishDelivery(
 			return err
 		}
 		var current nextcloudFileStateRow
-		if err := tx.Where("connection_id=? AND file_id=? AND publication_epoch=?", out.ConnectionID, out.FileID, out.PublicationEpoch).
+		if err := tx.Where(
+			"connection_id=? AND file_id=? AND publication_epoch=?",
+			out.ConnectionID,
+			out.FileID,
+			out.PublicationEpoch,
+		).
 			Take(&current).
 			Error; err != nil {
 			return err
@@ -319,7 +349,11 @@ func (s *NextcloudProcessingStateStore) FinishDelivery(
 			delay = 300
 		}
 		return tx.Model(&out).
-			Updates(map[string]any{"attempts": attempts, "next_attempt_at": now.Unix() + delay, "last_error_code": "state_delivery_failed"}).
+			Updates(map[string]any{
+				"attempts":        attempts,
+				"next_attempt_at": now.Unix() + delay,
+				"last_error_code": "state_delivery_failed",
+			}).
 			Error
 	})
 }
@@ -363,7 +397,12 @@ func (s *NextcloudProcessingStateStore) RefreshSourceEpoch(ctx context.Context, 
 			return err
 		}
 		var pair NextcloudSourcePairing
-		if err := tx.Where("tenant_id=? AND knowledge_base_id=? AND datasource_id=? AND state='active'", conn.TenantID, conn.KnowledgeBaseID, conn.DatasourceID).
+		if err := tx.Where(
+			"tenant_id=? AND knowledge_base_id=? AND datasource_id=? AND state='active'",
+			conn.TenantID,
+			conn.KnowledgeBaseID,
+			conn.DatasourceID,
+		).
 			Take(&pair).
 			Error; err != nil {
 			return err
@@ -380,8 +419,18 @@ func (s *NextcloudProcessingStateStore) RefreshSourceEpoch(ctx context.Context, 
 			return err
 		}
 		return tx.Table("nextcloud_source_status_epochs").
-			Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "connection_id"}}, DoUpdates: clause.AssignmentColumns([]string{"publication_epoch", "pair_operation_id", "verified_at"})}).
-			Create(map[string]any{"connection_id": connectionID, "publication_epoch": identity.PublicationEpoch, "pair_operation_id": pair.OperationID, "verified_at": time.Now().UTC().Unix()}).
+			Clauses(clause.OnConflict{
+				Columns: []clause.Column{{
+					Name: "connection_id",
+				}},
+				DoUpdates: clause.AssignmentColumns([]string{"publication_epoch", "pair_operation_id", "verified_at"}),
+			}).
+			Create(map[string]any{
+				"connection_id":     connectionID,
+				"publication_epoch": identity.PublicationEpoch,
+				"pair_operation_id": pair.OperationID,
+				"verified_at":       time.Now().UTC().Unix(),
+			}).
 			Error
 	})
 }
@@ -490,7 +539,11 @@ func (s *NextcloudProcessingStateStore) PrepareDeliveryBatch(
 		if len(retryIDs) > 0 {
 			return tx.Model(&nextcloudStatusOutboxRow{}).
 				Where("event_id IN ? AND state='pending'", retryIDs).
-				Updates(map[string]any{"next_attempt_at": time.Now().UTC().Add(5 * time.Second).Unix(), "attempts": gorm.Expr("attempts+1"), "last_error_code": "state_connection_unavailable"}).
+				Updates(map[string]any{
+					"next_attempt_at": time.Now().UTC().Add(5 * time.Second).Unix(),
+					"attempts":        gorm.Expr("attempts+1"),
+					"last_error_code": "state_connection_unavailable",
+				}).
 				Error
 		}
 		return nil
@@ -532,10 +585,19 @@ func (s *NextcloudProcessingStateStore) DeliveryCurrent(
 		Joins(("JOIN nextcloud_source_versions v ON v.tenant_id=c.tenant_id AND v.knowledg" +
 			"e_base_id=c.knowledge_base_id AND v.datasource_id=c.datasource_id AND v.ex" +
 			"ternal_id=('nextcloud:' || c.nextcloud_instance_id || ':' || o.file_id)")).
-		Where(("o.event_id=? AND o.state='pending' AND c.current_key_id=? AND c.current_se" +
-			"cret_ciphertext=? AND c.datasource_config_sha256=? AND p.operation_id=? AN" +
-			"D COALESCE(e.publication_epoch,p.publication_epoch)=o.publication_epoch AN" +
-			"D v.desired_etag=? AND COALESCE(v.candidate_knowledge_id,'')=?"), delivery.EventID, delivery.KeyID, delivery.SecretCiphertext, delivery.ConfigSHA, state.PairOperationID, state.SourceETag, knowledge)
+		Where(
+			("o.event_id=? AND o.state='pending' AND c.current_key_id=? AND c.current_se" +
+				"cret_ciphertext=? AND c.datasource_config_sha256=? AND p.operation_id=? AN" +
+				"D COALESCE(e.publication_epoch,p.publication_epoch)=o.publication_epoch AN" +
+				"D v.desired_etag=? AND COALESCE(v.candidate_knowledge_id,'')=?"),
+			delivery.EventID,
+			delivery.KeyID,
+			delivery.SecretCiphertext,
+			delivery.ConfigSHA,
+			state.PairOperationID,
+			state.SourceETag,
+			knowledge,
+		)
 	if s.contentRevisionSupported {
 		query = query.Where("v.desired_content_revision=?", state.SourceContentRevision)
 	} else if state.SourceContentRevision != "0" {

@@ -80,7 +80,12 @@ func TestWikiIDScopeBeforeBodyAndOrdinaryUsable(t *testing.T) {
 		db.Callback().
 			Query().
 			After("gorm:query").
-			Register("wiki_query_inventory", func(tx *gorm.DB) { queries = append(queries, tx.Statement.SQL.String()) }),
+			Register("wiki_query_inventory", func(tx *gorm.DB) {
+				queries = append(
+					queries,
+					tx.Statement.SQL.String(),
+				)
+			}),
 	)
 	denied := NewWikiPageService(repo, nil, wikiSourceRejectTestPolicy{}, nil, nil)
 	_, err = denied.GetPageByID(ctx, page.ID)

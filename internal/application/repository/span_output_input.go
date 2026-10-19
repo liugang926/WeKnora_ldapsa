@@ -81,7 +81,12 @@ func (r *knowledgeSpanRepository) attachSpanWriteTokens(
 	for i := range rows {
 		var receipt spanBodyReceipt
 		err := r.db.WithContext(ctx).
-			Where("knowledge_id = ? AND attempt = ? AND span_id = ?", rows[i].KnowledgeID, rows[i].Attempt, rows[i].SpanID).
+			Where(
+				"knowledge_id = ? AND attempt = ? AND span_id = ?",
+				rows[i].KnowledgeID,
+				rows[i].Attempt,
+				rows[i].SpanID,
+			).
 			Take(&receipt).
 			Error
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -117,7 +122,12 @@ func captureSpanMaterials(
 	}
 	var k types.Knowledge
 	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-		Where("id = ? AND tenant_id = ? AND knowledge_base_id = ?", original.KnowledgeID, original.TenantID, original.KnowledgeBaseID).
+		Where(
+			"id = ? AND tenant_id = ? AND knowledge_base_id = ?",
+			original.KnowledgeID,
+			original.TenantID,
+			original.KnowledgeBaseID,
+		).
 		Take(&k).
 		Error; err != nil {
 		return nil, err
@@ -130,7 +140,12 @@ func captureSpanMaterials(
 		return nil, ErrKnowledgeInputChanged
 	}
 	var chunks []*types.Chunk
-	if err := tx.Where("knowledge_id = ? AND tenant_id = ? AND knowledge_base_id = ?", k.ID, k.TenantID, k.KnowledgeBaseID).
+	if err := tx.Where(
+		"knowledge_id = ? AND tenant_id = ? AND knowledge_base_id = ?",
+		k.ID,
+		k.TenantID,
+		k.KnowledgeBaseID,
+	).
 		Order("id ASC").
 		Limit(4097).
 		Find(&chunks).
@@ -219,7 +234,12 @@ func verifySpanMaterials(
 		return nil, ErrKnowledgeInputChanged
 	}
 	var current types.Knowledge
-	if err := tx.Where("id = ? AND tenant_id = ? AND knowledge_base_id = ?", original.KnowledgeID, original.TenantID, original.KnowledgeBaseID).
+	if err := tx.Where(
+		"id = ? AND tenant_id = ? AND knowledge_base_id = ?",
+		original.KnowledgeID,
+		original.TenantID,
+		original.KnowledgeBaseID,
+	).
 		Take(&current).
 		Error; err != nil {
 		return nil, err
@@ -242,7 +262,13 @@ func verifySpanMaterials(
 			return nil, ErrKnowledgeInputChanged
 		}
 		var actual types.Chunk
-		if err := tx.Where("id = ? AND knowledge_id = ? AND tenant_id = ? AND knowledge_base_id = ?", chunk.ID, current.ID, current.TenantID, current.KnowledgeBaseID).
+		if err := tx.Where(
+			"id = ? AND knowledge_id = ? AND tenant_id = ? AND knowledge_base_id = ?",
+			chunk.ID,
+			current.ID,
+			current.TenantID,
+			current.KnowledgeBaseID,
+		).
 			Take(&actual).
 			Error; err != nil {
 			return nil, err
@@ -326,7 +352,12 @@ func (r *knowledgeSpanRepository) upsertWithOriginalSpan(
 		}
 		var receipt spanBodyReceipt
 		if found {
-			err = tx.Where("knowledge_id = ? AND attempt = ? AND span_id = ?", row.KnowledgeID, row.Attempt, row.SpanID).
+			err = tx.Where(
+				"knowledge_id = ? AND attempt = ? AND span_id = ?",
+				row.KnowledgeID,
+				row.Attempt,
+				row.SpanID,
+			).
 				Take(&receipt).
 				Error
 			if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
@@ -340,7 +371,12 @@ func (r *knowledgeSpanRepository) upsertWithOriginalSpan(
 				// An unproved auto Begin is operational only. In particular a
 				// later End carrying a document proof cannot sign old counters.
 				if receipt.RunToken != "" {
-					if err := tx.Where("knowledge_id = ? AND attempt = ? AND span_id = ?", row.KnowledgeID, row.Attempt, row.SpanID).
+					if err := tx.Where(
+						"knowledge_id = ? AND attempt = ? AND span_id = ?",
+						row.KnowledgeID,
+						row.Attempt,
+						row.SpanID,
+					).
 						Delete(&spanBodyReceipt{}).
 						Error; err != nil {
 						return err
@@ -365,7 +401,12 @@ func (r *knowledgeSpanRepository) upsertWithOriginalSpan(
 			if row.Kind != types.SpanKindRoot {
 				var parent types.KnowledgeProcessingSpan
 				if row.ParentSpanID == "" ||
-					tx.Where("knowledge_id = ? AND attempt = ? AND span_id = ?", row.KnowledgeID, row.Attempt, row.ParentSpanID).
+					tx.Where(
+						"knowledge_id = ? AND attempt = ? AND span_id = ?",
+						row.KnowledgeID,
+						row.Attempt,
+						row.ParentSpanID,
+					).
 						Take(&parent).
 						Error != nil {
 					return types.ErrSourceLineageUnknown
@@ -374,7 +415,12 @@ func (r *knowledgeSpanRepository) upsertWithOriginalSpan(
 					return ErrKnowledgeInputChanged
 				}
 				var parentReceipt spanBodyReceipt
-				err := tx.Where("knowledge_id = ? AND attempt = ? AND span_id = ?", parent.KnowledgeID, parent.Attempt, parent.SpanID).
+				err := tx.Where(
+					"knowledge_id = ? AND attempt = ? AND span_id = ?",
+					parent.KnowledgeID,
+					parent.Attempt,
+					parent.SpanID,
+				).
 					Take(&parentReceipt).
 					Error
 				if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
@@ -403,7 +449,12 @@ func (r *knowledgeSpanRepository) upsertWithOriginalSpan(
 			if row.Kind == types.SpanKindRoot && !found {
 				var roots int64
 				if err := tx.Model(&types.KnowledgeProcessingSpan{}).
-					Where("knowledge_id = ? AND attempt = ? AND kind = ?", row.KnowledgeID, row.Attempt, types.SpanKindRoot).
+					Where(
+						"knowledge_id = ? AND attempt = ? AND kind = ?",
+						row.KnowledgeID,
+						row.Attempt,
+						types.SpanKindRoot,
+					).
 					Count(&roots).
 					Error; err != nil {
 					return err
@@ -539,7 +590,14 @@ func (r *knowledgeSpanRepository) upsertWithOriginalSpan(
 			// omitted content and must not accidentally seal the previous run.
 			if err := tx.Model(&types.KnowledgeProcessingSpan{}).
 				Where("id = ?", existing.ID).
-				Updates(map[string]any{"input": nil, "output": nil, "metadata": nil, "error_code": "", "error_message": "", "error_detail": ""}).
+				Updates(map[string]any{
+					"input":         nil,
+					"output":        nil,
+					"metadata":      nil,
+					"error_code":    "",
+					"error_message": "",
+					"error_detail":  "",
+				}).
 				Error; err != nil {
 				return err
 			}
@@ -551,7 +609,12 @@ func (r *knowledgeSpanRepository) upsertWithOriginalSpan(
 			return nil
 		}
 		var actual types.KnowledgeProcessingSpan
-		if err := tx.Where("knowledge_id = ? AND attempt = ? AND span_id = ?", row.KnowledgeID, row.Attempt, row.SpanID).
+		if err := tx.Where(
+			"knowledge_id = ? AND attempt = ? AND span_id = ?",
+			row.KnowledgeID,
+			row.Attempt,
+			row.SpanID,
+		).
 			Take(&actual).
 			Error; err != nil {
 			return err
@@ -572,7 +635,12 @@ func (r *knowledgeSpanRepository) upsertWithOriginalSpan(
 			RowRevision: revision,
 			BodyDigest:  digest,
 		}
-		return tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "knowledge_id"}, {Name: "attempt"}, {Name: "span_id"}}, DoUpdates: clause.AssignmentColumns([]string{"run_token", "row_revision", "body_digest"})}).
+		return tx.Clauses(clause.OnConflict{
+			Columns: []clause.Column{{Name: "knowledge_id"}, {
+				Name: "attempt",
+			}, {Name: "span_id"}},
+			DoUpdates: clause.AssignmentColumns([]string{"run_token", "row_revision", "body_digest"}),
+		}).
 			Create(&bound).
 			Error
 	}, knowledgeDisplayWriteOptions(r.db))
@@ -646,7 +714,12 @@ func (s *KnowledgeInputProvenanceStore) CaptureSpanOutputInputs(
 	var result *types.SpanOutputInputSnapshot
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var current types.Knowledge
-		if err := tx.Where("id = ? AND tenant_id = ? AND knowledge_base_id = ?", request.KnowledgeID, request.TenantID, request.KnowledgeBaseID).
+		if err := tx.Where(
+			"id = ? AND tenant_id = ? AND knowledge_base_id = ?",
+			request.KnowledgeID,
+			request.TenantID,
+			request.KnowledgeBaseID,
+		).
 			Take(&current).
 			Error; err != nil {
 			return err
@@ -717,7 +790,12 @@ func (s *KnowledgeInputProvenanceStore) CaptureSpanOutputInputs(
 			}
 			material = append(material, fmt.Sprintf("%d:%d:%s", row.ID, revision, digest))
 			var receipt spanBodyReceipt
-			err = tx.Where("knowledge_id = ? AND attempt = ? AND span_id = ?", row.KnowledgeID, row.Attempt, row.SpanID).
+			err = tx.Where(
+				"knowledge_id = ? AND attempt = ? AND span_id = ?",
+				row.KnowledgeID,
+				row.Attempt,
+				row.SpanID,
+			).
 				Take(&receipt).
 				Error
 			if errors.Is(err, gorm.ErrRecordNotFound) {

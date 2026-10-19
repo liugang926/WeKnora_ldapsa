@@ -83,7 +83,9 @@ func (s *SessionRewindService) beginRewindMessageMaterial(
 			if original.Role == "user" {
 				continue
 			}
-		} else if original.CreatedAt.After(point.CreatedAt) || original.CreatedAt.Equal(point.CreatedAt) && original.ID >= point.ID {
+		} else if original.CreatedAt.After(
+			point.CreatedAt,
+		) || original.CreatedAt.Equal(point.CreatedAt) && original.ID >= point.ID {
 			continue // Original suffix remains authenticated for the atomic delete.
 		}
 		// There is currently no actual typed code/checkpoint producer. A saved

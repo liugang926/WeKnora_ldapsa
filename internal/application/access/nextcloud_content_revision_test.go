@@ -19,7 +19,15 @@ func TestNextcloudPublicationSameETagHigherContentRevisionClosesRead(t *testing.
 	k.Metadata = raw
 	original := guard.authorize
 	revision := "1"
-	guard.authorize = func(c context.Context, config *types.DataSourceConfig, instance, binding, directory, guid string, file int64) (nextcloud.AuthorizationDecision, error) {
+	guard.authorize = func(
+		c context.Context,
+		config *types.DataSourceConfig,
+		instance,
+		binding,
+		directory,
+		guid string,
+		file int64,
+	) (nextcloud.AuthorizationDecision, error) {
 		decision, err := original(c, config, instance, binding, directory, guid, file)
 		decision.SourceContentRevision = revision
 		return decision, err
@@ -59,7 +67,15 @@ func TestNextcloudActualOwnerReadControlsClosedBeforeAndAfterSourceProof(t *test
 	lookup.closed = false
 	require.NoError(t, guard.CheckKnowledge(ctx, k))
 	original := guard.authorize
-	guard.authorize = func(c context.Context, cfg *types.DataSourceConfig, i, b, d, g string, f int64) (nextcloud.AuthorizationDecision, error) {
+	guard.authorize = func(
+		c context.Context,
+		cfg *types.DataSourceConfig,
+		i,
+		b,
+		d,
+		g string,
+		f int64,
+	) (nextcloud.AuthorizationDecision, error) {
 		decision, err := original(c, cfg, i, b, d, g, f)
 		lookup.closed = true
 		return decision, err

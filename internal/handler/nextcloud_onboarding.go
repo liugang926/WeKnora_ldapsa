@@ -300,7 +300,8 @@ func (h *NextcloudOnboardingHandler) Pair(c *gin.Context) {
 	if err != nil || identity.InstanceID != op.InstanceID || identity.BindingID != op.BindingID ||
 		identity.BaseURL != cred.BaseURL ||
 		identity.PublicationState != "active" ||
-		(identity.PublicationEpoch != *req.PublicationEpoch && !(activeRetry && identity.PublicationEpoch >= *req.PublicationEpoch)) {
+		(identity.PublicationEpoch != *req.PublicationEpoch &&
+			!(activeRetry && identity.PublicationEpoch >= *req.PublicationEpoch)) {
 		c.JSON(http.StatusConflict, gin.H{"error": "nextcloud_prepared_binding_unavailable"})
 		return
 	}

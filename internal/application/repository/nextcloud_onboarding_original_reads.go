@@ -288,8 +288,14 @@ func (s *NextcloudOnboardingStore) beginOnboardingConfigurationRead(
 		var heads []originalBodyFieldHead
 		if err := bodyInternal(
 			s.db.WithContext(ctx),
-		).Where(("source_table='knowledges' AND row_key=? AND tenant_id=? AND knowledge_base" +
-			"_id=? AND knowledge_id=?"), source.KnowledgeID, source.TenantID, source.KnowledgeBaseID, source.KnowledgeID).
+		).Where(
+			("source_table='knowledges' AND row_key=? AND tenant_id=? AND knowledge_base" +
+				"_id=? AND knowledge_id=?"),
+			source.KnowledgeID,
+			source.TenantID,
+			source.KnowledgeBaseID,
+			source.KnowledgeID,
+		).
 			Order("slot_id").
 			Find(&heads).
 			Error; err != nil {
@@ -424,8 +430,15 @@ func (r *NextcloudOnboardingConfigurationRead) checkAuthority(ctx context.Contex
 		}
 		var target types.DataSource
 		if err := tx.Select("id,tenant_id,knowledge_base_id,type,status,config").
-			Where(("id=? AND tenant_id=? AND knowledge_base_id=? AND type=? AND status=? AND d" +
-				"eleted_at IS NULL"), r.datasource, r.tenant, r.kb, types.ConnectorTypeNextcloud, types.DataSourceStatusActive).
+			Where(
+				("id=? AND tenant_id=? AND knowledge_base_id=? AND type=? AND status=? AND d" +
+					"eleted_at IS NULL"),
+				r.datasource,
+				r.tenant,
+				r.kb,
+				types.ConnectorTypeNextcloud,
+				types.DataSourceStatusActive,
+			).
 			Take(&target).
 			Error; err != nil {
 			return err
@@ -491,21 +504,44 @@ func (r *NextcloudOnboardingConfigurationRead) checkSource(
 		return access.ErrNextcloudPublicationUnavailable
 	}
 	var pair NextcloudSourcePairing
-	if err := tx.Where(("operation_id=? AND tenant_id=? AND knowledge_base_id=? AND datasource_id=?" +
-		" AND nextcloud_instance_id=? AND binding_id=? AND state='active'"), source.PairOperationID, source.TenantID, source.KnowledgeBaseID, source.DataSourceID, source.InstanceID, source.BindingID).
+	if err := tx.Where(
+		("operation_id=? AND tenant_id=? AND knowledge_base_id=? AND datasource_id=?" +
+			" AND nextcloud_instance_id=? AND binding_id=? AND state='active'"),
+		source.PairOperationID,
+		source.TenantID,
+		source.KnowledgeBaseID,
+		source.DataSourceID,
+		source.InstanceID,
+		source.BindingID,
+	).
 		Take(&pair).
 		Error; err != nil {
 		return access.ErrNextcloudPublicationUnavailable
 	}
 	var op types.NextcloudOnboardingOperation
-	if err := tx.Where(("operation_id=? AND tenant_id=? AND knowledge_base_id=? AND instance_id=? A" +
-		"ND binding_id=? AND actor_directory_id=? AND state='active'"), pair.OperationID, source.TenantID, source.KnowledgeBaseID, source.InstanceID, source.BindingID, r.directory).
+	if err := tx.Where(
+		("operation_id=? AND tenant_id=? AND knowledge_base_id=? AND instance_id=? A" +
+			"ND binding_id=? AND actor_directory_id=? AND state='active'"),
+		pair.OperationID,
+		source.TenantID,
+		source.KnowledgeBaseID,
+		source.InstanceID,
+		source.BindingID,
+		r.directory,
+	).
 		Take(&op).
 		Error; err != nil {
 		return access.ErrNextcloudPublicationUnavailable
 	}
 	var sourceCred types.NextcloudOnboardingCredential
-	if err := tx.Where("id=? AND tenant_id=? AND instance_id=? AND directory_id=? AND enabled=?", op.CredentialID, source.TenantID, source.InstanceID, r.directory, true).
+	if err := tx.Where(
+		"id=? AND tenant_id=? AND instance_id=? AND directory_id=? AND enabled=?",
+		op.CredentialID,
+		source.TenantID,
+		source.InstanceID,
+		r.directory,
+		true,
+	).
 		Take(&sourceCred).
 		Error; err != nil {
 		return access.ErrNextcloudPublicationUnavailable
@@ -530,7 +566,12 @@ func (r *NextcloudOnboardingConfigurationRead) checkSource(
 		return ErrKnowledgeInputChanged
 	}
 	var fence nextcloudContentFence
-	if err := tx.Where("tenant_id=? AND knowledge_base_id=? AND knowledge_id=?", source.TenantID, source.KnowledgeBaseID, source.KnowledgeID).
+	if err := tx.Where(
+		"tenant_id=? AND knowledge_base_id=? AND knowledge_id=?",
+		source.TenantID,
+		source.KnowledgeBaseID,
+		source.KnowledgeID,
+	).
 		Take(&fence).
 		Error; err != nil {
 		return access.ErrNextcloudPublicationUnavailable
@@ -542,7 +583,12 @@ func (r *NextcloudOnboardingConfigurationRead) checkSource(
 	}
 	var knowledge types.Knowledge
 	if err := tx.Select("id,tenant_id,knowledge_base_id,channel,parse_status,enable_status").
-		Where("id=? AND tenant_id=? AND knowledge_base_id=? AND deleted_at IS NULL", source.KnowledgeID, source.TenantID, source.KnowledgeBaseID).
+		Where(
+			"id=? AND tenant_id=? AND knowledge_base_id=? AND deleted_at IS NULL",
+			source.KnowledgeID,
+			source.TenantID,
+			source.KnowledgeBaseID,
+		).
 		Take(&knowledge).
 		Error; err != nil {
 		return access.ErrNextcloudPublicationUnavailable
@@ -559,7 +605,17 @@ func (r *NextcloudOnboardingConfigurationRead) checkSource(
 		}
 		return "COALESCE(json_extract(metadata,'$." + key + "'),'') AS " + alias
 	}
-	var control struct{ DataSource, External, Instance, Binding, File, ETag, TargetETag, Resource, ContentRevision string }
+	var control struct {
+		DataSource      string
+		External        string
+		Instance        string
+		Binding         string
+		File            string
+		ETag            string
+		TargetETag      string
+		Resource        string
+		ContentRevision string
+	}
 	fields := []string{
 		field("datasource_id", "data_source"),
 		field("external_id", "external"),
@@ -573,7 +629,12 @@ func (r *NextcloudOnboardingConfigurationRead) checkSource(
 	}
 	if err := tx.Table("knowledges").
 		Select(strings.Join(fields, ",")).
-		Where("id=? AND tenant_id=? AND knowledge_base_id=? AND deleted_at IS NULL", source.KnowledgeID, source.TenantID, source.KnowledgeBaseID).
+		Where(
+			"id=? AND tenant_id=? AND knowledge_base_id=? AND deleted_at IS NULL",
+			source.KnowledgeID,
+			source.TenantID,
+			source.KnowledgeBaseID,
+		).
 		Take(&control).
 		Error; err != nil {
 		return err
@@ -598,7 +659,13 @@ func (r *NextcloudOnboardingConfigurationRead) checkSource(
 	}
 	if err := tx.Table("nextcloud_source_revisions").
 		Select("revision,desired_etag,candidate_knowledge_id,state,source_updated_at").
-		Where("tenant_id=? AND knowledge_base_id=? AND datasource_id=? AND external_id=?", source.TenantID, source.KnowledgeBaseID, source.DataSourceID, source.ExternalID).
+		Where(
+			"tenant_id=? AND knowledge_base_id=? AND datasource_id=? AND external_id=?",
+			source.TenantID,
+			source.KnowledgeBaseID,
+			source.DataSourceID,
+			source.ExternalID,
+		).
 		Order("revision DESC").
 		Take(&observed).
 		Error; err != nil {
@@ -619,8 +686,15 @@ func (r *NextcloudOnboardingConfigurationRead) checkSource(
 		return ErrKnowledgeInputChanged
 	}
 	var admission knowledgeInputAdmission
-	if err := tx.Where(("admission_id=? AND tenant_id=? AND knowledge_base_id=? AND knowledge_id=? " +
-		"AND build_generation=? AND origin_kind='nextcloud'"), material.AdmissionID, source.TenantID, source.KnowledgeBaseID, source.KnowledgeID, source.Revision).
+	if err := tx.Where(
+		("admission_id=? AND tenant_id=? AND knowledge_base_id=? AND knowledge_id=? " +
+			"AND build_generation=? AND origin_kind='nextcloud'"),
+		material.AdmissionID,
+		source.TenantID,
+		source.KnowledgeBaseID,
+		source.KnowledgeID,
+		source.Revision,
+	).
 		Take(&admission).
 		Error; err != nil {
 		return types.ErrSourceLineageUnknown
@@ -687,8 +761,15 @@ func (r *NextcloudOnboardingConfigurationRead) checkSource(
 	}
 	var ds types.DataSource
 	if err := tx.Select("id,tenant_id,knowledge_base_id,type,status,config").
-		Where(("id=? AND tenant_id=? AND knowledge_base_id=? AND type=? AND status=? AND d" +
-			"eleted_at IS NULL"), source.DataSourceID, source.TenantID, source.KnowledgeBaseID, types.ConnectorTypeNextcloud, types.DataSourceStatusActive).
+		Where(
+			("id=? AND tenant_id=? AND knowledge_base_id=? AND type=? AND status=? AND d" +
+				"eleted_at IS NULL"),
+			source.DataSourceID,
+			source.TenantID,
+			source.KnowledgeBaseID,
+			types.ConnectorTypeNextcloud,
+			types.DataSourceStatusActive,
+		).
 		Take(&ds).
 		Error; err != nil {
 		return access.ErrNextcloudPublicationUnavailable
@@ -875,7 +956,12 @@ func (r *NextcloudOnboardingConfigurationRead) renewLeases(ctx context.Context) 
 	}
 	if err := NewKnowledgeInputProvenanceStore(
 		r.store.db,
-	).RecheckKnowledgeConfigurationBodyReadLeases(ctx, r.configPlan, r.configBodyLeases, onboardingConfigurationReadTTL); err != nil {
+	).RecheckKnowledgeConfigurationBodyReadLeases(
+		ctx,
+		r.configPlan,
+		r.configBodyLeases,
+		onboardingConfigurationReadTTL,
+	); err != nil {
 		return err
 	}
 	for _, id := range r.sourceBodyLeases {

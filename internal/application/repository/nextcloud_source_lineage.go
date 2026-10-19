@@ -128,7 +128,10 @@ func (r *knowledgeRepository) resolveNextcloudSourceLineageInTx(
 			return lineageSnapshotReadError(err)
 		}
 		if observed.Revision <= 0 || observed.DesiredETag != candidate.version.DesiredETag ||
-			observed.CandidateKnowledgeID != knowledgeID || observed.State != "published" || !observed.SourceUpdatedAt.Equal(candidate.version.UpdatedAt) {
+			observed.CandidateKnowledgeID != knowledgeID ||
+			observed.State != "published" || !observed.SourceUpdatedAt.Equal(
+			candidate.version.UpdatedAt,
+		) {
 			return ErrNextcloudLineageSnapshotDenied
 		}
 		var fence nextcloudContentFence

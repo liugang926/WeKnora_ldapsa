@@ -10,8 +10,20 @@ import (
 )
 
 type steerConsumptionOrigin struct {
-	ID, OriginID, SelectionManifest, PreviousHeadID, ResultHeadID, UserMessageID, UserGenerationID, UserAdmissionID, UserBodyDigest, SessionID, RunMessageID, RunGenerationID, RunRequestID string
-	PreviousMembershipRevision, ResultMembershipRevision                                                                                                                                    uint64
+	ID                                                   string
+	OriginID                                             string
+	SelectionManifest                                    string
+	PreviousHeadID                                       string
+	ResultHeadID                                         string
+	UserMessageID                                        string
+	UserGenerationID                                     string
+	UserAdmissionID                                      string
+	UserBodyDigest                                       string
+	SessionID                                            string
+	RunMessageID                                         string
+	RunGenerationID                                      string
+	RunRequestID                                         string
+	PreviousMembershipRevision, ResultMembershipRevision uint64
 }
 
 func (steerConsumptionOrigin) TableName() string { return "steer_consumption_origins" }
@@ -90,7 +102,9 @@ func (s *KnowledgeInputProvenanceStore) consumeSteerIntoMessage(
 				original.Control.RunRequestID == request {
 				return ErrKnowledgeInputChanged
 			}
-		} else if original.Control.RunMessageID != runID || original.Control.RunGenerationID != generation || original.Control.RunRequestID != request || original.Control.Delivery != types.SteerDeliveryInject {
+		} else if original.Control.RunMessageID != runID ||
+			original.Control.RunGenerationID != generation ||
+			original.Control.RunRequestID != request || original.Control.Delivery != types.SteerDeliveryInject {
 			return ErrKnowledgeInputChanged
 		}
 		before, err := messageVersion(tx, "message_session_membership_versions", "session_id", input.Proof.SessionID)
@@ -259,7 +273,12 @@ func (s *KnowledgeInputProvenanceStore) AdvanceMessageMaterialAfterOwnSteerInser
 	var result *types.MessageMaterialSnapshot
 	err := s.collectionTransaction(ctx, func(tx *gorm.DB) error {
 		var edge steerConsumptionOrigin
-		if err := tx.Where("origin_id=? AND user_message_id=? AND result_head_id=?", proof.OriginalAdmissionID, proof.UserMessageID, proof.ResultHeadID).
+		if err := tx.Where(
+			"origin_id=? AND user_message_id=? AND result_head_id=?",
+			proof.OriginalAdmissionID,
+			proof.UserMessageID,
+			proof.ResultHeadID,
+		).
 			Take(&edge).
 			Error; err != nil {
 			return err
@@ -434,7 +453,12 @@ func (s *KnowledgeInputProvenanceStore) checkSteerConsumptionInTx(
 	proof *types.SteerConsumptionProof,
 ) error {
 	var edge steerConsumptionOrigin
-	if err := tx.Where("origin_id=? AND user_message_id=? AND result_head_id=?", proof.OriginalAdmissionID, proof.UserMessageID, proof.ResultHeadID).
+	if err := tx.Where(
+		"origin_id=? AND user_message_id=? AND result_head_id=?",
+		proof.OriginalAdmissionID,
+		proof.UserMessageID,
+		proof.ResultHeadID,
+	).
 		Take(&edge).
 		Error; err != nil {
 		return err
@@ -574,7 +598,12 @@ func (s *KnowledgeInputProvenanceStore) SteerConsumptionSelectionDigest(
 	var edge steerConsumptionOrigin
 	if err := s.db.WithContext(ctx).
 		Select("selection_manifest").
-		Where("origin_id=? AND user_message_id=? AND result_head_id=?", proof.OriginalAdmissionID, proof.UserMessageID, proof.ResultHeadID).
+		Where(
+			"origin_id=? AND user_message_id=? AND result_head_id=?",
+			proof.OriginalAdmissionID,
+			proof.UserMessageID,
+			proof.ResultHeadID,
+		).
 		Take(&edge).
 		Error; err != nil {
 		return "", err

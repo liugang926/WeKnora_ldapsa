@@ -86,7 +86,10 @@ func TestFAQListEntriesPassesEnabledFilter(t *testing.T) {
 			t.Fatalf("create status=%d: %s", w.Code, w.Body.String())
 		}
 	}
-	for _, tc := range []struct{ query, total string }{{"", "2"}, {"?is_enabled=true", "1"}, {"?is_enabled=false", "1"}} {
+	for _, tc := range []struct{ query, total string }{{
+		"",
+		"2",
+	}, {"?is_enabled=true", "1"}, {"?is_enabled=false", "1"}} {
 		w := serveFAQHTTP(ctx, h, http.MethodGet, "/knowledge-bases/kb/faq/entries"+tc.query, "")
 		if w.Code != http.StatusOK {
 			t.Fatalf("status=%d: %s", w.Code, w.Body.String())

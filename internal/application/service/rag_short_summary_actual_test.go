@@ -16,7 +16,16 @@ import (
 // producer's text-parent association. A short text also forces Merge through
 // its actual base/neighbor snapshot path instead of silently skipping it.
 func runRAGPhysicalActualShortSummary(t *testing.T, pg bool) {
-	for _, mode := range []string{"short-summary", "text-neighbors", "source-revoked", "missing-summary-proof", "changed-stored-parent", "forged-parent-selector", "changed-cached-summary", "unsupported-image-parent"} {
+	for _, mode := range []string{
+		"short-summary",
+		"text-neighbors",
+		"source-revoked",
+		"missing-summary-proof",
+		"changed-stored-parent",
+		"forged-parent-selector",
+		"changed-cached-summary",
+		"unsupported-image-parent",
+	} {
 		t.Run(mode, func(t *testing.T) {
 			body := ("Current employee policy: read the approved record, then ask before changin" +
 				"g another department's access.")

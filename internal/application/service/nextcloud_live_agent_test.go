@@ -115,9 +115,15 @@ func documentLiveAgent(
 		engine.SetSourceLineageVerifier(verify)
 		return engine
 	}
-	result, err := makeEngine().Execute(ctx, "live-owned-agent", "live-agent-turn", ("Use search_knowledge to find the Project Cedar document, then use read_doc" +
-		"ument to inspect it. Based only on that document, who does Alice know? Ans" +
-		"wer with the person's name in one sentence."), nil)
+	result, err := makeEngine().Execute(
+		ctx,
+		"live-owned-agent",
+		"live-agent-turn",
+		("Use search_knowledge to find the Project Cedar document, then use read_doc" +
+			"ument to inspect it. Based only on that document, who does Alice know? Ans" +
+			"wer with the person's name in one sentence."),
+		nil,
+	)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.True(t, result.IsComplete)
@@ -150,7 +156,19 @@ func documentLiveAgent(
 		require.Error(t, verify(ctx, result.SourceLineage))
 		calls := models.summary.streams.Load()
 		syncCalls := models.summary.calls.Load()
-		_, err := makeEngine().Execute(ctx, "live-owned-agent", "live-agent-after-revoke", "Explain the previous answer again.", []chat.Message{{Role: "assistant", Content: result.FinalAnswer, SourceLineage: result.SourceLineage}})
+		_, err := makeEngine().Execute(
+			ctx,
+			"live-owned-agent",
+			"live-agent-after-revoke",
+			"Explain the previous answer again.",
+			[]chat.Message{
+				{
+					Role:          "assistant",
+					Content:       result.FinalAnswer,
+					SourceLineage: result.SourceLineage,
+				},
+			},
+		)
 		require.Error(t, err)
 		require.Equal(
 			t,

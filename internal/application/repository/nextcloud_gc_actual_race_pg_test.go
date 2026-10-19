@@ -52,7 +52,9 @@ func TestPostgresNextcloudActualGCProviderTransactionSerializesRestore(t *testin
 			if _, e := gcLockKBContent(tx, nextcloudGCJob{TenantID: 7, KnowledgeBaseID: "kb"}); e != nil {
 				return e
 			}
-			return tx.Model(&nextcloudSourceVersion{}).Where(("tenant_id=7 AND knowledge_base_id='kb' AND datasource_id='ds' AND external" +
+			return tx.Model(
+				&nextcloudSourceVersion{},
+			).Where(("tenant_id=7 AND knowledge_base_id='kb' AND datasource_id='ds' AND external" +
 				"_id='node'")).Updates(map[string]any{"state": "published", "candidate_knowledge_id": "old"}).Error
 		})
 	}()

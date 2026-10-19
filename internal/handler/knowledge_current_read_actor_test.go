@@ -14,7 +14,21 @@ import (
 )
 
 func TestKnowledgeCurrentReadActorActualHTTP(t *testing.T) {
-	for _, mode := range []string{"web-allowed", "web-disabled", "web-membership-withdrawn", "api-retrieve-only", "api-revoked", "api-expired", "api-allowlist", "api-capability", "api-tenant", "late-web-disabled", "late-api-revoked", "late-api-allowlist", "late-api-capability"} {
+	for _, mode := range []string{
+		"web-allowed",
+		"web-disabled",
+		"web-membership-withdrawn",
+		"api-retrieve-only",
+		"api-revoked",
+		"api-expired",
+		"api-allowlist",
+		"api-capability",
+		"api-tenant",
+		"late-web-disabled",
+		"late-api-revoked",
+		"late-api-allowlist",
+		"late-api-capability",
+	} {
 		t.Run(mode, func(t *testing.T) {
 			h, db, _, groups := outputHTTPFixture(t, true)
 			ctx := types.WithCaller(

@@ -570,7 +570,9 @@ func TestNextcloudEventDispatchRequiresSecondDeletionScan(t *testing.T) {
 	require.NotNil(t, second)
 	require.NoError(t, repo.PrepareDispatch(ctx, *second, "missing-second", now.Add(4*time.Minute)))
 	require.NoError(t, db.Exec(("INSERT INTO sync_logs (id, data_source_id, status, started_at, finished_at"+
-		")\n\t\tVALUES ('missing-second', 'ds-synthetic', 'success', ?, ?)"), now.Add(4*time.Minute), now.Add(4*time.Minute)).Error)
+		")\n\t\tVALUES ('missing-second', 'ds-synthetic', 'success', ?, ?)"), now.Add(
+		4*time.Minute,
+	), now.Add(4*time.Minute)).Error)
 	require.NoError(t, repo.FinishDispatch(ctx, *second, "missing-second", now.Add(4*time.Minute)))
 	require.NoError(t, db.Exec(`INSERT INTO nextcloud_source_versions
 		(tenant_id, knowledge_base_id, datasource_id, external_id, state)

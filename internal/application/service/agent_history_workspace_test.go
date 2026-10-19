@@ -180,7 +180,13 @@ func TestAgentHistoryAdmissionFallbackBlocksOldWorkspaceReadAndExec(t *testing.T
 				require.Zero(t, shell.calls)
 				require.False(t, model.sawMarker)
 				require.NotContains(t, output.String(), protectedHistoryFileMarker)
-				for _, tool := range []string{tools.ToolReadFile, tools.ToolShellExec, tools.ToolListSandboxFiles, tools.ToolSearchConversations, tools.ToolDataAnalysis} {
+				for _, tool := range []string{
+					tools.ToolReadFile,
+					tools.ToolShellExec,
+					tools.ToolListSandboxFiles,
+					tools.ToolSearchConversations,
+					tools.ToolDataAnalysis,
+				} {
 					require.NotContains(t, model.offered, tool)
 				}
 				require.Contains(t, output.String(), "new plain answer")
@@ -211,7 +217,12 @@ func (r *retainedContextHistoryRepo) GetSessionAttachments(context.Context, stri
 
 func TestAgentHistoryAdmissionBothModesIsolateRetainedWorkspaceAtAgentQA(t *testing.T) {
 	for _, multiTurn := range []bool{false, true} {
-		for _, scenario := range []string{"ever-source", "lookup-unavailable", "missing-policy", "legacy-no-source-state"} {
+		for _, scenario := range []string{
+			"ever-source",
+			"lookup-unavailable",
+			"missing-policy",
+			"legacy-no-source-state",
+		} {
 			t.Run(fmt.Sprintf("multi-turn-%t/%s", multiTurn, scenario), func(t *testing.T) {
 				files := &historyBoundaryFileStore{}
 				shell := &historyBoundaryShell{}
@@ -242,11 +253,7 @@ func TestAgentHistoryAdmissionBothModesIsolateRetainedWorkspaceAtAgentQA(t *test
 						modelsByID: map[string]*types.Model{"chat": {ID: "chat", Type: types.ModelTypeKnowledgeQA}},
 					},
 				}
-				ctx := context.WithValue(
-					context.WithValue(context.Background(), types.TenantIDContextKey, uint64(1)),
-					types.TenantInfoContextKey,
-					&types.Tenant{ID: 1},
-				)
+
 				req := &types.QARequest{
 					Session:            &types.Session{ID: "same-old-session", TenantID: 1},
 					AssistantMessageID: "new-message",
@@ -275,7 +282,7 @@ func TestAgentHistoryAdmissionBothModesIsolateRetainedWorkspaceAtAgentQA(t *test
 						func(_ context.Context, evt event.Event) error { fmt.Fprint(&output, evt.Data); return nil },
 					)
 				}
-				ctx = actualAgentHistoryRequest(t, svc, req)
+				ctx := actualAgentHistoryRequest(t, svc, req)
 				require.NoError(t, svc.AgentQA(ctx, req, bus))
 				require.Equal(
 					t,

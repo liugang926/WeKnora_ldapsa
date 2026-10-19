@@ -174,7 +174,8 @@ func (h *AgentStreamHandler) subscribeWithLineage(kind event.EventType, handler 
 				data.MessageID == h.assistantMessageID && data.FinalAnswer == "" &&
 				len(data.KnowledgeRefs) == 0 && data.AgentSteps == nil && data.Usage == nil && len(data.Extra) == 0 &&
 				data.TotalSteps == 0 && data.TotalDurationMs == 0 &&
-				(data.SessionID == "" || data.SessionID == h.sessionID) && (data.RequestID == "" || data.RequestID == h.requestID) {
+				(data.SessionID == "" ||
+					data.SessionID == h.sessionID) && (data.RequestID == "" || data.RequestID == h.requestID) {
 				lineage = h.prefixLineage
 			}
 		}

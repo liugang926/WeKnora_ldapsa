@@ -26,7 +26,14 @@ func (s chunkOutputHTTPService) GetChunkByIDOnly(context.Context, string) (*type
 
 func chunkOutputHTTPFixture(
 	t *testing.T,
-) (*ChunkHandler, *gorm.DB, *types.Knowledge, *outputHTTPGroups, *repository.KnowledgeInputProvenanceStore, context.Context) {
+) (
+	*ChunkHandler,
+	*gorm.DB,
+	*types.Knowledge,
+	*outputHTTPGroups,
+	*repository.KnowledgeInputProvenanceStore,
+	context.Context,
+) {
 	t.Helper()
 	base, db, k, groups := outputHTTPFixture(t, true)
 	store := repository.NewKnowledgeInputProvenanceStore(db)
@@ -138,7 +145,26 @@ func TestChunkOutputHTTPFreshCandidatesNormalPageAndTotal(t *testing.T) {
 	require.NoError(
 		t,
 		repository.NewChunkRepository(db).
-			CreateChunks(ctx, []*types.Chunk{{ID: "second-text", TenantID: k.TenantID, KnowledgeBaseID: k.KnowledgeBaseID, KnowledgeID: k.ID, Content: "second accounted chunk", ChunkType: types.ChunkTypeText, ChunkIndex: 2, IsEnabled: true, IndexStatus: "ready"}, {ID: "accounted-image", TenantID: k.TenantID, KnowledgeBaseID: k.KnowledgeBaseID, KnowledgeID: k.ID, Content: "accounted image body", ChunkType: types.ChunkTypeImageCaption, IsEnabled: true, IndexStatus: "ready"}}),
+			CreateChunks(ctx, []*types.Chunk{{
+				ID:              "second-text",
+				TenantID:        k.TenantID,
+				KnowledgeBaseID: k.KnowledgeBaseID,
+				KnowledgeID:     k.ID,
+				Content:         "second accounted chunk",
+				ChunkType:       types.ChunkTypeText,
+				ChunkIndex:      2,
+				IsEnabled:       true,
+				IndexStatus:     "ready",
+			}, {
+				ID:              "accounted-image",
+				TenantID:        k.TenantID,
+				KnowledgeBaseID: k.KnowledgeBaseID,
+				KnowledgeID:     k.ID,
+				Content:         "accounted image body",
+				ChunkType:       types.ChunkTypeImageCaption,
+				IsEnabled:       true,
+				IndexStatus:     "ready",
+			}}),
 	)
 	w := serveChunkOutput(h, "/chunks/document?page=2&page_size=1")
 	require.Equal(t, 200, w.Code, w.Body.String())

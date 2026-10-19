@@ -38,7 +38,15 @@ func TestNextcloudSourceLineageBatchRejectsEarlierReadChangedDuringLaterRemote(t
 	secondProof, err := types.NewCompleteSourceLineage(second)
 	require.NoError(t, err)
 	changed := false
-	guard.publication.authorize = func(_ context.Context, _ *types.DataSourceConfig, _, _, _, _ string, fileID int64) (nextcloud.AuthorizationDecision, error) {
+	guard.publication.authorize = func(
+		_ context.Context,
+		_ *types.DataSourceConfig,
+		_,
+		_,
+		_,
+		_ string,
+		fileID int64,
+	) (nextcloud.AuthorizationDecision, error) {
 		if fileID == 43 {
 			current := snapshots.identity[first.KnowledgeID]
 			current.Revision++

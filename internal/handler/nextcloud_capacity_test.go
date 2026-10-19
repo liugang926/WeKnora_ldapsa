@@ -35,7 +35,15 @@ func (f *capacityHTTPFile) MeasureStorageCapacity(context.Context) (types.Storag
 }
 
 func TestNextcloudCapacityActualAdminHTTPStatusAndPolicy(t *testing.T) {
-	for _, mode := range []string{"normal", "paused", "set-policy", "disabled", "late-disabled", "api-key", "cross-tenant"} {
+	for _, mode := range []string{
+		"normal",
+		"paused",
+		"set-policy",
+		"disabled",
+		"late-disabled",
+		"api-key",
+		"cross-tenant",
+	} {
 		t.Run(mode, func(t *testing.T) {
 			_, db, actor, _, _, _ := collectionHTTPFixture(t)
 			require.NoError(t, db.AutoMigrate(&types.StoredResource{}, &types.ResourceBinding{}))

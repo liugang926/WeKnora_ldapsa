@@ -163,13 +163,33 @@ func TestLiveSSEAcceptsProducerContentlessKnowledgeToolResults(t *testing.T) {
 		name string
 		data event.AgentToolResultData
 	}{
-		{"empty_search", event.AgentToolResultData{ToolName: "search_knowledge", Success: true, Data: emptySearchToolData()}},
-		{"empty_list", event.AgentToolResultData{ToolName: "list_documents", Success: true, Data: map[string]interface{}{
-			"display_type": "document_info", "documents": []map[string]interface{}{},
-			"knowledge_base_id": "manual-kb", "total_docs": int64(0), "page": 1, "page_size": 20,
-		}}},
-		{"failed_search", event.AgentToolResultData{ToolName: "search_knowledge", Success: false, Error: "query is required"}},
-		{"failed_list", event.AgentToolResultData{ToolName: "list_documents", Success: false, Error: "knowledge_base_id is required"}},
+		{"empty_search", event.AgentToolResultData{
+			ToolName: "search_knowledge",
+			Success:  true,
+			Data:     emptySearchToolData(),
+		}},
+		{"empty_list", event.AgentToolResultData{
+			ToolName: "list_documents",
+			Success:  true,
+			Data: map[string]interface{}{
+				"display_type":      "document_info",
+				"documents":         []map[string]interface{}{},
+				"knowledge_base_id": "manual-kb",
+				"total_docs":        int64(0),
+				"page":              1,
+				"page_size":         20,
+			},
+		}},
+		{"failed_search", event.AgentToolResultData{
+			ToolName: "search_knowledge",
+			Success:  false,
+			Error:    "query is required",
+		}},
+		{"failed_list", event.AgentToolResultData{
+			ToolName: "list_documents",
+			Success:  false,
+			Error:    "knowledge_base_id is required",
+		}},
 		{"failed_read", event.AgentToolResultData{ToolName: "read_document", Success: false, Error: "id is required"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

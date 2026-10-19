@@ -207,7 +207,11 @@ func bindKnowledgeConfigurationOriginalBodiesInTx(
 					tx,
 				).Model(&originalBodyPayload{}).
 					Where("id=? AND retired_at_ms IS NULL", prior.BodyID).
-					Updates(map[string]any{"retired_at_ms": now, "body_deadline_ms": now + 3600000, "metadata_deadline_ms": now + 90*86400000}).
+					Updates(map[string]any{
+						"retired_at_ms":        now,
+						"body_deadline_ms":     now + 3600000,
+						"metadata_deadline_ms": now + 90*86400000,
+					}).
 					Error; err != nil {
 					return err
 				}
@@ -350,7 +354,13 @@ func recordConfigurationOriginalBodyParents(tx *gorm.DB, bodyID string, scope or
 		var admission knowledgeInputAdmission
 		if bodyInternal(
 			tx,
-		).Where("admission_id=? AND tenant_id=? AND knowledge_base_id=? AND knowledge_id=?", receipt.AdmissionID, source.TenantID, source.KnowledgeBaseID, source.KnowledgeID).
+		).Where(
+			"admission_id=? AND tenant_id=? AND knowledge_base_id=? AND knowledge_id=?",
+			receipt.AdmissionID,
+			source.TenantID,
+			source.KnowledgeBaseID,
+			source.KnowledgeID,
+		).
 			Take(&admission).
 			Error != nil {
 			return ErrOriginalBodyUnavailable
@@ -450,7 +460,9 @@ func (s *KnowledgeInputProvenanceStore) KnowledgeConfigurationBodyReadPlan(
 			).Select("id,tenant_id,body_sha256,origin_domain_sha256,body_bytes,state,purge_epoch,storage_kind").
 				Where("id=?", head.BodyID).
 				Take(&body).
-				Error; err != nil || body.State != "live" || body.StorageKind != "inline" || body.TenantID != tenant || body.BodyBytes <= 0 ||
+				Error; err != nil ||
+				body.State != "live" || body.StorageKind != "inline" ||
+				body.TenantID != tenant || body.BodyBytes <= 0 ||
 				body.OriginDomainSHA256 != bodySHA(
 					[]byte(fmt.Sprintf("%d/%s/%s/%s", tenant, kb, "", "admission/"+fact.OriginID)),
 				) {
@@ -729,7 +741,13 @@ func configurationOriginalBodyParentCoverage(
 		var admission knowledgeInputAdmission
 		if bodyInternal(
 			tx,
-		).Where("admission_id=? AND tenant_id=? AND knowledge_base_id=? AND knowledge_id=?", parent.AdmissionID, parent.TenantID, parent.KnowledgeBaseID, parent.KnowledgeID).
+		).Where(
+			"admission_id=? AND tenant_id=? AND knowledge_base_id=? AND knowledge_id=?",
+			parent.AdmissionID,
+			parent.TenantID,
+			parent.KnowledgeBaseID,
+			parent.KnowledgeID,
+		).
 			Take(&admission).
 			Error != nil {
 			return ErrOriginalBodyUnavailable

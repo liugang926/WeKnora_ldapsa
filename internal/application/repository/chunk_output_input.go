@@ -30,7 +30,12 @@ func (s *KnowledgeInputProvenanceStore) CaptureChunkOutputInputs(
 		}
 		if err := s.db.WithContext(ctx).
 			Model(&types.Chunk{}).
-			Where("tenant_id = ? AND knowledge_base_id = ? AND knowledge_id = ?", request.TenantID, request.KnowledgeBaseID, request.KnowledgeID).
+			Where(
+				"tenant_id = ? AND knowledge_base_id = ? AND knowledge_id = ?",
+				request.TenantID,
+				request.KnowledgeBaseID,
+				request.KnowledgeID,
+			).
 			Order("id ASC").
 			Limit(4097).
 			Pluck("id", &ids).
@@ -149,7 +154,12 @@ func (s *KnowledgeInputProvenanceStore) RecheckChunkOutputInputs(
 		if snapshot.AllChunks {
 			var allIDs []string
 			if err := tx.Model(&types.Chunk{}).
-				Where("tenant_id = ? AND knowledge_base_id = ? AND knowledge_id = ?", k.TenantID, k.KnowledgeBaseID, k.ID).
+				Where(
+					"tenant_id = ? AND knowledge_base_id = ? AND knowledge_id = ?",
+					k.TenantID,
+					k.KnowledgeBaseID,
+					k.ID,
+				).
 				Order("id ASC").
 				Limit(4097).
 				Pluck("id", &allIDs).
@@ -168,7 +178,13 @@ func (s *KnowledgeInputProvenanceStore) RecheckChunkOutputInputs(
 				return ErrKnowledgeInputChanged
 			}
 			var chunk types.Chunk
-			if err := tx.Where("id = ? AND tenant_id = ? AND knowledge_base_id = ? AND knowledge_id = ?", id, k.TenantID, k.KnowledgeBaseID, k.ID).
+			if err := tx.Where(
+				"id = ? AND tenant_id = ? AND knowledge_base_id = ? AND knowledge_id = ?",
+				id,
+				k.TenantID,
+				k.KnowledgeBaseID,
+				k.ID,
+			).
 				Take(&chunk).
 				Error; err != nil {
 				return err

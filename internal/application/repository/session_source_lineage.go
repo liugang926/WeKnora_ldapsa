@@ -23,7 +23,13 @@ func (r *sessionRepository) SaveGeneratedSessionTitle(
 	query := applySessionUserScope(
 		r.db.WithContext(ctx).
 			Model(&types.Session{}).
-			Where("tenant_id = ? AND id = ? AND title = ? AND title_revision = ?", tenantID, id, expected.Text, expected.Revision),
+			Where(
+				"tenant_id = ? AND id = ? AND title = ? AND title_revision = ?",
+				tenantID,
+				id,
+				expected.Text,
+				expected.Revision,
+			),
 		ownerID,
 	)
 	var originalProof any

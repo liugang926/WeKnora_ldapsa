@@ -14,7 +14,18 @@ import (
 )
 
 func runOriginalBodyInlineRowActual(t *testing.T, pg bool) {
-	for _, mode := range []string{"all-heads-once", "two-rows", "unselected-corrupt", "second-row-pin-change", "sql-head-change", "caller-cancel", "concurrent-purge", "vault-body-digest", "mid-head-and-pin", "last-payload-cancel"} {
+	for _, mode := range []string{
+		"all-heads-once",
+		"two-rows",
+		"unselected-corrupt",
+		"second-row-pin-change",
+		"sql-head-change",
+		"caller-cancel",
+		"concurrent-purge",
+		"vault-body-digest",
+		"mid-head-and-pin",
+		"last-payload-cancel",
+	} {
 		t.Run(mode, func(t *testing.T) {
 			db, store := bodyProtocolFixture(t, pg)
 			for _, id := range []string{"one", "two"} {
@@ -71,7 +82,10 @@ func runOriginalBodyInlineRowActual(t *testing.T, pg bool) {
 							t,
 							bodyInternal(
 								tx,
-							).Exec("UPDATE original_body_journal_heads SET head_sha256=? WHERE id=1", strings.Repeat("0", 64)).
+							).Exec("UPDATE original_body_journal_heads SET head_sha256=? WHERE id=1", strings.Repeat(
+								"0",
+								64,
+							)).
 								Error,
 						)
 					case "caller-cancel":
@@ -200,7 +214,11 @@ func runOriginalBodyInlineRowActual(t *testing.T, pg bool) {
 							require.Positive(t, n)
 						}),
 				)
-				defer func() { require.NoError(t, db.Callback().Query().Remove("actual-mid-availability-transition")) }()
+				defer func() {
+					require.NoError(t, db.Callback().Query().Remove(
+						"actual-mid-availability-transition",
+					))
+				}()
 			}
 			if mode == "vault-body-digest" {
 				id := bodyProtocolCreate(t, db, "actual-vault", "two")

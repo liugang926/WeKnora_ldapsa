@@ -129,11 +129,7 @@ func TestAgentHistoryAdmissionRejectedContextStillRunsCurrentAgentQA(t *testing.
 					modelsByID: map[string]*types.Model{"chat": {ID: "chat", Type: types.ModelTypeKnowledgeQA}},
 				},
 			}
-			ctx := context.WithValue(
-				context.WithValue(context.Background(), types.TenantIDContextKey, uint64(1)),
-				types.TenantInfoContextKey,
-				&types.Tenant{ID: 1},
-			)
+
 			req := &types.QARequest{
 				Session:            &types.Session{ID: "session", TenantID: 1},
 				AssistantMessageID: "new",
@@ -151,7 +147,7 @@ func TestAgentHistoryAdmissionRejectedContextStillRunsCurrentAgentQA(t *testing.
 					},
 				},
 			}
-			ctx = actualAgentHistoryRequest(t, svc, req)
+			ctx := actualAgentHistoryRequest(t, svc, req)
 			require.NoError(t, svc.AgentQA(ctx, req, event.NewEventBus()))
 			require.Len(t, engine.contexts, 1)
 			require.Empty(t, engine.contexts[0])

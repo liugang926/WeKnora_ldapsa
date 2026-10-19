@@ -76,7 +76,18 @@ func assertForkMaterialReadLeases(t *testing.T, db *gorm.DB, held bool) {
 
 func actualForkMaterialFixture(
 	t *testing.T,
-) (*SessionForkService, *messageService, *repository.KnowledgeInputProvenanceStore, *gorm.DB, context.Context, *types.Session, *types.Message, *types.Message, *actualForkMaterialSessions, *actualForkMaterialSandbox) {
+) (
+	*SessionForkService,
+	*messageService,
+	*repository.KnowledgeInputProvenanceStore,
+	*gorm.DB,
+	context.Context,
+	*types.Session,
+	*types.Message,
+	*types.Message,
+	*actualForkMaterialSessions,
+	*actualForkMaterialSandbox,
+) {
 	t.Helper()
 	messages, _, store, db, ctx, session := messageMaterialActualFixture(t)
 	require.NoError(t, db.AutoMigrate(&types.ForkSnapshotLease{}))
@@ -194,7 +205,12 @@ func TestMessageForkActualFirstUserAuthenticatesOriginalWithoutCopy(t *testing.T
 }
 
 func TestMessageForkActualLegacyAndUnknownGeneratedFieldRejectBeforeSnapshot(t *testing.T) {
-	for _, mode := range []string{"legacy", "legacy_unknown_artifact", "unknown_user_rendering", "unknown_assistant_checkpoint"} {
+	for _, mode := range []string{
+		"legacy",
+		"legacy_unknown_artifact",
+		"unknown_user_rendering",
+		"unknown_assistant_checkpoint",
+	} {
 		t.Run(mode, func(t *testing.T) {
 			fork, _, _, db, ctx, source, user, assistant, sessions, port := actualForkMaterialFixture(t)
 			point := assistant.ID
@@ -366,7 +382,11 @@ func TestMessageForkActualSignedSourceCloneAndFinalWriterRevoke(t *testing.T) {
 	f.k.EnableStatus = "enabled"
 	require.NoError(t, f.s.repo.UpdateKnowledge(f.build, f.k))
 	require.NoError(t, f.db.Exec("ALTER TABLE messages ADD COLUMN artifacts TEXT").Error)
-	for _, name := range []string{"000023_message_artifacts_table.up.sql", "000026_message_artifacts_deleted_at.up.sql", "000070_message_original_materials.up.sql"} {
+	for _, name := range []string{
+		"000023_message_artifacts_table.up.sql",
+		"000026_message_artifacts_deleted_at.up.sql",
+		"000070_message_original_materials.up.sql",
+	} {
 		ddl, err := os.ReadFile("../../../migrations/sqlite/" + name)
 		require.NoError(t, err)
 		require.NoError(t, f.db.Exec(string(ddl)).Error)
@@ -403,7 +423,24 @@ func TestMessageForkActualSignedSourceCloneAndFinalWriterRevoke(t *testing.T) {
 	readCtx, err := repository.WithFAQReadLeaseCoverage(ctx, []repository.NextcloudContentLease{lease})
 	require.NoError(t, err)
 	originals, err := repository.NewRAGChunkSnapshotReader(f.db, f.store).
-		HydrateRAGChunkSnapshots(readCtx, []types.RAGChunkReadRequest{{TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: f.k.ID, ChunkIDs: []string{f.chunks[0].ID}, Lease: &types.RAGExactReadLease{ID: lease.ID, TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: f.k.ID, Kind: string(lease.Kind), Epoch: lease.Epoch, OwnerID: lease.OwnerID, ExpiresAt: lease.ExpiresAt}}})
+		HydrateRAGChunkSnapshots(readCtx, []types.RAGChunkReadRequest{{
+			TenantID:        7,
+			KnowledgeBaseID: "kb",
+			KnowledgeID:     f.k.ID,
+			ChunkIDs: []string{
+				f.chunks[0].ID,
+			},
+			Lease: &types.RAGExactReadLease{
+				ID:              lease.ID,
+				TenantID:        7,
+				KnowledgeBaseID: "kb",
+				KnowledgeID:     f.k.ID,
+				Kind:            string(lease.Kind),
+				Epoch:           lease.Epoch,
+				OwnerID:         lease.OwnerID,
+				ExpiresAt:       lease.ExpiresAt,
+			},
+		}})
 	require.NoError(t, err)
 	require.Len(t, originals, 1)
 	session := &types.Session{TenantID: 7, UserID: "enrich-human"}

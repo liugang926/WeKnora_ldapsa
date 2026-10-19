@@ -47,7 +47,8 @@ func (p *PluginMerge) hydrateMergeInput(
 	inputs := []*types.SourceLineage{original.SourceLineage}
 	for _, snapshot := range snapshots {
 		if snapshot.Chunk == nil || snapshot.Knowledge == nil || snapshot.Chunk.KnowledgeID != original.KnowledgeID ||
-			snapshot.Chunk.KnowledgeBaseID != original.KnowledgeBaseID || snapshot.SourceLineage.RequireComplete() != nil {
+			snapshot.Chunk.KnowledgeBaseID != original.KnowledgeBaseID ||
+			snapshot.SourceLineage.RequireComplete() != nil {
 			unknownMergeInput(ctx, original)
 			return nil
 		}
@@ -78,7 +79,10 @@ func (p *PluginMerge) resolveCapturedParents(ctx context.Context, results []*typ
 				rows[0].Content != result.Content || rows[0].ParentChunkID != result.ParentChunkID ||
 				rows[0].ContentRevision != result.ContentRevision || rows[0].ChunkIndex != result.ChunkIndex ||
 				rows[0].StartAt != result.StartAt || rows[0].EndAt != result.EndAt ||
-				rows[0].ImageInfo != result.ImageInfo || !bytes.Equal(rows[0].Metadata, result.ChunkMetadata) || result.ContentRewritten {
+				rows[0].ImageInfo != result.ImageInfo || !bytes.Equal(
+				rows[0].Metadata,
+				result.ChunkMetadata,
+			) || result.ContentRewritten {
 				unknownMergeInput(ctx, result)
 			}
 			continue

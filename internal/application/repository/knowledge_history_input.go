@@ -44,7 +44,19 @@ func historyMessageInputDigest(message *types.Message) (string, error) {
 		Complete                                          bool
 		Lineage                                           *types.SourceLineage
 		Execution                                         types.MessageExecutionContext
-	}{message.ID, message.SessionID, message.RequestID, message.Role, message.Content, message.AgentID, message.ModelID, message.AgentTenantID, message.IsCompleted, message.SourceLineage, message.ExecutionContext})
+	}{
+		message.ID,
+		message.SessionID,
+		message.RequestID,
+		message.Role,
+		message.Content,
+		message.AgentID,
+		message.ModelID,
+		message.AgentTenantID,
+		message.IsCompleted,
+		message.SourceLineage,
+		message.ExecutionContext,
+	})
 }
 
 func historyMessageInputRevision(tx *gorm.DB, id string) (uint64, error) {
@@ -99,7 +111,12 @@ func (s *KnowledgeInputProvenanceStore) verifyCommittedHistoryParents(
 	for _, item := range []struct {
 		ID, Role, Digest string
 		Revision         uint64
-	}{{parent.AssistantMessageID, "assistant", parent.AssistantDigest, parent.AssistantRevision}, {parent.UserMessageID, "user", parent.UserDigest, parent.UserRevision}} {
+	}{{parent.AssistantMessageID, "assistant", parent.AssistantDigest, parent.AssistantRevision}, {
+		parent.UserMessageID,
+		"user",
+		parent.UserDigest,
+		parent.UserRevision,
+	}} {
 		message, err := readMessageMaterialBodyInTx(tx, item.ID, parent.SessionID, item.Role)
 		if err != nil {
 			return err
@@ -327,7 +344,12 @@ func (s *KnowledgeInputProvenanceStore) KnowledgeHistoryMaterialRequest(
 	}
 	var row knowledgeInputAdmission
 	if err := s.db.WithContext(ctx).
-		Where("admission_id=? AND knowledge_id=? AND tenant_id=?", proof.AdmissionID, proof.KnowledgeID, proof.TenantID).
+		Where(
+			"admission_id=? AND knowledge_id=? AND tenant_id=?",
+			proof.AdmissionID,
+			proof.KnowledgeID,
+			proof.TenantID,
+		).
 		Take(&row).
 		Error; err != nil {
 		return nil, err

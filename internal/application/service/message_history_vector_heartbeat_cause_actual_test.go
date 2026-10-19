@@ -270,7 +270,9 @@ func TestHistoryVectorActualSQLHeartbeatNonemptyUnknownRefusesModel(t *testing.T
 			releaseModel()
 			require.NoError(t, check(), "actual nonempty retained inputs must be admitted before caller/lease failure")
 			guards, bridges := heldHistoryHeartbeatInputs(ctx, t)
-			lookups, ranks, streams := f.models.lookups.Load(), f.models.rankCalls.Load(), f.models.chatter.streams.Load()
+			lookups, ranks, streams := f.models.lookups.Load(),
+				f.models.rankCalls.Load(),
+				f.models.chatter.streams.Load()
 			switch mode {
 			case "original-lease-released":
 				require.NotEmpty(t, guards[0].leases)

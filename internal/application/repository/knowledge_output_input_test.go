@@ -58,7 +58,14 @@ func TestKnowledgeOutputInputUsesReceiptAdmissionRatherThanNewestOrigin(t *testi
 }
 
 func TestKnowledgeOutputInputRejectsUnknownForeignAndMaterialABA(t *testing.T) {
-	for _, change := range []string{"foreign_tenant", "foreign_kb", "orphan_chunk", "title_aba", "chunk_aba", "legacy_receipt"} {
+	for _, change := range []string{
+		"foreign_tenant",
+		"foreign_kb",
+		"orphan_chunk",
+		"title_aba",
+		"chunk_aba",
+		"legacy_receipt",
+	} {
 		t.Run(change, func(t *testing.T) {
 			store, db := knowledgeInputFixture(t)
 			_, k, chunk, _ := createAdmittedManual(t, store, db)

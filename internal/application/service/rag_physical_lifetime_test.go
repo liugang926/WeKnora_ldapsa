@@ -12,7 +12,14 @@ import (
 )
 
 func TestRAGPhysicalActualHydrationHeldUntilFinalProducerAndSenderRelease(t *testing.T) {
-	for _, mode := range []string{"normal", "borrowed-parent", "expired-before-model", "expired-before-http", "cancel", "no-turn"} {
+	for _, mode := range []string{
+		"normal",
+		"borrowed-parent",
+		"expired-before-model",
+		"expired-before-http",
+		"cancel",
+		"no-turn",
+	} {
 		t.Run(mode, func(t *testing.T) {
 			messages, kg, store, db, ctx, _ := messageMaterialActualFixture(t)
 			k := &types.Knowledge{

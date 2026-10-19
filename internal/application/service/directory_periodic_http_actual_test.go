@@ -122,7 +122,10 @@ func (m *directoryPeriodicHTTPModel) ChatStream(
 			m.syncedEpochs.Add(1)
 			if m.mode == "unchanged_complete_sync" {
 				select {
-				case out <- types.StreamResponse{ResponseType: types.ResponseTypeAnswer, Content: fmt.Sprintf("CURRENT PERIODIC DIRECTORY EPOCH %d; ", epoch)}:
+				case out <- types.StreamResponse{
+					ResponseType: types.ResponseTypeAnswer,
+					Content:      fmt.Sprintf("CURRENT PERIODIC DIRECTORY EPOCH %d; ", epoch),
+				}:
 				case <-ctx.Done():
 					m.stopped.Store(true)
 					return
@@ -148,7 +151,11 @@ func (m *directoryPeriodicHTTPModel) ChatStream(
 			// Done occurs only after the two real open-provider sync windows;
 			// it is an actual authorized model result, not a fake completion.
 			select {
-			case out <- types.StreamResponse{ResponseType: types.ResponseTypeAnswer, Content: "CURRENT PERIODIC DIRECTORY FINAL", Done: true}:
+			case out <- types.StreamResponse{
+				ResponseType: types.ResponseTypeAnswer,
+				Content:      "CURRENT PERIODIC DIRECTORY FINAL",
+				Done:         true,
+			}:
 			case <-ctx.Done():
 				m.stopped.Store(true)
 			case <-m.abandon:
@@ -365,19 +372,25 @@ func runDirectoryPeriodicActualHTTP(t *testing.T, pg bool) {
 			wait(httpReturned, "actual HTTP handler")
 			wait(f.ProducerReturned, "actual KnowledgeQA producer")
 			wait(model.transportReturned, "actual provider transport")
-			assert.Eventually(t, func() bool {
-				var source, bodies int64
-				return f.DB.Table("nextcloud_content_leases").
-					Where("kind='read' AND released_at_ms IS NULL").
-					Count(&source).
-					Error == nil &&
-					f.DB.Table("original_body_leases").
+			assert.Eventually(
+				t,
+				func() bool {
+					var source, bodies int64
+					return f.DB.Table("nextcloud_content_leases").
 						Where("kind='read' AND released_at_ms IS NULL").
-						Count(&bodies).
+						Count(&source).
 						Error == nil &&
-					source == 0 &&
-					bodies == 0
-			}, 3*time.Second, 10*time.Millisecond, "actual producer/sender release all original pins before fixture cleanup")
+						f.DB.Table("original_body_leases").
+							Where("kind='read' AND released_at_ms IS NULL").
+							Count(&bodies).
+							Error == nil &&
+						source == 0 &&
+						bodies == 0
+				},
+				3*time.Second,
+				10*time.Millisecond,
+				"actual producer/sender release all original pins before fixture cleanup",
+			)
 			model.mu.Lock()
 			operationErr := model.operationErr
 			model.mu.Unlock()

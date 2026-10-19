@@ -20,7 +20,12 @@ func readOriginalUploadActual(
 		return nil, ErrKnowledgeInputChanged
 	}
 	var receipt nextcloudOriginalUploadInput
-	if err := tx.Where("knowledge_id = ? AND tenant_id = ? AND knowledge_base_id = ?", original.KnowledgeID, original.TenantID, original.KnowledgeBaseID).
+	if err := tx.Where(
+		"knowledge_id = ? AND tenant_id = ? AND knowledge_base_id = ?",
+		original.KnowledgeID,
+		original.TenantID,
+		original.KnowledgeBaseID,
+	).
 		Take(&receipt).
 		Error; err != nil {
 		return nil, err
@@ -98,7 +103,12 @@ func (s *KnowledgeInputProvenanceStore) verifyNextcloudGroupingDisplayInput(
 	lineage, _ := types.NewCompleteSourceLineage()
 	for _, id := range wanted {
 		var tag types.KnowledgeTag
-		if err := tx.Where("id = ? AND tenant_id = ? AND knowledge_base_id = ?", id, request.Original.TenantID, request.Original.KnowledgeBaseID).
+		if err := tx.Where(
+			"id = ? AND tenant_id = ? AND knowledge_base_id = ?",
+			id,
+			request.Original.TenantID,
+			request.Original.KnowledgeBaseID,
+		).
 			Take(&tag).
 			Error; err != nil {
 			return nil, err

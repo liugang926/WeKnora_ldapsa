@@ -151,7 +151,14 @@ func TestNextcloudMachineRepositoryReceiptIsImmutableAndSingleUse(t *testing.T) 
 
 func TestNextcloudMachineRepositoryRejectsPayloadAndAuthorityChanges(t *testing.T) {
 	f, build, raw, taskID := machineTaskRepositoryFixture(t)
-	for _, mutation := range []string{"language", "attempt", "tenant_id", "knowledge_base_id", "knowledge_id", "initiator"} {
+	for _, mutation := range []string{
+		"language",
+		"attempt",
+		"tenant_id",
+		"knowledge_base_id",
+		"knowledge_id",
+		"initiator",
+	} {
 		t.Run(mutation, func(t *testing.T) {
 			var fields map[string]any
 			require.NoError(t, json.Unmarshal(raw, &fields))

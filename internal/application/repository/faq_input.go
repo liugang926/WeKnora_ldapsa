@@ -33,9 +33,17 @@ type (
 )
 
 type faqInputSessionRow struct {
-	ID                                                                                                                               string `gorm:"primaryKey"`
-	TenantID                                                                                                                         uint64
-	KnowledgeBaseID, Operation, InputDigest, InputBody, OriginKind, SourceLineage, OriginalInputs, OriginalSnapshot, CurrentSnapshot string
+	ID               string `gorm:"primaryKey"`
+	TenantID         uint64
+	KnowledgeBaseID  string
+	Operation        string
+	InputDigest      string
+	InputBody        string
+	OriginKind       string
+	SourceLineage    string
+	OriginalInputs   string
+	OriginalSnapshot string
+	CurrentSnapshot  string
 }
 type faqInputActorSelector knowledgeBuildActorSelector
 
@@ -344,7 +352,12 @@ func (s *KnowledgeInputProvenanceStore) captureFAQInputsInTx(
 		snapshot.ScopeRevision = version.Revision
 	}
 	var catalogs []*types.Knowledge
-	if err := tx.Where("tenant_id=? AND knowledge_base_id=? AND type=?", req.TenantID, req.KnowledgeBaseID, types.KnowledgeTypeFAQ).
+	if err := tx.Where(
+		"tenant_id=? AND knowledge_base_id=? AND type=?",
+		req.TenantID,
+		req.KnowledgeBaseID,
+		types.KnowledgeTypeFAQ,
+	).
 		Find(&catalogs).
 		Error; err != nil {
 		return nil, err
@@ -975,7 +988,8 @@ func (s *KnowledgeInputProvenanceStore) DeleteFAQChunks(ctx context.Context, ids
 			return err
 		}
 		if operation.Kind != "delete" &&
-			!(operation.Kind == "import" && operation.Batch != nil && operation.Batch.Mode == types.FAQBatchModeReplace) &&
+			!(operation.Kind == "import" &&
+				operation.Batch != nil && operation.Batch.Mode == types.FAQBatchModeReplace) &&
 			operation.Kind != "create" {
 			return ErrKnowledgeInputChanged
 		}
@@ -993,7 +1007,9 @@ func (s *KnowledgeInputProvenanceStore) DeleteFAQChunks(ctx context.Context, ids
 					return ErrKnowledgeInputChanged
 				}
 				if operation.Kind == "create" &&
-					(proofs[c.ID] == nil || proofs[c.ID].SessionID != session.ID || c.Status != int(types.ChunkStatusStored)) {
+					(proofs[c.ID] == nil || proofs[c.ID].SessionID != session.ID || c.Status != int(
+						types.ChunkStatusStored,
+					)) {
 					return ErrKnowledgeInputChanged
 				}
 			}
@@ -1002,7 +1018,13 @@ func (s *KnowledgeInputProvenanceStore) DeleteFAQChunks(ctx context.Context, ids
 		if len(wanted) > 0 {
 			return ErrKnowledgeInputChanged
 		}
-		if err := tx.Where("id IN (?) AND tenant_id=? AND knowledge_base_id=? AND chunk_type=?", ids, session.TenantID, session.KnowledgeBaseID, types.ChunkTypeFAQ).
+		if err := tx.Where(
+			"id IN (?) AND tenant_id=? AND knowledge_base_id=? AND chunk_type=?",
+			ids,
+			session.TenantID,
+			session.KnowledgeBaseID,
+			types.ChunkTypeFAQ,
+		).
 			Delete(&types.Chunk{}).
 			Error; err != nil {
 			return err

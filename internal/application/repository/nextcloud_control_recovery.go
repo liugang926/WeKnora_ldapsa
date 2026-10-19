@@ -207,8 +207,21 @@ func closeNextcloudControlsInTx(tx *gorm.DB, instance, planSHA, inventorySHA str
 		return nil
 	}
 	now := time.Now().UTC()
-	if err := tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "instance_id"}}, DoUpdates: clause.Assignments(map[string]any{"closed": true, "plan_sha256": planSHA, "inventory_sha256": inventorySHA, "closed_at": now})}).
-		Create(&nextcloudControlRecoveryGate{InstanceID: instance, PlanSHA256: planSHA, InventorySHA256: inventorySHA, Closed: true, ClosedAt: now}).
+	if err := tx.Clauses(clause.OnConflict{Columns: []clause.Column{{
+		Name: "instance_id",
+	}}, DoUpdates: clause.Assignments(map[string]any{
+		"closed":           true,
+		"plan_sha256":      planSHA,
+		"inventory_sha256": inventorySHA,
+		"closed_at":        now,
+	})}).
+		Create(&nextcloudControlRecoveryGate{
+			InstanceID:      instance,
+			PlanSHA256:      planSHA,
+			InventorySHA256: inventorySHA,
+			Closed:          true,
+			ClosedAt:        now,
+		}).
 		Error; err != nil {
 		return err
 	}

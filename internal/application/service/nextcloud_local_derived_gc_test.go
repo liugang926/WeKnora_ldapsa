@@ -65,7 +65,9 @@ func actualLocalComposite(t *testing.T, db *gorm.DB, pg bool) *retriever.Composi
 				("CREATE TABLE IF NOT EXISTS embeddings(id BIGSERIAL PRIMARY KEY,created_at "+
 					"TIMESTAMPTZ,updated_at TIMESTAMPTZ,source_id TEXT NOT NULL,source_type INT"+
 					"EGER NOT NULL,chunk_id TEXT,knowledge_id TEXT,knowledge_base_id TEXT,tag_i"+
-					"d TEXT,content TEXT NOT NULL,dimension INTEGER NOT NULL,embedding ")+kind+` NOT NULL,is_enabled BOOLEAN DEFAULT TRUE,UNIQUE(source_id,source_type))`,
+					"d TEXT,content TEXT NOT NULL,dimension INTEGER NOT NULL,embedding ")+
+					kind+
+					` NOT NULL,is_enabled BOOLEAN DEFAULT TRUE,UNIQUE(source_id,source_type))`,
 			).Error,
 		)
 		rows = pgindex.NewPostgresRetrieveEngineRepository(db)
@@ -143,7 +145,13 @@ func localDerivedActualPipeline(t *testing.T, pg bool, modes ...string) {
 					require.NoError(
 						t,
 						repository.NewResourceRepository(f.db).
-							CreateBinding(ctx, &types.ResourceBinding{ResourceID: physicalResourceID, TenantID: 7, OwnerType: types.ResourceOwnerKnowledge, OwnerID: "source-candidate", Relation: types.ResourceRelationSourceFile}),
+							CreateBinding(ctx, &types.ResourceBinding{
+								ResourceID: physicalResourceID,
+								TenantID:   7,
+								OwnerType:  types.ResourceOwnerKnowledge,
+								OwnerID:    "source-candidate",
+								Relation:   types.ResourceRelationSourceFile,
+							}),
 					)
 				}
 				composite = actualLocalComposite(t, f.db, pg)
@@ -174,7 +182,13 @@ func localDerivedActualPipeline(t *testing.T, pg bool, modes ...string) {
 	require.NoError(t, composite.BatchIndex(build, localDerivedEmbedder{}, []*types.IndexInfo{info}))
 	if pg && os.Getenv("WEKNORA_LOCAL_DERIVED_NATIVE_VECTOR") == "1" {
 		results, err := pgindex.NewPostgresRetrieveEngineRepository(f.db).
-			Retrieve(build, types.RetrieveParams{RetrieverType: types.VectorRetrieverType, Embedding: []float32{.2, .3, .4}, TopK: 3, KnowledgeBaseIDs: []string{"kb"}})
+			Retrieve(build, types.RetrieveParams{RetrieverType: types.VectorRetrieverType, Embedding: []float32{
+				.2,
+				.3,
+				.4,
+			}, TopK: 3, KnowledgeBaseIDs: []string{
+				"kb",
+			}})
 		require.NoError(t, err)
 		require.NotEmpty(t, results)
 		require.NotEmpty(t, results[0].Results)
@@ -424,13 +438,37 @@ func localDerivedActualPipeline(t *testing.T, pg bool, modes ...string) {
 }
 
 func TestNextcloudLocalDerivedActualSQLitePipeline(t *testing.T) {
-	for _, mode := range []string{"normal", "reader", "builder", "late-writer", "foreign-parent", "receipt-crash", "restored-current", "sqlite-ftserror", "physical-original", "unwitnessed-row", "restored-after-collection", "orphan-native"} {
+	for _, mode := range []string{
+		"normal",
+		"reader",
+		"builder",
+		"late-writer",
+		"foreign-parent",
+		"receipt-crash",
+		"restored-current",
+		"sqlite-ftserror",
+		"physical-original",
+		"unwitnessed-row",
+		"restored-after-collection",
+		"orphan-native",
+	} {
 		t.Run(mode, func(t *testing.T) { localDerivedActualPipeline(t, false, mode) })
 	}
 }
 
 func TestPostgresNextcloudLocalDerivedActualPipeline(t *testing.T) {
-	for _, mode := range []string{"normal", "reader", "builder", "late-writer", "foreign-parent", "receipt-crash", "restored-current", "physical-original", "unwitnessed-row", "restored-after-collection"} {
+	for _, mode := range []string{
+		"normal",
+		"reader",
+		"builder",
+		"late-writer",
+		"foreign-parent",
+		"receipt-crash",
+		"restored-current",
+		"physical-original",
+		"unwitnessed-row",
+		"restored-after-collection",
+	} {
 		t.Run(mode, func(t *testing.T) { localDerivedActualPipeline(t, true, mode) })
 	}
 }

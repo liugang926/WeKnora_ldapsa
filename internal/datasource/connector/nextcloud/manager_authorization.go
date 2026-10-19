@@ -13,12 +13,17 @@ import (
 	"strings"
 	"time"
 
+	apperrors "github.com/Tencent/WeKnora/internal/errors"
 	"github.com/Tencent/WeKnora/internal/types"
 )
 
 var (
 	// ErrManagerAuthorizationDenied indicates that current-manager authorization was refused.
-	ErrManagerAuthorizationDenied      = errors.New("Nextcloud manager authorization denied")
+	ErrManagerAuthorizationDenied = apperrors.NewProtocolError(
+		errors.New("nextcloud manager authorization denied"),
+		"Nextcloud manager authorization denied",
+	)
+	// ErrManagerAuthorizationUnavailable indicates that current-manager authorization could not be verified.
 	ErrManagerAuthorizationUnavailable = errors.New("nextcloud manager authorization unavailable")
 	managerSHA256Pattern               = regexp.MustCompile(`^[0-9a-f]{64}$`)
 	managerControlIDPattern            = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,256}$`)

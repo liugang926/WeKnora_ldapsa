@@ -50,11 +50,20 @@ func TestPostgresNextcloudProductionUpgradeFrom132PreservesLegacySession(t *test
 	require.False(t, descriptionLineage.Valid)
 	require.False(t, scoped)
 	for _, table := range []string{
-		"knowledge_configuration_control_versions", "nextcloud_publication_recovery_scopes",
-		"original_body_journal_heads", "nextcloud_onboarding_operations", "nextcloud_source_grants",
-		"nextcloud_file_states", "nextcloud_status_outbox", "nextcloud_source_status_epochs",
-		"nextcloud_recovery_build_leases", "nextcloud_onboarding_target_closures",
-		"knowledge_configuration_original_body_manifests", "nextcloud_onboarding_manager_heads", "nextcloud_machine_tasks", "nextcloud_machine_task_claims",
+		"knowledge_configuration_control_versions",
+		"nextcloud_publication_recovery_scopes",
+		"original_body_journal_heads",
+		"nextcloud_onboarding_operations",
+		"nextcloud_source_grants",
+		"nextcloud_file_states",
+		"nextcloud_status_outbox",
+		"nextcloud_source_status_epochs",
+		"nextcloud_recovery_build_leases",
+		"nextcloud_onboarding_target_closures",
+		"knowledge_configuration_original_body_manifests",
+		"nextcloud_onboarding_manager_heads",
+		"nextcloud_machine_tasks",
+		"nextcloud_machine_task_claims",
 	} {
 		var exists bool
 		require.NoError(

@@ -16,7 +16,17 @@ import (
 )
 
 func runMessageMaterialOwnGrowthActual(t *testing.T, pg bool) {
-	for _, mode := range []string{"no-kb", "cross-kb", "source-after-content", "actor-after-content", "caller-after-content", "guard-after-content", "epoch-after-content", "cancel-after-body", "raw-unconsumed"} {
+	for _, mode := range []string{
+		"no-kb",
+		"cross-kb",
+		"source-after-content",
+		"actor-after-content",
+		"caller-after-content",
+		"guard-after-content",
+		"epoch-after-content",
+		"cancel-after-body",
+		"raw-unconsumed",
+	} {
 		t.Run(mode, func(t *testing.T) {
 			m := newMachinePipelineFixture(t, pg)
 			k := m.ingest(t)
@@ -142,7 +152,9 @@ func runMessageMaterialOwnGrowthActual(t *testing.T, pg bool) {
 				types.KnowledgeBuildInputCaptureRequest{TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: k.ID},
 			)
 			require.NoError(t, err)
-			parent.Content, parent.IsCompleted, parent.SourceLineage = "actual source-derived answer", true, actual.Proof.SourceLineage
+			parent.Content, parent.IsCompleted, parent.SourceLineage = "actual source-derived answer",
+				true,
+				actual.Proof.SourceLineage
 			require.NoError(t, messages.UpdateMessage(ctx, parent))
 			scope := access.LineageReadScope{
 				Targets: []*types.SearchTarget{
@@ -154,7 +166,13 @@ func runMessageMaterialOwnGrowthActual(t *testing.T, pg bool) {
 			writer = types.WithRAGSourceLineage(
 				writer,
 				types.NewRAGSourceLineage(
-					func(check context.Context, l *types.SourceLineage) error { return m.f.guard.Check(check, l, scope) },
+					func(check context.Context, l *types.SourceLineage) error {
+						return m.f.guard.Check(
+							check,
+							l,
+							scope,
+						)
+					},
 				),
 			)
 			_, err = messages.GetMessage(writer, session.ID, parent.ID)
@@ -213,7 +231,13 @@ func runMessageMaterialOwnGrowthActual(t *testing.T, pg bool) {
 					require.NoError(
 						t,
 						m.f.store.ContentLeaseStore().
-							RetireKnowledgeInTx(context.Background(), cleanTx, repository.NextcloudContentScope{TenantID: source.TenantID, KnowledgeBaseID: source.KnowledgeBaseID, KnowledgeID: source.KnowledgeID, DataSourceID: source.DataSourceID, ExternalID: source.ExternalID}),
+							RetireKnowledgeInTx(context.Background(), cleanTx, repository.NextcloudContentScope{
+								TenantID:        source.TenantID,
+								KnowledgeBaseID: source.KnowledgeBaseID,
+								KnowledgeID:     source.KnowledgeID,
+								DataSourceID:    source.DataSourceID,
+								ExternalID:      source.ExternalID,
+							}),
 					)
 					var fence struct {
 						Epoch uint64
@@ -224,8 +248,15 @@ func runMessageMaterialOwnGrowthActual(t *testing.T, pg bool) {
 						tx.Session(&gorm.Session{NewDB: true, Initialized: true}).
 							Table("nextcloud_content_fences").
 							Select("epoch", "state").
-							Where(("tenant_id=? AND knowledge_base_id=? AND knowledge_id=? AND datasource_id=?"+
-								" AND external_id=?"), source.TenantID, source.KnowledgeBaseID, source.KnowledgeID, source.DataSourceID, source.ExternalID).
+							Where(
+								("tenant_id=? AND knowledge_base_id=? AND knowledge_id=? AND datasource_id=?"+
+									" AND external_id=?"),
+								source.TenantID,
+								source.KnowledgeBaseID,
+								source.KnowledgeID,
+								source.DataSourceID,
+								source.ExternalID,
+							).
 							Take(&fence).
 							Error,
 					)

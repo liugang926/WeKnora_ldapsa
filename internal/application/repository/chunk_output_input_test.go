@@ -10,7 +10,15 @@ import (
 )
 
 func chunkOutputInputCases(t *testing.T, fixture func(*testing.T) (*KnowledgeInputProvenanceStore, *gorm.DB)) {
-	for _, change := range []string{"positive", "legacy nonmatching", "candidate addition", "candidate deletion", "content ABA", "wire field tamper", "graph projection"} {
+	for _, change := range []string{
+		"positive",
+		"legacy nonmatching",
+		"candidate addition",
+		"candidate deletion",
+		"content ABA",
+		"wire field tamper",
+		"graph projection",
+	} {
 		t.Run(change, func(t *testing.T) {
 			store, db := fixture(t)
 			ctx, k, c, _ := createAdmittedManual(t, store, db)
@@ -33,7 +41,15 @@ func chunkOutputInputCases(t *testing.T, fixture func(*testing.T) (*KnowledgeInp
 					t,
 					NewChunkRepository(
 						db,
-					).CreateChunks(context.Background(), []*types.Chunk{{ID: "unproved-image", TenantID: k.TenantID, KnowledgeBaseID: k.KnowledgeBaseID, KnowledgeID: k.ID, ChunkType: types.ChunkTypeImageCaption, Content: "orphan controlled body", IsEnabled: true}}),
+					).CreateChunks(context.Background(), []*types.Chunk{{
+						ID:              "unproved-image",
+						TenantID:        k.TenantID,
+						KnowledgeBaseID: k.KnowledgeBaseID,
+						KnowledgeID:     k.ID,
+						ChunkType:       types.ChunkTypeImageCaption,
+						Content:         "orphan controlled body",
+						IsEnabled:       true,
+					}}),
 				)
 				_, err = store.CaptureChunkOutputInputs(context.Background(), request)
 				require.Error(t, err)
@@ -43,7 +59,15 @@ func chunkOutputInputCases(t *testing.T, fixture func(*testing.T) (*KnowledgeInp
 					t,
 					NewChunkRepository(
 						db,
-					).CreateChunks(ctx, []*types.Chunk{{ID: "new-original-row", TenantID: k.TenantID, KnowledgeBaseID: k.KnowledgeBaseID, KnowledgeID: k.ID, ChunkType: types.ChunkTypeText, Content: "new admitted body", IsEnabled: true}}),
+					).CreateChunks(ctx, []*types.Chunk{{
+						ID:              "new-original-row",
+						TenantID:        k.TenantID,
+						KnowledgeBaseID: k.KnowledgeBaseID,
+						KnowledgeID:     k.ID,
+						ChunkType:       types.ChunkTypeText,
+						Content:         "new admitted body",
+						IsEnabled:       true,
+					}}),
 				)
 			case "candidate deletion":
 				require.NoError(t, db.Unscoped().Where("id = ?", c.ID).Delete(&types.Chunk{}).Error)

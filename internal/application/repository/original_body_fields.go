@@ -317,7 +317,8 @@ func (s *OriginalBodyRetentionStore) captureField(
 			return e
 		}
 		if old.BodySHA256 == sha &&
-			(d.Table != "knowledge_bases" || (prior.AdmissionID == scope.AdmissionID && prior.SourceLineage == scope.Lineage)) {
+			(d.Table != "knowledge_bases" ||
+				(prior.AdmissionID == scope.AdmissionID && prior.SourceLineage == scope.Lineage)) {
 			if d.Table == "knowledge_bases" && scope.AdmissionID != "" {
 				var count int64
 				if tx.Migrator().HasTable(&knowledgeConfigurationOriginalBodyManifest{}) {
@@ -357,7 +358,11 @@ func (s *OriginalBodyRetentionStore) captureField(
 			if e := bodyInternal(
 				tx,
 			).Model(&old).
-				Updates(map[string]any{"retired_at_ms": now, "body_deadline_ms": now + int64(3600000), "metadata_deadline_ms": now + int64(90*86400000)}).
+				Updates(map[string]any{
+					"retired_at_ms":        now,
+					"body_deadline_ms":     now + int64(3600000),
+					"metadata_deadline_ms": now + int64(90*86400000),
+				}).
 				Error; e != nil {
 				return e
 			}
@@ -444,9 +449,11 @@ func (s *OriginalBodyRetentionStore) captureField(
 	}
 	if e := bodyInternal(
 		tx,
-	).Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "source_table"}, {Name: "row_key"}, {Name: "column_name"}}, UpdateAll: true}).
-		Create(&head).
-		Error; e != nil {
+	).Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "source_table"}, {
+		Name: "row_key",
+	}, {Name: "column_name"}}, UpdateAll: true}).
+						Create(&head).
+						Error; e != nil {
 		return e
 	}
 	if e := bodyInternal(tx).Table("original_body_field_revisions").Create(&head).Error; e != nil {
@@ -507,7 +514,13 @@ func (s *OriginalBodyRetentionStore) recordBodyParents(tx *gorm.DB, id, raw stri
 				if e := bodyInternal(
 					tx,
 				).Clauses(clause.OnConflict{DoNothing: true}).
-					Create(&originalBodyParentRef{BodyID: id, TenantID: origin.TenantID, KnowledgeBaseID: origin.KnowledgeBaseID, KnowledgeID: origin.KnowledgeID, AdmissionID: admission}).
+					Create(&originalBodyParentRef{
+						BodyID:          id,
+						TenantID:        origin.TenantID,
+						KnowledgeBaseID: origin.KnowledgeBaseID,
+						KnowledgeID:     origin.KnowledgeID,
+						AdmissionID:     admission,
+					}).
 					Error; e != nil {
 					return e
 				}
@@ -986,7 +999,11 @@ func (s *OriginalBodyRetentionStore) ShareOriginalBodyFieldInTx(
 		tx,
 	).Model(&originalBodyFieldHead{}).
 		Where("slot_id=?", target.SlotID).
-		Updates(map[string]any{"body_id": target.BodyID, "revision": target.Revision, "original_body_ref": target.OriginalBodyRef}).
+		Updates(map[string]any{
+			"body_id":           target.BodyID,
+			"revision":          target.Revision,
+			"original_body_ref": target.OriginalBodyRef,
+		}).
 		Error; e != nil {
 		return e
 	}

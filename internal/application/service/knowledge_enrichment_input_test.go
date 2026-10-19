@@ -69,7 +69,7 @@ type enrichmentTestVLM struct {
 	beforeReturn func()
 }
 
-func (m *enrichmentTestVLM) Predict(_ context.Context, _ [][]byte, prompt string) (string, error) {
+func (m *enrichmentTestVLM) Predict(_ context.Context, _ [][]byte, _ string) (string, error) {
 	m.calls++
 	if m.beforeReturn != nil {
 		m.beforeReturn()
@@ -439,7 +439,12 @@ func assertEnrichmentReadable(t *testing.T, f *enrichmentTestFixture, ids []stri
 	require.NoError(t, e)
 	require.NoError(t, cg.Check(f.ctx, snapshot))
 	rows, e := repository.NewRAGChunkSnapshotReader(f.db, f.store).
-		HydrateRAGChunkSnapshots(f.ctx, []types.RAGChunkReadRequest{{TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: k.ID, ChunkIDs: ids}})
+		HydrateRAGChunkSnapshots(f.ctx, []types.RAGChunkReadRequest{{
+			TenantID:        7,
+			KnowledgeBaseID: "kb",
+			KnowledgeID:     k.ID,
+			ChunkIDs:        ids,
+		}})
 	require.NoError(t, e)
 	for _, row := range rows {
 		require.NoError(t, row.SourceLineage.RequireComplete())
@@ -605,7 +610,25 @@ func TestPostgresKnowledgeEnrichmentOriginalRoutes(t *testing.T) {
 }
 
 func runEnrichmentRejectedChanges(t *testing.T, pg bool) {
-	for _, mode := range []string{"body ABA", "metadata ABA", "neighbor ABA", "enable ABA", "config ABA", "model ABA", "runtime template", "tenant routing ABA", "KB binding ABA", "generic summary ABA", "generic questions ABA", "user revoked", "role revoked", "forged language", "forged proof", "forged scope", "canceled context"} {
+	for _, mode := range []string{
+		"body ABA",
+		"metadata ABA",
+		"neighbor ABA",
+		"enable ABA",
+		"config ABA",
+		"model ABA",
+		"runtime template",
+		"tenant routing ABA",
+		"KB binding ABA",
+		"generic summary ABA",
+		"generic questions ABA",
+		"user revoked",
+		"role revoked",
+		"forged language",
+		"forged proof",
+		"forged scope",
+		"canceled context",
+	} {
 		t.Run(mode, func(t *testing.T) {
 			f := newEnrichmentTestFixture(t, pg)
 			f.model.questions = true
@@ -727,8 +750,10 @@ func runEnrichmentRejectedChanges(t *testing.T, pg bool) {
 						t,
 						f.db.Model(&types.Chunk{}).
 							Where("id = ?", f.chunks[1].ID).
-							Update("metadata", types.JSON(("{\"generated_questions\":[{\"id\":\"forged\",\"question\":\"Cached unprove"+
-								"d question\"}]}"))).
+							Update("metadata", types.JSON(
+								("{\"generated_questions\":[{\"id\":\"forged\",\"question\":\"Cached unprove"+
+									"d question\"}]}"),
+							)).
 							Error,
 					)
 					require.NoError(
@@ -795,7 +820,12 @@ func runEnrichmentRejectedChanges(t *testing.T, pg bool) {
 			require.Empty(t, f.engine.indexed)
 		})
 	}
-	for _, mode := range []string{"bytes mismatch", "image control forged", "source revoke during OCR", "cancel during OCR"} {
+	for _, mode := range []string{
+		"bytes mismatch",
+		"image control forged",
+		"source revoke during OCR",
+		"cancel during OCR",
+	} {
 		t.Run(mode, func(t *testing.T) {
 			f := newEnrichmentTestFixture(t, pg)
 			image := []byte("actual original image bytes")
@@ -955,7 +985,12 @@ func runEnrichmentCurrentWriters(t *testing.T, pg bool) {
 			_, e := f.store.RefreshCurrentReadActor(ctx)
 			require.Error(t, e)
 			if revoke {
-				f.model.beforeReturn = func() { now := time.Now().UTC(); require.NoError(t, f.db.Model(key).Update("revoked_at", now).Error) }
+				f.model.beforeReturn = func() {
+					now := time.Now().UTC()
+					require.NoError(t, f.db.Model(
+						key,
+					).Update("revoked_at", now).Error)
+				}
 			}
 			require.NoError(t, f.s.RequestKnowledgeSummaryRefresh(ctx, f.k.ID))
 			e = f.s.ProcessSummaryGeneration(context.Background(), f.queue.tasks[len(f.queue.tasks)-1])

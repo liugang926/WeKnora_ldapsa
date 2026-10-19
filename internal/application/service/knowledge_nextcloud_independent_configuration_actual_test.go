@@ -13,7 +13,12 @@ import (
 )
 
 func TestNextcloudIndependentConfigurationLegacyPairActualSQLite(t *testing.T) {
-	for _, mode := range []string{"positive", "configuration ABA during model", "pair ABA during model", "body lease owner changed during model"} {
+	for _, mode := range []string{
+		"positive",
+		"configuration ABA during model",
+		"pair ABA during model",
+		"body lease owner changed during model",
+	} {
 		t.Run(mode, func(t *testing.T) {
 			m := newMachinePipelineFixture(t, false)
 			var operations int64

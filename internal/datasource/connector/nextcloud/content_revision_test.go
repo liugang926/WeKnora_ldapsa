@@ -67,6 +67,12 @@ func TestNextcloudDownloadContentRevisionMismatchRejectsArtifact(t *testing.T) {
 	require.NoError(t, err)
 	_, _, err = newClient(
 		cfg,
-	).content(context.Background(), "dev-published", manifestItem{FileID: 41, ETag: "same", ContentRevision: "1", Name: "Notes.md", Size: 11})
+	).content(context.Background(), "dev-published", manifestItem{
+		FileID:          41,
+		ETag:            "same",
+		ContentRevision: "1",
+		Name:            "Notes.md",
+		Size:            11,
+	})
 	require.Error(t, err)
 }

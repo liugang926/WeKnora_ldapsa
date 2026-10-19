@@ -166,7 +166,15 @@ func publicationSnapshotActualDB(t *testing.T, pg bool) *gorm.DB {
 
 func runPublicationDirectorySnapshotActual(t *testing.T, pg bool) {
 	t.Helper()
-	for _, mode := range []string{"current", "unchanged_complete_sync", "disabled", "out_of_scope", "unlinked", "sync_failure", "cross_directory_link"} {
+	for _, mode := range []string{
+		"current",
+		"unchanged_complete_sync",
+		"disabled",
+		"out_of_scope",
+		"unlinked",
+		"sync_failure",
+		"cross_directory_link",
+	} {
 		t.Run(mode, func(t *testing.T) {
 			db := publicationSnapshotActualDB(t, pg)
 			repo := apprepo.NewDirectoryRepository(db)
@@ -236,7 +244,9 @@ func runPublicationDirectorySnapshotActual(t *testing.T, pg bool) {
 						FileID      int64  `json:"file_id"`
 					}
 					if err := json.NewDecoder(r.Body).
-						Decode(&payload); err != nil || payload.DirectoryID != directory.ID || payload.ObjectGUID != guid ||
+						Decode(
+							&payload,
+						); err != nil || payload.DirectoryID != directory.ID || payload.ObjectGUID != guid ||
 						payload.FileID != 42 {
 						t.Error("source check did not use the exact current linked identity")
 						w.WriteHeader(http.StatusBadRequest)

@@ -30,7 +30,12 @@ func testMessageMaterialExternalTail(t *testing.T, postgres bool) {
 				kg, store, pgdb, pgctx := faqPostgresActualFixture(t)
 				require.NoError(t, pgdb.Exec("CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\"").Error)
 				require.NoError(t, pgdb.Exec("ALTER TABLE messages ADD COLUMN artifacts JSONB").Error)
-				for _, name := range []string{"000103_message_artifacts_table.up.sql", "000107_message_artifacts_deleted_at.up.sql", "000127_nextcloud_content_leases.up.sql", "000151_message_original_materials.up.sql"} {
+				for _, name := range []string{
+					"000103_message_artifacts_table.up.sql",
+					"000107_message_artifacts_deleted_at.up.sql",
+					"000127_nextcloud_content_leases.up.sql",
+					"000151_message_original_materials.up.sql",
+				} {
 					ddl, err := os.ReadFile("../../../migrations/versioned/" + name)
 					require.NoError(t, err)
 					require.NoError(t, pgdb.Exec(string(ddl)).Error)

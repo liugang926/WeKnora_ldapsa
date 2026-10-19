@@ -243,7 +243,12 @@ func (s *KnowledgeInputProvenanceStore) peekFAQInputReadPlanInTx(
 			Joins("JOIN faq_entry_input_admissions a ON a.id=m.admission_id AND a.chunk_id=m.chunk_id").
 			Joins("JOIN faq_input_sessions s ON s.id=a.session_id").
 			Joins("JOIN faq_input_row_versions v ON v.chunk_id=m.chunk_id").
-			Where("m.chunk_id IN ? AND a.tenant_id=? AND a.knowledge_base_id=?", ids, request.TenantID, request.KnowledgeBaseID).
+			Where(
+				"m.chunk_id IN ? AND a.tenant_id=? AND a.knowledge_base_id=?",
+				ids,
+				request.TenantID,
+				request.KnowledgeBaseID,
+			).
 			Order("m.chunk_id").
 			Scan(&proofs).
 			Error

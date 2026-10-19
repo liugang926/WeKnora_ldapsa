@@ -188,13 +188,21 @@ func RequireNextcloudScopedRoutes(
 		switch path {
 		case "/api/v1/knowledge-bases", "/api/v1/knowledge-bases/:id", "/api/v1/knowledge-bases/:id/hybrid-search",
 			"/api/v1/knowledge-bases/:id/knowledge", "/api/v1/knowledge-bases/:id/knowledge/folders",
-			"/api/v1/knowledge/batch", "/api/v1/knowledge/:id", "/api/v1/knowledge/:id/stages", "/api/v1/knowledge/:id/spans", "/api/v1/knowledge/:id/preview", "/api/v1/knowledge/search",
+			"/api/v1/knowledge/batch",
+			"/api/v1/knowledge/:id",
+			"/api/v1/knowledge/:id/stages",
+			"/api/v1/knowledge/:id/spans",
+			"/api/v1/knowledge/:id/preview",
+			"/api/v1/knowledge/search",
 			"/api/v1/chunks/:knowledge_id", "/api/v1/chunks/by-id/:id", "/api/v1/integrations/nextcloud/ask-target":
 			allowed = true
 		}
 
 		if !allowed ||
-			(c.Request.Method != http.MethodGet && !strings.Contains(path, "hybrid-search") && !strings.Contains(path, "/ask")) {
+			(c.Request.Method != http.MethodGet && !strings.Contains(path, "hybrid-search") && !strings.Contains(
+				path,
+				"/ask",
+			)) {
 			deny()
 			return
 		}

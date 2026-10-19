@@ -17,7 +17,18 @@ import (
 )
 
 func gcManualActual(t *testing.T, pg bool) {
-	for _, mode := range []string{"collect", "retention", "no-coverage", "broad-reader", "disabled", "viewer", "api-key", "late-disabled", "cross-tenant", "missing-factory"} {
+	for _, mode := range []string{
+		"collect",
+		"retention",
+		"no-coverage",
+		"broad-reader",
+		"disabled",
+		"viewer",
+		"api-key",
+		"late-disabled",
+		"cross-tenant",
+		"missing-factory",
+	} {
 		t.Run(mode, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 			defer cancel()

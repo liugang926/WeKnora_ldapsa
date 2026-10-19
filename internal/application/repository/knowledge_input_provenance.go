@@ -530,7 +530,15 @@ func sealKnowledgeInputMaterial(tx *gorm.DB, admissionID string, k *types.Knowle
 		receipt.GraphBodyDigest = &graphDigest
 		receipt.GraphRowRevision = &graphRevision
 	}
-	return tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "row_kind"}, {Name: "row_id"}}, DoUpdates: clause.AssignmentColumns([]string{"admission_id", "row_revision", "body_digest", "graph_body_digest", "graph_row_revision"})}).
+	return tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "row_kind"}, {
+		Name: "row_id",
+	}}, DoUpdates: clause.AssignmentColumns([]string{
+		"admission_id",
+		"row_revision",
+		"body_digest",
+		"graph_body_digest",
+		"graph_row_revision",
+	})}).
 		Create(&receipt).
 		Error
 }
@@ -647,7 +655,15 @@ func (s *KnowledgeInputProvenanceStore) admissionInTx(
 		return nil, nil, nil, err
 	}
 	if expected != nil &&
-		(expected.Version != 1 || expected.TenantID != k.TenantID || expected.KnowledgeBaseID != k.KnowledgeBaseID || expected.KnowledgeID != k.ID || expected.BuildGeneration != a.BuildGeneration || expected.InputDigest != a.InputDigest || expected.ConfigDigest != a.ConfigDigest || !reflect.DeepEqual(expected.SourceLineage, &lineage)) {
+		(expected.Version != 1 ||
+			expected.TenantID != k.TenantID ||
+			expected.KnowledgeBaseID != k.KnowledgeBaseID ||
+			expected.KnowledgeID != k.ID ||
+			expected.BuildGeneration != a.BuildGeneration ||
+			expected.InputDigest != a.InputDigest || expected.ConfigDigest != a.ConfigDigest || !reflect.DeepEqual(
+			expected.SourceLineage,
+			&lineage,
+		)) {
 		return nil, nil, nil, ErrKnowledgeInputChanged
 	}
 	if expected == nil || expected.Projection != types.KnowledgeBuildProjectionGraph {
@@ -941,7 +957,12 @@ func sealKnowledgeInputChunks(ctx context.Context, tx *gorm.DB, chunks []*types.
 		// The write was validated before SQL changed these rows. Re-sealing runs
 		// in that same transaction and cannot recapture a now-unsealed chunk.
 		var k types.Knowledge
-		if err := tx.Where("id = ? AND tenant_id = ? AND knowledge_base_id = ?", c.KnowledgeID, c.TenantID, c.KnowledgeBaseID).
+		if err := tx.Where(
+			"id = ? AND tenant_id = ? AND knowledge_base_id = ?",
+			c.KnowledgeID,
+			c.TenantID,
+			c.KnowledgeBaseID,
+		).
 			Take(&k).
 			Error; err != nil {
 			return err
@@ -965,7 +986,13 @@ func sealKnowledgeInputChunks(ctx context.Context, tx *gorm.DB, chunks []*types.
 			continue
 		}
 		var actual types.Chunk
-		if err := tx.Where("id = ? AND tenant_id = ? AND knowledge_base_id = ? AND knowledge_id = ?", c.ID, c.TenantID, c.KnowledgeBaseID, c.KnowledgeID).
+		if err := tx.Where(
+			"id = ? AND tenant_id = ? AND knowledge_base_id = ? AND knowledge_id = ?",
+			c.ID,
+			c.TenantID,
+			c.KnowledgeBaseID,
+			c.KnowledgeID,
+		).
 			Take(&actual).
 			Error; err != nil {
 			return err
@@ -991,7 +1018,12 @@ func (s *KnowledgeInputProvenanceStore) captureKnowledgeBuildSnapshotInTx(
 		return nil, err
 	}
 	var k types.Knowledge
-	if err := tx.Where("id = ? AND tenant_id = ? AND knowledge_base_id = ?", request.KnowledgeID, request.TenantID, request.KnowledgeBaseID).
+	if err := tx.Where(
+		"id = ? AND tenant_id = ? AND knowledge_base_id = ?",
+		request.KnowledgeID,
+		request.TenantID,
+		request.KnowledgeBaseID,
+	).
 		Take(&k).
 		Error; err != nil {
 		return nil, err
@@ -1011,7 +1043,13 @@ func (s *KnowledgeInputProvenanceStore) captureKnowledgeBuildSnapshotInTx(
 		}
 		seen[id] = true
 		c := &types.Chunk{}
-		if err := tx.Where("id = ? AND tenant_id = ? AND knowledge_base_id = ? AND knowledge_id = ?", id, k.TenantID, k.KnowledgeBaseID, k.ID).
+		if err := tx.Where(
+			"id = ? AND tenant_id = ? AND knowledge_base_id = ? AND knowledge_id = ?",
+			id,
+			k.TenantID,
+			k.KnowledgeBaseID,
+			k.ID,
+		).
 			Take(c).
 			Error; err != nil {
 			return nil, err
@@ -1094,7 +1132,10 @@ func (s *KnowledgeInputProvenanceStore) captureKnowledgeBuildSnapshotInTx(
 		SourceLineage:   lineage,
 	}
 	if (recheck || request.Expected.BodyDigest != "") &&
-		(proof.BodyDigest != request.Expected.BodyDigest || !reflect.DeepEqual(proof.ChunkIDs, request.Expected.ChunkIDs)) {
+		(proof.BodyDigest != request.Expected.BodyDigest || !reflect.DeepEqual(
+			proof.ChunkIDs,
+			request.Expected.ChunkIDs,
+		)) {
 		return nil, ErrKnowledgeInputChanged
 	}
 	result := &types.KnowledgeBuildInputSnapshot{Knowledge: &k, KnowledgeBase: kb, Chunks: chunks, Proof: proof}

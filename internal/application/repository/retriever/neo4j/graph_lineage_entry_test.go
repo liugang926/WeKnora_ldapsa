@@ -303,7 +303,8 @@ func TestKnowledgeGraphLegacyOrChangedBodyCannotBorrowChunkProof(t *testing.T) {
 			label := "`ENTITY" + namespace.KnowledgeBase + "`:`ENTITY" + namespace.Knowledge + "`"
 			query := `MATCH (n:` + label + `) SET n.attributes=['rewritten attributes']`
 			if mode != "changed body" {
-				query = `CREATE (n:` + label + (" {name:'legacy',kg:$kg,chunks:['current-chunk'],attributes:['unknown graph" +
+				query = `CREATE (n:` + label + (" {name:'legacy',kg:$kg,chunks:['" +
+					"current-chunk'],attributes:['unknown graph" +
 					"']})")
 			}
 			_, err := session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (any, error) {

@@ -71,7 +71,13 @@ func (s *OriginalBodyRetentionStore) bodyKnowledgeDeadline(
 			if e := bodyInternal(
 				tx,
 			).Model(&NextcloudIndexedWithdrawal{}).
-				Where("tenant_id=? AND knowledge_base_id=? AND datasource_id=? AND state=?", tenant, kb, meta["datasource_id"], "withdrawn_inventory_incomplete").
+				Where(
+					"tenant_id=? AND knowledge_base_id=? AND datasource_id=? AND state=?",
+					tenant,
+					kb,
+					meta["datasource_id"],
+					"withdrawn_inventory_incomplete",
+				).
 				Count(&n).
 				Error; e != nil {
 				return 0, true, e
@@ -254,7 +260,13 @@ func (s *OriginalBodyRetentionStore) fieldCurrent(
 			var withdrawal NextcloudIndexedWithdrawal
 			e := bodyInternal(
 				tx,
-			).Where("tenant_id=? AND knowledge_base_id=? AND datasource_id=? AND state=?", head.TenantID, head.KnowledgeBaseID, row["datasource_id"], "withdrawn_inventory_incomplete").
+			).Where(
+				"tenant_id=? AND knowledge_base_id=? AND datasource_id=? AND state=?",
+				head.TenantID,
+				head.KnowledgeBaseID,
+				row["datasource_id"],
+				"withdrawn_inventory_incomplete",
+			).
 				Take(&withdrawal).
 				Error
 			if e == nil {
@@ -661,8 +673,19 @@ func (s *OriginalBodyRetentionStore) PurgeSelectedJob(
 			return bodyInternal(
 				tx,
 			).Model(&nextcloudGCJob{}).
-				Where("id=? AND tenant_id=? AND knowledge_base_id=? AND knowledge_id=?", job.ID, job.TenantID, job.KnowledgeBaseID, job.KnowledgeID).
-				Updates(map[string]any{"state": "blocked", "completed_at": nil, "last_error_code": "original_body_retained_or_unverified", "next_attempt_at": time.UnixMilli(now).Add(nextcloudGCRetryWindow)}).
+				Where(
+					"id=? AND tenant_id=? AND knowledge_base_id=? AND knowledge_id=?",
+					job.ID,
+					job.TenantID,
+					job.KnowledgeBaseID,
+					job.KnowledgeID,
+				).
+				Updates(map[string]any{
+					"state":           "blocked",
+					"completed_at":    nil,
+					"last_error_code": "original_body_retained_or_unverified",
+					"next_attempt_at": time.UnixMilli(now).Add(nextcloudGCRetryWindow),
+				}).
 				Error
 		})
 		return 0, errors.Join(e, recordErr)
@@ -756,7 +779,11 @@ func (s *OriginalBodyRetentionStore) PurgeSelectedJob(
 				tx,
 			).Model(&nextcloudGCJob{}).
 				Where("id=?", job.ID).
-				Updates(map[string]any{"state": "blocked", "completed_at": nil, "last_error_code": "original_body_retained_or_unverified"}).
+				Updates(map[string]any{
+					"state":           "blocked",
+					"completed_at":    nil,
+					"last_error_code": "original_body_retained_or_unverified",
+				}).
 				Error
 		}
 		return nil
@@ -895,7 +922,11 @@ func (s *OriginalBodyRetentionStore) purgeBodyIDs(
 				if e := bodyInternal(
 					tx,
 				).Model(&body).
-					Updates(map[string]any{"retired_at_ms": now, "body_deadline_ms": deadline, "metadata_deadline_ms": now + 90*86400000}).
+					Updates(map[string]any{
+						"retired_at_ms":        now,
+						"body_deadline_ms":     deadline,
+						"metadata_deadline_ms": now + 90*86400000,
+					}).
 					Error; e != nil {
 					return e
 				}

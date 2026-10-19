@@ -29,7 +29,10 @@ func (h *TagHandler) requireTagOutput(c *gin.Context) bool {
 func (h *TagHandler) respondCommittedTag(ctx context.Context, c *gin.Context, returned *types.KnowledgeTag) {
 	snapshot, err := repository.TagCommittedOutput(ctx)
 	if err == nil &&
-		(returned == nil || snapshot.Request.TagID != returned.ID || snapshot.Request.TenantID != returned.TenantID || snapshot.Request.KnowledgeBaseID != returned.KnowledgeBaseID) {
+		(returned == nil ||
+			snapshot.Request.TagID != returned.ID ||
+			snapshot.Request.TenantID != returned.TenantID ||
+			snapshot.Request.KnowledgeBaseID != returned.KnowledgeBaseID) {
 		err = repository.ErrKnowledgeInputChanged
 	}
 	if err != nil {

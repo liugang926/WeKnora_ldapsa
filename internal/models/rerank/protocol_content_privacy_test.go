@@ -19,7 +19,10 @@ func TestSourceContentProtocolRerankDebugPreservesOrdinary(t *testing.T) {
 	log.SetLevel(logrus.DebugLevel)
 	ctx := context.WithValue(context.Background(), types.LoggerContextKey, logrus.NewEntry(log))
 	r := newWrapped(&fakeProtocol{}, catalog.RerankSettings{})
-	for _, private := range []context.Context{logprivacy.SuppressContent(ctx), types.WithRAGSourceLineage(ctx, types.NewRAGSourceLineage(nil))} {
+	for _, private := range []context.Context{
+		logprivacy.SuppressContent(ctx),
+		types.WithRAGSourceLineage(ctx, types.NewRAGSourceLineage(nil)),
+	} {
 		result, err := r.Rerank(private, "PRIVATE_SOURCE_QUERY", []string{"PRIVATE_SOURCE_DOCUMENT"})
 		require.NoError(t, err)
 		require.Equal(t, "PRIVATE_SOURCE_DOCUMENT", result[0].Document.Text)

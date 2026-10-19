@@ -122,14 +122,21 @@ func runKnowledgeMachineSecretControls(t *testing.T, pg bool) {
 			} else {
 				require.Equal(t, int64(1), added)
 			}
-			for _, table := range []string{"knowledge_auto_tag_input_manifests", "datasource_name_inputs", "nextcloud_original_upload_inputs"} {
+			for _, table := range []string{
+				"knowledge_auto_tag_input_manifests",
+				"datasource_name_inputs",
+				"nextcloud_original_upload_inputs",
+			} {
 				var inputs []string
 				require.NoError(t, m.f.db.Table(table).Pluck("actual_inputs", &inputs).Error)
 				require.NotEmpty(t, inputs)
 				for _, input := range inputs {
 					require.False(
 						t,
-						strings.Contains(input, secret) || strings.Contains(input, appID) || strings.Contains(input, "tenant_input") ||
+						strings.Contains(input, secret) || strings.Contains(
+							input,
+							appID,
+						) || strings.Contains(input, "tenant_input") ||
 							strings.Contains(input, "app_secret"),
 						"immutable receipt must contain only credential/configuration digest and version",
 					)

@@ -52,8 +52,12 @@ func TestSessionTitleReviewPostgresOriginalProofAndRevisionCAS(t *testing.T) {
 	require.NoError(t, db.AutoMigrate(&types.Session{}))
 	script, err := os.ReadFile("../../../migrations/versioned/000133_session_text_source_lineage.up.sql")
 	require.NoError(t, err)
-	function := string(script)[strings.Index(string(script), "CREATE OR REPLACE FUNCTION"):strings.Index(string(script), "CREATE TRIGGER")]
-	trigger := string(script)[strings.Index(string(script), "CREATE TRIGGER"):strings.Index(string(script), "COMMENT ON")]
+	function := string(
+		script,
+	)[strings.Index(string(script), "CREATE OR REPLACE FUNCTION"):strings.Index(string(script), "CREATE TRIGGER")]
+	trigger := string(
+		script,
+	)[strings.Index(string(script), "CREATE TRIGGER"):strings.Index(string(script), "COMMENT ON")]
 	require.NoError(t, db.Exec(function).Error)
 	require.NoError(t, db.Exec(trigger).Error)
 	repo := NewSessionRepository(db).(*sessionRepository)

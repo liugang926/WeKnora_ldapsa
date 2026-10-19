@@ -24,7 +24,13 @@ func (r *vectorCandidateSQLRecorder) Trace(_ context.Context, _ time.Time, fc fu
 }
 
 func TestNativeSQLiteVectorCandidatesFilterBeforeTopKAndNeverSelectBody(t *testing.T) {
-	for _, mode := range []string{"knowledge-base", "tenant", "owned-whitelist", "index-disabled", "knowledge-disabled"} {
+	for _, mode := range []string{
+		"knowledge-base",
+		"tenant",
+		"owned-whitelist",
+		"index-disabled",
+		"knowledge-disabled",
+	} {
 		t.Run(mode, func(t *testing.T) {
 			r := newSQLiteRetrieverTestRepository(t)
 			require.NoError(

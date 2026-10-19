@@ -91,7 +91,16 @@ func serveAuxiliaryMetadataHTTP(h *KnowledgeHandler, batch bool) *httptest.Respo
 
 func TestKnowledgeOutputAuxiliaryActualHTTPExplicitMetadata(t *testing.T) {
 	for _, batch := range []bool{false, true} {
-		for _, change := range []string{"original_tags", "original_tags_and_kb_name", "unconsumed_name_and_unrelated_legacy", "legacy_tag", "tag_aba_before_output", "name_aba_before_output", "relation_aba_before_output", "wire_alias_before_output"} {
+		for _, change := range []string{
+			"original_tags",
+			"original_tags_and_kb_name",
+			"unconsumed_name_and_unrelated_legacy",
+			"legacy_tag",
+			"tag_aba_before_output",
+			"name_aba_before_output",
+			"relation_aba_before_output",
+			"wire_alias_before_output",
+		} {
 			t.Run(map[bool]string{false: "single", true: "batch"}[batch]+"/"+change, func(t *testing.T) {
 				h, db, store, groups, shares, agents := collectionHTTPFixture(t)
 				tags := repository.NewKnowledgeTagRepository(db)

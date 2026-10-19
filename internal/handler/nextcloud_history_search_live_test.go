@@ -106,7 +106,10 @@ func addDocumentLiveHistorySearch(t *testing.T, router *gin.Engine, db *gorm.DB,
 		if revoked {
 			stage = "source_revoked"
 		}
-		for _, item := range []struct{ name, query string }{{"answer", "Bob"}, {"question_partner", "Who does Alice know on Project Cedar?"}} {
+		for _, item := range []struct{ name, query string }{{
+			"answer",
+			"Bob",
+		}, {"question_partner", "Who does Alice know on Project Cedar?"}} {
 			t.Run("jwt_history_search_"+stage+"_"+item.name, func(t *testing.T) {
 				body, err := json.Marshal(
 					map[string]any{

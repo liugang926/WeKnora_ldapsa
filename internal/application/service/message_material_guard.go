@@ -372,7 +372,13 @@ func (g *MessageMaterialGuard) prepareOwnPlanGrowthLocked(
 			return fail(repository.ErrNextcloudContentGCUncovered)
 		}
 		lease, err := g.store.ContentLeaseStore().
-			UpgradeKBRead(g.ctx, kb.ID, repository.NextcloudContentScope{TenantID: source.TenantID, KnowledgeBaseID: source.KnowledgeBaseID, KnowledgeID: source.KnowledgeID, DataSourceID: source.DataSourceID, ExternalID: source.ExternalID}, kb.OwnerID, 2*time.Minute)
+			UpgradeKBRead(g.ctx, kb.ID, repository.NextcloudContentScope{
+				TenantID:        source.TenantID,
+				KnowledgeBaseID: source.KnowledgeBaseID,
+				KnowledgeID:     source.KnowledgeID,
+				DataSourceID:    source.DataSourceID,
+				ExternalID:      source.ExternalID,
+			}, kb.OwnerID, 2*time.Minute)
 		if err != nil {
 			return fail(err)
 		}

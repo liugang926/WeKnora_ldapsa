@@ -84,7 +84,19 @@ func gcActualObjectFixture(t *testing.T, pg bool) (*NextcloudGCStore, *gorm.DB, 
 }
 
 func gcActualRunDueContract(t *testing.T, pg bool) {
-	for _, mode := range []string{"coverage-missing", "broad-reader", "exact-reader", "build-worker", "late-reader", "provider-failure", "crash-after-unlink", "restore-before-provider", "symlink", "shared", "lost-claim"} {
+	for _, mode := range []string{
+		"coverage-missing",
+		"broad-reader",
+		"exact-reader",
+		"build-worker",
+		"late-reader",
+		"provider-failure",
+		"crash-after-unlink",
+		"restore-before-provider",
+		"symlink",
+		"shared",
+		"lost-claim",
+	} {
 		t.Run(mode, func(t *testing.T) {
 			ctx := context.Background()
 			store, db, jobID, ref, path := gcActualObjectFixture(t, pg)

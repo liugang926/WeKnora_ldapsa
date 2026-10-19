@@ -52,9 +52,12 @@ func newClient(cfg config) *client {
 				return http.ErrUseLastResponse
 			},
 			Transport: &http.Transport{
-				DisableCompression:    true,
-				Proxy:                 nil,
-				DialContext:           (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+				DisableCompression: true,
+				Proxy:              nil,
+				DialContext: (&net.Dialer{
+					Timeout:   10 * time.Second,
+					KeepAlive: 30 * time.Second,
+				}).DialContext,
 				TLSHandshakeTimeout:   10 * time.Second,
 				ResponseHeaderTimeout: 20 * time.Second,
 				IdleConnTimeout:       30 * time.Second,

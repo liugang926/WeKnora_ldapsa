@@ -231,7 +231,17 @@ func TestMessageRewindActualHTTPOriginalUserAssistantCutsAndFinalLeaseCleanup(t 
 }
 
 func TestMessageRewindActualHTTPFinalWriterRejectsActorSourceBodyAndControlABA(t *testing.T) {
-	for _, mode := range []string{"actor_revoke", "source_revoke", "remaining_body_aba", "remaining_control_aba", "owner_aba", "deleted_body_aba", "deleted_control_aba", "http_cancel", "lease_expired"} {
+	for _, mode := range []string{
+		"actor_revoke",
+		"source_revoke",
+		"remaining_body_aba",
+		"remaining_control_aba",
+		"owner_aba",
+		"deleted_body_aba",
+		"deleted_control_aba",
+		"http_cancel",
+		"lease_expired",
+	} {
 		t.Run(mode, func(t *testing.T) {
 			f := newActualHTTPTailFixture(t, mode == "source_revoke")
 			first, user, answer := actualRewindHTTPMessages(t, f)

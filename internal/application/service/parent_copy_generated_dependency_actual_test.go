@@ -23,7 +23,17 @@ import (
 // is restored at the real generated-field Create boundary; receipts and parent
 // material are obtained from the actual producers/readers, never raw SQL seals.
 func runParentCopyActualGeneratedDependency(t *testing.T, pg bool) {
-	for _, mode := range []string{"known-source-closure", "source-still-active", "missing-source-coverage", "missing-existing-scope", "corrupt-existing-scope", "changed-generated-source", "changed-generated-parent", "wrong-generation", "wrong-admission"} {
+	for _, mode := range []string{
+		"known-source-closure",
+		"source-still-active",
+		"missing-source-coverage",
+		"missing-existing-scope",
+		"corrupt-existing-scope",
+		"changed-generated-source",
+		"changed-generated-parent",
+		"wrong-generation",
+		"wrong-admission",
+	} {
 		t.Run(mode, func(t *testing.T) {
 			m := newMachinePipelineFixture(t, pg)
 			k := m.ingest(t)
@@ -127,7 +137,9 @@ func runParentCopyActualGeneratedDependency(t *testing.T, pg bool) {
 				types.KnowledgeBuildInputCaptureRequest{TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: k.ID},
 			)
 			require.NoError(t, err)
-			parent.Content, parent.IsCompleted, parent.SourceLineage = "actual source-derived answer", true, actual.Proof.SourceLineage
+			parent.Content, parent.IsCompleted, parent.SourceLineage = "actual source-derived answer",
+				true,
+				actual.Proof.SourceLineage
 			require.NoError(t, messages.UpdateMessage(ctx, parent))
 			scope := access.LineageReadScope{
 				Targets: []*types.SearchTarget{
@@ -139,7 +151,13 @@ func runParentCopyActualGeneratedDependency(t *testing.T, pg bool) {
 			writer = types.WithRAGSourceLineage(
 				writer,
 				types.NewRAGSourceLineage(
-					func(check context.Context, l *types.SourceLineage) error { return m.f.guard.Check(check, l, scope) },
+					func(check context.Context, l *types.SourceLineage) error {
+						return m.f.guard.Check(
+							check,
+							l,
+							scope,
+						)
+					},
 				),
 			)
 			_, err = messages.GetMessage(writer, session.ID, parent.ID)
@@ -165,7 +183,13 @@ func runParentCopyActualGeneratedDependency(t *testing.T, pg bool) {
 			copyWriter = types.WithRAGSourceLineage(
 				copyWriter,
 				types.NewRAGSourceLineage(
-					func(check context.Context, l *types.SourceLineage) error { return m.f.guard.Check(check, l, scope) },
+					func(check context.Context, l *types.SourceLineage) error {
+						return m.f.guard.Check(
+							check,
+							l,
+							scope,
+						)
+					},
 				),
 			)
 			_, err = messages.GetMessage(copyWriter, session.ID, user.ID)
@@ -397,8 +421,12 @@ func runParentCopyActualGeneratedDependency(t *testing.T, pg bool) {
 			require.NoError(
 				t,
 				m.f.db.Table("nextcloud_content_leases").
-					Where(("tenant_id=7 AND knowledge_base_id='kb' AND knowledge_id=? AND epoch=? AND "+
-						"kind='read' AND released_at_ms IS NULL"), k.ID, actual.Proof.SourceLineage.Sources[0].Revision).
+					Where(
+						("tenant_id=7 AND knowledge_base_id='kb' AND knowledge_id=? AND epoch=? AND "+
+							"kind='read' AND released_at_ms IS NULL"),
+						k.ID,
+						actual.Proof.SourceLineage.Sources[0].Revision,
+					).
 					Count(&exactHeld).
 					Error,
 			)
@@ -440,8 +468,10 @@ func runParentCopyActualGeneratedDependency(t *testing.T, pg bool) {
 					m.f.db.Exec(
 						("INSERT INTO nextcloud_content_lease_coverage(tenant_id,knowledge_base_id,a"+
 							"ctivated_at_ms,legacy_drained_at_ms,reader_revision,builder_revision) VALU"+
-							"ES(7,'kb',")+clock+","+clock+(",'actual-copy-pipeline-reader-contract','actual-copy-pipeline-builder-cont"+
-							"ract')"),
+							"ES(7,'kb',")+
+							clock+","+clock+
+							(",'actual-copy-pipeline-reader-contract','actual-copy-pipeline-builder-cont"+
+								"ract')"),
 					).Error,
 				)
 			}

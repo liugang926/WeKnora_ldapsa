@@ -267,7 +267,14 @@ func TestSpanOriginalLateRunTokenAndCrossAttemptRejected(t *testing.T) {
 }
 
 func TestSpanOriginalBodyAndInputControlABAClosed(t *testing.T) {
-	for _, mode := range []string{"span body", "chunk input", "chunk metadata", "parser controls", "input artifact", "tuple"} {
+	for _, mode := range []string{
+		"span body",
+		"chunk input",
+		"chunk metadata",
+		"parser controls",
+		"input artifact",
+		"tuple",
+	} {
 		t.Run(mode, func(t *testing.T) {
 			store, db, ctx, k, c, repo := spanFixture(t)
 			root := startOriginalSpan(ctx, t, repo, k.ID, 1, "root", "", types.SpanKindRoot)
@@ -384,7 +391,15 @@ func TestSpanOriginalNextcloudETagChangeAndWithdrawalCannotCertifyOldAttempt(t *
 		t.Run(mode, func(t *testing.T) {
 			store, db := knowledgeInputFixture(t)
 			repo := NewKnowledgeRepository(db).(*knowledgeRepository)
-			repo.nextcloudPublicationCheck = func(context.Context, *types.DataSourceConfig, string, string, int64, string, string) error {
+			repo.nextcloudPublicationCheck = func(
+				context.Context,
+				*types.DataSourceConfig,
+				string,
+				string,
+				int64,
+				string,
+				string,
+			) error {
 				return nil
 			}
 			require.NoError(
@@ -472,7 +487,12 @@ func TestSpanOriginalKnowledgeDeletionClearsManifestAndContent(t *testing.T) {
 	root := startOriginalSpan(ctx, t, repo, k.ID, 1, "root", "", types.SpanKindRoot)
 	finishOriginalSpan(ctx, t, repo, root)
 	require.NoError(t, db.Unscoped().Where("id = ?", k.ID).Delete(&types.Knowledge{}).Error)
-	for _, table := range []string{"knowledge_span_start_manifests", "knowledge_span_body_receipts", "knowledge_span_row_versions", "knowledge_processing_spans"} {
+	for _, table := range []string{
+		"knowledge_span_start_manifests",
+		"knowledge_span_body_receipts",
+		"knowledge_span_row_versions",
+		"knowledge_processing_spans",
+	} {
 		var count int64
 		require.NoError(t, db.Table(table).Count(&count).Error)
 		require.Zero(t, count, table)

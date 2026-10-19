@@ -326,9 +326,21 @@ func (r *knowledgeRepository) preserveNextcloudSourceFields(tx *gorm.DB, k *type
 		return err
 	}
 	for _, key := range []string{
-		"datasource_id", "external_id", "source_resource_id", "channel",
-		"nextcloud_instance_id", "nextcloud_binding_id", "nextcloud_file_id", "nextcloud_path",
-		"nextcloud_generation", "nextcloud_content_revision", "nextcloud_publication_epoch", "source_updated_at", "source_created_at", "nextcloud_target_etag", "nextcloud_etag",
+		"datasource_id",
+		"external_id",
+		"source_resource_id",
+		"channel",
+		"nextcloud_instance_id",
+		"nextcloud_binding_id",
+		"nextcloud_file_id",
+		"nextcloud_path",
+		"nextcloud_generation",
+		"nextcloud_content_revision",
+		"nextcloud_publication_epoch",
+		"source_updated_at",
+		"source_created_at",
+		"nextcloud_target_etag",
+		"nextcloud_etag",
 	} {
 		if value, ok := currentMetadata[key]; ok {
 			incomingMetadata[key] = value
@@ -707,7 +719,12 @@ func (r *knowledgeRepository) stageNextcloudVersion(
 				return err
 			}
 			var pair NextcloudSourcePairing
-			if err := tx.Where("tenant_id=? AND knowledge_base_id=? AND datasource_id=? AND state='active'", tenantID, kbID, dsID).
+			if err := tx.Where(
+				"tenant_id=? AND knowledge_base_id=? AND datasource_id=? AND state='active'",
+				tenantID,
+				kbID,
+				dsID,
+			).
 				Take(&pair).
 				Error; err != nil {
 				return err
@@ -743,7 +760,13 @@ func (r *knowledgeRepository) stageNextcloudVersion(
 				}
 			}
 		}
-		for _, key := range []string{"nextcloud_path", "nextcloud_generation", "nextcloud_publication_epoch", "source_updated_at", "source_created_at"} {
+		for _, key := range []string{
+			"nextcloud_path",
+			"nextcloud_generation",
+			"nextcloud_publication_epoch",
+			"source_updated_at",
+			"source_created_at",
+		} {
 			if value, ok := sourceMetadata[key]; ok {
 				metadata[key] = value
 			}

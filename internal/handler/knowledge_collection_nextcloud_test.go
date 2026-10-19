@@ -57,7 +57,13 @@ func collectionNextcloudHTTPStateFixture(
 	t *testing.T,
 	change string,
 	beforeSource func(*gorm.DB, *repository.KnowledgeInputProvenanceStore),
-) (*KnowledgeHandler, *gorm.DB, *repository.KnowledgeInputProvenanceStore, *access.NextcloudSourceLineageGuard, *atomic.Int64) {
+) (
+	*KnowledgeHandler,
+	*gorm.DB,
+	*repository.KnowledgeInputProvenanceStore,
+	*access.NextcloudSourceLineageGuard,
+	*atomic.Int64,
+) {
 	t.Helper()
 	h, db, store, groups, shares, agents := collectionHTTPFixture(t)
 	if beforeSource != nil {
@@ -107,7 +113,13 @@ func collectionNextcloudHTTPStateFixture(
 				require.NoError(
 					t,
 					repository.NewNextcloudContentLeaseStore(db).
-						RetireKnowledge(context.Background(), repository.NextcloudContentScope{TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: "source", DataSourceID: "ds", ExternalID: "nextcloud:instance:77"}),
+						RetireKnowledge(context.Background(), repository.NextcloudContentScope{
+							TenantID:        7,
+							KnowledgeBaseID: "kb",
+							KnowledgeID:     "source",
+							DataSourceID:    "ds",
+							ExternalID:      "nextcloud:instance:77",
+						}),
 				)
 			}
 			if _, err := fmt.Fprint(
@@ -130,7 +142,11 @@ func collectionNextcloudHTTPStateFixture(
 		require.NoError(t, err)
 		require.NoError(t, db.Exec(string(script)).Error)
 	}
-	config, err := (&types.DataSourceConfig{Type: types.ConnectorTypeNextcloud, ResourceIDs: []string{"binding"}, Settings: map[string]interface{}{"base_url": server.URL}, Credentials: map[string]interface{}{"token": "isolated-source-secret", "key_id": "isolated-key"}}).ToJSON()
+	config, err := (&types.DataSourceConfig{Type: types.ConnectorTypeNextcloud, ResourceIDs: []string{
+		"binding",
+	}, Settings: map[string]interface{}{
+		"base_url": server.URL,
+	}, Credentials: map[string]interface{}{"token": "isolated-source-secret", "key_id": "isolated-key"}}).ToJSON()
 	require.NoError(t, err)
 	ds := &types.DataSource{
 		ID:              "ds",
@@ -230,7 +246,16 @@ func collectionNextcloudHTTPStateFixture(
 	require.NoError(
 		t,
 		repository.NewChunkRepository(db).
-			CreateChunks(ctx, []*types.Chunk{{ID: "source-chunk", TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: "source", Content: "actual original source parsed body", ChunkType: types.ChunkTypeText, IsEnabled: true, IndexStatus: "ready"}}),
+			CreateChunks(ctx, []*types.Chunk{{
+				ID:              "source-chunk",
+				TenantID:        7,
+				KnowledgeBaseID: "kb",
+				KnowledgeID:     "source",
+				Content:         "actual original source parsed body",
+				ChunkType:       types.ChunkTypeText,
+				IsEnabled:       true,
+				IndexStatus:     "ready",
+			}}),
 	)
 	require.NoError(t, db.Where("id='source'").Take(k).Error)
 	k.ParseStatus, k.EnableStatus = types.ParseStatusCompleted, "enabled"
@@ -281,9 +306,21 @@ func TestKnowledgeCollectionNextcloudActualHTTPPositiveAndPersonalRevocation(t *
 		{"list", "/knowledge-bases/kb/knowledge?page_size=1", http.StatusOK},
 		{"folders", "/knowledge-bases/kb/knowledge/folders", http.StatusOK},
 		{"search", "/knowledge/search?keyword=source", http.StatusOK},
-		{"deny_excluded_before_filter", "/knowledge-bases/kb/knowledge?keyword=match&page_size=1", http.StatusForbidden},
-		{"personal_revoke_before_write", "/knowledge-bases/kb/knowledge?keyword=match&page_size=1", http.StatusForbidden},
-		{"source_withdraw_during_final_remote", "/knowledge-bases/kb/knowledge?keyword=match&page_size=1", http.StatusServiceUnavailable},
+		{
+			"deny_excluded_before_filter",
+			"/knowledge-bases/kb/knowledge?keyword=match&page_size=1",
+			http.StatusForbidden,
+		},
+		{
+			"personal_revoke_before_write",
+			"/knowledge-bases/kb/knowledge?keyword=match&page_size=1",
+			http.StatusForbidden,
+		},
+		{
+			"source_withdraw_during_final_remote",
+			"/knowledge-bases/kb/knowledge?keyword=match&page_size=1",
+			http.StatusServiceUnavailable,
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h, calls := collectionNextcloudHTTPFixture(t, tc.name)

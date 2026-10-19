@@ -101,7 +101,15 @@ func TestNextcloudAutomaticSyncManagerPurposeRequiresActualFetchScope(t *testing
 }
 
 func TestNextcloudAutomaticSyncManagerPurposeRechecksAuthorityWithIndependentBody(t *testing.T) {
-	for _, mode := range []string{"manager denied", "manager unavailable", "directory stale", "directory disabled", "delegation revoked", "credential disabled", "source paused"} {
+	for _, mode := range []string{
+		"manager denied",
+		"manager unavailable",
+		"directory stale",
+		"directory disabled",
+		"delegation revoked",
+		"credential disabled",
+		"source paused",
+	} {
 		t.Run(mode, func(t *testing.T) {
 			f := newOnboardingOriginalActualFixture(t)
 			op, err := f.onboarding.Reserve(
@@ -141,7 +149,12 @@ func TestNextcloudAutomaticSyncManagerPurposeRechecksAuthorityWithIndependentBod
 			case "delegation revoked":
 				require.NoError(
 					t,
-					f.db.Where("tenant_id = ? AND directory_id = ? AND object_guid = ?", 7, f.credential.DirectoryID, onboardingActualGUID).
+					f.db.Where(
+						"tenant_id = ? AND directory_id = ? AND object_guid = ?",
+						7,
+						f.credential.DirectoryID,
+						onboardingActualGUID,
+					).
 						Delete(&types.NextcloudOnboardingDelegation{}).
 						Error,
 				)

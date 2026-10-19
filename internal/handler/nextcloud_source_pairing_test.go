@@ -81,7 +81,13 @@ func TestNextcloudSourcePairingPendingRetryWithoutSecretReadback(t *testing.T) {
 	}
 	encoded, err := json.Marshal(body)
 	require.NoError(t, err)
-	request := func(method, path string, requestBody []byte, tenantID uint64, role types.TenantRole) *httptest.ResponseRecorder {
+	request := func(
+		method,
+		path string,
+		requestBody []byte,
+		tenantID uint64,
+		role types.TenantRole,
+	) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(method, path, bytes.NewReader(requestBody))
 		req.Header.Set("Content-Type", "application/json")
 		ctx := context.WithValue(req.Context(), types.TenantIDContextKey, tenantID)

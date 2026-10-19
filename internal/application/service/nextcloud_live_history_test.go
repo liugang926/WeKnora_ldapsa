@@ -35,7 +35,10 @@ func prepareDocumentLiveHistory(
 	if !db.Migrator().HasColumn(&types.Message{}, "artifacts") {
 		require.NoError(t, db.Exec("ALTER TABLE messages ADD COLUMN artifacts TEXT").Error)
 	}
-	for _, name := range []string{"000023_message_artifacts_table.up.sql", "000026_message_artifacts_deleted_at.up.sql"} {
+	for _, name := range []string{
+		"000023_message_artifacts_table.up.sql",
+		"000026_message_artifacts_deleted_at.up.sql",
+	} {
 		ddl, err := os.ReadFile("../../../migrations/sqlite/" + name)
 		require.NoError(t, err)
 		require.NoError(t, db.Exec(string(ddl)).Error)

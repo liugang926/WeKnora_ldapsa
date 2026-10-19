@@ -17,7 +17,15 @@ import (
 
 func spanHTTPFixture(
 	t *testing.T,
-) (*KnowledgeHandler, *service.SpanOutputAuthorizer, *gorm.DB, *types.Knowledge, *outputHTTPGroups, service.SpanTracker, context.Context) {
+) (
+	*KnowledgeHandler,
+	*service.SpanOutputAuthorizer,
+	*gorm.DB,
+	*types.Knowledge,
+	*outputHTTPGroups,
+	service.SpanTracker,
+	context.Context,
+) {
 	t.Helper()
 	h, db, k, groups := outputHTTPFixture(t, true)
 	require.NoError(t, db.AutoMigrate(&types.KnowledgeProcessingSpan{}))
@@ -109,7 +117,14 @@ func TestSpanOutputHTTPActualTrackerStartWorkEndRESTOriginalAttempt(t *testing.T
 	w := serveSpanHTTP(h, a, "/knowledge/document/spans?attempt=1")
 	require.Equal(t, 200, w.Code, w.Body.String())
 	require.Equal(t, 1, attempt)
-	for _, body := range []string{"original Start input", "actual summary input", "actual original model error", "actual original stage output", "actual original attempt output", "original-langfuse-trace"} {
+	for _, body := range []string{
+		"original Start input",
+		"actual summary input",
+		"actual original model error",
+		"actual original stage output",
+		"actual original attempt output",
+		"original-langfuse-trace",
+	} {
 		require.Contains(t, w.Body.String(), body)
 	}
 	require.NotContains(t, w.Body.String(), "CURRENT recovery")
@@ -152,7 +167,14 @@ func TestSpanOutputHTTPUnknownLegacyAndUnknownBeginThenAdmittedEndStatusOnly(t *
 }
 
 func TestSpanOutputHTTPFinalSetRecheckClosesWithdrawBodyABAInputConfigAndMembership(t *testing.T) {
-	for _, mode := range []string{"grant", "span body ABA", "config ABA", "config afterremote", "input ABA", "membership"} {
+	for _, mode := range []string{
+		"grant",
+		"span body ABA",
+		"config ABA",
+		"config afterremote",
+		"input ABA",
+		"membership",
+	} {
 		t.Run(mode, func(t *testing.T) {
 			h, a, db, k, groups, tracker, ctx := spanHTTPFixture(t)
 			_, _, _ = recordActualSpanHTTP(ctx, t, tracker, k.ID)

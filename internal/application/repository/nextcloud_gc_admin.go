@@ -14,9 +14,11 @@ import (
 
 var (
 	// ErrNextcloudGCAdmin reports a nextcloud gcadmin condition.
-	ErrNextcloudGCAdmin          = errors.New("current GC admin session required")
+	ErrNextcloudGCAdmin = errors.New("current GC admin session required")
+	// ErrNextcloudGCJobUnavailable reports that the requested GC job is unavailable.
 	ErrNextcloudGCJobUnavailable = apperrors.NewProtocolError(errors.New("gc job unavailable"), "GC job unavailable")
-	ErrNextcloudGCRetention      = apperrors.NewProtocolError(
+	// ErrNextcloudGCRetention reports that the GC retention window remains open.
+	ErrNextcloudGCRetention = apperrors.NewProtocolError(
 		errors.New("gc retention window open"), "GC retention window open",
 	)
 )
@@ -95,7 +97,13 @@ func (s *NextcloudGCStore) PreviewJob(ctx context.Context, tenant uint64, id str
 		).Model(&originalBodyGCItem{}).
 			Select(("'sql_original_body' AS kind,state,COUNT(*) AS count,COALESCE(SUM(estimated" +
 				"_bytes),0) AS estimated_bytes,0 AS confirmed_released_bytes")).
-			Where("job_id=? AND tenant_id=? AND knowledge_base_id=? AND knowledge_id=?", job.ID, job.TenantID, job.KnowledgeBaseID, job.KnowledgeID).
+			Where(
+				"job_id=? AND tenant_id=? AND knowledge_base_id=? AND knowledge_id=?",
+				job.ID,
+				job.TenantID,
+				job.KnowledgeBaseID,
+				job.KnowledgeID,
+			).
 			Group("state").
 			Order("state").
 			Scan(&bodies).
@@ -217,7 +225,11 @@ func (s *NextcloudGCStore) RetryJobAsAdmin(
 		}
 		r := tx.Model(&nextcloudGCJob{}).
 			Where("id=? AND tenant_id=? AND state IN ?", id, tenant, []string{"blocked", "retry"}).
-			Updates(map[string]any{"state": "retry", "next_attempt_at": time.UnixMilli(now).UTC(), "updated_at": time.UnixMilli(now).UTC()})
+			Updates(map[string]any{
+				"state":           "retry",
+				"next_attempt_at": time.UnixMilli(now).UTC(),
+				"updated_at":      time.UnixMilli(now).UTC(),
+			})
 		changed = r.RowsAffected > 0
 		if r.Error != nil {
 			return r.Error

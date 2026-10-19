@@ -9,7 +9,16 @@ import (
 )
 
 func TestPostgresNextcloudGlobalAndScopedHistoryAdmission(t *testing.T) {
-	for _, kind := range []string{"none", "source", "sticky", "pairing", "abort", "tombstone-after-hard-delete", "unavailable", "tombstone-unavailable"} {
+	for _, kind := range []string{
+		"none",
+		"source",
+		"sticky",
+		"pairing",
+		"abort",
+		"tombstone-after-hard-delete",
+		"unavailable",
+		"tombstone-unavailable",
+	} {
 		t.Run(kind, func(t *testing.T) {
 			db := leaseTestPostgres(t)
 			require.NoError(

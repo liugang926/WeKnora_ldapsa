@@ -308,9 +308,21 @@ func nextcloudValidateRecoveryBuildLease(
 		return nil
 	}
 	var permit nextcloudRecoveryBuildLease
-	if e := tx.Where(("lease_id=? AND plan_sha256=? AND operation_id=? AND tenant_id=? AND knowle" +
-		"dge_base_id=? AND datasource_id=? AND knowledge_id=? AND build_epoch=? AND" +
-		" kb_epoch=? AND manifest_sha256=?"), lease.ID, proof.PlanSHA256, proof.OperationID, scope.TenantID, scope.KnowledgeBaseID, scope.DataSourceID, scope.KnowledgeID, lease.Epoch, kbEpoch, proof.ReconciliationSHA256).
+	if e := tx.Where(
+		("lease_id=? AND plan_sha256=? AND operation_id=? AND tenant_id=? AND knowle" +
+			"dge_base_id=? AND datasource_id=? AND knowledge_id=? AND build_epoch=? AND" +
+			" kb_epoch=? AND manifest_sha256=?"),
+		lease.ID,
+		proof.PlanSHA256,
+		proof.OperationID,
+		scope.TenantID,
+		scope.KnowledgeBaseID,
+		scope.DataSourceID,
+		scope.KnowledgeID,
+		lease.Epoch,
+		kbEpoch,
+		proof.ReconciliationSHA256,
+	).
 		Take(&permit).
 		Error; e != nil {
 		return ErrNextcloudContentLeaseDenied
@@ -329,9 +341,18 @@ func nextcloudAllowRecoveryBuildRead(ctx context.Context, tx *gorm.DB, tenant ui
 	}
 	var live int64
 	if e := tx.Table("nextcloud_content_leases").
-		Where(("lease_id=? AND tenant_id=? AND knowledge_base_id=? AND knowledge_id=? AND " +
-			"kind='build' AND epoch=? AND owner_id=? AND released_at_ms IS NULL AND exp" +
-			"ires_at_ms>?"), guard.lease.ID, tenant, kb, kid, guard.lease.Epoch, guard.lease.OwnerID, time.Now().UnixMilli()).
+		Where(
+			("lease_id=? AND tenant_id=? AND knowledge_base_id=? AND knowledge_id=? AND " +
+				"kind='build' AND epoch=? AND owner_id=? AND released_at_ms IS NULL AND exp" +
+				"ires_at_ms>?"),
+			guard.lease.ID,
+			tenant,
+			kb,
+			kid,
+			guard.lease.Epoch,
+			guard.lease.OwnerID,
+			time.Now().UnixMilli(),
+		).
 		Count(&live).
 		Error; e != nil {
 		return false, e

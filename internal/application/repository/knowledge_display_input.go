@@ -425,7 +425,12 @@ func knowledgeDisplayWriterOrigin(
 		return ctx, nil, "", ErrKnowledgeInputChanged
 	}
 	var k types.Knowledge
-	if err := tx.Where("id = ? AND tenant_id = ? AND knowledge_base_id = ?", proof.KnowledgeID, proof.TenantID, proof.KnowledgeBaseID).
+	if err := tx.Where(
+		"id = ? AND tenant_id = ? AND knowledge_base_id = ?",
+		proof.KnowledgeID,
+		proof.TenantID,
+		proof.KnowledgeBaseID,
+	).
 		Take(&k).
 		Error; err != nil {
 		return ctx, nil, "", err
@@ -571,7 +576,12 @@ func writeKnowledgeTagWithDisplayInput(
 		}
 		var old types.KnowledgeTag
 		if !create {
-			if err := tx.Where("id = ? AND tenant_id = ? AND knowledge_base_id = ?", tag.ID, tag.TenantID, tag.KnowledgeBaseID).
+			if err := tx.Where(
+				"id = ? AND tenant_id = ? AND knowledge_base_id = ?",
+				tag.ID,
+				tag.TenantID,
+				tag.KnowledgeBaseID,
+			).
 				Take(&old).
 				Error; err != nil {
 				return err
@@ -653,7 +663,8 @@ func admitKnowledgeBaseNameInput(
 		return nil
 	}
 	if request.Kind != "derived" &&
-		(request.Kind != "kb-name" || request.ID != "" && request.ID != actual.ID || request.Fields["name"] != actual.Name) {
+		(request.Kind != "kb-name" ||
+			request.ID != "" && request.ID != actual.ID || request.Fields["name"] != actual.Name) {
 		return ErrKnowledgeInputChanged
 	}
 	actor, lineage, origin, err := knowledgeDisplayWriterOrigin(ctx, tx, actual, request, factory)

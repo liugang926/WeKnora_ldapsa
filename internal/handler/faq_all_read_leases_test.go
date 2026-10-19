@@ -83,7 +83,11 @@ func faqAllReadLeaseFixture(t *testing.T, change string) *faqAllLeaseFixture {
 	// a bounded context so a nested authority lookup cannot hang the suite.
 	bounded, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	t.Cleanup(cancel)
-	for _, file := range []string{"000056_knowledge_original_worker_actor.up.sql", "000060_tag_statistics_checkpoints.up.sql", "000063_faq_original_entry_inputs.up.sql"} {
+	for _, file := range []string{
+		"000056_knowledge_original_worker_actor.up.sql",
+		"000060_tag_statistics_checkpoints.up.sql",
+		"000063_faq_original_entry_inputs.up.sql",
+	} {
 		ddl, err := os.ReadFile("../../migrations/sqlite/" + file)
 		require.NoError(t, err)
 		require.NoError(t, db.Exec(string(ddl)).Error)
@@ -280,7 +284,17 @@ func serveFAQKnowledgeLeaseHTTP(ctx context.Context, h *KnowledgeHandler, url st
 }
 
 func TestFAQAllParentReadLeasesActualHTTPPositiveAndGCBarrier(t *testing.T) {
-	for _, route := range []string{"list", "get", "search", "export", "progress", "knowledge", "batch", "collection", "tags"} {
+	for _, route := range []string{
+		"list",
+		"get",
+		"search",
+		"export",
+		"progress",
+		"knowledge",
+		"batch",
+		"collection",
+		"tags",
+	} {
 		t.Run(route, func(t *testing.T) {
 			f := faqAllReadLeaseFixture(t, "allowed")
 			leases := f.store.ContentLeaseStore()
@@ -463,7 +477,17 @@ func TestFAQAllParentPlansRequireRealLeasesAndRejectABA(t *testing.T) {
 }
 
 func TestFAQAllParentHTTPSourcePermissionRevokeWithOpenLeases(t *testing.T) {
-	for _, route := range []string{"list", "get", "search", "export", "progress", "knowledge", "batch", "collection", "tags"} {
+	for _, route := range []string{
+		"list",
+		"get",
+		"search",
+		"export",
+		"progress",
+		"knowledge",
+		"batch",
+		"collection",
+		"tags",
+	} {
 		t.Run(route, func(t *testing.T) {
 			f := faqAllReadLeaseFixture(t, "personal_revoke_before_write")
 			observed := false

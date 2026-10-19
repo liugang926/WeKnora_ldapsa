@@ -52,7 +52,11 @@ func (r *NextcloudEventInboxRepository) RebindFinalizedSourceRotation(
 		}
 		var connection nextcloudEventConnection
 		if err := tx.Table("nextcloud_event_connections").Clauses(clause.Locking{Strength: "UPDATE"}).
-			Where("tenant_id = ? AND datasource_id = ? AND status = 'active'", identity.TenantID, identity.DatasourceID).
+			Where(
+				"tenant_id = ? AND datasource_id = ? AND status = 'active'",
+				identity.TenantID,
+				identity.DatasourceID,
+			).
 			Take(&connection).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return ErrNextcloudEventConnectionMissing

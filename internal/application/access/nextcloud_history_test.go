@@ -51,7 +51,15 @@ func TestNextcloudHistoryGuardRechecksSavedReference(t *testing.T) {
 	if err := history.CheckMessage(ctx, message); err != nil {
 		t.Fatalf("current source grant should allow saved answer: %v", err)
 	}
-	publication.authorize = func(context.Context, *types.DataSourceConfig, string, string, string, string, int64) (nextcloud.AuthorizationDecision, error) {
+	publication.authorize = func(
+		context.Context,
+		*types.DataSourceConfig,
+		string,
+		string,
+		string,
+		string,
+		int64,
+	) (nextcloud.AuthorizationDecision, error) {
 		return nextcloud.AuthorizationDecision{Allow: false, Reason: "source_not_readable"}, nil
 	}
 	if err := history.CheckMessage(ctx, message); !errors.Is(err, ErrNextcloudPublicationDenied) {
@@ -72,9 +80,13 @@ func TestNextcloudHistoryGuardDeniesBroadAndLegacyScopes(t *testing.T) {
 		},
 	}
 	for _, message := range []*types.Message{
-		{Role: "assistant", ExecutionContext: types.MessageExecutionContext{KnowledgeBaseIDs: []string{"nextcloud-kb"}}},
+		{Role: "assistant", ExecutionContext: types.MessageExecutionContext{KnowledgeBaseIDs: []string{
+			"nextcloud-kb",
+		}}},
 		{Role: "assistant", AgentID: "legacy-agent", AgentTenantID: 12},
-		{Role: "assistant", AgentID: "all-agent", AgentTenantID: 12, ExecutionContext: types.MessageExecutionContext{AgentKBSelectionMode: "all"}},
+		{Role: "assistant", AgentID: "all-agent", AgentTenantID: 12, ExecutionContext: types.MessageExecutionContext{
+			AgentKBSelectionMode: "all",
+		}},
 	} {
 		if err := history.CheckMessage(ctx, message); !errors.Is(err, ErrNextcloudPublicationDenied) {
 			t.Fatalf("ambiguous Nextcloud answer should be denied: %v", err)
@@ -83,7 +95,9 @@ func TestNextcloudHistoryGuardDeniesBroadAndLegacyScopes(t *testing.T) {
 	for _, message := range []*types.Message{
 		{Role: "user", Content: "my own question"},
 		{Role: "assistant", ExecutionContext: types.MessageExecutionContext{KnowledgeBaseIDs: []string{"ordinary-kb"}}},
-		{Role: "assistant", AgentID: "none-agent", AgentTenantID: 12, ExecutionContext: types.MessageExecutionContext{AgentKBSelectionMode: "none"}},
+		{Role: "assistant", AgentID: "none-agent", AgentTenantID: 12, ExecutionContext: types.MessageExecutionContext{
+			AgentKBSelectionMode: "none",
+		}},
 	} {
 		if err := history.CheckMessage(ctx, message); err != nil {
 			t.Fatalf("ordinary answer should remain readable: %v", err)
@@ -132,7 +146,15 @@ func TestNextcloudHistoryGuardLiveRechecksSourceVersionBetweenChunks(t *testing.
 	if err := history.CheckLiveMessage(ctx, message); err != nil {
 		t.Fatalf("current source should stream: %v", err)
 	}
-	publication.authorize = func(context.Context, *types.DataSourceConfig, string, string, string, string, int64) (nextcloud.AuthorizationDecision, error) {
+	publication.authorize = func(
+		context.Context,
+		*types.DataSourceConfig,
+		string,
+		string,
+		string,
+		string,
+		int64,
+	) (nextcloud.AuthorizationDecision, error) {
 		return nextcloud.AuthorizationDecision{Allow: true, Reason: "authorized", SourceETag: "new-version"}, nil
 	}
 	if err := history.CheckLiveMessage(ctx, message); !errors.Is(err, ErrNextcloudPublicationDenied) {

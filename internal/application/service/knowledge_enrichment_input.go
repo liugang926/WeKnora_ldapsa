@@ -72,7 +72,20 @@ func questionProducerControls(cfg *config.Config, p types.QuestionGenerationPayl
 		KB, KG, Language, Chunk, Pre, Next string
 		IDs                                []string
 		Count, Attempt, Batch              int
-	}{currentEnrichmentRuntime(cfg), p.TenantID, p.KnowledgeBaseID, p.KnowledgeID, p.Language, p.ChunkID, p.PrevChunkID, p.NextChunkID, p.ChunkIDs, p.QuestionCount, p.Attempt, p.BatchIndex}
+	}{
+		currentEnrichmentRuntime(cfg),
+		p.TenantID,
+		p.KnowledgeBaseID,
+		p.KnowledgeID,
+		p.Language,
+		p.ChunkID,
+		p.PrevChunkID,
+		p.NextChunkID,
+		p.ChunkIDs,
+		p.QuestionCount,
+		p.Attempt,
+		p.BatchIndex,
+	}
 }
 
 func imageProducerControls(p types.ImageMultimodalPayload) any {
@@ -81,7 +94,21 @@ func imageProducerControls(p types.ImageMultimodalPayload) any {
 		KB, KG, Parent, URL, Local, Digest, Language, Source string
 		OCR, Caption                                         bool
 		Attempt, Index                                       int
-	}{p.TenantID, p.KnowledgeBaseID, p.KnowledgeID, p.ChunkID, p.ImageURL, p.ImageLocalPath, p.ImageDigest, p.Language, p.ImageSourceType, p.EnableOCR, p.EnableCaption, p.Attempt, p.ImageIndex}
+	}{
+		p.TenantID,
+		p.KnowledgeBaseID,
+		p.KnowledgeID,
+		p.ChunkID,
+		p.ImageURL,
+		p.ImageLocalPath,
+		p.ImageDigest,
+		p.Language,
+		p.ImageSourceType,
+		p.EnableOCR,
+		p.EnableCaption,
+		p.Attempt,
+		p.ImageIndex,
+	}
 }
 
 func resumeKnowledgeEnrichment(
@@ -167,7 +194,8 @@ func enrichmentInputChunkIDs(chunks []*types.Chunk) []string {
 	ids := []string{}
 	for _, c := range chunks {
 		if c != nil &&
-			(c.ChunkType == types.ChunkTypeText || c.ChunkType == types.ChunkTypeImageOCR || c.ChunkType == types.ChunkTypeImageCaption) {
+			(c.ChunkType == types.ChunkTypeText ||
+				c.ChunkType == types.ChunkTypeImageOCR || c.ChunkType == types.ChunkTypeImageCaption) {
 			ids = append(ids, c.ID)
 		}
 	}

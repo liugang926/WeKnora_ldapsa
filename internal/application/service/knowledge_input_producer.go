@@ -39,7 +39,12 @@ func (s *knowledgeService) createAdmittedKnowledge(
 		kb, _ := ctx.Value(knowledgeOriginalFileKBKey{}).(*types.KnowledgeBase)
 		artifact, ok := input.([]byte)
 		writer, capable := s.knowledgeInputs.(interface {
-			CreateNextcloudKnowledgeWithOriginalUpload(context.Context, *types.KnowledgeBase, *types.Knowledge, []byte) error
+			CreateNextcloudKnowledgeWithOriginalUpload(
+				context.Context,
+				*types.KnowledgeBase,
+				*types.Knowledge,
+				[]byte,
+			) error
 		})
 		if !ok || !capable || kb == nil {
 			return ctx, types.ErrSourceLineageUnknown

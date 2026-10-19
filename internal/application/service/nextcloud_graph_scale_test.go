@@ -76,7 +76,15 @@ func TestNextcloudControlledTenThousandFileProcessingPipeline(t *testing.T) {
 		require.NoError(t, db.Create(doc).Error)
 		require.NoError(t, repo.(interface {
 			StageNextcloudVersion(context.Context, uint64, string, string, string, string, string) error
-		}).StageNextcloudVersion(context.Background(), 7, doc.KnowledgeBaseID, "ds-77", external, "scale-etag-"+file, id))
+		}).StageNextcloudVersion(
+			context.Background(),
+			7,
+			doc.KnowledgeBaseID,
+			"ds-77",
+			external,
+			"scale-etag-"+file,
+			id,
+		))
 		require.NoError(t, db.Where("id=?", id).Take(doc).Error)
 		scope := repository.NextcloudContentScope{
 			TenantID:        7,

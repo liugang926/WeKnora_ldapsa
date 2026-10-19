@@ -116,7 +116,13 @@ func TestNextcloudScopedFirstLoginActualLDAPSAndProductionRoutes(t *testing.T) {
 	require.NoError(
 		t,
 		f.db.Model(&types.NextcloudSourceGrant{}).
-			Where("operation_id=? AND origin=? AND kind=? AND principal_id=?", op.OperationID, "nextcloud", "user", identity.ID).
+			Where(
+				"operation_id=? AND origin=? AND kind=? AND principal_id=?",
+				op.OperationID,
+				"nextcloud",
+				"user",
+				identity.ID,
+			).
 			Count(&preloginGrants).
 			Error,
 	)
@@ -204,7 +210,12 @@ func TestNextcloudScopedFirstLoginActualLDAPSAndProductionRoutes(t *testing.T) {
 		require.NoError(t, json.Unmarshal(listed.Body.Bytes(), &list))
 		require.Len(t, list.Data, 1)
 		require.Equal(t, input.KnowledgeBaseID, list.Data[0].ID)
-		for _, url := range []string{"/api/v1/knowledge-bases/scoped-login-unrelated", "/api/v1/models", "/api/v1/agents", "/api/v1/sessions"} {
+		for _, url := range []string{
+			"/api/v1/knowledge-bases/scoped-login-unrelated",
+			"/api/v1/models",
+			"/api/v1/agents",
+			"/api/v1/sessions",
+		} {
 			denied := request(http.MethodGet, url, response.Token, "")
 			require.Equal(t, http.StatusForbidden, denied.Code, url)
 			require.NotContains(t, denied.Body.String(), "SCOPED_FIRST_LOGIN_ORIGINAL")

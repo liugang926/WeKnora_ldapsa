@@ -102,8 +102,10 @@ func (r *NextcloudSourcePairingRepository) PrepareSourcePairing(
 		// cannot skip validation through the existing-pair early return.
 		if producer, scoped := ctx.Value(nextcloudOnboardingProducerKey{}).(nextcloudOnboardingProducer); scoped {
 			if r.nameAuthorityFactory == nil || proposed.OperationID != producer.Operation.OperationID ||
-				proposed.TenantID != producer.Operation.TenantID || proposed.KnowledgeBaseID != producer.Operation.KnowledgeBaseID ||
-				proposed.InstanceID != producer.Operation.InstanceID || proposed.BindingID != producer.Operation.BindingID ||
+				proposed.TenantID != producer.Operation.TenantID ||
+				proposed.KnowledgeBaseID != producer.Operation.KnowledgeBaseID ||
+				proposed.InstanceID != producer.Operation.InstanceID ||
+				proposed.BindingID != producer.Operation.BindingID ||
 				proposed.BaseURL != producer.Credential.BaseURL {
 				return ErrNextcloudOnboardingDenied
 			}
@@ -208,7 +210,9 @@ func (r *NextcloudSourcePairingRepository) PrepareSourcePairing(
 		if err := tx.Where("id = ? AND tenant_id = ?", ds.ID, ds.TenantID).Take(&persisted).Error; err != nil {
 			return err
 		}
-		if _, scoped := ctx.Value(nextcloudOnboardingProducerKey{}).(nextcloudOnboardingProducer); r.nameAuthorityFactory != nil ||
+		if _, scoped := ctx.Value(
+			nextcloudOnboardingProducerKey{},
+		).(nextcloudOnboardingProducer); r.nameAuthorityFactory != nil ||
 			scoped {
 			// The prefix is code and the binding is the actual new independent
 			// pairing configuration selector, not retained data-source text.

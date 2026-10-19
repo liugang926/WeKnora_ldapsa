@@ -78,8 +78,10 @@ func TestFAQImportActualHTTPProgressResultAndDisplayToggle(t *testing.T) {
 	require.NoError(
 		t,
 		db.Model(&knowledge).
-			Update("last_faq_import_result", types.JSON(("{\"task_id\":\"foreign\",\"success_count\":999,\"display_status\":\"open\""+
-				"}"))).
+			Update("last_faq_import_result", types.JSON(
+				("{\"task_id\":\"foreign\",\"success_count\":999,\"display_status\":\"open\""+
+					"}"),
+			)).
 			Error,
 	)
 	require.NoError(t, db.Model(&knowledge).Update("last_faq_import_result", legacy).Error)

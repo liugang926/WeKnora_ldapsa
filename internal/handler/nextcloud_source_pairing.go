@@ -30,8 +30,13 @@ type NextcloudSourcePairingHandler struct {
 	rotateCommit     func(context.Context, *types.DataSourceConfig, nextcloud.SourceRotation) error
 	rotateFinalize   func(context.Context, *types.DataSourceConfig, nextcloud.SourceRotation) error
 	rotateAbort      func(context.Context, *types.DataSourceConfig, nextcloud.SourceRotation) error
-	readDecommission func(context.Context, *types.DataSourceConfig, string, string) (nextcloud.SourceDecommission, error)
-	ackDecommission  func(context.Context, *types.DataSourceConfig, nextcloud.SourceDecommission) error
+	readDecommission func(
+		context.Context,
+		*types.DataSourceConfig,
+		string,
+		string,
+	) (nextcloud.SourceDecommission, error)
+	ackDecommission func(context.Context, *types.DataSourceConfig, nextcloud.SourceDecommission) error
 }
 
 func NewNextcloudSourcePairingHandler(repo *repository.NextcloudSourcePairingRepository,

@@ -30,7 +30,15 @@ func TestPostgresNextcloudActualGraphProviderCommitSerializesRetirement(t *testi
 	t.Cleanup(func() { _ = db.Callback().Create().Remove(name) })
 	written := make(chan error, 1)
 	go func() {
-		written <- NewScopedSQLGraphRepository(db, nil).AddGraph(context.WithValue(ctx, graphCommitPauseKey{}, true), types.NameSpace{KnowledgeBase: "kb", Knowledge: k.ID}, []*types.GraphData{graph})
+		written <- NewScopedSQLGraphRepository(
+			db,
+			nil,
+		).AddGraph(context.WithValue(ctx, graphCommitPauseKey{}, true), types.NameSpace{
+			KnowledgeBase: "kb",
+			Knowledge:     k.ID,
+		}, []*types.GraphData{
+			graph,
+		})
 	}()
 	select {
 	case <-admitted:
@@ -39,7 +47,13 @@ func TestPostgresNextcloudActualGraphProviderCommitSerializesRetirement(t *testi
 	}
 	retired := make(chan error, 1)
 	go func() {
-		retired <- NewNextcloudContentLeaseStore(db).RetireKnowledge(context.Background(), NextcloudContentScope{TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: k.ID, DataSourceID: "ds", ExternalID: "nextcloud:instance:77"})
+		retired <- NewNextcloudContentLeaseStore(db).RetireKnowledge(context.Background(), NextcloudContentScope{
+			TenantID:        7,
+			KnowledgeBaseID: "kb",
+			KnowledgeID:     k.ID,
+			DataSourceID:    "ds",
+			ExternalID:      "nextcloud:instance:77",
+		})
 	}()
 	select {
 	case err := <-retired:

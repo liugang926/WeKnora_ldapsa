@@ -184,7 +184,12 @@ func (s *NextcloudGCStore) deleteClaimedObject(
 		if tx.Migrator().HasTable(&NextcloudIndexedWithdrawal{}) {
 			var withdrawn int64
 			if e = tx.Model(&NextcloudIndexedWithdrawal{}).
-				Where("tenant_id=? AND knowledge_base_id=? AND datasource_id=?", job.TenantID, job.KnowledgeBaseID, job.DataSourceID).
+				Where(
+					"tenant_id=? AND knowledge_base_id=? AND datasource_id=?",
+					job.TenantID,
+					job.KnowledgeBaseID,
+					job.DataSourceID,
+				).
 				Count(&withdrawn).
 				Error; e != nil {
 				return e
@@ -199,7 +204,13 @@ func (s *NextcloudGCStore) deleteClaimedObject(
 		var knowledge types.Knowledge
 		if e = tx.Unscoped().
 			Clauses(clause.Locking{Strength: "UPDATE"}).
-			Where("id=? AND tenant_id=? AND knowledge_base_id=? AND channel=?", job.KnowledgeID, job.TenantID, job.KnowledgeBaseID, types.ConnectorTypeNextcloud).
+			Where(
+				"id=? AND tenant_id=? AND knowledge_base_id=? AND channel=?",
+				job.KnowledgeID,
+				job.TenantID,
+				job.KnowledgeBaseID,
+				types.ConnectorTypeNextcloud,
+			).
 			Take(&knowledge).
 			Error; e != nil {
 			return e
@@ -212,7 +223,9 @@ func (s *NextcloudGCStore) deleteClaimedObject(
 			nextcloudMetadataString(meta, "external_id") != job.ExternalID ||
 			nextcloudMetadataString(meta, "nextcloud_etag") != "" ||
 			knowledge.PendingSubtasksCount > 0 ||
-			(knowledge.ParseStatus != types.ParseStatusCompleted && knowledge.ParseStatus != types.ParseStatusFailed && knowledge.ParseStatus != types.ParseStatusCancelled) ||
+			(knowledge.ParseStatus != types.ParseStatusCompleted &&
+				knowledge.ParseStatus != types.ParseStatusFailed &&
+				knowledge.ParseStatus != types.ParseStatusCancelled) ||
 			(kind == "source_file" && knowledge.FilePath != ref) {
 			return ErrNextcloudContentLeaseDenied
 		}

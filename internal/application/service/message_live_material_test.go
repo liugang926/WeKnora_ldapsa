@@ -139,7 +139,12 @@ func messageNativePostgresFixture(t *testing.T) (*messageService, *gorm.DB, cont
 	kg, store, db, ctx := faqPostgresActualFixture(t)
 	require.NoError(t, db.Exec("CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\"").Error)
 	require.NoError(t, db.Exec("ALTER TABLE messages ADD COLUMN artifacts JSONB").Error)
-	for _, name := range []string{"000103_message_artifacts_table.up.sql", "000107_message_artifacts_deleted_at.up.sql", "000127_nextcloud_content_leases.up.sql", "000151_message_original_materials.up.sql"} {
+	for _, name := range []string{
+		"000103_message_artifacts_table.up.sql",
+		"000107_message_artifacts_deleted_at.up.sql",
+		"000127_nextcloud_content_leases.up.sql",
+		"000151_message_original_materials.up.sql",
+	} {
 		ddl, err := os.ReadFile("../../../migrations/versioned/" + name)
 		require.NoError(t, err)
 		require.NoError(t, db.Exec(string(ddl)).Error)

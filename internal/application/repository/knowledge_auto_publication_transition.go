@@ -49,7 +49,17 @@ func recordKnowledgeAutoPublicationTransitionInTx(
 		return ErrKnowledgeInputChanged
 	}
 	var pending []*types.TaskPendingOp
-	if err := tx.Where("tenant_id=? AND task_type=? AND scope=? AND scope_id=? AND op IN ?", before.TenantID, types.TypeKnowledgeAutoTag, types.TaskScopeKnowledge, before.ID, []string{autoTagCompletionOp, autoTagCompletionRunning}).
+	if err := tx.Where(
+		"tenant_id=? AND task_type=? AND scope=? AND scope_id=? AND op IN ?",
+		before.TenantID,
+		types.TypeKnowledgeAutoTag,
+		types.TaskScopeKnowledge,
+		before.ID,
+		[]string{
+			autoTagCompletionOp,
+			autoTagCompletionRunning,
+		},
+	).
 		Find(&pending).
 		Error; err != nil {
 		return err
@@ -75,7 +85,13 @@ func recordKnowledgeAutoPublicationTransitionInTx(
 			return ErrKnowledgeInputChanged
 		}
 		var manifest knowledgeAutoTagManifest
-		if err := tx.Where("manifest_id=? AND tenant_id=? AND knowledge_base_id=? AND knowledge_id=?", p.CompletionInput, before.TenantID, before.KnowledgeBaseID, before.ID).
+		if err := tx.Where(
+			"manifest_id=? AND tenant_id=? AND knowledge_base_id=? AND knowledge_id=?",
+			p.CompletionInput,
+			before.TenantID,
+			before.KnowledgeBaseID,
+			before.ID,
+		).
 			Take(&manifest).
 			Error; err != nil {
 			return err
@@ -177,8 +193,15 @@ func knowledgeAutoPublicationTail(tx *gorm.DB, saved *types.KnowledgeAutoTagInpu
 		return 0, "", err
 	}
 	var receipts []knowledgeAutoPublicationTransition
-	if err := tx.Where(("snapshot_id=? AND tenant_id=? AND knowledge_base_id=? AND knowledge_id=? A" +
-		"ND admission_id=?"), saved.ManifestID, proof.TenantID, proof.KnowledgeBaseID, proof.KnowledgeID, proof.AdmissionID).
+	if err := tx.Where(
+		("snapshot_id=? AND tenant_id=? AND knowledge_base_id=? AND knowledge_id=? A" +
+			"ND admission_id=?"),
+		saved.ManifestID,
+		proof.TenantID,
+		proof.KnowledgeBaseID,
+		proof.KnowledgeID,
+		proof.AdmissionID,
+	).
 		Order("before_revision ASC").
 		Find(&receipts).
 		Error; err != nil {

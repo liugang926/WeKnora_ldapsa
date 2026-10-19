@@ -18,10 +18,13 @@ import (
 
 var (
 	// ErrNextcloudOnboardingDenied reports a nextcloud onboarding denied condition.
-	ErrNextcloudOnboardingDenied   = errors.New("nextcloud_onboarding_denied")
+	ErrNextcloudOnboardingDenied = errors.New("nextcloud_onboarding_denied")
+	// ErrNextcloudOnboardingNotFound reports a missing onboarding control row.
 	ErrNextcloudOnboardingNotFound = errors.New("nextcloud_onboarding_not_found")
+	// ErrNextcloudOnboardingConflict reports a conflicting onboarding binding.
 	ErrNextcloudOnboardingConflict = errors.New("nextcloud_onboarding_conflict")
-	ErrNextcloudKBBlankUnverified  = errors.New("knowledge_base_blank_unverified")
+	// ErrNextcloudKBBlankUnverified reports that an empty knowledge base has not been proven.
+	ErrNextcloudKBBlankUnverified = errors.New("knowledge_base_blank_unverified")
 )
 
 // NextcloudOnboardingStore represents nextcloud onboarding store repository data.
@@ -107,7 +110,12 @@ func (s *NextcloudOnboardingStore) Actor(
 		return "", nil
 	}
 	var member types.TenantMember
-	if err := tx.Where("tenant_id = ? AND user_id = ? AND status = ?", c.TenantID, *i.UserID, types.TenantMemberStatusActive).
+	if err := tx.Where(
+		"tenant_id = ? AND user_id = ? AND status = ?",
+		c.TenantID,
+		*i.UserID,
+		types.TenantMemberStatusActive,
+	).
 		Take(&member).
 		Error; err == nil &&
 		member.Role.HasPermission(types.TenantRoleAdmin) {
@@ -140,7 +148,13 @@ func blankKB(tx *gorm.DB, tenant uint64, id string) (*types.KnowledgeBase, error
 		n != 1 {
 		return nil, ErrNextcloudKBBlankUnverified
 	}
-	for _, table := range []string{"knowledges", "data_sources", "wiki_pages", "chunks", "nextcloud_onboarding_operations"} {
+	for _, table := range []string{
+		"knowledges",
+		"data_sources",
+		"wiki_pages",
+		"chunks",
+		"nextcloud_onboarding_operations",
+	} {
 		if err := tx.Table(table).
 			Where("tenant_id = ? AND knowledge_base_id = ?", tenant, id).
 			Count(&n).
@@ -187,8 +201,15 @@ func validateOnboardingTemplate(tx *gorm.DB, kb *types.KnowledgeBase) error {
 	}
 	if kb.IndexingStrategy.NeedsEmbedding() {
 		var model types.Model
-		if err := tx.Where(("id = ? AND (tenant_id = ? OR is_builtin = ?) AND type = ? AND status = ? A" +
-			"ND deleted_at IS NULL"), kb.EmbeddingModelID, kb.TenantID, true, types.ModelTypeEmbedding, types.ModelStatusActive).
+		if err := tx.Where(
+			("id = ? AND (tenant_id = ? OR is_builtin = ?) AND type = ? AND status = ? A" +
+				"ND deleted_at IS NULL"),
+			kb.EmbeddingModelID,
+			kb.TenantID,
+			true,
+			types.ModelTypeEmbedding,
+			types.ModelStatusActive,
+		).
 			Take(&model).
 			Error; err != nil {
 			return ErrNextcloudOnboardingConflict
@@ -212,7 +233,11 @@ func validateOnboardingTemplate(tx *gorm.DB, kb *types.KnowledgeBase) error {
 	}
 	var n int64
 	if err := tx.Table("storage_backends").
-		Where("id = ? AND tenant_id = ? AND status = 'active' AND deleted_at IS NULL", *kb.StorageBackendID, kb.TenantID).
+		Where(
+			"id = ? AND tenant_id = ? AND status = 'active' AND deleted_at IS NULL",
+			*kb.StorageBackendID,
+			kb.TenantID,
+		).
 		Count(&n).
 		Error; err != nil ||
 		n != 1 {
@@ -230,7 +255,11 @@ func (s *NextcloudOnboardingStore) Reserve(
 	var out types.NextcloudOnboardingOperation
 	if _, err := uuid.Parse(
 		req.OperationID,
-	); err != nil || req.TenantID != c.TenantID || req.InstanceID != c.InstanceID || req.BindingID == "" || len(req.BindingID) > 128 || strings.TrimSpace(req.Name) == "" || len(req.Name) > 255 || (req.Mode != "create" && req.Mode != "existing") ||
+	); err != nil || req.TenantID != c.TenantID || req.InstanceID != c.InstanceID || req.BindingID == "" || len(
+		req.BindingID,
+	) > 128 || strings.TrimSpace(req.Name) == "" || len(
+		req.Name,
+	) > 255 || (req.Mode != "create" && req.Mode != "existing") ||
 		req.ProcessingTemplateID != c.TemplateKBID {
 		return out, ErrNextcloudOnboardingDenied
 	}
@@ -346,7 +375,13 @@ func (s *NextcloudOnboardingStore) Reserve(
 		}
 		_, err = NewGroupAccessRepository(
 			tx,
-		).UpsertResourceAccessPolicy(ctx, &types.ResourceAccessPolicy{TenantID: c.TenantID, ResourceType: types.GroupResourceTypeKnowledgeBase, ResourceID: kb.ID, Mode: types.ResourceAccessRestricted, UpdatedBy: actor})
+		).UpsertResourceAccessPolicy(ctx, &types.ResourceAccessPolicy{
+			TenantID:     c.TenantID,
+			ResourceType: types.GroupResourceTypeKnowledgeBase,
+			ResourceID:   kb.ID,
+			Mode:         types.ResourceAccessRestricted,
+			UpdatedBy:    actor,
+		})
 		return err
 	})
 	return out, err
@@ -381,8 +416,15 @@ func (s *NextcloudOnboardingStore) MarkActive(ctx context.Context, op types.Next
 			return err
 		}
 		var pair NextcloudSourcePairing
-		if err := tx.Where(("operation_id=? AND tenant_id=? AND knowledge_base_id=? AND nextcloud_insta" +
-			"nce_id=? AND binding_id=? AND state='active'"), op.OperationID, op.TenantID, op.KnowledgeBaseID, op.InstanceID, op.BindingID).
+		if err := tx.Where(
+			("operation_id=? AND tenant_id=? AND knowledge_base_id=? AND nextcloud_insta" +
+				"nce_id=? AND binding_id=? AND state='active'"),
+			op.OperationID,
+			op.TenantID,
+			op.KnowledgeBaseID,
+			op.InstanceID,
+			op.BindingID,
+		).
 			Take(&pair).
 			Error; err != nil {
 			return ErrNextcloudOnboardingConflict
@@ -473,8 +515,14 @@ func (s *NextcloudOnboardingStore) ApplyGrantSnapshot(
 			switch subject.Kind {
 			case "user":
 				var i types.DirectoryIdentity
-				if err := tx.Where(("directory_id = ? AND object_guid = ? AND status = ? AND snapshot_version =" +
-					" (SELECT snapshot_version FROM directories WHERE id=?)"), subject.DirectoryID, subject.ObjectGUID, types.DirectoryObjectActive, subject.DirectoryID).
+				if err := tx.Where(
+					("directory_id = ? AND object_guid = ? AND status = ? AND snapshot_version =" +
+						" (SELECT snapshot_version FROM directories WHERE id=?)"),
+					subject.DirectoryID,
+					subject.ObjectGUID,
+					types.DirectoryObjectActive,
+					subject.DirectoryID,
+				).
 					Take(&i).
 					Error; err != nil {
 					return ErrNextcloudOnboardingDenied
@@ -482,8 +530,14 @@ func (s *NextcloudOnboardingStore) ApplyGrantSnapshot(
 				principal = i.ID
 			case "group":
 				var g types.DirectoryGroup
-				if err := tx.Where(("directory_id = ? AND object_guid = ? AND status = ? AND snapshot_version =" +
-					" (SELECT snapshot_version FROM directories WHERE id=?)"), subject.DirectoryID, subject.ObjectGUID, types.DirectoryObjectActive, subject.DirectoryID).
+				if err := tx.Where(
+					("directory_id = ? AND object_guid = ? AND status = ? AND snapshot_version =" +
+						" (SELECT snapshot_version FROM directories WHERE id=?)"),
+					subject.DirectoryID,
+					subject.ObjectGUID,
+					types.DirectoryObjectActive,
+					subject.DirectoryID,
+				).
 					Take(&g).
 					Error; err != nil {
 					return ErrNextcloudOnboardingDenied
@@ -521,7 +575,12 @@ func (s *NextcloudOnboardingStore) ApplyGrantSnapshot(
 			}
 		}
 		if err := tx.Model(&current).
-			Updates(map[string]any{"permission_version": snapshot.PermissionVersion, "permission_sha256": digest, "permission_synced_at": time.Now().UTC(), "updated_at": time.Now().UTC()}).
+			Updates(map[string]any{
+				"permission_version":   snapshot.PermissionVersion,
+				"permission_sha256":    digest,
+				"permission_synced_at": time.Now().UTC(),
+				"updated_at":           time.Now().UTC(),
+			}).
 			Error; err != nil {
 			return err
 		}
@@ -539,7 +598,11 @@ func (s *NextcloudOnboardingStore) ScopedMatches(
 	now time.Time,
 ) ([]types.NextcloudScopedGrantMatch, error) {
 	tx := s.db.WithContext(ctx)
-	if (!tx.Migrator().HasTable(&nextcloudControlRecoveryGate{}) || !tx.Migrator().HasTable(&NextcloudTargetClosure{}) || !tx.Migrator().HasTable(&types.Tenant{})) &&
+	if (!tx.Migrator().HasTable(&nextcloudControlRecoveryGate{}) || !tx.Migrator().HasTable(
+		&NextcloudTargetClosure{},
+	) || !tx.Migrator().HasTable(
+		&types.Tenant{},
+	)) &&
 		nextcloudCurrentControlModule(tx) {
 		return []types.NextcloudScopedGrantMatch{}, nil
 	}

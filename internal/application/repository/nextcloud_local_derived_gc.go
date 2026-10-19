@@ -189,7 +189,12 @@ func gcSealLocalManifest(tx *gorm.DB, job nextcloudGCJob, nowMS int64) (nextclou
 		return existing, e
 	}
 	var plan nextcloudDerivedBackendPlan
-	if e := tx.Where("tenant_id=? AND knowledge_base_id=? AND knowledge_id=?", job.TenantID, job.KnowledgeBaseID, job.KnowledgeID).
+	if e := tx.Where(
+		"tenant_id=? AND knowledge_base_id=? AND knowledge_id=?",
+		job.TenantID,
+		job.KnowledgeBaseID,
+		job.KnowledgeID,
+	).
 		Take(&plan).
 		Error; e != nil {
 		return existing, ErrNextcloudContentGCUncovered
@@ -221,7 +226,12 @@ func gcSealLocalManifest(tx *gorm.DB, job nextcloudGCJob, nowMS int64) (nextclou
 		ResourceIdentities:  map[string]string{},
 	}
 	if e := tx.Table("chunks").
-		Where("tenant_id=? AND knowledge_base_id=? AND knowledge_id=?", job.TenantID, job.KnowledgeBaseID, job.KnowledgeID).
+		Where(
+			"tenant_id=? AND knowledge_base_id=? AND knowledge_id=?",
+			job.TenantID,
+			job.KnowledgeBaseID,
+			job.KnowledgeID,
+		).
 		Order("id").
 		Pluck("id", &inventory.Chunks).
 		Error; e != nil {
@@ -257,7 +267,12 @@ func gcSealLocalManifest(tx *gorm.DB, job nextcloudGCJob, nowMS int64) (nextclou
 	// The union also retains IDs removed by a covered retry, so native orphan
 	// vector/FTS rows are verified rather than inferred from metadata absence.
 	var artifacts []nextcloudDerivedArtifact
-	if e := tx.Where("tenant_id=? AND knowledge_base_id=? AND knowledge_id=?", job.TenantID, job.KnowledgeBaseID, job.KnowledgeID).
+	if e := tx.Where(
+		"tenant_id=? AND knowledge_base_id=? AND knowledge_id=?",
+		job.TenantID,
+		job.KnowledgeBaseID,
+		job.KnowledgeID,
+	).
 		Order("item_kind,object_ref").
 		Find(&artifacts).
 		Error; e != nil {
@@ -292,7 +307,12 @@ func gcSealLocalManifest(tx *gorm.DB, job nextcloudGCJob, nowMS int64) (nextclou
 	}
 	if backend.Graph {
 		var records []nextcloudGraphRecord
-		if e := tx.Where("tenant_id=? AND knowledge_base_id=? AND knowledge_id=?", job.TenantID, job.KnowledgeBaseID, job.KnowledgeID).
+		if e := tx.Where(
+			"tenant_id=? AND knowledge_base_id=? AND knowledge_id=?",
+			job.TenantID,
+			job.KnowledgeBaseID,
+			job.KnowledgeID,
+		).
 			Find(&records).
 			Error; e != nil {
 			return existing, e
@@ -491,7 +511,9 @@ func (s *NextcloudGCStore) runLocalDerived(ctx context.Context, id string, _ tim
 			return e
 		}
 		if knowledge.GetMetadata()["nextcloud_etag"] != "" || knowledge.PendingSubtasksCount > 0 ||
-			(knowledge.ParseStatus != types.ParseStatusCompleted && knowledge.ParseStatus != types.ParseStatusFailed && knowledge.ParseStatus != types.ParseStatusCancelled) {
+			(knowledge.ParseStatus != types.ParseStatusCompleted &&
+				knowledge.ParseStatus != types.ParseStatusFailed &&
+				knowledge.ParseStatus != types.ParseStatusCancelled) {
 			return ErrNextcloudContentLeaseDenied
 		}
 		for _, embeddingID := range inventory.Embeddings {
@@ -591,7 +613,9 @@ func (s *NextcloudGCStore) deleteLocalEmbeddingInTx(
 		return ErrNextcloudContentLeaseDenied
 	}
 	if len(rows) == 1 &&
-		(fmt.Sprint(rows[0]["knowledge_base_id"]) != job.KnowledgeBaseID || fmt.Sprint(rows[0]["knowledge_id"]) != job.KnowledgeID) {
+		(fmt.Sprint(rows[0]["knowledge_base_id"]) != job.KnowledgeBaseID || fmt.Sprint(
+			rows[0]["knowledge_id"],
+		) != job.KnowledgeID) {
 		return ErrNextcloudContentLeaseDenied
 	}
 	deletedCount := int64(0)
@@ -708,13 +732,30 @@ func (s *NextcloudGCStore) deleteLocalChunkInTx(
 		return e
 	}
 	if len(rows) > 1 ||
-		(len(rows) == 1 && (fmt.Sprint(rows[0]["tenant_id"]) != strconv.FormatUint(job.TenantID, 10) || fmt.Sprint(rows[0]["knowledge_base_id"]) != job.KnowledgeBaseID || fmt.Sprint(rows[0]["knowledge_id"]) != job.KnowledgeID)) {
+		(len(
+			rows,
+		) == 1 && (fmt.Sprint(
+			rows[0]["tenant_id"],
+		) != strconv.FormatUint(
+			job.TenantID,
+			10,
+		) || fmt.Sprint(rows[0]["knowledge_base_id"]) != job.KnowledgeBaseID || fmt.Sprint(
+			rows[0]["knowledge_id"],
+		) != job.KnowledgeID)) {
 		return ErrNextcloudContentLeaseDenied
 	}
 	var foreignParents int64
 	if e := tx.Table("chunks").
-		Where(("(parent_chunk_id=? OR pre_chunk_id=? OR next_chunk_id=?) AND (tenant_id<>?" +
-			" OR knowledge_base_id<>? OR knowledge_id<>?)"), id, id, id, job.TenantID, job.KnowledgeBaseID, job.KnowledgeID).
+		Where(
+			("(parent_chunk_id=? OR pre_chunk_id=? OR next_chunk_id=?) AND (tenant_id<>?" +
+				" OR knowledge_base_id<>? OR knowledge_id<>?)"),
+			id,
+			id,
+			id,
+			job.TenantID,
+			job.KnowledgeBaseID,
+			job.KnowledgeID,
+		).
 		Count(&foreignParents).
 		Error; e != nil {
 		return e
@@ -753,7 +794,13 @@ func (s *NextcloudGCStore) deleteLocalChunkInTx(
 		deletedCount += revisions
 		var foreign int64
 		if e = tx.Table("chunk_revisions").
-			Where("chunk_id=? AND (tenant_id<>? OR knowledge_base_id<>? OR knowledge_id<>?)", id, job.TenantID, job.KnowledgeBaseID, job.KnowledgeID).
+			Where(
+				"chunk_id=? AND (tenant_id<>? OR knowledge_base_id<>? OR knowledge_id<>?)",
+				id,
+				job.TenantID,
+				job.KnowledgeBaseID,
+				job.KnowledgeID,
+			).
 			Count(&foreign).
 			Error; e != nil {
 			return e
@@ -762,14 +809,26 @@ func (s *NextcloudGCStore) deleteLocalChunkInTx(
 			return ErrNextcloudContentLeaseDenied
 		}
 		if e = tx.Table("chunk_revisions").
-			Where("chunk_id=? AND tenant_id=? AND knowledge_base_id=? AND knowledge_id=?", id, job.TenantID, job.KnowledgeBaseID, job.KnowledgeID).
+			Where(
+				"chunk_id=? AND tenant_id=? AND knowledge_base_id=? AND knowledge_id=?",
+				id,
+				job.TenantID,
+				job.KnowledgeBaseID,
+				job.KnowledgeID,
+			).
 			Delete(map[string]any{}).
 			Error; e != nil {
 			return e
 		}
 	}
 	if e = tx.Unscoped().
-		Where("id=? AND tenant_id=? AND knowledge_base_id=? AND knowledge_id=?", id, job.TenantID, job.KnowledgeBaseID, job.KnowledgeID).
+		Where(
+			"id=? AND tenant_id=? AND knowledge_base_id=? AND knowledge_id=?",
+			id,
+			job.TenantID,
+			job.KnowledgeBaseID,
+			job.KnowledgeID,
+		).
 		Delete(&types.Chunk{}).
 		Error; e != nil {
 		return e
@@ -799,7 +858,12 @@ func (s *NextcloudGCStore) verifyLocalDerivedGone(tx *gorm.DB, job nextcloudGCJo
 	var n int64
 	if len(inventory.GraphOperations) > 0 {
 		if e := tx.Table("nextcloud_graph_records").
-			Where("tenant_id=? AND knowledge_base_id=? AND knowledge_id=?", job.TenantID, job.KnowledgeBaseID, job.KnowledgeID).
+			Where(
+				"tenant_id=? AND knowledge_base_id=? AND knowledge_id=?",
+				job.TenantID,
+				job.KnowledgeBaseID,
+				job.KnowledgeID,
+			).
 			Count(&n).
 			Error; e != nil {
 			return e
@@ -809,7 +873,12 @@ func (s *NextcloudGCStore) verifyLocalDerivedGone(tx *gorm.DB, job nextcloudGCJo
 		}
 	}
 	if e := tx.Table("chunks").
-		Where("tenant_id=? AND knowledge_base_id=? AND knowledge_id=?", job.TenantID, job.KnowledgeBaseID, job.KnowledgeID).
+		Where(
+			"tenant_id=? AND knowledge_base_id=? AND knowledge_id=?",
+			job.TenantID,
+			job.KnowledgeBaseID,
+			job.KnowledgeID,
+		).
 		Count(&n).
 		Error; e != nil {
 		return e
@@ -864,7 +933,12 @@ func (s *NextcloudGCStore) verifyLocalResourceRefs(
 		}
 		var own int64
 		if e := tx.Model(&types.ResourceBinding{}).
-			Where("resource_id=? AND owner_type=? AND owner_id=?", resource.ID, types.ResourceOwnerKnowledge, job.KnowledgeID).
+			Where(
+				"resource_id=? AND owner_type=? AND owner_id=?",
+				resource.ID,
+				types.ResourceOwnerKnowledge,
+				job.KnowledgeID,
+			).
 			Count(&own).
 			Error; e != nil {
 			return e
@@ -961,12 +1035,22 @@ func (s *NextcloudGCStore) finishLocalManifestInTx(
 		return ErrNextcloudContentLeaseDenied
 	}
 	if e := tx.Model(&manifest).
-		Updates(map[string]any{"state": "collected", "completed_at_ms": nowMS, "physical_collected": physicalCollected, "protected_items": protected}).
+		Updates(map[string]any{
+			"state":              "collected",
+			"completed_at_ms":    nowMS,
+			"physical_collected": physicalCollected,
+			"protected_items":    protected,
+		}).
 		Error; e != nil {
 		return e
 	}
 	return tx.Model(&job).
-		Updates(map[string]any{"state": "collected", "completed_at": time.UnixMilli(nowMS), "last_error_code": "", "updated_at": time.UnixMilli(nowMS)}).
+		Updates(map[string]any{
+			"state":           "collected",
+			"completed_at":    time.UnixMilli(nowMS),
+			"last_error_code": "",
+			"updated_at":      time.UnixMilli(nowMS),
+		}).
 		Error
 }
 
@@ -1007,7 +1091,16 @@ func (s *NextcloudGCStore) deleteScopedGraphInTx(
 		return ErrNextcloudContentLeaseDenied
 	}
 	if len(rows) == 1 &&
-		(fmt.Sprint(rows[0]["tenant_id"]) != strconv.FormatUint(job.TenantID, 10) || fmt.Sprint(rows[0]["knowledge_base_id"]) != job.KnowledgeBaseID || fmt.Sprint(rows[0]["knowledge_id"]) != job.KnowledgeID || fmt.Sprint(rows[0]["backend"]) != NextcloudGraphBackend) {
+		(fmt.Sprint(
+			rows[0]["tenant_id"],
+		) != strconv.FormatUint(
+			job.TenantID,
+			10,
+		) || fmt.Sprint(rows[0]["knowledge_base_id"]) != job.KnowledgeBaseID || fmt.Sprint(
+			rows[0]["knowledge_id"],
+		) != job.KnowledgeID || fmt.Sprint(
+			rows[0]["backend"],
+		) != NextcloudGraphBackend) {
 		return ErrNextcloudContentLeaseDenied
 	}
 	var receipt nextcloudDerivedGCReceipt
@@ -1025,7 +1118,13 @@ func (s *NextcloudGCStore) deleteScopedGraphInTx(
 		return e
 	}
 	deleted := tx.Table("nextcloud_graph_records").
-		Where("operation_id=? AND tenant_id=? AND knowledge_base_id=? AND knowledge_id=?", id, job.TenantID, job.KnowledgeBaseID, job.KnowledgeID).
+		Where(
+			"operation_id=? AND tenant_id=? AND knowledge_base_id=? AND knowledge_id=?",
+			id,
+			job.TenantID,
+			job.KnowledgeBaseID,
+			job.KnowledgeID,
+		).
 		Delete(map[string]any{})
 	if deleted.Error != nil {
 		return deleted.Error

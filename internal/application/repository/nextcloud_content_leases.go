@@ -525,7 +525,12 @@ func (s *NextcloudContentLeaseStore) RenewLease(ctx context.Context, id string,
 				return ErrNextcloudContentLeaseDenied
 			}
 			var exact nextcloudContentFence
-			if e := tx.Where("tenant_id=? AND knowledge_base_id=? AND knowledge_id=?", row.TenantID, row.KnowledgeBaseID, row.KnowledgeID).
+			if e := tx.Where(
+				"tenant_id=? AND knowledge_base_id=? AND knowledge_id=?",
+				row.TenantID,
+				row.KnowledgeBaseID,
+				row.KnowledgeID,
+			).
 				Take(&exact).
 				Error; e != nil {
 				return e

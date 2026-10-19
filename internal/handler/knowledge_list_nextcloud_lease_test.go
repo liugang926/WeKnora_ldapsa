@@ -52,7 +52,11 @@ func newCollectionLeaseFixture(t *testing.T) *collectionLeaseFixture {
 	require.NoError(
 		t,
 		db.Table("nextcloud_content_leases").
-			Where("knowledge_id = ? AND kind = ? AND released_at_ms IS NULL", row.ID, repository.NextcloudContentBuildLease).
+			Where(
+				"knowledge_id = ? AND kind = ? AND released_at_ms IS NULL",
+				row.ID,
+				repository.NextcloudContentBuildLease,
+			).
 			Find(&builders).
 			Error,
 	)
@@ -85,7 +89,12 @@ func collectionRetiredAt(t *testing.T, f *collectionLeaseFixture) time.Time {
 		t,
 		f.db.Table("nextcloud_content_fences").
 			Select("retired_at_ms").
-			Where("tenant_id = ? AND knowledge_base_id = ? AND knowledge_id = ?", f.scope.TenantID, f.scope.KnowledgeBaseID, f.scope.KnowledgeID).
+			Where(
+				"tenant_id = ? AND knowledge_base_id = ? AND knowledge_id = ?",
+				f.scope.TenantID,
+				f.scope.KnowledgeBaseID,
+				f.scope.KnowledgeID,
+			).
 			Row().
 			Scan(&retired),
 	)

@@ -172,7 +172,13 @@ func runKnowledgeDisplayOriginalBody(t *testing.T, pg bool) {
 			t,
 			NewNextcloudContentLeaseStore(
 				db,
-			).RetireKnowledge(context.Background(), NextcloudContentScope{TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: source.KnowledgeID, DataSourceID: source.DataSourceID, ExternalID: source.ExternalID}),
+			).RetireKnowledge(context.Background(), NextcloudContentScope{
+				TenantID:        7,
+				KnowledgeBaseID: "kb",
+				KnowledgeID:     source.KnowledgeID,
+				DataSourceID:    source.DataSourceID,
+				ExternalID:      source.ExternalID,
+			}),
 		)
 		_, err = captureDisplayTest(t, db, k)
 		require.Error(t, err, "hydrating a vault input must preserve current source denial")

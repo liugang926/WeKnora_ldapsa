@@ -28,7 +28,14 @@ func (s SessionListItem) MarshalJSON() ([]byte, error) {
 	if err := json.Unmarshal(payload, &fields); err != nil {
 		return nil, err
 	}
-	for key, value := range map[string]string{"im_platform": s.IMPlatform, "im_chat_id": s.IMChatID, "im_thread_id": s.IMThreadID, "im_user_id": s.IMUserID, "im_agent_id": s.IMAgentID, "im_channel_id": s.IMChannelID} {
+	for key, value := range map[string]string{
+		"im_platform":   s.IMPlatform,
+		"im_chat_id":    s.IMChatID,
+		"im_thread_id":  s.IMThreadID,
+		"im_user_id":    s.IMUserID,
+		"im_agent_id":   s.IMAgentID,
+		"im_channel_id": s.IMChannelID,
+	} {
 		if value != "" {
 			fields[key] = value
 		}

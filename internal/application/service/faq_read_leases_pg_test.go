@@ -13,18 +13,32 @@ import (
 
 func TestFAQPostgresActualParentReadPlansAndDurableLeaseCoverage(t *testing.T) {
 	s, store, db, ctx := faqPostgresActualFixture(t)
-	ddl, err := os.ReadFile("../../../migrations/versioned/000127_nextcloud_content_leases.up.sql")
-	require.NoError(t, err)
-	require.NoError(t, db.Exec(string(ddl)).Error)
-	// The current Session type carries scoped-source columns, so install the real
-	// target closure/onboarding controls before acquiring physical read leases.
-	require.NoError(t, db.AutoMigrate(&types.Tenant{}, &types.DataSource{}))
-	require.NoError(t, db.Create(&types.Tenant{ID: 7}).Error)
-	installDocumentOnboardingSchema(t, db)
+	// This minimal FAQ fixture's DSN includes public. Isolate its one physical
+	// connection before installing real current controls: missing local tables
+	// must never resolve to another fixture's public source/control tables.
 	sqlDB, err := db.DB()
 	require.NoError(t, err)
 	sqlDB.SetMaxOpenConns(1)
 	sqlDB.SetMaxIdleConns(1)
+	var schema string
+	require.NoError(t, db.Raw("SELECT current_schema()").Scan(&schema).Error)
+	require.NotEmpty(t, schema)
+	require.NoError(t, db.Exec("SELECT set_config('search_path', ?, false)", schema).Error)
+	require.NoError(t, db.AutoMigrate(&types.Tenant{}, &types.DataSource{}, &types.SyncLog{}))
+	require.NoError(t, db.Create(&types.Tenant{ID: 7}).Error)
+	// Install the original source/event prerequisites locally, then the exact
+	// production closure/onboarding/current-manager controls and their triggers.
+	for _, name := range []string{
+		"000113_nextcloud_event_inbox",
+		"000116_nextcloud_source_pairing",
+		"000120_nextcloud_source_pairing_abort",
+		"000127_nextcloud_content_leases",
+	} {
+		ddl, err := os.ReadFile("../../../migrations/versioned/" + name + ".up.sql")
+		require.NoError(t, err)
+		require.NoError(t, db.Exec(string(ddl)).Error)
+	}
+	installDocumentOnboardingSchema(t, db)
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	parentKB := &types.KnowledgeBase{

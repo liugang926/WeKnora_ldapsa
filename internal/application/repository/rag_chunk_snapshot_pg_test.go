@@ -48,7 +48,11 @@ func ragSnapshotPostgresFixture(t *testing.T) (*knowledgeRepository, *gorm.DB, [
 	script, err := os.ReadFile("../../../migrations/versioned/000126_nextcloud_source_revisions.up.sql")
 	require.NoError(t, err)
 	require.NoError(t, migrations.Exec(string(script)).Error)
-	config, err := (&types.DataSourceConfig{Type: types.ConnectorTypeNextcloud, ResourceIDs: []string{"binding"}, Settings: map[string]interface{}{"base_url": "https://nextcloud.example"}, Credentials: map[string]interface{}{"token": "test-token", "key_id": "test_key"}}).ToJSON()
+	config, err := (&types.DataSourceConfig{Type: types.ConnectorTypeNextcloud, ResourceIDs: []string{
+		"binding",
+	}, Settings: map[string]interface{}{
+		"base_url": "https://nextcloud.example",
+	}, Credentials: map[string]interface{}{"token": "test-token", "key_id": "test_key"}}).ToJSON()
 	require.NoError(t, err)
 	ds := &types.DataSource{
 		ID:              "ds",
@@ -80,7 +84,15 @@ func ragSnapshotPostgresFixture(t *testing.T) (*knowledgeRepository, *gorm.DB, [
 	)
 	repo := &knowledgeRepository{
 		db: db,
-		nextcloudPublicationCheck: func(context.Context, *types.DataSourceConfig, string, string, int64, string, string) error {
+		nextcloudPublicationCheck: func(
+			context.Context,
+			*types.DataSourceConfig,
+			string,
+			string,
+			int64,
+			string,
+			string,
+		) error {
 			return nil
 		},
 	}
@@ -123,7 +135,13 @@ func ragSnapshotPostgresFixture(t *testing.T) (*knowledgeRepository, *gorm.DB, [
 		require.True(t, published)
 		lease, err := NewNextcloudContentLeaseStore(
 			db,
-		).AcquireKnowledge(context.Background(), NextcloudContentScope{TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: id, DataSourceID: "ds", ExternalID: "nextcloud:instance:" + file}, NextcloudContentReadLease, "reader-"+id, time.Minute)
+		).AcquireKnowledge(context.Background(), NextcloudContentScope{
+			TenantID:        7,
+			KnowledgeBaseID: "kb",
+			KnowledgeID:     id,
+			DataSourceID:    "ds",
+			ExternalID:      "nextcloud:instance:" + file,
+		}, NextcloudContentReadLease, "reader-"+id, time.Minute)
 		require.NoError(t, err)
 		requests = append(
 			requests,

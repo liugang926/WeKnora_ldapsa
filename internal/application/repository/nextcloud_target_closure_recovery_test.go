@@ -96,7 +96,15 @@ func TestNextcloudTargetRecoveryTypedTailAndRetainedClosureProof(t *testing.T) {
 	verified, err := VerifyNextcloudRecoveryPlan(targetRecoverySigned(t, p, key), key)
 	require.NoError(t, err)
 	require.Equal(t, proof, verified.TargetClosures[0])
-	for _, name := range []string{"omit-history", "changed-scope", "changed-root", "decimal-alias", "wrong-state", "file-event", "changed-hash"} {
+	for _, name := range []string{
+		"omit-history",
+		"changed-scope",
+		"changed-root",
+		"decimal-alias",
+		"wrong-state",
+		"file-event",
+		"changed-hash",
+	} {
 		t.Run(name, func(t *testing.T) {
 			candidate, _ := targetRecoveryPlan(t)
 			switch name {

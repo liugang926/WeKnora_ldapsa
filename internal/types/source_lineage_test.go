@@ -166,8 +166,12 @@ func TestSourceLineageDuplicateJSONKeysRemainUnknown(t *testing.T) {
 		"unicode alias state":          `{"version":1,"state":"unknown","\u017ftate":"complete","sources":[]}`,
 		"duplicate version":            `{"version":2,"version":1,"state":"complete","sources":[]}`,
 		"duplicate source set":         `{"version":1,"state":"complete","sources":[],"sources":[]}`,
-		"duplicate original etag":      strings.Replace(string(encoded.([]byte)), `"etag":"etag-original"`, `"etag":"old","etag":"new"`, 1),
-		"duplicate knowledge id":       strings.Replace(string(encoded.([]byte)), `"knowledge_id":"knowledge-1"`, `"knowledge_id":"old","knowledge_id":"new"`, 1),
+		"duplicate original etag": strings.Replace(string(
+			encoded.([]byte),
+		), `"etag":"etag-original"`, `"etag":"old","etag":"new"`, 1),
+		"duplicate knowledge id": strings.Replace(string(
+			encoded.([]byte),
+		), `"knowledge_id":"knowledge-1"`, `"knowledge_id":"old","knowledge_id":"new"`, 1),
 	} {
 		t.Run(name, func(t *testing.T) {
 			loaded := *good
@@ -246,7 +250,13 @@ func TestSourceLineageRemainsInternalInPublicMessageJSON(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, private := range []string{"source_lineage", "context_checkpoint", "private-etag", "private summary", "pair_operation_id"} {
+	for _, private := range []string{
+		"source_lineage",
+		"context_checkpoint",
+		"private-etag",
+		"private summary",
+		"pair_operation_id",
+	} {
 		if strings.Contains(string(encoded), private) {
 			t.Fatalf("public Message JSON exposed %q", private)
 		}

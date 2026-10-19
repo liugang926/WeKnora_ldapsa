@@ -41,7 +41,11 @@ func (m *ragEntryModel) ChatStream(
 	m.inputs = append(m.inputs, messages)
 	m.mu.Unlock()
 	responses := make(chan types.StreamResponse, 1)
-	responses <- types.StreamResponse{ResponseType: types.ResponseTypeAnswer, Content: "A paraphrase without citations", Done: true}
+	responses <- types.StreamResponse{
+		ResponseType: types.ResponseTypeAnswer,
+		Content:      "A paraphrase without citations",
+		Done:         true,
+	}
 	close(responses)
 	return responses, nil
 }
@@ -130,7 +134,13 @@ func TestRAGSourceLineageActualEntryKeepsCitationFreeNoSearchDependency(t *testi
 			if data.Done {
 				lineage, ok := evt.SourceLineage.(*types.SourceLineage)
 				require.True(t, ok)
-				done <- &types.Message{Role: "assistant", Content: data.Content, IsCompleted: true, RequestID: "prior", SourceLineage: lineage}
+				done <- &types.Message{
+					Role:          "assistant",
+					Content:       data.Content,
+					IsCompleted:   true,
+					RequestID:     "prior",
+					SourceLineage: lineage,
+				}
 			}
 			return nil
 		})

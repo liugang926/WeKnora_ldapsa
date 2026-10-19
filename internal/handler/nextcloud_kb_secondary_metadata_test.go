@@ -87,7 +87,12 @@ func TestNextcloudSecondaryMetadataMoveTargetsExcludeManagedSources(t *testing.T
 		}
 		require.Empty(t, c.Errors)
 		require.Contains(t, w.Body.String(), "Allowed ordinary target")
-		for _, secret := range []string{"Retired source marker", "Source root private", "Unknown source private", "retired body"} {
+		for _, secret := range []string{
+			"Retired source marker",
+			"Source root private",
+			"Unknown source private",
+			"retired body",
+		} {
 			require.NotContains(t, w.Body.String(), secret)
 		}
 	}
@@ -140,7 +145,12 @@ func TestNextcloudSecondaryMetadataSharedListsAndCountsExcludeManagedSources(t *
 		invoke(c)
 		require.Empty(t, c.Errors)
 		require.Contains(t, w.Body.String(), "Allowed ordinary target")
-		for _, secret := range []string{"Retired source marker", "Source root private", "Unknown source private", "retired body"} {
+		for _, secret := range []string{
+			"Retired source marker",
+			"Source root private",
+			"Unknown source private",
+			"retired body",
+		} {
 			require.NotContains(t, w.Body.String(), secret)
 		}
 	}

@@ -25,7 +25,14 @@ func TestSourceContentDebugLoggingAndDetachedContextsAreSuppressed(t *testing.T)
 	}
 	ctx := logprivacy.SuppressContent(context.Background())
 	rag := types.WithRAGSourceLineage(context.Background(), types.NewRAGSourceLineage(nil))
-	for _, current := range []context.Context{ctx, rag, CloneContext(ctx), CloneContextWithoutTrace(ctx), CloneContext(rag), CloneContextWithoutTrace(rag)} {
+	for _, current := range []context.Context{
+		ctx,
+		rag,
+		CloneContext(ctx),
+		CloneContextWithoutTrace(ctx),
+		CloneContext(rag),
+		CloneContextWithoutTrace(rag),
+	} {
 		require.True(t, logprivacy.ContentSuppressed(current))
 		LLMDebugLog(current, private)
 	}

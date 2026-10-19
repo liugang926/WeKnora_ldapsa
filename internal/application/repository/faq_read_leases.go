@@ -59,7 +59,11 @@ func validateFAQReadLeaseCoverageInTx(
 			return ErrNextcloudContentLeaseExpired
 		}
 		var kb nextcloudContentFence
-		if err := tx.Where("tenant_id=? AND knowledge_base_id=? AND knowledge_id=''", row.TenantID, row.KnowledgeBaseID).
+		if err := tx.Where(
+			"tenant_id=? AND knowledge_base_id=? AND knowledge_id=''",
+			row.TenantID,
+			row.KnowledgeBaseID,
+		).
 			Take(&kb).
 			Error; err != nil ||
 			kb.State != "open" {
@@ -73,7 +77,12 @@ func validateFAQReadLeaseCoverageInTx(
 			broad[key] = true
 		} else {
 			var fence nextcloudContentFence
-			if err := tx.Where("tenant_id=? AND knowledge_base_id=? AND knowledge_id=?", row.TenantID, row.KnowledgeBaseID, row.KnowledgeID).
+			if err := tx.Where(
+				"tenant_id=? AND knowledge_base_id=? AND knowledge_id=?",
+				row.TenantID,
+				row.KnowledgeBaseID,
+				row.KnowledgeID,
+			).
 				Take(&fence).
 				Error; err != nil ||
 				fence.State != "open" ||

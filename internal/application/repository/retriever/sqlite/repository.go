@@ -428,7 +428,9 @@ func (r *sqliteRepository) vectorRetrieve(
 	}
 
 	logger.GetLogger(ctx).
-		Infof("[SQLite] vectorRetrieve: query_dim=%d, threshold=%.4f, matched=%d rows", dim, params.Threshold, len(rows))
+		Infof("[SQLite] vectorRetrieve: query_dim=%d, threshold=%.4f, matched=%d rows", dim, params.Threshold, len(
+			rows,
+		))
 
 	items := make([]*types.IndexWithScore, 0, len(rows))
 

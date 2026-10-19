@@ -57,7 +57,10 @@ func TestNativePGVectorCandidatesFilterBeforeTopKAndNeverSelectBody(t *testing.T
 	for _, item := range []struct {
 		ID, KB string
 		Vector []float32
-	}{{"target", "kb-target", []float32{0.8, 0.6}}, {"not-owned", "kb-target", []float32{1, 0}}, {"foreign", "kb-foreign", []float32{1, 0}}} {
+	}{{"target", "kb-target", []float32{0.8, 0.6}}, {"not-owned", "kb-target", []float32{
+		1,
+		0,
+	}}, {"foreign", "kb-foreign", []float32{1, 0}}} {
 		info := &types.IndexInfo{
 			SourceID:        item.ID,
 			SourceType:      types.ChunkSourceType,

@@ -110,7 +110,13 @@ func (s *KnowledgeInputProvenanceStore) BindNextcloudOriginalFetch(
 	var actual types.DataSource
 	if err := s.db.WithContext(ctx).
 		Select("id", "tenant_id", "knowledge_base_id", "type", "status", "config", "name").
-		Where("id = ? AND tenant_id = ? AND knowledge_base_id = ? AND status = ?", ds.ID, ds.TenantID, ds.KnowledgeBaseID, types.DataSourceStatusActive).
+		Where(
+			"id = ? AND tenant_id = ? AND knowledge_base_id = ? AND status = ?",
+			ds.ID,
+			ds.TenantID,
+			ds.KnowledgeBaseID,
+			types.DataSourceStatusActive,
+		).
 		Take(&actual).
 		Error; err != nil {
 		return ctx, err
@@ -303,8 +309,15 @@ func originalUploadSourceInTx(
 		return nil, nil, ErrKnowledgeInputChanged
 	}
 	var ds types.DataSource
-	if err := tx.Where(("id = ? AND tenant_id = ? AND knowledge_base_id = ? AND type = ? AND status" +
-		" = ?"), input.DataSourceID, k.TenantID, k.KnowledgeBaseID, types.ConnectorTypeNextcloud, types.DataSourceStatusActive).
+	if err := tx.Where(
+		("id = ? AND tenant_id = ? AND knowledge_base_id = ? AND type = ? AND status" +
+			" = ?"),
+		input.DataSourceID,
+		k.TenantID,
+		k.KnowledgeBaseID,
+		types.ConnectorTypeNextcloud,
+		types.DataSourceStatusActive,
+	).
 		Take(&ds).
 		Error; err != nil {
 		return nil, nil, err
@@ -583,7 +596,12 @@ func (s *KnowledgeInputProvenanceStore) verifyOriginalUploadInTx(
 	initial bool,
 ) (*nextcloudOriginalUploadInput, error) {
 	var receipt nextcloudOriginalUploadInput
-	if err := tx.Where("knowledge_id = ? AND tenant_id = ? AND knowledge_base_id = ?", k.ID, k.TenantID, k.KnowledgeBaseID).
+	if err := tx.Where(
+		"knowledge_id = ? AND tenant_id = ? AND knowledge_base_id = ?",
+		k.ID,
+		k.TenantID,
+		k.KnowledgeBaseID,
+	).
 		Take(&receipt).
 		Error; err != nil {
 		return nil, err
@@ -676,7 +694,12 @@ func (s *KnowledgeInputProvenanceStore) AdmitNextcloudBuildInputsFromOriginalUpl
 	}
 	var k types.Knowledge
 	if err := s.db.WithContext(ctx).
-		Where("id = ? AND tenant_id = ? AND knowledge_base_id = ?", scope.KnowledgeID, scope.TenantID, scope.KnowledgeBaseID).
+		Where(
+			"id = ? AND tenant_id = ? AND knowledge_base_id = ?",
+			scope.KnowledgeID,
+			scope.TenantID,
+			scope.KnowledgeBaseID,
+		).
 		Take(&k).
 		Error; err != nil {
 		return nil, err

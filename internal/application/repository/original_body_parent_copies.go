@@ -73,8 +73,14 @@ func (v *parentCopyEvidence) addLineage(lineage *types.SourceLineage) error {
 		if _, found := v.sources[source]; !found {
 			var original knowledgeInputAdmission
 			var candidates []knowledgeInputAdmission
-			if v.tx.Where(("tenant_id=? AND knowledge_base_id=? AND knowledge_id=? AND build_generatio"+
-				"n=? AND origin_kind='nextcloud'"), source.TenantID, source.KnowledgeBaseID, source.KnowledgeID, source.Revision).
+			if v.tx.Where(
+				("tenant_id=? AND knowledge_base_id=? AND knowledge_id=? AND build_generatio"+
+					"n=? AND origin_kind='nextcloud'"),
+				source.TenantID,
+				source.KnowledgeBaseID,
+				source.KnowledgeID,
+				source.Revision,
+			).
 				Limit(2).
 				Find(&candidates).
 				Error != nil ||
@@ -169,7 +175,9 @@ func (v *parentCopyEvidence) proof(
 			return ErrOriginalBodyRetained
 		}
 		restored := *message
-		restored.SourceLineage, restored.ExecutionContext, restored.AgentTenantID = &lineage, execution, fact.AgentTenantID
+		restored.SourceLineage,
+			restored.ExecutionContext,
+			restored.AgentTenantID = &lineage, execution, fact.AgentTenantID
 		digest, err := messageMaterialDigest(&restored)
 		if err != nil || digest != fact.BodyDigest {
 			return ErrOriginalBodyRetained
@@ -241,7 +249,18 @@ func (v *parentCopyEvidence) proof(
 		return ErrOriginalBodyRetained
 	}
 	if message != nil && message.Role == "user" &&
-		(len(message.Images) > 0 && !covered["images"] || len(message.Attachments) > 0 && !covered["attachments"] || message.RenderedContent != "" && !covered["rendered_content"] || message.ContextCheckpoint != nil && !covered["context_checkpoint"] || len(message.AgentSteps) > 0 || len(message.KnowledgeReferences) > 0 || len(message.UsedMemories) > 0) {
+		(len(
+			message.Images,
+		) > 0 && !covered["images"] || len(
+			message.Attachments,
+		) > 0 &&
+			!covered["attachments"] ||
+			message.RenderedContent != "" &&
+				!covered["rendered_content"] ||
+			message.ContextCheckpoint != nil && !covered["context_checkpoint"] ||
+			len(
+				message.AgentSteps,
+			) > 0 || len(message.KnowledgeReferences) > 0 || len(message.UsedMemories) > 0) {
 		return ErrOriginalBodyRetained
 	}
 	return nil
@@ -355,7 +374,9 @@ func (v *parentCopyEvidence) generated(
 		}
 		for _, original := range parent.Proofs {
 			if original.MessageID == admission.MessageID &&
-				(original.AdmissionID != admission.PreviousAdmissionID || original.Revision != admission.PreviousRevision || parent.MembershipRevision != admission.PreviousMembership) {
+				(original.AdmissionID != admission.PreviousAdmissionID ||
+					original.Revision != admission.PreviousRevision ||
+					parent.MembershipRevision != admission.PreviousMembership) {
 				return ErrOriginalBodyRetained
 			}
 			// Every parent source must have been accounted by this immutable
@@ -646,7 +667,13 @@ func parentCopySourceDeadline(tx *gorm.DB, source types.SourceIdentity) (int64, 
 		if err := bodyInternal(
 			tx,
 		).Model(&NextcloudIndexedWithdrawal{}).
-			Where("tenant_id=? AND knowledge_base_id=? AND datasource_id=? AND state=?", source.TenantID, source.KnowledgeBaseID, source.DataSourceID, "withdrawn_inventory_incomplete").
+			Where(
+				"tenant_id=? AND knowledge_base_id=? AND datasource_id=? AND state=?",
+				source.TenantID,
+				source.KnowledgeBaseID,
+				source.DataSourceID,
+				"withdrawn_inventory_incomplete",
+			).
 			Count(&count).
 			Error; err != nil {
 			return 0, err
@@ -660,7 +687,12 @@ func parentCopySourceDeadline(tx *gorm.DB, source types.SourceIdentity) (int64, 
 		var current types.DataSource
 		if bodyInternal(
 			tx,
-		).Where("id=? AND tenant_id=? AND knowledge_base_id=?", source.DataSourceID, source.TenantID, source.KnowledgeBaseID).
+		).Where(
+			"id=? AND tenant_id=? AND knowledge_base_id=?",
+			source.DataSourceID,
+			source.TenantID,
+			source.KnowledgeBaseID,
+		).
 			Take(&current).
 			Error != nil ||
 			current.Status != types.DataSourceStatusActive {
@@ -671,7 +703,12 @@ func parentCopySourceDeadline(tx *gorm.DB, source types.SourceIdentity) (int64, 
 	if err := bodyInternal(
 		tx,
 	).Clauses(clause.Locking{Strength: "UPDATE"}).
-		Where("tenant_id=? AND knowledge_base_id=? AND knowledge_id=?", source.TenantID, source.KnowledgeBaseID, source.KnowledgeID).
+		Where(
+			"tenant_id=? AND knowledge_base_id=? AND knowledge_id=?",
+			source.TenantID,
+			source.KnowledgeBaseID,
+			source.KnowledgeID,
+		).
 		Take(&fence).
 		Error; err != nil {
 		return 0, ErrOriginalBodyRetained

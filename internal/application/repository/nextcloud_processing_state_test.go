@@ -22,7 +22,14 @@ import (
 func processingStateFixture(
 	t *testing.T,
 	required bool,
-) (*NextcloudProcessingStateStore, *gorm.DB, context.Context, *types.Knowledge, *types.Chunk, *KnowledgeInputProvenanceStore) {
+) (
+	*NextcloudProcessingStateStore,
+	*gorm.DB,
+	context.Context,
+	*types.Knowledge,
+	*types.Chunk,
+	*KnowledgeInputProvenanceStore,
+) {
 	t.Helper()
 	return processingStateFixtureBackend(t, required, false)
 }
@@ -30,7 +37,14 @@ func processingStateFixture(
 func processingStateFixtureBackend(
 	t *testing.T,
 	required, pg bool,
-) (*NextcloudProcessingStateStore, *gorm.DB, context.Context, *types.Knowledge, *types.Chunk, *KnowledgeInputProvenanceStore) {
+) (
+	*NextcloudProcessingStateStore,
+	*gorm.DB,
+	context.Context,
+	*types.Knowledge,
+	*types.Chunk,
+	*KnowledgeInputProvenanceStore,
+) {
 	t.Helper()
 	var inputs *KnowledgeInputProvenanceStore
 	var db *gorm.DB
@@ -68,7 +82,19 @@ func processingStateFixtureBackend(
 	require.NoError(
 		t,
 		db.Table("nextcloud_event_connections").
-			Create(map[string]any{"connection_id": "connection-0000001", "tenant_id": 7, "knowledge_base_id": "kb", "datasource_id": "ds", "nextcloud_instance_id": "instance", "binding_id": binding, "datasource_base_url": baseURL, "datasource_config_sha256": sha, "status": "active", "current_key_id": "current", "current_secret_ciphertext": encrypted}).
+			Create(map[string]any{
+				"connection_id":             "connection-0000001",
+				"tenant_id":                 7,
+				"knowledge_base_id":         "kb",
+				"datasource_id":             "ds",
+				"nextcloud_instance_id":     "instance",
+				"binding_id":                binding,
+				"datasource_base_url":       baseURL,
+				"datasource_config_sha256":  sha,
+				"status":                    "active",
+				"current_key_id":            "current",
+				"current_secret_ciphertext": encrypted,
+			}).
 			Error,
 	)
 	repo := NewKnowledgeRepository(db).(*knowledgeRepository)
@@ -89,7 +115,16 @@ func processingStateFixtureBackend(
 	require.NoError(
 		t,
 		db.Model(&k).
-			Updates(map[string]any{"parse_status": types.ParseStatusFinalizing, "enable_status": "disabled", "pending_subtasks_count": 1, "file_name": "file.md", "title": "file.md", "file_hash": "test-file-hash", "file_type": "md", "file_size": 20}).
+			Updates(map[string]any{
+				"parse_status":           types.ParseStatusFinalizing,
+				"enable_status":          "disabled",
+				"pending_subtasks_count": 1,
+				"file_name":              "file.md",
+				"title":                  "file.md",
+				"file_hash":              "test-file-hash",
+				"file_type":              "md",
+				"file_size":              20,
+			}).
 			Error,
 	)
 	require.NoError(t, db.Where("id=?", k.ID).Take(&k).Error)
@@ -279,7 +314,13 @@ func TestNextcloudGraphActualSQLRetirementAndAttemptFence(t *testing.T) {
 					t,
 					NewNextcloudContentLeaseStore(
 						db,
-					).RetireKnowledge(context.Background(), NextcloudContentScope{TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: k.ID, DataSourceID: "ds", ExternalID: "nextcloud:instance:77"}),
+					).RetireKnowledge(context.Background(), NextcloudContentScope{
+						TenantID:        7,
+						KnowledgeBaseID: "kb",
+						KnowledgeID:     k.ID,
+						DataSourceID:    "ds",
+						ExternalID:      "nextcloud:instance:77",
+					}),
 				)
 			case "attempt":
 				require.NoError(
@@ -517,7 +558,13 @@ func TestNextcloudPlannedGraphPayloadCrashRecoveryIsExactAndFenced(t *testing.T)
 		t,
 		NewNextcloudContentLeaseStore(
 			db,
-		).RetireKnowledge(context.Background(), NextcloudContentScope{TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: k.ID, DataSourceID: "ds", ExternalID: "nextcloud:instance:77"}),
+		).RetireKnowledge(context.Background(), NextcloudContentScope{
+			TenantID:        7,
+			KnowledgeBaseID: "kb",
+			KnowledgeID:     k.ID,
+			DataSourceID:    "ds",
+			ExternalID:      "nextcloud:instance:77",
+		}),
 	)
 	intents, err = state.PendingGraphQueueIntents(ctx, time.Now())
 	require.NoError(t, err)
@@ -582,7 +629,7 @@ func TestNextcloudActualGraphExactGCReceiptAndUnknownCoverage(t *testing.T) {
 		KnowledgeID:       k.ID,
 		DataSourceID:      "ds",
 		ExternalID:        scope.ExternalID,
-		State:             "running",
+		State:             "pending",
 		NotBefore:         notBefore,
 		OriginalNotBefore: notBefore,
 	}

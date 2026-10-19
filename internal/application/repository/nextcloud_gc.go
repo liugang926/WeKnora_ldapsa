@@ -130,7 +130,11 @@ func (s *NextcloudGCStore) InventoryRetired(ctx context.Context, now time.Time, 
 		Joins(("JOIN nextcloud_source_versions AS v ON v.tenant_id = k.tenant_id AND v.kno" +
 			"wledge_base_id = k.knowledge_base_id AND v.datasource_id = k.metadata->>'d" +
 			"atasource_id' AND v.external_id = k.metadata->>'external_id'")).
-		Where("k.channel = ? AND (v.state = ? OR v.candidate_knowledge_id <> k.id)", types.ConnectorTypeNextcloud, "tombstone").
+		Where(
+			"k.channel = ? AND (v.state = ? OR v.candidate_knowledge_id <> k.id)",
+			types.ConnectorTypeNextcloud,
+			"tombstone",
+		).
 		Where("COALESCE(k.metadata->>'nextcloud_etag', '') = ''").
 		Where("NOT EXISTS (SELECT 1 FROM nextcloud_gc_jobs AS j WHERE j.knowledge_id = k.id)").
 		Order("k.updated_at ASC, k.id ASC").Limit(limit).Scan(&sources).Error
@@ -243,7 +247,12 @@ func (s *NextcloudGCStore) inventoryOne(ctx context.Context, source nextcloudGCS
 		if tx.Migrator().HasTable("nextcloud_graph_records") {
 			var graphIDs []string
 			if err := tx.Table("nextcloud_graph_records").
-				Where("tenant_id=? AND knowledge_base_id=? AND knowledge_id=?", job.TenantID, job.KnowledgeBaseID, job.KnowledgeID).
+				Where(
+					"tenant_id=? AND knowledge_base_id=? AND knowledge_id=?",
+					job.TenantID,
+					job.KnowledgeBaseID,
+					job.KnowledgeID,
+				).
 				Pluck("operation_id", &graphIDs).
 				Error; err != nil {
 				return err
@@ -356,7 +365,11 @@ func (s *NextcloudGCStore) RunDue(ctx context.Context, now time.Time, limit int)
 			recordErr := s.db.WithContext(ctx).
 				Model(&nextcloudGCJob{}).
 				Where("id=?", id).
-				Updates(map[string]any{"state": "blocked", "last_error_code": "derived_exact_verification_failed", "next_attempt_at": now.Add(nextcloudGCRetryWindow)}).
+				Updates(map[string]any{
+					"state":           "blocked",
+					"last_error_code": "derived_exact_verification_failed",
+					"next_attempt_at": now.Add(nextcloudGCRetryWindow),
+				}).
 				Error
 			return processed, errors.Join(err, recordErr)
 		}
@@ -579,7 +592,12 @@ func refreshNextcloudGCDerivedInventory(tx *gorm.DB, job nextcloudGCJob, now tim
 	if tx.Migrator().HasTable("nextcloud_graph_records") {
 		var ids []string
 		if err := tx.Table("nextcloud_graph_records").
-			Where("tenant_id=? AND knowledge_base_id=? AND knowledge_id=?", job.TenantID, job.KnowledgeBaseID, job.KnowledgeID).
+			Where(
+				"tenant_id=? AND knowledge_base_id=? AND knowledge_id=?",
+				job.TenantID,
+				job.KnowledgeBaseID,
+				job.KnowledgeID,
+			).
 			Pluck("operation_id", &ids).
 			Error; err != nil {
 			return err
@@ -707,7 +725,13 @@ func (s *NextcloudGCStore) ListStatus(
 			).Model(&originalBodyGCItem{}).
 				Select(("COALESCE(SUM(CASE WHEN state<>'collected' THEN 1 ELSE 0 END),0) AS pending" +
 					"_items,COALESCE(SUM(estimated_bytes),0) AS estimated_bytes")).
-				Where("job_id=? AND tenant_id=? AND knowledge_base_id=? AND knowledge_id=?", job.ID, job.TenantID, job.KnowledgeBaseID, job.KnowledgeID).
+				Where(
+					"job_id=? AND tenant_id=? AND knowledge_base_id=? AND knowledge_id=?",
+					job.ID,
+					job.TenantID,
+					job.KnowledgeBaseID,
+					job.KnowledgeID,
+				).
 				Scan(&bodies).
 				Error; e != nil {
 				return nil, e

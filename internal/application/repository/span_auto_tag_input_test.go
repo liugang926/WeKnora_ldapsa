@@ -15,7 +15,16 @@ import (
 func autoSpanFixture(
 	t *testing.T,
 	pg, derived bool,
-) (*KnowledgeInputProvenanceStore, *gorm.DB, context.Context, *types.Knowledge, interfaces.KnowledgeRepository, *types.KnowledgeAutoTagInputSnapshot, *types.KnowledgeProcessingSpan, KnowledgeSpanRepository) {
+) (
+	*KnowledgeInputProvenanceStore,
+	*gorm.DB,
+	context.Context,
+	*types.Knowledge,
+	interfaces.KnowledgeRepository,
+	*types.KnowledgeAutoTagInputSnapshot,
+	*types.KnowledgeProcessingSpan,
+	KnowledgeSpanRepository,
+) {
 	t.Helper()
 	store, db, ctx, tags, knowledge, k := displayTestFixture(t, pg)
 	_ = displayTag(ctx, t, tags, "span-match")
@@ -132,7 +141,13 @@ func runAutoSpanOriginalAdditionalManifest(t *testing.T, pg bool) {
 		t,
 		NewNextcloudContentLeaseStore(
 			db,
-		).RetireKnowledge(ctx, NextcloudContentScope{TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: source.KnowledgeID, DataSourceID: source.DataSourceID, ExternalID: source.ExternalID}),
+		).RetireKnowledge(ctx, NextcloudContentScope{
+			TenantID:        7,
+			KnowledgeBaseID: "kb",
+			KnowledgeID:     source.KnowledgeID,
+			DataSourceID:    source.DataSourceID,
+			ExternalID:      source.ExternalID,
+		}),
 	)
 	_, err = store.CaptureSpanOutputInputs(
 		context.Background(),
@@ -150,7 +165,12 @@ func TestAutoSpanPostgresOriginalAdditionalManifest(t *testing.T) {
 }
 
 func runAutoSpanCandidateAndRelationABA(t *testing.T, pg bool) {
-	for _, mutation := range []string{"candidate name ABA", "relationship ABA", "human origin substitution", "extra manifest replacement"} {
+	for _, mutation := range []string{
+		"candidate name ABA",
+		"relationship ABA",
+		"human origin substitution",
+		"extra manifest replacement",
+	} {
 		t.Run(mutation, func(t *testing.T) {
 			store, db, ctx, k, knowledge, manifest, row, repo := autoSpanFixture(t, pg, false)
 			writeCtx, err := WithKnowledgeAutoTagInput(ctx, store, manifest)

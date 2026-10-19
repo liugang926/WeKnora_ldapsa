@@ -12,7 +12,8 @@ type SteerDelivery string
 
 const (
 	// SteerDeliveryAfter schedules an injected message after the current operation.
-	SteerDeliveryAfter  SteerDelivery = "after"
+	SteerDeliveryAfter SteerDelivery = "after"
+	// SteerDeliveryInject interrupts the current turn with authored input.
 	SteerDeliveryInject SteerDelivery = "inject"
 )
 
@@ -64,12 +65,17 @@ type SteerControlOperation string
 
 const (
 	// SteerControlPromote identifies the operation that promotes a queued injected message.
-	SteerControlPromote     SteerControlOperation = "promote"
-	SteerControlConsume     SteerControlOperation = "consume"
-	SteerControlDiscard     SteerControlOperation = "discard"
+	SteerControlPromote SteerControlOperation = "promote"
+	// SteerControlConsume consumes an original steer head for the active run.
+	SteerControlConsume SteerControlOperation = "consume"
+	// SteerControlDiscard discards a queued original steer head.
+	SteerControlDiscard SteerControlOperation = "discard"
+	// SteerControlClaimFailed records a failed claim of an original steer head.
 	SteerControlClaimFailed SteerControlOperation = "claim_failed"
-	SteerControlDelete      SteerControlOperation = "delete"
-	SteerControlRebind      SteerControlOperation = "rebind"
+	// SteerControlDelete deletes an original steer head through its control mutation.
+	SteerControlDelete SteerControlOperation = "delete"
+	// SteerControlRebind rebinds an original steer head to a server-owned run.
+	SteerControlRebind SteerControlOperation = "rebind"
 )
 
 // SteerControlRequest names the exact original head consumed by a control-only mutation.
@@ -104,8 +110,10 @@ type SteerMaterialUse string
 
 const (
 	// SteerMaterialPending marks an injected original input awaiting consumption.
-	SteerMaterialPending  SteerMaterialUse = "pending"
-	SteerMaterialInject   SteerMaterialUse = "inject"
+	SteerMaterialPending SteerMaterialUse = "pending"
+	// SteerMaterialInject selects original material for an injected input.
+	SteerMaterialInject SteerMaterialUse = "inject"
+	// SteerMaterialFollowUp selects original material for a follow-up input.
 	SteerMaterialFollowUp SteerMaterialUse = "follow_up"
 )
 

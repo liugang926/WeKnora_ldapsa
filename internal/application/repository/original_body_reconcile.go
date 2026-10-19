@@ -194,7 +194,13 @@ func (s *OriginalBodyRetentionStore) ReconcileExternalPurge(ctx context.Context)
 			if e := bodyInternal(
 				tx,
 			).Model(&body).
-				Updates(map[string]any{"state": "purged", "payload": nil, "purge_epoch": event.PurgeEpoch, "body_deadline_ms": event.BodyDeadlineMS, "metadata_deadline_ms": event.MetadataDeadlineMS}).
+				Updates(map[string]any{
+					"state":                "purged",
+					"payload":              nil,
+					"purge_epoch":          event.PurgeEpoch,
+					"body_deadline_ms":     event.BodyDeadlineMS,
+					"metadata_deadline_ms": event.MetadataDeadlineMS,
+				}).
 				Error; e != nil {
 				return e
 			}

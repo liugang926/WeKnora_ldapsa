@@ -157,7 +157,10 @@ func (r *NextcloudEventInboxRepository) ClaimDispatch(
 			if status == "running" {
 				if now.Sub(startedAt) < 150*time.Minute {
 					return tx.Table("nextcloud_event_dispatch").Where("connection_id = ?", connectionID).
-						Updates(map[string]any{"next_attempt_at": now.Add(nextcloudQueuedPollInterval), "updated_at": now}).
+						Updates(map[string]any{
+							"next_attempt_at": now.Add(nextcloudQueuedPollInterval),
+							"updated_at":      now,
+						}).
 						Error
 				}
 				return setNextcloudDispatchState(tx, connectionID, "blocked",
@@ -347,7 +350,11 @@ func (r *NextcloudEventInboxRepository) ClaimDispatch(
 			}
 			if status == "success" {
 				if err := tx.Table("nextcloud_event_inbox").
-					Where("connection_id = ? AND event_id <= ? AND state = 'pending'", connectionID, dispatch.TargetEventID).
+					Where(
+						"connection_id = ? AND event_id <= ? AND state = 'pending'",
+						connectionID,
+						dispatch.TargetEventID,
+					).
 					Update("state", "dispatched").Error; err != nil {
 					return err
 				}
@@ -714,7 +721,9 @@ func nextcloudCanCoalesceUnproven(tx *gorm.DB, connection nextcloudEventConnecti
 		switch hint.EventType {
 		case "upsert":
 			if hint.ETag == nil || strings.TrimSpace(*hint.ETag) == "" ||
-				hint.RelativePath == nil || !nextcloud.ImportableFileName(path.Base(*hint.RelativePath), kb.IsMultimodalEnabled()) {
+				hint.RelativePath == nil || !nextcloud.ImportableFileName(path.Base(
+				*hint.RelativePath,
+			), kb.IsMultimodalEnabled()) {
 				return false, nil
 			}
 		case "delete":

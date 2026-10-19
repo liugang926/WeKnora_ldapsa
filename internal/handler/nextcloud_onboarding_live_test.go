@@ -79,7 +79,15 @@ func TestNextcloudOnboardingActualNCRuntime(t *testing.T) {
 			"CREATE UNIQUE INDEX live_policies ON resource_access_policies(tenant_id,resource_type,resource_id)",
 		).Error,
 	)
-	for _, name := range []string{"000031_nextcloud_source_versions", "000032_nextcloud_event_inbox", "000033_nextcloud_event_dispatch", "000046_nextcloud_content_leases", "000074_nextcloud_onboarding", "000076_nextcloud_directory_migrations", "000078_nextcloud_control_recovery"} {
+	for _, name := range []string{
+		"000031_nextcloud_source_versions",
+		"000032_nextcloud_event_inbox",
+		"000033_nextcloud_event_dispatch",
+		"000046_nextcloud_content_leases",
+		"000074_nextcloud_onboarding",
+		"000076_nextcloud_directory_migrations",
+		"000078_nextcloud_control_recovery",
+	} {
 		m, e := os.ReadFile("../../migrations/sqlite/" + name + ".up.sql")
 		require.NoError(t, e)
 		require.NoError(t, db.Exec(string(m)).Error)

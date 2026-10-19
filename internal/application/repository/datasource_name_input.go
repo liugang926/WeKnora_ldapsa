@@ -110,7 +110,8 @@ func admitDataSourceNameInput(
 		}
 	}
 	if edit.Kind != "human" &&
-		(edit.Kind != "pairing_configuration" || edit.BindingID == "" || edit.PairOperation == "" || edit.Name != "Nextcloud · "+edit.BindingID) {
+		(edit.Kind != "pairing_configuration" ||
+			edit.BindingID == "" || edit.PairOperation == "" || edit.Name != "Nextcloud · "+edit.BindingID) {
 		return ErrKnowledgeInputChanged
 	}
 	actual, err := json.Marshal(edit)
@@ -209,7 +210,12 @@ func (s *KnowledgeInputProvenanceStore) recheckDataSourceNameInput(
 		return ErrKnowledgeInputChanged
 	}
 	var ds types.DataSource
-	if err := tx.Where("id = ? AND tenant_id = ? AND knowledge_base_id = ?", p.DataSourceID, p.TenantID, p.KnowledgeBaseID).
+	if err := tx.Where(
+		"id = ? AND tenant_id = ? AND knowledge_base_id = ?",
+		p.DataSourceID,
+		p.TenantID,
+		p.KnowledgeBaseID,
+	).
 		Take(&ds).
 		Error; err != nil {
 		return err

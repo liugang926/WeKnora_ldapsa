@@ -130,7 +130,18 @@ func mustLineageSQLDB(t *testing.T, db *gorm.DB) *sql.DB {
 }
 
 func TestNextcloudSourceLineageResolverDeniesChangedMissingOrCorruptRows(t *testing.T) {
-	for _, change := range []string{"wrong tenant", "wrong KB", "metadata forged", "paused source", "pair identity", "version hidden", "ledger missing", "fence missing", "KB fence closed", "ledger error"} {
+	for _, change := range []string{
+		"wrong tenant",
+		"wrong KB",
+		"metadata forged",
+		"paused source",
+		"pair identity",
+		"version hidden",
+		"ledger missing",
+		"fence missing",
+		"KB fence closed",
+		"ledger error",
+	} {
 		t.Run(change, func(t *testing.T) {
 			repo, db, k := sourceLineageRepoFixture(t)
 			tenant := uint64(7)
@@ -169,7 +180,11 @@ func TestNextcloudSourceLineageResolverDeniesChangedMissingOrCorruptRows(t *test
 }
 
 func TestNextcloudSourceLineageResolverRejectsAmbiguousMetadata(t *testing.T) {
-	for _, raw := range []string{`{"datasource_id":"one","datasource_id":"two"}`, `{"datasource_id":1}`, `{"nextcloud_etag":null}`} {
+	for _, raw := range []string{
+		`{"datasource_id":"one","datasource_id":"two"}`,
+		`{"datasource_id":1}`,
+		`{"nextcloud_etag":null}`,
+	} {
 		_, err := strictLineageKnowledgeMetadata([]byte(raw))
 		require.Error(t, err)
 	}
@@ -217,7 +232,11 @@ func TestPostgresNextcloudSourceLineageResolverReadSnapshotAndRename(t *testing.
 	script, err := os.ReadFile("../../../migrations/versioned/000126_nextcloud_source_revisions.up.sql")
 	require.NoError(t, err)
 	require.NoError(t, migrations.Exec(string(script)).Error)
-	config, err := (&types.DataSourceConfig{Type: types.ConnectorTypeNextcloud, ResourceIDs: []string{"binding"}, Settings: map[string]interface{}{"base_url": "https://nextcloud.example"}, Credentials: map[string]interface{}{"token": "test-token", "key_id": "test_key"}}).ToJSON()
+	config, err := (&types.DataSourceConfig{Type: types.ConnectorTypeNextcloud, ResourceIDs: []string{
+		"binding",
+	}, Settings: map[string]interface{}{
+		"base_url": "https://nextcloud.example",
+	}, Credentials: map[string]interface{}{"token": "test-token", "key_id": "test_key"}}).ToJSON()
 	require.NoError(t, err)
 	source := &types.DataSource{
 		ID:              "ds",
@@ -251,7 +270,15 @@ func TestPostgresNextcloudSourceLineageResolverReadSnapshotAndRename(t *testing.
 	)
 	repo := &knowledgeRepository{
 		db: db,
-		nextcloudPublicationCheck: func(context.Context, *types.DataSourceConfig, string, string, int64, string, string) error {
+		nextcloudPublicationCheck: func(
+			context.Context,
+			*types.DataSourceConfig,
+			string,
+			string,
+			int64,
+			string,
+			string,
+		) error {
 			return nil
 		},
 	}

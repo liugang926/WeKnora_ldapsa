@@ -26,7 +26,8 @@ type messageGenerationOrigin struct {
 func (messageGenerationOrigin) TableName() string { return "message_generation_origins" }
 
 type messageMaterialAdmission struct {
-	ID                                                                                                string `gorm:"primaryKey"`
+	ID string `gorm:"primaryKey"`
+
 	GenerationID, MessageID, SessionID, OwnerID, BodyDigest, SourceLineage, ExecutionContext, AgentID string
 	TenantID, OwnerRevision, Revision, AgentTenantID                                                  uint64
 }
@@ -87,7 +88,18 @@ func messageMaterialDigest(message *types.Message) (string, error) {
 			Complete                                   bool
 			Created                                    time.Time
 			Execution                                  types.MessageExecutionContext
-		}{message.ID, message.SessionID, message.RequestID, message.Role, message.Content, message.AgentID, message.AgentTenantID, message.IsCompleted, message.CreatedAt, message.ExecutionContext})
+		}{
+			message.ID,
+			message.SessionID,
+			message.RequestID,
+			message.Role,
+			message.Content,
+			message.AgentID,
+			message.AgentTenantID,
+			message.IsCompleted,
+			message.CreatedAt,
+			message.ExecutionContext,
+		})
 	}
 	body := *message
 	body.KnowledgeID = ""
@@ -100,7 +112,14 @@ func messageMaterialDigest(message *types.Message) (string, error) {
 		AgentTenant uint64
 		Rendered    string
 		Context     *types.ContextCheckpoint
-	}{&body, body.SourceLineage, body.ExecutionContext, body.AgentTenantID, body.RenderedContent, body.ContextCheckpoint})
+	}{
+		&body,
+		body.SourceLineage,
+		body.ExecutionContext,
+		body.AgentTenantID,
+		body.RenderedContent,
+		body.ContextCheckpoint,
+	})
 }
 
 func messageVersion(tx *gorm.DB, table, column, id string) (uint64, error) {
@@ -166,7 +185,9 @@ func (s *KnowledgeInputProvenanceStore) beginMessageProducerInTx(
 	if err != nil {
 		return nil, err
 	}
-	if advance, present := tx.Statement.Context.Value(messageProducerAdvanceKey{}).(messageProducerAdvanceBoundary); present {
+	if advance, present := tx.Statement.Context.Value(
+		messageProducerAdvanceKey{},
+	).(messageProducerAdvanceBoundary); present {
 		if advance.Store != s || advance.MessageID != message.ID || advance.SessionID != message.SessionID ||
 			advance.Digest != digest {
 			return nil, ErrKnowledgeInputChanged
@@ -338,9 +359,11 @@ func (s *KnowledgeInputProvenanceStore) sealMessageMaterialInTx(
 			return err
 		}
 	}
-	if err := tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "message_id"}}, DoUpdates: clause.AssignmentColumns([]string{"admission_id"})}).
-		Create(&messageMaterialReceipt{message.ID, row.ID}).
-		Error; err != nil {
+	if err := tx.Clauses(clause.OnConflict{Columns: []clause.Column{{
+		Name: "message_id",
+	}}, DoUpdates: clause.AssignmentColumns([]string{"admission_id"})}).
+			Create(&messageMaterialReceipt{message.ID, row.ID}).
+			Error; err != nil {
 		return err
 	}
 	if origin.PreviousAdmissionID != "" {
@@ -420,7 +443,14 @@ func messageOriginalInputJSON(message *types.Message) ([]byte, error) {
 		AgentTenant uint64
 		Rendered    string
 		Checkpoint  *types.ContextCheckpoint
-	}{message, message.SourceLineage, message.ExecutionContext, message.AgentTenantID, message.RenderedContent, message.ContextCheckpoint})
+	}{
+		message,
+		message.SourceLineage,
+		message.ExecutionContext,
+		message.AgentTenantID,
+		message.RenderedContent,
+		message.ContextCheckpoint,
+	})
 }
 
 const messageGenerationMetadataFields = ("id,message_id,session_id,tenant_id,owner_id,owner_revision,request_id,role" +

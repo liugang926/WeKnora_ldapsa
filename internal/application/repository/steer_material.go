@@ -13,18 +13,41 @@ import (
 )
 
 type steerAuthoredOrigin struct {
-	ID, SteerID, SessionID, OwnerID, OriginRunMessageID, OriginRunGenerationID, OriginRunRequestID, Actor, BodyDigest, CanonicalDigest, SourceLineage, ExecutionContext, AgentID, InputBody string
-	TenantID, OwnerRevision, AgentTenantID                                                                                                                                                  uint64
-	CreatedAtMS                                                                                                                                                                             int64
+	ID                                     string
+	SteerID                                string
+	SessionID                              string
+	OwnerID                                string
+	OriginRunMessageID                     string
+	OriginRunGenerationID                  string
+	OriginRunRequestID                     string
+	Actor                                  string
+	BodyDigest                             string
+	CanonicalDigest                        string
+	SourceLineage                          string
+	ExecutionContext                       string
+	AgentID                                string
+	InputBody                              string
+	TenantID, OwnerRevision, AgentTenantID uint64
+	CreatedAtMS                            int64
 }
 
 func (steerAuthoredOrigin) TableName() string { return "steer_authored_origins" }
 
 type steerControlAdmission struct {
-	ID, OriginID, SessionID, SteerID, PreviousHeadID, Operation, RunMessageID, RunGenerationID, RunRequestID, Delivery, UserMessageID string
-	TenantID, Revision                                                                                                                uint64
-	Consumed, Discarded, Deleted                                                                                                      bool
-	CreatedAtMS                                                                                                                       int64
+	ID                           string
+	OriginID                     string
+	SessionID                    string
+	SteerID                      string
+	PreviousHeadID               string
+	Operation                    string
+	RunMessageID                 string
+	RunGenerationID              string
+	RunRequestID                 string
+	Delivery                     string
+	UserMessageID                string
+	TenantID, Revision           uint64
+	Consumed, Discarded, Deleted bool
+	CreatedAtMS                  int64
 }
 
 func (steerControlAdmission) TableName() string { return "steer_control_admissions" }
@@ -200,8 +223,14 @@ func (s *KnowledgeInputProvenanceStore) AdmitSteerAuthoredInput(
 		if err := tx.Table("steer_control_heads h").
 			Select("h.origin_id").
 			Joins("JOIN steer_control_admissions c ON c.id=h.head_id AND c.origin_id=h.origin_id").
-			Where(("c.tenant_id=? AND c.session_id=? AND c.run_message_id=? AND c.run_generati" +
-				"on_id=? AND c.consumed=false AND c.discarded=false AND c.deleted=false"), req.TenantID, req.SessionID, run.ID, generation).
+			Where(
+				("c.tenant_id=? AND c.session_id=? AND c.run_message_id=? AND c.run_generati" +
+					"on_id=? AND c.consumed=false AND c.discarded=false AND c.deleted=false"),
+				req.TenantID,
+				req.SessionID,
+				run.ID,
+				generation,
+			).
 			Scan(&pending).
 			Error; err != nil {
 			return err
@@ -392,7 +421,13 @@ func (s *KnowledgeInputProvenanceStore) ApplySteerControl(
 		}
 		var origin steerAuthoredOrigin
 		if err := tx.Select(steerOriginMetadataFields).
-			Where("id=? AND tenant_id=? AND session_id=? AND steer_id=?", req.OriginalAdmissionID, req.TenantID, req.SessionID, req.SteerID).
+			Where(
+				"id=? AND tenant_id=? AND session_id=? AND steer_id=?",
+				req.OriginalAdmissionID,
+				req.TenantID,
+				req.SessionID,
+				req.SteerID,
+			).
 			Take(&origin).
 			Error; err != nil {
 			return err

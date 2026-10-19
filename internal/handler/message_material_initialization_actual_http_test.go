@@ -42,7 +42,14 @@ func (m *actualHTTPInitializationModels) GetModelByID(ctx context.Context, id st
 }
 
 func TestMessageMaterialActualHTTPInitializationWaitsForAdmission(t *testing.T) {
-	for _, mode := range []string{"ready", "steer_schema_ready", "current_user_aba", "actor_revoked", "source_revoked", "cancelled"} {
+	for _, mode := range []string{
+		"ready",
+		"steer_schema_ready",
+		"current_user_aba",
+		"actor_revoked",
+		"source_revoked",
+		"cancelled",
+	} {
 		t.Run(mode, func(t *testing.T) {
 			f := newActualHTTPTailFixture(t, mode == "source_revoked")
 			if mode == "steer_schema_ready" {

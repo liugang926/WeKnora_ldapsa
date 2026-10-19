@@ -82,11 +82,16 @@ func onboardingDB(t *testing.T) (*gorm.DB, *repo.NextcloudOnboardingStore, types
 			&repo.NextcloudSourcePairingAbort{},
 		),
 	)
-	for _, sql := range []string{("CREATE UNIQUE INDEX policies_key ON resource_access_policies(tenant_id,res" +
-		"ource_type,resource_id)"), "CREATE TABLE wiki_pages(tenant_id INTEGER,knowledge_base_id TEXT)", ("CREATE TABLE nextcloud_source_tombstones(tenant_id INTEGER,scope_type TEXT" +
-		",scope_id TEXT)"), ("CREATE TABLE nextcloud_event_connections(connection_id TEXT PRIMARY KEY,te" +
-		"nant_id BIGINT,knowledge_base_id TEXT,nextcloud_instance_id TEXT,binding_i" +
-		"d TEXT,datasource_id TEXT,status TEXT)")} {
+	for _, sql := range []string{
+		("CREATE UNIQUE INDEX policies_key ON resource_access_policies(tenant_id,res" +
+			"ource_type,resource_id)"),
+		"CREATE TABLE wiki_pages(tenant_id INTEGER,knowledge_base_id TEXT)",
+		("CREATE TABLE nextcloud_source_tombstones(tenant_id INTEGER,scope_type TEXT" +
+			",scope_id TEXT)"),
+		("CREATE TABLE nextcloud_event_connections(connection_id TEXT PRIMARY KEY,te" +
+			"nant_id BIGINT,knowledge_base_id TEXT,nextcloud_instance_id TEXT,binding_i" +
+			"d TEXT,datasource_id TEXT,status TEXT)"),
+	} {
 		require.NoError(t, db.Exec(sql).Error)
 	}
 	require.NoError(t, db.Create(&types.Tenant{ID: 7, Name: "onboarding-owner"}).Error)
@@ -470,7 +475,16 @@ func TestNextcloudOnboardingBlankHistoryReservationAndRetry(t *testing.T) {
 	require.NoError(t, db.Model(&types.Knowledge{}).Count(&n).Error)
 	require.Zero(t, n)
 	_, _, err = repo.NewNextcloudSourcePairingRepository(db).
-		PrepareSourcePairing(ctx, repo.NextcloudSourcePairing{OperationID: uuid.NewString(), TenantID: 7, KnowledgeBaseID: kb.ID, InstanceID: c.InstanceID, BindingID: "wrong-root", BaseURL: c.BaseURL, PublicationEpoch: 1, KeyID: "wrong"}, "token")
+		PrepareSourcePairing(ctx, repo.NextcloudSourcePairing{
+			OperationID:      uuid.NewString(),
+			TenantID:         7,
+			KnowledgeBaseID:  kb.ID,
+			InstanceID:       c.InstanceID,
+			BindingID:        "wrong-root",
+			BaseURL:          c.BaseURL,
+			PublicationEpoch: 1,
+			KeyID:            "wrong",
+		}, "token")
 	require.ErrorIs(t, err, repo.ErrNextcloudSourcePairingConflict)
 	// Tenant containing unrelated business content is a valid target.
 	other := freshOnboardingKB("other")
@@ -770,7 +784,12 @@ func TestNextcloudOnboardingPostgresConcurrentAdmission(t *testing.T) {
 		}()
 		go func() {
 			<-start
-			out <- peer.Create(&types.Knowledge{ID: uuid.NewString(), TenantID: 7, KnowledgeBaseID: id, Channel: "manual"}).Error
+			out <- peer.Create(&types.Knowledge{
+				ID:              uuid.NewString(),
+				TenantID:        7,
+				KnowledgeBaseID: id,
+				Channel:         "manual",
+			}).Error
 		}()
 		close(start)
 		successes := 0

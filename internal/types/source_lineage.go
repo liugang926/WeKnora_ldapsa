@@ -297,7 +297,14 @@ func canonicalSourceLineageJSONKey(depth int, key string) bool {
 	if depth == 2 {
 		switch key {
 		case "provider", "tenant_id", "knowledge_base_id", "datasource_id", "pair_operation_id",
-			"instance_id", "binding_id", "file_id", "external_id", "knowledge_id", "revision", "etag", "content_revision":
+			"instance_id",
+			"binding_id",
+			"file_id",
+			"external_id",
+			"knowledge_id",
+			"revision",
+			"etag",
+			"content_revision":
 			return true
 		}
 	}

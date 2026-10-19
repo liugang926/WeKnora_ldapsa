@@ -71,8 +71,15 @@ func onboardingManagerPairMetadata(
 	c types.NextcloudOnboardingCredential,
 ) (NextcloudSourcePairing, error) {
 	var pair NextcloudSourcePairing
-	if err := tx.Where(("operation_id=? AND tenant_id=? AND knowledge_base_id=? AND nextcloud_insta" +
-		"nce_id=? AND binding_id=? AND state='active'"), op.OperationID, op.TenantID, op.KnowledgeBaseID, op.InstanceID, op.BindingID).
+	if err := tx.Where(
+		("operation_id=? AND tenant_id=? AND knowledge_base_id=? AND nextcloud_insta" +
+			"nce_id=? AND binding_id=? AND state='active'"),
+		op.OperationID,
+		op.TenantID,
+		op.KnowledgeBaseID,
+		op.InstanceID,
+		op.BindingID,
+	).
 		Take(&pair).
 		Error; err != nil {
 		return pair, types.ErrSourceLineageUnknown
@@ -82,8 +89,15 @@ func onboardingManagerPairMetadata(
 	}
 	var ds types.DataSource
 	if err := tx.Select("id,tenant_id,knowledge_base_id,type,status,config").
-		Where(("id=? AND tenant_id=? AND knowledge_base_id=? AND type=? AND status=? AND d" +
-			"eleted_at IS NULL"), pair.DataSourceID, op.TenantID, op.KnowledgeBaseID, types.ConnectorTypeNextcloud, types.DataSourceStatusActive).
+		Where(
+			("id=? AND tenant_id=? AND knowledge_base_id=? AND type=? AND status=? AND d" +
+				"eleted_at IS NULL"),
+			pair.DataSourceID,
+			op.TenantID,
+			op.KnowledgeBaseID,
+			types.ConnectorTypeNextcloud,
+			types.DataSourceStatusActive,
+		).
 		Take(&ds).
 		Error; err != nil {
 		return pair, err
@@ -280,7 +294,12 @@ func (s *NextcloudOnboardingStore) RecordPairManagerPurpose(
 		}
 		if lookup == nil {
 			var prior NextcloudOnboardingManagerPurpose
-			if err := tx.Where("purpose_id=? AND operation_id=? AND version=?", head.PurposeID, op.OperationID, head.Version).
+			if err := tx.Where(
+				"purpose_id=? AND operation_id=? AND version=?",
+				head.PurposeID,
+				op.OperationID,
+				head.Version,
+			).
 				Take(&prior).
 				Error; err != nil {
 				return types.ErrSourceLineageUnknown
@@ -338,7 +357,11 @@ func (s *NextcloudOnboardingStore) RecordPairManagerPurpose(
 			if q.RowsAffected != 1 {
 				return ErrKnowledgeInputChanged
 			}
-		} else if err := tx.Create(&nextcloudOnboardingManagerHead{OperationID: op.OperationID, PurposeID: purpose.PurposeID, Version: purpose.Version}).Error; err != nil {
+		} else if err := tx.Create(&nextcloudOnboardingManagerHead{
+			OperationID: op.OperationID,
+			PurposeID:   purpose.PurposeID,
+			Version:     purpose.Version,
+		}).Error; err != nil {
 			return err
 		}
 		if err := permit.check(tx); err != nil {
@@ -395,7 +418,12 @@ func ValidateNextcloudOnboardingManagerPurposeCoverageInTx(tx *gorm.DB, instance
 			return types.ErrSourceLineageUnknown
 		}
 		var p NextcloudOnboardingManagerPurpose
-		if err := tx.Where("purpose_id=? AND operation_id=? AND version=?", head.PurposeID, op.OperationID, head.Version).
+		if err := tx.Where(
+			"purpose_id=? AND operation_id=? AND version=?",
+			head.PurposeID,
+			op.OperationID,
+			head.Version,
+		).
 			Take(&p).
 			Error; err != nil {
 			return types.ErrSourceLineageUnknown

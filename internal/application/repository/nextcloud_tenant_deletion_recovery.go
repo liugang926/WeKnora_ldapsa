@@ -49,7 +49,17 @@ func validateRecoveryTenantDeletion(raw json.RawMessage, instance string) (Nextc
 	if json.Unmarshal(fields["tenant"], &tenant) != nil || len(tenant) != 9 {
 		return proof, ErrNextcloudRecoveryDenied
 	}
-	for _, name := range []string{"schema", "state", "operation_id", "instance_id", "binding_id", "tenant_id", "deletion_id", "deletion_time_ms", "closed_at"} {
+	for _, name := range []string{
+		"schema",
+		"state",
+		"operation_id",
+		"instance_id",
+		"binding_id",
+		"tenant_id",
+		"deletion_id",
+		"deletion_time_ms",
+		"closed_at",
+	} {
 		var value string
 		if json.Unmarshal(tenant[name], &value) != nil {
 			return proof, ErrNextcloudRecoveryDenied

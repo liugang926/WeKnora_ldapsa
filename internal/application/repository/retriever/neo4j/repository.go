@@ -40,6 +40,7 @@ func (n *Neo4jRepository) Label(namespace types.NameSpace) string {
 	return strings.Join(labels, ":")
 }
 
+// AddGraph writes graph material with checked source receipts and closes its write session.
 func (n *Neo4jRepository) AddGraph(
 	ctx context.Context,
 	namespace types.NameSpace,

@@ -41,7 +41,12 @@ func (s *KnowledgeInputProvenanceStore) RecheckKnowledgeOutputInputs(
 				return types.ErrSourceLineageUnknown
 			}
 			var k types.Knowledge
-			if err := tx.Where("id = ? AND tenant_id = ? AND knowledge_base_id = ?", proof.KnowledgeID, proof.TenantID, proof.KnowledgeBaseID).
+			if err := tx.Where(
+				"id = ? AND tenant_id = ? AND knowledge_base_id = ?",
+				proof.KnowledgeID,
+				proof.TenantID,
+				proof.KnowledgeBaseID,
+			).
 				Take(&k).
 				Error; err != nil {
 				return err
@@ -62,7 +67,13 @@ func (s *KnowledgeInputProvenanceStore) RecheckKnowledgeOutputInputs(
 					return ErrKnowledgeInputChanged
 				}
 				var chunk types.Chunk
-				if err := tx.Where("id = ? AND tenant_id = ? AND knowledge_base_id = ? AND knowledge_id = ?", id, k.TenantID, k.KnowledgeBaseID, k.ID).
+				if err := tx.Where(
+					"id = ? AND tenant_id = ? AND knowledge_base_id = ? AND knowledge_id = ?",
+					id,
+					k.TenantID,
+					k.KnowledgeBaseID,
+					k.ID,
+				).
 					Take(&chunk).
 					Error; err != nil {
 					return err

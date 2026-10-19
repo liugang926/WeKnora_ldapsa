@@ -77,7 +77,9 @@ func (s *SessionForkService) beginForkMessageMaterial(
 			if original.Role == "user" {
 				continue
 			}
-		} else if original.CreatedAt.After(point.CreatedAt) || original.CreatedAt.Equal(point.CreatedAt) && original.ID >= point.ID {
+		} else if original.CreatedAt.After(
+			point.CreatedAt,
+		) || original.CreatedAt.Equal(point.CreatedAt) && original.ID >= point.ID {
 			guard.Close()
 			return nil, nil, nil, access.ErrNextcloudPublicationDenied
 		}
@@ -113,7 +115,14 @@ func cloneForkOriginalMessage(original *types.Message) (*types.Message, error) {
 		AgentTenantID     uint64
 		RenderedContent   string
 		ContextCheckpoint *types.ContextCheckpoint
-	}{original, original.SourceLineage, original.ExecutionContext, original.AgentTenantID, original.RenderedContent, original.ContextCheckpoint})
+	}{
+		original,
+		original.SourceLineage,
+		original.ExecutionContext,
+		original.AgentTenantID,
+		original.RenderedContent,
+		original.ContextCheckpoint,
+	})
 	if err != nil {
 		return nil, err
 	}

@@ -42,7 +42,13 @@ func TestGroupAccessMissingOnboardingLedgerPreservesSchemaBoundary(t *testing.T)
 			}
 			require.NoError(t, db.Migrator().DropTable(&types.NextcloudOnboardingOperation{}))
 			access := repo.NewGroupAccessRepository(db).(interface {
-				ScopedMatches(context.Context, string, uint64, string, time.Time) ([]types.NextcloudScopedGrantMatch, error)
+				ScopedMatches(
+					context.Context,
+					string,
+					uint64,
+					string,
+					time.Time,
+				) ([]types.NextcloudScopedGrantMatch, error)
 				TenantScoped(context.Context, uint64) (bool, error)
 				ManagedKB(context.Context, uint64, string) (bool, error)
 			})

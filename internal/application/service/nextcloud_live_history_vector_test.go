@@ -132,7 +132,10 @@ func documentLiveHistoryVector(
 		t,
 		db.Model(&types.Tenant{}).
 			Where("id=7").
-			Updates(map[string]any{"chat_history_config": tenant.ChatHistoryConfig, "retrieval_config": tenant.RetrievalConfig}).
+			Updates(map[string]any{
+				"chat_history_config": tenant.ChatHistoryConfig,
+				"retrieval_config":    tenant.RetrievalConfig,
+			}).
 			Error,
 	)
 	history.ctx = context.WithValue(history.ctx, types.TenantInfoContextKey, &tenant)

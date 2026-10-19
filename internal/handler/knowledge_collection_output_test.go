@@ -107,7 +107,14 @@ func (s *collectionHTTPAgents) TenantCanAccessKBViaSomeSharedAgent(
 
 func collectionHTTPFixture(
 	t *testing.T,
-) (*KnowledgeHandler, *gorm.DB, *repository.KnowledgeInputProvenanceStore, *outputHTTPGroups, *collectionHTTPShare, *collectionHTTPAgents) {
+) (
+	*KnowledgeHandler,
+	*gorm.DB,
+	*repository.KnowledgeInputProvenanceStore,
+	*outputHTTPGroups,
+	*collectionHTTPShare,
+	*collectionHTTPAgents,
+) {
 	t.Helper()
 	db, err := gorm.Open(
 		sqlite.Open(filepath.Join(t.TempDir(), "collection.db")+"?_journal_mode=WAL&_busy_timeout=5000"),
@@ -150,7 +157,15 @@ func collectionHTTPFixture(
 		require.NoError(t, err)
 		require.NoError(t, db.Exec(string(ddl)).Error)
 	}
-	for _, name := range []string{"000046_nextcloud_content_leases", "000053_knowledge_input_provenance", "000054_knowledge_configuration_history_inputs", "000055_knowledge_actual_config_controls", "000058_knowledge_collection_checkpoints", "000059_knowledge_collection_display_inputs"} {
+	for _, name := range []string{
+		"000046_nextcloud_content_leases",
+		"000053_knowledge_input_provenance",
+		"000054_knowledge_configuration_history_inputs",
+		"000055_knowledge_actual_config_controls",
+		"000056_knowledge_original_worker_actor",
+		"000058_knowledge_collection_checkpoints",
+		"000059_knowledge_collection_display_inputs",
+	} {
 		path := "../../migrations/sqlite/" + name + ".up.sql"
 		script, err := os.ReadFile(path)
 		require.NoError(t, err)
@@ -232,9 +247,54 @@ func collectionHTTPFixture(
 		)
 	}
 	for _, k := range []*types.Knowledge{
-		{ID: "match", TenantID: 7, KnowledgeBaseID: "kb", Type: "manual", Title: "match original", FileName: "match.md", FileType: "md", FolderPath: "docs/spec", Channel: "web", Source: "manual", ParseStatus: types.ParseStatusCompleted, EnableStatus: "enabled", Metadata: types.JSON(`{"manual":{"content":"original body","version":1}}`), CustomMetadata: types.JSON(`{}`)},
-		{ID: "excluded", TenantID: 7, KnowledgeBaseID: "kb", Type: "manual", Title: "excluded original", FileName: "else.pdf", FileType: "pdf", FolderPath: "other", Channel: "web", Source: "manual", ParseStatus: types.ParseStatusCompleted, EnableStatus: "enabled", Metadata: types.JSON(`{"manual":{"content":"excluded body","version":1}}`), CustomMetadata: types.JSON(`{}`)},
-		{ID: "shared-match", TenantID: 9, KnowledgeBaseID: "shared-kb", Type: "manual", Title: "match shared original", FileName: "shared.md", FileType: "md", FolderPath: "shared", Channel: "web", Source: "manual", ParseStatus: types.ParseStatusCompleted, EnableStatus: "enabled", Metadata: types.JSON(`{"manual":{"content":"shared body","version":1}}`), CustomMetadata: types.JSON(`{}`)},
+		{
+			ID:              "match",
+			TenantID:        7,
+			KnowledgeBaseID: "kb",
+			Type:            "manual",
+			Title:           "match original",
+			FileName:        "match.md",
+			FileType:        "md",
+			FolderPath:      "docs/spec",
+			Channel:         "web",
+			Source:          "manual",
+			ParseStatus:     types.ParseStatusCompleted,
+			EnableStatus:    "enabled",
+			Metadata:        types.JSON(`{"manual":{"content":"original body","version":1}}`),
+			CustomMetadata:  types.JSON(`{}`),
+		},
+		{
+			ID:              "excluded",
+			TenantID:        7,
+			KnowledgeBaseID: "kb",
+			Type:            "manual",
+			Title:           "excluded original",
+			FileName:        "else.pdf",
+			FileType:        "pdf",
+			FolderPath:      "other",
+			Channel:         "web",
+			Source:          "manual",
+			ParseStatus:     types.ParseStatusCompleted,
+			EnableStatus:    "enabled",
+			Metadata:        types.JSON(`{"manual":{"content":"excluded body","version":1}}`),
+			CustomMetadata:  types.JSON(`{}`),
+		},
+		{
+			ID:              "shared-match",
+			TenantID:        9,
+			KnowledgeBaseID: "shared-kb",
+			Type:            "manual",
+			Title:           "match shared original",
+			FileName:        "shared.md",
+			FileType:        "md",
+			FolderPath:      "shared",
+			Channel:         "web",
+			Source:          "manual",
+			ParseStatus:     types.ParseStatusCompleted,
+			EnableStatus:    "enabled",
+			Metadata:        types.JSON(`{"manual":{"content":"shared body","version":1}}`),
+			CustomMetadata:  types.JSON(`{}`),
+		},
 	} {
 		_, err := store.CreateKnowledgeWithInput(
 			repository.WithIndependentKnowledgeInput(context.Background()),
@@ -343,7 +403,19 @@ func TestKnowledgeCollectionHTTPPositiveListFoldersAndThreeSearchBranches(t *tes
 }
 
 func TestKnowledgeCollectionHTTPWholeCandidatesAndFinalRemoteBoundary(t *testing.T) {
-	for _, change := range []string{"unproved_excluded", "excluded_body", "body_aba", "insert", "delete", "insert_delete_aba", "config_aba", "withdraw_group", "withdraw_share", "withdraw_agent", "final_grant_withdraw"} {
+	for _, change := range []string{
+		"unproved_excluded",
+		"excluded_body",
+		"body_aba",
+		"insert",
+		"delete",
+		"insert_delete_aba",
+		"config_aba",
+		"withdraw_group",
+		"withdraw_share",
+		"withdraw_agent",
+		"final_grant_withdraw",
+	} {
 		t.Run(change, func(t *testing.T) {
 			h, db, _, groups, shares, agents := collectionHTTPFixture(t)
 			url := "/knowledge-bases/kb/knowledge?keyword=match&file_type=md&page_size=1"
@@ -530,7 +602,12 @@ func TestKnowledgeCollectionHTTPTenThousandCandidatesRemainUsable(t *testing.T) 
 }
 
 func TestKnowledgeCollectionHTTPOriginalTagFilterAndDisplay(t *testing.T) {
-	for _, change := range []string{"positive", "excluded_tag_body_aba", "excluded_relation_aba", "legacy_excluded_tag"} {
+	for _, change := range []string{
+		"positive",
+		"excluded_tag_body_aba",
+		"excluded_relation_aba",
+		"legacy_excluded_tag",
+	} {
 		t.Run(change, func(t *testing.T) {
 			h, db, store, groups, _, _ := collectionHTTPFixture(t)
 			tags := repository.NewKnowledgeTagRepository(db)
@@ -646,7 +723,11 @@ func TestKnowledgeCollectionHTTPAuthorizationPrecedesCallerPredicates(t *testing
 }
 
 func TestKnowledgeCollectionHTTPMissingVerifierNeverUsesLegacyReaders(t *testing.T) {
-	for _, url := range []string{"/knowledge-bases/kb/knowledge?keyword=match", "/knowledge-bases/kb/knowledge/folders", "/knowledge/search?keyword=match"} {
+	for _, url := range []string{
+		"/knowledge-bases/kb/knowledge?keyword=match",
+		"/knowledge-bases/kb/knowledge/folders",
+		"/knowledge/search?keyword=match",
+	} {
 		h, _, _, _, _, _ := collectionHTTPFixture(t)
 		h.collectionOutputAuthorizer = nil
 		w := serveCollectionHTTP(h, url, false)

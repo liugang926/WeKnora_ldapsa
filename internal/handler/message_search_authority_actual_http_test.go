@@ -48,7 +48,13 @@ func TestHistorySearchActualHTTPTransactionAuthorityFactory(t *testing.T) {
 	)
 	require.NoError(t, db.Exec("PRAGMA journal_mode=WAL").Error)
 	require.NoError(t, db.Exec("ALTER TABLE messages ADD COLUMN artifacts TEXT").Error)
-	for _, file := range []string{"000023_message_artifacts_table.up.sql", "000026_message_artifacts_deleted_at.up.sql", "000028_directory_group_access.up.sql", "000046_nextcloud_content_leases.up.sql", "000070_message_original_materials.up.sql"} {
+	for _, file := range []string{
+		"000023_message_artifacts_table.up.sql",
+		"000026_message_artifacts_deleted_at.up.sql",
+		"000028_directory_group_access.up.sql",
+		"000046_nextcloud_content_leases.up.sql",
+		"000070_message_original_materials.up.sql",
+	} {
 		ddl, err := os.ReadFile("../../migrations/sqlite/" + file)
 		require.NoError(t, err)
 		require.NoError(t, db.Exec(string(ddl)).Error)

@@ -27,7 +27,13 @@ func runParentBodyCopyCase(t *testing.T, pg bool, mode string) {
 	messages, _, _, db, ctx, session, body := messageBodyIntegrationFixture(
 		t,
 		pg,
-		func(messages *messageService, db *gorm.DB, _ *repository.KnowledgeInputProvenanceStore, ctx context.Context, session *types.Session) {
+		func(
+			messages *messageService,
+			db *gorm.DB,
+			_ *repository.KnowledgeInputProvenanceStore,
+			ctx context.Context,
+			session *types.Session,
+		) {
 			var e error
 			input := &types.Message{
 				SessionID:   session.ID,
@@ -375,7 +381,13 @@ func runParentBodyCopyMultipleLiveHosts(t *testing.T, pg bool) {
 	messages, _, _, db, ctx, session, body := messageBodyIntegrationFixture(
 		t,
 		pg,
-		func(messages *messageService, db *gorm.DB, _ *repository.KnowledgeInputProvenanceStore, ctx context.Context, session *types.Session) {
+		func(
+			messages *messageService,
+			db *gorm.DB,
+			_ *repository.KnowledgeInputProvenanceStore,
+			ctx context.Context,
+			session *types.Session,
+		) {
 			source, err := messages.CreateMessage(
 				ctx,
 				&types.Message{

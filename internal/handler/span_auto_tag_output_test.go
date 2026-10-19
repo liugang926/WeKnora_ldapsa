@@ -61,7 +61,17 @@ func (s autoSpanHTTPChunks) ListChunksByKnowledgeID(context.Context, string) ([]
 }
 
 func TestAutoTagActualAsynqBeginModelEndOriginalSpanHTTP(t *testing.T) {
-	for _, mutation := range []string{"none", "unselected name ABA", "relationship ABA", "source withdrawal after model", "source withdrawal before HTTP", "remote revoke before HTTP", "source withdraw during HTTP remote", "API revoked after model", "API revoked before HTTP"} {
+	for _, mutation := range []string{
+		"none",
+		"unselected name ABA",
+		"relationship ABA",
+		"source withdrawal after model",
+		"source withdrawal before HTTP",
+		"remote revoke before HTTP",
+		"source withdraw during HTTP remote",
+		"API revoked after model",
+		"API revoked before HTTP",
+	} {
 		t.Run(mutation, func(t *testing.T) {
 			change := "auto-source"
 			if mutation == "source withdraw during HTTP remote" {
@@ -75,7 +85,11 @@ func TestAutoTagActualAsynqBeginModelEndOriginalSpanHTTP(t *testing.T) {
 				change,
 				func(db *gorm.DB, store *repository.KnowledgeInputProvenanceStore) {
 					require.NoError(t, db.AutoMigrate(&types.Tenant{}, &types.Model{}))
-					for _, name := range []string{"000056_knowledge_original_worker_actor", "000057_processing_span_original_inputs", "000062_knowledge_enrichment_inputs"} {
+					for _, name := range []string{
+						"000056_knowledge_original_worker_actor",
+						"000057_processing_span_original_inputs",
+						"000062_knowledge_enrichment_inputs",
+					} {
 						if name == "000057_processing_span_original_inputs" {
 							require.NoError(t, db.AutoMigrate(&types.KnowledgeProcessingSpan{}))
 							require.NoError(
@@ -292,10 +306,21 @@ func TestAutoTagActualAsynqBeginModelEndOriginalSpanHTTP(t *testing.T) {
 				require.NoError(
 					t,
 					repository.NewNextcloudContentLeaseStore(db).
-						RetireKnowledge(context.Background(), repository.NextcloudContentScope{TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: "source", DataSourceID: "ds", ExternalID: "nextcloud:instance:77"}),
+						RetireKnowledge(context.Background(), repository.NextcloudContentScope{
+							TenantID:        7,
+							KnowledgeBaseID: "kb",
+							KnowledgeID:     "source",
+							DataSourceID:    "ds",
+							ExternalID:      "nextcloud:instance:77",
+						}),
 				)
 			}
-			revokeAPI := func() { now := time.Now(); require.NoError(t, db.Model(apiKey).Update("revoked_at", &now).Error) }
+			revokeAPI := func() {
+				now := time.Now()
+				require.NoError(t, db.Model(
+					apiKey,
+				).Update("revoked_at", &now).Error)
+			}
 			if mutation == "API revoked after model" {
 				model.after = revokeAPI
 			}

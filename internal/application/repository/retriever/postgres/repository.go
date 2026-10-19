@@ -146,7 +146,12 @@ func (r *pgRepository) writeIndexRows(ctx context.Context, infos []*types.IndexI
 		}
 		for _, scope := range scopes {
 			var written []*pgVector
-			if err := tx.Where("knowledge_base_id=? AND knowledge_id=? AND source_id IN ?", scope.kbID, scope.knowledgeID, scope.sourceIDs).
+			if err := tx.Where(
+				"knowledge_base_id=? AND knowledge_id=? AND source_id IN ?",
+				scope.kbID,
+				scope.knowledgeID,
+				scope.sourceIDs,
+			).
 				Find(&written).
 				Error; err != nil {
 				return err

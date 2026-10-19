@@ -454,11 +454,18 @@ func (b *historyVectorMaterialBridge) captureChildren(
 		}
 		header := b.originals[id].header
 		if child == nil || child.Proof == nil || child.Knowledge == nil || child.KnowledgeBase == nil ||
-			child.Knowledge.ID != id || child.Knowledge.TenantID != b.tenant || child.Knowledge.KnowledgeBaseID != b.kbID ||
+			child.Knowledge.ID != id ||
+			child.Knowledge.TenantID != b.tenant || child.Knowledge.KnowledgeBaseID != b.kbID ||
 			child.KnowledgeBase.ID != b.kbID || child.KnowledgeBase.TenantID != b.tenant ||
-			child.Proof.TenantID != b.tenant || child.Proof.KnowledgeBaseID != b.kbID || child.Proof.KnowledgeID != id ||
-			child.Proof.AdmissionID != header.AdmissionID || child.Proof.InputDigest != header.InputDigest || child.Proof.BuildGeneration != header.BuildGeneration ||
-			child.Proof.BodyDigest == "" || child.Proof.SourceLineage.RequireComplete() != nil || len(child.Chunks) != len(chunkIDs) {
+			child.Proof.TenantID != b.tenant ||
+			child.Proof.KnowledgeBaseID != b.kbID || child.Proof.KnowledgeID != id ||
+			child.Proof.AdmissionID != header.AdmissionID ||
+			child.Proof.InputDigest != header.InputDigest || child.Proof.BuildGeneration != header.BuildGeneration ||
+			child.Proof.BodyDigest == "" || child.Proof.SourceLineage.RequireComplete() != nil || len(
+			child.Chunks,
+		) != len(
+			chunkIDs,
+		) {
 			return repository.ErrKnowledgeInputChanged
 		}
 		wanted := map[string]bool{}

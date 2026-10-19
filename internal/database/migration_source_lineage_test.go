@@ -243,8 +243,11 @@ func requireSourceTombstone(t *testing.T, db *sql.DB, dialect string, tenant int
 	var count int
 	require.NoError(
 		t,
-		db.QueryRow(lineageMigrationQuery(dialect, ("SELECT count(*)\n\t\tFROM nextcloud_source_tombstones WHERE tenant_id = ? "+
-			"AND scope_type = ? AND scope_id = ?")), tenant, scope, id).
+		db.QueryRow(lineageMigrationQuery(
+			dialect,
+			("SELECT count(*)\n\t\tFROM nextcloud_source_tombstones WHERE tenant_id = ? "+
+				"AND scope_type = ? AND scope_id = ?"),
+		), tenant, scope, id).
 			Scan(&count),
 	)
 	require.Equal(t, want, count, "%d/%s/%s", tenant, scope, id)
@@ -277,8 +280,11 @@ func requireSourceLineageMigrationBehavior(t *testing.T, db *sql.DB, dialect str
 	}
 	requireSourceTombstone(t, db, dialect, 8, "tenant", "8", 0) // absence remains unknown
 	for _, invalid := range []string{
-		`{}`, `{"version":1,"sources":[]}`, `{"version":2,"state":"complete","sources":[]}`,
-		`{"version":1,"state":"complete","sources":null}`, ("{\"version\":1,\"state\":\"complete\",\"sources\":[],\"extra\":true} trail" +
+		`{}`,
+		`{"version":1,"sources":[]}`,
+		`{"version":2,"state":"complete","sources":[]}`,
+		`{"version":1,"state":"complete","sources":null}`,
+		("{\"version\":1,\"state\":\"complete\",\"sources\":[],\"extra\":true} trail" +
 			"ing"),
 	} {
 		_, err := db.Exec(

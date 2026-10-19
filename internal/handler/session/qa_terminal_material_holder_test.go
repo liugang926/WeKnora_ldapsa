@@ -158,7 +158,16 @@ func TestLiveSSEProducerErrorWithRefusedOriginalMaterialHolder(t *testing.T) {
 				}
 				// executeQA emits this event after the service fails, without a
 				// generated-body receipt; do not fake assistant completion to close.
-				producerResult <- bus.Emit(ctx, event.Event{ID: "private diagnostic event ID", Type: event.EventError, SessionID: "session", RequestID: "request", Data: event.ErrorData{Error: "private diagnostic token=SECRET", Stage: "private source stage"}})
+				producerResult <- bus.Emit(ctx, event.Event{
+					ID:        "private diagnostic event ID",
+					Type:      event.EventError,
+					SessionID: "session",
+					RequestID: "request",
+					Data: event.ErrorData{
+						Error: "private diagnostic token=SECRET",
+						Stage: "private source stage",
+					},
+				})
 				setSSEHeaders(c)
 				rewriter := storageurl.NewStreamRewriter(
 					storageurl.NewRequestRewriter(ctx, storageurl.ModePublic, nil, nil),
@@ -181,7 +190,13 @@ func TestLiveSSEProducerErrorWithRefusedOriginalMaterialHolder(t *testing.T) {
 			require.Contains(t, string(raw), `"done":true`)
 			require.Contains(t, string(raw), `"error_code":"generation_failed"`)
 			require.NotContains(t, string(raw), `"response_type":"complete"`)
-			for _, forbidden := range []string{"SECRET", "private diagnostic", "private source stage", "private refused body", "private held source"} {
+			for _, forbidden := range []string{
+				"SECRET",
+				"private diagnostic",
+				"private source stage",
+				"private refused body",
+				"private held source",
+			} {
 				require.NotContains(t, string(raw), forbidden)
 			}
 			require.False(t, message.IsCompleted)

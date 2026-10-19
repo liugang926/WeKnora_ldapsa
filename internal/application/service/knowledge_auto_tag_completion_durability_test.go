@@ -82,7 +82,13 @@ func autoCompletionRunUntilPending(t *testing.T, m *machinePipelineFixture) (*ty
 	require.NoError(
 		t,
 		m.f.db.WithContext(m.f.ctx).
-			Where("manifest_id=? AND tenant_id=? AND knowledge_base_id=? AND knowledge_id=?", p.CompletionInput, p.TenantID, p.KnowledgeBaseID, p.KnowledgeID).
+			Where(
+				"manifest_id=? AND tenant_id=? AND knowledge_base_id=? AND knowledge_id=?",
+				p.CompletionInput,
+				p.TenantID,
+				p.KnowledgeBaseID,
+				p.KnowledgeID,
+			).
 			Take(&receipt).
 			Error,
 	)
@@ -240,7 +246,17 @@ func TestKnowledgeAutoCompletionCrashChild(t *testing.T) {
 }
 
 func runAutoCompletionWithdraw(t *testing.T, pg bool) {
-	for _, mutation := range []string{"source_withdraw", "actor_withdraw", "model_ABA", "tenant_ABA", "body_ABA", "publication_etag_ABA", "publication_updated_at_ABA", "publication_metadata_ABA", "queue_forge"} {
+	for _, mutation := range []string{
+		"source_withdraw",
+		"actor_withdraw",
+		"model_ABA",
+		"tenant_ABA",
+		"body_ABA",
+		"publication_etag_ABA",
+		"publication_updated_at_ABA",
+		"publication_metadata_ABA",
+		"queue_forge",
+	} {
 		t.Run(mutation, func(t *testing.T) {
 			m := autoCompletionFixture(t, pg)
 			m.authenticated = true

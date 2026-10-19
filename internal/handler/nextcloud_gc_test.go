@@ -106,7 +106,15 @@ func TestNextcloudGCAdminStatusIsTenantScopedAndHidesInventory(t *testing.T) {
 }
 
 func TestNextcloudGCActualAdminHTTPPreviewAndCurrentRevocation(t *testing.T) {
-	for _, mode := range []string{"preview", "disabled", "member-removed", "demoted", "api-key", "cross-tenant", "missing-actor"} {
+	for _, mode := range []string{
+		"preview",
+		"disabled",
+		"member-removed",
+		"demoted",
+		"api-key",
+		"cross-tenant",
+		"missing-actor",
+	} {
 		t.Run(mode, func(t *testing.T) {
 			_, db, actor, _, _, _ := collectionHTTPFixture(t)
 			sql, e := os.ReadFile("../../migrations/sqlite/000038_nextcloud_gc.up.sql")

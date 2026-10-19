@@ -937,7 +937,11 @@ func (s *sessionService) KnowledgeQAByEvent(ctx context.Context,
 		}
 		err := s.eventManager.Trigger(stageCtx, eventType, chatManage)
 		if err == nil || err == chatpipeline.ErrSearchNothing {
-			for _, outputs := range [][]*types.SearchResult{chatManage.SearchResult, chatManage.RerankResult, chatManage.MergeResult} {
+			for _, outputs := range [][]*types.SearchResult{
+				chatManage.SearchResult,
+				chatManage.RerankResult,
+				chatManage.MergeResult,
+			} {
 				if inputErr := chatpipeline.AccountResults(stageCtx, outputs); inputErr != nil {
 					return inputErr
 				}

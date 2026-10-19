@@ -256,14 +256,24 @@ func (m *actualSteerHTTPModel) ChatStream(
 				out <- types.StreamResponse{Done: true, FinishReason: "stop"}
 				return
 			}
-			out <- types.StreamResponse{ResponseType: types.ResponseTypeAnswer, Content: "ACTUAL FIRST ROUND", Done: true, FinishReason: "stop"}
+			out <- types.StreamResponse{
+				ResponseType: types.ResponseTypeAnswer,
+				Content:      "ACTUAL FIRST ROUND",
+				Done:         true,
+				FinishReason: "stop",
+			}
 		}()
 	} else {
 		assertActualSteerBodyLease(m.t, m.f.db, m.steerID, true)
 		if m.f.source != "" {
 			assertActualHTTPTailLeases(m.t, m.f.db, true, m.f.source)
 		}
-		out <- types.StreamResponse{ResponseType: types.ResponseTypeAnswer, Content: actualSteerHTTPAnswer, Done: true, FinishReason: "stop"}
+		out <- types.StreamResponse{
+			ResponseType: types.ResponseTypeAnswer,
+			Content:      actualSteerHTTPAnswer,
+			Done:         true,
+			FinishReason: "stop",
+		}
 		close(out)
 	}
 	return out, nil

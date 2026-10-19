@@ -95,7 +95,10 @@ func (s *messageService) messageSourceLineageScope(
 		)
 		return nil
 	}
-	for _, id := range append(append([]string{}, message.ExecutionContext.KnowledgeBaseIDs...), message.ExecutionContext.AgentKnowledgeBaseIDs...) {
+	for _, id := range append(
+		append([]string{}, message.ExecutionContext.KnowledgeBaseIDs...),
+		message.ExecutionContext.AgentKnowledgeBaseIDs...,
+	) {
 		if err := addKB(id); err != nil {
 			return scope, err
 		}

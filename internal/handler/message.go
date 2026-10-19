@@ -116,7 +116,11 @@ func (h *MessageHandler) LoadMessages(c *gin.Context) {
 	prior := c.Writer
 	c.Writer = &knowledgeCollectionAuthorizationWriter{
 		ResponseWriter: prior,
-		check:          func() error { return messageHistoryReadErrorOrNil(service.CheckMessageMaterialOutputBoundary(ctx)) },
+		check: func() error {
+			return messageHistoryReadErrorOrNil(service.CheckMessageMaterialOutputBoundary(
+				ctx,
+			))
+		},
 	}
 	defer func() { c.Writer = prior }()
 
@@ -288,7 +292,11 @@ func (h *MessageHandler) SearchMessages(c *gin.Context) {
 	prior := c.Writer
 	c.Writer = &knowledgeCollectionAuthorizationWriter{
 		ResponseWriter: prior,
-		check:          func() error { return messageHistoryReadErrorOrNil(service.CheckMessageMaterialOutputBoundary(ctx)) },
+		check: func() error {
+			return messageHistoryReadErrorOrNil(service.CheckMessageMaterialOutputBoundary(
+				ctx,
+			))
+		},
 	}
 	defer func() { c.Writer = prior }()
 

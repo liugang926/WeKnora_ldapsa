@@ -18,9 +18,11 @@ var (
 	ErrNextcloudCapacityUnavailable = apperrors.NewProtocolError(
 		errors.New("nextcloud storage capacity is unavailable"), "Nextcloud storage capacity is unavailable",
 	)
+	// ErrNextcloudCapacityPaused reports that storage capacity currently pauses ingestion.
 	ErrNextcloudCapacityPaused = apperrors.NewProtocolError(
 		errors.New("nextcloud AI ingestion is paused by capacity"), "Nextcloud AI ingestion is paused by capacity",
 	)
+	// ErrNextcloudRetentionQuota reports that the knowledge base retention quota is exceeded.
 	ErrNextcloudRetentionQuota = apperrors.NewProtocolError(
 		errors.New(
 			"nextcloud knowledge base retention quota exceeded",
@@ -91,7 +93,14 @@ func (s *NextcloudCapacityStore) SetPolicy(ctx context.Context, p NextcloudCapac
 		if err := tx.Where("tenant_id=? AND id=?", p.TenantID, p.KnowledgeBaseID).Take(&kb).Error; err != nil {
 			return err
 		}
-		return tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "tenant_id"}, {Name: "knowledge_base_id"}}, DoUpdates: clause.AssignmentColumns([]string{"retention_quota_bytes", "warning_percent", "pause_percent"})}).
+		return tx.Clauses(clause.OnConflict{
+			Columns: []clause.Column{{
+				Name: "tenant_id",
+			}, {
+				Name: "knowledge_base_id",
+			}},
+			DoUpdates: clause.AssignmentColumns([]string{"retention_quota_bytes", "warning_percent", "pause_percent"}),
+		}).
 			Create(&p).
 			Error
 	})
@@ -290,7 +299,12 @@ func (s *NextcloudCapacityStore) reserve(
 			return ErrNextcloudRetentionQuota
 		}
 		if err := tx.Model(&scope).
-			Updates(map[string]any{"total_bytes": m.TotalBytes, "available_bytes": m.AvailableBytes, "measured_at_ms": m.MeasuredAt.UnixMilli(), "state": state}).
+			Updates(map[string]any{
+				"total_bytes":     m.TotalBytes,
+				"available_bytes": m.AvailableBytes,
+				"measured_at_ms":  m.MeasuredAt.UnixMilli(),
+				"state":           state,
+			}).
 			Error; err != nil {
 			return err
 		}
@@ -400,7 +414,15 @@ func (s *NextcloudCapacityStore) Observe(ctx context.Context, m types.StorageCap
 			State:          state,
 			Revision:       1,
 		}
-		return tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "scope_id"}}, DoUpdates: clause.Assignments(map[string]any{"total_bytes": m.TotalBytes, "available_bytes": m.AvailableBytes, "measured_at_ms": m.MeasuredAt.UnixMilli(), "state": state, "revision": gorm.Expr("nextcloud_capacity_scopes.revision+1")})}).
+		return tx.Clauses(clause.OnConflict{Columns: []clause.Column{{
+			Name: "scope_id",
+		}}, DoUpdates: clause.Assignments(map[string]any{
+			"total_bytes":     m.TotalBytes,
+			"available_bytes": m.AvailableBytes,
+			"measured_at_ms":  m.MeasuredAt.UnixMilli(),
+			"state":           state,
+			"revision":        gorm.Expr("nextcloud_capacity_scopes.revision+1"),
+		})}).
 			Create(&row).
 			Error
 	})
@@ -500,7 +522,10 @@ func (s *NextcloudCapacityStore) Status(
 		if quota := result.Policy.RetentionQuotaBytes; quota > 0 {
 			if result.LogicalRetainedBytes >= quota {
 				result.State = "paused"
-			} else if result.State == "normal" && result.LogicalRetainedBytes >= threshold(quota, result.Policy.WarningPercent) {
+			} else if result.State == "normal" && result.LogicalRetainedBytes >= threshold(
+				quota,
+				result.Policy.WarningPercent,
+			) {
 				result.State = "warning"
 			}
 		}

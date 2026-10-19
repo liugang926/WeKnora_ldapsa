@@ -19,7 +19,12 @@ func faqActualInputFixture(
 	kind string,
 ) (*knowledgeService, *repository.KnowledgeInputProvenanceStore, *gorm.DB, context.Context) {
 	s, store, db, ctx, _, _, _ := historyActorIntegrationFixture(t, kind)
-	for _, file := range []string{"000058_knowledge_collection_checkpoints.up.sql", "000059_knowledge_collection_display_inputs.up.sql", "000060_tag_statistics_checkpoints.up.sql", "000063_faq_original_entry_inputs.up.sql"} {
+	for _, file := range []string{
+		"000058_knowledge_collection_checkpoints.up.sql",
+		"000059_knowledge_collection_display_inputs.up.sql",
+		"000060_tag_statistics_checkpoints.up.sql",
+		"000063_faq_original_entry_inputs.up.sql",
+	} {
 		ddl, err := os.ReadFile("../../../migrations/sqlite/" + file)
 		require.NoError(t, err)
 		require.NoError(t, db.Exec(string(ddl)).Error)
@@ -140,7 +145,14 @@ func TestFAQActualCreateUpdateRetainsIndependentOtherEntries(t *testing.T) {
 			var chunk types.Chunk
 			require.NoError(t, db.Where("id=?", a.ChunkID).Take(&chunk).Error)
 			rows, err := repository.NewRAGChunkSnapshotReader(db, store).
-				HydrateRAGChunkSnapshots(ctx, []types.RAGChunkReadRequest{{TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: a.KnowledgeID, ChunkIDs: []string{a.ChunkID}}})
+				HydrateRAGChunkSnapshots(ctx, []types.RAGChunkReadRequest{{
+					TenantID:        7,
+					KnowledgeBaseID: "kb",
+					KnowledgeID:     a.KnowledgeID,
+					ChunkIDs: []string{
+						a.ChunkID,
+					},
+				}})
 			require.NoError(t, err)
 			require.NoError(t, rows[0].SourceLineage.RequireComplete())
 		})
@@ -178,9 +190,24 @@ func TestFAQOriginalBodyControlsAndMembershipABAReject(t *testing.T) {
 				)
 				require.NoError(t, db.Model(&types.KnowledgeBase{}).Where("id='kb'").Update(field, nil).Error)
 			} else {
-				before := map[string]any{"content": chunk.Content, "metadata": chunk.Metadata, "is_enabled": chunk.IsEnabled, "flags": chunk.Flags, "seq_id": chunk.SeqID, "deleted_at": nil}[field]
-				after := map[string]any{"content": "temporary foreign body", "metadata": types.JSON(("{\"standard_question\":\"foreign question\",\"answers\":[\"foreign answer" +
-					"\"]}")), "is_enabled": false, "flags": 0, "seq_id": chunk.SeqID + 123, "deleted_at": "2026-10-09 01:00:00"}[field]
+				before := map[string]any{
+					"content":    chunk.Content,
+					"metadata":   chunk.Metadata,
+					"is_enabled": chunk.IsEnabled,
+					"flags":      chunk.Flags,
+					"seq_id":     chunk.SeqID,
+					"deleted_at": nil,
+				}[field]
+				after := map[string]any{
+					"content": "temporary foreign body",
+					"metadata": types.JSON(
+						("{\"standard_question\":\"foreign question\",\"answers\":[\"foreign answer" +
+							"\"]}")),
+					"is_enabled": false,
+					"flags":      0,
+					"seq_id":     chunk.SeqID + 123,
+					"deleted_at": "2026-10-09 01:00:00",
+				}[field]
 				require.NoError(t, db.Model(&types.Chunk{}).Where("id=?", chunk.ID).Update(field, after).Error)
 				require.NoError(
 					t,

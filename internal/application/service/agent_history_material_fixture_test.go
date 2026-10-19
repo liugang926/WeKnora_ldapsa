@@ -47,6 +47,7 @@ func actualAgentHistoryRequest(t *testing.T, sessionService *sessionService, req
 	require.NoError(t, err)
 	request.UserMessageID, request.AssistantMessageID = user.ID, assistant.ID
 	ctx = WithMessageMaterialOutputBoundary(ctx)
+	ctx = context.WithValue(ctx, agentHistoryCurrentRequestKey{}, user.RequestID)
 	t.Cleanup(func() { CloseMessageMaterialOutputBoundary(ctx) })
 	actualUser, err := messages.GetMessage(ctx, session.ID, user.ID)
 	require.NoError(t, err)

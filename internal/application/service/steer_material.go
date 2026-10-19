@@ -122,7 +122,13 @@ func (s *messageService) beginSteerMaterialRead(
 	for _, source := range plan.SourceLineage.Sources {
 		kb := broad[types.KnowledgeSearchScope{TenantID: source.TenantID, KBID: source.KnowledgeBaseID}]
 		lease, err := s.materialStore.ContentLeaseStore().
-			UpgradeKBRead(ctx, kb.ID, repository.NextcloudContentScope{TenantID: source.TenantID, KnowledgeBaseID: source.KnowledgeBaseID, KnowledgeID: source.KnowledgeID, DataSourceID: source.DataSourceID, ExternalID: source.ExternalID}, owner, 2*time.Minute)
+			UpgradeKBRead(ctx, kb.ID, repository.NextcloudContentScope{
+				TenantID:        source.TenantID,
+				KnowledgeBaseID: source.KnowledgeBaseID,
+				KnowledgeID:     source.KnowledgeID,
+				DataSourceID:    source.DataSourceID,
+				ExternalID:      source.ExternalID,
+			}, owner, 2*time.Minute)
 		if err != nil {
 			closeRead2()
 			return nil, ctx, nil, nil, err

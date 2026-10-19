@@ -14,7 +14,8 @@ import (
 )
 
 type faqImportOutputAdmission struct {
-	ID                                                                                          string `gorm:"primaryKey"`
+	ID string `gorm:"primaryKey"`
+
 	OutputKey, SessionID                                                                        string
 	TenantID                                                                                    uint64
 	KnowledgeBaseID, KnowledgeID, TaskID, Kind, BodyDigest, Body, SourceLineage, OriginalInputs string
@@ -281,7 +282,12 @@ func sealFAQImportOutputInTx(
 	if err := tx.Create(&admission).Error; err != nil {
 		return err
 	}
-	return tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "output_key"}}, DoUpdates: clause.Assignments(map[string]any{"admission_id": admission.ID, "revision": gorm.Expr("faq_import_output_heads.revision+1")})}).
+	return tx.Clauses(clause.OnConflict{Columns: []clause.Column{{
+		Name: "output_key",
+	}}, DoUpdates: clause.Assignments(map[string]any{
+		"admission_id": admission.ID,
+		"revision":     gorm.Expr("faq_import_output_heads.revision+1"),
+	})}).
 		Create(&faqImportOutputHead{OutputKey: key, AdmissionID: admission.ID, Revision: 1}).
 		Error
 }
@@ -363,7 +369,13 @@ func (s *KnowledgeInputProvenanceStore) PublishFAQImportResult(
 			return ErrKnowledgeInputChanged
 		}
 		var knowledge types.Knowledge
-		if err := tx.Where("id=? AND tenant_id=? AND knowledge_base_id=? AND type=?", knowledgeID, session.TenantID, session.KnowledgeBaseID, types.KnowledgeTypeFAQ).
+		if err := tx.Where(
+			"id=? AND tenant_id=? AND knowledge_base_id=? AND type=?",
+			knowledgeID,
+			session.TenantID,
+			session.KnowledgeBaseID,
+			types.KnowledgeTypeFAQ,
+		).
 			Take(&knowledge).
 			Error; err != nil {
 			return err
@@ -412,7 +424,13 @@ func (s *KnowledgeInputProvenanceStore) captureFAQImportOutputInTx(
 		return nil, err
 	}
 	var admission faqImportOutputAdmission
-	if err := tx.Where("id=? AND output_key=? AND tenant_id=? AND kind=?", head.AdmissionID, key, req.TenantID, req.Kind).
+	if err := tx.Where(
+		"id=? AND output_key=? AND tenant_id=? AND kind=?",
+		head.AdmissionID,
+		key,
+		req.TenantID,
+		req.Kind,
+	).
 		Take(&admission).
 		Error; err != nil {
 		return nil, err
@@ -422,7 +440,12 @@ func (s *KnowledgeInputProvenanceStore) captureFAQImportOutputInTx(
 		return nil, ErrKnowledgeInputChanged
 	}
 	var producer faqInputSessionRow
-	if err := tx.Where("id=? AND tenant_id=? AND knowledge_base_id=?", admission.SessionID, admission.TenantID, admission.KnowledgeBaseID).
+	if err := tx.Where(
+		"id=? AND tenant_id=? AND knowledge_base_id=?",
+		admission.SessionID,
+		admission.TenantID,
+		admission.KnowledgeBaseID,
+	).
 		Take(&producer).
 		Error; err != nil {
 		return nil, err
@@ -476,7 +499,13 @@ func (s *KnowledgeInputProvenanceStore) captureFAQImportOutputInTx(
 			return nil, err
 		}
 		var knowledge types.Knowledge
-		if err := tx.Where("id=? AND tenant_id=? AND knowledge_base_id=? AND type=?", admission.KnowledgeID, admission.TenantID, admission.KnowledgeBaseID, types.KnowledgeTypeFAQ).
+		if err := tx.Where(
+			"id=? AND tenant_id=? AND knowledge_base_id=? AND type=?",
+			admission.KnowledgeID,
+			admission.TenantID,
+			admission.KnowledgeBaseID,
+			types.KnowledgeTypeFAQ,
+		).
 			Take(&knowledge).
 			Error; err != nil {
 			return nil, err
@@ -583,7 +612,12 @@ func (s *KnowledgeInputProvenanceStore) UpdateFAQImportResultDisplayWithInput(
 		result := *actual.Result
 		result.DisplayStatus = status
 		var knowledge types.Knowledge
-		if err := tx.Where("id=? AND tenant_id=? AND knowledge_base_id=?", actual.Request.KnowledgeID, actual.Request.TenantID, actual.Request.KnowledgeBaseID).
+		if err := tx.Where(
+			"id=? AND tenant_id=? AND knowledge_base_id=?",
+			actual.Request.KnowledgeID,
+			actual.Request.TenantID,
+			actual.Request.KnowledgeBaseID,
+		).
 			Take(&knowledge).
 			Error; err != nil {
 			return err

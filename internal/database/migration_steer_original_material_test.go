@@ -128,7 +128,12 @@ func requireSteerOriginalSchema(t *testing.T, db *sql.DB, dialect string) {
 		}
 		require.Equal(t, 1, count, "missing Steer proof table %s", table)
 	}
-	for _, table := range []string{"steer_authored_origins", "steer_control_admissions", "steer_consumption_origins", "message_completion_input_manifests"} {
+	for _, table := range []string{
+		"steer_authored_origins",
+		"steer_control_admissions",
+		"steer_consumption_origins",
+		"message_completion_input_manifests",
+	} {
 		if dialect == "sqlite" {
 			for _, operation := range []string{"update", "delete"} {
 				var count int

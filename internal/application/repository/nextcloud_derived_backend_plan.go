@@ -58,7 +58,13 @@ func (s *NextcloudContentLeaseStore) RecordDerivedBackendSelection(
 		}
 		var k types.Knowledge
 		var kb types.KnowledgeBase
-		if e := tx.Where("id=? AND tenant_id=? AND knowledge_base_id=? AND channel=?", guard.scope.KnowledgeID, guard.scope.TenantID, guard.scope.KnowledgeBaseID, types.ConnectorTypeNextcloud).
+		if e := tx.Where(
+			"id=? AND tenant_id=? AND knowledge_base_id=? AND channel=?",
+			guard.scope.KnowledgeID,
+			guard.scope.TenantID,
+			guard.scope.KnowledgeBaseID,
+			types.ConnectorTypeNextcloud,
+		).
 			Take(&k).
 			Error; e != nil {
 			return e
@@ -104,7 +110,12 @@ func (s *NextcloudContentLeaseStore) RecordDerivedBackendSelection(
 		}
 		digest := recoverySHA(raw)
 		var existing nextcloudDerivedBackendPlan
-		e = tx.Where("tenant_id=? AND knowledge_base_id=? AND knowledge_id=?", guard.scope.TenantID, guard.scope.KnowledgeBaseID, guard.scope.KnowledgeID).
+		e = tx.Where(
+			"tenant_id=? AND knowledge_base_id=? AND knowledge_id=?",
+			guard.scope.TenantID,
+			guard.scope.KnowledgeBaseID,
+			guard.scope.KnowledgeID,
+		).
 			Take(&existing).
 			Error
 		if e == nil {
@@ -177,7 +188,17 @@ func (s *NextcloudContentLeaseStore) RecordDerivedBackendSelection(
 			return e
 		}
 		return tx.Clauses(clause.OnConflict{DoNothing: true}).
-			Create(&nextcloudDerivedBackendPlan{TenantID: k.TenantID, KnowledgeBaseID: k.KnowledgeBaseID, KnowledgeID: k.ID, DataSourceID: guard.scope.DataSourceID, ExternalID: guard.scope.ExternalID, OriginAdmissionID: proof.AdmissionID, BackendPlan: string(raw), PlanSHA256: digest, CreatedAtMS: now}).
+			Create(&nextcloudDerivedBackendPlan{
+				TenantID:          k.TenantID,
+				KnowledgeBaseID:   k.KnowledgeBaseID,
+				KnowledgeID:       k.ID,
+				DataSourceID:      guard.scope.DataSourceID,
+				ExternalID:        guard.scope.ExternalID,
+				OriginAdmissionID: proof.AdmissionID,
+				BackendPlan:       string(raw),
+				PlanSHA256:        digest,
+				CreatedAtMS:       now,
+			}).
 			Error
 	})
 }

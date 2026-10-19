@@ -130,7 +130,16 @@ func TestRAGChunkSnapshotOldPinCannotAuthenticateNewVersionOrOldCachedText(t *te
 }
 
 func TestRAGChunkSnapshotRejectsLeaseForgeryExpiryAndScopePivot(t *testing.T) {
-	for _, changed := range []string{"missing", "unknown id", "owner", "expiry", "released", "wrong document", "wrong chunk scope", "rewritten source channel"} {
+	for _, changed := range []string{
+		"missing",
+		"unknown id",
+		"owner",
+		"expiry",
+		"released",
+		"wrong document",
+		"wrong chunk scope",
+		"rewritten source channel",
+	} {
 		t.Run(changed, func(t *testing.T) {
 			_, db, request := ragSnapshotSourceFixture(t)
 			switch changed {
@@ -159,7 +168,10 @@ func TestRAGChunkSnapshotRejectsLeaseForgeryExpiryAndScopePivot(t *testing.T) {
 					t,
 					db.Model(&types.Knowledge{}).
 						Where("id = ?", request.KnowledgeID).
-						Updates(map[string]any{"channel": "web", "metadata": types.JSON(`{"source_lineage":{"version":1,"state":"complete","sources":[]}}`)}).
+						Updates(map[string]any{
+							"channel":  "web",
+							"metadata": types.JSON(`{"source_lineage":{"version":1,"state":"complete","sources":[]}}`),
+						}).
 						Error,
 				)
 			}

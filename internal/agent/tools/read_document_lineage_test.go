@@ -27,12 +27,19 @@ func actualAgentDocumentFixture(t *testing.T) (*ReadDocumentTool, *leasedAgentKn
 			&repository.NextcloudSourcePairing{},
 		),
 	)
-	for _, name := range []string{"000031_nextcloud_source_versions.up.sql", "000045_nextcloud_source_revisions.up.sql"} {
+	for _, name := range []string{
+		"000031_nextcloud_source_versions.up.sql",
+		"000045_nextcloud_source_revisions.up.sql",
+	} {
 		b, err := os.ReadFile("../../../migrations/sqlite/" + name)
 		require.NoError(t, err)
 		require.NoError(t, db.Exec(string(b)).Error)
 	}
-	config, err := (&types.DataSourceConfig{Type: types.ConnectorTypeNextcloud, ResourceIDs: []string{"binding"}, Settings: map[string]any{"base_url": "https://nextcloud.fixture.invalid"}, Credentials: map[string]any{"token": "local-stub-credential", "key_id": "fixture"}}).ToJSON()
+	config, err := (&types.DataSourceConfig{Type: types.ConnectorTypeNextcloud, ResourceIDs: []string{
+		"binding",
+	}, Settings: map[string]any{
+		"base_url": "https://nextcloud.fixture.invalid",
+	}, Credentials: map[string]any{"token": "local-stub-credential", "key_id": "fixture"}}).ToJSON()
 	require.NoError(t, err)
 	ds := &types.DataSource{
 		ID:              "ds",
@@ -105,7 +112,16 @@ func actualAgentDocumentFixture(t *testing.T) (*ReadDocumentTool, *leasedAgentKn
 	require.NoError(
 		t,
 		db.Table("nextcloud_source_versions").
-			Create(map[string]any{"tenant_id": 7, "knowledge_base_id": "kb", "datasource_id": "ds", "external_id": "nextcloud:instance:77", "desired_etag": "original", "candidate_knowledge_id": "doc", "state": "published", "updated_at": updated}).
+			Create(map[string]any{
+				"tenant_id":              7,
+				"knowledge_base_id":      "kb",
+				"datasource_id":          "ds",
+				"external_id":            "nextcloud:instance:77",
+				"desired_etag":           "original",
+				"candidate_knowledge_id": "doc",
+				"state":                  "published",
+				"updated_at":             updated,
+			}).
 			Error,
 	)
 	chunks := []*types.Chunk{

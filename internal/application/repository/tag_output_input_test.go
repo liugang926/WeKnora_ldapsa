@@ -85,7 +85,14 @@ func runTagOutputOriginalStats(t *testing.T, pg bool) {
 func TestTagOutputSQLiteOriginalStats(t *testing.T)   { runTagOutputOriginalStats(t, false) }
 func TestTagOutputPostgresOriginalStats(t *testing.T) { runTagOutputOriginalStats(t, true) }
 func runTagOutputABA(t *testing.T, pg bool) {
-	for _, kind := range []string{"tag-membership", "relation-membership", "chunk-membership", "chunk-body", "knowledge-body", "count-soft-delete"} {
+	for _, kind := range []string{
+		"tag-membership",
+		"relation-membership",
+		"chunk-membership",
+		"chunk-body",
+		"knowledge-body",
+		"count-soft-delete",
+	} {
 		t.Run(kind, func(t *testing.T) {
 			store, db, ctx, _ := tagOutputFixture(t, pg)
 			snapshot, e := store.CaptureTagOutputInputs(

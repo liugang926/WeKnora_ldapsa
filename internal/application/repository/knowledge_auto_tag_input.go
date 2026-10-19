@@ -318,7 +318,14 @@ func (s *KnowledgeInputProvenanceStore) RecheckKnowledgeAutoTagInputs(
 		options.Isolation = sql.LevelRepeatableRead
 	}
 	return s.db.WithContext(ctx).
-		Transaction(func(tx *gorm.DB) error { _, err := s.recheckKnowledgeAutoTagInTx(ctx, tx, expected); return err }, options)
+		Transaction(func(tx *gorm.DB) error {
+			_, err := s.recheckKnowledgeAutoTagInTx(
+				ctx,
+				tx,
+				expected,
+			)
+			return err
+		}, options)
 }
 
 // WithKnowledgeAutoTagInput binds knowledge auto tag input.

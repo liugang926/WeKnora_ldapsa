@@ -98,7 +98,14 @@ func TestKnowledgeInputActualWriterHydrationAndBuildSnapshot(t *testing.T) {
 	rows, err := NewRAGChunkSnapshotReader(
 		db,
 		store,
-	).HydrateRAGChunkSnapshots(context.Background(), []RAGChunkReadRequest{{TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: k.ID, ChunkIDs: []string{c.ID}}})
+	).HydrateRAGChunkSnapshots(context.Background(), []RAGChunkReadRequest{{
+		TenantID:        7,
+		KnowledgeBaseID: "kb",
+		KnowledgeID:     k.ID,
+		ChunkIDs: []string{
+			c.ID,
+		},
+	}})
 	require.NoError(t, err)
 	require.Len(t, rows, 1)
 	require.NoError(t, rows[0].SourceLineage.RequireComplete())
@@ -154,7 +161,14 @@ func TestKnowledgeInputClientForgeAndLegacyCannotMintOrigin(t *testing.T) {
 	rows, err := NewRAGChunkSnapshotReader(
 		db,
 		store,
-	).HydrateRAGChunkSnapshots(context.Background(), []RAGChunkReadRequest{{TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: k.ID, ChunkIDs: []string{c.ID}}})
+	).HydrateRAGChunkSnapshots(context.Background(), []RAGChunkReadRequest{{
+		TenantID:        7,
+		KnowledgeBaseID: "kb",
+		KnowledgeID:     k.ID,
+		ChunkIDs: []string{
+			c.ID,
+		},
+	}})
 	require.NoError(t, err)
 	require.ErrorIs(t, rows[0].SourceLineage.RequireComplete(), types.ErrSourceLineageUnknown)
 	_, err = store.CaptureKnowledgeBuildInputs(
@@ -214,7 +228,14 @@ func TestKnowledgeInputGenericMutationAndRollbackNeverRestoreOldProof(t *testing
 			rows, err := NewRAGChunkSnapshotReader(
 				db,
 				store,
-			).HydrateRAGChunkSnapshots(context.Background(), []RAGChunkReadRequest{{TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: k.ID, ChunkIDs: []string{c.ID}}})
+			).HydrateRAGChunkSnapshots(context.Background(), []RAGChunkReadRequest{{
+				TenantID:        7,
+				KnowledgeBaseID: "kb",
+				KnowledgeID:     k.ID,
+				ChunkIDs: []string{
+					c.ID,
+				},
+			}})
 			require.NoError(t, err)
 			require.ErrorIs(t, rows[0].SourceLineage.RequireComplete(), types.ErrSourceLineageUnknown)
 		})
@@ -321,7 +342,15 @@ func runNextcloudOriginalChunkReceipt(worker context.Context, t *testing.T) {
 	t.Helper()
 	store, db := knowledgeInputFixture(t)
 	repo := NewKnowledgeRepository(db).(*knowledgeRepository)
-	repo.nextcloudPublicationCheck = func(context.Context, *types.DataSourceConfig, string, string, int64, string, string) error {
+	repo.nextcloudPublicationCheck = func(
+		context.Context,
+		*types.DataSourceConfig,
+		string,
+		string,
+		int64,
+		string,
+		string,
+	) error {
 		return nil
 	}
 	require.NoError(
@@ -485,13 +514,26 @@ func TestKnowledgeInputDerivedSourcesPreservedAndWithdrawalClosesReads(t *testin
 		t,
 		NewNextcloudContentLeaseStore(
 			db,
-		).RetireKnowledge(context.Background(), NextcloudContentScope{TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: source.KnowledgeID, DataSourceID: source.DataSourceID, ExternalID: source.ExternalID}),
+		).RetireKnowledge(context.Background(), NextcloudContentScope{
+			TenantID:        7,
+			KnowledgeBaseID: "kb",
+			KnowledgeID:     source.KnowledgeID,
+			DataSourceID:    source.DataSourceID,
+			ExternalID:      source.ExternalID,
+		}),
 	)
 	require.Error(t, store.RecheckKnowledgeBuildInputs(ctx, input.Proof))
 	rows, err := NewRAGChunkSnapshotReader(
 		db,
 		store,
-	).HydrateRAGChunkSnapshots(ctx, []RAGChunkReadRequest{{TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: k.ID, ChunkIDs: []string{c.ID}}})
+	).HydrateRAGChunkSnapshots(ctx, []RAGChunkReadRequest{{
+		TenantID:        7,
+		KnowledgeBaseID: "kb",
+		KnowledgeID:     k.ID,
+		ChunkIDs: []string{
+			c.ID,
+		},
+	}})
 	require.NoError(t, err)
 	require.ErrorIs(t, rows[0].SourceLineage.RequireComplete(), types.ErrSourceLineageUnknown)
 }
@@ -521,7 +563,10 @@ func TestKnowledgeInputGraphProjectionSurvivesUnusedSummaryButBodyRollbackCloses
 		t,
 		db.Model(&types.KnowledgeBase{}).
 			Where("id = 'kb'").
-			Updates(map[string]any{"description": "generated description", "generated_profile": types.JSON(`{"gist":"generated profile"}`)}).
+			Updates(map[string]any{
+				"description":       "generated description",
+				"generated_profile": types.JSON(`{"gist":"generated profile"}`),
+			}).
 			Error,
 	)
 	require.NoError(
@@ -676,7 +721,13 @@ func TestKnowledgeInputPartialHumanUpdatePreservesRetainedDerivedDependencies(t 
 				t,
 				NewNextcloudContentLeaseStore(
 					db,
-				).RetireKnowledge(context.Background(), NextcloudContentScope{TenantID: source.TenantID, KnowledgeBaseID: source.KnowledgeBaseID, KnowledgeID: source.KnowledgeID, DataSourceID: source.DataSourceID, ExternalID: source.ExternalID}),
+				).RetireKnowledge(context.Background(), NextcloudContentScope{
+					TenantID:        source.TenantID,
+					KnowledgeBaseID: source.KnowledgeBaseID,
+					KnowledgeID:     source.KnowledgeID,
+					DataSourceID:    source.DataSourceID,
+					ExternalID:      source.ExternalID,
+				}),
 			)
 			require.Error(t, store.RecheckKnowledgeBuildInputs(context.Background(), updated))
 		})

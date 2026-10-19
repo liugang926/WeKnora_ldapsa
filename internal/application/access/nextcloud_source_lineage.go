@@ -110,12 +110,18 @@ func (g *NextcloudSourceLineageGuard) Check(
 	}
 	switch principal.Type {
 	case types.PrincipalWebUser, types.PrincipalAPITenant, types.PrincipalAPIPlatform, types.PrincipalAPIExternalUser,
-		types.PrincipalIMUser, types.PrincipalEmbedChannel, types.PrincipalEmbedSession, types.PrincipalEmbedVisitor, types.PrincipalMCPEndpoint:
+		types.PrincipalIMUser,
+		types.PrincipalEmbedChannel,
+		types.PrincipalEmbedSession,
+		types.PrincipalEmbedVisitor,
+		types.PrincipalMCPEndpoint:
 	default:
 		return ErrNextcloudPublicationDenied
 	}
 	if principal.Type == types.PrincipalWebUser &&
-		(strings.TrimSpace(caller.UserID) == "" || principal.ID != caller.UserID || types.IsSyntheticUserID(caller.UserID)) {
+		(strings.TrimSpace(
+			caller.UserID,
+		) == "" || principal.ID != caller.UserID || types.IsSyntheticUserID(caller.UserID)) {
 		return ErrNextcloudPublicationDenied
 	}
 	if len(lineage.Sources) != 0 {
@@ -215,7 +221,8 @@ func (g *NextcloudSourceLineageGuard) Check(
 		return err
 	}
 	if currentDirectory.ID != checkedDirectory.ID || currentDirectory.DirectoryID != checkedDirectory.DirectoryID ||
-		currentDirectory.ObjectGUID != checkedDirectory.ObjectGUID || *currentDirectory.UserID != *checkedDirectory.UserID {
+		currentDirectory.ObjectGUID != checkedDirectory.ObjectGUID ||
+		*currentDirectory.UserID != *checkedDirectory.UserID {
 		return ErrNextcloudPublicationDenied
 	}
 	matches, err := g.snapshots.RecheckNextcloudSourceLineage(ctx, lineage)

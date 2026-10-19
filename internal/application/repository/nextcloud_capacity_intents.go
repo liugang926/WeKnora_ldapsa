@@ -367,7 +367,12 @@ func (s *NextcloudCapacityStore) ReconcileLocal(
 				return e
 			}
 			var k types.Knowledge
-			ke := tx.Where("id=? AND tenant_id=? AND knowledge_base_id=?", i.KnowledgeID, row.TenantID, row.KnowledgeBaseID).
+			ke := tx.Where(
+				"id=? AND tenant_id=? AND knowledge_base_id=?",
+				i.KnowledgeID,
+				row.TenantID,
+				row.KnowledgeBaseID,
+			).
 				Take(&k).
 				Error
 			var count int64
@@ -386,7 +391,8 @@ func (s *NextcloudCapacityStore) ReconcileLocal(
 			resourceID = resource.ID
 		}
 		if o.Exists &&
-			(i.ObjectIdentity == "" || i.ObjectIdentity != o.ObjectIdentity || (i.SHA256 != "" && i.SHA256 != o.SHA256)) {
+			(i.ObjectIdentity == "" ||
+				i.ObjectIdentity != o.ObjectIdentity || (i.SHA256 != "" && i.SHA256 != o.SHA256)) {
 			return ErrNextcloudCapacityUnavailable
 		}
 		if i.State == "charged" {
@@ -424,7 +430,14 @@ func (s *NextcloudCapacityStore) ReconcileLocal(
 			orphan = 0
 		}
 		if e = tx.Model(&i).
-			Updates(map[string]any{"state": "charged", "observed_bytes": o.Size, "sha256": o.SHA256, "resource_id": resourceID, "orphan_charge_bytes": orphan, "updated_at_ms": now}).
+			Updates(map[string]any{
+				"state":               "charged",
+				"observed_bytes":      o.Size,
+				"sha256":              o.SHA256,
+				"resource_id":         resourceID,
+				"orphan_charge_bytes": orphan,
+				"updated_at_ms":       now,
+			}).
 			Error; e != nil {
 			return e
 		}
@@ -470,12 +483,24 @@ func (s *NextcloudCapacityStore) FinishDurable(
 		if e = tx.Where("id=?", i.ResourceID).Take(&resource).Error; e != nil {
 			return e
 		}
-		if e = tx.Raw(("SELECT COUNT(*) FROM resources s JOIN resource_bindings b ON b.resource_id" +
-			"=s.id JOIN knowledges k ON k.id=b.owner_id AND k.tenant_id=s.tenant_id WHE" +
-			"RE s.id=? AND s.tenant_id=? AND s.storage_backend_id=? AND s.physical_path" +
-			"=? AND s.state='active' AND s.size=? AND b.owner_type='knowledge' AND b.re" +
-			"lation='source_file' AND k.id=? AND k.knowledge_base_id=? AND k.file_path=" +
-			"?"), i.ResourceID, row.TenantID, row.BackendID, i.PhysicalPath, i.ObservedBytes, k, row.KnowledgeBaseID, types.BuildResourcePath(resource.Handle)).
+		if e = tx.Raw(
+			("SELECT COUNT(*) FROM resources s JOIN resource_bindings b ON b.resource_id" +
+				"=s.id JOIN knowledges k ON k.id=b.owner_id AND k.tenant_id=s.tenant_id WHE" +
+				"RE s.id=? AND s.tenant_id=? AND s.storage_backend_id=? AND s.physical_path" +
+				"=? AND s.state='active' AND s.size=? AND b.owner_type='knowledge' AND b.re" +
+				"lation='source_file' AND k.id=? AND k.knowledge_base_id=? AND k.file_path=" +
+				"?"),
+			i.ResourceID,
+			row.TenantID,
+			row.BackendID,
+			i.PhysicalPath,
+			i.ObservedBytes,
+			k,
+			row.KnowledgeBaseID,
+			types.BuildResourcePath(
+				resource.Handle,
+			),
+		).
 			Scan(&count).
 			Error; e != nil {
 			return e

@@ -299,7 +299,12 @@ func (s *NextcloudProcessingStateStore) StartGraph(
 		}
 		if task.Persisted && (task.State == "succeeded" || task.State == "succeeded_empty") {
 			var record nextcloudGraphRecord
-			if err := tx.Where("operation_id=? AND backend=? AND generation=?", task.OperationID, NextcloudGraphBackend, task.BuildEpoch).
+			if err := tx.Where(
+				"operation_id=? AND backend=? AND generation=?",
+				task.OperationID,
+				NextcloudGraphBackend,
+				task.BuildEpoch,
+			).
 				Take(&record).
 				Error; err != nil {
 				return err
@@ -451,7 +456,12 @@ func readNextcloudGraphState(
 				continue
 			}
 			var record nextcloudGraphRecord
-			recordErr := tx.Where("operation_id=? AND backend=? AND generation=?", task.OperationID, NextcloudGraphBackend, task.BuildEpoch).
+			recordErr := tx.Where(
+				"operation_id=? AND backend=? AND generation=?",
+				task.OperationID,
+				NextcloudGraphBackend,
+				task.BuildEpoch,
+			).
 				Take(&record).
 				Error
 			validRecord := recordErr == nil
@@ -1078,7 +1088,11 @@ func (s *NextcloudProcessingStateStore) FinishGraphEnqueue(
 			delay = 300
 		}
 		return tx.Model(&task).
-			Updates(map[string]any{"queue_attempts": attempts, "queue_next_at": now.Unix() + delay, "error_code": "graph_enqueue_failed"}).
+			Updates(map[string]any{
+				"queue_attempts": attempts,
+				"queue_next_at":  now.Unix() + delay,
+				"error_code":     "graph_enqueue_failed",
+			}).
 			Error
 	})
 }

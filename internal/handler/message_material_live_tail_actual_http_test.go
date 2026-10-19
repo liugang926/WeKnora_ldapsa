@@ -144,7 +144,11 @@ func (w *actualHTTPTailWriter) Write(body []byte) (int, error) {
 		require.NoError(
 			w.t,
 			w.db.Model(&types.Message{}).
-				Where("session_id=? AND role='assistant' AND request_id<>? AND is_completed=true", w.session, w.parentRequest).
+				Where(
+					"session_id=? AND role='assistant' AND request_id<>? AND is_completed=true",
+					w.session,
+					w.parentRequest,
+				).
 				Count(&persisted).
 				Error,
 		)
@@ -182,15 +186,21 @@ func assertActualHTTPTailLeases(t *testing.T, db *gorm.DB, held bool, source str
 	if held {
 		require.Positive(t, live, "the actual model or final HTTP writer must still hold original source leases")
 	} else {
-		require.Eventually(t, func() bool {
-			var pending int64
-			return db.Table("nextcloud_content_leases").
-				Where("kind='read' AND released_at_ms IS NULL").
-				Count(&pending).
-				Error == nil &&
-				pending == 0
-		}, 2*time.Second, 10*time.Millisecond, ("HTTP release must preserve an active producer until it finishes, then all " +
-			"leases close"))
+		require.Eventually(
+			t,
+			func() bool {
+				var pending int64
+				return db.Table("nextcloud_content_leases").
+					Where("kind='read' AND released_at_ms IS NULL").
+					Count(&pending).
+					Error == nil &&
+					pending == 0
+			},
+			2*time.Second,
+			10*time.Millisecond,
+			("HTTP release must preserve an active producer until it finishes, then all " +
+				"leases close"),
+		)
 	}
 }
 

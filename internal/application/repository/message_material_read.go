@@ -295,7 +295,11 @@ func (s *KnowledgeInputProvenanceStore) peekMessageMaterialReadPlanInTx(
 		var fieldParents []struct{ ParentMaterials, SourceLineage string }
 		if tx.Migrator().HasTable("message_generated_field_admissions") {
 			if err := tx.Table("message_generated_field_admissions a").
-				Select(parentCopyMetadataSelect(tx, "a.parent_materials", true)+" AS parent_materials,a.source_lineage").
+				Select(parentCopyMetadataSelect(
+					tx,
+					"a.parent_materials",
+					true,
+				)+" AS parent_materials,a.source_lineage").
 				Joins(("JOIN message_generated_field_receipts r ON r.admission_id=a.id AND r.messa" +
 					"ge_id=a.message_id AND r.field=a.field")).
 				Where("a.message_id=?", id.ID).
@@ -359,7 +363,11 @@ func (s *KnowledgeInputProvenanceStore) peekMessageMaterialReadPlanInTx(
 		}
 		if tx.Migrator().HasTable("message_fork_parent_origins") {
 			var fork messageForkParentOrigin
-			err := tx.Select("generation_id,"+parentCopyMetadataSelect(tx, "parent_materials", false)+" AS parent_materials").
+			err := tx.Select("generation_id,"+parentCopyMetadataSelect(
+				tx,
+				"parent_materials",
+				false,
+			)+" AS parent_materials").
 				Where("generation_id=?", fact.GenerationID).
 				Take(&fork).
 				Error
@@ -933,7 +941,12 @@ func (s *KnowledgeInputProvenanceStore) peekHistoryMaterialPlanForProofInTx(
 	var admission knowledgeInputAdmission
 	if err := tx.Select(("admission_id,tenant_id,knowledge_base_id,knowledge_id,origin_kind,input_di" +
 		"gest,build_generation")).
-		Where("admission_id=? AND tenant_id=? AND knowledge_id=?", proof.AdmissionID, proof.TenantID, proof.KnowledgeID).
+		Where(
+			"admission_id=? AND tenant_id=? AND knowledge_id=?",
+			proof.AdmissionID,
+			proof.TenantID,
+			proof.KnowledgeID,
+		).
 		Take(&admission).
 		Error; err != nil {
 		return nil, err
@@ -1008,7 +1021,13 @@ func (s *KnowledgeInputProvenanceStore) AdvanceMessageMaterialAfterOwnFieldWrite
 			Select("a.*").
 			Joins(("JOIN message_generated_field_receipts r ON r.admission_id=a.id AND r.messa" +
 				"ge_id=a.message_id AND r.field=a.field")).
-			Where("a.message_id=? AND a.session_id=? AND a.field=? AND a.body_digest=?", boundary.MessageID, boundary.SessionID, boundary.Field, boundary.Digest).
+			Where(
+				"a.message_id=? AND a.session_id=? AND a.field=? AND a.body_digest=?",
+				boundary.MessageID,
+				boundary.SessionID,
+				boundary.Field,
+				boundary.Digest,
+			).
 			Take(&receipt).
 			Error; err != nil {
 			return err

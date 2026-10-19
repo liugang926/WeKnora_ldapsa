@@ -83,7 +83,15 @@ func TestCollectionHTTPReadLeaseBlocksGCThroughActualFAQTagAndList(t *testing.T)
 					inputs,
 				)
 				service.ConfigureFAQInputProvenance(h.knowledgeService, inputs, guard)
-				serve = func() int { return serveFAQHTTP(ctx, h, http.MethodGet, "/knowledge-bases/kb/faq/entries", "").Code }
+				serve = func() int {
+					return serveFAQHTTP(
+						ctx,
+						h,
+						http.MethodGet,
+						"/knowledge-bases/kb/faq/entries",
+						"",
+					).Code
+				}
 			case "tag":
 				h, actualDB, _, actualGroups := tagHTTPFixture(t)
 				db, groups = actualDB, actualGroups

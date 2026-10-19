@@ -91,7 +91,11 @@ func (c *historyVectorActualChat) ChatStream(
 	)
 	c.streams.Add(1)
 	responses := make(chan types.StreamResponse, 1)
-	responses <- types.StreamResponse{ResponseType: types.ResponseTypeAnswer, Content: "Bob is named in the actual source used for this controlled completion.", Done: true}
+	responses <- types.StreamResponse{
+		ResponseType: types.ResponseTypeAnswer,
+		Content:      "Bob is named in the actual source used for this controlled completion.",
+		Done:         true,
+	}
 	close(responses)
 	return responses, nil
 }
@@ -222,7 +226,10 @@ func newHistoryVectorActualFixture(t *testing.T, options ...historyVectorActualO
 	if !db.Migrator().HasColumn(&types.Message{}, "artifacts") {
 		require.NoError(t, db.Exec("ALTER TABLE messages ADD COLUMN artifacts TEXT").Error)
 	}
-	for _, name := range []string{"000023_message_artifacts_table.up.sql", "000026_message_artifacts_deleted_at.up.sql"} {
+	for _, name := range []string{
+		"000023_message_artifacts_table.up.sql",
+		"000026_message_artifacts_deleted_at.up.sql",
+	} {
 		ddl, err := os.ReadFile("../../../migrations/sqlite/" + name)
 		require.NoError(t, err)
 		require.NoError(t, db.Exec(string(ddl)).Error)

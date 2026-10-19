@@ -63,7 +63,20 @@ func validateRecoveryTargetClosure(raw json.RawMessage, instance string) (Nextcl
 	if json.Unmarshal(object["target"], &target) != nil || len(target) != 12 {
 		return proof, ErrNextcloudRecoveryDenied
 	}
-	for _, name := range []string{"schema", "state", "reason", "operation_id", "instance_id", "binding_id", "tenant_id", "knowledge_base_id", "operation_revision", "closure_id", "deletion_time_ms", "closed_at"} {
+	for _, name := range []string{
+		"schema",
+		"state",
+		"reason",
+		"operation_id",
+		"instance_id",
+		"binding_id",
+		"tenant_id",
+		"knowledge_base_id",
+		"operation_revision",
+		"closure_id",
+		"deletion_time_ms",
+		"closed_at",
+	} {
 		var value string
 		if json.Unmarshal(target[name], &value) != nil {
 			return proof, ErrNextcloudRecoveryDenied
@@ -203,7 +216,12 @@ func applyRecoveryTargetClosuresInTx(ctx context.Context, tx *gorm.DB, p *Nextcl
 		}
 		q := tx.Model(&types.NextcloudOnboardingOperation{}).
 			Where("operation_id=? AND revision=?", op.OperationID, op.Revision).
-			Updates(map[string]any{"revision": newRevision, "permission_version": op.PermissionVersion + 1, "permission_synced_at": nil, "updated_at": time.Now().UTC()})
+			Updates(map[string]any{
+				"revision":             newRevision,
+				"permission_version":   op.PermissionVersion + 1,
+				"permission_synced_at": nil,
+				"updated_at":           time.Now().UTC(),
+			})
 		if q.Error != nil {
 			return q.Error
 		}
@@ -231,7 +249,12 @@ func applyRecoveryTargetClosuresInTx(ctx context.Context, tx *gorm.DB, p *Nextcl
 		if tx.Migrator().HasTable("data_sources") && tx.Migrator().HasTable("nextcloud_source_pairings") {
 			ids := tx.Table("nextcloud_source_pairings").
 				Select("datasource_id").
-				Where("operation_id=? AND tenant_id=? AND knowledge_base_id=?", op.OperationID, op.TenantID, op.KnowledgeBaseID)
+				Where(
+					"operation_id=? AND tenant_id=? AND knowledge_base_id=?",
+					op.OperationID,
+					op.TenantID,
+					op.KnowledgeBaseID,
+				)
 			if err = tx.Table("data_sources").
 				Where("id IN (?) AND tenant_id=? AND knowledge_base_id=?", ids, op.TenantID, op.KnowledgeBaseID).
 				Updates(map[string]any{"status": types.DataSourceStatusPaused, "sync_enabled": false}).

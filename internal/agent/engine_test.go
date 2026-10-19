@@ -253,8 +253,9 @@ func TestRunToolCallRejectsUnresolvedHandlesBeforeExecution(t *testing.T) {
 	tool := newCountingTool("test_unresolved")
 	engine.toolRegistry.RegisterTool(tool)
 
+	require.NoError(t, engine.checkLineage(context.Background()))
 	result := engine.runToolCall(
-		context.Background(),
+		types.WithRAGSourceLineage(context.Background(), engine.turnLineage),
 		types.LLMToolCall{
 			ID: "call-1",
 			Function: types.FunctionCall{
@@ -270,7 +271,11 @@ func TestRunToolCallRejectsUnresolvedHandlesBeforeExecution(t *testing.T) {
 	require.Zero(t, tool.calls)
 	require.NotNil(t, result.Result)
 	require.False(t, result.Result.Success)
-	require.Contains(t, result.Result.Error, "unresolved model handles")
+	// An unresolved handle has no accounted result; its diagnostic cannot
+	// be relabeled as ordinary tool output. Refuse before execution.
+	require.Equal(t, ErrAgentSourceLineageDenied.Error(), result.Result.Error)
+	require.ErrorIs(t, engine.lineageFailure(), ErrAgentSourceLineageDenied)
+	require.Error(t, result.Result.SourceLineage.RequireComplete())
 }
 
 func TestRunToolCallDecodesHandlesAfterJSONRepair(t *testing.T) {
@@ -283,8 +288,9 @@ func TestRunToolCallDecodesHandlesAfterJSONRepair(t *testing.T) {
 	}
 
 	unknownEngine, unknownTool := newEngine()
+	require.NoError(t, unknownEngine.checkLineage(context.Background()))
 	unknown := unknownEngine.runToolCall(
-		context.Background(),
+		types.WithRAGSourceLineage(context.Background(), unknownEngine.turnLineage),
 		types.LLMToolCall{
 			ID:             "call-unknown",
 			Function:       types.FunctionCall{Name: unknownTool.Name(), Arguments: `{"id":"d99",}`},
@@ -294,12 +300,14 @@ func TestRunToolCallDecodesHandlesAfterJSONRepair(t *testing.T) {
 	)
 	require.Zero(t, unknownTool.calls)
 	require.False(t, unknown.Result.Success)
-	require.Contains(t, unknown.Result.Error, "unresolved model handles")
+	require.Equal(t, ErrAgentSourceLineageDenied.Error(), unknown.Result.Error)
+	require.ErrorIs(t, unknownEngine.lineageFailure(), ErrAgentSourceLineageDenied)
+	require.Error(t, unknown.Result.SourceLineage.RequireComplete())
 
 	knownEngine, knownTool := newEngine()
 	knownEngine.modelContext.RegisterDocument("doc-real")
 	known := knownEngine.runToolCall(
-		context.Background(),
+		types.WithRAGSourceLineage(context.Background(), knownEngine.turnLineage),
 		types.LLMToolCall{
 			ID:             "call-known",
 			Function:       types.FunctionCall{Name: knownTool.Name(), Arguments: `{"id":"d1",}`},
@@ -307,6 +315,8 @@ func TestRunToolCallDecodesHandlesAfterJSONRepair(t *testing.T) {
 		},
 		0, 0, 1, "session", "message",
 	)
+	require.NoError(t, knownEngine.lineageFailure())
+	require.NoError(t, known.Result.SourceLineage.RequireComplete())
 	require.Equal(t, 1, knownTool.calls)
 	require.True(t, known.Result.Success)
 	require.Equal(t, "doc-real", known.Args["id"])

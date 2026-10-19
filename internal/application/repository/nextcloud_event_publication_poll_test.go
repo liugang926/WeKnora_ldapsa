@@ -23,7 +23,11 @@ func newNextcloudQueuedPublicationTest(t *testing.T) (*gorm.DB, *NextcloudEventI
 	require.NoError(t, db.Exec(`CREATE TABLE knowledge_bases
 		(id TEXT PRIMARY KEY, tenant_id INTEGER, deleted_at DATETIME)`).Error)
 	require.NoError(t, db.Exec(`INSERT INTO knowledge_bases (id, tenant_id) VALUES ('kb', 7)`).Error)
-	for _, name := range []string{"000032_nextcloud_event_inbox.up.sql", "000033_nextcloud_event_dispatch.up.sql", "000049_nextcloud_event_hint_etag.up.sql"} {
+	for _, name := range []string{
+		"000032_nextcloud_event_inbox.up.sql",
+		"000033_nextcloud_event_dispatch.up.sql",
+		"000049_nextcloud_event_hint_etag.up.sql",
+	} {
 		schema, err := os.ReadFile("../../../migrations/sqlite/" + name)
 		require.NoError(t, err)
 		require.NoError(t, db.Exec(string(schema)).Error)
@@ -144,7 +148,10 @@ func TestNextcloudQueuedPublicationWaitsForParserWithoutAck(t *testing.T) {
 		DataSourceID: "ds", ExternalID: "nextcloud:instance:77", DesiredETag: "etag-v1",
 		CandidateKnowledgeID: pending.ID, State: "staging", UpdatedAt: now,
 	}).Error)
-	for _, checkAt := range []time.Time{now.Add(5 * time.Second), now.Add(nextcloudPublicationFastPollWindow + time.Second)} {
+	for _, checkAt := range []time.Time{
+		now.Add(5 * time.Second),
+		now.Add(nextcloudPublicationFastPollWindow + time.Second),
+	} {
 		claim, err := inbox.ClaimDispatch(ctx, "event-connection", checkAt)
 		require.NoError(t, err)
 		require.Nil(t, claim)

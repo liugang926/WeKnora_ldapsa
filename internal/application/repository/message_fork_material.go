@@ -285,7 +285,12 @@ func (s *KnowledgeInputProvenanceStore) verifyMessageForkParentsInTx(tx *gorm.DB
 		if err := tx.Table("message_material_admissions a").
 			Select("a.*").
 			Joins("JOIN message_material_receipts r ON r.admission_id=a.id AND r.message_id=a.message_id").
-			Where("a.message_id=? AND a.session_id=? AND a.tenant_id=?", proof.MessageID, proof.SessionID, proof.TenantID).
+			Where(
+				"a.message_id=? AND a.session_id=? AND a.tenant_id=?",
+				proof.MessageID,
+				proof.SessionID,
+				proof.TenantID,
+			).
 			Take(&current).
 			Error; err != nil {
 			return err

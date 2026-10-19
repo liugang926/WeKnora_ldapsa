@@ -55,19 +55,21 @@ jobs:
         shell: bash
         run: |
           diff_range="${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }}"
+          # Consume every filename: grep -q can make git exit on SIGPIPE
+          # under pipefail when a large pull request fills the pipe.
           modules=()
           if git diff --name-only --diff-filter=ACMR "$diff_range" -- \
-               .golangci.yml .github/workflows/go-lint.yml | grep -q .; then
+               .golangci.yml .github/workflows/go-lint.yml | grep . >/dev/null; then
             modules=("." "cli" "client")
           else
             if git diff --name-only --diff-filter=ACMR "$diff_range" -- \
-                 '*.go' ':!cli/**' ':!client/**' go.mod go.sum | grep -q .; then
+                 '*.go' ':!cli/**' ':!client/**' go.mod go.sum | grep . >/dev/null; then
               modules+=(".")
             fi
-            if git diff --name-only --diff-filter=ACMR "$diff_range" -- 'cli/**' | grep -q .; then
+            if git diff --name-only --diff-filter=ACMR "$diff_range" -- 'cli/**' | grep . >/dev/null; then
               modules+=("cli")
             fi
-            if git diff --name-only --diff-filter=ACMR "$diff_range" -- 'client/**' | grep -q .; then
+            if git diff --name-only --diff-filter=ACMR "$diff_range" -- 'client/**' | grep . >/dev/null; then
               modules+=("client")
             fi
           fi

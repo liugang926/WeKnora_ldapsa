@@ -54,7 +54,14 @@ func (g displayTestGroups) EffectivePermission(
 func displayTestFixture(
 	t *testing.T,
 	pg bool,
-) (*KnowledgeInputProvenanceStore, *gorm.DB, context.Context, interfaces.KnowledgeTagRepository, interfaces.KnowledgeRepository, *types.Knowledge) {
+) (
+	*KnowledgeInputProvenanceStore,
+	*gorm.DB,
+	context.Context,
+	interfaces.KnowledgeTagRepository,
+	interfaces.KnowledgeRepository,
+	*types.Knowledge,
+) {
 	t.Helper()
 	var store *KnowledgeInputProvenanceStore
 	var db *gorm.DB
@@ -436,7 +443,13 @@ func runDisplayDerivedWithdrawal(t *testing.T, pg bool) {
 		t,
 		NewNextcloudContentLeaseStore(
 			db,
-		).RetireKnowledge(ctx, NextcloudContentScope{TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: source.KnowledgeID, DataSourceID: source.DataSourceID, ExternalID: source.ExternalID}),
+		).RetireKnowledge(ctx, NextcloudContentScope{
+			TenantID:        7,
+			KnowledgeBaseID: "kb",
+			KnowledgeID:     source.KnowledgeID,
+			DataSourceID:    source.DataSourceID,
+			ExternalID:      source.ExternalID,
+		}),
 	)
 	_, err = captureDisplayTest(t, db, k)
 	require.Error(t, err, "a same-value independent request never clears derived source dependency")
@@ -496,7 +509,11 @@ func runDisplayCurrentAPIKeyAndIngestionAssignment(t *testing.T, pg bool) {
 	require.NoError(
 		t,
 		db.Model(key).
-			Updates(map[string]any{"capabilities": types.StringArray{string(types.APIKeyCapabilityIngest)}, "knowledge_base_ids": types.StringArray{"other"}}).
+			Updates(map[string]any{"capabilities": types.StringArray{
+				string(types.APIKeyCapabilityIngest),
+			}, "knowledge_base_ids": types.StringArray{
+				"other",
+			}}).
 			Error,
 	)
 	require.Error(
@@ -507,7 +524,11 @@ func runDisplayCurrentAPIKeyAndIngestionAssignment(t *testing.T, pg bool) {
 	require.NoError(
 		t,
 		db.Model(key).
-			Updates(map[string]any{"capabilities": types.StringArray{string(types.APIKeyCapabilityManageKnowledgeBases)}, "knowledge_base_ids": types.StringArray{"kb"}}).
+			Updates(map[string]any{"capabilities": types.StringArray{
+				string(types.APIKeyCapabilityManageKnowledgeBases),
+			}, "knowledge_base_ids": types.StringArray{
+				"kb",
+			}}).
 			Error,
 	)
 	var kb types.KnowledgeBase
@@ -608,7 +629,13 @@ func runAutoTagOriginalCompleteCandidateManifest(t *testing.T, pg bool) {
 		t,
 		NewNextcloudContentLeaseStore(
 			db,
-		).RetireKnowledge(ctx, NextcloudContentScope{TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: source.KnowledgeID, DataSourceID: source.DataSourceID, ExternalID: source.ExternalID}),
+		).RetireKnowledge(ctx, NextcloudContentScope{
+			TenantID:        7,
+			KnowledgeBaseID: "kb",
+			KnowledgeID:     source.KnowledgeID,
+			DataSourceID:    source.DataSourceID,
+			ExternalID:      source.ExternalID,
+		}),
 	)
 	_, err = captureDisplayTest(t, db, k)
 	require.Error(t, err)

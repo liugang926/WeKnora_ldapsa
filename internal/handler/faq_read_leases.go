@@ -78,7 +78,13 @@ func acquireFAQReadPlanLeases(
 			return nil, knowledgeOutputHTTPError(repository.ErrNextcloudContentGCUncovered)
 		}
 		upgrader, ok := store.(interface {
-			UpgradeKBRead(context.Context, string, repository.NextcloudContentScope, string, time.Duration) (repository.NextcloudContentLease, error)
+			UpgradeKBRead(
+				context.Context,
+				string,
+				repository.NextcloudContentScope,
+				string,
+				time.Duration,
+			) (repository.NextcloudContentLease, error)
 		})
 		if !ok {
 			group.Close()

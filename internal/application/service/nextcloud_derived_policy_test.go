@@ -103,7 +103,11 @@ func TestRejectNextcloudDerivedKBChecksConfigurationAndDocuments(t *testing.T) {
 		wantErr bool
 	}{
 		{"ordinary", []*types.Knowledge{ordinary}, nil, false},
-		{"new source without documents", nil, []*types.DataSource{{TenantID: 7, KnowledgeBaseID: "kb", Type: types.ConnectorTypeNextcloud}}, true},
+		{"new source without documents", nil, []*types.DataSource{{
+			TenantID:        7,
+			KnowledgeBaseID: "kb",
+			Type:            types.ConnectorTypeNextcloud,
+		}}, true},
 		{"imported document", []*types.Knowledge{withNextcloud}, nil, true},
 		{"metadata marker", []*types.Knowledge{withMarker}, nil, true},
 	} {

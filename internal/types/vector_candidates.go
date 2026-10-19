@@ -9,7 +9,8 @@ import (
 var (
 	// ErrVectorCandidateRetrievalUnavailable indicates that candidate retrieval lacks its required boundary.
 	ErrVectorCandidateRetrievalUnavailable = errors.New("native vector candidate retrieval unavailable")
-	ErrVectorCandidateScope                = errors.New("invalid native vector candidate scope")
+	// ErrVectorCandidateScope indicates an invalid native vector retrieval scope.
+	ErrVectorCandidateScope = errors.New("invalid native vector candidate scope")
 )
 
 // VectorCandidateParams is private server state. TenantID and both nonempty

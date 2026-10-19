@@ -19,7 +19,15 @@ import (
 func historyActorIntegrationFixture(
 	t *testing.T,
 	kind string,
-) (*knowledgeService, *repository.KnowledgeInputProvenanceStore, *gorm.DB, context.Context, *types.Message, *types.TenantAPIKey, *types.User) {
+) (
+	*knowledgeService,
+	*repository.KnowledgeInputProvenanceStore,
+	*gorm.DB,
+	context.Context,
+	*types.Message,
+	*types.TenantAPIKey,
+	*types.User,
+) {
 	t.Helper()
 	service, store, db, _, _ := knowledgeInputServiceFixture(t)
 	require.NoError(t, db.Exec("PRAGMA journal_mode=WAL").Error)
@@ -31,7 +39,12 @@ func historyActorIntegrationFixture(
 	repository.ConfigureKnowledgeInputActorGroupAccess(store, groups)
 	repository.ConfigureKnowledgeCurrentReadActor(service.repo, store)
 	require.NoError(t, db.Exec("ALTER TABLE messages ADD COLUMN artifacts TEXT").Error)
-	for _, name := range []string{"000023_message_artifacts_table.up.sql", "000026_message_artifacts_deleted_at.up.sql", "000046_nextcloud_content_leases.up.sql", "000070_message_original_materials.up.sql"} {
+	for _, name := range []string{
+		"000023_message_artifacts_table.up.sql",
+		"000026_message_artifacts_deleted_at.up.sql",
+		"000046_nextcloud_content_leases.up.sql",
+		"000070_message_original_materials.up.sql",
+	} {
 		ddl, err := os.ReadFile("../../../migrations/sqlite/" + name)
 		require.NoError(t, err)
 		require.NoError(t, db.Exec(string(ddl)).Error)
@@ -49,7 +62,13 @@ func historyActorIntegrationFixture(
 		require.Zero(t, count, "only empty legacy fixture stubs may be replaced")
 		require.NoError(t, db.Migrator().DropTable(table))
 	}
-	for _, name := range []string{"000031_nextcloud_source_versions", "000045_nextcloud_source_revisions", "000047_nextcloud_candidate_retry", "000035_nextcloud_source_pairing", "000039_nextcloud_source_pairing_abort"} {
+	for _, name := range []string{
+		"000031_nextcloud_source_versions",
+		"000045_nextcloud_source_revisions",
+		"000047_nextcloud_candidate_retry",
+		"000035_nextcloud_source_pairing",
+		"000039_nextcloud_source_pairing_abort",
+	} {
 		ddl, err := os.ReadFile("../../../migrations/sqlite/" + name + ".up.sql")
 		require.NoError(t, err)
 		require.NoError(t, db.Exec(string(ddl)).Error)
@@ -278,7 +297,17 @@ func TestKnowledgeHistoryActorReadModeDoesNotReuseIngest(t *testing.T) {
 }
 
 func TestKnowledgeHistoryActorCurrentRevocationBeforeActualWorkerStopsAllWrites(t *testing.T) {
-	for _, mode := range []string{"disabled", "membership", "role-viewer", "key-revoked", "key-expired", "key-scope", "key-tenant", "key-capability", "key-group-restricted"} {
+	for _, mode := range []string{
+		"disabled",
+		"membership",
+		"role-viewer",
+		"key-revoked",
+		"key-expired",
+		"key-scope",
+		"key-tenant",
+		"key-capability",
+		"key-group-restricted",
+	} {
 		t.Run(mode, func(t *testing.T) {
 			kind := "web"
 			if mode[:3] == "key" {
@@ -471,7 +500,14 @@ func seedHistoryActorGroup(t *testing.T, db *gorm.DB, user *types.User) {
 }
 
 func TestKnowledgeHistoryActorActualGroupOnlyMembershipAndRestrictedKB(t *testing.T) {
-	for _, mode := range []string{"allowed", "group-membership-withdrawn", "resource-grant-withdrawn", "resource-read-only", "directory-disabled", "directory-stale"} {
+	for _, mode := range []string{
+		"allowed",
+		"group-membership-withdrawn",
+		"resource-grant-withdrawn",
+		"resource-read-only",
+		"directory-disabled",
+		"directory-stale",
+	} {
 		t.Run(mode, func(t *testing.T) {
 			service, store, db, ctx, answer, _, user := historyActorIntegrationFixture(t, "web")
 			seedHistoryActorGroup(t, db, user)
@@ -653,7 +689,13 @@ func TestKnowledgeHistoryActorRevocationDuringRealParentAuthorizationStopsWorker
 }
 
 func TestKnowledgeHistoryActorActualSharedWritePreservesOriginalCallerTenant(t *testing.T) {
-	for _, mode := range []string{"allowed", "caller-membership-removed", "share-read-only", "org-member-removed", "proof-owner-swapped"} {
+	for _, mode := range []string{
+		"allowed",
+		"caller-membership-removed",
+		"share-read-only",
+		"org-member-removed",
+		"proof-owner-swapped",
+	} {
 		t.Run(mode, func(t *testing.T) {
 			service, store, db, ctx, answer, _, user := historyActorIntegrationFixture(t, "web")
 			require.NoError(

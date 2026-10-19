@@ -29,7 +29,9 @@ func (f *outputArtifactReader) Read(p []byte) (int, error) {
 func (f *outputArtifactReader) Close() error { f.closed = true; return nil }
 
 func TestKnowledgeOutputFileActualArtifactSnapshotAndRange(t *testing.T) {
-	for _, body := range [][]byte{{}, {'a'}, {'a', 'b'}, {'a', 'b', 'c'}, {0, 255, 1, 2, 3}, bytes.Repeat([]byte{17, 33, 64, 255}, 20000)} {
+	for _, body := range [][]byte{{}, {
+		'a',
+	}, {'a', 'b'}, {'a', 'b', 'c'}, {0, 255, 1, 2, 3}, bytes.Repeat([]byte{17, 33, 64, 255}, 20000)} {
 		t.Run(string(rune(len(body)+65)), func(t *testing.T) {
 			t.Setenv("TMPDIR", t.TempDir())
 			a, reader, row := outputAuthorizerFixture(t)

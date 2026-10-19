@@ -334,7 +334,11 @@ func TestNextcloudEventAppliedAfterFreshManifestWithSettledChanges(t *testing.T)
 	require.NoError(t, db.Exec(`CREATE TABLE knowledge_bases
 		(id TEXT PRIMARY KEY, tenant_id INTEGER, deleted_at DATETIME)`).Error)
 	require.NoError(t, db.Exec(`INSERT INTO knowledge_bases (id, tenant_id) VALUES ('kb', 7)`).Error)
-	for _, name := range []string{"000032_nextcloud_event_inbox.up.sql", "000033_nextcloud_event_dispatch.up.sql", "000049_nextcloud_event_hint_etag.up.sql"} {
+	for _, name := range []string{
+		"000032_nextcloud_event_inbox.up.sql",
+		"000033_nextcloud_event_dispatch.up.sql",
+		"000049_nextcloud_event_hint_etag.up.sql",
+	} {
 		schema, err := os.ReadFile("../../../migrations/sqlite/" + name)
 		require.NoError(t, err)
 		require.NoError(t, db.Exec(string(schema)).Error)

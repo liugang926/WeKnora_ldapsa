@@ -73,7 +73,16 @@ func faqPostgresActualFixture(
 				"E TABLE nextcloud_source_revisions(candidate_knowledge_id TEXT)"),
 		).Error,
 	)
-	for _, file := range []string{"000134_knowledge_input_provenance", "000135_knowledge_configuration_history_inputs", "000136_knowledge_actual_config_controls", "000137_knowledge_original_worker_actor", "000139_knowledge_collection_checkpoints", "000140_knowledge_collection_display_inputs", "000141_tag_statistics_checkpoints", "000144_faq_original_entry_inputs"} {
+	for _, file := range []string{
+		"000134_knowledge_input_provenance",
+		"000135_knowledge_configuration_history_inputs",
+		"000136_knowledge_actual_config_controls",
+		"000137_knowledge_original_worker_actor",
+		"000139_knowledge_collection_checkpoints",
+		"000140_knowledge_collection_display_inputs",
+		"000141_tag_statistics_checkpoints",
+		"000144_faq_original_entry_inputs",
+	} {
 		ddl, err := os.ReadFile("../../../migrations/versioned/" + file + ".up.sql")
 		require.NoError(t, err)
 		require.NoError(t, db.Exec(string(ddl)).Error)

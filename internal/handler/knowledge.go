@@ -43,9 +43,12 @@ type KnowledgeHandler struct {
 	spanOutputAuthorizer       *service.SpanOutputAuthorizer
 	leaseHeartbeat             time.Duration
 	leaseCheckpoint            time.Duration
-	publicationCheck           func(context.Context, *types.Knowledge) error // test seam; production uses publicationGuard
-	asynqClient                interfaces.TaskEnqueuer
-	spanRepo                   repository.KnowledgeSpanRepository
+	publicationCheck           func(
+		context.Context,
+		*types.Knowledge,
+	) error // test seam; production uses publicationGuard
+	asynqClient interfaces.TaskEnqueuer
+	spanRepo    repository.KnowledgeSpanRepository
 }
 
 // ConfigureKnowledgeHandlerGroupAccess attaches the optional directory-group

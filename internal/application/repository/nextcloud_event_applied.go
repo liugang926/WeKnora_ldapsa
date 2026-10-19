@@ -200,7 +200,8 @@ func nextcloudDispatchPublicationProof(
 			return nextcloudApplyRetry, nil
 		}
 		if version.State == "staging" && candidate.DeletedAt == nil &&
-			(candidate.ParseStatus == types.ParseStatusPending || candidate.ParseStatus == types.ParseStatusProcessing ||
+			(candidate.ParseStatus == types.ParseStatusPending ||
+				candidate.ParseStatus == types.ParseStatusProcessing ||
 				candidate.ParseStatus == types.ParseStatusFinalizing) {
 			return nextcloudApplyWaiting, nil
 		}

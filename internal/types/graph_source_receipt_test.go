@@ -74,7 +74,15 @@ func TestKnowledgeGraphReceiptPrivateAndOriginalBinding(t *testing.T) {
 }
 
 func TestKnowledgeGraphReceiptMalformedOriginalAndLegacyClosed(t *testing.T) {
-	for _, mode := range []string{"nil", "generation", "admission", "source unknown", "input digest", "duplicate key", "extra key"} {
+	for _, mode := range []string{
+		"nil",
+		"generation",
+		"admission",
+		"source unknown",
+		"input digest",
+		"duplicate key",
+		"extra key",
+	} {
 		t.Run(mode, func(t *testing.T) {
 			_, node := graphReceiptFixture(t)
 			r := node.SourceReceipt

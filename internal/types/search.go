@@ -149,7 +149,8 @@ func (st SearchTargets) ContainsKB(kbID string) bool {
 
 // SearchResult represents the search result
 type SearchResult struct {
-	SourceLineage *SourceLineage `json:"-" gorm:"-"` // Bound by the trusted content reader, never by citation/model metadata.
+	// Bound by the trusted content reader, never by citation/model metadata.
+	SourceLineage *SourceLineage `json:"-" gorm:"-"`
 	// ID
 	ID string `gorm:"column:id"              json:"id"`
 	// Content

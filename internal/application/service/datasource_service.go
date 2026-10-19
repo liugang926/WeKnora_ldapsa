@@ -1366,7 +1366,8 @@ func (s *DataSourceService) checkNextcloudSyncActive(
 	}
 	if admitted, present := ctx.Value(nextcloudAutomaticSyncKey{}).(nextcloudAutomaticSyncScope); present {
 		if admitted.tenant != currentSource.TenantID || admitted.kb != currentSource.KnowledgeBaseID ||
-			admitted.source != currentSource.ID || admitted.log != payload.SyncLogID || admitted.trigger != payload.Trigger ||
+			admitted.source != currentSource.ID ||
+			admitted.log != payload.SyncLogID || admitted.trigger != payload.Trigger ||
 			s.sourceInputs == nil {
 			return true, apprepo.ErrNextcloudMachineTaskInvalid
 		}

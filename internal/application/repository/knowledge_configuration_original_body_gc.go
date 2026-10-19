@@ -55,7 +55,12 @@ func (s *OriginalBodyRetentionStore) configurationOriginalBodyCurrent(
 	var origin knowledgeConfigurationInputOrigin
 	if err := bodyInternal(
 		tx,
-	).Where("origin_id=? AND tenant_id=? AND knowledge_base_id=?", head.AdmissionID, head.TenantID, head.KnowledgeBaseID).
+	).Where(
+		"origin_id=? AND tenant_id=? AND knowledge_base_id=?",
+		head.AdmissionID,
+		head.TenantID,
+		head.KnowledgeBaseID,
+	).
 		Take(&origin).
 		Error; err != nil {
 		return true, 0, err

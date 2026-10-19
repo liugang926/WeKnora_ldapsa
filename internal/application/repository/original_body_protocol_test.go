@@ -447,7 +447,17 @@ func TestOriginalBodyFullDatabaseRollbackSQLite(t *testing.T) { bodyProtocolData
 func TestPostgresOriginalBodyFullSchemaRollback(t *testing.T) { bodyProtocolDatabaseRollback(t, true) }
 
 func bodyProtocolSourceWindows(t *testing.T, pg bool) {
-	for _, mode := range []string{"current", "one-hour-open", "one-hour-expired", "failed-open", "failed-expired", "cancelled-retry", "source-unreachable", "confirmed-delete", "whole-binding-withdrawal"} {
+	for _, mode := range []string{
+		"current",
+		"one-hour-open",
+		"one-hour-expired",
+		"failed-open",
+		"failed-expired",
+		"cancelled-retry",
+		"source-unreachable",
+		"confirmed-delete",
+		"whole-binding-withdrawal",
+	} {
 		t.Run(mode, func(t *testing.T) {
 			db, s := bodyProtocolFixture(t, pg)
 			require.NoError(

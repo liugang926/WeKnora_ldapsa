@@ -217,7 +217,8 @@ func (s *knowledgeBaseService) hydrateRAGSearchChunks(ctx context.Context, byKno
 	var rows []*types.Chunk
 	for _, snapshot := range snapshots {
 		if snapshot.Knowledge == nil || snapshot.Chunk == nil || snapshot.Chunk.KnowledgeID != snapshot.Knowledge.ID ||
-			snapshot.Chunk.TenantID != snapshot.Knowledge.TenantID || snapshot.Chunk.KnowledgeBaseID != snapshot.Knowledge.KnowledgeBaseID {
+			snapshot.Chunk.TenantID != snapshot.Knowledge.TenantID ||
+			snapshot.Chunk.KnowledgeBaseID != snapshot.Knowledge.KnowledgeBaseID {
 			return nil, nil, fmt.Errorf("RAG hydration returned an invalid scope")
 		}
 		knowledgeMap[snapshot.Knowledge.ID] = snapshot.Knowledge

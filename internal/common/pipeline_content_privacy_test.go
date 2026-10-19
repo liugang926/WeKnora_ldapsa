@@ -19,7 +19,11 @@ func TestSourceContentPipelineLogsSuppressBodiesAndPreserveOrdinary(t *testing.T
 	ctx := context.WithValue(context.Background(), types.LoggerContextKey, logrus.NewEntry(log))
 	err := &api.HTTPError{StatusCode: 400, Body: "PRIVATE_VENDOR_BODY"}
 	fields := map[string]interface{}{"error": err, "content": "PRIVATE_OTHER_FIELD", "answer_preview": "PRIVATE_ANSWER"}
-	for _, emit := range []func(context.Context, string, string, map[string]interface{}){PipelineInfo, PipelineWarn, PipelineError} {
+	for _, emit := range []func(context.Context, string, string, map[string]interface{}){
+		PipelineInfo,
+		PipelineWarn,
+		PipelineError,
+	} {
 		output.Reset()
 		emit(logprivacy.SuppressContent(ctx), "PRIVATE_STAGE", "PRIVATE_ACTION", fields)
 		require.Empty(t, output.String(), "protected diagnostics never reach the caller's content logger")

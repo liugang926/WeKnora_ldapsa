@@ -157,10 +157,21 @@ func (s faqHTTPKB) HybridSearch(_ context.Context, kb string, _ types.SearchPara
 
 func faqActualHTTPFixture(
 	t *testing.T,
-) (*FAQHandler, *TagHandler, *gorm.DB, *repository.KnowledgeInputProvenanceStore, *faqHTTPQueue, *faqHTTPEngine, context.Context) {
+) (
+	*FAQHandler,
+	*TagHandler,
+	*gorm.DB,
+	*repository.KnowledgeInputProvenanceStore,
+	*faqHTTPQueue,
+	*faqHTTPEngine,
+	context.Context,
+) {
 	t.Helper()
 	tag, db, store, _ := tagHTTPFixture(t)
-	for _, file := range []string{"000056_knowledge_original_worker_actor.up.sql", "000063_faq_original_entry_inputs.up.sql"} {
+	for _, file := range []string{
+		"000056_knowledge_original_worker_actor.up.sql",
+		"000063_faq_original_entry_inputs.up.sql",
+	} {
 		ddl, err := os.ReadFile("../../migrations/sqlite/" + file)
 		require.NoError(t, err)
 		require.NoError(t, db.Exec(string(ddl)).Error)

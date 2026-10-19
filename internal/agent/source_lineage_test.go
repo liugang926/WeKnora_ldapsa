@@ -108,7 +108,15 @@ func lineageEngine(
 	}
 	e.SetSourceLineageVerifier(check)
 	events := &[]event.Event{}
-	for _, kind := range []event.EventType{event.EventAgentFinalAnswer, event.EventAgentToolResult, event.EventAgentTool, event.EventAgentToolCall, event.EventAgentThought, event.EventAgentComplete, event.EventError} {
+	for _, kind := range []event.EventType{
+		event.EventAgentFinalAnswer,
+		event.EventAgentToolResult,
+		event.EventAgentTool,
+		event.EventAgentToolCall,
+		event.EventAgentThought,
+		event.EventAgentComplete,
+		event.EventError,
+	} {
 		e.eventBus.On(kind, func(_ context.Context, ev event.Event) error {
 			l, ok := ev.SourceLineage.(*types.SourceLineage)
 			require.True(t, ok)
@@ -296,7 +304,13 @@ func TestAgentLineageRevocationAtToolReturnBlocksResultMetadataAndNextSend(t *te
 }
 
 func TestAgentLineageFreshSourceIndependentAndMandatoryUnknown(t *testing.T) {
-	for _, kind := range []string{"missing verifier", "legacy nil history", "unaccounted memory", "unaccounted image", "unaccounted profile"} {
+	for _, kind := range []string{
+		"missing verifier",
+		"legacy nil history",
+		"unaccounted memory",
+		"unaccounted image",
+		"unaccounted profile",
+	} {
 		t.Run(kind, func(t *testing.T) {
 			model := &mockChat{responses: []mockResponse{lineageAnswer("no")}}
 			e, ev := lineageEngine(t, model, nil, grantChecker(map[types.SourceIdentity]bool{}))

@@ -12,7 +12,14 @@ import (
 )
 
 func TestAgentLineageDuringAuthorizationMutationCannotChangeActualWireSnapshot(t *testing.T) {
-	for _, mutation := range []string{"description", "type", "shared schema bytes", "image pointer", "reasoning metadata", "literal positive"} {
+	for _, mutation := range []string{
+		"description",
+		"type",
+		"shared schema bytes",
+		"image pointer",
+		"reasoning metadata",
+		"literal positive",
+	} {
 		t.Run(mutation, func(t *testing.T) {
 			model := &mockChat{responses: []mockResponse{lineageAnswer("safe response")}}
 			e := newTestEngine(t, model)

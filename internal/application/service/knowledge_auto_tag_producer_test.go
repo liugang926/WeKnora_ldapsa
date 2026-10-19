@@ -102,7 +102,12 @@ func autoTagActualFixture(
 	require.NoError(t, err)
 	migration, err := gorm.Open(postgres.New(postgres.Config{Conn: sqlDB, PreferSimpleProtocol: true}), &gorm.Config{})
 	require.NoError(t, err)
-	for _, file := range []string{"000134_knowledge_input_provenance.up.sql", "000135_knowledge_configuration_history_inputs.up.sql", "000136_knowledge_actual_config_controls.up.sql", "000137_knowledge_original_worker_actor.up.sql"} {
+	for _, file := range []string{
+		"000134_knowledge_input_provenance.up.sql",
+		"000135_knowledge_configuration_history_inputs.up.sql",
+		"000136_knowledge_actual_config_controls.up.sql",
+		"000137_knowledge_original_worker_actor.up.sql",
+	} {
 		script, err := os.ReadFile("../../../migrations/versioned/" + file)
 		require.NoError(t, err)
 		require.NoError(t, migration.Exec(string(script)).Error)
@@ -123,7 +128,14 @@ func autoTagActualFixture(
 }
 
 func runKnowledgeAutoTagActualEnqueueOriginalActorManifestAndSQLWriter(t *testing.T, pg bool) {
-	for _, mutation := range []string{"none", "candidate ABA", "role revoked", "legacy unknown", "payload forge", "API revoked"} {
+	for _, mutation := range []string{
+		"none",
+		"candidate ABA",
+		"role revoked",
+		"legacy unknown",
+		"payload forge",
+		"API revoked",
+	} {
 		t.Run(mutation, func(t *testing.T) {
 			store, db, ctx := autoTagActualFixture(t, pg)
 			require.NoError(
@@ -360,7 +372,12 @@ func runKnowledgeAutoTagActualEnqueueOriginalActorManifestAndSQLWriter(t *testin
 				}
 			}
 			if mutation == "API revoked" {
-				model.beforeReturn = func() { now := time.Now(); require.NoError(t, db.Model(apiKey).Update("revoked_at", &now).Error) }
+				model.beforeReturn = func() {
+					now := time.Now()
+					require.NoError(t, db.Model(
+						apiKey,
+					).Update("revoked_at", &now).Error)
+				}
 			}
 			if mutation == "payload forge" {
 				payload.OriginalInput.AdmissionID = "forged-original"

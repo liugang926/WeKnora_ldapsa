@@ -31,7 +31,12 @@ func (s *KnowledgeInputProvenanceStore) captureKnowledgeOutputAuxiliaryInTx(
 			return nil, types.ErrSourceLineageUnknown
 		}
 		var k types.Knowledge
-		if err := tx.Where("id = ? AND tenant_id = ? AND knowledge_base_id = ?", proof.KnowledgeID, proof.TenantID, proof.KnowledgeBaseID).
+		if err := tx.Where(
+			"id = ? AND tenant_id = ? AND knowledge_base_id = ?",
+			proof.KnowledgeID,
+			proof.TenantID,
+			proof.KnowledgeBaseID,
+		).
 			Take(&k).
 			Error; err != nil {
 			return nil, err

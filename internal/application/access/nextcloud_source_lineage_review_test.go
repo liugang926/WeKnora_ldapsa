@@ -77,7 +77,15 @@ func TestNextcloudSourceLineageReviewEarlierSourceChangesDuringLaterRemoteCall(t
 	lineage, err := types.NewCompleteSourceLineage(first, second)
 	require.NoError(t, err)
 	require.Equal(t, first, lineage.Sources[0], "the changed source must be checked before the delayed source")
-	guard.publication.authorize = func(_ context.Context, _ *types.DataSourceConfig, _, _, _, _ string, fileID int64) (nextcloud.AuthorizationDecision, error) {
+	guard.publication.authorize = func(
+		_ context.Context,
+		_ *types.DataSourceConfig,
+		_,
+		_,
+		_,
+		_ string,
+		fileID int64,
+	) (nextcloud.AuthorizationDecision, error) {
 		if fileID == 43 {
 			current := snapshots.identity[first.KnowledgeID]
 			current.Revision++
@@ -100,7 +108,15 @@ func TestNextcloudSourceLineageReviewEarlierSourceChangesDuringLaterRemoteCall(t
 func TestNextcloudSourceLineageReviewDirectoryRevokedDuringRemoteCall(t *testing.T) {
 	guard, ctx, saved, _, _ := lineagePolicyFixture(t)
 	directory := guard.publication.directories.(*publicationDirectoryLookup)
-	guard.publication.authorize = func(context.Context, *types.DataSourceConfig, string, string, string, string, int64) (nextcloud.AuthorizationDecision, error) {
+	guard.publication.authorize = func(
+		context.Context,
+		*types.DataSourceConfig,
+		string,
+		string,
+		string,
+		string,
+		int64,
+	) (nextcloud.AuthorizationDecision, error) {
 		directory.identities[0].Status = types.DirectoryObjectDisabled
 		return nextcloud.AuthorizationDecision{Allow: true, SourceETag: saved.Sources[0].ETag}, nil
 	}
@@ -179,7 +195,15 @@ func TestNextcloudSourceLineageReviewLocalRechecksFollowFinalGrantLookup(t *test
 			remoteDone := false
 			changed := false
 			directory := guard.publication.directories.(*publicationDirectoryLookup)
-			guard.publication.authorize = func(context.Context, *types.DataSourceConfig, string, string, string, string, int64) (nextcloud.AuthorizationDecision, error) {
+			guard.publication.authorize = func(
+				context.Context,
+				*types.DataSourceConfig,
+				string,
+				string,
+				string,
+				string,
+				int64,
+			) (nextcloud.AuthorizationDecision, error) {
 				remoteDone = true
 				return nextcloud.AuthorizationDecision{Allow: true, SourceETag: saved.Sources[0].ETag}, nil
 			}
