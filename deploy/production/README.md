@@ -7,7 +7,7 @@ buffering, allow 50 MB uploads, and use a 3600-second read timeout.
 ## Release contract
 
 Merge reviewed changes to `liugang926/WeKnora_ldapsa` main first. Then create and
-push a unique tag such as `prod-20261018.1` on that merged commit. The
+push a unique tag such as `prod-20261019.1` on that merged commit. The
 `Production release` workflow rejects tags outside main, builds Linux amd64
 app (including AnyDoc) and UI, and publishes a complete GitHub release only
 after all image bundles and SHA-256 manifests have uploaded. A normal branch
@@ -135,6 +135,45 @@ only the reviewed changes, retaining the existing environment and data.
   for future Nextcloud. These are planning reserves, not filesystem quotas.
 - Existing Qwen models, ports 30443/30444 and inactive LiteLLM migration data
   are retained. Their measured health is checked before and after deployment.
+
+## Nextcloud feature scope
+
+This release targets the Nextcloud core integration: knowledge-space onboarding,
+source pairing and access controls, processing status v2, background document
+and CSV parsing/summary/vector ingestion, and source lifecycle controls. LDAP
+administration, RAG evaluation and the reviewed automatic release path are retained.
+Models and actual business pairing require administrator configuration and
+separate acceptance; exposing an integration route does not establish a pairing.
+
+The operator explicitly chose this scope with the following optional limitations:
+
+- Image, attachment and quoted-context inputs; web search/fetch; long-term memory;
+  sandbox, skills and browser tools; interactive Wiki/SQL/data-analysis tools;
+  and optional automatic RAG graph/entity inputs lack complete provenance adapters
+  and are refused. Background CSV ingestion and the typed Agent graph tool are
+  separate supported paths.
+- Default chat starts with web/browser disabled. Keep memory and sandbox providers
+  unconfigured: enabling them can also inject unsupported inputs/tools into
+  otherwise ordinary conversations.
+- Ordinary MCP discovery and calls require the server-owned ordinary-session
+  transport check. Controlled Nextcloud model input cannot be sent through this
+  independent transport. Explicit `@MCP`/`@Skill` pinned prompt metadata remains
+  unsupported. Set `mcp_selection_mode=none` on Agents used for Nextcloud: an
+  actually registered MCP directory also prevents their controlled answer's next
+  model round. Use a separate ordinary session/Agent for MCP. The dedicated
+  source-knowledge page uses the non-Agent RAG path and is unaffected.
+- Only builtin Agent IDs using their exact image-owned system templates have the
+  restored Agent prompt contract. A custom Agent ID using the same official
+  template or copied text is not that original producer. Custom/retained/copied
+  Agents and their unproved templates remain unavailable.
+  Agent opening prompts omit unproved KB descriptions, generated profiles,
+  document counts and recent-document previews; proved KB names/capabilities and
+  selected-document metadata remain available.
+
+An old KB/document without original producer admissions is not certified from its
+current database row during upgrade. The first schema-132 production-copy rehearsal
+requires no existing KBs/documents/sources/pairings; new data invalidates that
+precondition and requires a separate migration/import assessment.
 
 ## Recovery and operation
 
