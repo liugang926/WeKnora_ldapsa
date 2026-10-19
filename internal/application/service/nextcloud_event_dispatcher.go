@@ -53,7 +53,6 @@ type NextcloudEventDispatcher struct {
 	done        chan struct{}
 }
 
-// NewNextcloudEventDispatcher returns the durable source-event dispatcher.
 func NewNextcloudEventDispatcher(
 	inbox *repository.NextcloudEventInboxRepository,
 	dataSources interfaces.DataSourceRepository,
@@ -63,7 +62,6 @@ func NewNextcloudEventDispatcher(
 	return &NextcloudEventDispatcher{inbox: inbox, dataSources: dataSources, syncLogs: syncLogs, enqueuer: enqueuer}
 }
 
-// Start starts the source-event dispatch loop.
 func (d *NextcloudEventDispatcher) Start() {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -90,7 +88,6 @@ func (d *NextcloudEventDispatcher) Start() {
 	}()
 }
 
-// Stop stops the source-event dispatch loop.
 func (d *NextcloudEventDispatcher) Stop() {
 	d.mu.Lock()
 	cancel, done := d.cancel, d.done
@@ -134,19 +131,16 @@ func (d *NextcloudEventDispatcher) runOnce(ctx context.Context, now time.Time) {
 	}
 }
 
-func (d *NextcloudEventDispatcher) dispatchCandidateRetry(_ context.Context,
-	claim repository.NextcloudCandidateRetryClaim,
-) error {
-	payload := types.DataSourceSyncPayload{
-		DataSourceID: claim.DataSourceID, TenantID: claim.TenantID,
+func (d *NextcloudEventDispatcher) dispatchCandidateRetry(ctx context.Context,
+	claim repository.NextcloudCandidateRetryClaim) error {
+	payload := types.DataSourceSyncPayload{DataSourceID: claim.DataSourceID, TenantID: claim.TenantID,
 		SyncLogID: claim.SyncLogID, Trigger: "nextcloud_candidate_retry",
 		NextcloudRetryKnowledgeBaseID: claim.KnowledgeBaseID,
 		NextcloudRetryExternalID:      claim.ExternalID, NextcloudRetryETag: claim.DesiredETag,
 		NextcloudRetryCandidateID: claim.FailedCandidateID, NextcloudRetryInstanceID: claim.InstanceID,
 		NextcloudRetryBindingID: claim.BindingID, NextcloudRetryConfigSHA256: claim.ConfigSHA,
 		NextcloudRetryPairOperationID: claim.PairOperationID,
-		NextcloudRetryPairingEpoch:    claim.PairingEpoch, NextcloudRetryLeaseToken: claim.LeaseToken,
-	}
+		NextcloudRetryPairingEpoch:    claim.PairingEpoch, NextcloudRetryLeaseToken: claim.LeaseToken}
 	encoded, err := json.Marshal(payload)
 	if err != nil {
 		return err
@@ -197,12 +191,10 @@ func (d *NextcloudEventDispatcher) dispatchOne(ctx context.Context, connectionID
 	// re-downloads touched files. Broad hints, missing cursors and expired feeds
 	// still force a content refresh; an ordinary event need not re-download
 	// every unchanged file in the source.
-	payload := types.DataSourceSyncPayload{
-		DataSourceID: ds.ID, TenantID: ds.TenantID,
+	payload := types.DataSourceSyncPayload{DataSourceID: ds.ID, TenantID: ds.TenantID,
 		SyncLogID: logID, ForceFull: false, Trigger: "nextcloud_event",
 		NextcloudEventConnectionID: claim.ConnectionID,
-		NextcloudEventConfigSHA256: claim.ConfigSHA256,
-	}
+		NextcloudEventConfigSHA256: claim.ConfigSHA256}
 	encoded, err := json.Marshal(payload)
 	if err != nil {
 		return fail("queue_unavailable", err)

@@ -8,8 +8,6 @@ import (
 	"strings"
 	"time"
 
-	apperrors "github.com/Tencent/WeKnora/internal/errors"
-
 	"github.com/Tencent/WeKnora/internal/types"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -17,10 +15,7 @@ import (
 
 const nextcloudAutomaticCandidateRetryWindow = 24 * time.Hour
 
-// ErrNextcloudCandidateRetryNotDue reports a candidate retry that is not yet eligible.
-var ErrNextcloudCandidateRetryNotDue = apperrors.NewProtocolError(
-	errors.New("nextcloud failed candidate retry is not due"), "Nextcloud failed candidate retry is not due",
-)
+var ErrNextcloudCandidateRetryNotDue = errors.New("Nextcloud failed candidate retry is not due")
 
 type nextcloudCandidateRetryClaimKey struct{}
 
@@ -114,8 +109,7 @@ func nextcloudFailedCandidateAdmission(tx *gorm.DB, version nextcloudSourceVersi
 		return true, ErrNextcloudCandidateRetryNotDue
 	}
 	var ds types.DataSource
-	dsQuery := tx.Where(("id = ? AND tenant_id = ? AND knowledge_base_id = ? AND " +
-		"type = ? AND status = ? AND deleted_at IS NULL"),
+	dsQuery := tx.Where("id = ? AND tenant_id = ? AND knowledge_base_id = ? AND type = ? AND status = ? AND deleted_at IS NULL",
 		version.DataSourceID, version.TenantID, version.KnowledgeBaseID,
 		types.ConnectorTypeNextcloud, types.DataSourceStatusActive)
 	if lockSource {
@@ -154,10 +148,8 @@ func (r *knowledgeRepository) FailedNextcloudCandidateETags(ctx context.Context,
 	}
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var ds types.DataSource
-		if err := tx.Where(("id = ? AND tenant_id = ? AND knowledge_base_id = ? AND " +
-			"type = ? AND status = ? AND deleted_at IS NULL"),
-			dsID, tenantID, kbID, types.ConnectorTypeNextcloud, types.DataSourceStatusActive).Take(&ds).Error; err !=
-			nil {
+		if err := tx.Where("id = ? AND tenant_id = ? AND knowledge_base_id = ? AND type = ? AND status = ? AND deleted_at IS NULL",
+			dsID, tenantID, kbID, types.ConnectorTypeNextcloud, types.DataSourceStatusActive).Take(&ds).Error; err != nil {
 			return ErrNextcloudSourcePairingConflict
 		}
 		baseURL, configSHA, currentBinding, err := NextcloudEventDataSourceIdentity(ds.Config)
@@ -179,9 +171,7 @@ func (r *knowledgeRepository) FailedNextcloudCandidateETags(ctx context.Context,
 			return nil
 		}
 		if err := tx.Table("nextcloud_source_versions AS v").Select("v.*").
-			Joins(("JOIN knowledges AS k ON k.id = v.candidate_knowledge_id"+
-				" AND k.tenant_id = v.tenant_id AND k.knowledge_base_id "+
-				"= v.knowledge_base_id")).
+			Joins("JOIN knowledges AS k ON k.id = v.candidate_knowledge_id AND k.tenant_id = v.tenant_id AND k.knowledge_base_id = v.knowledge_base_id").
 			Where("v.tenant_id = ? AND v.knowledge_base_id = ? AND v.datasource_id = ? AND v.state = 'staging'",
 				tenantID, kbID, dsID).
 			Where("k.channel = ? AND k.parse_status = ? AND k.deleted_at IS NULL",

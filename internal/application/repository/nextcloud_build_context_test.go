@@ -19,11 +19,9 @@ func TestNextcloudBuildChunkWriteUsesSameTransactionFence(t *testing.T) {
 		NextcloudContentBuildLease, "worker", time.Minute)
 	require.NoError(t, err)
 	ctx := WithNextcloudBuildLease(context.Background(), store, lease, scope)
-	chunk := &types.Chunk{
-		ID: "chunk-1", TenantID: scope.TenantID,
+	chunk := &types.Chunk{ID: "chunk-1", TenantID: scope.TenantID,
 		KnowledgeBaseID: scope.KnowledgeBaseID, KnowledgeID: scope.KnowledgeID,
-		Content: "first", ChunkType: types.ChunkTypeText,
-	}
+		Content: "first", ChunkType: types.ChunkTypeText}
 	require.NoError(t, chunkRepo.CreateChunks(ctx, []*types.Chunk{chunk}))
 
 	wrong := *chunk
@@ -64,11 +62,9 @@ func TestNextcloudBuildSaveChunkRevisionRequiresExactLiveLease(t *testing.T) {
 		NextcloudContentBuildLease, "worker", time.Minute)
 	require.NoError(t, err)
 	ctx := WithNextcloudBuildLease(context.Background(), store, lease, scope)
-	chunk := &types.Chunk{
-		ID: "revision-source-chunk", TenantID: scope.TenantID,
+	chunk := &types.Chunk{ID: "revision-source-chunk", TenantID: scope.TenantID,
 		KnowledgeBaseID: scope.KnowledgeBaseID, KnowledgeID: scope.KnowledgeID,
-		Content: "before", ChunkType: types.ChunkTypeText,
-	}
+		Content: "before", ChunkType: types.ChunkTypeText}
 	require.NoError(t, repo.CreateChunks(ctx, []*types.Chunk{chunk}))
 	readLease, err := store.AcquireKnowledge(context.Background(), scope,
 		NextcloudContentReadLease, "reader", time.Minute)
@@ -76,11 +72,9 @@ func TestNextcloudBuildSaveChunkRevisionRequiresExactLiveLease(t *testing.T) {
 
 	edit := *chunk
 	edit.Content, edit.ContentRevision = "after", 1
-	revision := &types.ChunkRevision{
-		ID: "revision-before", TenantID: scope.TenantID,
+	revision := &types.ChunkRevision{ID: "revision-before", TenantID: scope.TenantID,
 		KnowledgeBaseID: scope.KnowledgeBaseID, KnowledgeID: scope.KnowledgeID,
-		ChunkID: chunk.ID, Revision: 0, Content: "before",
-	}
+		ChunkID: chunk.ID, Revision: 0, Content: "before"}
 	require.ErrorIs(t, repo.SaveChunkRevision(context.Background(), &edit, revision, 0),
 		ErrNextcloudContentLeaseInvalid)
 
@@ -127,11 +121,9 @@ func TestNextcloudMarkedChunkRevisionRejectsNoLease(t *testing.T) {
 	db := leaseTestSQLite(t)
 	require.NoError(t, db.AutoMigrate(&types.Knowledge{}, &types.Chunk{}, &types.ChunkRevision{}))
 	repo := &chunkRepository{db: db}
-	chunk := &types.Chunk{
-		ID: "marked-chunk", TenantID: 7,
+	chunk := &types.Chunk{ID: "marked-chunk", TenantID: 7,
 		KnowledgeBaseID: "kb-1", KnowledgeID: "marked-source", Content: "before",
-		ChunkType: types.ChunkTypeText,
-	}
+		ChunkType: types.ChunkTypeText}
 	require.NoError(t, db.Create(&types.Knowledge{
 		ID: chunk.KnowledgeID, TenantID: chunk.TenantID,
 		KnowledgeBaseID: chunk.KnowledgeBaseID,
@@ -139,11 +131,9 @@ func TestNextcloudMarkedChunkRevisionRejectsNoLease(t *testing.T) {
 	}).Error)
 	require.NoError(t, repo.CreateChunks(context.Background(), []*types.Chunk{chunk}))
 	chunk.Content, chunk.ContentRevision = "after", 1
-	revision := &types.ChunkRevision{
-		ID: "marked-revision", TenantID: chunk.TenantID,
+	revision := &types.ChunkRevision{ID: "marked-revision", TenantID: chunk.TenantID,
 		KnowledgeBaseID: chunk.KnowledgeBaseID, KnowledgeID: chunk.KnowledgeID,
-		ChunkID: chunk.ID, Revision: 0, Content: "before",
-	}
+		ChunkID: chunk.ID, Revision: 0, Content: "before"}
 	require.ErrorIs(t, repo.SaveChunkRevision(context.Background(), chunk, revision, 0),
 		ErrNextcloudContentLeaseInvalid)
 	var count int64
@@ -164,11 +154,9 @@ func TestNextcloudBuildDetachedFinalizationCannotReviveCanceledWorker(t *testing
 	detached := context.WithoutCancel(leased)
 	cancel()
 	require.NoError(t, detached.Err(), "the detached context itself stays live")
-	chunk := &types.Chunk{
-		ID: "late-chunk", TenantID: scope.TenantID,
+	chunk := &types.Chunk{ID: "late-chunk", TenantID: scope.TenantID,
 		KnowledgeBaseID: scope.KnowledgeBaseID, KnowledgeID: scope.KnowledgeID,
-		Content: "late", ChunkType: types.ChunkTypeText,
-	}
+		Content: "late", ChunkType: types.ChunkTypeText}
 	require.ErrorIs(t, (&chunkRepository{db: db}).CreateChunks(detached, []*types.Chunk{chunk}),
 		context.Canceled)
 	var count int64

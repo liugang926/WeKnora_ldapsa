@@ -47,32 +47,37 @@ var (
 // knowledgeService implements the knowledge service interface
 // service 实现知识服务接口
 type knowledgeService struct {
-	config           *config.Config
-	retrieveEngine   interfaces.RetrieveEngineRegistry
-	ownership        retriever.TenantStoreOwnership
-	repo             interfaces.KnowledgeRepository
-	kbService        interfaces.KnowledgeBaseService
-	tenantRepo       interfaces.TenantRepository
-	tenantService    interfaces.TenantService
-	documentReader   interfaces.DocumentReader
-	chunkService     interfaces.ChunkService
-	chunkRepo        interfaces.ChunkRepository
-	tagRepo          interfaces.KnowledgeTagRepository
-	tagService       interfaces.KnowledgeTagService
-	fileSvc          interfaces.FileService
-	storageResolver  interfaces.StorageBackendResolver
-	resourceCatalog  interfaces.ResourceCatalog
-	modelService     interfaces.ModelService
-	task             interfaces.TaskEnqueuer
-	taskInspector    interfaces.TaskInspector
-	graphEngine      interfaces.RetrieveGraphRepository
-	redisClient      *redis.Client
-	kbShareService   interfaces.KBShareService
-	groupAccess      interfaces.GroupAccessService
-	publicationGuard *access.NextcloudPublicationGuard
-	contentLeases    *repository.NextcloudContentLeaseStore
-	imageResolver    *docparser.ImageResolver
-	taskPendingRepo  interfaces.TaskPendingOpsRepository
+	config                  *config.Config
+	retrieveEngine          interfaces.RetrieveEngineRegistry
+	ownership               retriever.TenantStoreOwnership
+	repo                    interfaces.KnowledgeRepository
+	kbService               interfaces.KnowledgeBaseService
+	tenantRepo              interfaces.TenantRepository
+	tenantService           interfaces.TenantService
+	documentReader          interfaces.DocumentReader
+	chunkService            interfaces.ChunkService
+	chunkRepo               interfaces.ChunkRepository
+	tagRepo                 interfaces.KnowledgeTagRepository
+	tagService              interfaces.KnowledgeTagService
+	fileSvc                 interfaces.FileService
+	storageResolver         interfaces.StorageBackendResolver
+	resourceCatalog         interfaces.ResourceCatalog
+	modelService            interfaces.ModelService
+	task                    interfaces.TaskEnqueuer
+	taskInspector           interfaces.TaskInspector
+	graphEngine             interfaces.RetrieveGraphRepository
+	redisClient             *redis.Client
+	kbShareService          interfaces.KBShareService
+	groupAccess             interfaces.GroupAccessService
+	publicationGuard        *access.NextcloudPublicationGuard
+	contentLeases           *repository.NextcloudContentLeaseStore
+	historyMaterialMessages *messageService
+	knowledgeInputs         interfaces.KnowledgeBuildInputReader
+	knowledgeInputWriter    interfaces.KnowledgeInputWriter
+	faqInputs               *repository.KnowledgeInputProvenanceStore
+	faqLineageChecker       knowledgeOutputLineageChecker
+	imageResolver           *docparser.ImageResolver
+	taskPendingRepo         interfaces.TaskPendingOpsRepository
 
 	// In-memory fallbacks for Lite mode (no Redis)
 	memFAQProgress      sync.Map // taskID -> *types.FAQImportProgress
@@ -289,17 +294,24 @@ func finalizeSubtaskDetached(
 	knowledgeID, source string,
 	retErr error,
 	superseded, final bool,
-) {
+) error {
 	willDrain := repo != nil && knowledgeID != "" && !superseded && (retErr == nil || final)
 	if !willDrain {
-		return
+		return nil
+	}
+	if repository.KnowledgeBuildInputProofFromContext(ctx) != nil {
+		if err := requireActualKnowledgeBuildInput(ctx); err != nil {
+			return err
+		}
 	}
 	dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), finalizeSubtaskDetachedTimeout)
 	defer cancel()
 	if _, _, err := repo.FinalizeSubtask(dctx, knowledgeID); err != nil {
 		logger.Warnf(ctx, "finalize subtask decrement failed source=%s knowledge=%s err=%v",
 			source, knowledgeID, err)
+		return err
 	}
+	return nil
 }
 
 // beginStage / endStage / failStage / skipStage are the by-name shims
@@ -861,7 +873,7 @@ func (s *knowledgeService) UpdateKnowledge(ctx context.Context, knowledge *types
 		return err
 	}
 	if metadataChanged && record.SummaryStatus != "" && record.SummaryStatus != types.SummaryStatusNone {
-		if err := enqueueSummaryRefresh(ctx, s.repo, s.task, s.kbService, s.tracker(), record); err != nil {
+		if err := enqueueSummaryRefresh(ctx, s.repo, s.task, s.kbService, s.tracker(), record, s.prepareSummaryGenerationPayload); err != nil {
 			logger.Warnf(ctx, "Metadata saved but summary refresh enqueue failed for %s: %v", record.ID, err)
 		} else {
 			logger.Infof(ctx, "Enqueued summary refresh after metadata update, knowledge ID: %s", record.ID)

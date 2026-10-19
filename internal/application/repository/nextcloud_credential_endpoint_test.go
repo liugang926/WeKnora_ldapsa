@@ -32,18 +32,14 @@ func TestNextcloudCredentialAndEndpointUpdatesCannotCombineAcrossStaleWriters(t 
 	repo := NewDataSourceRepository(db)
 	ctx := context.Background()
 	base := "https://trusted.example"
-	old := &types.DataSource{
-		ID: "paired", TenantID: 7, KnowledgeBaseID: "kb",
-		Type: types.ConnectorTypeNextcloud, Config: nextcloudEndpointTestConfig(t, base, "private-token"),
-	}
+	old := &types.DataSource{ID: "paired", TenantID: 7, KnowledgeBaseID: "kb",
+		Type: types.ConnectorTypeNextcloud, Config: nextcloudEndpointTestConfig(t, base, "private-token")}
 	require.NoError(t, repo.Create(ctx, old))
 
 	update := func(updateCtx context.Context, url, token string) error {
-		return repo.Update(updateCtx, &types.DataSource{
-			ID: old.ID, TenantID: old.TenantID,
+		return repo.Update(updateCtx, &types.DataSource{ID: old.ID, TenantID: old.TenantID,
 			KnowledgeBaseID: old.KnowledgeBaseID, Type: old.Type,
-			Config: nextcloudEndpointTestConfig(t, url, token),
-		})
+			Config: nextcloudEndpointTestConfig(t, url, token)})
 	}
 	storedURL := func() string {
 		t.Helper()

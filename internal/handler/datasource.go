@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"errors"
+	"github.com/Tencent/WeKnora/internal/application/repository"
 	"net/http"
 	"strconv"
 	"time"
@@ -142,6 +143,7 @@ func (h *DataSourceHandler) CreateDataSource(c *gin.Context) {
 
 	// Enforce tenant isolation
 	req.TenantID = tenantID
+	ctx = repository.WithIndependentDataSourceNameInput(ctx, req.Name)
 
 	ds, err := h.service.CreateDataSource(ctx, &req)
 	if err != nil {
@@ -253,6 +255,9 @@ func (h *DataSourceHandler) UpdateDataSource(c *gin.Context) {
 	req.ID = id
 	req.TenantID = existing.TenantID
 	req.KnowledgeBaseID = existing.KnowledgeBaseID
+	if req.Name != "" {
+		ctx = repository.WithIndependentDataSourceNameInput(ctx, req.Name)
+	}
 	ds, err := h.service.UpdateDataSource(ctx, &req)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": apperrors.PublicMessage(err)})
@@ -662,4 +667,14 @@ func (h *DataSourceHandler) GetSyncLog(c *gin.Context) {
 func (h *DataSourceHandler) GetAvailableConnectors(c *gin.Context) {
 	connectors := datasource.ListAvailableConnectors()
 	c.JSON(http.StatusOK, connectors)
+}
+
+func (h *DataSourceHandler) PublishTargetMigrationCandidates(ctx context.Context, row repository.NextcloudTargetMigration) error {
+	// Handler wiring uses the same configured repository as asynchronous workers.
+	if publisher, ok := h.service.(interface {
+		PublishTargetMigrationCandidates(context.Context, repository.NextcloudTargetMigration) error
+	}); ok {
+		return publisher.PublishTargetMigrationCandidates(ctx, row)
+	}
+	return repository.ErrNextcloudOnboardingConflict
 }

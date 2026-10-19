@@ -4,35 +4,33 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"regexp"
 	"sort"
 	"strings"
 	"time"
 
-	apperrors "github.com/Tencent/WeKnora/internal/errors"
-
 	"github.com/Tencent/WeKnora/internal/application/access"
+	"github.com/Tencent/WeKnora/internal/application/repository"
+	apperrors "github.com/Tencent/WeKnora/internal/errors"
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 )
-
-// regThinkIndex matches <think>...</think> blocks for stripping from KB index content.
-var regThinkIndex = regexp.MustCompile(`(?s)<think>.*?</think>`)
 
 // messageService implements the MessageService interface for managing messaging operations
 // It handles creating, retrieving, updating, and deleting messages within sessions.
 // It reads the chat history knowledge base configuration from the tenant's ChatHistoryConfig,
 // which is managed via the settings UI.
 type messageService struct {
-	messageRepo    interfaces.MessageRepository    // Repository for message storage operations
-	sessionRepo    interfaces.SessionRepository    // Repository for session validation
-	tenantService  interfaces.TenantService        // Service for tenant operations (read ChatHistoryConfig)
-	kbService      interfaces.KnowledgeBaseService // Service for knowledge base operations (search chat history KB)
-	knowService    interfaces.KnowledgeService     // Service for knowledge operations (index/delete passages)
-	modelService   interfaces.ModelService         // Service for model operations (rerank model)
-	suggestionRepo interfaces.MessageSuggestionRepository
-	historyGuard   *access.NextcloudHistoryGuard
+	materialStore      *repository.KnowledgeInputProvenanceStore
+	sourceLineageGuard access.SourceLineageAuthorizer
+	messageRepo        interfaces.MessageRepository    // Repository for message storage operations
+	sessionRepo        interfaces.SessionRepository    // Repository for session validation
+	tenantService      interfaces.TenantService        // Service for tenant operations (read ChatHistoryConfig)
+	kbService          interfaces.KnowledgeBaseService // Service for knowledge base operations (search chat history KB)
+	knowService        interfaces.KnowledgeService     // Service for knowledge operations (index/delete passages)
+	modelService       interfaces.ModelService         // Service for model operations (rerank model)
+	suggestionRepo     interfaces.MessageSuggestionRepository
+	historyGuard       *access.NextcloudHistoryGuard
 }
 
 // NewMessageService creates a new message service instance with the required repositories
@@ -62,14 +60,17 @@ func NewMessageService(messageRepo interfaces.MessageRepository,
 // assertion to SSE replay. It rechecks authorization as a stream advances,
 // since a file can be withdrawn after the first frame was sent.
 func (s *messageService) CheckMessagePublication(ctx context.Context, message *types.Message) error {
-	return s.historyGuard.CheckMessage(ctx, message)
+	if message == nil {
+		return access.ErrNextcloudPublicationUnavailable
+	}
+	if message.Role == "user" {
+		return nil
+	} // Read adapters retain raw user text only.
+	return s.checkTypedSourceLineage(ctx, message)
 }
 
 func (s *messageService) CheckLiveMessagePublication(ctx context.Context, message *types.Message) error {
-	if err := s.historyGuard.CheckLiveMessage(ctx, message); err != nil {
-		return err
-	}
-	return s.checkLiveKnowledgeGrants(ctx, message)
+	return s.checkTypedSourceLineage(ctx, message)
 }
 
 type liveKnowledgeGrantChecker interface {
@@ -179,7 +180,10 @@ func (
 		}
 		filtered = append(filtered, message)
 	}
-	return filtered, nil
+	if err := s.checkMessageSourceLineageBatch(ctx, filtered, nil); err != nil {
+		return nil, err
+	}
+	return rawUserContentOnly(filtered), nil
 }
 
 // sessionTenantIDForLookup returns the tenant ID to use for session lookup.
@@ -208,6 +212,9 @@ func sessionUserIDForLookup(ctx context.Context) string {
 
 // CreateMessage creates a new message within an existing session
 func (s *messageService) CreateMessage(ctx context.Context, message *types.Message) (*types.Message, error) {
+	if message != nil && message.Role != "user" && message.SourceLineage == nil {
+		message.SourceLineage = types.UnknownSourceLineage()
+	}
 	logger.Info(ctx, "Start creating message")
 	logger.Infof(ctx, "Creating message for session ID: %s", message.SessionID)
 
@@ -219,6 +226,15 @@ func (s *messageService) CreateMessage(ctx context.Context, message *types.Messa
 		return nil, err
 	}
 
+	if s.materialStore != nil {
+		if message.Role == "user" && message.SourceLineage == nil {
+			message.SourceLineage, _ = types.NewCompleteSourceLineage()
+		}
+		ctx, err = s.materialStore.WithMessageProducerInput(ctx, message, true)
+		if err != nil {
+			return nil, err
+		}
+	}
 	logger.Info(ctx, "Session exists, creating message")
 	createdMessage, err := s.messageRepo.CreateMessage(ctx, message)
 	if err != nil {
@@ -245,6 +261,17 @@ func (s *messageService) GetMessage(ctx context.Context, sessionID string, messa
 		return nil, err
 	}
 
+	if s.materialStore != nil {
+		_, model := ctx.Value(agentHistoryCurrentRequestKey{}).(string)
+		rows, err := s.admittedMessages(ctx, types.MessageMaterialReadRequest{TenantID: tenantID, SessionID: sessionID, MessageIDs: []string{messageID}, IncludeOriginalUserFields: model})
+		if err != nil {
+			return nil, err
+		}
+		if len(rows) != 1 {
+			return nil, access.ErrNextcloudPublicationDenied
+		}
+		return rows[0], nil
+	}
 	logger.Info(ctx, "Session exists, getting message")
 	message, err := s.messageRepo.GetMessage(ctx, sessionID, messageID)
 	if err != nil {
@@ -259,15 +286,16 @@ func (s *messageService) GetMessage(ctx context.Context, sessionID string, messa
 	if err := s.CheckMessagePublication(ctx, message); err != nil {
 		return nil, err
 	}
-	return s.clarifyReadArtifactVersions(ctx, sessionID, []*types.Message{message})[0], nil
+	return rawUserContentOnly(s.clarifyReadArtifactVersions(ctx, sessionID, []*types.Message{message}))[0], nil
 }
 
 // GetMessageForControl is an owner-only metadata lookup used to stop or steer
 // a running turn. It never returns saved content, tool outputs or references,
 // and does not require permission to read content that may have been revoked.
-func (
-	s *messageService,
-) GetMessageForControl(ctx context.Context, sessionID, messageID string) (*types.Message, error) {
+func (s *messageService) GetMessageForControl(ctx context.Context, sessionID, messageID string) (*types.Message, error) {
+	if s.materialStore != nil {
+		return s.materialStore.MessageOwnedControlMetadata(ctx, sessionID, messageID)
+	}
 	tenantID := types.MustTenantIDFromContext(ctx)
 	owner := types.SessionOwnerIDFromContext(ctx)
 	if owner == "" || types.CallerFromContext(ctx).TenantID != tenantID {
@@ -280,7 +308,6 @@ func (
 	if session == nil || session.UserID != owner || session.TenantID != tenantID || session.ID != sessionID {
 		return nil, access.ErrNextcloudPublicationDenied
 	}
-
 	message, err := s.messageRepo.GetMessage(ctx, sessionID, messageID)
 	if err != nil {
 		return nil, err
@@ -288,21 +315,17 @@ func (
 	if message == nil || message.ID != messageID || message.SessionID != sessionID {
 		return nil, access.ErrNextcloudPublicationDenied
 	}
-	return &types.Message{
-		ID:            message.ID,
-		SessionID:     message.SessionID,
-		RequestID:     message.RequestID,
-		Role:          message.Role,
-		IsCompleted:   message.IsCompleted,
-		AgentID:       message.AgentID,
-		AgentTenantID: message.AgentTenantID,
-	}, nil
+	return &types.Message{ID: message.ID, SessionID: message.SessionID, RequestID: message.RequestID, Role: message.Role, IsCompleted: message.IsCompleted, AgentID: message.AgentID, AgentTenantID: message.AgentTenantID}, nil
 }
 
 // GetMessageForStream is private to the guarded SSE sender. Public saved
 // message reads continue to apply the historical guard, including incomplete
 // rows. SSE needs the running scope before it can learn tool provenance.
 func (s *messageService) GetMessageForStream(ctx context.Context, sessionID, messageID string) (*types.Message, error) {
+	if s.materialStore != nil {
+		message, _, err := s.materialStore.MessageLiveControl(ctx, sessionID, messageID)
+		return message, err
+	}
 	tenantID := types.MustTenantIDFromContext(ctx)
 	owner := types.SessionOwnerIDFromContext(ctx)
 	if owner == "" || types.CallerFromContext(ctx).TenantID != tenantID {
@@ -315,7 +338,6 @@ func (s *messageService) GetMessageForStream(ctx context.Context, sessionID, mes
 	if session == nil || session.UserID != owner || session.TenantID != tenantID || session.ID != sessionID {
 		return nil, access.ErrNextcloudPublicationDenied
 	}
-
 	message, err := s.messageRepo.GetMessage(ctx, sessionID, messageID)
 	if err != nil {
 		return nil, err
@@ -341,6 +363,9 @@ func (s *messageService) GetMessagesBySession(ctx context.Context,
 		return nil, err
 	}
 
+	if s.materialStore != nil {
+		return s.admittedMessagePage(ctx, sessionID, time.Time{}, pageSize, page, false)
+	}
 	logger.Info(ctx, "Session exists, getting messages")
 	messages, err := s.messageRepo.GetMessagesBySession(ctx, sessionID, page, pageSize)
 	if err != nil {
@@ -379,6 +404,9 @@ func (s *messageService) GetRecentMessagesBySession(ctx context.Context,
 		return nil, err
 	}
 
+	if s.materialStore != nil {
+		return s.admittedMessagePage(ctx, sessionID, time.Time{}, limit, 1, true)
+	}
 	logger.Info(ctx, "Session exists, getting recent messages")
 	messages, err := s.messageRepo.GetRecentMessagesBySession(ctx, sessionID, limit)
 	if err != nil {
@@ -416,6 +444,9 @@ func (s *messageService) GetMessagesBySessionBeforeTime(ctx context.Context,
 		return nil, err
 	}
 
+	if s.materialStore != nil {
+		return s.admittedMessagePage(ctx, sessionID, beforeTime, limit, 1, true)
+	}
 	logger.Info(ctx, "Session exists, getting messages before time")
 	messages, err := s.messageRepo.GetMessagesBySessionBeforeTime(ctx, sessionID, beforeTime, limit)
 	if err != nil {
@@ -437,6 +468,14 @@ func (s *messageService) GetMessagesBySessionBeforeTime(ctx context.Context,
 
 // UpdateMessage updates an existing message's content or metadata
 func (s *messageService) UpdateMessage(ctx context.Context, message *types.Message) error {
+	if message == nil {
+		return access.ErrNextcloudPublicationDenied
+	}
+	if message.Role != "user" && message.IsCompleted {
+		if err := s.checkTypedSourceLineage(ctx, message); err != nil {
+			return err
+		}
+	}
 	logger.Info(ctx, "Start updating message")
 	logger.Infof(ctx, "Updating message, ID: %s, session ID: %s", message.ID, message.SessionID)
 
@@ -448,8 +487,22 @@ func (s *messageService) UpdateMessage(ctx context.Context, message *types.Messa
 		return err
 	}
 
+	if s.materialStore != nil {
+		ctx, err = s.materialStore.WithMessageProducerInput(ctx, message, false)
+		if err != nil {
+			return err
+		}
+	}
+	var finishCompletion func(error) error
+	ctx, finishCompletion, err = s.beginMessageMaterialCompletion(ctx, message)
+	if err != nil {
+		return err
+	}
 	logger.Info(ctx, "Session exists, updating message")
 	err = s.messageRepo.UpdateMessage(ctx, message)
+	if finishCompletion != nil {
+		err = finishCompletion(err)
+	}
 	if err != nil {
 		logger.ErrorWithFields(ctx, err, map[string]interface{}{
 			"session_id": message.SessionID,
@@ -464,12 +517,32 @@ func (s *messageService) UpdateMessage(ctx context.Context, message *types.Messa
 
 // UpdateMessageImages updates only the images JSONB column for a message.
 func (s *messageService) UpdateMessageImages(ctx context.Context, sessionID, messageID string, images types.MessageImages) error {
-	return s.messageRepo.UpdateMessageImages(ctx, sessionID, messageID, images)
+	marked, actual, err := s.actualGeneratedMessageFieldContext(ctx, sessionID, messageID, "images", images)
+	if err != nil {
+		return err
+	}
+	if err = s.messageRepo.UpdateMessageImages(marked, sessionID, messageID, images); err != nil {
+		return err
+	}
+	if actual {
+		return advanceMessageMaterialBoundaryAfterOwnField(marked)
+	}
+	return nil
 }
 
 // UpdateMessageRenderedContent updates the rendered_content column for a user message.
 func (s *messageService) UpdateMessageRenderedContent(ctx context.Context, sessionID, messageID string, renderedContent string) error {
-	return s.messageRepo.UpdateMessageRenderedContent(ctx, sessionID, messageID, renderedContent)
+	marked, actual, err := s.actualGeneratedMessageFieldContext(ctx, sessionID, messageID, "rendered_content", renderedContent)
+	if err != nil {
+		return err
+	}
+	if err = s.messageRepo.UpdateMessageRenderedContent(marked, sessionID, messageID, renderedContent); err != nil {
+		return err
+	}
+	if actual {
+		return advanceMessageMaterialBoundaryAfterOwnField(marked)
+	}
+	return nil
 }
 
 // DeleteMessage removes a message from a session, also cleaning up its Knowledge entry in the chat history KB.
@@ -577,21 +650,53 @@ func (s *messageService) getRetrievalConfig(ctx context.Context) *types.Retrieva
 	return tenant.RetrievalConfig
 }
 
-// IndexMessageToKB indexes a message (Q&A pair) into the chat history knowledge base asynchronously.
-// It creates a Knowledge entry (passage) containing both the user query and assistant answer,
-// then links the message to the Knowledge entry via the knowledge_id field.
+// IndexMessageToKB admits actual committed parents into the configured history
+// KB. The writer atomically reloads the paired user and assistant, records their
+// original proof, creates the child and links the message before queueing it.
 // The KB ID is read from the tenant's ChatHistoryConfig — if not configured, indexing is skipped.
-func (s *messageService) IndexMessageToKB(ctx context.Context, userQuery string, assistantAnswer string, messageID string, sessionID string) {
-	// Strip thinking content (<think>...</think>) before indexing to avoid
-	// polluting the knowledge base with intermediate reasoning that would
-	// degrade retrieval quality.
-	assistantAnswer = regThinkIndex.ReplaceAllString(assistantAnswer, "")
-	assistantAnswer = strings.TrimSpace(assistantAnswer)
-
-	if strings.TrimSpace(userQuery) == "" && assistantAnswer == "" {
+func (s *messageService) IndexMessageToKB(ctx context.Context, _ string, _ string, messageID string, sessionID string) {
+	// Only the actual immutable saved question and assistant receipts enter this adapter.
+	tenantID, ok := sessionTenantIDForLookup(ctx)
+	if !ok || tenantID == 0 || s.sessionRepo == nil || s.messageRepo == nil {
+		return
+	}
+	if _, err := s.sessionRepo.Get(ctx, tenantID, types.SessionOwnerIDFromContext(ctx), sessionID); err != nil {
+		return
+	}
+	if s.materialStore == nil {
+		return
+	}
+	request, err := s.materialStore.CommittedMessageParentRequest(ctx, tenantID, sessionID, messageID)
+	if err != nil {
+		return
+	}
+	material, err := s.beginMessageMaterialRead(ctx, request)
+	if err != nil {
+		return
+	}
+	defer material.Close()
+	ctx = material.Context()
+	var committed *types.Message
+	for _, row := range material.snapshot.Messages {
+		if row.ID == messageID {
+			committed = row
+		}
+	}
+	if committed == nil || committed.Role != "assistant" || s.CheckMessagePublication(ctx, committed) != nil {
 		return
 	}
 
+	tenant, ok := types.TenantInfoFromContext(ctx)
+	if !ok || tenant.ID != tenantID {
+		if s.tenantService == nil {
+			return
+		}
+		tenant, err = s.tenantService.GetTenantByID(ctx, tenantID)
+		if err != nil || tenant == nil || tenant.ID != tenantID {
+			return
+		}
+		ctx = context.WithValue(ctx, types.TenantInfoContextKey, tenant)
+	}
 	cfg := s.getChatHistoryConfig(ctx)
 	if cfg == nil {
 		// Say why, otherwise an operator who enabled indexing in the UI sees
@@ -603,27 +708,41 @@ func (s *messageService) IndexMessageToKB(ctx context.Context, userQuery string,
 		return
 	}
 
-	logger.Infof(ctx, "Indexing message to chat history KB %s, message ID: %s, session ID: %s", cfg.KnowledgeBaseID, messageID, sessionID)
-
-	// Build passage content: combine Q&A for better semantic search
-	var passages []string
-	passage := fmt.Sprintf("[Session: %s]\nQ: %s\nA: %s", sessionID, userQuery, assistantAnswer)
-	passages = append(passages, passage)
-
-	// Use async (non-sync) passage creation so it doesn't block the response
-	knowledge, err := s.knowService.CreateKnowledgeFromPassage(ctx, cfg.KnowledgeBaseID, passages, "")
+	writer, capable := s.knowService.(interfaces.CommittedHistoryKnowledgeInputWriter)
+	if !capable || s.kbService == nil || s.sourceLineageGuard == nil {
+		return
+	}
+	kb, err := s.kbService.GetKnowledgeBaseByIDOnly(ctx, cfg.KnowledgeBaseID)
+	if err != nil || kb == nil || kb.ID != cfg.KnowledgeBaseID || kb.TenantID != tenantID {
+		return
+	}
+	caller := types.CallerFromContext(ctx)
+	// The configured history KB belongs to the session tenant. A shared Agent
+	// execution tenant/read grant cannot mint a history mutation for its owner.
+	if caller.TenantID != tenantID {
+		return
+	}
+	grant, err := access.ResolveKB(ctx, access.KBRequest{Caller: caller}, kb, types.OrgRoleEditor, nil, nil)
+	if err != nil {
+		return
+	}
+	empty, _ := types.NewCompleteSourceLineage()
+	if err := s.sourceLineageGuard.Check(ctx, empty, access.LineageReadScope{Targets: types.SearchTargets{
+		{Type: types.SearchTargetTypeKnowledgeBase, TenantID: kb.TenantID, KnowledgeBaseID: kb.ID},
+	}}); err != nil {
+		return
+	}
+	result, err := writer.CreateCommittedHistoryKnowledgeInput(grant.Context(ctx), types.CommittedHistoryKnowledgeInputRequest{
+		TenantID: tenantID, KnowledgeBaseID: kb.ID, SessionID: sessionID, AssistantMessageID: messageID,
+	})
 	if err != nil {
 		logger.Warnf(ctx, "Failed to index message to chat history KB: %v", err)
 		return
 	}
-
-	// Link the message to the knowledge entry
-	if err := s.messageRepo.UpdateMessageKnowledgeID(ctx, messageID, knowledge.ID); err != nil {
-		logger.Warnf(ctx, "Failed to update message knowledge_id: %v", err)
+	if result == nil || result.Knowledge == nil {
 		return
 	}
-
-	logger.Infof(ctx, "Message indexed to chat history KB: knowledge_id=%s, message_id=%s", knowledge.ID, messageID)
+	logger.Infof(ctx, "Message indexed to chat history KB: knowledge_id=%s, message_id=%s", result.Knowledge.ID, messageID)
 }
 
 // describeChatHistorySkip reports which chat-history precondition is missing,
@@ -729,7 +848,9 @@ func (s *messageService) GetSessionArtifacts(
 	if sessionID == "" {
 		return types.MessageArtifacts{}, nil
 	}
-	return s.messageRepo.GetSessionArtifacts(ctx, sessionID)
+	// Artifact producers do not yet persist independent lineage. Returning
+	// legacy artifact names/paths would expose generated fields before denial.
+	return types.MessageArtifacts{}, access.ErrNextcloudPublicationDenied
 }
 
 // artifactLibraryMaxPageSize caps one library page; the page renders a card
@@ -762,6 +883,13 @@ func (s *messageService) ListArtifactLibrary(
 		return nil, err
 	}
 	for _, item := range items {
+		message, err := s.messageRepo.GetMessage(ctx, item.SessionID, item.MessageID)
+		if err != nil {
+			return nil, err
+		}
+		if err := s.CheckMessagePublication(ctx, message); err != nil {
+			return nil, err
+		}
 		if handle, ok := types.ParseResourcePath(item.URL); ok {
 			item.Handle = types.BuildResourcePath(handle)
 		}
@@ -794,10 +922,23 @@ func normalizeArtifactFileTypes(in []string) []string {
 // Message Search (Hybrid: Keyword + KB Vector Search)
 // ─────────────────────────────────────────────────────────────────────────────
 
-// SearchMessages searches messages by keyword and/or vector similarity across all sessions of the current tenant.
-// Vector search is delegated to the chat history knowledge base's HybridSearch (configured via ChatHistoryConfig).
+// SearchMessages searches the authenticated person's owned conversations.
+// Native vector candidates are admitted through original message and child
+// guards before hydration or reranking, under the configured history KB.
 func (s *messageService) SearchMessages(ctx context.Context, params *types.MessageSearchParams) (*types.MessageSearchResult, error) {
-	logger.Infof(ctx, "Start searching messages, query: %s, mode: %s", params.Query, params.Mode)
+	if params == nil || params.Query == "" {
+		return nil, access.ErrNextcloudPublicationDenied
+	}
+	if params.Mode == "" {
+		params.Mode = types.MessageSearchModeHybrid
+	}
+	if params.Mode != types.MessageSearchModeKeyword && params.Mode != types.MessageSearchModeVector && params.Mode != types.MessageSearchModeHybrid {
+		return nil, access.ErrNextcloudPublicationDenied
+	}
+	if params.Mode == types.MessageSearchModeVector && params.Cursor != "" {
+		return nil, access.ErrNextcloudPublicationDenied
+	}
+	logger.Infof(ctx, "Start searching messages, mode: %s", params.Mode)
 
 	tenantID := types.MustTenantIDFromContext(ctx)
 
@@ -805,9 +946,11 @@ func (s *messageService) SearchMessages(ctx context.Context, params *types.Messa
 	// session list is. Sessions are per-user state, and a workspace-wide
 	// keyword search over them let any viewer read a colleague's private
 	// conversations, which is not something a search box should be able to do.
-	if params.OwnerID == "" {
-		params.OwnerID = types.SessionOwnerIDFromContext(ctx)
+	owner := types.SessionOwnerIDFromContext(ctx)
+	if owner == "" || (params.OwnerID != "" && params.OwnerID != owner) {
+		return nil, access.ErrNextcloudPublicationDenied
 	}
+	params.OwnerID = owner
 
 	// Set defaults
 	if params.Mode == "" {
@@ -817,29 +960,42 @@ func (s *messageService) SearchMessages(ctx context.Context, params *types.Messa
 		params.Limit = 20
 	}
 
+	if params.Limit > historySearchMaximumResults {
+		params.Limit = historySearchMaximumResults
+	}
+	if len(params.SessionIDs) > 100 {
+		return nil, access.ErrNextcloudPublicationDenied
+	}
 	var keywordResults []*types.MessageWithSession
 	var vectorResults []*types.MessageSearchResultItem
+	var keywordPage *historyKeywordPage
+	pairs := make(map[string][]*types.Message)
 	var err error
 
-	// Step 1: Keyword search (dialect-aware LIKE in the repository)
+	// Step 1: Metadata candidates -> original leases/receipts -> body matching.
 	if params.Mode == types.MessageSearchModeKeyword || params.Mode == types.MessageSearchModeHybrid {
-		keywordResults, err = s.messageRepo.SearchMessagesByKeyword(
-			ctx, tenantID, params.OwnerID, params.Query, params.SessionIDs, params.Limit*3)
+		keywordPage, err = s.fencedKeywordHistorySearch(ctx, params)
 		if err != nil {
 			logger.Errorf(ctx, "Keyword search failed: %v", err)
 			return nil, err
+		}
+		keywordResults = keywordPage.Hits
+		for key, rows := range keywordPage.Pairs {
+			pairs[key] = rows
 		}
 		logger.Infof(ctx, "Keyword search found %d results", len(keywordResults))
 	}
 
 	// Step 2: Vector search via chat history knowledge base (if configured)
-	if params.Mode == types.MessageSearchModeVector || params.Mode == types.MessageSearchModeHybrid {
-		vectorResults, err = s.vectorSearchViaKB(ctx, params)
+	if params.Cursor == "" && (params.Mode == types.MessageSearchModeVector || params.Mode == types.MessageSearchModeHybrid) {
+		var vectorPairs map[string][]*types.Message
+		vectorResults, vectorPairs, err = s.vectorSearchViaKB(ctx, params)
+		for key, rows := range vectorPairs {
+			pairs[key] = rows
+		}
 		if err != nil {
-			logger.Warnf(ctx, "Vector search via KB failed, falling back to keyword-only: %v", err)
-			if params.Mode == types.MessageSearchModeVector {
-				return nil, err
-			}
+			logger.Warnf(ctx, "History vector search did not complete: %v", err)
+			return nil, err
 		} else {
 			logger.Infof(ctx, "Vector search found %d results", len(vectorResults))
 		}
@@ -857,19 +1013,22 @@ func (s *messageService) SearchMessages(ctx context.Context, params *types.Messa
 		items = rrfMerge(keywordResults, vectorResults)
 	}
 
-	// The vector path resolves hits through a shared knowledge base that does
-	// not know who wrote a message, so ownership is re-checked on the results.
+	// Recheck current owned sessions after merging both admitted search paths.
 	items, err = s.restrictToOwnedSessions(ctx, tenantID, params.OwnerID, items)
 	if err != nil {
 		return nil, err
 	}
 
 	// Step 4: Fetch partner messages (Q&A counterparts) to ensure complete pairs
-	items = s.fetchPartnerMessages(ctx, items)
+	items, err = expandHeldHistoricalSearchPairs(items, pairs)
+	if err != nil {
+		return nil, err
+	}
 	items, err = s.filterHistoricalSearchPairs(ctx, items)
 	if err != nil {
 		return nil, err
 	}
+	keepEligibleHistoricalCursorHits(keywordPage, items)
 
 	// Step 5: Group by request_id to merge Q&A pairs
 	grouped := groupByRequestID(items)
@@ -884,6 +1043,12 @@ func (s *messageService) SearchMessages(ctx context.Context, params *types.Messa
 		Total: len(grouped),
 	}
 
+	if err := completeHistorySearchCursor(keywordPage, result); err != nil {
+		return nil, err
+	}
+	if err := holdHistoricalSearchProjection(ctx, result); err != nil {
+		return nil, err
+	}
 	logger.Infof(ctx, "Message search completed, returning %d grouped results", result.Total)
 	return result, nil
 }
@@ -899,7 +1064,7 @@ func (s *messageService) filterHistoricalSearchPairs(
 		if item == nil || item.Role != "assistant" {
 			continue
 		}
-		if err := s.CheckMessagePublication(ctx, &item.Message); err != nil {
+		if err := s.CheckMessagePublication(ctx, &item.MessageWithSession.Message); err != nil {
 			if !errors.Is(err, access.ErrNextcloudPublicationDenied) {
 				return nil, err
 			}
@@ -907,13 +1072,38 @@ func (s *messageService) filterHistoricalSearchPairs(
 		}
 	}
 	filtered := make([]*types.MessageSearchResultItem, 0, len(items))
+	var batchMessages []*types.Message
+	var batchTitles []access.SourceLineageRead
 	for _, item := range items {
 		if item == nil {
 			continue
 		}
 		if _, denied := blocked[historicalSearchPairKey(item)]; !denied {
+			if item.SessionTitleSourceLineage.RequireComplete() != nil {
+				item.SessionTitle = ""
+			} else if len(item.SessionTitleSourceLineage.Sources) > 0 {
+				if s.sourceLineageGuard == nil {
+					return nil, access.ErrNextcloudPublicationUnavailable
+				}
+				if err := s.sourceLineageGuard.Check(ctx, item.SessionTitleSourceLineage, access.LineageReadScope{}); err != nil {
+					if !errors.Is(err, access.ErrNextcloudPublicationDenied) {
+						return nil, err
+					}
+					item.SessionTitle = ""
+				}
+			}
+			if item.Role == "user" {
+				item.MessageWithSession.Message = *rawUserContentOnly([]*types.Message{&item.MessageWithSession.Message})[0]
+			}
 			filtered = append(filtered, item)
+			batchMessages = append(batchMessages, &item.MessageWithSession.Message)
+			if item.SessionTitle != "" && item.SessionTitleSourceLineage.RequireComplete() == nil {
+				batchTitles = append(batchTitles, access.SourceLineageRead{Lineage: item.SessionTitleSourceLineage})
+			}
 		}
+	}
+	if err := s.checkMessageSourceLineageBatch(ctx, batchMessages, batchTitles); err != nil {
+		return nil, err
 	}
 	return filtered, nil
 }
@@ -957,131 +1147,22 @@ func (s *messageService) restrictToOwnedSessions(
 	return filtered, nil
 }
 
-// vectorSearchViaKB performs vector search using the chat history knowledge base's HybridSearch.
-// The KB ID is read from ChatHistoryConfig, search params from RetrievalConfig.
-func (s *messageService) vectorSearchViaKB(ctx context.Context, params *types.MessageSearchParams) ([]*types.MessageSearchResultItem, error) {
+// vectorSearchViaKB discovers native metadata candidates, admits their actual
+// original message inputs and child bodies, then rechecks each model boundary.
+func (s *messageService) vectorSearchViaKB(ctx context.Context, params *types.MessageSearchParams) ([]*types.MessageSearchResultItem, map[string][]*types.Message, error) {
 	cfg := s.getChatHistoryConfig(ctx)
 	if cfg == nil {
-		return nil, nil // Chat history KB not configured, skip vector search
+		return nil, nil, nil // Chat history KB not configured, skip vector search
 	}
 
-	// Read global retrieval config for search parameters
-	rc := s.getRetrievalConfig(ctx)
-
-	// Use KB HybridSearch with vector-only mode (keyword search is done separately on the messages table)
-	searchParams := types.SearchParams{
-		QueryText:            params.Query,
-		MatchCount:           rc.GetEffectiveEmbeddingTopK(),
-		VectorThreshold:      rc.GetEffectiveVectorThreshold(),
-		DisableKeywordsMatch: true, // We handle keyword search separately on the messages table
-	}
-
-	kbResults, err := s.kbService.HybridSearch(ctx, cfg.KnowledgeBaseID, searchParams)
+	items, pairs, err := s.searchHistoryVectorViaNativeBridge(ctx, params, cfg.KnowledgeBaseID, s.getRetrievalConfig(ctx))
 	if err != nil {
-		return nil, apperrors.NewProtocolError(
+		return nil, nil, apperrors.NewProtocolError(
 			fmt.Errorf("KB hybrid search failed: %w", err),
 			fmt.Sprintf("KB hybrid search failed: %s", apperrors.PublicMessage(err)),
 		)
 	}
-
-	if len(kbResults) == 0 {
-		return nil, nil
-	}
-
-	// Rerank results if a rerank model is configured
-	kbResults = s.rerankResults(ctx, rc, params.Query, kbResults)
-	if len(kbResults) == 0 {
-		return nil, nil
-	}
-
-	// Map KB search results back to messages via knowledge_id
-	knowledgeIDs := make([]string, 0, len(kbResults))
-	scoreByKnowledgeID := make(map[string]float64)
-	for _, r := range kbResults {
-		knowledgeIDs = append(knowledgeIDs, r.KnowledgeID)
-		scoreByKnowledgeID[r.KnowledgeID] = r.Score
-	}
-
-	// Look up messages by their knowledge_id
-	messages, err := s.messageRepo.GetMessagesByKnowledgeIDs(ctx, knowledgeIDs)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get messages by knowledge IDs: %w", err)
-	}
-
-	// Filter by session IDs if specified
-	sessionFilter := make(map[string]bool)
-	for _, sid := range params.SessionIDs {
-		sessionFilter[sid] = true
-	}
-
-	var results []*types.MessageSearchResultItem
-	for _, msg := range messages {
-		if len(sessionFilter) > 0 && !sessionFilter[msg.SessionID] {
-			continue
-		}
-		score := scoreByKnowledgeID[msg.KnowledgeID]
-		results = append(results, &types.MessageSearchResultItem{
-			MessageWithSession: *msg,
-			Score:              score,
-			MatchType:          "vector",
-		})
-	}
-
-	// Sort by score descending
-	sort.Slice(results, func(i, j int) bool {
-		return results[i].Score > results[j].Score
-	})
-
-	return results, nil
-}
-
-// rerankResults applies rerank model to search results if configured.
-// Returns reranked + filtered results, or original results if rerank is unavailable.
-func (s *messageService) rerankResults(ctx context.Context, rc *types.RetrievalConfig, query string, results []*types.SearchResult) []*types.SearchResult {
-	if rc == nil || rc.RerankModelID == "" || len(results) == 0 {
-		return results
-	}
-
-	reranker, err := s.modelService.GetRerankModel(ctx, rc.RerankModelID)
-	if err != nil {
-		logger.Warnf(ctx, "Failed to get rerank model %s, skipping rerank: %v", rc.RerankModelID, err)
-		return results
-	}
-
-	// Build documents for rerank
-	documents := make([]string, len(results))
-	for i, r := range results {
-		documents[i] = r.Content
-	}
-
-	rankResults, err := reranker.Rerank(ctx, query, documents)
-	if err != nil {
-		logger.Warnf(ctx, "Rerank call failed, skipping: %v", err)
-		return results
-	}
-
-	// Filter by threshold and topK, rebuild results with rerank scores
-	threshold := rc.GetEffectiveRerankThreshold()
-	topK := rc.GetEffectiveRerankTopK()
-
-	var reranked []*types.SearchResult
-	for _, rr := range rankResults {
-		if rr.Index >= len(results) {
-			continue
-		}
-		if rr.RelevanceScore < threshold {
-			continue
-		}
-		item := *results[rr.Index]
-		item.Score = rr.RelevanceScore
-		reranked = append(reranked, &item)
-		if len(reranked) >= topK {
-			break
-		}
-	}
-
-	logger.Infof(ctx, "Rerank: %d -> %d results (threshold=%.2f, topK=%d)", len(results), len(reranked), threshold, topK)
-	return reranked
+	return items, pairs, nil
 }
 
 // convertKeywordResults converts keyword search results to MessageSearchResultItem
@@ -1226,6 +1307,7 @@ func groupByRequestID(items []*types.MessageSearchResultItem) []*types.MessageSe
 	type groupState struct {
 		item  *types.MessageSearchGroupItem
 		order int // preserve the order of first appearance
+		users []*types.Message
 	}
 	groups := make(map[string]*groupState)
 	nextOrder := 0
@@ -1247,6 +1329,9 @@ func groupByRequestID(items []*types.MessageSearchResultItem) []*types.MessageSe
 				},
 				order: nextOrder,
 			}
+			if item.RequestID == "" {
+				g.item.MessageID = item.ID
+			}
 			nextOrder++
 			groups[key] = g
 		}
@@ -1254,7 +1339,7 @@ func groupByRequestID(items []*types.MessageSearchResultItem) []*types.MessageSe
 		// Assign content based on role
 		switch item.Role {
 		case "user":
-			g.item.QueryContent = item.Content
+			g.users = append(g.users, &item.MessageWithSession.Message)
 		case "assistant":
 			g.item.AnswerContent = item.Content
 		}
@@ -1285,6 +1370,19 @@ func groupByRequestID(items []*types.MessageSearchResultItem) []*types.MessageSe
 		return ordered[i].order < ordered[j].order
 	})
 	for _, g := range ordered {
+		// Preserve the initial question and all authenticated steer questions,
+		// even when their hits arrived in relevance order rather than time order.
+		sort.SliceStable(g.users, func(i, j int) bool {
+			if g.users[i].CreatedAt.Equal(g.users[j].CreatedAt) {
+				return g.users[i].ID < g.users[j].ID
+			}
+			return g.users[i].CreatedAt.Before(g.users[j].CreatedAt)
+		})
+		questions := make([]string, 0, len(g.users))
+		for _, user := range g.users {
+			questions = append(questions, user.Content)
+		}
+		g.item.QueryContent = strings.Join(questions, "\n\n")
 		result = append(result, g.item)
 	}
 

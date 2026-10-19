@@ -27,6 +27,13 @@ type DirectoryRepository interface {
 		ctx context.Context,
 		directoryID, objectGUID string,
 	) (*types.DirectoryLoginSnapshot, error)
+	// GetUserLoginSnapshot reads all user links and the sole current directory
+	// identity/groups in one consistent transaction. Publication must not join
+	// a user-link read to a later, independent directory snapshot read.
+	GetUserLoginSnapshot(
+		ctx context.Context,
+		userID string,
+	) ([]*types.DirectoryIdentity, *types.DirectoryLoginSnapshot, error)
 	GetIdentityByUserID(ctx context.Context, userID string) ([]*types.DirectoryIdentity, error)
 	LinkIdentity(ctx context.Context, identityID, userID string) error
 	UnlinkIdentity(ctx context.Context, identityID string) error

@@ -1,0 +1,92 @@
+{
+  "actor_id": "baa29e213686eff27ffdcbd579135b67259d101f74a4c0ab21f742119980863d",
+  "actor_name": "weknora-prd-component-go",
+  "cpu": 1000000000,
+  "memory": 2147483648,
+  "started_at": "2026-10-10T10:35:36.20680172Z",
+  "hard_deadline": "2026-10-10T10:40:36.206801+00:00",
+  "commands": [
+    {
+      "label": "final-short-security-di-20261010T1035",
+      "started_at": "2026-10-10T10:36:14.270393+00:00",
+      "ended_at": "2026-10-10T10:37:28.993823+00:00",
+      "exit": 1,
+      "command": [
+        "docker",
+        "exec",
+        "weknora-prd-component-go",
+        "go",
+        "test",
+        "-p",
+        "1",
+        "-tags=sqlite",
+        "./internal/application/repository",
+        "./internal/middleware",
+        "./internal/handler",
+        "./internal/container",
+        "-run",
+        "^(TestGroupAccessMissingOnboardingLedgerPreservesSchemaBoundary|TestResolveTenantRoleActualMissingOnboardingLedgerCannotPromoteOrFailOpen|TestResolveTenantRoleActualMissingOnboardingLedgerPreservesDirectMember|TestResolveTenantRoleActualLegacySchemaKeepsRolloutBehavior|TestNextcloudOnboardingCurrentSchemaMissingControlsOrPairingFailsClosed|TestNextcloudSecondaryMetadata.*|TestOrganizationSharedListsApplyGroupResourceAccess|TestRouterWiring)$",
+        "-count=1",
+        "-v",
+        "-timeout=2m"
+      ]
+    },
+    {
+      "label": "final-short-live-checkpoint-20261010T1037",
+      "started_at": "2026-10-10T10:38:03.386443+00:00",
+      "ended_at": "2026-10-10T10:38:35.974916+00:00",
+      "exit": 0,
+      "command": [
+        "docker",
+        "exec",
+        "weknora-prd-component-go",
+        "go",
+        "test",
+        "-p",
+        "1",
+        "-tags=sqlite",
+        "./internal/application/service",
+        "-run",
+        "^TestNextcloudLiveOriginalExtractionProviderAndStatusInbox$",
+        "-count=1",
+        "-v",
+        "-timeout=90s"
+      ]
+    },
+    {
+      "label": "final-short-metadata-rerun-20261010T1038",
+      "started_at": "2026-10-10T10:38:49.354639+00:00",
+      "ended_at": "2026-10-10T10:39:04.165562+00:00",
+      "exit": 0,
+      "command": [
+        "docker",
+        "exec",
+        "weknora-prd-component-go",
+        "go",
+        "test",
+        "-p",
+        "1",
+        "-tags=sqlite",
+        "./internal/handler",
+        "-run",
+        "^(TestNextcloudSecondaryMetadata.*|TestOrganizationSharedListsApplyGroupResourceAccess)$",
+        "-count=1",
+        "-v",
+        "-timeout=45s"
+      ]
+    },
+    {
+      "label": "actual-onboarding-pair-runner",
+      "state": "not-executed",
+      "reason": "Owned NC target-delegate fix not installed/frozen before remaining short window; do not run pairing during runtime mutation"
+    }
+  ],
+  "terminal": {
+    "Status": "exited",
+    "Running": false,
+    "OOMKilled": false,
+    "ExitCode": 0,
+    "StartedAt": "2026-10-10T10:35:36.20680172Z",
+    "FinishedAt": "2026-10-10T10:40:02.107489718Z"
+  }
+}

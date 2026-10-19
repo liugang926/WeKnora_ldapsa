@@ -70,6 +70,7 @@ func fitSpanName(name string) string {
 // is executing. It carries enough context for End/Fail/Skip to write back
 // without re-querying the DB. Returned (and required) from every Begin*.
 type Span struct {
+	WriteToken   string
 	KnowledgeID  string
 	Attempt      int
 	SpanID       string
@@ -214,7 +215,7 @@ func (t *spanTracker) touchKnowledgeHeartbeat(ctx context.Context, knowledgeID, 
 		return
 	}
 	if err := t.db.WithContext(ctx).Model(&types.Knowledge{}).
-		Where("id = ?", knowledgeID).
+		Where("id = ? AND parse_status IN ?", knowledgeID, []string{types.ParseStatusPending, types.ParseStatusProcessing, types.ParseStatusFinalizing}).
 		Update("updated_at", time.Now()).Error; err != nil {
 		// Don't log every failure — heartbeat is best-effort and
 		// noisy logs would drown out real errors. Single line at
@@ -275,6 +276,7 @@ func (t *spanTracker) OpenAttempt(ctx context.Context, knowledgeID, langfuseTrac
 	t.recordStart(rootID, now)
 	t.touchKnowledgeHeartbeat(ctx, knowledgeID, types.SpanKindRoot)
 	return &Span{
+		WriteToken:  row.WriteToken,
 		KnowledgeID: knowledgeID,
 		Attempt:     attempt,
 		SpanID:      rootID,
@@ -361,6 +363,7 @@ func (t *spanTracker) BeginStage(ctx context.Context, knowledgeID string, attemp
 		t.recordStart(existing.SpanID, now)
 		t.touchKnowledgeHeartbeat(ctx, knowledgeID, types.SpanKindStage)
 		return &Span{
+			WriteToken:   row.WriteToken,
 			KnowledgeID:  existing.KnowledgeID,
 			Attempt:      existing.Attempt,
 			SpanID:       existing.SpanID,
@@ -391,6 +394,7 @@ func (t *spanTracker) BeginStage(ctx context.Context, knowledgeID string, attemp
 	t.recordStart(id, now)
 	t.touchKnowledgeHeartbeat(ctx, knowledgeID, types.SpanKindStage)
 	return &Span{
+		WriteToken:   row.WriteToken,
 		KnowledgeID:  knowledgeID,
 		Attempt:      attempt,
 		SpanID:       id,
@@ -439,6 +443,7 @@ func (t *spanTracker) BeginSubSpan(ctx context.Context, parent *Span, name, kind
 	t.recordStart(id, now)
 	t.touchKnowledgeHeartbeat(ctx, parent.KnowledgeID, kind)
 	return &Span{
+		WriteToken:   row.WriteToken,
 		KnowledgeID:  parent.KnowledgeID,
 		Attempt:      parent.Attempt,
 		SpanID:       id,
@@ -457,6 +462,7 @@ func (t *spanTracker) EndSpan(ctx context.Context, span *Span, output types.JSON
 	now := time.Now()
 	dur := durationSince(t, span, now)
 	row := &types.KnowledgeProcessingSpan{
+		WriteToken:   span.WriteToken,
 		KnowledgeID:  span.KnowledgeID,
 		Attempt:      span.Attempt,
 		SpanID:       span.SpanID,
@@ -492,6 +498,7 @@ func (t *spanTracker) FailSpan(ctx context.Context, span *Span, errorCode, error
 		errorMessage = errorMessage[:1024]
 	}
 	row := &types.KnowledgeProcessingSpan{
+		WriteToken:   span.WriteToken,
 		KnowledgeID:  span.KnowledgeID,
 		Attempt:      span.Attempt,
 		SpanID:       span.SpanID,
@@ -543,6 +550,7 @@ func (t *spanTracker) SkipSpan(ctx context.Context, span *Span, reason string) {
 	}
 	now := time.Now()
 	row := &types.KnowledgeProcessingSpan{
+		WriteToken:   span.WriteToken,
 		KnowledgeID:  span.KnowledgeID,
 		Attempt:      span.Attempt,
 		SpanID:       span.SpanID,
@@ -577,6 +585,7 @@ func (t *spanTracker) LookupStage(ctx context.Context, knowledgeID string, attem
 			started = *r.StartedAt
 		}
 		return &Span{
+			WriteToken:   r.WriteToken,
 			KnowledgeID:  r.KnowledgeID,
 			Attempt:      r.Attempt,
 			SpanID:       r.SpanID,
@@ -611,6 +620,7 @@ func (t *spanTracker) LookupSpanByName(ctx context.Context, knowledgeID string, 
 			started = *r.StartedAt
 		}
 		return &Span{
+			WriteToken:   r.WriteToken,
 			KnowledgeID:  r.KnowledgeID,
 			Attempt:      r.Attempt,
 			SpanID:       r.SpanID,
@@ -793,6 +803,7 @@ func (t *spanTracker) FinalizeAttempt(ctx context.Context, knowledgeID string, a
 		errorMessage = errorMessage[:1024]
 	}
 	row := &types.KnowledgeProcessingSpan{
+		WriteToken:   root.WriteToken,
 		KnowledgeID:  root.KnowledgeID,
 		Attempt:      root.Attempt,
 		SpanID:       root.SpanID,

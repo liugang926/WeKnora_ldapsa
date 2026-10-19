@@ -1,0 +1,1 @@
+-- Original inputs cannot be rolled back without revoking derived material.

@@ -13,7 +13,6 @@ import (
 	"time"
 
 	apperrors "github.com/Tencent/WeKnora/internal/errors"
-
 	"github.com/Tencent/WeKnora/internal/types"
 )
 
@@ -21,9 +20,7 @@ const maxAuthorizationResponseBytes = 16 << 10
 
 var (
 	authorizationDirectoryIDPattern = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,128}$`)
-	authorizationGUIDPattern        = regexp.MustCompile(
-		`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]` +
-			`{12}$`)
+	authorizationGUIDPattern        = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 	// Source checks are on a read path. A slow or unreachable source must deny
 	// promptly instead of holding an application request open for the sync timeout.
 	authorizationHTTPClient = &http.Client{
@@ -45,11 +42,12 @@ var (
 // AuthorizationDecision is a fresh source decision. Callers must never cache
 // an allow without a separately defined invalidation policy.
 type AuthorizationDecision struct {
-	Allow          bool
-	Reason         string
-	PolicyRevision string
-	SourceETag     string
-	CheckedAt      int64
+	SourceContentRevision string
+	Allow                 bool
+	Reason                string
+	PolicyRevision        string
+	SourceETag            string
+	CheckedAt             int64
 }
 
 // AuthorizeCurrentFile checks the live Nextcloud instance and the current
@@ -88,10 +86,15 @@ func AuthorizeCurrentFile(
 		return AuthorizationDecision{}, apperrors.NewProtocolError(fmt.Errorf(
 			"nextcloud instance changed after import"), "Nextcloud instance changed after import")
 	}
+	revision, err := types.NormalizeNextcloudContentRevision(types.NextcloudContentRevisionFromContext(ctx))
+	if err != nil {
+		return AuthorizationDecision{}, err
+	}
 	body, err := json.Marshal(map[string]any{
-		"directory_id": directoryID,
-		"object_guid":  strings.ToLower(objectGUID),
-		"file_id":      fileID,
+		"content_revision": revision,
+		"directory_id":     directoryID,
+		"object_guid":      strings.ToLower(objectGUID),
+		"file_id":          fileID,
 	})
 	if err != nil {
 		return AuthorizationDecision{}, err
@@ -133,11 +136,12 @@ func AuthorizeCurrentFile(
 			"nextcloud authorization response too large"), "Nextcloud authorization response too large")
 	}
 	var wire struct {
-		Allow          *bool   `json:"allow"`
-		Reason         *string `json:"reason"`
-		PolicyRevision *string `json:"policy_revision"`
-		SourceETag     *string `json:"source_etag"`
-		CheckedAt      *int64  `json:"checked_at"`
+		Allow                 *bool   `json:"allow"`
+		Reason                *string `json:"reason"`
+		PolicyRevision        *string `json:"policy_revision"`
+		SourceETag            *string `json:"source_etag"`
+		SourceContentRevision string  `json:"source_content_revision"`
+		CheckedAt             *int64  `json:"checked_at"`
 	}
 	if err := json.Unmarshal(raw, &wire); err != nil || wire.Allow == nil ||
 		wire.Reason == nil || strings.TrimSpace(*wire.Reason) == "" ||
@@ -149,7 +153,11 @@ func AuthorizeCurrentFile(
 		strings.TrimSpace(*wire.SourceETag) == "") {
 		return AuthorizationDecision{}, fmt.Errorf("incomplete Nextcloud allow decision")
 	}
-	decision := AuthorizationDecision{Allow: *wire.Allow, Reason: *wire.Reason, CheckedAt: *wire.CheckedAt}
+	revision, err = types.NormalizeNextcloudContentRevision(wire.SourceContentRevision)
+	if err != nil {
+		return AuthorizationDecision{}, err
+	}
+	decision := AuthorizationDecision{SourceContentRevision: revision, Allow: *wire.Allow, Reason: *wire.Reason, CheckedAt: *wire.CheckedAt}
 	if wire.PolicyRevision != nil {
 		decision.PolicyRevision = *wire.PolicyRevision
 	}

@@ -790,6 +790,9 @@ func resolveTenantRole(
 ) (types.TenantRole, bool) {
 	if len(groupAccess) > 0 && groupAccess[0] != nil {
 		effective, err := groupAccess[0].EffectiveTenantRole(ctx, user.ID, targetTenantID, time.Now().UTC())
+		if err == nil && effective.ScopedOnly && !effective.Member {
+			return "", false
+		}
 		if err == nil && effective.Member {
 			logger.Infof(ctx,
 				"[auth] effective direct/group role=%s user=%s tenant=%d", effective.Role, user.ID, targetTenantID)
@@ -798,6 +801,13 @@ func resolveTenantRole(
 		if err != nil {
 			logger.Warnf(ctx,
 				"effective directory-group role lookup failed user=%s tenant=%d: %v", user.ID, targetTenantID, err)
+			// A failed source-scope lookup must never reach orphan promotion or
+			// the legacy rollout Admin fallback. Preserve only a direct role
+			// already verified by the role service before that failure.
+			if effective.DirectRole != nil && effective.DirectRole.IsValid() {
+				return *effective.DirectRole, true
+			}
+			return "", false
 		}
 	}
 	// 1. 正常成员关系

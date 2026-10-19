@@ -24,9 +24,9 @@ type askTargetLookup struct {
 func (s *askTargetLookup) FindPublished(_ context.Context, _, _ string, _ int64, _ string) (*types.Knowledge, error) {
 	s.calls++
 	if s.change && s.calls == 2 {
-		changedKnowledge := *s.knowledge
-		changedKnowledge.ID = "another-version"
-		return &changedKnowledge, nil
+		copy := *s.knowledge
+		copy.ID = "another-version"
+		return &copy, nil
 	}
 	return s.knowledge, nil
 }

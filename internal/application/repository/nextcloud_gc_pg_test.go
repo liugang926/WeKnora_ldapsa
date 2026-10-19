@@ -27,7 +27,7 @@ func TestPostgresNextcloudGCBindRaceSerializesOnResource(t *testing.T) {
 	require.NoError(t, err)
 	adminSQL, err := admin.DB()
 	require.NoError(t, err)
-	defer func() { require.NoError(t, adminSQL.Close()) }()
+	defer adminSQL.Close()
 	schema := "gc_bind_" + strings.ReplaceAll(uuid.NewString()[:8], "-", "")
 	require.NoError(t, admin.Exec(`CREATE SCHEMA "`+schema+`"`).Error)
 	defer admin.Exec(`DROP SCHEMA "` + schema + `" CASCADE`)
@@ -45,7 +45,7 @@ func TestPostgresNextcloudGCBindRaceSerializesOnResource(t *testing.T) {
 	sqlDB, err := db.DB()
 	require.NoError(t, err)
 	sqlDB.SetMaxOpenConns(5)
-	defer func() { require.NoError(t, sqlDB.Close()) }()
+	defer sqlDB.Close()
 	require.NoError(t, db.Exec(`CREATE TABLE knowledge_bases (id TEXT PRIMARY KEY,
 		tenant_id BIGINT NOT NULL, ever_had_nextcloud_source BOOLEAN NOT NULL DEFAULT TRUE)`).Error)
 	require.NoError(t, db.Exec(`INSERT INTO knowledge_bases (id, tenant_id) VALUES ('kb', 7)`).Error)
@@ -53,6 +53,7 @@ func TestPostgresNextcloudGCBindRaceSerializesOnResource(t *testing.T) {
 		&nextcloudGCJob{}, &nextcloudGCItem{}, &types.StoredResource{}, &types.ResourceBinding{},
 		&NextcloudIndexedWithdrawal{}))
 	now := time.Now().UTC()
+	gcObjectTestLeaseSchema(t, db)
 	ref := nextcloudGCTestLocalResource(t, db, strings.Repeat("p", 22), "old")
 	nextcloudGCTestSource(t, db, "old", ref, now.Add(-8*24*time.Hour))
 	store := NewNextcloudGCStore(db)

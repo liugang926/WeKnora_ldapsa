@@ -1,0 +1,8 @@
+{
+  "sha256": "ba47050dd634910f328d9d29be319cdf14af1aacb54ba288e122e07c9c2626aa",
+  "tests_pass": 23,
+  "tests_fail": 0,
+  "tests_skip": 0,
+  "packages_pass": 3,
+  "postgres_fixture_ran": true
+}

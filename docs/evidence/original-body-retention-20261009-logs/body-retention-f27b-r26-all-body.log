@@ -1,0 +1,46 @@
+ok  	github.com/Tencent/WeKnora/internal/application/repository	4.264s
+INFO [2026-10-09 03:12:59.704] []                      | [SQLite] Initializing SQLite retriever engine repository with sqlite-vec
+ERROR[2026-10-09 03:13:00.045] [] composite.go:247[func2] | Repository sqlite failed to batch save: unrecognized option: "contentless_delete"
+INFO [2026-10-09 03:13:00.287] []                      | [SQLite] Initializing SQLite retriever engine repository with sqlite-vec
+ERROR[2026-10-09 03:13:00.577] [] composite.go:247[func2] | Repository sqlite failed to batch save: unrecognized option: "contentless_delete"
+--- FAIL: TestOriginalBodyActualLocalDerivedSQLite (1.11s)
+    --- FAIL: TestOriginalBodyActualLocalDerivedSQLite/body-retention (0.58s)
+        nextcloud_local_derived_gc_test.go:131: 
+            	Error Trace:	/workspace/internal/application/service/nextcloud_local_derived_gc_test.go:131
+            	            				/workspace/internal/application/service/nextcloud_local_derived_gc_test.go:317
+            	Error:      	Received unexpected error:
+            	            	unrecognized option: "contentless_delete"
+            	Test:       	TestOriginalBodyActualLocalDerivedSQLite/body-retention
+    --- FAIL: TestOriginalBodyActualLocalDerivedSQLite/body-inline-restore (0.53s)
+        nextcloud_local_derived_gc_test.go:131: 
+            	Error Trace:	/workspace/internal/application/service/nextcloud_local_derived_gc_test.go:131
+            	            				/workspace/internal/application/service/nextcloud_local_derived_gc_test.go:317
+            	Error:      	Received unexpected error:
+            	            	unrecognized option: "contentless_delete"
+            	Test:       	TestOriginalBodyActualLocalDerivedSQLite/body-inline-restore
+INFO [2026-10-09 03:13:00.913] []                      | [Postgres] Initializing PostgreSQL retriever engine repository
+INFO [2026-10-09 03:13:01.492] []                      | [Postgres] Batch saving 1 indices
+INFO [2026-10-09 03:13:01.500] []                      | [Postgres] Successfully batch saved 1 indices
+INFO [2026-10-09 03:13:02.123] []                      | [Postgres] Initializing PostgreSQL retriever engine repository
+INFO [2026-10-09 03:13:02.933] []                      | [Postgres] Batch saving 1 indices
+INFO [2026-10-09 03:13:02.940] []                      | [Postgres] Successfully batch saved 1 indices
+--- FAIL: TestPostgresOriginalBodyActualLocalDerived (2.71s)
+    --- FAIL: TestPostgresOriginalBodyActualLocalDerived/body-inline-restore (1.43s)
+        nextcloud_local_derived_gc_test.go:424: 
+            	Error Trace:	/workspace/internal/application/service/nextcloud_local_derived_gc_test.go:424
+            	            				/workspace/internal/application/service/nextcloud_local_derived_gc_test.go:290
+            	            				/workspace/internal/application/service/nextcloud_local_derived_gc_test.go:322
+            	Error:      	Not equal: 
+            	            	expected: "blocked"
+            	            	actual  : "collected"
+            	            	
+            	            	Diff:
+            	            	--- Expected
+            	            	+++ Actual
+            	            	@@ -1 +1 @@
+            	            	-blocked
+            	            	+collected
+            	Test:       	TestPostgresOriginalBodyActualLocalDerived/body-inline-restore
+FAIL
+FAIL	github.com/Tencent/WeKnora/internal/application/service	4.890s
+FAIL

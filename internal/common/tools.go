@@ -13,6 +13,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/Tencent/WeKnora/internal/logger"
+	"github.com/Tencent/WeKnora/internal/logprivacy"
 	secutils "github.com/Tencent/WeKnora/internal/utils"
 )
 
@@ -252,16 +253,28 @@ func PipelineLog(stage, action string, fields map[string]interface{}) string {
 
 // PipelineInfo logs pipeline info level entries.
 func PipelineInfo(ctx context.Context, stage, action string, fields map[string]interface{}) {
+	if logprivacy.ContentSuppressed(ctx) {
+		logger.GetLogger(ctx).Info("[PIPELINE] info: content logging suppressed")
+		return
+	}
 	logger.GetLogger(ctx).Info(PipelineLog(stage, action, fields))
 }
 
 // PipelineWarn logs pipeline warning level entries.
 func PipelineWarn(ctx context.Context, stage, action string, fields map[string]interface{}) {
+	if logprivacy.ContentSuppressed(ctx) {
+		logger.GetLogger(ctx).Warn("[PIPELINE] warning: content logging suppressed")
+		return
+	}
 	logger.GetLogger(ctx).Warn(PipelineLog(stage, action, fields))
 }
 
 // PipelineError logs pipeline error level entries.
 func PipelineError(ctx context.Context, stage, action string, fields map[string]interface{}) {
+	if logprivacy.ContentSuppressed(ctx) {
+		logger.GetLogger(ctx).Error("[PIPELINE] error: content logging suppressed")
+		return
+	}
 	logger.GetLogger(ctx).Error(PipelineLog(stage, action, fields))
 }
 

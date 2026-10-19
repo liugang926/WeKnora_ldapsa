@@ -28,25 +28,24 @@ func nextcloudGCTestDB(t *testing.T) (*NextcloudGCStore, *gorm.DB) {
 	t.Cleanup(func() { _ = sqlDB.Close() })
 	require.NoError(t, db.AutoMigrate(&types.Knowledge{}, &types.Chunk{}, &nextcloudSourceVersion{},
 		&nextcloudGCJob{}, &nextcloudGCItem{}, &types.StoredResource{}, &types.ResourceBinding{}))
+	gcObjectTestLeaseSchema(t, db)
 	return NewNextcloudGCStore(db), db
 }
 
 func nextcloudGCTestLocalResource(t *testing.T, db *gorm.DB, handle, knowledgeID string) string {
 	t.Helper()
+	gcObjectTestLeaseSchema(t, db)
+	leaseTestCoverKB(t, db, NextcloudContentScope{TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: knowledgeID, DataSourceID: "ds", ExternalID: "node"}) // Explicit fully-drained isolated fixture only.
 	ref := types.BuildResourcePath(handle)
-	resource := &types.StoredResource{
-		ID: uuid.NewString(), Handle: handle, TenantID: 7,
+	resource := &types.StoredResource{ID: uuid.NewString(), Handle: handle, TenantID: 7,
 		StorageBackendID: "backend", Provider: "local",
 		PhysicalPath: "storage://backend/local://7/" + knowledgeID + "/source.txt",
 		LocationHash: uuid.NewString(), SourceProvenance: types.ResourceProvenanceNextcloud,
-		Size: 23, State: types.ResourceStateActive,
-	}
+		Size: 23, State: types.ResourceStateActive}
 	require.NoError(t, db.Create(resource).Error)
-	require.NoError(t, db.Create(&types.ResourceBinding{
-		ResourceID: resource.ID, TenantID: 7,
+	require.NoError(t, db.Create(&types.ResourceBinding{ResourceID: resource.ID, TenantID: 7,
 		OwnerType: types.ResourceOwnerKnowledge, OwnerID: knowledgeID,
-		Relation: types.ResourceRelationSourceFile,
-	}).Error)
+		Relation: types.ResourceRelationSourceFile}).Error)
 	return ref
 }
 
@@ -113,21 +112,13 @@ func TestNextcloudGCSharedResourceReleasesOnlyRetiredClaim(t *testing.T) {
 	nextcloudGCTestSource(t, db, "old", ref, now.Add(-8*24*time.Hour))
 	var resource types.StoredResource
 	require.NoError(t, db.Where("handle = ?", strings.Repeat("b", 22)).Take(&resource).Error)
-	require.NoError(t, db.Create(&types.ResourceBinding{
-		ResourceID: resource.ID, TenantID: 7,
+	require.NoError(t, db.Create(&types.ResourceBinding{ResourceID: resource.ID, TenantID: 7,
 		OwnerType: types.ResourceOwnerMessage, OwnerID: "still-reading",
-		Relation: types.ResourceRelationArtifact,
-	}).Error)
+		Relation: types.ResourceRelationArtifact}).Error)
 	_, err := store.InventoryRetired(ctx, now, 100)
 	require.NoError(t, err)
 	deletes := 0
-	store.ConfigureLocalDelete(func(context.Context, *types.StoredResource) (
-		bool,
-		error,
-	) {
-		deletes++
-		return true, nil
-	})
+	store.ConfigureLocalDelete(func(context.Context, *types.StoredResource) (bool, error) { deletes++; return true, nil })
 	_, err = store.RunDue(ctx, now, 100)
 	require.NoError(t, err)
 	require.Zero(t, deletes)
@@ -155,30 +146,20 @@ func TestNextcloudGCUnscopedOrCloudObjectStaysBlockedWithBinding(t *testing.T) {
 			store, db := nextcloudGCTestDB(t)
 			handle := strings.Repeat("e", 22)
 			ref := types.BuildResourcePath(handle)
-			resource := &types.StoredResource{
-				ID: uuid.NewString(), Handle: handle, TenantID: 7,
+			resource := &types.StoredResource{ID: uuid.NewString(), Handle: handle, TenantID: 7,
 				StorageBackendID: testCase.backend, Provider: testCase.provider,
 				PhysicalPath: testCase.path, LocationHash: uuid.NewString(),
 				SourceProvenance: types.ResourceProvenanceNextcloud, Size: 23,
-				State: types.ResourceStateActive,
-			}
+				State: types.ResourceStateActive}
 			require.NoError(t, db.Create(resource).Error)
-			require.NoError(t, db.Create(&types.ResourceBinding{
-				ResourceID: resource.ID, TenantID: 7,
+			require.NoError(t, db.Create(&types.ResourceBinding{ResourceID: resource.ID, TenantID: 7,
 				OwnerType: types.ResourceOwnerKnowledge, OwnerID: "old",
-				Relation: types.ResourceRelationSourceFile,
-			}).Error)
+				Relation: types.ResourceRelationSourceFile}).Error)
 			nextcloudGCTestSource(t, db, "old", ref, now.Add(-8*24*time.Hour))
 			_, err := store.InventoryRetired(ctx, now, 100)
 			require.NoError(t, err)
 			called := false
-			store.ConfigureLocalDelete(func(context.Context, *types.StoredResource) (
-				bool,
-				error,
-			) {
-				called = true
-				return true, nil
-			})
+			store.ConfigureLocalDelete(func(context.Context, *types.StoredResource) (bool, error) { called = true; return true, nil })
 			_, err = store.RunDue(ctx, now, 100)
 			require.NoError(t, err)
 			require.False(t, called)
@@ -215,14 +196,16 @@ func TestNextcloudGCObjectLeaseAllowsCrashRecoveryWithoutDoubleCredit(t *testing
 	require.NoError(t, err)
 	require.Nil(t, concurrent.resource)
 	require.Equal(t, "resource_delete_in_progress", concurrent.code)
+	require.NoError(t, db.Model(&nextcloudGCItem{}).Where("job_id=? AND kind='source_file'", job.ID).Update("lease_until", time.Now().Add(-time.Second)).Error)
+	require.NoError(t, db.Exec("UPDATE nextcloud_content_fences SET claim_until_ms=1 WHERE tenant_id=7 AND knowledge_base_id='kb' AND knowledge_id='old'").Error)
 	recovered, err := store.claimObject(ctx, job.ID, "source_file", ref, now.Add(11*time.Minute))
 	require.NoError(t, err)
 	require.NotNil(t, recovered.resource)
 	require.NotEqual(t, first.token, recovered.token)
 	require.Error(t, store.finishObject(ctx, job.ID, "source_file", ref,
-		first.resource.ID, first.token, true, now.Add(11*time.Minute)))
+		first.resource.ID, first, true, now.Add(11*time.Minute)))
 	require.NoError(t, store.finishObject(ctx, job.ID, "source_file", ref,
-		recovered.resource.ID, recovered.token, true, now.Add(11*time.Minute)))
+		recovered.resource.ID, recovered, true, now.Add(11*time.Minute)))
 	var item nextcloudGCItem
 	require.NoError(t, db.Where("job_id = ? AND kind = ?", job.ID, "source_file").Take(&item).Error)
 	require.Equal(t, int64(23), item.ConfirmedReleasedBytes)
@@ -268,8 +251,7 @@ func TestNextcloudGCScopedLocalProviderCrashAfterUnlinkRetriesExactly(t *testing
 	require.NoError(t, err)
 	status, err = store.ListStatus(ctx, 7, 100)
 	require.NoError(t, err)
-	require.Zero(t, status[0].ConfirmedReleasedBytes, ("a crash before acknowledgement leaves physical bytes un" +
-		"confirmed"))
+	require.Zero(t, status[0].ConfirmedReleasedBytes, "a crash before acknowledgement leaves physical bytes unconfirmed")
 	require.Equal(t, 2, attempts)
 }
 
@@ -279,20 +261,12 @@ func TestNextcloudGCImageAliasCannotShortenOriginalRetention(t *testing.T) {
 	store, db := nextcloudGCTestDB(t)
 	ref := nextcloudGCTestLocalResource(t, db, strings.Repeat("f", 22), "old")
 	nextcloudGCTestSource(t, db, "old", ref, now.Add(-2*time.Hour))
-	require.NoError(t, db.Create(&types.Chunk{
-		ID: "chunk", TenantID: 7, KnowledgeBaseID: "kb",
-		KnowledgeID: "old", ImageInfo: `[{"url":"` + ref + `"}]`,
-	}).Error)
+	require.NoError(t, db.Create(&types.Chunk{ID: "chunk", TenantID: 7, KnowledgeBaseID: "kb",
+		KnowledgeID: "old", ImageInfo: `[{"url":"` + ref + `"}]`}).Error)
 	_, err := store.InventoryRetired(ctx, now, 100)
 	require.NoError(t, err)
 	deletes := 0
-	store.ConfigureLocalDelete(func(context.Context, *types.StoredResource) (
-		bool,
-		error,
-	) {
-		deletes++
-		return true, nil
-	})
+	store.ConfigureLocalDelete(func(context.Context, *types.StoredResource) (bool, error) { deletes++; return true, nil })
 	_, err = store.RunDue(ctx, now, 100)
 	require.NoError(t, err)
 	require.Zero(t, deletes)
@@ -302,6 +276,7 @@ func TestNextcloudGCImageAliasCannotShortenOriginalRetention(t *testing.T) {
 	var bindings int64
 	require.NoError(t, db.Model(&types.ResourceBinding{}).Where("resource_id = ?", resource.ID).Count(&bindings).Error)
 	require.Equal(t, int64(1), bindings)
+	require.NoError(t, db.Model(&nextcloudGCJob{}).Where("knowledge_id='old'").Update("original_not_before", time.Now().Add(-time.Second)).Error)
 	_, err = store.RunDue(ctx, now.Add(7*24*time.Hour), 100)
 	require.NoError(t, err)
 	require.Equal(t, 1, deletes)
@@ -316,20 +291,12 @@ func TestNextcloudGCInvalidImageInventoryStopsPhysicalRelease(t *testing.T) {
 	store, db := nextcloudGCTestDB(t)
 	ref := nextcloudGCTestLocalResource(t, db, strings.Repeat("g", 22), "old")
 	nextcloudGCTestSource(t, db, "old", ref, now.Add(-8*24*time.Hour))
-	require.NoError(t, db.Create(&types.Chunk{
-		ID: "chunk", TenantID: 7, KnowledgeBaseID: "kb",
-		KnowledgeID: "old", ImageInfo: `{broken`,
-	}).Error)
+	require.NoError(t, db.Create(&types.Chunk{ID: "chunk", TenantID: 7, KnowledgeBaseID: "kb",
+		KnowledgeID: "old", ImageInfo: `{broken`}).Error)
 	_, err := store.InventoryRetired(ctx, now, 100)
 	require.NoError(t, err)
 	deletes := 0
-	store.ConfigureLocalDelete(func(context.Context, *types.StoredResource) (
-		bool,
-		error,
-	) {
-		deletes++
-		return true, nil
-	})
+	store.ConfigureLocalDelete(func(context.Context, *types.StoredResource) (bool, error) { deletes++; return true, nil })
 	_, err = store.RunDue(ctx, now.Add(time.Hour), 100)
 	require.NoError(t, err)
 	require.Zero(t, deletes)
@@ -346,10 +313,8 @@ func TestNextcloudGCRetryInventoriesLateImageReference(t *testing.T) {
 	now := time.Now().UTC()
 	store, db := nextcloudGCTestDB(t)
 	nextcloudGCTestSource(t, db, "old", "", now.Add(-2*time.Hour))
-	require.NoError(t, db.Create(&types.Chunk{
-		ID: "chunk", TenantID: 7,
-		KnowledgeBaseID: "kb", KnowledgeID: "old",
-	}).Error)
+	require.NoError(t, db.Create(&types.Chunk{ID: "chunk", TenantID: 7,
+		KnowledgeBaseID: "kb", KnowledgeID: "old"}).Error)
 	_, err := store.InventoryRetired(ctx, now, 100)
 	require.NoError(t, err)
 	var job nextcloudGCJob
@@ -393,10 +358,9 @@ func TestNextcloudGCLateInvalidImageInventoryBlocksThenRecovers(t *testing.T) {
 	require.Zero(t, deletes, "the original is still inside its recovery window")
 	// The initial inventory and first due run were valid. A later writer
 	// leaves image_info corrupt before the original's recovery window ends.
-	require.NoError(t, db.Create(&types.Chunk{
-		ID: "late-chunk", TenantID: 7,
-		KnowledgeBaseID: "kb", KnowledgeID: "old", ImageInfo: `{broken`,
-	}).Error)
+	require.NoError(t, db.Create(&types.Chunk{ID: "late-chunk", TenantID: 7,
+		KnowledgeBaseID: "kb", KnowledgeID: "old", ImageInfo: `{broken`}).Error)
+	require.NoError(t, db.Model(&nextcloudGCJob{}).Where("knowledge_id='old'").Update("original_not_before", time.Now().Add(-time.Second)).Error)
 	_, err = store.RunDue(ctx, now.Add(7*24*time.Hour), 100)
 	require.NoError(t, err)
 	require.Zero(t, deletes)
@@ -451,21 +415,24 @@ func TestNextcloudGCPhysicalClaimFailureIsDurable(t *testing.T) {
 
 func nextcloudGCTestSource(t *testing.T, db *gorm.DB, id, filePath string, at time.Time) {
 	t.Helper()
-	metadata, err := json.Marshal(map[string]string{
-		"datasource_id": "ds", "external_id": "node",
-		"nextcloud_etag": "", "nextcloud_binding_id": "binding", "nextcloud_file_id": "77",
-	})
+	metadata, err := json.Marshal(map[string]string{"datasource_id": "ds", "external_id": "node",
+		"nextcloud_etag": "", "nextcloud_binding_id": "binding", "nextcloud_file_id": "77"})
 	require.NoError(t, err)
 	require.NoError(t, db.Create(&types.Knowledge{
 		ID: id, TenantID: 7, KnowledgeBaseID: "kb", Channel: types.ConnectorTypeNextcloud,
 		ParseStatus: types.ParseStatusCompleted, EnableStatus: "enabled", Metadata: types.JSON(metadata),
 		FilePath: filePath, StorageSize: 23, CreatedAt: at, UpdatedAt: at,
 	}).Error)
-	require.NoError(t, db.Create(&nextcloudSourceVersion{
-		TenantID: 7, KnowledgeBaseID: "kb",
+	if db.Migrator().HasTable("nextcloud_content_fences") {
+		var bindings int64
+		require.NoError(t, db.Model(&types.ResourceBinding{}).Where("tenant_id=7 AND owner_type='knowledge' AND owner_id=?", id).Count(&bindings).Error)
+		if bindings > 0 {
+			gcObjectTestRetiredFence(t, db, id, at)
+		}
+	}
+	require.NoError(t, db.Create(&nextcloudSourceVersion{TenantID: 7, KnowledgeBaseID: "kb",
 		DataSourceID: "ds", ExternalID: "node", State: "published", CandidateKnowledgeID: "new",
-		DesiredETag: "new-etag", UpdatedAt: at,
-	}).Error)
+		DesiredETag: "new-etag", UpdatedAt: at}).Error)
 }
 
 func TestNextcloudGCInventoryPersistsExactItemsAndRetriesWithoutClaimingBytes(t *testing.T) {
@@ -473,10 +440,8 @@ func TestNextcloudGCInventoryPersistsExactItemsAndRetriesWithoutClaimingBytes(t 
 	now := time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC)
 	store, db := nextcloudGCTestDB(t)
 	nextcloudGCTestSource(t, db, "old", "resource://opaque-source", now.Add(-2*time.Hour))
-	require.NoError(t, db.Create(&types.Chunk{
-		ID: "chunk", TenantID: 7, KnowledgeBaseID: "kb",
-		KnowledgeID: "old", ImageInfo: `[{"url":"resource://opaque-image"}]`,
-	}).Error)
+	require.NoError(t, db.Create(&types.Chunk{ID: "chunk", TenantID: 7, KnowledgeBaseID: "kb",
+		KnowledgeID: "old", ImageInfo: `[{"url":"resource://opaque-image"}]`}).Error)
 
 	created, err := store.InventoryRetired(ctx, now, 100)
 	require.NoError(t, err)
@@ -529,8 +494,7 @@ func TestNextcloudGCTombstoneSkipsOrdinarySafetyWindow(t *testing.T) {
 	store, db := nextcloudGCTestDB(t)
 	nextcloudGCTestSource(t, db, "old", "resource://source", now)
 	require.NoError(t, db.Model(&nextcloudSourceVersion{}).
-		Where(("tenant_id = ? AND knowledge_base_id = ? AND datasource_"+
-			"id = ? AND external_id = ?"), 7, "kb", "ds", "node").
+		Where("tenant_id = ? AND knowledge_base_id = ? AND datasource_id = ? AND external_id = ?", 7, "kb", "ds", "node").
 		Updates(map[string]any{"state": "tombstone", "candidate_knowledge_id": ""}).Error)
 	created, err := store.InventoryRetired(ctx, now, 100)
 	require.NoError(t, err)
@@ -558,8 +522,7 @@ func TestNextcloudGCBlocksCandidateThatBecameCurrent(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, created)
 	require.NoError(t, db.Model(&nextcloudSourceVersion{}).
-		Where(("tenant_id = ? AND knowledge_base_id = ? AND datasource_"+
-			"id = ? AND external_id = ?"), 7, "kb", "ds", "node").
+		Where("tenant_id = ? AND knowledge_base_id = ? AND datasource_id = ? AND external_id = ?", 7, "kb", "ds", "node").
 		Update("candidate_knowledge_id", "old").Error)
 	_, err = store.RunDue(ctx, now, 100)
 	require.NoError(t, err)
@@ -600,10 +563,8 @@ func TestNextcloudGCInvalidImageInventoryRemainsBlockedThenRecovers(t *testing.T
 	now := time.Now().UTC()
 	store, db := nextcloudGCTestDB(t)
 	nextcloudGCTestSource(t, db, "old", "", now.Add(-2*time.Hour))
-	require.NoError(t, db.Create(&types.Chunk{
-		ID: "chunk", TenantID: 7, KnowledgeBaseID: "kb",
-		KnowledgeID: "old", ImageInfo: `{broken`,
-	}).Error)
+	require.NoError(t, db.Create(&types.Chunk{ID: "chunk", TenantID: 7, KnowledgeBaseID: "kb",
+		KnowledgeID: "old", ImageInfo: `{broken`}).Error)
 	created, err := store.InventoryRetired(ctx, now, 100)
 	require.NoError(t, err)
 	require.Equal(t, 1, created)
@@ -632,10 +593,8 @@ func TestNextcloudGCInventoriesExactLocalIndexRowsAndLateWrites(t *testing.T) {
 	require.NoError(t, db.Exec(`CREATE TABLE lite_embeddings
 		(id INTEGER PRIMARY KEY, knowledge_base_id TEXT NOT NULL, knowledge_id TEXT NOT NULL)`).Error)
 	nextcloudGCTestSource(t, db, "old", "", now.Add(-2*time.Hour))
-	require.NoError(t, db.Create(&types.Chunk{
-		ID: "chunk-old", TenantID: 7,
-		KnowledgeBaseID: "kb", KnowledgeID: "old",
-	}).Error)
+	require.NoError(t, db.Create(&types.Chunk{ID: "chunk-old", TenantID: 7,
+		KnowledgeBaseID: "kb", KnowledgeID: "old"}).Error)
 	require.NoError(t, db.Exec(`INSERT INTO lite_embeddings (id, knowledge_base_id, knowledge_id)
 		VALUES (11, 'kb', 'old'), (12, 'other-kb', 'old'), (13, 'kb', 'other')`).Error)
 	created, err := store.InventoryRetired(ctx, now, 100)
@@ -646,10 +605,8 @@ func TestNextcloudGCInventoriesExactLocalIndexRowsAndLateWrites(t *testing.T) {
 	var items []nextcloudGCItem
 	require.NoError(t, db.Where("job_id = ?", job.ID).Order("kind, object_ref").Find(&items).Error)
 	require.Equal(t, []string{"derived_chunk:chunk-old", "derived_index:old", "knowledge:old", "sqlite_embedding:11"},
-		[]string{
-			items[0].Kind + ":" + items[0].ObjectRef, items[1].Kind + ":" + items[1].ObjectRef,
-			items[2].Kind + ":" + items[2].ObjectRef, items[3].Kind + ":" + items[3].ObjectRef,
-		})
+		[]string{items[0].Kind + ":" + items[0].ObjectRef, items[1].Kind + ":" + items[1].ObjectRef,
+			items[2].Kind + ":" + items[2].ObjectRef, items[3].Kind + ":" + items[3].ObjectRef})
 
 	// A late row is inventoried on the retry, before the job can claim it is
 	// collected. Current code deliberately keeps derived rows blocked.
@@ -665,9 +622,7 @@ func TestNextcloudGCInventoriesExactLocalIndexRowsAndLateWrites(t *testing.T) {
 	require.Equal(t, "14", items[1].ObjectRef)
 	var chunks, embeddings int64
 	require.NoError(t, db.Model(&types.Chunk{}).Where("id = ?", "chunk-old").Count(&chunks).Error)
-	require.NoError(t, db.Table(
-		"lite_embeddings",
-	).Where("knowledge_id = ? AND knowledge_base_id = ?", "old", "kb").Count(&embeddings).Error)
+	require.NoError(t, db.Table("lite_embeddings").Where("knowledge_id = ? AND knowledge_base_id = ?", "old", "kb").Count(&embeddings).Error)
 	require.Equal(t, int64(1), chunks)
 	require.Equal(t, int64(2), embeddings)
 	status, err := store.ListStatus(ctx, 7, 100)
@@ -718,10 +673,8 @@ func TestNextcloudGCStepFailureIsDurableAndRetried(t *testing.T) {
 	require.Equal(t, "gc_step_failed", status[0].LastErrorCode)
 	require.Equal(t, 1, status[0].Attempts)
 	require.Zero(t, status[0].ConfirmedReleasedBytes)
-	require.NoError(t, db.Create(&nextcloudSourceVersion{
-		TenantID: 7, KnowledgeBaseID: "kb",
-		DataSourceID: "ds", ExternalID: "node", State: "published", CandidateKnowledgeID: "new",
-	}).Error)
+	require.NoError(t, db.Create(&nextcloudSourceVersion{TenantID: 7, KnowledgeBaseID: "kb",
+		DataSourceID: "ds", ExternalID: "node", State: "published", CandidateKnowledgeID: "new"}).Error)
 	processed, err := store.RunDue(ctx, now.Add(time.Hour), 100)
 	require.NoError(t, err)
 	require.Equal(t, 1, processed)

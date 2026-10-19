@@ -57,6 +57,7 @@ const (
 
 // KnowledgeBase represents a knowledge base entity
 type KnowledgeBase struct {
+	EnrichmentTemplates *KnowledgeEnrichmentTemplates `json:"-" yaml:"enrichment_templates,omitempty" gorm:"type:jsonb"`
 	// Unique identifier of the knowledge base
 	ID string `yaml:"id"                      json:"id"                      gorm:"type:varchar(36);primaryKey"`
 	// Name of the knowledge base
@@ -163,6 +164,7 @@ type KnowledgeBase struct {
 
 // KnowledgeBaseConfig represents the knowledge base configuration
 type KnowledgeBaseConfig struct {
+	EnrichmentTemplates *KnowledgeEnrichmentTemplates `json:"enrichment_templates,omitempty" yaml:"enrichment_templates,omitempty"`
 	// Chunking configuration
 	ChunkingConfig ChunkingConfig `yaml:"chunking_config"         json:"chunking_config"`
 	// Image processing configuration

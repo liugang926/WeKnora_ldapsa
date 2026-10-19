@@ -10,18 +10,15 @@ import (
 	"strings"
 	"time"
 
-	apperrors "github.com/Tencent/WeKnora/internal/errors"
-
 	"github.com/Tencent/WeKnora/internal/datasource"
+	apperrors "github.com/Tencent/WeKnora/internal/errors"
 	"github.com/Tencent/WeKnora/internal/types"
 )
 
-var (
-	_ datasource.Connector              = (*Connector)(nil)
-	_ datasource.FullSyncWithCursor     = (*Connector)(nil)
-	_ datasource.StreamingConnector     = (*Connector)(nil)
-	_ datasource.FullStreamingConnector = (*Connector)(nil)
-)
+var _ datasource.Connector = (*Connector)(nil)
+var _ datasource.FullSyncWithCursor = (*Connector)(nil)
+var _ datasource.StreamingConnector = (*Connector)(nil)
+var _ datasource.FullStreamingConnector = (*Connector)(nil)
 
 // A Nextcloud stream must report its live source identity before any item can
 // be written. The service uses it to fence revoked event tasks and cloned
@@ -50,13 +47,14 @@ type eventManifestStreamHandler interface {
 	NextcloudRequireManifest() bool
 }
 
-// Connector implements the authenticated Nextcloud datasource adapter.
+type publicationEpochStreamHandler interface {
+	ObserveNextcloudPublicationEpoch(context.Context, string, string, int64) error
+}
+
 type Connector struct{}
 
-// NewConnector constructs the Nextcloud datasource adapter.
 func NewConnector() *Connector { return &Connector{} }
 
-// Type identifies the Nextcloud connector provider.
 func (*Connector) Type() string { return types.ConnectorTypeNextcloud }
 
 // PairingIdentity is the live Nextcloud identity behind a configured source.
@@ -86,7 +84,7 @@ func InspectPairing(ctx context.Context, ds *types.DataSourceConfig) (PairingIde
 		return PairingIdentity{}, err
 	}
 	cli := newClient(cfg)
-	capabilities, err := cli.capabilities(ctx)
+	cap, err := cli.capabilities(ctx)
 	if err != nil {
 		return PairingIdentity{}, err
 	}
@@ -99,7 +97,7 @@ func InspectPairing(ctx context.Context, ds *types.DataSourceConfig) (PairingIde
 			baseURL := *cfg.baseURL
 			baseURL.Host = strings.ToLower(baseURL.Host)
 			return PairingIdentity{
-				InstanceID:       capabilities.InstanceID,
+				InstanceID:       cap.InstanceID,
 				BindingID:        binding.ID,
 				BaseURL:          baseURL.String(),
 				PublicationState: binding.PublicationState,
@@ -109,19 +107,16 @@ func InspectPairing(ctx context.Context, ds *types.DataSourceConfig) (PairingIde
 	}
 	return PairingIdentity{}, apperrors.NewProtocolError(fmt.Errorf(
 		"%w: selected Nextcloud binding is unavailable", datasource.ErrInvalidConfig), fmt.Sprintf(
-		"%s: selected Nextcloud binding is unavailable", apperrors.PublicMessage(datasource.ErrInvalidConfig)))
+		"%s: selected Nextcloud binding is unavailable", apperrors.PublicMessage(
+			datasource.ErrInvalidConfig)))
 }
 
-// Validate checks the selected binding and remote instance configuration.
 func (*Connector) Validate(ctx context.Context, ds *types.DataSourceConfig) error {
 	_, err := InspectPairing(ctx, ds)
 	return err
 }
 
-// ListResources lists the remote binding resources exposed by the source instance.
-func (*Connector) ListResources(ctx context.Context, ds *types.DataSourceConfig, parentID string) (
-	[]types.Resource, error,
-) {
+func (*Connector) ListResources(ctx context.Context, ds *types.DataSourceConfig, parentID string) ([]types.Resource, error) {
 	if parentID != "" {
 		return []types.Resource{}, nil
 	}
@@ -150,15 +145,11 @@ func (*Connector) ListResources(ctx context.Context, ds *types.DataSourceConfig,
 	return resources, nil
 }
 
-// ResolveResourceAncestors returns no ancestors for the flat binding resource list.
 func (*Connector) ResolveResourceAncestors(context.Context, *types.DataSourceConfig, []string) ([]string, error) {
 	return []string{}, nil
 }
 
-// FetchAll reads the complete selected remote inventory.
-func (c *Connector) FetchAll(ctx context.Context, ds *types.DataSourceConfig, resourceIDs []string) (
-	[]types.FetchedItem, error,
-) {
+func (c *Connector) FetchAll(ctx context.Context, ds *types.DataSourceConfig, resourceIDs []string) ([]types.FetchedItem, error) {
 	if len(resourceIDs) == 0 && ds != nil {
 		resourceIDs = ds.ResourceIDs
 	}
@@ -174,7 +165,6 @@ func (c *Connector) FetchAllFromCursor(
 	return c.walk(ctx, ds, resourceIDs, old, true, true, nil)
 }
 
-// FetchIncremental reads changes while retaining the prior inventory evidence.
 func (c *Connector) FetchIncremental(
 	ctx context.Context, ds *types.DataSourceConfig, old *types.SyncCursor,
 ) ([]types.FetchedItem, *types.SyncCursor, error) {
@@ -261,11 +251,11 @@ func (c *Connector) walk(
 		return nil, nil, err
 	}
 	cli := newClient(cfg)
-	capabilities, err := cli.capabilities(ctx)
+	cap, err := cli.capabilities(ctx)
 	if err != nil {
 		return nil, nil, err
 	}
-	if old != nil && old.ConnectorCursor != nil && previous.InstanceID != capabilities.InstanceID {
+	if old != nil && old.ConnectorCursor != nil && previous.InstanceID != cap.InstanceID {
 		// A cloned instance may reuse file IDs. Dropping the old inventory
 		// would also lose deletion evidence. A truncated cursor with no
 		// instance ID is unsafe for the same reason.
@@ -293,6 +283,11 @@ func (c *Connector) walk(
 		for _, binding := range bindings {
 			if binding.ID == selected[0] {
 				found = true
+				if observer, ok := h.(publicationEpochStreamHandler); ok {
+					if err := observer.ObserveNextcloudPublicationEpoch(ctx, cap.InstanceID, binding.ID, binding.PublicationEpoch); err != nil {
+						return nil, nil, err
+					}
+				}
 				break
 			}
 		}
@@ -302,7 +297,7 @@ func (c *Connector) walk(
 				"%s: selected Nextcloud binding is unavailable", apperrors.PublicMessage(
 					datasource.ErrInvalidConfig)))
 		}
-		if err := h.ObserveNextcloudIdentity(ctx, capabilities.InstanceID, selected[0]); err != nil {
+		if err := h.ObserveNextcloudIdentity(ctx, cap.InstanceID, selected[0]); err != nil {
 			return nil, nil, err
 		}
 	}
@@ -319,6 +314,9 @@ func (c *Connector) walk(
 		requireManifest = event.NextcloudRequireManifest()
 	}
 	policy := fmt.Sprintf("v1:multimodal=%t", ds.MultimodalEnabled)
+	if ds.ProcessingPolicyDigest != "" {
+		policy += ";processing=" + ds.ProcessingPolicyDigest
+	}
 	// Hints are read before the authoritative manifest. If a file changes
 	// between these two reads, its hint is still pending on the next run.
 	// No hint is ever used as evidence that a file is gone.
@@ -328,9 +326,8 @@ func (c *Connector) walk(
 	forceContentAudit := full || previous.LastContentAuditAt <= 0 ||
 		previous.LastContentAuditAt > now.Unix() ||
 		now.Sub(time.Unix(previous.LastContentAuditAt, 0)) >= cfg.reconcileInterval
-	forceAllContent := forceContentAudit
-	forceManifest := requireManifest || len(failedCandidates) > 0 || forceContentAudit ||
-		previous.LastReconcileAt <= 0 ||
+	forceAllContent := forceContentAudit || previous.ImportPolicy != policy
+	forceManifest := requireManifest || len(failedCandidates) > 0 || forceContentAudit || previous.LastReconcileAt <= 0 ||
 		previous.LastReconcileAt > now.Unix() ||
 		now.Sub(time.Unix(previous.LastReconcileAt, 0)) >= cfg.reconcileInterval ||
 		previous.ImportPolicy != policy
@@ -395,7 +392,7 @@ func (c *Connector) walk(
 	}
 
 	next := syncState{
-		InstanceID:         capabilities.InstanceID,
+		InstanceID:         cap.InstanceID,
 		Files:              make(map[string]map[string]fileState, len(selected)),
 		ImportPolicy:       policy,
 		Changes:            changeCursors,
@@ -431,7 +428,7 @@ func (c *Connector) walk(
 			state := file.state()
 			oldState, hadOld := previous.Files[bindingID][id]
 			_, wasTombstone := previous.Tombstones[bindingID][id]
-			if retryExternalID != "" && retryExternalID != "nextcloud:"+capabilities.InstanceID+":"+id {
+			if retryExternalID != "" && retryExternalID != "nextcloud:"+cap.InstanceID+":"+id {
 				// The complete manifest was validated above; only the claimed file
 				// may incur a content read. The service retains the original cursor
 				// so this neighbor is handled by a later ordinary sync.
@@ -449,8 +446,7 @@ func (c *Connector) walk(
 			if err != nil {
 				return nil, nil, err
 			}
-			if err := emit(fetchedItem(capabilities.InstanceID, bindingID, generations[bindingID], file,
-				content, contentType)); err != nil {
+			if err := emit(fetchedItem(cap.InstanceID, bindingID, generations[bindingID], file, content, contentType, cfg)); err != nil {
 				return nil, nil, err
 			}
 			current[id] = state
@@ -483,7 +479,7 @@ func (c *Connector) walk(
 			}
 			if previous.Missing[bindingID][id] {
 				rememberTombstone(&next, bindingID, id, state)
-				if err := emit(deletedItem(capabilities.InstanceID, bindingID, id, state)); err != nil {
+				if err := emit(deletedItem(cap.InstanceID, bindingID, id, state)); err != nil {
 					return nil, nil, err
 				}
 			} else {
@@ -504,7 +500,7 @@ func (c *Connector) walk(
 				continue
 			}
 			rememberTombstone(&next, bindingID, id, state)
-			if err := emit(deletedItem(capabilities.InstanceID, bindingID, id, state)); err != nil {
+			if err := emit(deletedItem(cap.InstanceID, bindingID, id, state)); err != nil {
 				return nil, nil, err
 			}
 		}
@@ -559,14 +555,12 @@ func deletedItem(instanceID, bindingID, id string, state fileState) types.Fetche
 	}
 }
 
-func fetchedItem(instanceID, bindingID, generation string, file manifestItem, content []byte,
-	contentType string,
-) types.FetchedItem {
+func fetchedItem(instanceID, bindingID, generation string, file manifestItem, content []byte, contentType string, originalCfg ...config) types.FetchedItem {
 	updatedAt := time.Time{}
 	if file.MTime > 0 {
 		updatedAt = time.Unix(file.MTime, 0).UTC()
 	}
-	return types.FetchedItem{
+	item := types.FetchedItem{
 		ExternalID:       "nextcloud:" + instanceID + ":" + strconv.FormatInt(file.FileID, 10),
 		SourceResourceID: bindingID,
 		Title:            file.Name,
@@ -581,9 +575,23 @@ func fetchedItem(instanceID, bindingID, generation string, file manifestItem, co
 			"nextcloud_binding_id":  bindingID,
 			"nextcloud_file_id":     strconv.FormatInt(file.FileID, 10),
 			"nextcloud_etag":        file.ETag,
-			"nextcloud_path":        file.Path,
-			"nextcloud_human_url":   strings.TrimSpace(file.HumanURL),
-			"nextcloud_generation":  generation,
+			"nextcloud_content_revision": func() string {
+				revision, _ := types.NormalizeNextcloudContentRevision(file.ContentRevision)
+				return revision
+			}(),
+			"nextcloud_path":       file.Path,
+			"nextcloud_human_url":  strings.TrimSpace(file.HumanURL),
+			"nextcloud_generation": generation,
 		},
 	}
+	if len(originalCfg) == 1 {
+		sealFetchedArtifact(&item, originalCfg[0])
+	}
+	return item
+}
+
+func revisionEqual(a, b string) bool {
+	a, ae := types.NormalizeNextcloudContentRevision(a)
+	b, be := types.NormalizeNextcloudContentRevision(b)
+	return ae == nil && be == nil && a == b
 }

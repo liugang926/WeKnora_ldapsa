@@ -42,6 +42,7 @@ var ErrNothingToCompact = errors.New("compaction: nothing outside the keep-recen
 
 // Result describes what one compaction did.
 type Result struct {
+	SourceLineage  *types.SourceLineage
 	Messages       []chat.Message
 	Summary        string
 	Reason         Reason
@@ -68,6 +69,7 @@ type Result struct {
 // that turn, it lets the next turn load the summary in place of everything up
 // to and including the turn, instead of summarizing the same history again.
 type Checkpoint struct {
+	SourceLineage *types.SourceLineage
 	// TurnID is the stored turn the summary covers through, inclusive.
 	TurnID  string
 	Summary string
@@ -85,9 +87,27 @@ func (r *Result) Freed() int {
 
 // Compactor summarizes conversation history into a checkpoint.
 type Compactor struct {
-	chatModel chat.Chat
-	estimator *agenttoken.Estimator
-	settings  Settings
+	chatModel       chat.Chat
+	estimator       *agenttoken.Estimator
+	settings        Settings
+	lineageVerifier func(context.Context, *types.SourceLineage) error
+}
+
+// SetSourceLineageVerifier binds the same current caller/source authorizer as
+// the engine. Missing wiring never exempts summarization or raw archives.
+func (c *Compactor) SetSourceLineageVerifier(check func(context.Context, *types.SourceLineage) error) {
+	if c != nil {
+		c.lineageVerifier = check
+	}
+}
+func (c *Compactor) checkLineage(ctx context.Context, l *types.SourceLineage) error {
+	if err := l.RequireComplete(); err != nil {
+		return err
+	}
+	if c.lineageVerifier == nil {
+		return types.ErrSourceLineageUnknown
+	}
+	return c.lineageVerifier(ctx, l)
 }
 
 // New builds a compactor. It returns nil when compaction cannot run, so the
@@ -119,13 +139,20 @@ func (c *Compactor) Compact(
 	if prep == nil {
 		return nil, ErrNothingToCompact
 	}
+	if err := c.checkLineage(ctx, prep.SourceLineage); err != nil {
+		return nil, err
+	}
 
 	history, historyDegraded := c.summarizeHistory(ctx, prep)
 	summary, prefixDegraded := c.appendTurnPrefix(ctx, prep, history)
 	summary += prep.fileOps.format()
 	compacted := Apply(messages, prep, summary)
+	if err := c.checkLineage(ctx, prep.SourceLineage); err != nil {
+		return nil, err
+	}
 
 	return &Result{
+		SourceLineage:  prep.SourceLineage,
 		Messages:       compacted,
 		Summary:        summary,
 		Reason:         reason,
@@ -151,7 +178,7 @@ func (c *Compactor) summarizeHistory(ctx context.Context, p *Preparation) (strin
 		instructions = updateSummarizationInstructions
 	}
 	text, err := c.summarize(
-		ctx, p.MessagesToSummarize, p.OmittedHistory, p.PreviousSummary, instructions, c.settings.summaryBudget(),
+		ctx, p.MessagesToSummarize, p.OmittedHistory, p.PreviousSummary, instructions, c.settings.summaryBudget(), p.HistorySourceLineage,
 	)
 	if err != nil {
 		// The previous summary is still the best record of everything
@@ -171,7 +198,7 @@ func (c *Compactor) appendTurnPrefix(ctx context.Context, p *Preparation, histor
 	}
 	degraded := false
 	prefix, err := c.summarize(
-		ctx, p.TurnPrefixMessages, p.OmittedTurnPrefix, "", turnPrefixInstructions, c.settings.turnPrefixBudget(),
+		ctx, p.TurnPrefixMessages, p.OmittedTurnPrefix, "", turnPrefixInstructions, c.settings.turnPrefixBudget(), lineageOf(independentSummaryInput(), p.TurnPrefixMessages),
 	)
 	if err != nil {
 		degraded = true
@@ -197,10 +224,17 @@ func (c *Compactor) summarize(
 	omitted int,
 	previousSummary, instructions string,
 	maxTokens int,
+	lineageInputs ...*types.SourceLineage,
 ) (string, error) {
+	lineage := lineageOf(independentSummaryInput(), messages)
+	if len(lineageInputs) > 0 {
+		lineage, _ = types.UnionSourceLineage(lineageInputs...)
+	} else if previousSummary != "" {
+		lineage, _ = types.UnionSourceLineage(lineage, nil)
+	}
 	request := []chat.Message{
-		{Role: "system", Content: summarizationSystemPrompt},
-		{Role: "user", Content: buildSummarizationPrompt(messages, omitted, previousSummary, instructions)},
+		{Role: "system", Content: summarizationSystemPrompt, SourceLineage: independentSummaryInput()},
+		{Role: "user", Content: buildSummarizationPrompt(messages, omitted, previousSummary, instructions), SourceLineage: lineage},
 	}
 	opts := &chat.ChatOptions{
 		Temperature:    0.3, // low temperature for factual summarization
@@ -232,6 +266,10 @@ func (c *Compactor) summarize(
 func (c *Compactor) streamSummary(
 	ctx context.Context, messages []chat.Message, opts *chat.ChatOptions,
 ) (content, finishReason string, err error) {
+	lineage := lineageOf(independentSummaryInput(), messages)
+	if err := c.checkLineage(ctx, lineage); err != nil {
+		return "", "", err
+	}
 	callCtx, cancel := context.WithCancel(types.WithLLMCallMetadata(ctx, llmCallLabel, ""))
 	defer cancel()
 	stream, err := c.chatModel.ChatStream(callCtx, messages, opts)
@@ -265,6 +303,9 @@ func (c *Compactor) streamSummary(
 		case <-stall.C:
 			return "", "", fmt.Errorf("summarization stalled: no output for %s", timeout)
 		case chunk, ok := <-stream:
+			if err := c.checkLineage(ctx, lineage); err != nil {
+				return "", "", err
+			}
 			if !ok {
 				if streamErr != "" {
 					return "", finishReason, fmt.Errorf("summarization stream error: %s", streamErr)
@@ -285,6 +326,11 @@ func (c *Compactor) streamSummary(
 			}
 		}
 	}
+}
+
+func independentSummaryInput() *types.SourceLineage {
+	l, _ := types.NewCompleteSourceLineage()
+	return l
 }
 
 // validateSummary rejects responses that cannot serve as a checkpoint.

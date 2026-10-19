@@ -17,10 +17,11 @@ import (
 // Contains query-answer pairs and associated knowledge references
 // Used for tracking conversation context and history
 type History struct {
-	Query               string     // User query text
-	Answer              string     // System response text
-	CreateAt            time.Time  // When this history entry was created
-	KnowledgeReferences References // Knowledge references used in the answer
+	SourceLineage       *SourceLineage `json:"-"` // Original saved dependency union; NULL is unknown.
+	Query               string         // User query text
+	Answer              string         // System response text
+	CreateAt            time.Time      // When this history entry was created
+	KnowledgeReferences References     // Knowledge references used in the answer
 }
 
 // MentionedItem represents a mentioned knowledge base or file
@@ -538,7 +539,9 @@ func (a *AgentSteps) Scan(value interface{}) error {
 // Returns:
 //   - error: Any error encountered during the hook execution
 func (m *Message) BeforeCreate(tx *gorm.DB) (err error) {
-	m.ID = uuid.New().String()
+	if m.ID == "" {
+		m.ID = uuid.New().String()
+	}
 	if m.KnowledgeReferences == nil {
 		m.KnowledgeReferences = make(References, 0)
 	}
@@ -574,6 +577,8 @@ const (
 
 // MessageSearchParams defines the parameters for searching chat history messages
 type MessageSearchParams struct {
+	// Cursor continues the bounded owned-history scan; it grants no read access.
+	Cursor string `json:"cursor,omitempty"`
 	// Query text for search
 	Query string `json:"query" binding:"required"`
 	// Search mode: "keyword", "vector", "hybrid" (default: "hybrid")
@@ -592,7 +597,8 @@ type MessageSearchParams struct {
 type MessageWithSession struct {
 	Message
 	// Title of the session this message belongs to
-	SessionTitle string `json:"session_title"`
+	SessionTitle              string         `json:"session_title"`
+	SessionTitleSourceLineage *SourceLineage `json:"-" gorm:"column:session_title_source_lineage"`
 }
 
 // MessageSearchResultItem represents a single search result item (internal, pre-merge)
@@ -609,6 +615,8 @@ type MessageSearchResultItem struct {
 // Messages sharing the same request_id are grouped together so that the user query
 // and assistant answer are displayed side by side.
 type MessageSearchGroupItem struct {
+	// MessageID identifies a standalone original when there is no request_id.
+	MessageID string `json:"message_id,omitempty"`
 	// The request_id that groups Q&A together
 	RequestID string `json:"request_id"`
 	// Session info
@@ -628,6 +636,10 @@ type MessageSearchGroupItem struct {
 
 // MessageSearchResult represents the search result for message search
 type MessageSearchResult struct {
+	// HasMore means owned keyword candidates remain unscanned, including when
+	// this page has no authorized matches. Total counts this page only.
+	NextCursor string `json:"next_cursor,omitempty"`
+	HasMore    bool   `json:"has_more"`
 	// List of merged Q&A pairs
 	Items []*MessageSearchGroupItem `json:"items"`
 	// Total number of results
@@ -649,3 +661,14 @@ type ChatHistoryKBStats struct {
 	// Whether there are any indexed messages (used by frontend to lock embedding model)
 	HasIndexedMessages bool `json:"has_indexed_messages"`
 }
+
+// MessageSearchCandidate contains only control metadata. Saved text is read
+// exclusively through its exact original-material plan and physical leases.
+type MessageSearchCandidate struct {
+	ID, SessionID, RequestID, Role, KnowledgeID string
+	CreatedAt                                   time.Time
+}
+
+// One history request may include the initial question and several consumed
+// steer inputs. Bound metadata discovery before acquiring their original bodies.
+const MessageSearchMaximumExchangeMessages = 200

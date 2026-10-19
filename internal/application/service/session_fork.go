@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Tencent/WeKnora/internal/application/repository"
 	apperrors "github.com/Tencent/WeKnora/internal/errors"
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/sandbox"
@@ -128,9 +129,10 @@ type forkMessageStore interface {
 
 // SessionForkService implements the fork decision chain.
 type SessionForkService struct {
-	sessions forkSessionStore
-	messages forkMessageStore
-	sandbox  SessionForkSandboxPort
+	lineageVerifier interfaces.MessageSourceLineageVerifier
+	sessions        forkSessionStore
+	messages        forkMessageStore
+	sandbox         SessionForkSandboxPort
 }
 
 // NewSessionForkService wires the service. A nil sandbox port makes every fork
@@ -184,7 +186,11 @@ func (s *SessionForkService) Fork(
 		return nil, ErrForkSessionNotFound
 	}
 
-	forkPoint, err := s.messages.GetMessage(ctx, sourceSessionID, messageID)
+	// Keep the actual original-material leases alive through snapshotting and
+	// the atomic destination write even if the requesting client disconnects.
+	workCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), forkSnapshotTimeout)
+	defer cancel()
+	forkPoint, history, material, err := s.beginForkMessageMaterial(workCtx, tenantID, sourceSessionID, messageID)
 	if err != nil {
 		if isForkNotFound(err) {
 			return nil, ErrForkMessageNotFound
@@ -193,6 +199,10 @@ func (s *SessionForkService) Fork(
 	}
 	if forkPoint == nil {
 		return nil, ErrForkMessageNotFound
+	}
+	if material != nil {
+		defer material.Close()
+		workCtx = repository.WithMessageForkMaterialStore(material.Context(), material.store, material.Recheck)
 	}
 	if forkPoint.Role != "user" && forkPoint.Role != "assistant" {
 		return nil, ErrForkMessageNotUser
@@ -216,18 +226,14 @@ func (s *SessionForkService) Fork(
 		}
 	}
 
-	history, err := s.messages.ListMessagesBySessionUpTo(
-		ctx, sourceSessionID, forkPoint.CreatedAt, forkPoint.ID,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("session fork: load history: %w", err)
+	var checkOriginal func() error
+	if material != nil {
+		checkOriginal = material.Recheck
+		if err := checkOriginal(); err != nil {
+			return nil, err
+		}
 	}
-	history = historyThroughForkPoint(history, forkPoint)
-
-	workCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), forkSnapshotTimeout)
-	defer cancel()
-
-	bootstrap, reason, createdSnapshot, prepErr := s.prepareBootstrap(workCtx, source, history)
+	bootstrap, reason, createdSnapshot, prepErr := s.prepareBootstrap(workCtx, source, history, checkOriginal)
 	if prepErr != nil {
 		return nil, prepErr
 	}
@@ -254,9 +260,42 @@ func (s *SessionForkService) Fork(
 		ForkedFromMessageID:   forkPoint.ID,
 		ForkBootstrap:         bootstrap,
 	}
+	if title != "" {
+		newSession.TitleSourceLineage, _ = types.NewCompleteSourceLineage() // Raw authorized human title.
+	} else {
+		newSession.TitleSourceLineage, _ = types.UnionSourceLineage(source.TitleSourceLineage)
+		if newSession.TitleSourceLineage.RequireComplete() != nil {
+			newSession.Title = ""
+		}
+	}
+	newSession.DescriptionSourceLineage, _ = types.UnionSourceLineage(source.DescriptionSourceLineage)
+	if newSession.DescriptionSourceLineage.RequireComplete() != nil {
+		newSession.Description = ""
+	}
+	if material != nil {
+		// Message receipts do not authenticate the source session's text or
+		// input-bar configuration. Only an explicit new human title is copied.
+		if title == "" {
+			newSession.Title = ""
+			newSession.TitleSourceLineage = types.UnknownSourceLineage()
+		}
+		newSession.Description = ""
+		newSession.DescriptionSourceLineage = types.UnknownSourceLineage()
+		newSession.LastRequestState = nil
+		// Sandbox pins and bootstrap remain operational system state; this
+		// message transfer does not mint a config/template body receipt.
+	}
 
 	copied := copyMessagesInto(newSession.ID, history)
-	if err := s.sessions.CreateForked(workCtx, newSession, copied); err != nil {
+	if material != nil {
+		if err = checkOriginal(); err == nil {
+			err = s.sessions.(forkMaterialSessionStore).CreateForkedFromMaterial(workCtx, newSession, copied, material.snapshot)
+		}
+	} else {
+		// Only the explicit algorithm fixture port can reach this branch.
+		err = s.sessions.CreateForked(workCtx, newSession, copied)
+	}
+	if err != nil {
 		if createdSnapshot {
 			s.abandonCreatedSnapshot(workCtx, source.ID, bootstrap.SnapshotID)
 		}
@@ -264,6 +303,11 @@ func (s *SessionForkService) Fork(
 	}
 	if createdSnapshot {
 		s.clearSnapshotLease(workCtx, bootstrap.SnapshotID)
+	}
+	if material != nil {
+		if err := checkOriginal(); err != nil {
+			return nil, err
+		}
 	}
 
 	logger.Infof(ctx,
@@ -284,7 +328,7 @@ func (s *SessionForkService) Fork(
 // forking at the very first user message has no prior output to carry, so a
 // brand new sandbox is the correct result rather than a degradation.
 func (s *SessionForkService) prepareBootstrap(
-	ctx context.Context, source *types.Session, history []*types.Message,
+	ctx context.Context, source *types.Session, history []*types.Message, checkOriginal func() error,
 ) (*types.ForkBootstrap, ForkDegradeReason, bool, error) {
 	checkpoint := latestCheckpoint(history)
 	if checkpoint == nil {
@@ -323,6 +367,11 @@ func (s *SessionForkService) prepareBootstrap(
 	}
 	if busy {
 		return nil, "", false, ErrForkSourceBusy
+	}
+	if checkOriginal != nil {
+		if err := checkOriginal(); err != nil {
+			return nil, "", false, err
+		}
 	}
 
 	snapshotID, err := s.sandbox.CreateForkSnapshot(
@@ -491,18 +540,24 @@ func historyThroughForkPoint(listed []*types.Message, forkPoint *types.Message) 
 // per original value so a user/assistant pair stays paired inside the fork
 // without colliding with the parent in search partner lookups.
 //
-// Copies deliberately keep their Artifacts and Attachments. CreateForked
-// writes the copied artifact rows (same storage URLs) under the new message
-// IDs, so the forked session's 产物 tab can list and download the same files. Attachment storage handles live in
-// temporary_documents (still scoped to the parent session) and are resolved
-// by ID at preview and staging time when the copied messages reference them.
+// Covered attachments arrive from the typed original capture. Artifact rows
+// have no receipt in that capture and are never transferred by this producer.
 func copyMessagesInto(newSessionID string, history []*types.Message) []*types.Message {
 	copies := make([]*types.Message, 0, len(history))
 	requestIDs := make(map[string]string, len(history))
 	for _, src := range history {
 		clone := *src
+		if src.SourceLineage != nil {
+			clone.SourceLineage, _ = types.UnionSourceLineage(src.SourceLineage)
+		}
+		if src.ContextCheckpoint != nil {
+			checkpoint := *src.ContextCheckpoint
+			checkpoint.SourceLineage, _ = types.UnionSourceLineage(src.ContextCheckpoint.SourceLineage)
+			clone.ContextCheckpoint = &checkpoint
+		}
 		clone.ID = uuid.New().String()
 		clone.SessionID = newSessionID
+		clone.Artifacts = nil
 		// The parent already indexed these into the chat-history knowledge
 		// base. Clearing the link stops the copy from being re-indexed, which
 		// would both duplicate retrieval hits and burn embedding quota.

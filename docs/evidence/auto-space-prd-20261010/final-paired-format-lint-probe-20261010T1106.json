@@ -1,0 +1,9 @@
+{
+  "checked_count": 100,
+  "gofmt_exit": 0,
+  "initial_unformatted_count": 0,
+  "final_gofmt_list": [],
+  "lint_probe_exit": 127,
+  "lint_available": false,
+  "lint_path": "unavailable"
+}

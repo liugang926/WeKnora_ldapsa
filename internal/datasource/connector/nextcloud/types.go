@@ -12,9 +12,8 @@ import (
 	"strings"
 	"time"
 
-	apperrors "github.com/Tencent/WeKnora/internal/errors"
-
 	"github.com/Tencent/WeKnora/internal/datasource"
+	apperrors "github.com/Tencent/WeKnora/internal/errors"
 	"github.com/Tencent/WeKnora/internal/types"
 )
 
@@ -69,8 +68,8 @@ func parseConfig(ds *types.DataSourceConfig) (config, error) {
 		decoded, err := url.PathUnescape(part)
 		if err != nil || decoded == "." || decoded == ".." || strings.ContainsAny(decoded, "/\\\r\n") {
 			return config{}, apperrors.NewProtocolError(fmt.Errorf("%w: unsafe base_url path",
-				datasource.ErrInvalidConfig), fmt.Sprintf("%s: unsafe base_url path",
-				apperrors.PublicMessage(datasource.ErrInvalidConfig)))
+				datasource.ErrInvalidConfig), fmt.Sprintf("%s: unsafe base_url path", apperrors.PublicMessage(
+				datasource.ErrInvalidConfig)))
 		}
 	}
 	if strings.Contains(parsed.Path, "//") {
@@ -217,15 +216,16 @@ type bindingsResponse struct {
 }
 
 type manifestItem struct {
-	FileID   int64  `json:"file_id"`
-	ETag     string `json:"etag"`
-	Name     string `json:"name"`
-	Path     string `json:"path"`
-	MimeType string `json:"mime_type"`
-	Size     int64  `json:"size"`
-	MTime    int64  `json:"mtime"`
-	URL      string `json:"url"`
-	HumanURL string `json:"human_url"`
+	ContentRevision string `json:"source_content_revision"`
+	FileID          int64  `json:"file_id"`
+	ETag            string `json:"etag"`
+	Name            string `json:"name"`
+	Path            string `json:"path"`
+	MimeType        string `json:"mime_type"`
+	Size            int64  `json:"size"`
+	MTime           int64  `json:"mtime"`
+	URL             string `json:"url"`
+	HumanURL        string `json:"human_url"`
 }
 
 type manifestPage struct {
@@ -251,6 +251,9 @@ type changesPage struct {
 }
 
 func (i manifestItem) validate() error {
+	if _, err := types.NormalizeNextcloudContentRevision(i.ContentRevision); err != nil {
+		return err
+	}
 	if i.FileID <= 0 || strings.TrimSpace(i.ETag) == "" || i.Name == "" ||
 		i.Name == "." || i.Name == ".." || strings.ContainsAny(i.Name, "/\\\r\n") ||
 		i.Size < 0 || i.MTime < 0 {
@@ -262,16 +265,17 @@ func (i manifestItem) validate() error {
 // fileState compares both the version token and the user-visible file fields.
 // Nextcloud ETags are opaque change tokens, and a rename need not change one.
 type fileState struct {
-	ETag     string `json:"etag"`
-	Name     string `json:"name"`
-	Path     string `json:"path"`
-	MimeType string `json:"mime_type"`
-	Size     int64  `json:"size"`
-	MTime    int64  `json:"mtime"`
+	ContentRevision string `json:"source_content_revision,omitempty"`
+	ETag            string `json:"etag"`
+	Name            string `json:"name"`
+	Path            string `json:"path"`
+	MimeType        string `json:"mime_type"`
+	Size            int64  `json:"size"`
+	MTime           int64  `json:"mtime"`
 }
 
 func (i manifestItem) state() fileState {
-	return fileState{ETag: i.ETag, Name: i.Name, Path: i.Path, MimeType: i.MimeType, Size: i.Size, MTime: i.MTime}
+	return fileState{ContentRevision: i.ContentRevision, ETag: i.ETag, Name: i.Name, Path: i.Path, MimeType: i.MimeType, Size: i.Size, MTime: i.MTime}
 }
 
 type syncState struct {

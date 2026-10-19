@@ -1,0 +1,4 @@
+# github.com/Tencent/WeKnora/internal/application/repository [github.com/Tencent/WeKnora/internal/application/repository.test]
+internal/application/repository/original_body_protocol_test.go:306:4: declared and not used: ctx
+FAIL	github.com/Tencent/WeKnora/internal/application/repository [build failed]
+FAIL

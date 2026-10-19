@@ -23,25 +23,18 @@ type nextcloudMetadataKnowledgeService struct {
 	listed bool
 }
 
-func (s *nextcloudMetadataKnowledgeService) ListKnowledgeByKnowledgeBaseID(
-	context.Context,
-	string,
-) ([]*types.Knowledge, error) {
+func (s *nextcloudMetadataKnowledgeService) ListKnowledgeByKnowledgeBaseID(context.Context, string) ([]*types.Knowledge, error) {
 	s.listed = true
 	return []*types.Knowledge{{Title: "private-title", Description: "private-summary", EnableStatus: "enabled"}}, nil
 }
 
 func TestNextcloudKnowledgeBaseProfileAndFallbackCannotAggregateFiles(t *testing.T) {
-	kb := &types.KnowledgeBase{
-		ID: "nextcloud-kb", Type: types.KnowledgeBaseTypeDocument,
-		EverHadNextcloudSource: true,
-	}
+	kb := &types.KnowledgeBase{ID: "nextcloud-kb", Type: types.KnowledgeBaseTypeDocument,
+		EverHadNextcloudSource: true}
 	require.False(t, knowledgeBaseProfileEligible(kb))
 	knowledge := &nextcloudMetadataKnowledgeService{}
-	session := &sessionService{
-		knowledgeBaseService: &nextcloudMetadataKBService{kb: kb},
-		knowledgeService:     knowledge,
-	}
+	session := &sessionService{knowledgeBaseService: &nextcloudMetadataKBService{kb: kb},
+		knowledgeService: knowledge}
 	listing := session.buildKBDocumentListing(context.Background(),
 		&types.ChatManage{PipelineRequest: types.PipelineRequest{KnowledgeBaseIDs: []string{kb.ID}}})
 	require.Empty(t, listing)

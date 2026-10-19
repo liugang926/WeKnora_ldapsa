@@ -29,6 +29,9 @@ func (r *knowledgeBaseRepository) CreateKnowledgeBase(ctx context.Context, kb *t
 
 // GetKnowledgeBaseByID gets a knowledge base by id (no tenant scope; caller must enforce isolation where needed)
 func (r *knowledgeBaseRepository) GetKnowledgeBaseByID(ctx context.Context, id string) (*types.KnowledgeBase, error) {
+	if current, handled, err := scopedWorkerConfigurationProjection(ctx, id, 0); handled {
+		return current, err
+	}
 	var kb types.KnowledgeBase
 	if err := r.db.WithContext(ctx).Where("id = ?", id).First(&kb).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -41,6 +44,9 @@ func (r *knowledgeBaseRepository) GetKnowledgeBaseByID(ctx context.Context, id s
 
 // GetKnowledgeBaseByIDAndTenant gets a knowledge base by id only if it belongs to the given tenant (enforces tenant isolation)
 func (r *knowledgeBaseRepository) GetKnowledgeBaseByIDAndTenant(ctx context.Context, id string, tenantID uint64) (*types.KnowledgeBase, error) {
+	if current, handled, err := scopedWorkerConfigurationProjection(ctx, id, tenantID); handled {
+		return current, err
+	}
 	var kb types.KnowledgeBase
 	if err := r.db.WithContext(ctx).Where("id = ? AND tenant_id = ?", id, tenantID).First(&kb).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -53,6 +59,20 @@ func (r *knowledgeBaseRepository) GetKnowledgeBaseByIDAndTenant(ctx context.Cont
 
 // GetKnowledgeBaseByIDs gets knowledge bases by multiple ids
 func (r *knowledgeBaseRepository) GetKnowledgeBaseByIDs(ctx context.Context, ids []string) ([]*types.KnowledgeBase, error) {
+	if ctx != nil && ctx.Value(scopedOnboardingConfigurationReadKey{}) != nil {
+		current := make([]*types.KnowledgeBase, 0, len(ids))
+		for _, id := range ids {
+			row, handled, err := scopedWorkerConfigurationProjection(ctx, id, 0)
+			if err != nil {
+				return nil, err
+			}
+			if !handled {
+				return nil, types.ErrSourceLineageUnknown
+			}
+			current = append(current, row)
+		}
+		return current, nil
+	}
 	if len(ids) == 0 {
 		return []*types.KnowledgeBase{}, nil
 	}
@@ -207,7 +227,18 @@ func (r *knowledgeBaseRepository) UpdateKnowledgeBaseGeneratedProfile(
 
 // DeleteKnowledgeBase deletes a knowledge base
 func (r *knowledgeBaseRepository) DeleteKnowledgeBase(ctx context.Context, id string) error {
-	return r.db.WithContext(ctx).Where("id = ?", id).Delete(&types.KnowledgeBase{}).Error
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var target types.KnowledgeBase
+		if err := tx.Unscoped().Where("id=?", id).Take(&target).Error; err != nil {
+			return err
+		}
+		if !target.DeletedAt.Valid {
+			if err := tx.Where("id = ?", id).Delete(&types.KnowledgeBase{}).Error; err != nil {
+				return err
+			}
+		}
+		return closeDeletedNextcloudTargetsInTx(tx, target.TenantID, target.ID)
+	})
 }
 
 // CountByVectorStoreID counts active knowledge bases that are bound to the

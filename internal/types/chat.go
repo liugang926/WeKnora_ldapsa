@@ -200,7 +200,8 @@ type FunctionCall struct {
 
 // ChatResponse chat response
 type ChatResponse struct {
-	Content string `json:"content"`
+	SourceLineage *SourceLineage `json:"-"`
+	Content       string         `json:"content"`
 	// ReasoningContent 是支持思考链的模型（DeepSeek thinking、小米 MiMo、vLLM reasoning 等）
 	// 在本轮输出的推理内容。需要在后续多轮请求中原样回传给那些严格校验的供应商。
 	ReasoningContent string `json:"reasoning_content,omitempty"`

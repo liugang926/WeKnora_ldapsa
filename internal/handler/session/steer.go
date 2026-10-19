@@ -71,10 +71,14 @@ type steerSink struct {
 	messageService   interfaces.MessageService
 	streamManager    interfaces.StreamManager
 
-	mu                sync.Mutex
-	lastUserMessageID string
-	drainedOffset     int
-	injectedIDs       map[string]struct{}
+	mu                 sync.Mutex
+	lastUserMessageID  string
+	drainedOffset      int
+	injectedIDs        map[string]struct{}
+	originalInputs     map[string]heldSteerMaterial
+	originalChecks     []func() error
+	originalCloses     []func()
+	originalPollCloses []func()
 }
 
 func newSteerSink(
@@ -84,7 +88,7 @@ func newSteerSink(
 	messageService interfaces.MessageService,
 	streamManager interfaces.StreamManager,
 ) *steerSink {
-	return &steerSink{
+	sink := &steerSink{
 		ctx:              ctx,
 		sessionID:        sessionID,
 		requestID:        requestID,
@@ -93,6 +97,8 @@ func newSteerSink(
 		streamManager:    streamManager,
 		injectedIDs:      make(map[string]struct{}),
 	}
+	context.AfterFunc(ctx, sink.closeOriginalSteerInputs)
+	return sink
 }
 
 // PollSteer drains the steer sub-list and returns plain maps so the shape
@@ -105,6 +111,9 @@ func (s *steerSink) PollSteer(
 	// skipped event is visible on the next drain. Consumed injects are
 	// filtered by injectedIDs rather than offset.
 	_ = lastOffset
+	if events, total, handled, err := s.pollActualSteer(ctx, sessionID, messageID); handled {
+		return events, total, err
+	}
 	events, total, err := s.streamManager.GetSteerEvents(ctx, sessionID, messageID, 0)
 	if err != nil {
 		return nil, lastOffset, err
@@ -213,6 +222,16 @@ func (s *steerSink) PersistSteerMessage(
 	mentionedItems types.MentionedItems,
 	channel string,
 ) string {
+	if _, algorithm, err := actualSteerService(s.messageService); !algorithm {
+		if err != nil {
+			return ""
+		}
+		id, _, _, _, err := s.PersistSteerMaterial(ctx, sessionID, messageID, steerID, content, mentionedItems, channel)
+		if err != nil {
+			return ""
+		}
+		return id
+	}
 	if s.messageService == nil {
 		s.unmarkInjected(steerID)
 		return ""
@@ -472,7 +491,7 @@ func (h *Handler) SteerMessage(c *gin.Context) {
 		_ = c.Error(errors.NewBadRequestError(err.Error()))
 		return
 	}
-	query := strings.TrimSpace(req.Query)
+	query := types.SteerCanonicalQuery(req.Query)
 	if query == "" {
 		_ = c.Error(errors.NewBadRequestError("query must not be empty"))
 		return
@@ -497,6 +516,9 @@ func (h *Handler) SteerMessage(c *gin.Context) {
 
 	assistantID, ok := h.resolveLiveAgentRun(ctx, c, sessionID)
 	if !ok {
+		return
+	}
+	if h.tryActualSteerEnqueue(c, ctx, sessionID, assistantID, &req, query, delivery) {
 		return
 	}
 	if req.SteerID != "" && req.ExpectedAssistantMessageID != "" {
@@ -630,6 +652,9 @@ func (h *Handler) PromoteSteerMessage(c *gin.Context) {
 	if !ok {
 		return
 	}
+	if h.tryActualSteerControl(c, ctx, sessionID, assistantID, steerID, types.SteerControlPromote) {
+		return
+	}
 	if assistantID == "" {
 		c.JSON(200, gin.H{"success": true, "status": "new_run"})
 		return
@@ -711,6 +736,9 @@ func (h *Handler) ListSteerMessages(c *gin.Context) {
 	if !ok {
 		return
 	}
+	if h.tryActualSteerList(c, ctx, sessionID, assistantID) {
+		return
+	}
 	if assistantID == "" {
 		c.JSON(200, gin.H{"success": true, "items": []map[string]interface{}{}})
 		return
@@ -763,6 +791,9 @@ func (h *Handler) DeleteSteerMessage(c *gin.Context) {
 
 	assistantID, ok := h.resolveLiveAgentRun(ctx, c, sessionID)
 	if !ok {
+		return
+	}
+	if h.tryActualSteerControl(c, ctx, sessionID, assistantID, steerID, types.SteerControlDelete) {
 		return
 	}
 	if assistantID == "" {
@@ -820,6 +851,12 @@ func (h *Handler) discardSteerBacklog(
 	sessionID, assistantMessageID string,
 	injected map[string]struct{},
 ) {
+	if handled, err := h.discardActualSteer(ctx, sessionID, assistantMessageID); handled {
+		if err != nil {
+			logger.Warnf(ctx, "actual steer discard denied: %v", err)
+		}
+		return
+	}
 	all, _, err := h.streamManager.GetSteerEvents(ctx, sessionID, assistantMessageID, 0)
 	if err != nil {
 		logger.Warnf(ctx, "steer backlog read failed for session %s: %v", sessionID, err)
@@ -873,6 +910,19 @@ func (h *Handler) kickNextRunFromSteerBacklog(
 				logger.Errorf(ctx, "steer follow-up run panicked: %v", r)
 			}
 		}()
+		if prevStreamCtx.producerDone != nil {
+			<-prevStreamCtx.producerDone
+		}
+		if _, algorithm, err := actualSteerService(h.messageService); !algorithm {
+			previous, readErr := h.messageService.GetMessage(followUp.ctx, prevReqCtx.sessionID, prevStreamCtx.assistantMessage.ID)
+			if err != nil || readErr != nil || previous == nil || !previous.IsCompleted {
+				if followUp.steerInputClose != nil {
+					followUp.steerInputClose()
+				}
+				_ = h.streamManager.ClearLiveRun(followUp.ctx, followUp.sessionID, followUp.assistantMessage.ID)
+				return
+			}
+		}
 		h.executeQA(followUp, qaModeAgent, false)
 	}()
 	return true
@@ -886,6 +936,9 @@ func (h *Handler) claimNextSteerFollowUp(
 	prevReqCtx *qaRequestContext,
 	prevStreamCtx *sseStreamContext,
 ) (*qaRequestContext, bool) {
+	if follow, ok, handled := h.claimActualSteerFollowUp(ctx, prevReqCtx, prevStreamCtx); handled {
+		return follow, ok
+	}
 	prevMessageID := prevStreamCtx.assistantMessage.ID
 
 	all, _, err := h.streamManager.GetSteerEvents(ctx, prevReqCtx.sessionID, prevMessageID, 0)

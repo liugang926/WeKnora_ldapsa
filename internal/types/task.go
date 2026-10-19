@@ -280,7 +280,8 @@ type MemoryExtractPayload struct {
 
 // ExtractChunkPayload represents the extract chunk task payload
 type ExtractChunkPayload struct {
-	Initiator TaskInitiator `json:"initiator,omitempty"`
+	Initiator     TaskInitiator             `json:"initiator,omitempty"`
+	OriginalInput *KnowledgeBuildInputProof `json:"original_input_proof,omitempty"`
 	TracingContext
 	TenantID uint64 `json:"tenant_id"`
 	ChunkID  string `json:"chunk_id"`
@@ -300,6 +301,8 @@ type ExtractChunkPayload struct {
 // DocumentProcessPayload represents the document process task payload
 type DocumentProcessPayload struct {
 	Initiator TaskInitiator `json:"initiator,omitempty"`
+	// OriginalInput is private job state emitted by trusted producer code.
+	OriginalInput *KnowledgeBuildInputProof `json:"_original_input,omitempty"`
 	TracingContext
 	RequestId                string   `json:"request_id"`
 	TenantID                 uint64   `json:"tenant_id"`
@@ -326,6 +329,8 @@ type DocumentProcessPayload struct {
 
 // FAQImportPayload represents the FAQ import task payload (including dry run mode)
 type FAQImportPayload struct {
+	OriginalFAQInputID string             `json:"_original_faq_input_id,omitempty"`
+	OriginalFAQInput   *FAQInputOperation `json:"_original_faq_input,omitempty"`
 	TracingContext
 	TenantID    uint64            `json:"tenant_id"`
 	TaskID      string            `json:"task_id"`
@@ -343,7 +348,10 @@ type FAQImportPayload struct {
 
 // QuestionGenerationPayload represents the question generation task payload
 type QuestionGenerationPayload struct {
-	Initiator TaskInitiator `json:"initiator,omitempty"`
+	Initiator     TaskInitiator                `json:"initiator,omitempty"`
+	ProducerInput *KnowledgeProducerInputProof `json:"_producer_input,omitempty"`
+	// OriginalInput is private job state emitted by trusted producer code.
+	OriginalInput *KnowledgeBuildInputProof `json:"_original_input,omitempty"`
 	TracingContext
 	TenantID        uint64 `json:"tenant_id"`
 	KnowledgeBaseID string `json:"knowledge_base_id"`
@@ -388,7 +396,10 @@ type QuestionGenerationPayload struct {
 
 // SummaryGenerationPayload represents the summary generation task payload
 type SummaryGenerationPayload struct {
-	Initiator TaskInitiator `json:"initiator,omitempty"`
+	Initiator     TaskInitiator                `json:"initiator,omitempty"`
+	ProducerInput *KnowledgeProducerInputProof `json:"_producer_input,omitempty"`
+	// OriginalInput is private job state emitted by trusted producer code.
+	OriginalInput *KnowledgeBuildInputProof `json:"_original_input,omitempty"`
 	TracingContext
 	TenantID        uint64 `json:"tenant_id"`
 	KnowledgeBaseID string `json:"knowledge_base_id"`
@@ -497,6 +508,8 @@ type KnowledgeMoveProgress struct {
 // Used for both create (publish) and update operations.
 type ManualProcessPayload struct {
 	Initiator TaskInitiator `json:"initiator,omitempty"`
+	// OriginalInput is private job state emitted by trusted producer code.
+	OriginalInput *KnowledgeBuildInputProof `json:"_original_input,omitempty"`
 	TracingContext
 	RequestId       string `json:"request_id"`
 	TenantID        uint64 `json:"tenant_id"`
@@ -510,7 +523,11 @@ type ManualProcessPayload struct {
 
 // ImageMultimodalPayload represents the image multimodal processing task payload.
 type ImageMultimodalPayload struct {
-	Initiator TaskInitiator `json:"initiator,omitempty"`
+	Initiator     TaskInitiator                `json:"initiator,omitempty"`
+	ProducerInput *KnowledgeProducerInputProof `json:"_producer_input,omitempty"`
+	ImageDigest   string                       `json:"_image_digest,omitempty"`
+	// OriginalInput is private job state emitted by trusted producer code.
+	OriginalInput *KnowledgeBuildInputProof `json:"_original_input,omitempty"`
 	TracingContext
 	TenantID        uint64 `json:"tenant_id"`
 	KnowledgeID     string `json:"knowledge_id"`
@@ -535,6 +552,8 @@ type ImageMultimodalPayload struct {
 // KnowledgePostProcessPayload represents the knowledge post process task payload.
 type KnowledgePostProcessPayload struct {
 	Initiator TaskInitiator `json:"initiator,omitempty"`
+	// OriginalInput is private job state emitted by trusted producer code.
+	OriginalInput *KnowledgeBuildInputProof `json:"_original_input,omitempty"`
 	TracingContext
 	TenantID        uint64 `json:"tenant_id"`
 	KnowledgeID     string `json:"knowledge_id"`
@@ -546,13 +565,18 @@ type KnowledgePostProcessPayload struct {
 // KnowledgeAutoTagPayload identifies a document whose parsed content should be
 // classified against the latest set of existing tags in its knowledge base.
 type KnowledgeAutoTagPayload struct {
-	Initiator TaskInitiator `json:"initiator,omitempty"`
+	Initiator TaskInitiator                   `json:"initiator,omitempty"`
+	TaskInput *KnowledgeAutoTagTaskInputProof `json:"task_input,omitempty"`
+	// CompletionInput names the immutable candidate/model snapshot sealed in
+	// the same SQL transaction as completion and the durable queue intent.
+	CompletionInput string `json:"completion_input,omitempty"`
 	TracingContext
-	TenantID        uint64 `json:"tenant_id"`
-	KnowledgeID     string `json:"knowledge_id"`
-	KnowledgeBaseID string `json:"knowledge_base_id"`
-	Language        string `json:"language,omitempty"`
-	Attempt         int    `json:"attempt,omitempty"`
+	OriginalInput   *KnowledgeBuildInputProof `json:"_original_input,omitempty"`
+	TenantID        uint64                    `json:"tenant_id"`
+	KnowledgeID     string                    `json:"knowledge_id"`
+	KnowledgeBaseID string                    `json:"knowledge_base_id"`
+	Language        string                    `json:"language,omitempty"`
+	Attempt         int                       `json:"attempt,omitempty"`
 }
 
 // KnowledgeBaseProfilePayload asks the worker to rebuild the generated

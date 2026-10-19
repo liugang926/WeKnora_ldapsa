@@ -24,6 +24,15 @@ const (
 type StageProgress struct {
 	toolCallID string
 	toolName   string
+	err        error
+}
+
+// Err reports producer publication failure to the ordinary pipeline caller.
+func (p *StageProgress) Err() error {
+	if p == nil {
+		return nil
+	}
+	return p.err
 }
 
 // ShouldEmitQueryUnderstandProgress reports whether the query-understand stage
@@ -92,7 +101,7 @@ func BeginRetrievalProgress(ctx context.Context, chatManage *types.ChatManage) *
 		args["query"] = chatManage.Query
 	}
 
-	_ = chatManage.EventBus.Emit(ctx, types.Event{
+	emitErr := emitSourceLineageEvent(ctx, chatManage.EventBus, types.Event{
 		Type:      types.EventType(event.EventAgentToolCall),
 		SessionID: chatManage.SessionID,
 		Data: event.AgentToolCallData{
@@ -102,7 +111,7 @@ func BeginRetrievalProgress(ctx context.Context, chatManage *types.ChatManage) *
 		},
 	})
 
-	return &StageProgress{toolCallID: toolCallID, toolName: retrievalProgressTool}
+	return &StageProgress{toolCallID: toolCallID, toolName: retrievalProgressTool, err: emitErr}
 }
 
 // BeginQueryUnderstandProgress emits a pending query_understand tool_call.
@@ -120,7 +129,7 @@ func BeginQueryUnderstandProgress(ctx context.Context, chatManage *types.ChatMan
 		args["has_images"] = true
 	}
 
-	_ = chatManage.EventBus.Emit(ctx, types.Event{
+	emitErr := emitSourceLineageEvent(ctx, chatManage.EventBus, types.Event{
 		Type:      types.EventType(event.EventAgentToolCall),
 		SessionID: chatManage.SessionID,
 		Data: event.AgentToolCallData{
@@ -130,7 +139,7 @@ func BeginQueryUnderstandProgress(ctx context.Context, chatManage *types.ChatMan
 		},
 	})
 
-	return &StageProgress{toolCallID: toolCallID, toolName: queryUnderstandProgressTool}
+	return &StageProgress{toolCallID: toolCallID, toolName: queryUnderstandProgressTool, err: emitErr}
 }
 
 // EndQueryUnderstandProgress emits the matching tool_result for query understanding.
@@ -140,9 +149,9 @@ func EndQueryUnderstandProgress(
 	progress *StageProgress,
 	start time.Time,
 	stageErr *PluginError,
-) {
+) error {
 	if progress == nil || chatManage == nil || chatManage.EventBus == nil {
-		return
+		return nil
 	}
 
 	success := stageErr == nil
@@ -156,7 +165,7 @@ func EndQueryUnderstandProgress(
 		errMsg = stageErr.Err.Error()
 	}
 
-	_ = chatManage.EventBus.Emit(ctx, types.Event{
+	return emitSourceLineageEvent(ctx, chatManage.EventBus, types.Event{
 		Type:      types.EventType(event.EventAgentToolResult),
 		SessionID: chatManage.SessionID,
 		Data: event.AgentToolResultData{
@@ -177,9 +186,9 @@ func EndRetrievalProgress(
 	progress *StageProgress,
 	start time.Time,
 	stageErr *PluginError,
-) {
+) error {
 	if progress == nil || chatManage == nil || chatManage.EventBus == nil {
-		return
+		return nil
 	}
 
 	count, docCount, webCount := retrievalResultBreakdown(chatManage)
@@ -227,7 +236,7 @@ func EndRetrievalProgress(
 		errMsg = stageErr.Err.Error()
 	}
 
-	_ = chatManage.EventBus.Emit(ctx, types.Event{
+	return emitSourceLineageEvent(ctx, chatManage.EventBus, types.Event{
 		Type:      types.EventType(event.EventAgentToolResult),
 		SessionID: chatManage.SessionID,
 		Data: event.AgentToolResultData{

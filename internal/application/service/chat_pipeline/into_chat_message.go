@@ -37,6 +37,12 @@ func (p *PluginIntoChatMessage) ActivationEvents() []types.EventType {
 func (p *PluginIntoChatMessage) OnEvent(ctx context.Context,
 	eventType types.EventType, chatManage *types.ChatManage, next func() *PluginError,
 ) *PluginError {
+	if err := AccountResults(ctx, chatManage.MergeResult); err != nil {
+		return sourceLineagePluginError(err)
+	}
+	if err := CheckSourceLineageInputs(ctx, chatManage); err != nil {
+		return sourceLineagePluginError(err)
+	}
 	// Merge can reintroduce cached references from earlier turns. Validate the
 	// final list against the current knowledge row and source authorization
 	// immediately before it is rendered into the model prompt.
@@ -271,6 +277,10 @@ func checkCurrentKnowledgePublication(
 // to the user message so that subsequent conversation turns can see the full
 // retrieval context in history.
 func (p *PluginIntoChatMessage) persistRenderedContent(ctx context.Context, chatManage *types.ChatManage) {
+	// This derived user snapshot has no atomic lineage contract yet.
+	if types.RAGSourceLineageFromContext(ctx) != nil {
+		return
+	}
 	if chatManage.UserMessageID == "" || chatManage.UserContent == "" {
 		pipelineInfo(ctx, "IntoChatMessage", "persist_rendered_content_skip", map[string]interface{}{
 			"session_id":       chatManage.SessionID,

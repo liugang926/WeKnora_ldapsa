@@ -1,0 +1,85 @@
+# Nextcloud stage state V2 implementation
+
+This change implements file-stage state, graph task accounting, real graph persistence, durable state delivery and independent content-sync pause for the Nextcloud PRD. Migrations are PostgreSQL `000156`/`000158`/`000161` and SQLite `000075`/`000077`/`000080`; onboarding and root-migration migrations are supplied separately.
+
+## Current-version identity and graph persistence
+
+The source head includes source instance/file, raw ETag, `source_content_revision`, candidate knowledge, build attempt and processing configuration. The independent source revision changes even when a same-second, same-length Nextcloud write preserves its raw ETag. Content download, machine publication checks, human authorization, deduplication, lineage, build inputs and state sender all compare this revision. Missing legacy revisions mean zero; a zero client cannot read a current nonzero version.
+
+Graph plans freeze the sorted applicable chunk manifest before fan-out. Stable operation IDs identify `(tenant, knowledge, attempt, chunk, scoped_sql_v1)`. An empty actual extraction is `succeeded_empty`; no applicable input is `skipped`. Counter updates alone never prove graph success.
+
+`ScopedSQLGraphRepository` stores the actual graph body, nodes/edges and private original-input receipts in SQL. The final target insert checks the current candidate, attempt, processing config revision, open KB/exact content generation and exact unexpired, unreleased build lease ID. Its DB trigger enforces the same conditions. The graph record, exact resource inventory, task acknowledgement and status event are committed in the same transaction. Records cannot be mutated. Terminal task finalization is idempotent, so a duplicate task cannot decrement its parent's counter twice or call the model again after a durable graph ACK.
+
+Nextcloud graph writes cannot fall back to an unfenced Neo4j writer. Existing independent graph operations continue to use their configured backend. Required graph success participates in the actual publication gate; optional graph failure preserves independently valid document processing. Typed graph reads retain source receipts and pass the existing current-source/read-lease guards.
+
+Enqueue intent stores the exact original-input payload before calling the queue and uses a stable queue task ID. Transient enqueue failures retain the owned finalizing slot and are retried by the dispatcher. A post-process retry also resumes only the exact planned slots left unprepared by a crash before payload persistence, recapturing original inputs without incrementing counters. Retired generations/config changes cannot be queued. Unknown original input remains unverified.
+
+Signed, finalized same-physical-root migration proofs project the new path/epoch while retaining original immutable bytes and receipts. They do not allow child-file movement or changed source content. Old lease IDs are permanently revoked; successful persisted graph generations are reused only when their original content fence remains open.
+
+## Status protocol
+
+- Signed snapshot: `GET /api/v1/integrations/nextcloud/files/status/v2`, exact query `connection_id`, `file_id`, `source_etag`.
+- Push: `POST /index.php/apps/integration_weknora/api/v1/status` at the approved source origin.
+- V2 state signing key is raw `HMAC-SHA256(connection_secret, "weknora-nextcloud-state-key-v2")`.
+- Request canonical components are purpose, method, escaped actual path, exact query, raw body SHA-256, timestamp, nonce, connection, key, separated by newline. Purposes are `nextcloud-file-status-hmac-sha256-v2` and `weknora-state-push-hmac-sha256-v2`.
+- Response canonical components are `weknora-file-status-hmac-sha256-v2`, original request signature, raw response body SHA-256, connection, key, nonce.
+- Revisions are canonical decimal strings; timestamps/counts are JSON numbers. Epoch zero is valid. State bodies carry exact pairing/source/KB/data-source scope, independent phase times, graph frozen counters, publication, independent permission-sync timestamp, and withdrawal/GC evidence. No credentials, original path, graph body or model output is returned. `qa_available` is false.
+- Sender accepts only 2xx with exact `event_id`, `status:"accepted"`, `persisted:true`. Nonmatching, missing, redirect or error ACKs retain pending delivery with bounded backoff. A crash after receiver persistence retries the identical event/body.
+
+A signed snapshot rechecks the authoritative current head, refreshes its verification time and uses a new response event ID. A same-head/status snapshot cannot alter business state. A new head never inherits the preceding head's verification time. Published V2 requires proved parse/chunk, succeeded or explicitly skipped embedding, actual published index timestamp, nonzero attempt/config, and successful persisted graph when required. Historical completed rows without those spans remain unverified.
+
+Outbox events use latest-event supersession and prioritize business transitions over freshness heartbeat events. Sender batches source configuration checks, then performs a final current-head/key/config/candidate/content-revision check immediately before each HTTP request. Durable receiver ACKs are committed locally in batches with latest-head CAS. Compensation has a separate goroutine, durable least-verified pagination and a one-minute cadence; it cannot block the five-second sender timer. Sending uses bounded eight-way concurrency and repeated pages within a four-second normal tick budget.
+
+Content sync pause uses the dedicated `sync_enabled` column and rechecks the current source before content writes and cursor commits. It preserves the active pairing/source ACL lifecycle. Missing/current-source scope failures deny without panic. State reconciliation and permission revocation continue independently.
+
+## Metadata, recovery and collection
+
+Source KB list and direct metadata reads require a fresh signed current-human root authorization. Their response whitelist omits generated profiles, source-derived configuration text and backend inventory. File/chunk/processing counts are null with `source_statistics_state:"unverified"`; a root proof cannot certify complete current-file statistics.
+
+Manual move sources/targets, organization-shared KB lists and organization KB counts exclude source-managed KBs, using local current-source inventory and historical lineage markers. These ordinary routes have no current-file authorization proof; managed KBs remain accessible through the source-scoped entry. Inventory failures close discovery. The count path caches classification by KB and does not issue per-candidate source HTTP checks.
+
+Graph GC adds exact operation IDs to the existing immutable inventory. Actual deletion runs inside the existing KB/content/source/job/item/claim transaction with matching scope and a durable row deletion receipt. Current candidates, active read/build leases, open generations, missing inventory or unknown backend coverage stay protected. This change does not activate coverage or shorten the original-file recovery window.
+
+The independent recovery control gate denies ordinary human document/root reads, even for a normal Owner, until the final control CAS. A closed gate makes V2 publication unverified and fences older ready outbox events; genuinely proved phase results remain independent. New graph writes additionally require the exact immutable bounded maintenance-build lease permit (migration 160/79), matched to the reconciled scope/current plan and newer KB epoch by the actual SQL target trigger (161/80).
+
+Coordinated recovery already retires all source generations, revokes restored deleting claims, clears backend coverage, pauses sources and closes old workers in one transaction. New writers/queue intents/outbox sends observe these existing gates. Reconciliation cannot reopen an old generation or reauthorize unknown restored objects.
+
+## Validation and limits
+
+The tests exercise real SQLite graph provider commits with deterministic extraction-model responses, exact private receipt validation, duplicate task finalization, content/config/attempt/lease retirement fences, same-ETag new-content revision, root migration reuse, current-head outbox supersession, exact/duplicate ACK behavior and the shared PHP/Go golden HMAC fixture. A PostgreSQL concurrent-provider test pauses the actual target insert and proves retirement cannot pass that transaction.
+
+The 10,000-row workload uses declared discovered/pending metadata, actual HTTP/HMAC, sender SQL and an independent receiver SQLite inbox using synchronous FULL commits. It is a metadata throughput test, not 10,000 real Nextcloud Files/LDAP authorizations or 100GB document processing. See `nextcloud-state-throughput-10000.log` and the focused component logs for measured timings. Live two-system tests require explicit owned fixture environment variables and never use production credentials. Remote LLM/embedding capacity and the 100GB physical-original acceptance workload are separately reported by the coordinating agent.
+
+
+The evidence directory is `docs/evidence/auto-space-prd-20261010`. Individual command exits and exact bounded actor termination are recorded independently. A container's exit 0 does not establish test success.
+
+| Verification | Actual result and boundary |
+| --- | --- |
+| All-package compilation, including `cmd/server` | `final-tree-cached-compile.log`, exit 0. Final edited repository/middleware/handler/container/service packages subsequently compiled in the focused runs. Existing baseline assertion failures are documented separately; the full assertion suite is not reported as passing. |
+| Graph write/read fences and exact GC | Actual SQLite provider/target SQL, immutable receipt/resource inventory, generation/config/attempt/lease retirement, protected exact collection and crash-before-queue recovery passed. PostgreSQL concurrent insert versus retirement passed. |
+| Closed recovery and fresh maintenance rebuild | Actual ordinary Owner reads and older ready-state delivery deny while controls remain closed; raw graph target requires exact permit. Positive SQLite/PostgreSQL new-generation recovery, target migration and approved blank-template adoption passed. |
+| Source content revision and sync pause | Same-ETag/new-write revision rejects old inputs/read proof, sealed original artifacts bind their revision, and both introduced per-item stream guards passed. |
+| Metadata and missing-ledger permission boundary | Root authorization uses actual NC HTTP/LDAP with Alice allowed and Bob denied. Secondary move/shared/organization metadata tests, real missing-ledger auth fallback tests and lite/Redis DI passed. |
+| Two-system graph chain | Actual owned NC original bytes → pre-staged parse/chunk spans and one exact prebuilt plaintext chunk → controlled model and real protected SQL graph/resource/task receipts → signed actual NC inbox and identical duplicate ACK passed. Repeating with a rebuilt sender DB recovered the exact receiver's durable checkpoint and passed (1.29 s), without resetting the receiver or weakening ordering. |
+| Ten actual SQL graph-file heads | One exact prebuilt plaintext chunk and pre-staged parse/chunk spans per head; actual protected chunk writes, graph records, exact resource witnesses, durable task finalizers and published candidates passed; 890 ms processing interval, 11.23 files/s, per-file p95 103 ms. This is ten files. |
+| 10,000 metadata states with durable HTTP ACK | Completed in 3.984 s (2,509 events/s), and in a concurrent-I/O run in 8.380 s (1,193 events/s; receiver p95 7.616 s). This uses an independent SQLite FULL inbox and controlled metadata, and does not establish a universal production p95 guarantee. |
+| Automated two-system onboarding | The coordinator performs fresh prepare, single-actor readiness and immediate NC finish/explicit abort. The real latest run passed reserve/pair/event credentials/grants, stable-ID signed root rename, cross-tenant new-KB/source transfer, exact retry, immutable originals and zero tenant memberships (Go business run 6.51 s). Empty roots and synthetic WK actor/model resources are explicit boundaries. Earlier missing event-dispatch schema and unknown-operation 403 were identified and repaired; their failure logs remain visible. |
+| 10,000 actual graph-file heads | The first opt-in run hit its 18m30s inner timeout (Go exit 1). A subsequent native read-only SQL query confirmed 9,368 committed graph records, finalized task ACKs, exact resources, published candidates and published/persisted state heads; 9,369 heads had been created. P95 and exact model-call total were not emitted and remain unavailable. Cgroup memory peak was 1,817,161,728 bytes, with no OOM. The fixture omitted three existing production chunk indexes; these now reuse exact production init DDL. The existing partial source-candidate index is now selected by a semantically identical nonempty predicate, verified using actual SQLite EXPLAIN. The final independent run passed all 10,000 model calls, graph records, finalized persisted task ACKs, exact graph resources, published candidates and published/persisted state heads. Workload-loop time was 1,143.783 s (19 min 3.783 s), throughput 8.74 files/s, per-file p95 145 ms. Go package test time was 1,144.529 s and the host Go command took 1,175.708 s including compilation. Actual cgroup memory peak was 2,100,015,104 bytes with zero OOM/kill/max events. Parsing/chunking stages are pre-staged and embedding explicitly skipped. Live NC/LDAP/remote models and 100GB source transfer are separate acceptance workloads. |
+
+Resolved fixture failures remain in their original command logs: missing current protective migrations, absent processing-span unique constraint, a misnamed metadata context helper and the original manual onboarding timeout. Window receipts `processing-final-window-receipt.json`, `processing-component-window-receipt.json`, `processing-third-window-receipt.json` and `processing-fourth-short-window-receipt.json` distinguish each failure, successful focused rerun, skipped command and hard deadline. Public logs have sensitive SQL statements removed; the redaction receipt preserves their original and public hashes.
+
+## 来源内容日志保护
+
+Nextcloud 构建租约、受保护或未知来源输入证明及所有非空 RAG 账本上下文携带只控制日志的内部标记。LLM 调试日志不写这些输入，chat、embedding、rerank、VLM 与 ASR 的 Langfuse 包装器在受保护上下文直接调用原模型，避免输出正文和实体追踪；无标记的直接模型调用保留原有追踪。限制覆盖安装该上下文的普通 RAG 和 Agent 会话，即使最终没有 Nextcloud 来源，模型 generation 内容及其用量遥测也停写；本次没有实现只保留用量的脱敏 generation。九项测试中的普通调用是无标记模型调用，不能据此宣称普通 RAG 遥测不受影响。显式 detached 日志上下文保留该限制，清空 RAG 状态也不能清除已经建立的限制。该标记不授予读写资格，不改变来源证明、取消和租约校验。底层图谱提取器只打印数量与固定诊断，移除了实体名称、关系端点、模型原始错误与 fallback 正文。九项定向真实 HTTP/log 测试及来源构建上下文守卫、实际图谱成功和撤回回归均通过，实际退出码与日志记录见 `docs/evidence/auto-space-prd-20261010/extraction-log-privacy.json`。
+
+The final focused privacy, opaque 404 error-contract, protected graph/withdrawal and candidate-index query-plan tests passed with actual command exit 0; the owned two-system onboarding also passed. `processing-sixth-final-window-receipt.json` records these results, final source hash, hard actor terminal and the unavailable lint binary. The initial changed-scope formatting check passed with an empty list; its last 126-file probe hit the actor deadline and is explicitly not counted as a pass. The final independent scale actor completed the 126-file changed-scope formatting check with exit 0 and an empty list, and its frozen source hashes still matched after test completion.
+
+`processing-real-10000-full-window-receipt.json` and `final-real-graph-10000-full-20261010T1149.log` record the completed 10,000-head result, exact source hash, measured peak, command exit 0 and early exact actor removal. The actor ended at 20:10:17.464 CST with OOM false; it did not remain idle until its 20:19:51 hard deadline. The first 9,368-result timeout remains a failed run. Both runs retain original raw-log hashes, distinct from the published redacted-log hashes.
+
+## SDK 与调用层补充验证
+
+包装器的九项测试使用受控 inner model，只证明该包装器的日志边界；其 PASS 不覆盖 SDK 或上层普通日志。补充审查定位并修复了 SDK 的完整请求日志、raw dump、首 reasoning/content/tool 输出和 stream 原始错误，以及 RAG 公共 Info/Warn/Error、SSE 消费日志和原生 Ollama 错误日志。raw dumper 现在强制接收原 context，受保护或 nil context 在创建目录/文件之前返回 nil；四 SDK 调用都传入保留标记的派生 context。受保护公共流水线日志只保留固定级别诊断，任意 metadata fields 不格式化；请求、模型结果、原始业务错误与控制流程保持原行为。
+
+`sdk-content-privacy-window-receipt.json` 保存三项新父测试及既有流错误/取消回归的实际 exit0：四种协议、marker/RAG/ordinary、流式/非流式真实 HTTP，校验实际请求及解析结果、受保护日志无正文且没有 raw 目录、无标记调用有实际 dump 和日志。`caller-content-privacy-window-receipt.json` 保存四项新父测试及旧流式/转换回归的实际 exit0：原生 Ollama HTTP heartbeat/tags/chat500、真实 completion 插件错误实例保留、SSE 失败消费控制，以及三类公共日志输出。两轮均无 OOM、容器精确清理；最终 141 Go 文件格式检查实际 exit0 且为空，源码哈希与测试后匹配。测试不涉及生产模型或所有第三方 tracing sink。
+
+完整 10,000 图谱测试仍对应原冻结 126 文件 SHA `091ced5994247d974efd1619a26da43d1954e7e5cd882eb3549f96a8e00374cf`；这 126 文件在补修后字节完全一致。补充的 15 Go 文件仅修改 SDK/调用层日志及其测试，原图谱耗时、数量和源哈希不改写，也不把原矩阵的 PASS 借给补充路径。生产 GORM 已配置 `ParameterizedQueries: true` 是静态配置证据，不等于测试 Default logger 或所有数据库 tracing 的运行验收。

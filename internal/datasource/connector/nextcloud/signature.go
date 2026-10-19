@@ -19,10 +19,8 @@ import (
 
 const machineSignatureVersion = "weknora-hmac-sha256-v1"
 
-var (
-	machineKeyIDPattern    = regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`)
-	machineQueryKeyPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
-)
+var machineKeyIDPattern = regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`)
+var machineQueryKeyPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 
 func validMachineKeyID(id string) bool { return machineKeyIDPattern.MatchString(id) }
 

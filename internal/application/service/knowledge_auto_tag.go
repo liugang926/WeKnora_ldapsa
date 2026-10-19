@@ -3,17 +3,22 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/Tencent/WeKnora/internal/application/access"
+	"github.com/Tencent/WeKnora/internal/application/repository"
 	"github.com/Tencent/WeKnora/internal/common"
+	"github.com/Tencent/WeKnora/internal/datasource/connector/nextcloud"
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/models/chat"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	"github.com/hibiken/asynq"
+	"gorm.io/gorm"
 )
 
 const (
@@ -37,12 +42,62 @@ func normalizeAutoTagMaxTags(maxTags int) int {
 
 // KnowledgeAutoTagService classifies processed documents against existing knowledge-base tags.
 type KnowledgeAutoTagService struct {
-	knowledgeRepo interfaces.KnowledgeRepository
-	tagRepo       interfaces.KnowledgeTagRepository
-	kbService     interfaces.KnowledgeBaseService
-	chunkService  interfaces.ChunkService
-	modelService  interfaces.ModelService
-	spanTracker   SpanTracker
+	knowledgeRepo   interfaces.KnowledgeRepository
+	tagRepo         interfaces.KnowledgeTagRepository
+	kbService       interfaces.KnowledgeBaseService
+	chunkService    interfaces.ChunkService
+	modelService    interfaces.ModelService
+	spanTracker     SpanTracker
+	knowledgeInputs *repository.KnowledgeInputProvenanceStore
+	lineageChecker  knowledgeOutputLineageChecker
+}
+
+func ConfigureKnowledgeAutoTagInputProvenance(handler interfaces.TaskHandler, store *repository.KnowledgeInputProvenanceStore, guard *access.NextcloudSourceLineageGuard) {
+	if impl, ok := handler.(*KnowledgeAutoTagService); ok {
+		impl.knowledgeInputs = store
+		impl.lineageChecker = guard
+	}
+}
+
+func (s *KnowledgeAutoTagService) checkAutoTagInput(ctx context.Context, snapshot *types.KnowledgeAutoTagInputSnapshot) error {
+	if s.knowledgeInputs == nil || s.lineageChecker == nil || snapshot == nil || snapshot.Original == nil {
+		return types.ErrSourceLineageUnknown
+	}
+	if err := s.knowledgeInputs.RecheckKnowledgeAutoTagInputs(ctx, snapshot); err != nil {
+		return err
+	}
+	// The original document may be this exact worker's unpublished Nextcloud
+	// generation. Its private lease/admission verifier authorizes that input;
+	// candidate tag and retained relation origins still use public authority.
+	if err := s.knowledgeInputs.RecheckKnowledgeBuildInputs(ctx, snapshot.Original.Proof); err != nil {
+		return err
+	}
+	extra, err := types.NewCompleteSourceLineage()
+	if err != nil {
+		return err
+	}
+	for _, proof := range snapshot.TagProofs {
+		if proof == nil {
+			return types.ErrSourceLineageUnknown
+		}
+		extra, err = types.UnionSourceLineage(extra, proof.SourceLineage)
+		if err != nil {
+			return err
+		}
+	}
+	if snapshot.RelationProof != nil {
+		extra, err = types.UnionSourceLineage(extra, snapshot.RelationProof.SourceLineage)
+		if err != nil {
+			return err
+		}
+	}
+	scope := access.LineageReadScope{Targets: types.SearchTargets{&types.SearchTarget{Type: types.SearchTargetTypeKnowledgeBase, TenantID: snapshot.Original.Proof.TenantID, KnowledgeBaseID: snapshot.Original.Proof.KnowledgeBaseID}}}
+	if len(extra.Sources) > 0 || !repository.NextcloudBuildLeasePresent(ctx, snapshot.Original.Proof.TenantID, snapshot.Original.Proof.KnowledgeBaseID, snapshot.Original.Proof.KnowledgeID) {
+		if err := s.lineageChecker.Check(ctx, extra, scope); err != nil {
+			return err
+		}
+	}
+	return s.knowledgeInputs.RecheckKnowledgeAutoTagInputs(ctx, snapshot)
 }
 
 // NewKnowledgeAutoTagService creates the asynchronous automatic-tagging task handler.
@@ -109,12 +164,97 @@ type autoTagModelResponse struct {
 }
 
 // Handle processes one automatic-tagging task.
-func (s *KnowledgeAutoTagService) Handle(ctx context.Context, task *asynq.Task) error {
+func (s *KnowledgeAutoTagService) Handle(ctx context.Context, task *asynq.Task) (result error) {
 	var payload types.KnowledgeAutoTagPayload
 	if err := json.Unmarshal(task.Payload(), &payload); err != nil {
 		return fmt.Errorf("unmarshal knowledge auto tag payload: %w", err)
 	}
+	var closeConfiguration func()
+	var configurationErr error
+	ctx, closeConfiguration, configurationErr = beginNextcloudTaskConfigurationRead(ctx, s.knowledgeInputs)
+	if configurationErr != nil {
+		return configurationErr
+	}
+	defer closeConfiguration()
 	ctx = types.WithExecutionTenant(ctx, payload.TenantID)
+	var admitted *types.KnowledgeAutoTagInputSnapshot
+	if s.knowledgeInputs != nil {
+		if err := s.knowledgeInputs.VerifyKnowledgeAutoTagTaskInput(ctx, payload); err != nil {
+			return fmt.Errorf("automatic tag queue receipt: %w", err)
+		}
+		if payload.CompletionInput != "" {
+			claimedAt, err := s.knowledgeInputs.ClaimKnowledgeAutoTagCompletion(ctx, payload)
+			if err != nil {
+				return err
+			}
+			if claimedAt == nil {
+				return nil
+			}
+			ctx = repository.WithKnowledgeAutoTagCompletion(ctx, payload, *claimedAt)
+			defer func() {
+				rejected := errors.Is(result, repository.ErrKnowledgeInputChanged) || errors.Is(result, types.ErrSourceLineageUnknown) || errors.Is(result, access.ErrForbidden) || errors.Is(result, access.ErrNextcloudPublicationDenied) || errors.Is(result, asynq.SkipRetry) || errors.Is(result, gorm.ErrRecordNotFound) || errors.Is(result, nextcloud.ErrPublicationNotCurrent)
+				finishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+				defer cancel()
+				if err := s.knowledgeInputs.FinishKnowledgeAutoTagCompletion(finishCtx, payload, *claimedAt, result == nil, rejected); err != nil && result == nil {
+					result = err
+				}
+			}()
+		}
+		if payload.OriginalInput == nil || payload.OriginalInput.TenantID != payload.TenantID || payload.OriginalInput.KnowledgeBaseID != payload.KnowledgeBaseID || payload.OriginalInput.KnowledgeID != payload.KnowledgeID {
+			return types.ErrSourceLineageUnknown
+		}
+		var err error
+		ctx, err = repository.RestoreKnowledgeBuildActorIfRequired(ctx, s.knowledgeInputs, payload.OriginalInput)
+		if err != nil {
+			return fmt.Errorf("automatic tag current actor: %w", err)
+		}
+		if err := s.knowledgeInputs.RecheckKnowledgeBuildInputs(ctx, payload.OriginalInput); err != nil {
+			return fmt.Errorf("automatic tag original material: %w", err)
+		}
+		ctx = repository.WithKnowledgeBuildInputProof(ctx, s.knowledgeInputs, payload.OriginalInput)
+		if payload.CompletionInput != "" {
+			k, err := s.knowledgeRepo.GetKnowledgeByIDOnly(ctx, payload.KnowledgeID)
+			if err != nil {
+				return err
+			}
+			if k != nil && k.Channel == types.ConnectorTypeNextcloud {
+				publisher, ok := s.knowledgeRepo.(interface {
+					PublishNextcloudVersion(context.Context, string) (bool, error)
+				})
+				if !ok {
+					return types.ErrSourceLineageUnknown
+				}
+				// Completion may have committed immediately before the first
+				// publisher exited or lost its source connection. The durable
+				// intent retries the real publisher before any Auto call.
+				published, err := publisher.PublishNextcloudVersion(ctx, payload.KnowledgeID)
+				if err != nil {
+					return err
+				}
+				if !published {
+					return repository.ErrKnowledgeInputChanged
+				}
+			}
+		}
+		if payload.CompletionInput != "" {
+			admitted, err = s.knowledgeInputs.LoadKnowledgeAutoTagCompletionInput(ctx, payload)
+		} else {
+			admitted, err = s.knowledgeInputs.CaptureKnowledgeAutoTagInputs(ctx, payload.OriginalInput)
+		}
+		if err != nil {
+			return fmt.Errorf("automatic tag sealed model input: %w", err)
+		}
+		if err := s.checkAutoTagInput(ctx, admitted); err != nil {
+			return err
+		}
+		if admitted.Tenant != nil {
+			ctx = context.WithValue(ctx, types.TenantInfoContextKey, admitted.Tenant)
+		}
+		ctx, err = repository.WithSpanAutoTagOriginalInput(ctx, s.knowledgeInputs, admitted)
+		if err != nil {
+			return err
+		}
+	}
 	if payload.Language != "" {
 		ctx = context.WithValue(ctx, types.LanguageContextKey, payload.Language)
 	}
@@ -137,6 +277,9 @@ func (s *KnowledgeAutoTagService) Handle(ctx context.Context, task *asynq.Task) 
 		s.tracker().FailSpan(ctx, span, "AUTO_TAG_KNOWLEDGE_LOAD_FAILED", err.Error(), err)
 		return fmt.Errorf("get knowledge for auto tag: %w", err)
 	}
+	if admitted != nil {
+		knowledge = admitted.Original.Knowledge
+	}
 	if knowledge == nil || knowledge.TenantID != payload.TenantID || knowledge.KnowledgeBaseID != payload.KnowledgeBaseID {
 		return skip("knowledge_not_in_scope", nil)
 	}
@@ -151,6 +294,9 @@ func (s *KnowledgeAutoTagService) Handle(ctx context.Context, task *asynq.Task) 
 		s.tracker().FailSpan(ctx, span, "AUTO_TAG_KB_LOAD_FAILED", err.Error(), err)
 		return fmt.Errorf("get knowledge base for auto tag: %w", err)
 	}
+	if admitted != nil {
+		kb = admitted.Original.KnowledgeBase
+	}
 	if kb == nil || kb.TenantID != payload.TenantID || kb.Type != types.KnowledgeBaseTypeDocument {
 		return skip("knowledge_base_not_eligible", nil)
 	}
@@ -162,6 +308,8 @@ func (s *KnowledgeAutoTagService) Handle(ctx context.Context, task *asynq.Task) 
 	if config == nil || !config.Enabled {
 		return skip("auto_tag_disabled", nil)
 	}
+	copyConfig := *config
+	config = &copyConfig
 	config.Normalize()
 
 	tags, totalTags, err := s.tagRepo.ListByKB(
@@ -174,6 +322,10 @@ func (s *KnowledgeAutoTagService) Handle(ctx context.Context, task *asynq.Task) 
 	if err != nil {
 		s.tracker().FailSpan(ctx, span, "AUTO_TAG_LIST_TAGS_FAILED", err.Error(), err)
 		return fmt.Errorf("list auto tag candidates: %w", err)
+	}
+	if admitted != nil {
+		tags = admitted.Tags
+		totalTags = admitted.TotalTags
 	}
 	if len(tags) == 0 {
 		return skip("no_candidate_tags", nil)
@@ -199,6 +351,12 @@ func (s *KnowledgeAutoTagService) Handle(ctx context.Context, task *asynq.Task) 
 		return fmt.Errorf("get existing knowledge tags: %w", err)
 	}
 	existingTags := existing[payload.KnowledgeID]
+	if admitted != nil {
+		existingTags = []*types.KnowledgeTag{}
+		for _, relation := range admitted.Relations {
+			existingTags = append(existingTags, &types.KnowledgeTag{ID: relation.TagID})
+		}
+	}
 	if len(existingTags) > 0 && config.ShouldSkipIfTagged() {
 		return skip("knowledge_already_tagged", types.JSONMap{
 			"existing_tag_count": len(existingTags),
@@ -222,6 +380,9 @@ func (s *KnowledgeAutoTagService) Handle(ctx context.Context, task *asynq.Task) 
 		s.tracker().FailSpan(ctx, span, "AUTO_TAG_LIST_CHUNKS_FAILED", err.Error(), err)
 		return fmt.Errorf("list chunks for auto tag: %w", err)
 	}
+	if admitted != nil {
+		chunks = admitted.Original.Chunks
+	}
 	content := buildAutoTagDocumentContent(knowledge, chunks)
 	if strings.TrimSpace(content) == "" {
 		return skip("no_text_chunks", nil)
@@ -231,6 +392,11 @@ func (s *KnowledgeAutoTagService) Handle(ctx context.Context, task *asynq.Task) 
 	if err != nil {
 		s.tracker().FailSpan(ctx, span, "AUTO_TAG_MODEL_LOAD_FAILED", err.Error(), err)
 		return fmt.Errorf("get auto tag model: %w", err)
+	}
+	if admitted != nil {
+		if err := s.checkAutoTagInput(ctx, admitted); err != nil {
+			return err
+		}
 	}
 	response, err := classifyExistingTags(ctx, chatModel, tags, content, config.MaxTags)
 	if err != nil {
@@ -258,6 +424,15 @@ func (s *KnowledgeAutoTagService) Handle(ctx context.Context, task *asynq.Task) 
 	}
 	if err := access.RequireKBWrite(ctx, kb); err != nil {
 		return err
+	}
+	if admitted != nil {
+		if err := s.checkAutoTagInput(ctx, admitted); err != nil {
+			return err
+		}
+		ctx, err = repository.WithKnowledgeAutoTagInput(ctx, s.knowledgeInputs, admitted)
+		if err != nil {
+			return err
+		}
 	}
 	if err := s.knowledgeRepo.AddKnowledgeTagRelations(
 		ctx,

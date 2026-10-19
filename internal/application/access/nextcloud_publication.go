@@ -9,18 +9,15 @@ import (
 	"strings"
 	"time"
 
-	apperrors "github.com/Tencent/WeKnora/internal/errors"
-
 	"github.com/Tencent/WeKnora/internal/datasource/connector/nextcloud"
+	apperrors "github.com/Tencent/WeKnora/internal/errors"
 	"github.com/Tencent/WeKnora/internal/types"
 )
 
 var (
-	// ErrNextcloudPublicationDenied reports a denied live source-publication check.
 	ErrNextcloudPublicationDenied = apperrors.NewProtocolError(
 		errors.New("nextcloud publication access denied"), "Nextcloud publication access denied",
 	)
-	// ErrNextcloudPublicationUnavailable reports an unavailable live source-publication check.
 	ErrNextcloudPublicationUnavailable = apperrors.NewProtocolError(errors.New(
 		"nextcloud publication authorization unavailable",
 	), "Nextcloud publication authorization unavailable")
@@ -30,13 +27,15 @@ var (
 // narrow so the guard can use the existing repositories without owning their
 // broader management APIs.
 type NextcloudDirectoryLookup interface {
-	GetIdentityByUserID(context.Context, string) ([]*types.DirectoryIdentity, error)
-	GetLoginSnapshot(context.Context, string, string) (*types.DirectoryLoginSnapshot, error)
+	GetUserLoginSnapshot(context.Context, string) ([]*types.DirectoryIdentity, *types.DirectoryLoginSnapshot, error)
 }
 
-// NextcloudDataSourceLookup loads the authoritative data-source row for a publication check.
 type NextcloudDataSourceLookup interface {
 	FindByID(context.Context, string) (*types.DataSource, error)
+}
+
+type NextcloudSourcePathResolver interface {
+	ResolveCurrentSourcePath(context.Context, uint64, string, string, string) (string, error)
 }
 
 type nextcloudSourceAuthorizer func(
@@ -50,9 +49,10 @@ type NextcloudPublicationGuard struct {
 	directories NextcloudDirectoryLookup
 	dataSources NextcloudDataSourceLookup
 	authorize   nextcloudSourceAuthorizer
+	paths       NextcloudSourcePathResolver
+	checkPath   func(context.Context, *types.DataSourceConfig, string, string, int64, string, string) error
 }
 
-// NewNextcloudPublicationGuard returns the live source-publication authorization guard.
 func NewNextcloudPublicationGuard(
 	directories NextcloudDirectoryLookup, dataSources NextcloudDataSourceLookup,
 ) *NextcloudPublicationGuard {
@@ -61,6 +61,11 @@ func NewNextcloudPublicationGuard(
 		dataSources: dataSources,
 		authorize:   nextcloud.AuthorizeCurrentFile,
 	}
+}
+
+func (g *NextcloudPublicationGuard) ConfigureSourcePathResolver(paths NextcloudSourcePathResolver) {
+	g.paths = paths
+	g.checkPath = nextcloud.CheckCurrentPublication
 }
 
 // CheckKnowledge returns nil for unrelated knowledge and for a currently
@@ -171,6 +176,9 @@ func (g *NextcloudPublicationGuard) CheckKnowledge(ctx context.Context, knowledg
 			ErrNextcloudPublicationDenied,
 		)))
 	}
+	if err := g.checkSourceControls(ctx, instanceID); err != nil {
+		return err
+	}
 	config, err := ds.ParseConfig()
 	if err != nil || config == nil {
 		return apperrors.NewProtocolError(fmt.Errorf(
@@ -206,7 +214,12 @@ func (g *NextcloudPublicationGuard) CheckKnowledge(ctx context.Context, knowledg
 	if g.authorize == nil {
 		return ErrNextcloudPublicationUnavailable
 	}
-	decision, err := g.authorize(ctx, config, instanceID, bindingID,
+	importedRevision, _ := publicationMetadataString(metadata, "nextcloud_content_revision")
+	importedRevision, err = types.NormalizeNextcloudContentRevision(importedRevision)
+	if err != nil {
+		return ErrNextcloudPublicationDenied
+	}
+	decision, err := g.authorize(types.WithNextcloudContentRevision(ctx, importedRevision), config, instanceID, bindingID,
 		currentIdentity.DirectoryID, currentIdentity.ObjectGUID, fileID)
 	if err != nil {
 		return apperrors.NewProtocolError(fmt.Errorf(
@@ -232,6 +245,10 @@ func (g *NextcloudPublicationGuard) CheckKnowledge(ctx context.Context, knowledg
 	}
 	// Publication and ACL may still be valid while the source bytes have
 	// changed. Never expose an imported older version as the current file.
+	currentRevision, err := types.NormalizeNextcloudContentRevision(decision.SourceContentRevision)
+	if err != nil || currentRevision != importedRevision {
+		return ErrNextcloudPublicationDenied
+	}
 	if decision.SourceETag == "" || decision.SourceETag != importedETag {
 		return apperrors.NewProtocolError(fmt.Errorf(
 			"%w: source version changed",
@@ -240,7 +257,20 @@ func (g *NextcloudPublicationGuard) CheckKnowledge(ctx context.Context, knowledg
 			ErrNextcloudPublicationDenied,
 		)))
 	}
-	return nil
+	if g.paths != nil {
+		oldPath, valid := publicationMetadataString(metadata, "nextcloud_path")
+		if !valid || oldPath == "" || g.checkPath == nil {
+			return ErrNextcloudPublicationDenied
+		}
+		path, err := g.paths.ResolveCurrentSourcePath(ctx, knowledge.TenantID, knowledge.KnowledgeBaseID, dsID, oldPath)
+		if err != nil {
+			return ErrNextcloudPublicationUnavailable
+		}
+		if err := g.checkPath(types.WithNextcloudContentRevision(ctx, importedRevision), config, instanceID, bindingID, fileID, importedETag, path); err != nil {
+			return ErrNextcloudPublicationDenied
+		}
+	}
+	return g.checkSourceControls(ctx, instanceID)
 }
 
 // currentDirectoryIdentity validates only captured principal and local AD
@@ -287,7 +317,7 @@ func (g *NextcloudPublicationGuard) currentDirectoryIdentity(ctx context.Context
 	if g == nil || g.directories == nil {
 		return nil, ErrNextcloudPublicationUnavailable
 	}
-	identities, err := g.directories.GetIdentityByUserID(ctx, caller.UserID)
+	identities, snapshot, err := g.directories.GetUserLoginSnapshot(ctx, caller.UserID)
 	if err != nil {
 		return nil, apperrors.NewProtocolError(fmt.Errorf(
 			"%w: directory identity lookup failed: %v",
@@ -321,8 +351,7 @@ func (g *NextcloudPublicationGuard) currentDirectoryIdentity(ctx context.Context
 			ErrNextcloudPublicationDenied,
 		)))
 	}
-	snapshot, err := g.directories.GetLoginSnapshot(ctx, identity.DirectoryID, identity.ObjectGUID)
-	if err != nil || snapshot == nil || snapshot.Directory == nil {
+	if snapshot == nil || snapshot.Directory == nil {
 		return nil, apperrors.NewProtocolError(fmt.Errorf(
 			"%w: directory snapshot lookup failed: %v",
 			ErrNextcloudPublicationUnavailable,
@@ -355,10 +384,10 @@ func (g *NextcloudPublicationGuard) currentDirectoryIdentity(ctx context.Context
 		)))
 	}
 
-	cloned := *currentIdentity
+	copy := *currentIdentity
 	userID := *currentIdentity.UserID
-	cloned.UserID = &userID
-	return &cloned, nil
+	copy.UserID = &userID
+	return &copy, nil
 }
 
 func publicationMetadataString(metadata map[string]json.RawMessage, key string) (string, bool) {
@@ -371,4 +400,48 @@ func publicationMetadataString(metadata map[string]json.RawMessage, key string) 
 		return "", false
 	}
 	return *value, true
+}
+
+// CheckSourceRoot gates KB labels and metadata before a complete document
+// listing exists, including an empty root. It retains the real principal and
+// NC/LDAPS checks; a target Owner/Admin or cached grant cannot bypass them.
+func (g *NextcloudPublicationGuard) CheckSourceRoot(ctx context.Context, ds *types.DataSource, instance, binding string) error {
+	if err := g.checkSourceControls(ctx, instance); err != nil {
+		return err
+	}
+
+	if g == nil || ds == nil || ds.Type != types.ConnectorTypeNextcloud || ds.Status != types.DataSourceStatusActive {
+		return ErrNextcloudPublicationDenied
+	}
+	identity, err := g.currentDirectoryIdentity(ctx)
+	if err != nil {
+		return err
+	}
+	cfg, err := ds.ParseConfig()
+	if err != nil || cfg == nil {
+		return ErrNextcloudPublicationUnavailable
+	}
+	cfg.Type = ds.Type
+	if err := nextcloud.AuthorizeCurrentRoot(ctx, cfg, instance, binding, identity.DirectoryID, identity.ObjectGUID); err != nil {
+		return ErrNextcloudPublicationDenied
+	}
+	return g.checkSourceControls(ctx, instance)
+}
+
+func (g *NextcloudPublicationGuard) checkSourceControls(ctx context.Context, instance string) error {
+	if g == nil {
+		return ErrNextcloudPublicationUnavailable
+	}
+	if reader, ok := g.dataSources.(interface {
+		InstanceControlsClosed(context.Context, string) (bool, error)
+	}); ok {
+		closed, err := reader.InstanceControlsClosed(ctx, instance)
+		if err != nil {
+			return ErrNextcloudPublicationUnavailable
+		}
+		if closed {
+			return ErrNextcloudPublicationDenied
+		}
+	}
+	return nil
 }

@@ -43,9 +43,7 @@ func TestAuthorizeCurrentFileUsesAuthenticatedSourceContract(t *testing.T) {
 			if r.Method != http.MethodGet {
 				t.Errorf("capabilities used %s", r.Method)
 			}
-			if _, err := fmt.Fprint(w, `{"protocol_version":"1","instance_id":"instance-1"}`); err != nil {
-				t.Logf("write source authorization fixture response: %v", err)
-			}
+			fmt.Fprint(w, `{"protocol_version":"1","instance_id":"instance-1"}`)
 		case apiPath + "/bindings/binding-1/authorize":
 			if r.Method != http.MethodPost {
 				t.Errorf("authorize used %s", r.Method)
@@ -69,14 +67,10 @@ func TestAuthorizeCurrentFileUsesAuthenticatedSourceContract(t *testing.T) {
 			if !hmac.Equal(mac.Sum(nil), mustDecodeHex(t, r.Header.Get("X-WeKnora-Signature"))) {
 				t.Error("authorization POST signature did not bind the raw body")
 			}
-			if payload["directory_id"] != "ad-1" || payload["object_guid"] != guid ||
-				payload["file_id"] != float64(42) {
+			if payload["directory_id"] != "ad-1" || payload["object_guid"] != guid || payload["file_id"] != float64(42) {
 				t.Errorf("unexpected payload: %#v", payload)
 			}
-			if _, err := fmt.Fprint(w, `{"allow":true,"reason":"authorized","policy_revision":"rev-1","source_et`+
-				`ag":"etag-42","checked_at":1780000000}`); err != nil {
-				t.Logf("write source authorization fixture response: %v", err)
-			}
+			fmt.Fprint(w, `{"allow":true,"reason":"authorized","policy_revision":"rev-1","source_etag":"etag-42","checked_at":1780000000}`)
 		default:
 			http.NotFound(w, r)
 		}
@@ -84,8 +78,7 @@ func TestAuthorizeCurrentFileUsesAuthenticatedSourceContract(t *testing.T) {
 	defer server.Close()
 	decision, err := AuthorizeCurrentFile(context.Background(), authorizationConfig(t, server.URL),
 		"instance-1", "binding-1", "ad-1", guid, 42)
-	if err != nil || !decision.Allow || decision.PolicyRevision != "rev-1" ||
-		decision.SourceETag != "etag-42" || requests != 2 {
+	if err != nil || !decision.Allow || decision.PolicyRevision != "rev-1" || decision.SourceETag != "etag-42" || requests != 2 {
 		t.Fatalf("decision=%+v err=%v requests=%d", decision, err, requests)
 	}
 }
@@ -98,26 +91,13 @@ func TestAuthorizeCurrentFileRejectsChangedInstanceAndBadResponses(t *testing.T)
 		statusCode int
 		instanceID string
 	}{
-		{
-			name: "changed instance",
-			response: `{"allow":true,"reason":"authorized","policy_revision":"rev","checked_at"` +
-				`:1780000000}`, instanceID: "another",
-		},
+		{name: "changed instance", response: `{"allow":true,"reason":"authorized","policy_revision":"rev","checked_at":1780000000}`, instanceID: "another"},
 		{name: "upstream forbidden", statusCode: http.StatusForbidden},
 		{name: "missing allow", response: `{"reason":"authorized","policy_revision":"rev","checked_at":1780000000}`},
-		{name: "malformed allow", response: `{"allow":"true","reason":"authorized","policy_revision":"rev","checked_a` +
-			`t":1780000000}`},
+		{name: "malformed allow", response: `{"allow":"true","reason":"authorized","policy_revision":"rev","checked_at":1780000000}`},
 		{name: "missing revision", response: `{"allow":true,"reason":"authorized","checked_at":1780000000}`},
-		{
-			name: "missing source etag",
-			response: `{"allow":true,"reason":"authorized","policy_revision":"rev","checked_at"` +
-				`:1780000000}`,
-		},
-		{
-			name: "empty source etag",
-			response: `{"allow":true,"reason":"authorized","policy_revision":"rev","source_etag` +
-				`":"","checked_at":1780000000}`,
-		},
+		{name: "missing source etag", response: `{"allow":true,"reason":"authorized","policy_revision":"rev","checked_at":1780000000}`},
+		{name: "empty source etag", response: `{"allow":true,"reason":"authorized","policy_revision":"rev","source_etag":"","checked_at":1780000000}`},
 		{name: "oversized response", response: string(make([]byte, maxAuthorizationResponseBytes+1))},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -127,17 +107,13 @@ func TestAuthorizeCurrentFileRejectsChangedInstanceAndBadResponses(t *testing.T)
 					if tc.instanceID != "" {
 						instanceID = tc.instanceID
 					}
-					if _, err := fmt.Fprintf(w, `{"protocol_version":"1","instance_id":%q}`, instanceID); err != nil {
-						t.Logf("write source authorization fixture response: %v", err)
-					}
+					fmt.Fprintf(w, `{"protocol_version":"1","instance_id":%q}`, instanceID)
 					return
 				}
 				if tc.statusCode != 0 {
 					w.WriteHeader(tc.statusCode)
 				}
-				if _, err := fmt.Fprint(w, tc.response); err != nil {
-					t.Logf("write source authorization fixture response: %v", err)
-				}
+				fmt.Fprint(w, tc.response)
 			}))
 			defer server.Close()
 			decision, err := AuthorizeCurrentFile(context.Background(), authorizationConfig(t, server.URL),
@@ -152,15 +128,10 @@ func TestAuthorizeCurrentFileRejectsChangedInstanceAndBadResponses(t *testing.T)
 func TestAuthorizeCurrentFilePreservesExplicitDeny(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == apiPath+"/capabilities" {
-			if _, err := fmt.Fprint(w, `{"protocol_version":"1","instance_id":"instance-1"}`); err != nil {
-				t.Logf("write source authorization fixture response: %v", err)
-			}
+			fmt.Fprint(w, `{"protocol_version":"1","instance_id":"instance-1"}`)
 			return
 		}
-		if _, err := fmt.Fprint(w, `{"allow":false,"reason":"publication_withdrawn","policy_revision":null,"`+
-			`checked_at":1780000000}`); err != nil {
-			t.Logf("write source authorization fixture response: %v", err)
-		}
+		fmt.Fprint(w, `{"allow":false,"reason":"publication_withdrawn","policy_revision":null,"checked_at":1780000000}`)
 	}))
 	defer server.Close()
 	decision, err := AuthorizeCurrentFile(context.Background(), authorizationConfig(t, server.URL),

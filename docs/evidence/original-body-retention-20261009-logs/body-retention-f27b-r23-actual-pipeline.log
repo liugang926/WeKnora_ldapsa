@@ -1,0 +1,41 @@
+INFO [2026-10-09 02:52:22.518] []                      | [SQLite] Initializing SQLite retriever engine repository with sqlite-vec
+INFO [2026-10-09 02:52:23.307] []                      | [SQLite] Initializing SQLite retriever engine repository with sqlite-vec
+--- FAIL: TestOriginalBodyActualLocalDerivedSQLite (1.63s)
+    --- FAIL: TestOriginalBodyActualLocalDerivedSQLite/body-retention (0.77s)
+        nextcloud_local_derived_gc_test.go:386: 
+            	Error Trace:	/workspace/internal/application/service/nextcloud_local_derived_gc_test.go:386
+            	            				/workspace/internal/application/service/nextcloud_local_derived_gc_test.go:120
+            	            				/workspace/internal/application/service/nextcloud_local_derived_gc_test.go:317
+            	Error:      	Received unexpected error:
+            	            	immutable FAQ session input
+            	Test:       	TestOriginalBodyActualLocalDerivedSQLite/body-retention
+    --- FAIL: TestOriginalBodyActualLocalDerivedSQLite/body-inline-restore (0.85s)
+        nextcloud_local_derived_gc_test.go:386: 
+            	Error Trace:	/workspace/internal/application/service/nextcloud_local_derived_gc_test.go:386
+            	            				/workspace/internal/application/service/nextcloud_local_derived_gc_test.go:120
+            	            				/workspace/internal/application/service/nextcloud_local_derived_gc_test.go:317
+            	Error:      	Received unexpected error:
+            	            	immutable FAQ session input
+            	Test:       	TestOriginalBodyActualLocalDerivedSQLite/body-inline-restore
+INFO [2026-10-09 02:52:24.098] []                      | [Postgres] Initializing PostgreSQL retriever engine repository
+INFO [2026-10-09 02:52:25.184] []                      | [Postgres] Initializing PostgreSQL retriever engine repository
+--- FAIL: TestPostgresOriginalBodyActualLocalDerived (2.15s)
+    --- FAIL: TestPostgresOriginalBodyActualLocalDerived/body-retention (1.06s)
+        nextcloud_local_derived_gc_test.go:386: 
+            	Error Trace:	/workspace/internal/application/service/nextcloud_local_derived_gc_test.go:386
+            	            				/workspace/internal/application/service/nextcloud_local_derived_gc_test.go:120
+            	            				/workspace/internal/application/service/nextcloud_local_derived_gc_test.go:322
+            	Error:      	Received unexpected error:
+            	            	ERROR: immutable FAQ session input (SQLSTATE P0001)
+            	Test:       	TestPostgresOriginalBodyActualLocalDerived/body-retention
+    --- FAIL: TestPostgresOriginalBodyActualLocalDerived/body-inline-restore (1.09s)
+        nextcloud_local_derived_gc_test.go:386: 
+            	Error Trace:	/workspace/internal/application/service/nextcloud_local_derived_gc_test.go:386
+            	            				/workspace/internal/application/service/nextcloud_local_derived_gc_test.go:120
+            	            				/workspace/internal/application/service/nextcloud_local_derived_gc_test.go:322
+            	Error:      	Received unexpected error:
+            	            	ERROR: immutable FAQ session input (SQLSTATE P0001)
+            	Test:       	TestPostgresOriginalBodyActualLocalDerived/body-inline-restore
+FAIL
+FAIL	github.com/Tencent/WeKnora/internal/application/service	4.226s
+FAIL

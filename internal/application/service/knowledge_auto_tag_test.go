@@ -356,19 +356,12 @@ func TestBuildAutoTagDocumentContentSamplesAndFilters(t *testing.T) {
 	assert.LessOrEqual(t, len([]rune(content)), maximumAutoTagContentRunes)
 }
 
-func TestEnqueueAutoTagTaskCarriesScopeWithoutOwningFinalizingSlot(t *testing.T) {
+func TestEnqueueAutoTagTaskWithoutOriginalInputCannotAdoptCurrentRows(t *testing.T) {
 	queue := &autoTagRecordingQueue{}
 	service := &KnowledgePostProcessService{taskEnqueuer: queue}
 	ok := service.enqueueAutoTagTask(context.Background(), types.KnowledgePostProcessPayload{
 		TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: "doc", Language: "zh-CN",
 	}, 4)
-	require.True(t, ok)
-	require.NotNil(t, queue.task)
-	assert.Equal(t, types.TypeKnowledgeAutoTag, queue.task.Type())
-	var payload types.KnowledgeAutoTagPayload
-	require.NoError(t, json.Unmarshal(queue.task.Payload(), &payload))
-	assert.Equal(t, uint64(7), payload.TenantID)
-	assert.Equal(t, "kb", payload.KnowledgeBaseID)
-	assert.Equal(t, "doc", payload.KnowledgeID)
-	assert.Equal(t, 4, payload.Attempt)
+	require.False(t, ok)
+	require.Nil(t, queue.task)
 }

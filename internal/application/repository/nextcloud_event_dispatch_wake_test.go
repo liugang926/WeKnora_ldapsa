@@ -20,11 +20,7 @@ func TestNextcloudQueuedDispatchWakesForNewHintAfterMatchingSyncCompletes(t *tes
 	require.NoError(t, db.Exec(`CREATE TABLE knowledge_bases
 		(id TEXT PRIMARY KEY, tenant_id INTEGER, deleted_at DATETIME)`).Error)
 	require.NoError(t, db.Exec(`INSERT INTO knowledge_bases (id, tenant_id) VALUES ('kb', 7)`).Error)
-	for _, name := range []string{
-		"000032_nextcloud_event_inbox.up.sql",
-		"000033_nextcloud_event_dispatch.up.sql",
-		"000049_nextcloud_event_hint_etag.up.sql",
-	} {
+	for _, name := range []string{"000032_nextcloud_event_inbox.up.sql", "000033_nextcloud_event_dispatch.up.sql", "000049_nextcloud_event_hint_etag.up.sql"} {
 		schema, err := os.ReadFile("../../../migrations/sqlite/" + name)
 		require.NoError(t, err)
 		require.NoError(t, db.Exec(string(schema)).Error)
@@ -34,11 +30,9 @@ func TestNextcloudQueuedDispatchWakesForNewHintAfterMatchingSyncCompletes(t *tes
 		types.ParseStatusCompleted, "enabled")
 	require.NoError(t, db.Model(&types.Knowledge{}).Where("id = ?", ready.ID).
 		Update("file_name", "file.md").Error)
-	require.NoError(t, db.Create(&nextcloudSourceVersion{
-		TenantID: 7, KnowledgeBaseID: "kb",
+	require.NoError(t, db.Create(&nextcloudSourceVersion{TenantID: 7, KnowledgeBaseID: "kb",
 		DataSourceID: "ds", ExternalID: "nextcloud:instance:77", DesiredETag: "etag-v1",
-		CandidateKnowledgeID: ready.ID, State: "published", UpdatedAt: time.Now().UTC(),
-	}).Error)
+		CandidateKnowledgeID: ready.ID, State: "published", UpdatedAt: time.Now().UTC()}).Error)
 	var source types.DataSource
 	require.NoError(t, db.Where("id = ?", "ds").Take(&source).Error)
 	baseURL, configSHA, bindingID, err := NextcloudEventDataSourceIdentity(source.Config)
@@ -51,18 +45,14 @@ func TestNextcloudQueuedDispatchWakesForNewHintAfterMatchingSyncCompletes(t *tes
 		bindingID, baseURL, configSHA).Error)
 	require.NoError(t, db.Exec(`INSERT INTO nextcloud_event_checkpoint (connection_id, received_id)
 		VALUES ('event-connection', 1)`).Error)
-	require.NoError(t, db.Exec(("INSERT INTO nextcloud_event_inbox\n"+
-		"\t\t(connection_id, event_id, payload_sha256, event_type,"+
-		" file_id, etag, path, relative_path, state)\n"+
-		"\t\tVALUES ('event-connection', 1, ?, 'upsert', 77, 'etag"+
-		"-v1', '/Published/file.md', 'file.md', 'dispatched')"), strings.Repeat("0", 64)).Error)
+	require.NoError(t, db.Exec(`INSERT INTO nextcloud_event_inbox
+		(connection_id, event_id, payload_sha256, event_type, file_id, etag, path, relative_path, state)
+		VALUES ('event-connection', 1, ?, 'upsert', 77, 'etag-v1', '/Published/file.md', 'file.md', 'dispatched')`, strings.Repeat("0", 64)).Error)
 
 	now := time.Now().UTC().Truncate(time.Second)
 	startedAt := now.Add(-time.Minute)
-	require.NoError(t, db.Create(&types.SyncLog{
-		ID: "first-event-log", DataSourceID: "ds",
-		TenantID: 7, Status: types.SyncLogStatusRunning, StartedAt: startedAt,
-	}).Error)
+	require.NoError(t, db.Create(&types.SyncLog{ID: "first-event-log", DataSourceID: "ds",
+		TenantID: 7, Status: types.SyncLogStatusRunning, StartedAt: startedAt}).Error)
 	require.NoError(t, db.Exec(`INSERT INTO nextcloud_event_dispatch
 		(connection_id, dispatched_id, target_event_id, state, last_sync_log_id, next_attempt_at)
 		VALUES ('event-connection', 1, 1, 'queued', 'first-event-log', ?)`, now.Add(time.Minute)).Error)
@@ -85,11 +75,9 @@ func TestNextcloudQueuedDispatchWakesForNewHintAfterMatchingSyncCompletes(t *tes
 	candidates, err := inbox.DispatchCandidates(ctx, now)
 	require.NoError(t, err)
 	require.Empty(t, candidates, "a completed scan alone must not queue duplicate work")
-	require.NoError(t, db.Exec(("INSERT INTO nextcloud_event_inbox\n"+
-		"\t\t(connection_id, event_id, payload_sha256, event_type,"+
-		" file_id, etag, path, relative_path, state)\n"+
-		"\t\tVALUES ('event-connection', 2, ?, 'upsert', 77, 'etag"+
-		"-v2', '/Published/file.md', 'file.md', 'pending')"), strings.Repeat("1", 64)).Error)
+	require.NoError(t, db.Exec(`INSERT INTO nextcloud_event_inbox
+		(connection_id, event_id, payload_sha256, event_type, file_id, etag, path, relative_path, state)
+		VALUES ('event-connection', 2, ?, 'upsert', 77, 'etag-v2', '/Published/file.md', 'file.md', 'pending')`, strings.Repeat("1", 64)).Error)
 	require.NoError(t, db.Exec(`UPDATE nextcloud_event_checkpoint SET received_id = 2
 		WHERE connection_id = 'event-connection'`).Error)
 	candidates, err = inbox.DispatchCandidates(ctx, now)

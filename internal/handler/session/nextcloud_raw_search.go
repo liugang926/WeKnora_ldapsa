@@ -273,7 +273,7 @@ func (w *rawSearchAuthorizationWriter) beforeWrite() error {
 }
 
 func (w *rawSearchAuthorizationWriter) denyWrite(err error) {
-	if w.Written() {
+	if w.ResponseWriter.Written() {
 		return
 	}
 	status := http.StatusForbidden

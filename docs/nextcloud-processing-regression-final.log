@@ -1,0 +1,62 @@
+=== RUN   TestDataSourceRepositoryUpdatePersistsDisabledSyncDeletions
+--- PASS: TestDataSourceRepositoryUpdatePersistsDisabledSyncDeletions (0.00s)
+=== RUN   TestDataSourceRepositoryCreatePersistsEnabledSyncDeletions
+--- PASS: TestDataSourceRepositoryCreatePersistsEnabledSyncDeletions (0.00s)
+=== RUN   TestNextcloudBatchDeliveryFinalCurrentHeadAndLostACK
+
+2026/10/10 06:37:50 /app/internal/application/repository/nextcloud_versions.go:505 record not found
+
+2026/10/10 06:37:50 /app/internal/application/repository/nextcloud_processing_state.go:176 record not found
+
+2026/10/10 06:37:50 /app/internal/application/repository/nextcloud_graph.go:283 record not found
+
+2026/10/10 06:37:50 /app/internal/application/repository/nextcloud_processing_state.go:346 record not found
+
+2026/10/10 06:37:50 /app/internal/application/repository/nextcloud_processing_state.go:360 record not found
+
+2026/10/10 06:37:50 /app/internal/application/repository/nextcloud_graph.go:140 record not found
+
+2026/10/10 06:37:50 /app/internal/application/repository/nextcloud_processing_state.go:176 record not found
+
+2026/10/10 06:37:50 /app/internal/application/repository/nextcloud_processing_state.go:346 record not found
+
+2026/10/10 06:37:50 /app/internal/application/repository/nextcloud_processing_state.go:176 record not found
+
+2026/10/10 06:37:50 /app/internal/application/repository/nextcloud_processing_state.go:346 record not found
+
+2026/10/10 06:37:50 /app/internal/application/repository/nextcloud_processing_state.go:176 record not found
+
+2026/10/10 06:37:50 /app/internal/application/repository/nextcloud_processing_state.go:346 record not found
+--- PASS: TestNextcloudBatchDeliveryFinalCurrentHeadAndLostACK (0.06s)
+=== RUN   TestSQLiteNextcloudVersionMigrationCreatesDurableUniqueCandidate
+
+2026/10/10 06:37:50 /app/internal/application/repository/nextcloud_versions_test.go:1007 UNIQUE constraint failed: nextcloud_source_versions.candidate_knowledge_id
+--- PASS: TestSQLiteNextcloudVersionMigrationCreatesDurableUniqueCandidate (0.00s)
+PASS
+ok      github.com/Tencent/WeKnora/internal/application/repository  0.917s
+=== RUN   TestNextcloudStreamHandlerRejectsFailedItemAndPartialCheckpoint
+ERROR[2026-10-10 06:40:02.863] [] datasource_service.go:1335[applyFetchedItem] | failed to tombstone Nextcloud item nextcloud:instance-1:41: tombstone failed
+--- PASS: TestNextcloudStreamHandlerRejectsFailedItemAndPartialCheckpoint (0.00s)
+=== RUN   TestNextcloudStreamHandlerRechecksRunningLogBeforeItem
+--- PASS: TestNextcloudStreamHandlerRechecksRunningLogBeforeItem (0.00s)
+=== RUN   TestNextcloudSyncPausedCurrentSourceAdmission
+--- PASS: TestNextcloudSyncPausedCurrentSourceAdmission (0.00s)
+PASS
+ok      github.com/Tencent/WeKnora/internal/application/service 0.776s
+=== RUN   TestResolveTenantRoleSourceLookupFailureCannotPromoteOrFailOpen
+WARNING[2026-10-10 06:40:17.530] [] auth.go:799[resolveTenantRole] | effective directory-group role lookup failed user=source-reader tenant=7: current source qualification unavailable
+WARNING[2026-10-10 06:40:17.530] [] auth.go:799[resolveTenantRole] | effective directory-group role lookup failed user=source-reader tenant=7: current source qualification unavailable
+--- PASS: TestResolveTenantRoleSourceLookupFailureCannotPromoteOrFailOpen (0.00s)
+=== RUN   TestResolveTenantRoleSourceLookupFailurePreservesVerifiedDirectRole
+WARNING[2026-10-10 06:40:17.530] [] auth.go:799[resolveTenantRole] | effective directory-group role lookup failed user=ordinary-member tenant=7: current source qualification unavailable
+--- PASS: TestResolveTenantRoleSourceLookupFailurePreservesVerifiedDirectRole (0.00s)
+PASS
+ok      github.com/Tencent/WeKnora/internal/middleware  0.692s
+=== RUN   TestNextcloudKBMetadataWhitelistsUnknownCountsAndBodyFallback
+--- PASS: TestNextcloudKBMetadataWhitelistsUnknownCountsAndBodyFallback (0.00s)
+PASS
+ok      github.com/Tencent/WeKnora/internal/handler 0.847s
+=== RUN   TestRequiredGraphConfigurationCannotDisableItsWriter
+--- PASS: TestRequiredGraphConfigurationCannotDisableItsWriter (0.00s)
+PASS
+ok      github.com/Tencent/WeKnora/internal/types   0.490s

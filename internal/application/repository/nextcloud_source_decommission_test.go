@@ -82,13 +82,11 @@ func TestEmptyDecommissionRequiresVirginPairAndFencesFutureWrites(t *testing.T) 
 		WHERE pair_operation_id = ?`, fortyTwo.OperationID).Scan(&virgin).Error)
 	require.True(t, virgin, "a 42-era virgin marker cannot be trusted after the upgrade")
 	proposed := func(pair NextcloudSourcePairing, operationID string) NextcloudSourceDecommission {
-		return NextcloudSourceDecommission{
-			OperationID:     operationID,
+		return NextcloudSourceDecommission{OperationID: operationID,
 			PairOperationID: pair.OperationID, TenantID: pair.TenantID,
 			KnowledgeBaseID: pair.KnowledgeBaseID, DataSourceID: pair.DataSourceID,
 			InstanceID: pair.InstanceID, BindingID: pair.BindingID, KeyID: pair.KeyID,
-			PublicationEpoch: 1,
-		}
+			PublicationEpoch: 1}
 	}
 	_, err = repo.BeginEmptySourceDecommission(context.Background(), old,
 		proposed(old, "43c2678e-e5e5-4cf6-b975-18de9999cba9"))

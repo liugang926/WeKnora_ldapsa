@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Tencent/WeKnora/internal/application/access"
+	applicationservice "github.com/Tencent/WeKnora/internal/application/service"
 	"github.com/Tencent/WeKnora/internal/errors"
 	"github.com/Tencent/WeKnora/internal/event"
 	"github.com/Tencent/WeKnora/internal/logger"
@@ -18,6 +19,18 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
+
+type liveMaterialWritePhaseKey struct{}
+type liveMaterialWritePhase struct {
+	RawControl             bool
+	MaterialCheck          func() error
+	InitializationDeadline time.Time
+	LastIdleMaterialCheck  time.Time
+	IdleMaterialReady      bool
+}
+
+const liveMaterialInitializationTimeout = 10 * time.Second
+const liveIdleMaterialRecheckInterval = time.Second
 
 // ContinueStream godoc
 // @Summary      继续流式响应
@@ -77,6 +90,15 @@ func (h *Handler) ContinueStream(c *gin.Context) {
 		return
 	}
 
+	// Completed reconnects consume authenticated saved material. Redis frames
+	// are live transport data and cannot prove the original completed body.
+	if h.tryNativeSavedReplay(ctx, c, sessionID, messageID, resourceRewriter) {
+		return
+	}
+	if h.tryNativeLiveReplay(ctx, c, sessionID, messageID, resourceRewriter) {
+		return
+	}
+
 	// Get the incomplete message
 	message, err := getMessageForStream(ctx, h.messageService, sessionID, messageID)
 	if err != nil {
@@ -118,6 +140,16 @@ func (h *Handler) ContinueStream(c *gin.Context) {
 			"success": false,
 			"error":   "Incomplete message not found",
 		})
+		return
+	}
+
+	if message.IsCompleted {
+		// The metadata probe may have observed the last running moment. Retry
+		// after completion without authorizing its cached frames from row lineage.
+		if h.tryNativeSavedReplay(ctx, c, sessionID, messageID, resourceRewriter) {
+			return
+		}
+		c.Error(replayPublicationHTTPError(access.ErrNextcloudPublicationUnavailable))
 		return
 	}
 
@@ -232,6 +264,11 @@ func (h *Handler) ContinueStream(c *gin.Context) {
 						return
 					}
 				}
+				if evt.Type == types.ResponseTypeError && evt.Done {
+					emitSafeTerminalGenerationError(c, message.RequestID)
+					return
+				}
+
 				// Check for completion event
 				if evt.Type == "complete" {
 					streamCompletedNow = true
@@ -271,13 +308,27 @@ func checkReplayPublication(
 	if !ok {
 		return access.ErrNextcloudPublicationUnavailable
 	}
-	messageSnapshot := *message
-	messageSnapshot.KnowledgeReferences = append(types.References(nil), message.KnowledgeReferences...)
+	copy := *message
+	if copy.SourceLineage.RequireComplete() != nil {
+		return access.ErrNextcloudPublicationDenied
+	}
+	for _, frame := range events {
+		if !liveBatchNeedsPublicationCheck([]interfaces.StreamEvent{frame}) {
+			continue
+		}
+		if frame.SourceLineage.RequireComplete() != nil {
+			return access.ErrNextcloudPublicationDenied
+		}
+		union, err := types.UnionSourceLineage(copy.SourceLineage, frame.SourceLineage)
+		if err != nil || len(union.Sources) != len(copy.SourceLineage.Sources) {
+			return access.ErrNextcloudPublicationDenied
+		}
+	}
+	copy.KnowledgeReferences = append(types.References(nil), message.KnowledgeReferences...)
 	for _, streamEvent := range events {
 		if streamEvent.Type == types.ResponseTypeReferences {
 			response := buildStreamResponse(streamEvent, message.RequestID)
-			messageSnapshot.KnowledgeReferences = append(messageSnapshot.KnowledgeReferences,
-				response.KnowledgeReferences...)
+			copy.KnowledgeReferences = append(copy.KnowledgeReferences, response.KnowledgeReferences...)
 		}
 		// Old Redis frames may contain tool output not yet copied to the row.
 		// Such a saved Agent replay remains globally guarded even without AgentID.
@@ -285,16 +336,15 @@ func checkReplayPublication(
 			name, _ := streamEvent.Data["tool_name"].(string)
 			id, _ := streamEvent.Data["tool_call_id"].(string)
 			if !types.IsPipelineToolCallID(id) && !syntheticHistoryStreamCall(message, id) && name != "final_answer" {
-				messageSnapshot.AgentSteps = append(messageSnapshot.AgentSteps,
-					types.AgentStep{ToolCalls: []types.ToolCall{{ID: id, Name: name}}})
+				copy.AgentSteps = append(copy.AgentSteps, types.AgentStep{ToolCalls: []types.ToolCall{{ID: id, Name: name}}})
 			}
 		}
 	}
-	if err := verifier.CheckMessagePublication(ctx, &messageSnapshot); err != nil {
+	if err := verifier.CheckMessagePublication(ctx, &copy); err != nil {
 		return err
 	}
-	message.KnowledgeReferences = messageSnapshot.KnowledgeReferences
-	message.AgentSteps = messageSnapshot.AgentSteps
+	message.KnowledgeReferences = copy.KnowledgeReferences
+	message.AgentSteps = copy.AgentSteps
 	return nil
 }
 
@@ -511,6 +561,53 @@ func (h *Handler) handleAgentEventsForSSE(
 				log.Warnf("Failed to get events from stream: %v", err)
 				continue
 			}
+			// An error closes through a fixed code-origin recipe only. Discard
+			// the entire pending batch and holdback tail before any source or
+			// original-material check; refusal cannot suppress this static close.
+			for _, evt := range events {
+				if evt.Type == types.ResponseTypeError && evt.Done {
+					emitSafeTerminalGenerationError(c, requestID)
+					return
+				}
+			}
+			if phase, ok := ctx.Value(liveMaterialWritePhaseKey{}).(*liveMaterialWritePhase); ok && phase.MaterialCheck != nil {
+				// No buffered/public-resource tail and no queued event may use
+				// the bounded idle cadence. It cannot authorize a future write.
+				idle := len(events) == 0 && !phase.RawControl && (resourceRewriter == nil || !resourceRewriter.Enabled())
+				eligible := idle && phase.IdleMaterialReady && applicationservice.MessageMaterialIdleRecheckEligible(ctx)
+				if eligible && time.Since(phase.LastIdleMaterialCheck) < liveIdleMaterialRecheckInterval {
+					continue
+				}
+				if err := phase.MaterialCheck(); err != nil {
+					phase.IdleMaterialReady = false
+					if stderrors.Is(err, applicationservice.ErrMessageMaterialHTTPInitializing) {
+						if phase.InitializationDeadline.IsZero() {
+							phase.InitializationDeadline = time.Now().Add(liveMaterialInitializationTimeout)
+						}
+						if time.Now().Before(phase.InitializationDeadline) {
+							// Keep the original offset and all bytes unconsumed. Even
+							// raw query controls wait for their actual user admission.
+							continue
+						}
+					}
+					// Actual refusal, failed setup or bounded initialization expiry
+					// closes without granting a placeholder any completed proof.
+					stopLiveStreamForOriginalMaterial(ctx, c, eventBus, sessionID, assistantMessageID, requestID)
+					return
+				}
+				// Empty physical renewal alone does not recheck the current
+				// actor grant for sources already admitted by prior frames.
+				// Use only that original complete union, never infer a source
+				// from citations or clear an unknown prefix during idle.
+				if idle && liveMessage != nil && liveMessage.SourceLineage.RequireComplete() == nil {
+					if err := checkLiveStreamPublication(ctx, h.messageService, liveMessage, nil); err != nil {
+						stopLiveStreamForPublication(ctx, c, eventBus, sessionID, assistantMessageID, requestID, err)
+						return
+					}
+				}
+				phase.IdleMaterialReady = true
+				phase.LastIdleMaterialCheck = time.Now()
+			}
 			events, err = protectLiveStreamBatch(ctx, h.messageService, liveMessage, events)
 			if err != nil {
 				stopLiveStreamForPublication(ctx, c, eventBus, sessionID, assistantMessageID, requestID, err)
@@ -583,7 +680,14 @@ func (h *Handler) handleAgentEventsForSSE(
 					return
 				}
 
+				if phase, ok := ctx.Value(liveMaterialWritePhaseKey{}).(*liveMaterialWritePhase); ok {
+					phase.RawControl = evt.Type == types.ResponseTypeAgentQuery || evt.Type == types.ResponseType(event.EventStop)
+				}
 				emitStreamEvent(ctx, c, evt, requestID, resourceRewriter)
+				if writer, ok := c.Writer.(*nativeSavedReplayWriter); ok && writer.denied != nil {
+					emitSafeTerminalGenerationError(c, requestID)
+					return
+				}
 			}
 
 			// Update offset
@@ -714,10 +818,27 @@ func checkLiveStreamPublication(
 	if message == nil {
 		return access.ErrNextcloudPublicationUnavailable
 	}
-	messageSnapshot := *message
-	messageSnapshot.KnowledgeReferences = append(types.References(nil), message.KnowledgeReferences...)
-	seen := make(map[string]struct{}, len(messageSnapshot.KnowledgeReferences))
-	for _, ref := range messageSnapshot.KnowledgeReferences {
+	copy := *message
+	for _, frame := range events {
+		if !liveBatchNeedsPublicationCheck([]interfaces.StreamEvent{frame}) {
+			continue
+		}
+		if frame.SourceLineage.RequireComplete() != nil {
+			return access.ErrNextcloudPublicationDenied
+		}
+		if copy.SourceLineage.RequireComplete() != nil {
+			copy.SourceLineage, _ = types.UnionSourceLineage(frame.SourceLineage)
+		} else {
+			var err error
+			copy.SourceLineage, err = types.UnionSourceLineage(copy.SourceLineage, frame.SourceLineage)
+			if err != nil {
+				return access.ErrNextcloudPublicationDenied
+			}
+		}
+	}
+	copy.KnowledgeReferences = append(types.References(nil), message.KnowledgeReferences...)
+	seen := make(map[string]struct{}, len(copy.KnowledgeReferences))
+	for _, ref := range copy.KnowledgeReferences {
 		if ref != nil && ref.KnowledgeID != "" {
 			seen[ref.KnowledgeID] = struct{}{}
 		}
@@ -730,12 +851,12 @@ func checkLiveStreamPublication(
 					continue
 				}
 				if ref.KnowledgeID == "" {
-					messageSnapshot.KnowledgeReferences = append(messageSnapshot.KnowledgeReferences, ref)
+					copy.KnowledgeReferences = append(copy.KnowledgeReferences, ref)
 					continue
 				}
 				if _, exists := seen[ref.KnowledgeID]; !exists {
 					seen[ref.KnowledgeID] = struct{}{}
-					messageSnapshot.KnowledgeReferences = append(messageSnapshot.KnowledgeReferences, ref)
+					copy.KnowledgeReferences = append(copy.KnowledgeReferences, ref)
 				}
 			}
 		}
@@ -749,16 +870,16 @@ func checkLiveStreamPublication(
 			for id := range ids {
 				if _, exists := seen[id]; !exists {
 					seen[id] = struct{}{}
-					messageSnapshot.KnowledgeReferences = append(messageSnapshot.KnowledgeReferences,
-						&types.SearchResult{KnowledgeID: id})
+					copy.KnowledgeReferences = append(copy.KnowledgeReferences, &types.SearchResult{KnowledgeID: id})
 				}
 			}
 		}
 	}
-	if err := verifier.CheckLiveMessagePublication(ctx, &messageSnapshot); err != nil {
+	if err := verifier.CheckLiveMessagePublication(ctx, &copy); err != nil {
 		return err
 	}
-	message.KnowledgeReferences = messageSnapshot.KnowledgeReferences
+	message.KnowledgeReferences = copy.KnowledgeReferences
+	message.SourceLineage = copy.SourceLineage
 	return nil
 }
 
@@ -931,9 +1052,43 @@ func stopLiveStreamForPublication(
 	}
 	// Do not flush the resource URL holdback buffer: its tail may itself be
 	// source-derived text from just before the publication was withdrawn.
+	emitStaticTerminalStreamError(c, requestID, "Current source access changed; generation stopped", "source_access_changed")
+}
+
+// Original-material refusal closes the original owner before cancellation.
+// Stop is an exact control event, never authorization for a completed body.
+// The existing KnowledgeQA cancellation path joins its actual child stream.
+func stopLiveStreamForOriginalMaterial(
+	ctx context.Context, c *gin.Context, bus *event.EventBus,
+	sessionID, messageID, requestID string,
+) {
+	applicationservice.RefuseMessageMaterialOutputBoundary(ctx)
+	if bus != nil {
+		_ = bus.Emit(ctx, event.Event{
+			Type: event.EventStop, SessionID: sessionID,
+			Data: event.StopData{SessionID: sessionID, MessageID: messageID, Reason: "original_material_unavailable"},
+		})
+	}
+	emitSafeTerminalGenerationError(c, requestID)
+}
+
+func emitSafeTerminalGenerationError(c *gin.Context, requestID string) {
+	emitStaticTerminalStreamError(c, requestID, "Generation could not complete; please retry after checking access", "generation_failed")
+}
+
+func emitStaticTerminalStreamError(c *gin.Context, requestID, content, code string) {
+	if c.Request.Context().Err() != nil {
+		return
+	}
+	prior := c.Writer
+	if guarded, ok := prior.(*nativeSavedReplayWriter); ok {
+		c.Writer = guarded.ResponseWriter
+		defer func() { c.Writer = prior }()
+	}
 	c.SSEvent("message", &types.StreamResponse{
 		ID: requestID, ResponseType: types.ResponseTypeError,
-		Content: "Current source access changed; generation stopped", Done: true,
+		Content: content, Done: true,
+		Data: map[string]interface{}{"error_code": code},
 	})
 	c.Writer.Flush()
 }

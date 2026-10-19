@@ -23,11 +23,7 @@ func newNextcloudQueuedPublicationTest(t *testing.T) (*gorm.DB, *NextcloudEventI
 	require.NoError(t, db.Exec(`CREATE TABLE knowledge_bases
 		(id TEXT PRIMARY KEY, tenant_id INTEGER, deleted_at DATETIME)`).Error)
 	require.NoError(t, db.Exec(`INSERT INTO knowledge_bases (id, tenant_id) VALUES ('kb', 7)`).Error)
-	for _, name := range []string{
-		"000032_nextcloud_event_inbox.up.sql",
-		"000033_nextcloud_event_dispatch.up.sql",
-		"000049_nextcloud_event_hint_etag.up.sql",
-	} {
+	for _, name := range []string{"000032_nextcloud_event_inbox.up.sql", "000033_nextcloud_event_dispatch.up.sql", "000049_nextcloud_event_hint_etag.up.sql"} {
 		schema, err := os.ReadFile("../../../migrations/sqlite/" + name)
 		require.NoError(t, err)
 		require.NoError(t, db.Exec(string(schema)).Error)
@@ -44,16 +40,12 @@ func newNextcloudQueuedPublicationTest(t *testing.T) (*gorm.DB, *NextcloudEventI
 		bindingID, baseURL, configSHA).Error)
 	require.NoError(t, db.Exec(`INSERT INTO nextcloud_event_checkpoint (connection_id, received_id)
 		VALUES ('event-connection', 1)`).Error)
-	require.NoError(t, db.Exec(("INSERT INTO nextcloud_event_inbox\n"+
-		"\t\t(connection_id, event_id, payload_sha256, event_type,"+
-		" file_id, etag, path, relative_path, state)\n"+
-		"\t\tVALUES ('event-connection', 1, ?, 'upsert', 77, 'etag"+
-		"-v1', '/Published/file.md', 'file.md', 'dispatched')"), strings.Repeat("0", 64)).Error)
+	require.NoError(t, db.Exec(`INSERT INTO nextcloud_event_inbox
+		(connection_id, event_id, payload_sha256, event_type, file_id, etag, path, relative_path, state)
+		VALUES ('event-connection', 1, ?, 'upsert', 77, 'etag-v1', '/Published/file.md', 'file.md', 'dispatched')`, strings.Repeat("0", 64)).Error)
 	now := time.Now().UTC().Truncate(time.Second)
-	require.NoError(t, db.Create(&types.SyncLog{
-		ID: "event-log", DataSourceID: "ds",
-		TenantID: 7, Status: types.SyncLogStatusRunning, StartedAt: now.Add(-time.Minute),
-	}).Error)
+	require.NoError(t, db.Create(&types.SyncLog{ID: "event-log", DataSourceID: "ds",
+		TenantID: 7, Status: types.SyncLogStatusRunning, StartedAt: now.Add(-time.Minute)}).Error)
 	require.NoError(t, db.Exec(`INSERT INTO nextcloud_event_dispatch
 		(connection_id, dispatched_id, target_event_id, state, last_sync_log_id, next_attempt_at)
 		VALUES ('event-connection', 1, 1, 'queued', 'event-log', ?)`, now).Error)
@@ -108,11 +100,9 @@ func TestNextcloudQueuedPublicationWaitsForBriefRegistrationGap(t *testing.T) {
 		types.ParseStatusCompleted, "enabled")
 	require.NoError(t, db.Model(&types.Knowledge{}).Where("id = ?", ready.ID).
 		Update("file_name", "file.md").Error)
-	require.NoError(t, db.Create(&nextcloudSourceVersion{
-		TenantID: 7, KnowledgeBaseID: "kb",
+	require.NoError(t, db.Create(&nextcloudSourceVersion{TenantID: 7, KnowledgeBaseID: "kb",
 		DataSourceID: "ds", ExternalID: "nextcloud:instance:77", DesiredETag: "etag-v1",
-		CandidateKnowledgeID: ready.ID, State: "published", UpdatedAt: now,
-	}).Error)
+		CandidateKnowledgeID: ready.ID, State: "published", UpdatedAt: now}).Error)
 	claim, err = inbox.ClaimDispatch(ctx, "event-connection", now.Add(2*nextcloudQueuedPollInterval))
 	require.NoError(t, err)
 	require.Nil(t, claim)
@@ -144,13 +134,10 @@ func TestNextcloudQueuedPublicationWaitsForParserWithoutAck(t *testing.T) {
 		WHERE id = 'event-log'`, now).Error)
 	pending := insertNextcloudVersionTestKnowledge(t, db, "pending-after-sync", "",
 		types.ParseStatusPending, "disabled")
-	require.NoError(t, db.Create(&nextcloudSourceVersion{
-		TenantID: 7, KnowledgeBaseID: "kb",
+	require.NoError(t, db.Create(&nextcloudSourceVersion{TenantID: 7, KnowledgeBaseID: "kb",
 		DataSourceID: "ds", ExternalID: "nextcloud:instance:77", DesiredETag: "etag-v1",
-		CandidateKnowledgeID: pending.ID, State: "staging", UpdatedAt: now,
-	}).Error)
-	for _, checkAt := range []time.Time{now.Add(5 *
-		time.Second), now.Add(nextcloudPublicationFastPollWindow + time.Second)} {
+		CandidateKnowledgeID: pending.ID, State: "staging", UpdatedAt: now}).Error)
+	for _, checkAt := range []time.Time{now.Add(5 * time.Second), now.Add(nextcloudPublicationFastPollWindow + time.Second)} {
 		claim, err := inbox.ClaimDispatch(ctx, "event-connection", checkAt)
 		require.NoError(t, err)
 		require.Nil(t, claim)
@@ -173,18 +160,14 @@ func TestNextcloudQueuedPublicationSupersededByNewReceipt(t *testing.T) {
 	// unpublished. Its proof cannot become complete after the file changes.
 	stale := insertNextcloudVersionTestKnowledge(t, db, "stale-candidate", "",
 		types.ParseStatusCompleted, "disabled")
-	require.NoError(t, db.Create(&nextcloudSourceVersion{
-		TenantID: 7, KnowledgeBaseID: "kb",
+	require.NoError(t, db.Create(&nextcloudSourceVersion{TenantID: 7, KnowledgeBaseID: "kb",
 		DataSourceID: "ds", ExternalID: "nextcloud:instance:77", DesiredETag: "etag-v1",
-		CandidateKnowledgeID: stale.ID, State: "staging", UpdatedAt: now,
-	}).Error)
+		CandidateKnowledgeID: stale.ID, State: "staging", UpdatedAt: now}).Error)
 	require.NoError(t, db.Exec(`UPDATE sync_logs SET status = 'success', finished_at = ?
 		WHERE id = 'event-log'`, now).Error)
-	require.NoError(t, db.Exec(("INSERT INTO nextcloud_event_inbox\n"+
-		"\t\t(connection_id, event_id, payload_sha256, event_type,"+
-		" file_id, etag, path, relative_path, state)\n"+
-		"\t\tVALUES ('event-connection', 2, ?, 'upsert', 77, 'etag"+
-		"-v2', '/Published/file.md', 'file.md', 'pending')"), strings.Repeat("1", 64)).Error)
+	require.NoError(t, db.Exec(`INSERT INTO nextcloud_event_inbox
+		(connection_id, event_id, payload_sha256, event_type, file_id, etag, path, relative_path, state)
+		VALUES ('event-connection', 2, ?, 'upsert', 77, 'etag-v2', '/Published/file.md', 'file.md', 'pending')`, strings.Repeat("1", 64)).Error)
 	require.NoError(t, db.Exec(`UPDATE nextcloud_event_checkpoint SET received_id = 2
 		WHERE connection_id = 'event-connection'`).Error)
 
@@ -200,11 +183,9 @@ func TestNextcloudQueuedPublicationSupersededByNewReceipt(t *testing.T) {
 	require.NoError(t, inbox.FinishDispatch(ctx, *claim, "new-event-log", now.Add(time.Second)))
 
 	finished := now.Add(3 * time.Second)
-	require.NoError(t, db.Create(&types.SyncLog{
-		ID: "new-event-log", DataSourceID: "ds",
+	require.NoError(t, db.Create(&types.SyncLog{ID: "new-event-log", DataSourceID: "ds",
 		TenantID: 7, Status: types.SyncLogStatusSuccess,
-		StartedAt: now.Add(2 * time.Second), FinishedAt: &finished,
-	}).Error)
+		StartedAt: now.Add(2 * time.Second), FinishedAt: &finished}).Error)
 	oldReady := insertNextcloudVersionTestKnowledge(t, db, "old-published", "etag-v1",
 		types.ParseStatusCompleted, "enabled")
 	require.NoError(t, db.Model(&types.Knowledge{}).Where("id = ?", oldReady.ID).
@@ -212,10 +193,8 @@ func TestNextcloudQueuedPublicationSupersededByNewReceipt(t *testing.T) {
 	require.NoError(t, db.Model(&nextcloudSourceVersion{}).
 		Where("tenant_id = ? AND knowledge_base_id = ? AND datasource_id = ? AND external_id = ?",
 			7, "kb", "ds", "nextcloud:instance:77").
-		Updates(map[string]any{
-			"desired_etag": "etag-v1", "candidate_knowledge_id": oldReady.ID,
-			"state": "published", "updated_at": now.Add(4 * time.Second),
-		}).Error)
+		Updates(map[string]any{"desired_etag": "etag-v1", "candidate_knowledge_id": oldReady.ID,
+			"state": "published", "updated_at": now.Add(4 * time.Second)}).Error)
 	var source types.DataSource
 	require.NoError(t, db.Where("id = ?", "ds").Take(&source).Error)
 	cursor, err := source.ParseSyncCursor()
@@ -249,10 +228,8 @@ func TestNextcloudQueuedPublicationSupersededByNewReceipt(t *testing.T) {
 	require.NoError(t, db.Model(&nextcloudSourceVersion{}).
 		Where("tenant_id = ? AND knowledge_base_id = ? AND datasource_id = ? AND external_id = ?",
 			7, "kb", "ds", "nextcloud:instance:77").
-		Updates(map[string]any{
-			"desired_etag": "etag-v2", "candidate_knowledge_id": ready.ID,
-			"state": "published", "updated_at": now.Add(8 * time.Second),
-		}).Error)
+		Updates(map[string]any{"desired_etag": "etag-v2", "candidate_knowledge_id": ready.ID,
+			"state": "published", "updated_at": now.Add(8 * time.Second)}).Error)
 	require.NoError(t, writeNextcloudETag(db, oldReady, ""))
 	cursor.ConnectorCursor["files"] = map[string]interface{}{bindingID: map[string]interface{}{
 		"77": map[string]string{"etag": "etag-v2", "name": "file.md", "path": "file.md"},
@@ -352,15 +329,11 @@ func TestNextcloudPublicationProofRejectsUnboundLatestHints(t *testing.T) {
 				types.ParseStatusCompleted, "enabled")
 			require.NoError(t, db.Model(&types.Knowledge{}).Where("id = ?", ready.ID).
 				Update("file_name", "file.md").Error)
-			require.NoError(t, db.Create(&nextcloudSourceVersion{
-				TenantID: 7, KnowledgeBaseID: "kb",
+			require.NoError(t, db.Create(&nextcloudSourceVersion{TenantID: 7, KnowledgeBaseID: "kb",
 				DataSourceID: "ds", ExternalID: "nextcloud:instance:77", DesiredETag: "etag-v1",
-				CandidateKnowledgeID: ready.ID, State: "published", UpdatedAt: now,
-			}).Error)
-			require.NoError(t, db.Exec(("UPDATE nextcloud_event_inbox SET event_type = ?, file_i"+
-				"d = ?, etag = ?, path = ?, relative_path = ?\n"+
-				"\t\t\t\tWHERE connection_id = 'event-connection' AND event_"+
-				"id = 1"),
+				CandidateKnowledgeID: ready.ID, State: "published", UpdatedAt: now}).Error)
+			require.NoError(t, db.Exec(`UPDATE nextcloud_event_inbox SET event_type = ?, file_id = ?, etag = ?, path = ?, relative_path = ?
+				WHERE connection_id = 'event-connection' AND event_id = 1`,
 				latest.eventType, latest.fileID, latest.etag, latest.path, latest.relativePath).Error)
 			require.NoError(t, db.Exec(`UPDATE sync_logs SET status = 'success', finished_at = ?
 				WHERE id = 'event-log'`, now).Error)
@@ -370,9 +343,7 @@ func TestNextcloudPublicationProofRejectsUnboundLatestHints(t *testing.T) {
 			row := publicationDispatchRow(t, db)
 			require.Zero(t, row.AppliedID)
 			require.Equal(t, "queued", row.State)
-			claim, err = inbox.ClaimDispatch(ctx, "event-connection", now.Add(
-				nextcloudPublicationRetryGrace+time.Second,
-			))
+			claim, err = inbox.ClaimDispatch(ctx, "event-connection", now.Add(nextcloudPublicationRetryGrace+time.Second))
 			require.NoError(t, err)
 			require.Nil(t, claim)
 			row = publicationDispatchRow(t, db)
@@ -393,11 +364,9 @@ func TestNextcloudSubtreeHintRequiresSecondCompleteManifest(t *testing.T) {
 		types.ParseStatusCompleted, "enabled")
 	require.NoError(t, db.Model(&types.Knowledge{}).Where("id = ?", ready.ID).
 		Update("file_name", "file.md").Error)
-	require.NoError(t, db.Create(&nextcloudSourceVersion{
-		TenantID: 7, KnowledgeBaseID: "kb",
+	require.NoError(t, db.Create(&nextcloudSourceVersion{TenantID: 7, KnowledgeBaseID: "kb",
 		DataSourceID: "ds", ExternalID: "nextcloud:instance:77", DesiredETag: "etag-v1",
-		CandidateKnowledgeID: ready.ID, State: "published", UpdatedAt: now,
-	}).Error)
+		CandidateKnowledgeID: ready.ID, State: "published", UpdatedAt: now}).Error)
 	require.NoError(t, db.Exec(`UPDATE nextcloud_event_inbox
 		SET event_type = 'subtree_moved', file_id = NULL, etag = NULL, relative_path = NULL
 		WHERE connection_id = 'event-connection' AND event_id = 1`).Error)
@@ -419,11 +388,9 @@ func TestNextcloudSubtreeHintRequiresSecondCompleteManifest(t *testing.T) {
 	row = publicationDispatchRow(t, db)
 	require.Equal(t, "broad_confirm:1", row.LastErrorCode)
 	finished := now.Add(7 * time.Second)
-	require.NoError(t, db.Create(&types.SyncLog{
-		ID: "subtree-second-log", DataSourceID: "ds",
+	require.NoError(t, db.Create(&types.SyncLog{ID: "subtree-second-log", DataSourceID: "ds",
 		TenantID: 7, Status: types.SyncLogStatusSuccess,
-		StartedAt: now.Add(6 * time.Second), FinishedAt: &finished,
-	}).Error)
+		StartedAt: now.Add(6 * time.Second), FinishedAt: &finished}).Error)
 	var source types.DataSource
 	require.NoError(t, db.Where("id = ?", "ds").Take(&source).Error)
 	cursor, err := source.ParseSyncCursor()
@@ -491,11 +458,9 @@ func TestNextcloudFileScopedReconcileTransitionsAckAfterSecondCompleteManifest(t
 					types.ParseStatusCompleted, "enabled")
 				require.NoError(t, db.Model(&types.Knowledge{}).Where("id = ?", ready.ID).
 					Update("file_name", "file.md").Error)
-				require.NoError(t, db.Create(&nextcloudSourceVersion{
-					TenantID: 7, KnowledgeBaseID: "kb",
+				require.NoError(t, db.Create(&nextcloudSourceVersion{TenantID: 7, KnowledgeBaseID: "kb",
 					DataSourceID: "ds", ExternalID: "nextcloud:instance:77", DesiredETag: "etag-v2",
-					CandidateKnowledgeID: ready.ID, State: "published", UpdatedAt: now,
-				}).Error)
+					CandidateKnowledgeID: ready.ID, State: "published", UpdatedAt: now}).Error)
 				cursor.ConnectorCursor["files"] = map[string]interface{}{bindingID: map[string]interface{}{
 					"77": map[string]string{"etag": "etag-v2", "name": "file.md", "path": "file.md"},
 				}}
@@ -504,11 +469,9 @@ func TestNextcloudFileScopedReconcileTransitionsAckAfterSecondCompleteManifest(t
 					types.ParseStatusCompleted, "enabled")
 				require.NoError(t, writeNextcloudETag(db, old, ""))
 				require.NoError(t, db.Delete(old).Error)
-				require.NoError(t, db.Create(&nextcloudSourceVersion{
-					TenantID: 7, KnowledgeBaseID: "kb",
+				require.NoError(t, db.Create(&nextcloudSourceVersion{TenantID: 7, KnowledgeBaseID: "kb",
 					DataSourceID: "ds", ExternalID: "nextcloud:instance:77",
-					State: "tombstone", UpdatedAt: now,
-				}).Error)
+					State: "tombstone", UpdatedAt: now}).Error)
 				cursor.ConnectorCursor["files"] = map[string]interface{}{bindingID: map[string]interface{}{}}
 				cursor.ConnectorCursor["tombstones"] = map[string]interface{}{bindingID: map[string]interface{}{
 					"77": map[string]string{"etag": "etag-v1", "name": "file.md", "path": "file.md"},
@@ -534,11 +497,9 @@ func TestNextcloudFileScopedReconcileTransitionsAckAfterSecondCompleteManifest(t
 			require.NoError(t, inbox.PrepareDispatch(ctx, *claim, "reconcile-second-log", now.Add(6*time.Second)))
 			require.NoError(t, inbox.FinishDispatch(ctx, *claim, "reconcile-second-log", now.Add(6*time.Second)))
 			finished := now.Add(7 * time.Second)
-			require.NoError(t, db.Create(&types.SyncLog{
-				ID: "reconcile-second-log", DataSourceID: "ds",
+			require.NoError(t, db.Create(&types.SyncLog{ID: "reconcile-second-log", DataSourceID: "ds",
 				TenantID: 7, Status: types.SyncLogStatusSuccess,
-				StartedAt: now.Add(6 * time.Second), FinishedAt: &finished,
-			}).Error)
+				StartedAt: now.Add(6 * time.Second), FinishedAt: &finished}).Error)
 			cursor.LastSyncTime = finished
 			cursor.ConnectorCursor["last_reconcile_at"] = finished.Unix()
 			raw, err = cursor.ToJSON()
@@ -590,11 +551,9 @@ func TestNextcloudExcludedImportableUpsertNeedsTwoAbsentManifests(t *testing.T) 
 	require.NoError(t, inbox.PrepareDispatch(ctx, *claim, "excluded-second-log", now.Add(6*time.Second)))
 	require.NoError(t, inbox.FinishDispatch(ctx, *claim, "excluded-second-log", now.Add(6*time.Second)))
 	finished := now.Add(7 * time.Second)
-	require.NoError(t, db.Create(&types.SyncLog{
-		ID: "excluded-second-log", DataSourceID: "ds",
+	require.NoError(t, db.Create(&types.SyncLog{ID: "excluded-second-log", DataSourceID: "ds",
 		TenantID: 7, Status: types.SyncLogStatusSuccess,
-		StartedAt: now.Add(6 * time.Second), FinishedAt: &finished,
-	}).Error)
+		StartedAt: now.Add(6 * time.Second), FinishedAt: &finished}).Error)
 	cursor.LastSyncTime = finished
 	cursor.ConnectorCursor["last_reconcile_at"] = finished.Unix()
 	raw, err = cursor.ToJSON()
@@ -616,11 +575,9 @@ func TestNextcloudExcludedPreviouslyPublishedFileRequiresWithdrawal(t *testing.T
 		types.ParseStatusCompleted, "enabled")
 	require.NoError(t, db.Model(&types.Knowledge{}).Where("id = ?", ready.ID).
 		Update("file_name", "file.md").Error)
-	require.NoError(t, db.Create(&nextcloudSourceVersion{
-		TenantID: 7, KnowledgeBaseID: "kb",
+	require.NoError(t, db.Create(&nextcloudSourceVersion{TenantID: 7, KnowledgeBaseID: "kb",
 		DataSourceID: "ds", ExternalID: "nextcloud:instance:77", DesiredETag: "etag-v1",
-		CandidateKnowledgeID: ready.ID, State: "published", UpdatedAt: now,
-	}).Error)
+		CandidateKnowledgeID: ready.ID, State: "published", UpdatedAt: now}).Error)
 	var source types.DataSource
 	require.NoError(t, db.Where("id = ?", "ds").Take(&source).Error)
 	cursor, err := source.ParseSyncCursor()
@@ -658,21 +615,17 @@ func TestNextcloudExcludedPreviouslyPublishedFileRequiresWithdrawal(t *testing.T
 	require.NoError(t, db.Model(&nextcloudSourceVersion{}).
 		Where("tenant_id = ? AND knowledge_base_id = ? AND datasource_id = ? AND external_id = ?",
 			7, "kb", "ds", "nextcloud:instance:77").
-		Updates(map[string]any{
-			"desired_etag": "", "candidate_knowledge_id": "",
-			"state": "tombstone",
-		}).Error)
+		Updates(map[string]any{"desired_etag": "", "candidate_knowledge_id": "",
+			"state": "tombstone"}).Error)
 	cursor.ConnectorCursor["files"] = map[string]interface{}{bindingID: map[string]interface{}{}}
 	cursor.ConnectorCursor["missing"] = map[string]interface{}{bindingID: map[string]interface{}{}}
 	cursor.ConnectorCursor["tombstones"] = map[string]interface{}{bindingID: map[string]interface{}{
 		"77": map[string]string{"etag": "etag-v1", "name": "file.md", "path": "file.md"},
 	}}
 	firstComplete := now.Add(62 * time.Second)
-	require.NoError(t, db.Create(&types.SyncLog{
-		ID: "withdrawn-first-complete-log", DataSourceID: "ds",
+	require.NoError(t, db.Create(&types.SyncLog{ID: "withdrawn-first-complete-log", DataSourceID: "ds",
 		TenantID: 7, Status: types.SyncLogStatusSuccess,
-		StartedAt: now.Add(61 * time.Second), FinishedAt: &firstComplete,
-	}).Error)
+		StartedAt: now.Add(61 * time.Second), FinishedAt: &firstComplete}).Error)
 	cursor.LastSyncTime = firstComplete
 	cursor.ConnectorCursor["last_reconcile_at"] = firstComplete.Unix()
 	raw, err = cursor.ToJSON()
@@ -692,11 +645,9 @@ func TestNextcloudExcludedPreviouslyPublishedFileRequiresWithdrawal(t *testing.T
 	require.NoError(t, inbox.PrepareDispatch(ctx, *claim, "withdrawn-second-log", now.Add(68*time.Second)))
 	require.NoError(t, inbox.FinishDispatch(ctx, *claim, "withdrawn-second-log", now.Add(68*time.Second)))
 	finished := now.Add(69 * time.Second)
-	require.NoError(t, db.Create(&types.SyncLog{
-		ID: "withdrawn-second-log", DataSourceID: "ds",
+	require.NoError(t, db.Create(&types.SyncLog{ID: "withdrawn-second-log", DataSourceID: "ds",
 		TenantID: 7, Status: types.SyncLogStatusSuccess,
-		StartedAt: now.Add(68 * time.Second), FinishedAt: &finished,
-	}).Error)
+		StartedAt: now.Add(68 * time.Second), FinishedAt: &finished}).Error)
 	cursor.LastSyncTime = finished
 	cursor.ConnectorCursor["last_reconcile_at"] = finished.Unix()
 	raw, err = cursor.ToJSON()

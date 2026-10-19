@@ -33,10 +33,12 @@ func (publicationHandlerDirectories) GetIdentityByUserID(context.Context, string
 	return nil, nil
 }
 
-func (publicationHandlerDirectories) GetLoginSnapshot(context.Context, string,
-	string,
-) (*types.DirectoryLoginSnapshot, error) {
+func (publicationHandlerDirectories) GetLoginSnapshot(context.Context, string, string) (*types.DirectoryLoginSnapshot, error) {
 	return nil, nil
+}
+
+func (publicationHandlerDirectories) GetUserLoginSnapshot(context.Context, string) ([]*types.DirectoryIdentity, *types.DirectoryLoginSnapshot, error) {
+	return nil, nil, nil
 }
 
 type publicationHandlerKnowledge struct {
@@ -126,10 +128,7 @@ func TestGetKnowledgeFailsClosedForNextcloud(t *testing.T) {
 func TestDirectChunkReadFailsClosedWithoutPublicationVerifier(t *testing.T) {
 	knowledge, _ := publicationHandlerFixture(t, true)
 	h := NewChunkHandler(
-		publicationHandlerChunks{chunk: &types.Chunk{
-			ID: "chunk-1", KnowledgeID: knowledge.ID,
-			Content: "secret chunk text",
-		}},
+		publicationHandlerChunks{chunk: &types.Chunk{ID: "chunk-1", KnowledgeID: knowledge.ID, Content: "secret chunk text"}},
 		publicationHandlerKnowledge{row: knowledge},
 	)
 	r := documentHandlerRouter()

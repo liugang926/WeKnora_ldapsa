@@ -816,6 +816,66 @@ export default {
     pauseFailed: '일시정지 실패',
     logs: '로그',
     actions: '작업',
+    gc: {
+      "more": "More tasks",
+      "title": "Retired version cleanup",
+      "description": "Review expiration and cleanup progress. Estimated bytes are separate from confirmed filesystem releases.",
+      "unavailable": "Cleanup status is unavailable or the safety check refused the action. Refresh and inspect the current status.",
+      "empty": "No retained cleanup tasks for this knowledge base.",
+      "nextAttempt": "Next retry",
+      "unknown": "Unverified",
+      "derivedExpiry": "Derived content expiry",
+      "originalExpiry": "Recovery copy expiry",
+      "estimated": "Estimated bytes",
+      "confirmed": "Confirmed released bytes",
+      "failure": "Reason for deferral",
+      "preview": "Preview inventory",
+      "safety": "An attempt repeats current-version, reference, retention and read/build lease checks. Unknown inventories stay blocked; allocated database pages may remain after row deletion.",
+      "category": "Category",
+      "status": "Status",
+      "count": "Count",
+      "collect": "Attempt collection now",
+      "retry": "Retry on next sweep",
+      "refresh": "Refresh",
+      "reason": {
+        "retired": "Replaced version",
+        "tombstone": "Source withdrawn"
+      },
+      "state": {
+        "pending": "Pending",
+        "retry": "Retry scheduled",
+        "blocked": "Safety check pending",
+        "deleting": "Collecting",
+        "collected": "Recorded items collected"
+      },
+      "error": {"content_lease_coverage_unverified": "Reader/build coverage is unverified; collection stays blocked.", "content_read_or_build_busy": "A reader or builder is active; retry later.", "content_generation_unverified": "Source generation needs reconciliation.", "candidate_is_current": "This is still the current version and cannot be collected.", "build_still_active": "Build is still active; retain its data.", "source_identity_changed": "Source identity changed; refresh and reconcile.", "derived_backend_inventory_unverified": "Derived backend inventory is incomplete; retain data.", "derived_provenance_unverified": "Historical derived origins are unverified; retain data.", "safe_object_cleanup_unavailable": "Protected references or backend checks prevent collection.", "provider_delete_failed": "Storage deletion was not confirmed; inspect the backend and retry.", "retention_window_open": "Retention is still active; retain data.", "invalid_image_inventory": "Image inventory needs repair before retry.", "original_body_retained_or_unverified": "Body references, leases, retention windows, or verification still require retention",
+        "gc_step_failed": "Cleanup step failed; inspect and retry."},
+      "kind": {
+        "knowledge": "Knowledge record",
+        "derived_index": "Derived inventory",
+        "chunk": "Chunk",
+        "local_embedding": "Local index",
+        "sql_original_body": "Original input bodies",
+        "source_file": "Original copy",
+        "extracted_image": "Extracted image"
+      }
+    },
+    capacity: {
+      title: "AI 수집 용량",
+      description: "높은 사용률에서는 새 AI 수집을 중지합니다. 원본과 유효한 지식은 유지됩니다.",
+      unavailable: "용량을 확인할 수 없어 새 AI 수집이 중지되었습니다.",
+      normal: "정상 용량",
+      warning: "용량 경고",
+      paused: "새 AI 수집 중지",
+      physical: "실제 여유 / 전체",
+      retained: "KB 보관 객체",
+      reserved: "수집 예약 용량",
+      quota: "보관 한도 MiB (0 무제한)",
+      warningLabel: "경고 %",
+      pause: "중지 %",
+      save: "저장",
+      refresh: "새로 고침",
+    },
     failedCandidates: {
       title: 'Nextcloud 처리 실패 파일',
       hint: '이 연결된 데이터 소스에서 처리에 실패한 파일만 표시됩니다. 재시도 시 원본 파일을 다시 가져오며 실패한 이전 버전을 게시하지 않습니다.',
@@ -1822,6 +1882,14 @@ export default {
     todoWrite: '계획 수립'
   },
   commandPalette: {
+    search: {
+      previousMessages: '이전 페이지',
+      pageEmpty: '이 페이지에 일치하는 대화가 없습니다.',
+      continueMessages: '이전 대화 계속 검색',
+      moreAvailable: '아직 검색하지 않은 이전 대화가 있습니다.',
+      failed: '검색을 완료하지 못했습니다. 다시 시도해 주세요.',
+      retry: '검색 다시 시도',
+    },
     placeholder: '지식베이스, 파일, 대화 검색…',
     clearRecent: '지우기',
     retrieval: '검색 설정',
@@ -4575,7 +4643,10 @@ export default {
         'wiki.content_changed': 'Wiki 콘텐츠 업데이트',
         'faq.import_started': 'FAQ 가져오기 시작',
         'faq.import_completed': 'FAQ 가져오기 완료',
-        'faq.import_failed': 'FAQ 가져오기 실패'
+        'faq.import_failed': 'FAQ 가져오기 실패',
+        'nextcloud.gc_collect_requested': 'Cleanup attempt requested',
+        'nextcloud.gc_collect_finished': 'Cleanup attempt finished',
+        'nextcloud.gc_retry_requested': 'Cleanup retry scheduled'
       },
       detailFields: {
         task_id: '작업 ID',
@@ -5180,6 +5251,8 @@ export default {
     next: '다음'
   },
   graphSettings: {
+    requiredForPublication: '원본 파일을 공개하기 전에 그래프 완료 필수',
+    requiredForPublicationDescription: '이 지식 베이스를 원본 템플릿으로 사용하면 그래프 추출이 성공한 후에만 파일로 질문할 수 있습니다. 선택을 해제하면 그래프는 선택 사항이 되며 실패는 파일 상태에 표시됩니다.',
     title: '지식 그래프 설정',
     description: '엔티티-관계 추출 기능을 구성하여 텍스트에서 자동으로 엔티티와 관계를 추출하여 지식 그래프를 구축합니다 (참고: Wiki의 \'페이지 링크 그래프\'와는 다릅니다. 후자는 Wiki 페이지 간의 참조 관계를 보여주며, 이쪽은 LLM이 추출한 엔티티-관계 그래프입니다)',
     enableLabel: '엔티티 관계 추출 활성화',

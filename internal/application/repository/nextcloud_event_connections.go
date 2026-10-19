@@ -10,8 +10,6 @@ import (
 	"strconv"
 	"time"
 
-	apperrors "github.com/Tencent/WeKnora/internal/errors"
-
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/utils"
 	"github.com/google/uuid"
@@ -19,15 +17,8 @@ import (
 	"gorm.io/gorm/clause"
 )
 
-// ErrNextcloudEventConnectionExists reports an already configured event connection.
-var ErrNextcloudEventConnectionExists = apperrors.NewProtocolError(
-	errors.New("nextcloud event connection already exists"), "Nextcloud event connection already exists",
-)
-
-// ErrNextcloudEventConnectionMissing reports an unavailable event connection.
-var ErrNextcloudEventConnectionMissing = apperrors.NewProtocolError(
-	errors.New("nextcloud event connection is not active"), "Nextcloud event connection is not active",
-)
+var ErrNextcloudEventConnectionExists = errors.New("Nextcloud event connection already exists")
+var ErrNextcloudEventConnectionMissing = errors.New("Nextcloud event connection is not active")
 
 const nextcloudEventRotationGrace = 2 * time.Minute
 
@@ -75,12 +66,7 @@ type NextcloudEventConnectionStatus struct {
 	LastSyncLogID            string `json:"last_sync_log_id,omitempty"`
 }
 
-// ConnectionStatus loads the event connection's persisted status.
-func (r *NextcloudEventInboxRepository) ConnectionStatus(
-	ctx context.Context,
-	tenantID uint64,
-	datasourceID string,
-) (NextcloudEventConnectionStatus, error) {
+func (r *NextcloudEventInboxRepository) ConnectionStatus(ctx context.Context, tenantID uint64, datasourceID string) (NextcloudEventConnectionStatus, error) {
 	if tenantID == 0 || datasourceID == "" {
 		return NextcloudEventConnectionStatus{}, ErrNextcloudEventScope
 	}
@@ -154,24 +140,18 @@ func newNextcloudEventCredential() (string, string, string, error) {
 	secret := base64.RawURLEncoding.EncodeToString(secretBytes)
 	key := utils.GetAESKey()
 	if len(key) != 32 {
-		return "", "", "", apperrors.NewProtocolError(errors.New(
-			"nextcloud event encryption key unavailable",
-		), "Nextcloud event encryption key unavailable")
+		return "", "", "", errors.New("Nextcloud event encryption key unavailable")
 	}
 	ciphertext, err := utils.EncryptAESGCM(secret, key)
 	if err != nil || ciphertext == secret {
-		return "", "", "", apperrors.NewProtocolError(errors.New(
-			"nextcloud event encryption key unavailable",
-		), "Nextcloud event encryption key unavailable")
+		return "", "", "", errors.New("Nextcloud event encryption key unavailable")
 	}
 	return "evt_" + hex.EncodeToString(keyBytes), secret, ciphertext, nil
 }
 
 // Pair creates a new connection only after the live-validated source identity
 // still matches the committed row. It never reissues an existing secret.
-func (
-	r *NextcloudEventInboxRepository,
-) Pair(ctx context.Context, identity NextcloudEventPairingIdentity) (NextcloudEventConnectionCredential, error) {
+func (r *NextcloudEventInboxRepository) Pair(ctx context.Context, identity NextcloudEventPairingIdentity) (NextcloudEventConnectionCredential, error) {
 	keyID, secret, ciphertext, err := newNextcloudEventCredential()
 	if err != nil {
 		return NextcloudEventConnectionCredential{}, err
@@ -219,12 +199,10 @@ func (
 		if err := tx.Table("nextcloud_event_checkpoint").Create(checkpoint).Error; err != nil {
 			return fmt.Errorf("initialize Nextcloud event checkpoint: %w", err)
 		}
-		dispatch := map[string]any{
-			"connection_id": connectionID, "dispatched_id": int64(0),
+		dispatch := map[string]any{"connection_id": connectionID, "dispatched_id": int64(0),
 			"applied_id": int64(0), "state": "idle", "target_event_id": int64(0),
 			"attempt_count": 0, "next_attempt_at": time.Now().UTC(), "last_error_code": "",
-			"updated_at": time.Now().UTC(),
-		}
+			"updated_at": time.Now().UTC()}
 		if err := tx.Table("nextcloud_event_dispatch").Create(dispatch).Error; err != nil {
 			return fmt.Errorf("initialize Nextcloud event dispatch: %w", err)
 		}
@@ -238,19 +216,16 @@ func (
 
 // Rotate accepts the old and new keys for a short, server-clock grace period.
 // A second rotation replaces the previous key, so no more than two are valid.
-func (
-	r *NextcloudEventInboxRepository,
-) Rotate(ctx context.Context, identity NextcloudEventPairingIdentity) (NextcloudEventConnectionCredential, error) {
+func (r *NextcloudEventInboxRepository) Rotate(ctx context.Context, identity NextcloudEventPairingIdentity) (NextcloudEventConnectionCredential, error) {
 	keyID, secret, ciphertext, err := newNextcloudEventCredential()
 	if err != nil {
 		return NextcloudEventConnectionCredential{}, err
 	}
 	var result NextcloudEventConnectionCredential
 	err = r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if tx.Name() == "sqlite" {
-			lock := tx.Exec(("UPDATE nextcloud_event_connections SET status = status\n" +
-				"\t\t\t\tWHERE tenant_id = ? AND datasource_id = ? AND statu" +
-				"s = 'active'"), identity.TenantID, identity.DatasourceID)
+		if tx.Dialector.Name() == "sqlite" {
+			lock := tx.Exec(`UPDATE nextcloud_event_connections SET status = status
+				WHERE tenant_id = ? AND datasource_id = ? AND status = 'active'`, identity.TenantID, identity.DatasourceID)
 			if lock.Error != nil {
 				return fmt.Errorf("lock Nextcloud event connection: %w", lock.Error)
 			}
@@ -261,8 +236,7 @@ func (
 		var connection nextcloudEventConnection
 		if err := tx.Table("nextcloud_event_connections").
 			Clauses(clause.Locking{Strength: "UPDATE"}).
-			Where(("tenant_id = ? AND datasource_id = ? AND status = 'activ" +
-				"e'"), identity.TenantID, identity.DatasourceID).
+			Where("tenant_id = ? AND datasource_id = ? AND status = 'active'", identity.TenantID, identity.DatasourceID).
 			Take(&connection).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return ErrNextcloudEventConnectionMissing
@@ -314,7 +288,7 @@ func (r *NextcloudEventInboxRepository) Revoke(ctx context.Context, tenantID uin
 		return ErrNextcloudEventScope
 	}
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if tx.Name() == "sqlite" {
+		if tx.Dialector.Name() == "sqlite" {
 			lock := tx.Exec(`UPDATE nextcloud_event_connections SET status = status
 				WHERE tenant_id = ? AND datasource_id = ? AND status = 'active'`, tenantID, datasourceID)
 			if lock.Error != nil {
@@ -333,14 +307,10 @@ func (r *NextcloudEventInboxRepository) Revoke(ctx context.Context, tenantID uin
 			}
 			return fmt.Errorf("read Nextcloud event connection: %w", err)
 		}
-		result := tx.Table(
-			"nextcloud_event_connections",
-		).Where("connection_id = ? AND status = 'active'", connection.ConnectionID).
-			Updates(map[string]any{
-				"status": "revoked", "previous_key_id": nil,
+		result := tx.Table("nextcloud_event_connections").Where("connection_id = ? AND status = 'active'", connection.ConnectionID).
+			Updates(map[string]any{"status": "revoked", "previous_key_id": nil,
 				"previous_secret_ciphertext": nil, "previous_valid_until": nil,
-				"updated_at": time.Now().UTC(),
-			})
+				"updated_at": time.Now().UTC()})
 		if result.Error != nil {
 			return fmt.Errorf("revoke Nextcloud event connection: %w", result.Error)
 		}
@@ -348,10 +318,8 @@ func (r *NextcloudEventInboxRepository) Revoke(ctx context.Context, tenantID uin
 			return ErrNextcloudEventConnectionMissing
 		}
 		return tx.Table("nextcloud_event_dispatch").Where("connection_id = ?", connection.ConnectionID).
-			Updates(map[string]any{
-				"state": "blocked", "lease_token": nil, "lease_until": nil,
-				"last_error_code": "revoked", "updated_at": time.Now().UTC(),
-			}).Error
+			Updates(map[string]any{"state": "blocked", "lease_token": nil, "lease_until": nil,
+				"last_error_code": "revoked", "updated_at": time.Now().UTC()}).Error
 	})
 }
 
@@ -374,8 +342,7 @@ func checkNextcloudPairingSource(tx *gorm.DB, identity NextcloudEventPairingIden
 		return ErrNextcloudEventScope
 	}
 	var kb types.KnowledgeBase
-	if err := tx.Where("id = ? AND tenant_id = ?", identity.KnowledgeBaseID, identity.TenantID).Take(&kb).Error; err !=
-		nil {
+	if err := tx.Where("id = ? AND tenant_id = ?", identity.KnowledgeBaseID, identity.TenantID).Take(&kb).Error; err != nil {
 		return ErrNextcloudEventScope
 	}
 	if !kb.EverHadNextcloudSource {

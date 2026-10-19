@@ -26,11 +26,8 @@ func TestRawSearchRankedSourceMetadataReturnsUnderExactLease(t *testing.T) {
 		{"both_scores", nil, map[string]string{"base_score": "0.8500", "model_score": "0.9500"}},
 		{"base_only", nil, map[string]string{"base_score": "-0.2500"}},
 		{"model_only", nil, map[string]string{"model_score": "1.2e-3"}},
-		{
-			"persisted_score_unchanged",
-			map[string]string{"base_score": "0.2500"},
-			map[string]string{"base_score": "0.2500", "model_score": "0.9500"},
-		},
+		{"persisted_score_unchanged", map[string]string{"base_score": "0.2500"},
+			map[string]string{"base_score": "0.2500", "model_score": "0.9500"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -81,11 +78,7 @@ func TestRawSearchRankedSourceMetadataRejectsUntrustedChanges(t *testing.T) {
 		{"changed_channel", func(_ *types.Knowledge, r *types.SearchResult) { r.KnowledgeChannel = "api" }},
 		{"changed_kb", func(_ *types.Knowledge, r *types.SearchResult) { r.KnowledgeBaseID = "kb-2" }},
 		{"base_not_numeric", func(_ *types.Knowledge, r *types.SearchResult) { r.Metadata["base_score"] = "invalid" }},
-		{"model_not_numeric", func(_ *types.Knowledge,
-			r *types.SearchResult,
-		) {
-			r.Metadata["model_score"] = "invalid"
-		}},
+		{"model_not_numeric", func(_ *types.Knowledge, r *types.SearchResult) { r.Metadata["model_score"] = "invalid" }},
 		{"base_empty", func(_ *types.Knowledge, r *types.SearchResult) { r.Metadata["base_score"] = "" }},
 		{"base_nan", func(_ *types.Knowledge, r *types.SearchResult) { r.Metadata["base_score"] = "NaN" }},
 		{"model_nan", func(_ *types.Knowledge, r *types.SearchResult) { r.Metadata["model_score"] = "NaN" }},
@@ -229,12 +222,10 @@ func TestRawSearchRankedSourceMetadataRejectsRetirementAndBlocksGC(t *testing.T)
 
 func TestRawSearchOrdinaryLocalResultMetadataUnchanged(t *testing.T) {
 	row := &types.Knowledge{ID: "local-doc", TenantID: 7, KnowledgeBaseID: "kb-1", Channel: "api"}
-	result := &types.SearchResult{
-		ID: "local-chunk", KnowledgeID: row.ID,
+	result := &types.SearchResult{ID: "local-chunk", KnowledgeID: row.ID,
 		KnowledgeBaseID: row.KnowledgeBaseID, KnowledgeChannel: row.Channel,
 		Metadata: map[string]string{"local_key": "local_value", "base_score": "0.8500"},
-		Content:  "synthetic local text",
-	}
+		Content:  "synthetic local text"}
 	h, _, knowledge := rawSearchHandler(row, result, nil)
 	h.searchContentLeases = nil
 	w := rawSearchResponse(h, `{"query":"synthetic","knowledge_base_ids":["kb-1"]}`)
@@ -246,12 +237,10 @@ func TestRawSearchOrdinaryLocalResultMetadataUnchanged(t *testing.T) {
 
 func TestRawSearchOrdinaryLocalResultCannotForgeSourceMetadata(t *testing.T) {
 	row := &types.Knowledge{ID: "local-doc", TenantID: 7, KnowledgeBaseID: "kb-1", Channel: "api"}
-	result := &types.SearchResult{
-		ID: "local-chunk", KnowledgeID: row.ID,
+	result := &types.SearchResult{ID: "local-chunk", KnowledgeID: row.ID,
 		KnowledgeBaseID: row.KnowledgeBaseID, KnowledgeChannel: row.Channel,
 		Metadata: map[string]string{"nextcloud_file_id": "1", "base_score": "0.8500"},
-		Content:  "synthetic forged source text",
-	}
+		Content:  "synthetic forged source text"}
 	h, _, knowledge := rawSearchHandler(row, result, nil)
 	h.searchContentLeases = nil
 	w := rawSearchResponse(h, `{"query":"synthetic","knowledge_base_ids":["kb-1"]}`)
@@ -273,18 +262,10 @@ func TestRawSearchSourceMetadataMatcherPreservesNilAndStoredKeys(t *testing.T) {
 		{"score_without_source_metadata", map[string]string{"base_score": "0.5"}, nil, false},
 		// Persisted fields retain the original exact-value contract. Numeric
 		// validation applies only to additional pipeline score diagnostics.
-		{
-			"persisted_score_opaque_unchanged",
-			map[string]string{"base_score": "stored-value"},
-			map[string]string{"base_score": "stored-value"},
-			true,
-		},
-		{
-			"persisted_score_changed",
-			map[string]string{"base_score": "0.5"},
-			map[string]string{"base_score": "stored-value"},
-			false,
-		},
+		{"persisted_score_opaque_unchanged", map[string]string{"base_score": "stored-value"},
+			map[string]string{"base_score": "stored-value"}, true},
+		{"persisted_score_changed", map[string]string{"base_score": "0.5"},
+			map[string]string{"base_score": "stored-value"}, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

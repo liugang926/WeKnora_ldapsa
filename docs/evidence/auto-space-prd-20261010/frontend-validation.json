@@ -1,0 +1,48 @@
+{
+  "source_files_sha256": {
+    "frontend/src/App.vue": "334b646f0c595a0f76ed63b19c7c5491b582d016ea0f34db977131c6526b036d",
+    "frontend/src/api/auth/index.ts": "b04028df2b20e9ed9f5b69c7aa3b9f6e9304a18ebd997a9157886b766c774d63",
+    "frontend/src/api/knowledge-base/index.ts": "7bc3b9abbe0e45905a9b64c9dd1792f6eb4e357362d6e7c825f7b2d3a53a5211",
+    "frontend/src/i18n/locales/en-US.ts": "15c1cbe76cb3c429ee552298fbfcbd2d43b198cc2cbb851b1b5e64c0b1cf0935",
+    "frontend/src/i18n/locales/ja-JP.ts": "6747ae5c500cc70bd62ecc02b30b00b199ddb21a8de9a69dbec61d842d72e449",
+    "frontend/src/i18n/locales/ko-KR.ts": "f9a594cd1b36cc0e8e5d9815799ab93b4c6ff98dce03c9aad09d964ba0d5f23d",
+    "frontend/src/i18n/locales/ru-RU.ts": "96d97cc91389103c0345553804c8b03d3b5867f842aca5f73dd59fc777e0296d",
+    "frontend/src/i18n/locales/zh-CN.ts": "f65339fa87f59280e4c0bb77b78a6d9a3d1aa37f6d8d7e1aa57b89e120683b97",
+    "frontend/src/router/index.ts": "b60d84954e33fe6a415fa991f164e34bf9d19eaacf5ec764f1034afdf34d5c23",
+    "frontend/src/stores/auth.ts": "1bb7c93b64380d6f0ecf87d65c0e23c4daa0f9a27d06e95a3e93b56df22e600c",
+    "frontend/src/views/knowledge/KnowledgeBaseEditorModal.vue": "fc84b7fc76f512ef105b97c4a089ae97e3147cc4ce80bf1dc3049c1e3c0de6c4",
+    "frontend/src/views/nextcloud/SourceKnowledge.vue": "9d084fd3c01e4f6b7c0a1225b4931a2158880451eff44601fd2a1de75bc86172"
+  },
+  "checks": {
+    "i18n": {
+      "exit_code": 0,
+      "assertions": 13
+    },
+    "type_check": {
+      "exit_code": 0
+    },
+    "production_build": {
+      "exit_code": 0,
+      "duration_seconds": 103,
+      "existing_chunk_size_warnings": true
+    },
+    "browser": {
+      "exit_code": 0,
+      "engine": "actual local headless Chrome / Playwright",
+      "api_boundary": "controlled API fixture",
+      "checks": [
+        "scoped redirect",
+        "explicit KB QA",
+        "file QA",
+        "revocation hides history and clears output",
+        "no unrelated API access",
+        "390 px mobile has no horizontal overflow",
+        "no page errors"
+      ],
+      "qa_requests": 2
+    }
+  },
+  "screenshot": "source-knowledge-mobile.png",
+  "production_ldap_qa_accepted": false,
+  "raw_initial_logs_not_used_as_final_evidence": true
+}

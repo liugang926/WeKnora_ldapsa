@@ -78,6 +78,10 @@ func (p *PluginMemoryRecall) OnEvent(ctx context.Context,
 	}
 
 	chatManage.MemoryPrompt = recall.Prompt
+	if turn := types.RAGSourceLineageFromContext(ctx); turn != nil {
+		_ = turn.Add(types.UnknownSourceLineage())
+		return sourceLineagePluginError(turn.Check(ctx))
+	}
 	chatManage.UsedMemories = types.UsedMemoriesFromItems(recall.Items)
 	emitMemoryRecalled(ctx, chatManage.EventBus, chatManage.SessionID, chatManage.UsedMemories)
 

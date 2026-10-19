@@ -1,0 +1,395 @@
+=== RUN   TestNextcloudStreamHandlerRejectsFailedItemAndPartialCheckpoint
+ERROR[2026-10-10 10:02:20.792] [] datasource_service.go:1335[applyFetchedItem] | failed to tombstone Nextcloud item nextcloud:instance-1:41: tombstone failed
+--- PASS: TestNextcloudStreamHandlerRejectsFailedItemAndPartialCheckpoint (0.00s)
+=== RUN   TestNextcloudStreamHandlerRechecksRunningLogBeforeItem
+--- PASS: TestNextcloudStreamHandlerRechecksRunningLogBeforeItem (0.00s)
+=== RUN   TestNextcloudLiveOriginalExtractionProviderAndStatusInbox
+
+2026/10/10 10:02:21 /app/internal/application/repository/nextcloud_versions.go:507 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:21 /app/internal/application/repository/nextcloud_processing_state.go:157 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:21 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:21 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:21 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:21 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:21 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:21 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:21 /app/internal/application/repository/nextcloud_derived_backend_plan.go:95 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:21 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:21 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:21 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:21 /app/internal/application/repository/span_output_input.go:262 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:21 /app/internal/application/repository/nextcloud_processing_state.go:157 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:21 /app/internal/application/repository/span_output_input.go:262 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:21 /app/internal/application/repository/nextcloud_processing_state.go:157 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:21 /app/internal/application/repository/nextcloud_processing_state.go:157 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:21 /app/internal/application/repository/span_output_input.go:262 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:21 /app/internal/application/repository/nextcloud_processing_state.go:157 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:21 /app/internal/application/repository/nextcloud_processing_state.go:157 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:21 /app/internal/application/repository/span_output_input.go:262 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:21 /app/internal/application/repository/nextcloud_processing_state.go:157 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:21 /app/internal/application/repository/nextcloud_processing_state.go:157 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:21 /app/internal/application/repository/nextcloud_processing_delivery.go:258 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:21 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:21 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:21 /app/internal/application/repository/nextcloud_graph.go:147 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:21 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:21 /app/internal/application/repository/nextcloud_processing_state.go:355 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:21 /app/internal/application/repository/nextcloud_processing_state.go:369 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:21 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:21 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:21 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:21 /app/internal/application/repository/nextcloud_processing_state.go:355 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+DEBUG[2026-10-10 10:02:21.396] [d5262e09-236a-41c5-a567-ddda106e3217 extract=actual-root-graph-document-chunk] extract_entity.go:575[extractContent] | no fence match, recovered content via fallback (122 bytes)
+INFO [2026-10-10 10:02:21.396] [d5262e09-236a-41c5-a567-ddda106e3217 extract=actual-root-graph-document-chunk] extract_entity.go:522[rebuildGraph] | Add unknown target node ID: target
+
+2026/10/10 10:02:21 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:21 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:21 /app/internal/application/repository/nextcloud_graph.go:493 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:21 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:21 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:21 /app/internal/application/repository/nextcloud_processing_state.go:355 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:21 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:21 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:21 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:21 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:21 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:21 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:21 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:21 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:21 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:21 /app/internal/application/repository/nextcloud_processing_state.go:355 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:21 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:21 /app/internal/application/repository/nextcloud_processing_state.go:355 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:21 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+    nextcloud_graph_live_pipeline_test.go:141:
+            Error Trace:    /app/internal/application/service/nextcloud_graph_live_pipeline_test.go:141
+            Error:          Not equal:
+                            expected: int(1)
+                            actual  : int64(0)
+            Test:           TestNextcloudLiveOriginalExtractionProviderAndStatusInbox
+--- FAIL: TestNextcloudLiveOriginalExtractionProviderAndStatusInbox (0.92s)
+=== RUN   TestNextcloudActualExtractionScopedGraphBackendAndPersistedResult
+
+2026/10/10 10:02:21 /app/internal/application/repository/nextcloud_versions.go:507 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:21 /app/internal/application/repository/nextcloud_processing_state.go:157 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:21 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:21 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:21 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:21 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:21 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:21 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:21 /app/internal/application/repository/nextcloud_derived_backend_plan.go:95 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:21 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:21 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:21 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:21 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:21 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:21 /app/internal/application/repository/nextcloud_graph.go:147 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:21 /app/internal/application/repository/nextcloud_processing_state.go:176 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:21 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:21 /app/internal/application/repository/nextcloud_processing_state.go:355 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:21 /app/internal/application/repository/nextcloud_processing_state.go:369 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:21 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:21 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:21 /app/internal/application/repository/nextcloud_processing_state.go:176 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:21 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:21 /app/internal/application/repository/nextcloud_processing_state.go:355 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+DEBUG[2026-10-10 10:02:21.915] [c3a6f9ba-f5cf-481d-9dce-ca78377eee5d extract=document-chunk] extract_entity.go:575[extractContent] | no fence match, recovered content via fallback (122 bytes)
+INFO [2026-10-10 10:02:21.915] [c3a6f9ba-f5cf-481d-9dce-ca78377eee5d extract=document-chunk] extract_entity.go:522[rebuildGraph] | Add unknown target node ID: target
+
+2026/10/10 10:02:21 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:21 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:21 /app/internal/application/repository/nextcloud_graph.go:493 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:21 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:21 /app/internal/application/repository/nextcloud_processing_state.go:176 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:21 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:21 /app/internal/application/repository/nextcloud_processing_state.go:355 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:21 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:21 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:21 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:21 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:21 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:21 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:21 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:21 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:21 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:21 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:21 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:21 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+--- PASS: TestNextcloudActualExtractionScopedGraphBackendAndPersistedResult (0.23s)
+=== RUN   TestNextcloudActualExtractionWithdrawalBeforeProviderCommitWritesNothing
+
+2026/10/10 10:02:22 /app/internal/application/repository/nextcloud_versions.go:507 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:22 /app/internal/application/repository/nextcloud_processing_state.go:157 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:22 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:22 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:22 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:22 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:22 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:22 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:22 /app/internal/application/repository/nextcloud_derived_backend_plan.go:95 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:22 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:22 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:22 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:22 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:22 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:22 /app/internal/application/repository/nextcloud_graph.go:147 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:22 /app/internal/application/repository/nextcloud_processing_state.go:176 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:22 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:22 /app/internal/application/repository/nextcloud_processing_state.go:355 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:22 /app/internal/application/repository/nextcloud_processing_state.go:369 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:22 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:22 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:22 /app/internal/application/repository/nextcloud_processing_state.go:176 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:22 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:02:22 /app/internal/application/repository/nextcloud_processing_state.go:355 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+--- PASS: TestNextcloudActualExtractionWithdrawalBeforeProviderCommitWritesNothing (0.21s)
+=== RUN   TestNextcloudSyncPausedCurrentSourceAdmission
+--- PASS: TestNextcloudSyncPausedCurrentSourceAdmission (0.00s)
+FAIL
+FAIL    github.com/Tencent/WeKnora/internal/application/service 1.702s
+=== RUN   TestNextcloudSameETagHigherContentRevisionFetchesNewSnapshot
+--- PASS: TestNextcloudSameETagHigherContentRevisionFetchesNewSnapshot (0.00s)
+=== RUN   TestNextcloudDownloadContentRevisionMismatchRejectsArtifact
+--- PASS: TestNextcloudDownloadContentRevisionMismatchRejectsArtifact (0.00s)
+=== RUN   TestNextcloudLiveOwnedRootAuthorizationAndContentRevision
+    root_authorization_live_test.go:51: actual Nextcloud signed machine HTTP with live LDAP: allowed Alice root/current file; denied Bob root and legacy content revision
+--- PASS: TestNextcloudLiveOwnedRootAuthorizationAndContentRevision (0.60s)
+PASS
+ok      github.com/Tencent/WeKnora/internal/datasource/connector/nextcloud  0.917s
+FAIL

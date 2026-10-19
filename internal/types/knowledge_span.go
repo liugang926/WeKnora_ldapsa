@@ -81,25 +81,29 @@ var StageDependencies = map[string][]string{
 // is excluded by default — handlers must opt in for admin views, matching
 // how the dead-letter middleware already protects raw stack traces.
 type KnowledgeProcessingSpan struct {
-	ID           int64      `gorm:"primaryKey;column:id"             json:"-"`
-	KnowledgeID  string     `gorm:"column:knowledge_id"              json:"knowledge_id"`
-	Attempt      int        `gorm:"column:attempt"                   json:"attempt"`
-	SpanID       string     `gorm:"column:span_id;size:64"           json:"span_id"`
-	ParentSpanID string     `gorm:"column:parent_span_id;size:64"    json:"parent_span_id,omitempty"`
-	Name         string     `gorm:"column:name;size:255"             json:"name"`
-	Kind         string     `gorm:"column:kind;size:16"              json:"kind"`
-	Status       string     `gorm:"column:status;size:16"            json:"status"`
-	Input        JSONMap    `gorm:"column:input;type:jsonb"          json:"input,omitempty"`
-	Output       JSONMap    `gorm:"column:output;type:jsonb"         json:"output,omitempty"`
-	Metadata     JSONMap    `gorm:"column:metadata;type:jsonb"       json:"metadata,omitempty"`
-	ErrorCode    string     `gorm:"column:error_code;size:64"        json:"error_code,omitempty"`
-	ErrorMessage string     `gorm:"column:error_message;type:text"   json:"error_message,omitempty"`
-	ErrorDetail  string     `gorm:"column:error_detail;type:text"    json:"-"`
-	StartedAt    *time.Time `gorm:"column:started_at"                json:"started_at,omitempty"`
-	FinishedAt   *time.Time `gorm:"column:finished_at"               json:"finished_at,omitempty"`
-	DurationMs   int64      `gorm:"column:duration_ms"               json:"duration_ms,omitempty"`
-	CreatedAt    time.Time  `gorm:"column:created_at;autoCreateTime" json:"created_at"`
-	UpdatedAt    time.Time  `gorm:"column:updated_at;autoUpdateTime" json:"updated_at"`
+	// WriteToken is a private per-run capability. It never enters API JSON or
+	// the progress row; the repository binds it to an immutable Start manifest.
+	WriteToken        string     `gorm:"-" json:"-"`
+	ID                int64      `gorm:"primaryKey;column:id"             json:"-"`
+	KnowledgeID       string     `gorm:"column:knowledge_id"              json:"knowledge_id"`
+	Attempt           int        `gorm:"column:attempt"                   json:"attempt"`
+	SpanID            string     `gorm:"column:span_id;size:64"           json:"span_id"`
+	ParentSpanID      string     `gorm:"column:parent_span_id;size:64"    json:"parent_span_id,omitempty"`
+	Name              string     `gorm:"column:name;size:255"             json:"name"`
+	Kind              string     `gorm:"column:kind;size:16"              json:"kind"`
+	Status            string     `gorm:"column:status;size:16"            json:"status"`
+	Input             JSONMap    `gorm:"column:input;type:jsonb"          json:"input,omitempty"`
+	Output            JSONMap    `gorm:"column:output;type:jsonb"         json:"output,omitempty"`
+	Metadata          JSONMap    `gorm:"column:metadata;type:jsonb"       json:"metadata,omitempty"`
+	ErrorCode         string     `gorm:"column:error_code;size:64"        json:"error_code,omitempty"`
+	ErrorMessage      string     `gorm:"column:error_message;type:text"   json:"error_message,omitempty"`
+	ErrorDetail       string     `gorm:"column:error_detail;type:text"    json:"-"`
+	StartedAt         *time.Time `gorm:"column:started_at"                json:"started_at,omitempty"`
+	FinishedAt        *time.Time `gorm:"column:finished_at"               json:"finished_at,omitempty"`
+	DurationMs        int64      `gorm:"column:duration_ms"               json:"duration_ms,omitempty"`
+	CreatedAt         time.Time  `gorm:"column:created_at;autoCreateTime" json:"created_at"`
+	UpdatedAt         time.Time  `gorm:"column:updated_at;autoUpdateTime" json:"updated_at"`
+	ContentProvenance string     `gorm:"-" json:"content_provenance,omitempty"`
 }
 
 // TableName pins the table because GORM's default pluralization

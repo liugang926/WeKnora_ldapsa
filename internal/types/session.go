@@ -76,12 +76,18 @@ type ContextConfig struct {
 
 // Session represents the session
 type Session struct {
+	NextcloudScoped bool `json:"nextcloud_scoped,omitempty" gorm:"not null;default:false"`
 	// ID
 	ID string `json:"id"          gorm:"type:varchar(36);primaryKey"`
 	// Title
-	Title string `json:"title"`
+	Title              string         `json:"title"`
+	TitleSourceLineage *SourceLineage `json:"-" gorm:"type:jsonb;column:title_source_lineage"`
+	TitleRevision      uint64         `json:"-" gorm:"column:title_revision;not null;default:0"`
+	TitleAuthorized    bool           `json:"-" gorm:"-"`
 	// Description
-	Description string `json:"description"`
+	Description              string         `json:"description"`
+	DescriptionSourceLineage *SourceLineage `json:"-" gorm:"type:jsonb;column:description_source_lineage"`
+	DescriptionAuthorized    bool           `json:"-" gorm:"-"`
 	// Workspace ID
 	TenantID uint64 `json:"tenant_id"   gorm:"index"`
 	// UserID is the owner scope for this session. WeKnora user UUIDs, API

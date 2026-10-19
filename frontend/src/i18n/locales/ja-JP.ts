@@ -2324,6 +2324,8 @@ export default {
     }
   },
   graphSettings: {
+    requiredForPublication: 'ソースファイルの公開前にグラフの完了を必須にする',
+    requiredForPublicationDescription: 'このナレッジベースをソースのテンプレートとして使う場合、グラフ抽出が成功するまでファイルを質問に利用できません。チェックを外すとグラフは任意となり、失敗はファイルの状態に表示されます。',
     title: 'ナレッジグラフの設定',
     description: 'エンティティとリレーションの抽出を設定し、テキストからナレッジグラフを自動的に構築します（注: Wiki内の「ページリンクグラフ」とは別のものです。あちらはWikiページ間の参照関係を示し、こちらはLLMが抽出したエンティティとリレーションのグラフです）',
     enableLabel: 'エンティティとリレーションの抽出を有効化',
@@ -3028,7 +3030,10 @@ export default {
         'wiki.content_changed': 'Wikiの内容を変更',
         'faq.import_started': 'FAQのインポートを開始',
         'faq.import_completed': 'FAQのインポートが完了',
-        'faq.import_failed': 'FAQのインポートに失敗'
+        'faq.import_failed': 'FAQのインポートに失敗',
+        'nextcloud.gc_collect_requested': 'Cleanup attempt requested',
+        'nextcloud.gc_collect_finished': 'Cleanup attempt finished',
+        'nextcloud.gc_retry_requested': 'Cleanup retry scheduled'
       },
       outcomes: {
         accepted: '受付済み',
@@ -5688,6 +5693,14 @@ export default {
     videoNotSupported: 'お使いのブラウザは動画再生に対応していません'
   },
   commandPalette: {
+    search: {
+      previousMessages: '前のページ',
+      pageEmpty: 'このページには一致する会話がありません。',
+      continueMessages: '以前の会話を引き続き検索',
+      moreAvailable: 'まだ検索されていない以前の会話があります。',
+      failed: '検索を完了できませんでした。再試行してください。',
+      retry: '検索を再試行',
+    },
     placeholder: 'ナレッジベース、ファイル、会話を検索…',
     clearRecent: 'クリア',
     retrieval: '検索設定',
@@ -6489,6 +6502,66 @@ export default {
     pauseFailed: '一時停止に失敗しました',
     logs: 'ログ',
     actions: '操作',
+    gc: {
+      "more": "More tasks",
+      "title": "Retired version cleanup",
+      "description": "Review expiration and cleanup progress. Estimated bytes are separate from confirmed filesystem releases.",
+      "unavailable": "Cleanup status is unavailable or the safety check refused the action. Refresh and inspect the current status.",
+      "empty": "No retained cleanup tasks for this knowledge base.",
+      "nextAttempt": "Next retry",
+      "unknown": "Unverified",
+      "derivedExpiry": "Derived content expiry",
+      "originalExpiry": "Recovery copy expiry",
+      "estimated": "Estimated bytes",
+      "confirmed": "Confirmed released bytes",
+      "failure": "Reason for deferral",
+      "preview": "Preview inventory",
+      "safety": "An attempt repeats current-version, reference, retention and read/build lease checks. Unknown inventories stay blocked; allocated database pages may remain after row deletion.",
+      "category": "Category",
+      "status": "Status",
+      "count": "Count",
+      "collect": "Attempt collection now",
+      "retry": "Retry on next sweep",
+      "refresh": "Refresh",
+      "reason": {
+        "retired": "Replaced version",
+        "tombstone": "Source withdrawn"
+      },
+      "state": {
+        "pending": "Pending",
+        "retry": "Retry scheduled",
+        "blocked": "Safety check pending",
+        "deleting": "Collecting",
+        "collected": "Recorded items collected"
+      },
+      "error": {"content_lease_coverage_unverified": "Reader/build coverage is unverified; collection stays blocked.", "content_read_or_build_busy": "A reader or builder is active; retry later.", "content_generation_unverified": "Source generation needs reconciliation.", "candidate_is_current": "This is still the current version and cannot be collected.", "build_still_active": "Build is still active; retain its data.", "source_identity_changed": "Source identity changed; refresh and reconcile.", "derived_backend_inventory_unverified": "Derived backend inventory is incomplete; retain data.", "derived_provenance_unverified": "Historical derived origins are unverified; retain data.", "safe_object_cleanup_unavailable": "Protected references or backend checks prevent collection.", "provider_delete_failed": "Storage deletion was not confirmed; inspect the backend and retry.", "retention_window_open": "Retention is still active; retain data.", "invalid_image_inventory": "Image inventory needs repair before retry.", "original_body_retained_or_unverified": "Body references, leases, retention windows, or verification still require retention",
+        "gc_step_failed": "Cleanup step failed; inspect and retry."},
+      "kind": {
+        "knowledge": "Knowledge record",
+        "derived_index": "Derived inventory",
+        "chunk": "Chunk",
+        "local_embedding": "Local index",
+        "sql_original_body": "Original input bodies",
+        "source_file": "Original copy",
+        "extracted_image": "Extracted image"
+      }
+    },
+    capacity: {
+      title: "AI取込容量",
+      description: "高水位では新規AI取込を停止します。原本と有効なナレッジは保持されます。",
+      unavailable: "容量を確認できません。新規AI取込は停止中です。",
+      normal: "容量正常",
+      warning: "容量警告",
+      paused: "新規AI取込停止",
+      physical: "物理空き / 合計",
+      retained: "KB保持オブジェクト",
+      reserved: "取込予約容量",
+      quota: "保持上限 MiB（0 無制限）",
+      warningLabel: "警告 %",
+      pause: "停止 %",
+      save: "保存",
+      refresh: "更新",
+    },
     failedCandidates: {
       title: 'Nextcloud の処理失敗ファイル',
       hint: 'この接続済みデータソースで処理に失敗したファイルのみ表示します。再試行では元のファイルを再取得し、処理に失敗した以前の版は公開しません。',

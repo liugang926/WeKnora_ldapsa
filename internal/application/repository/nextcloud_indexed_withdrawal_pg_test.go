@@ -28,7 +28,7 @@ func TestPostgresNextcloudIndexedWithdrawalFencesAndInventories(t *testing.T) {
 	require.NoError(t, err)
 	adminSQL, err := admin.DB()
 	require.NoError(t, err)
-	defer func() { require.NoError(t, adminSQL.Close()) }()
+	defer adminSQL.Close()
 	schema := "indexed_withdrawal_" + strings.ReplaceAll(uuid.NewString()[:8], "-", "")
 	require.NoError(t, admin.Exec(`CREATE SCHEMA "`+schema+`"`).Error)
 	defer admin.Exec(`DROP SCHEMA "` + schema + `" CASCADE`)
@@ -45,7 +45,7 @@ func TestPostgresNextcloudIndexedWithdrawalFencesAndInventories(t *testing.T) {
 	require.NoError(t, err)
 	sqlDB, err := db.DB()
 	require.NoError(t, err)
-	defer func() { require.NoError(t, sqlDB.Close()) }()
+	defer sqlDB.Close()
 	// Migration files contain several SQL statements. Use a separate simple
 	// protocol connection for DDL; GORM's JSON fields need the normal pgx
 	// parameter protocol for test fixture writes.
@@ -55,7 +55,7 @@ func TestPostgresNextcloudIndexedWithdrawalFencesAndInventories(t *testing.T) {
 	require.NoError(t, err)
 	migrationSQL, err := migrationDB.DB()
 	require.NoError(t, err)
-	defer func() { require.NoError(t, migrationSQL.Close()) }()
+	defer migrationSQL.Close()
 	require.NoError(t, db.Exec(`CREATE TABLE knowledge_bases (
 		id TEXT PRIMARY KEY, tenant_id BIGINT NOT NULL, ever_had_nextcloud_source BOOLEAN NOT NULL DEFAULT TRUE,
 		deleted_at TIMESTAMPTZ)`).Error)
@@ -78,28 +78,22 @@ func TestPostgresNextcloudIndexedWithdrawalFencesAndInventories(t *testing.T) {
 	}
 	require.NoError(t, db.Exec(`CREATE TABLE embeddings
 		(id BIGSERIAL PRIMARY KEY, knowledge_base_id TEXT, knowledge_id TEXT)`).Error)
-	cfg := &types.DataSourceConfig{
-		Type:        types.ConnectorTypeNextcloud,
+	cfg := &types.DataSourceConfig{Type: types.ConnectorTypeNextcloud,
 		Credentials: map[string]interface{}{"token": "test-token", "key_id": "pair_key"},
 		ResourceIDs: []string{"binding"},
-		Settings:    map[string]interface{}{"base_url": "https://nextcloud.example.test"},
-	}
+		Settings:    map[string]interface{}{"base_url": "https://nextcloud.example.test"}}
 	blob, err := cfg.ToJSON()
 	require.NoError(t, err)
-	ds := &types.DataSource{
-		ID: uuid.NewString(), TenantID: 7, KnowledgeBaseID: "kb",
-		Type: types.ConnectorTypeNextcloud, Config: blob, Status: types.DataSourceStatusActive,
-	}
+	ds := &types.DataSource{ID: uuid.NewString(), TenantID: 7, KnowledgeBaseID: "kb",
+		Type: types.ConnectorTypeNextcloud, Config: blob, Status: types.DataSourceStatusActive}
 	require.NoError(t, db.Create(ds).Error)
 	require.NoError(t, db.Where("id = ?", ds.ID).Take(ds).Error)
 	_, digest, _, err := NextcloudEventDataSourceIdentity(ds.Config)
 	require.NoError(t, err)
-	pair := NextcloudSourcePairing{
-		OperationID: uuid.NewString(), TenantID: 7,
+	pair := NextcloudSourcePairing{OperationID: uuid.NewString(), TenantID: 7,
 		KnowledgeBaseID: "kb", DataSourceID: ds.ID, InstanceID: "instance",
 		BindingID: "binding", BaseURL: "https://nextcloud.example.test",
-		ConfigSHA: digest, KeyID: "pair_key", State: "active",
-	}
+		ConfigSHA: digest, KeyID: "pair_key", State: "active"}
 	require.NoError(t, db.Create(&pair).Error)
 	ctx := context.Background()
 	inbox := NewNextcloudEventInboxRepository(db)
@@ -109,12 +103,10 @@ func TestPostgresNextcloudIndexedWithdrawalFencesAndInventories(t *testing.T) {
 		DatasourceBaseURL: pair.BaseURL, DatasourceConfigSHA: pair.ConfigSHA,
 	})
 	require.NoError(t, err)
-	knowledge := &types.Knowledge{
-		ID: "file-1", TenantID: 7, KnowledgeBaseID: "kb",
+	knowledge := &types.Knowledge{ID: "file-1", TenantID: 7, KnowledgeBaseID: "kb",
 		Channel: types.ConnectorTypeNextcloud, Type: "file", Title: "file", Source: "file",
 		EnableStatus: "enabled", FilePath: "resource://local-copy", Metadata: types.JSON(
-			`{"datasource_id":"` + ds.ID + `","nextcloud_etag":"etag-1","nextcloud_instance_id":"instance"}`),
-	}
+			`{"datasource_id":"` + ds.ID + `","nextcloud_etag":"etag-1","nextcloud_instance_id":"instance"}`)}
 	require.NoError(t, db.Create(knowledge).Error)
 	require.NoError(t, db.Exec(`INSERT INTO chunks (id, tenant_id, knowledge_base_id,
 		knowledge_id, content, image_info) VALUES ('chunk-1', 7, 'kb', 'file-1', 'text',
@@ -126,11 +118,9 @@ func TestPostgresNextcloudIndexedWithdrawalFencesAndInventories(t *testing.T) {
 		VALUES ('kb', 'file-1'), ('other-kb', 'other-file')`).Error)
 	require.NoError(t, db.Exec(`INSERT INTO sync_logs (id, data_source_id, status)
 		VALUES ('sync-1', ?, 'success')`, ds.ID).Error)
-	version := nextcloudSourceVersion{
-		TenantID: 7, KnowledgeBaseID: "kb", DataSourceID: ds.ID,
+	version := nextcloudSourceVersion{TenantID: 7, KnowledgeBaseID: "kb", DataSourceID: ds.ID,
 		ExternalID: "nextcloud:instance:1", DesiredETag: "etag-1", CandidateKnowledgeID: "file-1",
-		State: "published",
-	}
+		State: "published"}
 	require.NoError(t, db.Create(&version).Error)
 	script, err := os.ReadFile("../../../migrations/versioned/000125_nextcloud_indexed_withdrawal.up.sql")
 	require.NoError(t, err)
@@ -149,9 +139,7 @@ func TestPostgresNextcloudIndexedWithdrawalFencesAndInventories(t *testing.T) {
 	oldKnowledge := *knowledge
 	oldKnowledge.ID = "old-hard-deleted"
 	oldKnowledge.FilePath = "resource://old-copy"
-	oldKnowledge.Metadata = types.JSON(
-		`{"datasource_id":"` + ds.ID + ("\",\"nextcloud_etag\":\"etag-old\",\"nextcloud_instance_id\":\"" +
-			"instance\"}"))
+	oldKnowledge.Metadata = types.JSON(`{"datasource_id":"` + ds.ID + `","nextcloud_etag":"etag-old","nextcloud_instance_id":"instance"}`)
 	require.NoError(t, db.Create(&oldKnowledge).Error)
 	require.NoError(t, db.Exec(`UPDATE nextcloud_source_versions SET
 		desired_etag = 'etag-old', candidate_knowledge_id = 'old-hard-deleted'
@@ -175,10 +163,8 @@ func TestPostgresNextcloudIndexedWithdrawalFencesAndInventories(t *testing.T) {
 			ConnectionID: credential.ConnectionID, NextcloudInstanceID: pair.InstanceID,
 			BindingID: pair.BindingID, KeyID: credential.KeyID, Nonce: uuid.NewString(),
 			Signature: mac.Sum(nil), CanonicalRequest: canonical,
-			AfterEventID: afterID, Events: []NextcloudEventHint{{
-				EventID:       eventID,
-				PayloadSHA256: strings.Repeat("a", 64), EventType: "updated",
-			}},
+			AfterEventID: afterID, Events: []NextcloudEventHint{{EventID: eventID,
+				PayloadSHA256: strings.Repeat("a", 64), EventType: "updated"}},
 			Now: time.Now().UTC(),
 		}
 	}
@@ -192,11 +178,9 @@ func TestPostgresNextcloudIndexedWithdrawalFencesAndInventories(t *testing.T) {
 		"a paused source must not accept new receipts even before withdrawal")
 	require.NoError(t, db.Model(&types.DataSource{}).Where("id = ?", ds.ID).
 		Update("status", types.DataSourceStatusActive).Error)
-	proposed := NextcloudIndexedWithdrawal{
-		OperationID: uuid.NewString(), PairOperationID: pair.OperationID,
+	proposed := NextcloudIndexedWithdrawal{OperationID: uuid.NewString(), PairOperationID: pair.OperationID,
 		TenantID: 7, KnowledgeBaseID: "kb", DataSourceID: ds.ID, InstanceID: pair.InstanceID,
-		BindingID: pair.BindingID, KeyID: pair.KeyID, PublicationEpoch: 3,
-	}
+		BindingID: pair.BindingID, KeyID: pair.KeyID, PublicationEpoch: 3}
 	require.NoError(t, db.Exec(`INSERT INTO sync_logs (id, data_source_id, status)
 		VALUES ('sync-running', ?, 'running')`, ds.ID).Error)
 	_, err = repo.BeginIndexedSourceWithdrawal(ctx, pair, proposed)
@@ -323,17 +307,13 @@ func TestPostgresNextcloudIndexedWithdrawalFencesAndInventories(t *testing.T) {
 	require.NoError(t, db.Model(&nextcloudIndexedWithdrawalItem{}).
 		Where("operation_id = ?", row.OperationID).Count(&count).Error)
 	require.EqualValues(t, 15, count, "retry must not double-count copies")
-	lateJob := nextcloudGCJob{
-		ID: uuid.NewString(), TenantID: 7,
+	lateJob := nextcloudGCJob{ID: uuid.NewString(), TenantID: 7,
 		KnowledgeBaseID: "kb", DataSourceID: ds.ID,
 		ExternalID: "nextcloud:instance:1", KnowledgeID: "file-1",
-		State: "pending", Reason: "retired",
-	}
+		State: "pending", Reason: "retired"}
 	require.NoError(t, db.Create(&lateJob).Error)
-	require.NoError(t, db.Create(&nextcloudGCItem{
-		JobID: lateJob.ID,
-		Kind:  "source_file", ObjectRef: knowledge.FilePath, State: "pending",
-	}).Error)
+	require.NoError(t, db.Create(&nextcloudGCItem{JobID: lateJob.ID,
+		Kind: "source_file", ObjectRef: knowledge.FilePath, State: "pending"}).Error)
 	claim, err := NewNextcloudGCStore(db).claimObject(ctx, lateJob.ID,
 		"source_file", knowledge.FilePath, time.Now().UTC())
 	require.NoError(t, err)
@@ -380,23 +360,18 @@ func TestPostgresNextcloudIndexedWithdrawalFencesAndInventories(t *testing.T) {
 		TenantID: pair.TenantID, KnowledgeBaseID: pair.KnowledgeBaseID,
 		DataSourceID: pair.DataSourceID, InstanceID: pair.InstanceID,
 		BindingID: pair.BindingID, KeyID: pair.KeyID,
-		State: "prepared",
-	}).Error, "an indexed withdrawal must never acquire an empty ACK")
+		State: "prepared"}).Error, "an indexed withdrawal must never acquire an empty ACK")
 	// A legacy active event connection beside a durable withdrawal can still
 	// be revoked by an administrator. The exception must not permit rotating
 	// its key or changing its source while making that transition.
-	otherSource := &types.DataSource{
-		ID: uuid.NewString(), TenantID: 8,
+	otherSource := &types.DataSource{ID: uuid.NewString(), TenantID: 8,
 		KnowledgeBaseID: "other-kb", Type: types.ConnectorTypeNextcloud,
-		Config: blob, Status: types.DataSourceStatusActive,
-	}
+		Config: blob, Status: types.DataSourceStatusActive}
 	require.NoError(t, db.Create(otherSource).Error)
-	otherPair := NextcloudSourcePairing{
-		OperationID: uuid.NewString(), TenantID: 8,
+	otherPair := NextcloudSourcePairing{OperationID: uuid.NewString(), TenantID: 8,
 		KnowledgeBaseID: "other-kb", DataSourceID: otherSource.ID,
 		InstanceID: "other-instance", BindingID: "binding", BaseURL: pair.BaseURL,
-		ConfigSHA: digest, KeyID: "pair_key", State: "active",
-	}
+		ConfigSHA: digest, KeyID: "pair_key", State: "active"}
 	require.NoError(t, db.Create(&otherPair).Error)
 	otherCredential, err := inbox.Pair(ctx, NextcloudEventPairingIdentity{
 		TenantID: 8, KnowledgeBaseID: otherPair.KnowledgeBaseID,

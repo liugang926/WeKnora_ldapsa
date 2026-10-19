@@ -55,6 +55,9 @@ func (r *sourceRegistry) ModelOutput(result *types.ToolResult) string {
 	case "document_info":
 		return r.modelDocumentInfoOutput(result.Data, result.Output)
 	case "graph_query_results":
+		if _, ok := result.Data["graph"].(map[string]interface{}); ok {
+			return r.modelKnowledgeGraphOutput(result.Data, result.Output)
+		}
 		return r.modelKnowledgeOutput("graph", mapsValue(result.Data["results"]), result.Output)
 	case "web_search_results":
 		return r.modelWebSearchOutput(mapsValue(result.Data["results"]), result.Output)

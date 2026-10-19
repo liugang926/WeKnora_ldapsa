@@ -1,0 +1,146 @@
+=== RUN   TestNextcloudCandidateKnowledgeQueriesUsePartialIndex
+--- PASS: TestNextcloudCandidateKnowledgeQueriesUsePartialIndex (0.00s)
+PASS
+ok      github.com/Tencent/WeKnora/internal/application/repository  0.331s
+=== RUN   TestNextcloudActualExtractionScopedGraphBackendAndPersistedResult
+
+2026/10/10 11:39:23 /app/internal/application/repository/nextcloud_versions.go:526 record not found
+
+2026/10/10 11:39:23 /app/internal/application/repository/nextcloud_processing_state.go:157 record not found
+
+2026/10/10 11:39:23 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+
+2026/10/10 11:39:23 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+
+2026/10/10 11:39:23 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+
+2026/10/10 11:39:23 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+
+2026/10/10 11:39:23 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+
+2026/10/10 11:39:23 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+
+2026/10/10 11:39:23 /app/internal/application/repository/nextcloud_derived_backend_plan.go:95 record not found
+
+2026/10/10 11:39:23 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+
+2026/10/10 11:39:23 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+
+2026/10/10 11:39:23 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+
+2026/10/10 11:39:23 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+
+2026/10/10 11:39:23 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+
+2026/10/10 11:39:23 /app/internal/application/repository/nextcloud_graph.go:147 record not found
+
+2026/10/10 11:39:23 /app/internal/application/repository/nextcloud_processing_state.go:176 record not found
+
+2026/10/10 11:39:23 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+
+2026/10/10 11:39:23 /app/internal/application/repository/nextcloud_processing_state.go:355 record not found
+
+2026/10/10 11:39:23 /app/internal/application/repository/nextcloud_processing_state.go:369 record not found
+
+2026/10/10 11:39:23 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+
+2026/10/10 11:39:23 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+
+2026/10/10 11:39:23 /app/internal/application/repository/nextcloud_processing_state.go:176 record not found
+
+2026/10/10 11:39:23 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+
+2026/10/10 11:39:23 /app/internal/application/repository/nextcloud_processing_state.go:355 record not found
+DEBUG[2026-10-10 11:39:23.033] [93ac0aa5-30b8-451f-9b26-cdaf78cd80e3 extract=document-chunk] extract_entity.go:569[extractContent] | no fence match, recovered content via fallback (122 bytes)
+INFO [2026-10-10 11:39:23.033] [93ac0aa5-30b8-451f-9b26-cdaf78cd80e3 extract=document-chunk] extract_entity.go:516[rebuildGraph] | Add missing relation target node
+
+2026/10/10 11:39:23 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+
+2026/10/10 11:39:23 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+
+2026/10/10 11:39:23 /app/internal/application/repository/nextcloud_graph.go:493 record not found
+
+2026/10/10 11:39:23 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+
+2026/10/10 11:39:23 /app/internal/application/repository/nextcloud_processing_state.go:176 record not found
+
+2026/10/10 11:39:23 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+
+2026/10/10 11:39:23 /app/internal/application/repository/nextcloud_processing_state.go:355 record not found
+
+2026/10/10 11:39:23 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+
+2026/10/10 11:39:23 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+
+2026/10/10 11:39:23 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+
+2026/10/10 11:39:23 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+
+2026/10/10 11:39:23 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+
+2026/10/10 11:39:23 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+
+2026/10/10 11:39:23 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+
+2026/10/10 11:39:23 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+
+2026/10/10 11:39:23 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+
+2026/10/10 11:39:23 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+
+2026/10/10 11:39:23 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+
+2026/10/10 11:39:23 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+--- PASS: TestNextcloudActualExtractionScopedGraphBackendAndPersistedResult (0.26s)
+=== RUN   TestNextcloudActualExtractionWithdrawalBeforeProviderCommitWritesNothing
+
+2026/10/10 11:39:23 /app/internal/application/repository/nextcloud_versions.go:526 record not found
+
+2026/10/10 11:39:23 /app/internal/application/repository/nextcloud_processing_state.go:157 record not found
+
+2026/10/10 11:39:23 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+
+2026/10/10 11:39:23 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+
+2026/10/10 11:39:23 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+
+2026/10/10 11:39:23 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+
+2026/10/10 11:39:23 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+
+2026/10/10 11:39:23 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+
+2026/10/10 11:39:23 /app/internal/application/repository/nextcloud_derived_backend_plan.go:95 record not found
+
+2026/10/10 11:39:23 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+
+2026/10/10 11:39:23 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+
+2026/10/10 11:39:23 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+
+2026/10/10 11:39:23 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+
+2026/10/10 11:39:23 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+
+2026/10/10 11:39:23 /app/internal/application/repository/nextcloud_graph.go:147 record not found
+
+2026/10/10 11:39:23 /app/internal/application/repository/nextcloud_processing_state.go:176 record not found
+
+2026/10/10 11:39:23 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+
+2026/10/10 11:39:23 /app/internal/application/repository/nextcloud_processing_state.go:355 record not found
+
+2026/10/10 11:39:23 /app/internal/application/repository/nextcloud_processing_state.go:369 record not found
+
+2026/10/10 11:39:23 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+
+2026/10/10 11:39:23 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+
+2026/10/10 11:39:23 /app/internal/application/repository/nextcloud_processing_state.go:176 record not found
+
+2026/10/10 11:39:23 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+
+2026/10/10 11:39:23 /app/internal/application/repository/nextcloud_processing_state.go:355 record not found
+--- PASS: TestNextcloudActualExtractionWithdrawalBeforeProviderCommitWritesNothing (0.21s)
+PASS
+ok      github.com/Tencent/WeKnora/internal/application/service 0.794s

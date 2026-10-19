@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/Tencent/WeKnora/internal/application/access"
+	applicationservice "github.com/Tencent/WeKnora/internal/application/service"
 	"github.com/Tencent/WeKnora/internal/errors"
 	"github.com/Tencent/WeKnora/internal/event"
 	"github.com/Tencent/WeKnora/internal/logger"
@@ -75,7 +76,8 @@ type qaRequestContext struct {
 	// steerSink bridges the engine's round-boundary drain to the steer
 	// sub-list and user-row persistence. Set by setupSSEStream for agent
 	// runs only.
-	steerSink *steerSink
+	steerSink       *steerSink
+	steerInputClose func()
 
 	// Snapshot of the request fields needed to persist the input-bar state
 	// for session restoration. Kept verbatim from the request so we record
@@ -725,11 +727,16 @@ func mergeKnowledgeTargets(requestKBIDs []string, requestKnowledgeIDs []string, 
 
 // sseStreamContext holds the context for SSE streaming
 type sseStreamContext struct {
-	eventBus         *event.EventBus
-	streamHandler    *AgentStreamHandler
-	asyncCtx         context.Context
-	cancel           context.CancelFunc
-	assistantMessage *types.Message
+	actualSteerClaimAttempted bool
+	producerDone              <-chan struct{}
+	eventBus                  *event.EventBus
+	streamHandler             *AgentStreamHandler
+	materialAttach            func(context.Context) context.Context
+	materialCheck             func() error
+	materialClose             func()
+	asyncCtx                  context.Context
+	cancel                    context.CancelFunc
+	assistantMessage          *types.Message
 	// steerSink bridges the engine's round-boundary drain to the steer
 	// sub-list and user-row persistence. Nil for non-agent modes.
 	steerSink *steerSink
@@ -780,8 +787,17 @@ func (h *Handler) setupSSEStream(reqCtx *qaRequestContext, generateTitle bool, m
 
 	eventBus := event.NewEventBus()
 	asyncCtx, cancel := context.WithCancel(logger.CloneContext(baseCtx))
+	var materialAttach func(context.Context) context.Context
+	var materialCheck func() error
+	var materialClose func()
+	if native, ok := h.messageService.(interface{ HasOriginalMessageMaterialStore() bool }); ok && native.HasOriginalMessageMaterialStore() {
+		asyncCtx, materialAttach, materialCheck, materialClose = applicationservice.BeginMessageMaterialHTTPBoundary(asyncCtx)
+	}
 
 	streamCtx := &sseStreamContext{
+		materialAttach:   materialAttach,
+		materialCheck:    materialCheck,
+		materialClose:    materialClose,
 		eventBus:         eventBus,
 		asyncCtx:         asyncCtx,
 		cancel:           cancel,
@@ -1077,7 +1093,7 @@ func (h *Handler) AgentQA(c *gin.Context) {
 
 	// Route to appropriate handler based on agent mode
 	if agentModeEnabled {
-		h.executeQA(reqCtx, qaModeAgent, true)
+		h.executeQA(reqCtx, qaModeAgent, !request.DisableTitle)
 	} else {
 		logger.Infof(reqCtx.ctx, "Agent mode disabled, delegating to normal mode for session: %s", reqCtx.sessionID)
 		h.executeQA(reqCtx, qaModeNormal, !request.DisableTitle)
@@ -1248,6 +1264,15 @@ func (h *Handler) holdQATurn(ctx context.Context, reqCtx *qaRequestContext) (fun
 // It handles message creation, SSE setup, VLM analysis, service invocation, and error handling.
 func (h *Handler) executeQA(reqCtx *qaRequestContext, mode qaMode, generateTitle bool) {
 	ctx := reqCtx.ctx
+	if reqCtx.steerInputClose != nil {
+		defer reqCtx.steerInputClose()
+	}
+	if len(reqCtx.images) > 0 || len(reqCtx.attachments) > 0 || len(reqCtx.attachmentIDs) > 0 || reqCtx.questionOrigin != nil {
+		if reqCtx.c != nil && !reqCtx.skipSSE {
+			_ = reqCtx.c.Error(errors.NewForbiddenError("Input source lineage is not available"))
+		}
+		return
+	}
 	sessionID := reqCtx.sessionID
 
 	// Persist the input-bar state used for this request so reopening the
@@ -1334,6 +1359,9 @@ func (h *Handler) executeQA(reqCtx *qaRequestContext, mode qaMode, generateTitle
 
 	// Setup SSE stream
 	streamCtx := h.setupSSEStream(reqCtx, generateTitle, mode)
+	if streamCtx.materialClose != nil {
+		defer streamCtx.materialClose()
+	}
 	streamCtx.releaseTurn = releaseQATurn
 	if streamCtx.liveRunFailed {
 		if streamCtx.cancel != nil {
@@ -1404,10 +1432,20 @@ func (h *Handler) executeQA(reqCtx *qaRequestContext, mode qaMode, generateTitle
 	livePublicationMessage := *reqCtx.assistantMessage
 	livePublicationMessage.KnowledgeReferences = nil
 	asyncDone := make(chan struct{})
+	streamCtx.producerDone = asyncDone
+	releaseMaterialProducer := applicationservice.RetainMessageMaterialHTTPProducer(streamCtx.asyncCtx)
 	go func() {
 		defer close(asyncDone)
+		defer releaseMaterialProducer()
+		// Polling holds original Steer bodies before atomic consumption. A
+		// refused consume must release them even when the request context is
+		// still live. Register before finalization so final guards run first.
+		if streamCtx.steerSink != nil {
+			defer streamCtx.steerSink.closeOriginalSteerInputs()
+		}
 		defer func() {
 			if r := recover(); r != nil {
+				applicationservice.RefuseMessageMaterialOutputBoundary(streamCtx.asyncCtx)
 				if streamCtx.releaseTurn != nil {
 					streamCtx.releaseTurn()
 				}
@@ -1510,12 +1548,17 @@ func (h *Handler) executeQA(reqCtx *qaRequestContext, mode qaMode, generateTitle
 			if streamCtx.asyncCtx.Err() != nil {
 				logger.Infof(streamCtx.asyncCtx, "QA cancelled by user stop for session: %s", sessionID)
 			} else {
+				// A refused Steer control may not touch any saved parent row.
+				// Carry that producer failure into this same request's material
+				// owner so finalization cannot certify an empty completed answer.
+				applicationservice.RefuseMessageMaterialOutputBoundary(streamCtx.asyncCtx)
 				logger.ErrorWithFields(streamCtx.asyncCtx, serviceErr, nil)
 				streamCtx.eventBus.Emit(streamCtx.asyncCtx, event.Event{
 					Type:      event.EventError,
 					SessionID: sessionID,
 					Data: event.ErrorData{
-						Error:     errors.PublicMessage(serviceErr),
+						Error:     "Generation could not complete; please retry after checking access",
+						ErrorCode: "generation_failed",
 						Stage:     stageName,
 						SessionID: sessionID,
 					},
@@ -1538,6 +1581,32 @@ func (h *Handler) executeQA(reqCtx *qaRequestContext, mode qaMode, generateTitle
 	if reqCtx.customAgent != nil && reqCtx.effectiveTenantID != 0 &&
 		reqCtx.effectiveTenantID != reqCtx.session.TenantID {
 		sseCtx = access.WithSharedAgent(ctx, reqCtx.customAgent)
+	}
+	if streamCtx.materialAttach != nil {
+		sseCtx = streamCtx.materialAttach(sseCtx)
+	}
+	if streamCtx.materialCheck != nil {
+		phase := &liveMaterialWritePhase{MaterialCheck: streamCtx.materialCheck}
+		sseCtx = context.WithValue(sseCtx, liveMaterialWritePhaseKey{}, phase)
+		prior := reqCtx.c.Writer
+		writer := &nativeSavedReplayWriter{ResponseWriter: prior, ctx: reqCtx.c.Request.Context(), check: func() error {
+			if err := streamCtx.materialCheck(); err != nil {
+				logger.Warnf(sseCtx, "Original history HTTP material check failed: %v", err)
+				return err
+			}
+			// Before any derived frame, the loop may send the exact raw human
+			// query control. Its original user guard is in the same holder. Every
+			// source-bearing batch is independently checked before serialization.
+			if livePublicationMessage.SourceLineage.RequireComplete() != nil {
+				if phase.RawControl {
+					return nil
+				}
+				return access.ErrNextcloudPublicationDenied
+			}
+			return checkLiveStreamPublication(sseCtx, h.messageService, &livePublicationMessage, nil)
+		}}
+		reqCtx.c.Writer = writer
+		defer func() { reqCtx.c.Writer = prior }()
 	}
 	h.handleAgentEventsForSSE(sseCtx, reqCtx.c, sessionID, reqCtx.assistantMessage.ID,
 		reqCtx.requestID, streamCtx.eventBus, shouldWaitForTitle, reqCtx.resourceRewriter,
@@ -1984,11 +2053,11 @@ func (h *Handler) completeAssistantMessage(
 	// Asynchronously index the Q&A pair into the chat history knowledge base for vector search.
 	// Use WithoutCancel so the goroutine survives after the HTTP request context is done.
 	bgCtx := context.WithoutCancel(ctx)
-	if indexCtx, ok := h.sessionTenantInfoContext(bgCtx); ok {
+	if indexCtx, ok := h.sessionTenantInfoContext(bgCtx); ok && types.SourceIndependentDerivativesAllowed(assistantMessage) {
 		go h.messageService.IndexMessageToKB(
 			indexCtx, userQuery, assistantMessage.Content, assistantMessage.ID, assistantMessage.SessionID)
 	}
-	if userQuery != "" && h.suggestionService != nil {
+	if userQuery != "" && h.suggestionService != nil && types.SourceIndependentDerivativesAllowed(assistantMessage) {
 		go func() {
 			if _, err := h.suggestionService.EnsureFollowUps(
 				bgCtx, assistantMessage.SessionID, assistantMessage.ID, false,
@@ -1997,7 +2066,7 @@ func (h *Handler) completeAssistantMessage(
 			}
 		}()
 	}
-	if userQuery != "" {
+	if userQuery != "" && types.SourceIndependentDerivativesAllowed(assistantMessage) {
 		go h.recordTurnMemory(bgCtx, assistantMessage, userQuery, userMessageID)
 	}
 	return nil

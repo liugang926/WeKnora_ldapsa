@@ -22,9 +22,7 @@ func (l *publicationDirectoryLookup) GetIdentityByUserID(context.Context, string
 	return l.identities, l.err
 }
 
-func (
-	l *publicationDirectoryLookup,
-) GetLoginSnapshot(context.Context, string, string) (*types.DirectoryLoginSnapshot, error) {
+func (l *publicationDirectoryLookup) GetLoginSnapshot(context.Context, string, string) (*types.DirectoryLoginSnapshot, error) {
 	if l.err != nil {
 		return nil, l.err
 	}
@@ -35,6 +33,11 @@ func (
 		return &types.DirectoryLoginSnapshot{Directory: l.directory, Identity: l.snapshotIdentity}, nil
 	}
 	return &types.DirectoryLoginSnapshot{Directory: l.directory, Identity: l.identities[0]}, nil
+}
+
+func (l *publicationDirectoryLookup) GetUserLoginSnapshot(ctx context.Context, _ string) ([]*types.DirectoryIdentity, *types.DirectoryLoginSnapshot, error) {
+	snapshot, err := l.GetLoginSnapshot(ctx, "", "")
+	return l.identities, snapshot, err
 }
 
 type publicationDataSourceLookup struct {
@@ -96,12 +99,7 @@ func publicationFixture(t *testing.T) (*NextcloudPublicationGuard, context.Conte
 			objectGUID != identity.ObjectGUID || fileID != 42 {
 			t.Fatal("guard sent incorrect source identity")
 		}
-		return nextcloud.AuthorizationDecision{
-			Allow:          true,
-			Reason:         "authorized",
-			PolicyRevision: "rev-1",
-			SourceETag:     "etag-42",
-		}, nil
+		return nextcloud.AuthorizationDecision{Allow: true, Reason: "authorized", PolicyRevision: "rev-1", SourceETag: "etag-42"}, nil
 	}
 	ctx := types.WithCaller(context.Background(), types.Caller{TenantID: 12, UserID: userID})
 	ctx = types.WithPrincipal(ctx, types.Principal{Type: types.PrincipalWebUser, ID: userID})
@@ -130,38 +128,22 @@ func TestNextcloudPublicationGuardFailsClosed(t *testing.T) {
 		want   error
 	}{
 		{"source denied", func(g *NextcloudPublicationGuard, _ *context.Context, _ *types.Knowledge) {
-			g.authorize = func(context.Context, *types.DataSourceConfig, string, string, string, string, int64) (
-				nextcloud.AuthorizationDecision,
-				error,
-			) {
+			g.authorize = func(context.Context, *types.DataSourceConfig, string, string, string, string, int64) (nextcloud.AuthorizationDecision, error) {
 				return nextcloud.AuthorizationDecision{Allow: false, Reason: "source_not_readable"}, nil
 			}
 		}, ErrNextcloudPublicationDenied},
 		{"source unavailable", func(g *NextcloudPublicationGuard, _ *context.Context, _ *types.Knowledge) {
-			g.authorize = func(context.Context, *types.DataSourceConfig, string, string, string, string, int64) (
-				nextcloud.AuthorizationDecision,
-				error,
-			) {
+			g.authorize = func(context.Context, *types.DataSourceConfig, string, string, string, string, int64) (nextcloud.AuthorizationDecision, error) {
 				return nextcloud.AuthorizationDecision{}, errors.New("network failure")
 			}
 		}, ErrNextcloudPublicationUnavailable},
 		{"source version changed", func(g *NextcloudPublicationGuard, _ *context.Context, _ *types.Knowledge) {
-			g.authorize = func(context.Context, *types.DataSourceConfig, string, string, string, string, int64) (
-				nextcloud.AuthorizationDecision,
-				error,
-			) {
-				return nextcloud.AuthorizationDecision{
-					Allow:      true,
-					Reason:     "authorized",
-					SourceETag: "new-version",
-				}, nil
+			g.authorize = func(context.Context, *types.DataSourceConfig, string, string, string, string, int64) (nextcloud.AuthorizationDecision, error) {
+				return nextcloud.AuthorizationDecision{Allow: true, Reason: "authorized", SourceETag: "new-version"}, nil
 			}
 		}, ErrNextcloudPublicationDenied},
 		{"missing imported etag", func(_ *NextcloudPublicationGuard, _ *context.Context, k *types.Knowledge) {
-			k.Metadata = types.JSON(("{\"datasource_id\":\"source-1\",\"external_id\":\"nextcloud:in" +
-				"stance-1:42\",\"source_resource_id\":\"binding-1\",\"nextclou" +
-				"d_instance_id\":\"instance-1\",\"nextcloud_binding_id\":\"bin" +
-				"ding-1\",\"nextcloud_file_id\":\"42\"}"))
+			k.Metadata = types.JSON(`{"datasource_id":"source-1","external_id":"nextcloud:instance-1:42","source_resource_id":"binding-1","nextcloud_instance_id":"instance-1","nextcloud_binding_id":"binding-1","nextcloud_file_id":"42"}`)
 		}, ErrNextcloudPublicationDenied},
 		{"unlinked user", func(g *NextcloudPublicationGuard, _ *context.Context, _ *types.Knowledge) {
 			g.directories.(*publicationDirectoryLookup).identities = nil
@@ -178,9 +160,9 @@ func TestNextcloudPublicationGuardFailsClosed(t *testing.T) {
 		}, ErrNextcloudPublicationDenied},
 		{"identity changed after lookup", func(g *NextcloudPublicationGuard, _ *context.Context, _ *types.Knowledge) {
 			lookup := g.directories.(*publicationDirectoryLookup)
-			cloned := *lookup.identities[0]
-			cloned.Status = types.DirectoryObjectDisabled
-			lookup.snapshotIdentity = &cloned
+			copy := *lookup.identities[0]
+			copy.Status = types.DirectoryObjectDisabled
+			lookup.snapshotIdentity = &copy
 		}, ErrNextcloudPublicationDenied},
 		{"directory sync stale", func(g *NextcloudPublicationGuard, _ *context.Context, _ *types.Knowledge) {
 			last := time.Now().Add(-time.Hour)
@@ -192,25 +174,13 @@ func TestNextcloudPublicationGuardFailsClosed(t *testing.T) {
 		{"machine caller", func(_ *NextcloudPublicationGuard, ctx *context.Context, _ *types.Knowledge) {
 			*ctx = types.WithCaller(*ctx, types.Caller{TenantID: 12, UserID: "system-12"})
 		}, ErrNextcloudPublicationDenied},
-		{"embed principal with linked user", func(
-			_ *NextcloudPublicationGuard,
-			ctx *context.Context,
-			_ *types.Knowledge,
-		) {
+		{"embed principal with linked user", func(_ *NextcloudPublicationGuard, ctx *context.Context, _ *types.Knowledge) {
 			*ctx = types.WithPrincipal(*ctx, types.Principal{Type: types.PrincipalEmbedChannel, ID: "12:channel-1"})
 		}, ErrNextcloudPublicationDenied},
-		{"mcp principal with linked user", func(
-			_ *NextcloudPublicationGuard,
-			ctx *context.Context,
-			_ *types.Knowledge,
-		) {
+		{"mcp principal with linked user", func(_ *NextcloudPublicationGuard, ctx *context.Context, _ *types.Knowledge) {
 			*ctx = types.WithPrincipal(*ctx, types.MCPEndpointPrincipal(12, "endpoint-1"))
 		}, ErrNextcloudPublicationDenied},
-		{"api principal with linked user", func(
-			_ *NextcloudPublicationGuard,
-			ctx *context.Context,
-			_ *types.Knowledge,
-		) {
+		{"api principal with linked user", func(_ *NextcloudPublicationGuard, ctx *context.Context, _ *types.Knowledge) {
 			*ctx = types.WithPrincipal(*ctx, types.Principal{Type: types.PrincipalAPIExternalUser, ID: "12:person-1"})
 		}, ErrNextcloudPublicationDenied},
 		{"web principal mismatch", func(_ *NextcloudPublicationGuard, ctx *context.Context, _ *types.Knowledge) {
@@ -226,14 +196,10 @@ func TestNextcloudPublicationGuardFailsClosed(t *testing.T) {
 			g.dataSources.(*publicationDataSourceLookup).source.TenantID = 99
 		}, ErrNextcloudPublicationDenied},
 		{"multiple selected bindings", func(g *NextcloudPublicationGuard, _ *context.Context, _ *types.Knowledge) {
-			g.dataSources.(*publicationDataSourceLookup).source.Config = types.JSON(
-				("{\"type\":\"nextcloud\",\"resource_ids\":[\"binding-1\",\"bindin" +
-					"g-2\"]}"))
+			g.dataSources.(*publicationDataSourceLookup).source.Config = types.JSON(`{"type":"nextcloud","resource_ids":["binding-1","binding-2"]}`)
 		}, ErrNextcloudPublicationDenied},
 		{"no selected binding", func(g *NextcloudPublicationGuard, _ *context.Context, _ *types.Knowledge) {
-			g.dataSources.(*publicationDataSourceLookup).source.Config = types.JSON(
-				`{"type":"nextcloud","resource_ids":[]}`,
-			)
+			g.dataSources.(*publicationDataSourceLookup).source.Config = types.JSON(`{"type":"nextcloud","resource_ids":[]}`)
 		}, ErrNextcloudPublicationDenied},
 		{"missing source", func(g *NextcloudPublicationGuard, _ *context.Context, _ *types.Knowledge) {
 			g.dataSources.(*publicationDataSourceLookup).err = errors.New("database down")

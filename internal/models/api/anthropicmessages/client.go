@@ -154,7 +154,7 @@ func (c *Client) ChatStream(
 		}
 	}
 	ch := make(chan types.StreamResponse)
-	dumper := api.NewStreamPacketDumper(c.cfg.Endpoint.Model, json.RawMessage(resp.data))
+	dumper := api.NewStreamPacketDumper(ctx, c.cfg.Endpoint.Model, json.RawMessage(resp.data))
 	go func() {
 		defer cancel()
 		defer close(ch)

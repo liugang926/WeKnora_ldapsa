@@ -56,7 +56,7 @@ func nextcloudRevisionRows(t *testing.T, db *sql.DB, externalID string) []nextcl
 		WHERE tenant_id = 7 AND knowledge_base_id = 'kb' AND datasource_id = 'ds'
 		AND external_id = ? ORDER BY revision`, externalID)
 	require.NoError(t, err)
-	defer func() { require.NoError(t, rows.Close()) }()
+	defer rows.Close()
 	var observed []nextcloudRevisionObservation
 	for rows.Next() {
 		var row nextcloudRevisionObservation

@@ -39,6 +39,8 @@ func readNextcloudFileStatus(router http.Handler, request *http.Request) *httpte
 
 func installNextcloudFileStatusVersion(t *testing.T, db *gorm.DB, state, parseStatus, enabled, etag string) {
 	t.Helper()
+	require.NoError(t, db.Exec(`CREATE TABLE IF NOT EXISTS nextcloud_content_fences(tenant_id BIGINT,knowledge_base_id TEXT,knowledge_id TEXT,state TEXT)`).Error)
+	require.NoError(t, db.Exec(`INSERT INTO nextcloud_content_fences VALUES(7,'kb-synthetic','','open'),(7,'kb-synthetic','candidate-77','open')`).Error)
 	require.NoError(t, db.Exec(`ALTER TABLE knowledges ADD COLUMN file_type TEXT NOT NULL DEFAULT ''`).Error)
 	require.NoError(t, db.Exec(`ALTER TABLE knowledges ADD COLUMN error_message TEXT NOT NULL DEFAULT ''`).Error)
 	require.NoError(t, db.Exec(`CREATE TABLE chunks (
@@ -53,10 +55,9 @@ func installNextcloudFileStatusVersion(t *testing.T, db *gorm.DB, state, parseSt
 		"nextcloud_etag": map[bool]string{true: etag, false: ""}[state == "published"],
 	})
 	require.NoError(t, err)
-	require.NoError(t, db.Exec("INSERT INTO knowledges\n\t\t(id, tenant_id, knowledge_base_id, "+
-		"channel, parse_status, enable_status, file_type, "+
-		"metadata)\n\t\tVALUES (?, 7, 'kb-synthetic', 'nextcloud', ?, ?, "+
-		"'md', ?)", "candidate-77", parseStatus, enabled, string(metadata)).Error)
+	require.NoError(t, db.Exec(`INSERT INTO knowledges
+		(id, tenant_id, knowledge_base_id, channel, parse_status, enable_status, file_type, metadata)
+		VALUES (?, 7, 'kb-synthetic', 'nextcloud', ?, ?, 'md', ?)`, "candidate-77", parseStatus, enabled, string(metadata)).Error)
 	if parseStatus == "completed" && enabled == "enabled" {
 		require.NoError(t, db.Exec(`INSERT INTO chunks
 			(id, tenant_id, knowledge_base_id, knowledge_id, chunk_type, content, is_enabled, index_status)
@@ -166,10 +167,7 @@ func TestNextcloudSignedFileStatusReportsFailedCandidateWithoutReady(t *testing.
 	require.Equal(t, "no_retrievable_content", status.FailureCode)
 
 	require.NoError(t, db.Exec(`UPDATE knowledges SET metadata = ? WHERE id = 'candidate-77'`,
-		"{\"datasource_id\":\"ds-synthetic\",\"external_id\":\"nextcloud:instance"+
-			"_synthetic:77\",\"nextcloud_instance_id\":\"instance_synthetic\",\"next"+
-			"cloud_binding_id\":\"wrong\",\"nextcloud_file_id\":\"77\",\"nextcloud_tar"+
-			"get_etag\":\"etag-77\"}").Error)
+		`{"datasource_id":"ds-synthetic","external_id":"nextcloud:instance_synthetic:77","nextcloud_instance_id":"instance_synthetic","nextcloud_binding_id":"wrong","nextcloud_file_id":"77","nextcloud_target_etag":"etag-77"}`).Error)
 	response = readNextcloudFileStatus(router,
 		signedNextcloudFileStatusRequest(secret, strings.Repeat("1", 32), "77", "etag-77"))
 	require.Equal(t, http.StatusOK, response.Code)

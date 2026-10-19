@@ -20,20 +20,18 @@ type lineageSnapshotStub struct {
 	onRead    func(int)
 }
 
-func (s *lineageSnapshotStub) RecheckNextcloudSourceLineage(ctx context.Context, lineage *types.SourceLineage) (
-	bool,
-	error,
-) {
+// The policy fixture intentionally supplies fake current-account authority;
+// production SQL resolvers must delegate to the actual account/key store.
+func (s *lineageSnapshotStub) RefreshCurrentReadActor(ctx context.Context) (context.Context, error) {
+	return ctx, nil
+}
+
+func (s *lineageSnapshotStub) RecheckNextcloudSourceLineage(ctx context.Context, lineage *types.SourceLineage) (bool, error) {
 	if s.batchErr != nil {
 		return false, s.batchErr
 	}
 	for _, saved := range lineage.Sources {
-		_, current, err := s.ResolveNextcloudSourceLineage(
-			ctx,
-			saved.TenantID,
-			saved.KnowledgeBaseID,
-			saved.KnowledgeID,
-		)
+		_, current, err := s.ResolveNextcloudSourceLineage(ctx, saved.TenantID, saved.KnowledgeBaseID, saved.KnowledgeID)
 		if err != nil {
 			return false, err
 		}
@@ -44,13 +42,7 @@ func (s *lineageSnapshotStub) RecheckNextcloudSourceLineage(ctx context.Context,
 	return true, nil
 }
 
-func (
-	s *lineageSnapshotStub,
-) ResolveNextcloudSourceLineage(_ context.Context, tenant uint64, kb, id string) (
-	*types.Knowledge,
-	types.SourceIdentity,
-	error,
-) {
+func (s *lineageSnapshotStub) ResolveNextcloudSourceLineage(_ context.Context, tenant uint64, kb, id string) (*types.Knowledge, types.SourceIdentity, error) {
 	s.calls++
 	if s.onRead != nil {
 		s.onRead(s.calls)
@@ -79,9 +71,7 @@ type lineageSharesStub struct {
 	calls   int
 }
 
-func (
-	s *lineageSharesStub,
-) CheckTenantKBPermission(context.Context, string, uint64, types.TenantRole) (types.OrgMemberRole, bool, error) {
+func (s *lineageSharesStub) CheckTenantKBPermission(context.Context, string, uint64, types.TenantRole) (types.OrgMemberRole, bool, error) {
 	s.calls++
 	return types.OrgRoleViewer, s.allowed, s.err
 }
@@ -92,19 +82,7 @@ type lineageGroupsStub struct {
 	callers []types.Caller
 }
 
-func (
-	s *lineageGroupsStub,
-) EffectivePermission(
-	ctx context.Context,
-	_ uint64,
-	_ types.ResourceType,
-	_ string,
-	_ types.ResourceAction,
-	_ time.Time,
-) (
-	types.EffectiveResourcePermission,
-	error,
-) {
+func (s *lineageGroupsStub) EffectivePermission(ctx context.Context, tenant uint64, kind types.ResourceType, kb string, action types.ResourceAction, now time.Time) (types.EffectiveResourcePermission, error) {
 	s.callers = append(s.callers, types.CallerFromContext(ctx))
 	return types.EffectiveResourcePermission{Allowed: s.allowed}, s.err
 }
@@ -115,53 +93,27 @@ type lineageAgentsStub struct {
 	err     error
 }
 
-func (
-	s *lineageAgentsStub,
-) GetSharedAgentForTenant(context.Context, uint64, types.TenantRole, string, ...uint64) (*types.CustomAgent, error) {
+func (s *lineageAgentsStub) GetSharedAgentForTenant(context.Context, uint64, types.TenantRole, string, ...uint64) (*types.CustomAgent, error) {
 	if !s.allowed {
 		return nil, s.err
 	}
 	return s.agent, s.err
 }
-
-func (
-	s *lineageAgentsStub,
-) TenantCanAccessKBViaSomeSharedAgent(context.Context, uint64, types.TenantRole, *types.KnowledgeBase) (
-	bool,
-	error,
-) {
+func (s *lineageAgentsStub) TenantCanAccessKBViaSomeSharedAgent(context.Context, uint64, types.TenantRole, *types.KnowledgeBase) (bool, error) {
 	return s.allowed, s.err
 }
 
-func lineagePolicyFixture(
-	t *testing.T,
-) (*NextcloudSourceLineageGuard, context.Context, *types.SourceLineage, *lineageSnapshotStub, *lineageGroupsStub) {
+func lineagePolicyFixture(t *testing.T) (*NextcloudSourceLineageGuard, context.Context, *types.SourceLineage, *lineageSnapshotStub, *lineageGroupsStub) {
 	t.Helper()
 	publication, ctx, knowledge := publicationFixture(t)
 	knowledge.ID = "document-1"
 	knowledge.ParseStatus = types.ParseStatusCompleted
 	knowledge.EnableStatus = "enabled"
-	identity := types.SourceIdentity{
-		Provider:        types.ConnectorTypeNextcloud,
-		TenantID:        12,
-		KnowledgeBaseID: "kb-1",
-		DataSourceID:    "source-1",
-		PairOperationID: "pair-1",
-		InstanceID:      "instance-1",
-		BindingID:       "binding-1",
-		FileID:          "42",
-		ExternalID:      "nextcloud:instance-1:42",
-		KnowledgeID:     "document-1",
-		Revision:        1,
-		ETag:            "etag-42",
-	}
+	identity := types.SourceIdentity{Provider: types.ConnectorTypeNextcloud, TenantID: 12, KnowledgeBaseID: "kb-1", DataSourceID: "source-1", PairOperationID: "pair-1",
+		InstanceID: "instance-1", BindingID: "binding-1", FileID: "42", ExternalID: "nextcloud:instance-1:42", KnowledgeID: "document-1", Revision: 1, ETag: "etag-42"}
 	snapshots := &lineageSnapshotStub{knowledge: knowledge, identity: identity}
 	groups := &lineageGroupsStub{allowed: true}
-	guard := NewNextcloudSourceLineageGuard(snapshots, &lineageKBStub{kb: &types.KnowledgeBase{
-		ID:                     "kb-1",
-		TenantID:               12,
-		EverHadNextcloudSource: true,
-	}}, nil, nil, groups, publication)
+	guard := NewNextcloudSourceLineageGuard(snapshots, &lineageKBStub{kb: &types.KnowledgeBase{ID: "kb-1", TenantID: 12, EverHadNextcloudSource: true}}, nil, nil, groups, publication)
 	lineage, err := types.NewCompleteSourceLineage(identity)
 	require.NoError(t, err)
 	return guard, ctx, lineage, snapshots, groups
@@ -200,19 +152,10 @@ func TestNextcloudSourceLineageRechecksFreshGrantsAndLocalVersionAfterRemoteAuth
 			guard.shares = shares
 			scope := LineageReadScope{}
 			if changed == "org share" || changed == "shared agent" {
-				ctx = types.WithCaller(ctx, types.Caller{
-					TenantID: 99,
-					UserID:   "person-1",
-					Role:     types.TenantRoleViewer,
-				})
+				ctx = types.WithCaller(ctx, types.Caller{TenantID: 99, UserID: "person-1", Role: types.TenantRoleViewer})
 				ctx = types.WithExecutionTenant(ctx, 12)
 				// An old exact upstream context grant must not bypass fresh checks.
-				ctx = (&KBAccess{KnowledgeBase: &types.KnowledgeBase{
-					ID:       "kb-1",
-					TenantID: 12,
-				}, Caller: types.CallerFromContext(
-					ctx,
-				), EffectiveTenantID: 12, Permission: types.OrgRoleViewer}).WithGrant(ctx)
+				ctx = (&KBAccess{KnowledgeBase: &types.KnowledgeBase{ID: "kb-1", TenantID: 12}, Caller: types.CallerFromContext(ctx), EffectiveTenantID: 12, Permission: types.OrgRoleViewer}).WithGrant(ctx)
 			}
 			agent := &types.CustomAgent{ID: "agent-1", TenantID: 12}
 			agent.Config.KBSelectionMode = "selected"
@@ -223,18 +166,7 @@ func TestNextcloudSourceLineageRechecksFreshGrantsAndLocalVersionAfterRemoteAuth
 				scope.AgentID = "agent-1"
 				scope.AgentTenantID = 12
 			}
-			guard.publication.authorize = func(
-				context.Context,
-				*types.DataSourceConfig,
-				string,
-				string,
-				string,
-				string,
-				int64,
-			) (
-				nextcloud.AuthorizationDecision,
-				error,
-			) {
+			guard.publication.authorize = func(context.Context, *types.DataSourceConfig, string, string, string, string, int64) (nextcloud.AuthorizationDecision, error) {
 				switch changed {
 				case "KB directory grant":
 					groups.allowed = false
@@ -270,22 +202,7 @@ func TestNextcloudSourceLineageSharedEffectiveTenantRequiresCurrentCallerGrant(t
 }
 
 func TestNextcloudSourceLineageUnknownUnsupportedAndUnavailableDeny(t *testing.T) {
-	for _, name := range []string{
-		"legacy NULL",
-		"unknown",
-		"overflow",
-		"snapshot error",
-		"KB error",
-		"missing groups",
-		"uncaptured caller",
-		"machine",
-		"web API key",
-		"principal mismatch",
-		"unknown principal",
-		"source denied",
-		"source error",
-		"source etag changed",
-	} {
+	for _, name := range []string{"legacy NULL", "unknown", "overflow", "snapshot error", "KB error", "missing groups", "uncaptured caller", "machine", "web API key", "principal mismatch", "unknown principal", "source denied", "source error", "source etag changed"} {
 		t.Run(name, func(t *testing.T) {
 			guard, ctx, lineage, snapshots, _ := lineagePolicyFixture(t)
 			switch name {
@@ -312,48 +229,15 @@ func TestNextcloudSourceLineageUnknownUnsupportedAndUnavailableDeny(t *testing.T
 			case "unknown principal":
 				ctx = types.WithPrincipal(ctx, types.Principal{Type: "unsupported", ID: "person-1"})
 			case "source denied":
-				guard.publication.authorize = func(
-					context.Context,
-					*types.DataSourceConfig,
-					string,
-					string,
-					string,
-					string,
-					int64,
-				) (
-					nextcloud.AuthorizationDecision,
-					error,
-				) {
+				guard.publication.authorize = func(context.Context, *types.DataSourceConfig, string, string, string, string, int64) (nextcloud.AuthorizationDecision, error) {
 					return nextcloud.AuthorizationDecision{}, nil
 				}
 			case "source error":
-				guard.publication.authorize = func(
-					context.Context,
-					*types.DataSourceConfig,
-					string,
-					string,
-					string,
-					string,
-					int64,
-				) (
-					nextcloud.AuthorizationDecision,
-					error,
-				) {
+				guard.publication.authorize = func(context.Context, *types.DataSourceConfig, string, string, string, string, int64) (nextcloud.AuthorizationDecision, error) {
 					return nextcloud.AuthorizationDecision{}, errors.New("source offline")
 				}
 			case "source etag changed":
-				guard.publication.authorize = func(
-					context.Context,
-					*types.DataSourceConfig,
-					string,
-					string,
-					string,
-					string,
-					int64,
-				) (
-					nextcloud.AuthorizationDecision,
-					error,
-				) {
+				guard.publication.authorize = func(context.Context, *types.DataSourceConfig, string, string, string, string, int64) (nextcloud.AuthorizationDecision, error) {
 					return nextcloud.AuthorizationDecision{Allow: true, SourceETag: "new-etag"}, nil
 				}
 			}
@@ -370,11 +254,7 @@ func TestNextcloudSourceLineageExplicitEmptyStillChecksOrdinaryKBAndAPIKeyScope(
 	guard.kbs.(*lineageKBStub).kb.EverHadNextcloudSource = false
 	lineage, err := types.NewCompleteSourceLineage()
 	require.NoError(t, err)
-	scope := LineageReadScope{Targets: types.SearchTargets{{
-		Type:            types.SearchTargetTypeKnowledgeBase,
-		TenantID:        12,
-		KnowledgeBaseID: "kb-1",
-	}}}
+	scope := LineageReadScope{Targets: types.SearchTargets{{Type: types.SearchTargetTypeKnowledgeBase, TenantID: 12, KnowledgeBaseID: "kb-1"}}}
 	require.NoError(t, guard.Check(ctx, lineage, scope))
 	ctx = types.WithCaller(ctx, types.Caller{TenantID: 99, UserID: "person-1"})
 	require.ErrorIs(t, guard.Check(ctx, lineage, scope), ErrNextcloudPublicationDenied)
@@ -382,13 +262,10 @@ func TestNextcloudSourceLineageExplicitEmptyStillChecksOrdinaryKBAndAPIKeyScope(
 	require.NoError(t, guard.Check(ctx, lineage, scope))
 	apiCtx := types.WithCaller(ctx, types.Caller{TenantID: 12, Role: types.TenantRoleViewer})
 	apiCtx = types.WithPrincipal(apiCtx, types.Principal{Type: types.PrincipalAPITenant, ID: "api-key"})
-	apiCtx = types.WithTenantAPIKeyScope(apiCtx, types.TenantAPIKeyScope{KnowledgeBaseIDs: types.StringArray{
-		"other-kb",
-	}})
+	apiCtx = types.WithTenantAPIKeyScope(apiCtx, types.TenantAPIKeyScope{KnowledgeBaseIDs: types.StringArray{"other-kb"}})
 	require.ErrorIs(t, guard.Check(apiCtx, lineage, scope), ErrNextcloudPublicationDenied)
 	apiCtx = types.WithTenantAPIKeyScope(apiCtx, types.TenantAPIKeyScope{KnowledgeBaseIDs: types.StringArray{"kb-1"}})
-	require.NoError(t, guard.Check(apiCtx, lineage, scope), ("explicit ordinary lineage preserves valid machine KB sc" +
-		"ope"))
+	require.NoError(t, guard.Check(apiCtx, lineage, scope), "explicit ordinary lineage preserves valid machine KB scope")
 	guard.kbs.(*lineageKBStub).kb.TenantID = 99 // Wrong persisted owner for requested scope.
 	require.ErrorIs(t, guard.Check(ctx, lineage, scope), ErrNextcloudPublicationDenied)
 }

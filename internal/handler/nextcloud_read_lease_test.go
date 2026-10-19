@@ -139,10 +139,8 @@ func leaseHandlerKnowledge(t *testing.T) *types.Knowledge {
 		"datasource_id": "source-1", "external_id": "nextcloud:instance:1",
 	})
 	require.NoError(t, err)
-	return &types.Knowledge{
-		ID: "doc-1", TenantID: 7, KnowledgeBaseID: "kb-1",
-		Channel: types.ConnectorTypeNextcloud, Metadata: types.JSON(metadata),
-	}
+	return &types.Knowledge{ID: "doc-1", TenantID: 7, KnowledgeBaseID: "kb-1",
+		Channel: types.ConnectorTypeNextcloud, Metadata: types.JSON(metadata)}
 }
 
 func assertLeaseReleased(t *testing.T, db *gorm.DB) {
@@ -165,16 +163,12 @@ func TestGlobalKnowledgeSearchRetirementBlocksGCAndSourceOutput(t *testing.T) {
 		(tenant_id, knowledge_base_id, activated_at_ms, legacy_drained_at_ms,
 		 reader_revision, builder_revision)
 		VALUES (7, 'kb-1', ?, ?, 'test-reader', 'test-builder')`, nowMS-1000, nowMS-1000).Error)
-	scope := repository.NextcloudContentScope{
-		TenantID: 7, KnowledgeBaseID: "kb-1",
-		KnowledgeID: row.ID, DataSourceID: "source-1", ExternalID: "nextcloud:instance:1",
-	}
+	scope := repository.NextcloudContentScope{TenantID: 7, KnowledgeBaseID: "kb-1",
+		KnowledgeID: row.ID, DataSourceID: "source-1", ExternalID: "nextcloud:instance:1"}
 	var retired atomic.Bool
 	var retireErr, claimErr error
-	h := &KnowledgeHandler{
-		kgService: &leaseSearchService{rows: []*types.Knowledge{row}},
-		contentLeases: &leaseAcquireHookStore{
-			NextcloudContentLeaseStore: store,
+	h := &KnowledgeHandler{kgService: &leaseSearchService{rows: []*types.Knowledge{row}},
+		contentLeases: &leaseAcquireHookStore{NextcloudContentLeaseStore: store,
 			onAcquire: func() {
 				retireErr = store.RetireKnowledge(context.Background(), scope)
 				if retireErr != nil {
@@ -189,8 +183,7 @@ func TestGlobalKnowledgeSearchRetirementBlocksGCAndSourceOutput(t *testing.T) {
 					_, claimErr = store.ClaimKnowledgeGC(context.Background(), scope,
 						time.UnixMilli(retiredAtMS), time.Minute)
 				}
-			},
-		},
+			}},
 		publicationCheck: func(context.Context, *types.Knowledge) error {
 			if retired.Load() {
 				return apperrors.NewForbiddenError("source revoked")
@@ -223,8 +216,7 @@ func TestGlobalKnowledgeSearchRechecksPublicationAtJSONWrite(t *testing.T) {
 	row := leaseHandlerKnowledge(t)
 	row.Title = "private source title"
 	var checks atomic.Int32
-	h := &KnowledgeHandler{
-		kgService:     &leaseSearchService{rows: []*types.Knowledge{row}},
+	h := &KnowledgeHandler{kgService: &leaseSearchService{rows: []*types.Knowledge{row}},
 		contentLeases: store,
 		publicationCheck: func(context.Context, *types.Knowledge) error {
 			if checks.Add(1) >= 3 {
@@ -258,8 +250,7 @@ func TestPreviewLeaseRetireDuringReadStopsLaterBytes(t *testing.T) {
 			revoked.Store(true)
 		}}, nil
 	}
-	h := &KnowledgeHandler{
-		kgService: svc, contentLeases: store,
+	h := &KnowledgeHandler{kgService: svc, contentLeases: store,
 		kbService: &downloadKBStub{kb: &types.KnowledgeBase{ID: "kb-1", TenantID: 7}},
 		publicationCheck: func(context.Context, *types.Knowledge) error {
 			if revoked.Load() {
@@ -282,19 +273,15 @@ func TestPreviewLeaseAcquisitionRechecksPublicationBeforeFirstByte(t *testing.T)
 	store := repository.NewNextcloudContentLeaseStore(db)
 	knowledge := leaseHandlerKnowledge(t)
 	var revoked atomic.Bool
-	svc := &leasePreviewService{
-		knowledge: knowledge,
+	svc := &leasePreviewService{knowledge: knowledge,
 		open: func(context.Context) (io.ReadCloser, error) {
 			return io.NopCloser(strings.NewReader("secret")), nil
 		},
 	}
-	h := &KnowledgeHandler{
-		kgService: svc,
+	h := &KnowledgeHandler{kgService: svc,
 		kbService: &downloadKBStub{kb: &types.KnowledgeBase{ID: "kb-1", TenantID: 7}},
-		contentLeases: &leaseAcquireHookStore{
-			NextcloudContentLeaseStore: store,
-			onAcquire:                  func() { revoked.Store(true) },
-		},
+		contentLeases: &leaseAcquireHookStore{NextcloudContentLeaseStore: store,
+			onAcquire: func() { revoked.Store(true) }},
 		publicationCheck: func(context.Context, *types.Knowledge) error {
 			if revoked.Load() {
 				return apperrors.NewForbiddenError("source revoked")
@@ -316,8 +303,7 @@ func TestPreviewStopsAfterKnowledgeBaseShareRevokedMidstream(t *testing.T) {
 	knowledge := leaseHandlerKnowledge(t)
 	knowledge.TenantID = 8
 	share := &leaseRevocableShare{}
-	svc := &leasePreviewService{
-		knowledge: knowledge,
+	svc := &leasePreviewService{knowledge: knowledge,
 		open: func(context.Context) (io.ReadCloser, error) {
 			return &twoPhaseSource{second: func() { share.revoked.Store(true) }}, nil
 		},
@@ -354,8 +340,7 @@ func TestPreviewLeaseExpiryAndCancellationStopLaterBytes(t *testing.T) {
 					}
 				}}, nil
 			}
-			h := &KnowledgeHandler{
-				kgService: svc, contentLeases: store,
+			h := &KnowledgeHandler{kgService: svc, contentLeases: store,
 				kbService:        &downloadKBStub{kb: &types.KnowledgeBase{ID: "kb-1", TenantID: 7}},
 				leaseCheckpoint:  time.Nanosecond,
 				publicationCheck: func(context.Context, *types.Knowledge) error { return nil },
@@ -394,15 +379,13 @@ func TestPreviewWriteBoundaryRejectsRevocationAfterRead(t *testing.T) {
 	revoked.Store(true) // source changed after Read and before Write
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
-	guarded := &nextcloudAuthorizationWriter{
-		ResponseWriter: c.Writer, leases: leaselist,
+	guarded := &nextcloudAuthorizationWriter{ResponseWriter: c.Writer, leases: leaselist,
 		check: func(context.Context) error {
 			if revoked.Load() {
 				return apperrors.NewForbiddenError("source revoked")
 			}
 			return nil
-		},
-	}
+		}}
 	written, err := guarded.Write(buf[:n])
 	require.Error(t, err)
 	require.Zero(t, written)
@@ -463,8 +446,7 @@ func TestPreviewHeaderBoundaryHidesFileMetadataAfterRevocation(t *testing.T) {
 	defer leases.Close()
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
-	guarded := &nextcloudAuthorizationWriter{
-		ResponseWriter: c.Writer, leases: leases,
+	guarded := &nextcloudAuthorizationWriter{ResponseWriter: c.Writer, leases: leases,
 		check: func(context.Context) error { return apperrors.NewForbiddenError("source revoked") },
 	}
 	guarded.Header().Set("Content-Disposition", `attachment; filename="secret.txt"`)
@@ -478,8 +460,7 @@ func TestPreviewHeaderBoundaryHidesFileMetadataAfterRevocation(t *testing.T) {
 func TestPreviewBufferedRangeAndHeadResponses(t *testing.T) {
 	db := leaseHandlerDB(t)
 	store := repository.NewNextcloudContentLeaseStore(db)
-	svc := &leasePreviewService{
-		knowledge: leaseHandlerKnowledge(t),
+	svc := &leasePreviewService{knowledge: leaseHandlerKnowledge(t),
 		open: func(context.Context) (io.ReadCloser, error) {
 			return &leaseSeekFile{Reader: strings.NewReader("abcdef")}, nil
 		},
@@ -524,7 +505,7 @@ func TestLeasedFileChecksSourceAtCheckpointRatherThanEverySmallRead(t *testing.T
 	checks := 0
 	reader := wrapNextcloudLeasedFile(io.NopCloser(strings.NewReader("abcdef")), leases,
 		func(context.Context) error { checks++; return nil }, time.Minute)
-	defer func() { require.NoError(t, reader.Close()) }()
+	defer reader.Close()
 	buf := make([]byte, 1)
 	for range 3 {
 		_, err := reader.Read(buf)

@@ -102,8 +102,7 @@ func (s *NextcloudGCStore) DeleteNextcloudExactChunkForGC(ctx context.Context,
 			return ErrNextcloudContentLeaseDenied
 		}
 		var revisions int64
-		if err := tx.Table("chunk_revisions").Where(("chunk_id = ? AND tenant_id = ? AND knowledge_base_id = " +
-			"? AND knowledge_id = ?"),
+		if err := tx.Table("chunk_revisions").Where("chunk_id = ? AND tenant_id = ? AND knowledge_base_id = ? AND knowledge_id = ?",
 			chunkID, scope.TenantID, scope.KnowledgeBaseID, scope.KnowledgeID).Count(&revisions).Error; err != nil {
 			return err
 		}

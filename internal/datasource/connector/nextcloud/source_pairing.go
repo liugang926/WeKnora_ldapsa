@@ -10,7 +10,6 @@ import (
 	"strconv"
 
 	apperrors "github.com/Tencent/WeKnora/internal/errors"
-
 	"github.com/Tencent/WeKnora/internal/types"
 )
 
@@ -25,7 +24,6 @@ type SourcePairingCommit struct {
 	DataSourceID    string
 }
 
-// SourcePairingRemoteError records an unsuccessful remote pairing status.
 type SourcePairingRemoteError struct{ StatusCode int }
 
 func (e *SourcePairingRemoteError) Error() string {

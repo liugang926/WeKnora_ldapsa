@@ -10,12 +10,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Tencent/WeKnora/internal/application/repository"
 	werrors "github.com/Tencent/WeKnora/internal/errors"
 	"github.com/Tencent/WeKnora/internal/infrastructure/chunker"
 	"github.com/Tencent/WeKnora/internal/infrastructure/docparser"
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/tracing/langfuse"
 	"github.com/Tencent/WeKnora/internal/types"
+	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	secutils "github.com/Tencent/WeKnora/internal/utils"
 	"github.com/google/uuid"
 	"github.com/hibiken/asynq"
@@ -102,6 +104,7 @@ func (s *knowledgeService) CreateKnowledgeFromFile(ctx context.Context,
 		checkParams.ExternalID = metadata["external_id"]
 		if channel == types.ConnectorTypeNextcloud {
 			checkParams.NextcloudTargetETag = metadata["nextcloud_target_etag"]
+			checkParams.NextcloudContentRevision = metadata["nextcloud_content_revision"]
 		}
 	}
 	exists, existingKnowledge, err := s.repo.CheckKnowledgeExists(ctx, tenantID, kbID, checkParams)
@@ -199,11 +202,33 @@ func (s *knowledgeService) CreateKnowledgeFromFile(ctx context.Context,
 	provenance := types.ResourceProvenanceOrdinary
 	if markedNextcloud {
 		provenance = types.ResourceProvenanceNextcloud
+		count := eff.QuestionGenerationConfig.QuestionCount
+		if count <= 0 {
+			count = 3
+		}
+		ctx = repository.WithNextcloudOriginalDocumentControls(ctx, types.LanguageFromContextOrDefault(ctx), safeFilename, getFileType(safeFilename), eff.EnableMultimodel, eff.QuestionGenerationConfig.Enabled, count)
+		artifact, err := readOriginalUploadArtifact(file)
+		if err != nil {
+			return nil, err
+		}
+		checker, ok := s.knowledgeInputs.(interface {
+			CheckNextcloudOriginalUploadInput(context.Context, *types.KnowledgeBase, *types.Knowledge, []byte) error
+		})
+		if !ok {
+			return nil, types.ErrSourceLineageUnknown
+		}
+		if err := checker.CheckNextcloudOriginalUploadInput(ctx, kb, knowledge, artifact); err != nil {
+			return nil, err
+		}
+		ctx = context.WithValue(ctx, knowledgeOriginalFileKBKey{}, kb)
 	}
-	filePath, err := fileSvc.SaveFile(types.WithResourceProvenance(
-		ctx,
-		provenance,
-	), file, knowledge.TenantID, knowledge.ID)
+	if types.CapacityWriteSessionFromContext(ctx) != nil {
+		provider, ok := fileSvc.(interfaces.LocalCapacityIntentProvider)
+		if !ok || !provider.SupportsLocalCapacityIntents() {
+			return nil, repository.ErrNextcloudCapacityUnavailable
+		}
+	}
+	filePath, err := fileSvc.SaveFile(types.WithResourceProvenance(ctx, provenance), file, knowledge.TenantID, knowledge.ID)
 	if err != nil {
 		logger.Errorf(ctx, "Failed to save file, knowledge ID: %s, error: %v", knowledge.ID, err)
 		return nil, err
@@ -212,17 +237,27 @@ func (s *knowledgeService) CreateKnowledgeFromFile(ctx context.Context,
 
 	// Save knowledge record to database after the file is safely stored.
 	logger.Info(ctx, "Saving knowledge record to database")
-	if err := s.repo.CreateKnowledge(ctx, knowledge); err != nil {
+	artifact, artifactErr := readOriginalUploadArtifact(file)
+	if artifactErr != nil {
+		return nil, artifactErr
+	}
+	var createErr error
+	ctx, createErr = s.createAdmittedKnowledge(ctx, knowledge, artifact)
+	if err := createErr; err != nil {
 		logger.Errorf(ctx, "Failed to create knowledge record, ID: %s, error: %v", knowledge.ID, err)
-		if deleteErr := fileSvc.DeleteFile(ctx, filePath); deleteErr != nil {
-			logger.Errorf(ctx, "Failed to delete saved file after knowledge creation failed, path: %s, error: %v", filePath, deleteErr)
+		if types.CapacityWriteSessionFromContext(ctx) == nil {
+			if deleteErr := fileSvc.DeleteFile(ctx, filePath); deleteErr != nil {
+				logger.Errorf(ctx, "Failed to delete saved file after knowledge creation failed, path: %s, error: %v", filePath, deleteErr)
+			}
 		}
 		return nil, err
 	}
 	// Set tag relations
-	if err := s.setAndAttachKnowledgeTags(ctx, tenantID, kbID, knowledge, tagIDs); err != nil {
-		logger.Errorf(ctx, "Failed to set knowledge tags, knowledge ID: %s, error: %v", knowledge.ID, err)
-		return nil, err
+	if !markedNextcloud {
+		if err := s.setAndAttachKnowledgeTags(ctx, tenantID, kbID, knowledge, tagIDs); err != nil {
+			logger.Errorf(ctx, "Failed to set knowledge tags, knowledge ID: %s, error: %v", knowledge.ID, err)
+			return nil, err
+		}
 	}
 
 	// Enqueue document processing task to Asynq
@@ -237,6 +272,7 @@ func (s *knowledgeService) CreateKnowledgeFromFile(ctx context.Context,
 
 	lang := types.LanguageFromContextOrDefault(ctx)
 	taskPayload := types.DocumentProcessPayload{
+		OriginalInput:            repository.KnowledgeBuildInputProofFromContext(ctx),
 		TenantID:                 tenantID,
 		KnowledgeID:              knowledge.ID,
 		KnowledgeBaseID:          kbID,
@@ -834,7 +870,9 @@ func (s *knowledgeService) CreateKnowledgeFromManual(ctx context.Context,
 		}
 	}
 
-	if err := s.repo.CreateKnowledge(ctx, knowledge); err != nil {
+	var createErr error
+	ctx, createErr = s.createAdmittedKnowledge(ctx, knowledge, cleanContent)
+	if err := createErr; err != nil {
 		logger.Errorf(ctx, "Failed to create manual knowledge record: %v", err)
 		return nil, err
 	}
@@ -932,7 +970,9 @@ func (s *knowledgeService) createKnowledgeFromPassageInternal(ctx context.Contex
 
 	// Save knowledge record
 	logger.Infof(ctx, "Saving knowledge record to database, ID: %s", knowledge.ID)
-	if err := s.repo.CreateKnowledge(ctx, knowledge); err != nil {
+	var createErr error
+	ctx, createErr = s.createAdmittedKnowledge(ctx, knowledge, safePassages)
+	if err := createErr; err != nil {
 		logger.Errorf(ctx, "Failed to create knowledge record: %v", err)
 		return nil, err
 	}
@@ -962,6 +1002,7 @@ func (s *knowledgeService) createKnowledgeFromPassageInternal(ctx context.Contex
 
 		lang := types.LanguageFromContextOrDefault(ctx)
 		taskPayload := types.DocumentProcessPayload{
+			OriginalInput:            repository.KnowledgeBuildInputProofFromContext(ctx),
 			TenantID:                 tenantID,
 			KnowledgeID:              knowledge.ID,
 			KnowledgeBaseID:          kbID,
@@ -1089,9 +1130,20 @@ func (s *knowledgeService) UpdateManualKnowledge(ctx context.Context,
 	if status == types.ManualKnowledgeStatusDraft {
 		existing.ParseStatus = types.ManualKnowledgeStatusDraft
 		existing.Description = ""
+		existing.Profile = nil
 		existing.ProcessedAt = nil
 
-		if err := s.repo.UpdateKnowledge(ctx, existing); err != nil {
+		var writeErr error
+		if s.knowledgeInputWriter != nil {
+			proof, err := s.knowledgeInputWriter.UpdateKnowledgeWithInput(ctx, existing, cleanContent)
+			writeErr = err
+			if err == nil {
+				ctx = repository.WithKnowledgeBuildInputProof(ctx, s.knowledgeInputs, proof)
+			}
+		} else {
+			writeErr = s.repo.UpdateKnowledge(ctx, existing)
+		}
+		if err := writeErr; err != nil {
 			logger.Errorf(ctx, "Failed to persist manual draft: %v", err)
 			return nil, err
 		}
@@ -1106,13 +1158,24 @@ func (s *knowledgeService) UpdateManualKnowledge(ctx context.Context,
 	// Publish: persist pending status and enqueue async task for cleanup + re-indexing
 	existing.ParseStatus = "pending"
 	existing.Description = ""
+	existing.Profile = nil
 	existing.ProcessedAt = nil
 
 	if _, err := ApplyKnowledgeProcessOverrides(ctx, kb, existing, payload.ProcessConfig, nil, nil); err != nil {
 		return nil, err
 	}
 
-	if err := s.repo.UpdateKnowledge(ctx, existing); err != nil {
+	var writeErr error
+	if s.knowledgeInputWriter != nil {
+		proof, err := s.knowledgeInputWriter.UpdateKnowledgeWithInput(ctx, existing, cleanContent)
+		writeErr = err
+		if err == nil {
+			ctx = repository.WithKnowledgeBuildInputProof(ctx, s.knowledgeInputs, proof)
+		}
+	} else {
+		writeErr = s.repo.UpdateKnowledge(ctx, existing)
+	}
+	if err := writeErr; err != nil {
 		logger.Errorf(ctx, "Failed to persist manual knowledge before indexing: %v", err)
 		return nil, err
 	}
@@ -1146,6 +1209,7 @@ func (s *knowledgeService) enqueueManualProcessing(ctx context.Context,
 ) (string, error) {
 	requestID, _ := types.RequestIDFromContext(ctx)
 	payload := types.ManualProcessPayload{
+		OriginalInput:   repository.KnowledgeBuildInputProofFromContext(ctx),
 		RequestId:       requestID,
 		TenantID:        knowledge.TenantID,
 		KnowledgeID:     knowledge.ID,

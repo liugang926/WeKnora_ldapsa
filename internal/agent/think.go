@@ -58,6 +58,36 @@ func (e *AgentEngine) streamLLMToEventBus(
 
 	// Model-context encoding owns codec ordering and temporary-handle lifecycle.
 	messages = e.modelContext.EncodeMessages(messages)
+	var snapshotErr error
+	messages, snapshotErr = freezeModelMessages(messages)
+	if snapshotErr == nil {
+		opts, snapshotErr = freezeModelOptions(opts)
+	}
+	if snapshotErr != nil {
+		_ = e.addLineage(types.UnknownSourceLineage())
+		return nil, e.rememberLineageFailure(snapshotErr)
+	}
+	// This exact detached wire snapshot is checked below and is the only
+	// options/message object supplied to the model. Opaque formats have no
+	// producer receipt on this Agent entry path.
+	if opts != nil && len(opts.Format) > 0 {
+		_ = e.addLineage(types.UnknownSourceLineage())
+		return nil, e.rememberLineageFailure(types.ErrSourceLineageUnknown)
+	}
+	if opts != nil && len(opts.Tools) > 0 && e.toolRegistry == nil {
+		_ = e.addLineage(types.UnknownSourceLineage())
+		return nil, e.rememberLineageFailure(types.ErrSourceLineageUnknown)
+	}
+	if e.toolRegistry != nil && opts != nil {
+		if err := e.addLineage(e.toolRegistry.DefinitionSourceLineage(opts.Tools)); err != nil {
+			logger.Warn(ctx, "Agent input rejected at original tool definition boundary")
+			return nil, err
+		}
+	}
+	if err := e.accountMessages(ctx, messages); err != nil {
+		logger.Warn(ctx, "Agent input rejected at original wire message boundary")
+		return nil, err
+	}
 	reportModelContextLeaks(ctx, "Agent", e.modelContext, messages)
 	prefixFingerprint := chat.PromptPrefixFingerprint(messages, opts)
 	llmCtx = types.WithLLMCallMetadata(llmCtx, "agent_round", prefixFingerprint)
@@ -79,6 +109,12 @@ func (e *AgentEngine) streamLLMToEventBus(
 	defer stopWatchdog()
 
 	for chunk := range stream {
+		// Reauthorize at the actual model-output boundary before decoding,
+		// collecting, or publishing any content/control argument.
+		if err := e.checkLineage(ctx); err != nil {
+			llmCancel()
+			return nil, err
+		}
 		lastChunkAt.Store(time.Now().UnixNano())
 		chunkCount++
 		if chunkCount == 1 {
@@ -149,6 +185,9 @@ func (e *AgentEngine) streamLLMToEventBus(
 		}
 	}
 	answerTail := answerDecoder.Flush()
+	if err := e.checkLineage(ctx); err != nil {
+		return nil, err
+	}
 	thinkingTail := thinkingDecoder.Flush()
 	result.Content += answerTail
 	result.ReasoningContent += thinkingTail
@@ -297,7 +336,7 @@ func (e *AgentEngine) streamThinkingToEventBus(
 			return
 		}
 		emittedEventTypes["thought_chunk"]++
-		e.eventBus.Emit(ctx, event.Event{
+		e.emitEvent(ctx, event.Event{
 			ID:        thinkingID,
 			Type:      event.EventAgentThought,
 			SessionID: sessionID,
@@ -334,7 +373,7 @@ func (e *AgentEngine) streamThinkingToEventBus(
 		closeThinking()
 		answerStreamed = true
 		emittedEventTypes["final_answer_chunk"]++
-		e.eventBus.Emit(ctx, event.Event{
+		e.emitEvent(ctx, event.Event{
 			ID:        answerID,
 			Type:      event.EventAgentFinalAnswer,
 			SessionID: sessionID,
@@ -358,7 +397,7 @@ func (e *AgentEngine) streamThinkingToEventBus(
 				if toolCallID != "" && toolName != "" && !pendingToolCalls[toolCallID] {
 					pendingToolCalls[toolCallID] = true
 					emittedEventTypes["tool_call_pending"]++
-					e.eventBus.Emit(ctx, event.Event{
+					e.emitEvent(ctx, event.Event{
 						ID:        fmt.Sprintf("%s-tool-call-pending", toolCallID),
 						Type:      event.EventAgentToolCall,
 						SessionID: sessionID,
@@ -371,7 +410,7 @@ func (e *AgentEngine) streamThinkingToEventBus(
 					})
 				} else if toolCallID != "" && pendingToolCalls[toolCallID] && args != nil {
 					emittedEventTypes["tool_call_progress"]++
-					_ = e.eventBus.Emit(ctx, event.Event{
+					_ = e.emitEvent(ctx, event.Event{
 						ID:        fmt.Sprintf("%s-tool-call-progress", toolCallID),
 						Type:      event.EventAgentToolCall,
 						SessionID: sessionID,
@@ -395,7 +434,7 @@ func (e *AgentEngine) streamThinkingToEventBus(
 						thinkingToolIDs[toolCallID] = eventID
 					}
 					emittedEventTypes["thinking_tool_chunk"]++
-					e.eventBus.Emit(ctx, event.Event{
+					e.emitEvent(ctx, event.Event{
 						ID:        eventID,
 						Type:      event.EventAgentThought,
 						SessionID: sessionID,
@@ -467,6 +506,7 @@ func (e *AgentEngine) streamThinkingToEventBus(
 	}
 
 	resp := &types.ChatResponse{
+		SourceLineage:      e.SourceLineageSnapshot(),
 		Content:            fullContent,
 		ReasoningContent:   llmResult.ReasoningContent,
 		ReasoningSignature: llmResult.ReasoningSignature,

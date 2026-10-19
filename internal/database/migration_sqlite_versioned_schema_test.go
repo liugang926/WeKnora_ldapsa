@@ -50,47 +50,70 @@ var versionedSQLiteTables = []string{
 	"nextcloud_pair_rebuild_history",
 	"nextcloud_source_revisions",
 	"nextcloud_source_tombstones",
+	"nextcloud_capacity_write_intents",
+	"nextcloud_derived_backend_plans",
+	"nextcloud_derived_gc_manifests",
+	"nextcloud_derived_gc_receipts",
+	"nextcloud_derived_write_artifacts",
+	"nextcloud_derived_protocol_boundary",
+	"nextcloud_derived_origin_witnesses",
+	"nextcloud_derived_new_knowledges",
+	"datasource_name_inputs",
+	"nextcloud_original_upload_inputs",
+	"knowledge_question_metadata_outputs",
+	"message_generation_origins",
+	"message_material_admissions",
+	"message_material_receipts",
+	"message_material_versions",
+	"message_session_owner_versions",
+	"message_session_membership_versions",
+	"original_body_payloads",
+	"original_body_field_heads",
+	"original_body_rewrite_authorities",
+	"original_body_parent_refs",
+	"original_body_leases",
+	"original_body_purge_receipts",
+	"original_body_journal_heads",
+	"original_body_field_revisions",
+	"original_body_gc_items",
+	"knowledge_auto_publication_versions",
+	"knowledge_auto_publication_transitions",
+	"steer_authored_origins",
+	"steer_control_admissions",
+	"steer_control_heads",
+	"steer_consumption_origins",
+	"steer_control_versions",
+	"message_completion_input_manifests",
 }
 
 // versionedSQLiteColumns maps each existing table to the columns that the
 // versioned migrations add and the SQLite baseline was missing.
 var versionedSQLiteColumns = map[string][]string{
-	"memory_subjects": {"extraction_state"},     // 000094
-	"memory_items":    {"replaces_id"},          // 000094
-	"tenants":         {"api_principal_config"}, // 000064
-	"users":           {"is_system_admin"},      // 000053
-	"knowledges":      {"pending_subtasks_count", "profile"},
-	// 000056, 000101
-	"knowledge_bases": {"profile_config", "generated_profile"}, // 000101
-	"messages": {
-		"attachments", "usage", "sandbox_checkpoint", "context_checkpoint",
-		"source_lineage",
-	}, // 000034/085/097/105/132
+	"nextcloud_capacity_reservations":  {"protocol_version"},
+	"nextcloud_capacity_write_intents": {"physical_path", "object_identity", "orphan_charge_bytes"},
+	"memory_subjects":                  {"extraction_state"},                                                                   // 000094
+	"memory_items":                     {"replaces_id"},                                                                        // 000094
+	"tenants":                          {"api_principal_config"},                                                               // 000064
+	"users":                            {"is_system_admin"},                                                                    // 000053
+	"knowledges":                       {"pending_subtasks_count", "profile"},                                                  // 000056, 000101
+	"knowledge_bases":                  {"profile_config", "generated_profile"},                                                // 000101
+	"messages":                         {"attachments", "usage", "sandbox_checkpoint", "context_checkpoint", "source_lineage"}, // 000034/085/097/105/132
 	"sessions": {
+		"title_source_lineage", "description_source_lineage", "title_revision", // PostgreSQL133/SQLite52
 		"parent_session_id", "forked_from_message_id", "fork_bootstrap", // 000097
 		"sandbox_config_tenant_id", // 000108
 	},
-	"tenant_invitations": {"token", "accepted_count"},
-	// 000054
-	"embed_channels": {"allow_memory"},
-	// 000060
-	"mcp_oauth_tokens": {"principal_type", "principal_id"},
-	// 000064
-	"mcp_tool_approvals": {"enabled"},
-	// 000091
-	"message_artifacts": {"deleted_at"},
-	// 000107
-	"directories": {"config_version", "security_config_fingerprint"},
-	// 000109 / SQLite 000028
-	"nextcloud_event_inbox": {"etag", "path", "relative_path"},
-	// SQLite 000049 / PostgreSQL 000130
-	"sync_logs": {
-		"recovery_version", "recovery_trigger", "queue_task_id", "worker_started_at",
-		"worker_active", "worker_attempt_token",
-	}, // SQLite 000050 / PostgreSQL 000131
+	"tenant_invitations":    {"token", "accepted_count"},                                                                                             // 000054
+	"embed_channels":        {"allow_memory"},                                                                                                        // 000060
+	"mcp_oauth_tokens":      {"principal_type", "principal_id"},                                                                                      // 000064
+	"mcp_tool_approvals":    {"enabled"},                                                                                                             // 000091
+	"message_artifacts":     {"deleted_at"},                                                                                                          // 000107
+	"directories":           {"config_version", "security_config_fingerprint"},                                                                       // 000109 / SQLite 000028
+	"nextcloud_event_inbox": {"etag", "path", "relative_path"},                                                                                       // SQLite 000049 / PostgreSQL 000130
+	"sync_logs":             {"recovery_version", "recovery_trigger", "queue_task_id", "worker_started_at", "worker_active", "worker_attempt_token"}, // SQLite 000050 / PostgreSQL 000131
 }
 
-const expectedSQLiteMigrationVersion = 51
+const expectedSQLiteMigrationVersion = 73
 
 func TestSQLiteNextcloudRevisionUpgradeFrom43PreservesUnknownHistory(t *testing.T) {
 	repoRoot := sqliteRepoRoot(t)
@@ -201,16 +224,13 @@ func TestSQLiteNextcloudPairingGuardsPendingAndActiveKnowledgeBase(t *testing.T)
 	require.NoError(t, err)
 	_, err = db.Exec(`UPDATE data_sources SET status = 'active' WHERE id = 'ds-paired'`)
 	require.ErrorContains(t, err, "nextcloud_source_unpaired")
-	_, err = db.Exec(`UPDATE knowledge_bases SET deleted_at = CURRENT_TIMESTAMP WHERE id = 'kb` +
-		`-paired'`)
+	_, err = db.Exec(`UPDATE knowledge_bases SET deleted_at = CURRENT_TIMESTAMP WHERE id = 'kb-paired'`)
 	require.ErrorContains(t, err, "nextcloud_paired_kb_delete_forbidden")
-	_, err = db.Exec(`UPDATE nextcloud_source_pairings SET state = 'active' WHERE operation_id` +
-		` = 'op'`)
+	_, err = db.Exec(`UPDATE nextcloud_source_pairings SET state = 'active' WHERE operation_id = 'op'`)
 	require.NoError(t, err)
 	_, err = db.Exec(`UPDATE data_sources SET status = 'active' WHERE id = 'ds-paired'`)
 	require.NoError(t, err)
-	_, err = db.Exec(`UPDATE knowledge_bases SET deleted_at = CURRENT_TIMESTAMP WHERE id = 'kb` +
-		`-paired'`)
+	_, err = db.Exec(`UPDATE knowledge_bases SET deleted_at = CURRENT_TIMESTAMP WHERE id = 'kb-paired'`)
 	require.ErrorContains(t, err, "nextcloud_paired_kb_delete_forbidden")
 	_, err = db.Exec(`INSERT INTO nextcloud_source_rotations
 		(operation_id, pair_operation_id, tenant_id, knowledge_base_id, datasource_id,
@@ -219,26 +239,21 @@ func TestSQLiteNextcloudPairingGuardsPendingAndActiveKnowledgeBase(t *testing.T)
 		VALUES ('rotation', 'op', 7, 'kb-paired', 'ds-paired', 'instance', 'binding',
 		        'pair_key', 'rot_key', 'hash', 'newhash', '{}', '{"credential":"new"}', 'pending')`)
 	require.NoError(t, err)
-	_, err = db.Exec(`UPDATE data_sources SET config = '{"credential":"new"}' WHERE id = 'ds-p` +
-		`aired'`)
+	_, err = db.Exec(`UPDATE data_sources SET config = '{"credential":"new"}' WHERE id = 'ds-paired'`)
 	require.ErrorContains(t, err, "nextcloud_paired_source_immutable")
 	_, err = db.Exec(`UPDATE nextcloud_source_pairings SET key_id = 'rot_key',
 		datasource_config_sha256 = 'newhash' WHERE operation_id = 'op'`)
 	require.ErrorContains(t, err, "nextcloud_source_pairing_immutable")
-	_, err = db.Exec(`UPDATE nextcloud_source_rotations SET state = 'committed' WHERE operatio` +
-		`n_id = 'rotation'`)
+	_, err = db.Exec(`UPDATE nextcloud_source_rotations SET state = 'committed' WHERE operation_id = 'rotation'`)
 	require.NoError(t, err)
-	_, err = db.Exec(`UPDATE data_sources SET config = '{"credential":"other"}' WHERE id = 'ds` +
-		`-paired'`)
+	_, err = db.Exec(`UPDATE data_sources SET config = '{"credential":"other"}' WHERE id = 'ds-paired'`)
 	require.ErrorContains(t, err, "nextcloud_paired_source_immutable")
-	_, err = db.Exec(`UPDATE data_sources SET config = '{"credential":"new"}' WHERE id = 'ds-p` +
-		`aired'`)
+	_, err = db.Exec(`UPDATE data_sources SET config = '{"credential":"new"}' WHERE id = 'ds-paired'`)
 	require.NoError(t, err)
 	_, err = db.Exec(`UPDATE nextcloud_source_pairings SET key_id = 'rot_key',
 		datasource_config_sha256 = 'newhash' WHERE operation_id = 'op'`)
 	require.NoError(t, err)
-	_, err = db.Exec(`UPDATE nextcloud_source_rotations SET state = 'switched' WHERE operation` +
-		`_id = 'rotation'`)
+	_, err = db.Exec(`UPDATE nextcloud_source_rotations SET state = 'switched' WHERE operation_id = 'rotation'`)
 	require.NoError(t, err)
 	_, err = db.Exec(`UPDATE data_sources SET config = '{}' WHERE id = 'ds-paired'`)
 	require.ErrorContains(t, err, "nextcloud_paired_source_immutable")
@@ -259,6 +274,7 @@ func TestSQLiteMigrationsCreateVersionedSchema(t *testing.T) {
 	for _, table := range versionedSQLiteTables {
 		require.Truef(t, sqliteTableExists(t, db, table), "SQLite migrations must create table %s", table)
 	}
+	requireSteerOriginalSchema(t, db, "sqlite")
 	for table, columns := range versionedSQLiteColumns {
 		for _, column := range columns {
 			require.Truef(
@@ -318,6 +334,7 @@ func TestSQLiteMigrationsUpgradeV4PreservesData(t *testing.T) {
 	for _, table := range versionedSQLiteTables {
 		require.Truef(t, sqliteTableExists(t, db, table), "upgraded SQLite DB must have table %s", table)
 	}
+	requireSteerOriginalSchema(t, db, "sqlite")
 	for table, columns := range versionedSQLiteColumns {
 		for _, column := range columns {
 			require.Truef(

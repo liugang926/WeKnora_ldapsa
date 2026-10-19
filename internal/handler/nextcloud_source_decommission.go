@@ -92,7 +92,6 @@ func (h *NextcloudSourcePairingHandler) Decommission(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"decommission": local})
 }
 
-// DecommissionStatus returns tenant-scoped source-decommission status.
 func (h *NextcloudSourcePairingHandler) DecommissionStatus(c *gin.Context) {
 	pair, _, ok := h.authorizedPair(c)
 	if !ok {

@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/Tencent/WeKnora/internal/models/api"
 
 	"github.com/Tencent/WeKnora/internal/event"
+	"github.com/Tencent/WeKnora/internal/logprivacy"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	"github.com/google/uuid"
@@ -46,6 +48,13 @@ func (p *PluginChatCompletionStream) OnEvent(ctx context.Context,
 		"chat_model":     chatManage.ChatModelID,
 	})
 
+	ctx, cancelLineage := context.WithCancel(ctx)
+	streamStarted := false
+	defer func() {
+		if !streamStarted {
+			cancelLineage()
+		}
+	}()
 	// Prepare chat model and options
 	chatModel, opt, err := prepareChatModel(ctx, p.modelService, chatManage)
 	if err != nil {
@@ -82,6 +91,23 @@ func (p *PluginChatCompletionStream) OnEvent(ctx context.Context,
 	pipelineInfo(ctx, "Stream", "model_call", map[string]interface{}{
 		"chat_model": chatManage.ChatModelID,
 	})
+	if err := CheckSourceLineageInputs(ctx, chatManage); err != nil {
+		return sourceLineagePluginError(err)
+	}
+	if err := AccountResults(ctx, chatManage.MergeResult); err != nil {
+		return sourceLineagePluginError(err)
+	}
+	chatMessages, err = api.FreezeSourceModelMessages(chatMessages)
+	if err != nil {
+		return sourceLineagePluginError(err)
+	}
+	opt, err = api.FreezeSourceModelOptions(opt)
+	if err != nil {
+		return sourceLineagePluginError(err)
+	}
+	if err := stampModelInputLineage(ctx, chatMessages); err != nil {
+		return sourceLineagePluginError(err)
+	}
 	responseChan, err := chatModel.ChatStream(ctx, chatMessages, opt)
 	if err != nil {
 		pipelineError(ctx, "Stream", "model_call", map[string]interface{}{
@@ -107,7 +133,32 @@ func (p *PluginChatCompletionStream) OnEvent(ctx context.Context,
 	// and plain answer text to EventAgentFinalAnswer, matching the Agent pipeline.
 	// The goroutine monitors ctx.Done() to avoid leaking when the context is cancelled
 	// and the upstream channel is not closed promptly.
+	var streamDone chan error
+	if types.RAGSourceLineageFromContext(ctx) != nil {
+		streamDone = make(chan error, 1)
+		chatManage.SourceStreamResult = streamDone
+		chatManage.SourceStreamCancel = cancelLineage
+	}
+	streamStarted = true
 	go func() {
+		var streamErr error
+		defer func() {
+			types.CloseHistoryMaterialLifetime(ctx)
+			cancelLineage()
+			if streamDone != nil {
+				streamDone <- streamErr
+				close(streamDone)
+			}
+		}()
+		failStream := func(err error) {
+			streamErr = err
+			// A pure code-origin failure control contains no provider/body/ref
+			// data and never certifies the incomplete assistant. Its private bus
+			// and exact session bind it to this owned producer instance.
+			_ = eventBus.Emit(ctx, types.Event{Type: types.EventType(event.EventError), SessionID: chatManage.SessionID,
+				Data: event.ErrorData{Stage: "source_output", Error: "Source output could not complete", SessionID: chatManage.SessionID}})
+			cancelLineage()
+		}
 		answerDecoder := modelContext.StreamDecoder()
 		thinkingDecoder := modelContext.StreamDecoder()
 		thinkingID := fmt.Sprintf("%s-thinking", uuid.New().String()[:8])
@@ -115,11 +166,11 @@ func (p *PluginChatCompletionStream) OnEvent(ctx context.Context,
 		thinkingOpen := false
 		answerCompleted := false
 
-		closeThinking := func() {
+		closeThinking := func() error {
 			if !thinkingOpen {
-				return
+				return nil
 			}
-			eventBus.Emit(ctx, types.Event{
+			err := emitSourceLineageEvent(ctx, eventBus, types.Event{
 				ID:        thinkingID,
 				Type:      types.EventType(event.EventAgentThought),
 				SessionID: chatManage.SessionID,
@@ -127,7 +178,11 @@ func (p *PluginChatCompletionStream) OnEvent(ctx context.Context,
 					Done: true,
 				},
 			})
+			if err != nil {
+				return err
+			}
 			thinkingOpen = false
+			return nil
 		}
 
 		// flushDecoders drains any handle suffix the stream decoders held back to
@@ -135,41 +190,64 @@ func (p *PluginChatCompletionStream) OnEvent(ctx context.Context,
 		// and the cancellation path must call this, otherwise a resource
 		// reference in flight at teardown is silently dropped (and never
 		// persisted, since the assistant message is saved from these events).
-		flushDecoders := func() {
+		flushDecoders := func() error {
+			if turn := types.RAGSourceLineageFromContext(ctx); turn != nil && turn.Check(ctx) != nil {
+				return nil
+			}
 			thinkingTail := thinkingDecoder.Flush()
 			if thinkingTail != "" {
-				_ = eventBus.Emit(ctx, types.Event{
+				if err := emitSourceLineageEvent(ctx, eventBus, types.Event{
 					ID:        thinkingID,
 					Type:      types.EventType(event.EventAgentThought),
 					SessionID: chatManage.SessionID,
 					Data:      event.AgentThoughtData{Content: thinkingTail},
-				})
+				}); err != nil {
+					return err
+				}
 			}
 			answerTail := answerDecoder.Flush()
 			if answerTail != "" {
-				_ = eventBus.Emit(ctx, types.Event{
+				if err := emitSourceLineageEvent(ctx, eventBus, types.Event{
 					ID:        answerID,
 					Type:      types.EventType(event.EventAgentFinalAnswer),
 					SessionID: chatManage.SessionID,
 					Data:      event.AgentFinalAnswerData{Content: answerTail},
-				})
+				}); err != nil {
+					return err
+				}
 			}
+			return nil
 		}
 
 		for {
 			select {
 			case <-ctx.Done():
-				flushDecoders()
-				closeThinking()
+				streamErr = ctx.Err()
 				pipelineInfo(ctx, "Stream", "context_cancelled", map[string]interface{}{
 					"session_id": chatManage.SessionID,
 				})
 				return
 
 			case response, ok := <-responseChan:
+				if turn := types.RAGSourceLineageFromContext(ctx); turn != nil {
+					if err := turn.Check(ctx); err != nil {
+						failStream(err)
+						return
+					}
+				}
 				if !ok {
-					flushDecoders()
-					closeThinking()
+					if err := flushDecoders(); err != nil {
+						failStream(err)
+						return
+					}
+					if err := closeThinking(); err != nil {
+						failStream(err)
+						return
+					}
+					if !answerCompleted {
+						failStream(errors.New("model stream closed without terminal answer"))
+						return
+					}
 					pipelineInfo(ctx, "Stream", "channel_close", map[string]interface{}{
 						"session_id": chatManage.SessionID,
 					})
@@ -177,21 +255,16 @@ func (p *PluginChatCompletionStream) OnEvent(ctx context.Context,
 				}
 
 				if response.ResponseType == types.ResponseTypeError {
+					errorDiagnostic := "model_stream_error"
+					if !logprivacy.ContentSuppressed(ctx) {
+						errorDiagnostic = response.Content
+					}
 					pipelineError(ctx, "Stream", "stream_error", map[string]interface{}{
 						"session_id": chatManage.SessionID,
-						"error":      response.Content,
+						"error":      errorDiagnostic,
 					})
-					eventBus.Emit(ctx, types.Event{
-						ID:        fmt.Sprintf("%s-error", uuid.New().String()[:8]),
-						Type:      types.EventType(event.EventError),
-						SessionID: chatManage.SessionID,
-						Data: event.ErrorData{
-							Error:     response.Content,
-							Stage:     "chat_completion_stream",
-							SessionID: chatManage.SessionID,
-						},
-					})
-					continue
+					failStream(errors.New("model stream reported failure"))
+					return
 				}
 
 				if response.ResponseType == types.ResponseTypeThinking {
@@ -201,7 +274,7 @@ func (p *PluginChatCompletionStream) OnEvent(ctx context.Context,
 					}
 					if response.Content != "" {
 						thinkingOpen = true
-						eventBus.Emit(ctx, types.Event{
+						if err := emitSourceLineageEvent(ctx, eventBus, types.Event{
 							ID:        thinkingID,
 							Type:      types.EventType(event.EventAgentThought),
 							SessionID: chatManage.SessionID,
@@ -209,10 +282,16 @@ func (p *PluginChatCompletionStream) OnEvent(ctx context.Context,
 								Content: response.Content,
 								Done:    false,
 							},
-						})
+						}); err != nil {
+							failStream(err)
+							return
+						}
 					}
 					if response.Done {
-						closeThinking()
+						if err := closeThinking(); err != nil {
+							failStream(err)
+							return
+						}
 					}
 					continue
 				}
@@ -228,10 +307,12 @@ func (p *PluginChatCompletionStream) OnEvent(ctx context.Context,
 					response.Content = answerDecoder.Feed(response.Content)
 					if response.Done {
 						response.Content += answerDecoder.Flush()
-						answerCompleted = true
 					}
-					closeThinking()
-					eventBus.Emit(ctx, types.Event{
+					if err := closeThinking(); err != nil {
+						failStream(err)
+						return
+					}
+					if err := emitSourceLineageEvent(ctx, eventBus, types.Event{
 						ID:        answerID,
 						Type:      types.EventType(event.EventAgentFinalAnswer),
 						SessionID: chatManage.SessionID,
@@ -239,7 +320,17 @@ func (p *PluginChatCompletionStream) OnEvent(ctx context.Context,
 							Content: response.Content,
 							Done:    response.Done,
 						},
-					})
+					}); err != nil {
+						failStream(err)
+						return
+					}
+					if response.Done {
+						answerCompleted = true
+						// The successful producer terminal is Done, not a later
+						// provider EOF. Stop this owned child stream and release its
+						// source/body pins even if the provider keeps the channel open.
+						return
+					}
 				}
 			}
 		}

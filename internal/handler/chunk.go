@@ -32,6 +32,7 @@ import (
 // access — that lookup answers "is the caller the creator of THIS
 // resource", not "does the caller's tenant have access").
 type ChunkHandler struct {
+	outputAuthorizer *service.ChunkOutputAuthorizer
 	service          interfaces.ChunkService
 	kgService        interfaces.KnowledgeService
 	publicationGuard *access.NextcloudPublicationGuard
@@ -75,6 +76,11 @@ func (h *ChunkHandler) loadPublishedKnowledge(ctx context.Context, knowledgeID s
 	return knowledge, err
 }
 
+func (h *ChunkHandler) checkPublication(ctx *gin.Context, knowledgeID string) error {
+	_, err := h.loadPublishedKnowledge(ctx.Request.Context(), knowledgeID)
+	return err
+}
+
 // GetChunkByIDOnly godoc
 // @Summary      通过ID获取分块
 // @Description  仅通过分块ID获取分块详情（不需要knowledge_id）；支持共享知识库下的分块访问
@@ -89,72 +95,7 @@ func (h *ChunkHandler) loadPublishedKnowledge(ctx context.Context, knowledgeID s
 // @Security     ApiKeyAuth
 // @Router       /chunks/by-id/{id} [get]
 func (h *ChunkHandler) GetChunkByIDOnly(c *gin.Context) {
-	ctx := c.Request.Context()
-	logger.Info(ctx, "Start retrieving chunk by ID only")
-
-	chunkID := secutils.SanitizeForLog(c.Param("id"))
-	if chunkID == "" {
-		logger.Error(ctx, "Chunk ID is empty")
-		c.Error(errors.NewBadRequestError("Chunk ID cannot be empty"))
-		return
-	}
-
-	// Get chunk by ID without tenant filter (chunk may belong to shared
-	// KB; the route-level KB-access guard already verified read
-	// permission against the parent KB before we got here).
-	chunk, err := h.service.GetChunkByIDOnly(ctx, chunkID)
-	if err != nil {
-		if err == service.ErrChunkNotFound {
-			logger.Warnf(ctx, "Chunk not found, chunk ID: %s", chunkID)
-			c.Error(errors.NewNotFoundError("Chunk not found"))
-			return
-		}
-		logger.ErrorWithFields(ctx, err, nil)
-		c.Error(errors.NewInternalServerError(err.Error()))
-		return
-	}
-	if chunk == nil {
-		_ = c.Error(errors.NewNotFoundError("Chunk not found"))
-		return
-	}
-	knowledge, err := h.loadPublishedKnowledge(ctx, chunk.KnowledgeID)
-	if err != nil {
-		_ = c.Error(err)
-		return
-	}
-	leases, err := h.beginNextcloudRead(ctx, c, knowledge)
-	if err != nil {
-		_ = c.Error(err)
-		return
-	}
-	defer leases.Close()
-	ctx = leases.Context(ctx)
-	if leases != nil {
-		// The first lookup identified the parent. Re-read content only while
-		// the exact generation is protected by its durable lease.
-		chunk, err = h.service.GetChunkByIDOnly(ctx, chunkID)
-		if err != nil || chunk == nil || chunk.KnowledgeID != knowledge.ID {
-			_ = c.Error(errors.NewNotFoundError("Chunk not found"))
-			return
-		}
-	}
-	if err := leases.Verify(); err != nil {
-		_ = c.Error(nextcloudHTTPLeaseError(err))
-		return
-	}
-	if _, err := h.loadPublishedKnowledge(ctx, chunk.KnowledgeID); err != nil {
-		_ = c.Error(err)
-		return
-	}
-	defer guardNextcloudResponseWrites(c, leases, func(checkCtx context.Context) error {
-		_, err := h.loadPublishedKnowledge(checkCtx, chunk.KnowledgeID)
-		return err
-	})()
-
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"data":    chunk,
-	})
+	h.getOriginalChunkOutput(c)
 }
 
 // ListKnowledgeChunks godoc
@@ -172,82 +113,7 @@ func (h *ChunkHandler) GetChunkByIDOnly(c *gin.Context) {
 // @Security     ApiKeyAuth
 // @Router       /chunks/{knowledge_id} [get]
 func (h *ChunkHandler) ListKnowledgeChunks(c *gin.Context) {
-	ctx := c.Request.Context()
-	logger.Info(ctx, "Start retrieving knowledge chunks list")
-
-	knowledgeID := secutils.SanitizeForLog(c.Param("knowledge_id"))
-	if knowledgeID == "" {
-		logger.Error(ctx, "Knowledge ID is empty")
-		c.Error(errors.NewBadRequestError("Knowledge ID cannot be empty"))
-		return
-	}
-	knowledge, err := h.loadPublishedKnowledge(ctx, knowledgeID)
-	if err != nil {
-		_ = c.Error(err)
-		return
-	}
-	leases, err := h.beginNextcloudRead(ctx, c, knowledge)
-	if err != nil {
-		_ = c.Error(err)
-		return
-	}
-	defer leases.Close()
-	ctx = leases.Context(ctx)
-
-	// Parse pagination parameters
-	var pagination types.Pagination
-	if err := c.ShouldBindQuery(&pagination); err != nil {
-		logger.Errorf(ctx, "Failed to parse pagination parameters: %s", secutils.SanitizeForLog(err.Error()))
-		c.Error(errors.NewBadRequestError(err.Error()))
-		return
-	}
-	if pagination.Page < 1 {
-		pagination.Page = 1
-	}
-	if pagination.PageSize < 1 {
-		pagination.PageSize = 10
-	}
-	if pagination.PageSize > 100 {
-		pagination.PageSize = 100
-	}
-
-	// Default to text chunks; callers may override via ?chunk_type=image_caption etc.
-	chunkType := []types.ChunkType{types.ChunkTypeText}
-	if queryTypes := c.QueryArray("chunk_type"); len(queryTypes) > 0 {
-		chunkType = make([]types.ChunkType, 0, len(queryTypes))
-		for _, qt := range queryTypes {
-			chunkType = append(chunkType, types.ChunkType(qt))
-		}
-	}
-
-	// The route-level guard has rewritten the request's tenant context
-	// to the effective tenant for shared KBs.
-	result, err := h.service.ListPagedChunksByKnowledgeID(ctx, knowledgeID, &pagination, chunkType)
-	if err != nil {
-		logger.ErrorWithFields(ctx, err, nil)
-		c.Error(errors.NewInternalServerError(err.Error()))
-		return
-	}
-	if err := leases.Verify(); err != nil {
-		_ = c.Error(nextcloudHTTPLeaseError(err))
-		return
-	}
-	if _, err := h.loadPublishedKnowledge(ctx, knowledgeID); err != nil {
-		_ = c.Error(err)
-		return
-	}
-	defer guardNextcloudResponseWrites(c, leases, func(checkCtx context.Context) error {
-		_, err := h.loadPublishedKnowledge(checkCtx, knowledgeID)
-		return err
-	})()
-
-	c.JSON(http.StatusOK, gin.H{
-		"success":   true,
-		"data":      result.Data,
-		"total":     result.Total,
-		"page":      result.Page,
-		"page_size": result.PageSize,
-	})
+	h.listOriginalChunkOutputs(c)
 }
 
 // UpdateChunkRequest defines the request structure for updating a chunk
@@ -364,7 +230,7 @@ func (h *ChunkHandler) ListChunkRevisions(c *gin.Context) {
 		_ = c.Error(err)
 		return
 	}
-	leases, err := h.beginNextcloudRead(c.Request.Context(), c, knowledge)
+	leases, err := h.beginNextcloudRead(c, c.Request.Context(), knowledge)
 	if err != nil {
 		_ = c.Error(err)
 		return

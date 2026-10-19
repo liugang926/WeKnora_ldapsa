@@ -29,10 +29,8 @@ func leaseTestSQLite(t *testing.T) *gorm.DB {
 }
 
 func leaseTestScope(id string) NextcloudContentScope {
-	return NextcloudContentScope{
-		TenantID: 7, KnowledgeBaseID: "kb-1", KnowledgeID: id,
-		DataSourceID: "source-1", ExternalID: "nextcloud:instance:" + id,
-	}
+	return NextcloudContentScope{TenantID: 7, KnowledgeBaseID: "kb-1", KnowledgeID: id,
+		DataSourceID: "source-1", ExternalID: "nextcloud:instance:" + id}
 }
 
 func leaseTestCoverKB(t *testing.T, db *gorm.DB, scope NextcloudContentScope) {

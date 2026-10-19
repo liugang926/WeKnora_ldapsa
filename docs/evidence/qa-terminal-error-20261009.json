@@ -1,0 +1,20 @@
+{
+  "source_parent": "e0b33efe6eb89321060f3e1a401afc1499117b4b",
+  "actual_http_error_close": true,
+  "safe_error_payload": true,
+  "held_body_not_flushed_on_error": true,
+  "title_wait_skipped_on_error": true,
+  "last_verified_counts": {
+    "pass": 11,
+    "fail": 0,
+    "skip": 0
+  },
+  "log_sha256": "a41b4b74a52ef3bac3b14d396c0d914e0261d4ae5a398c7d361e03efc6a9d07b",
+  "previous_failed_logs": {
+    ".qa-terminal-root-20261009.jsonl": "fe43496a7ad292a2573b703ca9d0f8fa84c338aa990d7dde5a72dbde6c62fe04",
+    ".qa-terminal-r2-root-20261009.jsonl": "452eb75a8485612fe483b711efa8d1d3f245416896a76ef3029c0ad87edc315e"
+  },
+  "fixture_correction": "old staged authorized frames had no complete original lineage; added explicit code-origin complete frames so actual publication verifier still denies the third chunk",
+  "shared_runtime_changed": false,
+  "full_session_suite_run": false
+}

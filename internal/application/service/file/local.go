@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Tencent/WeKnora/internal/logger"
+	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	secutils "github.com/Tencent/WeKnora/internal/utils"
 )
@@ -51,6 +52,9 @@ func NewLocalFileService(baseDir, externalURL string) interfaces.FileService {
 func (s *localFileService) SaveFile(ctx context.Context,
 	file *multipart.FileHeader, tenantID uint64, knowledgeID string,
 ) (string, error) {
+	if types.CapacityWriteSessionFromContext(ctx) != nil {
+		return s.saveCapacityFile(ctx, file, tenantID, knowledgeID)
+	}
 	logger.Info(ctx, "Starting to save file locally")
 	logger.Infof(ctx, "File information: name=%s, size=%d, tenant ID=%d, knowledge ID=%s",
 		file.Filename, file.Size, tenantID, knowledgeID)
@@ -62,7 +66,7 @@ func (s *localFileService) SaveFile(ctx context.Context,
 		return "", fmt.Errorf("invalid path: %w", err)
 	}
 	logger.Infof(ctx, "Creating directory: %s", dir)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := s.ensurePhysicalDirectory(dir); err != nil {
 		logger.Errorf(ctx, "Failed to create directory: %v", err)
 		return "", fmt.Errorf("failed to create directory: %w", err)
 	}
@@ -84,7 +88,12 @@ func (s *localFileService) SaveFile(ctx context.Context,
 
 	// Create destination file for writing
 	logger.Info(ctx, "Creating destination file")
-	dst, err := os.Create(filePath)
+	pathLock, err := s.physicalPathFence(filePath)
+	if err != nil {
+		return "", err
+	}
+	defer pathLock.Close()
+	dst, err := s.createPhysicalFile(filePath)
 	if err != nil {
 		logger.Errorf(ctx, "Failed to create destination file: %v", err)
 		return "", fmt.Errorf("failed to create file: %w", err)
@@ -144,6 +153,11 @@ func (s *localFileService) DeleteFile(ctx context.Context, filePath string) erro
 		return fmt.Errorf("invalid file path: %w", err)
 	}
 
+	pathLock, lockErr := s.physicalPathFence(resolved)
+	if lockErr != nil {
+		return lockErr
+	}
+	defer pathLock.Close()
 	err = os.Remove(resolved)
 	if err != nil {
 		logger.Errorf(ctx, "Failed to delete file: %v", err)
@@ -182,7 +196,7 @@ func (s *localFileService) CopyFile(ctx context.Context,
 		logger.Errorf(ctx, "Path traversal denied for CopyFile dir: %v", err)
 		return "", fmt.Errorf("invalid path: %w", err)
 	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := s.ensurePhysicalDirectory(dir); err != nil {
 		return "", fmt.Errorf("failed to create directory: %w", err)
 	}
 
@@ -196,7 +210,12 @@ func (s *localFileService) CopyFile(ctx context.Context,
 	}
 	defer src.Close()
 
-	dst, err := os.Create(dstPath)
+	pathLock, err := s.physicalPathFence(dstPath)
+	if err != nil {
+		return "", err
+	}
+	defer pathLock.Close()
+	dst, err := s.createPhysicalFile(dstPath)
 	if err != nil {
 		return "", fmt.Errorf("failed to create destination file: %w", err)
 	}
@@ -226,7 +245,7 @@ func (s *localFileService) SaveBytes(ctx context.Context, data []byte, tenantID 
 
 	// Create storage directory with tenant ID
 	dir := filepath.Join(s.baseDir, fmt.Sprintf("%d", tenantID), "exports")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := s.ensurePhysicalDirectory(dir); err != nil {
 		logger.Errorf(ctx, "Failed to create directory: %v", err)
 		return "", fmt.Errorf("failed to create directory: %w", err)
 	}
@@ -238,7 +257,17 @@ func (s *localFileService) SaveBytes(ctx context.Context, data []byte, tenantID 
 	filePath := filepath.Join(dir, uniqueFileName)
 
 	// Write data to file
-	if err := os.WriteFile(filePath, data, 0o644); err != nil {
+	pathLock, lockErr := s.physicalPathFence(filePath)
+	if lockErr != nil {
+		return "", lockErr
+	}
+	defer pathLock.Close()
+	dst, createErr := s.createPhysicalFile(filePath)
+	if createErr != nil {
+		return "", createErr
+	}
+	defer dst.Close()
+	if _, err := dst.Write(data); err != nil {
 		logger.Errorf(ctx, "Failed to write file: %v", err)
 		return "", fmt.Errorf("failed to write file: %w", err)
 	}

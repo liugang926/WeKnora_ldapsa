@@ -81,11 +81,9 @@ func markListLeaseCoverage(t *testing.T, db *gorm.DB, tenantID uint64) {
 }
 
 func listLeaseScope(row *types.Knowledge) repository.NextcloudContentScope {
-	return repository.NextcloudContentScope{
-		TenantID:        row.TenantID,
+	return repository.NextcloudContentScope{TenantID: row.TenantID,
 		KnowledgeBaseID: row.KnowledgeBaseID, KnowledgeID: row.ID,
-		DataSourceID: "source-1", ExternalID: "nextcloud:instance:1",
-	}
+		DataSourceID: "source-1", ExternalID: "nextcloud:instance:1"}
 }
 
 func retiredListLeaseTime(t *testing.T, db *gorm.DB, row *types.Knowledge) time.Time {
@@ -128,8 +126,7 @@ func TestListKnowledgeBroadLeaseBlocksGCBeforeExactPin(t *testing.T) {
 		_, claimErr = store.ClaimKnowledgeGC(context.Background(), listLeaseScope(row),
 			retiredListLeaseTime(t, db, row), time.Minute)
 	}
-	h := &KnowledgeHandler{
-		kgService:     svc,
+	h := &KnowledgeHandler{kgService: svc,
 		kbService:     &leasedListKBService{kb: &types.KnowledgeBase{ID: "kb-1", TenantID: 7}},
 		contentLeases: store,
 		publicationCheck: func(context.Context, *types.Knowledge) error {
@@ -161,8 +158,7 @@ func TestListKnowledgeExactLeaseBlocksGCAndRevokedOutput(t *testing.T) {
 	row.Title = "source list secret"
 	var retired atomic.Bool
 	var retireErr, claimErr error
-	wrapped := &leaseAcquireHookStore{
-		NextcloudContentLeaseStore: store,
+	wrapped := &leaseAcquireHookStore{NextcloudContentLeaseStore: store,
 		onAcquire: func() {
 			retireErr = store.RetireKnowledge(context.Background(), listLeaseScope(row))
 			if retireErr != nil {
@@ -171,10 +167,8 @@ func TestListKnowledgeExactLeaseBlocksGCAndRevokedOutput(t *testing.T) {
 			retired.Store(true)
 			_, claimErr = store.ClaimKnowledgeGC(context.Background(), listLeaseScope(row),
 				retiredListLeaseTime(t, db, row), time.Minute)
-		},
-	}
-	h := &KnowledgeHandler{
-		kgService:     &leasedListKnowledgeService{rows: []*types.Knowledge{row}},
+		}}
+	h := &KnowledgeHandler{kgService: &leasedListKnowledgeService{rows: []*types.Knowledge{row}},
 		kbService:     &leasedListKBService{kb: &types.KnowledgeBase{ID: "kb-1", TenantID: 7}},
 		contentLeases: wrapped,
 		publicationCheck: func(context.Context, *types.Knowledge) error {
@@ -202,12 +196,9 @@ func TestListKnowledgeWriteBoundaryRechecksCurrentShare(t *testing.T) {
 	row.Title = "shared source secret"
 	share := &leaseRevocableShare{}
 	var checks atomic.Int32
-	wrapped := &leaseAcquireHookStore{
-		NextcloudContentLeaseStore: store,
-		onAcquire:                  func() { share.revoked.Store(true) },
-	}
-	h := &KnowledgeHandler{
-		kgService:      &leasedListKnowledgeService{rows: []*types.Knowledge{row}},
+	wrapped := &leaseAcquireHookStore{NextcloudContentLeaseStore: store,
+		onAcquire: func() { share.revoked.Store(true) }}
+	h := &KnowledgeHandler{kgService: &leasedListKnowledgeService{rows: []*types.Knowledge{row}},
 		kbService:      &leasedListKBService{kb: &types.KnowledgeBase{ID: "kb-1", TenantID: 8}},
 		kbShareService: share, contentLeases: wrapped,
 		publicationCheck: func(context.Context, *types.Knowledge) error {
@@ -229,8 +220,7 @@ func TestListKnowledgeSourcePageReturnsUnderBothLeases(t *testing.T) {
 	row := leaseHandlerKnowledge(t)
 	row.Title = "current source title"
 	var checks atomic.Int32
-	h := &KnowledgeHandler{
-		kgService:     &leasedListKnowledgeService{rows: []*types.Knowledge{row}},
+	h := &KnowledgeHandler{kgService: &leasedListKnowledgeService{rows: []*types.Knowledge{row}},
 		kbService:     &leasedListKBService{kb: &types.KnowledgeBase{ID: "kb-1", TenantID: 7}},
 		contentLeases: store,
 		publicationCheck: func(context.Context, *types.Knowledge) error {

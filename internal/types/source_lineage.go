@@ -15,25 +15,17 @@ import (
 )
 
 const (
-	// SourceLineageVersion identifies the supported lineage envelope schema.
-	SourceLineageVersion = 1
-	// SourceLineageMaxSources bounds the number of controlled source identities.
+	SourceLineageVersion    = 1
 	SourceLineageMaxSources = 1024
-	// SourceLineageMaxBytes bounds the serialized lineage envelope.
-	SourceLineageMaxBytes = 256 * 1024
-	// SourceLineageComplete marks a producer-accounted set of sources.
-	SourceLineageComplete = "complete"
-	// SourceLineageUnknown marks an unaccounted or legacy set of sources.
-	SourceLineageUnknown = "unknown"
+	SourceLineageMaxBytes   = 256 * 1024
+	SourceLineageComplete   = "complete"
+	SourceLineageUnknown    = "unknown"
 )
 
 var (
-	// ErrSourceLineageInvalid reports malformed source identity or envelope data.
 	ErrSourceLineageInvalid = errors.New("invalid source lineage")
-	// ErrSourceLineageUnknown reports a lineage whose source set is not complete.
 	ErrSourceLineageUnknown = errors.New("source lineage is unknown")
-	// ErrSourceLineageLimit reports an envelope exceeding its size or count limits.
-	ErrSourceLineageLimit = errors.New("source lineage exceeds limit")
+	ErrSourceLineageLimit   = errors.New("source lineage exceeds limit")
 )
 
 // SourceIdentity identifies the original source revision, not its current row
@@ -52,22 +44,22 @@ type SourceIdentity struct {
 	KnowledgeID     string `json:"knowledge_id"`
 	// Revision is the exact open build-fence epoch, paired with KnowledgeID.
 	// It is not the append-only observation/audit sequence number.
-	Revision uint64 `json:"revision"`
-	ETag     string `json:"etag"`
+	Revision        uint64 `json:"revision"`
+	ETag            string `json:"etag"`
+	ContentRevision string `json:"content_revision,omitempty"`
 }
 
-// Validate checks the identity and original revision fields without authorizing them.
 func (s SourceIdentity) Validate() error {
+	if _, err := NormalizeNextcloudContentRevision(s.ContentRevision); err != nil {
+		return fmt.Errorf("%w: source content revision", ErrSourceLineageInvalid)
+	}
 	if s.Provider != ConnectorTypeNextcloud || s.TenantID == 0 || s.TenantID > math.MaxInt64 ||
 		s.Revision == 0 || s.Revision > math.MaxInt64 {
 		return fmt.Errorf("%w: source provider, tenant or revision", ErrSourceLineageInvalid)
 	}
-	for _, id := range []string{
-		s.KnowledgeBaseID, s.DataSourceID, s.PairOperationID,
-		s.InstanceID, s.BindingID, s.FileID, s.ExternalID, s.KnowledgeID,
-	} {
-		if id == "" || strings.TrimSpace(id) != id || !utf8.ValidString(id) || len(id) > 512 ||
-			strings.ContainsAny(id, "\x00\r\n") {
+	for _, id := range []string{s.KnowledgeBaseID, s.DataSourceID, s.PairOperationID,
+		s.InstanceID, s.BindingID, s.FileID, s.ExternalID, s.KnowledgeID} {
+		if id == "" || strings.TrimSpace(id) != id || !utf8.ValidString(id) || len(id) > 512 || strings.ContainsAny(id, "\x00\r\n") {
 			return fmt.Errorf("%w: source identity", ErrSourceLineageInvalid)
 		}
 	}
@@ -76,8 +68,7 @@ func (s SourceIdentity) Validate() error {
 		s.ExternalID != "nextcloud:"+s.InstanceID+":"+s.FileID {
 		return fmt.Errorf("%w: source file identity", ErrSourceLineageInvalid)
 	}
-	if strings.TrimSpace(s.ETag) == "" || !utf8.ValidString(s.ETag) || len(s.ETag) > 4096 ||
-		strings.ContainsAny(s.ETag, "\x00\r\n") {
+	if strings.TrimSpace(s.ETag) == "" || !utf8.ValidString(s.ETag) || len(s.ETag) > 4096 || strings.ContainsAny(s.ETag, "\x00\r\n") {
 		return fmt.Errorf("%w: original ETag", ErrSourceLineageInvalid)
 	}
 	return nil
@@ -94,7 +85,6 @@ type SourceLineage struct {
 
 type sourceLineageJSON SourceLineage
 
-// UnknownSourceLineage constructs an explicitly unknown lineage envelope.
 func UnknownSourceLineage() *SourceLineage {
 	return &SourceLineage{Version: SourceLineageVersion, State: SourceLineageUnknown, Sources: []SourceIdentity{}}
 }
@@ -105,14 +95,11 @@ func NewCompleteSourceLineage(sources ...SourceIdentity) (*SourceLineage, error)
 	if len(sources) > SourceLineageMaxSources {
 		return UnknownSourceLineage(), ErrSourceLineageLimit
 	}
-	lineage := &SourceLineage{
-		Version: SourceLineageVersion, State: SourceLineageComplete,
-		Sources: append([]SourceIdentity{}, sources...),
-	}
+	lineage := &SourceLineage{Version: SourceLineageVersion, State: SourceLineageComplete,
+		Sources: append([]SourceIdentity{}, sources...)}
 	return UnionSourceLineage(lineage)
 }
 
-// Validate checks the envelope, its source identities, and serialized size bounds.
 func (l *SourceLineage) Validate() error {
 	if l == nil || l.Version != SourceLineageVersion ||
 		(l.State != SourceLineageComplete && l.State != SourceLineageUnknown) || l.Sources == nil {
@@ -136,7 +123,6 @@ func (l *SourceLineage) Validate() error {
 	return nil
 }
 
-// RequireComplete rejects unknown lineage before accepting a validated complete set.
 func (l *SourceLineage) RequireComplete() error {
 	if l == nil {
 		return ErrSourceLineageUnknown
@@ -195,7 +181,6 @@ func UnionSourceLineage(inputs ...*SourceLineage) (*SourceLineage, error) {
 	return out, nil
 }
 
-// MarshalJSON encodes a validated lineage envelope.
 func (l SourceLineage) MarshalJSON() ([]byte, error) {
 	if err := l.Validate(); err != nil {
 		return nil, err
@@ -203,7 +188,6 @@ func (l SourceLineage) MarshalJSON() ([]byte, error) {
 	return json.Marshal(sourceLineageJSON(l))
 }
 
-// UnmarshalJSON decodes and validates a canonical lineage envelope.
 func (l *SourceLineage) UnmarshalJSON(data []byte) error {
 	*l = *UnknownSourceLineage()
 	if len(data) > SourceLineageMaxBytes {
@@ -306,17 +290,15 @@ func canonicalSourceLineageJSONKey(depth int, key string) bool {
 	if depth == 2 {
 		switch key {
 		case "provider", "tenant_id", "knowledge_base_id", "datasource_id", "pair_operation_id",
-			"instance_id", "binding_id", "file_id", "external_id", "knowledge_id", "revision", "etag":
+			"instance_id", "binding_id", "file_id", "external_id", "knowledge_id", "revision", "etag", "content_revision":
 			return true
 		}
 	}
 	return false
 }
 
-// Value implements the database driver encoding of a lineage envelope.
 func (l SourceLineage) Value() (driver.Value, error) { return l.MarshalJSON() }
 
-// Scan implements database decoding while keeping NULL lineage unknown.
 func (l *SourceLineage) Scan(value any) error {
 	*l = *UnknownSourceLineage()
 	switch value := value.(type) {

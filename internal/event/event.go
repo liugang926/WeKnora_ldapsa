@@ -93,12 +93,15 @@ const (
 
 // Event represents an event in the system
 type Event struct {
-	ID        string                 // 事件ID (自动生成UUID，用于流式更新追踪)
-	Type      EventType              // 事件类型
-	SessionID string                 // 会话ID
-	Data      interface{}            // 事件数据
-	Metadata  map[string]interface{} // 事件元数据
-	RequestID string                 // 请求ID
+	// Internal typed prefix envelope. event cannot import types (types embeds
+	// event contracts), so consumers require *types.SourceLineage explicitly.
+	SourceLineage interface{}            `json:"-"`
+	ID            string                 // 事件ID (自动生成UUID，用于流式更新追踪)
+	Type          EventType              // 事件类型
+	SessionID     string                 // 会话ID
+	Data          interface{}            // 事件数据
+	Metadata      map[string]interface{} // 事件元数据
+	RequestID     string                 // 请求ID
 }
 
 // EventHandler is a function that handles events

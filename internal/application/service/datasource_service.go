@@ -10,6 +10,7 @@ import (
 	"net/textproto"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -40,6 +41,8 @@ type DataSourceService struct {
 	audit                   interfaces.AuditLogService
 	nextcloudEventInbox     *apprepo.NextcloudEventInboxRepository
 	nextcloudSourcePairings *apprepo.NextcloudSourcePairingRepository
+	capacityAdmission       *NextcloudCapacityAdmission
+	sourceInputs            *apprepo.KnowledgeInputProvenanceStore
 }
 
 // NewDataSourceService creates a new data source service
@@ -816,6 +819,7 @@ func (s *DataSourceService) ProcessSync(ctx context.Context, task *asynq.Task) (
 			}
 		}
 	}
+	ctx = payload.Initiator.Apply(ctx)
 	taskID, _ := asynq.GetTaskID(ctx)
 	ctx = withKBActivityTask(ctx, taskID, payload.Trigger)
 
@@ -842,6 +846,13 @@ func (s *DataSourceService) ProcessSync(ctx context.Context, task *asynq.Task) (
 	if err != nil {
 		logger.Errorf(ctx, "failed to get sync log: %v", err)
 		return nil
+	}
+	if ds.Type == types.ConnectorTypeNextcloud && ds.SyncEnabled != nil && !*ds.SyncEnabled {
+		syncLog.Status = types.SyncLogStatusCanceled
+		syncLog.FinishedAt = timePtr(time.Now().UTC())
+		syncLog.ErrorMessage = "content_sync_paused"
+		_ = s.syncLogRepo.Update(ctx, syncLog)
+		return fmt.Errorf("%w: content sync paused", asynq.SkipRetry)
 	}
 	if ds.Type == types.ConnectorTypeNextcloud && syncLog.Status != types.SyncLogStatusRunning {
 		return fmt.Errorf("%w: Nextcloud sync log is no longer running", asynq.SkipRetry)
@@ -912,8 +923,26 @@ func (s *DataSourceService) ProcessSync(ctx context.Context, task *asynq.Task) (
 		}
 	}
 
+	if ds.Type == types.ConnectorTypeNextcloud {
+		if s.sourceInputs == nil {
+			return types.ErrSourceLineageUnknown
+		}
+		var closeConfiguration func()
+		ctx, closeConfiguration, err = s.sourceInputs.BeginNextcloudOriginalFetchConfigurationRead(ctx, ds)
+		if err != nil {
+			return fmt.Errorf("begin Nextcloud configuration read: %w", err)
+		}
+		defer closeConfiguration()
+	}
+
 	kb, kbErr := s.kbService.GetKnowledgeBaseByID(ctx, ds.KnowledgeBaseID)
 	if kbErr != nil {
+		if ds.Type == types.ConnectorTypeNextcloud {
+			// A failed current configuration/source check is not proof that
+			// the KB was deleted. Keep the failure retryable and preserve it.
+			s.recordPreStreamSyncFailure(ctx, ds, syncLog, "Nextcloud configuration unavailable", ds.Status == types.DataSourceStatusPaused)
+			return fmt.Errorf("read Nextcloud configuration projection: %w", kbErr)
+		}
 		logger.Warnf(ctx, "knowledge base not found (likely deleted), cancelling sync: kb=%s ds=%s err=%v",
 			ds.KnowledgeBaseID, payload.DataSourceID, kbErr)
 		syncLog.Status = types.SyncLogStatusCanceled
@@ -960,16 +989,26 @@ func (s *DataSourceService) ProcessSync(ctx context.Context, task *asynq.Task) (
 	// Surface the KB's multimodal/VLM state to the connector so it only extracts
 	// embedded images for OCR when the KB can actually ingest them (never persisted).
 	config.MultimodalEnabled = kb.IsMultimodalEnabled()
+	config.ProcessingPolicyDigest = types.GraphDigest(struct {
+		Process types.EffectiveProcessConfig
+		Index   types.IndexingStrategy
+		Summary string
+	}{ResolveProcessConfig(kb, nil), kb.IndexingStrategy, kb.SummaryModelID})
 	if ds.Type == types.ConnectorTypeNextcloud {
 		if s.nextcloudEventInbox == nil {
-			return apperrors.NewProtocolError(fmt.Errorf(
-				"nextcloud source baseline verifier is unavailable",
-			), "Nextcloud source baseline verifier is unavailable")
+			return apperrors.NewProtocolError(fmt.Errorf("nextcloud source baseline verifier is unavailable"), "Nextcloud source baseline verifier is unavailable")
 		}
 		if err := s.nextcloudEventInbox.ValidateNextcloudSourceBaseline(ctx, ds); err != nil {
 			s.updateSyncRunResult(ctx, ds, syncLog, &types.SyncResult{}, nil,
 				types.SyncLogStatusFailed, apperrors.PublicMessage(err), wasPaused)
 			return err
+		}
+		if s.sourceInputs == nil {
+			return types.ErrSourceLineageUnknown
+		}
+		ctx, err = s.sourceInputs.BindNextcloudOriginalFetch(ctx, kb, ds)
+		if err != nil {
+			return fmt.Errorf("bind Nextcloud original fetch: %w", err)
 		}
 	}
 
@@ -1230,19 +1269,25 @@ func (
 // A terminal log may have released source admission while an old queued task
 // was still alive. Recheck before every knowledge write and before committing
 // the cursor; event tasks also recheck their pinned connection.
-func (
-	s *DataSourceService,
-) checkNextcloudSyncActive(ctx context.Context, payload types.DataSourceSyncPayload, observedInstanceID ...string) (
-	bool,
-	error,
-) {
+func (s *DataSourceService) checkNextcloudSyncActive(ctx context.Context, payload types.DataSourceSyncPayload, observedInstanceID ...string) (bool, error) {
+	if s.dsRepo == nil || payload.DataSourceID == "" {
+		return false, errors.New("Nextcloud current data source unavailable")
+	}
+	currentSource, err := s.GetDataSource(ctx, payload.DataSourceID)
+	if err != nil {
+		return false, err
+	}
+	if currentSource == nil || currentSource.TenantID != payload.TenantID || currentSource.Type != types.ConnectorTypeNextcloud {
+		return false, errors.New("Nextcloud current data source scope changed")
+	}
+	if currentSource.Status == types.DataSourceStatusPaused {
+		return true, fmt.Errorf("%w: source admission paused", asynq.SkipRetry)
+	}
+	if currentSource.SyncEnabled != nil && !*currentSource.SyncEnabled {
+		return true, fmt.Errorf("%w: content sync paused", asynq.SkipRetry)
+	}
 	if s.nextcloudSourcePairings != nil {
-		active, err := s.nextcloudSourcePairings.ActiveForSync(
-			ctx,
-			payload.DataSourceID,
-			payload.TenantID,
-			observedInstanceID...,
-		)
+		active, err := s.nextcloudSourcePairings.ActiveForSync(ctx, payload.DataSourceID, payload.TenantID, observedInstanceID...)
 		if err != nil {
 			return false, err
 		}
@@ -1279,6 +1324,11 @@ func (
 // synced item so results are identifiable in the KB. A tag failure is
 // non-fatal: the sync proceeds untagged.
 func (s *DataSourceService) resolveAutoTagIDs(ctx context.Context, ds *types.DataSource) []string {
+	if ds.Type == types.ConnectorTypeNextcloud {
+		// Creating or assigning this name's grouping tag is deferred to the
+		// actual original upload worker after Stage and a private build lease.
+		return nil
+	}
 	autoTagIDs := []string{}
 	if autoTag, tagErr := s.tagService.FindOrCreateTagByName(ctx, ds.KnowledgeBaseID, ds.Name); tagErr != nil {
 		logger.Warnf(ctx, "failed to find/create auto-tag %q: %v (proceeding without tag)", ds.Name, tagErr)
@@ -1499,22 +1549,34 @@ func streamStartCursor(ds *types.DataSource, forceFull bool, attempt int) (*type
 // Emit ingests each item as it arrives (bounding memory) and Checkpoint persists
 // the connector cursor plus live progress counts at page boundaries.
 type streamSyncHandler struct {
-	svc                   *DataSourceService
-	ds                    *types.DataSource
-	tagIDs                []string
-	result                *types.SyncResult
-	syncLog               *types.SyncLog
-	payload               types.DataSourceSyncPayload
-	nextcloudInstanceID   string
-	nextcloudBindingID    string
-	nextcloudObserved     bool
-	nextcloudGuardStopped bool
-	nextcloudFailedETags  map[string]string
+	svc                       *DataSourceService
+	ds                        *types.DataSource
+	tagIDs                    []string
+	result                    *types.SyncResult
+	syncLog                   *types.SyncLog
+	payload                   types.DataSourceSyncPayload
+	nextcloudInstanceID       string
+	nextcloudBindingID        string
+	nextcloudObserved         bool
+	nextcloudPublicationEpoch *int64
+	nextcloudGuardStopped     bool
+	nextcloudFailedETags      map[string]string
 }
 
 var errNextcloudStreamCanceled = apperrors.NewProtocolError(errors.New(
 	"nextcloud stream canceled",
 ), "Nextcloud stream canceled")
+
+func (h *streamSyncHandler) ObserveNextcloudPublicationEpoch(ctx context.Context, instance, binding string, epoch int64) error {
+	if epoch < 0 || h.ds.Type != types.ConnectorTypeNextcloud {
+		return errNextcloudStreamCanceled
+	}
+	if h.nextcloudObserved && (h.nextcloudInstanceID != instance || h.nextcloudBindingID != binding) {
+		return errNextcloudStreamCanceled
+	}
+	h.nextcloudPublicationEpoch = &epoch
+	return nil
+}
 
 // ObserveNextcloudIdentity is called by the Nextcloud connector after its
 // signed capabilities and live binding checks, before it emits any item.
@@ -1636,6 +1698,11 @@ func (h *streamSyncHandler) Emit(ctx context.Context, item types.FetchedItem) er
 		return err
 	}
 	if h.ds.Type == types.ConnectorTypeNextcloud {
+		if h.nextcloudPublicationEpoch != nil {
+			// The connector seals the complete fetched item. Keep source observation
+			// outside that immutable artifact until constructing knowledge metadata.
+			ctx = context.WithValue(ctx, nextcloudObservedEpochKey{}, nextcloudObservedEpoch{h.ds.ID, *h.nextcloudPublicationEpoch})
+		}
 		fileID := item.Metadata["nextcloud_file_id"]
 		if fileID == "" || item.Metadata["nextcloud_instance_id"] != h.nextcloudInstanceID ||
 			item.Metadata["nextcloud_binding_id"] != h.nextcloudBindingID ||
@@ -2045,6 +2112,14 @@ func (s *DataSourceService) validateDataSourceConfig(ctx context.Context, ds *ty
 //   - Has URL only      → CreateKnowledgeFromURL  (让 WeKnora 下载并解析)
 //
 // Returns (isUpdate, error) — isUpdate is true when an existing item was replaced.
+// Internal source observation, scoped to the stream's data source. It does not
+// replace the connector's original-byte proof or current-source admission.
+type nextcloudObservedEpochKey struct{}
+type nextcloudObservedEpoch struct {
+	dataSourceID string
+	epoch        int64
+}
+
 func (s *DataSourceService) ingestItem(ctx context.Context, ds *types.DataSource, item *types.FetchedItem, tagIDs []string) (bool, error) {
 	// Channel decides the knowledge "source" label shown in the UI. Prefer the
 	// connector-supplied metadata["channel"] (e.g. Feishu Drive sets it to
@@ -2083,6 +2158,12 @@ func (s *DataSourceService) ingestItem(ctx context.Context, ds *types.DataSource
 		metadata["datasource_id"] = ds.ID
 		metadata["external_id"] = item.ExternalID
 		metadata["source_resource_id"] = item.SourceResourceID
+		if observed, ok := ctx.Value(nextcloudObservedEpochKey{}).(nextcloudObservedEpoch); ok {
+			if observed.dataSourceID != ds.ID || observed.epoch < 0 {
+				return false, errors.New("Nextcloud observed publication scope changed")
+			}
+			metadata["nextcloud_publication_epoch"] = strconv.FormatInt(observed.epoch, 10)
+		}
 		return s.ingestNextcloudItem(ctx, ds, item, metadata, tagIDs)
 	}
 
@@ -2219,6 +2300,11 @@ func (s *DataSourceService) ingestNextcloudItem(
 	ctx context.Context, ds *types.DataSource, item *types.FetchedItem,
 	metadata map[string]string, tagIDs []string,
 ) (bool, error) {
+	var originalErr error
+	ctx, originalErr = apprepo.WithNextcloudOriginalFetchedArtifact(ctx, ds.ID, item, tagIDs)
+	if originalErr != nil {
+		return false, originalErr
+	}
 	versions, ok := s.knowledgeService.GetRepository().(nextcloudVersionStore)
 	if !ok {
 		return false, apperrors.NewProtocolError(errors.New(
@@ -2232,6 +2318,19 @@ func (s *DataSourceService) ingestNextcloudItem(
 		!validName || fileName == "" || fileName != item.FileName || strings.ContainsAny(fileName, `/\`) {
 		return false, errors.New("incomplete Nextcloud file version")
 	}
+	if s.capacityAdmission == nil {
+		return false, apprepo.ErrNextcloudCapacityUnavailable
+	}
+	capacityKB, capacityErr := s.kbService.GetKnowledgeBaseByID(ctx, ds.KnowledgeBaseID)
+	if capacityErr != nil || capacityKB == nil || capacityKB.TenantID != ds.TenantID {
+		return false, apprepo.ErrNextcloudCapacityUnavailable
+	}
+	reservation, capacityErr := s.capacityAdmission.Begin(ctx, capacityKB, ds.ID, item.ExternalID, etag, int64(len(item.Content)))
+	if capacityErr != nil {
+		return false, capacityErr
+	}
+	ctx = s.capacityAdmission.WriteContext(ctx, reservation)
+	defer s.capacityAdmission.End(ctx, reservation, capacityKB)
 	if err := versions.AdmitNextcloudCandidateRetry(ctx, ds.TenantID,
 		ds.KnowledgeBaseID, ds.ID, item.ExternalID, etag); err != nil {
 		return false, err
@@ -2284,6 +2383,9 @@ func (s *DataSourceService) ingestNextcloudItem(
 		), fmt.Sprintf("publish completed Nextcloud version: %s", apperrors.PublicMessage(
 			err,
 		)))
+	}
+	if err := s.capacityAdmission.Finish(ctx, reservation, candidate.ID, true); err != nil {
+		return isUpdate, err
 	}
 	return isUpdate, nil
 }
@@ -2404,4 +2506,29 @@ func bytesToFileHeader(data []byte, filename string) (*multipart.FileHeader, err
 func timePtr(t time.Time) *time.Time {
 	utc := t.UTC()
 	return &utc
+}
+
+func (s *DataSourceService) PublishTargetMigrationCandidates(ctx context.Context, row apprepo.NextcloudTargetMigration) error {
+	if row.State != "active" || s.knowledgeService == nil {
+		return apprepo.ErrNextcloudOnboardingConflict
+	}
+	repository := s.knowledgeService.GetRepository()
+	candidates, err := repository.ListKnowledgeByKnowledgeBaseID(ctx, row.NewTenantID, row.NewKnowledgeBaseID)
+	if err != nil {
+		return err
+	}
+	publisher, ok := repository.(interface {
+		PublishNextcloudVersion(context.Context, string) (bool, error)
+	})
+	if !ok {
+		return apprepo.ErrNextcloudOnboardingConflict
+	}
+	for _, k := range candidates {
+		if k.Channel == types.ConnectorTypeNextcloud {
+			if _, err := publisher.PublishNextcloudVersion(ctx, k.ID); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }

@@ -1,0 +1,5 @@
+RuntimeException: Target handoff did not reach its durable new source in /var/www/html/custom_apps/integration_weknora/tests/onboarding_actual_runtime.php:11
+Stack trace:
+#0 /var/www/html/custom_apps/integration_weknora/tests/onboarding_actual_runtime.php(34): actualCheck(false, 'Target handoff ...')
+#1 {main}
+Controlled component aborted after NC phase failure

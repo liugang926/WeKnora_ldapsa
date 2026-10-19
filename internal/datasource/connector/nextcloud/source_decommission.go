@@ -10,14 +10,11 @@ import (
 	"strconv"
 
 	apperrors "github.com/Tencent/WeKnora/internal/errors"
-
 	"github.com/Tencent/WeKnora/internal/types"
 )
 
-// EmptyDecommissionInventorySHA256 identifies the canonical empty inventory digest.
 const EmptyDecommissionInventorySHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 
-// SourceDecommission is the exact remote acknowledgement tuple for source retirement.
 type SourceDecommission struct {
 	OperationID      string `json:"operation_id"`
 	PairOperationID  string `json:"pair_operation_id"`
@@ -43,8 +40,7 @@ func (d SourceDecommission) sameIdentity(other SourceDecommission) bool {
 // ReadSourceDecommission verifies a stopped Nextcloud intent through the
 // exact source credential. A caller must compare every identity field.
 func ReadSourceDecommission(ctx context.Context, source *types.DataSourceConfig,
-	bindingID, operationID string,
-) (SourceDecommission, error) {
+	bindingID, operationID string) (SourceDecommission, error) {
 	var empty SourceDecommission
 	cfg, err := parseConfig(source)
 	if err != nil {
@@ -93,8 +89,7 @@ func ReadSourceDecommission(ctx context.Context, source *types.DataSourceConfig,
 // AcknowledgeEmptySourceDecommission sends an empty-inventory proof only after
 // the repository has durably paused and fenced the never-touched source.
 func AcknowledgeEmptySourceDecommission(ctx context.Context, source *types.DataSourceConfig,
-	intent SourceDecommission,
-) error {
+	intent SourceDecommission) error {
 	cfg, err := parseConfig(source)
 	if err != nil {
 		return err
@@ -165,5 +160,4 @@ func readDecommissionResponse(body io.Reader, out any) error {
 	return nil
 }
 
-// DecommissionTenantID parses the tenant identifier used by the retirement protocol.
 func DecommissionTenantID(value uint64) string { return strconv.FormatUint(value, 10) }

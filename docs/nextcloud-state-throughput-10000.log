@@ -1,0 +1,23 @@
+=== RUN   TestNextcloudStateTenThousandMetadataHTTPDurableACKThroughput
+
+2026/10/10 05:26:34 /workspace/internal/application/repository/nextcloud_versions.go:505 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 05:26:34 /workspace/internal/application/repository/nextcloud_processing_state.go:157 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 05:26:34 /workspace/internal/application/repository/nextcloud_graph.go:140 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 05:26:34 /workspace/internal/application/repository/nextcloud_processing_state.go:176 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 05:26:34 /workspace/internal/application/repository/nextcloud_processing_state.go:346 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 05:26:34 /workspace/internal/application/repository/nextcloud_processing_state.go:360 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+    nextcloud_state_throughput_test.go:128: metadata_rows=10000 exact_persisted_acks=10000 elapsed_ms=3984 throughput_per_second=2509.4 entire_batch_sender_lag_ms=3984; includes actual HTTP, HMAC, sender DB and receiver FULL SQLite commits; excludes Nextcloud Files/LDAP costs and document bodies
+--- PASS: TestNextcloudStateTenThousandMetadataHTTPDurableACKThroughput (5.03s)
+PASS
+ok      github.com/Tencent/WeKnora/internal/application/service 5.552s

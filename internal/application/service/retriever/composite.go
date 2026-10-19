@@ -8,6 +8,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	apprepo "github.com/Tencent/WeKnora/internal/application/repository"
 	"github.com/Tencent/WeKnora/internal/common"
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/models/embedding"
@@ -85,6 +86,22 @@ func NewCompositeRetrieveEngine(
 		}
 	}
 	return &CompositeRetrieveEngine{engineInfos: slices.Collect(maps.Values(engineInfos))}, nil
+}
+
+// SelectedBackendTypes exposes the actual server registry selection, never a
+// user-supplied cleanup assertion.
+func (c *CompositeRetrieveEngine) SelectedBackendTypes() []types.RetrieverEngineType {
+	result := []types.RetrieverEngineType{}
+	for _, engine := range c.engineInfos {
+		if engine != nil {
+			result = append(result, engine.retrieveEngine.EngineType())
+		}
+	}
+	return result
+}
+
+func (c *CompositeRetrieveEngine) PrepareNextcloudStorageSelection(ctx context.Context) error {
+	return apprepo.RecordNextcloudDerivedBackendSelection(ctx, c.SelectedBackendTypes())
 }
 
 // SupportRetriever checks if a retriever type is supported by any of the registered engines
@@ -198,6 +215,9 @@ func (c *CompositeRetrieveEngine) concurrentExecWithError(
 func (c *CompositeRetrieveEngine) Index(ctx context.Context,
 	embedder embedding.Embedder, indexInfo *types.IndexInfo,
 ) error {
+	if err := apprepo.RecordNextcloudDerivedBackendSelection(ctx, c.SelectedBackendTypes()); err != nil {
+		return err
+	}
 	err := c.concurrentExecWithError(ctx, func(ctx context.Context, engineInfo *engineInfo) error {
 		if err := engineInfo.retrieveEngine.Index(ctx, embedder, indexInfo, engineInfo.retrieverType); err != nil {
 			logger.Errorf(ctx, "Repository %s failed to save: %v", engineInfo.retrieveEngine.EngineType(), err)
@@ -212,6 +232,9 @@ func (c *CompositeRetrieveEngine) Index(ctx context.Context,
 func (c *CompositeRetrieveEngine) BatchIndex(ctx context.Context,
 	embedder embedding.Embedder, indexInfoList []*types.IndexInfo,
 ) error {
+	if err := apprepo.RecordNextcloudDerivedBackendSelection(ctx, c.SelectedBackendTypes()); err != nil {
+		return err
+	}
 	// Deduplicate sourceIDs
 	indexInfoList = common.Deduplicate(func(info *types.IndexInfo) string { return info.SourceID }, indexInfoList...)
 	err := c.concurrentExecWithError(ctx, func(ctx context.Context, engineInfo *engineInfo) error {

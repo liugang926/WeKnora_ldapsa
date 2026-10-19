@@ -1,0 +1,132 @@
+{
+  "owner": "rest-chunk-lineage",
+  "nonce": "70d1af928a6eb1cfd74fe811",
+  "network_id": "8579483d2ac564b16d9d886b707b5c7a9be6af42cf9ded9a62bf622fbbc64555",
+  "internal_network": true,
+  "containers": [
+    {
+      "id": "0a71b52fe9dd13d4011c7a9fad0540b6f9f2cd49f1e726260509e823d90a7d92",
+      "name": "/rest-chunk-lineage-final-70d1af928a6eb1cfd74fe811",
+      "image_id": "sha256:5a74e8b5137496d3e22c72c01d862c4cbb1fe6ce476ddf5616fd9a807d6ae9ac",
+      "cpus": 1000000000,
+      "memory": 2147483648,
+      "running": false,
+      "exit_code": 0,
+      "oom_killed": false,
+      "mounts": [
+        {
+          "Type": "bind",
+          "Source": "/host_mnt/Users/abner/My_Project/ai-server/.weknora-rest-chunk-source-lineage-c6-20261008",
+          "Destination": "/src",
+          "Mode": "ro",
+          "RW": false,
+          "Propagation": "rprivate"
+        },
+        {
+          "Type": "volume",
+          "Name": "weknora-go-mod",
+          "Source": "/var/lib/docker/volumes/weknora-go-mod/_data",
+          "Destination": "/go/pkg/mod",
+          "Driver": "local",
+          "Mode": "ro",
+          "RW": false,
+          "Propagation": ""
+        },
+        {
+          "Type": "volume",
+          "Name": "weknora-go-build",
+          "Source": "/var/lib/docker/volumes/weknora-go-build/_data",
+          "Destination": "/root/.cache/go-build",
+          "Driver": "local",
+          "Mode": "z",
+          "RW": true,
+          "Propagation": ""
+        }
+      ]
+    },
+    {
+      "id": "0fe67bbb50619eca633de8e783172e2939e42b4746c402662593a95ca4fcea61",
+      "name": "/rest-chunk-lineage-format-70d1af928a6eb1cfd74fe811",
+      "image_id": "sha256:5a74e8b5137496d3e22c72c01d862c4cbb1fe6ce476ddf5616fd9a807d6ae9ac",
+      "cpus": 1000000000,
+      "memory": 536870912,
+      "running": false,
+      "exit_code": 0,
+      "oom_killed": false,
+      "mounts": [
+        {
+          "Type": "bind",
+          "Source": "/var/folders/16/j5t7hnm97rsby21z7kjqp76m0000gn/T/rest-chunk-format-70d1af928a6eb1cfd74fe811-i1jo5i2d",
+          "Destination": "/format",
+          "Mode": "",
+          "RW": true,
+          "Propagation": "rprivate"
+        }
+      ]
+    },
+    {
+      "id": "5bab47af588d1404ff90706a187ba6f8fdd04caff516c3fc34787bf01c0f8219",
+      "name": "/rest-chunk-lineage-pg-70d1af928a6eb1cfd74fe811",
+      "image_id": "sha256:20edbde7749f822887a1a022ad526fde0a47d6b2be9a8364433605cf65099416",
+      "cpus": 1000000000,
+      "memory": 536870912,
+      "running": true,
+      "exit_code": 0,
+      "oom_killed": false,
+      "mounts": [
+        {
+          "Type": "volume",
+          "Name": "93b58bb7ceaf1d6737f61fd120118bba335063ee9eb9ac47ab507bed3e844160",
+          "Source": "/var/lib/docker/volumes/93b58bb7ceaf1d6737f61fd120118bba335063ee9eb9ac47ab507bed3e844160/_data",
+          "Destination": "/var/lib/postgresql/data",
+          "Driver": "local",
+          "Mode": "",
+          "RW": true,
+          "Propagation": ""
+        }
+      ]
+    },
+    {
+      "id": "b9c2aca8f843c13059d0ccff980db6ae18942bb5d009472728570185cacf1e93",
+      "name": "/rest-chunk-lineage-test-70d1af928a6eb1cfd74fe811",
+      "image_id": "sha256:5a74e8b5137496d3e22c72c01d862c4cbb1fe6ce476ddf5616fd9a807d6ae9ac",
+      "cpus": 1000000000,
+      "memory": 2147483648,
+      "running": false,
+      "exit_code": 0,
+      "oom_killed": false,
+      "mounts": [
+        {
+          "Type": "bind",
+          "Source": "/Users/abner/My_Project/ai-server/.weknora-rest-chunk-source-lineage-c6-20261008",
+          "Destination": "/src",
+          "Mode": "ro",
+          "RW": false,
+          "Propagation": "rprivate"
+        },
+        {
+          "Type": "volume",
+          "Name": "weknora-go-mod",
+          "Source": "/var/lib/docker/volumes/weknora-go-mod/_data",
+          "Destination": "/go/pkg/mod",
+          "Driver": "local",
+          "Mode": "ro",
+          "RW": false,
+          "Propagation": ""
+        },
+        {
+          "Type": "volume",
+          "Name": "weknora-go-build",
+          "Source": "/var/lib/docker/volumes/weknora-go-build/_data",
+          "Destination": "/root/.cache/go-build",
+          "Driver": "local",
+          "Mode": "z",
+          "RW": true,
+          "Propagation": ""
+        }
+      ]
+    }
+  ],
+  "exact_cleanup_completed": true,
+  "shared_caches_retained": true
+}

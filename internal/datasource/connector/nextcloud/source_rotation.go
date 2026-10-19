@@ -10,7 +10,6 @@ import (
 	"strconv"
 
 	apperrors "github.com/Tencent/WeKnora/internal/errors"
-
 	"github.com/Tencent/WeKnora/internal/types"
 )
 
@@ -26,24 +25,20 @@ type SourceRotation struct {
 	DataSourceID    string
 }
 
-// CommitSourceRotation commits the prepared remote source rotation.
 func CommitSourceRotation(ctx context.Context, source *types.DataSourceConfig, rotation SourceRotation) error {
 	return sourceRotationRequest(ctx, source, rotation, "commit", "committed")
 }
 
-// FinalizeSourceRotation finalizes the committed remote source rotation.
 func FinalizeSourceRotation(ctx context.Context, source *types.DataSourceConfig, rotation SourceRotation) error {
 	return sourceRotationRequest(ctx, source, rotation, "finalize", "finalized")
 }
 
-// AbortSourceRotation aborts the prepared operation using its old source identity.
 func AbortSourceRotation(ctx context.Context, oldSource *types.DataSourceConfig, rotation SourceRotation) error {
 	return sourceRotationRequest(ctx, oldSource, rotation, "abort", "aborted")
 }
 
 func sourceRotationRequest(ctx context.Context, source *types.DataSourceConfig, rotation SourceRotation,
-	action, expectedState string,
-) error {
+	action, expectedState string) error {
 	if rotation.OperationID == "" || rotation.PairOperationID == "" || rotation.InstanceID == "" ||
 		!validBindingID(rotation.BindingID) || rotation.TenantID == 0 ||
 		rotation.KnowledgeBaseID == "" || rotation.DataSourceID == "" {
@@ -65,10 +60,8 @@ func sourceRotationRequest(ctx context.Context, source *types.DataSourceConfig, 
 		TenantID        string `json:"tenant_id"`
 		KnowledgeBaseID string `json:"knowledge_base_id"`
 		DataSourceID    string `json:"data_source_id"`
-	}{
-		rotation.OperationID, rotation.PairOperationID, rotation.InstanceID,
-		strconv.FormatUint(rotation.TenantID, 10), rotation.KnowledgeBaseID, rotation.DataSourceID,
-	}
+	}{rotation.OperationID, rotation.PairOperationID, rotation.InstanceID,
+		strconv.FormatUint(rotation.TenantID, 10), rotation.KnowledgeBaseID, rotation.DataSourceID}
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return err
@@ -133,7 +126,7 @@ func sourceRotationRequest(ctx context.Context, source *types.DataSourceConfig, 
 		answer.Rotation.DataSourceID != rotation.DataSourceID ||
 		expectedKey != keyID ||
 		(answer.Rotation.State != expectedState &&
-			(action != "commit" || answer.Rotation.State != "finalized")) {
+			!(action == "commit" && answer.Rotation.State == "finalized")) {
 		return apperrors.NewProtocolError(fmt.Errorf("nextcloud source rotation response tuple mismatch"),
 			"Nextcloud source rotation response tuple mismatch")
 	}

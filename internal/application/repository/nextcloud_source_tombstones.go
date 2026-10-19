@@ -7,8 +7,6 @@ import (
 	"math"
 	"strconv"
 	"strings"
-
-	apperrors "github.com/Tencent/WeKnora/internal/errors"
 )
 
 // NextcloudSourcePresence deliberately has no "never" state. Absence of
@@ -16,10 +14,8 @@ import (
 type NextcloudSourcePresence string
 
 const (
-	// NextcloudSourcePresenceUnknown identifies a source-presence state that has not been observed.
 	NextcloudSourcePresenceUnknown NextcloudSourcePresence = "unknown"
-	// NextcloudSourcePresenceEver records retained evidence of a source-influenced scope.
-	NextcloudSourcePresenceEver NextcloudSourcePresence = "ever"
+	NextcloudSourcePresenceEver    NextcloudSourcePresence = "ever"
 )
 
 // LookupNextcloudSourcePresence reads independent positive tombstones. It is a
@@ -35,9 +31,7 @@ func (r *DataSourceRepository) LookupNextcloudSourcePresence(
 	switch scopeType {
 	case "tenant":
 		if scopeID != strconv.FormatUint(tenantID, 10) {
-			return NextcloudSourcePresenceUnknown, apperrors.NewProtocolError(errors.New(
-				"nextcloud tenant tombstone identity mismatch",
-			), "Nextcloud tenant tombstone identity mismatch")
+			return NextcloudSourcePresenceUnknown, errors.New("Nextcloud tenant tombstone identity mismatch")
 		}
 	case "knowledge_base", "datasource", "pair":
 	default:

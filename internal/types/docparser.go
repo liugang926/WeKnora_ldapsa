@@ -17,6 +17,7 @@ type ReadRequest struct {
 
 // ReadResult is the transport-agnostic result of document reading.
 type ReadResult struct {
+	OriginalInput   *KnowledgeBuildInputProof `json:"-"`
 	MarkdownContent string
 	ImageRefs       []ImageRef
 	ImageDirPath    string

@@ -32,41 +32,29 @@ func TestNextcloudFailedCandidateListScopedKeyset(t *testing.T) {
 	// different tenant and source. Its ID must never appear on tenant 7's page.
 	var original types.DataSource
 	require.NoError(t, db.Where("id = ?", "ds").Take(&original).Error)
-	alien := &types.DataSource{
-		ID: "alien-ds", TenantID: 8, KnowledgeBaseID: "kb",
-		Type: types.ConnectorTypeNextcloud, Status: types.DataSourceStatusActive, Config: original.Config,
-	}
+	alien := &types.DataSource{ID: "alien-ds", TenantID: 8, KnowledgeBaseID: "kb",
+		Type: types.ConnectorTypeNextcloud, Status: types.DataSourceStatusActive, Config: original.Config}
 	require.NoError(t, db.Create(alien).Error)
 	var originalPair NextcloudSourcePairing
 	require.NoError(t, db.Where("datasource_id = ?", "ds").Take(&originalPair).Error)
-	require.NoError(t, db.Create(&NextcloudSourcePairing{
-		OperationID: uuid.NewString(), TenantID: 8,
+	require.NoError(t, db.Create(&NextcloudSourcePairing{OperationID: uuid.NewString(), TenantID: 8,
 		KnowledgeBaseID: "kb", DataSourceID: "alien-ds", InstanceID: "instance",
 		BindingID: originalPair.BindingID, BaseURL: originalPair.BaseURL,
-		ConfigSHA: originalPair.ConfigSHA, State: "active",
-	}).Error)
-	require.NoError(t, db.Create(&types.Knowledge{
-		ID: "alien-candidate", TenantID: 8,
+		ConfigSHA: originalPair.ConfigSHA, State: "active"}).Error)
+	require.NoError(t, db.Create(&types.Knowledge{ID: "alien-candidate", TenantID: 8,
 		KnowledgeBaseID: "kb", Channel: types.ConnectorTypeNextcloud,
-		ParseStatus: types.ParseStatusFailed,
-	}).Error)
-	require.NoError(t, db.Create(&nextcloudSourceVersion{
-		TenantID: 8, KnowledgeBaseID: "kb",
+		ParseStatus: types.ParseStatusFailed}).Error)
+	require.NoError(t, db.Create(&nextcloudSourceVersion{TenantID: 8, KnowledgeBaseID: "kb",
 		DataSourceID: "alien-ds", ExternalID: "nextcloud:instance:55", DesiredETag: "alien",
-		CandidateKnowledgeID: "alien-candidate", State: "staging",
-	}).Error)
+		CandidateKnowledgeID: "alien-candidate", State: "staging"}).Error)
 	// A malformed row may be the final raw row in a page. Its opaque cursor
 	// must still reach later valid files without exposing the malformed ID.
-	require.NoError(t, db.Create(&types.Knowledge{
-		ID: "malformed-candidate", TenantID: 7,
+	require.NoError(t, db.Create(&types.Knowledge{ID: "malformed-candidate", TenantID: 7,
 		KnowledgeBaseID: "kb", Channel: types.ConnectorTypeNextcloud,
-		ParseStatus: types.ParseStatusFailed,
-	}).Error)
-	require.NoError(t, db.Create(&nextcloudSourceVersion{
-		TenantID: 7, KnowledgeBaseID: "kb",
+		ParseStatus: types.ParseStatusFailed}).Error)
+	require.NoError(t, db.Create(&nextcloudSourceVersion{TenantID: 7, KnowledgeBaseID: "kb",
 		DataSourceID: "ds", ExternalID: "nextcloud:instance:77x", DesiredETag: "bad",
-		CandidateKnowledgeID: "malformed-candidate", State: "staging",
-	}).Error)
+		CandidateKnowledgeID: "malformed-candidate", State: "staging"}).Error)
 
 	repo := NewNextcloudSourcePairingRepository(db)
 	pair, _, err := repo.ActiveSourcePairingForDataSource(ctx, 7, "ds")
@@ -127,11 +115,9 @@ func TestNextcloudFailedCandidateStatusRequiresCurrentActiveSourceIdentity(t *te
 	require.ErrorIs(t, err, ErrNextcloudSourcePairingConflict)
 	require.NoError(t, db.Model(&types.DataSource{}).Where("id = ?", "ds").
 		Update("status", types.DataSourceStatusActive).Error)
-	newConfig, err := (&types.DataSourceConfig{
-		Type:        types.ConnectorTypeNextcloud,
+	newConfig, err := (&types.DataSourceConfig{Type: types.ConnectorTypeNextcloud,
 		ResourceIDs: []string{"binding"}, Settings: map[string]interface{}{"base_url": "https://nextcloud.example"},
-		Credentials: map[string]interface{}{"token": "different-token", "key_id": "pair_test"},
-	}).ToJSON()
+		Credentials: map[string]interface{}{"token": "different-token", "key_id": "pair_test"}}).ToJSON()
 	require.NoError(t, err)
 	require.NoError(t, db.Model(&types.DataSource{}).Where("id = ?", "ds").
 		Update("config", newConfig).Error)

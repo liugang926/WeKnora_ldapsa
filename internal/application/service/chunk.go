@@ -26,14 +26,15 @@ var ErrChunkRevisionConflict = repository.ErrChunkRevisionConflict
 // It provides operations for managing document chunks in the knowledge base
 // Chunks are segments of documents that have been processed and prepared for indexing
 type chunkService struct {
-	chunkRepository interfaces.ChunkRepository // Repository for chunk data persistence
-	knowledgeRepo   interfaces.KnowledgeRepository
-	kbRepository    interfaces.KnowledgeBaseRepository
-	modelService    interfaces.ModelService
-	retrieveEngine  interfaces.RetrieveEngineRegistry
-	ownership       retriever.TenantStoreOwnership
-	task            interfaces.TaskEnqueuer
-	spanTracker     SpanTracker
+	chunkRepository     interfaces.ChunkRepository // Repository for chunk data persistence
+	knowledgeRepo       interfaces.KnowledgeRepository
+	kbRepository        interfaces.KnowledgeBaseRepository
+	modelService        interfaces.ModelService
+	retrieveEngine      interfaces.RetrieveEngineRegistry
+	ownership           retriever.TenantStoreOwnership
+	task                interfaces.TaskEnqueuer
+	spanTracker         SpanTracker
+	summaryInputPrepare func(context.Context, *types.SummaryGenerationPayload) error
 }
 
 // NewChunkService creates a new chunk service
@@ -510,6 +511,7 @@ func (s *chunkService) UpdateDocumentChunk(
 		if getErr == nil {
 			if err := enqueueSummaryRefresh(
 				ctx, s.knowledgeRepo, s.task, s.kbRepository, s.spanTracker, knowledge,
+				s.summaryInputPrepare,
 			); err != nil {
 				logger.Warnf(ctx, "Chunk saved but summary refresh enqueue failed for %s: %v", knowledge.ID, err)
 			}

@@ -2,7 +2,6 @@ package agent
 
 import (
 	"context"
-	"strings"
 
 	"github.com/Tencent/WeKnora/internal/event"
 	"github.com/Tencent/WeKnora/internal/logger"
@@ -10,19 +9,86 @@ import (
 	"github.com/Tencent/WeKnora/internal/types"
 )
 
-// sanitizeSteerContent normalizes newlines and trims, same treatment the chat
-// pipeline applies to user queries.
+// sanitizeSteerContent uses the same fixed authored-text transfer as the
+// original-material producer and its consume writer.
 func sanitizeSteerContent(content string) string {
-	content = strings.ReplaceAll(content, "\r\n", "\n")
-	content = strings.ReplaceAll(content, "\r", "\n")
-	return strings.TrimSpace(content)
+	return types.SteerCanonicalQuery(content)
 }
 
-// SetSteerSink wires the optional steer channel. Nil (the default) disables
-// mid-run injection entirely — every existing call site keeps working. The
-// sink satisfies types.SteerSink structurally.
+// Only explicit in-package algorithm fixtures may exercise the old queue
+// algorithm without original-material capabilities. Its implementation lives
+// in a _test.go file; an external sink cannot supply this private marker.
+type steerAlgorithmFixture interface {
+	agentSteerAlgorithmFixture()
+}
+
+type originalSteerInputChecker interface {
+	CheckOriginalSteerInputs(context.Context) error
+}
+
+// SetSteerSink is configured after the source verifier and round guard, before
+// Execute. Retained original consume guards belong to the sink's producer/HTTP
+// lifetime, including assistant persistence after EventAgentComplete.
 func (e *AgentEngine) SetSteerSink(sink types.SteerSink) {
 	e.steerSink = sink
+	if sink == nil {
+		return
+	}
+	if _, fixture := sink.(steerAlgorithmFixture); fixture {
+		return
+	}
+
+	previousVerifier := e.lineageVerifier
+	e.lineageVerifier = func(ctx context.Context, lineage *types.SourceLineage) error {
+		if previousVerifier == nil {
+			return e.rememberLineageFailure(types.ErrSourceLineageUnknown)
+		}
+		if err := previousVerifier(ctx, lineage); err != nil {
+			return e.rememberLineageFailure(err)
+		}
+		return e.checkOriginalSteerSinkInputs(ctx, sink)
+	}
+	previousGuard := e.roundGuard
+	e.roundGuard = func(ctx context.Context) error {
+		if previousGuard != nil {
+			if err := previousGuard(ctx); err != nil {
+				return e.rememberLineageFailure(err)
+			}
+		}
+		return e.checkOriginalSteerSinkInputs(ctx, sink)
+	}
+
+	// The accumulator captures its authorizer at construction. Rebind it with
+	// the complete prior snapshot instead of losing sources already accounted
+	// by the caller. Execute uses this composed verifier for its new turn too.
+	previousLineage := e.SourceLineageSnapshot()
+	e.turnLineage = types.NewRAGSourceLineage(e.lineageVerifier)
+	if previousLineage != nil {
+		_ = e.addLineage(previousLineage)
+	}
+}
+
+func (e *AgentEngine) checkOriginalSteerInputs(ctx context.Context) error {
+	return e.checkOriginalSteerSinkInputs(ctx, e.steerSink)
+}
+
+func (e *AgentEngine) checkOriginalSteerSinkInputs(ctx context.Context, sink types.SteerSink) error {
+	if err := e.lineageFailure(); err != nil {
+		return err
+	}
+	if sink == nil {
+		return nil
+	}
+	if _, fixture := sink.(steerAlgorithmFixture); fixture {
+		return nil
+	}
+	if _, actual := sink.(types.OriginalSteerSink); !actual {
+		return e.rememberLineageFailure(types.ErrSourceLineageUnknown)
+	}
+	if checker, ok := sink.(originalSteerInputChecker); ok {
+		return e.rememberLineageFailure(checker.CheckOriginalSteerInputs(ctx))
+	}
+	return nil
 }
 
 // drainSteerMessages is called at the round boundary, after context
@@ -32,9 +98,9 @@ func (e *AgentEngine) SetSteerSink(sink types.SteerSink) {
 //   - is included in lastSentMsgCount's delta-token accounting,
 //   - and is visible to the very next callLLMWithRetry.
 //
-// Persist happens before append. A persist failure leaves the event
-// unconsumed so the next boundary can retry; appending first would put
-// text in the model that history never recorded.
+// Typed original persistence, lineage and retained guard checks all happen
+// before append. A rejected capability poisons the turn so a later model or
+// publication boundary cannot continue with an unaccounted input.
 func (e *AgentEngine) drainSteerMessages(
 	ctx context.Context,
 	state *types.AgentState,
@@ -44,9 +110,19 @@ func (e *AgentEngine) drainSteerMessages(
 	if e.steerSink == nil {
 		return 0
 	}
+	actualSink, actual := e.steerSink.(types.OriginalSteerSink)
+	_, fixture := e.steerSink.(steerAlgorithmFixture)
+	if !fixture {
+		if err := e.checkOriginalSteerInputs(ctx); err != nil {
+			return 0
+		}
+	}
 	events, _, err := e.steerSink.PollSteer(ctx, sessionID, messageID, 0)
 	if err != nil {
 		logger.Warnf(ctx, "[Agent] Steer poll failed at round %d: %v", state.CurrentRound+1, err)
+		if !fixture {
+			e.rememberLineageFailure(err)
+		}
 		return 0
 	}
 	if len(events) == 0 {
@@ -60,15 +136,54 @@ func (e *AgentEngine) drainSteerMessages(
 			continue
 		}
 		steerID := getString(evt, "id")
-		userMessageID := e.steerSink.PersistSteerMessage(ctx, sessionID, messageID, steerID, content,
-			types.MentionedItemsFromRaw(evt["mentioned_items"]), getString(evt, "channel"))
-		if userMessageID == "" {
-			logger.Warnf(ctx, "[Agent] Steer persist failed for %s, leaving event pending", steerID)
-			continue
+		var userMessageID string
+		var lineage *types.SourceLineage
+		if actual {
+			var check func() error
+			var close func()
+			userMessageID, lineage, check, close, err = actualSink.PersistSteerMaterial(ctx, sessionID, messageID, steerID, content,
+				types.MentionedItemsFromRaw(evt["mentioned_items"]), getString(evt, "channel"))
+			if err != nil {
+				e.rememberLineageFailure(err)
+				return injected
+			}
+			if userMessageID == "" || check == nil || close == nil || lineage.RequireComplete() != nil {
+				e.rememberLineageFailure(types.ErrSourceLineageUnknown)
+				return injected
+			}
+			// Keep a private receipt for the exact input, then validate the live
+			// consume guard. The sink retains and closes it after persistence;
+			// closing here would invalidate the next model/output boundary.
+			lineage, err = types.UnionSourceLineage(lineage)
+			if err != nil {
+				e.rememberLineageFailure(err)
+				return injected
+			}
+			if err := check(); err != nil {
+				e.rememberLineageFailure(err)
+				return injected
+			}
+			if err := e.addLineage(lineage); err != nil {
+				return injected
+			}
+			if err := e.checkLineage(ctx); err != nil {
+				return injected
+			}
+		} else if fixture {
+			userMessageID = e.steerSink.PersistSteerMessage(ctx, sessionID, messageID, steerID, content,
+				types.MentionedItemsFromRaw(evt["mentioned_items"]), getString(evt, "channel"))
+			if userMessageID == "" {
+				logger.Warnf(ctx, "[Agent] Steer persist failed for %s, leaving event pending", steerID)
+				continue
+			}
+			lineage = independentAgentInput()
+		} else {
+			e.rememberLineageFailure(types.ErrSourceLineageUnknown)
+			return injected
 		}
-		*messagesPtr = append(*messagesPtr, chat.Message{Role: "user", Content: types.SteerMessageContent(content)})
+		*messagesPtr = append(*messagesPtr, chat.Message{Role: "user", Content: types.SteerMessageContent(content), SourceLineage: lineage})
 		state.PendingSteerMessages = append(state.PendingSteerMessages, userMessageID)
-		_ = e.eventBus.Emit(ctx, event.Event{
+		err = e.emitEvent(ctx, event.Event{
 			ID:        generateEventID("injected"),
 			Type:      event.EventUserMessageInjected,
 			SessionID: sessionID,
@@ -79,6 +194,9 @@ func (e *AgentEngine) drainSteerMessages(
 				UserMessageID: userMessageID,
 			},
 		})
+		if actual && err != nil {
+			return injected
+		}
 		injected++
 	}
 	if injected > 0 {

@@ -121,6 +121,10 @@ func (a *APIKeyRouteAuthorizer) Middleware() gin.HandlerFunc {
 			})
 			return
 		}
+		policy, _ := a.Lookup(c.Request.Method, c.FullPath())
+		c.Request = c.Request.WithContext(types.WithAPIKeyOperationRequirement(c.Request.Context(), types.APIKeyOperationRequirement{
+			PlatformOnly: policy.PlatformOnly, RequireFullAccess: policy.RequireFullAccess, Capabilities: policy.Capabilities,
+		}))
 		c.Next()
 	}
 }

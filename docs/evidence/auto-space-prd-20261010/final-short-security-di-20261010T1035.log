@@ -1,0 +1,189 @@
+=== RUN   TestGroupAccessMissingOnboardingLedgerPreservesSchemaBoundary
+=== RUN   TestGroupAccessMissingOnboardingLedgerPreservesSchemaBoundary/legacy
+=== RUN   TestGroupAccessMissingOnboardingLedgerPreservesSchemaBoundary/session
+=== RUN   TestGroupAccessMissingOnboardingLedgerPreservesSchemaBoundary/credential
+=== RUN   TestGroupAccessMissingOnboardingLedgerPreservesSchemaBoundary/control
+--- PASS: TestGroupAccessMissingOnboardingLedgerPreservesSchemaBoundary (0.02s)
+    --- PASS: TestGroupAccessMissingOnboardingLedgerPreservesSchemaBoundary/legacy (0.01s)
+    --- PASS: TestGroupAccessMissingOnboardingLedgerPreservesSchemaBoundary/session (0.00s)
+    --- PASS: TestGroupAccessMissingOnboardingLedgerPreservesSchemaBoundary/credential (0.00s)
+    --- PASS: TestGroupAccessMissingOnboardingLedgerPreservesSchemaBoundary/control (0.00s)
+=== RUN   TestNextcloudOnboardingCurrentSchemaMissingControlsOrPairingFailsClosed
+--- PASS: TestNextcloudOnboardingCurrentSchemaMissingControlsOrPairingFailsClosed (0.15s)
+PASS
+ok      github.com/Tencent/WeKnora/internal/application/repository  0.586s
+=== RUN   TestResolveTenantRoleActualMissingOnboardingLedgerCannotPromoteOrFailOpen
+=== RUN   TestResolveTenantRoleActualMissingOnboardingLedgerCannotPromoteOrFailOpen/disabled=false/rbac=false/home=false
+
+2026/10/10 10:37:03 /app/internal/application/repository/group_access.go:32 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:37:03 /app/internal/application/repository/group_access.go:32 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+WARNING[2026-10-10 10:37:03.529] [] auth.go:799[resolveTenantRole] | effective directory-group role lookup failed user=source-reader tenant=7: nextcloud_onboarding_denied
+=== RUN   TestResolveTenantRoleActualMissingOnboardingLedgerCannotPromoteOrFailOpen/disabled=false/rbac=false/home=true
+
+2026/10/10 10:37:03 /app/internal/application/repository/group_access.go:32 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:37:03 /app/internal/application/repository/group_access.go:32 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+WARNING[2026-10-10 10:37:03.557] [] auth.go:799[resolveTenantRole] | effective directory-group role lookup failed user=source-reader tenant=7: nextcloud_onboarding_denied
+=== RUN   TestResolveTenantRoleActualMissingOnboardingLedgerCannotPromoteOrFailOpen/disabled=false/rbac=true/home=false
+
+2026/10/10 10:37:03 /app/internal/application/repository/group_access.go:32 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:37:03 /app/internal/application/repository/group_access.go:32 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+WARNING[2026-10-10 10:37:03.587] [] auth.go:799[resolveTenantRole] | effective directory-group role lookup failed user=source-reader tenant=7: nextcloud_onboarding_denied
+=== RUN   TestResolveTenantRoleActualMissingOnboardingLedgerCannotPromoteOrFailOpen/disabled=false/rbac=true/home=true
+
+2026/10/10 10:37:03 /app/internal/application/repository/group_access.go:32 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:37:03 /app/internal/application/repository/group_access.go:32 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+WARNING[2026-10-10 10:37:03.617] [] auth.go:799[resolveTenantRole] | effective directory-group role lookup failed user=source-reader tenant=7: nextcloud_onboarding_denied
+=== RUN   TestResolveTenantRoleActualMissingOnboardingLedgerCannotPromoteOrFailOpen/disabled=true/rbac=false/home=false
+
+2026/10/10 10:37:03 /app/internal/application/repository/group_access.go:32 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:37:03 /app/internal/application/repository/group_access.go:32 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+WARNING[2026-10-10 10:37:03.647] [] auth.go:799[resolveTenantRole] | effective directory-group role lookup failed user=source-reader tenant=7: nextcloud_onboarding_denied
+=== RUN   TestResolveTenantRoleActualMissingOnboardingLedgerCannotPromoteOrFailOpen/disabled=true/rbac=false/home=true
+
+2026/10/10 10:37:03 /app/internal/application/repository/group_access.go:32 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:37:03 /app/internal/application/repository/group_access.go:32 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+WARNING[2026-10-10 10:37:03.674] [] auth.go:799[resolveTenantRole] | effective directory-group role lookup failed user=source-reader tenant=7: nextcloud_onboarding_denied
+=== RUN   TestResolveTenantRoleActualMissingOnboardingLedgerCannotPromoteOrFailOpen/disabled=true/rbac=true/home=false
+
+2026/10/10 10:37:03 /app/internal/application/repository/group_access.go:32 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:37:03 /app/internal/application/repository/group_access.go:32 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+WARNING[2026-10-10 10:37:03.706] [] auth.go:799[resolveTenantRole] | effective directory-group role lookup failed user=source-reader tenant=7: nextcloud_onboarding_denied
+=== RUN   TestResolveTenantRoleActualMissingOnboardingLedgerCannotPromoteOrFailOpen/disabled=true/rbac=true/home=true
+
+2026/10/10 10:37:03 /app/internal/application/repository/group_access.go:32 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+
+2026/10/10 10:37:03 /app/internal/application/repository/group_access.go:32 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+WARNING[2026-10-10 10:37:03.735] [] auth.go:799[resolveTenantRole] | effective directory-group role lookup failed user=source-reader tenant=7: nextcloud_onboarding_denied
+--- PASS: TestResolveTenantRoleActualMissingOnboardingLedgerCannotPromoteOrFailOpen (0.24s)
+    --- PASS: TestResolveTenantRoleActualMissingOnboardingLedgerCannotPromoteOrFailOpen/disabled=false/rbac=false/home=false (0.03s)
+    --- PASS: TestResolveTenantRoleActualMissingOnboardingLedgerCannotPromoteOrFailOpen/disabled=false/rbac=false/home=true (0.03s)
+    --- PASS: TestResolveTenantRoleActualMissingOnboardingLedgerCannotPromoteOrFailOpen/disabled=false/rbac=true/home=false (0.03s)
+    --- PASS: TestResolveTenantRoleActualMissingOnboardingLedgerCannotPromoteOrFailOpen/disabled=false/rbac=true/home=true (0.03s)
+    --- PASS: TestResolveTenantRoleActualMissingOnboardingLedgerCannotPromoteOrFailOpen/disabled=true/rbac=false/home=false (0.03s)
+    --- PASS: TestResolveTenantRoleActualMissingOnboardingLedgerCannotPromoteOrFailOpen/disabled=true/rbac=false/home=true (0.03s)
+    --- PASS: TestResolveTenantRoleActualMissingOnboardingLedgerCannotPromoteOrFailOpen/disabled=true/rbac=true/home=false (0.03s)
+    --- PASS: TestResolveTenantRoleActualMissingOnboardingLedgerCannotPromoteOrFailOpen/disabled=true/rbac=true/home=true (0.03s)
+=== RUN   TestResolveTenantRoleActualMissingOnboardingLedgerPreservesDirectMember
+INFO [2026-10-10 10:37:03.764] [] auth.go:795[resolveTenantRole] | [auth] effective direct/group role=contributor user=ordinary-member tenant=7
+--- PASS: TestResolveTenantRoleActualMissingOnboardingLedgerPreservesDirectMember (0.03s)
+=== RUN   TestResolveTenantRoleActualLegacySchemaKeepsRolloutBehavior
+=== RUN   TestResolveTenantRoleActualLegacySchemaKeepsRolloutBehavior/home=false
+
+2026/10/10 10:37:03 /app/internal/application/repository/group_access.go:32 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+WARNING[2026-10-10 10:37:03.794] [] auth.go:829[resolveTenantRole] | [auth] resolveTenantRole step1 miss: user=legacy-user tenant=7 (no_row)
+WARNING[2026-10-10 10:37:03.794] [] auth.go:873[resolveTenantRole] | [auth] resolveTenantRole step4 fail-open (EnableRBAC=false) -> Admin: user=legacy-user tenant=7
+=== RUN   TestResolveTenantRoleActualLegacySchemaKeepsRolloutBehavior/home=true
+
+2026/10/10 10:37:03 /app/internal/application/repository/group_access.go:32 record not found
+[SQL statement omitted from public test evidence; original retained in private audit]
+WARNING[2026-10-10 10:37:03.821] [] auth.go:829[resolveTenantRole] | [auth] resolveTenantRole step1 miss: user=legacy-user tenant=7 (no_row)
+INFO [2026-10-10 10:37:03.821] [] auth.go:854[resolveTenantRole] | [audit] Auto-promoted user legacy-user to Owner of orphan tenant 7 (home_tenant=true)
+--- PASS: TestResolveTenantRoleActualLegacySchemaKeepsRolloutBehavior (0.06s)
+    --- PASS: TestResolveTenantRoleActualLegacySchemaKeepsRolloutBehavior/home=false (0.03s)
+    --- PASS: TestResolveTenantRoleActualLegacySchemaKeepsRolloutBehavior/home=true (0.03s)
+PASS
+ok      github.com/Tencent/WeKnora/internal/middleware  0.686s
+# github.com/Tencent/WeKnora/internal/handler [github.com/Tencent/WeKnora/internal/handler.test]
+internal/handler/nextcloud_kb_secondary_metadata_test.go:61:11: undefined: organizationGroupContext
+internal/handler/nextcloud_kb_secondary_metadata_test.go:104:11: undefined: organizationGroupContext
+internal/handler/nextcloud_kb_secondary_metadata_test.go:112:10: undefined: organizationGroupContext
+FAIL    github.com/Tencent/WeKnora/internal/handler [build failed]
+=== RUN   TestRouterWiring
+=== RUN   TestRouterWiring/lite
+DEBUG[2026-10-10 10:37:28.642] [] container.go:127[BuildContainer] | [Container] Starting container initialization...
+DEBUG[2026-10-10 10:37:28.643] [] container.go:133[BuildContainer] | [Container] Registering core infrastructure...
+DEBUG[2026-10-10 10:37:28.643] [] container.go:147[BuildContainer] | [Container] Registering retrieval engine registry...
+DEBUG[2026-10-10 10:37:28.643] [] container.go:151[BuildContainer] | [Container] Registering external service clients...
+DEBUG[2026-10-10 10:37:28.643] [] container.go:157[BuildContainer] | [Container] Initializing DuckDB...
+DEBUG[2026-10-10 10:37:28.643] [] container.go:159[BuildContainer] | [Container] DuckDB registered
+DEBUG[2026-10-10 10:37:28.643] [] container.go:162[BuildContainer] | [Container] Registering repositories...
+DEBUG[2026-10-10 10:37:28.644] [] container.go:222[BuildContainer] | [Container] Registering MCP manager...
+DEBUG[2026-10-10 10:37:28.644] [] container.go:228[BuildContainer] | [Container] Registering sandbox manager...
+DEBUG[2026-10-10 10:37:28.644] [] container.go:244[BuildContainer] | [Container] Registering business services...
+DEBUG[2026-10-10 10:37:28.646] [] container.go:309[BuildContainer] | [Container] Registering web search registry and providers...
+DEBUG[2026-10-10 10:37:28.647] [] container.go:340[BuildContainer] | [Container] Registering event bus and agent service...
+DEBUG[2026-10-10 10:37:28.647] [] container.go:360[BuildContainer] | [Container] Registering memory service...
+DEBUG[2026-10-10 10:37:28.647] [] container.go:363[BuildContainer] | [Container] Registering session service...
+DEBUG[2026-10-10 10:37:28.649] [] container.go:452[BuildContainer] | [Container] Registering task enqueuer...
+DEBUG[2026-10-10 10:37:28.649] [] container.go:489[BuildContainer] | [Container] Registering chat pipeline plugins...
+DEBUG[2026-10-10 10:37:28.649] [] container.go:492[BuildContainer] | [Container] Registering data source sync framework...
+DEBUG[2026-10-10 10:37:28.650] [] container.go:515[BuildContainer] | [Container] Data source sync framework registered
+DEBUG[2026-10-10 10:37:28.650] [] container.go:517[BuildContainer] | [Container] Audit log retention runner registered
+DEBUG[2026-10-10 10:37:28.650] [] container.go:520[BuildContainer] | [Container] Knowledge housekeeping runner registered
+DEBUG[2026-10-10 10:37:28.652] [] container.go:638[BuildContainer] | [Container] Chat pipeline plugins registered
+DEBUG[2026-10-10 10:37:28.652] [] container.go:645[BuildContainer] | [Container] Tenant skill reaper registered
+DEBUG[2026-10-10 10:37:28.652] [] container.go:647[BuildContainer] | [Container] Session group-access overlay registered
+DEBUG[2026-10-10 10:37:28.652] [] container.go:649[BuildContainer] | [Container] Custom-agent group-access overlay registered
+DEBUG[2026-10-10 10:37:28.652] [] container.go:651[BuildContainer] | [Container] MCP group-access overlay registered
+DEBUG[2026-10-10 10:37:28.652] [] container.go:654[BuildContainer] | [Container] Knowledge group-access overlay registered
+DEBUG[2026-10-10 10:37:28.652] [] container.go:659[BuildContainer] | [Container] Directory feature switch registered for group access
+DEBUG[2026-10-10 10:37:28.652] [] container.go:670[BuildContainer] | [Container] Fork snapshot reaper registered
+DEBUG[2026-10-10 10:37:28.652] [] container.go:673[BuildContainer] | [Container] Registering HTTP handlers...
+DEBUG[2026-10-10 10:37:28.659] [] container.go:765[BuildContainer] | [Container] Registering IM integration...
+DEBUG[2026-10-10 10:37:28.659] [] container.go:773[BuildContainer] | [Container] HTTP handlers registered
+DEBUG[2026-10-10 10:37:28.659] [] container.go:782[BuildContainer] | [Container] Registering router and starting task server...
+INFO [2026-10-10 10:37:28.660] [] container.go:802[BuildContainer] | [Container] Container initialization completed successfully
+=== RUN   TestRouterWiring/redis
+DEBUG[2026-10-10 10:37:28.660] [] container.go:127[BuildContainer] | [Container] Starting container initialization...
+DEBUG[2026-10-10 10:37:28.660] [] container.go:133[BuildContainer] | [Container] Registering core infrastructure...
+DEBUG[2026-10-10 10:37:28.660] [] container.go:147[BuildContainer] | [Container] Registering retrieval engine registry...
+DEBUG[2026-10-10 10:37:28.660] [] container.go:151[BuildContainer] | [Container] Registering external service clients...
+DEBUG[2026-10-10 10:37:28.660] [] container.go:157[BuildContainer] | [Container] Initializing DuckDB...
+DEBUG[2026-10-10 10:37:28.660] [] container.go:159[BuildContainer] | [Container] DuckDB registered
+DEBUG[2026-10-10 10:37:28.660] [] container.go:162[BuildContainer] | [Container] Registering repositories...
+DEBUG[2026-10-10 10:37:28.661] [] container.go:222[BuildContainer] | [Container] Registering MCP manager...
+DEBUG[2026-10-10 10:37:28.661] [] container.go:228[BuildContainer] | [Container] Registering sandbox manager...
+DEBUG[2026-10-10 10:37:28.661] [] container.go:244[BuildContainer] | [Container] Registering business services...
+DEBUG[2026-10-10 10:37:28.662] [] container.go:309[BuildContainer] | [Container] Registering web search registry and providers...
+DEBUG[2026-10-10 10:37:28.663] [] container.go:340[BuildContainer] | [Container] Registering event bus and agent service...
+DEBUG[2026-10-10 10:37:28.663] [] container.go:360[BuildContainer] | [Container] Registering memory service...
+DEBUG[2026-10-10 10:37:28.663] [] container.go:363[BuildContainer] | [Container] Registering session service...
+DEBUG[2026-10-10 10:37:28.665] [] container.go:452[BuildContainer] | [Container] Registering task enqueuer...
+DEBUG[2026-10-10 10:37:28.665] [] container.go:489[BuildContainer] | [Container] Registering chat pipeline plugins...
+DEBUG[2026-10-10 10:37:28.665] [] container.go:492[BuildContainer] | [Container] Registering data source sync framework...
+DEBUG[2026-10-10 10:37:28.666] [] container.go:515[BuildContainer] | [Container] Data source sync framework registered
+DEBUG[2026-10-10 10:37:28.666] [] container.go:517[BuildContainer] | [Container] Audit log retention runner registered
+DEBUG[2026-10-10 10:37:28.666] [] container.go:520[BuildContainer] | [Container] Knowledge housekeeping runner registered
+DEBUG[2026-10-10 10:37:28.671] [] container.go:638[BuildContainer] | [Container] Chat pipeline plugins registered
+DEBUG[2026-10-10 10:37:28.671] [] container.go:645[BuildContainer] | [Container] Tenant skill reaper registered
+DEBUG[2026-10-10 10:37:28.671] [] container.go:647[BuildContainer] | [Container] Session group-access overlay registered
+DEBUG[2026-10-10 10:37:28.671] [] container.go:649[BuildContainer] | [Container] Custom-agent group-access overlay registered
+DEBUG[2026-10-10 10:37:28.671] [] container.go:651[BuildContainer] | [Container] MCP group-access overlay registered
+DEBUG[2026-10-10 10:37:28.671] [] container.go:654[BuildContainer] | [Container] Knowledge group-access overlay registered
+DEBUG[2026-10-10 10:37:28.671] [] container.go:659[BuildContainer] | [Container] Directory feature switch registered for group access
+DEBUG[2026-10-10 10:37:28.671] [] container.go:670[BuildContainer] | [Container] Fork snapshot reaper registered
+DEBUG[2026-10-10 10:37:28.671] [] container.go:673[BuildContainer] | [Container] Registering HTTP handlers...
+DEBUG[2026-10-10 10:37:28.676] [] container.go:765[BuildContainer] | [Container] Registering IM integration...
+DEBUG[2026-10-10 10:37:28.677] [] container.go:773[BuildContainer] | [Container] HTTP handlers registered
+DEBUG[2026-10-10 10:37:28.677] [] container.go:782[BuildContainer] | [Container] Registering router and starting task server...
+INFO [2026-10-10 10:37:28.677] [] container.go:802[BuildContainer] | [Container] Container initialization completed successfully
+--- PASS: TestRouterWiring (0.04s)
+    --- PASS: TestRouterWiring/lite (0.02s)
+    --- PASS: TestRouterWiring/redis (0.02s)
+PASS
+ok      github.com/Tencent/WeKnora/internal/container   0.387s
+FAIL

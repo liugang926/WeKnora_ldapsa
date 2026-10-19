@@ -5,6 +5,7 @@ import (
 	stderrors "errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/Tencent/WeKnora/internal/application/access"
 	"github.com/Tencent/WeKnora/internal/application/repository"
@@ -111,6 +112,8 @@ func generateEventID(suffix string) string {
 // (see service.LoadAgentHistory and chat_pipeline history loading) — there is no
 // separate cross-turn cache layer.
 type sessionService struct {
+	lineageVerifier       interfaces.MessageSourceLineageVerifier
+	sourceLineageGuard    access.SourceLineageAuthorizer
 	historyGuard          *access.NextcloudHistoryGuard
 	cfg                   *config.Config                         // Application configuration
 	sessionRepo           interfaces.SessionRepository           // Repository for session data
@@ -220,6 +223,19 @@ func (s *sessionService) CreateSession(ctx context.Context, session *types.Sessi
 
 	logger.Infof(ctx, "Creating session, tenant ID: %d", session.TenantID)
 
+	if s.groupAccess != nil {
+		caller := types.CallerFromContext(ctx)
+		role, err := s.groupAccess.EffectiveTenantRole(ctx, caller.UserID, session.TenantID, time.Now().UTC())
+		if err != nil {
+			return nil, err
+		}
+		if role.ScopedOnly {
+			if !role.Member {
+				return nil, ErrResourceAccessDenied
+			}
+			session.NextcloudScoped = true
+		}
+	}
 	// Create session in repository
 	createdSession, err := s.sessionRepo.Create(ctx, session)
 	if err != nil {
@@ -227,7 +243,7 @@ func (s *sessionService) CreateSession(ctx context.Context, session *types.Sessi
 	}
 
 	logger.Infof(ctx, "Session created successfully, ID: %s, tenant ID: %d", createdSession.ID, createdSession.TenantID)
-	return createdSession, nil
+	return s.authorizeSessionText(ctx, createdSession)
 }
 
 // GetSession retrieves a session by its ID
@@ -266,7 +282,7 @@ func (s *sessionService) GetSession(ctx context.Context, id string) (*types.Sess
 	}
 
 	logger.Infof(ctx, "Session retrieved successfully, ID: %s, tenant ID: %d", session.ID, session.TenantID)
-	return session, nil
+	return s.authorizeSessionText(ctx, session)
 }
 
 // GetOwnedSession loads a session strictly within the caller's owner scope.
@@ -280,7 +296,11 @@ func (s *sessionService) GetOwnedSession(ctx context.Context, id string) (*types
 	}
 	tenantID := types.MustTenantIDFromContext(ctx)
 	userID := sessionUserIDFromContext(ctx)
-	return s.sessionRepo.Get(ctx, tenantID, userID, id)
+	row, err := s.sessionRepo.Get(ctx, tenantID, userID, id)
+	if err != nil {
+		return nil, err
+	}
+	return s.authorizeSessionText(ctx, row)
 }
 
 // GetSessionByID loads a session by tenant and id without user scoping.
@@ -291,7 +311,11 @@ func (s *sessionService) GetSessionByID(ctx context.Context, tenantID uint64, id
 	if tenantID == 0 {
 		return nil, stderrors.New("workspace id is required")
 	}
-	return s.sessionRepo.GetByID(ctx, tenantID, id)
+	row, err := s.sessionRepo.GetByID(ctx, tenantID, id)
+	if err != nil {
+		return nil, err
+	}
+	return s.authorizeSessionText(ctx, row)
 }
 
 // SetSessionOwnerID assigns sessions.user_id for the given session row.
@@ -328,7 +352,7 @@ func (s *sessionService) GetSessionsByTenant(ctx context.Context) ([]*types.Sess
 	logger.Infof(
 		ctx, "Tenant sessions retrieved successfully, tenant ID: %d, session count: %d", tenantID, len(sessions),
 	)
-	return sessions, nil
+	return s.authorizeSessionTexts(ctx, sessions)
 }
 
 // GetPagedSessionsByTenant retrieves sessions for the current tenant with pagination
@@ -349,6 +373,10 @@ func (s *sessionService) GetPagedSessionsByTenant(ctx context.Context,
 		return nil, err
 	}
 
+	sessions, err = s.authorizeSessionTexts(ctx, sessions)
+	if err != nil {
+		return nil, err
+	}
 	return types.NewPageResult(total, pagination, sessions), nil
 }
 
@@ -387,6 +415,32 @@ func (s *sessionService) ListSessions(
 		})
 		return nil, err
 	}
+	if strings.TrimSpace(query.Keyword) != "" {
+		matches, err := s.authorizedTitleMatches(ctx, query)
+		if err != nil {
+			return nil, err
+		}
+		total = int64(len(matches))
+		page := (&types.Pagination{Page: query.Page, PageSize: query.PageSize}).GetPage()
+		size := (&types.Pagination{Page: query.Page, PageSize: query.PageSize}).GetPageSize()
+		start := min((page-1)*size, len(matches))
+		end := min(start+size, len(matches))
+		items = matches[start:end]
+	} else {
+		sessions := make([]*types.Session, 0, len(items))
+		for _, row := range items {
+			sessions = append(sessions, &row.Session)
+		}
+		visibleRows, err := s.authorizeSessionTexts(ctx, sessions)
+		if err != nil {
+			return nil, err
+		}
+		for i, row := range items {
+			copy := *row
+			copy.Session = *visibleRows[i]
+			items[i] = &copy
+		}
+	}
 
 	pagination := &types.Pagination{Page: query.Page, PageSize: query.PageSize}
 	return types.NewPageResult(total, pagination, items), nil
@@ -415,6 +469,13 @@ func (s *sessionService) CountSessionsBySource(
 			"source":    query.Source,
 		})
 		return 0, err
+	}
+	if strings.TrimSpace(query.Keyword) != "" {
+		matches, err := s.authorizedTitleMatches(ctx, query)
+		if err != nil {
+			return 0, err
+		}
+		return int64(len(matches)), nil
 	}
 	return total, nil
 }
@@ -448,8 +509,12 @@ func (s *sessionService) UpdateSession(ctx context.Context, session *types.Sessi
 		return err
 	}
 	if existing != nil {
+		originalDescription := session.Description
 		session.Description = types.SanitizeClientSessionDescription(
 			session.Description, existing.Description)
+		if session.Description != originalDescription {
+			session.DescriptionSourceLineage, _ = types.UnionSourceLineage(existing.DescriptionSourceLineage)
+		}
 	}
 
 	_, err = s.sessionRepo.Update(ctx, session, userID)
@@ -822,12 +887,21 @@ func (s *sessionService) GenerateTitle(ctx context.Context,
 		logger.Error(ctx, "Failed to generate title: session cannot be empty")
 		return "", stderrors.New("session cannot be empty")
 	}
+	stored, err := loadSessionForRead(ctx, s.sessionRepo, session.TenantID, sessionUserIDFromContext(ctx), session.ID)
+	if err != nil {
+		return "", err
+	}
+	visible, err := s.authorizeSessionText(ctx, stored)
+	if err != nil {
+		return "", err
+	}
+	if visible.Title != "" {
+		return visible.Title, nil
+	}
+	originalTitle := types.SessionTitleSnapshot{Text: stored.Title, Revision: stored.TitleRevision, SourceLineage: stored.TitleSourceLineage}
 
 	// Skip if title already exists
-	if session.Title != "" {
-		return session.Title, nil
-	}
-	var err error
+	session.Title = ""
 	// Get the first user message, either from provided messages or repository
 	var message *types.Message
 	if len(messages) == 0 {
@@ -899,6 +973,18 @@ func (s *sessionService) GenerateTitle(ctx context.Context,
 	)
 
 	// Call model to generate title
+	// This adapter sends only the author's raw user Content and the configured
+	// static title prompt. It never consumes captions, attachments or answers.
+	titleLineage, _ := types.NewCompleteSourceLineage()
+	if s.sourceLineageGuard == nil {
+		return "", access.ErrNextcloudPublicationUnavailable
+	}
+	if err := s.sourceLineageGuard.Check(ctx, titleLineage, access.LineageReadScope{}); err != nil {
+		return "", err
+	}
+	for i := range chatMessages {
+		chatMessages[i].SourceLineage, _ = types.UnionSourceLineage(titleLineage)
+	}
 	thinking := false
 	response, err := chatModel.Chat(ctx, chatMessages, &chat.ChatOptions{
 		Temperature: 0.3,
@@ -910,6 +996,9 @@ func (s *sessionService) GenerateTitle(ctx context.Context,
 	}
 
 	// Process and store the generated title
+	if err := s.sourceLineageGuard.Check(ctx, titleLineage, access.LineageReadScope{}); err != nil {
+		return "", err
+	}
 	title, truncated := sanitizeGeneratedTitle(response.Content)
 	if truncated {
 		logger.Warnf(ctx,
@@ -917,14 +1006,23 @@ func (s *sessionService) GenerateTitle(ctx context.Context,
 			maxSessionTitleRunes, session.ID, modelID,
 		)
 	}
-	session.Title = title
-
 	// Update session with new title
-	_, err = s.sessionRepo.Update(ctx, session, session.UserID)
+	titleWriter, ok := s.sessionRepo.(sessionTitleWriter)
+	if !ok {
+		return "", access.ErrNextcloudPublicationUnavailable
+	}
+	written, writeErr := titleWriter.SaveGeneratedSessionTitle(ctx, session.TenantID, session.UserID, session.ID, originalTitle, title, titleLineage)
+	err = writeErr
+	if err == nil && written != 1 {
+		err = access.ErrNextcloudPublicationDenied
+	}
 	if err != nil {
 		logger.ErrorWithFields(ctx, err, nil)
 		return "", err
 	}
+	session.Title = title
+	session.TitleSourceLineage, _ = types.UnionSourceLineage(titleLineage)
+	session.TitleAuthorized = true
 
 	return session.Title, nil
 }
@@ -949,7 +1047,7 @@ func (s *sessionService) GenerateTitleAsync(
 	// as a child of the same trace as the originating chat request.
 	langfuseTrace := ctx.Value(types.LangfuseTraceContextKey)
 	go func() {
-		bgCtx := context.Background()
+		bgCtx := context.WithoutCancel(ctx) // Preserve captured caller/principal separately from effective tenant.
 		if tenantID != nil {
 			bgCtx = context.WithValue(bgCtx, types.TenantIDContextKey, tenantID)
 		}
@@ -987,9 +1085,15 @@ func (s *sessionService) GenerateTitleAsync(
 		// Emit title update event - BUG FIX: use bgCtx instead of ctx
 		// The original ctx is from the HTTP request and may be cancelled by the time we get here
 		if eventBus != nil {
+			titleLineage, err := s.committedSessionTitleEventLineage(bgCtx, session, title)
+			if err != nil {
+				logger.Warnf(bgCtx, "Skipped session title event after committed title authorization failed: %v", err)
+				return
+			}
 			if err := eventBus.Emit(bgCtx, event.Event{
-				Type:      event.EventSessionTitle,
-				SessionID: session.ID,
+				SourceLineage: titleLineage,
+				Type:          event.EventSessionTitle,
+				SessionID:     session.ID,
 				Data: event.SessionTitleData{
 					SessionID: session.ID,
 					Title:     title,

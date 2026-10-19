@@ -1,0 +1,41 @@
+INFO [2026-10-09 02:28:13.357] []                      | [SQLite] Initializing SQLite retriever engine repository with sqlite-vec
+WARNING[2026-10-09 02:28:13.603] [] knowledge_span_tracker.go:333[BeginStage] | [SpanTracker] BeginStage: no root for kid=source-candidate attempt=1, recording rootless
+WARNING[2026-10-09 02:28:13.610] [] knowledge_span_tracker.go:390[BeginStage] | [SpanTracker] BeginStage failed kid=source-candidate stage=actual-body-audit: source lineage is unknown
+INFO [2026-10-09 02:28:13.910] []                      | [SQLite] Initializing SQLite retriever engine repository with sqlite-vec
+WARNING[2026-10-09 02:28:14.011] [] knowledge_span_tracker.go:333[BeginStage] | [SpanTracker] BeginStage: no root for kid=source-candidate attempt=1, recording rootless
+WARNING[2026-10-09 02:28:14.017] [] knowledge_span_tracker.go:390[BeginStage] | [SpanTracker] BeginStage failed kid=source-candidate stage=actual-body-audit: source lineage is unknown
+--- FAIL: TestOriginalBodyActualLocalDerivedSQLite (1.35s)
+    --- FAIL: TestOriginalBodyActualLocalDerivedSQLite/body-retention (0.95s)
+        nextcloud_local_derived_gc_test.go:150: 
+            	Error Trace:	/workspace/internal/application/service/nextcloud_local_derived_gc_test.go:150
+            	            				/workspace/internal/application/service/nextcloud_local_derived_gc_test.go:367
+            	Error:      	Expected value not to be nil.
+            	Test:       	TestOriginalBodyActualLocalDerivedSQLite/body-retention
+    --- FAIL: TestOriginalBodyActualLocalDerivedSQLite/body-inline-restore (0.41s)
+        nextcloud_local_derived_gc_test.go:150: 
+            	Error Trace:	/workspace/internal/application/service/nextcloud_local_derived_gc_test.go:150
+            	            				/workspace/internal/application/service/nextcloud_local_derived_gc_test.go:367
+            	Error:      	Expected value not to be nil.
+            	Test:       	TestOriginalBodyActualLocalDerivedSQLite/body-inline-restore
+INFO [2026-10-09 02:28:14.505] []                      | [Postgres] Initializing PostgreSQL retriever engine repository
+WARNING[2026-10-09 02:28:14.750] [] knowledge_span_tracker.go:333[BeginStage] | [SpanTracker] BeginStage: no root for kid=source-candidate attempt=1, recording rootless
+WARNING[2026-10-09 02:28:14.766] [] knowledge_span_tracker.go:390[BeginStage] | [SpanTracker] BeginStage failed kid=source-candidate stage=actual-body-audit: source lineage is unknown
+INFO [2026-10-09 02:28:15.357] []                      | [Postgres] Initializing PostgreSQL retriever engine repository
+WARNING[2026-10-09 02:28:15.607] [] knowledge_span_tracker.go:333[BeginStage] | [SpanTracker] BeginStage: no root for kid=source-candidate attempt=1, recording rootless
+WARNING[2026-10-09 02:28:15.622] [] knowledge_span_tracker.go:390[BeginStage] | [SpanTracker] BeginStage failed kid=source-candidate stage=actual-body-audit: source lineage is unknown
+--- FAIL: TestPostgresOriginalBodyActualLocalDerived (1.71s)
+    --- FAIL: TestPostgresOriginalBodyActualLocalDerived/body-retention (0.85s)
+        nextcloud_local_derived_gc_test.go:150: 
+            	Error Trace:	/workspace/internal/application/service/nextcloud_local_derived_gc_test.go:150
+            	            				/workspace/internal/application/service/nextcloud_local_derived_gc_test.go:372
+            	Error:      	Expected value not to be nil.
+            	Test:       	TestPostgresOriginalBodyActualLocalDerived/body-retention
+    --- FAIL: TestPostgresOriginalBodyActualLocalDerived/body-inline-restore (0.87s)
+        nextcloud_local_derived_gc_test.go:150: 
+            	Error Trace:	/workspace/internal/application/service/nextcloud_local_derived_gc_test.go:150
+            	            				/workspace/internal/application/service/nextcloud_local_derived_gc_test.go:372
+            	Error:      	Expected value not to be nil.
+            	Test:       	TestPostgresOriginalBodyActualLocalDerived/body-inline-restore
+FAIL
+FAIL	github.com/Tencent/WeKnora/internal/application/service	3.489s
+FAIL

@@ -1,0 +1,25 @@
+=== RUN   TestSourceContentPipelineLogsSuppressBodiesAndPreserveOrdinary
+--- PASS: TestSourceContentPipelineLogsSuppressBodiesAndPreserveOrdinary (0.00s)
+PASS
+ok      github.com/Tencent/WeKnora/internal/common  0.382s
+=== RUN   TestSourceContentCompletionErrorLogsPreserveOriginalFailure
+--- PASS: TestSourceContentCompletionErrorLogsPreserveOriginalFailure (0.00s)
+=== RUN   TestSourceContentCompletionStreamErrorLogPreservesFailureControl
+--- PASS: TestSourceContentCompletionStreamErrorLogPreservesFailureControl (0.00s)
+=== RUN   TestStreamDropsIncompleteHandleOnCancel
+--- PASS: TestStreamDropsIncompleteHandleOnCancel (0.03s)
+=== RUN   TestStreamIgnoresDuplicateTerminalAnswer
+--- PASS: TestStreamIgnoresDuplicateTerminalAnswer (0.01s)
+PASS
+ok      github.com/Tencent/WeKnora/internal/application/service/chat_pipeline   0.384s
+=== RUN   TestSourceContentOllamaActualHTTPStreamErrorKeepsCallerAndSuppressesLog
+=== RUN   TestSourceContentOllamaActualHTTPStreamErrorKeepsCallerAndSuppressesLog/private-marker
+=== RUN   TestSourceContentOllamaActualHTTPStreamErrorKeepsCallerAndSuppressesLog/private-lineage
+=== RUN   TestSourceContentOllamaActualHTTPStreamErrorKeepsCallerAndSuppressesLog/ordinary
+--- PASS: TestSourceContentOllamaActualHTTPStreamErrorKeepsCallerAndSuppressesLog (0.01s)
+=== RUN   TestOllamaConvertMessagesReadsMultiContent
+--- PASS: TestOllamaConvertMessagesReadsMultiContent (0.00s)
+=== RUN   TestOllamaConvertMessagesKeepsExplicitContent
+--- PASS: TestOllamaConvertMessagesKeepsExplicitContent (0.00s)
+PASS
+ok      github.com/Tencent/WeKnora/internal/models/chat 0.312s

@@ -141,6 +141,9 @@ func (r *ToolRegistry) ExecuteTool(
 	name string,
 	args json.RawMessage,
 ) (*types.ToolResult, error) {
+	if types.RAGSourceLineageFromContext(ctx) != nil {
+		return r.ExecuteToolWithSourceLineage(ctx, name, args)
+	}
 	if err := ctx.Err(); err != nil {
 		return &types.ToolResult{Success: false, Error: err.Error()}, err
 	}
@@ -214,9 +217,14 @@ func (r *ToolRegistry) execute(ctx context.Context, tool types.Tool, args json.R
 			"tool":   name,
 			"errors": errMsg,
 		})
+		var receipt *types.SourceLineage
+		if _, trusted := tool.(*lineageToolExecutor); trusted {
+			receipt = independentToolInput()
+		}
 		return &types.ToolResult{
-			Success: false,
-			Error:   errMsg,
+			SourceLineage: receipt,
+			Success:       false,
+			Error:         errMsg,
 		}, nil
 	}
 

@@ -81,8 +81,7 @@ func TestNextcloudResponseReadFailureClassification(t *testing.T) {
 			case "changes":
 				_, readErr = client.changes(context.Background(), "dev-published", "")
 			case "content":
-				_, _, readErr = client.content(context.Background(), "dev-published",
-					manifestItem{FileID: 41, ETag: "etag-1", Size: 3})
+				_, _, readErr = client.content(context.Background(), "dev-published", manifestItem{FileID: 41, ETag: "etag-1", Size: 3})
 			default:
 				var page manifestPage
 				readErr = client.getJSON(context.Background(), "/bindings/dev-published/manifest", nil, &page)
@@ -98,16 +97,10 @@ func TestNextcloudManifestGenerationMismatchIsRetryable(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		pages.Add(1)
 		if r.URL.Query().Get("cursor") == "" {
-			writeJSON(w, map[string]interface{}{
-				"generation": "first", "complete": false,
-				"next_cursor": "page-2", "items": []interface{}{},
-			})
+			writeJSON(w, map[string]interface{}{"generation": "first", "complete": false, "next_cursor": "page-2", "items": []interface{}{}})
 			return
 		}
-		writeJSON(w, map[string]interface{}{
-			"generation": "second", "complete": true, "next_cursor": nil,
-			"items": []interface{}{},
-		})
+		writeJSON(w, map[string]interface{}{"generation": "second", "complete": true, "next_cursor": nil, "items": []interface{}{}})
 	}))
 	defer server.Close()
 	cfg, err := parseConfig(testConfig(t, server.URL))
@@ -128,9 +121,6 @@ func TestNextcloudContentETagMismatchIsRetryable(t *testing.T) {
 	defer server.Close()
 	cfg, err := parseConfig(testConfig(t, server.URL))
 	require.NoError(t, err)
-	_, _, err = newClient(cfg).content(context.Background(), "dev-published", manifestItem{
-		FileID: 41,
-		ETag:   "etag-1", Size: 5,
-	})
+	_, _, err = newClient(cfg).content(context.Background(), "dev-published", manifestItem{FileID: 41, ETag: "etag-1", Size: 5})
 	require.ErrorIs(t, err, datasource.ErrRetryableSource)
 }

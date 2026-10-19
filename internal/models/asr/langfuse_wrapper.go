@@ -3,7 +3,9 @@ package asr
 import (
 	"context"
 
+	"github.com/Tencent/WeKnora/internal/logprivacy"
 	"github.com/Tencent/WeKnora/internal/tracing/langfuse"
+	"github.com/Tencent/WeKnora/internal/types"
 )
 
 // langfuseASR wraps an ASR implementation and reports each Transcribe call
@@ -20,6 +22,9 @@ func (l *langfuseASR) GetModelName() string { return l.inner.GetModelName() }
 func (l *langfuseASR) GetModelID() string   { return l.inner.GetModelID() }
 
 func (l *langfuseASR) Transcribe(ctx context.Context, audioBytes []byte, fileName string) (*TranscriptionResult, error) {
+	if logprivacy.ContentSuppressed(ctx) || types.RAGSourceLineageFromContext(ctx) != nil {
+		return l.inner.Transcribe(ctx, audioBytes, fileName)
+	}
 	mgr := langfuse.GetManager()
 	if !mgr.Enabled() {
 		return l.inner.Transcribe(ctx, audioBytes, fileName)

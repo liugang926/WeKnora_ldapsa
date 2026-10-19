@@ -10,12 +10,13 @@ type EventHandler func(ctx context.Context, evt Event) error
 // Event represents an event in the system
 // This is a simplified version to avoid import cycle with event package
 type Event struct {
-	ID        string                 // Event ID
-	Type      EventType              // Event type (uses EventType from chat_manage.go)
-	SessionID string                 // Session ID
-	Data      interface{}            // Event data
-	Metadata  map[string]interface{} // Event metadata
-	RequestID string                 // Request ID
+	SourceLineage *SourceLineage         `json:"-"` // Internal producer prefix, preserved by EventBusAdapter.
+	ID            string                 // Event ID
+	Type          EventType              // Event type (uses EventType from chat_manage.go)
+	SessionID     string                 // Session ID
+	Data          interface{}            // Event data
+	Metadata      map[string]interface{} // Event metadata
+	RequestID     string                 // Request ID
 }
 
 // EventBusInterface defines the interface for event bus operations

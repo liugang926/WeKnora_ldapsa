@@ -12,6 +12,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/agent/approval"
 	"github.com/Tencent/WeKnora/internal/agent/skills"
 	"github.com/Tencent/WeKnora/internal/agent/tools"
+	"github.com/Tencent/WeKnora/internal/application/access"
 	"github.com/Tencent/WeKnora/internal/application/repository"
 	"github.com/Tencent/WeKnora/internal/browserskill"
 	"github.com/Tencent/WeKnora/internal/config"
@@ -93,30 +94,31 @@ func knowledgeBaseScopesForPrompt(config *types.AgentConfig) ([]string, map[stri
 
 // agentService implements agent-related business logic
 type agentService struct {
-	browserSkill         *browserskill.Manager
-	userRepo             interfaces.UserRepository
-	cfg                  *config.Config
-	modelService         interfaces.ModelService
-	mcpServiceService    interfaces.MCPServiceService
-	mcpManager           *mcp.MCPManager
-	eventBus             *event.EventBus
-	db                   *gorm.DB
-	webSearchService     interfaces.WebSearchService
-	knowledgeBaseService interfaces.KnowledgeBaseService
-	knowledgeService     interfaces.KnowledgeService
-	fileService          interfaces.FileService
-	chunkService         interfaces.ChunkService
-	duckdb               *sql.DB
-	wikiPageService      interfaces.WikiPageService
-	tenantService        interfaces.TenantService
-	messageService       interfaces.MessageService
-	memoryService        interfaces.MemoryService
-	storageResolver      interfaces.StorageBackendResolver
-	toolApprovalGate     approval.MCPApproval
-	sandboxMgr           sandbox.Manager
-	sandboxResolver      sandbox.TenantSandboxResolver
-	sandboxPinner        *SessionSandboxPinner
-	sandboxPolicy        WorkspaceSandboxPolicy
+	ragChunkSnapshotReader interfaces.RAGChunkSnapshotReader
+	browserSkill           *browserskill.Manager
+	userRepo               interfaces.UserRepository
+	cfg                    *config.Config
+	modelService           interfaces.ModelService
+	mcpServiceService      interfaces.MCPServiceService
+	mcpManager             *mcp.MCPManager
+	eventBus               *event.EventBus
+	db                     *gorm.DB
+	webSearchService       interfaces.WebSearchService
+	knowledgeBaseService   interfaces.KnowledgeBaseService
+	knowledgeService       interfaces.KnowledgeService
+	fileService            interfaces.FileService
+	chunkService           interfaces.ChunkService
+	duckdb                 *sql.DB
+	wikiPageService        interfaces.WikiPageService
+	tenantService          interfaces.TenantService
+	messageService         interfaces.MessageService
+	memoryService          interfaces.MemoryService
+	storageResolver        interfaces.StorageBackendResolver
+	toolApprovalGate       approval.MCPApproval
+	sandboxMgr             sandbox.Manager
+	sandboxResolver        sandbox.TenantSandboxResolver
+	sandboxPinner          *SessionSandboxPinner
+	sandboxPolicy          WorkspaceSandboxPolicy
 }
 
 // NewAgentService creates a new agent service
@@ -236,6 +238,13 @@ func (s *agentService) CreateAgentEngine(
 	}
 
 	// 5. Create engine
+	if registry, ok := any(toolRegistry).(interface {
+		SetRAGChunkSnapshotReader(interfaces.RAGChunkSnapshotReader)
+	}); ok && s.ragChunkSnapshotReader != nil {
+		registry.SetRAGChunkSnapshotReader(s.ragChunkSnapshotReader)
+	} else {
+		return nil, access.ErrNextcloudPublicationUnavailable
+	}
 	engine := agent.NewAgentEngine(
 		config, chatModel, toolRegistry, eventBus,
 		kbInfos, selectedDocs, sessionID,

@@ -12,6 +12,7 @@ import (
 
 // PluginSearch implements search functionality for chat pipeline
 type PluginSearchEntity struct {
+	graphReader   interfaces.KnowledgeGraphSnapshotReader
 	graphRepo     interfaces.RetrieveGraphRepository
 	chunkRepo     interfaces.ChunkRepository
 	knowledgeRepo interfaces.KnowledgeRepository
@@ -23,11 +24,15 @@ func NewPluginSearchEntity(
 	graphRepository interfaces.RetrieveGraphRepository,
 	chunkRepository interfaces.ChunkRepository,
 	knowledgeRepository interfaces.KnowledgeRepository,
+	knowledgeBaseService interfaces.KnowledgeBaseService,
 ) *PluginSearchEntity {
 	res := &PluginSearchEntity{
 		graphRepo:     graphRepository,
 		chunkRepo:     chunkRepository,
 		knowledgeRepo: knowledgeRepository,
+	}
+	if reader, ok := knowledgeBaseService.(interfaces.KnowledgeGraphSnapshotReader); ok {
+		res.graphReader = reader
 	}
 	eventManager.Register(res)
 	return res
@@ -42,6 +47,9 @@ func (p *PluginSearchEntity) ActivationEvents() []types.EventType {
 func (p *PluginSearchEntity) OnEvent(ctx context.Context,
 	eventType types.EventType, chatManage *types.ChatManage, next func() *PluginError,
 ) *PluginError {
+	if types.RAGSourceLineageFromContext(ctx) != nil {
+		return p.onLineageEntitySearch(ctx, chatManage, next)
+	}
 	entity := chatManage.Entity
 	if len(entity) == 0 {
 		logger.Infof(ctx, "No entity found")

@@ -27,7 +27,7 @@ func shellCommandOutput(ctx context.Context, command string) (func(string, []byt
 	closed := false
 	emit := func(done bool) {
 		last = time.Now()
-		_ = meta.EventBus.Emit(ctx, event.Event{
+		_ = EmitToolEvent(ctx, event.Event{
 			ID: uuid.NewString(), Type: event.EventAgentCommandOutput, SessionID: meta.SessionID,
 			Data: event.CommandOutputData{
 				ToolCallID: meta.ToolCallID,

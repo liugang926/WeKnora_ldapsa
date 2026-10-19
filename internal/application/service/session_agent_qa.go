@@ -11,6 +11,7 @@ import (
 
 	"github.com/Tencent/WeKnora/internal/agent"
 	"github.com/Tencent/WeKnora/internal/agent/tools"
+	"github.com/Tencent/WeKnora/internal/application/access"
 	"github.com/Tencent/WeKnora/internal/event"
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/models/chat"
@@ -27,6 +28,32 @@ func (s *sessionService) AgentQA(
 	req *types.QARequest,
 	eventBus *event.EventBus,
 ) error {
+	var releaseProducer func()
+	var external bool
+	ctx, releaseProducer, external = retainMessageMaterialProducer(ctx)
+	if !external {
+		ctx = WithMessageMaterialOutputBoundary(ctx)
+		releaseProducer = func() { CloseMessageMaterialOutputBoundary(ctx) }
+	}
+	defer releaseProducer()
+	if native, ok := s.lineageVerifier.(*messageService); ok && native.materialStore != nil {
+		requestID, err := native.materialStore.MessageRequestControl(ctx, req.Session.ID, req.AssistantMessageID)
+		if err != nil {
+			return err
+		}
+		ctx = context.WithValue(ctx, agentHistoryCurrentRequestKey{}, requestID)
+		if req.UserMessageID != "" {
+			if _, err := native.GetMessage(ctx, req.Session.ID, req.UserMessageID); err != nil {
+				return err
+			}
+			if err := native.bindInitialMessageMaterial(ctx, req.AssistantMessageID, req.UserMessageID, requestID); err != nil {
+				return err
+			}
+		}
+	}
+	if len(req.ImageURLs) > 0 || req.ImageDescription != "" || req.QuotedContext != "" || len(req.Attachments) > 0 {
+		return access.ErrNextcloudPublicationDenied
+	}
 	sessionID := req.Session.ID
 	// Propagate the session ID so stateful sandbox backends (CubeSandbox) can
 	// bind script execution to a per-session MicroVM instance.
@@ -168,24 +195,24 @@ func (s *sessionService) AgentQA(
 	}
 	// A single-turn Agent can still reuse the session workspace, attachments,
 	// memory and tools. Admission is independent from message replay settings.
-	if err := s.historyGuard.CheckAgentHistoryReplay(ctx); err != nil {
+	if native, ok := s.lineageVerifier.(*messageService); ok && native.materialStore != nil {
+		// Native retained materials have per-message original proofs and actual
+		// scopes. Their current source guard runs on the captured inputs.
+		if err := CheckMessageMaterialOutputBoundary(ctx); err != nil {
+			return err
+		}
+	} else if s.historyGuard == nil {
+		excludeHistoricalContext(access.ErrNextcloudPublicationUnavailable)
+	} else if err := s.historyGuard.CheckAgentHistoryReplay(ctx); err != nil {
 		excludeHistoricalContext(err)
 	}
 	if historyAdmitted && agentConfig.MultiTurnEnabled {
 		budget := agent.HistoryTokenBudget(agentConfig)
-		llmContext, agentConfig.ContextTokenScale, err = LoadAgentHistory(
-			ctx,
-			s.messageRepo,
-			sessionID,
-			budget,
-			agentConfig.RetainRetrievalHistory,
-			s.historyGuard,
-		)
+		llmContext, agentConfig.ContextTokenScale, err = LoadAgentHistory(ctx, s.messageRepo, sessionID, budget, agentConfig.RetainRetrievalHistory, messageLineageHistoryAdmission{verifier: s.lineageVerifier})
 		if err != nil {
 			excludeHistoricalContext(err)
 		}
-		logger.Infof(ctx, ("Loaded %d history messages from DB (budget=%d tokens, t" +
-			"oken scale=%.2f)"), len(llmContext), budget, agentConfig.ContextTokenScale)
+		logger.Infof(ctx, "Loaded %d history messages from DB (budget=%d tokens, token scale=%.2f)", len(llmContext), budget, agentConfig.ContextTokenScale)
 	} else {
 		llmContext = []chat.Message{}
 	}
@@ -222,17 +249,11 @@ func (s *sessionService) AgentQA(
 			return fmt.Errorf("resolve sandbox file store for session %s: %w", sessionID, storeErr)
 		}
 		if inputStore != nil {
-			sessionAttachments, loadErr := s.messageRepo.GetSessionAttachments(ctx, sessionID)
+			sessionAttachments, loadErr := admittedAgentSessionAttachments(ctx, s.lineageVerifier, sessionID)
 			if loadErr != nil {
 				return fmt.Errorf("load session attachments for sandbox staging: %w", loadErr)
 			}
-			stagedAttachments, err = stager.stageSessionAttachments(
-				ctx,
-				sessionID,
-				agentConfig.SandboxConfigID,
-				req.Session.TenantID,
-				sessionAttachments,
-			)
+			stagedAttachments, err = stager.stageSessionAttachments(ctx, sessionID, agentConfig.SandboxConfigID, req.Session.TenantID, sessionAttachments)
 			if err != nil {
 				return fmt.Errorf("restore session attachments into sandbox: %w", err)
 			}
@@ -255,6 +276,23 @@ func (s *sessionService) AgentQA(
 		logger.Errorf(ctx, "Failed to create agent engine: %v", err)
 		return err
 	}
+	lineageEngine, ok := engine.(interface {
+		SetSourceLineageVerifier(func(context.Context, *types.SourceLineage) error)
+	})
+	if !ok || s.sourceLineageGuard == nil {
+		return access.ErrNextcloudPublicationUnavailable
+	}
+	lineageScope := access.LineageReadScope{Targets: agentConfig.SearchTargets, AgentID: req.CustomAgent.ID, AgentTenantID: req.CustomAgent.TenantID}
+	lineageEngine.SetSourceLineageVerifier(func(checkCtx context.Context, lineage *types.SourceLineage) error {
+		if err := CheckMessageMaterialOutputBoundary(ctx); err != nil {
+			return err
+		}
+
+		if err := s.revalidateAgentExecution(checkCtx, req.CustomAgent, agentConfig.SearchTargets); err != nil {
+			return err
+		}
+		return s.sourceLineageGuard.Check(checkCtx, lineage, lineageScope)
+	})
 	if s.groupAccess != nil {
 		guarded, ok := engine.(interface {
 			SetRoundGuard(func(context.Context) error)
@@ -265,6 +303,10 @@ func (s *sessionService) AgentQA(
 		agent := req.CustomAgent
 		searchTargets := agentConfig.SearchTargets
 		guarded.SetRoundGuard(func(guardCtx context.Context) error {
+			if err := CheckMessageMaterialOutputBoundary(ctx); err != nil {
+				return err
+			}
+
 			return s.revalidateAgentExecution(guardCtx, agent, searchTargets)
 		})
 	}
@@ -275,16 +317,7 @@ func (s *sessionService) AgentQA(
 	if historyAdmitted && s.memoryService != nil {
 		recall := s.memoryService.Recall(memoryCtx, req.Query)
 		if recall.Prompt != "" {
-			engine.SetMemoryPrompt(recall.Prompt)
-			used := types.UsedMemoriesFromItems(recall.Items)
-			if err := eventBus.Emit(ctx, event.Event{
-				Type:      event.EventMemoryRecalled,
-				SessionID: sessionID,
-				Data:      event.MemoryRecalledData{Memories: used},
-			}); err != nil {
-				logger.Warnf(ctx, "Failed to emit memory recalled event: %v", err)
-			}
-			logger.Infof(ctx, "Injected %d long-term memories into agent context", len(used))
+			return access.ErrNextcloudPublicationDenied
 		}
 	}
 
@@ -332,8 +365,12 @@ func (s *sessionService) AgentQA(
 
 	// Execute agent with streaming (asynchronously)
 	// Events will be emitted to EventBus and handled by the Handler layer
+	markMessageMaterialReady(ctx)
 	logger.Info(ctx, "Executing agent with streaming")
 	if _, err := engine.Execute(ctx, sessionID, req.AssistantMessageID, agentQuery, llmContext, agentImageURLs); err != nil {
+		if ctx.Err() == nil {
+			RefuseMessageMaterialOutputBoundary(ctx)
+		}
 		logger.Errorf(ctx, "Agent execution failed: %v", err)
 		// Emit error event to the EventBus used by this agent
 		eventBus.Emit(ctx, event.Event{
@@ -345,6 +382,10 @@ func (s *sessionService) AgentQA(
 				SessionID: sessionID,
 			},
 		})
+		return err
+	}
+	if err := CheckMessageMaterialOutputBoundary(ctx); err != nil {
+		return err
 	}
 	// Return empty - events will be handled by Handler via EventBus subscription
 	return nil

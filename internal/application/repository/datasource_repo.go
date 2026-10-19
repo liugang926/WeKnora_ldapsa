@@ -19,7 +19,8 @@ import (
 
 // DataSourceRepository provides data access for data sources
 type DataSourceRepository struct {
-	db *gorm.DB
+	db                   *gorm.DB
+	nameAuthorityFactory KnowledgeDisplayAuthorityFactory
 }
 
 type nextcloudCredentialWriteKey struct{}
@@ -54,9 +55,12 @@ func (r *DataSourceRepository) Create(ctx context.Context, ds *types.DataSource)
 		if err := tx.Create(ds).Error; err != nil {
 			return err
 		}
-		return tx.Model(&types.DataSource{}).
+		if err := tx.Model(&types.DataSource{}).
 			Where("id = ?", ds.ID).
-			UpdateColumn("sync_deletions", syncDeletions).Error
+			UpdateColumn("sync_deletions", syncDeletions).Error; err != nil {
+			return err
+		}
+		return admitDataSourceNameInput(tx, ctx, ds, r.nameAuthorityFactory)
 	})
 	ds.SyncDeletions = syncDeletions
 	return err
@@ -331,9 +335,16 @@ func (r *DataSourceRepository) Update(ctx context.Context, ds *types.DataSource)
 		}
 		// GORM Updates(struct) deliberately skips zero values, which would make
 		// a user-selected sync_deletions=false impossible to persist.
-		return tx.Model(&types.DataSource{}).
+		if err := tx.Model(&types.DataSource{}).
 			Where("id = ?", ds.ID).
-			UpdateColumn("sync_deletions", ds.SyncDeletions).Error
+			UpdateColumn("sync_deletions", ds.SyncDeletions).Error; err != nil {
+			return err
+		}
+		var actual types.DataSource
+		if err := tx.Where("id = ?", ds.ID).Take(&actual).Error; err != nil {
+			return err
+		}
+		return admitDataSourceNameInput(tx, ctx, &actual, r.nameAuthorityFactory)
 	})
 }
 
@@ -760,4 +771,10 @@ func (r *SyncLogRepository) CleanupOldLogs(ctx context.Context, retentionDays in
 		return err
 	}
 	return nil
+}
+
+// InstanceControlsClosed exposes the private recovery gate to the real human
+// source guard without allowing requests to reopen it.
+func (r *DataSourceRepository) InstanceControlsClosed(ctx context.Context, instance string) (bool, error) {
+	return nextcloudControlsClosed(r.db.WithContext(ctx), instance)
 }

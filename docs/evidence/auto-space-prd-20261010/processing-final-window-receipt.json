@@ -1,0 +1,24 @@
+{
+  "actor_id": "e69e5cf01feed35a460fc0db83fffaf53c7da7fb2e3167bdfb1f3e0949493a5f",
+  "actor_name": "/weknora-processing-prd-final-20261010",
+  "started_at": "2026-10-10T06:34:47.740888755Z",
+  "finished_at": "2026-10-10T06:49:48.154321755Z",
+  "running": false,
+  "entry_exit_code": 0,
+  "oom_killed": false,
+  "memory_bytes": 2147483648,
+  "nano_cpus": 1000000000,
+  "hard_wallclock_seconds": 900,
+  "commands": [
+    {
+      "log": "nextcloud-processing-regression-final.log",
+      "exit_code": 0,
+      "result": "six introduced regressions, root role two regressions, sync pause, metadata mask, required flags passed"
+    },
+    {
+      "log": "nextcloud-processing-live-final.log",
+      "exit_code": 1,
+      "result": "live graph and ten file smoke fixture span unique index absent; actual PG writer concurrency, SQLite provider fences, signatures, queue recovery, graph GC and live NC root auth passed"
+    }
+  ]
+}

@@ -2324,6 +2324,8 @@ export default {
     }
   },
   graphSettings: {
+    requiredForPublication: 'Require graph completion before publishing source files',
+    requiredForPublicationDescription: 'When this knowledge base is used as a source template, files become available for Q&A only after graph extraction succeeds. When unchecked, graph extraction is optional and failures remain visible in file status.',
     title: 'Knowledge Graph Configuration',
     description: 'Configure entity-relationship extraction to automatically build a knowledge graph from text (note: this is different from the "page-link graph" inside the Wiki — that one shows references between Wiki pages, while this one is an LLM-extracted entity-relationship graph)',
     enableLabel: 'Enable Entity-Relationship Extraction',
@@ -3028,7 +3030,10 @@ export default {
         'wiki.content_changed': 'Wiki content changed',
         'faq.import_started': 'FAQ import started',
         'faq.import_completed': 'FAQ import completed',
-        'faq.import_failed': 'FAQ import failed'
+        'faq.import_failed': 'FAQ import failed',
+        'nextcloud.gc_collect_requested': 'Cleanup attempt requested',
+        'nextcloud.gc_collect_finished': 'Cleanup attempt finished',
+        'nextcloud.gc_retry_requested': 'Cleanup retry scheduled'
       },
       outcomes: {
         accepted: 'Accepted',
@@ -5688,6 +5693,14 @@ export default {
     videoNotSupported: 'Your browser does not support video playback'
   },
   commandPalette: {
+    search: {
+      previousMessages: 'Previous page',
+      pageEmpty: 'No matching conversations on this page.',
+      continueMessages: 'Continue searching earlier conversations',
+      moreAvailable: 'Earlier conversations have not all been searched.',
+      failed: 'Search could not finish. Please try again.',
+      retry: 'Retry search',
+    },
     placeholder: 'Search knowledge bases, files, conversations…',
     clearRecent: 'Clear',
     retrieval: 'Retrieval settings',
@@ -6489,6 +6502,66 @@ export default {
     pauseFailed: 'Failed to pause',
     logs: 'Logs',
     actions: 'Actions',
+    gc: {
+      "more": "More tasks",
+      "title": "Retired version cleanup",
+      "description": "Review expiration and cleanup progress. Estimated bytes are separate from confirmed filesystem releases.",
+      "unavailable": "Cleanup status is unavailable or the safety check refused the action. Refresh and inspect the current status.",
+      "empty": "No retained cleanup tasks for this knowledge base.",
+      "nextAttempt": "Next retry",
+      "unknown": "Unverified",
+      "derivedExpiry": "Derived content expiry",
+      "originalExpiry": "Recovery copy expiry",
+      "estimated": "Estimated bytes",
+      "confirmed": "Confirmed released bytes",
+      "failure": "Reason for deferral",
+      "preview": "Preview inventory",
+      "safety": "An attempt repeats current-version, reference, retention and read/build lease checks. Unknown inventories stay blocked; allocated database pages may remain after row deletion.",
+      "category": "Category",
+      "status": "Status",
+      "count": "Count",
+      "collect": "Attempt collection now",
+      "retry": "Retry on next sweep",
+      "refresh": "Refresh",
+      "reason": {
+        "retired": "Replaced version",
+        "tombstone": "Source withdrawn"
+      },
+      "state": {
+        "pending": "Pending",
+        "retry": "Retry scheduled",
+        "blocked": "Safety check pending",
+        "deleting": "Collecting",
+        "collected": "Recorded items collected"
+      },
+      "error": {"content_lease_coverage_unverified": "Reader/build coverage is unverified; collection stays blocked.", "content_read_or_build_busy": "A reader or builder is active; retry later.", "content_generation_unverified": "Source generation needs reconciliation.", "candidate_is_current": "This is still the current version and cannot be collected.", "build_still_active": "Build is still active; retain its data.", "source_identity_changed": "Source identity changed; refresh and reconcile.", "derived_backend_inventory_unverified": "Derived backend inventory is incomplete; retain data.", "derived_provenance_unverified": "Historical derived origins are unverified; retain data.", "safe_object_cleanup_unavailable": "Protected references or backend checks prevent collection.", "provider_delete_failed": "Storage deletion was not confirmed; inspect the backend and retry.", "retention_window_open": "Retention is still active; retain data.", "invalid_image_inventory": "Image inventory needs repair before retry.", "original_body_retained_or_unverified": "Body references, leases, retention windows, or verification still require retention",
+        "gc_step_failed": "Cleanup step failed; inspect and retry."},
+      "kind": {
+        "knowledge": "Knowledge record",
+        "derived_index": "Derived inventory",
+        "chunk": "Chunk",
+        "local_embedding": "Local index",
+        "sql_original_body": "Original input bodies",
+        "source_file": "Original copy",
+        "extracted_image": "Extracted image"
+      }
+    },
+    capacity: {
+      title: "AI ingestion capacity",
+      description: "High watermarks pause new AI ingestion. Original uploads and current knowledge are retained.",
+      unavailable: "Capacity cannot be verified. New AI ingestion is closed.",
+      normal: "Normal capacity",
+      warning: "Capacity warning",
+      paused: "New AI ingestion paused",
+      physical: "Physical available / total",
+      retained: "Retained KB objects",
+      reserved: "Reserved ingestion bytes",
+      quota: "Retention quota MiB (0 unlimited)",
+      warningLabel: "Warning %",
+      pause: "Pause %",
+      save: "Save",
+      refresh: "Refresh",
+    },
     failedCandidates: {
       title: 'Failed Nextcloud files',
       hint: 'Only failed files in this paired source appear here. A retry fetches the current source file again; it does not publish the failed copy.',

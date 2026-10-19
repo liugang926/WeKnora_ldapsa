@@ -118,6 +118,8 @@ type Membership struct {
 	TenantID   uint64     `json:"tenant_id"`
 	TenantName string     `json:"tenant_name"`
 	Role       TenantRole `json:"role"`
+	// ScopedOnly is an entrance to granted source KBs; it is not tenant membership.
+	ScopedOnly bool `json:"scoped_only"`
 }
 
 // TenantMemberResponse is the API projection of a TenantMember row joined

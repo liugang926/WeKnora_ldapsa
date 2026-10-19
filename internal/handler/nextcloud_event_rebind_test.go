@@ -55,8 +55,7 @@ func setupManagedRebindTest(t *testing.T, dialect string) (*gorm.DB, *gin.Engine
 }
 
 func managedRebindRequest(router *gin.Engine, rotationID string, tenantID uint64,
-	role types.TenantRole, apiKey bool,
-) *httptest.ResponseRecorder {
+	role types.TenantRole, apiKey bool) *httptest.ResponseRecorder {
 	body, _ := json.Marshal(map[string]string{"operation_id": rotationID})
 	req := httptest.NewRequest(http.MethodPost, testManagedEventPath+"/rebind", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -116,9 +115,8 @@ func TestNextcloudEventRebindFinalizedRotationHTTPAndRepository(t *testing.T) {
 				KeyID      string `gorm:"column:current_key_id"`
 				Ciphertext string `gorm:"column:current_secret_ciphertext"`
 			}
-			require.NoError(t,
-				db.Table("nextcloud_event_connections").Select("current_key_id, current_secret_ciphertext").
-					Where("connection_id = ?", credential.ConnectionID).Take(&original).Error)
+			require.NoError(t, db.Table("nextcloud_event_connections").Select("current_key_id, current_secret_ciphertext").
+				Where("connection_id = ?", credential.ConnectionID).Take(&original).Error)
 			pending := sampleNextcloudEventBatch("101", "102")
 			pending.ConnectionID = credential.ConnectionID
 			require.Equal(t, http.StatusAccepted, postNextcloudEvent(router,
@@ -134,9 +132,7 @@ func TestNextcloudEventRebindFinalizedRotationHTTPAndRepository(t *testing.T) {
 				{"new publication epoch", "active", 2},
 			} {
 				t.Run(live.name, func(t *testing.T) {
-					h.inspect = func(ctx context.Context,
-						cfg *types.DataSourceConfig,
-					) (nextcloud.PairingIdentity, error) {
+					h.inspect = func(ctx context.Context, cfg *types.DataSourceConfig) (nextcloud.PairingIdentity, error) {
 						identity, err := originalInspect(ctx, cfg)
 						identity.PublicationState = live.state
 						identity.PublicationEpoch = live.epoch
@@ -178,8 +174,7 @@ func TestNextcloudEventRebindFinalizedRotationHTTPAndRepository(t *testing.T) {
 				response := managedRebindRequest(router, rotation.OperationID, 7, types.TenantRoleAdmin, false)
 				require.Equal(t, http.StatusConflict, response.Code, state+": "+response.Body.String())
 			}
-			require.NoError(t, db.Exec("UPDATE nextcloud_source_rotations SET state = 'finalized' WHERE "+
-				"operation_id = ?",
+			require.NoError(t, db.Exec(`UPDATE nextcloud_source_rotations SET state = 'finalized' WHERE operation_id = ?`,
 				rotation.OperationID).Error)
 			response := managedRebindRequest(router, rotation.OperationID, 7, types.TenantRoleAdmin, false)
 			require.Equal(t, http.StatusOK, response.Code, response.Body.String())
@@ -192,9 +187,8 @@ func TestNextcloudEventRebindFinalizedRotationHTTPAndRepository(t *testing.T) {
 				KeyID      string `gorm:"column:current_key_id"`
 				Ciphertext string `gorm:"column:current_secret_ciphertext"`
 			}
-			require.NoError(t,
-				db.Table("nextcloud_event_connections").Select("current_key_id, current_secret_ciphertext").
-					Where("connection_id = ?", credential.ConnectionID).Take(&updated).Error)
+			require.NoError(t, db.Table("nextcloud_event_connections").Select("current_key_id, current_secret_ciphertext").
+				Where("connection_id = ?", credential.ConnectionID).Take(&updated).Error)
 			require.Equal(t, original, updated)
 			again := managedRebindRequest(router, rotation.OperationID, 7, types.TenantRoleAdmin, false)
 			require.Equal(t, http.StatusOK, again.Code, again.Body.String())
@@ -263,17 +257,14 @@ func TestNextcloudEventRebindRejectsUncertainDispatch(t *testing.T) {
 				{"new_config_sha256", strings.Repeat("f", 64)},
 			} {
 				var original string
-				require.NoError(t,
-					db.Raw("SELECT "+change.column+" FROM nextcloud_source_rotations WHERE operation_id = ?",
-						rotation.OperationID).Scan(&original).Error)
-				require.NoError(t,
-					db.Exec("UPDATE nextcloud_source_rotations SET "+change.column+" = ? WHERE operation_id = ?",
-						change.value, rotation.OperationID).Error)
+				require.NoError(t, db.Raw("SELECT "+change.column+" FROM nextcloud_source_rotations WHERE operation_id = ?",
+					rotation.OperationID).Scan(&original).Error)
+				require.NoError(t, db.Exec("UPDATE nextcloud_source_rotations SET "+change.column+" = ? WHERE operation_id = ?",
+					change.value, rotation.OperationID).Error)
 				response = managedRebindRequest(router, rotation.OperationID, 7, types.TenantRoleAdmin, false)
 				require.Equal(t, http.StatusConflict, response.Code, change.column+": "+response.Body.String())
-				require.NoError(t,
-					db.Exec("UPDATE nextcloud_source_rotations SET "+change.column+" = ? WHERE operation_id = ?",
-						original, rotation.OperationID).Error)
+				require.NoError(t, db.Exec("UPDATE nextcloud_source_rotations SET "+change.column+" = ? WHERE operation_id = ?",
+					original, rotation.OperationID).Error)
 			}
 			require.NoError(t, db.Exec(`UPDATE data_sources SET status = 'paused' WHERE id = ?`,
 				"ds-synthetic").Error)
@@ -282,8 +273,7 @@ func TestNextcloudEventRebindRejectsUncertainDispatch(t *testing.T) {
 			require.NoError(t, db.Exec(`UPDATE data_sources SET status = 'active' WHERE id = ?`,
 				"ds-synthetic").Error)
 			changed := syntheticNextcloudEventDataSourceConfig(t, "https://nextcloud.example.test", true)
-			require.NoError(t, db.Exec("UPDATE data_sources SET config = ? WHERE id = ?", string(changed),
-				"ds-synthetic").Error)
+			require.NoError(t, db.Exec(`UPDATE data_sources SET config = ? WHERE id = ?`, string(changed), "ds-synthetic").Error)
 			response = managedRebindRequest(router, rotation.OperationID, 7, types.TenantRoleAdmin, false)
 			require.Equal(t, http.StatusConflict, response.Code, response.Body.String())
 			require.NoError(t, db.Exec(`UPDATE data_sources SET config = ? WHERE id = ?`,

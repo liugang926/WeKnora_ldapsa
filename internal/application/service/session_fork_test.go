@@ -230,6 +230,18 @@ type fakeMessageStore struct {
 	liveArtifacts       []types.MessageArtifactRecord
 }
 
+func (f *fakeMessageStore) readForkAlgorithmMaterial(ctx context.Context, sessionID, pointID string) (*types.Message, []*types.Message, error) {
+	point, err := f.GetMessage(ctx, sessionID, pointID)
+	if err != nil || point == nil {
+		return point, nil, err
+	}
+	history, err := f.ListMessagesBySessionUpTo(ctx, sessionID, point.CreatedAt, point.ID)
+	if err != nil {
+		return nil, nil, err
+	}
+	return point, historyThroughForkPoint(history, point), nil
+}
+
 func newFakeMessageStore(messages []*types.Message) *fakeMessageStore {
 	return &fakeMessageStore{messages: messages}
 }
@@ -478,8 +490,9 @@ func newForkFixture(t *testing.T, port *fakeForkSandboxPort, messages []*types.M
 	*SessionForkService, *fakeSessionStore, *fakeMessageStore,
 ) {
 	t.Helper()
+	titleLineage, _ := types.NewCompleteSourceLineage()
 	sessions := newFakeSessionStore(&types.Session{
-		ID: "src", TenantID: 1, UserID: "u1", Title: "原会话", SandboxConfigID: "cfg-1",
+		ID: "src", TenantID: 1, UserID: "u1", Title: "原会话", TitleSourceLineage: titleLineage, SandboxConfigID: "cfg-1",
 	})
 	msgs := newFakeMessageStore(messages)
 	sessions.origIDsFrom = msgs
@@ -544,7 +557,7 @@ func TestCopyMessagesIntoRemapsRequestIDsPerTurn(t *testing.T) {
 	require.NotEqual(t, "u1", copies[0].ID)
 }
 
-func TestForkCopiesArtifactsAndAttachmentsOntoNewSession(t *testing.T) {
+func TestForkCopiesCoveredAttachmentsAndOmitsUnknownArtifacts(t *testing.T) {
 	turn := checkpointedTurn("u-msg-1", "a-msg-1", "sbx-1", "sha1", 0)
 	turn[0].Attachments = types.MessageAttachments{{
 		ID: "doc-1", FileName: "brief.pdf", FileType: ".pdf", FileSize: 12,
@@ -577,7 +590,7 @@ func TestForkCopiesArtifactsAndAttachmentsOntoNewSession(t *testing.T) {
 	require.NotNil(t, copiedUser)
 	require.Equal(t, turn[0].Attachments, copiedUser.Attachments)
 	require.NotNil(t, copiedAssistant)
-	require.Equal(t, turn[1].Artifacts, copiedAssistant.Artifacts)
+	require.Empty(t, copiedAssistant.Artifacts)
 }
 
 func TestForkUsesProvidedTitle(t *testing.T) {

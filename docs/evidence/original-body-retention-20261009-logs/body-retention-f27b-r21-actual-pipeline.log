@@ -1,0 +1,52 @@
+INFO [2026-10-09 02:43:45.761] []                      | [SQLite] Initializing SQLite retriever engine repository with sqlite-vec
+--- FAIL: TestOriginalBodyActualLocalDerivedSQLite (0.55s)
+    --- FAIL: TestOriginalBodyActualLocalDerivedSQLite/body-retention (0.55s)
+panic: reflect: call of reflect.Value.Field on int64 Value [recovered, repanicked]
+
+goroutine 12 [running]:
+testing.tRunner.func1.2({0x2e0d760, 0x19e2861d1da0})
+	/usr/local/go/src/testing/testing.go:1974 +0x1a0
+testing.tRunner.func1()
+	/usr/local/go/src/testing/testing.go:1977 +0x318
+panic({0x2e0d760?, 0x19e2861d1da0?})
+	/usr/local/go/src/runtime/panic.go:860 +0x12c
+reflect.Value.Field({0x2cf3300?, 0x19e286aa53e0?, 0x80?}, 0x3?)
+	/usr/local/go/src/reflect/value.go:1266 +0x108
+gorm.io/gorm/schema.(*Field).setupValuerAndSetter.func1({0x2f6be40?, 0x19e286c7a6f0?}, {0x2cf3300?, 0x19e286aa53e0?, 0x2bfc340?})
+	/go/pkg/mod/gorm.io/gorm@v1.31.1/schema/field.go:461 +0x6c
+github.com/Tencent/WeKnora/internal/application/repository.bodyRecordKey(0x19e286b35710, {{0x36dc23f, 0x1a}, {0x35098b2, 0x2}, {0x3562bf5, 0x6}, {0x64dd160, 0x4, 0x4}}, ...)
+	/workspace/internal/application/repository/original_body_fields.go:479 +0xb4
+github.com/Tencent/WeKnora/internal/application/repository.InstallOriginalBodyRetentionCallbacks.func2.(*OriginalBodyRetentionStore).resolveStatement.1({0x2cf3300?, 0x19e286aa53e0?, 0x49?})
+	/workspace/internal/application/repository/original_body_fields.go:535 +0x74
+github.com/Tencent/WeKnora/internal/application/repository.bodyVisit({0x2cf3300?, 0x19e286aa53e0?, 0x66b9a20?}, 0x19e286aa2758)
+	/workspace/internal/application/repository/original_body_fields.go:467 +0xf8
+github.com/Tencent/WeKnora/internal/application/repository.(*OriginalBodyRetentionStore).resolveStatement(...)
+	/workspace/internal/application/repository/original_body_fields.go:534
+github.com/Tencent/WeKnora/internal/application/repository.InstallOriginalBodyRetentionCallbacks.func2(0x19e286b35710)
+	/workspace/internal/application/repository/original_body_fields.go:440 +0x24c
+gorm.io/gorm.(*processor).Execute(0x19e286211720, 0x38ae990?)
+	/go/pkg/mod/gorm.io/gorm@v1.31.1/callbacks.go:136 +0x3ac
+gorm.io/gorm.(*DB).Count(0x19e286b35710, 0x19e286aa53e0)
+	/go/pkg/mod/gorm.io/gorm@v1.31.1/finisher_api.go:497 +0x748
+github.com/Tencent/WeKnora/internal/application/repository.(*knowledgeSpanRepository).upsertWithOriginalSpan.func1(0x19e286be6de0)
+	/workspace/internal/application/repository/span_output_input.go:330 +0xbdc
+gorm.io/gorm.(*DB).Transaction(0x19e286be6c90, 0x19e286aa32c8, {0x19e286aa32c0?, 0x1?, 0x1?})
+	/go/pkg/mod/gorm.io/gorm@v1.31.1/finisher_api.go:654 +0x1d4
+github.com/Tencent/WeKnora/internal/application/repository.(*knowledgeSpanRepository).upsertWithOriginalSpan(0x19e2861c0c08, {0x38b5088, 0x19e286b354d0}, 0x19e286917680)
+	/workspace/internal/application/repository/span_output_input.go:258 +0x23c
+github.com/Tencent/WeKnora/internal/application/repository.(*knowledgeSpanRepository).Upsert(0x19e2861c0c08?, {0x38b5088?, 0x19e286b354d0?}, 0x19e2867fd1a0?)
+	/workspace/internal/application/repository/knowledge_span_repo.go:59 +0x24
+github.com/Tencent/WeKnora/internal/application/service.(*spanTracker).OpenAttempt(0x19e286adf740, {0x38b5088, 0x19e286b354d0}, {0x19e2867fd1a0, 0x10}, {0x0, 0x0})
+	/workspace/internal/application/service/knowledge_span_tracker.go:272 +0x1d0
+github.com/Tencent/WeKnora/internal/application/service.setupActualBodyLocalGC(0x19e2865c5448, 0x19e286567dd0, {0x38b5088, 0x19e286b354d0}, 0x0)
+	/workspace/internal/application/service/nextcloud_local_derived_gc_test.go:356 +0x628
+github.com/Tencent/WeKnora/internal/application/service.localDerivedActualPipeline(0x19e2865c5448, 0x0, {0x19e28624bf48?, 0x6ac854e1?, 0x19e28624bf58?})
+	/workspace/internal/application/service/nextcloud_local_derived_gc_test.go:120 +0x504
+github.com/Tencent/WeKnora/internal/application/service.TestOriginalBodyActualLocalDerivedSQLite.func1(0x19e2865c5448?)
+	/workspace/internal/application/service/nextcloud_local_derived_gc_test.go:317 +0x34
+testing.tRunner(0x19e2865c5448, 0x19e2861d0c90)
+	/usr/local/go/src/testing/testing.go:2036 +0xc4
+created by testing.(*T).Run in goroutine 11
+	/usr/local/go/src/testing/testing.go:2101 +0x3a8
+FAIL	github.com/Tencent/WeKnora/internal/application/service	1.122s
+FAIL

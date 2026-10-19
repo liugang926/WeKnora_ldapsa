@@ -123,7 +123,7 @@ func (h *KnowledgeHandler) BatchDownloadKnowledge(c *gin.Context) {
 	for _, entry := range entries {
 		readItems = append(readItems, byID[entry.ID])
 	}
-	leases, err := h.beginNextcloudRead(ctx, c, readItems)
+	leases, err := h.beginNextcloudRead(c, ctx, readItems)
 	if err != nil {
 		_ = c.Error(err)
 		return
@@ -150,6 +150,10 @@ func (h *KnowledgeHandler) BatchDownloadKnowledge(c *gin.Context) {
 	}
 	open := func(openCtx context.Context, id string) (io.ReadCloser, string, error) {
 		file, filename, err := h.kgService.GetKnowledgeFile(openCtx, id)
+		if err != nil {
+			return nil, "", err
+		}
+		file, err = bindKnowledgeOutputFile(openCtx, byID[id], file)
 		if err != nil {
 			return nil, "", err
 		}

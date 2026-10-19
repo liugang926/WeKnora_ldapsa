@@ -366,6 +366,10 @@ make test
 
 `make fmt` formats the entire Go repository, so run it only with a clean worktree and review the resulting diff. Some full-suite tests require local infrastructure or service configuration. If a full check fails for an unrelated baseline or environment reason, include the exact command and failure in the PR while still providing passing targeted tests for your change.
 
+## Nextcloud directory integration
+
+The automatic directory integration uses an existing tenant, a dedicated knowledge base, source-scoped user/group grants and signed per-file processing states. See [onboarding and coordinated recovery](docs/nextcloud-onboarding.md) and [processing, graph persistence and status delivery](docs/nextcloud-processing-state-v2.md) for the matching migrations, restricted credentials and validation boundaries. Both systems must be upgraded together before enabling the integration.
+
 ## 🔒 Security Notice
 
 **Important:** Starting from v0.1.3, WeKnora includes login authentication functionality to enhance system security. For production deployments, we strongly recommend:

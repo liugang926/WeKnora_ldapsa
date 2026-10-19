@@ -7,8 +7,6 @@ import (
 	"reflect"
 	"time"
 
-	apperrors "github.com/Tencent/WeKnora/internal/errors"
-
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -17,10 +15,7 @@ import (
 
 // ErrNextcloudEventRebindUnsafe means a prior queue admission or a different
 // dispatch failure still needs operator review. Rebinding must not erase it.
-var ErrNextcloudEventRebindUnsafe = apperrors.NewProtocolError(
-	errors.New("nextcloud event dispatch requires manual review before source rotation rebind"),
-	"Nextcloud event dispatch requires manual review before source rotation rebind",
-)
+var ErrNextcloudEventRebindUnsafe = errors.New("Nextcloud event dispatch requires manual review before source rotation rebind")
 
 // RebindFinalizedSourceRotation keeps the event connection and its HMAC key,
 // inbox, nonces, and receipt/application watermarks after the exact source
@@ -40,7 +35,7 @@ func (r *NextcloudEventInboxRepository) RebindFinalizedSourceRotation(
 	err = r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		// Ingest, dispatch, key rotation and revoke all lock the connection
 		// first. SQLite needs a real write before its first transactional read.
-		if tx.Name() == "sqlite" {
+		if tx.Dialector.Name() == "sqlite" {
 			lock := tx.Exec(`UPDATE nextcloud_event_connections SET status = status
 				WHERE tenant_id = ? AND datasource_id = ? AND status = 'active'`,
 				identity.TenantID, identity.DatasourceID)
@@ -53,8 +48,7 @@ func (r *NextcloudEventInboxRepository) RebindFinalizedSourceRotation(
 		}
 		var connection nextcloudEventConnection
 		if err := tx.Table("nextcloud_event_connections").Clauses(clause.Locking{Strength: "UPDATE"}).
-			Where(("tenant_id = ? AND datasource_id = ? AND status = 'activ" +
-				"e'"), identity.TenantID, identity.DatasourceID).
+			Where("tenant_id = ? AND datasource_id = ? AND status = 'active'", identity.TenantID, identity.DatasourceID).
 			Take(&connection).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return ErrNextcloudEventConnectionMissing
@@ -143,7 +137,7 @@ func (r *NextcloudEventInboxRepository) RebindFinalizedSourceRotation(
 		}
 		if checkpoint.ReceivedID < dispatch.DispatchedID || dispatch.DispatchedID != dispatch.AppliedID ||
 			dispatch.TargetEventID > dispatch.AppliedID || dispatch.LeaseToken != nil || dispatch.LeaseUntil != nil ||
-			(dispatch.State != "idle" && (dispatch.State != "blocked" || dispatch.LastErrorCode != "source_changed")) {
+			(dispatch.State != "idle" && !(dispatch.State == "blocked" && dispatch.LastErrorCode == "source_changed")) {
 			return ErrNextcloudEventRebindUnsafe
 		}
 		// A running manual/scheduled task may still be writing this source even
@@ -156,10 +150,7 @@ func (r *NextcloudEventInboxRepository) RebindFinalizedSourceRotation(
 		if running != 0 {
 			return ErrNextcloudEventRebindUnsafe
 		}
-		updated := tx.Table(
-			"nextcloud_event_connections",
-		).Where(("connection_id = ? AND status = 'active' AND datasource_" +
-			"config_sha256 = ?"),
+		updated := tx.Table("nextcloud_event_connections").Where("connection_id = ? AND status = 'active' AND datasource_config_sha256 = ?",
 			connection.ConnectionID, rotation.OldConfigSHA).
 			Updates(map[string]any{"datasource_config_sha256": rotation.NewConfigSHA, "updated_at": time.Now().UTC()})
 		if updated.Error != nil {
@@ -169,14 +160,9 @@ func (r *NextcloudEventInboxRepository) RebindFinalizedSourceRotation(
 			return ErrNextcloudEventScope
 		}
 		if dispatch.State == "blocked" {
-			if err := tx.Table(
-				"nextcloud_event_dispatch",
-			).Where(("connection_id = ? AND state = 'blocked' AND last_error_" +
-				"code = 'source_changed'"),
-				connection.ConnectionID).Updates(map[string]any{
-				"state": "idle", "last_error_code": "",
-				"next_attempt_at": time.Now().UTC(), "updated_at": time.Now().UTC(),
-			}).Error; err != nil {
+			if err := tx.Table("nextcloud_event_dispatch").Where("connection_id = ? AND state = 'blocked' AND last_error_code = 'source_changed'",
+				connection.ConnectionID).Updates(map[string]any{"state": "idle", "last_error_code": "",
+				"next_attempt_at": time.Now().UTC(), "updated_at": time.Now().UTC()}).Error; err != nil {
 				return fmt.Errorf("resume Nextcloud event dispatch: %w", err)
 			}
 		}

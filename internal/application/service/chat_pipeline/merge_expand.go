@@ -13,6 +13,9 @@ func (p *PluginMerge) expandShortContextWithNeighbors(
 	chatManage *types.ChatManage,
 	results []*types.SearchResult,
 ) []*types.SearchResult {
+	if p.ragChunks != nil || types.RAGSourceLineageFromContext(ctx) != nil || hasRAGInputReceipt(results) {
+		return p.expandCapturedNeighbors(ctx, results)
+	}
 	const (
 		minLen = 350
 		maxLen = 850

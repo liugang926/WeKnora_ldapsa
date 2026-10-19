@@ -276,6 +276,13 @@ func createAgentQueryEvent(
 
 // createUserMessage creates a user message and returns the created message.
 func (h *Handler) createUserMessage(ctx context.Context, sessionID, query, requestID string, mentionedItems types.MentionedItems, images types.MessageImages, attachments types.MessageAttachments, channel string, attribution *types.SuggestionAttribution) (*types.Message, error) {
+	// query is the original request.Query, before prompt rendering/rewrite.
+	// Only this explicit raw-text adapter may admit an independent user body;
+	// opaque image/attachment inputs keep their complete message proof unknown.
+	lineage := types.UnknownSourceLineage()
+	if len(images) == 0 && len(attachments) == 0 {
+		lineage, _ = types.NewCompleteSourceLineage()
+	}
 	return h.messageService.CreateMessage(ctx, &types.Message{
 		SessionID:        sessionID,
 		Role:             "user",
@@ -288,6 +295,7 @@ func (h *Handler) createUserMessage(ctx context.Context, sessionID, query, reque
 		Attachments:      attachments,
 		Channel:          channel,
 		ExecutionContext: types.MessageExecutionContext{SuggestionAttribution: attribution},
+		SourceLineage:    lineage,
 	})
 }
 
@@ -308,7 +316,7 @@ func (h *Handler) setupStreamHandler(
 ) *AgentStreamHandler {
 	streamHandler := NewAgentStreamHandler(
 		ctx, sessionID, assistantMessageID, requestID, tenantID, receivedAt,
-		assistantMessage, h.streamManager, eventBus, h.artifactCollector,
+		assistantMessage, h.nativeLiveStreamManager(ctx, tenantID, sessionID, assistantMessageID, requestID), eventBus, h.artifactCollector,
 		h.workspaceCheckpointer, h.sandboxIDLookup,
 	)
 	streamHandler.Subscribe()

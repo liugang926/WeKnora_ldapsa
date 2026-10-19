@@ -127,7 +127,16 @@ func (r *tenantRepository) DeleteTenant(ctx context.Context, id uint64) error {
 		if err := tx.Where("tenant_id = ?", id).Delete(&types.TenantMember{}).Error; err != nil {
 			return err
 		}
-		return tx.Where("id = ?", id).Delete(&types.Tenant{}).Error
+		var owner types.Tenant
+		if err := tx.Unscoped().Clauses(clause.Locking{Strength: "UPDATE"}).Where("id=?", id).Take(&owner).Error; err != nil {
+			return err
+		}
+		if !owner.DeletedAt.Valid {
+			if err := tx.Where("id = ?", id).Delete(&types.Tenant{}).Error; err != nil {
+				return err
+			}
+		}
+		return closeDeletedNextcloudTargetsInTx(tx, id, "")
 	})
 }
 

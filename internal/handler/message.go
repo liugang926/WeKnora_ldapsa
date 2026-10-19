@@ -11,6 +11,8 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/Tencent/WeKnora/internal/application/access"
+	"github.com/Tencent/WeKnora/internal/application/repository"
+	"github.com/Tencent/WeKnora/internal/application/service"
 	"github.com/Tencent/WeKnora/internal/errors"
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/storageurl"
@@ -66,12 +68,25 @@ func (h *MessageHandler) resolveResourceRewriter(c *gin.Context) (*storageurl.Re
 	return storageurl.NewRequestRewriter(ctx, mode, h.FileService, h.StorageResolver), nil
 }
 
+func messageHistoryReadErrorOrNil(err error) error {
+	if err == nil {
+		return nil
+	}
+	return messageHistoryReadError(err)
+}
 func messageHistoryReadError(err error) error {
+	if stderrors.Is(err, repository.ErrKnowledgeInputChanged) || stderrors.Is(err, types.ErrSourceLineageUnknown) || stderrors.Is(err, repository.ErrNextcloudContentGCUncovered) || stderrors.Is(err, gorm.ErrRecordNotFound) {
+		return errors.NewServiceUnavailableError("Saved message original material is unavailable")
+	}
+
 	if stderrors.Is(err, access.ErrNextcloudPublicationUnavailable) {
 		return errors.NewServiceUnavailableError("Cannot verify current Nextcloud file access")
 	}
 	if stderrors.Is(err, access.ErrNextcloudPublicationDenied) {
 		return errors.NewForbiddenError("Current Nextcloud file access is required")
+	}
+	if stderrors.Is(err, types.ErrVectorCandidateRetrievalUnavailable) || messageHistoryStorageUnavailable(err) {
+		return errors.NewServiceUnavailableError("Saved message storage is unavailable")
 	}
 	return errors.NewInternalServerError(errors.PublicMessage(err))
 }
@@ -92,7 +107,12 @@ func messageHistoryReadError(err error) error {
 // @Security     ApiKeyAuth
 // @Router       /messages/{session_id}/load [get]
 func (h *MessageHandler) LoadMessages(c *gin.Context) {
-	ctx := c.Request.Context()
+	ctx := service.WithMessageMaterialOutputBoundary(c.Request.Context())
+	c.Request = c.Request.WithContext(ctx)
+	defer service.CloseMessageMaterialOutputBoundary(ctx)
+	prior := c.Writer
+	c.Writer = &knowledgeCollectionAuthorizationWriter{ResponseWriter: prior, check: func() error { return messageHistoryReadErrorOrNil(service.CheckMessageMaterialOutputBoundary(ctx)) }}
+	defer func() { c.Writer = prior }()
 
 	logger.Info(ctx, "Start loading messages")
 
@@ -256,7 +276,12 @@ func (h *MessageHandler) DeleteMessage(c *gin.Context) {
 // @Security     ApiKeyAuth
 // @Router       /messages/search [post]
 func (h *MessageHandler) SearchMessages(c *gin.Context) {
-	ctx := c.Request.Context()
+	ctx := service.WithMessageMaterialOutputBoundary(c.Request.Context())
+	c.Request = c.Request.WithContext(ctx)
+	defer service.CloseMessageMaterialOutputBoundary(ctx)
+	prior := c.Writer
+	c.Writer = &knowledgeCollectionAuthorizationWriter{ResponseWriter: prior, check: func() error { return messageHistoryReadErrorOrNil(service.CheckMessageMaterialOutputBoundary(ctx)) }}
+	defer func() { c.Writer = prior }()
 
 	logger.Info(ctx, "Start searching messages")
 
@@ -274,14 +299,15 @@ func (h *MessageHandler) SearchMessages(c *gin.Context) {
 	}
 
 	params := &types.MessageSearchParams{
-		Query:      secutils.SanitizeForLog(request.Query),
+		Query:      request.Query,
+		Cursor:     request.Cursor,
 		Mode:       types.MessageSearchMode(request.Mode),
 		Limit:      request.Limit,
 		SessionIDs: request.SessionIDs,
 	}
 
-	logger.Infof(ctx, "Searching messages with params: query=%s, mode=%s, limit=%d, session_ids=%v",
-		params.Query, params.Mode, params.Limit, params.SessionIDs)
+	logger.Infof(ctx, "Searching messages with params: mode=%s, limit=%d, session_count=%d",
+		params.Mode, params.Limit, len(params.SessionIDs))
 
 	result, err := h.MessageService.SearchMessages(ctx, params)
 	if err != nil {
@@ -299,6 +325,7 @@ func (h *MessageHandler) SearchMessages(c *gin.Context) {
 
 // SearchMessagesRequest defines the request structure for searching messages
 type SearchMessagesRequest struct {
+	Cursor string `json:"cursor,omitempty"`
 	// Query text for search
 	Query string `json:"query" binding:"required"`
 	// Search mode: "keyword", "vector", "hybrid" (default: "hybrid")

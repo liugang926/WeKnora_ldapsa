@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/Tencent/WeKnora/internal/models/api"
 	"regexp"
 	"strings"
 
@@ -90,7 +91,11 @@ func (p *PluginQueryUnderstand) OnEvent(ctx context.Context,
 			"rounds":     len(historyList),
 		})
 	} else {
-		historyList = p.loadHistory(ctx, chatManage)
+		var err error
+		historyList, err = p.loadHistory(ctx, chatManage)
+		if err != nil && types.RAGSourceLineageFromContext(ctx) != nil {
+			return sourceLineagePluginError(err)
+		}
 	}
 
 	// --- Select the appropriate model ---
@@ -116,12 +121,26 @@ func (p *PluginQueryUnderstand) OnEvent(ctx context.Context,
 	}
 
 	// --- Call model ---
+	if err := AccountHistory(ctx, historyList); err != nil {
+		return sourceLineagePluginError(err)
+	}
+	if err := CheckSourceLineageInputs(ctx, chatManage); err != nil {
+		return sourceLineagePluginError(err)
+	}
 	thinking := false
 	modelCtx := types.WithLLMCallMetadata(ctx, "query_rewrite", "")
-	response, err := rewriteModel.Chat(modelCtx, []chat.Message{
+	rewriteMessages := []chat.Message{
 		{Role: "system", Content: systemContent},
 		userMsg,
-	}, &chat.ChatOptions{
+	}
+	rewriteMessages, freezeErr := api.FreezeSourceModelMessages(rewriteMessages)
+	if freezeErr != nil {
+		return sourceLineagePluginError(freezeErr)
+	}
+	if err := stampModelInputLineage(ctx, rewriteMessages); err != nil {
+		return sourceLineagePluginError(err)
+	}
+	response, err := rewriteModel.Chat(modelCtx, rewriteMessages, &chat.ChatOptions{
 		Temperature:         0.3,
 		MaxCompletionTokens: maxTokens,
 		Thinking:            &thinking,
@@ -193,14 +212,14 @@ func (p *PluginQueryUnderstand) updateUserMessageImageCaption(ctx context.Contex
 }
 
 // loadHistory fetches and processes conversation history for rewrite context.
-func (p *PluginQueryUnderstand) loadHistory(ctx context.Context, chatManage *types.ChatManage) []*types.History {
+func (p *PluginQueryUnderstand) loadHistory(ctx context.Context, chatManage *types.ChatManage) ([]*types.History, error) {
 	// Honor the multi-turn-disabled signal: chatManage.MaxRounds == 0 is set
 	// explicitly by applyAgentOverridesToChatManage when the custom agent has
 	// MultiTurnEnabled=false. We must not silently fall back to the global
 	// default, otherwise rewrite + image analysis would still pull old turns
 	// into the context and leak through chatManage.History.
 	if chatManage.MaxRounds <= 0 {
-		return nil
+		return nil, nil
 	}
 	maxRounds := chatManage.MaxRounds
 
@@ -210,7 +229,7 @@ func (p *PluginQueryUnderstand) loadHistory(ctx context.Context, chatManage *typ
 			"session_id": chatManage.SessionID,
 			"error":      err.Error(),
 		})
-		return nil
+		return nil, err
 	}
 
 	chatManage.History = historyList
@@ -222,7 +241,7 @@ func (p *PluginQueryUnderstand) loadHistory(ctx context.Context, chatManage *typ
 		})
 	}
 
-	return historyList
+	return historyList, nil
 }
 
 // selectModel picks the model for query understanding. When images are present
@@ -339,6 +358,10 @@ func (p *PluginQueryUnderstand) memoryBackground(ctx context.Context, chatManage
 	memCtx := p.memoryService.RetrievalContextFor(ctx)
 	if memCtx.Empty() {
 		return ""
+	}
+	if turn := types.RAGSourceLineageFromContext(ctx); turn != nil {
+		_ = turn.Add(types.UnknownSourceLineage())
+		return "" // Caller checks sticky unknown before the rewrite call.
 	}
 
 	var b strings.Builder

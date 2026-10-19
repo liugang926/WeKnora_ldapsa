@@ -25,7 +25,7 @@ func TestPostgresNextcloudSourceRotationUsesPersistedJSONBHash(t *testing.T) {
 	sqlDB, err := db.DB()
 	require.NoError(t, err)
 	sqlDB.SetMaxOpenConns(1)
-	defer func() { require.NoError(t, sqlDB.Close()) }()
+	defer sqlDB.Close()
 	schema := "pair_rotation_" + uuid.NewString()[:8]
 	require.NoError(t, db.Exec(`CREATE SCHEMA "`+schema+`"`).Error)
 	defer db.Exec(`DROP SCHEMA "` + schema + `" CASCADE`)
@@ -37,37 +37,29 @@ func TestPostgresNextcloudSourceRotationUsesPersistedJSONBHash(t *testing.T) {
 	require.NoError(t, db.AutoMigrate(&types.DataSource{}, &NextcloudSourcePairing{},
 		&NextcloudSourceRotation{}))
 	require.NoError(t, db.Exec(`INSERT INTO knowledge_bases (id, tenant_id) VALUES ('kb-paired', 7)`).Error)
-	oldConfig := &types.DataSourceConfig{
-		Type:        types.ConnectorTypeNextcloud,
+	oldConfig := &types.DataSourceConfig{Type: types.ConnectorTypeNextcloud,
 		Credentials: map[string]interface{}{"token": "old-secret", "key_id": "pair_old"},
 		ResourceIDs: []string{"dev-published"},
-		Settings:    map[string]interface{}{"base_url": "https://nextcloud.example.test"},
-	}
+		Settings:    map[string]interface{}{"base_url": "https://nextcloud.example.test"}}
 	oldBlob, err := oldConfig.ToJSON()
 	require.NoError(t, err)
-	ds := &types.DataSource{
-		ID: uuid.NewString(), TenantID: 7, KnowledgeBaseID: "kb-paired",
-		Type: types.ConnectorTypeNextcloud, Config: oldBlob, Status: types.DataSourceStatusActive,
-	}
+	ds := &types.DataSource{ID: uuid.NewString(), TenantID: 7, KnowledgeBaseID: "kb-paired",
+		Type: types.ConnectorTypeNextcloud, Config: oldBlob, Status: types.DataSourceStatusActive}
 	require.NoError(t, db.Create(ds).Error)
 	require.NoError(t, db.Where("id = ?", ds.ID).Take(ds).Error)
 	_, oldHash, _, err := NextcloudEventDataSourceIdentity(ds.Config)
 	require.NoError(t, err)
-	pair := &NextcloudSourcePairing{
-		OperationID: uuid.NewString(), TenantID: 7,
+	pair := &NextcloudSourcePairing{OperationID: uuid.NewString(), TenantID: 7,
 		KnowledgeBaseID: "kb-paired", DataSourceID: ds.ID, InstanceID: "instance-1",
 		BindingID: "dev-published", BaseURL: "https://nextcloud.example.test",
-		ConfigSHA: oldHash, PublicationEpoch: 0, KeyID: "pair_old", State: "active",
-	}
+		ConfigSHA: oldHash, PublicationEpoch: 0, KeyID: "pair_old", State: "active"}
 	require.NoError(t, db.Create(pair).Error)
 	repo := NewNextcloudSourcePairingRepository(db)
 	ctx := context.Background()
-	rotation := NextcloudSourceRotation{
-		OperationID:     uuid.NewString(),
+	rotation := NextcloudSourceRotation{OperationID: uuid.NewString(),
 		PairOperationID: pair.OperationID, TenantID: 7, KnowledgeBaseID: pair.KnowledgeBaseID,
 		DataSourceID: ds.ID, InstanceID: pair.InstanceID, BindingID: pair.BindingID,
-		NewKeyID: "rot_" + uuid.NewString()[:8],
-	}
+		NewKeyID: "rot_" + uuid.NewString()[:8]}
 	prepared, created, err := repo.PrepareSourceRotation(ctx, rotation, "new-secret")
 	require.NoError(t, err)
 	require.True(t, created)

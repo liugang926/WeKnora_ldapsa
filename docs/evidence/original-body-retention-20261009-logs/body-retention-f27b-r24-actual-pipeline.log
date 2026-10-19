@@ -1,0 +1,43 @@
+INFO [2026-10-09 02:56:10.937] []                      | [SQLite] Initializing SQLite retriever engine repository with sqlite-vec
+ERROR[2026-10-09 02:56:11.271] [] composite.go:247[func2] | Repository sqlite failed to batch save: no such module: fts5
+INFO [2026-10-09 02:56:11.746] []                      | [SQLite] Initializing SQLite retriever engine repository with sqlite-vec
+ERROR[2026-10-09 02:56:12.176] [] composite.go:247[func2] | Repository sqlite failed to batch save: no such module: fts5
+--- FAIL: TestOriginalBodyActualLocalDerivedSQLite (1.59s)
+    --- FAIL: TestOriginalBodyActualLocalDerivedSQLite/body-retention (0.68s)
+        nextcloud_local_derived_gc_test.go:131: 
+            	Error Trace:	/workspace/internal/application/service/nextcloud_local_derived_gc_test.go:131
+            	            				/workspace/internal/application/service/nextcloud_local_derived_gc_test.go:317
+            	Error:      	Received unexpected error:
+            	            	no such module: fts5
+            	Test:       	TestOriginalBodyActualLocalDerivedSQLite/body-retention
+    --- FAIL: TestOriginalBodyActualLocalDerivedSQLite/body-inline-restore (0.90s)
+        nextcloud_local_derived_gc_test.go:131: 
+            	Error Trace:	/workspace/internal/application/service/nextcloud_local_derived_gc_test.go:131
+            	            				/workspace/internal/application/service/nextcloud_local_derived_gc_test.go:317
+            	Error:      	Received unexpected error:
+            	            	no such module: fts5
+            	Test:       	TestOriginalBodyActualLocalDerivedSQLite/body-inline-restore
+INFO [2026-10-09 02:56:12.549] []                      | [Postgres] Initializing PostgreSQL retriever engine repository
+INFO [2026-10-09 02:56:13.147] []                      | [Postgres] Batch saving 1 indices
+INFO [2026-10-09 02:56:13.154] []                      | [Postgres] Successfully batch saved 1 indices
+INFO [2026-10-09 02:56:13.685] []                      | [Postgres] Initializing PostgreSQL retriever engine repository
+INFO [2026-10-09 02:56:14.291] []                      | [Postgres] Batch saving 1 indices
+INFO [2026-10-09 02:56:14.299] []                      | [Postgres] Successfully batch saved 1 indices
+--- FAIL: TestPostgresOriginalBodyActualLocalDerived (2.33s)
+    --- FAIL: TestPostgresOriginalBodyActualLocalDerived/body-retention (1.18s)
+        nextcloud_local_derived_gc_test.go:228: 
+            	Error Trace:	/workspace/internal/application/service/nextcloud_local_derived_gc_test.go:228
+            	            				/workspace/internal/application/service/nextcloud_local_derived_gc_test.go:322
+            	Error:      	Received unexpected error:
+            	            	ERROR: new row for relation "nextcloud_gc_items" violates check constraint "nextcloud_gc_items_kind_check" (SQLSTATE 23514)
+            	Test:       	TestPostgresOriginalBodyActualLocalDerived/body-retention
+    --- FAIL: TestPostgresOriginalBodyActualLocalDerived/body-inline-restore (1.15s)
+        nextcloud_local_derived_gc_test.go:228: 
+            	Error Trace:	/workspace/internal/application/service/nextcloud_local_derived_gc_test.go:228
+            	            				/workspace/internal/application/service/nextcloud_local_derived_gc_test.go:322
+            	Error:      	Received unexpected error:
+            	            	ERROR: new row for relation "nextcloud_gc_items" violates check constraint "nextcloud_gc_items_kind_check" (SQLSTATE 23514)
+            	Test:       	TestPostgresOriginalBodyActualLocalDerived/body-inline-restore
+FAIL
+FAIL	github.com/Tencent/WeKnora/internal/application/service	4.300s
+FAIL

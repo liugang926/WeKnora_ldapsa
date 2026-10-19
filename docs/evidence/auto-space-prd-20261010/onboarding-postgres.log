@@ -1,0 +1,14 @@
+=== RUN   TestNextcloudOnboardingBlankHistoryReservationAndRetry
+--- PASS: TestNextcloudOnboardingBlankHistoryReservationAndRetry (0.19s)
+=== RUN   TestNextcloudOnboardingCompetingRootsAndConcurrentContent
+--- PASS: TestNextcloudOnboardingCompetingRootsAndConcurrentContent (0.17s)
+=== RUN   TestNextcloudOnboardingLedgerScopeRevocationAndDirectoryFailure
+--- PASS: TestNextcloudOnboardingLedgerScopeRevocationAndDirectoryFailure (0.19s)
+=== RUN   TestNextcloudOnboardingSyncPauseCASIsRecoverable
+--- PASS: TestNextcloudOnboardingSyncPauseCASIsRecoverable (0.45s)
+=== RUN   TestNextcloudOnboardingAuthorityEpochSupersedesPairingReceipt
+--- PASS: TestNextcloudOnboardingAuthorityEpochSupersedesPairingReceipt (0.19s)
+=== RUN   TestNextcloudOnboardingPostgresConcurrentAdmission
+--- PASS: TestNextcloudOnboardingPostgresConcurrentAdmission (0.18s)
+PASS
+ok      github.com/Tencent/WeKnora/internal/application/repository  1.744s

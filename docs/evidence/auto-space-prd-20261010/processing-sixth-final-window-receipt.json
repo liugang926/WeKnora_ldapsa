@@ -1,0 +1,101 @@
+{
+  "actor_id": "c7209f26c85daf6ad246420922c9c6d9361c662b90bc0886776cb2e90854420f",
+  "actor_name": "weknora-prd-component-go",
+  "cpu": 1000000000,
+  "memory_cap_bytes": 2147483648,
+  "started_at": "2026-10-10T11:33:08.133632637Z",
+  "hard_deadline": "2026-10-10T11:41:08.133632+00:00",
+  "commands": [
+    {
+      "label": "final-changed-scope-format-lint",
+      "checked_count": 125,
+      "initial_nonempty_count": 8,
+      "gofmt_exit": 0,
+      "final_gofmt_list": [],
+      "lint_probe_exit": 127,
+      "lint_available": false
+    },
+    {
+      "label": "final-privacy-404-pipeline-20261010T1133",
+      "started_at": "2026-10-10T11:33:28.817503+00:00",
+      "ended_at": "2026-10-10T11:35:19.743036+00:00",
+      "exit": 0,
+      "command": [
+        "docker",
+        "exec",
+        "weknora-prd-component-go",
+        "go",
+        "test",
+        "-p",
+        "1",
+        "./internal/logprivacy",
+        "./internal/logger",
+        "./internal/types",
+        "./internal/models/chat",
+        "./internal/models/embedding",
+        "./internal/models/rerank",
+        "./internal/models/vlm",
+        "./internal/models/asr",
+        "./internal/application/repository",
+        "./internal/handler",
+        "./internal/application/service",
+        "-run",
+        "^(TestSourceContent.*|TestNextcloudBuildContextsSuppressContentWithoutGrantingAccess|TestNextcloudOnboardingOperationNotFoundIsOpaqueAndScoped|TestNextcloudOnboardingErrorsUseOpaqueFixedCodes|TestNextcloudActualExtractionScopedGraphBackendAndPersistedResult|TestNextcloudActualExtractionWithdrawalBeforeProviderCommitWritesNothing)$",
+        "-count=1",
+        "-v",
+        "-timeout=120s"
+      ]
+    },
+    {
+      "label": "final-candidate-index-graph-20261010T1137",
+      "started_at": "2026-10-10T11:38:21.041717+00:00",
+      "ended_at": "2026-10-10T11:39:23.351185+00:00",
+      "exit": 0,
+      "command": [
+        "docker",
+        "exec",
+        "weknora-prd-component-go",
+        "go",
+        "test",
+        "-p",
+        "1",
+        "./internal/application/repository",
+        "./internal/application/service",
+        "-run",
+        "^(TestNextcloudCandidateKnowledgeQueriesUsePartialIndex|TestNextcloudActualExtractionScopedGraphBackendAndPersistedResult|TestNextcloudActualExtractionWithdrawalBeforeProviderCommitWritesNothing)$",
+        "-count=1",
+        "-v",
+        "-timeout=90s"
+      ]
+    },
+    {
+      "label": "final-paired-full-runtime-20261010T1139",
+      "started_at": "2026-10-10T11:40:11.247865+00:00",
+      "ended_at": "2026-10-10T11:40:46.215392+00:00",
+      "exit": 0,
+      "command": [
+        "python3",
+        "/Users/abner/My_Project/ai-server/nextcloud-auto-space-prd-20261010/apps/integration_weknora/tests/run_onboarding_actual_runtime.py",
+        "--actor",
+        "weknora-prd-component-go",
+        "--evidence",
+        "/Users/abner/My_Project/ai-server/WeKnora-auto-space-prd-20261010/docs/evidence/auto-space-prd-20261010"
+      ]
+    }
+  ],
+  "changed_go_files": 125,
+  "final_source_sha256": "c62558f2ad1da7b564f74e0d02300db823c4734da2525d62ece77ccd0adf37db",
+  "final_format": {
+    "count": 126,
+    "exit": 1,
+    "nonempty_list": []
+  },
+  "terminal": {
+    "Status": "exited",
+    "Running": false,
+    "OOMKilled": false,
+    "ExitCode": 0,
+    "StartedAt": "2026-10-10T11:33:08.133632637Z",
+    "FinishedAt": "2026-10-10T11:41:08.265780887Z"
+  }
+}

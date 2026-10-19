@@ -24,9 +24,7 @@ type stagedLiveStream struct {
 	events []interfaces.StreamEvent
 }
 
-func (s *stagedLiveStream) GetEvents(_ context.Context, _, _ string, offset int) ([]interfaces.StreamEvent, int,
-	error,
-) {
+func (s *stagedLiveStream) GetEvents(_ context.Context, _, _ string, offset int) ([]interfaces.StreamEvent, int, error) {
 	if offset >= len(s.events) {
 		return nil, offset, nil
 	}
@@ -58,12 +56,16 @@ func (s *liveHistoryMessageService) CheckLiveMessagePublication(_ context.Contex
 func TestLiveSSEStopsBeforeRevokedNextChunk(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	svc := &liveHistoryMessageService{denyAt: 3}
+	lineage, err := types.NewCompleteSourceLineage()
+	if err != nil {
+		t.Fatal(err)
+	}
 	h := &Handler{messageService: svc, streamManager: &stagedLiveStream{events: []interfaces.StreamEvent{
-		{ID: "refs", Type: types.ResponseTypeReferences, Data: map[string]interface{}{"references": types.References{{
+		{SourceLineage: lineage, ID: "refs", Type: types.ResponseTypeReferences, Data: map[string]interface{}{"references": types.References{{
 			KnowledgeID: "nextcloud-document", KnowledgeChannel: types.ConnectorTypeNextcloud,
 		}}}},
-		{ID: "answer", Type: types.ResponseTypeAnswer, Content: "authorized first chunk"},
-		{ID: "answer", Type: types.ResponseTypeAnswer, Content: "revoked secret second chunk"},
+		{SourceLineage: lineage, ID: "answer", Type: types.ResponseTypeAnswer, Content: "authorized first chunk"},
+		{SourceLineage: lineage, ID: "answer", Type: types.ResponseTypeAnswer, Content: "revoked secret second chunk"},
 	}}}
 	bus := event.NewEventBus()
 	stops := 0
@@ -152,25 +154,13 @@ func TestLiveSSEAcceptsProducerContentlessKnowledgeToolResults(t *testing.T) {
 		name string
 		data event.AgentToolResultData
 	}{
-		{"empty_search", event.AgentToolResultData{
-			ToolName: "search_knowledge", Success: true,
-			Data: emptySearchToolData(),
-		}},
-		{"empty_list", event.AgentToolResultData{
-			ToolName: "list_documents", Success: true,
-			Data: map[string]interface{}{
-				"display_type": "document_info", "documents": []map[string]interface{}{},
-				"knowledge_base_id": "manual-kb", "total_docs": int64(0), "page": 1, "page_size": 20,
-			},
-		}},
-		{"failed_search", event.AgentToolResultData{
-			ToolName: "search_knowledge", Success: false,
-			Error: "query is required",
-		}},
-		{"failed_list", event.AgentToolResultData{
-			ToolName: "list_documents", Success: false,
-			Error: "knowledge_base_id is required",
-		}},
+		{"empty_search", event.AgentToolResultData{ToolName: "search_knowledge", Success: true, Data: emptySearchToolData()}},
+		{"empty_list", event.AgentToolResultData{ToolName: "list_documents", Success: true, Data: map[string]interface{}{
+			"display_type": "document_info", "documents": []map[string]interface{}{},
+			"knowledge_base_id": "manual-kb", "total_docs": int64(0), "page": 1, "page_size": 20,
+		}}},
+		{"failed_search", event.AgentToolResultData{ToolName: "search_knowledge", Success: false, Error: "query is required"}},
+		{"failed_list", event.AgentToolResultData{ToolName: "list_documents", Success: false, Error: "knowledge_base_id is required"}},
 		{"failed_read", event.AgentToolResultData{ToolName: "read_document", Success: false, Error: "id is required"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -179,8 +169,7 @@ func TestLiveSSEAcceptsProducerContentlessKnowledgeToolResults(t *testing.T) {
 				KnowledgeBaseIDs: []string{"manual-kb"},
 			}}
 			evt := producedKnowledgeToolResult(t, tc.data)
-			if err := checkLiveStreamPublication(context.Background(), svc, message,
-				[]interfaces.StreamEvent{evt}); err != nil {
+			if err := checkLiveStreamPublication(context.Background(), svc, message, []interfaces.StreamEvent{evt}); err != nil {
 				t.Fatalf("contentless producer result stopped ordinary chat: %v", err)
 			}
 			if svc.checks != 1 || len(svc.checkedKBs) != 1 || svc.checkedKBs[0] != "manual-kb" {
@@ -195,28 +184,18 @@ func TestLiveSSEProducerNonemptyKnowledgeResultsRetainIdentity(t *testing.T) {
 		name string
 		data map[string]interface{}
 	}{
-		{"search_knowledge", map[string]interface{}{
-			"display_type": "search_results", "count": 1,
-			"results": []map[string]interface{}{{"knowledge_id": "source-doc", "content": "synthetic excerpt"}},
-		}},
-		{"list_documents", map[string]interface{}{
-			"display_type": "document_info",
-			"documents":    []map[string]interface{}{{"knowledge_id": "source-doc", "title": "synthetic title"}},
-		}},
-		{"read_document", map[string]interface{}{
-			"display_type": "knowledge_chunks_list", "knowledge_id": "source-doc",
-			"chunks": []map[string]interface{}{{"knowledge_id": "source-doc", "content": "synthetic excerpt"}},
-		}},
+		{"search_knowledge", map[string]interface{}{"display_type": "search_results", "count": 1,
+			"results": []map[string]interface{}{{"knowledge_id": "source-doc", "content": "synthetic excerpt"}}}},
+		{"list_documents", map[string]interface{}{"display_type": "document_info",
+			"documents": []map[string]interface{}{{"knowledge_id": "source-doc", "title": "synthetic title"}}}},
+		{"read_document", map[string]interface{}{"display_type": "knowledge_chunks_list", "knowledge_id": "source-doc",
+			"chunks": []map[string]interface{}{{"knowledge_id": "source-doc", "content": "synthetic excerpt"}}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			evt := producedKnowledgeToolResult(t, event.AgentToolResultData{
-				ToolName: tc.name, Success: true,
-				Data: tc.data,
-			})
+			evt := producedKnowledgeToolResult(t, event.AgentToolResultData{ToolName: tc.name, Success: true, Data: tc.data})
 			svc := &liveHistoryMessageService{}
 			message := &types.Message{Role: "assistant"}
-			if err := checkLiveStreamPublication(context.Background(), svc, message,
-				[]interfaces.StreamEvent{evt}); err != nil {
+			if err := checkLiveStreamPublication(context.Background(), svc, message, []interfaces.StreamEvent{evt}); err != nil {
 				t.Fatal(err)
 			}
 			if len(svc.checkedRefs) != 1 || svc.checkedRefs[0] != "source-doc" {
@@ -246,10 +225,8 @@ func TestLiveSSERejectsUnknownEmptyOrOpaqueKnowledgeResults(t *testing.T) {
 		}},
 		{"opaque_read", func(evt *interfaces.StreamEvent) { evt.Data["tool_name"] = "read_document" }},
 		{"failure_with_output", func(evt *interfaces.StreamEvent) {
-			evt.Data = map[string]interface{}{
-				"tool_name": "read_document", "success": false,
-				"error": "failed", "output": "opaque excerpt",
-			}
+			evt.Data = map[string]interface{}{"tool_name": "read_document", "success": false,
+				"error": "failed", "output": "opaque excerpt"}
 			evt.Content = "failed"
 		}},
 		{"failure_with_unmatched_content", func(evt *interfaces.StreamEvent) {
@@ -257,11 +234,9 @@ func TestLiveSSERejectsUnknownEmptyOrOpaqueKnowledgeResults(t *testing.T) {
 			evt.Content = "opaque excerpt"
 		}},
 		{"empty_list_missing_total", func(evt *interfaces.StreamEvent) {
-			evt.Data = map[string]interface{}{
-				"tool_name": "list_documents", "success": true,
+			evt.Data = map[string]interface{}{"tool_name": "list_documents", "success": true,
 				"display_type": "document_info", "documents": []interface{}{}, "knowledge_base_id": "manual-kb",
-				"page": 1, "page_size": 20,
-			}
+				"page": 1, "page_size": 20}
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -287,8 +262,7 @@ func TestLiveSSEEmptyResultStillRechecksRevokedEarlierReference(t *testing.T) {
 	err := checkLiveStreamPublication(context.Background(), svc, message, []interfaces.StreamEvent{evt})
 	if !errors.Is(err, access.ErrNextcloudPublicationDenied) || svc.checks != 1 ||
 		len(svc.checkedRefs) != 1 || svc.checkedRefs[0] != "nextcloud-doc" {
-		t.Fatalf("empty result bypassed current source check: err=%v checks=%d refs=%v", err, svc.checks,
-			svc.checkedRefs)
+		t.Fatalf("empty result bypassed current source check: err=%v checks=%d refs=%v", err, svc.checks, svc.checkedRefs)
 	}
 }
 
@@ -300,19 +274,15 @@ func TestLiveSSEEmptySearchContinuesOrdinaryChatAndPreservesRevocationStop(t *te
 				ToolName: "search_knowledge", Success: true, Data: emptySearchToolData(),
 			})
 			svc := &liveHistoryMessageService{}
-			message := &types.Message{
-				Role: "assistant", RequestID: "turn",
-				ExecutionContext: types.MessageExecutionContext{
-					KnowledgeBaseIDs: []string{"manual-kb"},
-				},
-			}
+			message := &types.Message{Role: "assistant", RequestID: "turn", ExecutionContext: types.MessageExecutionContext{
+				KnowledgeBaseIDs: []string{"manual-kb"},
+			}}
 			if revoked {
 				svc.denyAt = 1
 				message.KnowledgeReferences = types.References{{KnowledgeID: "nextcloud-doc"}}
 			}
 			h := &Handler{messageService: svc, streamManager: &stagedLiveStream{events: []interfaces.StreamEvent{
-				evt,
-				{ID: "answer", Type: types.ResponseTypeAnswer, Content: "synthetic no-evidence response"},
+				evt, {ID: "answer", Type: types.ResponseTypeAnswer, Content: "synthetic no-evidence response"},
 				{ID: "complete", Type: "complete", Done: true},
 			}}}
 			bus := event.NewEventBus()
@@ -324,8 +294,7 @@ func TestLiveSSEEmptySearchContinuesOrdinaryChatAndPreservesRevocationStop(t *te
 			defer cancel()
 			c.Request = httptest.NewRequest(http.MethodPost, "/knowledge-chat/session", nil).WithContext(ctx)
 			h.handleAgentEventsForSSE(ctx, c, "session", "assistant", "turn", bus, false,
-				storageurl.NewStreamRewriter(storageurl.NewRequestRewriter(ctx, storageurl.ModeHandle, nil,
-					nil)), message)
+				storageurl.NewStreamRewriter(storageurl.NewRequestRewriter(ctx, storageurl.ModeHandle, nil, nil)), message)
 			body := recorder.Body.String()
 			if revoked {
 				if stops != 1 || strings.Contains(body, "synthetic no-evidence response") ||

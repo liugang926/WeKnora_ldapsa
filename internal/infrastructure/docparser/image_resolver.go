@@ -3,7 +3,9 @@ package docparser
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"html"
@@ -57,6 +59,8 @@ func isIconImage(data []byte) bool {
 
 // StoredImage describes an image that has been saved to storage.
 type StoredImage struct {
+	ArtifactDigest string // SHA-256 of actual bytes read by this original parse
+
 	OriginalRef string // reference in the original markdown
 	ServingURL  string // provider:// URL (e.g. local://images/xxx.png, minio://bucket/key)
 	MimeType    string
@@ -181,9 +185,10 @@ func (r *ImageResolver) saveReferencedImage(
 	if ref.Filename != "" {
 		if cached, ok := savedRefs["__filename__:"+ref.Filename]; ok {
 			stored := StoredImage{
-				OriginalRef: refPath,
-				ServingURL:  cached.ServingURL,
-				MimeType:    cached.MimeType,
+				ArtifactDigest: cached.ArtifactDigest,
+				OriginalRef:    refPath,
+				ServingURL:     cached.ServingURL,
+				MimeType:       cached.MimeType,
 			}
 			savedRefs[refPath] = stored
 			return stored, true
@@ -206,9 +211,10 @@ func (r *ImageResolver) saveReferencedImage(
 	}
 
 	stored := StoredImage{
-		OriginalRef: refPath,
-		ServingURL:  servingURL,
-		MimeType:    ref.MimeType,
+		ArtifactDigest: actualImageDigest(ref.ImageData),
+		OriginalRef:    refPath,
+		ServingURL:     servingURL,
+		MimeType:       ref.MimeType,
 	}
 	savedRefs[refPath] = stored
 	if ref.Filename != "" {
@@ -398,9 +404,10 @@ func (r *ImageResolver) ResolveHTMLDataURIImages(
 			continue
 		}
 		images = append(images, StoredImage{
-			OriginalRef: "html-img-data-uri",
-			ServingURL:  servingURL,
-			MimeType:    mimeType,
+			ArtifactDigest: actualImageDigest(data),
+			OriginalRef:    "html-img-data-uri",
+			ServingURL:     servingURL,
+			MimeType:       mimeType,
 		})
 		markdown = markdown[:m[0]] + fmt.Sprintf("![image](%s)", servingURL) + markdown[m[1]:]
 		processed++
@@ -537,9 +544,10 @@ func (r *ImageResolver) resolveBareDataURIs(
 			continue
 		}
 		images = append(images, StoredImage{
-			OriginalRef: "bare-data-uri",
-			ServingURL:  servingURL,
-			MimeType:    mimeType,
+			ArtifactDigest: actualImageDigest(data),
+			OriginalRef:    "bare-data-uri",
+			ServingURL:     servingURL,
+			MimeType:       mimeType,
 		})
 		if insideWrapper {
 			// Inside a broken markdown ref like ![weird]alt](data:...) — replace data URI only
@@ -605,9 +613,10 @@ func (r *ImageResolver) resolveBareBase64Prefix(
 			continue
 		}
 		images = append(images, StoredImage{
-			OriginalRef: "bare-base64",
-			ServingURL:  servingURL,
-			MimeType:    mimeType,
+			ArtifactDigest: actualImageDigest(data),
+			OriginalRef:    "bare-base64",
+			ServingURL:     servingURL,
+			MimeType:       mimeType,
 		})
 		markdown = markdown[:m[0]] + fmt.Sprintf("![image](%s)", servingURL) + markdown[m[1]:]
 		processed++
@@ -737,9 +746,10 @@ func (r *ImageResolver) ResolveDataURIImages(
 			continue
 		}
 		images = append(images, StoredImage{
-			OriginalRef: dataURI,
-			ServingURL:  servingURL,
-			MimeType:    mimeType,
+			ArtifactDigest: actualImageDigest(data),
+			OriginalRef:    dataURI,
+			ServingURL:     servingURL,
+			MimeType:       mimeType,
 		})
 		markdown = markdown[:m[4]] + servingURL + markdown[m[5]:]
 		processed++
@@ -754,6 +764,8 @@ var errRemoteImageIsIcon = errors.New("filtered out as icon")
 
 // remoteImageResult describes one image that was fetched successfully.
 type remoteImageResult struct {
+	ArtifactDigest string
+
 	// ServingURL is empty when KeepOriginalURL is set. The caller fills it in
 	// with the normalized request URL — NOT the raw document bytes. Later stages
 	// both search the document for this string and fetch it, so a padded or
@@ -797,7 +809,7 @@ func fetchAndStoreRemoteImage(
 	}
 
 	if whitelisted {
-		return &remoteImageResult{MimeType: mimeType, KeepOriginalURL: true}, nil
+		return &remoteImageResult{ArtifactDigest: actualImageDigest(data), MimeType: mimeType, KeepOriginalURL: true}, nil
 	}
 
 	ext := extFromMime(mimeType)
@@ -811,7 +823,7 @@ func fetchAndStoreRemoteImage(
 	if err != nil {
 		return nil, fmt.Errorf("save: %w", err)
 	}
-	return &remoteImageResult{ServingURL: servingURL, MimeType: mimeType}, nil
+	return &remoteImageResult{ArtifactDigest: actualImageDigest(data), ServingURL: servingURL, MimeType: mimeType}, nil
 }
 
 // isRemoteHTTPURL reports whether raw is an absolute http(s) URL.
@@ -921,9 +933,10 @@ func resolveRemoteImagePass(
 		}
 
 		images = append(images, StoredImage{
-			OriginalRef: imgURL,
-			ServingURL:  servingURL,
-			MimeType:    res.MimeType,
+			ArtifactDigest: res.ArtifactDigest,
+			OriginalRef:    imgURL,
+			ServingURL:     servingURL,
+			MimeType:       res.MimeType,
 		})
 		markdown = markdown[:start] + servingURL + markdown[end:]
 	}
@@ -1066,4 +1079,9 @@ func extFromURLPath(rawURL string) string {
 	default:
 		return ""
 	}
+}
+
+func actualImageDigest(data []byte) string {
+	digest := sha256.Sum256(data)
+	return hex.EncodeToString(digest[:])
 }

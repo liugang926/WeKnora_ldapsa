@@ -12,10 +12,10 @@ import (
 	"strings"
 	"time"
 
-	apperrors "github.com/Tencent/WeKnora/internal/errors"
-
 	"github.com/Tencent/WeKnora/internal/datasource"
+	apperrors "github.com/Tencent/WeKnora/internal/errors"
 	"github.com/Tencent/WeKnora/internal/logger"
+	"github.com/Tencent/WeKnora/internal/types"
 )
 
 const (
@@ -52,12 +52,9 @@ func newClient(cfg config) *client {
 				return http.ErrUseLastResponse
 			},
 			Transport: &http.Transport{
-				DisableCompression: true,
-				Proxy:              nil,
-				DialContext: (&net.Dialer{
-					Timeout:   10 * time.Second,
-					KeepAlive: 30 * time.Second,
-				}).DialContext,
+				DisableCompression:    true,
+				Proxy:                 nil,
+				DialContext:           (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
 				TLSHandshakeTimeout:   10 * time.Second,
 				ResponseHeaderTimeout: 20 * time.Second,
 				IdleConnTimeout:       30 * time.Second,
@@ -77,9 +74,7 @@ func (c *client) endpointURL(endpoint string, query url.Values) string {
 	return u.String()
 }
 
-func (c *client) request(ctx context.Context, endpoint string, query url.Values, ifMatch ...string) (
-	*http.Response, error,
-) {
+func (c *client) request(ctx context.Context, endpoint string, query url.Values, ifMatch ...string) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.endpointURL(endpoint, query), nil)
 	if err != nil {
 		return nil, err
@@ -104,9 +99,7 @@ func (c *client) request(ctx context.Context, endpoint string, query url.Values,
 	return resp, nil
 }
 
-func (c *client) get(ctx context.Context, endpoint string, query url.Values, ifMatch ...string) (
-	*http.Response, error,
-) {
+func (c *client) get(ctx context.Context, endpoint string, query url.Values, ifMatch ...string) (*http.Response, error) {
 	resp, err := c.request(ctx, endpoint, query, ifMatch...)
 	if err != nil {
 		return nil, err
@@ -114,20 +107,20 @@ func (c *client) get(ctx context.Context, endpoint string, query url.Values, ifM
 	if resp.StatusCode != http.StatusOK {
 		closeNextcloudResponseBody(ctx, resp.Body)
 		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-			return nil, apperrors.NewProtocolError(fmt.Errorf("%w: Nextcloud %s returned status %d",
-				datasource.ErrInvalidCredentials, endpoint, resp.StatusCode), fmt.Sprintf(
-				"%s: Nextcloud %s returned status %d", apperrors.PublicMessage(
-					datasource.ErrInvalidCredentials), endpoint, resp.StatusCode))
+			return nil, apperrors.NewProtocolError(fmt.Errorf(
+				"%w: Nextcloud %s returned status %d", datasource.ErrInvalidCredentials, endpoint,
+				resp.StatusCode), fmt.Sprintf("%s: Nextcloud %s returned status %d",
+				apperrors.PublicMessage(datasource.ErrInvalidCredentials), endpoint, resp.StatusCode))
 		}
 		if retryableNextcloudStatus(resp.StatusCode) ||
 			(resp.StatusCode == http.StatusNotFound && len(ifMatch) != 0) {
-			return nil, apperrors.NewProtocolError(fmt.Errorf("%w: Nextcloud %s returned status %d",
-				datasource.ErrRetryableSource, endpoint, resp.StatusCode), fmt.Sprintf(
-				"%s: Nextcloud %s returned status %d", apperrors.PublicMessage(
-					datasource.ErrRetryableSource), endpoint, resp.StatusCode))
+			return nil, apperrors.NewProtocolError(fmt.Errorf(
+				"%w: Nextcloud %s returned status %d", datasource.ErrRetryableSource, endpoint,
+				resp.StatusCode), fmt.Sprintf("%s: Nextcloud %s returned status %d",
+				apperrors.PublicMessage(datasource.ErrRetryableSource), endpoint, resp.StatusCode))
 		}
-		return nil, apperrors.NewProtocolError(fmt.Errorf("nextcloud %s returned status %d", endpoint,
-			resp.StatusCode), fmt.Sprintf("Nextcloud %s returned status %d", endpoint, resp.StatusCode))
+		return nil, apperrors.NewProtocolError(fmt.Errorf("nextcloud %s returned status %d",
+			endpoint, resp.StatusCode), fmt.Sprintf("Nextcloud %s returned status %d", endpoint, resp.StatusCode))
 	}
 	return resp, nil
 }
@@ -173,7 +166,7 @@ func (c *client) changes(ctx context.Context, bindingID, oldCursor string) (chan
 				RescanRequired bool   `json:"rescan_required"`
 				NextCursor     string `json:"next_cursor"`
 			}
-			if err := decodeChangeResponse(resp, endpoint, &conflict); err != nil {
+			if err := decodeChangeResponse(ctx, resp, endpoint, &conflict); err != nil {
 				return changeScan{}, err
 			}
 			if !conflict.RescanRequired || (conflict.NextCursor != "" && !validChangeCursor(conflict.NextCursor)) {
@@ -183,10 +176,7 @@ func (c *client) changes(ctx context.Context, bindingID, oldCursor string) (chan
 			}
 			// The recovery cursor is not authoritative until a complete manifest
 			// has been processed and its downstream result committed.
-			return changeScan{
-				Supported: true, NeedsReconcile: true, ForceAllContent: true,
-				Cursor: conflict.NextCursor,
-			}, nil
+			return changeScan{Supported: true, NeedsReconcile: true, ForceAllContent: true, Cursor: conflict.NextCursor}, nil
 		}
 		if resp.StatusCode != http.StatusOK {
 			closeNextcloudResponseBody(ctx, resp.Body)
@@ -206,7 +196,7 @@ func (c *client) changes(ctx context.Context, bindingID, oldCursor string) (chan
 				endpoint, resp.StatusCode), fmt.Sprintf("Nextcloud %s returned status %d", endpoint, resp.StatusCode))
 		}
 		var page changesPage
-		if err := decodeChangeResponse(resp, endpoint, &page); err != nil {
+		if err := decodeChangeResponse(ctx, resp, endpoint, &page); err != nil {
 			return changeScan{}, err
 		}
 		if page.BindingID != bindingID || page.HintOnly == nil || !*page.HintOnly ||
@@ -246,16 +236,12 @@ func (c *client) changes(ctx context.Context, bindingID, oldCursor string) (chan
 		seen[page.NextCursor] = true
 		cursor = page.NextCursor
 		if !*page.HasMore {
-			return changeScan{
-				Supported: true, NeedsReconcile: len(page.Items) > 0 || pageNum > 0,
-				Cursor: cursor, ChangedFiles: changedFiles, ForceAllContent: forceAllContent,
-			}, nil
+			return changeScan{Supported: true, NeedsReconcile: len(page.Items) > 0 || pageNum > 0,
+				Cursor: cursor, ChangedFiles: changedFiles, ForceAllContent: forceAllContent}, nil
 		}
 	}
-	return changeScan{
-		Supported: true, NeedsReconcile: true, Cursor: cursor,
-		ChangedFiles: changedFiles, ForceAllContent: true,
-	}, nil
+	return changeScan{Supported: true, NeedsReconcile: true, Cursor: cursor,
+		ChangedFiles: changedFiles, ForceAllContent: true}, nil
 }
 
 type changeScan struct {
@@ -266,11 +252,7 @@ type changeScan struct {
 	ForceAllContent bool
 }
 
-func decodeChangeResponse(resp *http.Response, endpoint string, target interface{}) error {
-	ctx := context.Background()
-	if resp.Request != nil {
-		ctx = resp.Request.Context()
-	}
+func decodeChangeResponse(ctx context.Context, resp *http.Response, endpoint string, target interface{}) error {
 	defer closeNextcloudResponseBody(ctx, resp.Body)
 	if resp.ContentLength > maxChangeResponseBytes {
 		return apperrors.NewProtocolError(fmt.Errorf("nextcloud %s exceeds response size limit", endpoint),
@@ -293,7 +275,7 @@ func validChangeCursor(cursor string) bool {
 		return false
 	}
 	for _, c := range cursor {
-		if (c < 'A' || c > 'Z') && (c < 'a' || c > 'z') && (c < '0' || c > '9') && c != '_' && c != '-' {
+		if !(c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '_' || c == '-') {
 			return false
 		}
 	}
@@ -454,7 +436,15 @@ func (c *client) content(ctx context.Context, bindingID string, item manifestIte
 			apperrors.PublicMessage(datasource.ErrInvalidConfig)))
 	}
 	endpoint := "/bindings/" + bindingID + "/files/" + strconv.FormatInt(item.FileID, 10) + "/content"
-	resp, err := c.get(ctx, endpoint, nil, item.ETag)
+	revision, err := types.NormalizeNextcloudContentRevision(item.ContentRevision)
+	if err != nil {
+		return nil, "", err
+	}
+	var query url.Values
+	if revision != "0" {
+		query = url.Values{"content_revision": {revision}}
+	}
+	resp, err := c.get(ctx, endpoint, query, item.ETag)
 	if err != nil {
 		return nil, "", err
 	}
@@ -481,6 +471,10 @@ func (c *client) content(ctx context.Context, bindingID string, item manifestIte
 			"%w: Nextcloud file %d ETag changed during download", datasource.ErrRetryableSource,
 			item.FileID), fmt.Sprintf("%s: Nextcloud file %d ETag changed during download",
 			apperrors.PublicMessage(datasource.ErrRetryableSource), item.FileID))
+	}
+	actualRevision, err := types.NormalizeNextcloudContentRevision(resp.Header.Get("X-Nextcloud-Content-Revision"))
+	if err != nil || actualRevision != revision {
+		return nil, "", fmt.Errorf("%w: Nextcloud content revision changed during download", datasource.ErrRetryableSource)
 	}
 	contentType := strings.TrimSpace(resp.Header.Get("Content-Type"))
 	if contentType == "" {

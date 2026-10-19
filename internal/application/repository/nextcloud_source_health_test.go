@@ -36,43 +36,34 @@ func nextcloudHealthFixture(t *testing.T, db *gorm.DB) (NextcloudSourcePairing, 
 	}
 
 	now := time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
-	config, err := (&types.DataSourceConfig{
-		Type:        types.ConnectorTypeNextcloud,
+	config, err := (&types.DataSourceConfig{Type: types.ConnectorTypeNextcloud,
 		ResourceIDs: []string{"binding"},
 		Settings:    map[string]interface{}{"base_url": "https://private.example.test"},
 		Credentials: map[string]interface{}{"token": "secret-machine-token", "key_id": "pair_fixture"},
 	}).ToJSON()
 	require.NoError(t, err)
-	ds := &types.DataSource{
-		ID: "health-ds", TenantID: 7, KnowledgeBaseID: "health-kb",
-		Type: types.ConnectorTypeNextcloud, Status: types.DataSourceStatusActive, Config: config,
-	}
+	ds := &types.DataSource{ID: "health-ds", TenantID: 7, KnowledgeBaseID: "health-kb",
+		Type: types.ConnectorTypeNextcloud, Status: types.DataSourceStatusActive, Config: config}
 	require.NoError(t, db.Create(ds).Error)
 	baseURL, configSHA, bindingID, err := NextcloudEventDataSourceIdentity(ds.Config)
 	require.NoError(t, err)
-	pair := NextcloudSourcePairing{
-		OperationID: uuid.NewString(), TenantID: 7,
+	pair := NextcloudSourcePairing{OperationID: uuid.NewString(), TenantID: 7,
 		KnowledgeBaseID: ds.KnowledgeBaseID, DataSourceID: ds.ID,
 		InstanceID: "instance", BindingID: bindingID, BaseURL: baseURL,
-		ConfigSHA: configSHA, State: "active",
-	}
+		ConfigSHA: configSHA, State: "active"}
 	require.NoError(t, db.Create(&pair).Error)
 
 	addKnowledge := func(id, status, enabled, knowledgeBase string) {
-		require.NoError(t, db.Create(&types.Knowledge{
-			ID: id, TenantID: 7,
+		require.NoError(t, db.Create(&types.Knowledge{ID: id, TenantID: 7,
 			KnowledgeBaseID: knowledgeBase, Channel: types.ConnectorTypeNextcloud,
 			Type: "file", ParseStatus: status, EnableStatus: enabled,
-			Title: "private title", FilePath: "/private/source/path",
-		}).Error)
+			Title: "private title", FilePath: "/private/source/path"}).Error)
 	}
 	addVersion := func(externalID, candidateID, state string, updatedAt time.Time) {
-		require.NoError(t, db.Create(&nextcloudSourceVersion{
-			TenantID:        7,
+		require.NoError(t, db.Create(&nextcloudSourceVersion{TenantID: 7,
 			KnowledgeBaseID: pair.KnowledgeBaseID, DataSourceID: pair.DataSourceID,
 			ExternalID: externalID, CandidateKnowledgeID: candidateID,
-			State: state, UpdatedAt: updatedAt,
-		}).Error)
+			State: state, UpdatedAt: updatedAt}).Error)
 	}
 	addKnowledge("candidate-pending", types.ParseStatusPending, "disabled", pair.KnowledgeBaseID)
 	addKnowledge("candidate-failed", types.ParseStatusFailed, "disabled", pair.KnowledgeBaseID)
@@ -83,33 +74,21 @@ func nextcloudHealthFixture(t *testing.T, db *gorm.DB) (NextcloudSourcePairing, 
 	addVersion("nextcloud:instance:3", "candidate-completed", "published", now.Add(-time.Hour))
 	addVersion("nextcloud:instance:4", "", "tombstone", now.Add(-time.Hour))
 	addVersion("nextcloud:instance:5", "foreign-candidate", "staging", now.Add(-time.Hour))
-	require.NoError(t, db.Create(&nextcloudSourceVersion{
-		TenantID:        8,
+	require.NoError(t, db.Create(&nextcloudSourceVersion{TenantID: 8,
 		KnowledgeBaseID: "foreign-kb", DataSourceID: "foreign-ds", ExternalID: "foreign",
-		State: "staging", UpdatedAt: now.Add(-24 * time.Hour),
-	}).Error)
+		State: "staging", UpdatedAt: now.Add(-24 * time.Hour)}).Error)
 
 	for _, log := range []types.SyncLog{
-		{
-			ID: uuid.NewString(), DataSourceID: ds.ID, TenantID: 7, Status: "running",
-			StartedAt: now.Add(-time.Hour), ErrorMessage: "hidden running detail",
-		},
-		{
-			ID: uuid.NewString(), DataSourceID: ds.ID, TenantID: 7, Status: "failed",
-			StartedAt: now.Add(-2 * time.Hour), ErrorMessage: "/private/failure secret",
-		},
-		{
-			ID: uuid.NewString(), DataSourceID: ds.ID, TenantID: 7, Status: "partial",
-			StartedAt: now.Add(-3 * time.Hour), ErrorMessage: "private partial detail",
-		},
-		{
-			ID: uuid.NewString(), DataSourceID: ds.ID, TenantID: 7, Status: "failed",
-			StartedAt: now.Add(-25 * time.Hour),
-		},
-		{
-			ID: uuid.NewString(), DataSourceID: "foreign-ds", TenantID: 8, Status: "failed",
-			StartedAt: now.Add(-time.Minute),
-		},
+		{ID: uuid.NewString(), DataSourceID: ds.ID, TenantID: 7, Status: "running",
+			StartedAt: now.Add(-time.Hour), ErrorMessage: "hidden running detail"},
+		{ID: uuid.NewString(), DataSourceID: ds.ID, TenantID: 7, Status: "failed",
+			StartedAt: now.Add(-2 * time.Hour), ErrorMessage: "/private/failure secret"},
+		{ID: uuid.NewString(), DataSourceID: ds.ID, TenantID: 7, Status: "partial",
+			StartedAt: now.Add(-3 * time.Hour), ErrorMessage: "private partial detail"},
+		{ID: uuid.NewString(), DataSourceID: ds.ID, TenantID: 7, Status: "failed",
+			StartedAt: now.Add(-25 * time.Hour)},
+		{ID: uuid.NewString(), DataSourceID: "foreign-ds", TenantID: 8, Status: "failed",
+			StartedAt: now.Add(-time.Minute)},
 	} {
 		require.NoError(t, db.Create(&log).Error)
 	}
@@ -202,7 +181,7 @@ func TestPostgresNextcloudSourceHealthObservations(t *testing.T) {
 	sqlDB, err := db.DB()
 	require.NoError(t, err)
 	sqlDB.SetMaxOpenConns(1)
-	defer func() { require.NoError(t, sqlDB.Close()) }()
+	defer sqlDB.Close()
 	schema := "source_health_" + uuid.NewString()[:8]
 	require.NoError(t, db.Exec(`CREATE SCHEMA "`+schema+`"`).Error)
 	defer db.Exec(`DROP SCHEMA "` + schema + `" CASCADE`)

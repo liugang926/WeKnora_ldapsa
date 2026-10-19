@@ -52,10 +52,8 @@ func TestNextcloudSourceRotationRecoversUncertainCommitAndFinalize(t *testing.T)
 	}}
 	h := NewNextcloudSourcePairingHandler(repo, NewDataSourceHandler(dsService, kbService))
 	h.inspect = func(context.Context, *types.DataSourceConfig) (nextcloud.PairingIdentity, error) {
-		return nextcloud.PairingIdentity{
-			InstanceID: pair.InstanceID, BindingID: pair.BindingID,
-			BaseURL: pair.BaseURL, PublicationState: "active",
-		}, nil
+		return nextcloud.PairingIdentity{InstanceID: pair.InstanceID, BindingID: pair.BindingID,
+			BaseURL: pair.BaseURL, PublicationState: "active"}, nil
 	}
 	commits, finalizes := 0, 0
 	h.rotateCommit = func(_ context.Context, cfg *types.DataSourceConfig, tuple nextcloud.SourceRotation) error {
@@ -68,7 +66,7 @@ func TestNextcloudSourceRotationRecoversUncertainCommitAndFinalize(t *testing.T)
 		}
 		return nil
 	}
-	h.rotateFinalize = func(_ context.Context, _ *types.DataSourceConfig, tuple nextcloud.SourceRotation) error {
+	h.rotateFinalize = func(_ context.Context, cfg *types.DataSourceConfig, tuple nextcloud.SourceRotation) error {
 		finalizes++
 		require.Equal(t, pair.DataSourceID, tuple.DataSourceID)
 		if finalizes == 1 {
@@ -87,13 +85,9 @@ func TestNextcloudSourceRotationRecoversUncertainCommitAndFinalize(t *testing.T)
 	base := "/api/v1/datasource/nextcloud-source-pairings/" + pair.OperationID + "/rotations"
 	router.POST("/api/v1/datasource/nextcloud-source-pairings/:operation_id/rotations", h.Rotate)
 	router.GET("/api/v1/datasource/nextcloud-source-pairings/:operation_id/rotations/:rotation_id", h.RotationStatus)
-	router.POST("/api/v1/datasource/nextcloud-source-pairings/:operation_id/rotations/:rotation_id/retry",
-		h.RetryRotation)
-	router.POST("/api/v1/datasource/nextcloud-source-pairings/:operation_id/rotations/:rotation_id/abort",
-		h.AbortRotation)
-	request := func(method, path string, body []byte, tenantID uint64,
-		role types.TenantRole,
-	) *httptest.ResponseRecorder {
+	router.POST("/api/v1/datasource/nextcloud-source-pairings/:operation_id/rotations/:rotation_id/retry", h.RetryRotation)
+	router.POST("/api/v1/datasource/nextcloud-source-pairings/:operation_id/rotations/:rotation_id/abort", h.AbortRotation)
+	request := func(method, path string, body []byte, tenantID uint64, role types.TenantRole) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(method, path, bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		ctx := context.WithValue(req.Context(), types.TenantIDContextKey, tenantID)
@@ -105,8 +99,7 @@ func TestNextcloudSourceRotationRecoversUncertainCommitAndFinalize(t *testing.T)
 	rotationID := "6e359042-69aa-489e-bd9b-8754bf5beee1"
 	body, err := json.Marshal(map[string]string{
 		"operation_id": rotationID, "new_key_id": "rot_6e35904269aa489ebd9b8754bf5beee1",
-		"token": "new-secret",
-	})
+		"token": "new-secret"})
 	require.NoError(t, err)
 	require.Equal(t, http.StatusForbidden,
 		request(http.MethodPost, base, body, 7, types.TenantRoleViewer).Code)
@@ -136,7 +129,7 @@ func TestNextcloudSourceRotationRecoversUncertainCommitAndFinalize(t *testing.T)
 		return &nextcloud.SourcePairingRemoteError{StatusCode: http.StatusConflict}
 	}
 	abortAttempts := 0
-	h.rotateAbort = func(_ context.Context, old *types.DataSourceConfig, _ nextcloud.SourceRotation) error {
+	h.rotateAbort = func(_ context.Context, old *types.DataSourceConfig, tuple nextcloud.SourceRotation) error {
 		abortAttempts++
 		require.Equal(t, "new-secret", old.Credentials["token"])
 		if abortAttempts == 1 {
@@ -147,8 +140,7 @@ func TestNextcloudSourceRotationRecoversUncertainCommitAndFinalize(t *testing.T)
 	secondID := "e293b10b-4d80-43c5-8bb5-67425903e394"
 	secondBody, err := json.Marshal(map[string]string{
 		"operation_id": secondID, "new_key_id": "rot_e293b10b4d8043c58bb567425903e394",
-		"token": "discarded-secret",
-	})
+		"token": "discarded-secret"})
 	require.NoError(t, err)
 	rejected := request(http.MethodPost, base, secondBody, 7, types.TenantRoleAdmin)
 	require.Equal(t, http.StatusConflict, rejected.Code, rejected.Body.String())

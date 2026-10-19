@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/Tencent/WeKnora/internal/logger"
+	"github.com/Tencent/WeKnora/internal/logprivacy"
 	secutils "github.com/Tencent/WeKnora/internal/utils"
 )
 
@@ -210,6 +211,10 @@ func (e *HTTPError) Error() string {
 // LogRequest emits the standard request log line with image payloads
 // compacted so data URIs do not flood the log.
 func LogRequest(ctx context.Context, url, model string, body []byte, stream bool) {
+	if logprivacy.ContentSuppressed(ctx) {
+		logger.Infof(ctx, "[LLM Request] content logging suppressed, stream=%v", stream)
+		return
+	}
 	pretty := body
 	var buf bytes.Buffer
 	if err := json.Indent(&buf, body, "", "  "); err == nil {
