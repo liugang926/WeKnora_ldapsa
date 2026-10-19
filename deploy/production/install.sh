@@ -19,6 +19,7 @@ values=dict(DB_DRIVER='postgres',DB_HOST='postgres',DB_PORT='5432',DB_USER='wekn
     LOG_LEVEL='info',GIN_MODE='release',TZ='Asia/Shanghai',GOMAXPROCS='3',CONCURRENCY_POOL_SIZE='2',AUTO_MIGRATE='true',AUTO_RECOVER_DIRTY='false',
     DOCREADER_ADDR='',OLLAMA_OPTIONAL='true',WEKNORA_SANDBOX_DOCKER_ENABLED='false',
     DISABLE_REGISTRATION='false',WEKNORA_AUTH_COMPLEX_PASSWORD_ENABLED='true',
+    LDAP_CONFIG_SOURCE='database',LDAP_DIRECTORY_ID='tianji-ad',
     WEKNORA_BOOTSTRAP_SYSTEM_ADMIN_EMAIL='admin@ai-doc.tianjizn.com',
     FRONTEND_BASE_URL='https://ai-doc.tianjizn.com',APP_EXTERNAL_URL='https://ai-doc.tianjizn.com',
     WEKNORA_NEXTCLOUD_ALLOWED_ORIGINS='https://cloud.tianjizn.com',

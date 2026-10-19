@@ -48,6 +48,29 @@ requires Docker, the resource slice and the data mount, and serializes against
 updates. Containers also retain their restart policies. Image downloads use eight bounded HTTP ranges with retained chunk caches;
 metadata uses bounded atomic reads. Every complete asset must pass SHA-256 verification. No development data is imported.
 
+## LDAP / Active Directory setup
+
+Production uses `LDAP_CONFIG_SOURCE=database` and `LDAP_DIRECTORY_ID=tianji-ad`
+so a system administrator can edit the LDAP/AD page at `/platform/settings?section=directory`. Without this setting,
+the application defaults to file management and locks all connection fields.
+For an existing installation, back up the root-only environment, set these values
+in `/srv/weknora-production/secrets/app.env`, retain the intended directory ID,
+and recreate only the app service using the current release's Compose file. Retain the existing encryption key.
+
+A fresh database has no AD connection. Fill in the real domain controllers,
+search scope, service account and trusted enterprise CA, test the connection,
+then enable it. The login page shows domain login only after it is enabled.
+Do not enable an empty or synthetic directory. The credential is encrypted in
+the production database and is covered by the existing cold backup procedure.
+An enterprise CA file must be readable inside the app container; for example,
+an operator can place a public CA certificate under the existing files mount at
+`/data/weknora-production/runtime/files/.ldap-ca/ad-ca.pem` and enter
+`/data/files/.ldap-ca/ad-ca.pem` in the form. Use a dedicated operator-owned
+subdirectory and certificate permissions. No AD data or credentials are imported by
+the installer. LDAP readiness is separate from ordinary HTTP health: acceptance
+reports `ldap_runtime=NOT_CONFIGURED` until AD is enabled, and requires an enabled
+directory to have an available, unpaused synchronized snapshot.
+
 ## Updating deployment infrastructure
 
 Production releases update application images and the release's Compose/nginx
