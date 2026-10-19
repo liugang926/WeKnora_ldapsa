@@ -53,7 +53,7 @@ jobs:
         run: |
           set -euo pipefail
           docker image inspect "weknora-production-app:$GITHUB_SHA" --format '{{range .Config.Env}}{{println .}}{{end}}' | grep -Fx "WEKNORA_BUILD_COMMIT=$GITHUB_SHA"
-          docker run --rm --entrypoint sh "weknora-production-app:$GITHUB_SHA" -c 'test -x /app/WeKnora && test -x /usr/local/bin/migrate'
+          docker run --rm --entrypoint sh "weknora-production-app:$GITHUB_SHA" -c 'test -x /app/WeKnora && test -x /usr/local/bin/migrate && test -x /usr/local/bin/original-body-retention && test -x /usr/local/bin/publication-recovery'
           docker pull paradedb/paradedb:v0.22.6-pg17@sha256:58bf87d2a6f1e72f56590b0f0ae1467e82c3f99ca203dde646672c8ac13148b2
           docker tag paradedb/paradedb:v0.22.6-pg17@sha256:58bf87d2a6f1e72f56590b0f0ae1467e82c3f99ca203dde646672c8ac13148b2 paradedb/paradedb:v0.22.6-pg17
           docker pull redis:7.4.10-alpine

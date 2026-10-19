@@ -43,13 +43,24 @@ services:
       retries: 30
   app:
     <<: *common
+    # Crash recovery is bounded. Daemon/host restart must pass start.sh's gate.
+    restart: on-failure:5
     image: ${APP_IMAGE:?}
     mem_limit: 12g
     memswap_limit: 12g
     cpus: 3
     env_file: [/srv/weknora-production/secrets/app.env]
+    environment:
+      AUTO_MIGRATE: 'false'
+      AUTO_RECOVER_DIRTY: 'false'
+      WEKNORA_ORIGINAL_BODY_JOURNAL_DIRECTORY: /data/body-journal
+      WEKNORA_ORIGINAL_BODY_JOURNAL_KEY: /data/body-key/hmac.key
+      WEKNORA_ORIGINAL_BODY_JOURNAL_PIN: /data/body-pin/pin.json
     volumes:
       - /data/weknora-production/runtime/files:/data/files
+      - /data/weknora-production/retention/journal:/data/body-journal
+      - /data/weknora-production/retention/key:/data/body-key:ro
+      - /data/weknora-production/retention/pin:/data/body-pin
     depends_on:
       postgres: {condition: service_healthy}
       redis: {condition: service_healthy}
@@ -62,6 +73,7 @@ services:
     stop_grace_period: 90s
   frontend:
     <<: *common
+    restart: on-failure:5
     image: ${UI_IMAGE:?}
     mem_limit: 512m
     memswap_limit: 512m

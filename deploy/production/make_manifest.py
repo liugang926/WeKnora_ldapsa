@@ -11,6 +11,8 @@ if __name__ == '__main__':
             'POSTGRES_IMAGE': 'paradedb/paradedb:v0.22.6-pg17',
             'REDIS_IMAGE': 'redis:7.4.10-alpine'}
     print(json.dumps({'schema': 1, 'commit': sha, 'tag': os.environ['GITHUB_REF_NAME'],
+        'deployment_protocol': 2,
+        'required_features': ['original_body_journal', 'nextcloud_onboarding_v1', 'nextcloud_file_status_v2'],
         'images': {key: image_id(ref) for key, ref in refs.items()},
         'image_references': refs,
         'image_config_digests': {key: inspect_config_digest(ref) for key, ref in refs.items()}}, indent=2))

@@ -54,6 +54,21 @@ status, _ = api('/api/v1/knowledge-bases', token=token)
 assert status == 200, 'Authenticated database-backed request failed'
 status, _ = api('/api/v1/auth/register', credentials)
 assert status == 403, 'Public registration accepted'
+nextcloud_routes='NOT_DECLARED'
+if 'nextcloud_onboarding_v1' in manifest.get('required_features', []):
+    # Machine provisioning credentials are intentionally separate from a web
+    # administrator JWT. A guarded route must exist and reject that JWT.
+    status, body = api('/api/v1/integrations/nextcloud/onboarding/candidates', token=token)
+    assert status == 401 and json.loads(body).get('error') == 'onboarding_credential_required', 'Nextcloud onboarding route missing or unguarded'
+    status, _ = api('/api/v1/integrations/nextcloud/files/status/v2', token=token)
+    assert status == 400, 'Nextcloud V2 status route missing or unguarded'
+    status, _ = api('/api/v1/datasource/nextcloud-gc-jobs', token=token)
+    assert status == 200, 'Nextcloud GC administration unavailable'
+    nextcloud_routes='PASS'
+retention_journal='NOT_DECLARED'
+if 'original_body_journal' in manifest.get('required_features', []):
+    subprocess.run(['python3',str(base/'bin/retention.py'),'status',str(release)],check=True,stdout=subprocess.DEVNULL)
+    retention_journal='PASS'
 subprocess.run(['bash',str(base/'bin/check-schema.sh'),str(release)],check=True,stdout=subprocess.DEVNULL)
 app_id=output(['ps','-q','app'])
 environment=json.loads(subprocess.check_output(['docker','inspect',app_id,'--format','{{json .Config.Env}}'],text=True))
@@ -70,5 +85,5 @@ for service,key in [('app','APP_IMAGE'),('frontend','UI_IMAGE'),('postgres','POS
     assert record['HostConfig']['CgroupParent']=='weknora-production.slice', 'Wrong resource slice'
     assert not record['HostConfig'].get('DeviceRequests') and not record['HostConfig'].get('Devices'), 'Unexpected GPU/device allocation'
     images[service]={'image':record['Image'],'health':'healthy','restart_policy':record['HostConfig']['RestartPolicy']['Name'],'memory_bytes':record['HostConfig']['Memory'],'nano_cpus':record['HostConfig']['NanoCpus']}
-result={'origin':origin,'release':manifest['tag'],'commit':manifest['commit'],'frontend_and_assets':'PASS','admin_login':'PASS','directory_administration':'PASS','ldap_runtime':ldap_runtime,'authenticated_database_request':'PASS','registration_closed':'PASS','anonymous_access_denied':'PASS','migration_gate':'PASS','images':images}
+result={'origin':origin,'release':manifest['tag'],'commit':manifest['commit'],'frontend_and_assets':'PASS','admin_login':'PASS','directory_administration':'PASS','ldap_runtime':ldap_runtime,'authenticated_database_request':'PASS','registration_closed':'PASS','anonymous_access_denied':'PASS','migration_gate':'PASS','nextcloud_routes':nextcloud_routes,'nextcloud_business_pairing':'NOT_ACCEPTED_BY_THIS_CHECK','retention_journal':retention_journal,'images':images}
 print(json.dumps(result,indent=2))
