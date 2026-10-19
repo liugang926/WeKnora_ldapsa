@@ -52,7 +52,8 @@ updates. App/frontend use `on-failure:5` for bounded crash recovery; this policy
 does not restart containers when the Docker daemon restarts. The application unit
 has `PartOf=docker.service`, so a controlled Docker restart reruns the same gate.
 Database/Redis retain their own restart policies. Image downloads use eight bounded HTTP ranges with retained chunk caches;
-metadata uses bounded atomic reads. Every complete asset must pass SHA-256 verification. No development data is imported.
+metadata uses bounded atomic reads. Every complete asset must pass SHA-256 verification. No development data is imported. Credential-bearing acceptance checks connect directly
+to the explicit local HTTP endpoint, ignore host proxy settings, and reject redirects.
 
 For the first protocol 2 upgrade, pause the update timer and wait for the active
 updater to finish. Run `python3 /srv/weknora-production/bin/update.py --stage-only`

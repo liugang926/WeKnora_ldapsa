@@ -1,23 +1,18 @@
 #!/usr/bin/env python3
 """Check a fresh HTTP deployment without printing credentials or tokens."""
-import json, pathlib, re, subprocess, sys, urllib.error, urllib.request
+import json, pathlib, re, subprocess, sys
 base = pathlib.Path('/srv/weknora-production')
 origin = sys.argv[1] if len(sys.argv) > 1 else 'http://127.0.0.1:18080'
 sys.path.insert(0, str(base/'bin'))
 from image_identity import resolve_images
+from local_http import LocalHTTPClient
+http = LocalHTTPClient(origin)
 release = (base/'current').resolve()
 manifest = json.loads((release/'manifest.json').read_text())
 credentials = json.loads((base/'secrets/admin.json').read_text())
 cmd = ['docker', 'compose', '--env-file', str(base/'secrets/app.env'), '--env-file', str(release/'images.env'), '-f', str(release/'production/compose.yaml')]
 def api(path, payload=None, token=None):
-    headers = {'Host': 'ai-doc.tianjizn.com'}
-    if payload is not None: headers['Content-Type'] = 'application/json'
-    if token: headers['Authorization'] = 'Bearer '+token
-    request = urllib.request.Request(origin+path, data=json.dumps(payload).encode() if payload is not None else None, headers=headers)
-    try:
-        with urllib.request.urlopen(request, timeout=30) as response: return response.status, response.read()
-    except urllib.error.HTTPError as error:
-        return error.code, error.read()
+    return http.request(path, payload, token)
 def output(args):
     return subprocess.check_output(cmd+args, text=True).strip()
 status, html = api('/')

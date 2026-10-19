@@ -7,7 +7,7 @@ data=/data/weknora-production
 [[ ! -e "$base/secrets/app.env" ]] || { echo 'Already initialized; refusing to overwrite secrets'; exit 1; }
 install -d -m 700 "$base/secrets" "$base/bin" "$base/releases" "$data/runtime" "$data/backups" "$data/downloads" "$data/retention"
 install -d "$data/runtime/"{postgres,redis,files}
-cp "$(dirname "$0")/"{activate.sh,start.sh,check-schema.sh,retention.py,update.py,parallel_download.py,image_identity.py,validate_release.py} "$base/bin/"
+cp "$(dirname "$0")/"{activate.sh,start.sh,check-schema.sh,retention.py,update.py,parallel_download.py,image_identity.py,validate_release.py,local_http.py} "$base/bin/"
 python3 - <<'PY'
 import pathlib, secrets
 base=pathlib.Path('/srv/weknora-production/secrets')
