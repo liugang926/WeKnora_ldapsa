@@ -35,6 +35,19 @@ status, body = api('/api/v1/auth/login', {'email':credentials['email'], 'passwor
 login=json.loads(body)
 assert status==200 and login.get('success') and login.get('user',{}).get('is_system_admin'), 'Administrator login failed'
 token=login['token']
+status, body = api('/api/v1/system/admin/directory/config', token=token)
+directory=json.loads(body)
+assert status == 200, 'Directory administration unavailable'
+assert directory.get('source') in ('default', 'database') and directory.get('read_only_fields') == [], 'Directory administration is deployment-locked'
+status, body = api('/api/v1/system/admin/directory/status', token=token)
+directory_health=json.loads(body)
+assert status == 200, 'Directory health unavailable'
+ldap_runtime='NOT_CONFIGURED'
+if directory.get('enabled'):
+    assert directory_health.get('available') and not directory_health.get('access_paused'), 'Configured directory is not ready'
+    ldap_runtime='PASS'
+status, _ = api('/api/v1/system/admin/directory/config')
+assert status == 401, 'Anonymous directory administration was not rejected'
 status, _ = api('/api/v1/knowledge-bases')
 assert status == 401, 'Anonymous knowledge base access was not rejected'
 status, _ = api('/api/v1/knowledge-bases', token=token)
@@ -57,5 +70,5 @@ for service,key in [('app','APP_IMAGE'),('frontend','UI_IMAGE'),('postgres','POS
     assert record['HostConfig']['CgroupParent']=='weknora-production.slice', 'Wrong resource slice'
     assert not record['HostConfig'].get('DeviceRequests') and not record['HostConfig'].get('Devices'), 'Unexpected GPU/device allocation'
     images[service]={'image':record['Image'],'health':'healthy','restart_policy':record['HostConfig']['RestartPolicy']['Name'],'memory_bytes':record['HostConfig']['Memory'],'nano_cpus':record['HostConfig']['NanoCpus']}
-result={'origin':origin,'release':manifest['tag'],'commit':manifest['commit'],'frontend_and_assets':'PASS','admin_login':'PASS','authenticated_database_request':'PASS','registration_closed':'PASS','anonymous_access_denied':'PASS','migration_gate':'PASS','images':images}
+result={'origin':origin,'release':manifest['tag'],'commit':manifest['commit'],'frontend_and_assets':'PASS','admin_login':'PASS','directory_administration':'PASS','ldap_runtime':ldap_runtime,'authenticated_database_request':'PASS','registration_closed':'PASS','anonymous_access_denied':'PASS','migration_gate':'PASS','images':images}
 print(json.dumps(result,indent=2))
