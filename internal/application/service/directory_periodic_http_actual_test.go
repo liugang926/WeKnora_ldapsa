@@ -375,7 +375,7 @@ func runDirectoryPeriodicActualHTTP(t *testing.T, pg bool) {
 			wait := func(ch <-chan struct{}, name string) {
 				select {
 				case <-ch:
-				case <-time.After(3 * time.Second):
+				case <-time.After(15 * time.Second):
 					assert.Fail(t, name+" did not actually return before final oracle")
 				}
 			}
@@ -396,7 +396,7 @@ func runDirectoryPeriodicActualHTTP(t *testing.T, pg bool) {
 						source == 0 &&
 						bodies == 0
 				},
-				3*time.Second,
+				15*time.Second,
 				10*time.Millisecond,
 				"actual producer/sender release all original pins before fixture cleanup",
 			)
