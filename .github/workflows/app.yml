@@ -144,7 +144,7 @@ jobs:
           go vet "${pkgs[@]}"
           # Real source/lease fixtures are sequential work within a package.
           # The service package carries the complete no-tag runtime matrix.
-          go test -timeout=75m "${pkgs[@]}"
+          go test -p 1 -count=1 -timeout=75m "${pkgs[@]}"
 
       - name: Build server
         run: go build ./cmd/server
