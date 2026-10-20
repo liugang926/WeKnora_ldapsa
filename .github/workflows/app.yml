@@ -151,26 +151,26 @@ jobs:
           fi
           if [ "$handler_ok" = false ]; then
             python3 - <<'PYHANDLER'
-import json, sys
-passed = set()
-failures = []
-for line in open('/tmp/handler-tests.json', errors='replace'):
-    try:
-        event = json.loads(line)
-    except Exception:
-        continue
-    if event.get('Action') == 'pass' and event.get('Test'):
-        passed.add(event['Test'])
-    if event.get('Action') == 'fail' and event.get('Test'):
-        failures.append(event['Test'])
-if failures:
-    print('handler test failures: ' + ', '.join(failures), file=sys.stderr)
-    sys.exit(1)
-if not passed:
-    print('handler suite produced no passing tests', file=sys.stderr)
-    sys.exit(1)
-print(f'handler harness exited nonzero after {len(passed)} passing test events; no test-level failure was reported')
-PYHANDLER
+          import json, sys
+          passed = set()
+          failures = []
+          for line in open('/tmp/handler-tests.json', errors='replace'):
+              try:
+                  event = json.loads(line)
+              except Exception:
+                  continue
+              if event.get('Action') == 'pass' and event.get('Test'):
+                  passed.add(event['Test'])
+              if event.get('Action') == 'fail' and event.get('Test'):
+                  failures.append(event['Test'])
+          if failures:
+              print('handler test failures: ' + ', '.join(failures), file=sys.stderr)
+              sys.exit(1)
+          if not passed:
+              print('handler suite produced no passing tests', file=sys.stderr)
+              sys.exit(1)
+          print(f'handler harness exited nonzero after {len(passed)} passing test events; no test-level failure was reported')
+          PYHANDLER
           fi
           # Real source/lease fixtures are sequential work within a package.
           # The service package carries the complete no-tag runtime matrix.
