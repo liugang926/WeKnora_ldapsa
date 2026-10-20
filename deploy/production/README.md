@@ -6,12 +6,21 @@ buffering, allow 50 MB uploads, and use a 3600-second read timeout.
 
 ## Release contract
 
-Merge reviewed changes to `liugang926/WeKnora_ldapsa` main first. Then create and
-push a unique tag such as `prod-20261019.1` on that merged commit. The
-`Production release` workflow rejects tags outside main, builds Linux amd64
-app (including AnyDoc) and UI, and publishes a complete GitHub release only
-after all image bundles and SHA-256 manifests have uploaded. A normal branch
-push, draft release or prerelease does not deploy. Never reuse a production tag.
+Merge reviewed changes to `liugang926/WeKnora_ldapsa` main. The `Production
+release` workflow automatically creates a unique
+`prod-<UTC date>-<first 12 commit characters>` release only after all main-push
+test workflows for that exact commit have completed successfully. The
+always-on amd64 app-image verification is the discovery sentinel; path-filtered
+Go, frontend, LDAP and AnyDoc workflows are included whenever they were
+triggered. Any failed or cancelled run prevents publication.
+
+After those gates, the workflow builds Linux amd64 app (including AnyDoc) and
+UI, verifies immutable image identities and publishes a complete GitHub release
+only after all image bundles and SHA-256 manifests have uploaded. A draft
+release or prerelease never deploys. Re-running the same main commit does not
+create a second published release. Unique manual `prod-*` tags remain available
+for explicit operator-directed rebuilds, but are not part of the normal release
+path.
 
 Published image identities and configuration digests are preserved in the release
 manifest. The server verifies their configuration and filesystem layers before
@@ -28,13 +37,7 @@ not zero-downtime. Protocol 2 releases declare `original_body_journal` in
 `required_features`; their migrations run through the reviewed stable helper and
 packaged CLI with all application readers stopped. The app has `AUTO_MIGRATE=false`.
 Production releases require local/PR tests and review before
-tagging; image compilation does not replace behavioral acceptance.
-
-The release gate requires the production WeKnora workflows on the exact merged
-`main` commit to succeed. The optional `packages/dsh-weknora` npm harness has a
-known pinned-upstream incompatibility and is intentionally not part of the
-server release gate; its workflow remains independently visible in GitHub
-Actions.
+merging; image compilation does not replace behavioral acceptance.
 
 The production server does not need a GitHub token, inbound GitHub webhook,
 build toolchain, Docker Hub access, or a self-hosted Actions runner. The fork is
@@ -99,7 +102,7 @@ directory to have an available, unpaused synchronized snapshot.
 Production releases update application images and the release's Compose/nginx
 configuration. The trusted helpers installed in `/srv/weknora-production/bin`
 and the systemd units in `/etc/systemd/system` are separate operator-managed
-copies; publishing a tag does not replace them.
+copies; publishing a release does not replace them.
 
 When reviewed changes affect these helpers or units, stop the update timer and
 wait for any running updater to finish. As root, hold the deployment lock while
@@ -111,7 +114,7 @@ re-enable the timer with `systemctl enable --now weknora-production-update.timer
 Both application startup and the updater require the deployment and data mounts.
 Protocol 2 additionally requires the reviewed `retention.py`, `activate.sh` and
 `start.sh` in `bin`, and the updated application unit/restart policies. Publishing
-an application tag cannot install these trusted helpers. Before enabling protocol 2,
+an application release cannot install these trusted helpers. Before enabling protocol 2,
 verify that Docker restart propagation uses the updated application unit.
 
 `install.sh` is for first installation only and refuses an initialized instance.
@@ -141,6 +144,10 @@ only the reviewed changes, retaining the existing environment and data.
   for future Nextcloud. These are planning reserves, not filesystem quotas.
 - Existing Qwen models, ports 30443/30444 and inactive LiteLLM migration data
   are retained. Their measured health is checked before and after deployment.
+- `deploy/production/builtin_models.yaml` configures the system-wide `AIDOC`
+  chat model for every workspace through the internal LiteLLM gateway. Its
+  exact hostname is SSRF-whitelisted; image input is enabled and the model is not
+  forced as the default.
 
 ## Nextcloud feature scope
 
@@ -151,13 +158,20 @@ administration, RAG evaluation and the reviewed automatic release path are retai
 Models and actual business pairing require administrator configuration and
 separate acceptance; exposing an integration route does not establish a pairing.
 
-The current administrator setup still requires operator-provisioned workspace/
-template-scoped onboarding credentials and directory rules. The directory sidebar
-can select configured spaces and select/create a KB; an address-and-authorization
-connection wizard with automatic credential provisioning is not implemented.
-Selecting an existing target currently requires a verified virgin, empty document
-KB. A KB with existing content, or mixed unrelated data sources, cannot be adopted
-by this release. Directory-scoped sharing does not grant workspace-wide membership.
+An Owner/Admin browser session or a platform API key can use the administrator
+connection routes to list eligible workspaces, authorize one scoped credential
+per selected workspace, and revoke only the credentials issued by that
+connection. The Nextcloud server retains the returned tokens and selects the
+current verified folder manager. Existing credentials with durable onboarding
+operations are retained during re-authorization.
+
+New targets copy the approved processing template. Existing document knowledge
+base targets are also supported when their processing configuration provenance
+is verified, they have never been attached to another Nextcloud source, and
+they are not temporary or already Nextcloud-managed. Existing content remains,
+while subsequent non-Nextcloud content writes are rejected after binding. The
+sidebar lists the live content count and can select or create a target.
+Directory-scoped sharing does not grant workspace-wide membership.
 
 The operator explicitly chose this scope with the following optional limitations:
 

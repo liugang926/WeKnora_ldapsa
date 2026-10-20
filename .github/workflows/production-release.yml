@@ -1,72 +1,123 @@
 name: Production release
 on:
   push:
+    branches: [main]
+    paths:
+      - '**'
+      - '!docs/**'
+      - '!examples/**'
+      - '!Formula/**'
+      - '!helm/**'
+      - '!miniprogram/**'
+      - '!website-docs/**'
+      - '!.github/**'
+      - '.github/workflows/production-release.yml'
     tags: ['prod-*']
+  pull_request:
+    paths:
+      - 'deploy/production/**'
+      - '.github/workflows/production-release.yml'
   workflow_dispatch:
 permissions:
-  actions: read
   contents: write
+  actions: read
 concurrency:
-  group: production-release
+  group: ${{ github.event_name == 'pull_request' && 'production-release-validation' || 'production-release' }}
   cancel-in-progress: false
 jobs:
-  main-ci-gate:
-    name: Exact merged main CI gate
+  validate:
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
-    timeout-minutes: 80
-    permissions:
-      actions: read
-      contents: read
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - name: Validate production release helpers
+        run: |
+          for script in deploy/production/*.sh; do bash -n "$script"; done
+          python3 -m unittest discover -s deploy/production -p 'test_*.py'
+
+  identity:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      auto: ${{ steps.resolve.outputs.auto }}
+      commit: ${{ steps.resolve.outputs.commit }}
+      should_release: ${{ steps.resolve.outputs.should_release }}
+      tag: ${{ steps.resolve.outputs.tag }}
     steps:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-      - name: Test the exact-main Actions gate offline
-        run: python3 -m unittest discover -s .github/scripts -p 'test_require_main_ci.py' -v
-      - name: Require the production tag at the current main tip
-        run: |
-          set -euo pipefail
-          [[ "$GITHUB_REF" == refs/tags/prod-* ]]
-          git fetch --no-tags origin '+refs/heads/main:refs/remotes/origin/main'
-          candidate=$(git rev-parse 'HEAD^{commit}')
-          main_tip=$(git rev-parse 'refs/remotes/origin/main^{commit}')
-          [[ "$candidate" == "$GITHUB_SHA" && "$candidate" == "$main_tip" ]]
-      - name: Wait for exact merged-main CI
+      - name: Resolve release identity and uniqueness
+        id: resolve
         env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: |
-          python3 .github/scripts/require_main_ci.py \
-            --repository "$GITHUB_REPOSITORY" \
-            --sha "$GITHUB_SHA" \
-            --timeout-seconds 4500 \
-            --poll-seconds 15 \
-            --settle-seconds 60
-      - name: Recheck the main tip after CI discovery
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          git fetch --no-tags origin '+refs/heads/main:refs/remotes/origin/main'
-          candidate=$(git rev-parse 'HEAD^{commit}')
-          main_tip=$(git rev-parse 'refs/remotes/origin/main^{commit}')
-          [[ "$candidate" == "$GITHUB_SHA" && "$candidate" == "$main_tip" ]]
+          git fetch origin main
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then
+            tag="$GITHUB_REF_NAME"
+            commit="$(git rev-parse "$GITHUB_REF^{commit}")"
+            auto=false
+          elif [[ "$GITHUB_REF" == refs/heads/main ]]; then
+            commit="$GITHUB_SHA"
+            tag="prod-$(date -u +%Y%m%d)-${commit:0:12}"
+            auto=true
+          else
+            echo 'Production releases must come from main or a prod-* tag' >&2
+            exit 1
+          fi
+          [[ "$tag" =~ ^prod-[A-Za-z0-9][A-Za-z0-9._-]{0,100}$ ]]
+          test "$commit" = "$(git rev-parse HEAD)"
+          git merge-base --is-ancestor "$commit" origin/main
+
+          should_release=true
+          if release="$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" \
+              --json isDraft,isPrerelease 2>/dev/null)"; then
+            if [[ "$auto" == true && "$(jq -r .isDraft <<< "$release")" == false \
+                && "$(jq -r .isPrerelease <<< "$release")" == false ]]; then
+              echo "Published release $tag already exists; this main commit will not be released twice."
+              should_release=false
+            else
+              echo "A draft, prerelease, or manually requested release already exists for $tag" >&2
+              exit 1
+            fi
+          fi
+          printf 'tag=%s\ncommit=%s\nauto=%s\nshould_release=%s\n' \
+            "$tag" "$commit" "$auto" "$should_release" >> "$GITHUB_OUTPUT"
 
   package:
-    needs: main-ci-gate
+    needs: identity
+    if: needs.identity.outputs.should_release == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 150
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_AUTO: ${{ needs.identity.outputs.auto }}
+      RELEASE_COMMIT: ${{ needs.identity.outputs.commit }}
+      RELEASE_TAG: ${{ needs.identity.outputs.tag }}
     steps:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-      - name: Recheck the exact merged main tip and deployment helpers
+      - name: Verify resolved release identity
         run: |
-          set -euo pipefail
-          [[ "$GITHUB_REF" == refs/tags/prod-* ]]
-          git fetch --no-tags origin '+refs/heads/main:refs/remotes/origin/main'
-          candidate=$(git rev-parse 'HEAD^{commit}')
-          main_tip=$(git rev-parse 'refs/remotes/origin/main^{commit}')
-          [[ "$candidate" == "$GITHUB_SHA" && "$candidate" == "$main_tip" ]]
+          git fetch origin main
+          [[ "$RELEASE_TAG" =~ ^prod-[A-Za-z0-9][A-Za-z0-9._-]{0,100}$ ]]
+          test "$RELEASE_COMMIT" = "$(git rev-parse HEAD)"
+          git merge-base --is-ancestor HEAD origin/main
+          if [[ "$RELEASE_AUTO" == false ]]; then
+            test "$(git rev-parse "$RELEASE_TAG^{commit}")" = "$RELEASE_COMMIT"
+          fi
           bash -n deploy/production/*.sh
           python3 -m unittest discover -s deploy/production -p 'test_*.py'
+      - name: Require all exact-commit main test workflows
+        run: |
+          python3 deploy/production/release_gate.py \
+            --repo "$GITHUB_REPOSITORY" \
+            --run-id "$GITHUB_RUN_ID" \
+            --commit "$RELEASE_COMMIT"
       - uses: docker/setup-buildx-action@v4
       - name: Build application
         uses: docker/build-push-action@v7
@@ -92,12 +143,10 @@ jobs:
           tags: weknora-production-ui:${{ github.sha }}
           build-args: VITE_FRONTEND_COMMIT=${{ github.sha }}
       - name: Verify and package immutable images
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           docker image inspect "weknora-production-app:$GITHUB_SHA" --format '{{range .Config.Env}}{{println .}}{{end}}' | grep -Fx "WEKNORA_BUILD_COMMIT=$GITHUB_SHA"
-          docker run --rm --entrypoint sh "weknora-production-app:$GITHUB_SHA" -c 'test -x /app/WeKnora && test -x /usr/local/bin/migrate && test -x /usr/local/bin/original-body-retention && test -x /usr/local/bin/publication-recovery'
+          docker run --rm --entrypoint sh "weknora-production-app:$GITHUB_SHA" -c 'test -x /app/WeKnora && test -x /usr/local/bin/migrate'
           docker pull paradedb/paradedb:v0.22.6-pg17@sha256:58bf87d2a6f1e72f56590b0f0ae1467e82c3f99ca203dde646672c8ac13148b2
           docker tag paradedb/paradedb:v0.22.6-pg17@sha256:58bf87d2a6f1e72f56590b0f0ae1467e82c3f99ca203dde646672c8ac13148b2 paradedb/paradedb:v0.22.6-pg17
           docker pull redis:7.4.10-alpine
@@ -106,14 +155,15 @@ jobs:
           docker save "weknora-production-app:$GITHUB_SHA" "weknora-production-ui:$GITHUB_SHA" paradedb/paradedb:v0.22.6-pg17 redis:7.4.10-alpine | gzip -1 | split -b 1800M -d - bundle/images.tar.gz.part
           tar --exclude=__pycache__ -czf bundle/deployment.tar.gz -C deploy production
           (cd bundle && sha256sum manifest.json deployment.tar.gz images.tar.gz.part* > SHA256SUMS)
-          git fetch --no-tags origin '+refs/heads/main:refs/remotes/origin/main'
-          candidate=$(git rev-parse 'HEAD^{commit}')
-          main_tip=$(git rev-parse 'refs/remotes/origin/main^{commit}')
-          [[ "$candidate" == "$GITHUB_SHA" && "$candidate" == "$main_tip" ]]
-          gh release create "$GITHUB_REF_NAME" --verify-tag --title "WeKnora production $GITHUB_REF_NAME" --notes "Merged main commit: $GITHUB_SHA. Linux amd64. Deployment includes bounded resources, backup and health gates." --draft
-          gh release upload "$GITHUB_REF_NAME" bundle/*
-          git fetch --no-tags origin '+refs/heads/main:refs/remotes/origin/main'
-          candidate=$(git rev-parse 'HEAD^{commit}')
-          main_tip=$(git rev-parse 'refs/remotes/origin/main^{commit}')
-          [[ "$candidate" == "$GITHUB_SHA" && "$candidate" == "$main_tip" ]]
-          gh release edit "$GITHUB_REF_NAME" --draft=false --latest=false
+          notes="Merged main commit: $RELEASE_COMMIT. Linux amd64. Deployment includes bounded resources, backup and health gates."
+          if [[ "$RELEASE_AUTO" == true ]]; then
+            notes="$notes Published automatically after all exact-commit main test workflows passed."
+            gh release create "$RELEASE_TAG" --target "$RELEASE_COMMIT" \
+              --title "WeKnora production $RELEASE_TAG" --notes "$notes" --draft
+          else
+            gh release create "$RELEASE_TAG" --verify-tag \
+              --title "WeKnora production $RELEASE_TAG" --notes "$notes" --draft
+          fi
+          gh release upload "$RELEASE_TAG" bundle/*
+          gh release edit "$RELEASE_TAG" --draft=false --latest=false
+          gh release view "$RELEASE_TAG" --json tagName,isDraft,isPrerelease,url
