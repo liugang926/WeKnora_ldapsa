@@ -264,7 +264,7 @@ func (s *KnowledgeInputProvenanceStore) recheckKnowledgeAutoTagInTx(
 	}
 	actual, err := s.captureKnowledgeAutoTagInTx(tx, proof)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("auto current material: %w", err)
 	}
 	// A live producer uses this transient tenant to instantiate the model. It
 	// is deliberately absent from persisted JSON, but must still equal the
@@ -285,9 +285,12 @@ func (s *KnowledgeInputProvenanceStore) recheckKnowledgeAutoTagInTx(
 	if err := acceptKnowledgeAutoPublicationTransition(tx, &saved, actual); err != nil {
 		return nil, fmt.Errorf("auto publication transition: %w", err)
 	}
+	if err := acceptKnowledgeAutoTagConfigurationProjection(&saved, actual); err != nil {
+		return nil, fmt.Errorf("auto configuration projection: %w", err)
+	}
 	currentDigest, err := autoTagSnapshotDigest(actual)
 	if err != nil || currentDigest != digest {
-		return nil, ErrKnowledgeInputChanged
+		return nil, fmt.Errorf("auto current digest: %w", ErrKnowledgeInputChanged)
 	}
 	if s.displayAuthorityFactory == nil {
 		return nil, types.ErrSourceLineageUnknown
@@ -301,9 +304,41 @@ func (s *KnowledgeInputProvenanceStore) recheckKnowledgeAutoTagInTx(
 		actual.Original.KnowledgeBase,
 		proof,
 	); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("auto producer authority: %w", err)
 	}
 	return actual.SourceLineage, nil
+}
+
+// Scoped Nextcloud worker reads intentionally project only model-relevant KB
+// controls, omitting display metadata, timestamps and computed counters. Those
+// fields are not Auto Tag inputs. Recheck the effective configuration first,
+// then restore the sealed KB representation before hashing the model snapshot.
+func acceptKnowledgeAutoTagConfigurationProjection(
+	saved,
+	actual *types.KnowledgeAutoTagInputSnapshot,
+) error {
+	if saved == nil || actual == nil || saved.Original == nil || actual.Original == nil ||
+		saved.Original.Knowledge == nil || actual.Original.Knowledge == nil ||
+		saved.Original.KnowledgeBase == nil || actual.Original.KnowledgeBase == nil ||
+		saved.Original.Proof == nil || actual.Original.Proof == nil {
+		return ErrKnowledgeInputChanged
+	}
+	savedKB, actualKB := saved.Original.KnowledgeBase, actual.Original.KnowledgeBase
+	if savedKB.ID != actualKB.ID || savedKB.TenantID != actualKB.TenantID ||
+		savedKB.Type != actualKB.Type ||
+		saved.Original.Proof.ConfigDigest != actual.Original.Proof.ConfigDigest {
+		return ErrKnowledgeInputChanged
+	}
+	savedConfig, err := knowledgeConfigDigest(savedKB, saved.Original.Knowledge)
+	if err != nil {
+		return err
+	}
+	actualConfig, err := knowledgeConfigDigest(actualKB, actual.Original.Knowledge)
+	if err != nil || actualConfig != savedConfig {
+		return ErrKnowledgeInputChanged
+	}
+	actual.Original.KnowledgeBase = savedKB
+	return nil
 }
 
 // RecheckKnowledgeAutoTagInputs rechecks knowledge auto tag inputs.

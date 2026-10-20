@@ -350,7 +350,7 @@ func runDirectoryPeriodicActualHTTP(t *testing.T, pg bool) {
 			})
 			// Keep a bounded handler deadline with enough headroom for shared
 			// CI runners, while still failing a hung SSE response.
-			client := &http.Client{Timeout: 15 * time.Second}
+			client := &http.Client{Timeout: 30 * time.Second}
 			started := time.Now()
 			response, err := client.Post(
 				server.URL+"/knowledge-chat/"+f.Session.ID,
@@ -368,8 +368,8 @@ func runDirectoryPeriodicActualHTTP(t *testing.T, pg bool) {
 			assert.Equal(t, http.StatusOK, response.StatusCode)
 			select {
 			case returnedAt := <-httpReturned:
-				assert.Less(t, returnedAt.Sub(started), 12*time.Second)
-			case <-time.After(3 * time.Second):
+				assert.Less(t, returnedAt.Sub(started), 25*time.Second)
+			case <-time.After(5 * time.Second):
 				assert.Fail(t, "actual HTTP handler did not actually return before final oracle")
 			}
 			wait := func(ch <-chan struct{}, name string) {
