@@ -404,7 +404,7 @@ func runNormalReferencesActualHTTP(t *testing.T, pg bool, modes ...string) {
 		if mode == "producer-stop" {
 			select {
 			case <-httpReturned:
-			case <-time.After(12 * time.Second):
+			case <-time.After(3 * time.Second):
 				t.Fatal("the real owned HTTP sender did not exit")
 			}
 			var watcherCtx context.Context
