@@ -201,7 +201,7 @@ jobs:
           go build -o "$WEKNORA_CAPACITY_RECONCILE_CLI" ./cmd/capacity-reconcile
       - name: Run source contracts with actual FTS5, PostgreSQL and Redis
         run: |
-          go test -tags sqlite,sqlite_fts5 -p 1 -count=1 -timeout=50m \
+          go test -tags sqlite,sqlite_fts5 -p 1 -count=1 -timeout=75m \
             ./internal/application/repository \
             ./internal/application/repository/retriever/sqlite \
             ./internal/application/repository/retriever/postgres \

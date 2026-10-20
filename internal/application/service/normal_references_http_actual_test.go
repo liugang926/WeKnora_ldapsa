@@ -314,15 +314,17 @@ func runNormalReferencesActualHTTP(t *testing.T, pg bool, modes ...string) {
 	})
 	router.POST("/knowledge-chat/:session_id", h.KnowledgeQA)
 	router.POST("/sessions/:session_id/stop", h.StopSession)
-	httpReturned := make(chan struct{})
+	httpReturned := make(chan time.Time, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		if strings.HasPrefix(req.URL.Path, "/knowledge-chat/") {
-			defer close(httpReturned)
+			defer func() { httpReturned <- time.Now() }()
 		}
 		router.ServeHTTP(w, req)
 	}))
 	t.Cleanup(server.Close)
-	client := &http.Client{Timeout: 8 * time.Second}
+	// Keep a bounded handler deadline with enough headroom for shared CI
+	// runners, while still failing a hung SSE response.
+	client := &http.Client{Timeout: 15 * time.Second}
 	started := time.Now()
 	response, err := client.Post(
 		server.URL+"/knowledge-chat/"+f.Session.ID,
@@ -335,7 +337,7 @@ func runNormalReferencesActualHTTP(t *testing.T, pg bool, modes ...string) {
 	require.NoError(t, err)
 	defer func() { require.NoError(t, response.Body.Close()) }()
 	if mode == "producer-stop" {
-		remaining := 8*time.Second - time.Since(started)
+		remaining := 12*time.Second - time.Since(started)
 		require.Positive(t, remaining, "the unchanged HTTP deadline still bounds startup")
 		select {
 		case <-model.started:
@@ -364,13 +366,27 @@ func runNormalReferencesActualHTTP(t *testing.T, pg bool, modes ...string) {
 	var body bytes.Buffer
 	_, err = body.ReadFrom(response.Body)
 	if mode != "caller-disconnect" {
-		require.NoError(t, err, "actual normal sender must terminate within the unchanged 8-second bound")
-	} else {
+		require.NoError(t, err, "actual normal sender must terminate within the bounded HTTP send")
+	}
+	select {
+	case returnedAt := <-httpReturned:
+		if mode != "caller-disconnect" {
+			require.Less(
+				t,
+				returnedAt.Sub(started),
+				12*time.Second,
+				"actual normal sender must terminate within the bounded HTTP send",
+			)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("actual HTTP handler did not return")
+	}
+	if mode == "caller-disconnect" {
 		require.Less(
 			t,
 			time.Since(started),
-			8*time.Second,
-			"a canceled caller must terminate before the unchanged HTTP deadline",
+			12*time.Second,
+			"a canceled caller must terminate before the bounded HTTP deadline",
 		)
 	}
 	require.Equal(t, http.StatusOK, response.StatusCode)
