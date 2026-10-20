@@ -203,7 +203,7 @@ func onboardingExistingTarget(tx *gorm.DB, tenant uint64, id string) (*types.Kno
 		return nil, 0, ErrNextcloudKBUnavailable
 	}
 	if err := tx.Table("knowledges").
-		Where("tenant_id=? AND knowledge_base_id=?", tenant, id).
+		Where("tenant_id=? AND knowledge_base_id=? AND deleted_at IS NULL", tenant, id).
 		Count(&n).
 		Error; err != nil {
 		return nil, 0, ErrNextcloudKBUnavailable

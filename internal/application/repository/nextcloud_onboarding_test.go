@@ -551,6 +551,17 @@ func TestNextcloudOnboardingAllowsExistingNonEmptyKnowledgeBase(t *testing.T) {
 		KnowledgeBaseID: kb.ID,
 		Channel:         "manual",
 	}).Error)
+	candidates, err := store.Candidates(context.Background(), c, "directory", "guid-owner")
+	require.NoError(t, err)
+	found := false
+	for _, candidate := range candidates {
+		if candidate["id"] == kb.ID {
+			found = true
+			require.Equal(t, "1", candidate["content_count"])
+			break
+		}
+	}
+	require.True(t, found)
 	op, err := store.Reserve(
 		context.Background(),
 		c,

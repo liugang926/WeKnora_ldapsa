@@ -1,6 +1,32 @@
 # Nextcloud directory onboarding
 
-This protocol creates **knowledge bases in an existing tenant**. It never creates a tenant or ordinary tenant membership. All routes use TLS and the separate Nextcloud server automation credential; content/API keys cannot call these routes.
+This protocol creates **knowledge bases in an existing tenant**. It never creates a tenant or ordinary tenant membership. Onboarding machine routes use TLS and the separate Nextcloud server automation credential. The administrator connection routes below additionally accept an Owner/Admin browser session or a platform API key; tenant-scoped content keys cannot call them.
+
+## Administrator connection
+
+An administrator with a WeKnora platform API key (`system_tenants_read` and
+`system_tenants_manage`) or an Owner/Admin browser session can use the
+connection setup routes without pre-installing onboarding credentials:
+
+- `GET /api/v1/integrations/nextcloud/connection/workspaces` lists eligible
+  workspaces and the default processing template selected from each workspace.
+- `POST /api/v1/integrations/nextcloud/connection/authorize` accepts
+  `instance_id`, canonical `base_url`, `directory_id`, optional verified
+  `actor_directory_id`/`actor_object_guid`, and one or more `tenant_ids`. It
+  creates one scoped credential per workspace and returns each token exactly
+  once.
+- `POST /api/v1/integrations/nextcloud/connection/revoke` disables the exact
+  connection-issued credentials. A Nextcloud instance can also revoke its own
+  connection through `POST /api/v1/integrations/nextcloud/onboarding/connection/revoke`
+  using any scoped onboarding credential it holds.
+
+Connection credentials are held only by the Nextcloud server. They are
+instance-scoped and still require a live verified directory identity; the
+Nextcloud server verifies the current folder manager before selecting that
+actor. A folder manager authorized by Nextcloud may bind any eligible
+knowledge base in a workspace authorized by the connection. Existing
+credentials with durable onboarding operations are retained when a connection
+is re-authorized.
 
 ## Initial operator configuration
 

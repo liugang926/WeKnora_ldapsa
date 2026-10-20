@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"net/url"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -390,9 +391,17 @@ func connectionBaseURLCanonical(raw string) bool {
 		return false
 	}
 	u, err := url.Parse(raw)
-	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil ||
+	devHTTP := strings.TrimSpace(os.Getenv("WEKNORA_EVENT_DEV_HTTP")) == "1"
+	if err != nil || (u.Scheme != "https" && !(devHTTP && u.Scheme == "http")) ||
+		u.Host == "" || u.User != nil ||
 		u.RawQuery != "" || u.Fragment != "" || (u.Path != "" && u.Path != "/") {
 		return false
+	}
+	if port := u.Port(); port != "" {
+		parsed, err := strconv.Atoi(port)
+		if err != nil || parsed < 1 || parsed > 65535 {
+			return false
+		}
 	}
 	host := strings.ToLower(u.Hostname())
 	return host != "" && len(host) <= 253 &&

@@ -9,7 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// NextcloudConnectionHandler owns the one-time administrator connection that
+// NextcloudConnectionHandler owns the administrator connection setup that
 // turns selected workspaces into scoped Nextcloud onboarding credentials.
 type NextcloudConnectionHandler struct {
 	store *repository.NextcloudOnboardingStore
