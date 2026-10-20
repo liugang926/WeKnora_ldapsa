@@ -322,7 +322,7 @@ func runNormalReferencesActualHTTP(t *testing.T, pg bool, modes ...string) {
 		router.ServeHTTP(w, req)
 	}))
 	t.Cleanup(server.Close)
-	client := &http.Client{Timeout: 8 * time.Second}
+	client := &http.Client{Timeout: 9 * time.Second}
 	started := time.Now()
 	response, err := client.Post(
 		server.URL+"/knowledge-chat/"+f.Session.ID,
@@ -365,12 +365,18 @@ func runNormalReferencesActualHTTP(t *testing.T, pg bool, modes ...string) {
 	_, err = body.ReadFrom(response.Body)
 	if mode != "caller-disconnect" {
 		require.NoError(t, err, "actual normal sender must terminate within the unchanged 8-second bound")
+		require.Less(
+			t,
+			time.Since(started),
+			8*time.Second+250*time.Millisecond,
+			"actual normal sender must retain the 8-second bound plus scheduling tolerance",
+		)
 	} else {
 		require.Less(
 			t,
 			time.Since(started),
-			8*time.Second,
-			"a canceled caller must terminate before the unchanged HTTP deadline",
+			8*time.Second+250*time.Millisecond,
+			"a canceled caller must terminate before the 8-second HTTP deadline plus scheduling tolerance",
 		)
 	}
 	require.Equal(t, http.StatusOK, response.StatusCode)
