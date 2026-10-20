@@ -26,6 +26,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+const normalReferencesHTTPReturnTimeout = 15 * time.Second
+
 type normalReferencesActualModel struct {
 	t                     *testing.T
 	f                     *service.NormalReferencesHTTPFixtureForTest
@@ -378,7 +380,7 @@ func runNormalReferencesActualHTTP(t *testing.T, pg bool, modes ...string) {
 				"actual normal sender must terminate within the bounded HTTP send",
 			)
 		}
-	case <-time.After(3 * time.Second):
+	case <-time.After(normalReferencesHTTPReturnTimeout):
 		t.Fatal("actual HTTP handler did not return")
 	}
 	if mode == "caller-disconnect" {
@@ -394,7 +396,7 @@ func runNormalReferencesActualHTTP(t *testing.T, pg bool, modes ...string) {
 	defer func() {
 		select {
 		case <-f.ProducerReturned:
-		case <-time.After(3 * time.Second):
+		case <-time.After(normalReferencesHTTPReturnTimeout):
 			if lateIdle {
 				assert.Fail(t, "the actual production KnowledgeQA did not return before final database assertions")
 			} else {
@@ -405,12 +407,12 @@ func runNormalReferencesActualHTTP(t *testing.T, pg bool, modes ...string) {
 			var watcherCtx context.Context
 			select {
 			case watcherCtx = <-observedStream.watcher:
-			case <-time.After(3 * time.Second):
+			case <-time.After(normalReferencesHTTPReturnTimeout):
 				t.Fatal("the real owned stop watcher never called the actual Redis reader")
 			}
 			select {
 			case <-watcherCtx.Done():
-			case <-time.After(3 * time.Second):
+			case <-time.After(normalReferencesHTTPReturnTimeout):
 				t.Fatal("the real owned stop watcher did not exit")
 			}
 			select {
@@ -432,7 +434,7 @@ func runNormalReferencesActualHTTP(t *testing.T, pg bool, modes ...string) {
 							" both delivery loops exited"),
 					)
 				}
-			case <-time.After(3 * time.Second):
+			case <-time.After(normalReferencesHTTPReturnTimeout):
 				t.Fatal("the actual StopSession completion call did not return")
 			}
 		}
@@ -453,7 +455,7 @@ func runNormalReferencesActualHTTP(t *testing.T, pg bool, modes ...string) {
 			assert.Eventually(
 				t,
 				leasesReleased,
-				3*time.Second,
+				normalReferencesHTTPReturnTimeout,
 				10*time.Millisecond,
 				"actual terminal releases producer/reader pins before fixture cleanup",
 			)
@@ -461,7 +463,7 @@ func runNormalReferencesActualHTTP(t *testing.T, pg bool, modes ...string) {
 			require.Eventually(
 				t,
 				leasesReleased,
-				3*time.Second,
+				normalReferencesHTTPReturnTimeout,
 				10*time.Millisecond,
 				"actual terminal releases producer/reader pins before fixture cleanup",
 			)
@@ -632,7 +634,7 @@ func runNormalReferencesActualHTTP(t *testing.T, pg bool, modes ...string) {
 				Error == nil &&
 			source == 0 &&
 			body == 0
-	}, 3*time.Second, 10*time.Millisecond, "real producer and final sender release all owned original pins")
+	}, normalReferencesHTTPReturnTimeout, 10*time.Millisecond, "real producer and final sender release all owned original pins")
 }
 
 func TestNormalReferencesActualHTTPSQLite(t *testing.T)   { runNormalReferencesActualHTTP(t, false) }

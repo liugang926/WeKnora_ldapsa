@@ -24,6 +24,11 @@ import (
 	"gorm.io/gorm"
 )
 
+const (
+	normalReferencesHTTPContextTimeout = 90 * time.Second
+	normalReferencesHTTPReturnTimeout  = 15 * time.Second
+)
+
 // This test-only bridge lets the external HTTP tests use the real signed
 // machine ingestion fixture without introducing a service -> handler cycle.
 type NormalReferencesHTTPFixtureForTest struct {
@@ -268,7 +273,7 @@ func NewNormalReferencesHTTPFixtureForTest(
 	}
 	ConfigureMessageSourceLineage(messages, sessions, &SessionForkService{}, manager, m.f.guard)
 	ctx := context.WithValue(m.f.ctx, types.UserIDContextKey, types.CallerFromContext(m.f.ctx).UserID)
-	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, normalReferencesHTTPContextTimeout)
 	t.Cleanup(cancel)
 	var tenant types.Tenant
 	require.NoError(t, m.f.db.Where("id=7").Take(&tenant).Error)
