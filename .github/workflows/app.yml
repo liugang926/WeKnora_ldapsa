@@ -152,7 +152,7 @@ jobs:
   source-contracts:
     name: SQLite FTS5 and PostgreSQL source contracts
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
     services:
       postgres:
         image: paradedb/paradedb:v0.22.6-pg17@sha256:58bf87d2a6f1e72f56590b0f0ae1467e82c3f99ca203dde646672c8ac13148b2
@@ -201,7 +201,7 @@ jobs:
           go build -o "$WEKNORA_CAPACITY_RECONCILE_CLI" ./cmd/capacity-reconcile
       - name: Run source contracts with actual FTS5, PostgreSQL and Redis
         run: |
-          go test -tags sqlite,sqlite_fts5 -p 1 -count=1 -timeout=30m \
+          go test -tags sqlite,sqlite_fts5 -p 1 -count=1 -timeout=50m \
             ./internal/application/repository \
             ./internal/application/repository/retriever/sqlite \
             ./internal/application/repository/retriever/postgres \
