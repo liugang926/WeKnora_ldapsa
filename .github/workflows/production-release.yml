@@ -13,15 +13,31 @@ on:
       - '!.github/**'
       - '.github/workflows/production-release.yml'
     tags: ['prod-*']
+  pull_request:
+    paths:
+      - 'deploy/production/**'
+      - '.github/workflows/production-release.yml'
   workflow_dispatch:
 permissions:
   contents: write
   actions: read
 concurrency:
-  group: production-release
+  group: ${{ github.event_name == 'pull_request' && 'production-release-validation' || 'production-release' }}
   cancel-in-progress: false
 jobs:
+  validate:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - name: Validate production release helpers
+        run: |
+          for script in deploy/production/*.sh; do bash -n "$script"; done
+          python3 -m unittest discover -s deploy/production -p 'test_*.py'
+
   identity:
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     outputs:
