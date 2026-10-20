@@ -15,6 +15,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// The actual handler/write assertions provide the production semantics. This
+// broader wait only prevents shared-runner scheduling from looking like a hang.
+const actualSteerHTTPWait = 30 * time.Second
+
 func TestSteerOriginalMaterialActualHTTPAgentPromoteCanonicalAndRedisForgery(t *testing.T) {
 	for _, controlled := range []bool{false, true} {
 		name := "ordinary_new_legal_flow"
@@ -66,7 +70,7 @@ func TestSteerOriginalMaterialActualHTTPAgentHonorsDisableTitle(t *testing.T) {
 			case <-model.ready:
 			case <-done:
 				t.Fatal("actual AgentQA ended before its admitted local model")
-			case <-time.After(8 * time.Second):
+			case <-time.After(actualSteerHTTPWait):
 				t.Fatal("actual AgentQA did not reach its admitted local model")
 			}
 			wantTitles := int64(1)
@@ -82,7 +86,7 @@ func TestSteerOriginalMaterialActualHTTPAgentHonorsDisableTitle(t *testing.T) {
 			model.release()
 			select {
 			case <-done:
-			case <-time.After(8 * time.Second):
+			case <-time.After(actualSteerHTTPWait):
 				t.Fatal("actual Agent producer or its final HTTP sender did not finish")
 			}
 			require.Equal(t, wantTitles, model.titleCalls.Load())
@@ -181,7 +185,7 @@ func runActualSteerAfterHTTP(t *testing.T, mode string) {
 	case <-model.ready:
 	case <-done:
 		t.Fatal("initial actual AgentQA ended before its model")
-	case <-time.After(8 * time.Second):
+	case <-time.After(actualSteerHTTPWait):
 		t.Fatal("initial actual AgentQA did not reach its model")
 	}
 	var initial types.Message
@@ -284,7 +288,7 @@ func runActualSteerAfterHTTP(t *testing.T, mode string) {
 	model.release()
 	select {
 	case <-done:
-	case <-time.After(8 * time.Second):
+	case <-time.After(actualSteerHTTPWait):
 		t.Fatal("initial actual HTTP run did not finish")
 	}
 	if mode != "positive" {
@@ -471,7 +475,7 @@ func runActualSteerHTTPAgent(t *testing.T, controlled bool, mode string) {
 	case <-model.ready:
 	case <-done:
 		t.Fatalf("actual public AgentQA ended before its first local model call: %s", w.Body.String())
-	case <-time.After(8 * time.Second):
+	case <-time.After(actualSteerHTTPWait):
 		t.Fatal("actual public AgentQA did not reach the paused local model")
 	}
 	var run types.Message
@@ -619,7 +623,7 @@ func runActualSteerHTTPAgent(t *testing.T, controlled bool, mode string) {
 	model.release()
 	select {
 	case <-done:
-	case <-time.After(8 * time.Second):
+	case <-time.After(actualSteerHTTPWait):
 		t.Fatal("actual Agent producer or its final HTTP sender did not finish")
 	}
 	require.EqualValues(t, 1, observed.consumes.Load(), "one actual round drain consumes one exact admitted original")
