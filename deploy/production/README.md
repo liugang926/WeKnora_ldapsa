@@ -6,12 +6,21 @@ buffering, allow 50 MB uploads, and use a 3600-second read timeout.
 
 ## Release contract
 
-Merge reviewed changes to `liugang926/WeKnora_ldapsa` main first. Then create and
-push a unique tag such as `prod-20261018.1` on that merged commit. The
-`Production release` workflow rejects tags outside main, builds Linux amd64
-app (including AnyDoc) and UI, and publishes a complete GitHub release only
-after all image bundles and SHA-256 manifests have uploaded. A normal branch
-push, draft release or prerelease does not deploy. Never reuse a production tag.
+Merge reviewed changes to `liugang926/WeKnora_ldapsa` main. The `Production
+release` workflow automatically creates a unique
+`prod-<UTC date>-<first 12 commit characters>` release only after all main-push
+test workflows for that exact commit have completed successfully. The
+always-on amd64 app-image verification is the discovery sentinel; path-filtered
+Go, frontend, LDAP and AnyDoc workflows are included whenever they were
+triggered. Any failed or cancelled run prevents publication.
+
+After those gates, the workflow builds Linux amd64 app (including AnyDoc) and
+UI, verifies immutable image identities and publishes a complete GitHub release
+only after all image bundles and SHA-256 manifests have uploaded. A draft
+release or prerelease never deploys. Re-running the same main commit does not
+create a second published release. Unique manual `prod-*` tags remain available
+for explicit operator-directed rebuilds, but are not part of the normal release
+path.
 
 Published image identities and configuration digests are preserved in the release
 manifest. The server verifies their configuration and filesystem layers before
@@ -24,8 +33,8 @@ consistent backup, starts database/Redis/app, verifies health, the exact clean m
 and application tables,
 and only then opens the frontend. This is a maintenance-window deployment,
 not zero-downtime. Future schema migrations run through the application's normal
-AUTO_MIGRATE path. Production releases require local/PR tests and review before
-tagging; image compilation does not replace behavioral acceptance.
+AUTO_MIGRATE path. Image compilation does not replace behavioral acceptance;
+the release waits for the exact commit's main test workflows before packaging.
 
 The production server does not need a GitHub token, inbound GitHub webhook,
 build toolchain, Docker Hub access, or a self-hosted Actions runner. The fork is
@@ -76,7 +85,7 @@ directory to have an available, unpaused synchronized snapshot.
 Production releases update application images and the release's Compose/nginx
 configuration. The trusted helpers installed in `/srv/weknora-production/bin`
 and the systemd units in `/etc/systemd/system` are separate operator-managed
-copies; publishing a tag does not replace them.
+copies; publishing a release does not replace them.
 
 When reviewed changes affect these helpers or units, stop the update timer and
 wait for any running updater to finish. As root, hold the deployment lock while
