@@ -67,7 +67,12 @@ func nextcloudKBControlsClosed(tx *gorm.DB, tenant uint64, kb string) (bool, err
 		return true, err
 	}
 	if !tx.Migrator().HasTable(&NextcloudSourcePairing{}) {
-		return nextcloudCurrentControlModule(tx), nil
+		// A session field is part of the onboarding migration, but by itself it
+		// does not prove that this knowledge base ever used Nextcloud. Treat
+		// only an unpaired current source or the irreversible KB marker as a
+		// closed target; otherwise an AutoMigrate-created session schema would
+		// block unrelated legacy knowledge bases.
+		return nextcloudUnpairedCurrentKB(tx, tenant, kb)
 	}
 	var pairs []NextcloudSourcePairing
 	if e := tx.Where("tenant_id=? AND knowledge_base_id=?", tenant, kb).Find(&pairs).Error; e != nil {

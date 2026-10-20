@@ -378,3 +378,20 @@ func TestNextcloudContentLeaseSQLitePruneFinishedInBoundedBatches(t *testing.T) 
 	_, err = store.RenewLease(ctx, active.ID, time.Minute)
 	require.NoError(t, err)
 }
+
+func TestNextcloudContentLeaseSessionColumnAloneDoesNotCloseLegacyRead(t *testing.T) {
+	db := leaseTestSQLite(t)
+	require.NoError(t, db.Exec(
+		"CREATE TABLE sessions(id TEXT PRIMARY KEY, nextcloud_scoped BOOLEAN NOT NULL DEFAULT FALSE)",
+	).Error)
+
+	lease, err := NewNextcloudContentLeaseStore(db).AcquireKBRead(
+		context.Background(),
+		7,
+		"kb-legacy",
+		"legacy-reader",
+		time.Minute,
+	)
+	require.NoError(t, err)
+	require.NotEmpty(t, lease.ID)
+}

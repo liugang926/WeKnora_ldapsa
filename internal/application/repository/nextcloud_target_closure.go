@@ -87,8 +87,7 @@ func requireNextcloudTargetOpenInTx(tx *gorm.DB, tenant uint64, kb string) error
 		return err
 	}
 	if !tx.Migrator().HasTable("nextcloud_onboarding_operations") {
-		if tx.Migrator().HasColumn("sessions", "nextcloud_scoped") ||
-			tx.Migrator().HasTable("nextcloud_onboarding_credentials") ||
+		if tx.Migrator().HasTable("nextcloud_onboarding_credentials") ||
 			tx.Migrator().HasTable(&NextcloudTargetClosure{}) {
 			return ErrNextcloudTargetUnverified
 		}
@@ -633,8 +632,7 @@ func requireNextcloudTargetTenantNotPermanentlyClosed(tx *gorm.DB, tenant uint64
 }
 
 func requireNextcloudTargetClosureSchema(tx *gorm.DB) error {
-	current := tx.Migrator().HasColumn("sessions", "nextcloud_scoped") ||
-		tx.Migrator().HasTable("nextcloud_onboarding_credentials") ||
+	current := tx.Migrator().HasTable("nextcloud_onboarding_credentials") ||
 		tx.Migrator().HasTable("nextcloud_onboarding_operations") ||
 		tx.Migrator().HasTable(&NextcloudTargetClosure{}) ||
 		tx.Migrator().HasTable(&NextcloudTenantDeletion{})
