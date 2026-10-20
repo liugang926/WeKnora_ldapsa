@@ -3,6 +3,8 @@ package chatpipeline
 import (
 	"context"
 
+	"github.com/Tencent/WeKnora/internal/models/api"
+
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 )
@@ -59,6 +61,23 @@ func (p *PluginChatCompletion) OnEvent(
 	pipelineInfo(ctx, "Completion", "model_call", map[string]interface{}{
 		"chat_model": chatManage.ChatModelID,
 	})
+	if err := CheckSourceLineageInputs(ctx, chatManage); err != nil {
+		return sourceLineagePluginError(err)
+	}
+	if err := AccountResults(ctx, chatManage.MergeResult); err != nil {
+		return sourceLineagePluginError(err)
+	}
+	chatMessages, err = api.FreezeSourceModelMessages(chatMessages)
+	if err != nil {
+		return sourceLineagePluginError(err)
+	}
+	opt, err = api.FreezeSourceModelOptions(opt)
+	if err != nil {
+		return sourceLineagePluginError(err)
+	}
+	if err := stampModelInputLineage(ctx, chatMessages); err != nil {
+		return sourceLineagePluginError(err)
+	}
 	chatResponse, err := chatModel.Chat(ctx, chatMessages, opt)
 	if err != nil {
 		pipelineError(ctx, "Completion", "model_call", map[string]interface{}{
@@ -83,5 +102,12 @@ func (p *PluginChatCompletion) OnEvent(
 		"prompt_tokens":     chatResponse.Usage.PromptTokens,
 	})
 	chatManage.ChatResponse = chatResponse
+	if turn := types.RAGSourceLineageFromContext(ctx); turn != nil {
+		lineage, err := turn.CheckedSnapshot(ctx)
+		if err != nil {
+			return sourceLineagePluginError(err)
+		}
+		chatResponse.SourceLineage = lineage
+	}
 	return next()
 }

@@ -5,6 +5,7 @@ import (
 
 	agenttoken "github.com/Tencent/WeKnora/internal/agent/token"
 	"github.com/Tencent/WeKnora/internal/models/chat"
+	"github.com/Tencent/WeKnora/internal/types"
 )
 
 // The summary is injected as a `user` message rather than a second `system`
@@ -20,6 +21,10 @@ const (
 // Preparation is everything the summarization step needs, computed before any
 // LLM call so the caller can decide not to make one.
 type Preparation struct {
+	// Union before fit/truncation, including previous summaries and path
+	// annotations. Omitted text cannot erase inherited dependencies.
+	SourceLineage        *types.SourceLineage
+	HistorySourceLineage *types.SourceLineage
 	// FirstKeptIdx is where the verbatim tail begins.
 	FirstKeptIdx int
 	// MessagesToSummarize are the complete turns being replaced by prose.
@@ -62,11 +67,13 @@ func Prepare(messages []chat.Message, s Settings, estimator *agenttoken.Estimato
 	// successive compactions into a summary of a summary of a summary.
 	boundaryStart := historyStart(messages)
 	previousSummary := ""
+	previousLineage, _ := types.NewCompleteSourceLineage()
 	for i := len(messages) - 1; i >= boundaryStart; i-- {
 		if messages[i].Kind != chat.MessageKindCompactionSummary {
 			continue
 		}
 		previousSummary = unwrapSummary(messages[i].Content)
+		previousLineage = messages[i].SourceLineage
 		boundaryStart = i + 1
 		break
 	}
@@ -100,6 +107,8 @@ func Prepare(messages []chat.Message, s Settings, estimator *agenttoken.Estimato
 		historyFileOps:  extractFileOps(previousSummary, toSummarize),
 		storedTurnID:    storedTurnEndingAt(messages, historyEnd),
 	}
+	p.HistorySourceLineage = lineageOf(previousLineage, toSummarize)
+	p.SourceLineage = lineageOf(p.HistorySourceLineage, turnPrefix)
 	p.MessagesToSummarize, p.OmittedHistory = fitSummarizerInput(
 		toSummarize, s.summarizerInputBudget(estimator, previousSummary, s.summaryBudget()), estimator)
 	p.TurnPrefixMessages, p.OmittedTurnPrefix = fitSummarizerInput(
@@ -148,9 +157,10 @@ func (p *Preparation) checkpoint(history string, degraded bool) *Checkpoint {
 		return nil
 	}
 	return &Checkpoint{
-		TurnID:   p.storedTurnID,
-		Summary:  history + p.historyFileOps.format(),
-		Degraded: degraded,
+		SourceLineage: p.HistorySourceLineage,
+		TurnID:        p.storedTurnID,
+		Summary:       history + p.historyFileOps.format(),
+		Degraded:      degraded,
 	}
 }
 
@@ -183,8 +193,19 @@ func Apply(messages []chat.Message, p *Preparation, summary string) []chat.Messa
 	if historyStart(messages) == 1 {
 		out = append(out, messages[0])
 	}
-	out = append(out, SummaryMessage(summary))
+	message := SummaryMessage(summary)
+	message.SourceLineage, _ = types.UnionSourceLineage(p.SourceLineage)
+	out = append(out, message)
 	return append(out, messages[tailStart:]...)
+}
+
+func lineageOf(previous *types.SourceLineage, messages []chat.Message) *types.SourceLineage {
+	inputs := []*types.SourceLineage{previous}
+	for _, message := range messages {
+		inputs = append(inputs, message.SourceLineage)
+	}
+	l, _ := types.UnionSourceLineage(inputs...)
+	return l
 }
 
 // SummaryMessage wraps summary text in the envelope the model sees, tagged so

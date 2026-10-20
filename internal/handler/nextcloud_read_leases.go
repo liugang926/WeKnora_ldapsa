@@ -12,6 +12,7 @@ import (
 
 	"github.com/Tencent/WeKnora/internal/application/access"
 	"github.com/Tencent/WeKnora/internal/application/repository"
+	"github.com/Tencent/WeKnora/internal/application/service"
 	"github.com/Tencent/WeKnora/internal/errors"
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/middleware"
@@ -176,9 +177,73 @@ func attachNextcloudLeasedRequest(c *gin.Context, leases *nextcloudHTTPReadLease
 func (h *KnowledgeHandler) beginNextcloudRead(ctx context.Context, c *gin.Context,
 	knowledges []*types.Knowledge,
 ) (*nextcloudHTTPReadLeases, error) {
+	faqLeases, _ := ctx.Value(faqKnowledgePreReadKey{}).(*nextcloudHTTPReadLeases)
+	var ids []string
+	for _, row := range knowledges {
+		if row != nil && row.Type == types.KnowledgeTypeFAQ && len(row.LastFAQImportResult) > 0 &&
+			string(row.LastFAQImportResult) != "null" {
+			ids = append(ids, row.ID)
+		}
+	}
+	if len(ids) > 0 && faqLeases == nil {
+		if h.outputAuthorizer == nil {
+			return nil, errors.NewServiceUnavailableError("FAQ original output verifier unavailable")
+		}
+		plan, err := h.outputAuthorizer.FAQResultReadPlan(ctx, ids)
+		if err != nil {
+			return nil, knowledgeOutputHTTPError(err)
+		}
+		faqLeases, err = acquireFAQReadPlanLeases(
+			ctx,
+			h.contentLeases,
+			plan.Scopes,
+			plan.SourceLineage,
+			h.leaseHeartbeat,
+		)
+		if err != nil {
+			return nil, err
+		}
+		ctx, err = repository.WithFAQImportOutputReadSetPlan(faqLeases.Context(ctx), plan)
+		if err != nil {
+			faqLeases.Close()
+			return nil, knowledgeOutputHTTPError(err)
+		}
+		faqLeases.ctx = ctx
+	}
 	leases, err := acquireNextcloudHTTPReadLeases(ctx, h.contentLeases, knowledges, h.leaseHeartbeat)
+	if faqLeases != nil {
+		if err != nil {
+			faqLeases.Close()
+			return nil, err
+		}
+		if leases == nil {
+			leases = faqLeases
+		} else {
+			// One group owns both sets through the actual response. Stop the child
+			// heartbeat, transfer its rows, and release them only with the owner.
+			leases.cancel()
+			leases.stop.Wait()
+			faqLeases.renewMu.Lock()
+			faqLeases.rows = append(faqLeases.rows, leases.rows...)
+			faqLeases.renewMu.Unlock()
+			leases = faqLeases
+		}
+	}
+
 	if err != nil {
 		return nil, err
+	}
+	if h.outputAuthorizer != nil {
+		guard, err := h.outputAuthorizer.Begin(ctx, knowledges)
+		if err != nil {
+			leases.Close()
+			return nil, knowledgeOutputHTTPError(err)
+		}
+		if leases == nil {
+			guardCtx, cancel := context.WithCancel(ctx)
+			leases = &nextcloudHTTPReadLeases{ctx: guardCtx, cancel: cancel}
+		}
+		leases.ctx = service.WithKnowledgeOutputGuard(leases.ctx, guard)
 	}
 	attachNextcloudLeasedRequest(c, leases)
 	return leases, nil
@@ -479,8 +544,8 @@ func (w *nextcloudAuthorizationWriter) denyWrite(err error) {
 	if appErr, ok := errors.IsAppError(err); ok {
 		status = appErr.HTTPCode
 	}
-	w.ResponseWriter.Header().Del("Content-Type")
-	w.ResponseWriter.Header().Del("Content-Length")
+	w.Header().Del("Content-Type")
+	w.Header().Del("Content-Length")
 	w.ResponseWriter.WriteHeader(status)
 	w.ResponseWriter.WriteHeaderNow()
 }

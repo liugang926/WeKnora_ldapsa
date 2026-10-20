@@ -3,6 +3,7 @@ Description=WeKnora production application stack
 Wants=network-online.target
 After=network-online.target docker.service weknora-production.slice
 Requires=docker.service weknora-production.slice
+PartOf=docker.service
 RequiresMountsFor=/srv/weknora-production /data/weknora-production
 ConditionPathExists=/srv/weknora-production/current/images.env
 

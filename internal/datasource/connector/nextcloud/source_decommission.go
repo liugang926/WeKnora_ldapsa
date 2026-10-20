@@ -10,14 +10,11 @@ import (
 	"strconv"
 
 	apperrors "github.com/Tencent/WeKnora/internal/errors"
-
 	"github.com/Tencent/WeKnora/internal/types"
 )
 
-// EmptyDecommissionInventorySHA256 identifies the canonical empty inventory digest.
 const EmptyDecommissionInventorySHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 
-// SourceDecommission is the exact remote acknowledgement tuple for source retirement.
 type SourceDecommission struct {
 	OperationID      string `json:"operation_id"`
 	PairOperationID  string `json:"pair_operation_id"`
@@ -165,5 +162,4 @@ func readDecommissionResponse(body io.Reader, out any) error {
 	return nil
 }
 
-// DecommissionTenantID parses the tenant identifier used by the retirement protocol.
 func DecommissionTenantID(value uint64) string { return strconv.FormatUint(value, 10) }

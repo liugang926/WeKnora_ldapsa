@@ -1,0 +1,48 @@
+=== RUN   TestSourceContentAPIRequestAndStreamLogsRemainPrivate
+--- PASS: TestSourceContentAPIRequestAndStreamLogsRemainPrivate (0.00s)
+=== RUN   TestSourceContentRawDumpRequiresContextAndPreservesOrdinary
+--- PASS: TestSourceContentRawDumpRequiresContextAndPreservesOrdinary (0.00s)
+=== RUN   TestStreamAssembler_AbandonedConsumerDoesNotBlock
+--- PASS: TestStreamAssembler_AbandonedConsumerDoesNotBlock (0.02s)
+=== RUN   TestStreamAssembler_CancelledContextAbortsImmediately
+--- PASS: TestStreamAssembler_CancelledContextAbortsImmediately (0.00s)
+=== RUN   TestSourceContentSDKActualHTTPStreamAndNonstream
+=== RUN   TestSourceContentSDKActualHTTPStreamAndNonstream/openaicompletions
+=== RUN   TestSourceContentSDKActualHTTPStreamAndNonstream/openaicompletions/private-marker
+=== RUN   TestSourceContentSDKActualHTTPStreamAndNonstream/openaicompletions/private-lineage
+=== RUN   TestSourceContentSDKActualHTTPStreamAndNonstream/openaicompletions/ordinary
+=== RUN   TestSourceContentSDKActualHTTPStreamAndNonstream/openairesponses
+=== RUN   TestSourceContentSDKActualHTTPStreamAndNonstream/openairesponses/private-marker
+=== RUN   TestSourceContentSDKActualHTTPStreamAndNonstream/openairesponses/private-lineage
+=== RUN   TestSourceContentSDKActualHTTPStreamAndNonstream/openairesponses/ordinary
+=== RUN   TestSourceContentSDKActualHTTPStreamAndNonstream/anthropicmessages
+=== RUN   TestSourceContentSDKActualHTTPStreamAndNonstream/anthropicmessages/private-marker
+=== RUN   TestSourceContentSDKActualHTTPStreamAndNonstream/anthropicmessages/private-lineage
+=== RUN   TestSourceContentSDKActualHTTPStreamAndNonstream/anthropicmessages/ordinary
+=== RUN   TestSourceContentSDKActualHTTPStreamAndNonstream/googlegenai
+=== RUN   TestSourceContentSDKActualHTTPStreamAndNonstream/googlegenai/private-marker
+=== RUN   TestSourceContentSDKActualHTTPStreamAndNonstream/googlegenai/private-lineage
+=== RUN   TestSourceContentSDKActualHTTPStreamAndNonstream/googlegenai/ordinary
+--- PASS: TestSourceContentSDKActualHTTPStreamAndNonstream (0.02s)
+PASS
+ok      github.com/Tencent/WeKnora/internal/models/api  0.451s
+=== RUN   TestChatStream_UndecodableChunkFailsTheStream
+--- PASS: TestChatStream_UndecodableChunkFailsTheStream (0.01s)
+=== RUN   TestChatStream_MalformedToolCallFailsTheStream
+--- PASS: TestChatStream_MalformedToolCallFailsTheStream (0.00s)
+PASS
+ok      github.com/Tencent/WeKnora/internal/models/api/openaicompletions    0.334s
+=== RUN   TestChatStreamFailedEvent
+--- PASS: TestChatStreamFailedEvent (0.00s)
+=== RUN   TestChatStreamUndecodableEventFailsTheStream
+--- PASS: TestChatStreamUndecodableEventFailsTheStream (0.00s)
+=== RUN   TestChatStreamMalformedOutputItemFailsTheStream
+--- PASS: TestChatStreamMalformedOutputItemFailsTheStream (0.00s)
+PASS
+ok      github.com/Tencent/WeKnora/internal/models/api/openairesponses  0.287s
+PASS
+ok      github.com/Tencent/WeKnora/internal/models/api/anthropicmessages    0.294s [no tests to run]
+=== RUN   TestChatStreamErrorPayload
+--- PASS: TestChatStreamErrorPayload (0.01s)
+PASS
+ok      github.com/Tencent/WeKnora/internal/models/api/googlegenai  0.300s

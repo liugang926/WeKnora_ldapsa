@@ -43,7 +43,12 @@ type KnowledgeSpanRepository interface {
 	// name for (knowledgeID, attempt). Used before re-opening a subspan
 	// after asynq retry or server restart so the trace tree does not
 	// accumulate duplicate postprocess.summary / question rows.
-	CancelOpenSpansByName(ctx context.Context, knowledgeID string, attempt int, name, errorCode, reason string) (int64, error)
+	CancelOpenSpansByName(
+		ctx context.Context,
+		knowledgeID string,
+		attempt int,
+		name, errorCode, reason string,
+	) (int64, error)
 }
 
 type knowledgeSpanRepository struct {
@@ -56,6 +61,10 @@ func NewKnowledgeSpanRepository(db *gorm.DB) KnowledgeSpanRepository {
 }
 
 func (r *knowledgeSpanRepository) Upsert(ctx context.Context, row *types.KnowledgeProcessingSpan) error {
+	return r.upsertWithOriginalSpan(ctx, row)
+}
+
+func (r *knowledgeSpanRepository) upsertSpanRow(ctx context.Context, row *types.KnowledgeProcessingSpan) error {
 	if row == nil || row.KnowledgeID == "" || row.SpanID == "" {
 		return errors.New("knowledgeSpanRepository.Upsert: knowledge_id and span_id required")
 	}
@@ -101,14 +110,19 @@ func (r *knowledgeSpanRepository) Upsert(ctx context.Context, row *types.Knowled
 	if row.Metadata != nil {
 		cols = append(cols, "metadata")
 	}
-	return r.db.WithContext(ctx).Clauses(clause.OnConflict{
-		Columns: []clause.Column{
-			{Name: "knowledge_id"},
-			{Name: "attempt"},
-			{Name: "span_id"},
-		},
-		DoUpdates: clause.AssignmentColumns(cols),
-	}).Create(row).Error
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Clauses(clause.OnConflict{
+			Columns: []clause.Column{
+				{Name: "knowledge_id"},
+				{Name: "attempt"},
+				{Name: "span_id"},
+			},
+			DoUpdates: clause.AssignmentColumns(cols),
+		}).Create(row).Error; err != nil {
+			return err
+		}
+		return CaptureNextcloudKnowledgeStateInTx(ctx, tx, row.KnowledgeID)
+	})
 }
 
 func (r *knowledgeSpanRepository) NextAttempt(ctx context.Context, knowledgeID string) (int, error) {
@@ -132,7 +146,11 @@ func (r *knowledgeSpanRepository) LatestAttempt(ctx context.Context, knowledgeID
 	return max, err
 }
 
-func (r *knowledgeSpanRepository) ListByAttempt(ctx context.Context, knowledgeID string, attempt int) ([]types.KnowledgeProcessingSpan, error) {
+func (r *knowledgeSpanRepository) ListByAttempt(
+	ctx context.Context,
+	knowledgeID string,
+	attempt int,
+) ([]types.KnowledgeProcessingSpan, error) {
 	if knowledgeID == "" {
 		return nil, nil
 	}
@@ -145,10 +163,18 @@ func (r *knowledgeSpanRepository) ListByAttempt(ctx context.Context, knowledgeID
 	// rendering of fan-out subspans (e.g. multimodal.image[0..N] in
 	// the order they were enqueued).
 	err := q.Order("id ASC").Find(&rows).Error
+	if err == nil {
+		err = r.attachSpanWriteTokens(ctx, rows)
+	}
 	return rows, err
 }
 
-func (r *knowledgeSpanRepository) GetSpan(ctx context.Context, knowledgeID string, attempt int, spanID string) (*types.KnowledgeProcessingSpan, error) {
+func (r *knowledgeSpanRepository) GetSpan(
+	ctx context.Context,
+	knowledgeID string,
+	attempt int,
+	spanID string,
+) (*types.KnowledgeProcessingSpan, error) {
 	var row types.KnowledgeProcessingSpan
 	err := r.db.WithContext(ctx).
 		Where("knowledge_id = ? AND attempt = ? AND span_id = ?", knowledgeID, attempt, spanID).
@@ -159,6 +185,11 @@ func (r *knowledgeSpanRepository) GetSpan(ctx context.Context, knowledgeID strin
 		}
 		return nil, err
 	}
+	rows := []types.KnowledgeProcessingSpan{row}
+	if err := r.attachSpanWriteTokens(ctx, rows); err != nil {
+		return nil, err
+	}
+	row = rows[0]
 	return &row, nil
 }
 
@@ -169,7 +200,12 @@ func (r *knowledgeSpanRepository) GetSpan(ctx context.Context, knowledgeID strin
 //
 // Postgres-specific WITH RECURSIVE would be denser but harder to test on
 // the SQLite Lite backend. The iterative path stays portable.
-func (r *knowledgeSpanRepository) CancelDescendants(ctx context.Context, knowledgeID string, attempt int, parentSpanID, reason string) (int64, error) {
+func (r *knowledgeSpanRepository) CancelDescendants(
+	ctx context.Context,
+	knowledgeID string,
+	attempt int,
+	parentSpanID, reason string,
+) (int64, error) {
 	reason = common.CleanInvalidUTF8(reason)
 	frontier := []string{parentSpanID}
 	var totalAffected int64

@@ -854,6 +854,66 @@ export default {
     pauseFailed: '暂停失败',
     logs: '日志',
     actions: '更多操作',
+    gc: {
+      "more": "查看更多任务",
+      "title": "旧版本回收",
+      "description": "查看到期时间及清理进度。预计字节和文件系统确认释放字节分别统计。",
+      "unavailable": "回收状态暂不可用或安全检查拒绝操作，请刷新查看当前状态。",
+      "empty": "此知识库暂无待回收任务。",
+      "nextAttempt": "下次核对时间",
+      "unknown": "尚未核实",
+      "derivedExpiry": "派生内容到期时间",
+      "originalExpiry": "恢复副本到期时间",
+      "estimated": "预计字节",
+      "confirmed": "确认释放字节",
+      "failure": "暂缓原因",
+      "preview": "预览回收清单",
+      "safety": "每次尝试都会重新检查当前版本、引用、保留期限及读取／构建租约。未知清单继续阻断；删除数据库行不表示分配的磁盘页已释放。",
+      "category": "类别",
+      "status": "状态",
+      "count": "数量",
+      "collect": "立即尝试回收",
+      "retry": "安排下次重试",
+      "refresh": "刷新",
+      "reason": {
+        "retired": "被替换版本",
+        "tombstone": "来源撤回"
+      },
+      "state": {
+        "pending": "待处理",
+        "retry": "等待重试",
+        "blocked": "等待安全检查",
+        "deleting": "清理中",
+        "collected": "记录的对象已清理"
+      },
+      "error": {"content_lease_coverage_unverified": "读取／构建覆盖尚未验收，保持阻断。", "content_read_or_build_busy": "仍有读取或构建活动，稍后重试。", "content_generation_unverified": "来源代次尚未核实，请重新核对。", "candidate_is_current": "此代次仍为当前版本，不能回收。", "build_still_active": "构建尚未结束，保留数据。", "source_identity_changed": "来源身份或版本变化，请刷新核对。", "derived_backend_inventory_unverified": "派生后端清单不完整，继续保留。", "derived_provenance_unverified": "历史派生来源尚未核实，继续保留。", "safe_object_cleanup_unavailable": "仍有受保护对象或后端清理条件未满足。", "provider_delete_failed": "存储删除未获确认，请检查后端后重试。", "retention_window_open": "尚在保留期限内，继续保留。", "invalid_image_inventory": "图片清单不完整，修复清单后重试。", "original_body_retained_or_unverified": "正文仍有有效引用、租约或保留窗口，或尚未完成核验",
+        "gc_step_failed": "清理步骤失败，请检查后重试。"},
+      "kind": {
+        "knowledge": "知识记录",
+        "derived_index": "派生清单",
+        "chunk": "分块",
+        "local_embedding": "本地索引",
+        "sql_original_body": "正文输入副本",
+        "source_file": "原件副本",
+        "extracted_image": "解析图片"
+      }
+    },
+    capacity: {
+      title: "AI 入库容量",
+      description: "高水位暂停新增 AI 入库，原件上传和有效知识保留。",
+      unavailable: "容量暂不可确认，新增 AI 入库已关闭。",
+      normal: "容量正常",
+      warning: "容量预警",
+      paused: "新增 AI 入库已暂停",
+      physical: "物理可用 / 总量",
+      retained: "知识库保留对象用量",
+      reserved: "待完成入库保留量",
+      quota: "保留配额 MiB（0 不设限）",
+      warningLabel: "预警水位 %",
+      pause: "暂停水位 %",
+      save: "保存",
+      refresh: "刷新",
+    },
     failedCandidates: {
       title: 'Nextcloud 失败文件',
       hint: '仅显示此配对数据源中处理失败的文件。重试会重新读取源文件，不会发布失败的旧版本。',
@@ -1862,6 +1922,14 @@ export default {
     todoWrite: '制定计划'
   },
   commandPalette: {
+    search: {
+      previousMessages: '返回上一页',
+      pageEmpty: '本页没有匹配的对话。',
+      continueMessages: '继续搜索较早对话',
+      moreAvailable: '还有较早的对话尚未搜索。',
+      failed: '搜索未完成，请重试。',
+      retry: '重试搜索',
+    },
     placeholder: '搜索知识库、文件、对话…',
     clearRecent: '清除',
     retrieval: '检索参数',
@@ -4615,7 +4683,10 @@ export default {
         'wiki.content_changed': '更新 Wiki 内容',
         'faq.import_started': '开始导入 FAQ',
         'faq.import_completed': '完成导入 FAQ',
-        'faq.import_failed': '导入 FAQ 失败'
+        'faq.import_failed': '导入 FAQ 失败',
+        'nextcloud.gc_collect_requested': '请求回收尝试',
+        'nextcloud.gc_collect_finished': '回收尝试结束',
+        'nextcloud.gc_retry_requested': '安排回收重试'
       },
       detailFields: {
         task_id: '任务 ID',
@@ -5220,6 +5291,8 @@ export default {
     next: '下一步'
   },
   graphSettings: {
+    requiredForPublication: '来源文件发布前必须完成图谱',
+    requiredForPublicationDescription: '此知识库作为来源模板时，勾选后需等图谱提取成功，文件才能用于问答。取消勾选后，图谱为可选步骤，提取失败仍会显示在文件状态中。',
     title: '知识图谱配置',
     description: '配置实体-关系提取功能，自动从文本中抽取实体和关系构建知识图谱（注意：这与 Wiki 知识库中的「页面链接图谱」是两回事——前者是基于 LLM 的实体-关系图，后者是 Wiki 页面之间的引用关系图）',
     enableLabel: '启用实体关系提取',

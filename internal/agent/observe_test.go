@@ -142,16 +142,20 @@ func TestAppendToolResults_PreservesReasoningContent(t *testing.T) {
 			Iteration:        0,
 			Thought:          "I will call search.",
 			ReasoningContent: "Detailed chain of thought from MiMo/DeepSeek.",
-			ToolCalls: []types.ToolCall{{
-				ID:               "call_1",
-				Name:             "knowledge_search",
-				Args:             map[string]interface{}{"query": "hi"},
-				ProviderMetadata: types.ToolCallMetadata{"google": json.RawMessage(`{"thought_signature":"gemini-thought-signature"}`)},
-				Result: &types.ToolResult{
-					Success: true,
-					Output:  "result text",
+			ToolCalls: []types.ToolCall{
+				{
+					ID:   "call_1",
+					Name: "knowledge_search",
+					Args: map[string]interface{}{"query": "hi"},
+					ProviderMetadata: types.ToolCallMetadata{
+						"google": json.RawMessage(`{"thought_signature":"gemini-thought-signature"}`),
+					},
+					Result: &types.ToolResult{
+						Success: true,
+						Output:  "result text",
+					},
 				},
-			}},
+			},
 			Timestamp: time.Now(),
 		}
 
@@ -525,7 +529,7 @@ func TestExecuteToolCalls_CompleteArgs_StillExecute(t *testing.T) {
 
 	step := &types.AgentStep{}
 	engine.executeToolCalls(
-		context.Background(),
+		types.WithRAGSourceLineage(context.Background(), engine.turnLineage),
 		&types.ChatResponse{
 			FinishReason: "tool_calls",
 			ToolCalls: []types.LLMToolCall{

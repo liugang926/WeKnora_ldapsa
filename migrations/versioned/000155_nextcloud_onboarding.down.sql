@@ -1,0 +1,18 @@
+DROP TRIGGER IF EXISTS nextcloud_onboarding_guard_knowledges ON knowledges;
+DROP TRIGGER IF EXISTS nextcloud_onboarding_guard_data_sources ON data_sources;
+DROP TRIGGER IF EXISTS nextcloud_onboarding_guard_wiki_pages ON wiki_pages;
+DROP TRIGGER IF EXISTS nextcloud_onboarding_guard_chunks ON chunks;
+DROP TRIGGER IF EXISTS nextcloud_onboarding_new_kb ON knowledge_bases;
+DROP TRIGGER IF EXISTS nextcloud_onboarding_profile_guard ON knowledge_bases;
+DROP FUNCTION IF EXISTS nextcloud_onboarding_content_guard();
+DROP FUNCTION IF EXISTS nextcloud_onboarding_new_kb();
+DROP FUNCTION IF EXISTS nextcloud_onboarding_profile_guard();
+DROP TABLE IF EXISTS nextcloud_source_grants;
+DROP TABLE IF EXISTS nextcloud_onboarding_operations;
+DROP TABLE IF EXISTS nextcloud_onboarding_delegations;
+DROP TABLE IF EXISTS nextcloud_onboarding_credentials;
+DROP TABLE IF EXISTS nextcloud_kb_blank_witnesses;
+DROP FUNCTION IF EXISTS nextcloud_onboarding_witness_immutable();
+ALTER TABLE sessions DROP COLUMN nextcloud_scoped;
+DROP FUNCTION IF EXISTS nextcloud_onboarding_operation_guard();
+DROP FUNCTION IF EXISTS nextcloud_onboarding_grant_guard();

@@ -87,6 +87,10 @@ type DataSource struct {
 	// Cron expression for scheduled syncs (e.g., "0 */6 * * *" = every 6 hours)
 	SyncSchedule string `json:"sync_schedule"`
 
+	// SyncEnabled pauses content ingestion independently of publication and ACL checks.
+	// nil is treated as enabled for older in-memory callers.
+	SyncEnabled *bool `json:"sync_enabled" gorm:"->"`
+
 	// Sync mode: "incremental" (recommended) or "full"
 	SyncMode string `json:"sync_mode" gorm:"type:varchar(20);default:'incremental'"`
 
@@ -256,6 +260,8 @@ type DataSourceConfig struct {
 	// ingesting an image into a KB without VLM is rejected, so image extraction is
 	// skipped when this is false.
 	MultimodalEnabled bool `json:"-"`
+	// ProcessingPolicyDigest is supplied by the target KB for this fetch only.
+	ProcessingPolicyDigest string `json:"-"`
 }
 
 // HasCredentials reports whether the credentials map carries any value at
@@ -332,6 +338,9 @@ type Resource struct {
 
 // FetchedItem represents a single document/content item fetched from external source
 type FetchedItem struct {
+	// Populated only by the connector's actual signed content response. It is
+	// opaque outside that connector and never accepted from JSON or a queue.
+	OriginalArtifact any `json:"-"`
 	// Unique ID in the external system
 	ExternalID string `json:"external_id"`
 

@@ -1,0 +1,70 @@
+{
+  "source_commit": "d6e1b4f620a7cfb293001c6c6e1eeee5836cb6b0",
+  "runs": [
+    {
+      "name": "r1",
+      "terminal": 1,
+      "counts": {
+        "pass": 0,
+        "fail": 6,
+        "skip": 0
+      },
+      "package_results": {
+        "github.com/Tencent/WeKnora/internal/application/service": "fail"
+      },
+      "log_sha256": "cc104533a1731ee7d93968c6b4b622a8709eee77c5f00449e98ca8356f11faca",
+      "log": "/Users/abner/My_Project/ai-server/.rag-physical-lifetime-7e2d-r1.jsonl"
+    },
+    {
+      "name": "r2",
+      "terminal": 0,
+      "counts": {
+        "pass": 6,
+        "fail": 0,
+        "skip": 0
+      },
+      "package_results": {
+        "github.com/Tencent/WeKnora/internal/application/service": "pass"
+      },
+      "log_sha256": "2e21ba9d5287cd2d6397f626c33c955379e36280532c26b6783c827276bbc184",
+      "log": "/Users/abner/My_Project/ai-server/.rag-physical-lifetime-7e2d-r2.jsonl"
+    },
+    {
+      "name": "r3",
+      "terminal": 0,
+      "counts": {
+        "pass": 7,
+        "fail": 0,
+        "skip": 0
+      },
+      "package_results": {
+        "github.com/Tencent/WeKnora/internal/application/service": "pass",
+        "github.com/Tencent/WeKnora/internal/application/readlease": "pass"
+      },
+      "log_sha256": "6eb8e776832e5ee35b5cddc0e9a42b8ca29bd7de316032c014f650c4ff5745cf",
+      "log": "/Users/abner/My_Project/ai-server/.rag-physical-lifetime-7e2d-r3.jsonl"
+    },
+    {
+      "name": "r4",
+      "terminal": 0,
+      "counts": {
+        "pass": 14,
+        "fail": 0,
+        "skip": 0
+      },
+      "package_results": {
+        "github.com/Tencent/WeKnora/internal/application/service": "pass",
+        "github.com/Tencent/WeKnora/internal/application/readlease": "pass"
+      },
+      "log_sha256": "d2f61e4b231a08ae38a8e68937e18a3b167796b80de4f79c2af298e3bf765398",
+      "log": "/Users/abner/My_Project/ai-server/.rag-physical-lifetime-7e2d-r4.jsonl"
+    }
+  ],
+  "fixture": "actual file-backed SQLite, pool1, actual original document/chunk producer and RAG SQL hydration",
+  "accepted": "retrieval physical guard remains held across producer/sender references, verifies before shared output, closes only after final release; borrowed shorter guard has independent ownership",
+  "full_model_generation_accepted": false,
+  "actual_public_http_accepted": false,
+  "postgres_new_module_accepted": false,
+  "whole_application_accepted": false,
+  "cleanup": "owned AutoRemove containers absent; network none; named caches retained"
+}

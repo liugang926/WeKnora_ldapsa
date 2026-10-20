@@ -1,0 +1,9 @@
+{
+  "attempt": "r01",
+  "exit_code": 1,
+  "source": "conversation tool stdout (no raw log file captured)",
+  "failures": [
+    "SQLite manual metadata map value was *interface{}; invalid character x after top-level value",
+    "PostgreSQL DB-clock query inherited active producer arguments; expected 0 arguments, got 8"
+  ]
+}

@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -14,7 +12,6 @@ import (
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	"github.com/hibiken/asynq"
 	"github.com/stretchr/testify/require"
-	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
 
@@ -65,21 +62,6 @@ type nextcloudTaskAdmissionFixture struct {
 func newNextcloudTaskAdmissionFixture(t *testing.T, trigger string) *nextcloudTaskAdmissionFixture {
 	t.Helper()
 	t.Setenv("SYSTEM_AES_KEY", "0123456789abcdef0123456789abcdef")
-	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "task-admission.db")), &gorm.Config{})
-	require.NoError(t, err)
-	sqlDB, err := db.DB()
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = sqlDB.Close() })
-	require.NoError(t, db.AutoMigrate(&types.DataSource{}, &types.KnowledgeBase{},
-		&types.Knowledge{}, &types.SyncLog{}, &apprepo.NextcloudSourcePairing{}))
-	for _, migration := range []string{
-		"000031_nextcloud_source_versions.up.sql", "000032_nextcloud_event_inbox.up.sql",
-		"000033_nextcloud_event_dispatch.up.sql", "000047_nextcloud_candidate_retry.up.sql",
-	} {
-		schema, err := os.ReadFile(filepath.Join("../../../migrations/sqlite", migration))
-		require.NoError(t, err)
-		require.NoError(t, db.Exec(string(schema)).Error)
-	}
 	config, err := (&types.DataSourceConfig{
 		Type: types.ConnectorTypeNextcloud, ResourceIDs: []string{"binding"},
 		Settings:    map[string]interface{}{"base_url": "https://nextcloud.example"},
@@ -91,16 +73,18 @@ func newNextcloudTaskAdmissionFixture(t *testing.T, trigger string) *nextcloudTa
 		Type: types.ConnectorTypeNextcloud, Status: types.DataSourceStatusActive, Config: config,
 	}
 	kb := &types.KnowledgeBase{ID: "kb", TenantID: 7}
-	require.NoError(t, db.Create(ds).Error)
-	require.NoError(t, db.Create(kb).Error)
+	logs := &nextcloudTaskLogRepo{processSyncSyncLogRepo: processSyncSyncLogRepo{logs: map[string]*types.SyncLog{}}}
+	probe := &nextcloudTaskAccessProbe{}
+	svc := &DataSourceService{
+		dsRepo: newKBDeleteDSRepo("kb", ds), syncLogRepo: logs,
+		kbService: &processSyncKBService{kb: kb}, knowledgeService: &knowledgeService{groupAccess: probe},
+	}
+	db := wireNextcloudCurrentInputFixture(t, svc, ds, "instance")
+	svc.nextcloudEventInbox = apprepo.NewNextcloudEventInboxRepository(db)
 	baseURL, configSHA, bindingID, err := apprepo.NextcloudEventDataSourceIdentity(ds.Config)
 	require.NoError(t, err)
-	pair := &apprepo.NextcloudSourcePairing{
-		OperationID: "pair", TenantID: 7,
-		KnowledgeBaseID: "kb", DataSourceID: "ds", InstanceID: "instance", BindingID: bindingID,
-		BaseURL: baseURL, ConfigSHA: configSHA, State: "active", PublicationEpoch: 3,
-	}
-	require.NoError(t, db.Create(pair).Error)
+	var pair apprepo.NextcloudSourcePairing
+	require.NoError(t, db.Where("datasource_id = ?", ds.ID).Take(&pair).Error)
 	payload := types.DataSourceSyncPayload{
 		TenantID: 7, DataSourceID: "ds", SyncLogID: "log", Trigger: trigger,
 		NextcloudEventConnectionID: "connection", NextcloudEventConfigSHA256: configSHA,
@@ -136,18 +120,11 @@ func newNextcloudTaskAdmissionFixture(t *testing.T, trigger string) *nextcloudTa
 			        ?, ?, 'leased', 'lease', ?, 'log')`,
 			now, now, now.Add(time.Minute)).Error)
 	}
-	logs := &nextcloudTaskLogRepo{processSyncSyncLogRepo: processSyncSyncLogRepo{logs: map[string]*types.SyncLog{}}}
-	probe := &nextcloudTaskAccessProbe{}
-	return &nextcloudTaskAdmissionFixture{
+	fixture := &nextcloudTaskAdmissionFixture{
 		db: db, logs: logs, access: probe, payload: payload,
-		svc: &DataSourceService{
-			dsRepo: newKBDeleteDSRepo("kb", ds), syncLogRepo: logs,
-			kbService:               &processSyncKBService{kb: kb},
-			knowledgeService:        &knowledgeService{groupAccess: probe},
-			nextcloudEventInbox:     apprepo.NewNextcloudEventInboxRepository(db),
-			nextcloudSourcePairings: apprepo.NewNextcloudSourcePairingRepository(db),
-		},
+		svc: svc,
 	}
+	return fixture
 }
 
 func (f *nextcloudTaskAdmissionFixture) run(ctx context.Context, t *testing.T) error {

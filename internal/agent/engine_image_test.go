@@ -67,10 +67,11 @@ func TestDecodeDataURIBytes_EmptyBase64(t *testing.T) {
 	}
 }
 
-func TestDescribeImages_WithDescriber(t *testing.T) {
+func TestDescribeImages_WithoutInputBoundaryRefusesDescriber(t *testing.T) {
 	engine := &AgentEngine{
-		imageDescriber: func(ctx context.Context, imgBytes []byte, prompt string) (string, error) {
-			return "A red square image", nil
+		imageDescriber: func(_ context.Context, _ []byte, _ string) (string, error) {
+			t.Fatal("an unadmitted image must not reach the VLM")
+			return "", nil
 		},
 	}
 
@@ -78,17 +79,16 @@ func TestDescribeImages_WithDescriber(t *testing.T) {
 	dataURI := "data:image/png;base64," + base64.StdEncoding.EncodeToString(raw)
 
 	descriptions := engine.describeImages(context.Background(), []string{dataURI})
-	if len(descriptions) != 1 {
-		t.Fatalf("expected 1 description, got %d", len(descriptions))
-	}
-	if descriptions[0] != "A red square image" {
-		t.Errorf("unexpected description: %s", descriptions[0])
+	if len(descriptions) != 0 || engine.lineageFailure() != ErrAgentSourceLineageDenied {
+		t.Fatal("unadmitted image input must fail closed")
 	}
 }
 
-func TestDescribeImages_VLMFailure(t *testing.T) {
+func TestDescribeImages_UnadmittedInputNeverReachesFailingVLM(t *testing.T) {
+	calls := 0
 	engine := &AgentEngine{
-		imageDescriber: func(ctx context.Context, imgBytes []byte, prompt string) (string, error) {
+		imageDescriber: func(_ context.Context, _ []byte, _ string) (string, error) {
+			calls++
 			return "", errors.New("VLM service unavailable")
 		},
 	}
@@ -97,14 +97,14 @@ func TestDescribeImages_VLMFailure(t *testing.T) {
 	dataURI := "data:image/png;base64," + base64.StdEncoding.EncodeToString(raw)
 
 	descriptions := engine.describeImages(context.Background(), []string{dataURI})
-	if len(descriptions) != 0 {
-		t.Errorf("expected 0 descriptions on VLM failure, got %d", len(descriptions))
+	if len(descriptions) != 0 || calls != 0 || engine.lineageFailure() != ErrAgentSourceLineageDenied {
+		t.Fatal("unadmitted input must be rejected before the failing provider is invoked")
 	}
 }
 
 func TestDescribeImages_InvalidDataURI(t *testing.T) {
 	engine := &AgentEngine{
-		imageDescriber: func(ctx context.Context, imgBytes []byte, prompt string) (string, error) {
+		imageDescriber: func(_ context.Context, _ []byte, _ string) (string, error) {
 			t.Fatal("imageDescriber should not be called for invalid data URI")
 			return "", nil
 		},
@@ -119,7 +119,7 @@ func TestDescribeImages_InvalidDataURI(t *testing.T) {
 func TestDescribeImages_ContextCancelled(t *testing.T) {
 	callCount := 0
 	engine := &AgentEngine{
-		imageDescriber: func(ctx context.Context, imgBytes []byte, prompt string) (string, error) {
+		imageDescriber: func(_ context.Context, _ []byte, _ string) (string, error) {
 			callCount++
 			return "desc", nil
 		},
@@ -152,10 +152,10 @@ func TestDescribeImages_NilDescriber(t *testing.T) {
 	}
 }
 
-func TestDescribeImages_MixedSuccess(t *testing.T) {
+func TestDescribeImages_MultipleUnadmittedImagesNeverInvokeVLM(t *testing.T) {
 	callIdx := 0
 	engine := &AgentEngine{
-		imageDescriber: func(ctx context.Context, imgBytes []byte, prompt string) (string, error) {
+		imageDescriber: func(_ context.Context, _ []byte, _ string) (string, error) {
 			callIdx++
 			if callIdx == 2 {
 				return "", errors.New("fail on second")
@@ -168,7 +168,7 @@ func TestDescribeImages_MixedSuccess(t *testing.T) {
 	dataURI := "data:image/png;base64," + base64.StdEncoding.EncodeToString(raw)
 
 	descriptions := engine.describeImages(context.Background(), []string{dataURI, dataURI, dataURI})
-	if len(descriptions) != 2 {
-		t.Errorf("expected 2 descriptions (1 failed), got %d", len(descriptions))
+	if len(descriptions) != 0 || callIdx != 0 || engine.lineageFailure() != ErrAgentSourceLineageDenied {
+		t.Fatal("no unadmitted image may reach the VLM or publish a description")
 	}
 }

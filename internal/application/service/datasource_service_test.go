@@ -89,7 +89,10 @@ type processSyncKBService struct {
 	kb     *types.KnowledgeBase
 }
 
-func (s *processSyncKBService) CreateKnowledgeBase(context.Context, *types.KnowledgeBase) (*types.KnowledgeBase, error) {
+func (s *processSyncKBService) CreateKnowledgeBase(
+	context.Context,
+	*types.KnowledgeBase,
+) (*types.KnowledgeBase, error) {
 	return nil, nil
 }
 
@@ -127,7 +130,11 @@ func (s *processSyncKBService) TogglePinKnowledgeBase(context.Context, string) (
 	return nil, nil
 }
 
-func (s *processSyncKBService) HybridSearch(context.Context, string, types.SearchParams) ([]*types.SearchResult, error) {
+func (s *processSyncKBService) HybridSearch(
+	context.Context,
+	string,
+	types.SearchParams,
+) ([]*types.SearchResult, error) {
 	return nil, nil
 }
 
@@ -139,7 +146,11 @@ func (s *processSyncKBService) ResolveEmbeddingModelKeys(context.Context, []*typ
 	return nil
 }
 
-func (s *processSyncKBService) CopyKnowledgeBase(context.Context, string, string) (*types.KnowledgeBase, *types.KnowledgeBase, error) {
+func (s *processSyncKBService) CopyKnowledgeBase(
+	context.Context,
+	string,
+	string,
+) (*types.KnowledgeBase, *types.KnowledgeBase, error) {
 	return nil, nil, nil
 }
 
@@ -360,11 +371,12 @@ func TestProcessSyncRejectsUnclaimedNextcloudManualBeforeSourceIO(t *testing.T) 
 }
 
 func TestProcessSyncNextcloudRetryAfterTransientFailure(t *testing.T) {
+	t.Setenv("SYSTEM_AES_KEY", "0123456789abcdef0123456789abcdef")
 	config, err := (&types.DataSourceConfig{
 		Type:        types.ConnectorTypeNextcloud,
 		ResourceIDs: []string{"binding-1"},
 		Settings:    map[string]interface{}{"base_url": "https://nextcloud.example.test"},
-		Credentials: map[string]interface{}{"token": "synthetic-token"},
+		Credentials: map[string]interface{}{"token": "synthetic-token", "key_id": "fixture"},
 	}).ToJSON()
 	require.NoError(t, err)
 	ds := &types.DataSource{
@@ -386,6 +398,7 @@ func TestProcessSyncNextcloudRetryAfterTransientFailure(t *testing.T) {
 		syncLogRepo: logs, connectorRegistry: registry,
 		kbService: &processSyncKBService{kb: &types.KnowledgeBase{ID: "kb-1", TenantID: 1}},
 	}
+	wireNextcloudCurrentInputFixture(t, svc, ds)
 	payload, err := json.Marshal(types.DataSourceSyncPayload{
 		DataSourceID: ds.ID,
 		TenantID:     ds.TenantID, SyncLogID: log.ID, Trigger: "manual",
@@ -409,13 +422,14 @@ func TestProcessSyncNextcloudRetryAfterTransientFailure(t *testing.T) {
 }
 
 func TestProcessSyncNextcloudMalformedCursorFailsClosed(t *testing.T) {
+	t.Setenv("SYSTEM_AES_KEY", "0123456789abcdef0123456789abcdef")
 	for _, full := range []bool{true, false} {
 		t.Run(map[bool]string{true: "full", false: "incremental"}[full], func(t *testing.T) {
 			config, err := (&types.DataSourceConfig{
 				Type:        types.ConnectorTypeNextcloud,
 				ResourceIDs: []string{"binding-1"},
 				Settings:    map[string]interface{}{"base_url": "https://nextcloud.example.test"},
-				Credentials: map[string]interface{}{"token": "synthetic-token"},
+				Credentials: map[string]interface{}{"token": "synthetic-token", "key_id": "synthetic-key"},
 			}).ToJSON()
 			require.NoError(t, err)
 			ds := &types.DataSource{
@@ -438,6 +452,7 @@ func TestProcessSyncNextcloudMalformedCursorFailsClosed(t *testing.T) {
 				kbService:           &processSyncKBService{kb: &types.KnowledgeBase{ID: "kb-1", TenantID: 1}},
 				nextcloudEventInbox: nextcloudBaselineTestRepo(t),
 			}
+			wireNextcloudCurrentInputFixture(t, svc, ds)
 			payload, err := json.Marshal(types.DataSourceSyncPayload{
 				DataSourceID: ds.ID,
 				TenantID:     ds.TenantID, SyncLogID: log.ID, ForceFull: full, Trigger: "manual",
@@ -490,6 +505,7 @@ func TestProcessSyncNextcloudLostCursorWithHistoryFailsClosed(t *testing.T) {
 				kbService:           &processSyncKBService{kb: &types.KnowledgeBase{ID: "kb-1", TenantID: 1}},
 				nextcloudEventInbox: baselineRepo,
 			}
+			wireNextcloudCurrentInputFixture(t, svc, ds)
 			trigger := "manual"
 			if scenario == "schedule_legacy_knowledge" {
 				trigger = "schedule"
@@ -964,10 +980,12 @@ func newSyncDeletionHarness(
 		knowledgeRepo: repo,
 		knowledgeSvc:  ks,
 		svc: &DataSourceService{
-			dsRepo:            newKBDeleteDSRepo(ds.KnowledgeBaseID, ds),
-			syncLogRepo:       syncLogRepo,
-			knowledgeService:  ks,
-			kbService:         &processSyncKBService{kb: &types.KnowledgeBase{ID: ds.KnowledgeBaseID, TenantID: ds.TenantID}},
+			dsRepo:           newKBDeleteDSRepo(ds.KnowledgeBaseID, ds),
+			syncLogRepo:      syncLogRepo,
+			knowledgeService: ks,
+			kbService: &processSyncKBService{
+				kb: &types.KnowledgeBase{ID: ds.KnowledgeBaseID, TenantID: ds.TenantID},
+			},
 			connectorRegistry: registry,
 			tenantRepo:        &processSyncTenantRepo{tenant: &types.Tenant{ID: ds.TenantID}},
 			tagService:        &processSyncTagService{},
@@ -1210,15 +1228,18 @@ func (mixedSyncConnector) FetchIncremental(
 	return items, nil, err
 }
 
-type nextcloudCursorMixedConnector struct{ mixedSyncConnector }
+type nextcloudCursorMixedConnector struct {
+	mixedSyncConnector
+	item types.FetchedItem
+}
 
 func (nextcloudCursorMixedConnector) Type() string { return types.ConnectorTypeNextcloud }
 
-func (nextcloudCursorMixedConnector) FetchIncremental(
+func (c nextcloudCursorMixedConnector) FetchIncremental(
 	ctx context.Context, config *types.DataSourceConfig, _ *types.SyncCursor,
 ) ([]types.FetchedItem, *types.SyncCursor, error) {
 	items, err := (mixedSyncConnector{}).FetchAll(ctx, config, nil)
-	items[1].Metadata = map[string]string{"nextcloud_etag": "etag-new"}
+	items[1] = c.item
 	return items, &types.SyncCursor{ConnectorCursor: map[string]interface{}{
 		"instance_id": "instance-1", "files": map[string]interface{}{"binding-1": map[string]interface{}{}},
 		"marker": "new",
@@ -1226,6 +1247,7 @@ func (nextcloudCursorMixedConnector) FetchIncremental(
 }
 
 func TestProcessSync_NextcloudPartialFailureDoesNotAdvanceCursor(t *testing.T) {
+	t.Setenv("SYSTEM_AES_KEY", "0123456789abcdef0123456789abcdef")
 	for _, test := range []struct {
 		name            string
 		trigger         string
@@ -1255,10 +1277,8 @@ func TestProcessSync_NextcloudPartialFailureDoesNotAdvanceCursor(t *testing.T) {
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			configJSON, err := (&types.DataSourceConfig{
-				Type:        types.ConnectorTypeNextcloud,
-				ResourceIDs: []string{"binding-1"},
-			}).ToJSON()
+			item, config := datasourceOriginalFetchedItem(t, "new.txt", "etag-new", "hello")
+			configJSON, err := config.ToJSON()
 			require.NoError(t, err)
 			oldCursor, err := (&types.SyncCursor{ConnectorCursor: map[string]interface{}{
 				"instance_id": "instance-1", "files": map[string]interface{}{"binding-1": map[string]interface{}{}},
@@ -1287,7 +1307,7 @@ func TestProcessSync_NextcloudPartialFailureDoesNotAdvanceCursor(t *testing.T) {
 				repo.tombstoneErr = errors.New("tombstone failed")
 			}
 			registry := datasource.NewConnectorRegistry()
-			require.NoError(t, registry.Register(nextcloudCursorMixedConnector{}))
+			require.NoError(t, registry.Register(nextcloudCursorMixedConnector{item: *item}))
 			svc := &DataSourceService{
 				dsRepo:           newKBDeleteDSRepo(ds.KnowledgeBaseID, ds),
 				syncLogRepo:      &processSyncSyncLogRepo{logs: map[string]*types.SyncLog{syncLog.ID: syncLog}},
@@ -1301,6 +1321,8 @@ func TestProcessSync_NextcloudPartialFailureDoesNotAdvanceCursor(t *testing.T) {
 				tagService:          &processSyncTagService{},
 				nextcloudEventInbox: nextcloudBaselineTestRepo(t),
 			}
+			wireNextcloudCapacityFixture(t, svc, ds)
+			wireNextcloudCurrentInputFixture(t, svc, ds)
 			payload, err := json.Marshal(types.DataSourceSyncPayload{
 				DataSourceID: ds.ID, TenantID: ds.TenantID, SyncLogID: syncLog.ID, Trigger: test.trigger,
 			})
@@ -1343,10 +1365,12 @@ func TestProcessSync_SyncDeletionsPartialWhenMixedResults(t *testing.T) {
 	require.NoError(t, registry.Register(mixedSyncConnector{}))
 
 	svc := &DataSourceService{
-		dsRepo:            newKBDeleteDSRepo(ds.KnowledgeBaseID, ds),
-		syncLogRepo:       syncLogRepo,
-		knowledgeService:  ks,
-		kbService:         &processSyncKBService{kb: &types.KnowledgeBase{ID: ds.KnowledgeBaseID, TenantID: ds.TenantID}},
+		dsRepo:           newKBDeleteDSRepo(ds.KnowledgeBaseID, ds),
+		syncLogRepo:      syncLogRepo,
+		knowledgeService: ks,
+		kbService: &processSyncKBService{
+			kb: &types.KnowledgeBase{ID: ds.KnowledgeBaseID, TenantID: ds.TenantID},
+		},
 		connectorRegistry: registry,
 		tenantRepo:        &processSyncTenantRepo{tenant: &types.Tenant{ID: ds.TenantID}},
 		tagService:        &processSyncTagService{},
@@ -1385,13 +1409,11 @@ func TestNextcloudOrdinarySyncSkipsFailedSameETagBeforeCreate(t *testing.T) {
 	repo := &deletionLookupKnowledgeRepo{admitErr: apprepo.ErrNextcloudCandidateRetryNotDue}
 	knowledge := &sweepFakeKS{repo: repo}
 	svc := &DataSourceService{knowledgeService: knowledge}
+	ds := &types.DataSource{ID: "ds", TenantID: 7, KnowledgeBaseID: "kb", Type: types.ConnectorTypeNextcloud}
+	wireNextcloudCapacityFixture(t, svc, ds)
+	item, _ := datasourceOriginalFetchedItem(t, "file.md", "same-etag", "identical bytes")
 	result := &types.SyncResult{}
-	svc.applyFetchedItem(context.Background(), &types.DataSource{
-		ID: "ds", TenantID: 7, KnowledgeBaseID: "kb", Type: types.ConnectorTypeNextcloud,
-	}, &types.FetchedItem{
-		ExternalID: "nextcloud:instance:77", FileName: "file.md",
-		Content: []byte("identical bytes"), Metadata: map[string]string{"nextcloud_etag": "same-etag"},
-	},
+	svc.applyFetchedItem(context.Background(), ds, item,
 		nil, result)
 	require.Equal(t, 1, result.Skipped)
 	require.Zero(t, result.Failed)
@@ -1427,10 +1449,9 @@ func TestIngestItem_NextcloudFailureRetainsOldKnowledge(t *testing.T) {
 			ds := &types.DataSource{
 				ID: "ds-nextcloud", TenantID: 1, KnowledgeBaseID: "kb-1", Type: types.ConnectorTypeNextcloud,
 			}
-			updated, err := svc.ingestItem(context.Background(), ds, &types.FetchedItem{
-				ExternalID: "nextcloud:instance:77", FileName: "document.txt", Content: []byte("new bytes"),
-				Metadata: map[string]string{"nextcloud_etag": "new-etag"},
-			}, nil)
+			wireNextcloudCapacityFixture(t, svc, ds)
+			item, _ := datasourceOriginalFetchedItem(t, "document.txt", "new-etag", "new bytes")
+			updated, err := svc.ingestItem(context.Background(), ds, item, nil)
 			require.Error(t, err)
 			assert.Equal(t, tc.lookupErr == nil, updated)
 			assert.Empty(t, ks.deleted)
@@ -1460,17 +1481,31 @@ func (s *nextcloudChannelCaptureKnowledgeService) CreateKnowledgeFromFile(
 }
 
 func TestIngestItem_NextcloudConnectorCannotRelabelProvenance(t *testing.T) {
-	knowledge := &nextcloudChannelCaptureKnowledgeService{
-		sweepFakeKS: &sweepFakeKS{repo: &deletionLookupKnowledgeRepo{}},
+	for _, tamper := range []bool{false, true} {
+		t.Run(fmt.Sprintf("metadata_tampered=%t", tamper), func(t *testing.T) {
+			knowledge := &nextcloudChannelCaptureKnowledgeService{
+				sweepFakeKS: &sweepFakeKS{repo: &deletionLookupKnowledgeRepo{}},
+			}
+			svc := &DataSourceService{knowledgeService: knowledge}
+			ds := &types.DataSource{
+				ID:              "nextcloud-source",
+				TenantID:        1,
+				KnowledgeBaseID: "kb-1",
+				Type:            types.ConnectorTypeNextcloud,
+			}
+			wireNextcloudCapacityFixture(t, svc, ds)
+			item, _ := datasourceOriginalFetchedItem(t, "document.txt", "etag-1", "current bytes")
+			if tamper {
+				item.Metadata["channel"] = "local"
+			}
+			_, err := svc.ingestItem(context.Background(), ds, item, nil)
+			if tamper {
+				require.ErrorContains(t, err, "original Nextcloud artifact changed or is unknown")
+				require.Empty(t, knowledge.channel, "forged source metadata must fail before creating any knowledge")
+			} else {
+				require.NoError(t, err)
+				require.Equal(t, types.ConnectorTypeNextcloud, knowledge.channel)
+			}
+		})
 	}
-	svc := &DataSourceService{knowledgeService: knowledge}
-	_, err := svc.ingestItem(context.Background(), &types.DataSource{
-		ID: "nextcloud-source", TenantID: 1, KnowledgeBaseID: "kb-1",
-		Type: types.ConnectorTypeNextcloud,
-	}, &types.FetchedItem{
-		ExternalID: "nextcloud:instance:77", FileName: "document.txt",
-		Content: []byte("current bytes"), Metadata: map[string]string{"channel": "local", "nextcloud_etag": "etag-1"},
-	}, nil)
-	require.NoError(t, err)
-	assert.Equal(t, types.ConnectorTypeNextcloud, knowledge.channel)
 }

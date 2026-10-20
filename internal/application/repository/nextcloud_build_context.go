@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/Tencent/WeKnora/internal/logprivacy"
 	"gorm.io/gorm"
 )
 
@@ -53,7 +54,7 @@ func CheckNextcloudBuildLease(ctx context.Context) error {
 func WithNextcloudBuildLease(ctx context.Context, validator NextcloudBuildLeaseValidator,
 	lease NextcloudContentLease, scope NextcloudContentScope,
 ) context.Context {
-	return context.WithValue(ctx, nextcloudBuildContextKey{}, nextcloudBuildContext{
+	return context.WithValue(logprivacy.SuppressContent(ctx), nextcloudBuildContextKey{}, nextcloudBuildContext{
 		validator: validator, lease: lease, scope: scope, admissionCtx: ctx,
 	})
 }
@@ -76,7 +77,10 @@ func ValidateNextcloudBuildWrite(ctx context.Context, tx *gorm.DB,
 	if guard.validator == nil {
 		return ErrNextcloudContentLeaseInvalid
 	}
-	return guard.validator.ValidateBuildLeaseInTx(ctx, tx, guard.lease, guard.scope)
+	if err := guard.validator.ValidateBuildLeaseInTx(ctx, tx, guard.lease, guard.scope); err != nil {
+		return err
+	}
+	return ValidateNextcloudMachineTaskWriteInTx(ctx, tx, tenantID, kbID, knowledgeID)
 }
 
 // CheckNextcloudBuildIdentity is a cheap batch preflight; the caller still

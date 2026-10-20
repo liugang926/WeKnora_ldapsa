@@ -499,7 +499,8 @@ type KnowledgeCheckParams struct {
 	ExternalID   string
 	// Nextcloud deduplicates only against the current exact source version.
 	// Retired generations may have identical bytes but must never be reopened.
-	NextcloudTargetETag string
+	NextcloudTargetETag      string
+	NextcloudContentRevision string
 	// URL parameters
 	URL string
 	// Text passage parameters

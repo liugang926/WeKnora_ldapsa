@@ -12,7 +12,6 @@ import (
 	"github.com/Tencent/WeKnora/internal/models/embedding"
 	"github.com/Tencent/WeKnora/internal/tracing/langfuse"
 	"github.com/Tencent/WeKnora/internal/types"
-	secutils "github.com/Tencent/WeKnora/internal/utils"
 )
 
 // maxRetrievalPoolSize bounds every retrieval depth derived from MatchCount:
@@ -25,7 +24,11 @@ const maxRetrievalPoolSize = 500
 // associated with the given knowledge base. Callers can pre-compute and reuse
 // the result across multiple KBs that share the same embedding model to avoid
 // redundant embedding API calls.
-func (s *knowledgeBaseService) GetQueryEmbedding(ctx context.Context, kbID string, queryText string) ([]float32, error) {
+func (s *knowledgeBaseService) GetQueryEmbedding(
+	ctx context.Context,
+	kbID string,
+	queryText string,
+) ([]float32, error) {
 	kb, err := s.repo.GetKnowledgeBaseByID(ctx, kbID)
 	if err != nil {
 		return nil, err
@@ -74,14 +77,20 @@ func validateQueryEmbeddingDimension(model embedding.Embedder, actual int) error
 		"model":              model.GetModelName(),
 		"expected_dimension": expected,
 		"actual_dimension":   actual,
-		"hint":               fmt.Sprintf("check the embedding model configuration and rebuild the affected index (%d dimensions)", expected),
+		"hint": fmt.Sprintf(
+			"check the embedding model configuration and rebuild the affected index (%d dimensions)",
+			expected,
+		),
 	})
 }
 
 // ResolveEmbeddingModelKeys resolves embedding model IDs to their actual model
 // identity key (name + endpoint). KBs using the same underlying model across
 // different tenants will share the same key, enabling optimal grouping.
-func (s *knowledgeBaseService) ResolveEmbeddingModelKeys(ctx context.Context, kbs []*types.KnowledgeBase) map[string]string {
+func (s *knowledgeBaseService) ResolveEmbeddingModelKeys(
+	ctx context.Context,
+	kbs []*types.KnowledgeBase,
+) map[string]string {
 	type modelRef struct {
 		ModelID  string
 		TenantID uint64
@@ -102,7 +111,13 @@ func (s *knowledgeBaseService) ResolveEmbeddingModelKeys(ctx context.Context, kb
 		tenantCtx := types.WithExecutionTenant(ctx, ref.TenantID)
 		model, err := s.modelService.GetModelByID(tenantCtx, ref.ModelID)
 		if err != nil || model == nil {
-			logger.Warnf(ctx, "ResolveEmbeddingModelKeys: cannot resolve model %s for tenant %d: %v", ref.ModelID, ref.TenantID, err)
+			logger.Warnf(
+				ctx,
+				"ResolveEmbeddingModelKeys: cannot resolve model %s for tenant %d: %v",
+				ref.ModelID,
+				ref.TenantID,
+				err,
+			)
 			resolvedKeys[ref] = ref.ModelID
 			continue
 		}
@@ -138,11 +153,8 @@ func (s *knowledgeBaseService) HybridSearch(ctx context.Context,
 		searchKBIDs = []string{id}
 	}
 
-	// QueryText is user-controlled; sanitize before logging to prevent
-	// CR/LF/tab log injection. Matches the handler-layer sanitization at
-	// handler/knowledgebase.go.
-	logger.Infof(ctx, "Hybrid search parameters, knowledge base IDs: %v, query text: %s",
-		searchKBIDs, secutils.SanitizeForLog(params.QueryText))
+	// Search text may contain protected document or conversation material.
+	logger.Infof(ctx, "Hybrid search parameters, knowledge base IDs: %v", searchKBIDs)
 
 	tenantInfo, _ := types.TenantInfoFromContext(ctx)
 
@@ -196,25 +208,45 @@ func (s *knowledgeBaseService) HybridSearch(ctx context.Context,
 		}
 	}
 	guard := readlease.NextcloudReadGuardFromContext(ctx)
+	if owned, turn := ragTurnPhysicalReadGuard(ctx, scopes); turn {
+		if guard != nil && owned != guard {
+			ctx = guard.ParentContext(ctx)
+		}
+		guard = owned
+	}
 	if guard == nil || !guard.Covers(scopes) {
 		if s.contentLeases != nil {
 			var beginErr error
-			guard, beginErr = readlease.BeginNextcloudKBRead(ctx, s.contentLeases, scopes)
+			guard, beginErr = readlease.BeginNextcloudKBRead(
+				ragPhysicalReadLifetimeContext(ctx),
+				s.contentLeases,
+				scopes,
+			)
 			if beginErr != nil {
 				return nil, apperrors.NewProtocolError(
 					fmt.Errorf("protect knowledge search: %w", beginErr),
 					fmt.Sprintf("protect knowledge search: %s", apperrors.PublicMessage(beginErr)),
 				)
 			}
-			defer func() {
+			held, holdErr := holdRAGPhysicalReadGuard(ctx, guard)
+			if holdErr != nil {
 				if releaseErr := guard.Close(); releaseErr != nil {
-					// A failed release retains the existing durable fence until its TTL.
-					// It must not grant access or change an already assembled response.
 					logger.Warnf(ctx, "Knowledge search read lease release failed: %v", releaseErr)
 				}
-			}()
-			ctx = guard.Context()
+				return nil, holdErr
+			}
+			if !held {
+				defer func() {
+					if releaseErr := guard.Close(); releaseErr != nil {
+						// A failed release retains the durable fence until its TTL.
+						logger.Warnf(ctx, "Knowledge search read lease release failed: %v", releaseErr)
+					}
+				}()
+			}
 		}
+	}
+	if guard != nil {
+		ctx = guard.ContextFor(ctx)
 	}
 
 	// Resolve the primary KB — embedding model + FAQ type come from this
@@ -271,7 +303,7 @@ func (s *knowledgeBaseService) HybridSearch(ctx context.Context,
 	retrieveCtx, retrieveSpan := langfuse.GetManager().StartSpan(ctx, langfuse.SpanOptions{
 		Name: "retrieve",
 		Input: map[string]interface{}{
-			"query_text":             params.QueryText,
+			"query_length":           len(params.QueryText),
 			"kb_ids":                 searchKBIDs,
 			"knowledge_ids":          params.KnowledgeIDs,
 			"tag_ids":                params.TagIDs,
@@ -295,7 +327,6 @@ func (s *knowledgeBaseService) HybridSearch(ctx context.Context,
 	if err != nil {
 		logger.ErrorWithFields(ctx, err, map[string]interface{}{
 			"knowledge_base_ids": searchKBIDs,
-			"query_text":         params.QueryText,
 		})
 		return nil, err
 	}
@@ -578,7 +609,13 @@ func (s *knowledgeBaseService) resolveQueryEmbedding(
 	var embeddingModel embedding.Embedder
 	var err error
 	if kb.TenantID != currentTenantID {
-		logger.Infof(ctx, "Cross-tenant knowledge base detected, using source tenant's embedding model. KB tenant: %d, current tenant: %d", kb.TenantID, currentTenantID)
+		logger.Infof(
+			ctx,
+			("Cross-tenant knowledge base detected, using source tenant's embedding mode" +
+				"l. KB tenant: %d, current tenant: %d"),
+			kb.TenantID,
+			currentTenantID,
+		)
 		embeddingModel, err = s.modelService.GetEmbeddingModelForTenant(ctx, kb.EmbeddingModelID, kb.TenantID)
 	} else {
 		embeddingModel, err = s.modelService.GetEmbeddingModel(ctx, kb.EmbeddingModelID)

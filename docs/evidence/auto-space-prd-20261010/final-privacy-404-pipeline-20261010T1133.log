@@ -1,0 +1,202 @@
+=== RUN   TestSourceContentSuppressionIsInherited
+--- PASS: TestSourceContentSuppressionIsInherited (0.00s)
+PASS
+ok      github.com/Tencent/WeKnora/internal/logprivacy  0.002s
+=== RUN   TestSourceContentDebugLoggingAndDetachedContextsAreSuppressed
+--- PASS: TestSourceContentDebugLoggingAndDetachedContextsAreSuppressed (0.00s)
+PASS
+ok      github.com/Tencent/WeKnora/internal/logger  0.363s
+=== RUN   TestSourceContentRAGLineageMarksAndPreservesPrivacy
+--- PASS: TestSourceContentRAGLineageMarksAndPreservesPrivacy (0.00s)
+PASS
+ok      github.com/Tencent/WeKnora/internal/types   0.341s
+=== RUN   TestSourceContentChatTelemetryBypassPreservesOrdinary
+INFO [2026-10-10 11:33:40.894] [] manager.go:105[Init] | [Langfuse] enabled host=http://127.0.0.1:37719 flush_at=100 flush_interval=1h0m0s sample_rate=1.00 (OTLP/OTel SDK)
+INFO [2026-10-10 11:33:40.894] [] manager.go:105[Init] | [Langfuse] enabled host=http://127.0.0.1:39483 flush_at=100 flush_interval=1h0m0s sample_rate=1.00 (OTLP/OTel SDK)
+--- PASS: TestSourceContentChatTelemetryBypassPreservesOrdinary (0.01s)
+PASS
+ok      github.com/Tencent/WeKnora/internal/models/chat 0.378s
+=== RUN   TestSourceContentEmbeddingTelemetryBypassPreservesOrdinary
+INFO [2026-10-10 11:33:42.944] [] manager.go:105[Init] | [Langfuse] enabled host=http://127.0.0.1:39633 flush_at=100 flush_interval=1h0m0s sample_rate=1.00 (OTLP/OTel SDK)
+INFO [2026-10-10 11:33:42.944] [] manager.go:105[Init] | [Langfuse] enabled host=http://127.0.0.1:43499 flush_at=100 flush_interval=1h0m0s sample_rate=1.00 (OTLP/OTel SDK)
+--- PASS: TestSourceContentEmbeddingTelemetryBypassPreservesOrdinary (0.00s)
+PASS
+ok      github.com/Tencent/WeKnora/internal/models/embedding    0.319s
+=== RUN   TestSourceContentRerankTelemetryBypassPreservesOrdinary
+INFO [2026-10-10 11:33:44.712] [] manager.go:105[Init] | [Langfuse] enabled host=http://127.0.0.1:37781 flush_at=100 flush_interval=1h0m0s sample_rate=1.00 (OTLP/OTel SDK)
+INFO [2026-10-10 11:33:44.712] [] manager.go:105[Init] | [Langfuse] enabled host=http://127.0.0.1:38807 flush_at=100 flush_interval=1h0m0s sample_rate=1.00 (OTLP/OTel SDK)
+--- PASS: TestSourceContentRerankTelemetryBypassPreservesOrdinary (0.00s)
+=== RUN   TestSourceContentProtocolRerankDebugPreservesOrdinary
+--- PASS: TestSourceContentProtocolRerankDebugPreservesOrdinary (0.00s)
+PASS
+ok      github.com/Tencent/WeKnora/internal/models/rerank   0.332s
+=== RUN   TestSourceContentVLMTelemetryBypassPreservesOrdinary
+INFO [2026-10-10 11:33:46.451] [] manager.go:105[Init] | [Langfuse] enabled host=http://127.0.0.1:45151 flush_at=100 flush_interval=1h0m0s sample_rate=1.00 (OTLP/OTel SDK)
+INFO [2026-10-10 11:33:46.451] [] manager.go:105[Init] | [Langfuse] enabled host=http://127.0.0.1:39283 flush_at=100 flush_interval=1h0m0s sample_rate=1.00 (OTLP/OTel SDK)
+--- PASS: TestSourceContentVLMTelemetryBypassPreservesOrdinary (0.00s)
+PASS
+ok      github.com/Tencent/WeKnora/internal/models/vlm  0.301s
+=== RUN   TestSourceContentASRTelemetryBypassPreservesOrdinary
+INFO [2026-10-10 11:33:47.911] [] manager.go:105[Init] | [Langfuse] enabled host=http://127.0.0.1:41655 flush_at=100 flush_interval=1h0m0s sample_rate=1.00 (OTLP/OTel SDK)
+INFO [2026-10-10 11:33:47.911] [] manager.go:105[Init] | [Langfuse] enabled host=http://127.0.0.1:41861 flush_at=100 flush_interval=1h0m0s sample_rate=1.00 (OTLP/OTel SDK)
+--- PASS: TestSourceContentASRTelemetryBypassPreservesOrdinary (0.00s)
+PASS
+ok      github.com/Tencent/WeKnora/internal/models/asr  0.330s
+=== RUN   TestNextcloudBuildContextsSuppressContentWithoutGrantingAccess
+=== RUN   TestNextcloudBuildContextsSuppressContentWithoutGrantingAccess/ordinary
+=== RUN   TestNextcloudBuildContextsSuppressContentWithoutGrantingAccess/protected
+=== RUN   TestNextcloudBuildContextsSuppressContentWithoutGrantingAccess/unknown
+--- PASS: TestNextcloudBuildContextsSuppressContentWithoutGrantingAccess (0.00s)
+    --- PASS: TestNextcloudBuildContextsSuppressContentWithoutGrantingAccess/ordinary (0.00s)
+    --- PASS: TestNextcloudBuildContextsSuppressContentWithoutGrantingAccess/protected (0.00s)
+    --- PASS: TestNextcloudBuildContextsSuppressContentWithoutGrantingAccess/unknown (0.00s)
+=== RUN   TestNextcloudOnboardingOperationNotFoundIsOpaqueAndScoped
+--- PASS: TestNextcloudOnboardingOperationNotFoundIsOpaqueAndScoped (0.12s)
+PASS
+ok      github.com/Tencent/WeKnora/internal/application/repository  0.450s
+=== RUN   TestNextcloudOnboardingErrorsUseOpaqueFixedCodes
+--- PASS: TestNextcloudOnboardingErrorsUseOpaqueFixedCodes (0.00s)
+PASS
+ok      github.com/Tencent/WeKnora/internal/handler 0.317s
+=== RUN   TestNextcloudActualExtractionScopedGraphBackendAndPersistedResult
+
+2026/10/10 11:35:19 /app/internal/application/repository/nextcloud_versions.go:516 record not found
+
+2026/10/10 11:35:19 /app/internal/application/repository/nextcloud_processing_state.go:157 record not found
+
+2026/10/10 11:35:19 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+
+2026/10/10 11:35:19 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+
+2026/10/10 11:35:19 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+
+2026/10/10 11:35:19 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+
+2026/10/10 11:35:19 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+
+2026/10/10 11:35:19 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+
+2026/10/10 11:35:19 /app/internal/application/repository/nextcloud_derived_backend_plan.go:95 record not found
+
+2026/10/10 11:35:19 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+
+2026/10/10 11:35:19 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+
+2026/10/10 11:35:19 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+
+2026/10/10 11:35:19 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+
+2026/10/10 11:35:19 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+
+2026/10/10 11:35:19 /app/internal/application/repository/nextcloud_graph.go:147 record not found
+
+2026/10/10 11:35:19 /app/internal/application/repository/nextcloud_processing_state.go:176 record not found
+
+2026/10/10 11:35:19 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+
+2026/10/10 11:35:19 /app/internal/application/repository/nextcloud_processing_state.go:355 record not found
+
+2026/10/10 11:35:19 /app/internal/application/repository/nextcloud_processing_state.go:369 record not found
+
+2026/10/10 11:35:19 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+
+2026/10/10 11:35:19 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+
+2026/10/10 11:35:19 /app/internal/application/repository/nextcloud_processing_state.go:176 record not found
+
+2026/10/10 11:35:19 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+
+2026/10/10 11:35:19 /app/internal/application/repository/nextcloud_processing_state.go:355 record not found
+DEBUG[2026-10-10 11:35:19.373] [b0c73bb9-fcda-4c2c-863f-beb4f1bb7dde extract=document-chunk] extract_entity.go:569[extractContent] | no fence match, recovered content via fallback (122 bytes)
+INFO [2026-10-10 11:35:19.373] [b0c73bb9-fcda-4c2c-863f-beb4f1bb7dde extract=document-chunk] extract_entity.go:516[rebuildGraph] | Add missing relation target node
+
+2026/10/10 11:35:19 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+
+2026/10/10 11:35:19 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+
+2026/10/10 11:35:19 /app/internal/application/repository/nextcloud_graph.go:493 record not found
+
+2026/10/10 11:35:19 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+
+2026/10/10 11:35:19 /app/internal/application/repository/nextcloud_processing_state.go:176 record not found
+
+2026/10/10 11:35:19 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+
+2026/10/10 11:35:19 /app/internal/application/repository/nextcloud_processing_state.go:355 record not found
+
+2026/10/10 11:35:19 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+
+2026/10/10 11:35:19 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+
+2026/10/10 11:35:19 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+
+2026/10/10 11:35:19 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+
+2026/10/10 11:35:19 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+
+2026/10/10 11:35:19 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+
+2026/10/10 11:35:19 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+
+2026/10/10 11:35:19 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+
+2026/10/10 11:35:19 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+
+2026/10/10 11:35:19 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+
+2026/10/10 11:35:19 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+
+2026/10/10 11:35:19 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+--- PASS: TestNextcloudActualExtractionScopedGraphBackendAndPersistedResult (0.28s)
+=== RUN   TestNextcloudActualExtractionWithdrawalBeforeProviderCommitWritesNothing
+
+2026/10/10 11:35:19 /app/internal/application/repository/nextcloud_versions.go:516 record not found
+
+2026/10/10 11:35:19 /app/internal/application/repository/nextcloud_processing_state.go:157 record not found
+
+2026/10/10 11:35:19 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+
+2026/10/10 11:35:19 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+
+2026/10/10 11:35:19 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+
+2026/10/10 11:35:19 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+
+2026/10/10 11:35:19 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+
+2026/10/10 11:35:19 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+
+2026/10/10 11:35:19 /app/internal/application/repository/nextcloud_derived_backend_plan.go:95 record not found
+
+2026/10/10 11:35:19 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+
+2026/10/10 11:35:19 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+
+2026/10/10 11:35:19 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+
+2026/10/10 11:35:19 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+
+2026/10/10 11:35:19 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+
+2026/10/10 11:35:19 /app/internal/application/repository/nextcloud_graph.go:147 record not found
+
+2026/10/10 11:35:19 /app/internal/application/repository/nextcloud_processing_state.go:176 record not found
+
+2026/10/10 11:35:19 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+
+2026/10/10 11:35:19 /app/internal/application/repository/nextcloud_processing_state.go:355 record not found
+
+2026/10/10 11:35:19 /app/internal/application/repository/nextcloud_processing_state.go:369 record not found
+
+2026/10/10 11:35:19 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+
+2026/10/10 11:35:19 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+
+2026/10/10 11:35:19 /app/internal/application/repository/nextcloud_processing_state.go:176 record not found
+
+2026/10/10 11:35:19 /app/internal/application/repository/nextcloud_control_recovery.go:32 record not found
+
+2026/10/10 11:35:19 /app/internal/application/repository/nextcloud_processing_state.go:355 record not found
+--- PASS: TestNextcloudActualExtractionWithdrawalBeforeProviderCommitWritesNothing (0.22s)
+PASS
+ok      github.com/Tencent/WeKnora/internal/application/service 0.862s

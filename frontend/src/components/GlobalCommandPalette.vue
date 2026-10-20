@@ -16,7 +16,7 @@
         <input ref="inputRef" v-model="query" type="text" class="cmdk__input"
           :placeholder="activeKbScope ? t('commandPalette.scope.placeholder') : t('commandPalette.placeholder')"
           autofocus spellcheck="false" @keydown="onInputKeyDown" />
-        <span v-if="loading" class="cmdk__input-spinner">
+        <span v-if="loading || messageLoadingMore" class="cmdk__input-spinner">
           <t-loading size="small" />
         </span>
         <t-tooltip :content="t('commandPalette.retrieval')" placement="bottom">
@@ -74,7 +74,7 @@
           <!-- Messages -->
           <ResultGroup v-if="isGroupVisible('messages') && messageGroups.length"
             :label="t('commandPalette.group.messages')" :count="totalMessages">
-            <template v-for="(item, i) in flatMessageItems" :key="'m-' + item.msg.request_id">
+            <template v-for="(item, i) in flatMessageItems" :key="'m-' + messageSearchGroupKey(item.msg)">
               <ResultItem :index="flatIndexFor('messages', i)" :selected="selectedIndex === flatIndexFor('messages', i)"
                 :shortcut="shortcutFor(flatIndexFor('messages', i))" icon-name="chat" :score="item.msg.score"
                 @primary="openMessage(item)" @hover="selectItemAt($event)">
@@ -88,6 +88,30 @@
               </ResultItem>
             </template>
           </ResultGroup>
+
+          <!-- Only the fresh current page is shown; navigation re-fetches it. -->
+          <div v-if="isGroupVisible('messages') && (messageHasMore || messageHasPrevious || messageSearchError || messageLoadingMore)"
+            class="cmdk__search-status" role="status" aria-live="polite">
+            <p v-if="messageSearchError">{{ t('commandPalette.search.failed') }}</p>
+            <p v-else-if="messageHasMore">{{ t('commandPalette.search.moreAvailable') }}</p>
+            <p v-else-if="messageHasPrevious && !messageLoadingMore && !messageGroups.length">{{ t('commandPalette.search.pageEmpty') }}</p>
+            <div class="cmdk__empty-actions">
+              <t-button v-if="messageHasPrevious" variant="outline" size="small" :disabled="loading || messageLoadingMore"
+                @keydown.stop @click="previousMessagePage">
+                {{ t('commandPalette.search.previousMessages') }}
+              </t-button>
+              <t-button v-if="messageHasMore || messageSearchError" variant="outline" size="small" :disabled="loading || messageLoadingMore"
+                @keydown.stop @click="continueMessageSearch">
+                {{ t(messageSearchError ? 'commandPalette.search.retry' : 'commandPalette.search.continueMessages') }}
+              </t-button>
+            </div>
+          </div>
+          <div v-if="knowledgeSearchError" class="cmdk__search-status" role="status" aria-live="polite">
+            <p>{{ t('commandPalette.search.failed') }}</p>
+            <t-button variant="outline" size="small" :disabled="loading || messageLoadingMore" @keydown.stop @click="retrySearch">
+              {{ t('commandPalette.search.retry') }}
+            </t-button>
+          </div>
 
           <!-- KB name matches -->
           <ResultGroup v-if="isGroupVisible('kbs') && kbMatches.length" :label="t('commandPalette.group.kbs')">
@@ -123,7 +147,7 @@
           </ResultGroup>
 
           <!-- No results -->
-          <div v-if="!loading && !hasAnyResults && hasSearched" class="cmdk__empty">
+          <div v-if="!loading && !messageLoadingMore && !messageHasPrevious && !searchIncomplete && !hasAnyResults && hasSearched" class="cmdk__empty">
             <p>{{ t('commandPalette.empty.noResults') }}</p>
             <div class="cmdk__empty-actions">
               <t-button theme="primary" variant="outline" size="small" @click="askAi">
@@ -173,7 +197,7 @@ import { buildCommands, filterCommands } from './GlobalCommandPalette/commands'
 import ResultGroup from './GlobalCommandPalette/ResultGroup.vue'
 import ResultItem from './GlobalCommandPalette/ResultItem.vue'
 import RetrievalSettings from '@/views/settings/RetrievalSettings.vue'
-import type { MessageSearchGroupItem } from '@/api/chat-history'
+import { messageSearchGroupKey, type MessageSearchGroupItem } from '@/api/chat-history'
 
 const { t } = useI18n()
 const route = useRoute()
@@ -186,7 +210,6 @@ const { startChat } = useStartChat()
 
 // Per-group display caps — keep the palette compact.
 const CHUNK_LIMIT = 5
-const MSG_LIMIT = 4
 
 // Active KB scope: when the palette opens on a KB detail page, we default to
 // searching within that KB. The user can remove the chip to expand scope.
@@ -195,12 +218,16 @@ const scopeDismissed = ref(false) // user clicked ✕, remember for this session
 
 const {
   query, loading, hasSearched,
+  messageHasMore, messageHasPrevious, messageLoadingMore, messageSearchError, knowledgeSearchError, searchIncomplete,
+  continueMessageSearch, previousMessagePage, retrySearch,
   fileGroups, messageGroups, kbMatches,
   knowledgeBases,
   agentMatches, sessionMatches,
   totalChunks, totalMessages,
   clearResults,
 } = useCmdkSearch({
+  enabled: () => open.value,
+  contextKey: () => JSON.stringify([authStore.user?.id || '', authStore.effectiveTenantId]),
   lockedKbIds: () => (activeKbScope.value ? [activeKbScope.value.id] : []),
   agentsEnabled: () => deploymentCapabilities.isSupported('agents'),
 })
@@ -244,7 +271,6 @@ const flatMessageItems = computed<FlatMsgItem[]>(() => {
   for (const g of messageGroups.value) {
     for (const m of g.items) {
       out.push({ kind: 'msg', group: g, msg: m })
-      if (out.length >= MSG_LIMIT) return out
     }
   }
   return out
@@ -345,7 +371,7 @@ const flatItems = computed<FlatItem[]>(() => {
     } else if (g === 'messages') {
       flatMessageItems.value.forEach((item) => {
         out.push({
-          key: `msg:${item.msg.request_id}`,
+          key: `msg:${messageSearchGroupKey(item.msg)}`,
           group: g,
           run: () => openMessage(item),
         })
@@ -542,6 +568,7 @@ const onInputKeyDown = (e: KeyboardEvent) => {
 }
 
 const handleClose = () => {
+  clearResults()
   drawerVisible.value = false
   commandPaletteStore.closePalette()
 }
@@ -770,6 +797,14 @@ onUnmounted(() => {
   min-height: 0;
   overflow-y: auto;
   padding: 6px 4px;
+}
+
+.cmdk__search-status {
+  padding: 10px 12px;
+  color: var(--td-text-color-secondary);
+  font-size: var(--app-text-sm);
+
+  p { margin: 0 0 8px; }
 }
 
 .cmdk__empty {

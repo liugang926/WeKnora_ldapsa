@@ -21,15 +21,43 @@ type safeCurrentTurnEngine struct {
 	contexts        [][]chat.Message
 	queries         []string
 	checkpointCalls int
+	check           func(context.Context, *types.SourceLineage) error
+	round           func(context.Context) error
 }
 
-func (
-	e *safeCurrentTurnEngine,
-) Execute(_ context.Context, _, _, query string, history []chat.Message, _ ...[]string) (*types.AgentState, error) {
+func (e *safeCurrentTurnEngine) Execute(
+	ctx context.Context,
+	_, _, query string,
+	history []chat.Message,
+	_ ...[]string,
+) (*types.AgentState, error) {
+	if e.round != nil {
+		if err := e.round(ctx); err != nil {
+			return nil, err
+		}
+	}
+	if e.check == nil {
+		return nil, access.ErrNextcloudPublicationUnavailable
+	}
+	actual, ok := ctx.Value(actualHistoryInputKey{}).(actualHistoryInput)
+	if !ok || actual.query != query || actual.lineage.RequireComplete() != nil {
+		return nil, types.ErrSourceLineageUnknown
+	}
+	if err := e.check(ctx, actual.lineage); err != nil {
+		return nil, err
+	}
 	e.contexts = append(e.contexts, history)
 	e.queries = append(e.queries, query)
 	return &types.AgentState{IsComplete: true}, nil
 }
+
+// SetSourceLineageVerifier keeps actual current request proofs in the fixture engine.
+func (e *safeCurrentTurnEngine) SetSourceLineageVerifier(check func(context.Context, *types.SourceLineage) error) {
+	e.check = check
+}
+
+// SetRoundGuard retains the actual current Agent grant at execution.
+func (e *safeCurrentTurnEngine) SetRoundGuard(check func(context.Context) error) { e.round = check }
 
 func (e *safeCurrentTurnEngine) SetContextCheckpointSink(types.ContextCheckpointSink) {
 	e.checkpointCalls++
@@ -43,37 +71,35 @@ type safeCurrentTurnAgent struct {
 	sandboxCalls  int
 }
 
-func (
-	a *safeCurrentTurnAgent,
-) CreateAgentEngine(
+func (a *safeCurrentTurnAgent) CreateAgentEngine(
 	_ context.Context,
 	cfg *types.AgentConfig,
 	_ chat.Chat,
 	_ rerank.Reranker,
 	_ *event.EventBus,
 	_, _ string,
-) (
-	interfaces.AgentEngine,
-	error,
-) {
+) (interfaces.AgentEngine, error) {
 	a.memoryEnabled = cfg.MemoryEnabled
 	a.excluded = cfg.ExcludeHistoricalContext
 	return a.engine, nil
 }
 
-func (
-	a *safeCurrentTurnAgent,
-) sessionSandboxInputStore(context.Context, string, string) (sandbox.SessionFileStore, error) {
+func (a *safeCurrentTurnAgent) sessionSandboxInputStore(
+	context.Context,
+	string,
+	string,
+) (sandbox.SessionFileStore, error) {
 	a.sandboxCalls++
 	return nil, nil
 }
 
-func (
-	a *safeCurrentTurnAgent,
-) stageSessionAttachments(context.Context, string, string, uint64, types.MessageAttachments) (
-	[]stagedSessionAttachment,
-	error,
-) {
+func (a *safeCurrentTurnAgent) stageSessionAttachments(
+	context.Context,
+	string,
+	string,
+	uint64,
+	types.MessageAttachments,
+) ([]stagedSessionAttachment, error) {
 	return nil, nil
 }
 
@@ -88,9 +114,10 @@ func TestAgentHistoryAdmissionRejectedContextStillRunsCurrentAgentQA(t *testing.
 			if scenario == "missing-policy" {
 				guard = nil
 			}
-			repo := &historyRepo{rows: storedTurns(
-				5,
-			), checkpoint: checkpointOn(storedTurns(5)[1], "secret old checkpoint")}
+			repo := &historyRepo{
+				rows:       storedTurns(5),
+				checkpoint: checkpointOn(storedTurns(5)[1], "secret old checkpoint"),
+			}
 			engine := &safeCurrentTurnEngine{}
 			agentSvc := &safeCurrentTurnAgent{engine: engine}
 			svc := &sessionService{
@@ -99,22 +126,12 @@ func TestAgentHistoryAdmissionRejectedContextStillRunsCurrentAgentQA(t *testing.
 				messageRepo:  repo,
 				agentService: agentSvc,
 				modelService: &stubModelService{
-					modelsByID: map[string]*types.Model{
-						"chat": {
-							ID:   "chat",
-							Type: types.ModelTypeKnowledgeQA,
-						},
-					},
+					modelsByID: map[string]*types.Model{"chat": {ID: "chat", Type: types.ModelTypeKnowledgeQA}},
 				},
 			}
-			ctx := context.WithValue(context.WithValue(context.Background(), types.TenantIDContextKey, uint64(
-				1,
-			)), types.TenantInfoContextKey, &types.Tenant{ID: 1})
+
 			req := &types.QARequest{
-				Session: &types.Session{
-					ID:       "session",
-					TenantID: 1,
-				},
+				Session:            &types.Session{ID: "session", TenantID: 1},
 				AssistantMessageID: "new",
 				Query:              "new user question",
 				TurnLeaseHeld:      true,
@@ -125,12 +142,12 @@ func TestAgentHistoryAdmissionRejectedContextStillRunsCurrentAgentQA(t *testing.
 						ModelID:             "chat",
 						KBSelectionMode:     "none",
 						WebSearchProviderID: "unused",
-						AllowedTools: []string{
-							"thinking",
-						}, MultiTurnEnabled: true,
+						AllowedTools:        []string{"thinking"},
+						MultiTurnEnabled:    true,
 					},
 				},
 			}
+			ctx := actualAgentHistoryRequest(t, svc, req)
 			require.NoError(t, svc.AgentQA(ctx, req, event.NewEventBus()))
 			require.Len(t, engine.contexts, 1)
 			require.Empty(t, engine.contexts[0])

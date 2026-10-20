@@ -1,0 +1,10 @@
+-- Only actual parser/model controls advance this original input counter.
+-- Display metadata is authenticated independently, not included in graph inputs.
+CREATE TABLE knowledge_configuration_control_versions (
+    knowledge_base_id TEXT PRIMARY KEY CHECK(length(trim(knowledge_base_id)) > 0),
+    revision BIGINT NOT NULL CHECK(revision > 0)
+);
+INSERT INTO knowledge_configuration_control_versions(knowledge_base_id,revision) SELECT id,1 FROM knowledge_bases;
+CREATE TRIGGER knowledge_configuration_control_insert AFTER INSERT ON knowledge_bases BEGIN INSERT INTO knowledge_configuration_control_versions(knowledge_base_id,revision) VALUES(NEW.id,1) ON CONFLICT(knowledge_base_id) DO UPDATE SET revision=revision+1; END;
+CREATE TRIGGER knowledge_configuration_control_update AFTER UPDATE ON knowledge_bases WHEN OLD.tenant_id IS NOT NEW.tenant_id OR OLD.type IS NOT NEW.type OR OLD.chunking_config IS NOT NEW.chunking_config OR OLD.image_processing_config IS NOT NEW.image_processing_config OR OLD.embedding_model_id IS NOT NEW.embedding_model_id OR OLD.summary_model_id IS NOT NEW.summary_model_id OR OLD.vlm_config IS NOT NEW.vlm_config OR OLD.asr_config IS NOT NEW.asr_config OR OLD.extract_config IS NOT NEW.extract_config OR OLD.faq_config IS NOT NEW.faq_config OR OLD.question_generation_config IS NOT NEW.question_generation_config OR OLD.auto_tag_config IS NOT NEW.auto_tag_config OR OLD.profile_config IS NOT NEW.profile_config OR OLD.wiki_config IS NOT NEW.wiki_config OR OLD.indexing_strategy IS NOT NEW.indexing_strategy OR OLD.deleted_at IS NOT NEW.deleted_at BEGIN INSERT INTO knowledge_configuration_control_versions(knowledge_base_id,revision) VALUES(NEW.id,1) ON CONFLICT(knowledge_base_id) DO UPDATE SET revision=revision+1; END;
+CREATE TRIGGER knowledge_configuration_control_delete AFTER DELETE ON knowledge_bases BEGIN INSERT INTO knowledge_configuration_control_versions(knowledge_base_id,revision) VALUES(OLD.id,1) ON CONFLICT(knowledge_base_id) DO UPDATE SET revision=revision+1; END;

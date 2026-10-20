@@ -21,12 +21,10 @@ const (
 	maxNextcloudEventBatchItems = 200
 )
 
-// NextcloudEventHandler receives signed Nextcloud event hints.
 type NextcloudEventHandler struct {
 	inbox *repository.NextcloudEventInboxRepository
 }
 
-// NewNextcloudEventHandler constructs the signed event-hint handler.
 func NewNextcloudEventHandler(inbox *repository.NextcloudEventInboxRepository) *NextcloudEventHandler {
 	return &NextcloudEventHandler{inbox: inbox}
 }
@@ -206,8 +204,7 @@ func validNextcloudOpaqueID(value string, minLength, maxLength int) bool {
 		return false
 	}
 	for _, ch := range value {
-		if (ch < 'A' || ch > 'Z') && (ch < 'a' || ch > 'z') &&
-			(ch < '0' || ch > '9') && ch != '_' && ch != '-' {
+		if (ch < 'A' || ch > 'Z') && (ch < 'a' || ch > 'z') && (ch < '0' || ch > '9') && ch != '_' && ch != '-' {
 			return false
 		}
 	}
@@ -219,8 +216,8 @@ func validNextcloudKeyID(value string) bool {
 		return false
 	}
 	for _, ch := range value {
-		if (ch < 'A' || ch > 'Z') && (ch < 'a' || ch > 'z') &&
-			(ch < '0' || ch > '9') && ch != '.' && ch != '_' && ch != '-' {
+		if (ch < 'A' || ch > 'Z') && (ch < 'a' || ch > 'z') && (ch < '0' || ch > '9') &&
+			ch != '.' && ch != '_' && ch != '-' {
 			return false
 		}
 	}

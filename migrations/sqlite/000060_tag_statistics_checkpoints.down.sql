@@ -1,0 +1,16 @@
+DROP TRIGGER IF EXISTS tag_statistics_knowledge_bases_insert;
+DROP TRIGGER IF EXISTS tag_statistics_knowledge_bases_update;
+DROP TRIGGER IF EXISTS tag_statistics_knowledge_bases_delete;
+DROP TRIGGER IF EXISTS tag_statistics_knowledge_tags_insert;
+DROP TRIGGER IF EXISTS tag_statistics_knowledge_tags_update;
+DROP TRIGGER IF EXISTS tag_statistics_knowledge_tags_delete;
+DROP TRIGGER IF EXISTS tag_statistics_knowledges_insert;
+DROP TRIGGER IF EXISTS tag_statistics_knowledges_update;
+DROP TRIGGER IF EXISTS tag_statistics_knowledges_delete;
+DROP TRIGGER IF EXISTS tag_statistics_chunks_insert;
+DROP TRIGGER IF EXISTS tag_statistics_chunks_update;
+DROP TRIGGER IF EXISTS tag_statistics_chunks_delete;
+DROP TRIGGER IF EXISTS tag_statistics_relations_insert;
+DROP TRIGGER IF EXISTS tag_statistics_relations_update;
+DROP TRIGGER IF EXISTS tag_statistics_relations_delete;
+DROP TABLE IF EXISTS knowledge_tag_statistics_scope_versions;

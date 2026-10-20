@@ -16,6 +16,7 @@ if [[ -e "$base/ACTIVATION_PENDING" ]]; then
   echo 'Interrupted activation requires operator recovery; original backup pointer retained.' >&2
   exit 1
 fi
+protocol=$(python3 "$base/bin/retention.py" protocol "$release" --lock-fd 9)
 compose "$release" config --quiet
 for ref in $(cut -d= -f2 "$release/images.env"); do docker image inspect "$ref" >/dev/null; done
 if [[ "$old" == "$release" ]]; then exit 0; fi
@@ -42,6 +43,14 @@ printf '%s\n' "$old" > "$backup/previous-release"
 sha256sum "$backup/runtime.tar.gz" > "$backup/SHA256SUMS"
 rollback() {
   trap - ERR
+  if [[ "$protocol" == journal ]]; then
+    # The external purge ledger/pin may now be newer than any physical backup.
+    # Never roll the DB back and reopen an old binary against that anchor.
+    compose "$release" stop --timeout 90 || true
+    touch "$base/UPDATE_FAILED"
+    echo "Journal activation failed; stack closed. Pending pointer, runtime and backup retained: $backup" >&2
+    exit 1
+  fi
   compose "$release" down --timeout 90 || true
   mv "$data/runtime" "$backup/failed-runtime"
   tar -xzf "$backup/runtime.tar.gz" -C "$data"
@@ -64,12 +73,19 @@ fd = os.open(os.path.dirname(path), os.O_DIRECTORY)
 os.fsync(fd); os.close(fd)
 PYMARK
 trap rollback ERR
-compose "$release" up -d --pull never --wait --wait-timeout 420 postgres redis app
+compose "$release" up -d --pull never --wait --wait-timeout 420 postgres redis
+if [[ "$protocol" == journal ]]; then
+  python3 "$base/bin/retention.py" prepare "$release" --lock-fd 9
+fi
+compose "$release" up -d --pull never --wait --wait-timeout 420 app
 compose "$release" exec -T app curl -fsS http://localhost:8080/health >/dev/null
 compose "$release" exec -T app curl -fsS http://localhost:8080/api/v1/auth/config >/dev/null
 bash "$base/bin/check-schema.sh" "$release"
+if [[ "$protocol" == journal ]]; then
+  python3 "$base/bin/retention.py" status "$release" --lock-fd 9
+fi
 # No automatic destructive rollback after reopening traffic.
-trap - ERR
+if [[ "$protocol" != journal ]]; then trap - ERR; fi
 ln -sfn "$release" "$base/current.new"
 mv -Tf "$base/current.new" "$base/current"
 python3 - <<'PYCOMMIT'
@@ -77,13 +93,25 @@ import os, pathlib
 base = pathlib.Path('/srv/weknora-production')
 fd = os.open(base, os.O_DIRECTORY)
 os.fsync(fd)
-(base/'ACTIVATION_PENDING').unlink()
-os.fsync(fd); os.close(fd)
+os.close(fd)
 PYCOMMIT
 if ! compose "$release" up -d --pull never --wait --wait-timeout 180 frontend; then
+  if [[ "$protocol" == journal ]]; then rollback; fi
   touch "$base/UPDATE_FAILED"
   echo 'Frontend failed; backend and data retained for operator recovery.' >&2
   exit 1
 fi
-printf '%s\n' "$(basename "$release")" > "$base/active-release"
+python3 - "$release" <<'PYCLEAR'
+import os, pathlib, sys
+base = pathlib.Path('/srv/weknora-production')
+with (base/'active-release.new').open('w') as f:
+    f.write(pathlib.Path(sys.argv[1]).name + '\n')
+    f.flush(); os.fsync(f.fileno())
+os.replace(base/'active-release.new', base/'active-release')
+fd = os.open(base, os.O_DIRECTORY)
+os.fsync(fd)
+(base/'ACTIVATION_PENDING').unlink()
+os.fsync(fd); os.close(fd)
+PYCLEAR
+trap - ERR
 echo "Activated $(basename "$release"); backup $backup"

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Pull only complete, published prod-* releases from the configured public fork."""
-import hashlib, json, os, pathlib, re, shutil, subprocess, tarfile, tempfile, time, urllib.request
+import argparse, hashlib, json, os, pathlib, re, shutil, subprocess, tarfile, tempfile, time, urllib.request
 from validate_release import validate
 from parallel_download import download_parallel
 from image_identity import resolve_images
@@ -62,7 +62,7 @@ def cached_asset_valid(path, expected_digest):
         return False
     return file_sha256(path) == expected_digest
 
-def main():
+def main(stage_only=False):
     if (BASE/'ACTIVATION_PENDING').exists():
         (BASE/'UPDATE_FAILED').touch(mode=0o600)
         raise RuntimeError('Interrupted activation requires recovery; original backup pointer retained')
@@ -125,6 +125,8 @@ def main():
     # Recheck cached releases too: a previously downloaded older release must
     # never bypass the schema downgrade gate when republished.
     manifest = validate(json.loads((target/'manifest.json').read_text()))
+    if manifest.get('deployment_protocol', 1) >= 2 and not (BASE/'bin/retention.py').is_file():
+        raise RuntimeError('Reviewed original-body retention helper must be installed before activation')
     active = BASE/'current'/'manifest.json'
     if active.exists():
         old = validate(json.loads(active.read_text()))
@@ -134,6 +136,12 @@ def main():
     resolved = resolve_images(manifest)
     (target/'resolved-images.json').write_text(json.dumps(resolved, indent=2)+'\n')
     (target/'images.env').write_text(''.join(k+'='+v+'\n' for k,v in sorted(resolved['local_images'].items())))
+    if stage_only:
+        print(json.dumps({'staged_release': tag, 'activated': False}))
+        return
     subprocess.run(['bash', str(BASE/'bin/activate.sh'), str(target)], check=True)
 
-if __name__ == '__main__': main()
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--stage-only', action='store_true', help='Verify and load a release without changing services or the database')
+    main(stage_only=parser.parse_args().stage_only)

@@ -7,6 +7,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/Tencent/WeKnora/internal/application/repository"
+	"github.com/Tencent/WeKnora/internal/application/service"
 	"github.com/Tencent/WeKnora/internal/errors"
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/types"
@@ -24,6 +26,7 @@ import (
 type FAQHandler struct {
 	knowledgeService interfaces.KnowledgeService
 	kbService        interfaces.KnowledgeBaseService
+	outputAuthorizer *service.FAQOutputAuthorizer
 }
 
 // NewFAQHandler creates a new FAQ handler.
@@ -79,7 +82,7 @@ type updateLastFAQImportResultDisplayStatusRequest struct {
 // @Security     ApiKeyAuth
 // @Router       /knowledge-bases/{id}/faq/entries [get]
 func (h *FAQHandler) ListEntries(c *gin.Context) {
-	ctx := c.Request.Context()
+	ctx := service.WithFAQOutputBoundary(c.Request.Context())
 	kbID := secutils.SanitizeForLog(c.Param("id"))
 
 	var page types.Pagination
@@ -109,17 +112,35 @@ func (h *FAQHandler) ListEntries(c *gin.Context) {
 		return
 	}
 
-	result, err := h.knowledgeService.ListFAQEntries(ctx, kbID, &page, tagUUIDs, legacyTagSeqID, keyword, searchField, sortOrder, isEnabled)
+	if !h.requireFAQOutput(c) {
+		return
+	}
+
+	ctx, closeRead, leaseErr := beginFAQHTTPRead(ctx, c, h.outputAuthorizer, kbID)
+	if leaseErr != nil {
+		_ = c.Error(leaseErr)
+		return
+	}
+	defer closeRead()
+
+	result, err := h.knowledgeService.ListFAQEntries(
+		ctx,
+		kbID,
+		&page,
+		tagUUIDs,
+		legacyTagSeqID,
+		keyword,
+		searchField,
+		sortOrder,
+		isEnabled,
+	)
 	if err != nil {
 		logger.ErrorWithFields(ctx, err, nil)
 		c.Error(err)
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"data":    result,
-	})
+	h.writeFAQOutput(ctx, c, result)
 }
 
 // parseOptionalFAQEnabled preserves the distinction between an omitted filter
@@ -168,6 +189,11 @@ func (h *FAQHandler) UpsertEntries(c *gin.Context) {
 		return
 	}
 
+	ctx, inputErr := repository.WithIndependentFAQInput(ctx, kbID, types.FAQInputOperation{Kind: "import", Batch: &req})
+	if inputErr != nil {
+		_ = c.Error(knowledgeOutputHTTPError(inputErr))
+		return
+	}
 	taskID, err := h.knowledgeService.UpsertFAQEntries(ctx, kbID, &req)
 	if err != nil {
 		logger.ErrorWithFields(ctx, err, nil)
@@ -197,8 +223,17 @@ func (h *FAQHandler) UpsertEntries(c *gin.Context) {
 // @Security     ApiKeyAuth
 // @Router       /knowledge-bases/{id}/faq/entry [post]
 func (h *FAQHandler) CreateEntry(c *gin.Context) {
-	ctx := c.Request.Context()
+	if !h.requireFAQOutput(c) {
+		return
+	}
+	ctx := service.WithFAQOutputBoundary(c.Request.Context())
 	kbID := secutils.SanitizeForLog(c.Param("id"))
+	ctx, closeRead, leaseErr := beginFAQHTTPRead(ctx, c, h.outputAuthorizer, kbID)
+	if leaseErr != nil {
+		_ = c.Error(leaseErr)
+		return
+	}
+	defer closeRead()
 
 	var req types.FAQEntryPayload
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -207,6 +242,11 @@ func (h *FAQHandler) CreateEntry(c *gin.Context) {
 		return
 	}
 
+	ctx, inputErr := repository.WithIndependentFAQInput(ctx, kbID, types.FAQInputOperation{Kind: "create", Entry: &req})
+	if inputErr != nil {
+		_ = c.Error(knowledgeOutputHTTPError(inputErr))
+		return
+	}
 	entry, err := h.knowledgeService.CreateFAQEntry(ctx, kbID, &req)
 	if err != nil {
 		logger.ErrorWithFields(ctx, err, nil)
@@ -214,10 +254,7 @@ func (h *FAQHandler) CreateEntry(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"data":    entry,
-	})
+	h.writeFAQOutput(ctx, c, entry)
 }
 
 // UpdateEntry godoc
@@ -235,8 +272,17 @@ func (h *FAQHandler) CreateEntry(c *gin.Context) {
 // @Security     ApiKeyAuth
 // @Router       /knowledge-bases/{id}/faq/entries/{entry_id} [put]
 func (h *FAQHandler) UpdateEntry(c *gin.Context) {
-	ctx := c.Request.Context()
+	if !h.requireFAQOutput(c) {
+		return
+	}
+	ctx := service.WithFAQOutputBoundary(c.Request.Context())
 	kbID := secutils.SanitizeForLog(c.Param("id"))
+	ctx, closeRead, leaseErr := beginFAQHTTPRead(ctx, c, h.outputAuthorizer, kbID)
+	if leaseErr != nil {
+		_ = c.Error(leaseErr)
+		return
+	}
+	defer closeRead()
 
 	var req types.FAQEntryPayload
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -251,6 +297,15 @@ func (h *FAQHandler) UpdateEntry(c *gin.Context) {
 		return
 	}
 
+	ctx, inputErr := repository.WithIndependentFAQInput(
+		ctx,
+		kbID,
+		types.FAQInputOperation{Kind: "update", Entry: &req, EntrySeqID: entrySeqID},
+	)
+	if inputErr != nil {
+		_ = c.Error(knowledgeOutputHTTPError(inputErr))
+		return
+	}
 	entry, err := h.knowledgeService.UpdateFAQEntry(ctx, kbID, entrySeqID, &req)
 	if err != nil {
 		logger.ErrorWithFields(ctx, err, nil)
@@ -258,10 +313,7 @@ func (h *FAQHandler) UpdateEntry(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"data":    entry,
-	})
+	h.writeFAQOutput(ctx, c, entry)
 }
 
 // UpdateEntryTagBatch godoc
@@ -285,6 +337,23 @@ func (h *FAQHandler) UpdateEntryTagBatch(c *gin.Context) {
 	if err := c.ShouldBindJSON(&req); err != nil {
 		logger.Error(ctx, "Failed to bind FAQ entry tag batch payload", err)
 		c.Error(errors.NewBadRequestError("请求参数不合法").WithDetails(err.Error()))
+		return
+	}
+	fields := &types.FAQEntryFieldsBatchUpdate{ByID: make(map[int64]types.FAQEntryFieldsUpdate)}
+	for id, tag := range req.Updates {
+		value := int64(0)
+		if tag != nil {
+			value = *tag
+		}
+		fields.ByID[id] = types.FAQEntryFieldsUpdate{TagID: &value}
+	}
+	ctx, inputErr := repository.WithIndependentFAQInput(
+		ctx,
+		kbID,
+		types.FAQInputOperation{Kind: "fields", Fields: fields},
+	)
+	if inputErr != nil {
+		_ = c.Error(knowledgeOutputHTTPError(inputErr))
 		return
 	}
 	if err := h.knowledgeService.UpdateFAQEntryTagBatch(ctx, kbID, req.Updates); err != nil {
@@ -318,6 +387,15 @@ func (h *FAQHandler) UpdateEntryFieldsBatch(c *gin.Context) {
 	if err := c.ShouldBindJSON(&req); err != nil {
 		logger.Error(ctx, "Failed to bind FAQ entry fields batch payload", err)
 		c.Error(errors.NewBadRequestError("请求参数不合法").WithDetails(err.Error()))
+		return
+	}
+	ctx, inputErr := repository.WithIndependentFAQInput(
+		ctx,
+		kbID,
+		types.FAQInputOperation{Kind: "fields", Fields: &req},
+	)
+	if inputErr != nil {
+		_ = c.Error(knowledgeOutputHTTPError(inputErr))
 		return
 	}
 	if err := h.knowledgeService.UpdateFAQEntryFieldsBatch(ctx, kbID, &req); err != nil {
@@ -354,6 +432,15 @@ func (h *FAQHandler) DeleteEntries(c *gin.Context) {
 		return
 	}
 
+	ctx, inputErr := repository.WithIndependentFAQInput(
+		ctx,
+		kbID,
+		types.FAQInputOperation{Kind: "delete", DeleteIDs: req.IDs},
+	)
+	if inputErr != nil {
+		_ = c.Error(knowledgeOutputHTTPError(inputErr))
+		return
+	}
 	if err := h.knowledgeService.DeleteFAQEntries(ctx, kbID, req.IDs); err != nil {
 		logger.ErrorWithFields(ctx, err, nil)
 		c.Error(err)
@@ -379,8 +466,17 @@ func (h *FAQHandler) DeleteEntries(c *gin.Context) {
 // @Security     ApiKeyAuth
 // @Router       /knowledge-bases/{id}/faq/search [post]
 func (h *FAQHandler) SearchFAQ(c *gin.Context) {
-	ctx := c.Request.Context()
+	if !h.requireFAQOutput(c) {
+		return
+	}
+	ctx := service.WithFAQOutputBoundary(c.Request.Context())
 	kbID := secutils.SanitizeForLog(c.Param("id"))
+	ctx, closeRead, leaseErr := beginFAQHTTPRead(ctx, c, h.outputAuthorizer, kbID)
+	if leaseErr != nil {
+		_ = c.Error(leaseErr)
+		return
+	}
+	defer closeRead()
 
 	var req types.FAQSearchRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -402,10 +498,7 @@ func (h *FAQHandler) SearchFAQ(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"data":    entries,
-	})
+	h.writeFAQOutput(ctx, c, entries)
 }
 
 // ExportEntries godoc
@@ -423,8 +516,17 @@ func (h *FAQHandler) SearchFAQ(c *gin.Context) {
 // @Security     ApiKeyAuth
 // @Router       /knowledge-bases/{id}/faq/entries/export [get]
 func (h *FAQHandler) ExportEntries(c *gin.Context) {
-	ctx := c.Request.Context()
+	if !h.requireFAQOutput(c) {
+		return
+	}
+	ctx := service.WithFAQOutputBoundary(c.Request.Context())
 	kbID := secutils.SanitizeForLog(c.Param("id"))
+	ctx, closeRead, leaseErr := beginFAQHTTPRead(ctx, c, h.outputAuthorizer, kbID)
+	if leaseErr != nil {
+		_ = c.Error(leaseErr)
+		return
+	}
+	defer closeRead()
 	format := strings.ToLower(strings.TrimSpace(c.Query("format")))
 
 	if format == "json" {
@@ -436,7 +538,7 @@ func (h *FAQHandler) ExportEntries(c *gin.Context) {
 		}
 		c.Header("Content-Type", "application/json; charset=utf-8")
 		c.Header("Content-Disposition", "attachment; filename=faq_export.json")
-		c.Data(http.StatusOK, "application/json; charset=utf-8", jsonData)
+		h.writeFAQData(ctx, c, "application/json; charset=utf-8", jsonData, jsonData)
 		return
 	}
 
@@ -452,7 +554,7 @@ func (h *FAQHandler) ExportEntries(c *gin.Context) {
 	c.Header("Content-Disposition", "attachment; filename=faq_export.csv")
 	// Add BOM for Excel compatibility with UTF-8
 	bom := []byte{0xEF, 0xBB, 0xBF}
-	c.Data(http.StatusOK, "text/csv; charset=utf-8", append(bom, csvData...))
+	h.writeFAQData(ctx, c, "text/csv; charset=utf-8", csvData, append(bom, csvData...))
 }
 
 // GetEntry godoc
@@ -470,8 +572,17 @@ func (h *FAQHandler) ExportEntries(c *gin.Context) {
 // @Security     ApiKeyAuth
 // @Router       /knowledge-bases/{id}/faq/entries/{entry_id} [get]
 func (h *FAQHandler) GetEntry(c *gin.Context) {
-	ctx := c.Request.Context()
+	if !h.requireFAQOutput(c) {
+		return
+	}
+	ctx := service.WithFAQOutputBoundary(c.Request.Context())
 	kbID := secutils.SanitizeForLog(c.Param("id"))
+	ctx, closeRead, leaseErr := beginFAQHTTPRead(ctx, c, h.outputAuthorizer, kbID)
+	if leaseErr != nil {
+		_ = c.Error(leaseErr)
+		return
+	}
+	defer closeRead()
 
 	entrySeqID, err := strconv.ParseInt(c.Param("entry_id"), 10, 64)
 	if err != nil {
@@ -486,10 +597,7 @@ func (h *FAQHandler) GetEntry(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"data":    entry,
-	})
+	h.writeFAQOutput(ctx, c, entry)
 }
 
 // GetImportProgress godoc
@@ -505,13 +613,22 @@ func (h *FAQHandler) GetEntry(c *gin.Context) {
 // @Security     ApiKeyAuth
 // @Router       /faq/import/progress/{task_id} [get]
 func (h *FAQHandler) GetImportProgress(c *gin.Context) {
-	ctx := c.Request.Context()
+	if !h.requireFAQOutput(c) {
+		return
+	}
+	ctx := service.WithFAQOutputBoundary(c.Request.Context())
 	taskID := secutils.SanitizeForLog(c.Param("task_id"))
 	if err := requireTaskProgressTenant(ctx, taskID); err != nil {
 		c.Error(err)
 		return
 	}
 
+	ctx, closeRead, leaseErr := beginFAQProgressHTTPRead(ctx, c, h.outputAuthorizer, taskID)
+	if leaseErr != nil {
+		_ = c.Error(leaseErr)
+		return
+	}
+	defer closeRead()
 	progress, err := h.knowledgeService.GetFAQImportProgress(ctx, taskID)
 	if err != nil {
 		logger.ErrorWithFields(ctx, err, nil)
@@ -519,10 +636,7 @@ func (h *FAQHandler) GetImportProgress(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"data":    progress,
-	})
+	h.writeFAQOutput(ctx, c, progress)
 }
 
 // UpdateLastImportResultDisplayStatus godoc
@@ -550,6 +664,15 @@ func (h *FAQHandler) UpdateLastImportResultDisplayStatus(c *gin.Context) {
 		return
 	}
 
+	ctx, inputErr := repository.WithIndependentFAQInput(
+		ctx,
+		kbID,
+		types.FAQInputOperation{Kind: "display-status", DisplayStatus: req.DisplayStatus},
+	)
+	if inputErr != nil {
+		_ = c.Error(knowledgeOutputHTTPError(inputErr))
+		return
+	}
 	if err := h.knowledgeService.UpdateLastFAQImportResultDisplayStatus(ctx, kbID, req.DisplayStatus); err != nil {
 		logger.ErrorWithFields(ctx, err, nil)
 		c.Error(err)
@@ -577,8 +700,17 @@ func (h *FAQHandler) UpdateLastImportResultDisplayStatus(c *gin.Context) {
 // @Security     ApiKeyAuth
 // @Router       /knowledge-bases/{id}/faq/entries/{entry_id}/similar-questions [post]
 func (h *FAQHandler) AddSimilarQuestions(c *gin.Context) {
-	ctx := c.Request.Context()
+	if !h.requireFAQOutput(c) {
+		return
+	}
+	ctx := service.WithFAQOutputBoundary(c.Request.Context())
 	kbID := secutils.SanitizeForLog(c.Param("id"))
+	ctx, closeRead, leaseErr := beginFAQHTTPRead(ctx, c, h.outputAuthorizer, kbID)
+	if leaseErr != nil {
+		_ = c.Error(leaseErr)
+		return
+	}
+	defer closeRead()
 
 	entrySeqID, err := strconv.ParseInt(c.Param("entry_id"), 10, 64)
 	if err != nil {
@@ -593,6 +725,15 @@ func (h *FAQHandler) AddSimilarQuestions(c *gin.Context) {
 		return
 	}
 
+	ctx, inputErr := repository.WithIndependentFAQInput(
+		ctx,
+		kbID,
+		types.FAQInputOperation{Kind: "similar", EntrySeqID: entrySeqID, Questions: req.SimilarQuestions},
+	)
+	if inputErr != nil {
+		_ = c.Error(knowledgeOutputHTTPError(inputErr))
+		return
+	}
 	entry, err := h.knowledgeService.AddSimilarQuestions(ctx, kbID, entrySeqID, req.SimilarQuestions)
 	if err != nil {
 		logger.ErrorWithFields(ctx, err, nil)
@@ -600,8 +741,5 @@ func (h *FAQHandler) AddSimilarQuestions(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"data":    entry,
-	})
+	h.writeFAQOutput(ctx, c, entry)
 }

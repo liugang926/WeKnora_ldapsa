@@ -71,7 +71,7 @@ func answerChunks(n int) []types.StreamResponse {
 // part of the summary.
 func TestSummarizationRunsAsLongAsItProgresses(t *testing.T) {
 	chatModel := &pacedChat{chunks: answerChunks(10), gap: 30 * time.Millisecond}
-	c := New(chatModel, newEstimator(t), pacedSettings())
+	c := newLiteralTestCompactor(chatModel, newEstimator(t), pacedSettings())
 
 	start := time.Now()
 	result, err := c.Compact(context.Background(), reactTurn(12), ReasonThreshold)
@@ -87,7 +87,7 @@ func TestSummarizationRunsAsLongAsItProgresses(t *testing.T) {
 // retried once, and then degrades to the archive rather than hanging the turn.
 func TestSummarizationIsCancelledWhenItStalls(t *testing.T) {
 	chatModel := &pacedChat{chunks: answerChunks(10), gap: 10 * time.Millisecond, stallFrom: 2}
-	c := New(chatModel, newEstimator(t), pacedSettings())
+	c := newLiteralTestCompactor(chatModel, newEstimator(t), pacedSettings())
 
 	result, err := c.Compact(context.Background(), reactTurn(12), ReasonThreshold)
 	require.NoError(t, err)
@@ -103,7 +103,7 @@ func TestSummarizationStreamErrorIsAFailure(t *testing.T) {
 		{ResponseType: types.ResponseTypeAnswer, Content: "## Goal half"},
 		{ResponseType: types.ResponseTypeError, Content: "upstream reset", Done: true},
 	}}
-	c := New(chatModel, newEstimator(t), pacedSettings())
+	c := newLiteralTestCompactor(chatModel, newEstimator(t), pacedSettings())
 
 	result, err := c.Compact(context.Background(), reactTurn(12), ReasonThreshold)
 	require.NoError(t, err)
@@ -114,7 +114,7 @@ func TestSummarizationStreamErrorIsAFailure(t *testing.T) {
 // A stopped turn is not retried: another attempt cannot outlive the turn.
 func TestSummarizationIsNotRetriedOnceTheTurnIsCancelled(t *testing.T) {
 	chatModel := &pacedChat{chunks: answerChunks(10), gap: 10 * time.Millisecond, stallFrom: 1}
-	c := New(chatModel, newEstimator(t), pacedSettings())
+	c := newLiteralTestCompactor(chatModel, newEstimator(t), pacedSettings())
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 

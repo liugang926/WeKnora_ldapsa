@@ -10,7 +10,6 @@ import (
 	"strconv"
 
 	apperrors "github.com/Tencent/WeKnora/internal/errors"
-
 	"github.com/Tencent/WeKnora/internal/types"
 )
 
@@ -26,17 +25,14 @@ type SourceRotation struct {
 	DataSourceID    string
 }
 
-// CommitSourceRotation commits the prepared remote source rotation.
 func CommitSourceRotation(ctx context.Context, source *types.DataSourceConfig, rotation SourceRotation) error {
 	return sourceRotationRequest(ctx, source, rotation, "commit", "committed")
 }
 
-// FinalizeSourceRotation finalizes the committed remote source rotation.
 func FinalizeSourceRotation(ctx context.Context, source *types.DataSourceConfig, rotation SourceRotation) error {
 	return sourceRotationRequest(ctx, source, rotation, "finalize", "finalized")
 }
 
-// AbortSourceRotation aborts the prepared operation using its old source identity.
 func AbortSourceRotation(ctx context.Context, oldSource *types.DataSourceConfig, rotation SourceRotation) error {
 	return sourceRotationRequest(ctx, oldSource, rotation, "abort", "aborted")
 }

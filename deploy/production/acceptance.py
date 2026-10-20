@@ -1,23 +1,18 @@
 #!/usr/bin/env python3
 """Check a fresh HTTP deployment without printing credentials or tokens."""
-import json, pathlib, re, subprocess, sys, urllib.error, urllib.request
+import json, pathlib, re, subprocess, sys
 base = pathlib.Path('/srv/weknora-production')
 origin = sys.argv[1] if len(sys.argv) > 1 else 'http://127.0.0.1:18080'
 sys.path.insert(0, str(base/'bin'))
 from image_identity import resolve_images
+from local_http import LocalHTTPClient
+http = LocalHTTPClient(origin)
 release = (base/'current').resolve()
 manifest = json.loads((release/'manifest.json').read_text())
 credentials = json.loads((base/'secrets/admin.json').read_text())
 cmd = ['docker', 'compose', '--env-file', str(base/'secrets/app.env'), '--env-file', str(release/'images.env'), '-f', str(release/'production/compose.yaml')]
 def api(path, payload=None, token=None):
-    headers = {'Host': 'ai-doc.tianjizn.com'}
-    if payload is not None: headers['Content-Type'] = 'application/json'
-    if token: headers['Authorization'] = 'Bearer '+token
-    request = urllib.request.Request(origin+path, data=json.dumps(payload).encode() if payload is not None else None, headers=headers)
-    try:
-        with urllib.request.urlopen(request, timeout=30) as response: return response.status, response.read()
-    except urllib.error.HTTPError as error:
-        return error.code, error.read()
+    return http.request(path, payload, token)
 def output(args):
     return subprocess.check_output(cmd+args, text=True).strip()
 status, html = api('/')
@@ -54,6 +49,21 @@ status, _ = api('/api/v1/knowledge-bases', token=token)
 assert status == 200, 'Authenticated database-backed request failed'
 status, _ = api('/api/v1/auth/register', credentials)
 assert status == 403, 'Public registration accepted'
+nextcloud_routes='NOT_DECLARED'
+if 'nextcloud_onboarding_v1' in manifest.get('required_features', []):
+    # Machine provisioning credentials are intentionally separate from a web
+    # administrator JWT. A guarded route must exist and reject that JWT.
+    status, body = api('/api/v1/integrations/nextcloud/onboarding/candidates', token=token)
+    assert status == 401 and json.loads(body).get('error') == 'onboarding_credential_required', 'Nextcloud onboarding route missing or unguarded'
+    status, _ = api('/api/v1/integrations/nextcloud/files/status/v2', token=token)
+    assert status == 400, 'Nextcloud V2 status route missing or unguarded'
+    status, _ = api('/api/v1/datasource/nextcloud-gc-jobs', token=token)
+    assert status == 200, 'Nextcloud GC administration unavailable'
+    nextcloud_routes='PASS'
+retention_journal='NOT_DECLARED'
+if 'original_body_journal' in manifest.get('required_features', []):
+    subprocess.run(['python3',str(base/'bin/retention.py'),'status',str(release)],check=True,stdout=subprocess.DEVNULL)
+    retention_journal='PASS'
 subprocess.run(['bash',str(base/'bin/check-schema.sh'),str(release)],check=True,stdout=subprocess.DEVNULL)
 app_id=output(['ps','-q','app'])
 environment=json.loads(subprocess.check_output(['docker','inspect',app_id,'--format','{{json .Config.Env}}'],text=True))
@@ -70,5 +80,5 @@ for service,key in [('app','APP_IMAGE'),('frontend','UI_IMAGE'),('postgres','POS
     assert record['HostConfig']['CgroupParent']=='weknora-production.slice', 'Wrong resource slice'
     assert not record['HostConfig'].get('DeviceRequests') and not record['HostConfig'].get('Devices'), 'Unexpected GPU/device allocation'
     images[service]={'image':record['Image'],'health':'healthy','restart_policy':record['HostConfig']['RestartPolicy']['Name'],'memory_bytes':record['HostConfig']['Memory'],'nano_cpus':record['HostConfig']['NanoCpus']}
-result={'origin':origin,'release':manifest['tag'],'commit':manifest['commit'],'frontend_and_assets':'PASS','admin_login':'PASS','directory_administration':'PASS','ldap_runtime':ldap_runtime,'authenticated_database_request':'PASS','registration_closed':'PASS','anonymous_access_denied':'PASS','migration_gate':'PASS','images':images}
+result={'origin':origin,'release':manifest['tag'],'commit':manifest['commit'],'frontend_and_assets':'PASS','admin_login':'PASS','directory_administration':'PASS','ldap_runtime':ldap_runtime,'authenticated_database_request':'PASS','registration_closed':'PASS','anonymous_access_denied':'PASS','migration_gate':'PASS','nextcloud_routes':nextcloud_routes,'nextcloud_business_pairing':'NOT_ACCEPTED_BY_THIS_CHECK','retention_journal':retention_journal,'images':images}
 print(json.dumps(result,indent=2))

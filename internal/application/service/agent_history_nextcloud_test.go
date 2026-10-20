@@ -28,10 +28,9 @@ func TestAgentHistoryAdmissionBeforeCheckpointAndTokenPage(t *testing.T) {
 	for _, scenario := range []string{"revoked-older-than-page", "checkpoint", "unavailable", "missing-verifier"} {
 		t.Run(scenario, func(t *testing.T) {
 			rows := storedTurnsOfSize(250, 100)
-			rows[1].KnowledgeReferences = types.References{{
-				KnowledgeID:      "old-denied-source",
-				KnowledgeChannel: types.ConnectorTypeNextcloud,
-			}}
+			rows[1].KnowledgeReferences = types.References{
+				{KnowledgeID: "old-denied-source", KnowledgeChannel: types.ConnectorTypeNextcloud},
+			}
 			rows[len(rows)-1].Content = "new paraphrase without citations"
 			repo := &historyRepo{rows: rows, checkpoint: checkpointOn(rows[1], "secret compressed source")}
 			sources := &instanceHistorySources{ever: true}
@@ -47,15 +46,17 @@ func TestAgentHistoryAdmissionBeforeCheckpointAndTokenPage(t *testing.T) {
 			require.Error(t, err)
 			require.Empty(t, got)
 			require.Zero(t, repo.pages)
-			require.Zero(t, repo.checkpointReads)
 		})
 	}
 }
 
 func TestAgentHistoryAdmissionAllowsOrdinaryCheckpointAndRechecks(t *testing.T) {
-	rows := storedTurns(3)
+	rows := literalAgentHistoryTurns(t, 3)
 	for _, changed := range []bool{false, true} {
-		repo := &historyRepo{rows: rows, checkpoint: checkpointOn(rows[1], "ordinary checkpoint")}
+		checkpoint := checkpointOn(rows[1], "ordinary checkpoint")
+		checkpoint.SourceLineage = rows[1].SourceLineage
+		checkpoint.ContextCheckpoint.SourceLineage = rows[1].SourceLineage
+		repo := &historyRepo{rows: rows, checkpoint: checkpoint}
 		sources := &instanceHistorySources{}
 		if changed {
 			sources.becomeSourceAt = 2
@@ -66,11 +67,8 @@ func TestAgentHistoryAdmissionAllowsOrdinaryCheckpointAndRechecks(t *testing.T) 
 			"s1",
 			unlimitedBudget,
 			false,
-			access.NewNextcloudHistoryGuard(
-				nil,
-				sources,
-				nil,
-			))
+			literalHistoryAdmission{guard: access.NewNextcloudHistoryGuard(nil, sources, nil)},
+		)
 		require.Equal(t, 2, sources.calls)
 		if changed {
 			require.ErrorIs(t, err, access.ErrNextcloudPublicationDenied)

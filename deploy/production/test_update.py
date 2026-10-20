@@ -42,6 +42,30 @@ class UpdateTests(unittest.TestCase):
             get.assert_not_called();run.assert_not_called()
         self.assertEqual(marker.read_text(),'original backup pointer')
         self.assertTrue((self.base/'UPDATE_FAILED').exists())
+    def test_journal_release_requires_reviewed_local_helper(self):
+        target=self.base/'releases'/'prod-journal';target.mkdir(parents=True)
+        manifest={'schema':1,'tag':'prod-journal','commit':'a'*40,
+          'deployment_protocol':2,'required_features':['original_body_journal'],
+          'images':{key:'sha256:'+'b'*64 for key in ['APP_IMAGE','UI_IMAGE','POSTGRES_IMAGE','REDIS_IMAGE']}}
+        (target/'manifest.json').write_text(json.dumps(manifest))
+        releases=[{'draft':False,'prerelease':False,'tag_name':'prod-journal','published_at':'2026-10-19T00:00:00Z'}]
+        with patch.object(update,'get',return_value=io.StringIO(json.dumps(releases))),patch.object(update.subprocess,'run') as run:
+            with self.assertRaisesRegex(RuntimeError,'retention helper'):
+                update.main()
+            run.assert_not_called()
+    def test_stage_only_verifies_images_without_activating_or_marking_active(self):
+        target=self.base/'releases'/'prod-stage';target.mkdir(parents=True)
+        images={key:'sha256:'+'b'*64 for key in ['APP_IMAGE','UI_IMAGE','POSTGRES_IMAGE','REDIS_IMAGE']}
+        manifest={'schema':1,'tag':'prod-stage','commit':'a'*40,'images':images}
+        (target/'manifest.json').write_text(json.dumps(manifest))
+        releases=[{'draft':False,'prerelease':False,'tag_name':'prod-stage','published_at':'2026-10-19T00:00:00Z'}]
+        resolved={'local_images':images}
+        with patch.object(update,'get',return_value=io.StringIO(json.dumps(releases))),patch.object(update,'resolve_images',return_value=resolved),patch.object(update.subprocess,'run') as run,patch('builtins.print'):
+            update.main(stage_only=True)
+            run.assert_not_called()
+        self.assertEqual(json.loads((target/'resolved-images.json').read_text()),resolved)
+        self.assertFalse((self.base/'current').exists())
+        self.assertFalse((self.base/'active-release').exists())
     def test_asset_url_uses_the_strict_public_repository_api_endpoint(self):
         url = 'https://api.github.com/repos/liugang926/WeKnora_ldapsa/releases/assets/123456'
         self.assertEqual(update.asset_url({'url': url, 'browser_download_url': 'https://untrusted.invalid/ignored'}), url)

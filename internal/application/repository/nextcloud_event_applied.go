@@ -91,10 +91,7 @@ func nextcloudDispatchPublicationProof(
 	connection nextcloudEventConnection,
 	appliedEventID, targetEventID int64,
 	syncStartedAt time.Time,
-) (
-	nextcloudApplyProof,
-	error,
-) {
+) (nextcloudApplyProof, error) {
 	var source types.DataSource
 	if err := tx.Select("last_sync_cursor").Where("id = ?", connection.DatasourceID).Take(&source).Error; err != nil {
 		return nextcloudApplyRetry, err
@@ -203,10 +200,8 @@ func nextcloudDispatchPublicationProof(
 			return nextcloudApplyRetry, nil
 		}
 		if version.State == "staging" && candidate.DeletedAt == nil &&
-			(candidate.ParseStatus ==
-				types.ParseStatusPending ||
-				candidate.ParseStatus ==
-					types.ParseStatusProcessing ||
+			(candidate.ParseStatus == types.ParseStatusPending ||
+				candidate.ParseStatus == types.ParseStatusProcessing ||
 				candidate.ParseStatus == types.ParseStatusFinalizing) {
 			return nextcloudApplyWaiting, nil
 		}

@@ -198,7 +198,7 @@ func emitMCPOAuthRequiredNotice(
 	if sess == nil || sess.EventBus == nil || service == nil {
 		return
 	}
-	_ = sess.EventBus.Emit(context.WithoutCancel(ctx), event.Event{
+	_ = EmitToolEvent(context.WithoutCancel(ctx), event.Event{
 		ID:        "mcp-oauth-notice-" + service.ID,
 		Type:      event.EventMCPOAuthRequired,
 		SessionID: sess.SessionID,

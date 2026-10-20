@@ -1,0 +1,21 @@
+--- FAIL: TestOriginalBodyProtocolSQLite (0.27s)
+    --- FAIL: TestOriginalBodyProtocolSQLite/nestedTTL (0.09s)
+        original_body_protocol_test.go:148: 
+            	Error Trace:	/workspace/internal/application/repository/original_body_protocol_test.go:148
+            	            				/workspace/internal/application/repository/original_body_protocol_test.go:192
+            	Error:      	Target error should be in err chain:
+            	            	expected: "original body is unavailable or retention evidence changed"
+            	            	in chain: "record not found"
+            	Test:       	TestOriginalBodyProtocolSQLite/nestedTTL
+--- FAIL: TestPostgresOriginalBodyProtocol (0.61s)
+    --- FAIL: TestPostgresOriginalBodyProtocol/nestedTTL (0.22s)
+        original_body_protocol_test.go:148: 
+            	Error Trace:	/workspace/internal/application/repository/original_body_protocol_test.go:148
+            	            				/workspace/internal/application/repository/original_body_protocol_test.go:200
+            	Error:      	Target error should be in err chain:
+            	            	expected: "original body is unavailable or retention evidence changed"
+            	            	in chain: "record not found"
+            	Test:       	TestPostgresOriginalBodyProtocol/nestedTTL
+FAIL
+FAIL	github.com/Tencent/WeKnora/internal/application/repository	1.275s
+FAIL

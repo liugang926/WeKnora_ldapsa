@@ -8,7 +8,6 @@ import (
 	"time"
 
 	apperrors "github.com/Tencent/WeKnora/internal/errors"
-
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -19,6 +18,8 @@ type nextcloudGCObjectClaim struct {
 	resource *types.StoredResource
 	token    string
 	code     string
+	content  NextcloudContentGCClaim
+	delete   func(context.Context) (bool, error)
 }
 
 const nextcloudGCObjectLease = 10 * time.Minute
@@ -78,28 +79,48 @@ func (s *NextcloudGCStore) runPhysical(ctx context.Context, jobID string, now ti
 		if claim.resource == nil {
 			continue // another owner retained it, or the item was already done
 		}
-		unlinked, err := s.deleteObject(ctx, claim.resource)
-		if err != nil {
-			// The state remains deleting, so no new application binding can be
-			// admitted. Retrying the exact path is safe; no bytes are credited.
-			if recordErr := s.blockObject(ctx, jobID, item.Kind, item.ObjectRef,
-				"provider_delete_failed", now); recordErr != nil {
+		if s.prepareDeleteObject != nil {
+			operation, err := s.prepareDeleteObject(ctx, claim.resource)
+			if err != nil || operation == nil {
+				if releaseErr := s.failContentClaim(
+					ctx,
+					jobID,
+					item.Kind,
+					item.ObjectRef,
+					claim,
+					now,
+				); releaseErr != nil {
+					return errors.Join(err, releaseErr)
+				}
+				if recordErr := s.blockObject(
+					ctx,
+					jobID,
+					item.Kind,
+					item.ObjectRef,
+					"provider_delete_failed",
+					now,
+				); recordErr != nil {
+					return recordErr
+				}
+				continue
+			}
+			claim.delete = operation
+		}
+		if err := s.deleteClaimedObject(ctx, jobID, item.Kind, item.ObjectRef, claim, now); err != nil {
+			// Release only this generation/item claim. An old worker cannot
+			// clear the bounded token of a successor after a crash/retry.
+			if releaseErr := s.failContentClaim(ctx, jobID, item.Kind, item.ObjectRef, claim, now); releaseErr != nil {
+				return errors.Join(err, releaseErr)
+			}
+			code := "provider_delete_failed"
+			if errors.Is(err, ErrNextcloudContentLeaseDenied) || errors.Is(err, ErrNextcloudContentGCUncovered) ||
+				errors.Is(err, ErrNextcloudContentGCBusy) {
+				code = gcLeaseErrorCode(err)
+			}
+			if recordErr := s.blockObject(ctx, jobID, item.Kind, item.ObjectRef, code, now); recordErr != nil {
 				return errors.Join(err, recordErr)
 			}
 			continue
-		}
-		if err := s.finishObject(
-			ctx,
-			jobID,
-			item.Kind,
-			item.ObjectRef,
-			claim.resource.ID,
-			claim.token,
-			unlinked,
-			now,
-		); err !=
-			nil {
-			return errors.Join(err, s.blockObject(ctx, jobID, item.Kind, item.ObjectRef, "gc_step_failed", now))
 		}
 	}
 	return nil
@@ -108,34 +129,40 @@ func (s *NextcloudGCStore) runPhysical(ctx context.Context, jobID string, now ti
 // claimObject locks job, source, knowledge, item and resource in a fixed order. All new
 // binds lock the resource row before insertion. Once state=deleting commits,
 // no new owner can appear between the reference check and provider deletion.
-func (
-	s *NextcloudGCStore,
-) claimObject(ctx context.Context, jobID, kind, ref string, now time.Time) (nextcloudGCObjectClaim, error) {
+func (s *NextcloudGCStore) claimObject(
+	ctx context.Context,
+	jobID, kind, ref string,
+	now time.Time,
+) (nextcloudGCObjectClaim, error) {
 	claim := nextcloudGCObjectClaim{}
 	var identity nextcloudGCJob
-	if s.db.Name() == "postgres" {
-		// Read only the immutable job scope before the transaction so every
-		// source writer acquires the KB lock before version/knowledge locks.
-		if err := s.db.WithContext(ctx).Select("id", "tenant_id", "knowledge_base_id", "datasource_id").
-			Where("id = ?", jobID).Take(&identity).Error; err != nil {
-			return claim, err
-		}
+	if err := s.db.WithContext(ctx).
+		Select("id", "tenant_id", "knowledge_base_id", "datasource_id", "knowledge_id", "external_id").
+		Where("id=?", jobID).
+		Take(&identity).
+		Error; err != nil {
+		return claim, err
 	}
+
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if tx.Name() == "postgres" {
-			lock := tx.Exec(`UPDATE knowledge_bases SET ever_had_nextcloud_source = ever_had_nextcloud_source
-				WHERE id = ? AND tenant_id = ?`, identity.KnowledgeBaseID, identity.TenantID)
-			if lock.Error != nil {
-				return lock.Error
-			}
-			if lock.RowsAffected != 1 {
-				claim.code = "source_identity_changed"
-				return nil
-			}
+		tx = bodyInternal(tx)
+		nowMS, lockErr := gcLockKBContent(tx, identity)
+		if lockErr != nil {
+			claim.code = gcLeaseErrorCode(lockErr)
+			return nil
 		}
+
 		var job nextcloudGCJob
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", jobID).Take(&job).Error; err != nil {
 			return err
+		}
+		if e := gcValidateManualAdmin(ctx, tx, job); e != nil {
+			return e
+		}
+
+		if gcContentScope(job) != gcContentScope(identity) {
+			claim.code = "source_identity_changed"
+			return nil
 		}
 		if tx.Name() == "postgres" {
 			// A claim committed first leaves a deleting item that withdrawal
@@ -204,7 +231,7 @@ func (
 			claim.code = "inventory_mismatch"
 			return nil
 		}
-		if kind == "extracted_image" && knowledge.FilePath == ref && now.Before(job.OriginalNotBefore) {
+		if kind == "extracted_image" && knowledge.FilePath == ref && job.OriginalNotBefore.UnixMilli() > nowMS {
 			// An image item can name the same object as the original source.
 			// Releasing its knowledge binding before the original's deadline
 			// would silently shorten the seven-day recovery window.
@@ -239,11 +266,20 @@ func (
 				Where("job_id = ? AND kind = ? AND object_ref = ?", jobID, kind, ref).
 				Updates(map[string]any{"state": "collected", "updated_at": now}).Error
 		}
+		fence, contentErr := gcCheckRetiredContent(tx, job, nowMS)
+		if contentErr != nil {
+			claim.code = gcLeaseErrorCode(contentErr)
+			return nil
+		}
+		if job.NotBefore.UnixMilli() > nowMS || (kind == "source_file" && job.OriginalNotBefore.UnixMilli() > nowMS) {
+			claim.code = "retention_window_open"
+			return nil
+		}
 		var remaining int64
-		if err := tx.Model(
-			&types.ResourceBinding{},
-		).Where("resource_id = ?", resource.ID).Count(&remaining).Error; err !=
-			nil {
+		if err := tx.Model(&types.ResourceBinding{}).
+			Where("resource_id = ?", resource.ID).
+			Count(&remaining).
+			Error; err != nil {
 			return err
 		}
 		if resource.State == types.ResourceStateDeleting {
@@ -251,20 +287,22 @@ func (
 				claim.code = "resource_delete_in_progress"
 				return nil
 			}
-			if item.LeaseUntil != nil && now.Before(*item.LeaseUntil) {
+			if item.LeaseUntil != nil && nowMS < item.LeaseUntil.UnixMilli() {
 				claim.code = "resource_delete_in_progress"
 				return nil
 			}
 			claim.token = uuid.NewString()
-			leaseUntil := now.Add(nextcloudGCObjectLease)
+			contentClaim, err := gcMarkContentClaim(tx, job, fence, claim.token, nowMS)
+			if err != nil {
+				claim.code = gcLeaseErrorCode(err)
+				return nil
+			}
+			claim.content = contentClaim
+			leaseUntil := time.UnixMilli(nowMS + nextcloudGCObjectLease.Milliseconds()).UTC()
 			if err := tx.Model(&nextcloudGCItem{}).
 				Where("job_id = ? AND kind = ? AND object_ref = ?", jobID, kind, ref).
-				Updates(map[string]any{
-					"lease_token": claim.token,
-					"lease_until": &leaseUntil,
-					"updated_at":  now,
-				}).Error; err !=
-				nil {
+				Updates(map[string]any{"lease_token": claim.token, "lease_until": &leaseUntil, "updated_at": now}).
+				Error; err != nil {
 				return err
 			}
 			copyOfResource := resource
@@ -291,10 +329,10 @@ func (
 			Delete(&types.ResourceBinding{}).Error; err != nil {
 			return err
 		}
-		if err := tx.Model(
-			&types.ResourceBinding{},
-		).Where("resource_id = ?", resource.ID).Count(&remaining).Error; err !=
-			nil {
+		if err := tx.Model(&types.ResourceBinding{}).
+			Where("resource_id = ?", resource.ID).
+			Count(&remaining).
+			Error; err != nil {
 			return err
 		}
 		if remaining > 0 {
@@ -304,18 +342,23 @@ func (
 				Where("job_id = ? AND kind = ? AND object_ref = ?", jobID, kind, ref).
 				Updates(map[string]any{"state": "collected", "updated_at": now}).Error
 		}
-		if err := tx.Model(
-			&types.StoredResource{},
-		).Where("id = ? AND state = ?", resource.ID, types.ResourceStateActive).
-			Updates(map[string]any{"state": types.ResourceStateDeleting, "updated_at": now}).Error; err != nil {
+		if err := tx.Model(&types.StoredResource{}).
+			Where("id = ? AND state = ?", resource.ID, types.ResourceStateActive).
+			Updates(map[string]any{"state": types.ResourceStateDeleting, "updated_at": now}).
+			Error; err != nil {
 			return err
 		}
 		claim.token = uuid.NewString()
+		contentClaim, err := gcMarkContentClaim(tx, job, fence, claim.token, nowMS)
+		if err != nil {
+			return err
+		}
+		claim.content = contentClaim
 		if err := tx.Model(&nextcloudGCItem{}).
 			Where("job_id = ? AND kind = ? AND object_ref = ?", jobID, kind, ref).
 			Updates(map[string]any{
 				"state": "deleting", "lease_token": claim.token,
-				"lease_until": now.Add(nextcloudGCObjectLease), "updated_at": now,
+				"lease_until": claim.content.ExpiresAt, "updated_at": now,
 			}).Error; err != nil {
 			return err
 		}
@@ -327,66 +370,119 @@ func (
 	return claim, err
 }
 
-func (
-	s *NextcloudGCStore,
-) finishObject(ctx context.Context, jobID, kind, ref, resourceID, token string, unlinked bool, now time.Time) error {
+func (s *NextcloudGCStore) finishObject(
+	ctx context.Context,
+	jobID, kind, ref, resourceID string,
+	claim nextcloudGCObjectClaim,
+	unlinked bool,
+	now time.Time,
+) error {
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var item nextcloudGCItem
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("job_id = ? AND kind = ? AND object_ref = ?",
-			jobID, kind, ref).Take(&item).Error; err != nil {
+		tx = bodyInternal(tx)
+		if _, err := gcLockKBContent(
+			tx,
+			nextcloudGCJob{
+				TenantID:        claim.content.Scope.TenantID,
+				KnowledgeBaseID: claim.content.Scope.KnowledgeBaseID,
+			},
+		); err != nil {
 			return err
 		}
-		if item.State != "deleting" || token == "" || item.LeaseToken != token {
-			return apperrors.NewProtocolError(errors.New(
-				"nextcloud GC item deletion claim lost",
-			), "Nextcloud GC item deletion claim lost")
-		}
-		var resource types.StoredResource
-		if err := tx.Unscoped().Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", resourceID).
-			Take(&resource).Error; err != nil {
-			return err
-		}
-		if resource.State != types.ResourceStateDeleting {
-			return errors.New("resource deletion claim lost")
-		}
-		var remaining int64
-		if err := tx.Model(
-			&types.ResourceBinding{},
-		).Where("resource_id = ?", resourceID).Count(&remaining).Error; err !=
-			nil {
-			return err
-		}
-		if remaining != 0 {
-			return errors.New("resource rebound during deletion")
-		}
-		if err := tx.Model(
-			&types.StoredResource{},
-		).Where("id = ? AND state = ?", resourceID, types.ResourceStateDeleting).
-			Updates(map[string]any{
-				"state":      types.ResourceStateDeleted,
-				"deleted_at": now,
-				"updated_at": now,
-			}).Error; err !=
-			nil {
-			return err
-		}
-		credited := int64(0)
-		if unlinked {
-			credited = resource.Size
-		}
-		if credited < 0 {
-			credited = 0
-		}
-		return tx.Model(&nextcloudGCItem{}).Where("job_id = ? AND kind = ? AND object_ref = ?", jobID, kind, ref).
-			Updates(map[string]any{
-				"state": "collected", "confirmed_released_bytes": credited,
-				"lease_token": "", "lease_until": nil, "updated_at": now,
-			}).Error
+		return s.finishObjectInTx(tx, jobID, kind, ref, resourceID, claim, unlinked, now)
 	})
 }
 
+func (s *NextcloudGCStore) finishObjectInTx(
+	tx *gorm.DB,
+	jobID, kind, ref, resourceID string,
+	claim nextcloudGCObjectClaim,
+	unlinked bool,
+	now time.Time,
+) error {
+	if err := NewNextcloudContentLeaseStore(
+		s.db,
+	).ValidateGCClaimInTx(tx.Statement.Context, tx, claim.content); err != nil {
+		return err
+	}
+	nowMS, err := nextcloudLeaseNowMS(tx)
+	if err != nil {
+		return err
+	}
+	var job nextcloudGCJob
+	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id=?", jobID).Take(&job).Error; err != nil {
+		return err
+	}
+	if gcContentScope(job) != claim.content.Scope {
+		return ErrNextcloudContentLeaseDenied
+	}
+
+	var item nextcloudGCItem
+	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("job_id = ? AND kind = ? AND object_ref = ?",
+		jobID, kind, ref).Take(&item).Error; err != nil {
+		return err
+	}
+	if item.State != "deleting" || claim.token == "" || item.LeaseToken != claim.token || item.LeaseUntil == nil ||
+		item.LeaseUntil.UnixMilli() <= nowMS {
+		return apperrors.NewProtocolError(
+			errors.New("nextcloud GC item deletion claim lost"), "Nextcloud GC item deletion claim lost",
+		)
+	}
+	var resource types.StoredResource
+	if err := tx.Unscoped().Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", resourceID).
+		Take(&resource).Error; err != nil {
+		return err
+	}
+	if resource.State != types.ResourceStateDeleting {
+		return errors.New("resource deletion claim lost")
+	}
+	var remaining int64
+	if err := tx.Model(&types.ResourceBinding{}).
+		Where("resource_id = ?", resourceID).
+		Count(&remaining).
+		Error; err != nil {
+		return err
+	}
+	if remaining != 0 {
+		return errors.New("resource rebound during deletion")
+	}
+	if err := tx.Model(&types.StoredResource{}).Where("id = ? AND state = ?", resourceID, types.ResourceStateDeleting).
+		Updates(map[string]any{"state": types.ResourceStateDeleted, "deleted_at": now, "updated_at": now}).
+		Error; err != nil {
+		return err
+	}
+	credited := int64(0)
+	if unlinked {
+		credited = resource.Size
+	}
+	if credited < 0 {
+		credited = 0
+	}
+	if err := tx.Model(&nextcloudGCItem{}).Where("job_id = ? AND kind = ? AND object_ref = ?", jobID, kind, ref).
+		Updates(map[string]any{
+			"state": "collected", "confirmed_released_bytes": credited,
+			"lease_token": "", "lease_until": nil, "updated_at": now,
+		}).Error; err != nil {
+		return err
+	}
+	return gcReturnContentRetired(tx, claim.content, nowMS)
+}
+
 func (s *NextcloudGCStore) blockObject(ctx context.Context, jobID, kind, ref, code string, now time.Time) error {
+	var identity nextcloudGCJob
+	if e := s.db.WithContext(ctx).
+		Select("tenant_id", "knowledge_base_id").
+		Where("id=?", jobID).
+		Take(&identity).
+		Error; e != nil {
+		return e
+	}
+
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		tx = bodyInternal(tx)
+		if _, e := gcLockKBContent(tx, identity); e != nil {
+			return e
+		}
+
 		var job nextcloudGCJob
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", jobID).Take(&job).Error; err != nil {
 			return err
@@ -394,13 +490,7 @@ func (s *NextcloudGCStore) blockObject(ctx context.Context, jobID, kind, ref, co
 		if job.State == "collected" {
 			return nil
 		}
-		if code == "provider_delete_failed" {
-			if err := tx.Model(&nextcloudGCItem{}).
-				Where("job_id = ? AND kind = ? AND object_ref = ? AND state = ?", jobID, kind, ref, "deleting").
-				Updates(map[string]any{"lease_token": "", "lease_until": nil, "updated_at": now}).Error; err != nil {
-				return err
-			}
-		}
+
 		if err := tx.Model(&nextcloudGCItem{}).
 			Where("job_id = ? AND kind = ? AND object_ref = ? AND state NOT IN ?", jobID, kind, ref,
 				[]string{"deleting", "collected"}).

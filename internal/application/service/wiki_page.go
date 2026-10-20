@@ -41,15 +41,16 @@ func stripWikiPageInlineChunkCitations(page *types.WikiPage) {
 }
 
 func (s *wikiPageService) rejectNextcloudSource(ctx context.Context, kbID string) error {
-	// Production uses knowledgeBaseService. In small unit fixtures the KB
-	// dependency is often deliberately absent; those fixtures have no source
-	// configuration or imported documents to expose.
-	if checker, ok := s.kbService.(interface {
-		RejectNextcloudDerivedKB(context.Context, string) error
-	}); ok {
-		return checker.RejectNextcloudDerivedKB(ctx, kbID)
+	if s == nil || strings.TrimSpace(kbID) == "" {
+		return nextcloudDerivedContentContext("invalid Wiki scope")
 	}
-	return nil
+	checker, ok := s.kbService.(interface {
+		RejectNextcloudDerivedKB(context.Context, string) error
+	})
+	if !ok || checker == nil {
+		return nextcloudDerivedContentContext("Wiki source policy unavailable")
+	}
+	return checker.RejectNextcloudDerivedKB(ctx, kbID)
 }
 
 // wikiPageService implements the WikiPageService interface
@@ -80,6 +81,14 @@ func NewWikiPageService(
 
 // CreatePage creates a new wiki page
 func (s *wikiPageService) CreatePage(ctx context.Context, page *types.WikiPage) (*types.WikiPage, error) {
+	if page == nil {
+		return nil, nextcloudDerivedContentContext("nil Wiki input")
+	}
+
+	if err := s.rejectNextcloudSource(ctx, page.KnowledgeBaseID); err != nil {
+		return nil, err
+	}
+
 	if page.ID == "" {
 		page.ID = uuid.New().String()
 	}
@@ -131,6 +140,14 @@ func (s *wikiPageService) CreatePage(ctx context.Context, page *types.WikiPage) 
 // nothing, etc.) still persist through `UpdateMeta` but leave `version`
 // untouched so consumers can treat a bump as a real edit signal.
 func (s *wikiPageService) UpdatePage(ctx context.Context, page *types.WikiPage) (*types.WikiPage, error) {
+	if page == nil {
+		return nil, nextcloudDerivedContentContext("nil Wiki input")
+	}
+
+	if err := s.rejectNextcloudSource(ctx, page.KnowledgeBaseID); err != nil {
+		return nil, err
+	}
+
 	existing, err := s.repo.GetBySlug(ctx, page.KnowledgeBaseID, page.Slug)
 	if err != nil {
 		return nil, fmt.Errorf("get existing page: %w", err)
@@ -210,6 +227,31 @@ func (s *wikiPageService) UpdatePage(ctx context.Context, page *types.WikiPage) 
 
 // UpdatePageMeta updates only metadata (status, source_refs) without version bump or link re-parse.
 func (s *wikiPageService) UpdatePageMeta(ctx context.Context, page *types.WikiPage) error {
+	if page == nil {
+		return nextcloudDerivedContentContext("nil Wiki input")
+	}
+
+	if err := s.rejectNextcloudSource(ctx, page.KnowledgeBaseID); err != nil {
+		return err
+	}
+
+	resolver, ok := s.repo.(interface {
+		GetPageScopeByID(context.Context, string) (string, error)
+	})
+	if !ok {
+		return nextcloudDerivedContentContext("Wiki scope lookup unavailable")
+	}
+	actualKB, err := resolver.GetPageScopeByID(ctx, page.ID)
+	if err != nil {
+		return err
+	}
+	if actualKB != page.KnowledgeBaseID {
+		return nextcloudDerivedContentContext("Wiki scope changed")
+	}
+	if err := s.rejectNextcloudSource(ctx, actualKB); err != nil {
+		return err
+	}
+
 	normalizeWikiHierarchy(page)
 	page.UpdatedAt = time.Now()
 	return s.repo.UpdateMeta(ctx, page)
@@ -221,6 +263,14 @@ func (s *wikiPageService) UpdatePageMeta(ctx context.Context, page *types.WikiPa
 // in-link references on target pages are refreshed so link navigation stays
 // consistent — only the user-facing revision counter is preserved.
 func (s *wikiPageService) UpdateAutoLinkedContent(ctx context.Context, page *types.WikiPage) error {
+	if page == nil {
+		return nextcloudDerivedContentContext("nil Wiki input")
+	}
+
+	if err := s.rejectNextcloudSource(ctx, page.KnowledgeBaseID); err != nil {
+		return err
+	}
+
 	existing, err := s.repo.GetBySlug(ctx, page.KnowledgeBaseID, page.Slug)
 	if err != nil {
 		return fmt.Errorf("get existing page: %w", err)
@@ -296,6 +346,10 @@ var ErrWikiRevertToCurrentVersion = errors.New("cannot revert to the current ver
 func (s *wikiPageService) ListRevisions(
 	ctx context.Context, kbID string, slug string, limit int, offset int,
 ) (*types.WikiPageRevisionListResponse, error) {
+	if err := s.rejectNextcloudSource(ctx, kbID); err != nil {
+		return nil, err
+	}
+
 	page, err := s.repo.GetBySlug(ctx, kbID, slug)
 	if err != nil {
 		return nil, err
@@ -315,6 +369,10 @@ func (s *wikiPageService) ListRevisions(
 func (s *wikiPageService) GetRevision(
 	ctx context.Context, kbID string, slug string, version int,
 ) (*types.WikiPageRevision, error) {
+	if err := s.rejectNextcloudSource(ctx, kbID); err != nil {
+		return nil, err
+	}
+
 	page, err := s.repo.GetBySlug(ctx, kbID, slug)
 	if err != nil {
 		return nil, err
@@ -330,6 +388,10 @@ func (s *wikiPageService) GetRevision(
 func (s *wikiPageService) RevertPageToVersion(
 	ctx context.Context, kbID string, slug string, version int,
 ) (*types.WikiPage, error) {
+	if err := s.rejectNextcloudSource(ctx, kbID); err != nil {
+		return nil, err
+	}
+
 	page, err := s.repo.GetBySlug(ctx, kbID, slug)
 	if err != nil {
 		return nil, err
@@ -368,21 +430,35 @@ func (s *wikiPageService) GetPageBySlug(ctx context.Context, kbID string, slug s
 
 // GetPageByID retrieves a wiki page by its ID
 func (s *wikiPageService) GetPageByID(ctx context.Context, id string) (*types.WikiPage, error) {
+	resolver, ok := s.repo.(interface {
+		GetPageScopeByID(context.Context, string) (string, error)
+	})
+	if !ok {
+		return nil, nextcloudDerivedContentContext("Wiki scope lookup unavailable")
+	}
+	kbID, err := resolver.GetPageScopeByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.rejectNextcloudSource(ctx, kbID); err != nil {
+		return nil, err
+	}
 	page, err := s.repo.GetByID(ctx, id)
 	if err != nil {
 		return nil, err
 	}
-	if page != nil {
-		if err := s.rejectNextcloudSource(ctx, page.KnowledgeBaseID); err != nil {
-			return nil, err
-		}
+	if page == nil || page.KnowledgeBaseID != kbID {
+		return nil, nextcloudDerivedContentContext("Wiki scope changed")
 	}
 	stripWikiPageInlineChunkCitations(page)
 	return page, nil
 }
 
 // ListPages lists wiki pages with optional filtering and pagination
-func (s *wikiPageService) ListPages(ctx context.Context, req *types.WikiPageListRequest) (*types.WikiPageListResponse, error) {
+func (s *wikiPageService) ListPages(
+	ctx context.Context,
+	req *types.WikiPageListRequest,
+) (*types.WikiPageListResponse, error) {
 	if err := s.rejectNextcloudSource(ctx, req.KnowledgeBaseID); err != nil {
 		return nil, err
 	}
@@ -419,6 +495,10 @@ func (s *wikiPageService) ListPages(ctx context.Context, req *types.WikiPageList
 
 // DeletePage soft-deletes a wiki page
 func (s *wikiPageService) DeletePage(ctx context.Context, kbID string, slug string) error {
+	if err := s.rejectNextcloudSource(ctx, kbID); err != nil {
+		return err
+	}
+
 	page, err := s.repo.GetBySlug(ctx, kbID, slug)
 	if err != nil {
 		return err
@@ -496,6 +576,10 @@ func (s *wikiPageService) GetIndexView(
 	limit int,
 	cursor string,
 ) (*types.WikiIndexResponse, error) {
+	if err := s.rejectNextcloudSource(ctx, kbID); err != nil {
+		return nil, err
+	}
+
 	indexPage, err := s.GetIndex(ctx, kbID)
 	if err != nil {
 		return nil, fmt.Errorf("load index page: %w", err)
@@ -600,6 +684,14 @@ func (s *wikiPageService) GetIndexView(
 // unchanged. Pushing the filter/top-N down into SQL is a follow-up step
 // (cache layer + DB-side projection) — see CLAUDE.md plan.
 func (s *wikiPageService) GetGraph(ctx context.Context, req *types.WikiGraphRequest) (*types.WikiGraphData, error) {
+	if req == nil {
+		return nil, nextcloudDerivedContentContext("nil Wiki input")
+	}
+
+	if err := s.rejectNextcloudSource(ctx, req.KnowledgeBaseID); err != nil {
+		return nil, err
+	}
+
 	if req == nil {
 		return nil, errors.New("wiki graph request is required")
 	}
@@ -840,6 +932,10 @@ func bfsEgoSlugs(
 
 // GetStats returns aggregate statistics about the wiki
 func (s *wikiPageService) GetStats(ctx context.Context, kbID string) (*types.WikiStats, error) {
+	if err := s.rejectNextcloudSource(ctx, kbID); err != nil {
+		return nil, err
+	}
+
 	counts, err := s.repo.CountByType(ctx, kbID)
 	if err != nil {
 		return nil, err
@@ -911,6 +1007,10 @@ func (s *wikiPageService) GetStats(ctx context.Context, kbID string) (*types.Wik
 
 // RebuildLinks re-parses all pages and rebuilds bidirectional link references
 func (s *wikiPageService) RebuildLinks(ctx context.Context, kbID string) error {
+	if err := s.rejectNextcloudSource(ctx, kbID); err != nil {
+		return err
+	}
+
 	pages, err := s.repo.ListAll(ctx, kbID)
 	if err != nil {
 		return err
@@ -950,6 +1050,10 @@ func (s *wikiPageService) RebuildLinks(ctx context.Context, kbID string) error {
 
 // ListAllPages retrieves all non-archived wiki pages without pagination.
 func (s *wikiPageService) ListAllPages(ctx context.Context, kbID string) ([]*types.WikiPage, error) {
+	if err := s.rejectNextcloudSource(ctx, kbID); err != nil {
+		return nil, err
+	}
+
 	return s.repo.ListAll(ctx, kbID)
 }
 
@@ -957,13 +1061,25 @@ func (s *wikiPageService) ListAllPages(ctx context.Context, kbID string) ([]*typ
 // callers like intro regeneration can load only the page type they need
 // (summaries) instead of paying for the full ListAll scan.
 func (s *wikiPageService) ListByType(ctx context.Context, kbID string, pageType string) ([]*types.WikiPage, error) {
+	if err := s.rejectNextcloudSource(ctx, kbID); err != nil {
+		return nil, err
+	}
+
 	return s.repo.ListByType(ctx, kbID, pageType)
 }
 
 // ListPagesBySourceRef exposes the repository's source-ref lookup so higher
 // layers (delete flow, retract reconciliation) can re-query the current wiki
 // state without depending on a stale caller-captured slug list.
-func (s *wikiPageService) ListPagesBySourceRef(ctx context.Context, kbID string, knowledgeID string) ([]*types.WikiPage, error) {
+func (s *wikiPageService) ListPagesBySourceRef(
+	ctx context.Context,
+	kbID string,
+	knowledgeID string,
+) ([]*types.WikiPage, error) {
+	if err := s.rejectNextcloudSource(ctx, kbID); err != nil {
+		return nil, err
+	}
+
 	return s.repo.ListBySourceRef(ctx, kbID, knowledgeID)
 }
 
@@ -972,6 +1088,10 @@ func (s *wikiPageService) ListPagesBySourceRef(ctx context.Context, kbID string,
 // 000041 — the wiki ingest pipeline uses it as a cheap "before" snapshot
 // when reconciling old vs new extraction sets.
 func (s *wikiPageService) ListSlugsBySourceRef(ctx context.Context, kbID string, knowledgeID string) ([]string, error) {
+	if err := s.rejectNextcloudSource(ctx, kbID); err != nil {
+		return nil, err
+	}
+
 	return s.repo.ListSlugsBySourceRef(ctx, kbID, knowledgeID)
 }
 
@@ -980,14 +1100,30 @@ func (s *wikiPageService) ListSlugsBySourceRef(ctx context.Context, kbID string,
 // for the requested slugs, in a single IN query. Used in place of the
 // pre-batch ListAllPages dump that historically pulled hundreds of MB
 // for KBs in the tens of thousands of pages.
-func (s *wikiPageService) ListBySlugs(ctx context.Context, kbID string, slugs []string) (map[string]*types.WikiPageLite, error) {
+func (s *wikiPageService) ListBySlugs(
+	ctx context.Context,
+	kbID string,
+	slugs []string,
+) (map[string]*types.WikiPageLite, error) {
+	if err := s.rejectNextcloudSource(ctx, kbID); err != nil {
+		return nil, err
+	}
+
 	return s.repo.ListBySlugs(ctx, kbID, slugs)
 }
 
 // ListSummariesByKnowledgeIDs is the lazy fetcher for the retract /
 // reparse branches of reduceSlugUpdates. Returns the content of each
 // surviving summary page keyed by its source knowledge id.
-func (s *wikiPageService) ListSummariesByKnowledgeIDs(ctx context.Context, kbID string, kids []string) (map[string]string, error) {
+func (s *wikiPageService) ListSummariesByKnowledgeIDs(
+	ctx context.Context,
+	kbID string,
+	kids []string,
+) (map[string]string, error) {
+	if err := s.rejectNextcloudSource(ctx, kbID); err != nil {
+		return nil, err
+	}
+
 	return s.repo.ListSummariesByKnowledgeIDs(ctx, kbID, kids)
 }
 
@@ -995,6 +1131,10 @@ func (s *wikiPageService) ListSummariesByKnowledgeIDs(ctx context.Context, kbID 
 // non-deleted) in the KB. Used by cleanDeadLinks to validate out-link
 // targets before stripping them.
 func (s *wikiPageService) ExistsSlugs(ctx context.Context, kbID string, slugs []string) (map[string]bool, error) {
+	if err := s.rejectNextcloudSource(ctx, kbID); err != nil {
+		return nil, err
+	}
+
 	return s.repo.ExistsSlugs(ctx, kbID, slugs)
 }
 
@@ -1002,52 +1142,116 @@ func (s *wikiPageService) ExistsSlugs(ctx context.Context, kbID string, slugs []
 // to compute the live-slug set without paying for ListAll's full row
 // materialization.
 func (s *wikiPageService) ListAllSlugs(ctx context.Context, kbID string) ([]string, error) {
+	if err := s.rejectNextcloudSource(ctx, kbID); err != nil {
+		return nil, err
+	}
+
 	return s.repo.ListAllSlugs(ctx, kbID)
 }
 
 // ListPagesCursor is the lint-side cursor pagination over wiki_pages.
-func (s *wikiPageService) ListPagesCursor(ctx context.Context, kbID string, cursor string, limit int) ([]*types.WikiPage, string, error) {
+func (s *wikiPageService) ListPagesCursor(
+	ctx context.Context,
+	kbID string,
+	cursor string,
+	limit int,
+) ([]*types.WikiPage, string, error) {
+	if err := s.rejectNextcloudSource(ctx, kbID); err != nil {
+		return nil, "", err
+	}
+
 	return s.repo.ListPagesCursor(ctx, kbID, cursor, limit)
 }
 
 // ListByTypeRecent caps the page count for first-time index intro
 // generation so the LLM prompt stays bounded on large KBs.
-func (s *wikiPageService) ListByTypeRecent(ctx context.Context, kbID string, pageType string, limit int) ([]types.WikiIndexEntry, error) {
+func (s *wikiPageService) ListByTypeRecent(
+	ctx context.Context,
+	kbID string,
+	pageType string,
+	limit int,
+) ([]types.WikiIndexEntry, error) {
+	if err := s.rejectNextcloudSource(ctx, kbID); err != nil {
+		return nil, err
+	}
+
 	return s.repo.ListByTypeRecent(ctx, kbID, pageType, limit)
 }
 
 // FindSimilarPages performs a pg_trgm similarity search; used by the
 // dedup pre-filter to surface candidate merge targets.
-func (s *wikiPageService) FindSimilarPages(ctx context.Context, kbID string, query string, pageTypes []string, limit int) ([]*types.WikiPageLite, error) {
+func (s *wikiPageService) FindSimilarPages(
+	ctx context.Context,
+	kbID string,
+	query string,
+	pageTypes []string,
+	limit int,
+) ([]*types.WikiPageLite, error) {
+	if err := s.rejectNextcloudSource(ctx, kbID); err != nil {
+		return nil, err
+	}
+
 	return s.repo.FindSimilarPages(ctx, kbID, query, pageTypes, limit)
 }
 
 // FindPagesByNormalizedTitle looks up exact same-type title identities for
 // wiki ingest, independent of the trigram top-K used for semantic dedup.
-func (s *wikiPageService) FindPagesByNormalizedTitle(ctx context.Context, kbID, pageType, identity string) ([]*types.WikiPageLite, error) {
+func (s *wikiPageService) FindPagesByNormalizedTitle(
+	ctx context.Context,
+	kbID, pageType, identity string,
+) ([]*types.WikiPageLite, error) {
+	if err := s.rejectNextcloudSource(ctx, kbID); err != nil {
+		return nil, err
+	}
+
 	return s.repo.FindPagesByNormalizedTitle(ctx, kbID, pageType, identity)
 }
 
 // FindPagesByNormalizedTitles looks up several normalized title identities
 // in one query so wiki ingest does not seq-scan once per extracted item.
-func (s *wikiPageService) FindPagesByNormalizedTitles(ctx context.Context, kbID, pageType string, identities []string) ([]*types.WikiPageLite, error) {
+func (s *wikiPageService) FindPagesByNormalizedTitles(
+	ctx context.Context,
+	kbID, pageType string,
+	identities []string,
+) ([]*types.WikiPageLite, error) {
+	if err := s.rejectNextcloudSource(ctx, kbID); err != nil {
+		return nil, err
+	}
+
 	return s.repo.FindPagesByNormalizedTitles(ctx, kbID, pageType, identities)
 }
 
 // ListDistinctCategoryPaths returns the existing wiki folder paths. Used by
 // wiki ingest's taxonomy planner to ground folder reuse.
-func (s *wikiPageService) ListDistinctCategoryPaths(ctx context.Context, kbID string, maxPaths int) ([][]string, error) {
+func (s *wikiPageService) ListDistinctCategoryPaths(
+	ctx context.Context,
+	kbID string,
+	maxPaths int,
+) ([][]string, error) {
+	if err := s.rejectNextcloudSource(ctx, kbID); err != nil {
+		return nil, err
+	}
+
 	return s.repo.ListDistinctCategoryPaths(ctx, kbID, maxPaths)
 }
 
 // CountByType is a service-layer pass-through over the repo. Used by
 // the index intro path to frame the LLM prompt's "showing N of M" hint.
 func (s *wikiPageService) CountByType(ctx context.Context, kbID string) (map[string]int64, error) {
+	if err := s.rejectNextcloudSource(ctx, kbID); err != nil {
+		return nil, err
+	}
+
 	return s.repo.CountByType(ctx, kbID)
 }
 
 // SearchPages performs full-text search over wiki pages
-func (s *wikiPageService) SearchPages(ctx context.Context, kbID string, query string, limit int) ([]*types.WikiPage, error) {
+func (s *wikiPageService) SearchPages(
+	ctx context.Context,
+	kbID string,
+	query string,
+	limit int,
+) ([]*types.WikiPage, error) {
 	if err := s.rejectNextcloudSource(ctx, kbID); err != nil {
 		return nil, err
 	}
@@ -1153,6 +1357,10 @@ func rewriteDeadWikiLinks(content string, resolve func(normSlug, display string)
 func (s *wikiPageService) RepairContentLinks(
 	ctx context.Context, kbID, selfSlug, content string,
 ) (string, bool, error) {
+	if err := s.rejectNextcloudSource(ctx, kbID); err != nil {
+		return "", false, err
+	}
+
 	if strings.TrimSpace(content) == "" {
 		return content, false, nil
 	}
@@ -1232,7 +1440,12 @@ func (s *wikiPageService) RepairContentLinks(
 }
 
 // updateInLinks adds the source slug to the in_links of target pages
-func (s *wikiPageService) updateInLinks(ctx context.Context, kbID string, sourceSlug string, targets types.StringArray) {
+func (s *wikiPageService) updateInLinks(
+	ctx context.Context,
+	kbID string,
+	sourceSlug string,
+	targets types.StringArray,
+) {
 	for _, targetSlug := range targets {
 		targetPage, err := s.repo.GetBySlug(ctx, kbID, targetSlug)
 		if err != nil {
@@ -1249,7 +1462,12 @@ func (s *wikiPageService) updateInLinks(ctx context.Context, kbID string, source
 }
 
 // removeInLinks removes the source slug from the in_links of target pages
-func (s *wikiPageService) removeInLinks(ctx context.Context, kbID string, sourceSlug string, targets types.StringArray) {
+func (s *wikiPageService) removeInLinks(
+	ctx context.Context,
+	kbID string,
+	sourceSlug string,
+	targets types.StringArray,
+) {
 	for _, targetSlug := range targets {
 		targetPage, err := s.repo.GetBySlug(ctx, kbID, targetSlug)
 		if err != nil {
@@ -1280,7 +1498,14 @@ func (s *wikiPageService) deleteChunkForPage(ctx context.Context, page *types.Wi
 }
 
 // createDefaultPage creates the default index page.
-func (s *wikiPageService) createDefaultPage(ctx context.Context, kbID string, slug string, title string, pageType string, content string) (*types.WikiPage, error) {
+func (s *wikiPageService) createDefaultPage(
+	ctx context.Context,
+	kbID string,
+	slug string,
+	title string,
+	pageType string,
+	content string,
+) (*types.WikiPage, error) {
 	// Get KB to get tenant ID
 	kb, err := s.kbService.GetKnowledgeBaseByIDOnly(ctx, kbID)
 	if err != nil {
@@ -1386,6 +1611,14 @@ func removeString(slice []string, s string) types.StringArray {
 
 // CreateIssue logs a new issue for a wiki page
 func (s *wikiPageService) CreateIssue(ctx context.Context, issue *types.WikiPageIssue) (*types.WikiPageIssue, error) {
+	if issue == nil {
+		return nil, nextcloudDerivedContentContext("nil Wiki input")
+	}
+
+	if err := s.rejectNextcloudSource(ctx, issue.KnowledgeBaseID); err != nil {
+		return nil, err
+	}
+
 	if issue.ID == "" {
 		issue.ID = uuid.New().String()
 	}
@@ -1396,12 +1629,25 @@ func (s *wikiPageService) CreateIssue(ctx context.Context, issue *types.WikiPage
 }
 
 // ListIssues retrieves issues for a knowledge base
-func (s *wikiPageService) ListIssues(ctx context.Context, kbID string, slug string, status string) ([]*types.WikiPageIssue, error) {
+func (s *wikiPageService) ListIssues(
+	ctx context.Context,
+	kbID string,
+	slug string,
+	status string,
+) ([]*types.WikiPageIssue, error) {
+	if err := s.rejectNextcloudSource(ctx, kbID); err != nil {
+		return nil, err
+	}
+
 	return s.repo.ListIssues(ctx, kbID, slug, status)
 }
 
 // UpdateIssueStatus updates an issue's status
 func (s *wikiPageService) UpdateIssueStatus(ctx context.Context, kbID string, issueID string, status string) error {
+	if err := s.rejectNextcloudSource(ctx, kbID); err != nil {
+		return err
+	}
+
 	return s.repo.UpdateIssueStatus(ctx, kbID, issueID, status)
 }
 
@@ -1440,6 +1686,10 @@ func (s *wikiPageService) applyFolderToPage(ctx context.Context, page *types.Wik
 
 // GetFolder retrieves a single folder by id.
 func (s *wikiPageService) GetFolder(ctx context.Context, kbID string, id string) (*types.WikiFolder, error) {
+	if err := s.rejectNextcloudSource(ctx, kbID); err != nil {
+		return nil, err
+	}
+
 	return s.repo.GetFolderByID(ctx, kbID, id)
 }
 
@@ -1453,6 +1703,10 @@ func (s *wikiPageService) GetFolder(ctx context.Context, kbID string, id string)
 func (s *wikiPageService) ListChildFolders(
 	ctx context.Context, kbID string, parentID string, pageTypes []string,
 ) ([]types.WikiFolderNode, error) {
+	if err := s.rejectNextcloudSource(ctx, kbID); err != nil {
+		return nil, err
+	}
+
 	all, err := s.repo.ListAllFolders(ctx, kbID)
 	if err != nil {
 		return nil, err
@@ -1540,6 +1794,10 @@ func validateFolderName(name string) (string, error) {
 func (s *wikiPageService) CreateFolder(
 	ctx context.Context, kbID string, tenantID uint64, parentID string, name string,
 ) (*types.WikiFolder, error) {
+	if err := s.rejectNextcloudSource(ctx, kbID); err != nil {
+		return nil, err
+	}
+
 	name, err := validateFolderName(name)
 	if err != nil {
 		return nil, err
@@ -1590,6 +1848,10 @@ func (s *wikiPageService) CreateFolder(
 func (s *wikiPageService) FindOrCreateFolderPath(
 	ctx context.Context, kbID string, tenantID uint64, path []string,
 ) (string, []string, error) {
+	if err := s.rejectNextcloudSource(ctx, kbID); err != nil {
+		return "", nil, err
+	}
+
 	clean := types.CleanWikiCategoryPath(path)
 	if len(clean) == 0 {
 		return types.WikiFolderRootID, nil, nil
@@ -1638,6 +1900,10 @@ func (s *wikiPageService) FindOrCreateFolderPath(
 func (s *wikiPageService) MovePage(
 	ctx context.Context, kbID string, slug string, folderID string,
 ) (*types.WikiPage, error) {
+	if err := s.rejectNextcloudSource(ctx, kbID); err != nil {
+		return nil, err
+	}
+
 	page, err := s.repo.GetBySlug(ctx, kbID, slug)
 	if err != nil {
 		return nil, err
@@ -1661,6 +1927,10 @@ func (s *wikiPageService) MovePage(
 func (s *wikiPageService) RenameOrMoveFolder(
 	ctx context.Context, kbID string, id string, newName string, newParentID string, moveParent bool,
 ) (*types.WikiFolder, error) {
+	if err := s.rejectNextcloudSource(ctx, kbID); err != nil {
+		return nil, err
+	}
+
 	folder, err := s.repo.GetFolderByID(ctx, kbID, id)
 	if err != nil {
 		return nil, err
@@ -1778,6 +2048,10 @@ func (s *wikiPageService) recomputePagesForFolders(ctx context.Context, kbID str
 // DeleteFolder removes a folder that has no pages and no child folders. The UI
 // must relocate contents first; this keeps deletion non-destructive.
 func (s *wikiPageService) DeleteFolder(ctx context.Context, kbID string, id string) error {
+	if err := s.rejectNextcloudSource(ctx, kbID); err != nil {
+		return err
+	}
+
 	if _, err := s.repo.GetFolderByID(ctx, kbID, id); err != nil {
 		return err
 	}
@@ -1807,6 +2081,10 @@ func (s *wikiPageService) DeleteFolder(ctx context.Context, kbID string, id stri
 func (s *wikiPageService) PruneEmptyFolderChains(
 	ctx context.Context, kbID string, folderIDs []string,
 ) ([]string, error) {
+	if err := s.rejectNextcloudSource(ctx, kbID); err != nil {
+		return nil, err
+	}
+
 	if len(folderIDs) == 0 {
 		return nil, nil
 	}
@@ -1882,6 +2160,10 @@ func (s *wikiPageService) PruneEmptyFolderChains(
 // Shares the linkifyContent helper with the ingest pipeline so both paths honor
 // the same code-block / existing-link / word-boundary rules.
 func (s *wikiPageService) InjectCrossLinks(ctx context.Context, kbID string, affectedSlugs []string) {
+	if err := s.rejectNextcloudSource(ctx, kbID); err != nil {
+		return
+	}
+
 	allPages, err := s.ListAllPages(ctx, kbID)
 	if err != nil || len(allPages) < 2 {
 		return
@@ -1939,6 +2221,10 @@ func (s *wikiPageService) InjectCrossLinks(ctx context.Context, kbID string, aff
 // completion, which is where we actually have the LLM + change description
 // context needed to rewrite it.
 func (s *wikiPageService) RebuildIndexPage(ctx context.Context, kbID string) error {
+	if err := s.rejectNextcloudSource(ctx, kbID); err != nil {
+		return err
+	}
+
 	_ = ctx
 	_ = kbID
 	return nil

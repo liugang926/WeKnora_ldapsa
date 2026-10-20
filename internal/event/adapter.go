@@ -33,6 +33,9 @@ func (a *EventBusAdapter) On(eventType types.EventType, handler types.EventHandl
 			Metadata:  evt.Metadata,
 			RequestID: evt.RequestID,
 		}
+		if lineage, ok := evt.SourceLineage.(*types.SourceLineage); ok {
+			typesEvt.SourceLineage, _ = types.UnionSourceLineage(lineage)
+		}
 		return handler(ctx, typesEvt)
 	}
 
@@ -49,6 +52,9 @@ func (a *EventBusAdapter) Emit(ctx context.Context, evt types.Event) error {
 		Data:      evt.Data,
 		Metadata:  evt.Metadata,
 		RequestID: evt.RequestID,
+	}
+	if evt.SourceLineage != nil {
+		eventEvt.SourceLineage, _ = types.UnionSourceLineage(evt.SourceLineage)
 	}
 	return a.bus.Emit(ctx, eventEvt)
 }

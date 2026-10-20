@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/Tencent/WeKnora/internal/logger"
+	"github.com/Tencent/WeKnora/internal/logprivacy"
 	"github.com/Tencent/WeKnora/internal/types"
 )
 
@@ -200,9 +201,13 @@ func (a *StreamAssembler) Process(ch chan<- types.StreamResponse, d Delta) {
 	if d.Reasoning != "" {
 		if !a.firstReasoningSeen {
 			a.firstReasoningSeen = true
-			logger.Infof(a.ctx, "[LLM Stream] First reasoning chunk at protocol layer "+
-				"(len=%d, preview=%q, elapsed_ms=%d)",
-				len(d.Reasoning), TruncateForDebug(d.Reasoning, 80), a.elapsedMs())
+			if logprivacy.ContentSuppressed(a.ctx) {
+				logger.Infof(a.ctx, "[LLM Stream] First reasoning chunk (content logging suppressed)")
+			} else {
+				logger.Infof(a.ctx, "[LLM Stream] First reasoning chunk at protocol layer "+
+					"(len=%d, preview=%q, elapsed_ms=%d)",
+					len(d.Reasoning), TruncateForDebug(d.Reasoning, 80), a.elapsedMs())
+			}
 		}
 		a.Emit(ch, d.Reasoning)
 	}
@@ -210,10 +215,14 @@ func (a *StreamAssembler) Process(ch chan<- types.StreamResponse, d Delta) {
 	if d.Content != "" {
 		if !a.firstContentSeen {
 			a.firstContentSeen = true
-			logger.Infof(a.ctx, "[LLM Stream] First content chunk at protocol layer "+
-				"(len=%d, preview=%q, tool_call_seen=%t, thinking_seen=%t, elapsed_ms=%d)",
-				len(d.Content), TruncateForDebug(d.Content, 80),
-				a.firstToolCallSeen, a.firstReasoningSeen, a.elapsedMs())
+			if logprivacy.ContentSuppressed(a.ctx) {
+				logger.Infof(a.ctx, "[LLM Stream] First content chunk (content logging suppressed)")
+			} else {
+				logger.Infof(a.ctx, "[LLM Stream] First content chunk at protocol layer "+
+					"(len=%d, preview=%q, tool_call_seen=%t, thinking_seen=%t, elapsed_ms=%d)",
+					len(d.Content), TruncateForDebug(d.Content, 80),
+					a.firstToolCallSeen, a.firstReasoningSeen, a.elapsedMs())
+			}
 		}
 		a.Finish(ch)
 		a.emit(ch, types.StreamResponse{
@@ -281,7 +290,11 @@ func (a *StreamAssembler) End(ch chan<- types.StreamResponse) {
 
 // Fail emits the error chunk for a broken stream.
 func (a *StreamAssembler) Fail(ch chan<- types.StreamResponse, err error) {
-	logger.Errorf(a.ctx, "Stream read error: %v (tool_calls_assembled=%d)", err, len(a.toolCallMap))
+	if logprivacy.ContentSuppressed(a.ctx) {
+		logger.Errorf(a.ctx, "Stream read error (content logging suppressed)")
+	} else {
+		logger.Errorf(a.ctx, "Stream read error: %v (tool_calls_assembled=%d)", err, len(a.toolCallMap))
+	}
 	a.Finish(ch)
 	a.emit(ch, types.StreamResponse{
 		ResponseType: types.ResponseTypeError,
@@ -308,9 +321,13 @@ func (a *StreamAssembler) processToolCalls(ch chan<- types.StreamResponse, delta
 				break
 			}
 		}
-		logger.Infof(a.ctx, "[LLM Stream] First tool_calls delta at protocol layer "+
-			"(count=%d, first_id=%q, first_name=%q, first_content_seen=%t, thinking_seen=%t, elapsed_ms=%d)",
-			len(deltas), firstID, firstName, a.firstContentSeen, a.firstReasoningSeen, a.elapsedMs())
+		if logprivacy.ContentSuppressed(a.ctx) {
+			logger.Infof(a.ctx, "[LLM Stream] First tool_calls delta (content logging suppressed)")
+		} else {
+			logger.Infof(a.ctx, "[LLM Stream] First tool_calls delta at protocol layer "+
+				"(count=%d, first_id=%q, first_name=%q, first_content_seen=%t, thinking_seen=%t, elapsed_ms=%d)",
+				len(deltas), firstID, firstName, a.firstContentSeen, a.firstReasoningSeen, a.elapsedMs())
+		}
 	}
 
 	for _, tc := range deltas {

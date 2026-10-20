@@ -23,7 +23,6 @@ type NextcloudSourceHealth struct {
 	CurrentVersions NextcloudSourceVersionHealth `json:"current_versions"`
 }
 
-// NextcloudSourceEventHealth contains the source-event health projection.
 // EventInbox is nil when no event connection has ever been installed for the
 // paired source. Its pending counts refer to durable event receipts only.
 type NextcloudSourceEventHealth struct {
@@ -38,7 +37,6 @@ type NextcloudSourceEventHealth struct {
 	LastErrorCode             string `json:"last_error_code"`
 }
 
-// NextcloudSourceSyncHealth contains the source-sync health projection.
 // Failed and partial sync counts cover retained logs started in the previous
 // 24 hours. Log retention means they are not a lifetime failure total.
 type NextcloudSourceSyncHealth struct {
@@ -49,7 +47,6 @@ type NextcloudSourceSyncHealth struct {
 	LatestStatus            *string `json:"latest_status"`
 }
 
-// NextcloudSourceVersionHealth contains the source-version health projection.
 // These are the current source-version rows, not historical revisions or all
 // knowledge in the dedicated KB. A completed parse does not prove that the
 // current ETag was published or that a question is authorized.
@@ -138,17 +135,12 @@ func (r *NextcloudSourcePairingRepository) SourceHealth(
 		result.SourceStatus = source.Status
 
 		var sync nextcloudSyncHealthRow
-		if err := tx.Raw(("SELECT\n" +
-			"\t\t\tCOALESCE(SUM(CASE WHEN status = 'running' THEN 1 ELS" +
-			"E 0 END), 0) AS running_count,\n" +
-			"\t\t\tCOALESCE(SUM(CASE WHEN status = 'failed' AND started" +
-			"_at >= ? THEN 1 ELSE 0 END), 0) AS failed_last_24_hours" +
-			",\n" +
-			"\t\t\tCOALESCE(SUM(CASE WHEN status = 'partial' AND starte" +
-			"d_at >= ? THEN 1 ELSE 0 END), 0) AS partial_last_24_hou" +
-			"rs\n" +
-			"\t\t\tFROM sync_logs WHERE tenant_id = ? AND data_source_i" +
-			"d = ?"),
+		if err := tx.Raw(("SELECT\n\t\t\tCOALESCE(SUM(CASE WHEN status = 'running' THEN 1 ELSE 0 END)" +
+			", 0) AS running_count,\n\t\t\tCOALESCE(SUM(CASE WHEN status = 'failed' AND" +
+			" started_at >= ? THEN 1 ELSE 0 END), 0) AS failed_last_24_hours,\n\t\t\tCO" +
+			"ALESCE(SUM(CASE WHEN status = 'partial' AND started_at >= ? THEN 1 ELSE 0 " +
+			"END), 0) AS partial_last_24_hours\n\t\t\tFROM sync_logs WHERE tenant_id = " +
+			"? AND data_source_id = ?"),
 			now.Add(-24*time.Hour), now.Add(-24*time.Hour), pair.TenantID, pair.DataSourceID,
 		).Scan(&sync).Error; err != nil {
 			return fmt.Errorf("read paired sync health: %w", err)
@@ -185,41 +177,28 @@ func (r *NextcloudSourcePairingRepository) SourceHealth(
 		}
 
 		var versions nextcloudVersionHealthRow
-		if err := tx.Raw(("SELECT\n" +
-			"\t\t\tCOALESCE(SUM(CASE WHEN v.state = 'staging' THEN 1 EL" +
-			"SE 0 END), 0) AS staging_count,\n" +
-			"\t\t\tCOALESCE(SUM(CASE WHEN v.state = 'published' THEN 1 " +
-			"ELSE 0 END), 0) AS published_count,\n" +
-			"\t\t\tCOALESCE(SUM(CASE WHEN v.state = 'tombstone' THEN 1 " +
-			"ELSE 0 END), 0) AS tombstone_count,\n" +
-			"\t\t\tCOALESCE(SUM(CASE WHEN v.state <> 'tombstone' AND k." +
-			"id IS NULL THEN 1 ELSE 0 END), 0) AS missing_candidate_" +
-			"count,\n" +
-			"\t\t\tCOALESCE(SUM(CASE WHEN k.parse_status = 'pending' TH" +
-			"EN 1 ELSE 0 END), 0) AS parse_pending_count,\n" +
-			"\t\t\tCOALESCE(SUM(CASE WHEN k.parse_status = 'processing'" +
-			" THEN 1 ELSE 0 END), 0) AS parse_processing_count,\n" +
-			"\t\t\tCOALESCE(SUM(CASE WHEN k.parse_status = 'finalizing'" +
-			" THEN 1 ELSE 0 END), 0) AS parse_finalizing_count,\n" +
-			"\t\t\tCOALESCE(SUM(CASE WHEN k.parse_status = 'failed' THE" +
-			"N 1 ELSE 0 END), 0) AS parse_failed_count,\n" +
-			"\t\t\tCOALESCE(SUM(CASE WHEN k.parse_status = 'completed' " +
-			"AND k.enable_status = 'enabled' THEN 1 ELSE 0 END), 0) " +
-			"AS parse_completed_enabled_count,\n" +
-			"\t\t\tCOALESCE(SUM(CASE WHEN k.id IS NOT NULL AND\n" +
-			"\t\t\t\t(k.parse_status NOT IN ('pending', 'processing', 'f" +
-			"inalizing', 'failed', 'completed') OR\n" +
-			"\t\t\t\t(k.parse_status = 'completed' AND k.enable_status <" +
-			"> 'enabled')) THEN 1 ELSE 0 END), 0) AS other_candidate" +
-			"_status_count\n" +
-			"\t\t\tFROM nextcloud_source_versions AS v\n" +
-			"\t\t\tLEFT JOIN knowledges AS k ON k.id = v.candidate_know" +
-			"ledge_id AND\n" +
-			"\t\t\t\tk.tenant_id = v.tenant_id AND k.knowledge_base_id =" +
-			" v.knowledge_base_id AND\n" +
-			"\t\t\t\tk.deleted_at IS NULL AND v.state <> 'tombstone'\n" +
-			"\t\t\tWHERE v.tenant_id = ? AND v.knowledge_base_id = ? AN" +
-			"D v.datasource_id = ?"),
+		if err := tx.Raw(("SELECT\n\t\t\tCOALESCE(SUM(CASE WHEN v.state = 'staging' THEN 1 ELSE 0 END" +
+			"), 0) AS staging_count,\n\t\t\tCOALESCE(SUM(CASE WHEN v.state = 'published" +
+			"' THEN 1 ELSE 0 END), 0) AS published_count,\n\t\t\tCOALESCE(SUM(CASE WHEN" +
+			" v.state = 'tombstone' THEN 1 ELSE 0 END), 0) AS tombstone_count,\n\t\t\tC" +
+			"OALESCE(SUM(CASE WHEN v.state <> 'tombstone' AND k.id IS NULL THEN 1 ELSE " +
+			"0 END), 0) AS missing_candidate_count,\n\t\t\tCOALESCE(SUM(CASE WHEN k.par" +
+			"se_status = 'pending' THEN 1 ELSE 0 END), 0) AS parse_pending_count,\n\t\t" +
+			"\tCOALESCE(SUM(CASE WHEN k.parse_status = 'processing' THEN 1 ELSE 0 END)," +
+			" 0) AS parse_processing_count,\n\t\t\tCOALESCE(SUM(CASE WHEN k.parse_statu" +
+			"s = 'finalizing' THEN 1 ELSE 0 END), 0) AS parse_finalizing_count,\n\t\t\t" +
+			"COALESCE(SUM(CASE WHEN k.parse_status = 'failed' THEN 1 ELSE 0 END), 0) AS" +
+			" parse_failed_count,\n\t\t\tCOALESCE(SUM(CASE WHEN k.parse_status = 'compl" +
+			"eted' AND k.enable_status = 'enabled' THEN 1 ELSE 0 END), 0) AS parse_comp" +
+			"leted_enabled_count,\n\t\t\tCOALESCE(SUM(CASE WHEN k.id IS NOT NULL AND\n" +
+			"\t\t\t\t(k.parse_status NOT IN ('pending', 'processing', 'finalizing', 'fa" +
+			"iled', 'completed') OR\n\t\t\t\t(k.parse_status = 'completed' AND k.enable" +
+			"_status <> 'enabled')) THEN 1 ELSE 0 END), 0) AS other_candidate_status_co" +
+			"unt\n\t\t\tFROM nextcloud_source_versions AS v\n\t\t\tLEFT JOIN knowledges" +
+			" AS k ON k.id = v.candidate_knowledge_id AND\n\t\t\t\tk.tenant_id = v.tena" +
+			"nt_id AND k.knowledge_base_id = v.knowledge_base_id AND\n\t\t\t\tk.deleted" +
+			"_at IS NULL AND v.state <> 'tombstone'\n\t\t\tWHERE v.tenant_id = ? AND v." +
+			"knowledge_base_id = ? AND v.datasource_id = ?"),
 			pair.TenantID, pair.KnowledgeBaseID, pair.DataSourceID,
 		).Scan(&versions).Error; err != nil {
 			return fmt.Errorf("read paired version health: %w", err)

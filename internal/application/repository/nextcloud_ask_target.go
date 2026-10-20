@@ -8,17 +8,14 @@ import (
 	"strconv"
 
 	apperrors "github.com/Tencent/WeKnora/internal/errors"
-
 	"github.com/Tencent/WeKnora/internal/types"
 	"gorm.io/gorm"
 )
 
 var (
-	// ErrNextcloudAskTargetNotFound reports that no published source ask target is available.
 	ErrNextcloudAskTargetNotFound = apperrors.NewProtocolError(
 		errors.New("nextcloud ask target not found"), "Nextcloud ask target not found",
 	)
-	// ErrNextcloudAskTargetUnavailable reports an unavailable published source ask target.
 	ErrNextcloudAskTargetUnavailable = apperrors.NewProtocolError(errors.New(
 		"nextcloud ask target unavailable",
 	), "Nextcloud ask target unavailable")
@@ -31,12 +28,10 @@ var (
 // must independently check the KB and live Nextcloud source before returning.
 type NextcloudAskTargetRepository struct{ db *gorm.DB }
 
-// NewNextcloudAskTargetRepository returns the source ask-target repository.
 func NewNextcloudAskTargetRepository(db *gorm.DB) *NextcloudAskTargetRepository {
 	return &NextcloudAskTargetRepository{db: db}
 }
 
-// FindPublished loads a published source target in the requested tenant scope.
 func (r *NextcloudAskTargetRepository) FindPublished(
 	ctx context.Context, instanceID, bindingID string, fileID int64, sourceETag string,
 ) (*types.Knowledge, error) {
@@ -51,18 +46,7 @@ func (r *NextcloudAskTargetRepository) FindPublished(
 	var pairs []NextcloudSourcePairing
 	if err := db.Where("nextcloud_instance_id = ? AND binding_id = ? AND state = ?",
 		instanceID, bindingID, "active").Limit(2).Find(&pairs).Error; err != nil {
-		return nil, apperrors.NewProtocolError(fmt.Errorf(
-			"%w: read source pair: %v",
-			ErrNextcloudAskTargetUnavailable,
-			err,
-		), fmt.Sprintf("%s: read source pair: %v", apperrors.PublicMessage(
-			ErrNextcloudAskTargetUnavailable,
-		), func() any {
-			if err == nil {
-				return nil
-			}
-			return apperrors.PublicMessage(err)
-		}()))
+		return nil, fmt.Errorf("%w: read source pair: %v", ErrNextcloudAskTargetUnavailable, err)
 	}
 	if len(pairs) == 0 {
 		return nil, ErrNextcloudAskTargetNotFound
@@ -79,18 +63,7 @@ func (r *NextcloudAskTargetRepository) FindPublished(
 		return nil, ErrNextcloudAskTargetNotFound
 	}
 	if err != nil {
-		return nil, apperrors.NewProtocolError(fmt.Errorf(
-			"%w: read source version: %v",
-			ErrNextcloudAskTargetUnavailable,
-			err,
-		), fmt.Sprintf("%s: read source version: %v", apperrors.PublicMessage(
-			ErrNextcloudAskTargetUnavailable,
-		), func() any {
-			if err == nil {
-				return nil
-			}
-			return apperrors.PublicMessage(err)
-		}()))
+		return nil, fmt.Errorf("%w: read source version: %v", ErrNextcloudAskTargetUnavailable, err)
 	}
 	if version.State != "published" || version.DesiredETag != sourceETag ||
 		version.CandidateKnowledgeID == "" {
@@ -99,18 +72,7 @@ func (r *NextcloudAskTargetRepository) FindPublished(
 	checked, ready, err := (&knowledgeRepository{db: r.db}).publicationCandidate(db,
 		version.CandidateKnowledgeID, false)
 	if err != nil {
-		return nil, apperrors.NewProtocolError(fmt.Errorf(
-			"%w: verify candidate: %v",
-			ErrNextcloudAskTargetUnavailable,
-			err,
-		), fmt.Sprintf("%s: verify candidate: %v", apperrors.PublicMessage(
-			ErrNextcloudAskTargetUnavailable,
-		), func() any {
-			if err == nil {
-				return nil
-			}
-			return apperrors.PublicMessage(err)
-		}()))
+		return nil, fmt.Errorf("%w: verify candidate: %v", ErrNextcloudAskTargetUnavailable, err)
 	}
 	if !ready || checked.version.TenantID != pair.TenantID ||
 		checked.version.KnowledgeBaseID != pair.KnowledgeBaseID ||
@@ -128,18 +90,7 @@ func (r *NextcloudAskTargetRepository) FindPublished(
 		return nil, ErrNextcloudAskTargetNotFound
 	}
 	if err != nil {
-		return nil, apperrors.NewProtocolError(fmt.Errorf(
-			"%w: read candidate: %v",
-			ErrNextcloudAskTargetUnavailable,
-			err,
-		), fmt.Sprintf("%s: read candidate: %v", apperrors.PublicMessage(
-			ErrNextcloudAskTargetUnavailable,
-		), func() any {
-			if err == nil {
-				return nil
-			}
-			return apperrors.PublicMessage(err)
-		}()))
+		return nil, fmt.Errorf("%w: read candidate: %v", ErrNextcloudAskTargetUnavailable, err)
 	}
 	metadata, err := nextcloudMetadata(&knowledge)
 	if err != nil || nextcloudMetadataString(metadata, "nextcloud_etag") != sourceETag ||

@@ -50,6 +50,7 @@ func TestSetupSSEStreamMirrorsSteerSinkOntoRequestContext(t *testing.T) {
 	streamCtx := h.setupSSEStream(reqCtx, false, qaModeAgent)
 
 	require.NotNil(t, streamCtx, "setupSSEStream returned nil")
+	t.Cleanup(streamCtx.cancel)
 	require.NotNil(t, streamCtx.steerSink, "streamCtx.steerSink must be created for agent runs")
 	assert.NotNil(t, reqCtx.steerSink,
 		"reqCtx.steerSink must mirror the streamCtx sink — buildQARequest reads it; "+
@@ -91,6 +92,7 @@ func TestSetupSSEStreamNoSinkWithoutCustomAgent(t *testing.T) {
 
 	streamCtx := h.setupSSEStream(reqCtx, false, qaModeNormal)
 	require.NotNil(t, streamCtx)
+	t.Cleanup(streamCtx.cancel)
 	assert.Nil(t, streamCtx.steerSink)
 	assert.Nil(t, reqCtx.steerSink)
 	qaReq := reqCtx.buildQARequest()
@@ -129,6 +131,7 @@ func TestSetupSSEStreamNoSinkForQuickAnswerCustomAgent(t *testing.T) {
 
 	streamCtx := h.setupSSEStream(reqCtx, false, qaModeNormal)
 	require.NotNil(t, streamCtx)
+	t.Cleanup(streamCtx.cancel)
 	assert.Nil(t, streamCtx.steerSink,
 		"KnowledgeQA / quick-answer turns must not get a steer sink")
 	assert.Nil(t, reqCtx.steerSink)
@@ -164,6 +167,7 @@ func TestSetupSSEStreamNoSinkForKnowledgeQAEvenWithAgentModeAgent(t *testing.T) 
 
 	streamCtx := h.setupSSEStream(reqCtx, false, qaModeNormal)
 	require.NotNil(t, streamCtx)
+	t.Cleanup(streamCtx.cancel)
 	assert.Nil(t, streamCtx.steerSink)
 	liveID, _, err := streams.GetLiveRun(t.Context(), "sess-4")
 	require.NoError(t, err)

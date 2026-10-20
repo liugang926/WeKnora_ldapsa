@@ -98,7 +98,7 @@ func TestPollSteerSkipsAfterDeliveryAndAdvancesOffset(t *testing.T) {
 		steerEvent("c", "inject-c", nil, "web"),
 	}))
 
-	sink := newSteerSink(ctx, "sess", "req", &types.Message{ID: "assist"}, nil, mgr)
+	sink := newSteerSink(ctx, "sess", "req", &types.Message{ID: "assist"}, &steerMessageLookupStub{}, mgr)
 	events, next, err := sink.PollSteer(ctx, "sess", "assist", 0)
 	require.NoError(t, err)
 	require.Len(t, events, 2)
@@ -120,7 +120,7 @@ func TestPollSteerPicksUpAfterPromotedToInject(t *testing.T) {
 		steerEventWithDelivery("b", "wait-then-nudge", steerDeliveryAfter),
 	}))
 
-	sink := newSteerSink(ctx, "sess", "req", &types.Message{ID: "assist"}, nil, mgr)
+	sink := newSteerSink(ctx, "sess", "req", &types.Message{ID: "assist"}, &steerMessageLookupStub{}, mgr)
 	events, _, err := sink.PollSteer(ctx, "sess", "assist", 0)
 	require.NoError(t, err)
 	assert.Empty(t, events)
@@ -186,7 +186,7 @@ func TestPollSteerMarksConsumedDurably(t *testing.T) {
 
 	// A fresh sink stands in for another replica: it must not replay the
 	// message the first one already handed to the model.
-	other := newSteerSink(ctx, "sess", "req", &types.Message{ID: "assist"}, nil, mgr)
+	other := newSteerSink(ctx, "sess", "req", &types.Message{ID: "assist"}, &steerMessageLookupStub{}, mgr)
 	replayed, _, err := other.PollSteer(ctx, "sess", "assist", 0)
 	require.NoError(t, err)
 	assert.Empty(t, replayed)

@@ -53,7 +53,6 @@ type NextcloudEventDispatcher struct {
 	done        chan struct{}
 }
 
-// NewNextcloudEventDispatcher returns the durable source-event dispatcher.
 func NewNextcloudEventDispatcher(
 	inbox *repository.NextcloudEventInboxRepository,
 	dataSources interfaces.DataSourceRepository,
@@ -63,7 +62,6 @@ func NewNextcloudEventDispatcher(
 	return &NextcloudEventDispatcher{inbox: inbox, dataSources: dataSources, syncLogs: syncLogs, enqueuer: enqueuer}
 }
 
-// Start starts the source-event dispatch loop.
 func (d *NextcloudEventDispatcher) Start() {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -90,7 +88,6 @@ func (d *NextcloudEventDispatcher) Start() {
 	}()
 }
 
-// Stop stops the source-event dispatch loop.
 func (d *NextcloudEventDispatcher) Stop() {
 	d.mu.Lock()
 	cancel, done := d.cancel, d.done

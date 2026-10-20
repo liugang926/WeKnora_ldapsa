@@ -35,7 +35,8 @@ func (e *AgentEngine) streamFinalAnswerToEventBus(
 	// into user instructions during error recovery or iteration-limit synthesis.
 	messages := append([]chat.Message(nil), conversation...)
 	messages = append(messages, chat.Message{
-		Role: "user",
+		SourceLineage: independentAgentInput(),
+		Role:          "user",
 		Content: "Tool execution has ended for this run. Respond to the current task, including " +
 			"the latest user corrections and source restrictions in the conversation. Base claims on " +
 			"the evidence actually obtained; distinguish completed work from remaining work and explain " +
@@ -65,7 +66,7 @@ func (e *AgentEngine) streamFinalAnswerToEventBus(
 			}
 			if chunk.Content != "" {
 				logger.Debugf(ctx, "[Agent][FinalAnswer] Emitting answer chunk: %d chars", len(chunk.Content))
-				e.eventBus.Emit(ctx, event.Event{
+				if err := e.emitEvent(ctx, event.Event{
 					ID:        answerID,
 					Type:      event.EventAgentFinalAnswer,
 					SessionID: sessionID,
@@ -73,13 +74,18 @@ func (e *AgentEngine) streamFinalAnswerToEventBus(
 						Content: chunk.Content,
 						Done:    chunk.Done,
 					},
-				})
+				}); err != nil {
+					return
+				}
 				if chunk.Done {
 					answerDoneEmitted = true
 				}
 			}
 		},
 	)
+	if boundaryErr := e.lineageFailure(); boundaryErr != nil {
+		return boundaryErr
+	}
 	if err != nil {
 		logger.Errorf(ctx, "[Agent][FinalAnswer] Final answer generation failed: %v", err)
 		common.PipelineError(ctx, "Agent", "final_answer_stream_failed", map[string]interface{}{
@@ -90,7 +96,7 @@ func (e *AgentEngine) streamFinalAnswerToEventBus(
 	}
 
 	if !answerDoneEmitted {
-		e.eventBus.Emit(ctx, event.Event{
+		if err := e.emitEvent(ctx, event.Event{
 			ID:        answerID,
 			Type:      event.EventAgentFinalAnswer,
 			SessionID: sessionID,
@@ -98,7 +104,9 @@ func (e *AgentEngine) streamFinalAnswerToEventBus(
 				Content: "",
 				Done:    true,
 			},
-		})
+		}); err != nil {
+			return err
+		}
 	}
 
 	// The synthesis call is often the largest of the turn — fold its usage
@@ -158,7 +166,7 @@ func (e *AgentEngine) emitCompletionEvent(
 		knowledgeRefsInterface = append(knowledgeRefsInterface, ref)
 	}
 
-	e.eventBus.Emit(ctx, event.Event{
+	if err := e.emitEvent(ctx, event.Event{
 		ID:        generateEventID("complete"),
 		Type:      event.EventAgentComplete,
 		SessionID: sessionID,
@@ -171,7 +179,9 @@ func (e *AgentEngine) emitCompletionEvent(
 			TotalDurationMs: time.Since(startTime).Milliseconds(),
 			MessageID:       messageID, // Include message ID for proper message update
 		},
-	})
+	}); err != nil {
+		return
+	}
 
 	logger.Infof(ctx, "Agent execution completed in %d rounds", state.CurrentRound)
 }

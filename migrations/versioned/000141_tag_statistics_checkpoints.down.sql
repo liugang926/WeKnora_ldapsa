@@ -1,0 +1,11 @@
+DROP TRIGGER IF EXISTS tag_statistics_knowledge_bases ON knowledge_bases;
+DROP FUNCTION IF EXISTS tag_statistics_knowledge_bases();
+DROP TRIGGER IF EXISTS tag_statistics_knowledge_tags ON knowledge_tags;
+DROP FUNCTION IF EXISTS tag_statistics_knowledge_tags();
+DROP TRIGGER IF EXISTS tag_statistics_knowledges ON knowledges;
+DROP FUNCTION IF EXISTS tag_statistics_knowledges();
+DROP TRIGGER IF EXISTS tag_statistics_chunks ON chunks;
+DROP FUNCTION IF EXISTS tag_statistics_chunks();
+DROP TRIGGER IF EXISTS tag_statistics_relations ON knowledge_tag_relations;
+DROP FUNCTION IF EXISTS tag_statistics_relations();
+DROP TABLE IF EXISTS knowledge_tag_statistics_scope_versions;

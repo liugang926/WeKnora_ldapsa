@@ -11,15 +11,23 @@ import (
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 )
 
-// ErrNextcloudDerivedContent reports operations that cannot preserve source-content authorization.
+// ErrNextcloudDerivedContent rejects copied or synthesized Nextcloud source content.
 // A copied or synthesized document has no source authorization link that can
 // reliably revoke it. These operations remain unavailable for Nextcloud data.
 var ErrNextcloudDerivedContent = werrors.NewProtocolError(
-	errors.New(
-		("nextcloud source content cannot be copied, shared, or s" +
-			"ynthesized")), "Nextcloud source content cannot be copied, shared, or synthesized")
+	errors.New("nextcloud source content cannot be copied, shared, or synthesized"),
+	"Nextcloud source content cannot be copied, shared, or synthesized",
+)
 
-// ErrNextcloudSourceManagedMutation reports a mutation requiring a new source connector candidate.
+// Keep the existing public context at this exact layer while preserving the
+// lower-case Go diagnostic and the derived-content sentinel's identity.
+func nextcloudDerivedContentContext(message string) error {
+	return werrors.NewProtocolError(
+		fmt.Errorf("%w: %s", ErrNextcloudDerivedContent, message),
+		fmt.Sprintf("%s: %s", werrors.PublicMessage(ErrNextcloudDerivedContent), message),
+	)
+}
+
 var ErrNextcloudSourceManagedMutation = werrors.NewConflictError(
 	"Nextcloud source-managed files must be rebuilt through a new connector candidate",
 )
@@ -47,10 +55,7 @@ func isNextcloudKnowledge(k *types.Knowledge) (bool, error) {
 	}
 	var metadata map[string]json.RawMessage
 	if err := json.Unmarshal(k.Metadata, &metadata); err != nil || metadata == nil {
-		return false, werrors.NewProtocolError(
-			fmt.Errorf("%w: malformed knowledge metadata", ErrNextcloudDerivedContent),
-			fmt.Sprintf("%s: malformed knowledge metadata", werrors.PublicMessage(ErrNextcloudDerivedContent)),
-		)
+		return false, nextcloudDerivedContentContext("malformed knowledge metadata")
 	}
 	for _, key := range []string{"nextcloud_instance_id", "nextcloud_binding_id", "nextcloud_file_id"} {
 		if _, marked := metadata[key]; marked {
@@ -84,10 +89,7 @@ func RejectNextcloudDerivedKB(
 	dataSourceRepo interfaces.DataSourceRepository,
 ) error {
 	if kb == nil || kb.ID == "" || kb.TenantID == 0 || knowledgeRepo == nil || dataSourceRepo == nil {
-		return werrors.NewProtocolError(
-			fmt.Errorf("%w: source scope unavailable", ErrNextcloudDerivedContent),
-			fmt.Sprintf("%s: source scope unavailable", werrors.PublicMessage(ErrNextcloudDerivedContent)),
-		)
+		return nextcloudDerivedContentContext("source scope unavailable")
 	}
 	if kb.EverHadNextcloudSource {
 		return ErrNextcloudDerivedContent
@@ -98,10 +100,7 @@ func RejectNextcloudDerivedKB(
 	}
 	for _, source := range sources {
 		if source == nil || source.KnowledgeBaseID != kb.ID || source.TenantID != kb.TenantID {
-			return werrors.NewProtocolError(
-				fmt.Errorf("%w: source scope mismatch", ErrNextcloudDerivedContent),
-				fmt.Sprintf("%s: source scope mismatch", werrors.PublicMessage(ErrNextcloudDerivedContent)),
-			)
+			return nextcloudDerivedContentContext("source scope mismatch")
 		}
 		if source.Type == types.ConnectorTypeNextcloud {
 			return ErrNextcloudDerivedContent
@@ -113,10 +112,7 @@ func RejectNextcloudDerivedKB(
 	}
 	for _, item := range knowledge {
 		if item == nil || item.TenantID != kb.TenantID || item.KnowledgeBaseID != kb.ID {
-			return werrors.NewProtocolError(
-				fmt.Errorf("%w: document scope mismatch", ErrNextcloudDerivedContent),
-				fmt.Sprintf("%s: document scope mismatch", werrors.PublicMessage(ErrNextcloudDerivedContent)),
-			)
+			return nextcloudDerivedContentContext("document scope mismatch")
 		}
 	}
 	return rejectNextcloudKnowledgeRows(knowledge)

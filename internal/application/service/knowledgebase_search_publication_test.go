@@ -12,10 +12,15 @@ import (
 func TestSearchPublicationRevokedAfterInitialLookupOmitsHydratedSource(t *testing.T) {
 	knowledgeService, db := newKnowledgeSharedAccessService(t, nil)
 	source := &types.Knowledge{
-		ID: "source-doc", TenantID: 1, KnowledgeBaseID: "kb-1", Type: "file",
-		Channel: types.ConnectorTypeNextcloud, Title: "source title",
-		Metadata: types.JSON(("{\"datasource_id\":\"source-1\",\"nextcloud_instance_id\":\"in" +
-			"stance-1\",\"external_id\":\"nextcloud:instance-1:42\"}")),
+		ID:              "source-doc",
+		TenantID:        1,
+		KnowledgeBaseID: "kb-1",
+		Type:            "file",
+		Channel:         types.ConnectorTypeNextcloud,
+		Title:           "source title",
+		Metadata: types.JSON(
+			`{"datasource_id":"source-1","nextcloud_instance_id":"instance-1","external_id":"nextcloud:instance-1:42"}`,
+		),
 	}
 	ordinary := &types.Knowledge{
 		ID: "ordinary-doc", TenantID: 1,
@@ -82,9 +87,10 @@ func TestSearchPublicationVersionChangeAfterHydrationOmitsOldResult(t *testing.T
 	}
 	require.NoError(t, db.Model(&types.Knowledge{}).Where("id = ?", source.ID).
 		Update("metadata", types.JSON(`{"datasource_id":"source-1","nextcloud_etag":"new"}`)).Error)
-	filtered, err := svc.filterSearchResultsAtPublicationBoundary(newSharedAccessContext(), []*types.SearchResult{
-		result,
-	})
+	filtered, err := svc.filterSearchResultsAtPublicationBoundary(
+		newSharedAccessContext(),
+		[]*types.SearchResult{result},
+	)
 	require.NoError(t, err)
 	require.Empty(t, filtered)
 }

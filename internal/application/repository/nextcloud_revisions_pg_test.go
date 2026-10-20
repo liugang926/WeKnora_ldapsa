@@ -27,10 +27,7 @@ func TestPostgresNextcloudSourceRevisionUpgradeAndIndexedFence(t *testing.T) {
 	schema := "source_revisions_" + strings.ReplaceAll(uuid.NewString()[:8], "-", "")
 	_, err = admin.Exec(`CREATE SCHEMA "` + schema + `"`)
 	require.NoError(t, err)
-	defer func() {
-		_, cleanupErr := admin.Exec(`DROP SCHEMA "` + schema + `" CASCADE`)
-		require.NoError(t, cleanupErr)
-	}()
+	defer func() { _, err := admin.Exec(`DROP SCHEMA "` + schema + `" CASCADE`); require.NoError(t, err) }()
 	u, err := url.Parse(dsn)
 	require.NoError(t, err)
 	q := u.Query()

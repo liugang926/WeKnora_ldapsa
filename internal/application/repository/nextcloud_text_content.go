@@ -30,12 +30,12 @@ func NextcloudTextChunkRequired(fileType string) bool {
 func nextcloudHasRetrievableTextChunk(tx *gorm.DB, candidate *types.Knowledge) (bool, error) {
 	var chunk struct{ ID string }
 	result := tx.Table("chunks").Select("id").Where(
-		("tenant_id = ? AND knowledge_base_id = ? AND knowledge_i" +
-			"d = ? AND deleted_at IS NULL AND chunk_type = ? AND is_" +
-			"enabled = ? AND index_status = ? AND TRIM(content) <> '" +
-			"'"),
+		("tenant_id = ? AND knowledge_base_id = ? AND knowledge_id = ? AND deleted_a" +
+			"t IS NULL AND chunk_type = ? AND is_enabled = ? AND index_status = ? AND T" +
+			"RIM(content) <> ''"),
 		candidate.TenantID, candidate.KnowledgeBaseID, candidate.ID,
 		types.ChunkTypeText, true, "ready",
-	).Limit(1).Find(&chunk)
+	).
+		Limit(1).Find(&chunk)
 	return result.RowsAffected == 1, result.Error
 }

@@ -27,28 +27,43 @@ func (r *wikiEnqueueFailureKnowledgeRepo) GetKnowledgeByIDOnly(
 }
 
 func (r *wikiEnqueueFailureKnowledgeRepo) SetFinalizing(
-	_ context.Context,
-	_ string,
+	ctx context.Context,
+	id string,
 	expectedSubtasks int,
 ) (bool, error) {
+	if r.KnowledgeRepository != nil {
+		promoted, err := r.KnowledgeRepository.SetFinalizing(ctx, id, expectedSubtasks)
+		if err != nil || !promoted {
+			return promoted, err
+		}
+	}
 	r.expectedSubtasks = expectedSubtasks
 	r.knowledge.ParseStatus = types.ParseStatusFinalizing
 	return true, nil
 }
 
-func (r *wikiEnqueueFailureKnowledgeRepo) FinalizeSubtask(
-	context.Context,
-	string,
-) (int, bool, error) {
+func (r *wikiEnqueueFailureKnowledgeRepo) FinalizeSubtask(ctx context.Context, id string) (int, bool, error) {
+	if r.KnowledgeRepository != nil {
+		remaining, completed, err := r.KnowledgeRepository.FinalizeSubtask(ctx, id)
+		if err == nil && completed {
+			r.knowledge.ParseStatus = types.ParseStatusCompleted
+		}
+		return remaining, completed, err
+	}
 	return 0, false, nil
 }
 
 func (r *wikiEnqueueFailureKnowledgeRepo) UpdateKnowledgeColumn(
-	context.Context,
-	string,
-	string,
-	interface{},
+	ctx context.Context, id, column string, value interface{},
 ) error {
+	if r.KnowledgeRepository != nil {
+		if err := r.KnowledgeRepository.UpdateKnowledgeColumn(ctx, id, column, value); err != nil {
+			return err
+		}
+	}
+	if column == "summary_status" {
+		r.knowledge.SummaryStatus = value.(string)
+	}
 	return nil
 }
 
@@ -79,6 +94,7 @@ func (s *wikiEnqueueFailureChunkService) ListChunksByKnowledgeID(
 type wikiEnqueueFailureTaskQueue struct {
 	interfaces.TaskEnqueuer
 	taskTypes       []string
+	tasks           []*asynq.Task
 	extractChunkIDs []string
 	wikiErr         error
 }
@@ -88,6 +104,7 @@ func (q *wikiEnqueueFailureTaskQueue) Enqueue(
 	_ ...asynq.Option,
 ) (*asynq.TaskInfo, error) {
 	q.taskTypes = append(q.taskTypes, task.Type())
+	q.tasks = append(q.tasks, task)
 	if task.Type() == types.TypeWikiIngest {
 		return nil, q.wikiErr
 	}
@@ -109,14 +126,24 @@ type wikiEnqueueFailurePendingRepo struct {
 }
 
 func (r *wikiEnqueueFailurePendingRepo) SeedKnowledgeFinalizingWithPendingOp(
-	_ context.Context,
-	_ string,
+	ctx context.Context,
+	knowledgeID string,
 	expectedSubtasks int,
 	op *types.TaskPendingOp,
 ) (bool, error) {
 	r.seedCalls++
 	if r.seedErr != nil {
 		return false, r.seedErr
+	}
+	if r.TaskPendingOpsRepository != nil {
+		seeder, ok := r.TaskPendingOpsRepository.(interfaces.TaskPendingOpsFinalizingSeeder)
+		if !ok {
+			return false, errors.New("actual pending repository lacks atomic seeder")
+		}
+		promoted, err := seeder.SeedKnowledgeFinalizingWithPendingOp(ctx, knowledgeID, expectedSubtasks, op)
+		if err != nil || !promoted {
+			return promoted, err
+		}
 	}
 	r.seededOp = op
 	r.knowledgeRepo.expectedSubtasks = expectedSubtasks
@@ -149,10 +176,11 @@ func (r *wikiEnqueueFailureChunkRepo) ListChunksByKnowledgeIDAndTypes(
 }
 
 func newWikiEnqueueTestService(
+	t *testing.T,
 	knowledgeID string,
 	pendingRepo *wikiEnqueueFailurePendingRepo,
 	queue *wikiEnqueueFailureTaskQueue,
-) (*KnowledgePostProcessService, *wikiEnqueueFailureKnowledgeRepo) {
+) (*KnowledgePostProcessService, *wikiEnqueueFailureKnowledgeRepo, *enrichmentTestFixture) {
 	repo := &wikiEnqueueFailureKnowledgeRepo{
 		knowledge: &types.Knowledge{
 			ID:              knowledgeID,
@@ -162,7 +190,7 @@ func newWikiEnqueueTestService(
 		},
 	}
 	pendingRepo.knowledgeRepo = repo
-	return &KnowledgePostProcessService{
+	svc := &KnowledgePostProcessService{
 		knowledgeRepo: repo,
 		kbService: &wikiEnqueueFailureKBService{kb: &types.KnowledgeBase{
 			ID:       "kb-wiki",
@@ -192,18 +220,10 @@ func newWikiEnqueueTestService(
 		}},
 		taskEnqueuer: queue,
 		pendingRepo:  pendingRepo,
-	}, repo
-}
-
-func newWikiEnqueuePostProcessTask(t *testing.T, knowledgeID string) *asynq.Task {
-	t.Helper()
-	payload, err := json.Marshal(types.KnowledgePostProcessPayload{
-		TenantID:        7,
-		KnowledgeID:     knowledgeID,
-		KnowledgeBaseID: "kb-wiki",
-	})
-	require.NoError(t, err)
-	return asynq.NewTask(types.TypeKnowledgePostProcess, payload)
+	}
+	f := attachPostProcessOriginalInputs(t, svc, repo, svc.kbService.(*wikiEnqueueFailureKBService).kb,
+		svc.chunkRepo.(*wikiEnqueueFailureChunkRepo).chunks)
+	return svc, repo, f
 }
 
 func TestKnowledgePostProcessAtomicallySeedsWikiSlot(t *testing.T) {
@@ -232,9 +252,9 @@ func TestKnowledgePostProcessAtomicallySeedsWikiSlot(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			pendingRepo := &wikiEnqueueFailurePendingRepo{seedErr: test.pendingErr}
 			queue := &wikiEnqueueFailureTaskQueue{}
-			service, repo := newWikiEnqueueTestService(knowledgeID, pendingRepo, queue)
+			service, repo, f := newWikiEnqueueTestService(t, knowledgeID, pendingRepo, queue)
 
-			err := service.Handle(context.Background(), newWikiEnqueuePostProcessTask(t, knowledgeID))
+			err := service.Handle(f.build, postProcessOriginalTask(t, f))
 
 			if test.wantErr {
 				require.ErrorIs(t, err, test.pendingErr)
@@ -247,6 +267,7 @@ func TestKnowledgePostProcessAtomicallySeedsWikiSlot(t *testing.T) {
 			assert.Equal(t, test.wantStatus, repo.knowledge.ParseStatus)
 			assert.Equal(t, test.wantTasks, queue.taskTypes)
 			assert.Equal(t, 1, pendingRepo.seedCalls)
+			assertPostProcessQueuedOriginals(t, f, queue)
 		})
 	}
 }
@@ -256,10 +277,10 @@ func TestKnowledgePostProcessRetriesWikiTriggerWithoutDoubleAccounting(t *testin
 	wikiErr := errors.New("redis unavailable")
 	pendingRepo := &wikiEnqueueFailurePendingRepo{}
 	queue := &wikiEnqueueFailureTaskQueue{wikiErr: wikiErr}
-	service, repo := newWikiEnqueueTestService(knowledgeID, pendingRepo, queue)
-	task := newWikiEnqueuePostProcessTask(t, knowledgeID)
+	service, repo, f := newWikiEnqueueTestService(t, knowledgeID, pendingRepo, queue)
+	task := postProcessOriginalTask(t, f)
 
-	err := service.Handle(context.Background(), task)
+	err := service.Handle(f.build, task)
 
 	require.ErrorIs(t, err, wikiErr)
 	assert.Equal(t, 2, repo.expectedSubtasks, "summary and wiki each seed one slot")
@@ -267,7 +288,7 @@ func TestKnowledgePostProcessRetriesWikiTriggerWithoutDoubleAccounting(t *testin
 	assert.Equal(t, []string{types.TypeSummaryGeneration, types.TypeWikiIngest}, queue.taskTypes)
 
 	queue.wikiErr = nil
-	err = service.Handle(context.Background(), task)
+	err = service.Handle(f.build, task)
 
 	require.NoError(t, err)
 	assert.Equal(t, 1, pendingRepo.seedCalls, "retry must not append another pending op")
@@ -275,14 +296,16 @@ func TestKnowledgePostProcessRetriesWikiTriggerWithoutDoubleAccounting(t *testin
 		[]string{types.TypeSummaryGeneration, types.TypeWikiIngest, types.TypeWikiIngest},
 		queue.taskTypes,
 	)
+	assertPostProcessQueuedOriginals(t, f, queue)
 }
 
 func TestPostProcessRejectsMovedKnowledgeBeforeWikiOrSpanWrites(t *testing.T) {
 	pending := &wikiEnqueueFailurePendingRepo{}
 	queue := &wikiEnqueueFailureTaskQueue{}
-	svc, repo := newWikiEnqueueTestService("moved-doc", pending, queue)
+	svc, repo, f := newWikiEnqueueTestService(t, "moved-doc", pending, queue)
+	task := postProcessOriginalTask(t, f)
 	repo.knowledge.KnowledgeBaseID = "other-kb"
-	require.ErrorIs(t, svc.Handle(context.Background(), newWikiEnqueuePostProcessTask(t, "moved-doc")), asynq.SkipRetry)
+	require.ErrorIs(t, svc.Handle(f.build, task), asynq.SkipRetry)
 	require.Zero(t, repo.expectedSubtasks)
 	require.Equal(t, types.ParseStatusProcessing, repo.knowledge.ParseStatus)
 }

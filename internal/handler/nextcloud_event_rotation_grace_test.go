@@ -71,8 +71,11 @@ func TestNextcloudEventRotationGraceStatusAndFileStatus(t *testing.T) {
 	require.Equal(t, http.StatusUnauthorized, read(statusRequest("current", oldSecret, priorNonce)).Code,
 		"rotation must retain the shared replay nonce table")
 	require.Equal(t, http.StatusOK, read(statusRequest("current", oldSecret, strings.Repeat("b", 32))).Code)
-	require.Equal(t, http.StatusOK, read(statusRequest(replacement.KeyID, replacement.Secret,
-		strings.Repeat("c", 32))).Code)
+	require.Equal(
+		t,
+		http.StatusOK,
+		read(statusRequest(replacement.KeyID, replacement.Secret, strings.Repeat("c", 32))).Code,
+	)
 	oldFileNonce := strings.Repeat("d", 32)
 	oldFileRequest := fileRequest("current", oldSecret, oldFileNonce)
 	oldFileResponse := read(oldFileRequest)
@@ -84,23 +87,38 @@ func TestNextcloudEventRotationGraceStatusAndFileStatus(t *testing.T) {
 	mac := hmac.New(sha256.New, []byte(oldSecret))
 	_, _ = mac.Write([]byte(responseCanonical))
 	require.Equal(t, hex.EncodeToString(mac.Sum(nil)), oldFileResponse.Header().Get("X-WeKnora-Status-Signature"))
-	require.Equal(t, http.StatusOK, read(fileRequest(replacement.KeyID, replacement.Secret, strings.Repeat("e",
-		32))).Code)
+	require.Equal(
+		t,
+		http.StatusOK,
+		read(fileRequest(replacement.KeyID, replacement.Secret, strings.Repeat("e", 32))).Code,
+	)
 
 	require.NoError(t, db.Exec(`UPDATE nextcloud_event_connections
 		SET previous_valid_until = ? WHERE connection_id = ?`,
 		time.Now().UTC().Add(-time.Second), testEventConnection).Error)
 	require.Equal(t, http.StatusUnauthorized, read(statusRequest("current", oldSecret, strings.Repeat("f", 32))).Code)
 	require.Equal(t, http.StatusUnauthorized, read(fileRequest("current", oldSecret, strings.Repeat("1", 32))).Code)
-	require.Equal(t, http.StatusOK, read(statusRequest(replacement.KeyID, replacement.Secret,
-		strings.Repeat("2", 32))).Code)
-	require.Equal(t, http.StatusOK, read(fileRequest(replacement.KeyID, replacement.Secret, strings.Repeat("3",
-		32))).Code)
+	require.Equal(
+		t,
+		http.StatusOK,
+		read(statusRequest(replacement.KeyID, replacement.Secret, strings.Repeat("2", 32))).Code,
+	)
+	require.Equal(
+		t,
+		http.StatusOK,
+		read(fileRequest(replacement.KeyID, replacement.Secret, strings.Repeat("3", 32))).Code,
+	)
 	require.NoError(t, repo.Revoke(context.Background(), 7, "ds-synthetic"))
-	require.Equal(t, http.StatusUnauthorized, read(statusRequest(replacement.KeyID, replacement.Secret,
-		strings.Repeat("4", 32))).Code)
-	require.Equal(t, http.StatusUnauthorized, read(fileRequest(replacement.KeyID, replacement.Secret,
-		strings.Repeat("5", 32))).Code)
+	require.Equal(
+		t,
+		http.StatusUnauthorized,
+		read(statusRequest(replacement.KeyID, replacement.Secret, strings.Repeat("4", 32))).Code,
+	)
+	require.Equal(
+		t,
+		http.StatusUnauthorized,
+		read(fileRequest(replacement.KeyID, replacement.Secret, strings.Repeat("5", 32))).Code,
+	)
 	var previousCount int64
 	require.NoError(t, db.Raw(`SELECT COUNT(*) FROM nextcloud_event_connections
 		WHERE connection_id = ? AND previous_key_id IS NOT NULL`, testEventConnection).

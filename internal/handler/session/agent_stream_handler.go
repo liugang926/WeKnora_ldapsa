@@ -10,6 +10,7 @@ import (
 
 	"github.com/Tencent/WeKnora/internal/agent/skills"
 	agenttools "github.com/Tencent/WeKnora/internal/agent/tools"
+	"github.com/Tencent/WeKnora/internal/application/access"
 	"github.com/Tencent/WeKnora/internal/application/service"
 	"github.com/Tencent/WeKnora/internal/event"
 	"github.com/Tencent/WeKnora/internal/logger"
@@ -42,6 +43,7 @@ type AgentStreamHandler struct {
 	ttfbLogged         bool      // Guards one-shot TTFB log on first answer chunk
 	assistantMessage   *types.Message
 	streamManager      interfaces.StreamManager
+	prefixLineage      *types.SourceLineage
 	completionEvent    *interfaces.StreamEvent // Published only after the final message is persisted.
 
 	eventBus *event.EventBus
@@ -138,23 +140,58 @@ func NewAgentStreamHandler(
 // No SessionID filtering needed since we have a dedicated EventBus per request
 func (h *AgentStreamHandler) Subscribe() {
 	// Subscribe to all agent streaming events on the dedicated EventBus
-	h.eventBus.On(event.EventAgentThought, h.handleThought)
-	h.eventBus.On(event.EventAgentToolCall, h.handleToolCall)
-	h.eventBus.On(event.EventAgentToolResult, h.handleToolResult)
-	h.eventBus.On(event.EventAgentCommandOutput, h.handleCommandOutput)
-	h.eventBus.On(event.EventAgentReferences, h.handleReferences)
-	h.eventBus.On(event.EventMemoryRecalled, h.handleMemoryRecalled)
-	h.eventBus.On(event.EventContextCompacted, h.handleContextCompacted)
-	h.eventBus.On(event.EventUserMessageInjected, h.handleUserMessageInjected)
-	h.eventBus.On(event.EventAgentFinalAnswer, h.handleFinalAnswer)
-	h.eventBus.On(event.EventAgentReflection, h.handleReflection)
+	h.subscribeWithLineage(event.EventAgentThought, h.handleThought)
+	h.subscribeWithLineage(event.EventAgentToolCall, h.handleToolCall)
+	h.subscribeWithLineage(event.EventAgentToolResult, h.handleToolResult)
+	h.subscribeWithLineage(event.EventAgentCommandOutput, h.handleCommandOutput)
+	h.subscribeWithLineage(event.EventAgentReferences, h.handleReferences)
+	h.subscribeWithLineage(event.EventMemoryRecalled, h.handleMemoryRecalled)
+	h.subscribeWithLineage(event.EventContextCompacted, h.handleContextCompacted)
+	h.subscribeWithLineage(event.EventUserMessageInjected, h.handleUserMessageInjected)
+	h.subscribeWithLineage(event.EventAgentFinalAnswer, h.handleFinalAnswer)
+	h.subscribeWithLineage(event.EventAgentReflection, h.handleReflection)
+	// Failure carries no admitted generated body. Its handler replaces all
+	// diagnostics with a fixed code-origin terminal before transport storage;
+	// a missing/poisoned source prefix must not suppress that close signal.
 	h.eventBus.On(event.EventError, h.handleError)
-	h.eventBus.On(event.EventSessionTitle, h.handleSessionTitle)
-	h.eventBus.On(event.EventAgentComplete, h.handleComplete)
-	h.eventBus.On(event.EventToolApprovalRequired, h.handleToolApprovalRequired)
-	h.eventBus.On(event.EventToolApprovalResolved, h.handleToolApprovalResolved)
-	h.eventBus.On(event.EventMCPOAuthRequired, h.handleMCPOAuthRequired)
-	h.eventBus.On(event.EventMCPOAuthResolved, h.handleMCPOAuthResolved)
+	h.subscribeWithLineage(event.EventSessionTitle, h.handleSessionTitle)
+	h.subscribeWithLineage(event.EventAgentComplete, h.handleComplete)
+	h.subscribeWithLineage(event.EventToolApprovalRequired, h.handleToolApprovalRequired)
+	h.subscribeWithLineage(event.EventToolApprovalResolved, h.handleToolApprovalResolved)
+	h.subscribeWithLineage(event.EventMCPOAuthRequired, h.handleMCPOAuthRequired)
+	h.subscribeWithLineage(event.EventMCPOAuthResolved, h.handleMCPOAuthResolved)
+}
+
+func (h *AgentStreamHandler) subscribeWithLineage(kind event.EventType, handler event.EventHandler) {
+	h.eventBus.On(kind, func(ctx context.Context, evt event.Event) error {
+		lineage := eventSourceLineage(ctx, evt)
+		h.mu.Lock()
+		// The quick-answer close notification carries no new generated body.
+		// It seals the already-accounted prefix; a new FinalAnswer never gets
+		// this exception and must carry its own producer receipt.
+		if evt.SourceLineage == nil && kind == event.EventAgentComplete {
+			if data, ok := evt.Data.(event.AgentCompleteData); ok &&
+				data.MessageID == h.assistantMessageID && data.FinalAnswer == "" &&
+				len(data.KnowledgeRefs) == 0 && data.AgentSteps == nil && data.Usage == nil && len(data.Extra) == 0 &&
+				data.TotalSteps == 0 && data.TotalDurationMs == 0 &&
+				(data.SessionID == "" ||
+					data.SessionID == h.sessionID) && (data.RequestID == "" || data.RequestID == h.requestID) {
+				lineage = h.prefixLineage
+			}
+		}
+		if h.prefixLineage == nil {
+			h.prefixLineage, _ = types.UnionSourceLineage(lineage)
+		} else {
+			h.prefixLineage, _ = types.UnionSourceLineage(h.prefixLineage, lineage)
+		}
+		evt.SourceLineage, _ = types.UnionSourceLineage(h.prefixLineage)
+		complete := h.prefixLineage.RequireComplete() == nil
+		h.mu.Unlock()
+		if !complete {
+			return access.ErrNextcloudPublicationDenied
+		}
+		return handler(ctx, evt)
+	})
 }
 
 // handleThought handles agent thought events
@@ -192,14 +229,16 @@ func (h *AgentStreamHandler) handleThought(ctx context.Context, evt event.Event)
 
 	// Append this chunk to stream (no accumulation - frontend will accumulate)
 	if err := h.streamManager.AppendEvent(h.ctx, h.sessionID, h.assistantMessageID, interfaces.StreamEvent{
-		ID:        evt.ID,
-		Type:      types.ResponseTypeThinking,
-		Content:   data.Content, // Just this chunk
-		Done:      data.Done,
-		Timestamp: time.Now(),
-		Data:      metadata,
+		SourceLineage: eventSourceLineage(ctx, evt),
+		ID:            evt.ID,
+		Type:          types.ResponseTypeThinking,
+		Content:       data.Content, // Just this chunk
+		Done:          data.Done,
+		Timestamp:     time.Now(),
+		Data:          metadata,
 	}); err != nil {
 		logger.GetLogger(h.ctx).Error("Append thought event to stream failed", "error", err)
+		return err
 	}
 
 	return nil
@@ -241,12 +280,13 @@ func (h *AgentStreamHandler) handleToolCall(ctx context.Context, evt event.Event
 
 	// Append event to stream
 	if err := h.streamManager.AppendEvent(h.ctx, h.sessionID, h.assistantMessageID, interfaces.StreamEvent{
-		ID:        evt.ID,
-		Type:      types.ResponseTypeToolCall,
-		Content:   fmt.Sprintf("Calling tool: %s", data.ToolName),
-		Done:      false,
-		Timestamp: time.Now(),
-		Data:      metadata,
+		SourceLineage: eventSourceLineage(ctx, evt),
+		ID:            evt.ID,
+		Type:          types.ResponseTypeToolCall,
+		Content:       fmt.Sprintf("Calling tool: %s", data.ToolName),
+		Done:          false,
+		Timestamp:     time.Now(),
+		Data:          metadata,
 	}); err != nil {
 		logger.GetLogger(h.ctx).Error("Append tool call event to stream failed", "error", err)
 	}
@@ -304,12 +344,13 @@ func (h *AgentStreamHandler) handleToolResult(ctx context.Context, evt event.Eve
 
 	// Append event to stream
 	if err := h.streamManager.AppendEvent(h.ctx, h.sessionID, h.assistantMessageID, interfaces.StreamEvent{
-		ID:        evt.ID,
-		Type:      responseType,
-		Content:   content,
-		Done:      false,
-		Timestamp: time.Now(),
-		Data:      metadata,
+		SourceLineage: eventSourceLineage(ctx, evt),
+		ID:            evt.ID,
+		Type:          responseType,
+		Content:       content,
+		Done:          false,
+		Timestamp:     time.Now(),
+		Data:          metadata,
 	}); err != nil {
 		logger.GetLogger(h.ctx).Error("Append tool result event to stream failed", "error", err)
 	}
@@ -338,12 +379,13 @@ func (h *AgentStreamHandler) handleToolApprovalRequired(ctx context.Context, evt
 	meta := toolApprovalDataToMap(data)
 	meta["pending_id"] = data.PendingID
 	if err := h.streamManager.AppendEvent(h.ctx, h.sessionID, h.assistantMessageID, interfaces.StreamEvent{
-		ID:        evt.ID,
-		Type:      types.ResponseTypeToolApprovalRequired,
-		Content:   "MCP tool requires human approval",
-		Done:      true,
-		Timestamp: time.Now(),
-		Data:      meta,
+		SourceLineage: eventSourceLineage(ctx, evt),
+		ID:            evt.ID,
+		Type:          types.ResponseTypeToolApprovalRequired,
+		Content:       "MCP tool requires human approval",
+		Done:          true,
+		Timestamp:     time.Now(),
+		Data:          meta,
 	}); err != nil {
 		logger.GetLogger(h.ctx).Error("Append tool approval required event failed", "error", err)
 	}
@@ -359,12 +401,13 @@ func (h *AgentStreamHandler) handleToolApprovalResolved(ctx context.Context, evt
 	meta := toolApprovalDataToMap(data)
 	meta["pending_id"] = data.PendingID
 	if err := h.streamManager.AppendEvent(h.ctx, h.sessionID, h.assistantMessageID, interfaces.StreamEvent{
-		ID:        evt.ID,
-		Type:      types.ResponseTypeToolApprovalResolved,
-		Content:   "MCP tool approval resolved",
-		Done:      true,
-		Timestamp: time.Now(),
-		Data:      meta,
+		SourceLineage: eventSourceLineage(ctx, evt),
+		ID:            evt.ID,
+		Type:          types.ResponseTypeToolApprovalResolved,
+		Content:       "MCP tool approval resolved",
+		Done:          true,
+		Timestamp:     time.Now(),
+		Data:          meta,
 	}); err != nil {
 		logger.GetLogger(h.ctx).Error("Append tool approval resolved event failed", "error", err)
 	}
@@ -381,12 +424,13 @@ func (h *AgentStreamHandler) handleMCPOAuthRequired(ctx context.Context, evt eve
 	meta := toolApprovalDataToMap(data)
 	meta["pending_id"] = data.PendingID
 	if err := h.streamManager.AppendEvent(h.ctx, h.sessionID, h.assistantMessageID, interfaces.StreamEvent{
-		ID:        evt.ID,
-		Type:      types.ResponseTypeMCPOAuthRequired,
-		Content:   "MCP service requires OAuth authorization",
-		Done:      true,
-		Timestamp: time.Now(),
-		Data:      meta,
+		SourceLineage: eventSourceLineage(ctx, evt),
+		ID:            evt.ID,
+		Type:          types.ResponseTypeMCPOAuthRequired,
+		Content:       "MCP service requires OAuth authorization",
+		Done:          true,
+		Timestamp:     time.Now(),
+		Data:          meta,
 	}); err != nil {
 		logger.GetLogger(h.ctx).Error("Append mcp oauth required event failed", "error", err)
 	}
@@ -402,12 +446,13 @@ func (h *AgentStreamHandler) handleMCPOAuthResolved(ctx context.Context, evt eve
 	meta := toolApprovalDataToMap(data)
 	meta["pending_id"] = data.PendingID
 	if err := h.streamManager.AppendEvent(h.ctx, h.sessionID, h.assistantMessageID, interfaces.StreamEvent{
-		ID:        evt.ID,
-		Type:      types.ResponseTypeMCPOAuthResolved,
-		Content:   "MCP OAuth authorization resolved",
-		Done:      true,
-		Timestamp: time.Now(),
-		Data:      meta,
+		SourceLineage: eventSourceLineage(ctx, evt),
+		ID:            evt.ID,
+		Type:          types.ResponseTypeMCPOAuthResolved,
+		Content:       "MCP OAuth authorization resolved",
+		Done:          true,
+		Timestamp:     time.Now(),
+		Data:          meta,
 	}); err != nil {
 		logger.GetLogger(h.ctx).Error("Append mcp oauth resolved event failed", "error", err)
 	}
@@ -445,11 +490,12 @@ func (h *AgentStreamHandler) handleReferences(ctx context.Context, evt event.Eve
 
 	// Append references event to stream
 	if err := h.streamManager.AppendEvent(h.ctx, h.sessionID, h.assistantMessageID, interfaces.StreamEvent{
-		ID:        evt.ID,
-		Type:      types.ResponseTypeReferences,
-		Content:   "",
-		Done:      false,
-		Timestamp: time.Now(),
+		SourceLineage: eventSourceLineage(ctx, evt),
+		ID:            evt.ID,
+		Type:          types.ResponseTypeReferences,
+		Content:       "",
+		Done:          false,
+		Timestamp:     time.Now(),
 		Data: map[string]interface{}{
 			"references": types.References(h.knowledgeRefs),
 		},
@@ -478,11 +524,12 @@ func (h *AgentStreamHandler) handleMemoryRecalled(ctx context.Context, evt event
 	h.mu.Unlock()
 
 	if err := h.streamManager.AppendEvent(h.ctx, h.sessionID, h.assistantMessageID, interfaces.StreamEvent{
-		ID:        evt.ID,
-		Type:      types.ResponseTypeMemoryRecalled,
-		Done:      false,
-		Timestamp: time.Now(),
-		Data:      map[string]interface{}{"memories": used},
+		SourceLineage: eventSourceLineage(ctx, evt),
+		ID:            evt.ID,
+		Type:          types.ResponseTypeMemoryRecalled,
+		Done:          false,
+		Timestamp:     time.Now(),
+		Data:          map[string]interface{}{"memories": used},
 	}); err != nil {
 		logger.GetLogger(h.ctx).Error("Append memory recalled event to stream failed", "error", err)
 	}
@@ -494,17 +541,18 @@ func (h *AgentStreamHandler) handleMemoryRecalled(ctx context.Context, evt event
 // The summary itself is carried so the user can expand it and see exactly what
 // the agent kept, which is the only way to tell an agent that forgot something
 // from an agent that never had it.
-func (h *AgentStreamHandler) handleContextCompacted(_ context.Context, evt event.Event) error {
+func (h *AgentStreamHandler) handleContextCompacted(ctx context.Context, evt event.Event) error {
 	data, ok := evt.Data.(event.ContextCompactedData)
 	if !ok {
 		return nil
 	}
 
 	if err := h.streamManager.AppendEvent(h.ctx, h.sessionID, h.assistantMessageID, interfaces.StreamEvent{
-		ID:        evt.ID,
-		Type:      types.ResponseTypeContextCompacted,
-		Done:      true,
-		Timestamp: time.Now(),
+		SourceLineage: eventSourceLineage(ctx, evt),
+		ID:            evt.ID,
+		Type:          types.ResponseTypeContextCompacted,
+		Done:          true,
+		Timestamp:     time.Now(),
 		Data: map[string]interface{}{
 			"reason":          data.Reason,
 			"round":           data.Round,
@@ -545,6 +593,15 @@ func (h *AgentStreamHandler) handleFinalAnswer(ctx context.Context, evt event.Ev
 		ttfb := time.Since(h.receivedAt)
 		logger.GetLogger(h.ctx).Infof("TTFB:first_answer_chunk request_id=%s, session_id=%s, ttfb_ms=%d",
 			h.requestID, h.sessionID, ttfb.Milliseconds())
+	}
+
+	if lineage := eventSourceLineage(ctx, evt); lineage != nil {
+		if h.prefixLineage == nil {
+			h.prefixLineage, _ = types.UnionSourceLineage(lineage)
+		} else {
+			h.prefixLineage, _ = types.UnionSourceLineage(h.prefixLineage, lineage)
+		}
+		h.assistantMessage.SourceLineage, _ = types.UnionSourceLineage(h.prefixLineage)
 	}
 
 	// Accumulate final answer locally for assistant message (database). Track
@@ -592,14 +649,16 @@ func (h *AgentStreamHandler) handleFinalAnswer(ctx context.Context, evt event.Ev
 
 	// Append this chunk to stream (frontend will accumulate by event ID)
 	if err := h.streamManager.AppendEvent(h.ctx, h.sessionID, h.assistantMessageID, interfaces.StreamEvent{
-		ID:        evt.ID,
-		Type:      types.ResponseTypeAnswer,
-		Content:   data.Content, // Just this chunk
-		Done:      data.Done,
-		Timestamp: time.Now(),
-		Data:      metadata,
+		SourceLineage: eventSourceLineage(ctx, evt),
+		ID:            evt.ID,
+		Type:          types.ResponseTypeAnswer,
+		Content:       data.Content, // Just this chunk
+		Done:          data.Done,
+		Timestamp:     time.Now(),
+		Data:          metadata,
 	}); err != nil {
 		logger.GetLogger(h.ctx).Error("Append answer event to stream failed", "error", err)
+		return err
 	}
 
 	return nil
@@ -614,11 +673,12 @@ func (h *AgentStreamHandler) handleReflection(ctx context.Context, evt event.Eve
 
 	// Append this chunk to stream (frontend will accumulate by event ID)
 	if err := h.streamManager.AppendEvent(h.ctx, h.sessionID, h.assistantMessageID, interfaces.StreamEvent{
-		ID:        evt.ID,
-		Type:      types.ResponseTypeReflection,
-		Content:   data.Content, // Just this chunk
-		Done:      data.Done,
-		Timestamp: time.Now(),
+		SourceLineage: eventSourceLineage(ctx, evt),
+		ID:            evt.ID,
+		Type:          types.ResponseTypeReflection,
+		Content:       data.Content, // Just this chunk
+		Done:          data.Done,
+		Timestamp:     time.Now(),
 	}); err != nil {
 		logger.GetLogger(h.ctx).Error("Append reflection event to stream failed", "error", err)
 	}
@@ -628,25 +688,24 @@ func (h *AgentStreamHandler) handleReflection(ctx context.Context, evt event.Eve
 
 // handleError handles error events
 func (h *AgentStreamHandler) handleError(ctx context.Context, evt event.Event) error {
-	data, ok := evt.Data.(event.ErrorData)
+	_, ok := evt.Data.(event.ErrorData)
 	if !ok {
 		return nil
 	}
-
-	// Build error metadata
-	metadata := map[string]interface{}{
-		"stage": data.Stage,
-		"error": data.Error,
+	if evt.SessionID != "" && evt.SessionID != h.sessionID || evt.RequestID != "" && evt.RequestID != h.requestID {
+		return access.ErrNextcloudPublicationDenied
 	}
 
-	// Append error event to stream
+	// Provider errors and stage metadata can contain source text or secrets.
+	// This code-origin control neither authenticates the failed assistant nor
+	// certifies a source lineage, and is bound to this handler's exact run.
 	if err := h.streamManager.AppendEvent(h.ctx, h.sessionID, h.assistantMessageID, interfaces.StreamEvent{
-		ID:        evt.ID,
+		ID:        h.requestID,
 		Type:      types.ResponseTypeError,
-		Content:   data.Error,
+		Content:   "Generation could not complete; please retry after checking access",
 		Done:      true,
 		Timestamp: time.Now(),
-		Data:      metadata,
+		Data:      map[string]interface{}{"error_code": "generation_failed"},
 	}); err != nil {
 		logger.GetLogger(h.ctx).Error("Append error event to stream failed", "error", err)
 	}
@@ -666,17 +725,19 @@ func (h *AgentStreamHandler) handleSessionTitle(ctx context.Context, evt event.E
 
 	// Append title event to stream
 	if err := h.streamManager.AppendEvent(bgCtx, h.sessionID, h.assistantMessageID, interfaces.StreamEvent{
-		ID:        evt.ID,
-		Type:      types.ResponseTypeSessionTitle,
-		Content:   data.Title,
-		Done:      true,
-		Timestamp: time.Now(),
+		SourceLineage: eventSourceLineage(ctx, evt),
+		ID:            evt.ID,
+		Type:          types.ResponseTypeSessionTitle,
+		Content:       data.Title,
+		Done:          true,
+		Timestamp:     time.Now(),
 		Data: map[string]interface{}{
 			"session_id": data.SessionID,
 			"title":      data.Title,
 		},
 	}); err != nil {
-		logger.GetLogger(h.ctx).Warn("Append session title event to stream failed (stream may have ended)", "error", err)
+		logger.GetLogger(h.ctx).
+			Warn("Append session title event to stream failed (stream may have ended)", "error", err)
 	}
 
 	return nil
@@ -686,17 +747,18 @@ func (h *AgentStreamHandler) handleSessionTitle(ctx context.Context, evt event.E
 // user-visible stream so the frontend can flip its optimistic "queued"
 // bubble into a normal message of the running turn. The event carries the
 // steer ID the client generated queue time, so correlation is exact.
-func (h *AgentStreamHandler) handleUserMessageInjected(_ context.Context, evt event.Event) error {
+func (h *AgentStreamHandler) handleUserMessageInjected(ctx context.Context, evt event.Event) error {
 	data, ok := evt.Data.(event.UserMessageInjectedData)
 	if !ok {
 		return nil
 	}
 
 	if err := h.streamManager.AppendEvent(h.ctx, h.sessionID, h.assistantMessageID, interfaces.StreamEvent{
-		ID:        evt.ID,
-		Type:      types.ResponseTypeUserMessageInjected,
-		Done:      true,
-		Timestamp: time.Now(),
+		SourceLineage: eventSourceLineage(ctx, evt),
+		ID:            evt.ID,
+		Type:          types.ResponseTypeUserMessageInjected,
+		Done:          true,
+		Timestamp:     time.Now(),
 		Data: map[string]interface{}{
 			"steer_id":        data.SteerID,
 			"message_id":      data.MessageID,
@@ -718,6 +780,15 @@ func (h *AgentStreamHandler) handleComplete(ctx context.Context, evt event.Event
 
 	h.mu.Lock()
 	defer h.mu.Unlock()
+
+	if lineage := eventSourceLineage(ctx, evt); lineage != nil {
+		if h.prefixLineage == nil {
+			h.prefixLineage, _ = types.UnionSourceLineage(lineage)
+		} else {
+			h.prefixLineage, _ = types.UnionSourceLineage(h.prefixLineage, lineage)
+		}
+		h.assistantMessage.SourceLineage, _ = types.UnionSourceLineage(h.prefixLineage)
+	}
 
 	// Update assistant message with final data
 	if data.MessageID == h.assistantMessageID {
@@ -850,11 +921,12 @@ func (h *AgentStreamHandler) handleComplete(ctx context.Context, evt event.Event
 		)
 		fallbackID := fmt.Sprintf("answer-fallback-%d", time.Now().UnixMilli())
 		if err := h.streamManager.AppendEvent(h.ctx, h.sessionID, h.assistantMessageID, interfaces.StreamEvent{
-			ID:        fallbackID,
-			Type:      types.ResponseTypeAnswer,
-			Content:   data.FinalAnswer,
-			Done:      false,
-			Timestamp: time.Now(),
+			SourceLineage: eventSourceLineage(ctx, evt),
+			ID:            fallbackID,
+			Type:          types.ResponseTypeAnswer,
+			Content:       data.FinalAnswer,
+			Done:          false,
+			Timestamp:     time.Now(),
 			Data: map[string]interface{}{
 				"event_id":    fallbackID,
 				"is_fallback": true,
@@ -863,11 +935,12 @@ func (h *AgentStreamHandler) handleComplete(ctx context.Context, evt event.Event
 			logger.GetLogger(h.ctx).Errorf("Append fallback answer event failed: %v", err)
 		}
 		if err := h.streamManager.AppendEvent(h.ctx, h.sessionID, h.assistantMessageID, interfaces.StreamEvent{
-			ID:        fallbackID,
-			Type:      types.ResponseTypeAnswer,
-			Content:   "",
-			Done:      true,
-			Timestamp: time.Now(),
+			SourceLineage: eventSourceLineage(ctx, evt),
+			ID:            fallbackID,
+			Type:          types.ResponseTypeAnswer,
+			Content:       "",
+			Done:          true,
+			Timestamp:     time.Now(),
 			Data: map[string]interface{}{
 				"event_id":    fallbackID,
 				"is_fallback": true,
@@ -901,13 +974,14 @@ func (h *AgentStreamHandler) handleComplete(ctx context.Context, evt event.Event
 		completeData["usage"] = turnUsage
 	}
 	h.completionEvent = &interfaces.StreamEvent{
-		ID:        evt.ID,
-		Type:      types.ResponseTypeComplete,
-		Content:   "",
-		Done:      true,
-		Timestamp: time.Now(),
-		Data:      completeData,
-		Usage:     turnUsage,
+		SourceLineage: eventSourceLineage(ctx, evt),
+		ID:            evt.ID,
+		Type:          types.ResponseTypeComplete,
+		Content:       "",
+		Done:          true,
+		Timestamp:     time.Now(),
+		Data:          completeData,
+		Usage:         turnUsage,
 	}
 
 	return nil
@@ -922,6 +996,7 @@ func (h *AgentStreamHandler) publishCompletion(ctx context.Context) error {
 	if h.completionEvent == nil {
 		return nil
 	}
+	h.completionEvent.SourceLineage, _ = types.UnionSourceLineage(h.assistantMessage.SourceLineage)
 	if err := h.streamManager.AppendEvent(ctx, h.sessionID, h.assistantMessageID, *h.completionEvent); err != nil {
 		return err
 	}
@@ -937,9 +1012,10 @@ func (h *AgentStreamHandler) emitArtifactsPending(count int) {
 		return
 	}
 	if err := h.streamManager.AppendEvent(h.ctx, h.sessionID, h.assistantMessageID, interfaces.StreamEvent{
-		ID:        fmt.Sprintf("artifacts-pending-%d", time.Now().UnixMilli()),
-		Type:      types.ResponseTypeArtifactsPending,
-		Timestamp: time.Now(),
+		SourceLineage: nil,
+		ID:            fmt.Sprintf("artifacts-pending-%d", time.Now().UnixMilli()),
+		Type:          types.ResponseTypeArtifactsPending,
+		Timestamp:     time.Now(),
 		Data: map[string]interface{}{
 			"count": count,
 		},
@@ -975,16 +1051,26 @@ func publicArtifactViews(list types.MessageArtifacts) []map[string]interface{} {
 
 // handleCommandOutput forwards UI-only progress without adding partial output
 // to the model conversation or completing the tool call.
-func (h *AgentStreamHandler) handleCommandOutput(_ context.Context, evt event.Event) error {
+func (h *AgentStreamHandler) handleCommandOutput(ctx context.Context, evt event.Event) error {
 	data, ok := evt.Data.(event.CommandOutputData)
 	if !ok || data.ToolCallID == "" {
 		return nil
 	}
 	return h.streamManager.AppendEvent(h.ctx, h.sessionID, h.assistantMessageID, interfaces.StreamEvent{
-		ID: evt.ID, Type: types.ResponseTypeCommandOutput, Timestamp: time.Now(),
+		SourceLineage: eventSourceLineage(ctx, evt),
+		ID:            evt.ID, Type: types.ResponseTypeCommandOutput, Timestamp: time.Now(),
 		Data: map[string]interface{}{
 			"tool_call_id": data.ToolCallID, "command": data.Command,
 			"started_at": data.StartedAt, "output": data.Output, "done": data.Done,
 		},
 	})
+}
+
+// eventSourceLineage carries producer metadata, never client Data/citations.
+func eventSourceLineage(_ context.Context, evt event.Event) *types.SourceLineage {
+	if lineage, ok := evt.SourceLineage.(*types.SourceLineage); ok {
+		copied, _ := types.UnionSourceLineage(lineage)
+		return copied
+	}
+	return nil
 }

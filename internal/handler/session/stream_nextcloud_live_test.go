@@ -19,14 +19,45 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// These publication units own their literal wire bytes. Source-bearing cases
+// explicitly construct a fictional original identity at the producer; neither
+// result Data nor a missing receipt is used to infer it. Native producer and
+// SQL authority integration tests cover actual source acquisition separately.
+func literalLiveSSEFixtureLineage(t *testing.T) *types.SourceLineage {
+	t.Helper()
+	lineage, err := types.NewCompleteSourceLineage()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return lineage
+}
+
+func controlledLiveSSEFixtureLineage(t *testing.T, knowledgeID string) *types.SourceLineage {
+	t.Helper()
+	lineage, err := types.NewCompleteSourceLineage(types.SourceIdentity{
+		Provider: types.ConnectorTypeNextcloud, TenantID: 7,
+		KnowledgeBaseID: "fictional-kb", KnowledgeID: knowledgeID,
+		DataSourceID: "fictional-source", PairOperationID: "fictional-pair",
+		InstanceID: "fictional-instance", BindingID: "fictional-binding",
+		FileID: "9001", ExternalID: "nextcloud:fictional-instance:9001",
+		Revision: 1, ETag: "fictional-original-etag",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return lineage
+}
+
 type stagedLiveStream struct {
 	interfaces.StreamManager
 	events []interfaces.StreamEvent
 }
 
-func (s *stagedLiveStream) GetEvents(_ context.Context, _, _ string, offset int) ([]interfaces.StreamEvent, int,
-	error,
-) {
+func (s *stagedLiveStream) GetEvents(
+	_ context.Context,
+	_, _ string,
+	offset int,
+) ([]interfaces.StreamEvent, int, error) {
 	if offset >= len(s.events) {
 		return nil, offset, nil
 	}
@@ -35,14 +66,32 @@ func (s *stagedLiveStream) GetEvents(_ context.Context, _, _ string, offset int)
 
 type liveHistoryMessageService struct {
 	interfaces.MessageService
-	checks      int
-	denyAt      int
-	checkedRefs []string
-	checkedKBs  []string
+	checks           int
+	denyAt           int
+	checkedRefs      []string
+	checkedKBs       []string
+	checkedSourceIDs []string
+	expectedLineage  *types.SourceLineage
 }
 
 func (s *liveHistoryMessageService) CheckLiveMessagePublication(_ context.Context, message *types.Message) error {
 	s.checks++
+	if s.expectedLineage != nil {
+		if message.SourceLineage.RequireComplete() != nil ||
+			len(message.SourceLineage.Sources) != len(s.expectedLineage.Sources) {
+			return access.ErrNextcloudPublicationDenied
+		}
+		for i, source := range message.SourceLineage.Sources {
+			if source != s.expectedLineage.Sources[i] {
+				return access.ErrNextcloudPublicationDenied
+			}
+		}
+	}
+	if message.SourceLineage != nil {
+		for _, source := range message.SourceLineage.Sources {
+			s.checkedSourceIDs = append(s.checkedSourceIDs, source.KnowledgeID)
+		}
+	}
 	s.checkedKBs = append(s.checkedKBs, message.ExecutionContext.KnowledgeBaseIDs...)
 	for _, ref := range message.KnowledgeReferences {
 		if ref != nil {
@@ -57,13 +106,19 @@ func (s *liveHistoryMessageService) CheckLiveMessagePublication(_ context.Contex
 
 func TestLiveSSEStopsBeforeRevokedNextChunk(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	svc := &liveHistoryMessageService{denyAt: 3}
+	lineage := controlledLiveSSEFixtureLineage(t, "nextcloud-document")
+	svc := &liveHistoryMessageService{denyAt: 3, expectedLineage: lineage}
 	h := &Handler{messageService: svc, streamManager: &stagedLiveStream{events: []interfaces.StreamEvent{
-		{ID: "refs", Type: types.ResponseTypeReferences, Data: map[string]interface{}{"references": types.References{{
-			KnowledgeID: "nextcloud-document", KnowledgeChannel: types.ConnectorTypeNextcloud,
-		}}}},
-		{ID: "answer", Type: types.ResponseTypeAnswer, Content: "authorized first chunk"},
-		{ID: "answer", Type: types.ResponseTypeAnswer, Content: "revoked secret second chunk"},
+		{
+			SourceLineage: lineage,
+			ID:            "refs",
+			Type:          types.ResponseTypeReferences,
+			Data: map[string]interface{}{"references": types.References{{
+				KnowledgeID: "nextcloud-document", KnowledgeChannel: types.ConnectorTypeNextcloud,
+			}}},
+		},
+		{SourceLineage: lineage, ID: "answer", Type: types.ResponseTypeAnswer, Content: "authorized first chunk"},
+		{SourceLineage: lineage, ID: "answer", Type: types.ResponseTypeAnswer, Content: "revoked secret second chunk"},
 	}}}
 	bus := event.NewEventBus()
 	stops := 0
@@ -90,12 +145,15 @@ func TestLiveSSEStopsBeforeRevokedNextChunk(t *testing.T) {
 }
 
 func TestLiveSSEChecksKnowledgeToolResultIdentity(t *testing.T) {
-	svc := &liveHistoryMessageService{}
+	lineage := controlledLiveSSEFixtureLineage(t, "nextcloud-document")
+	svc := &liveHistoryMessageService{expectedLineage: lineage}
 	message := &types.Message{Role: "assistant"}
-	events := []interfaces.StreamEvent{{Type: types.ResponseTypeToolResult, Data: map[string]interface{}{
-		"tool_name": "read_document", "knowledge_id": "nextcloud-document",
-		"output": "source excerpt",
-	}}}
+	events := []interfaces.StreamEvent{{
+		SourceLineage: lineage, Type: types.ResponseTypeToolResult, Data: map[string]interface{}{
+			"tool_name": "read_document", "knowledge_id": "nextcloud-document",
+			"output": "source excerpt",
+		},
+	}}
 	if err := checkLiveStreamPublication(context.Background(), svc, message, events); err != nil {
 		t.Fatal(err)
 	}
@@ -103,9 +161,11 @@ func TestLiveSSEChecksKnowledgeToolResultIdentity(t *testing.T) {
 		t.Fatalf("knowledge tool provenance not retained: %+v", message.KnowledgeReferences)
 	}
 	if err := checkLiveStreamPublication(context.Background(), svc, &types.Message{Role: "assistant"},
-		[]interfaces.StreamEvent{{Type: types.ResponseTypeToolResult, Data: map[string]interface{}{
-			"tool_name": "read_document", "output": "opaque excerpt without identity",
-		}}}); err == nil {
+		[]interfaces.StreamEvent{{
+			SourceLineage: lineage, Type: types.ResponseTypeToolResult, Data: map[string]interface{}{
+				"tool_name": "read_document", "output": "opaque excerpt without identity",
+			},
+		}}); err == nil {
 		t.Fatal("knowledge tool output without document identity must fail closed")
 	}
 }
@@ -113,14 +173,16 @@ func TestLiveSSEChecksKnowledgeToolResultIdentity(t *testing.T) {
 // Use the actual producer and sanitizer, followed by StreamManager's JSON
 // roundtrip, so empty arrays, counts and retained document IDs have their real
 // live-event shape rather than a hand-built approximation.
-func producedKnowledgeToolResult(t *testing.T, data event.AgentToolResultData) interfaces.StreamEvent {
+func producedKnowledgeToolResult(
+	t *testing.T, data event.AgentToolResultData, lineage *types.SourceLineage,
+) interfaces.StreamEvent {
 	t.Helper()
 	data.Data = agenttools.SanitizeToolDataForPersist(data.ToolName, data.Data)
 	streams := &capturingStreamManager{}
 	h := NewAgentStreamHandler(context.Background(), "session", "assistant", "turn", 7,
 		time.Now(), &types.Message{}, streams, nil, nil, nil, nil)
 	if err := h.handleToolResult(context.Background(), event.Event{
-		ID: "tool-result", Type: event.EventAgentToolResult, Data: data,
+		ID: "tool-result", Type: event.EventAgentToolResult, Data: data, SourceLineage: lineage,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -153,34 +215,46 @@ func TestLiveSSEAcceptsProducerContentlessKnowledgeToolResults(t *testing.T) {
 		data event.AgentToolResultData
 	}{
 		{"empty_search", event.AgentToolResultData{
-			ToolName: "search_knowledge", Success: true,
-			Data: emptySearchToolData(),
+			ToolName: "search_knowledge",
+			Success:  true,
+			Data:     emptySearchToolData(),
 		}},
 		{"empty_list", event.AgentToolResultData{
-			ToolName: "list_documents", Success: true,
+			ToolName: "list_documents",
+			Success:  true,
 			Data: map[string]interface{}{
-				"display_type": "document_info", "documents": []map[string]interface{}{},
-				"knowledge_base_id": "manual-kb", "total_docs": int64(0), "page": 1, "page_size": 20,
+				"display_type":      "document_info",
+				"documents":         []map[string]interface{}{},
+				"knowledge_base_id": "manual-kb",
+				"total_docs":        int64(0),
+				"page":              1,
+				"page_size":         20,
 			},
 		}},
 		{"failed_search", event.AgentToolResultData{
-			ToolName: "search_knowledge", Success: false,
-			Error: "query is required",
+			ToolName: "search_knowledge",
+			Success:  false,
+			Error:    "query is required",
 		}},
 		{"failed_list", event.AgentToolResultData{
-			ToolName: "list_documents", Success: false,
-			Error: "knowledge_base_id is required",
+			ToolName: "list_documents",
+			Success:  false,
+			Error:    "knowledge_base_id is required",
 		}},
 		{"failed_read", event.AgentToolResultData{ToolName: "read_document", Success: false, Error: "id is required"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			svc := &liveHistoryMessageService{}
+			svc := &liveHistoryMessageService{expectedLineage: literalLiveSSEFixtureLineage(t)}
 			message := &types.Message{Role: "assistant", ExecutionContext: types.MessageExecutionContext{
 				KnowledgeBaseIDs: []string{"manual-kb"},
 			}}
-			evt := producedKnowledgeToolResult(t, tc.data)
-			if err := checkLiveStreamPublication(context.Background(), svc, message,
-				[]interfaces.StreamEvent{evt}); err != nil {
+			evt := producedKnowledgeToolResult(t, tc.data, literalLiveSSEFixtureLineage(t))
+			if err := checkLiveStreamPublication(
+				context.Background(),
+				svc,
+				message,
+				[]interfaces.StreamEvent{evt},
+			); err != nil {
 				t.Fatalf("contentless producer result stopped ordinary chat: %v", err)
 			}
 			if svc.checks != 1 || len(svc.checkedKBs) != 1 || svc.checkedKBs[0] != "manual-kb" {
@@ -209,17 +283,23 @@ func TestLiveSSEProducerNonemptyKnowledgeResultsRetainIdentity(t *testing.T) {
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			evt := producedKnowledgeToolResult(t, event.AgentToolResultData{
-				ToolName: tc.name, Success: true,
-				Data: tc.data,
-			})
-			svc := &liveHistoryMessageService{}
+			evt := producedKnowledgeToolResult(
+				t,
+				event.AgentToolResultData{ToolName: tc.name, Success: true, Data: tc.data},
+				controlledLiveSSEFixtureLineage(t, "source-doc"),
+			)
+			svc := &liveHistoryMessageService{expectedLineage: controlledLiveSSEFixtureLineage(t, "source-doc")}
 			message := &types.Message{Role: "assistant"}
-			if err := checkLiveStreamPublication(context.Background(), svc, message,
-				[]interfaces.StreamEvent{evt}); err != nil {
+			if err := checkLiveStreamPublication(
+				context.Background(),
+				svc,
+				message,
+				[]interfaces.StreamEvent{evt},
+			); err != nil {
 				t.Fatal(err)
 			}
-			if len(svc.checkedRefs) != 1 || svc.checkedRefs[0] != "source-doc" {
+			if len(svc.checkedRefs) != 1 || svc.checkedRefs[0] != "source-doc" ||
+				len(svc.checkedSourceIDs) != 1 || svc.checkedSourceIDs[0] != "source-doc" {
 				t.Fatalf("sanitized producer result lost identity: %v", svc.checkedRefs)
 			}
 		})
@@ -231,6 +311,7 @@ func TestLiveSSERejectsUnknownEmptyOrOpaqueKnowledgeResults(t *testing.T) {
 		name   string
 		mutate func(*interfaces.StreamEvent)
 	}{
+		{"missing_producer_receipt", func(evt *interfaces.StreamEvent) { evt.SourceLineage = nil }},
 		{"missing_count", func(evt *interfaces.StreamEvent) { delete(evt.Data, "count") }},
 		{"positive_count", func(evt *interfaces.StreamEvent) { evt.Data["count"] = 1 }},
 		{"string_count", func(evt *interfaces.StreamEvent) { evt.Data["count"] = "0" }},
@@ -267,7 +348,7 @@ func TestLiveSSERejectsUnknownEmptyOrOpaqueKnowledgeResults(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			evt := producedKnowledgeToolResult(t, event.AgentToolResultData{
 				ToolName: "search_knowledge", Success: true, Data: emptySearchToolData(),
-			})
+			}, literalLiveSSEFixtureLineage(t))
 			tc.mutate(&evt)
 			err := checkLiveStreamPublication(context.Background(), &liveHistoryMessageService{},
 				&types.Message{Role: "assistant"}, []interfaces.StreamEvent{evt})
@@ -281,14 +362,24 @@ func TestLiveSSERejectsUnknownEmptyOrOpaqueKnowledgeResults(t *testing.T) {
 func TestLiveSSEEmptyResultStillRechecksRevokedEarlierReference(t *testing.T) {
 	evt := producedKnowledgeToolResult(t, event.AgentToolResultData{
 		ToolName: "search_knowledge", Success: true, Data: emptySearchToolData(),
-	})
-	svc := &liveHistoryMessageService{denyAt: 1}
-	message := &types.Message{Role: "assistant", KnowledgeReferences: types.References{{KnowledgeID: "nextcloud-doc"}}}
+	}, literalLiveSSEFixtureLineage(t))
+	svc := &liveHistoryMessageService{
+		denyAt: 1, expectedLineage: controlledLiveSSEFixtureLineage(t, "nextcloud-doc"),
+	}
+	message := &types.Message{
+		Role: "assistant", KnowledgeReferences: types.References{{KnowledgeID: "nextcloud-doc"}},
+		SourceLineage: controlledLiveSSEFixtureLineage(t, "nextcloud-doc"),
+	}
 	err := checkLiveStreamPublication(context.Background(), svc, message, []interfaces.StreamEvent{evt})
 	if !errors.Is(err, access.ErrNextcloudPublicationDenied) || svc.checks != 1 ||
-		len(svc.checkedRefs) != 1 || svc.checkedRefs[0] != "nextcloud-doc" {
-		t.Fatalf("empty result bypassed current source check: err=%v checks=%d refs=%v", err, svc.checks,
-			svc.checkedRefs)
+		len(svc.checkedRefs) != 1 || svc.checkedRefs[0] != "nextcloud-doc" ||
+		len(svc.checkedSourceIDs) != 1 || svc.checkedSourceIDs[0] != "nextcloud-doc" {
+		t.Fatalf(
+			"empty result bypassed current source check: err=%v checks=%d refs=%v",
+			err,
+			svc.checks,
+			svc.checkedRefs,
+		)
 	}
 }
 
@@ -298,10 +389,11 @@ func TestLiveSSEEmptySearchContinuesOrdinaryChatAndPreservesRevocationStop(t *te
 		t.Run(map[bool]string{false: "ordinary_chat", true: "earlier_reference_revoked"}[revoked], func(t *testing.T) {
 			evt := producedKnowledgeToolResult(t, event.AgentToolResultData{
 				ToolName: "search_knowledge", Success: true, Data: emptySearchToolData(),
-			})
+			}, literalLiveSSEFixtureLineage(t))
 			svc := &liveHistoryMessageService{}
 			message := &types.Message{
-				Role: "assistant", RequestID: "turn",
+				Role:      "assistant",
+				RequestID: "turn",
 				ExecutionContext: types.MessageExecutionContext{
 					KnowledgeBaseIDs: []string{"manual-kb"},
 				},
@@ -309,11 +401,23 @@ func TestLiveSSEEmptySearchContinuesOrdinaryChatAndPreservesRevocationStop(t *te
 			if revoked {
 				svc.denyAt = 1
 				message.KnowledgeReferences = types.References{{KnowledgeID: "nextcloud-doc"}}
+				message.SourceLineage = controlledLiveSSEFixtureLineage(t, "nextcloud-doc")
+			}
+			svc.expectedLineage = literalLiveSSEFixtureLineage(t)
+			if revoked {
+				svc.expectedLineage = message.SourceLineage
+			}
+			answerLineage := literalLiveSSEFixtureLineage(t)
+			if revoked {
+				answerLineage = message.SourceLineage
 			}
 			h := &Handler{messageService: svc, streamManager: &stagedLiveStream{events: []interfaces.StreamEvent{
 				evt,
-				{ID: "answer", Type: types.ResponseTypeAnswer, Content: "synthetic no-evidence response"},
-				{ID: "complete", Type: "complete", Done: true},
+				{
+					SourceLineage: answerLineage, ID: "answer", Type: types.ResponseTypeAnswer,
+					Content: "synthetic no-evidence response",
+				},
+				{SourceLineage: answerLineage, ID: "complete", Type: "complete", Done: true},
 			}}}
 			bus := event.NewEventBus()
 			stops := 0
@@ -323,9 +427,19 @@ func TestLiveSSEEmptySearchContinuesOrdinaryChatAndPreservesRevocationStop(t *te
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 			defer cancel()
 			c.Request = httptest.NewRequest(http.MethodPost, "/knowledge-chat/session", nil).WithContext(ctx)
-			h.handleAgentEventsForSSE(ctx, c, "session", "assistant", "turn", bus, false,
-				storageurl.NewStreamRewriter(storageurl.NewRequestRewriter(ctx, storageurl.ModeHandle, nil,
-					nil)), message)
+			h.handleAgentEventsForSSE(
+				ctx,
+				c,
+				"session",
+				"assistant",
+				"turn",
+				bus,
+				false,
+				storageurl.NewStreamRewriter(
+					storageurl.NewRequestRewriter(ctx, storageurl.ModeHandle, nil, nil),
+				),
+				message,
+			)
 			body := recorder.Body.String()
 			if revoked {
 				if stops != 1 || strings.Contains(body, "synthetic no-evidence response") ||
@@ -335,6 +449,44 @@ func TestLiveSSEEmptySearchContinuesOrdinaryChatAndPreservesRevocationStop(t *te
 			} else if stops != 0 || !strings.Contains(body, "synthetic no-evidence response") ||
 				strings.Contains(body, "Current source access changed") || svc.checks != 3 {
 				t.Fatalf("ordinary no-result chat did not finish: stops=%d checks=%d body=%s", stops, svc.checks, body)
+			}
+		})
+	}
+}
+
+func TestLiveSSERequiresOriginalReceiptAndVerifierOnLaterFrame(t *testing.T) {
+	for _, mode := range []string{"missing receipt", "changed source tuple", "missing verifier"} {
+		t.Run(mode, func(t *testing.T) {
+			lineage := controlledLiveSSEFixtureLineage(t, "nextcloud-document")
+			svc := &liveHistoryMessageService{expectedLineage: lineage}
+			message := &types.Message{Role: "assistant", SourceLineage: lineage}
+			first := interfaces.StreamEvent{
+				Type: types.ResponseTypeAnswer, Content: "fictional first fragment", SourceLineage: lineage,
+			}
+			if err := checkLiveStreamPublication(
+				context.Background(), svc, message, []interfaces.StreamEvent{first},
+			); err != nil {
+				t.Fatal(err)
+			}
+			later := first
+			later.Content = "fictional later fragment"
+			var verifier interfaces.MessageService = svc
+			want := access.ErrNextcloudPublicationDenied
+			switch mode {
+			case "missing receipt":
+				later.SourceLineage = nil
+			case "changed source tuple":
+				changed := lineage.Sources[0]
+				changed.PairOperationID = "other-fictional-pair"
+				later.SourceLineage, _ = types.NewCompleteSourceLineage(changed)
+			case "missing verifier":
+				verifier = &struct{ interfaces.MessageService }{}
+				want = access.ErrNextcloudPublicationUnavailable
+			}
+			if err := checkLiveStreamPublication(
+				context.Background(), verifier, message, []interfaces.StreamEvent{later},
+			); !errors.Is(err, want) {
+				t.Fatalf("later unproven frame was admitted: %v", err)
 			}
 		})
 	}

@@ -3,7 +3,9 @@ package rerank
 import (
 	"context"
 
+	"github.com/Tencent/WeKnora/internal/logprivacy"
 	"github.com/Tencent/WeKnora/internal/tracing/langfuse"
+	"github.com/Tencent/WeKnora/internal/types"
 )
 
 const (
@@ -24,6 +26,9 @@ func (l *langfuseReranker) GetModelName() string { return l.inner.GetModelName()
 func (l *langfuseReranker) GetModelID() string   { return l.inner.GetModelID() }
 
 func (l *langfuseReranker) Rerank(ctx context.Context, query string, documents []string) ([]RankResult, error) {
+	if logprivacy.ContentSuppressed(ctx) || types.RAGSourceLineageFromContext(ctx) != nil {
+		return l.inner.Rerank(ctx, query, documents)
+	}
 	mgr := langfuse.GetManager()
 	if !mgr.Enabled() {
 		return l.inner.Rerank(ctx, query, documents)

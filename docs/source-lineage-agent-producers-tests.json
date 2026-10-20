@@ -1,0 +1,28 @@
+{
+  "sourceOnly": true,
+  "runtimeChanged": false,
+  "suite": "go test -p 1 ./internal/agent ./internal/agent/compaction ./internal/agent/tools ./internal/types ./internal/event ./internal/application/repository -run TestAgentLineage|TestRAGSourceLineage|TestEventAdapter.*Lineage|TestRAGChunkSnapshot -count=1 -json",
+  "passedTestsIncludingSubtests": 47,
+  "failedTests": 0,
+  "skippedTests": 0,
+  "passedPackages": [
+    "github.com/Tencent/WeKnora/internal/agent",
+    "github.com/Tencent/WeKnora/internal/agent/compaction",
+    "github.com/Tencent/WeKnora/internal/agent/tools",
+    "github.com/Tencent/WeKnora/internal/types",
+    "github.com/Tencent/WeKnora/internal/event",
+    "github.com/Tencent/WeKnora/internal/application/repository"
+  ],
+  "logSha256": "b7383a457e54e30ce8dbf3aaf0a941c9353572285ed0d1cd552d4a60a6cfaa1e",
+  "fixture": {
+    "network": "none",
+    "cpus": 1,
+    "memoryBytes": 2147483648,
+    "goParallelPackages": 1,
+    "goMemoryLimit": "1800MiB",
+    "models": "local stubs",
+    "database": "owned temporary SQLite",
+    "sourceMount": "readonly",
+    "moduleBuildCaches": "retained"
+  }
+}

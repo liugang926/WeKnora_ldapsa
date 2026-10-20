@@ -20,6 +20,8 @@ const (
 	rewindSHA2 = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 )
 
+func (f *fakeMessageStore) rewindAlgorithmMaterial() {}
+
 type fakeRewindSandboxPort struct {
 	boundID            string
 	bound              bool

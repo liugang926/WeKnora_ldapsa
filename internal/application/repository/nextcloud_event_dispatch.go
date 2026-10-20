@@ -10,9 +10,8 @@ import (
 	"strings"
 	"time"
 
-	apperrors "github.com/Tencent/WeKnora/internal/errors"
-
 	"github.com/Tencent/WeKnora/internal/datasource/connector/nextcloud"
+	apperrors "github.com/Tencent/WeKnora/internal/errors"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -91,9 +90,11 @@ func (r *NextcloudEventInboxRepository) DispatchCandidates(ctx context.Context, 
 // ClaimDispatch consumes no hint and does no network I/O. Its target is the
 // committed receipt watermark, so a later pushed event remains for a later
 // complete manifest reconciliation. Retried work can coalesce newer hints.
-func (
-	r *NextcloudEventInboxRepository,
-) ClaimDispatch(ctx context.Context, connectionID string, now time.Time) (*NextcloudEventDispatchClaim, error) {
+func (r *NextcloudEventInboxRepository) ClaimDispatch(
+	ctx context.Context,
+	connectionID string,
+	now time.Time,
+) (*NextcloudEventDispatchClaim, error) {
 	var claim *NextcloudEventDispatchClaim
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if tx.Name() == "sqlite" {
@@ -156,9 +157,11 @@ func (
 			if status == "running" {
 				if now.Sub(startedAt) < 150*time.Minute {
 					return tx.Table("nextcloud_event_dispatch").Where("connection_id = ?", connectionID).
-						Updates(map[string]any{"next_attempt_at": now.Add(
-							nextcloudQueuedPollInterval,
-						), "updated_at": now}).Error
+						Updates(map[string]any{
+							"next_attempt_at": now.Add(nextcloudQueuedPollInterval),
+							"updated_at":      now,
+						}).
+						Error
 				}
 				return setNextcloudDispatchState(tx, connectionID, "blocked",
 					"sync_stale_manual_review", now, dispatch.AttemptCount)
@@ -173,10 +176,9 @@ func (
 					connectionID,
 					"retry",
 					"sync_not_successful",
-					now.Add(
-						nextcloudDispatchBackoff(
-							dispatch.AttemptCount+1,
-						)), dispatch.AttemptCount+1)
+					now.Add(nextcloudDispatchBackoff(dispatch.AttemptCount+1)),
+					dispatch.AttemptCount+1,
+				)
 			}
 			confirmed, err := nextcloudDispatchCursorComplete(tx, connection, startedAt)
 			if err != nil {
@@ -217,9 +219,7 @@ func (
 				return tx.Table("nextcloud_event_dispatch").Where("connection_id = ?", connectionID).
 					Updates(map[string]any{
 						"next_attempt_at": now.Add(nextcloudPublicationPollDelay(now, finishedAt)),
-						"last_error_code": nextcloudPublicationPendingCode(
-							dispatch.LastErrorCode,
-						), "updated_at": now,
+						"last_error_code": nextcloudPublicationPendingCode(dispatch.LastErrorCode), "updated_at": now,
 					}).Error
 			case nextcloudApplyRetry:
 				// A newer durable hint can supersede an old candidate that the
@@ -251,7 +251,8 @@ func (
 							"next_attempt_at": now.Add(nextcloudQueuedPollInterval),
 							"last_error_code": nextcloudPublicationPendingCode(
 								dispatch.LastErrorCode,
-							), "updated_at": now,
+							),
+							"updated_at": now,
 						}).Error
 				}
 				unprovable, err := nextcloudHintRangeUnprovable(tx, connectionID,
@@ -349,8 +350,11 @@ func (
 			}
 			if status == "success" {
 				if err := tx.Table("nextcloud_event_inbox").
-					Where(("connection_id = ? AND event_id <= ? AND state = 'pendin"+
-						"g'"), connectionID, dispatch.TargetEventID).
+					Where(
+						"connection_id = ? AND event_id <= ? AND state = 'pending'",
+						connectionID,
+						dispatch.TargetEventID,
+					).
 					Update("state", "dispatched").Error; err != nil {
 					return err
 				}
@@ -454,10 +458,11 @@ func nextcloudSourceHasNoHistory(tx *gorm.DB, tenantID uint64, kbID, dsID string
 // Existing source rows must be represented in the cursor inventory. A cursor
 // with the correct instance and an empty files map would otherwise let a
 // deletion disappear without ever producing a tombstone.
-func nextcloudDispatchInventoryValid(tx *gorm.DB, raw map[string]interface{}, connection nextcloudEventConnection) (
-	bool,
-	error,
-) {
+func nextcloudDispatchInventoryValid(
+	tx *gorm.DB,
+	raw map[string]interface{},
+	connection nextcloudEventConnection,
+) (bool, error) {
 	return nextcloudSourceInventoryValid(tx, raw, connection.TenantID, connection.KnowledgeBaseID,
 		connection.DatasourceID, connection.NextcloudInstanceID, []string{connection.BindingID})
 }
@@ -477,14 +482,8 @@ func nextcloudSourceInventoryValid(tx *gorm.DB, raw map[string]interface{}, tena
 	if err := json.Unmarshal(encoded, &state); err != nil {
 		return false, nil
 	}
-	if state.InstanceID ==
-		"" ||
-		(expectedInstanceID !=
-			"" &&
-			state.InstanceID !=
-				expectedInstanceID) ||
-		len(bindings) ==
-			0 {
+	if state.InstanceID == "" || (expectedInstanceID != "" && state.InstanceID != expectedInstanceID) ||
+		len(bindings) == 0 {
 		return false, nil
 	}
 	for _, bindingID := range bindings {
@@ -546,9 +545,10 @@ func nextcloudSourceInventoryValid(tx *gorm.DB, raw map[string]interface{}, tena
 // ValidateNextcloudSourceBaseline protects manual and scheduled syncs as well
 // as event work. A lost or truncated cursor cannot be treated as first import
 // when any older source knowledge or version still exists.
-func (
-	r *NextcloudEventInboxRepository,
-) ValidateNextcloudSourceBaseline(ctx context.Context, source *types.DataSource) error {
+func (r *NextcloudEventInboxRepository) ValidateNextcloudSourceBaseline(
+	ctx context.Context,
+	source *types.DataSource,
+) error {
 	if source == nil || source.Type != types.ConnectorTypeNextcloud {
 		return ErrNextcloudEventScope
 	}
@@ -583,7 +583,6 @@ func (
 	})
 }
 
-// ErrNextcloudSourceCursor reports an invalid source event cursor.
 var ErrNextcloudSourceCursor = apperrors.NewProtocolError(
 	errors.New("nextcloud source cursor requires manual review"), "Nextcloud source cursor requires manual review",
 )
@@ -592,10 +591,11 @@ var ErrNextcloudSourceCursor = apperrors.NewProtocolError(
 // a deletion. A successful first scan can therefore leave a non-empty Missing
 // set. The cursor must also belong to this sync run: a failed cursor write must
 // never let an older, clean snapshot acknowledge a newer event.
-func nextcloudDispatchCursorComplete(tx *gorm.DB, connection nextcloudEventConnection, syncStartedAt time.Time) (
-	bool,
-	error,
-) {
+func nextcloudDispatchCursorComplete(
+	tx *gorm.DB,
+	connection nextcloudEventConnection,
+	syncStartedAt time.Time,
+) (bool, error) {
 	var source types.DataSource
 	if err := tx.Select("last_sync_cursor").Where("id = ?", connection.DatasourceID).Take(&source).Error; err != nil {
 		return false, err
@@ -641,10 +641,11 @@ func nextcloudDispatchSyncStatus(tx *gorm.DB, syncLogID *string) (string, time.T
 		StartedAt  time.Time  `gorm:"column:started_at"`
 		FinishedAt *time.Time `gorm:"column:finished_at"`
 	}
-	if err := tx.Table(
-		"sync_logs",
-	).Select("status", "started_at", "finished_at").Where("id = ?", *syncLogID).Take(&row).Error; err !=
-		nil {
+	if err := tx.Table("sync_logs").
+		Select("status", "started_at", "finished_at").
+		Where("id = ?", *syncLogID).
+		Take(&row).
+		Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return "missing", time.Time{}, nil, nil
 		}
@@ -720,9 +721,9 @@ func nextcloudCanCoalesceUnproven(tx *gorm.DB, connection nextcloudEventConnecti
 		switch hint.EventType {
 		case "upsert":
 			if hint.ETag == nil || strings.TrimSpace(*hint.ETag) == "" ||
-				hint.RelativePath ==
-					nil ||
-				!nextcloud.ImportableFileName(path.Base(*hint.RelativePath), kb.IsMultimodalEnabled()) {
+				hint.RelativePath == nil || !nextcloud.ImportableFileName(path.Base(
+				*hint.RelativePath,
+			), kb.IsMultimodalEnabled()) {
 				return false, nil
 			}
 		case "delete":
@@ -859,9 +860,12 @@ func setNextcloudDispatchState(tx *gorm.DB, connectionID, state, errorCode strin
 // PrepareDispatch makes the attempt's sync log ID durable before creating the
 // log or submitting the task. A crash after this point can be reconciled from
 // the leased row without guessing which running log belongs to the event.
-func (
-	r *NextcloudEventInboxRepository,
-) PrepareDispatch(ctx context.Context, claim NextcloudEventDispatchClaim, syncLogID string, now time.Time) error {
+func (r *NextcloudEventInboxRepository) PrepareDispatch(
+	ctx context.Context,
+	claim NextcloudEventDispatchClaim,
+	syncLogID string,
+	now time.Time,
+) error {
 	if claim.LeaseToken == "" || syncLogID == "" {
 		return ErrNextcloudEventConflict
 	}
@@ -892,9 +896,8 @@ func (
 			return err
 		}
 		result := tx.Table("nextcloud_event_dispatch").
-			Where(("connection_id = ? AND state = 'leased' AND lease_token " +
-				"= ? AND target_event_id = ? AND last_sync_log_id IS NUL" +
-				"L"),
+			Where(("connection_id = ? AND state = 'leased' AND lease_token = ? AND target_even" +
+				"t_id = ? AND last_sync_log_id IS NULL"),
 				claim.ConnectionID, claim.LeaseToken, claim.TargetEventID).
 			Updates(map[string]any{"last_sync_log_id": syncLogID, "updated_at": now})
 		if result.Error != nil {
@@ -909,16 +912,21 @@ func (
 
 // FinishDispatch records only that a task was accepted by the queue. It does
 // not advance applied_id; successful parsing/publication requires later proof.
-func (
-	r *NextcloudEventInboxRepository,
-) FinishDispatch(ctx context.Context, claim NextcloudEventDispatchClaim, syncLogID string, now time.Time) error {
+func (r *NextcloudEventInboxRepository) FinishDispatch(
+	ctx context.Context,
+	claim NextcloudEventDispatchClaim,
+	syncLogID string,
+	now time.Time,
+) error {
 	if syncLogID == "" || claim.LeaseToken == "" {
 		return ErrNextcloudEventConflict
 	}
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if tx.Name() == "sqlite" {
-			lock := tx.Exec(("UPDATE nextcloud_event_connections SET status = status " +
-				"WHERE connection_id = ? AND status = 'active'"), claim.ConnectionID)
+			lock := tx.Exec(
+				`UPDATE nextcloud_event_connections SET status = status WHERE connection_id = ? AND status = 'active'`,
+				claim.ConnectionID,
+			)
 			if lock.Error != nil {
 				return lock.Error
 			}
@@ -964,9 +972,12 @@ func (
 
 // FailDispatch leaves the range retryable. Error codes are static and contain
 // no URLs, credentials, filenames, or upstream response bodies.
-func (
-	r *NextcloudEventInboxRepository,
-) FailDispatch(ctx context.Context, claim NextcloudEventDispatchClaim, errorCode string, now time.Time) error {
+func (r *NextcloudEventInboxRepository) FailDispatch(
+	ctx context.Context,
+	claim NextcloudEventDispatchClaim,
+	errorCode string,
+	now time.Time,
+) error {
 	if claim.LeaseToken == "" {
 		return ErrNextcloudEventConflict
 	}
@@ -990,9 +1001,11 @@ func (
 // UncertainDispatch preserves the lease and intended log ID when enqueue
 // returns an error: a queue may have accepted the task but lost its response.
 // Lease recovery observes the exact log before allowing another attempt.
-func (
-	r *NextcloudEventInboxRepository,
-) UncertainDispatch(ctx context.Context, claim NextcloudEventDispatchClaim, now time.Time) error {
+func (r *NextcloudEventInboxRepository) UncertainDispatch(
+	ctx context.Context,
+	claim NextcloudEventDispatchClaim,
+	now time.Time,
+) error {
 	if claim.LeaseToken == "" {
 		return ErrNextcloudEventConflict
 	}
@@ -1011,9 +1024,7 @@ func (
 
 // ValidateEventSyncTask prevents queued event work from starting after a
 // connection was revoked or its pinned source changed.
-func (
-	r *NextcloudEventInboxRepository,
-) ValidateEventSyncTask(
+func (r *NextcloudEventInboxRepository) ValidateEventSyncTask(
 	ctx context.Context,
 	connectionID, dsID string,
 	tenantID uint64,
@@ -1022,10 +1033,10 @@ func (
 ) error {
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var connection nextcloudEventConnection
-		if err := tx.Table(
-			"nextcloud_event_connections",
-		).Where("connection_id = ? AND status = 'active'", connectionID).
-			Take(&connection).Error; err != nil {
+		if err := tx.Table("nextcloud_event_connections").
+			Where("connection_id = ? AND status = 'active'", connectionID).
+			Take(&connection).
+			Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return ErrNextcloudEventScope
 			}

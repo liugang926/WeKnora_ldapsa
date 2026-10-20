@@ -44,11 +44,10 @@ func newNextcloudQueuedPublicationTest(t *testing.T) (*gorm.DB, *NextcloudEventI
 		bindingID, baseURL, configSHA).Error)
 	require.NoError(t, db.Exec(`INSERT INTO nextcloud_event_checkpoint (connection_id, received_id)
 		VALUES ('event-connection', 1)`).Error)
-	require.NoError(t, db.Exec(("INSERT INTO nextcloud_event_inbox\n"+
-		"\t\t(connection_id, event_id, payload_sha256, event_type,"+
-		" file_id, etag, path, relative_path, state)\n"+
-		"\t\tVALUES ('event-connection', 1, ?, 'upsert', 77, 'etag"+
-		"-v1', '/Published/file.md', 'file.md', 'dispatched')"), strings.Repeat("0", 64)).Error)
+	require.NoError(t, db.Exec(("INSERT INTO nextcloud_event_inbox\n\t\t(connection_id, event_id, payload_s"+
+		"ha256, event_type, file_id, etag, path, relative_path, state)\n\t\tVALUES "+
+		"('event-connection', 1, ?, 'upsert', 77, 'etag-v1', '/Published/file.md', "+
+		"'file.md', 'dispatched')"), strings.Repeat("0", 64)).Error)
 	now := time.Now().UTC().Truncate(time.Second)
 	require.NoError(t, db.Create(&types.SyncLog{
 		ID: "event-log", DataSourceID: "ds",
@@ -149,8 +148,10 @@ func TestNextcloudQueuedPublicationWaitsForParserWithoutAck(t *testing.T) {
 		DataSourceID: "ds", ExternalID: "nextcloud:instance:77", DesiredETag: "etag-v1",
 		CandidateKnowledgeID: pending.ID, State: "staging", UpdatedAt: now,
 	}).Error)
-	for _, checkAt := range []time.Time{now.Add(5 *
-		time.Second), now.Add(nextcloudPublicationFastPollWindow + time.Second)} {
+	for _, checkAt := range []time.Time{
+		now.Add(5 * time.Second),
+		now.Add(nextcloudPublicationFastPollWindow + time.Second),
+	} {
 		claim, err := inbox.ClaimDispatch(ctx, "event-connection", checkAt)
 		require.NoError(t, err)
 		require.Nil(t, claim)
@@ -180,11 +181,10 @@ func TestNextcloudQueuedPublicationSupersededByNewReceipt(t *testing.T) {
 	}).Error)
 	require.NoError(t, db.Exec(`UPDATE sync_logs SET status = 'success', finished_at = ?
 		WHERE id = 'event-log'`, now).Error)
-	require.NoError(t, db.Exec(("INSERT INTO nextcloud_event_inbox\n"+
-		"\t\t(connection_id, event_id, payload_sha256, event_type,"+
-		" file_id, etag, path, relative_path, state)\n"+
-		"\t\tVALUES ('event-connection', 2, ?, 'upsert', 77, 'etag"+
-		"-v2', '/Published/file.md', 'file.md', 'pending')"), strings.Repeat("1", 64)).Error)
+	require.NoError(t, db.Exec(("INSERT INTO nextcloud_event_inbox\n\t\t(connection_id, event_id, payload_s"+
+		"ha256, event_type, file_id, etag, path, relative_path, state)\n\t\tVALUES "+
+		"('event-connection', 2, ?, 'upsert', 77, 'etag-v2', '/Published/file.md', "+
+		"'file.md', 'pending')"), strings.Repeat("1", 64)).Error)
 	require.NoError(t, db.Exec(`UPDATE nextcloud_event_checkpoint SET received_id = 2
 		WHERE connection_id = 'event-connection'`).Error)
 
@@ -357,11 +357,18 @@ func TestNextcloudPublicationProofRejectsUnboundLatestHints(t *testing.T) {
 				DataSourceID: "ds", ExternalID: "nextcloud:instance:77", DesiredETag: "etag-v1",
 				CandidateKnowledgeID: ready.ID, State: "published", UpdatedAt: now,
 			}).Error)
-			require.NoError(t, db.Exec(("UPDATE nextcloud_event_inbox SET event_type = ?, file_i"+
-				"d = ?, etag = ?, path = ?, relative_path = ?\n"+
-				"\t\t\t\tWHERE connection_id = 'event-connection' AND event_"+
-				"id = 1"),
-				latest.eventType, latest.fileID, latest.etag, latest.path, latest.relativePath).Error)
+			require.NoError(
+				t,
+				db.Exec(
+					`UPDATE nextcloud_event_inbox SET event_type = ?, file_id = ?, etag = ?, path = ?, relative_path = ?
+				WHERE connection_id = 'event-connection' AND event_id = 1`,
+					latest.eventType,
+					latest.fileID,
+					latest.etag,
+					latest.path,
+					latest.relativePath,
+				).Error,
+			)
 			require.NoError(t, db.Exec(`UPDATE sync_logs SET status = 'success', finished_at = ?
 				WHERE id = 'event-log'`, now).Error)
 			claim, err := inbox.ClaimDispatch(ctx, "event-connection", now.Add(time.Second))
@@ -370,9 +377,11 @@ func TestNextcloudPublicationProofRejectsUnboundLatestHints(t *testing.T) {
 			row := publicationDispatchRow(t, db)
 			require.Zero(t, row.AppliedID)
 			require.Equal(t, "queued", row.State)
-			claim, err = inbox.ClaimDispatch(ctx, "event-connection", now.Add(
-				nextcloudPublicationRetryGrace+time.Second,
-			))
+			claim, err = inbox.ClaimDispatch(
+				ctx,
+				"event-connection",
+				now.Add(nextcloudPublicationRetryGrace+time.Second),
+			)
 			require.NoError(t, err)
 			require.Nil(t, claim)
 			row = publicationDispatchRow(t, db)

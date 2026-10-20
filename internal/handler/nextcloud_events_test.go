@@ -150,7 +150,10 @@ func signedNextcloudEventRequest(t *testing.T, secret string, body nextcloudEven
 	return signedNextcloudEventRequestWithKey(t, secret, "current", body, nonce)
 }
 
-func signedNextcloudEventRequestWithKey(t *testing.T, secret, keyID string, body nextcloudEventRequest,
+func signedNextcloudEventRequestWithKey(
+	t *testing.T,
+	secret, keyID string,
+	body nextcloudEventRequest,
 	nonce string,
 ) *http.Request {
 	t.Helper()
@@ -220,10 +223,9 @@ func TestNextcloudEventInboxReceiptSequenceAndReplay(t *testing.T) {
 	response = postNextcloudEvent(router, signedNextcloudEventRequest(t, secret, first, strings.Repeat("a", 32)))
 	require.Equal(t, http.StatusUnauthorized, response.Code)
 	changed := first
-	changed.Events = []nextcloudEventHintJSON{{
-		EventID: first.Events[0].EventID, Type: "metadata",
-		FileID: ptrInt64(41),
-	}}
+	changed.Events = []nextcloudEventHintJSON{
+		{EventID: first.Events[0].EventID, Type: "metadata", FileID: ptrInt64(41)},
+	}
 	response = postNextcloudEvent(router, signedNextcloudEventRequest(t, secret, changed, strings.Repeat("c", 32)))
 	require.Equal(t, http.StatusConflict, response.Code)
 

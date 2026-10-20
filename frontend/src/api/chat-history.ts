@@ -24,11 +24,15 @@ export interface MessageSearchRequest {
   mode?: 'keyword' | 'vector' | 'hybrid'
   limit?: number
   session_ids?: string[]
+  // Resume the same query, mode and session filter using the server cursor.
+  cursor?: string
 }
 
 // MessageSearchGroupItem represents a merged Q&A pair in search results
 export interface MessageSearchGroupItem {
   request_id: string
+  // Stable identity of a standalone message without a request_id.
+  message_id?: string
   session_id: string
   session_title: string
   query_content: string
@@ -38,10 +42,26 @@ export interface MessageSearchGroupItem {
   created_at: string
 }
 
-// MessageSearchResult represents the full search result
+// Request groups and standalone messages have separate identity namespaces.
+// A missing stable identity cannot certify that distinct results were retained.
+export function messageSearchGroupKey(item: MessageSearchGroupItem): string {
+  const identity = item.request_id || item.message_id
+  if (!item.session_id || !identity) throw new Error('Message search result has no stable identity')
+  return JSON.stringify([item.session_id, item.request_id ? 'request' : 'message', identity])
+}
+
+// One authorized search page; total counts this page's returned groups.
 export interface MessageSearchResult {
   items: MessageSearchGroupItem[]
   total: number
+  // More keyword candidates remain; an empty page may still need continuation.
+  has_more?: boolean
+  next_cursor?: string
+}
+
+export interface MessageSearchResponse {
+  success: boolean
+  data?: MessageSearchResult
 }
 
 // Get tenant chat history config via KV API
@@ -61,5 +81,5 @@ export function getChatHistoryKBStats() {
 
 // Search messages across all sessions (keyword + vector hybrid search)
 export function searchMessages(data: MessageSearchRequest) {
-  return post('/api/v1/messages/search', data)
+  return post<MessageSearchResponse>('/api/v1/messages/search', data)
 }

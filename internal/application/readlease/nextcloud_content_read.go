@@ -1,4 +1,3 @@
-// Package readlease holds durable source-content fences during retrieval and response assembly.
 package readlease
 
 import (
@@ -10,9 +9,8 @@ import (
 	"sync"
 	"time"
 
-	apperrors "github.com/Tencent/WeKnora/internal/errors"
-
 	"github.com/Tencent/WeKnora/internal/application/repository"
+	apperrors "github.com/Tencent/WeKnora/internal/errors"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/google/uuid"
 )
@@ -26,15 +24,17 @@ const (
 // lets retrieval tests force retirement or a failed renewal at a checkpoint.
 type NextcloudReadLeaseStore interface {
 	AcquireKBRead(context.Context, uint64, string, string, time.Duration) (repository.NextcloudContentLease, error)
-	UpgradeKBRead(context.Context, string, repository.NextcloudContentScope, string, time.Duration) (
-		repository.NextcloudContentLease,
-		error,
-	)
+	UpgradeKBRead(
+		context.Context,
+		string,
+		repository.NextcloudContentScope,
+		string,
+		time.Duration,
+	) (repository.NextcloudContentLease, error)
 	RenewLease(context.Context, string, time.Duration) (repository.NextcloudContentLease, error)
 	ReleaseLease(context.Context, string) error
 }
 
-// NextcloudKBReadScope identifies the tenant and knowledge base protected by a broad read lease.
 type NextcloudKBReadScope struct {
 	TenantID uint64
 	KBID     string
@@ -64,7 +64,6 @@ type NextcloudReadGuard struct {
 
 type nextcloudReadGuardContextKey struct{}
 
-// NextcloudReadGuardFromContext returns the read guard attached to the request context.
 func NextcloudReadGuardFromContext(ctx context.Context) *NextcloudReadGuard {
 	guard, _ := ctx.Value(nextcloudReadGuardContextKey{}).(*NextcloudReadGuard)
 	return guard
@@ -118,7 +117,6 @@ func BeginNextcloudKBRead(ctx context.Context, store NextcloudReadLeaseStore,
 	return g, nil
 }
 
-// Context returns the lease-guarded request context.
 func (g *NextcloudReadGuard) Context() context.Context {
 	if g == nil {
 		return nil
@@ -126,7 +124,44 @@ func (g *NextcloudReadGuard) Context() context.Context {
 	return context.WithValue(g.ctx, nextcloudReadGuardContextKey{}, g)
 }
 
-// Covers reports whether the guard holds every requested broad read scope.
+// ContextFor attaches this fence to the current consumer's values. A reused
+// turn guard may predate its lineage accumulator, actor or search selectors;
+// returning its creation context would discard those later authority inputs.
+// Both the current caller and the original fence can cancel this read.
+func (g *NextcloudReadGuard) ContextFor(values context.Context) context.Context {
+	if g == nil {
+		return values
+	}
+	var ctx context.Context
+	var cancel context.CancelFunc
+	if deadline, ok := g.ctx.Deadline(); ok {
+		ctx, cancel = context.WithDeadline(values, deadline)
+	} else {
+		ctx, cancel = context.WithCancel(values)
+	}
+	stop := context.AfterFunc(g.ctx, cancel)
+	context.AfterFunc(ctx, func() { stop() })
+	return context.WithValue(ctx, nextcloudReadGuardContextKey{}, g)
+}
+
+// ParentContext preserves the request's authority and cancellation while a
+// turn acquires a separate fence from a borrowed, shorter-lived read guard.
+func (g *NextcloudReadGuard) ParentContext(values context.Context) context.Context {
+	if g == nil {
+		return nil
+	}
+	return &readParentContext{Context: values, parent: g.parentCtx}
+}
+
+type readParentContext struct {
+	context.Context
+	parent context.Context
+}
+
+func (c *readParentContext) Deadline() (time.Time, bool) { return c.parent.Deadline() }
+func (c *readParentContext) Done() <-chan struct{}       { return c.parent.Done() }
+func (c *readParentContext) Err() error                  { return c.parent.Err() }
+
 func (g *NextcloudReadGuard) Covers(scopes []NextcloudKBReadScope) bool {
 	if g == nil {
 		return false
@@ -213,6 +248,47 @@ func (g *NextcloudReadGuard) PinKnowledge(k *types.Knowledge) error {
 	g.rows = append(g.rows, row)
 	g.exact[scope] = true
 	return nil
+}
+
+// ExactLease returns the original server-acquired generation token. It never
+// renews/re-pins a newer epoch to authenticate material already read. The
+// snapshot reader validates this token against durable rows; Verify remains
+// mandatory after hydration and at every subsequent read/output boundary.
+func (g *NextcloudReadGuard) ExactLease(k *types.Knowledge) (*types.RAGExactReadLease, error) {
+	scope, marked, err := NextcloudKnowledgeLeaseScope(k)
+	if err != nil || !marked {
+		return nil, err
+	}
+	if g == nil {
+		return nil, apperrors.NewProtocolError(errors.New(
+			"nextcloud knowledge has no read lease",
+		), "Nextcloud knowledge has no read lease")
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if err := g.currentErrorLocked(); err != nil {
+		return nil, err
+	}
+	if !g.exact[scope] {
+		return nil, repository.ErrNextcloudContentLeaseDenied
+	}
+	for _, row := range g.rows {
+		if row.KnowledgeID == scope.KnowledgeID && row.TenantID == scope.TenantID &&
+			row.KnowledgeBaseID == scope.KnowledgeBaseID &&
+			row.Kind == repository.NextcloudContentReadLease {
+			return &types.RAGExactReadLease{
+				ID:              row.ID,
+				TenantID:        row.TenantID,
+				KnowledgeBaseID: row.KnowledgeBaseID,
+				KnowledgeID:     row.KnowledgeID,
+				Kind:            string(row.Kind),
+				Epoch:           row.Epoch,
+				OwnerID:         row.OwnerID,
+				ExpiresAt:       row.ExpiresAt,
+			}, nil
+		}
+	}
+	return nil, repository.ErrNextcloudContentLeaseDenied
 }
 
 func (g *NextcloudReadGuard) currentErrorLocked() error {

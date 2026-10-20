@@ -11,6 +11,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/Tencent/WeKnora/internal/application/access"
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/models/chat"
 	"github.com/Tencent/WeKnora/internal/searchutil"
@@ -21,8 +22,10 @@ import (
 	"gorm.io/gorm"
 )
 
-var suggestionThinkBlock = regexp.MustCompile(`(?s)<think>.*?</think>`)
-var trailingCitationTags = regexp.MustCompile(`(?s)(?:\s*<(?:kb|web)>.*?</(?:kb|web)>)+\s*$`)
+var (
+	suggestionThinkBlock = regexp.MustCompile(`(?s)<think>.*?</think>`)
+	trailingCitationTags = regexp.MustCompile(`(?s)(?:\s*<(?:kb|web)>.*?</(?:kb|web)>)+\s*$`)
+)
 
 const (
 	suggestionHistoryRuneBudget        = 6000
@@ -75,6 +78,11 @@ func (s *messageSuggestionService) EnsureFollowUps(
 	message, err := s.messageService.GetMessage(ctx, sessionID, assistantMessageID)
 	if err != nil {
 		return nil, err
+	}
+	if !types.SourceIndependentDerivativesAllowed(message) || len(message.ExecutionContext.KnowledgeBaseIDs) > 0 ||
+		len(message.ExecutionContext.AgentKnowledgeBaseIDs) > 0 ||
+		len(message.ExecutionContext.KnowledgeIDs) > 0 {
+		return nil, access.ErrNextcloudPublicationDenied
 	}
 	if message.Role != "assistant" || !message.IsCompleted {
 		return nil, errors.New("follow-up suggestions require a completed assistant message")
@@ -174,6 +182,9 @@ func (s *messageSuggestionService) GetFollowUps(
 	message, err := s.messageService.GetMessage(ctx, sessionID, assistantMessageID)
 	if err != nil {
 		return nil, err
+	}
+	if !types.SourceIndependentDerivativesAllowed(message) {
+		return nil, access.ErrNextcloudPublicationDenied
 	}
 	tenantID := types.MustTenantIDFromContext(ctx)
 	locale := types.ResolveLanguage(ctx, message.ExecutionContext.Locale)
@@ -517,6 +528,11 @@ func (s *messageSuggestionService) buildGenerationContext(
 	messages, err := s.messageService.GetRecentMessagesBySession(ctx, current.SessionID, maxTurns*4+8)
 	if err != nil {
 		return suggestionGenerationContext{}, err
+	}
+	for _, message := range messages {
+		if message.Role != "user" && !types.SourceIndependentDerivativesAllowed(message) {
+			return suggestionGenerationContext{}, access.ErrNextcloudPublicationDenied
+		}
 	}
 	return buildSuggestionGenerationContext(messages, current, maxTurns), nil
 }

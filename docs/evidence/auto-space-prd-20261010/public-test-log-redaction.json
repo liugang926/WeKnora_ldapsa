@@ -1,0 +1,439 @@
+{
+  "policy": "SQL statements may contain bound document bodies or fixture credentials; statements are omitted, test names/assertions/results retained. Raw original hashes distinguish public copies.",
+  "logs": [
+    {
+      "file": "final-all-packages-compile.log",
+      "original_sha256": "ac3d0a108e8f1ef6ef740b024881dd4b57031eaeabc08b5d3501888ae0999846",
+      "published_sha256": "bb6607f0eec9ad4c2cc84b8bab71c44f311e23d97c4ef669813d2bdcbde63ebe",
+      "omitted_sql_lines": 0,
+      "ansi_stripped": false,
+      "private_original_retained": false,
+      "public_normalization_sha256_history": [
+        "ac3d0a108e8f1ef6ef740b024881dd4b57031eaeabc08b5d3501888ae0999846"
+      ],
+      "public_tabs_expanded": true
+    },
+    {
+      "file": "final-closed-graph-sql.log",
+      "original_sha256": "2504ca6c9b3db38dcb1bf559a3bffa6f86ae2c53408a6f9d73ccc1ee3793fde5",
+      "published_sha256": "f61365dd3600800aa1887148508140de8f2938dbf2bd4d996ba40a71b09b79cc",
+      "omitted_sql_lines": 33,
+      "ansi_stripped": true,
+      "private_original_retained": true,
+      "prior_published_sha256_before_whitespace_normalization": "3bb9131779e0af00ed8b6d58b8a98fc13c359e3e2a830df5efba402904e158d4",
+      "public_whitespace_normalized": true,
+      "public_normalization_sha256_history": [
+        "88b1dd8bea607132a50ff4e167414567ae9a0e5c5cfea8c05f3860d33b70555f"
+      ],
+      "public_tabs_expanded": true
+    },
+    {
+      "file": "final-control-live-targets.log",
+      "original_sha256": "b2eee4636cf35bf5800b5fa32c757d92f8b4ecb22c5526e4c2434ce5ff87c9d8",
+      "published_sha256": "663b016764ac24182fa3949f17f18dfc77d2036fed780f2903f6d95131faf113",
+      "omitted_sql_lines": 103,
+      "ansi_stripped": true,
+      "private_original_retained": true,
+      "prior_published_sha256_before_whitespace_normalization": "50e17e2429378eb373df422973f48991b8a91a295eb130fb6ca316647a393ecd",
+      "public_whitespace_normalized": true,
+      "public_normalization_sha256_history": [
+        "1c386427f43549d537abfc9957bf5f4b3af2d02870c1e1ee812aee1917439307"
+      ],
+      "public_tabs_expanded": true
+    },
+    {
+      "file": "final-live-durable-checkpoint.log",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "published_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "omitted_sql_lines": 0,
+      "ansi_stripped": false,
+      "private_original_retained": false
+    },
+    {
+      "file": "final-live-graph-and-source-regressions.log",
+      "original_sha256": "1e7b737ba30fba7b8c38fa56cfd8fcd44ac96d14f191f2f959053caa608a9cc4",
+      "published_sha256": "b227ed659adf8deb35f5c731ce850f1a943a20b86db23fb03c1c4c3f6e5a2850",
+      "omitted_sql_lines": 120,
+      "ansi_stripped": true,
+      "private_original_retained": true,
+      "prior_published_sha256_before_whitespace_normalization": "46ea4387f00322b69536a0ee8ebd801fdfdcd629f960a08595981ef3a972432b",
+      "public_whitespace_normalized": true,
+      "public_normalization_sha256_history": [
+        "dee909bf994973f6e83075fc2cb43c4b28480eed4224d8290cff7eabd4a159fb"
+      ],
+      "public_tabs_expanded": true
+    },
+    {
+      "file": "final-recovery-positive-rerun.log",
+      "original_sha256": "c425536d2d81e546cff4b962e2578356304e2ed7f3c9bb00260a6771c582c116",
+      "published_sha256": "8020a46e748c4b3256ae7611c7c83038925e6ccc3214ab164c6a0f3e25652245",
+      "omitted_sql_lines": 41,
+      "ansi_stripped": true,
+      "private_original_retained": true,
+      "prior_published_sha256_before_whitespace_normalization": "172c3afaf84da9d17faac7bcab962bd59fe3d01e71b97525a0904cc7089e9ad6",
+      "public_whitespace_normalized": true,
+      "public_normalization_sha256_history": [
+        "59e3e70260addd38071d02597c665785bcbc9d8f4f903ed5dcf81129446c9da8"
+      ],
+      "public_tabs_expanded": true
+    },
+    {
+      "file": "final-recovery-regressions.log",
+      "original_sha256": "e4e2917df060853b5f80c50a085f1bf5ad16d84be357dc4c36f341f07bab8495",
+      "published_sha256": "e62ebd54196564997ce9cfb513eb75701efae3c65918f47835ebc9d13f0666a2",
+      "omitted_sql_lines": 164,
+      "ansi_stripped": true,
+      "private_original_retained": true,
+      "prior_published_sha256_before_whitespace_normalization": "3fa61d34149993511802c31df2e299e0c8c06b8e42134a154ae2012c934c2168",
+      "public_whitespace_normalized": true,
+      "public_normalization_sha256_history": [
+        "e04c9f8ffa4ab81d55f7a9f815da8f424a1760161b01c07a76fc7c42594bdc74"
+      ],
+      "public_tabs_expanded": true
+    },
+    {
+      "file": "final-repaired-repository-targets.log",
+      "original_sha256": "b4a2be00d114ab9fe11385474cd85ea7f709b1d08d43efd9ba2fd5b52f47a87a",
+      "published_sha256": "b4a2be00d114ab9fe11385474cd85ea7f709b1d08d43efd9ba2fd5b52f47a87a",
+      "omitted_sql_lines": 0,
+      "ansi_stripped": false,
+      "private_original_retained": false
+    },
+    {
+      "file": "final-tree-cached-compile.log",
+      "original_sha256": "e2e275d2094ee621582d1d1dc5ceff68e2701f2a150ea193205fea566908f95d",
+      "published_sha256": "ba4ddf3ba5523780e5f81585eff2a24aba1c28f17ec371231aadad0303999148",
+      "omitted_sql_lines": 0,
+      "ansi_stripped": false,
+      "private_original_retained": false,
+      "public_normalization_sha256_history": [
+        "e2e275d2094ee621582d1d1dc5ceff68e2701f2a150ea193205fea566908f95d"
+      ],
+      "public_tabs_expanded": true
+    },
+    {
+      "file": "onboarding-actual-coordinator-rerun.log",
+      "original_sha256": "0890b539ec5868cd0517fa2aae1bc2f3d9093c9019c4841dc584539f8bf62ce2",
+      "published_sha256": "0890b539ec5868cd0517fa2aae1bc2f3d9093c9019c4841dc584539f8bf62ce2",
+      "omitted_sql_lines": 0,
+      "ansi_stripped": false,
+      "private_original_retained": false
+    },
+    {
+      "file": "onboarding-actual-coordinator.log",
+      "original_sha256": "4349406ebef0ab363e23364171e85e94f11b36d179c646169a099503a65265a1",
+      "published_sha256": "4349406ebef0ab363e23364171e85e94f11b36d179c646169a099503a65265a1",
+      "omitted_sql_lines": 0,
+      "ansi_stripped": false,
+      "private_original_retained": false
+    },
+    {
+      "file": "onboarding-actual-nc-attempt-1791630429003076000.log",
+      "original_sha256": "7ef61397af89d9467338a7b22973142e521ce21719aaf57a65f71fb4d06c193f",
+      "published_sha256": "7ef61397af89d9467338a7b22973142e521ce21719aaf57a65f71fb4d06c193f",
+      "omitted_sql_lines": 0,
+      "ansi_stripped": false,
+      "private_original_retained": false,
+      "generation_archived_by_live_runner": true
+    },
+    {
+      "file": "onboarding-actual-wk-attempt-1791630429000283000.log",
+      "original_sha256": "5b7e1ad8e040ef327b4bbafc4108625c9c18e7a7b011354fefe3374aec2c1ec7",
+      "published_sha256": "374385b4060ccd69bbddfd4f4fe5098ea6848946985170579badb8c8793c501f",
+      "omitted_sql_lines": 0,
+      "ansi_stripped": false,
+      "private_original_retained": false,
+      "generation_archived_by_live_runner": true,
+      "prior_published_sha256_before_whitespace_normalization": "5b7e1ad8e040ef327b4bbafc4108625c9c18e7a7b011354fefe3374aec2c1ec7",
+      "public_whitespace_normalized": true,
+      "public_normalization_sha256_history": [
+        "a7fe92feb4272278095d067b2e27d22064a0517f861c24d57cc0eccd156e1509"
+      ],
+      "public_tabs_expanded": true
+    },
+    {
+      "file": "onboarding-migrations-recovery.log",
+      "original_sha256": "b9c85ba1d56fd667e52ac760a37fe16e607116076a6d1bc73acf02df92962f0e",
+      "published_sha256": "82e25841cbfb98e0f37038ef83e8699dc05c728251e776277a98dcb791894867",
+      "omitted_sql_lines": 30,
+      "ansi_stripped": true,
+      "private_original_retained": true,
+      "prior_published_sha256_before_whitespace_normalization": "dd3d15eb4f612fef0e7ce42a82139f4f62bed3b4bbb0f7ad2a24f3080997da0a",
+      "public_whitespace_normalized": true,
+      "public_normalization_sha256_history": [
+        "5ed6ba139ea72e88b32f207d59b01f4104d8fc9cb456c90a2d24ff6d3ce55350"
+      ],
+      "public_tabs_expanded": true
+    },
+    {
+      "file": "onboarding-postgres.log",
+      "original_sha256": "8cb542a8c26ac2d3a7d36a66b9491a9ec5d189fe696fa74a88de9b25f0a5b821",
+      "published_sha256": "61457e968225787cae0a25c5edf99ded4d434d22e57b638f5b607af27732132b",
+      "omitted_sql_lines": 0,
+      "ansi_stripped": false,
+      "private_original_retained": false,
+      "public_normalization_sha256_history": [
+        "8cb542a8c26ac2d3a7d36a66b9491a9ec5d189fe696fa74a88de9b25f0a5b821"
+      ],
+      "public_tabs_expanded": true
+    },
+    {
+      "file": "../../nextcloud-state-throughput-10000.log",
+      "original_sha256": "289f98fd7095b706b39bf908730c0659142a58fdb39c19fe998087432f2d2e39",
+      "published_sha256": "7ab5df12080a910f700f4417e49a25015eef3812b3b0255e585e4b1b4b58c8e0",
+      "omitted_sql_lines": 6,
+      "private_original_retained": true,
+      "prior_published_sha256_before_whitespace_normalization": "1b5457e96da4451170ae0a20dccc4db6deb1094c2b9d3426b7c2daf626eaad73",
+      "public_whitespace_normalized": true,
+      "public_normalization_sha256_history": [
+        "e0f7f0f837f3dad538e521568419686f5ec2182ce0b17e6eb4c943b2816e3ec7"
+      ],
+      "public_tabs_expanded": true
+    },
+    {
+      "file": "final-short-live-checkpoint-20261010T1037.log",
+      "original_sha256": "b3b972f7596b279f6703fced8b50a5c3ba13e4df619597298ebeefb1296878b6",
+      "published_sha256": "2125b8c733de04c2906f1e062344ce8ec6736b76127971a1d8ff6323d665788a",
+      "omitted_sql_lines": 53,
+      "private_original_retained": true,
+      "prior_published_sha256_before_whitespace_normalization": "84afebd4189f67dc04d3b1c410d5d3837e3712ecdfcc2430cfdd1f79d3751621",
+      "public_whitespace_normalized": true,
+      "public_normalization_sha256_history": [
+        "735b414f97a526ffc58366420b6da7fc595f7cde75a27ad53fde89b910eae3fe"
+      ],
+      "public_tabs_expanded": true
+    },
+    {
+      "file": "final-short-metadata-rerun-20261010T1038.log",
+      "original_sha256": "1e82f54e934b31979f828880edc56cd87cb6c20c1a3969c68440fc21c753c44a",
+      "published_sha256": "892a9e8f96335b9567fa2b95916f4c1228fea2b90414a554633ca9d3923946df",
+      "omitted_sql_lines": 0,
+      "private_original_retained": true,
+      "public_normalization_sha256_history": [
+        "1e82f54e934b31979f828880edc56cd87cb6c20c1a3969c68440fc21c753c44a"
+      ],
+      "public_tabs_expanded": true
+    },
+    {
+      "file": "final-short-security-di-20261010T1035.log",
+      "original_sha256": "2960f50d8553b536004db4520f5b500c8fcc1fd5ee91a607ee1f64b9d7efea74",
+      "published_sha256": "b863697223c6293eb250f8282fe60dd79be1a5b8942bd875cdbf0b99001c18a6",
+      "omitted_sql_lines": 18,
+      "private_original_retained": true,
+      "prior_published_sha256_before_whitespace_normalization": "5d1453af1505e8b4c202daa81318269087dd8347b598e3ddb8b0941de766d42e",
+      "public_whitespace_normalized": true,
+      "public_normalization_sha256_history": [
+        "5457524b8968cf985e80fb91fcc822d5f35687f51f9f19e71cb42dca279773ac"
+      ],
+      "public_tabs_expanded": true
+    },
+    {
+      "file": "../../nextcloud-processing-regression-final.log",
+      "original_sha256": "122e20a72d97188fbabc1f98e5a5df9cc0e8e7657314c012587404e3cacce43e",
+      "published_sha256": "4c658e329259de8b5c5379b8d9c094a665973e8d5ff85680cfc1f06ea0431540",
+      "omitted_sql_lines": 13,
+      "ansi_stripped": true,
+      "private_original_retained": true,
+      "prior_published_sha256_before_whitespace_normalization": "a643b0bf0696639992807febf00e83722a970661e09e2213d1d0c96cefd14d00",
+      "public_whitespace_normalized": true,
+      "public_normalization_sha256_history": [
+        "75cc0132d6d535ec8896ac5a556f4a408a4f4cb46484ead4e5948656c52a19eb"
+      ],
+      "public_tabs_expanded": true
+    },
+    {
+      "file": "../../nextcloud-processing-live-final.log",
+      "original_sha256": "7d38ca922ab5023ba3e81c10ff35993e9f2481fd94c8592d958ed6bc2a2a7131",
+      "published_sha256": "9d8ea0cb9b10d2349963a8e0efd0222b04f3ab522e4ae5cb4003b77f828eca62",
+      "omitted_sql_lines": 105,
+      "ansi_stripped": true,
+      "private_original_retained": true,
+      "prior_published_sha256_before_whitespace_normalization": "c06c16973d7512047652ba299624afdabb8fdee49ddb1ee3c4ec1d1529238083",
+      "public_whitespace_normalized": true,
+      "public_normalization_sha256_history": [
+        "02f141180925f3465a1a78e2034e36e78171fd63a03a9c36a077bc3508a2082f"
+      ],
+      "public_tabs_expanded": true
+    },
+    {
+      "file": "final-real-graph-10000-20261010T1110.log",
+      "original_sha256": "8d7f0a0f01a281f9b4521959bfeee19d14e815bc8d38a728383e2a1c8344e99f",
+      "published_sha256": "be31e3984957ee002dd117ea4efa5e5b0b917b3e5e4686094f68430a8913029e",
+      "omitted_lines": 18971,
+      "policy": "test assertions/progress/results only; application logs and timeout stacks omitted",
+      "ansi_stripped": true,
+      "private_original_retained": true,
+      "private_original_file": "final-real-graph-10000-20261010T1110.log.8d7f0a0f01a2.raw",
+      "public_normalization_sha256_history": [
+        "3d7b0b4025afd86e17a981b2cef5f5abb3dccc07a9667162eb8041bf07dfcbb6"
+      ],
+      "public_tabs_expanded": true
+    },
+    {
+      "file": "final-privacy-404-pipeline-20261010T1133.log",
+      "original_sha256": "4f29d362dc9674419486487e8990b1b103e39f3f123ab1a0bdd9fbb9b0e8a632",
+      "published_sha256": "af056facc976245b23be58ee63a9c50e7e23435cdc3751a29cb4fd176dfe4c3e",
+      "omitted_lines": 67,
+      "policy": "SQL statements omitted; test and safe fixed diagnostics retained",
+      "ansi_stripped": true,
+      "private_original_retained": true,
+      "private_original_file": "final-privacy-404-pipeline-20261010T1133.log.4f29d362dc96.raw",
+      "prior_published_sha256_before_whitespace_normalization": "f959d5156dd3f5e942d53d89e16873a30d404a96cc6f7abaab243b83a77d550e",
+      "public_whitespace_normalized": true,
+      "public_normalization_sha256_history": [
+        "eefff71d31815853c55de1a9be4ce10fffd216dcef68deca68920e5fa8efbdd6"
+      ],
+      "public_tabs_expanded": true
+    },
+    {
+      "file": "final-candidate-index-graph-20261010T1137.log",
+      "original_sha256": "c52e072daa3f3a859567995e5ab91663229a45d12654ae9e5a30ad84990dd6c9",
+      "published_sha256": "da01943efe59a1f51f0245966eeb6d84c158a77e82c350eb4e4e991e4a8325eb",
+      "omitted_lines": 67,
+      "policy": "SQL statements omitted; test and safe fixed diagnostics retained",
+      "ansi_stripped": true,
+      "private_original_retained": true,
+      "private_original_file": "final-candidate-index-graph-20261010T1137.log.c52e072daa3f.raw",
+      "prior_published_sha256_before_whitespace_normalization": "5307e93a270654853e7073955fd80755862043680cf4ffc2f15762dbebd21dea",
+      "public_whitespace_normalized": true,
+      "public_normalization_sha256_history": [
+        "5186fc116b8d3f9d27c94d945d6f320897be6ed40904123c630263f36eb57b0b"
+      ],
+      "public_tabs_expanded": true
+    },
+    {
+      "file": "final-paired-full-runtime-20261010T1139.log",
+      "original_sha256": "244f932409aba8f13c609b4936f4395f00565dcebec07519ad7d5a1db7aacc38",
+      "published_sha256": "244f932409aba8f13c609b4936f4395f00565dcebec07519ad7d5a1db7aacc38",
+      "omitted_lines": 0,
+      "policy": "SQL statements omitted; test and safe fixed diagnostics retained",
+      "ansi_stripped": false,
+      "private_original_retained": true,
+      "private_original_file": "final-paired-full-runtime-20261010T1139.log.244f932409ab.raw"
+    },
+    {
+      "file": "final-paired-404-retry-20261010T1108.log",
+      "original_sha256": "701d260f84c229c29b37024af3b9e8c65732eda3313cdecf89ad82d74f6c2a77",
+      "published_sha256": "701d260f84c229c29b37024af3b9e8c65732eda3313cdecf89ad82d74f6c2a77",
+      "omitted_lines": 0,
+      "policy": "SQL statements omitted; test and safe fixed diagnostics retained",
+      "ansi_stripped": false,
+      "private_original_retained": true,
+      "private_original_file": "final-paired-404-retry-20261010T1108.log.701d260f84c2.raw"
+    },
+    {
+      "file": "final-paired-auto-runner-20261010T1106.log",
+      "original_sha256": "ba317020b3c2963e096da05eca77a1c918fe256c48c508835cf52f357d30b005",
+      "published_sha256": "ba317020b3c2963e096da05eca77a1c918fe256c48c508835cf52f357d30b005",
+      "omitted_lines": 0,
+      "policy": "SQL statements omitted; test and safe fixed diagnostics retained",
+      "ansi_stripped": false,
+      "private_original_retained": true,
+      "private_original_file": "final-paired-auto-runner-20261010T1106.log.ba317020b3c2.raw"
+    },
+    {
+      "file": "onboarding-actual-nc-attempt-1791632412452082000.log",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "published_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "omitted_lines": 0,
+      "policy": "SQL statements omitted; test and safe fixed diagnostics retained",
+      "ansi_stripped": false,
+      "private_original_retained": true,
+      "private_original_file": "onboarding-actual-nc-attempt-1791632412452082000.log.e3b0c44298fc.raw"
+    },
+    {
+      "file": "onboarding-actual-nc.log",
+      "original_sha256": "cc1d8e53e8603709962db3a4e6465785ceab6042ef43681f7f531b16eb492c7b",
+      "published_sha256": "cc1d8e53e8603709962db3a4e6465785ceab6042ef43681f7f531b16eb492c7b",
+      "omitted_lines": 0,
+      "policy": "SQL statements omitted; test and safe fixed diagnostics retained",
+      "ansi_stripped": false,
+      "private_original_retained": true,
+      "private_original_file": "onboarding-actual-nc.log.cc1d8e53e860.raw"
+    },
+    {
+      "file": "onboarding-actual-wk-attempt-1791630562834980000.log",
+      "original_sha256": "4ca33e0b4dc2277fd9280ed23c3ca45b3dc203efe6cef6d3a34caa93bbcc598a",
+      "published_sha256": "7580a071d6f76ea728e3bd357114aed2d3b5f61933516bde5cc02bb9741235d3",
+      "omitted_lines": 0,
+      "policy": "SQL statements omitted; test and safe fixed diagnostics retained",
+      "ansi_stripped": false,
+      "private_original_retained": true,
+      "private_original_file": "onboarding-actual-wk-attempt-1791630562834980000.log.4ca33e0b4dc2.raw",
+      "prior_published_sha256_before_whitespace_normalization": "4ca33e0b4dc2277fd9280ed23c3ca45b3dc203efe6cef6d3a34caa93bbcc598a",
+      "public_whitespace_normalized": true,
+      "public_normalization_sha256_history": [
+        "449687a0cddedcd3deca31ca4df940533706dda9c6563284e637ebca6e440aae"
+      ],
+      "public_tabs_expanded": true
+    },
+    {
+      "file": "onboarding-actual-nc-attempt-1791630562836718000.log",
+      "original_sha256": "17625956b5e2e63037b55bf0c6e0f5cbe436fc87a7631a7f2ff497c65741eccf",
+      "published_sha256": "17625956b5e2e63037b55bf0c6e0f5cbe436fc87a7631a7f2ff497c65741eccf",
+      "omitted_lines": 0,
+      "policy": "SQL statements omitted; test and safe fixed diagnostics retained",
+      "ansi_stripped": false,
+      "private_original_retained": true,
+      "private_original_file": "onboarding-actual-nc-attempt-1791630562836718000.log.17625956b5e2.raw"
+    },
+    {
+      "file": "onboarding-actual-wk.log",
+      "original_sha256": "963fb9d498afd99516b757e8977c4e93bc236d09b5d1507c07bba69fd46961b4",
+      "published_sha256": "97ada1139fd6d7595ee116502301c9960feeaba695b155831b9bc217097df30b",
+      "omitted_lines": 0,
+      "policy": "SQL statements omitted; test and safe fixed diagnostics retained",
+      "ansi_stripped": false,
+      "private_original_retained": true,
+      "private_original_file": "onboarding-actual-wk.log.963fb9d498af.raw",
+      "public_normalization_sha256_history": [
+        "963fb9d498afd99516b757e8977c4e93bc236d09b5d1507c07bba69fd46961b4"
+      ],
+      "public_tabs_expanded": true
+    },
+    {
+      "file": "onboarding-actual-wk-attempt-1791632412450588000.log",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "published_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "omitted_lines": 0,
+      "policy": "SQL statements omitted; test and safe fixed diagnostics retained",
+      "ansi_stripped": false,
+      "private_original_retained": true,
+      "private_original_file": "onboarding-actual-wk-attempt-1791632412450588000.log.e3b0c44298fc.raw"
+    },
+    {
+      "file": "final-real-graph-10000-full-20261010T1149.log",
+      "original_sha256": "ca6b170a23962862b71c5f1e57cd960c7ab5fbbb2c0434fe3d58c24469a2bf36",
+      "published_sha256": "059cc627e30c56f2aa4427ebabf1bea78cb51cb6d3c3ca85376a461f9cc8c129",
+      "omitted_lines": 20057,
+      "policy": "Test assertions/progress/results only; application and SQL logs omitted",
+      "ansi_stripped": true,
+      "private_original_retained": true,
+      "private_original_file": "final-real-graph-10000-full-20261010T1149.log.ca6b170a2396.raw",
+      "public_normalization_sha256_history": [
+        "58fd74811976391519d18739ed8075bc4bee77d4a32ea2a34aca805cb72b687b"
+      ],
+      "public_tabs_expanded": true
+    },
+    {
+      "file": "sdk-content-privacy-real-http-20261010.log",
+      "original_sha256": "da123022a556333d21605498d83883851c987d6bcf595db4bb21b403780add7d",
+      "published_sha256": "d77277dd32f2467ff513c953e3d585aad7cdc84e701cb7593dab76500fd03890",
+      "omitted_lines": 111,
+      "policy": "Test names/assertions/results only; application and vendor diagnostics omitted",
+      "private_original_retained": true,
+      "private_original_file": "sdk-content-privacy-real-http-20261010.log.da123022a556.raw",
+      "public_whitespace_normalized": true
+    },
+    {
+      "file": "caller-content-privacy-real-http-20261010.log",
+      "original_sha256": "49fdb87a7e10998bc53c6c3c0e56e243c9505add044300429e560b3432846d02",
+      "published_sha256": "bfe3cd92499886d0ecd7d41ed03470af9e349eac76bb1f9f9e6ddc8759c67caf",
+      "omitted_lines": 19,
+      "policy": "Test names/assertions/results only; application and vendor diagnostics omitted",
+      "private_original_retained": true,
+      "private_original_file": "caller-content-privacy-real-http-20261010.log.49fdb87a7e10.raw",
+      "public_whitespace_normalized": true
+    }
+  ]
+}

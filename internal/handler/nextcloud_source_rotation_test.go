@@ -87,11 +87,19 @@ func TestNextcloudSourceRotationRecoversUncertainCommitAndFinalize(t *testing.T)
 	base := "/api/v1/datasource/nextcloud-source-pairings/" + pair.OperationID + "/rotations"
 	router.POST("/api/v1/datasource/nextcloud-source-pairings/:operation_id/rotations", h.Rotate)
 	router.GET("/api/v1/datasource/nextcloud-source-pairings/:operation_id/rotations/:rotation_id", h.RotationStatus)
-	router.POST("/api/v1/datasource/nextcloud-source-pairings/:operation_id/rotations/:rotation_id/retry",
-		h.RetryRotation)
-	router.POST("/api/v1/datasource/nextcloud-source-pairings/:operation_id/rotations/:rotation_id/abort",
-		h.AbortRotation)
-	request := func(method, path string, body []byte, tenantID uint64,
+	router.POST(
+		"/api/v1/datasource/nextcloud-source-pairings/:operation_id/rotations/:rotation_id/retry",
+		h.RetryRotation,
+	)
+	router.POST(
+		"/api/v1/datasource/nextcloud-source-pairings/:operation_id/rotations/:rotation_id/abort",
+		h.AbortRotation,
+	)
+	request := func(
+		method,
+		path string,
+		body []byte,
+		tenantID uint64,
 		role types.TenantRole,
 	) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(method, path, bytes.NewReader(body))

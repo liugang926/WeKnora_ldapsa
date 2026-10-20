@@ -52,6 +52,12 @@ const router = createRouter({
       redirect: "/platform/knowledge-bases",
     },
     {
+      path: '/source-knowledge',
+      name: 'sourceKnowledge',
+      component: () => import('../views/nextcloud/SourceKnowledge.vue'),
+      meta: { requiresAuth: true, requiresInit: true },
+    },
+    {
       path: "/login",
       name: "login",
       component: () => import("../views/auth/Login.vue"),
@@ -419,6 +425,12 @@ router.beforeEach(async (to, from, next) => {
     next('/onboarding/workspace')
     return
   }
+  if (authStore.currentTenantScopedOnly && to.name !== 'sourceKnowledge') {
+    const ask = to.name === 'nextcloudAsk' ? safeNextcloudAskPath(to.fullPath) : null
+    next({ name: 'sourceKnowledge', query: ask ? { ask } : {} })
+    return
+  }
+  if (to.name === 'sourceKnowledge') { next(); return }
 
   // 部署能力只描述“后端是否提供该功能”，不反映服务健康或是否已配置。
   // 探测失败时 Store 会 fail-open，真正的权限和可用性仍由后端接口校验。

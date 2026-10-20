@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"strings"
@@ -294,6 +295,111 @@ func (r *directoryRepository) GetIdentityByUserID(
 		return nil, err
 	}
 	return identities, nil
+}
+
+// GetUserLoginSnapshot keeps link cardinality and the directory/current
+// identity/groups on one snapshot. The all-directory/all-status user-link query
+// never hides an inactive or second-directory link. Only the sole routed
+// directory is SHARE-locked, before reading the current identity/groups.
+// PostgreSQL repeatable read covers link changes and phantoms without locking
+// unrelated directories. SQLite has the same stable read transaction.
+func (r *directoryRepository) GetUserLoginSnapshot(
+	ctx context.Context,
+	userID string,
+) ([]*types.DirectoryIdentity, *types.DirectoryLoginSnapshot, error) {
+	if ctx == nil || strings.TrimSpace(userID) == "" {
+		return nil, nil, fmt.Errorf("directory user login snapshot requires a user")
+	}
+	options := &sql.TxOptions{}
+	if r.db.Name() == "postgres" {
+		// SELECT FOR SHARE is disallowed in a read-only PostgreSQL transaction.
+		options.Isolation = sql.LevelRepeatableRead
+	}
+	var lastErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return nil, nil, err
+		}
+		var identities []*types.DirectoryIdentity
+		var snapshot *types.DirectoryLoginSnapshot
+		err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			// This routing read takes no identity row lock. All later reads
+			// remain on this same repeatable-read/MVCC snapshot.
+			if err := tx.Where("user_id = ?", userID).
+				Order("directory_id ASC, id ASC").Find(&identities).Error; err != nil {
+				return err
+			}
+			if len(identities) != 1 || identities[0] == nil {
+				return ctx.Err()
+			}
+			linked := identities[0]
+			var directory types.Directory
+			directoryErr := tx.Clauses(clause.Locking{Strength: "SHARE"}).
+				Where("id = ?", linked.DirectoryID).First(&directory).Error
+			if errors.Is(directoryErr, gorm.ErrRecordNotFound) {
+				return ctx.Err()
+			}
+			if directoryErr != nil {
+				return directoryErr
+			}
+			snapshot = &types.DirectoryLoginSnapshot{Directory: &directory}
+			var identity types.DirectoryIdentity
+			lookupErr := tx.Where(
+				("id = ? AND directory_id = ? AND object_guid = ? AND user_id = ? AND snapsh" +
+					"ot_version = ? AND status = ?"),
+				linked.ID,
+				directory.ID,
+				linked.ObjectGUID,
+				userID,
+				directory.SnapshotVersion,
+				types.DirectoryObjectActive,
+			).First(&identity).Error
+			if errors.Is(lookupErr, gorm.ErrRecordNotFound) {
+				return ctx.Err()
+			}
+			if lookupErr != nil {
+				return lookupErr
+			}
+			var groups []struct{ ObjectGUID string }
+			if err := tx.Table("directory_group_memberships AS gm").
+				Select("DISTINCT g.object_guid AS object_guid").
+				Joins("JOIN directory_groups AS g ON g.id = gm.group_id AND g.directory_id = gm.directory_id").
+				Where(
+					"gm.directory_id = ? AND gm.identity_id = ? AND gm.snapshot_version = ?"+
+						" AND g.snapshot_version = ? AND g.status = ?",
+					directory.ID, identity.ID, directory.SnapshotVersion,
+					directory.SnapshotVersion, types.DirectoryObjectActive,
+				).Order("g.object_guid ASC").Scan(&groups).Error; err != nil {
+				return err
+			}
+			snapshot.Identity = &identity
+			snapshot.EffectiveGroupObjectGUIDs = make([]string, 0, len(groups))
+			for _, group := range groups {
+				if strings.TrimSpace(group.ObjectGUID) == "" {
+					return fmt.Errorf("directory user login snapshot contains an empty group objectGUID")
+				}
+				snapshot.EffectiveGroupObjectGUIDs = append(snapshot.EffectiveGroupObjectGUIDs, group.ObjectGUID)
+			}
+			return ctx.Err()
+		}, options)
+		if err == nil {
+			if err := ctx.Err(); err != nil {
+				return nil, nil, err
+			}
+			return identities, snapshot, nil
+		}
+		if err := ctx.Err(); err != nil {
+			return nil, nil, err
+		}
+		lastErr = err
+		var pgErr *pgconn.PgError
+		if r.db.Name() != "postgres" || !errors.As(err, &pgErr) || pgErr.Code != "40001" {
+			return nil, nil, err
+		}
+		// Discard the complete attempt, including old identities/snapshot.
+		// A conflicting update cannot be retried inside the original snapshot.
+	}
+	return nil, nil, fmt.Errorf("directory user login snapshot retries exhausted: %w", lastErr)
 }
 
 func (r *directoryRepository) LinkIdentity(ctx context.Context, identityID, userID string) error {

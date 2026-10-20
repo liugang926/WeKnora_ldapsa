@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http/httptest"
 	"sync/atomic"
 	"testing"
@@ -16,6 +17,32 @@ import (
 	sdkserver "github.com/mark3labs/mcp-go/server"
 	"github.com/stretchr/testify/require"
 )
+
+func ordinaryMCPAgentFixture(ctx context.Context, t *testing.T, engine *AgentEngine) context.Context {
+	t.Helper()
+	engine.SetSourceLineageVerifier(func(_ context.Context, lineage *types.SourceLineage) error {
+		return lineage.RequireComplete()
+	})
+	engine.SetMCPIndependentTransportVerifier(func(ctx context.Context) error {
+		tenant, ok := types.TenantIDFromContext(ctx)
+		if !ok || tenant != 7 {
+			return fmt.Errorf("ordinary MCP fixture tenant differs")
+		}
+		return ctx.Err()
+	})
+	return types.WithRAGSourceLineage(ctx, engine.turnLineage)
+}
+
+func ordinaryMCPServiceLookup(services []*types.MCPService) agenttools.MCPServiceLookup {
+	return func(_ context.Context, tenant uint64, id string) (*types.MCPService, error) {
+		for _, service := range services {
+			if tenant == service.TenantID && id == service.ID {
+				return service, nil
+			}
+		}
+		return nil, fmt.Errorf("ordinary MCP fixture service differs")
+	}
+}
 
 func TestAgentMCPProxyKeepsTargetEventsAndProtocolHistory(t *testing.T) {
 	utils.SetSSRFWhitelistFromRaw("127.0.0.1")
@@ -33,28 +60,24 @@ func TestAgentMCPProxyKeepsTargetEventsAndProtocolHistory(t *testing.T) {
 	defer manager.Shutdown()
 	ctx := context.WithValue(context.Background(), types.TenantIDContextKey, uint64(7))
 	registry := agenttools.NewToolRegistry()
+	services := []*types.MCPService{{
+		ID: "orders", TenantID: 7, Name: "Orders", Enabled: true,
+		URL: &httpServer.URL, TransportType: types.MCPTransportHTTPStreamable,
+	}}
 	_, err := agenttools.RegisterMCPTools(
 		ctx,
 		registry,
-		[]*types.MCPService{
-			{
-				ID:            "orders",
-				TenantID:      7,
-				Name:          "Orders",
-				Enabled:       true,
-				URL:           &httpServer.URL,
-				TransportType: types.MCPTransportHTTPStreamable,
-			},
-		},
+		services,
 		manager,
 		nil,
 		0,
-		nil,
+		ordinaryMCPServiceLookup(services),
 		nil,
 	)
 	require.NoError(t, err)
 	engine := newTestEngine(t, &mockChat{})
 	engine.toolRegistry = registry
+	ctx = ordinaryMCPAgentFixture(ctx, t, engine)
 	var starts []event.AgentToolCallData
 	var outcomes []event.AgentToolResultData
 	engine.eventBus.On(event.EventAgentToolCall, func(_ context.Context, evt event.Event) error {
@@ -135,13 +158,16 @@ func TestAgentMCPStringArgumentsKeepValidationAndAudit(t *testing.T) {
 	defer manager.Shutdown()
 	ctx := context.WithValue(context.Background(), types.TenantIDContextKey, uint64(7))
 	registry := agenttools.NewToolRegistry()
-	_, err := agenttools.RegisterMCPTools(ctx, registry, []*types.MCPService{{
+	services := []*types.MCPService{{
 		ID: "currency", TenantID: 7, Name: "Currency", Enabled: true,
 		URL: &httpServer.URL, TransportType: types.MCPTransportHTTPStreamable,
-	}}, manager, nil, 0, nil, nil)
+	}}
+	_, err := agenttools.RegisterMCPTools(ctx, registry, services, manager, nil, 0,
+		ordinaryMCPServiceLookup(services), nil)
 	require.NoError(t, err)
 	engine := newTestEngine(t, &mockChat{})
 	engine.toolRegistry = registry
+	ctx = ordinaryMCPAgentFixture(ctx, t, engine)
 	var starts []event.AgentToolCallData
 	engine.eventBus.On(event.EventAgentToolCall, func(_ context.Context, evt event.Event) error {
 		starts = append(starts, evt.Data.(event.AgentToolCallData))
@@ -149,7 +175,7 @@ func TestAgentMCPStringArgumentsKeepValidationAndAudit(t *testing.T) {
 	})
 	describe := func(name string) string {
 		raw, _ := json.Marshal(map[string]any{"mode": "describe", "server_id": "currency", "tool_name": name})
-		result, err := registry.ExecuteTool(ctx, agenttools.ToolDiscoverMCPTools, raw)
+		result, err := registry.ExecuteToolWithSourceLineage(ctx, agenttools.ToolDiscoverMCPTools, raw)
 		require.NoError(t, err)
 		require.True(t, result.Success, result.Error)
 		modelResult := engine.modelContext.ModelToolResultForTool(agenttools.ToolDiscoverMCPTools, result)

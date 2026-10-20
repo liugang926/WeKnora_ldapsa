@@ -522,11 +522,9 @@ func TestIncompleteCursorCannotDiscardDeletionEvidence(t *testing.T) {
 	}))
 	defer server.Close()
 	for _, old := range []*types.SyncCursor{
-		{
-			ConnectorCursor: map[string]interface{}{
-				"files": map[string]interface{}{"dev-published": map[string]interface{}{}},
-			},
-		},
+		{ConnectorCursor: map[string]interface{}{"files": map[string]interface{}{
+			"dev-published": map[string]interface{}{},
+		}}},
 		{ConnectorCursor: map[string]interface{}{"instance_id": "instance-1", "files": map[string]interface{}{}}},
 	} {
 		items, cursor, err := NewConnector().FetchIncremental(context.Background(), testConfig(t, server.URL), old)
@@ -545,15 +543,25 @@ func TestPaginatedManifestCompletesBeforeDownload(t *testing.T) {
 		case apiPath + "/bindings/dev-published/manifest":
 			pages++
 			if r.URL.Query().Get("cursor") == "" {
-				writeJSON(w, map[string]interface{}{
-					"generation": "g1", "complete": false,
-					"next_cursor": "page-2", "items": testManifest("etag-1")["items"],
-				})
+				writeJSON(
+					w,
+					map[string]interface{}{
+						"generation":  "g1",
+						"complete":    false,
+						"next_cursor": "page-2",
+						"items":       testManifest("etag-1")["items"],
+					},
+				)
 			} else if r.URL.Query().Get("cursor") == "page-2" {
-				writeJSON(w, map[string]interface{}{
-					"generation": "g1", "complete": true,
-					"next_cursor": nil, "items": []interface{}{},
-				})
+				writeJSON(
+					w,
+					map[string]interface{}{
+						"generation":  "g1",
+						"complete":    true,
+						"next_cursor": nil,
+						"items":       []interface{}{},
+					},
+				)
 			} else {
 				t.Errorf("unexpected cursor %q", r.URL.Query().Get("cursor"))
 			}

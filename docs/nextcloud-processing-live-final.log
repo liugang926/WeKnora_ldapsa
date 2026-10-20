@@ -1,0 +1,259 @@
+=== RUN   TestNextcloudLiveOriginalExtractionProviderAndStatusInbox
+
+2026/10/10 06:48:49 /app/internal/application/repository/nextcloud_versions.go:505 record not found
+
+2026/10/10 06:48:49 /app/internal/application/repository/nextcloud_processing_state.go:157 record not found
+
+2026/10/10 06:48:49 /app/internal/application/repository/nextcloud_derived_backend_plan.go:95 record not found
+
+2026/10/10 06:48:49 /app/internal/application/repository/span_output_input.go:262 record not found
+
+2026/10/10 06:48:49 /app/internal/application/repository/knowledge_span_repo.go:116 ON CONFLICT clause does not match any PRIMARY KEY or UNIQUE constraint
+WARNING[2026-10-10 06:48:49.840] [] knowledge_span_tracker.go:273[OpenAttempt] | [SpanTracker] OpenAttempt failed kid=actual-root-graph-document: ON CONFLICT clause does not match any PRIMARY KEY or UNIQUE constraint
+    nextcloud_graph_live_pipeline_test.go:106:
+            Error Trace:    /app/internal/application/service/nextcloud_graph_live_pipeline_test.go:106
+            Error:          Received unexpected error:
+                            ON CONFLICT clause does not match any PRIMARY KEY or UNIQUE constraint
+            Test:           TestNextcloudLiveOriginalExtractionProviderAndStatusInbox
+--- FAIL: TestNextcloudLiveOriginalExtractionProviderAndStatusInbox (0.86s)
+=== RUN   TestNextcloudControlledTenThousandFileProcessingPipeline
+
+2026/10/10 06:48:50 /app/internal/application/repository/nextcloud_versions.go:505 record not found
+
+2026/10/10 06:48:50 /app/internal/application/repository/nextcloud_processing_state.go:157 record not found
+
+2026/10/10 06:48:50 /app/internal/application/repository/nextcloud_derived_backend_plan.go:95 record not found
+
+2026/10/10 06:48:50 /app/internal/application/repository/nextcloud_graph.go:140 record not found
+
+2026/10/10 06:48:50 /app/internal/application/repository/nextcloud_processing_state.go:176 record not found
+
+2026/10/10 06:48:50 /app/internal/application/repository/nextcloud_processing_state.go:346 record not found
+
+2026/10/10 06:48:50 /app/internal/application/repository/nextcloud_processing_state.go:360 record not found
+WARNING[2026-10-10 06:48:50.062] [] knowledge_span_tracker.go:273[OpenAttempt] | [SpanTracker] OpenAttempt failed kid=scale-file-0: ON CONFLICT clause does not match any PRIMARY KEY or UNIQUE constraint
+    nextcloud_graph_scale_test.go:63:
+            Error Trace:    /app/internal/application/service/nextcloud_graph_scale_test.go:63
+            Error:          Received unexpected error:
+                            ON CONFLICT clause does not match any PRIMARY KEY or UNIQUE constraint
+            Test:           TestNextcloudControlledTenThousandFileProcessingPipeline
+--- FAIL: TestNextcloudControlledTenThousandFileProcessingPipeline (0.22s)
+FAIL
+FAIL    github.com/Tencent/WeKnora/internal/application/service 1.507s
+=== RUN   TestPostgresNextcloudActualGraphProviderCommitSerializesRetirement
+
+2026/10/10 06:49:15 /app/internal/application/repository/nextcloud_versions.go:505 record not found
+
+2026/10/10 06:49:15 /app/internal/application/repository/nextcloud_versions.go:505 record not found
+
+2026/10/10 06:49:15 /app/internal/application/repository/nextcloud_processing_state.go:176 record not found
+
+2026/10/10 06:49:15 /app/internal/application/repository/nextcloud_graph.go:283 record not found
+
+2026/10/10 06:49:15 /app/internal/application/repository/nextcloud_processing_state.go:346 record not found
+
+2026/10/10 06:49:15 /app/internal/application/repository/nextcloud_processing_state.go:360 record not found
+
+2026/10/10 06:49:15 /app/internal/application/repository/nextcloud_graph.go:140 record not found
+
+2026/10/10 06:49:15 /app/internal/application/repository/nextcloud_processing_state.go:176 record not found
+
+2026/10/10 06:49:15 /app/internal/application/repository/nextcloud_processing_state.go:346 record not found
+
+2026/10/10 06:49:15 /app/internal/application/repository/nextcloud_processing_state.go:176 record not found
+
+2026/10/10 06:49:15 /app/internal/application/repository/nextcloud_processing_state.go:346 record not found
+
+2026/10/10 06:49:15 /app/internal/application/repository/nextcloud_graph.go:479 record not found
+
+2026/10/10 06:49:15 /app/internal/application/repository/nextcloud_processing_state.go:176 record not found
+
+2026/10/10 06:49:15 /app/internal/application/repository/nextcloud_processing_state.go:346 record not found
+
+2026/10/10 06:49:15 /app/internal/application/repository/nextcloud_processing_state.go:176 record not found
+
+2026/10/10 06:49:15 /app/internal/application/repository/nextcloud_processing_state.go:346 record not found
+
+2026/10/10 06:49:15 /app/internal/application/repository/nextcloud_processing_pg_test.go:29
+[warn] removing callback `pause_graph_provider_actual_commit` from /app/internal/application/repository/nextcloud_processing_pg_test.go:29
+--- PASS: TestPostgresNextcloudActualGraphProviderCommitSerializesRetirement (0.78s)
+=== RUN   TestNextcloudGraphActualSQLProviderDurableStateAndIdempotentTask
+
+2026/10/10 06:49:15 /app/internal/application/repository/nextcloud_versions.go:505 record not found
+
+2026/10/10 06:49:15 /app/internal/application/repository/nextcloud_processing_state.go:176 record not found
+
+2026/10/10 06:49:15 /app/internal/application/repository/nextcloud_graph.go:283 record not found
+
+2026/10/10 06:49:15 /app/internal/application/repository/nextcloud_processing_state.go:346 record not found
+
+2026/10/10 06:49:15 /app/internal/application/repository/nextcloud_processing_state.go:360 record not found
+
+2026/10/10 06:49:15 /app/internal/application/repository/nextcloud_graph.go:140 record not found
+
+2026/10/10 06:49:15 /app/internal/application/repository/nextcloud_processing_state.go:176 record not found
+
+2026/10/10 06:49:15 /app/internal/application/repository/nextcloud_processing_state.go:346 record not found
+
+2026/10/10 06:49:15 /app/internal/application/repository/nextcloud_processing_state.go:176 record not found
+
+2026/10/10 06:49:15 /app/internal/application/repository/nextcloud_processing_state.go:346 record not found
+
+2026/10/10 06:49:15 /app/internal/application/repository/nextcloud_graph.go:479 record not found
+
+2026/10/10 06:49:15 /app/internal/application/repository/nextcloud_processing_state.go:176 record not found
+
+2026/10/10 06:49:15 /app/internal/application/repository/nextcloud_processing_state.go:346 record not found
+
+2026/10/10 06:49:15 /app/internal/application/repository/nextcloud_processing_state_test.go:155 nextcloud_graph_record_immutable
+--- PASS: TestNextcloudGraphActualSQLProviderDurableStateAndIdempotentTask (0.03s)
+=== RUN   TestNextcloudGraphActualSQLRetirementAndAttemptFence
+=== RUN   TestNextcloudGraphActualSQLRetirementAndAttemptFence/retire
+
+2026/10/10 06:49:15 /app/internal/application/repository/nextcloud_versions.go:505 record not found
+
+2026/10/10 06:49:15 /app/internal/application/repository/nextcloud_processing_state.go:176 record not found
+
+2026/10/10 06:49:15 /app/internal/application/repository/nextcloud_graph.go:283 record not found
+
+2026/10/10 06:49:15 /app/internal/application/repository/nextcloud_processing_state.go:346 record not found
+
+2026/10/10 06:49:15 /app/internal/application/repository/nextcloud_processing_state.go:360 record not found
+
+2026/10/10 06:49:15 /app/internal/application/repository/nextcloud_graph.go:140 record not found
+
+2026/10/10 06:49:15 /app/internal/application/repository/nextcloud_processing_state.go:176 record not found
+
+2026/10/10 06:49:15 /app/internal/application/repository/nextcloud_processing_state.go:346 record not found
+
+2026/10/10 06:49:15 /app/internal/application/repository/nextcloud_processing_state.go:176 record not found
+
+2026/10/10 06:49:15 /app/internal/application/repository/nextcloud_processing_state.go:346 record not found
+=== RUN   TestNextcloudGraphActualSQLRetirementAndAttemptFence/attempt
+
+2026/10/10 06:49:15 /app/internal/application/repository/nextcloud_versions.go:505 record not found
+
+2026/10/10 06:49:15 /app/internal/application/repository/nextcloud_processing_state.go:176 record not found
+
+2026/10/10 06:49:15 /app/internal/application/repository/nextcloud_graph.go:283 record not found
+
+2026/10/10 06:49:15 /app/internal/application/repository/nextcloud_processing_state.go:346 record not found
+
+2026/10/10 06:49:15 /app/internal/application/repository/nextcloud_processing_state.go:360 record not found
+
+2026/10/10 06:49:15 /app/internal/application/repository/nextcloud_graph.go:140 record not found
+
+2026/10/10 06:49:15 /app/internal/application/repository/nextcloud_processing_state.go:176 record not found
+
+2026/10/10 06:49:15 /app/internal/application/repository/nextcloud_processing_state.go:346 record not found
+
+2026/10/10 06:49:15 /app/internal/application/repository/nextcloud_processing_state.go:176 record not found
+
+2026/10/10 06:49:15 /app/internal/application/repository/nextcloud_processing_state.go:346 record not found
+=== RUN   TestNextcloudGraphActualSQLRetirementAndAttemptFence/config
+
+2026/10/10 06:49:15 /app/internal/application/repository/nextcloud_versions.go:505 record not found
+
+2026/10/10 06:49:15 /app/internal/application/repository/nextcloud_processing_state.go:176 record not found
+
+2026/10/10 06:49:15 /app/internal/application/repository/nextcloud_graph.go:283 record not found
+
+2026/10/10 06:49:15 /app/internal/application/repository/nextcloud_processing_state.go:346 record not found
+
+2026/10/10 06:49:15 /app/internal/application/repository/nextcloud_processing_state.go:360 record not found
+
+2026/10/10 06:49:15 /app/internal/application/repository/nextcloud_graph.go:140 record not found
+
+2026/10/10 06:49:15 /app/internal/application/repository/nextcloud_processing_state.go:176 record not found
+
+2026/10/10 06:49:15 /app/internal/application/repository/nextcloud_processing_state.go:346 record not found
+
+2026/10/10 06:49:15 /app/internal/application/repository/nextcloud_processing_state.go:176 record not found
+
+2026/10/10 06:49:15 /app/internal/application/repository/nextcloud_processing_state.go:346 record not found
+=== RUN   TestNextcloudGraphActualSQLRetirementAndAttemptFence/lease
+
+2026/10/10 06:49:15 /app/internal/application/repository/nextcloud_versions.go:505 record not found
+
+2026/10/10 06:49:15 /app/internal/application/repository/nextcloud_processing_state.go:176 record not found
+
+2026/10/10 06:49:15 /app/internal/application/repository/nextcloud_graph.go:283 record not found
+
+2026/10/10 06:49:15 /app/internal/application/repository/nextcloud_processing_state.go:346 record not found
+
+2026/10/10 06:49:15 /app/internal/application/repository/nextcloud_processing_state.go:360 record not found
+
+2026/10/10 06:49:15 /app/internal/application/repository/nextcloud_graph.go:140 record not found
+
+2026/10/10 06:49:15 /app/internal/application/repository/nextcloud_processing_state.go:176 record not found
+
+2026/10/10 06:49:15 /app/internal/application/repository/nextcloud_processing_state.go:346 record not found
+
+2026/10/10 06:49:15 /app/internal/application/repository/nextcloud_processing_state.go:176 record not found
+
+2026/10/10 06:49:15 /app/internal/application/repository/nextcloud_processing_state.go:346 record not found
+--- PASS: TestNextcloudGraphActualSQLRetirementAndAttemptFence (0.09s)
+    --- PASS: TestNextcloudGraphActualSQLRetirementAndAttemptFence/retire (0.02s)
+    --- PASS: TestNextcloudGraphActualSQLRetirementAndAttemptFence/attempt (0.03s)
+    --- PASS: TestNextcloudGraphActualSQLRetirementAndAttemptFence/config (0.02s)
+    --- PASS: TestNextcloudGraphActualSQLRetirementAndAttemptFence/lease (0.02s)
+=== RUN   TestNextcloudStateV2CrossLanguageSigningFixture
+--- PASS: TestNextcloudStateV2CrossLanguageSigningFixture (0.00s)
+=== RUN   TestNextcloudPlannedGraphPayloadCrashRecoveryIsExactAndFenced
+
+2026/10/10 06:49:15 /app/internal/application/repository/nextcloud_versions.go:505 record not found
+
+2026/10/10 06:49:15 /app/internal/application/repository/nextcloud_processing_state.go:176 record not found
+
+2026/10/10 06:49:15 /app/internal/application/repository/nextcloud_graph.go:283 record not found
+
+2026/10/10 06:49:15 /app/internal/application/repository/nextcloud_processing_state.go:346 record not found
+
+2026/10/10 06:49:15 /app/internal/application/repository/nextcloud_processing_state.go:360 record not found
+
+2026/10/10 06:49:15 /app/internal/application/repository/nextcloud_graph.go:140 record not found
+
+2026/10/10 06:49:15 /app/internal/application/repository/nextcloud_processing_state.go:176 record not found
+
+2026/10/10 06:49:15 /app/internal/application/repository/nextcloud_processing_state.go:346 record not found
+--- PASS: TestNextcloudPlannedGraphPayloadCrashRecoveryIsExactAndFenced (0.03s)
+=== RUN   TestNextcloudActualGraphExactGCReceiptAndUnknownCoverage
+
+2026/10/10 06:49:15 /app/internal/application/repository/nextcloud_versions.go:505 record not found
+
+2026/10/10 06:49:15 /app/internal/application/repository/nextcloud_processing_state.go:176 record not found
+
+2026/10/10 06:49:15 /app/internal/application/repository/nextcloud_graph.go:283 record not found
+
+2026/10/10 06:49:15 /app/internal/application/repository/nextcloud_processing_state.go:346 record not found
+
+2026/10/10 06:49:15 /app/internal/application/repository/nextcloud_processing_state.go:360 record not found
+
+2026/10/10 06:49:15 /app/internal/application/repository/nextcloud_graph.go:140 record not found
+
+2026/10/10 06:49:15 /app/internal/application/repository/nextcloud_processing_state.go:176 record not found
+
+2026/10/10 06:49:15 /app/internal/application/repository/nextcloud_processing_state.go:346 record not found
+
+2026/10/10 06:49:15 /app/internal/application/repository/nextcloud_processing_state.go:176 record not found
+
+2026/10/10 06:49:15 /app/internal/application/repository/nextcloud_processing_state.go:346 record not found
+
+2026/10/10 06:49:15 /app/internal/application/repository/nextcloud_graph.go:479 record not found
+
+2026/10/10 06:49:15 /app/internal/application/repository/nextcloud_processing_state.go:176 record not found
+
+2026/10/10 06:49:15 /app/internal/application/repository/nextcloud_processing_state.go:346 record not found
+
+2026/10/10 06:49:15 /app/internal/application/repository/nextcloud_processing_state.go:176 record not found
+
+2026/10/10 06:49:15 /app/internal/application/repository/nextcloud_local_derived_gc.go:715 record not found
+--- PASS: TestNextcloudActualGraphExactGCReceiptAndUnknownCoverage (0.03s)
+PASS
+ok      github.com/Tencent/WeKnora/internal/application/repository  1.383s
+=== RUN   TestNextcloudLiveOwnedRootAuthorizationAndContentRevision
+    root_authorization_live_test.go:51: actual Nextcloud signed machine HTTP with live LDAP: allowed Alice root/current file; denied Bob root and legacy content revision
+--- PASS: TestNextcloudLiveOwnedRootAuthorizationAndContentRevision (0.64s)
+PASS
+ok      github.com/Tencent/WeKnora/internal/datasource/connector/nextcloud  1.056s
+FAIL

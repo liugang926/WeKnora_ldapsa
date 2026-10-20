@@ -27,6 +27,20 @@ type groupAccessService struct {
 	directoryRuntime interfaces.DirectoryRuntimeService
 	userEligibility  func(context.Context, string) error
 	now              func() time.Time
+	nextcloudScopes  NextcloudScopedGrantReader
+}
+
+// NextcloudScopedGrantReader resolves ledger grants without creating members.
+type NextcloudScopedGrantReader interface {
+	ScopedMatches(context.Context, string, uint64, string, time.Time) ([]types.NextcloudScopedGrantMatch, error)
+	TenantScoped(context.Context, uint64) (bool, error)
+}
+
+// ConfigureGroupAccessNextcloudScopes configures the group access nextcloud scopes boundary.
+func ConfigureGroupAccessNextcloudScopes(access interfaces.GroupAccessService, reader NextcloudScopedGrantReader) {
+	if impl, ok := access.(*groupAccessService); ok {
+		impl.nextcloudScopes = reader
+	}
 }
 
 // ConfigureGroupAccessUserEligibility rechecks the live user and directory
@@ -69,7 +83,11 @@ func NewGroupAccessServiceWithInvalidator(
 	repo interfaces.GroupAccessRepository,
 	invalidator interfaces.PermissionInvalidator,
 ) interfaces.GroupAccessService {
-	return &groupAccessService{repo: repo, invalidator: invalidator, now: time.Now}
+	impl := &groupAccessService{repo: repo, invalidator: invalidator, now: time.Now}
+	if reader, ok := repo.(NextcloudScopedGrantReader); ok {
+		impl.nextcloudScopes = reader
+	}
+	return impl
 }
 
 // ConfigureGroupAccessDirectoryRuntime makes the directory feature flag the
@@ -121,6 +139,13 @@ func (s *groupAccessService) EffectiveTenantRole(
 		result.Role = *direct
 	}
 	if s.directoryModuleDisabled(ctx) {
+		if !result.Member && s.nextcloudScopes != nil {
+			scoped, err := s.nextcloudScopes.TenantScoped(ctx, tenantID)
+			if err != nil {
+				return result, err
+			}
+			result.ScopedOnly = scoped
+		}
 		return result, nil
 	}
 	matches, err := s.repo.ListGroupRoleMatches(ctx, userID, tenantID)
@@ -137,6 +162,22 @@ func (s *groupAccessService) EffectiveTenantRole(
 		if !result.Member || match.Role.Level() > result.Role.Level() {
 			result.Member = true
 			result.Role = match.Role
+		}
+	}
+	if !result.Member && s.nextcloudScopes != nil {
+		scoped, err := s.nextcloudScopes.TenantScoped(ctx, tenantID)
+		if err != nil {
+			return result, err
+		}
+		result.ScopedOnly = scoped
+		matches, err := s.nextcloudScopes.ScopedMatches(ctx, userID, tenantID, "", now)
+		if err != nil {
+			return result, err
+		}
+		if len(matches) > 0 {
+			result.Member = true
+			result.Role = types.TenantRoleViewer
+			result.ScopedOnly = true
 		}
 	}
 	return result, nil
@@ -171,6 +212,30 @@ func (s *groupAccessService) ListEffectiveTenantRoles(
 			directOnly = append(directOnly, role)
 		}
 		roles = directOnly
+	}
+	if s.nextcloudScopes != nil && !s.directoryModuleDisabled(ctx) {
+		matches, err := s.nextcloudScopes.ScopedMatches(ctx, userID, 0, "", now)
+		if err != nil {
+			return nil, err
+		}
+		seen := map[uint64]bool{}
+		for _, role := range roles {
+			seen[role.TenantID] = true
+		}
+		for _, match := range matches {
+			if !seen[match.TenantID] {
+				roles = append(
+					roles,
+					types.EffectiveTenantRole{
+						TenantID:   match.TenantID,
+						Member:     true,
+						Role:       types.TenantRoleViewer,
+						ScopedOnly: true,
+					},
+				)
+				seen[match.TenantID] = true
+			}
+		}
 	}
 	// The repository contract is already sorted, but sort again at the public
 	// service boundary so alternate implementations cannot make login tenant
@@ -300,6 +365,21 @@ func (s *groupAccessService) EffectivePermission(
 	now time.Time,
 ) (types.EffectiveResourcePermission, error) {
 	if s.directoryModuleDisabled(ctx) {
+		if checker, ok := s.nextcloudScopes.(interface {
+			ManagedKB(context.Context, uint64, string) (bool, error)
+		}); ok && resourceType == types.GroupResourceTypeKnowledgeBase {
+			managed, err := checker.ManagedKB(ctx, tenantID, resourceID)
+			if err != nil {
+				return types.EffectiveResourcePermission{}, err
+			}
+			if managed {
+				return types.EffectiveResourcePermission{
+					Action: action,
+					Mode:   types.ResourceAccessRestricted,
+					Reason: "nextcloud_directory_disabled",
+				}, nil
+			}
+		}
 		return types.EffectiveResourcePermission{
 			Allowed: true,
 			Mode:    types.ResourceAccessInherit,
@@ -344,6 +424,22 @@ func (s *groupAccessService) effectivePermissionWithMode(
 		!action.ValidFor(resourceType) ||
 		!mode.IsValid() {
 		return result, ErrInvalidResourcePolicy
+	}
+	// Scoped entry is deliberately not an ordinary Viewer role. It can never
+	// inherit unrelated KBs or agents, including when a policy is missing.
+	if s.nextcloudScopes != nil {
+		if principal, ok := types.PrincipalFromContext(ctx); ok && principal.Type == types.PrincipalWebUser {
+			role, err := s.EffectiveTenantRole(ctx, principal.ID, tenantID, now)
+			if err != nil {
+				return result, err
+			}
+			if role.ScopedOnly &&
+				(mode == types.ResourceAccessInherit ||
+					resourceType != types.GroupResourceTypeKnowledgeBase || action != types.ResourceActionRead) {
+				result.Reason = "scoped_knowledge_base_only"
+				return result, nil
+			}
+		}
 	}
 	if mode == types.ResourceAccessInherit {
 		// HTTP admission already checks workspace/share authority. A human
@@ -424,6 +520,18 @@ func (s *groupAccessService) effectivePermissionWithMode(
 	if action == types.ResourceActionManage {
 		result.Reason = "management_requires_owner_or_admin"
 		return result, nil
+	}
+	if s.nextcloudScopes != nil && resourceType == types.GroupResourceTypeKnowledgeBase &&
+		action == types.ResourceActionRead {
+		matches, err := s.nextcloudScopes.ScopedMatches(ctx, caller.UserID, tenantID, resourceID, now)
+		if err != nil {
+			return result, err
+		}
+		if len(matches) > 0 {
+			result.Allowed = true
+			result.Reason = "nextcloud_source_grant"
+			return result, nil
+		}
 	}
 	matches, err := s.repo.ListResourceGroupMatches(
 		ctx,

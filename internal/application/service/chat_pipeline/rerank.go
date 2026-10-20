@@ -3,10 +3,13 @@ package chatpipeline
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"regexp"
 	"strings"
+
+	"github.com/Tencent/WeKnora/internal/application/access"
 
 	"github.com/Tencent/WeKnora/internal/models/rerank"
 	"github.com/Tencent/WeKnora/internal/searchutil"
@@ -125,9 +128,22 @@ func (p *PluginRerank) OnEvent(ctx context.Context,
 		// Single rerank call with RewriteQuery, use threshold degradation if no results
 		originalThreshold := chatManage.RerankThreshold
 		var rerankErr error
-		rerankResp, rerankErr = p.rerank(ctx, chatManage, rerankModel, chatManage.RewriteQuery, passages, candidatesToRerank)
+		rerankResp, rerankErr = p.rerank(
+			ctx,
+			chatManage,
+			rerankModel,
+			chatManage.RewriteQuery,
+			passages,
+			candidatesToRerank,
+		)
 
 		if rerankErr != nil {
+			if errors.Is(rerankErr, access.ErrNextcloudPublicationDenied) ||
+				errors.Is(rerankErr, access.ErrNextcloudPublicationUnavailable) ||
+				errors.Is(rerankErr, types.ErrSourceLineageUnknown) {
+				spanErr = rerankErr
+				return sourceLineagePluginError(rerankErr)
+			}
 			if strictRetrieval(ctx) {
 				spanErr = rerankErr
 				return ErrRerank.WithError(rerankErr)
@@ -162,10 +178,23 @@ func (p *PluginRerank) OnEvent(ctx context.Context,
 				"reason":        "no results above original threshold, retrying with lower threshold",
 			})
 			chatManage.RerankThreshold = degradedThreshold
-			rerankResp, rerankErr = p.rerank(ctx, chatManage, rerankModel, chatManage.RewriteQuery, passages, candidatesToRerank)
+			rerankResp, rerankErr = p.rerank(
+				ctx,
+				chatManage,
+				rerankModel,
+				chatManage.RewriteQuery,
+				passages,
+				candidatesToRerank,
+			)
 			// Restore original threshold
 			chatManage.RerankThreshold = originalThreshold
 			if rerankErr != nil {
+				if errors.Is(rerankErr, access.ErrNextcloudPublicationDenied) ||
+					errors.Is(rerankErr, access.ErrNextcloudPublicationUnavailable) ||
+					errors.Is(rerankErr, types.ErrSourceLineageUnknown) {
+					spanErr = rerankErr
+					return sourceLineagePluginError(rerankErr)
+				}
 				if strictRetrieval(ctx) {
 					spanErr = rerankErr
 					return ErrRerank.WithError(rerankErr)
@@ -348,7 +377,14 @@ func (p *PluginRerank) rerank(ctx context.Context,
 		return nil, nil
 	}
 	passages = cleanPassages
+	passages = append([]string(nil), passages...) // Detach actual model-input slice before authorization callbacks.
 	candidates = cleanCandidates
+	if err := CheckSourceLineageInputs(ctx, chatManage); err != nil {
+		return nil, err
+	}
+	if err := AccountResults(ctx, candidates); err != nil {
+		return nil, err
+	}
 
 	rerankResp, err := rerankModel.Rerank(ctx, query, passages)
 	if err != nil {

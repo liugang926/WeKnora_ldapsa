@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/Tencent/WeKnora/internal/logprivacy"
 	"github.com/Tencent/WeKnora/internal/tracing/langfuse"
 	"github.com/Tencent/WeKnora/internal/types"
 )
@@ -20,6 +21,9 @@ func (l *langfuseChat) GetModelName() string { return l.inner.GetModelName() }
 func (l *langfuseChat) GetModelID() string   { return l.inner.GetModelID() }
 
 func (l *langfuseChat) Chat(ctx context.Context, messages []Message, opts *ChatOptions) (*types.ChatResponse, error) {
+	if logprivacy.ContentSuppressed(ctx) || types.RAGSourceLineageFromContext(ctx) != nil {
+		return l.inner.Chat(ctx, messages, opts)
+	}
 	mgr := langfuse.GetManager()
 	if !mgr.Enabled() {
 		return l.inner.Chat(ctx, messages, opts)
@@ -48,7 +52,14 @@ func (l *langfuseChat) Chat(ctx context.Context, messages []Message, opts *ChatO
 	return resp, err
 }
 
-func (l *langfuseChat) ChatStream(ctx context.Context, messages []Message, opts *ChatOptions) (<-chan types.StreamResponse, error) {
+func (l *langfuseChat) ChatStream(
+	ctx context.Context,
+	messages []Message,
+	opts *ChatOptions,
+) (<-chan types.StreamResponse, error) {
+	if logprivacy.ContentSuppressed(ctx) || types.RAGSourceLineageFromContext(ctx) != nil {
+		return l.inner.ChatStream(ctx, messages, opts)
+	}
 	mgr := langfuse.GetManager()
 	if !mgr.Enabled() {
 		return l.inner.ChatStream(ctx, messages, opts)

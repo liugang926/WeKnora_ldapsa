@@ -52,7 +52,17 @@ func (p *PluginMerge) populateFAQAnswers(
 		chunkIDs = append(chunkIDs, id)
 	}
 
-	chunks, err := p.chunkRepo.ListChunksByID(ctx, tenantID, chunkIDs)
+	var chunks []*types.Chunk
+	var err error
+	if p.ragChunks != nil || types.RAGSourceLineageFromContext(ctx) != nil || hasRAGInputReceipt(results) {
+		for id, references := range chunkResultMap {
+			for _, reference := range references {
+				chunks = append(chunks, p.hydrateMergeInput(ctx, reference, []string{id})...)
+			}
+		}
+	} else {
+		chunks, err = p.chunkRepo.ListChunksByID(ctx, tenantID, chunkIDs)
+	}
 	if err != nil {
 		pipelineWarn(ctx, "Merge", "faq_chunk_fetch_failed", map[string]interface{}{
 			"error": err.Error(),

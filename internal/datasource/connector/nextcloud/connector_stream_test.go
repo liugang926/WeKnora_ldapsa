@@ -431,12 +431,10 @@ func TestFetchStreamEmitFailureStopsWithoutCursor(t *testing.T) {
 				"mtime": 1700000000, "url": "https://files.example/index.php/f/42",
 			}
 			writeJSON(w, map[string]interface{}{
-				"generation": "g1", "complete": true,
+				"generation":  "g1",
+				"complete":    true,
 				"next_cursor": nil,
-				"items": []interface{}{
-					testManifest("etag-41")["items"].([]map[string]interface{})[0],
-					second,
-				},
+				"items":       []interface{}{testManifest("etag-41")["items"].([]map[string]interface{})[0], second},
 			})
 		case apiPath + "/bindings/dev-published/files/41/content":
 			w.Header().Set("ETag", "etag-41")

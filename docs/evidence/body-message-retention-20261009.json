@@ -1,0 +1,369 @@
+{
+  "base": "d7cee0415eeafadbbb1507ef6ea63a2c2362aa2d",
+  "production_source": "36cf96c44e5ce207c2e489fdc8773faf79f20374",
+  "broad_verified_source": "62d332d02d8c9874bdeabfe3f709f2eaede6762d",
+  "readonly_source": {
+    "container": "weknora-body-message-go-ro-20261009-b913",
+    "workspace_bind_rw": false,
+    "source_clean_at_test_start": true,
+    "cpu_limit": 1,
+    "memory_limit_bytes": 2147483648,
+    "GOMAXPROCS": 1,
+    "GOMEMLIMIT": "384MiB",
+    "GOGC": 20
+  },
+  "final_gates": [
+    {
+      "run": "r23",
+      "source": "62d332d02d8c9874bdeabfe3f709f2eaede6762d",
+      "exit_code": 0,
+      "leaf_pass": 109,
+      "leaf_fail": 0,
+      "leaf_skip": 0,
+      "packages": {
+        "repository": {
+          "pass": 47,
+          "elapsed_s": 12.419
+        },
+        "service": {
+          "pass": 52,
+          "elapsed_s": 27.396
+        },
+        "handler": {
+          "pass": 10,
+          "elapsed_s": 14.803
+        }
+      },
+      "command": "go test -json -p 1 -tags sqlite_fts5 ./internal/application/repository ./internal/application/service ./internal/handler -run '^Test(OriginalBody|PostgresOriginalBody|MessageBody|PostgresMessageBody|MessageMaterial|MessageActual|MessageGenerated|NextcloudGCAdmin|SpanOriginalBody)' -count=1 -timeout=240s",
+      "cli_binary_source": "5e34663152a25aab028b67b954fef9ed378f0f0c"
+    },
+    {
+      "run": "r24",
+      "source": "62d332d02d8c9874bdeabfe3f709f2eaede6762d",
+      "exit_code": 0,
+      "compiled_packages": 155,
+      "command": "go test -p 1 -tags sqlite_fts5 ./... -run '^$' -timeout=180s",
+      "runtime_tests_executed": false
+    },
+    {
+      "run": "r25",
+      "source": "62d332d02d8c9874bdeabfe3f709f2eaede6762d",
+      "exit_code": 0,
+      "cli_sha256": "b53deb4a567991749564280217d7e04ccbe77edb05e89d3d109ef3299bbaf22c"
+    },
+    {
+      "run": "r26",
+      "source": "62d332d02d8c9874bdeabfe3f709f2eaede6762d",
+      "exit_code": 0,
+      "leaf_pass": 4,
+      "leaf_fail": 0,
+      "leaf_skip": 0,
+      "elapsed_s": 6.149,
+      "scope": "Actual offline CLI SQLite complete database file / PostgreSQL all schema table-data restore plus forward schema upgrade, missing-table and missing-trigger rejection. Each restore replayed 3. PG migrated triggers remained installed; no pg_dump/fullcluster restore claim."
+    },
+    {
+      "run": "r27",
+      "source": "62d332d02d8c9874bdeabfe3f709f2eaede6762d",
+      "exit_code": 0,
+      "scope": "Fresh actual SQLite migrator 0 to 72; verify before init refused; init then verify succeeded; repeated init refused. Journal dir 0700, key/pin 0600, effective UID 0. This is developer CLI acceptance, not normal image appuser startup or fresh PG extension-chain acceptance."
+    },
+    {
+      "run": "r28",
+      "source": "36cf96c44e5ce207c2e489fdc8773faf79f20374",
+      "exit_code": 0,
+      "leaf_pass": 6,
+      "leaf_fail": 0,
+      "leaf_skip": 0,
+      "elapsed_s": 3.145,
+      "scope": "Necessary completeness-marker delta: old schema/empty refs and only-KB partial refs retained; namespace ABA preserved old KB; actual no-KB reader body-ID leases protect until close. No repeated full 109 suite/full project compile on this 22-line delta."
+    },
+    {
+      "run": "r29",
+      "source": "36cf96c44e5ce207c2e489fdc8773faf79f20374",
+      "exit_code": 0,
+      "cli_sha256": "0f64b77d7241b4c341c57713ce6cccb567e21c658b63308592aa4d7dfec592e2"
+    },
+    {
+      "run": "r30",
+      "source": "36cf96c44e5ce207c2e489fdc8773faf79f20374",
+      "exit_code": 0,
+      "leaf_pass": 4,
+      "leaf_fail": 0,
+      "leaf_skip": 0,
+      "elapsed_s": 7.006,
+      "scope": "Actual final-source offline CLI dual SQL forward schema gate and whole file/schema table-data restore, each restore replayed 3. The migrated PG triggers were retained; no pg_dump/fullcluster restore claim."
+    }
+  ],
+  "implementation": {
+    "same_tx": "Actual message writer and reader availability checks use caller transaction; CheckOriginalBodyAvailableInTx loads only id/state, and material metadata projections avoid vault bytes. Actual reader claims exact body IDs before capture; renewal and final release share material guard/model/HTTP holder lifetime, including no-KB reads. New completion/generated heads are additionally leased without recertifying unconsumed fields.",
+    "scopes": "Actual authenticated producer resolves tenant/KB at capture and persists immutable scope rows. Empty-KB row is completeness marker; only that row means complete no-KB. Scope rows enter external purge ScopeSHA. Legacy missing/partial refs are retained; no current-pointer backfill.",
+    "forward": "Already installed 152/71: offline upgrade-scopes then reconcile then verify, with app/readers/builders/sync stopped and same external ledger/key/pin retained. Fresh 152/71 includes table and immutable triggers. Startup refuses missing table/columns/triggers. No automatic dirty recovery or lease coverage grant.",
+    "generated": "Future generated parent_materials snapshots exclude Messages. Actual selected generated empty-field ABA is rejected using receipts/counters before hydration; raw-user plans can ignore unconsumed generated updates. Known old generated/fork Messages copies have unsupported inventory heads preserving proof metadata; no unproved deletion or current-body re-sign."
+  },
+  "limits": [
+    "Known old generated/fork parent Messages copies remain explicit retained blockers; not physically cleared. No reliable old copy/closure receipt was invented.",
+    "Fresh PG normal-image migration and appuser external anchor/app startup are root integrated fixture work; this module did not execute them.",
+    "This worktree includes consumer 7930/cee02 dependencies but excludes newer native/Rewind/steer154/root physical RAG integration; no coverage claim for those later combined sources.",
+    "r22 had 4 known old Chunk HTTP fixture failures; root owns that independent repair. The final bounded body/message suite does not include those cases.",
+    "Source lineage alone is not physical GC coverage. Global coverage never enabled. Other Neo4j/Wiki/provider/backup copies are not claimed empty. Metadata deadlines are persisted; no metadata expiry scheduler claim.",
+    "No real AD or production users/providers were used. All DB rows and credentials are isolated synthetic fixtures."
+  ],
+  "diagnostics": {
+    "r01": "compile unused time",
+    "r02": "fixture counted pre-feature origins; PG required uuid-ossp",
+    "r03": "anonymous DTO table inheritance prevented vault hydration",
+    "r04": "Gorm anonymous DeletedAt filtered closed rows",
+    "r05": "2 message integration pass 1.525s",
+    "r06": "2 with consumer dependency pass 1.781s",
+    "r07": "34 pass/22 skip/2 fail; missing optional PG DSNs and private staging lookup fixture defect",
+    "r08": "54 pass/4 fail; actual localderived used public actor in private staging",
+    "r09": "SQLite ABA fixture missing display versions",
+    "r10": "6 scope cases pass 5.661s",
+    "r11": "read-only diagnosis source finalizing/disabled public staging unavailable",
+    "r12": "test compile sourceLease.Scope nonexistent",
+    "r13": "fixture missing auto153/72 publication table",
+    "r14": "4 body/localderived cases pass 4.611s",
+    "r15": "8 message cases pass 3.803s",
+    "r16": "8 immutable scope cases pass 4.619s",
+    "r17": "10 including model/HTTP holder pass 5.654s",
+    "r18": "terminal test timeout 90s; cumulative normal SQL delays, no OOM or SQL-lock evidence. No running test restart.",
+    "r19": "5 pass/7 fail; PG extension visibility after terminal timeout plus actual generated unconsumed-head lease omission",
+    "r20": "12 message/body cases pass 6.384s",
+    "r21": "CLI build exit0",
+    "r22": "119 pass/9 fail: repository61/service48/handler10 pass; PG consumer5 uuid extension visibility failures and older root-owned Chunk HTTP4 fixture failures. Diagnostic, not final acceptance.",
+    "r31": "Exact owned containers/network/PG volume were removed successfully; subsequent verification assertion used a capitalized Docker error expectation and failed. Shell cat wrapper exit0 is not treated as successful verification. The failed assertion is preserved; r32 rechecked actual IDs and caches without recreating resources.",
+    "r32": "Exact-ID resource absence and both shared cache volumes verified, exit0."
+  },
+  "logs": [
+    {
+      "file": "body-message-b913-r01.log.gz",
+      "raw_bytes": 308,
+      "raw_sha256": "76e4a863a67c9cd16e5840177d0b4903c5ffc2763947f9dc1d794eaaa6e7147a",
+      "compressed_sha256": "624a8f0e0d223df3b9e7b62a9675bde32469f9d8546fca4154878085eb2f4743"
+    },
+    {
+      "file": "body-message-b913-r02.log.gz",
+      "raw_bytes": 26608,
+      "raw_sha256": "13048e484eb18b95143c0424e61df7e1860e29823af2025309d21ca95fc2c7d5",
+      "compressed_sha256": "c3569ce951f0a39f6f2e24bd1a16a13c7fd7e2863218868611433a780e6568ad"
+    },
+    {
+      "file": "body-message-b913-r03.log.gz",
+      "raw_bytes": 55210,
+      "raw_sha256": "8b1083d16570dd44e1252ff1364b3d34a5f612b9745f10a86a8644b649e5aa26",
+      "compressed_sha256": "d968a8b0e3ecc9849fede65f98bc30c0624c0ee02fdf5a1823a52be82e2c5557"
+    },
+    {
+      "file": "body-message-b913-r04.log.gz",
+      "raw_bytes": 70880,
+      "raw_sha256": "e41846a2cb6796d22cdd3660d327cb1caad44fe55ea199c2582d38d9c054b28d",
+      "compressed_sha256": "cc5548faeed529a587f800bb186efe1e8a5aaa62b11ac54a7d46526906216a53"
+    },
+    {
+      "file": "body-message-b913-r05.log.gz",
+      "raw_bytes": 68,
+      "raw_sha256": "953ec3d450819e823a157b6343859b3b6e02e67112934c3a0594f094c37bb7b4",
+      "compressed_sha256": "d493f59b071d8a068ededa8bfa97e1183b968eb3a3efbea19988f76a59e80d3d"
+    },
+    {
+      "file": "body-message-b913-r06-consumer.log.gz",
+      "raw_bytes": 68,
+      "raw_sha256": "25b0396b02e848e98a9c2995d6200545a838cd04ae8dc7ed4bc13f4cd505cee5",
+      "compressed_sha256": "60da104d8f1dd3857921bb6a684388845e7ffc3797b647759ead713c19e41226"
+    },
+    {
+      "file": "body-message-b913-r07-ro-suite.jsonl.gz",
+      "raw_bytes": 2196390,
+      "raw_sha256": "43d394cb3d9102422f5dd400aed56b144516fa2dff27ed1282f5b8e174adae6e",
+      "compressed_sha256": "329aa2a1929c751761ebcb9de84ea0b2cfc8c3b31451327ead50626713f646b5"
+    },
+    {
+      "file": "body-message-b913-r08-ro-suite.jsonl.gz",
+      "raw_bytes": 2259694,
+      "raw_sha256": "7fec438ac5ee2616455f8a8531a65815d12b5f0e4288f0ba2531aeedb7fa0abc",
+      "compressed_sha256": "10cac98ba906fea5127ebe7130c61e4f2d56604abe23747adb7cd548a22fe073"
+    },
+    {
+      "file": "body-message-b913-r09-scopes.log.gz",
+      "raw_bytes": 85575,
+      "raw_sha256": "e55852a2e0c0e5d39844c9e119b569ca117866747bed91399b62d085ab29e280",
+      "compressed_sha256": "87db8a2963498950245cd22873706137977b9d6ad43d33999e36bac8e4604d4f"
+    },
+    {
+      "file": "body-message-b913-r10-scopes.log.gz",
+      "raw_bytes": 68,
+      "raw_sha256": "ab8fd644b28c5be4cb1166cf36f7fa5d4d60ef3111d3220a3415ecc98cb960ce",
+      "compressed_sha256": "a4bfedf602258cd46bbda8c69402dd0e669dce6a1eaa601d888162be74ebbaa5"
+    },
+    {
+      "file": "body-message-b913-r11-publication.log.gz",
+      "raw_bytes": 1091,
+      "raw_sha256": "9598c78e89b134291a14227a4593a2859fd48f8e903dae7345f2f48cafc88675",
+      "compressed_sha256": "971111c036d8007a1b2bb7aaddb27a0d57a628e5654972f4ae83f664744c6072"
+    },
+    {
+      "file": "body-message-b913-r12-publication.log.gz",
+      "raw_bytes": 372,
+      "raw_sha256": "5aac24f0caa7e070ec172437838bc2529d959b6a36a308db9f06b976d1aa44fc",
+      "compressed_sha256": "820fb4a1694c992adbcbe79bb0ce4d948ab6f436cc78cb8ef0d20e00ef1f2292"
+    },
+    {
+      "file": "body-message-b913-r13-publication.log.gz",
+      "raw_bytes": 3436,
+      "raw_sha256": "a65dc54b9dbcb045b4da8171c2244e628ddb5d71d5b04e32da6fdf9b66be4966",
+      "compressed_sha256": "1fd2bea62a589884559197d6009dcf9dfef7310b427b1393c1264bea429f6a1e"
+    },
+    {
+      "file": "body-message-b913-r14-publication.log.gz",
+      "raw_bytes": 68,
+      "raw_sha256": "5fd03fa4ee6b4218a44731f181264eff1f87214592bc26f99bfc9162bbc71a80",
+      "compressed_sha256": "aecf22ddb9a3db4a333719d05607644ee00d6a24280cf4c9fd9059300949d57f"
+    },
+    {
+      "file": "body-message-b913-r15-body-leases.log.gz",
+      "raw_bytes": 68,
+      "raw_sha256": "bb074ad28d2bba948b84daacc9781c9606b3517c77dc975909818f5ae4aeda53",
+      "compressed_sha256": "089cc54e5ad35fa5280348e23de15531617ae3c767dbd8878508db90a836cf33"
+    },
+    {
+      "file": "body-message-b913-r16-immutable-scopes.log.gz",
+      "raw_bytes": 68,
+      "raw_sha256": "a8b40c2fa6a86eeda02fea57c1a759bedeeb6e9d1db2cd7dbb881f521e04b8ca",
+      "compressed_sha256": "56211ad65cf9be1173023337684a7dbf671f72b8bac345b8f38a0550ea2118a9"
+    },
+    {
+      "file": "body-message-b913-r17-http-holder.log.gz",
+      "raw_bytes": 68,
+      "raw_sha256": "f53b79cba01e8577a201f14fd6c91e9c1572c0fc61148bf9aa79e1fd230652a9",
+      "compressed_sha256": "54e4517d38b1672cd959e2fd19e4111d05c05cc9e7d0a9ee78d5cade988837f4"
+    },
+    {
+      "file": "body-message-b913-r18-generated-field.log.gz",
+      "raw_bytes": 386690,
+      "raw_sha256": "9dbc91609e7d51e2e5773aa7b0a8fea407ff6c904b9077ca99f1373aa54e0d1c",
+      "compressed_sha256": "bc382bb6386a4dfcaabfaddc0ce0ac57dea1b67dd76e377c6db29f886d73ef18"
+    },
+    {
+      "file": "body-message-b913-r19-frozen-message.jsonl.gz",
+      "raw_bytes": 582273,
+      "raw_sha256": "d4bbff715365581c39a1976d3f9a8acbef534da22f2edbc41ff3468435aae0cb",
+      "compressed_sha256": "3a53444df130384ef5c62cab34b3d4415888e6c3f4dc89aec57360a195e21cc4"
+    },
+    {
+      "file": "body-message-b913-r20-frozen-message.jsonl.gz",
+      "raw_bytes": 677171,
+      "raw_sha256": "6a5c4fc57a11f5a1565771ed011846a0b9b1dd84daa766746a1d243223c45657",
+      "compressed_sha256": "c7dda6ef06170f5aa9116e87377a62115f8fe55afb5e87edcf755510ec45a47f"
+    },
+    {
+      "file": "body-message-b913-r21-cli-build.log.gz",
+      "raw_bytes": 0,
+      "raw_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "compressed_sha256": "9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64"
+    },
+    {
+      "file": "body-message-b913-r22-frozen-suite.jsonl.gz",
+      "raw_bytes": 15476459,
+      "raw_sha256": "6e60f896d3eb307fcdaa974b680381a7dba6a39287465e5d96fe029a8f753328",
+      "compressed_sha256": "e70a5b69b05a3b81e191ec25277381d5f1e8149e39fd11cb39a23907bdcb55da"
+    },
+    {
+      "file": "body-message-b913-r23-frozen-suite.jsonl.gz",
+      "raw_bytes": 15848146,
+      "raw_sha256": "9e417e4e0c9ab807155dd00e0df8ce24cf2f7cfd74a99067f268ae4965fcaa20",
+      "compressed_sha256": "54ec70bfaef8a62b071e931563e38ca5a336ddf9f01390f26b21440280e3672e"
+    },
+    {
+      "file": "body-message-b913-r24-frozen-compile.log.gz",
+      "raw_bytes": 12973,
+      "raw_sha256": "b4864576819d9272594330f527dea95e53297d620fb91063d0590238a808e215",
+      "compressed_sha256": "23d9278c7dbf4db7e6d478006ea8c0573335f3707ce769aa06c70a41bf04e30a"
+    },
+    {
+      "file": "body-message-b913-r25-final-cli-build.log.gz",
+      "raw_bytes": 0,
+      "raw_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "compressed_sha256": "9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64"
+    },
+    {
+      "file": "body-message-b913-r26-final-cli.jsonl.gz",
+      "raw_bytes": 9623,
+      "raw_sha256": "f124106f4e2fa3f68d6d7c020806d2186780151b2ffe3371d42a1fa11194d7b0",
+      "compressed_sha256": "a461fc5784105c3ab4fb16b1e7f6fd2addf7b49ebca94e2769770891bfc0100d"
+    },
+    {
+      "file": "body-message-b913-r27-fresh-cli.log.gz",
+      "raw_bytes": 924,
+      "raw_sha256": "52a494ceb094acf07b976f42c1c206f76cdaf521a9c219ff0f8b3655aa884433",
+      "compressed_sha256": "02b2e4568fe8681bf61534d660681365ecc3f69a92758571364f9409bd7f1082"
+    },
+    {
+      "file": "body-message-b913-r28-complete-scope.jsonl.gz",
+      "raw_bytes": 235236,
+      "raw_sha256": "eeeca3ff728f7af1bc75360966993cb340433edd30a08df35a72f30cc7651778",
+      "compressed_sha256": "b56883a62e9c08c21028ab771c86eabfb910564afea27977abd7eafde56db2bc"
+    },
+    {
+      "file": "body-message-b913-r29-marker-cli-build.log.gz",
+      "raw_bytes": 0,
+      "raw_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "compressed_sha256": "9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64"
+    },
+    {
+      "file": "body-message-b913-r30-marker-cli.jsonl.gz",
+      "raw_bytes": 9626,
+      "raw_sha256": "0d44b0d349501bc6701ddc382c3148dfaf1dde1fb2ab1441f93f9cb03b02c5d3",
+      "compressed_sha256": "3143cb09dbb48322043eb23391c41821a992bcb4a93436c8e6a50d2f2cc47eb7"
+    },
+    {
+      "file": "body-message-b913-r31-cleanup.log.gz",
+      "raw_bytes": 571,
+      "raw_sha256": "c105dad11ec344a5e2a94e088e05e234bef1759685edbc462e97ac2dbfaafc64",
+      "compressed_sha256": "39127c41a90c5ca7ae7f367cfd8f1917501c10056064eed4ea763e3edd9ae9f5"
+    },
+    {
+      "file": "body-message-b913-r32-cleanup-verify.log.gz",
+      "raw_bytes": 966,
+      "raw_sha256": "2d03f1569cb795d108a754e8359dc63d84afa4488a93e2f9a971b2f950f69b90",
+      "compressed_sha256": "4e386bd632862195f6f29f765a02517eb12597c991c1e3ca184eaf98e8143151"
+    }
+  ],
+  "cleanup": {
+    "status": "complete",
+    "owner": "body-message-20261009-b913",
+    "network": "weknora-body-message-20261009-b913",
+    "containers": [
+      "weknora-body-message-go-ro-20261009-b913",
+      "weknora-body-message-pg-20261009-b913"
+    ],
+    "pg_anonymous_volume": "38f1fe1d6fe57de31c410b1ebaa53ce09c2641a4feea6194dfe4711ee0f7c99c",
+    "preserve": [
+      "weknora-go-mod",
+      "weknora-go-build"
+    ],
+    "no_published_ports": true,
+    "internal_network": true,
+    "run": "r32",
+    "exit_code": 0,
+    "container_ids": [
+      "ab508a416bd19140c3a0b351c707f3a956b9561b837d2fce3118c9742e0bdb08",
+      "65acde6d86d4952243d9f0d9b73cdc5ea92a8648560b5bfa28391558517135f1"
+    ],
+    "verified": "Exact IDs absent after docker rm; exact network and anonymous PG volume absent. Both shared caches inspected and preserved. All go/test/CLI exec handles were terminal before removal; docker top showed only owned idle tail process."
+  },
+  "delivery_chain_after_consumer_dependencies": [
+    "c201507df8ec6cd73294ceef22b12f5aa8b2bfc8",
+    "58e163415220d85a9798021da07a41d39da3a537",
+    "ae3fb404c43abee5a75f4bfebaed7208a17a4f75",
+    "35195ed4164095754a9bae11ea829c1d81d22624",
+    "433451f50e7a9a22bee1e5d0f62658a646cda69d",
+    "1dd3c1dea5e9bbd7a38519da1ba16653a4d0d3cd",
+    "5e34663152a25aab028b67b954fef9ed378f0f0c",
+    "62d332d02d8c9874bdeabfe3f709f2eaede6762d",
+    "36cf96c44e5ce207c2e489fdc8773faf79f20374"
+  ],
+  "do_not_duplicate_dependency_commits": {
+    "ce6d5e1c2b3bcc1dffc976f7dc7858e3f1a4050e": "original consumer 7930e9009296f895e27a234a86b5d649041bd428",
+    "4d42c5881784edd5de195f74a9e55115db7f0d4b": "original consumer cee02ace1798324eb0659b1f72ec6c9910d25cef"
+  }
+}

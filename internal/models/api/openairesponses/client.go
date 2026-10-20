@@ -116,7 +116,7 @@ func (c *Client) ChatStream(
 	}
 
 	ch := make(chan types.StreamResponse)
-	dumper := api.NewStreamPacketDumper(c.cfg.Endpoint.Model, json.RawMessage(data))
+	dumper := api.NewStreamPacketDumper(ctx, c.cfg.Endpoint.Model, json.RawMessage(data))
 	if dumper != nil {
 		logger.Infof(ctx, "[LLM Stream Raw Dump] writing packets to %s", dumper.Path())
 	}

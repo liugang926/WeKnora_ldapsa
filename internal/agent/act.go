@@ -281,7 +281,9 @@ func (e *AgentEngine) failTruncatedToolCalls(
 			Name:             tc.Function.Name,
 			Args:             map[string]any{"_raw": tc.Function.Arguments},
 			ProviderMetadata: tc.ProviderMetadata,
-			Result:           &types.ToolResult{Success: false, Error: truncatedArgumentsError},
+			Result: &types.ToolResult{
+				SourceLineage: independentAgentInput(), Success: false, Error: truncatedArgumentsError,
+			},
 		}
 		step.ToolCalls = append(step.ToolCalls, toolCall)
 		e.emitToolOutcome(ctx, toolCall, iteration, sessionID)
@@ -343,8 +345,11 @@ func (e *AgentEngine) emitToolOutcome(
 	if result == nil {
 		result = &types.ToolResult{Success: false, Error: "no result"}
 	}
+	if err := e.addLineage(result.SourceLineage); err != nil {
+		return
+	}
 
-	e.eventBus.Emit(ctx, event.Event{
+	if err := e.emitEvent(ctx, event.Event{
 		ID:        toolCall.ID + "-tool-result",
 		Type:      event.EventAgentToolResult,
 		SessionID: sessionID,
@@ -358,9 +363,11 @@ func (e *AgentEngine) emitToolOutcome(
 			Iteration:  iteration,
 			Data:       agenttools.SanitizeToolDataForPersist(toolCall.Name, result.Data),
 		},
-	})
+	}); err != nil {
+		return
+	}
 
-	e.eventBus.Emit(ctx, event.Event{
+	if err := e.emitEvent(ctx, event.Event{
 		ID:        toolCall.ID + "-tool-exec",
 		Type:      event.EventAgentTool,
 		SessionID: sessionID,
@@ -373,7 +380,9 @@ func (e *AgentEngine) emitToolOutcome(
 			Error:      result.Error,
 			Duration:   toolCall.Duration,
 		},
-	})
+	}); err != nil {
+		return
+	}
 }
 
 // executeSingleToolCall runs one tool call sequentially (original behavior).
@@ -409,7 +418,8 @@ func (e *AgentEngine) runToolCall(
 				Args:             map[string]any{"_raw": argsStr},
 				ProviderMetadata: tc.ProviderMetadata,
 				Result: &types.ToolResult{
-					Success: false,
+					SourceLineage: independentAgentInput(),
+					Success:       false,
 					Error: fmt.Sprintf(
 						"Failed to parse tool arguments: %v", err,
 					) + "\n\nIf the JSON looks cut off, the previous round likely hit the output token cap. " +
@@ -432,7 +442,9 @@ func (e *AgentEngine) runToolCall(
 				Name:             tc.Function.Name,
 				Args:             map[string]any{"_raw": argsStr},
 				ProviderMetadata: tc.ProviderMetadata,
-				Result:           &types.ToolResult{Success: false, Error: truncatedArgumentsError},
+				Result: &types.ToolResult{
+					SourceLineage: independentAgentInput(), Success: false, Error: truncatedArgumentsError,
+				},
 			}
 		}
 		logger.Warnf(ctx, "%s Repaired malformed JSON arguments", toolTag)
@@ -454,8 +466,9 @@ func (e *AgentEngine) runToolCall(
 				Args:             map[string]any{"_raw": tc.Function.Arguments},
 				ProviderMetadata: tc.ProviderMetadata,
 				Result: &types.ToolResult{
-					Success: false,
-					Error:   fmt.Sprintf("Failed to parse repaired tool arguments: %v", err),
+					SourceLineage: independentAgentInput(),
+					Success:       false,
+					Error:         fmt.Sprintf("Failed to parse repaired tool arguments: %v", err),
 				},
 			}
 		}
@@ -478,7 +491,7 @@ func (e *AgentEngine) runToolCall(
 
 	// Emit tool hint for UI progress display
 	toolHint := formatToolHint(executionName, executionArgs)
-	e.eventBus.Emit(ctx, event.Event{
+	if err := e.emitEvent(ctx, event.Event{
 		ID:        tc.ID + "-tool-hint",
 		Type:      event.EventAgentToolCall,
 		SessionID: sessionID,
@@ -489,7 +502,12 @@ func (e *AgentEngine) runToolCall(
 			Iteration:  iteration,
 			Hint:       toolHint,
 		},
-	})
+	}); err != nil {
+		return types.ToolCall{
+			Target: target, ID: tc.ID, Name: tc.Function.Name, Args: args,
+			Result: &types.ToolResult{Success: false, Error: err.Error(), SourceLineage: types.UnknownSourceLineage()},
+		}
+	}
 
 	common.PipelineInfo(ctx, "Agent", "tool_call_start", map[string]interface{}{
 		"iteration":    iteration,
@@ -534,6 +552,7 @@ func (e *AgentEngine) runToolCall(
 		SessionID:          sessionID,
 		AssistantMessageID: assistantMessageID,
 		EventBus:           e.eventBus,
+		EmitEvent:          e.emitEvent,
 		ToolCallID:         tc.ID,
 		UserID:             principal.StorageID(),
 		// ApprovalCtx keeps the round-level ctx without the per-tool execution timeout,
@@ -551,7 +570,7 @@ func (e *AgentEngine) runToolCall(
 		err = fmt.Errorf("tool arguments contain unresolved model handles: %v", tc.UnresolvedHandles)
 	} else {
 		execCtx, toolCancel := context.WithTimeout(toolExecCtx, execTimeout)
-		result, err = e.toolRegistry.ExecuteTool(
+		result, err = e.toolRegistry.ExecuteToolWithSourceLineage(
 			execCtx, tc.Function.Name,
 			json.RawMessage(tc.Function.Arguments),
 		)
@@ -570,10 +589,23 @@ func (e *AgentEngine) runToolCall(
 	}
 
 	if err != nil {
+		// A refused/unaccounted result cannot become a source-free diagnostic.
+		if result == nil || result.SourceLineage.RequireComplete() != nil {
+			lineageErr := e.rememberLineageFailure(err)
+			return types.ToolCall{
+				ID: tc.ID, Name: tc.Function.Name, Args: args,
+				Result: &types.ToolResult{
+					Success:       false,
+					Error:         lineageErr.Error(),
+					SourceLineage: types.UnknownSourceLineage(),
+				},
+			}
+		}
 		logger.Errorf(ctx, "%s Failed in %dms: %v", toolTag, duration, err)
 		toolCall.Result = &types.ToolResult{
-			Success: false,
-			Error:   apperrors.PublicMessage(err),
+			SourceLineage: result.SourceLineage,
+			Success:       false,
+			Error:         apperrors.PublicMessage(err),
 		}
 	} else {
 		success := result != nil && result.Success

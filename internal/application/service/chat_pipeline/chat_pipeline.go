@@ -3,6 +3,8 @@ package chatpipeline
 import (
 	"context"
 
+	"github.com/Tencent/WeKnora/internal/application/access"
+
 	"github.com/Tencent/WeKnora/internal/types"
 )
 
@@ -22,6 +24,7 @@ type Plugin interface {
 
 // EventManager manages plugins and their event handling
 type EventManager struct {
+	sourceLineageGuard *access.NextcloudSourceLineageGuard
 	// Map of event types to registered plugins
 	listeners map[types.EventType][]Plugin
 	// Map of event types to handler functions

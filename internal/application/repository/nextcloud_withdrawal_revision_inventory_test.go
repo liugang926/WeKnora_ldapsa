@@ -42,8 +42,9 @@ func TestSQLiteNextcloudWithdrawalRevisionInventoryMigration(t *testing.T) {
 		t.Run(map[bool]string{false: "reversible_empty", true: "retained_revision"}[keepRevision],
 			func(t *testing.T) {
 				db := nextcloudWithdrawalInventorySQLiteDB(t)
-				up, err := os.ReadFile(("../../../migrations/sqlite/000048_nextcloud_withdrawal_" +
-					"revision_inventory.up.sql"))
+				up, err := os.ReadFile(
+					"../../../migrations/sqlite/000048_nextcloud_withdrawal_revision_inventory.up.sql",
+				)
 				require.NoError(t, err)
 				_, err = db.Exec(string(up))
 				require.NoError(t, err)
@@ -61,8 +62,9 @@ func TestSQLiteNextcloudWithdrawalRevisionInventoryMigration(t *testing.T) {
 						VALUES ('withdrawal', 'source_revision', '["source",2]', 'old-copy')`)
 					require.NoError(t, err)
 				}
-				down, err := os.ReadFile(("../../../migrations/sqlite/000048_nextcloud_withdrawal_" +
-					"revision_inventory.down.sql"))
+				down, err := os.ReadFile(
+					"../../../migrations/sqlite/000048_nextcloud_withdrawal_revision_inventory.down.sql",
+				)
 				require.NoError(t, err)
 				_, err = db.Exec(string(down))
 				if keepRevision {

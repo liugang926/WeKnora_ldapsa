@@ -37,10 +37,11 @@ func TestNextcloudEventPreviousKeyExpiryUsesValidationClock(t *testing.T) {
 			Now: expired.Add(-time.Minute),
 		}
 	}
-	require.ErrorIs(t, verifyNextcloudEventSignature(connection, signed(
-		oldSecret,
-		"old",
-	)), ErrNextcloudEventUnauthorized)
+	require.ErrorIs(
+		t,
+		verifyNextcloudEventSignature(connection, signed(oldSecret, "old")),
+		ErrNextcloudEventUnauthorized,
+	)
 	_, err = nextcloudEventResponseSecret(connection, "old")
 	require.ErrorIs(t, err, ErrNextcloudEventUnauthorized)
 	require.NoError(t, verifyNextcloudEventSignature(connection, signed(newSecret, "new")))

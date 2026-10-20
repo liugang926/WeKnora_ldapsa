@@ -12,6 +12,7 @@ import (
 
 	"github.com/Tencent/WeKnora/internal/application/access"
 	"github.com/Tencent/WeKnora/internal/application/repository"
+	"github.com/Tencent/WeKnora/internal/application/service"
 	"github.com/Tencent/WeKnora/internal/config"
 	"github.com/Tencent/WeKnora/internal/errors"
 	"github.com/Tencent/WeKnora/internal/filetransport"
@@ -28,20 +29,26 @@ import (
 
 // KnowledgeHandler processes HTTP requests related to knowledge resources
 type KnowledgeHandler struct {
-	cfg               *config.Config
-	kgService         interfaces.KnowledgeService
-	kbService         interfaces.KnowledgeBaseService
-	kbShareService    interfaces.KBShareService
-	agentShareService interfaces.AgentShareService
-	groupAccess       interfaces.GroupAccessService
-	publicationGuard  *access.NextcloudPublicationGuard
-	askTargets        nextcloudAskTargetResolver
-	contentLeases     nextcloudHTTPReadLeaseStore
-	leaseHeartbeat    time.Duration
-	leaseCheckpoint   time.Duration
-	publicationCheck  func(context.Context, *types.Knowledge) error // test seam; production uses publicationGuard
-	asynqClient       interfaces.TaskEnqueuer
-	spanRepo          repository.KnowledgeSpanRepository
+	cfg                        *config.Config
+	kgService                  interfaces.KnowledgeService
+	kbService                  interfaces.KnowledgeBaseService
+	kbShareService             interfaces.KBShareService
+	agentShareService          interfaces.AgentShareService
+	groupAccess                interfaces.GroupAccessService
+	publicationGuard           *access.NextcloudPublicationGuard
+	askTargets                 nextcloudAskTargetResolver
+	contentLeases              nextcloudHTTPReadLeaseStore
+	outputAuthorizer           *service.KnowledgeOutputAuthorizer
+	collectionOutputAuthorizer *service.KnowledgeCollectionOutputAuthorizer
+	spanOutputAuthorizer       *service.SpanOutputAuthorizer
+	leaseHeartbeat             time.Duration
+	leaseCheckpoint            time.Duration
+	publicationCheck           func(
+		context.Context,
+		*types.Knowledge,
+	) error // test seam; production uses publicationGuard
+	asynqClient interfaces.TaskEnqueuer
+	spanRepo    repository.KnowledgeSpanRepository
 }
 
 // ConfigureKnowledgeHandlerGroupAccess attaches the optional directory-group
@@ -74,18 +81,31 @@ func ConfigureKnowledgeHandlerContentLeaseStore(h *KnowledgeHandler, store *repo
 	}
 }
 
-func (h *KnowledgeHandler) checkPublication(ctx context.Context, knowledge *types.Knowledge) error {
+func (h *KnowledgeHandler) checkSourcePublication(ctx context.Context, knowledge *types.Knowledge) error {
 	if h.publicationCheck != nil {
 		return h.publicationCheck(ctx, knowledge)
 	}
 	return checkKnowledgePublication(ctx, h.publicationGuard, knowledge)
 }
 
+func (h *KnowledgeHandler) checkPublication(ctx context.Context, knowledge *types.Knowledge) error {
+	if err := h.checkSourcePublication(ctx, knowledge); err != nil {
+		return err
+	}
+	if guard := service.KnowledgeOutputGuardFromContext(ctx); guard != nil {
+		return knowledgeOutputHTTPError(guard.Check(ctx, []*types.Knowledge{knowledge}))
+	}
+	return nil
+}
+
 func (h *KnowledgeHandler) checkPublicationList(ctx context.Context, knowledges []*types.Knowledge) error {
 	for _, knowledge := range knowledges {
-		if err := h.checkPublication(ctx, knowledge); err != nil {
+		if err := h.checkSourcePublication(ctx, knowledge); err != nil {
 			return err
 		}
+	}
+	if guard := service.KnowledgeOutputGuardFromContext(ctx); guard != nil {
+		return knowledgeOutputHTTPError(guard.Check(ctx, knowledges))
 	}
 	return nil
 }
@@ -203,7 +223,9 @@ func (h *KnowledgeHandler) requireKBLegacyOwnershipOrAdmin(c *gin.Context, kbID 
 
 // validateKnowledgeBaseAccess validates access permissions to a knowledge base
 // using the ":id" URL path parameter. It delegates to validateKnowledgeBaseAccessWithKBID.
-func (h *KnowledgeHandler) validateKnowledgeBaseAccess(c *gin.Context) (*types.KnowledgeBase, string, uint64, types.OrgMemberRole, error) {
+func (h *KnowledgeHandler) validateKnowledgeBaseAccess(
+	c *gin.Context,
+) (*types.KnowledgeBase, string, uint64, types.OrgMemberRole, error) {
 	kbID := secutils.SanitizeForLog(c.Param("id"))
 	return h.validateKnowledgeBaseAccessWithKBID(c, kbID)
 }
@@ -498,7 +520,20 @@ func (h *KnowledgeHandler) CreateKnowledgeFromFile(c *gin.Context) {
 	channel := c.PostForm("channel")
 
 	// Create knowledge entry from the file
-	knowledge, err := h.kgService.CreateKnowledgeFromFile(ctx, kbID, file, metadata, enableMultimodel, customFileName, tagIDs, channel, processOverrides)
+	knowledge, err := h.kgService.CreateKnowledgeFromFile(
+		repository.WithIndependentKnowledgeTagAssignmentInput(
+			repository.WithIndependentKnowledgeInput(ctx),
+			map[string][]string{"": tagIDs},
+		),
+		kbID,
+		file,
+		metadata,
+		enableMultimodel,
+		customFileName,
+		tagIDs,
+		channel,
+		processOverrides,
+	)
 	// Check for duplicate knowledge error
 	if err != nil {
 		if h.handleDuplicateKnowledgeError(c, err, knowledge, "file") {
@@ -595,7 +630,16 @@ func (h *KnowledgeHandler) CreateKnowledgeFromURL(c *gin.Context) {
 
 	// Create knowledge entry from the URL
 	knowledge, err := h.kgService.CreateKnowledgeFromURL(
-		ctx, kbID, req.URL, req.FileName, req.FileType, req.EnableMultimodel, req.Title, req.TagIDs, req.Channel, req.ProcessConfig,
+		ctx,
+		kbID,
+		req.URL,
+		req.FileName,
+		req.FileType,
+		req.EnableMultimodel,
+		req.Title,
+		req.TagIDs,
+		req.Channel,
+		req.ProcessConfig,
 	)
 	// Check for duplicate knowledge error
 	if err != nil {
@@ -661,7 +705,15 @@ func (h *KnowledgeHandler) CreateManualKnowledge(c *gin.Context) {
 		return
 	}
 
-	knowledge, err := h.kgService.CreateKnowledgeFromManual(ctx, kbID, &req, req.Channel)
+	knowledge, err := h.kgService.CreateKnowledgeFromManual(
+		repository.WithIndependentKnowledgeTagAssignmentInput(
+			repository.WithIndependentKnowledgeInput(ctx),
+			map[string][]string{"": req.TagIDs},
+		),
+		kbID,
+		&req,
+		req.Channel,
+	)
 	if err != nil {
 		if appErr, ok := errors.IsAppError(err); ok {
 			c.Error(appErr)
@@ -706,6 +758,13 @@ func (h *KnowledgeHandler) GetKnowledge(c *gin.Context) {
 		c.Error(errors.NewBadRequestError("Knowledge ID cannot be empty"))
 		return
 	}
+
+	ctx, closeFAQRead, faqReadErr := h.beginFAQKnowledgePreRead(ctx, c, []string{id})
+	if faqReadErr != nil {
+		_ = c.Error(faqReadErr)
+		return
+	}
+	defer closeFAQRead()
 
 	// Resolve knowledge and validate KB access (at least viewer)
 	knowledge, effCtx, err := h.resolveKnowledgeAndValidateKBAccess(c, id, types.OrgRoleViewer)
@@ -762,108 +821,15 @@ func (h *KnowledgeHandler) GetKnowledge(c *gin.Context) {
 // segments. Subspans (multimodal.image[i], generation.*) ride along under
 // each stage as children when present.
 func (h *KnowledgeHandler) GetKnowledgeSpans(c *gin.Context) {
-	ctx := c.Request.Context()
+	ServeOriginalKnowledgeSpans(h, c, h.spanOutputAuthorizer)
+}
 
-	id := secutils.SanitizeForLog(c.Param("id"))
-	if id == "" {
-		c.Error(errors.NewBadRequestError("Knowledge ID cannot be empty"))
-		return
+// ConfigureKnowledgeHandlerSpanOutputLineage installs the original attempt
+// authorizer in production. Unconfigured readers remain unavailable.
+func ConfigureKnowledgeHandlerSpanOutputLineage(h *KnowledgeHandler, authorizer *service.SpanOutputAuthorizer) {
+	if h != nil {
+		h.spanOutputAuthorizer = authorizer
 	}
-
-	knowledge, _, err := h.resolveKnowledgeAndValidateKBAccess(c, id, types.OrgRoleViewer)
-	if err != nil {
-		c.Error(err)
-		return
-	}
-	if err := h.checkPublication(ctx, knowledge); err != nil {
-		_ = c.Error(err)
-		return
-	}
-	leases, err := h.beginNextcloudRead(ctx, c, []*types.Knowledge{knowledge})
-	if err != nil {
-		_ = c.Error(err)
-		return
-	}
-	defer leases.Close()
-	ctx = leases.Context(ctx)
-
-	// Pick attempt: explicit ?attempt=N wins; otherwise pull the
-	// latest attempt from the spans table. Lite-mode / fresh installs
-	// with zero rows fall through to attempt=0, in which case we
-	// return a placeholder tree (5 pending stages, no root, no
-	// children) so the UI still renders.
-	requestedAttempt := 0
-	if v := strings.TrimSpace(c.Query("attempt")); v != "" {
-		if n, perr := strconv.Atoi(v); perr == nil && n > 0 {
-			requestedAttempt = n
-		}
-	}
-
-	rows := []types.KnowledgeProcessingSpan{}
-	currentAttempt := 0
-	latestAttempt := 0
-	if h.spanRepo != nil {
-		latest, lerr := h.spanRepo.LatestAttempt(ctx, knowledge.ID)
-		if lerr != nil {
-			logger.Warnf(ctx, "spans LatestAttempt failed for %s: %v", knowledge.ID, lerr)
-		} else {
-			latestAttempt = latest
-		}
-		if requestedAttempt > 0 {
-			currentAttempt = requestedAttempt
-		} else {
-			currentAttempt = latestAttempt
-		}
-		if currentAttempt > 0 {
-			rows, err = h.spanRepo.ListByAttempt(ctx, knowledge.ID, currentAttempt)
-			if err != nil {
-				logger.Warnf(ctx, "spans ListByAttempt failed kid=%s attempt=%d: %v",
-					knowledge.ID, currentAttempt, err)
-				rows = nil
-			}
-		}
-	}
-
-	// Build tree: index by SpanID, then attach to parents. Stages
-	// missing from the DB are synthesized as "pending" placeholders
-	// under a synthetic (or real, if present) root so the timeline
-	// always renders five segments. parse_status threads through so
-	// pre-tracker historical knowledge (no rows but parse_status is
-	// already terminal) renders as done/failed instead of pending —
-	// otherwise legacy completed documents would forever look like
-	// they're still waiting in the queue.
-	tree, currentStageName, lastErr := buildSpanTree(knowledge.ID, currentAttempt, rows, knowledge.ParseStatus)
-
-	resp := gin.H{
-		"knowledge_id":    knowledge.ID,
-		"attempt":         currentAttempt,
-		"latest_attempt":  latestAttempt,
-		"parse_status":    knowledge.ParseStatus,
-		"current_attempt": currentAttempt,
-		"current_stage":   currentStageName,
-		"trace":           tree,
-	}
-	if lastError := knowledgeSpansLastError(
-		currentAttempt,
-		latestAttempt,
-		knowledge.ParseStatus,
-		knowledge.ErrorMessage,
-		knowledge.UpdatedAt,
-		lastErr,
-	); lastError != nil {
-		resp["last_error"] = lastError
-	}
-	if err := h.verifyNextcloudRead(ctx, leases, []*types.Knowledge{knowledge}); err != nil {
-		_ = c.Error(err)
-		return
-	}
-	defer guardNextcloudResponseWrites(c, leases, func(checkCtx context.Context) error {
-		return h.checkPublication(checkCtx, knowledge)
-	})()
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"data":    resp,
-	})
 }
 
 // knowledgeSpansLastError builds the last_error payload for GetKnowledgeSpans.
@@ -1129,6 +1095,21 @@ func (h *KnowledgeHandler) ListKnowledge(c *gin.Context) {
 		effectiveTenantID,
 	)
 
+	if !h.requireKnowledgeCollectionOutput(c) {
+		return
+	}
+	if h.collectionOutputAuthorizer != nil {
+		h.respondKnowledgeCollection(
+
+			ctx, c,
+
+			[]types.KnowledgeSearchScope{{TenantID: effectiveTenantID, KBID: kbID}},
+			types.KnowledgeCollectionSelectionRequest{Mode: "list", Filter: filter, Page: pagination},
+			access.LineageReadScope{},
+		)
+		return
+	}
+
 	// The page and total are read before their source IDs are known. Hold the
 	// KB fence across the query so a concurrent GC claim cannot delete rows
 	// being hydrated. Production always wires this store; test-only handlers
@@ -1236,6 +1217,20 @@ func (h *KnowledgeHandler) ListKnowledgeFolders(c *gin.Context) {
 		return
 	}
 	ctx = types.WithExecutionTenant(c.Request.Context(), effectiveTenantID)
+	if !h.requireKnowledgeCollectionOutput(c) {
+		return
+	}
+	if h.collectionOutputAuthorizer != nil {
+		h.respondKnowledgeCollection(
+
+			ctx, c,
+
+			[]types.KnowledgeSearchScope{{TenantID: effectiveTenantID, KBID: kbID}},
+			types.KnowledgeCollectionSelectionRequest{Mode: "folders"},
+			access.LineageReadScope{},
+		)
+		return
+	}
 	// Folder names and counts are aggregated before document-level policy can
 	// run. A mixed KB cannot safely expose that aggregate while it contains
 	// Nextcloud documents, so require clients to use the guarded document list.
@@ -1758,6 +1753,13 @@ func (h *KnowledgeHandler) DownloadKnowledgeFile(c *gin.Context) {
 	effCtx = leases.Context(effCtx)
 
 	file, filename, err := h.kgService.GetKnowledgeFile(effCtx, id)
+	if err == nil {
+		file, err = bindKnowledgeOutputFile(effCtx, knowledge, file)
+		if err != nil {
+			_ = c.Error(err)
+			return
+		}
+	}
 	if err != nil {
 		if leaseErr := leases.Err(); leaseErr != nil {
 			_ = c.Error(nextcloudHTTPLeaseError(leaseErr))
@@ -1840,6 +1842,13 @@ func (h *KnowledgeHandler) PreviewKnowledgeFile(c *gin.Context) {
 	effCtx = leases.Context(effCtx)
 
 	file, filename, err := h.kgService.GetKnowledgeFile(effCtx, id)
+	if err == nil {
+		file, err = bindKnowledgeOutputFile(effCtx, knowledge, file)
+		if err != nil {
+			_ = c.Error(err)
+			return
+		}
+	}
 	if err != nil {
 		if leaseErr := leases.Err(); leaseErr != nil {
 			_ = c.Error(nextcloudHTTPLeaseError(leaseErr))
@@ -1944,6 +1953,13 @@ func (h *KnowledgeHandler) GetKnowledgeBatch(c *gin.Context) {
 			return
 		}
 	}
+
+	ctx, closeFAQRead, faqReadErr := h.beginFAQKnowledgePreRead(ctx, c, req.IDs)
+	if faqReadErr != nil {
+		_ = c.Error(faqReadErr)
+		return
+	}
+	defer closeFAQRead()
 
 	var knowledges []*types.Knowledge
 	var err error
@@ -2422,7 +2438,11 @@ func (h *KnowledgeHandler) UpdateKnowledgeTagBatch(c *gin.Context) {
 		return
 	}
 
-	if err := h.kgService.UpdateKnowledgeTagBatch(ctx, authorizedKBID, req.Updates); err != nil {
+	if err := h.kgService.UpdateKnowledgeTagBatch(
+		repository.WithIndependentKnowledgeTagAssignmentInput(ctx, req.Updates),
+		authorizedKBID,
+		req.Updates,
+	); err != nil {
 		logger.ErrorWithFields(ctx, err, nil)
 		c.Error(err)
 		return
@@ -2550,6 +2570,14 @@ func (h *KnowledgeHandler) SearchKnowledge(c *gin.Context) {
 		}
 	}
 
+	if !h.requireKnowledgeCollectionOutput(c) {
+		return
+	}
+	if h.collectionOutputAuthorizer != nil {
+		h.searchKnowledgeCollection(ctx, c, keyword, offset, limit, fileTypes)
+		return
+	}
+
 	agentID := c.Query("agent_id")
 	if agentID != "" {
 		agent, err := resolveSharedAgentForRequest(c, agentID, h.agentShareService)
@@ -2604,7 +2632,14 @@ func (h *KnowledgeHandler) SearchKnowledge(c *gin.Context) {
 			})
 			return
 		}
-		knowledges, hasMore, total, err := h.kgService.SearchKnowledgeForScopes(ctx, scopes, keyword, offset, limit, fileTypes)
+		knowledges, hasMore, total, err := h.kgService.SearchKnowledgeForScopes(
+			ctx,
+			scopes,
+			keyword,
+			offset,
+			limit,
+			fileTypes,
+		)
 		if err != nil {
 			logger.ErrorWithFields(ctx, err, nil)
 			c.Error(errors.NewInternalServerError("Failed to search knowledge").WithDetails(err.Error()))
@@ -2624,7 +2659,14 @@ func (h *KnowledgeHandler) SearchKnowledge(c *gin.Context) {
 			})
 			return
 		}
-		knowledges, hasMore, total, err := h.kgService.SearchKnowledgeForScopes(ctx, scopes, keyword, offset, limit, fileTypes)
+		knowledges, hasMore, total, err := h.kgService.SearchKnowledgeForScopes(
+			ctx,
+			scopes,
+			keyword,
+			offset,
+			limit,
+			fileTypes,
+		)
 		if err != nil {
 			logger.ErrorWithFields(ctx, err, nil)
 			c.Error(errors.NewInternalServerError("Failed to search knowledge").WithDetails(err.Error()))
@@ -2794,7 +2836,15 @@ func (h *KnowledgeHandler) MoveKnowledge(c *gin.Context) {
 			return
 		}
 		if knowledge.ParseStatus != types.ParseStatusCompleted {
-			c.Error(errors.NewBadRequestError(fmt.Sprintf("Knowledge item %s is not in completed status (current: %s)", kID, knowledge.ParseStatus)))
+			_ = c.Error(
+				errors.NewBadRequestError(
+					fmt.Sprintf(
+						"Knowledge item %s is not in completed status (current: %s)",
+						kID,
+						knowledge.ParseStatus,
+					),
+				),
+			)
 			return
 		}
 	}
@@ -2829,8 +2879,15 @@ func (h *KnowledgeHandler) MoveKnowledge(c *gin.Context) {
 		return
 	}
 
-	logger.Infof(ctx, "MoveKnowledge: task enqueued: %s, asynq_id: %s, source: %s, target: %s, count: %d",
-		taskID, info.ID, secutils.SanitizeForLog(req.SourceKBID), secutils.SanitizeForLog(req.TargetKBID), len(req.KnowledgeIDs))
+	logger.Infof(
+		ctx,
+		"MoveKnowledge: task enqueued: %s, asynq_id: %s, source: %s, target: %s, count: %d",
+		taskID,
+		info.ID,
+		secutils.SanitizeForLog(req.SourceKBID),
+		secutils.SanitizeForLog(req.TargetKBID),
+		len(req.KnowledgeIDs),
+	)
 
 	// Save initial progress
 	initialProgress := &types.KnowledgeMoveProgress{
@@ -3097,7 +3154,10 @@ func filterKnowledgesByKBAllowSet(knowledges []*types.Knowledge, allowed map[str
 	return filtered
 }
 
-func filterKnowledgeSearchScopesForAPIKey(ctx context.Context, scopes []types.KnowledgeSearchScope) []types.KnowledgeSearchScope {
+func filterKnowledgeSearchScopesForAPIKey(
+	ctx context.Context,
+	scopes []types.KnowledgeSearchScope,
+) []types.KnowledgeSearchScope {
 	allowed := tenantAPIKeyAllowedKBSet(ctx)
 	if allowed == nil {
 		return scopes

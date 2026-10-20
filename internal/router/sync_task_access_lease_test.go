@@ -220,7 +220,8 @@ func TestRegisterSyncHandlersCombinesAuthorizationAndNextcloudBuildLease(t *test
 			}
 
 			// Revoke after registration: the next queued stage must use the
-			// current grant, finish the denied attempt, and never acquire a lease.
+			// current grant inside the exact build lease, finish the denied
+			// attempt, and release that lease without invoking the handler.
 			access.allow = false
 			err = registered(context.Background(), task)
 			require.ErrorIs(t, err, asynq.SkipRetry)
@@ -229,7 +230,8 @@ func TestRegisterSyncHandlersCombinesAuthorizationAndNextcloudBuildLease(t *test
 			if leaseExpected {
 				require.Equal(t, 1, repo.failures)
 				require.Equal(t, 1, tracker.finalized)
-				require.EqualValues(t, 1, countLeases("1 = 1"), "authorization must run before lease admission")
+				require.EqualValues(t, 2, countLeases("1 = 1"), "the authorization guard holds an exact lease")
+				require.EqualValues(t, 2, countLeases("released_at_ms IS NOT NULL"), "denied worker releases its lease")
 			}
 
 			// The lease wrapper must also preserve machine identity. Attributed
@@ -247,7 +249,7 @@ func TestRegisterSyncHandlersCombinesAuthorizationAndNextcloudBuildLease(t *test
 
 			if leaseExpected {
 				// A valid human grant cannot bypass a retired Nextcloud source.
-				require.EqualValues(t, 2, countLeases("released_at_ms IS NOT NULL"))
+				require.EqualValues(t, 3, countLeases("released_at_ms IS NOT NULL"))
 				scope, err := nextcloudBuildScope(repo.row)
 				require.NoError(t, err)
 				require.NoError(t, leases.RetireKnowledge(context.Background(), scope))

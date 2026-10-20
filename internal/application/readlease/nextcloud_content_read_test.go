@@ -163,3 +163,59 @@ func TestNextcloudKnowledgeLeaseScopeRejectsMalformedMarker(t *testing.T) {
 	require.Error(t, (*NextcloudReadGuard)(nil).PinKnowledge(k))
 	require.NoError(t, (*NextcloudReadGuard)(nil).PinKnowledge(ordinary))
 }
+
+func TestNextcloudKBReadContextForKeepsCurrentAuthorityAndCancellation(t *testing.T) {
+	for _, mode := range []string{"current-values", "caller-cancel", "lease-retired", "earlier-fence-deadline"} {
+		t.Run(mode, func(t *testing.T) {
+			store, _ := nextcloudReadTestStore(t)
+			base := context.Background()
+			if mode == "earlier-fence-deadline" {
+				var cancel context.CancelFunc
+				base, cancel = context.WithTimeout(base, time.Minute)
+				defer cancel()
+			}
+			guard, err := BeginNextcloudKBRead(base, store, []NextcloudKBReadScope{{TenantID: 7, KBID: "kb-1"}})
+			require.NoError(t, err)
+			defer func() { require.NoError(t, guard.Close()) }()
+			knowledge := nextcloudReadTestKnowledge(t)
+			require.NoError(t, guard.PinKnowledge(knowledge))
+			type currentSelectionKey struct{}
+			turn := types.NewRAGSourceLineage(func(context.Context, *types.SourceLineage) error { return nil })
+			current := types.WithRAGSourceLineage(
+				context.WithValue(context.Background(), currentSelectionKey{}, "later selector"),
+				turn,
+			)
+			current = types.WithCaller(current, types.Caller{TenantID: 7, UserID: "current-user"})
+			current, cancel := context.WithCancel(current)
+			defer cancel()
+			attached := guard.ContextFor(current)
+			require.Same(t, guard, NextcloudReadGuardFromContext(attached))
+			require.Same(t, turn, types.RAGSourceLineageFromContext(attached))
+			require.Equal(t, "later selector", attached.Value(currentSelectionKey{}))
+			require.Equal(t, "current-user", types.CallerFromContext(attached).UserID)
+			switch mode {
+			case "caller-cancel":
+				cancel()
+				require.ErrorIs(t, attached.Err(), context.Canceled)
+				require.NoError(t, guard.Verify(), "a cancelled query does not cancel another consumer's turn fence")
+			case "lease-retired":
+				scope, _, err := NextcloudKnowledgeLeaseScope(knowledge)
+				require.NoError(t, err)
+				require.NoError(t, store.RetireKnowledge(base, scope))
+				require.Error(t, guard.Verify())
+				select {
+				case <-attached.Done():
+				case <-time.After(time.Second):
+					t.Fatal("retired fence did not cancel the current consumer")
+				}
+			case "earlier-fence-deadline":
+				deadline, ok := attached.Deadline()
+				require.True(t, ok)
+				original, _ := base.Deadline()
+				require.False(t, deadline.After(original))
+			default:
+				require.NoError(t, guard.Verify())
+			}
+		})
+	}
+}

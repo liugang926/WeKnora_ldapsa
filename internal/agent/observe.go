@@ -145,10 +145,11 @@ func (e *AgentEngine) runCompaction(
 func (e *AgentEngine) emitContextCompacted(
 	ctx context.Context, result *compaction.Result, round int,
 ) {
-	_ = e.eventBus.Emit(ctx, event.Event{
-		ID:        generateEventID("compaction"),
-		Type:      event.EventContextCompacted,
-		SessionID: e.sessionID,
+	_ = e.emitEvent(ctx, event.Event{
+		SourceLineage: result.SourceLineage,
+		ID:            generateEventID("compaction"),
+		Type:          event.EventContextCompacted,
+		SessionID:     e.sessionID,
 		Data: event.ContextCompactedData{
 			Reason:         string(result.Reason),
 			Round:          round,
@@ -395,7 +396,7 @@ func (e *AgentEngine) analyzeResponse(
 		}
 
 		answerID := generateEventID("answer")
-		e.eventBus.Emit(ctx, event.Event{
+		if err := e.emitEvent(ctx, event.Event{
 			ID:        answerID,
 			Type:      event.EventAgentFinalAnswer,
 			SessionID: sessionID,
@@ -403,8 +404,10 @@ func (e *AgentEngine) analyzeResponse(
 				Content: answer,
 				Done:    false,
 			},
-		})
-		e.eventBus.Emit(ctx, event.Event{
+		}); err != nil {
+			return responseVerdict{isDone: true, step: step}
+		}
+		if err := e.emitEvent(ctx, event.Event{
 			ID:        answerID,
 			Type:      event.EventAgentFinalAnswer,
 			SessionID: sessionID,
@@ -412,7 +415,9 @@ func (e *AgentEngine) analyzeResponse(
 				Content: "",
 				Done:    true,
 			},
-		})
+		}); err != nil {
+			return responseVerdict{isDone: true, step: step}
+		}
 
 		return responseVerdict{
 			isDone:      true,
@@ -466,7 +471,7 @@ func (e *AgentEngine) analyzeResponse(
 		} else {
 			answerID = generateEventID("answer")
 			if response.Content != "" {
-				e.eventBus.Emit(ctx, event.Event{
+				if err := e.emitEvent(ctx, event.Event{
 					ID:        answerID,
 					Type:      event.EventAgentFinalAnswer,
 					SessionID: sessionID,
@@ -474,7 +479,9 @@ func (e *AgentEngine) analyzeResponse(
 						Content: response.Content,
 						Done:    false,
 					},
-				})
+				}); err != nil {
+					return responseVerdict{isDone: true, step: step}
+				}
 			}
 		}
 		// Do not emit Done:true here. The caller drains any loop-end inject
@@ -535,7 +542,7 @@ func (e *AgentEngine) analyzeResponse(
 		answerID := response.AnswerEventID
 		if !response.AnswerStreamed || answerID == "" {
 			answerID = generateEventID("answer")
-			_ = e.eventBus.Emit(ctx, event.Event{
+			_ = e.emitEvent(ctx, event.Event{
 				ID:        answerID,
 				Type:      event.EventAgentFinalAnswer,
 				SessionID: sessionID,
@@ -890,6 +897,14 @@ func mcpCatalogDescriptionLen(ts []chat.Tool) int {
 
 // buildToolsForLLM builds the tools list for LLM function calling
 func (e *AgentEngine) buildToolsForLLM() []chat.Tool {
+	return e.modelContext.EncodeTools(e.rawToolsForLLM())
+}
+
+// rawToolsForLLM reads only the registry's currently eligible definitions.
+func (e *AgentEngine) rawToolsForLLM() []chat.Tool {
+	if e.toolRegistry == nil {
+		return nil
+	}
 	functionDefs := e.toolRegistry.GetModelFunctionDefinitions()
 	tools := make([]chat.Tool, 0, len(functionDefs))
 	for _, def := range functionDefs {
@@ -903,7 +918,7 @@ func (e *AgentEngine) buildToolsForLLM() []chat.Tool {
 		})
 	}
 
-	return e.modelContext.EncodeTools(tools)
+	return tools
 }
 
 // appendToolResults adds tool results to the in-turn message history following
@@ -921,6 +936,7 @@ func (e *AgentEngine) appendToolResults(
 	if step.Thought != "" || len(step.ToolCalls) > 0 || step.ReasoningContent != "" ||
 		step.ReasoningSignature != "" || len(step.ReasoningMetadata) > 0 {
 		assistantMsg := chat.Message{
+			SourceLineage:      e.SourceLineageSnapshot(),
 			Role:               "assistant",
 			Content:            step.Thought,
 			ReasoningContent:   step.ReasoningContent,
@@ -955,10 +971,11 @@ func (e *AgentEngine) appendToolResults(
 		resultContent := e.modelContext.ModelToolResultForTool(toolCall.Name, toolCall.Result)
 
 		toolMsg := chat.Message{
-			Role:       "tool",
-			Content:    resultContent,
-			ToolCallID: toolCall.ID,
-			Name:       toolCall.Name,
+			SourceLineage: toolResultLineage(toolCall.Result),
+			Role:          "tool",
+			Content:       resultContent,
+			ToolCallID:    toolCall.ID,
+			Name:          toolCall.Name,
 		}
 
 		messages = append(messages, toolMsg)
@@ -1002,8 +1019,10 @@ func redactHistoryKBResults(llmContext []chat.Message) []chat.Message {
 	for _, msg := range llmContext {
 		if msg.Role == "tool" && kbToolNames[msg.Name] {
 			redacted = append(redacted, chat.Message{
-				Role:       msg.Role,
-				Content:    "[Previous retrieval result omitted — knowledge base may have changed. Please perform a fresh search.]",
+				SourceLineage: msg.SourceLineage,
+				Role:          msg.Role,
+				Content: "[Previous retrieval result omitted — knowledge base may have changed. " +
+					"Please perform a fresh search.]",
 				ToolCallID: msg.ToolCallID,
 				Name:       msg.Name,
 				TurnID:     msg.TurnID,
@@ -1035,15 +1054,22 @@ func (e *AgentEngine) buildMessagesWithLLMContext(
 	imageURLs []string,
 ) []chat.Message {
 	messages := []chat.Message{
-		{Role: "system", Content: systemPrompt},
+		{Role: "system", Content: systemPrompt, SourceLineage: e.promptSourceLineage()},
 	}
 
 	if len(llmContext) > 0 {
 		sanitized := HistoryAsSent(llmContext, e.config.RetainRetrievalHistory)
 		if e.config.RetainRetrievalHistory {
-			logger.Infof(context.Background(), "Retaining full retrieval history in context (RetainRetrievalHistory=true)")
+			logger.Infof(
+				context.Background(),
+				"Retaining full retrieval history in context (RetainRetrievalHistory=true)",
+			)
 		} else {
-			logger.Infof(context.Background(), "Added %d history messages to context (KB tool results redacted)", len(llmContext))
+			logger.Infof(
+				context.Background(),
+				"Added %d history messages to context (KB tool results redacted)",
+				len(llmContext),
+			)
 		}
 
 		for _, msg := range sanitized {
@@ -1061,9 +1087,10 @@ func (e *AgentEngine) buildMessagesWithLLMContext(
 	// durable bound-KB/document IDs into the first model request before the
 	// request-local source registry had seen them.
 	userMsg := chat.Message{
-		Role:    "user",
-		Content: e.RenderUserTurnContent(sessionID, currentQuery),
-		Images:  imageURLs,
+		SourceLineage: e.currentUserSourceLineage(imageURLs),
+		Role:          "user",
+		Content:       e.RenderUserTurnContent(sessionID, currentQuery),
+		Images:        imageURLs,
 	}
 	messages = append(messages, userMsg)
 

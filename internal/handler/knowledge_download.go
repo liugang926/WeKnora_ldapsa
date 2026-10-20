@@ -153,6 +153,10 @@ func (h *KnowledgeHandler) BatchDownloadKnowledge(c *gin.Context) {
 		if err != nil {
 			return nil, "", err
 		}
+		file, err = bindKnowledgeOutputFile(openCtx, byID[id], file)
+		if err != nil {
+			return nil, "", err
+		}
 		return wrapNextcloudLeasedFile(file, leases, func(checkCtx context.Context) error {
 			if err := checkKB(checkCtx); err != nil {
 				return err

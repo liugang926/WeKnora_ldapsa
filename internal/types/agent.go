@@ -369,6 +369,9 @@ type Cleanable interface {
 
 // ToolResult represents the result of a tool execution
 type ToolResult struct {
+	// Only a trusted tool adapter may account for the actual output, metadata,
+	// diagnostics and images. Nil remains unknown; model/client JSON cannot set it.
+	SourceLineage *SourceLineage `json:"-"`
 	// OutputFiles holds sandbox references for this live result only. History
 	// uses the final answer's persistent resource references instead.
 	// A non-nil empty slice means output inspection found no eligible changes;
@@ -480,6 +483,7 @@ func (s *AgentStep) GetObservations() []string {
 
 // AgentState tracks the execution state of an agent across iterations
 type AgentState struct {
+	SourceLineage        *SourceLineage  `json:"-"`
 	PendingSteerMessages []string        `json:"-"`
 	CurrentRound         int             `json:"current_round"`  // Current round number
 	RoundSteps           []AgentStep     `json:"round_steps"`    // All steps taken so far in the current round

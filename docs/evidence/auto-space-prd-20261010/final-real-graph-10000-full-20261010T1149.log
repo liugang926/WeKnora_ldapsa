@@ -1,0 +1,16 @@
+=== RUN   TestNextcloudControlledTenThousandFileProcessingPipeline
+    nextcloud_graph_scale_test.go:80: processed=1000 elapsed_ms=94090
+    nextcloud_graph_scale_test.go:80: processed=2000 elapsed_ms=197440
+    nextcloud_graph_scale_test.go:80: processed=3000 elapsed_ms=288769
+    nextcloud_graph_scale_test.go:80: processed=4000 elapsed_ms=384769
+    nextcloud_graph_scale_test.go:80: processed=5000 elapsed_ms=491347
+    nextcloud_graph_scale_test.go:80: processed=6000 elapsed_ms=612196
+    nextcloud_graph_scale_test.go:80: processed=7000 elapsed_ms=735743
+    nextcloud_graph_scale_test.go:80: processed=8000 elapsed_ms=873612
+    nextcloud_graph_scale_test.go:80: processed=9000 elapsed_ms=1009371
+    nextcloud_graph_scale_test.go:80: processed=10000 elapsed_ms=1143783
+    nextcloud_graph_scale_test.go:85: p95_file_processing_ms=145
+    nextcloud_graph_scale_test.go:98: real_file_heads=10000 real_chunk_extract_calls=10000 real_graph_records=10000 durable_task_acks=10000 exact_graph_resources=10000 published=10000 elapsed_ms=1143783 files_per_second=8.74; controlled small plaintext/source/model; embedding explicitly skipped; excludes liveNC/LDAP/remoteLLM/100GB source transfer
+--- PASS: TestNextcloudControlledTenThousandFileProcessingPipeline (1144.19s)
+PASS
+ok      github.com/Tencent/WeKnora/internal/application/service 1144.529s

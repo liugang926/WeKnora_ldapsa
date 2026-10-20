@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Tencent/WeKnora/internal/agent/compaction"
@@ -80,7 +81,19 @@ type AgentEngine struct {
 	steerOverruns     int  // how many times this turn has already used the extra round
 	// roundGuard revalidates authorization at each background ReAct boundary.
 	// It is intentionally request-local and is never persisted with the agent.
-	roundGuard func(context.Context) error
+	roundGuard                    func(context.Context) error
+	lineageVerifier               func(context.Context, *types.SourceLineage) error
+	turnLineage                   *types.RAGSourceLineage
+	lineageMu                     sync.Mutex
+	lineageEmitMu                 sync.Mutex
+	lineageErr                    error
+	lineageCancel                 context.CancelFunc
+	systemPromptLineage           *types.SourceLineage
+	memoryPromptLineage           *types.SourceLineage
+	userInputLineage              *types.SourceLineage
+	skillsMetadataLineage         *types.SourceLineage
+	skillsMetadataBinding         []byte
+	renderedSkillsMetadataLineage *types.SourceLineage
 }
 
 // maxSteerOverruns caps loop-end injects past MaxIterations. One extra round
@@ -151,7 +164,15 @@ func (e *AgentEngine) SetPinnedMentions(mcpServices []*PinnedMCPServiceInfo, ski
 	e.pinnedSkills = skills
 }
 
+// SetMCPIndependentTransportVerifier binds the service-owned current session
+// and material eligibility check. A missing verifier leaves MCP unavailable at
+// the accounted Agent boundary.
+func (e *AgentEngine) SetMCPIndependentTransportVerifier(check func(context.Context) error) {
+	agenttools.ConfigureMCPIndependentTransportVerifier(e.toolRegistry, check)
+}
+
 func (e *AgentEngine) systemPromptOptions(ctx context.Context) *BuildSystemPromptOptions {
+	e.renderedSkillsMetadataLineage = nil
 	opts := &BuildSystemPromptOptions{
 		Language:         types.LanguageNameFromContext(ctx),
 		Config:           e.appConfig,
@@ -160,7 +181,11 @@ func (e *AgentEngine) systemPromptOptions(ctx context.Context) *BuildSystemPromp
 		ProtocolPrompt:   e.modelContext.ProtocolPrompt(),
 	}
 	if e.skillsManager != nil && e.skillsManager.IsEnabled() {
-		opts.SkillsMetadata = e.skillsManager.GetAllMetadata()
+		metadata := e.skillsManager.GetAllMetadata()
+		opts.SkillsMetadata = cloneSkillsMetadata(metadata)
+		if len(metadata) > 0 && opts.SkillsMetadata == nil {
+			e.renderedSkillsMetadataLineage = types.UnknownSourceLineage()
+		}
 	}
 	if e.toolRegistry != nil {
 		opts.SelectedTools = e.toolRegistry.ListTools()
@@ -175,6 +200,14 @@ func (e *AgentEngine) systemPromptOptions(ctx context.Context) *BuildSystemPromp
 		}
 		_, err := e.toolRegistry.GetTool(agenttools.ToolShellExec)
 		opts.ShellExecEnabled = err == nil
+	}
+	// Keep a prior failed metadata copy unknown; initialize only an absent receipt.
+	if e.renderedSkillsMetadataLineage == nil {
+		if len(opts.SkillsMetadata) > 0 {
+			e.renderedSkillsMetadataLineage = e.skillsMetadataInputLineage(opts.SkillsMetadata)
+		} else {
+			e.renderedSkillsMetadataLineage = independentAgentInput()
+		}
 	}
 	return opts
 }
@@ -300,10 +333,20 @@ func (e *AgentEngine) Execute(
 	llmContext []chat.Message,
 	imageURLs ...[]string,
 ) (*types.AgentState, error) {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	e.lineageMu.Lock()
+	e.lineageErr, e.lineageCancel = nil, cancel
+	e.lineageMu.Unlock()
+	e.turnLineage = types.NewRAGSourceLineage(e.lineageVerifier)
+	ctx = types.WithRAGSourceLineage(ctx, e.turnLineage)
+	defer func() { e.lineageMu.Lock(); e.lineageCancel = nil; e.lineageMu.Unlock() }()
 	logger.Infof(ctx, "[Agent] Starting execution: session=%s, message=%s, query_len=%d, context_msgs=%d",
 		sessionID, messageID, len(query), len(llmContext))
 	// Ensure tools are cleaned up after execution
-	defer e.toolRegistry.Cleanup(ctx)
+	if e.toolRegistry != nil {
+		defer e.toolRegistry.Cleanup(ctx)
+	}
 
 	common.PipelineInfo(ctx, "Agent", "execute_start", map[string]interface{}{
 		"session_id":   sessionID,
@@ -371,6 +414,9 @@ func (e *AgentEngine) Execute(
 		imgs = imageURLs[0]
 	}
 	messages := e.buildMessagesWithLLMContext(systemPrompt, query, sessionID, llmContext, imgs)
+	if err := e.accountMessages(ctx, messages); err != nil {
+		return nil, err
+	}
 	if e.toolRegistry != nil {
 		e.toolRegistry.RememberMCPHistory(messages)
 		e.toolRegistry.RefreshMCPTools(ctx)
@@ -388,9 +434,13 @@ func (e *AgentEngine) Execute(
 	})
 
 	_, err := e.executeLoop(ctx, state, query, messages, tools, sessionID, messageID)
+	if boundaryErr := e.lineageFailure(); boundaryErr != nil {
+		err = boundaryErr
+	}
+	state.SourceLineage = e.SourceLineageSnapshot()
 	if err != nil {
 		logger.Errorf(ctx, "[Agent] Execution failed: %v", err)
-		e.eventBus.Emit(ctx, event.Event{
+		_ = e.emitEvent(ctx, event.Event{
 			ID:        generateEventID("error"),
 			Type:      event.EventError,
 			SessionID: sessionID,
@@ -498,7 +548,7 @@ func (e *AgentEngine) closeAnswerStream(ctx context.Context, sessionID, answerID
 	if e.eventBus == nil || answerID == "" {
 		return
 	}
-	_ = e.eventBus.Emit(ctx, event.Event{
+	_ = e.emitEvent(ctx, event.Event{
 		ID:        answerID,
 		Type:      event.EventAgentFinalAnswer,
 		SessionID: sessionID,
@@ -546,7 +596,7 @@ func (e *AgentEngine) finishStalledTurn(
 	// does not end on a Done marker for content the client never saw.
 	if answerID == "" && e.eventBus != nil {
 		answerID = generateEventID("answer")
-		_ = e.eventBus.Emit(ctx, event.Event{
+		_ = e.emitEvent(ctx, event.Event{
 			ID:        answerID,
 			Type:      event.EventAgentFinalAnswer,
 			SessionID: sessionID,
@@ -602,6 +652,7 @@ func (e *AgentEngine) executeLoop(
 			return
 		}
 		completionEmitted = true
+		state.SourceLineage = e.SourceLineageSnapshot()
 		e.emitCompletionEvent(context.WithoutCancel(ctx), state, sessionID, messageID, startTime)
 	}
 	defer emitCompletion()
@@ -886,8 +937,13 @@ func (e *AgentEngine) runReActIteration(
 		guards.sawPlainRound = true
 		guards.lastResponseContent = response.Content
 		if guards.consecutiveSameContent >= maxRepeatedResponseRounds {
-			logger.Warnf(ctx, "[Agent][Round-%d] Detected stuck loop: same content repeated %d times (finish=%s), stopping",
-				round, guards.consecutiveSameContent+1, response.FinishReason)
+			logger.Warnf(
+				ctx,
+				"[Agent][Round-%d] Detected stuck loop: same content repeated %d times (finish=%s), stopping",
+				round,
+				guards.consecutiveSameContent+1,
+				response.FinishReason,
+			)
 			e.finishStalledTurn(ctx, state, sessionID, response, false)
 			return iterOutcomeBreak, nil
 		}
@@ -942,8 +998,9 @@ func (e *AgentEngine) runReActIteration(
 				logger.Warnf(ctx, "[Agent][Round-%d] Empty content with stop - retrying (%d/%d)",
 					round, guards.emptyRetries, maxEmptyResponseRetries)
 				*messagesPtr = append(*messagesPtr, chat.Message{
-					Role:    "user",
-					Content: "Please provide your complete answer now as plain text.",
+					SourceLineage: independentAgentInput(),
+					Role:          "user",
+					Content:       "Please provide your complete answer now as plain text.",
 				})
 				return iterOutcomeContinue, nil
 			}
@@ -955,7 +1012,7 @@ func (e *AgentEngine) runReActIteration(
 				round, maxEmptyResponseRetries)
 			fallback := stalledAnswerFallback
 			answerID := generateEventID("answer")
-			_ = e.eventBus.Emit(ctx, event.Event{
+			_ = e.emitEvent(ctx, event.Event{
 				ID:        answerID,
 				Type:      event.EventAgentFinalAnswer,
 				SessionID: sessionID,
@@ -964,7 +1021,7 @@ func (e *AgentEngine) runReActIteration(
 					Done:    false,
 				},
 			})
-			_ = e.eventBus.Emit(ctx, event.Event{
+			_ = e.emitEvent(ctx, event.Event{
 				ID:        answerID,
 				Type:      event.EventAgentFinalAnswer,
 				SessionID: sessionID,
@@ -989,6 +1046,7 @@ func (e *AgentEngine) runReActIteration(
 			canContinue := e.withinIterationBudget(nextRound) || e.steerOverruns < maxSteerOverruns
 			if canContinue {
 				*messagesPtr = append(*messagesPtr, chat.Message{
+					SourceLineage:      e.SourceLineageSnapshot(),
 					Role:               "assistant",
 					Content:            verdict.finalAnswer,
 					ReasoningContent:   response.ReasoningContent,
@@ -1027,6 +1085,9 @@ func (e *AgentEngine) runReActIteration(
 
 	// 3. Act: Execute tool calls
 	e.executeToolCalls(ctx, response, &step, state.CurrentRound, sessionID, assistantMessageID)
+	if err := e.lineageFailure(); err != nil {
+		return iterOutcomeNext, err
+	}
 	toolCallCount = len(step.ToolCalls)
 
 	// 4. Observe: Add tool results to messages and write to context
@@ -1076,7 +1137,11 @@ func (e *AgentEngine) describeImages(ctx context.Context, imageDataURIs []string
 	var descriptions []string
 	for i, dataURI := range imageDataURIs {
 		if ctx.Err() != nil {
-			logger.Warnf(ctx, "[Agent] Context cancelled, skipping remaining %d tool result images", len(imageDataURIs)-i)
+			logger.Warnf(
+				ctx,
+				"[Agent] Context cancelled, skipping remaining %d tool result images",
+				len(imageDataURIs)-i,
+			)
 			break
 		}
 		imgBytes, err := decodeDataURIBytes(dataURI)
@@ -1084,7 +1149,13 @@ func (e *AgentEngine) describeImages(ctx context.Context, imageDataURIs []string
 			logger.Warnf(ctx, "[Agent] Failed to decode tool result image %d: %v", i, err)
 			continue
 		}
+		if err := e.checkLineage(ctx); err != nil {
+			return descriptions
+		}
 		desc, err := e.imageDescriber(ctx, imgBytes, toolImageAnalysisPrompt)
+		if err := e.checkLineage(ctx); err != nil {
+			return descriptions
+		}
 		if err != nil {
 			logger.Warnf(ctx, "[Agent] VLM analysis failed for tool result image %d: %v", i, err)
 			continue

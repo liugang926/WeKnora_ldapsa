@@ -215,3 +215,46 @@ export async function putDataSourceCredentials(
 export async function deleteDataSourceCredentials(id: string): Promise<void> {
   await del(`/api/v1/datasource/${id}/credentials/credentials`)
 }
+
+export interface NextcloudCapacityStatus {
+  policy: { TenantID: number; KnowledgeBaseID: string; RetentionQuotaBytes: number; WarningPercent: number; PausePercent: number }
+  physical_total_bytes: number
+  physical_available_bytes: number
+  logical_retained_bytes: number
+  reserved_bytes: number
+  state: 'normal' | 'warning' | 'paused'
+  measured_at_ms: number
+}
+export async function getNextcloudCapacity(kbId: string): Promise<NextcloudCapacityStatus> {
+  const response = await get(`/api/v1/knowledge-bases/${encodeURIComponent(kbId)}/nextcloud-capacity`)
+  return response.capacity
+}
+export async function setNextcloudCapacity(kbId: string, input: {retention_quota_bytes: number; warning_percent: number; pause_percent: number}) {
+  return put(`/api/v1/knowledge-bases/${encodeURIComponent(kbId)}/nextcloud-capacity`, input)
+}
+
+export interface NextcloudGCStatus {
+  id: string; knowledge_base_id: string; knowledge_id: string; reason: string; state: string
+  not_before: string; original_not_before: string; next_attempt_at: string; attempts: number
+  last_error_code: string; pending_items: number; estimated_bytes: number; confirmed_released_bytes: number
+}
+export interface NextcloudGCPreview {
+  status: NextcloudGCStatus
+  items: {kind: string; state: string; count: number; estimated_bytes: number; confirmed_released_bytes: number}[]
+  earliest_collect_at: string; can_request_collection: boolean; collection_checks_repeated: boolean
+}
+export async function listNextcloudGC(kbId: string, cursor = ''): Promise<{jobs: NextcloudGCStatus[]; next_cursor: string}> {
+  const result = await get(`/api/v1/datasource/nextcloud-gc-jobs?knowledge_base_id=${encodeURIComponent(kbId)}&cursor=${encodeURIComponent(cursor)}`)
+  return result
+}
+export async function previewNextcloudGC(id: string): Promise<NextcloudGCPreview> {
+  const result = await get(`/api/v1/datasource/nextcloud-gc-jobs/${encodeURIComponent(id)}/preview`)
+  return result.preview
+}
+export async function collectNextcloudGC(id: string): Promise<NextcloudGCPreview> {
+  const result = await post(`/api/v1/datasource/nextcloud-gc-jobs/${encodeURIComponent(id)}/collect`, {})
+  return result.preview
+}
+export async function retryNextcloudGC(id: string) {
+  return post(`/api/v1/datasource/nextcloud-gc-jobs/${encodeURIComponent(id)}/retry`, {})
+}

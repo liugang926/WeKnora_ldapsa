@@ -117,33 +117,63 @@ func completedAnswerStream() []interfaces.StreamEvent {
 	}
 }
 
-func newContinueStreamRouter(t *testing.T) *gin.Engine {
+// renderReplayCodec exercises formatting only. These fabricated Redis-like
+// frames deliberately retain unknown origins; they cannot enter ContinueStream's
+// authenticated original-material path. Its actual HTTP success and revocation
+// coverage is in TestNativeLiveReplayActualPausedProducerReceiverAndRedisForgery
+// and TestNativeSavedReplayActualPlainRedisReconnectAndLegacyReject.
+func renderReplayCodec(t *testing.T, initial, polled []interfaces.StreamEvent, query string) (int, string) {
+	t.Helper()
+	for _, batch := range [][]interfaces.StreamEvent{initial, polled} {
+		for _, frame := range batch {
+			require.Error(t, frame.SourceLineage.RequireComplete(), "the codec fixture must not mint replay authority")
+		}
+	}
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.Use(middleware.ErrorHandler())
+	h := &Handler{fileService: &stubResourceFileService{}}
+	r.GET("/codec", func(c *gin.Context) {
+		rewriter, err := h.resolveStreamRewriter(c)
+		if err != nil {
+			_ = c.Error(err)
+			return
+		}
+		setSSEHeaders(c)
+		for _, frame := range coalesceReplayEvents(initial) {
+			emitStreamEvent(c.Request.Context(), c, frame, "req-1", rewriter)
+		}
+		// Keep the same holdback buffer for later polled deltas.
+		for _, frame := range polled {
+			emitStreamEvent(c.Request.Context(), c, frame, "req-1", rewriter)
+		}
+	})
+	recorder := httptest.NewRecorder()
+	r.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/codec?"+strings.TrimPrefix(query, "&"), nil))
+	return recorder.Code, recorder.Body.String()
+}
+
+func continueUnknownReplay(t *testing.T, query string) (int, string) {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	r.Use(middleware.ErrorHandler())
 	h := &Handler{
-		sessionService: &stubSessionService{},
-		messageService: &stubMessageServiceForStream{},
-		streamManager:  &stubStreamManager{events: completedAnswerStream()},
-		fileService:    &stubResourceFileService{},
+		sessionService: &stubSessionService{}, messageService: &stubMessageServiceForStream{},
+		streamManager: &stubStreamManager{events: completedAnswerStream()}, fileService: &stubResourceFileService{},
 	}
 	r.GET("/sessions/continue-stream/:session_id", h.ContinueStream)
-	return r
-}
-
-func continueStream(t *testing.T, query string) (int, string) {
-	t.Helper()
 	recorder := httptest.NewRecorder()
-	newContinueStreamRouter(t).ServeHTTP(recorder, httptest.NewRequest(
-		http.MethodGet, "/sessions/continue-stream/sess1?message_id=msg1"+query, nil))
+	r.ServeHTTP(recorder, httptest.NewRequest(
+		http.MethodGet, "/sessions/continue-stream/sess1?message_id=msg1"+query, nil,
+	))
 	return recorder.Code, recorder.Body.String()
 }
 
 // Default behaviour: the SSE stream keeps carrying internal handles, which the
 // WeKnora frontend resolves through the authenticated /files proxy.
-func TestContinueStream_DefaultEmitsHandles(t *testing.T) {
-	code, body := continueStream(t, "")
+func TestReplayCodec_DefaultEmitsHandles(t *testing.T) {
+	code, body := renderReplayCodec(t, completedAnswerStream(), nil, "")
 	require.Equal(t, http.StatusOK, code, body)
 
 	assert.Contains(t, body, testResourceHandle)
@@ -152,8 +182,8 @@ func TestContinueStream_DefaultEmitsHandles(t *testing.T) {
 
 // With resource_urls=public the whole stream — answer text and the references
 // payload — carries URLs a third-party app can load directly.
-func TestContinueStream_PublicModeEmitsLoadableURLs(t *testing.T) {
-	code, body := continueStream(t, "&resource_urls=public")
+func TestReplayCodec_PublicModeEmitsLoadableURLs(t *testing.T) {
+	code, body := renderReplayCodec(t, completedAnswerStream(), nil, "&resource_urls=public")
 	require.Equal(t, http.StatusOK, code, body)
 
 	assert.NotContains(t, body, "resource://",
@@ -174,7 +204,7 @@ func TestContinueStream_PublicModeEmitsLoadableURLs(t *testing.T) {
 }
 
 func TestContinueStream_RejectsInvalidResourceURLMode(t *testing.T) {
-	code, body := continueStream(t, "&resource_urls=signed")
+	code, body := continueUnknownReplay(t, "&resource_urls=signed")
 	assert.Equal(t, http.StatusBadRequest, code, body)
 	assert.Contains(t, body, "resource_urls")
 }
@@ -185,4 +215,12 @@ func (s *stubMessageServiceForStream) CheckLiveMessagePublication(context.Contex
 
 func (s *stubMessageServiceForStream) CheckMessagePublication(context.Context, *types.Message) error {
 	return nil
+}
+
+func TestContinueStreamUnknownFramesCannotBypassOriginalMaterial(t *testing.T) {
+	code, body := continueUnknownReplay(t, "&resource_urls=public")
+	require.Equal(t, http.StatusForbidden, code, body)
+	require.NotContains(t, body, "The diagram")
+	require.NotContains(t, body, testResourceHandle)
+	require.NotContains(t, body, "signed.png")
 }

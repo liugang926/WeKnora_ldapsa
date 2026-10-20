@@ -816,6 +816,66 @@ export default {
     pauseFailed: 'Не удалось приостановить',
     logs: 'Журнал',
     actions: 'Действия',
+    gc: {
+      "more": "More tasks",
+      "title": "Retired version cleanup",
+      "description": "Review expiration and cleanup progress. Estimated bytes are separate from confirmed filesystem releases.",
+      "unavailable": "Cleanup status is unavailable or the safety check refused the action. Refresh and inspect the current status.",
+      "empty": "No retained cleanup tasks for this knowledge base.",
+      "nextAttempt": "Next retry",
+      "unknown": "Unverified",
+      "derivedExpiry": "Derived content expiry",
+      "originalExpiry": "Recovery copy expiry",
+      "estimated": "Estimated bytes",
+      "confirmed": "Confirmed released bytes",
+      "failure": "Reason for deferral",
+      "preview": "Preview inventory",
+      "safety": "An attempt repeats current-version, reference, retention and read/build lease checks. Unknown inventories stay blocked; allocated database pages may remain after row deletion.",
+      "category": "Category",
+      "status": "Status",
+      "count": "Count",
+      "collect": "Attempt collection now",
+      "retry": "Retry on next sweep",
+      "refresh": "Refresh",
+      "reason": {
+        "retired": "Replaced version",
+        "tombstone": "Source withdrawn"
+      },
+      "state": {
+        "pending": "Pending",
+        "retry": "Retry scheduled",
+        "blocked": "Safety check pending",
+        "deleting": "Collecting",
+        "collected": "Recorded items collected"
+      },
+      "error": {"content_lease_coverage_unverified": "Reader/build coverage is unverified; collection stays blocked.", "content_read_or_build_busy": "A reader or builder is active; retry later.", "content_generation_unverified": "Source generation needs reconciliation.", "candidate_is_current": "This is still the current version and cannot be collected.", "build_still_active": "Build is still active; retain its data.", "source_identity_changed": "Source identity changed; refresh and reconcile.", "derived_backend_inventory_unverified": "Derived backend inventory is incomplete; retain data.", "derived_provenance_unverified": "Historical derived origins are unverified; retain data.", "safe_object_cleanup_unavailable": "Protected references or backend checks prevent collection.", "provider_delete_failed": "Storage deletion was not confirmed; inspect the backend and retry.", "retention_window_open": "Retention is still active; retain data.", "invalid_image_inventory": "Image inventory needs repair before retry.", "original_body_retained_or_unverified": "Body references, leases, retention windows, or verification still require retention",
+        "gc_step_failed": "Cleanup step failed; inspect and retry."},
+      "kind": {
+        "knowledge": "Knowledge record",
+        "derived_index": "Derived inventory",
+        "chunk": "Chunk",
+        "local_embedding": "Local index",
+        "sql_original_body": "Original input bodies",
+        "source_file": "Original copy",
+        "extracted_image": "Extracted image"
+      }
+    },
+    capacity: {
+      title: "Ёмкость загрузки ИИ",
+      description: "При высокой заполненности новые загрузки ИИ приостанавливаются. Оригиналы и актуальные знания сохраняются.",
+      unavailable: "Ёмкость не подтверждена. Новая загрузка ИИ закрыта.",
+      normal: "Нормальная ёмкость",
+      warning: "Предупреждение о ёмкости",
+      paused: "Новая загрузка ИИ приостановлена",
+      physical: "Свободно физически / всего",
+      retained: "Сохранённые объекты БЗ",
+      reserved: "Зарезервировано",
+      quota: "Квота MiB (0 без лимита)",
+      warningLabel: "Предупреждение %",
+      pause: "Пауза %",
+      save: "Сохранить",
+      refresh: "Обновить",
+    },
     failedCandidates: {
       title: 'Файлы Nextcloud с ошибками обработки',
       hint: 'Показаны только файлы этого подключённого источника с ошибками обработки. Повторная попытка заново получает исходный файл и не публикует предыдущую версию с ошибкой.',
@@ -1822,6 +1882,14 @@ export default {
     todoWrite: 'Составить план'
   },
   commandPalette: {
+    search: {
+      previousMessages: 'Предыдущая страница',
+      pageEmpty: 'На этой странице нет подходящих диалогов.',
+      continueMessages: 'Продолжить поиск в более ранних диалогах',
+      moreAvailable: 'Поиск ещё не охватил все более ранние диалоги.',
+      failed: 'Поиск не завершён. Повторите попытку.',
+      retry: 'Повторить поиск',
+    },
     placeholder: 'Поиск по базам знаний, файлам, диалогам…',
     clearRecent: 'Очистить',
     retrieval: 'Параметры поиска',
@@ -4575,7 +4643,10 @@ export default {
         'wiki.content_changed': 'Содержимое Wiki обновлено',
         'faq.import_started': 'Импорт FAQ начат',
         'faq.import_completed': 'Импорт FAQ завершён',
-        'faq.import_failed': 'Ошибка импорта FAQ'
+        'faq.import_failed': 'Ошибка импорта FAQ',
+        'nextcloud.gc_collect_requested': 'Cleanup attempt requested',
+        'nextcloud.gc_collect_finished': 'Cleanup attempt finished',
+        'nextcloud.gc_retry_requested': 'Cleanup retry scheduled'
       },
       detailFields: {
         task_id: 'ID задачи',
@@ -5180,6 +5251,8 @@ export default {
     next: 'Далее'
   },
   graphSettings: {
+    requiredForPublication: 'Завершать извлечение графа до публикации исходных файлов',
+    requiredForPublicationDescription: 'Если база используется как шаблон источника, файлы доступны для вопросов только после успешного извлечения графа. Если флажок снят, граф необязателен, а ошибки остаются видны в статусе файла.',
     title: 'Настройки графа знаний',
     description: 'Настройте извлечение сущностей и отношений для автоматического построения графа знаний из текста (примечание: это не то же самое, что «граф ссылок страниц» внутри Wiki — там показаны связи между Wiki-страницами, а здесь строится граф сущностей и отношений на основе LLM)',
     enableLabel: 'Включить извлечение сущностей и отношений',

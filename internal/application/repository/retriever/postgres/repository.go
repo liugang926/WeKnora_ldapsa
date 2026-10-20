@@ -145,6 +145,37 @@ func (r *pgRepository) writeIndexRows(ctx context.Context, infos []*types.IndexI
 			return err
 		}
 		for _, scope := range scopes {
+			var written []*pgVector
+			if err := tx.Where(
+				"knowledge_base_id=? AND knowledge_id=? AND source_id IN ?",
+				scope.kbID,
+				scope.knowledgeID,
+				scope.sourceIDs,
+			).
+				Find(&written).
+				Error; err != nil {
+				return err
+			}
+			uniqueSources := map[string]bool{}
+			for _, id := range scope.sourceIDs {
+				uniqueSources[id] = true
+			}
+			if len(written) != len(uniqueSources) {
+				return apprepo.ErrNextcloudContentLeaseDenied
+			}
+			for _, row := range written {
+				if err := apprepo.RecordNextcloudDerivedArtifactInTx(
+					ctx,
+					tx,
+					row.KnowledgeID,
+					row.KnowledgeBaseID,
+					"postgres_embedding",
+					strconv.FormatUint(uint64(row.ID), 10),
+					int64(row.Dimension),
+				); err != nil {
+					return err
+				}
+			}
 			if err := r.inventoryNextcloudVectorIDs(tx, scope); err != nil {
 				return err
 			}
@@ -213,6 +244,10 @@ func (r *pgRepository) guardNextcloudVectorWrites(ctx context.Context, tx *gorm.
 				return nil, apprepo.ErrNextcloudContentLeaseInvalid
 			}
 		}
+		if err := apprepo.LockNextcloudIndexKnowledgeBaseInTx(ctx, tx,
+			scope.tenantID, scope.kbID, scope.knowledgeID); err != nil {
+			return nil, err
+		}
 		if err := apprepo.ValidateNextcloudBuildWrite(ctx, tx,
 			scope.tenantID, scope.kbID, scope.knowledgeID); err != nil {
 			return nil, err
@@ -229,6 +264,10 @@ func (r *pgRepository) guardNextcloudVectorWrites(ctx context.Context, tx *gorm.
 		}
 		if version.State == "tombstone" || version.CandidateKnowledgeID != scope.knowledgeID {
 			return nil, apprepo.ErrNextcloudContentLeaseDenied
+		}
+		if err := apprepo.ValidateNextcloudIndexInputWriteInTx(ctx, tx,
+			scope.tenantID, scope.kbID, scope.knowledgeID); err != nil {
+			return nil, err
 		}
 		result = append(result, *scope)
 	}
@@ -271,9 +310,14 @@ func (r *pgRepository) inventoryNextcloudVectorIDs(tx *gorm.DB, scope nextcloudV
 }
 
 // DeleteByChunkIDList deletes indices by chunk IDs
-func (g *pgRepository) DeleteByChunkIDList(ctx context.Context, chunkIDList []string, dimension int, knowledgeType string) error {
+func (r *pgRepository) DeleteByChunkIDList(
+	ctx context.Context,
+	chunkIDList []string,
+	_ int,
+	_ string,
+) error {
 	logger.GetLogger(ctx).Infof("[Postgres] Deleting indices by chunk IDs, count: %d", len(chunkIDList))
-	result := g.db.WithContext(ctx).Where("chunk_id IN ?", chunkIDList).Delete(&pgVector{})
+	result := r.db.WithContext(ctx).Where("chunk_id IN ?", chunkIDList).Delete(&pgVector{})
 	if result.Error != nil {
 		logger.GetLogger(ctx).Errorf("[Postgres] Failed to delete indices by chunk IDs: %v", result.Error)
 		return result.Error
@@ -283,12 +327,17 @@ func (g *pgRepository) DeleteByChunkIDList(ctx context.Context, chunkIDList []st
 }
 
 // DeleteBySourceIDList deletes indices by source IDs
-func (g *pgRepository) DeleteBySourceIDList(ctx context.Context, sourceIDList []string, dimension int, knowledgeType string) error {
+func (r *pgRepository) DeleteBySourceIDList(
+	ctx context.Context,
+	sourceIDList []string,
+	_ int,
+	_ string,
+) error {
 	if len(sourceIDList) == 0 {
 		return nil
 	}
 	logger.GetLogger(ctx).Infof("[Postgres] Deleting indices by source IDs, count: %d", len(sourceIDList))
-	result := g.db.WithContext(ctx).Where("source_id IN ?", sourceIDList).Delete(&pgVector{})
+	result := r.db.WithContext(ctx).Where("source_id IN ?", sourceIDList).Delete(&pgVector{})
 	if result.Error != nil {
 		logger.GetLogger(ctx).Errorf("[Postgres] Failed to delete indices by source IDs: %v", result.Error)
 		return result.Error
@@ -298,9 +347,14 @@ func (g *pgRepository) DeleteBySourceIDList(ctx context.Context, sourceIDList []
 }
 
 // DeleteByKnowledgeIDList deletes indices by knowledge IDs
-func (g *pgRepository) DeleteByKnowledgeIDList(ctx context.Context, knowledgeIDList []string, dimension int, knowledgeType string) error {
+func (r *pgRepository) DeleteByKnowledgeIDList(
+	ctx context.Context,
+	knowledgeIDList []string,
+	_ int,
+	_ string,
+) error {
 	logger.GetLogger(ctx).Infof("[Postgres] Deleting indices by knowledge IDs, count: %d", len(knowledgeIDList))
-	result := g.db.WithContext(ctx).Where("knowledge_id IN ?", knowledgeIDList).Delete(&pgVector{})
+	result := r.db.WithContext(ctx).Where("knowledge_id IN ?", knowledgeIDList).Delete(&pgVector{})
 	if result.Error != nil {
 		logger.GetLogger(ctx).Errorf("[Postgres] Failed to delete indices by knowledge IDs: %v", result.Error)
 		return result.Error
@@ -751,8 +805,17 @@ func (g *pgRepository) CopyIndices(ctx context.Context,
 
 		// Batch insert target vector index
 		if len(targetVectors) > 0 {
-			if err := g.db.WithContext(ctx).
-				Clauses(clause.OnConflict{DoNothing: true}).Create(targetVectors).Error; err != nil {
+			infos := make([]*types.IndexInfo, len(targetVectors))
+			for i, row := range targetVectors {
+				infos[i] = &types.IndexInfo{
+					KnowledgeID:     row.KnowledgeID,
+					KnowledgeBaseID: row.KnowledgeBaseID,
+					SourceID:        row.SourceID,
+					SourceType:      types.SourceType(row.SourceType),
+					ChunkID:         row.ChunkID,
+				}
+			}
+			if err := g.writeIndexRows(ctx, infos, targetVectors, true); err != nil {
 				logger.GetLogger(ctx).Errorf("[Postgres] Failed to batch create target index: %v", err)
 				return err
 			}

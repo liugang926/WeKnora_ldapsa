@@ -47,17 +47,21 @@ type RecentDocInfo struct {
 // SelectedDocumentInfo contains summary information about a user-selected document (via @ mention).
 // Injected into the user message runtime_context (pinned_documents); content is fetched via tools.
 type SelectedDocumentInfo struct {
-	KnowledgeID     string // Knowledge ID
-	KnowledgeBaseID string // Knowledge base ID
-	Title           string // Document title
-	FileName        string // Original file name
-	FileType        string // File type (pdf, docx, etc.)
+	// Trusted receipt for every rendered field, including generated profiles.
+	SourceLineage   *types.SourceLineage `json:"-"`
+	KnowledgeID     string               // Knowledge ID
+	KnowledgeBaseID string               // Knowledge base ID
+	Title           string               // Document title
+	FileName        string               // Original file name
+	FileType        string               // File type (pdf, docx, etc.)
 }
 
 // QuestionOriginInfo is the knowledge source a suggested question was
 // generated from, when the user picked that question. Rendered into
 // runtime_context so the model searches the source before answering.
 type QuestionOriginInfo struct {
+	// Trusted receipt for every rendered field, including generated profiles.
+	SourceLineage     *types.SourceLineage `json:"-"`
 	KnowledgeBaseID   string
 	KnowledgeBaseName string
 	Document          *SelectedDocumentInfo // nil when only the base is known
@@ -65,26 +69,34 @@ type QuestionOriginInfo struct {
 
 // PinnedMCPServiceInfo describes an MCP service explicitly @mentioned for this turn.
 type PinnedMCPServiceInfo struct {
-	Discoverable bool // Available through the scoped MCP directory.
-	ID           string
-	Name         string
-	Description  string
-	ToolNames    []string // Registered tool.function names for this service (mcp_{service}_{tool})
+	// Trusted receipt for every rendered field, including generated profiles.
+	SourceLineage *types.SourceLineage `json:"-"`
+	Discoverable  bool                 // Available through the scoped MCP directory.
+	ID            string
+	Name          string
+	Description   string
+	ToolNames     []string // Registered tool.function names for this service (mcp_{service}_{tool})
 }
 
 // PinnedSkillInfo describes a skill explicitly @mentioned for this turn.
 type PinnedSkillInfo struct {
-	Name        string
-	Description string
+	// Trusted receipt for every rendered field, including generated profiles.
+	SourceLineage *types.SourceLineage `json:"-"`
+	Name          string
+	Description   string
 }
 
 // KnowledgeBaseInfo contains essential information about a knowledge base for agent prompt
 type KnowledgeBaseInfo struct {
-	ID          string
-	Name        string
-	Type        string // Knowledge base type: "document" or "faq"
-	Description string
-	DocCount    int
+	// Trusted receipt for every rendered field, including generated profiles.
+	SourceLineage *types.SourceLineage `json:"-"`
+	ID            string
+	Name          string
+	Type          string // Knowledge base type: "document" or "faq"
+	Description   string
+	DocCount      int
+	// OmitDocumentMetadata suppresses unconsumed collection statistics and previews.
+	OmitDocumentMetadata bool
 	// Capabilities lists the retrieval surfaces this KB exposes. Any subset of
 	// {"wiki", "chunks"}. "chunks" is present when the KB has vector and/or
 	// keyword (BM25) indexing enabled. This is the *deterministic* source of
@@ -139,14 +151,20 @@ func formatKnowledgeBaseList(kbInfos []*KnowledgeBaseInfo) string {
 		if kbType == "" {
 			kbType = "document"
 		}
-		fmt.Fprintf(&b, "<knowledge_base id=\"%s\" name=\"%s\" type=\"%s\" doc_count=\"%d\" capabilities=\"%s\">\n",
-			escapeXMLAttr(kb.ID), escapeXMLAttr(formatDocSummary(kb.Name, 160)), escapeXMLAttr(kbType), kb.DocCount,
-			escapeXMLAttr(strings.Join(kb.Capabilities, ",")))
+		if kb.OmitDocumentMetadata {
+			fmt.Fprintf(&b, "<knowledge_base id=\"%s\" name=\"%s\" type=\"%s\" capabilities=\"%s\">\n",
+				escapeXMLAttr(kb.ID), escapeXMLAttr(formatDocSummary(kb.Name, 160)), escapeXMLAttr(kbType),
+				escapeXMLAttr(strings.Join(kb.Capabilities, ",")))
+		} else {
+			fmt.Fprintf(&b, "<knowledge_base id=\"%s\" name=\"%s\" type=\"%s\" doc_count=\"%d\" capabilities=\"%s\">\n",
+				escapeXMLAttr(kb.ID), escapeXMLAttr(formatDocSummary(kb.Name, 160)), escapeXMLAttr(kbType), kb.DocCount,
+				escapeXMLAttr(strings.Join(kb.Capabilities, ",")))
+		}
 		if kb.Description != "" {
 			fmt.Fprintf(&b, "<description>%s</description>\n", escapeXMLAttr(formatDocSummary(kb.Description, 240)))
 		}
 		writeKnowledgeBaseProfile(&b, kb.Profile)
-		if len(kb.RecentDocs) > 0 {
+		if !kb.OmitDocumentMetadata && len(kb.RecentDocs) > 0 {
 			b.WriteString("<recent_documents>\n")
 			for j, doc := range kb.RecentDocs {
 				if j >= 2 {

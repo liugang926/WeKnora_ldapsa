@@ -90,9 +90,12 @@ func TestRejectNextcloudDerivedKBChecksConfigurationAndDocuments(t *testing.T) {
 		KnowledgeBaseID: "kb",
 		Channel:         types.ConnectorTypeNextcloud,
 	}
-	withMarker := &types.Knowledge{ID: "marker", TenantID: 7, KnowledgeBaseID: "kb", Metadata: []byte(
-		`{"nextcloud_file_id":"42"}`,
-	)}
+	withMarker := &types.Knowledge{
+		ID:              "marker",
+		TenantID:        7,
+		KnowledgeBaseID: "kb",
+		Metadata:        []byte(`{"nextcloud_file_id":"42"}`),
+	}
 	for _, tc := range []struct {
 		name    string
 		rows    []*types.Knowledge
@@ -200,9 +203,14 @@ func TestAgentShareRejectsPersistentlyMarkedKB(t *testing.T) {
 				shareRepo:           builtinShareRepo{},
 				enforceSourcePolicy: true,
 			}
-			_, err := svc.ShareAgent(shareMgmtCtx(
-				types.TenantRoleAdmin,
-			), "agent-1", "org-1", "user-1", 7, types.OrgRoleViewer)
+			_, err := svc.ShareAgent(
+				shareMgmtCtx(types.TenantRoleAdmin),
+				"agent-1",
+				"org-1",
+				"user-1",
+				7,
+				types.OrgRoleViewer,
+			)
 			require.ErrorIs(t, err, ErrNextcloudDerivedContent)
 			_, err = svc.GetSharedAgentForTenant(context.Background(), 8, types.TenantRoleViewer, "agent-1", 7)
 			require.ErrorIs(t, err, ErrAgentSharePermission)
@@ -223,9 +231,13 @@ func TestNextcloudTransferPreflightDoesNotMutateSource(t *testing.T) {
 			if operation == access.KBTransferClone {
 				_, err = f.svc.planKnowledgeClone(f.ctx, f.kbs.values["kb"], f.kbs.values["other"])
 			} else {
-				_, err = f.svc.planKnowledgeMove(f.ctx, f.kbs.values["kb"], f.kbs.values["other"], []string{
-					"doc",
-				}, "reuse_vectors")
+				_, err = f.svc.planKnowledgeMove(
+					f.ctx,
+					f.kbs.values["kb"],
+					f.kbs.values["other"],
+					[]string{"doc"},
+					"reuse_vectors",
+				)
 			}
 			require.ErrorIs(t, err, ErrNextcloudDerivedContent)
 			row, getErr := f.repo.GetKnowledgeByID(f.ctx, 7, "doc")

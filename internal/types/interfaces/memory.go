@@ -64,10 +64,23 @@ type MemoryRepository interface {
 	) (*types.MemorySubject, bool, error)
 	// ClaimPendingSessions leases a snapshot without removing durable work.
 	// A nil batch means no work remains; RetryAt defers a busy lease.
-	ClaimPendingSessions(ctx context.Context, scope MemoryScope, fallbackSession, leaseID string, ttl time.Duration) (*types.MemoryExtractionBatch, error)
+	ClaimPendingSessions(
+		ctx context.Context,
+		scope MemoryScope,
+		fallbackSession,
+		leaseID string,
+		ttl time.Duration,
+	) (*types.MemoryExtractionBatch, error)
 	// CheckpointExtraction acknowledges a processed segment (or a recorded
 	// skip). A concurrent enqueue changes Revision and keeps the session pending.
-	CheckpointExtraction(ctx context.Context, scope MemoryScope, leaseID string, session types.MemoryExtractionSession, cursor types.MemoryMessageCursor, drained bool) error
+	CheckpointExtraction(
+		ctx context.Context,
+		scope MemoryScope,
+		leaseID string,
+		session types.MemoryExtractionSession,
+		cursor types.MemoryMessageCursor,
+		drained bool,
+	) error
 	HasPendingExtraction(ctx context.Context, scope MemoryScope) (bool, error)
 	// RecordExtractionFailure returns true after the bounded invalid-output
 	// retry budget. It preserves a failure range without storing transcript text.
@@ -92,7 +105,13 @@ type MemoryRepository interface {
 	// block: stable traits, plus anything the user explicitly asked to keep.
 	ListActiveResident(ctx context.Context, scope MemoryScope, limit int) ([]*types.MemoryItem, error)
 	// ListItems returns items for the memory manager, filtered by status.
-	ListItems(ctx context.Context, scope MemoryScope, status string, limit, offset int) ([]*types.MemoryItem, int64, error)
+	ListItems(
+		ctx context.Context,
+		scope MemoryScope,
+		status string,
+		limit,
+		offset int,
+	) ([]*types.MemoryItem, int64, error)
 	// FindActiveByKey returns the active item occupying a topic key, if any.
 	FindActiveByKey(ctx context.Context, scope MemoryScope, normalizedKey string) (*types.MemoryItem, error)
 	// UpdateItemContent rewrites an item edited in the memory manager.
@@ -140,7 +159,12 @@ type MemoryRepository interface {
 	// ItemEmbeddings loads the vectors for the given items, keyed by item id.
 	// Only vectors produced by modelID are returned: vectors from a different
 	// model are not comparable, so mixing them would score nonsense.
-	ItemEmbeddings(ctx context.Context, scope MemoryScope, itemIDs []string, modelID string) (map[string][]float32, error)
+	ItemEmbeddings(
+		ctx context.Context,
+		scope MemoryScope,
+		itemIDs []string,
+		modelID string,
+	) (map[string][]float32, error)
 	// SearchItemsByVector returns this subject's semantically closest items,
 	// ranked by the database over every vector it holds.
 	//
@@ -156,7 +180,12 @@ type MemoryRepository interface {
 	SyncVectorColumn(ctx context.Context, scope MemoryScope, limit int) (int, error)
 	// ItemsMissingEmbeddings returns active items that have no vector yet, so a
 	// background pass can fill them in.
-	ItemsMissingEmbeddings(ctx context.Context, scope MemoryScope, modelID string, limit int) ([]*types.MemoryItem, error)
+	ItemsMissingEmbeddings(
+		ctx context.Context,
+		scope MemoryScope,
+		modelID string,
+		limit int,
+	) ([]*types.MemoryItem, error)
 	// ListLive returns items of one kind that the user can see: in use plus
 	// proposed and awaiting a decision.
 	ListLive(ctx context.Context, scope MemoryScope, kind string, limit int) ([]*types.MemoryItem, error)
@@ -183,7 +212,12 @@ type MemoryRepository interface {
 	TopicByID(ctx context.Context, scope MemoryScope, id string) (*types.MemoryTopicStat, error)
 	// ListUnpromotedTopics returns subjects that have been counted but have
 	// not yet become an interest, closest to the threshold first.
-	ListUnpromotedTopics(ctx context.Context, scope MemoryScope, limit, offset int) ([]*types.MemoryTopicStat, int64, error)
+	ListUnpromotedTopics(
+		ctx context.Context,
+		scope MemoryScope,
+		limit,
+		offset int,
+	) ([]*types.MemoryTopicStat, int64, error)
 	// DeleteTopic removes one topic row. Counting starts over if the subject
 	// is asked about again, unless a tombstone blocks promotion.
 	DeleteTopic(ctx context.Context, scope MemoryScope, id string) error
@@ -203,7 +237,13 @@ type MemoryRepository interface {
 	DocAffinityByID(ctx context.Context, scope MemoryScope, id string) (*types.MemoryDocAffinity, error)
 	// ListFamiliarDocs returns documents cited often enough to count as a
 	// habit, most-used first.
-	ListFamiliarDocs(ctx context.Context, scope MemoryScope, minHits, limit, offset int) ([]*types.MemoryDocAffinity, int64, error)
+	ListFamiliarDocs(
+		ctx context.Context,
+		scope MemoryScope,
+		minHits,
+		limit,
+		offset int,
+	) ([]*types.MemoryDocAffinity, int64, error)
 	// DeleteDocAffinity removes one document counter.
 	DeleteDocAffinity(ctx context.Context, scope MemoryScope, id string) error
 	// DeleteAllDocAffinity drops every document counter in the scope.

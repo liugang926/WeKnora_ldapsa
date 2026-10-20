@@ -132,7 +132,8 @@ type SearchKnowledgeTool struct {
 	// patternFilter, when set, keeps only results whose text matches it.
 	// It is not exposed to the model; the MCP grep_chunks endpoint uses it
 	// to keep grep semantics on top of index-backed retrieval.
-	patternFilter *regexp.Regexp
+	patternFilter  *regexp.Regexp
+	snapshotReader interfaces.RAGChunkSnapshotReader
 }
 
 // WithPatternFilter restricts results to chunks whose text matches re. The
@@ -240,6 +241,9 @@ func (t *SearchKnowledgeTool) Execute(ctx context.Context, args json.RawMessage)
 		}()
 	}
 	ctx = readCtx
+	if capture := searchCaptureFromContext(ctx); capture != nil {
+		capture.guard = guard
+	}
 
 	kbIDs := searchTargets.GetAllKnowledgeBaseIDs()
 	kbList, err := t.knowledgeBaseService.GetKnowledgeBasesByIDsOnly(ctx, kbIDs)
@@ -268,6 +272,12 @@ func (t *SearchKnowledgeTool) Execute(ctx context.Context, args json.RawMessage)
 
 	allResults := t.concurrentSearchByTargets(ctx, query, mode, kbModes, searchTargets, kbList,
 		topK, vectorThreshold, keywordThreshold, kbTypeMap)
+	if searchCaptureFromContext(ctx) != nil {
+		allResults, err = t.hydrateActualSearchInputs(ctx, allResults, searchTargets)
+		if err != nil {
+			return nil, err
+		}
+	}
 
 	deduplicated := t.deduplicateResults(allResults)
 
@@ -316,7 +326,7 @@ func (t *SearchKnowledgeTool) Execute(ctx context.Context, args json.RawMessage)
 	}
 
 	// Enrich image info for search results (lazy-loaded from child image chunks)
-	if t.chunkService != nil && len(final) > 0 {
+	if t.chunkService != nil && len(final) > 0 && searchCaptureFromContext(ctx) == nil {
 		byTenant := make(map[uint64][]*types.SearchResult)
 		for _, r := range final {
 			tid := t.searchTargets.GetTenantIDForKB(r.KnowledgeBaseID)
@@ -380,6 +390,16 @@ func (t *SearchKnowledgeTool) Execute(ctx context.Context, args json.RawMessage)
 	}
 	if err := finishAgentRead(ctx, t.knowledgeService, searchTargets, guard, sourceDocuments); err != nil {
 		return &types.ToolResult{Success: false, Error: apperrors.PublicMessage(err)}, err
+	}
+	if capture := searchCaptureFromContext(ctx); capture != nil {
+		var all []*types.Knowledge
+		for _, k := range capture.documents {
+			all = append(all, k)
+		}
+		if err := finishAgentRead(ctx, t.knowledgeService, searchTargets, guard, all); err != nil {
+			return nil, err
+		}
+		result.SourceLineage, _ = types.UnionSourceLineage(capture.lineage)
 	}
 	return result, nil
 }
@@ -610,7 +630,15 @@ func (t *SearchKnowledgeTool) concurrentSearchByTargets(
 			// Compute embedding once for this (model, query) pair
 			var queryEmbedding []float32
 			if modelKey != "" && needsEmbedding {
+				if err := checkSearchModelBoundary(ctx); err != nil {
+					markSearchLineageFailure(ctx, err)
+					return
+				}
 				emb, err := t.knowledgeBaseService.GetQueryEmbedding(ctx, targets[0].KnowledgeBaseID, query)
+				if boundaryErr := checkSearchModelBoundary(ctx); boundaryErr != nil {
+					markSearchLineageFailure(ctx, boundaryErr)
+					return
+				}
 				if err != nil {
 					logger.Warnf(ctx, "[Tool][SearchKnowledge] Failed to pre-compute embedding for model %s: %v",
 						modelKey, err)
@@ -648,6 +676,7 @@ func (t *SearchKnowledgeTool) concurrentSearchByTargets(
 						DisableKeywordsMatch: usedMode == SearchModeSemantic,
 					})
 					if err != nil {
+						markSearchLineageFailure(ctx, err)
 						logger.Warnf(ctx, "[Tool][SearchKnowledge] Combined search failed for KBs %v: %v",
 							fullKBIDs, err)
 						return
@@ -676,6 +705,7 @@ func (t *SearchKnowledgeTool) concurrentSearchByTargets(
 						DisableKeywordsMatch: usedMode == SearchModeSemantic,
 					})
 					if err != nil {
+						markSearchLineageFailure(ctx, err)
 						logger.Warnf(ctx, "[Tool][SearchKnowledge] Failed to search KB %s: %v", st.KnowledgeBaseID, err)
 						return
 					}
@@ -762,11 +792,17 @@ func (t *SearchKnowledgeTool) rerankScores(
 	query string,
 	results []*searchResultWithMeta,
 ) ([]rerank.RankResult, error) {
+	if err := checkSearchModelBoundary(ctx); err != nil {
+		return nil, err
+	}
 	passages := make([]string, len(results))
 	for i, result := range results {
 		passages[i] = t.rerankPassage(ctx, result.SearchResult)
 	}
 	rerankResp, err := t.rerankModel.Rerank(ctx, query, passages)
+	if boundaryErr := checkSearchModelBoundary(ctx); boundaryErr != nil {
+		return nil, boundaryErr
+	}
 	if err != nil {
 		return nil, fmt.Errorf("rerank call failed: %w", err)
 	}

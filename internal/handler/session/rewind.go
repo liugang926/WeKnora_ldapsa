@@ -79,7 +79,7 @@ func (h *Handler) RewindSession(c *gin.Context) {
 	userID := types.SessionOwnerIDFromContext(ctx)
 
 	result, err := h.rewindService.Rewind(
-		ctx, tenantID, userID, sessionID, strings.TrimSpace(req.MessageID),
+		service.WithRewindOriginalHTTPOutput(ctx), tenantID, userID, sessionID, strings.TrimSpace(req.MessageID),
 	)
 	if err != nil {
 		if stderrors.Is(err, service.ErrRewindSourceBusy) {
@@ -123,5 +123,17 @@ func (h *Handler) RewindSession(c *gin.Context) {
 		return
 	}
 
+	if result != nil && result.CloseOriginalOutput != nil {
+		defer result.CloseOriginalOutput()
+	}
+	if result != nil && result.CheckOriginalOutput != nil {
+		prior := c.Writer
+		c.Writer = &nativeSavedReplayWriter{
+			ResponseWriter: prior,
+			ctx:            c.Request.Context(),
+			check:          result.CheckOriginalOutput,
+		}
+		defer func() { c.Writer = prior }()
+	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": result})
 }

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -8,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/Tencent/WeKnora/internal/logprivacy"
 )
 
 // streamRawDumpDir returns the directory for per-stream raw packet dumps.
@@ -39,8 +42,12 @@ type StreamPacketDumper struct {
 }
 
 // NewStreamPacketDumper opens a dump file for one stream, or returns nil when
-// raw dumping is disabled.
-func NewStreamPacketDumper(modelName string, request any) *StreamPacketDumper {
+// raw dumping is disabled or the caller's content must remain private. The
+// original call context is mandatory; nil cannot opt into raw dumping.
+func NewStreamPacketDumper(ctx context.Context, modelName string, request any) *StreamPacketDumper {
+	if ctx == nil || logprivacy.ContentSuppressed(ctx) {
+		return nil
+	}
 	dir := streamRawDumpDir()
 	if dir == "" {
 		return nil

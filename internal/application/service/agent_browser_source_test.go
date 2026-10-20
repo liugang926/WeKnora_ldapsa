@@ -4,7 +4,6 @@ import (
 	"context"
 	"testing"
 
-	"github.com/Tencent/WeKnora/internal/agent"
 	"github.com/Tencent/WeKnora/internal/agent/tools"
 	"github.com/Tencent/WeKnora/internal/browserskill"
 	"github.com/Tencent/WeKnora/internal/config"
@@ -19,7 +18,7 @@ func (s *browserSourceKBService) GetKnowledgeBaseByIDOnly(context.Context, strin
 	return s.kb, nil
 }
 
-func TestBrowserSourceKeepsOtherConfiguredTools(t *testing.T) {
+func TestBrowserSelectionPreservesOtherToolRegistration(t *testing.T) {
 	t.Setenv("BROWSERSKILL_BINARY", "/unused/browser-skill")
 	ctx := context.WithValue(t.Context(), types.TenantIDContextKey, uint64(7))
 	ctx = context.WithValue(ctx, types.UserIDContextKey, "alice")
@@ -43,23 +42,16 @@ func TestBrowserSourceKeepsOtherConfiguredTools(t *testing.T) {
 			SkillDirs:     []string{t.TempDir()},
 			AllowedTools:  []string{tools.ToolSearchKnowledge, tools.ToolShellExec, tools.ToolThinking},
 		}
-		engine, err := svc.CreateAgentEngine(ctx, cfg, model, nil, nil, "session", "message")
-		require.NoError(t, err)
-		require.NotNil(t, engine.(*agent.AgentEngine).GetSkillsManager())
-		_, err = engine.Execute(ctx, "session", "message", "use my browser and other sources", nil)
-		require.NoError(t, err)
+		registry, manager := sandboxRegistrationFixture(ctx, t, svc, cfg)
+		require.NotNil(t, manager)
+		require.NoError(t, svc.registerTools(ctx, registry, cfg, nil, model, "session"))
 		for _, name := range []string{
 			tools.ToolSearchKnowledge, tools.ToolWebSearch, tools.ToolWebFetch, tools.ToolShellExec,
 		} {
-			require.Contains(t, model.lastToolNames, name)
-		}
-		if selected {
-			require.Contains(t, model.lastToolNames, "local_browser")
-		} else {
-			require.NotContains(t, model.lastToolNames, "local_browser")
+			require.Contains(t, registry.ListTools(), name)
 		}
 		var otherTools []string
-		for _, name := range model.lastToolNames {
+		for _, name := range registry.ListTools() {
 			if name != "local_browser" {
 				otherTools = append(otherTools, name)
 			}

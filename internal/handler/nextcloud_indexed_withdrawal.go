@@ -76,7 +76,6 @@ func (h *NextcloudSourcePairingHandler) BeginIndexedWithdrawal(c *gin.Context) {
 	c.JSON(http.StatusAccepted, gin.H{"withdrawal": status})
 }
 
-// IndexedWithdrawalStatus returns tenant-scoped indexed-withdrawal status.
 func (h *NextcloudSourcePairingHandler) IndexedWithdrawalStatus(c *gin.Context) {
 	pair, _, ok := h.authorizedPair(c)
 	if !ok {

@@ -23,9 +23,10 @@ type historicalSourceStub struct {
 	err  error
 }
 
-func (
-	s historicalSourceStub,
-) FindByKnowledgeBaseIncludingDeleted(_ context.Context, kbID string) ([]*types.DataSource, error) {
+func (s historicalSourceStub) FindByKnowledgeBaseIncludingDeleted(
+	_ context.Context,
+	kbID string,
+) ([]*types.DataSource, error) {
 	return s.byKB[kbID], s.err
 }
 
@@ -41,19 +42,24 @@ func TestNextcloudHistoryGuardRechecksSavedReference(t *testing.T) {
 		sources:   historicalSourceStub{}, publication: publication,
 	}
 	message := &types.Message{
-		Role: "assistant", Content: "saved source answer",
-		KnowledgeReferences: types.References{{
-			KnowledgeID:      knowledge.ID,
-			KnowledgeChannel: types.ConnectorTypeNextcloud,
-		}},
+		Role:    "assistant",
+		Content: "saved source answer",
+		KnowledgeReferences: types.References{
+			{KnowledgeID: knowledge.ID, KnowledgeChannel: types.ConnectorTypeNextcloud},
+		},
 	}
 	if err := history.CheckMessage(ctx, message); err != nil {
 		t.Fatalf("current source grant should allow saved answer: %v", err)
 	}
-	publication.authorize = func(context.Context, *types.DataSourceConfig, string, string, string, string, int64) (
-		nextcloud.AuthorizationDecision,
-		error,
-	) {
+	publication.authorize = func(
+		context.Context,
+		*types.DataSourceConfig,
+		string,
+		string,
+		string,
+		string,
+		int64,
+	) (nextcloud.AuthorizationDecision, error) {
 		return nextcloud.AuthorizationDecision{Allow: false, Reason: "source_not_readable"}, nil
 	}
 	if err := history.CheckMessage(ctx, message); !errors.Is(err, ErrNextcloudPublicationDenied) {
@@ -140,10 +146,15 @@ func TestNextcloudHistoryGuardLiveRechecksSourceVersionBetweenChunks(t *testing.
 	if err := history.CheckLiveMessage(ctx, message); err != nil {
 		t.Fatalf("current source should stream: %v", err)
 	}
-	publication.authorize = func(context.Context, *types.DataSourceConfig, string, string, string, string, int64) (
-		nextcloud.AuthorizationDecision,
-		error,
-	) {
+	publication.authorize = func(
+		context.Context,
+		*types.DataSourceConfig,
+		string,
+		string,
+		string,
+		string,
+		int64,
+	) (nextcloud.AuthorizationDecision, error) {
 		return nextcloud.AuthorizationDecision{Allow: true, Reason: "authorized", SourceETag: "new-version"}, nil
 	}
 	if err := history.CheckLiveMessage(ctx, message); !errors.Is(err, ErrNextcloudPublicationDenied) {
@@ -171,12 +182,10 @@ func TestNextcloudLiveAgentWithoutHistoryPreservesOrdinaryAnswer(t *testing.T) {
 	guard := &NextcloudHistoryGuard{sources: sources, instanceSources: sources}
 	ctx := types.WithCaller(context.Background(), types.Caller{TenantID: 12, UserID: "person"})
 	message := &types.Message{
-		Role:          "assistant",
-		AgentID:       "agent",
-		AgentTenantID: 12,
-		ExecutionContext: types.MessageExecutionContext{
-			AgentKBSelectionMode: "none",
-		},
+		Role:             "assistant",
+		AgentID:          "agent",
+		AgentTenantID:    12,
+		ExecutionContext: types.MessageExecutionContext{AgentKBSelectionMode: "none"},
 	}
 	if err := guard.CheckLiveMessage(ctx, message); err != nil {
 		t.Fatalf("ordinary live no-history turn denied: %v", err)
@@ -184,10 +193,9 @@ func TestNextcloudLiveAgentWithoutHistoryPreservesOrdinaryAnswer(t *testing.T) {
 	if err := guard.CheckMessage(ctx, message); !errors.Is(err, ErrNextcloudPublicationDenied) {
 		t.Fatalf("saved same shape must remain blocked: %v", err)
 	}
-	message.AgentSteps = types.AgentSteps{{ToolCalls: []types.ToolCall{{
-		ID:   types.PipelineToolCallIDPrefix + "step",
-		Name: "search_knowledge",
-	}}}}
+	message.AgentSteps = types.AgentSteps{
+		{ToolCalls: []types.ToolCall{{ID: types.PipelineToolCallIDPrefix + "step", Name: "search_knowledge"}}},
+	}
 	if err := guard.CheckMessage(ctx, message); err != nil {
 		t.Fatalf("ordinary synthetic KnowledgeQA timeline denied: %v", err)
 	}

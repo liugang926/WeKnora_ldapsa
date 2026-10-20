@@ -20,6 +20,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Tencent/WeKnora/internal/application/repository"
 	apperrors "github.com/Tencent/WeKnora/internal/errors"
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/sandbox"
@@ -86,9 +87,11 @@ func isRewindNotFound(err error) bool {
 // unopened fork's ForkBootstrap was retargeted so the first provision lands
 // on the rewind SHA.
 type RewindResult struct {
-	DeletedMessages int              `json:"deleted_messages"`
-	WorkspaceReset  bool             `json:"workspace_reset"`
-	Reason          RewindSkipReason `json:"reason"`
+	CheckOriginalOutput func() error     `json:"-"`
+	CloseOriginalOutput func()           `json:"-"`
+	DeletedMessages     int              `json:"deleted_messages"`
+	WorkspaceReset      bool             `json:"workspace_reset"`
+	Reason              RewindSkipReason `json:"reason"`
 }
 
 // SessionRewindSandboxPort is the narrow sandbox surface rewind needs.
@@ -244,7 +247,16 @@ func (s *SessionRewindService) Rewind(
 		return nil, ErrRewindSessionNotFound
 	}
 
-	rewindPoint, err := s.messages.GetMessage(ctx, sessionID, messageID)
+	// The original read and its leases survive a client disconnect until the
+	// guarded truncate and metadata cleanup have completed.
+	persistCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), forkSnapshotTimeout)
+	handoffOriginalScope := false
+	defer func() {
+		if !handoffOriginalScope {
+			cancel()
+		}
+	}()
+	rewindPoint, history, material, err := s.beginRewindMessageMaterial(persistCtx, tenantID, sessionID, messageID)
 	if err != nil {
 		if isRewindNotFound(err) {
 			return nil, ErrRewindMessageNotFound
@@ -254,6 +266,22 @@ func (s *SessionRewindService) Rewind(
 	if rewindPoint == nil {
 		return nil, ErrRewindMessageNotFound
 	}
+	var checkOriginal func() error
+	handoffOriginal := false
+	if material != nil {
+		defer func() {
+			if !handoffOriginal {
+				material.Close()
+			}
+		}()
+		checkOriginal = material.Recheck
+		persistCtx = repository.WithMessageRewindMaterialStore(material.Context(), material.store, material.Recheck)
+		// A pending cached bootstrap is a reset instruction with no original
+		// code-field producer in this module. Do not rewrite or execute its SHA.
+		if source.ForkBootstrap != nil && !source.ForkBootstrap.Consumed() {
+			return nil, types.ErrSourceLineageUnknown
+		}
+	}
 	if rewindPoint.Role != "user" && rewindPoint.Role != "assistant" {
 		return nil, ErrRewindMessageRole
 	}
@@ -261,27 +289,26 @@ func (s *SessionRewindService) Rewind(
 		return nil, ErrRewindSourceBusy
 	}
 
-	if err := s.rejectIfBusy(ctx, sessionID); err != nil {
-		return nil, err
-	}
-
-	history, err := s.keptCheckpointHistory(ctx, sessionID, rewindPoint)
-	if err != nil {
+	if err := s.rejectIfBusy(persistCtx, sessionID); err != nil {
 		return nil, err
 	}
 
 	// Client abort must not leave git reset applied and messages intact.
 	// Once we are past the cheap busy reject, finish reset+truncate even if
 	// the HTTP request is gone.
-	persistCtx := context.WithoutCancel(ctx)
 	unlock, err := s.lockRewind(persistCtx, sessionID)
 	if err != nil {
 		return nil, err
 	}
 	defer unlock()
+	if checkOriginal != nil {
+		if err := checkOriginal(); err != nil {
+			return nil, err
+		}
+	}
 
 	var abandonedBootstrap *types.ForkBootstrap
-	workspaceReset, reason, resetErr := s.resetWorkspaceIfPossible(persistCtx, sessionID, history)
+	workspaceReset, reason, resetErr := s.resetWorkspaceIfPossible(persistCtx, sessionID, history, checkOriginal)
 	if resetErr != nil {
 		return nil, resetErr
 	}
@@ -305,9 +332,21 @@ func (s *SessionRewindService) Rewind(
 	}
 
 	inclusive := rewindPoint.Role == "user"
-	deleted, err := s.deleteMessagesFrom(
-		persistCtx, sessionID, rewindPoint.CreatedAt, rewindPoint.ID, inclusive,
-	)
+	var deleted []*types.Message
+	if material != nil {
+		material.stopOriginalHeartbeat()
+		if err = checkOriginal(); err == nil {
+			deleted, err = s.messages.(rewindMaterialMessageStore).DeleteMessagesFromMaterial(
+				persistCtx,
+				sessionID,
+				rewindPoint.ID,
+				material.snapshot,
+			)
+		}
+	} else {
+		// Only the explicit service-package algorithm fixture port reaches here.
+		deleted, err = s.deleteMessagesFrom(persistCtx, sessionID, rewindPoint.CreatedAt, rewindPoint.ID, inclusive)
+	}
 	if err != nil {
 		if workspaceReset {
 			return nil, fmt.Errorf("session rewind: delete messages after workspace reset: %w", err)
@@ -326,11 +365,41 @@ func (s *SessionRewindService) Rewind(
 		"[SessionRewind] session=%s rewind_point=%s deleted=%d workspace_reset=%v reason=%s",
 		sessionID, rewindPoint.ID, len(deleted), workspaceReset, reason)
 
-	return &RewindResult{
-		DeletedMessages: len(deleted),
-		WorkspaceReset:  workspaceReset,
-		Reason:          reason,
-	}, nil
+	result := &RewindResult{DeletedMessages: len(deleted), WorkspaceReset: workspaceReset, Reason: reason}
+	if material != nil {
+		receipt := repository.MessageRewindOutputReceiptFromContext(persistCtx)
+		result.CheckOriginalOutput = func() error {
+			if result.DeletedMessages != len(deleted) || result.WorkspaceReset != workspaceReset ||
+				result.Reason != reason {
+				return types.ErrSourceLineageUnknown
+			}
+			for _, lease := range material.leases {
+				if _, err := material.store.ContentLeaseStore().
+					RenewLease(persistCtx, lease.ID, 2*time.Minute); err != nil {
+					return err
+				}
+			}
+			if err := material.verifier.CheckMessagePublications(persistCtx, material.snapshot.Messages); err != nil {
+				return err
+			}
+			if err := material.store.CheckMessageRewindOutput(persistCtx, receipt); err != nil {
+				return err
+			}
+			return material.verifier.CheckMessagePublications(persistCtx, material.snapshot.Messages)
+		}
+		result.CloseOriginalOutput = func() { material.Close(); cancel() }
+		if err := result.CheckOriginalOutput(); err != nil {
+			return nil, err
+		}
+		if requested, _ := ctx.Value(rewindHTTPOutputKey{}).(bool); requested {
+			handoffOriginalScope = true
+			handoffOriginal = true
+		} else {
+			result.CheckOriginalOutput = nil
+			result.CloseOriginalOutput = nil
+		}
+	}
+	return result, nil
 }
 
 // keptCheckpointHistory returns the messages that survive the cut, in the
@@ -364,7 +433,7 @@ func (s *SessionRewindService) keptCheckpointHistory(
 }
 
 func (s *SessionRewindService) resetWorkspaceIfPossible(
-	ctx context.Context, sessionID string, history []*types.Message,
+	ctx context.Context, sessionID string, history []*types.Message, checkOriginal func() error,
 ) (bool, RewindSkipReason, error) {
 	if s.sandbox == nil {
 		return false, RewindSkipNoSandbox, nil
@@ -381,6 +450,11 @@ func (s *SessionRewindService) resetWorkspaceIfPossible(
 		if err := s.rejectIfBusy(ctx, sessionID); err != nil {
 			return false, "", err
 		}
+		if checkOriginal != nil {
+			if err := checkOriginal(); err != nil {
+				return false, "", err
+			}
+		}
 		workCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), workspaceResetTimeout)
 		defer cancel()
 		if err := resetWorkspaceToEmpty(workCtx, s.sandbox, sessionID, currentID); err != nil {
@@ -396,6 +470,11 @@ func (s *SessionRewindService) resetWorkspaceIfPossible(
 	// cheap reject; a turn can start while we look up the checkpoint.
 	if err := s.rejectIfBusy(ctx, sessionID); err != nil {
 		return false, "", err
+	}
+	if checkOriginal != nil {
+		if err := checkOriginal(); err != nil {
+			return false, "", err
+		}
 	}
 
 	workCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), workspaceResetTimeout)

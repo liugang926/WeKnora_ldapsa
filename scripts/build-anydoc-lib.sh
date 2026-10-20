@@ -7,20 +7,35 @@
 #
 # Usage:
 #   scripts/build-anydoc-lib.sh              # host platform
+#   scripts/build-anydoc-lib.sh --prepare-only  # prepare pinned source for cargo audit/update
 #   TARGET=aarch64-unknown-linux-musl scripts/build-anydoc-lib.sh
 set -euo pipefail
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 crate_dir="$repo_root/third_party/anydoc-go"
+prepare_only=false
+if [ "${1:-}" = "--prepare-only" ]; then
+  prepare_only=true
+elif [ "$#" -ne 0 ]; then
+  echo "Usage: $0 [--prepare-only]" >&2
+  exit 1
+fi
 
-if ! command -v cargo >/dev/null 2>&1; then
+if [ "$prepare_only" = false ] && ! command -v cargo >/dev/null 2>&1; then
   echo "error: cargo not found. Install Rust (https://rustup.rs) to build the anydoc archive." >&2
   exit 1
 fi
 
 # The Rust target triple decides the archive; the directory name mirrors what
 # the cgo LDFLAGS in third_party/anydoc-go expect for that platform.
-target=${TARGET:-$(rustc -vV | sed -n 's/^host: //p')}
+target=${TARGET:-}
+if [ -z "$target" ]; then
+  if [ "$prepare_only" = true ]; then
+    target=aarch64-unknown-linux-gnu
+  else
+    target=$(rustc -vV | sed -n 's/^host: //p')
+  fi
+fi
 case "$target" in
   x86_64-apple-darwin) lib_dir=darwin_amd64 ;;
   aarch64-apple-darwin) lib_dir=darwin_arm64 ;;
@@ -53,12 +68,13 @@ fi
 # and re-export that one function so anydoc-go can keep the official serializer.
 prepare_patched_anydoc() {
   local dest="$crate_dir/patched-anydoc"
+  local patch_version="$anydoc_version:zip9.0.5:calamine0.37.0"
   # The marker records which version was patched: after a version bump the
   # copy left by the previous build is the wrong crate, and reusing it would
   # fail deep inside cargo's patch resolution instead of here. Cargo.toml is
   # required too: a truncated leftover with only the marker would otherwise
   # skip the copy and fail with "failed to read .../Cargo.toml".
-  if [ -f "$dest/.weknora-patched" ] && [ "$(cat "$dest/.weknora-patched")" = "$anydoc_version" ] && [ -f "$dest/Cargo.toml" ]; then
+  if [ -f "$dest/.weknora-patched" ] && [ "$(cat "$dest/.weknora-patched")" = "$patch_version" ] && [ -f "$dest/Cargo.toml" ]; then
     return
   fi
 
@@ -91,7 +107,28 @@ prepare_patched_anydoc() {
   fi
   sed -i.bak 's/^use render::markdown::document_to_markdown;/pub use render::markdown::document_to_markdown;/' "$dest/src/lib.rs"
   rm -f "$dest/src/lib.rs.bak"
-  printf '%s\n' "$anydoc_version" > "$dest/.weknora-patched"
+  # RustSec 2026-0367/0368/0369 require zip >=9. Keep the parser/C ABI pin,
+  # and use calamine's published zip-9-compatible release for spreadsheets.
+  # Check the exact normalized dependency sections so upstream drift fails.
+  if ! awk '
+    /^\[/ { section=$0 }
+    section=="[dependencies.zip]" && /^version = / {
+      if ($0 !~ /^version = "8[.]6([.][0-9]+)?"$/) exit 2
+      print "version = \"=9.0.5\""; patched_zip++; next
+    }
+    section=="[dependencies.calamine]" && /^version = / {
+      if ($0 !~ /^version = "0[.]36([.][0-9]+)?"$/) exit 2
+      print "version = \"=0.37.0\""; patched_calamine++; next
+    }
+    { print }
+    END { if (patched_zip != 1 || patched_calamine != 1) exit 2 }
+  ' "$dest/Cargo.toml" > "$dest/Cargo.toml.zip9"; then
+    rm -f "$dest/Cargo.toml.zip9"
+    echo "error: anydoc dependency sections changed; refusing an incomplete security patch" >&2
+    exit 1
+  fi
+  mv "$dest/Cargo.toml.zip9" "$dest/Cargo.toml"
+  printf '%s\n' "$patch_version" > "$dest/.weknora-patched"
   rm -rf "$crate_dir/.anydoc-unpack" "$crate_dir/.anydoc-$anydoc_version.crate"
 }
 
@@ -106,6 +143,7 @@ fi
 
 echo "Building anydoc $anydoc_version archive for $target"
 prepare_patched_anydoc
+if [ "$prepare_only" = true ]; then exit 0; fi
 
 # --locked: build exactly the dependency versions in the committed Cargo.lock.
 # That lockfile is what pins the patched pdf-inspector/lopdf, so a silent

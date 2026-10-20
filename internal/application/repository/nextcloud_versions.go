@@ -11,7 +11,6 @@ import (
 	"time"
 
 	apperrors "github.com/Tencent/WeKnora/internal/errors"
-
 	"github.com/Tencent/WeKnora/internal/types"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -20,14 +19,15 @@ import (
 // nextcloudSourceVersion is the durable publication intent for one source file.
 // Its key deliberately includes the data source: external IDs are not global.
 type nextcloudSourceVersion struct {
-	TenantID             uint64 `gorm:"primaryKey"`
-	KnowledgeBaseID      string `gorm:"primaryKey"`
-	DataSourceID         string `gorm:"column:datasource_id;primaryKey"`
-	ExternalID           string `gorm:"primaryKey"`
-	DesiredETag          string `gorm:"column:desired_etag"`
-	CandidateKnowledgeID string
-	State                string
-	UpdatedAt            time.Time
+	TenantID               uint64 `gorm:"primaryKey"`
+	KnowledgeBaseID        string `gorm:"primaryKey"`
+	DataSourceID           string `gorm:"column:datasource_id;primaryKey"`
+	ExternalID             string `gorm:"primaryKey"`
+	DesiredETag            string `gorm:"column:desired_etag"`
+	DesiredContentRevision string `gorm:"column:desired_content_revision;default:0"`
+	CandidateKnowledgeID   string
+	State                  string
+	UpdatedAt              time.Time
 }
 
 func (nextcloudSourceVersion) TableName() string { return "nextcloud_source_versions" }
@@ -49,8 +49,28 @@ type nextcloudPublicationCandidate struct {
 func (r *knowledgeRepository) publicationCandidate(
 	tx *gorm.DB, candidateID string, lock bool,
 ) (nextcloudPublicationCandidate, bool, error) {
+	return r.publicationCandidateMode(tx, candidateID, lock, false)
+}
+
+// Make the existing partial candidate index usable for nonempty identities.
+// Preserve legacy empty-parameter behavior for callers that still probe it.
+func withNextcloudCandidateKnowledgeID(tx *gorm.DB, candidateID string) *gorm.DB {
+	query := tx.Where("candidate_knowledge_id = ?", candidateID)
+	if candidateID != "" {
+		query = query.Where("candidate_knowledge_id <> ''")
+	}
+	return query
+}
+
+// Build capture uses the same full persisted tuple/config/pair validation,
+// while permitting a leased staging/finalizing input before publication.
+func (r *knowledgeRepository) publicationCandidateMode(
+	tx *gorm.DB,
+	candidateID string,
+	lock, allowBuilding bool,
+) (nextcloudPublicationCandidate, bool, error) {
 	var result nextcloudPublicationCandidate
-	versionQuery := tx.Where("candidate_knowledge_id = ? AND state IN ?", candidateID,
+	versionQuery := withNextcloudCandidateKnowledgeID(tx, candidateID).Where("state IN ?",
 		[]string{"staging", "published"})
 	if lock {
 		versionQuery = versionQuery.Clauses(clause.Locking{Strength: "UPDATE"})
@@ -73,10 +93,19 @@ func (r *knowledgeRepository) publicationCandidate(
 	if err != nil {
 		return result, false, err
 	}
-	if candidate.ParseStatus != types.ParseStatusCompleted || candidate.EnableStatus != "enabled" {
+	if !allowBuilding && (candidate.ParseStatus != types.ParseStatusCompleted || candidate.EnableStatus != "enabled") {
 		return result, false, nil
 	}
-	if NextcloudTextChunkRequired(candidate.FileType) {
+	if !allowBuilding {
+		ready, err := nextcloudRequiredGraphReady(tx, &candidate)
+		if err != nil {
+			return result, false, err
+		}
+		if !ready {
+			return result, false, nil
+		}
+	}
+	if !allowBuilding && NextcloudTextChunkRequired(candidate.FileType) {
 		hasText, err := nextcloudHasRetrievableTextChunk(tx, &candidate)
 		if err != nil {
 			return result, false, fmt.Errorf("read Nextcloud candidate text chunks: %w", err)
@@ -102,16 +131,29 @@ func (r *knowledgeRepository) publicationCandidate(
 		nextcloudMetadataString(metadata, "external_id") != result.version.ExternalID ||
 		nextcloudMetadataString(metadata, "source_resource_id") != result.binding ||
 		result.version.ExternalID != "nextcloud:"+result.instance+":"+fileIDRaw {
-		return result, false, apperrors.NewProtocolError(errors.New(
-			"nextcloud candidate source identity mismatch",
-		), "Nextcloud candidate source identity mismatch")
+		return result, false, apperrors.NewProtocolError(
+			errors.New("nextcloud candidate source identity mismatch"), "Nextcloud candidate source identity mismatch",
+		)
+	}
+	contentRevision, err := types.NormalizeNextcloudContentRevision(
+		nextcloudMetadataString(metadata, "nextcloud_content_revision"),
+	)
+	if err != nil {
+		return result, false, err
+	}
+	desiredRevision, err := types.NormalizeNextcloudContentRevision(result.version.DesiredContentRevision)
+	if err != nil || contentRevision != desiredRevision {
+		return result, false, ErrKnowledgeInputChanged
 	}
 	currentETag := nextcloudMetadataString(metadata, "nextcloud_etag")
 	if currentETag != "" &&
 		(result.version.State != "published" || currentETag != result.version.DesiredETag) {
-		return result, false, apperrors.NewProtocolError(errors.New(
-			"nextcloud candidate publication identity mismatch",
-		), "Nextcloud candidate publication identity mismatch")
+		return result, false, apperrors.NewProtocolError(
+			errors.New(
+				"nextcloud candidate publication identity mismatch",
+			),
+			"Nextcloud candidate publication identity mismatch",
+		)
 	}
 	var ds types.DataSource
 	sourceQuery := tx.Where("id = ? AND tenant_id = ? AND knowledge_base_id = ? AND deleted_at IS NULL",
@@ -125,9 +167,9 @@ func (r *knowledgeRepository) publicationCandidate(
 	}
 	baseURL, configSHA, bindingID, err := NextcloudEventDataSourceIdentity(ds.Config)
 	if err != nil || bindingID != result.binding {
-		return result, false, apperrors.NewProtocolError(errors.New(
-			"nextcloud source configuration changed",
-		), "Nextcloud source configuration changed")
+		return result, false, apperrors.NewProtocolError(
+			errors.New("nextcloud source configuration changed"), "Nextcloud source configuration changed",
+		)
 	}
 	pairQuery := tx.Where("tenant_id = ? AND knowledge_base_id = ? AND datasource_id = ? AND state = ?",
 		ds.TenantID, ds.KnowledgeBaseID, ds.ID, "active")
@@ -136,22 +178,22 @@ func (r *knowledgeRepository) publicationCandidate(
 	}
 	var pairs []NextcloudSourcePairing
 	if err := pairQuery.Limit(2).Find(&pairs).Error; err != nil || len(pairs) != 1 {
-		return result, false, apperrors.NewProtocolError(errors.New(
-			"nextcloud source pairing is unavailable",
-		), "Nextcloud source pairing is unavailable")
+		return result, false, apperrors.NewProtocolError(
+			errors.New("nextcloud source pairing is unavailable"), "Nextcloud source pairing is unavailable",
+		)
 	}
 	pair := pairs[0]
 	if pair.InstanceID != result.instance || pair.BindingID != result.binding ||
 		pair.BaseURL != baseURL || pair.ConfigSHA != configSHA {
-		return result, false, apperrors.NewProtocolError(errors.New(
-			"nextcloud source pairing is unavailable",
-		), "Nextcloud source pairing is unavailable")
+		return result, false, apperrors.NewProtocolError(
+			errors.New("nextcloud source pairing is unavailable"), "Nextcloud source pairing is unavailable",
+		)
 	}
 	result.config, err = ds.ParseConfig()
 	if err != nil || result.config == nil {
-		return result, false, apperrors.NewProtocolError(errors.New(
-			"nextcloud source credential is unavailable",
-		), "Nextcloud source credential is unavailable")
+		return result, false, apperrors.NewProtocolError(
+			errors.New("nextcloud source credential is unavailable"), "Nextcloud source credential is unavailable",
+		)
 	}
 	result.config.Type = ds.Type
 	result.configSHA = configSHA
@@ -165,6 +207,7 @@ func samePublicationCandidate(a, b nextcloudPublicationCandidate) bool {
 		a.version.ExternalID == b.version.ExternalID &&
 		a.version.CandidateKnowledgeID == b.version.CandidateKnowledgeID &&
 		a.version.DesiredETag == b.version.DesiredETag &&
+		a.version.DesiredContentRevision == b.version.DesiredContentRevision &&
 		a.instance == b.instance && a.binding == b.binding && a.fileID == b.fileID &&
 		a.etag == b.etag && a.path == b.path && a.configSHA == b.configSHA
 }
@@ -206,9 +249,31 @@ func (r *knowledgeRepository) unpublishIfCurrent(ctx context.Context, checked ne
 			(checked.etag != "" && nextcloudMetadataString(metadata, "nextcloud_target_etag") != checked.etag) {
 			return nil
 		}
+		var beforeRevision uint64
+		if tx.Migrator().HasTable("knowledge_auto_publication_versions") {
+			beforeRevision, err = knowledgeAutoPublicationRevision(tx, candidate.ID)
+			if err != nil {
+				return err
+			}
+		}
 		if err := r.hideNextcloudSourceRows(tx, current.TenantID, current.KnowledgeBaseID,
 			current.DataSourceID, current.ExternalID); err != nil {
 			return err
+		}
+		if beforeRevision > 0 && KnowledgeBuildInputProofFromContext(ctx) != nil {
+			var after types.Knowledge
+			if err := tx.Where("id=?", candidate.ID).Take(&after).Error; err != nil {
+				return err
+			}
+			if err := recordKnowledgeAutoPublicationTransitionInTx(
+				ctx,
+				tx,
+				&candidate,
+				&after,
+				beforeRevision,
+			); err != nil {
+				return err
+			}
 		}
 		return nextcloudVersionQuery(tx, current.TenantID, current.KnowledgeBaseID,
 			current.DataSourceID, current.ExternalID).
@@ -261,9 +326,21 @@ func (r *knowledgeRepository) preserveNextcloudSourceFields(tx *gorm.DB, k *type
 		return err
 	}
 	for _, key := range []string{
-		"datasource_id", "external_id", "source_resource_id", "channel",
-		"nextcloud_instance_id", "nextcloud_binding_id", "nextcloud_file_id", "nextcloud_path",
-		"nextcloud_generation", "source_updated_at", "source_created_at", "nextcloud_target_etag", "nextcloud_etag",
+		"datasource_id",
+		"external_id",
+		"source_resource_id",
+		"channel",
+		"nextcloud_instance_id",
+		"nextcloud_binding_id",
+		"nextcloud_file_id",
+		"nextcloud_path",
+		"nextcloud_generation",
+		"nextcloud_content_revision",
+		"nextcloud_publication_epoch",
+		"source_updated_at",
+		"source_created_at",
+		"nextcloud_target_etag",
+		"nextcloud_etag",
 	} {
 		if value, ok := currentMetadata[key]; ok {
 			incomingMetadata[key] = value
@@ -409,7 +486,6 @@ func (r *knowledgeRepository) retireNextcloudSourceRowsInTx(ctx context.Context,
 		dsID, externalID, keepKnowledgeID, rows)
 }
 
-// ErrNextcloudCandidateRetryManual reports a candidate that requires a manual retry.
 var ErrNextcloudCandidateRetryManual = apperrors.NewProtocolError(
 	errors.New("nextcloud failed candidate requires administrator retry"),
 	"Nextcloud failed candidate requires administrator retry",
@@ -449,7 +525,23 @@ func (r *knowledgeRepository) stageNextcloudVersion(
 		strings.TrimSpace(etag) == "" || candidateID == "" {
 		return errors.New("incomplete Nextcloud source version")
 	}
-	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) (retErr error) {
+		defer func() {
+			if retErr == nil {
+				allowed, e := NextcloudBuildControlsAllowed(ctx, tx, tenantID, kbID, dsID, candidateID)
+				if e != nil {
+					retErr = e
+				} else if !allowed {
+					retErr = ErrNextcloudContentLeaseDenied
+				}
+			}
+		}()
+
+		defer func() {
+			if retErr == nil {
+				retErr = captureNextcloudStateInTx(ctx, tx, tenantID, kbID, dsID, externalID, false)
+			}
+		}()
 		nowMS, err := nextcloudLeaseNowMS(tx)
 		if err != nil {
 			return err
@@ -506,9 +598,23 @@ func (r *knowledgeRepository) stageNextcloudVersion(
 				return err
 			}
 		}
+		revisionInput := sourceMetadata["nextcloud_content_revision"]
+		if sourceMetadata == nil {
+			var original types.Knowledge
+			if err := tx.Where("id=? AND tenant_id=? AND knowledge_base_id=?", candidateID, tenantID, kbID).
+				Take(&original).
+				Error; err != nil {
+				return err
+			}
+			revisionInput = original.GetMetadata()["nextcloud_content_revision"]
+		}
+		contentRevision, err := types.NormalizeNextcloudContentRevision(revisionInput)
+		if err != nil {
+			return err
+		}
 		version := nextcloudSourceVersion{
 			TenantID: tenantID, KnowledgeBaseID: kbID, DataSourceID: dsID,
-			ExternalID: externalID, DesiredETag: etag,
+			ExternalID: externalID, DesiredETag: etag, DesiredContentRevision: contentRevision,
 			CandidateKnowledgeID: candidateID, State: "staging", UpdatedAt: time.Now().UTC(),
 		}
 		if err == nil && previous.State == "staging" && previous.DesiredETag == etag {
@@ -516,28 +622,33 @@ func (r *knowledgeRepository) stageNextcloudVersion(
 			// bounds automatic retries even when every new parser fails quickly.
 			version.UpdatedAt = previous.UpdatedAt
 		}
-		if err := tx.Clauses(clause.OnConflict{
+		versionWriter := tx
+		columns := []string{"desired_etag", "candidate_knowledge_id", "state", "updated_at"}
+		if tx.Migrator().HasColumn("nextcloud_source_versions", "desired_content_revision") {
+			columns = append(columns, "desired_content_revision")
+		} else {
+			if contentRevision != "0" {
+				return ErrKnowledgeInputChanged
+			}
+			versionWriter = versionWriter.Omit("desired_content_revision")
+		}
+		if err := versionWriter.Clauses(clause.OnConflict{
 			Columns: []clause.Column{
 				{Name: "tenant_id"},
 				{Name: "knowledge_base_id"},
 				{Name: "datasource_id"},
 				{Name: "external_id"},
 			},
-			DoUpdates: clause.AssignmentColumns([]string{
-				"desired_etag",
-				"candidate_knowledge_id",
-				"state",
-				"updated_at",
-			}),
+			DoUpdates: clause.AssignmentColumns(columns),
 		}).Create(&version).Error; err != nil {
 			return err
 		}
 		var candidate types.Knowledge
-		if err := tx.Clauses(clause.Locking{
-			Strength: "UPDATE",
-		}).Where(("tenant_id = ? AND knowledge_base_id = ? AND id = ? AND " +
-			"channel = ?"),
-			tenantID, kbID, candidateID, types.ConnectorTypeNextcloud).Take(&candidate).Error; err != nil {
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("tenant_id = ? AND knowledge_base_id = ? AND id = ? AND channel = ?",
+				tenantID, kbID, candidateID, types.ConnectorTypeNextcloud).
+			Take(&candidate).
+			Error; err != nil {
 			return err
 		}
 		metadata, err := nextcloudMetadata(&candidate)
@@ -546,9 +657,12 @@ func (r *knowledgeRepository) stageNextcloudVersion(
 		}
 		if nextcloudMetadataString(metadata, "datasource_id") != dsID ||
 			nextcloudMetadataString(metadata, "external_id") != externalID {
-			return apperrors.NewProtocolError(errors.New(
-				"nextcloud candidate source identity mismatch",
-			), "Nextcloud candidate source identity mismatch")
+			return apperrors.NewProtocolError(
+				errors.New(
+					"nextcloud candidate source identity mismatch",
+				),
+				"Nextcloud candidate source identity mismatch",
+			)
 		}
 		if err := r.hideNextcloudSourceRows(tx, tenantID, kbID, dsID, externalID); err != nil {
 			return err
@@ -587,20 +701,78 @@ func (r *knowledgeRepository) stageNextcloudVersion(
 			"nextcloud_instance_id", "nextcloud_binding_id", "nextcloud_file_id",
 		} {
 			if sourceMetadata[key] == "" || nextcloudMetadataString(metadata, key) != sourceMetadata[key] {
-				return apperrors.NewProtocolError(errors.New(
-					"nextcloud candidate source identity mismatch",
-				), "Nextcloud candidate source identity mismatch")
+				return apperrors.NewProtocolError(
+					errors.New(
+						"nextcloud candidate source identity mismatch",
+					),
+					"Nextcloud candidate source identity mismatch",
+				)
+			}
+		}
+		if previous.CandidateKnowledgeID == candidateID && previous.DesiredETag == etag && func() bool {
+			old, _ := types.NormalizeNextcloudContentRevision(previous.DesiredContentRevision)
+			return old == contentRevision
+		}() && candidate.FileName == fileName {
+			oldPath := nextcloudMetadataString(metadata, "nextcloud_path")
+			mapped, err := nextcloudCurrentSourcePath(ctx, tx, tenantID, kbID, dsID, oldPath)
+			if err != nil {
+				return err
+			}
+			var pair NextcloudSourcePairing
+			if err := tx.Where(
+				"tenant_id=? AND knowledge_base_id=? AND datasource_id=? AND state='active'",
+				tenantID,
+				kbID,
+				dsID,
+			).
+				Take(&pair).
+				Error; err != nil {
+				return err
+			}
+			oldEpoch := pair.PublicationEpoch
+			if raw := nextcloudMetadataString(metadata, "nextcloud_publication_epoch"); raw != "" {
+				n, err := strconv.ParseInt(raw, 10, 64)
+				if err != nil {
+					return err
+				}
+				oldEpoch = n
+			}
+			incomingEpoch, err := strconv.ParseInt(sourceMetadata["nextcloud_publication_epoch"], 10, 64)
+			if err == nil && oldEpoch == incomingEpoch && oldPath == sourceMetadata["nextcloud_path"] {
+				return CaptureNextcloudKnowledgeStateInTx(ctx, tx, candidateID)
+			}
+			if err == nil && mapped == sourceMetadata["nextcloud_path"] {
+				authorized, err := nextcloudRootEpochAuthorized(
+					ctx,
+					tx,
+					tenantID,
+					kbID,
+					dsID,
+					oldPath,
+					oldEpoch,
+					incomingEpoch,
+				)
+				if err != nil {
+					return err
+				}
+				if authorized {
+					return CaptureNextcloudKnowledgeStateInTx(ctx, tx, candidateID)
+				}
 			}
 		}
 		for _, key := range []string{
 			"nextcloud_path",
 			"nextcloud_generation",
+			"nextcloud_publication_epoch",
 			"source_updated_at",
 			"source_created_at",
 		} {
 			if value, ok := sourceMetadata[key]; ok {
 				metadata[key] = value
 			}
+		}
+		if contentRevision != "0" || metadata["nextcloud_content_revision"] != nil {
+			metadata["nextcloud_content_revision"] = contentRevision
 		}
 		metadata["nextcloud_target_etag"] = etag
 		metadata["nextcloud_etag"] = ""
@@ -623,24 +795,15 @@ func (r *knowledgeRepository) PublishNextcloudVersion(ctx context.Context, candi
 		return false, nil
 	}
 	if r.nextcloudPublicationCheck == nil {
-		return false, apperrors.NewProtocolError(errors.New(
-			"nextcloud publication verifier unavailable",
-		), "Nextcloud publication verifier unavailable")
+		return false, apperrors.NewProtocolError(
+			errors.New("nextcloud publication verifier unavailable"), "Nextcloud publication verifier unavailable",
+		)
 	}
 	checked, ready, err := r.publicationCandidate(r.db.WithContext(ctx), candidateID, false)
 	if err != nil {
 		if checked.version.CandidateKnowledgeID == candidateID {
 			if hideErr := r.unpublishIfCurrent(ctx, checked); hideErr != nil {
-				return false, apperrors.NewProtocolError(fmt.Errorf(
-					"load publication candidate: %v; hide failed: %w",
-					err,
-					hideErr,
-				), fmt.Sprintf("load publication candidate: %v; hide failed: %s", func() any {
-					if err == nil {
-						return nil
-					}
-					return apperrors.PublicMessage(err)
-				}(), apperrors.PublicMessage(hideErr)))
+				return false, fmt.Errorf("load publication candidate: %v; hide failed: %w", err, hideErr)
 			}
 		}
 		return false, err
@@ -648,29 +811,59 @@ func (r *knowledgeRepository) PublishNextcloudVersion(ctx context.Context, candi
 	if !ready {
 		return false, nil
 	}
+	if blocked, err := nextcloudTargetMigrationPublicationBlocked(
+		r.db.WithContext(ctx),
+		checked.version.TenantID,
+		checked.version.KnowledgeBaseID,
+		checked.version.DataSourceID,
+	); err != nil {
+		return false, err
+	} else if blocked {
+		return false, nil
+	}
+
+	allowed, e := NextcloudBuildControlsAllowed(
+		ctx,
+		r.db.WithContext(ctx),
+		checked.version.TenantID,
+		checked.version.KnowledgeBaseID,
+		checked.version.DataSourceID,
+		candidateID,
+	)
+	if e != nil {
+		return false, e
+	}
+	if !allowed {
+		return false, ErrNextcloudContentLeaseDenied
+	}
+
 	verify := func() error {
-		return r.nextcloudPublicationCheck(ctx, checked.config, checked.instance,
-			checked.binding, checked.fileID, checked.etag, checked.path)
+		path, err := nextcloudCurrentSourcePath(
+			ctx,
+			r.db.WithContext(ctx),
+			checked.version.TenantID,
+			checked.version.KnowledgeBaseID,
+			checked.version.DataSourceID,
+			checked.path,
+		)
+		if err != nil {
+			return err
+		}
+		return r.nextcloudPublicationCheck(
+			types.WithNextcloudContentRevision(ctx, checked.version.DesiredContentRevision),
+			checked.config,
+			checked.instance,
+			checked.binding,
+			checked.fileID,
+			checked.etag,
+			path,
+		)
 	}
 	if err := verify(); err != nil {
 		if hideErr := r.unpublishIfCurrent(ctx, checked); hideErr != nil {
-			return false, apperrors.NewProtocolError(fmt.Errorf(
-				"source publication check failed: %v; hide failed: %w",
-				err,
-				hideErr,
-			), fmt.Sprintf("source publication check failed: %v; hide failed: %s", func() any {
-				if err == nil {
-					return nil
-				}
-				return apperrors.PublicMessage(err)
-			}(), apperrors.PublicMessage(hideErr)))
+			return false, fmt.Errorf("source publication check failed: %v; hide failed: %w", err, hideErr)
 		}
-		return false, apperrors.NewProtocolError(fmt.Errorf(
-			"source publication check failed: %w",
-			err,
-		), fmt.Sprintf("source publication check failed: %s", apperrors.PublicMessage(
-			err,
-		)))
+		return false, fmt.Errorf("source publication check failed: %w", err)
 	}
 	published := false
 	err = r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -684,12 +877,53 @@ func (r *knowledgeRepository) PublishNextcloudVersion(ctx context.Context, candi
 		if err != nil {
 			return err
 		}
+		if blocked, err := nextcloudTargetMigrationPublicationBlocked(
+			tx,
+			current.version.TenantID,
+			current.version.KnowledgeBaseID,
+			current.version.DataSourceID,
+		); err != nil {
+			return err
+		} else if blocked {
+			return nil
+		}
 		if !ready || !samePublicationCandidate(checked, current) {
 			return nil
+		}
+		allowed, e := NextcloudBuildControlsAllowed(
+			ctx,
+			tx,
+			checked.version.TenantID,
+			checked.version.KnowledgeBaseID,
+			checked.version.DataSourceID,
+			candidateID,
+		)
+		if e != nil {
+			return e
+		}
+		if !allowed {
+			return ErrNextcloudContentLeaseDenied
 		}
 		if err := ValidateNextcloudBuildWrite(ctx, tx,
 			checked.version.TenantID, checked.version.KnowledgeBaseID, candidateID); err != nil {
 			return err
+		}
+		// Repeated completion deliveries must not rewrite a published row:
+		// its exact original Auto publication transition is immutable.
+		if current.version.State == "published" {
+			published = true
+			return nil
+		}
+		var autoPublicationBefore types.Knowledge
+		if err := tx.Where("id = ?", candidateID).Take(&autoPublicationBefore).Error; err != nil {
+			return err
+		}
+		var autoPublicationBeforeRevision uint64
+		if tx.Migrator().HasTable("knowledge_auto_publication_versions") {
+			autoPublicationBeforeRevision, err = knowledgeAutoPublicationRevision(tx, candidateID)
+			if err != nil {
+				return err
+			}
 		}
 		if err := r.retireNextcloudSourceRowsLockedInTx(ctx, tx,
 			checked.version.TenantID, checked.version.KnowledgeBaseID,
@@ -714,22 +948,28 @@ func (r *knowledgeRepository) PublishNextcloudVersion(ctx context.Context, candi
 			Updates(map[string]any{"state": "published", "updated_at": time.Now().UTC()}).Error; err != nil {
 			return err
 		}
+		if autoPublicationBeforeRevision > 0 {
+			var after types.Knowledge
+			if err := tx.Where("id = ?", candidateID).Take(&after).Error; err != nil {
+				return err
+			}
+			if err := recordKnowledgeAutoPublicationTransitionInTx(
+				ctx,
+				tx,
+				&autoPublicationBefore,
+				&after,
+				autoPublicationBeforeRevision,
+			); err != nil {
+				return err
+			}
+		}
 		published = true
-		return nil
+		return CaptureNextcloudKnowledgeStateInTx(ctx, tx, candidateID)
 	})
 	if err != nil || !published {
 		if err != nil {
 			if hideErr := r.unpublishIfCurrent(ctx, checked); hideErr != nil {
-				return false, apperrors.NewProtocolError(fmt.Errorf(
-					"publish candidate: %v; hide failed: %w",
-					err,
-					hideErr,
-				), fmt.Sprintf("publish candidate: %v; hide failed: %s", func() any {
-					if err == nil {
-						return nil
-					}
-					return apperrors.PublicMessage(err)
-				}(), apperrors.PublicMessage(hideErr)))
+				return false, fmt.Errorf("publish candidate: %v; hide failed: %w", err, hideErr)
 			}
 			return false, err
 		}
@@ -737,37 +977,14 @@ func (r *knowledgeRepository) PublishNextcloudVersion(ctx context.Context, candi
 	}
 	if err := verify(); err != nil {
 		if hideErr := r.unpublishIfCurrent(ctx, checked); hideErr != nil {
-			return false, apperrors.NewProtocolError(
-				fmt.Errorf(
-					("source publication changed after commit: %v; hide faile"+
-						"d: %w"), err, hideErr), fmt.Sprintf(("source publication changed after commit: %v; hide faile"+
-					"d: %s"), func() any {
-					if err == nil {
-						return nil
-					}
-					return apperrors.PublicMessage(err)
-				}(), apperrors.PublicMessage(hideErr)))
+			return false, fmt.Errorf("source publication changed after commit: %v; hide failed: %w", err, hideErr)
 		}
-		return false, apperrors.NewProtocolError(fmt.Errorf(
-			"source publication changed after commit: %w",
-			err,
-		), fmt.Sprintf("source publication changed after commit: %s", apperrors.PublicMessage(
-			err,
-		)))
+		return false, fmt.Errorf("source publication changed after commit: %w", err)
 	}
 	final, ready, err := r.publicationCandidate(r.db.WithContext(ctx), candidateID, false)
 	if err != nil {
 		if hideErr := r.unpublishIfCurrent(ctx, checked); hideErr != nil {
-			return false, apperrors.NewProtocolError(fmt.Errorf(
-				"final publication check failed: %v; hide failed: %w",
-				err,
-				hideErr,
-			), fmt.Sprintf("final publication check failed: %v; hide failed: %s", func() any {
-				if err == nil {
-					return nil
-				}
-				return apperrors.PublicMessage(err)
-			}(), apperrors.PublicMessage(hideErr)))
+			return false, fmt.Errorf("final publication check failed: %v; hide failed: %w", err, hideErr)
 		}
 		return false, err
 	}
@@ -789,7 +1006,12 @@ func (r *knowledgeRepository) TombstoneNextcloudVersion(
 	if tenantID == 0 || kbID == "" || dsID == "" || externalID == "" {
 		return errors.New("incomplete Nextcloud tombstone identity")
 	}
-	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) (retErr error) {
+		defer func() {
+			if retErr == nil {
+				retErr = captureNextcloudStateInTx(ctx, tx, tenantID, kbID, dsID, externalID, false)
+			}
+		}()
 		if err := r.retireNextcloudSourceRowsInTx(ctx, tx, tenantID, kbID, dsID, externalID, ""); err != nil {
 			return err
 		}
@@ -797,19 +1019,20 @@ func (r *knowledgeRepository) TombstoneNextcloudVersion(
 			TenantID: tenantID, KnowledgeBaseID: kbID, DataSourceID: dsID,
 			ExternalID: externalID, State: "tombstone", UpdatedAt: time.Now().UTC(),
 		}
-		if err := tx.Clauses(clause.OnConflict{
+		versionWriter := tx
+		if !tx.Migrator().HasColumn("nextcloud_source_versions", "desired_content_revision") {
+			versionWriter = versionWriter.Omit("desired_content_revision")
+		}
+		if err := versionWriter.Clauses(clause.OnConflict{
 			Columns: []clause.Column{
 				{Name: "tenant_id"},
 				{Name: "knowledge_base_id"},
 				{Name: "datasource_id"},
 				{Name: "external_id"},
 			},
-			DoUpdates: clause.AssignmentColumns([]string{
-				"desired_etag",
-				"candidate_knowledge_id",
-				"state",
-				"updated_at",
-			}),
+			DoUpdates: clause.AssignmentColumns(
+				[]string{"desired_etag", "candidate_knowledge_id", "state", "updated_at"},
+			),
 		}).Create(&version).Error; err != nil {
 			return err
 		}

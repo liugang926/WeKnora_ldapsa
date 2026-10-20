@@ -88,10 +88,15 @@ func TestDrainSteerMessagesInjectsIntoTail(t *testing.T) {
 	engine.SetSteerSink(sink)
 
 	messages := []chat.Message{
-		{Role: "system", Content: "sys"},
-		{Role: "user", Content: "original query"},
-		{Role: "assistant", Content: "", ToolCalls: []chat.ToolCall{{ID: "tc1"}}},
-		{Role: "tool", Content: "tool output"},
+		{SourceLineage: independentAgentInput(), Role: "system", Content: "sys"},
+		{SourceLineage: independentAgentInput(), Role: "user", Content: "original query"},
+		{
+			SourceLineage: independentAgentInput(),
+			Role:          "assistant",
+			Content:       "",
+			ToolCalls:     []chat.ToolCall{{ID: "tc1"}},
+		},
+		{SourceLineage: independentAgentInput(), Role: "tool", Content: "tool output"},
 	}
 	state := &types.AgentState{CurrentRound: 1}
 	engine.drainSteerMessages(context.Background(), state, &messages, "sess", "msg")
@@ -125,7 +130,7 @@ func TestDrainSteerMessagesEmptyAndOffset(t *testing.T) {
 	sink := &fakeSteerSink{}
 	engine.SetSteerSink(sink)
 
-	messages := []chat.Message{{Role: "user", Content: "q"}}
+	messages := []chat.Message{{SourceLineage: independentAgentInput(), Role: "user", Content: "q"}}
 	state := &types.AgentState{CurrentRound: 0}
 
 	engine.drainSteerMessages(context.Background(), state, &messages, "sess", "msg")
@@ -153,7 +158,7 @@ func TestDrainSteerMessagesNilSinkNoOp(t *testing.T) {
 	engine := newTestEngine(t, model)
 	engine.eventBus = event.NewEventBus()
 
-	messages := []chat.Message{{Role: "user", Content: "q"}}
+	messages := []chat.Message{{SourceLineage: independentAgentInput(), Role: "user", Content: "q"}}
 	state := &types.AgentState{CurrentRound: 0}
 	engine.drainSteerMessages(context.Background(), state, &messages, "sess", "msg")
 	assert.Len(t, messages, 1)
@@ -174,7 +179,7 @@ func TestDrainSteerMessagesBlankContentSkipped(t *testing.T) {
 	}
 	engine.SetSteerSink(sink)
 
-	messages := []chat.Message{{Role: "user", Content: "q"}}
+	messages := []chat.Message{{SourceLineage: independentAgentInput(), Role: "user", Content: "q"}}
 	state := &types.AgentState{CurrentRound: 0}
 	engine.drainSteerMessages(context.Background(), state, &messages, "sess", "msg")
 
@@ -224,11 +229,19 @@ func TestExecuteLoopInjectsBeforeNextLLMCall(t *testing.T) {
 		RoundSteps:   []types.AgentStep{},
 	}
 	messages := []chat.Message{
-		{Role: "system", Content: "sys"},
-		{Role: "user", Content: "start"},
+		{SourceLineage: independentAgentInput(), Role: "system", Content: "sys"},
+		{SourceLineage: independentAgentInput(), Role: "user", Content: "start"},
 	}
 	tools := engine.buildToolsForLLM()
-	_, err := engine.executeLoop(context.Background(), state, "start", messages, tools, "sess", "msg")
+	_, err := engine.executeLoop(
+		types.WithRAGSourceLineage(context.Background(), engine.turnLineage),
+		state,
+		"start",
+		messages,
+		tools,
+		"sess",
+		"msg",
+	)
 	require.NoError(t, err)
 	require.Len(t, model.calls, 2)
 
@@ -304,10 +317,18 @@ func TestExecuteLoopContinuesWhenSteerArrivesOnNaturalStop(t *testing.T) {
 
 	state := &types.AgentState{RoundSteps: []types.AgentStep{}}
 	messages := []chat.Message{
-		{Role: "system", Content: "sys"},
-		{Role: "user", Content: "write a draft"},
+		{SourceLineage: independentAgentInput(), Role: "system", Content: "sys"},
+		{SourceLineage: independentAgentInput(), Role: "user", Content: "write a draft"},
 	}
-	_, err := engine.executeLoop(context.Background(), state, "write a draft", messages, nil, "sess", "msg")
+	_, err := engine.executeLoop(
+		types.WithRAGSourceLineage(context.Background(), engine.turnLineage),
+		state,
+		"write a draft",
+		messages,
+		nil,
+		"sess",
+		"msg",
+	)
 	require.NoError(t, err)
 	require.Len(t, model.calls, 2)
 
@@ -341,7 +362,7 @@ func TestDrainSteerMessagesSkipsAppendWhenPersistFails(t *testing.T) {
 	}
 	engine.SetSteerSink(sink)
 
-	messages := []chat.Message{{Role: "user", Content: "q"}}
+	messages := []chat.Message{{SourceLineage: independentAgentInput(), Role: "user", Content: "q"}}
 	state := &types.AgentState{CurrentRound: 0}
 	assert.Equal(t, 0, engine.drainSteerMessages(context.Background(), state, &messages, "sess", "msg"))
 	assert.Len(t, messages, 1)
@@ -388,10 +409,18 @@ func TestExecuteLoopLoopEndInjectDoesNotCloseAnswerBeforeContinue(t *testing.T) 
 
 	state := &types.AgentState{RoundSteps: []types.AgentStep{}}
 	messages := []chat.Message{
-		{Role: "system", Content: "sys"},
-		{Role: "user", Content: "write a draft"},
+		{SourceLineage: independentAgentInput(), Role: "system", Content: "sys"},
+		{SourceLineage: independentAgentInput(), Role: "user", Content: "write a draft"},
 	}
-	_, err := engine.executeLoop(context.Background(), state, "write a draft", messages, nil, "sess", "msg")
+	_, err := engine.executeLoop(
+		types.WithRAGSourceLineage(context.Background(), engine.turnLineage),
+		state,
+		"write a draft",
+		messages,
+		nil,
+		"sess",
+		"msg",
+	)
 	require.NoError(t, err)
 	require.Len(t, model.calls, 2)
 	assert.Equal(t, 1, *doneCount, "Done:true must fire once, after the continued round actually finishes")
@@ -423,10 +452,18 @@ func TestExecuteLoopLastRoundInjectRunsAnotherReActRound(t *testing.T) {
 
 	state := &types.AgentState{RoundSteps: []types.AgentStep{}}
 	messages := []chat.Message{
-		{Role: "system", Content: "sys"},
-		{Role: "user", Content: "write a draft"},
+		{SourceLineage: independentAgentInput(), Role: "system", Content: "sys"},
+		{SourceLineage: independentAgentInput(), Role: "user", Content: "write a draft"},
 	}
-	_, err := engine.executeLoop(context.Background(), state, "write a draft", messages, nil, "sess", "msg")
+	_, err := engine.executeLoop(
+		types.WithRAGSourceLineage(context.Background(), engine.turnLineage),
+		state,
+		"write a draft",
+		messages,
+		nil,
+		"sess",
+		"msg",
+	)
 	require.NoError(t, err)
 	require.Len(t, model.calls, 2)
 	assert.Equal(t, "revised after steer", state.FinalAnswer)
@@ -477,10 +514,18 @@ func TestExecuteLoopSecondOverrunDoesNotContinue(t *testing.T) {
 
 	state := &types.AgentState{RoundSteps: []types.AgentStep{}}
 	messages := []chat.Message{
-		{Role: "system", Content: "sys"},
-		{Role: "user", Content: "write a draft"},
+		{SourceLineage: independentAgentInput(), Role: "system", Content: "sys"},
+		{SourceLineage: independentAgentInput(), Role: "user", Content: "write a draft"},
 	}
-	_, err := engine.executeLoop(context.Background(), state, "write a draft", messages, nil, "sess", "msg")
+	_, err := engine.executeLoop(
+		types.WithRAGSourceLineage(context.Background(), engine.turnLineage),
+		state,
+		"write a draft",
+		messages,
+		nil,
+		"sess",
+		"msg",
+	)
 	require.NoError(t, err)
 	require.Len(t, model.calls, 2)
 	assert.Equal(t, "revised after steer", state.FinalAnswer)

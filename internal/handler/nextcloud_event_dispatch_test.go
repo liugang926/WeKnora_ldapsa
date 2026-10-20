@@ -142,9 +142,11 @@ func testNextcloudEventDispatchTransaction(t *testing.T, usePostgres bool) {
 	require.Equal(t, int64(41), retry.TargetEventID)
 	require.NotEqual(t, first.LeaseToken, retry.LeaseToken)
 	require.NoError(t, repo.PrepareDispatch(ctx, *retry, "log-41", now.Add(2*time.Minute)))
-	require.NoError(t, db.Exec("INSERT INTO sync_logs (id, data_source_id, status, started_at) "+
-		"VALUES (?, 'ds-synthetic', ?, ?)",
-		"log-41", types.SyncLogStatusRunning, now).Error)
+	require.NoError(
+		t,
+		db.Exec(`INSERT INTO sync_logs (id, data_source_id, status, started_at) VALUES (?, 'ds-synthetic', ?, ?)`,
+			"log-41", types.SyncLogStatusRunning, now).Error,
+	)
 	require.NoError(t, repo.FinishDispatch(ctx, *retry, "log-41", now.Add(2*time.Minute)))
 	require.ErrorIs(t, repo.FinishDispatch(ctx, *retry, "log-41", now.Add(2*time.Minute)),
 		repository.ErrNextcloudEventConflict)
@@ -191,9 +193,17 @@ func testNextcloudEventDispatchTransaction(t *testing.T, usePostgres bool) {
 	require.NoError(t, err)
 	require.NoError(t, db.Exec(`UPDATE data_sources SET last_sync_cursor = ? WHERE id = ?`,
 		string(cursor), "ds-synthetic").Error)
-	require.NoError(t, db.Exec("INSERT INTO sync_logs (id, data_source_id, status, started_at, "+
-		"finished_at) VALUES (?, 'ds-synthetic', ?, ?, ?)",
-		"log-43", types.SyncLogStatusSuccess, now, now).Error)
+	require.NoError(
+		t,
+		db.Exec(
+			("INSERT INTO sync_logs (id, data_source_id, status, started_at, finished_at"+
+				") VALUES (?, 'ds-synthetic', ?, ?, ?)"),
+			"log-43",
+			types.SyncLogStatusSuccess,
+			now,
+			now,
+		).Error,
+	)
 	require.NoError(t, repo.FinishDispatch(ctx, *retry, "log-43", now.Add(6*time.Minute)))
 	status, err = repo.ConnectionStatus(ctx, 7, "ds-synthetic")
 	require.NoError(t, err)
@@ -277,11 +287,10 @@ func testNextcloudEventAppliedAfterParse(t *testing.T, usePostgres bool) {
 	require.NoError(t, err)
 	require.NoError(t, db.Exec(`UPDATE data_sources SET last_sync_cursor = ? WHERE id = 'ds-synthetic'`,
 		string(cursor)).Error)
-	require.NoError(t, db.Exec("INSERT INTO nextcloud_source_versions\n\t\t(tenant_id, "+
-		"knowledge_base_id, datasource_id, external_id, desired_etag, "+
-		"candidate_knowledge_id, state)\n\t\tVALUES (7, 'kb-synthetic', "+
-		"'ds-synthetic', 'nextcloud:instance_synthetic:41', 'v1', "+
-		"'candidate-41', 'staging')").Error)
+	require.NoError(t, db.Exec(("INSERT INTO nextcloud_source_versions\n\t\t(tenant_id, knowledge_base_id, " +
+		"datasource_id, external_id, desired_etag, candidate_knowledge_id, state)\n" +
+		"\t\tVALUES (7, 'kb-synthetic', 'ds-synthetic', 'nextcloud:instance_synthet" +
+		"ic:41', 'v1', 'candidate-41', 'staging')")).Error)
 	metadata := `{"datasource_id":"ds-synthetic","external_id":"nextcloud:instance_synthetic:41",` +
 		`"source_resource_id":"binding_synthetic","nextcloud_instance_id":"instance_synthetic",` +
 		`"nextcloud_binding_id":"binding_synthetic","nextcloud_file_id":"41",` +
@@ -378,10 +387,12 @@ func TestNextcloudEventDispatchRejectsLostOrMismatchedInventory(t *testing.T) {
 			} else {
 				if scenario == "version_without_cursor" || scenario == "truncated_inventory" ||
 					scenario == "valid_inventory" {
-					require.NoError(t, db.Exec("INSERT INTO nextcloud_source_versions\n\t\t\t\t\t\t(tenant_id, "+
-						"knowledge_base_id, datasource_id, external_id, "+
-						"state)\n\t\t\t\t\t\tVALUES (7, 'kb-synthetic', 'ds-synthetic', "+
-						"'nextcloud:instance_synthetic:41', 'published')").Error)
+					require.NoError(
+						t,
+						db.Exec(("INSERT INTO nextcloud_source_versions\n\t\t\t\t\t\t(tenant_id, knowledge_b" +
+							"ase_id, datasource_id, external_id, state)\n\t\t\t\t\t\tVALUES (7, 'kb-syn" +
+							"thetic', 'ds-synthetic', 'nextcloud:instance_synthetic:41', 'published')")).Error,
+					)
 				}
 				if scenario != "version_without_cursor" {
 					instance := testEventInstance
@@ -558,9 +569,10 @@ func TestNextcloudEventDispatchRequiresSecondDeletionScan(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, second)
 	require.NoError(t, repo.PrepareDispatch(ctx, *second, "missing-second", now.Add(4*time.Minute)))
-	require.NoError(t, db.Exec("INSERT INTO sync_logs (id, data_source_id, status, started_at, "+
-		"finished_at)\n\t\tVALUES ('missing-second', 'ds-synthetic', "+
-		"'success', ?, ?)", now.Add(4*time.Minute), now.Add(4*time.Minute)).Error)
+	require.NoError(t, db.Exec(("INSERT INTO sync_logs (id, data_source_id, status, started_at, finished_at"+
+		")\n\t\tVALUES ('missing-second', 'ds-synthetic', 'success', ?, ?)"), now.Add(
+		4*time.Minute,
+	), now.Add(4*time.Minute)).Error)
 	require.NoError(t, repo.FinishDispatch(ctx, *second, "missing-second", now.Add(4*time.Minute)))
 	require.NoError(t, db.Exec(`INSERT INTO nextcloud_source_versions
 		(tenant_id, knowledge_base_id, datasource_id, external_id, state)
@@ -596,9 +608,11 @@ func TestNextcloudEventDispatchRevocationAndSourceDrift(t *testing.T) {
 				require.NoError(t, repo.Revoke(ctx, 7, "ds-synthetic"))
 			case "missing_inbox":
 				receiveDispatchHint(t, router, secret, "41", "43", "e")
-				require.NoError(t, db.Exec("DELETE FROM nextcloud_event_inbox WHERE connection_id = ? AND "+
-					"event_id = 43",
-					testEventConnection).Error)
+				require.NoError(
+					t,
+					db.Exec(`DELETE FROM nextcloud_event_inbox WHERE connection_id = ? AND event_id = 43`,
+						testEventConnection).Error,
+				)
 			}
 			claim, err := repo.ClaimDispatch(ctx, testEventConnection, now)
 			require.NoError(t, err)
@@ -645,9 +659,11 @@ func TestNextcloudEventDispatchExpiredLeaseCannotFinish(t *testing.T) {
 		"ds-synthetic", 7, stale.ConfigSHA256, "never-enqueued-log"), repository.ErrNextcloudEventScope)
 	require.ErrorIs(t, repo.FinishDispatch(ctx, *stale, "stale-log", now.Add(4*time.Minute)),
 		repository.ErrNextcloudEventConflict)
-	require.NoError(t, db.Exec("INSERT INTO sync_logs (id, data_source_id, status, started_at) "+
-		"VALUES (?, 'ds-synthetic', ?, ?)",
-		"current-log", types.SyncLogStatusRunning, now).Error)
+	require.NoError(
+		t,
+		db.Exec(`INSERT INTO sync_logs (id, data_source_id, status, started_at) VALUES (?, 'ds-synthetic', ?, ?)`,
+			"current-log", types.SyncLogStatusRunning, now).Error,
+	)
 	require.NoError(t, repo.PrepareDispatch(ctx, *current, "current-log", now.Add(4*time.Minute)))
 	require.NoError(t, repo.FinishDispatch(ctx, *current, "current-log", now.Add(4*time.Minute)))
 	require.NoError(t, repo.Revoke(ctx, 7, "ds-synthetic"))
@@ -672,9 +688,17 @@ func TestNextcloudEventDispatchCrashAfterEnqueueReconcilesIntent(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, claim)
 	require.NoError(t, repo.PrepareDispatch(ctx, *claim, "completed-before-record", now))
-	require.NoError(t, db.Exec("INSERT INTO sync_logs (id, data_source_id, status, started_at, "+
-		"finished_at) VALUES (?, 'ds-synthetic', ?, ?, ?)",
-		"completed-before-record", types.SyncLogStatusSuccess, now, now).Error)
+	require.NoError(
+		t,
+		db.Exec(
+			("INSERT INTO sync_logs (id, data_source_id, status, started_at, finished_at"+
+				") VALUES (?, 'ds-synthetic', ?, ?, ?)"),
+			"completed-before-record",
+			types.SyncLogStatusSuccess,
+			now,
+			now,
+		).Error,
+	)
 	// Simulate process death after the task ran but before FinishDispatch.
 	recovered, err := repo.ClaimDispatch(ctx, testEventConnection, now.Add(4*time.Minute))
 	require.NoError(t, err)
@@ -697,9 +721,11 @@ func TestNextcloudEventDispatchStaleRunningTaskBlocksReplacement(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, claim)
 	require.NoError(t, repo.PrepareDispatch(ctx, *claim, "still-running", now))
-	require.NoError(t, db.Exec("INSERT INTO sync_logs (id, data_source_id, status, started_at) "+
-		"VALUES (?, 'ds-synthetic', ?, ?)",
-		"still-running", types.SyncLogStatusRunning, now).Error)
+	require.NoError(
+		t,
+		db.Exec(`INSERT INTO sync_logs (id, data_source_id, status, started_at) VALUES (?, 'ds-synthetic', ?, ?)`,
+			"still-running", types.SyncLogStatusRunning, now).Error,
+	)
 	waiting, err := repo.ClaimDispatch(ctx, testEventConnection, now.Add(4*time.Minute))
 	require.NoError(t, err)
 	require.Nil(t, waiting)
@@ -812,9 +838,16 @@ func TestNextcloudEventDispatcherQueuesIncrementalManifestWithoutPrematureSyncLo
 				require.Equal(t, "0", status.DispatchedThroughEventID)
 				// The queue may have accepted the task before losing its reply.
 				// A running task must prevent a second claim after lease expiry.
-				require.NoError(t, db.Exec("INSERT INTO sync_logs (id, data_source_id, status, started_at) "+
-					"VALUES (?, 'ds-synthetic', ?, ?)",
-					payload.SyncLogID, types.SyncLogStatusRunning, time.Now().UTC()).Error)
+				require.NoError(
+					t,
+					db.Exec(
+						("INSERT INTO sync_logs (id, data_source_id, status, started_at) VALUES (?, "+
+							"'ds-synthetic', ?, ?)"),
+						payload.SyncLogID,
+						types.SyncLogStatusRunning,
+						time.Now().UTC(),
+					).Error,
+				)
 				again, err := repository.NewNextcloudEventInboxRepository(db).
 					ClaimDispatch(context.Background(), testEventConnection, time.Now().UTC().Add(4*time.Minute))
 				require.NoError(t, err)

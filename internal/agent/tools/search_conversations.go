@@ -104,6 +104,16 @@ func NewSearchConversationsTool(
 func (t *SearchConversationsTool) Execute(
 	ctx context.Context, args json.RawMessage,
 ) (*types.ToolResult, error) {
+	return t.executeConversationSearch(ctx, args, nil)
+}
+
+type conversationSearch func(context.Context, *types.MessageSearchParams) (*types.MessageSearchResult, error)
+
+// Both entry points render the same actual search projection. A typed caller
+// supplies the native original-input producer instead of the legacy reader.
+func (t *SearchConversationsTool) executeConversationSearch(
+	ctx context.Context, args json.RawMessage, search conversationSearch,
+) (*types.ToolResult, error) {
 	var input SearchConversationsInput
 	if err := json.Unmarshal(args, &input); err != nil {
 		return &types.ToolResult{
@@ -133,7 +143,10 @@ func (t *SearchConversationsTool) Execute(
 		limit = searchConversationsMaxResults
 	}
 
-	result, err := t.messageService.SearchMessages(ctx, &types.MessageSearchParams{
+	if search == nil {
+		search = t.messageService.SearchMessages
+	}
+	result, err := search(ctx, &types.MessageSearchParams{
 		Query: query,
 		Mode:  types.MessageSearchModeHybrid,
 		// Over-fetch so dropping the current session cannot empty the result.

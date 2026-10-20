@@ -15,19 +15,20 @@ type publicationAwareKnowledgeService struct {
 	rows map[string]*types.Knowledge
 }
 
-func (s *publicationAwareKnowledgeService) GetKnowledgeByIDOnly(_ context.Context, id string) (
-	*types.Knowledge,
-	error,
-) {
+func (s *publicationAwareKnowledgeService) GetKnowledgeByIDOnly(
+	_ context.Context,
+	id string,
+) (*types.Knowledge, error) {
 	if row := s.rows[id]; row != nil {
 		return row, nil
 	}
 	return nil, errors.New("knowledge not found")
 }
 
-func (
-	s *publicationAwareKnowledgeService,
-) CheckKnowledgePublication(_ context.Context, knowledge *types.Knowledge) error {
+func (s *publicationAwareKnowledgeService) CheckKnowledgePublication(
+	_ context.Context,
+	knowledge *types.Knowledge,
+) error {
 	if knowledge.Channel == types.ConnectorTypeNextcloud {
 		return errors.New("source publication was withdrawn")
 	}
@@ -56,14 +57,18 @@ func TestIntoChatMessageRechecksHistoricalReferencesBeforeModelContext(t *testin
 		types.INTO_CHAT_MESSAGE,
 		manage,
 		func() *PluginError { return nil },
-	); err !=
-		nil {
+	); err != nil {
 		t.Fatal(err)
 	}
 	if len(manage.MergeResult) != 1 || manage.MergeResult[0].KnowledgeID != "ordinary" ||
-		strings.Contains(manage.UserContent, "withdrawn secret") ||
-		!strings.Contains(manage.UserContent, "allowed context") {
-		t.Fatalf(("stale source reference reached model context: results=%" +
-			"+v content=%q"), manage.MergeResult, manage.UserContent)
+		strings.Contains(
+			manage.UserContent,
+			"withdrawn secret",
+		) || !strings.Contains(manage.UserContent, "allowed context") {
+		t.Fatalf(
+			"stale source reference reached model context: results=%+v content=%q",
+			manage.MergeResult,
+			manage.UserContent,
+		)
 	}
 }

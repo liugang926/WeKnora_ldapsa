@@ -1,20 +1,15 @@
 package session
 
 import (
-	"context"
 	"fmt"
 	"net/http"
-	"net/http/httptest"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
-	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/Tencent/WeKnora/internal/middleware"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 )
@@ -114,7 +109,7 @@ func TestCoalesceReplayEvents_LeavesShortInputsAlone(t *testing.T) {
 
 // A long turn stored chunk by chunk replays as a handful of frames, and the
 // client still receives every character in order.
-func TestContinueStream_ReplaysALongAnswerInAFewFrames(t *testing.T) {
+func TestReplayCodec_ReplaysALongAnswerInAFewFrames(t *testing.T) {
 	var events []interfaces.StreamEvent
 	var thought, answer strings.Builder
 	for i := 0; i < 2000; i++ {
@@ -132,21 +127,8 @@ func TestContinueStream_ReplaysALongAnswerInAFewFrames(t *testing.T) {
 		doneChunk("ans-1", types.ResponseTypeAnswer, ""),
 		interfaces.StreamEvent{ID: "complete-1", Type: types.ResponseTypeComplete, Done: true})
 
-	gin.SetMode(gin.TestMode)
-	r := gin.New()
-	r.Use(middleware.ErrorHandler())
-	h := &Handler{
-		sessionService: &stubSessionService{},
-		messageService: &stubMessageServiceForStream{},
-		streamManager:  &stubStreamManager{events: events},
-		fileService:    &stubResourceFileService{},
-	}
-	r.GET("/sessions/continue-stream/:session_id", h.ContinueStream)
-	recorder := httptest.NewRecorder()
-	r.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/sessions/continue-stream/sess1?message_id=msg1", nil))
-
-	require.Equal(t, http.StatusOK, recorder.Code)
-	body := recorder.Body.String()
+	code, body := renderReplayCodec(t, events, nil, "")
+	require.Equal(t, http.StatusOK, code, body)
 	// thinking run, thinking done, answer run, answer done, complete.
 	assert.Equal(t, 5, strings.Count(body, "event:message"), body)
 	assert.Contains(t, body, thought.String())
@@ -154,35 +136,10 @@ func TestContinueStream_ReplaysALongAnswerInAFewFrames(t *testing.T) {
 	assert.Less(t, strings.Index(body, thought.String()), strings.Index(body, answer.String()))
 }
 
-// growingStreamManager shows `visible` events on the first read and the whole
-// log afterwards, so the handler replays a prefix and polls for the rest.
-type growingStreamManager struct {
-	stubStreamManager
-	mu      sync.Mutex
-	visible int
-	reads   int
-}
-
-func (g *growingStreamManager) GetEvents(
-	_ context.Context, _, _ string, from int,
-) ([]interfaces.StreamEvent, int, error) {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	g.reads++
-	limit := g.visible
-	if g.reads > 1 {
-		limit = len(g.events)
-	}
-	if from >= limit {
-		return nil, from, nil
-	}
-	return g.events[from:limit], limit, nil
-}
-
 // A storage reference cut between the replayed prefix and the chunks that
 // arrive through the poll loop is still reassembled: the merged replay frame
 // goes through the same holdback buffer as the live chunks after it.
-func TestContinueStream_ReplayHoldbackSurvivesToThePollLoop(t *testing.T) {
+func TestReplayCodec_HoldbackSurvivesReplayToLaterDelta(t *testing.T) {
 	events := []interfaces.StreamEvent{
 		chunk("answer-1", types.ResponseTypeAnswer, "The diagram "),
 		chunk("answer-1", types.ResponseTypeAnswer, "![fig](resource://xifDo7"),
@@ -191,22 +148,8 @@ func TestContinueStream_ReplayHoldbackSurvivesToThePollLoop(t *testing.T) {
 		doneChunk("answer-1", types.ResponseTypeAnswer, ""),
 		{ID: "complete-1", Type: types.ResponseTypeComplete, Done: true},
 	}
-	gin.SetMode(gin.TestMode)
-	r := gin.New()
-	r.Use(middleware.ErrorHandler())
-	h := &Handler{
-		sessionService: &stubSessionService{},
-		messageService: &stubMessageServiceForStream{},
-		streamManager:  &growingStreamManager{stubStreamManager: stubStreamManager{events: events}, visible: 2},
-		fileService:    &stubResourceFileService{},
-	}
-	r.GET("/sessions/continue-stream/:session_id", h.ContinueStream)
-	recorder := httptest.NewRecorder()
-	r.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet,
-		"/sessions/continue-stream/sess1?message_id=msg1&resource_urls=public", nil))
-
-	require.Equal(t, http.StatusOK, recorder.Code)
-	body := recorder.Body.String()
+	code, body := renderReplayCodec(t, events[:2], events[2:], "&resource_urls=public")
+	require.Equal(t, http.StatusOK, code, body)
 	assert.NotContains(t, body, "resource://")
 	assert.Contains(t, body, `![fig](https://cdn.example.com/signed.png) shows the flow.`)
 	assert.Less(t, strings.LastIndex(body, `"response_type":"answer"`),

@@ -11,7 +11,6 @@ import (
 	"gorm.io/gorm"
 )
 
-// NextcloudSourceRotation records a durable source-rotation operation.
 // The new credential remains encrypted in new_config until the remote commit
 // has been acknowledged. Status responses never include this field.
 type NextcloudSourceRotation struct {
@@ -34,10 +33,8 @@ type NextcloudSourceRotation struct {
 	UpdatedAt       time.Time  `json:"updated_at" gorm:"column:updated_at"`
 }
 
-// TableName returns the source-rotation table name.
 func (NextcloudSourceRotation) TableName() string { return "nextcloud_source_rotations" }
 
-// PrepareSourceRotation prepares a durable source-rotation operation.
 func (r *NextcloudSourcePairingRepository) PrepareSourceRotation(ctx context.Context,
 	proposed NextcloudSourceRotation, token string,
 ) (NextcloudSourceRotation, bool, error) {
@@ -159,13 +156,11 @@ func (r *NextcloudSourcePairingRepository) PrepareSourceRotation(ctx context.Con
 	return result, created, nil
 }
 
-// SourceRotationConfig returns the configuration stored for a source rotation.
 func SourceRotationConfig(rotation NextcloudSourceRotation) (*types.DataSourceConfig, error) {
 	ds := &types.DataSource{Config: rotation.NewConfig}
 	return ds.ParseConfig()
 }
 
-// SourceRotation loads a source-rotation operation.
 func (r *NextcloudSourcePairingRepository) SourceRotation(ctx context.Context,
 	tenantID uint64, operationID string,
 ) (NextcloudSourceRotation, error) {
@@ -178,7 +173,6 @@ func (r *NextcloudSourcePairingRepository) SourceRotation(ctx context.Context,
 	return rotation, err
 }
 
-// SwitchSourceRotation switches the prepared source-rotation scope.
 // Called only after Nextcloud commits the new key. The source config, pinned
 // fingerprint, and rotation state switch atomically under the owning KB lock.
 func (r *NextcloudSourcePairingRepository) SwitchSourceRotation(ctx context.Context,
@@ -244,7 +238,6 @@ func (r *NextcloudSourcePairingRepository) SwitchSourceRotation(ctx context.Cont
 	})
 }
 
-// FinalizeSourceRotation finalizes a source-rotation operation.
 func (r *NextcloudSourcePairingRepository) FinalizeSourceRotation(ctx context.Context,
 	rotation NextcloudSourceRotation,
 ) error {
@@ -266,7 +259,6 @@ func (r *NextcloudSourcePairingRepository) FinalizeSourceRotation(ctx context.Co
 	})
 }
 
-// AbortSourceRotation aborts a source-rotation operation.
 // Abort is safe only after Nextcloud's signed abort ACK. A committed remote
 // operation cannot be discarded, even if the local switch has not run yet.
 func (r *NextcloudSourcePairingRepository) AbortSourceRotation(ctx context.Context,
@@ -312,7 +304,6 @@ func (r *NextcloudSourcePairingRepository) AbortSourceRotation(ctx context.Conte
 	})
 }
 
-// RecordSourceRotationFailure records the source-rotation failure state.
 func (r *NextcloudSourcePairingRepository) RecordSourceRotationFailure(ctx context.Context,
 	rotation NextcloudSourceRotation, code string,
 ) error {

@@ -21,7 +21,6 @@ var (
 	sourceRotationKeyPattern = regexp.MustCompile(`^rot_[0-9a-f]{32}$`)
 )
 
-// NextcloudSourcePairingHandler manages trusted source-pairing transitions.
 type NextcloudSourcePairingHandler struct {
 	repo             *repository.NextcloudSourcePairingRepository
 	dataSource       *DataSourceHandler
@@ -31,12 +30,15 @@ type NextcloudSourcePairingHandler struct {
 	rotateCommit     func(context.Context, *types.DataSourceConfig, nextcloud.SourceRotation) error
 	rotateFinalize   func(context.Context, *types.DataSourceConfig, nextcloud.SourceRotation) error
 	rotateAbort      func(context.Context, *types.DataSourceConfig, nextcloud.SourceRotation) error
-	readDecommission func(context.Context, *types.DataSourceConfig, string,
-		string) (nextcloud.SourceDecommission, error)
+	readDecommission func(
+		context.Context,
+		*types.DataSourceConfig,
+		string,
+		string,
+	) (nextcloud.SourceDecommission, error)
 	ackDecommission func(context.Context, *types.DataSourceConfig, nextcloud.SourceDecommission) error
 }
 
-// NewNextcloudSourcePairingHandler constructs the trusted source-pairing handler.
 func NewNextcloudSourcePairingHandler(repo *repository.NextcloudSourcePairingRepository,
 	dataSource *DataSourceHandler,
 ) *NextcloudSourcePairingHandler {
@@ -70,6 +72,8 @@ func (h *NextcloudSourcePairingHandler) admin(c *gin.Context) (uint64, bool) {
 }
 
 type sourcePairingRequest struct {
+	ActorDirectoryID string `json:"actor_directory_id"`
+	ActorObjectGUID  string `json:"actor_object_guid"`
 	KnowledgeBaseID  string `json:"knowledge_base_id" binding:"required"`
 	BaseURL          string `json:"base_url" binding:"required"`
 	BindingID        string `json:"binding_id" binding:"required"`
@@ -105,8 +109,12 @@ func (h *NextcloudSourcePairingHandler) Pair(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_source_pairing_request"})
 		return
 	}
-	if _, status, message := h.dataSource.getOwnedKnowledgeBase(c.Request.Context(), tenantID,
-		req.KnowledgeBaseID, types.ResourceActionEdit); status != http.StatusOK {
+	if _, status, message := h.dataSource.getOwnedKnowledgeBase(
+		c.Request.Context(),
+		tenantID,
+		req.KnowledgeBaseID,
+		types.ResourceActionEdit,
+	); status != http.StatusOK {
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
@@ -149,9 +157,9 @@ func sourcePairingError(c *gin.Context, err error) {
 	}
 }
 
-func (h *NextcloudSourcePairingHandler) authorizedPair(c *gin.Context) (repository.NextcloudSourcePairing,
-	*types.DataSource, bool,
-) {
+func (h *NextcloudSourcePairingHandler) authorizedPair(
+	c *gin.Context,
+) (repository.NextcloudSourcePairing, *types.DataSource, bool) {
 	tenantID, ok := h.admin(c)
 	if !ok {
 		return repository.NextcloudSourcePairing{}, nil, false
@@ -162,8 +170,12 @@ func (h *NextcloudSourcePairingHandler) authorizedPair(c *gin.Context) (reposito
 		return pair, nil, false
 	}
 	if pair.State != "aborted" {
-		if _, status, message := h.dataSource.getOwnedKnowledgeBase(c.Request.Context(), tenantID,
-			pair.KnowledgeBaseID, types.ResourceActionEdit); status != http.StatusOK {
+		if _, status, message := h.dataSource.getOwnedKnowledgeBase(
+			c.Request.Context(),
+			tenantID,
+			pair.KnowledgeBaseID,
+			types.ResourceActionEdit,
+		); status != http.StatusOK {
 			c.JSON(status, gin.H{"error": message})
 			return pair, nil, false
 		}
@@ -171,7 +183,6 @@ func (h *NextcloudSourcePairingHandler) authorizedPair(c *gin.Context) (reposito
 	return pair, ds, true
 }
 
-// Status returns the tenant-scoped pairing status.
 func (h *NextcloudSourcePairingHandler) Status(c *gin.Context) {
 	pair, _, ok := h.authorizedPair(c)
 	if !ok {
@@ -180,7 +191,6 @@ func (h *NextcloudSourcePairingHandler) Status(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"pairing": pair})
 }
 
-// Retry retries an eligible tenant-scoped source-pairing operation.
 func (h *NextcloudSourcePairingHandler) Retry(c *gin.Context) {
 	pair, ds, ok := h.authorizedPair(c)
 	if !ok {
@@ -252,7 +262,6 @@ func (h *NextcloudSourcePairingHandler) FailedCandidates(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"operation_id": pair.OperationID, "candidates": items, "next_cursor": nextCursor})
 }
 
-// FailedCandidateRetryStatus returns the status of a failed-candidate retry.
 func (h *NextcloudSourcePairingHandler) FailedCandidateRetryStatus(c *gin.Context) {
 	pair, ds, ok := h.authorizedPair(c)
 	if !ok {

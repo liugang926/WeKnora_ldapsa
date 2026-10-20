@@ -140,6 +140,11 @@ func nextcloudVectorLease(
 
 func TestNextcloudPGVectorWriteAndStageSerialize(t *testing.T) {
 	db := nextcloudVectorTestDB(t)
+	require.NoError(t, db.AutoMigrate(&types.KnowledgeBase{}))
+	require.NoError(t, db.Create(&types.KnowledgeBase{
+		ID: "kb", TenantID: 7, Name: "Actual vector fence owner", Type: types.KnowledgeBaseTypeDocument,
+		EverHadNextcloudSource: true,
+	}).Error)
 	ctx := context.Background()
 	nextcloudVectorKnowledge(t, db, "old", types.ConnectorTypeNextcloud)
 	nextcloudVectorStage(t, db, "etag-old", "old")
@@ -202,6 +207,7 @@ func TestNextcloudPGVectorWriteAndStageSerialize(t *testing.T) {
 	var late int64
 	require.NoError(t, db.Table("embeddings").Where("source_id = ?", "late-chunk").Count(&late).Error)
 	require.Zero(t, late)
+	require.NoError(t, leases.ReleaseLease(ctx, lease.ID), "the completed worker releases its obsolete build lease")
 	created, err := apprepo.NewNextcloudGCStore(db).InventoryRetired(ctx, time.Now().UTC(), 10)
 	require.NoError(t, err)
 	require.Equal(t, 1, created)
@@ -419,8 +425,9 @@ func TestNextcloudPGVectorSameCandidateETagFencesOldLeaseAndOrdinaryWrites(t *te
 	require.ErrorIs(t, repo.Save(ctx, nextcloudVectorInfo("same", "unleased"),
 		nextcloudVectorEmbedding("unleased")), apprepo.ErrNextcloudContentLeaseInvalid)
 	var leaked int64
-	require.NoError(t, db.Table(
-		"embeddings",
-	).Where("source_id IN ?", []string{"stale", "unleased"}).Count(&leaked).Error)
+	require.NoError(
+		t,
+		db.Table("embeddings").Where("source_id IN ?", []string{"stale", "unleased"}).Count(&leaked).Error,
+	)
 	require.Zero(t, leaked)
 }

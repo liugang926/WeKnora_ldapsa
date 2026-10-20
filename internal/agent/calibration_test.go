@@ -28,8 +28,8 @@ func newCalibrationRun(t *testing.T, opts ...testEngineOption) *calibrationRun {
 		engine: newTestEngine(t, &mockChat{}, opts...),
 		state:  &types.AgentState{},
 		messages: []chat.Message{
-			{Role: "system", Content: "you are an agent"},
-			{Role: "user", Content: "summarize the contract"},
+			{SourceLineage: independentAgentInput(), Role: "system", Content: "you are an agent"},
+			{SourceLineage: independentAgentInput(), Role: "user", Content: "summarize the contract"},
 		},
 	}
 }
@@ -44,11 +44,17 @@ func (r *calibrationRun) send(prompt int) {
 // appendRound adds a reply and a tool result and returns their raw estimate.
 func (r *calibrationRun) appendRound(result string) int {
 	appended := []chat.Message{
-		{Role: "assistant", ToolCalls: []chat.ToolCall{{
+		{SourceLineage: independentAgentInput(), Role: "assistant", ToolCalls: []chat.ToolCall{{
 			ID: "call", Type: "function",
 			Function: chat.FunctionCall{Name: "search_knowledge", Arguments: `{"query":"条款"}`},
 		}}},
-		{Role: "tool", Name: "search_knowledge", ToolCallID: "call", Content: result},
+		{
+			SourceLineage: independentAgentInput(),
+			Role:          "tool",
+			Name:          "search_knowledge",
+			ToolCallID:    "call",
+			Content:       result,
+		},
 	}
 	r.messages = append(r.messages, appended...)
 	estimated := 0
@@ -131,8 +137,15 @@ func TestCalibrationSkipsSamplesWithImages(t *testing.T) {
 	r := newCalibrationRun(t)
 	r.send(500)
 	appended := r.appendRound(chineseResult)
-	r.messages = append(r.messages,
-		chat.Message{Role: "user", Content: "see image", Images: []string{"https://x/a.png"}})
+	r.messages = append(
+		r.messages,
+		chat.Message{
+			SourceLineage: independentAgentInput(),
+			Role:          "user",
+			Content:       "see image",
+			Images:        []string{"https://x/a.png"},
+		},
+	)
 	r.send(500 + appended*6/10 + 800)
 
 	require.Equal(t, 1.0, r.engine.tokenEstimator.Scale())
@@ -157,7 +170,7 @@ func TestEngineStartsFromThePreviousTurnsScale(t *testing.T) {
 	})
 	require.InDelta(t, 0.6, engine.tokenEstimator.Scale(), 1e-9)
 
-	text := chat.Message{Role: "user", Content: chineseResult}
+	text := chat.Message{SourceLineage: independentAgentInput(), Role: "user", Content: chineseResult}
 	require.Less(t, engine.tokenEstimator.EstimateMessage(&text), engine.rawEstimator.EstimateMessage(&text))
 }
 
@@ -165,7 +178,11 @@ func TestEngineStartsFromThePreviousTurnsScale(t *testing.T) {
 type bigResultTool struct{ countingTool }
 
 func (t *bigResultTool) Execute(context.Context, json.RawMessage) (*types.ToolResult, error) {
-	return &types.ToolResult{Success: true, Output: chineseResult}, nil
+	return &types.ToolResult{Success: true, Output: chineseResult, SourceLineage: independentAgentInput()}, nil
+}
+
+func (t *bigResultTool) ExecuteSourceLineage(ctx context.Context, args json.RawMessage) (*types.ToolResult, error) {
+	return t.Execute(ctx, args)
 }
 
 // Some providers report a prompt count and no total. Calibration needs only

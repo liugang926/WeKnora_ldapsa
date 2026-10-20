@@ -17,26 +17,34 @@ func sourceLineageRepoFixture(t *testing.T) (*knowledgeRepository, *gorm.DB, *ty
 	t.Helper()
 	repo, db := newNextcloudVersionTestRepo(t)
 	require.NoError(t, db.AutoMigrate(&types.KnowledgeBase{}))
-	require.NoError(t, db.Create(&types.KnowledgeBase{
-		ID:               "kb",
-		TenantID:         7,
-		Name:             "source",
-		EmbeddingModelID: "embed",
-		SummaryModelID:   "summary",
-	}).Error)
+	require.NoError(
+		t,
+		db.Create(
+			&types.KnowledgeBase{
+				ID:               "kb",
+				TenantID:         7,
+				Name:             "source",
+				EmbeddingModelID: "embed",
+				SummaryModelID:   "summary",
+			},
+		).Error,
+	)
 	script, err := os.ReadFile("../../../migrations/sqlite/000045_nextcloud_source_revisions.up.sql")
 	require.NoError(t, err)
 	require.NoError(t, db.Exec(string(script)).Error)
 	knowledge := insertNextcloudVersionTestKnowledge(t, db, "candidate", "", types.ParseStatusCompleted, "enabled")
-	require.NoError(t, repo.StageNextcloudVersion(
-		context.Background(),
-		7,
-		"kb",
-		"ds",
-		"nextcloud:instance:77",
-		"original-etag",
-		knowledge.ID,
-	))
+	require.NoError(
+		t,
+		repo.StageNextcloudVersion(
+			context.Background(),
+			7,
+			"kb",
+			"ds",
+			"nextcloud:instance:77",
+			"original-etag",
+			knowledge.ID,
+		),
+	)
 	published, err := repo.PublishNextcloudVersion(context.Background(), knowledge.ID)
 	require.NoError(t, err)
 	require.True(t, published)
@@ -67,17 +75,20 @@ func TestNextcloudSourceLineageResolverUsesPersistedTupleAndStableBuildGeneratio
 	metadata["nextcloud_target_etag"] = "original-etag"
 	metadata["nextcloud_etag"] = ""
 	metadata["nextcloud_path"] = "renamed.md"
-	require.NoError(t, repo.StageNextcloudVersionWithSource(
-		ctx,
-		7,
-		"kb",
-		"ds",
-		"nextcloud:instance:77",
-		"original-etag",
-		k.ID,
-		"renamed.md",
-		metadata,
-	))
+	require.NoError(
+		t,
+		repo.StageNextcloudVersionWithSource(
+			ctx,
+			7,
+			"kb",
+			"ds",
+			"nextcloud:instance:77",
+			"original-etag",
+			k.ID,
+			"renamed.md",
+			metadata,
+		),
+	)
 	published, err := repo.PublishNextcloudVersion(ctx, k.ID)
 	require.NoError(t, err)
 	require.True(t, published)
@@ -153,8 +164,10 @@ func TestNextcloudSourceLineageResolverDeniesChangedMissingOrCorruptRows(t *test
 			case "fence missing":
 				require.NoError(t, db.Exec("DELETE FROM nextcloud_content_fences WHERE knowledge_id=?", k.ID).Error)
 			case "KB fence closed":
-				require.NoError(t, db.Exec(("UPDATE nextcloud_content_fences SET state='retired' WHE" +
-					"RE knowledge_id=''")).Error)
+				require.NoError(
+					t,
+					db.Exec("UPDATE nextcloud_content_fences SET state='retired' WHERE knowledge_id=''").Error,
+				)
 			case "ledger error":
 				require.NoError(t, db.Exec("DROP TABLE nextcloud_source_versions").Error)
 			}
@@ -175,9 +188,9 @@ func TestNextcloudSourceLineageResolverRejectsAmbiguousMetadata(t *testing.T) {
 		_, err := strictLineageKnowledgeMetadata([]byte(raw))
 		require.Error(t, err)
 	}
-	_, err := strictLineageKnowledgeMetadata(append([]byte(`{"datasource_id":"`), append([]byte{
-		0xff,
-	}, []byte(`"}`)...)...))
+	_, err := strictLineageKnowledgeMetadata(
+		append([]byte(`{"datasource_id":"`), append([]byte{0xff}, []byte(`"}`)...)...),
+	)
 	require.Error(t, err)
 	good, _ := json.Marshal(map[string]string{"datasource_id": "ds", "nextcloud_etag": "opaque-etag"})
 	metadata, err := strictLineageKnowledgeMetadata(good)
@@ -188,22 +201,30 @@ func TestNextcloudSourceLineageResolverRejectsAmbiguousMetadata(t *testing.T) {
 func TestPostgresNextcloudSourceLineageResolverReadSnapshotAndRename(t *testing.T) {
 	t.Setenv("SYSTEM_AES_KEY", "0123456789abcdef0123456789abcdef")
 	db := leaseTestPostgres(t)
-	require.NoError(t, db.AutoMigrate(
-		&types.Knowledge{},
-		&types.KnowledgeBase{},
-		&types.Chunk{},
-		&nextcloudSourceVersion{},
-		&types.DataSource{},
-		&NextcloudSourcePairing{},
-		&nextcloudCandidateRetryJob{},
-	))
-	require.NoError(t, db.Create(&types.KnowledgeBase{
-		ID:               "kb",
-		TenantID:         7,
-		Name:             "source",
-		EmbeddingModelID: "embed",
-		SummaryModelID:   "summary",
-	}).Error)
+	require.NoError(
+		t,
+		db.AutoMigrate(
+			&types.Knowledge{},
+			&types.KnowledgeBase{},
+			&types.Chunk{},
+			&nextcloudSourceVersion{},
+			&types.DataSource{},
+			&NextcloudSourcePairing{},
+			&nextcloudCandidateRetryJob{},
+		),
+	)
+	require.NoError(
+		t,
+		db.Create(
+			&types.KnowledgeBase{
+				ID:               "kb",
+				TenantID:         7,
+				Name:             "source",
+				EmbeddingModelID: "embed",
+				SummaryModelID:   "summary",
+			},
+		).Error,
+	)
 	sqlDB, err := db.DB()
 	require.NoError(t, err)
 	migrations, err := gorm.Open(postgres.New(postgres.Config{Conn: sqlDB, PreferSimpleProtocol: true}), &gorm.Config{})
@@ -231,28 +252,36 @@ func TestPostgresNextcloudSourceLineageResolverReadSnapshotAndRename(t *testing.
 	require.NoError(t, db.Where("id = 'ds'").Take(source).Error)
 	base, sha, binding, err := NextcloudEventDataSourceIdentity(source.Config)
 	require.NoError(t, err)
-	require.NoError(t, db.Create(&NextcloudSourcePairing{
-		OperationID:     "pair",
-		TenantID:        7,
-		KnowledgeBaseID: "kb",
-		DataSourceID:    "ds",
-		InstanceID:      "instance",
-		BindingID:       binding,
-		BaseURL:         base,
-		ConfigSHA:       sha,
-		State:           "active",
-	}).Error)
-	repo := &knowledgeRepository{db: db, nextcloudPublicationCheck: func(
-		context.Context,
-		*types.DataSourceConfig,
-		string,
-		string,
-		int64,
-		string,
-		string,
-	) error {
-		return nil
-	}}
+	require.NoError(
+		t,
+		db.Create(
+			&NextcloudSourcePairing{
+				OperationID:     "pair",
+				TenantID:        7,
+				KnowledgeBaseID: "kb",
+				DataSourceID:    "ds",
+				InstanceID:      "instance",
+				BindingID:       binding,
+				BaseURL:         base,
+				ConfigSHA:       sha,
+				State:           "active",
+			},
+		).Error,
+	)
+	repo := &knowledgeRepository{
+		db: db,
+		nextcloudPublicationCheck: func(
+			context.Context,
+			*types.DataSourceConfig,
+			string,
+			string,
+			int64,
+			string,
+			string,
+		) error {
+			return nil
+		},
+	}
 	k := insertNextcloudVersionTestKnowledge(t, db, "candidate", "", types.ParseStatusCompleted, "enabled")
 	ctx := context.Background()
 	require.NoError(t, repo.StageNextcloudVersion(ctx, 7, "kb", "ds", "nextcloud:instance:77", "etag", k.ID))
@@ -265,17 +294,20 @@ func TestPostgresNextcloudSourceLineageResolverReadSnapshotAndRename(t *testing.
 	metadata["nextcloud_target_etag"] = "etag"
 	metadata["nextcloud_etag"] = ""
 	metadata["nextcloud_path"] = "renamed.md"
-	require.NoError(t, repo.StageNextcloudVersionWithSource(
-		ctx,
-		7,
-		"kb",
-		"ds",
-		"nextcloud:instance:77",
-		"etag",
-		k.ID,
-		"renamed.md",
-		metadata,
-	))
+	require.NoError(
+		t,
+		repo.StageNextcloudVersionWithSource(
+			ctx,
+			7,
+			"kb",
+			"ds",
+			"nextcloud:instance:77",
+			"etag",
+			k.ID,
+			"renamed.md",
+			metadata,
+		),
+	)
 	published, err = repo.PublishNextcloudVersion(ctx, k.ID)
 	require.NoError(t, err)
 	require.True(t, published)

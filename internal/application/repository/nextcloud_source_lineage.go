@@ -20,12 +20,10 @@ import (
 )
 
 var (
-	// ErrNextcloudLineageSnapshotDenied reports an unavailable authorized source-lineage snapshot.
 	ErrNextcloudLineageSnapshotDenied = apperrors.NewProtocolError(
 		errors.New("nextcloud lineage snapshot is unavailable or changed"),
 		"Nextcloud lineage snapshot is unavailable or changed",
 	)
-	// ErrNextcloudLineageSnapshotStore reports unavailable durable source-lineage storage.
 	ErrNextcloudLineageSnapshotStore = apperrors.NewProtocolError(errors.New(
 		"nextcloud lineage snapshot storage unavailable",
 	), "Nextcloud lineage snapshot storage unavailable")
@@ -63,13 +61,11 @@ func (r *knowledgeRepository) ResolveNextcloudSourceLineage(
 	return knowledge, identity, nil
 }
 
-func (
-	r *knowledgeRepository,
-) resolveNextcloudSourceLineageInTx(tx *gorm.DB, tenantID uint64, kbID, knowledgeID string) (
-	*types.Knowledge,
-	types.SourceIdentity,
-	error,
-) {
+func (r *knowledgeRepository) resolveNextcloudSourceLineageInTx(
+	tx *gorm.DB,
+	tenantID uint64,
+	kbID, knowledgeID string,
+) (*types.Knowledge, types.SourceIdentity, error) {
 	var knowledge *types.Knowledge
 	var identity types.SourceIdentity
 	err := func() error {
@@ -78,12 +74,8 @@ func (
 			Take(&current).Error; err != nil {
 			return lineageSnapshotReadError(err)
 		}
-		if current.Channel !=
-			types.ConnectorTypeNextcloud ||
-			current.ParseStatus !=
-				types.ParseStatusCompleted ||
-			current.EnableStatus !=
-				"enabled" {
+		if current.Channel != types.ConnectorTypeNextcloud || current.ParseStatus != types.ParseStatusCompleted ||
+			current.EnableStatus != "enabled" {
 			return ErrNextcloudLineageSnapshotDenied
 		}
 		metadata, err := strictLineageKnowledgeMetadata(current.Metadata)
@@ -97,12 +89,7 @@ func (
 		}
 		candidate, ready, err := r.publicationCandidate(tx, knowledgeID, false)
 		if err != nil {
-			return apperrors.NewProtocolError(fmt.Errorf(
-				"%w: publication snapshot",
-				ErrNextcloudLineageSnapshotStore,
-			), fmt.Sprintf("%s: publication snapshot", apperrors.PublicMessage(
-				ErrNextcloudLineageSnapshotStore,
-			)))
+			return fmt.Errorf("%w: publication snapshot", ErrNextcloudLineageSnapshotStore)
 		}
 		if !ready || candidate.version.State != "published" || candidate.version.TenantID != tenantID ||
 			candidate.version.KnowledgeBaseID != kbID || candidate.version.CandidateKnowledgeID != knowledgeID {
@@ -113,6 +100,18 @@ func (
 			tenantID, kbID, candidate.version.DataSourceID).Take(&pair).Error; err != nil {
 			return lineageSnapshotReadError(err)
 		}
+		if !r.nextcloudRecoveryProbe {
+			closed, err := nextcloudControlsClosed(tx, pair.InstanceID)
+			if err != nil {
+				return err
+			}
+			if closed {
+				allowed, e := nextcloudAllowRecoveryBuildRead(tx.Statement.Context, tx, tenantID, kbID, knowledgeID)
+				if e != nil || !allowed {
+					return ErrNextcloudLineageSnapshotDenied
+				}
+			}
+		}
 		var observed struct {
 			Revision             int64
 			DesiredETag          string `gorm:"column:desired_etag"`
@@ -120,20 +119,19 @@ func (
 			State                string
 			SourceUpdatedAt      time.Time
 		}
-		if err := tx.Table(
-			"nextcloud_source_revisions",
-		).Where(("tenant_id = ? AND knowledge_base_id = ? AND datasource_" +
-			"id = ? AND external_id = ?"),
-			tenantID, kbID, candidate.version.DataSourceID, candidate.version.ExternalID).
-			Order("revision DESC").Take(&observed).Error; err != nil {
+		if err := tx.Table("nextcloud_source_revisions").
+			Where("tenant_id = ? AND knowledge_base_id = ? AND datasource_id = ? AND external_id = ?",
+				tenantID, kbID, candidate.version.DataSourceID, candidate.version.ExternalID).
+			Order("revision DESC").
+			Take(&observed).
+			Error; err != nil {
 			return lineageSnapshotReadError(err)
 		}
 		if observed.Revision <= 0 || observed.DesiredETag != candidate.version.DesiredETag ||
-			observed.CandidateKnowledgeID !=
-				knowledgeID ||
-			observed.State !=
-				"published" ||
-			!observed.SourceUpdatedAt.Equal(candidate.version.UpdatedAt) {
+			observed.CandidateKnowledgeID != knowledgeID ||
+			observed.State != "published" || !observed.SourceUpdatedAt.Equal(
+			candidate.version.UpdatedAt,
+		) {
 			return ErrNextcloudLineageSnapshotDenied
 		}
 		var fence nextcloudContentFence
@@ -149,32 +147,30 @@ func (
 			Take(&fence).Error; err != nil {
 			return lineageSnapshotReadError(err)
 		}
-		if fence.Epoch <=
-			0 ||
-			fence.State !=
-				"open" ||
-			fence.DataSourceID !=
-				candidate.version.DataSourceID ||
-			fence.ExternalID !=
-				candidate.version.ExternalID {
+		if fence.Epoch <= 0 || fence.State != "open" || fence.DataSourceID != candidate.version.DataSourceID ||
+			fence.ExternalID != candidate.version.ExternalID {
 			return ErrNextcloudLineageSnapshotDenied
 		}
 		// The observation sequence is not a publication/build generation. The
 		// exact open fence epoch is the durable build-write token; paired with
 		// immutable knowledge ID, it survives same-content path/metadata edits.
 		identity = types.SourceIdentity{
-			Provider: types.ConnectorTypeNextcloud, TenantID: current.TenantID,
-			KnowledgeBaseID: current.KnowledgeBaseID, DataSourceID: candidate.version.DataSourceID,
-			PairOperationID: pair.OperationID, InstanceID: candidate.instance, BindingID: candidate.binding,
-			FileID: strconv.FormatInt(candidate.fileID, 10), ExternalID: candidate.version.ExternalID,
-			KnowledgeID: current.ID, Revision: uint64(fence.Epoch), ETag: metadata["nextcloud_etag"],
+			Provider:        types.ConnectorTypeNextcloud,
+			TenantID:        current.TenantID,
+			KnowledgeBaseID: current.KnowledgeBaseID,
+			DataSourceID:    candidate.version.DataSourceID,
+			PairOperationID: pair.OperationID,
+			InstanceID:      candidate.instance,
+			BindingID:       candidate.binding,
+			FileID:          strconv.FormatInt(candidate.fileID, 10),
+			ExternalID:      candidate.version.ExternalID,
+			KnowledgeID:     current.ID,
+			Revision:        uint64(fence.Epoch),
+			ETag:            metadata["nextcloud_etag"],
+			ContentRevision: types.NextcloudLineageContentRevision(candidate.version.DesiredContentRevision),
 		}
-		if identity.ETag !=
-			candidate.etag ||
-			identity.ETag !=
-				candidate.version.DesiredETag ||
-			identity.Validate() !=
-				nil {
+		if identity.ETag != candidate.etag || identity.ETag != candidate.version.DesiredETag ||
+			identity.Validate() != nil {
 			return ErrNextcloudLineageSnapshotDenied
 		}
 		knowledge = &current
@@ -189,10 +185,10 @@ func (
 // RecheckNextcloudSourceLineage compares the entire dependency set in one
 // coherent local snapshot after every remote/grant check has completed. A
 // source checked early cannot be silently changed during a later remote call.
-func (r *knowledgeRepository) RecheckNextcloudSourceLineage(ctx context.Context, lineage *types.SourceLineage) (
-	bool,
-	error,
-) {
+func (r *knowledgeRepository) RecheckNextcloudSourceLineage(
+	ctx context.Context,
+	lineage *types.SourceLineage,
+) (bool, error) {
 	if lineage.RequireComplete() != nil {
 		return false, nil
 	}
@@ -237,12 +233,7 @@ func lineageSnapshotReadError(err error) error {
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return ErrNextcloudLineageSnapshotDenied
 	}
-	return apperrors.NewProtocolError(fmt.Errorf(
-		"%w: snapshot read",
-		ErrNextcloudLineageSnapshotStore,
-	), fmt.Sprintf("%s: snapshot read", apperrors.PublicMessage(
-		ErrNextcloudLineageSnapshotStore,
-	)))
+	return fmt.Errorf("%w: snapshot read", ErrNextcloudLineageSnapshotStore)
 }
 
 // Metadata may contain unrelated parser fields, but identity keys must be
@@ -270,15 +261,17 @@ func strictLineageKnowledgeMetadata(data []byte) (map[string]string, error) {
 			return nil, ErrNextcloudLineageSnapshotDenied
 		}
 		switch key {
-		case
-			"datasource_id",
+		case "datasource_id",
 			"external_id",
 			"source_resource_id",
 			"nextcloud_instance_id",
 			"nextcloud_binding_id",
 			"nextcloud_file_id",
 			"nextcloud_etag",
-			"nextcloud_target_etag":
+			"nextcloud_target_etag",
+			"nextcloud_content_revision",
+			"nextcloud_path",
+			"nextcloud_publication_epoch":
 			var value *string
 			if err := json.Unmarshal(raw, &value); err != nil || value == nil {
 				return nil, ErrNextcloudLineageSnapshotDenied

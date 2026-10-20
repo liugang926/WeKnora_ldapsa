@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/Tencent/WeKnora/internal/application/access"
+	"github.com/Tencent/WeKnora/internal/application/service"
 	"github.com/Tencent/WeKnora/internal/middleware"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
@@ -33,10 +34,19 @@ func (publicationHandlerDirectories) GetIdentityByUserID(context.Context, string
 	return nil, nil
 }
 
-func (publicationHandlerDirectories) GetLoginSnapshot(context.Context, string,
+func (publicationHandlerDirectories) GetLoginSnapshot(
+	context.Context,
+	string,
 	string,
 ) (*types.DirectoryLoginSnapshot, error) {
 	return nil, nil
+}
+
+func (publicationHandlerDirectories) GetUserLoginSnapshot(
+	context.Context,
+	string,
+) ([]*types.DirectoryIdentity, *types.DirectoryLoginSnapshot, error) {
+	return nil, nil, nil
 }
 
 type publicationHandlerKnowledge struct {
@@ -126,12 +136,14 @@ func TestGetKnowledgeFailsClosedForNextcloud(t *testing.T) {
 func TestDirectChunkReadFailsClosedWithoutPublicationVerifier(t *testing.T) {
 	knowledge, _ := publicationHandlerFixture(t, true)
 	h := NewChunkHandler(
-		publicationHandlerChunks{chunk: &types.Chunk{
-			ID: "chunk-1", KnowledgeID: knowledge.ID,
-			Content: "secret chunk text",
-		}},
+		publicationHandlerChunks{
+			chunk: &types.Chunk{ID: "chunk-1", KnowledgeID: knowledge.ID, Content: "secret chunk text"},
+		},
 		publicationHandlerKnowledge{row: knowledge},
 	)
+	// Install the current output boundary so this test reaches the missing
+	// publication dependency. Neither nil authority grants a read.
+	ConfigureChunkHandlerOutputLineage(h, service.NewChunkOutputAuthorizer(nil, nil))
 	r := documentHandlerRouter()
 	r.GET("/chunks/by-id/:id", h.GetChunkByIDOnly)
 	w := httptest.NewRecorder()

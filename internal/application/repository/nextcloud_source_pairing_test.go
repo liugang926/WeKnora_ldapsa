@@ -20,8 +20,10 @@ import (
 func TestNextcloudSourcePairingPrepareRetryAndActivate(t *testing.T) {
 	t.Setenv("SYSTEM_AES_KEY", "0123456789abcdef0123456789abcdef")
 	db := provenanceTestDB(t)
-	require.NoError(t, db.Exec(("INSERT INTO knowledge_bases (id, tenant_id) VALUES ('kb" +
-		"-paired', 7), ('kb-other', 7)")).Error)
+	require.NoError(
+		t,
+		db.Exec(`INSERT INTO knowledge_bases (id, tenant_id) VALUES ('kb-paired', 7), ('kb-other', 7)`).Error,
+	)
 	repo := NewNextcloudSourcePairingRepository(db)
 	ctx := context.Background()
 	proposal := NextcloudSourcePairing{

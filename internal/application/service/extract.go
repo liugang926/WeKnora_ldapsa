@@ -4,16 +4,20 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
 	"time"
+
+	"github.com/Tencent/WeKnora/internal/application/repository"
 
 	"github.com/Tencent/WeKnora/internal/agent/tools"
 	"github.com/Tencent/WeKnora/internal/application/access"
 	chatpipeline "github.com/Tencent/WeKnora/internal/application/service/chat_pipeline"
 	"github.com/Tencent/WeKnora/internal/application/service/retriever"
 	"github.com/Tencent/WeKnora/internal/config"
+	apperrors "github.com/Tencent/WeKnora/internal/errors"
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/models/chat"
 	"github.com/Tencent/WeKnora/internal/models/embedding"
@@ -96,18 +100,30 @@ func NewChunkExtractTask(
 	knowledgeID string,
 	attempt int,
 	chunkIndex int,
+	originalInputs ...*types.KnowledgeBuildInputProof,
 ) (bool, error) {
-	if strings.ToLower(os.Getenv("NEO4J_ENABLE")) != "true" {
+	if strings.ToLower(os.Getenv("NEO4J_ENABLE")) != "true" &&
+		!repository.NextcloudBuildLeasePresent(ctx, tenantID, func() string {
+			if len(originalInputs) == 1 && originalInputs[0] != nil {
+				return originalInputs[0].KnowledgeBaseID
+			}
+			return ""
+		}(), knowledgeID) {
 		logger.Warn(ctx, "NEO4J is not enabled, skip chunk extract task")
 		return false, nil
 	}
+	if len(originalInputs) != 1 || originalInputs[0] == nil || originalInputs[0].TenantID != tenantID ||
+		originalInputs[0].KnowledgeID != knowledgeID {
+		return false, types.ErrGraphSourceReceiptUnknown
+	}
 	taskPayload := types.ExtractChunkPayload{
-		TenantID:    tenantID,
-		ChunkID:     chunkID,
-		ModelID:     modelID,
-		KnowledgeID: knowledgeID,
-		Attempt:     attempt,
-		ChunkIndex:  chunkIndex,
+		OriginalInput: originalInputs[0],
+		TenantID:      tenantID,
+		ChunkID:       chunkID,
+		ModelID:       modelID,
+		KnowledgeID:   knowledgeID,
+		Attempt:       attempt,
+		ChunkIndex:    chunkIndex,
 	}
 	taskPayload.Initiator = types.TaskInitiatorFromContext(ctx)
 	langfuse.InjectTracing(ctx, &taskPayload)
@@ -115,9 +131,41 @@ func NewChunkExtractTask(
 	if err != nil {
 		return false, err
 	}
-	task := asynq.NewTask(types.TypeChunkExtract, payload,
-		asynq.Queue(types.QueueGraph), asynq.MaxRetry(3), asynq.Timeout(30*time.Minute))
+	ledger := types.NextcloudGraphQueueLedgerFromContext(ctx)
+	options := []asynq.Option{asynq.Queue(types.QueueGraph), asynq.MaxRetry(3), asynq.Timeout(30 * time.Minute)}
+	if ledger != nil {
+		options = append(
+			options,
+			asynq.TaskID("nc-graph:"+repository.NextcloudGraphOperationID(tenantID, knowledgeID, attempt, chunkID)),
+		)
+	}
+	task, err := newKnowledgeQueueTask(ctx, nil, types.TypeChunkExtract, payload, options...)
+	if err != nil {
+		return false, err
+	}
+	payload = task.Payload()
+	if ledger != nil {
+		if err := ledger.RecordGraphPayload(ctx, tenantID, knowledgeID, attempt, chunkID, payload); err != nil {
+			return false, err
+		}
+	}
+	if client == nil {
+		if ledger != nil {
+			return true, nil
+		}
+		return false, errors.New("graph queue unavailable")
+	}
 	info, err := client.Enqueue(task)
+	if ledger != nil {
+		accepted := err == nil || errors.Is(err, asynq.ErrTaskIDConflict)
+		if markErr := ledger.MarkGraphQueued(ctx, tenantID, knowledgeID, attempt, chunkID, accepted); markErr != nil {
+			return true, markErr
+		}
+		if err != nil {
+			return true, nil
+		} // durable intent owns the slot and retries independently
+	}
+
 	if err != nil {
 		logger.Errorf(ctx, "failed to enqueue task: %v", err)
 		return false, fmt.Errorf("failed to enqueue task: %v", err)
@@ -175,23 +223,33 @@ func enqueueDataTableSummaryIfNeeded(
 	if !isDataTableFileType(ft) {
 		return
 	}
-	if err := NewDataTableSummaryTask(ctx, client, tenantID, knowledgeID, summaryModelID, embeddingModelID); err != nil {
+	if err := NewDataTableSummaryTask(
+		ctx,
+		client,
+		tenantID,
+		knowledgeID,
+		summaryModelID,
+		embeddingModelID,
+	); err != nil {
 		logger.Warnf(ctx, "Failed to enqueue data table summary task for knowledge %s: %v", knowledgeID, err)
 	}
 }
 
 // ChunkExtractService is a service for extracting chunks
 type ChunkExtractService struct {
-	template          *types.PromptTemplateStructured
-	modelService      interfaces.ModelService
-	knowledgeBaseRepo interfaces.KnowledgeBaseRepository
-	knowledgeRepo     interfaces.KnowledgeRepository
-	chunkRepo         interfaces.ChunkRepository
-	graphEngine       interfaces.RetrieveGraphRepository
+	buildInputs         interfaces.KnowledgeBuildInputReader
+	templateSourceCheck func(context.Context, *types.SourceLineage) error
+	template            *types.PromptTemplateStructured
+	modelService        interfaces.ModelService
+	knowledgeBaseRepo   interfaces.KnowledgeBaseRepository
+	knowledgeRepo       interfaces.KnowledgeRepository
+	chunkRepo           interfaces.ChunkRepository
+	graphEngine         interfaces.RetrieveGraphRepository
 	// spanTracker records this graph-extract task's subspan under the
 	// parent attempt's postprocess stage so the trace viewer shows real
 	// per-chunk graph extraction time rather than the upstream's enqueue.
-	spanTracker SpanTracker
+	spanTracker      SpanTracker
+	processingLedger types.NextcloudProcessingLedger
 }
 
 // NewChunkExtractService creates a new chunk extract service
@@ -203,15 +261,30 @@ func NewChunkExtractService(
 	chunkRepo interfaces.ChunkRepository,
 	graphEngine interfaces.RetrieveGraphRepository,
 	spanTracker SpanTracker,
+	buildInputs interfaces.KnowledgeBuildInputReader,
 ) interfaces.TaskHandler {
+	template := config.ExtractManager.ExtractGraph
+	if _, err := types.GraphPromptTemplateLineage(template); err != nil {
+		if bound, err := configpkgGraphTemplate(template); err == nil {
+			template = bound
+		}
+	}
 	return &ChunkExtractService{
-		template:          config.ExtractManager.ExtractGraph,
+		buildInputs:       buildInputs,
+		template:          template,
 		modelService:      modelService,
 		knowledgeBaseRepo: knowledgeBaseRepo,
 		knowledgeRepo:     knowledgeRepo,
 		chunkRepo:         chunkRepo,
 		graphEngine:       graphEngine,
 		spanTracker:       spanTracker,
+	}
+}
+
+// ConfigureNextcloudChunkExtractLedger binds graph work to the durable processing ledger.
+func ConfigureNextcloudChunkExtractLedger(handler interfaces.TaskHandler, ledger types.NextcloudProcessingLedger) {
+	if impl, ok := handler.(*ChunkExtractService); ok {
+		impl.processingLedger = ledger
 	}
 }
 
@@ -223,7 +296,7 @@ func (s *ChunkExtractService) tracker() SpanTracker {
 }
 
 // Handle handles the chunk extraction task
-func (s *ChunkExtractService) Handle(ctx context.Context, t *asynq.Task) error {
+func (s *ChunkExtractService) Handle(ctx context.Context, t *asynq.Task) (returnErr error) {
 	var p types.ExtractChunkPayload
 	if err := json.Unmarshal(t.Payload(), &p); err != nil {
 		logger.Errorf(ctx, "failed to unmarshal task payload: %v", err)
@@ -232,7 +305,6 @@ func (s *ChunkExtractService) Handle(ctx context.Context, t *asynq.Task) error {
 	ctx = logger.WithRequestID(ctx, uuid.New().String())
 	ctx = logger.WithField(ctx, "extract", p.ChunkID)
 	ctx = context.WithValue(ctx, types.TenantIDContextKey, p.TenantID)
-
 	// A newer attempt (re-upload / edit / reparse) has superseded this one:
 	// skip before opening the span or registering the FinalizeSubtask defer.
 	// The chunk this task references was deleted by the new attempt's cleanup,
@@ -241,6 +313,118 @@ func (s *ChunkExtractService) Handle(ctx context.Context, t *asynq.Task) error {
 		logger.Infof(ctx, "graph extract: attempt %d superseded for %s, skipping stale enrichment",
 			p.Attempt, p.KnowledgeID)
 		return nil
+	}
+
+	mainFinalizeRegistered := false
+	defer func() {
+		if !mainFinalizeRegistered && returnErr != nil {
+			returnErr = errors.Join(returnErr, finalizeSubtaskDetached(
+				ctx,
+				s.knowledgeRepo,
+				p.KnowledgeID,
+				"graph_input_admission",
+				returnErr,
+				false,
+				isFinalAsynqAttempt(ctx),
+			))
+		}
+	}()
+
+	if s.buildInputs == nil || p.OriginalInput == nil || p.OriginalInput.TenantID != p.TenantID ||
+		p.OriginalInput.KnowledgeID != p.KnowledgeID {
+		return types.ErrGraphSourceReceiptUnknown
+	}
+	var actorErr error
+	ctx, actorErr = repository.RestoreKnowledgeBuildActorIfRequired(ctx, s.buildInputs, p.OriginalInput)
+	if actorErr != nil {
+		return actorErr
+	}
+	ctx = repository.WithKnowledgeBuildInputProof(ctx, s.buildInputs, p.OriginalInput)
+	snapshot, err := s.buildInputs.CaptureKnowledgeBuildInputs(
+		ctx,
+		types.KnowledgeBuildInputCaptureRequest{
+			Projection:      types.KnowledgeBuildProjectionGraph,
+			TenantID:        p.TenantID,
+			KnowledgeBaseID: p.OriginalInput.KnowledgeBaseID,
+			KnowledgeID:     p.KnowledgeID,
+			ChunkIDs:        []string{p.ChunkID},
+			Expected:        p.OriginalInput,
+		},
+	)
+	if err != nil {
+		return err
+	}
+	if snapshot == nil || snapshot.Proof == nil || snapshot.Knowledge == nil || snapshot.KnowledgeBase == nil ||
+		len(snapshot.Chunks) != 1 ||
+		snapshot.Chunks[0] == nil ||
+		snapshot.Chunks[0].ID != p.ChunkID {
+		return types.ErrGraphSourceReceiptUnknown
+	}
+	snapshot, err = freezeGraphBuildSnapshot(snapshot)
+	if err != nil {
+		return err
+	}
+	if err := recheckOriginalGraphProof(ctx, s.buildInputs, snapshot.Proof); err != nil {
+		return err
+	}
+
+	graphFailureCode := "graph_extraction_failed"
+	sourcePrivate := snapshot.Knowledge.Channel == types.ConnectorTypeNextcloud
+	for _, source := range snapshot.Proof.SourceLineage.Sources {
+		if source.Provider == types.ConnectorTypeNextcloud {
+			sourcePrivate = true
+		}
+	}
+	defer func() {
+		if sourcePrivate && returnErr != nil {
+			returnErr = errors.New(graphFailureCode)
+		}
+	}()
+	if snapshot.Knowledge.Channel == types.ConnectorTypeNextcloud {
+		if s.processingLedger == nil {
+			return apperrors.NewProtocolError(errors.New("nextcloud graph processing ledger unavailable"),
+				"Nextcloud graph processing ledger unavailable")
+		}
+		ctx = types.WithGraphWriteOperation(
+			ctx,
+			types.GraphWriteOperation{
+				ID:      repository.NextcloudGraphOperationID(p.TenantID, p.KnowledgeID, p.Attempt, p.ChunkID),
+				Attempt: p.Attempt,
+				ChunkID: p.ChunkID,
+			},
+		)
+		done, err := s.processingLedger.StartGraph(ctx, p.TenantID, p.KnowledgeID, p.Attempt, p.ChunkID)
+		if err != nil {
+			return err
+		}
+		if done {
+			mainFinalizeRegistered = true
+			return finalizeSubtaskDetached(
+				ctx,
+				s.knowledgeRepo,
+				p.KnowledgeID,
+				fmt.Sprintf("graph_chunk[%d]", p.ChunkIndex),
+				nil,
+				false,
+				true,
+			)
+		}
+
+		defer func() {
+			if returnErr != nil {
+				fctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+				defer cancel()
+				_ = s.processingLedger.FailGraph(
+					fctx,
+					p.TenantID,
+					p.KnowledgeID,
+					p.Attempt,
+					p.ChunkID,
+					graphFailureCode,
+					isFinalAsynqAttempt(ctx),
+				)
+			}
+		}()
 	}
 
 	// Open a postprocess subspan keyed by chunk ordinal so the trace
@@ -263,19 +447,33 @@ func (s *ChunkExtractService) Handle(ctx context.Context, t *asynq.Task) error {
 	}
 	var handleErr error
 	graphOut := types.JSONMap{}
+	mainFinalizeRegistered = true
 	defer func() {
 		// Decrement the parent's enrichment counter on terminal exit so a
 		// completed (or terminally-failed) per-chunk extract releases its
 		// slot in pending_subtasks_count. KnowledgeID is the new (post-#? )
 		// payload field; legacy in-flight tasks without it are skipped.
-		finalizeSubtaskDetached(ctx, s.knowledgeRepo, p.KnowledgeID,
+		safeErr := handleErr
+		if sourcePrivate && safeErr != nil {
+			safeErr = errors.New(graphFailureCode)
+		}
+		if err := finalizeSubtaskDetached(ctx, s.knowledgeRepo, p.KnowledgeID,
 			fmt.Sprintf("graph_chunk[%d]", p.ChunkIndex),
-			handleErr, false, isFinalAsynqAttempt(ctx))
+			safeErr, false, isFinalAsynqAttempt(ctx)); err != nil {
+			returnErr = errors.Join(returnErr, err)
+			if handleErr == nil {
+				handleErr = err
+			}
+		}
 		if gSpan == nil {
 			return
 		}
 		if handleErr != nil {
-			s.tracker().FailSpan(ctx, gSpan, "GRAPH_EXTRACT_FAILED", handleErr.Error(), handleErr)
+			if sourcePrivate {
+				s.tracker().FailSpan(ctx, gSpan, graphFailureCode, graphFailureCode, errors.New(graphFailureCode))
+			} else {
+				s.tracker().FailSpan(ctx, gSpan, "GRAPH_EXTRACT_FAILED", handleErr.Error(), handleErr)
+			}
 		} else {
 			s.tracker().EndSpan(ctx, gSpan, graphOut)
 		}
@@ -297,35 +495,16 @@ func (s *ChunkExtractService) Handle(ctx context.Context, t *asynq.Task) error {
 		}
 	}
 
-	chunk, err := s.chunkRepo.GetChunkByID(ctx, p.TenantID, p.ChunkID)
+	chunk := snapshot.Chunks[0]
+	kb := snapshot.KnowledgeBase
+	processOverrides, err := snapshot.Knowledge.ProcessOverrides()
 	if err != nil {
-		logger.Errorf(ctx, "failed to get chunk: %v", err)
 		handleErr = err
 		return err
 	}
-	// Capture chunk content shape on output — lets traces answer "WHAT
-	// did the LLM call see?" without joining back to the chunk store.
-	// Preview is truncated to keep span rows reasonable.
-	if gSpan != nil {
-		graphOut["chunk_chars"] = len([]rune(chunk.Content))
-		graphOut["chunk_preview"] = previewText(chunk.Content, 200)
-	}
-	kb, err := s.knowledgeBaseRepo.GetKnowledgeBaseByID(ctx, chunk.KnowledgeBaseID)
-	if err != nil {
-		logger.Errorf(ctx, "failed to get knowledge base: %v", err)
-		handleErr = err
-		return err
-	}
-
-	var processOverrides *types.KnowledgeProcessOverrides
-	knowledgeID := p.KnowledgeID
-	if knowledgeID == "" {
-		knowledgeID = chunk.KnowledgeID
-	}
-	if knowledgeID != "" && s.knowledgeRepo != nil {
-		if k, kerr := s.knowledgeRepo.GetKnowledgeByIDOnly(ctx, knowledgeID); kerr == nil && k != nil {
-			processOverrides, _ = k.ProcessOverrides()
-		}
+	if p.ModelID != kb.SummaryModelID {
+		handleErr = types.ErrGraphSourceReceiptUnknown
+		return handleErr
 	}
 	extractCfg := ResolveProcessConfig(kb, processOverrides).ExtractConfig
 	if !extractCfg.Enabled {
@@ -353,28 +532,100 @@ func (s *ChunkExtractService) Handle(ctx context.Context, t *asynq.Task) error {
 			},
 		},
 	}
-	extractor := chatpipeline.NewExtractor(chatModel, template)
-	graph, err := extractor.Extract(ctx, chunk.Content)
+
+	templateLineage, err := types.GraphPromptTemplateLineage(s.template)
 	if err != nil {
 		handleErr = err
 		return err
 	}
-
-	chunk, err = s.chunkRepo.GetChunkByID(ctx, p.TenantID, p.ChunkID)
-	if err != nil {
-		logger.Warnf(ctx, "graph ignore chunk %s: %v", p.ChunkID, err)
-		graphOut["skipped"] = "chunk_disappeared"
+	check := func(checkCtx context.Context, lineage *types.SourceLineage) error {
+		if lineage.RequireComplete() != nil {
+			return types.ErrGraphSourceReceiptUnknown
+		}
+		if err := recheckOriginalGraphProof(checkCtx, s.buildInputs, snapshot.Proof); err != nil {
+			return err
+		}
+		if len(templateLineage.Sources) > 0 {
+			if s.templateSourceCheck == nil {
+				return types.ErrGraphSourceReceiptUnknown
+			}
+			// Original document inputs use their exact private build purpose above.
+			// Additional typed template inputs retain their own public source grants.
+			return s.templateSourceCheck(checkCtx, templateLineage)
+		}
 		return nil
 	}
-
+	extractor := chatpipeline.NewExtractor(chatModel, template)
+	actualConfigDigest := types.GraphDigest(template)
+	graph, err := extractor.ExtractSourceLineage(
+		ctx,
+		chunk.Content,
+		snapshot.Proof.SourceLineage,
+		templateLineage,
+		check,
+	)
+	if err != nil {
+		handleErr = err
+		return err
+	}
+	namespace := types.NameSpace{KnowledgeBase: chunk.KnowledgeBaseID, Knowledge: chunk.KnowledgeID}
+	base := &types.GraphSourceReceipt{
+		OriginalInput:   snapshot.Proof,
+		Version:         1,
+		TenantID:        chunk.TenantID,
+		KnowledgeBaseID: chunk.KnowledgeBaseID,
+		KnowledgeID:     chunk.KnowledgeID,
+		BuildGeneration: snapshot.Proof.BuildGeneration,
+		InputDigest:     snapshot.Proof.InputDigest,
+		ConfigDigest:    actualConfigDigest,
+		WireDigest:      graph.WireDigest,
+		SourceLineage:   graph.SourceLineage,
+	}
 	for _, node := range graph.Node {
 		node.Chunks = []string{chunk.ID}
+		if node.Attributes == nil {
+			node.Attributes = []string{}
+		}
+		node.SourceReceipt, err = types.BindGraphSourceReceipt(base, types.GraphNodeBodyDigest(namespace, node))
+		if err != nil {
+			handleErr = err
+			return err
+		}
 	}
-	if err = s.graphEngine.AddGraph(ctx,
-		types.NameSpace{KnowledgeBase: chunk.KnowledgeBaseID, Knowledge: chunk.KnowledgeID},
-		[]*types.GraphData{graph},
-	); err != nil {
-		logger.Errorf(ctx, "failed to add graph: %v", err)
+	for _, edge := range graph.Relation {
+		edge.SourceReceipt, err = types.BindGraphSourceReceipt(base, types.GraphRelationBodyDigest(namespace, edge))
+		if err != nil {
+			handleErr = err
+			return err
+		}
+	}
+	graph.SourceReceipt, err = types.BindGraphSourceReceipt(base, types.GraphDataBodyDigest(namespace, graph))
+	if err != nil {
+		handleErr = err
+		return err
+	}
+	if err := check(ctx, graph.SourceLineage); err != nil {
+		handleErr = err
+		return err
+	}
+	writeCtx := types.WithGraphWriteAuthorization(
+		ctx,
+		func(ctx context.Context, receipt *types.GraphSourceReceipt) error {
+			if receipt.OriginalInput == nil || receipt.OriginalInput.AdmissionID != snapshot.Proof.AdmissionID ||
+				receipt.InputDigest != snapshot.Proof.InputDigest ||
+				receipt.WireDigest != graph.WireDigest ||
+				receipt.ConfigDigest != actualConfigDigest {
+				return types.ErrGraphSourceReceiptUnknown
+			}
+			return check(ctx, receipt.SourceLineage)
+		},
+	)
+	graphFailureCode = "graph_persistence_failed"
+	if err := s.graphEngine.AddGraph(writeCtx, namespace, []*types.GraphData{graph}); err != nil {
+		handleErr = err
+		return err
+	}
+	if err := check(ctx, graph.SourceLineage); err != nil {
 		handleErr = err
 		return err
 	}
@@ -384,7 +635,7 @@ func (s *ChunkExtractService) Handle(ctx context.Context, t *asynq.Task) error {
 	// answer "what did the LLM actually extract?" without round-tripping
 	// to the graph store. Cap to two each — anything more bloats span
 	// rows and the full graph is queryable elsewhere.
-	if len(graph.Node) > 0 {
+	if !sourcePrivate && len(graph.Node) > 0 {
 		samples := graph.Node
 		if len(samples) > 2 {
 			samples = samples[:2]
@@ -395,7 +646,7 @@ func (s *ChunkExtractService) Handle(ctx context.Context, t *asynq.Task) error {
 		}
 		graphOut["sample_nodes"] = names
 	}
-	if len(graph.Relation) > 0 {
+	if !sourcePrivate && len(graph.Relation) > 0 {
 		samples := graph.Relation
 		if len(samples) > 2 {
 			samples = samples[:2]
@@ -411,7 +662,12 @@ func (s *ChunkExtractService) Handle(ctx context.Context, t *asynq.Task) error {
 
 // DataTableExtractPayload represents the table extract task payload
 type DataTableSummaryPayload struct {
-	Initiator types.TaskInitiator `json:"initiator,omitempty"`
+	Initiator       types.TaskInitiator                `json:"initiator,omitempty"`
+	OriginalInput   *types.KnowledgeBuildInputProof    `json:"_original_input,omitempty"`
+	ProducerInput   *types.KnowledgeProducerInputProof `json:"_producer_input,omitempty"`
+	KnowledgeBaseID string                             `json:"knowledge_base_id,omitempty"`
+	ArtifactSHA256  string                             `json:"artifact_sha256,omitempty"`
+	Attempt         int                                `json:"attempt,omitempty"`
 	types.TracingContext
 	TenantID       uint64 `json:"tenant_id"`
 	KnowledgeID    string `json:"knowledge_id"`
@@ -421,6 +677,7 @@ type DataTableSummaryPayload struct {
 
 // DataTableSummaryService is a service for extracting tables
 type DataTableSummaryService struct {
+	knowledgeInputs      interfaces.KnowledgeBuildInputReader
 	modelService         interfaces.ModelService
 	knowledgeBaseService interfaces.KnowledgeBaseService
 	knowledgeService     interfaces.KnowledgeService
@@ -470,6 +727,20 @@ func (s *DataTableSummaryService) Handle(ctx context.Context, t *asynq.Task) err
 		return err
 	}
 
+	var closeConfiguration func()
+	var err error
+	ctx, closeConfiguration, err = beginNextcloudTaskConfigurationRead(ctx, s.knowledgeInputs)
+	if err != nil {
+		return err
+	}
+	defer closeConfiguration()
+	if payload.OriginalInput != nil {
+		ctx, err = resumeKnowledgeEnrichment(ctx, s.knowledgeInputs, payload.OriginalInput, payload.ProducerInput,
+			func() any { return tableProducerControls(payload) })
+		if err != nil {
+			return err
+		}
+	}
 	ctx = logger.WithRequestID(ctx, uuid.New().String())
 	ctx = logger.WithField(ctx, "knowledge", payload.KnowledgeID)
 	ctx = types.WithExecutionTenant(ctx, payload.TenantID)
@@ -487,6 +758,29 @@ func (s *DataTableSummaryService) Handle(ctx context.Context, t *asynq.Task) err
 		return err
 	}
 	ctx = context.WithValue(ctx, types.TenantInfoContextKey, resources.tenant)
+	if resources.knowledge.Channel == types.ConnectorTypeNextcloud {
+		store, ok := s.knowledgeInputs.(*repository.KnowledgeInputProvenanceStore)
+		if !ok || payload.OriginalInput == nil || payload.ProducerInput == nil || payload.ArtifactSHA256 == "" {
+			return types.ErrSourceLineageUnknown
+		}
+		expected, e := store.NextcloudOriginalTableArtifactDigest(ctx, payload.OriginalInput)
+		if e != nil {
+			return e
+		}
+		if expected != payload.ArtifactSHA256 {
+			return repository.ErrKnowledgeInputChanged
+		}
+		resources.verifiedFile = verifiedTableFileService{
+			FileService: s.resolveFileServiceForKnowledge(ctx, resources), ctx: ctx,
+			path: resources.knowledge.FilePath, digest: expected,
+		}
+		if err := repository.RecordNextcloudDerivedBackendSelection(
+			ctx,
+			resources.retrieveEngine.SelectedBackendTypes(),
+		); err != nil {
+			return err
+		}
+	}
 
 	// 3. 加载表格数据并生成摘要
 	chunks, err := s.processTableData(ctx, resources)
@@ -506,6 +800,7 @@ func (s *DataTableSummaryService) Handle(ctx context.Context, t *asynq.Task) err
 
 // extractionResources 封装提取过程所需的所有资源
 type extractionResources struct {
+	verifiedFile   interfaces.FileService
 	knowledge      *types.Knowledge
 	knowledgeBase  *types.KnowledgeBase
 	tenant         *types.Tenant
@@ -516,7 +811,10 @@ type extractionResources struct {
 
 // prepareResources 准备提取所需的所有资源
 // 思路：集中加载所有依赖，统一错误处理，避免分散的资源获取逻辑
-func (s *DataTableSummaryService) prepareResources(ctx context.Context, payload DataTableSummaryPayload) (*extractionResources, error) {
+func (s *DataTableSummaryService) prepareResources(
+	ctx context.Context,
+	payload DataTableSummaryPayload,
+) (*extractionResources, error) {
 	// 获取并验证知识文件
 	knowledge, err := s.knowledgeService.GetRepository().GetKnowledgeByID(ctx, payload.TenantID, payload.KnowledgeID)
 	if err != nil {
@@ -589,7 +887,13 @@ func (s *DataTableSummaryService) prepareResources(ctx context.Context, payload 
 
 // resolveFileServiceForKnowledge resolves a provider-specific file service for the current knowledge file.
 // It falls back to the global service when tenant storage config is unavailable.
-func (s *DataTableSummaryService) resolveFileServiceForKnowledge(ctx context.Context, resources *extractionResources) interfaces.FileService {
+func (s *DataTableSummaryService) resolveFileServiceForKnowledge(
+	ctx context.Context,
+	resources *extractionResources,
+) interfaces.FileService {
+	if resources != nil && resources.verifiedFile != nil {
+		return resources.verifiedFile
+	}
 	if resources == nil || resources.knowledge == nil {
 		return s.fileService
 	}
@@ -615,22 +919,46 @@ func (s *DataTableSummaryService) resolveFileServiceForKnowledge(ctx context.Con
 		return s.fileService
 	}
 
-	resolvedSvc, resolvedProvider, err := s.storageResolver.ResolveFileService(ctx, resources.tenant, backendID, provider, baseDir)
+	resolvedSvc, resolvedProvider, err := s.storageResolver.ResolveFileService(
+		ctx,
+		resources.tenant,
+		backendID,
+		provider,
+		baseDir,
+	)
 	if err != nil {
-		logger.Warnf(ctx, "[TableSummary] Failed to resolve file service for provider=%s, fallback to default: %v", provider, err)
+		logger.Warnf(
+			ctx,
+			"[TableSummary] Failed to resolve file service for provider=%s, fallback to default: %v",
+			provider,
+			err,
+		)
 		return s.fileService
 	}
-	logger.Infof(ctx, "[TableSummary] Resolved file service for knowledge=%s provider=%s", resources.knowledge.ID, resolvedProvider)
+	logger.Infof(
+		ctx,
+		"[TableSummary] Resolved file service for knowledge=%s provider=%s",
+		resources.knowledge.ID,
+		resolvedProvider,
+	)
 	return resolvedSvc
 }
 
 // processTableData 处理表格数据：加载 -> 分析 -> 生成摘要 -> 创建chunks
 // 思路：将数据处理的核心流程集中在一起，保持逻辑连贯性
-func (s *DataTableSummaryService) processTableData(ctx context.Context, resources *extractionResources) ([]*types.Chunk, error) {
+func (s *DataTableSummaryService) processTableData(
+	ctx context.Context,
+	resources *extractionResources,
+) ([]*types.Chunk, error) {
 	// 创建DuckDB会话并加载数据
 	sessionID := fmt.Sprintf("table_summary_%s", resources.knowledge.ID)
 	fileSvc := s.resolveFileServiceForKnowledge(ctx, resources)
-	duckdbTool := tools.NewDataAnalysisTool(s.knowledgeBaseService, s.knowledgeService, s.tenantService, fileSvc, s.sqlDB, sessionID, s.storageResolver)
+	resolver := s.storageResolver
+	if resources.verifiedFile != nil {
+		resolver = nil
+	}
+	duckdbTool := tools.NewDataAnalysisTool(s.knowledgeBaseService, s.knowledgeService, s.tenantService,
+		fileSvc, s.sqlDB, sessionID, resolver)
 	defer duckdbTool.Cleanup(ctx)
 
 	// 使用knowledge.ID作为表名，根据文件类型自动加载数据
@@ -640,7 +968,13 @@ func (s *DataTableSummaryService) processTableData(ctx context.Context, resource
 		return nil, err
 	}
 
-	logger.Infof(ctx, "Loaded table %s with %d columns and %d rows", tableSchema.TableName, len(tableSchema.Columns), tableSchema.RowCount)
+	logger.Infof(
+		ctx,
+		"Loaded table %s with %d columns and %d rows",
+		tableSchema.TableName,
+		len(tableSchema.Columns),
+		tableSchema.RowCount,
+	)
 
 	// 获取样本数据用于生成摘要
 	input := tools.DataAnalysisInput{
@@ -652,7 +986,12 @@ func (s *DataTableSummaryService) processTableData(ctx context.Context, resource
 		logger.Errorf(ctx, "failed to marshal input: %v", err)
 		return nil, err
 	}
-	sampleResult, err := duckdbTool.Execute(ctx, jsonData)
+	var sampleResult *types.ToolResult
+	if resources.verifiedFile != nil {
+		sampleResult, err = duckdbTool.SampleLoadedKnowledge(ctx, resources.knowledge, 10)
+	} else {
+		sampleResult, err = duckdbTool.Execute(ctx, jsonData)
+	}
 	if err != nil {
 		logger.Errorf(ctx, "failed to get sample data: %v", err)
 		return nil, err
@@ -669,7 +1008,10 @@ func (s *DataTableSummaryService) processTableData(ctx context.Context, resource
 		if resources.knowledge != nil {
 			processOverrides, _ = resources.knowledge.ProcessOverrides()
 		}
-		customInstructions = ResolveProcessConfig(resources.knowledgeBase, processOverrides).ChunkingConfig.TableMetadataInstructions
+		customInstructions = ResolveProcessConfig(
+			resources.knowledgeBase,
+			processOverrides,
+		).ChunkingConfig.TableMetadataInstructions
 	}
 	// The stored summary is later shown to the model by data_schema, so it
 	// must name the model-facing table, never the physical knowledge-ID table.
@@ -679,7 +1021,7 @@ func (s *DataTableSummaryService) processTableData(ctx context.Context, resource
 		logger.Errorf(ctx, "failed to generate table description: %v", err)
 		return nil, err
 	}
-	logger.Debugf(ctx, "table describe of knowledge %s: %s", resources.knowledge.ID, tableDescription)
+	logger.Debugf(ctx, "table description prepared for knowledge %s", resources.knowledge.ID)
 
 	columnDescription, err := s.generateColumnDescriptions(ctx, resources.chatModel, tools.DataAnalysisTableName,
 		schemaDesc, sampleDesc, customInstructions)
@@ -687,7 +1029,7 @@ func (s *DataTableSummaryService) processTableData(ctx context.Context, resource
 		logger.Errorf(ctx, "failed to generate column descriptions: %v", err)
 		return nil, err
 	}
-	logger.Debugf(ctx, "column describe of knowledge %s: %s", resources.knowledge.ID, columnDescription)
+	logger.Debugf(ctx, "column descriptions prepared for knowledge %s", resources.knowledge.ID)
 
 	// 构建chunks：一个表格摘要chunk + 多个列描述chunks
 	chunks := s.buildChunks(resources, tableDescription, columnDescription)
@@ -696,7 +1038,11 @@ func (s *DataTableSummaryService) processTableData(ctx context.Context, resource
 
 // buildChunks 构建chunk对象
 // tableDescription和columnDescriptions分别生成一个chunk
-func (s *DataTableSummaryService) buildChunks(resources *extractionResources, tableDescription string, columnDescription string) []*types.Chunk {
+func (s *DataTableSummaryService) buildChunks(
+	resources *extractionResources,
+	tableDescription string,
+	columnDescription string,
+) []*types.Chunk {
 	chunks := make([]*types.Chunk, 0, 2)
 
 	// 表格摘要chunk
@@ -742,6 +1088,12 @@ func (s *DataTableSummaryService) indexToVectorDB(
 	engine *retriever.CompositeRetrieveEngine,
 	embedder embedding.Embedder,
 ) error {
+	if err := requireActualKnowledgeBuildInput(ctx); err != nil {
+		return err
+	}
+	if repository.KnowledgeBuildInputProofFromContext(ctx) != nil {
+		embedder = verifiedTableEmbedder{Embedder: embedder}
+	}
 	// 构建索引信息列表
 	indexInfoList := make([]*types.IndexInfo, 0, len(chunks))
 	for _, chunk := range chunks {
@@ -763,6 +1115,10 @@ func (s *DataTableSummaryService) indexToVectorDB(
 	}
 	logger.Infof(ctx, "Created %d chunks for data table", len(chunks))
 
+	// A SQL chunk receipt already binds every vector's actual influencing source union.
+	if err := requireActualKnowledgeBuildInput(ctx); err != nil {
+		return err
+	}
 	// 批量索引
 	if err := engine.BatchIndex(ctx, embedder, indexInfoList); err != nil {
 		logger.Errorf(ctx, "failed to index chunks: %v", err)
@@ -783,13 +1139,18 @@ func (s *DataTableSummaryService) indexToVectorDB(
 
 // cleanupOnFailure 索引失败时的清理工作
 // 思路：删除已创建的chunk和对应的向量索引，避免脏数据残留
-func (s *DataTableSummaryService) cleanupOnFailure(ctx context.Context, resources *extractionResources, chunks []*types.Chunk, indexErr error) {
+func (s *DataTableSummaryService) cleanupOnFailure(
+	ctx context.Context,
+	resources *extractionResources,
+	chunks []*types.Chunk,
+	indexErr error,
+) {
 	logger.Warnf(ctx, "Starting cleanup due to failure: %v", indexErr)
 
 	// 1. 更新知识状态为失败
 	before, after := *resources.knowledge, *resources.knowledge
 	after.ParseStatus = types.ParseStatusFailed
-	after.ErrorMessage = indexErr.Error()
+	after.ErrorMessage = apperrors.PublicMessage(indexErr)
 	if err := s.knowledgeService.GetRepository().UpdateKnowledgeForTransfer(ctx, &before, &after); err != nil {
 		logger.Warnf(ctx, "Table summary cleanup skipped after knowledge changed: %v", err)
 		return
@@ -832,6 +1193,9 @@ func (s *DataTableSummaryService) generateTableDescription(ctx context.Context, 
 	prompt = types.AppendCustomPromptInstructions(prompt, customInstructions, "table_metadata")
 	// logger.Debugf(ctx, "generateTableDescription prompt: %s", prompt)
 
+	if err := requireActualKnowledgeBuildInput(ctx); err != nil {
+		return "", err
+	}
 	thinking := false
 	response, err := chatModel.Chat(ctx, []chat.Message{
 		{Role: "user", Content: prompt},
@@ -844,6 +1208,9 @@ func (s *DataTableSummaryService) generateTableDescription(ctx context.Context, 
 		return "", fmt.Errorf("failed to generate table description: %w", err)
 	}
 
+	if err := requireActualKnowledgeBuildInput(ctx); err != nil {
+		return "", err
+	}
 	return fmt.Sprintf("# Table Summary\n\nTable name: %s\n\n%s", tableName, response.Content), nil
 }
 
@@ -857,6 +1224,9 @@ func (s *DataTableSummaryService) generateColumnDescriptions(ctx context.Context
 	// logger.Debugf(ctx, "generateColumnDescriptions prompt: %s", prompt)
 
 	// Call LLM once for all columns
+	if err := requireActualKnowledgeBuildInput(ctx); err != nil {
+		return "", err
+	}
 	thinking := false
 	response, err := chatModel.Chat(ctx, []chat.Message{
 		{Role: "user", Content: prompt},
@@ -869,11 +1239,18 @@ func (s *DataTableSummaryService) generateColumnDescriptions(ctx context.Context
 		return "", fmt.Errorf("failed to generate column descriptions: %w", err)
 	}
 
+	if err := requireActualKnowledgeBuildInput(ctx); err != nil {
+		return "", err
+	}
 	return fmt.Sprintf("# Table Column Information\n\nTable name: %s\n\n%s", tableName, response.Content), nil
 }
 
 // buildSampleDataDescription builds a formatted sample data description
-func (s *DataTableSummaryService) buildSampleDataDescription(ctx context.Context, sampleData *types.ToolResult, maxRows int) string {
+func (s *DataTableSummaryService) buildSampleDataDescription(
+	ctx context.Context,
+	sampleData *types.ToolResult,
+	maxRows int,
+) string {
 	var builder strings.Builder
 	builder.WriteString(fmt.Sprintf("Sample data (first %d rows):\n", maxRows))
 
@@ -919,4 +1296,69 @@ func (s *DataTableSummaryService) buildSampleDataDescription(ctx context.Context
 	}
 
 	return builder.String()
+}
+
+func configpkgGraphTemplate(template *types.PromptTemplateStructured) (*types.PromptTemplateStructured, error) {
+	return config.BuiltInGraphTemplateOrigin(template, "graph")
+}
+
+// ConfigureChunkGraphTemplateAuthorizer is a trusted in-process binder for a
+// source-derived operator template. Independent exact code literals need no
+// additional source authorization; arbitrary custom YAML remains unknown.
+func ConfigureChunkGraphTemplateAuthorizer(
+	handler interfaces.TaskHandler,
+	check func(context.Context, *types.SourceLineage) error,
+) {
+	if impl, ok := handler.(*ChunkExtractService); ok {
+		impl.templateSourceCheck = check
+	}
+}
+
+func freezeGraphBuildSnapshot(snapshot *types.KnowledgeBuildInputSnapshot) (*types.KnowledgeBuildInputSnapshot, error) {
+	if snapshot == nil {
+		return nil, types.ErrGraphSourceReceiptUnknown
+	}
+	out := &types.KnowledgeBuildInputSnapshot{}
+	clone := func(in, out any) error {
+		data, err := json.Marshal(in)
+		if err != nil {
+			return err
+		}
+		return json.Unmarshal(data, out)
+	}
+	out.Knowledge = &types.Knowledge{}
+	if err := clone(snapshot.Knowledge, out.Knowledge); err != nil {
+		return nil, err
+	}
+	out.KnowledgeBase = &types.KnowledgeBase{}
+	if err := clone(snapshot.KnowledgeBase, out.KnowledgeBase); err != nil {
+		return nil, err
+	}
+	out.Proof = &types.KnowledgeBuildInputProof{}
+	if err := clone(snapshot.Proof, out.Proof); err != nil {
+		return nil, err
+	}
+	if err := clone(snapshot.Chunks, &out.Chunks); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func recheckOriginalGraphProof(
+	ctx context.Context,
+	reader interfaces.KnowledgeBuildInputReader,
+	proof *types.KnowledgeBuildInputProof,
+) error {
+	if reader == nil || proof == nil {
+		return types.ErrGraphSourceReceiptUnknown
+	}
+	data, err := json.Marshal(proof)
+	if err != nil {
+		return err
+	}
+	var copied types.KnowledgeBuildInputProof
+	if err := json.Unmarshal(data, &copied); err != nil {
+		return err
+	}
+	return reader.RecheckKnowledgeBuildInputs(ctx, &copied)
 }

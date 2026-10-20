@@ -420,6 +420,15 @@
           :all-models="allModels"
           @update:graphExtract="handleNodeExtractUpdate"
         />
+        <div v-if="formData" class="form-item graph-publication-policy">
+          <t-checkbox
+            v-model="formData.indexingStrategy.graphRequired"
+            :disabled="!formData.indexingStrategy.graphEnabled"
+          >
+            {{ $t('graphSettings.requiredForPublication') }}
+          </t-checkbox>
+          <p class="form-tip">{{ $t('graphSettings.requiredForPublicationDescription') }}</p>
+        </div>
       </div>
 
       <!-- 高级设置 -->
@@ -869,6 +878,7 @@ const initFormData = (type: 'document' | 'faq' = 'document') => {
       keywordEnabled: true,
       wikiEnabled: false,
       graphEnabled: false,
+      graphRequired: false,
     },
     // Vector-store binding. Empty string means "use the env-configured
     // store"; create mode defaults to that, edit mode loads the
@@ -1025,6 +1035,7 @@ const loadKBData = async (
         keywordEnabled: kb.indexing_strategy?.keyword_enabled ?? true,
         wikiEnabled: kb.indexing_strategy?.wiki_enabled ?? false,
         graphEnabled: kb.indexing_strategy?.graph_enabled ?? false,
+        graphRequired: kb.indexing_strategy?.graph_required ?? false,
       },
       // Vector-store binding. vectorStoreId is editor-only state; it
       // is only included in the create request, never the update
@@ -1252,6 +1263,8 @@ const handleAdoptProfileGist = () => {
 const handleNodeExtractUpdate = (config: any) => {
   if (formData.value) {
     formData.value.nodeExtractConfig = { ...config }
+    formData.value.indexingStrategy.graphEnabled = !!config.enabled
+    if (!config.enabled) formData.value.indexingStrategy.graphRequired = false
   }
 }
 
@@ -1434,6 +1447,7 @@ const buildSubmitData = () => {
       keyword_enabled: formData.value.indexingStrategy?.keywordEnabled ?? true,
       wiki_enabled: formData.value.indexingStrategy?.wikiEnabled ?? false,
       graph_enabled: formData.value.indexingStrategy?.graphEnabled ?? false,
+      graph_required: !!formData.value.indexingStrategy?.graphEnabled && !!formData.value.indexingStrategy?.graphRequired,
     }
   }
 
@@ -1539,6 +1553,7 @@ const doSubmit = async () => {
           keyword_enabled: formData.value.indexingStrategy?.keywordEnabled ?? true,
           wiki_enabled: formData.value.indexingStrategy?.wikiEnabled ?? false,
           graph_enabled: formData.value.indexingStrategy?.graphEnabled ?? false,
+          graph_required: !!formData.value.indexingStrategy?.graphEnabled && !!formData.value.indexingStrategy?.graphRequired,
         }
       }
       await updateKnowledgeBase(kbId, {
@@ -1600,7 +1615,8 @@ const doSubmit = async () => {
           curr.vectorEnabled !== prev.vectorEnabled ||
           curr.keywordEnabled !== prev.keywordEnabled ||
           curr.wikiEnabled !== prev.wikiEnabled ||
-          curr.graphEnabled !== prev.graphEnabled
+          curr.graphEnabled !== prev.graphEnabled ||
+          curr.graphRequired !== prev.graphRequired
         )
         if (strategyChanged) {
           const dialog = DialogPlugin.confirm({
@@ -1793,6 +1809,13 @@ watch(() => chatResources.allModels, (list) => {
   &:last-child {
     margin-bottom: 0;
   }
+}
+
+.graph-publication-policy {
+  margin-top: 24px;
+  padding: 16px;
+  background: var(--td-bg-color-secondarycontainer);
+  border-radius: var(--app-radius-md);
 }
 
 .form-label {

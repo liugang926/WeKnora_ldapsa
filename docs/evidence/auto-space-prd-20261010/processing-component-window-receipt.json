@@ -1,0 +1,30 @@
+{
+  "actor_id": "bde892bbd383e9c7c48530d0a4e3b4bdf90c67a8d3ae8d907f041e0b4200c0b0",
+  "actor_name": "/weknora-prd-component-go",
+  "started_at": "2026-10-10T08:55:21.408844797Z",
+  "finished_at": "2026-10-10T09:15:21.58530113Z",
+  "running": false,
+  "entry_exit_code": 0,
+  "oom_killed": false,
+  "memory_bytes": 2147483648,
+  "nano_cpus": 1000000000,
+  "hard_wallclock_seconds": 1200,
+  "commands": [
+    {
+      "log": "final-all-packages-compile.log",
+      "exit_code": 0,
+      "result": "all packages compile only, cmd/server included; this precedes final fixture edits"
+    },
+    {
+      "log": "final-control-live-targets.log",
+      "exit_code": 1,
+      "result": "first repository attempt missing control migrations in fixtures; actual NC onboarding timed out420s. Real NC graph pipeline, ten file SQL graph smoke, actual owner controls denied, HMAC/scoped routes/auth roles/required flags/root authorization passed"
+    },
+    {
+      "log": "final-repaired-repository-targets.log",
+      "exit_code": 1,
+      "executed": false,
+      "result": "actor hard deadline passed; docker rejected exec. Repaired repository tests remain pending"
+    }
+  ]
+}

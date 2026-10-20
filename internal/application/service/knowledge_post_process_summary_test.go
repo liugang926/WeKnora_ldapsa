@@ -2,12 +2,10 @@ package service
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"testing"
 
 	"github.com/Tencent/WeKnora/internal/types"
-	"github.com/hibiken/asynq"
 	"github.com/stretchr/testify/require"
 )
 
@@ -18,20 +16,23 @@ type optionalSummaryKnowledgeRepo struct {
 }
 
 func (r *optionalSummaryKnowledgeRepo) UpdateKnowledgeColumn(
-	_ context.Context, _ string, column string, value interface{},
+	ctx context.Context, id string, column string, value interface{},
 ) error {
-	if column == "summary_status" {
-		r.knowledge.SummaryStatus = value.(string)
-	}
-	return nil
+	return r.wikiEnqueueFailureKnowledgeRepo.UpdateKnowledgeColumn(ctx, id, column, value)
 }
 
-func (r *optionalSummaryKnowledgeRepo) CompleteProcessingWithoutSubtasks(context.Context, string) (bool, error) {
+func (r *optionalSummaryKnowledgeRepo) CompleteProcessingWithoutSubtasks(ctx context.Context, id string) (bool, error) {
 	if r.completionErr != nil {
 		return false, r.completionErr
 	}
 	if r.completionSkipped {
 		return false, nil
+	}
+	if r.KnowledgeRepository != nil {
+		completed, err := r.KnowledgeRepository.CompleteProcessingWithoutSubtasks(ctx, id)
+		if err != nil || !completed {
+			return completed, err
+		}
 	}
 	r.knowledge.ParseStatus = types.ParseStatusCompleted
 	r.knowledge.SummaryStatus = types.SummaryStatusNone
@@ -103,12 +104,10 @@ func TestKnowledgePostProcessOptionalSummary(t *testing.T) {
 				taskEnqueuer: queue,
 				pendingRepo:  &wikiEnqueueFailurePendingRepo{knowledgeRepo: &repo.wikiEnqueueFailureKnowledgeRepo},
 			}
-			payload, err := json.Marshal(types.KnowledgePostProcessPayload{
-				TenantID: 7, KnowledgeID: "doc", KnowledgeBaseID: "kb",
-			})
-			require.NoError(t, err)
-			task := asynq.NewTask(types.TypeKnowledgePostProcess, payload)
-			require.NoError(t, service.Handle(context.Background(), task))
+			f := attachPostProcessOriginalInputs(t, service, &repo.wikiEnqueueFailureKnowledgeRepo, kb,
+				service.chunkRepo.(*wikiEnqueueFailureChunkRepo).chunks)
+			require.NoError(t, service.Handle(f.build, postProcessOriginalTask(t, f)))
+			assertPostProcessQueuedOriginals(t, f, queue)
 			require.Equal(t, tt.wantTasks, queue.taskTypes)
 			require.Equal(t, len(tt.wantTasks), repo.expectedSubtasks)
 			if len(tt.wantTasks) == 0 {
@@ -158,20 +157,30 @@ func TestKnowledgePostProcessWithoutSummaryCompletionFailure(t *testing.T) {
 				}}},
 				taskEnqueuer: queue,
 			}
-			payload, err := json.Marshal(types.KnowledgePostProcessPayload{
-				TenantID: 7, KnowledgeID: "doc", KnowledgeBaseID: "kb",
-			})
-			require.NoError(t, err)
-			err = svc.Handle(context.Background(), asynq.NewTask(types.TypeKnowledgePostProcess, payload))
+			f := attachPostProcessOriginalInputs(t, svc, &repo.wikiEnqueueFailureKnowledgeRepo,
+				svc.kbService.(*wikiEnqueueFailureKBService).kb, svc.chunkRepo.(*wikiEnqueueFailureChunkRepo).chunks)
+			task := postProcessOriginalTask(t, f)
+			err := svc.Handle(f.build, task)
 			require.ErrorIs(t, err, tc.err)
 			require.Empty(t, queue.taskTypes)
 			require.Equal(t, types.ParseStatusProcessing, knowledge.ParseStatus)
+			var handoffs int64
+			require.NoError(t, f.db.Model(&types.TaskPendingOp{}).
+				Where("task_type = ? AND scope_id = ?", types.TypeKnowledgeAutoTag, knowledge.ID).
+				Count(&handoffs).Error)
+			require.Zero(t, handoffs, "failed or skipped completion must not own child work")
 			if tc.err != nil {
 				repo.completionErr = nil
-				task := asynq.NewTask(types.TypeKnowledgePostProcess, payload)
-				require.NoError(t, svc.Handle(context.Background(), task))
+				require.NoError(t, svc.Handle(f.build, task))
 				require.Equal(t, types.ParseStatusCompleted, knowledge.ParseStatus)
 				require.Equal(t, []string{types.TypeKnowledgeAutoTag}, queue.taskTypes)
+				assertPostProcessQueuedOriginals(t, f, queue)
+				var op types.TaskPendingOp
+				require.NoError(t, f.db.Where("task_type = ? AND scope_id = ?",
+					types.TypeKnowledgeAutoTag, knowledge.ID).Take(&op).Error)
+				require.Equal(t, "auto_tag_completion", op.Op)
+				require.NotEmpty(t, op.DedupKey)
+				require.JSONEq(t, string(op.Payload), string(queue.tasks[0].Payload()))
 			}
 		})
 	}

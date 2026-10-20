@@ -18,3 +18,6 @@ cli/acceptance/testdata/**/*.json text eol=lf
 
 # Unified diffs use a space to mark empty context lines.
 patches/browserskill/*.patch whitespace=-blank-at-eol
+
+# Preserve exact diagnostic bytes, including Go/terminal whitespace.
+docs/evidence/*-logs/** -diff

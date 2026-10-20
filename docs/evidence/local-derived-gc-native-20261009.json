@@ -1,0 +1,30 @@
+{
+  "actual_source_commit": "76d82e1f6745c00eca60ff78d8d0fb78f651a047",
+  "audit_fulltext_purge_complete": false,
+  "cleanup_verified": true,
+  "external_derived_cleanup_complete": false,
+  "go_container_id": "36f450b0d5605ddda56d3ca561c53beb3f7cbe5e7437ba050f2eefd9ee6acad9",
+  "go_image": "weknora-go-test@sha256:5a74e8b5137496d3e22c72c01d862c4cbb1fe6ce476ddf5616fd9a807d6ae9ac",
+  "host_ports": false,
+  "internal_network": true,
+  "limits": {
+    "go": "1 CPU/2 GiB",
+    "postgres": "1 CPU/512 MiB/tmpfs"
+  },
+  "native_pgvector": true,
+  "network_id": "5ae73c3dd3884e59ef87bcf2071db7f660400082cc8328bca7070aa32b7d72b7",
+  "pg_container_id": "24bc636271aeb84799054896c2abe21dc6d056d247318430a31fc6776778adc2",
+  "pipeline": "actual signed source fixture + input provenance + Composite/KVHybrid/model + local provider/catalog + RunDue",
+  "postgres_image": "paradedb/paradedb@sha256:58bf87d2a6f1e72f56590b0f0ae1467e82c3f99ca203dde646672c8ac13148b2",
+  "production_coverage_inserted": false,
+  "remaining_nonce_schemas": 0,
+  "schema_version": 1,
+  "shared_target_modified": false,
+  "source_commit_unchanged": true,
+  "source_finally_clean": true,
+  "source_initially_clean": true,
+  "source_read_only": true,
+  "sqlite_vec_module": "actual sqlite_vec.Auto()/FTS5",
+  "status": "PASS",
+  "tests_log_sha256": "c7b08706ab6f7cdbb8c899ad513f99b198c3361d3e7dc7f408c6de91dfca5dca"
+}

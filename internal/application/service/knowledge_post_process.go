@@ -8,6 +8,9 @@ import (
 	"sort"
 	"time"
 
+	"github.com/Tencent/WeKnora/internal/application/repository"
+	"github.com/Tencent/WeKnora/internal/config"
+
 	"github.com/Tencent/WeKnora/internal/application/access"
 	"github.com/Tencent/WeKnora/internal/infrastructure/docparser"
 	"github.com/Tencent/WeKnora/internal/logger"
@@ -21,14 +24,35 @@ import (
 // KnowledgePostProcessService acts as an orchestrator for all post-processing tasks
 // after a document has been parsed and split into chunks (including multimodal OCR/Caption).
 type KnowledgePostProcessService struct {
-	knowledgeRepo interfaces.KnowledgeRepository
-	kbService     interfaces.KnowledgeBaseService
-	chunkService  interfaces.ChunkService
-	chunkRepo     interfaces.ChunkRepository
-	taskEnqueuer  interfaces.TaskEnqueuer
-	pendingRepo   interfaces.TaskPendingOpsRepository
-	redisClient   *redis.Client
-	spanTracker   SpanTracker
+	knowledgeRepo    interfaces.KnowledgeRepository
+	kbService        interfaces.KnowledgeBaseService
+	chunkService     interfaces.ChunkService
+	chunkRepo        interfaces.ChunkRepository
+	taskEnqueuer     interfaces.TaskEnqueuer
+	pendingRepo      interfaces.TaskPendingOpsRepository
+	redisClient      *redis.Client
+	spanTracker      SpanTracker
+	knowledgeInputs  interfaces.KnowledgeBuildInputReader
+	historyMaterials interfaces.KnowledgeHistoryTaskMaterialRestorer
+	enrichmentConfig *config.Config
+	processingLedger types.NextcloudProcessingLedger
+}
+
+// ConfigureKnowledgePostProcessInputProvenance configures the knowledge post process input provenance boundary.
+func ConfigureKnowledgePostProcessInputProvenance(
+	handler interfaces.TaskHandler,
+	reader interfaces.KnowledgeBuildInputReader,
+) {
+	if impl, ok := handler.(*KnowledgePostProcessService); ok {
+		impl.knowledgeInputs = reader
+	}
+}
+
+// ConfigureNextcloudPostProcessLedger configures the nextcloud post process ledger boundary.
+func ConfigureNextcloudPostProcessLedger(handler interfaces.TaskHandler, ledger types.NextcloudProcessingLedger) {
+	if impl, ok := handler.(*KnowledgePostProcessService); ok {
+		impl.processingLedger = ledger
+	}
 }
 
 func NewKnowledgePostProcessService(
@@ -86,8 +110,39 @@ func (s *KnowledgePostProcessService) Handle(ctx context.Context, task *asynq.Ta
 		return fmt.Errorf("unmarshal knowledge post process payload: %w", err)
 	}
 
+	var closeConfiguration func()
+	var configurationErr error
+	ctx, closeConfiguration, configurationErr = beginNextcloudTaskConfigurationRead(ctx, s.knowledgeInputs)
+	if configurationErr != nil {
+		return configurationErr
+	}
+	defer closeConfiguration()
 	logger.Infof(ctx, "[KnowledgePostProcess] Orchestrating post processing for knowledge: %s", payload.KnowledgeID)
 
+	if payload.OriginalInput != nil {
+		if s.knowledgeInputs == nil {
+			return types.ErrGraphSourceReceiptUnknown
+		}
+		var closeMaterials func()
+		var restoreErr error
+		ctx, closeMaterials, restoreErr = beginKnowledgeHistoryTaskMaterial(
+			ctx,
+			s.knowledgeInputs,
+			s.historyMaterials,
+			payload.OriginalInput,
+		)
+		if restoreErr != nil {
+			return restoreErr
+		}
+		defer closeMaterials()
+		// Restore history's actual actor before an execution-only wrapper
+		// captures an otherwise empty Caller in a fresh queue context.
+		ctx = types.WithExecutionTenant(ctx, payload.TenantID)
+		if err := s.knowledgeInputs.RecheckKnowledgeBuildInputs(ctx, payload.OriginalInput); err != nil {
+			return err
+		}
+		ctx = repository.WithKnowledgeBuildInputProof(ctx, s.knowledgeInputs, payload.OriginalInput)
+	}
 	ctx = types.WithExecutionTenant(ctx, payload.TenantID)
 	if payload.Language != "" {
 		ctx = context.WithValue(ctx, types.LanguageContextKey, payload.Language)
@@ -183,7 +238,8 @@ func (s *KnowledgePostProcessService) Handle(ctx context.Context, task *asynq.Ta
 	// Gather all text-like chunks (including newly added OCR and Caption from multimodal tasks)
 	var textChunks []*types.Chunk
 	for _, c := range chunks {
-		if c.ChunkType == types.ChunkTypeText || c.ChunkType == types.ChunkTypeImageOCR || c.ChunkType == types.ChunkTypeImageCaption {
+		if c.ChunkType == types.ChunkTypeText || c.ChunkType == types.ChunkTypeImageOCR ||
+			c.ChunkType == types.ChunkTypeImageCaption {
 			textChunks = append(textChunks, c)
 		}
 	}
@@ -209,9 +265,8 @@ func (s *KnowledgePostProcessService) Handle(ctx context.Context, task *asynq.Ta
 	willSpawnQuestion := len(textChunks) > 0 && kb.NeedsEmbeddingModel() &&
 		eff.QuestionGenerationConfig.Enabled
 	willSpawnWiki := kb.IndexingStrategy.WikiEnabled && len(textChunks) > 0
-	willSpawnAutoTag := kb.Type == types.KnowledgeBaseTypeDocument &&
+	autoTagOnCompletion := kb.Type == types.KnowledgeBaseTypeDocument &&
 		kb.AutoTagConfig != nil && kb.AutoTagConfig.Enabled && len(textChunks) > 0
-	enqueuedAutoTag := false
 
 	// Question generation now fans out one subtask per plain text chunk
 	// (mirroring the graph-extract per-chunk pattern) so each chunk's LLM
@@ -253,6 +308,79 @@ func (s *KnowledgePostProcessService) Handle(ctx context.Context, task *asynq.Ta
 		expectedSubtasks++
 	}
 	expectedSubtasks += graphChunkCount
+
+	if knowledge.Channel == types.ConnectorTypeNextcloud {
+		if s.processingLedger == nil {
+			return errors.New("nextcloud graph processing ledger unavailable")
+		}
+		if err := s.processingLedger.PlanGraph(
+			ctx,
+			knowledge,
+			attempt,
+			graphChunks,
+			eff.GraphEnabled,
+			kb.IndexingStrategy.GraphRequired,
+		); err != nil {
+			return err
+		}
+		ctx = types.WithNextcloudGraphQueueLedger(ctx, s.processingLedger)
+	}
+
+	// A retry after the durable finalizing handoff may precede graph payload
+	// persistence. Resume only those exact planned slots; existing queue intents
+	// and successful provider records retain their IDs and original inputs.
+	if knowledge.Channel == types.ConnectorTypeNextcloud && knowledge.ParseStatus == types.ParseStatusFinalizing &&
+		eff.GraphEnabled {
+		reader, ok := s.processingLedger.(interface {
+			UnpreparedGraphChunks(context.Context, uint64, string, int) ([]string, error)
+		})
+		if !ok {
+			return errors.New("nextcloud graph queue recovery unavailable")
+		}
+		ids, err := reader.UnpreparedGraphChunks(ctx, payload.TenantID, payload.KnowledgeID, attempt)
+		if err != nil {
+			return err
+		}
+		for i, chunkID := range ids {
+			if s.knowledgeInputs == nil {
+				return types.ErrGraphSourceReceiptUnknown
+			}
+			snapshot, err := s.knowledgeInputs.CaptureKnowledgeBuildInputs(
+				ctx,
+				types.KnowledgeBuildInputCaptureRequest{
+					Projection:      types.KnowledgeBuildProjectionGraph,
+					TenantID:        payload.TenantID,
+					KnowledgeBaseID: kb.ID,
+					KnowledgeID:     payload.KnowledgeID,
+					ChunkIDs:        []string{chunkID},
+					Expected:        repository.KnowledgeBuildInputProofFromContext(ctx),
+				},
+			)
+			if err != nil {
+				return err
+			}
+			if snapshot == nil || snapshot.Proof == nil {
+				return types.ErrGraphSourceReceiptUnknown
+			}
+			queued, err := NewChunkExtractTask(
+				ctx,
+				s.taskEnqueuer,
+				payload.TenantID,
+				chunkID,
+				kb.SummaryModelID,
+				payload.KnowledgeID,
+				attempt,
+				i,
+				snapshot.Proof,
+			)
+			if err != nil {
+				return err
+			}
+			if !queued {
+				return errors.New("nextcloud planned graph queue unavailable")
+			}
+		}
+	}
 
 	// enteredFinalizing is set only when the processing-to-finalizing handoff
 	// actually seeded the counter. For Wiki-enabled knowledge, that handoff
@@ -368,12 +496,9 @@ func (s *KnowledgePostProcessService) Handle(ctx context.Context, task *asynq.Ta
 		}
 	}
 
-	// Queue best-effort automatic tagging only after the processing row has
-	// successfully handed off to finalizing or completed. This avoids model calls from a
-	// duplicate post-process delivery that observes an already terminal row.
-	if willSpawnAutoTag {
-		enqueuedAutoTag = s.enqueueAutoTagTask(ctx, payload, attempt)
-	}
+	// The completion observer owns auto-tag enqueue after every producing
+	// subtask has committed, so its actual original inputs cannot be invalidated
+	// by a later legitimate summary/question output from this same parse.
 
 	// 4. Spawn Summary and Question Tasks
 	enqueuedSummary := false
@@ -415,10 +540,69 @@ func (s *KnowledgePostProcessService) Handle(ctx context.Context, task *asynq.Ta
 			"[KnowledgePostProcess] Spawning Graph RAG extract tasks for %d text/OCR chunks (of %d text-like)",
 			len(graphChunks), len(textChunks))
 		for i, chunk := range graphChunks {
+			var original *types.KnowledgeBuildInputProof
+			var captureErr error
+			if s.knowledgeInputs == nil {
+				captureErr = types.ErrGraphSourceReceiptUnknown
+			} else {
+				snapshot, err := s.knowledgeInputs.CaptureKnowledgeBuildInputs(
+					ctx,
+					types.KnowledgeBuildInputCaptureRequest{
+						Projection:      types.KnowledgeBuildProjectionGraph,
+						TenantID:        payload.TenantID,
+						KnowledgeBaseID: kb.ID,
+						KnowledgeID:     payload.KnowledgeID,
+						ChunkIDs:        []string{chunk.ID},
+						Expected:        repository.KnowledgeBuildInputProofFromContext(ctx),
+					},
+				)
+				if err != nil {
+					captureErr = err
+				} else if snapshot == nil || snapshot.Proof == nil {
+					captureErr = types.ErrGraphSourceReceiptUnknown
+				} else {
+					original = snapshot.Proof
+				}
+			}
+			if captureErr != nil {
+				logger.Warn(ctx, "graph original input admission unavailable")
+				if knowledge.Channel == types.ConnectorTypeNextcloud {
+					if err := s.processingLedger.FailGraph(
+						ctx,
+						payload.TenantID,
+						payload.KnowledgeID,
+						attempt,
+						chunk.ID,
+						"graph_input_unverified",
+						true,
+					); err != nil {
+						return err
+					}
+				}
+				continue
+			}
 			ok, err := NewChunkExtractTask(ctx, s.taskEnqueuer, payload.TenantID, chunk.ID, kb.SummaryModelID,
-				payload.KnowledgeID, attempt, i)
+				payload.KnowledgeID, attempt, i, original)
 			if err != nil {
-				logger.Errorf(ctx, "[KnowledgePostProcess] Failed to create chunk extract task for %s: %v", chunk.ID, err)
+				logger.Errorf(
+					ctx,
+					"[KnowledgePostProcess] Failed to create chunk extract task for %s: %v",
+					chunk.ID,
+					err,
+				)
+			}
+			if !ok && knowledge.Channel == types.ConnectorTypeNextcloud {
+				if ledgerErr := s.processingLedger.FailGraph(
+					ctx,
+					payload.TenantID,
+					payload.KnowledgeID,
+					attempt,
+					chunk.ID,
+					"graph_enqueue_failed",
+					true,
+				); ledgerErr != nil {
+					return ledgerErr
+				}
 			}
 			if ok {
 				enqueuedGraphCount++
@@ -503,7 +687,7 @@ func (s *KnowledgePostProcessService) Handle(ctx context.Context, task *asynq.Ta
 		"wiki_slot_owned":         wikiSlotOwned,
 		"enqueued_graph":          enqueuedGraphCount > 0,
 		"enqueued_graph_count":    enqueuedGraphCount,
-		"enqueued_auto_tag":       enqueuedAutoTag,
+		"auto_tag_on_completion":  autoTagOnCompletion,
 	}
 	s.tracker().EndSpan(ctx, postSpan, postOutput)
 	if wikiSlotOwned && wikiEnqueueErr != nil {
@@ -535,7 +719,32 @@ func (s *KnowledgePostProcessService) enqueueAutoTagTask(
 	if s.taskEnqueuer == nil {
 		return false
 	}
+	if s.knowledgeInputs == nil {
+		return false
+	}
+	actual, err := s.chunkRepo.ListChunksByKnowledgeIDAndTypes(
+		ctx,
+		payload.TenantID,
+		payload.KnowledgeID,
+		[]types.ChunkType{types.ChunkTypeText, types.ChunkTypeImageOCR, types.ChunkTypeImageCaption},
+	)
+	if err != nil {
+		return false
+	}
+	ids := []string{}
+	for _, chunk := range actual {
+		if chunk == nil || chunk.TenantID != payload.TenantID || chunk.KnowledgeBaseID != payload.KnowledgeBaseID ||
+			chunk.KnowledgeID != payload.KnowledgeID {
+			return false
+		}
+		ids = append(ids, chunk.ID)
+	}
+	original, err := s.capturePostProcessBuildProof(ctx, payload, ids)
+	if err != nil {
+		return false
+	}
 	taskPayload := types.KnowledgeAutoTagPayload{
+		OriginalInput:   original,
 		TenantID:        payload.TenantID,
 		KnowledgeBaseID: payload.KnowledgeBaseID,
 		KnowledgeID:     payload.KnowledgeID,
@@ -544,15 +753,31 @@ func (s *KnowledgePostProcessService) enqueueAutoTagTask(
 	}
 	taskPayload.Initiator = types.TaskInitiatorFromContext(ctx)
 	langfuse.InjectTracing(ctx, &taskPayload)
+	store, ok := s.knowledgeInputs.(*repository.KnowledgeInputProvenanceStore)
+	if !ok {
+		return false
+	}
+	taskPayload.TaskInput, err = store.AdmitKnowledgeAutoTagTaskInput(ctx, taskPayload)
+	if err != nil {
+		return false
+	}
 	payloadBytes, err := json.Marshal(taskPayload)
 	if err != nil {
 		logger.Warnf(ctx, "[KnowledgePostProcess] Failed to marshal auto tag payload: %v", err)
 		return false
 	}
-	task := asynq.NewTask(types.TypeKnowledgeAutoTag, payloadBytes,
+	task, err := newKnowledgeQueueTask(ctx, s.knowledgeInputs, types.TypeKnowledgeAutoTag, payloadBytes,
 		asynq.Queue(types.QueueSummary), asynq.MaxRetry(2), asynq.Timeout(2*time.Minute))
+	if err != nil {
+		return false
+	}
 	if _, err := s.taskEnqueuer.Enqueue(task); err != nil {
-		logger.Warnf(ctx, "[KnowledgePostProcess] Failed to enqueue automatic tagging for %s: %v", payload.KnowledgeID, err)
+		logger.Warnf(
+			ctx,
+			"[KnowledgePostProcess] Failed to enqueue automatic tagging for %s: %v",
+			payload.KnowledgeID,
+			err,
+		)
 		return false
 	}
 	logger.Infof(ctx, "[KnowledgePostProcess] Enqueued automatic tagging for %s", payload.KnowledgeID)
@@ -562,12 +787,57 @@ func (s *KnowledgePostProcessService) enqueueAutoTagTask(
 // enqueueSummaryGenerationTask enqueues the summary task. Returns true only
 // when a task was actually placed on the queue, so the caller can release the
 // seeded pending-subtask slot when enqueue is skipped or fails.
-func (s *KnowledgePostProcessService) enqueueSummaryGenerationTask(ctx context.Context, payload types.KnowledgePostProcessPayload, attempt int) bool {
+func (s *KnowledgePostProcessService) enqueueSummaryGenerationTask(
+	ctx context.Context,
+	payload types.KnowledgePostProcessPayload,
+	attempt int,
+) bool {
 	if s.taskEnqueuer == nil {
 		return false
 	}
 
+	if s.knowledgeInputs == nil {
+		return false
+	}
+	actual, err := s.chunkRepo.ListChunksByKnowledgeIDAndTypes(
+		ctx,
+		payload.TenantID,
+		payload.KnowledgeID,
+		[]types.ChunkType{types.ChunkTypeText, types.ChunkTypeImageOCR, types.ChunkTypeImageCaption},
+	)
+	if err != nil {
+		return false
+	}
+	ids := []string{}
+	for _, chunk := range actual {
+		if chunk == nil || chunk.TenantID != payload.TenantID || chunk.KnowledgeBaseID != payload.KnowledgeBaseID ||
+			chunk.KnowledgeID != payload.KnowledgeID {
+			return false
+		}
+		ids = append(ids, chunk.ID)
+	}
+	original, err := s.capturePostProcessEnrichmentProof(ctx, payload, ids)
+	if err != nil {
+		logger.Warnf(ctx, "[KnowledgePostProcess] Failed to capture original summary inputs: %v", err)
+		return false
+	}
+
+	actualSnapshot, err := s.knowledgeInputs.CaptureKnowledgeBuildInputs(
+		ctx,
+		types.KnowledgeBuildInputCaptureRequest{
+			TenantID:        original.TenantID,
+			KnowledgeBaseID: original.KnowledgeBaseID,
+			KnowledgeID:     original.KnowledgeID,
+			ChunkIDs:        original.ChunkIDs,
+			Expected:        original,
+		},
+	)
+	if err != nil ||
+		requireKnowledgeEnrichmentPromptOrigin(s.enrichmentConfig, actualSnapshot.KnowledgeBase, "summary") != nil {
+		return false
+	}
 	taskPayload := types.SummaryGenerationPayload{
+		OriginalInput:   original,
 		TenantID:        payload.TenantID,
 		KnowledgeBaseID: payload.KnowledgeBaseID,
 		KnowledgeID:     payload.KnowledgeID,
@@ -575,6 +845,20 @@ func (s *KnowledgePostProcessService) enqueueSummaryGenerationTask(ctx context.C
 		Attempt:         attempt,
 	}
 	taskPayload.Initiator = types.TaskInitiatorFromContext(ctx)
+	store, ok := s.knowledgeInputs.(knowledgeEnrichmentInputStore)
+	if !ok {
+		return false
+	}
+	taskPayload.ProducerInput, err = store.AdmitKnowledgeProducerInput(
+		ctx,
+		original,
+		"summary",
+		summaryProducerControls(s.enrichmentConfig, taskPayload),
+	)
+	if err != nil {
+		logger.Warnf(ctx, "[KnowledgePostProcess] Failed to admit original summary controls: %v", err)
+		return false
+	}
 	langfuse.InjectTracing(ctx, &taskPayload)
 	payloadBytes, err := json.Marshal(taskPayload)
 	if err != nil {
@@ -582,10 +866,18 @@ func (s *KnowledgePostProcessService) enqueueSummaryGenerationTask(ctx context.C
 		return false
 	}
 
-	task := asynq.NewTask(types.TypeSummaryGeneration, payloadBytes,
+	task, err := newKnowledgeQueueTask(ctx, s.knowledgeInputs, types.TypeSummaryGeneration, payloadBytes,
 		asynq.Queue(types.QueueSummary), asynq.MaxRetry(3), asynq.Timeout(30*time.Minute))
+	if err != nil {
+		return false
+	}
 	if _, err := s.taskEnqueuer.Enqueue(task); err != nil {
-		logger.Warnf(ctx, "[KnowledgePostProcess] Failed to enqueue summary generation for %s: %v", payload.KnowledgeID, err)
+		logger.Warnf(
+			ctx,
+			"[KnowledgePostProcess] Failed to enqueue summary generation for %s: %v",
+			payload.KnowledgeID,
+			err,
+		)
 		return false
 	}
 	logger.Infof(ctx, "[KnowledgePostProcess] Enqueued summary generation task for %s", payload.KnowledgeID)
@@ -669,6 +961,54 @@ func (s *KnowledgePostProcessService) enqueueQuestionGenerationTasks(
 		if end < total {
 			taskPayload.NextChunkID = questionChunks[end].ID
 		}
+		inputs := append([]string{}, chunkIDs...)
+		if taskPayload.PrevChunkID != "" {
+			inputs = append(inputs, taskPayload.PrevChunkID)
+		}
+		if taskPayload.NextChunkID != "" {
+			inputs = append(inputs, taskPayload.NextChunkID)
+		}
+		original, captureErr := s.capturePostProcessEnrichmentProof(ctx, payload, inputs)
+		if captureErr != nil {
+			batchIndex++
+			continue
+		}
+		taskPayload.OriginalInput = original
+		actualSnapshot, captureErr := s.knowledgeInputs.CaptureKnowledgeBuildInputs(
+			ctx,
+			types.KnowledgeBuildInputCaptureRequest{
+				TenantID:        original.TenantID,
+				KnowledgeBaseID: original.KnowledgeBaseID,
+				KnowledgeID:     original.KnowledgeID,
+				ChunkIDs:        original.ChunkIDs,
+				Expected:        original,
+			},
+		)
+		if captureErr != nil ||
+			requireKnowledgeEnrichmentPromptOrigin(
+				s.enrichmentConfig,
+				actualSnapshot.KnowledgeBase,
+				"question",
+			) != nil {
+			batchIndex++
+			continue
+		}
+		store, ok := s.knowledgeInputs.(knowledgeEnrichmentInputStore)
+		if !ok {
+			batchIndex++
+			continue
+		}
+		taskPayload.ProducerInput, captureErr = store.AdmitKnowledgeProducerInput(
+			ctx,
+			original,
+			"question",
+			questionProducerControls(s.enrichmentConfig, taskPayload),
+		)
+		if captureErr != nil {
+			batchIndex++
+			continue
+		}
+
 		batchIndex++
 
 		taskPayload.Initiator = types.TaskInitiatorFromContext(ctx)
@@ -676,20 +1016,42 @@ func (s *KnowledgePostProcessService) enqueueQuestionGenerationTasks(
 		langfuse.InjectTracing(ctx, &taskPayload)
 		payloadBytes, err := json.Marshal(taskPayload)
 		if err != nil {
-			logger.Warnf(ctx, "[KnowledgePostProcess] Failed to marshal question generation payload for batch %d: %v", batchIndex-1, err)
+			logger.Warnf(
+				ctx,
+				"[KnowledgePostProcess] Failed to marshal question generation payload for batch %d: %v",
+				batchIndex-1,
+				err,
+			)
 			continue
 		}
 
-		task := asynq.NewTask(types.TypeQuestionGeneration, payloadBytes,
+		task, err := newKnowledgeQueueTask(ctx, s.knowledgeInputs, types.TypeQuestionGeneration, payloadBytes,
 			asynq.Queue(types.QueueQuestion), asynq.MaxRetry(3), asynq.Timeout(30*time.Minute))
+		if err != nil {
+			continue
+		}
 		if _, err := s.taskEnqueuer.Enqueue(task); err != nil {
-			logger.Warnf(ctx, "[KnowledgePostProcess] Failed to enqueue question generation batch %d for %s: %v", batchIndex-1, payload.KnowledgeID, err)
+			logger.Warnf(
+				ctx,
+				"[KnowledgePostProcess] Failed to enqueue question generation batch %d for %s: %v",
+				batchIndex-1,
+				payload.KnowledgeID,
+				err,
+			)
 			continue
 		}
 		enqueued++
 	}
-	logger.Infof(ctx, "[KnowledgePostProcess] Enqueued %d question generation batch tasks (%d chunks, batch_size=%d) for %s (count=%d)",
-		enqueued, total, questionGenChunkBatchSize, payload.KnowledgeID, questionCount)
+	logger.Infof(
+		ctx,
+		("[KnowledgePostProcess] Enqueued %d question generation batch tasks (%d chu" +
+			"nks, batch_size=%d) for %s (count=%d)"),
+		enqueued,
+		total,
+		questionGenChunkBatchSize,
+		payload.KnowledgeID,
+		questionCount,
+	)
 	return enqueued
 }
 
@@ -736,4 +1098,74 @@ func selectGraphChunks(chunks []*types.Chunk) []*types.Chunk {
 // extraction (or question generation) can find entities in it.
 func chunkHasExtractableText(content string) bool {
 	return extractRealText(docparser.StripMarkdownImages(content)) != ""
+}
+
+func (s *KnowledgePostProcessService) capturePostProcessBuildProof(
+	ctx context.Context,
+	payload types.KnowledgePostProcessPayload,
+	ids []string,
+) (*types.KnowledgeBuildInputProof, error) {
+	if s.knowledgeInputs == nil {
+		return nil, types.ErrSourceLineageUnknown
+	}
+	snapshot, err := s.knowledgeInputs.CaptureKnowledgeBuildInputs(
+		ctx,
+		types.KnowledgeBuildInputCaptureRequest{
+			TenantID:        payload.TenantID,
+			KnowledgeBaseID: payload.KnowledgeBaseID,
+			KnowledgeID:     payload.KnowledgeID,
+			ChunkIDs:        ids,
+			Expected:        repository.KnowledgeBuildInputProofFromContext(ctx),
+		},
+	)
+	if err != nil {
+		return nil, err
+	}
+	if snapshot == nil || snapshot.Proof == nil {
+		return nil, types.ErrSourceLineageUnknown
+	}
+	return snapshot.Proof, nil
+}
+
+func (s *KnowledgePostProcessService) capturePostProcessEnrichmentProof(
+	ctx context.Context,
+	payload types.KnowledgePostProcessPayload,
+	ids []string,
+) (*types.KnowledgeBuildInputProof, error) {
+	store, ok := s.knowledgeInputs.(knowledgeEnrichmentInputStore)
+	if !ok {
+		return nil, types.ErrSourceLineageUnknown
+	}
+	// Capture every image child used to enrich the selected text/neighbor input.
+	rows, err := s.chunkRepo.ListChunksByKnowledgeID(ctx, payload.TenantID, payload.KnowledgeID)
+	if err != nil {
+		return nil, err
+	}
+	wanted := map[string]bool{}
+	for _, id := range ids {
+		wanted[id] = true
+	}
+	for _, row := range rows {
+		if row != nil && wanted[row.ParentChunkID] &&
+			(row.ChunkType == types.ChunkTypeImageOCR || row.ChunkType == types.ChunkTypeImageCaption) {
+			if !wanted[row.ID] {
+				ids = append(ids, row.ID)
+				wanted[row.ID] = true
+			}
+		}
+	}
+	snapshot, err := store.CaptureKnowledgeEnrichmentInputs(
+		ctx,
+		types.KnowledgeBuildInputCaptureRequest{
+			TenantID:        payload.TenantID,
+			KnowledgeBaseID: payload.KnowledgeBaseID,
+			KnowledgeID:     payload.KnowledgeID,
+			ChunkIDs:        ids,
+			Expected:        repository.KnowledgeBuildInputProofFromContext(ctx),
+		},
+	)
+	if err != nil {
+		return nil, err
+	}
+	return snapshot.Proof, nil
 }

@@ -15,7 +15,6 @@ import (
 
 	"github.com/Tencent/WeKnora/internal/application/repository"
 	apperrors "github.com/Tencent/WeKnora/internal/errors"
-	"github.com/Tencent/WeKnora/internal/middleware"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	"github.com/gin-gonic/gin"
@@ -28,29 +27,6 @@ type leasePreviewService struct {
 	interfaces.KnowledgeService
 	knowledge *types.Knowledge
 	open      func(context.Context) (io.ReadCloser, error)
-}
-
-type leaseSearchService struct {
-	interfaces.KnowledgeService
-	rows []*types.Knowledge
-}
-
-func (s *leaseSearchService) SearchKnowledge(context.Context, string, int, int,
-	[]string,
-) ([]*types.Knowledge, bool, int64, error) {
-	return s.rows, false, int64(len(s.rows)), nil
-}
-
-func leaseSearchRouter(h *KnowledgeHandler) *gin.Engine {
-	gin.SetMode(gin.TestMode)
-	r := gin.New()
-	r.Use(middleware.ErrorHandler(), func(c *gin.Context) {
-		c.Set(types.TenantIDContextKey.String(), uint64(7))
-		c.Set(types.UserIDContextKey.String(), "test-user")
-		c.Next()
-	})
-	r.GET("/knowledge/search", h.SearchKnowledge)
-	return r
 }
 
 func (s *leasePreviewService) GetKnowledgeByIDOnly(context.Context, string) (*types.Knowledge, error) {
@@ -156,90 +132,24 @@ func assertLeaseReleased(t *testing.T, db *gorm.DB) {
 }
 
 func TestGlobalKnowledgeSearchRetirementBlocksGCAndSourceOutput(t *testing.T) {
-	db := leaseHandlerDB(t)
-	store := repository.NewNextcloudContentLeaseStore(db)
-	row := leaseHandlerKnowledge(t)
-	row.Title = "private source title"
-	nowMS := time.Now().UnixMilli()
-	require.NoError(t, db.Exec(`INSERT INTO nextcloud_content_lease_coverage
-		(tenant_id, knowledge_base_id, activated_at_ms, legacy_drained_at_ms,
-		 reader_revision, builder_revision)
-		VALUES (7, 'kb-1', ?, ?, 'test-reader', 'test-builder')`, nowMS-1000, nowMS-1000).Error)
-	scope := repository.NextcloudContentScope{
-		TenantID: 7, KnowledgeBaseID: "kb-1",
-		KnowledgeID: row.ID, DataSourceID: "source-1", ExternalID: "nextcloud:instance:1",
-	}
-	var retired atomic.Bool
-	var retireErr, claimErr error
-	h := &KnowledgeHandler{
-		kgService: &leaseSearchService{rows: []*types.Knowledge{row}},
-		contentLeases: &leaseAcquireHookStore{
-			NextcloudContentLeaseStore: store,
-			onAcquire: func() {
-				retireErr = store.RetireKnowledge(context.Background(), scope)
-				if retireErr != nil {
-					return
-				}
-				retired.Store(true)
-				var retiredAtMS int64
-				claimErr = db.Table("nextcloud_content_fences").Select("retired_at_ms").
-					Where("tenant_id = 7 AND knowledge_base_id = 'kb-1' AND knowledge_id = ?", row.ID).
-					Row().Scan(&retiredAtMS)
-				if claimErr == nil {
-					_, claimErr = store.ClaimKnowledgeGC(context.Background(), scope,
-						time.UnixMilli(retiredAtMS), time.Minute)
-				}
-			},
-		},
-		publicationCheck: func(context.Context, *types.Knowledge) error {
-			if retired.Load() {
-				return apperrors.NewForbiddenError("source revoked")
-			}
-			return nil
-		},
-	}
-	w := httptest.NewRecorder()
-	leaseSearchRouter(h).ServeHTTP(w,
-		httptest.NewRequest(http.MethodGet, "/knowledge/search?keyword=private", nil))
-	require.NoError(t, retireErr)
-	require.ErrorIs(t, claimErr, repository.ErrNextcloudContentGCBusy,
-		"the active exact read lease must block a GC claim after retirement")
-	require.Equal(t, http.StatusForbidden, w.Code)
-	require.NotContains(t, w.Body.String(), row.Title)
-	assertLeaseReleased(t, db)
-	var retiredAtMS int64
-	require.NoError(t, db.Table("nextcloud_content_fences").Select("retired_at_ms").
-		Where("tenant_id = 7 AND knowledge_base_id = 'kb-1' AND knowledge_id = ?", row.ID).
-		Row().Scan(&retiredAtMS))
-	claim, err := store.ClaimKnowledgeGC(context.Background(), scope,
-		time.UnixMilli(retiredAtMS), time.Minute)
-	require.NoError(t, err, "the test-only coverage marker permits a claim after release")
-	require.NoError(t, store.FinishGCClaim(context.Background(), claim, false))
+	collectionRetirementRequest(t, "/knowledge/search?keyword=source")
 }
 
 func TestGlobalKnowledgeSearchRechecksPublicationAtJSONWrite(t *testing.T) {
-	db := leaseHandlerDB(t)
-	store := repository.NewNextcloudContentLeaseStore(db)
-	row := leaseHandlerKnowledge(t)
-	row.Title = "private source title"
-	var checks atomic.Int32
-	h := &KnowledgeHandler{
-		kgService:     &leaseSearchService{rows: []*types.Knowledge{row}},
-		contentLeases: store,
-		publicationCheck: func(context.Context, *types.Knowledge) error {
-			if checks.Add(1) >= 3 {
-				return apperrors.NewForbiddenError("source revoked before response write")
-			}
-			return nil
-		},
-	}
-	w := httptest.NewRecorder()
-	leaseSearchRouter(h).ServeHTTP(w,
-		httptest.NewRequest(http.MethodGet, "/knowledge/search?keyword=private", nil))
-	require.GreaterOrEqual(t, checks.Load(), int32(3))
-	require.Equal(t, http.StatusForbidden, w.Code)
-	require.NotContains(t, w.Body.String(), row.Title)
-	assertLeaseReleased(t, db)
+	// Global search now renders its retained original collection snapshot.
+	// Exercise its real current-source check rather than the retired legacy
+	// SearchKnowledge callback path or a manufactured empty proof.
+	h, db, _, _, calls := collectionNextcloudHTTPStateFixture(t, "personal_revoke_before_write", nil)
+	w := serveCollectionHTTP(h, "/knowledge/search?keyword=source", false)
+	require.GreaterOrEqual(t, calls.Load(), int64(3))
+	require.Equal(t, http.StatusForbidden, w.Code, w.Body.String())
+	require.NotContains(t, w.Body.String(), "source original")
+	var reads, activeReads int64
+	require.NoError(t, db.Table("nextcloud_content_leases").Where("kind='read'").Count(&reads).Error)
+	require.Positive(t, reads, "the real response must acquire source read fences")
+	require.NoError(t, db.Table("nextcloud_content_leases").
+		Where("kind='read' AND released_at_ms IS NULL").Count(&activeReads).Error)
+	require.Zero(t, activeReads, "a refused JSON response must release every acquired read fence")
 }
 
 func TestPreviewLeaseRetireDuringReadStopsLaterBytes(t *testing.T) {

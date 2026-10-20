@@ -81,11 +81,10 @@ func TestRawSearchRankedSourceMetadataRejectsUntrustedChanges(t *testing.T) {
 		{"changed_channel", func(_ *types.Knowledge, r *types.SearchResult) { r.KnowledgeChannel = "api" }},
 		{"changed_kb", func(_ *types.Knowledge, r *types.SearchResult) { r.KnowledgeBaseID = "kb-2" }},
 		{"base_not_numeric", func(_ *types.Knowledge, r *types.SearchResult) { r.Metadata["base_score"] = "invalid" }},
-		{"model_not_numeric", func(_ *types.Knowledge,
-			r *types.SearchResult,
-		) {
-			r.Metadata["model_score"] = "invalid"
-		}},
+		{
+			"model_not_numeric",
+			func(_ *types.Knowledge, r *types.SearchResult) { r.Metadata["model_score"] = "invalid" },
+		},
 		{"base_empty", func(_ *types.Knowledge, r *types.SearchResult) { r.Metadata["base_score"] = "" }},
 		{"base_nan", func(_ *types.Knowledge, r *types.SearchResult) { r.Metadata["base_score"] = "NaN" }},
 		{"model_nan", func(_ *types.Knowledge, r *types.SearchResult) { r.Metadata["model_score"] = "NaN" }},

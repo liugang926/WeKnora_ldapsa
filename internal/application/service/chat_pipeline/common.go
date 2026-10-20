@@ -98,6 +98,9 @@ func prepareMessagesWithHistory(chatManage *types.ChatManage) []chat.Message {
 		userMsg.Images = chatManage.Images
 	}
 	chatMessages = append(chatMessages, userMsg)
+	// Prompt assembly is covered by the turn accumulator; attach the exact
+	// union internally to every actual model message for other producer paths.
+	// The API model's json:"-" field never enters the provider payload.
 
 	return chatMessages
 }
@@ -118,8 +121,14 @@ func withPromptCacheMetadata(
 // History is already filtered and truncated upstream by the load_history plugin.
 func AppendHistoryMessages(messages []chat.Message, history []*types.History) []chat.Message {
 	for _, history := range history {
-		messages = append(messages, chat.Message{Role: "user", Content: history.Query})
-		messages = append(messages, chat.Message{Role: "assistant", Content: history.Answer})
+		messages = append(
+			messages,
+			chat.Message{Role: "user", Content: history.Query, SourceLineage: history.SourceLineage},
+		)
+		messages = append(
+			messages,
+			chat.Message{Role: "assistant", Content: history.Answer, SourceLineage: history.SourceLineage},
+		)
 	}
 	return messages
 }
@@ -154,14 +163,38 @@ func loadAndProcessHistory(
 			h.Query = message.Content
 			h.CreateAt = message.CreatedAt
 			if desc := extractImageCaptions(message.Images); desc != "" {
+				h.SourceLineage = types.UnknownSourceLineage()
 				h.Query += "\n\n[用户上传图片内容]\n" + desc
 			}
 			if len(message.Attachments) > 0 {
+				h.SourceLineage = types.UnknownSourceLineage()
 				h.Query += message.Attachments.BuildPrompt()
 			}
 		} else {
+			if h.SourceLineage == nil {
+				h.SourceLineage, _ = types.UnionSourceLineage(message.SourceLineage)
+			} else {
+				h.SourceLineage, _ = types.UnionSourceLineage(h.SourceLineage, message.SourceLineage)
+			}
+			if message.ContextCheckpoint != nil {
+				// Ordinary RAG does not consume checkpoints; their generated
+				// adapters are not covered by this producer.
+				h.SourceLineage = types.UnknownSourceLineage()
+			}
 			h.Answer = regThinkTags.ReplaceAllString(message.Content, "")
 			h.KnowledgeReferences = message.KnowledgeReferences
+			// The completed parent's exhaustive output proof covers its cached
+			// references too. Preserve that original union; do not resolve a new
+			// version to recertify old cached reference prose.
+			h.KnowledgeReferences = make(types.References, 0, len(message.KnowledgeReferences))
+			for _, ref := range message.KnowledgeReferences {
+				if ref == nil {
+					continue
+				}
+				copied := *ref
+				copied.SourceLineage, _ = types.UnionSourceLineage(message.SourceLineage)
+				h.KnowledgeReferences = append(h.KnowledgeReferences, &copied)
+			}
 		}
 		historyMap[message.RequestID] = h
 	}

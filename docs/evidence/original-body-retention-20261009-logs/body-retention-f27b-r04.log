@@ -1,0 +1,35 @@
+--- FAIL: TestOriginalBodyProtocolSQLite (0.14s)
+    --- FAIL: TestOriginalBodyProtocolSQLite/nestedTTL (0.04s)
+        original_body_protocol_test.go:141: 
+            	Error Trace:	/workspace/internal/application/repository/original_body_protocol_test.go:141
+            	            				/workspace/internal/application/repository/original_body_protocol_test.go:196
+            	Error:      	"0" is not positive
+            	Test:       	TestOriginalBodyProtocolSQLite/nestedTTL
+--- FAIL: TestPostgresOriginalBodyProtocol (0.12s)
+    --- FAIL: TestPostgresOriginalBodyProtocol/shared (0.05s)
+        original_body_protocol_test.go:104: 
+            	Error Trace:	/workspace/internal/application/repository/original_body_protocol_test.go:57
+            	            				/workspace/internal/application/repository/original_body_protocol_test.go:104
+            	            				/workspace/internal/application/repository/original_body_protocol_test.go:204
+            	Error:      	Received unexpected error:
+            	            	ERROR: invalid input syntax for type json (SQLSTATE 22P02)
+            	Test:       	TestPostgresOriginalBodyProtocol/shared
+    --- FAIL: TestPostgresOriginalBodyProtocol/nestedTTL (0.03s)
+        original_body_protocol_test.go:130: 
+            	Error Trace:	/workspace/internal/application/repository/original_body_protocol_test.go:57
+            	            				/workspace/internal/application/repository/original_body_protocol_test.go:130
+            	            				/workspace/internal/application/repository/original_body_protocol_test.go:204
+            	Error:      	Received unexpected error:
+            	            	ERROR: invalid input syntax for type json (SQLSTATE 22P02)
+            	Test:       	TestPostgresOriginalBodyProtocol/nestedTTL
+    --- FAIL: TestPostgresOriginalBodyProtocol/failedACK (0.03s)
+        original_body_protocol_test.go:155: 
+            	Error Trace:	/workspace/internal/application/repository/original_body_protocol_test.go:57
+            	            				/workspace/internal/application/repository/original_body_protocol_test.go:155
+            	            				/workspace/internal/application/repository/original_body_protocol_test.go:204
+            	Error:      	Received unexpected error:
+            	            	ERROR: invalid input syntax for type json (SQLSTATE 22P02)
+            	Test:       	TestPostgresOriginalBodyProtocol/failedACK
+FAIL
+FAIL	github.com/Tencent/WeKnora/internal/application/repository	0.648s
+FAIL

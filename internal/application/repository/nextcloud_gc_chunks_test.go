@@ -17,7 +17,9 @@ func TestNextcloudExactChunkGCIsDormantScopedAndAtomicSQLite(t *testing.T) {
 	require.NoError(t, db.AutoMigrate(&types.ChunkRevision{}))
 	script, err := os.ReadFile("../../../migrations/sqlite/000046_nextcloud_content_leases.up.sql")
 	require.NoError(t, err)
-	require.NoError(t, db.Exec(string(script)).Error)
+	if !db.Migrator().HasTable("nextcloud_content_fences") {
+		require.NoError(t, db.Exec(string(script)).Error)
+	}
 	now := time.Now().UTC()
 	nextcloudGCTestSource(t, db, "old", "", now.Add(-2*time.Hour))
 	require.NoError(t, db.Create(&types.Chunk{
@@ -145,7 +147,9 @@ func TestNextcloudExactChunkGCRequiresInventoriedImage(t *testing.T) {
 	require.NoError(t, db.AutoMigrate(&types.ChunkRevision{}))
 	script, err := os.ReadFile("../../../migrations/sqlite/000046_nextcloud_content_leases.up.sql")
 	require.NoError(t, err)
-	require.NoError(t, db.Exec(string(script)).Error)
+	if !db.Migrator().HasTable("nextcloud_content_fences") {
+		require.NoError(t, db.Exec(string(script)).Error)
+	}
 	now := time.Now().UTC()
 	nextcloudGCTestSource(t, db, "old", "", now.Add(-2*time.Hour))
 	require.NoError(t, db.Create(&types.Chunk{

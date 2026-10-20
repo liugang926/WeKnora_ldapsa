@@ -1,0 +1,20 @@
+# Production-wide models. The application reconciles this file into the
+# `models` table on startup with is_builtin=true, making each entry visible to
+# every workspace while restricting changes to system administrators.
+builtin_models:
+  - id: builtin-aidoc-chat
+    tenant_id: 10000
+    name: AIDOC
+    type: KnowledgeQA
+    source: remote
+    description: TianJi internal OpenAI-compatible route with image input
+    is_default: false
+    status: active
+    parameters:
+      base_url: http://llmproxy.tianjizn.com/v1
+      api_key: placeholder-not-required-by-gateway
+      provider: litellm
+      supports_vision: true
+      context_window: 831488
+      max_output_tokens: 65536
+      max_concurrency: 4

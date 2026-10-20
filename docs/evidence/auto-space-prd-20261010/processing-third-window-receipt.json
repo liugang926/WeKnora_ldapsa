@@ -1,0 +1,54 @@
+{
+  "actor_id": "8d232490694042a5ac780b7591588cb09a8e5c95c70f9a57f4c15d13f0088200",
+  "actor_name": "/weknora-prd-component-go",
+  "started_at": "2026-10-10T09:52:41.828500959Z",
+  "finished_at": "2026-10-10T10:12:41.919391917Z",
+  "running": false,
+  "entry_exit_code": 0,
+  "oom_killed": false,
+  "memory_bytes": 2147483648,
+  "nano_cpus": 1000000000,
+  "hard_wallclock_seconds": 1200,
+  "commands": [
+    {
+      "log": "final-recovery-regressions.log",
+      "exit_code": 1,
+      "result": "processing state repeated directory DDL, restore proof check12, blank fixture UUID overflow; other queue/GC/root/batch/source role checks passed"
+    },
+    {
+      "log": "onboarding-actual-coordinator.log",
+      "exit_code": 1,
+      "result": "reserve/pair pending target conflict; automatic ready/finish succeeded, business phase failed"
+    },
+    {
+      "log": "final-closed-graph-sql.log",
+      "exit_code": 0,
+      "result": "unverified publication, blocked older ready, actual raw SQL requires immutable maintenance permit passed"
+    },
+    {
+      "log": "final-live-graph-and-source-regressions.log",
+      "exit_code": 1,
+      "result": "repeat fresh sender lacked durable NC revision checkpoint so old head ACK rejected; stream2 and actual extraction, source content revision and live root authorization passed"
+    },
+    {
+      "log": "final-recovery-positive-rerun.log",
+      "exit_code": 0,
+      "result": "SQLite/PostgreSQL positive recovery and target migration, exact approved blank template passed"
+    },
+    {
+      "log": "final-tree-cached-compile.log",
+      "exit_code": 0,
+      "result": "all packages including cmd/server compiled with final source metadata/revision/error/logging changes; late checkpoint test edit and late dispatch fixture edit require targeted final compile"
+    },
+    {
+      "log": "final-live-durable-checkpoint.log",
+      "exit_code": 143,
+      "result": "stopped this own overlapping test command before assertions; exact recovered checkpoint retest not completed"
+    },
+    {
+      "log": "onboarding-actual-coordinator-rerun.log",
+      "exit_code": 1,
+      "result": "actual reserve200 active, pair202 event_connection_pending; controlled immediate abort. Missing actual event dispatch schema in fixture now repaired but untested"
+    }
+  ]
+}

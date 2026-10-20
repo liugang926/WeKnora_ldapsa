@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Tencent/WeKnora/internal/logprivacy"
 	"github.com/Tencent/WeKnora/internal/models/api"
 
 	"github.com/Tencent/WeKnora/internal/logger"
@@ -303,7 +304,11 @@ func (c *OllamaChat) ChatStream(
 			return nil
 		})
 		if err != nil {
-			logger.GetLogger(ctx).Errorf("流式聊天请求失败: %v", err)
+			if logprivacy.ContentSuppressed(ctx) {
+				logger.GetLogger(ctx).Error("流式聊天请求失败 (content logging suppressed)")
+			} else {
+				logger.GetLogger(ctx).Errorf("流式聊天请求失败: %v", err)
+			}
 			// 发送错误响应
 			streamChan <- types.StreamResponse{
 				ResponseType: types.ResponseTypeError,

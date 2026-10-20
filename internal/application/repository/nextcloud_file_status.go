@@ -27,21 +27,21 @@ type SignedNextcloudFileStatusRequest struct {
 	RequestSignature string
 }
 
-// NextcloudFileStatus contains the public source-file status projection.
 type NextcloudFileStatus struct {
-	ConnectionID        string  `json:"connection_id"`
-	NextcloudInstanceID string  `json:"nextcloud_instance_id"`
-	BindingID           string  `json:"binding_id"`
-	TenantID            string  `json:"tenant_id"`
-	KnowledgeBaseID     string  `json:"knowledge_base_id"`
-	DataSourceID        string  `json:"data_source_id"`
-	FileID              string  `json:"file_id"`
-	SourceETag          string  `json:"source_etag"`
-	KnowledgeState      string  `json:"knowledge_state"`
-	FailureCode         string  `json:"failure_code,omitempty"`
-	PublishedSourceETag *string `json:"published_source_etag"`
-	KnowledgeReadyAt    *int64  `json:"knowledge_ready_at"`
-	QAAvailable         bool    `json:"qa_available"`
+	ConnectionID          string  `json:"connection_id"`
+	NextcloudInstanceID   string  `json:"nextcloud_instance_id"`
+	BindingID             string  `json:"binding_id"`
+	TenantID              string  `json:"tenant_id"`
+	KnowledgeBaseID       string  `json:"knowledge_base_id"`
+	DataSourceID          string  `json:"data_source_id"`
+	FileID                string  `json:"file_id"`
+	SourceETag            string  `json:"source_etag"`
+	SourceContentRevision string  `json:"source_content_revision"`
+	KnowledgeState        string  `json:"knowledge_state"`
+	FailureCode           string  `json:"failure_code,omitempty"`
+	PublishedSourceETag   *string `json:"published_source_etag"`
+	KnowledgeReadyAt      *int64  `json:"knowledge_ready_at"`
+	QAAvailable           bool    `json:"qa_available"`
 }
 
 // SignedFileStatus reads one source version only after authenticating the
@@ -110,7 +110,7 @@ func (r *NextcloudEventInboxRepository) SignedFileStatus(
 			BindingID: connection.BindingID, TenantID: strconv.FormatUint(connection.TenantID, 10),
 			KnowledgeBaseID: connection.KnowledgeBaseID, DataSourceID: connection.DatasourceID,
 			FileID: strconv.FormatInt(request.FileID, 10), SourceETag: request.SourceETag,
-			KnowledgeState: "unverified", QAAvailable: false,
+			KnowledgeState: "unverified", SourceContentRevision: "0", QAAvailable: false,
 		}
 		if err := readNextcloudFileVersionStatus(tx, connection, request, &status); err != nil {
 			return err
@@ -147,6 +147,29 @@ func readNextcloudFileVersionStatus(tx *gorm.DB, connection nextcloudEventConnec
 	if err != nil {
 		return fmt.Errorf("read Nextcloud source version: %w", err)
 	}
+	var fences []nextcloudContentFence
+	if err := tx.Where(
+		"tenant_id=? AND knowledge_base_id=? AND knowledge_id IN ?",
+		connection.TenantID,
+		connection.KnowledgeBaseID,
+		[]string{
+			"",
+			version.CandidateKnowledgeID,
+		},
+	).
+		Find(&fences).
+		Error; err != nil {
+		return err
+	}
+	if len(fences) != 2 {
+		return nil
+	}
+	for _, fence := range fences {
+		if fence.State != "open" {
+			return nil
+		}
+	}
+	status.SourceContentRevision, _ = types.NormalizeNextcloudContentRevision(version.DesiredContentRevision)
 	if version.State == "tombstone" || version.DesiredETag == "" || version.CandidateKnowledgeID == "" {
 		return nil
 	}
@@ -170,6 +193,12 @@ func readNextcloudFileVersionStatus(tx *gorm.DB, connection nextcloudEventConnec
 		nextcloudMetadataString(metadata, "nextcloud_target_etag") != version.DesiredETag {
 		return nil
 	}
+	candidateRevision, err := types.NormalizeNextcloudContentRevision(
+		nextcloudMetadataString(metadata, "nextcloud_content_revision"),
+	)
+	if err != nil || candidateRevision != status.SourceContentRevision {
+		return nil
+	}
 	if version.DesiredETag == request.SourceETag {
 		if candidate.ParseStatus == types.ParseStatusFailed {
 			status.KnowledgeState = "failed"
@@ -190,6 +219,11 @@ func readNextcloudFileVersionStatus(tx *gorm.DB, connection nextcloudEventConnec
 				return nil
 			}
 		}
+	}
+	if ready, err := nextcloudRequiredGraphReady(tx, &candidate); err != nil {
+		return err
+	} else if !ready {
+		return nil
 	}
 	if version.State == "published" && candidate.ParseStatus == types.ParseStatusCompleted &&
 		candidate.EnableStatus == "enabled" &&

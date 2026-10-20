@@ -29,11 +29,12 @@ type OrganizationHandler struct {
 	// and to back the tenant-centric invite picker. Plan 3 lifts org
 	// membership to the tenant level, so the UI needs to surface the
 	// tenant identity rather than the representative user alone.
-	tenantService interfaces.TenantService
-	kbService     interfaces.KnowledgeBaseService
-	knowledgeRepo interfaces.KnowledgeRepository
-	chunkRepo     interfaces.ChunkRepository
-	groupAccess   interfaces.GroupAccessService
+	tenantService  interfaces.TenantService
+	kbService      interfaces.KnowledgeBaseService
+	knowledgeRepo  interfaces.KnowledgeRepository
+	chunkRepo      interfaces.ChunkRepository
+	groupAccess    interfaces.GroupAccessService
+	sourceMetadata *KnowledgeBaseHandler
 }
 
 // NewOrganizationHandler creates a new organization handler
@@ -101,6 +102,23 @@ func (h *OrganizationHandler) mayListSharedKnowledgeBase(
 	kb *types.KnowledgeBase,
 	kbID string,
 ) bool {
+	if h.sourceMetadata != nil {
+		if kb == nil {
+			if h.kbService == nil {
+				return false
+			}
+			var err error
+			kb, err = h.kbService.GetKnowledgeBaseByIDOnly(ctx, kbID)
+			if err != nil {
+				return false
+			}
+		}
+		if !h.sourceMetadata.ordinaryKBMetadataAllowed(ctx, kb) {
+			return false
+		}
+	} else if kb != nil && kb.EverHadNextcloudSource {
+		return false
+	}
 	if kb != nil {
 		kbID = kb.ID
 		if kb.TenantID != 0 {
@@ -268,7 +286,12 @@ func (h *OrganizationHandler) ListMyOrganizations(c *gin.Context) {
 
 // buildResourceCountsByOrg 返回各空间内知识库数与智能体数，供 ListMyOrganizations 和侧栏使用；失败时返回 nil。
 // 使用批量接口：一次拉取所有空间的直接共享 KB ID、一次拉取所有空间的智能体列表，再在内存中按空间合并计数。
-func (h *OrganizationHandler) buildResourceCountsByOrg(ctx context.Context, orgs []*types.Organization, userID string, tenantID uint64) *types.ResourceCountsByOrgResponse {
+func (h *OrganizationHandler) buildResourceCountsByOrg(
+	ctx context.Context,
+	orgs []*types.Organization,
+	userID string,
+	tenantID uint64,
+) *types.ResourceCountsByOrgResponse {
 	orgIDs := make([]string, 0, len(orgs))
 	for _, o := range orgs {
 		orgIDs = append(orgIDs, o.ID)
@@ -292,14 +315,32 @@ func (h *OrganizationHandler) buildResourceCountsByOrg(ctx context.Context, orgs
 	_ = userID
 	byOrgKB := make(map[string]int)
 	tenantKBCache := make(map[uint64][]string) // cache ListKnowledgeBasesByTenantID by tenantID
+	allowedCache := map[string]bool{}
+	mayCountKB := func(id string) bool {
+		if h.sourceMetadata == nil {
+			return true
+		}
+		if allowed, ok := allowedCache[id]; ok {
+			return allowed
+		}
+		allowed := false
+		if h.kbService != nil {
+			kb, err := h.kbService.GetKnowledgeBaseByIDOnly(ctx, id)
+			allowed = err == nil && kb != nil && h.mayListSharedKnowledgeBase(ctx, kb.TenantID, kb, id)
+		}
+		allowedCache[id] = allowed
+		return allowed
+	}
 	for _, o := range orgs {
 		oid := o.ID
 		directIDs := directKBIDsByOrg[oid]
 		directSet := make(map[string]bool)
 		for _, id := range directIDs {
-			directSet[id] = true
+			if id != "" && mayCountKB(id) {
+				directSet[id] = true
+			}
 		}
-		count := len(directIDs)
+		count := len(directSet)
 		for _, item := range agentListByOrg[oid] {
 			if item.Agent == nil {
 				continue
@@ -340,7 +381,7 @@ func (h *OrganizationHandler) buildResourceCountsByOrg(ctx context.Context, orgs
 				}
 			}
 			for _, kbID := range kbIDs {
-				if kbID != "" && !directSet[kbID] {
+				if kbID != "" && !directSet[kbID] && mayCountKB(kbID) {
 					directSet[kbID] = true
 					count++
 				}
@@ -544,7 +585,14 @@ func (h *OrganizationHandler) UpdateMemberRole(c *gin.Context) {
 		return
 	}
 
-	if err := h.orgService.UpdateTenantMemberRole(ctx, orgID, memberTenantID, req.Role, operatorUserID, operatorTenantID); err != nil {
+	if err := h.orgService.UpdateTenantMemberRole(
+		ctx,
+		orgID,
+		memberTenantID,
+		req.Role,
+		operatorUserID,
+		operatorTenantID,
+	); err != nil {
 		logger.Errorf(ctx, "Failed to update member role: %v", err)
 		c.Error(apperrors.NewForbiddenError("Permission denied or invalid operation"))
 		return
@@ -579,7 +627,13 @@ func (h *OrganizationHandler) RemoveMember(c *gin.Context) {
 	operatorUserID := c.GetString(types.UserIDContextKey.String())
 	operatorTenantID := c.GetUint64(types.TenantIDContextKey.String())
 
-	if err := h.orgService.RemoveTenantMember(ctx, orgID, memberTenantID, operatorUserID, operatorTenantID); err != nil {
+	if err := h.orgService.RemoveTenantMember(
+		ctx,
+		orgID,
+		memberTenantID,
+		operatorUserID,
+		operatorTenantID,
+	); err != nil {
 		logger.Errorf(ctx, "Failed to remove member: %v", err)
 		c.Error(apperrors.NewForbiddenError("Permission denied or invalid operation"))
 		return
@@ -754,7 +808,9 @@ func (h *OrganizationHandler) SubmitJoinRequest(c *gin.Context) {
 
 	// Check if organization requires approval
 	if !org.RequireApproval {
-		c.Error(apperrors.NewValidationError("This organization does not require approval. Use the join endpoint instead."))
+		_ = c.Error(
+			apperrors.NewValidationError("This organization does not require approval. Use the join endpoint instead."),
+		)
 		return
 	}
 
@@ -937,7 +993,12 @@ func (h *OrganizationHandler) RequestRoleUpgrade(c *gin.Context) {
 		return
 	}
 
-	logger.Infof(ctx, "User %s submitted role upgrade request for organization %s", secutils.SanitizeForLog(userID), orgID)
+	logger.Infof(
+		ctx,
+		"User %s submitted role upgrade request for organization %s",
+		secutils.SanitizeForLog(userID),
+		orgID,
+	)
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"data":    request,
@@ -972,7 +1033,11 @@ func (h *OrganizationHandler) LeaveOrganization(c *gin.Context) {
 
 	isOwnerTenant := org.OwnerTenantID != 0 && org.OwnerTenantID == tenantID
 	if isOwnerTenant || (org.OwnerTenantID == 0 && org.OwnerID == userID) {
-		c.Error(apperrors.NewForbiddenError("Organization owner cannot leave. Please transfer ownership or delete the organization."))
+		_ = c.Error(
+			apperrors.NewForbiddenError(
+				"Organization owner cannot leave. Please transfer ownership or delete the organization.",
+			),
+		)
 		return
 	}
 
@@ -1098,7 +1163,16 @@ func (h *OrganizationHandler) ReviewJoinRequest(c *gin.Context) {
 		assignRole = &req.Role
 	}
 
-	if err := h.orgService.ReviewJoinRequest(ctx, orgID, requestID, req.Approved, userID, tenantID, req.Message, assignRole); err != nil {
+	if err := h.orgService.ReviewJoinRequest(
+		ctx,
+		orgID,
+		requestID,
+		req.Approved,
+		userID,
+		tenantID,
+		req.Message,
+		assignRole,
+	); err != nil {
 		logger.Errorf(ctx, "Failed to review join request: %v", err)
 		if errors.Is(err, service.ErrOrgMemberLimitReached) {
 			c.Error(apperrors.NewValidationError("空间成员已满，无法通过该加入申请"))
@@ -1147,7 +1221,9 @@ func (h *OrganizationHandler) ShareKnowledgeBase(c *gin.Context) {
 	if err != nil {
 		logger.Errorf(ctx, "Failed to share knowledge base: %v", err)
 		if errors.Is(err, service.ErrOrgRoleCannotShare) {
-			c.Error(apperrors.NewForbiddenError("Only editors and admins can share knowledge bases to this organization"))
+			_ = c.Error(
+				apperrors.NewForbiddenError("Only editors and admins can share knowledge bases to this organization"),
+			)
 			return
 		}
 		c.Error(apperrors.NewForbiddenError("Permission denied or invalid operation"))
@@ -1389,11 +1465,19 @@ func (h *OrganizationHandler) ListOrgShares(c *gin.Context) {
 			resp.KnowledgeBaseName = s.KnowledgeBase.Name
 			resp.KnowledgeBaseType = s.KnowledgeBase.Type
 			// Get knowledge count for document type
-			if count, err := h.knowledgeRepo.CountKnowledgeByKnowledgeBaseID(ctx, s.SourceTenantID, s.KnowledgeBaseID); err == nil {
+			if count, err := h.knowledgeRepo.CountKnowledgeByKnowledgeBaseID(
+				ctx,
+				s.SourceTenantID,
+				s.KnowledgeBaseID,
+			); err == nil {
 				resp.KnowledgeCount = count
 			}
 			// Get chunk count for FAQ type
-			if count, err := h.chunkRepo.CountChunksByKnowledgeBaseID(ctx, s.SourceTenantID, s.KnowledgeBaseID); err == nil {
+			if count, err := h.chunkRepo.CountChunksByKnowledgeBaseID(
+				ctx,
+				s.SourceTenantID,
+				s.KnowledgeBaseID,
+			); err == nil {
 				resp.ChunkCount = count
 			}
 		}
@@ -1482,7 +1566,12 @@ func (h *OrganizationHandler) ShareAgent(c *gin.Context) {
 			return
 		}
 		if errors.Is(err, service.ErrAgentNotConfigured) {
-			c.Error(apperrors.NewValidationError("Agent is not fully configured. Please set the chat model, and set the rerank model if the knowledge_search tool is enabled in agent settings."))
+			_ = c.Error(
+				apperrors.NewValidationError(
+					("Agent is not fully configured. Please set the chat model, and set the rera" +
+						"nk model if the knowledge_search tool is enabled in agent settings."),
+				),
+			)
 			return
 		}
 		if errors.Is(err, service.ErrBuiltinAgentNotShareable) {
@@ -1606,9 +1695,17 @@ func (h *OrganizationHandler) ListOrgAgentShares(c *gin.Context) {
 			effectivePerm = myRoleInOrg
 		}
 		resp := types.AgentShareResponse{
-			ID: s.ID, AgentID: s.AgentID, OrganizationID: s.OrganizationID,
-			SharedByUserID: s.SharedByUserID, SourceTenantID: s.SourceTenantID,
-			Permission: string(s.Permission), MyRoleInOrg: string(myRoleInOrg), MyPermission: string(effectivePerm), CreatedAt: s.CreatedAt,
+			ID:             s.ID,
+			AgentID:        s.AgentID,
+			OrganizationID: s.OrganizationID,
+			SharedByUserID: s.SharedByUserID,
+			SourceTenantID: s.SourceTenantID,
+			Permission: string(
+				s.Permission,
+			),
+			MyRoleInOrg:  string(myRoleInOrg),
+			MyPermission: string(effectivePerm),
+			CreatedAt:    s.CreatedAt,
 		}
 		if s.Agent != nil {
 			// Built-in rows carry display fields frozen in the writer's
@@ -1681,7 +1778,12 @@ func (h *OrganizationHandler) ListSharedAgents(c *gin.Context) {
 }
 
 // listSpaceKnowledgeBasesInOrganization returns merged list of direct shared KBs and agent-carried KBs in the org (for list and count).
-func (h *OrganizationHandler) listSpaceKnowledgeBasesInOrganization(ctx context.Context, orgID string, tenantID uint64, callerTenantRole types.TenantRole) ([]*types.OrganizationSharedKnowledgeBaseItem, error) {
+func (h *OrganizationHandler) listSpaceKnowledgeBasesInOrganization(
+	ctx context.Context,
+	orgID string,
+	tenantID uint64,
+	callerTenantRole types.TenantRole,
+) ([]*types.OrganizationSharedKnowledgeBaseItem, error) {
 	directList, err := h.shareService.ListSharedKnowledgeBasesInOrganization(ctx, orgID, tenantID, callerTenantRole)
 	if err != nil {
 		return nil, err
@@ -1781,7 +1883,11 @@ func (h *OrganizationHandler) listSpaceKnowledgeBasesInOrganization(ctx context.
 
 			switch kb.Type {
 			case types.KnowledgeBaseTypeDocument:
-				if count, err := h.knowledgeRepo.CountKnowledgeByKnowledgeBaseID(ctx, sourceTenantID, kb.ID); err == nil {
+				if count, err := h.knowledgeRepo.CountKnowledgeByKnowledgeBaseID(
+					ctx,
+					sourceTenantID,
+					kb.ID,
+				); err == nil {
 					kb.KnowledgeCount = count
 				}
 			case types.KnowledgeBaseTypeFAQ:
@@ -1936,7 +2042,13 @@ func (h *OrganizationHandler) SetSharedAgentDisabledByMe(c *gin.Context) {
 		sourceTenantID = share.SourceTenantID
 	}
 	_ = uid
-	if err := h.agentShareService.SetSharedAgentDisabledByMe(ctx, tid, req.AgentID, sourceTenantID, req.Disabled); err != nil {
+	if err := h.agentShareService.SetSharedAgentDisabledByMe(
+		ctx,
+		tid,
+		req.AgentID,
+		sourceTenantID,
+		req.Disabled,
+	); err != nil {
 		logger.Errorf(ctx, "SetSharedAgentDisabledByMe failed: %v", err)
 		c.Error(apperrors.NewInternalServerError("Failed to update preference"))
 		return
@@ -1945,7 +2057,11 @@ func (h *OrganizationHandler) SetSharedAgentDisabledByMe(c *gin.Context) {
 }
 
 // toOrgResponse converts an organization to response format
-func (h *OrganizationHandler) toOrgResponse(ctx context.Context, org *types.Organization, currentUserID string) types.OrganizationResponse {
+func (h *OrganizationHandler) toOrgResponse(
+	ctx context.Context,
+	org *types.Organization,
+	currentUserID string,
+) types.OrganizationResponse {
 	currentTenantID := types.MustTenantIDFromContext(ctx)
 	// Post-Plan-3 the canonical "is the caller the owner side?" check
 	// is tenant-based: org.OwnerTenantID is the pinned column; legacy

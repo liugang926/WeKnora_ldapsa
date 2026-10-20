@@ -3,7 +3,9 @@ package embedding
 import (
 	"context"
 
+	"github.com/Tencent/WeKnora/internal/logprivacy"
 	"github.com/Tencent/WeKnora/internal/tracing/langfuse"
+	"github.com/Tencent/WeKnora/internal/types"
 )
 
 // langfuseEmbedder wraps an Embedder and reports each call as a Langfuse
@@ -15,6 +17,9 @@ type langfuseEmbedder struct {
 }
 
 func (l *langfuseEmbedder) Embed(ctx context.Context, text string) ([]float32, error) {
+	if logprivacy.ContentSuppressed(ctx) || types.RAGSourceLineageFromContext(ctx) != nil {
+		return l.inner.Embed(ctx, text)
+	}
 	mgr := langfuse.GetManager()
 	if !mgr.Enabled() {
 		return l.inner.Embed(ctx, text)
@@ -42,6 +47,9 @@ func (l *langfuseEmbedder) Embed(ctx context.Context, text string) ([]float32, e
 }
 
 func (l *langfuseEmbedder) BatchEmbed(ctx context.Context, texts []string) ([][]float32, error) {
+	if logprivacy.ContentSuppressed(ctx) || types.RAGSourceLineageFromContext(ctx) != nil {
+		return l.inner.BatchEmbed(ctx, texts)
+	}
 	mgr := langfuse.GetManager()
 	if !mgr.Enabled() {
 		return l.inner.BatchEmbed(ctx, texts)
@@ -74,7 +82,14 @@ func (l *langfuseEmbedder) BatchEmbed(ctx context.Context, texts []string) ([][]
 	return result, err
 }
 
-func (l *langfuseEmbedder) BatchEmbedWithPool(ctx context.Context, model Embedder, texts []string) ([][]float32, error) {
+func (l *langfuseEmbedder) BatchEmbedWithPool(
+	ctx context.Context,
+	_ Embedder,
+	texts []string,
+) ([][]float32, error) {
+	if logprivacy.ContentSuppressed(ctx) || types.RAGSourceLineageFromContext(ctx) != nil {
+		return l.inner.BatchEmbedWithPool(ctx, l.inner, texts)
+	}
 	return l.inner.BatchEmbedWithPool(ctx, l, texts)
 }
 

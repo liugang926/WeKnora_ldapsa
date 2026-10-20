@@ -21,7 +21,7 @@ func TestPruneEmptyFolderChainsDeletesOnlyEmptyCandidateAncestors(t *testing.T) 
 
 	ctx := context.Background()
 	repo := repository.NewWikiPageRepository(db)
-	svc := NewWikiPageService(repo, nil, nil, nil, nil)
+	svc := NewWikiPageService(repo, nil, wikiOrdinaryTestPolicy{}, nil, nil)
 	now := time.Now()
 	createFolder := func(id, parentID, name, path string, depth int) {
 		require.NoError(t, repo.CreateFolder(ctx, &types.WikiFolder{
@@ -77,7 +77,7 @@ func TestUpdateWikiPagePersistsAndClearsAliases(t *testing.T) {
 
 	ctx := context.Background()
 	repo := repository.NewWikiPageRepository(db)
-	svc := NewWikiPageService(repo, nil, nil, nil, nil)
+	svc := NewWikiPageService(repo, nil, wikiOrdinaryTestPolicy{}, nil, nil)
 	page, err := svc.CreatePage(ctx, &types.WikiPage{
 		TenantID: 1, KnowledgeBaseID: "kb-alias", Slug: "concept/alias",
 		Title: "Alias", Summary: "summary", Content: "content",
@@ -180,7 +180,7 @@ func TestRepairContentLinks(t *testing.T) {
 
 	ctx := context.Background()
 	repo := repository.NewWikiPageRepository(db)
-	svc := NewWikiPageService(repo, nil, nil, nil, nil)
+	svc := NewWikiPageService(repo, nil, wikiOrdinaryTestPolicy{}, nil, nil)
 	const kbID = "kb-repair"
 	now := time.Now()
 
@@ -265,7 +265,13 @@ func TestNormalizeWikiHierarchyCleansModelCategoryNoise(t *testing.T) {
 	}
 	for i := range want {
 		if page.CategoryPath[i] != want[i] {
-			t.Fatalf("CategoryPath[%d] = %q, want %q; full path=%v", i, page.CategoryPath[i], want[i], page.CategoryPath)
+			t.Fatalf(
+				"CategoryPath[%d] = %q, want %q; full path=%v",
+				i,
+				page.CategoryPath[i],
+				want[i],
+				page.CategoryPath,
+			)
 		}
 	}
 	if page.Depth != 3 {
@@ -291,7 +297,13 @@ func TestNormalizeWikiIndexEntryHierarchyCleansModelCategoryNoise(t *testing.T) 
 	}
 	for i := range want {
 		if entry.CategoryPath[i] != want[i] {
-			t.Fatalf("CategoryPath[%d] = %q, want %q; full path=%v", i, entry.CategoryPath[i], want[i], entry.CategoryPath)
+			t.Fatalf(
+				"CategoryPath[%d] = %q, want %q; full path=%v",
+				i,
+				entry.CategoryPath[i],
+				want[i],
+				entry.CategoryPath,
+			)
 		}
 	}
 	if entry.WikiPath != "entity/标牌/生态/行为倡导/爱护花草标牌" {
@@ -613,7 +625,7 @@ func TestFindPagesByNormalizedTitleMatchesWhitespace(t *testing.T) {
 
 	ctx := context.Background()
 	repo := repository.NewWikiPageRepository(db)
-	svc := NewWikiPageService(repo, nil, nil, nil, nil)
+	svc := NewWikiPageService(repo, nil, wikiOrdinaryTestPolicy{}, nil, nil)
 	now := time.Now()
 	require.NoError(t, repo.Create(ctx, &types.WikiPage{
 		ID: "page-kong", TenantID: 1, KnowledgeBaseID: "kb-id", Slug: "entity/confucius",
@@ -671,7 +683,7 @@ func TestMovePageIntoTypeLabelNamedFolderKeepsHierarchy(t *testing.T) {
 
 	ctx := context.Background()
 	repo := repository.NewWikiPageRepository(db)
-	svc := NewWikiPageService(repo, nil, nil, nil, nil)
+	svc := NewWikiPageService(repo, nil, wikiOrdinaryTestPolicy{}, nil, nil)
 	now := time.Now()
 
 	folder, err := svc.CreateFolder(ctx, "kb-move", 1, types.WikiFolderRootID, "概念")

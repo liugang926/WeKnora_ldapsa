@@ -132,9 +132,12 @@ func TestMCPListDocumentsFiltersNextcloudBeforePagination(t *testing.T) {
 	service := &pagedDocumentsForMCP{docs: []*types.Knowledge{
 		{ID: "ordinary-1", TenantID: 1, KnowledgeBaseID: "kb-1", Title: "first"},
 		{
-			ID: "secret", TenantID: 1, KnowledgeBaseID: "kb-1", Channel: types.ConnectorTypeNextcloud,
-			Title: "secret Nextcloud title", Metadata: types.JSON(
-				`{"datasource_id":"source-1","nextcloud_file_id":"42"}`),
+			ID:              "secret",
+			TenantID:        1,
+			KnowledgeBaseID: "kb-1",
+			Channel:         types.ConnectorTypeNextcloud,
+			Title:           "secret Nextcloud title",
+			Metadata:        types.JSON(`{"datasource_id":"source-1","nextcloud_file_id":"42"}`),
 		},
 		{ID: "ordinary-2", TenantID: 1, KnowledgeBaseID: "kb-1", Title: "second"},
 	}}

@@ -1,0 +1,1 @@
+SELECT fail_capacity_admission_rollback_requires_coordinated_restore();

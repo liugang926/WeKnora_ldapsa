@@ -2,6 +2,7 @@ package router
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sync"
@@ -69,6 +70,17 @@ func (e *SyncTaskExecutor) Enqueue(task *asynq.Task, opts ...asynq.Option) (*asy
 	}
 
 	taskID := requestedTaskID
+	if taskID == "" {
+		var envelope struct {
+			Receipt struct {
+				ID     string `json:"id"`
+				TaskID string `json:"task_id"`
+			} `json:"_nextcloud_machine_task"`
+		}
+		if json.Unmarshal(task.Payload(), &envelope) == nil && envelope.Receipt.ID != "" {
+			taskID = envelope.Receipt.TaskID
+		}
+	}
 	if taskID == "" {
 		taskID = uuid.New().String()
 	}
@@ -150,6 +162,7 @@ type SyncTaskParams struct {
 	KnowledgeRepo        interfaces.KnowledgeRepository
 	ChunkRepo            interfaces.ChunkRepository
 	ContentLeases        *repository.NextcloudContentLeaseStore
+	KnowledgeInputs      *repository.KnowledgeInputProvenanceStore
 	KnowledgeBaseService interfaces.KnowledgeBaseService
 	GroupAccess          interfaces.GroupAccessService
 	SpanTracker          service.SpanTracker
@@ -171,12 +184,26 @@ type SyncTaskParams struct {
 func RegisterSyncHandlers(params SyncTaskParams) {
 	// Wrap registration once so Lite performs the same per-stage recheck as
 	// the Redis worker, including restoration of the initiating human. The
-	// authorization guard runs before acquiring a Nextcloud build lease.
+	// authorization guard runs inside the exact Nextcloud build lease.
 	guard := taskGroupAccessMiddleware(
-		params.GroupAccess, params.KnowledgeBaseService, params.KnowledgeRepo, params.ChunkRepo, params.SpanTracker,
+		params.GroupAccess,
+		params.KnowledgeBaseService,
+		params.KnowledgeRepo,
+		params.ChunkRepo,
+		params.SpanTracker,
+		params.KnowledgeInputs,
 	)
 	build := func(handler func(context.Context, *asynq.Task) error) func(context.Context, *asynq.Task) error {
-		return wrapNextcloudBuild(params.ContentLeases, params.KnowledgeRepo, params.ChunkRepo, handler)
+		return WrapKnowledgeBuildTask(
+			params.ContentLeases,
+			params.KnowledgeRepo,
+			params.ChunkRepo,
+			params.KnowledgeBaseService,
+			params.GroupAccess,
+			params.SpanTracker,
+			params.KnowledgeInputs,
+			handler,
+		)
 	}
 	params.Executor.RegisterHandler(types.TypeChunkExtract, build(params.ChunkExtractor.Handle))
 	params.Executor.RegisterHandler(types.TypeDataTableSummary, build(params.DataTableSummary.Handle))
@@ -197,15 +224,13 @@ func RegisterSyncHandlers(params SyncTaskParams) {
 	params.Executor.RegisterHandler(types.TypeImageMultimodal, build(params.ImageMultimodal.Handle))
 	params.Executor.RegisterHandler(types.TypeKnowledgePostProcess, build(params.KnowledgePostProcess.Handle))
 	params.Executor.RegisterHandler(types.TypeKnowledgeAutoTag, build(params.KnowledgeAutoTag.Handle))
-	params.Executor.RegisterHandler(types.TypeKnowledgeBaseProfile, params.KnowledgeBaseProfile.Handle)
+	params.Executor.RegisterHandler(
+		types.TypeKnowledgeBaseProfile,
+		guard(asynq.HandlerFunc(params.KnowledgeBaseProfile.Handle)).ProcessTask,
+	)
 	params.Executor.RegisterHandler(types.TypeDataSourceSync, params.DataSourceService.ProcessSync)
 	params.Executor.RegisterHandler(types.TypeWikiIngest, params.WikiIngest.Handle)
 	params.Executor.RegisterHandler(types.TypeWikiFinalize, params.WikiIngest.Handle)
 	params.Executor.RegisterHandler(types.TypeMemoryExtract, params.MemoryService.Handle)
-	params.Executor.mu.Lock()
-	for taskType, handler := range params.Executor.handlers {
-		params.Executor.handlers[taskType] = guard(asynq.HandlerFunc(handler)).ProcessTask
-	}
-	params.Executor.mu.Unlock()
 	logger.Infof(context.Background(), "[SyncTask] All task handlers registered (Lite mode, no Redis)")
 }

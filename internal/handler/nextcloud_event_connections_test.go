@@ -37,8 +37,12 @@ func prepareManagedNextcloudConnection(t *testing.T, db *gorm.DB, router *gin.En
 	t.Helper()
 	createNextcloudEventSyncLogFixture(t, db)
 	applyNextcloudEventDispatchMigration(t, db)
-	require.NoError(t, db.Exec("ALTER TABLE knowledge_bases ADD COLUMN ever_had_nextcloud_source "+
-		"BOOLEAN NOT NULL DEFAULT FALSE").Error)
+	require.NoError(
+		t,
+		db.Exec(
+			`ALTER TABLE knowledge_bases ADD COLUMN ever_had_nextcloud_source BOOLEAN NOT NULL DEFAULT FALSE`,
+		).Error,
+	)
 	require.NoError(t, db.Exec(`UPDATE knowledge_bases SET ever_had_nextcloud_source = TRUE`).Error)
 	require.NoError(t, db.Exec(`UPDATE nextcloud_event_connections SET status = 'revoked'`).Error)
 	service := &stubDataSourceService{getDataSource: func(_ context.Context, id string) (*types.DataSource, error) {
@@ -55,12 +59,17 @@ func prepareManagedNextcloudConnection(t *testing.T, db *gorm.DB, router *gin.En
 		}
 		return &kb, nil
 	}}
-	h := NewNextcloudEventConnectionHandler(repository.NewNextcloudEventInboxRepository(db),
-		NewDataSourceHandler(service, kbService))
+	h := NewNextcloudEventConnectionHandler(
+		repository.NewNextcloudEventInboxRepository(db),
+		NewDataSourceHandler(service, kbService),
+	)
 	h.inspect = func(context.Context, *types.DataSourceConfig) (nextcloud.PairingIdentity, error) {
 		return nextcloud.PairingIdentity{
-			InstanceID: testEventInstance, BindingID: testEventBinding,
-			BaseURL: "https://nextcloud.example.test", PublicationState: "active", PublicationEpoch: 1,
+			InstanceID:       testEventInstance,
+			BindingID:        testEventBinding,
+			BaseURL:          "https://nextcloud.example.test",
+			PublicationState: "active",
+			PublicationEpoch: 1,
 		}, nil
 	}
 	router.Use(func(c *gin.Context) {
@@ -127,7 +136,10 @@ func applyNextcloudEventDispatchMigration(t *testing.T, db *gorm.DB) {
 	require.Empty(t, strings.TrimSpace(statement.String()))
 }
 
-func managedConnectionRequest(router *gin.Engine, method, path string, tenantID uint64,
+func managedConnectionRequest(
+	router *gin.Engine,
+	method, path string,
+	tenantID uint64,
 	role types.TenantRole,
 ) *httptest.ResponseRecorder {
 	req := httptest.NewRequest(method, path, nil)
@@ -139,7 +151,8 @@ func managedConnectionRequest(router *gin.Engine, method, path string, tenantID 
 	return response
 }
 
-func issuedEventCredential(t *testing.T,
+func issuedEventCredential(
+	t *testing.T,
 	response *httptest.ResponseRecorder,
 ) repository.NextcloudEventConnectionCredential {
 	t.Helper()
@@ -189,8 +202,13 @@ func TestNextcloudEventConnectionPairRotateRevoke(t *testing.T) {
 	}
 	require.NotContains(t, paired.Body.String(), "enc:v1:")
 	var ciphertext string
-	require.NoError(t, db.Raw("SELECT current_secret_ciphertext FROM "+
-		"nextcloud_event_connections WHERE connection_id = ?", first.ConnectionID).Scan(&ciphertext).Error)
+	require.NoError(
+		t,
+		db.Raw(("SELECT current_secret_ciphertext FROM nextcloud_event_connections WHERE co"+
+			"nnection_id = ?"), first.ConnectionID).
+			Scan(&ciphertext).
+			Error,
+	)
 	require.True(t, strings.HasPrefix(ciphertext, utils.EncPrefix))
 	require.NotContains(t, ciphertext, first.Secret)
 	plaintext, err := utils.DecryptStoredSecret(ciphertext)
@@ -211,12 +229,19 @@ func TestNextcloudEventConnectionPairRotateRevoke(t *testing.T) {
 	require.NotContains(t, repeat.Body.String(), first.Secret)
 
 	batch := pairedBatch("0", "1")
-	response := postNextcloudEvent(router, signedNextcloudEventRequestWithKey(t, first.Secret, first.KeyID,
-		batch, strings.Repeat("a", 32)))
+	response := postNextcloudEvent(
+		router,
+		signedNextcloudEventRequestWithKey(t, first.Secret, first.KeyID, batch, strings.Repeat("a", 32)),
+	)
 	require.Equal(t, http.StatusAccepted, response.Code, response.Body.String())
 	rotatedAt := time.Now().UTC()
-	rotated := managedConnectionRequest(router, http.MethodPost, testManagedEventPath+"/rotate", 7,
-		types.TenantRoleAdmin)
+	rotated := managedConnectionRequest(
+		router,
+		http.MethodPost,
+		testManagedEventPath+"/rotate",
+		7,
+		types.TenantRoleAdmin,
+	)
 	require.Equal(t, http.StatusOK, rotated.Code, rotated.Body.String())
 	second := issuedEventCredential(t, rotated)
 	require.Equal(t, first.ConnectionID, second.ConnectionID)
@@ -233,65 +258,94 @@ func TestNextcloudEventConnectionPairRotateRevoke(t *testing.T) {
 	require.WithinDuration(t, rotatedAt.Add(2*time.Minute), previous.PreviousValidUntil, 2*time.Second)
 	batch = pairedBatch("1", "2")
 	oldNonce := strings.Repeat("b", 32)
-	response = postNextcloudEvent(router, signedNextcloudEventRequestWithKey(t, first.Secret, first.KeyID,
-		batch, oldNonce))
+	response = postNextcloudEvent(
+		router,
+		signedNextcloudEventRequestWithKey(t, first.Secret, first.KeyID, batch, oldNonce),
+	)
 	require.Equal(t, http.StatusAccepted, response.Code, response.Body.String())
-	response = postNextcloudEvent(router, signedNextcloudEventRequestWithKey(t, first.Secret, first.KeyID,
-		batch, oldNonce))
+	response = postNextcloudEvent(
+		router,
+		signedNextcloudEventRequestWithKey(t, first.Secret, first.KeyID, batch, oldNonce),
+	)
 	require.Equal(t, http.StatusUnauthorized, response.Code, response.Body.String())
 	wrongScope := pairedBatch("2", "3")
 	wrongScope.BindingID = "other-binding"
-	response = postNextcloudEvent(router, signedNextcloudEventRequestWithKey(t, first.Secret, first.KeyID,
-		wrongScope, strings.Repeat("c", 32)))
+	response = postNextcloudEvent(
+		router,
+		signedNextcloudEventRequestWithKey(t, first.Secret, first.KeyID, wrongScope, strings.Repeat("c", 32)),
+	)
 	require.Equal(t, http.StatusForbidden, response.Code, response.Body.String())
 	var originalConfig string
-	require.NoError(t, db.Raw("SELECT config FROM data_sources WHERE id = ?",
-		"ds-synthetic").Scan(&originalConfig).Error)
+	require.NoError(
+		t,
+		db.Raw(`SELECT config FROM data_sources WHERE id = ?`, "ds-synthetic").Scan(&originalConfig).Error,
+	)
 	changedConfig := syntheticNextcloudEventDataSourceConfig(t, "https://different.example.test", true)
-	require.NoError(t, db.Exec("UPDATE data_sources SET config = ? WHERE id = ?", string(changedConfig),
-		"ds-synthetic").Error)
+	require.NoError(
+		t,
+		db.Exec(`UPDATE data_sources SET config = ? WHERE id = ?`, string(changedConfig), "ds-synthetic").Error,
+	)
 	response = postNextcloudEvent(router, signedNextcloudEventRequestWithKey(t, first.Secret, first.KeyID,
 		pairedBatch("2", "3"), strings.Repeat("5", 32)))
 	require.Equal(t, http.StatusForbidden, response.Code, response.Body.String())
 	require.NoError(t, db.Exec(`UPDATE data_sources SET config = ? WHERE id = ?`, originalConfig, "ds-synthetic").Error)
 	batch = pairedBatch("2", "3")
-	response = postNextcloudEvent(router, signedNextcloudEventRequestWithKey(t, second.Secret, second.KeyID,
-		batch, strings.Repeat("d", 32)))
+	response = postNextcloudEvent(
+		router,
+		signedNextcloudEventRequestWithKey(t, second.Secret, second.KeyID, batch, strings.Repeat("d", 32)),
+	)
 	require.Equal(t, http.StatusAccepted, response.Code, response.Body.String())
 
-	rotated = managedConnectionRequest(router, http.MethodPost, testManagedEventPath+"/rotate", 7,
-		types.TenantRoleAdmin)
+	rotated = managedConnectionRequest(
+		router,
+		http.MethodPost,
+		testManagedEventPath+"/rotate",
+		7,
+		types.TenantRoleAdmin,
+	)
 	require.Equal(t, http.StatusOK, rotated.Code, rotated.Body.String())
 	third := issuedEventCredential(t, rotated)
 	require.Equal(t, first.ConnectionID, third.ConnectionID)
 	batch = pairedBatch("3", "4")
-	response = postNextcloudEvent(router, signedNextcloudEventRequestWithKey(t, first.Secret, first.KeyID,
-		batch, strings.Repeat("e", 32)))
+	response = postNextcloudEvent(
+		router,
+		signedNextcloudEventRequestWithKey(t, first.Secret, first.KeyID, batch, strings.Repeat("e", 32)),
+	)
 	require.Equal(t, http.StatusUnauthorized, response.Code, response.Body.String())
-	response = postNextcloudEvent(router, signedNextcloudEventRequestWithKey(t, second.Secret, second.KeyID,
-		batch, strings.Repeat("f", 32)))
+	response = postNextcloudEvent(
+		router,
+		signedNextcloudEventRequestWithKey(t, second.Secret, second.KeyID, batch, strings.Repeat("f", 32)),
+	)
 	require.Equal(t, http.StatusAccepted, response.Code, response.Body.String())
 	batch = pairedBatch("4", "5")
-	response = postNextcloudEvent(router, signedNextcloudEventRequestWithKey(t, third.Secret, third.KeyID,
-		batch, strings.Repeat("1", 32)))
+	response = postNextcloudEvent(
+		router,
+		signedNextcloudEventRequestWithKey(t, third.Secret, third.KeyID, batch, strings.Repeat("1", 32)),
+	)
 	require.Equal(t, http.StatusAccepted, response.Code, response.Body.String())
 
 	require.NoError(t, db.Exec(`UPDATE nextcloud_event_connections
 		SET previous_valid_until = ? WHERE connection_id = ?`,
 		time.Now().UTC().Add(-time.Minute), first.ConnectionID).Error)
 	batch = pairedBatch("5", "6")
-	response = postNextcloudEvent(router, signedNextcloudEventRequestWithKey(t, second.Secret, second.KeyID,
-		batch, strings.Repeat("2", 32)))
+	response = postNextcloudEvent(
+		router,
+		signedNextcloudEventRequestWithKey(t, second.Secret, second.KeyID, batch, strings.Repeat("2", 32)),
+	)
 	require.Equal(t, http.StatusUnauthorized, response.Code, response.Body.String())
-	response = postNextcloudEvent(router, signedNextcloudEventRequestWithKey(t, third.Secret, third.KeyID,
-		batch, strings.Repeat("3", 32)))
+	response = postNextcloudEvent(
+		router,
+		signedNextcloudEventRequestWithKey(t, third.Secret, third.KeyID, batch, strings.Repeat("3", 32)),
+	)
 	require.Equal(t, http.StatusAccepted, response.Code, response.Body.String())
 
 	revoked := managedConnectionRequest(router, http.MethodDelete, testManagedEventPath, 7, types.TenantRoleAdmin)
 	require.Equal(t, http.StatusNoContent, revoked.Code, revoked.Body.String())
 	batch = pairedBatch("6", "7")
-	response = postNextcloudEvent(router, signedNextcloudEventRequestWithKey(t, third.Secret, third.KeyID,
-		batch, strings.Repeat("4", 32)))
+	response = postNextcloudEvent(
+		router,
+		signedNextcloudEventRequestWithKey(t, third.Secret, third.KeyID, batch, strings.Repeat("4", 32)),
+	)
 	require.Equal(t, http.StatusUnauthorized, response.Code, response.Body.String())
 	newPair := managedConnectionRequest(router, http.MethodPost, testManagedEventPath, 7, types.TenantRoleAdmin)
 	require.Equal(t, http.StatusCreated, newPair.Code, newPair.Body.String())
@@ -303,8 +357,9 @@ func TestNextcloudEventConnectionRejectsWrongBindingAndChangedSource(t *testing.
 		db, router, h := setupManagedNextcloudConnection(t)
 		h.inspect = func(context.Context, *types.DataSourceConfig) (nextcloud.PairingIdentity, error) {
 			return nextcloud.PairingIdentity{
-				InstanceID: testEventInstance, BindingID: "different-binding",
-				BaseURL: "https://nextcloud.example.test",
+				InstanceID: testEventInstance,
+				BindingID:  "different-binding",
+				BaseURL:    "https://nextcloud.example.test",
 			}, nil
 		}
 		response := managedConnectionRequest(router, http.MethodPost, testManagedEventPath, 7, types.TenantRoleAdmin)
@@ -326,15 +381,23 @@ func TestNextcloudEventConnectionRejectsWrongBindingAndChangedSource(t *testing.
 			db, router, h := setupManagedNextcloudConnection(t)
 			h.inspect = func(context.Context, *types.DataSourceConfig) (nextcloud.PairingIdentity, error) {
 				config := syntheticNextcloudEventDataSourceConfig(t, change.url, change.cred)
-				require.NoError(t, db.Exec("UPDATE data_sources SET config = ? WHERE id = ?",
-					string(config), "ds-synthetic").Error)
+				require.NoError(
+					t,
+					db.Exec(`UPDATE data_sources SET config = ? WHERE id = ?`, string(config), "ds-synthetic").Error,
+				)
 				return nextcloud.PairingIdentity{
-					InstanceID: testEventInstance, BindingID: testEventBinding,
-					BaseURL: "https://nextcloud.example.test",
+					InstanceID: testEventInstance,
+					BindingID:  testEventBinding,
+					BaseURL:    "https://nextcloud.example.test",
 				}, nil
 			}
-			response := managedConnectionRequest(router, http.MethodPost, testManagedEventPath, 7,
-				types.TenantRoleAdmin)
+			response := managedConnectionRequest(
+				router,
+				http.MethodPost,
+				testManagedEventPath,
+				7,
+				types.TenantRoleAdmin,
+			)
 			require.Equal(t, http.StatusConflict, response.Code, response.Body.String())
 			var count int64
 			require.NoError(t, db.Table("nextcloud_event_connections").Where("status = 'active'").Count(&count).Error)
@@ -351,8 +414,13 @@ func TestNextcloudEventConnectionRejectsWrongBindingAndChangedSource(t *testing.
 					(id, tenant_id, knowledge_base_id, type, config, deleted_at)
 					VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`, "other-source", 7, "kb-synthetic", "rss", "{}").Error)
 			}
-			response := managedConnectionRequest(router, http.MethodPost, testManagedEventPath, 7,
-				types.TenantRoleAdmin)
+			response := managedConnectionRequest(
+				router,
+				http.MethodPost,
+				testManagedEventPath,
+				7,
+				types.TenantRoleAdmin,
+			)
 			require.Equal(t, http.StatusConflict, response.Code, fmt.Sprintf("%s: %s", invalid, response.Body.String()))
 		})
 	}
@@ -364,10 +432,17 @@ func TestNextcloudEventConnectionRevocationSurvivesCredentialDrift(t *testing.T)
 	require.Equal(t, http.StatusCreated, paired.Code, paired.Body.String())
 	credential := issuedEventCredential(t, paired)
 	reprovisioned := syntheticNextcloudEventDataSourceConfig(t, "https://nextcloud.example.test", true)
-	require.NoError(t, db.Exec("UPDATE data_sources SET config = ? WHERE id = ?", string(reprovisioned),
-		"ds-synthetic").Error)
-	rotation := managedConnectionRequest(router, http.MethodPost, testManagedEventPath+"/rotate", 7,
-		types.TenantRoleAdmin)
+	require.NoError(
+		t,
+		db.Exec(`UPDATE data_sources SET config = ? WHERE id = ?`, string(reprovisioned), "ds-synthetic").Error,
+	)
+	rotation := managedConnectionRequest(
+		router,
+		http.MethodPost,
+		testManagedEventPath+"/rotate",
+		7,
+		types.TenantRoleAdmin,
+	)
 	require.Equal(t, http.StatusConflict, rotation.Code, rotation.Body.String())
 	config := syntheticNextcloudEventDataSourceConfig(t, "https://changed.example.test", false)
 	require.NoError(t, db.Exec(`UPDATE data_sources SET config = ? WHERE id = ?`, string(config), "ds-synthetic").Error)
@@ -375,15 +450,22 @@ func TestNextcloudEventConnectionRevocationSurvivesCredentialDrift(t *testing.T)
 	require.Equal(t, http.StatusOK, status.Code, status.Body.String())
 	require.Contains(t, status.Body.String(), `"status":"source_changed"`)
 	require.NotContains(t, status.Body.String(), credential.Secret)
-	rotation = managedConnectionRequest(router, http.MethodPost, testManagedEventPath+"/rotate", 7,
-		types.TenantRoleAdmin)
+	rotation = managedConnectionRequest(
+		router,
+		http.MethodPost,
+		testManagedEventPath+"/rotate",
+		7,
+		types.TenantRoleAdmin,
+	)
 	require.Equal(t, http.StatusConflict, rotation.Code, rotation.Body.String())
 	revoked := managedConnectionRequest(router, http.MethodDelete, testManagedEventPath, 7, types.TenantRoleAdmin)
 	require.Equal(t, http.StatusNoContent, revoked.Code, revoked.Body.String())
 	batch := sampleNextcloudEventBatch("0", "1")
 	batch.ConnectionID = credential.ConnectionID
-	response := postNextcloudEvent(router, signedNextcloudEventRequestWithKey(t, credential.Secret,
-		credential.KeyID, batch, strings.Repeat("e", 32)))
+	response := postNextcloudEvent(
+		router,
+		signedNextcloudEventRequestWithKey(t, credential.Secret, credential.KeyID, batch, strings.Repeat("e", 32)),
+	)
 	require.Equal(t, http.StatusUnauthorized, response.Code, response.Body.String())
 }
 
@@ -416,8 +498,13 @@ func TestNextcloudEventConnectionPostgresLifecycle(t *testing.T) {
 	first := issuedEventCredential(t, paired)
 	repeat := managedConnectionRequest(router, http.MethodPost, testManagedEventPath, 7, types.TenantRoleAdmin)
 	require.Equal(t, http.StatusConflict, repeat.Code, repeat.Body.String())
-	rotated := managedConnectionRequest(router, http.MethodPost, testManagedEventPath+"/rotate", 7,
-		types.TenantRoleAdmin)
+	rotated := managedConnectionRequest(
+		router,
+		http.MethodPost,
+		testManagedEventPath+"/rotate",
+		7,
+		types.TenantRoleAdmin,
+	)
 	require.Equal(t, http.StatusOK, rotated.Code, rotated.Body.String())
 	second := issuedEventCredential(t, rotated)
 	require.Equal(t, first.ConnectionID, second.ConnectionID)

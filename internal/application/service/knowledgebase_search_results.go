@@ -44,7 +44,7 @@ func (s *knowledgeBaseService) processSearchResults(ctx context.Context,
 
 	// Batch fetch chunks (include shared KB chunks)
 	logger.Infof(ctx, "Fetching chunk data for %d IDs", len(index.chunkIDs))
-	allChunks, err := s.listChunksByIDWithShared(ctx, tenantID, index.chunkIDs)
+	allChunks, lineages, err := s.hydrateRAGSearchChunks(ctx, ragPrimaryChunkScopes(chunks), knowledgeMap, nil)
 	if err != nil {
 		logger.ErrorWithFields(ctx, err, map[string]interface{}{
 			"tenant_id": tenantID,
@@ -64,12 +64,18 @@ func (s *knowledgeBaseService) processSearchResults(ctx context.Context,
 		additionalChunkIDs := s.collectEnrichmentChunkIDs(ctx, allChunks, index)
 		if len(additionalChunkIDs) > 0 {
 			logger.Infof(ctx, "Fetching %d additional chunks", len(additionalChunkIDs))
-			additionalChunks, err := s.listChunksByIDWithShared(ctx, tenantID, additionalChunkIDs)
+			additionalChunks, additionalLineages, err := s.hydrateRAGSearchChunks(
+				ctx,
+				ragEnrichmentChunkScopes(allChunks, additionalChunkIDs),
+				knowledgeMap,
+				ragKnowledgeReceiptMap(allChunks, lineages),
+			)
 			if err != nil {
 				logger.Warnf(ctx, "Failed to fetch some additional chunks: %v", err)
 			} else {
 				for _, chunk := range additionalChunks {
 					chunkMap[chunk.ID] = chunk
+					lineages[chunk.ID] = additionalLineages[chunk.ID]
 				}
 				// Second round: only needed when image chunks are among primary
 				// results (image → text resolved above, now text → parent_text).
@@ -78,12 +84,18 @@ func (s *knowledgeBaseService) processSearchResults(ctx context.Context,
 					parentIDs := s.collectParentChunkIDs(additionalChunks, index)
 					if len(parentIDs) > 0 {
 						logger.Infof(ctx, "Fetching %d second-level parent chunks", len(parentIDs))
-						parentChunks, err := s.listChunksByIDWithShared(ctx, tenantID, parentIDs)
+						parentChunks, parentLineages, err := s.hydrateRAGSearchChunks(
+							ctx,
+							ragEnrichmentChunkScopes(additionalChunks, parentIDs),
+							knowledgeMap,
+							ragKnowledgeReceiptMap(additionalChunks, lineages),
+						)
 						if err != nil {
 							logger.Warnf(ctx, "Failed to fetch second-level parent chunks: %v", err)
 						} else {
 							for _, chunk := range parentChunks {
 								chunkMap[chunk.ID] = chunk
+								lineages[chunk.ID] = parentLineages[chunk.ID]
 							}
 						}
 					}
@@ -94,8 +106,42 @@ func (s *knowledgeBaseService) processSearchResults(ctx context.Context,
 
 	// Build final search results
 	searchResults := s.assembleSearchResults(ctx, chunks, chunkMap, knowledgeMap, index, skipEnrichment)
+	for _, result := range searchResults {
+		result.SourceLineage = lineages[result.ID]
+		if result.SourceLineage == nil {
+			result.SourceLineage = types.UnknownSourceLineage()
+		}
+		// Raw vector/keyword matched text may belong to an older artifact. FAQ
+		// rendering can use the current captured row's canonical question.
+		if s.ragChunkSnapshots != nil {
+			result.MatchedContent = ""
+		}
+	}
 
+	beforeImages := make(map[string]string, len(searchResults))
+	for _, result := range searchResults {
+		beforeImages[result.ID] = result.ImageInfo
+	}
 	searchutil.EnrichSearchResultsImageInfo(ctx, s.chunkRepo, tenantID, searchResults)
+	unaccountedImages := false
+	for _, result := range searchResults {
+		if result.ImageInfo != beforeImages[result.ID] {
+			result.SourceLineage = types.UnknownSourceLineage()
+			unaccountedImages = true
+		}
+	}
+	if unaccountedImages {
+		if turn := types.RAGSourceLineageFromContext(ctx); turn != nil {
+			if err := turn.Add(types.UnknownSourceLineage()); err != nil {
+				return nil, err
+			}
+			if _, err := turn.CheckedSnapshot(ctx); err != nil {
+				return nil, err
+			}
+		} else if s.ragChunkSnapshots != nil {
+			return nil, types.ErrSourceLineageUnknown
+		}
+	}
 
 	logger.Infof(ctx, "Search results processed, total: %d", len(searchResults))
 	return searchResults, nil
@@ -251,7 +297,10 @@ func (s *knowledgeBaseService) assembleSearchResults(
 		if knowledge, ok := knowledgeMap[chunk.KnowledgeID]; ok {
 			matchType := idx.matchTypes[chunk.ID]
 			matchedContent := idx.matchedContents[chunk.ID]
-			searchResults = append(searchResults, s.buildSearchResult(chunk, knowledge, score, matchType, matchedContent))
+			searchResults = append(
+				searchResults,
+				s.buildSearchResult(chunk, knowledge, score, matchType, matchedContent),
+			)
 			addedChunkIDs[chunk.ID] = true
 		} else {
 			logger.Warnf(ctx, "Knowledge not found for chunk: %s, knowledge_id: %s", chunk.ID, chunk.KnowledgeID)
@@ -285,7 +334,10 @@ func (s *knowledgeBaseService) assembleSearchResults(
 					continue
 				}
 				matchedContent := idx.matchedContents[chunkID]
-				searchResults = append(searchResults, s.buildSearchResult(chunk, knowledge, score, matchType, matchedContent))
+				searchResults = append(
+					searchResults,
+					s.buildSearchResult(chunk, knowledge, score, matchType, matchedContent),
+				)
 			}
 		}
 	}

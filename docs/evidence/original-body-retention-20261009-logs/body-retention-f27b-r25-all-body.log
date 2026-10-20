@@ -1,0 +1,46 @@
+ok  	github.com/Tencent/WeKnora/internal/application/repository	4.152s
+INFO [2026-10-09 03:06:49.747] []                      | [SQLite] Initializing SQLite retriever engine repository with sqlite-vec
+ERROR[2026-10-09 03:06:50.068] [] composite.go:247[func2] | Repository sqlite failed to batch save: unrecognized option: "contentless_delete"
+INFO [2026-10-09 03:06:50.350] []                      | [SQLite] Initializing SQLite retriever engine repository with sqlite-vec
+ERROR[2026-10-09 03:06:50.663] [] composite.go:247[func2] | Repository sqlite failed to batch save: unrecognized option: "contentless_delete"
+--- FAIL: TestOriginalBodyActualLocalDerivedSQLite (1.18s)
+    --- FAIL: TestOriginalBodyActualLocalDerivedSQLite/body-retention (0.59s)
+        nextcloud_local_derived_gc_test.go:131: 
+            	Error Trace:	/workspace/internal/application/service/nextcloud_local_derived_gc_test.go:131
+            	            				/workspace/internal/application/service/nextcloud_local_derived_gc_test.go:317
+            	Error:      	Received unexpected error:
+            	            	unrecognized option: "contentless_delete"
+            	Test:       	TestOriginalBodyActualLocalDerivedSQLite/body-retention
+    --- FAIL: TestOriginalBodyActualLocalDerivedSQLite/body-inline-restore (0.59s)
+        nextcloud_local_derived_gc_test.go:131: 
+            	Error Trace:	/workspace/internal/application/service/nextcloud_local_derived_gc_test.go:131
+            	            				/workspace/internal/application/service/nextcloud_local_derived_gc_test.go:317
+            	Error:      	Received unexpected error:
+            	            	unrecognized option: "contentless_delete"
+            	Test:       	TestOriginalBodyActualLocalDerivedSQLite/body-inline-restore
+INFO [2026-10-09 03:06:50.956] []                      | [Postgres] Initializing PostgreSQL retriever engine repository
+INFO [2026-10-09 03:06:51.535] []                      | [Postgres] Batch saving 1 indices
+INFO [2026-10-09 03:06:51.541] []                      | [Postgres] Successfully batch saved 1 indices
+INFO [2026-10-09 03:06:52.174] []                      | [Postgres] Initializing PostgreSQL retriever engine repository
+INFO [2026-10-09 03:06:52.729] []                      | [Postgres] Batch saving 1 indices
+INFO [2026-10-09 03:06:52.736] []                      | [Postgres] Successfully batch saved 1 indices
+--- FAIL: TestPostgresOriginalBodyActualLocalDerived (2.38s)
+    --- FAIL: TestPostgresOriginalBodyActualLocalDerived/body-retention (1.24s)
+        nextcloud_local_derived_gc_test.go:393: 
+            	Error Trace:	/workspace/internal/application/service/nextcloud_local_derived_gc_test.go:393
+            	            				/workspace/internal/application/service/nextcloud_local_derived_gc_test.go:290
+            	            				/workspace/internal/application/service/nextcloud_local_derived_gc_test.go:322
+            	Error:      	Received unexpected error:
+            	            	ERROR: invalid input syntax for type json (SQLSTATE 22P02)
+            	Test:       	TestPostgresOriginalBodyActualLocalDerived/body-retention
+    --- FAIL: TestPostgresOriginalBodyActualLocalDerived/body-inline-restore (1.14s)
+        nextcloud_local_derived_gc_test.go:393: 
+            	Error Trace:	/workspace/internal/application/service/nextcloud_local_derived_gc_test.go:393
+            	            				/workspace/internal/application/service/nextcloud_local_derived_gc_test.go:290
+            	            				/workspace/internal/application/service/nextcloud_local_derived_gc_test.go:322
+            	Error:      	Received unexpected error:
+            	            	ERROR: invalid input syntax for type json (SQLSTATE 22P02)
+            	Test:       	TestPostgresOriginalBodyActualLocalDerived/body-inline-restore
+FAIL
+FAIL	github.com/Tencent/WeKnora/internal/application/service	4.573s
+FAIL

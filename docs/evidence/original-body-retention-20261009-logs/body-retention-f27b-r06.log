@@ -1,0 +1,11 @@
+--- FAIL: TestPostgresOriginalBodyProtocol (0.74s)
+    --- FAIL: TestPostgresOriginalBodyProtocol/nestedTTL (0.22s)
+        original_body_protocol_test.go:149: 
+            	Error Trace:	/workspace/internal/application/repository/original_body_protocol_test.go:149
+            	            				/workspace/internal/application/repository/original_body_protocol_test.go:201
+            	Error:      	Expected error with "original body is unavailable or retention evidence changed" in chain but got nil.
+            	Test:       	TestPostgresOriginalBodyProtocol/nestedTTL
+FAIL
+FAIL	github.com/Tencent/WeKnora/internal/application/repository	1.596s
+ok  	github.com/Tencent/WeKnora/internal/application/service	6.704s
+FAIL

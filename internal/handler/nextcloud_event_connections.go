@@ -22,7 +22,6 @@ type NextcloudEventConnectionHandler struct {
 	inspect    func(context.Context, *types.DataSourceConfig) (nextcloud.PairingIdentity, error)
 }
 
-// NewNextcloudEventConnectionHandler constructs the tenant-scoped event-connection handler.
 func NewNextcloudEventConnectionHandler(
 	inbox *repository.NextcloudEventInboxRepository,
 	dataSource *DataSourceHandler,

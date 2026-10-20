@@ -14,6 +14,7 @@ import (
 	agenttoken "github.com/Tencent/WeKnora/internal/agent/token"
 	agenttools "github.com/Tencent/WeKnora/internal/agent/tools"
 	"github.com/Tencent/WeKnora/internal/application/access"
+	"github.com/Tencent/WeKnora/internal/application/repository"
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/models/chat"
 	"github.com/Tencent/WeKnora/internal/types"
@@ -34,6 +35,10 @@ var agentHistoryThinkTagRegex = regexp.MustCompile(`(?s)<think>.*?</think>`)
 // AgentHistoryAdmission contains the source-history admission for an agent request.
 type AgentHistoryAdmission interface {
 	CheckAgentHistoryReplay(context.Context) error
+}
+
+type agentHistoryLineageAdmission interface {
+	CheckMessageSourceLineage(context.Context, *types.Message) error
 }
 
 // LoadAgentHistory rebuilds the multi-turn LLM context for an Agent-mode
@@ -89,9 +94,21 @@ func LoadAgentHistory(
 	if err := admission.CheckAgentHistoryReplay(ctx); err != nil {
 		return nil, 0, err
 	}
+	lineageAdmission, ok := admission.(agentHistoryLineageAdmission)
+	if !ok {
+		return nil, 0, access.ErrNextcloudPublicationUnavailable
+	}
 	if tokenBudget <= 0 {
 		return []chat.Message{}, 0, nil
 	}
+	if actual, ok := admission.(agentHistoryOriginalAdmission); ok && originalHistoryRepositoryConfigured(messageRepo) {
+		var err error
+		messageRepo, err = actual.OriginalHistoryRepository(ctx, sessionID)
+		if err != nil {
+			return nil, 0, err
+		}
+	}
+
 	estimator, err := agenttoken.NewEstimator()
 	if err != nil {
 		return nil, 0, fmt.Errorf("load agent history: %w", err)
@@ -103,7 +120,11 @@ func LoadAgentHistory(
 	}
 	out := []chat.Message{}
 	if checkpoint != nil {
+		if err := lineageAdmission.CheckMessageSourceLineage(ctx, checkpoint); err != nil {
+			return nil, 0, err
+		}
 		out = append(out, compaction.SummaryMessage(checkpoint.ContextCheckpoint.Summary))
+		out[len(out)-1].SourceLineage, _ = types.UnionSourceLineage(checkpoint.ContextCheckpoint.SourceLineage)
 	}
 
 	var (
@@ -137,6 +158,13 @@ func LoadAgentHistory(
 			replay.budget = tokenBudget - used
 		}
 		for _, msg := range page {
+			if msg.Role != "user" {
+				if err := lineageAdmission.CheckMessageSourceLineage(ctx, msg); err != nil {
+					return nil, 0, err
+				}
+			} else if _, native := messageRepo.(agentOriginalHistoryRepository); !native {
+				msg = rawUserContentOnly([]*types.Message{msg})[0]
+			}
 			rows = append(rows, replay.track(msg))
 		}
 		reachedStart = len(page) < agentHistoryPageSize
@@ -328,6 +356,7 @@ func (r *historyReplay) messages(t *agentHistoryTurn) []chat.Message {
 		buildTurnBodyMessages(r.stored(t.assistant), users[1:])...)
 	for i := range msgs {
 		msgs[i].TurnID = id
+		msgs[i].SourceLineage, _ = types.UnionSourceLineage(r.stored(t.assistant).SourceLineage)
 	}
 	sent := agent.HistoryAsSent(msgs, r.retainRetrievalHistory)
 	tokens := 0
@@ -433,7 +462,39 @@ type messageCheckpointSink struct {
 func (s messageCheckpointSink) SaveContextCheckpoint(
 	ctx context.Context, turnMessageID string, checkpoint *types.ContextCheckpoint,
 ) error {
-	return s.repo.UpdateMessageContextCheckpoint(ctx, s.sessionID, turnMessageID, checkpoint)
+	if store, ok := s.repo.(interface {
+		MessageMaterialStore() *repository.KnowledgeInputProvenanceStore
+	}); ok && store.MessageMaterialStore() != nil {
+		var err error
+		ctx, err = messageMaterialGeneratedWriteContext(ctx)
+		if err != nil {
+			return err
+		}
+		parents, err := messageMaterialBoundarySnapshots(ctx)
+		if err != nil {
+			return err
+		}
+		ctx, err = store.MessageMaterialStore().
+			WithActualMessageGeneratedField(
+				ctx,
+				s.sessionID,
+				turnMessageID,
+				"context_checkpoint",
+				checkpoint,
+				parents,
+				checkpoint.SourceLineage,
+			)
+		if err != nil {
+			return err
+		}
+	}
+	if err := s.repo.UpdateMessageContextCheckpoint(ctx, s.sessionID, turnMessageID, checkpoint); err != nil {
+		return err
+	}
+	if originalHistoryRepositoryConfigured(s.repo) {
+		return advanceMessageMaterialBoundaryAfterOwnField(ctx)
+	}
+	return nil
 }
 
 // buildTurnBodyMessages replays one turn's assistant work with any mid-run

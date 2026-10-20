@@ -8,7 +8,6 @@ import (
 	"time"
 
 	apperrors "github.com/Tencent/WeKnora/internal/errors"
-
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -82,13 +81,22 @@ type NextcloudGCStatus struct {
 	CompletedAt            *time.Time `json:"completed_at,omitempty"`
 }
 
-// NextcloudGCStore persists source-generation collection work and inventory.
 type NextcloudGCStore struct {
-	db           *gorm.DB
-	deleteObject func(context.Context, *types.StoredResource) (bool, error)
+	db                  *gorm.DB
+	deleteObject        func(context.Context, *types.StoredResource) (bool, error)
+	prepareDeleteObject func(context.Context, *types.StoredResource) (func(context.Context) (bool, error), error)
 }
 
-// NewNextcloudGCStore returns the source-generation collection store.
+// ConfigureLocalDeletePreparation configures local delete preparation.
+// Resolve database-backed provider configuration before the final transaction.
+// The returned operation performs physical IO only, avoiding a reentrant DB
+// lookup while a single-connection SQLite transaction holds its content fence.
+func (s *NextcloudGCStore) ConfigureLocalDeletePreparation(
+	fn func(context.Context, *types.StoredResource) (func(context.Context) (bool, error), error),
+) {
+	s.prepareDeleteObject = fn
+}
+
 func NewNextcloudGCStore(db *gorm.DB) *NextcloudGCStore { return &NextcloudGCStore{db: db} }
 
 // ConfigureLocalDelete is set before the scheduler starts. The callback must
@@ -117,14 +125,16 @@ func (s *NextcloudGCStore) InventoryRetired(ctx context.Context, now time.Time, 
 	}
 	var sources []nextcloudGCSource
 	err := s.db.WithContext(ctx).Table("knowledges AS k").
-		Select(("k.*, v.datasource_id, v.external_id, v.state AS source_" +
-			"state, v.candidate_knowledge_id AS candidate_id")).
-		Joins(("JOIN nextcloud_source_versions AS v ON v.tenant_id = k." +
-			"tenant_id AND v.knowledge_base_id = k.knowledge_base_id" +
-			" AND v.datasource_id = k.metadata->>'datasource_id' AND" +
-			" v.external_id = k.metadata->>'external_id'")).
-		Where(("k.channel = ? AND (v.state = ? OR v.candidate_knowledge" +
-			"_id <> k.id)"), types.ConnectorTypeNextcloud, "tombstone").
+		Select(("k.*, v.datasource_id, v.external_id, v.state AS source_state, v.candidate_" +
+			"knowledge_id AS candidate_id")).
+		Joins(("JOIN nextcloud_source_versions AS v ON v.tenant_id = k.tenant_id AND v.kno" +
+			"wledge_base_id = k.knowledge_base_id AND v.datasource_id = k.metadata->>'d" +
+			"atasource_id' AND v.external_id = k.metadata->>'external_id'")).
+		Where(
+			"k.channel = ? AND (v.state = ? OR v.candidate_knowledge_id <> k.id)",
+			types.ConnectorTypeNextcloud,
+			"tombstone",
+		).
 		Where("COALESCE(k.metadata->>'nextcloud_etag', '') = ''").
 		Where("NOT EXISTS (SELECT 1 FROM nextcloud_gc_jobs AS j WHERE j.knowledge_id = k.id)").
 		Order("k.updated_at ASC, k.id ASC").Limit(limit).Scan(&sources).Error
@@ -147,6 +157,14 @@ func (s *NextcloudGCStore) InventoryRetired(ctx context.Context, now time.Time, 
 func (s *NextcloudGCStore) inventoryOne(ctx context.Context, source nextcloudGCSource, now time.Time) (bool, error) {
 	inserted := false
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		tx = bodyInternal(tx)
+		if _, e := gcLockKBContent(
+			tx,
+			nextcloudGCJob{TenantID: source.TenantID, KnowledgeBaseID: source.KnowledgeBaseID},
+		); e != nil {
+			return e
+		}
+
 		var version nextcloudSourceVersion
 		if err := nextcloudVersionQuery(tx.Clauses(clause.Locking{Strength: "UPDATE"}),
 			source.TenantID, source.KnowledgeBaseID, source.DataSourceID, source.ExternalID).
@@ -205,14 +223,9 @@ func (s *NextcloudGCStore) inventoryOne(ctx context.Context, source nextcloudGCS
 			return nil
 		}
 		inserted = true
-		items := []nextcloudGCItem{{
-			JobID:     job.ID,
-			Kind:      "knowledge",
-			ObjectRef: current.ID,
-			State:     "pending",
-			CreatedAt: now,
-			UpdatedAt: now,
-		}}
+		items := []nextcloudGCItem{
+			{JobID: job.ID, Kind: "knowledge", ObjectRef: current.ID, State: "pending", CreatedAt: now, UpdatedAt: now},
+		}
 		if current.FilePath != "" {
 			items = append(items, nextcloudGCItem{
 				JobID: job.ID, Kind: "source_file", ObjectRef: current.FilePath,
@@ -223,12 +236,40 @@ func (s *NextcloudGCStore) inventoryOne(ctx context.Context, source nextcloudGCS
 			ID        string
 			ImageInfo string
 		}
-		if err := tx.Table(
-			"chunks",
-		).Select("id, image_info").Where(("tenant_id = ? AND knowledge_base_id = ? AND knowledge_i" +
-			"d = ?"),
-			current.TenantID, current.KnowledgeBaseID, current.ID).Find(&chunkRows).Error; err != nil {
+		if err := tx.Table("chunks").
+			Select("id, image_info").
+			Where("tenant_id = ? AND knowledge_base_id = ? AND knowledge_id = ?",
+				current.TenantID, current.KnowledgeBaseID, current.ID).
+			Find(&chunkRows).
+			Error; err != nil {
 			return err
+		}
+		if tx.Migrator().HasTable("nextcloud_graph_records") {
+			var graphIDs []string
+			if err := tx.Table("nextcloud_graph_records").
+				Where(
+					"tenant_id=? AND knowledge_base_id=? AND knowledge_id=?",
+					job.TenantID,
+					job.KnowledgeBaseID,
+					job.KnowledgeID,
+				).
+				Pluck("operation_id", &graphIDs).
+				Error; err != nil {
+				return err
+			}
+			for _, id := range graphIDs {
+				items = append(
+					items,
+					nextcloudGCItem{
+						JobID:     job.ID,
+						Kind:      "scoped_sql_graph",
+						ObjectRef: id,
+						State:     "pending",
+						CreatedAt: now,
+						UpdatedAt: now,
+					},
+				)
+			}
 		}
 		if err := appendNextcloudGCEmbeddingItems(tx, job, now, &items); err != nil {
 			return err
@@ -282,23 +323,22 @@ func (s *NextcloudGCStore) inventoryOne(ctx context.Context, source nextcloudGCS
 	return inserted && err == nil, err
 }
 
-// RunDue is intentionally fail-closed for all stored objects and indexes.
-// The current generic delete path can lose cleanup failures and races a new
-// resource binding. Even an empty local inventory cannot prove that historical
-// graph, Wiki or external index output is absent, so the job stays blocked
-// after any individually proven local resource deletion. Its metadata is
-// retained for the separate 90-day history policy.
+// RunDue collects proven local objects and post-protocol local SQL derived
+// inventories. Historic or external output remains an observable blocker.
+// Collected local inventories are periodically verified without deleting again,
+// so a partial restore cannot silently revive rows behind an old receipt.
 func (s *NextcloudGCStore) RunDue(ctx context.Context, now time.Time, limit int) (int, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 100
 	}
 	var ids []string
-	if err := s.db.WithContext(ctx).Model(&nextcloudGCJob{}).
-		Where("state IN ? AND not_before <= ? AND next_attempt_at <= ?", []string{
-			"pending",
-			"retry",
-			"blocked",
-		}, now, now).
+	query := s.db.WithContext(ctx).Model(&nextcloudGCJob{})
+	condition := "state IN ('pending','retry','blocked')"
+	if s.db.Migrator().HasTable(&nextcloudDerivedGCManifest{}) {
+		condition = "(" + condition + (" OR (state='collected' AND EXISTS (SELECT 1 FROM nextcloud_derived_gc_mani" +
+			"fests m WHERE m.job_id=nextcloud_gc_jobs.id)))")
+	}
+	if err := query.Where(condition).Where("not_before <= ? AND next_attempt_at <= ?", now, now).
 		Order("next_attempt_at ASC, id ASC").Limit(limit).Pluck("id", &ids).Error; err != nil {
 		return 0, err
 	}
@@ -316,10 +356,41 @@ func (s *NextcloudGCStore) RunDue(ctx context.Context, now time.Time, limit int)
 				}).Error
 			return processed, errors.Join(err, recordErr)
 		}
-		if s.deleteObject != nil {
+		if s.deleteObject != nil || s.prepareDeleteObject != nil {
 			if err := s.runPhysical(ctx, id, now); err != nil {
 				return processed, err
 			}
+		}
+		if err := s.runLocalDerived(ctx, id, now); err != nil {
+			recordErr := s.db.WithContext(ctx).
+				Model(&nextcloudGCJob{}).
+				Where("id=?", id).
+				Updates(map[string]any{
+					"state":           "blocked",
+					"last_error_code": "derived_exact_verification_failed",
+					"next_attempt_at": now.Add(nextcloudGCRetryWindow),
+				}).
+				Error
+			return processed, errors.Join(err, recordErr)
+		}
+		if err := s.db.WithContext(ctx).
+			Model(&nextcloudGCJob{}).
+			Where("id=? AND state='collected'", id).
+			Update("next_attempt_at", now.Add(nextcloudGCRetryWindow)).
+			Error; err != nil {
+			return processed, err
+		}
+		var bodyJob nextcloudGCJob
+		if err := bodyInternal(
+			s.db.WithContext(ctx),
+		).Select("tenant_id").
+			Where("id=?", id).
+			Take(&bodyJob).
+			Error; err != nil {
+			return processed, err
+		}
+		if _, err := NewOriginalBodyRetentionStore(s.db).PurgeSelectedJob(ctx, bodyJob.TenantID, id, 100); err != nil {
+			return processed, err
 		}
 		processed++
 	}
@@ -327,7 +398,24 @@ func (s *NextcloudGCStore) RunDue(ctx context.Context, now time.Time, limit int)
 }
 
 func (s *NextcloudGCStore) runOne(ctx context.Context, id string, now time.Time) error {
+	var identity nextcloudGCJob
+	if e := s.db.WithContext(ctx).
+		Select("id", "tenant_id", "knowledge_base_id", "knowledge_id", "datasource_id", "external_id").
+		Where("id=?", id).
+		Take(&identity).
+		Error; e != nil {
+		if errors.Is(e, gorm.ErrRecordNotFound) {
+			return nil
+		}
+		return e
+	}
+
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		tx = bodyInternal(tx)
+		if _, e := gcLockKBContent(tx, identity); e != nil {
+			return e
+		}
+
 		var job nextcloudGCJob
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", id).Take(&job).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -335,6 +423,10 @@ func (s *NextcloudGCStore) runOne(ctx context.Context, id string, now time.Time)
 			}
 			return err
 		}
+		if e := gcValidateManualAdmin(ctx, tx, job); e != nil {
+			return e
+		}
+
 		if job.State == "collected" || now.Before(job.NotBefore) || now.Before(job.NextAttemptAt) {
 			return nil
 		}
@@ -426,9 +518,9 @@ func (s *NextcloudGCStore) runOne(ctx context.Context, id string, now time.Time)
 			}
 		}
 		if code == "" {
-			return apperrors.NewProtocolError(errors.New(
-				"nextcloud GC missing terminal state",
-			), "Nextcloud GC missing terminal state")
+			return apperrors.NewProtocolError(
+				errors.New("nextcloud GC missing terminal state"), "Nextcloud GC missing terminal state",
+			)
 		}
 		if err := tx.Model(&nextcloudGCItem{}).Where("job_id = ? AND kind <> ? AND state NOT IN ?",
 			job.ID, "knowledge", []string{"deleting", "collected"}).
@@ -464,10 +556,10 @@ func appendNextcloudGCEmbeddingItems(tx *gorm.DB, job nextcloudGCJob, now time.T
 	var rows []struct{ ID int64 }
 	if err := tx.Table(table+" AS e").Select("e.id").
 		Where("e.knowledge_base_id = ? AND e.knowledge_id = ?", job.KnowledgeBaseID, job.KnowledgeID).
-		Where(("NOT EXISTS (SELECT 1 FROM nextcloud_gc_items AS i WHERE" +
-			" i.job_id = ? AND i.kind = ? AND i.object_ref = CAST(e." +
-			"id AS TEXT))"),
-			job.ID, kind).Order("e.id ASC").Limit(nextcloudGCDerivedBatch).Find(&rows).Error; err != nil {
+		Where(("NOT EXISTS (SELECT 1 FROM nextcloud_gc_items AS i WHERE i.job_id = ? AND i" +
+			".kind = ? AND i.object_ref = CAST(e.id AS TEXT))"),
+			job.ID, kind).
+		Order("e.id ASC").Limit(nextcloudGCDerivedBatch).Find(&rows).Error; err != nil {
 		return err
 	}
 	for _, row := range rows {
@@ -485,9 +577,10 @@ func refreshNextcloudGCDerivedInventory(tx *gorm.DB, job nextcloudGCJob, now tim
 	if err := tx.Table("chunks AS c").Select("c.id").
 		Where("c.tenant_id = ? AND c.knowledge_base_id = ? AND c.knowledge_id = ?",
 			job.TenantID, job.KnowledgeBaseID, job.KnowledgeID).
-		Where(("NOT EXISTS (SELECT 1 FROM nextcloud_gc_items AS i WHERE" +
-			" i.job_id = ? AND i.kind = ? AND i.object_ref = c.id)"),
-			job.ID, "derived_chunk").Order("c.id ASC").Limit(nextcloudGCDerivedBatch).Find(&rows).Error; err != nil {
+		Where(("NOT EXISTS (SELECT 1 FROM nextcloud_gc_items AS i WHERE i.job_id = ? AND i" +
+			".kind = ? AND i.object_ref = c.id)"),
+			job.ID, "derived_chunk").
+		Order("c.id ASC").Limit(nextcloudGCDerivedBatch).Find(&rows).Error; err != nil {
 		return err
 	}
 	for _, row := range rows {
@@ -495,6 +588,33 @@ func refreshNextcloudGCDerivedInventory(tx *gorm.DB, job nextcloudGCJob, now tim
 			JobID: job.ID, Kind: "derived_chunk",
 			ObjectRef: row.ID, State: "pending", CreatedAt: now, UpdatedAt: now,
 		})
+	}
+	if tx.Migrator().HasTable("nextcloud_graph_records") {
+		var ids []string
+		if err := tx.Table("nextcloud_graph_records").
+			Where(
+				"tenant_id=? AND knowledge_base_id=? AND knowledge_id=?",
+				job.TenantID,
+				job.KnowledgeBaseID,
+				job.KnowledgeID,
+			).
+			Pluck("operation_id", &ids).
+			Error; err != nil {
+			return err
+		}
+		for _, id := range ids {
+			items = append(
+				items,
+				nextcloudGCItem{
+					JobID:     job.ID,
+					Kind:      "scoped_sql_graph",
+					ObjectRef: id,
+					State:     "pending",
+					CreatedAt: now,
+					UpdatedAt: now,
+				},
+			)
+		}
 	}
 	if err := appendNextcloudGCEmbeddingItems(tx, job, now, &items); err != nil {
 		return err
@@ -511,9 +631,12 @@ func refreshNextcloudGCDerivedInventory(tx *gorm.DB, job nextcloudGCJob, now tim
 
 func refreshNextcloudGCImageInventory(tx *gorm.DB, job nextcloudGCJob, now time.Time) (bool, error) {
 	var rows []struct{ ImageInfo string }
-	if err := tx.Table("chunks").Select("image_info").Where(("tenant_id = ? AND knowledge_base_id = ? AND knowledge_i" +
-		"d = ?"),
-		job.TenantID, job.KnowledgeBaseID, job.KnowledgeID).Find(&rows).Error; err != nil {
+	if err := tx.Table("chunks").
+		Select("image_info").
+		Where("tenant_id = ? AND knowledge_base_id = ? AND knowledge_id = ?",
+			job.TenantID, job.KnowledgeBaseID, job.KnowledgeID).
+		Find(&rows).
+		Error; err != nil {
 		return false, err
 	}
 	for _, row := range rows {
@@ -541,18 +664,44 @@ func refreshNextcloudGCImageInventory(tx *gorm.DB, job nextcloudGCJob, now time.
 }
 
 // ListStatus returns bounded, tenant-scoped progress with no object locator.
-func (s *NextcloudGCStore) ListStatus(ctx context.Context, tenantID uint64, limit int) ([]NextcloudGCStatus, error) {
+func (s *NextcloudGCStore) ListStatus(
+	ctx context.Context,
+	tenantID uint64,
+	limit int,
+	kbIDs ...string,
+) ([]NextcloudGCStatus, error) {
 	if tenantID == 0 {
-		return nil, apperrors.NewProtocolError(errors.New(
-			"nextcloud GC status requires a tenant",
-		), "Nextcloud GC status requires a tenant")
+		return nil, apperrors.NewProtocolError(
+			errors.New("nextcloud GC status requires a tenant"), "Nextcloud GC status requires a tenant",
+		)
 	}
 	if limit <= 0 || limit > 200 {
 		limit = 100
 	}
 	var jobs []nextcloudGCJob
-	if err := s.db.WithContext(ctx).Where("tenant_id = ?", tenantID).
-		Order("created_at DESC, id DESC").Limit(limit).Find(&jobs).Error; err != nil {
+	query := s.db.WithContext(ctx).Where("tenant_id = ?", tenantID)
+	if len(kbIDs) > 0 && kbIDs[0] != "" {
+		query = query.Where("knowledge_base_id = ?", kbIDs[0])
+	}
+	if len(kbIDs) > 1 && kbIDs[1] != "" {
+		var anchor nextcloudGCJob
+		anchorQuery := s.db.WithContext(ctx).
+			Select("id", "created_at").
+			Where("id=? AND tenant_id=?", kbIDs[1], tenantID)
+		if kbIDs[0] != "" {
+			anchorQuery = anchorQuery.Where("knowledge_base_id=?", kbIDs[0])
+		}
+		if e := anchorQuery.Take(&anchor).Error; e != nil {
+			return nil, ErrNextcloudGCJobUnavailable
+		}
+		query = query.Where(
+			"(created_at < ? OR (created_at = ? AND id < ?))",
+			anchor.CreatedAt,
+			anchor.CreatedAt,
+			anchor.ID,
+		)
+	}
+	if err := query.Order("created_at DESC, id DESC").Limit(limit).Find(&jobs).Error; err != nil {
 		return nil, err
 	}
 	status := make([]NextcloudGCStatus, 0, len(jobs))
@@ -563,12 +712,32 @@ func (s *NextcloudGCStore) ListStatus(ctx context.Context, tenantID uint64, limi
 			ConfirmedReleasedBytes int64
 		}
 		if err := s.db.WithContext(ctx).Model(&nextcloudGCItem{}).
-			Select(("SUM(CASE WHEN state <> 'collected' THEN 1 ELSE 0 END) A" +
-				"S pending_items, COALESCE(SUM(estimated_bytes), 0) AS e" +
-				"stimated_bytes, COALESCE(SUM(confirmed_released_bytes)," +
-				" 0) AS confirmed_released_bytes")).
+			Select(("SUM(CASE WHEN state <> 'collected' THEN 1 ELSE 0 END) AS pending_items, CO" +
+				"ALESCE(SUM(estimated_bytes), 0) AS estimated_bytes, COALESCE(SUM(confirmed" +
+				"_released_bytes), 0) AS confirmed_released_bytes")).
 			Where("job_id = ?", job.ID).Scan(&aggregate).Error; err != nil {
 			return nil, err
+		}
+		if s.db.Migrator().HasTable(&originalBodyGCItem{}) {
+			var bodies struct{ PendingItems, EstimatedBytes int64 }
+			if e := bodyInternal(
+				s.db.WithContext(ctx),
+			).Model(&originalBodyGCItem{}).
+				Select(("COALESCE(SUM(CASE WHEN state<>'collected' THEN 1 ELSE 0 END),0) AS pending" +
+					"_items,COALESCE(SUM(estimated_bytes),0) AS estimated_bytes")).
+				Where(
+					"job_id=? AND tenant_id=? AND knowledge_base_id=? AND knowledge_id=?",
+					job.ID,
+					job.TenantID,
+					job.KnowledgeBaseID,
+					job.KnowledgeID,
+				).
+				Scan(&bodies).
+				Error; e != nil {
+				return nil, e
+			}
+			aggregate.PendingItems += bodies.PendingItems
+			aggregate.EstimatedBytes += bodies.EstimatedBytes
 		}
 		status = append(status, NextcloudGCStatus{
 			ID: job.ID, TenantID: job.TenantID,

@@ -33,6 +33,7 @@ type MCPTool struct {
 	schemaErr              error
 	registeredName         string
 	serverInstructions     string
+	sourceSnapshot         []byte
 }
 
 // NewMCPTool creates a new MCP tool wrapper. authWaitTimeoutSeconds carries the
@@ -139,6 +140,9 @@ func (t *MCPTool) callToolTimeout(engineTimeout time.Duration) time.Duration {
 
 // Execute executes the MCP tool
 func (t *MCPTool) Execute(ctx context.Context, args json.RawMessage) (*types.ToolResult, error) {
+	if err := checkMCPSourceTool(ctx, t); err != nil {
+		return nil, err
+	}
 	logger.GetLogger(ctx).Infof("Executing MCP tool: %s from service: %s", t.mcpTool.Name, t.service.Name)
 
 	// Re-check the policy at call time as well as during registration. An agent
@@ -262,6 +266,9 @@ func (t *MCPTool) Execute(ctx context.Context, args json.RawMessage) (*types.Too
 	}
 
 	connectAndCall := func(callCtx context.Context) (*mcp.CallToolResult, error) {
+		if err := checkMCPSourceTool(callCtx, t); err != nil {
+			return nil, err
+		}
 		client, err := getOrCreateMCPClientWithOAuthRetry(
 			callCtx, t.mcpManager, t.service, t.gate, oauthSess, t.mcpTool.Name, toolCallID,
 		)
@@ -278,15 +285,24 @@ func (t *MCPTool) Execute(ctx context.Context, args json.RawMessage) (*types.Too
 			}()
 		}
 
+		if err := checkMCPSourceTool(callCtx, t); err != nil {
+			return nil, err
+		}
 		result, err := client.CallTool(callCtx, t.mcpTool.Name, input)
 		if err != nil && !isStdio {
 			logger.GetLogger(callCtx).Warnf("MCP tool call failed, retrying with fresh connection: %v", err)
 			_ = client.Disconnect()
 
+			if err := checkMCPSourceTool(callCtx, t); err != nil {
+				return nil, err
+			}
 			client, err = getOrCreateMCPClientWithOAuthRetry(
 				callCtx, t.mcpManager, t.service, t.gate, oauthSess, t.mcpTool.Name, toolCallID,
 			)
 			if err != nil {
+				return nil, err
+			}
+			if err := checkMCPSourceTool(callCtx, t); err != nil {
 				return nil, err
 			}
 			result, err = client.CallTool(callCtx, t.mcpTool.Name, input)
@@ -295,6 +311,9 @@ func (t *MCPTool) Execute(ctx context.Context, args json.RawMessage) (*types.Too
 	}
 
 	result, err := connectAndCall(ctx)
+	if checkErr := checkMCPSourceTool(ctx, t); checkErr != nil {
+		return nil, checkErr
+	}
 	if err != nil {
 		logger.GetLogger(ctx).Errorf("MCP tool call failed: %v", err)
 		return &types.ToolResult{
@@ -316,7 +335,8 @@ func (t *MCPTool) Execute(ctx context.Context, args json.RawMessage) (*types.Too
 	// Extract text content and image data URIs from result
 	output, images, skipped := extractContentAndImages(result.Content)
 	if skipped > 0 {
-		logger.GetLogger(ctx).Warnf("MCP tool %s: %d image(s) skipped (exceeded count/size/MIME limits)", t.mcpTool.Name, skipped)
+		logger.GetLogger(ctx).
+			Warnf("MCP tool %s: %d image(s) skipped (exceeded count/size/MIME limits)", t.mcpTool.Name, skipped)
 	}
 
 	// Mitigate indirect prompt injection: prefix MCP output so the LLM treats it as
@@ -576,12 +596,14 @@ func RegisterMCPTools(
 				seen[definition.Name] = true
 				tool := NewMCPTool(service, definition, mcpManager, gate, authWaitTimeoutSeconds)
 				tool.serverInstructions = instructions
+				tool.sourceSnapshot = mcpOwnedToolSnapshot(tool)
 				tools = append(tools, tool)
 			}
 			return tools, nil
 		},
 		lookup,
 	)
+	catalog.transport = mcpManager
 	if err := catalog.authorize(ctx); err != nil {
 		return 0, err
 	}
@@ -605,6 +627,9 @@ func loadMCPServiceTools(
 	gate approval.MCPApproval,
 	regOAuth *MCPOAuthSession,
 ) ([]*types.MCPTool, string, error) {
+	if err := checkMCPSourceService(ctx, service); err != nil {
+		return nil, "", err
+	}
 	const listToolsTimeout = 30 * time.Second
 	toolCallID := "mcp-discover-" + service.ID
 	if meta, ok := ToolExecFromContext(ctx); ok && meta != nil {
@@ -631,6 +656,10 @@ func loadMCPServiceTools(
 	// List tools from the service with timeout.
 	// If the cached connection is stale, disconnect and retry once.
 	listCtx, cancel := context.WithTimeout(ctx, listToolsTimeout)
+	if err := checkMCPSourceService(listCtx, service); err != nil {
+		cancel()
+		return nil, "", err
+	}
 	mcpTools, err := client.ListTools(listCtx)
 	cancel()
 
@@ -639,6 +668,9 @@ func loadMCPServiceTools(
 			Warnf("Failed to list tools from MCP service %s (will retry with fresh connection): %v", service.Name, err)
 		_ = client.Disconnect()
 
+		if err := checkMCPSourceService(ctx, service); err != nil {
+			return nil, "", err
+		}
 		client, err = getOrCreateMCPClientWithOAuthRetry(
 			ctx, mcpManager, service, gate, regOAuth, "", toolCallID,
 		)
@@ -648,6 +680,10 @@ func loadMCPServiceTools(
 		}
 
 		retryCtx, retryCancel := context.WithTimeout(ctx, listToolsTimeout)
+		if err := checkMCPSourceService(retryCtx, service); err != nil {
+			retryCancel()
+			return nil, "", err
+		}
 		mcpTools, err = client.ListTools(retryCtx)
 		retryCancel()
 	}

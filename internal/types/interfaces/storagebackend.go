@@ -26,6 +26,12 @@ type StorageBackendService interface {
 // StorageBackendResolver is the single runtime entry point for resolving one
 // concrete storage instance. backendID wins; provider is a legacy fallback.
 type StorageBackendResolver interface {
-	ResolveFileService(ctx context.Context, tenant *types.Tenant, backendID, provider, localBaseDir string) (FileService, string, error)
+	ResolveFileService(
+		ctx context.Context,
+		tenant *types.Tenant,
+		backendID,
+		provider,
+		localBaseDir string,
+	) (FileService, string, error)
 	ResolveBackend(ctx context.Context, tenant *types.Tenant, backendID, provider string) (*types.StorageBackend, error)
 }

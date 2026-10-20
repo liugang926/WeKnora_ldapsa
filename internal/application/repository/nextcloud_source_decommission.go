@@ -10,10 +10,8 @@ import (
 	"gorm.io/gorm/clause"
 )
 
-// EmptyNextcloudInventorySHA256 is the digest of an empty source inventory.
 const EmptyNextcloudInventorySHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 
-// NextcloudSourceDecommission records the durable source-decommission acknowledgement.
 // A row is an immutable identity and a retry checkpoint, never a claim that
 // general source GC has completed. This protocol handles virgin sources only.
 type NextcloudSourceDecommission struct {
@@ -32,7 +30,6 @@ type NextcloudSourceDecommission struct {
 	UpdatedAt        time.Time `json:"updated_at" gorm:"column:updated_at"`
 }
 
-// TableName returns the source-decommission table name.
 func (NextcloudSourceDecommission) TableName() string { return "nextcloud_source_decommissions" }
 
 type nextcloudSourceVirgin struct {
@@ -184,7 +181,6 @@ func (r *NextcloudSourcePairingRepository) BeginEmptySourceDecommission(
 	return result, nil
 }
 
-// SourceDecommission loads a source-decommission record.
 func (r *NextcloudSourcePairingRepository) SourceDecommission(
 	ctx context.Context, pair NextcloudSourcePairing,
 ) (NextcloudSourceDecommission, error) {
@@ -204,7 +200,6 @@ func (r *NextcloudSourcePairingRepository) SourceDecommission(
 	return row, nil
 }
 
-// RecordEmptyDecommissionAck records an empty source-inventory acknowledgement.
 func (r *NextcloudSourcePairingRepository) RecordEmptyDecommissionAck(
 	ctx context.Context, row NextcloudSourceDecommission,
 ) error {

@@ -13,7 +13,6 @@ import (
 	"time"
 
 	apperrors "github.com/Tencent/WeKnora/internal/errors"
-
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/utils"
 	"gorm.io/gorm"
@@ -35,7 +34,6 @@ var (
 	), "Nextcloud event batch conflicts with the durable inbox")
 )
 
-// NextcloudEventHint contains an untrusted source event hint.
 type NextcloudEventHint struct {
 	EventID       int64
 	PayloadSHA256 string
@@ -46,7 +44,6 @@ type NextcloudEventHint struct {
 	RelativePath  *string
 }
 
-// SignedNextcloudEventBatch contains a signed source event batch.
 type SignedNextcloudEventBatch struct {
 	ConnectionID        string
 	NextcloudInstanceID string
@@ -60,10 +57,8 @@ type SignedNextcloudEventBatch struct {
 	Now                 time.Time
 }
 
-// NextcloudEventInboxRepository persists source event batches and checkpoints.
 type NextcloudEventInboxRepository struct{ db *gorm.DB }
 
-// NewNextcloudEventInboxRepository returns the durable source event-inbox repository.
 func NewNextcloudEventInboxRepository(db *gorm.DB) *NextcloudEventInboxRepository {
 	return &NextcloudEventInboxRepository{db: db}
 }
@@ -107,10 +102,10 @@ type nextcloudEventInboxRow struct {
 // the receipt watermark. A 202 response from its caller means only that the
 // inbox transaction committed. It does not acknowledge source reconciliation,
 // parsing, or publication.
-func (r *NextcloudEventInboxRepository) IngestSigned(ctx context.Context, batch SignedNextcloudEventBatch) (
-	int64,
-	error,
-) {
+func (r *NextcloudEventInboxRepository) IngestSigned(
+	ctx context.Context,
+	batch SignedNextcloudEventBatch,
+) (int64, error) {
 	if batch.AfterEventID < 0 || len(batch.Events) == 0 || len(batch.Events) > 200 {
 		return 0, ErrNextcloudEventConflict
 	}

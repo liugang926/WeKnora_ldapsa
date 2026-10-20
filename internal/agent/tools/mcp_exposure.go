@@ -25,8 +25,9 @@ const (
 // configuration checks just because its definition was advertised up front.
 type MCPRegisteredTool struct {
 	*MCPTool
-	catalog *MCPCatalog
-	ref     string
+	catalog          *MCPCatalog
+	ref              string
+	sourceDefinition types.FunctionDefinition
 }
 
 // Description identifies the external service and original tool.
@@ -63,6 +64,7 @@ func (t *MCPRegisteredTool) Execute(ctx context.Context, args json.RawMessage) (
 			current.authWaitTimeoutSeconds,
 		)
 		target.registeredName = t.Name()
+		target.serverInstructions = current.serverInstructions
 		return target.Execute(ctx, args)
 	}
 	return mcpDiscoveryFailure(
@@ -247,7 +249,10 @@ func (r *ToolRegistry) RefreshMCPTools(ctx context.Context) {
 			bound := NewMCPTool(tool.service, tool.mcpTool, tool.mcpManager, tool.gate, tool.authWaitTimeoutSeconds)
 			bound.registeredName = mcpRegisteredName(tool)
 			bound.serverInstructions = tool.serverInstructions
-			r.RegisterTool(&MCPRegisteredTool{MCPTool: bound, catalog: c, ref: mcpToolRef(tool)})
+			bound.sourceSnapshot = mcpOwnedToolSnapshot(bound)
+			r.RegisterTool(
+				bindMCPRegisteredSource(&MCPRegisteredTool{MCPTool: bound, catalog: c, ref: mcpToolRef(tool)}),
+			)
 			r.deferred[ToolCallMCPTool] = false
 		}
 	}

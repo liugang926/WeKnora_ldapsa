@@ -39,6 +39,7 @@ type AsynqTaskParams struct {
 	KnowledgeRepo        interfaces.KnowledgeRepository
 	ChunkRepo            interfaces.ChunkRepository
 	ContentLeases        *repository.NextcloudContentLeaseStore
+	KnowledgeInputs      *repository.KnowledgeInputProvenanceStore
 	KnowledgeBaseService interfaces.KnowledgeBaseService
 	GroupAccess          interfaces.GroupAccessService
 	TagService           interfaces.KnowledgeTagService
@@ -256,9 +257,14 @@ func RunAsynqServer(params AsynqTaskParams) *asynq.ServeMux {
 	// leaving user-facing interactive chat ungated. Installed early so all
 	// downstream handlers (and their model calls) inherit the flag.
 	mux.Use(backgroundTaskMiddleware())
-	mux.Use(taskGroupAccessMiddleware(
-		params.GroupAccess, params.KnowledgeBaseService, params.KnowledgeRepo, params.ChunkRepo, params.SpanTracker,
-	))
+	guard := taskGroupAccessMiddleware(
+		params.GroupAccess,
+		params.KnowledgeBaseService,
+		params.KnowledgeRepo,
+		params.ChunkRepo,
+		params.SpanTracker,
+		params.KnowledgeInputs,
+	)
 
 	// Install Langfuse middleware BEFORE handler registration so every task
 	// type is automatically wrapped. When Langfuse is disabled the middleware
@@ -268,7 +274,16 @@ func RunAsynqServer(params AsynqTaskParams) *asynq.ServeMux {
 	// chat / rerank / ASR) nest correctly in the Langfuse UI.
 	mux.Use(langfuse.AsynqMiddleware())
 	build := func(handler func(context.Context, *asynq.Task) error) func(context.Context, *asynq.Task) error {
-		return wrapNextcloudBuild(params.ContentLeases, params.KnowledgeRepo, params.ChunkRepo, handler)
+		return WrapKnowledgeBuildTask(
+			params.ContentLeases,
+			params.KnowledgeRepo,
+			params.ChunkRepo,
+			params.KnowledgeBaseService,
+			params.GroupAccess,
+			params.SpanTracker,
+			params.KnowledgeInputs,
+			handler,
+		)
 	}
 
 	// Register extract handlers - router will dispatch to appropriate handler
@@ -315,7 +330,10 @@ func RunAsynqServer(params AsynqTaskParams) *asynq.ServeMux {
 	// Register knowledge post process handler
 	mux.HandleFunc(types.TypeKnowledgePostProcess, build(params.KnowledgePostProcess.Handle))
 	mux.HandleFunc(types.TypeKnowledgeAutoTag, build(params.KnowledgeAutoTag.Handle))
-	mux.HandleFunc(types.TypeKnowledgeBaseProfile, params.KnowledgeBaseProfile.Handle)
+	mux.HandleFunc(
+		types.TypeKnowledgeBaseProfile,
+		guard(asynq.HandlerFunc(params.KnowledgeBaseProfile.Handle)).ProcessTask,
+	)
 
 	// Register data source sync handler
 	mux.HandleFunc(types.TypeDataSourceSync, params.DataSourceService.ProcessSync)
@@ -504,13 +522,27 @@ func markKnowledgeListDeleteFailed(
 			},
 		)
 		if err != nil {
-			logger.Warnf(ctx, "dead-letter callback: failed to mark delete failure for knowledge %s: %v", knowledgeID, err)
+			logger.Warnf(
+				ctx,
+				"dead-letter callback: failed to mark delete failure for knowledge %s: %v",
+				knowledgeID,
+				err,
+			)
 			continue
 		}
 		if !updated {
-			logger.Infof(ctx, "dead-letter callback: skipped marking knowledge %s after delete task exhaustion because it is no longer active deleting", knowledgeID)
+			logger.Infof(
+				ctx,
+				("dead-letter callback: skipped marking knowledge %s after delete task exhau" +
+					"stion because it is no longer active deleting"),
+				knowledgeID,
+			)
 			continue
 		}
-		logger.Infof(ctx, "dead-letter callback: marked knowledge %s as failed after delete task exhausted retries", knowledgeID)
+		logger.Infof(
+			ctx,
+			"dead-letter callback: marked knowledge %s as failed after delete task exhausted retries",
+			knowledgeID,
+		)
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -37,12 +38,14 @@ func (s *historyBoundaryFileStore) StatSessionFile(context.Context, string, stri
 
 type historyBoundaryShell struct{ calls int }
 
-func (
-	s *historyBoundaryShell,
-) ExecShellCommand(context.Context, string, string, string, time.Duration, map[string]string) (
-	*sandbox.ExecuteResult,
-	error,
-) {
+func (s *historyBoundaryShell) ExecShellCommand(
+	context.Context,
+	string,
+	string,
+	string,
+	time.Duration,
+	map[string]string,
+) (*sandbox.ExecuteResult, error) {
 	s.calls++
 	return &sandbox.ExecuteResult{Stdout: protectedHistoryFileMarker}, nil
 }
@@ -54,9 +57,11 @@ type historyBoundaryModel struct {
 	sawMarker bool
 }
 
-func (
-	m *historyBoundaryModel,
-) ChatStream(_ context.Context, messages []chat.Message, opts *chat.ChatOptions) (<-chan types.StreamResponse, error) {
+func (m *historyBoundaryModel) ChatStream(
+	_ context.Context,
+	messages []chat.Message,
+	opts *chat.ChatOptions,
+) (<-chan types.StreamResponse, error) {
 	m.calls++
 	for _, message := range messages {
 		if strings.Contains(message.Content, protectedHistoryFileMarker) {
@@ -74,16 +79,25 @@ func (
 		Done:         true,
 		FinishReason: "stop",
 	}
-	if m.calls == 1 {
+	if m.calls == 1 && slices.Contains(m.offered, tools.ToolReadFile) &&
+		slices.Contains(m.offered, tools.ToolShellExec) {
 		response = types.StreamResponse{Done: true, FinishReason: "tool_calls", ToolCalls: []types.LLMToolCall{
-			{ID: "read-old", Type: "function", Function: types.FunctionCall{
-				Name:      tools.ToolReadFile,
-				Arguments: `{"path":"/workspace/output/old-protected.txt"}`,
-			}},
-			{ID: "exec-old", Type: "function", Function: types.FunctionCall{
-				Name:      tools.ToolShellExec,
-				Arguments: `{"command":"cat /workspace/output/old-protected.txt"}`,
-			}},
+			{
+				ID:   "read-old",
+				Type: "function",
+				Function: types.FunctionCall{
+					Name:      tools.ToolReadFile,
+					Arguments: `{"path":"/workspace/output/old-protected.txt"}`,
+				},
+			},
+			{
+				ID:   "exec-old",
+				Type: "function",
+				Function: types.FunctionCall{
+					Name:      tools.ToolShellExec,
+					Arguments: `{"command":"cat /workspace/output/old-protected.txt"}`,
+				},
+			},
 		}}
 	}
 	if m.sawMarker {
@@ -101,11 +115,11 @@ func TestAgentHistoryAdmissionFallbackBlocksOldWorkspaceReadAndExec(t *testing.T
 			files := &historyBoundaryFileStore{}
 			shell := &historyBoundaryShell{}
 			model := &historyBoundaryModel{}
-			svc := &agentService{sandboxResolver: stubSandboxResolver{mgr: &capableManager{
-				typ:   sandbox.SandboxTypeCube,
-				shell: shell,
-				files: files,
-			}}}
+			svc := &agentService{
+				sandboxResolver: stubSandboxResolver{
+					mgr: &capableManager{typ: sandbox.SandboxTypeCube, shell: shell, files: files},
+				},
+			}
 			cfg := &types.AgentConfig{
 				ExcludeHistoricalContext: exclude,
 				SkillsEnabled:            true,
@@ -116,25 +130,52 @@ func TestAgentHistoryAdmissionFallbackBlocksOldWorkspaceReadAndExec(t *testing.T
 					tools.ToolShellExec,
 					tools.ToolSearchConversations,
 					tools.ToolDataAnalysis,
-				}, MaxIterations: 3, MCPSelectionMode: "none",
+				},
+				MaxIterations:    3,
+				MCPSelectionMode: "none",
 			}
 			bus := event.NewEventBus()
 			var output strings.Builder
 			for _, kind := range []event.EventType{event.EventAgentToolResult, event.EventAgentFinalAnswer} {
-				bus.On(kind, func(_ context.Context, evt event.Event) error {
-					fmt.Fprint(
-						&output,
-						evt.Data,
-					)
-					return nil
-				})
+				bus.On(
+					kind,
+					func(_ context.Context, evt event.Event) error { fmt.Fprint(&output, evt.Data); return nil },
+				)
 			}
-			ctx := context.WithValue(context.Background(), types.TenantIDContextKey, uint64(1))
-			engine, err := svc.CreateAgentEngine(ctx, cfg, model, nil, bus, "old-session", "new-message")
+			request := &types.QARequest{
+				Query:       "new user question",
+				CustomAgent: &types.CustomAgent{ID: "workspace-fixture-agent"},
+			}
+			current := &sessionService{agentService: svc}
+			ctx := actualAgentHistoryRequest(t, current, request)
+			engine, err := svc.CreateAgentEngine(
+				ctx,
+				cfg,
+				model,
+				nil,
+				bus,
+				request.Session.ID,
+				request.AssistantMessageID,
+			)
 			require.NoError(t, err)
-			_, err = engine.Execute(ctx, "old-session", "new-message", "new user question", nil)
-			require.NoError(t, err)
+			native := engine.(interface {
+				SetSourceLineageVerifier(func(context.Context, *types.SourceLineage) error)
+				SetSystemPromptSourceLineage(*types.SourceLineage)
+				SetUserInputSourceLineage(*types.SourceLineage)
+			})
+			independent, lineageErr := types.NewCompleteSourceLineage()
+			require.NoError(t, lineageErr)
+			native.SetSystemPromptSourceLineage(independent)
+			native.SetUserInputSourceLineage(ctx.Value(actualHistoryInputKey{}).(actualHistoryInput).lineage)
+			native.SetSourceLineageVerifier(func(checkCtx context.Context, lineage *types.SourceLineage) error {
+				if err := CheckMessageMaterialOutputBoundary(ctx); err != nil {
+					return err
+				}
+				return current.sourceLineageGuard.Check(checkCtx, lineage, access.LineageReadScope{})
+			})
+			_, err = engine.Execute(ctx, request.Session.ID, request.AssistantMessageID, request.Query, nil)
 			if exclude {
+				require.NoError(t, err)
 				require.Zero(t, files.reads)
 				require.Zero(t, shell.calls)
 				require.False(t, model.sawMarker)
@@ -150,10 +191,15 @@ func TestAgentHistoryAdmissionFallbackBlocksOldWorkspaceReadAndExec(t *testing.T
 				}
 				require.Contains(t, output.String(), "new plain answer")
 			} else {
-				require.Positive(t, files.reads)
-				require.Positive(t, shell.calls)
-				require.True(t, model.sawMarker)
-				require.Contains(t, output.String(), protectedHistoryFileMarker)
+				require.Error(
+					t,
+					err,
+					"retained sandbox bytes have no typed source adapter in the accepted release scope",
+				)
+				require.Zero(t, files.reads)
+				require.Zero(t, shell.calls)
+				require.False(t, model.sawMarker)
+				require.NotContains(t, output.String(), protectedHistoryFileMarker)
 			}
 		})
 	}
@@ -171,7 +217,12 @@ func (r *retainedContextHistoryRepo) GetSessionAttachments(context.Context, stri
 
 func TestAgentHistoryAdmissionBothModesIsolateRetainedWorkspaceAtAgentQA(t *testing.T) {
 	for _, multiTurn := range []bool{false, true} {
-		for _, scenario := range []string{"ever-source", "lookup-unavailable", "missing-policy", "ordinary-no-source"} {
+		for _, scenario := range []string{
+			"ever-source",
+			"lookup-unavailable",
+			"missing-policy",
+			"legacy-no-source-state",
+		} {
 			t.Run(fmt.Sprintf("multi-turn-%t/%s", multiTurn, scenario), func(t *testing.T) {
 				files := &historyBoundaryFileStore{}
 				shell := &historyBoundaryShell{}
@@ -188,11 +239,7 @@ func TestAgentHistoryAdmissionBothModesIsolateRetainedWorkspaceAtAgentQA(t *test
 				agents := &agentService{
 					cfg: &config.Config{},
 					sandboxResolver: stubSandboxResolver{
-						mgr: &capableManager{
-							typ:   sandbox.SandboxTypeCube,
-							shell: shell,
-							files: files,
-						},
+						mgr: &capableManager{typ: sandbox.SandboxTypeCube, shell: shell, files: files},
 					},
 				}
 				var agentInterface interfaces.AgentService = agents
@@ -202,23 +249,13 @@ func TestAgentHistoryAdmissionBothModesIsolateRetainedWorkspaceAtAgentQA(t *test
 					messageRepo:  repo,
 					agentService: agentInterface,
 					modelService: &stubModelService{
-						chatModel: model,
-						modelsByID: map[string]*types.Model{
-							"chat": {
-								ID:   "chat",
-								Type: types.ModelTypeKnowledgeQA,
-							},
-						},
+						chatModel:  model,
+						modelsByID: map[string]*types.Model{"chat": {ID: "chat", Type: types.ModelTypeKnowledgeQA}},
 					},
 				}
-				ctx := context.WithValue(context.WithValue(context.Background(), types.TenantIDContextKey, uint64(
-					1,
-				)), types.TenantInfoContextKey, &types.Tenant{ID: 1})
+
 				req := &types.QARequest{
-					Session: &types.Session{
-						ID:       "same-old-session",
-						TenantID: 1,
-					},
+					Session:            &types.Session{ID: "same-old-session", TenantID: 1},
 					AssistantMessageID: "new-message",
 					Query:              "new user question",
 					TurnLeaseHeld:      true,
@@ -232,47 +269,53 @@ func TestAgentHistoryAdmissionBothModesIsolateRetainedWorkspaceAtAgentQA(t *test
 							MCPSelectionMode:    "none",
 							SkillsSelectionMode: "all",
 							SandboxConfigID:     "old-sandbox",
-							AllowedTools: []string{
-								tools.ToolThinking,
-								tools.ToolReadFile,
-								tools.ToolShellExec,
-							}, MultiTurnEnabled: multiTurn,
+							AllowedTools:        []string{tools.ToolThinking, tools.ToolReadFile, tools.ToolShellExec},
+							MultiTurnEnabled:    multiTurn,
 						},
 					},
 				}
 				bus := event.NewEventBus()
 				var output strings.Builder
 				for _, kind := range []event.EventType{event.EventAgentToolResult, event.EventAgentFinalAnswer} {
-					bus.On(kind, func(_ context.Context, evt event.Event) error {
-						fmt.Fprint(
-							&output,
-							evt.Data,
-						)
-						return nil
-					})
+					bus.On(
+						kind,
+						func(_ context.Context, evt event.Event) error { fmt.Fprint(&output, evt.Data); return nil },
+					)
 				}
-				require.NoError(t, svc.AgentQA(ctx, req, bus))
+				ctx := actualAgentHistoryRequest(t, svc, req)
+				err := svc.AgentQA(ctx, req, bus)
+				unadmittedWorkspace := scenario == "legacy-no-source-state" && !multiTurn
+				if unadmittedWorkspace {
+					require.ErrorIs(t, err, access.ErrNextcloudPublicationUnavailable)
+					require.Zero(t, model.calls, "single-turn cannot stage an unadmitted retained workspace")
+				} else {
+					require.NoError(t, err)
+				}
 				require.Equal(
 					t,
 					multiTurn,
 					req.CustomAgent.Config.MultiTurnEnabled,
-					("the single-turn case must not be defaulted into multi-t" +
-						"urn"))
-				if scenario == "ordinary-no-source" {
-					require.Positive(t, repo.attachmentLoads)
-					require.Positive(t, files.reads)
-					require.Positive(t, shell.calls)
-					require.True(t, model.sawMarker)
-					require.Contains(t, output.String(), protectedHistoryFileMarker)
-				} else {
+					"the single-turn case must not be defaulted into multi-turn",
+				)
+				// A global no-source fact cannot certify raw legacy history or sandbox bytes.
+				{
 					require.Zero(t, repo.attachmentLoads)
-					require.Zero(t, repo.pages)
-					require.Zero(t, repo.checkpointReads)
+					if scenario == "legacy-no-source-state" && multiTurn {
+						require.Equal(t, 1, repo.pages, "the literal legacy rows are rejected before model input")
+						require.Equal(t, 1, repo.checkpointReads)
+					} else {
+						require.Zero(t, repo.pages)
+						require.Zero(t, repo.checkpointReads)
+					}
 					require.Zero(t, files.reads)
 					require.Zero(t, shell.calls)
 					require.False(t, model.sawMarker)
 					require.NotContains(t, output.String(), protectedHistoryFileMarker)
-					require.Contains(t, output.String(), "new plain answer")
+					if unadmittedWorkspace {
+						require.NotContains(t, output.String(), "new plain answer")
+					} else {
+						require.Contains(t, output.String(), "new plain answer")
+					}
 					for _, tool := range []string{tools.ToolReadFile, tools.ToolShellExec, tools.ToolListSandboxFiles} {
 						require.NotContains(t, model.offered, tool)
 					}

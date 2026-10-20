@@ -7,45 +7,37 @@ import (
 	"time"
 
 	apperrors "github.com/Tencent/WeKnora/internal/errors"
-
 	"github.com/google/uuid"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
-// NextcloudContentLeaseMaxTTL bounds the lifetime of a durable content lease.
 const NextcloudContentLeaseMaxTTL = 5 * time.Minute
 
 const nextcloudContentLeasePruneMaxBatch = 1000
 
 var (
-	// ErrNextcloudContentLeaseInvalid reports an invalid durable content-lease scope.
 	ErrNextcloudContentLeaseInvalid = errors.New("invalid Nextcloud content lease request")
-	// ErrNextcloudContentLeaseDenied reports a closed content-read or build fence.
-	ErrNextcloudContentLeaseDenied = apperrors.NewProtocolError(errors.New(
+	ErrNextcloudContentLeaseDenied  = apperrors.NewProtocolError(errors.New(
 		"nextcloud content fence is closed",
 	), "Nextcloud content fence is closed")
-	// ErrNextcloudContentLeaseExpired reports an expired or released content lease.
 	ErrNextcloudContentLeaseExpired = apperrors.NewProtocolError(errors.New(
 		"nextcloud content lease expired or released",
 	), "Nextcloud content lease expired or released")
-	// ErrNextcloudContentGCBusy reports a collection blocked by an active lease or claim.
 	ErrNextcloudContentGCBusy = apperrors.NewProtocolError(
 		errors.New(
 			("nextcloud content GC is blocked by an active lease or c" +
 				"laim")), "Nextcloud content GC is blocked by an active lease or claim")
-	// ErrNextcloudContentGCUncovered reports unproven durable lease-protocol coverage.
 	ErrNextcloudContentGCUncovered = apperrors.NewProtocolError(errors.New(
 		"nextcloud content lease protocol coverage is unproven",
 	), "Nextcloud content lease protocol coverage is unproven")
 )
 
-// NextcloudContentLeaseKind identifies the purpose of a durable content lease.
 type NextcloudContentLeaseKind string
 
 const (
-	// NextcloudContentReadLease identifies a lease protecting source-content reads.
-	NextcloudContentReadLease NextcloudContentLeaseKind = "read"
-	// NextcloudContentBuildLease identifies a lease protecting source-content writes.
+	// NextcloudContentReadLease defines the nextcloud content read lease value.
+	NextcloudContentReadLease  NextcloudContentLeaseKind = "read"
 	NextcloudContentBuildLease NextcloudContentLeaseKind = "build"
 )
 
@@ -65,7 +57,6 @@ func (s NextcloudContentScope) valid() bool {
 		s.DataSourceID != "" && s.ExternalID != ""
 }
 
-// NextcloudContentLease records a durable source-content lease.
 type NextcloudContentLease struct {
 	ID              string
 	TenantID        uint64
@@ -77,7 +68,6 @@ type NextcloudContentLease struct {
 	ExpiresAt       time.Time
 }
 
-// NextcloudContentGCClaim records a durable claim for source-content collection.
 type NextcloudContentGCClaim struct {
 	Token     string
 	Scope     NextcloudContentScope
@@ -114,10 +104,8 @@ type nextcloudContentLeaseRow struct {
 
 func (nextcloudContentLeaseRow) TableName() string { return "nextcloud_content_leases" }
 
-// NextcloudContentLeaseStore persists source-content leases and collection fences.
 type NextcloudContentLeaseStore struct{ db *gorm.DB }
 
-// NewNextcloudContentLeaseStore returns the durable source-content lease store.
 func NewNextcloudContentLeaseStore(db *gorm.DB) *NextcloudContentLeaseStore {
 	return &NextcloudContentLeaseStore{db: db}
 }
@@ -173,10 +161,12 @@ func nextcloudLockKBFence(tx *gorm.DB, tenantID uint64, kbID string, nowMS int64
 	return fence, err
 }
 
-func nextcloudLockExactFence(tx *gorm.DB, scope NextcloudContentScope, nowMS int64, create bool) (
-	nextcloudContentFence,
-	error,
-) {
+func nextcloudLockExactFence(
+	tx *gorm.DB,
+	scope NextcloudContentScope,
+	nowMS int64,
+	create bool,
+) (nextcloudContentFence, error) {
 	var fence nextcloudContentFence
 	if !scope.valid() {
 		return fence, ErrNextcloudContentLeaseInvalid
@@ -268,6 +258,13 @@ func (s *NextcloudContentLeaseStore) AcquireKBRead(ctx context.Context,
 		if err != nil {
 			return err
 		}
+		closed, e := nextcloudKBControlsClosed(tx, tenantID, kbID)
+		if e != nil {
+			return e
+		}
+		if closed {
+			return ErrNextcloudContentLeaseDenied
+		}
 		if kb.State != "open" {
 			return ErrNextcloudContentLeaseDenied
 		}
@@ -285,7 +282,6 @@ func (s *NextcloudContentLeaseStore) AcquireKBRead(ctx context.Context,
 	return lease, err
 }
 
-// AcquireKnowledge acquires a lease for an exact source generation.
 func (s *NextcloudContentLeaseStore) AcquireKnowledge(ctx context.Context,
 	scope NextcloudContentScope, kind NextcloudContentLeaseKind, owner string, ttl time.Duration,
 ) (NextcloudContentLease, error) {
@@ -343,12 +339,10 @@ func (s *NextcloudContentLeaseStore) WaitForCurrentSourceVersion(ctx context.Con
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-waitCtx.Done():
-			return apperrors.NewProtocolError(fmt.Errorf(
-				"nextcloud source version was not staged: %w",
-				ErrNextcloudContentLeaseDenied,
-			), fmt.Sprintf("Nextcloud source version was not staged: %s", apperrors.PublicMessage(
-				ErrNextcloudContentLeaseDenied,
-			)))
+			return apperrors.NewProtocolError(
+				fmt.Errorf("nextcloud source version was not staged: %w", ErrNextcloudContentLeaseDenied),
+				fmt.Sprintf("Nextcloud source version was not staged: %s", ErrNextcloudContentLeaseDenied),
+			)
 		case <-ticker.C:
 		}
 	}
@@ -385,8 +379,49 @@ func (s *NextcloudContentLeaseStore) AcquireKnowledgeInTx(ctx context.Context,
 	if fence.State != "open" {
 		return lease, ErrNextcloudContentLeaseDenied
 	}
-	return nextcloudInsertLease(tx, scope.TenantID, scope.KnowledgeBaseID,
-		scope.KnowledgeID, kind, fence.Epoch, owner, nowMS, ttlMS)
+	closed, e := nextcloudKBControlsClosed(tx, scope.TenantID, scope.KnowledgeBaseID)
+	if e != nil {
+		return lease, e
+	}
+	if closed && kind == NextcloudContentReadLease {
+		return lease, ErrNextcloudContentLeaseDenied
+	}
+	if kind == NextcloudContentBuildLease {
+		allowed, e := NextcloudBuildControlsAllowed(
+			ctx,
+			tx,
+			scope.TenantID,
+			scope.KnowledgeBaseID,
+			scope.DataSourceID,
+			scope.KnowledgeID,
+		)
+		if e != nil || !allowed {
+			if e == nil {
+				e = ErrNextcloudContentLeaseDenied
+			}
+			return lease, e
+		}
+	}
+	lease, e = nextcloudInsertLease(
+		tx,
+		scope.TenantID,
+		scope.KnowledgeBaseID,
+		scope.KnowledgeID,
+		kind,
+		fence.Epoch,
+		owner,
+		nowMS,
+		ttlMS,
+	)
+	if e != nil {
+		return lease, e
+	}
+	if kind == NextcloudContentBuildLease {
+		if e = nextcloudRecordRecoveryBuildLease(ctx, tx, lease, scope); e != nil {
+			return lease, e
+		}
+	}
+	return lease, nil
 }
 
 // UpgradeKBRead serializes with retirement and preserves the broad lease. A
@@ -408,6 +443,13 @@ func (s *NextcloudContentLeaseStore) UpgradeKBRead(ctx context.Context,
 		kb, err := nextcloudLockKBFence(tx, scope.TenantID, scope.KnowledgeBaseID, nowMS)
 		if err != nil {
 			return err
+		}
+		closed, e := nextcloudKBControlsClosed(tx, scope.TenantID, scope.KnowledgeBaseID)
+		if e != nil {
+			return e
+		}
+		if closed {
+			return ErrNextcloudContentLeaseDenied
 		}
 		if kb.State != "open" {
 			return ErrNextcloudContentLeaseDenied
@@ -474,6 +516,40 @@ func (s *NextcloudContentLeaseStore) RenewLease(ctx context.Context, id string,
 		} else if kb.Epoch != row.Epoch {
 			return ErrNextcloudContentLeaseDenied
 		}
+		closed, e := nextcloudKBControlsClosed(tx, row.TenantID, row.KnowledgeBaseID)
+		if e != nil {
+			return e
+		}
+		if closed {
+			if row.Kind == string(NextcloudContentReadLease) || row.KnowledgeID == "" {
+				return ErrNextcloudContentLeaseDenied
+			}
+			var exact nextcloudContentFence
+			if e := tx.Where(
+				"tenant_id=? AND knowledge_base_id=? AND knowledge_id=?",
+				row.TenantID,
+				row.KnowledgeBaseID,
+				row.KnowledgeID,
+			).
+				Take(&exact).
+				Error; e != nil {
+				return e
+			}
+			if e := nextcloudValidateRecoveryBuildLease(
+				ctx,
+				tx,
+				nextcloudLeasePublic(row),
+				NextcloudContentScope{
+					TenantID:        row.TenantID,
+					KnowledgeBaseID: row.KnowledgeBaseID,
+					KnowledgeID:     row.KnowledgeID,
+					DataSourceID:    exact.DataSourceID,
+					ExternalID:      exact.ExternalID,
+				},
+			); e != nil {
+				return e
+			}
+		}
 		result := tx.Exec(`UPDATE nextcloud_content_leases SET expires_at_ms = ?, updated_at_ms = ?
 			WHERE lease_id = ? AND released_at_ms IS NULL AND expires_at_ms > ?`,
 			nowMS+ttlMS, nowMS, id, nowMS)
@@ -490,7 +566,6 @@ func (s *NextcloudContentLeaseStore) RenewLease(ctx context.Context, id string,
 	return lease, err
 }
 
-// ReleaseLease releases a durable content lease.
 func (s *NextcloudContentLeaseStore) ReleaseLease(ctx context.Context, id string) error {
 	if id == "" {
 		return ErrNextcloudContentLeaseInvalid
@@ -561,7 +636,6 @@ func (s *NextcloudContentLeaseStore) PruneFinishedLeases(ctx context.Context,
 	return pruned, nil
 }
 
-// RetireKnowledge retires an exact source generation before collection.
 func (s *NextcloudContentLeaseStore) RetireKnowledge(ctx context.Context,
 	scope NextcloudContentScope,
 ) error {
@@ -589,6 +663,37 @@ func (s *NextcloudContentLeaseStore) RetireKnowledgeInTx(ctx context.Context,
 	if _, err := nextcloudLockKBFence(tx, scope.TenantID, scope.KnowledgeBaseID, nowMS); err != nil {
 		return err
 	}
+	// Permanent closure cannot create a new open exact fence while retiring
+	// a retained generation. Create it already retired; never grant a lease.
+	if tx.Migrator().HasTable(&NextcloudTargetClosure{}) {
+		var closed int64
+		if e := tx.Model(&NextcloudTargetClosure{}).
+			Where("tenant_id=? AND knowledge_base_id=?", scope.TenantID, scope.KnowledgeBaseID).
+			Count(&closed).
+			Error; e != nil {
+			return e
+		}
+		if closed > 0 {
+			row := map[string]any{
+				"tenant_id":         scope.TenantID,
+				"knowledge_base_id": scope.KnowledgeBaseID,
+				"knowledge_id":      scope.KnowledgeID,
+				"datasource_id":     scope.DataSourceID,
+				"external_id":       scope.ExternalID,
+				"epoch":             1,
+				"state":             "retired",
+				"retired_at_ms":     nowMS,
+				"created_at_ms":     nowMS,
+				"updated_at_ms":     nowMS,
+			}
+			if e := tx.Table("nextcloud_content_fences").
+				Clauses(clause.OnConflict{DoNothing: true}).
+				Create(row).
+				Error; e != nil {
+				return e
+			}
+		}
+	}
 	fence, err := nextcloudLockExactFence(tx, scope, nowMS, true)
 	if err != nil {
 		return err
@@ -602,7 +707,6 @@ func (s *NextcloudContentLeaseStore) RetireKnowledgeInTx(ctx context.Context,
 		nowMS, nowMS, scope.TenantID, scope.KnowledgeBaseID, scope.KnowledgeID).Error
 }
 
-// RetireKB retires the source generations in a knowledge base.
 func (s *NextcloudContentLeaseStore) RetireKB(ctx context.Context,
 	tenantID uint64, kbID string,
 ) error {
@@ -614,7 +718,6 @@ func (s *NextcloudContentLeaseStore) RetireKB(ctx context.Context,
 	})
 }
 
-// RetireKBInTx retires knowledge-base source generations in the caller's transaction.
 func (s *NextcloudContentLeaseStore) RetireKBInTx(ctx context.Context,
 	tx *gorm.DB, tenantID uint64, kbID string,
 ) error {
@@ -646,6 +749,9 @@ func (s *NextcloudContentLeaseStore) ValidateBuildLeaseInTx(ctx context.Context,
 		lease.KnowledgeID != scope.KnowledgeID {
 		return ErrNextcloudContentLeaseInvalid
 	}
+	if err := requireNextcloudTargetOpenInTx(tx.WithContext(ctx), scope.TenantID, scope.KnowledgeBaseID); err != nil {
+		return err
+	}
 	tx = tx.WithContext(ctx)
 	nowMS, err := nextcloudLeaseNowMS(tx)
 	if err != nil {
@@ -671,6 +777,9 @@ func (s *NextcloudContentLeaseStore) ValidateBuildLeaseInTx(ctx context.Context,
 		row.Epoch != fence.Epoch || row.OwnerID != lease.OwnerID ||
 		row.ReleasedAtMS != nil || row.ExpiresAtMS <= nowMS {
 		return ErrNextcloudContentLeaseExpired
+	}
+	if err := nextcloudValidateRecoveryBuildLease(ctx, tx, lease, scope); err != nil {
+		return err
 	}
 	return nil
 }
@@ -855,7 +964,6 @@ func (s *NextcloudContentLeaseStore) RenewGCClaim(ctx context.Context,
 	return claim, err
 }
 
-// FinishGCClaim finishes the durable content-collection claim.
 func (s *NextcloudContentLeaseStore) FinishGCClaim(ctx context.Context,
 	claim NextcloudContentGCClaim, completed bool,
 ) error {

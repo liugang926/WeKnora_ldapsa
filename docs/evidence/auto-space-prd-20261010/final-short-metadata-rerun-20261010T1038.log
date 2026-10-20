@@ -1,0 +1,27 @@
+=== RUN   TestNextcloudSecondaryMetadataMoveTargetsExcludeManagedSources
+--- PASS: TestNextcloudSecondaryMetadataMoveTargetsExcludeManagedSources (0.00s)
+=== RUN   TestNextcloudSecondaryMetadataSharedListsAndCountsExcludeManagedSources
+--- PASS: TestNextcloudSecondaryMetadataSharedListsAndCountsExcludeManagedSources (0.00s)
+=== RUN   TestOrganizationSharedListsApplyGroupResourceAccess
+=== RUN   TestOrganizationSharedListsApplyGroupResourceAccess/ListOrgShares
+WARNING[2026-10-10 10:39:04.089] [] organization.go:93[mayListGroupResource] | Cannot verify directory group access for shared knowledge_base kb-error: directory unavailable
+=== RUN   TestOrganizationSharedListsApplyGroupResourceAccess/ListSharedKnowledgeBases
+WARNING[2026-10-10 10:39:04.090] [] organization.go:93[mayListGroupResource] | Cannot verify directory group access for shared knowledge_base kb-error: directory unavailable
+=== RUN   TestOrganizationSharedListsApplyGroupResourceAccess/ListOrganizationSharedKnowledgeBases
+WARNING[2026-10-10 10:39:04.090] [] organization.go:93[mayListGroupResource] | Cannot verify directory group access for shared knowledge_base kb-error: directory unavailable
+WARNING[2026-10-10 10:39:04.090] [] organization.go:93[mayListGroupResource] | Cannot verify directory group access for shared agent agent-error: directory unavailable
+=== RUN   TestOrganizationSharedListsApplyGroupResourceAccess/ListOrgAgentShares
+WARNING[2026-10-10 10:39:04.090] [] organization.go:93[mayListGroupResource] | Cannot verify directory group access for shared agent agent-error: directory unavailable
+=== RUN   TestOrganizationSharedListsApplyGroupResourceAccess/ListSharedAgents
+WARNING[2026-10-10 10:39:04.090] [] organization.go:93[mayListGroupResource] | Cannot verify directory group access for shared agent agent-error: directory unavailable
+=== RUN   TestOrganizationSharedListsApplyGroupResourceAccess/ListOrganizationSharedAgents
+WARNING[2026-10-10 10:39:04.090] [] organization.go:93[mayListGroupResource] | Cannot verify directory group access for shared agent agent-error: directory unavailable
+--- PASS: TestOrganizationSharedListsApplyGroupResourceAccess (0.00s)
+    --- PASS: TestOrganizationSharedListsApplyGroupResourceAccess/ListOrgShares (0.00s)
+    --- PASS: TestOrganizationSharedListsApplyGroupResourceAccess/ListSharedKnowledgeBases (0.00s)
+    --- PASS: TestOrganizationSharedListsApplyGroupResourceAccess/ListOrganizationSharedKnowledgeBases (0.00s)
+    --- PASS: TestOrganizationSharedListsApplyGroupResourceAccess/ListOrgAgentShares (0.00s)
+    --- PASS: TestOrganizationSharedListsApplyGroupResourceAccess/ListSharedAgents (0.00s)
+    --- PASS: TestOrganizationSharedListsApplyGroupResourceAccess/ListOrganizationSharedAgents (0.00s)
+PASS
+ok      github.com/Tencent/WeKnora/internal/handler 0.398s

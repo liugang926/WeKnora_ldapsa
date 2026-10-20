@@ -53,6 +53,9 @@ const updateByIDsBatchSize = 5000
 // for every chunk doubled the insert volume and the TOAST footprint for no
 // benefit.
 func (r *chunkRepository) CreateChunks(ctx context.Context, chunks []*types.Chunk) error {
+	if err := PrecheckKnowledgeBuildWrite(ctx); err != nil {
+		return err
+	}
 	if len(chunks) == 0 {
 		return nil
 	}
@@ -91,7 +94,37 @@ func (r *chunkRepository) CreateChunks(ctx context.Context, chunks []*types.Chun
 		// Select("*") ensures zero-value fields (IsEnabled=false, Flags=0) are
 		// explicitly inserted, bypassing GORM's default value behavior.
 		// SeqID=0 is skipped by GORM automatically (autoIncrement tag).
-		return tx.Select("*").CreateInBatches(chunks, createChunksBatchSize).Error
+		for _, chunk := range chunks {
+			if _, err := validateKnowledgeInputWrite(
+				ctx,
+				tx,
+				chunk.TenantID,
+				chunk.KnowledgeBaseID,
+				chunk.KnowledgeID,
+			); err != nil {
+				return err
+			}
+		}
+		if err := guardNextcloudDerivedChunkReferences(tx, chunks); err != nil {
+			return err
+		}
+		if err := tx.Select("*").CreateInBatches(chunks, createChunksBatchSize).Error; err != nil {
+			return err
+		}
+		for _, chunk := range chunks {
+			if err := RecordNextcloudDerivedArtifactInTx(
+				ctx,
+				tx,
+				chunk.KnowledgeID,
+				chunk.KnowledgeBaseID,
+				"derived_chunk",
+				chunk.ID,
+				0,
+			); err != nil {
+				return err
+			}
+		}
+		return sealKnowledgeInputChunks(ctx, tx, chunks)
 	})
 }
 
@@ -122,7 +155,10 @@ func (r *chunkRepository) GetChunkByIDOnly(ctx context.Context, id string) (*typ
 // GetChunkBySeqID retrieves a chunk by its seq_id and tenant ID
 func (r *chunkRepository) GetChunkBySeqID(ctx context.Context, tenantID uint64, seqID int64) (*types.Chunk, error) {
 	var chunk types.Chunk
-	if err := r.db.WithContext(ctx).Where("tenant_id = ? AND seq_id = ?", tenantID, seqID).First(&chunk).Error; err != nil {
+	if err := r.db.WithContext(ctx).
+		Where("tenant_id = ? AND seq_id = ?", tenantID, seqID).
+		First(&chunk).
+		Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, ErrChunkNotFound
 		}
@@ -390,15 +426,37 @@ func (r *chunkRepository) ListChunksByParentIDs(
 // except SeqID (auto-increment, must not be overwritten).
 // Make sure the chunk object is complete (e.g., fetched from DB) before calling this method.
 func (r *chunkRepository) UpdateChunk(ctx context.Context, chunk *types.Chunk) error {
-	if _, guarded := ctx.Value(nextcloudBuildContextKey{}).(nextcloudBuildContext); !guarded {
+	if err := PrecheckKnowledgeBuildWrite(ctx); err != nil {
+		return err
+	}
+	_, ncGuarded := ctx.Value(nextcloudBuildContextKey{}).(nextcloudBuildContext)
+	_, inputGuarded := ctx.Value(knowledgeBuildInputKey{}).(knowledgeBuildInputContext)
+	if !ncGuarded && !inputGuarded {
 		return r.db.WithContext(ctx).Omit("SeqID").Save(chunk).Error
 	}
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := ValidateNextcloudBuildWrite(ctx, tx,
-			chunk.TenantID, chunk.KnowledgeBaseID, chunk.KnowledgeID); err != nil {
+		if err := ValidateNextcloudBuildWrite(
+			ctx,
+			tx,
+			chunk.TenantID,
+			chunk.KnowledgeBaseID,
+			chunk.KnowledgeID,
+		); err != nil {
 			return err
 		}
-		return tx.Omit("SeqID").Save(chunk).Error
+		if _, err := validateKnowledgeInputWrite(
+			ctx,
+			tx,
+			chunk.TenantID,
+			chunk.KnowledgeBaseID,
+			chunk.KnowledgeID,
+		); err != nil {
+			return err
+		}
+		if err := tx.Omit("SeqID").Save(chunk).Error; err != nil {
+			return err
+		}
+		return sealKnowledgeInputChunks(ctx, tx, []*types.Chunk{chunk})
 	})
 }
 
@@ -541,6 +599,9 @@ func (r *chunkRepository) SaveChunks(ctx context.Context, chunks []*types.Chunk)
 // run one small UPDATE per row inside a single transaction, which is also
 // O(N) and keeps the statement well within their bind-parameter limits.
 func (r *chunkRepository) UpdateChunks(ctx context.Context, chunks []*types.Chunk) error {
+	if err := PrecheckKnowledgeBuildWrite(ctx); err != nil {
+		return err
+	}
 	if len(chunks) == 0 {
 		return nil
 	}
@@ -555,6 +616,17 @@ func (r *chunkRepository) UpdateChunks(ctx context.Context, chunks []*types.Chun
 		if err := ValidateNextcloudBuildWrite(ctx, tx,
 			chunks[0].TenantID, chunks[0].KnowledgeBaseID, chunks[0].KnowledgeID); err != nil {
 			return err
+		}
+		for _, chunk := range chunks {
+			if _, err := validateKnowledgeInputWrite(
+				ctx,
+				tx,
+				chunk.TenantID,
+				chunk.KnowledgeBaseID,
+				chunk.KnowledgeID,
+			); err != nil {
+				return err
+			}
 		}
 		for start := 0; start < len(chunks); start += updateChunksBatchSize {
 			end := start + updateChunksBatchSize
@@ -573,7 +645,7 @@ func (r *chunkRepository) UpdateChunks(ctx context.Context, chunks []*types.Chun
 				return err
 			}
 		}
-		return nil
+		return sealKnowledgeInputChunks(ctx, tx, chunks)
 	})
 }
 
@@ -685,7 +757,10 @@ func (r *chunkRepository) DeleteChunks(ctx context.Context, tenantID uint64, ids
 		if end > len(ids) {
 			end = len(ids)
 		}
-		if err := r.db.WithContext(ctx).Where("tenant_id = ? AND id IN ?", tenantID, ids[i:end]).Delete(&types.Chunk{}).Error; err != nil {
+		if err := r.db.WithContext(ctx).
+			Where("tenant_id = ? AND id IN ?", tenantID, ids[i:end]).
+			Delete(&types.Chunk{}).
+			Error; err != nil {
 			return err
 		}
 	}
@@ -732,7 +807,12 @@ func (r *chunkRepository) DeleteByKnowledgeList(ctx context.Context, tenantID ui
 }
 
 // MoveChunksByKnowledgeID updates knowledge_base_id for all chunks of a knowledge item
-func (r *chunkRepository) MoveChunksByKnowledgeID(ctx context.Context, tenantID uint64, knowledgeID string, targetKBID string) error {
+func (r *chunkRepository) MoveChunksByKnowledgeID(
+	ctx context.Context,
+	tenantID uint64,
+	knowledgeID string,
+	targetKBID string,
+) error {
 	return r.db.WithContext(ctx).Model(&types.Chunk{}).
 		Where("tenant_id = ? AND knowledge_id = ?", tenantID, knowledgeID).
 		Updates(map[string]any{"knowledge_base_id": targetKBID, "tag_id": ""}).Error
@@ -740,7 +820,13 @@ func (r *chunkRepository) MoveChunksByKnowledgeID(ctx context.Context, tenantID 
 
 // DeleteChunksByTagID deletes all chunks with the specified tag ID
 // Returns the IDs of deleted chunks for index cleanup
-func (r *chunkRepository) DeleteChunksByTagID(ctx context.Context, tenantID uint64, kbID string, tagID string, excludeIDs []string) ([]string, error) {
+func (r *chunkRepository) DeleteChunksByTagID(
+	ctx context.Context,
+	tenantID uint64,
+	kbID string,
+	tagID string,
+	excludeIDs []string,
+) ([]string, error) {
 	// Build exclude set for O(1) lookup
 	excludeSet := make(map[string]struct{}, len(excludeIDs))
 	for _, id := range excludeIDs {
@@ -986,7 +1072,7 @@ func (r *chunkRepository) ListAllFAQChunksForExport(
 	for {
 		var batchChunks []*types.Chunk
 		if err := r.db.WithContext(ctx).
-			Select("id, metadata, tag_id, is_enabled, flags").
+			Select("*").
 			Where("tenant_id = ? AND knowledge_id = ? AND chunk_type = ? AND status = ?",
 				tenantID, knowledgeID, types.ChunkTypeFAQ, types.ChunkStatusIndexed).
 			Order("created_at ASC").
@@ -1435,7 +1521,10 @@ func (r *chunkRepository) ListRecentDocumentChunksWithQuestions(
 	switch r.db.Name() {
 	case "postgres":
 		if err := baseQuery.
-			Where("metadata IS NOT NULL AND metadata::text != '{}' AND jsonb_array_length(COALESCE(metadata->'generated_questions', '[]'::jsonb)) > 0").
+			Where(
+				("metadata IS NOT NULL AND metadata::text != '{}' AND jsonb_array_length(COA" +
+					"LESCE(metadata->'generated_questions', '[]'::jsonb)) > 0"),
+			).
 			Order(orderClause).
 			Limit(limit).
 			Find(&chunks).Error; err != nil {

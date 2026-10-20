@@ -89,31 +89,81 @@ func TestMCPExposureWithoutMentionReachesProviderAndExecutes(t *testing.T) {
 					},
 				}
 			}
+			// This ordinary transport fixture owns its exact live service row.
+			service := &types.MCPService{
+				ID: serverID, TenantID: 7, Name: "Orders", Description: "Query orders and shipping",
+				Enabled: true, URL: &mcpServer.URL, TransportType: types.MCPTransportHTTPStreamable,
+				AuthConfig: &types.MCPAuthConfig{Token: "NEVER-IN-MODEL-CONTEXT"},
+			}
 			_, err := agenttools.RegisterMCPTools(
 				ctx,
 				registry,
-				[]*types.MCPService{
-					{
-						ID:            serverID,
-						Name:          "Orders",
-						Description:   "Query orders and shipping",
-						Enabled:       true,
-						URL:           &mcpServer.URL,
-						TransportType: types.MCPTransportHTTPStreamable,
-						AuthConfig:    &types.MCPAuthConfig{Token: "NEVER-IN-MODEL-CONTEXT"},
-					},
-				},
+				[]*types.MCPService{service},
 				manager,
 				nil,
 				0,
-				nil,
+				func(_ context.Context, tenant uint64, id string) (*types.MCPService, error) {
+					if tenant != 7 || id != service.ID {
+						return nil, fmt.Errorf("fixture service unavailable")
+					}
+					raw, err := json.Marshal(service)
+					if err != nil {
+						return nil, err
+					}
+					var current types.MCPService
+					if err := json.Unmarshal(raw, &current); err != nil {
+						return nil, err
+					}
+					return &current, nil
+				},
 				metadata,
 			)
 			require.NoError(t, err)
+			// Only this local fixture's ordinary session is authorized here.
+			// Actual SQL session/caller and controlled-source denial are tested
+			// independently by the production service authority tests.
+			ordinaryCheck := func(ctx context.Context) error { return ctx.Err() }
+			agenttools.ConfigureMCPIndependentTransportVerifier(registry, ordinaryCheck)
 			if deferred {
 				registry.PrepareMCPTools(ctx)
 			} else {
 				registry.PrepareMCPToolsDirect(ctx)
+			}
+			for _, kind := range []string{
+				"wire description", "wire parameters", "wire type", "raw routing IDs",
+				"current configuration", "missing ordinary authority",
+			} {
+				t.Run("reject "+kind, func(t *testing.T) {
+					model := &mockChat{responses: []mockResponse{lineageAnswer("must not send")}}
+					engine := newTestEngine(t, model)
+					engine.toolRegistry = registry
+					turn := types.WithRAGSourceLineage(ctx, engine.turnLineage)
+					tools := engine.buildToolsForLLM()
+					require.NotEmpty(t, tools)
+					switch kind {
+					case "wire description":
+						tools[0].Function.Description += " unaccounted external text"
+					case "wire parameters":
+						tools[0].Function.Parameters = json.RawMessage(`{"type":"object"}`)
+					case "wire type":
+						tools[0].Type = "unaccounted"
+					case "raw routing IDs":
+						tools = engine.rawToolsForLLM()
+					case "current configuration":
+						service.Enabled = false
+						t.Cleanup(func() { service.Enabled = true })
+					case "missing ordinary authority":
+						agenttools.ConfigureMCPIndependentTransportVerifier(registry, nil)
+						t.Cleanup(func() {
+							agenttools.ConfigureMCPIndependentTransportVerifier(registry, ordinaryCheck)
+						})
+					}
+					_, err := engine.streamLLMToEventBus(turn, []chat.Message{
+						{Role: "user", Content: "raw human", SourceLineage: independentAgentInput()},
+					}, &chat.ChatOptions{Tools: tools}, nil)
+					require.ErrorIs(t, err, ErrAgentSourceLineageDenied)
+					require.Zero(t, model.callCount)
+				})
 			}
 			var requests atomic.Int32
 			modelServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

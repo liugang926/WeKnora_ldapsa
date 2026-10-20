@@ -221,27 +221,25 @@ func TestEmitStreamEvent_FlushesHeldContentOnError(t *testing.T) {
 
 // A user-requested stop ends the stream without a completion event, and the text
 // generated before it is still the user's content.
-func TestHandleAgentEventsForSSE_FlushesHeldContentOnStop(t *testing.T) {
-	h := &Handler{
-		messageService: &stubMessageServiceForStream{},
-		streamManager: &stubStreamManager{events: []interfaces.StreamEvent{
-			{ID: "answer-1", Type: types.ResponseTypeAnswer, Content: "tail ![fig](resource://xifDo7"},
-			{ID: "stop-1", Type: types.ResponseType(event.EventStop), Done: true},
-		}},
-	}
+// This formatting unit exercises the real holdback/flush primitives only.
+// Unknown fabricated frames remain barred by the actual SSE publication gate.
+func TestStopFormattingFlushesHeldContentBeforeNotification(t *testing.T) {
+	ctx := context.Background()
 	c, recorder := newTestGinContext(t, "?resource_urls=public")
-
-	h.handleAgentEventsForSSE(
-		context.Background(), c, "sess1", "msg1", "req-1", nil, false, publicStreamRewriter(),
-		&types.Message{Role: "assistant"})
-
+	rewriter := publicStreamRewriter()
+	answer := interfaces.StreamEvent{
+		ID: "answer-1", Type: types.ResponseTypeAnswer, Content: "tail ![fig](resource://xifDo7",
+	}
+	require.Error(t, answer.SourceLineage.RequireComplete(), "a codec unit cannot certify source bytes")
+	emitStreamEvent(ctx, c, answer, "req-1", rewriter)
+	flushHeldStreamContent(ctx, c, "req-1", rewriter)
+	emitStreamEvent(ctx, c, interfaces.StreamEvent{
+		ID: "stop-1", Type: types.ResponseType(event.EventStop), Done: true,
+	}, "req-1", rewriter)
 	body := recorder.Body.String()
 	assert.Contains(t, body, `![fig](resource://xifDo7`, "the tail must not be swallowed")
-	assert.Less(t,
-		indexOf(body, `"response_type":"answer"`),
-		indexOf(body, `"response_type":"stop"`),
-		"held content must precede the stop notification",
-	)
+	assert.Less(t, indexOf(body, `"response_type":"answer"`), indexOf(body, `"response_type":"stop"`),
+		"held content must precede the stop notification")
 }
 
 func TestHoldbackKeyRoundTrip(t *testing.T) {

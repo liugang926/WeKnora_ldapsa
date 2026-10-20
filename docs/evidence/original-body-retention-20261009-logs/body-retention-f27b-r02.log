@@ -1,0 +1,535 @@
+body callback table=knowledge_auto_tag_input_manifests type=*repository.knowledgeAutoTagManifest internal=<nil> err=<nil>
+body feature=true table=knowledge_auto_tag_input_manifests schema=true reflect=struct
+body callback table=original_body_payloads type=*repository.originalBodyPayload internal=true err=<nil>
+body callback table=original_body_field_heads type=*repository.originalBodyFieldHead internal=true err=<nil>
+body callback table=original_body_field_revisions type=*repository.originalBodyFieldHead internal=true err=<nil>
+body callback table=original_body_parent_refs type=*repository.originalBodyParentRef internal=true err=<nil>
+body callback table=original_body_leases type=*repository.originalBodyLease internal=true err=<nil>
+body callback table=original_body_leases type=map[string]interface {} internal=true err=<nil>
+body callback table=original_body_payloads type=map[string]interface {} internal=true err=<nil>
+body callback table=original_body_payloads type=map[string]interface {} internal=true err=<nil>
+body callback table=original_body_payloads type=map[string]interface {} internal=true err=<nil>
+body callback table=original_body_purge_receipts type=*repository.originalBodyPurgeReceipt internal=true err=<nil>
+body callback table=original_body_journal_heads type=map[string]interface {} internal=true err=<nil>
+body callback table=knowledges type=*types.Knowledge internal=<nil> err=<nil>
+body feature=true table=knowledges schema=true reflect=struct
+body callback table=original_body_payloads type=*repository.originalBodyPayload internal=true err=<nil>
+body callback table=original_body_field_heads type=*repository.originalBodyFieldHead internal=true err=<nil>
+body callback table=original_body_field_revisions type=*repository.originalBodyFieldHead internal=true err=<nil>
+body callback table=original_body_payloads type=*repository.originalBodyPayload internal=true err=<nil>
+body callback table=original_body_field_heads type=*repository.originalBodyFieldHead internal=true err=<nil>
+body callback table=original_body_field_revisions type=*repository.originalBodyFieldHead internal=true err=<nil>
+--- FAIL: TestOriginalBodyActualSQLiteTagProducer (0.26s)
+    original_body_retention_test.go:58: actual auto-tag heads=1 payloads=1
+    original_body_retention_test.go:104: 
+        	Error Trace:	/workspace/internal/application/service/original_body_retention_test.go:104
+        	            				/workspace/internal/application/service/original_body_retention_test.go:110
+        	Error:      	Received unexpected error:
+        	            	body JSON metadata.manual.content type *interface {}: invalid character 'x' after top-level value
+        	Test:       	TestOriginalBodyActualSQLiteTagProducer
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/service/original_body_retention_test.go:28
+[0m[33m[29.188ms] [34;1m[rows:0][0m CREATE TABLE original_body_payloads (
+ id TEXT PRIMARY KEY,tenant_id BIGINT NOT NULL,body_sha256 TEXT NOT NULL,
+ payload TEXT,origin_domain_sha256 TEXT NOT NULL,body_bytes BIGINT NOT NULL,storage_kind TEXT NOT NULL,
+ state TEXT NOT NULL CHECK(state IN ('live','pending','purged')),
+ created_at_ms BIGINT NOT NULL,retired_at_ms BIGINT,body_deadline_ms BIGINT,
+ metadata_deadline_ms BIGINT,purge_token TEXT NOT NULL DEFAULT '',purge_epoch BIGINT NOT NULL DEFAULT 0
+);
+CREATE TABLE original_body_field_heads (
+ slot_id TEXT PRIMARY KEY,source_table TEXT NOT NULL,row_key TEXT NOT NULL,column_name TEXT NOT NULL,
+ tenant_id BIGINT NOT NULL,knowledge_base_id TEXT NOT NULL,knowledge_id TEXT NOT NULL,
+ owner_kind TEXT NOT NULL,owner_id TEXT NOT NULL,source_identity_sha256 TEXT NOT NULL,
+ body_id TEXT NOT NULL REFERENCES original_body_payloads(id),revision BIGINT NOT NULL,
+ admission_id TEXT NOT NULL,source_lineage TEXT NOT NULL,original_body_ref TEXT NOT NULL,
+ UNIQUE(source_table,row_key,column_name)
+);
+CREATE INDEX original_body_heads_body ON original_body_field_heads(body_id);
+CREATE TABLE original_body_rewrite_authorities (
+ source_table TEXT NOT NULL,row_key TEXT NOT NULL,column_name TEXT NOT NULL,
+ body_id TEXT NOT NULL REFERENCES original_body_payloads(id),old_value TEXT NOT NULL,
+ new_value TEXT NOT NULL,PRIMARY KEY(source_table,row_key,column_name)
+);
+CREATE TABLE original_body_parent_refs (
+ body_id TEXT NOT NULL REFERENCES original_body_payloads(id),tenant_id BIGINT NOT NULL,
+ knowledge_base_id TEXT NOT NULL,knowledge_id TEXT NOT NULL,admission_id TEXT NOT NULL,
+ PRIMARY KEY(body_id,tenant_id,knowledge_base_id,knowledge_id,admission_id)
+);
+CREATE TABLE original_body_leases (
+ lease_id TEXT PRIMARY KEY,body_id TEXT NOT NULL REFERENCES original_body_payloads(id),
+ kind TEXT NOT NULL CHECK(kind IN ('read','build')),owner_id TEXT NOT NULL,
+ epoch BIGINT NOT NULL,expires_at_ms BIGINT NOT NULL,released_at_ms BIGINT
+);
+CREATE INDEX original_body_live_leases ON original_body_leases(body_id,expires_at_ms);
+CREATE TABLE original_body_purge_receipts (
+ body_id TEXT PRIMARY KEY,body_sha256 TEXT NOT NULL,scope_sha256 TEXT NOT NULL,
+ before_bytes BIGINT NOT NULL,after_bytes BIGINT NOT NULL,cleared_fields BIGINT NOT NULL,
+ journal_sequence BIGINT NOT NULL,journal_head_sha256 TEXT NOT NULL,
+ purge_token TEXT NOT NULL,purge_epoch BIGINT NOT NULL,completed_at_ms BIGINT NOT NULL
+);
+CREATE TABLE original_body_journal_heads(id INTEGER PRIMARY KEY CHECK(id=1),sequence BIGINT NOT NULL,head_sha256 TEXT NOT NULL);
+INSERT INTO original_body_journal_heads VALUES(1,0,'');
+CREATE FUNCTION original_body_receipt_immutable() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'immutable original body purge'; END $$;
+CREATE TRIGGER original_body_receipt_immutable BEFORE UPDATE OR DELETE ON original_body_purge_receipts FOR EACH ROW EXECUTE FUNCTION original_body_receipt_immutable();
+
+CREATE TABLE original_body_field_revisions (
+ slot_id TEXT NOT NULL,revision BIGINT NOT NULL,source_table TEXT NOT NULL,row_key TEXT NOT NULL,column_name TEXT NOT NULL,
+ tenant_id BIGINT NOT NULL,knowledge_base_id TEXT NOT NULL,knowledge_id TEXT NOT NULL,
+ owner_kind TEXT NOT NULL,owner_id TEXT NOT NULL,source_identity_sha256 TEXT NOT NULL,
+ body_id TEXT NOT NULL REFERENCES original_body_payloads(id),admission_id TEXT NOT NULL,source_lineage TEXT NOT NULL,original_body_ref TEXT NOT NULL,
+ PRIMARY KEY(slot_id,revision)
+);
+CREATE INDEX original_body_revision_body ON original_body_field_revisions(body_id);
+CREATE INDEX original_body_same_payload ON original_body_payloads(tenant_id,origin_domain_sha256,body_sha256,state);
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/original_body_rewrite.go:61
+[0m[33m[0.461ms] [34;1m[rows:1][0m SELECT count(*) FROM information_schema.tables WHERE table_schema = CURRENT_SCHEMA() AND table_name = 'original_body_payloads' AND table_type = 'BASE TABLE'
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/original_body_rewrite.go:146
+[0m[33m[0.240ms] [34;1m[rows:1][0m SELECT count(*) FROM information_schema.tables WHERE table_schema = CURRENT_SCHEMA() AND table_name = 'datasource_name_inputs' AND table_type = 'BASE TABLE'
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/original_body_rewrite.go:146
+[0m[33m[0.158ms] [34;1m[rows:1][0m SELECT count(*) FROM information_schema.tables WHERE table_schema = CURRENT_SCHEMA() AND table_name = 'nextcloud_original_upload_inputs' AND table_type = 'BASE TABLE'
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/original_body_rewrite.go:146
+[0m[33m[0.133ms] [34;1m[rows:1][0m SELECT count(*) FROM information_schema.tables WHERE table_schema = CURRENT_SCHEMA() AND table_name = 'knowledge_auto_tag_input_manifests' AND table_type = 'BASE TABLE'
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/original_body_rewrite.go:149
+[0m[33m[0.062ms] [34;1m[rows:1][0m SELECT CURRENT_DATABASE()
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/original_body_rewrite.go:149
+[0m[33m[4.226ms] [34;1m[rows:-][0m SELECT c.column_name, c.is_nullable = 'YES', c.udt_name, c.character_maximum_length, c.numeric_precision, c.numeric_precision_radix, c.numeric_scale, c.datetime_precision, 8 * typlen, c.column_default, pd.description, c.identity_increment FROM information_schema.columns AS c JOIN pg_type AS pgt ON c.udt_name = pgt.typname LEFT JOIN pg_catalog.pg_description as pd ON pd.objsubid = c.ordinal_position AND pd.objoid = (SELECT oid FROM pg_catalog.pg_class WHERE relname = c.table_name AND relnamespace = (SELECT oid FROM pg_catalog.pg_namespace WHERE nspname = c.table_schema)) where table_catalog = 'body_owned' AND table_schema = CURRENT_SCHEMA() AND table_name = 'knowledge_auto_tag_input_manifests'
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/original_body_rewrite.go:149
+[0m[33m[0.318ms] [34;1m[rows:-][0m SELECT * FROM "knowledge_auto_tag_input_manifests" LIMIT 5
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/original_body_rewrite.go:149
+[0m[33m[4.694ms] [34;1m[rows:-][0m SELECT constraint_name FROM information_schema.table_constraints tc JOIN information_schema.constraint_column_usage AS ccu USING (constraint_schema, constraint_catalog, table_name, constraint_name) JOIN information_schema.columns AS c ON c.table_schema = tc.constraint_schema AND tc.table_name = c.table_name AND ccu.column_name = c.column_name WHERE constraint_type IN ('PRIMARY KEY', 'UNIQUE') AND c.table_catalog = 'body_owned' AND c.table_schema = CURRENT_SCHEMA() AND c.table_name = 'knowledge_auto_tag_input_manifests' AND constraint_type = 'UNIQUE'
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/original_body_rewrite.go:149
+[0m[33m[4.148ms] [34;1m[rows:-][0m SELECT c.column_name, constraint_name, constraint_type FROM information_schema.table_constraints tc JOIN information_schema.constraint_column_usage AS ccu USING (constraint_schema, constraint_catalog, table_name, constraint_name) JOIN information_schema.columns AS c ON c.table_schema = tc.constraint_schema AND tc.table_name = c.table_name AND ccu.column_name = c.column_name WHERE constraint_type IN ('PRIMARY KEY', 'UNIQUE') AND c.table_catalog = 'body_owned' AND c.table_schema = CURRENT_SCHEMA() AND c.table_name = 'knowledge_auto_tag_input_manifests'
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/original_body_rewrite.go:149
+[0m[33m[0.290ms] [34;1m[rows:-][0m SELECT a.attname as column_name, format_type(a.atttypid, a.atttypmod) AS data_type
+		FROM pg_attribute a JOIN pg_class b ON a.attrelid = b.oid AND relnamespace = (SELECT oid FROM pg_catalog.pg_namespace WHERE nspname = CURRENT_SCHEMA())
+		WHERE a.attnum > 0 -- hide internal columns
+		AND NOT a.attisdropped -- hide deleted columns
+		AND b.relname = 'knowledge_auto_tag_input_manifests'
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/original_body_rewrite.go:171
+[0m[33m[0.837ms] [34;1m[rows:1][0m SELECT t.tgname AS name,pg_get_triggerdef(t.oid) AS definition,pg_get_functiondef(t.tgfoid) AS function FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE c.relname='knowledge_auto_tag_input_manifests' AND n.nspname=current_schema() AND NOT t.tgisinternal
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/original_body_rewrite.go:197
+[0m[33m[1.540ms] [34;1m[rows:0][0m CREATE OR REPLACE FUNCTION "original_body_f004fdf51104cb33ad5f"() RETURNS trigger LANGUAGE plpgsql AS $body$  BEGIN IF TG_OP='UPDATE' AND (((to_jsonb(NEW)-'actual_inputs')=(to_jsonb(OLD)-'actual_inputs') AND EXISTS(SELECT 1 FROM original_body_rewrite_authorities a JOIN original_body_payloads p ON p.id=a.body_id WHERE a.source_table='knowledge_auto_tag_input_manifests' AND a.row_key=to_jsonb(OLD)->>'manifest_id' AND a.column_name='actual_inputs' AND a.old_value=to_jsonb(OLD)->>'actual_inputs' AND a.new_value=to_jsonb(NEW)->>'actual_inputs'))) THEN RETURN NEW; END IF; RAISE EXCEPTION 'immutable actual display input'; END;  $body$
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/original_body_rewrite.go:207
+[0m[33m[0.492ms] [34;1m[rows:0][0m DROP TRIGGER "knowledge_auto_tag_manifest_immutable" ON "knowledge_auto_tag_input_manifests"
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/original_body_rewrite.go:210
+[0m[33m[0.183ms] [34;1m[rows:0][0m CREATE TRIGGER knowledge_auto_tag_manifest_immutable BEFORE DELETE OR UPDATE ON auto_tag_c2bb23b4.knowledge_auto_tag_input_manifests FOR EACH ROW EXECUTE FUNCTION "original_body_f004fdf51104cb33ad5f"()
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/original_body_rewrite.go:146
+[0m[33m[0.172ms] [34;1m[rows:1][0m SELECT count(*) FROM information_schema.tables WHERE table_schema = CURRENT_SCHEMA() AND table_name = 'knowledge_display_input_origins' AND table_type = 'BASE TABLE'
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/original_body_rewrite.go:149
+[0m[33m[0.089ms] [34;1m[rows:1][0m SELECT CURRENT_DATABASE()
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/original_body_rewrite.go:149
+[0m[33m[3.539ms] [34;1m[rows:-][0m SELECT c.column_name, c.is_nullable = 'YES', c.udt_name, c.character_maximum_length, c.numeric_precision, c.numeric_precision_radix, c.numeric_scale, c.datetime_precision, 8 * typlen, c.column_default, pd.description, c.identity_increment FROM information_schema.columns AS c JOIN pg_type AS pgt ON c.udt_name = pgt.typname LEFT JOIN pg_catalog.pg_description as pd ON pd.objsubid = c.ordinal_position AND pd.objoid = (SELECT oid FROM pg_catalog.pg_class WHERE relname = c.table_name AND relnamespace = (SELECT oid FROM pg_catalog.pg_namespace WHERE nspname = c.table_schema)) where table_catalog = 'body_owned' AND table_schema = CURRENT_SCHEMA() AND table_name = 'knowledge_display_input_origins'
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/original_body_rewrite.go:149
+[0m[33m[0.334ms] [34;1m[rows:-][0m SELECT * FROM "knowledge_display_input_origins" LIMIT 5
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/original_body_rewrite.go:149
+[0m[33m[4.759ms] [34;1m[rows:-][0m SELECT constraint_name FROM information_schema.table_constraints tc JOIN information_schema.constraint_column_usage AS ccu USING (constraint_schema, constraint_catalog, table_name, constraint_name) JOIN information_schema.columns AS c ON c.table_schema = tc.constraint_schema AND tc.table_name = c.table_name AND ccu.column_name = c.column_name WHERE constraint_type IN ('PRIMARY KEY', 'UNIQUE') AND c.table_catalog = 'body_owned' AND c.table_schema = CURRENT_SCHEMA() AND c.table_name = 'knowledge_display_input_origins' AND constraint_type = 'UNIQUE'
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/original_body_rewrite.go:149
+[0m[33m[4.418ms] [34;1m[rows:-][0m SELECT c.column_name, constraint_name, constraint_type FROM information_schema.table_constraints tc JOIN information_schema.constraint_column_usage AS ccu USING (constraint_schema, constraint_catalog, table_name, constraint_name) JOIN information_schema.columns AS c ON c.table_schema = tc.constraint_schema AND tc.table_name = c.table_name AND ccu.column_name = c.column_name WHERE constraint_type IN ('PRIMARY KEY', 'UNIQUE') AND c.table_catalog = 'body_owned' AND c.table_schema = CURRENT_SCHEMA() AND c.table_name = 'knowledge_display_input_origins'
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/original_body_rewrite.go:149
+[0m[33m[0.295ms] [34;1m[rows:-][0m SELECT a.attname as column_name, format_type(a.atttypid, a.atttypmod) AS data_type
+		FROM pg_attribute a JOIN pg_class b ON a.attrelid = b.oid AND relnamespace = (SELECT oid FROM pg_catalog.pg_namespace WHERE nspname = CURRENT_SCHEMA())
+		WHERE a.attnum > 0 -- hide internal columns
+		AND NOT a.attisdropped -- hide deleted columns
+		AND b.relname = 'knowledge_display_input_origins'
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/original_body_rewrite.go:171
+[0m[33m[0.362ms] [34;1m[rows:1][0m SELECT t.tgname AS name,pg_get_triggerdef(t.oid) AS definition,pg_get_functiondef(t.tgfoid) AS function FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE c.relname='knowledge_display_input_origins' AND n.nspname=current_schema() AND NOT t.tgisinternal
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/original_body_rewrite.go:197
+[0m[33m[0.531ms] [34;1m[rows:0][0m CREATE OR REPLACE FUNCTION "original_body_9e30d4f82e4739e83f64"() RETURNS trigger LANGUAGE plpgsql AS $body$  BEGIN IF TG_OP='UPDATE' AND (((to_jsonb(NEW)-'actual_input')=(to_jsonb(OLD)-'actual_input') AND EXISTS(SELECT 1 FROM original_body_rewrite_authorities a JOIN original_body_payloads p ON p.id=a.body_id WHERE a.source_table='knowledge_display_input_origins' AND a.row_key=to_jsonb(OLD)->>'origin_id' AND a.column_name='actual_input' AND a.old_value=to_jsonb(OLD)->>'actual_input' AND a.new_value=to_jsonb(NEW)->>'actual_input'))) THEN RETURN NEW; END IF; RAISE EXCEPTION 'immutable actual display input'; END;  $body$
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/original_body_rewrite.go:207
+[0m[33m[0.223ms] [34;1m[rows:0][0m DROP TRIGGER "knowledge_display_origins_immutable" ON "knowledge_display_input_origins"
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/original_body_rewrite.go:210
+[0m[33m[0.214ms] [34;1m[rows:0][0m CREATE TRIGGER knowledge_display_origins_immutable BEFORE DELETE OR UPDATE ON auto_tag_c2bb23b4.knowledge_display_input_origins FOR EACH ROW EXECUTE FUNCTION "original_body_9e30d4f82e4739e83f64"()
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/original_body_rewrite.go:146
+[0m[33m[0.120ms] [34;1m[rows:1][0m SELECT count(*) FROM information_schema.tables WHERE table_schema = CURRENT_SCHEMA() AND table_name = 'knowledge_span_start_manifests' AND table_type = 'BASE TABLE'
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/original_body_rewrite.go:146
+[0m[33m[0.133ms] [34;1m[rows:1][0m SELECT count(*) FROM information_schema.tables WHERE table_schema = CURRENT_SCHEMA() AND table_name = 'knowledge_enrichment_template_inputs' AND table_type = 'BASE TABLE'
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/original_body_rewrite.go:146
+[0m[33m[0.096ms] [34;1m[rows:1][0m SELECT count(*) FROM information_schema.tables WHERE table_schema = CURRENT_SCHEMA() AND table_name = 'faq_input_sessions' AND table_type = 'BASE TABLE'
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/original_body_rewrite.go:146
+[0m[33m[0.109ms] [34;1m[rows:1][0m SELECT count(*) FROM information_schema.tables WHERE table_schema = CURRENT_SCHEMA() AND table_name = 'faq_import_output_admissions' AND table_type = 'BASE TABLE'
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/original_body_rewrite.go:146
+[0m[33m[0.118ms] [34;1m[rows:1][0m SELECT count(*) FROM information_schema.tables WHERE table_schema = CURRENT_SCHEMA() AND table_name = 'message_generation_origins' AND table_type = 'BASE TABLE'
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/original_body_rewrite.go:146
+[0m[33m[0.098ms] [34;1m[rows:1][0m SELECT count(*) FROM information_schema.tables WHERE table_schema = CURRENT_SCHEMA() AND table_name = 'knowledge_processing_spans' AND table_type = 'BASE TABLE'
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/original_body_rewrite.go:146
+[0m[33m[0.101ms] [34;1m[rows:1][0m SELECT count(*) FROM information_schema.tables WHERE table_schema = CURRENT_SCHEMA() AND table_name = 'knowledges' AND table_type = 'BASE TABLE'
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/original_body_rewrite.go:149
+[0m[33m[0.074ms] [34;1m[rows:1][0m SELECT CURRENT_DATABASE()
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/original_body_rewrite.go:149
+[0m[33m[3.828ms] [34;1m[rows:-][0m SELECT c.column_name, c.is_nullable = 'YES', c.udt_name, c.character_maximum_length, c.numeric_precision, c.numeric_precision_radix, c.numeric_scale, c.datetime_precision, 8 * typlen, c.column_default, pd.description, c.identity_increment FROM information_schema.columns AS c JOIN pg_type AS pgt ON c.udt_name = pgt.typname LEFT JOIN pg_catalog.pg_description as pd ON pd.objsubid = c.ordinal_position AND pd.objoid = (SELECT oid FROM pg_catalog.pg_class WHERE relname = c.table_name AND relnamespace = (SELECT oid FROM pg_catalog.pg_namespace WHERE nspname = c.table_schema)) where table_catalog = 'body_owned' AND table_schema = CURRENT_SCHEMA() AND table_name = 'knowledges'
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/original_body_rewrite.go:149
+[0m[33m[0.163ms] [34;1m[rows:-][0m SELECT * FROM "knowledges" LIMIT 5
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/original_body_rewrite.go:149
+[0m[33m[4.862ms] [34;1m[rows:-][0m SELECT constraint_name FROM information_schema.table_constraints tc JOIN information_schema.constraint_column_usage AS ccu USING (constraint_schema, constraint_catalog, table_name, constraint_name) JOIN information_schema.columns AS c ON c.table_schema = tc.constraint_schema AND tc.table_name = c.table_name AND ccu.column_name = c.column_name WHERE constraint_type IN ('PRIMARY KEY', 'UNIQUE') AND c.table_catalog = 'body_owned' AND c.table_schema = CURRENT_SCHEMA() AND c.table_name = 'knowledges' AND constraint_type = 'UNIQUE'
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/original_body_rewrite.go:149
+[0m[33m[4.722ms] [34;1m[rows:-][0m SELECT c.column_name, constraint_name, constraint_type FROM information_schema.table_constraints tc JOIN information_schema.constraint_column_usage AS ccu USING (constraint_schema, constraint_catalog, table_name, constraint_name) JOIN information_schema.columns AS c ON c.table_schema = tc.constraint_schema AND tc.table_name = c.table_name AND ccu.column_name = c.column_name WHERE constraint_type IN ('PRIMARY KEY', 'UNIQUE') AND c.table_catalog = 'body_owned' AND c.table_schema = CURRENT_SCHEMA() AND c.table_name = 'knowledges'
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/original_body_rewrite.go:149
+[0m[33m[0.351ms] [34;1m[rows:-][0m SELECT a.attname as column_name, format_type(a.atttypid, a.atttypmod) AS data_type
+		FROM pg_attribute a JOIN pg_class b ON a.attrelid = b.oid AND relnamespace = (SELECT oid FROM pg_catalog.pg_namespace WHERE nspname = CURRENT_SCHEMA())
+		WHERE a.attnum > 0 -- hide internal columns
+		AND NOT a.attisdropped -- hide deleted columns
+		AND b.relname = 'knowledges'
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/original_body_rewrite.go:171
+[0m[33m[0.369ms] [34;1m[rows:3][0m SELECT t.tgname AS name,pg_get_triggerdef(t.oid) AS definition,pg_get_functiondef(t.tgfoid) AS function FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE c.relname='knowledges' AND n.nspname=current_schema() AND NOT t.tgisinternal
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/original_body_rewrite.go:197
+[0m[33m[0.786ms] [34;1m[rows:0][0m CREATE OR REPLACE FUNCTION "original_body_a1c4e299ea2a120d4be4"() RETURNS trigger LANGUAGE plpgsql AS $body$  BEGIN IF TG_OP='UPDATE' AND (((to_jsonb(NEW)-'description')=(to_jsonb(OLD)-'description') AND EXISTS(SELECT 1 FROM original_body_rewrite_authorities a JOIN original_body_payloads p ON p.id=a.body_id WHERE a.source_table='knowledges' AND a.row_key=to_jsonb(OLD)->>'id' AND a.column_name='description' AND a.old_value=to_jsonb(OLD)->>'description' AND a.new_value=to_jsonb(NEW)->>'description')) OR ((to_jsonb(NEW)-'profile')=(to_jsonb(OLD)-'profile') AND EXISTS(SELECT 1 FROM original_body_rewrite_authorities a JOIN original_body_payloads p ON p.id=a.body_id WHERE a.source_table='knowledges' AND a.row_key=to_jsonb(OLD)->>'id' AND a.column_name='profile' AND a.old_value=to_jsonb(OLD)->>'profile' AND a.new_value=to_jsonb(NEW)->>'profile')) OR ((to_jsonb(NEW)-'custom_metadata')=(to_jsonb(OLD)-'custom_metadata') AND EXISTS(SELECT 1 FROM original_body_rewrite_authorities a JOIN original_body_payloads p ON p.id=a.body_id WHERE a.source_table='knowledges' AND a.row_key=to_jsonb(OLD)->>'id' AND a.column_name='custom_metadata' AND a.old_value=to_jsonb(OLD)->>'custom_metadata' AND a.new_value=to_jsonb(NEW)->>'custom_metadata')) OR ((to_jsonb(NEW)-'metadata')=(to_jsonb(OLD)-'metadata') AND EXISTS(SELECT 1 FROM original_body_rewrite_authorities a JOIN original_body_payloads p ON p.id=a.body_id WHERE a.source_table='knowledges' AND a.row_key=to_jsonb(OLD)->>'id' AND a.column_name='metadata' AND a.old_value=to_jsonb(OLD)->>'metadata' AND a.new_value=to_jsonb(NEW)->>'metadata'))) THEN RETURN NEW; END IF; IF TG_OP = 'UPDATE' THEN IF NOT (OLD.tenant_id IS DISTINCT FROM NEW.tenant_id OR OLD.knowledge_base_id IS DISTINCT FROM NEW.knowledge_base_id OR OLD.type IS DISTINCT FROM NEW.type OR OLD.title IS DISTINCT FROM NEW.title OR OLD.description IS DISTINCT FROM NEW.description OR OLD.source IS DISTINCT FROM NEW.source OR OLD.channel IS DISTINCT FROM NEW.channel OR OLD.profile::jsonb IS DISTINCT FROM NEW.profile::jsonb OR OLD.embedding_model_id IS DISTINCT FROM NEW.embedding_model_id OR OLD.file_name IS DISTINCT FROM NEW.file_name OR OLD.folder_path IS DISTINCT FROM NEW.folder_path OR OLD.file_type IS DISTINCT FROM NEW.file_type OR OLD.file_size IS DISTINCT FROM NEW.file_size OR OLD.file_hash IS DISTINCT FROM NEW.file_hash OR OLD.file_path IS DISTINCT FROM NEW.file_path OR (CASE WHEN OLD.channel = 'nextcloud' AND NEW.channel = 'nextcloud' THEN (OLD.metadata::jsonb - 'nextcloud_etag') IS DISTINCT FROM (NEW.metadata::jsonb - 'nextcloud_etag') ELSE OLD.metadata::jsonb IS DISTINCT FROM NEW.metadata::jsonb END) OR OLD.custom_metadata::jsonb IS DISTINCT FROM NEW.custom_metadata::jsonb OR OLD.deleted_at IS DISTINCT FROM NEW.deleted_at) THEN RETURN NEW; END IF; END IF; INSERT INTO knowledge_input_row_versions(row_kind,row_id,revision) VALUES ('knowledge',CASE WHEN TG_OP = 'DELETE' THEN OLD.id ELSE NEW.id END,1) ON CONFLICT(row_kind,row_id) DO UPDATE SET revision=knowledge_input_row_versions.revision+1; IF TG_OP = 'DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF; END;  $body$
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/original_body_rewrite.go:207
+[0m[33m[0.250ms] [34;1m[rows:0][0m DROP TRIGGER "knowledge_input_knowledge_version" ON "knowledges"
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/original_body_rewrite.go:210
+[0m[33m[0.209ms] [34;1m[rows:0][0m CREATE TRIGGER knowledge_input_knowledge_version AFTER INSERT OR DELETE OR UPDATE ON auto_tag_c2bb23b4.knowledges FOR EACH ROW EXECUTE FUNCTION "original_body_a1c4e299ea2a120d4be4"()
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/original_body_rewrite.go:197
+[0m[33m[0.684ms] [34;1m[rows:0][0m CREATE OR REPLACE FUNCTION "original_body_638170137e02d0ec99f5"() RETURNS trigger LANGUAGE plpgsql AS $body$  BEGIN IF TG_OP='UPDATE' AND (((to_jsonb(NEW)-'description')=(to_jsonb(OLD)-'description') AND EXISTS(SELECT 1 FROM original_body_rewrite_authorities a JOIN original_body_payloads p ON p.id=a.body_id WHERE a.source_table='knowledges' AND a.row_key=to_jsonb(OLD)->>'id' AND a.column_name='description' AND a.old_value=to_jsonb(OLD)->>'description' AND a.new_value=to_jsonb(NEW)->>'description')) OR ((to_jsonb(NEW)-'profile')=(to_jsonb(OLD)-'profile') AND EXISTS(SELECT 1 FROM original_body_rewrite_authorities a JOIN original_body_payloads p ON p.id=a.body_id WHERE a.source_table='knowledges' AND a.row_key=to_jsonb(OLD)->>'id' AND a.column_name='profile' AND a.old_value=to_jsonb(OLD)->>'profile' AND a.new_value=to_jsonb(NEW)->>'profile')) OR ((to_jsonb(NEW)-'custom_metadata')=(to_jsonb(OLD)-'custom_metadata') AND EXISTS(SELECT 1 FROM original_body_rewrite_authorities a JOIN original_body_payloads p ON p.id=a.body_id WHERE a.source_table='knowledges' AND a.row_key=to_jsonb(OLD)->>'id' AND a.column_name='custom_metadata' AND a.old_value=to_jsonb(OLD)->>'custom_metadata' AND a.new_value=to_jsonb(NEW)->>'custom_metadata')) OR ((to_jsonb(NEW)-'metadata')=(to_jsonb(OLD)-'metadata') AND EXISTS(SELECT 1 FROM original_body_rewrite_authorities a JOIN original_body_payloads p ON p.id=a.body_id WHERE a.source_table='knowledges' AND a.row_key=to_jsonb(OLD)->>'id' AND a.column_name='metadata' AND a.old_value=to_jsonb(OLD)->>'metadata' AND a.new_value=to_jsonb(NEW)->>'metadata'))) THEN RETURN NEW; END IF; IF TG_OP = 'UPDATE' AND NOT (OLD.tenant_id IS DISTINCT FROM NEW.tenant_id OR OLD.knowledge_base_id IS DISTINCT FROM NEW.knowledge_base_id OR OLD.type IS DISTINCT FROM NEW.type OR OLD.title IS DISTINCT FROM NEW.title OR OLD.source IS DISTINCT FROM NEW.source OR OLD.channel IS DISTINCT FROM NEW.channel OR OLD.file_name IS DISTINCT FROM NEW.file_name OR OLD.folder_path IS DISTINCT FROM NEW.folder_path OR OLD.file_type IS DISTINCT FROM NEW.file_type OR OLD.file_hash IS DISTINCT FROM NEW.file_hash OR OLD.file_path IS DISTINCT FROM NEW.file_path OR OLD.custom_metadata::jsonb IS DISTINCT FROM NEW.custom_metadata::jsonb OR OLD.deleted_at IS DISTINCT FROM NEW.deleted_at OR (CASE WHEN OLD.channel = 'nextcloud' AND NEW.channel = 'nextcloud' THEN OLD.metadata::jsonb - 'nextcloud_etag' IS DISTINCT FROM NEW.metadata::jsonb - 'nextcloud_etag' ELSE OLD.metadata::jsonb IS DISTINCT FROM NEW.metadata::jsonb END)) THEN RETURN NEW; END IF; INSERT INTO knowledge_enrichment_row_versions(row_kind,row_id,revision) VALUES('knowledge',CASE WHEN TG_OP = 'DELETE' THEN OLD.id ELSE NEW.id END,1) ON CONFLICT(row_kind,row_id) DO UPDATE SET revision=knowledge_enrichment_row_versions.revision+1; IF TG_OP = 'DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF; END;  $body$
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/original_body_rewrite.go:207
+[0m[33m[0.281ms] [34;1m[rows:0][0m DROP TRIGGER "knowledge_enrichment_knowledge_version" ON "knowledges"
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/original_body_rewrite.go:210
+[0m[33m[0.229ms] [34;1m[rows:0][0m CREATE TRIGGER knowledge_enrichment_knowledge_version AFTER INSERT OR DELETE OR UPDATE ON auto_tag_c2bb23b4.knowledges FOR EACH ROW EXECUTE FUNCTION "original_body_638170137e02d0ec99f5"()
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/original_body_rewrite.go:146
+[0m[33m[0.191ms] [34;1m[rows:1][0m SELECT count(*) FROM information_schema.tables WHERE table_schema = CURRENT_SCHEMA() AND table_name = 'chunks' AND table_type = 'BASE TABLE'
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/original_body_rewrite.go:149
+[0m[33m[0.104ms] [34;1m[rows:1][0m SELECT CURRENT_DATABASE()
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/original_body_rewrite.go:149
+[0m[33m[4.010ms] [34;1m[rows:-][0m SELECT c.column_name, c.is_nullable = 'YES', c.udt_name, c.character_maximum_length, c.numeric_precision, c.numeric_precision_radix, c.numeric_scale, c.datetime_precision, 8 * typlen, c.column_default, pd.description, c.identity_increment FROM information_schema.columns AS c JOIN pg_type AS pgt ON c.udt_name = pgt.typname LEFT JOIN pg_catalog.pg_description as pd ON pd.objsubid = c.ordinal_position AND pd.objoid = (SELECT oid FROM pg_catalog.pg_class WHERE relname = c.table_name AND relnamespace = (SELECT oid FROM pg_catalog.pg_namespace WHERE nspname = c.table_schema)) where table_catalog = 'body_owned' AND table_schema = CURRENT_SCHEMA() AND table_name = 'chunks'
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/original_body_rewrite.go:149
+[0m[33m[0.430ms] [34;1m[rows:-][0m SELECT * FROM "chunks" LIMIT 5
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/original_body_rewrite.go:149
+[0m[33m[5.692ms] [34;1m[rows:-][0m SELECT constraint_name FROM information_schema.table_constraints tc JOIN information_schema.constraint_column_usage AS ccu USING (constraint_schema, constraint_catalog, table_name, constraint_name) JOIN information_schema.columns AS c ON c.table_schema = tc.constraint_schema AND tc.table_name = c.table_name AND ccu.column_name = c.column_name WHERE constraint_type IN ('PRIMARY KEY', 'UNIQUE') AND c.table_catalog = 'body_owned' AND c.table_schema = CURRENT_SCHEMA() AND c.table_name = 'chunks' AND constraint_type = 'UNIQUE'
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/original_body_rewrite.go:149
+[0m[33m[5.593ms] [34;1m[rows:-][0m SELECT c.column_name, constraint_name, constraint_type FROM information_schema.table_constraints tc JOIN information_schema.constraint_column_usage AS ccu USING (constraint_schema, constraint_catalog, table_name, constraint_name) JOIN information_schema.columns AS c ON c.table_schema = tc.constraint_schema AND tc.table_name = c.table_name AND ccu.column_name = c.column_name WHERE constraint_type IN ('PRIMARY KEY', 'UNIQUE') AND c.table_catalog = 'body_owned' AND c.table_schema = CURRENT_SCHEMA() AND c.table_name = 'chunks'
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/original_body_rewrite.go:149
+[0m[33m[0.359ms] [34;1m[rows:-][0m SELECT a.attname as column_name, format_type(a.atttypid, a.atttypmod) AS data_type
+		FROM pg_attribute a JOIN pg_class b ON a.attrelid = b.oid AND relnamespace = (SELECT oid FROM pg_catalog.pg_namespace WHERE nspname = CURRENT_SCHEMA())
+		WHERE a.attnum > 0 -- hide internal columns
+		AND NOT a.attisdropped -- hide deleted columns
+		AND b.relname = 'chunks'
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/original_body_rewrite.go:171
+[0m[33m[0.368ms] [34;1m[rows:3][0m SELECT t.tgname AS name,pg_get_triggerdef(t.oid) AS definition,pg_get_functiondef(t.tgfoid) AS function FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE c.relname='chunks' AND n.nspname=current_schema() AND NOT t.tgisinternal
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/original_body_rewrite.go:197
+[0m[33m[0.737ms] [34;1m[rows:0][0m CREATE OR REPLACE FUNCTION "original_body_459c4c35c8fc47c87e6c"() RETURNS trigger LANGUAGE plpgsql AS $body$  BEGIN IF TG_OP='UPDATE' AND (((to_jsonb(NEW)-'content')=(to_jsonb(OLD)-'content') AND EXISTS(SELECT 1 FROM original_body_rewrite_authorities a JOIN original_body_payloads p ON p.id=a.body_id WHERE a.source_table='chunks' AND a.row_key=to_jsonb(OLD)->>'id' AND a.column_name='content' AND a.old_value=to_jsonb(OLD)->>'content' AND a.new_value=to_jsonb(NEW)->>'content')) OR ((to_jsonb(NEW)-'source_content')=(to_jsonb(OLD)-'source_content') AND EXISTS(SELECT 1 FROM original_body_rewrite_authorities a JOIN original_body_payloads p ON p.id=a.body_id WHERE a.source_table='chunks' AND a.row_key=to_jsonb(OLD)->>'id' AND a.column_name='source_content' AND a.old_value=to_jsonb(OLD)->>'source_content' AND a.new_value=to_jsonb(NEW)->>'source_content')) OR ((to_jsonb(NEW)-'context_header')=(to_jsonb(OLD)-'context_header') AND EXISTS(SELECT 1 FROM original_body_rewrite_authorities a JOIN original_body_payloads p ON p.id=a.body_id WHERE a.source_table='chunks' AND a.row_key=to_jsonb(OLD)->>'id' AND a.column_name='context_header' AND a.old_value=to_jsonb(OLD)->>'context_header' AND a.new_value=to_jsonb(NEW)->>'context_header')) OR ((to_jsonb(NEW)-'metadata')=(to_jsonb(OLD)-'metadata') AND EXISTS(SELECT 1 FROM original_body_rewrite_authorities a JOIN original_body_payloads p ON p.id=a.body_id WHERE a.source_table='chunks' AND a.row_key=to_jsonb(OLD)->>'id' AND a.column_name='metadata' AND a.old_value=to_jsonb(OLD)->>'metadata' AND a.new_value=to_jsonb(NEW)->>'metadata'))) THEN RETURN NEW; END IF; IF TG_OP = 'UPDATE' THEN IF NOT (OLD.tenant_id IS DISTINCT FROM NEW.tenant_id OR OLD.knowledge_base_id IS DISTINCT FROM NEW.knowledge_base_id OR OLD.knowledge_id IS DISTINCT FROM NEW.knowledge_id OR OLD.content IS DISTINCT FROM NEW.content OR OLD.source_content IS DISTINCT FROM NEW.source_content OR OLD.context_header IS DISTINCT FROM NEW.context_header OR OLD.chunk_type IS DISTINCT FROM NEW.chunk_type OR OLD.metadata::jsonb IS DISTINCT FROM NEW.metadata::jsonb OR OLD.image_info IS DISTINCT FROM NEW.image_info OR OLD.parent_chunk_id IS DISTINCT FROM NEW.parent_chunk_id OR OLD.pre_chunk_id IS DISTINCT FROM NEW.pre_chunk_id OR OLD.next_chunk_id IS DISTINCT FROM NEW.next_chunk_id OR OLD.start_at IS DISTINCT FROM NEW.start_at OR OLD.end_at IS DISTINCT FROM NEW.end_at OR OLD.chunk_index IS DISTINCT FROM NEW.chunk_index OR OLD.content_revision IS DISTINCT FROM NEW.content_revision OR OLD.tag_id IS DISTINCT FROM NEW.tag_id OR OLD.relation_chunks::jsonb IS DISTINCT FROM NEW.relation_chunks::jsonb OR OLD.indirect_relation_chunks::jsonb IS DISTINCT FROM NEW.indirect_relation_chunks::jsonb OR OLD.deleted_at IS DISTINCT FROM NEW.deleted_at) THEN RETURN NEW; END IF; END IF; INSERT INTO knowledge_input_row_versions(row_kind,row_id,revision) VALUES ('chunk',CASE WHEN TG_OP = 'DELETE' THEN OLD.id ELSE NEW.id END,1) ON CONFLICT(row_kind,row_id) DO UPDATE SET revision=knowledge_input_row_versions.revision+1; IF TG_OP = 'DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF; END;  $body$
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/original_body_rewrite.go:207
+[0m[33m[0.207ms] [34;1m[rows:0][0m DROP TRIGGER "knowledge_input_chunk_version" ON "chunks"
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/original_body_rewrite.go:210
+[0m[33m[0.202ms] [34;1m[rows:0][0m CREATE TRIGGER knowledge_input_chunk_version AFTER INSERT OR DELETE OR UPDATE ON auto_tag_c2bb23b4.chunks FOR EACH ROW EXECUTE FUNCTION "original_body_459c4c35c8fc47c87e6c"()
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/original_body_rewrite.go:197
+[0m[33m[0.537ms] [34;1m[rows:0][0m CREATE OR REPLACE FUNCTION "original_body_0054e4cb993b8c18fa84"() RETURNS trigger LANGUAGE plpgsql AS $body$  BEGIN IF TG_OP='UPDATE' AND (((to_jsonb(NEW)-'content')=(to_jsonb(OLD)-'content') AND EXISTS(SELECT 1 FROM original_body_rewrite_authorities a JOIN original_body_payloads p ON p.id=a.body_id WHERE a.source_table='chunks' AND a.row_key=to_jsonb(OLD)->>'id' AND a.column_name='content' AND a.old_value=to_jsonb(OLD)->>'content' AND a.new_value=to_jsonb(NEW)->>'content')) OR ((to_jsonb(NEW)-'source_content')=(to_jsonb(OLD)-'source_content') AND EXISTS(SELECT 1 FROM original_body_rewrite_authorities a JOIN original_body_payloads p ON p.id=a.body_id WHERE a.source_table='chunks' AND a.row_key=to_jsonb(OLD)->>'id' AND a.column_name='source_content' AND a.old_value=to_jsonb(OLD)->>'source_content' AND a.new_value=to_jsonb(NEW)->>'source_content')) OR ((to_jsonb(NEW)-'context_header')=(to_jsonb(OLD)-'context_header') AND EXISTS(SELECT 1 FROM original_body_rewrite_authorities a JOIN original_body_payloads p ON p.id=a.body_id WHERE a.source_table='chunks' AND a.row_key=to_jsonb(OLD)->>'id' AND a.column_name='context_header' AND a.old_value=to_jsonb(OLD)->>'context_header' AND a.new_value=to_jsonb(NEW)->>'context_header')) OR ((to_jsonb(NEW)-'metadata')=(to_jsonb(OLD)-'metadata') AND EXISTS(SELECT 1 FROM original_body_rewrite_authorities a JOIN original_body_payloads p ON p.id=a.body_id WHERE a.source_table='chunks' AND a.row_key=to_jsonb(OLD)->>'id' AND a.column_name='metadata' AND a.old_value=to_jsonb(OLD)->>'metadata' AND a.new_value=to_jsonb(NEW)->>'metadata'))) THEN RETURN NEW; END IF; IF TG_OP = 'UPDATE' THEN IF NOT (OLD.tenant_id IS DISTINCT FROM NEW.tenant_id OR OLD.knowledge_base_id IS DISTINCT FROM NEW.knowledge_base_id OR OLD.knowledge_id IS DISTINCT FROM NEW.knowledge_id OR OLD.content IS DISTINCT FROM NEW.content OR OLD.content_revision IS DISTINCT FROM NEW.content_revision OR OLD.chunk_type IS DISTINCT FROM NEW.chunk_type OR OLD.parent_chunk_id IS DISTINCT FROM NEW.parent_chunk_id OR OLD.deleted_at IS DISTINCT FROM NEW.deleted_at) THEN RETURN NEW; END IF; END IF; INSERT INTO knowledge_input_graph_chunk_versions(chunk_id,revision) VALUES(CASE WHEN TG_OP = 'DELETE' THEN OLD.id ELSE NEW.id END,1) ON CONFLICT(chunk_id) DO UPDATE SET revision=knowledge_input_graph_chunk_versions.revision+1; IF TG_OP = 'DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF; END;  $body$
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/original_body_rewrite.go:207
+[0m[33m[0.254ms] [34;1m[rows:0][0m DROP TRIGGER "knowledge_input_graph_chunk_version" ON "chunks"
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/original_body_rewrite.go:210
+[0m[33m[0.194ms] [34;1m[rows:0][0m CREATE TRIGGER knowledge_input_graph_chunk_version AFTER INSERT OR DELETE OR UPDATE ON auto_tag_c2bb23b4.chunks FOR EACH ROW EXECUTE FUNCTION "original_body_0054e4cb993b8c18fa84"()
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/original_body_rewrite.go:197
+[0m[33m[0.525ms] [34;1m[rows:0][0m CREATE OR REPLACE FUNCTION "original_body_f334f1ed5831edba72fe"() RETURNS trigger LANGUAGE plpgsql AS $body$  BEGIN IF TG_OP='UPDATE' AND (((to_jsonb(NEW)-'content')=(to_jsonb(OLD)-'content') AND EXISTS(SELECT 1 FROM original_body_rewrite_authorities a JOIN original_body_payloads p ON p.id=a.body_id WHERE a.source_table='chunks' AND a.row_key=to_jsonb(OLD)->>'id' AND a.column_name='content' AND a.old_value=to_jsonb(OLD)->>'content' AND a.new_value=to_jsonb(NEW)->>'content')) OR ((to_jsonb(NEW)-'source_content')=(to_jsonb(OLD)-'source_content') AND EXISTS(SELECT 1 FROM original_body_rewrite_authorities a JOIN original_body_payloads p ON p.id=a.body_id WHERE a.source_table='chunks' AND a.row_key=to_jsonb(OLD)->>'id' AND a.column_name='source_content' AND a.old_value=to_jsonb(OLD)->>'source_content' AND a.new_value=to_jsonb(NEW)->>'source_content')) OR ((to_jsonb(NEW)-'context_header')=(to_jsonb(OLD)-'context_header') AND EXISTS(SELECT 1 FROM original_body_rewrite_authorities a JOIN original_body_payloads p ON p.id=a.body_id WHERE a.source_table='chunks' AND a.row_key=to_jsonb(OLD)->>'id' AND a.column_name='context_header' AND a.old_value=to_jsonb(OLD)->>'context_header' AND a.new_value=to_jsonb(NEW)->>'context_header')) OR ((to_jsonb(NEW)-'metadata')=(to_jsonb(OLD)-'metadata') AND EXISTS(SELECT 1 FROM original_body_rewrite_authorities a JOIN original_body_payloads p ON p.id=a.body_id WHERE a.source_table='chunks' AND a.row_key=to_jsonb(OLD)->>'id' AND a.column_name='metadata' AND a.old_value=to_jsonb(OLD)->>'metadata' AND a.new_value=to_jsonb(NEW)->>'metadata'))) THEN RETURN NEW; END IF; IF TG_OP = 'UPDATE' AND NOT (OLD.tenant_id IS DISTINCT FROM NEW.tenant_id OR OLD.knowledge_base_id IS DISTINCT FROM NEW.knowledge_base_id OR OLD.knowledge_id IS DISTINCT FROM NEW.knowledge_id OR OLD.content IS DISTINCT FROM NEW.content OR OLD.source_content IS DISTINCT FROM NEW.source_content OR OLD.context_header IS DISTINCT FROM NEW.context_header OR OLD.chunk_type IS DISTINCT FROM NEW.chunk_type OR OLD.image_info IS DISTINCT FROM NEW.image_info OR OLD.parent_chunk_id IS DISTINCT FROM NEW.parent_chunk_id OR OLD.pre_chunk_id IS DISTINCT FROM NEW.pre_chunk_id OR OLD.next_chunk_id IS DISTINCT FROM NEW.next_chunk_id OR OLD.start_at IS DISTINCT FROM NEW.start_at OR OLD.end_at IS DISTINCT FROM NEW.end_at OR OLD.chunk_index IS DISTINCT FROM NEW.chunk_index OR OLD.content_revision IS DISTINCT FROM NEW.content_revision OR OLD.is_enabled IS DISTINCT FROM NEW.is_enabled OR OLD.deleted_at IS DISTINCT FROM NEW.deleted_at) THEN RETURN NEW; END IF; INSERT INTO knowledge_enrichment_row_versions(row_kind,row_id,revision) VALUES('chunk',CASE WHEN TG_OP = 'DELETE' THEN OLD.id ELSE NEW.id END,1) ON CONFLICT(row_kind,row_id) DO UPDATE SET revision=knowledge_enrichment_row_versions.revision+1; IF TG_OP = 'DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF; END;  $body$
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/original_body_rewrite.go:207
+[0m[33m[0.233ms] [34;1m[rows:0][0m DROP TRIGGER "knowledge_enrichment_chunk_version" ON "chunks"
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/original_body_rewrite.go:210
+[0m[33m[0.203ms] [34;1m[rows:0][0m CREATE TRIGGER knowledge_enrichment_chunk_version AFTER INSERT OR DELETE OR UPDATE ON auto_tag_c2bb23b4.chunks FOR EACH ROW EXECUTE FUNCTION "original_body_f334f1ed5831edba72fe"()
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/original_body_rewrite.go:146
+[0m[33m[0.132ms] [34;1m[rows:1][0m SELECT count(*) FROM information_schema.tables WHERE table_schema = CURRENT_SCHEMA() AND table_name = 'messages' AND table_type = 'BASE TABLE'
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/original_body_rewrite.go:149
+[0m[33m[0.055ms] [34;1m[rows:1][0m SELECT CURRENT_DATABASE()
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/original_body_rewrite.go:149
+[0m[33m[3.626ms] [34;1m[rows:-][0m SELECT c.column_name, c.is_nullable = 'YES', c.udt_name, c.character_maximum_length, c.numeric_precision, c.numeric_precision_radix, c.numeric_scale, c.datetime_precision, 8 * typlen, c.column_default, pd.description, c.identity_increment FROM information_schema.columns AS c JOIN pg_type AS pgt ON c.udt_name = pgt.typname LEFT JOIN pg_catalog.pg_description as pd ON pd.objsubid = c.ordinal_position AND pd.objoid = (SELECT oid FROM pg_catalog.pg_class WHERE relname = c.table_name AND relnamespace = (SELECT oid FROM pg_catalog.pg_namespace WHERE nspname = c.table_schema)) where table_catalog = 'body_owned' AND table_schema = CURRENT_SCHEMA() AND table_name = 'messages'
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/original_body_rewrite.go:149
+[0m[33m[0.194ms] [34;1m[rows:-][0m SELECT * FROM "messages" LIMIT 5
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/original_body_rewrite.go:149
+[0m[33m[4.926ms] [34;1m[rows:-][0m SELECT constraint_name FROM information_schema.table_constraints tc JOIN information_schema.constraint_column_usage AS ccu USING (constraint_schema, constraint_catalog, table_name, constraint_name) JOIN information_schema.columns AS c ON c.table_schema = tc.constraint_schema AND tc.table_name = c.table_name AND ccu.column_name = c.column_name WHERE constraint_type IN ('PRIMARY KEY', 'UNIQUE') AND c.table_catalog = 'body_owned' AND c.table_schema = CURRENT_SCHEMA() AND c.table_name = 'messages' AND constraint_type = 'UNIQUE'
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/original_body_rewrite.go:149
+[0m[33m[5.193ms] [34;1m[rows:-][0m SELECT c.column_name, constraint_name, constraint_type FROM information_schema.table_constraints tc JOIN information_schema.constraint_column_usage AS ccu USING (constraint_schema, constraint_catalog, table_name, constraint_name) JOIN information_schema.columns AS c ON c.table_schema = tc.constraint_schema AND tc.table_name = c.table_name AND ccu.column_name = c.column_name WHERE constraint_type IN ('PRIMARY KEY', 'UNIQUE') AND c.table_catalog = 'body_owned' AND c.table_schema = CURRENT_SCHEMA() AND c.table_name = 'messages'
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/original_body_rewrite.go:149
+[0m[33m[0.347ms] [34;1m[rows:-][0m SELECT a.attname as column_name, format_type(a.atttypid, a.atttypmod) AS data_type
+		FROM pg_attribute a JOIN pg_class b ON a.attrelid = b.oid AND relnamespace = (SELECT oid FROM pg_catalog.pg_namespace WHERE nspname = CURRENT_SCHEMA())
+		WHERE a.attnum > 0 -- hide internal columns
+		AND NOT a.attisdropped -- hide deleted columns
+		AND b.relname = 'messages'
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/original_body_rewrite.go:171
+[0m[33m[0.323ms] [34;1m[rows:1][0m SELECT t.tgname AS name,pg_get_triggerdef(t.oid) AS definition,pg_get_functiondef(t.tgfoid) AS function FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE c.relname='messages' AND n.nspname=current_schema() AND NOT t.tgisinternal
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/original_body_rewrite.go:197
+[0m[33m[0.618ms] [34;1m[rows:0][0m CREATE OR REPLACE FUNCTION "original_body_e74b4e6a15584815c1e3"() RETURNS trigger LANGUAGE plpgsql AS $body$  BEGIN IF TG_OP='UPDATE' AND (((to_jsonb(NEW)-'content')=(to_jsonb(OLD)-'content') AND EXISTS(SELECT 1 FROM original_body_rewrite_authorities a JOIN original_body_payloads p ON p.id=a.body_id WHERE a.source_table='messages' AND a.row_key=to_jsonb(OLD)->>'id' AND a.column_name='content' AND a.old_value=to_jsonb(OLD)->>'content' AND a.new_value=to_jsonb(NEW)->>'content')) OR ((to_jsonb(NEW)-'rendered_content')=(to_jsonb(OLD)-'rendered_content') AND EXISTS(SELECT 1 FROM original_body_rewrite_authorities a JOIN original_body_payloads p ON p.id=a.body_id WHERE a.source_table='messages' AND a.row_key=to_jsonb(OLD)->>'id' AND a.column_name='rendered_content' AND a.old_value=to_jsonb(OLD)->>'rendered_content' AND a.new_value=to_jsonb(NEW)->>'rendered_content')) OR ((to_jsonb(NEW)-'context_checkpoint')=(to_jsonb(OLD)-'context_checkpoint') AND EXISTS(SELECT 1 FROM original_body_rewrite_authorities a JOIN original_body_payloads p ON p.id=a.body_id WHERE a.source_table='messages' AND a.row_key=to_jsonb(OLD)->>'id' AND a.column_name='context_checkpoint' AND a.old_value=to_jsonb(OLD)->>'context_checkpoint' AND a.new_value=to_jsonb(NEW)->>'context_checkpoint'))) THEN RETURN NEW; END IF; IF TG_OP = 'UPDATE' THEN IF NOT (OLD.session_id IS DISTINCT FROM NEW.session_id OR OLD.request_id IS DISTINCT FROM NEW.request_id OR OLD.content IS DISTINCT FROM NEW.content OR OLD.role IS DISTINCT FROM NEW.role OR OLD.source_lineage::jsonb IS DISTINCT FROM NEW.source_lineage::jsonb OR OLD.rendered_content IS DISTINCT FROM NEW.rendered_content OR OLD.is_completed IS DISTINCT FROM NEW.is_completed OR OLD.knowledge_id IS DISTINCT FROM NEW.knowledge_id OR OLD.agent_id IS DISTINCT FROM NEW.agent_id OR OLD.agent_tenant_id IS DISTINCT FROM NEW.agent_tenant_id OR OLD.model_id IS DISTINCT FROM NEW.model_id OR OLD.execution_context::jsonb IS DISTINCT FROM NEW.execution_context::jsonb OR OLD.deleted_at IS DISTINCT FROM NEW.deleted_at) THEN RETURN NEW; END IF; END IF; INSERT INTO knowledge_input_message_versions(message_id,revision) VALUES(CASE WHEN TG_OP = 'DELETE' THEN OLD.id ELSE NEW.id END,1) ON CONFLICT(message_id) DO UPDATE SET revision=knowledge_input_message_versions.revision+1; IF TG_OP = 'DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF; END;  $body$
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/original_body_rewrite.go:207
+[0m[33m[0.172ms] [34;1m[rows:0][0m DROP TRIGGER "knowledge_input_message_version" ON "messages"
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/original_body_rewrite.go:210
+[0m[33m[0.164ms] [34;1m[rows:0][0m CREATE TRIGGER knowledge_input_message_version AFTER INSERT OR DELETE OR UPDATE ON auto_tag_c2bb23b4.messages FOR EACH ROW EXECUTE FUNCTION "original_body_e74b4e6a15584815c1e3"()
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/original_body_rewrite.go:146
+[0m[33m[0.114ms] [34;1m[rows:1][0m SELECT count(*) FROM information_schema.tables WHERE table_schema = CURRENT_SCHEMA() AND table_name = 'sessions' AND table_type = 'BASE TABLE'
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/original_body_rewrite.go:149
+[0m[33m[0.055ms] [34;1m[rows:1][0m SELECT CURRENT_DATABASE()
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/original_body_rewrite.go:149
+[0m[33m[1.035ms] [34;1m[rows:-][0m SELECT c.column_name, c.is_nullable = 'YES', c.udt_name, c.character_maximum_length, c.numeric_precision, c.numeric_precision_radix, c.numeric_scale, c.datetime_precision, 8 * typlen, c.column_default, pd.description, c.identity_increment FROM information_schema.columns AS c JOIN pg_type AS pgt ON c.udt_name = pgt.typname LEFT JOIN pg_catalog.pg_description as pd ON pd.objsubid = c.ordinal_position AND pd.objoid = (SELECT oid FROM pg_catalog.pg_class WHERE relname = c.table_name AND relnamespace = (SELECT oid FROM pg_catalog.pg_namespace WHERE nspname = c.table_schema)) where table_catalog = 'body_owned' AND table_schema = CURRENT_SCHEMA() AND table_name = 'sessions'
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/original_body_rewrite.go:149
+[0m[33m[0.398ms] [34;1m[rows:-][0m SELECT * FROM "sessions" LIMIT 5
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/original_body_rewrite.go:149
+[0m[33m[1.259ms] [34;1m[rows:-][0m SELECT constraint_name FROM information_schema.table_constraints tc JOIN information_schema.constraint_column_usage AS ccu USING (constraint_schema, constraint_catalog, table_name, constraint_name) JOIN information_schema.columns AS c ON c.table_schema = tc.constraint_schema AND tc.table_name = c.table_name AND ccu.column_name = c.column_name WHERE constraint_type IN ('PRIMARY KEY', 'UNIQUE') AND c.table_catalog = 'body_owned' AND c.table_schema = CURRENT_SCHEMA() AND c.table_name = 'sessions' AND constraint_type = 'UNIQUE'
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/original_body_rewrite.go:149
+[0m[33m[1.258ms] [34;1m[rows:-][0m SELECT c.column_name, constraint_name, constraint_type FROM information_schema.table_constraints tc JOIN information_schema.constraint_column_usage AS ccu USING (constraint_schema, constraint_catalog, table_name, constraint_name) JOIN information_schema.columns AS c ON c.table_schema = tc.constraint_schema AND tc.table_name = c.table_name AND ccu.column_name = c.column_name WHERE constraint_type IN ('PRIMARY KEY', 'UNIQUE') AND c.table_catalog = 'body_owned' AND c.table_schema = CURRENT_SCHEMA() AND c.table_name = 'sessions'
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/original_body_rewrite.go:149
+[0m[33m[0.118ms] [34;1m[rows:-][0m SELECT a.attname as column_name, format_type(a.atttypid, a.atttypmod) AS data_type
+		FROM pg_attribute a JOIN pg_class b ON a.attrelid = b.oid AND relnamespace = (SELECT oid FROM pg_catalog.pg_namespace WHERE nspname = CURRENT_SCHEMA())
+		WHERE a.attnum > 0 -- hide internal columns
+		AND NOT a.attisdropped -- hide deleted columns
+		AND b.relname = 'sessions'
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/original_body_rewrite.go:171
+[0m[33m[0.239ms] [34;1m[rows:0][0m SELECT t.tgname AS name,pg_get_triggerdef(t.oid) AS definition,pg_get_functiondef(t.tgfoid) AS function FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE c.relname='sessions' AND n.nspname=current_schema() AND NOT t.tgisinternal
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/original_body_rewrite.go:146
+[0m[33m[0.107ms] [34;1m[rows:1][0m SELECT count(*) FROM information_schema.tables WHERE table_schema = CURRENT_SCHEMA() AND table_name = 'wiki_pages' AND table_type = 'BASE TABLE'
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/original_body_rewrite.go:146
+[0m[33m[0.088ms] [34;1m[rows:1][0m SELECT count(*) FROM information_schema.tables WHERE table_schema = CURRENT_SCHEMA() AND table_name = 'wiki_page_revisions' AND table_type = 'BASE TABLE'
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/service/original_body_retention_test.go:46
+[0m[33m[0.137ms] [34;1m[rows:1][0m SELECT count(*) FROM information_schema.tables WHERE table_schema = CURRENT_SCHEMA() AND table_name = 'original_body_payloads' AND table_type = 'BASE TABLE'
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/original_body_fields.go:598
+[0m[33m[0.120ms] [34;1m[rows:1][0m SELECT count(*) FROM information_schema.tables WHERE table_schema=current_schema() AND table_name='original_body_payloads'
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/original_body_fields.go:522
+[0m[33m[0.465ms] [34;1m[rows:0][0m SELECT * FROM "original_body_field_heads" WHERE source_table='knowledges' AND row_key='enrichment-doc'
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/knowledge_input_provenance.go:757
+[0m[33m[0.913ms] [34;1m[rows:1][0m SELECT * FROM "knowledges" WHERE (id = 'enrichment-doc' AND tenant_id = 7 AND knowledge_base_id = 'kb') AND "knowledges"."deleted_at" IS NULL LIMIT 1
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/knowledge_input_provenance.go:458
+[0m[33m[0.110ms] [34;1m[rows:1][0m SELECT * FROM "knowledge_input_admissions" WHERE (tenant_id = 7 AND knowledge_base_id = 'kb' AND knowledge_id = 'enrichment-doc') AND admission_id = '8d3a429d-63f9-4bd6-ad9c-eefe6c4af2ea' LIMIT 1
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/knowledge_input_provenance.go:462
+[0m[33m[0.159ms] [34;1m[rows:1][0m SELECT * FROM "knowledge_bases" WHERE (id = 'kb' AND tenant_id = 7) AND "knowledge_bases"."deleted_at" IS NULL LIMIT 1
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/knowledge_configuration_input.go:36
+[0m[33m[0.095ms] [34;1m[rows:1][0m SELECT * FROM "knowledge_configuration_control_versions" WHERE knowledge_base_id = 'kb' LIMIT 1
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/knowledge_configuration_input.go:36
+[0m[33m[0.082ms] [34;1m[rows:1][0m SELECT * FROM "knowledge_configuration_control_versions" WHERE knowledge_base_id = 'kb' LIMIT 1
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/knowledge_configuration_input.go:51
+[0m[33m[0.101ms] [34;1m[rows:1][0m SELECT * FROM "knowledge_config_input_origins" WHERE tenant_id = 7 AND knowledge_base_id = 'kb' AND config_revision = 2 LIMIT 1
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/knowledge_input_provenance.go:282
+[0m[33m[0.097ms] [34;1m[rows:1][0m SELECT * FROM "knowledge_input_row_versions" WHERE row_kind = 'knowledge' AND row_id = 'enrichment-doc' LIMIT 1
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/knowledge_input_provenance.go:438
+[0m[33m[0.092ms] [34;1m[rows:1][0m SELECT * FROM "knowledge_input_material_receipts" WHERE row_kind = 'knowledge' AND row_id = 'enrichment-doc' LIMIT 1
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/original_body_fields.go:598
+[0m[33m[0.106ms] [34;1m[rows:1][0m SELECT count(*) FROM information_schema.tables WHERE table_schema=current_schema() AND table_name='original_body_payloads'
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/original_body_fields.go:522
+[0m[33m[0.133ms] [34;1m[rows:0][0m SELECT * FROM "original_body_field_heads" WHERE source_table='chunks' AND row_key='text-one'
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/knowledge_input_provenance.go:775
+[0m[33m[0.490ms] [34;1m[rows:1][0m SELECT * FROM "chunks" WHERE (id = 'text-one' AND tenant_id = 7 AND knowledge_base_id = 'kb' AND knowledge_id = 'enrichment-doc') AND "chunks"."deleted_at" IS NULL LIMIT 1
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/knowledge_input_provenance.go:282
+[0m[33m[0.069ms] [34;1m[rows:1][0m SELECT * FROM "knowledge_input_row_versions" WHERE row_kind = 'chunk' AND row_id = 'text-one' LIMIT 1
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/knowledge_input_provenance.go:438
+[0m[33m[0.069ms] [34;1m[rows:1][0m SELECT * FROM "knowledge_input_material_receipts" WHERE row_kind = 'chunk' AND row_id = 'text-one' LIMIT 1
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/knowledge_input_provenance.go:282
+[0m[33m[0.058ms] [34;1m[rows:1][0m SELECT * FROM "knowledge_input_row_versions" WHERE row_kind = 'chunk' AND row_id = 'text-one' LIMIT 1
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/knowledge_input_provenance.go:282
+[0m[33m[0.068ms] [34;1m[rows:1][0m SELECT * FROM "knowledge_input_row_versions" WHERE row_kind = 'knowledge' AND row_id = 'enrichment-doc' LIMIT 1
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/original_body_fields.go:598
+[0m[33m[0.090ms] [34;1m[rows:1][0m SELECT count(*) FROM information_schema.tables WHERE table_schema=current_schema() AND table_name='original_body_payloads'
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/original_body_fields.go:522
+[0m[33m[0.197ms] [34;1m[rows:0][0m SELECT * FROM "original_body_field_heads" WHERE source_table='knowledges' AND row_key='enrichment-doc'
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/knowledge_input_provenance.go:757
+[0m[33m[0.411ms] [34;1m[rows:1][0m SELECT * FROM "knowledges" WHERE (id = 'enrichment-doc' AND tenant_id = 7 AND knowledge_base_id = 'kb') AND "knowledges"."deleted_at" IS NULL LIMIT 1
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/knowledge_input_provenance.go:458
+[0m[33m[0.098ms] [34;1m[rows:1][0m SELECT * FROM "knowledge_input_admissions" WHERE (tenant_id = 7 AND knowledge_base_id = 'kb' AND knowledge_id = 'enrichment-doc') AND admission_id = '8d3a429d-63f9-4bd6-ad9c-eefe6c4af2ea' LIMIT 1
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/knowledge_input_provenance.go:462
+[0m[33m[0.110ms] [34;1m[rows:1][0m SELECT * FROM "knowledge_bases" WHERE (id = 'kb' AND tenant_id = 7) AND "knowledge_bases"."deleted_at" IS NULL LIMIT 1
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/knowledge_configuration_input.go:36
+[0m[33m[0.071ms] [34;1m[rows:1][0m SELECT * FROM "knowledge_configuration_control_versions" WHERE knowledge_base_id = 'kb' LIMIT 1
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/knowledge_configuration_input.go:36
+[0m[33m[0.093ms] [34;1m[rows:1][0m SELECT * FROM "knowledge_configuration_control_versions" WHERE knowledge_base_id = 'kb' LIMIT 1
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/knowledge_configuration_input.go:51
+[0m[33m[0.098ms] [34;1m[rows:1][0m SELECT * FROM "knowledge_config_input_origins" WHERE tenant_id = 7 AND knowledge_base_id = 'kb' AND config_revision = 2 LIMIT 1
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/knowledge_input_provenance.go:282
+[0m[33m[0.091ms] [34;1m[rows:1][0m SELECT * FROM "knowledge_input_row_versions" WHERE row_kind = 'knowledge' AND row_id = 'enrichment-doc' LIMIT 1
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/knowledge_input_provenance.go:438
+[0m[33m[0.097ms] [34;1m[rows:1][0m SELECT * FROM "knowledge_input_material_receipts" WHERE row_kind = 'knowledge' AND row_id = 'enrichment-doc' LIMIT 1
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/original_body_fields.go:598
+[0m[33m[0.128ms] [34;1m[rows:1][0m SELECT count(*) FROM information_schema.tables WHERE table_schema=current_schema() AND table_name='original_body_payloads'
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/original_body_fields.go:522
+[0m[33m[0.112ms] [34;1m[rows:0][0m SELECT * FROM "original_body_field_heads" WHERE source_table='chunks' AND row_key='text-one'
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/knowledge_input_provenance.go:775
+[0m[33m[0.451ms] [34;1m[rows:1][0m SELECT * FROM "chunks" WHERE (id = 'text-one' AND tenant_id = 7 AND knowledge_base_id = 'kb' AND knowledge_id = 'enrichment-doc') AND "chunks"."deleted_at" IS NULL LIMIT 1
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/knowledge_input_provenance.go:282
+[0m[33m[0.056ms] [34;1m[rows:1][0m SELECT * FROM "knowledge_input_row_versions" WHERE row_kind = 'chunk' AND row_id = 'text-one' LIMIT 1
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/knowledge_input_provenance.go:438
+[0m[33m[0.056ms] [34;1m[rows:1][0m SELECT * FROM "knowledge_input_material_receipts" WHERE row_kind = 'chunk' AND row_id = 'text-one' LIMIT 1
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/knowledge_input_provenance.go:282
+[0m[33m[0.060ms] [34;1m[rows:1][0m SELECT * FROM "knowledge_input_row_versions" WHERE row_kind = 'chunk' AND row_id = 'text-one' LIMIT 1
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/knowledge_input_provenance.go:282
+[0m[33m[0.068ms] [34;1m[rows:1][0m SELECT * FROM "knowledge_input_row_versions" WHERE row_kind = 'knowledge' AND row_id = 'enrichment-doc' LIMIT 1
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/knowledge_auto_tag_input.go:32
+[0m[33m[0.294ms] [34;1m[rows:1][0m SELECT count(*) FROM "knowledge_tags" WHERE tenant_id = 7 AND knowledge_base_id = 'kb'
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/knowledge_auto_tag_input.go:35
+[0m[33m[0.391ms] [34;1m[rows:0][0m SELECT * FROM "knowledge_tags" WHERE tenant_id = 7 AND knowledge_base_id = 'kb' ORDER BY sort_order ASC,created_at DESC,seq_id DESC LIMIT 500
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/knowledge_display_input.go:169
+[0m[33m[0.159ms] [34;1m[rows:1][0m SELECT * FROM "knowledge_display_versions" WHERE kind = 'tag-list' AND row_id = 'kb' LIMIT 1
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/knowledge_auto_tag_input.go:53
+[0m[33m[0.222ms] [34;1m[rows:0][0m SELECT * FROM "knowledge_tag_relations" WHERE knowledge_id = 'enrichment-doc' ORDER BY tag_id ASC
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/knowledge_display_input.go:169
+[0m[33m[0.065ms] [34;1m[rows:1][0m SELECT * FROM "knowledge_display_versions" WHERE kind = 'relations' AND row_id = 'enrichment-doc' LIMIT 1
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/knowledge_build_actor.go:283
+[0m[33m[0.114ms] [34;1m[rows:1][0m SELECT * FROM "users" WHERE (id = 'enrich-human' AND is_active = true) AND "users"."deleted_at" IS NULL LIMIT 1
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/group_access.go:32
+[0m[33m[0.140ms] [34;1m[rows:1][0m SELECT * FROM "tenant_members" WHERE (user_id = 'enrich-human' AND tenant_id = 7 AND status = 'active') AND "tenant_members"."deleted_at" IS NULL ORDER BY "tenant_members"."id" LIMIT 1
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/group_access.go:66
+[0m[33m[0.558ms] [34;1m[rows:0][0m 
+		SELECT d.id AS directory_id,
+		       g.id AS directory_group_id,
+		       g.display_name AS group_display_name,
+		       tgr.role AS role,
+		       gm.source AS membership_source,
+		       gm.depth AS membership_depth,
+		       d.enabled AS directory_enabled,
+		       d.last_successful_sync_at AS last_successful_sync_at,
+		       d.stale_after_seconds AS stale_after_seconds
+		  FROM directory_identities i
+		  JOIN directory_group_memberships gm ON gm.identity_id = i.id
+		  JOIN directory_groups g ON g.id = gm.group_id AND g.status = 'active'
+		  JOIN directories d ON d.id = i.directory_id
+		  JOIN tenant_group_role_grants tgr ON tgr.directory_group_id = g.id
+		 WHERE i.user_id = 'enrich-human' AND i.status = 'active' AND tgr.tenant_id = 7
+		 ORDER BY tgr.role DESC, g.display_name ASC, g.id ASC
+	
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/knowledge_build_actor.go:216
+[0m[33m[0.134ms] [34;1m[rows:1][0m SELECT * FROM "knowledge_bases" WHERE (id = 'kb' AND tenant_id = 7) AND "knowledge_bases"."deleted_at" IS NULL LIMIT 1
+
+2026/10/09 01:52:52 [31;1m/workspace/internal/application/repository/group_access.go:254 [35;1mrecord not found
+[0m[33m[0.120ms] [34;1m[rows:0][0m SELECT * FROM "resource_access_policies" WHERE tenant_id = 7 AND resource_type = 'knowledge_base' AND resource_id = 'kb' ORDER BY "resource_access_policies"."id" LIMIT 1
+body callback table=knowledge_auto_tag_input_manifests type=*repository.knowledgeAutoTagManifest internal=<nil> err=<nil>
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/original_body_fields.go:598
+[0m[33m[0.094ms] [34;1m[rows:1][0m SELECT count(*) FROM information_schema.tables WHERE table_schema=current_schema() AND table_name='original_body_payloads'
+body feature=true table=knowledge_auto_tag_input_manifests schema=true reflect=struct
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/original_body_fields.go:118
+[0m[33m[0.171ms] [34;1m[rows:1][0m SELECT * FROM "knowledge_auto_tag_input_manifests" WHERE manifest_id='d4fcb830-8cc2-41ec-9777-a2e00013057d'
+
+2026/10/09 01:52:52 [32m/workspace/internal/application/repository/original_body_journal.go:206
+[0m[33m[0.270ms] [34;1m[rows:1][0m SELECT * FROM "original_body_journal_heads" WHERE id=1 LIMIT 1
+
+2026/10/09 01:52:52 [31;1m/workspace/internal/application/repository/original_body_fields.go:192 [35;1mrecord not found
+[0m[33m[0.172ms] [34;1m[rows:0][0m SELECT * FROM "original_body_field_heads" WHERE source_table='knowledge_auto_tag_input_manifests' AND row_key='d4fcb830-8cc2-41ec-9777-a2e00013057d' AND column_name='actual_inputs' LIMIT 1 FOR UPDATE
+
+2026/10/09 01:52:52 [31;1m/workspace/internal/application/repository/nextcloud_content_leases.go:120 [35;1mexpected 0 arguments, got 8
+[0m[33m[0.452ms] [34;1m[rows:-][0m SELECT floor(extract(epoch from clock_timestamp()) * 1000)::bigint
+--- FAIL: TestPostgresOriginalBodyActualTagProducer (0.44s)
+    original_body_retention_test.go:52: 
+        	Error Trace:	/workspace/internal/application/service/original_body_retention_test.go:52
+        	            				/workspace/internal/application/service/original_body_retention_test.go:113
+        	Error:      	Received unexpected error:
+        	            	expected 0 arguments, got 8; expected 0 arguments, got 8
+        	Test:       	TestPostgresOriginalBodyActualTagProducer
+FAIL
+FAIL	github.com/Tencent/WeKnora/internal/application/service	1.042s
+FAIL

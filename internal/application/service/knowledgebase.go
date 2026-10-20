@@ -31,6 +31,8 @@ const kbTaskCleanupTimeout = 5 * time.Second
 
 // knowledgeBaseService implements the knowledge base service interface
 type knowledgeBaseService struct {
+	knowledgeInputWriter   interfaces.KnowledgeBaseInputWriter
+	graphLineageReader     *KnowledgeGraphLineageReader
 	repo                   interfaces.KnowledgeBaseRepository
 	kgRepo                 interfaces.KnowledgeRepository
 	chunkRepo              interfaces.ChunkRepository
@@ -56,6 +58,8 @@ type knowledgeBaseService struct {
 	searchPublicationCheck func(context.Context, *types.Knowledge) error // test seam; production uses publicationGuard
 	contentLeases          *repository.NextcloudContentLeaseStore
 	groupAccess            interfaces.GroupAccessService
+	ragChunkSnapshots      repository.RAGChunkSnapshotLookup
+	ragChunkLineageGuard   *access.NextcloudSourceLineageGuard
 }
 
 // ConfigureKnowledgeBaseGroupAccess gives RAG and Agent search the same live
@@ -139,6 +143,9 @@ func (s *knowledgeBaseService) GetRepository() interfaces.KnowledgeBaseRepositor
 func (s *knowledgeBaseService) CreateKnowledgeBase(ctx context.Context,
 	kb *types.KnowledgeBase,
 ) (*types.KnowledgeBase, error) {
+	if err := kb.IndexingStrategy.ValidateGraphRequirement(); err != nil {
+		return nil, err
+	}
 	// Generate UUID and set creation timestamps
 	if kb.ID == "" {
 		kb.ID = uuid.New().String()
@@ -181,7 +188,13 @@ func (s *knowledgeBaseService) CreateKnowledgeBase(ctx context.Context,
 
 	logger.Infof(ctx, "Creating knowledge base, ID: %s, tenant ID: %d, name: %s", kb.ID, kb.TenantID, kb.Name)
 
-	if err := s.repo.CreateKnowledgeBase(ctx, kb); err != nil {
+	var createErr error
+	if s.knowledgeInputWriter != nil {
+		createErr = s.knowledgeInputWriter.CreateKnowledgeBaseWithInput(ctx, kb)
+	} else {
+		createErr = s.repo.CreateKnowledgeBase(ctx, kb)
+	}
+	if err := createErr; err != nil {
 		logger.ErrorWithFields(ctx, err, map[string]interface{}{
 			"knowledge_base_id": kb.ID,
 			"tenant_id":         kb.TenantID,
@@ -351,7 +364,10 @@ func (s *knowledgeBaseService) GetKnowledgeBaseByIDOnly(ctx context.Context, id 
 }
 
 // GetKnowledgeBasesByIDsOnly retrieves knowledge bases by IDs without tenant filter (batch).
-func (s *knowledgeBaseService) GetKnowledgeBasesByIDsOnly(ctx context.Context, ids []string) ([]*types.KnowledgeBase, error) {
+func (s *knowledgeBaseService) GetKnowledgeBasesByIDsOnly(
+	ctx context.Context,
+	ids []string,
+) ([]*types.KnowledgeBase, error) {
 	if len(ids) == 0 {
 		return nil, nil
 	}
@@ -432,7 +448,10 @@ func (s *knowledgeBaseService) ListKnowledgeBases(ctx context.Context) ([]*types
 }
 
 // ListKnowledgeBasesByTenantID returns all knowledge bases for the given tenant (e.g. for shared agent context).
-func (s *knowledgeBaseService) ListKnowledgeBasesByTenantID(ctx context.Context, tenantID uint64) ([]*types.KnowledgeBase, error) {
+func (s *knowledgeBaseService) ListKnowledgeBasesByTenantID(
+	ctx context.Context,
+	tenantID uint64,
+) ([]*types.KnowledgeBase, error) {
 	kbs, err := s.repo.ListKnowledgeBasesByTenantID(ctx, tenantID)
 	if err != nil {
 		logger.ErrorWithFields(ctx, err, map[string]interface{}{
@@ -452,7 +471,12 @@ func (s *knowledgeBaseService) ListKnowledgeBasesByTenantID(ctx context.Context,
 				kb.ChunkCount = cnt
 			}
 		}
-		if processingCount, err := s.kgRepo.CountKnowledgeByStatus(ctx, tenantID, kb.ID, []string{"pending", "processing"}); err == nil {
+		if processingCount, err := s.kgRepo.CountKnowledgeByStatus(
+			ctx,
+			tenantID,
+			kb.ID,
+			[]string{"pending", "processing"},
+		); err == nil {
 			kb.IsProcessing = processingCount > 0
 			kb.ProcessingCount = processingCount
 		}
@@ -486,7 +510,12 @@ func (s *knowledgeBaseService) FillKnowledgeBaseCounts(ctx context.Context, kb *
 			kb.ChunkCount = cnt
 		}
 	}
-	if processingCount, err := s.kgRepo.CountKnowledgeByStatus(ctx, tenantID, kb.ID, []string{"pending", "processing"}); err == nil {
+	if processingCount, err := s.kgRepo.CountKnowledgeByStatus(
+		ctx,
+		tenantID,
+		kb.ID,
+		[]string{"pending", "processing"},
+	); err == nil {
 		kb.IsProcessing = processingCount > 0
 		kb.ProcessingCount = processingCount
 	}
@@ -548,6 +577,9 @@ func (s *knowledgeBaseService) UpdateKnowledgeBase(ctx context.Context,
 	kb.Name = name
 	kb.Description = description
 	if config != nil {
+		if config.EnrichmentTemplates != nil {
+			kb.EnrichmentTemplates = config.EnrichmentTemplates
+		}
 		kb.ChunkingConfig = config.ChunkingConfig
 		kb.ImageProcessingConfig = config.ImageProcessingConfig
 		if config.FAQConfig != nil {
@@ -566,6 +598,9 @@ func (s *knowledgeBaseService) UpdateKnowledgeBase(ctx context.Context,
 		}
 		// Update indexing strategy — syncs to ExtractConfig for backward compat
 		if config.IndexingStrategy != nil {
+			if err := config.IndexingStrategy.ValidateGraphRequirement(); err != nil {
+				return nil, err
+			}
 			if !config.IndexingStrategy.HasAnyIndexing() {
 				return nil, errors.New("at least one indexing strategy must be enabled")
 			}
@@ -583,11 +618,40 @@ func (s *knowledgeBaseService) UpdateKnowledgeBase(ctx context.Context,
 			}
 		}
 	}
+	if config != nil && config.EnrichmentTemplates != nil {
+		authority, ok := s.knowledgeInputWriter.(interface {
+			AuthorizeKnowledgeTemplateConfigurationEdit(context.Context, *types.KnowledgeBase) (context.Context, error)
+		})
+		if !ok {
+			return nil, types.ErrSourceLineageUnknown
+		}
+		var err error
+		ctx, err = authority.AuthorizeKnowledgeTemplateConfigurationEdit(ctx, kb)
+		if err != nil {
+			return nil, err
+		}
+		if content := kb.EnrichmentTemplates.Summary; content != "" {
+			if len(content) > 32768 {
+				return nil, types.ErrSourceLineageLimit
+			}
+		}
+		if content := kb.EnrichmentTemplates.Question; content != "" {
+			if len(content) > 32768 {
+				return nil, types.ErrSourceLineageLimit
+			}
+		}
+	}
 	kb.UpdatedAt = time.Now()
 	kb.EnsureDefaults()
 
 	logger.Info(ctx, "Saving knowledge base update")
-	if err := s.repo.UpdateKnowledgeBase(ctx, kb); err != nil {
+	var updateErr error
+	if s.knowledgeInputWriter != nil {
+		updateErr = s.knowledgeInputWriter.UpdateKnowledgeBaseWithInput(ctx, kb)
+	} else {
+		updateErr = s.repo.UpdateKnowledgeBase(ctx, kb)
+	}
+	if err := updateErr; err != nil {
 		logger.ErrorWithFields(ctx, err, map[string]interface{}{
 			"knowledge_base_id": id,
 		})
@@ -942,14 +1006,26 @@ func (s *knowledgeBaseService) ProcessKBDelete(ctx context.Context, t *asynq.Tas
 		)
 		if errors.Is(err, retriever.ErrVectorStoreForbidden) ||
 			errors.Is(err, retriever.ErrVectorStoreNotFound) {
-			logger.Errorf(ctx, "KB delete task aborted: %v (tenant=%d, kb=%s)", err, payload.TenantID, payload.KnowledgeBaseID)
+			logger.Errorf(
+				ctx,
+				"KB delete task aborted: %v (tenant=%d, kb=%s)",
+				err,
+				payload.TenantID,
+				payload.KnowledgeBaseID,
+			)
 			return asynq.SkipRetry
 		}
 		if err != nil {
 			// Transient failures — store temporarily unavailable, request
 			// cancellation during resolution, or other retryable errors —
 			// must not fall through and report success while embeddings remain.
-			logger.Errorf(ctx, "KB delete task deferred: %v (tenant=%d, kb=%s)", err, payload.TenantID, payload.KnowledgeBaseID)
+			logger.Errorf(
+				ctx,
+				"KB delete task deferred: %v (tenant=%d, kb=%s)",
+				err,
+				payload.TenantID,
+				payload.KnowledgeBaseID,
+			)
 			return err
 		} else {
 			// Group knowledge by embedding model and type
@@ -969,7 +1045,12 @@ func (s *knowledgeBaseService) ProcessKBDelete(ctx context.Context, t *asynq.Tas
 					logger.Warnf(ctx, "Failed to get embedding model %s: %v", key.EmbeddingModelID, err)
 					continue
 				}
-				if err := retrieveEngine.DeleteByKnowledgeIDList(ctx, knowledgeGroup, embeddingModel.GetDimensions(), key.Type); err != nil {
+				if err := retrieveEngine.DeleteByKnowledgeIDList(
+					ctx,
+					knowledgeGroup,
+					embeddingModel.GetDimensions(),
+					key.Type,
+				); err != nil {
 					logger.Warnf(ctx, "Failed to delete embeddings for model %s: %v", key.EmbeddingModelID, err)
 				}
 			}

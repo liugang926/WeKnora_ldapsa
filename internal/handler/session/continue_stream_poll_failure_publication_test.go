@@ -33,14 +33,27 @@ type continuePollPublicationMessages struct {
 	postPollChecks   int
 	historicalChecks int
 	missingReference bool
+	fixtureLineage   *types.SourceLineage
 }
 
 func (s *continuePollPublicationMessages) GetMessageForStream(
 	_ context.Context, sessionID, messageID string,
 ) (*types.Message, error) {
 	s.lookups++
+	lineage, err := types.NewCompleteSourceLineage(types.SourceIdentity{
+		Provider: types.ConnectorTypeNextcloud, TenantID: 1, KnowledgeBaseID: "fictional-kb",
+		DataSourceID: "fictional-source", PairOperationID: "fictional-pair",
+		InstanceID: "fictional-instance", BindingID: "fictional-binding", FileID: "1",
+		ExternalID: "nextcloud:fictional-instance:1", KnowledgeID: "fictional-nextcloud-document",
+		Revision: 1, ETag: "fictional-original-etag",
+	})
+	if err != nil {
+		return nil, err
+	}
+	s.fixtureLineage = lineage
 	return &types.Message{
-		ID: messageID, SessionID: sessionID, RequestID: "fictional-poll-turn",
+		SourceLineage: lineage,
+		ID:            messageID, SessionID: sessionID, RequestID: "fictional-poll-turn",
 		Role: "assistant", IsCompleted: false,
 		KnowledgeReferences: types.References{{
 			KnowledgeID:      "fictional-nextcloud-document",
@@ -59,7 +72,10 @@ func (s *continuePollPublicationMessages) CheckLiveMessagePublication(
 	if message == nil || len(message.KnowledgeReferences) != 1 ||
 		message.KnowledgeReferences[0] == nil ||
 		message.KnowledgeReferences[0].KnowledgeID != "fictional-nextcloud-document" ||
-		message.KnowledgeReferences[0].KnowledgeChannel != types.ConnectorTypeNextcloud {
+		message.KnowledgeReferences[0].KnowledgeChannel != types.ConnectorTypeNextcloud ||
+		message.SourceLineage.RequireComplete() != nil || len(message.SourceLineage.Sources) != 1 ||
+		message.SourceLineage.Sources[0].KnowledgeID != "fictional-nextcloud-document" ||
+		message.SourceLineage.Sources[0].ETag != "fictional-original-etag" {
 		s.missingReference = true
 		return access.ErrNextcloudPublicationUnavailable
 	}
@@ -101,8 +117,10 @@ func (s *continuePollPublicationStreams) GetEvents(
 ) ([]interfaces.StreamEvent, int, error) {
 	s.reads++
 	if s.reads == 1 {
-		return []interfaces.StreamEvent{chunk("fictional-answer", types.ResponseTypeAnswer,
-			"authorized prefix !["+continuePollHeldMarker+"](resource://xifDo7")}, 1, nil
+		frame := chunk("fictional-answer", types.ResponseTypeAnswer,
+			"authorized prefix !["+continuePollHeldMarker+"](resource://xifDo7")
+		frame.SourceLineage, _ = types.UnionSourceLineage(s.messages.fixtureLineage)
+		return []interfaces.StreamEvent{frame}, 1, nil
 	}
 	s.prefixBeforeSecond = strings.Contains(s.recorder.Body.String(), "authorized prefix")
 	s.markerBeforeSecond = strings.Contains(s.recorder.Body.String(), continuePollHeldMarker)
@@ -119,7 +137,14 @@ func (s *continuePollPublicationStreams) GetEvents(
 	if s.pollError {
 		return nil, offset, errors.New("fictional event-store read failure")
 	}
-	return []interfaces.StreamEvent{{ID: "fictional-complete", Type: types.ResponseTypeComplete, Done: true}}, 2, nil
+	return []interfaces.StreamEvent{
+		{
+			ID:            "fictional-complete",
+			Type:          types.ResponseTypeComplete,
+			Done:          true,
+			SourceLineage: s.messages.fixtureLineage,
+		},
+	}, 2, nil
 }
 
 func TestContinueStreamPollFailureRechecksHeldPublication(t *testing.T) {

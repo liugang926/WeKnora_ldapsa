@@ -55,6 +55,9 @@ func (r *sourceRegistry) ModelOutput(result *types.ToolResult) string {
 	case "document_info":
 		return r.modelDocumentInfoOutput(result.Data, result.Output)
 	case "graph_query_results":
+		if _, ok := result.Data["graph"].(map[string]interface{}); ok {
+			return r.modelKnowledgeGraphOutput(result.Data, result.Output)
+		}
 		return r.modelKnowledgeOutput("graph", mapsValue(result.Data["results"]), result.Output)
 	case "web_search_results":
 		return r.modelWebSearchOutput(mapsValue(result.Data["results"]), result.Output)
@@ -604,8 +607,14 @@ func (r *sourceRegistry) modelWebFetchOutput(rows []map[string]interface{}, fall
 				writeLimitedWebEvidence(&b, "summary", summary, modelWebFetchSummaryMaxRunes, &remainingEvidence)
 			}
 			if summaryStatus := stringValue(row, "summary_status"); summaryStatus == "failed" {
-				fmt.Fprintf(&b, "    <summary_error code=\"%s\">%s</summary_error>\n",
-					escapeAttr(stringValue(row, "summary_error_code")), escapeText(stringValue(row, "summary_error_message")))
+				fmt.Fprintf(
+					&b,
+					"    <summary_error code=\"%s\">%s</summary_error>\n",
+					escapeAttr(
+						stringValue(row, "summary_error_code"),
+					),
+					escapeText(stringValue(row, "summary_error_message")),
+				)
 			}
 			if content := stringValue(row, "raw_content"); content != "" {
 				limit := min(modelWebFetchContentMaxRunes, remainingEvidence)
@@ -651,7 +660,10 @@ func (r *sourceRegistry) modelWebFetchOutput(rows []map[string]interface{}, fall
 				"Answer only to the extent supported by available evidence.\n")
 			b.WriteString("- Explicitly state that page content was not verified and treat dynamic facts as uncertain.")
 		} else {
-			b.WriteString("- Use successful page content together with existing search snippets; failed URLs do not invalidate successful evidence.\n")
+			b.WriteString(
+				("- Use successful page content together with existing search snippets; fail" +
+					"ed URLs do not invalidate successful evidence.\n"),
+			)
 			b.WriteString("- Do not retry non-retryable failures. If evidence is sufficient, answer now.")
 		}
 	}

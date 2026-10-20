@@ -95,7 +95,6 @@ func (h *NextcloudSourcePairingHandler) authorizedRotation(c *gin.Context) (repo
 	return rotation, true
 }
 
-// RotationStatus returns tenant-scoped source-credential rotation status.
 func (h *NextcloudSourcePairingHandler) RotationStatus(c *gin.Context) {
 	rotation, ok := h.authorizedRotation(c)
 	if !ok {
@@ -104,7 +103,6 @@ func (h *NextcloudSourcePairingHandler) RotationStatus(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"rotation": rotation})
 }
 
-// RetryRotation retries an eligible tenant-scoped source-credential rotation.
 func (h *NextcloudSourcePairingHandler) RetryRotation(c *gin.Context) {
 	rotation, ok := h.authorizedRotation(c)
 	if !ok {
@@ -128,7 +126,8 @@ func (h *NextcloudSourcePairingHandler) RetryRotation(c *gin.Context) {
 	h.continueRotation(c, rotation, config, false)
 }
 
-// AbortRotation is a signed remote compare-and-swap: only an uncommitted rotation can
+// AbortRotation aborts the current source credential rotation operation.
+// Abort is a signed remote compare-and-swap: only an uncommitted rotation can
 // be discarded. The old source credential signs the request and stays active.
 func (h *NextcloudSourcePairingHandler) AbortRotation(c *gin.Context) {
 	rotation, ok := h.authorizedRotation(c)

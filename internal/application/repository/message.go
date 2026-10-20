@@ -10,11 +10,13 @@ import (
 
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
+	"github.com/google/uuid"
 )
 
 // messageRepository implements the message repository interface
 type messageRepository struct {
-	db *gorm.DB
+	materialStore *KnowledgeInputProvenanceStore
+	db            *gorm.DB
 }
 
 // NewMessageRepository creates a new message repository
@@ -29,10 +31,40 @@ func (r *messageRepository) CreateMessage(
 	ctx context.Context, message *types.Message,
 ) (*types.Message, error) {
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// Material writer IDs are resolved before the immutable new generation.
+		if message.ID == "" {
+			message.ID = uuid.NewString()
+		}
+		var origin *messageGenerationOrigin
+		if r.materialStore != nil {
+			var err error
+			origin, err = r.materialStore.beginMessageProducerInTx(tx, message, true)
+			if err != nil {
+				return err
+			}
+		}
 		if err := tx.Create(message).Error; err != nil {
 			return err
 		}
-		return insertMessageArtifacts(tx, []*types.Message{message})
+		if err := insertMessageArtifacts(tx, []*types.Message{message}); err != nil {
+			return err
+		}
+		if origin != nil {
+			var actual types.Message
+			if err := tx.Where("id=? AND session_id=?", message.ID, message.SessionID).Take(&actual).Error; err != nil {
+				return err
+			}
+			if err := r.materialStore.sealMessageMaterialInTx(tx, origin, &actual); err != nil {
+				return err
+			}
+			if err := r.materialStore.sealInitialUserFieldsInTx(tx, origin, &actual); err != nil {
+				return err
+			}
+			message.CreatedAt = actual.CreatedAt
+			message.UpdatedAt = actual.UpdatedAt
+			return nil
+		}
+		return nil
 	})
 	if err != nil {
 		return nil, err
@@ -174,7 +206,12 @@ func (r *messageRepository) ListMessagesBySessionAfterTime(
 }
 
 // ListMessagesBySessionAfterCursor uses a stable tie-breaker for memory paging.
-func (r *messageRepository) ListMessagesBySessionAfterCursor(ctx context.Context, sessionID string, cursor types.MemoryMessageCursor, limit int) ([]*types.Message, error) {
+func (r *messageRepository) ListMessagesBySessionAfterCursor(
+	ctx context.Context,
+	sessionID string,
+	cursor types.MemoryMessageCursor,
+	limit int,
+) ([]*types.Message, error) {
 	var messages []*types.Message
 	query := r.db.WithContext(ctx).Where("session_id = ?", sessionID)
 	if !cursor.At.IsZero() || cursor.ID != "" {
@@ -262,12 +299,57 @@ func (r *messageRepository) ListAssistantCheckpointsUpTo(
 // when message.Artifacts is non-nil (see writeMessageArtifacts).
 func (r *messageRepository) UpdateMessage(ctx context.Context, message *types.Message) error {
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var origin *messageGenerationOrigin
+		if r.materialStore != nil {
+			var err error
+			origin, err = r.materialStore.beginMessageProducerInTx(tx, message, false)
+			if err != nil {
+				return err
+			}
+		}
+		if origin != nil && origin.PriorSources != nil && message.Role == "user" &&
+			message.SourceLineage.RequireComplete() != nil {
+			message.SourceLineage = origin.PriorSources
+		}
+		if origin != nil && origin.PriorSources != nil && message.SourceLineage.RequireComplete() == nil {
+			inherited, err := types.UnionSourceLineage(origin.PriorSources, message.SourceLineage)
+			if err != nil {
+				return err
+			}
+			message.SourceLineage = inherited
+		}
 		if err := tx.Model(&types.Message{}).Where(
 			"id = ? AND session_id = ?", message.ID, message.SessionID,
 		).Updates(message).Error; err != nil {
 			return err
 		}
-		return writeMessageArtifacts(tx, message)
+		// Explicit generated fields include empty values and NULL lineage. The
+		// transaction must not pair a new body with a skipped old proof. Separate
+		// checkpoint updates retain their own lineage and are preserved here.
+		if err := tx.Model(&types.Message{}).Where("id = ? AND session_id = ?", message.ID, message.SessionID).
+			Select(
+				"content",
+				"is_completed",
+				"source_lineage",
+				"agent_steps",
+				"knowledge_references",
+				"updated_at",
+				"is_fallback",
+			).
+			Updates(message).Error; err != nil {
+			return err
+		}
+		if err := writeMessageArtifacts(tx, message); err != nil {
+			return err
+		}
+		if origin != nil {
+			var actual types.Message
+			if err := tx.Where("id=? AND session_id=?", message.ID, message.SessionID).Take(&actual).Error; err != nil {
+				return err
+			}
+			return r.materialStore.sealMessageMaterialInTx(tx, origin, &actual)
+		}
+		return nil
 	})
 }
 
@@ -378,7 +460,8 @@ func (r *messageRepository) SearchMessagesByKeyword(
 
 	query := r.db.WithContext(ctx).
 		Table("messages").
-		Select("messages.*, sessions.title as session_title").
+		Select(("messages.*, sessions.title as session_title, sessions.title_source_lineage"+
+			" as session_title_source_lineage")).
 		Joins("INNER JOIN sessions ON sessions.id = messages.session_id AND sessions.deleted_at IS NULL").
 		Where("sessions.tenant_id = ?", tenantID).
 		Where("messages.deleted_at IS NULL").
@@ -445,7 +528,8 @@ func (r *messageRepository) GetMessagesByKnowledgeIDs(
 	var results []*types.MessageWithSession
 	if err := r.db.WithContext(ctx).
 		Table("messages").
-		Select("messages.*, sessions.title as session_title").
+		Select(("messages.*, sessions.title as session_title, sessions.title_source_lineage" +
+			" as session_title_source_lineage")).
 		Joins("INNER JOIN sessions ON sessions.id = messages.session_id AND sessions.deleted_at IS NULL").
 		Where("messages.deleted_at IS NULL").
 		Where("messages.knowledge_id IN ?", knowledgeIDs).
@@ -469,7 +553,8 @@ func (r *messageRepository) GetMessagesByRequestIDs(
 	var results []*types.MessageWithSession
 	if err := r.db.WithContext(ctx).
 		Table("messages").
-		Select("messages.*, sessions.title as session_title").
+		Select(("messages.*, sessions.title as session_title, sessions.title_source_lineage"+
+			" as session_title_source_lineage")).
 		Joins("INNER JOIN sessions ON sessions.id = messages.session_id AND sessions.deleted_at IS NULL").
 		Where("messages.deleted_at IS NULL").
 		Where("messages.session_id = ?", sessionID).
@@ -500,7 +585,14 @@ func (r *messageRepository) GetKnowledgeIDsBySessionID(
 // UpdateMessageImages updates only the images JSONB column for a message.
 // Uses Select to force GORM to include the column even when struct-based
 // Updates would otherwise skip custom Valuer types.
-func (r *messageRepository) UpdateMessageImages(ctx context.Context, sessionID, messageID string, images types.MessageImages) error {
+func (r *messageRepository) UpdateMessageImages(
+	ctx context.Context,
+	sessionID, messageID string,
+	images types.MessageImages,
+) error {
+	if _, ok := ctx.Value(messageGeneratedFieldKey{}).(messageGeneratedFieldBoundary); ok {
+		return r.writeGeneratedField(ctx, sessionID, messageID, "images", images)
+	}
 	return r.db.WithContext(ctx).
 		Model(&types.Message{}).
 		Where("id = ? AND session_id = ?", messageID, sessionID).
@@ -508,7 +600,14 @@ func (r *messageRepository) UpdateMessageImages(ctx context.Context, sessionID, 
 }
 
 // UpdateMessageRenderedContent updates only the rendered_content column for a message.
-func (r *messageRepository) UpdateMessageRenderedContent(ctx context.Context, sessionID, messageID string, renderedContent string) error {
+func (r *messageRepository) UpdateMessageRenderedContent(
+	ctx context.Context,
+	sessionID, messageID string,
+	renderedContent string,
+) error {
+	if _, ok := ctx.Value(messageGeneratedFieldKey{}).(messageGeneratedFieldBoundary); ok {
+		return r.writeGeneratedField(ctx, sessionID, messageID, "rendered_content", renderedContent)
+	}
 	return r.db.WithContext(ctx).
 		Model(&types.Message{}).
 		Where("id = ? AND session_id = ?", messageID, sessionID).
@@ -522,6 +621,9 @@ func (r *messageRepository) UpdateMessageRenderedContent(ctx context.Context, se
 func (r *messageRepository) UpdateMessageContextCheckpoint(
 	ctx context.Context, sessionID, messageID string, checkpoint *types.ContextCheckpoint,
 ) error {
+	if _, ok := ctx.Value(messageGeneratedFieldKey{}).(messageGeneratedFieldBoundary); ok {
+		return r.writeGeneratedField(ctx, sessionID, messageID, "context_checkpoint", checkpoint)
+	}
 	result := r.db.WithContext(ctx).
 		Model(&types.Message{}).
 		Where("id = ? AND session_id = ? AND role = 'assistant'", messageID, sessionID).
@@ -632,4 +734,8 @@ func (r *messageRepository) GetSessionAttachments(
 		result = append(result, row.Attachments...)
 	}
 	return result, nil
+}
+
+func (r *messageRepository) MessageMaterialStore() *KnowledgeInputProvenanceStore {
+	return r.materialStore
 }

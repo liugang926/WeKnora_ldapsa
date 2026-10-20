@@ -77,7 +77,17 @@ jobs:
   verify:
     name: Format, vet, test, and build
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 70
+    services:
+      redis:
+        image: redis:7.4.10-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 2s --health-timeout 5s --health-retries 30
+    env:
+      WEKNORA_AUTO_COMPLETION_TEST_REDIS_ADDR: 127.0.0.1:6379
     steps:
       - uses: actions/checkout@v6
         with:
@@ -132,7 +142,67 @@ jobs:
         run: |
           mapfile -t pkgs < <(go list ./... | grep -v '/docreader/')
           go vet "${pkgs[@]}"
-          go test "${pkgs[@]}"
+          # Real source/lease fixtures are sequential work within a package.
+          # The service package carries the complete no-tag runtime matrix.
+          go test -timeout=35m "${pkgs[@]}"
 
       - name: Build server
         run: go build ./cmd/server
+
+  source-contracts:
+    name: SQLite FTS5 and PostgreSQL source contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    services:
+      postgres:
+        image: paradedb/paradedb:v0.22.6-pg17@sha256:58bf87d2a6f1e72f56590b0f0ae1467e82c3f99ca203dde646672c8ac13148b2
+        env:
+          POSTGRES_USER: weknora
+          POSTGRES_PASSWORD: fixture-only
+          POSTGRES_DB: source_contracts
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U weknora -d source_contracts"
+          --health-interval 2s --health-timeout 5s --health-retries 30
+      redis:
+        image: redis:7.4.10-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 2s --health-timeout 5s --health-retries 30
+    env:
+      WEKNORA_AUTO_COMPLETION_TEST_REDIS_ADDR: 127.0.0.1:6379
+      WEKNORA_ORIGINAL_BODY_TEST_CLI: /tmp/weknora-original-body-retention
+      WEKNORA_CAPACITY_RECONCILE_CLI: /tmp/weknora-capacity-reconcile
+      WEKNORA_PGVECTOR_RACE_TEST_DSN: postgres://weknora:fixture-only@localhost:5432/source_contracts?sslmode=disable
+      WEKNORA_REVISION_TEST_POSTGRES_DSN: postgres://weknora:fixture-only@localhost:5432/source_contracts?sslmode=disable
+      WEKNORA_MIGRATION_TEST_POSTGRES_DSN: postgres://weknora:fixture-only@localhost:5432/source_contracts?sslmode=disable
+      WEKNORA_LEASE_TEST_POSTGRES_DSN: host=localhost port=5432 user=weknora password=fixture-only dbname=source_contracts sslmode=disable
+      WEKNORA_GC_TEST_POSTGRES_DSN: host=localhost port=5432 user=weknora password=fixture-only dbname=source_contracts sslmode=disable
+      NEXTCLOUD_ONBOARDING_TEST_POSTGRES_DSN: host=localhost port=5432 user=weknora password=fixture-only dbname=source_contracts sslmode=disable
+      NEXTCLOUD_EVENT_TEST_POSTGRES_DSN: host=localhost port=5432 user=weknora password=fixture-only dbname=source_contracts sslmode=disable
+      WEKNORA_PAIRING_TEST_POSTGRES_DSN: host=localhost port=5432 user=weknora password=fixture-only dbname=source_contracts sslmode=disable
+      WEKNORA_SOURCE_HEALTH_TEST_POSTGRES_DSN: host=localhost port=5432 user=weknora password=fixture-only dbname=source_contracts sslmode=disable
+      WEKNORA_CAPACITY_TEST_POSTGRES_DSN: host=localhost port=5432 user=weknora password=fixture-only dbname=source_contracts sslmode=disable
+      WEKNORA_AUTO_TAG_TEST_POSTGRES_DSN: host=localhost port=5432 user=weknora password=fixture-only dbname=source_contracts sslmode=disable
+      WEKNORA_FAQ_TEST_POSTGRES_DSN: host=localhost port=5432 user=weknora password=fixture-only dbname=source_contracts sslmode=disable
+      WEKNORA_INDEXED_TEST_POSTGRES_DSN: host=localhost port=5432 user=weknora password=fixture-only dbname=source_contracts sslmode=disable
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      - name: Build actual recovery CLIs for contract tests
+        run: |
+          go build -o "$WEKNORA_ORIGINAL_BODY_TEST_CLI" ./cmd/original-body-retention
+          go build -o "$WEKNORA_CAPACITY_RECONCILE_CLI" ./cmd/capacity-reconcile
+      - name: Run source contracts with actual FTS5, PostgreSQL and Redis
+        run: |
+          go test -tags sqlite,sqlite_fts5 -p 1 -count=1 -timeout=50m \
+            ./internal/application/repository \
+            ./internal/application/repository/retriever/sqlite \
+            ./internal/application/repository/retriever/postgres \
+            ./internal/application/service ./internal/handler ./internal/router

@@ -364,11 +364,10 @@ func TestNextcloudEventAppliedAfterFreshManifestWithSettledChanges(t *testing.T)
 		"event-connection", bindingID, baseURL, configSHA).Error)
 	require.NoError(t, db.Exec(`INSERT INTO nextcloud_event_checkpoint (connection_id, received_id)
 		VALUES ('event-connection', 1)`).Error)
-	require.NoError(t, db.Exec(("INSERT INTO nextcloud_event_inbox\n"+
-		"\t\t(connection_id, event_id, payload_sha256, event_type,"+
-		" file_id, etag, path, relative_path, state)\n"+
-		"\t\tVALUES ('event-connection', 1, ?, 'upsert', 77, 'etag"+
-		"-v2', '/Published/file.md', 'file.md', 'dispatched')"), strings.Repeat("0", 64)).Error)
+	require.NoError(t, db.Exec(("INSERT INTO nextcloud_event_inbox\n\t\t(connection_id, event_id, payload_s"+
+		"ha256, event_type, file_id, etag, path, relative_path, state)\n\t\tVALUES "+
+		"('event-connection', 1, ?, 'upsert', 77, 'etag-v2', '/Published/file.md', "+
+		"'file.md', 'dispatched')"), strings.Repeat("0", 64)).Error)
 	now := time.Now().UTC()
 	startedAt := now.Add(-time.Minute)
 	log := &types.SyncLog{
@@ -404,9 +403,10 @@ func TestNextcloudEventAppliedAfterFreshManifestWithSettledChanges(t *testing.T)
 	require.NoError(t, err)
 	require.Nil(t, claim)
 	var dispatch nextcloudEventDispatchRow
-	require.NoError(t, db.Table(
-		"nextcloud_event_dispatch",
-	).Where("connection_id = ?", "event-connection").Take(&dispatch).Error)
+	require.NoError(
+		t,
+		db.Table("nextcloud_event_dispatch").Where("connection_id = ?", "event-connection").Take(&dispatch).Error,
+	)
 	require.Equal(t, "deletion_or_cursor_pending", dispatch.LastErrorCode)
 	require.Zero(t, dispatch.AppliedID)
 
@@ -419,15 +419,20 @@ func TestNextcloudEventAppliedAfterFreshManifestWithSettledChanges(t *testing.T)
 	claim, err = inbox.ClaimDispatch(ctx, "event-connection", now)
 	require.NoError(t, err)
 	require.Nil(t, claim)
-	require.NoError(t, db.Table(
-		"nextcloud_event_dispatch",
-	).Where("connection_id = ?", "event-connection").Take(&dispatch).Error)
+	require.NoError(
+		t,
+		db.Table("nextcloud_event_dispatch").Where("connection_id = ?", "event-connection").Take(&dispatch).Error,
+	)
 	require.Equal(t, "idle", dispatch.State)
 	require.Equal(t, int64(1), dispatch.AppliedID)
 	var receipt nextcloudEventInboxRow
-	require.NoError(t, db.Table(
-		"nextcloud_event_inbox",
-	).Where("connection_id = ? AND event_id = 1", "event-connection").Take(&receipt).Error)
+	require.NoError(
+		t,
+		db.Table("nextcloud_event_inbox").
+			Where("connection_id = ? AND event_id = 1", "event-connection").
+			Take(&receipt).
+			Error,
+	)
 	require.Equal(t, "applied", receipt.State)
 }
 
@@ -1042,11 +1047,15 @@ func TestSQLiteNextcloudVersionMigrationCreatesDurableUniqueCandidate(t *testing
 		TenantID: 7, KnowledgeBaseID: "kb", DataSourceID: "ds",
 		ExternalID: "one", DesiredETag: "v1", CandidateKnowledgeID: "candidate", State: "staging",
 	}
-	require.NoError(t, db.Create(&first).Error)
+	require.NoError(t, db.Omit("desired_content_revision").Create(&first).Error)
 	second := first
 	second.ExternalID = "two"
-	require.Error(t, db.Create(&second).Error, "one knowledge row cannot be desired by two source files")
+	require.Error(
+		t,
+		db.Omit("desired_content_revision").Create(&second).Error,
+		"one knowledge row cannot be desired by two source files",
+	)
 	second.CandidateKnowledgeID = ""
 	second.State = "tombstone"
-	require.NoError(t, db.Create(&second).Error)
+	require.NoError(t, db.Omit("desired_content_revision").Create(&second).Error)
 }

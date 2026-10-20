@@ -8,7 +8,6 @@ import (
 	"time"
 
 	apperrors "github.com/Tencent/WeKnora/internal/errors"
-
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -53,8 +52,11 @@ func (r *NextcloudEventInboxRepository) RebindFinalizedSourceRotation(
 		}
 		var connection nextcloudEventConnection
 		if err := tx.Table("nextcloud_event_connections").Clauses(clause.Locking{Strength: "UPDATE"}).
-			Where(("tenant_id = ? AND datasource_id = ? AND status = 'activ" +
-				"e'"), identity.TenantID, identity.DatasourceID).
+			Where(
+				"tenant_id = ? AND datasource_id = ? AND status = 'active'",
+				identity.TenantID,
+				identity.DatasourceID,
+			).
 			Take(&connection).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return ErrNextcloudEventConnectionMissing
@@ -156,11 +158,9 @@ func (r *NextcloudEventInboxRepository) RebindFinalizedSourceRotation(
 		if running != 0 {
 			return ErrNextcloudEventRebindUnsafe
 		}
-		updated := tx.Table(
-			"nextcloud_event_connections",
-		).Where(("connection_id = ? AND status = 'active' AND datasource_" +
-			"config_sha256 = ?"),
-			connection.ConnectionID, rotation.OldConfigSHA).
+		updated := tx.Table("nextcloud_event_connections").
+			Where("connection_id = ? AND status = 'active' AND datasource_config_sha256 = ?",
+				connection.ConnectionID, rotation.OldConfigSHA).
 			Updates(map[string]any{"datasource_config_sha256": rotation.NewConfigSHA, "updated_at": time.Now().UTC()})
 		if updated.Error != nil {
 			return fmt.Errorf("rebind Nextcloud event connection: %w", updated.Error)
@@ -169,14 +169,14 @@ func (r *NextcloudEventInboxRepository) RebindFinalizedSourceRotation(
 			return ErrNextcloudEventScope
 		}
 		if dispatch.State == "blocked" {
-			if err := tx.Table(
-				"nextcloud_event_dispatch",
-			).Where(("connection_id = ? AND state = 'blocked' AND last_error_" +
-				"code = 'source_changed'"),
-				connection.ConnectionID).Updates(map[string]any{
-				"state": "idle", "last_error_code": "",
-				"next_attempt_at": time.Now().UTC(), "updated_at": time.Now().UTC(),
-			}).Error; err != nil {
+			if err := tx.Table("nextcloud_event_dispatch").
+				Where("connection_id = ? AND state = 'blocked' AND last_error_code = 'source_changed'",
+					connection.ConnectionID).
+				Updates(map[string]any{
+					"state": "idle", "last_error_code": "",
+					"next_attempt_at": time.Now().UTC(), "updated_at": time.Now().UTC(),
+				}).
+				Error; err != nil {
 				return fmt.Errorf("resume Nextcloud event dispatch: %w", err)
 			}
 		}

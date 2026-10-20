@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/Tencent/WeKnora/internal/application/repository"
 	"github.com/Tencent/WeKnora/internal/application/service"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
@@ -21,13 +22,20 @@ func taskGroupAccessMiddleware(
 	knowledgeRepo interfaces.KnowledgeRepository,
 	chunkRepo interfaces.ChunkRepository,
 	tracker service.SpanTracker,
+	machineStores ...*repository.KnowledgeInputProvenanceStore,
 ) asynq.MiddlewareFunc {
 	return func(next asynq.Handler) asynq.Handler {
 		return asynq.HandlerFunc(func(ctx context.Context, task *asynq.Task) error {
 			switch task.Type() {
-			case types.TypeChunkExtract, types.TypeDataTableSummary, types.TypeImageMultimodal,
-				types.TypeKnowledgePostProcess, types.TypeQuestionGeneration, types.TypeSummaryGeneration,
-				types.TypeKnowledgeAutoTag, types.TypeKnowledgeBaseProfile:
+			case types.TypeDocumentProcess,
+				types.TypeChunkExtract,
+				types.TypeDataTableSummary,
+				types.TypeImageMultimodal,
+				types.TypeKnowledgePostProcess,
+				types.TypeQuestionGeneration,
+				types.TypeSummaryGeneration,
+				types.TypeKnowledgeAutoTag,
+				types.TypeKnowledgeBaseProfile:
 			default:
 				return next.ProcessTask(ctx, task)
 			}
@@ -43,6 +51,16 @@ func taskGroupAccessMiddleware(
 				return fmt.Errorf("invalid enrichment task: %v: %w", err, asynq.SkipRetry)
 			}
 			ctx = types.WithTaskAuthorization(ctx, payload.TenantID, payload.Initiator)
+			var machineStore *repository.KnowledgeInputProvenanceStore
+			if len(machineStores) == 1 {
+				machineStore = machineStores[0]
+			}
+			if handled, err := runNextcloudMachineTask(ctx, task, machineStore, next); handled {
+				return err
+			}
+			if task.Type() == types.TypeDocumentProcess {
+				return next.ProcessTask(ctx, task)
+			}
 			if groupAccess == nil {
 				return next.ProcessTask(ctx, task)
 			}

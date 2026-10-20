@@ -21,14 +21,18 @@ func TestPostgresNextcloudGlobalAndScopedHistoryAdmission(t *testing.T) {
 	} {
 		t.Run(kind, func(t *testing.T) {
 			db := leaseTestPostgres(t)
-			require.NoError(t, db.Exec(("CREATE TABLE knowledge_bases(id TEXT PRIMARY KEY, tenan" +
-				"t_id BIGINT NOT NULL, ever_had_nextcloud_source BOOLEAN" +
-				" NOT NULL DEFAULT FALSE, deleted_at TIMESTAMPTZ)")).Error)
-			require.NoError(t, db.AutoMigrate(
-				&types.DataSource{},
-				&NextcloudSourcePairing{},
-				&NextcloudSourcePairingAbort{},
-			))
+			require.NoError(
+				t,
+				db.Exec(
+					("CREATE TABLE knowledge_bases(id TEXT PRIMARY KEY, tenant_id BIGINT NOT NUL" +
+						"L, ever_had_nextcloud_source BOOLEAN NOT NULL DEFAULT FALSE, deleted_at TI" +
+						"MESTAMPTZ)"),
+				).Error,
+			)
+			require.NoError(
+				t,
+				db.AutoMigrate(&types.DataSource{}, &NextcloudSourcePairing{}, &NextcloudSourcePairingAbort{}),
+			)
 			require.NoError(t, db.Exec(`CREATE TABLE nextcloud_source_tombstones (
 				tenant_id BIGINT NOT NULL, scope_type TEXT NOT NULL, scope_id TEXT NOT NULL,
 				PRIMARY KEY(tenant_id,scope_type,scope_id))`).Error)
@@ -44,35 +48,53 @@ func TestPostgresNextcloudGlobalAndScopedHistoryAdmission(t *testing.T) {
 				require.NoError(t, db.Create(row).Error)
 				require.NoError(t, db.Delete(row).Error)
 			case "sticky":
-				require.NoError(t, db.Exec(("UPDATE knowledge_bases SET ever_had_nextcloud_source=TR" +
-					"UE,deleted_at=CURRENT_TIMESTAMP")).Error)
+				require.NoError(
+					t,
+					db.Exec(
+						"UPDATE knowledge_bases SET ever_had_nextcloud_source=TRUE,deleted_at=CURRENT_TIMESTAMP",
+					).Error,
+				)
 			case "pairing":
-				require.NoError(t, db.Create(&NextcloudSourcePairing{
-					OperationID:     "pair",
-					KnowledgeBaseID: "kb",
-					TenantID:        99,
-				}).Error)
+				require.NoError(
+					t,
+					db.Create(&NextcloudSourcePairing{OperationID: "pair", KnowledgeBaseID: "kb", TenantID: 99}).Error,
+				)
 			case "abort":
-				require.NoError(t, db.Create(&NextcloudSourcePairingAbort{
-					OperationID:     "abort",
-					KnowledgeBaseID: "kb",
-					TenantID:        99,
-				}).Error)
+				require.NoError(
+					t,
+					db.Create(
+						&NextcloudSourcePairingAbort{OperationID: "abort", KnowledgeBaseID: "kb", TenantID: 99},
+					).Error,
+				)
 			case "tombstone-after-hard-delete":
-				require.NoError(t, db.Create(&types.DataSource{
-					ID:              "source",
-					TenantID:        99,
-					KnowledgeBaseID: "kb",
-					Type:            types.ConnectorTypeNextcloud,
-				}).Error)
-				require.NoError(t, db.Create(&NextcloudSourcePairing{
-					OperationID:     "pair",
-					TenantID:        99,
-					KnowledgeBaseID: "kb",
-					DataSourceID:    "source",
-				}).Error)
-				require.NoError(t, db.Exec(("INSERT INTO nextcloud_source_tombstones VALUES (99,'ten" +
-					"ant','99'), (99,'knowledge_base','kb')")).Error)
+				require.NoError(
+					t,
+					db.Create(
+						&types.DataSource{
+							ID:              "source",
+							TenantID:        99,
+							KnowledgeBaseID: "kb",
+							Type:            types.ConnectorTypeNextcloud,
+						},
+					).Error,
+				)
+				require.NoError(
+					t,
+					db.Create(
+						&NextcloudSourcePairing{
+							OperationID:     "pair",
+							TenantID:        99,
+							KnowledgeBaseID: "kb",
+							DataSourceID:    "source",
+						},
+					).Error,
+				)
+				require.NoError(
+					t,
+					db.Exec(
+						"INSERT INTO nextcloud_source_tombstones VALUES (99,'tenant','99'), (99,'knowledge_base','kb')",
+					).Error,
+				)
 				require.NoError(t, db.Exec("DELETE FROM nextcloud_source_pairings").Error)
 				require.NoError(t, db.Exec("DELETE FROM data_sources").Error)
 				require.NoError(t, db.Exec("DELETE FROM knowledge_bases").Error)

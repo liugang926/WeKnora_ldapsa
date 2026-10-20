@@ -30,7 +30,6 @@ type NextcloudIndexedWithdrawal struct {
 	UpdatedAt        time.Time `json:"updated_at" gorm:"column:updated_at"`
 }
 
-// TableName returns the indexed-withdrawal table name.
 func (NextcloudIndexedWithdrawal) TableName() string { return "nextcloud_indexed_withdrawals" }
 
 type nextcloudIndexedWithdrawalItem struct {
@@ -45,7 +44,6 @@ func (nextcloudIndexedWithdrawalItem) TableName() string {
 	return "nextcloud_indexed_withdrawal_items"
 }
 
-// NextcloudIndexedWithdrawalStatus contains the indexed-withdrawal status projection.
 type NextcloudIndexedWithdrawalStatus struct {
 	NextcloudIndexedWithdrawal
 	ObservedItems     int64 `json:"observed_items"`
@@ -155,18 +153,18 @@ func (r *NextcloudSourcePairingRepository) BeginIndexedSourceWithdrawal(
 		var liveRotation int64
 		if err := tx.Table("nextcloud_source_rotations").
 			Where("pair_operation_id = ? AND state IN ?", pair.OperationID,
-				[]string{"pending", "committed", "switched"}).Count(&liveRotation).Error; err !=
-			nil ||
-			liveRotation !=
-				0 {
+				[]string{
+					"pending",
+					"committed",
+					"switched",
+				}).
+			Count(&liveRotation).Error; err != nil || liveRotation != 0 {
 			return ErrNextcloudSourcePairingConflict
 		}
 		var emptyDecommission int64
 		if err := tx.Model(&NextcloudSourceDecommission{}).
-			Where("pair_operation_id = ?", pair.OperationID).Count(&emptyDecommission).Error; err !=
-			nil ||
-			emptyDecommission !=
-				0 {
+			Where("pair_operation_id = ?", pair.OperationID).
+			Count(&emptyDecommission).Error; err != nil || emptyDecommission != 0 {
 			return ErrNextcloudSourcePairingConflict
 		}
 		var source types.DataSource
@@ -217,10 +215,8 @@ func (r *NextcloudSourcePairingRepository) BeginIndexedSourceWithdrawal(
 		if err := tx.Table("nextcloud_gc_items AS i").Joins(
 			"JOIN nextcloud_gc_jobs AS j ON j.id = i.job_id").
 			Where("j.tenant_id = ? AND j.knowledge_base_id = ? AND j.datasource_id = ? AND i.state = 'deleting'",
-				pair.TenantID, pair.KnowledgeBaseID, pair.DataSourceID).Count(&deleting).Error; err !=
-			nil ||
-			deleting !=
-				0 {
+				pair.TenantID, pair.KnowledgeBaseID, pair.DataSourceID).
+			Count(&deleting).Error; err != nil || deleting != 0 {
 			return ErrNextcloudSourcePairingConflict
 		}
 		if err := tx.Model(&types.DataSource{}).Where("id = ?", source.ID).
@@ -288,39 +284,60 @@ func (r *NextcloudSourcePairingRepository) RefreshIndexedWithdrawalInventory(
 			kind, sql string
 			args      []any
 		}{
-			{"knowledge", ("SELECT id AS object_ref, id AS knowledge_id FROM knowle" +
-				"dges WHERE tenant_id = ? AND knowledge_base_id = ?"), []any{row.TenantID, row.KnowledgeBaseID}},
-			{"source_file", ("SELECT id || ':' || file_path AS object_ref, id AS know" +
-				"ledge_id FROM knowledges WHERE tenant_id = ? AND knowle" +
-				"dge_base_id = ? AND file_path <> ''"), []any{row.TenantID, row.KnowledgeBaseID}},
-			{"chunk", ("SELECT id AS object_ref, knowledge_id FROM chunks WHERE" +
-				" tenant_id = ? AND knowledge_base_id = ?"), []any{row.TenantID, row.KnowledgeBaseID}},
-			{"gc_job", ("SELECT id AS object_ref, knowledge_id FROM nextcloud_gc" +
-				"_jobs WHERE tenant_id = ? AND knowledge_base_id = ? AND" +
-				" datasource_id = ?"), []any{row.TenantID, row.KnowledgeBaseID, row.DataSourceID}},
-			{"gc_item", ("SELECT i.job_id || ':' || i.kind || ':' || i.object_ref" +
-				" AS object_ref, j.knowledge_id FROM nextcloud_gc_items " +
-				"i JOIN nextcloud_gc_jobs j ON j.id = i.job_id WHERE j.t" +
-				"enant_id = ? AND j.knowledge_base_id = ? AND j.datasour" +
-				"ce_id = ?"), []any{row.TenantID, row.KnowledgeBaseID, row.DataSourceID}},
-			{"source_version", ("SELECT external_id AS object_ref, candidate_knowledge_i" +
-				"d AS knowledge_id FROM nextcloud_source_versions WHERE " +
-				"tenant_id = ? AND knowledge_base_id = ? AND datasource_" +
-				"id = ?"), []any{row.TenantID, row.KnowledgeBaseID, row.DataSourceID}},
+			{
+				"knowledge",
+				("SELECT id AS object_ref, id AS knowledge_id FROM knowledges WHERE tenant_i" +
+					"d = ? AND knowledge_base_id = ?"),
+				[]any{row.TenantID, row.KnowledgeBaseID},
+			},
+			{
+				"source_file",
+				("SELECT id || ':' || file_path AS object_ref, id AS knowledge_id FROM knowl" +
+					"edges WHERE tenant_id = ? AND knowledge_base_id = ? AND file_path <> ''"),
+				[]any{row.TenantID, row.KnowledgeBaseID},
+			},
+			{
+				"chunk",
+				`SELECT id AS object_ref, knowledge_id FROM chunks WHERE tenant_id = ? AND knowledge_base_id = ?`,
+				[]any{row.TenantID, row.KnowledgeBaseID},
+			},
+			{
+				"gc_job",
+				("SELECT id AS object_ref, knowledge_id FROM nextcloud_gc_jobs WHERE tenant_" +
+					"id = ? AND knowledge_base_id = ? AND datasource_id = ?"),
+				[]any{row.TenantID, row.KnowledgeBaseID, row.DataSourceID},
+			},
+			{
+				"gc_item",
+				("SELECT i.job_id || ':' || i.kind || ':' || i.object_ref AS object_ref, j.k" +
+					"nowledge_id FROM nextcloud_gc_items i JOIN nextcloud_gc_jobs j ON j.id = i" +
+					".job_id WHERE j.tenant_id = ? AND j.knowledge_base_id = ? AND j.datasource" +
+					"_id = ?"),
+				[]any{row.TenantID, row.KnowledgeBaseID, row.DataSourceID},
+			},
+			{
+				"source_version",
+				("SELECT external_id AS object_ref, candidate_knowledge_id AS knowledge_id F" +
+					"ROM nextcloud_source_versions WHERE tenant_id = ? AND knowledge_base_id = " +
+					"? AND datasource_id = ?"),
+				[]any{row.TenantID, row.KnowledgeBaseID, row.DataSourceID},
+			},
 			// The mutable source-version row names only the latest candidate. Keep
 			// every later observed revision, including one whose knowledge row
 			// was already hard-deleted. This remains an incomplete copy inventory:
 			// pre-ledger history and external backends are still unknown.
-			{"source_revision", ("SELECT jsonb_build_array(external_id, revision)::text A" +
-				"S object_ref, candidate_knowledge_id AS knowledge_id FR" +
-				"OM nextcloud_source_revisions WHERE tenant_id = ? AND k" +
-				"nowledge_base_id = ? AND datasource_id = ?"), []any{
-				row.TenantID,
-				row.KnowledgeBaseID,
-				row.DataSourceID,
-			}},
-			{"sync_log", ("SELECT id AS object_ref, '' AS knowledge_id FROM sync_l" +
-				"ogs WHERE data_source_id = ?"), []any{row.DataSourceID}},
+			{
+				"source_revision",
+				("SELECT jsonb_build_array(external_id, revision)::text AS object_ref, candi" +
+					"date_knowledge_id AS knowledge_id FROM nextcloud_source_revisions WHERE te" +
+					"nant_id = ? AND knowledge_base_id = ? AND datasource_id = ?"),
+				[]any{row.TenantID, row.KnowledgeBaseID, row.DataSourceID},
+			},
+			{
+				"sync_log",
+				`SELECT id AS object_ref, '' AS knowledge_id FROM sync_logs WHERE data_source_id = ?`,
+				[]any{row.DataSourceID},
+			},
 		}
 		for _, q := range queries {
 			if err := tx.Exec(`INSERT INTO nextcloud_indexed_withdrawal_items
@@ -364,8 +381,8 @@ func (r *NextcloudSourcePairingRepository) RefreshIndexedWithdrawalInventory(
 				ImageInfo   string
 			}
 			if err := tx.Table("chunks").Select("id, knowledge_id, image_info").
-				Where(("tenant_id = ? AND knowledge_base_id = ? AND id > ? AND " +
-					"image_info IS NOT NULL AND image_info <> ''"),
+				Where(("tenant_id = ? AND knowledge_base_id = ? AND id > ? AND image_info IS NOT N" +
+					"ULL AND image_info <> ''"),
 					row.TenantID, row.KnowledgeBaseID, lastChunkID).
 				Order("id ASC").Limit(500).Find(&imageRows).Error; err != nil {
 				return err

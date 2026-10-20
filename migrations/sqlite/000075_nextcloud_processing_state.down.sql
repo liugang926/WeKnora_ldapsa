@@ -1,0 +1,1 @@
+SELECT * FROM nextcloud_processing_state_rollback_requires_audit_export;

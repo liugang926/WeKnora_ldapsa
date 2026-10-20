@@ -1,6 +1,6 @@
-import { ref, watch, onMounted, computed } from 'vue'
+import { ref, watch, onMounted, onUnmounted, computed } from 'vue'
 import { knowledgeSemanticSearch } from '@/api/knowledge-base'
-import { searchMessages, type MessageSearchGroupItem } from '@/api/chat-history'
+import { searchMessages, messageSearchGroupKey, type MessageSearchGroupItem } from '@/api/chat-history'
 import { useOrganizationStore } from '@/stores/organization'
 import { useChatResourcesStore } from '@/stores/chatResources'
 import { useMenuStore } from '@/stores/menu'
@@ -76,16 +76,29 @@ export function useCmdkSearch(options: {
   debounceMs?: number
   /** 当前部署是否提供智能体路由；不提供时不发起预加载请求。 */
   agentsEnabled?: () => boolean
+  /** Disable requests immediately when the palette closes. */
+  enabled?: () => boolean
+  /** User and active tenant identity; changing it invalidates every page. */
+  contextKey?: () => string
 }) {
   const debounceMs = options.debounceMs ?? 350
   const query = ref('')
   const loading = ref(false)
   const hasSearched = ref(false)
+  const messageHasMore = ref(false)
+  const messageLoadingMore = ref(false)
+  const messagePageIndex = ref(0)
+  const messageHasPrevious = computed(() => messagePageIndex.value > 0)
+  const messageSearchError = ref(false)
+  const knowledgeSearchError = ref(false)
+  const searchIncomplete = computed(() => messageHasMore.value || messageSearchError.value || knowledgeSearchError.value)
+  const contextKey = () => options.contextKey?.() || ''
 
   // All KBs the current user can see (own + shared). Loaded lazily & cached.
   const knowledgeBases = ref<CmdkKb[]>([])
   const kbsLoaded = ref(false)
   let kbsLoadingPromise: Promise<void> | null = null
+  let kbsLoadingContext = ''
 
   const fileGroups = ref<CmdkFileGroup[]>([])
   const messageGroups = ref<CmdkMsgGroup[]>([])
@@ -96,17 +109,21 @@ export function useCmdkSearch(options: {
   const agents = ref<CmdkAgent[]>([])
   const agentsLoaded = ref(false)
   let agentsLoadingPromise: Promise<void> | null = null
+  let agentsLoadingContext = ''
 
   const orgStore = useOrganizationStore()
   const menuStore = useMenuStore()
 
   const ensureKbs = async (): Promise<void> => {
     if (kbsLoaded.value) return
-    if (kbsLoadingPromise) return kbsLoadingPromise
+    const identity = contextKey()
+    if (kbsLoadingPromise && kbsLoadingContext === identity) return kbsLoadingPromise
+    kbsLoadingContext = identity
     kbsLoadingPromise = (async () => {
       try {
         const chatResources = useChatResourcesStore()
         await chatResources.ensureKnowledgeBases()
+        if (identity !== contextKey()) return
         const own: CmdkKb[] = chatResources.rawKnowledgeBases.map((kb: any) => ({
           id: String(kb.id),
           name: kb.name || '',
@@ -124,9 +141,10 @@ export function useCmdkSearch(options: {
         knowledgeBases.value = [...own, ...sharedList]
         kbsLoaded.value = true
       } catch (e) {
+        if (identity === contextKey() && options.enabled?.() !== false) knowledgeSearchError.value = true
         console.error('[cmdk] failed to load knowledge bases', e)
       } finally {
-        kbsLoadingPromise = null
+        if (identity === kbsLoadingContext) kbsLoadingPromise = null
       }
     })()
     return kbsLoadingPromise
@@ -153,11 +171,14 @@ export function useCmdkSearch(options: {
   const ensureAgents = async (): Promise<void> => {
     if (options.agentsEnabled?.() === false) return
     if (agentsLoaded.value) return
-    if (agentsLoadingPromise) return agentsLoadingPromise
+    const identity = contextKey()
+    if (agentsLoadingPromise && agentsLoadingContext === identity) return agentsLoadingPromise
+    agentsLoadingContext = identity
     agentsLoadingPromise = (async () => {
       try {
         const chatResources = useChatResourcesStore()
         await chatResources.ensureAgents()
+        if (identity !== contextKey()) return
         const own: CmdkAgent[] = chatResources.agents.map((a: any) => ({
           id: String(a.id),
           name: a.name || '',
@@ -184,7 +205,7 @@ export function useCmdkSearch(options: {
       } catch (e) {
         console.error('[cmdk] failed to load agents', e)
       } finally {
-        agentsLoadingPromise = null
+        if (identity === agentsLoadingContext) agentsLoadingPromise = null
       }
     })()
     return agentsLoadingPromise
@@ -229,58 +250,107 @@ export function useCmdkSearch(options: {
       .slice(0, 5)
   })
 
-  // Monotonic id to drop stale responses.
+  // Every query, scope, identity or close change invalidates old responses
+  // before the next debounce timer can fire. Continuation remains user-driven.
   let requestSeq = 0
   let debounceTimer: ReturnType<typeof setTimeout> | null = null
+  // Store only navigation controls. Previous bodies are never cached.
+  let messagePageCursors = ['']
 
   const clearResults = () => {
+    requestSeq++
+    if (debounceTimer) clearTimeout(debounceTimer)
+    debounceTimer = null
+    loading.value = false
+    messageLoadingMore.value = false
     fileGroups.value = []
     messageGroups.value = []
     totalChunks.value = 0
     totalMessages.value = 0
     hasSearched.value = false
+    messageHasMore.value = false
+    messageSearchError.value = false
+    knowledgeSearchError.value = false
+    messagePageIndex.value = 0
+    messagePageCursors = ['']
+  }
+
+  const readMessagePage = async (q: string, seq: number, pageIndex = 0) => {
+    const cursor = messagePageCursors[pageIndex] || ''
+    // A navigation or retry action must fetch current authority again. Clear
+    // prior body output immediately, including when the new request fails.
+    messageGroups.value = []
+    totalMessages.value = 0
+    messagePageIndex.value = pageIndex
+    messageHasMore.value = false
+    messageSearchError.value = false
+    try {
+      const response = await searchMessages({ query: q, mode: 'hybrid', limit: 30, ...(cursor ? { cursor } : {}) })
+      if (seq !== requestSeq) return
+      const page = response.data
+      if (!response.success || !page || !Array.isArray(page.items)) throw new Error('Invalid message search response')
+      const hasMore = page.has_more === true
+      const nextCursor = page.next_cursor || ''
+      if (hasMore && (!nextCursor || nextCursor === cursor || messagePageCursors.slice(0, pageIndex + 1).includes(nextCursor))) {
+        throw new Error('Message search cursor did not advance')
+      }
+
+      // Deduplicate only within this fresh, authorized page. Previous pages
+      // retain their cursor, never their bodies; returning to one re-fetches it.
+      const merged = new Map<string, MessageSearchGroupItem>()
+      for (const item of page.items) merged.set(messageSearchGroupKey(item), item)
+      const groups = new Map<string, CmdkMsgGroup>()
+      for (const item of merged.values()) {
+        const sid = item.session_id
+        if (!groups.has(sid)) groups.set(sid, { sessionId: sid, sessionTitle: item.session_title || '', items: [] })
+        groups.get(sid)!.items.push(item)
+      }
+      messageGroups.value = Array.from(groups.values())
+      totalMessages.value = merged.size
+      messagePageCursors = messagePageCursors.slice(0, pageIndex + 1)
+      if (hasMore) messagePageCursors.push(nextCursor)
+      messageHasMore.value = hasMore
+    } catch (e) {
+      if (seq !== requestSeq) return
+      console.error('[cmdk] message search failed', e)
+      // Preserve the continuation point for an explicit retry. A failure
+      // never certifies an empty or completed search.
+      messageSearchError.value = true
+    }
   }
 
   const runSearch = async (q: string, seq: number) => {
     loading.value = true
     hasSearched.value = true
-
-    // Determine knowledge_base_ids for chunk search. A non-empty lockedKbIds
-    // narrows the scope and also disables message search (out of scope).
     const locked = options.lockedKbIds?.() || []
     const scoped = locked.length > 0
     let kbIds: string[]
     if (scoped) {
       kbIds = locked
     } else {
+      // Start requests after debounce, when tenant selection has also updated
+      // its request headers and shared resource stores.
+      void ensureAgents()
       await ensureKbs()
+      if (seq !== requestSeq) return
       kbIds = knowledgeBases.value.map(k => k.id)
     }
 
     const knowledgePromise = kbIds.length > 0
       ? knowledgeSemanticSearch({ query: q, knowledge_base_ids: kbIds })
-          .then((res: any) => (res?.success && res.data ? res.data : []))
+          .then((res: any) => {
+            if (!res?.success || !Array.isArray(res.data)) throw new Error('Invalid knowledge search response')
+            return res.data
+          })
           .catch((e) => {
+            if (seq === requestSeq) knowledgeSearchError.value = true
             console.error('[cmdk] knowledge search failed', e)
             return []
           })
       : Promise.resolve([])
-
-    const messagesPromise = scoped
-      ? Promise.resolve({ items: [], total: 0 })
-      : searchMessages({ query: q, mode: 'hybrid', limit: 30 })
-          .then((res: any) => (res?.success && res.data ? res.data : { items: [], total: 0 }))
-          .catch((e) => {
-            console.error('[cmdk] message search failed', e)
-            return { items: [], total: 0 }
-          })
-
-    const [chunks, msgRes] = await Promise.all([knowledgePromise, messagesPromise])
-
-    // Stale response guard.
+    const [chunks] = await Promise.all([knowledgePromise, scoped ? Promise.resolve() : readMessagePage(q, seq)])
     if (seq !== requestSeq) return
 
-    // Group chunks by knowledge_id.
     const fmap = new Map<string, CmdkFileGroup>()
     for (const item of chunks as any[]) {
       const kid = item.knowledge_id || 'unknown'
@@ -308,46 +378,62 @@ export function useCmdkSearch(options: {
     }
     fileGroups.value = Array.from(fmap.values())
     totalChunks.value = (chunks as any[]).length
-
-    // Group messages by session_id.
-    const mmap = new Map<string, CmdkMsgGroup>()
-    const items: MessageSearchGroupItem[] = (msgRes as any).items || []
-    for (const m of items) {
-      const sid = m.session_id || 'unknown'
-      if (!mmap.has(sid)) {
-        mmap.set(sid, {
-          sessionId: sid,
-          sessionTitle: m.session_title || '',
-          items: [],
-        })
-      }
-      mmap.get(sid)!.items.push(m)
-    }
-    messageGroups.value = Array.from(mmap.values())
-    totalMessages.value = (msgRes as any).total || items.length
-
     loading.value = false
   }
 
-  // Watch query changes (debounced). lockedKbIds is tracked as a derived
-  // string so the search re-runs when the KB scope toggles.
-  const lockedSignature = () =>
-    (options.lockedKbIds?.() || []).slice().sort().join(',')
-
-  watch([query, lockedSignature], ([val]) => {
-    if (debounceTimer) clearTimeout(debounceTimer)
-    const trimmed = (val as string).trim()
-    if (!trimmed) {
-      requestSeq++ // cancel in-flight
-      loading.value = false
-      clearResults()
-      return
+  const continueMessageSearch = async () => {
+    if (loading.value || messageLoadingMore.value || options.enabled?.() === false || (options.lockedKbIds?.() || []).length) return
+    if (!messageHasMore.value && !messageSearchError.value) return
+    const q = query.value.trim()
+    if (!q) return
+    const seq = requestSeq
+    messageLoadingMore.value = true
+    try {
+      await readMessagePage(q, seq, messageSearchError.value ? messagePageIndex.value : messagePageIndex.value + 1)
+    } finally {
+      if (seq === requestSeq) messageLoadingMore.value = false
     }
+  }
+
+  const previousMessagePage = async () => {
+    if (!messageHasPrevious.value || loading.value || messageLoadingMore.value || options.enabled?.() === false || (options.lockedKbIds?.() || []).length) return
+    const q = query.value.trim()
+    if (!q) return
+    const seq = requestSeq
+    messageLoadingMore.value = true
+    try {
+      await readMessagePage(q, seq, messagePageIndex.value - 1)
+    } finally {
+      if (seq === requestSeq) messageLoadingMore.value = false
+    }
+  }
+
+  const retrySearch = () => {
+    const q = query.value.trim()
+    clearResults()
+    if (q && options.enabled?.() !== false) void runSearch(q, requestSeq)
+  }
+
+  const lockedSignature = () => (options.lockedKbIds?.() || []).slice().sort().join(',')
+  watch([query, lockedSignature, contextKey, () => options.enabled?.() !== false], ([val, , identity], old) => {
+    clearResults()
+    if (old && identity !== old[2]) {
+      // Name matches and preloads belong to the same identity as remote pages.
+      knowledgeBases.value = []
+      agents.value = []
+      kbsLoaded.value = false
+      agentsLoaded.value = false
+    }
+    const trimmed = (val as string).trim()
+    if (!trimmed || options.enabled?.() === false) return
+    const seq = requestSeq
     debounceTimer = setTimeout(() => {
-      const seq = ++requestSeq
-      runSearch(trimmed, seq)
+      debounceTimer = null
+      if (seq === requestSeq) void runSearch(trimmed, seq)
     }, debounceMs)
-  })
+  }, { flush: 'sync' })
+
+  onUnmounted(clearResults)
 
   onMounted(() => {
     // Preload KB and agent lists so name matches show up instantly on first
@@ -363,6 +449,15 @@ export function useCmdkSearch(options: {
     query,
     loading,
     hasSearched,
+    messageHasMore,
+    messageHasPrevious,
+    messageLoadingMore,
+    messageSearchError,
+    knowledgeSearchError,
+    searchIncomplete,
+    continueMessageSearch,
+    previousMessagePage,
+    retrySearch,
     knowledgeBases,
     fileGroups,
     messageGroups,

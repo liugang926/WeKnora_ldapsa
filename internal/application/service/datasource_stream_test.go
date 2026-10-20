@@ -85,7 +85,12 @@ func TestStreamStartCursor_IncrementalKeepsCursor(t *testing.T) {
 	assert.NotNil(t, cur.ConnectorCursor["space_node_times"])
 }
 
-func newStreamHandler(svc *DataSourceService, ds *types.DataSource, result *types.SyncResult, syncLog *types.SyncLog) *streamSyncHandler {
+func newStreamHandler(
+	svc *DataSourceService,
+	ds *types.DataSource,
+	result *types.SyncResult,
+	syncLog *types.SyncLog,
+) *streamSyncHandler {
 	return &streamSyncHandler{svc: svc, ds: ds, result: result, syncLog: syncLog}
 }
 
@@ -560,9 +565,14 @@ func TestNextcloudStreamHandlerRejectsFailedItemAndPartialCheckpoint(t *testing.
 		syncLogRepo: &processSyncSyncLogRepo{logs: map[string]*types.SyncLog{log.ID: log}},
 	}
 	ds := &types.DataSource{ID: "ds-1", TenantID: 1, KnowledgeBaseID: "kb-1", Type: types.ConnectorTypeNextcloud}
+	if svc.dsRepo == nil {
+		svc.dsRepo = newKBDeleteDSRepo(ds.KnowledgeBaseID, ds)
+	} else if r, ok := svc.dsRepo.(*recordingDSRepo); ok {
+		r.kbDeleteDSRepo = *newKBDeleteDSRepo(ds.KnowledgeBaseID, ds)
+	}
 	h := &streamSyncHandler{
 		svc: svc, ds: ds, result: &types.SyncResult{}, syncLog: log,
-		payload: types.DataSourceSyncPayload{SyncLogID: log.ID},
+		payload: types.DataSourceSyncPayload{SyncLogID: log.ID, DataSourceID: ds.ID, TenantID: ds.TenantID},
 	}
 	require.NoError(t, h.ObserveNextcloudIdentity(context.Background(), "instance-1", "binding-1"))
 	require.ErrorContains(t, h.Emit(context.Background(), nextcloudStreamDeletion()), "could not be processed")
@@ -580,9 +590,14 @@ func TestNextcloudStreamHandlerRechecksRunningLogBeforeItem(t *testing.T) {
 		syncLogRepo:      &processSyncSyncLogRepo{logs: map[string]*types.SyncLog{log.ID: log}},
 	}
 	ds := &types.DataSource{ID: "ds-1", TenantID: 1, KnowledgeBaseID: "kb-1", Type: types.ConnectorTypeNextcloud}
+	if svc.dsRepo == nil {
+		svc.dsRepo = newKBDeleteDSRepo(ds.KnowledgeBaseID, ds)
+	} else if r, ok := svc.dsRepo.(*recordingDSRepo); ok {
+		r.kbDeleteDSRepo = *newKBDeleteDSRepo(ds.KnowledgeBaseID, ds)
+	}
 	h := &streamSyncHandler{
 		svc: svc, ds: ds, result: &types.SyncResult{}, syncLog: log,
-		payload: types.DataSourceSyncPayload{SyncLogID: log.ID},
+		payload: types.DataSourceSyncPayload{SyncLogID: log.ID, DataSourceID: ds.ID, TenantID: ds.TenantID},
 	}
 	require.NoError(t, h.ObserveNextcloudIdentity(context.Background(), "instance-1", "binding-1"))
 	log.Status = types.SyncLogStatusCanceled
@@ -609,19 +624,19 @@ func TestNextcloudStreamHandlerStagesVersionBeforeAcceptingItem(t *testing.T) {
 				KnowledgeBaseID: "kb-1",
 				Type:            types.ConnectorTypeNextcloud,
 			}
+			wireNextcloudCapacityFixture(t, svc, ds)
+			if svc.dsRepo == nil {
+				svc.dsRepo = newKBDeleteDSRepo(ds.KnowledgeBaseID, ds)
+			} else if r, ok := svc.dsRepo.(*recordingDSRepo); ok {
+				r.kbDeleteDSRepo = *newKBDeleteDSRepo(ds.KnowledgeBaseID, ds)
+			}
 			h := &streamSyncHandler{
 				svc: svc, ds: ds, result: &types.SyncResult{}, syncLog: log,
-				payload: types.DataSourceSyncPayload{SyncLogID: log.ID},
+				payload: types.DataSourceSyncPayload{SyncLogID: log.ID, DataSourceID: ds.ID, TenantID: ds.TenantID},
 			}
 			require.NoError(t, h.ObserveNextcloudIdentity(context.Background(), "instance-1", "binding-1"))
-			item := types.FetchedItem{
-				ExternalID: "nextcloud:instance-1:41", SourceResourceID: "binding-1",
-				FileName: "Notes.md", Content: []byte("hello"), Metadata: map[string]string{
-					"nextcloud_instance_id": "instance-1", "nextcloud_binding_id": "binding-1",
-					"nextcloud_file_id": "41", "nextcloud_etag": "etag-1",
-				},
-			}
-			err := h.Emit(context.Background(), item)
+			item, _ := datasourceOriginalFetchedItem(t, "Notes.md", "etag-1", "hello")
+			err := h.Emit(context.Background(), *item)
 			require.Equal(t, 1, repo.stageCalls)
 			if failStage {
 				require.ErrorContains(t, err, "could not be processed")
@@ -748,10 +763,11 @@ func TestProcessSyncStreamingNextcloudCursorOnlyAfterSuccessfulItems(t *testing.
 				tenantRepo:  &processSyncTenantRepo{tenant: &types.Tenant{ID: 1}},
 				tagService:  &processSyncTagService{},
 			}
+			dsRepo.kbDeleteDSRepo = *newKBDeleteDSRepo(ds.KnowledgeBaseID, ds)
 			connector := &nextcloudStreamingTestConnector{emit: true, cursor: nextcloudStreamCursor(t, "new")}
 			err = svc.processSyncStreaming(context.Background(), connector, ds, log,
 				&types.DataSourceConfig{Type: types.ConnectorTypeNextcloud, ResourceIDs: []string{"binding-1"}},
-				types.DataSourceSyncPayload{SyncLogID: log.ID}, false)
+				types.DataSourceSyncPayload{SyncLogID: log.ID, DataSourceID: ds.ID, TenantID: ds.TenantID}, false)
 			if failure {
 				require.ErrorContains(t, err, "could not be processed")
 				require.Equal(t, types.SyncLogStatusFailed, log.Status)
@@ -779,7 +795,7 @@ func TestProcessSyncStreamingNextcloudRechecksEmptyScanBeforeCursor(t *testing.T
 	}
 	log := &types.SyncLog{ID: "log-1", Status: types.SyncLogStatusRunning}
 	svc := &DataSourceService{
-		dsRepo:      &recordingDSRepo{},
+		dsRepo:      &recordingDSRepo{kbDeleteDSRepo: *newKBDeleteDSRepo(ds.KnowledgeBaseID, ds)},
 		syncLogRepo: &processSyncSyncLogRepo{logs: map[string]*types.SyncLog{log.ID: log}},
 		tenantRepo:  &processSyncTenantRepo{tenant: &types.Tenant{ID: 1}},
 		tagService:  &processSyncTagService{},
@@ -790,7 +806,7 @@ func TestProcessSyncStreamingNextcloudRechecksEmptyScanBeforeCursor(t *testing.T
 	}
 	err = svc.processSyncStreaming(context.Background(), connector, ds, log,
 		&types.DataSourceConfig{Type: types.ConnectorTypeNextcloud, ResourceIDs: []string{"binding-1"}},
-		types.DataSourceSyncPayload{SyncLogID: log.ID}, false)
+		types.DataSourceSyncPayload{SyncLogID: log.ID, DataSourceID: ds.ID, TenantID: ds.TenantID}, false)
 	require.ErrorIs(t, err, asynq.SkipRetry)
 	require.Equal(t, types.SyncLogStatusCanceled, log.Status)
 	stored, err := ds.ParseSyncCursor()
@@ -807,7 +823,7 @@ func TestProcessSyncStreamingNextcloudRejectsDifferentCursorInstance(t *testing.
 	}
 	log := &types.SyncLog{ID: "log-1", Status: types.SyncLogStatusRunning}
 	svc := &DataSourceService{
-		dsRepo:      &recordingDSRepo{},
+		dsRepo:      &recordingDSRepo{kbDeleteDSRepo: *newKBDeleteDSRepo(ds.KnowledgeBaseID, ds)},
 		syncLogRepo: &processSyncSyncLogRepo{logs: map[string]*types.SyncLog{log.ID: log}},
 		tenantRepo:  &processSyncTenantRepo{tenant: &types.Tenant{ID: 1}},
 		tagService:  &processSyncTagService{},
@@ -817,7 +833,7 @@ func TestProcessSyncStreamingNextcloudRejectsDifferentCursorInstance(t *testing.
 	connector := &nextcloudStreamingTestConnector{cursor: bad}
 	err = svc.processSyncStreaming(context.Background(), connector, ds, log,
 		&types.DataSourceConfig{Type: types.ConnectorTypeNextcloud, ResourceIDs: []string{"binding-1"}},
-		types.DataSourceSyncPayload{SyncLogID: log.ID}, false)
+		types.DataSourceSyncPayload{SyncLogID: log.ID, DataSourceID: ds.ID, TenantID: ds.TenantID}, false)
 	require.ErrorContains(t, err, "cursor identity or inventory differs")
 	require.Equal(t, types.SyncLogStatusFailed, log.Status)
 	stored, err := ds.ParseSyncCursor()

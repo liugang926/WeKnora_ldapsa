@@ -30,7 +30,16 @@ func newCountingTool(name string) *countingTool {
 
 func (t *countingTool) Execute(context.Context, json.RawMessage) (*types.ToolResult, error) {
 	t.calls++
-	return &types.ToolResult{Success: true, Output: "executed"}, nil
+	return &types.ToolResult{Success: true, Output: "executed", SourceLineage: independentAgentInput()}, nil
+}
+
+// DefinitionSourceLineageFor describes only this Go-owned unit fixture schema.
+func (t *countingTool) DefinitionSourceLineageFor(types.FunctionDefinition) *types.SourceLineage {
+	return independentAgentInput()
+}
+
+func (t *countingTool) ExecuteSourceLineage(ctx context.Context, args json.RawMessage) (*types.ToolResult, error) {
+	return t.Execute(ctx, args)
 }
 
 // ---------------------------------------------------------------------------
@@ -57,7 +66,11 @@ func (m *mockChat) ChatStream(
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.callCount >= len(m.responses) {
-		return nil, fmt.Errorf("unexpected ChatStream call #%d (only %d responses prepared)", m.callCount, len(m.responses))
+		return nil, fmt.Errorf(
+			"unexpected ChatStream call #%d (only %d responses prepared)",
+			m.callCount,
+			len(m.responses),
+		)
 	}
 	resp := m.responses[m.callCount]
 	m.calls = append(m.calls, append([]chat.Message(nil), messages...))
@@ -81,7 +94,7 @@ func TestStreamLLMResourceAliasesRoundTrip(t *testing.T) {
 	engine := newTestEngine(t, model)
 	result, err := engine.streamLLMToEventBus(
 		context.Background(),
-		[]chat.Message{{Role: "tool", Content: "source=" + ref}},
+		[]chat.Message{{SourceLineage: independentAgentInput(), Role: "tool", Content: "source=" + ref}},
 		nil,
 		nil,
 	)
@@ -122,8 +135,9 @@ func TestStreamLLMSummarySlugSurvivesDocumentCompaction(t *testing.T) {
 	require.Equal(t, "d1", engine.modelContext.RegisterDocument(knowledgeID))
 
 	toolMsg := chat.Message{
-		Role:    "tool",
-		Content: `<link>[[` + summarySlug + `|Weknora 试错记录.md - Summary]]</link>`,
+		SourceLineage: independentAgentInput(),
+		Role:          "tool",
+		Content:       `<link>[[` + summarySlug + `|Weknora 试错记录.md - Summary]]</link>`,
 	}
 	result, err := engine.streamLLMToEventBus(context.Background(),
 		[]chat.Message{toolMsg}, nil, nil)
@@ -165,9 +179,13 @@ func TestStreamMCPAnswerRejectsUnretrievedKnowledgeCitations(t *testing.T) {
 	})
 	var emitted strings.Builder
 	result, err := engine.streamLLMToEventBus(context.Background(), []chat.Message{
-		{Role: "assistant", Content: `物业工作<kb doc="9月13日周报.docx" chunk_id="weekly-report" />`},
-		{Role: "user", Content: userTurn},
-		{Role: "tool", Name: "call_mcp_tool", Content: toolResult},
+		{
+			SourceLineage: independentAgentInput(),
+			Role:          "assistant",
+			Content:       `物业工作<kb doc="9月13日周报.docx" chunk_id="weekly-report" />`,
+		},
+		{SourceLineage: independentAgentInput(), Role: "user", Content: userTurn},
+		{SourceLineage: independentAgentInput(), Role: "tool", Name: "call_mcp_tool", Content: toolResult},
 	}, nil, func(chunk *types.StreamResponse, _ string) {
 		emitted.WriteString(chunk.Content)
 	})
@@ -235,8 +253,9 @@ func TestRunToolCallRejectsUnresolvedHandlesBeforeExecution(t *testing.T) {
 	tool := newCountingTool("test_unresolved")
 	engine.toolRegistry.RegisterTool(tool)
 
+	require.NoError(t, engine.checkLineage(context.Background()))
 	result := engine.runToolCall(
-		context.Background(),
+		types.WithRAGSourceLineage(context.Background(), engine.turnLineage),
 		types.LLMToolCall{
 			ID: "call-1",
 			Function: types.FunctionCall{
@@ -252,7 +271,11 @@ func TestRunToolCallRejectsUnresolvedHandlesBeforeExecution(t *testing.T) {
 	require.Zero(t, tool.calls)
 	require.NotNil(t, result.Result)
 	require.False(t, result.Result.Success)
-	require.Contains(t, result.Result.Error, "unresolved model handles")
+	// An unresolved handle has no accounted result; its diagnostic cannot
+	// be relabeled as ordinary tool output. Refuse before execution.
+	require.Equal(t, ErrAgentSourceLineageDenied.Error(), result.Result.Error)
+	require.ErrorIs(t, engine.lineageFailure(), ErrAgentSourceLineageDenied)
+	require.Error(t, result.Result.SourceLineage.RequireComplete())
 }
 
 func TestRunToolCallDecodesHandlesAfterJSONRepair(t *testing.T) {
@@ -265,8 +288,9 @@ func TestRunToolCallDecodesHandlesAfterJSONRepair(t *testing.T) {
 	}
 
 	unknownEngine, unknownTool := newEngine()
+	require.NoError(t, unknownEngine.checkLineage(context.Background()))
 	unknown := unknownEngine.runToolCall(
-		context.Background(),
+		types.WithRAGSourceLineage(context.Background(), unknownEngine.turnLineage),
 		types.LLMToolCall{
 			ID:             "call-unknown",
 			Function:       types.FunctionCall{Name: unknownTool.Name(), Arguments: `{"id":"d99",}`},
@@ -276,12 +300,14 @@ func TestRunToolCallDecodesHandlesAfterJSONRepair(t *testing.T) {
 	)
 	require.Zero(t, unknownTool.calls)
 	require.False(t, unknown.Result.Success)
-	require.Contains(t, unknown.Result.Error, "unresolved model handles")
+	require.Equal(t, ErrAgentSourceLineageDenied.Error(), unknown.Result.Error)
+	require.ErrorIs(t, unknownEngine.lineageFailure(), ErrAgentSourceLineageDenied)
+	require.Error(t, unknown.Result.SourceLineage.RequireComplete())
 
 	knownEngine, knownTool := newEngine()
 	knownEngine.modelContext.RegisterDocument("doc-real")
 	known := knownEngine.runToolCall(
-		context.Background(),
+		types.WithRAGSourceLineage(context.Background(), knownEngine.turnLineage),
 		types.LLMToolCall{
 			ID:             "call-known",
 			Function:       types.FunctionCall{Name: knownTool.Name(), Arguments: `{"id":"d1",}`},
@@ -289,6 +315,8 @@ func TestRunToolCallDecodesHandlesAfterJSONRepair(t *testing.T) {
 		},
 		0, 0, 1, "session", "message",
 	)
+	require.NoError(t, knownEngine.lineageFailure())
+	require.NoError(t, known.Result.SourceLineage.RequireComplete())
 	require.Equal(t, 1, knownTool.calls)
 	require.True(t, known.Result.Success)
 	require.Equal(t, "doc-real", known.Args["id"])
@@ -375,15 +403,22 @@ func TestEstimateCurrentTokensDoesNotDoubleCountTheReply(t *testing.T) {
 	engine := newTestEngine(t, &mockChat{}, withMaxContextTokens(128000))
 
 	sent := []chat.Message{
-		{Role: "system", Content: "you are an agent"},
-		{Role: "user", Content: "do the thing"},
+		{SourceLineage: independentAgentInput(), Role: "system", Content: "you are an agent"},
+		{SourceLineage: independentAgentInput(), Role: "user", Content: "do the thing"},
 	}
 	reply := chat.Message{
+		SourceLineage:    independentAgentInput(),
 		Role:             "assistant",
 		Content:          "working on it",
 		ReasoningContent: strings.Repeat("deliberating carefully. ", 200),
 	}
-	toolResult := chat.Message{Role: "tool", Name: "t", ToolCallID: "c1", Content: "result"}
+	toolResult := chat.Message{
+		SourceLineage: independentAgentInput(),
+		Role:          "tool",
+		Name:          "t",
+		ToolCallID:    "c1",
+		Content:       "result",
+	}
 	messages := append(append([]chat.Message{}, sent...), reply, toolResult)
 
 	// The provider reported this round: 5000 in, and the reply as output.
@@ -412,8 +447,8 @@ func TestEstimateCurrentTokensDoesNotCountToolSchemasWithoutUsage(t *testing.T) 
 	engine := newTestEngine(t, &mockChat{}, withMaxContextTokens(128000))
 
 	messages := []chat.Message{
-		{Role: "system", Content: "you are an agent"},
-		{Role: "user", Content: "do the thing"},
+		{SourceLineage: independentAgentInput(), Role: "system", Content: "you are an agent"},
+		{SourceLineage: independentAgentInput(), Role: "user", Content: "do the thing"},
 	}
 	tools := make([]chat.Tool, 80)
 	for i := range tools {
@@ -476,19 +511,26 @@ func TestContextCompactionDoesNotRunEveryRound(t *testing.T) {
 	// One user message, then many assistant/tool rounds — a ReAct turn with
 	// no turn boundary anywhere in it.
 	messages := []chat.Message{
-		{Role: "system", Content: "you are an agent"},
-		{Role: "user", Content: "build me a deck"},
+		{SourceLineage: independentAgentInput(), Role: "system", Content: "you are an agent"},
+		{SourceLineage: independentAgentInput(), Role: "user", Content: "build me a deck"},
 	}
 	body := strings.Repeat("tool output content ", 400)
 	for i := 0; i < 20; i++ {
 		id := fmt.Sprintf("call-%d", i)
-		messages = append(messages,
-			chat.Message{Role: "assistant", ToolCalls: []chat.ToolCall{{
+		messages = append(
+			messages,
+			chat.Message{SourceLineage: independentAgentInput(), Role: "assistant", ToolCalls: []chat.ToolCall{{
 				ID:       id,
 				Type:     "function",
 				Function: chat.FunctionCall{Name: "write_sandbox_file", Arguments: `{"path":"/w/a.html"}`},
 			}}},
-			chat.Message{Role: "tool", Name: "write_sandbox_file", ToolCallID: id, Content: body},
+			chat.Message{
+				SourceLineage: independentAgentInput(),
+				Role:          "tool",
+				Name:          "write_sandbox_file",
+				ToolCallID:    id,
+				Content:       body,
+			},
 		)
 	}
 
@@ -529,27 +571,34 @@ func (s *recordingCheckpointSink) SaveContextCheckpoint(
 	return s.err
 }
 
-// storedHistoryOverflow is a request whose stored history ends on turn-b and
+// storedHistoryOverflow constructs a local fixture whose history ends on turn-b and
 // whose live turn has outgrown the keep-recent budget on its own.
 func storedHistoryOverflow() []chat.Message {
 	messages := []chat.Message{
-		{Role: "system", Content: "you are an agent"},
-		{Role: "user", Content: "first question", TurnID: "turn-a"},
-		{Role: "assistant", Content: "first answer", TurnID: "turn-a"},
-		{Role: "user", Content: "second question", TurnID: "turn-b"},
-		{Role: "assistant", Content: "second answer", TurnID: "turn-b"},
-		{Role: "user", Content: "build me a deck"},
+		{SourceLineage: independentAgentInput(), Role: "system", Content: "you are an agent"},
+		{SourceLineage: independentAgentInput(), Role: "user", Content: "first question", TurnID: "turn-a"},
+		{SourceLineage: independentAgentInput(), Role: "assistant", Content: "first answer", TurnID: "turn-a"},
+		{SourceLineage: independentAgentInput(), Role: "user", Content: "second question", TurnID: "turn-b"},
+		{SourceLineage: independentAgentInput(), Role: "assistant", Content: "second answer", TurnID: "turn-b"},
+		{SourceLineage: independentAgentInput(), Role: "user", Content: "build me a deck"},
 	}
 	body := strings.Repeat("tool output content ", 400)
 	for i := 0; i < 20; i++ {
 		id := fmt.Sprintf("call-%d", i)
-		messages = append(messages,
-			chat.Message{Role: "assistant", ToolCalls: []chat.ToolCall{{
+		messages = append(
+			messages,
+			chat.Message{SourceLineage: independentAgentInput(), Role: "assistant", ToolCalls: []chat.ToolCall{{
 				ID:       id,
 				Type:     "function",
 				Function: chat.FunctionCall{Name: "write_sandbox_file", Arguments: `{"path":"/w/a.html"}`},
 			}}},
-			chat.Message{Role: "tool", Name: "write_sandbox_file", ToolCallID: id, Content: body},
+			chat.Message{
+				SourceLineage: independentAgentInput(),
+				Role:          "tool",
+				Name:          "write_sandbox_file",
+				ToolCallID:    id,
+				Content:       body,
+			},
 		)
 	}
 	return messages
@@ -599,15 +648,21 @@ func TestContextCheckpointIsKeptWhenTheCompactionFreesTooLittle(t *testing.T) {
 	engine.SetContextCheckpointSink(sink)
 
 	messages := []chat.Message{
-		{Role: "system", Content: "you are an agent"},
-		{Role: "user", Content: "first question", TurnID: "turn-a"},
-		{Role: "assistant", Content: "first answer", TurnID: "turn-a"},
-		{Role: "user", Content: "read the export"},
-		{Role: "assistant", ToolCalls: []chat.ToolCall{{
+		{SourceLineage: independentAgentInput(), Role: "system", Content: "you are an agent"},
+		{SourceLineage: independentAgentInput(), Role: "user", Content: "first question", TurnID: "turn-a"},
+		{SourceLineage: independentAgentInput(), Role: "assistant", Content: "first answer", TurnID: "turn-a"},
+		{SourceLineage: independentAgentInput(), Role: "user", Content: "read the export"},
+		{SourceLineage: independentAgentInput(), Role: "assistant", ToolCalls: []chat.ToolCall{{
 			ID: "call-1", Type: "function",
 			Function: chat.FunctionCall{Name: "read_file", Arguments: `{"path":"/w/export.csv"}`},
 		}}},
-		{Role: "tool", Name: "read_file", ToolCallID: "call-1", Content: strings.Repeat("row,value ", 12000)},
+		{
+			SourceLineage: independentAgentInput(),
+			Role:          "tool",
+			Name:          "read_file",
+			ToolCallID:    "call-1",
+			Content:       strings.Repeat("row,value ", 12000),
+		},
 	}
 	before := engine.tokenEstimator.EstimateMessages(messages)
 	require.True(t, engine.compactor.Settings().ShouldCompact(before))
@@ -625,7 +680,8 @@ func TestContextCheckpointIsKeptWhenTheCompactionFreesTooLittle(t *testing.T) {
 // ending on that turn could no longer be recognized as ending there.
 func TestRedactHistoryKBResultsKeepsTurnID(t *testing.T) {
 	redacted := redactHistoryKBResults([]chat.Message{{
-		Role: "tool", Name: agenttools.ToolSearchKnowledge, ToolCallID: "c1",
+		SourceLineage: independentAgentInput(),
+		Role:          "tool", Name: agenttools.ToolSearchKnowledge, ToolCallID: "c1",
 		Content: "stale chunk", TurnID: "turn-a",
 	}})
 	require.Len(t, redacted, 1)
@@ -657,8 +713,20 @@ func TestHistoryTokenBudgetExceedsTheCompactionThreshold(t *testing.T) {
 // buildMessagesWithLLMContext sends under both settings.
 func TestHistoryAsSentFollowsTheRetainSetting(t *testing.T) {
 	history := []chat.Message{
-		{Role: "tool", Name: agenttools.ToolWikiReadPage, ToolCallID: "c1", Content: "full page"},
-		{Role: "tool", Name: agenttools.ToolWebFetch, ToolCallID: "c2", Content: "fetched"},
+		{
+			SourceLineage: independentAgentInput(),
+			Role:          "tool",
+			Name:          agenttools.ToolWikiReadPage,
+			ToolCallID:    "c1",
+			Content:       "full page",
+		},
+		{
+			SourceLineage: independentAgentInput(),
+			Role:          "tool",
+			Name:          agenttools.ToolWebFetch,
+			ToolCallID:    "c2",
+			Content:       "fetched",
+		},
 	}
 
 	redacted := HistoryAsSent(history, false)
@@ -724,13 +792,22 @@ func newTestEngine(t *testing.T, chatModel chat.Chat, opts ...testEngineOption) 
 		"",
 	)
 	require.NotNil(t, engine, "NewAgentEngine returned nil (agenttoken.NewEstimator failed?)")
+	engine.SetSourceLineageVerifier(func(_ context.Context, lineage *types.SourceLineage) error {
+		if err := lineage.RequireComplete(); err != nil {
+			return err
+		}
+		if len(lineage.Sources) != 0 {
+			return ErrAgentSourceLineageDenied
+		}
+		return nil
+	})
 	return engine
 }
 
 func emptyMessages() []chat.Message {
 	return []chat.Message{
-		{Role: "system", Content: "You are a test agent."},
-		{Role: "user", Content: "test query"},
+		{SourceLineage: independentAgentInput(), Role: "system", Content: "You are a test agent."},
+		{SourceLineage: independentAgentInput(), Role: "user", Content: "test query"},
 	}
 }
 
@@ -849,7 +926,7 @@ func TestStreamThinkingToEventBus_PropagatesFinishReason(t *testing.T) {
 
 			engine := newTestEngine(t, mock)
 			ctx := context.Background()
-			msgs := []chat.Message{{Role: "user", Content: "test"}}
+			msgs := []chat.Message{{SourceLineage: independentAgentInput(), Role: "user", Content: "test"}}
 			tools := []chat.Tool{}
 
 			resp, err := engine.streamThinkingToEventBus(ctx, msgs, tools, 0, "sess-1")
@@ -869,7 +946,7 @@ func TestStreamThinkingToEventBus_SetsCompletionTokenBudget(t *testing.T) {
 		}
 		engine := newTestEngine(t, mock, withMaxCompletionTokens(4096))
 		_, err := engine.streamThinkingToEventBus(context.Background(),
-			[]chat.Message{{Role: "user", Content: "test"}}, nil, 0, "sess-1")
+			[]chat.Message{{SourceLineage: independentAgentInput(), Role: "user", Content: "test"}}, nil, 0, "sess-1")
 		require.NoError(t, err)
 		require.Len(t, mock.opts, 1)
 		assert.Zero(t, mock.opts[0].MaxTokens)
@@ -884,7 +961,7 @@ func TestStreamThinkingToEventBus_SetsCompletionTokenBudget(t *testing.T) {
 		}
 		engine := newTestEngine(t, mock)
 		_, err := engine.streamThinkingToEventBus(context.Background(),
-			[]chat.Message{{Role: "user", Content: "test"}}, nil, 0, "sess-1")
+			[]chat.Message{{SourceLineage: independentAgentInput(), Role: "user", Content: "test"}}, nil, 0, "sess-1")
 		require.NoError(t, err)
 		require.Len(t, mock.opts, 1)
 		assert.Zero(t, mock.opts[0].MaxTokens)
@@ -901,7 +978,7 @@ func TestStreamThinkingToEventBus_SetsCompletionTokenBudget(t *testing.T) {
 			cfg.SandboxConfigID = "cfg-a"
 		})
 		_, err := engine.streamThinkingToEventBus(context.Background(),
-			[]chat.Message{{Role: "user", Content: "test"}}, nil, 0, "sess-1")
+			[]chat.Message{{SourceLineage: independentAgentInput(), Role: "user", Content: "test"}}, nil, 0, "sess-1")
 		require.NoError(t, err)
 		require.Len(t, mock.opts, 1)
 		assert.Zero(t, mock.opts[0].MaxTokens)
@@ -916,7 +993,7 @@ func TestStreamThinkingToEventBus_SetsCompletionTokenBudget(t *testing.T) {
 		}
 		engine := newTestEngine(t, mock, withMaxCompletionTokens(64000))
 		_, err := engine.streamThinkingToEventBus(context.Background(),
-			[]chat.Message{{Role: "user", Content: "test"}}, nil, 0, "sess-1")
+			[]chat.Message{{SourceLineage: independentAgentInput(), Role: "user", Content: "test"}}, nil, 0, "sess-1")
 		require.NoError(t, err)
 		require.Len(t, mock.opts, 1)
 		assert.Zero(t, mock.opts[0].MaxTokens)

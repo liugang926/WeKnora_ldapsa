@@ -7,6 +7,9 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/Tencent/WeKnora/internal/application/repository"
+	"github.com/Tencent/WeKnora/internal/application/service"
+
 	"github.com/Tencent/WeKnora/internal/errors"
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/types"
@@ -23,9 +26,10 @@ import (
 // carry the effective tenant ID, so handlers below just use
 // c.Request.Context() the way they always did.
 type TagHandler struct {
-	tagService interfaces.KnowledgeTagService
-	tagRepo    interfaces.KnowledgeTagRepository
-	chunkRepo  interfaces.ChunkRepository
+	tagService       interfaces.KnowledgeTagService
+	tagRepo          interfaces.KnowledgeTagRepository
+	chunkRepo        interfaces.ChunkRepository
+	outputAuthorizer *service.TagOutputAuthorizer
 }
 
 // DeleteTagRequest represents the request body for deleting a tag
@@ -97,17 +101,10 @@ func (h *TagHandler) ListTags(c *gin.Context) {
 
 	keyword := secutils.SanitizeForLog(c.Query("keyword"))
 
-	tags, err := h.tagService.ListTags(ctx, kbID, &page, keyword)
-	if err != nil {
-		logger.ErrorWithFields(ctx, err, nil)
-		c.Error(err)
+	if !h.requireTagOutput(c) {
 		return
 	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"data":    tags,
-	})
+	h.respondTagList(ctx, c, kbID, page, keyword)
 }
 
 type createTagRequest struct {
@@ -130,7 +127,10 @@ type createTagRequest struct {
 // @Security     ApiKeyAuth
 // @Router       /knowledge-bases/{id}/tags [post]
 func (h *TagHandler) CreateTag(c *gin.Context) {
-	ctx := c.Request.Context()
+	if !h.requireTagOutput(c) {
+		return
+	}
+	ctx := repository.WithTagCommittedOutput(c.Request.Context())
 	kbID := secutils.SanitizeForLog(c.Param("id"))
 
 	var req createTagRequest
@@ -140,8 +140,19 @@ func (h *TagHandler) CreateTag(c *gin.Context) {
 		return
 	}
 
-	tag, err := h.tagService.CreateTag(ctx, kbID,
-		secutils.SanitizeForLog(req.Name), secutils.SanitizeForLog(req.Color), req.SortOrder)
+	tag, err := h.tagService.CreateTag(
+		repository.WithIndependentKnowledgeTagCreateInput(
+			ctx,
+			kbID,
+			secutils.SanitizeForLog(req.Name),
+			secutils.SanitizeForLog(req.Color),
+			req.SortOrder,
+		),
+		kbID,
+		secutils.SanitizeForLog(req.Name),
+		secutils.SanitizeForLog(req.Color),
+		req.SortOrder,
+	)
 	if err != nil {
 		logger.ErrorWithFields(ctx, err, map[string]interface{}{
 			"kb_id": kbID,
@@ -150,10 +161,7 @@ func (h *TagHandler) CreateTag(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"data":    tag,
-	})
+	h.respondCommittedTag(ctx, c, tag)
 }
 
 type updateTagRequest struct {
@@ -177,7 +185,10 @@ type updateTagRequest struct {
 // @Security     ApiKeyAuth
 // @Router       /knowledge-bases/{id}/tags/{tag_id} [put]
 func (h *TagHandler) UpdateTag(c *gin.Context) {
-	ctx := c.Request.Context()
+	if !h.requireTagOutput(c) {
+		return
+	}
+	ctx := repository.WithTagCommittedOutput(c.Request.Context())
 
 	tagID, err := h.resolveTagID(c)
 	if err != nil {
@@ -192,7 +203,13 @@ func (h *TagHandler) UpdateTag(c *gin.Context) {
 		return
 	}
 
-	tag, err := h.tagService.UpdateTag(ctx, tagID, req.Name, req.Color, req.SortOrder)
+	tag, err := h.tagService.UpdateTag(
+		repository.WithIndependentKnowledgeTagUpdateInput(ctx, tagID, req.Name, req.Color, req.SortOrder),
+		tagID,
+		req.Name,
+		req.Color,
+		req.SortOrder,
+	)
 	if err != nil {
 		logger.ErrorWithFields(ctx, err, map[string]interface{}{
 			"tag_id": tagID,
@@ -201,10 +218,7 @@ func (h *TagHandler) UpdateTag(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"data":    tag,
-	})
+	h.respondCommittedTag(ctx, c, tag)
 }
 
 // DeleteTag godoc

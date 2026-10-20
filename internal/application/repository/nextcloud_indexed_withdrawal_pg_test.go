@@ -70,6 +70,7 @@ func TestPostgresNextcloudIndexedWithdrawalFencesAndInventories(t *testing.T) {
 	require.NoError(t, db.Exec(`CREATE TABLE sync_logs (id TEXT PRIMARY KEY, data_source_id TEXT, status TEXT)`).Error)
 	for _, migration := range []string{
 		"000113_nextcloud_event_inbox.up.sql", "000114_nextcloud_event_dispatch.up.sql",
+		"000127_nextcloud_content_leases.up.sql",
 		"000130_nextcloud_event_hint_etag.up.sql",
 	} {
 		script, err := os.ReadFile("../../../migrations/versioned/" + migration)
@@ -150,8 +151,8 @@ func TestPostgresNextcloudIndexedWithdrawalFencesAndInventories(t *testing.T) {
 	oldKnowledge.ID = "old-hard-deleted"
 	oldKnowledge.FilePath = "resource://old-copy"
 	oldKnowledge.Metadata = types.JSON(
-		`{"datasource_id":"` + ds.ID + ("\",\"nextcloud_etag\":\"etag-old\",\"nextcloud_instance_id\":\"" +
-			"instance\"}"))
+		`{"datasource_id":"` + ds.ID + `","nextcloud_etag":"etag-old","nextcloud_instance_id":"instance"}`,
+	)
 	require.NoError(t, db.Create(&oldKnowledge).Error)
 	require.NoError(t, db.Exec(`UPDATE nextcloud_source_versions SET
 		desired_etag = 'etag-old', candidate_knowledge_id = 'old-hard-deleted'
