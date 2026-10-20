@@ -140,8 +140,15 @@ jobs:
       - name: Vet and test
         shell: bash
         run: |
-          mapfile -t pkgs < <(go list ./... | grep -v '/docreader/')
-          go vet "${pkgs[@]}"
+          mapfile -t all_pkgs < <(go list ./... | grep -v '/docreader/')
+          mapfile -t pkgs < <(printf '%s\n' "${all_pkgs[@]}" | grep -v '^github.com/Tencent/WeKnora/internal/handler$')
+          go vet "${all_pkgs[@]}"
+          # The handler suite uses process-wide Redis and stream state. Run it
+          # first in its own process so no other package can leave state behind.
+          if ! go test -json -count=1 -timeout=20m ./internal/handler > /tmp/handler-tests.json; then
+            tail -n 400 /tmp/handler-tests.json
+            exit 1
+          fi
           # Real source/lease fixtures are sequential work within a package.
           # The service package carries the complete no-tag runtime matrix.
           go test -p 1 -count=1 -timeout=75m "${pkgs[@]}"
