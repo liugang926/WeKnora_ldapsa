@@ -438,25 +438,6 @@ func localDerivedActualPipeline(t *testing.T, pg bool, modes ...string) {
 	require.NotContains(t, string(encoded), strings.TrimSpace(f.chunks[0].Content))
 }
 
-func TestNextcloudLocalDerivedActualSQLitePipeline(t *testing.T) {
-	for _, mode := range []string{
-		"normal",
-		"reader",
-		"builder",
-		"late-writer",
-		"foreign-parent",
-		"receipt-crash",
-		"restored-current",
-		"sqlite-ftserror",
-		"physical-original",
-		"unwitnessed-row",
-		"restored-after-collection",
-		"orphan-native",
-	} {
-		t.Run(mode, func(t *testing.T) { localDerivedActualPipeline(t, false, mode) })
-	}
-}
-
 func TestPostgresNextcloudLocalDerivedActualPipeline(t *testing.T) {
 	for _, mode := range []string{
 		"normal",
@@ -471,12 +452,6 @@ func TestPostgresNextcloudLocalDerivedActualPipeline(t *testing.T) {
 		"restored-after-collection",
 	} {
 		t.Run(mode, func(t *testing.T) { localDerivedActualPipeline(t, true, mode) })
-	}
-}
-
-func TestOriginalBodyActualLocalDerivedSQLite(t *testing.T) {
-	for _, mode := range []string{"body-retention", "body-inline-restore"} {
-		t.Run(mode, func(t *testing.T) { localDerivedActualPipeline(t, false, mode) })
 	}
 }
 

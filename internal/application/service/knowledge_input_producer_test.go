@@ -67,6 +67,11 @@ func knowledgeInputServiceFixture(
 		&gorm.Config{DisableForeignKeyConstraintWhenMigrating: true},
 	)
 	require.NoError(t, err)
+	// This fixture owns the newly opened temporary SQLite pool. Register first
+	// so upper-layer material/HTTP/cancel cleanups finish before this last close.
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, sqlDB.Close()) })
 	require.NoError(
 		t,
 		db.AutoMigrate(

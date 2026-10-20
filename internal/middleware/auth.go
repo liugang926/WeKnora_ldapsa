@@ -476,6 +476,9 @@ func isPlatformTenantOptionalAPI(path, method string) bool {
 	if path == "/api/v1/system/admin" || strings.HasPrefix(path, "/api/v1/system/admin/") {
 		return true
 	}
+	if strings.HasPrefix(path, "/api/v1/integrations/nextcloud/connection") {
+		return true
+	}
 	if method == http.MethodGet && (path == "/api/v1/tenants/all" || path == "/api/v1/tenants/search") {
 		return true
 	}

@@ -73,11 +73,12 @@ func (m machinePipelineModels) GetEmbeddingModel(context.Context, string) (embed
 }
 
 type machinePipelineFixture struct {
-	liveHistorySessionID                  string
-	liveHistoryVectorKBID                 string
-	liveHistoryVectorKnowledgeID          string
-	liveHistoryVectorEmbeddingID          string
-	liveHistoryVectorAnswerSHA256         string
+	// These retained outputs are read by the tagged end-to-end history/vector fixtures.
+	liveHistorySessionID                  string //nolint:unused // Used by sqlite_fts5 fixtures.
+	liveHistoryVectorKBID                 string //nolint:unused // Used by sqlite_fts5 fixtures.
+	liveHistoryVectorKnowledgeID          string //nolint:unused // Used by sqlite_fts5 fixtures.
+	liveHistoryVectorEmbeddingID          string //nolint:unused // Used by sqlite_fts5 fixtures.
+	liveHistoryVectorAnswerSHA256         string //nolint:unused // Used by sqlite_fts5 fixtures.
 	externalID, etag                      string
 	f                                     *enrichmentTestFixture
 	source                                *DataSourceService

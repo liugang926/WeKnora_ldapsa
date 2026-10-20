@@ -30,6 +30,12 @@ packaged CLI with all application readers stopped. The app has `AUTO_MIGRATE=fal
 Production releases require local/PR tests and review before
 tagging; image compilation does not replace behavioral acceptance.
 
+The release gate requires the production WeKnora workflows on the exact merged
+`main` commit to succeed. The optional `packages/dsh-weknora` npm harness has a
+known pinned-upstream incompatibility and is intentionally not part of the
+server release gate; its workflow remains independently visible in GitHub
+Actions.
+
 The production server does not need a GitHub token, inbound GitHub webhook,
 build toolchain, Docker Hub access, or a self-hosted Actions runner. The fork is
 public; release assets contain code/images only, never runtime secrets/data.

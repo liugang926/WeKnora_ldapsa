@@ -254,7 +254,10 @@ func TestAuditLogRetentionRunner_PurgesOnTickerCadence(t *testing.T) {
 	// to a specific count, which would be flaky on a slow CI runner.
 	svc := &purgeCountingService{}
 	r := retentionRunnerWithImmediateStartup(svc, 30)
-
+	// This direct-loop fixture must mirror Start's synchronous ownership flag;
+	// otherwise Stop returns early and leaks the 30ms ticker into later tests.
+	r.started.Store(true)
+	t.Cleanup(r.Stop)
 	go r.runLoopWithoutStartupDelay()
 	time.Sleep(100 * time.Millisecond)
 	r.Stop()
@@ -282,6 +285,7 @@ func TestAuditLogRetentionRunner_RunOnceLogsButDoesNotPanicOnError(t *testing.T)
 // Ensure the test stubs satisfy the production type: if the interface
 // drifts, this assignment will fail to compile and tell us immediately.
 var _ interfaces.AuditLogRepository = (*stubAuditRepo)(nil)
+
 var _ interfaces.AuditLogRepository = (*stubAuditRepoForRetention)(nil)
 
 // Sanity check the audit entry struct's fields stay attached to the

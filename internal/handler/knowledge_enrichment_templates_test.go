@@ -64,10 +64,10 @@ func templateHTTPFixture(
 ) (*KnowledgeEnrichmentTemplateHandler, *gorm.DB, *templateHTTPModels, *outputHTTPGroups) {
 	t.Helper()
 	_, db, store, groups, _, _ := collectionHTTPFixture(t)
+	requireCommonHTTPOriginalActorSchema(t, db)
 	require.NoError(t, db.AutoMigrate(&types.Model{}, &types.Tenant{}))
 	require.NoError(t, db.Exec("ALTER TABLE knowledge_bases DROP COLUMN enrichment_templates").Error)
 	for _, file := range []string{
-		"000056_knowledge_original_worker_actor",
 		"000062_knowledge_enrichment_inputs",
 		"000066_knowledge_enrichment_template_origins",
 	} {

@@ -66,7 +66,8 @@ func onboardingError(c *gin.Context, err error) {
 		status = http.StatusNotFound
 	}
 	if errors.Is(err, repository.ErrNextcloudOnboardingConflict) ||
-		errors.Is(err, repository.ErrNextcloudKBBlankUnverified) {
+		errors.Is(err, repository.ErrNextcloudKBBlankUnverified) ||
+		errors.Is(err, repository.ErrNextcloudKBUnavailable) {
 		status = http.StatusConflict
 	}
 	code := "onboarding_unavailable"
@@ -81,6 +82,9 @@ func onboardingError(c *gin.Context, err error) {
 	}
 	if errors.Is(err, repository.ErrNextcloudKBBlankUnverified) {
 		code = "nextcloud_kb_blank_unverified"
+	}
+	if errors.Is(err, repository.ErrNextcloudKBUnavailable) {
+		code = "nextcloud_kb_unavailable"
 	}
 	if errors.Is(err, repository.ErrNextcloudTargetDeleted) {
 		status = http.StatusConflict
@@ -625,4 +629,29 @@ func (h *NextcloudOnboardingHandler) FinalizeTargetMigration(c *gin.Context) {
 		}
 	}
 	c.JSON(http.StatusOK, gin.H{"migration": finalized})
+}
+
+// RevokeConnection disables the credentials issued for the caller's
+// Nextcloud connection. The caller proves possession with its scoped
+// onboarding credential; no long-lived WeKnora administrator token is needed.
+func (h *NextcloudOnboardingHandler) RevokeConnection(c *gin.Context) {
+	credential, ok := h.credential(c)
+	if !ok {
+		return
+	}
+	var req types.NextcloudConnectionRevokeRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_nextcloud_connection"})
+		return
+	}
+	revoked, err := h.store.RevokeConnectionByCredential(
+		c.Request.Context(),
+		credential,
+		req.CredentialIDs,
+	)
+	if err != nil {
+		connectionError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"revoked": revoked})
 }

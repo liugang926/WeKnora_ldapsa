@@ -75,10 +75,64 @@ func installDocumentOnboardingSchema(t *testing.T, db *gorm.DB) {
 	installMachineOnboardingSchema(t, db, db)
 }
 
+// requireSourceAdmissionSchema proves that a reusable fixture installed the
+// complete production event/pairing prerequisite instead of substituting
+// AutoMigrate tables. The trigger check is schema-scoped on PostgreSQL so a
+// leftover disposable test schema cannot satisfy the assertion.
+func requireSourceAdmissionSchema(t *testing.T, db *gorm.DB) {
+	t.Helper()
+	for _, table := range []string{
+		"nextcloud_event_connections",
+		"nextcloud_event_nonces",
+		"nextcloud_event_inbox",
+		"nextcloud_event_checkpoint",
+		"nextcloud_source_pairings",
+		"nextcloud_source_pairing_aborts",
+	} {
+		require.True(t, db.Migrator().HasTable(table), "actual source admission schema incomplete: %s", table)
+	}
+	triggers := []string{
+		"nextcloud_source_pairing_admit_insert",
+		"nextcloud_source_pairing_admit_update",
+		"nextcloud_source_pairing_sync_insert",
+		"nextcloud_source_pairing_sync_update",
+		"nextcloud_paired_kb_delete_guard",
+	}
+	var count int64
+	if db.Name() == "postgres" {
+		require.NoError(t, db.Raw(
+			(`SELECT COUNT(*) FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid `+
+				`JOIN pg_namespace n ON n.oid=c.relnamespace WHERE NOT t.tgisinternal `+
+				`AND n.nspname=current_schema() AND t.tgname IN ?`),
+			triggers,
+		).Scan(&count).Error)
+	} else {
+		triggers = append(triggers, "nextcloud_source_pairing_immutable_update")
+		require.NoError(t, db.Table("sqlite_master").
+			Where("type = ? AND name IN ?", "trigger", triggers).
+			Count(&count).Error)
+	}
+	require.EqualValues(t, len(triggers), count, "actual source pairing guards are incomplete")
+}
+
 // The source-derived fixtures exercise current controls too. Install the same
 // production recovery/processing DDL as the machine fixture, before admission.
 // GC inventory precedes processing migrations which extend its tables.
 func installSourceCurrentControlSchema(t *testing.T, db, migration *gorm.DB) {
+	t.Helper()
+	installSourceCurrentControlSchemaFrom(t, db, migration, true)
+}
+
+// installSourceCurrentControlSchemaAfterAdmissionMigrations continues at the
+// first post-event control after a fixture has executed the real event,
+// pairing and pairing-abort migrations. It never replays event DDL.
+func installSourceCurrentControlSchemaAfterAdmissionMigrations(t *testing.T, db, migration *gorm.DB) {
+	t.Helper()
+	requireSourceAdmissionSchema(t, db)
+	installSourceCurrentControlSchemaFrom(t, db, migration, false)
+}
+
+func installSourceCurrentControlSchemaFrom(t *testing.T, db, migration *gorm.DB, includeEvent bool) {
 	t.Helper()
 	require.NoError(t, db.AutoMigrate(&types.KnowledgeProcessingSpan{}))
 	directory := "sqlite"
@@ -110,6 +164,9 @@ func installSourceCurrentControlSchema(t *testing.T, db, migration *gorm.DB) {
 			"000160_nextcloud_recovery_build_leases",
 			"000161_nextcloud_graph_recovery_fence",
 		}
+	}
+	if !includeEvent {
+		names = names[1:]
 	}
 	for _, name := range names {
 		ddl, err := os.ReadFile("../../../migrations/" + directory + "/" + name + ".up.sql")

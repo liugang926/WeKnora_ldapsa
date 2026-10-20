@@ -67,11 +67,17 @@ func sourceBuildFixture(
 	require.NoError(t, e)
 	require.NoError(t, f.db.Exec(string(data)).Error)
 	require.NoError(t, f.store.UpdateKnowledgeBaseWithInput(repository.WithIndependentKnowledgeInput(f.ctx), &kb))
-	require.NoError(t, f.db.AutoMigrate(&types.DataSource{}, &repository.NextcloudSourcePairing{}))
+	// Install the same source admission prerequisites as production before any
+	// Nextcloud data source exists. Pairing tables and their guards must come
+	// from versioned SQL, never AutoMigrate.
+	require.NoError(t, f.db.AutoMigrate(&types.DataSource{}, &types.SyncLog{}))
 	require.NoError(t, f.db.Exec("DROP TABLE nextcloud_source_revisions").Error)
 	require.NoError(t, f.db.Exec("DROP TABLE nextcloud_source_versions").Error)
 	paths := []string{
 		"000031_nextcloud_source_versions",
+		"000032_nextcloud_event_inbox",
+		"000035_nextcloud_source_pairing",
+		"000039_nextcloud_source_pairing_abort",
 		"000045_nextcloud_source_revisions",
 		"000046_nextcloud_content_leases",
 		"000047_nextcloud_candidate_retry",
@@ -82,6 +88,9 @@ func sourceBuildFixture(
 	if pg {
 		paths = []string{
 			"000112_nextcloud_source_versions",
+			"000113_nextcloud_event_inbox",
+			"000116_nextcloud_source_pairing",
+			"000120_nextcloud_source_pairing_abort",
 			"000126_nextcloud_source_revisions",
 			"000127_nextcloud_content_leases",
 			"000128_nextcloud_candidate_retry",
@@ -98,7 +107,7 @@ func sourceBuildFixture(
 		require.NoError(t, e)
 		require.NoError(t, migration.Exec(string(data)).Error)
 	}
-	installSourceCurrentControlSchema(t, f.db, migration)
+	installSourceCurrentControlSchemaAfterAdmissionMigrations(t, f.db, migration)
 	allow := &atomic.Bool{}
 	allow.Store(true)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -161,7 +170,7 @@ func sourceBuildFixture(
 		TenantID:        7,
 		KnowledgeBaseID: "kb",
 		Type:            types.ConnectorTypeNextcloud,
-		Status:          types.DataSourceStatusActive,
+		Status:          types.DataSourceStatusPaused,
 		Config:          config,
 	}
 	require.NoError(t, f.db.Create(ds).Error)
@@ -172,18 +181,28 @@ func sourceBuildFixture(
 		t,
 		f.db.Create(
 			&repository.NextcloudSourcePairing{
-				OperationID:     "original-pair",
-				TenantID:        7,
-				KnowledgeBaseID: "kb",
-				DataSourceID:    ds.ID,
-				InstanceID:      "instance",
-				BindingID:       binding,
-				BaseURL:         base,
-				ConfigSHA:       sha,
-				State:           "active",
+				OperationID:      "original-pair",
+				TenantID:         7,
+				KnowledgeBaseID:  "kb",
+				DataSourceID:     ds.ID,
+				InstanceID:       "instance",
+				BindingID:        binding,
+				BaseURL:          base,
+				ConfigSHA:        sha,
+				PublicationEpoch: 1,
+				KeyID:            "local_test",
+				State:            "active",
 			},
 		).Error,
 	)
+	require.NoError(
+		t,
+		f.db.Model(&types.DataSource{}).
+			Where("id = ? AND tenant_id = ?", ds.ID, ds.TenantID).
+			Update("status", types.DataSourceStatusActive).Error,
+	)
+	require.NoError(t, f.db.Where("id = ?", ds.ID).Take(ds).Error)
+	require.Equal(t, types.DataSourceStatusActive, ds.Status)
 	metadata, e := json.Marshal(
 		map[string]string{
 			"datasource_id":         ds.ID,

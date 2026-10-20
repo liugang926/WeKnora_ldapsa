@@ -141,7 +141,7 @@ func (s *NextcloudOnboardingStore) beginOnboardingExistingConfigurationRead(
 	if req.Mode != "existing" || req.KnowledgeBaseID == "" {
 		return nil, ErrNextcloudOnboardingDenied
 	}
-	if _, err := onboardingBlankTargetMetadata(s.db.WithContext(ctx), c.TenantID, req.KnowledgeBaseID); err != nil {
+	if _, _, err := onboardingExistingTarget(s.db.WithContext(ctx), c.TenantID, req.KnowledgeBaseID); err != nil {
 		return nil, err
 	}
 	_, lineage, err := onboardingConfigurationMetadata(s.db.WithContext(ctx), c.TenantID, req.KnowledgeBaseID)

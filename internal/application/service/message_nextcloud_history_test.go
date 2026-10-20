@@ -8,6 +8,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/application/access"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
+	"github.com/stretchr/testify/require"
 )
 
 type messageHistorySources struct {
@@ -27,46 +28,83 @@ func (s messageHistorySources) HasEverNextcloudSourceForTenant(context.Context, 
 	return false, s.err
 }
 
-func TestHistoryFilteringRemovesRevokedAnswerAndSearchPartner(t *testing.T) {
-	sources := messageHistorySources{byKB: map[string][]*types.DataSource{
-		"source-kb": {{Type: types.ConnectorTypeNextcloud}},
-		"web-kb":    {{Type: "web"}},
-	}}
-	s := &messageService{historyGuard: access.NewNextcloudHistoryGuard(nil, sources, nil)}
-	ctx := context.Background()
-	question := &types.Message{ID: "q", SessionID: "session", RequestID: "turn", Role: "user", Content: "question"}
+// The positive projection comes from actual producer writes and an admitted
+// private material read. Unknown legacy answers below never receive a proof.
+func historyFilteringActualOrdinary(t *testing.T) (
+	*messageService, context.Context, *types.Message, *types.Message,
+) {
+	t.Helper()
+	messages, _, _, _, ctx, session := messageMaterialActualFixture(t)
+	ordinaryQuestion, ordinary := produceActualMessagePair(ctx, t, messages, session)
+	question, err := messages.CreateMessage(ctx, &types.Message{
+		SessionID: session.ID, RequestID: "unknown-filter-partner", Role: "user",
+		Content: "actual independently authored question", IsCompleted: true,
+	})
+	require.NoError(t, err)
+	read, err := messages.beginMessageMaterialRead(ctx, types.MessageMaterialReadRequest{
+		TenantID: 7, SessionID: session.ID,
+		MessageIDs: []string{ordinaryQuestion.ID, ordinary.ID, question.ID},
+	})
+	require.NoError(t, err)
+	t.Cleanup(read.Close)
+	var originalQuestion, originalOrdinary *types.Message
+	for _, message := range read.snapshot.Messages {
+		switch message.ID {
+		case question.ID:
+			originalQuestion = message
+		case ordinary.ID:
+			originalOrdinary = message
+		}
+	}
+	require.NotNil(t, originalQuestion)
+	require.NotNil(t, originalOrdinary)
+	require.NoError(t, originalOrdinary.SourceLineage.RequireComplete())
+	require.NoError(t, messages.CheckMessagePublication(read.Context(), originalOrdinary))
+	require.NoError(t, read.Recheck())
+	return messages, read.Context(), originalQuestion, originalOrdinary
+}
+
+func TestHistoryFilteringRemovesUnknownAnswerAndSearchPartner(t *testing.T) {
+	s, ctx, question, ordinary := historyFilteringActualOrdinary(t)
+	// This cached broad-scope legacy row has no original envelope. The old
+	// sourcesMap fixture never represented an actual source authorization or
+	// revocation; actual signed-source withdrawal is covered by native HTTP.
 	answer := &types.Message{
-		ID: "a", SessionID: "session", RequestID: "turn", Role: "assistant", Content: "secret answer",
+		ID: "unknown-answer", SessionID: question.SessionID, RequestID: question.RequestID,
+		Role: "assistant", Content: "unproved secret answer",
 		ExecutionContext: types.MessageExecutionContext{KnowledgeBaseIDs: []string{"source-kb"}},
 	}
-	ordinary := &types.Message{
-		ID: "ordinary", SessionID: "session", RequestID: "other", Role: "assistant", Content: "ordinary answer",
-		ExecutionContext: types.MessageExecutionContext{KnowledgeBaseIDs: []string{"web-kb"}},
-	}
+	require.Error(t, answer.SourceLineage.RequireComplete())
 	filtered, err := s.filterHistoryMessages(ctx, []*types.Message{question, answer, ordinary})
-	if err != nil || len(filtered) != 2 || filtered[0] != question || filtered[1] != ordinary {
-		t.Fatalf("history filter = %#v, err=%v", filtered, err)
-	}
+	require.NoError(t, err)
+	require.Len(t, filtered, 2)
+	require.Equal(t, question.ID, filtered[0].ID)
+	require.Equal(t, question.Content, filtered[0].Content)
+	require.Empty(t, filtered[0].KnowledgeReferences)
+	require.Empty(t, filtered[0].AgentSteps)
+	require.Nil(t, filtered[0].SourceLineage, "raw-user projection must not retain generated metadata")
+	require.Same(t, ordinary, filtered[1])
 	items := []*types.MessageSearchResultItem{
 		{MessageWithSession: types.MessageWithSession{Message: *question}},
 		{MessageWithSession: types.MessageWithSession{Message: *answer}},
 		{MessageWithSession: types.MessageWithSession{Message: *ordinary}},
 	}
 	search, err := s.filterHistoricalSearchPairs(ctx, items)
-	if err != nil || len(search) != 1 || search[0].ID != ordinary.ID {
-		t.Fatalf("search filter = %#v, err=%v", search, err)
-	}
+	require.NoError(t, err)
+	require.Len(t, search, 1, "the unproved answer's harmless search partner must not reintroduce it")
+	require.Equal(t, ordinary.ID, search[0].ID)
+	require.Equal(t, ordinary.Content, search[0].Content)
 }
 
-func TestHistoryFilteringDoesNotServeWhenSourceCheckUnavailable(t *testing.T) {
-	s := &messageService{historyGuard: access.NewNextcloudHistoryGuard(nil,
-		messageHistorySources{err: errors.New("database down")}, nil)}
-	_, err := s.filterHistoryMessages(context.Background(), []*types.Message{{
-		Role: "assistant", ExecutionContext: types.MessageExecutionContext{KnowledgeBaseIDs: []string{"source-kb"}},
-	}})
-	if !errors.Is(err, access.ErrNextcloudPublicationUnavailable) {
-		t.Fatalf("unavailable verifier must not serve answer: %v", err)
-	}
+func TestHistoryFilteringDoesNotServeWhenTypedVerifierUnavailable(t *testing.T) {
+	s, ctx, _, ordinary := historyFilteringActualOrdinary(t)
+	// Legacy source probes cannot replace the current typed publication port.
+	s.historyGuard = access.NewNextcloudHistoryGuard(nil,
+		messageHistorySources{err: errors.New("database down")}, nil)
+	s.sourceLineageGuard = nil
+	rows, err := s.filterHistoryMessages(ctx, []*types.Message{ordinary})
+	require.ErrorIs(t, err, access.ErrNextcloudPublicationUnavailable)
+	require.Nil(t, rows)
 }
 
 func (s messageHistorySources) HasEverNextcloudSourceForKnowledgeBase(_ context.Context, id string) (bool, error) {
@@ -93,15 +131,13 @@ func (legacyHistorySourceLookup) HasEverNextcloudSourceForTenant(context.Context
 	return false, nil
 }
 
-func TestHistoryFilteringNeedsDurableKBSourceVerifier(t *testing.T) {
-	s := &messageService{historyGuard: access.NewNextcloudHistoryGuard(nil, legacyHistorySourceLookup{}, nil)}
-	_, err := s.filterHistoryMessages(
-		context.Background(),
-		[]*types.Message{
-			{Role: "assistant", ExecutionContext: types.MessageExecutionContext{KnowledgeBaseIDs: []string{"kb"}}},
-		},
-	)
-	if !errors.Is(err, access.ErrNextcloudPublicationUnavailable) {
-		t.Fatalf("legacy DS-only verifier admitted saved broad history: %v", err)
-	}
+func TestHistoryFilteringNeedsTypedCurrentActorVerifier(t *testing.T) {
+	s, ctx, _, ordinary := historyFilteringActualOrdinary(t)
+	s.historyGuard = access.NewNextcloudHistoryGuard(nil, legacyHistorySourceLookup{}, nil)
+	// Even a complete original envelope still requires the durable SQL actor
+	// capability. A source-empty legacy lookup is not a substitute for it.
+	s.sourceLineageGuard = access.NewNextcloudSourceLineageGuard(nil, s.kbService, nil, nil, nil, nil)
+	rows, err := s.filterHistoryMessages(ctx, []*types.Message{ordinary})
+	require.ErrorIs(t, err, access.ErrNextcloudPublicationUnavailable)
+	require.Nil(t, rows)
 }

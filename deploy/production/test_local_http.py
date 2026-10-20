@@ -55,9 +55,12 @@ class LocalHTTPTest(unittest.TestCase):
 
         class Redirect(BaseHTTPRequestHandler):
             def do_POST(self):
+                content_length = int(self.headers.get('Content-Length', '0'))
+                self.rfile.read(content_length)
                 reached.append(self.path)
                 self.send_response(302)
                 self.send_header('Location', self.server.destination)
+                self.send_header('Content-Length', '0')
                 self.end_headers()
 
             def do_GET(self):

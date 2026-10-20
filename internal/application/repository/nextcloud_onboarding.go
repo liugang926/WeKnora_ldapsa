@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -25,6 +26,9 @@ var (
 	ErrNextcloudOnboardingConflict = errors.New("nextcloud_onboarding_conflict")
 	// ErrNextcloudKBBlankUnverified reports that an empty knowledge base has not been proven.
 	ErrNextcloudKBBlankUnverified = errors.New("knowledge_base_blank_unverified")
+	// ErrNextcloudKBUnavailable reports that an existing knowledge base cannot
+	// be safely attached to a Nextcloud source.
+	ErrNextcloudKBUnavailable = errors.New("knowledge_base_unavailable")
 )
 
 // NextcloudOnboardingStore represents nextcloud onboarding store repository data.
@@ -96,6 +100,16 @@ func (s *NextcloudOnboardingStore) Actor(
 		Error; err != nil {
 		return "", ErrNextcloudOnboardingDenied
 	}
+	// A connection-issued credential is held only by the Nextcloud server. The
+	// server verifies the current folder manager before sending this actor; the
+	// directory row and live AD identity above remain mandatory. This is the
+	// multi-workspace equivalent of an explicit per-user delegation.
+	if strings.HasPrefix(c.ID, "nc-conn-") {
+		if i.UserID != nil && *i.UserID != "" {
+			return *i.UserID, nil
+		}
+		return "", nil
+	}
 	if i.UserID == nil || *i.UserID == "" {
 		var delegated int64
 		if err := tx.Model(&types.NextcloudOnboardingDelegation{}).
@@ -166,6 +180,37 @@ func blankKB(tx *gorm.DB, tenant uint64, id string) (*types.KnowledgeBase, error
 	return &kb, nil
 }
 
+// onboardingExistingTarget admits an existing document knowledge base without
+// requiring it to be empty. The owning knowledge base may already contain
+// content; attaching a Nextcloud source leaves that content in place while the
+// source guard prevents a second source from taking over the same KB.
+func onboardingExistingTarget(tx *gorm.DB, tenant uint64, id string) (*types.KnowledgeBase, int64, error) {
+	var kb types.KnowledgeBase
+	if err := tx.Where("tenant_id=? AND id=? AND deleted_at IS NULL", tenant, id).Take(&kb).Error; err != nil {
+		return nil, 0, ErrNextcloudKBUnavailable
+	}
+	if kb.Type != types.KnowledgeBaseTypeDocument || kb.IsTemporary || kb.EverHadNextcloudSource {
+		return nil, 0, ErrNextcloudKBUnavailable
+	}
+	var n int64
+	if err := tx.Model(&types.NextcloudOnboardingOperation{}).
+		Where("tenant_id=? AND knowledge_base_id=?", tenant, id).
+		Count(&n).
+		Error; err != nil || n != 0 {
+		return nil, 0, ErrNextcloudKBUnavailable
+	}
+	if _, _, err := onboardingConfigurationMetadata(tx, tenant, id); err != nil {
+		return nil, 0, ErrNextcloudKBUnavailable
+	}
+	if err := tx.Table("knowledges").
+		Where("tenant_id=? AND knowledge_base_id=?", tenant, id).
+		Count(&n).
+		Error; err != nil {
+		return nil, 0, ErrNextcloudKBUnavailable
+	}
+	return &kb, n, nil
+}
+
 // Candidates returns the candidates result.
 func (s *NextcloudOnboardingStore) Candidates(
 	ctx context.Context,
@@ -184,9 +229,25 @@ func (s *NextcloudOnboardingStore) Candidates(
 	}
 	out := []map[string]string{}
 	for _, kb := range rows {
-		if _, err := blankKB(s.db.WithContext(ctx), c.TenantID, kb.ID); err == nil {
-			out = append(out, map[string]string{"id": kb.ID, "name": kb.Name, "processing_template_id": c.TemplateKBID})
+		if kb.ID == c.TemplateKBID {
+			// The processing template must remain available for creating new
+			// dedicated knowledge bases.
+			continue
 		}
+		actual, contentCount, err := onboardingExistingTarget(s.db.WithContext(ctx), c.TenantID, kb.ID)
+		if err != nil {
+			continue
+		}
+		if err := validateOnboardingTemplate(s.db.WithContext(ctx), actual); err != nil {
+			continue
+		}
+		out = append(out, map[string]string{
+			"id":                     kb.ID,
+			"name":                   kb.Name,
+			"processing_template_id": c.TemplateKBID,
+			"content_count":          strconv.FormatInt(contentCount, 10),
+			"existing":               "true",
+		})
 	}
 	return out, nil
 }

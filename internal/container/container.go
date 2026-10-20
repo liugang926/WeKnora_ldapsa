@@ -845,6 +845,7 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	must(container.Provide(handler.NewNextcloudEventConnectionHandler))
 	must(container.Provide(handler.NewNextcloudSourcePairingHandler))
 	must(container.Provide(handler.NewNextcloudOnboardingHandler))
+	must(container.Provide(handler.NewNextcloudConnectionHandler))
 	must(container.Provide(handler.NewNextcloudGCHandler))
 	must(container.Provide(handler.NewNextcloudCapacityHandler))
 	must(container.Invoke(handler.ConfigureDataSourceCredentialsGroupAccess))

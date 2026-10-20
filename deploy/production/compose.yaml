@@ -53,6 +53,9 @@ services:
     environment:
       AUTO_MIGRATE: 'false'
       AUTO_RECOVER_DIRTY: 'false'
+      # The internal model gateway resolves to a private enterprise address.
+      # Whitelist only this exact host; all other SSRF protections stay on.
+      SSRF_WHITELIST_EXTRA: 'llmproxy.tianjizn.com'
       WEKNORA_ORIGINAL_BODY_JOURNAL_DIRECTORY: /data/body-journal
       WEKNORA_ORIGINAL_BODY_JOURNAL_KEY: /data/body-key/hmac.key
       WEKNORA_ORIGINAL_BODY_JOURNAL_PIN: /data/body-pin/pin.json
@@ -61,6 +64,7 @@ services:
       - /data/weknora-production/retention/journal:/data/body-journal
       - /data/weknora-production/retention/key:/data/body-key:ro
       - /data/weknora-production/retention/pin:/data/body-pin
+      - ./builtin_models.yaml:/app/config/builtin_models.yaml:ro
     depends_on:
       postgres: {condition: service_healthy}
       redis: {condition: service_healthy}

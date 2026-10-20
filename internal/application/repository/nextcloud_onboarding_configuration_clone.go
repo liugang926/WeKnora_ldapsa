@@ -148,7 +148,7 @@ func writeOnboardingConfigurationClone(
 			q.RowsAffected != 1 {
 			return nil, ErrNextcloudKBBlankUnverified
 		}
-		if _, err := onboardingBlankTargetMetadata(tx, c.TenantID, req.KnowledgeBaseID); err != nil {
+		if _, _, err := onboardingExistingTarget(tx, c.TenantID, req.KnowledgeBaseID); err != nil {
 			return nil, err
 		}
 		if err := requireNextcloudTargetOpenInTx(tx, c.TenantID, req.KnowledgeBaseID); err != nil {

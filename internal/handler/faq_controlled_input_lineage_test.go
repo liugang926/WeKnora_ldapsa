@@ -18,6 +18,7 @@ import (
 func TestFAQActualControlledDerivativeHTTPAndTagCountWithdraw(t *testing.T) {
 	parent, calls := collectionNextcloudHTTPFixture(t, "allowed")
 	db := parent.kbService.(collectionHTTPKB).db
+	requireCommonHTTPOriginalActorSchema(t, db)
 	store := repository.NewKnowledgeInputProvenanceStore(db)
 	groups := service.NewGroupAccessService(repository.NewGroupAccessRepository(db))
 	repository.ConfigureKnowledgeInputActorGroupAccess(store, groups)
@@ -43,7 +44,6 @@ func TestFAQActualControlledDerivativeHTTPAndTagCountWithdraw(t *testing.T) {
 	bounded, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	for _, file := range []string{
-		"000056_knowledge_original_worker_actor.up.sql",
 		"000060_tag_statistics_checkpoints.up.sql",
 		"000063_faq_original_entry_inputs.up.sql",
 	} {

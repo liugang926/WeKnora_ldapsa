@@ -2,6 +2,7 @@ package router
 
 import (
 	"context"
+	"net/http"
 	"os"
 	"strings"
 	"time"
@@ -22,6 +23,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/mcpserver"
 	"github.com/Tencent/WeKnora/internal/middleware"
 	"github.com/Tencent/WeKnora/internal/tracing/langfuse"
+	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 
 	_ "github.com/Tencent/WeKnora/docs" // swagger docs
@@ -101,6 +103,7 @@ type RouterParams struct {
 	NextcloudEventConnectionHandler    *handler.NextcloudEventConnectionHandler
 	NextcloudSourcePairingHandler      *handler.NextcloudSourcePairingHandler
 	NextcloudOnboardingHandler         *handler.NextcloudOnboardingHandler
+	NextcloudConnectionHandler         *handler.NextcloudConnectionHandler
 	NextcloudOnboardingStore           *repository.NextcloudOnboardingStore
 	NextcloudGCHandler                 *handler.NextcloudGCHandler
 	NextcloudCapacityHandler           *handler.NextcloudCapacityHandler
@@ -205,6 +208,7 @@ func NewRouter(params RouterParams) *gin.Engine {
 		group.POST("/operations/:operation_id/root-migrations", h.RootMigration)
 		group.POST("/operations/:operation_id/target-migrations", h.TargetMigration)
 		group.POST("/operations/:operation_id/target-migrations/:migration_id/finalize", h.FinalizeTargetMigration)
+		group.POST("/connection/revoke", h.RevokeConnection)
 	}
 	if params.NextcloudEventHandler != nil {
 		r.POST("/api/v1/integrations/nextcloud/events", params.NextcloudEventHandler.Receive)
@@ -334,6 +338,33 @@ func NewRouter(params RouterParams) *gin.Engine {
 		v1.Use(rbacGuards.apiKeyAuthorizer.Middleware())
 
 		RegisterAuthRoutes(v1, params.AuthHandler, rbacGuards)
+		if params.NextcloudConnectionHandler != nil {
+			connection := v1.Group("/integrations/nextcloud/connection")
+			rbacGuards.apiKeyRoute(
+				connection,
+				http.MethodGet,
+				"/workspaces",
+				apiKeyPlatform(
+					types.APIKeyCapabilitySystemTenantsRead,
+					types.APIKeyCapabilitySystemTenantsManage,
+				),
+				params.NextcloudConnectionHandler.Workspaces,
+			)
+			rbacGuards.apiKeyRoute(
+				connection,
+				http.MethodPost,
+				"/authorize",
+				apiKeyPlatform(types.APIKeyCapabilitySystemTenantsManage),
+				params.NextcloudConnectionHandler.Authorize,
+			)
+			rbacGuards.apiKeyRoute(
+				connection,
+				http.MethodPost,
+				"/revoke",
+				apiKeyPlatform(types.APIKeyCapabilitySystemTenantsManage),
+				params.NextcloudConnectionHandler.Revoke,
+			)
+		}
 		if params.DirectoryHandler != nil {
 			v1.POST(
 				"/auth/ldap/login",

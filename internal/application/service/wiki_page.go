@@ -42,13 +42,13 @@ func stripWikiPageInlineChunkCitations(page *types.WikiPage) {
 
 func (s *wikiPageService) rejectNextcloudSource(ctx context.Context, kbID string) error {
 	if s == nil || strings.TrimSpace(kbID) == "" {
-		return fmt.Errorf("%w: invalid Wiki scope", ErrNextcloudDerivedContent)
+		return nextcloudDerivedContentContext("invalid Wiki scope")
 	}
 	checker, ok := s.kbService.(interface {
 		RejectNextcloudDerivedKB(context.Context, string) error
 	})
 	if !ok || checker == nil {
-		return fmt.Errorf("%w: Wiki source policy unavailable", ErrNextcloudDerivedContent)
+		return nextcloudDerivedContentContext("Wiki source policy unavailable")
 	}
 	return checker.RejectNextcloudDerivedKB(ctx, kbID)
 }
@@ -82,7 +82,7 @@ func NewWikiPageService(
 // CreatePage creates a new wiki page
 func (s *wikiPageService) CreatePage(ctx context.Context, page *types.WikiPage) (*types.WikiPage, error) {
 	if page == nil {
-		return nil, fmt.Errorf("%w: nil Wiki input", ErrNextcloudDerivedContent)
+		return nil, nextcloudDerivedContentContext("nil Wiki input")
 	}
 
 	if err := s.rejectNextcloudSource(ctx, page.KnowledgeBaseID); err != nil {
@@ -141,7 +141,7 @@ func (s *wikiPageService) CreatePage(ctx context.Context, page *types.WikiPage) 
 // untouched so consumers can treat a bump as a real edit signal.
 func (s *wikiPageService) UpdatePage(ctx context.Context, page *types.WikiPage) (*types.WikiPage, error) {
 	if page == nil {
-		return nil, fmt.Errorf("%w: nil Wiki input", ErrNextcloudDerivedContent)
+		return nil, nextcloudDerivedContentContext("nil Wiki input")
 	}
 
 	if err := s.rejectNextcloudSource(ctx, page.KnowledgeBaseID); err != nil {
@@ -228,7 +228,7 @@ func (s *wikiPageService) UpdatePage(ctx context.Context, page *types.WikiPage) 
 // UpdatePageMeta updates only metadata (status, source_refs) without version bump or link re-parse.
 func (s *wikiPageService) UpdatePageMeta(ctx context.Context, page *types.WikiPage) error {
 	if page == nil {
-		return fmt.Errorf("%w: nil Wiki input", ErrNextcloudDerivedContent)
+		return nextcloudDerivedContentContext("nil Wiki input")
 	}
 
 	if err := s.rejectNextcloudSource(ctx, page.KnowledgeBaseID); err != nil {
@@ -239,14 +239,14 @@ func (s *wikiPageService) UpdatePageMeta(ctx context.Context, page *types.WikiPa
 		GetPageScopeByID(context.Context, string) (string, error)
 	})
 	if !ok {
-		return fmt.Errorf("%w: Wiki scope lookup unavailable", ErrNextcloudDerivedContent)
+		return nextcloudDerivedContentContext("Wiki scope lookup unavailable")
 	}
 	actualKB, err := resolver.GetPageScopeByID(ctx, page.ID)
 	if err != nil {
 		return err
 	}
 	if actualKB != page.KnowledgeBaseID {
-		return fmt.Errorf("%w: Wiki scope changed", ErrNextcloudDerivedContent)
+		return nextcloudDerivedContentContext("Wiki scope changed")
 	}
 	if err := s.rejectNextcloudSource(ctx, actualKB); err != nil {
 		return err
@@ -264,7 +264,7 @@ func (s *wikiPageService) UpdatePageMeta(ctx context.Context, page *types.WikiPa
 // consistent — only the user-facing revision counter is preserved.
 func (s *wikiPageService) UpdateAutoLinkedContent(ctx context.Context, page *types.WikiPage) error {
 	if page == nil {
-		return fmt.Errorf("%w: nil Wiki input", ErrNextcloudDerivedContent)
+		return nextcloudDerivedContentContext("nil Wiki input")
 	}
 
 	if err := s.rejectNextcloudSource(ctx, page.KnowledgeBaseID); err != nil {
@@ -434,7 +434,7 @@ func (s *wikiPageService) GetPageByID(ctx context.Context, id string) (*types.Wi
 		GetPageScopeByID(context.Context, string) (string, error)
 	})
 	if !ok {
-		return nil, fmt.Errorf("%w: Wiki scope lookup unavailable", ErrNextcloudDerivedContent)
+		return nil, nextcloudDerivedContentContext("Wiki scope lookup unavailable")
 	}
 	kbID, err := resolver.GetPageScopeByID(ctx, id)
 	if err != nil {
@@ -448,7 +448,7 @@ func (s *wikiPageService) GetPageByID(ctx context.Context, id string) (*types.Wi
 		return nil, err
 	}
 	if page == nil || page.KnowledgeBaseID != kbID {
-		return nil, fmt.Errorf("%w: Wiki scope changed", ErrNextcloudDerivedContent)
+		return nil, nextcloudDerivedContentContext("Wiki scope changed")
 	}
 	stripWikiPageInlineChunkCitations(page)
 	return page, nil
@@ -685,7 +685,7 @@ func (s *wikiPageService) GetIndexView(
 // (cache layer + DB-side projection) — see CLAUDE.md plan.
 func (s *wikiPageService) GetGraph(ctx context.Context, req *types.WikiGraphRequest) (*types.WikiGraphData, error) {
 	if req == nil {
-		return nil, fmt.Errorf("%w: nil Wiki input", ErrNextcloudDerivedContent)
+		return nil, nextcloudDerivedContentContext("nil Wiki input")
 	}
 
 	if err := s.rejectNextcloudSource(ctx, req.KnowledgeBaseID); err != nil {
@@ -1612,7 +1612,7 @@ func removeString(slice []string, s string) types.StringArray {
 // CreateIssue logs a new issue for a wiki page
 func (s *wikiPageService) CreateIssue(ctx context.Context, issue *types.WikiPageIssue) (*types.WikiPageIssue, error) {
 	if issue == nil {
-		return nil, fmt.Errorf("%w: nil Wiki input", ErrNextcloudDerivedContent)
+		return nil, nextcloudDerivedContentContext("nil Wiki input")
 	}
 
 	if err := s.rejectNextcloudSource(ctx, issue.KnowledgeBaseID); err != nil {

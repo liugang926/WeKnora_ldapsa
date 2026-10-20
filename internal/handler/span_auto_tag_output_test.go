@@ -84,9 +84,9 @@ func TestAutoTagActualAsynqBeginModelEndOriginalSpanHTTP(t *testing.T) {
 				t,
 				change,
 				func(db *gorm.DB, store *repository.KnowledgeInputProvenanceStore) {
+					requireCommonHTTPOriginalActorSchema(t, db)
 					require.NoError(t, db.AutoMigrate(&types.Tenant{}, &types.Model{}))
 					for _, name := range []string{
-						"000056_knowledge_original_worker_actor",
 						"000057_processing_span_original_inputs",
 						"000062_knowledge_enrichment_inputs",
 					} {

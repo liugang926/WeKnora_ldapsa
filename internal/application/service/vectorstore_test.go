@@ -142,30 +142,62 @@ func (m *mockEngineService) Retrieve(_ context.Context, _ types.RetrieveParams) 
 	return nil, nil
 }
 func (m *mockEngineService) Support() []types.RetrieverType { return nil }
-func (m *mockEngineService) Index(_ context.Context, _ embedding.Embedder, _ *types.IndexInfo, _ []types.RetrieverType) error {
+
+func (m *mockEngineService) Index(
+	_ context.Context,
+	_ embedding.Embedder,
+	_ *types.IndexInfo,
+	_ []types.RetrieverType,
+) error {
 	return nil
 }
-func (m *mockEngineService) BatchIndex(_ context.Context, _ embedding.Embedder, _ []*types.IndexInfo, _ []types.RetrieverType) error {
+
+func (m *mockEngineService) BatchIndex(
+	_ context.Context,
+	_ embedding.Embedder,
+	_ []*types.IndexInfo,
+	_ []types.RetrieverType,
+) error {
 	return nil
 }
-func (m *mockEngineService) EstimateStorageSize(_ context.Context, _ embedding.Embedder, _ []*types.IndexInfo, _ []types.RetrieverType) int64 {
+
+func (m *mockEngineService) EstimateStorageSize(
+	_ context.Context,
+	_ embedding.Embedder,
+	_ []*types.IndexInfo,
+	_ []types.RetrieverType,
+) int64 {
 	return 0
 }
-func (m *mockEngineService) CopyIndices(_ context.Context, _ string, _ map[string]string, _ map[string]string, _ string, _ int, _ string) error {
+
+func (m *mockEngineService) CopyIndices(
+	_ context.Context,
+	_ string,
+	_ map[string]string,
+	_ map[string]string,
+	_ string,
+	_ int,
+	_ string,
+) error {
 	return nil
 }
+
 func (m *mockEngineService) DeleteByChunkIDList(_ context.Context, _ []string, _ int, _ string) error {
 	return nil
 }
+
 func (m *mockEngineService) DeleteBySourceIDList(_ context.Context, _ []string, _ int, _ string) error {
 	return nil
 }
+
 func (m *mockEngineService) DeleteByKnowledgeIDList(_ context.Context, _ []string, _ int, _ string) error {
 	return nil
 }
+
 func (m *mockEngineService) BatchUpdateChunkEnabledStatus(_ context.Context, _ map[string]bool) error {
 	return nil
 }
+
 func (m *mockEngineService) BatchUpdateChunkTagID(_ context.Context, _ map[string]string) error {
 	return nil
 }
@@ -840,6 +872,7 @@ CREATE TABLE IF NOT EXISTS knowledge_bases (
     extract_config TEXT NULL DEFAULT NULL,
     faq_config TEXT,
     question_generation_config TEXT NULL,
+    enrichment_templates TEXT NULL,
     auto_tag_config TEXT NULL,
     is_temporary BOOLEAN NOT NULL DEFAULT 0,
     is_pinned INTEGER NOT NULL DEFAULT 0,
@@ -882,6 +915,7 @@ type realStoreRepo struct{ db *gorm.DB }
 func (r *realStoreRepo) Create(ctx context.Context, s *types.VectorStore) error {
 	return r.db.WithContext(ctx).Create(s).Error
 }
+
 func (r *realStoreRepo) GetByID(ctx context.Context, tenantID uint64, id string) (*types.VectorStore, error) {
 	var s types.VectorStore
 	err := r.db.WithContext(ctx).Where("id = ? AND tenant_id = ?", id, tenantID).First(&s).Error
@@ -893,21 +927,32 @@ func (r *realStoreRepo) GetByID(ctx context.Context, tenantID uint64, id string)
 	}
 	return &s, nil
 }
+
 func (r *realStoreRepo) List(ctx context.Context, tenantID uint64) ([]*types.VectorStore, error) {
 	var stores []*types.VectorStore
 	err := r.db.WithContext(ctx).Where("tenant_id = ?", tenantID).Find(&stores).Error
 	return stores, err
 }
+
 func (r *realStoreRepo) Update(_ context.Context, _ *types.VectorStore) error {
 	return nil
 }
+
 func (r *realStoreRepo) UpdateConnectionConfig(_ context.Context, _ *types.VectorStore) error {
 	return nil
 }
+
 func (r *realStoreRepo) Delete(ctx context.Context, tenantID uint64, id string) error {
 	return r.db.WithContext(ctx).Where("id = ? AND tenant_id = ?", id, tenantID).Delete(&types.VectorStore{}).Error
 }
-func (r *realStoreRepo) ExistsByEndpointAndIndex(_ context.Context, _ uint64, _ types.RetrieverEngineType, _ string, _ string) (bool, error) {
+
+func (r *realStoreRepo) ExistsByEndpointAndIndex(
+	_ context.Context,
+	_ uint64,
+	_ types.RetrieverEngineType,
+	_ string,
+	_ string,
+) (bool, error) {
 	return false, nil
 }
 
@@ -926,7 +971,12 @@ func (r *realKBRepo) UpdateKnowledgeBaseGeneratedProfile(
 		Update("generated_profile", value).Error
 }
 
-func (r *realKBRepo) CountByVectorStoreID(ctx context.Context, db *gorm.DB, tenantID uint64, storeID string) (int64, error) {
+func (r *realKBRepo) CountByVectorStoreID(
+	ctx context.Context,
+	db *gorm.DB,
+	tenantID uint64,
+	storeID string,
+) (int64, error) {
 	if db == nil {
 		db = r.db
 	}
@@ -937,9 +987,11 @@ func (r *realKBRepo) CountByVectorStoreID(ctx context.Context, db *gorm.DB, tena
 		Count(&count).Error
 	return count, err
 }
+
 func (r *realKBRepo) CountByModelID(_ context.Context, _ uint64, _ string) (int64, error) {
 	return 0, nil
 }
+
 func (r *realKBRepo) ListModelUsages(_ context.Context, _ uint64, _ string) ([]types.ModelUsageResource, error) {
 	return []types.ModelUsageResource{}, nil
 }
@@ -949,33 +1001,47 @@ func (r *realKBRepo) ListModelUsages(_ context.Context, _ uint64, _ string) ([]t
 func (r *realKBRepo) CreateKnowledgeBase(_ context.Context, kb *types.KnowledgeBase) error {
 	return r.db.Create(kb).Error
 }
+
 func (r *realKBRepo) GetKnowledgeBaseByID(_ context.Context, _ string) (*types.KnowledgeBase, error) {
 	return nil, nil
 }
-func (r *realKBRepo) GetKnowledgeBaseByIDAndTenant(_ context.Context, _ string, _ uint64) (*types.KnowledgeBase, error) {
+
+func (r *realKBRepo) GetKnowledgeBaseByIDAndTenant(
+	_ context.Context,
+	_ string,
+	_ uint64,
+) (*types.KnowledgeBase, error) {
 	return nil, nil
 }
+
 func (r *realKBRepo) GetKnowledgeBaseByIDs(_ context.Context, _ []string) ([]*types.KnowledgeBase, error) {
 	return nil, nil
 }
+
 func (r *realKBRepo) ListKnowledgeBases(_ context.Context) ([]*types.KnowledgeBase, error) {
 	return nil, nil
 }
+
 func (r *realKBRepo) ListKnowledgeBasesByTenantID(_ context.Context, _ uint64) ([]*types.KnowledgeBase, error) {
 	return nil, nil
 }
+
 func (r *realKBRepo) UpdateKnowledgeBase(_ context.Context, _ *types.KnowledgeBase) error {
 	return nil
 }
+
 func (r *realKBRepo) DeleteKnowledgeBase(_ context.Context, _ string) error {
 	return nil
 }
+
 func (r *realKBRepo) TogglePinKnowledgeBase(_ context.Context, _ string, _ uint64) (*types.KnowledgeBase, error) {
 	return nil, nil
 }
+
 func (r *realKBRepo) ListUserKBPinIDs(_ context.Context, _ uint64, _ string) (map[string]time.Time, error) {
 	return map[string]time.Time{}, nil
 }
+
 func (r *realKBRepo) SetUserKBPin(_ context.Context, _ uint64, _ string, _ string, _ bool) (*time.Time, error) {
 	return nil, nil
 }
@@ -1011,6 +1077,7 @@ func tenantID2s(t uint64) string {
 	}
 	return "tN"
 }
+
 func ptrOrEmpty(p *string) string {
 	if p == nil {
 		return "nil"

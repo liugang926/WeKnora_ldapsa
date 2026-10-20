@@ -37,27 +37,35 @@ func applyEnrichmentTemplateMigration(t *testing.T, f *enrichmentTestFixture, pg
 		require.NoError(t, e)
 		require.NoError(t, migration.Exec(string(leaseData)).Error)
 	}
-	// Current Session columns require the full original source/event tables
-	// before closure/onboarding triggers and physical parent reads are valid.
-	require.NoError(t, f.db.AutoMigrate(&types.DataSource{}, &types.SyncLog{}))
-	directory := "sqlite"
-	names := []string{
-		"000032_nextcloud_event_inbox",
-		"000035_nextcloud_source_pairing",
-		"000039_nextcloud_source_pairing_abort",
-	}
-	if pg {
-		directory = "versioned"
-		names = []string{
-			"000113_nextcloud_event_inbox",
-			"000116_nextcloud_source_pairing",
-			"000120_nextcloud_source_pairing_abort",
+	// Source-derived fixtures already install and prove the actual event,
+	// pairing and abort migrations before admitting their originals. Do not
+	// replay prerequisite DDL over those tables; ordinary fixtures still install
+	// the real migrations here.
+	if f.db.Migrator().HasTable("nextcloud_onboarding_operations") {
+		requireSourceAdmissionSchema(t, f.db)
+	} else {
+		// Current Session columns require the full original source/event tables
+		// before closure/onboarding triggers and physical parent reads are valid.
+		require.NoError(t, f.db.AutoMigrate(&types.DataSource{}, &types.SyncLog{}))
+		directory := "sqlite"
+		names := []string{
+			"000032_nextcloud_event_inbox",
+			"000035_nextcloud_source_pairing",
+			"000039_nextcloud_source_pairing_abort",
 		}
-	}
-	for _, name := range names {
-		ddl, err := os.ReadFile("../../../migrations/" + directory + "/" + name + ".up.sql")
-		require.NoError(t, err)
-		require.NoError(t, migration.Exec(string(ddl)).Error)
+		if pg {
+			directory = "versioned"
+			names = []string{
+				"000113_nextcloud_event_inbox",
+				"000116_nextcloud_source_pairing",
+				"000120_nextcloud_source_pairing_abort",
+			}
+		}
+		for _, name := range names {
+			ddl, err := os.ReadFile("../../../migrations/" + directory + "/" + name + ".up.sql")
+			require.NoError(t, err)
+			require.NoError(t, migration.Exec(string(ddl)).Error)
+		}
 	}
 	installMachineOnboardingSchema(t, f.db, migration)
 	if pg {

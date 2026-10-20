@@ -457,7 +457,7 @@ func TestNextcloudOnboardingBlankHistoryReservationAndRetry(t *testing.T) {
 	db, store, c := onboardingDB(t)
 	ctx := context.Background()
 	_, err := store.Reserve(ctx, c, onboardingRequest(c, uuid.NewString(), "legacy-zero-count"))
-	require.ErrorIs(t, err, repo.ErrNextcloudKBBlankUnverified)
+	require.ErrorIs(t, err, repo.ErrNextcloudKBUnavailable)
 	kb := freshOnboardingKB("blank")
 	createOnboardingTemplate(t, db, &kb)
 	req := onboardingRequest(c, uuid.NewString(), kb.ID)
@@ -529,21 +529,68 @@ func TestNextcloudOnboardingCompetingRootsAndConcurrentContent(t *testing.T) {
 	}
 	require.Equal(t, 1, successes)
 	touched := freshOnboardingKB("touched")
-	require.NoError(t, db.Create(&touched).Error)
+	createOnboardingTemplate(t, db, &touched)
 	doc := types.Knowledge{ID: "removed", TenantID: 7, KnowledgeBaseID: touched.ID, Channel: "manual"}
 	require.NoError(t, db.Create(&doc).Error)
 	require.NoError(t, db.Unscoped().Delete(&doc).Error)
 	_, err := store.Reserve(context.Background(), c, onboardingRequest(c, uuid.NewString(), touched.ID))
-	require.ErrorIs(
-		t,
-		err,
-		repo.ErrNextcloudKBBlankUnverified,
-		"even physically removed content cannot erase inventory history",
-	)
+	require.NoError(t, err, "an existing non-empty KB with verified configuration is a legal target")
 	require.Error(
 		t,
 		db.Exec("UPDATE nextcloud_kb_blank_witnesses SET virgin=1 WHERE knowledge_base_id=?", touched.ID).Error,
 	)
+}
+
+func TestNextcloudOnboardingAllowsExistingNonEmptyKnowledgeBase(t *testing.T) {
+	db, store, c := onboardingDB(t)
+	kb := freshOnboardingKB("nonempty-existing")
+	createOnboardingTemplate(t, db, &kb)
+	require.NoError(t, db.Create(&types.Knowledge{
+		ID:              "existing-content",
+		TenantID:        7,
+		KnowledgeBaseID: kb.ID,
+		Channel:         "manual",
+	}).Error)
+	op, err := store.Reserve(
+		context.Background(),
+		c,
+		onboardingRequest(c, uuid.NewString(), kb.ID),
+	)
+	require.NoError(t, err)
+	require.Equal(t, kb.ID, op.KnowledgeBaseID)
+}
+
+func TestNextcloudConnectionAuthorizesAndRevokesWorkspaceCredential(t *testing.T) {
+	db, store, _ := onboardingDB(t)
+	ctx := context.Background()
+	spaces, err := store.ConnectionWorkspaces(ctx, "owner", false)
+	require.NoError(t, err)
+	require.Len(t, spaces, 1)
+	require.True(t, spaces[0].Eligible)
+	require.Equal(t, uint64(7), spaces[0].TenantID)
+
+	result, err := store.AuthorizeConnection(ctx, types.NextcloudConnectionAuthorizeRequest{
+		InstanceID:  "nc-instance",
+		BaseURL:     "https://nc.example.test",
+		DirectoryID: "directory",
+		TenantIDs:   []uint64{7},
+	}, "owner", false)
+	require.NoError(t, err)
+	require.Len(t, result.Credentials, 1)
+	credential := result.Credentials[0]
+	require.NotEmpty(t, credential.Token)
+	require.Equal(t, uint64(7), credential.TenantID)
+
+	var stored types.NextcloudOnboardingCredential
+	require.NoError(t, db.Where("id=?", credential.CredentialID).Take(&stored).Error)
+	require.True(t, stored.Enabled)
+	require.NotEqual(t, credential.Token, stored.TokenSHA256)
+
+	revoked, err := store.RevokeConnectionByCredential(ctx, stored, []string{stored.ID})
+	require.NoError(t, err)
+	require.Equal(t, 1, revoked)
+	require.NoError(t, db.Where("id=?", stored.ID).Take(&stored).Error)
+	require.False(t, stored.Enabled)
 }
 
 func TestNextcloudOnboardingLedgerScopeRevocationAndDirectoryFailure(t *testing.T) {

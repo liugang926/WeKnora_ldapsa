@@ -155,6 +155,32 @@ func (s faqHTTPKB) HybridSearch(_ context.Context, kb string, _ types.SearchPara
 	return rows, err
 }
 
+// The shared HTTP fixture installs the actual migration before any source or
+// producer admission. Reusers must verify its protections, not replay DDL or
+// replace immutable worker actors with partial AutoMigrate tables.
+func requireCommonHTTPOriginalActorSchema(t *testing.T, db *gorm.DB) {
+	t.Helper()
+	require.True(t, db.Migrator().HasTable("knowledge_input_actor_selectors"))
+	var guards []struct {
+		Name string
+		SQL  string
+	}
+	wanted := map[string]string{
+		"knowledge_input_actor_immutable_update": "BEFORE UPDATE",
+		"knowledge_input_actor_immutable_delete": "BEFORE DELETE",
+	}
+	require.NoError(t, db.Table("sqlite_master").Select("name, sql").
+		Where("type = ? AND tbl_name = ? AND name IN ?", "trigger", "knowledge_input_actor_selectors",
+			[]string{"knowledge_input_actor_immutable_update", "knowledge_input_actor_immutable_delete"}).
+		Find(&guards).Error)
+	require.Len(t, guards, 2)
+	for _, guard := range guards {
+		require.Contains(t, guard.SQL, wanted[guard.Name])
+		require.Contains(t, guard.SQL, "ON knowledge_input_actor_selectors")
+		require.Contains(t, guard.SQL, "RAISE(ABORT,'immutable original worker actor')")
+	}
+}
+
 func faqActualHTTPFixture(
 	t *testing.T,
 ) (
@@ -168,8 +194,8 @@ func faqActualHTTPFixture(
 ) {
 	t.Helper()
 	tag, db, store, _ := tagHTTPFixture(t)
+	requireCommonHTTPOriginalActorSchema(t, db)
 	for _, file := range []string{
-		"000056_knowledge_original_worker_actor.up.sql",
 		"000063_faq_original_entry_inputs.up.sql",
 	} {
 		ddl, err := os.ReadFile("../../migrations/sqlite/" + file)
