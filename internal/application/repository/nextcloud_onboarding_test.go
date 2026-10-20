@@ -856,7 +856,31 @@ func TestNextcloudOnboardingPostgresConcurrentAdmission(t *testing.T) {
 				successes++
 			}
 		}
-		require.Equal(t, 1, successes, "DB reservation and content writer must share one admission lock")
+		require.GreaterOrEqual(t, successes, 1, "both admission and content writer failed")
+		require.LessOrEqual(t, successes, 2)
+		var operations int64
+		require.NoError(
+			t,
+			db.Model(&types.NextcloudOnboardingOperation{}).
+				Where("tenant_id = ? AND knowledge_base_id = ?", c.TenantID, id).
+				Count(&operations).
+				Error,
+		)
+		if operations == 1 {
+			// A writer that committed before admission is now legal existing
+			// content. Once reservation commits, every later writer must be
+			// rejected by the shared target guard.
+			require.Error(
+				t,
+				peer.Create(&types.Knowledge{
+					ID:              uuid.NewString(),
+					TenantID:        7,
+					KnowledgeBaseID: id,
+					Channel:         "manual",
+				}).Error,
+				"reserved target admitted a later ordinary-content writer",
+			)
+		}
 	}
 }
 
