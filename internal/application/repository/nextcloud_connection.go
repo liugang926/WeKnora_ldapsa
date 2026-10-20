@@ -26,6 +26,17 @@ var (
 	)
 )
 
+const (
+	disableConnectionCredentialSQL = "UPDATE nextcloud_onboarding_credentials SET enabled=FALSE " +
+		"WHERE id=? AND NOT EXISTS (" +
+		"SELECT 1 FROM nextcloud_onboarding_operations o " +
+		"WHERE o.credential_id=nextcloud_onboarding_credentials.id)"
+	replaceConnectionCredentialSQL = "UPDATE nextcloud_onboarding_credentials SET enabled=FALSE " +
+		"WHERE instance_id=? AND tenant_id=? AND id LIKE 'nc-conn-%' AND NOT EXISTS (" +
+		"SELECT 1 FROM nextcloud_onboarding_operations o " +
+		"WHERE o.credential_id=nextcloud_onboarding_credentials.id)"
+)
+
 type nextcloudConnectionTenant struct {
 	ID   uint64
 	Name string
@@ -155,7 +166,7 @@ func (s *NextcloudOnboardingStore) AuthorizeConnection(
 			// Reconnecting one Nextcloud instance/workspace replaces only the
 			// connection-issued credentials; operator credentials are retained.
 			if err := tx.Exec(
-				"UPDATE nextcloud_onboarding_credentials SET enabled=FALSE WHERE instance_id=? AND tenant_id=? AND id LIKE 'nc-conn-%' AND NOT EXISTS (SELECT 1 FROM nextcloud_onboarding_operations o WHERE o.credential_id=nextcloud_onboarding_credentials.id)",
+				replaceConnectionCredentialSQL,
 				req.InstanceID,
 				tenantID,
 			).Error; err != nil {
@@ -253,7 +264,7 @@ func (s *NextcloudOnboardingStore) RevokeConnection(
 				}
 			}
 			result := tx.Exec(
-				"UPDATE nextcloud_onboarding_credentials SET enabled=FALSE WHERE id=? AND NOT EXISTS (SELECT 1 FROM nextcloud_onboarding_operations o WHERE o.credential_id=nextcloud_onboarding_credentials.id)",
+				disableConnectionCredentialSQL,
 				id,
 			)
 			if result.Error != nil {
@@ -311,7 +322,7 @@ func (s *NextcloudOnboardingStore) RevokeConnectionByCredential(
 				return ErrNextcloudOnboardingDenied
 			}
 			result := tx.Exec(
-				"UPDATE nextcloud_onboarding_credentials SET enabled=FALSE WHERE id=? AND NOT EXISTS (SELECT 1 FROM nextcloud_onboarding_operations o WHERE o.credential_id=nextcloud_onboarding_credentials.id)",
+				disableConnectionCredentialSQL,
 				id,
 			)
 			if result.Error != nil {
@@ -391,8 +402,12 @@ func connectionBaseURLCanonical(raw string) bool {
 		return false
 	}
 	u, err := url.Parse(raw)
+	if err != nil {
+		return false
+	}
 	devHTTP := strings.TrimSpace(os.Getenv("WEKNORA_EVENT_DEV_HTTP")) == "1"
-	if err != nil || (u.Scheme != "https" && !(devHTTP && u.Scheme == "http")) ||
+	allowedScheme := u.Scheme == "https" || (devHTTP && u.Scheme == "http")
+	if !allowedScheme ||
 		u.Host == "" || u.User != nil ||
 		u.RawQuery != "" || u.Fragment != "" || (u.Path != "" && u.Path != "/") {
 		return false

@@ -146,40 +146,6 @@ func (s *NextcloudOnboardingStore) Actor(
 	return *i.UserID, nil
 }
 
-func blankKB(tx *gorm.DB, tenant uint64, id string) (*types.KnowledgeBase, error) {
-	var kb types.KnowledgeBase
-	if err := tx.Where("tenant_id = ? AND id = ? AND deleted_at IS NULL", tenant, id).Take(&kb).Error; err != nil {
-		return nil, ErrNextcloudKBBlankUnverified
-	}
-	if kb.Type != "document" || kb.IsTemporary || kb.EverHadNextcloudSource || kb.GeneratedProfile != nil {
-		return nil, ErrNextcloudKBBlankUnverified
-	}
-	var n int64
-	if err := tx.Table("nextcloud_kb_blank_witnesses").
-		Where("tenant_id = ? AND knowledge_base_id = ? AND virgin = ?", tenant, id, true).
-		Count(&n).
-		Error; err != nil ||
-		n != 1 {
-		return nil, ErrNextcloudKBBlankUnverified
-	}
-	for _, table := range []string{
-		"knowledges",
-		"data_sources",
-		"wiki_pages",
-		"chunks",
-		"nextcloud_onboarding_operations",
-	} {
-		if err := tx.Table(table).
-			Where("tenant_id = ? AND knowledge_base_id = ?", tenant, id).
-			Count(&n).
-			Error; err != nil ||
-			n != 0 {
-			return nil, ErrNextcloudKBBlankUnverified
-		}
-	}
-	return &kb, nil
-}
-
 // onboardingExistingTarget admits an existing document knowledge base without
 // requiring it to be empty. The owning knowledge base may already contain
 // content; attaching a Nextcloud source leaves that content in place while the

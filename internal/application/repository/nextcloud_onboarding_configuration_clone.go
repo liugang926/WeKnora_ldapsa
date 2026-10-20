@@ -45,58 +45,6 @@ func onboardingConfigurationProjection(tx *gorm.DB, tenant uint64, id string) (*
 	return &kb, nil
 }
 
-func onboardingBlankTargetMetadata(tx *gorm.DB, tenant uint64, id string) (*types.KnowledgeBase, error) {
-	var row struct {
-		ID                     string
-		TenantID               uint64
-		Type                   string
-		IsTemporary            bool
-		EverHadNextcloudSource bool
-		HasProfile             bool
-		VectorStoreID          *string
-	}
-	if err := tx.Table("knowledge_bases").
-		Select(("id,tenant_id,type,is_temporary,ever_had_nextcloud_source,generated_profile" +
-			" IS NOT NULL AS has_profile,vector_store_id")).
-		Where("tenant_id=? AND id=? AND deleted_at IS NULL", tenant, id).
-		Take(&row).
-		Error; err != nil {
-		return nil, ErrNextcloudKBBlankUnverified
-	}
-	if row.Type != types.KnowledgeBaseTypeDocument || row.IsTemporary || row.EverHadNextcloudSource || row.HasProfile {
-		return nil, ErrNextcloudKBBlankUnverified
-	}
-	var n int64
-	if err := tx.Table("nextcloud_kb_blank_witnesses").
-		Where("tenant_id=? AND knowledge_base_id=? AND virgin=?", tenant, id, true).
-		Count(&n).
-		Error; err != nil ||
-		n != 1 {
-		return nil, ErrNextcloudKBBlankUnverified
-	}
-	for _, table := range []string{
-		"knowledges",
-		"data_sources",
-		"wiki_pages",
-		"chunks",
-		"nextcloud_onboarding_operations",
-	} {
-		if err := tx.Table(table).
-			Where("tenant_id=? AND knowledge_base_id=?", tenant, id).
-			Count(&n).
-			Error; err != nil ||
-			n != 0 {
-			return nil, ErrNextcloudKBBlankUnverified
-		}
-	}
-	return &types.KnowledgeBase{
-		ID:            row.ID,
-		TenantID:      row.TenantID,
-		Type:          row.Type,
-		VectorStoreID: row.VectorStoreID,
-	}, nil
-}
-
 func cloneOnboardingProcessingConfiguration(
 	template *types.KnowledgeBase,
 	id string,
