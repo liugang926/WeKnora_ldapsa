@@ -73,8 +73,9 @@ func directoryUsable(tx *gorm.DB, directoryID string, now time.Time) error {
 	if err := tx.Where("id = ?", directoryID).Take(&d).Error; err != nil {
 		return ErrNextcloudOnboardingDenied
 	}
-	if !d.Enabled || d.LastSuccessfulSyncAt == nil || d.LastSyncError != "" || d.LastSuccessfulSyncAt.After(now) ||
-		now.Sub(*d.LastSuccessfulSyncAt) > 300*time.Second {
+	// Honor the operator-configured grace window. A fixed threshold equal to
+	// the sync interval rejects valid snapshots just before the next refresh.
+	if !d.IsFresh(now) || d.LastSyncError != "" || d.LastSuccessfulSyncAt.After(now) {
 		return ErrNextcloudOnboardingDenied
 	}
 	return nil
