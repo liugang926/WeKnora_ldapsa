@@ -55,7 +55,7 @@ services:
       AUTO_RECOVER_DIRTY: 'false'
       # The internal model gateway resolves to a private enterprise address.
       # Whitelist only this exact host; all other SSRF protections stay on.
-      SSRF_WHITELIST_EXTRA: 'llmproxy.tianjizn.com'
+      SSRF_WHITELIST_EXTRA: 'llmproxy.tianjizn.com,mozilla-yea-pays-attributes.trycloudflare.com'
       WEKNORA_ORIGINAL_BODY_JOURNAL_DIRECTORY: /data/body-journal
       WEKNORA_ORIGINAL_BODY_JOURNAL_KEY: /data/body-key/hmac.key
       WEKNORA_ORIGINAL_BODY_JOURNAL_PIN: /data/body-pin/pin.json
