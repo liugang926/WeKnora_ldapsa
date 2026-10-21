@@ -36,6 +36,8 @@ func TestNextcloudOnboardingErrorsExposeOnlyApprovedFailureStages(t *testing.T) 
 		c, _ := gin.CreateTestContext(w)
 		onboardingErrorStage(c, fmt.Errorf("private database detail"), stage)
 		require.Equal(t, http.StatusServiceUnavailable, w.Code)
+		require.Equal(t, "no-store", w.Header().Get("Cache-Control"))
+		require.Equal(t, "no-cache", w.Header().Get("Pragma"))
 		require.JSONEq(t, `{"error":"onboarding_unavailable","failure_stage":"`+stage+`"}`, w.Body.String())
 	}
 
