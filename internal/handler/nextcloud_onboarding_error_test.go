@@ -29,3 +29,18 @@ func TestNextcloudOnboardingErrorsUseOpaqueFixedCodes(t *testing.T) {
 		require.JSONEq(t, `{"error":"`+item.code+`"}`, w.Body.String())
 	}
 }
+
+func TestNextcloudOnboardingErrorsExposeOnlyApprovedFailureStages(t *testing.T) {
+	for _, stage := range []string{"operation_read", "tenant_deletion", "target_observation", "operation_refresh"} {
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		onboardingErrorStage(c, fmt.Errorf("private database detail"), stage)
+		require.Equal(t, http.StatusServiceUnavailable, w.Code)
+		require.JSONEq(t, `{"error":"onboarding_unavailable","failure_stage":"`+stage+`"}`, w.Body.String())
+	}
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	onboardingErrorStage(c, fmt.Errorf("private database detail"), "untrusted_remote_text")
+	require.JSONEq(t, `{"error":"onboarding_unavailable"}`, w.Body.String())
+}
