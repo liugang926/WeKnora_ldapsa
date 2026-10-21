@@ -9,7 +9,8 @@ An administrator with a WeKnora platform API key (`system_tenants_read` and
 connection setup routes without pre-installing onboarding credentials:
 
 - `GET /api/v1/integrations/nextcloud/connection/workspaces` lists eligible
-  workspaces and the default processing template selected from each workspace.
+  workspaces and, when one already exists, the default processing template
+  selected from each workspace.
 - `POST /api/v1/integrations/nextcloud/connection/authorize` accepts
   `instance_id`, canonical `base_url`, `directory_id`, optional verified
   `actor_directory_id`/`actor_object_guid`, and one or more `tenant_ids`. It
@@ -28,6 +29,17 @@ knowledge base in a workspace authorized by the connection. Existing
 credentials with durable onboarding operations are retained when a connection
 is re-authorized.
 
+An eligible workspace does not require an operator to create a template first.
+Authorization reuses a valid existing template or creates a workspace-local
+`Nextcloud processing template` in the same database transaction as the scoped
+credential. The generated template is empty and uses an active workspace
+storage backend. It prefers vector plus keyword processing when an active
+embedding model is available; otherwise it uses graph-only processing with an
+active chat model. Later authorizations reuse the same template. If neither a
+valid template nor usable workspace defaults exist, discovery reports
+`no_processing_template` instead of enabling a connection that cannot process
+content.
+
 ## Initial operator configuration
 
 Apply all packaged migrations through PostgreSQL `000165` / SQLite `000084` before starting this binary. The earlier onboarding sequence (`000155`–`000161` / `000074`–`000080`) alone is insufficient: the current release also requires the original-body retention and later lifecycle controls. Production must use the offline journal initialization/verification procedure in [the production runbook](../deploy/production/README.md), with application readers stopped. The matching Nextcloud plugin requires app migrations through `0029`; migrate both owned databases before enabling workers. An operator installs one row in `nextcloud_onboarding_credentials` per trusted instance/tenant/template:
@@ -39,7 +51,7 @@ Apply all packaged migrations through PostgreSQL `000165` / SQLite `000084` befo
 | `instance_id`, `base_url` | Exact pinned Nextcloud instance and canonical HTTPS origin |
 | `tenant_id` | Existing allowed tenant |
 | `directory_id` | Same trusted directory ID used by NC GUID mappings |
-| `template_kb_id` | Existing document KB whose administrator approved processing configuration is copied; storage backend and active embedding model must be valid |
+| `template_kb_id` | Existing document KB whose administrator approved processing configuration is copied; storage backend and the models required by its indexing strategy must be active |
 | `enabled` | Explicitly enabled after configuration validation; disabled by default |
 | `max_knowledge_bases` | Maximum retained operations for this credential; reserved operations count too |
 
