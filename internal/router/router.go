@@ -203,6 +203,7 @@ func NewRouter(params RouterParams) *gin.Engine {
 		group.POST("/operations", h.Create)
 		group.GET("/operations/:operation_id", h.Status)
 		group.GET("/operations/:operation_id/observe", h.Status)
+		group.GET("/operations/:operation_id/observe/:observation_nonce", h.Status)
 		group.POST("/operations/:operation_id/pair", h.Pair)
 		group.PUT("/operations/:operation_id/grants", h.Grants)
 		group.POST("/operations/:operation_id/sync", h.Sync)
