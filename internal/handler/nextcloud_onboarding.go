@@ -58,6 +58,10 @@ func (h *NextcloudOnboardingHandler) credential(c *gin.Context) (types.Nextcloud
 }
 
 func onboardingError(c *gin.Context, err error) {
+	onboardingErrorStage(c, err, "")
+}
+
+func onboardingErrorStage(c *gin.Context, err error, failureStage string) {
 	status := http.StatusServiceUnavailable
 	if errors.Is(err, repository.ErrNextcloudOnboardingDenied) {
 		status = http.StatusForbidden
@@ -90,7 +94,12 @@ func onboardingError(c *gin.Context, err error) {
 		status = http.StatusConflict
 		code = "nextcloud_target_closed"
 	}
-	c.JSON(status, gin.H{"error": code})
+	body := gin.H{"error": code}
+	switch failureStage {
+	case "operation_read", "tenant_deletion", "target_observation", "operation_refresh":
+		body["failure_stage"] = failureStage
+	}
+	c.JSON(status, body)
 }
 
 // Candidates returns candidates for the scoped onboarding operation.
@@ -210,7 +219,7 @@ func (h *NextcloudOnboardingHandler) Status(c *gin.Context) {
 	}
 	op, err := h.store.Operation(c.Request.Context(), cred, c.Param("operation_id"))
 	if err != nil {
-		onboardingError(c, err)
+		onboardingErrorStage(c, err, "operation_read")
 		return
 	}
 	tenantDeletion, err := h.store.TenantDeletionObservation(
@@ -221,12 +230,12 @@ func (h *NextcloudOnboardingHandler) Status(c *gin.Context) {
 		c.Query("actor_object_guid"),
 	)
 	if err != nil {
-		onboardingError(c, err)
+		onboardingErrorStage(c, err, "tenant_deletion")
 		return
 	}
 	op, err = h.store.Operation(c.Request.Context(), cred, op.OperationID)
 	if err != nil {
-		onboardingError(c, err)
+		onboardingErrorStage(c, err, "operation_refresh")
 		return
 	}
 	target, err := h.store.TargetObservation(
@@ -237,14 +246,14 @@ func (h *NextcloudOnboardingHandler) Status(c *gin.Context) {
 		c.Query("actor_object_guid"),
 	)
 	if err != nil {
-		onboardingError(c, err)
+		onboardingErrorStage(c, err, "target_observation")
 		return
 	}
 	// Positive deletion observation can repair a pre-hook closure and bump
 	// the operation revision. Return its fresh immutable owner tuple/revision.
 	op, err = h.store.Operation(c.Request.Context(), cred, op.OperationID)
 	if err != nil {
-		onboardingError(c, err)
+		onboardingErrorStage(c, err, "operation_refresh")
 		return
 	}
 	result := gin.H{"operation": op, "target": target}
