@@ -62,6 +62,8 @@ func onboardingError(c *gin.Context, err error) {
 }
 
 func onboardingErrorStage(c *gin.Context, err error, failureStage string) {
+	c.Header("Cache-Control", "no-store")
+	c.Header("Pragma", "no-cache")
 	status := http.StatusServiceUnavailable
 	if errors.Is(err, repository.ErrNextcloudOnboardingDenied) {
 		status = http.StatusForbidden
