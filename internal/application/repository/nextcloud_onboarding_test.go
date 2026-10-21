@@ -579,6 +579,7 @@ func TestNextcloudConnectionAuthorizesAndRevokesWorkspaceCredential(t *testing.T
 	require.Len(t, spaces, 1)
 	require.True(t, spaces[0].Eligible)
 	require.Equal(t, uint64(7), spaces[0].TenantID)
+	require.NotEmpty(t, spaces[0].ProcessingTemplateID)
 
 	result, err := store.AuthorizeConnection(ctx, types.NextcloudConnectionAuthorizeRequest{
 		InstanceID:  "nc-instance",
@@ -591,17 +592,173 @@ func TestNextcloudConnectionAuthorizesAndRevokesWorkspaceCredential(t *testing.T
 	credential := result.Credentials[0]
 	require.NotEmpty(t, credential.Token)
 	require.Equal(t, uint64(7), credential.TenantID)
+	require.Equal(t, spaces[0].ProcessingTemplateID, credential.ProcessingTemplateID)
+
+	reconnected, err := store.AuthorizeConnection(ctx, types.NextcloudConnectionAuthorizeRequest{
+		InstanceID:  "nc-instance",
+		BaseURL:     "https://nc.example.test",
+		DirectoryID: "directory",
+		TenantIDs:   []uint64{7},
+	}, "owner", false)
+	require.NoError(t, err)
+	require.Equal(t, credential.ProcessingTemplateID, reconnected.Credentials[0].ProcessingTemplateID)
 
 	var stored types.NextcloudOnboardingCredential
-	require.NoError(t, db.Where("id=?", credential.CredentialID).Take(&stored).Error)
+	require.NoError(t, db.Where("id=?", reconnected.Credentials[0].CredentialID).Take(&stored).Error)
 	require.True(t, stored.Enabled)
-	require.NotEqual(t, credential.Token, stored.TokenSHA256)
+	require.NotEqual(t, reconnected.Credentials[0].Token, stored.TokenSHA256)
 
 	revoked, err := store.RevokeConnectionByCredential(ctx, stored, []string{stored.ID})
 	require.NoError(t, err)
 	require.Equal(t, 1, revoked)
 	require.NoError(t, db.Where("id=?", stored.ID).Take(&stored).Error)
 	require.False(t, stored.Enabled)
+}
+
+func TestNextcloudConnectionCreatesAndReusesWorkspaceTemplate(t *testing.T) {
+	db, store, _ := onboardingDB(t)
+	ctx := context.Background()
+	require.NoError(t, db.Where("tenant_id=?", 7).Delete(&types.KnowledgeBase{}).Error)
+	require.NoError(t, db.Create(&types.KnowledgeBase{
+		ID:       "invalid-template",
+		TenantID: 7,
+		Name:     "Invalid legacy template",
+		Type:     types.KnowledgeBaseTypeDocument,
+	}).Error)
+
+	spaces, err := store.ConnectionWorkspaces(ctx, "owner", false)
+	require.NoError(t, err)
+	require.Len(t, spaces, 1)
+	require.True(t, spaces[0].Eligible)
+	require.Empty(t, spaces[0].ProcessingTemplateID)
+	require.Empty(t, spaces[0].Reason)
+
+	req := types.NextcloudConnectionAuthorizeRequest{
+		InstanceID:  "nc-auto-template",
+		BaseURL:     "https://nc.example.test",
+		DirectoryID: "directory",
+		TenantIDs:   []uint64{7},
+	}
+	first, err := store.AuthorizeConnection(ctx, req, "owner", false)
+	require.NoError(t, err)
+	require.Len(t, first.Credentials, 1)
+	templateID := first.Credentials[0].ProcessingTemplateID
+	require.NotEmpty(t, templateID)
+
+	var template types.KnowledgeBase
+	require.NoError(t, db.Where("tenant_id=? AND id=? AND deleted_at IS NULL", 7, templateID).Take(&template).Error)
+	require.True(t, template.IndexingStrategy.NeedsEmbedding())
+	require.Equal(t, "embedding", template.EmbeddingModelID)
+	require.NotNil(t, template.StorageBackendID)
+	require.Equal(t, "storage", *template.StorageBackendID)
+
+	discovered, err := store.ConnectionWorkspaces(ctx, "owner", false)
+	require.NoError(t, err)
+	require.Len(t, discovered, 1)
+	require.Equal(t, templateID, discovered[0].ProcessingTemplateID)
+	second, err := store.AuthorizeConnection(ctx, req, "owner", false)
+	require.NoError(t, err)
+	require.Equal(t, templateID, second.Credentials[0].ProcessingTemplateID)
+
+	var count int64
+	require.NoError(t, db.Model(&types.KnowledgeBase{}).
+		Where("tenant_id=? AND name=? AND deleted_at IS NULL", 7, "Nextcloud processing template").
+		Count(&count).Error)
+	require.Equal(t, int64(1), count)
+}
+
+func TestNextcloudConnectionCreatesGraphOnlyTemplateWithoutEmbeddingModel(t *testing.T) {
+	db, store, _ := onboardingDB(t)
+	ctx := context.Background()
+	require.NoError(t, db.Where("tenant_id=?", 7).Delete(&types.KnowledgeBase{}).Error)
+	require.NoError(t, db.Where("tenant_id=? AND type=?", 7, types.ModelTypeEmbedding).Delete(&types.Model{}).Error)
+	require.NoError(t, db.Create(&types.Model{
+		ID:       "chat",
+		TenantID: 7,
+		Type:     types.ModelTypeKnowledgeQA,
+		Status:   types.ModelStatusActive,
+	}).Error)
+
+	spaces, err := store.ConnectionWorkspaces(ctx, "owner", false)
+	require.NoError(t, err)
+	require.Len(t, spaces, 1)
+	require.True(t, spaces[0].Eligible)
+	require.Empty(t, spaces[0].ProcessingTemplateID)
+
+	result, err := store.AuthorizeConnection(ctx, types.NextcloudConnectionAuthorizeRequest{
+		InstanceID:  "nc-graph-only",
+		BaseURL:     "https://nc.example.test",
+		DirectoryID: "directory",
+		TenantIDs:   []uint64{7},
+	}, "owner", false)
+	require.NoError(t, err)
+	require.Len(t, result.Credentials, 1)
+
+	var template types.KnowledgeBase
+	require.NoError(t, db.Where(
+		"tenant_id=? AND id=? AND deleted_at IS NULL",
+		7,
+		result.Credentials[0].ProcessingTemplateID,
+	).Take(&template).Error)
+	require.Empty(t, template.EmbeddingModelID)
+	require.Equal(t, "chat", template.SummaryModelID)
+	require.True(t, template.IndexingStrategy.GraphEnabled)
+	require.False(t, template.IndexingStrategy.GraphRequired)
+	require.False(t, template.IndexingStrategy.NeedsEmbedding())
+	require.NotNil(t, template.ExtractConfig)
+	require.True(t, template.ExtractConfig.Enabled)
+}
+
+func TestNextcloudConnectionCreatesTemplatesForMultipleWorkspaces(t *testing.T) {
+	db, store, _ := onboardingDB(t)
+	ctx := context.Background()
+	require.NoError(t, db.Where("tenant_id IN ?", []uint64{7, 8}).Delete(&types.KnowledgeBase{}).Error)
+	require.NoError(t, db.Create(&types.Tenant{ID: 8, Name: "onboarding-second"}).Error)
+	require.NoError(t, db.Create(&types.TenantMember{
+		TenantID: 8,
+		UserID:   "owner",
+		Role:     types.TenantRoleOwner,
+		Status:   types.TenantMemberStatusActive,
+	}).Error)
+	require.NoError(t, db.Create(&types.Model{
+		ID:       "embedding-8",
+		TenantID: 8,
+		Type:     types.ModelTypeEmbedding,
+		Status:   types.ModelStatusActive,
+	}).Error)
+	require.NoError(t, db.Create(&types.StorageBackend{
+		ID:       "storage-8",
+		TenantID: 8,
+		Name:     "local",
+		Provider: "local",
+		Status:   types.StorageBackendStatusActive,
+	}).Error)
+
+	spaces, err := store.ConnectionWorkspaces(ctx, "owner", false)
+	require.NoError(t, err)
+	require.Len(t, spaces, 2)
+	for _, space := range spaces {
+		require.True(t, space.Eligible)
+		require.Empty(t, space.ProcessingTemplateID)
+	}
+
+	result, err := store.AuthorizeConnection(ctx, types.NextcloudConnectionAuthorizeRequest{
+		InstanceID:  "nc-multiple",
+		BaseURL:     "https://nc.example.test",
+		DirectoryID: "directory",
+		TenantIDs:   []uint64{8, 7},
+	}, "owner", false)
+	require.NoError(t, err)
+	require.Len(t, result.Credentials, 2)
+	templates := map[uint64]string{}
+	for _, credential := range result.Credentials {
+		require.NotEmpty(t, credential.Token)
+		require.NotEmpty(t, credential.ProcessingTemplateID)
+		templates[credential.TenantID] = credential.ProcessingTemplateID
+	}
+	require.NotEmpty(t, templates[7])
+	require.NotEmpty(t, templates[8])
+	require.NotEqual(t, templates[7], templates[8])
 }
 
 func TestNextcloudOnboardingLedgerScopeRevocationAndDirectoryFailure(t *testing.T) {

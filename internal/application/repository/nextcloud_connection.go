@@ -5,11 +5,14 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"net/url"
 	"os"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/google/uuid"
@@ -40,6 +43,12 @@ const (
 type nextcloudConnectionTenant struct {
 	ID   uint64
 	Name string
+}
+
+type nextcloudConnectionTemplateInputs struct {
+	EmbeddingModelID string
+	SummaryModelID   string
+	StorageBackendID string
 }
 
 // ConnectionWorkspaces returns the workspaces a Nextcloud administrator may
@@ -88,12 +97,18 @@ func (s *NextcloudOnboardingStore) ConnectionWorkspaces(
 			TenantName: row.Name,
 		}
 		template, err := connectionDefaultTemplate(tx, row.ID)
-		if err != nil {
-			workspace.Reason = "no_processing_template"
-		} else {
+		if err == nil {
 			workspace.Eligible = true
 			workspace.ProcessingTemplateID = template.ID
 			workspace.ProcessingTemplate = template.Name
+		} else if !errors.Is(err, ErrNextcloudOnboardingConflict) {
+			return nil, err
+		} else if _, err := connectionTemplateInputs(tx, row.ID); err == nil {
+			// No manual template is required. Authorization creates one from
+			// the workspace's current defaults and returns its stable ID.
+			workspace.Eligible = true
+		} else {
+			workspace.Reason = "no_processing_template"
 		}
 		out = append(out, workspace)
 	}
@@ -135,6 +150,8 @@ func (s *NextcloudOnboardingStore) AuthorizeConnection(
 		}
 		seen[tenantID] = struct{}{}
 	}
+	tenantIDs := append([]uint64(nil), req.TenantIDs...)
+	sort.Slice(tenantIDs, func(i, j int) bool { return tenantIDs[i] < tenantIDs[j] })
 
 	connectionID := uuid.NewString()
 	out.ConnectionID = connectionID
@@ -147,12 +164,13 @@ func (s *NextcloudOnboardingStore) AuthorizeConnection(
 			Error; err != nil || directoryCount != 1 {
 			return ErrNextcloudOnboardingDenied
 		}
-		for _, tenantID := range req.TenantIDs {
+		for _, tenantID := range tenantIDs {
 			if err := connectionTenantAllowed(tx, tenantID, userID, platform); err != nil {
 				return err
 			}
 			var tenant nextcloudConnectionTenant
-			if err := tx.Table("tenants").
+			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+				Table("tenants").
 				Select("id, name").
 				Where("id=? AND deleted_at IS NULL", tenantID).
 				Take(&tenant).
@@ -161,7 +179,13 @@ func (s *NextcloudOnboardingStore) AuthorizeConnection(
 			}
 			template, err := connectionDefaultTemplate(tx, tenantID)
 			if err != nil {
-				return ErrNextcloudOnboardingConflict
+				if !errors.Is(err, ErrNextcloudOnboardingConflict) {
+					return err
+				}
+				template, err = connectionEnsureDefaultTemplate(ctx, tx, tenantID)
+				if err != nil {
+					return err
+				}
 			}
 			// Reconnecting one Nextcloud instance/workspace replaces only the
 			// connection-issued credentials; operator credentials are retained.
@@ -389,12 +413,161 @@ func connectionDefaultTemplate(tx *gorm.DB, tenantID uint64) (*types.KnowledgeBa
 		Error; err != nil {
 		return nil, err
 	}
+	sort.SliceStable(rows, func(i, j int) bool {
+		iEmbedding := rows[i].IndexingStrategy.NeedsEmbedding()
+		jEmbedding := rows[j].IndexingStrategy.NeedsEmbedding()
+		if iEmbedding != jEmbedding {
+			return iEmbedding
+		}
+		return rows[i].CreatedAt.Before(rows[j].CreatedAt)
+	})
 	for i := range rows {
 		if err := validateOnboardingTemplate(tx, &rows[i]); err == nil {
 			return &rows[i], nil
 		}
 	}
 	return nil, ErrNextcloudOnboardingConflict
+}
+
+// connectionTemplateInputs resolves the concrete defaults required to create
+// a processing template. Graph-only processing is valid when the workspace has
+// a chat model but no embedding model, matching the KB validation contract.
+func connectionTemplateInputs(
+	tx *gorm.DB,
+	tenantID uint64,
+) (nextcloudConnectionTemplateInputs, error) {
+	var inputs nextcloudConnectionTemplateInputs
+	var tenant types.Tenant
+	if err := tx.Select("id", "default_storage_backend_id").
+		Where("id=? AND deleted_at IS NULL", tenantID).
+		Take(&tenant).
+		Error; err != nil {
+		return inputs, ErrNextcloudOnboardingConflict
+	}
+
+	var activeStorage int64
+	if tenant.DefaultStorageBackendID != nil && strings.TrimSpace(*tenant.DefaultStorageBackendID) != "" {
+		defaultStorage := strings.TrimSpace(*tenant.DefaultStorageBackendID)
+		if err := tx.Table("storage_backends").
+			Where("id=? AND tenant_id=? AND status=? AND deleted_at IS NULL",
+				defaultStorage, tenantID, types.StorageBackendStatusActive).
+			Count(&activeStorage).
+			Error; err != nil {
+			return inputs, err
+		}
+		if activeStorage == 1 {
+			inputs.StorageBackendID = defaultStorage
+		}
+	}
+	if inputs.StorageBackendID == "" {
+		var storage []types.StorageBackend
+		if err := tx.Where(
+			"tenant_id=? AND status=? AND deleted_at IS NULL",
+			tenantID,
+			types.StorageBackendStatusActive,
+		).
+			Order("created_at ASC").
+			Order("id ASC").
+			Limit(1).
+			Find(&storage).
+			Error; err != nil {
+			return inputs, err
+		}
+		if len(storage) != 1 {
+			return inputs, ErrNextcloudOnboardingConflict
+		}
+		inputs.StorageBackendID = storage[0].ID
+	}
+
+	var models []types.Model
+	if err := tx.Where(
+		"(tenant_id=? OR is_builtin=?) AND status=? AND deleted_at IS NULL",
+		tenantID,
+		true,
+		types.ModelStatusActive,
+	).
+		Find(&models).
+		Error; err != nil {
+		return inputs, err
+	}
+	sort.SliceStable(models, func(i, j int) bool {
+		if models[i].IsBuiltin != models[j].IsBuiltin {
+			return !models[i].IsBuiltin
+		}
+		if models[i].IsDefault != models[j].IsDefault {
+			return models[i].IsDefault
+		}
+		if !models[i].CreatedAt.Equal(models[j].CreatedAt) {
+			return models[i].CreatedAt.Before(models[j].CreatedAt)
+		}
+		return models[i].ID < models[j].ID
+	})
+	for i := range models {
+		switch models[i].Type {
+		case types.ModelTypeEmbedding:
+			if inputs.EmbeddingModelID == "" {
+				inputs.EmbeddingModelID = models[i].ID
+			}
+		case types.ModelTypeKnowledgeQA:
+			if inputs.SummaryModelID == "" {
+				inputs.SummaryModelID = models[i].ID
+			}
+		}
+	}
+	if inputs.EmbeddingModelID == "" && inputs.SummaryModelID == "" {
+		return inputs, ErrNextcloudOnboardingConflict
+	}
+	return inputs, nil
+}
+
+// connectionEnsureDefaultTemplate reuses an approved template if one exists,
+// otherwise it creates one through the configuration provenance writer in the
+// same transaction. The template contains no source content.
+func connectionEnsureDefaultTemplate(
+	ctx context.Context,
+	tx *gorm.DB,
+	tenantID uint64,
+) (*types.KnowledgeBase, error) {
+	template, err := connectionDefaultTemplate(tx, tenantID)
+	if err == nil {
+		return template, nil
+	}
+	if !errors.Is(err, ErrNextcloudOnboardingConflict) {
+		return nil, err
+	}
+	inputs, err := connectionTemplateInputs(tx, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	template = &types.KnowledgeBase{
+		ID:       uuid.NewString(),
+		TenantID: tenantID,
+		Name:     "Nextcloud processing template",
+		Type:     types.KnowledgeBaseTypeDocument,
+		ChunkingConfig: types.ChunkingConfig{
+			ChunkSize:    512,
+			ChunkOverlap: 50,
+			Separators:   []string{"\n\n", "\n", "。"},
+		},
+		EmbeddingModelID: inputs.EmbeddingModelID,
+		SummaryModelID:   inputs.SummaryModelID,
+		StorageBackendID: &inputs.StorageBackendID,
+		IndexingStrategy: types.DefaultIndexingStrategy(),
+		CreatedAt:        time.Now().UTC(),
+		UpdatedAt:        time.Now().UTC(),
+	}
+	if inputs.EmbeddingModelID == "" {
+		// A connection must work even before an embedding provider is deployed.
+		// The configured chat model can run the graph-only processing pipeline.
+		template.IndexingStrategy = types.IndexingStrategy{GraphEnabled: true}
+		template.ExtractConfig = &types.ExtractConfig{Enabled: true}
+	}
+	template.EnsureDefaults()
+	writer := NewKnowledgeInputProvenanceStore(tx)
+	if err := writer.CreateKnowledgeBaseWithInput(WithIndependentKnowledgeInput(ctx), template); err != nil {
+		return nil, err
+	}
+	return onboardingConfigurationProjection(tx, tenantID, template.ID)
 }
 
 func connectionBaseURLCanonical(raw string) bool {
