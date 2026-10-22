@@ -664,6 +664,9 @@ func TestNextcloudEventDispatchResumesAfterSourceRepair(t *testing.T) {
 
 	require.NoError(t, db.Exec(`UPDATE data_sources SET config = ? WHERE id = ?`,
 		originalConfig, "ds-synthetic").Error)
+	candidates, err := repo.DispatchCandidates(ctx, now.Add(time.Second))
+	require.NoError(t, err)
+	require.Contains(t, candidates, testEventConnection)
 	claim, err = repo.ClaimDispatch(ctx, testEventConnection, now.Add(time.Second))
 	require.NoError(t, err)
 	require.NotNil(t, claim)

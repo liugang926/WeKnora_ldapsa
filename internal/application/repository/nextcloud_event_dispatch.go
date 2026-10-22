@@ -60,6 +60,7 @@ func (r *NextcloudEventInboxRepository) DispatchCandidates(ctx context.Context, 
 		Where("c.status = 'active'").
 		Where(`(d.state = 'idle' AND p.received_id > d.dispatched_id)
 			OR (d.state IN ('queued', 'retry') AND d.next_attempt_at <= ?)
+			OR (d.state = 'blocked' AND d.last_error_code = 'source_changed')
 			OR (d.state = 'queued' AND d.last_error_code = ''
 				AND p.received_id > d.dispatched_id
 				AND EXISTS (SELECT 1 FROM sync_logs AS s
@@ -141,13 +142,28 @@ func (r *NextcloudEventInboxRepository) ClaimDispatch(
 			// tuple unavailable. Once the same active connection and pairing are
 			// valid again, resume from the applied watermark. Other blocked
 			// reasons remain manual review because they are not self-verifying.
-			if err := setNextcloudDispatchState(
-				tx, connectionID, "idle", "", now, dispatch.AttemptCount,
-			); err != nil {
-				return err
+			// source_changed can occur after the target was persisted but before
+			// dispatch was claimed. Restore the pre-dispatch watermark so the
+			// unreplayed receipt range is claimed again.
+			recovered := tx.Table("nextcloud_event_dispatch").
+				Where("connection_id = ? AND state = 'blocked' AND last_error_code = 'source_changed'",
+					connectionID).
+				Updates(map[string]any{
+					"state": "idle", "lease_token": nil, "lease_until": nil,
+					"dispatched_id": dispatch.AppliedID, "target_event_id": dispatch.AppliedID,
+					"next_attempt_at": now, "attempt_count": dispatch.AttemptCount,
+					"last_error_code": "", "updated_at": now,
+				})
+			if recovered.Error != nil {
+				return recovered.Error
+			}
+			if recovered.RowsAffected != 1 {
+				return ErrNextcloudEventConflict
 			}
 			dispatch.State = "idle"
 			dispatch.LastErrorCode = ""
+			dispatch.DispatchedID = dispatch.AppliedID
+			dispatch.TargetEventID = dispatch.AppliedID
 		}
 		baselineOK, err := nextcloudDispatchBaselineValid(tx, connection)
 		if err != nil {
