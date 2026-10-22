@@ -66,6 +66,24 @@ class UpdateTests(unittest.TestCase):
         self.assertEqual(json.loads((target/'resolved-images.json').read_text()),resolved)
         self.assertFalse((self.base/'current').exists())
         self.assertFalse((self.base/'active-release').exists())
+    def test_stage_only_accepts_a_pre_docreader_release_as_the_comparison_baseline(self):
+        target=self.base/'releases'/'prod-stage';target.mkdir(parents=True)
+        legacy_keys=['APP_IMAGE','UI_IMAGE','POSTGRES_IMAGE','REDIS_IMAGE']
+        old={'schema':1,'tag':'prod-old','commit':'a'*40,
+             'images':{key:'sha256:'+'a'*64 for key in legacy_keys}}
+        images={key:'sha256:'+'b'*64 for key in ['APP_IMAGE','UI_IMAGE','DOCREADER_IMAGE','POSTGRES_IMAGE','REDIS_IMAGE']}
+        manifest={'schema':1,'tag':'prod-stage','commit':'c'*40,'images':images}
+        active=self.base/'current';active.mkdir()
+        (target/'manifest.json').write_text(json.dumps(manifest))
+        (active/'manifest.json').write_text(json.dumps(old))
+        releases=[{'draft':False,'prerelease':False,'tag_name':'prod-stage','published_at':'2026-10-22T00:00:00Z'}]
+        responses=[io.StringIO(json.dumps(releases)),io.StringIO(json.dumps({'status':'ahead'}))]
+        resolved={'local_images':images}
+        with patch.object(update,'get',side_effect=responses),patch.object(update,'resolve_images',return_value=resolved),patch.object(update.subprocess,'run') as run,patch('builtins.print'):
+            update.main(stage_only=True)
+            run.assert_not_called()
+        self.assertEqual(json.loads((target/'resolved-images.json').read_text()),resolved)
+        self.assertFalse((self.base/'active-release').exists())
     def test_asset_url_uses_the_strict_public_repository_api_endpoint(self):
         url = 'https://api.github.com/repos/liugang926/WeKnora_ldapsa/releases/assets/123456'
         self.assertEqual(update.asset_url({'url': url, 'browser_download_url': 'https://untrusted.invalid/ignored'}), url)
