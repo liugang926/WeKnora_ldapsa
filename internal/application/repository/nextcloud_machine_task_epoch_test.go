@@ -15,7 +15,8 @@ func TestNextcloudMachineKnowledgePublicationEpoch(t *testing.T) {
 		id TEXT PRIMARY KEY,
 		tenant_id BIGINT NOT NULL,
 		knowledge_base_id TEXT NOT NULL,
-		metadata TEXT NOT NULL
+		metadata TEXT NOT NULL,
+		deleted_at DATETIME
 	)`).Error)
 	require.NoError(t, db.Exec(`INSERT INTO knowledges (id, tenant_id, knowledge_base_id, metadata)
 		VALUES
@@ -32,7 +33,12 @@ func TestNextcloudMachineKnowledgePublicationEpoch(t *testing.T) {
 	require.NoError(t, err)
 	require.Zero(t, epoch)
 
-	for _, id := range []string{"epoch-leading-zero", "epoch-negative", "epoch-missing", "other-tenant"} {
+	require.NoError(t, db.Exec(`INSERT INTO knowledges
+		(id, tenant_id, knowledge_base_id, metadata, deleted_at)
+		VALUES ('epoch-deleted', 7, 'kb', '{"nextcloud_publication_epoch":"4"}', CURRENT_TIMESTAMP)`).Error)
+	for _, id := range []string{
+		"epoch-leading-zero", "epoch-negative", "epoch-missing", "other-tenant", "epoch-deleted",
+	} {
 		tenant := uint64(7)
 		if id == "other-tenant" {
 			tenant = 8
