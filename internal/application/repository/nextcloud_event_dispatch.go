@@ -120,7 +120,7 @@ func (r *NextcloudEventInboxRepository) ClaimDispatch(
 			Where("connection_id = ?", connectionID).Take(&dispatch).Error; err != nil {
 			return fmt.Errorf("read Nextcloud event dispatch: %w", err)
 		}
-		if dispatch.State == "blocked" {
+		if dispatch.State == "blocked" && dispatch.LastErrorCode != "source_changed" {
 			return nil
 		}
 		if err := checkNextcloudEventDataSource(tx, connection); err != nil {
@@ -135,6 +135,19 @@ func (r *NextcloudEventInboxRepository) ClaimDispatch(
 				)
 			}
 			return err
+		}
+		if dispatch.State == "blocked" {
+			// A transient source-status failure may have made the exact source
+			// tuple unavailable. Once the same active connection and pairing are
+			// valid again, resume from the applied watermark. Other blocked
+			// reasons remain manual review because they are not self-verifying.
+			if err := setNextcloudDispatchState(
+				tx, connectionID, "idle", "", now, dispatch.AttemptCount,
+			); err != nil {
+				return err
+			}
+			dispatch.State = "idle"
+			dispatch.LastErrorCode = ""
 		}
 		baselineOK, err := nextcloudDispatchBaselineValid(tx, connection)
 		if err != nil {
