@@ -15,6 +15,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -1111,16 +1112,20 @@ func (f *onboardingOriginalActualFixture) configurationBuildContext(
 	t.Helper()
 	repository := NewKnowledgeRepository(f.db).(*knowledgeRepository)
 	external := "nextcloud:" + op.InstanceID + ":88"
+	var pair NextcloudSourcePairing
+	require.NoError(t, f.db.Where("datasource_id = ? AND tenant_id = ?", ds.ID, op.TenantID).
+		Take(&pair).Error)
 	metadata, err := json.Marshal(
 		map[string]string{
-			"datasource_id":         ds.ID,
-			"external_id":           external,
-			"nextcloud_instance_id": op.InstanceID,
-			"nextcloud_binding_id":  op.BindingID,
-			"nextcloud_file_id":     "88",
-			"nextcloud_etag":        "",
-			"source_resource_id":    op.BindingID,
-			"nextcloud_path":        "candidate.md",
+			"datasource_id":               ds.ID,
+			"external_id":                 external,
+			"nextcloud_instance_id":       op.InstanceID,
+			"nextcloud_binding_id":        op.BindingID,
+			"nextcloud_file_id":           "88",
+			"nextcloud_etag":              "",
+			"nextcloud_publication_epoch": strconv.FormatInt(pair.PublicationEpoch, 10),
+			"source_resource_id":          op.BindingID,
+			"nextcloud_path":              "candidate.md",
 		},
 	)
 	require.NoError(t, err)
