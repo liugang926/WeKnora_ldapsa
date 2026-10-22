@@ -3,6 +3,7 @@
 set -Eeuo pipefail
 umask 077
 base=/srv/weknora-production
+data=/data/weknora-production
 exec 9>"$base/deploy.lock"
 flock 9
 release=$(readlink -f "$base/current")
