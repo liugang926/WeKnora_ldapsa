@@ -159,7 +159,7 @@ var versionedSQLiteColumns = map[string][]string{
 	}, // SQLite 000050 / PostgreSQL 000131
 }
 
-const expectedSQLiteMigrationVersion = 84
+const expectedSQLiteMigrationVersion = 85
 
 func TestSQLiteNextcloudRevisionUpgradeFrom43PreservesUnknownHistory(t *testing.T) {
 	repoRoot := sqliteRepoRoot(t)

@@ -101,6 +101,13 @@ func machineTaskRepositoryFixtureWithConfiguration(t *testing.T,
 	raw, taskID, err := PrepareNextcloudMachineTask(build, types.TypeKnowledgePostProcess, raw, "")
 	require.NoError(t, err)
 	require.NotEmpty(t, taskID)
+	var pair NextcloudSourcePairing
+	require.NoError(t, f.db.Where("datasource_id = ? AND tenant_id = ?", ds.ID, proof.TenantID).
+		Take(&pair).Error)
+	var receipt nextcloudMachineTask
+	require.NoError(t, f.db.Where("task_id = ?", taskID).Take(&receipt).Error)
+	require.Equal(t, pair.PublicationEpoch+3, receipt.PairPublicationEpoch,
+		"machine work uses the observed source generation rather than the initial pairing receipt")
 	return f, build, raw, taskID
 }
 

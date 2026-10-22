@@ -641,6 +641,38 @@ func TestNextcloudEventDispatchRevocationAndSourceDrift(t *testing.T) {
 	}
 }
 
+func TestNextcloudEventDispatchResumesAfterSourceRepair(t *testing.T) {
+	db, router, secret := setupNextcloudDispatchTest(t, false)
+	repo := repository.NewNextcloudEventInboxRepository(db)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	receiveDispatchHint(t, router, secret, "0", "41", "a")
+
+	var originalConfig string
+	require.NoError(t, db.Raw(`SELECT config FROM data_sources WHERE id = ?`,
+		"ds-synthetic").Scan(&originalConfig).Error)
+	changed := syntheticNextcloudEventDataSourceConfig(t, "https://other.example.test", true)
+	require.NoError(t, db.Exec(`UPDATE data_sources SET config = ? WHERE id = ?`,
+		string(changed), "ds-synthetic").Error)
+	claim, err := repo.ClaimDispatch(ctx, testEventConnection, now)
+	require.NoError(t, err)
+	require.Nil(t, claim)
+	status, err := repo.ConnectionStatus(ctx, 7, "ds-synthetic")
+	require.NoError(t, err)
+	require.Equal(t, "blocked", status.DispatchState)
+	require.Equal(t, "source_changed", status.LastErrorCode)
+
+	require.NoError(t, db.Exec(`UPDATE data_sources SET config = ? WHERE id = ?`,
+		originalConfig, "ds-synthetic").Error)
+	claim, err = repo.ClaimDispatch(ctx, testEventConnection, now.Add(time.Second))
+	require.NoError(t, err)
+	require.NotNil(t, claim)
+	status, err = repo.ConnectionStatus(ctx, 7, "ds-synthetic")
+	require.NoError(t, err)
+	require.Equal(t, "leased", status.DispatchState)
+	require.Empty(t, status.LastErrorCode)
+}
+
 func TestNextcloudEventDispatchExpiredLeaseCannotFinish(t *testing.T) {
 	db, router, secret := setupNextcloudDispatchTest(t, false)
 	repo := repository.NewNextcloudEventInboxRepository(db)
