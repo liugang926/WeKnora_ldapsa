@@ -42,7 +42,9 @@ func ValidateNextcloudMachineTaskWriteInTx(ctx context.Context, tx *gorm.DB, ten
 	if q.RowsAffected != 1 {
 		return ErrNextcloudMachineTaskInvalid
 	}
-	manager, pair, err := managerTaskPurposeInTx(ctx, tx, tenant, kb, execution.scope.DataSourceID)
+	manager, pair, err := managerTaskPurposeInTx(
+		ctx, tx, tenant, kb, execution.scope.DataSourceID, execution.scope.KnowledgeID,
+	)
 	if err != nil {
 		return err
 	}
@@ -76,7 +78,9 @@ func CheckNextcloudDocumentMachineTaskWrite(ctx context.Context, tenant uint64, 
 		if err := ValidateNextcloudBuildWrite(ctx, tx, tenant, kb, knowledge); err != nil {
 			return err
 		}
-		_, _, err := managerTaskPurposeInTx(ctx, tx, tenant, kb, execution.scope.DataSourceID)
+		_, _, err := managerTaskPurposeInTx(
+			ctx, tx, tenant, kb, execution.scope.DataSourceID, execution.scope.KnowledgeID,
+		)
 		return err
 	})
 	return err == nil, err

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
+	"strconv"
 	"time"
 
 	apperrors "github.com/Tencent/WeKnora/internal/errors"
@@ -120,7 +121,7 @@ func machineTaskPayload(kind string, raw []byte) (nextcloudMachinePayload, strin
 // managerTaskPurposeInTx is intentionally private. A UUID, empty initiator or
 // ordinary build lease alone cannot authorize an automatic machine task.
 func managerTaskPurposeInTx(ctx context.Context, tx *gorm.DB, tenant uint64, kb,
-	source string,
+	source, knowledgeID string,
 ) (*NextcloudOnboardingManagerPurpose, NextcloudSourcePairing, error) {
 	var pair NextcloudSourcePairing
 	if err := scopedOnboardingConfigurationPurposeInTx(ctx, tx, tenant, kb); err != nil {
@@ -159,7 +160,36 @@ func managerTaskPurposeInTx(ctx context.Context, tx *gorm.DB, tenant uint64, kb,
 	if err := currentOnboardingActor(tx, credential, manager.ActorDirectoryID, manager.ActorObjectGUID); err != nil {
 		return nil, pair, err
 	}
+	if knowledgeID != "" {
+		// A pairing receipt deliberately retains the epoch observed when the
+		// binding was first paired. The item carries the signed generation
+		// observed for its own source read, which may have advanced after a
+		// stop/resume. Bind machine work to that exact generation without
+		// rewriting the immutable pairing receipt.
+		epoch, err := nextcloudMachineKnowledgePublicationEpochInTx(tx, tenant, kb, knowledgeID)
+		if err != nil || epoch < pair.PublicationEpoch {
+			return nil, pair, ErrNextcloudMachineTaskInvalid
+		}
+		pair.PublicationEpoch = epoch
+	}
 	return manager, pair, nil
+}
+
+func nextcloudMachineKnowledgePublicationEpochInTx(tx *gorm.DB, tenant uint64, kb,
+	knowledgeID string,
+) (int64, error) {
+	var knowledge types.Knowledge
+	if err := tx.Select("id", "tenant_id", "knowledge_base_id", "metadata").
+		Where("id = ? AND tenant_id = ? AND knowledge_base_id = ?", knowledgeID, tenant, kb).
+		Take(&knowledge).Error; err != nil {
+		return 0, err
+	}
+	raw := knowledge.GetMetadata()["nextcloud_publication_epoch"]
+	epoch, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || epoch < 0 || strconv.FormatInt(epoch, 10) != raw {
+		return 0, ErrNextcloudMachineTaskInvalid
+	}
+	return epoch, nil
 }
 
 func requireMachineConfigurationRead(ctx context.Context, tenant uint64, kb string) error {
@@ -206,7 +236,7 @@ func (s *KnowledgeInputProvenanceStore) CheckNextcloudAutomaticSyncManagerPurpos
 		return err
 	}
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		_, _, err := managerTaskPurposeInTx(ctx, tx, tenant, kb, source)
+		_, _, err := managerTaskPurposeInTx(ctx, tx, tenant, kb, source, "")
 		return err
 	})
 }
@@ -314,7 +344,9 @@ func (s *KnowledgeInputProvenanceStore) PrepareNextcloudMachineTask(ctx context.
 			return err
 		}
 		row.CreatedAtMS = now
-		manager, pair, err := managerTaskPurposeInTx(ctx, tx, p.TenantID, p.KnowledgeBaseID, scope.DataSourceID)
+		manager, pair, err := managerTaskPurposeInTx(
+			ctx, tx, p.TenantID, p.KnowledgeBaseID, scope.DataSourceID, p.KnowledgeID,
+		)
 		if err != nil {
 			return err
 		}
@@ -395,7 +427,9 @@ func (s *KnowledgeInputProvenanceStore) BeginNextcloudMachineTask(ctx context.Co
 			row.DataSourceID != scope.DataSourceID || row.ExternalID != scope.ExternalID {
 			return ErrNextcloudMachineTaskInvalid
 		}
-		manager, pair, err := managerTaskPurposeInTx(ctx, tx, p.TenantID, p.KnowledgeBaseID, scope.DataSourceID)
+		manager, pair, err := managerTaskPurposeInTx(
+			ctx, tx, p.TenantID, p.KnowledgeBaseID, scope.DataSourceID, p.KnowledgeID,
+		)
 		if err != nil {
 			return err
 		}
