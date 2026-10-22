@@ -1,7 +1,7 @@
 """Reject malformed manifests before producing Compose environment values."""
 import json, re, sys
 
-def validate(m):
+def validate(m, *, allow_legacy_images=False):
     if m.get('schema') != 1 or not re.fullmatch(r'[0-9a-f]{40}', m.get('commit', '')):
         raise ValueError('invalid schema or commit')
     if not re.fullmatch(r'prod-[A-Za-z0-9._-]+', m.get('tag', '')):
@@ -19,9 +19,12 @@ def validate(m):
         raise ValueError('required features need deployment protocol 2')
     if protocol == 2 and 'original_body_journal' not in features:
         raise ValueError('protocol 2 requires an external original body journal')
-    if set(m.get('images', {})) != {'APP_IMAGE', 'UI_IMAGE', 'DOCREADER_IMAGE', 'POSTGRES_IMAGE', 'REDIS_IMAGE'}:
+    images = m.get('images', {})
+    required_images = {'APP_IMAGE', 'UI_IMAGE', 'DOCREADER_IMAGE', 'POSTGRES_IMAGE', 'REDIS_IMAGE'}
+    legacy_images = required_images - {'DOCREADER_IMAGE'}
+    if set(images) != required_images and not (allow_legacy_images and set(images) == legacy_images):
         raise ValueError('incomplete image set')
-    for value in m['images'].values():
+    for value in images.values():
         if not re.fullmatch(r'sha256:[0-9a-f]{64}', value):
             raise ValueError('images must use immutable local IDs')
     return m

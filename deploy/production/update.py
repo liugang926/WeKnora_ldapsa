@@ -129,7 +129,9 @@ def main(stage_only=False):
         raise RuntimeError('Reviewed original-body retention helper must be installed before activation')
     active = BASE/'current'/'manifest.json'
     if active.exists():
-        old = validate(json.loads(active.read_text()))
+        # Releases published before docreader was introduced are valid comparison
+        # baselines, but must never be accepted as the target release.
+        old = validate(json.loads(active.read_text()), allow_legacy_images=True)
         comparison = json.load(get(f"https://api.github.com/repos/{REPO}/compare/{old['commit']}...{manifest['commit']}"))
         if comparison.get('status') not in ('ahead', 'identical'):
             raise RuntimeError('Automatic database downgrade/divergent release refused')

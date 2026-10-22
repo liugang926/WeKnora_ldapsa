@@ -22,6 +22,10 @@ class ReleaseTests(unittest.TestCase):
     def test_missing_dependency(self):
         del self.m['images']['REDIS_IMAGE']
         with self.assertRaises(ValueError): validate(self.m)
+    def test_legacy_image_set_is_only_valid_as_a_compatibility_baseline(self):
+        del self.m['images']['DOCREADER_IMAGE']
+        with self.assertRaises(ValueError): validate(self.m)
+        self.assertEqual(validate(self.m, allow_legacy_images=True), self.m)
     def test_mutable_or_injected_images(self):
         for value in ['redis:latest', 'sha256:'+'b'*64+'\nHTTP_PORT=80', '']:
             m = copy.deepcopy(self.m); m['images']['APP_IMAGE'] = value
