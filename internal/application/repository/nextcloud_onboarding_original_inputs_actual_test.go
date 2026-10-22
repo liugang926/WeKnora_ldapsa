@@ -1123,7 +1123,7 @@ func (f *onboardingOriginalActualFixture) configurationBuildContext(
 			"nextcloud_binding_id":        op.BindingID,
 			"nextcloud_file_id":           "88",
 			"nextcloud_etag":              "",
-			"nextcloud_publication_epoch": strconv.FormatInt(pair.PublicationEpoch, 10),
+			"nextcloud_publication_epoch": strconv.FormatInt(pair.PublicationEpoch+3, 10),
 			"source_resource_id":          op.BindingID,
 			"nextcloud_path":              "candidate.md",
 		},
