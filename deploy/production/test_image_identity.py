@@ -9,7 +9,7 @@ from unittest.mock import patch
 from image_identity import ImageIdentityError, inspect_config_digest, resolve_images
 
 
-KEYS = ['APP_IMAGE', 'UI_IMAGE', 'POSTGRES_IMAGE', 'REDIS_IMAGE']
+KEYS = ['APP_IMAGE', 'UI_IMAGE', 'DOCREADER_IMAGE', 'POSTGRES_IMAGE', 'REDIS_IMAGE']
 COMMIT = 'a' * 40
 SOCKET = '/run/containerd/containerd.sock'
 IMAGE_TYPE = 'application/vnd.oci.image.manifest.v1+json'
@@ -56,6 +56,7 @@ def release(published):
 def fallback_infos(info):
     return {reference: info for reference in ['weknora-production-app:' + COMMIT,
                                              'weknora-production-ui:' + COMMIT,
+                                             'weknora-production-docreader:' + COMMIT,
                                              'paradedb/paradedb:v0.22.6-pg17',
                                              'redis:7.4.10-alpine']}
 
@@ -107,7 +108,7 @@ class ImageIdentityTests(unittest.TestCase):
         self.assertEqual(manifest, original)
         self.assertEqual(result, {'schema': 1, 'published_images': manifest['images'],
                                   'local_images': manifest['images'], 'config_digests': manifest['images']})
-        self.assertEqual(calls, [['docker', 'image', 'inspect', config_id]] * 4)
+        self.assertEqual(calls, [['docker', 'image', 'inspect', config_id]] * len(KEYS))
 
     def test_oci_store_tag_is_bound_to_published_config_and_layers(self):
         config_id, info, contents = fixture()
@@ -118,7 +119,7 @@ class ImageIdentityTests(unittest.TestCase):
         self.assertEqual(result['local_images'], {key: info['Id'] for key in KEYS})
         self.assertEqual(result['config_digests'], {key: config_id for key in KEYS})
         inspections = [command[3] for command in calls if command[0] == 'docker']
-        self.assertEqual(inspections[::2], [config_id] * 4)
+        self.assertEqual(inspections[::2], [config_id] * len(KEYS))
         self.assertCountEqual(inspections[1::2], list(fallback_infos(info)))
 
     def test_optional_discovery_reference_is_verified(self):

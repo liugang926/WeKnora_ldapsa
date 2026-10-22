@@ -6,7 +6,7 @@ base=/srv/weknora-production
 data=/data/weknora-production
 [[ ! -e "$base/secrets/app.env" ]] || { echo 'Already initialized; refusing to overwrite secrets'; exit 1; }
 install -d -m 700 "$base/secrets" "$base/bin" "$base/releases" "$data/runtime" "$data/backups" "$data/downloads" "$data/retention"
-install -d "$data/runtime/"{postgres,redis,files}
+install -d "$data/runtime/"{postgres,redis,files,docreader}
 cp "$(dirname "$0")/"{activate.sh,start.sh,check-schema.sh,retention.py,update.py,parallel_download.py,image_identity.py,validate_release.py,local_http.py} "$base/bin/"
 python3 - <<'PY'
 import pathlib, secrets
@@ -17,7 +17,7 @@ values=dict(DB_DRIVER='postgres',DB_HOST='postgres',DB_PORT='5432',DB_USER='wekn
     RETRIEVE_DRIVER='postgres',STORAGE_TYPE='local',LOCAL_STORAGE_BASE_DIR='/data/files',
     SYSTEM_AES_KEY=secrets.token_hex(16),SYSTEM_SIGNING_KEY=secrets.token_hex(32),JWT_SECRET=secrets.token_hex(32),
     LOG_LEVEL='info',GIN_MODE='release',TZ='Asia/Shanghai',GOMAXPROCS='3',CONCURRENCY_POOL_SIZE='2',AUTO_MIGRATE='true',AUTO_RECOVER_DIRTY='false',
-    DOCREADER_ADDR='',OLLAMA_OPTIONAL='true',WEKNORA_SANDBOX_DOCKER_ENABLED='false',
+    DOCREADER_ADDR='docreader:50051',DOCREADER_TRANSPORT='grpc',OLLAMA_OPTIONAL='true',WEKNORA_SANDBOX_DOCKER_ENABLED='false',
     DISABLE_REGISTRATION='false',WEKNORA_AUTH_COMPLEX_PASSWORD_ENABLED='true',
     LDAP_CONFIG_SOURCE='database',LDAP_DIRECTORY_ID='tianji-ad',
     WEKNORA_BOOTSTRAP_SYSTEM_ADMIN_EMAIL='admin@ai-doc.tianjizn.com',
@@ -29,17 +29,7 @@ values=dict(DB_DRIVER='postgres',DB_HOST='postgres',DB_PORT='5432',DB_USER='wekn
 (base/'redis.conf').chmod(0o644) # Parent directory is root-only; redis container drops UID.
 (base/'admin.json').write_text(__import__('json').dumps(dict(username='admin',email=values['WEKNORA_BOOTSTRAP_SYSTEM_ADMIN_EMAIL'],password=secrets.token_urlsafe(18)+'Aa1!')))
 PY
-cat > /etc/systemd/system/weknora-production.slice <<'UNIT'
-[Unit]
-Description=WeKnora production resource budget (no GPUs)
-[Slice]
-CPUQuota=600%
-MemoryHigh=28G
-MemoryMax=32G
-MemorySwapMax=0
-CPUWeight=50
-IOWeight=50
-UNIT
+install -m 644 "$(dirname "$0")/weknora-production.slice" /etc/systemd/system/weknora-production.slice
 cat > /etc/systemd/system/weknora-production-update.service <<'UNIT'
 [Unit]
 Description=Pull verified WeKnora production release

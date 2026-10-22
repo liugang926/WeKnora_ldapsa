@@ -14,8 +14,8 @@ always-on amd64 app-image verification is the discovery sentinel; path-filtered
 Go, frontend, LDAP and AnyDoc workflows are included whenever they were
 triggered. Any failed or cancelled run prevents publication.
 
-After those gates, the workflow builds Linux amd64 app (including AnyDoc) and
-UI, verifies immutable image identities and publishes a complete GitHub release
+After those gates, the workflow builds Linux amd64 app (including AnyDoc),
+UI and gRPC docreader images, verifies immutable image identities and publishes a complete GitHub release
 only after all image bundles and SHA-256 manifests have uploaded. A draft
 release or prerelease never deploys. Re-running the same main commit does not
 create a second published release. Unique manual `prod-*` tags remain available
@@ -29,7 +29,7 @@ Docker classic and containerd stores without trusting a mutable tag.
 
 The server polls published `prod-*` releases every five minutes. It downloads
 and verifies complete bundles, loads exact image IDs, stops this stack for a
-consistent backup, starts database/Redis, runs the packaged offline journal migration
+consistent backup, starts database/Redis/docreader, runs the packaged offline journal migration
 and initialization/verification gate, then starts app, verifies health, the exact clean migration version
 and application tables,
 and only then opens the frontend. This is a maintenance-window deployment,
@@ -123,12 +123,16 @@ only the reviewed changes, retaining the existing environment and data.
 
 ## Boundaries and resource allocation
 
-- Four containers: app, frontend, ParadeDB/PostgreSQL 17, Redis with persistent AOF.
-- AnyDoc runs inside the app; the optional Python DocReader, OCR/VLM, graph,
-  sandbox and local model containers are not installed. Configure supported
-  document engines and remote chat/embedding models in the administrator UI.
-- No GPU devices or Docker socket mounts. Aggregate slice: 6 CPU equivalents,
-  MemoryHigh 28 GiB, MemoryMax 32 GiB, swap disabled. Individual limits also apply.
+- Five containers: app, frontend, gRPC docreader, ParadeDB/PostgreSQL 17, Redis
+  with persistent AOF. AnyDoc remains available inside the app.
+- The Python DocReader is versioned with the application release and reachable
+  only as `docreader:50051` on the private Compose network. It shares a bounded
+  temporary image directory with the app and has no published port.
+- OCR/VLM enrichment, graph, sandbox and local model containers are not installed.
+  Configure supported document engines and remote chat/embedding models in the
+  administrator UI.
+- No GPU devices or Docker socket mounts. Aggregate slice: 8 CPU equivalents,
+  MemoryHigh 36 GiB, MemoryMax 40 GiB, swap disabled. Individual limits also apply.
 - Runtime data: `/data/weknora-production/runtime`; deployment and secrets:
   `/srv/weknora-production`; logs rotate at 3 x 10 MB per container.
 - External original-body retention anchor: `/data/weknora-production/retention`.

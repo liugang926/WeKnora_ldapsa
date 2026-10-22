@@ -19,7 +19,7 @@ def validate(m):
         raise ValueError('required features need deployment protocol 2')
     if protocol == 2 and 'original_body_journal' not in features:
         raise ValueError('protocol 2 requires an external original body journal')
-    if set(m.get('images', {})) != {'APP_IMAGE', 'UI_IMAGE', 'POSTGRES_IMAGE', 'REDIS_IMAGE'}:
+    if set(m.get('images', {})) != {'APP_IMAGE', 'UI_IMAGE', 'DOCREADER_IMAGE', 'POSTGRES_IMAGE', 'REDIS_IMAGE'}:
         raise ValueError('incomplete image set')
     for value in m['images'].values():
         if not re.fullmatch(r'sha256:[0-9a-f]{64}', value):

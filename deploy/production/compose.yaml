@@ -41,6 +41,34 @@ services:
       interval: 5s
       timeout: 5s
       retries: 30
+  docreader:
+    <<: *common
+    image: ${DOCREADER_IMAGE:?}
+    mem_limit: 8g
+    memswap_limit: 8g
+    cpus: 2
+    expose: ['50051']
+    volumes:
+      - /data/weknora-production/runtime/docreader:/tmp/docreader
+    environment:
+      TZ: Asia/Shanghai
+      LOG_LEVEL: info
+      DOCREADER_IMAGE_OUTPUT_DIR: /tmp/docreader
+      MAX_FILE_SIZE_MB: '50'
+      SSRF_WHITELIST_EXTRA: 'llmproxy.tianjizn.com,mozilla-yea-pays-attributes.trycloudflare.com,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16'
+      DOCREADER_GRPC_MAX_WORKERS: '4'
+      DOCREADER_GRPC_MAX_FILE_SIZE_MB: '50'
+      DOCREADER_GRPC_PORT: '50051'
+      DOCREADER_MARKITDOWN_MAX_WORKERS: '1'
+      DOCREADER_PDF_RENDER_MAX_WORKERS: '1'
+      DOCREADER_PDF_RENDER_DPI: '200'
+    healthcheck:
+      test: [CMD, grpc_health_probe, -addr=localhost:50051]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+    stop_grace_period: 60s
   app:
     <<: *common
     # Crash recovery is bounded. Daemon/host restart must pass start.sh's gate.
@@ -56,6 +84,8 @@ services:
       # The internal model gateway resolves to a private enterprise address.
       # Whitelist only this exact host; all other SSRF protections stay on.
       SSRF_WHITELIST_EXTRA: 'llmproxy.tianjizn.com,mozilla-yea-pays-attributes.trycloudflare.com,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16'
+      DOCREADER_ADDR: docreader:50051
+      DOCREADER_TRANSPORT: grpc
       WEKNORA_ORIGINAL_BODY_JOURNAL_DIRECTORY: /data/body-journal
       WEKNORA_ORIGINAL_BODY_JOURNAL_KEY: /data/body-key/hmac.key
       WEKNORA_ORIGINAL_BODY_JOURNAL_PIN: /data/body-pin/pin.json
@@ -64,10 +94,12 @@ services:
       - /data/weknora-production/retention/journal:/data/body-journal
       - /data/weknora-production/retention/key:/data/body-key:ro
       - /data/weknora-production/retention/pin:/data/body-pin
+      - /data/weknora-production/runtime/docreader:/tmp/docreader:ro
       - ./builtin_models.yaml:/app/config/builtin_models.yaml:ro
     depends_on:
       postgres: {condition: service_healthy}
       redis: {condition: service_healthy}
+      docreader: {condition: service_healthy}
     healthcheck:
       test: [CMD, curl, -fsS, http://localhost:8080/health]
       interval: 10s

@@ -6,6 +6,7 @@ base=/srv/weknora-production
 data=/data/weknora-production
 release=$(realpath "${1:?release directory required}")
 [[ "$release" == "$base/releases/"* && -f "$release/images.env" ]]
+install -d -m 0755 "$data/runtime/docreader"
 exec 9>"$base/deploy.lock"
 flock -n 9 || exit 0
 old=$(readlink -f "$base/current" || true)
@@ -73,7 +74,7 @@ fd = os.open(os.path.dirname(path), os.O_DIRECTORY)
 os.fsync(fd); os.close(fd)
 PYMARK
 trap rollback ERR
-compose "$release" up -d --pull never --wait --wait-timeout 420 postgres redis
+compose "$release" up -d --pull never --wait --wait-timeout 420 postgres redis docreader
 if [[ "$protocol" == journal ]]; then
   python3 "$base/bin/retention.py" prepare "$release" --lock-fd 9
 fi

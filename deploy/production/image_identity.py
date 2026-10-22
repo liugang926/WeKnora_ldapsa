@@ -25,7 +25,7 @@ _CONFIG_TYPES = {
     'application/vnd.oci.image.config.v1+json',
     'application/vnd.docker.container.image.v1+json',
 }
-_KEYS = {'APP_IMAGE', 'UI_IMAGE', 'POSTGRES_IMAGE', 'REDIS_IMAGE'}
+_KEYS = {'APP_IMAGE', 'UI_IMAGE', 'DOCREADER_IMAGE', 'POSTGRES_IMAGE', 'REDIS_IMAGE'}
 
 
 class ImageIdentityError(RuntimeError):
@@ -214,6 +214,7 @@ def resolve_images(manifest):
     fallback = {
         'APP_IMAGE': 'weknora-production-app:' + commit,
         'UI_IMAGE': 'weknora-production-ui:' + commit,
+        'DOCREADER_IMAGE': 'weknora-production-docreader:' + commit,
         'POSTGRES_IMAGE': 'paradedb/paradedb:v0.22.6-pg17',
         'REDIS_IMAGE': 'redis:7.4.10-alpine',
     }

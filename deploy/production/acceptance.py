@@ -47,6 +47,11 @@ status, _ = api('/api/v1/knowledge-bases')
 assert status == 401, 'Anonymous knowledge base access was not rejected'
 status, _ = api('/api/v1/knowledge-bases', token=token)
 assert status == 200, 'Authenticated database-backed request failed'
+status, body = api('/api/v1/system/parser-engines', token=token)
+parser_config=json.loads(body)
+assert status == 200 and parser_config.get('connected') is True, 'DocReader gRPC is not connected'
+assert parser_config.get('docreader_addr') == 'docreader:50051', 'DocReader address mismatch'
+assert parser_config.get('docreader_transport') == 'grpc', 'DocReader transport mismatch'
 status, _ = api('/api/v1/auth/register', credentials)
 assert status == 403, 'Public registration accepted'
 nextcloud_routes='NOT_DECLARED'
@@ -72,7 +77,7 @@ assert output(['exec','-T','frontend','sh','-c',"find /usr/share/nginx/html -typ
 resolved=resolve_images(manifest)
 assert resolved==json.loads((release/'resolved-images.json').read_text()), 'Recorded image identity proof differs'
 images={}
-for service,key in [('app','APP_IMAGE'),('frontend','UI_IMAGE'),('postgres','POSTGRES_IMAGE'),('redis','REDIS_IMAGE')]:
+for service,key in [('app','APP_IMAGE'),('frontend','UI_IMAGE'),('docreader','DOCREADER_IMAGE'),('postgres','POSTGRES_IMAGE'),('redis','REDIS_IMAGE')]:
     container=output(['ps','-q',service])
     record=json.loads(subprocess.check_output(['docker','inspect',container],text=True))[0]
     assert record['Image']==resolved['local_images'][key], 'Image identity mismatch: '+service
@@ -80,5 +85,5 @@ for service,key in [('app','APP_IMAGE'),('frontend','UI_IMAGE'),('postgres','POS
     assert record['HostConfig']['CgroupParent']=='weknora-production.slice', 'Wrong resource slice'
     assert not record['HostConfig'].get('DeviceRequests') and not record['HostConfig'].get('Devices'), 'Unexpected GPU/device allocation'
     images[service]={'image':record['Image'],'health':'healthy','restart_policy':record['HostConfig']['RestartPolicy']['Name'],'memory_bytes':record['HostConfig']['Memory'],'nano_cpus':record['HostConfig']['NanoCpus']}
-result={'origin':origin,'release':manifest['tag'],'commit':manifest['commit'],'frontend_and_assets':'PASS','admin_login':'PASS','directory_administration':'PASS','ldap_runtime':ldap_runtime,'authenticated_database_request':'PASS','registration_closed':'PASS','anonymous_access_denied':'PASS','migration_gate':'PASS','nextcloud_routes':nextcloud_routes,'nextcloud_business_pairing':'NOT_ACCEPTED_BY_THIS_CHECK','retention_journal':retention_journal,'images':images}
+result={'origin':origin,'release':manifest['tag'],'commit':manifest['commit'],'frontend_and_assets':'PASS','admin_login':'PASS','directory_administration':'PASS','ldap_runtime':ldap_runtime,'authenticated_database_request':'PASS','docreader_grpc':'PASS','registration_closed':'PASS','anonymous_access_denied':'PASS','migration_gate':'PASS','nextcloud_routes':nextcloud_routes,'nextcloud_business_pairing':'NOT_ACCEPTED_BY_THIS_CHECK','retention_journal':retention_journal,'images':images}
 print(json.dumps(result,indent=2))
