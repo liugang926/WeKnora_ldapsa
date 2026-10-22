@@ -1,0 +1,10 @@
+[Unit]
+Description=WeKnora production resource budget (no GPUs)
+
+[Slice]
+CPUQuota=800%
+MemoryHigh=36G
+MemoryMax=40G
+MemorySwapMax=0
+CPUWeight=50
+IOWeight=50

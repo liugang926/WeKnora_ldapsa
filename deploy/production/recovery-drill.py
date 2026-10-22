@@ -28,6 +28,6 @@ assert admins()==before, 'Database administrator data changed'
 result=subprocess.check_output(['python3',str(base/'support/acceptance.py'),'http://127.0.0.1:18080'],text=True)
 (base/'acceptance-after-restart.json').write_text(result)
 probe.unlink();assert redis('DEL',key)=='1'
-evidence={'stopped_all_four_containers':True,'restored_by_systemd':True,'database_admins_persisted':True,'redis_aof_persisted':True,'files_persisted':True,'http_acceptance_after_restart':'PASS'}
+evidence={'stopped_all_five_containers':True,'restored_by_systemd':True,'database_admins_persisted':True,'redis_aof_persisted':True,'files_persisted':True,'http_acceptance_after_restart':'PASS'}
 (base/'recovery-drill.json').write_text(json.dumps(evidence,indent=2)+'\n')
 print(json.dumps(evidence,indent=2))

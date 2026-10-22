@@ -9,6 +9,7 @@ if __name__ == '__main__':
     tag = os.environ.get('RELEASE_TAG') or os.environ['GITHUB_REF_NAME']
     refs = {'APP_IMAGE': 'weknora-production-app:' + sha,
             'UI_IMAGE': 'weknora-production-ui:' + sha,
+            'DOCREADER_IMAGE': 'weknora-production-docreader:' + sha,
             'POSTGRES_IMAGE': 'paradedb/paradedb:v0.22.6-pg17',
             'REDIS_IMAGE': 'redis:7.4.10-alpine'}
     print(json.dumps({'schema': 1, 'commit': sha, 'tag': tag,

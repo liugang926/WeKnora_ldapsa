@@ -118,6 +118,16 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --run-id "$GITHUB_RUN_ID" \
             --commit "$RELEASE_COMMIT"
+      - name: Free disk space for production images
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: false
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: true
       - uses: docker/setup-buildx-action@v4
       - name: Build application
         uses: docker/build-push-action@v7
@@ -142,17 +152,28 @@ jobs:
           load: true
           tags: weknora-production-ui:${{ github.sha }}
           build-args: VITE_FRONTEND_COMMIT=${{ github.sha }}
+      - name: Build docreader
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: docker/Dockerfile.docreader
+          platforms: linux/amd64
+          load: true
+          tags: weknora-production-docreader:${{ github.sha }}
+          cache-from: type=gha,scope=production-docreader-amd64
+          cache-to: type=gha,scope=production-docreader-amd64,mode=min
       - name: Verify and package immutable images
         run: |
           set -euo pipefail
           docker image inspect "weknora-production-app:$GITHUB_SHA" --format '{{range .Config.Env}}{{println .}}{{end}}' | grep -Fx "WEKNORA_BUILD_COMMIT=$GITHUB_SHA"
           docker run --rm --entrypoint sh "weknora-production-app:$GITHUB_SHA" -c 'test -x /app/WeKnora && test -x /usr/local/bin/migrate'
+          docker run --rm --entrypoint sh "weknora-production-docreader:$GITHUB_SHA" -c 'test -x /bin/grpc_health_probe && test -x /app/.venv/bin/python'
           docker pull paradedb/paradedb:v0.22.6-pg17@sha256:58bf87d2a6f1e72f56590b0f0ae1467e82c3f99ca203dde646672c8ac13148b2
           docker tag paradedb/paradedb:v0.22.6-pg17@sha256:58bf87d2a6f1e72f56590b0f0ae1467e82c3f99ca203dde646672c8ac13148b2 paradedb/paradedb:v0.22.6-pg17
           docker pull redis:7.4.10-alpine
           mkdir bundle
           python3 deploy/production/make_manifest.py > bundle/manifest.json
-          docker save "weknora-production-app:$GITHUB_SHA" "weknora-production-ui:$GITHUB_SHA" paradedb/paradedb:v0.22.6-pg17 redis:7.4.10-alpine | gzip -1 | split -b 1800M -d - bundle/images.tar.gz.part
+          docker save "weknora-production-app:$GITHUB_SHA" "weknora-production-ui:$GITHUB_SHA" "weknora-production-docreader:$GITHUB_SHA" paradedb/paradedb:v0.22.6-pg17 redis:7.4.10-alpine | gzip -1 | split -b 1800M -d - bundle/images.tar.gz.part
           tar --exclude=__pycache__ -czf bundle/deployment.tar.gz -C deploy production
           (cd bundle && sha256sum manifest.json deployment.tar.gz images.tar.gz.part* > SHA256SUMS)
           notes="Merged main commit: $RELEASE_COMMIT. Linux amd64. Deployment includes bounded resources, backup and health gates."

@@ -24,7 +24,7 @@ class UpdateTests(unittest.TestCase):
     def test_cached_old_release_cannot_downgrade_database(self):
         target=self.base/'releases'/'prod-old';target.mkdir(parents=True)
         active=self.base/'current';active.mkdir()
-        images={k:'sha256:'+'b'*64 for k in ['APP_IMAGE','UI_IMAGE','POSTGRES_IMAGE','REDIS_IMAGE']}
+        images={k:'sha256:'+'b'*64 for k in ['APP_IMAGE','UI_IMAGE','DOCREADER_IMAGE','POSTGRES_IMAGE','REDIS_IMAGE']}
         old={'schema':1,'tag':'prod-old','commit':'a'*40,'images':images}
         new=dict(old,tag='prod-current',commit='c'*40)
         (target/'manifest.json').write_text(json.dumps(old))
@@ -46,7 +46,7 @@ class UpdateTests(unittest.TestCase):
         target=self.base/'releases'/'prod-journal';target.mkdir(parents=True)
         manifest={'schema':1,'tag':'prod-journal','commit':'a'*40,
           'deployment_protocol':2,'required_features':['original_body_journal'],
-          'images':{key:'sha256:'+'b'*64 for key in ['APP_IMAGE','UI_IMAGE','POSTGRES_IMAGE','REDIS_IMAGE']}}
+          'images':{key:'sha256:'+'b'*64 for key in ['APP_IMAGE','UI_IMAGE','DOCREADER_IMAGE','POSTGRES_IMAGE','REDIS_IMAGE']}}
         (target/'manifest.json').write_text(json.dumps(manifest))
         releases=[{'draft':False,'prerelease':False,'tag_name':'prod-journal','published_at':'2026-10-19T00:00:00Z'}]
         with patch.object(update,'get',return_value=io.StringIO(json.dumps(releases))),patch.object(update.subprocess,'run') as run:
@@ -55,7 +55,7 @@ class UpdateTests(unittest.TestCase):
             run.assert_not_called()
     def test_stage_only_verifies_images_without_activating_or_marking_active(self):
         target=self.base/'releases'/'prod-stage';target.mkdir(parents=True)
-        images={key:'sha256:'+'b'*64 for key in ['APP_IMAGE','UI_IMAGE','POSTGRES_IMAGE','REDIS_IMAGE']}
+        images={key:'sha256:'+'b'*64 for key in ['APP_IMAGE','UI_IMAGE','DOCREADER_IMAGE','POSTGRES_IMAGE','REDIS_IMAGE']}
         manifest={'schema':1,'tag':'prod-stage','commit':'a'*40,'images':images}
         (target/'manifest.json').write_text(json.dumps(manifest))
         releases=[{'draft':False,'prerelease':False,'tag_name':'prod-stage','published_at':'2026-10-19T00:00:00Z'}]
