@@ -159,7 +159,7 @@ func bindKnowledgeConfigurationOriginalBodiesInTx(
 	if !originalBodySchemaPresent(tx) {
 		return nil
 	}
-	if !tx.Migrator().HasTable(&knowledgeConfigurationOriginalBodyManifest{}) {
+	if !schemaTablePresent(tx, "knowledge_configuration_original_body_manifests") {
 		return ErrOriginalBodyUnavailable
 	}
 	digest, err := knowledgeConfigurationOriginDigest(kb)
@@ -291,7 +291,8 @@ func (s *KnowledgeInputProvenanceStore) InventoryKnownKnowledgeConfigurationOrig
 	kbID string,
 ) error {
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if !originalBodySchemaPresent(tx) || !tx.Migrator().HasTable(&knowledgeConfigurationOriginalBodyManifest{}) {
+		if !originalBodySchemaPresent(tx) ||
+			!schemaTablePresent(tx, "knowledge_configuration_original_body_manifests") {
 			return ErrOriginalBodyUnavailable
 		}
 		fact, err := configurationOriginalBodyCurrentOrigin(tx, tenant, kbID)

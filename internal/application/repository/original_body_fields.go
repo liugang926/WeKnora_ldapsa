@@ -321,7 +321,7 @@ func (s *OriginalBodyRetentionStore) captureField(
 				(prior.AdmissionID == scope.AdmissionID && prior.SourceLineage == scope.Lineage)) {
 			if d.Table == "knowledge_bases" && scope.AdmissionID != "" {
 				var count int64
-				if tx.Migrator().HasTable(&knowledgeConfigurationOriginalBodyManifest{}) {
+				if schemaTablePresent(tx, "knowledge_configuration_original_body_manifests") {
 					if e := bodyInternal(
 						tx,
 					).Model(&knowledgeConfigurationOriginalBodyManifest{}).
@@ -900,12 +900,21 @@ func (s *OriginalBodyRetentionStore) resolveStatement(tx *gorm.DB, d originalBod
 
 var _ = strings.Contains
 
-func originalBodySchemaPresent(tx *gorm.DB) bool {
+func schemaTablePresent(tx *gorm.DB, table string) bool {
+	if tx == nil || table == "" {
+		return false
+	}
+	for _, char := range table {
+		if (char < 'a' || char > 'z') && (char < 'A' || char > 'Z') &&
+			(char < '0' || char > '9') && char != '_' {
+			return false
+		}
+	}
 	var count int64
 	if tx.Name() == "sqlite" {
 		return bodyInternal(
 			tx,
-		).Raw("SELECT count(*) FROM sqlite_master WHERE type='table' AND name='original_body_payloads'").
+		).Raw("SELECT count(*) FROM sqlite_master WHERE type='table' AND name='"+table+"'").
 			Scan(&count).
 			Error == nil &&
 			count == 1
@@ -914,12 +923,16 @@ func originalBodySchemaPresent(tx *gorm.DB) bool {
 		return bodyInternal(
 			tx,
 		).Raw(("SELECT count(*) FROM information_schema.tables WHERE table_schema=current_"+
-			"schema() AND table_name='original_body_payloads'")).
+			"schema() AND table_name='"+table+"'")).
 			Scan(&count).
 			Error == nil &&
 			count == 1
 	}
 	return false
+}
+
+func originalBodySchemaPresent(tx *gorm.DB) bool {
+	return schemaTablePresent(tx, "original_body_payloads")
 }
 
 // ShareOriginalBodyFieldInTx is an internal exact copy operation. The target
