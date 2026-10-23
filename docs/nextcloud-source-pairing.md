@@ -3,20 +3,28 @@
 The source pairing is separate from the optional event-inbox connection. A
 source created by the generic `POST /api/v1/datasource` route is not paired.
 Existing Nextcloud sources are classified as legacy unpaired; they are not
-silently adopted. The paired source uses one dedicated, empty knowledge base
-and exactly one Nextcloud binding.
+silently adopted. Each paired source owns exactly one Nextcloud binding. Under
+contract v3, several independently paired sources may share one dedicated
+knowledge base; they do not share a source ID, event connection, publication
+epoch, or sync ledger.
+
+The knowledge base remains dedicated to Nextcloud data sources. It may already
+contain documents when onboarding adopts it through verified configuration
+provenance, but it must not contain a non-Nextcloud data source. Adding another
+Nextcloud binding creates another paused source and another operation; it does
+not widen or replace the existing pairing.
 
 1. A Nextcloud administrator prepares an operation with
    `POST /api/v1/admin/bindings/{id}/source-pairing`, supplying the WeKnora
-   tenant ID as a canonical decimal string and the ID of an existing empty
-   WeKnora knowledge base. The response contains a one-time key and token.
+   tenant ID as a canonical decimal string and the ID of an eligible WeKnora
+   knowledge base. The response contains a one-time key and token.
    Save the `operation_id`, `instance_id`, `publication_epoch`, and `key_id`.
 2. An authenticated WeKnora tenant administrator with edit access to that KB
    calls `POST /api/v1/datasource/nextcloud-source-pairings`:
 
    ```json
    {
-     "knowledge_base_id": "<existing empty KB ID>",
+     "knowledge_base_id": "<eligible KB ID>",
      "base_url": "https://nextcloud.example",
      "binding_id": "<Nextcloud binding ID>",
      "operation_id": "<prepared UUID>",
@@ -31,7 +39,8 @@ and exactly one Nextcloud binding.
    binding registry, then creates a paused source and pending pairing in one
    database transaction. The token is encrypted in the source configuration.
    It signs the exact tuple back to Nextcloud's commit endpoint and activates
-   the source only after an exact active ACK.
+   this source only after an exact active ACK. Other sources already in the
+   shared KB remain unchanged.
 3. HTTP 201 means active. HTTP 202 with `state: pending` means the signed
    commit or local activation outcome is uncertain. The source remains paused;
    no content is admitted. Read `GET
@@ -176,7 +185,9 @@ must be aborted in Nextcloud and prepared again with a new operation and key.
 Paired source configuration and ownership are immutable through generic
 create/update/credential routes. Generic resume and sync refuse pending or
 legacy unpaired sources; database triggers enforce active pairing on running
-sync logs. The event connection has its own credentials and lifecycle.
+sync logs. The event connection has its own credentials and lifecycle for each
+source. Pausing, rotating, aborting, or withdrawing one binding never pauses
+or revokes another binding that targets the same knowledge base.
 
 Source pairing uses PostgreSQL `000116`/`000117` and SQLite `000035`/`000036`;
 rotation uses PostgreSQL `000118` and SQLite `000037`; initial abort uses

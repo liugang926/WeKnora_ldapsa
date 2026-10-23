@@ -387,14 +387,15 @@ func checkNextcloudPairingSource(tx *gorm.DB, identity NextcloudEventPairingIden
 		Take(&ds).Error; err != nil {
 		return ErrNextcloudEventScope
 	}
-	var otherSources int64
+	var incompatibleSources int64
 	if err := tx.Unscoped().Model(&types.DataSource{}).
-		Where("knowledge_base_id = ? AND tenant_id = ? AND id <> ?",
-			identity.KnowledgeBaseID, identity.TenantID, identity.DatasourceID).
-		Count(&otherSources).Error; err != nil {
-		return fmt.Errorf("check dedicated Nextcloud pairing source: %w", err)
+		Where("knowledge_base_id = ? AND tenant_id = ? AND id <> ? AND type <> ?",
+			identity.KnowledgeBaseID, identity.TenantID, identity.DatasourceID,
+			types.ConnectorTypeNextcloud).
+		Count(&incompatibleSources).Error; err != nil {
+		return fmt.Errorf("check shared Nextcloud pairing scope: %w", err)
 	}
-	if otherSources != 0 {
+	if incompatibleSources != 0 {
 		return ErrNextcloudEventScope
 	}
 	baseURL, configSHA, bindingID, err := NextcloudEventDataSourceIdentity(ds.Config)

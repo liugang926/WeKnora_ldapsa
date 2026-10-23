@@ -183,9 +183,9 @@ func (r *NextcloudSourcePairingRepository) BeginIndexedSourceWithdrawal(
 		if err != nil || config == nil || config.Credentials["key_id"] != pair.KeyID {
 			return ErrNextcloudSourcePairingConflict
 		}
-		// A source-level inventory can use the KB as its scope only when that
-		// KB still belongs to this one paired source. Unknown co-tenants make
-		// even the observed local copy attribution ambiguous.
+		// Shared-KB withdrawal is scoped by datasource_id. Rows carrying
+		// Nextcloud markers without that identity remain unattributable and
+		// fail closed instead of being hidden under another source.
 		var otherSources, unattributed int64
 		if err := tx.Table("data_sources").Where(
 			"tenant_id = ? AND knowledge_base_id = ? AND id <> ?",
@@ -194,14 +194,15 @@ func (r *NextcloudSourcePairingRepository) BeginIndexedSourceWithdrawal(
 		}
 		if err := tx.Table("knowledges").Where("tenant_id = ? AND knowledge_base_id = ?",
 			pair.TenantID, pair.KnowledgeBaseID).
-			Where(`channel IS DISTINCT FROM 'nextcloud' AND NOT (
-				COALESCE(jsonb_exists(metadata, 'nextcloud_instance_id'), FALSE)
+			Where(`(channel = 'nextcloud'
+				OR COALESCE(jsonb_exists(metadata, 'nextcloud_instance_id'), FALSE)
 				OR COALESCE(jsonb_exists(metadata, 'nextcloud_binding_id'), FALSE)
-				OR COALESCE(jsonb_exists(metadata, 'nextcloud_file_id'), FALSE))`).
+				OR COALESCE(jsonb_exists(metadata, 'nextcloud_file_id'), FALSE))
+				AND COALESCE(metadata->>'datasource_id', '') = ''`).
 			Count(&unattributed).Error; err != nil {
 			return err
 		}
-		if otherSources != 0 || unattributed != 0 {
+		if unattributed != 0 {
 			return ErrNextcloudSourcePairingConflict
 		}
 		var runningSyncs int64
@@ -227,7 +228,14 @@ func (r *NextcloudSourcePairingRepository) BeginIndexedSourceWithdrawal(
 			return err
 		}
 		// Hide already published rows in the same transaction as the durable
-		// pause. The access guard also rechecks the source status on reads.
+		// pause. A shared KB is scoped to this source; a legacy sole-source KB
+		// retains the historical KB-wide behavior for pre-metadata rows.
+		sourcePredicate := ""
+		sourceArgs := []any{pair.TenantID, pair.KnowledgeBaseID}
+		if otherSources != 0 {
+			sourcePredicate = " AND metadata->>'datasource_id' = ?"
+			sourceArgs = append(sourceArgs, pair.DataSourceID)
+		}
 		if err := tx.Exec(`UPDATE knowledges
 			SET enable_status = 'disabled',
 			    metadata = jsonb_set(COALESCE(metadata, '{}'::jsonb),
@@ -235,8 +243,8 @@ func (r *NextcloudSourcePairingRepository) BeginIndexedSourceWithdrawal(
 			WHERE tenant_id = ? AND knowledge_base_id = ?
 			  AND (channel = 'nextcloud' OR jsonb_exists(metadata, 'nextcloud_instance_id')
 			       OR jsonb_exists(metadata, 'nextcloud_binding_id')
-			       OR jsonb_exists(metadata, 'nextcloud_file_id'))`,
-			pair.TenantID, pair.KnowledgeBaseID).Error; err != nil {
+			       OR jsonb_exists(metadata, 'nextcloud_file_id'))`+sourcePredicate,
+			sourceArgs...).Error; err != nil {
 			return err
 		}
 		proposed.State = "withdrawn_inventory_incomplete"
@@ -278,6 +286,30 @@ func (r *NextcloudSourcePairingRepository) RefreshIndexedWithdrawalInventory(
 			Take(&source).Error; err != nil {
 			return ErrNextcloudSourcePairingConflict
 		}
+		var otherSources int64
+		if err := tx.Unscoped().Table("data_sources").
+			Where("tenant_id=? AND knowledge_base_id=? AND id<>?",
+				row.TenantID, row.KnowledgeBaseID, row.DataSourceID).
+			Count(&otherSources).Error; err != nil {
+			return err
+		}
+		knowledgeScope := ""
+		knowledgeArgs := []any{row.TenantID, row.KnowledgeBaseID}
+		if otherSources != 0 {
+			knowledgeScope = " AND metadata->>'datasource_id' = ?"
+			knowledgeArgs = append(knowledgeArgs, row.DataSourceID)
+		}
+		chunkSQL := `SELECT id AS object_ref, knowledge_id FROM chunks
+			WHERE tenant_id = ? AND knowledge_base_id = ?`
+		chunkArgs := []any{row.TenantID, row.KnowledgeBaseID}
+		if otherSources != 0 {
+			chunkSQL = `SELECT c.id AS object_ref, c.knowledge_id FROM chunks c
+				WHERE c.tenant_id = ? AND c.knowledge_base_id = ?
+				  AND EXISTS(SELECT 1 FROM knowledges k WHERE k.id=c.knowledge_id
+				    AND k.tenant_id=c.tenant_id AND k.knowledge_base_id=c.knowledge_base_id
+				    AND k.metadata->>'datasource_id'=?)`
+			chunkArgs = append(chunkArgs, row.DataSourceID)
+		}
 		// Each query uses persisted IDs. The GORM item table is append-only;
 		// ON CONFLICT makes interruption/retry idempotent.
 		queries := []struct {
@@ -287,19 +319,20 @@ func (r *NextcloudSourcePairingRepository) RefreshIndexedWithdrawalInventory(
 			{
 				"knowledge",
 				("SELECT id AS object_ref, id AS knowledge_id FROM knowledges WHERE tenant_i" +
-					"d = ? AND knowledge_base_id = ?"),
-				[]any{row.TenantID, row.KnowledgeBaseID},
+					"d = ? AND knowledge_base_id = ?" + knowledgeScope),
+				knowledgeArgs,
 			},
 			{
 				"source_file",
 				("SELECT id || ':' || file_path AS object_ref, id AS knowledge_id FROM knowl" +
-					"edges WHERE tenant_id = ? AND knowledge_base_id = ? AND file_path <> ''"),
-				[]any{row.TenantID, row.KnowledgeBaseID},
+					"edges WHERE tenant_id = ? AND knowledge_base_id = ? AND file_path <> ''" +
+					knowledgeScope),
+				knowledgeArgs,
 			},
 			{
 				"chunk",
-				`SELECT id AS object_ref, knowledge_id FROM chunks WHERE tenant_id = ? AND knowledge_base_id = ?`,
-				[]any{row.TenantID, row.KnowledgeBaseID},
+				chunkSQL,
+				chunkArgs,
 			},
 			{
 				"gc_job",
@@ -355,12 +388,20 @@ func (r *NextcloudSourcePairingRepository) RefreshIndexedWithdrawalInventory(
 			ObservedAt: time.Now().UTC(),
 		}}
 		if tx.Migrator().HasTable("embeddings") {
-			if err := tx.Exec(`INSERT INTO nextcloud_indexed_withdrawal_items
+			embeddingSQL := `INSERT INTO nextcloud_indexed_withdrawal_items
 				(operation_id, kind, object_ref, knowledge_id)
 				SELECT ?, 'postgres_embedding', CAST(id AS TEXT), COALESCE(knowledge_id, '')
-				FROM embeddings WHERE knowledge_base_id = ?
-				ON CONFLICT (operation_id, kind, object_ref) DO NOTHING`,
-				row.OperationID, row.KnowledgeBaseID).Error; err != nil {
+				FROM embeddings WHERE knowledge_base_id = ?`
+			embeddingArgs := []any{row.OperationID, row.KnowledgeBaseID}
+			if otherSources != 0 {
+				embeddingSQL += ` AND EXISTS(SELECT 1 FROM knowledges k
+					WHERE k.id=embeddings.knowledge_id AND k.tenant_id=?
+					  AND k.knowledge_base_id=embeddings.knowledge_base_id
+					  AND k.metadata->>'datasource_id'=?)`
+				embeddingArgs = append(embeddingArgs, row.TenantID, row.DataSourceID)
+			}
+			embeddingSQL += ` ON CONFLICT (operation_id, kind, object_ref) DO NOTHING`
+			if err := tx.Exec(embeddingSQL, embeddingArgs...).Error; err != nil {
 				return err
 			}
 		} else {
@@ -380,11 +421,17 @@ func (r *NextcloudSourcePairingRepository) RefreshIndexedWithdrawalInventory(
 				KnowledgeID string
 				ImageInfo   string
 			}
-			if err := tx.Table("chunks").Select("id, knowledge_id, image_info").
+			imageQuery := tx.Table("chunks").Select("id, knowledge_id, image_info").
 				Where(("tenant_id = ? AND knowledge_base_id = ? AND id > ? AND image_info IS NOT N" +
 					"ULL AND image_info <> ''"),
-					row.TenantID, row.KnowledgeBaseID, lastChunkID).
-				Order("id ASC").Limit(500).Find(&imageRows).Error; err != nil {
+					row.TenantID, row.KnowledgeBaseID, lastChunkID)
+			if otherSources != 0 {
+				imageQuery = imageQuery.Where(`EXISTS(SELECT 1 FROM knowledges k
+					WHERE k.id=chunks.knowledge_id AND k.tenant_id=chunks.tenant_id
+					  AND k.knowledge_base_id=chunks.knowledge_base_id
+					  AND k.metadata->>'datasource_id'=?)`, row.DataSourceID)
+			}
+			if err := imageQuery.Order("id ASC").Limit(500).Find(&imageRows).Error; err != nil {
 				return err
 			}
 			if len(imageRows) == 0 {

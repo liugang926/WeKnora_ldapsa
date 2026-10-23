@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -91,6 +92,10 @@ func onboardingDB(t *testing.T) (*gorm.DB, *repo.NextcloudOnboardingStore, types
 		("CREATE TABLE nextcloud_event_connections(connection_id TEXT PRIMARY KEY,te" +
 			"nant_id BIGINT,knowledge_base_id TEXT,nextcloud_instance_id TEXT,binding_i" +
 			"d TEXT,datasource_id TEXT,status TEXT)"),
+		"CREATE TABLE nextcloud_event_inbox(connection_id TEXT)",
+		("CREATE TABLE nextcloud_event_dispatch(connection_id TEXT,state TEXT NOT NU" +
+			"LL,updated_at TIMESTAMP NOT NULL)"),
+		"CREATE TABLE nextcloud_event_checkpoint(connection_id TEXT)",
 	} {
 		require.NoError(t, db.Exec(sql).Error)
 	}
@@ -120,6 +125,7 @@ func onboardingDB(t *testing.T) (*gorm.DB, *repo.NextcloudOnboardingStore, types
 			"../../../migrations/versioned/000162_nextcloud_target_closure.up.sql",
 			"../../../migrations/versioned/000164_nextcloud_current_manager_purpose.up.sql",
 			"../../../migrations/versioned/000165_nextcloud_machine_tasks.up.sql",
+			"../../../migrations/versioned/000167_nextcloud_multisource.up.sql",
 		}
 	}
 	// Producer/config/name fixtures use the actual immutable origin and body
@@ -178,12 +184,16 @@ func onboardingDB(t *testing.T) (*gorm.DB, *repo.NextcloudOnboardingStore, types
 	if dialect == "versioned" {
 		var schema string
 		require.NoError(t, db.Raw("SELECT current_schema()").Scan(&schema).Error)
+		migrationDSN, err := postgresDSNWithRuntimeParams(
+			os.Getenv("NEXTCLOUD_ONBOARDING_TEST_POSTGRES_DSN"),
+			map[string]string{
+				"search_path":             schema,
+				"default_query_exec_mode": "simple_protocol",
+			},
+		)
+		require.NoError(t, err)
 		migrationDB, err := gorm.Open(
-			postgres.Open(
-				os.Getenv(
-					"NEXTCLOUD_ONBOARDING_TEST_POSTGRES_DSN",
-				)+" search_path="+schema+" default_query_exec_mode=simple_protocol",
-			),
+			postgres.Open(migrationDSN),
 			&gorm.Config{Logger: logger.Default.LogMode(logger.Error)},
 		)
 		require.NoError(t, err)
@@ -339,6 +349,77 @@ func onboardingDB(t *testing.T) (*gorm.DB, *repo.NextcloudOnboardingStore, types
 	template := freshOnboardingKB("template")
 	createOnboardingTemplate(t, db, &template)
 	return db, repo.NewNextcloudOnboardingStore(db), cred
+}
+
+func postgresDSNWithRuntimeParams(dsn string, params map[string]string) (string, error) {
+	if !strings.Contains(dsn, "://") {
+		parts := []string{strings.TrimSpace(dsn)}
+		for key, value := range params {
+			parts = append(parts, key+"="+value)
+		}
+		return strings.Join(parts, " "), nil
+	}
+	parsed, err := url.Parse(dsn)
+	if err != nil {
+		return "", err
+	}
+	query := parsed.Query()
+	for key, value := range params {
+		query.Set(key, value)
+	}
+	parsed.RawQuery = query.Encode()
+	return parsed.String(), nil
+}
+
+func TestPostgresDSNWithRuntimeParamsSupportsURLAndKeywordForms(t *testing.T) {
+	urlDSN, err := postgresDSNWithRuntimeParams(
+		"postgres://user:pass@db.example/weknora?sslmode=disable",
+		map[string]string{"search_path": "onboarding_test"},
+	)
+	require.NoError(t, err)
+	require.Contains(t, urlDSN, "search_path=onboarding_test")
+	require.Contains(t, urlDSN, "sslmode=disable")
+
+	keywordDSN, err := postgresDSNWithRuntimeParams(
+		"host=db.example port=5432 user=user dbname=weknora sslmode=disable",
+		map[string]string{"search_path": "onboarding_test"},
+	)
+	require.NoError(t, err)
+	require.Contains(t, keywordDSN, "host=db.example")
+	require.Contains(t, keywordDSN, "search_path=onboarding_test")
+}
+
+func applySQLiteMultisourceMigration(t *testing.T, db *gorm.DB) {
+	t.Helper()
+	if db.Name() != "sqlite" {
+		return
+	}
+	require.NoError(t, db.AutoMigrate(&types.SyncLog{}))
+	for _, statement := range []string{
+		"CREATE TABLE nextcloud_graph_records(operation_id TEXT PRIMARY KEY,tenant_id BIGINT," +
+			"knowledge_base_id TEXT,knowledge_id TEXT,generation BIGINT,build_lease_id TEXT)",
+		"CREATE TABLE nextcloud_gc_jobs(id TEXT PRIMARY KEY,datasource_id TEXT)",
+		"CREATE TABLE nextcloud_source_rotations(operation_id TEXT,pair_operation_id TEXT," +
+			"datasource_id TEXT,state TEXT,old_key_id TEXT,new_key_id TEXT," +
+			"old_config_sha256 TEXT,new_config_sha256 TEXT,old_config TEXT,new_config TEXT)",
+	} {
+		require.NoError(t, db.Exec(statement).Error)
+	}
+	for _, name := range []string{
+		"000031_nextcloud_source_versions",
+		"000042_nextcloud_empty_decommission",
+		"000043_nextcloud_virgin_rebuild_guard",
+		"000044_nextcloud_indexed_withdrawal",
+	} {
+		migration, err := os.ReadFile("../../../migrations/sqlite/" + name + ".up.sql")
+		require.NoError(t, err)
+		require.NoError(t, db.Exec(string(migration)).Error)
+	}
+	migration, err := os.ReadFile(
+		"../../../migrations/sqlite/000086_nextcloud_multisource.up.sql",
+	)
+	require.NoError(t, err)
+	require.NoError(t, db.Exec(string(migration)).Error)
 }
 
 // Create a template through the same authenticated independent-input writer
@@ -504,6 +585,7 @@ func TestNextcloudOnboardingBlankHistoryReservationAndRetry(t *testing.T) {
 
 func TestNextcloudOnboardingCompetingRootsAndConcurrentContent(t *testing.T) {
 	db, store, c := onboardingDB(t)
+	applySQLiteMultisourceMigration(t, db)
 	kb := freshOnboardingKB("contended")
 	createOnboardingTemplate(t, db, &kb)
 	start := make(chan struct{})
@@ -527,7 +609,8 @@ func TestNextcloudOnboardingCompetingRootsAndConcurrentContent(t *testing.T) {
 			successes++
 		}
 	}
-	require.Equal(t, 1, successes)
+	require.Equal(t, 2, successes,
+		"v3 admits independent bindings concurrently into the same knowledge base")
 	touched := freshOnboardingKB("touched")
 	createOnboardingTemplate(t, db, &touched)
 	doc := types.Knowledge{ID: "removed", TenantID: 7, KnowledgeBaseID: touched.ID, Channel: "manual"}
@@ -571,6 +654,122 @@ func TestNextcloudOnboardingAllowsExistingNonEmptyKnowledgeBase(t *testing.T) {
 	require.Equal(t, kb.ID, op.KnowledgeBaseID)
 }
 
+func TestNextcloudOnboardingReservesIndependentBindingsForSharedKnowledgeBase(t *testing.T) {
+	db, store, credential := onboardingDB(t)
+	applySQLiteMultisourceMigration(t, db)
+	kb := freshOnboardingKB("shared-target")
+	createOnboardingTemplate(t, db, &kb)
+
+	first, err := store.Reserve(
+		context.Background(), credential,
+		onboardingRequest(credential, uuid.NewString(), kb.ID),
+	)
+	require.NoError(t, err)
+	second, err := store.Reserve(
+		context.Background(), credential,
+		onboardingRequest(credential, uuid.NewString(), kb.ID),
+	)
+	require.NoError(t, err)
+	require.Equal(t, kb.ID, first.KnowledgeBaseID)
+	require.Equal(t, kb.ID, second.KnowledgeBaseID)
+	require.NotEqual(t, first.BindingID, second.BindingID)
+	require.NotEqual(t, first.OperationID, second.OperationID)
+
+	pairings := repo.NewNextcloudSourcePairingRepository(db)
+	var sharedPairs []repo.NextcloudSourcePairing
+	for i, op := range []types.NextcloudOnboardingOperation{first, second} {
+		pair, created, err := pairings.PrepareSourcePairing(
+			context.Background(),
+			repo.NextcloudSourcePairing{
+				OperationID: op.OperationID, TenantID: op.TenantID,
+				KnowledgeBaseID: op.KnowledgeBaseID, InstanceID: op.InstanceID,
+				BindingID: op.BindingID, BaseURL: credential.BaseURL,
+				KeyID: "pair_" + strings.Repeat(string(rune('a'+i)), 32),
+			},
+			"shared-binding-token-"+op.OperationID,
+		)
+		require.NoError(t, err)
+		require.True(t, created)
+		require.Equal(t, op.BindingID, pair.BindingID)
+		require.NoError(t, pairings.ActivateSourcePairing(context.Background(), pair))
+		sharedPairs = append(sharedPairs, pair)
+	}
+	var active int64
+	require.NoError(t, db.Model(&repo.NextcloudSourcePairing{}).
+		Where("tenant_id=? AND knowledge_base_id=? AND state='active'", 7, kb.ID).
+		Count(&active).Error)
+	require.EqualValues(t, 2, active)
+
+	if db.Name() == "sqlite" {
+		for _, pair := range sharedPairs {
+			var virgin bool
+			require.NoError(t, db.Raw(
+				`SELECT ever_touched FROM nextcloud_source_virgin WHERE pair_operation_id=?`,
+				pair.OperationID,
+			).Scan(&virgin).Error)
+			require.False(t, virgin)
+			var source types.DataSource
+			require.NoError(t, db.Where("id=?", pair.DataSourceID).Take(&source).Error)
+			require.Equal(t, types.ConnectorTypeNextcloud, source.Type)
+			require.Equal(t, types.DataSourceStatusActive, source.Status)
+			require.Nil(t, source.LastSyncAt)
+			require.Empty(t, source.LastSyncCursor)
+			require.Empty(t, source.LastSyncResult)
+			base, hash, binding, err := repo.NextcloudEventDataSourceIdentity(source.Config)
+			require.NoError(t, err)
+			require.Equal(t, pair.BaseURL, base)
+			require.Equal(t, pair.ConfigSHA, hash)
+			require.Equal(t, pair.BindingID, binding)
+			config, err := source.ParseConfig()
+			require.NoError(t, err)
+			require.Equal(t, pair.KeyID, config.Credentials["key_id"])
+			for table, column := range map[string]string{
+				"sync_logs":                   "data_source_id",
+				"nextcloud_event_connections": "datasource_id",
+				"nextcloud_source_versions":   "datasource_id",
+				"nextcloud_gc_jobs":           "datasource_id",
+			} {
+				var count int64
+				require.NoError(t, db.Table(table).Where(column+"=?", pair.DataSourceID).
+					Count(&count).Error)
+				require.Zero(t, count, table)
+			}
+			var sourceRows int64
+			require.NoError(t, db.Table("knowledges").
+				Where("tenant_id=? AND knowledge_base_id=? AND metadata->>'datasource_id'=?",
+					7, kb.ID, pair.DataSourceID).Count(&sourceRows).Error)
+			require.Zero(t, sourceRows)
+			_, err = pairings.BeginEmptySourceDecommission(
+				context.Background(),
+				pair,
+				repo.NextcloudSourceDecommission{
+					OperationID: uuid.NewString(), PairOperationID: pair.OperationID,
+					TenantID: pair.TenantID, KnowledgeBaseID: pair.KnowledgeBaseID,
+					DataSourceID: pair.DataSourceID,
+					InstanceID:   pair.InstanceID, BindingID: pair.BindingID,
+					KeyID:            pair.KeyID,
+					PublicationEpoch: 1,
+				},
+			)
+			require.NoError(t, err, pair.OperationID)
+		}
+		var decommissions int64
+		require.NoError(t, db.Model(&repo.NextcloudSourceDecommission{}).
+			Where("tenant_id=? AND knowledge_base_id=?", 7, kb.ID).
+			Count(&decommissions).Error)
+		require.EqualValues(t, 2, decommissions)
+	}
+
+	require.NoError(t, repo.NewKnowledgeBaseRepository(db).DeleteKnowledgeBase(
+		context.Background(), kb.ID,
+	))
+	var closures int64
+	require.NoError(t, db.Model(&repo.NextcloudTargetClosure{}).
+		Where("tenant_id=? AND knowledge_base_id=?", 7, kb.ID).
+		Count(&closures).Error)
+	require.EqualValues(t, 2, closures)
+}
+
 func TestNextcloudCandidatePageExplainsIneligibleTargetsAndRejectsStaleRevision(t *testing.T) {
 	db, store, c := onboardingDB(t)
 	valid := freshOnboardingKB("selectable")
@@ -587,6 +786,38 @@ func TestNextcloudCandidatePageExplainsIneligibleTargetsAndRejectsStaleRevision(
 	createOnboardingTemplate(t, db, &bound)
 	require.NoError(t, db.Model(&types.KnowledgeBase{}).Where("id=?", bound.ID).
 		Update("ever_had_nextcloud_source", true).Error)
+	require.NoError(t, db.Create(&types.DataSource{
+		ID: "shared-source", TenantID: 7, KnowledgeBaseID: bound.ID,
+		Name: "Shared source", Type: types.ConnectorTypeNextcloud,
+		Config: types.JSON(`{"resource_ids":["root-a"],"settings":{},"credentials":{}}`),
+		Status: types.DataSourceStatusPaused,
+	}).Error)
+	require.NoError(t, db.Create(&repo.NextcloudSourcePairing{
+		OperationID: "shared-pair", TenantID: 7, KnowledgeBaseID: bound.ID,
+		DataSourceID: "shared-source", InstanceID: "instance",
+		BindingID: "root-a", BaseURL: "https://cloud.example.test",
+		ConfigSHA: strings.Repeat("a", 64), PublicationEpoch: 1,
+		KeyID: "pair_shared", State: "active",
+	}).Error)
+	require.NoError(t, db.Model(&types.DataSource{}).
+		Where("id = ?", "shared-source").
+		Update("status", types.DataSourceStatusActive).Error)
+
+	unpaired := freshOnboardingKB("unpaired-target")
+	createOnboardingTemplate(t, db, &unpaired)
+	require.NoError(t, db.Create(&types.DataSource{
+		ID: "legacy-unpaired", TenantID: 7, KnowledgeBaseID: unpaired.ID,
+		Name: "Legacy unpaired", Type: types.ConnectorTypeNextcloud,
+		Config: types.JSON(`{"resource_ids":["legacy-root"],"settings":{},"credentials":{}}`),
+		Status: types.DataSourceStatusPaused,
+	}).Error)
+	mixed := freshOnboardingKB("mixed-target")
+	createOnboardingTemplate(t, db, &mixed)
+	require.NoError(t, db.Create(&types.DataSource{
+		ID: "mixed-source", TenantID: 7, KnowledgeBaseID: mixed.ID,
+		Name: "Other source", Type: types.ConnectorTypeGitLab,
+		Config: types.JSON(`{}`), Status: types.DataSourceStatusActive,
+	}).Error)
 
 	page, err := store.CandidatePage(context.Background(), c, "directory", "guid-owner",
 		"", "", 50, "req_test")
@@ -600,7 +831,15 @@ func TestNextcloudCandidatePageExplainsIneligibleTargetsAndRejectsStaleRevision(
 		reasons[candidate.ID] = candidate.ReasonCode
 	}
 	require.Equal(t, "kb_wiki_not_supported", reasons[wiki.ID])
-	require.Equal(t, "kb_already_bound", reasons[bound.ID])
+	require.Equal(t, "kb_unpaired_sources", reasons[unpaired.ID])
+	require.Equal(t, "kb_mixed_sources", reasons[mixed.ID])
+	require.NotContains(t, reasons, bound.ID)
+	require.Contains(t, candidateIDs(page.Candidates), bound.ID)
+	for _, candidate := range page.Candidates {
+		if candidate.ID == bound.ID {
+			require.EqualValues(t, 1, candidate.NextcloudSourceCount)
+		}
+	}
 	for _, candidate := range page.Candidates {
 		require.True(t, candidate.Eligible)
 		require.True(t, candidate.CanTakeOver)
@@ -709,8 +948,6 @@ func TestNextcloudConnectionHealthFailsClosedUntilWorkerAndDispatcherObserved(t 
 		Status: types.SyncLogStatusSuccess, StartedAt: now.Add(-time.Second),
 		FinishedAt: &now, UpdatedAt: now, CreatedAt: now,
 	}).Error)
-	require.NoError(t, db.Exec(`CREATE TABLE nextcloud_event_dispatch (
-		state TEXT NOT NULL, updated_at TIMESTAMP NOT NULL)`).Error)
 	require.NoError(t, db.Exec("INSERT INTO nextcloud_event_dispatch(state,updated_at) VALUES(?,?)",
 		"idle", now).Error)
 
@@ -718,7 +955,7 @@ func TestNextcloudConnectionHealthFailsClosedUntilWorkerAndDispatcherObserved(t 
 	require.NoError(t, err)
 	require.True(t, healthy.BindingAllowed)
 	require.Equal(t, "healthy", healthy.Status)
-	require.Equal(t, 2, healthy.ContractVersion)
+	require.Equal(t, 3, healthy.ContractVersion)
 }
 
 func TestNextcloudConnectionCreatesAndReusesWorkspaceTemplate(t *testing.T) {
@@ -1064,8 +1301,13 @@ func TestNextcloudOnboardingPostgresConcurrentAdmission(t *testing.T) {
 	ctx := context.Background()
 	var schema string
 	require.NoError(t, db.Raw("SELECT current_schema()").Scan(&schema).Error)
+	peerDSN, err := postgresDSNWithRuntimeParams(
+		os.Getenv("NEXTCLOUD_ONBOARDING_TEST_POSTGRES_DSN"),
+		map[string]string{"search_path": schema},
+	)
+	require.NoError(t, err)
 	peer, err := gorm.Open(
-		postgres.Open(os.Getenv("NEXTCLOUD_ONBOARDING_TEST_POSTGRES_DSN")+" search_path="+schema),
+		postgres.Open(peerDSN),
 		&gorm.Config{Logger: logger.Default.LogMode(logger.Error)},
 	)
 	require.NoError(t, err)
@@ -1091,7 +1333,8 @@ func TestNextcloudOnboardingPostgresConcurrentAdmission(t *testing.T) {
 			successes++
 		}
 	}
-	require.Equal(t, 1, successes)
+	require.Equal(t, 2, successes,
+		"v3 admits independent bindings concurrently into the same knowledge base")
 	for range 5 {
 		id := uuid.NewString()
 		kb := freshOnboardingKB(id)

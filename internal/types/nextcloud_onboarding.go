@@ -78,6 +78,7 @@ type NextcloudKnowledgeBaseCandidate struct {
 	ID                     string `json:"id"`
 	Name                   string `json:"name"`
 	ContentCount           int64  `json:"content_count"`
+	NextcloudSourceCount   int64  `json:"nextcloud_source_count"`
 	Eligible               bool   `json:"eligible"`
 	ReasonCode             string `json:"reason_code,omitempty"`
 	Reason                 string `json:"reason,omitempty"`

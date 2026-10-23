@@ -116,19 +116,30 @@ func (r *NextcloudSourcePairingRepository) PrepareSourcePairing(
 		// Reserved admission and generic pairing share this writer lock. Only the
 		// owning immutable operation may enter a reserved knowledge base.
 		if tx.Migrator().HasTable(&types.NextcloudOnboardingOperation{}) {
-			var reservation types.NextcloudOnboardingOperation
-			err := tx.Where("tenant_id = ? AND knowledge_base_id = ?", proposed.TenantID, proposed.KnowledgeBaseID).
-				Take(&reservation).
-				Error
-			if err == nil {
-				if reservation.OperationID != proposed.OperationID || reservation.InstanceID != proposed.InstanceID ||
-					reservation.BindingID != proposed.BindingID ||
-					reservation.State == "retired" {
+			var reservations []types.NextcloudOnboardingOperation
+			if err := tx.Where("tenant_id = ? AND knowledge_base_id = ?",
+				proposed.TenantID, proposed.KnowledgeBaseID).
+				Find(&reservations).
+				Error; err != nil {
+				return err
+			}
+			if len(reservations) != 0 {
+				matched := false
+				for i := range reservations {
+					reservation := reservations[i]
+					if reservation.OperationID == proposed.OperationID {
+						if reservation.InstanceID != proposed.InstanceID ||
+							reservation.BindingID != proposed.BindingID ||
+							reservation.State == "retired" {
+							return ErrNextcloudSourcePairingConflict
+						}
+						cfg.Settings["onboarding_operation_id"] = reservation.OperationID
+						matched = true
+					}
+				}
+				if !matched {
 					return ErrNextcloudSourcePairingConflict
 				}
-				cfg.Settings["onboarding_operation_id"] = reservation.OperationID
-			} else if !errors.Is(err, gorm.ErrRecordNotFound) {
-				return err
 			}
 		}
 		var aborted NextcloudSourcePairing
@@ -197,7 +208,9 @@ func (r *NextcloudSourcePairingRepository) PrepareSourcePairing(
 			Type: types.ConnectorTypeNextcloud, Config: blob,
 			Status: types.DataSourceStatusPaused, SyncMode: types.SyncModeIncremental, SyncDeletions: true,
 		}
-		if err := admitDataSourceKnowledgeBase(tx, ds, false); err != nil {
+		if err := admitDataSourceKnowledgeBase(
+			WithNextcloudMultiSource(ctx), tx, ds, false,
+		); err != nil {
 			return fmt.Errorf("admit dedicated Nextcloud knowledge base: %w", err)
 		}
 		if err := tx.Create(ds).Error; err != nil {
@@ -377,15 +390,20 @@ func (r *NextcloudSourcePairingRepository) AbortPendingSourcePairing(ctx context
 		for _, tableAndWhere := range [][2]string{
 			{"sync_logs", "data_source_id = ?"},
 			{"nextcloud_event_connections", "datasource_id = ?"},
-			{"knowledges", "knowledge_base_id = ?"},
 		} {
 			var count int64
-			value := pair.DataSourceID
-			if tableAndWhere[0] == "knowledges" {
-				value = pair.KnowledgeBaseID
-			}
-			if err := tx.Table(tableAndWhere[0]).Where(tableAndWhere[1], value).
+			if err := tx.Table(tableAndWhere[0]).Where(tableAndWhere[1], pair.DataSourceID).
 				Count(&count).Error; err != nil || count != 0 {
+				return ErrNextcloudSourcePairingConflict
+			}
+		}
+		if tx.Migrator().HasTable("knowledges") {
+			var count int64
+			query := tx.Table("knowledges").Where("knowledge_base_id = ?", pair.KnowledgeBaseID)
+			if tx.Migrator().HasColumn("knowledges", "metadata") {
+				query = query.Where("metadata->>'datasource_id' = ?", pair.DataSourceID)
+			}
+			if err := query.Count(&count).Error; err != nil || count != 0 {
 				return ErrNextcloudSourcePairingConflict
 			}
 		}

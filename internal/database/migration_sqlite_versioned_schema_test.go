@@ -159,7 +159,7 @@ var versionedSQLiteColumns = map[string][]string{
 	}, // SQLite 000050 / PostgreSQL 000131
 }
 
-const expectedSQLiteMigrationVersion = 85
+const expectedSQLiteMigrationVersion = 86
 
 func TestSQLiteNextcloudRevisionUpgradeFrom43PreservesUnknownHistory(t *testing.T) {
 	repoRoot := sqliteRepoRoot(t)
@@ -271,13 +271,13 @@ func TestSQLiteNextcloudPairingGuardsPendingAndActiveKnowledgeBase(t *testing.T)
 	_, err = db.Exec(`UPDATE data_sources SET status = 'active' WHERE id = 'ds-paired'`)
 	require.ErrorContains(t, err, "nextcloud_source_unpaired")
 	_, err = db.Exec(`UPDATE knowledge_bases SET deleted_at = CURRENT_TIMESTAMP WHERE id = 'kb-paired'`)
-	require.ErrorContains(t, err, "nextcloud_paired_kb_delete_forbidden")
+	require.NoError(t, err, "soft deletion must enter exact target closure")
 	_, err = db.Exec(`UPDATE nextcloud_source_pairings SET state = 'active' WHERE operation_id = 'op'`)
 	require.NoError(t, err)
 	_, err = db.Exec(`UPDATE data_sources SET status = 'active' WHERE id = 'ds-paired'`)
 	require.NoError(t, err)
 	_, err = db.Exec(`UPDATE knowledge_bases SET deleted_at = CURRENT_TIMESTAMP WHERE id = 'kb-paired'`)
-	require.ErrorContains(t, err, "nextcloud_paired_kb_delete_forbidden")
+	require.NoError(t, err, "an active pair is closed by the target-closure transaction")
 	_, err = db.Exec(`INSERT INTO nextcloud_source_rotations
 		(operation_id, pair_operation_id, tenant_id, knowledge_base_id, datasource_id,
 		 nextcloud_instance_id, binding_id, old_key_id, new_key_id,

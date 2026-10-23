@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/Tencent/WeKnora/internal/types"
@@ -60,7 +61,7 @@ func (r *NextcloudSourcePairingRepository) BeginEmptySourceDecommission(
 		proposed.DataSourceID != pair.DataSourceID || proposed.InstanceID != pair.InstanceID ||
 		proposed.BindingID != pair.BindingID || proposed.KeyID != pair.KeyID ||
 		proposed.PublicationEpoch < 0 {
-		return result, ErrNextcloudSourcePairingConflict
+		return result, fmt.Errorf("invalid decommission proposal: %w", ErrNextcloudSourcePairingConflict)
 	}
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		lock := tx.Exec(`UPDATE knowledge_bases SET ever_had_nextcloud_source = ever_had_nextcloud_source
@@ -69,7 +70,7 @@ func (r *NextcloudSourcePairingRepository) BeginEmptySourceDecommission(
 			return lock.Error
 		}
 		if lock.RowsAffected != 1 {
-			return ErrNextcloudSourcePairingConflict
+			return fmt.Errorf("decommission knowledge base lock: %w", ErrNextcloudSourcePairingConflict)
 		}
 		var current NextcloudSourcePairing
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
@@ -78,13 +79,13 @@ func (r *NextcloudSourcePairingRepository) BeginEmptySourceDecommission(
 			current.ConfigSHA != pair.ConfigSHA || current.KeyID != pair.KeyID ||
 			current.InstanceID != pair.InstanceID || current.BindingID != pair.BindingID ||
 			current.BaseURL != pair.BaseURL {
-			return ErrNextcloudSourcePairingConflict
+			return fmt.Errorf("decommission current pair: %w", ErrNextcloudSourcePairingConflict)
 		}
 		var existing NextcloudSourceDecommission
 		err := tx.Where("pair_operation_id = ?", pair.OperationID).Take(&existing).Error
 		if err == nil {
 			if !sameSourceDecommission(existing, proposed) {
-				return ErrNextcloudSourcePairingConflict
+				return fmt.Errorf("decommission existing intent: %w", ErrNextcloudSourcePairingConflict)
 			}
 			result = existing
 			return nil
@@ -95,31 +96,38 @@ func (r *NextcloudSourcePairingRepository) BeginEmptySourceDecommission(
 		var virgin nextcloudSourceVirgin
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
 			Where("pair_operation_id = ?", pair.OperationID).Take(&virgin).Error; err != nil || virgin.EverTouched {
-			return ErrNextcloudSourcePairingConflict
+			return fmt.Errorf("decommission virgin proof: %w", ErrNextcloudSourcePairingConflict)
 		}
 		var liveRotation int64
 		if err := tx.Table("nextcloud_source_rotations").
 			Where("pair_operation_id = ? AND state IN ?", pair.OperationID,
 				[]string{"pending", "committed", "switched"}).
 			Count(&liveRotation).Error; err != nil || liveRotation != 0 {
-			return ErrNextcloudSourcePairingConflict
+			return fmt.Errorf("decommission live rotation: %w", ErrNextcloudSourcePairingConflict)
 		}
 		var source types.DataSource
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
 			Where("id = ? AND tenant_id = ? AND knowledge_base_id = ? AND deleted_at IS NULL",
 				pair.DataSourceID, pair.TenantID, pair.KnowledgeBaseID).Take(&source).Error; err != nil {
-			return ErrNextcloudSourcePairingConflict
+			return fmt.Errorf("decommission source: %w", ErrNextcloudSourcePairingConflict)
 		}
 		base, hash, binding, err := NextcloudEventDataSourceIdentity(source.Config)
 		if err != nil || source.Type != types.ConnectorTypeNextcloud ||
 			base != pair.BaseURL || hash != pair.ConfigSHA || binding != pair.BindingID ||
 			(source.Status != types.DataSourceStatusActive && source.Status != types.DataSourceStatusPaused) ||
 			source.LastSyncAt != nil || len(source.LastSyncCursor) != 0 || len(source.LastSyncResult) != 0 {
-			return ErrNextcloudSourcePairingConflict
+			return fmt.Errorf("decommission source identity: %w", ErrNextcloudSourcePairingConflict)
 		}
 		config, err := source.ParseConfig()
 		if err != nil || config == nil || config.Credentials["key_id"] != pair.KeyID {
-			return ErrNextcloudSourcePairingConflict
+			return fmt.Errorf("decommission source credential: %w", ErrNextcloudSourcePairingConflict)
+		}
+		var otherSources int64
+		if err := tx.Unscoped().Table("data_sources").
+			Where("tenant_id=? AND knowledge_base_id=? AND id<>?",
+				pair.TenantID, pair.KnowledgeBaseID, pair.DataSourceID).
+			Count(&otherSources).Error; err != nil {
+			return err
 		}
 		checks := []struct {
 			table, where string
@@ -129,8 +137,6 @@ func (r *NextcloudSourcePairingRepository) BeginEmptySourceDecommission(
 			{"nextcloud_event_connections", "datasource_id = ?", []any{pair.DataSourceID}},
 			{"nextcloud_source_versions", "datasource_id = ?", []any{pair.DataSourceID}},
 			{"nextcloud_gc_jobs", "datasource_id = ?", []any{pair.DataSourceID}},
-			{"knowledges", "knowledge_base_id = ?", []any{pair.KnowledgeBaseID}},
-			{"chunks", "knowledge_base_id = ?", []any{pair.KnowledgeBaseID}},
 		}
 		for _, check := range checks {
 			var count int64
@@ -138,8 +144,35 @@ func (r *NextcloudSourcePairingRepository) BeginEmptySourceDecommission(
 				return err
 			}
 			if count != 0 {
-				return ErrNextcloudSourcePairingConflict
+				return fmt.Errorf("decommission %s inventory: %w", check.table, ErrNextcloudSourcePairingConflict)
 			}
+		}
+		knowledgeQuery := tx.Table("knowledges").
+			Where("tenant_id=? AND knowledge_base_id=?", pair.TenantID, pair.KnowledgeBaseID)
+		if otherSources != 0 {
+			knowledgeQuery = knowledgeQuery.Where(
+				"metadata->>'datasource_id' = ?", pair.DataSourceID)
+		}
+		var sourceContent int64
+		if err := knowledgeQuery.Count(&sourceContent).Error; err != nil {
+			return err
+		}
+		if sourceContent != 0 {
+			return fmt.Errorf("decommission knowledge inventory: %w", ErrNextcloudSourcePairingConflict)
+		}
+		chunkQuery := tx.Table("chunks").
+			Where("tenant_id=? AND knowledge_base_id=?", pair.TenantID, pair.KnowledgeBaseID)
+		if otherSources != 0 {
+			chunkQuery = chunkQuery.Where(
+				"knowledge_id IN (SELECT id FROM knowledges "+
+					"WHERE tenant_id=? AND knowledge_base_id=? AND metadata->>'datasource_id'=?)",
+				pair.TenantID, pair.KnowledgeBaseID, pair.DataSourceID)
+		}
+		if err := chunkQuery.Count(&sourceContent).Error; err != nil {
+			return err
+		}
+		if sourceContent != 0 {
+			return fmt.Errorf("decommission chunk inventory: %w", ErrNextcloudSourcePairingConflict)
 		}
 		// Explicitly inspect persisted event receipts, dispatch leases and
 		// checkpoints too. Their foreign keys make them impossible when the
@@ -155,7 +188,7 @@ func (r *NextcloudSourcePairingRepository) BeginEmptySourceDecommission(
 				return err
 			}
 			if count != 0 {
-				return ErrNextcloudSourcePairingConflict
+				return fmt.Errorf("decommission %s inventory: %w", table, ErrNextcloudSourcePairingConflict)
 			}
 		}
 		// Manual and scheduled sync admission creates a sync log before
