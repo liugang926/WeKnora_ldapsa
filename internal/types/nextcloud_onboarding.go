@@ -69,6 +69,39 @@ type NextcloudOnboardingRequest struct {
 	Name                 string `json:"name"`
 	KnowledgeBaseID      string `json:"knowledge_base_id"`
 	ProcessingTemplateID string `json:"processing_template_id"`
+	CandidateRevision    string `json:"candidate_revision,omitempty"`
+}
+
+// NextcloudKnowledgeBaseCandidate is a server-filtered selectable target or a
+// redacted explanation for why a visible target cannot be selected.
+type NextcloudKnowledgeBaseCandidate struct {
+	ID                     string `json:"id"`
+	Name                   string `json:"name"`
+	ContentCount           int64  `json:"content_count"`
+	Eligible               bool   `json:"eligible"`
+	ReasonCode             string `json:"reason_code,omitempty"`
+	Reason                 string `json:"reason,omitempty"`
+	NextAction             string `json:"next_action,omitempty"`
+	CanTakeOver            bool   `json:"can_take_over"`
+	ProcessingTemplateID   string `json:"processing_template_id"`
+	ProcessingTemplateName string `json:"processing_template_name,omitempty"`
+	ConfigurationSummary   string `json:"configuration_summary,omitempty"`
+}
+
+// NextcloudCandidatePage is a bounded, stable candidate observation. The
+// revision covers all candidates in the scoped workspace, not only this page.
+type NextcloudCandidatePage struct {
+	ContractVersion        int                               `json:"contract_version"`
+	RequestID              string                            `json:"request_id"`
+	CandidateRevision      string                            `json:"candidate_revision"`
+	TenantID               uint64                            `json:"tenant_id"`
+	ProcessingTemplateID   string                            `json:"processing_template_id"`
+	ProcessingTemplateName string                            `json:"processing_template_name,omitempty"`
+	GraphMode              string                            `json:"graph_mode"`
+	Candidates             []NextcloudKnowledgeBaseCandidate `json:"candidates"`
+	Ineligible             []NextcloudKnowledgeBaseCandidate `json:"ineligible"`
+	NextCursor             string                            `json:"next_cursor,omitempty"`
+	Total                  int                               `json:"total"`
 }
 
 // NextcloudGrantSubject names one original Nextcloud sharing relation.

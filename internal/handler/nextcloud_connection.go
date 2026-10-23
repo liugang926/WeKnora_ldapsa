@@ -1,12 +1,17 @@
 package handler
 
 import (
+	"encoding/base64"
 	"errors"
 	"net/http"
+	"sort"
+	"strconv"
+	"strings"
 
 	"github.com/Tencent/WeKnora/internal/application/repository"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 )
 
 // NextcloudConnectionHandler owns the administrator connection setup that
@@ -62,7 +67,58 @@ func (h *NextcloudConnectionHandler) Workspaces(c *gin.Context) {
 		connectionError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"spaces": spaces})
+	query := strings.ToLower(strings.TrimSpace(c.Query("q")))
+	filtered := make([]types.NextcloudConnectionWorkspace, 0, len(spaces))
+	for _, space := range spaces {
+		if query == "" || strings.Contains(strings.ToLower(space.TenantName), query) ||
+			strconv.FormatUint(space.TenantID, 10) == query {
+			filtered = append(filtered, space)
+		}
+	}
+	sort.SliceStable(filtered, func(i, j int) bool {
+		if filtered[i].TenantName == filtered[j].TenantName {
+			return filtered[i].TenantID < filtered[j].TenantID
+		}
+		return filtered[i].TenantName < filtered[j].TenantName
+	})
+	limit, err := strconv.Atoi(c.DefaultQuery("limit", "50"))
+	if err != nil || limit < 1 || limit > 100 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_workspace_page"})
+		return
+	}
+	offset := 0
+	if raw := c.Query("cursor"); raw != "" {
+		decoded, err := base64.RawURLEncoding.DecodeString(raw)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_workspace_page"})
+			return
+		}
+		offset, err = strconv.Atoi(string(decoded))
+		if err != nil || offset < 0 || offset > len(filtered) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_workspace_page"})
+			return
+		}
+	}
+	end := offset + limit
+	if end > len(filtered) {
+		end = len(filtered)
+	}
+	nextCursor := ""
+	if end < len(filtered) {
+		nextCursor = base64.RawURLEncoding.EncodeToString([]byte(strconv.Itoa(end)))
+	}
+	health, err := h.store.ConnectionHealth(c.Request.Context())
+	if err != nil {
+		connectionError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"contract_version": types.NextcloudOnboardingContractVersion,
+		"request_id":       "req_" + uuid.NewString(),
+		"spaces":           filtered[offset:end],
+		"next_cursor":      nextCursor,
+		"health":           health,
+	})
 }
 
 // Authorize creates one scoped credential per selected workspace and returns
@@ -86,7 +142,18 @@ func (h *NextcloudConnectionHandler) Authorize(c *gin.Context) {
 		connectionError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, result)
+	health, err := h.store.ConnectionHealth(c.Request.Context())
+	if err != nil {
+		connectionError(c, err)
+		return
+	}
+	c.Header("X-WeKnora-Onboarding-Contract", "2")
+	c.JSON(http.StatusOK, gin.H{
+		"connection_id":    result.ConnectionID,
+		"credentials":      result.Credentials,
+		"contract_version": types.NextcloudOnboardingContractVersion,
+		"health":           health,
+	})
 }
 
 // Revoke disables exactly the credentials issued for one Nextcloud connection.

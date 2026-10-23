@@ -571,6 +571,81 @@ func TestNextcloudOnboardingAllowsExistingNonEmptyKnowledgeBase(t *testing.T) {
 	require.Equal(t, kb.ID, op.KnowledgeBaseID)
 }
 
+func TestNextcloudCandidatePageExplainsIneligibleTargetsAndRejectsStaleRevision(t *testing.T) {
+	db, store, c := onboardingDB(t)
+	valid := freshOnboardingKB("selectable")
+	valid.Name = "Alpha selectable"
+	createOnboardingTemplate(t, db, &valid)
+
+	wiki := freshOnboardingKB("wiki-target")
+	wiki.Name = "Beta wiki"
+	wiki.Type = types.KnowledgeBaseTypeWiki
+	createOnboardingTemplate(t, db, &wiki)
+
+	bound := freshOnboardingKB("bound-target")
+	bound.Name = "Gamma bound"
+	createOnboardingTemplate(t, db, &bound)
+	require.NoError(t, db.Model(&types.KnowledgeBase{}).Where("id=?", bound.ID).
+		Update("ever_had_nextcloud_source", true).Error)
+
+	page, err := store.CandidatePage(context.Background(), c, "directory", "guid-owner",
+		"", "", 50, "req_test")
+	require.NoError(t, err)
+	require.Equal(t, types.NextcloudOnboardingContractVersion, page.ContractVersion)
+	require.Equal(t, "req_test", page.RequestID)
+	require.True(t, strings.HasPrefix(page.CandidateRevision, "sha256:"))
+	require.Contains(t, candidateIDs(page.Candidates), valid.ID)
+	reasons := map[string]string{}
+	for _, candidate := range page.Ineligible {
+		reasons[candidate.ID] = candidate.ReasonCode
+	}
+	require.Equal(t, "kb_wiki_not_supported", reasons[wiki.ID])
+	require.Equal(t, "kb_already_bound", reasons[bound.ID])
+	for _, candidate := range page.Candidates {
+		require.True(t, candidate.Eligible)
+		require.True(t, candidate.CanTakeOver)
+		require.Empty(t, candidate.ReasonCode)
+	}
+
+	searched, err := store.CandidatePage(context.Background(), c, "directory", "guid-owner",
+		"Alpha", "", 50, "req_search")
+	require.NoError(t, err)
+	require.Equal(t, page.CandidateRevision, searched.CandidateRevision)
+	require.Equal(t, []string{valid.ID}, candidateIDs(searched.Candidates))
+
+	first, err := store.CandidatePage(context.Background(), c, "directory", "guid-owner",
+		"", "", 1, "req_page_one")
+	require.NoError(t, err)
+	require.NotEmpty(t, first.NextCursor)
+	second, err := store.CandidatePage(context.Background(), c, "directory", "guid-owner",
+		"", first.NextCursor, 1, "req_page_two")
+	require.NoError(t, err)
+	require.NotEqual(t,
+		append(candidateIDs(first.Candidates), candidateIDs(first.Ineligible)...),
+		append(candidateIDs(second.Candidates), candidateIDs(second.Ineligible)...),
+	)
+
+	stale := onboardingRequest(c, uuid.NewString(), valid.ID)
+	stale.CandidateRevision = "sha256:" + strings.Repeat("0", 64)
+	_, err = store.Reserve(context.Background(), c, stale)
+	require.ErrorIs(t, err, repo.ErrNextcloudCandidateRevisionChanged)
+
+	updated, err := store.CandidatePage(context.Background(), c, "directory", "guid-owner",
+		"", "", 50, "req_after")
+	require.NoError(t, err)
+	stale.CandidateRevision = updated.CandidateRevision
+	_, err = store.Reserve(context.Background(), c, stale)
+	require.NoError(t, err)
+}
+
+func candidateIDs(candidates []types.NextcloudKnowledgeBaseCandidate) []string {
+	ids := make([]string, 0, len(candidates))
+	for _, candidate := range candidates {
+		ids = append(ids, candidate.ID)
+	}
+	return ids
+}
+
 func TestNextcloudConnectionAuthorizesAndRevokesWorkspaceCredential(t *testing.T) {
 	db, store, _ := onboardingDB(t)
 	ctx := context.Background()
@@ -613,6 +688,37 @@ func TestNextcloudConnectionAuthorizesAndRevokesWorkspaceCredential(t *testing.T
 	require.Equal(t, 1, revoked)
 	require.NoError(t, db.Where("id=?", stored.ID).Take(&stored).Error)
 	require.False(t, stored.Enabled)
+}
+
+func TestNextcloudConnectionHealthFailsClosedUntilWorkerAndDispatcherObserved(t *testing.T) {
+	db, store, _ := onboardingDB(t)
+	ctx := context.Background()
+	initial, err := store.ConnectionHealth(ctx)
+	require.NoError(t, err)
+	require.False(t, initial.BindingAllowed)
+	require.Contains(t, initial.ReasonCode, "unverified")
+
+	require.NoError(t, db.AutoMigrate(&types.SyncLog{}))
+	now := time.Now().UTC()
+	require.NoError(t, db.Create(&types.DataSource{
+		ID: "health-ds", TenantID: 7, KnowledgeBaseID: "health-kb",
+		Name: "health", Type: types.ConnectorTypeNextcloud, Status: types.DataSourceStatusActive,
+	}).Error)
+	require.NoError(t, db.Create(&types.SyncLog{
+		ID: "health-sync", DataSourceID: "health-ds", TenantID: 7,
+		Status: types.SyncLogStatusSuccess, StartedAt: now.Add(-time.Second),
+		FinishedAt: &now, UpdatedAt: now, CreatedAt: now,
+	}).Error)
+	require.NoError(t, db.Exec(`CREATE TABLE nextcloud_event_dispatch (
+		state TEXT NOT NULL, updated_at TIMESTAMP NOT NULL)`).Error)
+	require.NoError(t, db.Exec("INSERT INTO nextcloud_event_dispatch(state,updated_at) VALUES(?,?)",
+		"idle", now).Error)
+
+	healthy, err := store.ConnectionHealth(ctx)
+	require.NoError(t, err)
+	require.True(t, healthy.BindingAllowed)
+	require.Equal(t, "healthy", healthy.Status)
+	require.Equal(t, 2, healthy.ContractVersion)
 }
 
 func TestNextcloudConnectionCreatesAndReusesWorkspaceTemplate(t *testing.T) {

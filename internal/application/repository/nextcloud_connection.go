@@ -66,7 +66,7 @@ func (s *NextcloudOnboardingStore) ConnectionWorkspaces(
 			Select("id, name").
 			Where("deleted_at IS NULL").
 			Order("id").
-			Limit(200).
+			Limit(1000).
 			Scan(&rows).
 			Error; err != nil {
 			return nil, err
@@ -84,7 +84,7 @@ func (s *NextcloudOnboardingStore) ConnectionWorkspaces(
 				types.TenantRoleOwner,
 				types.TenantRoleAdmin).
 			Order("t.id").
-			Limit(200).
+			Limit(1000).
 			Scan(&rows).
 			Error; err != nil {
 			return nil, err
@@ -95,10 +95,12 @@ func (s *NextcloudOnboardingStore) ConnectionWorkspaces(
 		workspace := types.NextcloudConnectionWorkspace{
 			TenantID:   row.ID,
 			TenantName: row.Name,
+			Visibility: "administrator",
 		}
 		template, err := connectionDefaultTemplate(tx, row.ID)
 		if err == nil {
 			workspace.Eligible = true
+			workspace.Available = true
 			workspace.ProcessingTemplateID = template.ID
 			workspace.ProcessingTemplate = template.Name
 		} else if !errors.Is(err, ErrNextcloudOnboardingConflict) {
@@ -107,12 +109,127 @@ func (s *NextcloudOnboardingStore) ConnectionWorkspaces(
 			// No manual template is required. Authorization creates one from
 			// the workspace's current defaults and returns its stable ID.
 			workspace.Eligible = true
+			workspace.Available = true
 		} else {
-			workspace.Reason = "no_processing_template"
+			workspace.ReasonCode = "space_no_processing_template"
+			workspace.Reason = "该空间没有可用的处理配置。"
+			workspace.NextAction = "在 WeKnora 配置有效的存储与嵌入或图谱模型。"
 		}
 		out = append(out, workspace)
 	}
 	return out, nil
+}
+
+// ConnectionHealth reports only bounded component observations. A missing
+// heartbeat is unverified, never healthy.
+func (s *NextcloudOnboardingStore) ConnectionHealth(
+	ctx context.Context,
+) (types.NextcloudConnectionHealth, error) {
+	now := time.Now().UTC()
+	health := types.NextcloudConnectionHealth{
+		Status:                    "degraded",
+		ContractVersion:           types.NextcloudOnboardingContractVersion,
+		WorkerStatus:              "unverified",
+		DispatcherStatus:          "unverified",
+		BindingAllowed:            false,
+		ReasonCode:                "worker_and_dispatcher_unverified",
+		CheckedAt:                 now.Unix(),
+		ProcessingQueueUnverified: true,
+	}
+	tx := s.db.WithContext(ctx)
+	if tx.Migrator().HasTable("sync_logs") {
+		var latest struct {
+			Status     string
+			StartedAt  time.Time
+			FinishedAt *time.Time
+			UpdatedAt  time.Time
+		}
+		result := tx.Table("sync_logs").
+			Select("status, started_at, finished_at, updated_at").
+			Where("data_source_id IN (SELECT id FROM data_sources WHERE type = ? AND deleted_at IS NULL)",
+				"nextcloud").
+			Order("updated_at DESC").Limit(1).Scan(&latest)
+		if result.Error != nil {
+			return health, result.Error
+		}
+		if result.RowsAffected > 0 {
+			observed := latest.UpdatedAt
+			if observed.IsZero() {
+				observed = latest.StartedAt
+			}
+			age := now.Sub(observed)
+			if latest.Status == "running" && age <= 15*time.Minute {
+				health.WorkerStatus = "running"
+			} else if age <= 15*time.Minute {
+				health.WorkerStatus = "active"
+			} else {
+				health.WorkerStatus = "stale"
+			}
+			if !observed.IsZero() && latest.Status == "success" {
+				last := observed.Unix()
+				health.WorkerLastSuccessAt = &last
+			}
+			if health.WorkerLastSuccessAt == nil {
+				var latestSuccess struct {
+					FinishedAt *time.Time
+					UpdatedAt  time.Time
+				}
+				success := tx.Table("sync_logs").
+					Select("finished_at, updated_at").
+					Where("status = ? AND data_source_id IN (SELECT id FROM data_sources WHERE type = ? AND deleted_at IS NULL)",
+						"success", "nextcloud").
+					Order("updated_at DESC").Limit(1).Scan(&latestSuccess)
+				if success.Error != nil {
+					return health, success.Error
+				}
+				if success.RowsAffected > 0 {
+					at := latestSuccess.UpdatedAt
+					if latestSuccess.FinishedAt != nil {
+						at = *latestSuccess.FinishedAt
+					}
+					last := at.Unix()
+					health.WorkerLastSuccessAt = &last
+				}
+			}
+			health.ProcessingQueueUnverified = false
+		}
+	}
+	if tx.Migrator().HasTable("nextcloud_event_dispatch") {
+		var latest struct {
+			State     string
+			UpdatedAt time.Time
+		}
+		result := tx.Table("nextcloud_event_dispatch").
+			Select("state, updated_at").Order("updated_at DESC").Limit(1).Scan(&latest)
+		if result.Error != nil {
+			return health, result.Error
+		}
+		if result.RowsAffected > 0 {
+			age := now.Sub(latest.UpdatedAt)
+			if age <= 2*time.Minute {
+				health.DispatcherStatus = "active"
+			} else {
+				health.DispatcherStatus = "stale"
+			}
+			last := latest.UpdatedAt.Unix()
+			health.DispatcherLastSuccessAt = &last
+		}
+	}
+	workerOK := health.WorkerStatus == "active" || health.WorkerStatus == "running"
+	dispatcherOK := health.DispatcherStatus == "active"
+	health.BindingAllowed = workerOK && dispatcherOK
+	switch {
+	case health.BindingAllowed:
+		health.Status = "healthy"
+		health.ReasonCode = ""
+	case !workerOK && !dispatcherOK:
+		health.ReasonCode = "worker_and_dispatcher_unverified"
+	case !workerOK:
+		health.ReasonCode = "worker_unverified"
+	default:
+		health.ReasonCode = "dispatcher_unverified"
+	}
+	return health, nil
 }
 
 // AuthorizeConnection creates one scoped onboarding credential per selected

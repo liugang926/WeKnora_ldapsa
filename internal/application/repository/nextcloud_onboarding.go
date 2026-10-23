@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -29,6 +30,9 @@ var (
 	// ErrNextcloudKBUnavailable reports that an existing knowledge base cannot
 	// be safely attached to a Nextcloud source.
 	ErrNextcloudKBUnavailable = errors.New("knowledge_base_unavailable")
+	// ErrNextcloudCandidateRevisionChanged means the operator submitted a stale
+	// server-generated candidate observation. No target was created or reserved.
+	ErrNextcloudCandidateRevisionChanged = errors.New("nextcloud_candidate_revision_changed")
 )
 
 // NextcloudOnboardingStore represents nextcloud onboarding store repository data.
@@ -184,39 +188,324 @@ func (s *NextcloudOnboardingStore) Candidates(
 	c types.NextcloudOnboardingCredential,
 	dir, guid string,
 ) ([]map[string]string, error) {
-	if _, err := s.Actor(ctx, c, dir, guid); err != nil {
+	page, err := s.CandidatePage(ctx, c, dir, guid, "", "", 1000, "")
+	if err != nil {
 		return nil, err
 	}
-	var rows []types.KnowledgeBase
-	if err := s.db.WithContext(ctx).
-		Where("tenant_id = ? AND deleted_at IS NULL", c.TenantID).
-		Find(&rows).
-		Error; err != nil {
-		return nil, err
-	}
-	out := []map[string]string{}
-	for _, kb := range rows {
-		if kb.ID == c.TemplateKBID {
-			// The processing template must remain available for creating new
-			// dedicated knowledge bases.
-			continue
-		}
-		actual, contentCount, err := onboardingExistingTarget(s.db.WithContext(ctx), c.TenantID, kb.ID)
-		if err != nil {
-			continue
-		}
-		if err := validateOnboardingTemplate(s.db.WithContext(ctx), actual); err != nil {
-			continue
-		}
+	out := make([]map[string]string, 0, len(page.Candidates))
+	for _, candidate := range page.Candidates {
 		out = append(out, map[string]string{
-			"id":                     kb.ID,
-			"name":                   kb.Name,
-			"processing_template_id": c.TemplateKBID,
-			"content_count":          strconv.FormatInt(contentCount, 10),
+			"id":                     candidate.ID,
+			"name":                   candidate.Name,
+			"processing_template_id": candidate.ProcessingTemplateID,
+			"content_count":          strconv.FormatInt(candidate.ContentCount, 10),
 			"existing":               "true",
+			"eligible":               "true",
+			"can_take_over":          "true",
 		})
 	}
 	return out, nil
+}
+
+// CandidatePage returns one stable keyset page while separately reporting
+// visible but ineligible knowledge bases. Filtering never becomes an empty
+// result without a reason code.
+func (s *NextcloudOnboardingStore) CandidatePage(
+	ctx context.Context,
+	c types.NextcloudOnboardingCredential,
+	dir, guid, query, cursor string,
+	limit int,
+	requestID string,
+) (types.NextcloudCandidatePage, error) {
+	var page types.NextcloudCandidatePage
+	page.ContractVersion = types.NextcloudOnboardingContractVersion
+	page.RequestID = requestID
+	page.TenantID = c.TenantID
+	page.ProcessingTemplateID = c.TemplateKBID
+	if _, err := s.Actor(ctx, c, dir, guid); err != nil {
+		return page, err
+	}
+	query = strings.TrimSpace(query)
+	if len(query) > 128 {
+		return page, ErrNextcloudOnboardingDenied
+	}
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 100 {
+		limit = 100
+	}
+
+	inventory, err := s.candidateInventory(ctx, c, "")
+	if err != nil {
+		return page, err
+	}
+	revisionInput := make([]map[string]any, 0, len(inventory))
+	observed := make([]types.NextcloudKnowledgeBaseCandidate, 0, len(inventory))
+	for _, kb := range inventory {
+		candidate, err := s.analyzeCandidate(ctx, c, kb)
+		if err != nil {
+			return page, err
+		}
+		observed = append(observed, candidate)
+		revisionInput = append(revisionInput, map[string]any{
+			"id": candidate.ID, "name": candidate.Name, "eligible": candidate.Eligible,
+			"reason_code": candidate.ReasonCode, "content_count": candidate.ContentCount,
+			"configuration": candidate.ConfigurationSummary,
+		})
+	}
+	page.CandidateRevision = "sha256:" + onboardingDigest(revisionInput)
+	all := observed
+	if query != "" {
+		filtered := make([]types.NextcloudKnowledgeBaseCandidate, 0, len(observed))
+		for _, candidate := range observed {
+			if strings.Contains(strings.ToLower(candidate.Name), strings.ToLower(query)) {
+				filtered = append(filtered, candidate)
+			}
+		}
+		all = filtered
+	}
+	page.Total = len(all)
+
+	afterName, afterID, err := decodeCandidateCursor(cursor, c, query)
+	if err != nil {
+		return page, err
+	}
+	start := 0
+	if cursor != "" {
+		for start < len(all) {
+			candidate := all[start]
+			if candidate.Name > afterName || (candidate.Name == afterName && candidate.ID > afterID) {
+				break
+			}
+			start++
+		}
+	}
+	end := start + limit
+	if end > len(all) {
+		end = len(all)
+	}
+	for _, candidate := range all[start:end] {
+		if candidate.Eligible {
+			page.Candidates = append(page.Candidates, candidate)
+		} else {
+			page.Ineligible = append(page.Ineligible, candidate)
+		}
+	}
+	if end < len(all) && end > start {
+		page.NextCursor = encodeCandidateCursor(c, query, all[end-1].Name, all[end-1].ID)
+	}
+	return page, nil
+}
+
+// CandidateRevision rechecks the exact full candidate observation used by a
+// submitted choice. It is optional for older clients.
+func (s *NextcloudOnboardingStore) CandidateRevision(
+	ctx context.Context,
+	c types.NextcloudOnboardingCredential,
+	dir, guid string,
+) (string, error) {
+	page, err := s.CandidatePage(ctx, c, dir, guid, "", "", 1, "")
+	return page.CandidateRevision, err
+}
+
+func (s *NextcloudOnboardingStore) candidateInventory(
+	ctx context.Context,
+	c types.NextcloudOnboardingCredential,
+	query string,
+) ([]types.KnowledgeBase, error) {
+	tx := s.db.WithContext(ctx).
+		Where("tenant_id = ? AND id <> ? AND deleted_at IS NULL", c.TenantID, c.TemplateKBID)
+	if query != "" {
+		tx = tx.Where("LOWER(name) LIKE ?", "%"+strings.ToLower(query)+"%")
+	}
+	var rows []types.KnowledgeBase
+	err := tx.Find(&rows).Error
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].Name == rows[j].Name {
+			return rows[i].ID < rows[j].ID
+		}
+		return rows[i].Name < rows[j].Name
+	})
+	return rows, err
+}
+
+func (s *NextcloudOnboardingStore) analyzeCandidate(
+	ctx context.Context,
+	c types.NextcloudOnboardingCredential,
+	kb types.KnowledgeBase,
+) (types.NextcloudKnowledgeBaseCandidate, error) {
+	candidate := types.NextcloudKnowledgeBaseCandidate{
+		ID:                   kb.ID,
+		Name:                 kb.Name,
+		ProcessingTemplateID: c.TemplateKBID,
+		ConfigurationSummary: candidateConfigurationSummary(kb),
+	}
+	var contentCount int64
+	if err := s.db.WithContext(ctx).Table("knowledges").
+		Where("tenant_id=? AND knowledge_base_id=? AND deleted_at IS NULL", c.TenantID, kb.ID).
+		Count(&contentCount).Error; err != nil {
+		return candidate, err
+	}
+	candidate.ContentCount = contentCount
+	var operationCount int64
+	if err := s.db.WithContext(ctx).Model(&types.NextcloudOnboardingOperation{}).
+		Where("tenant_id=? AND knowledge_base_id=?", c.TenantID, kb.ID).
+		Count(&operationCount).Error; err != nil {
+		return candidate, err
+	}
+	reject := func(code, reason, action string) (types.NextcloudKnowledgeBaseCandidate, error) {
+		candidate.Eligible = false
+		candidate.CanTakeOver = false
+		candidate.ReasonCode = code
+		candidate.Reason = reason
+		candidate.NextAction = action
+		return candidate, nil
+	}
+	if kb.EverHadNextcloudSource || operationCount != 0 {
+		return reject("kb_already_bound", "该知识库已被其他 Nextcloud 来源接管。",
+			"选择其他知识库，或由管理员执行显式迁移。")
+	}
+	if kb.Type == types.KnowledgeBaseTypeWiki || kb.IsTemporary || kb.IndexingStrategy.WikiEnabled {
+		return reject("kb_wiki_not_supported", "当前接入不支持 Wiki 或临时知识库。",
+			"选择文档知识库，或由管理员关闭 Wiki 生成。")
+	}
+	if kb.Type != types.KnowledgeBaseTypeDocument {
+		return reject("kb_configuration_unverified", "知识库类型或配置无法核验。",
+			"由管理员检查知识库接入配置。")
+	}
+	if err := kb.IndexingStrategy.ValidateGraphRequirement(); err != nil {
+		return reject("kb_graph_model_missing", "图谱处理要求与知识库配置不一致。",
+			"启用图谱处理，或关闭“图谱必须完成”。")
+	}
+	if !kb.IndexingStrategy.HasAnyIndexing() {
+		return reject("kb_configuration_unverified", "知识库未启用任何检索处理配置。",
+			"启用向量、关键词或图谱索引。")
+	}
+	if kb.IndexingStrategy.NeedsEmbedding() {
+		var count int64
+		if err := s.db.WithContext(ctx).Table("models").
+			Where("id=? AND (tenant_id=? OR is_builtin=?) AND type=? AND status=? AND deleted_at IS NULL",
+				kb.EmbeddingModelID, kb.TenantID, true, types.ModelTypeEmbedding,
+				types.ModelStatusActive).
+			Count(&count).Error; err != nil {
+			return candidate, err
+		}
+		if count != 1 {
+			return reject("kb_embedding_model_missing", "知识库使用的向量模型不可用。",
+				"由管理员配置有效的嵌入模型。")
+		}
+	}
+	if kb.IndexingStrategy.GraphEnabled {
+		if kb.ExtractConfig == nil || !kb.ExtractConfig.Enabled {
+			return reject("kb_graph_model_missing", "知识库启用了图谱但未启用图谱抽取。",
+				"启用图谱抽取，或关闭图谱索引。")
+		}
+		var count int64
+		if err := s.db.WithContext(ctx).Table("models").
+			Where("id=? AND (tenant_id=? OR is_builtin=?) AND type=? AND status=? AND deleted_at IS NULL",
+				kb.SummaryModelID, kb.TenantID, true, types.ModelTypeKnowledgeQA,
+				types.ModelStatusActive).
+			Count(&count).Error; err != nil {
+			return candidate, err
+		}
+		if count != 1 {
+			return reject("kb_graph_model_missing", "知识库使用的图谱模型不可用。",
+				"由管理员配置有效的图谱模型，或关闭图谱索引。")
+		}
+	}
+	if kb.StorageBackendID == nil || strings.TrimSpace(*kb.StorageBackendID) == "" {
+		return reject("kb_storage_unavailable", "知识库没有可用的存储后端。",
+			"由管理员修复存储后端。")
+	}
+	var storageCount int64
+	if err := s.db.WithContext(ctx).Table("storage_backends").
+		Where("id=? AND tenant_id=? AND status='active' AND deleted_at IS NULL",
+			*kb.StorageBackendID, kb.TenantID).
+		Count(&storageCount).Error; err != nil {
+		return candidate, err
+	}
+	if storageCount != 1 {
+		return reject("kb_storage_unavailable", "知识库存储后端不可用。",
+			"由管理员修复存储后端。")
+	}
+	if _, _, err := onboardingConfigurationMetadata(
+		s.db.WithContext(ctx), c.TenantID, kb.ID,
+	); err != nil {
+		return reject("kb_configuration_unverified", "知识库处理配置来源未通过核验。",
+			"由管理员重新确认 WeKnora 知识库配置。")
+	}
+	if err := validateOnboardingTemplate(s.db.WithContext(ctx), &kb); err != nil {
+		return reject("kb_configuration_unverified", "知识库配置未通过接入检查。",
+			"由管理员检查模型、存储和索引配置。")
+	}
+	if descriptor, err := s.TemplateDescriptor(ctx, c); err == nil {
+		candidate.ProcessingTemplateName = descriptor["name"]
+	}
+	candidate.Eligible = true
+	candidate.CanTakeOver = true
+	return candidate, nil
+}
+
+func candidateConfigurationSummary(kb types.KnowledgeBase) string {
+	parts := make([]string, 0, 4)
+	if kb.IndexingStrategy.VectorEnabled {
+		parts = append(parts, "向量")
+	}
+	if kb.IndexingStrategy.KeywordEnabled {
+		parts = append(parts, "关键词")
+	}
+	if kb.IndexingStrategy.GraphEnabled {
+		parts = append(parts, "图谱")
+	}
+	if kb.IndexingStrategy.GraphRequired {
+		parts = append(parts, "图谱必需")
+	}
+	if len(parts) == 0 {
+		return "未配置索引"
+	}
+	return strings.Join(parts, " + ")
+}
+
+func encodeCandidateCursor(
+	c types.NextcloudOnboardingCredential,
+	query, name, id string,
+) string {
+	body, _ := json.Marshal(map[string]string{
+		"credential_id": c.ID,
+		"tenant_id":     strconv.FormatUint(c.TenantID, 10),
+		"query":         query,
+		"name":          name,
+		"id":            id,
+	})
+	return base64.RawURLEncoding.EncodeToString(body)
+}
+
+func decodeCandidateCursor(
+	cursor string,
+	c types.NextcloudOnboardingCredential,
+	query string,
+) (string, string, error) {
+	if cursor == "" {
+		return "", "", nil
+	}
+	if len(cursor) > 2048 {
+		return "", "", ErrNextcloudOnboardingDenied
+	}
+	body, err := base64.RawURLEncoding.DecodeString(cursor)
+	if err != nil {
+		return "", "", ErrNextcloudOnboardingDenied
+	}
+	var value map[string]string
+	if json.Unmarshal(body, &value) != nil ||
+		value["credential_id"] != c.ID ||
+		value["tenant_id"] != strconv.FormatUint(c.TenantID, 10) ||
+		value["query"] != query ||
+		value["name"] == "" || value["id"] == "" ||
+		len(value["name"]) > 255 || len(value["id"]) > 36 {
+		return "", "", ErrNextcloudOnboardingDenied
+	}
+	return value["name"], value["id"], nil
 }
 
 func validateOnboardingTemplate(tx *gorm.DB, kb *types.KnowledgeBase) error {
@@ -306,6 +595,16 @@ func (s *NextcloudOnboardingStore) Reserve(
 	}
 	var read *NextcloudOnboardingConfigurationRead
 	if errors.Is(replay, gorm.ErrRecordNotFound) {
+		if req.CandidateRevision != "" {
+			revision, err := s.CandidateRevision(ctx, c, req.ActorDirectoryID, req.ActorObjectGUID)
+			if err != nil {
+				return out, err
+			}
+			if !strings.HasPrefix(req.CandidateRevision, "sha256:") ||
+				!constantTimeStringEqual(revision, req.CandidateRevision) {
+				return out, ErrNextcloudCandidateRevisionChanged
+			}
+		}
 		var err error
 		if req.Mode == "existing" {
 			read, err = s.beginOnboardingExistingConfigurationRead(ctx, c, req)
@@ -413,6 +712,17 @@ func (s *NextcloudOnboardingStore) Reserve(
 		return err
 	})
 	return out, err
+}
+
+func constantTimeStringEqual(left, right string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	var difference byte
+	for i := range left {
+		difference |= left[i] ^ right[i]
+	}
+	return difference == 0
 }
 
 // Operation returns the operation result.

@@ -15,6 +15,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/datasource/connector/nextcloud"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 )
 
 // NextcloudOnboardingHandler serves scoped source onboarding and migration requests.
@@ -73,7 +74,8 @@ func onboardingErrorStage(c *gin.Context, err error, failureStage string) {
 	}
 	if errors.Is(err, repository.ErrNextcloudOnboardingConflict) ||
 		errors.Is(err, repository.ErrNextcloudKBBlankUnverified) ||
-		errors.Is(err, repository.ErrNextcloudKBUnavailable) {
+		errors.Is(err, repository.ErrNextcloudKBUnavailable) ||
+		errors.Is(err, repository.ErrNextcloudCandidateRevisionChanged) {
 		status = http.StatusConflict
 	}
 	code := "onboarding_unavailable"
@@ -91,6 +93,9 @@ func onboardingErrorStage(c *gin.Context, err error, failureStage string) {
 	}
 	if errors.Is(err, repository.ErrNextcloudKBUnavailable) {
 		code = "nextcloud_kb_unavailable"
+	}
+	if errors.Is(err, repository.ErrNextcloudCandidateRevisionChanged) {
+		code = "nextcloud_candidate_revision_changed"
 	}
 	if errors.Is(err, repository.ErrNextcloudTargetDeleted) {
 		status = http.StatusConflict
@@ -116,11 +121,20 @@ func (h *NextcloudOnboardingHandler) Candidates(c *gin.Context) {
 		onboardingError(c, repository.ErrNextcloudOnboardingDenied)
 		return
 	}
-	rows, err := h.store.Candidates(
+	limit, err := strconv.Atoi(c.DefaultQuery("limit", "50"))
+	if err != nil || limit < 1 || limit > 100 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_candidate_page"})
+		return
+	}
+	page, err := h.store.CandidatePage(
 		c.Request.Context(),
 		cred,
 		c.Query("actor_directory_id"),
 		c.Query("actor_object_guid"),
+		c.Query("q"),
+		c.Query("cursor"),
+		limit,
+		"req_"+uuid.NewString(),
 	)
 	if err != nil {
 		onboardingError(c, err)
@@ -131,16 +145,57 @@ func (h *NextcloudOnboardingHandler) Candidates(c *gin.Context) {
 		onboardingError(c, err)
 		return
 	}
+	state := "available"
+	reasonCode := ""
+	reason := ""
+	nextAction := ""
+	if len(page.Candidates) == 0 {
+		state = "empty"
+		if page.NextCursor != "" {
+			state = "empty_page"
+		}
+		reasonCode = "no_eligible_knowledge_base"
+		reason = "当前空间没有可通过接入检查的知识库。"
+		nextAction = "查看不可用原因，或明确创建新的知识库。"
+	}
 	c.JSON(
 		http.StatusOK,
 		gin.H{
-			"candidates":               rows,
+			"contract_version":         page.ContractVersion,
+			"request_id":               page.RequestID,
+			"candidate_revision":       page.CandidateRevision,
+			"candidates":               page.Candidates,
+			"ineligible":               page.Ineligible,
+			"next_cursor":              page.NextCursor,
+			"total":                    page.Total,
+			"state":                    state,
+			"reason_code":              reasonCode,
+			"reason":                   reason,
+			"next_action":              nextAction,
 			"processing_template_id":   cred.TemplateKBID,
 			"processing_template_name": descriptor["name"],
 			"graph_mode":               descriptor["graph_mode"],
 			"tenant_id":                cred.TenantID,
 		},
 	)
+}
+
+// Health returns a scoped, non-secret observation of processing components.
+// It does not grant binding authority and does not claim per-file readiness.
+func (h *NextcloudOnboardingHandler) Health(c *gin.Context) {
+	if _, ok := h.credential(c); !ok {
+		return
+	}
+	health, err := h.store.ConnectionHealth(c.Request.Context())
+	if err != nil {
+		onboardingError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"contract_version": types.NextcloudOnboardingContractVersion,
+		"request_id":       "req_" + uuid.NewString(),
+		"health":           health,
+	})
 }
 
 // Create creates a scoped source onboarding operation.

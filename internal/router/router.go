@@ -200,6 +200,7 @@ func NewRouter(params RouterParams) *gin.Engine {
 	if h := params.NextcloudOnboardingHandler; h != nil {
 		group := r.Group("/api/v1/integrations/nextcloud/onboarding")
 		group.GET("/candidates", h.Candidates)
+		group.GET("/health", h.Health)
 		group.POST("/operations", h.Create)
 		group.GET("/operations/:operation_id", h.Status)
 		group.GET("/operations/:operation_id/observe", h.Status)
