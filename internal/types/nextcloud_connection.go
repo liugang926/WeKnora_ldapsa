@@ -1,5 +1,9 @@
 package types
 
+// NextcloudOnboardingContractVersion is the versioned machine contract used by
+// the Nextcloud integration. Additive fields remain readable by older clients.
+const NextcloudOnboardingContractVersion = 2
+
 // NextcloudConnectionWorkspace is one workspace that a Nextcloud administrator
 // may authorize for directory bindings. The processing template is selected by
 // WeKnora and is intentionally opaque to ordinary directory users.
@@ -9,7 +13,11 @@ type NextcloudConnectionWorkspace struct {
 	ProcessingTemplateID string `json:"processing_template_id,omitempty"`
 	ProcessingTemplate   string `json:"processing_template_name,omitempty"`
 	Eligible             bool   `json:"eligible"`
+	ReasonCode           string `json:"reason_code,omitempty"`
 	Reason               string `json:"reason,omitempty"`
+	NextAction           string `json:"next_action,omitempty"`
+	Visibility           string `json:"visibility,omitempty"`
+	Available            bool   `json:"available"`
 }
 
 // NextcloudConnectionAuthorizeRequest creates one scoped onboarding credential
@@ -44,4 +52,19 @@ type NextcloudConnectionAuthorizeResponse struct {
 // one Nextcloud connection. It does not delete workspaces or knowledge bases.
 type NextcloudConnectionRevokeRequest struct {
 	CredentialIDs []string `json:"credential_ids"`
+}
+
+// NextcloudConnectionHealth is deliberately non-secret and fail-closed. Unknown
+// component state is reported as unverified instead of being treated as ready.
+type NextcloudConnectionHealth struct {
+	Status                    string `json:"status"`
+	ContractVersion           int    `json:"contract_version"`
+	WorkerStatus              string `json:"worker_status"`
+	WorkerLastSuccessAt       *int64 `json:"worker_last_success_at,omitempty"`
+	DispatcherStatus          string `json:"dispatcher_status"`
+	DispatcherLastSuccessAt   *int64 `json:"dispatcher_last_success_at,omitempty"`
+	BindingAllowed            bool   `json:"binding_allowed"`
+	ReasonCode                string `json:"reason_code,omitempty"`
+	CheckedAt                 int64  `json:"checked_at"`
+	ProcessingQueueUnverified bool   `json:"processing_queue_unverified"`
 }

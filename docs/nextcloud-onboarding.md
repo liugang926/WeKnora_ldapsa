@@ -4,6 +4,12 @@ This protocol creates **knowledge bases in an existing tenant**. It never create
 
 ## Administrator connection
 
+The current machine contract is version `2`. Additive v2 fields are safe for
+older clients, while a client that cannot understand the negotiated contract
+must keep existing sources readable and block new bindings. The connection
+workspace response includes a bounded `health` projection with worker and
+dispatcher observations; absence is `unverified` and never healthy.
+
 An administrator with a WeKnora platform API key (`system_tenants_read` and
 `system_tenants_manage`) or an Owner/Admin browser session can use the
 connection setup routes without pre-installing onboarding credentials:
@@ -20,6 +26,10 @@ connection setup routes without pre-installing onboarding credentials:
   connection-issued credentials. A Nextcloud instance can also revoke its own
   connection through `POST /api/v1/integrations/nextcloud/onboarding/connection/revoke`
   using any scoped onboarding credential it holds.
+- `GET /api/v1/integrations/nextcloud/onboarding/health` lets a Nextcloud
+  instance refresh the non-secret worker/dispatcher observation with one of
+  its scoped credentials. Missing or stale observations fail closed and do not
+  authorize a new binding.
 
 Connection credentials are held only by the Nextcloud server. They are
 instance-scoped and still require a live verified directory identity; the
@@ -63,8 +73,8 @@ A fresh document KB created after this migration receives a database virgin-inve
 
 Prefix: `/api/v1/integrations/nextcloud/onboarding`. Header: `Authorization: Bearer <server token>`. Responses use `Cache-Control: no-store`.
 
-1. `GET /candidates?tenant_id=7&processing_template_id=...&actor_directory_id=...&actor_object_guid=...` returns `{candidates:[{id,name,processing_template_id,content_count}],tenant_id,processing_template_id,processing_template_name,graph_mode}`. `graph_mode` is `off`, `optional`, or `required`; no model instructions or secrets are returned. Usable document KBs in the credential's exact tenant are returned even when they already contain content, provided they have verified configuration provenance and have never been attached to another Nextcloud source.
-2. `POST /operations` receives `operation_id` (UUID), `tenant_id`, `instance_id`, `binding_id`, `actor_directory_id`, `actor_object_guid`, `mode` (`create` or `existing`), `name`, `knowledge_base_id` (for existing mode), and `processing_template_id` (defaults to the credential's template). It returns `{operation:{operation_id,knowledge_base_id,state:"reserved",revision:1,...}}`. Store the exact immutable intent before the Nextcloud node operation; a retry uses the same request and UUID.
+1. `GET /candidates?tenant_id=7&processing_template_id=...&actor_directory_id=...&actor_object_guid=...&q=&cursor=&limit=` returns contract v2 fields `contract_version`, `request_id`, `candidate_revision`, `candidates`, `ineligible`, `next_cursor`, and `total` together with the existing tenant/template descriptor. Eligible candidates include `content_count`, `can_take_over`, and a configuration summary. Visible but ineligible KBs are returned with a stable `reason_code`, human-readable explanation and `next_action`; permission failure is an HTTP 403 and is never represented as an empty space. `graph_mode` is `off`, `optional`, or `required`; no model instructions or secrets are returned. Usable document KBs in the credential's exact tenant are returned even when they already contain content, provided they have verified configuration provenance and have never been attached to another Nextcloud source.
+2. `POST /operations` receives `operation_id` (UUID), `tenant_id`, `instance_id`, `binding_id`, `actor_directory_id`, `actor_object_guid`, `mode` (`create` or `existing`), `name`, `knowledge_base_id` (for existing mode), `processing_template_id` (defaults to the credential's template), and optional `candidate_revision`. A new operation whose supplied revision does not match the current scoped candidate observation receives HTTP 409 with `nextcloud_candidate_revision_changed`; an exact operation-ID replay still returns its durable result. It returns `{operation:{operation_id,knowledge_base_id,state:"reserved",revision:1,...}}`. Store the exact immutable intent before the Nextcloud node operation.
 3. Prepare the NC binding against this reserved KB using the existing transactional encrypted handoff outbox.
 4. `POST /operations/:operation_id/pair` receives the existing pairing tuple: `knowledge_base_id`, `base_url`, `binding_id`, `operation_id`, `instance_id`, `publication_epoch`, `key_id`, `token`. It verifies signed NC capabilities, persists the paused source, signs the exact commit and activates only after ACK. The response contains `operation`, `pairing`, and `event_connection:{connection_id,key_id,secret,receiver_url}`. Resolve the relative receiver URL against the WeKnora origin. Retry the exact operation after ambiguous ACK; do not create another KB.
 5. `GET /operations/:operation_id` returns recoverable `operation`, `pairing`, `sync_enabled`, and the exact active event connection credential. Credentials are decrypted only for this pinned operation and an actor still authorized for target management. Optional current actor query fields let another delegated manager recover/manage the operation.
