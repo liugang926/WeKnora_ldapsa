@@ -153,26 +153,38 @@ func (s *NextcloudOnboardingStore) Actor(
 
 // onboardingExistingTarget admits an existing document knowledge base without
 // requiring it to be empty. The owning knowledge base may already contain
-// content; attaching a Nextcloud source leaves that content in place while the
-// source guard prevents a second source from taking over the same KB.
+// content; v3 permits multiple independent Nextcloud sources in one dedicated
+// KB while every document retains its own binding-scoped source guard.
 func onboardingExistingTarget(tx *gorm.DB, tenant uint64, id string) (*types.KnowledgeBase, int64, error) {
 	var kb types.KnowledgeBase
 	if err := tx.Where("tenant_id=? AND id=? AND deleted_at IS NULL", tenant, id).Take(&kb).Error; err != nil {
 		return nil, 0, ErrNextcloudKBUnavailable
 	}
-	if kb.Type != types.KnowledgeBaseTypeDocument || kb.IsTemporary || kb.EverHadNextcloudSource {
+	if kb.Type != types.KnowledgeBaseTypeDocument || kb.IsTemporary {
 		return nil, 0, ErrNextcloudKBUnavailable
 	}
-	var n int64
-	if err := tx.Model(&types.NextcloudOnboardingOperation{}).
-		Where("tenant_id=? AND knowledge_base_id=?", tenant, id).
-		Count(&n).
-		Error; err != nil || n != 0 {
+	var incompatibleSources int64
+	if err := tx.Unscoped().Model(&types.DataSource{}).
+		Where("tenant_id=? AND knowledge_base_id=? AND type<>?",
+			tenant, id, types.ConnectorTypeNextcloud).
+		Count(&incompatibleSources).
+		Error; err != nil || incompatibleSources != 0 {
+		return nil, 0, ErrNextcloudKBUnavailable
+	}
+	if err := tx.Unscoped().Table("data_sources AS d").
+		Where("d.tenant_id=? AND d.knowledge_base_id=? AND d.type=?",
+			tenant, id, types.ConnectorTypeNextcloud).
+		Where(`NOT EXISTS (SELECT 1 FROM nextcloud_source_pairings p
+			WHERE p.datasource_id=d.id AND p.tenant_id=d.tenant_id
+			  AND p.knowledge_base_id=d.knowledge_base_id)`).
+		Count(&incompatibleSources).
+		Error; err != nil || incompatibleSources != 0 {
 		return nil, 0, ErrNextcloudKBUnavailable
 	}
 	if _, _, err := onboardingConfigurationMetadata(tx, tenant, id); err != nil {
 		return nil, 0, ErrNextcloudKBUnavailable
 	}
+	var n int64
 	if err := tx.Table("knowledges").
 		Where("tenant_id=? AND knowledge_base_id=? AND deleted_at IS NULL", tenant, id).
 		Count(&n).
@@ -348,12 +360,6 @@ func (s *NextcloudOnboardingStore) analyzeCandidate(
 		return candidate, err
 	}
 	candidate.ContentCount = contentCount
-	var operationCount int64
-	if err := s.db.WithContext(ctx).Model(&types.NextcloudOnboardingOperation{}).
-		Where("tenant_id=? AND knowledge_base_id=?", c.TenantID, kb.ID).
-		Count(&operationCount).Error; err != nil {
-		return candidate, err
-	}
 	reject := func(code, reason, action string) (types.NextcloudKnowledgeBaseCandidate, error) {
 		candidate.Eligible = false
 		candidate.CanTakeOver = false
@@ -362,9 +368,36 @@ func (s *NextcloudOnboardingStore) analyzeCandidate(
 		candidate.NextAction = action
 		return candidate, nil
 	}
-	if kb.EverHadNextcloudSource || operationCount != 0 {
-		return reject("kb_already_bound", "该知识库已被其他 Nextcloud 来源接管。",
-			"选择其他知识库，或由管理员执行显式迁移。")
+	if err := s.db.WithContext(ctx).Table("nextcloud_source_pairings").
+		Where("tenant_id=? AND knowledge_base_id=? AND state IN ?",
+			c.TenantID, kb.ID, []string{"pending", "active"}).
+		Count(&candidate.NextcloudSourceCount).Error; err != nil {
+		return candidate, err
+	}
+	var incompatibleSources int64
+	if err := s.db.WithContext(ctx).Unscoped().Model(&types.DataSource{}).
+		Where("tenant_id=? AND knowledge_base_id=? AND type<>?",
+			c.TenantID, kb.ID, types.ConnectorTypeNextcloud).
+		Count(&incompatibleSources).Error; err != nil {
+		return candidate, err
+	}
+	if incompatibleSources != 0 {
+		return reject("kb_mixed_sources", "该知识库包含非 Nextcloud 数据源，不能安全共享。",
+			"选择其他知识库，或由管理员停用其他数据源。")
+	}
+	var unpairedSources int64
+	if err := s.db.WithContext(ctx).Unscoped().Table("data_sources AS d").
+		Where("d.tenant_id=? AND d.knowledge_base_id=? AND d.type=?",
+			c.TenantID, kb.ID, types.ConnectorTypeNextcloud).
+		Where(`NOT EXISTS (SELECT 1 FROM nextcloud_source_pairings p
+			WHERE p.datasource_id=d.id AND p.tenant_id=d.tenant_id
+			  AND p.knowledge_base_id=d.knowledge_base_id)`).
+		Count(&unpairedSources).Error; err != nil {
+		return candidate, err
+	}
+	if unpairedSources != 0 {
+		return reject("kb_unpaired_sources", "该知识库包含尚未完成安全配对的 Nextcloud 数据源。",
+			"先完成或停用旧数据源，再选择该知识库。")
 	}
 	if kb.Type == types.KnowledgeBaseTypeWiki || kb.IsTemporary || kb.IndexingStrategy.WikiEnabled {
 		return reject("kb_wiki_not_supported", "当前接入不支持 Wiki 或临时知识库。",

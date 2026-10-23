@@ -2,7 +2,7 @@ package types
 
 // NextcloudOnboardingContractVersion is the versioned machine contract used by
 // the Nextcloud integration. Additive fields remain readable by older clients.
-const NextcloudOnboardingContractVersion = 2
+const NextcloudOnboardingContractVersion = 3
 
 // NextcloudConnectionWorkspace is one workspace that a Nextcloud administrator
 // may authorize for directory bindings. The processing template is selected by

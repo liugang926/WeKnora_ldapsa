@@ -77,6 +77,58 @@ func TestNextcloudSourcePairingPrepareRetryAndActivate(t *testing.T) {
 	require.ErrorIs(t, NewDataSourceRepository(db).Delete(ctx, stored.ID), ErrNextcloudSourcePairingConflict)
 }
 
+func TestNextcloudSourcePairingAllowsIndependentBindingsOnSharedKnowledgeBase(t *testing.T) {
+	t.Setenv("SYSTEM_AES_KEY", "0123456789abcdef0123456789abcdef")
+	db := provenanceTestDB(t)
+	require.NoError(t, db.Exec(
+		`INSERT INTO knowledge_bases (id, tenant_id) VALUES ('kb-shared', 7)`,
+	).Error)
+	repository := NewNextcloudSourcePairingRepository(db)
+	ctx := context.Background()
+	first := NextcloudSourcePairing{
+		OperationID: "11111111-1111-4111-8111-111111111111",
+		TenantID:    7, KnowledgeBaseID: "kb-shared", InstanceID: "instance-1",
+		BindingID: "root-a", BaseURL: "https://nextcloud.example.test",
+		KeyID: "pair_11111111111141118111111111111111",
+	}
+	second := NextcloudSourcePairing{
+		OperationID: "22222222-2222-4222-8222-222222222222",
+		TenantID:    7, KnowledgeBaseID: "kb-shared", InstanceID: "instance-1",
+		BindingID: "root-b", BaseURL: "https://nextcloud.example.test",
+		KeyID: "pair_22222222222242228222222222222222",
+	}
+	firstPair, created, err := repository.PrepareSourcePairing(
+		ctx, first, "first-one-time-token",
+	)
+	require.NoError(t, err)
+	require.True(t, created)
+	secondPair, created, err := repository.PrepareSourcePairing(
+		ctx, second, "second-one-time-token",
+	)
+	require.NoError(t, err)
+	require.True(t, created)
+	require.NotEqual(t, firstPair.DataSourceID, secondPair.DataSourceID)
+	require.NoError(t, repository.ActivateSourcePairing(ctx, firstPair))
+	require.NoError(t, repository.ActivateSourcePairing(ctx, secondPair))
+
+	var active int64
+	require.NoError(t, db.Model(&NextcloudSourcePairing{}).
+		Where("tenant_id = ? AND knowledge_base_id = ? AND state = 'active'", 7, "kb-shared").
+		Count(&active).Error)
+	require.EqualValues(t, 2, active)
+	var sharedSource types.DataSource
+	require.NoError(t, db.Where("id = ?", firstPair.DataSourceID).Take(&sharedSource).Error)
+	require.NoError(t, NewDataSourceRepository(db).Update(ctx, &sharedSource))
+
+	duplicateBinding := second
+	duplicateBinding.OperationID = "33333333-3333-4333-8333-333333333333"
+	duplicateBinding.KeyID = "pair_33333333333343338333333333333333"
+	_, _, err = repository.PrepareSourcePairing(
+		ctx, duplicateBinding, "third-one-time-token",
+	)
+	require.ErrorIs(t, err, ErrNextcloudSourcePairingConflict)
+}
+
 func TestNextcloudSourcePairingPostgresJSONBActivation(t *testing.T) {
 	dsn := os.Getenv("NEXTCLOUD_EVENT_TEST_POSTGRES_DSN")
 	if dsn == "" {

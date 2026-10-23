@@ -22,7 +22,7 @@ func decommissionTestDB(t *testing.T) *gorm.DB {
 		`CREATE TABLE nextcloud_event_checkpoint (connection_id TEXT, received_id INTEGER)`,
 		`CREATE TABLE nextcloud_source_versions (id TEXT PRIMARY KEY, datasource_id TEXT)`,
 		`CREATE TABLE nextcloud_gc_jobs (id TEXT PRIMARY KEY, datasource_id TEXT)`,
-		`CREATE TABLE chunks (id TEXT PRIMARY KEY, knowledge_base_id TEXT)`,
+		`CREATE TABLE chunks (id TEXT PRIMARY KEY, tenant_id INTEGER, knowledge_base_id TEXT, knowledge_id TEXT)`,
 		`CREATE TABLE nextcloud_source_rotations (operation_id TEXT PRIMARY KEY, pair_operation_id TEXT, state TEXT)`,
 	} {
 		require.NoError(t, db.Exec(statement).Error)

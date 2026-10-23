@@ -428,6 +428,98 @@ func TestPostgresNextcloudIndexedWithdrawalFencesAndInventories(t *testing.T) {
 	require.NoError(t, err, "missing optional local table must retain a blocker, not fail refresh")
 	require.EqualValues(t, 18, status.ObservedItems)
 	require.False(t, status.InventoryComplete)
+
+	// A second binding may withdraw from the same KB without hiding the third
+	// binding's current content. This exercises v3 source-scoped inventory.
+	require.NoError(t, db.Exec(`ALTER TABLE nextcloud_indexed_withdrawals
+		DROP CONSTRAINT IF EXISTS nextcloud_indexed_withdrawals_knowledge_base_id_key`).Error)
+	multisourceDDL, err := os.ReadFile(
+		"../../../migrations/versioned/000167_nextcloud_multisource.up.sql",
+	)
+	require.NoError(t, err)
+	require.NoError(t, migrationDB.Exec(string(multisourceDDL)).Error)
+	require.NoError(t, db.Exec(`CREATE TABLE IF NOT EXISTS nextcloud_source_virgin
+		(pair_operation_id TEXT PRIMARY KEY, ever_touched BOOLEAN NOT NULL DEFAULT FALSE)`).Error)
+	makeSharedSource := func(binding, key string) (*types.DataSource, NextcloudSourcePairing) {
+		sharedConfig := &types.DataSourceConfig{
+			Type:        types.ConnectorTypeNextcloud,
+			Credentials: map[string]interface{}{"token": "token-" + binding, "key_id": key},
+			ResourceIDs: []string{binding},
+			Settings:    map[string]interface{}{"base_url": "https://nextcloud.example.test"},
+		}
+		sharedBlob, err := sharedConfig.ToJSON()
+		require.NoError(t, err)
+		shared := &types.DataSource{
+			ID: uuid.NewString(), TenantID: 7, KnowledgeBaseID: "kb",
+			Type: types.ConnectorTypeNextcloud, Config: sharedBlob,
+			Status: types.DataSourceStatusPaused,
+		}
+		require.NoError(t, db.Create(shared).Error)
+		var persisted types.DataSource
+		require.NoError(t, db.Where("id=?", shared.ID).Take(&persisted).Error)
+		_, sharedDigest, sharedBinding, err := NextcloudEventDataSourceIdentity(persisted.Config)
+		require.NoError(t, err)
+		require.Equal(t, binding, sharedBinding)
+		sharedPair := NextcloudSourcePairing{
+			OperationID: uuid.NewString(), TenantID: 7, KnowledgeBaseID: "kb",
+			DataSourceID: shared.ID, InstanceID: "instance", BindingID: binding,
+			BaseURL: "https://nextcloud.example.test", ConfigSHA: sharedDigest,
+			KeyID: key, State: "active",
+		}
+		require.NoError(t, db.Create(&sharedPair).Error)
+		require.NoError(t, db.Create(&nextcloudSourceVirgin{
+			PairOperationID: sharedPair.OperationID,
+		}).Error)
+		require.NoError(t, db.Model(&types.DataSource{}).Where("id=?", shared.ID).
+			Update("status", types.DataSourceStatusActive).Error)
+		return &persisted, sharedPair
+	}
+	sourceB, pairB := makeSharedSource("binding-b", "pair_b")
+	sourceC, pairC := makeSharedSource("binding-c", "pair_c")
+	knowledgeB := &types.Knowledge{
+		ID: "shared-file-b", TenantID: 7, KnowledgeBaseID: "kb",
+		Channel: types.ConnectorTypeNextcloud, Type: "file", Title: "B", Source: "file",
+		EnableStatus: "enabled", Metadata: types.JSON(
+			`{"datasource_id":"` + sourceB.ID + `","nextcloud_etag":"etag-b"}`),
+	}
+	knowledgeC := &types.Knowledge{
+		ID: "shared-file-c", TenantID: 7, KnowledgeBaseID: "kb",
+		Channel: types.ConnectorTypeNextcloud, Type: "file", Title: "C", Source: "file",
+		EnableStatus: "enabled", Metadata: types.JSON(
+			`{"datasource_id":"` + sourceC.ID + `","nextcloud_etag":"etag-c"}`),
+	}
+	require.NoError(t, db.Create(knowledgeB).Error)
+	require.NoError(t, db.Create(knowledgeC).Error)
+	require.NoError(t, db.Exec(`INSERT INTO chunks
+		(id,tenant_id,knowledge_base_id,knowledge_id,content) VALUES
+		('shared-chunk-b',7,'kb','shared-file-b','B'),
+		('shared-chunk-c',7,'kb','shared-file-c','C')`).Error)
+	sharedWithdrawal := NextcloudIndexedWithdrawal{
+		OperationID: uuid.NewString(), PairOperationID: pairB.OperationID,
+		TenantID: 7, KnowledgeBaseID: "kb", DataSourceID: sourceB.ID,
+		InstanceID: pairB.InstanceID, BindingID: pairB.BindingID,
+		KeyID: pairB.KeyID, PublicationEpoch: 2,
+	}
+	sharedRow, err := repo.BeginIndexedSourceWithdrawal(ctx, pairB, sharedWithdrawal)
+	require.NoError(t, err)
+	require.NoError(t, db.Where("id=?", knowledgeB.ID).Take(knowledgeB).Error)
+	require.Equal(t, "disabled", knowledgeB.EnableStatus)
+	require.NoError(t, db.Where("id=?", knowledgeC.ID).Take(knowledgeC).Error)
+	require.Equal(t, "enabled", knowledgeC.EnableStatus)
+	sharedStatus, err := repo.RefreshIndexedWithdrawalInventory(ctx, sharedRow)
+	require.NoError(t, err)
+	require.True(t, sharedStatus.LogicalWithdrawn)
+	var bItems, cItems int64
+	require.NoError(t, db.Model(&nextcloudIndexedWithdrawalItem{}).
+		Where("operation_id=? AND knowledge_id=?", sharedRow.OperationID, knowledgeB.ID).
+		Count(&bItems).Error)
+	require.NotZero(t, bItems)
+	require.NoError(t, db.Model(&nextcloudIndexedWithdrawalItem{}).
+		Where("operation_id=? AND knowledge_id=?", sharedRow.OperationID, knowledgeC.ID).
+		Count(&cItems).Error)
+	require.Zero(t, cItems)
+	require.NotEmpty(t, pairC.OperationID)
+
 	down, err := os.ReadFile("../../../migrations/versioned/000129_nextcloud_withdrawal_revision_inventory.down.sql")
 	require.NoError(t, err)
 	require.ErrorContains(t, migrationDB.Exec(string(down)).Error,

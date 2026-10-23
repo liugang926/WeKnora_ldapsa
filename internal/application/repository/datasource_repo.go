@@ -24,12 +24,20 @@ type DataSourceRepository struct {
 }
 
 type nextcloudCredentialWriteKey struct{}
+type nextcloudMultiSourceKey struct{}
 
 // WithNextcloudCredentialWrite marks the dedicated credential subresource's
 // repository update. Ordinary data-source edits and sync state writes retain
 // the database's currently committed Nextcloud machine credentials.
 func WithNextcloudCredentialWrite(ctx context.Context) context.Context {
 	return context.WithValue(ctx, nextcloudCredentialWriteKey{}, true)
+}
+
+// WithNextcloudMultiSource permits one additional paired Nextcloud source on a
+// knowledge base. Generic source creation and all non-Nextcloud writers remain
+// subject to the dedicated-knowledge-base rule.
+func WithNextcloudMultiSource(ctx context.Context) context.Context {
+	return context.WithValue(ctx, nextcloudMultiSourceKey{}, true)
 }
 
 // NewDataSourceRepository creates a new data source repository
@@ -49,7 +57,7 @@ func (r *DataSourceRepository) Create(ctx context.Context, ds *types.DataSource)
 	// the HTTP 201 body) match the database.
 	syncDeletions := ds.SyncDeletions
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := admitDataSourceKnowledgeBase(tx, ds, false); err != nil {
+		if err := admitDataSourceKnowledgeBase(ctx, tx, ds, false); err != nil {
 			return err
 		}
 		if err := tx.Create(ds).Error; err != nil {
@@ -70,7 +78,9 @@ func (r *DataSourceRepository) Create(ctx context.Context, ds *types.DataSource)
 // its sources. PostgreSQL serializes concurrent writers on that row; SQLite
 // serializes the write transaction. This prevents a concurrent ordinary source
 // from racing a Nextcloud source into the same dedicated KB.
-func admitDataSourceKnowledgeBase(tx *gorm.DB, ds *types.DataSource, update bool) error {
+func admitDataSourceKnowledgeBase(
+	ctx context.Context, tx *gorm.DB, ds *types.DataSource, update bool,
+) error {
 	if ds.TenantID == 0 || ds.KnowledgeBaseID == "" {
 		return errors.New("data source has no knowledge-base owner")
 	}
@@ -95,18 +105,55 @@ func admitDataSourceKnowledgeBase(tx *gorm.DB, ds *types.DataSource, update bool
 		}
 		return nil
 	}
-	var otherSources int64
+	multiSource, _ := ctx.Value(nextcloudMultiSourceKey{}).(bool)
+	pairedSource := false
+	if update && ds.ID != "" && tx.Migrator().HasTable("nextcloud_source_pairings") {
+		var paired int64
+		if err := tx.Table("nextcloud_source_pairings").
+			Where("datasource_id = ? AND tenant_id = ?", ds.ID, ds.TenantID).
+			Count(&paired).Error; err != nil {
+			return fmt.Errorf("check paired Nextcloud source: %w", err)
+		}
+		pairedSource = paired != 0
+	}
+	allowShared := multiSource || pairedSource
+	var otherSources, nonNextcloudSources int64
 	if err := tx.Unscoped().Model(&types.DataSource{}).
 		Where("knowledge_base_id = ? AND tenant_id = ?",
 			ds.KnowledgeBaseID, ds.TenantID).
 		Where("id <> ?", ds.ID).Count(&otherSources).Error; err != nil {
 		return fmt.Errorf("check dedicated Nextcloud knowledge base: %w", err)
 	}
-	if otherSources != 0 {
+	if err := tx.Unscoped().Model(&types.DataSource{}).
+		Where("knowledge_base_id = ? AND tenant_id = ?",
+			ds.KnowledgeBaseID, ds.TenantID).
+		Where("id <> ? AND type <> ?", ds.ID, types.ConnectorTypeNextcloud).
+		Count(&nonNextcloudSources).Error; err != nil {
+		return fmt.Errorf("check shared Nextcloud source scope: %w", err)
+	}
+	if nonNextcloudSources != 0 || (otherSources != 0 && !allowShared) {
 		return apperrors.NewProtocolError(errors.New(("nextcloud requires a dedicated knowledge base without o" +
 			"ther data sources")), "Nextcloud requires a dedicated knowledge base without other data sources")
 	}
-	if !update {
+	if allowShared && !update {
+		var unpairedSources int64
+		if err := tx.Unscoped().Table("data_sources AS d").
+			Where("d.tenant_id=? AND d.knowledge_base_id=? AND d.type=?",
+				ds.TenantID, ds.KnowledgeBaseID, types.ConnectorTypeNextcloud).
+			Where(`NOT EXISTS (SELECT 1 FROM nextcloud_source_pairings p
+				WHERE p.datasource_id=d.id AND p.tenant_id=d.tenant_id
+				  AND p.knowledge_base_id=d.knowledge_base_id)`).
+			Count(&unpairedSources).Error; err != nil {
+			return fmt.Errorf("check unpaired Nextcloud sources: %w", err)
+		}
+		if unpairedSources != 0 {
+			return apperrors.NewProtocolError(
+				errors.New("nextcloud shared knowledge base contains an unpaired legacy source"),
+				"Nextcloud requires all existing sources to be securely paired",
+			)
+		}
+	}
+	if !update && !multiSource {
 		var existingDocuments int64
 		if err := tx.Table("knowledges").
 			Where("knowledge_base_id = ? AND tenant_id = ?",
@@ -303,7 +350,7 @@ func (r *DataSourceRepository) Update(ctx context.Context, ds *types.DataSource)
 		// Lock the owning KB before reading the source. Credential replacement
 		// and endpoint edits must observe the same committed predecessor, even
 		// when two Web workers update a source concurrently.
-		if err := admitDataSourceKnowledgeBase(tx, ds, true); err != nil {
+		if err := admitDataSourceKnowledgeBase(ctx, tx, ds, true); err != nil {
 			return err
 		}
 		var previous types.DataSource

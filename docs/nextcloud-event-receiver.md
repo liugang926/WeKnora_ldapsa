@@ -36,7 +36,9 @@ recover event secrets. The target must be a committed, dedicated Nextcloud
 data source whose sole selected binding still exists in signed live
 capabilities/bindings responses. Pairing checks the persisted tenant, KB,
 source, base URL, encrypted config fingerprint, and dedicated KB marker again
-under the database lock before committing the connection.
+under the database lock before committing the connection. A v3 shared KB may
+have several such data sources, but a connection is still pinned to exactly
+one of them and cannot receive or dispatch hints for another binding.
 
 | Method | Route | Result |
 | --- | --- | --- |
