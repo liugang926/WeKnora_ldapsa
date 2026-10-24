@@ -419,9 +419,6 @@ func (h *NextcloudOnboardingHandler) Pair(c *gin.Context) {
 				DataSourceID:    pair.DataSourceID,
 			},
 		)
-		if err == nil {
-			err = h.pairing.repo.ActivateSourcePairing(c.Request.Context(), pair)
-		}
 		if err != nil {
 			_ = h.pairing.repo.RecordSourcePairingFailure(c.Request.Context(), pair, "remote_outcome_uncertain")
 			c.JSON(http.StatusAccepted, gin.H{"operation": op, "pairing": pair, "error": "remote_outcome_uncertain"})
@@ -429,6 +426,13 @@ func (h *NextcloudOnboardingHandler) Pair(c *gin.Context) {
 		}
 		pair.State = "active"
 	}
+	// An exact retry of an already-active pair must also repair a source left
+	// in the fail-closed error state by a pre-stream sync failure.
+	if err = h.pairing.repo.ActivateSourcePairing(c.Request.Context(), pair); err != nil {
+		onboardingError(c, err)
+		return
+	}
+	pair.State = "active"
 	if err = h.store.MarkActive(c.Request.Context(), op); err != nil {
 		onboardingError(c, err)
 		return
