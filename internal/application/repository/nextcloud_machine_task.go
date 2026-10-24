@@ -494,24 +494,8 @@ func (s *KnowledgeInputProvenanceStore) BeginNextcloudMachineTask(ctx context.Co
 			return ErrNextcloudMachineTaskInvalid
 		}
 		if !success && !retryable && kind == types.TypeDocumentProcess {
-			// ProcessDocument can fail before it reaches its own status writer,
-			// for example when the original input proof or build authority has
-			// already changed. The claim is now terminal, so leaving the
-			// knowledge row in processing would make the user see a permanent
-			// spinner and block later event ranges from converging.
-			failed := s.db.WithContext(end).Model(&types.Knowledge{}).
-				Where("id = ? AND tenant_id = ? AND knowledge_base_id = ? AND parse_status IN ?",
-					p.KnowledgeID, p.TenantID, p.KnowledgeBaseID,
-					[]string{types.ParseStatusPending, types.ParseStatusProcessing, types.ParseStatusFinalizing}).
-				Updates(map[string]any{
-					"parse_status":           types.ParseStatusFailed,
-					"error_message":          "document_processing_failed",
-					"pending_subtasks_count": 0,
-					"updated_at":             time.Now().UTC(),
-				})
-			if failed.Error != nil {
-				return failed.Error
-			}
+			return markNextcloudDocumentTerminalFailure(end, s.db,
+				p.TenantID, p.KnowledgeBaseID, p.KnowledgeID)
 		}
 		return nil
 	}
@@ -521,4 +505,24 @@ func (s *KnowledgeInputProvenanceStore) BeginNextcloudMachineTask(ctx context.Co
 			scope: scope, parent: ctx, store: s,
 		})
 	return current, finish, nil
+}
+
+// markNextcloudDocumentTerminalFailure closes the exact source-managed
+// document only after its machine claim is terminal. ProcessDocument can fail
+// before reaching its normal status writer, but a permanent spinner would also
+// block later event ranges from converging.
+func markNextcloudDocumentTerminalFailure(
+	ctx context.Context, db *gorm.DB, tenant uint64, kb, knowledgeID string,
+) error {
+	failed := db.WithContext(ctx).Model(&types.Knowledge{}).
+		Where("id = ? AND tenant_id = ? AND knowledge_base_id = ? AND parse_status IN ?",
+			knowledgeID, tenant, kb,
+			[]string{types.ParseStatusPending, types.ParseStatusProcessing, types.ParseStatusFinalizing}).
+		Updates(map[string]any{
+			"parse_status":           types.ParseStatusFailed,
+			"error_message":          "document_processing_failed",
+			"pending_subtasks_count": 0,
+			"updated_at":             time.Now().UTC(),
+		})
+	return failed.Error
 }
