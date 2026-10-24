@@ -474,10 +474,23 @@ func (r *NextcloudSourcePairingRepository) ActivateSourcePairing(
 			return ErrNextcloudSourcePairingConflict
 		}
 		if current.State == "active" {
-			if hash != pair.ConfigSHA || ds.Status != types.DataSourceStatusActive {
+			if hash != pair.ConfigSHA {
 				return ErrNextcloudSourcePairingConflict
 			}
-			return nil
+			if ds.Status == types.DataSourceStatusActive {
+				return nil
+			}
+			// A pre-stream sync failure records the source as error so stale
+			// content fails closed. An exact explicit re-pair is the recovery
+			// path: the manager was freshly authorized by the caller, the
+			// source identity is unchanged, and the source still exists.
+			if ds.Status != types.DataSourceStatusError {
+				return ErrNextcloudSourcePairingConflict
+			}
+			return tx.Model(&ds).Updates(map[string]any{
+				"status":        types.DataSourceStatusActive,
+				"error_message": "",
+			}).Error
 		}
 		if current.State != "pending" || ds.Status != types.DataSourceStatusPaused {
 			return ErrNextcloudSourcePairingConflict
