@@ -5053,6 +5053,7 @@ func (s *knowledgeService) enqueueKnowledgePostProcessTask(
 	ctx context.Context, knowledge *types.Knowledge,
 ) {
 	if s.task == nil {
+		s.failPostProcessAdmission(ctx, knowledge, "post_process_task_unavailable")
 		return
 	}
 	if knowledge.Channel == types.ConnectorTypeNextcloud && isDataTableFileType(knowledge.FileType) {
@@ -5083,6 +5084,7 @@ func (s *knowledgeService) enqueueKnowledgePostProcessTask(
 	payloadBytes, err := json.Marshal(payload)
 	if err != nil {
 		logger.Errorf(ctx, "Failed to marshal knowledge post process payload: %v", err)
+		s.failPostProcessAdmission(ctx, knowledge, "post_process_payload_invalid")
 		return
 	}
 	task, err := newKnowledgeQueueTask(
@@ -5093,13 +5095,40 @@ func (s *knowledgeService) enqueueKnowledgePostProcessTask(
 		knowledgePostProcessTaskOptions()...)
 	if err != nil {
 		logger.Error(ctx, "Failed to admit post process task")
+		s.failPostProcessAdmission(ctx, knowledge, "post_process_admission_failed")
 		return
 	}
 	if _, err := s.task.Enqueue(task); err != nil {
 		logger.Errorf(ctx, "Failed to enqueue knowledge post process task: %v", err)
+		s.failPostProcessAdmission(ctx, knowledge, "post_process_enqueue_failed")
 		return
 	}
 	logger.Infof(ctx, "Enqueued knowledge post process task for %s", knowledge.ID)
+}
+
+// failPostProcessAdmission prevents a document whose mandatory post-process
+// handoff failed from remaining in "processing" without any task that can
+// advance it. The source snapshot is already staged, so publishing it as a
+// failed candidate lets the existing candidate-retry scheduler recover from a
+// transient queue or transaction failure.
+func (s *knowledgeService) failPostProcessAdmission(
+	ctx context.Context, knowledge *types.Knowledge, code string,
+) {
+	if knowledge == nil || knowledge.ID == "" {
+		return
+	}
+	knowledge.ParseStatus = types.ParseStatusFailed
+	knowledge.EnableStatus = "disabled"
+	knowledge.SummaryStatus = types.SummaryStatusNone
+	knowledge.ErrorMessage = code
+	knowledge.UpdatedAt = time.Now().UTC()
+
+	dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer cancel()
+	if err := s.updateKnowledgeUnlessSourceReplaced(dctx, knowledge); err != nil {
+		logger.Errorf(ctx, "Failed to persist post-process admission failure for %s: %v",
+			knowledge.ID, err)
+	}
 }
 
 // ProcessKnowledgeListReparse handles Asynq knowledge list reparse tasks.
