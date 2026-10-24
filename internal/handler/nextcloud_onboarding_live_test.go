@@ -185,7 +185,7 @@ func TestNextcloudOnboardingActualNCRuntime(t *testing.T) {
 	}
 	store := repo.NewNextcloudOnboardingStore(db)
 	pair := NewNextcloudSourcePairingHandler(repo.NewNextcloudSourcePairingRepository(db), nil)
-	h := NewNextcloudOnboardingHandler(store, pair, repo.NewNextcloudEventInboxRepository(db))
+	h := NewNextcloudOnboardingHandler(store, pair, repo.NewNextcloudEventInboxRepository(db), nil)
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	r.Use(func(c *gin.Context) {

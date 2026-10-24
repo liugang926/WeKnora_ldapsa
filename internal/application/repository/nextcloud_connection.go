@@ -51,6 +51,14 @@ type nextcloudConnectionTemplateInputs struct {
 	StorageBackendID string
 }
 
+// NextcloudWorkerObservation is one live worker heartbeat observation. It is
+// independent from sync-log success: an idle source must not make the worker
+// appear unavailable.
+type NextcloudWorkerObservation struct {
+	Status     string
+	ObservedAt time.Time
+}
+
 // ConnectionWorkspaces returns the workspaces a Nextcloud administrator may
 // authorize. A platform API key may discover all live workspaces; a browser
 // session may discover only workspaces where its role is Admin or Owner.
@@ -124,6 +132,7 @@ func (s *NextcloudOnboardingStore) ConnectionWorkspaces(
 // heartbeat is unverified, never healthy.
 func (s *NextcloudOnboardingStore) ConnectionHealth(
 	ctx context.Context,
+	worker *NextcloudWorkerObservation,
 ) (types.NextcloudConnectionHealth, error) {
 	now := time.Now().UTC()
 	health := types.NextcloudConnectionHealth{
@@ -156,14 +165,6 @@ func (s *NextcloudOnboardingStore) ConnectionHealth(
 			observed := latest.UpdatedAt
 			if observed.IsZero() {
 				observed = latest.StartedAt
-			}
-			age := now.Sub(observed)
-			if latest.Status == "running" && age <= 15*time.Minute {
-				health.WorkerStatus = "running"
-			} else if age <= 15*time.Minute {
-				health.WorkerStatus = "active"
-			} else {
-				health.WorkerStatus = "stale"
 			}
 			if !observed.IsZero() && latest.Status == "success" {
 				last := observed.Unix()
@@ -213,6 +214,18 @@ func (s *NextcloudOnboardingStore) ConnectionHealth(
 			}
 			last := latest.UpdatedAt.Unix()
 			health.DispatcherLastSuccessAt = &last
+		}
+	}
+	if worker != nil && !worker.ObservedAt.IsZero() {
+		observed := worker.ObservedAt.UTC()
+		last := observed.Unix()
+		health.WorkerHeartbeatAt = &last
+		age := now.Sub(observed)
+		if strings.EqualFold(strings.TrimSpace(worker.Status), "running") &&
+			age >= -5*time.Second && age <= 2*time.Minute {
+			health.WorkerStatus = "running"
+		} else if age > 2*time.Minute {
+			health.WorkerStatus = "stale"
 		}
 	}
 	workerOK := health.WorkerStatus == "active" || health.WorkerStatus == "running"

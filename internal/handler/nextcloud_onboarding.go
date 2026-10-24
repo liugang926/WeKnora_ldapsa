@@ -14,6 +14,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/application/repository"
 	"github.com/Tencent/WeKnora/internal/datasource/connector/nextcloud"
 	"github.com/Tencent/WeKnora/internal/types"
+	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 )
@@ -23,6 +24,7 @@ type NextcloudOnboardingHandler struct {
 	store    *repository.NextcloudOnboardingStore
 	pairing  *NextcloudSourcePairingHandler
 	inbox    *repository.NextcloudEventInboxRepository
+	worker   interfaces.TaskInspector
 	readRoot func(context.Context, *types.DataSourceConfig, string, string) (nextcloud.RootMigration, error)
 	ackRoot  func(context.Context, *types.DataSourceConfig, nextcloud.RootMigration) (nextcloud.RootMigration, error)
 }
@@ -32,11 +34,13 @@ func NewNextcloudOnboardingHandler(
 	store *repository.NextcloudOnboardingStore,
 	pairing *NextcloudSourcePairingHandler,
 	inbox *repository.NextcloudEventInboxRepository,
+	worker interfaces.TaskInspector,
 ) *NextcloudOnboardingHandler {
 	return &NextcloudOnboardingHandler{
 		store:    store,
 		pairing:  pairing,
 		inbox:    inbox,
+		worker:   worker,
 		readRoot: nextcloud.ReadRootMigration,
 		ackRoot:  nextcloud.AcknowledgeRootMigration,
 	}
@@ -186,7 +190,7 @@ func (h *NextcloudOnboardingHandler) Health(c *gin.Context) {
 	if _, ok := h.credential(c); !ok {
 		return
 	}
-	health, err := h.store.ConnectionHealth(c.Request.Context())
+	health, err := nextcloudConnectionHealth(c.Request.Context(), h.store, h.worker)
 	if err != nil {
 		onboardingError(c, err)
 		return
