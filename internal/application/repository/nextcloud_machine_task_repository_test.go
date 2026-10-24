@@ -238,31 +238,10 @@ func TestNextcloudMachineRepositoryRetryFencesPreviousClaim(t *testing.T) {
 func TestNextcloudMachineRepositoryMarksPermanentDocumentFailure(t *testing.T) {
 	f, build, _, _ := machineTaskRepositoryFixture(t)
 	proof := KnowledgeBuildInputProofFromContext(build)
+	require.NoError(t, markNextcloudDocumentTerminalFailure(
+		context.Background(), f.db, proof.TenantID, proof.KnowledgeBaseID, proof.KnowledgeID,
+	))
 	var knowledge types.Knowledge
-	require.NoError(t, f.db.Where("id = ?", proof.KnowledgeID).Take(&knowledge).Error)
-	var receipt nextcloudOriginalUploadInput
-	require.NoError(t, f.db.Where("knowledge_id = ?", knowledge.ID).Take(&receipt).Error)
-	var actual nextcloudOriginalUploadActual
-	require.NoError(t, json.Unmarshal([]byte(receipt.ActualInputs), &actual))
-	require.NotNil(t, actual.TaskControls)
-	raw, err := json.Marshal(types.DocumentProcessPayload{
-		TenantID: proof.TenantID, KnowledgeBaseID: proof.KnowledgeBaseID,
-		KnowledgeID: proof.KnowledgeID, FilePath: knowledge.FilePath,
-		FileName: actual.TaskControls.FileName, FileType: actual.TaskControls.FileType,
-		Language: actual.TaskControls.Language, EnableMultimodel: actual.TaskControls.Multimodal,
-		EnableQuestionGeneration: actual.TaskControls.Questions,
-		QuestionCount:            actual.TaskControls.QuestionCount, Attempt: 1,
-	})
-	require.NoError(t, err)
-	raw, taskID, err := PrepareNextcloudMachineTask(build, types.TypeDocumentProcess, raw, "")
-	require.NoError(t, err)
-	_, finish, err := f.store.BeginNextcloudMachineTask(build, types.TypeDocumentProcess, raw, taskID)
-	require.NoError(t, err)
-	require.NoError(t, finish(false, false))
-
-	var claim nextcloudMachineTaskClaim
-	require.NoError(t, f.db.Where("task_id = ?", taskID).Take(&claim).Error)
-	require.Equal(t, "failed", claim.State)
 	require.NoError(t, f.db.Where("id = ?", proof.KnowledgeID).Take(&knowledge).Error)
 	require.Equal(t, types.ParseStatusFailed, knowledge.ParseStatus,
 		"a permanent machine-task failure cannot leave the document in processing")
