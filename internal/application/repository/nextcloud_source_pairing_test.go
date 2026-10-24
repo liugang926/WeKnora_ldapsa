@@ -59,6 +59,15 @@ func TestNextcloudSourcePairingPrepareRetryAndActivate(t *testing.T) {
 	require.ErrorIs(t, err, ErrNextcloudSourcePairingConflict)
 
 	require.NoError(t, repo.ActivateSourcePairing(ctx, first))
+	require.NoError(t, db.Model(&types.DataSource{}).
+		Where("id = ?", stored.ID).
+		Update("status", types.DataSourceStatusError).Error)
+	require.NoError(t, db.Where("id = ?", stored.ID).Take(&stored).Error)
+	require.Equal(t, types.DataSourceStatusError, stored.Status)
+	// The same explicit pairing request is the safe recovery path after a
+	// pre-stream automatic sync failure. It cannot revive a paused, deleted or
+	// changed source, and it does not rotate the pairing identity.
+	require.NoError(t, repo.ActivateSourcePairing(ctx, first))
 	require.NoError(t, repo.ActivateSourcePairing(ctx, first))
 	require.NoError(t, db.Where("id = ?", first.DataSourceID).Take(&stored).Error)
 	require.Equal(t, types.DataSourceStatusActive, stored.Status)
