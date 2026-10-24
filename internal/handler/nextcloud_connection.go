@@ -10,6 +10,7 @@ import (
 
 	"github.com/Tencent/WeKnora/internal/application/repository"
 	"github.com/Tencent/WeKnora/internal/types"
+	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 )
@@ -17,14 +18,16 @@ import (
 // NextcloudConnectionHandler owns the administrator connection setup that
 // turns selected workspaces into scoped Nextcloud onboarding credentials.
 type NextcloudConnectionHandler struct {
-	store *repository.NextcloudOnboardingStore
+	store  *repository.NextcloudOnboardingStore
+	worker interfaces.TaskInspector
 }
 
 // NewNextcloudConnectionHandler constructs the connection setup handler.
 func NewNextcloudConnectionHandler(
 	store *repository.NextcloudOnboardingStore,
+	worker interfaces.TaskInspector,
 ) *NextcloudConnectionHandler {
-	return &NextcloudConnectionHandler{store: store}
+	return &NextcloudConnectionHandler{store: store, worker: worker}
 }
 
 func (h *NextcloudConnectionHandler) caller(c *gin.Context) (string, bool, bool) {
@@ -107,7 +110,7 @@ func (h *NextcloudConnectionHandler) Workspaces(c *gin.Context) {
 	if end < len(filtered) {
 		nextCursor = base64.RawURLEncoding.EncodeToString([]byte(strconv.Itoa(end)))
 	}
-	health, err := h.store.ConnectionHealth(c.Request.Context())
+	health, err := nextcloudConnectionHealth(c.Request.Context(), h.store, h.worker)
 	if err != nil {
 		connectionError(c, err)
 		return
@@ -142,7 +145,7 @@ func (h *NextcloudConnectionHandler) Authorize(c *gin.Context) {
 		connectionError(c, err)
 		return
 	}
-	health, err := h.store.ConnectionHealth(c.Request.Context())
+	health, err := nextcloudConnectionHealth(c.Request.Context(), h.store, h.worker)
 	if err != nil {
 		connectionError(c, err)
 		return

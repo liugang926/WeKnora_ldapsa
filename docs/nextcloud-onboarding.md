@@ -9,6 +9,10 @@ older clients, while a client that cannot understand the negotiated contract
 must keep existing sources readable and block new bindings. The connection
 workspace response includes a bounded `health` projection with worker and
 dispatcher observations; absence is `unverified` and never healthy.
+Worker readiness comes from a live asynq server heartbeat subscribed to the
+`sync` queue. The latest successful `sync_logs` row is diagnostic history
+only: a source with no recent file changes does not close the binding gate.
+The dispatcher freshness condition remains independent.
 
 An administrator with a WeKnora platform API key (`system_tenants_read` and
 `system_tenants_manage`) or an Owner/Admin browser session can use the

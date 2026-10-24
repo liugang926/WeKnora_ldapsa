@@ -563,6 +563,7 @@ func newScopedFirstLoginFoundation(
 		onboarding,
 		handler.NewNextcloudSourcePairingHandler(pairs, sourceHandler),
 		repository.NewNextcloudEventInboxRepository(db),
+		nil,
 	)
 	kh := handler.NewKnowledgeHandler(cfg, knowledge, base, nil, nil, queue, repository.NewKnowledgeSpanRepository(db))
 	handler.ConfigureKnowledgeHandlerGroupAccess(kh, groups)

@@ -60,6 +60,7 @@ type NextcloudConnectionHealth struct {
 	Status                    string `json:"status"`
 	ContractVersion           int    `json:"contract_version"`
 	WorkerStatus              string `json:"worker_status"`
+	WorkerHeartbeatAt         *int64 `json:"worker_heartbeat_at,omitempty"`
 	WorkerLastSuccessAt       *int64 `json:"worker_last_success_at,omitempty"`
 	DispatcherStatus          string `json:"dispatcher_status"`
 	DispatcherLastSuccessAt   *int64 `json:"dispatcher_last_success_at,omitempty"`

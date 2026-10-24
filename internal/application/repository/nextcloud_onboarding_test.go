@@ -929,10 +929,10 @@ func TestNextcloudConnectionAuthorizesAndRevokesWorkspaceCredential(t *testing.T
 	require.False(t, stored.Enabled)
 }
 
-func TestNextcloudConnectionHealthFailsClosedUntilWorkerAndDispatcherObserved(t *testing.T) {
+func TestNextcloudConnectionHealthUsesIndependentWorkerHeartbeat(t *testing.T) {
 	db, store, _ := onboardingDB(t)
 	ctx := context.Background()
-	initial, err := store.ConnectionHealth(ctx)
+	initial, err := store.ConnectionHealth(ctx, nil)
 	require.NoError(t, err)
 	require.False(t, initial.BindingAllowed)
 	require.Contains(t, initial.ReasonCode, "unverified")
@@ -951,10 +951,32 @@ func TestNextcloudConnectionHealthFailsClosedUntilWorkerAndDispatcherObserved(t 
 	require.NoError(t, db.Exec("INSERT INTO nextcloud_event_dispatch(state,updated_at) VALUES(?,?)",
 		"idle", now).Error)
 
-	healthy, err := store.ConnectionHealth(ctx)
+	// A recent successful file sync is useful diagnostics, but it is not a
+	// worker heartbeat and must not open the binding gate on its own.
+	withoutHeartbeat, err := store.ConnectionHealth(ctx, nil)
+	require.NoError(t, err)
+	require.False(t, withoutHeartbeat.BindingAllowed)
+	require.Equal(t, "unverified", withoutHeartbeat.WorkerStatus)
+	require.NotNil(t, withoutHeartbeat.WorkerLastSuccessAt)
+	require.Nil(t, withoutHeartbeat.WorkerHeartbeatAt)
+
+	staleHeartbeat, err := store.ConnectionHealth(ctx, &repo.NextcloudWorkerObservation{
+		Status: "running", ObservedAt: now.Add(-3 * time.Minute),
+	})
+	require.NoError(t, err)
+	require.False(t, staleHeartbeat.BindingAllowed)
+	require.Equal(t, "stale", staleHeartbeat.WorkerStatus)
+	require.NotNil(t, staleHeartbeat.WorkerHeartbeatAt)
+
+	healthy, err := store.ConnectionHealth(ctx, &repo.NextcloudWorkerObservation{
+		Status: "running", ObservedAt: now,
+	})
 	require.NoError(t, err)
 	require.True(t, healthy.BindingAllowed)
 	require.Equal(t, "healthy", healthy.Status)
+	require.Equal(t, "running", healthy.WorkerStatus)
+	require.NotNil(t, healthy.WorkerHeartbeatAt)
+	require.NotNil(t, healthy.WorkerLastSuccessAt)
 	require.Equal(t, 3, healthy.ContractVersion)
 }
 
