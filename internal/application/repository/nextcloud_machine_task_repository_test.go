@@ -235,6 +235,30 @@ func TestNextcloudMachineRepositoryRetryFencesPreviousClaim(t *testing.T) {
 	require.Error(t, err, "terminal failure is not a retryable receipt")
 }
 
+func TestNextcloudMachineRepositoryMarksPermanentDocumentFailure(t *testing.T) {
+	f, build, _, _ := machineTaskRepositoryFixture(t)
+	proof := KnowledgeBuildInputProofFromContext(build)
+	raw, err := json.Marshal(types.DocumentProcessPayload{
+		TenantID: proof.TenantID, KnowledgeBaseID: proof.KnowledgeBaseID,
+		KnowledgeID: proof.KnowledgeID, OriginalInput: proof, Attempt: 1,
+	})
+	require.NoError(t, err)
+	raw, taskID, err := PrepareNextcloudMachineTask(build, types.TypeDocumentProcess, raw, "")
+	require.NoError(t, err)
+	_, finish, err := f.store.BeginNextcloudMachineTask(build, types.TypeDocumentProcess, raw, taskID)
+	require.NoError(t, err)
+	require.NoError(t, finish(false, false))
+
+	var claim nextcloudMachineTaskClaim
+	require.NoError(t, f.db.Where("task_id = ?", taskID).Take(&claim).Error)
+	require.Equal(t, "failed", claim.State)
+	var knowledge types.Knowledge
+	require.NoError(t, f.db.Where("id = ?", proof.KnowledgeID).Take(&knowledge).Error)
+	require.Equal(t, types.ParseStatusFailed, knowledge.ParseStatus,
+		"a permanent machine-task failure cannot leave the document in processing")
+	require.Equal(t, "document_processing_failed", knowledge.ErrorMessage)
+}
+
 func TestNextcloudMachineRepositoryExpiredLeaseTakeoverUsesDatabaseClock(t *testing.T) {
 	f, build, raw, taskID := machineTaskRepositoryFixture(t)
 	old, finish, err := f.store.BeginNextcloudMachineTask(build, types.TypeKnowledgePostProcess, raw, taskID)

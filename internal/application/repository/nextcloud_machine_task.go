@@ -493,6 +493,26 @@ func (s *KnowledgeInputProvenanceStore) BeginNextcloudMachineTask(ctx context.Co
 		if q.RowsAffected != 1 {
 			return ErrNextcloudMachineTaskInvalid
 		}
+		if !success && !retryable && kind == types.TypeDocumentProcess {
+			// ProcessDocument can fail before it reaches its own status writer,
+			// for example when the original input proof or build authority has
+			// already changed. The claim is now terminal, so leaving the
+			// knowledge row in processing would make the user see a permanent
+			// spinner and block later event ranges from converging.
+			failed := s.db.WithContext(end).Model(&types.Knowledge{}).
+				Where("id = ? AND tenant_id = ? AND knowledge_base_id = ? AND parse_status IN ?",
+					p.KnowledgeID, p.TenantID, p.KnowledgeBaseID,
+					[]string{types.ParseStatusPending, types.ParseStatusProcessing, types.ParseStatusFinalizing}).
+				Updates(map[string]any{
+					"parse_status":           types.ParseStatusFailed,
+					"error_message":          "document_processing_failed",
+					"pending_subtasks_count": 0,
+					"updated_at":             time.Now().UTC(),
+				})
+			if failed.Error != nil {
+				return failed.Error
+			}
+		}
 		return nil
 	}
 	current := context.WithValue(ctx, nextcloudMachineExecutionKey{},
