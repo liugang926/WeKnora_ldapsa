@@ -267,6 +267,27 @@ func captureNextcloudStateInTx(
 		Stages:                   map[string]NextcloudStageState{},
 		Graph:                    NextcloudGraphState{State: "unverified"},
 	}
+	// Tombstoning clears the mutable desired ETag, but Nextcloud still needs
+	// the exact withdrawn source identity to accept cleanup-only status.
+	// The append-only revision ledger retains that final source generation.
+	if v.State == "tombstone" {
+		var withdrawn struct {
+			DesiredETag string `gorm:"column:desired_etag"`
+		}
+		err := tx.Table("nextcloud_source_revisions").
+			Select("desired_etag").
+			Where("tenant_id=? AND knowledge_base_id=? AND datasource_id=? AND external_id=? AND desired_etag<>''",
+				tenant, kb, ds, external).
+			Order("revision DESC").
+			Take(&withdrawn).
+			Error
+		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			return err
+		}
+		if withdrawn.DesiredETag != "" {
+			out.SourceETag = withdrawn.DesiredETag
+		}
+	}
 	for _, stage := range []string{"parse", "chunk", "embedding", "index"} {
 		out.Stages[stage] = NextcloudStageState{State: "pending"}
 	}
@@ -499,6 +520,43 @@ func captureNextcloudStateInTx(
 			return err
 		}
 	}
+	// A tombstone has no candidate ID. Derive cleanup proof from every exact
+	// source job instead of reporting cleanup_pending forever. Verified is
+	// emitted only after each persisted inventory job reports collected.
+	if v.State == "tombstone" && tx.Migrator().HasTable("nextcloud_gc_jobs") {
+		var states []string
+		if err := tx.Table("nextcloud_gc_jobs").Where(
+			"tenant_id=? AND knowledge_base_id=? AND datasource_id=? AND external_id=?",
+			tenant, kb, ds, external,
+		).Pluck("state", &states).Error; err != nil {
+			return err
+		}
+		if len(states) > 0 {
+			collected := 0
+			blocked := false
+			unfinished := false
+			for _, state := range states {
+				switch state {
+				case "collected":
+					collected++
+				case "blocked":
+					blocked = true
+				default:
+					unfinished = true
+				}
+			}
+			switch {
+			case blocked:
+				out.GCState = "cleanup_blocked"
+			case unfinished && collected > 0:
+				out.GCState = "cleanup_partial"
+			case unfinished:
+				out.GCState = "cleanup_pending"
+			case collected == len(states):
+				out.GCState = "cleanup_verified"
+			}
+		}
+	}
 	var old nextcloudFileStateRow
 	err = tx.Clauses(clause.Locking{Strength: "UPDATE"}).
 		Where("connection_id=? AND file_id=? AND publication_epoch=?", conn.ConnectionID, file, publicationEpoch).
@@ -514,7 +572,7 @@ func captureNextcloudStateInTx(
 		Knowledge       *string
 		Attempt         int
 		Config          string
-	}{v.DesiredETag, revision, out.KnowledgeID, attempt, configDigest})
+	}{out.SourceETag, revision, out.KnowledgeID, attempt, configDigest})
 	row := old
 	if !found {
 		row = nextcloudFileStateRow{

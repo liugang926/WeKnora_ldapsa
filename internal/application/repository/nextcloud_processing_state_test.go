@@ -671,6 +671,47 @@ func TestNextcloudActualGraphExactGCReceiptAndUnknownCoverage(t *testing.T) {
 	require.EqualValues(t, 1, receipts, "retry cannot fabricate a second physical deletion")
 }
 
+func TestNextcloudTombstoneStatusPreservesSourceIdentityAndAggregatesCleanup(t *testing.T) {
+	state, db, ctx, k, _, _ := processingStateFixture(t, false)
+	require.NoError(t, NewKnowledgeRepository(db).(*knowledgeRepository).TombstoneNextcloudVersion(
+		context.Background(), 7, "kb", "ds", "nextcloud:instance:77",
+	))
+	now := time.Now().UTC()
+	for _, job := range []nextcloudGCJob{
+		{
+			ID: "tombstone-old-candidate", Reason: "tombstone", TenantID: 7,
+			KnowledgeBaseID: "kb", KnowledgeID: "candidate-old", DataSourceID: "ds",
+			ExternalID: "nextcloud:instance:77", State: "collected",
+			NotBefore: now, OriginalNotBefore: now, NextAttemptAt: now,
+			CompletedAt: &now, CreatedAt: now, UpdatedAt: now,
+		},
+		{
+			ID: "tombstone-current-candidate", Reason: "tombstone", TenantID: 7,
+			KnowledgeBaseID: "kb", KnowledgeID: k.ID, DataSourceID: "ds",
+			ExternalID: "nextcloud:instance:77", State: "pending",
+			NotBefore: now, OriginalNotBefore: now, NextAttemptAt: now,
+			CreatedAt: now, UpdatedAt: now,
+		},
+	} {
+		require.NoError(t, db.Create(&job).Error)
+	}
+
+	require.NoError(t, state.Capture(ctx, 7, "kb", "ds", "nextcloud:instance:77", true))
+	status := loadProcessingState(t, db)
+	require.Equal(t, "withdrawn", status.SyncState)
+	require.Equal(t, "withdrawn", status.PublicationState)
+	require.Equal(t, "original-etag", status.SourceETag,
+		"tombstone wire identity must remain eligible for Nextcloud cleanup-only status")
+	require.Equal(t, "cleanup_partial", status.GCState)
+
+	require.NoError(t, db.Model(&nextcloudGCJob{}).
+		Where("id=?", "tombstone-current-candidate").
+		Update("state", "collected").Error)
+	require.NoError(t, state.Capture(ctx, 7, "kb", "ds", "nextcloud:instance:77", true))
+	status = loadProcessingState(t, db)
+	require.Equal(t, "cleanup_verified", status.GCState)
+}
+
 func TestNextcloudClosedRecoveryControlsCannotReportPublishedOrDeliverOldReady(t *testing.T) {
 	state, db, ctx, k, chunk, inputs := processingStateFixture(t, true)
 	_, err := state.StartGraph(ctx, 7, k.ID, 1, chunk.ID)
