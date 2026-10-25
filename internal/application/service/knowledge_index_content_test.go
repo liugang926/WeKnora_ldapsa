@@ -173,6 +173,30 @@ func TestUpdateKnowledgeMetadataDoesNotLeaveTasklessPendingStatus(t *testing.T) 
 	require.Equal(t, types.SummaryStatusFailed, repo.summaryStatusUpdate)
 }
 
+func TestPostProcessEnqueueFailureMarksKnowledgeFailed(t *testing.T) {
+	t.Parallel()
+	repo := &metadataUpdateKnowledgeRepo{knowledge: &types.Knowledge{
+		ID:              "knowledge-1",
+		TenantID:        7,
+		KnowledgeBaseID: "kb-1",
+		ParseStatus:     types.ParseStatusProcessing,
+		EnableStatus:    "enabled",
+		SummaryStatus:   types.SummaryStatusPending,
+	}}
+	service := &knowledgeService{
+		repo: repo,
+		task: &metadataUpdateTaskEnqueuer{err: errors.New("queue unavailable")},
+	}
+	ctx := context.WithValue(context.Background(), types.TenantIDContextKey, uint64(7))
+
+	service.enqueueKnowledgePostProcessTask(ctx, repo.knowledge)
+
+	require.Equal(t, types.ParseStatusFailed, repo.knowledge.ParseStatus)
+	require.Equal(t, "disabled", repo.knowledge.EnableStatus)
+	require.Equal(t, types.SummaryStatusNone, repo.knowledge.SummaryStatus)
+	require.Equal(t, "post_process_enqueue_failed", repo.knowledge.ErrorMessage)
+}
+
 func TestUpdateKnowledgeUnchangedMetadataDoesNotRefreshSummary(t *testing.T) {
 	t.Parallel()
 	repo := &metadataUpdateKnowledgeRepo{knowledge: &types.Knowledge{
