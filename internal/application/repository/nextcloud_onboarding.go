@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/Tencent/WeKnora/internal/types"
+	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	"github.com/Tencent/WeKnora/internal/utils"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -36,11 +37,75 @@ var (
 )
 
 // NextcloudOnboardingStore represents nextcloud onboarding store repository data.
-type NextcloudOnboardingStore struct{ db *gorm.DB }
+type NextcloudOnboardingStore struct {
+	db     *gorm.DB
+	groups interfaces.GroupAccessService
+}
 
 // NewNextcloudOnboardingStore constructs nextcloud onboarding store.
 func NewNextcloudOnboardingStore(db *gorm.DB) *NextcloudOnboardingStore {
 	return &NextcloudOnboardingStore{db: db}
+}
+
+// ConfigureNextcloudOnboardingGroupAccess applies the same resource visibility
+// policy to onboarding candidates that the WeKnora knowledge-base list uses.
+func ConfigureNextcloudOnboardingGroupAccess(
+	store *NextcloudOnboardingStore,
+	groups interfaces.GroupAccessService,
+) {
+	store.groups = groups
+}
+
+func nextcloudCandidateContext(ctx context.Context, tenantID uint64, actor string) context.Context {
+	if actor == "" {
+		return ctx
+	}
+	ctx = types.WithPrincipal(ctx, types.Principal{Type: types.PrincipalWebUser, ID: actor})
+	return types.WithCaller(ctx, types.Caller{
+		TenantID: tenantID,
+		UserID:   actor,
+		Role:     types.TenantRoleViewer,
+	})
+}
+
+func (s *NextcloudOnboardingStore) candidateAccessible(
+	ctx context.Context,
+	tenantID uint64,
+	knowledgeBaseID string,
+) (bool, error) {
+	if s.groups == nil {
+		return true, nil
+	}
+	permission, err := s.groups.EffectivePermission(
+		ctx,
+		tenantID,
+		types.GroupResourceTypeKnowledgeBase,
+		knowledgeBaseID,
+		types.ResourceActionRead,
+		time.Now().UTC(),
+	)
+	if err != nil {
+		return false, err
+	}
+	return permission.Allowed, nil
+}
+
+func (s *NextcloudOnboardingStore) accessibleCandidateInventory(
+	ctx context.Context,
+	tenantID uint64,
+	inventory []types.KnowledgeBase,
+) ([]types.KnowledgeBase, error) {
+	visible := make([]types.KnowledgeBase, 0, len(inventory))
+	for _, kb := range inventory {
+		allowed, err := s.candidateAccessible(ctx, tenantID, kb.ID)
+		if err != nil {
+			return nil, err
+		}
+		if allowed {
+			visible = append(visible, kb)
+		}
+	}
+	return visible, nil
 }
 
 func onboardingDigest(v any) string {
@@ -234,9 +299,11 @@ func (s *NextcloudOnboardingStore) CandidatePage(
 	page.RequestID = requestID
 	page.TenantID = c.TenantID
 	page.ProcessingTemplateID = c.TemplateKBID
-	if _, err := s.Actor(ctx, c, dir, guid); err != nil {
+	actor, err := s.Actor(ctx, c, dir, guid)
+	if err != nil {
 		return page, err
 	}
+	ctx = nextcloudCandidateContext(ctx, c.TenantID, actor)
 	query = strings.TrimSpace(query)
 	if len(query) > 128 {
 		return page, ErrNextcloudOnboardingDenied
@@ -249,6 +316,10 @@ func (s *NextcloudOnboardingStore) CandidatePage(
 	}
 
 	inventory, err := s.candidateInventory(ctx, c, "")
+	if err != nil {
+		return page, err
+	}
+	inventory, err = s.accessibleCandidateInventory(ctx, c.TenantID, inventory)
 	if err != nil {
 		return page, err
 	}
