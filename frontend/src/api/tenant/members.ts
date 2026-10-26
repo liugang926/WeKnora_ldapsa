@@ -12,6 +12,7 @@ export interface TenantMember {
   user_id: string
   email: string
   username: string
+  display_name?: string
   avatar?: string
   role: TenantRole
   status: TenantMemberStatus

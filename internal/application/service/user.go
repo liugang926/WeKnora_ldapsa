@@ -118,6 +118,10 @@ type userService struct {
 	groupAccess      interfaces.GroupAccessService
 }
 
+type directoryIdentityBatchReader interface {
+	GetIdentitiesByUserIDs(ctx context.Context, userIDs []string) ([]*types.DirectoryIdentity, error)
+}
+
 // NewUserService creates a new user service instance
 func NewUserService(
 	configInfo *config.Config,
@@ -671,10 +675,37 @@ func (s *userService) GetUserByID(ctx context.Context, id string) (*types.User, 
 	return s.userRepo.GetUserByID(ctx, id)
 }
 
-// GetUsersByIDs proxies to the repository batch fetch. Returns an empty
-// map for an empty input; missing ids are absent from the result.
+// GetUsersByIDs batch-fetches local users and overlays the current directory
+// display name when available. The display name is derived rather than copied
+// onto users, so an AD rename is reflected after the next complete sync
+// without changing the stable login username.
 func (s *userService) GetUsersByIDs(ctx context.Context, ids []string) (map[string]*types.User, error) {
-	return s.userRepo.GetUsersByIDs(ctx, ids)
+	users, err := s.userRepo.GetUsersByIDs(ctx, ids)
+	if err != nil || len(users) == 0 || s.directoryRepo == nil {
+		return users, err
+	}
+	reader, ok := s.directoryRepo.(directoryIdentityBatchReader)
+	if !ok {
+		return users, nil
+	}
+	identities, err := reader.GetIdentitiesByUserIDs(ctx, ids)
+	if err != nil {
+		// Display names are presentation data. A transient directory read
+		// failure must not make workspace members disappear from the list.
+		logger.Warnf(ctx, "batch directory display-name lookup failed: %v", err)
+		return users, nil
+	}
+	for _, identity := range identities {
+		if identity == nil || identity.UserID == nil || identity.Status != types.DirectoryObjectActive {
+			continue
+		}
+		user := users[*identity.UserID]
+		if user == nil || strings.TrimSpace(user.DisplayName) != "" {
+			continue
+		}
+		user.DisplayName = strings.TrimSpace(identity.DisplayName)
+	}
+	return users, nil
 }
 
 // GetUserByEmail gets a user by email

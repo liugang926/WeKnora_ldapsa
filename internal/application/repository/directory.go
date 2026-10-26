@@ -402,6 +402,26 @@ func (r *directoryRepository) GetUserLoginSnapshot(
 	return nil, nil, fmt.Errorf("directory user login snapshot retries exhausted: %w", lastErr)
 }
 
+// GetIdentitiesByUserIDs is the batched equivalent used when rendering user
+// lists. Keeping the query in the repository avoids one directory lookup per
+// member and lets the user service overlay the latest AD display names.
+func (r *directoryRepository) GetIdentitiesByUserIDs(
+	ctx context.Context,
+	userIDs []string,
+) ([]*types.DirectoryIdentity, error) {
+	if len(userIDs) == 0 {
+		return []*types.DirectoryIdentity{}, nil
+	}
+	var identities []*types.DirectoryIdentity
+	if err := r.db.WithContext(ctx).
+		Where("user_id IN ?", userIDs).
+		Order("user_id ASC, directory_id ASC, id ASC").
+		Find(&identities).Error; err != nil {
+		return nil, err
+	}
+	return identities, nil
+}
+
 func (r *directoryRepository) LinkIdentity(ctx context.Context, identityID, userID string) error {
 	// Read immutable routing data before the write transaction. Keeping the
 	// transaction write-first avoids SQLite's deferred read-to-write upgrade
