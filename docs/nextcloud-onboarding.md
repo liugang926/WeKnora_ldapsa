@@ -73,6 +73,14 @@ The actor must be an active verified directory GUID with target Owner/Admin memb
 
 A fresh document KB created after this migration receives a database virgin-inventory witness. Historical KBs intentionally receive no witness; a zero document count cannot certify past vectors, tasks, leases or GC. There is no automatic takeover or timeout release for unknown history. Content/data-source/chunk/wiki/profile mutations permanently invalidate the witness. Reserved KBs reject concurrent ordinary content writes. Active sources retain the existing provenance/GC/recovery barriers.
 
+Knowledge-base initialization saves must retain configuration provenance. If an
+older initialization path advanced the current control revision without an
+origin row, onboarding repairs the current revision from the latest complete
+trusted origin during discovery. The current validated configuration and its
+original bodies are recorded transactionally, so adding or editing a KB in
+WeKnora does not require Rediscovering or re-saving the Nextcloud connection.
+A KB with no prior complete origin remains ineligible.
+
 ## HTTP contract
 
 Prefix: `/api/v1/integrations/nextcloud/onboarding`. Header: `Authorization: Bearer <server token>`. Responses use `Cache-Control: no-store`.

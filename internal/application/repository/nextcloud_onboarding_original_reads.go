@@ -114,7 +114,7 @@ func (s *NextcloudOnboardingStore) beginOnboardingTemplateRead(
 	c types.NextcloudOnboardingCredential,
 	req types.NextcloudOnboardingRequest,
 ) (*NextcloudOnboardingConfigurationRead, error) {
-	_, lineage, err := onboardingConfigurationMetadata(s.db.WithContext(ctx), c.TenantID, c.TemplateKBID)
+	_, lineage, err := ensureKnowledgeConfigurationMetadata(ctx, s.db, c.TenantID, c.TemplateKBID)
 	if err != nil {
 		return nil, err
 	}
@@ -153,7 +153,7 @@ func (s *NextcloudOnboardingStore) beginOnboardingExistingConfigurationRead(
 	if _, _, err := onboardingExistingTarget(s.db.WithContext(ctx), c.TenantID, req.KnowledgeBaseID); err != nil {
 		return nil, err
 	}
-	_, lineage, err := onboardingConfigurationMetadata(s.db.WithContext(ctx), c.TenantID, req.KnowledgeBaseID)
+	_, lineage, err := ensureKnowledgeConfigurationMetadata(ctx, s.db, c.TenantID, req.KnowledgeBaseID)
 	if err != nil {
 		return nil, err
 	}
