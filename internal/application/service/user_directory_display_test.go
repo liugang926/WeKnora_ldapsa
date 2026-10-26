@@ -21,8 +21,8 @@ func (r *displayNameUserRepo) GetUsersByIDs(
 	result := make(map[string]*types.User, len(ids))
 	for _, id := range ids {
 		if user := r.users[id]; user != nil {
-			copy := *user
-			result[id] = &copy
+			userCopy := *user
+			result[id] = &userCopy
 		}
 	}
 	return result, nil
