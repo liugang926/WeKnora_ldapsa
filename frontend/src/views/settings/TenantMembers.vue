@@ -309,7 +309,7 @@
               <template #actions="{ row }">
                 <t-popconfirm
                   v-if="canManage && row.user_id !== currentUserId"
-                  :content="$t('tenantMember.remove.confirmBody', { name: row.username || row.email })"
+                  :content="$t('tenantMember.remove.confirmBody', { name: memberPrimary(row) })"
                   :confirm-btn="{ content: $t('tenantMember.remove.confirm'), theme: 'danger' }"
                   :cancel-btn="{ content: $t('common.cancel') }"
                   placement="left"
@@ -586,7 +586,9 @@ const invitationsPage = ref(1)
 const invitationsPageSize = ref(20)
 
 /** 历次分页载荷里见过的成员展示字段，补齐审计表里不在当前页的 user id */
-const memberDisplayByUserId = reactive<Record<string, { username?: string; email?: string }>>({})
+const memberDisplayByUserId = reactive<
+  Record<string, { display_name?: string; username?: string; email?: string }>
+>({})
 
 // Pending invitations live alongside members but in a distinct section
 // at the top of the Members tab — they're "people we've asked to
@@ -737,13 +739,15 @@ const columns = computed(() => [
   { colKey: 'actions', title: t('tenantMember.columns.operations'), width: 88, align: 'left' },
 ])
 
-function memberPrimary(row: { username?: string; email?: string }) {
-  return row.username?.trim() || row.email?.trim() || '—'
+function memberPrimary(row: { display_name?: string; username?: string; email?: string }) {
+  return row.display_name?.trim() || row.username?.trim() || row.email?.trim() || '—'
 }
 
-function memberSecondary(row: { username?: string; email?: string }) {
+function memberSecondary(row: { display_name?: string; username?: string; email?: string }) {
+  const displayName = row.display_name?.trim()
   const name = row.username?.trim()
   const mail = row.email?.trim()
+  if (displayName && name) return mail ? `${name} · ${mail}` : name
   if (name && mail) return mail
   return ''
 }
@@ -797,7 +801,11 @@ function formatDate(s: string | undefined): string {
 
 function rememberMembersForAudit(rows: TenantMember[]) {
   for (const m of rows) {
-    memberDisplayByUserId[m.user_id] = { username: m.username, email: m.email }
+    memberDisplayByUserId[m.user_id] = {
+      display_name: m.display_name,
+      username: m.username,
+      email: m.email,
+    }
   }
 }
 
@@ -1064,9 +1072,11 @@ function formatAuditAction(action: AuditAction): string {
 // 再退到历次分页积累的 memberDisplayByUserId，最后是原始 id。
 function actorDisplayName(userId: string): string {
   const cur = members.value.find((x) => x.user_id === userId)
+  if (cur?.display_name?.trim()) return cur.display_name.trim()
   if (cur?.username?.trim()) return cur.username.trim()
   if (cur?.email?.trim()) return cur.email.trim()
   const memo = memberDisplayByUserId[userId]
+  if (memo?.display_name?.trim()) return memo.display_name!.trim()
   if (memo?.username?.trim()) return memo.username!.trim()
   if (memo?.email?.trim()) return memo.email!.trim()
   return userId

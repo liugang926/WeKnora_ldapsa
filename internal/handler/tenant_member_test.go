@@ -233,7 +233,11 @@ func TestTenantMember_ListMembers_HappyPath(t *testing.T) {
 	}
 	us := &stubMemberUserService{
 		getByID: func(_ context.Context, id string) (*types.User, error) {
-			return &types.User{ID: id, Username: id, Email: id + "@x.com"}, nil
+			displayName := ""
+			if id == "u-owner" {
+				displayName = "王小明"
+			}
+			return &types.User{ID: id, Username: id, DisplayName: displayName, Email: id + "@x.com"}, nil
 		},
 	}
 	h := newTestMemberHandler(ms, us)
@@ -258,6 +262,9 @@ func TestTenantMember_ListMembers_HappyPath(t *testing.T) {
 	// Hydration must have populated email so the UI can render avatars.
 	if resp.Data.Members[0].Email == "" {
 		t.Fatalf("expected hydrated email, got empty")
+	}
+	if resp.Data.Members[0].DisplayName != "王小明" {
+		t.Fatalf("expected hydrated AD display name, got %q", resp.Data.Members[0].DisplayName)
 	}
 }
 
