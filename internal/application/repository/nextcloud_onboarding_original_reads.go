@@ -141,6 +141,15 @@ func (s *NextcloudOnboardingStore) beginOnboardingExistingConfigurationRead(
 	if req.Mode != "existing" || req.KnowledgeBaseID == "" {
 		return nil, ErrNextcloudOnboardingDenied
 	}
+	actor, err := s.Actor(ctx, c, req.ActorDirectoryID, req.ActorObjectGUID)
+	if err != nil {
+		return nil, err
+	}
+	ctx = nextcloudCandidateContext(ctx, c.TenantID, actor)
+	allowed, err := s.candidateAccessible(ctx, c.TenantID, req.KnowledgeBaseID)
+	if err != nil || !allowed {
+		return nil, ErrNextcloudKBUnavailable
+	}
 	if _, _, err := onboardingExistingTarget(s.db.WithContext(ctx), c.TenantID, req.KnowledgeBaseID); err != nil {
 		return nil, err
 	}

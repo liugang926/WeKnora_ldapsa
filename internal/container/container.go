@@ -763,6 +763,7 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	must(container.Invoke(service.ConfigureGroupAccessUserEligibility))
 	must(container.Invoke(func(groups interfaces.GroupAccessService, scopes *repository.NextcloudOnboardingStore) {
 		service.ConfigureGroupAccessNextcloudScopes(groups, scopes)
+		repository.ConfigureNextcloudOnboardingGroupAccess(scopes, groups)
 	}))
 	logger.Debugf(ctx, "[Container] Directory feature switch registered for group access")
 	must(container.Provide(func(
