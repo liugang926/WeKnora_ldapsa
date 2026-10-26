@@ -54,7 +54,7 @@ func (h *KnowledgeBaseHandler) checkSourceKBMetadata(ctx context.Context, kb *ty
 			return true, err
 		}
 	}
-	if sourceCount > 1 || kb.EverHadNextcloudSource && sourceCount == 0 {
+	if kb.EverHadNextcloudSource && sourceCount == 0 {
 		return true, access.ErrNextcloudPublicationDenied
 	}
 	return sourceCount > 0, nil

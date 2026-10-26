@@ -398,7 +398,7 @@ func (s *NextcloudOnboardingStore) candidateInventory(
 	query string,
 ) ([]types.KnowledgeBase, error) {
 	tx := s.db.WithContext(ctx).
-		Where("tenant_id = ? AND id <> ? AND deleted_at IS NULL", c.TenantID, c.TemplateKBID)
+		Where("tenant_id = ? AND deleted_at IS NULL AND is_temporary = ?", c.TenantID, false)
 	if query != "" {
 		tx = tx.Where("LOWER(name) LIKE ?", "%"+strings.ToLower(query)+"%")
 	}
@@ -444,10 +444,6 @@ func (s *NextcloudOnboardingStore) analyzeCandidate(
 			c.TenantID, kb.ID, []string{"pending", "active"}).
 		Count(&candidate.NextcloudSourceCount).Error; err != nil {
 		return candidate, err
-	}
-	if candidate.NextcloudSourceCount > 0 || kb.EverHadNextcloudSource {
-		return reject("kb_already_bound", "该知识库已绑定 Nextcloud 来源，不能再次关联。",
-			"选择其他知识库，或先在 WeKnora 中创建新的知识库。")
 	}
 	var incompatibleSources int64
 	if err := s.db.WithContext(ctx).Unscoped().Model(&types.DataSource{}).
@@ -770,13 +766,23 @@ func (s *NextcloudOnboardingStore) Reserve(
 			return e
 		}
 		var n int64
-		if err := tx.Model(&types.NextcloudOnboardingOperation{}).
-			Where("credential_id = ?", c.ID).
-			Count(&n).
-			Error; err != nil {
+		if err := tx.Raw(
+			"SELECT COUNT(DISTINCT knowledge_base_id) FROM nextcloud_onboarding_operations WHERE credential_id = ?",
+			c.ID,
+		).Scan(&n).Error; err != nil {
 			return err
 		}
-		if c.MaxKnowledgeBases <= 0 || n >= int64(c.MaxKnowledgeBases) {
+		var existingKnowledgeBaseOperations int64
+		if req.Mode == "existing" {
+			if err := tx.Model(&types.NextcloudOnboardingOperation{}).
+				Where("credential_id = ? AND knowledge_base_id = ?", c.ID, req.KnowledgeBaseID).
+				Count(&existingKnowledgeBaseOperations).
+				Error; err != nil {
+				return err
+			}
+		}
+		if c.MaxKnowledgeBases <= 0 ||
+			(n >= int64(c.MaxKnowledgeBases) && existingKnowledgeBaseOperations == 0) {
 			return ErrNextcloudOnboardingConflict
 		}
 		if read == nil {
