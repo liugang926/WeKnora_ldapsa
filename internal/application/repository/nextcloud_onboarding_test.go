@@ -583,6 +583,39 @@ func TestNextcloudOnboardingBlankHistoryReservationAndRetry(t *testing.T) {
 	require.NotEqual(t, other.ID, op.KnowledgeBaseID)
 }
 
+func TestNextcloudOnboardingCandidatesExcludeAlreadyBoundKnowledgeBase(t *testing.T) {
+	db, store, c := onboardingDB(t)
+	kb := freshOnboardingKB("already-bound")
+	createOnboardingTemplate(t, db, &kb)
+	op, err := store.Reserve(
+		context.Background(),
+		c,
+		onboardingRequest(c, uuid.NewString(), kb.ID),
+	)
+	require.NoError(t, err)
+	activateOnboarding(t, db, store, op)
+
+	page, err := store.CandidatePage(
+		context.Background(),
+		c,
+		c.DirectoryID,
+		"guid-owner",
+		"",
+		"",
+		50,
+		"req_already_bound",
+	)
+	require.NoError(t, err)
+	for _, candidate := range page.Candidates {
+		require.NotEqual(t, kb.ID, candidate.ID)
+	}
+	for _, candidate := range page.Ineligible {
+		if candidate.ID == kb.ID {
+			require.Equal(t, "kb_already_bound", candidate.ReasonCode)
+		}
+	}
+}
+
 func TestNextcloudOnboardingCompetingRootsAndConcurrentContent(t *testing.T) {
 	db, store, c := onboardingDB(t)
 	applySQLiteMultisourceMigration(t, db)
