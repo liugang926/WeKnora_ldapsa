@@ -866,13 +866,8 @@ func TestNextcloudCandidatePageExplainsIneligibleTargetsAndRejectsStaleRevision(
 	require.Equal(t, "kb_wiki_not_supported", reasons[wiki.ID])
 	require.Equal(t, "kb_unpaired_sources", reasons[unpaired.ID])
 	require.Equal(t, "kb_mixed_sources", reasons[mixed.ID])
-	require.NotContains(t, reasons, bound.ID)
-	require.Contains(t, candidateIDs(page.Candidates), bound.ID)
-	for _, candidate := range page.Candidates {
-		if candidate.ID == bound.ID {
-			require.EqualValues(t, 1, candidate.NextcloudSourceCount)
-		}
-	}
+	require.Equal(t, "kb_already_bound", reasons[bound.ID])
+	require.NotContains(t, candidateIDs(page.Candidates), bound.ID)
 	for _, candidate := range page.Candidates {
 		require.True(t, candidate.Eligible)
 		require.True(t, candidate.CanTakeOver)
