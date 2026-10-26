@@ -194,7 +194,12 @@ func (s *KnowledgeInputProvenanceStore) UpdateKnowledgeBaseWithInput(
 		}
 		var lineage *types.SourceLineage
 		if oldControlDigest != requestedControlDigest {
-			previous, err := readKnowledgeConfigurationOrigin(tx, &old)
+			_, previous, err := ensureKnowledgeConfigurationMetadata(
+				ctx,
+				tx,
+				old.TenantID,
+				old.ID,
+			)
 			if err != nil {
 				return err
 			}

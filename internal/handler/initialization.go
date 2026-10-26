@@ -56,16 +56,17 @@ var (
 
 // InitializationHandler 初始化处理器
 type InitializationHandler struct {
-	config           *config.Config
-	tenantService    interfaces.TenantService
-	modelService     interfaces.ModelService
-	kbService        interfaces.KnowledgeBaseService
-	kbRepository     interfaces.KnowledgeBaseRepository
-	knowledgeService interfaces.KnowledgeService
-	ollamaService    *ollama.OllamaService
-	documentReader   interfaces.DocumentReader
-	pooler           embedding.EmbedderPooler
-	storageResolver  interfaces.StorageBackendResolver
+	config               *config.Config
+	tenantService        interfaces.TenantService
+	modelService         interfaces.ModelService
+	kbService            interfaces.KnowledgeBaseService
+	kbRepository         interfaces.KnowledgeBaseRepository
+	knowledgeService     interfaces.KnowledgeService
+	ollamaService        *ollama.OllamaService
+	documentReader       interfaces.DocumentReader
+	pooler               embedding.EmbedderPooler
+	storageResolver      interfaces.StorageBackendResolver
+	knowledgeInputWriter interfaces.KnowledgeBaseInputWriter
 }
 
 // NewInitializationHandler 创建初始化处理器
@@ -80,19 +81,34 @@ func NewInitializationHandler(
 	documentReader interfaces.DocumentReader,
 	pooler embedding.EmbedderPooler,
 	storageResolver interfaces.StorageBackendResolver,
+	knowledgeInputWriter interfaces.KnowledgeBaseInputWriter,
 ) *InitializationHandler {
 	return &InitializationHandler{
-		config:           config,
-		tenantService:    tenantService,
-		modelService:     modelService,
-		kbService:        kbService,
-		kbRepository:     kbRepository,
-		knowledgeService: knowledgeService,
-		ollamaService:    ollamaService,
-		documentReader:   documentReader,
-		pooler:           pooler,
-		storageResolver:  storageResolver,
+		config:               config,
+		tenantService:        tenantService,
+		modelService:         modelService,
+		kbService:            kbService,
+		kbRepository:         kbRepository,
+		knowledgeService:     knowledgeService,
+		ollamaService:        ollamaService,
+		documentReader:       documentReader,
+		pooler:               pooler,
+		storageResolver:      storageResolver,
+		knowledgeInputWriter: knowledgeInputWriter,
 	}
+}
+
+func (h *InitializationHandler) updateKnowledgeBase(
+	ctx context.Context,
+	kb *types.KnowledgeBase,
+) error {
+	if h.knowledgeInputWriter != nil {
+		return h.knowledgeInputWriter.UpdateKnowledgeBaseWithInput(
+			repository.WithIndependentKnowledgeInput(ctx),
+			kb,
+		)
+	}
+	return h.kbRepository.UpdateKnowledgeBase(ctx, kb)
 }
 
 // KBModelConfigRequest 知识库模型配置请求（简化版，只传模型ID）
@@ -443,7 +459,7 @@ func (h *InitializationHandler) UpdateKBConfig(c *gin.Context) {
 	}
 
 	// 保存更新后的知识库
-	if err := h.kbRepository.UpdateKnowledgeBase(ctx, kb); err != nil {
+	if err := h.updateKnowledgeBase(ctx, kb); err != nil {
 		logger.Error(ctx, "Failed to update knowledge base", err)
 		c.Error(errors.NewInternalServerError("更新知识库失败: " + err.Error()))
 		return
@@ -617,7 +633,7 @@ func (h *InitializationHandler) InitializeByKB(c *gin.Context) {
 
 	h.applyKnowledgeBaseInitialization(kb, req, processedModels)
 
-	if err := h.kbRepository.UpdateKnowledgeBase(ctx, kb); err != nil {
+	if err := h.updateKnowledgeBase(ctx, kb); err != nil {
 		logger.ErrorWithFields(ctx, err, map[string]interface{}{"kbId": utils.SanitizeForLog(kbIdStr)})
 		c.Error(errors.NewInternalServerError("更新知识库配置失败: " + err.Error()))
 		return

@@ -533,15 +533,15 @@ func (s *NextcloudOnboardingStore) analyzeCandidate(
 		return reject("kb_storage_unavailable", "知识库存储后端不可用。",
 			"由管理员修复存储后端。")
 	}
-	if _, _, err := onboardingConfigurationMetadata(
-		s.db.WithContext(ctx), c.TenantID, kb.ID,
-	); err != nil {
-		return reject("kb_configuration_unverified", "知识库处理配置来源未通过核验。",
-			"由管理员重新确认 WeKnora 知识库配置。")
-	}
 	if err := validateOnboardingTemplate(s.db.WithContext(ctx), &kb); err != nil {
 		return reject("kb_configuration_unverified", "知识库配置未通过接入检查。",
 			"由管理员检查模型、存储和索引配置。")
+	}
+	if _, _, err := ensureKnowledgeConfigurationMetadata(
+		ctx, s.db, c.TenantID, kb.ID,
+	); err != nil {
+		return reject("kb_configuration_unverified", "知识库处理配置来源未通过核验。",
+			"由管理员重新确认 WeKnora 知识库配置。")
 	}
 	if descriptor, err := s.TemplateDescriptor(ctx, c); err == nil {
 		candidate.ProcessingTemplateName = descriptor["name"]

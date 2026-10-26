@@ -621,6 +621,75 @@ func TestNextcloudOnboardingCandidatesIncludeSharedKnowledgeBase(t *testing.T) {
 	}
 }
 
+func TestNextcloudOnboardingRepairsCurrentConfigurationFromTrustedPriorRevision(t *testing.T) {
+	db, store, c := onboardingDB(t)
+	kb := freshOnboardingKB("legacy-current-config")
+	createOnboardingTemplate(t, db, &kb)
+
+	var actual types.KnowledgeBase
+	require.NoError(t, db.Where("id=?", kb.ID).Take(&actual).Error)
+	actual.ChunkingConfig.ChunkSize++
+	require.NoError(t, repo.NewKnowledgeBaseRepository(db).UpdateKnowledgeBase(
+		context.Background(),
+		&actual,
+	))
+
+	var revision uint64
+	require.NoError(t, db.Raw(
+		"SELECT revision FROM knowledge_configuration_control_versions WHERE knowledge_base_id=?",
+		kb.ID,
+	).Scan(&revision).Error)
+	var before int64
+	require.NoError(t, db.Table("knowledge_config_input_origins").
+		Where("knowledge_base_id=? AND config_revision=?", kb.ID, revision).
+		Count(&before).Error)
+	require.Zero(t, before, "the direct initialization-style update must reproduce the legacy gap")
+
+	page, err := store.CandidatePage(
+		context.Background(),
+		c,
+		c.DirectoryID,
+		"guid-owner",
+		"",
+		"",
+		50,
+		"req_repair_current_config",
+	)
+	require.NoError(t, err)
+	require.Contains(t, candidateIDs(page.Candidates), kb.ID)
+	var after int64
+	require.NoError(t, db.Table("knowledge_config_input_origins").
+		Where("knowledge_base_id=? AND config_revision=?", kb.ID, revision).
+		Count(&after).Error)
+	require.EqualValues(t, 1, after)
+}
+
+func TestNextcloudOnboardingDoesNotPromoteKnowledgeBaseWithoutTrustedHistory(t *testing.T) {
+	db, store, c := onboardingDB(t)
+	legacy := freshOnboardingKB("untraceable-legacy-config")
+	require.NoError(t, repo.NewKnowledgeBaseRepository(db).CreateKnowledgeBase(
+		context.Background(),
+		&legacy,
+	))
+
+	page, err := store.CandidatePage(
+		context.Background(),
+		c,
+		c.DirectoryID,
+		"guid-owner",
+		"",
+		"",
+		50,
+		"req_untrusted_legacy_config",
+	)
+	require.NoError(t, err)
+	reasons := map[string]string{}
+	for _, candidate := range page.Ineligible {
+		reasons[candidate.ID] = candidate.ReasonCode
+	}
+	require.Equal(t, "kb_configuration_unverified", reasons[legacy.ID])
+}
+
 func TestNextcloudOnboardingCompetingRootsAndConcurrentContent(t *testing.T) {
 	db, store, c := onboardingDB(t)
 	applySQLiteMultisourceMigration(t, db)
