@@ -445,6 +445,10 @@ func (s *NextcloudOnboardingStore) analyzeCandidate(
 		Count(&candidate.NextcloudSourceCount).Error; err != nil {
 		return candidate, err
 	}
+	if candidate.NextcloudSourceCount > 0 || kb.EverHadNextcloudSource {
+		return reject("kb_already_bound", "该知识库已绑定 Nextcloud 来源，不能再次关联。",
+			"选择其他知识库，或先在 WeKnora 中创建新的知识库。")
+	}
 	var incompatibleSources int64
 	if err := s.db.WithContext(ctx).Unscoped().Model(&types.DataSource{}).
 		Where("tenant_id=? AND knowledge_base_id=? AND type<>?",
