@@ -583,7 +583,7 @@ func TestNextcloudOnboardingBlankHistoryReservationAndRetry(t *testing.T) {
 	require.NotEqual(t, other.ID, op.KnowledgeBaseID)
 }
 
-func TestNextcloudOnboardingCandidatesExcludeAlreadyBoundKnowledgeBase(t *testing.T) {
+func TestNextcloudOnboardingCandidatesIncludeSharedKnowledgeBase(t *testing.T) {
 	db, store, c := onboardingDB(t)
 	kb := freshOnboardingKB("already-bound")
 	createOnboardingTemplate(t, db, &kb)
@@ -606,13 +606,18 @@ func TestNextcloudOnboardingCandidatesExcludeAlreadyBoundKnowledgeBase(t *testin
 		"req_already_bound",
 	)
 	require.NoError(t, err)
+	var found types.NextcloudKnowledgeBaseCandidate
+	var foundShared bool
 	for _, candidate := range page.Candidates {
-		require.NotEqual(t, kb.ID, candidate.ID)
-	}
-	for _, candidate := range page.Ineligible {
 		if candidate.ID == kb.ID {
-			require.Equal(t, "kb_already_bound", candidate.ReasonCode)
+			found = candidate
+			foundShared = true
 		}
+	}
+	require.True(t, foundShared)
+	require.EqualValues(t, 1, found.NextcloudSourceCount)
+	for _, candidate := range page.Ineligible {
+		require.NotEqual(t, kb.ID, candidate.ID)
 	}
 }
 
@@ -692,6 +697,10 @@ func TestNextcloudOnboardingReservesIndependentBindingsForSharedKnowledgeBase(t 
 	applySQLiteMultisourceMigration(t, db)
 	kb := freshOnboardingKB("shared-target")
 	createOnboardingTemplate(t, db, &kb)
+	credential.MaxKnowledgeBases = 1
+	require.NoError(t, db.Model(&types.NextcloudOnboardingCredential{}).
+		Where("id = ?", credential.ID).
+		Update("max_knowledge_bases", 1).Error)
 
 	first, err := store.Reserve(
 		context.Background(), credential,
@@ -707,6 +716,15 @@ func TestNextcloudOnboardingReservesIndependentBindingsForSharedKnowledgeBase(t 
 	require.Equal(t, kb.ID, second.KnowledgeBaseID)
 	require.NotEqual(t, first.BindingID, second.BindingID)
 	require.NotEqual(t, first.OperationID, second.OperationID)
+
+	other := freshOnboardingKB("quota-second-unique-target")
+	createOnboardingTemplate(t, db, &other)
+	_, err = store.Reserve(
+		context.Background(), credential,
+		onboardingRequest(credential, uuid.NewString(), other.ID),
+	)
+	require.ErrorIs(t, err, repo.ErrNextcloudOnboardingConflict,
+		"a second unique KB must still consume the configured quota")
 
 	pairings := repo.NewNextcloudSourcePairingRepository(db)
 	var sharedPairs []repo.NextcloudSourcePairing
@@ -732,6 +750,25 @@ func TestNextcloudOnboardingReservesIndependentBindingsForSharedKnowledgeBase(t 
 		Where("tenant_id=? AND knowledge_base_id=? AND state='active'", 7, kb.ID).
 		Count(&active).Error)
 	require.EqualValues(t, 2, active)
+	page, err := store.CandidatePage(
+		context.Background(),
+		credential,
+		credential.DirectoryID,
+		"guid-owner",
+		"",
+		"",
+		50,
+		"req_shared_target",
+	)
+	require.NoError(t, err)
+	var sharedCandidate *types.NextcloudKnowledgeBaseCandidate
+	for i := range page.Candidates {
+		if page.Candidates[i].ID == kb.ID {
+			sharedCandidate = &page.Candidates[i]
+		}
+	}
+	require.NotNil(t, sharedCandidate)
+	require.EqualValues(t, 2, sharedCandidate.NextcloudSourceCount)
 
 	if db.Name() == "sqlite" {
 		for _, pair := range sharedPairs {
@@ -859,6 +896,7 @@ func TestNextcloudCandidatePageExplainsIneligibleTargetsAndRejectsStaleRevision(
 	require.Equal(t, "req_test", page.RequestID)
 	require.True(t, strings.HasPrefix(page.CandidateRevision, "sha256:"))
 	require.Contains(t, candidateIDs(page.Candidates), valid.ID)
+	require.Contains(t, candidateIDs(page.Candidates), c.TemplateKBID)
 	reasons := map[string]string{}
 	for _, candidate := range page.Ineligible {
 		reasons[candidate.ID] = candidate.ReasonCode
@@ -866,8 +904,13 @@ func TestNextcloudCandidatePageExplainsIneligibleTargetsAndRejectsStaleRevision(
 	require.Equal(t, "kb_wiki_not_supported", reasons[wiki.ID])
 	require.Equal(t, "kb_unpaired_sources", reasons[unpaired.ID])
 	require.Equal(t, "kb_mixed_sources", reasons[mixed.ID])
-	require.Equal(t, "kb_already_bound", reasons[bound.ID])
-	require.NotContains(t, candidateIDs(page.Candidates), bound.ID)
+	require.NotContains(t, reasons, bound.ID)
+	require.Contains(t, candidateIDs(page.Candidates), bound.ID)
+	for _, candidate := range page.Candidates {
+		if candidate.ID == bound.ID {
+			require.EqualValues(t, 1, candidate.NextcloudSourceCount)
+		}
+	}
 	for _, candidate := range page.Candidates {
 		require.True(t, candidate.Eligible)
 		require.True(t, candidate.CanTakeOver)

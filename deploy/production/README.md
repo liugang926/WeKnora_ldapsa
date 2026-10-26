@@ -171,8 +171,10 @@ operations are retained during re-authorization.
 
 New targets copy the approved processing template. Existing document knowledge
 base targets are also supported when their processing configuration provenance
-is verified, they have never been attached to another Nextcloud source, and
-they are not temporary or already Nextcloud-managed. Existing content remains,
+is verified and they are not temporary, mixed-source, Wiki, or legacy unpaired
+knowledge bases. Several independently paired Nextcloud directory bindings may
+reuse the same eligible knowledge base; each binding keeps its own source,
+event connection, publication epoch, and sync state. Existing content remains,
 while subsequent non-Nextcloud content writes are rejected after binding. The
 sidebar lists the live content count and can select or create a target.
 Directory-scoped sharing does not grant workspace-wide membership.
