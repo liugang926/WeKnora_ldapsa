@@ -81,6 +81,7 @@ services:
     environment:
       AUTO_MIGRATE: 'false'
       AUTO_RECOVER_DIRTY: 'false'
+      WEKNORA_REQUIRE_ANYDOC_SELFTEST: '1'
       # The internal model gateway resolves to a private enterprise address.
       # Whitelist only this exact host; all other SSRF protections stay on.
       SSRF_WHITELIST_EXTRA: 'llmproxy.tianjizn.com,mozilla-yea-pays-attributes.trycloudflare.com,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16'
@@ -101,7 +102,7 @@ services:
       redis: {condition: service_healthy}
       docreader: {condition: service_healthy}
     healthcheck:
-      test: [CMD, curl, -fsS, http://localhost:8080/health]
+      test: [CMD, curl, -fsS, http://localhost:8080/health/readiness]
       interval: 10s
       timeout: 5s
       retries: 30

@@ -44,6 +44,31 @@ build toolchain, Docker Hub access, or a self-hosted Actions runner. The fork is
 public; release assets contain code/images only, never runtime secrets/data.
 Downloads use this public repository's GitHub API asset endpoints with `Accept: application/octet-stream`, without a token.
 
+## Mandatory readiness and Nextcloud metrics
+
+Production sets `WEKNORA_REQUIRE_ANYDOC_SELFTEST=1`. Before binding the HTTP
+port, the app parses an in-memory PDF and DOCX through the linked AnyDoc
+converter. A missing converter, failed conversion, or missing expected text
+terminates startup. The Compose healthcheck and activation gate therefore call
+`/health/readiness`, not the process-only `/health` endpoint. The readiness
+response reports the AnyDoc version and both probe results.
+
+`/metrics` exposes bounded-cardinality Prometheus text for the Nextcloud
+ingestion path. The frontend proxy permits this exact path only from loopback
+and the trusted internal gateway `10.106.1.119`; it is not part of the public
+SPA or general API proxy. Metrics never include filenames, source paths, tenant
+IDs, query strings, credentials or model/parser diagnostics. Monitor at least
+`candidate_staging_total`, `source_stuck_total`, `graph_manifest_unprepared_total`,
+`graph_queue_pending_age_seconds`, `candidate_failed_total`,
+`datasource_error_total`, and `binding_stopped_total`.
+
+The application also runs a source-specific watchdog every minute. A Nextcloud
+candidate left in `finalizing` for five minutes with no ASynq or durable Wiki
+work is marked failed without changing its data source. Existing candidate
+retry logic then re-reads authoritative source bytes and creates a fresh
+revision. The threshold can be tightened within 1–60 minutes with
+`WEKNORA_NEXTCLOUD_FINALIZING_STALL_THRESHOLD`.
+
 ## First installation
 
 As root, run `install.sh` from a reviewed copy of this directory. It refuses

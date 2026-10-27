@@ -79,7 +79,7 @@ if [[ "$protocol" == journal ]]; then
   python3 "$base/bin/retention.py" prepare "$release" --lock-fd 9
 fi
 compose "$release" up -d --pull never --wait --wait-timeout 420 app
-compose "$release" exec -T app curl -fsS http://localhost:8080/health >/dev/null
+compose "$release" exec -T app curl -fsS http://localhost:8080/health/readiness >/dev/null
 compose "$release" exec -T app curl -fsS http://localhost:8080/api/v1/auth/config >/dev/null
 bash "$base/bin/check-schema.sh" "$release"
 if [[ "$protocol" == journal ]]; then

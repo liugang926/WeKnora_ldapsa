@@ -13,6 +13,7 @@ import (
 	swaggerFiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
 	"go.uber.org/dig"
+	"gorm.io/gorm"
 
 	"github.com/Tencent/WeKnora/internal/application/access"
 	"github.com/Tencent/WeKnora/internal/application/repository"
@@ -22,6 +23,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/mcpserver"
 	"github.com/Tencent/WeKnora/internal/middleware"
+	"github.com/Tencent/WeKnora/internal/runtime"
 	"github.com/Tencent/WeKnora/internal/tracing/langfuse"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
@@ -34,6 +36,7 @@ type RouterParams struct {
 	dig.In
 
 	Config                             *config.Config
+	DB                                 *gorm.DB
 	FileService                        interfaces.FileService
 	UserService                        interfaces.UserService
 	KBService                          interfaces.KnowledgeBaseService
@@ -167,6 +170,19 @@ func NewRouter(params RouterParams) *gin.Engine {
 	r.GET("/health", func(c *gin.Context) {
 		c.JSON(200, gin.H{"status": "ok"})
 	})
+	r.GET("/health/readiness", func(c *gin.Context) {
+		readiness := runtime.GetDeploymentReadiness()
+		status := http.StatusOK
+		if !readiness.Ready {
+			status = http.StatusServiceUnavailable
+		}
+		state := "not_ready"
+		if readiness.Ready {
+			state = "ready"
+		}
+		c.JSON(status, gin.H{"status": state, "checks": readiness})
+	})
+	r.GET("/metrics", handler.ServeNextcloudMetrics(params.DB))
 
 	// Swagger API 文档（仅在非生产环境下启用）
 	// 通过 GIN_MODE 环境变量判断：release 模式下禁用 Swagger

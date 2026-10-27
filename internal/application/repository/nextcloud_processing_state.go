@@ -52,6 +52,7 @@ type NextcloudFileStateV2 struct {
 	TenantID                 string                         `json:"tenant_id"`
 	KnowledgeBaseID          string                         `json:"knowledge_base_id"`
 	DataSourceID             string                         `json:"data_source_id"`
+	ExternalID               string                         `json:"external_id"`
 	FileID                   string                         `json:"file_id"`
 	SourceContentRevision    string                         `json:"source_content_revision"`
 	SourceETag               string                         `json:"source_etag"`
@@ -59,6 +60,8 @@ type NextcloudFileStateV2 struct {
 	HeadRevision             string                         `json:"head_revision"`
 	StatusRevision           string                         `json:"status_revision"`
 	KnowledgeID              *string                        `json:"knowledge_id"`
+	CandidateKnowledgeID     *string                        `json:"candidate_knowledge_id"`
+	EffectiveConfigDigest    string                         `json:"effective_config_digest,omitempty"`
 	BuildAttempt             string                         `json:"build_attempt"`
 	ProcessingConfigRevision string                         `json:"processing_config_revision"`
 	SyncState                string                         `json:"sync_state"`
@@ -252,6 +255,7 @@ func captureNextcloudStateInTx(
 		TenantID:                 strconv.FormatUint(tenant, 10),
 		KnowledgeBaseID:          kb,
 		DataSourceID:             ds,
+		ExternalID:               external,
 		FileID:                   file,
 		SourceETag:               v.DesiredETag,
 		SourceContentRevision:    revision,
@@ -335,6 +339,7 @@ func captureNextcloudStateInTx(
 			}
 		}
 		out.KnowledgeID = &v.CandidateKnowledgeID
+		out.CandidateKnowledgeID = &v.CandidateKnowledgeID
 		out.SyncState = "ingested"
 		var base types.KnowledgeBase
 		if err := tx.Where("id=? AND tenant_id=?", kb, tenant).Take(&base).Error; err != nil {
@@ -344,6 +349,7 @@ func captureNextcloudStateInTx(
 		if err != nil {
 			return err
 		}
+		out.EffectiveConfigDigest = configDigest
 		if tx.Migrator().HasTable("knowledge_processing_spans") {
 			if err := tx.Model(&types.KnowledgeProcessingSpan{}).
 				Where("knowledge_id=?", k.ID).
