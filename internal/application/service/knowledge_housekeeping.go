@@ -292,7 +292,8 @@ func (h *HousekeepingService) recoverStalledNextcloudFinalizing(ctx context.Cont
 	var candidates []types.Knowledge
 	err := h.db.WithContext(ctx).
 		Table("knowledges AS k").
-		Select("DISTINCT k.*").
+		Select("k.id").
+		Group("k.id").
 		Joins(`JOIN nextcloud_source_versions AS v
 			ON v.tenant_id = k.tenant_id
 			AND v.knowledge_base_id = k.knowledge_base_id
