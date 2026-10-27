@@ -62,8 +62,8 @@ parser_config=json.loads(body)
 assert status == 200 and parser_config.get('connected') is True, 'DocReader gRPC is not connected'
 assert parser_config.get('docreader_addr') == 'docreader:50051', 'DocReader address mismatch'
 assert parser_config.get('docreader_transport') == 'grpc', 'DocReader transport mismatch'
-anydoc_engine=next((item for item in parser_config.get('data', []) if item.get('name')=='anydoc'), None)
-assert anydoc_engine and anydoc_engine.get('available') is True, 'anydoc engine is not available'
+anydoc_engine=next((item for item in parser_config.get('data', []) if item.get('Name')=='anydoc'), None)
+assert anydoc_engine and anydoc_engine.get('Available') is True, 'anydoc engine is not available'
 status, _ = api('/api/v1/auth/register', credentials)
 assert status == 403, 'Public registration accepted'
 nextcloud_routes='NOT_DECLARED'
