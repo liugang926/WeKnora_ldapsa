@@ -342,7 +342,8 @@ func (r *NextcloudEventInboxRepository) ClaimDispatch(
 			}
 		}
 		if dispatch.State == "retry" && now.Before(dispatch.NextAttemptAt) {
-			if dispatch.LastErrorCode != "publication_unproven" {
+			allowNewer := dispatch.LastErrorCode == "deletion_or_cursor_pending"
+			if dispatch.LastErrorCode != "publication_unproven" && !allowNewer {
 				return nil
 			}
 			var latest nextcloudEventCheckpoint
@@ -353,6 +354,7 @@ func (r *NextcloudEventInboxRepository) ClaimDispatch(
 			if latest.ReceivedID <= dispatch.TargetEventID {
 				return nil
 			}
+			if !allowNewer {
 			status, startedAt, finishedAt, err := nextcloudDispatchSyncStatus(tx, dispatch.LastSyncLogID)
 			if err != nil {
 				return err
@@ -374,6 +376,7 @@ func (r *NextcloudEventInboxRepository) ClaimDispatch(
 				return err
 			}
 			dispatch.AttemptCount = 0
+			}
 		}
 		if dispatch.State == "leased" && dispatch.LeaseUntil != nil && !now.Before(*dispatch.LeaseUntil) {
 			// The log ID is persisted before the log and queue task are created.
@@ -429,12 +432,16 @@ func (r *NextcloudEventInboxRepository) ClaimDispatch(
 		if count == 0 {
 			return setNextcloudDispatchState(tx, connectionID, "blocked", "inbox_missing", now, dispatch.AttemptCount)
 		}
+		attempts := dispatch.AttemptCount
+		if checkpoint.ReceivedID > dispatch.DispatchedID {
+			attempts = 0
+		}
 		token := uuid.NewString()
 		leaseUntil := now.Add(3 * time.Minute)
 		if err := tx.Table("nextcloud_event_dispatch").Where("connection_id = ?", connectionID).
 			Updates(map[string]any{
 				"state": "leased", "lease_token": token, "lease_until": leaseUntil,
-				"target_event_id": checkpoint.ReceivedID, "attempt_count": dispatch.AttemptCount,
+				"target_event_id": checkpoint.ReceivedID, "attempt_count": attempts,
 				"last_sync_log_id": nil, "next_attempt_at": leaseUntil, "updated_at": now,
 			}).Error; err != nil {
 			return err
