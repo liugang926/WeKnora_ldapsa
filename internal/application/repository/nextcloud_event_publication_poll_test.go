@@ -379,6 +379,30 @@ func TestNextcloudPublicationUnprovenCoalescesRenameThenDeleteForSameFile(t *tes
 	require.Zero(t, row.AppliedID, "coalescing is not publication proof")
 }
 
+func TestNextcloudDeletionPendingWakesForNewerReceipt(t *testing.T) {
+  ctx := context.Background()
+  db, inbox, now, _ := newNextcloudQueuedPublicationTest(t)
+  require.NoError(t, db.Exec(`UPDATE nextcloud_event_dispatch
+    SET state = 'retry', dispatched_id = 1, target_event_id = 1,
+    attempt_count = 8, last_error_code = 'deletion_or_cursor_pending',
+    next_attempt_at = ?
+    WHERE connection_id = 'event-connection'`, now.Add(2*time.Hour)).Error)
+  require.NoError(t, db.Exec(`INSERT INTO nextcloud_event_inbox
+    (connection_id, event_id, payload_sha256, event_type, file_id, etag, path, relative_path, state)
+    VALUES ('event-connection', 2, ?, 'upsert', 78, 'etag-78', '/Published/new.md', 'new.md', 'pending')`,
+    strings.Repeat("2", 64)).Error)
+  require.NoError(t, db.Exec(`UPDATE nextcloud_event_checkpoint SET received_id = 2
+    WHERE connection_id = 'event-connection'`).Error)
+  claim, err := inbox.ClaimDispatch(ctx, "event-connection", now.Add(time.Second))
+  require.NoError(t, err)
+  require.NotNil(t, claim)
+  require.Equal(t, int64(2), claim.TargetEventID)
+  row := publicationDispatchRow(t, db)
+  require.Equal(t, "leased", row.State)
+  require.Zero(t, row.AttemptCount, "a newer range starts with a fresh retry budget")
+}
+
+
 func TestNextcloudUnprovenDoesNotCoalesceUnsupportedOrUnsignedHint(t *testing.T) {
 	for _, newer := range []struct {
 		name, etag, path string
