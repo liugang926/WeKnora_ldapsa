@@ -44,7 +44,6 @@ type nextcloudApplyKnowledge struct {
 	ParseStatus  string     `gorm:"column:parse_status"`
 	EnableStatus string     `gorm:"column:enable_status"`
 	FileName     string     `gorm:"column:file_name"`
-	ErrorMessage string     `gorm:"column:error_message"`
 	Metadata     types.JSON `gorm:"column:metadata"`
 	DeletedAt    *time.Time `gorm:"column:deleted_at"`
 }
@@ -167,7 +166,7 @@ func nextcloudDispatchPublicationProof(
 	}
 	var knowledgeRows []nextcloudApplyKnowledge
 	if err := tx.Table("knowledges").
-		Select("id", "parse_status", "enable_status", "file_name", "error_message", "metadata", "deleted_at").
+		Select("id", "parse_status", "enable_status", "file_name", "metadata", "deleted_at").
 		Where("tenant_id = ? AND knowledge_base_id = ? AND channel = ?",
 			connection.TenantID, connection.KnowledgeBaseID, types.ConnectorTypeNextcloud).
 		Find(&knowledgeRows).Error; err != nil {
@@ -207,8 +206,7 @@ func nextcloudDispatchPublicationProof(
 			return nextcloudApplyWaiting, nil
 		}
 		terminalFailure := version.State == "staging" && candidate.DeletedAt == nil &&
-			candidate.ParseStatus == types.ParseStatusFailed &&
-			strings.TrimSpace(candidate.ErrorMessage) != ""
+			candidate.ParseStatus == types.ParseStatusFailed
 		var metadata map[string]json.RawMessage
 		if json.Unmarshal(candidate.Metadata, &metadata) != nil ||
 			(!terminalFailure && version.State != "published") || candidate.DeletedAt != nil ||
