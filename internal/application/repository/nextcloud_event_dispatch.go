@@ -355,27 +355,27 @@ func (r *NextcloudEventInboxRepository) ClaimDispatch(
 				return nil
 			}
 			if !allowNewer {
-			status, startedAt, finishedAt, err := nextcloudDispatchSyncStatus(tx, dispatch.LastSyncLogID)
-			if err != nil {
-				return err
-			}
-			matching, err := nextcloudDispatchMatchingSync(tx, connection, dispatch.LastSyncLogID)
-			if err != nil {
-				return err
-			}
-			if status != "success" || finishedAt == nil || !matching {
-				return nil
-			}
-			complete, err := nextcloudDispatchCursorComplete(tx, connection, startedAt)
-			if err != nil || !complete {
-				return err
-			}
-			coalescible, err := nextcloudCanCoalesceUnproven(tx, connection,
-				dispatch.TargetEventID, latest.ReceivedID)
-			if err != nil || !coalescible {
-				return err
-			}
-			dispatch.AttemptCount = 0
+				status, startedAt, finishedAt, err := nextcloudDispatchSyncStatus(tx, dispatch.LastSyncLogID)
+				if err != nil {
+					return err
+				}
+				matching, err := nextcloudDispatchMatchingSync(tx, connection, dispatch.LastSyncLogID)
+				if err != nil {
+					return err
+				}
+				if status != "success" || finishedAt == nil || !matching {
+					return nil
+				}
+				complete, err := nextcloudDispatchCursorComplete(tx, connection, startedAt)
+				if err != nil || !complete {
+					return err
+				}
+				coalescible, err := nextcloudCanCoalesceUnproven(tx, connection,
+					dispatch.TargetEventID, latest.ReceivedID)
+				if err != nil || !coalescible {
+					return err
+				}
+				dispatch.AttemptCount = 0
 			}
 		}
 		if dispatch.State == "leased" && dispatch.LeaseUntil != nil && !now.Before(*dispatch.LeaseUntil) {
