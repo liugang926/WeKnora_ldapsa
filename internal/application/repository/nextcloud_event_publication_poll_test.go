@@ -229,6 +229,7 @@ func TestNextcloudQueuedPublicationSupersededByNewReceipt(t *testing.T) {
 	row := publicationDispatchRow(t, db)
 	require.Equal(t, "leased", row.State)
 	require.Equal(t, int64(1), row.DispatchedID)
+	require.Zero(t, row.AttemptCount, "a newly claimed range starts with a fresh retry budget")
 	require.Zero(t, row.AppliedID, "superseded content must not be acknowledged")
 	require.NoError(t, inbox.PrepareDispatch(ctx, *claim, "new-event-log", now.Add(time.Second)))
 	require.NoError(t, inbox.FinishDispatch(ctx, *claim, "new-event-log", now.Add(time.Second)))
@@ -351,6 +352,8 @@ func TestNextcloudPublicationUnprovenCoalescesRenameThenDeleteForSameFile(t *tes
 	row := publicationDispatchRow(t, db)
 	require.Equal(t, "retry", row.State)
 	require.Equal(t, "publication_unproven", row.LastErrorCode)
+	require.NoError(t, db.Exec(`UPDATE nextcloud_event_dispatch SET attempt_count = 12
+		WHERE connection_id = 'event-connection'`).Error)
 
 	require.NoError(t, db.Exec(`INSERT INTO nextcloud_event_inbox
 		(connection_id, event_id, payload_sha256, event_type, file_id, etag, path, relative_path, state)

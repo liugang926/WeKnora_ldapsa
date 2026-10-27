@@ -247,6 +247,7 @@ func (r *NextcloudEventInboxRepository) ClaimDispatch(
 						return err
 					}
 					if coalescing {
+						dispatch.AttemptCount = 0
 						break
 					}
 				}
@@ -274,6 +275,7 @@ func (r *NextcloudEventInboxRepository) ClaimDispatch(
 						return err
 					}
 					if coalescing {
+						dispatch.AttemptCount = 0
 						break
 					}
 				}
@@ -371,6 +373,7 @@ func (r *NextcloudEventInboxRepository) ClaimDispatch(
 			if err != nil || !coalescible {
 				return err
 			}
+			dispatch.AttemptCount = 0
 		}
 		if dispatch.State == "leased" && dispatch.LeaseUntil != nil && !now.Before(*dispatch.LeaseUntil) {
 			// The log ID is persisted before the log and queue task are created.
