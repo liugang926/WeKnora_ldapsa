@@ -165,13 +165,19 @@ func (r *NextcloudEventInboxRepository) ClaimDispatch(
 			dispatch.DispatchedID = dispatch.AppliedID
 			dispatch.TargetEventID = dispatch.AppliedID
 		}
-		baselineOK, err := nextcloudDispatchBaselineValid(tx, connection)
-		if err != nil {
-			return err
-		}
-		if !baselineOK {
-			return setNextcloudDispatchState(tx, connectionID, "blocked",
-				"cursor_missing_manual_review", now, dispatch.AttemptCount)
+		// An already queued full sync may create source-version rows before it
+		// commits the new cursor. Rechecking the pre-sync baseline on every
+		// dispatcher tick would therefore block and cancel its own in-flight
+		// work. Baseline validation is only needed before starting new work.
+		if dispatch.State != "queued" {
+			baselineOK, err := nextcloudDispatchBaselineValid(tx, connection)
+			if err != nil {
+				return err
+			}
+			if !baselineOK {
+				return setNextcloudDispatchState(tx, connectionID, "blocked",
+					"cursor_missing_manual_review", now, dispatch.AttemptCount)
+			}
 		}
 		if dispatch.State == "leased" && ((dispatch.LeaseUntil != nil && now.Before(*dispatch.LeaseUntil)) ||
 			now.Before(dispatch.NextAttemptAt)) {

@@ -1025,6 +1025,29 @@ func candidateIDs(candidates []types.NextcloudKnowledgeBaseCandidate) []string {
 	return ids
 }
 
+func TestNextcloudOnboardingDeletedTemplateDoesNotHideExistingTargets(t *testing.T) {
+	db, store, c := onboardingDB(t)
+	existing := freshOnboardingKB("still-available")
+	createOnboardingTemplate(t, db, &existing)
+	require.NoError(t, db.Where("id=?", c.TemplateKBID).Delete(&types.KnowledgeBase{}).Error)
+
+	descriptor, err := store.TemplateDescriptor(context.Background(), c)
+	require.NoError(t, err)
+	require.Equal(t, "false", descriptor["available"])
+	require.Equal(t, "template_unavailable", descriptor["reason_code"])
+
+	candidates, err := store.Candidates(context.Background(), c, "directory", "guid-owner")
+	require.NoError(t, err)
+	found := false
+	for _, candidate := range candidates {
+		if candidate["id"] == existing.ID {
+			found = true
+			break
+		}
+	}
+	require.True(t, found)
+}
+
 func TestNextcloudConnectionAuthorizesAndRevokesWorkspaceCredential(t *testing.T) {
 	db, store, _ := onboardingDB(t)
 	ctx := context.Background()

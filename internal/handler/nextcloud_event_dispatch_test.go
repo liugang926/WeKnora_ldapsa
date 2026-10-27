@@ -447,6 +447,38 @@ func TestNextcloudEventDispatchRejectsLiveInstanceChange(t *testing.T) {
 		repository.ErrNextcloudEventScope)
 }
 
+func TestNextcloudEventDispatchQueuedSyncCanCreateFirstCursor(t *testing.T) {
+	db, router, secret := setupNextcloudDispatchTest(t, false)
+	receiveDispatchHint(t, router, secret, "0", "41", "a")
+	repo := repository.NewNextcloudEventInboxRepository(db)
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	claim, err := repo.ClaimDispatch(ctx, testEventConnection, now)
+	require.NoError(t, err)
+	require.NotNil(t, claim)
+	require.NoError(t, repo.PrepareDispatch(ctx, *claim, "first-import-log", now))
+	require.NoError(t, db.Exec(`INSERT INTO sync_logs (id, data_source_id, status, started_at)
+		VALUES ('first-import-log', 'ds-synthetic', 'running', ?)`, now).Error)
+	require.NoError(t, repo.FinishDispatch(ctx, *claim, "first-import-log", now))
+
+	// The queued sync stages a source row before it can commit its initial
+	// cursor. A dispatcher tick must continue observing that sync instead of
+	// treating the staged row as evidence of a lost cursor.
+	require.NoError(t, db.Exec(`INSERT INTO nextcloud_source_versions
+		(tenant_id, knowledge_base_id, datasource_id, external_id, state)
+		VALUES (7, 'kb-synthetic', 'ds-synthetic', 'nextcloud:instance_synthetic:41', 'staging')`).Error)
+
+	next, err := repo.ClaimDispatch(ctx, testEventConnection, now.Add(5*time.Second))
+	require.NoError(t, err)
+	require.Nil(t, next)
+
+	status, err := repo.ConnectionStatus(ctx, 7, "ds-synthetic")
+	require.NoError(t, err)
+	require.Empty(t, status.LastErrorCode)
+	require.Equal(t, "queued", status.DispatchState)
+}
+
 func testNextcloudEventSyncAdmission(t *testing.T, usePostgres bool) {
 	t.Helper()
 	db, _, _ := setupNextcloudDispatchTest(t, usePostgres)

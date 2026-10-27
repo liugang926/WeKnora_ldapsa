@@ -1281,10 +1281,22 @@ func (s *NextcloudOnboardingStore) TemplateDescriptor(
 		Where("tenant_id=? AND id=? AND deleted_at IS NULL", c.TenantID, c.TemplateKBID).
 		Take(&kb).
 		Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			// A template is needed only when creating a new KB. Existing KBs
+			// remain discoverable so one deleted template cannot black out the
+			// whole workspace and its valid destination sources.
+			return map[string]string{
+				"id": c.TemplateKBID, "name": "", "graph_mode": "off",
+				"available": "false", "reason_code": "template_unavailable",
+			}, nil
+		}
 		return nil, err
 	}
 	if err := validateOnboardingTemplate(s.db.WithContext(ctx), &kb); err != nil {
-		return nil, err
+		return map[string]string{
+			"id": c.TemplateKBID, "name": kb.Name, "graph_mode": "off",
+			"available": "false", "reason_code": "template_invalid",
+		}, nil
 	}
 	mode := "off"
 	if kb.IndexingStrategy.GraphEnabled {
@@ -1293,5 +1305,8 @@ func (s *NextcloudOnboardingStore) TemplateDescriptor(
 			mode = "required"
 		}
 	}
-	return map[string]string{"id": kb.ID, "name": kb.Name, "graph_mode": mode}, nil
+	return map[string]string{
+		"id": kb.ID, "name": kb.Name, "graph_mode": mode,
+		"available": "true",
+	}, nil
 }
