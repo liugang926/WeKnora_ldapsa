@@ -305,6 +305,43 @@ func TestNextcloudPublicationUnprovenRetryWakesOnlyForSignedImportableHint(t *te
 	require.Zero(t, row.AppliedID)
 }
 
+func TestNextcloudPublicationUnprovenCoalescesRenameThenDeleteForSameFile(t *testing.T) {
+	ctx := context.Background()
+	db, inbox, now, _ := newNextcloudQueuedPublicationTest(t)
+	require.NoError(t, db.Exec(`UPDATE sync_logs SET status = 'success', finished_at = ?
+		WHERE id = 'event-log'`, now).Error)
+	unprovenAt := now.Add(nextcloudPublicationRetryGrace + time.Second)
+	claim, err := inbox.ClaimDispatch(ctx, "event-connection", unprovenAt)
+	require.NoError(t, err)
+	require.Nil(t, claim)
+	row := publicationDispatchRow(t, db)
+	require.Equal(t, "retry", row.State)
+	require.Equal(t, "publication_unproven", row.LastErrorCode)
+
+	require.NoError(t, db.Exec(`INSERT INTO nextcloud_event_inbox
+		(connection_id, event_id, payload_sha256, event_type, file_id, etag, path, relative_path, state)
+		VALUES
+		('event-connection', 2, ?, 'metadata', 77, 'etag-v1',
+			'/Published/renamed.md', 'renamed.md', 'pending'),
+		('event-connection', 3, ?, 'delete', 77, NULL, NULL, NULL, 'pending')`,
+		strings.Repeat("2", 64), strings.Repeat("3", 64)).Error)
+	require.NoError(t, db.Exec(`UPDATE nextcloud_event_checkpoint SET received_id = 3
+		WHERE connection_id = 'event-connection'`).Error)
+
+	candidates, err := inbox.DispatchCandidates(ctx, unprovenAt.Add(time.Second))
+	require.NoError(t, err)
+	require.Equal(t, []string{"event-connection"}, candidates)
+	claim, err = inbox.ClaimDispatch(ctx, "event-connection", unprovenAt.Add(time.Second))
+	require.NoError(t, err)
+	require.NotNil(t, claim)
+	require.Equal(t, int64(3), claim.TargetEventID,
+		"a later signed delete must supersede the failed upsert of the same file")
+	row = publicationDispatchRow(t, db)
+	require.Equal(t, "leased", row.State)
+	require.Equal(t, int64(1), row.DispatchedID)
+	require.Zero(t, row.AppliedID, "coalescing is not publication proof")
+}
+
 func TestNextcloudUnprovenDoesNotCoalesceUnsupportedOrUnsignedHint(t *testing.T) {
 	for _, newer := range []struct {
 		name, etag, path string
