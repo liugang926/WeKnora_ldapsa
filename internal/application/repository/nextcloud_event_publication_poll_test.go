@@ -136,6 +136,40 @@ func TestNextcloudQueuedPublicationUnprovenAfterGraceRetriesWithoutAck(t *testin
 	require.Zero(t, row.AppliedID)
 }
 
+func TestNextcloudQueuedPublicationTerminalFileFailureDoesNotBlockApply(t *testing.T) {
+	ctx := context.Background()
+	db, inbox, now, _ := newNextcloudQueuedPublicationTest(t)
+	failed := insertNextcloudVersionTestKnowledge(t, db, "failed-after-sync", "etag-v1",
+		types.ParseStatusFailed, "disabled")
+	require.NoError(t, db.Model(&types.Knowledge{}).Where("id = ?", failed.ID).
+		Updates(map[string]any{"file_name": "file.md", "error_message": "document_processing_failed"}).Error)
+	require.NoError(t, db.Create(&nextcloudSourceVersion{
+		TenantID: 7, KnowledgeBaseID: "kb",
+		DataSourceID: "ds", ExternalID: "nextcloud:instance:77", DesiredETag: "etag-v1",
+		CandidateKnowledgeID: failed.ID, State: "staging", UpdatedAt: now,
+	}).Error)
+	require.NoError(t, db.Exec(`UPDATE sync_logs SET status = 'success', finished_at = ?
+		WHERE id = 'event-log'`, now).Error)
+
+	claim, err := inbox.ClaimDispatch(ctx, "event-connection",
+		now.Add(nextcloudPublicationRetryGrace+time.Second))
+	require.NoError(t, err)
+	require.Nil(t, claim)
+	row := publicationDispatchRow(t, db)
+	require.Equal(t, "idle", row.State)
+	require.Equal(t, int64(1), row.AppliedID,
+		"a durable terminal file failure must not block later file receipts")
+	var status types.Knowledge
+	require.NoError(t, db.Where("id = ?", failed.ID).Take(&status).Error)
+	require.Equal(t, types.ParseStatusFailed, status.ParseStatus)
+	var version nextcloudSourceVersion
+	require.NoError(t, db.Where(
+		"tenant_id = ? AND knowledge_base_id = ? AND datasource_id = ? AND external_id = ?",
+		7, "kb", "ds", "nextcloud:instance:77",
+	).Take(&version).Error)
+	require.Equal(t, "staging", version.State)
+}
+
 func TestNextcloudQueuedPublicationWaitsForParserWithoutAck(t *testing.T) {
 	ctx := context.Background()
 	db, inbox, now, _ := newNextcloudQueuedPublicationTest(t)
@@ -303,6 +337,43 @@ func TestNextcloudPublicationUnprovenRetryWakesOnlyForSignedImportableHint(t *te
 	require.Equal(t, int64(2), claim.TargetEventID)
 	row = publicationDispatchRow(t, db)
 	require.Zero(t, row.AppliedID)
+}
+
+func TestNextcloudPublicationUnprovenCoalescesRenameThenDeleteForSameFile(t *testing.T) {
+	ctx := context.Background()
+	db, inbox, now, _ := newNextcloudQueuedPublicationTest(t)
+	require.NoError(t, db.Exec(`UPDATE sync_logs SET status = 'success', finished_at = ?
+		WHERE id = 'event-log'`, now).Error)
+	unprovenAt := now.Add(nextcloudPublicationRetryGrace + time.Second)
+	claim, err := inbox.ClaimDispatch(ctx, "event-connection", unprovenAt)
+	require.NoError(t, err)
+	require.Nil(t, claim)
+	row := publicationDispatchRow(t, db)
+	require.Equal(t, "retry", row.State)
+	require.Equal(t, "publication_unproven", row.LastErrorCode)
+
+	require.NoError(t, db.Exec(`INSERT INTO nextcloud_event_inbox
+		(connection_id, event_id, payload_sha256, event_type, file_id, etag, path, relative_path, state)
+		VALUES
+		('event-connection', 2, ?, 'metadata', 77, 'etag-v1',
+			'/Published/renamed.md', 'renamed.md', 'pending'),
+		('event-connection', 3, ?, 'delete', 77, NULL, NULL, NULL, 'pending')`,
+		strings.Repeat("2", 64), strings.Repeat("3", 64)).Error)
+	require.NoError(t, db.Exec(`UPDATE nextcloud_event_checkpoint SET received_id = 3
+		WHERE connection_id = 'event-connection'`).Error)
+
+	candidates, err := inbox.DispatchCandidates(ctx, unprovenAt.Add(time.Second))
+	require.NoError(t, err)
+	require.Equal(t, []string{"event-connection"}, candidates)
+	claim, err = inbox.ClaimDispatch(ctx, "event-connection", unprovenAt.Add(time.Second))
+	require.NoError(t, err)
+	require.NotNil(t, claim)
+	require.Equal(t, int64(3), claim.TargetEventID,
+		"a later signed delete must supersede the failed upsert of the same file")
+	row = publicationDispatchRow(t, db)
+	require.Equal(t, "leased", row.State)
+	require.Equal(t, int64(1), row.DispatchedID)
+	require.Zero(t, row.AppliedID, "coalescing is not publication proof")
 }
 
 func TestNextcloudUnprovenDoesNotCoalesceUnsupportedOrUnsignedHint(t *testing.T) {

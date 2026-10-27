@@ -44,6 +44,7 @@ type nextcloudApplyKnowledge struct {
 	ParseStatus  string     `gorm:"column:parse_status"`
 	EnableStatus string     `gorm:"column:enable_status"`
 	FileName     string     `gorm:"column:file_name"`
+	ErrorMessage string     `gorm:"column:error_message"`
 	Metadata     types.JSON `gorm:"column:metadata"`
 	DeletedAt    *time.Time `gorm:"column:deleted_at"`
 }
@@ -166,7 +167,7 @@ func nextcloudDispatchPublicationProof(
 	}
 	var knowledgeRows []nextcloudApplyKnowledge
 	if err := tx.Table("knowledges").
-		Select("id", "parse_status", "enable_status", "file_name", "metadata", "deleted_at").
+		Select("id", "parse_status", "enable_status", "file_name", "error_message", "metadata", "deleted_at").
 		Where("tenant_id = ? AND knowledge_base_id = ? AND channel = ?",
 			connection.TenantID, connection.KnowledgeBaseID, types.ConnectorTypeNextcloud).
 		Find(&knowledgeRows).Error; err != nil {
@@ -184,7 +185,7 @@ func nextcloudDispatchPublicationProof(
 			return nextcloudApplyRetry, nil
 		}
 		if nextcloudApplyMetadataString(metadata, "nextcloud_etag") != "" &&
-			(row.DeletedAt != nil || version.State != "published" || version.CandidateKnowledgeID != row.ID ||
+			(row.DeletedAt != nil || version.CandidateKnowledgeID != row.ID ||
 				nextcloudApplyMetadataString(metadata, "nextcloud_etag") != version.DesiredETag) {
 			return nextcloudApplyRetry, nil
 		}
@@ -205,10 +206,14 @@ func nextcloudDispatchPublicationProof(
 				candidate.ParseStatus == types.ParseStatusFinalizing) {
 			return nextcloudApplyWaiting, nil
 		}
+		terminalFailure := version.State == "staging" && candidate.DeletedAt == nil &&
+			candidate.ParseStatus == types.ParseStatusFailed &&
+			strings.TrimSpace(candidate.ErrorMessage) != ""
 		var metadata map[string]json.RawMessage
 		if json.Unmarshal(candidate.Metadata, &metadata) != nil ||
-			version.State != "published" || candidate.DeletedAt != nil ||
-			candidate.ParseStatus != types.ParseStatusCompleted || candidate.EnableStatus != "enabled" ||
+			(!terminalFailure && version.State != "published") || candidate.DeletedAt != nil ||
+			(!terminalFailure && (candidate.ParseStatus != types.ParseStatusCompleted ||
+				candidate.EnableStatus != "enabled")) ||
 			candidate.FileName != file.Name || nextcloudApplyMetadataString(metadata, "nextcloud_path") != file.Path ||
 			nextcloudApplyMetadataString(metadata, "nextcloud_etag") != file.ETag ||
 			nextcloudApplyMetadataString(metadata, "nextcloud_instance_id") != connection.NextcloudInstanceID ||
