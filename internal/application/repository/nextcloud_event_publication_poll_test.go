@@ -136,6 +136,40 @@ func TestNextcloudQueuedPublicationUnprovenAfterGraceRetriesWithoutAck(t *testin
 	require.Zero(t, row.AppliedID)
 }
 
+func TestNextcloudQueuedPublicationTerminalFileFailureDoesNotBlockApply(t *testing.T) {
+	ctx := context.Background()
+	db, inbox, now, _ := newNextcloudQueuedPublicationTest(t)
+	failed := insertNextcloudVersionTestKnowledge(t, db, "failed-after-sync", "etag-v1",
+		types.ParseStatusFailed, "disabled")
+	require.NoError(t, db.Model(&types.Knowledge{}).Where("id = ?", failed.ID).
+		Updates(map[string]any{"file_name": "file.md", "error_message": "document_processing_failed"}).Error)
+	require.NoError(t, db.Create(&nextcloudSourceVersion{
+		TenantID: 7, KnowledgeBaseID: "kb",
+		DataSourceID: "ds", ExternalID: "nextcloud:instance:77", DesiredETag: "etag-v1",
+		CandidateKnowledgeID: failed.ID, State: "staging", UpdatedAt: now,
+	}).Error)
+	require.NoError(t, db.Exec(`UPDATE sync_logs SET status = 'success', finished_at = ?
+		WHERE id = 'event-log'`, now).Error)
+
+	claim, err := inbox.ClaimDispatch(ctx, "event-connection",
+		now.Add(nextcloudPublicationRetryGrace+time.Second))
+	require.NoError(t, err)
+	require.Nil(t, claim)
+	row := publicationDispatchRow(t, db)
+	require.Equal(t, "idle", row.State)
+	require.Equal(t, int64(1), row.AppliedID,
+		"a durable terminal file failure must not block later file receipts")
+	var status types.Knowledge
+	require.NoError(t, db.Where("id = ?", failed.ID).Take(&status).Error)
+	require.Equal(t, types.ParseStatusFailed, status.ParseStatus)
+	var version nextcloudSourceVersion
+	require.NoError(t, db.Where(
+		"tenant_id = ? AND knowledge_base_id = ? AND datasource_id = ? AND external_id = ?",
+		7, "kb", "ds", "nextcloud:instance:77",
+	).Take(&version).Error)
+	require.Equal(t, "staging", version.State)
+}
+
 func TestNextcloudQueuedPublicationWaitsForParserWithoutAck(t *testing.T) {
 	ctx := context.Background()
 	db, inbox, now, _ := newNextcloudQueuedPublicationTest(t)
