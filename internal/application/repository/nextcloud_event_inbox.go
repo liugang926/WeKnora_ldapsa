@@ -312,7 +312,7 @@ func checkNextcloudEventDataSource(tx *gorm.DB, connection nextcloudEventConnect
 		}
 		return fmt.Errorf("read Nextcloud event data source: %w", err)
 	}
-	if ds.Status != types.DataSourceStatusActive {
+	if ds.Status != types.DataSourceStatusActive && ds.Status != types.DataSourceStatusError {
 		return ErrNextcloudEventScope
 	}
 	baseURL, configSHA256, bindingID, err := NextcloudEventDataSourceIdentity(ds.Config)
