@@ -51,7 +51,11 @@ func main() {
 	runtime.SilenceGinRouteSpam()
 	// Print the env banner before container build so operators see what
 	// config landed even when DB / storage init fails.
-	runtime.LogStartupEnv(context.Background())
+	startupContext := context.Background()
+	runtime.LogStartupEnv(startupContext)
+	if err := runtime.ValidateDeploymentCapabilities(startupContext); err != nil {
+		logger.Fatalf(startupContext, "Deployment capability preflight failed: %v", err)
+	}
 	runtime.MarkServerStarted()
 
 	// Build dependency injection container

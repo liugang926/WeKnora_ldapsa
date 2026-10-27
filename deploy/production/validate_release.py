@@ -10,7 +10,13 @@ def validate(m, *, allow_legacy_images=False):
     if type(protocol) is not int or protocol not in (1, 2):
         raise ValueError('unsupported deployment protocol')
     features = m.get('required_features', [])
-    supported = {'original_body_journal', 'nextcloud_onboarding_v1', 'nextcloud_file_status_v2'}
+    supported = {
+        'original_body_journal',
+        'nextcloud_onboarding_v1',
+        'nextcloud_file_status_v2',
+        'nextcloud_anydoc_v1',
+        'nextcloud_metrics_v1',
+    }
     if not isinstance(features, list) or any(not isinstance(feature, str) or feature not in supported for feature in features):
         raise ValueError('unsupported required feature')
     if len(features) != len(set(features)):

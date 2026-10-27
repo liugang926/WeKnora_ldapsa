@@ -26,6 +26,16 @@ status, body = api('/api/v1/auth/config')
 config=json.loads(body)
 assert status == 200 and config.get('registration_mode')=='invite_only', 'Registration is not closed'
 assert config.get('complex_password_enabled') is True, 'Password policy missing'
+status, body = api('/health/readiness')
+readiness=json.loads(body)
+assert status == 200 and readiness.get('status') == 'ready', 'Mandatory deployment readiness failed'
+checks=readiness.get('checks', {})
+assert checks.get('required') is True, 'Strict production capabilities are not enabled'
+assert checks.get('ready') is True and checks.get('pdf') is True and checks.get('docx') is True, 'anydoc PDF/DOCX self-test missing'
+assert checks.get('anydoc_version'), 'anydoc version is missing from readiness'
+status, body = api('/metrics')
+metrics=body.decode()
+assert status == 200 and 'candidate_staging_total' in metrics and 'graph_manifest_unprepared_total' in metrics, 'Nextcloud metrics unavailable'
 status, body = api('/api/v1/auth/login', {'email':credentials['email'], 'password':credentials['password']})
 login=json.loads(body)
 assert status==200 and login.get('success') and login.get('user',{}).get('is_system_admin'), 'Administrator login failed'
@@ -52,6 +62,8 @@ parser_config=json.loads(body)
 assert status == 200 and parser_config.get('connected') is True, 'DocReader gRPC is not connected'
 assert parser_config.get('docreader_addr') == 'docreader:50051', 'DocReader address mismatch'
 assert parser_config.get('docreader_transport') == 'grpc', 'DocReader transport mismatch'
+anydoc_engine=next((item for item in parser_config.get('data', []) if item.get('name')=='anydoc'), None)
+assert anydoc_engine and anydoc_engine.get('available') is True, 'anydoc engine is not available'
 status, _ = api('/api/v1/auth/register', credentials)
 assert status == 403, 'Public registration accepted'
 nextcloud_routes='NOT_DECLARED'
@@ -85,5 +97,5 @@ for service,key in [('app','APP_IMAGE'),('frontend','UI_IMAGE'),('docreader','DO
     assert record['HostConfig']['CgroupParent']=='weknora-production.slice', 'Wrong resource slice'
     assert not record['HostConfig'].get('DeviceRequests') and not record['HostConfig'].get('Devices'), 'Unexpected GPU/device allocation'
     images[service]={'image':record['Image'],'health':'healthy','restart_policy':record['HostConfig']['RestartPolicy']['Name'],'memory_bytes':record['HostConfig']['Memory'],'nano_cpus':record['HostConfig']['NanoCpus']}
-result={'origin':origin,'release':manifest['tag'],'commit':manifest['commit'],'frontend_and_assets':'PASS','admin_login':'PASS','directory_administration':'PASS','ldap_runtime':ldap_runtime,'authenticated_database_request':'PASS','docreader_grpc':'PASS','registration_closed':'PASS','anonymous_access_denied':'PASS','migration_gate':'PASS','nextcloud_routes':nextcloud_routes,'nextcloud_business_pairing':'NOT_ACCEPTED_BY_THIS_CHECK','retention_journal':retention_journal,'images':images}
+result={'origin':origin,'release':manifest['tag'],'commit':manifest['commit'],'frontend_and_assets':'PASS','deployment_readiness':'PASS','anydoc_self_test':'PASS','nextcloud_metrics':'PASS','admin_login':'PASS','directory_administration':'PASS','ldap_runtime':ldap_runtime,'authenticated_database_request':'PASS','docreader_grpc':'PASS','registration_closed':'PASS','anonymous_access_denied':'PASS','migration_gate':'PASS','nextcloud_routes':nextcloud_routes,'nextcloud_business_pairing':'NOT_ACCEPTED_BY_THIS_CHECK','retention_journal':retention_journal,'images':images}
 print(json.dumps(result,indent=2))

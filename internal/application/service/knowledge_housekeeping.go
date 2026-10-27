@@ -33,6 +33,12 @@ import (
 	"gorm.io/gorm"
 )
 
+const (
+	defaultNextcloudFinalizingStall = 5 * time.Minute
+	minNextcloudFinalizingStall     = time.Minute
+	maxNextcloudFinalizingStall     = time.Hour
+)
+
 // HousekeepingService runs background sweeps to recover stuck rows.
 type HousekeepingService struct {
 	db   *gorm.DB
@@ -80,10 +86,11 @@ func (h *HousekeepingService) Start(ctx context.Context) error {
 		logger.Infof(ctx, "[Housekeeping] disabled via WEKNORA_HOUSEKEEPING_ENABLED=false")
 		return nil
 	}
-	// Every 5 minutes — frequent enough that user-visible recovery latency
-	// is acceptable, infrequent enough that the SQL sweep is invisible to
-	// query load even on large knowledge tables.
-	if _, err := h.cron.AddFunc("0 */5 * * * *", func() {
+	// Every minute. The generic thresholds remain one hour, while the
+	// Nextcloud finalizing watchdog below needs to observe a missing graph
+	// queue within its five-minute contract instead of waiting for a second
+	// five-minute tick.
+	if _, err := h.cron.AddFunc("0 * * * * *", func() {
 		// Use Background so a cancelled bootstrap ctx doesn't stop sweeps.
 		h.runSweep(context.Background())
 	}); err != nil {
@@ -91,7 +98,7 @@ func (h *HousekeepingService) Start(ctx context.Context) error {
 	}
 	h.cron.Start()
 	h.started = true
-	logger.Infof(ctx, "[Housekeeping] started with 5-minute sweep")
+	logger.Infof(ctx, "[Housekeeping] started with 1-minute sweep")
 	return nil
 }
 
@@ -110,8 +117,10 @@ func (h *HousekeepingService) Stop() {
 // runSweep is exported on the type for testability — tests can drive a
 // single sweep without waiting for the cron tick.
 func (h *HousekeepingService) runSweep(ctx context.Context) {
+	now := time.Now().UTC()
+	h.recoverStalledNextcloudFinalizing(ctx, now)
 	threshold := h.staleThreshold()
-	cutoff := time.Now().Add(-threshold)
+	cutoff := now.Add(-threshold)
 
 	// Sweep A: knowledge stuck in "pending", "processing", or "finalizing".
 	//
@@ -264,6 +273,95 @@ func (h *HousekeepingService) runSweep(ctx context.Context) {
 			}
 		}
 	}
+}
+
+// recoverStalledNextcloudFinalizing is the source-specific safety net for the
+// finalizing state. Graph extraction is fanned out after parsing, so a worker
+// crash or a plan whose payload was never persisted can leave
+// pending_subtasks_count above zero with no task capable of decrementing it.
+// The generic one-hour sweep is intentionally conservative; Nextcloud requires
+// a much tighter recovery window.
+//
+// This method never changes datasource status or reconstructs graph inputs from
+// partial data. It only fails the affected candidate after the durable
+// pending-op and queue probes prove no work can advance it. The existing
+// candidate retry path then re-reads authoritative source bytes and creates a
+// fresh generation.
+func (h *HousekeepingService) recoverStalledNextcloudFinalizing(ctx context.Context, now time.Time) {
+	cutoff := now.Add(-nextcloudFinalizingStallThreshold())
+	var candidates []types.Knowledge
+	err := h.db.WithContext(ctx).
+		Table("knowledges AS k").
+		Select("DISTINCT k.*").
+		Joins(`JOIN nextcloud_source_versions AS v
+			ON v.tenant_id = k.tenant_id
+			AND v.knowledge_base_id = k.knowledge_base_id
+			AND v.candidate_knowledge_id = k.id
+			AND v.state = 'staging'`).
+		Joins(`JOIN data_sources AS d
+			ON d.id = v.datasource_id AND d.tenant_id = v.tenant_id
+			AND d.knowledge_base_id = v.knowledge_base_id
+			AND d.type = ? AND d.status = ? AND d.deleted_at IS NULL`,
+			types.ConnectorTypeNextcloud, types.DataSourceStatusActive).
+		Joins(`JOIN nextcloud_source_pairings AS p
+			ON p.tenant_id = v.tenant_id AND p.knowledge_base_id = v.knowledge_base_id
+			AND p.datasource_id = v.datasource_id AND p.state = 'active'`).
+		Where(`k.channel = ? AND k.parse_status = ? AND k.deleted_at IS NULL
+			AND k.updated_at < ?`,
+			types.ConnectorTypeNextcloud, types.ParseStatusFinalizing, cutoff).
+		Order("k.updated_at ASC").
+		Limit(64).
+		Find(&candidates).Error
+	if err != nil {
+		logger.Warnf(ctx, "[Housekeeping] Nextcloud finalizing candidate query failed: %v", err)
+		return
+	}
+
+	stalled, queued := h.filterOutQueued(ctx, candidates)
+	if queued > 0 {
+		logger.Infof(ctx,
+			"[Housekeeping] %d Nextcloud finalizing candidate(s) still have durable or queued work",
+			queued)
+	}
+	recovered := int64(0)
+	for _, candidate := range stalled {
+		result := h.db.WithContext(ctx).Model(&types.Knowledge{}).
+			Where(`id = ? AND parse_status = ? AND updated_at < ?`,
+				candidate.ID, types.ParseStatusFinalizing, cutoff).
+			Updates(map[string]interface{}{
+				"parse_status":           types.ParseStatusFailed,
+				"pending_subtasks_count": 0,
+				"error_message":          "nextcloud_finalizing_stalled_without_queue_task",
+			})
+		if result.Error != nil {
+			logger.Warnf(ctx,
+				"[Housekeeping] Nextcloud finalizing recovery failed for %s: %v",
+				candidate.ID, result.Error)
+			continue
+		}
+		recovered += result.RowsAffected
+	}
+	if recovered > 0 {
+		logger.Infof(ctx,
+			"[Housekeeping] failed %d stalled Nextcloud finalizing candidate(s) "+
+				"without an executable task (threshold=%s)",
+			recovered, nextcloudFinalizingStallThreshold())
+	}
+}
+
+func nextcloudFinalizingStallThreshold() time.Duration {
+	raw := strings.TrimSpace(os.Getenv("WEKNORA_NEXTCLOUD_FINALIZING_STALL_THRESHOLD"))
+	if raw == "" {
+		return defaultNextcloudFinalizingStall
+	}
+	value, err := time.ParseDuration(raw)
+	if err != nil || value < minNextcloudFinalizingStall || value > maxNextcloudFinalizingStall {
+		logger.Warnf(context.Background(),
+			"[Housekeeping] invalid Nextcloud finalizing stall threshold %q; using %s",
+			raw, defaultNextcloudFinalizingStall)
+		return defaultNextcloudFinalizingStall
+	}
+	return value
 }
 
 // filterByLastSpanActivity returns the subset of candidates whose most

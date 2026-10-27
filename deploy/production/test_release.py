@@ -7,7 +7,9 @@ class ReleaseTests(unittest.TestCase):
     def test_valid(self):
         self.assertEqual(validate(self.m), self.m)
     def test_retention_release_declares_protocol_and_journal(self):
-        self.m.update(deployment_protocol=2, required_features=['original_body_journal', 'nextcloud_onboarding_v1', 'nextcloud_file_status_v2'])
+        self.m.update(deployment_protocol=2, required_features=[
+            'original_body_journal', 'nextcloud_onboarding_v1', 'nextcloud_file_status_v2',
+            'nextcloud_anydoc_v1', 'nextcloud_metrics_v1'])
         self.assertEqual(validate(self.m), self.m)
     def test_unknown_protocol_or_required_feature_refuses_activation(self):
         for protocol in [True, 0, 3, '2']:
