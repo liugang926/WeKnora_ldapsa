@@ -1257,3 +1257,37 @@ func TestNextcloudOnboardingActualSourceReadAllowsOnlyRecoverableSourceErrors(t 
 		"paused sources must never pass automatic source-read authorization")
 	require.NoError(t, read.Close())
 }
+
+func TestNextcloudOnboardingActualOriginalFetchAllowsOnlyRecoverableSourceErrors(t *testing.T) {
+	f := newOnboardingOriginalActualFixture(t)
+	source := f.produceSourceBoundTemplate(t)
+	require.Len(t, source.Sources, 1)
+
+	read, err := f.onboarding.beginOnboardingTemplateRead(
+		context.Background(),
+		f.credential,
+		f.request("Recoverable original fetch"),
+	)
+	require.NoError(t, err)
+	own := read.Context(context.Background())
+
+	var ds types.DataSource
+	require.NoError(t, f.db.Where("id = ?", source.Sources[0].DataSourceID).Take(&ds).Error)
+	var kb types.KnowledgeBase
+	require.NoError(t, f.db.Where("id = ? AND tenant_id = ?", ds.KnowledgeBaseID, ds.TenantID).
+		Take(&kb).Error)
+
+	require.NoError(t, f.db.Model(&types.DataSource{}).Where("id = ?", ds.ID).
+		Update("status", types.DataSourceStatusError).Error)
+	require.NoError(t, f.db.Where("id = ?", ds.ID).Take(&ds).Error)
+	_, err = f.store.BindNextcloudOriginalFetch(own, &kb, &ds)
+	require.NoError(t, err,
+		"an exact paired source must remain bindable while the source recovers")
+
+	require.NoError(t, f.db.Model(&types.DataSource{}).Where("id = ?", ds.ID).
+		Update("status", types.DataSourceStatusPaused).Error)
+	require.NoError(t, f.db.Where("id = ?", ds.ID).Take(&ds).Error)
+	_, err = f.store.BindNextcloudOriginalFetch(own, &kb, &ds)
+	require.Error(t, err, "paused sources must never bind automatic original fetches")
+	require.NoError(t, read.Close())
+}
