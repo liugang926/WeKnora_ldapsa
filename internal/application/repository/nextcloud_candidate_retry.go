@@ -113,12 +113,12 @@ func nextcloudFailedCandidateAdmission(tx *gorm.DB, version nextcloudSourceVersi
 	}
 	var ds types.DataSource
 	dsQuery := tx.Where(
-		"id = ? AND tenant_id = ? AND knowledge_base_id = ? AND type = ? AND status = ? AND deleted_at IS NULL",
+		"id = ? AND tenant_id = ? AND knowledge_base_id = ? AND type = ? AND status IN ? AND deleted_at IS NULL",
 		version.DataSourceID,
 		version.TenantID,
 		version.KnowledgeBaseID,
 		types.ConnectorTypeNextcloud,
-		types.DataSourceStatusActive,
+		nextcloudAutomaticReadableStatuses(),
 	)
 	if lockSource {
 		dsQuery = dsQuery.Clauses(clause.Locking{Strength: "UPDATE"})
@@ -157,8 +157,9 @@ func (r *knowledgeRepository) FailedNextcloudCandidateETags(ctx context.Context,
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var ds types.DataSource
 		if err := tx.Where(("id = ? AND tenant_id = ? AND knowledge_base_id = ? AND type = ? AND status" +
-			" = ? AND deleted_at IS NULL"),
-			dsID, tenantID, kbID, types.ConnectorTypeNextcloud, types.DataSourceStatusActive).
+			" IN ? AND deleted_at IS NULL"),
+			dsID, tenantID, kbID, types.ConnectorTypeNextcloud,
+			nextcloudAutomaticReadableStatuses()).
 			Take(&ds).
 			Error; err != nil {
 			return ErrNextcloudSourcePairingConflict
