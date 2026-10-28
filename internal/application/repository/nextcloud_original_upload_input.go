@@ -111,11 +111,12 @@ func (s *KnowledgeInputProvenanceStore) BindNextcloudOriginalFetch(
 	if err := s.db.WithContext(ctx).
 		Select("id", "tenant_id", "knowledge_base_id", "type", "status", "config", "name").
 		Where(
-			"id = ? AND tenant_id = ? AND knowledge_base_id = ? AND status = ?",
+			"id = ? AND tenant_id = ? AND knowledge_base_id = ? AND status IN (?, ?)",
 			ds.ID,
 			ds.TenantID,
 			ds.KnowledgeBaseID,
 			types.DataSourceStatusActive,
+			types.DataSourceStatusError,
 		).
 		Take(&actual).
 		Error; err != nil {
@@ -311,12 +312,13 @@ func originalUploadSourceInTx(
 	var ds types.DataSource
 	if err := tx.Where(
 		("id = ? AND tenant_id = ? AND knowledge_base_id = ? AND type = ? AND status" +
-			" = ?"),
+			" IN (?, ?)"),
 		input.DataSourceID,
 		k.TenantID,
 		k.KnowledgeBaseID,
 		types.ConnectorTypeNextcloud,
 		types.DataSourceStatusActive,
+		types.DataSourceStatusError,
 	).
 		Take(&ds).
 		Error; err != nil {
