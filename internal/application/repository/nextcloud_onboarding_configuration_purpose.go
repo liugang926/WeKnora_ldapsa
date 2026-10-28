@@ -207,12 +207,13 @@ func scopedConfigurationPairInTx(
 	if err := tx.Select("id", "tenant_id", "knowledge_base_id", "type", "status", "config").
 		Where(
 			("id = ? AND tenant_id = ? AND knowledge_base_id = ? AND type = ? AND status" +
-				" = ? AND deleted_at IS NULL"),
+				" IN (?, ?) AND deleted_at IS NULL"),
 			datasource,
 			tenant,
 			kb,
 			types.ConnectorTypeNextcloud,
 			types.DataSourceStatusActive,
+			types.DataSourceStatusError,
 		).
 		Take(&ds).
 		Error; err != nil {
