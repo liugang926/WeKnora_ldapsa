@@ -251,7 +251,7 @@ func (s *KnowledgeInputProvenanceStore) BeginNextcloudOriginalFetchConfiguration
 	noop := func() {}
 	if s == nil || s.db == nil || ds == nil || ds.TenantID == 0 || ds.KnowledgeBaseID == "" ||
 		ds.Type != types.ConnectorTypeNextcloud ||
-		ds.Status != types.DataSourceStatusActive {
+		ds.Status != types.DataSourceStatusActive && ds.Status != types.DataSourceStatusError {
 		return ctx, noop, ErrKnowledgeInputChanged
 	}
 	wanted, err := KnowledgeInputDigest(ds.Config)
@@ -268,7 +268,8 @@ func (s *KnowledgeInputProvenanceStore) BeginNextcloudOriginalFetchConfiguration
 		if err := tx.WithContext(current).
 			Select("id", "tenant_id", "knowledge_base_id", "type", "status", "config").
 			Where(("id = ? AND tenant_id = ? AND knowledge_base_id = ? AND type = ? AND status" +
-				" = ?"), id, tenant, kb, types.ConnectorTypeNextcloud, types.DataSourceStatusActive).
+				" IN (?, ?)"), id, tenant, kb, types.ConnectorTypeNextcloud,
+				types.DataSourceStatusActive, types.DataSourceStatusError).
 			Take(&actual).
 			Error; err != nil {
 			return err

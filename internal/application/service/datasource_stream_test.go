@@ -840,3 +840,16 @@ func TestProcessSyncStreamingNextcloudRejectsDifferentCursorInstance(t *testing.
 	require.NoError(t, err)
 	require.Equal(t, "old", stored.ConnectorCursor["marker"])
 }
+
+func TestNextcloudPreStreamErrorTerminalizesRunningEventLog(t *testing.T) {
+	run := &types.SyncLog{ID: "event-log", Status: types.SyncLogStatusRunning}
+	logs := &processSyncSyncLogRepo{logs: map[string]*types.SyncLog{run.ID: run}}
+	svc := &DataSourceService{syncLogRepo: logs}
+
+	svc.finishNextcloudPreStreamRun(context.Background(), run.ID,
+		errors.New("original knowledge input changed or is unknown"))
+
+	require.Equal(t, types.SyncLogStatusFailed, run.Status)
+	require.Equal(t, "nextcloud_pre_stream_failed", run.ErrorMessage)
+	require.NotNil(t, run.FinishedAt)
+}
