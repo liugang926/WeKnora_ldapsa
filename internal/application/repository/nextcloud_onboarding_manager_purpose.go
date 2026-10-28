@@ -65,6 +65,10 @@ func onboardingCredentialPurposeDigest(c types.NextcloudOnboardingCredential) st
 	}{c, c.TokenSHA256})
 }
 
+func nextcloudAutomaticReadableStatuses() []string {
+	return []string{types.DataSourceStatusActive, types.DataSourceStatusError}
+}
+
 func onboardingManagerPairMetadata(
 	tx *gorm.DB,
 	op types.NextcloudOnboardingOperation,
@@ -90,13 +94,13 @@ func onboardingManagerPairMetadata(
 	var ds types.DataSource
 	if err := tx.Select("id,tenant_id,knowledge_base_id,type,status,config").
 		Where(
-			("id=? AND tenant_id=? AND knowledge_base_id=? AND type=? AND status=? AND d" +
+			("id=? AND tenant_id=? AND knowledge_base_id=? AND type=? AND status IN ? AND d" +
 				"eleted_at IS NULL"),
 			pair.DataSourceID,
 			op.TenantID,
 			op.KnowledgeBaseID,
 			types.ConnectorTypeNextcloud,
-			types.DataSourceStatusActive,
+			nextcloudAutomaticReadableStatuses(),
 		).
 		Take(&ds).
 		Error; err != nil {
@@ -157,8 +161,9 @@ func authorizeOnboardingManagerPurpose(
 	}
 	var actual types.DataSource
 	if err := tx.Select("id,tenant_id,knowledge_base_id,type,status,config").
-		Where(("id=? AND tenant_id=? AND knowledge_base_id=? AND status=? AND deleted_at I" +
-			"S NULL"), p.DataSourceID, p.TenantID, p.KnowledgeBaseID, types.DataSourceStatusActive).
+		Where(("id=? AND tenant_id=? AND knowledge_base_id=? AND status IN ? AND deleted_at I" +
+			"S NULL"), p.DataSourceID, p.TenantID, p.KnowledgeBaseID,
+			nextcloudAutomaticReadableStatuses()).
 		Take(&actual).
 		Error; err != nil {
 		return err

@@ -1207,3 +1207,26 @@ func (b *onboardingActualBuildConfigurationBeginner) BeginKnowledgeConfiguration
 	b.read = read
 	return read.Context(ctx), func() { CloseScopedOnboardingConfigurationReads(ctx) }, nil
 }
+
+func TestNextcloudOnboardingActualManagerPurposeAllowsOnlyRecoverableSourceErrors(t *testing.T) {
+	f := newOnboardingOriginalActualFixture(t)
+	_ = f.produceSourceBoundTemplate(t)
+	req := f.request("Recoverable manager purpose source")
+	op, err := f.onboarding.Reserve(context.Background(), f.credential, req)
+	require.NoError(t, err)
+	_, ds := f.pair(t, op)
+
+	_, err = currentOnboardingManagerPurpose(f.db, f.credential, op)
+	require.NoError(t, err)
+
+	require.NoError(t, f.db.Model(&types.DataSource{}).Where("id = ?", ds.ID).
+		Update("status", types.DataSourceStatusError).Error)
+	purpose, err := currentOnboardingManagerPurpose(f.db, f.credential, op)
+	require.NoError(t, err, "an exact manager purpose must remain usable while the source recovers")
+	require.NotNil(t, purpose)
+
+	require.NoError(t, f.db.Model(&types.DataSource{}).Where("id = ?", ds.ID).
+		Update("status", types.DataSourceStatusPaused).Error)
+	_, err = currentOnboardingManagerPurpose(f.db, f.credential, op)
+	require.Error(t, err, "paused sources must never pass automatic manager authorization")
+}
