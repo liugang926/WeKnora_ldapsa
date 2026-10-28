@@ -816,3 +816,25 @@ func TestNextcloudExcludedPreviouslyPublishedFileRequiresWithdrawal(t *testing.T
 	require.Equal(t, "idle", row.State)
 	require.Equal(t, int64(1), row.AppliedID)
 }
+
+func TestRecoverQueuedEventSyncClosesExactTerminatedLog(t *testing.T) {
+	db, inbox, now, _ := newNextcloudQueuedPublicationTest(t)
+	require.NoError(t, db.Model(&types.DataSource{}).Where("id = ?", "ds").
+		Update("status", types.DataSourceStatusError).Error)
+
+	recovered, err := inbox.RecoverQueuedEventSync(
+		context.Background(), "event-connection", "event-log", now,
+	)
+	require.NoError(t, err)
+	require.True(t, recovered)
+
+	var log types.SyncLog
+	require.NoError(t, db.Where("id = ?", "event-log").Take(&log).Error)
+	require.Equal(t, types.SyncLogStatusFailed, log.Status)
+	require.Equal(t, "sync_worker_terminated", log.ErrorMessage)
+	require.NotNil(t, log.FinishedAt)
+	row := publicationDispatchRow(t, db)
+	require.Equal(t, "retry", row.State)
+	require.Equal(t, "sync_worker_terminated", row.LastErrorCode)
+	require.Zero(t, row.AttemptCount)
+}
