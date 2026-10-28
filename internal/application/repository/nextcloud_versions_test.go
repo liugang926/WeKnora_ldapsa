@@ -642,6 +642,90 @@ func TestNextcloudFailedCandidateRetryScheduledWithoutEvent(t *testing.T) {
 	require.Len(t, claims, 1, "administrator restart queues a fresh task")
 }
 
+func TestNextcloudCandidateRetryAllowsDatasourceErrorOnlyWithExactActivePair(t *testing.T) {
+	ctx := context.Background()
+	repo, db := newNextcloudVersionTestRepo(t)
+	require.NoError(t, db.AutoMigrate(&types.SyncLog{}))
+	failed := insertNextcloudVersionTestKnowledge(t, db, "failed", "",
+		types.ParseStatusPending, "disabled")
+	require.NoError(t, repo.StageNextcloudVersion(ctx, 7, "kb", "ds",
+		"nextcloud:instance:77", "retry-etag", failed.ID))
+	require.NoError(t, db.Model(&types.Knowledge{}).Where("id = ?", failed.ID).
+		Update("parse_status", types.ParseStatusFailed).Error)
+
+	now := time.Now().UTC().Add(2 * time.Minute)
+	claims, err := NewNextcloudEventInboxRepository(db).CandidateRetryClaims(ctx, now)
+	require.NoError(t, err)
+	require.Len(t, claims, 1)
+	retryCtx := WithNextcloudCandidateRetryClaim(ctx, claims[0])
+
+	var originalSource types.DataSource
+	require.NoError(t, db.Where("id = ?", "ds").Take(&originalSource).Error)
+	var originalPair NextcloudSourcePairing
+	require.NoError(t, db.Where("datasource_id = ?", "ds").Take(&originalPair).Error)
+	require.NoError(t, db.Model(&types.DataSource{}).Where("id = ?", "ds").
+		Update("status", types.DataSourceStatusError).Error)
+
+	selected, err := repo.FailedNextcloudCandidateETags(ctx, 7, "kb", "ds",
+		"instance", "binding", now, claims[0].LeaseToken)
+	require.NoError(t, err)
+	require.Equal(t, map[string]string{"77": "retry-etag"}, selected)
+	require.NoError(t, repo.AdmitNextcloudCandidateRetry(retryCtx, 7, "kb", "ds",
+		"nextcloud:instance:77", "retry-etag"))
+
+	require.NoError(t, db.Model(&types.DataSource{}).Where("id = ?", "ds").
+		Update("status", types.DataSourceStatusPaused).Error)
+	_, err = repo.FailedNextcloudCandidateETags(ctx, 7, "kb", "ds",
+		"instance", "binding", now, claims[0].LeaseToken)
+	require.ErrorIs(t, err, ErrNextcloudSourcePairingConflict)
+	require.ErrorIs(t, repo.AdmitNextcloudCandidateRetry(retryCtx, 7, "kb", "ds",
+		"nextcloud:instance:77", "retry-etag"), ErrNextcloudCandidateRetryNotDue)
+	require.NoError(t, db.Model(&types.DataSource{}).Where("id = ?", "ds").
+		Update("status", types.DataSourceStatusError).Error)
+
+	require.NoError(t, db.Model(&NextcloudSourcePairing{}).
+		Where("datasource_id = ?", "ds").Update("state", "retired").Error)
+	_, err = repo.FailedNextcloudCandidateETags(ctx, 7, "kb", "ds",
+		"instance", "binding", now, claims[0].LeaseToken)
+	require.ErrorIs(t, err, ErrNextcloudSourcePairingConflict)
+	require.ErrorIs(t, repo.AdmitNextcloudCandidateRetry(retryCtx, 7, "kb", "ds",
+		"nextcloud:instance:77", "retry-etag"), ErrNextcloudCandidateRetryNotDue)
+	require.NoError(t, db.Model(&NextcloudSourcePairing{}).
+		Where("datasource_id = ?", "ds").Updates(map[string]any{
+		"state":               "active",
+		"datasource_base_url": originalPair.BaseURL + "/changed",
+	}).Error)
+	_, err = repo.FailedNextcloudCandidateETags(ctx, 7, "kb", "ds",
+		"instance", "binding", now, claims[0].LeaseToken)
+	require.ErrorIs(t, err, ErrNextcloudSourcePairingConflict)
+	require.ErrorIs(t, repo.AdmitNextcloudCandidateRetry(retryCtx, 7, "kb", "ds",
+		"nextcloud:instance:77", "retry-etag"), ErrNextcloudCandidateRetryNotDue)
+	require.NoError(t, db.Model(&NextcloudSourcePairing{}).
+		Where("datasource_id = ?", "ds").Update("datasource_base_url", originalPair.BaseURL).Error)
+
+	changedConfig, err := (&types.DataSourceConfig{
+		Type:        types.ConnectorTypeNextcloud,
+		ResourceIDs: []string{"binding"},
+		Settings:    map[string]interface{}{"base_url": "https://changed.example"},
+		Credentials: map[string]interface{}{"token": "changed-token", "key_id": "pair_test"},
+	}).ToJSON()
+	require.NoError(t, err)
+	require.NoError(t, db.Model(&types.DataSource{}).Where("id = ?", "ds").
+		Update("config", changedConfig).Error)
+	_, err = repo.FailedNextcloudCandidateETags(ctx, 7, "kb", "ds",
+		"instance", "binding", now, claims[0].LeaseToken)
+	require.ErrorIs(t, err, ErrNextcloudSourcePairingConflict)
+	require.ErrorIs(t, repo.AdmitNextcloudCandidateRetry(retryCtx, 7, "kb", "ds",
+		"nextcloud:instance:77", "retry-etag"), ErrNextcloudCandidateRetryNotDue)
+
+	require.NoError(t, db.Model(&types.DataSource{}).Where("id = ?", "ds").
+		Update("config", originalSource.Config).Error)
+	selected, err = repo.FailedNextcloudCandidateETags(ctx, 7, "kb", "ds",
+		"instance", "binding", now, claims[0].LeaseToken)
+	require.NoError(t, err)
+	require.Equal(t, map[string]string{"77": "retry-etag"}, selected)
+}
+
 func TestNextcloudRetryLeaseSelectsOnlyItsFailedFile(t *testing.T) {
 	ctx := context.Background()
 	repo, db := newNextcloudVersionTestRepo(t)
