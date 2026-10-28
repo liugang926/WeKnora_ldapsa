@@ -52,6 +52,8 @@ type NextcloudEventDispatchClaim struct {
 // RecoverQueuedEventSync closes one running event log only when it is still
 // the exact task referenced by a queued dispatch. It is reserved for an
 // operator that has independently proven the Asynq task is archived or absent.
+// A queued dispatch or the one exact stale-review state may be recovered; all
+// other blocked states remain manual-review only.
 func (r *NextcloudEventInboxRepository) RecoverQueuedEventSync(
 	ctx context.Context, connectionID, syncLogID string, now time.Time,
 ) (bool, error) {
@@ -79,7 +81,10 @@ func (r *NextcloudEventInboxRepository) RecoverQueuedEventSync(
 			Where("connection_id = ?", connectionID).Take(&dispatch).Error; err != nil {
 			return err
 		}
-		if dispatch.State != "queued" || dispatch.LastSyncLogID == nil ||
+		recoverable := dispatch.State == "queued" ||
+			(dispatch.State == "blocked" &&
+				dispatch.LastErrorCode == "sync_stale_manual_review")
+		if !recoverable || dispatch.LastSyncLogID == nil ||
 			*dispatch.LastSyncLogID != syncLogID {
 			return ErrNextcloudEventConflict
 		}

@@ -838,3 +838,46 @@ func TestRecoverQueuedEventSyncClosesExactTerminatedLog(t *testing.T) {
 	require.Equal(t, "sync_worker_terminated", row.LastErrorCode)
 	require.Zero(t, row.AttemptCount)
 }
+
+func TestRecoverQueuedEventSyncAllowsOnlyExactStaleBlocked(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		state     string
+		errorCode string
+		allowed   bool
+	}{
+		{name: "exact stale manual review", state: "blocked",
+			errorCode: "sync_stale_manual_review", allowed: true},
+		{name: "other blocked state", state: "blocked",
+			errorCode: "source_changed", allowed: false},
+		{name: "idle state", state: "idle", errorCode: "", allowed: false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			db, inbox, now, _ := newNextcloudQueuedPublicationTest(t)
+			require.NoError(t, db.Model(&types.DataSource{}).Where("id = ?", "ds").
+				Update("status", types.DataSourceStatusError).Error)
+			require.NoError(t, db.Table("nextcloud_event_dispatch").
+				Where("connection_id = ?", "event-connection").
+				Updates(map[string]any{
+					"state": test.state, "last_error_code": test.errorCode,
+				}).Error)
+
+			recovered, err := inbox.RecoverQueuedEventSync(
+				context.Background(), "event-connection", "event-log", now,
+			)
+			if !test.allowed {
+				require.ErrorIs(t, err, ErrNextcloudEventConflict)
+				require.False(t, recovered)
+				var log types.SyncLog
+				require.NoError(t, db.Where("id = ?", "event-log").Take(&log).Error)
+				require.Equal(t, types.SyncLogStatusRunning, log.Status)
+				return
+			}
+			require.NoError(t, err)
+			require.True(t, recovered)
+			row := publicationDispatchRow(t, db)
+			require.Equal(t, "retry", row.State)
+			require.Equal(t, "sync_worker_terminated", row.LastErrorCode)
+		})
+	}
+}
