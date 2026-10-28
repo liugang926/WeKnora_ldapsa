@@ -126,6 +126,70 @@ func (r *NextcloudEventInboxRepository) RecoverQueuedEventSync(
 	return recovered, err
 }
 
+// ResetTerminalEventRetry brings one exact terminal failed retry forward
+// without changing its dispatch watermarks. It is reserved for an operator
+// that has independently proven the corresponding Asynq task is no longer
+// active. The source pairing and configuration identity remain mandatory.
+func (r *NextcloudEventInboxRepository) ResetTerminalEventRetry(
+	ctx context.Context, connectionID, syncLogID string, now time.Time,
+) (bool, error) {
+	if connectionID == "" || syncLogID == "" {
+		return false, ErrNextcloudEventConflict
+	}
+	recovered := false
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var connection nextcloudEventConnection
+		if err := tx.Table("nextcloud_event_connections").
+			Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("connection_id = ? AND status = 'active'", connectionID).
+			Take(&connection).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrNextcloudEventScope
+			}
+			return err
+		}
+		if err := checkNextcloudEventDataSource(tx, connection); err != nil {
+			return err
+		}
+		var dispatch nextcloudEventDispatchRow
+		if err := tx.Table("nextcloud_event_dispatch").
+			Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("connection_id = ?", connectionID).Take(&dispatch).Error; err != nil {
+			return err
+		}
+		if dispatch.State != "retry" ||
+			dispatch.LastErrorCode != "sync_not_successful" ||
+			dispatch.LastSyncLogID == nil || *dispatch.LastSyncLogID != syncLogID {
+			return ErrNextcloudEventConflict
+		}
+		var log types.SyncLog
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("id = ? AND data_source_id = ? AND tenant_id = ?",
+				syncLogID, connection.DatasourceID, connection.TenantID).
+			Take(&log).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrNextcloudEventConflict
+			}
+			return err
+		}
+		if log.Status != types.SyncLogStatusFailed || log.FinishedAt == nil {
+			return ErrNextcloudEventConflict
+		}
+		if err := tx.Table("nextcloud_event_dispatch").
+			Where("connection_id = ?", connectionID).
+			Updates(map[string]any{
+				"state": "retry", "lease_token": nil, "lease_until": nil,
+				"attempt_count": 0, "next_attempt_at": now,
+				"last_error_code": "manual_retry_requested", "updated_at": now,
+			}).Error; err != nil {
+			return err
+		}
+		recovered = true
+		return nil
+	})
+	return recovered, err
+}
+
 // DispatchCandidates returns only connection IDs; ClaimDispatch rechecks all
 // state under a transaction so multiple application instances can race safely.
 func (r *NextcloudEventInboxRepository) DispatchCandidates(ctx context.Context, now time.Time) ([]string, error) {

@@ -19,6 +19,7 @@ import (
 func main() {
 	connectionID := flag.String("connection-id", "", "exact Nextcloud event connection")
 	syncLogID := flag.String("sync-log-id", "", "exact running sync log")
+	resetRetry := flag.Bool("reset-retry", false, "reset an exact terminal failed retry to run immediately")
 	dsnEnv := flag.String("dsn-env", "WEKNORA_POSTGRES_DSN", "environment variable containing the PostgreSQL DSN")
 	flag.Parse()
 	if *connectionID == "" || *syncLogID == "" {
@@ -39,13 +40,23 @@ func main() {
 	defer sqlDB.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	recovered, err := repository.NewNextcloudEventInboxRepository(db).
-		RecoverQueuedEventSync(ctx, *connectionID, *syncLogID, time.Now().UTC())
+	events := repository.NewNextcloudEventInboxRepository(db)
+	action := "recover_queued_sync"
+	var recovered bool
+	if *resetRetry {
+		action = "reset_terminal_retry"
+		recovered, err = events.ResetTerminalEventRetry(
+			ctx, *connectionID, *syncLogID, time.Now().UTC())
+	} else {
+		recovered, err = events.RecoverQueuedEventSync(
+			ctx, *connectionID, *syncLogID, time.Now().UTC())
+	}
 	if err != nil {
 		exit(err)
 	}
 	encoded, _ := json.Marshal(map[string]any{
-		"connection_id": *connectionID, "sync_log_id": *syncLogID, "recovered": recovered,
+		"action": action, "connection_id": *connectionID,
+		"sync_log_id": *syncLogID, "recovered": recovered,
 	})
 	fmt.Println(string(encoded))
 }
