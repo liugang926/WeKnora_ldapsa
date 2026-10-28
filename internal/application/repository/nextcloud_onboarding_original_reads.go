@@ -440,13 +440,14 @@ func (r *NextcloudOnboardingConfigurationRead) checkAuthority(ctx context.Contex
 		var target types.DataSource
 		if err := tx.Select("id,tenant_id,knowledge_base_id,type,status,config").
 			Where(
-				("id=? AND tenant_id=? AND knowledge_base_id=? AND type=? AND status=? AND d" +
+				("id=? AND tenant_id=? AND knowledge_base_id=? AND type=? AND status IN (?,?) AND d" +
 					"eleted_at IS NULL"),
 				r.datasource,
 				r.tenant,
 				r.kb,
 				types.ConnectorTypeNextcloud,
 				types.DataSourceStatusActive,
+				types.DataSourceStatusError,
 			).
 			Take(&target).
 			Error; err != nil {
@@ -771,13 +772,14 @@ func (r *NextcloudOnboardingConfigurationRead) checkSource(
 	var ds types.DataSource
 	if err := tx.Select("id,tenant_id,knowledge_base_id,type,status,config").
 		Where(
-			("id=? AND tenant_id=? AND knowledge_base_id=? AND type=? AND status=? AND d" +
+			("id=? AND tenant_id=? AND knowledge_base_id=? AND type=? AND status IN (?,?) AND d" +
 				"eleted_at IS NULL"),
 			source.DataSourceID,
 			source.TenantID,
 			source.KnowledgeBaseID,
 			types.ConnectorTypeNextcloud,
 			types.DataSourceStatusActive,
+			types.DataSourceStatusError,
 		).
 		Take(&ds).
 		Error; err != nil {

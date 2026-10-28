@@ -1230,3 +1230,30 @@ func TestNextcloudOnboardingActualManagerPurposeAllowsOnlyRecoverableSourceError
 	_, err = currentOnboardingManagerPurpose(f.db, f.credential, op)
 	require.Error(t, err, "paused sources must never pass automatic manager authorization")
 }
+
+func TestNextcloudOnboardingActualSourceReadAllowsOnlyRecoverableSourceErrors(t *testing.T) {
+	f := newOnboardingOriginalActualFixture(t)
+	source := f.produceSourceBoundTemplate(t)
+	require.Len(t, source.Sources, 1)
+
+	read, err := f.onboarding.beginOnboardingTemplateRead(
+		context.Background(),
+		f.credential,
+		f.request("Recoverable original source read"),
+	)
+	require.NoError(t, err)
+	own := read.Context(context.Background())
+	require.NoError(t, read.Checkpoint(own))
+
+	datasourceID := source.Sources[0].DataSourceID
+	require.NoError(t, f.db.Model(&types.DataSource{}).Where("id = ?", datasourceID).
+		Update("status", types.DataSourceStatusError).Error)
+	require.NoError(t, read.Checkpoint(own),
+		"an exact paired source must remain readable while the source recovers")
+
+	require.NoError(t, f.db.Model(&types.DataSource{}).Where("id = ?", datasourceID).
+		Update("status", types.DataSourceStatusPaused).Error)
+	require.Error(t, read.Checkpoint(own),
+		"paused sources must never pass automatic source-read authorization")
+	require.NoError(t, read.Close())
+}
