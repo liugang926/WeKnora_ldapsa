@@ -881,3 +881,79 @@ func TestRecoverQueuedEventSyncAllowsOnlyExactStaleBlocked(t *testing.T) {
 		})
 	}
 }
+
+func TestResetTerminalEventRetryAdvancesOnlyExactFailedWork(t *testing.T) {
+	db, inbox, now, _ := newNextcloudQueuedPublicationTest(t)
+	require.NoError(t, db.Model(&types.DataSource{}).Where("id = ?", "ds").
+		Update("status", types.DataSourceStatusError).Error)
+	finished := now.Add(-time.Minute)
+	require.NoError(t, db.Model(&types.SyncLog{}).Where("id = ?", "event-log").
+		Updates(map[string]any{
+			"status": types.SyncLogStatusFailed, "finished_at": finished,
+			"error_message": "nextcloud_pre_stream_failed",
+		}).Error)
+	require.NoError(t, db.Table("nextcloud_event_dispatch").
+		Where("connection_id = ?", "event-connection").
+		Updates(map[string]any{
+			"state": "retry", "last_error_code": "sync_not_successful",
+			"attempt_count": 5, "next_attempt_at": now.Add(3 * time.Hour),
+		}).Error)
+
+	reset, err := inbox.ResetTerminalEventRetry(
+		context.Background(), "event-connection", "event-log", now,
+	)
+	require.NoError(t, err)
+	require.True(t, reset)
+	row := publicationDispatchRow(t, db)
+	require.Equal(t, "retry", row.State)
+	require.Equal(t, "manual_retry_requested", row.LastErrorCode)
+	require.Zero(t, row.AttemptCount)
+	require.Equal(t, now, row.NextAttemptAt.UTC())
+	require.Equal(t, int64(1), row.DispatchedID)
+	require.Zero(t, row.AppliedID)
+	require.Equal(t, int64(1), row.TargetEventID)
+}
+
+func TestResetTerminalEventRetryRejectsNonTerminalOrMismatchedWork(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		state     string
+		errorCode string
+		logStatus string
+		logID     string
+	}{
+		{name: "active log", state: "retry", errorCode: "sync_not_successful",
+			logStatus: types.SyncLogStatusRunning, logID: "event-log"},
+		{name: "queued dispatch", state: "queued", errorCode: "sync_not_successful",
+			logStatus: types.SyncLogStatusFailed, logID: "event-log"},
+		{name: "mismatched log", state: "retry", errorCode: "sync_not_successful",
+			logStatus: types.SyncLogStatusFailed, logID: "different-log"},
+		{name: "blocked dispatch", state: "blocked", errorCode: "sync_stale_manual_review",
+			logStatus: types.SyncLogStatusFailed, logID: "event-log"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			db, inbox, now, _ := newNextcloudQueuedPublicationTest(t)
+			require.NoError(t, db.Model(&types.SyncLog{}).Where("id = ?", "event-log").
+				Updates(map[string]any{
+					"status": test.logStatus, "finished_at": now,
+					"error_message": "terminal",
+				}).Error)
+			require.NoError(t, db.Table("nextcloud_event_dispatch").
+				Where("connection_id = ?", "event-connection").
+				Updates(map[string]any{
+					"state": test.state, "last_error_code": test.errorCode,
+					"attempt_count": 5, "next_attempt_at": now.Add(3 * time.Hour),
+				}).Error)
+
+			reset, err := inbox.ResetTerminalEventRetry(
+				context.Background(), "event-connection", test.logID, now,
+			)
+			require.ErrorIs(t, err, ErrNextcloudEventConflict)
+			require.False(t, reset)
+			row := publicationDispatchRow(t, db)
+			require.Equal(t, test.state, row.State)
+			require.Equal(t, test.errorCode, row.LastErrorCode)
+			require.Equal(t, 5, row.AttemptCount)
+		})
+	}
+}
