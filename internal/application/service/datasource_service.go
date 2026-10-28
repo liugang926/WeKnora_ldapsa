@@ -694,6 +694,30 @@ func (s *DataSourceService) GetSyncLog(ctx context.Context, syncLogID string) (*
 	return log, nil
 }
 
+// finishNextcloudPreStreamRun closes a running event/candidate log when a
+// worker exits before stream setup. It intentionally does not change datasource
+// status; the dispatcher owns the durable retry proof.
+func (s *DataSourceService) finishNextcloudPreStreamRun(
+	ctx context.Context, syncLogID string, cause error,
+) {
+	if s.syncLogRepo == nil || syncLogID == "" {
+		return
+	}
+	finishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer cancel()
+	syncLog, err := s.syncLogRepo.FindByID(finishCtx, syncLogID)
+	if err != nil || syncLog == nil || syncLog.Status != types.SyncLogStatusRunning {
+		return
+	}
+	syncLog.Status = types.SyncLogStatusFailed
+	syncLog.FinishedAt = timePtr(time.Now().UTC())
+	syncLog.ErrorMessage = "nextcloud_pre_stream_failed"
+	if errors.Is(cause, apprepo.ErrKnowledgeInputChanged) {
+		syncLog.ErrorMessage = "source_lineage_changed"
+	}
+	_ = s.syncLogRepo.Update(finishCtx, syncLog)
+}
+
 // recordPreStreamSyncFailure also covers connector/configuration errors before
 // the streaming handler exists. A file retry failure belongs to its sync log;
 // the paired source remains active for the next durable backoff claim.
@@ -866,6 +890,17 @@ func (s *DataSourceService) ProcessSync(ctx context.Context, task *asynq.Task) (
 	}
 	if ds.Type == types.ConnectorTypeNextcloud && syncLog.Status != types.SyncLogStatusRunning {
 		return fmt.Errorf("%w: Nextcloud sync log is no longer running", asynq.SkipRetry)
+	}
+	if ds.Type == types.ConnectorTypeNextcloud &&
+		(payload.Trigger == "nextcloud_event" || payload.Trigger == "nextcloud_candidate_retry") {
+		// Event and candidate tasks have no Asynq retries. A pre-stream error
+		// must still close the exact running log so dispatch can retry rather
+		// than treating an archived task as a 150-minute running sync.
+		defer func() {
+			if runErr != nil {
+				s.finishNextcloudPreStreamRun(ctx, payload.SyncLogID, runErr)
+			}
+		}()
 	}
 	if ds.Type == types.ConnectorTypeNextcloud &&
 		payload.Trigger != "nextcloud_event" && payload.Trigger != "nextcloud_candidate_retry" {
