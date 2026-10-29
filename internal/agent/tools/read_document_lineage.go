@@ -129,7 +129,12 @@ func (t *ReadDocumentTool) hydrateDocumentInputs(
 			snapshot.Knowledge.KnowledgeBaseID != k.KnowledgeBaseID {
 			return nil, ErrToolSourceLineageUnavailable
 		}
-		if err := snapshot.SourceLineage.RequireComplete(); err != nil {
+		sourceLineage := turn.NormalizeProducerLineage(snapshot.SourceLineage)
+		if turn.RequiresCompleteProducerLineage() {
+			if err := sourceLineage.RequireComplete(); err != nil {
+				return nil, err
+			}
+		} else if err := sourceLineage.Validate(); err != nil {
 			return nil, err
 		}
 
@@ -139,26 +144,39 @@ func (t *ReadDocumentTool) hydrateDocumentInputs(
 				c.KnowledgeID != k.ID {
 				return nil, ErrToolSourceLineageUnavailable
 			}
-			if err := validateDocumentChunkProjection(snapshot); err != nil {
+			if err := validateDocumentChunkProjection(
+				snapshot,
+				sourceLineage,
+				turn.RequiresCompleteProducerLineage(),
+			); err != nil {
 				return nil, err
 			}
 			out.Chunks = append(out.Chunks, c)
 		} else if snapshot.Chunk != nil {
 			return nil, ErrToolSourceLineageUnavailable
 		}
-		capture.lineage, err = types.UnionSourceLineage(capture.lineage, snapshot.SourceLineage)
+		capture.lineage, err = types.UnionSourceLineage(capture.lineage, sourceLineage)
 		if err != nil {
 			return nil, err
 		}
-		if err := turn.Add(snapshot.SourceLineage); err != nil {
+		if err := turn.Add(sourceLineage); err != nil {
 			return nil, err
 		}
 		out.Knowledge = snapshot.Knowledge
 	}
 	if request.MetadataOnly {
-		capture.metadataLineage, err = types.UnionSourceLineage(capture.lineage)
-		if err != nil {
-			return nil, err
+		if turn.RequiresCompleteProducerLineage() {
+			capture.metadataLineage, err = types.UnionSourceLineage(capture.lineage)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			// The snapshot reader treats ExpectedLineage as a strict material
+			// contract and rejects receipt-less legacy sources before the ACL
+			// accumulator can normalize them. The exact read lease already
+			// fences this document's build generation; ACL mode therefore
+			// carries no strict expected producer lineage into chunk hydration.
+			capture.metadataLineage = nil
 		}
 	}
 	if err := finishAgentRead(
@@ -176,8 +194,16 @@ func (t *ReadDocumentTool) hydrateDocumentInputs(
 	return out, nil
 }
 
-func validateDocumentChunkProjection(snapshot types.RAGChunkInputSnapshot) error {
-	if err := snapshot.SourceLineage.RequireComplete(); err != nil {
+func validateDocumentChunkProjection(
+	snapshot types.RAGChunkInputSnapshot,
+	sourceLineage *types.SourceLineage,
+	requireComplete bool,
+) error {
+	if requireComplete {
+		if err := sourceLineage.RequireComplete(); err != nil {
+			return err
+		}
+	} else if err := sourceLineage.Validate(); err != nil {
 		return err
 	}
 	c := snapshot.Chunk

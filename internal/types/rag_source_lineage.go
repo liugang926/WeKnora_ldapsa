@@ -148,6 +148,24 @@ func (t *RAGSourceLineage) Snapshot() *SourceLineage {
 	return snapshot
 }
 
+// NormalizeProducerLineage applies the turn's lineage admission policy to a
+// producer receipt before it is combined with another request-local receipt.
+// Ordinary WeKnora ACL turns accept receipt-less legacy sources after removing
+// identities that cannot be independently validated. Strict material turns
+// return the original receipt unchanged so callers keep requiring completeness.
+func (t *RAGSourceLineage) NormalizeProducerLineage(input *SourceLineage) *SourceLineage {
+	if t == nil || t.requireComplete {
+		return input
+	}
+	return NormalizeWeKnoraACLSourceLineage(input)
+}
+
+// RequiresCompleteProducerLineage reports whether producer receipts must retain
+// their complete envelope before entering the turn.
+func (t *RAGSourceLineage) RequiresCompleteProducerLineage() bool {
+	return t == nil || t.requireComplete
+}
+
 // Check authorizes a stable current snapshot of the accumulated lineage.
 func (t *RAGSourceLineage) Check(ctx context.Context) error {
 	_, err := t.CheckedSnapshot(ctx)

@@ -216,6 +216,94 @@ func TestAgentLineageReadDocumentActualSnapshotReplacesStaleBodyTitleAndPreserve
 	}
 }
 
+type malformedLineageSnapshotReader struct {
+	inner interface {
+		HydrateRAGChunkSnapshots(context.Context, []types.RAGChunkReadRequest) ([]types.RAGChunkInputSnapshot, error)
+	}
+}
+
+func (r *malformedLineageSnapshotReader) HydrateRAGChunkSnapshots(
+	ctx context.Context,
+	requests []types.RAGChunkReadRequest,
+) ([]types.RAGChunkInputSnapshot, error) {
+	snapshots, err := r.inner.HydrateRAGChunkSnapshots(ctx, requests)
+	if err != nil {
+		return nil, err
+	}
+	for i := range snapshots {
+		snapshots[i].SourceLineage = malformedCompleteNextcloudLineage()
+	}
+	return snapshots, nil
+}
+
+func malformedCompleteNextcloudLineage() *types.SourceLineage {
+	return &types.SourceLineage{
+		Version: types.SourceLineageVersion,
+		State:   types.SourceLineageComplete,
+		Sources: []types.SourceIdentity{{
+			Provider:        types.ConnectorTypeNextcloud,
+			TenantID:        7,
+			KnowledgeBaseID: "kb",
+			DataSourceID:    "ds",
+			PairOperationID: "pair",
+			InstanceID:      "instance",
+			BindingID:       "binding",
+			FileID:          "not-a-file-id",
+			ExternalID:      "nextcloud:instance:not-a-file-id",
+			KnowledgeID:     "doc",
+			Revision:        1,
+			ETag:            "original",
+		}},
+	}
+}
+
+func TestAgentLineageReadDocumentACLNormalizesMalformedNextcloudSnapshot(t *testing.T) {
+	tool, _, _ := actualAgentDocumentFixture(t)
+	tool.SetRAGChunkSnapshotReader(&malformedLineageSnapshotReader{inner: tool.snapshotReader})
+	turn := types.NewWeKnoraACLSourceLineage(func(context.Context, *types.SourceLineage) error {
+		return nil
+	})
+	ctx := types.WithRAGSourceLineage(context.Background(), turn)
+	r := NewToolRegistry()
+	r.RegisterTool(tool)
+	result, err := r.ExecuteToolWithSourceLineage(ctx, ToolReadDocument, json.RawMessage(`{"id":"doc"}`))
+	require.NoError(t, err)
+	require.True(t, result.Success)
+	require.Contains(t, result.Output, "authoritative database body")
+	require.Empty(t, result.SourceLineage.Sources)
+	require.NoError(t, turn.Snapshot().RequireComplete())
+}
+
+func TestAgentLineageReadDocumentACLRetainsValidNextcloudIdentity(t *testing.T) {
+	tool, _, _ := actualAgentDocumentFixture(t)
+	turn := types.NewWeKnoraACLSourceLineage(func(context.Context, *types.SourceLineage) error {
+		return nil
+	})
+	ctx := types.WithRAGSourceLineage(context.Background(), turn)
+	r := NewToolRegistry()
+	r.RegisterTool(tool)
+	result, err := r.ExecuteToolWithSourceLineage(ctx, ToolReadDocument, json.RawMessage(`{"id":"doc"}`))
+	require.NoError(t, err)
+	require.True(t, result.Success)
+	require.Len(t, result.SourceLineage.Sources, 1)
+	require.Equal(t, "77", result.SourceLineage.Sources[0].FileID)
+	require.Equal(t, result.SourceLineage, turn.Snapshot())
+}
+
+func TestAgentLineageReadDocumentMaterialKeepsMalformedNextcloudSnapshotClosed(t *testing.T) {
+	tool, _, _ := actualAgentDocumentFixture(t)
+	tool.SetRAGChunkSnapshotReader(&malformedLineageSnapshotReader{inner: tool.snapshotReader})
+	turn := types.NewRAGSourceLineage(func(context.Context, *types.SourceLineage) error {
+		return types.ErrSourceLineageInvalid
+	})
+	ctx := types.WithRAGSourceLineage(context.Background(), turn)
+	r := NewToolRegistry()
+	r.RegisterTool(tool)
+	result, err := r.ExecuteToolWithSourceLineage(ctx, ToolReadDocument, json.RawMessage(`{"id":"doc"}`))
+	require.ErrorIs(t, err, types.ErrSourceLineageInvalid)
+	require.Nil(t, result)
+}
+
 type changingAgentSnapshotReader struct {
 	inner interface {
 		HydrateRAGChunkSnapshots(context.Context, []types.RAGChunkReadRequest) ([]types.RAGChunkInputSnapshot, error)

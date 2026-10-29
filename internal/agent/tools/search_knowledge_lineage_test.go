@@ -59,6 +59,45 @@ func TestAgentLineageSearchActualTextTitleReachRerankAndOutput(t *testing.T) {
 	require.Equal(t, result.SourceLineage, turn.Snapshot())
 }
 
+func TestAgentLineageSearchACLNormalizesMalformedNextcloudSnapshot(t *testing.T) {
+	tool, _, _ := actualAgentSearchFixture(t, &stubReranker{scores: []float64{0.9}})
+	tool.SetRAGChunkSnapshotReader(&malformedLineageSnapshotReader{inner: tool.snapshotReader})
+	turn := types.NewWeKnoraACLSourceLineage(func(context.Context, *types.SourceLineage) error {
+		return nil
+	})
+	ctx := types.WithRAGSourceLineage(context.Background(), turn)
+	r := NewToolRegistry()
+	r.RegisterTool(tool)
+	result, err := r.ExecuteToolWithSourceLineage(
+		ctx,
+		ToolSearchKnowledge,
+		json.RawMessage(`{"query":"database","mode":"keyword"}`),
+	)
+	require.NoError(t, err)
+	require.True(t, result.Success)
+	require.Contains(t, result.Output, "authoritative database body")
+	require.Empty(t, result.SourceLineage.Sources)
+	require.NoError(t, turn.Snapshot().RequireComplete())
+}
+
+func TestAgentLineageSearchMaterialKeepsMalformedNextcloudSnapshotClosed(t *testing.T) {
+	tool, _, _ := actualAgentSearchFixture(t, &stubReranker{scores: []float64{0.9}})
+	tool.SetRAGChunkSnapshotReader(&malformedLineageSnapshotReader{inner: tool.snapshotReader})
+	turn := types.NewRAGSourceLineage(func(context.Context, *types.SourceLineage) error {
+		return types.ErrSourceLineageInvalid
+	})
+	ctx := types.WithRAGSourceLineage(context.Background(), turn)
+	r := NewToolRegistry()
+	r.RegisterTool(tool)
+	result, err := r.ExecuteToolWithSourceLineage(
+		ctx,
+		ToolSearchKnowledge,
+		json.RawMessage(`{"query":"database","mode":"keyword"}`),
+	)
+	require.ErrorIs(t, err, types.ErrSourceLineageInvalid)
+	require.Nil(t, result)
+}
+
 type revokeSearchReranker struct {
 	*stubReranker
 	svc *leasedAgentKnowledgeService
