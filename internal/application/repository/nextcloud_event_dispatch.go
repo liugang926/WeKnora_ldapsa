@@ -51,9 +51,10 @@ type NextcloudEventDispatchClaim struct {
 
 // RecoverQueuedEventSync closes one running event log only when it is still
 // the exact task referenced by a queued dispatch. It is reserved for an
-// operator that has independently proven the Asynq task is archived or absent.
-// A queued dispatch or the one exact stale-review state may be recovered; all
-// other blocked states remain manual-review only.
+// operator that has independently proven the Asynq task is archived or absent,
+// or that the durable worker lease has already been released. A queued
+// dispatch or the one exact stale-review state may be recovered; all other
+// blocked states remain manual-review only.
 func (r *NextcloudEventInboxRepository) RecoverQueuedEventSync(
 	ctx context.Context, connectionID, syncLogID string, now time.Time,
 ) (bool, error) {
@@ -98,18 +99,25 @@ func (r *NextcloudEventInboxRepository) RecoverQueuedEventSync(
 			}
 			return err
 		}
-		if log.Status != types.SyncLogStatusRunning {
+		if log.Status != types.SyncLogStatusRunning || log.WorkerActive {
 			return ErrNextcloudEventConflict
 		}
 		log.Status = types.SyncLogStatusFailed
 		log.FinishedAt = &now
 		log.ErrorMessage = "sync_worker_terminated"
-		if err := tx.Model(&types.SyncLog{}).Where("id = ?", syncLogID).
+		result := tx.Model(&types.SyncLog{}).
+			Where("id = ? AND data_source_id = ? AND tenant_id = ?", syncLogID,
+				connection.DatasourceID, connection.TenantID).
+			Where("status = ? AND worker_active = ?", types.SyncLogStatusRunning, false).
 			Updates(map[string]any{
 				"status": log.Status, "finished_at": log.FinishedAt,
 				"error_message": log.ErrorMessage, "updated_at": now,
-			}).Error; err != nil {
-			return err
+			})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return ErrNextcloudEventConflict
 		}
 		if err := tx.Table("nextcloud_event_dispatch").
 			Where("connection_id = ?", connectionID).
