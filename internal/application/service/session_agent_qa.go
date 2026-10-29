@@ -20,6 +20,14 @@ import (
 	secutils "github.com/Tencent/WeKnora/internal/utils"
 )
 
+func hasAgentRawInputMaterials(req *types.QARequest) bool {
+	return req != nil && (len(req.ImageURLs) > 0 || len(req.Attachments) > 0)
+}
+
+func hasAgentMaterialFlow(req *types.QARequest) bool {
+	return hasAgentRawInputMaterials(req) || req != nil && req.SteerSink != nil
+}
+
 // AgentQA performs agent-based question answering with conversation history and streaming support
 // customAgent is optional - if provided, uses custom agent configuration instead of tenant defaults
 // summaryModelID is optional - if provided, overrides the model from customAgent config
@@ -28,15 +36,24 @@ func (s *sessionService) AgentQA(
 	req *types.QARequest,
 	eventBus *event.EventBus,
 ) error {
-	var releaseProducer func()
-	var external bool
-	ctx, releaseProducer, external = retainMessageMaterialProducer(ctx)
-	if !external {
-		ctx = WithMessageMaterialOutputBoundary(ctx)
-		releaseProducer = func() { CloseMessageMaterialOutputBoundary(ctx) }
+	// Keep strict Nextcloud lineage as the default. Deployments may explicitly
+	// make the WeKnora workspace/session ACL authoritative; only in that mode
+	// may an ordinary query without explicit material skip lineage admission.
+	hasMaterialFlow := hasAgentMaterialFlow(req) || !access.UseWeKnoraReadAuthority()
+	if !hasMaterialFlow {
+		ctx = context.WithValue(ctx, weknoraSourceIndependentAgentKey{}, true)
+	}
+	releaseProducer := func() {}
+	if hasMaterialFlow {
+		var external bool
+		ctx, releaseProducer, external = retainMessageMaterialProducer(ctx)
+		if !external {
+			ctx = WithMessageMaterialOutputBoundary(ctx)
+			releaseProducer = func() { CloseMessageMaterialOutputBoundary(ctx) }
+		}
 	}
 	defer releaseProducer()
-	if native, ok := s.lineageVerifier.(*messageService); ok && native.materialStore != nil {
+	if native, ok := s.lineageVerifier.(*messageService); ok && native.materialStore != nil && hasMaterialFlow {
 		requestID, err := native.materialStore.MessageRequestControl(ctx, req.Session.ID, req.AssistantMessageID)
 		if err != nil {
 			return err
@@ -213,7 +230,7 @@ func (s *sessionService) AgentQA(
 	}
 	// A single-turn Agent can still reuse the session workspace, attachments,
 	// memory and tools. Admission is independent from message replay settings.
-	if native, ok := s.lineageVerifier.(*messageService); ok && native.materialStore != nil {
+	if native, ok := s.lineageVerifier.(*messageService); ok && native.materialStore != nil && hasMaterialFlow {
 		// Native retained materials have per-message original proofs and actual
 		// scopes. Their current source guard runs on the captured inputs.
 		if err := CheckMessageMaterialOutputBoundary(ctx); err != nil {
@@ -226,16 +243,34 @@ func (s *sessionService) AgentQA(
 	}
 	if historyAdmitted && agentConfig.MultiTurnEnabled {
 		budget := agent.HistoryTokenBudget(agentConfig)
+		var historyAdmission AgentHistoryAdmission = messageLineageHistoryAdmission{verifier: s.lineageVerifier}
+		if !hasMaterialFlow {
+			historyAdmission = weknoraACLHistoryAdmission{}
+		}
 		llmContext, agentConfig.ContextTokenScale, err = LoadAgentHistory(
 			ctx,
 			s.messageRepo,
 			sessionID,
 			budget,
 			agentConfig.RetainRetrievalHistory,
-			messageLineageHistoryAdmission{verifier: s.lineageVerifier},
+			historyAdmission,
 		)
 		if err != nil {
 			excludeHistoricalContext(err)
+		} else if !hasMaterialFlow {
+			// Stored conversation text is governed by the WeKnora session
+			// owner/space ACL. Older rows may predate the source-lineage
+			// envelope; normalize only unknown envelopes for the model turn
+			// without changing the persisted history.
+			emptyLineage, lineageErr := types.NewCompleteSourceLineage()
+			if lineageErr != nil {
+				return lineageErr
+			}
+			for i := range llmContext {
+				if llmContext[i].SourceLineage == nil || llmContext[i].SourceLineage.RequireComplete() != nil {
+					llmContext[i].SourceLineage = emptyLineage
+				}
+			}
 		}
 		logger.Infof(
 			ctx,
@@ -267,7 +302,7 @@ func (s *sessionService) AgentQA(
 	// source of truth. Gated on the sandbox manager advertising a session
 	// filesystem capability so provider-neutral remote wiring stays here.
 	var stagedAttachments []stagedSessionAttachment
-	if historyAdmitted {
+	if historyAdmitted && hasMaterialFlow {
 		stager, ok := s.agentService.(sessionAttachmentStager)
 		if !ok {
 			return errors.New("agent service does not support session attachment staging")
@@ -316,7 +351,10 @@ func (s *sessionService) AgentQA(
 	lineageEngine, ok := engine.(interface {
 		SetSourceLineageVerifier(func(context.Context, *types.SourceLineage) error)
 	})
-	if !ok || s.sourceLineageGuard == nil {
+	if !ok {
+		return access.ErrNextcloudPublicationUnavailable
+	}
+	if hasMaterialFlow && s.sourceLineageGuard == nil {
 		return access.ErrNextcloudPublicationUnavailable
 	}
 	lineageScope := access.LineageReadScope{
@@ -325,11 +363,16 @@ func (s *sessionService) AgentQA(
 		AgentTenantID: req.CustomAgent.TenantID,
 	}
 	lineageEngine.SetSourceLineageVerifier(func(checkCtx context.Context, lineage *types.SourceLineage) error {
-		if err := CheckMessageMaterialOutputBoundary(ctx); err != nil {
+		if err := lineage.RequireComplete(); err != nil {
 			return err
 		}
-
 		if err := s.revalidateAgentExecution(checkCtx, req.CustomAgent, agentConfig.SearchTargets); err != nil {
+			return err
+		}
+		if !hasMaterialFlow {
+			return nil
+		}
+		if err := CheckMessageMaterialOutputBoundary(ctx); err != nil {
 			return err
 		}
 		return s.sourceLineageGuard.Check(checkCtx, lineage, lineageScope)
@@ -349,8 +392,10 @@ func (s *sessionService) AgentQA(
 		agent := req.CustomAgent
 		searchTargets := agentConfig.SearchTargets
 		guarded.SetRoundGuard(func(guardCtx context.Context) error {
-			if err := CheckMessageMaterialOutputBoundary(ctx); err != nil {
-				return err
+			if hasMaterialFlow {
+				if err := CheckMessageMaterialOutputBoundary(ctx); err != nil {
+					return err
+				}
 			}
 
 			return s.revalidateAgentExecution(guardCtx, agent, searchTargets)
@@ -441,8 +486,10 @@ func (s *sessionService) AgentQA(
 		})
 		return err
 	}
-	if err := CheckMessageMaterialOutputBoundary(ctx); err != nil {
-		return err
+	if hasMaterialFlow {
+		if err := CheckMessageMaterialOutputBoundary(ctx); err != nil {
+			return err
+		}
 	}
 	// Return empty - events will be handled by Handler via EventBus subscription
 	return nil

@@ -16,7 +16,7 @@ import (
 	"time"
 
 	"github.com/Tencent/WeKnora/internal/application/access"
-	applicationservice "github.com/Tencent/WeKnora/internal/application/service"
+	appsvc "github.com/Tencent/WeKnora/internal/application/service"
 	"github.com/Tencent/WeKnora/internal/errors"
 	"github.com/Tencent/WeKnora/internal/event"
 	"github.com/Tencent/WeKnora/internal/logger"
@@ -840,11 +840,16 @@ func (h *Handler) setupSSEStream(reqCtx *qaRequestContext, generateTitle bool, m
 	var materialAttach func(context.Context) context.Context
 	var materialCheck func() error
 	var materialClose func()
-	if native, ok := h.messageService.(interface{ HasOriginalMessageMaterialStore() bool }); ok &&
-		native.HasOriginalMessageMaterialStore() {
-		asyncCtx, materialAttach, materialCheck, materialClose = applicationservice.BeginMessageMaterialHTTPBoundary(
-			asyncCtx,
-		)
+	// Agent turns create their steer sink below, after this boundary must be
+	// established. Check the mode/agent precondition rather than the sink's
+	// current value so mid-run steering cannot bypass original-material proof.
+	needsMaterialBoundary := !access.UseWeKnoraReadAuthority() || hasExplicitInputMaterials(reqCtx) ||
+		(mode == qaModeAgent && reqCtx != nil && reqCtx.customAgent != nil)
+	if needsMaterialBoundary {
+		native, ok := h.messageService.(interface{ HasOriginalMessageMaterialStore() bool })
+		if ok && native.HasOriginalMessageMaterialStore() {
+			asyncCtx, materialAttach, materialCheck, materialClose = appsvc.BeginMessageMaterialHTTPBoundary(asyncCtx)
+		}
 	}
 
 	streamCtx := &sseStreamContext{
@@ -1510,7 +1515,7 @@ func (h *Handler) executeQA(reqCtx *qaRequestContext, mode qaMode, generateTitle
 	livePublicationMessage.KnowledgeReferences = nil
 	asyncDone := make(chan struct{})
 	streamCtx.producerDone = asyncDone
-	releaseMaterialProducer := applicationservice.RetainMessageMaterialHTTPProducer(streamCtx.asyncCtx)
+	releaseMaterialProducer := appsvc.RetainMessageMaterialHTTPProducer(streamCtx.asyncCtx)
 	go func() {
 		defer close(asyncDone)
 		defer releaseMaterialProducer()
@@ -1522,7 +1527,7 @@ func (h *Handler) executeQA(reqCtx *qaRequestContext, mode qaMode, generateTitle
 		}
 		defer func() {
 			if r := recover(); r != nil {
-				applicationservice.RefuseMessageMaterialOutputBoundary(streamCtx.asyncCtx)
+				appsvc.RefuseMessageMaterialOutputBoundary(streamCtx.asyncCtx)
 				if streamCtx.releaseTurn != nil {
 					streamCtx.releaseTurn()
 				}
@@ -1632,7 +1637,7 @@ func (h *Handler) executeQA(reqCtx *qaRequestContext, mode qaMode, generateTitle
 				// A refused Steer control may not touch any saved parent row.
 				// Carry that producer failure into this same request's material
 				// owner so finalization cannot certify an empty completed answer.
-				applicationservice.RefuseMessageMaterialOutputBoundary(streamCtx.asyncCtx)
+				appsvc.RefuseMessageMaterialOutputBoundary(streamCtx.asyncCtx)
 				logger.ErrorWithFields(streamCtx.asyncCtx, serviceErr, nil)
 				streamCtx.eventBus.Emit(streamCtx.asyncCtx, event.Event{
 					Type:      event.EventError,

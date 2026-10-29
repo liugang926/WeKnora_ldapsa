@@ -988,11 +988,13 @@ func (s *sessionService) GenerateTitle(ctx context.Context,
 	// This adapter sends only the author's raw user Content and the configured
 	// static title prompt. It never consumes captions, attachments or answers.
 	titleLineage, _ := types.NewCompleteSourceLineage()
-	if s.sourceLineageGuard == nil {
-		return "", access.ErrNextcloudPublicationUnavailable
-	}
-	if err := s.sourceLineageGuard.Check(ctx, titleLineage, access.LineageReadScope{}); err != nil {
-		return "", err
+	if !access.UseWeKnoraReadAuthority() {
+		if s.sourceLineageGuard == nil {
+			return "", access.ErrNextcloudPublicationUnavailable
+		}
+		if err := s.sourceLineageGuard.Check(ctx, titleLineage, access.LineageReadScope{}); err != nil {
+			return "", err
+		}
 	}
 	for i := range chatMessages {
 		chatMessages[i].SourceLineage, _ = types.UnionSourceLineage(titleLineage)
@@ -1007,9 +1009,12 @@ func (s *sessionService) GenerateTitle(ctx context.Context,
 		return "", err
 	}
 
-	// Process and store the generated title
-	if err := s.sourceLineageGuard.Check(ctx, titleLineage, access.LineageReadScope{}); err != nil {
-		return "", err
+	// Process and store the generated title. In the default strict mode the
+	// exact same source snapshot must still be valid before persistence.
+	if !access.UseWeKnoraReadAuthority() {
+		if err := s.sourceLineageGuard.Check(ctx, titleLineage, access.LineageReadScope{}); err != nil {
+			return "", err
+		}
 	}
 	title, truncated := sanitizeGeneratedTitle(response.Content)
 	if truncated {
