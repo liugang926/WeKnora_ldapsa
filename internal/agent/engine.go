@@ -88,6 +88,7 @@ type AgentEngine struct {
 	lineageMu                     sync.Mutex
 	lineageEmitMu                 sync.Mutex
 	lineageErr                    error
+	lineageDiagnostic             string
 	lineageCancel                 context.CancelFunc
 	systemPromptLineage           *types.SourceLineage
 	memoryPromptLineage           *types.SourceLineage
@@ -337,7 +338,7 @@ func (e *AgentEngine) Execute(
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	e.lineageMu.Lock()
-	e.lineageErr, e.lineageCancel = nil, cancel
+	e.lineageErr, e.lineageDiagnostic, e.lineageCancel = nil, "", cancel
 	e.lineageMu.Unlock()
 	if e.requireCompleteSourceLineage {
 		e.turnLineage = types.NewRAGSourceLineage(e.lineageVerifier)

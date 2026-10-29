@@ -126,6 +126,7 @@ func (e *AgentEngine) rememberLineageFailure(err error) error {
 	defer e.lineageMu.Unlock()
 	if e.lineageErr == nil {
 		e.lineageErr = ErrAgentSourceLineageDenied
+		e.lineageDiagnostic = safeLineageFailureDiagnostic(err)
 	}
 	if e.lineageCancel != nil {
 		e.lineageCancel()
@@ -133,10 +134,29 @@ func (e *AgentEngine) rememberLineageFailure(err error) error {
 	return ErrAgentSourceLineageDenied
 }
 
+func safeLineageFailureDiagnostic(err error) string {
+	switch {
+	case errors.Is(err, types.ErrSourceLineageLimit):
+		return types.ErrSourceLineageLimit.Error()
+	case errors.Is(err, types.ErrSourceLineageInvalid):
+		return err.Error()
+	case errors.Is(err, types.ErrSourceLineageUnknown):
+		return types.ErrSourceLineageUnknown.Error()
+	default:
+		return "source lineage authorization denied"
+	}
+}
+
 func (e *AgentEngine) lineageFailure() error {
 	e.lineageMu.Lock()
 	defer e.lineageMu.Unlock()
 	return e.lineageErr
+}
+
+func (e *AgentEngine) lineageFailureDiagnostic() string {
+	e.lineageMu.Lock()
+	defer e.lineageMu.Unlock()
+	return e.lineageDiagnostic
 }
 
 func (e *AgentEngine) addLineage(inputs ...*types.SourceLineage) error {

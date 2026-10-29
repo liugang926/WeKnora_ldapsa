@@ -141,3 +141,40 @@ func TestWeKnoraACLAgentAcceptsMalformedLegacyNextcloudReceipt(t *testing.T) {
 	strict.SetSourceLineageVerifier(func(context.Context, *types.SourceLineage) error { return nil })
 	require.ErrorIs(t, strict.addLineage(legacy), ErrAgentSourceLineageDenied)
 }
+
+func TestWeKnoraACLAgentAcceptsMalformedCompleteNextcloudReceipt(t *testing.T) {
+	model := &mockChat{responses: []mockResponse{lineageAnswer("answer")}}
+	engine := newTestEngine(t, model)
+	engine.SetWeKnoraACLSourceLineageVerifier(func(context.Context) error { return nil })
+
+	legacy := types.UnknownSourceLineage()
+	legacy.State = types.SourceLineageComplete
+	legacy.Sources = []types.SourceIdentity{{
+		Provider: types.ConnectorTypeNextcloud,
+		TenantID: 7,
+		FileID:   "1",
+	}}
+	state, err := engine.Execute(
+		context.Background(),
+		"session",
+		"message",
+		"ordinary question over a Nextcloud-sourced KB",
+		[]chat.Message{{
+			Role:          "assistant",
+			Content:       "legacy answer with a malformed complete source receipt",
+			SourceLineage: legacy,
+		}},
+	)
+	require.NoError(t, err)
+	require.True(t, state.IsComplete)
+	require.NotEmpty(t, state.FinalAnswer)
+	require.Equal(t, 1, model.callCount)
+	require.NoError(t, state.SourceLineage.RequireComplete())
+	require.Empty(t, state.SourceLineage.Sources)
+	require.NoError(t, engine.lineageFailure())
+
+	strict := newTestEngine(t, &mockChat{})
+	strict.SetSourceLineageVerifier(func(context.Context, *types.SourceLineage) error { return nil })
+	require.ErrorIs(t, strict.addLineage(legacy), ErrAgentSourceLineageDenied)
+	require.Contains(t, strict.lineageFailureDiagnostic(), "invalid source lineage")
+}

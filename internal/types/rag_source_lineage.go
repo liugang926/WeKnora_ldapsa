@@ -75,10 +75,8 @@ func (t *RAGSourceLineage) Add(inputs ...*SourceLineage) error {
 }
 
 // normalizeWeKnoraACLInputs keeps structurally valid source receipts while
-// treating malformed legacy/unknown envelopes as source-independent inputs.
-// A malformed complete envelope remains invalid: it asserts provenance that
-// cannot be trusted. In ACL mode authorization comes from the current
-// WeKnora caller/session/space check, not from optional source identities.
+// dropping malformed optional receipts. In ACL mode authorization comes from
+// the current WeKnora caller/session/space check, not from source identities.
 func normalizeWeKnoraACLInputs(inputs []*SourceLineage) []*SourceLineage {
 	out := make([]*SourceLineage, len(inputs))
 	for i, input := range inputs {
@@ -88,19 +86,37 @@ func normalizeWeKnoraACLInputs(inputs []*SourceLineage) []*SourceLineage {
 }
 
 // NormalizeWeKnoraACLSourceLineage keeps a structurally valid source receipt
-// and treats a malformed legacy/unknown envelope as source-independent. It
-// deliberately leaves a malformed complete assertion untouched so strict
-// validation still rejects provenance claims that cannot be trusted.
+// and treats a malformed legacy/unknown envelope as source-independent. A
+// malformed complete envelope may retain only identities that independently
+// validate; its unverifiable identities are dropped because ACL mode does not
+// use them for authorization. Strict material turns never call this function.
 func NormalizeWeKnoraACLSourceLineage(input *SourceLineage) *SourceLineage {
 	if input == nil {
 		return nil
 	}
-	if input.State != SourceLineageComplete {
-		if err := input.Validate(); err != nil {
-			return UnknownSourceLineage()
+	if input.Validate() == nil {
+		return input
+	}
+
+	validSources := make([]SourceIdentity, 0, len(input.Sources))
+	for _, source := range input.Sources {
+		if source.Validate() == nil {
+			validSources = append(validSources, source)
 		}
 	}
-	return input
+	if input.State == SourceLineageComplete {
+		normalized, err := NewCompleteSourceLineage(validSources...)
+		if err == nil {
+			return normalized
+		}
+		return UnknownSourceLineage()
+	}
+	normalized := UnknownSourceLineage()
+	normalized.Sources = validSources
+	if normalized.Validate() != nil {
+		return UnknownSourceLineage()
+	}
+	return normalized
 }
 
 func sameRAGSourceLineage(a, b *SourceLineage) bool {

@@ -65,6 +65,7 @@ func (e *AgentEngine) streamLLMToEventBus(
 	}
 	if snapshotErr != nil {
 		_ = e.addLineage(types.UnknownSourceLineage())
+		logger.Warnf(ctx, "Agent input rejected at model snapshot boundary: %s", safeLineageFailureDiagnostic(snapshotErr))
 		return nil, e.rememberLineageFailure(snapshotErr)
 	}
 	// This exact detached wire snapshot is checked below and is the only
@@ -85,7 +86,7 @@ func (e *AgentEngine) streamLLMToEventBus(
 		}
 	}
 	if err := e.accountMessages(ctx, messages); err != nil {
-		logger.Warn(ctx, "Agent input rejected at original wire message boundary")
+		logger.Warnf(ctx, "Agent input rejected at original wire message boundary: %s", e.lineageFailureDiagnostic())
 		return nil, err
 	}
 	reportModelContextLeaks(ctx, "Agent", e.modelContext, messages)

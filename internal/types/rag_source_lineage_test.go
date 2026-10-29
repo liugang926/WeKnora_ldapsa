@@ -107,7 +107,7 @@ func TestWeKnoraACLSourceLineageNormalizesUnknownWithoutDroppingKnownSources(t *
 	}
 }
 
-func TestWeKnoraACLSourceLineageDropsMalformedLegacyUnknownButRejectsBadComplete(t *testing.T) {
+func TestWeKnoraACLSourceLineageNormalizesMalformedLegacyIncludingComplete(t *testing.T) {
 	turn := NewWeKnoraACLSourceLineage(func(context.Context, *SourceLineage) error { return nil })
 	legacy := UnknownSourceLineage()
 	legacy.Sources = []SourceIdentity{{Provider: ConnectorTypeNextcloud}}
@@ -130,12 +130,40 @@ func TestWeKnoraACLSourceLineageDropsMalformedLegacyUnknownButRejectsBadComplete
 	malformedComplete := UnknownSourceLineage()
 	malformedComplete.State = SourceLineageComplete
 	malformedComplete.Sources = []SourceIdentity{{Provider: ConnectorTypeNextcloud}}
-	if err := turn.Add(malformedComplete); !errors.Is(err, ErrSourceLineageInvalid) {
-		t.Fatalf("malformed complete source assertion was accepted: %v", err)
+	if err := turn.Add(malformedComplete); err != nil {
+		t.Fatalf("malformed legacy complete receipt rejected ACL turn: %v", err)
+	}
+	proof, err = turn.CheckedSnapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if proof.State != SourceLineageComplete || len(proof.Sources) != 1 ||
+		proof.Sources[0].FileID != "4" {
+		t.Fatalf("ACL normalization lost known sources after malformed complete: %+v", proof)
 	}
 
 	strict := NewRAGSourceLineage(func(context.Context, *SourceLineage) error { return nil })
 	if err := strict.Add(legacy); !errors.Is(err, ErrSourceLineageInvalid) {
 		t.Fatalf("strict lineage accepted malformed legacy input: %v", err)
+	}
+	if err := strict.Add(malformedComplete); !errors.Is(err, ErrSourceLineageInvalid) {
+		t.Fatalf("strict lineage accepted malformed complete input: %v", err)
+	}
+}
+
+func TestWeKnoraACLSourceLineageRetainsIndependentlyValidIdentities(t *testing.T) {
+	valid := lineageTestIdentity("5", "etag")
+	malformedComplete := &SourceLineage{
+		Version: SourceLineageVersion,
+		State:   SourceLineageComplete,
+		Sources: []SourceIdentity{
+			valid,
+			{Provider: ConnectorTypeNextcloud, TenantID: 7},
+		},
+	}
+	normalized := NormalizeWeKnoraACLSourceLineage(malformedComplete)
+	if normalized == nil || normalized.State != SourceLineageComplete ||
+		len(normalized.Sources) != 1 || normalized.Sources[0] != valid {
+		t.Fatalf("valid identity was lost while normalizing malformed complete: %+v", normalized)
 	}
 }
