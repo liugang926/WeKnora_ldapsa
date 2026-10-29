@@ -45,3 +45,21 @@ func TestWeKnoraSessionHistoryReadDoesNotRequireNextcloudReceipt(t *testing.T) {
 	require.Len(t, messages, 1)
 	require.Equal(t, "answer", messages[0].Content)
 }
+
+func TestWeKnoraSessionHistoryReadDoesNotMintNextcloudLeases(t *testing.T) {
+	messages, _, _, db, ctx, session := messageMaterialActualFixture(t)
+	_, assistant := produceActualMessagePair(ctx, t, messages, session)
+	rows, err := messages.GetRecentMessagesBySession(ctx, session.ID, 20)
+	require.NoError(t, err)
+	require.Len(t, rows, 2)
+	require.Equal(t, assistant.Content, rows[1].Content)
+	var live int64
+	require.NoError(
+		t,
+		db.Table("nextcloud_content_leases").
+			Where("kind='read' AND released_at_ms IS NULL").
+			Count(&live).
+			Error,
+	)
+	require.Zero(t, live, "ordinary WeKnora history reads must not acquire Nextcloud leases")
+}

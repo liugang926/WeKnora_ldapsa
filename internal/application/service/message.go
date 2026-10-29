@@ -1094,70 +1094,24 @@ func (s *messageService) SearchMessages(
 	return result, nil
 }
 
-// filterHistoricalSearchPairs runs after partner loading. Filtering only the
-// search hit would let fetchPartnerMessages reintroduce a revoked answer when
-// the user's harmless question was the text that matched.
+// filterHistoricalSearchPairs runs after the repository has restricted every
+// row to the authenticated WeKnora owner. Saved conversation text is no
+// longer an independent Nextcloud publication derivative: Nextcloud handles
+// source lifecycle, while the WeKnora session owner is the read ACL.
 func (s *messageService) filterHistoricalSearchPairs(
-	ctx context.Context, items []*types.MessageSearchResultItem,
+	_ context.Context, items []*types.MessageSearchResultItem,
 ) ([]*types.MessageSearchResultItem, error) {
-	blocked := make(map[string]struct{})
-	for _, item := range items {
-		if item == nil || item.Role != "assistant" {
-			continue
-		}
-		if err := s.CheckMessagePublication(ctx, &item.Message); err != nil {
-			if !errors.Is(err, access.ErrNextcloudPublicationDenied) {
-				return nil, err
-			}
-			blocked[historicalSearchPairKey(item)] = struct{}{}
-		}
-	}
 	filtered := make([]*types.MessageSearchResultItem, 0, len(items))
-	var batchMessages []*types.Message
-	var batchTitles []access.SourceLineageRead
 	for _, item := range items {
 		if item == nil {
 			continue
 		}
-		if _, denied := blocked[historicalSearchPairKey(item)]; !denied {
-			if item.SessionTitleSourceLineage.RequireComplete() != nil {
-				item.SessionTitle = ""
-			} else if len(item.SessionTitleSourceLineage.Sources) > 0 {
-				if s.sourceLineageGuard == nil {
-					return nil, access.ErrNextcloudPublicationUnavailable
-				}
-				if err := s.sourceLineageGuard.Check(
-					ctx,
-					item.SessionTitleSourceLineage,
-					access.LineageReadScope{},
-				); err != nil {
-					if !errors.Is(err, access.ErrNextcloudPublicationDenied) {
-						return nil, err
-					}
-					item.SessionTitle = ""
-				}
-			}
-			if item.Role == "user" {
-				item.Message = *rawUserContentOnly([]*types.Message{&item.Message})[0]
-			}
-			filtered = append(filtered, item)
-			batchMessages = append(batchMessages, &item.Message)
-			if item.SessionTitle != "" && item.SessionTitleSourceLineage.RequireComplete() == nil {
-				batchTitles = append(batchTitles, access.SourceLineageRead{Lineage: item.SessionTitleSourceLineage})
-			}
+		if item.Role == "user" {
+			item.Message = *rawUserContentOnly([]*types.Message{&item.Message})[0]
 		}
-	}
-	if err := s.checkMessageSourceLineageBatch(ctx, batchMessages, batchTitles); err != nil {
-		return nil, err
+		filtered = append(filtered, item)
 	}
 	return filtered, nil
-}
-
-func historicalSearchPairKey(item *types.MessageSearchResultItem) string {
-	if item.RequestID == "" {
-		return item.ID
-	}
-	return searchPairKey(item.SessionID, item.RequestID)
 }
 
 // restrictToOwnedSessions drops results from sessions the caller does not own.

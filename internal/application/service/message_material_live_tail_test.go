@@ -82,12 +82,20 @@ func testMessageMaterialExternalTail(t *testing.T, postgres bool) {
 					Role:        "user",
 					Content:     "actual new query",
 					IsCompleted: true,
+					ExecutionContext: types.MessageExecutionContext{
+						ExplicitInputMaterials: true,
+					},
 				},
 			)
 			require.NoError(t, err)
 			current, err := messages.CreateMessage(
 				ctx,
-				&types.Message{SessionID: session.ID, RequestID: currentUser.RequestID, Role: "assistant"},
+				&types.Message{
+					SessionID:        session.ID,
+					RequestID:        currentUser.RequestID,
+					Role:             "assistant",
+					ExecutionContext: currentUser.ExecutionContext,
+				},
 			)
 			require.NoError(t, err)
 			ctx, attach, check, closeRead := BeginMessageMaterialHTTPBoundary(ctx)
@@ -163,12 +171,20 @@ func TestMessageMaterialActualCompletionSerializesHeartbeatAndHTTPCheck(t *testi
 			Role:        "user",
 			Content:     "actual original live query",
 			IsCompleted: true,
+			ExecutionContext: types.MessageExecutionContext{
+				ExplicitInputMaterials: true,
+			},
 		},
 	)
 	require.NoError(t, err)
 	assistant, err := messages.CreateMessage(
 		ctx,
-		&types.Message{SessionID: session.ID, RequestID: user.RequestID, Role: "assistant"},
+		&types.Message{
+			SessionID:        session.ID,
+			RequestID:        user.RequestID,
+			Role:             "assistant",
+			ExecutionContext: user.ExecutionContext,
+		},
 	)
 	require.NoError(t, err)
 	ctx, _, check, closeHTTP := BeginMessageMaterialHTTPBoundary(ctx)

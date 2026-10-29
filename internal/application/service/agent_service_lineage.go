@@ -288,9 +288,11 @@ func (e *agentPromptInputEngine) Execute(
 	return e.AgentEngine.Execute(ctx, session, message, query, history, images...)
 }
 
-// A current DB row is an authorization/value check, not original provenance.
-// Only the exact image-owned builtin factory and YAML template bytes certify
-// the rendered template. A custom override or retained copy remains unknown.
+// builtinAgentPromptInput binds the exact server-resolved prompt to the
+// current WeKnora caller, session owner, Agent identity and live generation.
+// Nextcloud publication receipts are intentionally not part of this check:
+// a system prompt is WeKnora-owned input, while explicit user materials keep
+// their separate native-material path.
 func (s *agentService) builtinAgentPromptInput(
 	ctx context.Context,
 	config *types.AgentConfig,
@@ -299,11 +301,85 @@ func (s *agentService) builtinAgentPromptInput(
 	if template == "" {
 		return nil, nil, nil
 	}
+	messages, ok := s.messageService.(*messageService)
+	if !ok || messages == nil || messages.materialStore == nil || messages.sessionRepo == nil ||
+		s.db == nil || config == nil {
+		return nil, nil, access.ErrNextcloudPublicationUnavailable
+	}
+	control, generation, err := messages.materialStore.MessageLiveControl(ctx, sessionID, assistantID)
+	if err != nil || control == nil || generation == "" || control.Role != "assistant" || control.IsCompleted ||
+		control.AgentID == "" || control.AgentTenantID == 0 {
+		return nil, nil, types.ErrSourceLineageUnknown
+	}
+	caller, callerOK := ctx.Value(types.CallerContextKey).(types.Caller)
+	principal, principalOK := ctx.Value(types.PrincipalContextKey).(types.Principal)
+	owner := types.SessionOwnerIDFromContext(ctx)
+	if !callerOK || !principalOK || !principal.Valid() || owner == "" {
+		return nil, nil, types.ErrSourceLineageUnknown
+	}
+
+	check := func(current context.Context) error {
+		if current == nil || current.Err() != nil {
+			return access.ErrNextcloudPublicationUnavailable
+		}
+		actualCaller, callerOK := current.Value(types.CallerContextKey).(types.Caller)
+		actualPrincipal, principalOK := current.Value(types.PrincipalContextKey).(types.Principal)
+		if !callerOK || !principalOK || actualCaller != caller || actualPrincipal != principal ||
+			types.SessionOwnerIDFromContext(current) != owner {
+			return access.ErrNextcloudPublicationDenied
+		}
+		tenant, tenantOK := types.TenantIDFromContext(current)
+		if !tenantOK || tenant == 0 {
+			return access.ErrNextcloudPublicationDenied
+		}
+		owned, err := messages.sessionRepo.Get(current, tenant, owner, sessionID)
+		if err != nil || owned == nil || owned.ID != sessionID || owned.TenantID != tenant || owned.UserID != owner {
+			return access.ErrNextcloudPublicationDenied
+		}
+		live, liveGeneration, err := messages.materialStore.MessageLiveControl(current, sessionID, assistantID)
+		if err != nil || live == nil || liveGeneration != generation || live.Role != "assistant" ||
+			live.RequestID != control.RequestID ||
+			live.AgentID != control.AgentID ||
+			live.AgentTenantID != control.AgentTenantID {
+			return access.ErrNextcloudPublicationDenied
+		}
+
+		var actual *types.CustomAgent
+		if types.IsBuiltinAgentID(control.AgentID) {
+			factory := types.GetBuiltinAgentWithContext(current, control.AgentID, control.AgentTenantID)
+			if factory == nil {
+				return types.ErrSourceLineageUnknown
+			}
+			actual, err = repository.NewCustomAgentRepository(s.db).
+				GetAgentByID(current, control.AgentID, control.AgentTenantID)
+			if errors.Is(err, repository.ErrCustomAgentNotFound) {
+				actual = factory
+			} else if err != nil {
+				return access.ErrNextcloudPublicationUnavailable
+			}
+		} else {
+			actual, err = repository.NewCustomAgentRepository(s.db).
+				GetAgentByID(current, control.AgentID, control.AgentTenantID)
+			if err != nil {
+				return access.ErrNextcloudPublicationUnavailable
+			}
+		}
+		if actual == nil || actual.ID != control.AgentID || actual.TenantID != control.AgentTenantID {
+			return access.ErrNextcloudPublicationDenied
+		}
+		actual.EnsureDefaults()
+		resolved, _ := s.cfg.ResolveCustomAgentPrompts(actual)
+		if resolved != template || config.ResolveSystemPrompt(config.WebSearchEnabled) != template {
+			return types.ErrSourceLineageUnknown
+		}
+		return nil
+	}
+	if err := check(ctx); err != nil {
+		return nil, nil, err
+	}
 	lineage, err := types.NewCompleteSourceLineage()
 	if err != nil {
 		return nil, nil, err
 	}
-	// The prompt is server-owned and the Agent/session were authorized by the
-	// WeKnora route. Nextcloud material receipts are not a prompt-read ACL.
-	return lineage, func(context.Context) error { return nil }, nil
+	return lineage, check, nil
 }

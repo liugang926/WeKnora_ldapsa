@@ -64,11 +64,11 @@ func historyFilteringActualOrdinary(t *testing.T) (
 	return messages, read.Context(), originalQuestion, originalOrdinary
 }
 
-func TestHistoryFilteringRemovesUnknownAnswerAndSearchPartner(t *testing.T) {
+func TestHistoryFilteringKeepsOwnedConversationRowsUnderWeKnoraACL(t *testing.T) {
 	s, ctx, question, ordinary := historyFilteringActualOrdinary(t)
-	// This cached broad-scope legacy row has no original envelope. The old
-	// sourcesMap fixture never represented an actual source authorization or
-	// revocation; actual signed-source withdrawal is covered by native HTTP.
+	// Saved conversation rows are governed by the owning WeKnora session, not a
+	// second Nextcloud receipt. The legacy row must therefore remain readable
+	// to the authenticated owner even though it predates source receipts.
 	answer := &types.Message{
 		ID: "unknown-answer", SessionID: question.SessionID, RequestID: question.RequestID,
 		Role: "assistant", Content: "unproved secret answer",
@@ -77,13 +77,14 @@ func TestHistoryFilteringRemovesUnknownAnswerAndSearchPartner(t *testing.T) {
 	require.Error(t, answer.SourceLineage.RequireComplete())
 	filtered, err := s.filterHistoryMessages(ctx, []*types.Message{question, answer, ordinary})
 	require.NoError(t, err)
-	require.Len(t, filtered, 2)
+	require.Len(t, filtered, 3)
 	require.Equal(t, question.ID, filtered[0].ID)
 	require.Equal(t, question.Content, filtered[0].Content)
 	require.Empty(t, filtered[0].KnowledgeReferences)
 	require.Empty(t, filtered[0].AgentSteps)
 	require.Nil(t, filtered[0].SourceLineage, "raw-user projection must not retain generated metadata")
-	require.Same(t, ordinary, filtered[1])
+	require.Equal(t, answer.Content, filtered[1].Content)
+	require.Same(t, ordinary, filtered[2])
 	items := []*types.MessageSearchResultItem{
 		{MessageWithSession: types.MessageWithSession{Message: *question}},
 		{MessageWithSession: types.MessageWithSession{Message: *answer}},
@@ -91,20 +92,20 @@ func TestHistoryFilteringRemovesUnknownAnswerAndSearchPartner(t *testing.T) {
 	}
 	search, err := s.filterHistoricalSearchPairs(ctx, items)
 	require.NoError(t, err)
-	require.Len(t, search, 1, "the unproved answer's harmless search partner must not reintroduce it")
-	require.Equal(t, ordinary.ID, search[0].ID)
-	require.Equal(t, ordinary.Content, search[0].Content)
+	require.Len(t, search, 3)
+	require.Equal(t, answer.Content, search[1].Content)
+	require.Equal(t, ordinary.ID, search[2].ID)
+	require.Equal(t, ordinary.Content, search[2].Content)
 }
 
-func TestHistoryFilteringDoesNotServeWhenTypedVerifierUnavailable(t *testing.T) {
+func TestHistoryFilteringDoesNotRequireTypedNextcloudVerifier(t *testing.T) {
 	s, ctx, _, ordinary := historyFilteringActualOrdinary(t)
-	// Legacy source probes cannot replace the current typed publication port.
 	s.historyGuard = access.NewNextcloudHistoryGuard(nil,
 		messageHistorySources{err: errors.New("database down")}, nil)
 	s.sourceLineageGuard = nil
 	rows, err := s.filterHistoryMessages(ctx, []*types.Message{ordinary})
-	require.ErrorIs(t, err, access.ErrNextcloudPublicationUnavailable)
-	require.Nil(t, rows)
+	require.NoError(t, err)
+	require.Equal(t, []*types.Message{ordinary}, rows)
 }
 
 func (s messageHistorySources) HasEverNextcloudSourceForKnowledgeBase(_ context.Context, id string) (bool, error) {
@@ -131,13 +132,11 @@ func (legacyHistorySourceLookup) HasEverNextcloudSourceForTenant(context.Context
 	return false, nil
 }
 
-func TestHistoryFilteringNeedsTypedCurrentActorVerifier(t *testing.T) {
+func TestHistoryFilteringDoesNotUseLegacyNextcloudSourceLookup(t *testing.T) {
 	s, ctx, _, ordinary := historyFilteringActualOrdinary(t)
 	s.historyGuard = access.NewNextcloudHistoryGuard(nil, legacyHistorySourceLookup{}, nil)
-	// Even a complete original envelope still requires the durable SQL actor
-	// capability. A source-empty legacy lookup is not a substitute for it.
 	s.sourceLineageGuard = access.NewNextcloudSourceLineageGuard(nil, s.kbService, nil, nil, nil, nil)
 	rows, err := s.filterHistoryMessages(ctx, []*types.Message{ordinary})
-	require.ErrorIs(t, err, access.ErrNextcloudPublicationUnavailable)
-	require.Nil(t, rows)
+	require.NoError(t, err)
+	require.Equal(t, []*types.Message{ordinary}, rows)
 }

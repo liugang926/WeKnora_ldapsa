@@ -359,7 +359,7 @@ func TestMessageMaterialActualSavedReadBoundarySingleConnection(t *testing.T) {
 	_, assistant := produceActualMessagePair(ctx, t, messages, session)
 	ctx = WithMessageMaterialOutputBoundary(ctx)
 	defer CloseMessageMaterialOutputBoundary(ctx)
-	rows, err := messages.GetRecentMessagesBySession(ctx, session.ID, 20)
+	rows, err := messages.admittedMessagePage(ctx, session.ID, time.Time{}, 20, 1, true)
 	require.NoError(t, err)
 	require.Len(t, rows, 2)
 	require.Equal(t, assistant.Content, rows[1].Content)
