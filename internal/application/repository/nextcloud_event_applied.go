@@ -271,7 +271,8 @@ func nextcloudDispatchPublicationProof(
 	// changes visibility bookkeeping only; no failed row is published.
 	for _, candidateID := range failedEnabledCandidates {
 		result := tx.Model(&types.Knowledge{}).
-			Where("id = ? AND tenant_id = ? AND knowledge_base_id = ? AND channel = ? AND parse_status = ? AND enable_status = ? AND deleted_at IS NULL",
+			Where("id = ? AND tenant_id = ? AND knowledge_base_id = ? AND channel = ? "+
+				"AND parse_status = ? AND enable_status = ? AND deleted_at IS NULL",
 				candidateID, connection.TenantID, connection.KnowledgeBaseID,
 				types.ConnectorTypeNextcloud, types.ParseStatusFailed, "enabled").
 			Update("enable_status", "disabled")

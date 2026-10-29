@@ -20,7 +20,11 @@ func TestNextcloudAutomaticAuthorizationFailureCodeIsStableAndNonSensitive(t *te
 		{name: "local authority denied", err: apprepo.ErrNextcloudOnboardingDenied, want: "local_authority_denied"},
 		{name: "machine task invalid", err: apprepo.ErrNextcloudMachineTaskInvalid, want: "machine_task_invalid"},
 		{name: "scope changed", err: apprepo.ErrKnowledgeInputChanged, want: "scope_changed"},
-		{name: "wrapped denied", err: errors.Join(errors.New("source probe"), access.ErrNextcloudPublicationDenied), want: "manager_denied"},
+		{
+			name: "wrapped denied",
+			err:  errors.Join(errors.New("source probe"), access.ErrNextcloudPublicationDenied),
+			want: "manager_denied",
+		},
 		{name: "unclassified", err: errors.New("private implementation detail"), want: "authorization_unavailable"},
 	}
 	for _, tt := range tests {

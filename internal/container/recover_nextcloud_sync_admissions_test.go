@@ -226,8 +226,10 @@ func TestNextcloudSyncAdmissionRecoveryRequiresMissingExactQueuedEventTask(t *te
 		wantErr    bool
 		wantOutput int
 	}{
-		{name: "task absent", probeErr: asynq.ErrTaskNotFound, recovered: true,
-			wantCalls: 1, wantOutput: 1},
+		{
+			name: "task absent", probeErr: asynq.ErrTaskNotFound, recovered: true,
+			wantCalls: 1, wantOutput: 1,
+		},
 		{name: "task present", exists: true},
 		{name: "queue unavailable", probeErr: errors.New("redis timeout"), wantErr: true},
 		{name: "state changed during recovery", probeErr: asynq.ErrTaskNotFound, wantCalls: 1},
