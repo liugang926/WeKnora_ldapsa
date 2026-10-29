@@ -196,9 +196,9 @@ func TestNextcloudQueuedPublicationTerminalFailureRequiresExactTargetProof(t *te
 			errorMessage: "document_processing_failed", path: "file.md", complete: true,
 		},
 		{
-			name: "exact candidate and target", candidateETag: "etag-v1",
+			name: "exact enabled failed candidate and target", candidateETag: "etag-v1",
 			targetETag: "etag-v1", desiredETag: "etag-v1",
-			parseStatus: types.ParseStatusFailed, enabled: "disabled",
+			parseStatus: types.ParseStatusFailed, enabled: "enabled",
 			errorMessage: "document_processing_failed", path: "file.md", complete: true,
 		},
 		{
@@ -234,9 +234,10 @@ func TestNextcloudQueuedPublicationTerminalFailureRequiresExactTargetProof(t *te
 			errorMessage: "document_processing_failed", path: "file.md",
 		},
 		{
-			name: "failed candidate still enabled", targetETag: "etag-v1", desiredETag: "etag-v1",
-			parseStatus: types.ParseStatusFailed, enabled: "enabled",
-			errorMessage: "document_processing_failed", path: "file.md",
+			name: "enabled failed candidate is terminal", targetETag: "etag-v1",
+			desiredETag: "etag-v1", parseStatus: types.ParseStatusFailed,
+			enabled: "enabled", errorMessage: "document_processing_failed",
+			path: "file.md", complete: true,
 		},
 		{
 			name: "mismatched path", targetETag: "etag-v1", desiredETag: "etag-v1",
@@ -300,6 +301,8 @@ func TestNextcloudQueuedPublicationTerminalFailureRequiresExactTargetProof(t *te
 			require.NoError(t, db.Where("id = ?", candidate.ID).Take(&stored).Error)
 			require.Equal(t, test.parseStatus, stored.ParseStatus,
 				"proof must not turn a failed or completed candidate into a published row")
+			require.Equal(t, test.enabled, stored.EnableStatus,
+				"proof must not change the candidate enable state")
 			var version nextcloudSourceVersion
 			require.NoError(t, db.Where(
 				"tenant_id = ? AND knowledge_base_id = ? AND datasource_id = ? AND external_id = ?",
@@ -329,6 +332,87 @@ func TestNextcloudDispatchPublicationProofRejectsMalformedCandidateMetadata(t *t
 	file := nextcloudApplyFile{ETag: "etag-v1", Name: "file.md", Path: "file.md"}
 
 	require.False(t, nextcloudApplyCandidateProof(version, candidate, file, "77", connection))
+}
+
+func TestNextcloudApplyCandidateProofTerminalFailureStateBoundaries(t *testing.T) {
+	now := time.Now().UTC()
+	deletedAt := now.Add(-time.Minute)
+	connection := nextcloudEventConnection{
+		NextcloudInstanceID: "instance", BindingID: "binding",
+	}
+	metadata := types.JSON(`{
+		"nextcloud_etag":"etag-v1",
+		"nextcloud_target_etag":"etag-v1",
+		"nextcloud_path":"file.md",
+		"nextcloud_instance_id":"instance",
+		"nextcloud_binding_id":"binding",
+		"nextcloud_file_id":"77",
+		"source_resource_id":"binding",
+		"external_id":"nextcloud:instance:77"
+	}`)
+	file := nextcloudApplyFile{ETag: "etag-v1", Name: "file.md", Path: "file.md"}
+	tests := []struct {
+		name         string
+		versionState string
+		parseStatus  string
+		enableStatus string
+		deletedAt    *time.Time
+		want         bool
+	}{
+		{
+			name: "failed disabled staging candidate", versionState: "staging",
+			parseStatus: types.ParseStatusFailed, enableStatus: "disabled", want: true,
+		},
+		{
+			name: "failed enabled staging candidate", versionState: "staging",
+			parseStatus: types.ParseStatusFailed, enableStatus: "enabled", want: true,
+		},
+		{
+			name: "failed deleted candidate", versionState: "staging",
+			parseStatus: types.ParseStatusFailed, enableStatus: "enabled",
+			deletedAt: &deletedAt,
+		},
+		{
+			name: "pending parser remains pending", versionState: "staging",
+			parseStatus: types.ParseStatusPending, enableStatus: "enabled",
+		},
+		{
+			name: "processing parser remains pending", versionState: "staging",
+			parseStatus: types.ParseStatusProcessing, enableStatus: "enabled",
+		},
+		{
+			name: "finalizing parser remains pending", versionState: "staging",
+			parseStatus: types.ParseStatusFinalizing, enableStatus: "enabled",
+		},
+		{
+			name: "completed staging candidate needs publication", versionState: "staging",
+			parseStatus: types.ParseStatusCompleted, enableStatus: "enabled",
+		},
+		{
+			name: "published completed enabled candidate", versionState: "published",
+			parseStatus: types.ParseStatusCompleted, enableStatus: "enabled", want: true,
+		},
+		{
+			name: "tombstone version cannot use proof", versionState: "tombstone",
+			parseStatus: types.ParseStatusFailed, enableStatus: "enabled",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			version := nextcloudSourceVersion{
+				TenantID: 7, KnowledgeBaseID: "kb", DataSourceID: "ds",
+				ExternalID: "nextcloud:instance:77", DesiredETag: "etag-v1",
+				CandidateKnowledgeID: "candidate", State: test.versionState, UpdatedAt: now,
+			}
+			candidate := nextcloudApplyKnowledge{
+				ID: "candidate", ParseStatus: test.parseStatus,
+				EnableStatus: test.enableStatus, FileName: "file.md",
+				Metadata: metadata, DeletedAt: test.deletedAt,
+			}
+			require.Equal(t, test.want,
+				nextcloudApplyCandidateProof(version, candidate, file, "77", connection))
+		})
+	}
 }
 
 func TestNextcloudQueuedPublicationWaitsForParserWithoutAck(t *testing.T) {
