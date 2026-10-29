@@ -274,19 +274,26 @@ func (s *agentService) CreateAgentEngine(
 		pinnedSkills,
 	)
 	engine.SetQuestionOrigin(promptInputs.origin)
-	promptLineage, builtinCheck, err := s.builtinAgentPromptInput(
-		ctx,
-		config,
-		sessionID,
-		assistantMessageID,
-		systemPromptTemplate,
-	)
-	if err != nil {
-		return nil, err
+	explicitInputMaterials := agentExplicitInputMaterials(ctx)
+	var builtinCheck func(context.Context) error
+	promptLineage := promptInputs.promptLineage
+	if explicitInputMaterials {
+		promptLineage, builtinCheck, err = s.builtinAgentPromptInput(
+			ctx,
+			config,
+			sessionID,
+			assistantMessageID,
+			systemPromptTemplate,
+		)
+		if err != nil {
+			return nil, err
+		}
+		if builtinCheck != nil {
+			promptInputs.builtinCheck = builtinCheck
+		}
 	}
 	if promptLineage != nil {
 		engine.SetSystemPromptSourceLineage(promptLineage)
-		promptInputs.builtinCheck = builtinCheck
 	}
 
 	// Non-vision chat models use the configured VLM to describe tool images.
@@ -338,7 +345,10 @@ func (s *agentService) CreateAgentEngine(
 		toolRegistry.RegisterTool(tools.NewBrowserSkillTool(s.browserSkill, scope, sessionID, instructions))
 	}
 
-	if len(promptInputs.bases) > 0 || len(promptInputs.documents) > 0 || builtinCheck != nil {
+	// Only explicit images/attachments have Nextcloud material producers that
+	// must be held through the model call. KB metadata, selected docs, question
+	// origins and the server-owned system prompt are WeKnora ACL inputs.
+	if shouldHoldAgentPromptInputs(ctx, promptInputs, builtinCheck) {
 		if _, err := holdAgentPromptInputs(ctx, promptInputs); err != nil {
 			return nil, err
 		}

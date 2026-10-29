@@ -336,8 +336,9 @@ func (s *sessionService) AgentQA(
 
 	// Create agent engine with EventBus
 	logger.Info(ctx, "Creating agent engine")
+	engineCtx := withAgentExplicitInputMaterials(ctx, hasRawInputMaterials)
 	engine, err := s.agentService.CreateAgentEngine(
-		ctx,
+		engineCtx,
 		agentConfig,
 		summaryModel,
 		rerankModel,

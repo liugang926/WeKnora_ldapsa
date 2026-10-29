@@ -37,6 +37,31 @@ type agentPromptInputGuard struct {
 	promptLineage *types.SourceLineage
 }
 
+type agentExplicitInputMaterialsKey struct{}
+
+// withAgentExplicitInputMaterials records the server-side request classification.
+// A KB, mentioned document, question origin or plain text is retrieval context,
+// not a Nextcloud material admission.
+func withAgentExplicitInputMaterials(ctx context.Context, explicit bool) context.Context {
+	return context.WithValue(ctx, agentExplicitInputMaterialsKey{}, explicit)
+}
+
+func agentExplicitInputMaterials(ctx context.Context) bool {
+	explicit, _ := ctx.Value(agentExplicitInputMaterialsKey{}).(bool)
+	return explicit
+}
+
+func shouldHoldAgentPromptInputs(
+	ctx context.Context,
+	inputs *agentPromptInputGuard,
+	builtinCheck func(context.Context) error,
+) bool {
+	if !agentExplicitInputMaterials(ctx) || inputs == nil {
+		return false
+	}
+	return len(inputs.bases) > 0 || len(inputs.documents) > 0 || builtinCheck != nil
+}
+
 func sourceIndependentPromptLineage() *types.SourceLineage {
 	lineage, err := types.NewCompleteSourceLineage()
 	if err != nil {

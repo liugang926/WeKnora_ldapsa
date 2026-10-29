@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Tencent/WeKnora/internal/agent"
 	"github.com/Tencent/WeKnora/internal/agent/tools"
 	"github.com/Tencent/WeKnora/internal/application/access"
 	"github.com/Tencent/WeKnora/internal/application/repository"
@@ -170,14 +171,15 @@ func TestAgentPromptActualDefaultKBAndDocumentMetadata(t *testing.T) {
 		"agent-metadata-turn",
 	)
 	require.NoError(t, err)
-	guarded, ok := engine.(*agentPromptInputEngine)
+	_, wrapped := engine.(*agentPromptInputEngine)
+	require.False(t, wrapped, "ordinary KB metadata must not enter the Nextcloud material guard")
+	direct, ok := engine.(*agent.AgentEngine)
 	require.True(t, ok)
-	guarded.SetSourceLineageVerifier(func(current context.Context, lineage *types.SourceLineage) error {
-		return messages.sourceLineageGuard.Check(
-			current,
-			lineage,
-			access.LineageReadScope{Targets: settings.SearchTargets},
-		)
+	direct.SetSourceLineageVerifier(func(current context.Context, lineage *types.SourceLineage) error {
+		if current == nil || current.Err() != nil {
+			return access.ErrNextcloudPublicationUnavailable
+		}
+		return lineage.RequireComplete()
 	})
 	state, err := engine.Execute(ctx, session.ID, "agent-metadata-turn", "answer using the selected knowledge", nil)
 	require.NoError(t, err)
@@ -192,12 +194,37 @@ func TestAgentPromptActualDefaultKBAndDocumentMetadata(t *testing.T) {
 	require.NotContains(t, wire.String(), "doc_count=")
 	require.NotContains(t, wire.String(), "UNPROVEN_KB_DESCRIPTION")
 	require.NotContains(t, wire.String(), "UNPROVEN_PROFILE")
-	require.NoError(t, CheckMessageMaterialOutputBoundary(ctx))
-	require.NoError(
+}
+
+func TestAgentPromptMaterialHoldRequiresExplicitInputMaterials(t *testing.T) {
+	inputs := &agentPromptInputGuard{
+		bases: []*repository.KnowledgeBasePromptInputSnapshot{{}},
+	}
+	check := func(context.Context) error { return nil }
+
+	require.False(
 		t,
-		db.Model(&types.User{}).Where("id=?", types.CallerFromContext(ctx).UserID).Update("is_active", false).Error,
+		shouldHoldAgentPromptInputs(context.Background(), inputs, nil),
+		"an ordinary KB prompt without explicit materials must use the direct engine",
 	)
-	require.Error(t, CheckMessageMaterialOutputBoundary(ctx), "buffered HTTP output must recheck the current reader")
+	require.False(
+		t,
+		shouldHoldAgentPromptInputs(
+			withAgentExplicitInputMaterials(context.Background(), false),
+			inputs,
+			check,
+		),
+		"a server-owned prompt alone is not a Nextcloud material",
+	)
+	require.True(
+		t,
+		shouldHoldAgentPromptInputs(
+			withAgentExplicitInputMaterials(context.Background(), true),
+			inputs,
+			nil,
+		),
+		"explicit materials must keep retained prompt producers held",
+	)
 }
 
 func TestAgentPinnedMetadataIsSourceIndependent(t *testing.T) {
