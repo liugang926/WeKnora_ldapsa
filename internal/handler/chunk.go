@@ -90,13 +90,17 @@ func (h *ChunkHandler) loadPublishedKnowledge(ctx context.Context, knowledgeID s
 // @Security     ApiKeyAuth
 // @Router       /chunks/by-id/{id} [get]
 func (h *ChunkHandler) GetChunkByIDOnly(c *gin.Context) {
+	if !access.UseWeKnoraReadAuthority() {
+		h.getOriginalChunkOutput(c)
+		return
+	}
 	ctx := c.Request.Context()
 	logger.Info(ctx, "Start retrieving chunk by ID only")
 
 	chunkID := secutils.SanitizeForLog(c.Param("id"))
 	if chunkID == "" {
 		logger.Error(ctx, "Chunk ID is empty")
-		c.Error(errors.NewBadRequestError("Chunk ID cannot be empty"))
+		_ = c.Error(errors.NewBadRequestError("Chunk ID cannot be empty"))
 		return
 	}
 
@@ -107,11 +111,11 @@ func (h *ChunkHandler) GetChunkByIDOnly(c *gin.Context) {
 	if err != nil {
 		if stderrors.Is(err, service.ErrChunkNotFound) {
 			logger.Warnf(ctx, "Chunk not found, chunk ID: %s", chunkID)
-			c.Error(errors.NewNotFoundError("Chunk not found"))
+			_ = c.Error(errors.NewNotFoundError("Chunk not found"))
 			return
 		}
 		logger.ErrorWithFields(ctx, err, nil)
-		c.Error(errors.NewInternalServerError(err.Error()))
+		_ = c.Error(errors.NewInternalServerError(err.Error()))
 		return
 	}
 
@@ -136,20 +140,24 @@ func (h *ChunkHandler) GetChunkByIDOnly(c *gin.Context) {
 // @Security     ApiKeyAuth
 // @Router       /chunks/{knowledge_id} [get]
 func (h *ChunkHandler) ListKnowledgeChunks(c *gin.Context) {
+	if !access.UseWeKnoraReadAuthority() {
+		h.listOriginalChunkOutputs(c)
+		return
+	}
 	ctx := c.Request.Context()
 	logger.Info(ctx, "Start retrieving knowledge chunks list")
 
 	knowledgeID := secutils.SanitizeForLog(c.Param("knowledge_id"))
 	if knowledgeID == "" {
 		logger.Error(ctx, "Knowledge ID is empty")
-		c.Error(errors.NewBadRequestError("Knowledge ID cannot be empty"))
+		_ = c.Error(errors.NewBadRequestError("Knowledge ID cannot be empty"))
 		return
 	}
 
 	var pagination types.Pagination
 	if err := c.ShouldBindQuery(&pagination); err != nil {
 		logger.Errorf(ctx, "Failed to parse pagination parameters: %s", secutils.SanitizeForLog(err.Error()))
-		c.Error(errors.NewBadRequestError(err.Error()))
+		_ = c.Error(errors.NewBadRequestError(err.Error()))
 		return
 	}
 	if pagination.Page < 1 {
@@ -177,7 +185,7 @@ func (h *ChunkHandler) ListKnowledgeChunks(c *gin.Context) {
 	result, err := h.service.ListPagedChunksByKnowledgeID(ctx, knowledgeID, &pagination, chunkTypes)
 	if err != nil {
 		logger.ErrorWithFields(ctx, err, nil)
-		c.Error(errors.NewInternalServerError(err.Error()))
+		_ = c.Error(errors.NewInternalServerError(err.Error()))
 		return
 	}
 

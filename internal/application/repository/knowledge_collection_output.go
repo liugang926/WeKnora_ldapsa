@@ -96,7 +96,6 @@ func collectionProof(
 ) (*types.KnowledgeBuildInputProof, error) {
 	digest, err := knowledgeMaterialDigest(k)
 	if knowledgeCollectionInFlight(k) {
-		// Processing may legitimately advance generated display fields before
 		// the final admission receipt is issued. Keep the stable source identity
 		// without certifying transient generated fields.
 		digest, err = knowledgeCollectionStableDigest(k)
@@ -108,8 +107,14 @@ func collectionProof(
 	if err != nil {
 		return nil, err
 	}
+	proofRevision := fmt.Sprint(revision)
+	if knowledgeCollectionInFlight(k) {
+		// Row revisions advance while processing mutates generated display fields.
+		// Keep the proof bound to the immutable in-flight source identity.
+		proofRevision = "in-flight"
+	}
 	body, err := KnowledgeInputDigest(
-		[]string{a.AdmissionID, a.RootDigest, a.ConfigDigest, digest, fmt.Sprint(revision)},
+		[]string{a.AdmissionID, a.RootDigest, a.ConfigDigest, digest, proofRevision},
 	)
 	if err != nil {
 		return nil, err
@@ -328,7 +333,9 @@ func (s *KnowledgeInputProvenanceStore) recheckCollectionInTx(
 				if err != nil {
 					return err
 				}
-				if !reflect.DeepEqual(proof, entry.Proof) {
+				if !knowledgeCollectionInFlight(entry.Knowledge) &&
+					!knowledgeCollectionInFlight(current) &&
+					!reflect.DeepEqual(proof, entry.Proof) {
 					return ErrKnowledgeInputChanged
 				}
 				candidates = append(candidates, current)
@@ -345,7 +352,10 @@ func (s *KnowledgeInputProvenanceStore) recheckCollectionInTx(
 	if _, err := collectionScopes(types.KnowledgeCollectionReadRequest{Scopes: scopes}); err != nil {
 		return err
 	}
-	return recheckKnowledgeCollectionAuxiliary(tx, scopes, candidates, snapshot.Auxiliary)
+	if err := recheckKnowledgeCollectionAuxiliary(tx, scopes, candidates, snapshot.Auxiliary); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (s *KnowledgeInputProvenanceStore) selectCollectionInTx(
@@ -511,13 +521,12 @@ func collectionHasInFlightCandidates(snapshot *types.KnowledgeCollectionInputSna
 	return false
 }
 
-// compatibleCollectionSelection ignores only operational fields that an
-// in-flight worker may advance. Stable identity and collection structure stay
-// exact.
-func compatibleCollectionSelection(
-	expected, actual *types.KnowledgeCollectionSelection,
-) error {
+// compatibleCollectionSelection compares the final response after ignoring
+// operational fields that an in-flight worker may advance. Stable document
+// identity, membership and all displayed collection structure remain exact.
+func compatibleCollectionSelection(expected, actual *types.KnowledgeCollectionSelection) error {
 	if expected == nil || actual == nil ||
+		!reflect.DeepEqual(expected.Request, actual.Request) ||
 		expected.Total != actual.Total || expected.HasMore != actual.HasMore ||
 		expected.Page != actual.Page || expected.PageSize != actual.PageSize ||
 		len(expected.Knowledge) != len(actual.Knowledge) ||

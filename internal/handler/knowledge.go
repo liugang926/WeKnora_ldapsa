@@ -821,7 +821,70 @@ func (h *KnowledgeHandler) GetKnowledge(c *gin.Context) {
 // segments. Subspans (multimodal.image[i], generation.*) ride along under
 // each stage as children when present.
 func (h *KnowledgeHandler) GetKnowledgeSpans(c *gin.Context) {
-	ServeOriginalKnowledgeSpans(h, c, h.spanOutputAuthorizer)
+	if !access.UseWeKnoraReadAuthority() {
+		ServeOriginalKnowledgeSpans(h, c, h.spanOutputAuthorizer)
+		return
+	}
+	ctx := c.Request.Context()
+	id := secutils.SanitizeForLog(c.Param("id"))
+	if id == "" {
+		_ = c.Error(errors.NewBadRequestError("Knowledge ID cannot be empty"))
+		return
+	}
+	knowledge, _, err := h.resolveKnowledgeAndValidateKBAccess(c, id, types.OrgRoleViewer)
+	if err != nil {
+		_ = c.Error(err)
+		return
+	}
+	requestedAttempt := 0
+	if value := strings.TrimSpace(c.Query("attempt")); value != "" {
+		if attempt, parseErr := strconv.Atoi(value); parseErr == nil && attempt > 0 {
+			requestedAttempt = attempt
+		}
+	}
+	rows := []types.KnowledgeProcessingSpan{}
+	currentAttempt := 0
+	latestAttempt := 0
+	if h.spanRepo != nil {
+		latest, latestErr := h.spanRepo.LatestAttempt(ctx, knowledge.ID)
+		if latestErr != nil {
+			logger.Warnf(ctx, "spans LatestAttempt failed for %s: %v", knowledge.ID, latestErr)
+		} else {
+			latestAttempt = latest
+		}
+		if requestedAttempt > 0 {
+			currentAttempt = requestedAttempt
+		} else {
+			currentAttempt = latestAttempt
+		}
+		if currentAttempt > 0 {
+			rows, err = h.spanRepo.ListByAttempt(ctx, knowledge.ID, currentAttempt)
+			if err != nil {
+				logger.Warnf(ctx, "spans ListByAttempt failed kid=%s attempt=%d: %v",
+					knowledge.ID, currentAttempt, err)
+				rows = nil
+			}
+		}
+	}
+	tree, currentStage, lastErr := buildSpanTree(
+		knowledge.ID, currentAttempt, rows, knowledge.ParseStatus,
+	)
+	resp := gin.H{
+		"knowledge_id":    knowledge.ID,
+		"attempt":         currentAttempt,
+		"latest_attempt":  latestAttempt,
+		"parse_status":    knowledge.ParseStatus,
+		"current_attempt": currentAttempt,
+		"current_stage":   currentStage,
+		"trace":           tree,
+	}
+	if value := knowledgeSpansLastError(
+		currentAttempt, latestAttempt, knowledge.ParseStatus,
+		knowledge.ErrorMessage, knowledge.UpdatedAt, lastErr,
+	); value != nil {
+		resp["last_error"] = value
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": resp})
 }
 
 // ConfigureKnowledgeHandlerSpanOutputLineage installs the original attempt
@@ -1095,6 +1158,27 @@ func (h *KnowledgeHandler) ListKnowledge(c *gin.Context) {
 		effectiveTenantID,
 	)
 
+	if h.kgService != nil && access.UseWeKnoraReadAuthority() {
+		// WeKnora workspace authorization is authoritative for reads. Nextcloud
+		// source lineage controls publication and recycling, not a second ACL.
+		visibleResult, directErr := h.kgService.ListPagedKnowledgeByKnowledgeBaseID(
+			ctx, kbID, &pagination, filter,
+		)
+		if directErr != nil {
+			logger.ErrorWithFields(ctx, directErr, nil)
+			_ = c.Error(errors.NewInternalServerError(directErr.Error()))
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{
+			"success":   true,
+			"data":      visibleResult.Data,
+			"total":     visibleResult.Total,
+			"page":      visibleResult.Page,
+			"page_size": visibleResult.PageSize,
+		})
+		return
+	}
+
 	if !h.requireKnowledgeCollectionOutput(c) {
 		return
 	}
@@ -1217,6 +1301,18 @@ func (h *KnowledgeHandler) ListKnowledgeFolders(c *gin.Context) {
 		return
 	}
 	ctx = types.WithExecutionTenant(c.Request.Context(), effectiveTenantID)
+	if h.kgService != nil && access.UseWeKnoraReadAuthority() {
+		directTree, directErr := h.kgService.ListKnowledgeFolderTree(ctx, kbID)
+		if directErr != nil {
+			logger.ErrorWithFields(ctx, directErr, nil)
+			_ = c.Error(errors.NewInternalServerError(directErr.Error()))
+			return
+		}
+		logger.Infof(ctx, "Knowledge folder tree retrieved, kb_id=%s folders=%d",
+			secutils.SanitizeForLog(kbID), len(directTree.Folders))
+		c.JSON(http.StatusOK, gin.H{"success": true, "data": directTree})
+		return
+	}
 	if !h.requireKnowledgeCollectionOutput(c) {
 		return
 	}

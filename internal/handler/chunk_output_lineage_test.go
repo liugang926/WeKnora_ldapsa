@@ -40,6 +40,7 @@ func (s *officialChunkReadService) ListPagedChunksByKnowledgeID(
 
 func serveOfficialChunkRead(t *testing.T, h *ChunkHandler, path string) *httptest.ResponseRecorder {
 	t.Helper()
+	t.Setenv("WEKNORA_NEXTCLOUD_READ_AUTHORITY", "weknora")
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	router.GET("/chunks/by-id/:id", h.GetChunkByIDOnly)

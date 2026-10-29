@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/Tencent/WeKnora/internal/application/access"
 	"github.com/Tencent/WeKnora/internal/application/repository"
 	"github.com/Tencent/WeKnora/internal/application/service"
 
@@ -101,6 +102,17 @@ func (h *TagHandler) ListTags(c *gin.Context) {
 
 	keyword := secutils.SanitizeForLog(c.Query("keyword"))
 
+	if h.tagService != nil && access.UseWeKnoraReadAuthority() {
+		// WeKnora workspace authorization is authoritative for reads.
+		directTags, directErr := h.tagService.ListTags(ctx, kbID, &page, keyword)
+		if directErr != nil {
+			logger.ErrorWithFields(ctx, directErr, nil)
+			_ = c.Error(directErr)
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"success": true, "data": directTags})
+		return
+	}
 	if !h.requireTagOutput(c) {
 		return
 	}

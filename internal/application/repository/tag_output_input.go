@@ -446,11 +446,11 @@ func compatibleTagOutputInputs(
 	expected, actual *types.TagOutputInputSnapshot,
 ) bool {
 	if expected == nil || actual == nil || !tagOutputHasInFlight(expected) ||
-		!reflect.DeepEqual(expected.Request, actual.Request) ||
-		!reflect.DeepEqual(expected.Tags, actual.Tags) ||
-		!reflect.DeepEqual(expected.TagProofs, actual.TagProofs) ||
-		!reflect.DeepEqual(expected.Knowledge, actual.Knowledge) ||
-		!reflect.DeepEqual(expected.Chunks, actual.Chunks) {
+		!tagOutputEqual(expected.Request, actual.Request) ||
+		!tagOutputEqual(expected.Tags, actual.Tags) ||
+		!tagOutputEqual(expected.TagProofs, actual.TagProofs) ||
+		!tagOutputEqual(expected.Knowledge, actual.Knowledge) ||
+		!tagOutputEqual(expected.Chunks, actual.Chunks) {
 		return false
 	}
 	return true

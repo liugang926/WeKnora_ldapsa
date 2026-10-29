@@ -3,12 +3,22 @@ package access
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
 	apperrors "github.com/Tencent/WeKnora/internal/errors"
 	"github.com/Tencent/WeKnora/internal/types"
 )
+
+const nextcloudReadAuthorityEnv = "WEKNORA_NEXTCLOUD_READ_AUTHORITY"
+
+// UseWeKnoraReadAuthority reports whether user-facing Nextcloud reads should
+// use the workspace ACL directly. Strict source-lineage reads remain the
+// default for tests and deployments that do not opt in.
+func UseWeKnoraReadAuthority() bool {
+	return strings.EqualFold(strings.TrimSpace(os.Getenv(nextcloudReadAuthorityEnv)), "weknora")
+}
 
 type NextcloudLineageSnapshotLookup interface {
 	ResolveNextcloudSourceLineage(
@@ -95,6 +105,9 @@ func (g *NextcloudSourceLineageGuard) Check(
 	if lineage == nil {
 		lineage = types.UnknownSourceLineage()
 	}
+	if !UseWeKnoraReadAuthority() && lineage.RequireComplete() != nil {
+		return ErrNextcloudPublicationDenied
+	}
 	var refreshErr error
 	ctx, refreshErr = g.refreshCurrentReadActor(ctx)
 	if refreshErr != nil {
@@ -156,10 +169,12 @@ func (g *NextcloudSourceLineageGuard) Check(
 	if err := g.checkCurrentKBReads(ctx, caller, targets, controlled, scope); err != nil {
 		return err
 	}
-	// WeKnora owns workspace read authorization. Nextcloud source lineage is
-	// lifecycle metadata used for publication, withdrawal and GC; it is not a
-	// second ACL layer over WeKnora documents.
-	return g.recheckCurrentReadActor(ctx)
+	if UseWeKnoraReadAuthority() {
+		// WeKnora owns workspace read authorization in explicit opt-in
+		// deployments. Nextcloud source lineage remains lifecycle metadata for
+		// publication, withdrawal and GC rather than a second read ACL.
+		return g.recheckCurrentReadActor(ctx)
+	}
 
 	var checkedDirectory *types.DirectoryIdentity
 	if len(lineage.Sources) > 0 {
