@@ -56,6 +56,15 @@ func (e *safeCurrentTurnEngine) SetSourceLineageVerifier(check func(context.Cont
 	e.check = check
 }
 
+func (e *safeCurrentTurnEngine) SetWeKnoraACLSourceLineageVerifier(check func(context.Context) error) {
+	e.check = func(ctx context.Context, _ *types.SourceLineage) error {
+		if check == nil {
+			return access.ErrNextcloudPublicationUnavailable
+		}
+		return check(ctx)
+	}
+}
+
 // SetRoundGuard retains the actual current Agent grant at execution.
 func (e *safeCurrentTurnEngine) SetRoundGuard(check func(context.Context) error) { e.round = check }
 

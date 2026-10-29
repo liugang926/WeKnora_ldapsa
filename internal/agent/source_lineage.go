@@ -35,7 +35,28 @@ func toolResultLineage(result *types.ToolResult) *types.SourceLineage {
 // interactive caller and current server-resolved session/Agent source scope.
 func (e *AgentEngine) SetSourceLineageVerifier(check func(context.Context, *types.SourceLineage) error) {
 	e.lineageVerifier = check
+	e.requireCompleteSourceLineage = true
 	e.turnLineage = types.NewRAGSourceLineage(check)
+	if e.compactor != nil {
+		e.compactor.SetSourceLineageVerifier(e.authorizeCompaction)
+	}
+}
+
+// SetWeKnoraACLSourceLineageVerifier installs the ordinary WeKnora-only
+// authorization boundary. It preserves authenticated source identities when a
+// producer supplies them, while treating receipt-less legacy or code-owned
+// producers as source-independent inputs rather than Nextcloud materials.
+func (e *AgentEngine) SetWeKnoraACLSourceLineageVerifier(
+	check func(context.Context) error,
+) {
+	e.lineageVerifier = func(ctx context.Context, _ *types.SourceLineage) error {
+		if check == nil {
+			return types.ErrSourceLineageUnknown
+		}
+		return check(ctx)
+	}
+	e.requireCompleteSourceLineage = false
+	e.turnLineage = types.NewWeKnoraACLSourceLineage(e.lineageVerifier)
 	if e.compactor != nil {
 		e.compactor.SetSourceLineageVerifier(e.authorizeCompaction)
 	}

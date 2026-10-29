@@ -13,14 +13,27 @@ type ragLineageContextKey struct{}
 // adapters. It is shared by parallel readers and never serialized or supplied
 // to a model. A model response inherits the union of all earlier inputs.
 type RAGSourceLineage struct {
-	mu        sync.Mutex
-	lineage   *SourceLineage
-	revision  uint64
-	authorize func(context.Context, *SourceLineage) error
+	mu              sync.Mutex
+	lineage         *SourceLineage
+	revision        uint64
+	authorize       func(context.Context, *SourceLineage) error
+	requireComplete bool
 }
 
 // NewRAGSourceLineage creates a turn accumulator with a current authorization checker.
 func NewRAGSourceLineage(authorize func(context.Context, *SourceLineage) error) *RAGSourceLineage {
+	lineage, _ := NewCompleteSourceLineage()
+	return &RAGSourceLineage{lineage: lineage, authorize: authorize, requireComplete: true}
+}
+
+// NewWeKnoraACLSourceLineage creates a turn accumulator for ordinary WeKnora
+// Agent work. The current WeKnora caller/session/Agent/space ACL authorizes the
+// turn; authenticated source receipts remain attached when available, while a
+// receipt-less legacy or code-owned producer is not reinterpreted as a
+// Nextcloud material denial.
+func NewWeKnoraACLSourceLineage(
+	authorize func(context.Context, *SourceLineage) error,
+) *RAGSourceLineage {
 	lineage, _ := NewCompleteSourceLineage()
 	return &RAGSourceLineage{lineage: lineage, authorize: authorize}
 }
@@ -81,6 +94,9 @@ func (t *RAGSourceLineage) Snapshot() *SourceLineage {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	snapshot, _ := UnionSourceLineage(t.lineage)
+	if !t.requireComplete {
+		snapshot.State = SourceLineageComplete
+	}
 	return snapshot
 }
 
@@ -102,8 +118,12 @@ func (t *RAGSourceLineage) CheckedSnapshot(ctx context.Context) (*SourceLineage,
 		lineage, _ := UnionSourceLineage(t.lineage)
 		revision := t.revision
 		t.mu.Unlock()
-		if err := lineage.RequireComplete(); err != nil {
-			return UnknownSourceLineage(), err
+		if t.requireComplete {
+			if err := lineage.RequireComplete(); err != nil {
+				return UnknownSourceLineage(), err
+			}
+		} else {
+			lineage.State = SourceLineageComplete
 		}
 		if err := t.authorize(ctx, lineage); err != nil {
 			return UnknownSourceLineage(), err

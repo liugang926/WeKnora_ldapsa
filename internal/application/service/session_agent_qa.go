@@ -350,35 +350,60 @@ func (s *sessionService) AgentQA(
 		logger.Errorf(ctx, "Failed to create agent engine: %v", err)
 		return err
 	}
-	lineageEngine, ok := engine.(interface {
-		SetSourceLineageVerifier(func(context.Context, *types.SourceLineage) error)
-	})
-	if !ok {
-		return access.ErrNextcloudPublicationUnavailable
-	}
-	if hasRawInputMaterials && s.sourceLineageGuard == nil {
-		return access.ErrNextcloudPublicationUnavailable
-	}
-	lineageScope := access.LineageReadScope{
-		Targets:       agentConfig.SearchTargets,
-		AgentID:       req.CustomAgent.ID,
-		AgentTenantID: req.CustomAgent.TenantID,
-	}
-	lineageEngine.SetSourceLineageVerifier(func(checkCtx context.Context, lineage *types.SourceLineage) error {
-		if err := lineage.RequireComplete(); err != nil {
-			return err
+	if hasRawInputMaterials {
+		lineageEngine, ok := engine.(interface {
+			SetSourceLineageVerifier(func(context.Context, *types.SourceLineage) error)
+		})
+		if !ok || s.sourceLineageGuard == nil {
+			return access.ErrNextcloudPublicationUnavailable
 		}
-		if err := s.revalidateAgentExecution(checkCtx, req.CustomAgent, agentConfig.SearchTargets); err != nil {
-			return err
+		lineageScope := access.LineageReadScope{
+			Targets:       agentConfig.SearchTargets,
+			AgentID:       req.CustomAgent.ID,
+			AgentTenantID: req.CustomAgent.TenantID,
 		}
-		if !hasRawInputMaterials {
+		lineageEngine.SetSourceLineageVerifier(func(
+			checkCtx context.Context,
+			lineage *types.SourceLineage,
+		) error {
+			if err := lineage.RequireComplete(); err != nil {
+				return err
+			}
+			if err := s.revalidateAgentExecution(
+				checkCtx,
+				req.CustomAgent,
+				agentConfig.SearchTargets,
+			); err != nil {
+				return err
+			}
+			if err := CheckMessageMaterialOutputBoundary(ctx); err != nil {
+				return err
+			}
+			return s.sourceLineageGuard.Check(checkCtx, lineage, lineageScope)
+		})
+	} else {
+		aclEngine, ok := engine.(interface {
+			SetWeKnoraACLSourceLineageVerifier(func(context.Context) error)
+		})
+		if !ok {
+			return errors.New("agent engine does not support WeKnora ACL authorization")
+		}
+		aclEngine.SetWeKnoraACLSourceLineageVerifier(func(checkCtx context.Context) error {
+			if err := s.revalidateAgentExecution(
+				checkCtx,
+				req.CustomAgent,
+				agentConfig.SearchTargets,
+			); err != nil {
+				logger.Warnf(
+					checkCtx,
+					"Ordinary Agent ACL revalidation failed: %v",
+					err,
+				)
+				return err
+			}
 			return nil
-		}
-		if err := CheckMessageMaterialOutputBoundary(ctx); err != nil {
-			return err
-		}
-		return s.sourceLineageGuard.Check(checkCtx, lineage, lineageScope)
-	})
+		})
+	}
 	if mcpEngine, ok := engine.(interface {
 		SetMCPIndependentTransportVerifier(func(context.Context) error)
 	}); ok {

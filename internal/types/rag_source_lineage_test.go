@@ -81,3 +81,28 @@ func TestRAGSourceLineageCheckedSnapshotReauthorizesConcurrentSourceAddition(t *
 		t.Fatal("published an unchecked added source")
 	}
 }
+
+func TestWeKnoraACLSourceLineageNormalizesUnknownWithoutDroppingKnownSources(t *testing.T) {
+	checks := 0
+	turn := NewWeKnoraACLSourceLineage(func(_ context.Context, proof *SourceLineage) error {
+		checks++
+		if proof.State != SourceLineageComplete {
+			t.Fatal("WeKnora ACL verifier received an incomplete snapshot")
+		}
+		return nil
+	})
+	known, _ := NewCompleteSourceLineage(lineageTestIdentity("3", "etag"))
+	if err := turn.Add(known, UnknownSourceLineage()); err != nil {
+		t.Fatal(err)
+	}
+	proof, err := turn.CheckedSnapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if proof.State != SourceLineageComplete || len(proof.Sources) != 1 {
+		t.Fatalf("unexpected normalized lineage: %+v", proof)
+	}
+	if checks != 1 {
+		t.Fatalf("WeKnora ACL verifier calls = %d", checks)
+	}
+}

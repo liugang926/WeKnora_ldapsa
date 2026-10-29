@@ -84,6 +84,7 @@ type AgentEngine struct {
 	roundGuard                    func(context.Context) error
 	lineageVerifier               func(context.Context, *types.SourceLineage) error
 	turnLineage                   *types.RAGSourceLineage
+	requireCompleteSourceLineage  bool
 	lineageMu                     sync.Mutex
 	lineageEmitMu                 sync.Mutex
 	lineageErr                    error
@@ -338,7 +339,11 @@ func (e *AgentEngine) Execute(
 	e.lineageMu.Lock()
 	e.lineageErr, e.lineageCancel = nil, cancel
 	e.lineageMu.Unlock()
-	e.turnLineage = types.NewRAGSourceLineage(e.lineageVerifier)
+	if e.requireCompleteSourceLineage {
+		e.turnLineage = types.NewRAGSourceLineage(e.lineageVerifier)
+	} else {
+		e.turnLineage = types.NewWeKnoraACLSourceLineage(e.lineageVerifier)
+	}
 	ctx = types.WithRAGSourceLineage(ctx, e.turnLineage)
 	defer func() { e.lineageMu.Lock(); e.lineageCancel = nil; e.lineageMu.Unlock() }()
 	logger.Infof(ctx, "[Agent] Starting execution: session=%s, message=%s, query_len=%d, context_msgs=%d",
