@@ -13,6 +13,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/event"
 	"github.com/Tencent/WeKnora/internal/models/chat"
 	"github.com/Tencent/WeKnora/internal/types"
+	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
@@ -21,6 +22,22 @@ type agentPromptActualModel struct {
 	fakeAgentChatModel
 	messages []chat.Message
 	calls    int
+}
+
+type agentPromptMCPDirectory struct {
+	interfaces.MCPServiceService
+}
+
+func (d *agentPromptMCPDirectory) ListMCPServicesByIDs(
+	_ context.Context, _ uint64, ids []string,
+) ([]*types.MCPService, error) {
+	result := make([]*types.MCPService, 0, len(ids))
+	for _, id := range ids {
+		result = append(result, &types.MCPService{
+			ID: id, Name: "Actual prompt MCP", Description: "Server-resolved MCP metadata",
+		})
+	}
+	return result, nil
 }
 
 func (m *agentPromptActualModel) ChatStream(
@@ -181,6 +198,35 @@ func TestAgentPromptActualDefaultKBAndDocumentMetadata(t *testing.T) {
 		db.Model(&types.User{}).Where("id=?", types.CallerFromContext(ctx).UserID).Update("is_active", false).Error,
 	)
 	require.Error(t, CheckMessageMaterialOutputBoundary(ctx), "buffered HTTP output must recheck the current reader")
+}
+
+func TestAgentPinnedMetadataIsSourceIndependent(t *testing.T) {
+	ctx := types.WithExecutionTenant(
+		context.Background(),
+		7,
+	)
+	settings := &types.AgentConfig{
+		MCPSelectionMode:    "none",
+		PinnedMCPServiceIDs: []string{"mcp-prompt"},
+		PinnedSkillNames:    []string{"skill-prompt"},
+		TenantSkills: []*types.TenantSkillEntity{{
+			Name: "skill-prompt", Description: "Server-resolved pinned skill metadata",
+		}},
+	}
+	service := &agentService{
+		mcpServiceService: &agentPromptMCPDirectory{},
+	}
+	lineage := sourceIndependentPromptLineage()
+	require.NoError(t, lineage.RequireComplete())
+	mcpServices, skills := service.resolveSourceIndependentPinnedMentions(
+		ctx,
+		settings,
+		lineage,
+	)
+	require.Len(t, mcpServices, 1)
+	require.Len(t, skills, 1)
+	require.NoError(t, mcpServices[0].SourceLineage.RequireComplete())
+	require.NoError(t, skills[0].SourceLineage.RequireComplete())
 }
 
 func TestAgentPromptQuestionOriginIsAHintNotSelectedDocumentInput(t *testing.T) {

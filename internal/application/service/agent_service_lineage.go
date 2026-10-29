@@ -18,22 +18,31 @@ import (
 // emitted citations. It is transferred to the shared HTTP owner before any
 // model call and must not reenter that owner's boundary while being checked.
 type agentPromptInputGuard struct {
-	mu           sync.Mutex
-	ctx          context.Context
-	knowledge    *knowledgeService
-	store        *repository.KnowledgeInputProvenanceStore
-	checker      knowledgeOutputLineageChecker
-	targets      types.SearchTargets
-	physical     *readlease.NextcloudReadGuard
-	bases        []*repository.KnowledgeBasePromptInputSnapshot
-	documents    []*types.KnowledgeBuildInputSnapshot
-	kbInfos      []*agent.KnowledgeBaseInfo
-	selectedDocs []*agent.SelectedDocumentInfo
-	origin       *agent.QuestionOriginInfo
-	body         string
-	builtinCheck func(context.Context) error
-	closed       bool
-	held         bool
+	mu            sync.Mutex
+	ctx           context.Context
+	knowledge     *knowledgeService
+	store         *repository.KnowledgeInputProvenanceStore
+	checker       knowledgeOutputLineageChecker
+	targets       types.SearchTargets
+	physical      *readlease.NextcloudReadGuard
+	bases         []*repository.KnowledgeBasePromptInputSnapshot
+	documents     []*types.KnowledgeBuildInputSnapshot
+	kbInfos       []*agent.KnowledgeBaseInfo
+	selectedDocs  []*agent.SelectedDocumentInfo
+	origin        *agent.QuestionOriginInfo
+	body          string
+	builtinCheck  func(context.Context) error
+	closed        bool
+	held          bool
+	promptLineage *types.SourceLineage
+}
+
+func sourceIndependentPromptLineage() *types.SourceLineage {
+	lineage, err := types.NewCompleteSourceLineage()
+	if err != nil {
+		return types.UnknownSourceLineage()
+	}
+	return lineage
 }
 
 func agentPromptProjectionBody(g *agentPromptInputGuard) (string, error) {
@@ -202,10 +211,9 @@ func (s *agentService) prepareAgentPromptInputs(
 	config *types.AgentConfig,
 ) (*agentPromptInputGuard, error) {
 	g := &agentPromptInputGuard{ctx: ragPhysicalReadLifetimeContext(ctx)}
-	emptyLineage, err := types.NewCompleteSourceLineage()
-	if err != nil {
-		return nil, err
-	}
+	emptyLineage := sourceIndependentPromptLineage()
+	g.promptLineage = emptyLineage
+	var err error
 
 	// WeKnora owns the read boundary for WeKnora knowledge. Nextcloud source
 	// receipts describe lifecycle and provenance; they must not turn ordinary

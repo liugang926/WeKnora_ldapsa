@@ -263,11 +263,15 @@ func (s *agentService) CreateAgentEngine(
 		systemPromptTemplate,
 	)
 	engine.SetAppConfig(s.cfg)
-	pinnedMCP := s.resolvePinnedMCPServiceInfos(ctx, config)
+	pinnedMCP, pinnedSkills := s.resolveSourceIndependentPinnedMentions(
+		ctx,
+		config,
+		promptInputs.promptLineage,
+	)
 	s.attachPinnedMCPToolNames(toolRegistry, pinnedMCP)
 	engine.SetPinnedMentions(
 		pinnedMCP,
-		s.resolvePinnedSkillInfos(config),
+		pinnedSkills,
 	)
 	engine.SetQuestionOrigin(promptInputs.origin)
 	promptLineage, builtinCheck, err := s.builtinAgentPromptInput(
@@ -316,6 +320,7 @@ func (s *agentService) CreateAgentEngine(
 			logger.Warnf(ctx, "Failed to initialize skills manager: %v", err)
 		} else if skillsManager != nil {
 			engine.SetSkillsManager(skillsManager)
+			engine.SetSkillsMetadataSourceLineage(promptInputs.promptLineage)
 			logger.Infof(ctx, "Skills manager initialized with %d skills",
 				len(skillsManager.GetAllMetadata()))
 		}
@@ -1288,12 +1293,13 @@ func (s *agentService) getKnowledgeBaseInfos(
 		if err != nil {
 			logger.Warnf(ctx, "Failed to get knowledge base %s: %v", secutils.SanitizeForLog(kbID), err)
 			kbInfos = append(kbInfos, &agent.KnowledgeBaseInfo{
-				ID:          kbID,
-				Name:        kbID,
-				Type:        "document",
-				Description: "",
-				DocCount:    0,
-				RecentDocs:  []agent.RecentDocInfo{},
+				SourceLineage: sourceIndependentPromptLineage(),
+				ID:            kbID,
+				Name:          kbID,
+				Type:          "document",
+				Description:   "",
+				DocCount:      0,
+				RecentDocs:    []agent.RecentDocInfo{},
 			})
 			continue
 		}
@@ -1307,7 +1313,8 @@ func (s *agentService) getKnowledgeBaseInfos(
 			// The agent prompt has no per-file AD proof for a generic KB browse.
 			// Live retrieval has its own guard; omit cached titles and profiles.
 			kbInfos = append(kbInfos, &agent.KnowledgeBaseInfo{
-				ID: kb.ID, Name: kb.Name, Type: kb.Type, Description: kb.Description,
+				SourceLineage: sourceIndependentPromptLineage(),
+				ID:            kb.ID, Name: kb.Name, Type: kb.Type, Description: kb.Description,
 				Capabilities: kbRetrievalCapabilities(kb),
 				RecentDocs:   []agent.RecentDocInfo{},
 			})
@@ -1399,14 +1406,15 @@ func (s *agentService) getKnowledgeBaseInfos(
 			profile = kb.GeneratedProfile
 		}
 		kbInfos = append(kbInfos, &agent.KnowledgeBaseInfo{
-			ID:           kb.ID,
-			Name:         kb.Name,
-			Type:         kbType,
-			Description:  kb.Description,
-			DocCount:     docCount,
-			Capabilities: kbRetrievalCapabilities(kb),
-			RecentDocs:   recentDocs,
-			Profile:      profile,
+			SourceLineage: sourceIndependentPromptLineage(),
+			ID:            kb.ID,
+			Name:          kb.Name,
+			Type:          kbType,
+			Description:   kb.Description,
+			DocCount:      docCount,
+			Capabilities:  kbRetrievalCapabilities(kb),
+			RecentDocs:    recentDocs,
+			Profile:       profile,
 		})
 	}
 
@@ -1450,7 +1458,10 @@ func (s *agentService) resolveQuestionOriginInfo(
 	if origin == nil || origin.KnowledgeBaseID == "" || !targets.ContainsKB(origin.KnowledgeBaseID) {
 		return nil
 	}
-	info := &agent.QuestionOriginInfo{KnowledgeBaseID: origin.KnowledgeBaseID}
+	info := &agent.QuestionOriginInfo{
+		SourceLineage:   sourceIndependentPromptLineage(),
+		KnowledgeBaseID: origin.KnowledgeBaseID,
+	}
 	for _, kb := range kbInfos {
 		if kb != nil && kb.ID == origin.KnowledgeBaseID {
 			info.KnowledgeBaseName = kb.Name
@@ -1514,6 +1525,7 @@ func (s *agentService) getSelectedDocumentInfos(
 		}
 
 		docInfo := &agent.SelectedDocumentInfo{
+			SourceLineage:   sourceIndependentPromptLineage(),
 			KnowledgeID:     k.ID,
 			KnowledgeBaseID: k.KnowledgeBaseID,
 			Title:           k.Title,
@@ -1570,6 +1582,26 @@ func (s *agentService) resolvePinnedMCPServiceInfos(
 		result = append(result, &agent.PinnedMCPServiceInfo{ID: id, Name: id})
 	}
 	return result
+}
+
+func (s *agentService) resolveSourceIndependentPinnedMentions(
+	ctx context.Context,
+	config *types.AgentConfig,
+	lineage *types.SourceLineage,
+) ([]*agent.PinnedMCPServiceInfo, []*agent.PinnedSkillInfo) {
+	mcpServices := s.resolvePinnedMCPServiceInfos(ctx, config)
+	skills := s.resolvePinnedSkillInfos(config)
+	for _, info := range mcpServices {
+		if info != nil {
+			info.SourceLineage = lineage
+		}
+	}
+	for _, info := range skills {
+		if info != nil {
+			info.SourceLineage = lineage
+		}
+	}
+	return mcpServices, skills
 }
 
 func (s *agentService) attachPinnedMCPToolNames(

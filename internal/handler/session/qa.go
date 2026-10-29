@@ -800,6 +800,12 @@ type sseStreamContext struct {
 	releaseTurn func()
 }
 
+// A failed non-cancelled Agent run must remain incomplete. A user-requested
+// stop still persists the partial turn, matching the existing stop semantics.
+func shouldCompleteAgentTurn(executionFailed bool, contextErr error) bool {
+	return !executionFailed || contextErr != nil
+}
+
 // setupSSEStream sets up the SSE streaming context
 func (h *Handler) setupSSEStream(reqCtx *qaRequestContext, generateTitle bool, mode qaMode) *sseStreamContext {
 	// Base context for async work: when using shared agent, use source tenant for model/KB/MCP resolution
@@ -1520,6 +1526,7 @@ func (h *Handler) executeQA(reqCtx *qaRequestContext, mode qaMode, generateTitle
 	asyncDone := make(chan struct{})
 	streamCtx.producerDone = asyncDone
 	releaseMaterialProducer := applicationservice.RetainMessageMaterialHTTPProducer(streamCtx.asyncCtx)
+	agentExecutionFailed := false
 	go func() {
 		defer close(asyncDone)
 		defer releaseMaterialProducer()
@@ -1548,6 +1555,7 @@ func (h *Handler) executeQA(reqCtx *qaRequestContext, mode qaMode, generateTitle
 					),
 					map[string]interface{}{"session_id": sessionID},
 				)
+				agentExecutionFailed = true
 			}
 			// Agent mode: complete the assistant message in defer (normal mode does it via event handler)
 			if mode == qaModeAgent {
@@ -1564,32 +1572,40 @@ func (h *Handler) executeQA(reqCtx *qaRequestContext, mode qaMode, generateTitle
 					types.TenantIDContextKey, reqCtx.session.TenantID,
 				)
 
-				// Claim any follow-up before completing this row. liveAgentRun
-				// treats a completed assistant as idle and would ClearLiveRun
-				// the old marker — exactly the new_run window. The follow-up
-				// SetLiveRun's first; this run's CAS ClearLiveRun then no-ops.
-				if streamCtx.asyncCtx.Err() != nil {
-					// The turn was cancelled — a user stop. Stopping means
-					// stopping: queued follow-ups are dropped rather than
-					// fired off as a brand-new run the user did not ask for.
-					injected := map[string]struct{}{}
-					if streamCtx.steerSink != nil {
-						injected = streamCtx.steerSink.InjectedIDs()
-					}
-					h.discardSteerBacklog(updateCtx, sessionID, streamCtx.assistantMessage.ID, injected)
-					h.completeStreamAssistantMessage(
-						updateCtx, streamCtx, reqCtx.query, reqCtx.userMessageID,
+				if !shouldCompleteAgentTurn(agentExecutionFailed, streamCtx.asyncCtx.Err()) {
+					logger.Infof(
+						updateCtx,
+						"Agent QA did not complete; retaining assistant message as incomplete for session: %s",
+						sessionID,
 					)
 				} else {
-					kicked := h.kickNextRunFromSteerBacklog(updateCtx, reqCtx, streamCtx)
-					h.completeStreamAssistantMessage(
-						updateCtx, streamCtx, reqCtx.query, reqCtx.userMessageID,
-					)
-					// A /steer that landed while we were completing still sits
-					// on this run. Claim it before ClearLiveRun so it is not
-					// stranded on a list nobody will drain.
-					if !kicked {
-						h.kickNextRunFromSteerBacklog(updateCtx, reqCtx, streamCtx)
+					// Claim any follow-up before completing this row. liveAgentRun
+					// treats a completed assistant as idle and would ClearLiveRun
+					// the old marker — exactly the new_run window. The follow-up
+					// SetLiveRun's first; this run's CAS ClearLiveRun then no-ops.
+					if streamCtx.asyncCtx.Err() != nil {
+						// The turn was cancelled — a user stop. Stopping means
+						// stopping: queued follow-ups are dropped rather than
+						// fired off as a brand-new run the user did not ask for.
+						injected := map[string]struct{}{}
+						if streamCtx.steerSink != nil {
+							injected = streamCtx.steerSink.InjectedIDs()
+						}
+						h.discardSteerBacklog(updateCtx, sessionID, streamCtx.assistantMessage.ID, injected)
+						h.completeStreamAssistantMessage(
+							updateCtx, streamCtx, reqCtx.query, reqCtx.userMessageID,
+						)
+					} else {
+						kicked := h.kickNextRunFromSteerBacklog(updateCtx, reqCtx, streamCtx)
+						h.completeStreamAssistantMessage(
+							updateCtx, streamCtx, reqCtx.query, reqCtx.userMessageID,
+						)
+						// A /steer that landed while we were completing still sits
+						// on this run. Claim it before ClearLiveRun so it is not
+						// stranded on a list nobody will drain.
+						if !kicked {
+							h.kickNextRunFromSteerBacklog(updateCtx, reqCtx, streamCtx)
+						}
 					}
 				}
 				if err := h.streamManager.ClearLiveRun(
@@ -1628,6 +1644,9 @@ func (h *Handler) executeQA(reqCtx *qaRequestContext, mode qaMode, generateTitle
 		}
 
 		if serviceErr != nil {
+			if mode == qaModeAgent && streamCtx.asyncCtx.Err() == nil {
+				agentExecutionFailed = true
+			}
 			if mode == qaModeNormal && streamCtx.releaseTurn != nil {
 				streamCtx.releaseTurn()
 			}
