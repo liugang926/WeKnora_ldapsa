@@ -828,12 +828,12 @@ func (h *KnowledgeHandler) GetKnowledgeSpans(c *gin.Context) {
 	ctx := c.Request.Context()
 	id := secutils.SanitizeForLog(c.Param("id"))
 	if id == "" {
-		c.Error(errors.NewBadRequestError("Knowledge ID cannot be empty"))
+		_ = c.Error(errors.NewBadRequestError("Knowledge ID cannot be empty"))
 		return
 	}
 	knowledge, _, err := h.resolveKnowledgeAndValidateKBAccess(c, id, types.OrgRoleViewer)
 	if err != nil {
-		c.Error(err)
+		_ = c.Error(err)
 		return
 	}
 	requestedAttempt := 0
@@ -1166,7 +1166,7 @@ func (h *KnowledgeHandler) ListKnowledge(c *gin.Context) {
 		)
 		if directErr != nil {
 			logger.ErrorWithFields(ctx, directErr, nil)
-			c.Error(errors.NewInternalServerError(directErr.Error()))
+			_ = c.Error(errors.NewInternalServerError(directErr.Error()))
 			return
 		}
 		c.JSON(http.StatusOK, gin.H{
@@ -1305,7 +1305,7 @@ func (h *KnowledgeHandler) ListKnowledgeFolders(c *gin.Context) {
 		directTree, directErr := h.kgService.ListKnowledgeFolderTree(ctx, kbID)
 		if directErr != nil {
 			logger.ErrorWithFields(ctx, directErr, nil)
-			c.Error(errors.NewInternalServerError(directErr.Error()))
+			_ = c.Error(errors.NewInternalServerError(directErr.Error()))
 			return
 		}
 		logger.Infof(ctx, "Knowledge folder tree retrieved, kb_id=%s folders=%d",

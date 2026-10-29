@@ -401,10 +401,7 @@ func compatibleTagOutputInputs(expected, actual *types.TagOutputInputSnapshot) b
 			return false
 		}
 	}
-	if !tagOutputEqual(expected.Auxiliary, actual.Auxiliary) {
-		return false
-	}
-	return true
+	return tagOutputEqual(expected.Auxiliary, actual.Auxiliary)
 }
 
 func selectTagOutputInTx(

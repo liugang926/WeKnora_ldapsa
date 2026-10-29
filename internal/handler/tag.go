@@ -107,7 +107,7 @@ func (h *TagHandler) ListTags(c *gin.Context) {
 		directTags, directErr := h.tagService.ListTags(ctx, kbID, &page, keyword)
 		if directErr != nil {
 			logger.ErrorWithFields(ctx, directErr, nil)
-			c.Error(directErr)
+			_ = c.Error(directErr)
 			return
 		}
 		c.JSON(http.StatusOK, gin.H{"success": true, "data": directTags})
