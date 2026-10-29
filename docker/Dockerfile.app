@@ -95,7 +95,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
         fi && \
         if [ -n "$RUSTUP_DIST_SERVER_ARG" ]; then export RUSTUP_DIST_SERVER="$RUSTUP_DIST_SERVER_ARG"; fi && \
         if [ -n "$RUSTUP_UPDATE_ROOT_ARG" ]; then export RUSTUP_UPDATE_ROOT="$RUSTUP_UPDATE_ROOT_ARG"; fi && \
-        if [ -x /app/rustup-init ]; then \
+        if [ -f /app/rustup-init ]; then \
             cp /app/rustup-init /tmp/rustup-init && \
             chmod +x /tmp/rustup-init && \
             /tmp/rustup-init -y --profile minimal --default-toolchain stable && \
