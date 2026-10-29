@@ -3,6 +3,7 @@ package container
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"time"
 
@@ -21,14 +22,18 @@ type nextcloudSyncTaskProbe interface {
 	GetTaskInfo(queue, id string) (*asynq.TaskInfo, error)
 }
 
+type nextcloudEventSyncRecoverer interface {
+	RecoverQueuedEventSync(ctx context.Context, connectionID, syncLogID string, now time.Time) (bool, error)
+}
+
 func recoverNextcloudSyncAdmissionsOnce(ctx context.Context, store *repository.NextcloudSyncRecoveryStore,
-	probe nextcloudSyncTaskProbe, distributed bool, now time.Time,
+	probe nextcloudSyncTaskProbe, events nextcloudEventSyncRecoverer, distributed bool, now time.Time,
 ) (int, error) {
 	if store == nil || (distributed && probe == nil) {
 		return 0, nil
 	}
 	cutoff := now.Add(-nextcloudSyncRecoveryGrace)
-	logs, err := store.UnstartedBefore(ctx, cutoff, 100)
+	logs, err := store.RecoverableBefore(ctx, cutoff, 100)
 	if err != nil {
 		return 0, err
 	}
@@ -56,17 +61,51 @@ func recoverNextcloudSyncAdmissionsOnce(ctx context.Context, store *repository.N
 			recovered++
 		}
 	}
+	eventCandidates, err := store.QueuedEventSyncBefore(ctx, cutoff, 100)
+	if err != nil {
+		return recovered, err
+	}
+	for _, event := range eventCandidates {
+		if event.ConnectionID == "" || event.SyncLogID == "" || events == nil {
+			continue
+		}
+		if distributed {
+			// Event tasks use a deterministic ID, so their exact queue entry
+			// is a stronger liveness signal than the worker_active projection.
+			_, lookupErr := probe.GetTaskInfo(types.QueueSync,
+				fmt.Sprintf("ncevent:%s:%s", event.ConnectionID, event.SyncLogID))
+			if lookupErr == nil {
+				continue
+			}
+			if !errors.Is(lookupErr, asynq.ErrTaskNotFound) {
+				return recovered, lookupErr
+			}
+		}
+		released, err := events.RecoverQueuedEventSync(ctx, event.ConnectionID,
+			event.SyncLogID, now)
+		if err != nil {
+			if errors.Is(err, repository.ErrNextcloudEventConflict) ||
+				errors.Is(err, repository.ErrNextcloudEventScope) {
+				continue
+			}
+			return recovered, err
+		}
+		if released {
+			recovered++
+		}
+	}
 	return recovered, nil
 }
 
-// Redis recovery is opt-in during a rolling upgrade: every worker that can
-// consume the sync queue must enforce ClaimNextcloudSyncStart first. Lite has
-// one process, so the prior in-memory queue is gone on restart.
+// Recovery is enabled by default once queue workers enforce the durable
+// admission. Operators may disable it explicitly during a mixed-version
+// rollout with WEKNORA_NEXTCLOUD_SYNC_RECOVERY_ENABLED=false.
 func startNextcloudSyncAdmissionRecovery(db *gorm.DB, redisClient *redis.Client,
+	inbox *repository.NextcloudEventInboxRepository,
 	cleaner interfaces.ResourceCleaner,
 ) {
 	distributed := redisClient != nil
-	if distributed && os.Getenv("WEKNORA_NEXTCLOUD_SYNC_RECOVERY_ENABLED") != "true" {
+	if os.Getenv("WEKNORA_NEXTCLOUD_SYNC_RECOVERY_ENABLED") == "false" {
 		return
 	}
 	var probe nextcloudSyncTaskProbe
@@ -78,12 +117,12 @@ func startNextcloudSyncAdmissionRecovery(db *gorm.DB, redisClient *redis.Client,
 	run := func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		count, err := recoverNextcloudSyncAdmissionsOnce(ctx, store, probe, distributed, time.Now().UTC())
+		count, err := recoverNextcloudSyncAdmissionsOnce(ctx, store, probe, inbox, distributed, time.Now().UTC())
 		if err != nil {
 			logger.Warnf(ctx, "[NextcloudSyncRecovery] scan failed: %v", err)
 		}
 		if count > 0 {
-			logger.Infof(ctx, "[NextcloudSyncRecovery] released %d unstarted admission(s)", count)
+			logger.Infof(ctx, "[NextcloudSyncRecovery] recovered %d missing sync worker(s)", count)
 		}
 	}
 	go func() {

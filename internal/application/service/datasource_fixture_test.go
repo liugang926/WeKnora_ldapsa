@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	apprepo "github.com/Tencent/WeKnora/internal/application/repository"
 	storagefile "github.com/Tencent/WeKnora/internal/application/service/file"
@@ -178,10 +179,17 @@ func wireNextcloudCapacityFixture(t *testing.T, svc *DataSourceService, ds *type
 	kb := &types.KnowledgeBase{ID: ds.KnowledgeBaseID, TenantID: ds.TenantID, StorageBackendID: &backend}
 	require.NoError(t, db.Create(kb).Error)
 	files := storagefile.NewBackendScopedFileService(backend, storagefile.NewLocalFileService(t.TempDir(), ""))
+	measurement, err := files.(interfaces.StorageCapacityProvider).MeasureStorageCapacity(context.Background())
+	require.NoError(t, err)
+	measurement.TotalBytes = max(measurement.TotalBytes, int64(1<<30))
+	measurement.AvailableBytes = measurement.TotalBytes
+	measurement.MeasuredAt = time.Now().UTC()
 	svc.kbService = &processSyncKBService{kb: kb}
 	svc.capacityAdmission = NewNextcloudCapacityAdmission(
 		apprepo.NewNextcloudCapacityStore(db),
-		func(context.Context, *types.KnowledgeBase) (interfaces.FileService, error) { return files, nil },
+		func(context.Context, *types.KnowledgeBase) (interfaces.FileService, error) {
+			return capacityMeasuredFile{FileService: files, measurement: measurement}, nil
+		},
 	)
 }
 

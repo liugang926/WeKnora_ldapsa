@@ -64,7 +64,8 @@ func nextcloudApplyCandidateProof(
 	connection nextcloudEventConnection,
 ) bool {
 	terminalFailure := version.State == "staging" && candidate.DeletedAt == nil &&
-		candidate.ParseStatus == types.ParseStatusFailed
+		candidate.ParseStatus == types.ParseStatusFailed &&
+		(candidate.EnableStatus == "disabled" || candidate.EnableStatus == "enabled")
 	published := version.State == "published" && candidate.DeletedAt == nil &&
 		candidate.ParseStatus == types.ParseStatusCompleted &&
 		candidate.EnableStatus == "enabled"
@@ -214,6 +215,7 @@ func nextcloudDispatchPublicationProof(
 		return nextcloudApplyRetry, err
 	}
 	byKnowledgeID := make(map[string]nextcloudApplyKnowledge, len(knowledgeRows))
+	failedEnabledCandidates := make([]string, 0, 1)
 	for _, row := range knowledgeRows {
 		var metadata map[string]json.RawMessage
 		if json.Unmarshal(row.Metadata, &metadata) != nil ||
@@ -252,11 +254,34 @@ func nextcloudDispatchPublicationProof(
 		if !nextcloudApplyCandidateProof(version, candidate, file, fileID, connection) {
 			return nextcloudApplyRetry, nil
 		}
+		if version.State == "staging" &&
+			candidate.ParseStatus == types.ParseStatusFailed &&
+			candidate.EnableStatus == "enabled" {
+			failedEnabledCandidates = append(failedEnabledCandidates, candidate.ID)
+		}
 	}
 	barriersMatch, err := nextcloudLatestHintBarriers(tx, connection, appliedEventID,
 		targetEventID, files, tombstones, byExternalID)
 	if err != nil || !barriersMatch {
 		return nextcloudApplyRetry, err
+	}
+	// A failed parse is terminal even if an older failure path left the row
+	// enabled. Normalize only candidates whose exact source revision, target
+	// ETag, path, binding and file identity were already proven above. This
+	// changes visibility bookkeeping only; no failed row is published.
+	for _, candidateID := range failedEnabledCandidates {
+		result := tx.Model(&types.Knowledge{}).
+			Where("id = ? AND tenant_id = ? AND knowledge_base_id = ? AND channel = ? "+
+				"AND parse_status = ? AND enable_status = ? AND deleted_at IS NULL",
+				candidateID, connection.TenantID, connection.KnowledgeBaseID,
+				types.ConnectorTypeNextcloud, types.ParseStatusFailed, "enabled").
+			Update("enable_status", "disabled")
+		if result.Error != nil {
+			return nextcloudApplyRetry, result.Error
+		}
+		if result.RowsAffected != 1 {
+			return nextcloudApplyRetry, nil
+		}
 	}
 	return nextcloudApplyComplete, nil
 }

@@ -30,7 +30,7 @@ func nextcloudBaselineTestDB(t *testing.T) (*gorm.DB, *apprepo.NextcloudEventInb
 	require.NoError(t, err)
 	require.NoError(t, db.Exec(`CREATE TABLE nextcloud_source_versions (
 		tenant_id INTEGER, knowledge_base_id TEXT, datasource_id TEXT,
-		external_id TEXT, state TEXT)`).Error)
+		external_id TEXT, desired_etag TEXT, candidate_knowledge_id TEXT, state TEXT)`).Error)
 	require.NoError(t, db.Exec(`CREATE TABLE knowledges (
 		id TEXT PRIMARY KEY, tenant_id INTEGER, knowledge_base_id TEXT,
 		channel TEXT, metadata TEXT)`).Error)

@@ -675,7 +675,8 @@ func (r *SyncLogRepository) HasRunningSync(ctx context.Context, dsID string) (bo
 
 // ClaimNextcloudSyncStart fences every versioned manual/cron attempt to one
 // exact task. A retry may acquire only after its predecessor returned and
-// relinquished the token; a crashed or still-active worker remains fail-closed.
+// relinquished the token. A crashed worker is released only by the recovery
+// scanner after its exact queue task is proven absent.
 func (r *SyncLogRepository) ClaimNextcloudSyncStart(ctx context.Context, logID, dsID string,
 	tenantID uint64, trigger, taskID string, retryCount int,
 ) (string, error) {
