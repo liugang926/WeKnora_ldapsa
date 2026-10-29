@@ -49,6 +49,21 @@ type messageLineageHistoryAdmission struct {
 	verifier interfaces.MessageSourceLineageVerifier
 }
 
+type weknoraSourceIndependentAgentKey struct{}
+
+// weknoraACLHistoryAdmission keeps stored session history available under the
+// WeKnora owner/space boundary. Nextcloud publication receipts are lifecycle
+// evidence, not a second read ACL.
+type weknoraACLHistoryAdmission struct{}
+
+func (weknoraACLHistoryAdmission) CheckAgentHistoryReplay(context.Context) error {
+	return nil
+}
+
+func (weknoraACLHistoryAdmission) CheckMessageSourceLineage(context.Context, *types.Message) error {
+	return nil
+}
+
 func (a messageLineageHistoryAdmission) CheckAgentHistoryReplay(ctx context.Context) error {
 	if a.verifier == nil {
 		return access.ErrNextcloudPublicationUnavailable

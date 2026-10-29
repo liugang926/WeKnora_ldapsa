@@ -191,6 +191,13 @@ func (s *agentService) CreateAgentEngine(
 
 	if config != nil && config.ExcludeHistoricalContext {
 		config = withoutHistoricalAgentContext(config)
+	} else if sourceIndependent, _ := ctx.Value(
+		weknoraSourceIndependentAgentKey{},
+	).(bool); sourceIndependent {
+		// Session history text is available under the WeKnora owner/space ACL,
+		// but historically staged sandbox files and injected tools still need a
+		// current explicit-material receipt.
+		config = withoutHistoricalAgentContext(config)
 	}
 
 	// 1. Validate config
@@ -264,11 +271,30 @@ func (s *agentService) CreateAgentEngine(
 	)
 	engine.SetAppConfig(s.cfg)
 	pinnedMCP := s.resolvePinnedMCPServiceInfos(ctx, config)
-	s.attachPinnedMCPToolNames(toolRegistry, pinnedMCP)
-	engine.SetPinnedMentions(
-		pinnedMCP,
-		s.resolvePinnedSkillInfos(config),
-	)
+	sourceIndependent, _ := ctx.Value(weknoraSourceIndependentAgentKey{}).(bool)
+	if sourceIndependent {
+		emptyPromptLineage, err := types.NewCompleteSourceLineage()
+		if err != nil {
+			return nil, err
+		}
+		for _, info := range pinnedMCP {
+			if info != nil {
+				info.SourceLineage = emptyPromptLineage
+			}
+		}
+		s.attachPinnedMCPToolNames(toolRegistry, pinnedMCP)
+		pinnedSkills := s.resolvePinnedSkillInfos(config)
+		for _, info := range pinnedSkills {
+			if info != nil {
+				info.SourceLineage = emptyPromptLineage
+			}
+		}
+		engine.SetPinnedMentions(pinnedMCP, pinnedSkills)
+		engine.SetSkillsMetadataSourceLineage(emptyPromptLineage)
+	} else {
+		s.attachPinnedMCPToolNames(toolRegistry, pinnedMCP)
+		engine.SetPinnedMentions(pinnedMCP, s.resolvePinnedSkillInfos(config))
+	}
 	engine.SetQuestionOrigin(promptInputs.origin)
 	promptLineage, builtinCheck, err := s.builtinAgentPromptInput(
 		ctx,
@@ -1279,6 +1305,9 @@ func (s *agentService) getKnowledgeBaseInfos(
 	if len(kbIDs) == 0 {
 		return []*agent.KnowledgeBaseInfo{}, nil
 	}
+	if s.knowledgeBaseService == nil {
+		return nil, access.ErrNextcloudPublicationUnavailable
+	}
 
 	kbInfos := make([]*agent.KnowledgeBaseInfo, 0, len(kbIDs))
 
@@ -1296,6 +1325,9 @@ func (s *agentService) getKnowledgeBaseInfos(
 				RecentDocs:  []agent.RecentDocInfo{},
 			})
 			continue
+		}
+		if targetTenant := kbTenantMap[kbID]; targetTenant != 0 && kb.TenantID != targetTenant {
+			return nil, access.ErrNextcloudPublicationDenied
 		}
 
 		// Skip hidden/system-managed knowledge bases (e.g., __chat_history__)
@@ -1466,7 +1498,7 @@ func (s *agentService) resolveQuestionOriginInfo(
 	if origin.KnowledgeID == "" {
 		return info
 	}
-	docs, err := s.getSelectedDocumentInfos(ctx, []string{origin.KnowledgeID})
+	docs, err := s.getSelectedDocumentInfosInTargets(ctx, []string{origin.KnowledgeID}, targets)
 	if err != nil || len(docs) != 1 || docs[0].KnowledgeBaseID != origin.KnowledgeBaseID {
 		logger.Infof(ctx, "Question origin document %s dropped: not found in knowledge base %s",
 			secutils.SanitizeForLog(origin.KnowledgeID), secutils.SanitizeForLog(origin.KnowledgeBaseID))
@@ -1480,8 +1512,19 @@ func (s *agentService) getSelectedDocumentInfos(
 	ctx context.Context,
 	knowledgeIDs []string,
 ) ([]*agent.SelectedDocumentInfo, error) {
+	return s.getSelectedDocumentInfosInTargets(ctx, knowledgeIDs, nil)
+}
+
+func (s *agentService) getSelectedDocumentInfosInTargets(
+	ctx context.Context,
+	knowledgeIDs []string,
+	targets types.SearchTargets,
+) ([]*agent.SelectedDocumentInfo, error) {
 	if len(knowledgeIDs) == 0 {
 		return []*agent.SelectedDocumentInfo{}, nil
+	}
+	if s.knowledgeService == nil {
+		return nil, access.ErrNextcloudPublicationUnavailable
 	}
 
 	// Get tenant ID from context
@@ -1511,6 +1554,12 @@ func (s *agentService) getSelectedDocumentInfos(
 		if !ok {
 			logger.Warnf(ctx, "Selected knowledge %s not found", kid)
 			continue
+		}
+		if targets != nil {
+			targetTenant := targets.GetTenantIDForKB(k.KnowledgeBaseID)
+			if targetTenant == 0 || targetTenant != k.TenantID {
+				return nil, access.ErrNextcloudPublicationDenied
+			}
 		}
 
 		docInfo := &agent.SelectedDocumentInfo{

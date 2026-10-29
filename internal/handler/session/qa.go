@@ -840,11 +840,18 @@ func (h *Handler) setupSSEStream(reqCtx *qaRequestContext, generateTitle bool, m
 	var materialAttach func(context.Context) context.Context
 	var materialCheck func() error
 	var materialClose func()
-	if native, ok := h.messageService.(interface{ HasOriginalMessageMaterialStore() bool }); ok &&
-		native.HasOriginalMessageMaterialStore() {
-		asyncCtx, materialAttach, materialCheck, materialClose = applicationservice.BeginMessageMaterialHTTPBoundary(
-			asyncCtx,
-		)
+	// Agent turns create their steer sink below, after this boundary must be
+	// established. Check the mode/agent precondition rather than the sink's
+	// current value so mid-run steering cannot bypass original-material proof.
+	needsMaterialBoundary := !access.UseWeKnoraReadAuthority() || hasExplicitInputMaterials(reqCtx) ||
+		(mode == qaModeAgent && reqCtx != nil && reqCtx.customAgent != nil)
+	if needsMaterialBoundary {
+		native, ok := h.messageService.(interface{ HasOriginalMessageMaterialStore() bool })
+		if ok && native.HasOriginalMessageMaterialStore() {
+			asyncCtx, materialAttach, materialCheck, materialClose = applicationservice.BeginMessageMaterialHTTPBoundary(
+				asyncCtx,
+			)
+		}
 	}
 
 	streamCtx := &sseStreamContext{

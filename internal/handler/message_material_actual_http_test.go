@@ -222,6 +222,12 @@ func TestMessageMaterialActualHTTPProducerReadSingleConnection(t *testing.T) {
 	response = request()
 	require.Equal(t, http.StatusServiceUnavailable, response.Code, response.Body.String())
 	require.NotContains(t, response.Body.String(), answer.Content)
+
+	t.Setenv("WEKNORA_NEXTCLOUD_READ_AUTHORITY", "weknora")
+	response = request()
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	require.Contains(t, response.Body.String(), answer.Content,
+		"the explicit WeKnora read authority serves saved text without a source receipt")
 }
 
 func TestMessageMaterialActualControlledSavedHTTPAndCurrentSourceRevoke(t *testing.T) {

@@ -201,6 +201,70 @@ func (s *agentService) prepareAgentPromptInputs(
 	ctx context.Context,
 	config *types.AgentConfig,
 ) (*agentPromptInputGuard, error) {
+	if access.UseWeKnoraReadAuthority() {
+		return s.prepareWeKnoraAgentPromptInputs(ctx, config)
+	}
+	return s.prepareStrictAgentPromptInputs(ctx, config)
+}
+
+func (s *agentService) prepareWeKnoraAgentPromptInputs(
+	ctx context.Context,
+	config *types.AgentConfig,
+) (*agentPromptInputGuard, error) {
+	g := &agentPromptInputGuard{ctx: ragPhysicalReadLifetimeContext(ctx)}
+	emptyLineage, err := types.NewCompleteSourceLineage()
+	if err != nil {
+		return nil, err
+	}
+
+	// WeKnora owns the read boundary for WeKnora knowledge. Nextcloud source
+	// receipts describe lifecycle and provenance; they must not turn ordinary
+	// space browsing, @mentioned documents or question_origin hints into a
+	// Nextcloud permission check.
+	kbIDs, kbTenantMap := knowledgeBaseScopesForPrompt(config)
+	g.kbInfos, err = s.getKnowledgeBaseInfos(ctx, kbIDs, kbTenantMap)
+	if err != nil {
+		return nil, err
+	}
+	for _, info := range g.kbInfos {
+		if info != nil {
+			info.SourceLineage = emptyLineage
+		}
+	}
+
+	knowledgeIDs := dedupStrings(append([]string{}, config.KnowledgeIDs...))
+	g.selectedDocs, err = s.getSelectedDocumentInfosInTargets(ctx, knowledgeIDs, config.SearchTargets)
+	if err != nil {
+		return nil, err
+	}
+	for _, doc := range g.selectedDocs {
+		if doc == nil || !config.SearchTargets.ContainsKB(doc.KnowledgeBaseID) {
+			return nil, access.ErrNextcloudPublicationDenied
+		}
+		doc.SourceLineage = emptyLineage
+	}
+
+	g.origin = s.resolveQuestionOriginInfo(ctx, config.QuestionOrigin, config.SearchTargets, g.kbInfos)
+	if g.origin != nil {
+		g.origin.SourceLineage = emptyLineage
+		if g.origin.Document != nil {
+			g.origin.Document.SourceLineage = emptyLineage
+		}
+	}
+	g.body, err = agentPromptProjectionBody(g)
+	if err != nil {
+		return nil, err
+	}
+	if err := g.CheckHeld(); err != nil {
+		return nil, err
+	}
+	return g, nil
+}
+
+func (s *agentService) prepareStrictAgentPromptInputs(
+	ctx context.Context,
+	config *types.AgentConfig,
+) (*agentPromptInputGuard, error) {
 	g := &agentPromptInputGuard{ctx: ragPhysicalReadLifetimeContext(ctx)}
 	kbIDs, _ := knowledgeBaseScopesForPrompt(config)
 	if len(kbIDs) == 0 && len(config.KnowledgeIDs) == 0 && config.QuestionOrigin == nil {
@@ -266,12 +330,7 @@ func (s *agentService) prepareAgentPromptInputs(
 			g.kbInfos = append(g.kbInfos, info)
 		}
 	}
-	// A suggested-question origin is a retrieval hint, not a document selected
-	// as model input. Official WeKnora resolves it after the turn's targets are
-	// fixed. Requiring an original-material receipt here turns a stale or
-	// ordinary hint into a fatal 403 before the agent can search normally.
-	ids := append([]string{}, config.KnowledgeIDs...)
-	ids = dedupStrings(ids)
+	ids := dedupStrings(append([]string{}, config.KnowledgeIDs...))
 	byDoc := map[string]*agent.SelectedDocumentInfo{}
 	if len(ids) > 0 {
 		tenant, _ := types.TenantIDFromContext(g.ctx)
@@ -408,6 +467,23 @@ func (s *agentService) builtinAgentPromptInput(
 	if template == "" {
 		return nil, nil, nil
 	}
+	if !access.UseWeKnoraReadAuthority() {
+		return s.strictBuiltinAgentPromptInput(ctx, config, sessionID, assistantID, template)
+	}
+	lineage, err := types.NewCompleteSourceLineage()
+	if err != nil {
+		return nil, nil, err
+	}
+	// The prompt is server-owned and the Agent/session were authorized by the
+	// WeKnora route. Nextcloud material receipts are not a prompt-read ACL.
+	return lineage, func(context.Context) error { return nil }, nil
+}
+
+func (s *agentService) strictBuiltinAgentPromptInput(
+	ctx context.Context,
+	config *types.AgentConfig,
+	sessionID, assistantID, template string,
+) (*types.SourceLineage, func(context.Context) error, error) {
 	messages, ok := s.messageService.(*messageService)
 	if !ok || messages == nil || messages.materialStore == nil || messages.sessionRepo == nil || s.db == nil ||
 		s.cfg == nil {

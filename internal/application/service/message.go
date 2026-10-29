@@ -169,21 +169,27 @@ func (s *messageService) checkLiveKnowledgeGrants(ctx context.Context, message *
 func (
 	s *messageService,
 ) filterHistoryMessages(ctx context.Context, messages []*types.Message) ([]*types.Message, error) {
-	filtered := make([]*types.Message, 0, len(messages))
-	for _, message := range messages {
-		err := s.CheckMessagePublication(ctx, message)
-		if errors.Is(err, access.ErrNextcloudPublicationDenied) {
-			continue
+	if !access.UseWeKnoraReadAuthority() {
+		filtered := make([]*types.Message, 0, len(messages))
+		for _, message := range messages {
+			err := s.CheckMessagePublication(ctx, message)
+			if errors.Is(err, access.ErrNextcloudPublicationDenied) {
+				continue
+			}
+			if err != nil {
+				return nil, err
+			}
+			filtered = append(filtered, message)
 		}
-		if err != nil {
+		if err := s.checkMessageSourceLineageBatch(ctx, filtered, nil); err != nil {
 			return nil, err
 		}
-		filtered = append(filtered, message)
+		return rawUserContentOnly(filtered), nil
 	}
-	if err := s.checkMessageSourceLineageBatch(ctx, filtered, nil); err != nil {
-		return nil, err
-	}
-	return rawUserContentOnly(filtered), nil
+	// Session ownership/tenant scope is the WeKnora read boundary. Nextcloud
+	// receipts remain lifecycle evidence and do not filter saved conversation
+	// history.
+	return rawUserContentOnly(messages), nil
 }
 
 // sessionTenantIDForLookup returns the tenant ID to use for session lookup.
@@ -261,7 +267,7 @@ func (s *messageService) GetMessage(ctx context.Context, sessionID string, messa
 		return nil, err
 	}
 
-	if s.materialStore != nil {
+	if !access.UseWeKnoraReadAuthority() && s.materialStore != nil {
 		_, model := ctx.Value(agentHistoryCurrentRequestKey{}).(string)
 		rows, err := s.admittedMessages(
 			ctx,
@@ -291,8 +297,10 @@ func (s *messageService) GetMessage(ctx context.Context, sessionID string, messa
 	}
 
 	logger.Info(ctx, "Message retrieved successfully")
-	if err := s.CheckMessagePublication(ctx, message); err != nil {
-		return nil, err
+	if !access.UseWeKnoraReadAuthority() {
+		if err := s.CheckMessagePublication(ctx, message); err != nil {
+			return nil, err
+		}
 	}
 	return rawUserContentOnly(s.clarifyReadArtifactVersions(ctx, sessionID, []*types.Message{message}))[0], nil
 }
@@ -382,7 +390,7 @@ func (s *messageService) GetMessagesBySession(ctx context.Context,
 		return nil, err
 	}
 
-	if s.materialStore != nil {
+	if !access.UseWeKnoraReadAuthority() && s.materialStore != nil {
 		return s.admittedMessagePage(ctx, sessionID, time.Time{}, pageSize, page, false)
 	}
 	logger.Info(ctx, "Session exists, getting messages")
@@ -423,7 +431,7 @@ func (s *messageService) GetRecentMessagesBySession(ctx context.Context,
 		return nil, err
 	}
 
-	if s.materialStore != nil {
+	if !access.UseWeKnoraReadAuthority() && s.materialStore != nil {
 		return s.admittedMessagePage(ctx, sessionID, time.Time{}, limit, 1, true)
 	}
 	logger.Info(ctx, "Session exists, getting recent messages")
@@ -463,7 +471,7 @@ func (s *messageService) GetMessagesBySessionBeforeTime(ctx context.Context,
 		return nil, err
 	}
 
-	if s.materialStore != nil {
+	if !access.UseWeKnoraReadAuthority() && s.materialStore != nil {
 		return s.admittedMessagePage(ctx, sessionID, beforeTime, limit, 1, true)
 	}
 	logger.Info(ctx, "Session exists, getting messages before time")
@@ -490,7 +498,8 @@ func (s *messageService) UpdateMessage(ctx context.Context, message *types.Messa
 	if message == nil {
 		return access.ErrNextcloudPublicationDenied
 	}
-	if message.Role != "user" && message.IsCompleted {
+	sourceIndependent := access.UseWeKnoraReadAuthority() && types.SourceIndependentDerivativesAllowed(message)
+	if !sourceIndependent && message.Role != "user" && message.IsCompleted {
 		if err := s.checkTypedSourceLineage(ctx, message); err != nil {
 			return err
 		}
@@ -506,16 +515,24 @@ func (s *messageService) UpdateMessage(ctx context.Context, message *types.Messa
 		return err
 	}
 
+	var finishCompletion func(error) error
 	if s.materialStore != nil {
-		ctx, err = s.materialStore.WithMessageProducerInput(ctx, message, false)
+		materialCtx, inputErr := s.materialStore.WithMessageProducerInput(ctx, message, false)
+		if inputErr == nil {
+			inputCtx := ctx
+			ctx = materialCtx
+			ctx, finishCompletion, err = s.beginMessageMaterialCompletion(ctx, message)
+			if err != nil && sourceIndependent {
+				ctx = inputCtx
+				finishCompletion = nil
+				err = nil
+			}
+		} else if !sourceIndependent {
+			return inputErr
+		}
 		if err != nil {
 			return err
 		}
-	}
-	var finishCompletion func(error) error
-	ctx, finishCompletion, err = s.beginMessageMaterialCompletion(ctx, message)
-	if err != nil {
-		return err
 	}
 	logger.Info(ctx, "Session exists, updating message")
 	err = s.messageRepo.UpdateMessage(ctx, message)

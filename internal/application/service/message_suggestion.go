@@ -79,9 +79,11 @@ func (s *messageSuggestionService) EnsureFollowUps(
 	if err != nil {
 		return nil, err
 	}
-	if !types.SourceIndependentDerivativesAllowed(message) || len(message.ExecutionContext.KnowledgeBaseIDs) > 0 ||
-		len(message.ExecutionContext.AgentKnowledgeBaseIDs) > 0 ||
-		len(message.ExecutionContext.KnowledgeIDs) > 0 {
+	if !types.SourceIndependentDerivativesAllowed(message) ||
+		(!access.UseWeKnoraReadAuthority() &&
+			(len(message.ExecutionContext.KnowledgeBaseIDs) > 0 ||
+				len(message.ExecutionContext.AgentKnowledgeBaseIDs) > 0 ||
+				len(message.ExecutionContext.KnowledgeIDs) > 0)) {
 		return nil, access.ErrNextcloudPublicationDenied
 	}
 	if message.Role != "assistant" || !message.IsCompleted {
