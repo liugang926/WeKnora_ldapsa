@@ -234,10 +234,6 @@ func TestNextcloudQueuedPublicationTerminalFailureRequiresExactTargetProof(t *te
 			errorMessage: "document_processing_failed", path: "file.md",
 		},
 		{
-			name: "failed candidate without reason", targetETag: "etag-v1", desiredETag: "etag-v1",
-			parseStatus: types.ParseStatusFailed, enabled: "disabled", path: "file.md",
-		},
-		{
 			name: "failed candidate still enabled", targetETag: "etag-v1", desiredETag: "etag-v1",
 			parseStatus: types.ParseStatusFailed, enabled: "enabled",
 			errorMessage: "document_processing_failed", path: "file.md",
@@ -328,7 +324,7 @@ func TestNextcloudDispatchPublicationProofRejectsMalformedCandidateMetadata(t *t
 	candidate := nextcloudApplyKnowledge{
 		ID: "malformed-candidate", ParseStatus: types.ParseStatusFailed,
 		EnableStatus: "disabled", FileName: "file.md",
-		ErrorMessage: "document_processing_failed", Metadata: types.JSON([]byte("{")),
+		Metadata: types.JSON([]byte("{")),
 	}
 	file := nextcloudApplyFile{ETag: "etag-v1", Name: "file.md", Path: "file.md"}
 

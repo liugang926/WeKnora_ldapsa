@@ -44,7 +44,6 @@ type nextcloudApplyKnowledge struct {
 	ParseStatus  string     `gorm:"column:parse_status"`
 	EnableStatus string     `gorm:"column:enable_status"`
 	FileName     string     `gorm:"column:file_name"`
-	ErrorMessage string     `gorm:"column:error_message"`
 	Metadata     types.JSON `gorm:"column:metadata"`
 	DeletedAt    *time.Time `gorm:"column:deleted_at"`
 }
@@ -66,8 +65,7 @@ func nextcloudApplyCandidateProof(
 ) bool {
 	terminalFailure := version.State == "staging" && candidate.DeletedAt == nil &&
 		candidate.ParseStatus == types.ParseStatusFailed &&
-		candidate.EnableStatus == "disabled" &&
-		strings.TrimSpace(candidate.ErrorMessage) != ""
+		candidate.EnableStatus == "disabled"
 	published := version.State == "published" && candidate.DeletedAt == nil &&
 		candidate.ParseStatus == types.ParseStatusCompleted &&
 		candidate.EnableStatus == "enabled"
@@ -210,7 +208,7 @@ func nextcloudDispatchPublicationProof(
 	}
 	var knowledgeRows []nextcloudApplyKnowledge
 	if err := tx.Table("knowledges").
-		Select("id", "parse_status", "enable_status", "file_name", "error_message", "metadata", "deleted_at").
+		Select("id", "parse_status", "enable_status", "file_name", "metadata", "deleted_at").
 		Where("tenant_id = ? AND knowledge_base_id = ? AND channel = ?",
 			connection.TenantID, connection.KnowledgeBaseID, types.ConnectorTypeNextcloud).
 		Find(&knowledgeRows).Error; err != nil {
@@ -229,8 +227,7 @@ func nextcloudDispatchPublicationProof(
 		}
 		terminalFailure := version.State == "staging" && row.DeletedAt == nil &&
 			row.ParseStatus == types.ParseStatusFailed &&
-			row.EnableStatus == "disabled" &&
-			strings.TrimSpace(row.ErrorMessage) != ""
+			row.EnableStatus == "disabled"
 		if nextcloudApplyMetadataString(metadata, "nextcloud_etag") != "" &&
 			(row.DeletedAt != nil || version.CandidateKnowledgeID != row.ID ||
 				(!terminalFailure && version.State != "published") ||
