@@ -288,7 +288,17 @@ func (s *sessionService) KnowledgeQA(
 	if req.CustomAgent != nil {
 		lineageScope.AgentID, lineageScope.AgentTenantID = req.CustomAgent.ID, req.CustomAgent.TenantID
 	}
-	ctx, err = s.eventManager.BeginSourceLineage(ctx, chatManage, lineageScope)
+	ctx, err = s.eventManager.BeginSourceLineage(
+		ctx,
+		chatManage,
+		lineageScope,
+		func(checkCtx context.Context, lineage *types.SourceLineage, checkScope access.LineageReadScope) error {
+			if s.sourceLineageGuard == nil {
+				return access.ErrNextcloudPublicationUnavailable
+			}
+			return s.sourceLineageGuard.Check(checkCtx, lineage, checkScope)
+		},
+	)
 	if err != nil {
 		return err
 	}
