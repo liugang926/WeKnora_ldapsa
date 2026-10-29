@@ -113,6 +113,9 @@ func (h *Handler) nativeLiveStreamManager(
 		appender.registrationErr = err
 		return appender
 	}
+	if control != nil && !control.ExecutionContext.ExplicitInputMaterials {
+		return h.streamManager
+	}
 	if control == nil || control.IsCompleted || control.Role != "assistant" || control.RequestID != request ||
 		generation == "" ||
 		nativeLiveOwner(ctx) == "" {
@@ -366,6 +369,9 @@ func (h *Handler) tryNativeLiveReplay(
 	if control == nil {
 		_ = c.Error(nativeSavedReplayHTTPError(access.ErrNextcloudPublicationUnavailable))
 		return true
+	}
+	if !control.ExecutionContext.ExplicitInputMaterials {
+		return false
 	}
 	if control.IsCompleted {
 		return h.tryNativeSavedReplay(ctx, c, session, message, rewriter)

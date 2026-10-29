@@ -12,7 +12,6 @@ import (
 
 	"github.com/Tencent/WeKnora/internal/application/access"
 	"github.com/Tencent/WeKnora/internal/application/repository"
-	"github.com/Tencent/WeKnora/internal/application/service"
 	"github.com/Tencent/WeKnora/internal/errors"
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/storageurl"
@@ -110,20 +109,7 @@ func messageHistoryReadError(err error) error {
 // @Security     ApiKeyAuth
 // @Router       /messages/{session_id}/load [get]
 func (h *MessageHandler) LoadMessages(c *gin.Context) {
-	ctx := service.WithMessageMaterialOutputBoundary(c.Request.Context())
-	c.Request = c.Request.WithContext(ctx)
-	defer service.CloseMessageMaterialOutputBoundary(ctx)
-	prior := c.Writer
-	c.Writer = &knowledgeCollectionAuthorizationWriter{
-		ResponseWriter: prior,
-		check: func() error {
-			return messageHistoryReadErrorOrNil(service.CheckMessageMaterialOutputBoundary(
-				ctx,
-			))
-		},
-	}
-	defer func() { c.Writer = prior }()
-
+	ctx := c.Request.Context()
 	logger.Info(ctx, "Start loading messages")
 
 	// Get path parameters and query parameters
@@ -286,20 +272,7 @@ func (h *MessageHandler) DeleteMessage(c *gin.Context) {
 // @Security     ApiKeyAuth
 // @Router       /messages/search [post]
 func (h *MessageHandler) SearchMessages(c *gin.Context) {
-	ctx := service.WithMessageMaterialOutputBoundary(c.Request.Context())
-	c.Request = c.Request.WithContext(ctx)
-	defer service.CloseMessageMaterialOutputBoundary(ctx)
-	prior := c.Writer
-	c.Writer = &knowledgeCollectionAuthorizationWriter{
-		ResponseWriter: prior,
-		check: func() error {
-			return messageHistoryReadErrorOrNil(service.CheckMessageMaterialOutputBoundary(
-				ctx,
-			))
-		},
-	}
-	defer func() { c.Writer = prior }()
-
+	ctx := c.Request.Context()
 	logger.Info(ctx, "Start searching messages")
 
 	var request SearchMessagesRequest

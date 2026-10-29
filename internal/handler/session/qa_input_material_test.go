@@ -39,6 +39,13 @@ func TestHasExplicitInputMaterialsExcludesQuestionOrigin(t *testing.T) {
 			req:  &qaRequestContext{attachmentIDs: []string{"attachment-1"}},
 			want: true,
 		},
+		{
+			name: "persisted per-turn material marker remains explicit",
+			req: &qaRequestContext{assistantMessage: &types.Message{
+				ExecutionContext: types.MessageExecutionContext{ExplicitInputMaterials: true},
+			}},
+			want: true,
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

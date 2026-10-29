@@ -103,7 +103,7 @@ func (a *safeCurrentTurnAgent) stageSessionAttachments(
 	return nil, nil
 }
 
-func TestAgentHistoryAdmissionRejectedContextStillRunsCurrentAgentQA(t *testing.T) {
+func TestAgentHistoryAdmissionUsesWeKnoraACLWhenNextcloudProbeIsUnavailable(t *testing.T) {
 	for _, scenario := range []string{"ever-source", "lookup-unavailable", "missing-policy"} {
 		t.Run(scenario, func(t *testing.T) {
 			sources := &instanceHistorySources{ever: scenario == "ever-source"}
@@ -150,15 +150,13 @@ func TestAgentHistoryAdmissionRejectedContextStillRunsCurrentAgentQA(t *testing.
 			ctx := actualAgentHistoryRequest(t, svc, req)
 			require.NoError(t, svc.AgentQA(ctx, req, event.NewEventBus()))
 			require.Len(t, engine.contexts, 1)
-			require.Empty(t, engine.contexts[0])
+			require.NotEmpty(t, engine.contexts[0])
 			require.Equal(t, []string{"new user question"}, engine.queries)
-			require.Zero(t, repo.pages)
-			require.Zero(t, repo.checkpointReads)
-			require.Zero(t, engine.checkpointCalls)
-			require.NotNil(t, agentSvc.memoryEnabled)
-			require.False(t, *agentSvc.memoryEnabled)
-			require.True(t, agentSvc.excluded)
-			require.Zero(t, agentSvc.sandboxCalls)
+			require.Positive(t, repo.pages)
+			require.Positive(t, repo.checkpointReads)
+			require.Positive(t, engine.checkpointCalls)
+			require.False(t, agentSvc.excluded)
+			require.Positive(t, agentSvc.sandboxCalls)
 		})
 	}
 }

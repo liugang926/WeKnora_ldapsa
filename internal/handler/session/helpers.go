@@ -292,18 +292,22 @@ func (h *Handler) createUserMessage(
 		lineage, _ = types.NewCompleteSourceLineage()
 	}
 	return h.messageService.CreateMessage(ctx, &types.Message{
-		SessionID:        sessionID,
-		Role:             "user",
-		Content:          query,
-		RequestID:        requestID,
-		CreatedAt:        time.Now(),
-		IsCompleted:      true,
-		MentionedItems:   mentionedItems,
-		Images:           images,
-		Attachments:      attachments,
-		Channel:          channel,
-		ExecutionContext: types.MessageExecutionContext{SuggestionAttribution: attribution},
-		SourceLineage:    lineage,
+		SessionID:      sessionID,
+		Role:           "user",
+		Content:        query,
+		RequestID:      requestID,
+		CreatedAt:      time.Now(),
+		IsCompleted:    true,
+		MentionedItems: mentionedItems,
+		Images:         images,
+		Attachments:    attachments,
+		Channel:        channel,
+		ExecutionContext: types.MessageExecutionContext{
+			SuggestionAttribution: attribution,
+			ExplicitInputMaterials: len(images) > 0 ||
+				len(attachments) > 0,
+		},
+		SourceLineage: lineage,
 	})
 }
 

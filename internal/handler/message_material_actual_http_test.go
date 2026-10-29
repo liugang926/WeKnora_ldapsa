@@ -220,8 +220,8 @@ func TestMessageMaterialActualHTTPProducerReadSingleConnection(t *testing.T) {
 	require.NoError(t, db.Model(&types.Message{}).Where("id=?", answer.ID).Update("content", "foreign transient").Error)
 	require.NoError(t, db.Model(&types.Message{}).Where("id=?", answer.ID).Update("content", answer.Content).Error)
 	response = request()
-	require.Equal(t, http.StatusServiceUnavailable, response.Code, response.Body.String())
-	require.NotContains(t, response.Body.String(), answer.Content)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	require.Contains(t, response.Body.String(), answer.Content)
 }
 
 func TestMessageMaterialActualControlledSavedHTTPAndCurrentSourceRevoke(t *testing.T) {
@@ -349,9 +349,9 @@ func TestMessageMaterialActualControlledSavedHTTPAndCurrentSourceRevoke(t *testi
 	}
 	f.calls.Store(2)
 	response = call()
-	require.Equal(t, http.StatusForbidden, response.Code, response.Body.String())
-	require.NotContains(t, response.Body.String(), "new saved derivative")
-	require.True(t, observed)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	require.Contains(t, response.Body.String(), "new saved derivative")
+	require.False(t, observed, "WeKnora history reads must not consult Nextcloud source revocation")
 	var live int64
 	require.NoError(
 		t,

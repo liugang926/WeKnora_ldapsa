@@ -446,6 +446,9 @@ func (h *Handler) parseQARequest(
 	)
 
 	executionContext.LocalBrowserEnabled = request.LocalBrowserEnabled
+	executionContext.ExplicitInputMaterials = len(request.Images) > 0 ||
+		len(processedAttachments) > 0 ||
+		len(attachmentIDs) > 0
 
 	// Build request context
 	reqCtx := &qaRequestContext{
@@ -840,11 +843,13 @@ func (h *Handler) setupSSEStream(reqCtx *qaRequestContext, generateTitle bool, m
 	var materialAttach func(context.Context) context.Context
 	var materialCheck func() error
 	var materialClose func()
-	if native, ok := h.messageService.(interface{ HasOriginalMessageMaterialStore() bool }); ok &&
-		native.HasOriginalMessageMaterialStore() {
-		asyncCtx, materialAttach, materialCheck, materialClose = applicationservice.BeginMessageMaterialHTTPBoundary(
-			asyncCtx,
-		)
+	if hasExplicitInputMaterials(reqCtx) {
+		native, ok := h.messageService.(interface{ HasOriginalMessageMaterialStore() bool })
+		if ok && native.HasOriginalMessageMaterialStore() {
+			asyncCtx, materialAttach, materialCheck, materialClose = applicationservice.BeginMessageMaterialHTTPBoundary(
+				asyncCtx,
+			)
+		}
 	}
 
 	streamCtx := &sseStreamContext{
@@ -1334,7 +1339,11 @@ func (h *Handler) holdQATurn(ctx context.Context, reqCtx *qaRequestContext) (fun
 // an original-material receipt before the unified QA flow can continue.
 func hasExplicitInputMaterials(reqCtx *qaRequestContext) bool {
 	return reqCtx != nil &&
-		(len(reqCtx.images) > 0 || len(reqCtx.attachments) > 0 || len(reqCtx.attachmentIDs) > 0)
+		(len(reqCtx.images) > 0 ||
+			len(reqCtx.attachments) > 0 ||
+			len(reqCtx.attachmentIDs) > 0 ||
+			reqCtx.assistantMessage != nil &&
+				reqCtx.assistantMessage.ExecutionContext.ExplicitInputMaterials)
 }
 
 // executeQA is the unified execution flow for both KnowledgeQA and AgentQA modes.

@@ -184,11 +184,10 @@ func TestMessageMaterialActualHTTPInitializationWaitsForAdmission(t *testing.T) 
 							Count(&manifests).
 							Error,
 					)
-					require.EqualValues(
+					require.Zero(
 						t,
-						1,
 						manifests,
-						"Ready wait must preserve the exact initial-user completion manifest under Steer154/73",
+						"plain WeKnora turns must not mint a Nextcloud material completion manifest",
 					)
 				}
 			} else {

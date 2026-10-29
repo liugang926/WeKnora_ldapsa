@@ -988,12 +988,6 @@ func (s *sessionService) GenerateTitle(ctx context.Context,
 	// This adapter sends only the author's raw user Content and the configured
 	// static title prompt. It never consumes captions, attachments or answers.
 	titleLineage, _ := types.NewCompleteSourceLineage()
-	if s.sourceLineageGuard == nil {
-		return "", access.ErrNextcloudPublicationUnavailable
-	}
-	if err := s.sourceLineageGuard.Check(ctx, titleLineage, access.LineageReadScope{}); err != nil {
-		return "", err
-	}
 	for i := range chatMessages {
 		chatMessages[i].SourceLineage, _ = types.UnionSourceLineage(titleLineage)
 	}
@@ -1007,10 +1001,9 @@ func (s *sessionService) GenerateTitle(ctx context.Context,
 		return "", err
 	}
 
-	// Process and store the generated title
-	if err := s.sourceLineageGuard.Check(ctx, titleLineage, access.LineageReadScope{}); err != nil {
-		return "", err
-	}
+	// Process and store the generated title. The title is derived only from
+	// the owner's raw query and a server-owned static prompt; WeKnora session
+	// ownership already authorized this read.
 	title, truncated := sanitizeGeneratedTitle(response.Content)
 	if truncated {
 		logger.Warnf(ctx,

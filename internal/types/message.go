@@ -460,6 +460,10 @@ type Message struct {
 // request state used by derived experiences such as follow-up suggestions.
 type MessageExecutionContext struct {
 	AgentConfigHash string `json:"agent_config_hash,omitempty"`
+	// ExplicitInputMaterials is true only when this turn contains explicit
+	// images or file attachments. Knowledge bases, mentioned documents and
+	// question_origin are WeKnora retrieval context, not Nextcloud material.
+	ExplicitInputMaterials bool `json:"explicit_input_materials,omitempty"`
 	// Agent's KB selection at the time this answer was generated. History
 	// authorization must not rely on a subsequently edited Agent definition.
 	AgentKBSelectionMode  string                    `json:"agent_kb_selection_mode,omitempty"`
