@@ -275,6 +275,12 @@ func TestNextcloudQueuedPublicationTerminalFailureRequiresExactTargetProof(t *te
 			errorMessage: "document_processing_failed", path: "file.md", complete: true,
 		},
 		{
+			name: "exact candidate and target while failed candidate enabled", candidateETag: "etag-v1",
+			targetETag: "etag-v1", desiredETag: "etag-v1",
+			parseStatus: types.ParseStatusFailed, enabled: "enabled",
+			errorMessage: "document_processing_failed", path: "file.md", complete: true,
+		},
+		{
 			name: "missing staged target", desiredETag: "etag-v1",
 			parseStatus: types.ParseStatusFailed, enabled: "enabled",
 			errorMessage: "document_processing_failed", path: "file.md",

@@ -228,7 +228,7 @@ func nextcloudDispatchPublicationProof(
 		}
 		terminalFailure := version.State == "staging" && row.DeletedAt == nil &&
 			row.ParseStatus == types.ParseStatusFailed &&
-			row.EnableStatus == "disabled"
+			(row.EnableStatus == "disabled" || row.EnableStatus == "enabled")
 		if nextcloudApplyMetadataString(metadata, "nextcloud_etag") != "" &&
 			(row.DeletedAt != nil || version.CandidateKnowledgeID != row.ID ||
 				(!terminalFailure && version.State != "published") ||
