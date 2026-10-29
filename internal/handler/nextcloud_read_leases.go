@@ -177,6 +177,10 @@ func attachNextcloudLeasedRequest(c *gin.Context, leases *nextcloudHTTPReadLease
 func (h *KnowledgeHandler) beginNextcloudRead(ctx context.Context, c *gin.Context,
 	knowledges []*types.Knowledge,
 ) (*nextcloudHTTPReadLeases, error) {
+	if access.UseWeKnoraReadAuthority() {
+		// The workspace ACL is explicitly authoritative for user-facing reads.
+		return nil, nil
+	}
 	faqLeases, _ := ctx.Value(faqKnowledgePreReadKey{}).(*nextcloudHTTPReadLeases)
 	var ids []string
 	for _, row := range knowledges {
@@ -322,6 +326,9 @@ func (h *KnowledgeHandler) checkCurrentNextcloudKBAccess(ctx context.Context,
 func (h *ChunkHandler) beginNextcloudRead(ctx context.Context, c *gin.Context,
 	knowledge *types.Knowledge,
 ) (*nextcloudHTTPReadLeases, error) {
+	if access.UseWeKnoraReadAuthority() {
+		return nil, nil
+	}
 	leases, err := acquireNextcloudHTTPReadLeases(ctx, h.contentLeases,
 		[]*types.Knowledge{knowledge}, h.leaseHeartbeat)
 	if err != nil {

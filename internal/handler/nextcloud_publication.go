@@ -16,6 +16,11 @@ import (
 func checkKnowledgePublication(
 	ctx context.Context, guard *access.NextcloudPublicationGuard, knowledge *types.Knowledge,
 ) error {
+	if access.UseWeKnoraReadAuthority() {
+		// The workspace ACL is explicitly authoritative for user-facing
+		// reads in deployments that opt in to WeKnora read authority.
+		return nil
+	}
 	err := guard.CheckKnowledge(ctx, knowledge)
 	if err == nil {
 		return nil

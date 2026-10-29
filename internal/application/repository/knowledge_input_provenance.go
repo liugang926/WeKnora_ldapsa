@@ -575,6 +575,23 @@ func (s *KnowledgeInputProvenanceStore) admissionInTx(
 	k *types.Knowledge,
 	expected *types.KnowledgeBuildInputProof,
 ) (*knowledgeInputAdmission, *types.KnowledgeBase, *types.SourceLineage, error) {
+	return s.admissionInTxWithOptions(tx, k, expected, false)
+}
+
+func (s *KnowledgeInputProvenanceStore) admissionInTxForCollection(
+	tx *gorm.DB,
+	k *types.Knowledge,
+	expected *types.KnowledgeBuildInputProof,
+) (*knowledgeInputAdmission, *types.KnowledgeBase, *types.SourceLineage, error) {
+	return s.admissionInTxWithOptions(tx, k, expected, true)
+}
+
+func (s *KnowledgeInputProvenanceStore) admissionInTxWithOptions(
+	tx *gorm.DB,
+	k *types.Knowledge,
+	expected *types.KnowledgeBuildInputProof,
+	allowStaleInFlight bool,
+) (*knowledgeInputAdmission, *types.KnowledgeBase, *types.SourceLineage, error) {
 	var a knowledgeInputAdmission
 	query := tx.Where(
 		"tenant_id = ? AND knowledge_base_id = ? AND knowledge_id = ?",
@@ -668,7 +685,25 @@ func (s *KnowledgeInputProvenanceStore) admissionInTx(
 	}
 	if expected == nil || expected.Projection != types.KnowledgeBuildProjectionGraph {
 		if err := verifyKnowledgeInputMaterial(tx, &a, k, nil); err != nil {
-			return nil, nil, nil, err
+			// A document can transition from finalizing to completed between the
+			// bounded collection capture and its final recheck. Only permit that
+			// transition when the original proof binds the same admission/root.
+			boundedTransition := allowStaleInFlight && expected != nil &&
+				expected.AdmissionID == a.AdmissionID &&
+				expected.TenantID == k.TenantID &&
+				expected.KnowledgeBaseID == k.KnowledgeBaseID &&
+				expected.KnowledgeID == k.ID &&
+				expected.InputDigest == a.InputDigest
+			if !allowStaleInFlight || (!knowledgeCollectionInFlight(k) && !boundedTransition) {
+				return nil, nil, nil, err
+			}
+			// A pending/finalizing worker may update generated display fields
+			// before sealing the replacement receipt. Prove that the immutable
+			// original source identity is unchanged before allowing metadata-only
+			// output from the collection path.
+			if mustKnowledgeRootDigest(k) != a.RootDigest {
+				return nil, nil, nil, err
+			}
 		}
 	}
 	return &a, kb, &lineage, nil

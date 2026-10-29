@@ -3,12 +3,22 @@ package access
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
 	apperrors "github.com/Tencent/WeKnora/internal/errors"
 	"github.com/Tencent/WeKnora/internal/types"
 )
+
+const nextcloudReadAuthorityEnv = "WEKNORA_NEXTCLOUD_READ_AUTHORITY"
+
+// UseWeKnoraReadAuthority reports whether user-facing Nextcloud reads should
+// use the workspace ACL directly. Strict source-lineage reads remain the
+// default for tests and deployments that do not opt in.
+func UseWeKnoraReadAuthority() bool {
+	return strings.EqualFold(strings.TrimSpace(os.Getenv(nextcloudReadAuthorityEnv)), "weknora")
+}
 
 type NextcloudLineageSnapshotLookup interface {
 	ResolveNextcloudSourceLineage(
@@ -89,7 +99,7 @@ func (g *NextcloudSourceLineageGuard) Check(
 	lineage *types.SourceLineage,
 	scope LineageReadScope,
 ) error {
-	if lineage.RequireComplete() != nil {
+	if lineage == nil || lineage.RequireComplete() != nil {
 		return ErrNextcloudPublicationDenied
 	}
 	if ctx == nil || g == nil {

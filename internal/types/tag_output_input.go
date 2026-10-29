@@ -23,6 +23,7 @@ type TagOutputChunkCandidate struct {
 type TagOutputInputSnapshot struct {
 	Request       TagOutputReadRequest
 	ScopeRevision uint64
+	InFlight      bool
 	Tags          []*KnowledgeTag
 	TagProofs     []*KnowledgeCollectionAuxiliaryProof
 	Knowledge     []*KnowledgeCollectionCandidate

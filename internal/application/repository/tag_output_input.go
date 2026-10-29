@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"encoding/json"
+	"reflect"
 
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
@@ -132,6 +133,19 @@ func (s *KnowledgeInputProvenanceStore) captureTagOutputInTx(
 		Knowledge: []*types.KnowledgeCollectionCandidate{},
 		Chunks:    []*types.TagOutputChunkCandidate{},
 	}
+	var inFlight int64
+	if err := tx.Model(&types.Knowledge{}).
+		Where(
+			"tenant_id=? AND knowledge_base_id=? AND parse_status IN ?",
+			req.TenantID,
+			req.KnowledgeBaseID,
+			[]string{types.ParseStatusPending, types.ParseStatusProcessing, types.ParseStatusFinalizing},
+		).
+		Count(&inFlight).
+		Error; err != nil {
+		return nil, err
+	}
+	result.InFlight = inFlight > 0
 	if req.TagID != "" {
 		var tag types.KnowledgeTag
 		if err := tx.Where(
@@ -204,7 +218,7 @@ func (s *KnowledgeInputProvenanceStore) captureTagOutputInTx(
 			return nil, err
 		}
 		for _, k := range rows {
-			a, _, lineage, err := s.admissionInTx(tx, k, nil)
+			a, _, lineage, err := s.admissionInTxForCollection(tx, k, nil)
 			if err != nil {
 				return nil, err
 			}
@@ -241,7 +255,7 @@ func (s *KnowledgeInputProvenanceStore) captureTagOutputInTx(
 			if candidate == nil {
 				return nil, ErrKnowledgeInputChanged
 			}
-			admission, _, _, err := s.admissionInTx(tx, candidate.Knowledge, candidate.Proof)
+			admission, _, _, err := s.admissionInTxForCollection(tx, candidate.Knowledge, candidate.Proof)
 			if err != nil {
 				return nil, err
 			}
@@ -319,10 +333,78 @@ func (s *KnowledgeInputProvenanceStore) recheckTagOutputInTx(
 	if err != nil {
 		return err
 	}
-	if !tagOutputEqual(actual, snapshot) {
+	if !tagOutputEqual(actual, snapshot) && !compatibleTagOutputInputs(snapshot, actual) {
 		return ErrKnowledgeInputChanged
 	}
 	return nil
+}
+
+func tagOutputHasInFlight(snapshot *types.TagOutputInputSnapshot) bool {
+	if snapshot == nil {
+		return false
+	}
+	if snapshot.InFlight {
+		return true
+	}
+	for _, candidate := range snapshot.Knowledge {
+		if candidate != nil && candidate.Knowledge != nil && knowledgeCollectionInFlight(candidate.Knowledge) {
+			return true
+		}
+	}
+	return false
+}
+
+func compatibleTagOutputInputs(expected, actual *types.TagOutputInputSnapshot) bool {
+	if expected == nil || actual == nil || !tagOutputHasInFlight(expected) {
+		return false
+	}
+	if !reflect.DeepEqual(expected.Request, actual.Request) ||
+		!reflect.DeepEqual(expected.Tags, actual.Tags) ||
+		!reflect.DeepEqual(expected.TagProofs, actual.TagProofs) ||
+		len(expected.Knowledge) != len(actual.Knowledge) {
+		return false
+	}
+	inFlight := map[string]bool{}
+	for i := range expected.Knowledge {
+		left, right := expected.Knowledge[i], actual.Knowledge[i]
+		if left == nil || right == nil || left.Knowledge == nil || right.Knowledge == nil ||
+			left.Knowledge.ID != right.Knowledge.ID ||
+			left.Knowledge.TenantID != right.Knowledge.TenantID ||
+			left.Knowledge.KnowledgeBaseID != right.Knowledge.KnowledgeBaseID ||
+			left.Knowledge.Title != right.Knowledge.Title ||
+			left.Knowledge.FolderPath != right.Knowledge.FolderPath ||
+			mustKnowledgeRootDigest(left.Knowledge) != mustKnowledgeRootDigest(right.Knowledge) {
+			return false
+		}
+		if knowledgeCollectionInFlight(left.Knowledge) || knowledgeCollectionInFlight(right.Knowledge) {
+			inFlight[left.Knowledge.ID] = true
+		} else if !tagOutputEqual(left, right) {
+			return false
+		}
+	}
+	if !reflect.DeepEqual(expected.ScopeRevision, actual.ScopeRevision) && len(inFlight) == 0 && !expected.InFlight {
+		return false
+	}
+	if len(expected.Chunks) != len(actual.Chunks) {
+		return false
+	}
+	for i := range expected.Chunks {
+		left, right := expected.Chunks[i], actual.Chunks[i]
+		if left == nil || right == nil || left.Chunk == nil || right.Chunk == nil ||
+			left.Chunk.ID != right.Chunk.ID ||
+			left.Chunk.TenantID != right.Chunk.TenantID ||
+			left.Chunk.KnowledgeBaseID != right.Chunk.KnowledgeBaseID ||
+			left.Chunk.KnowledgeID != right.Chunk.KnowledgeID {
+			return false
+		}
+		if !inFlight[left.Chunk.KnowledgeID] && !tagOutputEqual(left, right) {
+			return false
+		}
+	}
+	if !tagOutputEqual(expected.Auxiliary, actual.Auxiliary) {
+		return false
+	}
+	return true
 }
 
 func selectTagOutputInTx(

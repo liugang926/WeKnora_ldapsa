@@ -1,7 +1,6 @@
 package repository
 
 import (
-	"reflect"
 	"sort"
 
 	"github.com/Tencent/WeKnora/internal/types"
@@ -240,7 +239,7 @@ func recheckKnowledgeCollectionAuxiliary(
 	if err != nil {
 		return err
 	}
-	if !reflect.DeepEqual(actual, expected) {
+	if !tagOutputEqual(actual, expected) {
 		return ErrKnowledgeInputChanged
 	}
 	return nil

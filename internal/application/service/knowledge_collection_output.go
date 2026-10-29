@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 
 	"github.com/Tencent/WeKnora/internal/application/access"
 	"github.com/Tencent/WeKnora/internal/application/repository"
@@ -88,12 +89,15 @@ func (g *KnowledgeCollectionOutputGuard) authorize(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	if access.UseWeKnoraReadAuthority() {
+		return g.authorizeWeKnoraScope(ctx)
+	}
 	// Each original producer stays bounded by SourceLineage's existing limit.
 	// Empty independent origins share one current full-scope grant check; source
 	// origins are checked individually, without a whole-KB lineage union.
 	seen := map[string]bool{}
 	check := func(original *types.SourceLineage) error {
-		if original.RequireComplete() != nil {
+		if original == nil || original.RequireComplete() != nil {
 			return types.ErrSourceLineageUnknown
 		}
 		if len(original.Sources) == 0 {
@@ -154,12 +158,28 @@ func (g *KnowledgeCollectionOutputGuard) authorize(ctx context.Context) error {
 			}
 		}
 	}
-	lineage, _ := types.NewCompleteSourceLineage()
+	lineage, err := types.NewCompleteSourceLineage()
+	if err != nil {
+		return err
+	}
 	scope, err := cloneCollection(g.scope)
 	if err != nil {
 		return err
 	}
 	return g.authorizer.checker.Check(ctx, lineage, scope)
+}
+
+func (g *KnowledgeCollectionOutputGuard) authorizeWeKnoraScope(ctx context.Context) error {
+	if g == nil || g.authorizer == nil || ctx == nil {
+		return access.ErrNextcloudPublicationUnavailable
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	// The opt-in path is entered only after the HTTP scope resolver applied
+	// WeKnora's KB/share/agent ACLs. Collection snapshots are still rechecked
+	// against exact membership and stable source identity below.
+	return nil
 }
 
 // Select selects a collection from the retained original inputs.
@@ -215,13 +235,13 @@ func (g *KnowledgeCollectionOutputGuard) Check(
 		return nil
 	}
 	if err := checkBody(); err != nil {
-		return err
+		return fmt.Errorf("knowledge collection body check: %w", err)
 	}
 	// Remote source/grant authorization precedes the final whole-set local
 	// snapshot, including membership, control versions and non-returned rows.
 	for round := 0; round < 2; round++ {
 		if err := g.authorize(ctx); err != nil {
-			return err
+			return fmt.Errorf("knowledge collection authorization: %w", err)
 		}
 		snapshot, err := cloneCollection(g.snapshot)
 		if err != nil {
@@ -232,10 +252,13 @@ func (g *KnowledgeCollectionOutputGuard) Check(
 			return err
 		}
 		if err := g.authorizer.reader.RecheckKnowledgeCollectionInputs(ctx, snapshot, original); err != nil {
-			return err
+			return fmt.Errorf("knowledge collection input recheck: %w", err)
 		}
 	}
-	return checkBody()
+	if err := checkBody(); err != nil {
+		return fmt.Errorf("knowledge collection final body check: %w", err)
+	}
+	return nil
 }
 
 // FAQResultReadPlan plans original material reads for FAQ result output.
