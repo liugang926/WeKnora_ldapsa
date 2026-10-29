@@ -81,6 +81,176 @@ func publicationDispatchRow(t *testing.T, db *gorm.DB) nextcloudEventDispatchRow
 	return row
 }
 
+func newNextcloudBlockedCursorOrphanTest(t *testing.T) (
+	*gorm.DB, *NextcloudEventInboxRepository, time.Time, string, *types.Knowledge, nextcloudSourceVersion,
+) {
+	t.Helper()
+	db, inbox, now, bindingID := newNextcloudQueuedPublicationTest(t)
+	const (
+		fileID      = "78"
+		candidateID = "orphaned-staging-candidate"
+		etag        = "etag-orphan"
+	)
+	metadata, err := json.Marshal(map[string]string{
+		"channel":                    types.ConnectorTypeNextcloud,
+		"datasource_id":              "ds",
+		"external_id":                "nextcloud:instance:" + fileID,
+		"nextcloud_instance_id":      "instance",
+		"nextcloud_binding_id":       bindingID,
+		"nextcloud_file_id":          fileID,
+		"nextcloud_etag":             "",
+		"nextcloud_path":             "deleted-before-publication.md",
+		"nextcloud_target_etag":      etag,
+		"source_resource_id":         bindingID,
+		"nextcloud_content_revision": "2",
+	})
+	require.NoError(t, err)
+	candidate := &types.Knowledge{
+		ID: candidateID, TenantID: 7, KnowledgeBaseID: "kb",
+		Channel: types.ConnectorTypeNextcloud, Type: "file",
+		ParseStatus: types.ParseStatusFailed, EnableStatus: "disabled",
+		Metadata: types.JSON(metadata),
+	}
+	require.NoError(t, db.Create(candidate).Error)
+	version := nextcloudSourceVersion{
+		TenantID: 7, KnowledgeBaseID: "kb", DataSourceID: "ds",
+		ExternalID: "nextcloud:instance:" + fileID, DesiredETag: etag,
+		CandidateKnowledgeID: candidateID, State: "staging", UpdatedAt: now,
+	}
+	require.NoError(t, db.Create(&version).Error)
+
+	require.NoError(t, db.Exec(`UPDATE nextcloud_event_dispatch
+		SET state = 'blocked', applied_id = 0, dispatched_id = 1, target_event_id = 1,
+			last_sync_log_id = NULL, lease_token = NULL, lease_until = NULL,
+			last_error_code = 'cursor_missing_manual_review', attempt_count = 2,
+			next_attempt_at = ?
+		WHERE connection_id = 'event-connection'`, now).Error)
+	require.NoError(t, db.Exec(`UPDATE nextcloud_event_checkpoint
+		SET received_id = 2 WHERE connection_id = 'event-connection'`).Error)
+	require.NoError(t, db.Exec(`INSERT INTO nextcloud_event_inbox
+		(connection_id, event_id, payload_sha256, event_type, file_id, etag, path,
+		 relative_path, state)
+		VALUES ('event-connection', 2, ?, 'delete', 78, '', '/Published/deleted.md',
+		 'deleted.md', 'pending')`, strings.Repeat("1", 64)).Error)
+	return db, inbox, now, bindingID, candidate, version
+}
+
+func TestNextcloudBlockedCursorRecoversProvenOrphanedFailedCandidate(t *testing.T) {
+	db, inbox, now, _, candidate, version := newNextcloudBlockedCursorOrphanTest(t)
+	var source types.DataSource
+	require.NoError(t, db.Where("id = ?", "ds").Take(&source).Error)
+	require.NoError(t, inbox.ValidateNextcloudSourceBaseline(context.Background(), &source))
+	claim, err := inbox.ClaimDispatch(context.Background(), "event-connection", now.Add(time.Second))
+	require.NoError(t, err)
+	require.NotNil(t, claim)
+	require.Equal(t, int64(2), claim.TargetEventID)
+	row := publicationDispatchRow(t, db)
+	require.Equal(t, "leased", row.State)
+	require.Empty(t, row.LastErrorCode)
+	require.Zero(t, row.AppliedID)
+
+	var gotCandidate types.Knowledge
+	require.NoError(t, db.Where("id = ?", candidate.ID).Take(&gotCandidate).Error)
+	require.Equal(t, types.ParseStatusFailed, gotCandidate.ParseStatus)
+	require.Equal(t, "disabled", gotCandidate.EnableStatus)
+	var gotVersion nextcloudSourceVersion
+	require.NoError(t, db.Where("external_id = ?", version.ExternalID).Take(&gotVersion).Error)
+	require.Equal(t, "staging", gotVersion.State)
+}
+
+func TestNextcloudBlockedCursorRejectsUnprovenStagingHistory(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		mutate func(*testing.T, *gorm.DB, string, *types.Knowledge, nextcloudSourceVersion)
+	}{
+		{
+			name: "completed candidate",
+			mutate: func(t *testing.T, db *gorm.DB, _ string, candidate *types.Knowledge, _ nextcloudSourceVersion) {
+				require.NoError(t, db.Model(&types.Knowledge{}).Where("id = ?", candidate.ID).
+					Update("parse_status", types.ParseStatusCompleted).Error)
+			},
+		},
+		{
+			name: "enabled candidate",
+			mutate: func(t *testing.T, db *gorm.DB, _ string, candidate *types.Knowledge, _ nextcloudSourceVersion) {
+				require.NoError(t, db.Model(&types.Knowledge{}).Where("id = ?", candidate.ID).
+					Update("enable_status", "enabled").Error)
+			},
+		},
+		{
+			name: "candidate carries published etag",
+			mutate: func(t *testing.T, db *gorm.DB, _ string, candidate *types.Knowledge, _ nextcloudSourceVersion) {
+				rewriteNextcloudCandidateMetadata(t, db, candidate.ID, map[string]string{
+					"nextcloud_etag": "published-etag",
+				})
+			},
+		},
+		{
+			name: "candidate target etag differs",
+			mutate: func(t *testing.T, db *gorm.DB, _ string, candidate *types.Knowledge, _ nextcloudSourceVersion) {
+				rewriteNextcloudCandidateMetadata(t, db, candidate.ID, map[string]string{
+					"nextcloud_target_etag": "different-etag",
+				})
+			},
+		},
+		{
+			name: "candidate external id differs",
+			mutate: func(t *testing.T, db *gorm.DB, _ string, candidate *types.Knowledge, _ nextcloudSourceVersion) {
+				rewriteNextcloudCandidateMetadata(t, db, candidate.ID, map[string]string{
+					"external_id": "nextcloud:instance:79",
+				})
+			},
+		},
+		{
+			name: "candidate path missing",
+			mutate: func(t *testing.T, db *gorm.DB, _ string, candidate *types.Knowledge, _ nextcloudSourceVersion) {
+				rewriteNextcloudCandidateMetadata(t, db, candidate.ID, map[string]string{
+					"nextcloud_path": "",
+				})
+			},
+		},
+		{
+			name: "published source version",
+			mutate: func(t *testing.T, db *gorm.DB, _ string, _ *types.Knowledge, version nextcloudSourceVersion) {
+				require.NoError(t, db.Model(&nextcloudSourceVersion{}).
+					Where("external_id = ?", version.ExternalID).Update("state", "published").Error)
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			db, inbox, now, bindingID, candidate, version := newNextcloudBlockedCursorOrphanTest(t)
+			tc.mutate(t, db, bindingID, candidate, version)
+			var source types.DataSource
+			require.NoError(t, db.Where("id = ?", "ds").Take(&source).Error)
+			require.Error(t, inbox.ValidateNextcloudSourceBaseline(context.Background(), &source))
+			claim, err := inbox.ClaimDispatch(context.Background(), "event-connection", now.Add(time.Second))
+			require.NoError(t, err)
+			require.Nil(t, claim)
+			row := publicationDispatchRow(t, db)
+			require.Equal(t, "blocked", row.State)
+			require.Equal(t, "cursor_missing_manual_review", row.LastErrorCode)
+			require.Zero(t, row.AppliedID)
+		})
+	}
+}
+
+func rewriteNextcloudCandidateMetadata(t *testing.T, db *gorm.DB, candidateID string,
+	updates map[string]string,
+) {
+	t.Helper()
+	var candidate types.Knowledge
+	require.NoError(t, db.Where("id = ?", candidateID).Take(&candidate).Error)
+	var metadata map[string]string
+	require.NoError(t, json.Unmarshal(candidate.Metadata, &metadata))
+	for key, value := range updates {
+		metadata[key] = value
+	}
+	raw, err := json.Marshal(metadata)
+	require.NoError(t, err)
+	require.NoError(t, db.Model(&types.Knowledge{}).Where("id = ?", candidateID).
+		Update("metadata", types.JSON(raw)).Error)
+}
+
 func TestNextcloudQueuedPublicationWaitsForBriefRegistrationGap(t *testing.T) {
 	ctx := context.Background()
 	db, inbox, now, _ := newNextcloudQueuedPublicationTest(t)

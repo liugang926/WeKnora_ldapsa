@@ -270,7 +270,10 @@ func (r *NextcloudEventInboxRepository) ClaimDispatch(
 			Where("connection_id = ?", connectionID).Take(&dispatch).Error; err != nil {
 			return fmt.Errorf("read Nextcloud event dispatch: %w", err)
 		}
-		if dispatch.State == "blocked" && dispatch.LastErrorCode != "source_changed" {
+		recoverableBlockedState := dispatch.State == "blocked" &&
+			(dispatch.LastErrorCode == "source_changed" ||
+				dispatch.LastErrorCode == "cursor_missing_manual_review")
+		if dispatch.State == "blocked" && !recoverableBlockedState {
 			return nil
 		}
 		if err := checkNextcloudEventDataSource(tx, connection); err != nil {
@@ -287,16 +290,32 @@ func (r *NextcloudEventInboxRepository) ClaimDispatch(
 			return err
 		}
 		if dispatch.State == "blocked" {
-			// A transient source-status failure may have made the exact source
-			// tuple unavailable. Once the same active connection and pairing are
-			// valid again, resume from the applied watermark. Other blocked
-			// reasons remain manual review because they are not self-verifying.
-			// source_changed can occur after the target was persisted but before
-			// dispatch was claimed. Restore the pre-dispatch watermark so the
-			// unreplayed receipt range is claimed again.
+			if dispatch.LastErrorCode == "cursor_missing_manual_review" {
+				// A failed staging candidate can be committed after the cursor
+				// snapshot that omitted the already-deleted file. It cannot be
+				// published, but it must not permanently strand every later
+				// signed event. Re-open dispatch only after the inventory
+				// validator proves every durable published source is covered
+				// and only receipt-less failed staging candidates are excluded.
+				baselineOK, err := nextcloudDispatchBaselineValid(tx, connection)
+				if err != nil {
+					return err
+				}
+				if !baselineOK {
+					return nil
+				}
+			}
+			// A transient source-status failure or a now-proven orphaned
+			// staging candidate may have blocked dispatch. Once the exact
+			// active connection and pairing validate again, resume from the
+			// applied watermark. Other blocked reasons remain manual review
+			// because they are not self-verifying. source_changed can occur
+			// after the target was persisted but before dispatch was claimed.
+			// Restore the pre-dispatch watermark so the unreplayed receipt
+			// range is claimed again.
 			recovered := tx.Table("nextcloud_event_dispatch").
-				Where("connection_id = ? AND state = 'blocked' AND last_error_code = 'source_changed'",
-					connectionID).
+				Where("connection_id = ? AND state = 'blocked' AND last_error_code IN ?",
+					connectionID, []string{"source_changed", "cursor_missing_manual_review"}).
 				Updates(map[string]any{
 					"state": "idle", "lease_token": nil, "lease_until": nil,
 					"dispatched_id": dispatch.AppliedID, "target_event_id": dispatch.AppliedID,
@@ -680,22 +699,61 @@ func nextcloudSourceInventoryValid(tx *gorm.DB, raw map[string]interface{}, tena
 		len(bindings) == 0 {
 		return false, nil
 	}
+	instanceID := state.InstanceID
 	for _, bindingID := range bindings {
 		if bindingID == "" || state.Files[bindingID] == nil {
 			return false, nil
 		}
 	}
-	var externalIDs []string
+	var versions []struct {
+		ExternalID           string `gorm:"column:external_id"`
+		DesiredETag          string `gorm:"column:desired_etag"`
+		CandidateKnowledgeID string `gorm:"column:candidate_knowledge_id"`
+		State                string `gorm:"column:state"`
+	}
 	if err := tx.Table("nextcloud_source_versions").
+		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Select("external_id", "desired_etag", "candidate_knowledge_id", "state").
 		Where("tenant_id = ? AND knowledge_base_id = ? AND datasource_id = ? AND state IN ?",
 			tenantID, kbID, dsID,
-			[]string{"staging", "published"}).Pluck("external_id", &externalIDs).Error; err != nil {
+			[]string{"staging", "published"}).Find(&versions).Error; err != nil {
 		return false, err
 	}
+	externalIDs := make([]string, 0, len(versions))
+	orphanedStaging := make(map[string]string)
+	for _, version := range versions {
+		fileID := ""
+		if strings.HasPrefix(version.ExternalID, prefixForNextcloudInstance(instanceID)) {
+			fileID = strings.TrimPrefix(version.ExternalID, prefixForNextcloudInstance(instanceID))
+		}
+		covered := false
+		for _, bindingID := range bindings {
+			if len(state.Files[bindingID][fileID]) > 0 || len(state.Tombstones[bindingID][fileID]) > 0 {
+				covered = true
+				break
+			}
+		}
+		if covered {
+			externalIDs = append(externalIDs, version.ExternalID)
+			continue
+		}
+		orphaned, err := nextcloudProvenOrphanedFailedCandidate(tx, tenantID, kbID, dsID,
+			instanceID, bindings, version.ExternalID, version.DesiredETag,
+			version.CandidateKnowledgeID, version.State)
+		if err != nil {
+			return false, err
+		}
+		if !orphaned {
+			externalIDs = append(externalIDs, version.ExternalID)
+			continue
+		}
+		orphanedStaging[version.ExternalID] = version.CandidateKnowledgeID
+	}
 	var oldRows []struct {
+		ID       string     `gorm:"column:id"`
 		Metadata types.JSON `gorm:"column:metadata"`
 	}
-	if err := tx.Table("knowledges").Select("metadata").
+	if err := tx.Table("knowledges").Select("id", "metadata").
 		Where("tenant_id = ? AND knowledge_base_id = ? AND channel = ?",
 			tenantID, kbID, types.ConnectorTypeNextcloud).
 		Where("metadata->>'datasource_id' = ? OR metadata->>'datasource_id' IS NULL", dsID).
@@ -709,6 +767,12 @@ func nextcloudSourceInventoryValid(tx *gorm.DB, raw map[string]interface{}, tena
 		}
 		if json.Unmarshal(row.Metadata, &metadata) != nil || metadata.DatasourceID == "" || metadata.ExternalID == "" {
 			return false, nil
+		}
+		if candidateID, orphaned := orphanedStaging[metadata.ExternalID]; orphaned {
+			if row.ID != candidateID {
+				return false, nil
+			}
+			continue
 		}
 		externalIDs = append(externalIDs, metadata.ExternalID)
 	}
@@ -734,6 +798,60 @@ func nextcloudSourceInventoryValid(tx *gorm.DB, raw map[string]interface{}, tena
 		}
 	}
 	return true, nil
+}
+
+func prefixForNextcloudInstance(instanceID string) string {
+	return "nextcloud:" + instanceID + ":"
+}
+
+func nextcloudProvenOrphanedFailedCandidate(tx *gorm.DB, tenantID uint64, kbID, dsID,
+	instanceID string, bindings []string, externalID, desiredETag, candidateID, versionState string,
+) (bool, error) {
+	if versionState != "staging" || externalID == "" || desiredETag == "" || candidateID == "" {
+		return false, nil
+	}
+	var candidate types.Knowledge
+	err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		Select("id", "metadata", "parse_status", "enable_status", "deleted_at").
+		Where("tenant_id = ? AND knowledge_base_id = ? AND id = ? AND channel = ? AND deleted_at IS NULL",
+			tenantID, kbID, candidateID, types.ConnectorTypeNextcloud).
+		Take(&candidate).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if candidate.ParseStatus != types.ParseStatusFailed || candidate.EnableStatus != "disabled" {
+		return false, nil
+	}
+	var metadata struct {
+		DatasourceID        string `json:"datasource_id"`
+		ExternalID          string `json:"external_id"`
+		NextcloudInstanceID string `json:"nextcloud_instance_id"`
+		NextcloudBindingID  string `json:"nextcloud_binding_id"`
+		NextcloudFileID     string `json:"nextcloud_file_id"`
+		NextcloudETag       string `json:"nextcloud_etag"`
+		NextcloudTargetETag string `json:"nextcloud_target_etag"`
+		NextcloudPath       string `json:"nextcloud_path"`
+		SourceResourceID    string `json:"source_resource_id"`
+	}
+	if json.Unmarshal(candidate.Metadata, &metadata) != nil {
+		return false, nil
+	}
+	expectedFileID := strings.TrimPrefix(externalID, prefixForNextcloudInstance(instanceID))
+	if metadata.DatasourceID != dsID || metadata.ExternalID != externalID ||
+		metadata.NextcloudInstanceID != instanceID || metadata.NextcloudFileID != expectedFileID ||
+		metadata.NextcloudETag != "" || metadata.NextcloudTargetETag != desiredETag ||
+		metadata.NextcloudPath == "" {
+		return false, nil
+	}
+	for _, bindingID := range bindings {
+		if metadata.NextcloudBindingID == bindingID && metadata.SourceResourceID == bindingID {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // ValidateNextcloudSourceBaseline protects manual and scheduled syncs as well
