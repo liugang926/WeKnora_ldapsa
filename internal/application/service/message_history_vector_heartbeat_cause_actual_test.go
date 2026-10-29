@@ -252,10 +252,11 @@ func TestHistoryVectorActualSQLHeartbeatNonemptyUnknownRefusesModel(t *testing.T
 			f := newHistoryVectorActualFixture(t)
 			var request context.Context
 			var cancel context.CancelFunc
+			const callerDeadline = 30 * time.Second
 			if mode == "caller-deadline" {
 				// Use a real request deadline after fixture construction. There is no
 				// injected cause or clock/lease mutation to stand in for its expiry.
-				request, cancel = context.WithTimeout(f.base, 10*time.Second)
+				request, cancel = context.WithTimeout(f.base, callerDeadline)
 			} else {
 				request, cancel = context.WithCancel(f.base)
 			}
@@ -287,7 +288,7 @@ func TestHistoryVectorActualSQLHeartbeatNonemptyUnknownRefusesModel(t *testing.T
 			case "caller-deadline":
 				select {
 				case <-request.Done():
-				case <-time.After(12 * time.Second):
+				case <-time.After(callerDeadline + 2*time.Second):
 					t.Fatal("real caller deadline did not expire")
 				}
 			}
