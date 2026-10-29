@@ -889,6 +889,163 @@ func TestNextcloudPublicationUnprovenCoalescesRenameThenDeleteForSameFile(t *tes
 	require.Zero(t, row.AppliedID, "coalescing is not publication proof")
 }
 
+func TestNextcloudPublicationUnprovenAdmitsNewerDifferentFileRange(t *testing.T) {
+	ctx := context.Background()
+	db, inbox, now, bindingID := newNextcloudQueuedPublicationTest(t)
+	require.NoError(t, db.Exec(`UPDATE sync_logs SET status = 'success', finished_at = ?
+		WHERE id = 'event-log'`, now).Error)
+	require.NoError(t, db.Exec(`UPDATE nextcloud_event_dispatch
+		SET state = 'retry', target_event_id = 1, attempt_count = 12,
+			last_error_code = 'publication_unproven', next_attempt_at = ?
+		WHERE connection_id = 'event-connection'`, now.Add(time.Minute)).Error)
+	require.NoError(t, db.Exec(`INSERT INTO nextcloud_event_inbox
+		(connection_id, event_id, payload_sha256, event_type, file_id, etag, path, relative_path, state)
+		VALUES
+		('event-connection', 2, ?, 'upsert', 78, 'etag-78',
+			'/Published/new.md', 'new.md', 'pending'),
+		('event-connection', 3, ?, 'delete', 79, NULL, NULL, NULL, 'pending')`,
+		strings.Repeat("2", 64), strings.Repeat("3", 64)).Error)
+	require.NoError(t, db.Exec(`UPDATE nextcloud_event_checkpoint SET received_id = 3
+		WHERE connection_id = 'event-connection'`).Error)
+
+	claim, err := inbox.ClaimDispatch(ctx, "event-connection", now.Add(time.Second))
+	require.NoError(t, err)
+	require.NotNil(t, claim,
+		"a newer unrelated file receipt must not be trapped behind an old unproven range")
+	require.Equal(t, int64(3), claim.TargetEventID)
+	row := publicationDispatchRow(t, db)
+	require.Equal(t, "leased", row.State)
+	require.Zero(t, row.AppliedID,
+		"admission of the newer range must not acknowledge either publication")
+	require.NoError(t, inbox.PrepareDispatch(ctx, *claim, "different-file-log", now.Add(time.Second)))
+	require.NoError(t, inbox.FinishDispatch(ctx, *claim, "different-file-log", now.Add(time.Second)))
+
+	finished := now.Add(3 * time.Second)
+	require.NoError(t, db.Create(&types.SyncLog{
+		ID: "different-file-log", DataSourceID: "ds",
+		TenantID: 7, Status: types.SyncLogStatusSuccess,
+		StartedAt: now.Add(2 * time.Second), FinishedAt: &finished,
+	}).Error)
+	file77 := insertNextcloudVersionTestKnowledge(t, db, "file-77", "etag-v1",
+		types.ParseStatusCompleted, "enabled")
+	require.NoError(t, db.Model(&types.Knowledge{}).Where("id = ?", file77.ID).
+		Update("file_name", "file.md").Error)
+	require.NoError(t, db.Create(&nextcloudSourceVersion{
+		TenantID: 7, KnowledgeBaseID: "kb", DataSourceID: "ds",
+		ExternalID: "nextcloud:instance:77", DesiredETag: "etag-v1",
+		CandidateKnowledgeID: file77.ID, State: "published", UpdatedAt: now,
+	}).Error)
+	file78 := insertNextcloudVersionTestKnowledge(t, db, "file-78", "etag-78",
+		types.ParseStatusCompleted, "enabled")
+	metadata, err := json.Marshal(map[string]string{
+		"datasource_id": "ds", "external_id": "nextcloud:instance:78",
+		"nextcloud_instance_id": "instance", "nextcloud_binding_id": "binding",
+		"nextcloud_file_id": "78", "nextcloud_etag": "etag-78",
+		"source_resource_id": "binding", "nextcloud_path": "new.md",
+	})
+	require.NoError(t, err)
+	require.NoError(t, db.Model(&types.Knowledge{}).Where("id = ?", file78.ID).
+		Updates(map[string]any{"file_name": "new.md", "metadata": types.JSON(metadata)}).Error)
+	require.NoError(t, db.Create(&nextcloudSourceVersion{
+		TenantID: 7, KnowledgeBaseID: "kb", DataSourceID: "ds",
+		ExternalID: "nextcloud:instance:78", DesiredETag: "etag-78",
+		CandidateKnowledgeID: file78.ID, State: "published", UpdatedAt: now,
+	}).Error)
+	require.NoError(t, db.Create(&nextcloudSourceVersion{
+		TenantID: 7, KnowledgeBaseID: "kb", DataSourceID: "ds",
+		ExternalID: "nextcloud:instance:79", DesiredETag: "",
+		CandidateKnowledgeID: "", State: "tombstone", UpdatedAt: now,
+	}).Error)
+
+	var source types.DataSource
+	require.NoError(t, db.Where("id = ?", "ds").Take(&source).Error)
+	cursor, err := source.ParseSyncCursor()
+	require.NoError(t, err)
+	changeBytes, err := json.Marshal([]any{1, bindingID, "3", strings.Repeat("0", 64)})
+	require.NoError(t, err)
+	cursor.LastSyncTime = now.Add(4 * time.Second)
+	cursor.ConnectorCursor["last_reconcile_at"] = now.Add(4 * time.Second).Unix()
+	cursor.ConnectorCursor["changes"] = map[string]interface{}{
+		bindingID: base64.RawURLEncoding.EncodeToString(changeBytes),
+	}
+	cursor.ConnectorCursor["files"] = map[string]interface{}{bindingID: map[string]interface{}{
+		"77": map[string]string{"etag": "etag-v1", "name": "file.md", "path": "file.md"},
+		"78": map[string]string{"etag": "etag-78", "name": "new.md", "path": "new.md"},
+	}}
+	cursor.ConnectorCursor["tombstones"] = map[string]interface{}{
+		bindingID: map[string]interface{}{"79": map[string]string{"etag": "deleted"}},
+	}
+	rawCursor, err := cursor.ToJSON()
+	require.NoError(t, err)
+	require.NoError(t, db.Model(&types.DataSource{}).Where("id = ?", "ds").
+		Update("last_sync_cursor", rawCursor).Error)
+
+	claim, err = inbox.ClaimDispatch(ctx, "event-connection", now.Add(6*time.Second))
+	require.NoError(t, err)
+	require.Nil(t, claim)
+	row = publicationDispatchRow(t, db)
+	require.Equal(t, "idle", row.State)
+	require.Equal(t, int64(3), row.AppliedID,
+		"the newer full scan must prove both the old and new receipt ranges")
+}
+
+func TestNextcloudPublicationUnprovenBroadTargetAdmitsSignedFileReceipt(t *testing.T) {
+	ctx := context.Background()
+	db, inbox, now, _ := newNextcloudQueuedPublicationTest(t)
+	require.NoError(t, db.Exec(`UPDATE sync_logs SET status = 'success', finished_at = ?
+		WHERE id = 'event-log'`, now).Error)
+	require.NoError(t, db.Exec(`UPDATE nextcloud_event_inbox
+		SET event_type = 'reconcile', file_id = NULL, etag = NULL, path = NULL,
+			relative_path = NULL
+		WHERE connection_id = 'event-connection' AND event_id = 1`).Error)
+	require.NoError(t, db.Exec(`UPDATE nextcloud_event_dispatch
+		SET state = 'retry', target_event_id = 1, attempt_count = 12,
+			last_error_code = 'publication_unproven', next_attempt_at = ?
+		WHERE connection_id = 'event-connection'`, now.Add(time.Minute)).Error)
+	require.NoError(t, db.Exec(`INSERT INTO nextcloud_event_inbox
+		(connection_id, event_id, payload_sha256, event_type, file_id, etag, path, relative_path, state)
+		VALUES ('event-connection', 2, ?, 'upsert', 78, 'etag-78',
+			'/Published/new.md', 'new.md', 'pending')`,
+		strings.Repeat("2", 64)).Error)
+	require.NoError(t, db.Exec(`UPDATE nextcloud_event_checkpoint SET received_id = 2
+		WHERE connection_id = 'event-connection'`).Error)
+
+	claim, err := inbox.ClaimDispatch(ctx, "event-connection", now.Add(time.Second))
+	require.NoError(t, err)
+	require.NotNil(t, claim,
+		"a broad unproven reconciliation must not permanently block signed file receipts")
+	require.Equal(t, int64(2), claim.TargetEventID)
+	row := publicationDispatchRow(t, db)
+	require.Equal(t, "leased", row.State)
+	require.Zero(t, row.AppliedID)
+}
+
+func TestNextcloudPublicationUnprovenRejectsMalformedNewerRange(t *testing.T) {
+	ctx := context.Background()
+	db, inbox, now, _ := newNextcloudQueuedPublicationTest(t)
+	require.NoError(t, db.Exec(`UPDATE sync_logs SET status = 'success', finished_at = ?
+		WHERE id = 'event-log'`, now).Error)
+	require.NoError(t, db.Exec(`UPDATE nextcloud_event_dispatch
+		SET state = 'retry', target_event_id = 1, attempt_count = 12,
+			last_error_code = 'publication_unproven', next_attempt_at = ?
+		WHERE connection_id = 'event-connection'`, now.Add(time.Minute)).Error)
+	require.NoError(t, db.Exec(`INSERT INTO nextcloud_event_inbox
+		(connection_id, event_id, payload_sha256, event_type, file_id, etag, path, relative_path, state)
+		VALUES ('event-connection', 2, ?, 'upsert', 78, '',
+			'/Published/new.md', 'new.md', 'pending')`,
+		strings.Repeat("2", 64)).Error)
+	require.NoError(t, db.Exec(`UPDATE nextcloud_event_checkpoint SET received_id = 2
+		WHERE connection_id = 'event-connection'`).Error)
+
+	claim, err := inbox.ClaimDispatch(ctx, "event-connection", now.Add(time.Second))
+	require.NoError(t, err)
+	require.Nil(t, claim, "malformed newer hints cannot force another publication scan")
+	row := publicationDispatchRow(t, db)
+	require.Equal(t, "retry", row.State)
+	require.Equal(t, "publication_unproven", row.LastErrorCode)
+	require.Zero(t, row.AppliedID)
+}
+
 func TestNextcloudDeletionPendingWakesForNewerReceipt(t *testing.T) {
 	ctx := context.Background()
 	db, inbox, now, _ := newNextcloudQueuedPublicationTest(t)

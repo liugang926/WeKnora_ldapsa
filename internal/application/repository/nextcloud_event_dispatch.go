@@ -979,23 +979,15 @@ func nextcloudDispatchMatchingSync(tx *gorm.DB, connection nextcloudEventConnect
 	return count == 1, err
 }
 
-// Only a small, signed, file-scoped receipt range can replace an old
-// publication-unproven scan. The replacement still needs its own complete
-// manifest and publication proof before any applied watermark advances.
+// A newer signed receipt range can replace an old publication-unproven scan
+// even when the old target was a broad reconciliation or a different file.
+// This only admits another complete scan: it never acknowledges either range.
+// The later manifest and publication proof must cover both the old and new
+// receipts before applied_id can advance.
 func nextcloudCanCoalesceUnproven(tx *gorm.DB, connection nextcloudEventConnection,
 	oldTargetID, newReceivedID int64,
 ) (bool, error) {
 	if newReceivedID <= oldTargetID {
-		return false, nil
-	}
-	var oldHint nextcloudEventInboxRow
-	if err := tx.Table("nextcloud_event_inbox").
-		Where("connection_id = ? AND event_id = ?", connection.ConnectionID, oldTargetID).
-		Take(&oldHint).Error; err != nil {
-		return false, err
-	}
-	if oldHint.FileID == nil || *oldHint.FileID <= 0 ||
-		(oldHint.EventType != "upsert" && oldHint.EventType != "metadata") {
 		return false, nil
 	}
 	var hints []nextcloudEventInboxRow
@@ -1036,35 +1028,37 @@ func nextcloudCanCoalesceUnproven(tx *gorm.DB, connection nextcloudEventConnecti
 		connection.TenantID).Take(&kb).Error; err != nil {
 		return false, err
 	}
-	superseding := false
 	for _, hint := range hints {
-		if hint.FileID == nil || *hint.FileID != *oldHint.FileID {
-			return false, nil
-		}
 		switch hint.EventType {
 		case "upsert":
-			if hint.ETag == nil || strings.TrimSpace(*hint.ETag) == "" ||
+			if hint.FileID == nil || *hint.FileID <= 0 ||
+				hint.ETag == nil || strings.TrimSpace(*hint.ETag) == "" ||
 				hint.RelativePath == nil || !nextcloud.ImportableFileName(path.Base(
 				*hint.RelativePath,
 			), kb.IsMultimodalEnabled()) {
 				return false, nil
 			}
-			superseding = true
 		case "metadata":
-			if hint.RelativePath == nil || strings.TrimSpace(*hint.RelativePath) == "" {
+			if hint.FileID == nil || *hint.FileID <= 0 ||
+				hint.RelativePath == nil || strings.TrimSpace(*hint.RelativePath) == "" {
 				return false, nil
 			}
 		case "delete":
 			// The delete receipt is authenticated. A fresh manifest must still
-			// prove the tombstone before the new range can advance applied_id,
-			// but the older failed upsert must not block admission of that
-			// delete solely because the previous cursor still contains the file.
-			superseding = true
+			// prove the tombstone before the combined range can advance
+			// applied_id.
+			if hint.FileID == nil || *hint.FileID <= 0 {
+				return false, nil
+			}
+		case "subtree_scan", "subtree_moved", "subtree_deleted", "reconcile":
+			// Broad hints have no file identity. They are still safe to admit
+			// because the caller requires a second complete scan and the normal
+			// publication proof before acknowledging the range.
 		default:
 			return false, nil
 		}
 	}
-	return superseding, nil
+	return true, nil
 }
 
 // A pending parser may be overtaken only by signed, importable upserts of the
