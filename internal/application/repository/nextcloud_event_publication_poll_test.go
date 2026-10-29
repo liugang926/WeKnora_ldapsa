@@ -177,6 +177,79 @@ func TestNextcloudQueuedPublicationTerminalFileFailureDoesNotBlockApply(t *testi
 	require.Equal(t, "staging", version.State)
 }
 
+func TestNextcloudQueuedPublicationNormalizesExactFailedEnabledCandidateAcrossUpsertDeleteRange(t *testing.T) {
+	ctx := context.Background()
+	db, inbox, now, bindingID := newNextcloudQueuedPublicationTest(t)
+	failed := insertNextcloudVersionTestKnowledge(t, db, "failed-enabled", "",
+		types.ParseStatusFailed, "enabled")
+	metadata := failed.GetMetadata()
+	metadata["nextcloud_target_etag"] = "etag-v1"
+	metadata["nextcloud_path"] = "file.md"
+	encoded, err := json.Marshal(metadata)
+	require.NoError(t, err)
+	require.NoError(t, db.Model(&types.Knowledge{}).Where("id = ?", failed.ID).
+		Updates(map[string]any{
+			"file_name": "file.md", "error_message": "document_processing_failed",
+			"metadata": types.JSON(encoded),
+		}).Error)
+	require.NoError(t, db.Create(&nextcloudSourceVersion{
+		TenantID: 7, KnowledgeBaseID: "kb", DataSourceID: "ds",
+		ExternalID: "nextcloud:instance:77", DesiredETag: "etag-v1",
+		CandidateKnowledgeID: failed.ID, State: "staging", UpdatedAt: now,
+	}).Error)
+	require.NoError(t, db.Create(&nextcloudSourceVersion{
+		TenantID: 7, KnowledgeBaseID: "kb", DataSourceID: "ds",
+		ExternalID: "nextcloud:instance:78", State: "tombstone", UpdatedAt: now,
+	}).Error)
+	require.NoError(t, db.Exec(`INSERT INTO nextcloud_event_inbox
+		(connection_id, event_id, payload_sha256, event_type, file_id, etag, path, relative_path, state)
+		VALUES ('event-connection', 2, ?, 'upsert', 78, 'etag-78', '/Published/transient.md',
+			'transient.md', 'dispatched')`, strings.Repeat("1", 64)).Error)
+	require.NoError(t, db.Exec(`INSERT INTO nextcloud_event_inbox
+		(connection_id, event_id, payload_sha256, event_type, file_id, state)
+		VALUES ('event-connection', 3, ?, 'delete', 78, 'dispatched')`,
+		strings.Repeat("2", 64)).Error)
+	require.NoError(t, db.Exec(`UPDATE nextcloud_event_checkpoint SET received_id = 3
+		WHERE connection_id = 'event-connection'`).Error)
+	require.NoError(t, db.Exec(`UPDATE nextcloud_event_dispatch
+		SET dispatched_id = 3, target_event_id = 3
+		WHERE connection_id = 'event-connection'`).Error)
+	var source types.DataSource
+	require.NoError(t, db.Where("id = ?", "ds").Take(&source).Error)
+	cursor, err := source.ParseSyncCursor()
+	require.NoError(t, err)
+	cursor.LastSyncTime = now
+	changeBytes, err := json.Marshal([]any{1, bindingID, "3", strings.Repeat("0", 64)})
+	require.NoError(t, err)
+	cursor.ConnectorCursor["changes"] = map[string]interface{}{
+		bindingID: base64.RawURLEncoding.EncodeToString(changeBytes),
+	}
+	cursor.ConnectorCursor["tombstones"] = map[string]interface{}{
+		bindingID: map[string]interface{}{"78": map[string]interface{}{}},
+	}
+	rawCursor, err := cursor.ToJSON()
+	require.NoError(t, err)
+	require.NoError(t, db.Model(&types.DataSource{}).Where("id = ?", "ds").
+		Update("last_sync_cursor", rawCursor).Error)
+	require.NoError(t, db.Exec(`UPDATE sync_logs SET status = 'success', finished_at = ?
+		WHERE id = 'event-log'`, now).Error)
+
+	claim, err := inbox.ClaimDispatch(ctx, "event-connection",
+		now.Add(nextcloudPublicationRetryGrace+time.Second))
+	require.NoError(t, err)
+	require.Nil(t, claim)
+	row := publicationDispatchRow(t, db)
+	require.Equal(t, "idle", row.State)
+	require.Equal(t, int64(3), row.AppliedID)
+	require.Empty(t, row.LastErrorCode)
+
+	var stored types.Knowledge
+	require.NoError(t, db.Where("id = ?", failed.ID).Take(&stored).Error)
+	require.Equal(t, types.ParseStatusFailed, stored.ParseStatus)
+	require.Equal(t, "disabled", stored.EnableStatus)
+	require.Empty(t, stored.GetMetadata()["nextcloud_etag"])
+}
+
 func TestNextcloudQueuedPublicationTerminalFailureRequiresExactTargetProof(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -203,34 +276,34 @@ func TestNextcloudQueuedPublicationTerminalFailureRequiresExactTargetProof(t *te
 		},
 		{
 			name: "missing staged target", desiredETag: "etag-v1",
-			parseStatus: types.ParseStatusFailed, enabled: "disabled",
+			parseStatus: types.ParseStatusFailed, enabled: "enabled",
 			errorMessage: "document_processing_failed", path: "file.md",
 		},
 		{
 			name: "exact candidate missing target", candidateETag: "etag-v1",
 			desiredETag: "etag-v1", parseStatus: types.ParseStatusFailed,
-			enabled: "disabled", errorMessage: "document_processing_failed", path: "file.md",
+			enabled: "enabled", errorMessage: "document_processing_failed", path: "file.md",
 		},
 		{
 			name: "exact candidate conflicting target", candidateETag: "etag-v1",
 			targetETag: "etag-other", desiredETag: "etag-v1",
-			parseStatus: types.ParseStatusFailed, enabled: "disabled",
+			parseStatus: types.ParseStatusFailed, enabled: "enabled",
 			errorMessage: "document_processing_failed", path: "file.md",
 		},
 		{
 			name: "mismatched staged target", targetETag: "etag-other", desiredETag: "etag-v1",
-			parseStatus: types.ParseStatusFailed, enabled: "disabled",
+			parseStatus: types.ParseStatusFailed, enabled: "enabled",
 			errorMessage: "document_processing_failed", path: "file.md",
 		},
 		{
 			name: "stale desired revision", targetETag: "etag-v1", desiredETag: "etag-2",
-			parseStatus: types.ParseStatusFailed, enabled: "disabled",
+			parseStatus: types.ParseStatusFailed, enabled: "enabled",
 			errorMessage: "document_processing_failed", path: "file.md",
 		},
 		{
 			name: "conflicting candidate etag", candidateETag: "etag-other",
 			targetETag: "etag-v1", desiredETag: "etag-v1",
-			parseStatus: types.ParseStatusFailed, enabled: "disabled",
+			parseStatus: types.ParseStatusFailed, enabled: "enabled",
 			errorMessage: "document_processing_failed", path: "file.md",
 		},
 		{
@@ -241,12 +314,12 @@ func TestNextcloudQueuedPublicationTerminalFailureRequiresExactTargetProof(t *te
 		},
 		{
 			name: "mismatched path", targetETag: "etag-v1", desiredETag: "etag-v1",
-			parseStatus: types.ParseStatusFailed, enabled: "disabled",
+			parseStatus: types.ParseStatusFailed, enabled: "enabled",
 			errorMessage: "document_processing_failed", path: "other.md",
 		},
 		{
 			name: "mismatched binding", targetETag: "etag-v1", desiredETag: "etag-v1",
-			parseStatus: types.ParseStatusFailed, enabled: "disabled",
+			parseStatus: types.ParseStatusFailed, enabled: "enabled",
 			errorMessage: "document_processing_failed", path: "file.md", bindingID: "other-binding",
 		},
 		{
@@ -301,8 +374,13 @@ func TestNextcloudQueuedPublicationTerminalFailureRequiresExactTargetProof(t *te
 			require.NoError(t, db.Where("id = ?", candidate.ID).Take(&stored).Error)
 			require.Equal(t, test.parseStatus, stored.ParseStatus,
 				"proof must not turn a failed or completed candidate into a published row")
-			require.Equal(t, test.enabled, stored.EnableStatus,
-				"proof must not change the candidate enable state")
+			if test.complete && test.parseStatus == types.ParseStatusFailed {
+				require.Equal(t, "disabled", stored.EnableStatus,
+					"an exact terminal failure is normalized before the receipt range can advance")
+			} else {
+				require.Equal(t, test.enabled, stored.EnableStatus,
+					"unproven candidates must not be mutated")
+			}
 			var version nextcloudSourceVersion
 			require.NoError(t, db.Where(
 				"tenant_id = ? AND knowledge_base_id = ? AND datasource_id = ? AND external_id = ?",
