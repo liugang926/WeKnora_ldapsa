@@ -1498,7 +1498,10 @@ func (s *agentService) resolveQuestionOriginInfo(
 	if origin.KnowledgeID == "" {
 		return info
 	}
-	docs, err := s.getSelectedDocumentInfosInTargets(ctx, []string{origin.KnowledgeID}, targets)
+	// The origin KB was already checked against this turn's search targets
+	// above. A document/tag-only target can legitimately omit the target tenant
+	// ID, while the original helper still applies the caller's KB/share access.
+	docs, err := s.getSelectedDocumentInfos(ctx, []string{origin.KnowledgeID})
 	if err != nil || len(docs) != 1 || docs[0].KnowledgeBaseID != origin.KnowledgeBaseID {
 		logger.Infof(ctx, "Question origin document %s dropped: not found in knowledge base %s",
 			secutils.SanitizeForLog(origin.KnowledgeID), secutils.SanitizeForLog(origin.KnowledgeBaseID))
