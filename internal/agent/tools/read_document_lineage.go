@@ -108,7 +108,7 @@ func (t *ReadDocumentTool) hydrateDocumentInputs(
 		KnowledgeID:     k.ID,
 		Lease:           lease,
 		MetadataOnly:    len(chunks) == 0,
-		ExpectedLineage: capture.metadataLineage,
+		ExpectedLineage: expectedHydrationLineage(turn, capture.metadataLineage),
 	}
 	for _, c := range chunks {
 		if c == nil || c.KnowledgeID != k.ID || c.KnowledgeBaseID != k.KnowledgeBaseID || c.TenantID != k.TenantID {
@@ -192,6 +192,26 @@ func (t *ReadDocumentTool) hydrateDocumentInputs(
 		return nil, err
 	}
 	return out, nil
+}
+
+// The snapshot reader treats ExpectedLineage as a strict material contract.
+// ACL turns authorize the exact read lease against current WeKnora state, so
+// they must not pass a malformed legacy producer receipt into that boundary.
+// A valid complete receipt is retained for exact augmentation; malformed,
+// receipt-less, and non-complete legacy evidence is omitted and revalidated
+// from the reader's current source identity below.
+func expectedHydrationLineage(
+	turn *types.RAGSourceLineage,
+	lineage *types.SourceLineage,
+) *types.SourceLineage {
+	if turn == nil || turn.RequiresCompleteProducerLineage() {
+		return lineage
+	}
+	normalized := turn.NormalizeProducerLineage(lineage)
+	if normalized == nil || len(normalized.Sources) == 0 || normalized.RequireComplete() != nil {
+		return nil
+	}
+	return normalized
 }
 
 func validateDocumentChunkProjection(

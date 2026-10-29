@@ -103,6 +103,102 @@ type revokeSearchReranker struct {
 	svc *leasedAgentKnowledgeService
 }
 
+type strictExpectedLineageReader struct {
+	inner interface {
+		HydrateRAGChunkSnapshots(context.Context, []types.RAGChunkReadRequest) ([]types.RAGChunkInputSnapshot, error)
+	}
+	expected *types.SourceLineage
+}
+
+func (r *strictExpectedLineageReader) HydrateRAGChunkSnapshots(
+	ctx context.Context,
+	requests []types.RAGChunkReadRequest,
+) ([]types.RAGChunkInputSnapshot, error) {
+	r.expected = nil
+	for _, request := range requests {
+		if request.ExpectedLineage == nil {
+			continue
+		}
+		r.expected = request.ExpectedLineage
+		if err := request.ExpectedLineage.RequireComplete(); err != nil {
+			return nil, types.ErrSourceLineageUnknown
+		}
+	}
+	return r.inner.HydrateRAGChunkSnapshots(ctx, requests)
+}
+
+func TestAgentLineageSearchACLDoesNotPassMalformedExpectedLineageToSnapshotReader(t *testing.T) {
+	tool, kbs, _ := actualAgentSearchFixture(t, &stubReranker{scores: []float64{0.9}})
+	reader := &strictExpectedLineageReader{inner: tool.snapshotReader}
+	tool.SetRAGChunkSnapshotReader(reader)
+	kbs.results[0].SourceLineage = malformedCompleteNextcloudLineage()
+	turn := types.NewWeKnoraACLSourceLineage(func(context.Context, *types.SourceLineage) error {
+		return nil
+	})
+	ctx := types.WithRAGSourceLineage(context.Background(), turn)
+	r := NewToolRegistry()
+	r.RegisterTool(tool)
+	result, err := r.ExecuteToolWithSourceLineage(
+		ctx,
+		ToolSearchKnowledge,
+		json.RawMessage(`{"query":"database","mode":"keyword"}`),
+	)
+	require.NoError(t, err)
+	require.True(t, result.Success)
+	require.Contains(t, result.Output, "authoritative database body")
+	require.Nil(t, reader.expected)
+	require.Len(t, result.SourceLineage.Sources, 1)
+	require.Equal(t, "77", result.SourceLineage.Sources[0].FileID)
+}
+
+func TestAgentLineageSearchACLRetainsValidExpectedLineage(t *testing.T) {
+	tool, kbs, _ := actualAgentSearchFixture(t, &stubReranker{scores: []float64{0.9}})
+	reader := &strictExpectedLineageReader{inner: tool.snapshotReader}
+	tool.SetRAGChunkSnapshotReader(reader)
+	lineage := malformedCompleteNextcloudLineage()
+	lineage.Sources[0].FileID = "77"
+	lineage.Sources[0].ExternalID = "nextcloud:instance:77"
+	kbs.results[0].SourceLineage = lineage
+	turn := types.NewWeKnoraACLSourceLineage(func(context.Context, *types.SourceLineage) error {
+		return nil
+	})
+	ctx := types.WithRAGSourceLineage(context.Background(), turn)
+	r := NewToolRegistry()
+	r.RegisterTool(tool)
+	result, err := r.ExecuteToolWithSourceLineage(
+		ctx,
+		ToolSearchKnowledge,
+		json.RawMessage(`{"query":"database","mode":"keyword"}`),
+	)
+	require.NoError(t, err)
+	require.True(t, result.Success)
+	require.NotNil(t, reader.expected)
+	require.NoError(t, reader.expected.RequireComplete())
+	require.Len(t, reader.expected.Sources, 1)
+	require.Equal(t, "77", reader.expected.Sources[0].FileID)
+}
+
+func TestAgentLineageSearchMaterialKeepsMalformedExpectedLineageStrict(t *testing.T) {
+	tool, kbs, _ := actualAgentSearchFixture(t, &stubReranker{scores: []float64{0.9}})
+	reader := &strictExpectedLineageReader{inner: tool.snapshotReader}
+	tool.SetRAGChunkSnapshotReader(reader)
+	kbs.results[0].SourceLineage = malformedCompleteNextcloudLineage()
+	turn := types.NewRAGSourceLineage(func(context.Context, *types.SourceLineage) error {
+		return nil
+	})
+	ctx := types.WithRAGSourceLineage(context.Background(), turn)
+	r := NewToolRegistry()
+	r.RegisterTool(tool)
+	result, err := r.ExecuteToolWithSourceLineage(
+		ctx,
+		ToolSearchKnowledge,
+		json.RawMessage(`{"query":"database","mode":"keyword"}`),
+	)
+	require.Error(t, err)
+	require.Nil(t, result)
+	require.NotNil(t, reader.expected)
+}
+
 func (m *revokeSearchReranker) Rerank(ctx context.Context, query string, docs []string) ([]rerank.RankResult, error) {
 	result, err := m.stubReranker.Rerank(ctx, query, docs)
 	m.svc.revoked.Store(true)
