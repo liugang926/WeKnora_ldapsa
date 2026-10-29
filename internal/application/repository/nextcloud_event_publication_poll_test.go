@@ -158,6 +158,159 @@ func TestNextcloudBlockedCursorRecoversProvenOrphanedFailedCandidate(t *testing.
 	require.Equal(t, "staging", gotVersion.State)
 }
 
+func nextcloudDeletedOrphanPublicationProofFixture(t *testing.T) (
+	*gorm.DB, *NextcloudEventInboxRepository, nextcloudEventConnection, time.Time,
+	*types.Knowledge, nextcloudSourceVersion,
+) {
+	t.Helper()
+	db, inbox, now, bindingID, candidate, version := newNextcloudBlockedCursorOrphanTest(t)
+	var source types.DataSource
+	require.NoError(t, db.Where("id = ?", "ds").Take(&source).Error)
+	cursor, err := source.ParseSyncCursor()
+	require.NoError(t, err)
+	cursor.LastSyncTime = now
+	changeBytes, err := json.Marshal([]any{1, bindingID, "2", strings.Repeat("2", 64)})
+	require.NoError(t, err)
+	cursor.ConnectorCursor["changes"] = map[string]interface{}{
+		bindingID: base64.RawURLEncoding.EncodeToString(changeBytes),
+	}
+	cursor.ConnectorCursor["files"] = map[string]interface{}{
+		bindingID: map[string]interface{}{},
+	}
+	cursor.ConnectorCursor["tombstones"] = map[string]interface{}{
+		bindingID: map[string]interface{}{},
+	}
+	rawCursor, err := cursor.ToJSON()
+	require.NoError(t, err)
+	require.NoError(t, db.Model(&types.DataSource{}).Where("id = ?", "ds").
+		Update("last_sync_cursor", rawCursor).Error)
+	connection := nextcloudEventConnection{
+		ConnectionID:        "event-connection",
+		TenantID:            7,
+		KnowledgeBaseID:     "kb",
+		DatasourceID:        "ds",
+		NextcloudInstanceID: "instance",
+		BindingID:           bindingID,
+	}
+	return db, inbox, connection, now, candidate, version
+}
+
+func TestNextcloudQueuedPublicationAppliesProvenDeletedOrphanedFailure(t *testing.T) {
+	db, _, connection, now, candidate, version := nextcloudDeletedOrphanPublicationProofFixture(t)
+	proof, err := nextcloudDispatchPublicationProof(
+		db, connection, 1, 2, now.Add(-time.Second),
+	)
+	require.NoError(t, err)
+	require.Equal(t, nextcloudApplyComplete, proof)
+
+	var stored types.Knowledge
+	require.NoError(t, db.Where("id = ?", candidate.ID).Take(&stored).Error)
+	require.Equal(t, types.ParseStatusFailed, stored.ParseStatus)
+	require.Equal(t, "disabled", stored.EnableStatus)
+	require.Empty(t, stored.GetMetadata()["nextcloud_etag"])
+
+	var storedVersion nextcloudSourceVersion
+	require.NoError(t, db.Where("external_id = ?", version.ExternalID).Take(&storedVersion).Error)
+	require.Equal(t, "staging", storedVersion.State,
+		"proof must not fabricate a published version for an unpublished terminal failure")
+}
+
+func TestNextcloudQueuedPublicationRejectsUnprovenDeletedOrphanReasons(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		mutate func(*testing.T, *gorm.DB, *types.Knowledge, nextcloudSourceVersion)
+	}{
+		{
+			name: "completed candidate",
+			mutate: func(t *testing.T, db *gorm.DB, candidate *types.Knowledge, _ nextcloudSourceVersion) {
+				require.NoError(t, db.Model(&types.Knowledge{}).Where("id = ?", candidate.ID).
+					Update("parse_status", types.ParseStatusCompleted).Error)
+			},
+		},
+		{
+			name: "enabled candidate",
+			mutate: func(t *testing.T, db *gorm.DB, candidate *types.Knowledge, _ nextcloudSourceVersion) {
+				require.NoError(t, db.Model(&types.Knowledge{}).Where("id = ?", candidate.ID).
+					Update("enable_status", "enabled").Error)
+			},
+		},
+		{
+			name: "candidate was published",
+			mutate: func(t *testing.T, db *gorm.DB, candidate *types.Knowledge, _ nextcloudSourceVersion) {
+				metadata := candidate.GetMetadata()
+				metadata["nextcloud_etag"] = "etag-orphan"
+				encoded, err := json.Marshal(metadata)
+				require.NoError(t, err)
+				require.NoError(t, db.Model(&types.Knowledge{}).Where("id = ?", candidate.ID).
+					Update("metadata", types.JSON(encoded)).Error)
+			},
+		},
+		{
+			name: "target etag changed",
+			mutate: func(t *testing.T, db *gorm.DB, candidate *types.Knowledge, _ nextcloudSourceVersion) {
+				metadata := candidate.GetMetadata()
+				metadata["nextcloud_target_etag"] = "different-etag"
+				encoded, err := json.Marshal(metadata)
+				require.NoError(t, err)
+				require.NoError(t, db.Model(&types.Knowledge{}).Where("id = ?", candidate.ID).
+					Update("metadata", types.JSON(encoded)).Error)
+			},
+		},
+		{
+			name: "path missing",
+			mutate: func(t *testing.T, db *gorm.DB, candidate *types.Knowledge, _ nextcloudSourceVersion) {
+				metadata := candidate.GetMetadata()
+				delete(metadata, "nextcloud_path")
+				encoded, err := json.Marshal(metadata)
+				require.NoError(t, err)
+				require.NoError(t, db.Model(&types.Knowledge{}).Where("id = ?", candidate.ID).
+					Update("metadata", types.JSON(encoded)).Error)
+			},
+		},
+		{
+			name: "published source version",
+			mutate: func(t *testing.T, db *gorm.DB, _ *types.Knowledge, version nextcloudSourceVersion) {
+				require.NoError(t, db.Model(&nextcloudSourceVersion{}).
+					Where("external_id = ?", version.ExternalID).Update("state", "published").Error)
+			},
+		},
+		{
+			name: "duplicate active candidate",
+			mutate: func(t *testing.T, db *gorm.DB, candidate *types.Knowledge, _ nextcloudSourceVersion) {
+				duplicate := *candidate
+				duplicate.ID = "duplicate-orphan"
+				require.NoError(t, db.Create(&duplicate).Error)
+			},
+		},
+		{
+			name: "newer upsert keeps file indexed",
+			mutate: func(t *testing.T, db *gorm.DB, _ *types.Knowledge, _ nextcloudSourceVersion) {
+				require.NoError(t, db.Exec(`INSERT INTO nextcloud_event_inbox
+					(connection_id, event_id, payload_sha256, event_type, file_id, etag, path,
+					 relative_path, state)
+					VALUES ('event-connection', 3, ?, 'upsert', 78, 'etag-orphan',
+					 '/Published/restored.md', 'restored.md', 'pending')`,
+					strings.Repeat("3", 64)).Error)
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			db, _, connection, now, candidate, version :=
+				nextcloudDeletedOrphanPublicationProofFixture(t)
+			tc.mutate(t, db, candidate, version)
+			target := int64(2)
+			if tc.name == "newer upsert keeps file indexed" {
+				target = 3
+			}
+			proof, err := nextcloudDispatchPublicationProof(
+				db, connection, 1, target, now.Add(-time.Second),
+			)
+			require.NoError(t, err)
+			require.Equal(t, nextcloudApplyRetry, proof)
+		})
+	}
+}
+
 func TestNextcloudBlockedCursorRecoveryAppearsInDispatchCandidates(t *testing.T) {
 	db, inbox, now, _, _, _ := newNextcloudBlockedCursorOrphanTest(t)
 
