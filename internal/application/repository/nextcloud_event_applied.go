@@ -54,6 +54,20 @@ func nextcloudApplyMetadataString(metadata map[string]json.RawMessage, key strin
 	return value
 }
 
+func nextcloudApplyMetadataExactString(
+	metadata map[string]json.RawMessage, key string,
+) (string, bool) {
+	raw, present := metadata[key]
+	if !present {
+		return "", false
+	}
+	var value *string
+	if json.Unmarshal(raw, &value) != nil || value == nil {
+		return "", false
+	}
+	return *value, true
+}
+
 // Nextcloud's returned changes cursor is HMAC protected by Nextcloud and
 // delivered over the signed machine API connection. We do not know its HMAC
 // secret; parsing the binding and decimal position here must not be confused
@@ -206,14 +220,25 @@ func nextcloudDispatchPublicationProof(
 			return nextcloudApplyWaiting, nil
 		}
 		terminalFailure := version.State == "staging" && candidate.DeletedAt == nil &&
-			candidate.ParseStatus == types.ParseStatusFailed
+			candidate.ParseStatus == types.ParseStatusFailed && candidate.EnableStatus == "disabled"
 		var metadata map[string]json.RawMessage
-		if json.Unmarshal(candidate.Metadata, &metadata) != nil ||
-			(!terminalFailure && version.State != "published") || candidate.DeletedAt != nil ||
+		if json.Unmarshal(candidate.Metadata, &metadata) != nil {
+			return nextcloudApplyRetry, nil
+		}
+		currentETag, currentETagPresent := nextcloudApplyMetadataExactString(metadata, "nextcloud_etag")
+		etagMatches := currentETagPresent && currentETag == file.ETag
+		if terminalFailure {
+			targetETag, targetPresent := nextcloudApplyMetadataExactString(
+				metadata, "nextcloud_target_etag",
+			)
+			etagMatches = etagMatches || (currentETagPresent && currentETag == "" &&
+				targetPresent && targetETag == file.ETag && version.DesiredETag == file.ETag)
+		}
+		if (!terminalFailure && version.State != "published") || candidate.DeletedAt != nil ||
 			(!terminalFailure && (candidate.ParseStatus != types.ParseStatusCompleted ||
 				candidate.EnableStatus != "enabled")) ||
 			candidate.FileName != file.Name || nextcloudApplyMetadataString(metadata, "nextcloud_path") != file.Path ||
-			nextcloudApplyMetadataString(metadata, "nextcloud_etag") != file.ETag ||
+			!etagMatches ||
 			nextcloudApplyMetadataString(metadata, "nextcloud_instance_id") != connection.NextcloudInstanceID ||
 			nextcloudApplyMetadataString(metadata, "nextcloud_binding_id") != connection.BindingID ||
 			nextcloudApplyMetadataString(metadata, "nextcloud_file_id") != fileID ||

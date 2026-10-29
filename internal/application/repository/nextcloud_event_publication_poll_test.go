@@ -170,6 +170,192 @@ func TestNextcloudQueuedPublicationTerminalFileFailureDoesNotBlockApply(t *testi
 	require.Equal(t, "staging", version.State)
 }
 
+func TestNextcloudQueuedPublicationTerminalFailureRequiresExactTargetETag(t *testing.T) {
+	tests := []struct {
+		name            string
+		candidateETag   any
+		removeETag      bool
+		targetETag      any
+		removeTarget    bool
+		parseStatus     string
+		enabled         string
+		path            string
+		fileName        string
+		desiredETag     string
+		malformed       bool
+		claimError      bool
+		expectedApplied bool
+	}{
+		{
+			name: "exact terminal target", candidateETag: "",
+			targetETag: "etag-v1", parseStatus: types.ParseStatusFailed,
+			enabled: "disabled", path: "file.md", fileName: "file.md",
+			desiredETag: "etag-v1", expectedApplied: true,
+		},
+		{
+			name: "candidate etag missing", removeETag: true,
+			targetETag: "etag-v1", parseStatus: types.ParseStatusFailed,
+			enabled: "disabled", path: "file.md", fileName: "file.md",
+			desiredETag: "etag-v1",
+		},
+		{
+			name: "candidate etag null", candidateETag: nil,
+			targetETag: "etag-v1", parseStatus: types.ParseStatusFailed,
+			enabled: "disabled", path: "file.md", fileName: "file.md",
+			desiredETag: "etag-v1",
+		},
+		{
+			name: "candidate etag not a string", candidateETag: 7,
+			targetETag: "etag-v1", parseStatus: types.ParseStatusFailed,
+			enabled: "disabled", path: "file.md", fileName: "file.md",
+			desiredETag: "etag-v1",
+		},
+		{
+			name: "conflicting candidate etag", candidateETag: "etag-other",
+			targetETag: "etag-v1", parseStatus: types.ParseStatusFailed,
+			enabled: "disabled", path: "file.md", fileName: "file.md",
+			desiredETag: "etag-v1",
+		},
+		{
+			name: "target etag missing", candidateETag: "",
+			removeTarget: true, parseStatus: types.ParseStatusFailed,
+			enabled: "disabled", path: "file.md", fileName: "file.md",
+			desiredETag: "etag-v1",
+		},
+		{
+			name: "target etag null", candidateETag: "",
+			targetETag: nil, parseStatus: types.ParseStatusFailed,
+			enabled: "disabled", path: "file.md", fileName: "file.md",
+			desiredETag: "etag-v1",
+		},
+		{
+			name: "target etag not a string", candidateETag: "",
+			targetETag: 7, parseStatus: types.ParseStatusFailed,
+			enabled: "disabled", path: "file.md", fileName: "file.md",
+			desiredETag: "etag-v1",
+		},
+		{
+			name: "mismatched target etag", candidateETag: "",
+			targetETag: "etag-other", parseStatus: types.ParseStatusFailed,
+			enabled: "disabled", path: "file.md", fileName: "file.md",
+			desiredETag: "etag-v1",
+		},
+		{
+			name: "mismatched desired revision", candidateETag: "",
+			targetETag: "etag-v1", parseStatus: types.ParseStatusFailed,
+			enabled: "disabled", path: "file.md", fileName: "file.md",
+			desiredETag: "etag-other",
+		},
+		{
+			name: "mismatched path", candidateETag: "",
+			targetETag: "etag-v1", parseStatus: types.ParseStatusFailed,
+			enabled: "disabled", path: "other.md", fileName: "file.md",
+			desiredETag: "etag-v1",
+		},
+		{
+			name: "mismatched file name", candidateETag: "",
+			targetETag: "etag-v1", parseStatus: types.ParseStatusFailed,
+			enabled: "disabled", path: "file.md", fileName: "other.md",
+			desiredETag: "etag-v1",
+		},
+		{
+			name: "terminal failure must be disabled", candidateETag: "",
+			targetETag: "etag-v1", parseStatus: types.ParseStatusFailed,
+			enabled: "enabled", path: "file.md", fileName: "file.md",
+			desiredETag: "etag-v1",
+		},
+		{
+			name: "completed candidate cannot use target fallback", candidateETag: "",
+			targetETag: "etag-v1", parseStatus: types.ParseStatusCompleted,
+			enabled: "enabled", path: "file.md", fileName: "file.md",
+			desiredETag: "etag-v1",
+		},
+		{
+			name: "malformed metadata", malformed: true,
+			parseStatus: types.ParseStatusFailed, enabled: "disabled",
+			path: "file.md", fileName: "file.md", desiredETag: "etag-v1",
+			claimError: true,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := context.Background()
+			db, inbox, now, _ := newNextcloudQueuedPublicationTest(t)
+			candidate := insertNextcloudVersionTestKnowledge(t, db, "candidate", "",
+				test.parseStatus, test.enabled)
+			require.NoError(t, db.Model(&types.Knowledge{}).Where("id = ?", candidate.ID).
+				Update("file_name", test.fileName).Error)
+
+			metadata := make(map[string]any)
+			for key, value := range candidate.GetMetadata() {
+				metadata[key] = value
+			}
+			metadata["nextcloud_path"] = test.path
+			if test.removeETag {
+				delete(metadata, "nextcloud_etag")
+			} else {
+				metadata["nextcloud_etag"] = test.candidateETag
+			}
+			if test.removeTarget {
+				delete(metadata, "nextcloud_target_etag")
+			} else {
+				metadata["nextcloud_target_etag"] = test.targetETag
+			}
+			encoded, err := json.Marshal(metadata)
+			require.NoError(t, err)
+			if test.malformed {
+				require.NoError(t, db.Exec(
+					"UPDATE knowledges SET metadata = ? WHERE id = ?", `{"malformed"`, candidate.ID,
+				).Error)
+			} else {
+				require.NoError(t, db.Model(&types.Knowledge{}).Where("id = ?", candidate.ID).
+					Update("metadata", types.JSON(encoded)).Error)
+			}
+			require.NoError(t, db.Create(&nextcloudSourceVersion{
+				TenantID: 7, KnowledgeBaseID: "kb", DataSourceID: "ds",
+				ExternalID: "nextcloud:instance:77", DesiredETag: test.desiredETag,
+				CandidateKnowledgeID: candidate.ID, State: "staging", UpdatedAt: now,
+			}).Error)
+			require.NoError(t, db.Exec(`UPDATE sync_logs SET status = 'success', finished_at = ?
+				WHERE id = 'event-log'`, now).Error)
+
+			claim, err := inbox.ClaimDispatch(ctx, "event-connection",
+				now.Add(nextcloudPublicationRetryGrace+time.Second))
+			if test.claimError {
+				require.Error(t, err)
+				require.Nil(t, claim)
+				row := publicationDispatchRow(t, db)
+				require.Zero(t, row.AppliedID)
+				require.NotEqual(t, "idle", row.State)
+				return
+			}
+			require.NoError(t, err)
+			require.Nil(t, claim)
+			row := publicationDispatchRow(t, db)
+			if test.expectedApplied {
+				require.Equal(t, "idle", row.State)
+				require.Equal(t, int64(1), row.AppliedID)
+				require.Zero(t, row.LastErrorCode)
+			} else {
+				require.Equal(t, "retry", row.State)
+				require.Equal(t, "publication_unproven", row.LastErrorCode)
+				require.Zero(t, row.AppliedID)
+			}
+
+			var stored types.Knowledge
+			require.NoError(t, db.Where("id = ?", candidate.ID).Take(&stored).Error)
+			require.Equal(t, test.parseStatus, stored.ParseStatus,
+				"proof must not turn a failed or completed candidate into a published row")
+			var version nextcloudSourceVersion
+			require.NoError(t, db.Where(
+				"tenant_id = ? AND knowledge_base_id = ? AND datasource_id = ? AND external_id = ?",
+				7, "kb", "ds", "nextcloud:instance:77",
+			).Take(&version).Error)
+			require.Equal(t, "staging", version.State)
+		})
+	}
+}
+
 func TestNextcloudQueuedPublicationWaitsForParserWithoutAck(t *testing.T) {
 	ctx := context.Background()
 	db, inbox, now, _ := newNextcloudQueuedPublicationTest(t)
