@@ -89,11 +89,11 @@ func (g *NextcloudSourceLineageGuard) Check(
 	lineage *types.SourceLineage,
 	scope LineageReadScope,
 ) error {
-	if lineage.RequireComplete() != nil {
-		return ErrNextcloudPublicationDenied
-	}
 	if ctx == nil || g == nil {
 		return ErrNextcloudPublicationUnavailable
+	}
+	if lineage == nil {
+		lineage = types.UnknownSourceLineage()
 	}
 	var refreshErr error
 	ctx, refreshErr = g.refreshCurrentReadActor(ctx)
@@ -156,6 +156,11 @@ func (g *NextcloudSourceLineageGuard) Check(
 	if err := g.checkCurrentKBReads(ctx, caller, targets, controlled, scope); err != nil {
 		return err
 	}
+	// WeKnora owns workspace read authorization. Nextcloud source lineage is
+	// lifecycle metadata used for publication, withdrawal and GC; it is not a
+	// second ACL layer over WeKnora documents.
+	return g.recheckCurrentReadActor(ctx)
+
 	var checkedDirectory *types.DirectoryIdentity
 	if len(lineage.Sources) > 0 {
 		var err error

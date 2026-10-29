@@ -63,6 +63,31 @@ func collectionRevision(tx *gorm.DB, scope types.KnowledgeSearchScope) (uint64, 
 	return row.Revision, nil
 }
 
+// knowledgeCollectionInFlight identifies documents whose operational fields
+// are still being advanced by the processing pipeline. Their original source
+// identity is stable, while generated display fields are not final yet.
+func knowledgeCollectionInFlight(k *types.Knowledge) bool {
+	if k == nil {
+		return false
+	}
+	switch k.ParseStatus {
+	case types.ParseStatusPending, types.ParseStatusProcessing, types.ParseStatusFinalizing:
+		return true
+	default:
+		return false
+	}
+}
+
+func knowledgeCollectionStableDigest(k *types.Knowledge) (string, error) {
+	return KnowledgeInputDigest(struct {
+		Root, Title, Folder string
+	}{
+		Root:   mustKnowledgeRootDigest(k),
+		Title:  k.Title,
+		Folder: k.FolderPath,
+	})
+}
+
 func collectionProof(
 	tx *gorm.DB,
 	k *types.Knowledge,
@@ -70,6 +95,12 @@ func collectionProof(
 	lineage *types.SourceLineage,
 ) (*types.KnowledgeBuildInputProof, error) {
 	digest, err := knowledgeMaterialDigest(k)
+	if knowledgeCollectionInFlight(k) {
+		// Processing may legitimately advance generated display fields before
+		// the final admission receipt is issued. Keep the stable source identity
+		// without certifying transient generated fields.
+		digest, err = knowledgeCollectionStableDigest(k)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -163,7 +194,7 @@ func (s *KnowledgeInputProvenanceStore) CaptureKnowledgeCollectionInputs(
 					return err
 				}
 				for _, k := range rows {
-					a, _, lineage, err := s.admissionInTx(tx, k, nil)
+					a, _, lineage, err := s.admissionInTxForCollection(tx, k, nil)
 					if err != nil {
 						return err
 					}
@@ -200,6 +231,14 @@ func (s *KnowledgeInputProvenanceStore) recheckCollectionInTx(
 	if snapshot == nil {
 		return types.ErrSourceLineageUnknown
 	}
+	hasInFlight := false
+	for _, candidate := range snapshot.Candidates {
+		if candidate != nil && candidate.Knowledge != nil &&
+			knowledgeCollectionInFlight(candidate.Knowledge) {
+			hasInFlight = true
+			break
+		}
+	}
 	var scopes []types.KnowledgeSearchScope
 	var candidates []*types.Knowledge
 	index := 0
@@ -210,7 +249,10 @@ func (s *KnowledgeInputProvenanceStore) recheckCollectionInTx(
 		if err != nil {
 			return err
 		}
-		if revision != checkpoint.Revision {
+		// A processing worker may advance collection statistics while this
+		// request is running. Stable membership and identity are still
+		// compared below, so operational updates are safe to tolerate.
+		if revision != checkpoint.Revision && !hasInFlight {
 			return ErrKnowledgeInputChanged
 		}
 		var kb types.KnowledgeBase
@@ -253,18 +295,32 @@ func (s *KnowledgeInputProvenanceStore) recheckCollectionInTx(
 					len(entry.Proof.ChunkIDs) != 0 {
 					return types.ErrSourceLineageUnknown
 				}
-				old, err := json.Marshal(entry.Knowledge)
-				if err != nil {
-					return err
+				if knowledgeCollectionInFlight(entry.Knowledge) {
+					oldDigest, digestErr := knowledgeCollectionStableDigest(entry.Knowledge)
+					if digestErr != nil {
+						return digestErr
+					}
+					currentDigest, digestErr := knowledgeCollectionStableDigest(current)
+					if digestErr != nil {
+						return digestErr
+					}
+					if oldDigest != currentDigest {
+						return ErrKnowledgeInputChanged
+					}
+				} else {
+					old, err := json.Marshal(entry.Knowledge)
+					if err != nil {
+						return err
+					}
+					body, err := json.Marshal(current)
+					if err != nil {
+						return err
+					}
+					if string(old) != string(body) {
+						return ErrKnowledgeInputChanged
+					}
 				}
-				body, err := json.Marshal(current)
-				if err != nil {
-					return err
-				}
-				if string(old) != string(body) {
-					return ErrKnowledgeInputChanged
-				}
-				a, _, lineage, err := s.admissionInTx(tx, current, entry.Proof)
+				a, _, lineage, err := s.admissionInTxForCollection(tx, current, entry.Proof)
 				if err != nil {
 					return err
 				}
@@ -345,6 +401,14 @@ func (s *KnowledgeInputProvenanceStore) selectCollectionInTx(
 	for _, k := range result.Knowledge {
 		// Display producers are separately bound to their original receipts.
 		k.KnowledgeBaseName = ""
+		if knowledgeCollectionInFlight(k) {
+			// Expose only stable source metadata and the explicit processing
+			// state while generated fields are still changing.
+			k.Description = ""
+			k.Profile = nil
+			k.SummaryStatus = ""
+			k.PendingSubtasksCount = 0
+		}
 		// These asynchronous diagnostic producers do not have original material
 		// receipts. Their strings must not ride a document's admission.
 		k.ErrorMessage = ""
@@ -416,6 +480,9 @@ func (s *KnowledgeInputProvenanceStore) RecheckKnowledgeCollectionInputs(
 		if err != nil {
 			return err
 		}
+		if collectionHasInFlightCandidates(snapshot) {
+			return compatibleCollectionSelection(selection, current)
+		}
 		expected, err := json.Marshal(selection)
 		if err != nil {
 			return err
@@ -429,6 +496,50 @@ func (s *KnowledgeInputProvenanceStore) RecheckKnowledgeCollectionInputs(
 		}
 		return nil
 	})
+}
+
+func collectionHasInFlightCandidates(snapshot *types.KnowledgeCollectionInputSnapshot) bool {
+	if snapshot == nil {
+		return false
+	}
+	for _, candidate := range snapshot.Candidates {
+		if candidate != nil && candidate.Knowledge != nil &&
+			knowledgeCollectionInFlight(candidate.Knowledge) {
+			return true
+		}
+	}
+	return false
+}
+
+// compatibleCollectionSelection ignores only operational fields that an
+// in-flight worker may advance. Stable identity and collection structure stay
+// exact.
+func compatibleCollectionSelection(
+	expected, actual *types.KnowledgeCollectionSelection,
+) error {
+	if expected == nil || actual == nil ||
+		expected.Total != actual.Total || expected.HasMore != actual.HasMore ||
+		expected.Page != actual.Page || expected.PageSize != actual.PageSize ||
+		len(expected.Knowledge) != len(actual.Knowledge) ||
+		!reflect.DeepEqual(expected.Folders, actual.Folders) ||
+		!reflect.DeepEqual(expected.FAQImportResults, actual.FAQImportResults) {
+		return ErrKnowledgeInputChanged
+	}
+	for i := range expected.Knowledge {
+		left, right := expected.Knowledge[i], actual.Knowledge[i]
+		if left == nil || right == nil ||
+			left.ID != right.ID || left.TenantID != right.TenantID ||
+			left.KnowledgeBaseID != right.KnowledgeBaseID ||
+			left.Title != right.Title || left.FileName != right.FileName ||
+			left.FolderPath != right.FolderPath ||
+			mustKnowledgeRootDigest(left) != mustKnowledgeRootDigest(right) {
+			return ErrKnowledgeInputChanged
+		}
+		if !knowledgeCollectionInFlight(left) && !reflect.DeepEqual(left, right) {
+			return ErrKnowledgeInputChanged
+		}
+	}
+	return nil
 }
 
 var _ interfaces.KnowledgeCollectionInputReader = (*KnowledgeInputProvenanceStore)(nil)

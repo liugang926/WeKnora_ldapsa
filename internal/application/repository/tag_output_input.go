@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"encoding/json"
+	"reflect"
 
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
@@ -132,6 +133,19 @@ func (s *KnowledgeInputProvenanceStore) captureTagOutputInTx(
 		Knowledge: []*types.KnowledgeCollectionCandidate{},
 		Chunks:    []*types.TagOutputChunkCandidate{},
 	}
+	var inFlight int64
+	if err := tx.Model(&types.Knowledge{}).
+		Where(
+			"tenant_id=? AND knowledge_base_id=? AND parse_status IN ?",
+			req.TenantID,
+			req.KnowledgeBaseID,
+			[]string{types.ParseStatusPending, types.ParseStatusProcessing, types.ParseStatusFinalizing},
+		).
+		Count(&inFlight).
+		Error; err != nil {
+		return nil, err
+	}
+	result.InFlight = inFlight > 0
 	if req.TagID != "" {
 		var tag types.KnowledgeTag
 		if err := tx.Where(
@@ -204,7 +218,7 @@ func (s *KnowledgeInputProvenanceStore) captureTagOutputInTx(
 			return nil, err
 		}
 		for _, k := range rows {
-			a, _, lineage, err := s.admissionInTx(tx, k, nil)
+			a, _, lineage, err := s.admissionInTxForCollection(tx, k, nil)
 			if err != nil {
 				return nil, err
 			}
@@ -241,7 +255,11 @@ func (s *KnowledgeInputProvenanceStore) captureTagOutputInTx(
 			if candidate == nil {
 				return nil, ErrKnowledgeInputChanged
 			}
-			admission, _, _, err := s.admissionInTx(tx, candidate.Knowledge, candidate.Proof)
+			admission, _, _, err := s.admissionInTxForCollection(
+				tx,
+				candidate.Knowledge,
+				candidate.Proof,
+			)
 			if err != nil {
 				return nil, err
 			}
@@ -319,7 +337,7 @@ func (s *KnowledgeInputProvenanceStore) recheckTagOutputInTx(
 	if err != nil {
 		return err
 	}
-	if !tagOutputEqual(actual, snapshot) {
+	if !tagOutputEqual(actual, snapshot) && !compatibleTagOutputInputs(snapshot, actual) {
 		return ErrKnowledgeInputChanged
 	}
 	return nil
@@ -396,12 +414,77 @@ func (s *KnowledgeInputProvenanceStore) RecheckTagOutputInputs(
 			if err != nil {
 				return err
 			}
-			if !tagOutputEqual(actual, selection) {
+			if !tagOutputEqual(actual, selection) &&
+				!compatibleTagOutputSelection(snapshot, selection, actual) {
 				return ErrKnowledgeInputChanged
 			}
 		}
 		return nil
 	})
+}
+
+func tagOutputHasInFlight(snapshot *types.TagOutputInputSnapshot) bool {
+	if snapshot == nil {
+		return false
+	}
+	if snapshot.InFlight {
+		return true
+	}
+	for _, candidate := range snapshot.Knowledge {
+		if candidate != nil && candidate.Knowledge != nil &&
+			knowledgeCollectionInFlight(candidate.Knowledge) {
+			return true
+		}
+	}
+	return false
+}
+
+// compatibleTagOutputInputs tolerates only statistics revisions that an
+// in-flight worker may advance. Tag membership, knowledge membership and
+// original proofs remain exact.
+func compatibleTagOutputInputs(
+	expected, actual *types.TagOutputInputSnapshot,
+) bool {
+	if expected == nil || actual == nil || !tagOutputHasInFlight(expected) ||
+		!reflect.DeepEqual(expected.Request, actual.Request) ||
+		!reflect.DeepEqual(expected.Tags, actual.Tags) ||
+		!reflect.DeepEqual(expected.TagProofs, actual.TagProofs) ||
+		!reflect.DeepEqual(expected.Knowledge, actual.Knowledge) ||
+		!reflect.DeepEqual(expected.Chunks, actual.Chunks) {
+		return false
+	}
+	return true
+}
+
+// compatibleTagOutputSelection tolerates statistics that advance while a
+// linked knowledge entry is still processing. Tag membership and ordering
+// remain exact; only derived document/chunk counters may change.
+func compatibleTagOutputSelection(
+	snapshot *types.TagOutputInputSnapshot,
+	expected, actual *types.TagOutputSelection,
+) bool {
+	if snapshot == nil || expected == nil || actual == nil ||
+		!tagOutputHasInFlight(snapshot) ||
+		!reflect.DeepEqual(expected.Request, actual.Request) ||
+		expected.Total != actual.Total ||
+		len(expected.Tags) != len(actual.Tags) {
+		return false
+	}
+	for i := range expected.Tags {
+		left, right := expected.Tags[i], actual.Tags[i]
+		if left == nil || right == nil {
+			return false
+		}
+		leftStable, rightStable := *left, *right
+		leftStable.KnowledgeCount = 0
+		leftStable.ChunkCount = 0
+		rightStable.KnowledgeCount = 0
+		rightStable.ChunkCount = 0
+		if !reflect.DeepEqual(leftStable, rightStable) {
+			return false
+		}
+	}
+	return true
 }
 
 var _ interfaces.TagOutputInputReader = (*KnowledgeInputProvenanceStore)(nil)

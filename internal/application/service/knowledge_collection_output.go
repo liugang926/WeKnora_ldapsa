@@ -88,6 +88,8 @@ func (g *KnowledgeCollectionOutputGuard) authorize(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	return g.authorizeWeKnoraScope(ctx)
+
 	// Each original producer stays bounded by SourceLineage's existing limit.
 	// Empty independent origins share one current full-scope grant check; source
 	// origins are checked individually, without a whole-KB lineage union.
@@ -155,6 +157,18 @@ func (g *KnowledgeCollectionOutputGuard) authorize(ctx context.Context) error {
 		}
 	}
 	lineage, _ := types.NewCompleteSourceLineage()
+	scope, err := cloneCollection(g.scope)
+	if err != nil {
+		return err
+	}
+	return g.authorizer.checker.Check(ctx, lineage, scope)
+}
+
+func (g *KnowledgeCollectionOutputGuard) authorizeWeKnoraScope(ctx context.Context) error {
+	lineage, err := types.NewCompleteSourceLineage()
+	if err != nil {
+		return err
+	}
 	scope, err := cloneCollection(g.scope)
 	if err != nil {
 		return err
