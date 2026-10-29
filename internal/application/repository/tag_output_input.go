@@ -255,7 +255,11 @@ func (s *KnowledgeInputProvenanceStore) captureTagOutputInTx(
 			if candidate == nil {
 				return nil, ErrKnowledgeInputChanged
 			}
-			admission, _, _, err := s.admissionInTxForCollection(tx, candidate.Knowledge, candidate.Proof)
+			admission, _, _, err := s.admissionInTxForCollection(
+				tx,
+				candidate.Knowledge,
+				candidate.Proof,
+			)
 			if err != nil {
 				return nil, err
 			}
@@ -339,71 +343,6 @@ func (s *KnowledgeInputProvenanceStore) recheckTagOutputInTx(
 	return nil
 }
 
-func tagOutputHasInFlight(snapshot *types.TagOutputInputSnapshot) bool {
-	if snapshot == nil {
-		return false
-	}
-	if snapshot.InFlight {
-		return true
-	}
-	for _, candidate := range snapshot.Knowledge {
-		if candidate != nil && candidate.Knowledge != nil && knowledgeCollectionInFlight(candidate.Knowledge) {
-			return true
-		}
-	}
-	return false
-}
-
-func compatibleTagOutputInputs(expected, actual *types.TagOutputInputSnapshot) bool {
-	if expected == nil || actual == nil || !tagOutputHasInFlight(expected) {
-		return false
-	}
-	if !reflect.DeepEqual(expected.Request, actual.Request) ||
-		!reflect.DeepEqual(expected.Tags, actual.Tags) ||
-		!reflect.DeepEqual(expected.TagProofs, actual.TagProofs) ||
-		len(expected.Knowledge) != len(actual.Knowledge) {
-		return false
-	}
-	inFlight := map[string]bool{}
-	for i := range expected.Knowledge {
-		left, right := expected.Knowledge[i], actual.Knowledge[i]
-		if left == nil || right == nil || left.Knowledge == nil || right.Knowledge == nil ||
-			left.Knowledge.ID != right.Knowledge.ID ||
-			left.Knowledge.TenantID != right.Knowledge.TenantID ||
-			left.Knowledge.KnowledgeBaseID != right.Knowledge.KnowledgeBaseID ||
-			left.Knowledge.Title != right.Knowledge.Title ||
-			left.Knowledge.FolderPath != right.Knowledge.FolderPath ||
-			mustKnowledgeRootDigest(left.Knowledge) != mustKnowledgeRootDigest(right.Knowledge) {
-			return false
-		}
-		if knowledgeCollectionInFlight(left.Knowledge) || knowledgeCollectionInFlight(right.Knowledge) {
-			inFlight[left.Knowledge.ID] = true
-		} else if !tagOutputEqual(left, right) {
-			return false
-		}
-	}
-	if !reflect.DeepEqual(expected.ScopeRevision, actual.ScopeRevision) && len(inFlight) == 0 && !expected.InFlight {
-		return false
-	}
-	if len(expected.Chunks) != len(actual.Chunks) {
-		return false
-	}
-	for i := range expected.Chunks {
-		left, right := expected.Chunks[i], actual.Chunks[i]
-		if left == nil || right == nil || left.Chunk == nil || right.Chunk == nil ||
-			left.Chunk.ID != right.Chunk.ID ||
-			left.Chunk.TenantID != right.Chunk.TenantID ||
-			left.Chunk.KnowledgeBaseID != right.Chunk.KnowledgeBaseID ||
-			left.Chunk.KnowledgeID != right.Chunk.KnowledgeID {
-			return false
-		}
-		if !inFlight[left.Chunk.KnowledgeID] && !tagOutputEqual(left, right) {
-			return false
-		}
-	}
-	return tagOutputEqual(expected.Auxiliary, actual.Auxiliary)
-}
-
 func selectTagOutputInTx(
 	ctx context.Context,
 	tx *gorm.DB,
@@ -475,12 +414,77 @@ func (s *KnowledgeInputProvenanceStore) RecheckTagOutputInputs(
 			if err != nil {
 				return err
 			}
-			if !tagOutputEqual(actual, selection) {
+			if !tagOutputEqual(actual, selection) &&
+				!compatibleTagOutputSelection(snapshot, selection, actual) {
 				return ErrKnowledgeInputChanged
 			}
 		}
 		return nil
 	})
+}
+
+func tagOutputHasInFlight(snapshot *types.TagOutputInputSnapshot) bool {
+	if snapshot == nil {
+		return false
+	}
+	if snapshot.InFlight {
+		return true
+	}
+	for _, candidate := range snapshot.Knowledge {
+		if candidate != nil && candidate.Knowledge != nil &&
+			knowledgeCollectionInFlight(candidate.Knowledge) {
+			return true
+		}
+	}
+	return false
+}
+
+// compatibleTagOutputInputs tolerates only statistics revisions that an
+// in-flight worker may advance. Tag membership, knowledge membership and
+// original proofs remain exact.
+func compatibleTagOutputInputs(
+	expected, actual *types.TagOutputInputSnapshot,
+) bool {
+	if expected == nil || actual == nil || !tagOutputHasInFlight(expected) ||
+		!tagOutputEqual(expected.Request, actual.Request) ||
+		!tagOutputEqual(expected.Tags, actual.Tags) ||
+		!tagOutputEqual(expected.TagProofs, actual.TagProofs) ||
+		!tagOutputEqual(expected.Knowledge, actual.Knowledge) ||
+		!tagOutputEqual(expected.Chunks, actual.Chunks) {
+		return false
+	}
+	return true
+}
+
+// compatibleTagOutputSelection tolerates statistics that advance while a
+// linked knowledge entry is still processing. Tag membership and ordering
+// remain exact; only derived document/chunk counters may change.
+func compatibleTagOutputSelection(
+	snapshot *types.TagOutputInputSnapshot,
+	expected, actual *types.TagOutputSelection,
+) bool {
+	if snapshot == nil || expected == nil || actual == nil ||
+		!tagOutputHasInFlight(snapshot) ||
+		!reflect.DeepEqual(expected.Request, actual.Request) ||
+		expected.Total != actual.Total ||
+		len(expected.Tags) != len(actual.Tags) {
+		return false
+	}
+	for i := range expected.Tags {
+		left, right := expected.Tags[i], actual.Tags[i]
+		if left == nil || right == nil {
+			return false
+		}
+		leftStable, rightStable := *left, *right
+		leftStable.KnowledgeCount = 0
+		leftStable.ChunkCount = 0
+		rightStable.KnowledgeCount = 0
+		rightStable.ChunkCount = 0
+		if !reflect.DeepEqual(leftStable, rightStable) {
+			return false
+		}
+	}
+	return true
 }
 
 var _ interfaces.TagOutputInputReader = (*KnowledgeInputProvenanceStore)(nil)

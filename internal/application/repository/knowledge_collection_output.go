@@ -65,8 +65,7 @@ func collectionRevision(tx *gorm.DB, scope types.KnowledgeSearchScope) (uint64, 
 
 // knowledgeCollectionInFlight identifies documents whose operational fields
 // are still being advanced by the processing pipeline. Their original source
-// identity is stable, while description/profile/status and related metadata
-// are not yet final output material.
+// identity is stable, while generated display fields are not final yet.
 func knowledgeCollectionInFlight(k *types.Knowledge) bool {
 	if k == nil {
 		return false
@@ -97,9 +96,8 @@ func collectionProof(
 ) (*types.KnowledgeBuildInputProof, error) {
 	digest, err := knowledgeMaterialDigest(k)
 	if knowledgeCollectionInFlight(k) {
-		// Processing may legitimately advance generated display fields before
-		// the final admission receipt is issued. Keep the original identity
-		// stable without certifying those in-flight generated fields.
+		// the final admission receipt is issued. Keep the stable source identity
+		// without certifying transient generated fields.
 		digest, err = knowledgeCollectionStableDigest(k)
 	}
 	if err != nil {
@@ -240,7 +238,8 @@ func (s *KnowledgeInputProvenanceStore) recheckCollectionInTx(
 	}
 	hasInFlight := false
 	for _, candidate := range snapshot.Candidates {
-		if candidate != nil && candidate.Knowledge != nil && knowledgeCollectionInFlight(candidate.Knowledge) {
+		if candidate != nil && candidate.Knowledge != nil &&
+			knowledgeCollectionInFlight(candidate.Knowledge) {
 			hasInFlight = true
 			break
 		}
@@ -255,9 +254,9 @@ func (s *KnowledgeInputProvenanceStore) recheckCollectionInTx(
 		if err != nil {
 			return err
 		}
-		// An in-flight worker may advance the collection revision while this
-		// request is running. Membership and stable document identity are
-		// still compared below, so operational updates are safe to tolerate.
+		// A processing worker may advance collection statistics while this
+		// request is running. Stable membership and identity are still
+		// compared below, so operational updates are safe to tolerate.
 		if revision != checkpoint.Revision && !hasInFlight {
 			return ErrKnowledgeInputChanged
 		}
@@ -413,9 +412,8 @@ func (s *KnowledgeInputProvenanceStore) selectCollectionInTx(
 		// Display producers are separately bound to their original receipts.
 		k.KnowledgeBaseName = ""
 		if knowledgeCollectionInFlight(k) {
-			// These fields can be generated before the final receipt exists.
-			// The in-flight response exposes only stable source metadata and
-			// explicit processing status.
+			// Expose only stable source metadata and the explicit processing
+			// state while generated fields are still changing.
 			k.Description = ""
 			k.Profile = nil
 			k.SummaryStatus = ""
@@ -515,7 +513,8 @@ func collectionHasInFlightCandidates(snapshot *types.KnowledgeCollectionInputSna
 		return false
 	}
 	for _, candidate := range snapshot.Candidates {
-		if candidate != nil && candidate.Knowledge != nil && knowledgeCollectionInFlight(candidate.Knowledge) {
+		if candidate != nil && candidate.Knowledge != nil &&
+			knowledgeCollectionInFlight(candidate.Knowledge) {
 			return true
 		}
 	}

@@ -685,22 +685,12 @@ func (s *KnowledgeInputProvenanceStore) admissionInTxWithOptions(
 	}
 	if expected == nil || expected.Projection != types.KnowledgeBuildProjectionGraph {
 		if err := verifyKnowledgeInputMaterial(tx, &a, k, nil); err != nil {
-			// A document can transition from finalizing to completed between the
-			// bounded collection capture and its final recheck. Only permit that
-			// transition when the original proof binds the same admission/root.
-			boundedTransition := allowStaleInFlight && expected != nil &&
-				expected.AdmissionID == a.AdmissionID &&
-				expected.TenantID == k.TenantID &&
-				expected.KnowledgeBaseID == k.KnowledgeBaseID &&
-				expected.KnowledgeID == k.ID &&
-				expected.InputDigest == a.InputDigest
-			if !allowStaleInFlight || (!knowledgeCollectionInFlight(k) && !boundedTransition) {
+			if !allowStaleInFlight || !knowledgeCollectionInFlight(k) {
 				return nil, nil, nil, err
 			}
-			// A pending/finalizing worker may update generated display fields
-			// before sealing the replacement receipt. Prove that the immutable
-			// original source identity is unchanged before allowing metadata-only
-			// output from the collection path.
+			// A processing worker may update generated display fields before
+			// sealing the replacement receipt. Prove the immutable source
+			// identity is unchanged before allowing metadata-only output.
 			if mustKnowledgeRootDigest(k) != a.RootDigest {
 				return nil, nil, nil, err
 			}

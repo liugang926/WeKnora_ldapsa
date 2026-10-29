@@ -90,7 +90,39 @@ func (h *ChunkHandler) loadPublishedKnowledge(ctx context.Context, knowledgeID s
 // @Security     ApiKeyAuth
 // @Router       /chunks/by-id/{id} [get]
 func (h *ChunkHandler) GetChunkByIDOnly(c *gin.Context) {
-	h.getOriginalChunkOutput(c)
+	if !access.UseWeKnoraReadAuthority() {
+		h.getOriginalChunkOutput(c)
+		return
+	}
+	ctx := c.Request.Context()
+	logger.Info(ctx, "Start retrieving chunk by ID only")
+
+	chunkID := secutils.SanitizeForLog(c.Param("id"))
+	if chunkID == "" {
+		logger.Error(ctx, "Chunk ID is empty")
+		_ = c.Error(errors.NewBadRequestError("Chunk ID cannot be empty"))
+		return
+	}
+
+	// The route-level KB-access guard has already verified read permission
+	// against the parent knowledge base. WeKnora ACL is the read authority;
+	// Nextcloud source lineage controls publication/reclamation, not reads.
+	chunk, err := h.service.GetChunkByIDOnly(ctx, chunkID)
+	if err != nil {
+		if stderrors.Is(err, service.ErrChunkNotFound) {
+			logger.Warnf(ctx, "Chunk not found, chunk ID: %s", chunkID)
+			_ = c.Error(errors.NewNotFoundError("Chunk not found"))
+			return
+		}
+		logger.ErrorWithFields(ctx, err, nil)
+		_ = c.Error(errors.NewInternalServerError(err.Error()))
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    chunk,
+	})
 }
 
 // ListKnowledgeChunks godoc
@@ -108,7 +140,62 @@ func (h *ChunkHandler) GetChunkByIDOnly(c *gin.Context) {
 // @Security     ApiKeyAuth
 // @Router       /chunks/{knowledge_id} [get]
 func (h *ChunkHandler) ListKnowledgeChunks(c *gin.Context) {
-	h.listOriginalChunkOutputs(c)
+	if !access.UseWeKnoraReadAuthority() {
+		h.listOriginalChunkOutputs(c)
+		return
+	}
+	ctx := c.Request.Context()
+	logger.Info(ctx, "Start retrieving knowledge chunks list")
+
+	knowledgeID := secutils.SanitizeForLog(c.Param("knowledge_id"))
+	if knowledgeID == "" {
+		logger.Error(ctx, "Knowledge ID is empty")
+		_ = c.Error(errors.NewBadRequestError("Knowledge ID cannot be empty"))
+		return
+	}
+
+	var pagination types.Pagination
+	if err := c.ShouldBindQuery(&pagination); err != nil {
+		logger.Errorf(ctx, "Failed to parse pagination parameters: %s", secutils.SanitizeForLog(err.Error()))
+		_ = c.Error(errors.NewBadRequestError(err.Error()))
+		return
+	}
+	if pagination.Page < 1 {
+		pagination.Page = 1
+	}
+	if pagination.PageSize < 1 {
+		pagination.PageSize = 10
+	}
+	if pagination.PageSize > 100 {
+		pagination.PageSize = 100
+	}
+
+	// Default to text chunks; callers may request other official chunk types.
+	chunkTypes := []types.ChunkType{types.ChunkTypeText}
+	if queryTypes := c.QueryArray("chunk_type"); len(queryTypes) > 0 {
+		chunkTypes = make([]types.ChunkType, 0, len(queryTypes))
+		for _, queryType := range queryTypes {
+			chunkTypes = append(chunkTypes, types.ChunkType(queryType))
+		}
+	}
+
+	// The route-level KB-access guard rewrites the tenant context after
+	// authorizing access to the parent KB. Missing chunks are a valid empty
+	// result (for example a failed parse), not an authorization failure.
+	result, err := h.service.ListPagedChunksByKnowledgeID(ctx, knowledgeID, &pagination, chunkTypes)
+	if err != nil {
+		logger.ErrorWithFields(ctx, err, nil)
+		_ = c.Error(errors.NewInternalServerError(err.Error()))
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success":   true,
+		"data":      result.Data,
+		"total":     result.Total,
+		"page":      result.Page,
+		"page_size": result.PageSize,
+	})
 }
 
 // UpdateChunkRequest defines the request structure for updating a chunk

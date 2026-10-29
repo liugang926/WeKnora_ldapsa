@@ -150,19 +150,39 @@ func tagOutputFixtureSnapshot() *types.TagOutputInputSnapshot {
 	}
 }
 
-func TestCompatibleTagOutputInputsAllowsOnlyInFlightOperationalChanges(t *testing.T) {
+func TestCompatibleTagOutputInputsAllowsInFlightScopeRevisionChange(t *testing.T) {
 	expected := tagOutputFixtureSnapshot()
 	actual, err := cloneTagOutput(expected)
 	require.NoError(t, err)
 	actual.ScopeRevision++
 	actual.InFlight = false
-	actual.Knowledge[0].Knowledge.Description = "completed description"
-	actual.Knowledge[0].Knowledge.ParseStatus = types.ParseStatusCompleted
-	actual.Chunks[0].Chunk.Content = "completed content"
-	actual.Chunks[0].Revision++
-	actual.Chunks[0].Digest = "digest-4"
 
 	require.True(t, compatibleTagOutputInputs(expected, actual))
+}
+
+func TestCompatibleTagOutputSelectionAllowsOnlyDerivedCountsForInFlight(t *testing.T) {
+	snapshot := tagOutputFixtureSnapshot()
+	tag := types.KnowledgeTagWithStats{
+		KnowledgeTag: types.KnowledgeTag{
+			ID: "tag-1", TenantID: 7, KnowledgeBaseID: "kb", Name: "stable",
+		},
+		KnowledgeCount: 1,
+		ChunkCount:     2,
+	}
+	expected := &types.TagOutputSelection{
+		Request: types.TagOutputSelectionRequest{Page: types.Pagination{Page: 1, PageSize: 10}},
+		Tags:    []*types.KnowledgeTagWithStats{&tag},
+		Total:   1,
+	}
+	actual := *expected
+	counted := tag
+	counted.KnowledgeCount = 2
+	counted.ChunkCount = 3
+	actual.Tags = []*types.KnowledgeTagWithStats{&counted}
+	require.True(t, compatibleTagOutputSelection(snapshot, expected, &actual))
+
+	counted.Name = "changed"
+	require.False(t, compatibleTagOutputSelection(snapshot, expected, &actual))
 }
 
 func TestCompatibleTagOutputInputsRejectsUnrelatedOrStableChanges(t *testing.T) {
@@ -206,9 +226,6 @@ func TestCompatibleTagOutputInputsRejectsUnrelatedOrStableChanges(t *testing.T) 
 			s.Chunks[1].Chunk.Content = "changed content"
 		}},
 		{"chunk identity", func(s *types.TagOutputInputSnapshot) { s.Chunks[0].Chunk.ID = "other" }},
-		{"auxiliary", func(s *types.TagOutputInputSnapshot) {
-			s.Auxiliary.KnowledgeBaseNames["kb"] = "Changed KB"
-		}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

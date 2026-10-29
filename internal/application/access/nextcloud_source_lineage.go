@@ -99,11 +99,14 @@ func (g *NextcloudSourceLineageGuard) Check(
 	lineage *types.SourceLineage,
 	scope LineageReadScope,
 ) error {
-	if lineage == nil || lineage.RequireComplete() != nil {
-		return ErrNextcloudPublicationDenied
-	}
 	if ctx == nil || g == nil {
 		return ErrNextcloudPublicationUnavailable
+	}
+	if lineage == nil {
+		lineage = types.UnknownSourceLineage()
+	}
+	if !UseWeKnoraReadAuthority() && lineage.RequireComplete() != nil {
+		return ErrNextcloudPublicationDenied
 	}
 	var refreshErr error
 	ctx, refreshErr = g.refreshCurrentReadActor(ctx)
@@ -166,6 +169,13 @@ func (g *NextcloudSourceLineageGuard) Check(
 	if err := g.checkCurrentKBReads(ctx, caller, targets, controlled, scope); err != nil {
 		return err
 	}
+	if UseWeKnoraReadAuthority() {
+		// WeKnora owns workspace read authorization in explicit opt-in
+		// deployments. Nextcloud source lineage remains lifecycle metadata for
+		// publication, withdrawal and GC rather than a second read ACL.
+		return g.recheckCurrentReadActor(ctx)
+	}
+
 	var checkedDirectory *types.DirectoryIdentity
 	if len(lineage.Sources) > 0 {
 		var err error
