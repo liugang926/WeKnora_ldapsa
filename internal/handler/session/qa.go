@@ -848,9 +848,8 @@ func (h *Handler) setupSSEStream(reqCtx *qaRequestContext, generateTitle bool, m
 	if needsMaterialBoundary {
 		native, ok := h.messageService.(interface{ HasOriginalMessageMaterialStore() bool })
 		if ok && native.HasOriginalMessageMaterialStore() {
-			asyncCtx, materialAttach, materialCheck, materialClose = applicationservice.BeginMessageMaterialHTTPBoundary(
-				asyncCtx,
-			)
+			asyncCtx, materialAttach, materialCheck, materialClose =
+				applicationservice.BeginMessageMaterialHTTPBoundary(asyncCtx)
 		}
 	}
 
