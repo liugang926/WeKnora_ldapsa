@@ -273,3 +273,59 @@ func TestNextcloudSyncAdmissionRecoveryRequiresMissingExactQueuedEventTask(t *te
 		})
 	}
 }
+
+func TestNextcloudSyncAdmissionRecoveryRequiresReleasedEventWorkerWithoutQueueProof(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		workerLive bool
+		wantCalls  int
+		wantOutput int
+	}{
+		{name: "released worker", wantCalls: 1, wantOutput: 1},
+		{name: "active worker", workerLive: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+			require.NoError(t, err)
+			raw, err := db.DB()
+			require.NoError(t, err)
+			raw.SetMaxOpenConns(1)
+			require.NoError(t, db.AutoMigrate(&types.SyncLog{}))
+			require.NoError(t, db.Exec("CREATE TABLE data_sources (id TEXT PRIMARY KEY, type TEXT)").Error)
+			require.NoError(t, db.Exec("INSERT INTO data_sources (id, type) VALUES ('ds', 'nextcloud')").Error)
+			require.NoError(t, db.Exec(`CREATE TABLE nextcloud_event_connections (
+				connection_id TEXT PRIMARY KEY, status TEXT NOT NULL)`).Error)
+			require.NoError(t, db.Exec(`CREATE TABLE nextcloud_event_dispatch (
+				connection_id TEXT PRIMARY KEY, state TEXT NOT NULL,
+				last_sync_log_id TEXT)`).Error)
+			now := time.Now().UTC()
+			started := now.Add(-20 * time.Minute)
+			log := &types.SyncLog{
+				ID: "event-log", DataSourceID: "ds", TenantID: 7,
+				Status: types.SyncLogStatusRunning, StartedAt: started,
+				WorkerStartedAt: &started, WorkerActive: tc.workerLive,
+			}
+			require.NoError(t, db.Create(log).Error)
+			require.NoError(t, db.Model(&types.SyncLog{}).Where("id = ?", log.ID).
+				UpdateColumn("updated_at", now.Add(-10*time.Minute)).Error)
+			require.NoError(t, db.Exec(`INSERT INTO nextcloud_event_connections
+				(connection_id, status) VALUES ('event-connection', 'active')`).Error)
+			require.NoError(t, db.Exec(`INSERT INTO nextcloud_event_dispatch
+				(connection_id, state, last_sync_log_id)
+				VALUES ('event-connection', 'queued', ?)`, log.ID).Error)
+
+			events := &nextcloudEventRecoveryProbe{recovered: true}
+			count, err := recoverNextcloudSyncAdmissionsOnce(context.Background(),
+				repository.NewNextcloudSyncRecoveryStore(db), nil, events, false, now)
+			require.NoError(t, err)
+			require.Equal(t, tc.wantOutput, count)
+			require.Len(t, events.calls, tc.wantCalls)
+
+			if tc.workerLive {
+				var after types.SyncLog
+				require.NoError(t, db.First(&after, "id = ?", log.ID).Error)
+				require.Equal(t, types.SyncLogStatusRunning, after.Status)
+			}
+		})
+	}
+}

@@ -287,6 +287,7 @@ func TestNextcloudQueuedEventSyncBeforeFindsOnlyStaleRunningQueuedDispatch(t *te
 	for _, tc := range []struct {
 		connection, logID, connectionStatus, dispatchState, logStatus string
 		startedAt, updatedAt                                          time.Time
+		workerActive                                                  bool
 		want                                                          bool
 	}{
 		{
@@ -300,6 +301,12 @@ func TestNextcloudQueuedEventSyncBeforeFindsOnlyStaleRunningQueuedDispatch(t *te
 			connectionStatus: "active", dispatchState: "queued",
 			logStatus: types.SyncLogStatusRunning,
 			startedAt: now.Add(-20 * time.Minute), updatedAt: now.Add(-time.Minute),
+		},
+		{
+			connection: "active-worker-connection", logID: "active-worker-event-log",
+			connectionStatus: "active", dispatchState: "queued",
+			logStatus: types.SyncLogStatusRunning, workerActive: true,
+			startedAt: now.Add(-20 * time.Minute), updatedAt: now.Add(-10 * time.Minute),
 		},
 		{
 			connection: "success-connection", logID: "success-event-log",
@@ -327,7 +334,7 @@ func TestNextcloudQueuedEventSyncBeforeFindsOnlyStaleRunningQueuedDispatch(t *te
 			tc.connection, tc.dispatchState, tc.logID).Error)
 		log := &types.SyncLog{
 			ID: tc.logID, DataSourceID: "ds", TenantID: 7,
-			Status: tc.logStatus, StartedAt: tc.startedAt,
+			Status: tc.logStatus, StartedAt: tc.startedAt, WorkerActive: tc.workerActive,
 		}
 		require.NoError(t, db.Create(log).Error)
 		require.NoError(t, db.Model(&types.SyncLog{}).Where("id = ?", tc.logID).
@@ -340,6 +347,54 @@ func TestNextcloudQueuedEventSyncBeforeFindsOnlyStaleRunningQueuedDispatch(t *te
 	require.Len(t, candidates, 1)
 	require.Equal(t, "stale-connection", candidates[0].ConnectionID)
 	require.Equal(t, "stale-event-log", candidates[0].SyncLogID)
+}
+
+func TestRecoverQueuedEventSyncRejectsActiveWorker(t *testing.T) {
+	db, inbox, now, _ := newNextcloudQueuedPublicationTest(t)
+	require.NoError(t, db.Model(&types.SyncLog{}).Where("id = ?", "event-log").
+		Updates(map[string]any{
+			"worker_active": true,
+			"updated_at":    now.Add(-10 * time.Minute),
+		}).Error)
+
+	recovered, err := inbox.RecoverQueuedEventSync(
+		context.Background(), "event-connection", "event-log", now,
+	)
+	require.ErrorIs(t, err, ErrNextcloudEventConflict)
+	require.False(t, recovered)
+
+	var log types.SyncLog
+	require.NoError(t, db.Where("id = ?", "event-log").Take(&log).Error)
+	require.Equal(t, types.SyncLogStatusRunning, log.Status)
+	require.True(t, log.WorkerActive)
+}
+
+func TestRecoverQueuedEventSyncRejectsWorkerClaimedAfterCandidateRead(t *testing.T) {
+	db, inbox, now, _ := newNextcloudQueuedPublicationTest(t)
+	require.NoError(t, db.Model(&types.SyncLog{}).Where("id = ?", "event-log").
+		Updates(map[string]any{
+			"started_at": now.Add(-20 * time.Minute),
+			"updated_at": now.Add(-10 * time.Minute),
+		}).Error)
+
+	candidates, err := NewNextcloudSyncRecoveryStore(db).
+		QueuedEventSyncBefore(context.Background(), now.Add(-5*time.Minute), 100)
+	require.NoError(t, err)
+	require.Len(t, candidates, 1)
+	require.Equal(t, "event-log", candidates[0].SyncLogID)
+
+	require.NoError(t, db.Model(&types.SyncLog{}).Where("id = ?", "event-log").
+		Update("worker_active", true).Error)
+	recovered, err := inbox.RecoverQueuedEventSync(
+		context.Background(), candidates[0].ConnectionID, candidates[0].SyncLogID, now,
+	)
+	require.ErrorIs(t, err, ErrNextcloudEventConflict)
+	require.False(t, recovered)
+
+	var log types.SyncLog
+	require.NoError(t, db.Where("id = ?", "event-log").Take(&log).Error)
+	require.Equal(t, types.SyncLogStatusRunning, log.Status)
+	require.True(t, log.WorkerActive)
 }
 
 func TestNextcloudQueuedEventSyncRecoveryUsesExactDispatchFence(t *testing.T) {

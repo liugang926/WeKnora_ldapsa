@@ -120,7 +120,8 @@ func (s *NextcloudSyncRecoveryStore) QueuedEventSyncBefore(
 			Joins("JOIN sync_logs AS s ON s.id = d.last_sync_log_id").
 			Where("c.status = 'active' AND d.state = 'queued' AND s.status = ?",
 				types.SyncLogStatusRunning).
-			Where("s.started_at <= ? AND s.updated_at <= ?", cutoff, cutoff)
+			Where("s.worker_active = ? AND s.started_at <= ? AND s.updated_at <= ?",
+				false, cutoff, cutoff)
 		if after {
 			query = query.Where(
 				"(s.started_at > ? OR (s.started_at = ? AND "+
