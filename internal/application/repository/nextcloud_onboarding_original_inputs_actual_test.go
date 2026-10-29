@@ -1038,9 +1038,8 @@ func TestNextcloudOnboardingActualManagerReplacementCurrentDelegationAndHeadABA(
 	require.Equal(t, readBefore, f.readCalls.Load())
 	f.managerAllow.Store(true)
 	f.managerUnknown.Store(true)
-	require.NoError(t, held.Checkpoint(fresh),
-		"an exact persisted manager purpose must survive a transient manager read failure")
-	require.Greater(t, f.readCalls.Load(), readBefore)
+	require.ErrorIs(t, held.Checkpoint(fresh), access.ErrNextcloudPublicationUnavailable)
+	require.Equal(t, readBefore, f.readCalls.Load())
 	f.managerUnknown.Store(false)
 	third := record(onboardingThirdManagerGUID)
 	fourth := record(onboardingNextManagerGUID)
@@ -1230,33 +1229,6 @@ func TestNextcloudOnboardingActualManagerPurposeAllowsOnlyRecoverableSourceError
 		Update("status", types.DataSourceStatusPaused).Error)
 	_, err = currentOnboardingManagerPurpose(f.db, f.credential, op)
 	require.Error(t, err, "paused sources must never pass automatic manager authorization")
-}
-
-func TestNextcloudOnboardingManagerPurposeTransientReadFailureRequiresExactLocalScope(t *testing.T) {
-	f := newOnboardingOriginalActualFixture(t)
-	_ = f.produceSourceBoundTemplate(t)
-	req := f.request("Transient manager read recovery")
-	op, err := f.onboarding.Reserve(context.Background(), f.credential, req)
-	require.NoError(t, err)
-	_, _ = f.pair(t, op)
-
-	f.managerUnknown.Store(true)
-	purpose, err := currentOnboardingManagerPurpose(f.db, f.credential, op)
-	require.NoError(t, err,
-		"a transient manager endpoint failure may use the exact persisted purpose")
-	require.NotNil(t, purpose)
-
-	wrongScope := op
-	wrongScope.KnowledgeBaseID = "different-kb"
-	_, err = currentOnboardingManagerPurpose(f.db, f.credential, wrongScope)
-	require.Error(t, err,
-		"the durable fallback must still require the exact paired local scope")
-
-	f.managerUnknown.Store(false)
-	f.managerAllow.Store(false)
-	_, err = currentOnboardingManagerPurpose(f.db, f.credential, op)
-	require.ErrorIs(t, err, access.ErrNextcloudPublicationDenied,
-		"an explicit manager denial must never use the transient fallback")
 }
 
 func TestNextcloudOnboardingActualSourceReadAllowsOnlyRecoverableSourceErrors(t *testing.T) {

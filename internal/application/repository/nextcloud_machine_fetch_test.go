@@ -178,6 +178,14 @@ func TestNextcloudAutomaticSyncManagerPurposeRechecksAuthorityWithIndependentBod
 				f.store.CheckNextcloudAutomaticSyncManagerPurpose(owned, 7, op.KnowledgeBaseID, ds.ID),
 				"a held independent body lease cannot preserve revoked manager authority",
 			)
+			if mode == "manager unavailable" {
+				f.managerUnknown.Store(false)
+				require.NoError(
+					t,
+					f.store.CheckNextcloudAutomaticSyncManagerPurpose(owned, 7, op.KnowledgeBaseID, ds.ID),
+					"a later retry must succeed after manager availability is restored",
+				)
+			}
 		})
 	}
 }
