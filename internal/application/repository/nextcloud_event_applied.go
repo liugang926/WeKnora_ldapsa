@@ -54,6 +54,48 @@ func nextcloudApplyMetadataString(metadata map[string]json.RawMessage, key strin
 	return value
 }
 
+// A terminal file failure may have no publication ETag after its source was
+// staged. Bind that exception to the same target revision recorded by staging.
+func nextcloudApplyCandidateProof(
+	version nextcloudSourceVersion,
+	candidate nextcloudApplyKnowledge,
+	file nextcloudApplyFile,
+	fileID string,
+	connection nextcloudEventConnection,
+) bool {
+	terminalFailure := version.State == "staging" && candidate.DeletedAt == nil &&
+		candidate.ParseStatus == types.ParseStatusFailed &&
+		candidate.EnableStatus == "disabled"
+	published := version.State == "published" && candidate.DeletedAt == nil &&
+		candidate.ParseStatus == types.ParseStatusCompleted &&
+		candidate.EnableStatus == "enabled"
+	if !terminalFailure && !published {
+		return false
+	}
+	var metadata map[string]json.RawMessage
+	if json.Unmarshal(candidate.Metadata, &metadata) != nil {
+		return false
+	}
+	candidateETag := nextcloudApplyMetadataString(metadata, "nextcloud_etag")
+	targetETag := nextcloudApplyMetadataString(metadata, "nextcloud_target_etag")
+	etagMatches := candidateETag == file.ETag
+	if terminalFailure {
+		etagMatches = targetETag == file.ETag &&
+			version.DesiredETag == file.ETag &&
+			(candidateETag == "" || candidateETag == file.ETag)
+	}
+	prefix := "nextcloud:" + connection.NextcloudInstanceID + ":"
+	return etagMatches &&
+		version.DesiredETag == file.ETag &&
+		candidate.FileName == file.Name &&
+		nextcloudApplyMetadataString(metadata, "nextcloud_path") == file.Path &&
+		nextcloudApplyMetadataString(metadata, "nextcloud_instance_id") == connection.NextcloudInstanceID &&
+		nextcloudApplyMetadataString(metadata, "nextcloud_binding_id") == connection.BindingID &&
+		nextcloudApplyMetadataString(metadata, "nextcloud_file_id") == fileID &&
+		nextcloudApplyMetadataString(metadata, "source_resource_id") == connection.BindingID &&
+		nextcloudApplyMetadataString(metadata, "external_id") == prefix+fileID
+}
+
 // Nextcloud's returned changes cursor is HMAC protected by Nextcloud and
 // delivered over the signed machine API connection. We do not know its HMAC
 // secret; parsing the binding and decimal position here must not be confused
@@ -183,8 +225,12 @@ func nextcloudDispatchPublicationProof(
 		if !found {
 			return nextcloudApplyRetry, nil
 		}
+		terminalFailure := version.State == "staging" && row.DeletedAt == nil &&
+			row.ParseStatus == types.ParseStatusFailed &&
+			row.EnableStatus == "disabled"
 		if nextcloudApplyMetadataString(metadata, "nextcloud_etag") != "" &&
 			(row.DeletedAt != nil || version.CandidateKnowledgeID != row.ID ||
+				(!terminalFailure && version.State != "published") ||
 				nextcloudApplyMetadataString(metadata, "nextcloud_etag") != version.DesiredETag) {
 			return nextcloudApplyRetry, nil
 		}
@@ -205,20 +251,7 @@ func nextcloudDispatchPublicationProof(
 				candidate.ParseStatus == types.ParseStatusFinalizing) {
 			return nextcloudApplyWaiting, nil
 		}
-		terminalFailure := version.State == "staging" && candidate.DeletedAt == nil &&
-			candidate.ParseStatus == types.ParseStatusFailed
-		var metadata map[string]json.RawMessage
-		if json.Unmarshal(candidate.Metadata, &metadata) != nil ||
-			(!terminalFailure && version.State != "published") || candidate.DeletedAt != nil ||
-			(!terminalFailure && (candidate.ParseStatus != types.ParseStatusCompleted ||
-				candidate.EnableStatus != "enabled")) ||
-			candidate.FileName != file.Name || nextcloudApplyMetadataString(metadata, "nextcloud_path") != file.Path ||
-			nextcloudApplyMetadataString(metadata, "nextcloud_etag") != file.ETag ||
-			nextcloudApplyMetadataString(metadata, "nextcloud_instance_id") != connection.NextcloudInstanceID ||
-			nextcloudApplyMetadataString(metadata, "nextcloud_binding_id") != connection.BindingID ||
-			nextcloudApplyMetadataString(metadata, "nextcloud_file_id") != fileID ||
-			nextcloudApplyMetadataString(metadata, "source_resource_id") != connection.BindingID ||
-			nextcloudApplyMetadataString(metadata, "external_id") != prefix+fileID {
+		if !nextcloudApplyCandidateProof(version, candidate, file, fileID, connection) {
 			return nextcloudApplyRetry, nil
 		}
 	}
