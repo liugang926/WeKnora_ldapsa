@@ -64,11 +64,43 @@ func (t *RAGSourceLineage) Add(inputs ...*SourceLineage) error {
 	defer t.mu.Unlock()
 	var err error
 	before := t.lineage
+	if !t.requireComplete {
+		inputs = normalizeWeKnoraACLInputs(inputs)
+	}
 	t.lineage, err = UnionSourceLineage(append([]*SourceLineage{t.lineage}, inputs...)...)
 	if !sameRAGSourceLineage(before, t.lineage) {
 		t.revision++
 	}
 	return err
+}
+
+// normalizeWeKnoraACLInputs keeps structurally valid source receipts while
+// treating malformed legacy/unknown envelopes as source-independent inputs.
+// A malformed complete envelope remains invalid: it asserts provenance that
+// cannot be trusted. In ACL mode authorization comes from the current
+// WeKnora caller/session/space check, not from optional source identities.
+func normalizeWeKnoraACLInputs(inputs []*SourceLineage) []*SourceLineage {
+	out := make([]*SourceLineage, len(inputs))
+	for i, input := range inputs {
+		out[i] = NormalizeWeKnoraACLSourceLineage(input)
+	}
+	return out
+}
+
+// NormalizeWeKnoraACLSourceLineage keeps a structurally valid source receipt
+// and treats a malformed legacy/unknown envelope as source-independent. It
+// deliberately leaves a malformed complete assertion untouched so strict
+// validation still rejects provenance claims that cannot be trusted.
+func NormalizeWeKnoraACLSourceLineage(input *SourceLineage) *SourceLineage {
+	if input == nil {
+		return nil
+	}
+	if input.State != SourceLineageComplete {
+		if err := input.Validate(); err != nil {
+			return UnknownSourceLineage()
+		}
+	}
+	return input
 }
 
 func sameRAGSourceLineage(a, b *SourceLineage) bool {

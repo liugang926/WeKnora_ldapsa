@@ -106,3 +106,36 @@ func TestWeKnoraACLSourceLineageNormalizesUnknownWithoutDroppingKnownSources(t *
 		t.Fatalf("WeKnora ACL verifier calls = %d", checks)
 	}
 }
+
+func TestWeKnoraACLSourceLineageDropsMalformedLegacyUnknownButRejectsBadComplete(t *testing.T) {
+	turn := NewWeKnoraACLSourceLineage(func(context.Context, *SourceLineage) error { return nil })
+	legacy := UnknownSourceLineage()
+	legacy.Sources = []SourceIdentity{{Provider: ConnectorTypeNextcloud}}
+	known, err := NewCompleteSourceLineage(lineageTestIdentity("4", "etag"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := turn.Add(known, legacy); err != nil {
+		t.Fatalf("malformed legacy unknown input rejected ACL turn: %v", err)
+	}
+	proof, err := turn.CheckedSnapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if proof.State != SourceLineageComplete || len(proof.Sources) != 1 ||
+		proof.Sources[0].FileID != "4" {
+		t.Fatalf("ACL normalization lost known sources: %+v", proof)
+	}
+
+	malformedComplete := UnknownSourceLineage()
+	malformedComplete.State = SourceLineageComplete
+	malformedComplete.Sources = []SourceIdentity{{Provider: ConnectorTypeNextcloud}}
+	if err := turn.Add(malformedComplete); !errors.Is(err, ErrSourceLineageInvalid) {
+		t.Fatalf("malformed complete source assertion was accepted: %v", err)
+	}
+
+	strict := NewRAGSourceLineage(func(context.Context, *SourceLineage) error { return nil })
+	if err := strict.Add(legacy); !errors.Is(err, ErrSourceLineageInvalid) {
+		t.Fatalf("strict lineage accepted malformed legacy input: %v", err)
+	}
+}
