@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/Tencent/WeKnora/internal/types"
@@ -17,6 +18,18 @@ type scopeKnowledgeService struct {
 type scopeChunkService struct {
 	interfaces.ChunkService
 	chunk *types.Chunk
+}
+
+type publicationRejectingKnowledgeService struct {
+	scopeKnowledgeService
+	publicationChecks int
+}
+
+func (s *publicationRejectingKnowledgeService) CheckKnowledgePublication(
+	context.Context, *types.Knowledge,
+) error {
+	s.publicationChecks++
+	return errors.New("source publication is not eligible")
 }
 
 func (s *scopeChunkService) GetChunkByIDOnly(context.Context, string) (*types.Chunk, error) {
@@ -96,7 +109,9 @@ func TestAgentDocumentScopeRejectsNextcloudWithoutPublicationCheck(t *testing.T)
 		Channel:  types.ConnectorTypeNextcloud,
 		Metadata: types.JSON(`{"datasource_id":"source-1","nextcloud_file_id":"42"}`),
 	}
-	service := &scopeKnowledgeService{knowledge: knowledge}
+	service := &publicationRejectingKnowledgeService{
+		scopeKnowledgeService: scopeKnowledgeService{knowledge: knowledge},
+	}
 	targets := types.SearchTargets{{
 		Type: types.SearchTargetTypeKnowledgeBase, KnowledgeBaseID: "kb-1", TenantID: 7,
 	}}
@@ -110,6 +125,65 @@ func TestAgentDocumentScopeRejectsNextcloudWithoutPublicationCheck(t *testing.T)
 	if _, err := authorizeChunkInSearchTargets(context.Background(), targets, "chunk-1", chunkService,
 		service); err == nil {
 		t.Fatal("Agent chunk handle exposed a Nextcloud document without source authorization")
+	}
+}
+
+func TestAgentDocumentScopeUsesWeKnoraACLInsteadOfNextcloudPublication(t *testing.T) {
+	knowledge := &types.Knowledge{
+		ID: "doc-1", TenantID: 7, KnowledgeBaseID: "kb-1",
+		Channel:  types.ConnectorTypeNextcloud,
+		Metadata: types.JSON(`{"datasource_id":"source-1","nextcloud_file_id":"42"}`),
+	}
+	service := &publicationRejectingKnowledgeService{
+		scopeKnowledgeService: scopeKnowledgeService{knowledge: knowledge},
+	}
+	targets := types.SearchTargets{{
+		Type: types.SearchTargetTypeKnowledgeBase, KnowledgeBaseID: "kb-1", TenantID: 7,
+	}}
+	turn := types.NewWeKnoraACLSourceLineage(func(context.Context, *types.SourceLineage) error {
+		return nil
+	})
+	ctx := types.WithRAGSourceLineage(context.Background(), turn)
+
+	if got, err := authorizeKnowledgeInSearchTargets(ctx, targets, knowledge.ID, service); err != nil ||
+		got == nil || got.ID != knowledge.ID {
+		t.Fatalf("ACL-authorized Nextcloud document failed: got=%+v err=%v", got, err)
+	}
+	chunkService := &scopeChunkService{chunk: &types.Chunk{
+		ID: "chunk-1", TenantID: 7, KnowledgeBaseID: "kb-1", KnowledgeID: knowledge.ID,
+		IsEnabled: true,
+	}}
+	if got, err := authorizeChunkInSearchTargets(ctx, targets, "chunk-1", chunkService, service); err != nil ||
+		got == nil || got.ID != "chunk-1" {
+		t.Fatalf("ACL-authorized Nextcloud chunk failed: got=%+v err=%v", got, err)
+	}
+	if service.publicationChecks != 0 {
+		t.Fatalf("ACL turn called Nextcloud publication %d times, want 0", service.publicationChecks)
+	}
+}
+
+func TestAgentDocumentScopeKeepsPublicationGateForExplicitMaterials(t *testing.T) {
+	knowledge := &types.Knowledge{
+		ID: "doc-1", TenantID: 7, KnowledgeBaseID: "kb-1",
+		Channel:  types.ConnectorTypeNextcloud,
+		Metadata: types.JSON(`{"datasource_id":"source-1","nextcloud_file_id":"42"}`),
+	}
+	service := &publicationRejectingKnowledgeService{
+		scopeKnowledgeService: scopeKnowledgeService{knowledge: knowledge},
+	}
+	targets := types.SearchTargets{{
+		Type: types.SearchTargetTypeKnowledgeBase, KnowledgeBaseID: "kb-1", TenantID: 7,
+	}}
+	turn := types.NewRAGSourceLineage(func(context.Context, *types.SourceLineage) error {
+		return nil
+	})
+	ctx := types.WithRAGSourceLineage(context.Background(), turn)
+
+	if _, err := authorizeKnowledgeInSearchTargets(ctx, targets, knowledge.ID, service); err == nil {
+		t.Fatal("explicit-material turn exposed Nextcloud document without publication authorization")
+	}
+	if service.publicationChecks != 1 {
+		t.Fatalf("explicit-material turn publication checks = %d, want 1", service.publicationChecks)
 	}
 }
 

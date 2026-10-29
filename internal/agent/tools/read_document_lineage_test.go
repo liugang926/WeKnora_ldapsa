@@ -274,6 +274,33 @@ func TestAgentLineageReadDocumentACLNormalizesMalformedNextcloudSnapshot(t *test
 	require.NoError(t, turn.Snapshot().RequireComplete())
 }
 
+func TestAgentLineageReadDocumentACLDropsUnrenderedGeneratedChunkMetadata(t *testing.T) {
+	tool, _, db := actualAgentDocumentFixture(t)
+	require.NoError(
+		t,
+		db.Model(&types.Chunk{}).
+			Where("id = ?", "c1").
+			Update("metadata", types.JSON(`{"generated_questions":["question-a"]}`)).
+			Error,
+	)
+	turn := types.NewWeKnoraACLSourceLineage(func(context.Context, *types.SourceLineage) error {
+		return nil
+	})
+	ctx := types.WithRAGSourceLineage(context.Background(), turn)
+	r := NewToolRegistry()
+	r.RegisterTool(tool)
+
+	result, err := r.ExecuteToolWithSourceLineage(
+		ctx,
+		ToolReadDocument,
+		json.RawMessage(`{"id":"c1","context":0}`),
+	)
+	require.NoError(t, err)
+	require.True(t, result.Success)
+	require.Contains(t, result.Output, "authoritative database body")
+	require.NoError(t, turn.Snapshot().RequireComplete())
+}
+
 func TestAgentLineageReadDocumentACLRetainsValidNextcloudIdentity(t *testing.T) {
 	tool, _, _ := actualAgentDocumentFixture(t)
 	turn := types.NewWeKnoraACLSourceLineage(func(context.Context, *types.SourceLineage) error {

@@ -129,6 +129,17 @@ func (t *ReadDocumentTool) hydrateDocumentInputs(
 			snapshot.Knowledge.KnowledgeBaseID != k.KnowledgeBaseID {
 			return nil, ErrToolSourceLineageUnavailable
 		}
+		if !turn.RequiresCompleteProducerLineage() && snapshot.Chunk != nil &&
+			snapshot.Chunk.ChunkType == types.ChunkTypeText {
+			// Generated chunk enrichment (for example question suggestions) is
+			// not model-visible body text. ACL turns can omit this unaccounted
+			// derivative without weakening the source-owned chunk content.
+			// Explicit materials retain the strict rejection below.
+			copied := *snapshot.Chunk
+			copied.Metadata = nil
+			copied.ImageInfo = ""
+			snapshot.Chunk = &copied
+		}
 		sourceLineage := turn.NormalizeProducerLineage(snapshot.SourceLineage)
 		if turn.RequiresCompleteProducerLineage() {
 			if err := sourceLineage.RequireComplete(); err != nil {
