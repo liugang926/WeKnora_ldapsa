@@ -266,10 +266,11 @@ func (s *agentService) prepareAgentPromptInputs(
 			g.kbInfos = append(g.kbInfos, info)
 		}
 	}
+	// A suggested-question origin is a retrieval hint, not a document selected
+	// as model input. Official WeKnora resolves it after the turn's targets are
+	// fixed. Requiring an original-material receipt here turns a stale or
+	// ordinary hint into a fatal 403 before the agent can search normally.
 	ids := append([]string{}, config.KnowledgeIDs...)
-	if config.QuestionOrigin != nil && config.QuestionOrigin.KnowledgeID != "" {
-		ids = append(ids, config.QuestionOrigin.KnowledgeID)
-	}
 	ids = dedupStrings(ids)
 	byDoc := map[string]*agent.SelectedDocumentInfo{}
 	if len(ids) > 0 {

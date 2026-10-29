@@ -95,9 +95,10 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
         fi && \
         if [ -n "$RUSTUP_DIST_SERVER_ARG" ]; then export RUSTUP_DIST_SERVER="$RUSTUP_DIST_SERVER_ARG"; fi && \
         if [ -n "$RUSTUP_UPDATE_ROOT_ARG" ]; then export RUSTUP_UPDATE_ROOT="$RUSTUP_UPDATE_ROOT_ARG"; fi && \
-        curl --proto '=https' --tlsv1.2 --retry 5 --retry-all-errors --retry-delay 2 -sSfL https://sh.rustup.rs -o /tmp/weknora-rustup-init.sh && \
-        sh /tmp/weknora-rustup-init.sh -y --profile minimal --default-toolchain stable && \
-        rm /tmp/weknora-rustup-init.sh && \
+        cp /app/rustup-init /tmp/rustup-init && \
+        chmod +x /tmp/rustup-init && \
+        /tmp/rustup-init -y --profile minimal --default-toolchain stable && \
+        rm /tmp/rustup-init && \
         ./scripts/build-anydoc-lib.sh; \
     fi
 

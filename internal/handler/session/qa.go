@@ -1330,6 +1330,13 @@ func (h *Handler) holdQATurn(ctx context.Context, reqCtx *qaRequestContext) (fun
 	return func() { once.Do(release) }, true
 }
 
+// Question origins are retrieval hints. Only explicit files and images require
+// an original-material receipt before the unified QA flow can continue.
+func hasExplicitInputMaterials(reqCtx *qaRequestContext) bool {
+	return reqCtx != nil &&
+		(len(reqCtx.images) > 0 || len(reqCtx.attachments) > 0 || len(reqCtx.attachmentIDs) > 0)
+}
+
 // executeQA is the unified execution flow for both KnowledgeQA and AgentQA modes.
 // It handles message creation, SSE setup, VLM analysis, service invocation, and error handling.
 func (h *Handler) executeQA(reqCtx *qaRequestContext, mode qaMode, generateTitle bool) {
@@ -1337,8 +1344,7 @@ func (h *Handler) executeQA(reqCtx *qaRequestContext, mode qaMode, generateTitle
 	if reqCtx.steerInputClose != nil {
 		defer reqCtx.steerInputClose()
 	}
-	if len(reqCtx.images) > 0 || len(reqCtx.attachments) > 0 || len(reqCtx.attachmentIDs) > 0 ||
-		reqCtx.questionOrigin != nil {
+	if hasExplicitInputMaterials(reqCtx) {
 		if reqCtx.c != nil && !reqCtx.skipSSE {
 			_ = reqCtx.c.Error(errors.NewForbiddenError("Input source lineage is not available"))
 		}

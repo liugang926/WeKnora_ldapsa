@@ -183,6 +183,90 @@ func TestAgentPromptActualDefaultKBAndDocumentMetadata(t *testing.T) {
 	require.Error(t, CheckMessageMaterialOutputBoundary(ctx), "buffered HTTP output must recheck the current reader")
 }
 
+func TestAgentPromptQuestionOriginIsAHintNotSelectedDocumentInput(t *testing.T) {
+	messages, knowledge, store, db, ctx, _, _ := messageBodyIntegrationFixture(
+		t,
+		false,
+		agentPromptDisplayFixtureSchema(t),
+	)
+	ctx = agentPromptActualRequestContext(ctx, t)
+	kbs := &knowledgeBaseService{repo: repository.NewKnowledgeBaseRepository(db)}
+	knowledge.kbService = kbs
+	knowledge.groupAccess = NewGroupAccessService(repository.NewGroupAccessRepository(db))
+	knowledge.contentLeases = store.ContentLeaseStore()
+	knowledge.knowledgeInputs = store
+	kb := &types.KnowledgeBase{
+		CreatorID:        types.CallerFromContext(ctx).UserID,
+		ID:               "question-origin-kb",
+		TenantID:         7,
+		Name:             "Question origin KB",
+		Type:             types.KnowledgeBaseTypeDocument,
+		EmbeddingModelID: "embed",
+		SummaryModelID:   "summary",
+		IndexingStrategy: types.IndexingStrategy{VectorEnabled: true},
+	}
+	require.NoError(t, store.CreateKnowledgeBaseWithInput(
+		repository.WithIndependentKnowledgeBaseNameInput(
+			repository.WithIndependentKnowledgeInput(ctx),
+			"",
+			kb.Name,
+		),
+		kb,
+	))
+	originDocument := &types.Knowledge{
+		ID:              "question-origin-document",
+		TenantID:        7,
+		KnowledgeBaseID: kb.ID,
+		Type:            types.KnowledgeTypeManual,
+		Source:          "manual",
+		Channel:         "web",
+		Title:           "Suggested question source",
+		FileName:        "suggested.md",
+		FileType:        "md",
+		CustomMetadata:  types.JSON(`{}`),
+		Metadata:        types.JSON(`{"manual":{"content":"hint only","version":1}}`),
+	}
+	require.NoError(t, db.Create(originDocument).Error)
+	service := &agentService{
+		db:                   db,
+		cfg:                  &config.Config{},
+		knowledgeService:     knowledge,
+		knowledgeBaseService: kbs,
+		messageService:       messages,
+	}
+	configWithOrigin := &types.AgentConfig{
+		KnowledgeBases: []string{kb.ID},
+		KnowledgeIDs:   nil,
+		SearchTargets: types.SearchTargets{
+			&types.SearchTarget{
+				Type:            types.SearchTargetTypeKnowledgeBase,
+				TenantID:        7,
+				KnowledgeBaseID: kb.ID,
+			},
+		},
+		QuestionOrigin: &types.QuestionOrigin{
+			KnowledgeBaseID: kb.ID,
+			KnowledgeID:     originDocument.ID,
+		},
+	}
+
+	guard, err := service.prepareAgentPromptInputs(ctx, configWithOrigin)
+	require.NoError(t, err, "a suggestion origin must not require an original-material receipt")
+	require.NotNil(t, guard)
+	require.NotNil(t, guard.origin)
+	require.Nil(t, guard.origin.Document,
+		"an origin document is not selected model input unless listed in KnowledgeIDs")
+	require.Empty(t, guard.selectedDocs)
+	require.NoError(t, guard.Close())
+
+	configWithOrigin.KnowledgeIDs = []string{originDocument.ID}
+	guard, err = service.prepareAgentPromptInputs(ctx, configWithOrigin)
+	require.Error(t, err, "an explicit document without material proof must remain rejected")
+	if guard != nil {
+		_ = guard.Close()
+	}
+}
+
 func TestAgentPromptActualBodyAndLineageMutationDeniedAtHTTP(t *testing.T) {
 	for _, mutation := range []string{"title", "lineage"} {
 		t.Run(mutation, func(t *testing.T) {
