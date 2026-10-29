@@ -55,6 +55,8 @@ func nextcloudApplyMetadataString(metadata map[string]json.RawMessage, key strin
 	return value
 }
 
+// A terminal file failure may have no publication ETag after its source was
+// staged. Bind that exception to the same target revision recorded by staging.
 func nextcloudApplyCandidateProof(
 	version nextcloudSourceVersion,
 	candidate nextcloudApplyKnowledge,
@@ -77,10 +79,12 @@ func nextcloudApplyCandidateProof(
 		return false
 	}
 	candidateETag := nextcloudApplyMetadataString(metadata, "nextcloud_etag")
+	targetETag := nextcloudApplyMetadataString(metadata, "nextcloud_target_etag")
 	etagMatches := candidateETag == file.ETag
-	if terminalFailure && candidateETag == "" {
-		targetETag := nextcloudApplyMetadataString(metadata, "nextcloud_target_etag")
-		etagMatches = targetETag == file.ETag && version.DesiredETag == file.ETag
+	if terminalFailure {
+		etagMatches = targetETag == file.ETag &&
+			version.DesiredETag == file.ETag &&
+			(candidateETag == "" || candidateETag == file.ETag)
 	}
 	prefix := "nextcloud:" + connection.NextcloudInstanceID + ":"
 	return etagMatches &&

@@ -141,8 +141,15 @@ func TestNextcloudQueuedPublicationTerminalFileFailureDoesNotBlockApply(t *testi
 	db, inbox, now, _ := newNextcloudQueuedPublicationTest(t)
 	failed := insertNextcloudVersionTestKnowledge(t, db, "failed-after-sync", "etag-v1",
 		types.ParseStatusFailed, "disabled")
+	metadata := failed.GetMetadata()
+	metadata["nextcloud_target_etag"] = "etag-v1"
+	encoded, err := json.Marshal(metadata)
+	require.NoError(t, err)
 	require.NoError(t, db.Model(&types.Knowledge{}).Where("id = ?", failed.ID).
-		Updates(map[string]any{"file_name": "file.md", "error_message": "document_processing_failed"}).Error)
+		Updates(map[string]any{
+			"file_name": "file.md", "error_message": "document_processing_failed",
+			"metadata": types.JSON(encoded),
+		}).Error)
 	require.NoError(t, db.Create(&nextcloudSourceVersion{
 		TenantID: 7, KnowledgeBaseID: "kb",
 		DataSourceID: "ds", ExternalID: "nextcloud:instance:77", DesiredETag: "etag-v1",
@@ -189,7 +196,24 @@ func TestNextcloudQueuedPublicationTerminalFailureRequiresExactTargetProof(t *te
 			errorMessage: "document_processing_failed", path: "file.md", complete: true,
 		},
 		{
+			name: "exact candidate and target", candidateETag: "etag-v1",
+			targetETag: "etag-v1", desiredETag: "etag-v1",
+			parseStatus: types.ParseStatusFailed, enabled: "disabled",
+			errorMessage: "document_processing_failed", path: "file.md", complete: true,
+		},
+		{
 			name: "missing staged target", desiredETag: "etag-v1",
+			parseStatus: types.ParseStatusFailed, enabled: "disabled",
+			errorMessage: "document_processing_failed", path: "file.md",
+		},
+		{
+			name: "exact candidate missing target", candidateETag: "etag-v1",
+			desiredETag: "etag-v1", parseStatus: types.ParseStatusFailed,
+			enabled: "disabled", errorMessage: "document_processing_failed", path: "file.md",
+		},
+		{
+			name: "exact candidate conflicting target", candidateETag: "etag-v1",
+			targetETag: "etag-other", desiredETag: "etag-v1",
 			parseStatus: types.ParseStatusFailed, enabled: "disabled",
 			errorMessage: "document_processing_failed", path: "file.md",
 		},
