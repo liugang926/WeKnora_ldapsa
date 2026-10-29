@@ -223,9 +223,21 @@ func currentOnboardingManagerPurpose(
 		return nil, err
 	}
 	if err := authorizeOnboardingManagerPurpose(tx.Statement.Context, tx, c, op, &purpose); err != nil {
+		// The immutable pairing purpose and every local scope fact have already
+		// been checked above. A transient manager endpoint failure must not turn
+		// an otherwise valid machine source into a permanently unusable source.
+		// An explicit manager denial still fails closed, and the source fetch
+		// remains protected by the paired scoped credential.
+		if canUseDurableManagerPurpose(err) {
+			return &purpose, nil
+		}
 		return nil, err
 	}
 	return &purpose, nil
+}
+
+func canUseDurableManagerPurpose(err error) bool {
+	return errors.Is(err, access.ErrNextcloudPublicationUnavailable)
 }
 
 // RecordPairManagerPurpose accepts only the private, freshly checked capability

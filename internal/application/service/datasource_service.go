@@ -1005,11 +1005,12 @@ func (s *DataSourceService) ProcessSync(ctx context.Context, task *asynq.Task) (
 
 	automaticSource, automaticErr := s.authorizeNextcloudAutomaticSync(ctx, ds, payload)
 	if automaticErr != nil {
+		failureCode := nextcloudAutomaticAuthorizationFailureCode(automaticErr)
 		s.recordPreStreamSyncFailure(
 			ctx,
 			ds,
 			syncLog,
-			"Nextcloud automatic source authorization unavailable",
+			"Nextcloud automatic source authorization unavailable ("+failureCode+")",
 			ds.Status == types.DataSourceStatusPaused,
 		)
 		return automaticErr
@@ -1503,6 +1504,23 @@ func (s *DataSourceService) authorizeNextcloudAutomaticSync(
 		return false, err
 	}
 	return true, nil
+}
+
+func nextcloudAutomaticAuthorizationFailureCode(err error) string {
+	switch {
+	case errors.Is(err, access.ErrNextcloudPublicationDenied):
+		return "manager_denied"
+	case errors.Is(err, access.ErrNextcloudPublicationUnavailable):
+		return "manager_unavailable"
+	case errors.Is(err, apprepo.ErrNextcloudOnboardingDenied):
+		return "local_authority_denied"
+	case errors.Is(err, apprepo.ErrNextcloudMachineTaskInvalid):
+		return "machine_task_invalid"
+	case errors.Is(err, apprepo.ErrKnowledgeInputChanged):
+		return "scope_changed"
+	default:
+		return "authorization_unavailable"
+	}
 }
 
 // resolveAutoTagIDs finds or creates the per-data-source tag applied to every
