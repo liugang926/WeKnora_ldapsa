@@ -158,6 +158,23 @@ func TestNextcloudBlockedCursorRecoversProvenOrphanedFailedCandidate(t *testing.
 	require.Equal(t, "staging", gotVersion.State)
 }
 
+func TestNextcloudBlockedCursorRecoveryAppearsInDispatchCandidates(t *testing.T) {
+	db, inbox, now, _, _, _ := newNextcloudBlockedCursorOrphanTest(t)
+
+	candidates, err := inbox.DispatchCandidates(context.Background(), now.Add(time.Second))
+	require.NoError(t, err)
+	require.Equal(t, []string{"event-connection"}, candidates,
+		"a blocked cursor recovery must be selected so ClaimDispatch can revalidate it")
+
+	require.NoError(t, db.Exec(`UPDATE nextcloud_event_dispatch
+		SET last_error_code = 'revoked'
+		WHERE connection_id = 'event-connection'`).Error)
+	candidates, err = inbox.DispatchCandidates(context.Background(), now.Add(time.Second))
+	require.NoError(t, err)
+	require.Empty(t, candidates,
+		"other blocked reasons still require manual review")
+}
+
 func TestNextcloudBlockedCursorRejectsUnprovenStagingHistory(t *testing.T) {
 	for _, tc := range []struct {
 		name   string

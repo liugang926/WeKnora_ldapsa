@@ -210,6 +210,7 @@ func (r *NextcloudEventInboxRepository) DispatchCandidates(ctx context.Context, 
 		Where(`(d.state = 'idle' AND p.received_id > d.dispatched_id)
 			OR (d.state IN ('queued', 'retry') AND d.next_attempt_at <= ?)
 			OR (d.state = 'blocked' AND d.last_error_code = 'source_changed')
+			OR (d.state = 'blocked' AND d.last_error_code = 'cursor_missing_manual_review')
 			OR (d.state = 'queued' AND d.last_error_code = ''
 				AND p.received_id > d.dispatched_id
 				AND EXISTS (SELECT 1 FROM sync_logs AS s
