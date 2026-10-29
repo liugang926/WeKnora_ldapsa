@@ -64,8 +64,7 @@ func nextcloudApplyCandidateProof(
 	connection nextcloudEventConnection,
 ) bool {
 	terminalFailure := version.State == "staging" && candidate.DeletedAt == nil &&
-		candidate.ParseStatus == types.ParseStatusFailed &&
-		candidate.EnableStatus == "disabled"
+		candidate.ParseStatus == types.ParseStatusFailed
 	published := version.State == "published" && candidate.DeletedAt == nil &&
 		candidate.ParseStatus == types.ParseStatusCompleted &&
 		candidate.EnableStatus == "enabled"
@@ -226,8 +225,7 @@ func nextcloudDispatchPublicationProof(
 			return nextcloudApplyRetry, nil
 		}
 		terminalFailure := version.State == "staging" && row.DeletedAt == nil &&
-			row.ParseStatus == types.ParseStatusFailed &&
-			row.EnableStatus == "disabled"
+			row.ParseStatus == types.ParseStatusFailed
 		if nextcloudApplyMetadataString(metadata, "nextcloud_etag") != "" &&
 			(row.DeletedAt != nil || version.CandidateKnowledgeID != row.ID ||
 				(!terminalFailure && version.State != "published") ||
