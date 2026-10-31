@@ -136,6 +136,13 @@ func CheckSourceLineageInputs(ctx context.Context, cm *types.ChatManage) error {
 }
 
 func sourceLineagePluginError(err error) *PluginError {
+	if err == nil {
+		// A passing lineage check must not abort the pipeline: the stage loop
+		// treats any non-nil PluginError as failure but returns PluginError.Err,
+		// so a non-nil wrapper around nil used to end the turn "successfully"
+		// with no answer, no error and an incomplete assistant message.
+		return nil
+	}
 	if errors.Is(err, types.ErrSourceLineageUnknown) || errors.Is(err, types.ErrSourceLineageInvalid) ||
 		errors.Is(err, types.ErrSourceLineageLimit) {
 		err = access.ErrNextcloudPublicationDenied

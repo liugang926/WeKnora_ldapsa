@@ -1258,8 +1258,12 @@ func (s *sessionService) handleFixedFallback(ctx context.Context, chatManage *ty
 
 // handleModelFallback handles model-based fallback response using streaming
 func (s *sessionService) handleModelFallback(ctx context.Context, chatManage *types.ChatManage) {
-	if turn := types.RAGSourceLineageFromContext(ctx); turn != nil {
-		// Document-listing metadata has no covered producer contract.
+	if turn := types.RAGSourceLineageFromContext(ctx); turn != nil && turn.RequiresCompleteProducerLineage() {
+		// Strict material turns have no producer contract for a document-
+		// listing fallback. Marking the turn unknown makes the caller's
+		// turn.Check fail loudly instead of silently streaming nothing.
+		// ACL-mode turns (ordinary WeKnora-authorized chat) keep the official
+		// behaviour: a marked, source-independent fallback answer streams.
 		_ = turn.Add(types.UnknownSourceLineage())
 		return
 	}
