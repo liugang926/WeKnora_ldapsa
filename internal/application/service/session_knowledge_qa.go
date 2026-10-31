@@ -1091,6 +1091,13 @@ func (s *sessionService) KnowledgeQAByEvent(ctx context.Context,
 				"error_type":  err.ErrorType,
 				"description": err.Description,
 			})
+			if err.Err == nil {
+				// A stage failed without a cause must surface as a visible
+				// failure. Returning nil here used to end the turn as a
+				// silent success: no answer, no error event and an
+				// incomplete assistant message.
+				return fmt.Errorf("pipeline stage %s failed without a cause: %s", eventType, err.Description)
+			}
 			return err.Err
 		}
 
