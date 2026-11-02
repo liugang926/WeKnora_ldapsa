@@ -64,6 +64,28 @@ test('owner and admin roles both count as admin users', () => {
   assert.equal(isMenuAdminUser(false, false), false)
 })
 
+test('user-menu settings shortcuts use the same employee gate (W-UI-01)', () => {
+  // UserMenu.vue 的 canAccessSettingsShortcuts 直接复用 isMenuAdminUser；
+  // 逐角色核对：viewer/contributor 关闭，admin/owner/systemAdmin 开启。
+  const roleLevels: Record<string, number> = { viewer: 10, contributor: 20, admin: 30, owner: 40 }
+  const minAdmin = roleLevels.admin
+  const cases: Array<[string, boolean, boolean]> = [
+    ['viewer', false, false],
+    ['contributor', false, false],
+    ['admin', true, false],
+    ['owner', true, false],
+    ['system-admin', false, true],
+  ]
+  for (const [role, isTenantAdmin, isSystemAdmin] of cases) {
+    const expected = role === 'system-admin' || (roleLevels[role] ?? 0) >= minAdmin
+    assert.equal(
+      isMenuAdminUser(isTenantAdmin, isSystemAdmin),
+      expected,
+      `${role} should ${expected ? 'see' : 'not see'} settings shortcuts`,
+    )
+  }
+})
+
 test('lite mode and employee restriction compose', () => {
   const visible = filterVisibleMenuItems(
     ALL_MENU_PATHS.map(path => ({ path })),
