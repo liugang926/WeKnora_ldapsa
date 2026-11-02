@@ -278,8 +278,7 @@ func (e *EvaluationService) Evaluation(ctx context.Context,
 			return nil, errors.New("no default embedding model found for evaluation")
 		}
 
-		kb, err := e.knowledgeBaseService.CreateKnowledgeBase(ctx,
-			evaluationKnowledgeBase(embeddingModelID, chatModelID))
+		kb, err := e.createEvaluationKnowledgeBase(ctx, embeddingModelID, chatModelID)
 		if err != nil {
 			logger.Errorf(ctx, "Failed to create knowledge base: %v", err)
 			return nil, err
@@ -300,8 +299,7 @@ func (e *EvaluationService) Evaluation(ctx context.Context,
 			return nil, errors.New("evaluation embedding model differs from reference knowledge base")
 		}
 
-		kb, err = e.knowledgeBaseService.CreateKnowledgeBase(ctx,
-			evaluationKnowledgeBase(kb.EmbeddingModelID, chatModelID))
+		kb, err = e.createEvaluationKnowledgeBase(ctx, kb.EmbeddingModelID, chatModelID)
 		if err != nil {
 			logger.Errorf(ctx, "Failed to create knowledge base: %v", err)
 			return nil, err
@@ -453,6 +451,24 @@ func validateEvaluationModelSelection(datasetID, chatModelID, rerankModelID, emb
 		}
 	}
 	return nil
+}
+
+// createEvaluationKnowledgeBase admits only the fixed configuration produced here.
+// The reference-KB branch selects an embedding model identifier; it does not copy
+// the reference KB's name, prompts, templates, passages or processing settings.
+// Keep this boundary local so unrelated callers still need their own proof.
+func (e *EvaluationService) createEvaluationKnowledgeBase(ctx context.Context, embeddingModelID, chatModelID string) (*types.KnowledgeBase, error) {
+	kb := evaluationKnowledgeBase(embeddingModelID, chatModelID)
+	lineage, err := types.NewCompleteSourceLineage()
+	if err != nil {
+		return nil, err
+	}
+	inputCtx, err := repository.WithDerivedKnowledgeInput(ctx, lineage)
+	if err != nil {
+		return nil, err
+	}
+	inputCtx = repository.WithIndependentKnowledgeBaseNameInput(inputCtx, "", kb.Name)
+	return e.knowledgeBaseService.CreateKnowledgeBase(inputCtx, kb)
 }
 
 // evaluationKnowledgeBase pins corpus summarization to the chosen answer
