@@ -483,6 +483,28 @@ func evaluationKnowledgeBase(embeddingModelID, chatModelID string) *types.Knowle
 	}
 }
 
+// loadEvaluationDatasetInput is the admission boundary for operator-installed,
+// de-identified benchmark fixtures. Only the concrete local loader enforces the
+// bounded dataset path and validates all Parquet relationships. A replacement
+// provider may read protected business data and must not inherit this receipt.
+// Keep this context scoped to the exact corpus import; it is not a QA bypass.
+func (e *EvaluationService) loadEvaluationDatasetInput(ctx context.Context, id string) (*types.EvaluationDataset, context.Context, error) {
+	loader, ok := e.dataset.(*DatasetService)
+	if !ok || loader == nil {
+		return nil, ctx, types.ErrSourceLineageUnknown
+	}
+	dataset, err := loader.GetDatasetByID(ctx, id)
+	if err != nil {
+		return nil, ctx, err
+	}
+	lineage, err := types.NewCompleteSourceLineage()
+	if err != nil {
+		return nil, ctx, err
+	}
+	inputCtx, err := repository.WithDerivedKnowledgeInput(ctx, lineage)
+	return dataset, inputCtx, err
+}
+
 // EvalDataset performs the actual evaluation of a dataset
 // Processes each QA pair in parallel and records metrics
 func (e *EvaluationService) EvalDataset(ctx context.Context, detail *types.EvaluationDetail, knowledgeBaseID string) error {
@@ -496,7 +518,7 @@ func (e *EvaluationService) EvalDataset(ctx context.Context, detail *types.Evalu
 	}()
 
 	// Retrieve dataset from storage
-	dataset, err := e.dataset.GetDatasetByID(ctx, detail.Task.DatasetID)
+	dataset, inputCtx, err := e.loadEvaluationDatasetInput(ctx, detail.Task.DatasetID)
 	if err != nil {
 		logger.Errorf(ctx, "Failed to get dataset: %v", err)
 		return err
@@ -537,7 +559,7 @@ func (e *EvaluationService) EvalDataset(ctx context.Context, detail *types.Evalu
 	logger.Infof(ctx, "Creating knowledge from %d passages", len(passages))
 
 	// Create knowledge base from passages (sync: wait for indexing to complete before querying)
-	knowledge, err := e.knowledgeService.CreateKnowledgeFromPassageSync(ctx, knowledgeBaseID, passages, "")
+	knowledge, err := e.knowledgeService.CreateKnowledgeFromPassageSync(inputCtx, knowledgeBaseID, passages, "")
 	if err != nil {
 		logger.Errorf(ctx, "Failed to create knowledge from passages: %v", err)
 		return err
