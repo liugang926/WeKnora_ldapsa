@@ -14,6 +14,7 @@ import { useRoleLabel } from '@/composables/useRoleLabel'
 import { notifyLoginSuccess } from '@/utils/loginNotify'
 import { consumeNextcloudAskReturn } from '@/utils/nextcloudAskLink'
 import { renderWorkspaceNotifyContent } from '@/utils/workspaceNotifyContent'
+import { parseDingTalkCallbackHash, resolveDingTalkErrorKey } from '@/utils/dingtalk'
 
 // TDesign locale configs
 import enUSConfig from 'tdesign-vue-next/esm/locale/en_US'
@@ -97,6 +98,9 @@ const syncOIDCUserContext = async () => {
   }
 }
 
+// persistOIDCLoginResponse 同时服务 OIDC 与钉钉回跳：两者 payload 完全
+// 同构（token/refresh_token/user/active_tenant/memberships），钉钉分支
+// 直接复用（见 handleGlobalOIDCCallback）。
 const persistOIDCLoginResponse = async (response: any) => {
   if (!response.token) {
     throw new Error(response.message || 'OIDC login failed')
@@ -136,9 +140,45 @@ const handleGlobalOIDCCallback = async () => {
   const oidcError = params.get('oidc_error')
   const oidcErrorDescription = params.get('oidc_error_description')
   const oidcResult = params.get('oidc_result')
+  // DingTalk SSO 回跳与 OIDC 完全同构：#dingtalk_result=<base64url(JSON)>
+  // 的 payload 与 #oidc_result= 相同，直接复用同一条落库路径；失败回跳
+  // 携带后端 reason code，映射成本地化文案后落到登录页（QR-02/QR-03/QR-04）。
+  const dingtalk = parseDingTalkCallbackHash(hash)
 
-  if (!oidcError && !oidcResult) return
+  if (!oidcError && !oidcResult && !dingtalk.result && !dingtalk.error) return
 
+  // ---- DingTalk 分支 ------------------------------------------------------
+  if (dingtalk.error || dingtalk.result) {
+    try {
+      if (dingtalk.error) {
+        clearOIDCCallbackState('/login')
+        await router.replace('/login')
+        MessagePlugin.error(t(resolveDingTalkErrorKey(dingtalk.error)))
+        return
+      }
+
+      const dingtalkResponse = decodeOIDCResult(dingtalk.result!)
+      if (dingtalkResponse.success) {
+        clearOIDCCallbackState('/')
+        await persistOIDCLoginResponse(dingtalkResponse)
+        notifyLoginSuccess(dingtalkResponse, t, tm, formatRole, roleIcon)
+        return
+      }
+
+      clearOIDCCallbackState('/login')
+      await router.replace('/login')
+      MessagePlugin.error(dingtalkResponse.message || t('auth.dingtalkLoginFailed'))
+    } catch (error: any) {
+      console.error('Global DingTalk callback handling failed:', error)
+      authStore.logout()
+      clearOIDCCallbackState('/login')
+      await router.replace('/login')
+      MessagePlugin.error(error.message || t('auth.dingtalkLoginFailed'))
+    }
+    return
+  }
+
+  // ---- OIDC 分支 ----------------------------------------------------------
   if (oidcError) {
     clearOIDCCallbackState('/login')
     await router.replace('/login')
