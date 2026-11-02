@@ -23,6 +23,28 @@ type UserService interface {
 		redirectURI string,
 		provisioning types.TenantProvisioningMode,
 	) (*types.OIDCCallbackResponse, error)
+	// GetDingTalkAuthConfig reports the public DingTalk SSO provider
+	// configuration (enabled flag, display name, corp id when enabled).
+	GetDingTalkAuthConfig(ctx context.Context) (*types.DingTalkConfigResponse, error)
+	// BuildDingTalkAuthorizeURL builds the DingTalk authorization page URL
+	// plus the signed state whose nonce is bound to the browser cookie.
+	BuildDingTalkAuthorizeURL(
+		ctx context.Context,
+		callbackURL string,
+	) (*types.DingTalkAuthURLResponse, error)
+	// LoginWithDingTalkCode completes the web authorization-code flow. The
+	// caller has already verified the signed state against the cookie. It
+	// never auto-creates accounts: logins resolve through the job-number
+	// matched AD identity or an existing binding, and are rejected otherwise.
+	LoginWithDingTalkCode(ctx context.Context, code string) (*types.OIDCCallbackResponse, error)
+	// LoginWithDingTalkAuthCode completes the DingTalk workbench免登 flow
+	// from the client-issued in-app auth code. Same binding rules as the
+	// web flow; enterprise membership is proven by resolving the code.
+	LoginWithDingTalkAuthCode(ctx context.Context, authCode string) (*types.LoginResponse, error)
+	// UnlinkDingTalkIdentity removes the target user's active DingTalk
+	// binding and revokes their sessions. The caller authorizes the
+	// operation; operatorID is only recorded in the audit trail.
+	UnlinkDingTalkIdentity(ctx context.Context, operatorID, targetUserID string) error
 	// GetUserByID gets a user by ID
 	GetUserByID(ctx context.Context, id string) (*types.User, error)
 	// GetUsersByIDs batch-fetches users by id, returning a map keyed by

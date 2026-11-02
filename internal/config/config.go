@@ -27,6 +27,7 @@ type Config struct {
 	Auth                     *AuthConfig            `yaml:"auth"             json:"auth"`
 	Audit                    *AuditConfig           `yaml:"audit"            json:"audit"`
 	OIDCAuth                 *OIDCAuthConfig        `yaml:"oidc_auth"        json:"oidc_auth"`
+	DingTalkAuth             *DingTalkAuthConfig    `yaml:"dingtalk_auth"    json:"dingtalk_auth"`
 	Directory                *DirectoryConfig       `yaml:"directory"        json:"directory"`
 	Models                   []ModelConfig          `yaml:"models"           json:"models"`
 	VectorDatabase           *VectorDatabaseConfig  `yaml:"vector_database"  json:"vector_database"`
@@ -330,6 +331,26 @@ type OIDCAuthConfig struct {
 	JwksURI               string               `yaml:"jwks_uri"               json:"jwks_uri"`
 	Scopes                []string             `yaml:"scopes"                 json:"scopes"`
 	UserInfoMapping       *OIDCUserInfoMapping `yaml:"user_info_mapping"      json:"user_info_mapping"`
+}
+
+// DingTalkAuthConfig configures the optional DingTalk enterprise SSO
+// module. Like OIDCAuth it is disabled unless explicitly enabled; logins
+// resolve existing users through the AD job number, so the module creates
+// no accounts of its own. AppSecret is never serialized to JSON responses.
+type DingTalkAuthConfig struct {
+	Enable              bool   `yaml:"enable"               json:"enable"`
+	CorpID              string `yaml:"corp_id"              json:"corp_id"`
+	AppKey              string `yaml:"app_key"              json:"app_key"`
+	AppSecret           string `yaml:"app_secret"           json:"-"`
+	// AgentID is recorded for completeness / future messaging features; the
+	// login flow itself does not use it.
+	AgentID             string `yaml:"agent_id"             json:"agent_id"`
+	ProviderDisplayName string `yaml:"provider_display_name" json:"provider_display_name"`
+	// RedirectURL is the absolute /api/v1/auth/dingtalk/callback URL
+	// registered with the DingTalk app. Empty falls back to a
+	// frontend_base_url-derived default (see applyDingTalkEnvOverrides) or,
+	// failing that, the request origin at call time.
+	RedirectURL         string `yaml:"redirect_url"         json:"-"`
 }
 
 // DirectoryConfig controls the optional LDAP / Active Directory module.
@@ -649,6 +670,7 @@ func LoadConfig() (*Config, error) {
 
 	// Validate configuration values
 	applyOIDCEnvOverrides(&cfg)
+	applyDingTalkEnvOverrides(&cfg)
 	if err := applyDirectoryEnvOverrides(&cfg); err != nil {
 		return nil, err
 	}
@@ -701,6 +723,18 @@ func ValidateConfig(cfg *Config) error {
 				("oidc_auth.discovery_url or both oidc_auth.authorization_endpoint and oidc_" +
 					"auth.token_endpoint are required when OIDC is enabled"),
 			)
+		}
+	}
+
+	if cfg.DingTalkAuth != nil && cfg.DingTalkAuth.Enable {
+		if strings.TrimSpace(cfg.DingTalkAuth.CorpID) == "" {
+			errs = append(errs, "dingtalk_auth.corp_id is required when DingTalk auth is enabled")
+		}
+		if strings.TrimSpace(cfg.DingTalkAuth.AppKey) == "" {
+			errs = append(errs, "dingtalk_auth.app_key is required when DingTalk auth is enabled")
+		}
+		if strings.TrimSpace(cfg.DingTalkAuth.AppSecret) == "" {
+			errs = append(errs, "dingtalk_auth.app_secret is required when DingTalk auth is enabled")
 		}
 	}
 
@@ -884,6 +918,49 @@ func applyOIDCEnvOverrides(cfg *Config) {
 	}
 	if cfg.OIDCAuth.DiscoveryURL == "" && cfg.OIDCAuth.IssuerURL != "" {
 		cfg.OIDCAuth.DiscoveryURL = strings.TrimRight(cfg.OIDCAuth.IssuerURL, "/") + "/.well-known/openid-configuration"
+	}
+}
+
+// applyDingTalkEnvOverrides mirrors applyOIDCEnvOverrides for the DingTalk
+// enterprise SSO module: environment wins over YAML, then defaults are
+// back-filled. The default display name is the product-facing Chinese name.
+func applyDingTalkEnvOverrides(cfg *Config) {
+	if cfg.DingTalkAuth == nil {
+		cfg.DingTalkAuth = &DingTalkAuthConfig{}
+	}
+	d := cfg.DingTalkAuth
+
+	if value := strings.TrimSpace(os.Getenv("DINGTALK_AUTH_ENABLE")); value != "" {
+		d.Enable = strings.EqualFold(value, "true")
+	}
+	if value := strings.TrimSpace(os.Getenv("DINGTALK_AUTH_CORP_ID")); value != "" {
+		d.CorpID = value
+	}
+	if value := strings.TrimSpace(os.Getenv("DINGTALK_AUTH_APP_KEY")); value != "" {
+		d.AppKey = value
+	}
+	// App secrets are opaque octet strings; keep them verbatim.
+	if value := os.Getenv("DINGTALK_AUTH_APP_SECRET"); value != "" {
+		d.AppSecret = value
+	}
+	if value := strings.TrimSpace(os.Getenv("DINGTALK_AUTH_AGENT_ID")); value != "" {
+		d.AgentID = value
+	}
+	if value := strings.TrimSpace(os.Getenv("DINGTALK_AUTH_DISPLAY_NAME")); value != "" {
+		d.ProviderDisplayName = value
+	}
+	if value := strings.TrimSpace(os.Getenv("DINGTALK_AUTH_REDIRECT_URL")); value != "" {
+		d.RedirectURL = value
+	}
+
+	if strings.TrimSpace(d.ProviderDisplayName) == "" {
+		d.ProviderDisplayName = "钉钉"
+	}
+	// Derive the OAuth callback from the externally-visible SPA origin when
+	// the operator did not register an explicit redirect URL.
+	if strings.TrimSpace(d.RedirectURL) == "" && strings.TrimSpace(cfg.FrontendBaseURL) != "" {
+		d.RedirectURL = strings.TrimRight(strings.TrimSpace(cfg.FrontendBaseURL), "/") +
+			"/api/v1/auth/dingtalk/callback"
 	}
 }
 

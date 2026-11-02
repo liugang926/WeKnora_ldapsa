@@ -116,6 +116,8 @@ type userService struct {
 	systemSettingSvc interfaces.SystemSettingService
 	directoryRepo    interfaces.DirectoryRepository
 	groupAccess      interfaces.GroupAccessService
+	dingtalkRepo     interfaces.DingTalkRepository
+	dingtalkClient   DingTalkClient
 }
 
 type directoryIdentityBatchReader interface {
@@ -132,6 +134,8 @@ func NewUserService(
 	systemSettingSvc interfaces.SystemSettingService,
 	directoryRepo interfaces.DirectoryRepository,
 	groupAccess interfaces.GroupAccessService,
+	dingtalkRepo interfaces.DingTalkRepository,
+	dingtalkClient DingTalkClient,
 ) interfaces.UserService {
 	return &userService{
 		userRepo:         userRepo,
@@ -142,6 +146,8 @@ func NewUserService(
 		systemSettingSvc: systemSettingSvc,
 		directoryRepo:    directoryRepo,
 		groupAccess:      groupAccess,
+		dingtalkRepo:     dingtalkRepo,
+		dingtalkClient:   dingtalkClient,
 	}
 }
 

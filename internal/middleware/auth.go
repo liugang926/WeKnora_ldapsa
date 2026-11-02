@@ -52,6 +52,15 @@ var noAuthAPI = map[string][]string{
 	"/api/v1/auth/oidc/url":           {"GET"},
 	"/api/v1/auth/oidc/start":         {"GET"},
 	"/api/v1/auth/oidc/callback":      {"GET"},
+	// DingTalk enterprise SSO mirrors the OIDC surfaces: config/url are
+	// public discovery endpoints, callback is authenticated by the signed
+	// one-time state (bound to an HttpOnly cookie), and inapp is
+	// authenticated by the DingTalk client-issued auth code. All are
+	// IP rate-limited at registration time.
+	"/api/v1/auth/dingtalk/config":   {"GET"},
+	"/api/v1/auth/dingtalk/url":      {"GET"},
+	"/api/v1/auth/dingtalk/callback": {"GET"},
+	"/api/v1/auth/dingtalk/inapp":    {"POST"},
 	// MCP OAuth provider redirect: the third-party authorization server
 	// redirects the browser here without a WeKnora bearer token. The request
 	// is authenticated by the opaque, single-use `state` parameter instead.
