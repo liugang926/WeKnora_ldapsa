@@ -73,6 +73,7 @@ type RouterParams struct {
 	MeEnvVarHandler                    *handler.MeEnvVarHandler
 	EvaluationHandler                  *handler.EvaluationHandler
 	AuthHandler                        *handler.AuthHandler
+	DingTalkAuthHandler                *handler.DingTalkAuthHandler
 	DirectoryHandler                   *handler.DirectoryHandler
 	GroupAccessHandler                 *handler.GroupAccessHandler
 	InitializationHandler              *handler.InitializationHandler
@@ -357,6 +358,7 @@ func NewRouter(params RouterParams) *gin.Engine {
 		v1.Use(rbacGuards.apiKeyAuthorizer.Middleware())
 
 		RegisterAuthRoutes(v1, params.AuthHandler, rbacGuards)
+		RegisterDingTalkAuthRoutes(v1, params.DingTalkAuthHandler)
 		if params.NextcloudConnectionHandler != nil {
 			connection := v1.Group("/integrations/nextcloud/connection")
 			rbacGuards.apiKeyRoute(
