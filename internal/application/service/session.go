@@ -223,7 +223,15 @@ func (s *sessionService) CreateSession(ctx context.Context, session *types.Sessi
 
 	logger.Infof(ctx, "Creating session, tenant ID: %d", session.TenantID)
 
-	if s.groupAccess != nil {
+	if scope, ok := types.IMChannelScopeFromContext(ctx); ok {
+		if session.TenantID != scope.TenantID {
+			return nil, ErrResourceAccessDenied
+		}
+		if err := scope.Check(ctx, scope.TenantID, types.GroupResourceTypeAgent, scope.AgentID, types.ResourceActionUse); err != nil {
+			return nil, err
+		}
+		session.UserID = types.SessionOwnerIDFromContext(ctx)
+	} else if s.groupAccess != nil {
 		caller := types.CallerFromContext(ctx)
 		role, err := s.groupAccess.EffectiveTenantRole(ctx, caller.UserID, session.TenantID, time.Now().UTC())
 		if err != nil {
