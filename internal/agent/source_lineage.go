@@ -35,7 +35,28 @@ func toolResultLineage(result *types.ToolResult) *types.SourceLineage {
 // interactive caller and current server-resolved session/Agent source scope.
 func (e *AgentEngine) SetSourceLineageVerifier(check func(context.Context, *types.SourceLineage) error) {
 	e.lineageVerifier = check
+	e.requireCompleteSourceLineage = true
 	e.turnLineage = types.NewRAGSourceLineage(check)
+	if e.compactor != nil {
+		e.compactor.SetSourceLineageVerifier(e.authorizeCompaction)
+	}
+}
+
+// SetWeKnoraACLSourceLineageVerifier installs the ordinary WeKnora-only
+// authorization boundary. It preserves authenticated source identities when a
+// producer supplies them, while treating receipt-less legacy or code-owned
+// producers as source-independent inputs rather than Nextcloud materials.
+func (e *AgentEngine) SetWeKnoraACLSourceLineageVerifier(
+	check func(context.Context) error,
+) {
+	e.lineageVerifier = func(ctx context.Context, _ *types.SourceLineage) error {
+		if check == nil {
+			return types.ErrSourceLineageUnknown
+		}
+		return check(ctx)
+	}
+	e.requireCompleteSourceLineage = false
+	e.turnLineage = types.NewWeKnoraACLSourceLineage(e.lineageVerifier)
 	if e.compactor != nil {
 		e.compactor.SetSourceLineageVerifier(e.authorizeCompaction)
 	}
@@ -105,6 +126,7 @@ func (e *AgentEngine) rememberLineageFailure(err error) error {
 	defer e.lineageMu.Unlock()
 	if e.lineageErr == nil {
 		e.lineageErr = ErrAgentSourceLineageDenied
+		e.lineageDiagnostic = safeLineageFailureDiagnostic(err)
 	}
 	if e.lineageCancel != nil {
 		e.lineageCancel()
@@ -112,10 +134,29 @@ func (e *AgentEngine) rememberLineageFailure(err error) error {
 	return ErrAgentSourceLineageDenied
 }
 
+func safeLineageFailureDiagnostic(err error) string {
+	switch {
+	case errors.Is(err, types.ErrSourceLineageLimit):
+		return types.ErrSourceLineageLimit.Error()
+	case errors.Is(err, types.ErrSourceLineageInvalid):
+		return err.Error()
+	case errors.Is(err, types.ErrSourceLineageUnknown):
+		return types.ErrSourceLineageUnknown.Error()
+	default:
+		return "source lineage authorization denied"
+	}
+}
+
 func (e *AgentEngine) lineageFailure() error {
 	e.lineageMu.Lock()
 	defer e.lineageMu.Unlock()
 	return e.lineageErr
+}
+
+func (e *AgentEngine) lineageFailureDiagnostic() string {
+	e.lineageMu.Lock()
+	defer e.lineageMu.Unlock()
+	return e.lineageDiagnostic
 }
 
 func (e *AgentEngine) addLineage(inputs ...*types.SourceLineage) error {

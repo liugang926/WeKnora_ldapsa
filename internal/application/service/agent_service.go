@@ -191,13 +191,6 @@ func (s *agentService) CreateAgentEngine(
 
 	if config != nil && config.ExcludeHistoricalContext {
 		config = withoutHistoricalAgentContext(config)
-	} else if sourceIndependent, _ := ctx.Value(
-		weknoraSourceIndependentAgentKey{},
-	).(bool); sourceIndependent {
-		// Session history text is available under the WeKnora owner/space ACL,
-		// but historically staged sandbox files and injected tools still need a
-		// current explicit-material receipt.
-		config = withoutHistoricalAgentContext(config)
 	}
 
 	// 1. Validate config
@@ -270,45 +263,37 @@ func (s *agentService) CreateAgentEngine(
 		systemPromptTemplate,
 	)
 	engine.SetAppConfig(s.cfg)
-	pinnedMCP := s.resolvePinnedMCPServiceInfos(ctx, config)
-	sourceIndependent, _ := ctx.Value(weknoraSourceIndependentAgentKey{}).(bool)
-	if sourceIndependent {
-		emptyPromptLineage, err := types.NewCompleteSourceLineage()
+	pinnedMCP, pinnedSkills := s.resolveSourceIndependentPinnedMentions(
+		ctx,
+		config,
+		promptInputs.promptLineage,
+	)
+	s.attachPinnedMCPToolNames(toolRegistry, pinnedMCP)
+	engine.SetPinnedMentions(
+		pinnedMCP,
+		pinnedSkills,
+	)
+	engine.SetQuestionOrigin(promptInputs.origin)
+	explicitInputMaterials := agentExplicitInputMaterials(ctx)
+	var builtinCheck func(context.Context) error
+	promptLineage := promptInputs.promptLineage
+	if explicitInputMaterials {
+		promptLineage, builtinCheck, err = s.builtinAgentPromptInput(
+			ctx,
+			config,
+			sessionID,
+			assistantMessageID,
+			systemPromptTemplate,
+		)
 		if err != nil {
 			return nil, err
 		}
-		for _, info := range pinnedMCP {
-			if info != nil {
-				info.SourceLineage = emptyPromptLineage
-			}
+		if builtinCheck != nil {
+			promptInputs.builtinCheck = builtinCheck
 		}
-		s.attachPinnedMCPToolNames(toolRegistry, pinnedMCP)
-		pinnedSkills := s.resolvePinnedSkillInfos(config)
-		for _, info := range pinnedSkills {
-			if info != nil {
-				info.SourceLineage = emptyPromptLineage
-			}
-		}
-		engine.SetPinnedMentions(pinnedMCP, pinnedSkills)
-		engine.SetSkillsMetadataSourceLineage(emptyPromptLineage)
-	} else {
-		s.attachPinnedMCPToolNames(toolRegistry, pinnedMCP)
-		engine.SetPinnedMentions(pinnedMCP, s.resolvePinnedSkillInfos(config))
-	}
-	engine.SetQuestionOrigin(promptInputs.origin)
-	promptLineage, builtinCheck, err := s.builtinAgentPromptInput(
-		ctx,
-		config,
-		sessionID,
-		assistantMessageID,
-		systemPromptTemplate,
-	)
-	if err != nil {
-		return nil, err
 	}
 	if promptLineage != nil {
 		engine.SetSystemPromptSourceLineage(promptLineage)
-		promptInputs.builtinCheck = builtinCheck
 	}
 
 	// Non-vision chat models use the configured VLM to describe tool images.
@@ -342,6 +327,7 @@ func (s *agentService) CreateAgentEngine(
 			logger.Warnf(ctx, "Failed to initialize skills manager: %v", err)
 		} else if skillsManager != nil {
 			engine.SetSkillsManager(skillsManager)
+			engine.SetSkillsMetadataSourceLineage(promptInputs.promptLineage)
 			logger.Infof(ctx, "Skills manager initialized with %d skills",
 				len(skillsManager.GetAllMetadata()))
 		}
@@ -359,7 +345,10 @@ func (s *agentService) CreateAgentEngine(
 		toolRegistry.RegisterTool(tools.NewBrowserSkillTool(s.browserSkill, scope, sessionID, instructions))
 	}
 
-	if len(promptInputs.bases) > 0 || len(promptInputs.documents) > 0 || builtinCheck != nil {
+	// Only explicit images/attachments have Nextcloud material producers that
+	// must be held through the model call. KB metadata, selected docs, question
+	// origins and the server-owned system prompt are WeKnora ACL inputs.
+	if shouldHoldAgentPromptInputs(ctx, promptInputs, builtinCheck) {
 		if _, err := holdAgentPromptInputs(ctx, promptInputs); err != nil {
 			return nil, err
 		}
@@ -1317,12 +1306,13 @@ func (s *agentService) getKnowledgeBaseInfos(
 		if err != nil {
 			logger.Warnf(ctx, "Failed to get knowledge base %s: %v", secutils.SanitizeForLog(kbID), err)
 			kbInfos = append(kbInfos, &agent.KnowledgeBaseInfo{
-				ID:          kbID,
-				Name:        kbID,
-				Type:        "document",
-				Description: "",
-				DocCount:    0,
-				RecentDocs:  []agent.RecentDocInfo{},
+				SourceLineage: sourceIndependentPromptLineage(),
+				ID:            kbID,
+				Name:          kbID,
+				Type:          "document",
+				Description:   "",
+				DocCount:      0,
+				RecentDocs:    []agent.RecentDocInfo{},
 			})
 			continue
 		}
@@ -1339,7 +1329,8 @@ func (s *agentService) getKnowledgeBaseInfos(
 			// The agent prompt has no per-file AD proof for a generic KB browse.
 			// Live retrieval has its own guard; omit cached titles and profiles.
 			kbInfos = append(kbInfos, &agent.KnowledgeBaseInfo{
-				ID: kb.ID, Name: kb.Name, Type: kb.Type, Description: kb.Description,
+				SourceLineage: sourceIndependentPromptLineage(),
+				ID:            kb.ID, Name: kb.Name, Type: kb.Type, Description: kb.Description,
 				Capabilities: kbRetrievalCapabilities(kb),
 				RecentDocs:   []agent.RecentDocInfo{},
 			})
@@ -1431,14 +1422,15 @@ func (s *agentService) getKnowledgeBaseInfos(
 			profile = kb.GeneratedProfile
 		}
 		kbInfos = append(kbInfos, &agent.KnowledgeBaseInfo{
-			ID:           kb.ID,
-			Name:         kb.Name,
-			Type:         kbType,
-			Description:  kb.Description,
-			DocCount:     docCount,
-			Capabilities: kbRetrievalCapabilities(kb),
-			RecentDocs:   recentDocs,
-			Profile:      profile,
+			SourceLineage: sourceIndependentPromptLineage(),
+			ID:            kb.ID,
+			Name:          kb.Name,
+			Type:          kbType,
+			Description:   kb.Description,
+			DocCount:      docCount,
+			Capabilities:  kbRetrievalCapabilities(kb),
+			RecentDocs:    recentDocs,
+			Profile:       profile,
 		})
 	}
 
@@ -1482,7 +1474,10 @@ func (s *agentService) resolveQuestionOriginInfo(
 	if origin == nil || origin.KnowledgeBaseID == "" || !targets.ContainsKB(origin.KnowledgeBaseID) {
 		return nil
 	}
-	info := &agent.QuestionOriginInfo{KnowledgeBaseID: origin.KnowledgeBaseID}
+	info := &agent.QuestionOriginInfo{
+		SourceLineage:   sourceIndependentPromptLineage(),
+		KnowledgeBaseID: origin.KnowledgeBaseID,
+	}
 	for _, kb := range kbInfos {
 		if kb != nil && kb.ID == origin.KnowledgeBaseID {
 			info.KnowledgeBaseName = kb.Name
@@ -1566,6 +1561,7 @@ func (s *agentService) getSelectedDocumentInfosInTargets(
 		}
 
 		docInfo := &agent.SelectedDocumentInfo{
+			SourceLineage:   sourceIndependentPromptLineage(),
 			KnowledgeID:     k.ID,
 			KnowledgeBaseID: k.KnowledgeBaseID,
 			Title:           k.Title,
@@ -1622,6 +1618,26 @@ func (s *agentService) resolvePinnedMCPServiceInfos(
 		result = append(result, &agent.PinnedMCPServiceInfo{ID: id, Name: id})
 	}
 	return result
+}
+
+func (s *agentService) resolveSourceIndependentPinnedMentions(
+	ctx context.Context,
+	config *types.AgentConfig,
+	lineage *types.SourceLineage,
+) ([]*agent.PinnedMCPServiceInfo, []*agent.PinnedSkillInfo) {
+	mcpServices := s.resolvePinnedMCPServiceInfos(ctx, config)
+	skills := s.resolvePinnedSkillInfos(config)
+	for _, info := range mcpServices {
+		if info != nil {
+			info.SourceLineage = lineage
+		}
+	}
+	for _, info := range skills {
+		if info != nil {
+			info.SourceLineage = lineage
+		}
+	}
+	return mcpServices, skills
 }
 
 func (s *agentService) attachPinnedMCPToolNames(

@@ -528,6 +528,7 @@ func TestGetKnowledgeBaseInfos_SharedKnowledgeBaseUsesSourceTenant(t *testing.T)
 
 	require.NoError(t, err)
 	require.Len(t, infos, 1)
+	require.NoError(t, infos[0].SourceLineage.RequireComplete())
 	assert.Equal(t, 1, infos[0].DocCount)
 	require.Len(t, infos[0].RecentDocs, 1)
 	assert.Equal(t, "shared-doc", infos[0].RecentDocs[0].KnowledgeID)
@@ -574,6 +575,7 @@ func TestGetKnowledgeBaseInfos_ExcludesUnprocessedDocuments(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Len(t, infos, 1)
+	require.NoError(t, infos[0].SourceLineage.RequireComplete())
 	assert.Equal(t, types.ParseStatusCompleted, knowledgeService.lastFilter.ParseStatus)
 	assert.Equal(t, 1, infos[0].DocCount)
 	require.Len(t, infos[0].RecentDocs, 1)

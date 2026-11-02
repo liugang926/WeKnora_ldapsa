@@ -49,8 +49,6 @@ type messageLineageHistoryAdmission struct {
 	verifier interfaces.MessageSourceLineageVerifier
 }
 
-type weknoraSourceIndependentAgentKey struct{}
-
 // weknoraACLHistoryAdmission keeps stored session history available under the
 // WeKnora owner/space boundary. Nextcloud publication receipts are lifecycle
 // evidence, not a second read ACL.

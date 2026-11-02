@@ -288,7 +288,12 @@ func (s *sessionService) KnowledgeQA(
 	if req.CustomAgent != nil {
 		lineageScope.AgentID, lineageScope.AgentTenantID = req.CustomAgent.ID, req.CustomAgent.TenantID
 	}
-	ctx, err = s.eventManager.BeginSourceLineage(ctx, chatManage, lineageScope)
+	ctx, err = s.eventManager.BeginSourceLineage(
+		ctx,
+		chatManage,
+		lineageScope,
+		s.knowledgeQAAuthorizer(req.Session),
+	)
 	if err != nil {
 		return err
 	}
@@ -806,6 +811,62 @@ func mergeTagScopesByKB(scopes []types.TagScope) map[string][]string {
 	return byKB
 }
 
+const knowledgeQAAuthorizationTimeout = 5 * time.Second
+
+// knowledgeQAAuthorizer revalidates ordinary knowledge chat against the
+// current WeKnora session owner and KB read policy. Nextcloud publication is a
+// source lifecycle proof, not a second read ACL for an attachment-free chat.
+func (s *sessionService) knowledgeQAAuthorizer(
+	expectedSession *types.Session,
+) func(context.Context, *types.SourceLineage, access.LineageReadScope) error {
+	if expectedSession == nil || expectedSession.ID == "" || expectedSession.TenantID == 0 ||
+		expectedSession.UserID == "" {
+		return func(context.Context, *types.SourceLineage, access.LineageReadScope) error {
+			return ErrResourceAccessDenied
+		}
+	}
+	return func(
+		checkCtx context.Context,
+		lineage *types.SourceLineage,
+		checkScope access.LineageReadScope,
+	) error {
+		if checkCtx == nil || checkCtx.Err() != nil {
+			if checkCtx != nil {
+				return checkCtx.Err()
+			}
+			return context.Canceled
+		}
+		if lineage == nil || lineage.RequireComplete() != nil {
+			return types.ErrSourceLineageInvalid
+		}
+		if s.sessionRepo == nil {
+			return access.ErrNextcloudPublicationUnavailable
+		}
+
+		authorizationCtx, cancel := context.WithTimeout(checkCtx, knowledgeQAAuthorizationTimeout)
+		defer cancel()
+		current, err := s.GetOwnedSession(authorizationCtx, expectedSession.ID)
+		if err != nil {
+			return fmt.Errorf("revalidate knowledge chat session authorization: %w", err)
+		}
+		if current == nil || current.ID != expectedSession.ID ||
+			current.TenantID != expectedSession.TenantID || current.UserID != expectedSession.UserID {
+			return ErrResourceAccessDenied
+		}
+		if err := s.revalidateSearchTargets(authorizationCtx, checkScope.Targets); err != nil {
+			return err
+		}
+		if lifecycle, ok := s.sourceLineageGuard.(interface {
+			CheckSourceLifecycle(context.Context, *types.SourceLineage) error
+		}); ok {
+			if err := lifecycle.CheckSourceLifecycle(authorizationCtx, lineage); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+}
+
 func uniqueNonEmptyStrings(values []string) []string {
 	seen := make(map[string]bool, len(values))
 	out := make([]string, 0, len(values))
@@ -1030,6 +1091,13 @@ func (s *sessionService) KnowledgeQAByEvent(ctx context.Context,
 				"error_type":  err.ErrorType,
 				"description": err.Description,
 			})
+			if err.Err == nil {
+				// A stage failed without a cause must surface as a visible
+				// failure. Returning nil here used to end the turn as a
+				// silent success: no answer, no error event and an
+				// incomplete assistant message.
+				return fmt.Errorf("pipeline stage %s failed without a cause: %s", eventType, err.Description)
+			}
 			return err.Err
 		}
 
@@ -1197,8 +1265,12 @@ func (s *sessionService) handleFixedFallback(ctx context.Context, chatManage *ty
 
 // handleModelFallback handles model-based fallback response using streaming
 func (s *sessionService) handleModelFallback(ctx context.Context, chatManage *types.ChatManage) {
-	if turn := types.RAGSourceLineageFromContext(ctx); turn != nil {
-		// Document-listing metadata has no covered producer contract.
+	if turn := types.RAGSourceLineageFromContext(ctx); turn != nil && turn.RequiresCompleteProducerLineage() {
+		// Strict material turns have no producer contract for a document-
+		// listing fallback. Marking the turn unknown makes the caller's
+		// turn.Check fail loudly instead of silently streaming nothing.
+		// ACL-mode turns (ordinary WeKnora-authorized chat) keep the official
+		// behaviour: a marked, source-independent fallback answer streams.
 		_ = turn.Add(types.UnknownSourceLineage())
 		return
 	}

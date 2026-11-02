@@ -374,8 +374,12 @@ func normalizeIDArray(in StringArray) StringArray {
 }
 
 // AuthorizeTenantAPIKeyKnowledgeBases rejects KB-restricted API key callers that
-// target one or more knowledge bases outside their allow-list.
+// target one or more knowledge bases outside their allow-list. This common
+// resource boundary also enforces the independent IM channel read scope.
 func AuthorizeTenantAPIKeyKnowledgeBases(ctx context.Context, kbIDs ...string) error {
+	if err := AuthorizeIMKnowledgeBases(ctx, kbIDs...); err != nil {
+		return err
+	}
 	scope, ok := TenantAPIKeyScopeFromContext(ctx)
 	if !ok || !scope.IsKnowledgeBaseRestricted() {
 		return nil

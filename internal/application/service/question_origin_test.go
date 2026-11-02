@@ -120,8 +120,10 @@ func TestResolveQuestionOriginInfo(t *testing.T) {
 
 	info := resolve("kb-a", "doc-in")
 	require.NotNil(t, info)
+	require.NoError(t, info.SourceLineage.RequireComplete())
 	assert.Equal(t, "TEST", info.KnowledgeBaseName)
 	require.NotNil(t, info.Document)
+	require.NoError(t, info.Document.SourceLineage.RequireComplete())
 	assert.Equal(t, "Corners", info.Document.Title)
 
 	info = resolve("kb-a", "doc-elsewhere")

@@ -43,7 +43,7 @@ func TestDocumentSummaryProjectionRequiresProducerMaterial(t *testing.T) {
 			case "missing-chunk":
 				snapshot.Chunk = nil
 			}
-			err = validateDocumentChunkProjection(snapshot)
+			err = validateDocumentChunkProjection(snapshot, snapshot.SourceLineage, true)
 			if mode == "text" || mode == "proved-summary" {
 				require.NoError(t, err)
 			} else {

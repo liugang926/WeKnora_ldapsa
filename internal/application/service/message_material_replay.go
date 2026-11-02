@@ -18,6 +18,13 @@ func (s *messageService) BeginCompletedMessageMaterialReplay(
 	if s.materialStore == nil || s.sourceLineageGuard == nil {
 		return nil, nil, nil, access.ErrNextcloudPublicationUnavailable
 	}
+	control, _, err := s.materialStore.MessageLiveControl(ctx, sessionID, messageID)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	if control == nil {
+		return nil, nil, nil, access.ErrNextcloudPublicationUnavailable
+	}
 	complete, err := s.materialStore.MessageCompletionControl(ctx, sessionID, messageID)
 	if err != nil {
 		return nil, nil, nil, err

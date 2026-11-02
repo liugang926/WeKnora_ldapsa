@@ -223,7 +223,15 @@ func (s *sessionService) CreateSession(ctx context.Context, session *types.Sessi
 
 	logger.Infof(ctx, "Creating session, tenant ID: %d", session.TenantID)
 
-	if s.groupAccess != nil {
+	if scope, ok := types.IMChannelScopeFromContext(ctx); ok {
+		if session.TenantID != scope.TenantID {
+			return nil, ErrResourceAccessDenied
+		}
+		if err := scope.Check(ctx, scope.TenantID, types.GroupResourceTypeAgent, scope.AgentID, types.ResourceActionUse); err != nil {
+			return nil, err
+		}
+		session.UserID = types.SessionOwnerIDFromContext(ctx)
+	} else if s.groupAccess != nil {
 		caller := types.CallerFromContext(ctx)
 		role, err := s.groupAccess.EffectiveTenantRole(ctx, caller.UserID, session.TenantID, time.Now().UTC())
 		if err != nil {
@@ -988,14 +996,6 @@ func (s *sessionService) GenerateTitle(ctx context.Context,
 	// This adapter sends only the author's raw user Content and the configured
 	// static title prompt. It never consumes captions, attachments or answers.
 	titleLineage, _ := types.NewCompleteSourceLineage()
-	if !access.UseWeKnoraReadAuthority() {
-		if s.sourceLineageGuard == nil {
-			return "", access.ErrNextcloudPublicationUnavailable
-		}
-		if err := s.sourceLineageGuard.Check(ctx, titleLineage, access.LineageReadScope{}); err != nil {
-			return "", err
-		}
-	}
 	for i := range chatMessages {
 		chatMessages[i].SourceLineage, _ = types.UnionSourceLineage(titleLineage)
 	}
@@ -1009,13 +1009,9 @@ func (s *sessionService) GenerateTitle(ctx context.Context,
 		return "", err
 	}
 
-	// Process and store the generated title. In the default strict mode the
-	// exact same source snapshot must still be valid before persistence.
-	if !access.UseWeKnoraReadAuthority() {
-		if err := s.sourceLineageGuard.Check(ctx, titleLineage, access.LineageReadScope{}); err != nil {
-			return "", err
-		}
-	}
+	// Process and store the generated title. The title is derived only from
+	// the owner's raw query and a server-owned static prompt; WeKnora session
+	// ownership already authorized this read.
 	title, truncated := sanitizeGeneratedTitle(response.Content)
 	if truncated {
 		logger.Warnf(ctx,

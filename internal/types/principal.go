@@ -186,6 +186,9 @@ func MCPOAuthPrincipalFromContext(ctx context.Context) Principal {
 // tenant API keys are isolated per key id; MCP OAuth token storage uses
 // MCPOAuthPrincipalFromContext (visitor-level for embed).
 func SessionOwnerIDFromContext(ctx context.Context) string {
+	if scope, ok := IMChannelScopeFromContext(ctx); ok && scope.OwnerID != "" {
+		return scope.OwnerID
+	}
 	if p, ok := PrincipalFromContext(ctx); ok {
 		switch p.Type {
 		case PrincipalAPIExternalUser, PrincipalEmbedSession:
