@@ -610,6 +610,7 @@ func (e *EvaluationService) EvalDataset(ctx context.Context, detail *types.Evalu
 			chatManage.SearchTargets = types.SearchTargets{
 				&types.SearchTarget{
 					Type:            types.SearchTargetTypeKnowledgeBase,
+					TenantID:        detail.Task.TenantID,
 					KnowledgeBaseID: knowledgeBaseID,
 				},
 			}
