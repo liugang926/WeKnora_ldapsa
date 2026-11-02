@@ -9,8 +9,8 @@ import (
 	"gorm.io/gorm/clause"
 )
 
-// Adopt only an unowned legacy session reached through the exact durable IM
-// mapping. This preserves conversation history without a tenant-wide migration.
+// Validate ownership through the exact durable mapping without changing history.
+// New IM sessions receive their owner atomically in CreateSession.
 func (s *Service) ensureChannelSessionOwner(ctx context.Context, mapping *ChannelSession) error {
 	scope, ok := types.IMChannelScopeFromContext(ctx)
 	if !ok || mapping == nil || scope.OwnerID == "" || mapping.TenantID != scope.TenantID || mapping.IMChannelID != scope.ChannelID || mapping.AgentID != scope.AgentID {
@@ -51,13 +51,9 @@ func (s *Service) ensureChannelSessionOwner(ctx context.Context, mapping *Channe
 		if session.UserID != "" {
 			return fmt.Errorf("IM session belongs to another owner")
 		}
-		result := tx.Model(&types.Session{}).Where("id = ? AND tenant_id = ? AND (user_id = '' OR user_id IS NULL)", session.ID, session.TenantID).Update("user_id", scope.OwnerID)
-		if result.Error != nil {
-			return result.Error
-		}
-		if result.RowsAffected != 1 {
-			return fmt.Errorf("IM session ownership changed concurrently")
-		}
-		return nil
+		// Never adopt an existing unowned session. Changing only sessions.user_id
+		// invalidates immutable message receipts and their owner revisions. Even an
+		// apparently empty session may have retained or concurrently written history.
+		return fmt.Errorf("legacy IM session has no owner; automatic adoption denied")
 	})
 }
