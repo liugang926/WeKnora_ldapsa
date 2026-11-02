@@ -120,6 +120,10 @@ func captureKnowledgeActorSelector(ctx context.Context, admissionID string) (kno
 		return selector, types.ErrSourceLineageUnknown
 	}
 	switch principal.Type {
+	case types.PrincipalIMUser:
+		if err := validateLiveIMActor(ctx, selector); err != nil {
+			return selector, err
+		}
 	case types.PrincipalWebUser:
 		_, machine := types.TenantAPIKeyScopeFromContext(ctx)
 		if caller.UserID == "" || principal.ID != caller.UserID || types.IsSyntheticUserID(caller.UserID) || machine {
@@ -405,6 +409,18 @@ func (s *KnowledgeInputProvenanceStore) restoreCurrentKnowledgeActor(
 	actor knowledgeBuildActorSelector,
 	executionTenant uint64,
 ) (context.Context, error) {
+	// A stored IM selector is an identity, never a transferable credential.
+	// Only the authenticated channel's current in-memory grant can refresh it.
+	if actor.PrincipalType == types.PrincipalIMUser {
+		if err := validateLiveIMActor(ctx, actor); err != nil {
+			return ctx, err
+		}
+		ctx = context.WithValue(ctx, types.KBGrantsContextKey, nil)
+		ctx = context.WithValue(ctx, types.UserContextKey, nil)
+		ctx = context.WithValue(ctx, types.SystemAdminContextKey, false)
+		ctx = context.WithValue(ctx, types.TenantRoleContextKey, types.TenantRoleViewer)
+		return types.WithExecutionTenant(ctx, executionTenant), nil
+	}
 	principal := types.Principal{Type: actor.PrincipalType, ID: actor.PrincipalID}
 	caller := types.Caller{TenantID: actor.CallerTenantID, UserID: actor.UserID, Role: types.TenantRoleViewer}
 	// Drop any cached request/task grants. They are not reconstructed authority.
@@ -506,3 +522,16 @@ func (s *KnowledgeInputProvenanceStore) restoreCurrentKnowledgeActor(
 var _ interface {
 	RestoreKnowledgeBuildActor(context.Context, *types.KnowledgeBuildInputProof) (context.Context, error)
 } = (*KnowledgeInputProvenanceStore)(nil)
+
+func validateLiveIMActor(ctx context.Context, actor knowledgeBuildActorSelector) error {
+	scope, ok := types.IMChannelScopeFromContext(ctx)
+	caller := types.CallerFromContext(ctx)
+	principal, verified := types.PrincipalFromContext(ctx)
+	_, machine := types.TenantAPIKeyScopeFromContext(ctx)
+	if !ok || !verified || machine || actor.APIKeyID != nil || scope.OwnerID == "" || scope.ChannelID == "" ||
+		principal.Type != types.PrincipalIMUser || actor.PrincipalType != principal.Type || actor.PrincipalID != principal.ID ||
+		actor.CallerTenantID != caller.TenantID || actor.UserID != caller.UserID || caller.Role != types.TenantRoleViewer {
+		return ErrKnowledgeInputChanged
+	}
+	return scope.Check(ctx, scope.TenantID, types.GroupResourceTypeAgent, scope.AgentID, types.ResourceActionUse)
+}

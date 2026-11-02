@@ -2520,6 +2520,9 @@ func (s *Service) handleMessageStream(ctx context.Context, msg *IncomingMessage,
 
 	useAgent := customAgent != nil && customAgent.IsAgentMode()
 	eventBus := event.NewEventBus()
+	provenance := &imMessageProvenance{}
+	eventBus.On(event.EventAgentFinalAnswer, func(_ context.Context, evt event.Event) error { provenance.observe(evt); return nil })
+	eventBus.On(event.EventAgentComplete, func(_ context.Context, evt event.Event) error { provenance.observe(evt); return nil })
 
 	var (
 		bufMu           sync.Mutex
@@ -2791,7 +2794,7 @@ func (s *Service) handleMessageStream(ctx context.Context, msg *IncomingMessage,
 	}
 
 	// Create placeholder assistant message
-	assistantMsg, err = s.messageService.CreateMessage(qaCtx, createIMAssistantMessagePayload(session.ID, requestID))
+	assistantMsg, err = s.messageService.CreateMessage(qaCtx, imAssistantMessage(ctx, session.ID, requestID, customAgent))
 	if err != nil {
 		return fmt.Errorf("create assistant message: %w", err)
 	}
@@ -2847,10 +2850,19 @@ func (s *Service) handleMessageStream(ctx context.Context, msg *IncomingMessage,
 	defer ticker.Stop()
 
 	flush := func() {
+		if provenance.check(ctx) != nil {
+			return
+		}
 		bufMu.Lock()
 		parts := getStreamParts()
+		snapshot := *assistantMsg
+		snapshot.KnowledgeReferences = append(types.References(nil), assistantMsg.KnowledgeReferences...)
 		agentRunning := useAgent && !agentDone
 		bufMu.Unlock()
+
+		if s.checkIMMessagePublication(ctx, provenance, &snapshot) != nil {
+			return
+		}
 
 		displaySource := FormatIMIntermediateFromParts(parts, agentRunning)
 		if displaySource == "" {
@@ -2900,6 +2912,10 @@ loop:
 	authServices := append([]imMCPAuthService(nil), mcpAuthServices...)
 	bufMu.Unlock()
 
+	if err := s.checkIMMessagePublication(ctx, provenance, assistantMsg); err != nil {
+		return fmt.Errorf("IM answer provenance: %w", err)
+	}
+
 	outCtx := imOutboundContext(ctx)
 	finalDisplay := cleanIMContent(outCtx, FormatIMFinalFromParts(parts), tenant, s.defaultFileSvc, s.storageResolver)
 	if noVisibleContent || finalDisplay == "" {
@@ -2915,6 +2931,12 @@ loop:
 	if notice := s.buildIMMCPAuthNotice(ctx, authServices); notice != "" {
 		finalDisplay = appendIMAuthNotice(finalDisplay, notice)
 		answer = appendIMAuthNotice(answer, notice)
+	}
+
+	assistantMsg.Content = answer
+	assistantMsg.IsCompleted = true
+	if err := s.messageService.UpdateMessage(outCtx, assistantMsg); err != nil {
+		return fmt.Errorf("persist IM answer: %w", err)
 	}
 
 	finalizeErr := streamer.FinalizeStream(outCtx, msg, streamID, finalDisplay)
@@ -2940,12 +2962,6 @@ loop:
 
 	if answer == "" {
 		answer = imNoAnswerFallback
-	}
-
-	assistantMsg.Content = answer
-	assistantMsg.IsCompleted = true
-	if err := s.messageService.UpdateMessage(outCtx, assistantMsg); err != nil {
-		logger.Warnf(ctx, "[IM] Failed to update assistant message: %v", err)
 	}
 
 	if finalizeErr != nil && fallbackErr != nil {
@@ -2978,6 +2994,9 @@ func (s *Service) runQA(ctx context.Context, session *types.Session, query strin
 	defer cancel()
 
 	eventBus := event.NewEventBus()
+	provenance := &imMessageProvenance{}
+	eventBus.On(event.EventAgentFinalAnswer, func(_ context.Context, evt event.Event) error { provenance.observe(evt); return nil })
+	eventBus.On(event.EventAgentComplete, func(_ context.Context, evt event.Event) error { provenance.observe(evt); return nil })
 
 	// Thread-safe answer collection
 	var answerMu sync.Mutex
@@ -3049,7 +3068,7 @@ func (s *Service) runQA(ctx context.Context, session *types.Session, query strin
 	}
 
 	// Create a placeholder assistant message
-	assistantMsg, err := s.messageService.CreateMessage(ctx, createIMAssistantMessagePayload(session.ID, requestID))
+	assistantMsg, err := s.messageService.CreateMessage(ctx, imAssistantMessage(ctx, session.ID, requestID, customAgent))
 	if err != nil {
 		return "", fmt.Errorf("create assistant message: %w", err)
 	}
@@ -3156,11 +3175,15 @@ func (s *Service) runQA(ctx context.Context, session *types.Session, query strin
 		answer = appendIMAuthNotice(answer, notice)
 	}
 
+	if err := s.checkIMMessagePublication(ctx, provenance, assistantMsg); err != nil {
+		return "", fmt.Errorf("IM answer provenance: %w", err)
+	}
+
 	// Update assistant message with the full answer (including citation tags for web rendering).
 	assistantMsg.Content = answer
 	assistantMsg.IsCompleted = true
 	if err := s.messageService.UpdateMessage(ctx, assistantMsg); err != nil {
-		logger.Warnf(ctx, "[IM] Failed to update assistant message: %v", err)
+		return "", fmt.Errorf("persist IM answer: %w", err)
 	}
 
 	// Return raw answer — callers apply cleanIMContent with the appropriate FileService.
