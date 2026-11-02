@@ -21,7 +21,7 @@ type evaluationImportStore struct {
 }
 
 func (s evaluationImportStore) CreateKnowledgeFromPassageSync(ctx context.Context, kb string, passages []string, channel string) (*types.Knowledge, error) {
-	k := &types.Knowledge{ID: "benchmark-import", TenantID: 7, KnowledgeBaseID: kb, Type: "passage", Channel: "web", ParseStatus: "pending", EnableStatus: "disabled", EmbeddingModelID: "embed"}
+	k := &types.Knowledge{ID: "benchmark-import", TenantID: 7, KnowledgeBaseID: kb, Type: "passage", Channel: "web", ParseStatus: "completed", EnableStatus: "enabled", EmbeddingModelID: "embed"}
 	_, err := s.store.CreateKnowledgeWithInput(ctx, k, passages)
 	return k, err
 }

@@ -512,7 +512,9 @@ func (e *EvaluationService) EvalDataset(ctx context.Context, detail *types.Evalu
 	logger.Infof(ctx, "Task ID: %s, Dataset ID: %s", detail.Task.ID, detail.Task.DatasetID)
 	defer func() {
 		logger.Infof(ctx, "Cleaning up evaluation knowledge base: %s", knowledgeBaseID)
-		if err := e.knowledgeBaseService.DeleteKnowledgeBase(ctx, knowledgeBaseID); err != nil {
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+		defer cancel()
+		if err := e.knowledgeBaseService.DeleteKnowledgeBase(cleanupCtx, knowledgeBaseID); err != nil {
 			logger.Errorf(ctx, "Failed to delete evaluation knowledge base %s: %v", knowledgeBaseID, err)
 		}
 	}()
@@ -569,7 +571,9 @@ func (e *EvaluationService) EvalDataset(ctx context.Context, detail *types.Evalu
 	// Setup cleanup of temporary resources
 	defer func() {
 		logger.Infof(ctx, "Cleaning up resources - deleting knowledge: %s", knowledge.ID)
-		if err := deleteReferencedKnowledge(ctx,
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+		defer cancel()
+		if err := deleteReferencedKnowledge(cleanupCtx,
 			e.knowledgeService,
 			knowledgeBaseID,
 			[]string{knowledge.ID}); err != nil {
@@ -577,6 +581,11 @@ func (e *EvaluationService) EvalDataset(ctx context.Context, detail *types.Evalu
 		}
 
 	}()
+
+	// Synchronous import waits for indexing, not asynchronous enrichment/finalization.
+	if err := waitForEvaluationKnowledge(ctx, e.knowledgeService.GetRepository(), detail.Task.TenantID, knowledgeBaseID, knowledge.ID, 5*time.Minute, time.Second); err != nil {
+		return err
+	}
 
 	// Initialize parallel evaluation metrics
 	var finished int
