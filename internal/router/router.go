@@ -356,6 +356,19 @@ func NewRouter(params RouterParams) *gin.Engine {
 		// so that sub-groups inherit it.
 		v1.Use(rbacGuards.apiKeyAuthorizer.Middleware())
 
+		// Employee write-block (W-ACL-01): rejects management writes
+		// (knowledge/KB management, model & agent config, org settings,
+		// API keys, sharing, MCP endpoint config) from non-admin HUMAN
+		// sessions. Reads, self-service routes, chat/retrieval/memory and
+		// the API-key machine channel all pass through. Runs after Auth
+		// (role/principal are already resolved on the context) and before
+		// the per-route RBAC guards, as an employee-tightening layer on
+		// top of them. The blocked prefix list lives in one testable
+		// declaration inside the middleware — see
+		// internal/middleware/employee_management_block.go for the
+		// prefix↔requirement-category mapping.
+		v1.Use(middleware.EmployeeManagementBlock())
+
 		RegisterAuthRoutes(v1, params.AuthHandler, rbacGuards)
 		if params.NextcloudConnectionHandler != nil {
 			connection := v1.Group("/integrations/nextcloud/connection")
