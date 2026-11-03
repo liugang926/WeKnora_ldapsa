@@ -746,9 +746,17 @@ func (s *userService) LoginWithDingTalkCode(
 			CorpID: cfg.CorpID, Reason: types.DingTalkRejectUnavailable, Detail: truncateDingTalkDetail(fmt.Sprintf("load contact profile failed: %v", err)),
 		})
 	}
-	if corpID != cfg.CorpID {
+	// AC-03 enterprise lock: a token that carries a corp id must carry OURS.
+	// An empty corp id (DingTalk omits it for some permission/scope
+	// combinations of /contact/users/me) is not a mismatch — enterprise
+	// membership is still proven authoritatively by the corp-token
+	// unionId→userid resolution right below, which fails for any account
+	// outside this enterprise.
+	if corpID != "" && corpID != cfg.CorpID {
 		return nil, s.rejectDingTalkLogin(ctx, types.DingTalkRejectWrongCorp, types.DingTalkAuthEvent{
-			CorpID: cfg.CorpID, Reason: types.DingTalkRejectWrongCorp, Detail: "token corp does not match configuration",
+			CorpID: cfg.CorpID, Reason: types.DingTalkRejectWrongCorp,
+			Detail: truncateDingTalkDetail(
+				fmt.Sprintf("token corp does not match configuration (received=%q)", corpID)),
 		})
 	}
 
