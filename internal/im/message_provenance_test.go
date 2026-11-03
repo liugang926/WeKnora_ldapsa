@@ -74,21 +74,32 @@ func TestIMRealMessageProducerBothOutputPaths(t *testing.T) {
 				agent := &types.CustomAgent{ID: "agent", TenantID: 7, Config: types.CustomAgentConfig{AgentMode: types.AgentModeSmartReasoning, KBSelectionMode: "none"}}
 				for turn := 0; turn < 2; turn++ {
 					session := &types.Session{ID: "session", TenantID: 7, UserID: "im_session:test"}
+					turnCtx, cancelTurn := context.WithCancel(ctx)
+					ownedCtx, owner := svc.beginInflight(turnCtx, "key", cancelTurn)
 					var runErr error
 					if stream {
 						adapter := &recordingStreamSender{}
-						runErr = svc.handleMessageStream(ctx, &IncomingMessage{Platform: PlatformDingtalk, UserID: "sender", Content: "fixture question"}, session, agent, nil, nil, nil, adapter, nil, "key", nil)
+						runErr = svc.handleMessageStream(ownedCtx, &IncomingMessage{Platform: PlatformDingtalk, UserID: "sender", Content: "fixture question"}, session, agent, nil, nil, nil, adapter, nil, "key", nil)
 						if fault != "none" {
 							updates, final, _ := adapter.snapshot()
 							require.Empty(t, updates)
 							require.Empty(t, final)
 						}
 					} else {
-						answer, e := svc.runQA(ctx, session, "fixture question", agent, nil, nil, nil, "key", nil)
+						answer, e := svc.runQA(ownedCtx, session, "fixture question", agent, nil, nil, nil, "key", nil)
 						runErr = e
 						if fault == "none" {
 							require.NotEmpty(t, answer)
 						}
+					}
+					owner.mu.Lock()
+					boundSession, boundMessage := owner.sessionID, owner.assistantMessageID
+					owner.mu.Unlock()
+					svc.finishInflight(ownedCtx, "key", owner)
+					cancelTurn()
+					if fault == "none" {
+						require.Equal(t, session.ID, boundSession)
+						require.NotEmpty(t, boundMessage)
 					}
 					if fault != "none" {
 						require.Error(t, runErr)
