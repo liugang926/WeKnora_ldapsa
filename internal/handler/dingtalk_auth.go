@@ -133,6 +133,17 @@ func (h *DingTalkAuthHandler) DingTalkRedirectCallback(c *gin.Context) {
 	frontendRedirectURI := "/"
 
 	state := strings.TrimSpace(c.Query("state"))
+	code := strings.TrimSpace(c.Query("code"))
+	// A callback hit with NEITHER code NOR state is a direct navigation, not a
+	// completed OAuth transaction — typically a DingTalk client opening the
+	// workbench app whose homepage was misconfigured to the callback URL
+	// (DingTalk clients then probe it on every open). Treat it as a plain
+	// entry-point hit and land on the SPA root instead of surfacing a
+	// misleading "session expired" error for an already-valid session.
+	if state == "" && code == "" {
+		c.Redirect(http.StatusFound, frontendRedirectURI)
+		return
+	}
 	if err := verifyDingTalkState(state, c.Request); err != nil {
 		logger.Errorf(ctx, "Failed to verify DingTalk state: %v", err)
 		c.Redirect(http.StatusFound, frontendRedirectURI+"#dingtalk_error="+urlQueryEscape("invalid_state"))
@@ -141,7 +152,6 @@ func (h *DingTalkAuthHandler) DingTalkRedirectCallback(c *gin.Context) {
 	// One-time use: clear the binding cookie as soon as it is checked.
 	c.SetCookie(dingTalkStateCookieName, "", -1, "/", "", false, true)
 
-	code := strings.TrimSpace(c.Query("code"))
 	if code == "" {
 		c.Redirect(http.StatusFound, frontendRedirectURI+"#dingtalk_error="+urlQueryEscape("missing_code"))
 		return

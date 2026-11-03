@@ -448,3 +448,18 @@ func TestDingTalkInAppLoginValidation(t *testing.T) {
 		}
 	})
 }
+
+// A callback navigation with neither code nor state (a DingTalk client
+// opening the workbench app whose homepage was pointed at the callback
+// URL) must land on the SPA root silently, not surface invalid_state.
+func TestDingTalkCallbackParamlessNavigationIsSilent(t *testing.T) {
+	r := newDingTalkTestRouter(newDingTalkTestHandler(true, &stubDingTalkUserService{}))
+	w := doDingTalkRequest(r, http.MethodGet, "/auth/dingtalk/callback")
+	if w.Code != http.StatusFound {
+		t.Fatalf("status = %d, want 302", w.Code)
+	}
+	loc := w.Header().Get("Location")
+	if loc != "/" {
+		t.Fatalf("location = %q, want plain root without an error fragment", loc)
+	}
+}
