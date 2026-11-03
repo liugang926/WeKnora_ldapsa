@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Tencent/WeKnora/internal/agent"
 	"github.com/Tencent/WeKnora/internal/agent/tools"
 	"github.com/Tencent/WeKnora/internal/application/access"
 	"github.com/Tencent/WeKnora/internal/application/repository"
@@ -13,6 +14,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/event"
 	"github.com/Tencent/WeKnora/internal/models/chat"
 	"github.com/Tencent/WeKnora/internal/types"
+	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
@@ -21,6 +23,22 @@ type agentPromptActualModel struct {
 	fakeAgentChatModel
 	messages []chat.Message
 	calls    int
+}
+
+type agentPromptMCPDirectory struct {
+	interfaces.MCPServiceService
+}
+
+func (d *agentPromptMCPDirectory) ListMCPServicesByIDs(
+	_ context.Context, _ uint64, ids []string,
+) ([]*types.MCPService, error) {
+	result := make([]*types.MCPService, 0, len(ids))
+	for _, id := range ids {
+		result = append(result, &types.MCPService{
+			ID: id, Name: "Actual prompt MCP", Description: "Server-resolved MCP metadata",
+		})
+	}
+	return result, nil
 }
 
 func (m *agentPromptActualModel) ChatStream(
@@ -153,14 +171,15 @@ func TestAgentPromptActualDefaultKBAndDocumentMetadata(t *testing.T) {
 		"agent-metadata-turn",
 	)
 	require.NoError(t, err)
-	guarded, ok := engine.(*agentPromptInputEngine)
+	_, wrapped := engine.(*agentPromptInputEngine)
+	require.False(t, wrapped, "ordinary KB metadata must not enter the Nextcloud material guard")
+	direct, ok := engine.(*agent.AgentEngine)
 	require.True(t, ok)
-	guarded.SetSourceLineageVerifier(func(current context.Context, lineage *types.SourceLineage) error {
-		return messages.sourceLineageGuard.Check(
-			current,
-			lineage,
-			access.LineageReadScope{Targets: settings.SearchTargets},
-		)
+	direct.SetSourceLineageVerifier(func(current context.Context, lineage *types.SourceLineage) error {
+		if current == nil || current.Err() != nil {
+			return access.ErrNextcloudPublicationUnavailable
+		}
+		return lineage.RequireComplete()
 	})
 	state, err := engine.Execute(ctx, session.ID, "agent-metadata-turn", "answer using the selected knowledge", nil)
 	require.NoError(t, err)
@@ -175,12 +194,66 @@ func TestAgentPromptActualDefaultKBAndDocumentMetadata(t *testing.T) {
 	require.NotContains(t, wire.String(), "doc_count=")
 	require.NotContains(t, wire.String(), "UNPROVEN_KB_DESCRIPTION")
 	require.NotContains(t, wire.String(), "UNPROVEN_PROFILE")
-	require.NoError(t, CheckMessageMaterialOutputBoundary(ctx))
-	require.NoError(
+}
+
+func TestAgentPromptMaterialHoldRequiresExplicitInputMaterials(t *testing.T) {
+	inputs := &agentPromptInputGuard{
+		bases: []*repository.KnowledgeBasePromptInputSnapshot{{}},
+	}
+	check := func(context.Context) error { return nil }
+
+	require.False(
 		t,
-		db.Model(&types.User{}).Where("id=?", types.CallerFromContext(ctx).UserID).Update("is_active", false).Error,
+		shouldHoldAgentPromptInputs(context.Background(), inputs, nil),
+		"an ordinary KB prompt without explicit materials must use the direct engine",
 	)
-	require.Error(t, CheckMessageMaterialOutputBoundary(ctx), "buffered HTTP output must recheck the current reader")
+	require.False(
+		t,
+		shouldHoldAgentPromptInputs(
+			withAgentExplicitInputMaterials(context.Background(), false),
+			inputs,
+			check,
+		),
+		"a server-owned prompt alone is not a Nextcloud material",
+	)
+	require.True(
+		t,
+		shouldHoldAgentPromptInputs(
+			withAgentExplicitInputMaterials(context.Background(), true),
+			inputs,
+			nil,
+		),
+		"explicit materials must keep retained prompt producers held",
+	)
+}
+
+func TestAgentPinnedMetadataIsSourceIndependent(t *testing.T) {
+	ctx := types.WithExecutionTenant(
+		context.Background(),
+		7,
+	)
+	settings := &types.AgentConfig{
+		MCPSelectionMode:    "none",
+		PinnedMCPServiceIDs: []string{"mcp-prompt"},
+		PinnedSkillNames:    []string{"skill-prompt"},
+		TenantSkills: []*types.TenantSkillEntity{{
+			Name: "skill-prompt", Description: "Server-resolved pinned skill metadata",
+		}},
+	}
+	service := &agentService{
+		mcpServiceService: &agentPromptMCPDirectory{},
+	}
+	lineage := sourceIndependentPromptLineage()
+	require.NoError(t, lineage.RequireComplete())
+	mcpServices, skills := service.resolveSourceIndependentPinnedMentions(
+		ctx,
+		settings,
+		lineage,
+	)
+	require.Len(t, mcpServices, 1)
+	require.Len(t, skills, 1)
+	require.NoError(t, mcpServices[0].SourceLineage.RequireComplete())
+	require.NoError(t, skills[0].SourceLineage.RequireComplete())
 }
 
 func TestAgentPromptQuestionOriginIsAHintNotSelectedDocumentInput(t *testing.T) {

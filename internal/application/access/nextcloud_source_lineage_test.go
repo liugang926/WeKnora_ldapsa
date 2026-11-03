@@ -201,6 +201,18 @@ func TestNextcloudSourceLineageChecksOriginalIdentityAndVersion(t *testing.T) {
 	require.Equal(t, saved, resolved)
 }
 
+func TestNextcloudSourceLifecycleChecksPublicationWithoutReapplyingDirectoryACL(t *testing.T) {
+	guard, ctx, saved, snapshots, groups := lineagePolicyFixture(t)
+	guard.currentReadActor = nil
+	groups.allowed = false
+
+	require.NoError(t, guard.CheckSourceLifecycle(ctx, saved))
+	require.Empty(t, groups.callers)
+
+	snapshots.identity.ETag = "revoked-new-etag"
+	require.ErrorIs(t, guard.CheckSourceLifecycle(ctx, saved), ErrNextcloudPublicationDenied)
+}
+
 func TestNextcloudSourceLineageRechecksFreshGrantsAndLocalVersionAfterRemoteAuth(t *testing.T) {
 	for _, changed := range []string{"KB directory grant", "org share", "shared agent", "local generation"} {
 		t.Run(changed, func(t *testing.T) {

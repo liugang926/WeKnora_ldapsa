@@ -179,6 +179,7 @@ COPY --from=builder /app/config ./config
 COPY --from=builder /app/scripts ./scripts
 COPY --from=builder /app/migrations ./migrations
 COPY --from=builder /app/dataset/samples ./dataset/samples
+COPY --from=builder /app/dataset/benchmarks ./dataset/benchmarks
 COPY --from=builder /root/.duckdb /home/appuser/.duckdb
 COPY --from=builder /app/WeKnora .
 COPY --from=builder /app/original-body-retention /usr/local/bin/original-body-retention

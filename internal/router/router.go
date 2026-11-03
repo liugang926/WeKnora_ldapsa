@@ -185,6 +185,9 @@ func NewRouter(params RouterParams) *gin.Engine {
 	})
 	r.GET("/metrics", handler.ServeNextcloudMetrics(params.DB))
 
+	// Operator diagnostics (off by default; see registerDebugPprof).
+	registerDebugPprof(r)
+
 	// Swagger API 文档（仅在非生产环境下启用）
 	// 通过 GIN_MODE 环境变量判断：release 模式下禁用 Swagger
 	if gin.Mode() != gin.ReleaseMode {

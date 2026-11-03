@@ -260,6 +260,79 @@ func (g *NextcloudSourceLineageGuard) Check(
 	return g.recheckCurrentReadActor(ctx)
 }
 
+// CheckSourceLifecycle verifies that saved Nextcloud source identities still
+// refer to the current, published knowledge object. Unlike Check, it does not
+// refresh the request actor or reapply directory ACLs: ordinary WeKnora reads
+// are authorized by the workspace/session ACL, while Nextcloud remains the
+// authority for file publication, withdrawal and recycling.
+func (g *NextcloudSourceLineageGuard) CheckSourceLifecycle(
+	ctx context.Context,
+	lineage *types.SourceLineage,
+) error {
+	if ctx == nil || g == nil {
+		return ErrNextcloudPublicationUnavailable
+	}
+	if lineage == nil || len(lineage.Sources) == 0 {
+		return nil
+	}
+	if lineage.RequireComplete() != nil {
+		return ErrNextcloudPublicationDenied
+	}
+	if g.snapshots == nil || g.publication == nil {
+		return ErrNextcloudPublicationUnavailable
+	}
+	for _, saved := range lineage.Sources {
+		if saved.Provider != types.ConnectorTypeNextcloud {
+			continue
+		}
+		knowledge, current, err := g.snapshots.ResolveNextcloudSourceLineage(
+			ctx,
+			saved.TenantID,
+			saved.KnowledgeBaseID,
+			saved.KnowledgeID,
+		)
+		if err != nil {
+			return apperrors.NewProtocolError(fmt.Errorf(
+				"%w: trusted lifecycle lookup",
+				ErrNextcloudPublicationUnavailable,
+			), fmt.Sprintf("%s: trusted lifecycle lookup", apperrors.PublicMessage(
+				ErrNextcloudPublicationUnavailable,
+			)))
+		}
+		if current != saved || current.Validate() != nil || knowledge == nil ||
+			knowledge.ID != saved.KnowledgeID ||
+			knowledge.TenantID != saved.TenantID ||
+			knowledge.KnowledgeBaseID != saved.KnowledgeBaseID ||
+			knowledge.Channel != types.ConnectorTypeNextcloud ||
+			knowledge.DeletedAt.Valid ||
+			knowledge.ParseStatus != types.ParseStatusCompleted ||
+			knowledge.EnableStatus != "enabled" {
+			return ErrNextcloudPublicationDenied
+		}
+		if err := g.publication.CheckKnowledge(ctx, knowledge); err != nil {
+			return err
+		}
+		_, after, err := g.snapshots.ResolveNextcloudSourceLineage(
+			ctx,
+			saved.TenantID,
+			saved.KnowledgeBaseID,
+			saved.KnowledgeID,
+		)
+		if err != nil {
+			return apperrors.NewProtocolError(fmt.Errorf(
+				"%w: trusted lifecycle recheck",
+				ErrNextcloudPublicationUnavailable,
+			), fmt.Sprintf("%s: trusted lifecycle recheck", apperrors.PublicMessage(
+				ErrNextcloudPublicationUnavailable,
+			)))
+		}
+		if after != saved {
+			return ErrNextcloudPublicationDenied
+		}
+	}
+	return nil
+}
+
 // Resolve performs both trusted identity resolution and current authorization.
 // Producers must still union every actual input, not just displayed citations.
 func (g *NextcloudSourceLineageGuard) Resolve(

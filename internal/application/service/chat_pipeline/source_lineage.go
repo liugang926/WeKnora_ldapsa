@@ -10,23 +10,42 @@ import (
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 )
 
-// BeginSourceLineage is the mandatory ordinary RAG entry boundary. Only text,
-// persisted accounted history and trusted hydrated document results are covered.
-// Other adapters remain unknown until they supply their own dependency contract.
+// BeginSourceLineage is the mandatory ordinary RAG entry boundary. Callers may
+// supply a current WeKnora ACL authorizer for requests without explicit input
+// materials; those turns retain authenticated source identities while allowing
+// receipt-less legacy producers. Explicit images or attachments remain strict.
 func (e *EventManager) BeginSourceLineage(
 	ctx context.Context,
 	cm *types.ChatManage,
 	scope access.LineageReadScope,
+	aclCheck ...func(context.Context, *types.SourceLineage, access.LineageReadScope) error,
 ) (context.Context, error) {
-	turn := types.NewRAGSourceLineage(func(ctx context.Context, lineage *types.SourceLineage) error {
-		if err := types.CheckHistoryMaterialLifetime(ctx); err != nil {
-			return err
-		}
-		if e == nil || e.sourceLineageGuard == nil {
-			return access.ErrNextcloudPublicationUnavailable
-		}
-		return e.sourceLineageGuard.Check(ctx, lineage, scope)
-	})
+	explicitInputMaterials := cm != nil && (len(cm.Images) > 0 || len(cm.Attachments) > 0)
+	var turn *types.RAGSourceLineage
+	if !explicitInputMaterials && len(aclCheck) == 1 {
+		// Ordinary knowledge chat is authorized by the current WeKnora
+		// caller/session/space ACL. Nextcloud source identities remain
+		// lifecycle metadata rather than a second read ACL.
+		turn = types.NewWeKnoraACLSourceLineage(func(ctx context.Context, lineage *types.SourceLineage) error {
+			if err := types.CheckHistoryMaterialLifetime(ctx); err != nil {
+				return err
+			}
+			if aclCheck[0] == nil {
+				return access.ErrNextcloudPublicationUnavailable
+			}
+			return aclCheck[0](ctx, lineage, scope)
+		})
+	} else {
+		turn = types.NewRAGSourceLineage(func(ctx context.Context, lineage *types.SourceLineage) error {
+			if err := types.CheckHistoryMaterialLifetime(ctx); err != nil {
+				return err
+			}
+			if e == nil || e.sourceLineageGuard == nil {
+				return access.ErrNextcloudPublicationUnavailable
+			}
+			return e.sourceLineageGuard.Check(ctx, lineage, scope)
+		})
+	}
 	ctx = types.WithRAGSourceLineage(ctx, turn)
 	if cm == nil || len(cm.Images) > 0 || len(cm.Attachments) > 0 || cm.QuotedContext != "" ||
 		cm.ImageDescription != "" || cm.WebSearchEnabled || cm.DataAnalysisEnabled || len(
@@ -117,6 +136,13 @@ func CheckSourceLineageInputs(ctx context.Context, cm *types.ChatManage) error {
 }
 
 func sourceLineagePluginError(err error) *PluginError {
+	if err == nil {
+		// A passing lineage check must not abort the pipeline: the stage loop
+		// treats any non-nil PluginError as failure but returns PluginError.Err,
+		// so a non-nil wrapper around nil used to end the turn "successfully"
+		// with no answer, no error and an incomplete assistant message.
+		return nil
+	}
 	if errors.Is(err, types.ErrSourceLineageUnknown) || errors.Is(err, types.ErrSourceLineageInvalid) ||
 		errors.Is(err, types.ErrSourceLineageLimit) {
 		err = access.ErrNextcloudPublicationDenied

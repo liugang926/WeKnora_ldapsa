@@ -13,14 +13,27 @@ type ragLineageContextKey struct{}
 // adapters. It is shared by parallel readers and never serialized or supplied
 // to a model. A model response inherits the union of all earlier inputs.
 type RAGSourceLineage struct {
-	mu        sync.Mutex
-	lineage   *SourceLineage
-	revision  uint64
-	authorize func(context.Context, *SourceLineage) error
+	mu              sync.Mutex
+	lineage         *SourceLineage
+	revision        uint64
+	authorize       func(context.Context, *SourceLineage) error
+	requireComplete bool
 }
 
 // NewRAGSourceLineage creates a turn accumulator with a current authorization checker.
 func NewRAGSourceLineage(authorize func(context.Context, *SourceLineage) error) *RAGSourceLineage {
+	lineage, _ := NewCompleteSourceLineage()
+	return &RAGSourceLineage{lineage: lineage, authorize: authorize, requireComplete: true}
+}
+
+// NewWeKnoraACLSourceLineage creates a turn accumulator for ordinary WeKnora
+// Agent work. The current WeKnora caller/session/Agent/space ACL authorizes the
+// turn; authenticated source receipts remain attached when available, while a
+// receipt-less legacy or code-owned producer is not reinterpreted as a
+// Nextcloud material denial.
+func NewWeKnoraACLSourceLineage(
+	authorize func(context.Context, *SourceLineage) error,
+) *RAGSourceLineage {
 	lineage, _ := NewCompleteSourceLineage()
 	return &RAGSourceLineage{lineage: lineage, authorize: authorize}
 }
@@ -51,11 +64,59 @@ func (t *RAGSourceLineage) Add(inputs ...*SourceLineage) error {
 	defer t.mu.Unlock()
 	var err error
 	before := t.lineage
+	if !t.requireComplete {
+		inputs = normalizeWeKnoraACLInputs(inputs)
+	}
 	t.lineage, err = UnionSourceLineage(append([]*SourceLineage{t.lineage}, inputs...)...)
 	if !sameRAGSourceLineage(before, t.lineage) {
 		t.revision++
 	}
 	return err
+}
+
+// normalizeWeKnoraACLInputs keeps structurally valid source receipts while
+// dropping malformed optional receipts. In ACL mode authorization comes from
+// the current WeKnora caller/session/space check, not from source identities.
+func normalizeWeKnoraACLInputs(inputs []*SourceLineage) []*SourceLineage {
+	out := make([]*SourceLineage, len(inputs))
+	for i, input := range inputs {
+		out[i] = NormalizeWeKnoraACLSourceLineage(input)
+	}
+	return out
+}
+
+// NormalizeWeKnoraACLSourceLineage keeps a structurally valid source receipt
+// and treats a malformed legacy/unknown envelope as source-independent. A
+// malformed complete envelope may retain only identities that independently
+// validate; its unverifiable identities are dropped because ACL mode does not
+// use them for authorization. Strict material turns never call this function.
+func NormalizeWeKnoraACLSourceLineage(input *SourceLineage) *SourceLineage {
+	if input == nil {
+		return nil
+	}
+	if input.Validate() == nil {
+		return input
+	}
+
+	validSources := make([]SourceIdentity, 0, len(input.Sources))
+	for _, source := range input.Sources {
+		if source.Validate() == nil {
+			validSources = append(validSources, source)
+		}
+	}
+	if input.State == SourceLineageComplete {
+		normalized, err := NewCompleteSourceLineage(validSources...)
+		if err == nil {
+			return normalized
+		}
+		return UnknownSourceLineage()
+	}
+	normalized := UnknownSourceLineage()
+	normalized.Sources = validSources
+	if normalized.Validate() != nil {
+		return UnknownSourceLineage()
+	}
+	return normalized
 }
 
 func sameRAGSourceLineage(a, b *SourceLineage) bool {
@@ -81,7 +142,28 @@ func (t *RAGSourceLineage) Snapshot() *SourceLineage {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	snapshot, _ := UnionSourceLineage(t.lineage)
+	if !t.requireComplete {
+		snapshot.State = SourceLineageComplete
+	}
 	return snapshot
+}
+
+// NormalizeProducerLineage applies the turn's lineage admission policy to a
+// producer receipt before it is combined with another request-local receipt.
+// Ordinary WeKnora ACL turns accept receipt-less legacy sources after removing
+// identities that cannot be independently validated. Strict material turns
+// return the original receipt unchanged so callers keep requiring completeness.
+func (t *RAGSourceLineage) NormalizeProducerLineage(input *SourceLineage) *SourceLineage {
+	if t == nil || t.requireComplete {
+		return input
+	}
+	return NormalizeWeKnoraACLSourceLineage(input)
+}
+
+// RequiresCompleteProducerLineage reports whether producer receipts must retain
+// their complete envelope before entering the turn.
+func (t *RAGSourceLineage) RequiresCompleteProducerLineage() bool {
+	return t == nil || t.requireComplete
 }
 
 // Check authorizes a stable current snapshot of the accumulated lineage.
@@ -102,8 +184,12 @@ func (t *RAGSourceLineage) CheckedSnapshot(ctx context.Context) (*SourceLineage,
 		lineage, _ := UnionSourceLineage(t.lineage)
 		revision := t.revision
 		t.mu.Unlock()
-		if err := lineage.RequireComplete(); err != nil {
-			return UnknownSourceLineage(), err
+		if t.requireComplete {
+			if err := lineage.RequireComplete(); err != nil {
+				return UnknownSourceLineage(), err
+			}
+		} else {
+			lineage.State = SourceLineageComplete
 		}
 		if err := t.authorize(ctx, lineage); err != nil {
 			return UnknownSourceLineage(), err

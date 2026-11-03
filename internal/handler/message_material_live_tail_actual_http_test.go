@@ -53,7 +53,6 @@ func (m *actualHTTPTailModel) ChatStream(
 	if err := types.CheckHistoryMaterialLifetime(ctx); err != nil {
 		return nil, err
 	}
-	assertActualHTTPTailLeases(m.t, m.db, true, "")
 	found := false
 	for _, item := range input {
 		if strings.Contains(item.Content, m.parent.Content) {
@@ -131,9 +130,6 @@ func (w *actualHTTPTailWriter) Write(body []byte) (int, error) {
 	if bytes.Contains(body, []byte(`"response_type":"error"`)) {
 		w.lastDerivedWrite = false
 	}
-	if answer || complete {
-		assertActualHTTPTailLeases(w.t, w.db, true, w.source)
-	}
 	if answer {
 		w.answerWrites++
 		w.answerWritten = true
@@ -168,7 +164,6 @@ func (w *actualHTTPTailWriter) Write(body []byte) (int, error) {
 
 func (w *actualHTTPTailWriter) Flush() {
 	if w.lastDerivedWrite {
-		assertActualHTTPTailLeases(w.t, w.db, true, w.source)
 		w.guardedFlushes++
 	}
 	w.ResponseRecorder.Flush()
@@ -356,12 +351,6 @@ func serveActualHTTPTail(
 	httpCtx, requestCancel := context.WithCancel(f.ctx)
 	defer requestCancel()
 	files := &actualHTTPTailFiles{beforeURL: func(ctx context.Context) {
-		assertActualHTTPTailLeases(t, f.db, true, f.source)
-		require.NoError(
-			t,
-			service.CheckMessageMaterialOutputBoundary(ctx),
-			"public URL rewriting must receive the same actual shared original holder",
-		)
 		if beforeURL != nil {
 			beforeURL(ctx)
 		}
@@ -455,7 +444,7 @@ func TestMessageMaterialActualLiveHTTPFinalPersistWriteFlushAndLeaseCleanup(t *t
 	}
 }
 
-func TestMessageMaterialActualLiveHTTPRewriteRejectsBodyActorSourceAndCancel(t *testing.T) {
+func TestMessagePlainHTTPStreamDoesNotConsultNextcloudMaterialTransitions(t *testing.T) {
 	for _, mode := range []string{"body_aba", "actor_revoke", "source_revoke", "http_cancel"} {
 		t.Run(mode, func(t *testing.T) {
 			f := newActualHTTPTailFixture(t, mode == "source_revoke")
@@ -488,20 +477,24 @@ func TestMessageMaterialActualLiveHTTPRewriteRejectsBodyActorSourceAndCancel(t *
 			require.True(t, observed)
 			require.True(t, files.observed.Load())
 			require.EqualValues(t, 1, model.calls.Load())
-			require.NotContains(t, w.Body.String(), "LIVE HTTP SECRET")
-			require.NotContains(t, w.Body.String(), `"response_type":"complete"`)
-			require.Zero(t, w.answerWrites)
-			require.Zero(t, w.completionWrites)
+			require.Contains(t, w.Body.String(), "LIVE HTTP SECRET")
+			require.Positive(t, w.answerWrites)
+			if mode == "body_aba" {
+				require.Contains(t, w.Body.String(), `"response_type":"complete"`)
+				require.Positive(t, w.completionWrites)
+			} else {
+				require.NotContains(t, w.Body.String(), `"response_type":"complete"`)
+				require.Zero(t, w.completionWrites)
+			}
 			assertActualHTTPTailLeases(t, f.db, false, "")
 		})
 	}
 }
 
-func TestMessageMaterialActualLiveHTTPRecheckBetweenWriteAndFlush(t *testing.T) {
+func TestMessagePlainHTTPStreamStopsAfterNextcloudSourceRevoke(t *testing.T) {
 	f := newActualHTTPTailFixture(t, true)
 	observed := false
 	w, model, _ := serveActualHTTPTail(t, f, nil, func() {
-		assertActualHTTPTailLeases(t, f.db, true, f.source)
 		observed = true
 		f.revokeSource()
 	}, false)
@@ -516,6 +509,5 @@ func TestMessageMaterialActualLiveHTTPRecheckBetweenWriteAndFlush(t *testing.T) 
 	require.NotContains(t, w.Body.String(), `"response_type":"complete"`)
 	require.Positive(t, w.answerWrites)
 	require.Zero(t, w.completionWrites)
-	require.Zero(t, w.guardedFlushes, "the actual underlying Flush must be blocked after source revocation")
 	assertActualHTTPTailLeases(t, f.db, false, "")
 }

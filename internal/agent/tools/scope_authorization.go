@@ -123,6 +123,16 @@ type knowledgePublicationChecker interface {
 func checkKnowledgePublication(
 	ctx context.Context, knowledge *types.Knowledge, knowledgeService interfaces.KnowledgeService,
 ) error {
+	// Ordinary WeKnora Agent turns authorize reads from the current caller,
+	// session, Agent and KB scope. Nextcloud publication remains responsible
+	// for source lifecycle, but it must not become a second read ACL for
+	// documents that WeKnora has already admitted. A nil turn is not an Agent
+	// ACL turn, and explicit materials intentionally use the strict complete
+	// producer-lineage mode.
+	if turn := types.RAGSourceLineageFromContext(ctx); turn != nil &&
+		!turn.RequiresCompleteProducerLineage() {
+		return nil
+	}
 	if checker, ok := knowledgeService.(knowledgePublicationChecker); ok {
 		return checker.CheckKnowledgePublication(ctx, knowledge)
 	}

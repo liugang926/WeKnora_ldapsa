@@ -136,6 +136,51 @@ func (s *stubModelService) GetASRModel(context.Context, string) (asr.ASR, error)
 	return nil, nil
 }
 
+func TestHandleModelFallback_ACLTurnStreamsWhileStrictTurnRefuses(t *testing.T) {
+	newChatManage := func(bus types.EventBusInterface) *types.ChatManage {
+		return &types.ChatManage{
+			PipelineRequest: types.PipelineRequest{
+				SessionID:      "session-fallback",
+				Query:          "知识库里没有的问题",
+				ChatModelID:    "chat-model",
+				FallbackPrompt: "Answer the latest user question: {{query}}",
+				SummaryConfig:  types.SummaryConfig{Temperature: 0.2},
+				Language:       "zh-CN",
+			},
+			PipelineContext: types.PipelineContext{EventBus: bus},
+		}
+	}
+
+	t.Run("acl turn streams the marked fallback answer", func(t *testing.T) {
+		chatModel := &captureChatModel{}
+		svc := &sessionService{modelService: &stubModelService{chatModel: chatModel}}
+		bus := event.NewEventBus()
+		cm := newChatManage(bus.AsEventBusInterface())
+		authorize := func(context.Context, *types.SourceLineage) error { return nil }
+		ctx := types.WithRAGSourceLineage(
+			context.Background(), types.NewWeKnoraACLSourceLineage(authorize),
+		)
+
+		svc.handleModelFallback(ctx, cm)
+		require.True(t, cm.FinalAnswerModelCalled, "ACL turn must stream the model fallback")
+		require.False(t, types.RAGSourceLineageFromContext(ctx).RequiresCompleteProducerLineage())
+	})
+
+	t.Run("strict material turn refuses loudly", func(t *testing.T) {
+		chatModel := &captureChatModel{}
+		svc := &sessionService{modelService: &stubModelService{chatModel: chatModel}}
+		bus := event.NewEventBus()
+		cm := newChatManage(bus.AsEventBusInterface())
+		authorize := func(context.Context, *types.SourceLineage) error { return nil }
+		turn := types.NewRAGSourceLineage(authorize)
+		ctx := types.WithRAGSourceLineage(context.Background(), turn)
+
+		svc.handleModelFallback(ctx, cm)
+		require.False(t, cm.FinalAnswerModelCalled, "strict turn must not call the fallback model")
+		require.Error(t, turn.Check(ctx), "strict turn must fail its check after the unknown marking")
+	})
+}
+
 func TestHandleModelFallback_IncludesHistoryMessages(t *testing.T) {
 	chatModel := &captureChatModel{}
 	svc := &sessionService{

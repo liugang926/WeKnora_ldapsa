@@ -35,7 +35,16 @@ func freezeModelOptions(options *chat.ChatOptions) (*chat.ChatOptions, error) {
 	return &snapshot, nil
 }
 
-func freezeModelMessages(messages []chat.Message) ([]chat.Message, error) {
+func freezeModelMessages(messages []chat.Message, normalizeACLOnly bool) ([]chat.Message, error) {
+	if normalizeACLOnly {
+		normalized := append([]chat.Message(nil), messages...)
+		for i := range normalized {
+			normalized[i].SourceLineage = types.NormalizeWeKnoraACLSourceLineage(
+				normalized[i].SourceLineage,
+			)
+		}
+		messages = normalized
+	}
 	for _, message := range messages {
 		if err := validateProviderArtifactValue(reflect.ValueOf(message.ReasoningMetadata), 0); err != nil {
 			return nil, err

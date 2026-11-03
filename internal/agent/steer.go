@@ -62,7 +62,11 @@ func (e *AgentEngine) SetSteerSink(sink types.SteerSink) {
 	// the complete prior snapshot instead of losing sources already accounted
 	// by the caller. Execute uses this composed verifier for its new turn too.
 	previousLineage := e.SourceLineageSnapshot()
-	e.turnLineage = types.NewRAGSourceLineage(e.lineageVerifier)
+	if e.requireCompleteSourceLineage {
+		e.turnLineage = types.NewRAGSourceLineage(e.lineageVerifier)
+	} else {
+		e.turnLineage = types.NewWeKnoraACLSourceLineage(e.lineageVerifier)
+	}
 	if previousLineage != nil {
 		_ = e.addLineage(previousLineage)
 	}
