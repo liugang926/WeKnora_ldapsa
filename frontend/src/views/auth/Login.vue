@@ -230,7 +230,7 @@
                 </t-button>
               </div>
 
-              <div v-if="oidcEnabled || dingtalkEnabled" class="oidc-divider">
+              <div v-if="oidcEnabled || (dingtalkEnabled && !isDingTalkContainer())" class="oidc-divider">
                 <span>{{ $t('auth.orContinueWith') }}</span>
               </div>
 
@@ -242,8 +242,11 @@
               <!-- 钉钉扫码登录（QR-01）：点击整页跳转钉钉官方授权页（自带
                    扫码二维码）。dingtalkEnabled 来自 /auth/dingtalk/config，
                    未启用或请求失败时按钮不渲染，AD/LDAP 与本地登录不受影响
-                   （AC-10）。品牌蓝 #0089FF + 内联 logo，不引外链图片。 -->
-              <button v-if="dingtalkEnabled" type="button" class="dingtalk-button" :disabled="dingtalkLoading || loading"
+                   （AC-10）。品牌蓝 #0089FF + 内联 logo，不引外链图片。
+                   钉钉容器（桌面/移动端内置浏览器）内不渲染：其 webview 在
+                   OAuth 回跳时会丢弃 query 参数，授权码永远到不了回调，
+                   只会留下 invalid_state 报错；容器内由免登通道覆盖。 -->
+              <button v-if="dingtalkEnabled && !isDingTalkContainer()" type="button" class="dingtalk-button" :disabled="dingtalkLoading || loading"
                 @click="handleDingTalkLogin">
                 <svg class="dingtalk-logo" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                   <path
