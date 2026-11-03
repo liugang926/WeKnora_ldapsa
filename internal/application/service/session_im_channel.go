@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/Tencent/WeKnora/internal/types"
+	"github.com/Tencent/WeKnora/internal/types/interfaces"
 )
 
 // ResolveIMChannelKnowledgeBases uses the same agent selection and capability
@@ -31,7 +32,11 @@ func (s *sessionService) ResolveIMChannelKnowledgeBases(ctx context.Context, age
 // shares independently of the channel grant, avoiding a circular authorization.
 func (s *sessionService) CheckIMChannelKnowledgeBase(ctx context.Context, tenant uint64, id string) error {
 	base := context.WithValue(ctx, types.IMChannelScopeContextKey, nil)
-	kb, err := s.knowledgeBaseService.GetKnowledgeBaseByIDOnly(base, id)
+	reader, ok := s.knowledgeBaseService.(interfaces.KnowledgeBaseAuthorizationReader)
+	if !ok || reader == nil {
+		return fmt.Errorf("IM knowledge base authorization metadata unavailable")
+	}
+	kb, err := reader.GetKnowledgeBaseAuthorizationMetadata(base, id)
 	if err != nil || kb == nil || kb.DeletedAt.Valid || kb.TenantID != tenant {
 		return fmt.Errorf("IM knowledge base is unavailable")
 	}
