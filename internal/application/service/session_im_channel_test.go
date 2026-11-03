@@ -194,3 +194,11 @@ func TestIMAllPreservesOnlyLiveShares(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, map[string]uint64{"own": 10000}, ids)
 }
+
+func (f imScopeKBs) GetKnowledgeBaseAuthorizationMetadata(ctx context.Context, id string) (*types.KnowledgeBaseAuthorizationMetadata, error) {
+	kb, err := f.GetKnowledgeBaseByIDOnly(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	return &types.KnowledgeBaseAuthorizationMetadata{ID: kb.ID, TenantID: kb.TenantID, DeletedAt: kb.DeletedAt}, nil
+}

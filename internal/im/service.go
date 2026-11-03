@@ -276,6 +276,8 @@ type AdapterFactory func(ctx context.Context, channel *IMChannel, msgHandler fun
 
 // inflightEntry tracks a running QA request, keyed by userKey in the inflight map.
 type inflightEntry struct {
+	mu                 sync.Mutex
+	token              string
 	cancel             context.CancelFunc
 	sessionID          string // set after assistant message is created
 	assistantMessageID string // set after assistant message is created
@@ -339,7 +341,8 @@ type Service struct {
 	// inflight tracks in-progress QA requests, keyed by userKey
 	// ("channelID:userID:chatID"). Allows /stop to abort a running request
 	// on this instance and look up (sessionID, messageID) for StreamManager.
-	inflight sync.Map // userKey -> *inflightEntry
+	inflight             sync.Map       // userKey -> *inflightEntry
+	inflightRegistration [64]sync.Mutex // bounded registration locks, never held during QA
 
 	// qaQueue manages bounded queuing and worker-pool execution of QA requests,
 	// providing backpressure to protect downstream LLM resources.
@@ -1494,42 +1497,6 @@ func (s *Service) checkAndClearStopMarker(ctx context.Context, userKey string) b
 	return deleted > 0
 }
 
-// storeInflightMapping writes the (sessionID, assistantMessageID) to Redis so
-// that /stop on any instance can look it up and write to StreamManager.
-func (s *Service) storeInflightMapping(ctx context.Context, userKey, sessionID, messageID string) {
-	if s.redis == nil {
-		return
-	}
-	val := sessionID + ":" + messageID
-	if err := s.redis.Set(ctx, RedisKeyInflight+userKey, val, 10*time.Minute).Err(); err != nil {
-		logger.Warnf(ctx, "[IM] Failed to store inflight mapping: %v", err)
-	}
-}
-
-// clearInflightMapping removes the inflight mapping from Redis.
-func (s *Service) clearInflightMapping(ctx context.Context, userKey string) {
-	if s.redis == nil {
-		return
-	}
-	s.redis.Del(ctx, RedisKeyInflight+userKey)
-}
-
-// loadInflightMapping retrieves (sessionID, messageID) from Redis.
-func (s *Service) loadInflightMapping(ctx context.Context, userKey string) (sessionID, messageID string, ok bool) {
-	if s.redis == nil {
-		return "", "", false
-	}
-	val, err := s.redis.Get(ctx, RedisKeyInflight+userKey).Result()
-	if err != nil {
-		return "", "", false
-	}
-	parts := strings.SplitN(val, ":", 2)
-	if len(parts) != 2 {
-		return "", "", false
-	}
-	return parts[0], parts[1], true
-}
-
 // writeStopEvent writes a stop event to StreamManager, matching the web
 // StopSession pattern. The QA watcher goroutine detects it and cancels.
 func (s *Service) writeStopEvent(ctx context.Context, sessionID, messageID string) {
@@ -1954,9 +1921,8 @@ func (s *Service) executeQARequest(req *qaRequest) {
 	defer req.cancel()
 
 	// Track in-flight request so /stop can cancel it.
-	entry := &inflightEntry{cancel: req.cancel}
-	s.inflight.Store(req.userKey, entry)
-	defer s.inflight.Delete(req.userKey)
+	ctx, entry := s.beginInflight(ctx, req.userKey, req.cancel)
+	defer s.finishInflight(ctx, req.userKey, entry)
 
 	// Check if a pre-execution /stop was issued while this request was queued.
 	if s.checkAndClearStopMarker(ctx, req.userKey) {
@@ -2164,8 +2130,10 @@ func (s *Service) handleCommand(
 			e := raw.(*inflightEntry)
 			e.cancel()
 			localStopped = true
+			e.mu.Lock()
 			localSessionID = e.sessionID
 			localMessageID = e.assistantMessageID
+			e.mu.Unlock()
 			logger.Infof(ctx, "[IM] Cancelled in-flight QA: key=%s", inflightKey)
 		}
 
@@ -2173,7 +2141,7 @@ func (s *Service) handleCommand(
 		//    For local stop with known IDs, write directly.
 		//    For cross-instance, look up Redis inflight mapping to get IDs.
 		sessionID, messageID := localSessionID, localMessageID
-		if sessionID == "" || messageID == "" {
+		if !localStopped && (sessionID == "" || messageID == "") {
 			// Try cross-instance lookup.
 			sessionID, messageID, _ = s.loadInflightMapping(ctx, inflightKey)
 		}
@@ -2801,13 +2769,7 @@ func (s *Service) handleMessageStream(ctx context.Context, msg *IncomingMessage,
 
 	// Register inflight mapping so cross-instance /stop can find this request
 	// and write a stop event to StreamManager.
-	if raw, ok := s.inflight.Load(userKey); ok {
-		e := raw.(*inflightEntry)
-		e.sessionID = session.ID
-		e.assistantMessageID = assistantMsg.ID
-	}
-	s.storeInflightMapping(qaCtx, userKey, session.ID, assistantMsg.ID)
-	defer s.clearInflightMapping(ctx, userKey)
+	s.bindInflight(qaCtx, userKey, session.ID, assistantMsg.ID)
 
 	// Start StreamManager stop watcher — mirrors web's handleAgentEventsForSSE
 	// stop detection. Cancels qaCtx if a stop event is written by any instance.
@@ -2967,8 +2929,11 @@ loop:
 	if finalizeErr != nil && fallbackErr != nil {
 		return errors.Join(finalizeErr, endErr, fallbackErr)
 	}
+	if endErr != nil && !(finalizeErr != nil && fallbackErr == nil) {
+		return endErr
+	}
 	logger.Infof(ctx, "[IM] Stream reply sent: platform=%s user=%s answer_len=%d", msg.Platform, msg.UserID, len(answer))
-	return endErr
+	return nil
 }
 
 // fallbackNonStream is used when streaming initialization fails.
@@ -3102,13 +3067,7 @@ func (s *Service) runQA(ctx context.Context, session *types.Session, query strin
 	})
 
 	// Register inflight mapping for cross-instance /stop via StreamManager.
-	if raw, ok := s.inflight.Load(userKey); ok {
-		e := raw.(*inflightEntry)
-		e.sessionID = session.ID
-		e.assistantMessageID = assistantMsg.ID
-	}
-	s.storeInflightMapping(ctx, userKey, session.ID, assistantMsg.ID)
-	defer s.clearInflightMapping(ctx, userKey)
+	s.bindInflight(ctx, userKey, session.ID, assistantMsg.ID)
 
 	// Start StreamManager stop watcher.
 	go s.watchStreamManagerStop(ctx, session.ID, assistantMsg.ID, cancel)
