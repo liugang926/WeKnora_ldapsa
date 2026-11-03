@@ -27,6 +27,10 @@ type stubDingTalkUserService struct {
 	authURL func(ctx context.Context, callbackURL string) (*types.DingTalkAuthURLResponse, error)
 	login   func(ctx context.Context, code string) (*types.OIDCCallbackResponse, error)
 	inApp   func(ctx context.Context, authCode string) (*types.LoginResponse, error)
+	info    func(ctx context.Context) (*types.DingTalkAuthInfo, error)
+	get     func(ctx context.Context) (*types.DingTalkAdminConfig, error)
+	update  func(ctx context.Context, update *types.DingTalkAdminConfigUpdate) (*types.DingTalkAdminConfig, error)
+	test    func(ctx context.Context, candidate *types.DingTalkAdminConfigUpdate) (*types.DingTalkTestResult, error)
 }
 
 func (s *stubDingTalkUserService) GetDingTalkAuthConfig(
@@ -53,6 +57,43 @@ func (s *stubDingTalkUserService) LoginWithDingTalkAuthCode(
 	return s.inApp(ctx, authCode)
 }
 
+func (s *stubDingTalkUserService) DingTalkEffectiveAuthInfo(
+	ctx context.Context,
+) (*types.DingTalkAuthInfo, error) {
+	if s.info == nil {
+		// Default: the module is enabled, matching every pre-existing test
+		// that only scripts the login/config calls.
+		return &types.DingTalkAuthInfo{Enabled: true}, nil
+	}
+	return s.info(ctx)
+}
+
+func (s *stubDingTalkUserService) GetDingTalkAdminConfig(
+	ctx context.Context,
+) (*types.DingTalkAdminConfig, error) {
+	return s.get(ctx)
+}
+
+func (s *stubDingTalkUserService) UpdateDingTalkAdminConfig(
+	ctx context.Context, update *types.DingTalkAdminConfigUpdate,
+) (*types.DingTalkAdminConfig, error) {
+	return s.update(ctx, update)
+}
+
+func (s *stubDingTalkUserService) TestDingTalkConnection(
+	ctx context.Context, candidate *types.DingTalkAdminConfigUpdate,
+) (*types.DingTalkTestResult, error) {
+	return s.test(ctx, candidate)
+}
+
+// enabledDingTalkInfo is the default effective-info stub: file-mode shape
+// where the static config decides.
+func enabledDingTalkInfo(enabled bool) func(context.Context) (*types.DingTalkAuthInfo, error) {
+	return func(context.Context) (*types.DingTalkAuthInfo, error) {
+		return &types.DingTalkAuthInfo{Enabled: enabled}, nil
+	}
+}
+
 func newDingTalkTestHandler(enable bool, stub *stubDingTalkUserService) *DingTalkAuthHandler {
 	return NewDingTalkAuthHandler(&config.Config{
 		DingTalkAuth: &config.DingTalkAuthConfig{
@@ -72,6 +113,8 @@ func newDingTalkTestRouter(h *DingTalkAuthHandler) *gin.Engine {
 	r.GET("/auth/dingtalk/url", h.GetDingTalkAuthorizationURL)
 	r.GET("/auth/dingtalk/callback", h.DingTalkRedirectCallback)
 	r.POST("/auth/dingtalk/inapp", h.DingTalkInAppLogin)
+	admin := r.Group("/api/v1/system/admin")
+	h.RegisterAdminRoutes(admin)
 	return r
 }
 
@@ -120,7 +163,7 @@ func TestDingTalkConfigEndpointReturnsProviderConfig(t *testing.T) {
 }
 
 func TestDingTalkURLDisabledReturns404(t *testing.T) {
-	stub := &stubDingTalkUserService{}
+	stub := &stubDingTalkUserService{info: enabledDingTalkInfo(false)}
 	r := newDingTalkTestRouter(newDingTalkTestHandler(false, stub))
 	w := doDingTalkRequest(r, http.MethodGet, "/auth/dingtalk/url")
 	if w.Code != http.StatusNotFound {
@@ -437,7 +480,8 @@ func TestDingTalkInAppLoginValidation(t *testing.T) {
 	})
 
 	t.Run("disabled module", func(t *testing.T) {
-		r := newDingTalkTestRouter(newDingTalkTestHandler(false, stub))
+		disabled := &stubDingTalkUserService{info: enabledDingTalkInfo(false)}
+		r := newDingTalkTestRouter(newDingTalkTestHandler(false, disabled))
 		req := httptest.NewRequest(http.MethodPost, "/auth/dingtalk/inapp",
 			strings.NewReader(`{"auth_code":"inapp-1"}`))
 		req.Header.Set("Content-Type", "application/json")
@@ -447,4 +491,136 @@ func TestDingTalkInAppLoginValidation(t *testing.T) {
 			t.Fatalf("status = %d, want 403", w.Code)
 		}
 	})
+}
+
+func TestDingTalkAdminConfigEndpoints(t *testing.T) {
+	newAdminRouter := func(stub *stubDingTalkUserService) *gin.Engine {
+		return newDingTalkTestRouter(newDingTalkTestHandler(true, stub))
+	}
+	doJSON := func(r *gin.Engine, method, target, body string) *httptest.ResponseRecorder {
+		reader := strings.NewReader("{}")
+		if body != "" {
+			reader = strings.NewReader(body)
+		}
+		req := httptest.NewRequest(method, target, reader)
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		return w
+	}
+
+	t.Run("get returns the redacted view", func(t *testing.T) {
+		stub := &stubDingTalkUserService{
+			get: func(context.Context) (*types.DingTalkAdminConfig, error) {
+				return &types.DingTalkAdminConfig{
+					Success: true, ConfigSource: "database", Enabled: true,
+					CorpID: "ding-corp-1", AppKey: "app-key", HasSecret: true,
+					SecretFrom: "database", ConfigVersion: 3, UpdatedBy: "admin-1",
+				}, nil
+			},
+		}
+		w := doJSON(newAdminRouter(stub), http.MethodGet, "/api/v1/system/admin/dingtalk/config", "")
+		if w.Code != http.StatusOK {
+			t.Fatalf("status = %d (body=%s)", w.Code, w.Body.String())
+		}
+		body := w.Body.String()
+		for _, want := range []string{`"config_source":"database"`, `"has_secret":true`, `"secret_from":"database"`} {
+			if !strings.Contains(body, want) {
+				t.Fatalf("body %s must contain %s", body, want)
+			}
+		}
+		if strings.Contains(body, "app_secret") || strings.Contains(body, "secret_value") {
+			t.Fatalf("body must not mention any secret: %s", body)
+		}
+	})
+
+	t.Run("put passes the payload through and maps service errors", func(t *testing.T) {
+		stub := &stubDingTalkUserService{
+			update: func(_ context.Context, update *types.DingTalkAdminConfigUpdate) (*types.DingTalkAdminConfig, error) {
+				if update.CorpID != "ding-corp-1" || !update.Enabled || update.AppSecret != "new-secret" {
+					t.Fatalf("update = %+v", update)
+				}
+				return &types.DingTalkAdminConfig{Success: true, CorpID: update.CorpID}, nil
+			},
+		}
+		w := doJSON(newAdminRouter(stub), http.MethodPut, "/api/v1/system/admin/dingtalk/config",
+			`{"enabled":true,"corp_id":"ding-corp-1","app_key":"k","app_secret":"new-secret"}`)
+		if w.Code != http.StatusOK {
+			t.Fatalf("status = %d (body=%s)", w.Code, w.Body.String())
+		}
+
+		rejecting := &stubDingTalkUserService{
+			update: func(context.Context, *types.DingTalkAdminConfigUpdate) (*types.DingTalkAdminConfig, error) {
+				return nil, service.ErrInvalidDingTalkConfig
+			},
+		}
+		w = doJSON(newAdminRouter(rejecting), http.MethodPut, "/api/v1/system/admin/dingtalk/config", `{}`)
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("validation status = %d, want 400 (body=%s)", w.Code, w.Body.String())
+		}
+
+		fileManaged := &stubDingTalkUserService{
+			update: func(context.Context, *types.DingTalkAdminConfigUpdate) (*types.DingTalkAdminConfig, error) {
+				return nil, service.ErrDingTalkConfigFileManaged
+			},
+		}
+		w = doJSON(newAdminRouter(fileManaged), http.MethodPut, "/api/v1/system/admin/dingtalk/config", `{}`)
+		if w.Code != http.StatusConflict {
+			t.Fatalf("file-managed status = %d, want 409 (body=%s)", w.Code, w.Body.String())
+		}
+	})
+
+	t.Run("test returns the verdict shape", func(t *testing.T) {
+		stub := &stubDingTalkUserService{
+			test: func(_ context.Context, candidate *types.DingTalkAdminConfigUpdate) (*types.DingTalkTestResult, error) {
+				if candidate.AppSecret != "candidate-secret" {
+					t.Errorf("candidate = %+v", candidate)
+				}
+				return &types.DingTalkTestResult{OK: true, Message: "DingTalk accepted the app credentials"}, nil
+			},
+		}
+		w := doJSON(newAdminRouter(stub), http.MethodPost, "/api/v1/system/admin/dingtalk/test",
+			`{"corp_id":"ding-corp-1","app_key":"k","app_secret":"candidate-secret"}`)
+		if w.Code != http.StatusOK {
+			t.Fatalf("status = %d (body=%s)", w.Code, w.Body.String())
+		}
+		if !strings.Contains(w.Body.String(), `"ok":true`) {
+			t.Fatalf("body = %s", w.Body.String())
+		}
+
+		invalid := &stubDingTalkUserService{
+			test: func(context.Context, *types.DingTalkAdminConfigUpdate) (*types.DingTalkTestResult, error) {
+				return nil, service.ErrInvalidDingTalkConfig
+			},
+		}
+		w = doJSON(newAdminRouter(invalid), http.MethodPost, "/api/v1/system/admin/dingtalk/test", `{}`)
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("validation status = %d, want 400 (body=%s)", w.Code, w.Body.String())
+		}
+	})
+}
+
+func TestDingTalkURLUsesEffectiveRedirectURL(t *testing.T) {
+	stub := &stubDingTalkUserService{
+		info: func(context.Context) (*types.DingTalkAuthInfo, error) {
+			return &types.DingTalkAuthInfo{
+				Enabled:     true,
+				RedirectURL: "https://registered.example.com/api/v1/auth/dingtalk/callback",
+			}, nil
+		},
+		authURL: func(_ context.Context, callbackURL string) (*types.DingTalkAuthURLResponse, error) {
+			if callbackURL != "https://registered.example.com/api/v1/auth/dingtalk/callback" {
+				t.Errorf("callbackURL = %q, want the effective redirect_url", callbackURL)
+			}
+			return &types.DingTalkAuthURLResponse{Success: true, AuthorizationURL: "https://login.dingtalk.com/x", State: "s"}, nil
+		},
+	}
+	r := newDingTalkTestRouter(newDingTalkTestHandler(true, stub))
+	req := httptest.NewRequest(http.MethodGet, "/auth/dingtalk/url", nil)
+	req.Host = "untrusted.example.com"
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d (body=%s)", w.Code, w.Body.String())
+	}
 }

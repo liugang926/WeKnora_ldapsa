@@ -489,6 +489,14 @@ func NewRouter(params RouterParams) *gin.Engine {
 			directoryAdmin := v1.Group("/system/admin", rbacGuards.SystemAdmin())
 			params.DirectoryHandler.RegisterAdminRoutes(directoryAdmin)
 		}
+		// DingTalk SSO provider administration rides the same system-admin
+		// group: SystemAdmin RBAC is the primary guard, and the employee
+		// write-block middleware additionally covers these writes because
+		// they live under /api/v1/system.
+		if params.DingTalkAuthHandler != nil {
+			dingTalkAdmin := v1.Group("/system/admin", rbacGuards.SystemAdmin())
+			params.DingTalkAuthHandler.RegisterAdminRoutes(dingTalkAdmin)
+		}
 		RegisterMCPServiceRoutes(
 			v1,
 			params.MCPServiceHandler,

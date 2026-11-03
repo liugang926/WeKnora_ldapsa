@@ -46,6 +46,9 @@ type fakeDingTalkClient struct {
 	userIDByInAppCode map[string]string
 	inAppErr          error
 
+	// verifyErr scripts VerifyCredentials for the admin connection test.
+	verifyErr error
+
 	details map[string]fakeDingTalkProfile
 }
 
@@ -120,6 +123,13 @@ func (f *fakeDingTalkClient) GetUserDetail(
 	return profile.JobNumber, profile.Name, profile.UnionID, nil
 }
 
+// VerifyCredentials is scripted by verifyErr; the fake records the
+// credentials it was handed so admin-config tests can assert which app
+// key/secret a candidate test used.
+func (f *fakeDingTalkClient) VerifyCredentials(_ context.Context) error {
+	return f.verifyErr
+}
+
 type dingTalkTestEnv struct {
 	db     *gorm.DB
 	svc    *userService
@@ -152,6 +162,7 @@ func setupDingTalkService(t *testing.T) *dingTalkTestEnv {
 
 	loadDingTalkMigrationSQL(t, db, "000028_directory_group_access.up.sql")
 	loadDingTalkMigrationSQL(t, db, "000087_dingtalk_sso.up.sql")
+	loadDingTalkMigrationSQL(t, db, "000088_dingtalk_admin_config.up.sql")
 	require.NoError(t, db.AutoMigrate(&types.User{}, &types.AuthToken{}, &types.Tenant{}))
 	// users.tenant_id carries a FK to tenants; seed the home workspace once.
 	require.NoError(t, db.Create(&types.Tenant{ID: 7, Name: "Corp Workspace", Status: "active"}).Error)
@@ -196,20 +207,20 @@ func (e *dingTalkTestEnv) createFreshDirectory(t *testing.T) *types.Directory {
 	t.Helper()
 	now := time.Now().UTC()
 	directory := &types.Directory{
-		ID:                 "dir-1",
-		Name:               "corp-ad",
-		Protocol:           types.DirectoryProtocolAD,
-		Enabled:            true,
-		ConfigSource:       types.DirectoryConfigSourceDatabase,
-		TLSMode:            types.DirectoryTLSLDAPS,
-		ServerURLs:         types.StringArray{"ldaps://ad.example.com"},
-		BaseDN:             "DC=example,DC=com",
-		UserBaseDN:         "DC=example,DC=com",
-		GroupBaseDN:        "DC=example,DC=com",
-		UserFilter:         "(objectClass=user)",
-		GroupFilter:        "(objectClass=group)",
-		ServiceAccountDN:   "CN=svc,DC=example,DC=com",
-		PasswordCiphertext: "ciphertext",
+		ID:                   "dir-1",
+		Name:                 "corp-ad",
+		Protocol:             types.DirectoryProtocolAD,
+		Enabled:              true,
+		ConfigSource:         types.DirectoryConfigSourceDatabase,
+		TLSMode:              types.DirectoryTLSLDAPS,
+		ServerURLs:           types.StringArray{"ldaps://ad.example.com"},
+		BaseDN:               "DC=example,DC=com",
+		UserBaseDN:           "DC=example,DC=com",
+		GroupBaseDN:          "DC=example,DC=com",
+		UserFilter:           "(objectClass=user)",
+		GroupFilter:          "(objectClass=group)",
+		ServiceAccountDN:     "CN=svc,DC=example,DC=com",
+		PasswordCiphertext:   "ciphertext",
 		LastSuccessfulSyncAt: &now,
 	}
 	require.NoError(t, e.db.Create(directory).Error)
@@ -314,16 +325,16 @@ func TestDingTalkLoginNewBindingMatchesJobNumberExactly(t *testing.T) {
 
 	resp, err := env.svc.LoginWithDingTalkCode(ctx, "auth-code-1")
 	require.NoError(t, err)
-	require.True(t,resp.Success)
-	require.Equal(t,user.ID, resp.User.ID)
+	require.True(t, resp.Success)
+	require.Equal(t, user.ID, resp.User.ID)
 	require.NotEmpty(t, resp.Token)
 	require.NotEmpty(t, resp.RefreshToken)
 	require.False(t, resp.IsNewUser, "dingtalk login must never report a new user")
 
 	binding := env.activeBinding(t, "dt-user-1")
 	require.NotNil(t, binding)
-	require.Equal(t,"00123", binding.JobNumber)
-	require.Equal(t,user.ID, *binding.UserID)
+	require.Equal(t, "00123", binding.JobNumber)
+	require.Equal(t, user.ID, *binding.UserID)
 
 	// No account was created: the same single user row remains.
 	require.EqualValues(t, 1, env.userCount(t))
@@ -349,12 +360,12 @@ func TestDingTalkLoginExistingBindingKeepsUserOnJobNumberChange(t *testing.T) {
 
 	resp, err := env.svc.LoginWithDingTalkCode(ctx, "auth-code-1")
 	require.NoError(t, err)
-	require.True(t,resp.Success)
-	require.Equal(t,user.ID, resp.User.ID)
+	require.True(t, resp.Success)
+	require.Equal(t, user.ID, resp.User.ID)
 
 	binding := env.activeBinding(t, "dt-user-1")
-	require.Equal(t,user.ID, *binding.UserID, "user link must not change on job number change")
-	require.Equal(t,"00999", binding.JobNumber)
+	require.Equal(t, user.ID, *binding.UserID, "user link must not change on job number change")
+	require.Equal(t, "00999", binding.JobNumber)
 	require.Len(t, env.events(types.DingTalkEventSnapshotUpdate), 1)
 }
 
@@ -414,7 +425,7 @@ func TestDingTalkLoginRejections(t *testing.T) {
 		requireRejection(t, err, types.DingTalkRejectBindingConflict)
 		// The original binding is untouched.
 		binding := env.activeBinding(t, "dt-holder")
-		require.Equal(t,user.ID, *binding.UserID)
+		require.Equal(t, user.ID, *binding.UserID)
 	})
 
 	t.Run("wrong corp", func(t *testing.T) {
@@ -538,8 +549,8 @@ func TestDingTalkInAppLogin(t *testing.T) {
 
 	resp, err := env.svc.LoginWithDingTalkAuthCode(ctx, "inapp-code-1")
 	require.NoError(t, err)
-	require.True(t,resp.Success)
-	require.Equal(t,user.ID, resp.User.ID)
+	require.True(t, resp.Success)
+	require.Equal(t, user.ID, resp.User.ID)
 	require.NotEmpty(t, resp.Token)
 	require.Len(t, env.events(types.DingTalkEventBind), 1)
 	require.Len(t, env.events(types.DingTalkEventLoginSuccess), 1)
@@ -560,7 +571,7 @@ func TestDingTalkUnlinkRevokesBindingAndSessions(t *testing.T) {
 
 	login, err := env.svc.LoginWithDingTalkCode(ctx, "auth-code-1")
 	require.NoError(t, err)
-	require.True(t,login.Success)
+	require.True(t, login.Success)
 
 	// Tokens issued by the login must be revoked by the unlink.
 	var activeTokens int64
@@ -575,7 +586,7 @@ func TestDingTalkUnlinkRevokesBindingAndSessions(t *testing.T) {
 	var row types.DingTalkIdentity
 	require.NoError(t, env.db.Where("corp_id = ? AND dingtalk_user_id = ?", dingTalkTestCorpID, "dt-user-1").
 		First(&row).Error)
-	require.Equal(t,types.DingTalkIdentityUnlinked, row.Status)
+	require.Equal(t, types.DingTalkIdentityUnlinked, row.Status)
 	require.Nil(t, row.UserID)
 	require.NotNil(t, row.UnboundAt)
 
@@ -590,7 +601,7 @@ func TestDingTalkUnlinkRevokesBindingAndSessions(t *testing.T) {
 	// A later login re-binds the same DingTalk user via the historical row.
 	login2, err := env.svc.LoginWithDingTalkCode(ctx, "auth-code-1")
 	require.NoError(t, err)
-	require.True(t,login2.Success)
+	require.True(t, login2.Success)
 	rebound := env.activeBinding(t, "dt-user-1")
 	require.NotNil(t, rebound)
 	require.EqualValues(t, row.ID, rebound.ID, "rebind must reactivate the historical row, not duplicate it")
@@ -601,20 +612,20 @@ func TestDingTalkAuthConfigSurface(t *testing.T) {
 
 	resp, err := env.svc.GetDingTalkAuthConfig(context.Background())
 	require.NoError(t, err)
-	require.True(t,resp.Success)
-	require.True(t,resp.Enabled)
-	require.Equal(t,dingTalkTestCorpID, resp.CorpID)
-	require.Equal(t,"钉钉", resp.ProviderDisplayName)
+	require.True(t, resp.Success)
+	require.True(t, resp.Enabled)
+	require.Equal(t, dingTalkTestCorpID, resp.CorpID)
+	require.Equal(t, "钉钉", resp.ProviderDisplayName)
 
 	env.cfg.ProviderDisplayName = "公司钉钉"
 	resp, err = env.svc.GetDingTalkAuthConfig(context.Background())
 	require.NoError(t, err)
-	require.Equal(t,"公司钉钉", resp.ProviderDisplayName)
+	require.Equal(t, "公司钉钉", resp.ProviderDisplayName)
 
 	env.cfg.Enable = false
 	resp, err = env.svc.GetDingTalkAuthConfig(context.Background())
 	require.NoError(t, err)
-	require.False(t,resp.Enabled)
+	require.False(t, resp.Enabled)
 	require.Empty(t, resp.CorpID)
 }
 
@@ -623,7 +634,7 @@ func TestBuildDingTalkAuthorizeURLSignsState(t *testing.T) {
 
 	resp, err := env.svc.BuildDingTalkAuthorizeURL(context.Background(), "https://app.example.com/api/v1/auth/dingtalk/callback")
 	require.NoError(t, err)
-	require.True(t,resp.Success)
+	require.True(t, resp.Success)
 	require.Contains(t, resp.AuthorizationURL, "state="+url.QueryEscape(resp.State))
 	require.Contains(t, resp.AuthorizationURL, "redirect_uri=")
 	require.NotEmpty(t, resp.Nonce)
@@ -631,7 +642,7 @@ func TestBuildDingTalkAuthorizeURLSignsState(t *testing.T) {
 
 	payload, err := secutils.VerifyDingTalkState(resp.State)
 	require.NoError(t, err)
-	require.Equal(t,resp.Nonce, payload.Nonce)
+	require.Equal(t, resp.Nonce, payload.Nonce)
 }
 
 func TestDingTalkErrorsNeverLeakSecrets(t *testing.T) {

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	apprepo "github.com/Tencent/WeKnora/internal/application/repository"
 	"github.com/Tencent/WeKnora/internal/config"
@@ -18,6 +19,21 @@ import (
 // ErrDingTalkBindingNotFound is returned by UnlinkDingTalkIdentity when the
 // target user has no active DingTalk binding.
 var ErrDingTalkBindingNotFound = errors.New("no active dingtalk binding for user")
+
+// ErrDingTalkConfigFileManaged rejects admin writes when the deployment
+// keeps the DingTalk configuration in env/YAML (config_source=file), the
+// same read-only contract the directory module exposes.
+var ErrDingTalkConfigFileManaged = errors.New(
+	"dingtalk configuration is managed by deployment files and is read-only")
+
+// ErrInvalidDingTalkConfig marks administrator input that would leave the
+// module unusable (enabled without corp id / app key / usable secret).
+var ErrInvalidDingTalkConfig = errors.New("invalid dingtalk configuration")
+
+// dingTalkConfigCacheTTL bounds how long a database-resolved configuration
+// stays cached. DingTalk login is low-frequency, so correctness (fresh
+// config) wins over avoiding one indexed single-row read.
+const dingTalkConfigCacheTTL = 30 * time.Second
 
 // DingTalkRejectionError marks a login attempt that was definitively
 // rejected (as opposed to a transient failure). Reason is a stable
@@ -92,32 +108,145 @@ func (s *userService) rejectDingTalkLogin(
 	return &DingTalkRejectionError{Reason: reason, Message: dingTalkRejectionMessage(reason)}
 }
 
+// dingTalkEnvConfig returns the deployment baseline (env/YAML) or an
+// equivalent empty section when the module was never configured.
+func (s *userService) dingTalkEnvConfig() *config.DingTalkAuthConfig {
+	if s.config == nil || s.config.DingTalkAuth == nil {
+		return &config.DingTalkAuthConfig{}
+	}
+	return s.config.DingTalkAuth
+}
+
+// dingTalkDatabaseManaged reports whether the settings UI owns the DingTalk
+// configuration (DINGTALK_AUTH_CONFIG_SOURCE=database).
+func (s *userService) dingTalkDatabaseManaged() bool {
+	return s.dingTalkEnvConfig().IsDatabaseManaged()
+}
+
+func (s *userService) dingTalkClock() time.Time {
+	if s.dingTalkNow != nil {
+		return s.dingTalkNow()
+	}
+	return time.Now()
+}
+
+// dingTalkEffectiveConfig resolves the configuration every login/URL/config
+// read must use:
+//
+//   - file (default): env/YAML is authoritative — today's behaviour, byte
+//     for byte; the settings table is never consulted.
+//   - database: the dingtalk_auth_settings row overlays the env baseline.
+//     Non-empty row fields win over their env counterparts; a stored secret
+//     replaces the env secret (empty ciphertext falls back to env); enabled
+//     is taken from the row. No row means the env baseline applies.
+//
+// The merged result is cached for dingTalkConfigCacheTTL; saves invalidate
+// it immediately. Decryption failures propagate as plain errors so callers
+// fail closed (503) instead of silently degrading to the env secret.
+func (s *userService) dingTalkEffectiveConfig(
+	ctx context.Context,
+) (*config.DingTalkAuthConfig, error) {
+	env := s.dingTalkEnvConfig()
+	if !env.IsDatabaseManaged() {
+		return env, nil
+	}
+	s.dingTalkConfigMu.Lock()
+	defer s.dingTalkConfigMu.Unlock()
+	if s.dingTalkConfigCached != nil && s.dingTalkClock().Before(s.dingTalkConfigExpires) {
+		return s.dingTalkConfigCached, nil
+	}
+	merged := *env
+	if s.dingtalkRepo != nil {
+		row, err := s.dingtalkRepo.GetSettings(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("load dingtalk settings: %w", err)
+		}
+		if row != nil {
+			// enabled always follows the database row, never env, so an
+			// administrator can switch the module off without redeploying.
+			merged.Enable = row.Enabled
+			merged.CorpID = dingTalkOverlay(merged.CorpID, row.CorpID)
+			merged.AppKey = dingTalkOverlay(merged.AppKey, row.AppKey)
+			merged.AgentID = dingTalkOverlay(merged.AgentID, row.AgentID)
+			merged.ProviderDisplayName = dingTalkOverlay(merged.ProviderDisplayName, row.DisplayName)
+			merged.RedirectURL = dingTalkOverlay(merged.RedirectURL, row.RedirectURL)
+			if row.AppSecretCiphertext != "" {
+				secret, err := secutils.DecryptStoredSecret(row.AppSecretCiphertext)
+				if err != nil {
+					return nil, fmt.Errorf("decrypt dingtalk app secret: %w", err)
+				}
+				merged.AppSecret = secret
+			}
+		}
+	}
+	s.dingTalkConfigCached = &merged
+	s.dingTalkConfigExpires = s.dingTalkClock().Add(dingTalkConfigCacheTTL)
+	return &merged, nil
+}
+
+// dingTalkOverlay lets a stored row value replace the env baseline value;
+// an empty row value keeps the baseline.
+func dingTalkOverlay(envValue, rowValue string) string {
+	if strings.TrimSpace(rowValue) != "" {
+		return rowValue
+	}
+	return envValue
+}
+
+// invalidateDingTalkConfigCache drops the cached effective configuration so
+// the next read observes a just-saved row immediately.
+func (s *userService) invalidateDingTalkConfigCache() {
+	s.dingTalkConfigMu.Lock()
+	defer s.dingTalkConfigMu.Unlock()
+	s.dingTalkConfigCached = nil
+}
+
 // dingTalkEnabledConfig gates every DingTalk entry point on the module
 // switch. A disabled module is a 403-class rejection, not a 503.
 func (s *userService) dingTalkEnabledConfig() (*config.DingTalkAuthConfig, error) {
-	if s.config == nil || s.config.DingTalkAuth == nil || !s.config.DingTalkAuth.Enable {
+	cfg, err := s.dingTalkEffectiveConfig(context.Background())
+	if err != nil {
+		return nil, err
+	}
+	if cfg == nil || !cfg.Enable {
 		return nil, &DingTalkRejectionError{
 			Reason:  types.DingTalkRejectDisabled,
 			Message: dingTalkRejectionMessage(types.DingTalkRejectDisabled),
 		}
 	}
-	return s.config.DingTalkAuth, nil
+	return cfg, nil
+}
+
+// dingTalkNewClient builds a credential-bound client, honouring the test
+// factory override when one is installed.
+func (s *userService) dingTalkNewClient(cfg *config.DingTalkAuthConfig) DingTalkClient {
+	if s.dingTalkClientFactory != nil {
+		return s.dingTalkClientFactory(cfg)
+	}
+	return NewDingTalkClient(cfg)
 }
 
 // dingTalkRuntime returns the config plus the client/repository pair the
-// login flows need. A missing wiring is an availability failure.
+// login flows need. A missing wiring is an availability failure. In database
+// mode the client is rebuilt from the effective config so a UI-saved secret
+// is honoured (the injected client still carries the env credentials);
+// file mode keeps the injected client, exactly as before.
 func (s *userService) dingTalkRuntime() (*config.DingTalkAuthConfig, DingTalkClient, error) {
 	cfg, err := s.dingTalkEnabledConfig()
 	if err != nil {
 		return nil, nil, err
 	}
-	if s.dingtalkClient == nil || s.dingtalkRepo == nil {
+	client := s.dingtalkClient
+	if s.dingTalkDatabaseManaged() {
+		client = s.dingTalkNewClient(cfg)
+	}
+	if client == nil || s.dingtalkRepo == nil {
 		return nil, nil, &DingTalkRejectionError{
 			Reason:  types.DingTalkRejectUnavailable,
 			Message: dingTalkRejectionMessage(types.DingTalkRejectUnavailable),
 		}
 	}
-	return cfg, s.dingtalkClient, nil
+	return cfg, client, nil
 }
 
 // GetDingTalkAuthConfig reports the public provider configuration. CorpID
@@ -126,12 +255,36 @@ func (s *userService) GetDingTalkAuthConfig(
 	ctx context.Context,
 ) (*types.DingTalkConfigResponse, error) {
 	resp := &types.DingTalkConfigResponse{Success: true}
-	if s.config != nil && s.config.DingTalkAuth != nil && s.config.DingTalkAuth.Enable {
+	cfg, err := s.dingTalkEffectiveConfig(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if cfg != nil && cfg.Enable {
 		resp.Enabled = true
-		resp.CorpID = strings.TrimSpace(s.config.DingTalkAuth.CorpID)
-		resp.ProviderDisplayName = dingTalkProviderDisplayName(s.config.DingTalkAuth)
+		resp.CorpID = strings.TrimSpace(cfg.CorpID)
+		resp.ProviderDisplayName = dingTalkProviderDisplayName(cfg)
 	}
 	return resp, nil
+}
+
+// DingTalkEffectiveAuthInfo reports the secret-free runtime state the auth
+// handler gates public endpoints on: whether the effective (file- or
+// database-resolved) configuration enables the module, and the registered
+// redirect URL to fall back from.
+func (s *userService) DingTalkEffectiveAuthInfo(
+	ctx context.Context,
+) (*types.DingTalkAuthInfo, error) {
+	cfg, err := s.dingTalkEffectiveConfig(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if cfg == nil {
+		cfg = &config.DingTalkAuthConfig{}
+	}
+	return &types.DingTalkAuthInfo{
+		Enabled:     cfg.Enable,
+		RedirectURL: strings.TrimSpace(cfg.RedirectURL),
+	}, nil
 }
 
 func dingTalkProviderDisplayName(cfg *config.DingTalkAuthConfig) string {
@@ -142,6 +295,275 @@ func dingTalkProviderDisplayName(cfg *config.DingTalkAuthConfig) string {
 		return name
 	}
 	return "钉钉"
+}
+
+// GetDingTalkAdminConfig returns the secret-free management view. Values are
+// the EFFECTIVE configuration (database row overlaid on env), so the form
+// round-trips exactly what a login would use. ConfigVersion / UpdatedBy /
+// UpdatedAt come from the stored row when one exists.
+func (s *userService) GetDingTalkAdminConfig(
+	ctx context.Context,
+) (*types.DingTalkAdminConfig, error) {
+	cfg, err := s.dingTalkEffectiveConfig(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if cfg == nil {
+		cfg = &config.DingTalkAuthConfig{}
+	}
+	var row *types.DingTalkAuthSettings
+	if s.dingtalkRepo != nil && s.dingTalkDatabaseManaged() {
+		if row, err = s.dingtalkRepo.GetSettings(ctx); err != nil {
+			return nil, err
+		}
+	}
+	view := &types.DingTalkAdminConfig{
+		Success:      true,
+		ConfigSource: s.dingTalkConfigSourceLabel(),
+		Enabled:      cfg.Enable,
+		CorpID:       strings.TrimSpace(cfg.CorpID),
+		AppKey:       strings.TrimSpace(cfg.AppKey),
+		AgentID:      strings.TrimSpace(cfg.AgentID),
+		DisplayName:  strings.TrimSpace(cfg.ProviderDisplayName),
+		RedirectURL:  strings.TrimSpace(cfg.RedirectURL),
+		HasSecret:    strings.TrimSpace(cfg.AppSecret) != "",
+		SecretFrom:   types.DingTalkSecretSourceNone,
+	}
+	if view.HasSecret {
+		if row != nil && row.AppSecretCiphertext != "" {
+			view.SecretFrom = types.DingTalkSecretSourceDatabase
+		} else {
+			view.SecretFrom = types.DingTalkSecretSourceEnv
+		}
+	}
+	if row != nil {
+		view.ConfigVersion = row.ConfigVersion
+		view.UpdatedBy = row.UpdatedBy
+		if !row.UpdatedAt.IsZero() {
+			view.UpdatedAt = row.UpdatedAt.UTC().Format(time.RFC3339)
+		}
+	}
+	return view, nil
+}
+
+// dingTalkConfigSourceLabel normalizes the deployment's config source for
+// the management view ("file" / "database").
+func (s *userService) dingTalkConfigSourceLabel() string {
+	if s.dingTalkDatabaseManaged() {
+		return config.DingTalkConfigSourceDatabase
+	}
+	return config.DingTalkConfigSourceFile
+}
+
+// UpdateDingTalkAdminConfig stores the UI-managed settings row. Non-secret
+// fields are replaced wholesale (an empty value simply means "fall back to
+// env" at resolution time); the secret keeps its current ciphertext unless a
+// replacement is supplied or clear_secret is set. Saving an ENABLED module
+// without corp id / app key / any usable secret is rejected so the switch
+// never produces a module that cannot log anybody in.
+func (s *userService) UpdateDingTalkAdminConfig(
+	ctx context.Context,
+	update *types.DingTalkAdminConfigUpdate,
+) (*types.DingTalkAdminConfig, error) {
+	if s.dingTalkDatabaseManaged() {
+		return s.writeDingTalkAdminConfig(ctx, update)
+	}
+	// File-managed deployments keep env/YAML authoritative; the settings UI
+	// is read-only for this module (same contract as the directory module).
+	return nil, ErrDingTalkConfigFileManaged
+}
+
+func (s *userService) writeDingTalkAdminConfig(
+	ctx context.Context,
+	update *types.DingTalkAdminConfigUpdate,
+) (*types.DingTalkAdminConfig, error) {
+	if update == nil {
+		return nil, fmt.Errorf("%w: empty update", ErrInvalidDingTalkConfig)
+	}
+	if s.dingtalkRepo == nil {
+		return nil, errors.New("dingtalk auth settings repository is not configured")
+	}
+	before, err := s.dingTalkEffectiveConfig(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if before == nil {
+		before = &config.DingTalkAuthConfig{}
+	}
+	existing, err := s.dingtalkRepo.GetSettings(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	candidate := &config.DingTalkAuthConfig{
+		Enable:              update.Enabled,
+		CorpID:              strings.TrimSpace(update.CorpID),
+		AppKey:              strings.TrimSpace(update.AppKey),
+		AgentID:             strings.TrimSpace(update.AgentID),
+		ProviderDisplayName: strings.TrimSpace(update.DisplayName),
+		RedirectURL:         strings.TrimSpace(update.RedirectURL),
+		AppSecret:           before.AppSecret,
+	}
+	row := &types.DingTalkAuthSettings{
+		ID:          1,
+		Enabled:     update.Enabled,
+		CorpID:      candidate.CorpID,
+		AppKey:      candidate.AppKey,
+		AgentID:     candidate.AgentID,
+		DisplayName: candidate.ProviderDisplayName,
+		RedirectURL: candidate.RedirectURL,
+	}
+	switch {
+	case update.ClearSecret:
+		// Explicitly drop the stored secret; effective resolution falls back
+		// to the env value (which may be empty — validated below).
+		row.AppSecretCiphertext = ""
+		candidate.AppSecret = s.dingTalkEnvConfig().AppSecret
+	case strings.TrimSpace(update.AppSecret) != "":
+		key := secutils.GetAESKey()
+		if len(key) != 32 {
+			return nil, ErrDirectoryEncryptionKey
+		}
+		ciphertext, err := secutils.EncryptAESGCM(strings.TrimSpace(update.AppSecret), key)
+		if err != nil {
+			return nil, fmt.Errorf("encrypt dingtalk app secret: %w", err)
+		}
+		row.AppSecretCiphertext = ciphertext
+		candidate.AppSecret = strings.TrimSpace(update.AppSecret)
+	default:
+		if existing != nil {
+			row.AppSecretCiphertext = existing.AppSecretCiphertext
+		}
+	}
+
+	// "Enabled must be usable" (same contract as the directory bind
+	// password): corp id, app key and a secret from some source are all
+	// required before the switch can be saved on.
+	if candidate.Enable {
+		if candidate.CorpID == "" || candidate.AppKey == "" {
+			return nil, fmt.Errorf(
+				"%w: corp_id and app_key are required when dingtalk auth is enabled",
+				ErrInvalidDingTalkConfig)
+		}
+		if strings.TrimSpace(candidate.AppSecret) == "" {
+			return nil, fmt.Errorf(
+				"%w: an app secret from the database or the environment is required when dingtalk auth is enabled",
+				ErrInvalidDingTalkConfig)
+		}
+	}
+
+	operatorID, _ := types.UserIDFromContext(ctx)
+	row.UpdatedBy = operatorID
+	row.ConfigVersion = 1
+	if existing != nil {
+		row.ConfigVersion = existing.ConfigVersion + 1
+	}
+	if err := s.dingtalkRepo.SaveSettings(ctx, row); err != nil {
+		return nil, err
+	}
+	s.invalidateDingTalkConfigCache()
+
+	s.dingTalkAudit(ctx, &types.DingTalkAuthEvent{
+		EventType: types.DingTalkEventConfigUpdate,
+		Detail: fmt.Sprintf("changed=%s operator=%s",
+			strings.Join(dingTalkChangedFields(before, candidate, existing, row), ","),
+			operatorID),
+	})
+	return s.GetDingTalkAdminConfig(ctx)
+}
+
+// dingTalkChangedFields lists which EFFECTIVE fields a save touched. Names
+// only — values (especially the secret) never enter the audit trail. The
+// secret counts as changed when its provenance or value changed; for the
+// stored secret that is detected via the ciphertext.
+func dingTalkChangedFields(
+	before, after *config.DingTalkAuthConfig,
+	existing *types.DingTalkAuthSettings,
+	row *types.DingTalkAuthSettings,
+) []string {
+	changed := make([]string, 0, 7)
+	appendIf := func(name string, differs bool) {
+		if differs {
+			changed = append(changed, name)
+		}
+	}
+	appendIf("enabled", before.Enable != after.Enable)
+	appendIf("corp_id", before.CorpID != after.CorpID)
+	appendIf("app_key", before.AppKey != after.AppKey)
+	appendIf("agent_id", before.AgentID != after.AgentID)
+	appendIf("display_name", before.ProviderDisplayName != after.ProviderDisplayName)
+	appendIf("redirect_url", before.RedirectURL != after.RedirectURL)
+	previousCiphertext := ""
+	if existing != nil {
+		previousCiphertext = existing.AppSecretCiphertext
+	}
+	appendIf("app_secret", previousCiphertext != row.AppSecretCiphertext)
+	return changed
+}
+
+// TestDingTalkConnection verifies candidate credentials against DingTalk's
+// enterprise access-token endpoint. Fields omitted from the candidate fall
+// back to the current effective values, so the administrator can test the
+// form as edited without saving first (directory-module interaction).
+// File-managed deployments ignore echoed form values and test the deployment
+// configuration itself, mirroring directoryRuntimeService.TestConnection.
+func (s *userService) TestDingTalkConnection(
+	ctx context.Context,
+	candidate *types.DingTalkAdminConfigUpdate,
+) (*types.DingTalkTestResult, error) {
+	effective, err := s.dingTalkEffectiveConfig(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if effective == nil {
+		effective = &config.DingTalkAuthConfig{}
+	}
+	probe := *effective
+	if candidate != nil && s.dingTalkDatabaseManaged() {
+		probe.CorpID = dingTalkOverlay(probe.CorpID, strings.TrimSpace(candidate.CorpID))
+		probe.AppKey = dingTalkOverlay(probe.AppKey, strings.TrimSpace(candidate.AppKey))
+		probe.AgentID = dingTalkOverlay(probe.AgentID, strings.TrimSpace(candidate.AgentID))
+		probe.ProviderDisplayName = dingTalkOverlay(
+			probe.ProviderDisplayName, strings.TrimSpace(candidate.DisplayName))
+		probe.RedirectURL = dingTalkOverlay(probe.RedirectURL, strings.TrimSpace(candidate.RedirectURL))
+		if secret := strings.TrimSpace(candidate.AppSecret); secret != "" {
+			probe.AppSecret = secret
+		}
+	}
+	if strings.TrimSpace(probe.CorpID) == "" || strings.TrimSpace(probe.AppKey) == "" ||
+		strings.TrimSpace(probe.AppSecret) == "" {
+		return nil, fmt.Errorf(
+			"%w: corp_id, app_key and an app secret are required to test the connection",
+			ErrInvalidDingTalkConfig)
+	}
+
+	result := &types.DingTalkTestResult{}
+	switch err := s.dingTalkNewClient(&probe).VerifyCredentials(ctx); {
+	case err == nil:
+		result.OK = true
+		result.Message = fmt.Sprintf(
+			"DingTalk accepted the app credentials for corp %s",
+			strings.TrimSpace(probe.CorpID))
+	case errors.Is(err, ErrDingTalkConfig):
+		return nil, fmt.Errorf(
+			"%w: corp_id, app_key and an app secret are required to test the connection",
+			ErrInvalidDingTalkConfig)
+	default:
+		var credentialErr *DingTalkCredentialError
+		if errors.As(err, &credentialErr) {
+			result.ErrorCode = credentialErr.Code
+			result.Message = credentialErr.Message
+		} else {
+			// Transport-level failure: no error code, generic message that
+			// never echoes credentials or endpoint details.
+			result.Message = "DingTalk API is unreachable; the credentials were not verified"
+		}
+	}
+	s.dingTalkAudit(ctx, &types.DingTalkAuthEvent{
+		EventType: types.DingTalkEventConfigTest,
+		Detail:    fmt.Sprintf("ok=%t", result.OK),
+	})
+	return result, nil
 }
 
 // BuildDingTalkAuthorizeURL composes the DingTalk authorization page URL

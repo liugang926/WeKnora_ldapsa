@@ -44,19 +44,31 @@ func NewDingTalkAuthHandler(
 	}
 }
 
-func (h *DingTalkAuthHandler) dingTalkEnabled() bool {
-	return h.configInfo != nil && h.configInfo.DingTalkAuth != nil && h.configInfo.DingTalkAuth.Enable
+// dingTalkEffectiveInfo resolves the module's effective runtime state. In
+// file mode this is exactly the static config check the handler always did;
+// in database mode it consults the settings row through the service's cached
+// loader. A resolution failure is an availability error (fail closed), never
+// a silent "disabled".
+func (h *DingTalkAuthHandler) dingTalkEffectiveInfo(c *gin.Context) (*types.DingTalkAuthInfo, error) {
+	info, err := h.userService.DingTalkEffectiveAuthInfo(c.Request.Context())
+	if err != nil {
+		logger.Errorf(c.Request.Context(), "Failed to resolve DingTalk effective config: %v", err)
+		return nil, apperrors.NewServiceUnavailableError("DingTalk auth config unavailable")
+	}
+	if info == nil {
+		info = &types.DingTalkAuthInfo{}
+	}
+	return info, nil
 }
 
 // dingTalkCallbackURL resolves the absolute /auth/dingtalk/callback URL.
-// Lookup order: the configured redirect_url (explicit or derived from
-// frontend_base_url at load time), then the request's own origin — the same
-// fallback the OIDC start endpoint uses for external deep links.
-func (h *DingTalkAuthHandler) dingTalkCallbackURL(c *gin.Context) string {
-	if h.configInfo != nil && h.configInfo.DingTalkAuth != nil {
-		if configured := strings.TrimSpace(h.configInfo.DingTalkAuth.RedirectURL); configured != "" {
-			return configured
-		}
+// Lookup order: the effective configured redirect_url (explicit or derived
+// from frontend_base_url at load time — resolved from env in file mode, from
+// the settings row in database mode), then the request's own origin — the
+// same fallback the OIDC start endpoint uses for external deep links.
+func dingTalkCallbackURL(c *gin.Context, info *types.DingTalkAuthInfo) string {
+	if configured := strings.TrimSpace(info.RedirectURL); configured != "" {
+		return configured
 	}
 	scheme := "http"
 	if c.Request.TLS != nil || strings.EqualFold(c.GetHeader("X-Forwarded-Proto"), "https") {
@@ -105,11 +117,16 @@ func (h *DingTalkAuthHandler) GetDingTalkConfig(c *gin.Context) {
 // @Router       /auth/dingtalk/url [get]
 func (h *DingTalkAuthHandler) GetDingTalkAuthorizationURL(c *gin.Context) {
 	ctx := c.Request.Context()
-	if !h.dingTalkEnabled() {
+	info, err := h.dingTalkEffectiveInfo(c)
+	if err != nil {
+		c.Error(err)
+		return
+	}
+	if !info.Enabled {
 		c.JSON(http.StatusNotFound, gin.H{"success": false, "message": "dingtalk auth disabled"})
 		return
 	}
-	resp, err := h.userService.BuildDingTalkAuthorizeURL(ctx, h.dingTalkCallbackURL(c))
+	resp, err := h.userService.BuildDingTalkAuthorizeURL(ctx, dingTalkCallbackURL(c, info))
 	if err != nil {
 		logger.Errorf(ctx, "Failed to generate DingTalk authorization URL: %v", err)
 		appErr := apperrors.NewForbiddenError("DingTalk authorization unavailable").WithDetails(err.Error())
@@ -209,7 +226,12 @@ func encodeDingTalkCallbackPayload(resp *types.OIDCCallbackResponse) (string, er
 // @Router       /auth/dingtalk/inapp [post]
 func (h *DingTalkAuthHandler) DingTalkInAppLogin(c *gin.Context) {
 	ctx := c.Request.Context()
-	if !h.dingTalkEnabled() {
+	info, err := h.dingTalkEffectiveInfo(c)
+	if err != nil {
+		c.Error(err)
+		return
+	}
+	if !info.Enabled {
 		_ = c.Error(apperrors.NewForbiddenError("dingtalk auth disabled"))
 		return
 	}
@@ -259,4 +281,105 @@ func asDingTalkRejection(err error) (*service.DingTalkRejectionError, bool) {
 		return rejection, true
 	}
 	return nil, false
+}
+
+// RegisterAdminRoutes wires the system-admin DingTalk configuration surface.
+// The caller must attach the existing authentication and SystemAdmin guards
+// before invoking it, mirroring DirectoryHandler.RegisterAdminRoutes. Two
+// further layers cover these endpoints by construction: the employee
+// write-block middleware rejects non-admin writes under /api/v1/system, and
+// the API-key gate leaves them human-only; SystemAdmin RBAC remains the
+// authoritative guard.
+func (h *DingTalkAuthHandler) RegisterAdminRoutes(group *gin.RouterGroup) {
+	group.GET("/dingtalk/config", h.GetAdminConfig)
+	group.PUT("/dingtalk/config", h.UpdateAdminConfig)
+	group.POST("/dingtalk/test", h.TestAdminConnection)
+}
+
+// GetAdminConfig godoc
+// @Summary      获取钉钉 SSO 管理配置
+// @Description  返回脱敏后的钉钉 SSO 生效配置（不含 app secret），供系统管理设置页展示
+// @Tags         系统管理
+// @Produce      json
+// @Success      200  {object}  types.DingTalkAdminConfig
+// @Failure      503  {object}  errors.AppError  "配置加载失败"
+// @Router       /system/admin/dingtalk/config [get]
+func (h *DingTalkAuthHandler) GetAdminConfig(c *gin.Context) {
+	result, err := h.userService.GetDingTalkAdminConfig(c.Request.Context())
+	if err != nil {
+		dingTalkAdminHTTPError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, result)
+}
+
+// UpdateAdminConfig godoc
+// @Summary      保存钉钉 SSO 管理配置
+// @Description  保存数据库托管的钉钉 SSO 配置（app_secret 留空保持不变，clear_secret 清空回落 env），启用时必须可用
+// @Tags         系统管理
+// @Accept       json
+// @Produce      json
+// @Param        request  body  types.DingTalkAdminConfigUpdate  true  "钉钉配置"
+// @Success      200      {object}  types.DingTalkAdminConfig
+// @Failure      400      {object}  errors.AppError  "启用但缺少 corp_id/app_key/secret"
+// @Failure      409      {object}  errors.AppError  "file 模式只读"
+// @Router       /system/admin/dingtalk/config [put]
+func (h *DingTalkAuthHandler) UpdateAdminConfig(c *gin.Context) {
+	var request types.DingTalkAdminConfigUpdate
+	if err := c.ShouldBindJSON(&request); err != nil {
+		_ = c.Error(
+			apperrors.NewValidationError("Invalid dingtalk configuration").
+				WithDetails(err.Error()),
+		)
+		return
+	}
+	result, err := h.userService.UpdateDingTalkAdminConfig(c.Request.Context(), &request)
+	if err != nil {
+		dingTalkAdminHTTPError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, result)
+}
+
+// TestAdminConnection godoc
+// @Summary      测试钉钉凭据
+// @Description  用表单候选值（未给字段回落当前生效值）调用钉钉 accessToken 接口验证凭据，不落盘
+// @Tags         系统管理
+// @Accept       json
+// @Produce      json
+// @Param        request  body  types.DingTalkAdminConfigUpdate  true  "候选配置"
+// @Success      200      {object}  types.DingTalkTestResult
+// @Failure      400      {object}  errors.AppError  "缺少 corp_id/app_key/secret"
+// @Router       /system/admin/dingtalk/test [post]
+func (h *DingTalkAuthHandler) TestAdminConnection(c *gin.Context) {
+	var request types.DingTalkAdminConfigUpdate
+	if err := c.ShouldBindJSON(&request); err != nil {
+		_ = c.Error(
+			apperrors.NewValidationError("Invalid dingtalk test configuration").
+				WithDetails(err.Error()),
+		)
+		return
+	}
+	result, err := h.userService.TestDingTalkConnection(c.Request.Context(), &request)
+	if err != nil {
+		dingTalkAdminHTTPError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, result)
+}
+
+// dingTalkAdminHTTPError maps admin-surface failures onto the directory
+// admin surface's status contract: validation 400, file-managed 409, and
+// anything else 503 (fail closed, no secret-bearing details).
+func dingTalkAdminHTTPError(c *gin.Context, err error) {
+	switch {
+	case stderrors.Is(err, service.ErrInvalidDingTalkConfig),
+		stderrors.Is(err, service.ErrDirectoryEncryptionKey):
+		_ = c.Error(apperrors.NewValidationError(err.Error()))
+	case stderrors.Is(err, service.ErrDingTalkConfigFileManaged):
+		_ = c.Error(apperrors.NewConflictError(err.Error()))
+	default:
+		_ = c.Error(
+			apperrors.NewServiceUnavailableError("DingTalk configuration is temporarily unavailable"))
+	}
 }

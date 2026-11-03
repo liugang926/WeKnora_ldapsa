@@ -162,6 +162,11 @@
           <DirectorySettings />
         </div>
 
+        <!-- 钉钉企业 SSO：系统管理员可见（与 directory 同组） -->
+        <div v-if="currentSection === 'dingtalk-auth'" class="section">
+          <DingTalkAuthSettings />
+        </div>
+
         <!-- 系统管理员可见的任务队列运行状态 -->
         <div v-if="currentSection === 'runtime-queues'" class="section">
           <RuntimeQueues />
@@ -242,6 +247,7 @@ import TenantMembers from './TenantMembers.vue'
 import SystemSettings from '@/views/system/SystemSettings.vue'
 import EvaluationSettings from './EvaluationSettings.vue'
 import DirectorySettings from '@/views/system/DirectorySettings.vue'
+import DingTalkAuthSettings from './DingTalkAuthSettings.vue'
 import RuntimeQueues from '@/views/system/RuntimeQueues.vue'
 import PlatformAPIKeys from '@/views/system/PlatformAPIKeys.vue'
 import SystemAuditLog from '@/views/system/SystemAuditLog.vue'
@@ -376,6 +382,7 @@ const navItems = computed(() => {
     { key: 'system', icon: 'info-circle', label: t('settings.versionInfo') },
     { key: 'system-global', icon: 'server', label: t('settings.system') },
     { key: 'directory', icon: 'usergroup', label: t('directoryAdmin.title') },
+    { key: 'dingtalk-auth', icon: 'user-circle', label: t('dingtalkAdmin.title') },
     { key: 'runtime-queues', icon: 'queue', label: t('settings.taskQueue') },
     { key: 'platform-api-keys', icon: 'secured', label: t('platformApiKeys.title') },
     { key: 'system-audit-log', icon: 'history', label: t('system.globalSettings.audit.tabLabel') },
@@ -440,7 +447,7 @@ const navGroups = computed<NavGroup[]>(() => {
     {
       key: 'system_administration',
       label: t('settings.navGroups.systemAdministration'),
-      items: pickItems(['system-global', 'directory', 'runtime-queues', 'platform-api-keys', 'system-audit-log']),
+      items: pickItems(['system-global', 'directory', 'dingtalk-auth', 'runtime-queues', 'platform-api-keys', 'system-audit-log']),
     },
     {
       key: 'platform',
@@ -500,7 +507,7 @@ const handleClose = () => {
   // 如果当前路由是设置页，返回上一页
   if (route.path === '/platform/settings') {
     const sec = route.query.section
-    if (sec === 'system-global' || sec === 'directory' || sec === 'runtime-queues' || sec === 'platform-api-keys' || sec === 'system-audit-log') {
+    if (sec === 'system-global' || sec === 'directory' || sec === 'dingtalk-auth' || sec === 'runtime-queues' || sec === 'platform-api-keys' || sec === 'system-audit-log') {
       router.push('/platform/knowledge-bases')
     } else {
       router.back()

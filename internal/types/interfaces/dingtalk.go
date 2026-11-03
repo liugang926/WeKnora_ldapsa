@@ -38,4 +38,10 @@ type DingTalkRepository interface {
 	// is passed through verbatim (no trimming or normalization) so leading
 	// zeros survive the comparison.
 	FindADIdentitiesBySAMAccountName(ctx context.Context, samAccountName string) ([]*types.DirectoryIdentity, error)
+	// GetSettings loads the single-row database-managed provider
+	// configuration, or nil when no administrator has saved one.
+	GetSettings(ctx context.Context) (*types.DingTalkAuthSettings, error)
+	// SaveSettings upserts the single-row database-managed provider
+	// configuration.
+	SaveSettings(ctx context.Context, settings *types.DingTalkAuthSettings) error
 }
