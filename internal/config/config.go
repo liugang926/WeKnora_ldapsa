@@ -338,10 +338,10 @@ type OIDCAuthConfig struct {
 // resolve existing users through the AD job number, so the module creates
 // no accounts of its own. AppSecret is never serialized to JSON responses.
 type DingTalkAuthConfig struct {
-	Enable              bool   `yaml:"enable"               json:"enable"`
-	CorpID              string `yaml:"corp_id"              json:"corp_id"`
-	AppKey              string `yaml:"app_key"              json:"app_key"`
-	AppSecret           string `yaml:"app_secret"           json:"-"`
+	Enable    bool   `yaml:"enable"               json:"enable"`
+	CorpID    string `yaml:"corp_id"              json:"corp_id"`
+	AppKey    string `yaml:"app_key"              json:"app_key"`
+	AppSecret string `yaml:"app_secret"           json:"-"`
 	// AgentID is recorded for completeness / future messaging features; the
 	// login flow itself does not use it.
 	AgentID             string `yaml:"agent_id"             json:"agent_id"`
@@ -350,7 +350,26 @@ type DingTalkAuthConfig struct {
 	// registered with the DingTalk app. Empty falls back to a
 	// frontend_base_url-derived default (see applyDingTalkEnvOverrides) or,
 	// failing that, the request origin at call time.
-	RedirectURL         string `yaml:"redirect_url"         json:"-"`
+	RedirectURL string `yaml:"redirect_url" json:"-"`
+	// ConfigSource selects where the effective configuration lives. "file"
+	// (the default) keeps environment/YAML authoritative; "database" lets a
+	// system administrator manage the settings (including a sealed
+	// app_secret) from the settings UI, with env values as the fallback
+	// baseline per field.
+	ConfigSource string `yaml:"config_source" json:"config_source"`
+}
+
+const (
+	// DingTalkConfigSourceFile keeps deployment env/YAML authoritative.
+	DingTalkConfigSourceFile = "file"
+	// DingTalkConfigSourceDatabase stores UI-managed settings in the
+	// dingtalk_auth_settings table (AES-GCM sealed app secret).
+	DingTalkConfigSourceDatabase = "database"
+)
+
+// IsDatabaseManaged reports whether the admin UI owns the DingTalk settings.
+func (d *DingTalkAuthConfig) IsDatabaseManaged() bool {
+	return d != nil && d.ConfigSource == DingTalkConfigSourceDatabase
 }
 
 // DirectoryConfig controls the optional LDAP / Active Directory module.
@@ -726,15 +745,28 @@ func ValidateConfig(cfg *Config) error {
 		}
 	}
 
-	if cfg.DingTalkAuth != nil && cfg.DingTalkAuth.Enable {
-		if strings.TrimSpace(cfg.DingTalkAuth.CorpID) == "" {
-			errs = append(errs, "dingtalk_auth.corp_id is required when DingTalk auth is enabled")
+	if cfg.DingTalkAuth != nil {
+		switch cfg.DingTalkAuth.ConfigSource {
+		case "", DingTalkConfigSourceFile, DingTalkConfigSourceDatabase:
+		default:
+			errs = append(errs,
+				"dingtalk_auth.config_source must be \"file\" or \"database\"")
 		}
-		if strings.TrimSpace(cfg.DingTalkAuth.AppKey) == "" {
-			errs = append(errs, "dingtalk_auth.app_key is required when DingTalk auth is enabled")
-		}
-		if strings.TrimSpace(cfg.DingTalkAuth.AppSecret) == "" {
-			errs = append(errs, "dingtalk_auth.app_secret is required when DingTalk auth is enabled")
+		// Database-managed deployments keep their connection settings in the
+		// dingtalk_auth_settings row and validate them at save time instead;
+		// requiring the fields here would lock an operator out of the very UI
+		// that is supposed to supply them. File deployments keep the strict
+		// startup contract.
+		if cfg.DingTalkAuth.Enable && !cfg.DingTalkAuth.IsDatabaseManaged() {
+			if strings.TrimSpace(cfg.DingTalkAuth.CorpID) == "" {
+				errs = append(errs, "dingtalk_auth.corp_id is required when DingTalk auth is enabled")
+			}
+			if strings.TrimSpace(cfg.DingTalkAuth.AppKey) == "" {
+				errs = append(errs, "dingtalk_auth.app_key is required when DingTalk auth is enabled")
+			}
+			if strings.TrimSpace(cfg.DingTalkAuth.AppSecret) == "" {
+				errs = append(errs, "dingtalk_auth.app_secret is required when DingTalk auth is enabled")
+			}
 		}
 	}
 
@@ -929,6 +961,15 @@ func applyDingTalkEnvOverrides(cfg *Config) {
 		cfg.DingTalkAuth = &DingTalkAuthConfig{}
 	}
 	d := cfg.DingTalkAuth
+
+	// DINGTALK_AUTH_CONFIG_SOURCE mirrors directory.management_source: it
+	// decides whether env/YAML (file) or the settings UI (database) owns the
+	// effective configuration. Default stays "file" so existing deployments
+	// keep today's behaviour.
+	d.ConfigSource = strings.TrimSpace(os.Getenv("DINGTALK_AUTH_CONFIG_SOURCE"))
+	if d.ConfigSource == "" {
+		d.ConfigSource = DingTalkConfigSourceFile
+	}
 
 	if value := strings.TrimSpace(os.Getenv("DINGTALK_AUTH_ENABLE")); value != "" {
 		d.Enable = strings.EqualFold(value, "true")

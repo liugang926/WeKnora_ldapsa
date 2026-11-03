@@ -48,6 +48,9 @@ export const SETTINGS_MANAGEMENT_SHORTCUT_MIN_ROLE = {
 export const SYSTEM_ADMIN_SETTINGS_SECTIONS = new Set([
   'system-global',
   'directory',
+  // DingTalk SSO provider configuration rides the same system-admin group as
+  // the directory module (backend: /system/admin/dingtalk under SystemAdmin).
+  'dingtalk-auth',
   'runtime-queues',
   'platform-api-keys',
   'system-audit-log',

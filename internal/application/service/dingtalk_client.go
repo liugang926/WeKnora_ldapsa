@@ -64,6 +64,19 @@ func (e *dingTalkBusinessError) Error() string {
 	return fmt.Sprintf("dingtalk business error at %s: errcode=%d", e.endpoint, e.errCode)
 }
 
+// DingTalkCredentialError marks a definitive answer from the credential
+// verification endpoint: the platform examined appKey/appSecret and rejected
+// them (bad secret, unknown app key, disabled app). Code keeps DingTalk's
+// own symbolic/numeric answer verbatim; Message is the platform text.
+type DingTalkCredentialError struct {
+	Code    string
+	Message string
+}
+
+func (e *DingTalkCredentialError) Error() string {
+	return fmt.Sprintf("dingtalk rejected the app credentials: code=%s message=%s", e.Code, e.Message)
+}
+
 // DingTalkClient is the narrow outbound surface of the DingTalk Open
 // Platform used by the SSO flow. Production wiring uses dingTalkHTTPClient;
 // tests substitute a fake.
@@ -88,6 +101,11 @@ type DingTalkClient interface {
 	GetInAppUserID(ctx context.Context, authCode string) (userid string, err error)
 	// GetUserDetail loads job number / name / unionID for a userid.
 	GetUserDetail(ctx context.Context, userid string) (jobNumber, name, unionID string, err error)
+	// VerifyCredentials proves the appKey/appSecret pair by fetching an
+	// enterprise access token from POST /v1.0/oauth2/accessToken. A
+	// definitive platform rejection returns *DingTalkCredentialError;
+	// transport failures return ErrDingTalkAPITransient.
+	VerifyCredentials(ctx context.Context) error
 }
 
 type dingTalkHTTPClient struct {
@@ -380,4 +398,84 @@ func redactDingTalkURL(raw string) string {
 		parsed.RawQuery = values.Encode()
 	}
 	return parsed.String()
+}
+
+// dingTalkCredentialErrorBody accepts both DingTalk error dialects: the
+// v1.0 surface answers {"code": "...", "message": "..."} with symbolic
+// codes, the legacy oapi envelope uses {"errcode": n, "errmsg": "..."}.
+type dingTalkCredentialErrorBody struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+	ErrCode int64  `json:"errcode"`
+	ErrMsg  string `json:"errmsg"`
+}
+
+func (b dingTalkCredentialErrorBody) credentialError() *DingTalkCredentialError {
+	code := strings.TrimSpace(b.Code)
+	if code == "" && b.ErrCode != 0 {
+		code = fmt.Sprintf("%d", b.ErrCode)
+	}
+	message := strings.TrimSpace(b.Message)
+	if message == "" {
+		message = strings.TrimSpace(b.ErrMsg)
+	}
+	return &DingTalkCredentialError{Code: code, Message: message}
+}
+
+// VerifyCredentials fetches an enterprise access token with the configured
+// appKey/appSecret. Unlike the login flow it must distinguish "the platform
+// rejected these credentials" from "the platform is unreachable", so it
+// decodes the error body of non-2xx answers instead of collapsing them into
+// ErrDingTalkAPITransient. One transport-level retry, same as doJSON; the
+// 10s client timeout bounds the whole call.
+func (c *dingTalkHTTPClient) VerifyCredentials(ctx context.Context) error {
+	if c.appKey == "" || c.appSecret == "" {
+		return ErrDingTalkConfig
+	}
+	raw, err := json.Marshal(map[string]string{
+		"appKey":    c.appKey,
+		"appSecret": c.appSecret,
+	})
+	if err != nil {
+		return fmt.Errorf("marshal dingtalk request: %w", err)
+	}
+	execute := func() (*http.Response, error) {
+		req, err := http.NewRequestWithContext(
+			ctx, http.MethodPost, dingTalkCorpTokenEndpoint, bytes.NewReader(raw))
+		if err != nil {
+			return nil, fmt.Errorf("build dingtalk request: %w", err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept", "application/json")
+		return c.httpClient.Do(req)
+	}
+	resp, err := execute()
+	if err != nil {
+		resp, err = execute()
+		if err != nil {
+			return fmt.Errorf("%w: %s", ErrDingTalkAPITransient, dingTalkCorpTokenEndpoint)
+		}
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		var body dingTalkCredentialErrorBody
+		if err := json.NewDecoder(io.LimitReader(resp.Body, dingTalkResponseBodyCap)).Decode(&body); err != nil {
+			return fmt.Errorf("%w: %s status=%d",
+				ErrDingTalkAPITransient, dingTalkCorpTokenEndpoint, resp.StatusCode)
+		}
+		credentialErr := body.credentialError()
+		if credentialErr.Code == "" && credentialErr.Message == "" {
+			return fmt.Errorf("%w: %s status=%d",
+				ErrDingTalkAPITransient, dingTalkCorpTokenEndpoint, resp.StatusCode)
+		}
+		return credentialErr
+	}
+	var payload dingTalkCorpTokenResponse
+	if err := json.NewDecoder(io.LimitReader(resp.Body, dingTalkResponseBodyCap)).Decode(&payload); err != nil {
+		return fmt.Errorf("%w: decode %s response", ErrDingTalkAPITransient, dingTalkCorpTokenEndpoint)
+	}
+	if strings.TrimSpace(payload.AccessToken) == "" {
+		return fmt.Errorf("%w: empty corp access token", ErrDingTalkAPITransient)
+	}
+	return nil
 }

@@ -19,21 +19,28 @@ const (
 	DingTalkEventLoginSuccess   = "login_success"
 	DingTalkEventLoginRejected  = "login_rejected"
 	DingTalkEventSnapshotUpdate = "snapshot_update"
+	// DingTalkEventConfigUpdate records an administrator saving the
+	// database-managed provider configuration. Detail carries changed field
+	// NAMES only, never values.
+	DingTalkEventConfigUpdate = "config_update"
+	// DingTalkEventConfigTest records an administrator running a connection
+	// test against (candidate) provider credentials.
+	DingTalkEventConfigTest = "config_test"
 )
 
 // Machine-readable rejection reasons shared by the audit trail and the
 // #dingtalk_error= redirect fragment.
 const (
-	DingTalkRejectDisabled           = "dingtalk_disabled"
-	DingTalkRejectWrongCorp          = "wrong_corp"
+	DingTalkRejectDisabled            = "dingtalk_disabled"
+	DingTalkRejectWrongCorp           = "wrong_corp"
 	DingTalkRejectNotEnterpriseMember = "not_enterprise_member"
-	DingTalkRejectUserInactive       = "user_inactive"
-	DingTalkRejectEmptyJobNumber     = "empty_job_number"
-	DingTalkRejectNoADMatch          = "no_ad_match"
-	DingTalkRejectDuplicateJobNumber = "duplicate_job_number"
-	DingTalkRejectBindingConflict    = "binding_conflict"
-	DingTalkRejectADOrUserDisabled   = "ad_or_user_disabled"
-	DingTalkRejectUnavailable        = "dingtalk_unavailable"
+	DingTalkRejectUserInactive        = "user_inactive"
+	DingTalkRejectEmptyJobNumber      = "empty_job_number"
+	DingTalkRejectNoADMatch           = "no_ad_match"
+	DingTalkRejectDuplicateJobNumber  = "duplicate_job_number"
+	DingTalkRejectBindingConflict     = "binding_conflict"
+	DingTalkRejectADOrUserDisabled    = "ad_or_user_disabled"
+	DingTalkRejectUnavailable         = "dingtalk_unavailable"
 )
 
 // DingTalkIdentity is the durable link between one DingTalk enterprise user
@@ -97,6 +104,99 @@ type DingTalkConfigResponse struct {
 	Enabled             bool   `json:"enabled"`
 	ProviderDisplayName string `json:"provider_display_name,omitempty"`
 	CorpID              string `json:"corp_id,omitempty"`
+}
+
+// DingTalkAuthInfo is the secret-free runtime state of the module after
+// file/database resolution, consumed by the auth handler to gate the public
+// endpoints (enabled flag, registered redirect URL).
+type DingTalkAuthInfo struct {
+	Enabled     bool   `json:"enabled"`
+	RedirectURL string `json:"redirect_url,omitempty"`
+}
+
+// DingTalkAuthSettings is the single-row (id = 1) database-managed provider
+// configuration. The application layer guarantees the singleton: every save
+// upserts row 1. AppSecretCiphertext is an AES-GCM sealed value derived from
+// SYSTEM_AES_KEY (same key system as the directory bind password) and is
+// never serialized to JSON.
+type DingTalkAuthSettings struct {
+	// ID is always 1; the column exists so both SQL dialects get a plain
+	// primary key and GORM has a stable upsert key.
+	ID uint64 `json:"id" gorm:"primaryKey"`
+	// Enabled is the module switch. In database mode this row is the
+	// authority; env enable is only the no-row fallback.
+	Enabled bool `json:"enabled" gorm:"not null;default:false"`
+	// CorpID / AppKey / AgentID / DisplayName / RedirectURL mirror the
+	// dingtalk_auth config fields; an empty value falls back to env.
+	CorpID              string `json:"corp_id" gorm:"type:varchar(64);not null;default:''"`
+	AppKey              string `json:"app_key" gorm:"type:varchar(64);not null;default:''"`
+	AgentID             string `json:"agent_id" gorm:"type:varchar(64);not null;default:''"`
+	DisplayName         string `json:"display_name" gorm:"type:varchar(128);not null;default:''"`
+	RedirectURL         string `json:"redirect_url" gorm:"type:varchar(512);not null;default:''"`
+	AppSecretCiphertext string `json:"-" gorm:"column:app_secret_ciphertext;type:text;not null;default:''"`
+	// ConfigVersion increments on every successful save so concurrent admins
+	// can detect stale views.
+	ConfigVersion uint64 `json:"config_version" gorm:"not null;default:1"`
+	// UpdatedBy records the last saving administrator's user id.
+	UpdatedBy string    `json:"updated_by" gorm:"type:varchar(36);not null;default:''"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// TableName names the single-row DingTalk settings table.
+func (DingTalkAuthSettings) TableName() string { return "dingtalk_auth_settings" }
+
+// DingTalk admin secret-provenance values reported by the redacted view.
+const (
+	// DingTalkSecretSourceDatabase marks a sealed secret stored in the row.
+	DingTalkSecretSourceDatabase = "database"
+	// DingTalkSecretSourceEnv marks a secret supplied by deployment config.
+	DingTalkSecretSourceEnv = "env"
+	// DingTalkSecretSourceNone marks an absent secret.
+	DingTalkSecretSourceNone = "none"
+)
+
+// DingTalkAdminConfig is the secret-free management view returned by the
+// system-admin DingTalk endpoints. It mirrors the directory admin contract:
+// the stored secret is represented by HasSecret/SecretFrom, never by value.
+type DingTalkAdminConfig struct {
+	Success       bool   `json:"success"`
+	ConfigSource  string `json:"config_source"`
+	Enabled       bool   `json:"enabled"`
+	CorpID        string `json:"corp_id"`
+	AppKey        string `json:"app_key"`
+	AgentID       string `json:"agent_id"`
+	DisplayName   string `json:"display_name"`
+	RedirectURL   string `json:"redirect_url"`
+	HasSecret     bool   `json:"has_secret"`
+	SecretFrom    string `json:"secret_from"`
+	ConfigVersion uint64 `json:"config_version"`
+	UpdatedBy     string `json:"updated_by"`
+	UpdatedAt     string `json:"updated_at,omitempty"`
+}
+
+// DingTalkAdminConfigUpdate is the write payload. AppSecret is optional:
+// empty/omitted keeps the current secret; ClearSecret explicitly drops the
+// stored secret so the effective config falls back to env.
+type DingTalkAdminConfigUpdate struct {
+	Enabled     bool   `json:"enabled"`
+	CorpID      string `json:"corp_id"`
+	AppKey      string `json:"app_key"`
+	AgentID     string `json:"agent_id"`
+	DisplayName string `json:"display_name"`
+	RedirectURL string `json:"redirect_url"`
+	AppSecret   string `json:"app_secret,omitempty"`
+	ClearSecret bool   `json:"clear_secret,omitempty"`
+}
+
+// DingTalkTestResult reports a redacted credential-test outcome. ErrorCode
+// carries DingTalk's business error code when the platform answered with a
+// definitive rejection; transport failures keep ok=false with a message and
+// no code.
+type DingTalkTestResult struct {
+	OK        bool   `json:"ok"`
+	ErrorCode string `json:"error_code,omitempty"`
+	Message   string `json:"message,omitempty"`
 }
 
 // DingTalkAuthURLResponse is the payload for /auth/dingtalk/url. State and

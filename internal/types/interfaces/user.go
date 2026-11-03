@@ -45,6 +45,27 @@ type UserService interface {
 	// binding and revokes their sessions. The caller authorizes the
 	// operation; operatorID is only recorded in the audit trail.
 	UnlinkDingTalkIdentity(ctx context.Context, operatorID, targetUserID string) error
+	// DingTalkEffectiveAuthInfo reports the effective (file- or
+	// database-resolved) runtime state: whether the module is enabled and
+	// the registered redirect URL. Secret-free by construction.
+	DingTalkEffectiveAuthInfo(ctx context.Context) (*types.DingTalkAuthInfo, error)
+	// GetDingTalkAdminConfig returns the secret-free DingTalk provider
+	// configuration for the system-admin settings UI.
+	GetDingTalkAdminConfig(ctx context.Context) (*types.DingTalkAdminConfig, error)
+	// UpdateDingTalkAdminConfig stores UI-managed DingTalk settings
+	// (database config source only; file-managed deployments are read-only
+	// and get ErrDingTalkConfigFileManaged semantics from the service).
+	UpdateDingTalkAdminConfig(
+		ctx context.Context,
+		update *types.DingTalkAdminConfigUpdate,
+	) (*types.DingTalkAdminConfig, error)
+	// TestDingTalkConnection verifies candidate DingTalk credentials
+	// (unspecified fields fall back to the effective values) against the
+	// enterprise access-token endpoint without saving anything.
+	TestDingTalkConnection(
+		ctx context.Context,
+		candidate *types.DingTalkAdminConfigUpdate,
+	) (*types.DingTalkTestResult, error)
 	// GetUserByID gets a user by ID
 	GetUserByID(ctx context.Context, id string) (*types.User, error)
 	// GetUsersByIDs batch-fetches users by id, returning a map keyed by

@@ -118,6 +118,19 @@ type userService struct {
 	groupAccess      interfaces.GroupAccessService
 	dingtalkRepo     interfaces.DingTalkRepository
 	dingtalkClient   DingTalkClient
+	// dingTalkClientFactory builds credential-bound clients for the
+	// database-managed runtime and the admin connection test. Nil means the
+	// production NewDingTalkClient; tests substitute a fake to inspect the
+	// credentials handed downstream.
+	dingTalkClientFactory func(*config.DingTalkAuthConfig) DingTalkClient
+
+	// dingTalkConfigCache memoizes the file/database-resolved DingTalk
+	// configuration for dingTalkConfigCacheTTL. Guarded by its own mutex so
+	// logins never contend on the broader service state.
+	dingTalkConfigMu      sync.Mutex
+	dingTalkConfigCached  *config.DingTalkAuthConfig
+	dingTalkConfigExpires time.Time
+	dingTalkNow           func() time.Time
 }
 
 type directoryIdentityBatchReader interface {

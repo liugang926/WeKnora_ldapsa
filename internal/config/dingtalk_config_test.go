@@ -67,6 +67,23 @@ func TestApplyDingTalkEnvOverrides(t *testing.T) {
 			t.Fatalf("redirect_url = %q", cfg.DingTalkAuth.RedirectURL)
 		}
 	})
+
+	t.Run("config source defaults to file and follows the env var", func(t *testing.T) {
+		cfg := &Config{}
+		applyDingTalkEnvOverrides(cfg)
+		if cfg.DingTalkAuth.ConfigSource != DingTalkConfigSourceFile {
+			t.Fatalf("config_source = %q, want file default", cfg.DingTalkAuth.ConfigSource)
+		}
+
+		t.Setenv("DINGTALK_AUTH_CONFIG_SOURCE", "database")
+		applyDingTalkEnvOverrides(cfg)
+		if cfg.DingTalkAuth.ConfigSource != DingTalkConfigSourceDatabase {
+			t.Fatalf("config_source = %q, want database", cfg.DingTalkAuth.ConfigSource)
+		}
+		if !cfg.DingTalkAuth.IsDatabaseManaged() {
+			t.Fatal("IsDatabaseManaged must be true for the database source")
+		}
+	})
 }
 
 func TestValidateConfigDingTalk(t *testing.T) {
@@ -96,6 +113,26 @@ func TestValidateConfigDingTalk(t *testing.T) {
 		}}
 		if err := ValidateConfig(cfg); err != nil {
 			t.Fatalf("complete module must validate: %v", err)
+		}
+	})
+
+	t.Run("illegal config source is rejected", func(t *testing.T) {
+		cfg := &Config{DingTalkAuth: &DingTalkAuthConfig{ConfigSource: "both"}}
+		err := ValidateConfig(cfg)
+		if err == nil {
+			t.Fatal("expected validation error for illegal config_source")
+		}
+		if !strings.Contains(err.Error(), "config_source") {
+			t.Fatalf("error %q should mention config_source", err)
+		}
+	})
+
+	t.Run("database source defers field requirements to save time", func(t *testing.T) {
+		cfg := &Config{DingTalkAuth: &DingTalkAuthConfig{
+			Enable: true, ConfigSource: DingTalkConfigSourceDatabase,
+		}}
+		if err := ValidateConfig(cfg); err != nil {
+			t.Fatalf("database-managed module must validate without env fields: %v", err)
 		}
 	})
 }

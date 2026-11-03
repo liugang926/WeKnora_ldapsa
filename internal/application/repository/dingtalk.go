@@ -121,15 +121,15 @@ func (r *dingTalkRepository) CreateBinding(ctx context.Context, binding *types.D
 		case err == nil:
 			// Re-activate the historical (unlinked) row.
 			updates := map[string]any{
-				"user_id":      userID,
-				"union_id":     binding.UnionID,
-				"job_number":   binding.JobNumber,
-				"display_name": binding.DisplayName,
-				"status":       types.DingTalkIdentityActive,
-				"bound_at":     now,
-				"unbound_at":   nil,
+				"user_id":       userID,
+				"union_id":      binding.UnionID,
+				"job_number":    binding.JobNumber,
+				"display_name":  binding.DisplayName,
+				"status":        types.DingTalkIdentityActive,
+				"bound_at":      now,
+				"unbound_at":    nil,
 				"last_login_at": nil,
-				"updated_at":   now,
+				"updated_at":    now,
 			}
 			res := tx.Model(&types.DingTalkIdentity{}).Where("id = ?", existing.ID).Updates(updates)
 			if res.Error != nil {
@@ -222,6 +222,65 @@ func (r *dingTalkRepository) InsertEvent(ctx context.Context, event *types.DingT
 	}
 	event.CreatedAt = time.Now().UTC()
 	return r.db.WithContext(ctx).Create(event).Error
+}
+
+// dingTalkSettingsID is the fixed primary key of the single-row settings
+// table; the application layer guarantees only this row is ever written.
+const dingTalkSettingsID = 1
+
+// GetSettings loads the database-managed provider configuration row, or nil
+// when no administrator has saved one yet (env baseline applies).
+func (r *dingTalkRepository) GetSettings(ctx context.Context) (*types.DingTalkAuthSettings, error) {
+	var settings types.DingTalkAuthSettings
+	err := r.db.WithContext(ctx).
+		Where("id = ?", dingTalkSettingsID).
+		First(&settings).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &settings, nil
+}
+
+// SaveSettings upserts the single configuration row in one statement so two
+// concurrent administrators cannot interleave a create-then-update race.
+func (r *dingTalkRepository) SaveSettings(
+	ctx context.Context,
+	settings *types.DingTalkAuthSettings,
+) error {
+	if settings == nil {
+		return errors.New("dingtalk settings are required")
+	}
+	settings.ID = dingTalkSettingsID
+	now := time.Now().UTC()
+	settings.UpdatedAt = now
+
+	existing, err := r.GetSettings(ctx)
+	if err != nil {
+		return err
+	}
+	if existing == nil {
+		settings.CreatedAt = now
+		return r.db.WithContext(ctx).Create(settings).Error
+	}
+	settings.CreatedAt = existing.CreatedAt
+	return r.db.WithContext(ctx).
+		Model(&types.DingTalkAuthSettings{}).
+		Where("id = ?", dingTalkSettingsID).
+		Updates(map[string]any{
+			"enabled":               settings.Enabled,
+			"corp_id":               settings.CorpID,
+			"app_key":               settings.AppKey,
+			"agent_id":              settings.AgentID,
+			"display_name":          settings.DisplayName,
+			"redirect_url":          settings.RedirectURL,
+			"app_secret_ciphertext": settings.AppSecretCiphertext,
+			"config_version":        settings.ConfigVersion,
+			"updated_by":            settings.UpdatedBy,
+			"updated_at":            settings.UpdatedAt,
+		}).Error
 }
 
 // FindADIdentitiesBySAMAccountName resolves the DingTalk job number against
