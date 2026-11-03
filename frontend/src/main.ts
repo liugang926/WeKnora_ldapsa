@@ -19,6 +19,7 @@ import { initFont } from "@/composables/useFont";
 import { installTDesignIconOfflineGuard } from "@/utils/tdesign-icon-offline";
 import { installAutofillGuard } from "@/utils/disable-autofill";
 import { useAuthStore } from "@/stores/auth";
+import { authCallbackCredentialsFromHash } from "@/utils/authCallbackPreload";
 
 // 必须在 Vue 组件挂载之前执行，避免 tdesign-icons 运行时请求 tdesign.gtimg.com
 installTDesignIconOfflineGuard();
@@ -37,6 +38,21 @@ async function bootstrap() {
   app.use(TDesign);
   const pinia = createPinia();
   app.use(pinia);
+
+  // SSO 回跳（#dingtalk_result= / #oidc_result=）的凭证必须在任何路由页面
+  // 挂载、发起首个 API 请求之前落库：App.vue 的异步消费 historically 晚于
+  // 页面组件的首批请求，导致 401 → refresh 无凭证 → 清凭证踢回登录页的
+  // “登录即会话过期”循环。这里同步预载 token；App.vue 仍负责导航与提示。
+  {
+    const authStore = useAuthStore();
+    const credentials = authCallbackCredentialsFromHash(window.location.hash);
+    if (credentials) {
+      authStore.setToken(credentials.token);
+      if (credentials.refreshToken) {
+        authStore.setRefreshToken(credentials.refreshToken);
+      }
+    }
+  }
 
   // Capabilities (can_create_tenant, auto_accept_invitation) are not cached
   // in localStorage — reconcile once before first paint when a session exists.

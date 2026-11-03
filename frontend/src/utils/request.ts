@@ -10,6 +10,7 @@ import {
   isEmbedPage,
   refreshAccessTokenShared,
 } from './authRefresh';
+import { hasPendingAuthCallbackResult } from './authCallbackPreload';
 
 export { forceReloginRedirect, refreshAccessTokenShared };
 
@@ -180,6 +181,17 @@ instance.interceptors.response.use(
 
     // 如果是401错误且不是刷新token的请求，尝试刷新token
     if (error.response.status === 401 && !originalRequest._retry && !originalRequest.url?.includes('/auth/refresh')) {
+      // SSO 回跳落地页竞态兜底：URL 还带着未消费的 #*_result= 而本地无任何
+      // 凭证时，说明这是回跳首屏的早期请求（token 尚未预载完成）。此时绝不能
+      // 走 refresh→清凭证→踢回登录页，否则会把刚带回的登录态杀掉，形成
+      // “登录即会话过期”循环；直接失败等预载完成后重新发起。
+      if (
+        hasPendingAuthCallbackResult() &&
+        !localStorage.getItem('weknora_token') &&
+        !localStorage.getItem('weknora_refresh_token')
+      ) {
+        return Promise.reject(withHttpStatus(error.response.data, error.response.status));
+      }
       originalRequest._retry = true;
       try {
         const token = await refreshAccessTokenShared({
