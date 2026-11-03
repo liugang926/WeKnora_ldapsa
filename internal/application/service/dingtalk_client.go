@@ -376,8 +376,25 @@ func (c *dingTalkHTTPClient) doJSON(
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 2048))
-		return fmt.Errorf("%w: %s status=%d", ErrDingTalkAPITransient, redactDingTalkURL(endpoint), resp.StatusCode)
+		// Surface DingTalk's own error dialect (v1.0 {"code","message"} /
+		// oapi {"errcode","errmsg"}) instead of discarding it: a 403
+		// "no personal-info read permission" must be diagnosable from the
+		// login_rejected audit row instead of reading as a transient outage.
+		var errBody dingTalkCredentialErrorBody
+		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+		_ = json.Unmarshal(bodyBytes, &errBody)
+		switch {
+		case errBody.Code != "" || errBody.Message != "":
+			return fmt.Errorf("%w: %s status=%d code=%s message=%s",
+				ErrDingTalkAPITransient, redactDingTalkURL(endpoint), resp.StatusCode,
+				errBody.Code, errBody.Message)
+		case errBody.ErrCode != 0 || errBody.ErrMsg != "":
+			return fmt.Errorf("%w: %s status=%d errcode=%d errmsg=%s",
+				ErrDingTalkAPITransient, redactDingTalkURL(endpoint), resp.StatusCode,
+				errBody.ErrCode, errBody.ErrMsg)
+		default:
+			return fmt.Errorf("%w: %s status=%d", ErrDingTalkAPITransient, redactDingTalkURL(endpoint), resp.StatusCode)
+		}
 	}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, dingTalkResponseBodyCap)).Decode(out); err != nil {
 		return fmt.Errorf("%w: decode %s response", ErrDingTalkAPITransient, endpoint)

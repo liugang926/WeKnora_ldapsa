@@ -74,6 +74,15 @@ func dingTalkRejectionMessage(reason string) string {
 	}
 }
 
+// truncateDingTalkDetail keeps an audit detail within the column size; the
+// client error strings are already redacted (endpoint URLs without tokens).
+func truncateDingTalkDetail(detail string) string {
+	if len(detail) > dingTalkAuditDetailCap-1 {
+		return detail[:dingTalkAuditDetailCap-1]
+	}
+	return detail
+}
+
 // dingTalkAuditDetailCap mirrors the dingtalk_auth_events.detail column size.
 const dingTalkAuditDetailCap = 512
 
@@ -728,13 +737,13 @@ func (s *userService) LoginWithDingTalkCode(
 	userAccessToken, err := client.ExchangeUserAccessToken(ctx, code)
 	if err != nil {
 		return nil, s.rejectDingTalkLogin(ctx, types.DingTalkRejectUnavailable, types.DingTalkAuthEvent{
-			CorpID: cfg.CorpID, Reason: types.DingTalkRejectUnavailable, Detail: "exchange user access token failed",
+			CorpID: cfg.CorpID, Reason: types.DingTalkRejectUnavailable, Detail: truncateDingTalkDetail(fmt.Sprintf("exchange user access token failed: %v", err)),
 		})
 	}
 	unionID, corpID, nick, err := client.GetUserContactMe(ctx, userAccessToken)
 	if err != nil {
 		return nil, s.rejectDingTalkLogin(ctx, types.DingTalkRejectUnavailable, types.DingTalkAuthEvent{
-			CorpID: cfg.CorpID, Reason: types.DingTalkRejectUnavailable, Detail: "load contact profile failed",
+			CorpID: cfg.CorpID, Reason: types.DingTalkRejectUnavailable, Detail: truncateDingTalkDetail(fmt.Sprintf("load contact profile failed: %v", err)),
 		})
 	}
 	if corpID != cfg.CorpID {
@@ -753,7 +762,7 @@ func (s *userService) LoginWithDingTalkCode(
 			reason = types.DingTalkRejectNotEnterpriseMember
 		}
 		return nil, s.rejectDingTalkLogin(ctx, reason, types.DingTalkAuthEvent{
-			CorpID: cfg.CorpID, Reason: reason, Detail: "resolve userid by unionId failed",
+			CorpID: cfg.CorpID, Reason: reason, Detail: truncateDingTalkDetail(fmt.Sprintf("resolve userid by unionId failed: %v", err)),
 		})
 	}
 
@@ -765,7 +774,7 @@ func (s *userService) LoginWithDingTalkCode(
 		}
 		return nil, s.rejectDingTalkLogin(ctx, reason, types.DingTalkAuthEvent{
 			CorpID: cfg.CorpID, DingTalkUserID: dingTalkUserID,
-			Reason: reason, Detail: "load user detail failed",
+			Reason: reason, Detail: truncateDingTalkDetail(fmt.Sprintf("load user detail failed: %v", err)),
 		})
 	}
 	displayName := name
@@ -827,7 +836,7 @@ func (s *userService) LoginWithDingTalkAuthCode(
 		}
 		return nil, s.rejectDingTalkLogin(ctx, reason, types.DingTalkAuthEvent{
 			CorpID: cfg.CorpID, DingTalkUserID: dingTalkUserID,
-			Reason: reason, Detail: "load user detail failed",
+			Reason: reason, Detail: truncateDingTalkDetail(fmt.Sprintf("load user detail failed: %v", err)),
 		})
 	}
 
