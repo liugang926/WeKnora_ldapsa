@@ -113,6 +113,12 @@
       </div>
 
       <div class="panel-actions">
+        <t-popconfirm v-if="canAdopt" :content="t('dingtalkAdmin.actions.adoptConfirm')"
+          @confirm="adoptEnvConfig">
+          <t-button variant="dashed" :loading="adopting">
+            {{ t('dingtalkAdmin.actions.adopt') }}
+          </t-button>
+        </t-popconfirm>
         <t-button variant="outline" :loading="testing" @click="runConnectionTest">
           {{ t('dingtalkAdmin.actions.test') }}
         </t-button>
@@ -129,6 +135,7 @@ import { computed, onMounted, ref } from 'vue'
 import { MessagePlugin } from 'tdesign-vue-next'
 import { useI18n } from 'vue-i18n'
 import {
+  adoptDingTalkEnvConfig,
   getDingTalkAdminConfig,
   testDingTalkConnection,
   updateDingTalkAdminConfig,
@@ -150,6 +157,25 @@ const testResult = ref<DingTalkTestResult | null>(null)
 // File/env-managed deployments keep the settings read-only here, matching the
 // directory module's read_only_fields contract.
 const readOnly = computed(() => config.value?.config_source !== 'database')
+const adopting = ref(false)
+// One-shot migration: env values exist but the UI is not yet authoritative
+// (config_source=file is the hard rollback switch and hides the action).
+const canAdopt = computed(() =>
+  config.value?.config_source === 'file'
+  && Boolean(config.value.corp_id || config.value.app_key))
+
+async function adoptEnvConfig() {
+  adopting.value = true
+  try {
+    await adoptDingTalkEnvConfig()
+    MessagePlugin.success(t('dingtalkAdmin.messages.adoptSuccess'))
+    await loadConfig()
+  } catch (error: any) {
+    MessagePlugin.error(error?.message || t('dingtalkAdmin.messages.adoptFailed'))
+  } finally {
+    adopting.value = false
+  }
+}
 
 const secretTheme = computed<'success' | 'warning' | 'danger'>(() => {
   if (!config.value?.has_secret) return 'danger'

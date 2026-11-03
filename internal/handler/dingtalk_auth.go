@@ -303,6 +303,7 @@ func asDingTalkRejection(err error) (*service.DingTalkRejectionError, bool) {
 func (h *DingTalkAuthHandler) RegisterAdminRoutes(group *gin.RouterGroup) {
 	group.GET("/dingtalk/config", h.GetAdminConfig)
 	group.PUT("/dingtalk/config", h.UpdateAdminConfig)
+	group.POST("/dingtalk/adopt", h.AdoptAdminConfig)
 	group.POST("/dingtalk/test", h.TestAdminConnection)
 }
 
@@ -361,6 +362,23 @@ func (h *DingTalkAuthHandler) UpdateAdminConfig(c *gin.Context) {
 // @Success      200      {object}  types.DingTalkTestResult
 // @Failure      400      {object}  errors.AppError  "缺少 corp_id/app_key/secret"
 // @Router       /system/admin/dingtalk/test [post]
+// AdoptAdminConfig godoc
+// @Summary      将环境配置导入为页面管理
+// @Description  把当前 env/YAML 的钉钉配置（含密文密封的 app secret）写入设置行并切换为页面管理，无需重启；DINGTALK_AUTH_CONFIG_SOURCE=file 时拒绝（硬回退开关）
+// @Tags         系统管理
+// @Produce      json
+// @Success      200  {object}  types.DingTalkAdminConfig
+// @Failure      409  {object}  errors.AppError  "已被页面管理或 env 强制 file 模式"
+// @Router       /system/admin/dingtalk/adopt [post]
+func (h *DingTalkAuthHandler) AdoptAdminConfig(c *gin.Context) {
+	result, err := h.userService.AdoptDingTalkEnvConfig(c.Request.Context())
+	if err != nil {
+		dingTalkAdminHTTPError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, result)
+}
+
 func (h *DingTalkAuthHandler) TestAdminConnection(c *gin.Context) {
 	var request types.DingTalkAdminConfigUpdate
 	if err := c.ShouldBindJSON(&request); err != nil {
@@ -386,7 +404,8 @@ func dingTalkAdminHTTPError(c *gin.Context, err error) {
 	case stderrors.Is(err, service.ErrInvalidDingTalkConfig),
 		stderrors.Is(err, service.ErrDirectoryEncryptionKey):
 		_ = c.Error(apperrors.NewValidationError(err.Error()))
-	case stderrors.Is(err, service.ErrDingTalkConfigFileManaged):
+	case stderrors.Is(err, service.ErrDingTalkConfigFileManaged),
+		stderrors.Is(err, service.ErrDingTalkConfigAlreadyManaged):
 		_ = c.Error(apperrors.NewConflictError(err.Error()))
 	default:
 		_ = c.Error(

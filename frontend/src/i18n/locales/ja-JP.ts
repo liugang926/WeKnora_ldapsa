@@ -34,7 +34,11 @@ export default {
       secretFromEnv: '現在のシークレットは環境変数由来です。ここで保存するとデータベースに保存されます。',
       secretMissing: 'AppSecret が未設定です。有効化には必要です。',
     },
-    actions: { test: '接続テスト' },
+    actions: {
+      test: '接続テスト',
+      adopt: '環境設定から取り込む',
+      adoptConfirm: '現在の環境変数の DingTalk 設定（AppSecret は暗号化して保存）をこのページに取り込み、ページ管理に切り替えます。取り込み後は環境変数を整理できます。DINGTALK_AUTH_CONFIG_SOURCE=file でいつでも環境変数管理に戻せます。取り込みますか？'
+    },
     messages: {
       testSuccess: 'DingTalk がアプリ資格情報を受け入れました。',
       testFailed: 'DingTalk 接続テストに失敗しました。',
@@ -44,6 +48,8 @@ export default {
       saveFailed: 'DingTalk 設定の保存に失敗しました。',
       required: 'DingTalk ログインを有効化するには Corp ID と AppKey が必要です。',
       copyFailed: 'リダイレクト URL をコピーできませんでした。',
+      adoptSuccess: '環境設定を取り込み、ページ管理に切り替えました。',
+      adoptFailed: '環境設定の取り込みに失敗しました。',
     },
   },
 

@@ -65,6 +65,12 @@ export async function updateDingTalkAdminConfig(
   )
 }
 
+export async function adoptDingTalkEnvConfig(): Promise<DingTalkAdminConfig> {
+  return unwrapDingTalkAdminResponse<DingTalkAdminConfig>(
+    await post('/api/v1/system/admin/dingtalk/adopt', {}),
+  )
+}
+
 export async function testDingTalkConnection(
   payload: Partial<DingTalkConfigUpdate>,
 ): Promise<DingTalkTestResult> {

@@ -118,9 +118,43 @@ func (s *userService) dingTalkEnvConfig() *config.DingTalkAuthConfig {
 }
 
 // dingTalkDatabaseManaged reports whether the settings UI owns the DingTalk
-// configuration (DINGTALK_AUTH_CONFIG_SOURCE=database).
-func (s *userService) dingTalkDatabaseManaged() bool {
-	return s.dingTalkEnvConfig().IsDatabaseManaged()
+// configuration:
+//
+//   - DINGTALK_AUTH_CONFIG_SOURCE=file — hard rollback switch, env/YAML
+//     stays authoritative and the settings row is never consulted;
+//   - DINGTALK_AUTH_CONFIG_SOURCE=database — explicit opt-in;
+//   - unset (legacy default) — database-managed once a settings row exists,
+//     so adopting the env configuration from the admin UI flips the module
+//     without a restart.
+//
+// The row-exists probe rides the same 30s cache as the effective config and
+// is invalidated on every save.
+func (s *userService) dingTalkDatabaseManaged(ctx context.Context) bool {
+	switch s.dingTalkEnvConfig().ConfigSource {
+	case config.DingTalkConfigSourceFile:
+		return false
+	case config.DingTalkConfigSourceDatabase:
+		return true
+	}
+	return s.dingTalkSettingsRowExists(ctx)
+}
+
+func (s *userService) dingTalkSettingsRowExists(ctx context.Context) bool {
+	if s.dingtalkRepo == nil {
+		return false
+	}
+	s.dingTalkConfigMu.Lock()
+	defer s.dingTalkConfigMu.Unlock()
+	if s.dingTalkRowExists != nil && s.dingTalkClock().Before(s.dingTalkRowExistsExpires) {
+		return *s.dingTalkRowExists
+	}
+	exists := false
+	if row, err := s.dingtalkRepo.GetSettings(ctx); err == nil && row != nil {
+		exists = true
+	}
+	s.dingTalkRowExists = &exists
+	s.dingTalkRowExistsExpires = s.dingTalkClock().Add(dingTalkConfigCacheTTL)
+	return exists
 }
 
 func (s *userService) dingTalkClock() time.Time {
@@ -147,7 +181,10 @@ func (s *userService) dingTalkEffectiveConfig(
 	ctx context.Context,
 ) (*config.DingTalkAuthConfig, error) {
 	env := s.dingTalkEnvConfig()
-	if !env.IsDatabaseManaged() {
+	// Resolution gate is the service-level management mode (explicit env
+	// choice, or — with the source unset — a stored settings row), probed
+	// BEFORE taking the config cache lock: the probe locks the same mutex.
+	if !s.dingTalkDatabaseManaged(ctx) {
 		return env, nil
 	}
 	s.dingTalkConfigMu.Lock()
@@ -196,6 +233,7 @@ func dingTalkOverlay(envValue, rowValue string) string {
 // invalidateDingTalkConfigCache drops the cached effective configuration so
 // the next read observes a just-saved row immediately.
 func (s *userService) invalidateDingTalkConfigCache() {
+	s.dingTalkRowExists = nil
 	s.dingTalkConfigMu.Lock()
 	defer s.dingTalkConfigMu.Unlock()
 	s.dingTalkConfigCached = nil
@@ -203,7 +241,7 @@ func (s *userService) invalidateDingTalkConfigCache() {
 
 // dingTalkEnabledConfig gates every DingTalk entry point on the module
 // switch. A disabled module is a 403-class rejection, not a 503.
-func (s *userService) dingTalkEnabledConfig() (*config.DingTalkAuthConfig, error) {
+func (s *userService) dingTalkEnabledConfig(ctx context.Context) (*config.DingTalkAuthConfig, error) {
 	cfg, err := s.dingTalkEffectiveConfig(context.Background())
 	if err != nil {
 		return nil, err
@@ -231,13 +269,13 @@ func (s *userService) dingTalkNewClient(cfg *config.DingTalkAuthConfig) DingTalk
 // mode the client is rebuilt from the effective config so a UI-saved secret
 // is honoured (the injected client still carries the env credentials);
 // file mode keeps the injected client, exactly as before.
-func (s *userService) dingTalkRuntime() (*config.DingTalkAuthConfig, DingTalkClient, error) {
-	cfg, err := s.dingTalkEnabledConfig()
+func (s *userService) dingTalkRuntime(ctx context.Context) (*config.DingTalkAuthConfig, DingTalkClient, error) {
+	cfg, err := s.dingTalkEnabledConfig(ctx)
 	if err != nil {
 		return nil, nil, err
 	}
 	client := s.dingtalkClient
-	if s.dingTalkDatabaseManaged() {
+	if s.dingTalkDatabaseManaged(ctx) {
 		client = s.dingTalkNewClient(cfg)
 	}
 	if client == nil || s.dingtalkRepo == nil {
@@ -312,14 +350,14 @@ func (s *userService) GetDingTalkAdminConfig(
 		cfg = &config.DingTalkAuthConfig{}
 	}
 	var row *types.DingTalkAuthSettings
-	if s.dingtalkRepo != nil && s.dingTalkDatabaseManaged() {
+	if s.dingtalkRepo != nil && s.dingTalkDatabaseManaged(ctx) {
 		if row, err = s.dingtalkRepo.GetSettings(ctx); err != nil {
 			return nil, err
 		}
 	}
 	view := &types.DingTalkAdminConfig{
 		Success:      true,
-		ConfigSource: s.dingTalkConfigSourceLabel(),
+		ConfigSource: s.dingTalkConfigSourceLabel(ctx),
 		Enabled:      cfg.Enable,
 		CorpID:       strings.TrimSpace(cfg.CorpID),
 		AppKey:       strings.TrimSpace(cfg.AppKey),
@@ -348,8 +386,8 @@ func (s *userService) GetDingTalkAdminConfig(
 
 // dingTalkConfigSourceLabel normalizes the deployment's config source for
 // the management view ("file" / "database").
-func (s *userService) dingTalkConfigSourceLabel() string {
-	if s.dingTalkDatabaseManaged() {
+func (s *userService) dingTalkConfigSourceLabel(ctx context.Context) string {
+	if s.dingTalkDatabaseManaged(ctx) {
 		return config.DingTalkConfigSourceDatabase
 	}
 	return config.DingTalkConfigSourceFile
@@ -365,12 +403,81 @@ func (s *userService) UpdateDingTalkAdminConfig(
 	ctx context.Context,
 	update *types.DingTalkAdminConfigUpdate,
 ) (*types.DingTalkAdminConfig, error) {
-	if s.dingTalkDatabaseManaged() {
+	if s.dingTalkDatabaseManaged(ctx) {
 		return s.writeDingTalkAdminConfig(ctx, update)
 	}
 	// File-managed deployments keep env/YAML authoritative; the settings UI
 	// is read-only for this module (same contract as the directory module).
+	// Adoption below is the one-shot path out of that state.
 	return nil, ErrDingTalkConfigFileManaged
+}
+
+// ErrDingTalkConfigAlreadyManaged rejects adoption when the settings row
+// already exists (the UI is already authoritative).
+var ErrDingTalkConfigAlreadyManaged = errors.New(
+	"dingtalk configuration is already managed in the settings UI")
+
+// AdoptDingTalkEnvConfig copies the current env/YAML configuration —
+// including the app secret, re-sealed for storage — into the settings row,
+// flipping the module to database management in one click without a restart.
+// DINGTALK_AUTH_CONFIG_SOURCE=file remains the hard rollback switch and
+// refuses the adoption; the env values can be cleaned up afterwards.
+func (s *userService) AdoptDingTalkEnvConfig(
+	ctx context.Context,
+) (*types.DingTalkAdminConfig, error) {
+	if s.dingtalkRepo == nil {
+		return nil, errors.New("dingtalk auth settings repository is not configured")
+	}
+	env := s.dingTalkEnvConfig()
+	if env.ConfigSource == config.DingTalkConfigSourceFile {
+		return nil, ErrDingTalkConfigFileManaged
+	}
+	if s.dingTalkDatabaseManaged(ctx) {
+		return nil, ErrDingTalkConfigAlreadyManaged
+	}
+	if strings.TrimSpace(env.CorpID) == "" || strings.TrimSpace(env.AppKey) == "" {
+		return nil, fmt.Errorf(
+			"%w: environment configuration lacks corp_id/app_key to adopt", ErrInvalidDingTalkConfig)
+	}
+
+	row := &types.DingTalkAuthSettings{
+		ID:          1,
+		Enabled:     env.Enable,
+		CorpID:      strings.TrimSpace(env.CorpID),
+		AppKey:      strings.TrimSpace(env.AppKey),
+		AgentID:     strings.TrimSpace(env.AgentID),
+		DisplayName: strings.TrimSpace(env.ProviderDisplayName),
+		RedirectURL: strings.TrimSpace(env.RedirectURL),
+	}
+	if secret := strings.TrimSpace(env.AppSecret); secret != "" {
+		key := secutils.GetAESKey()
+		if len(key) != 32 {
+			return nil, ErrDirectoryEncryptionKey
+		}
+		ciphertext, err := secutils.EncryptAESGCM(secret, key)
+		if err != nil {
+			return nil, fmt.Errorf("encrypt dingtalk app secret: %w", err)
+		}
+		row.AppSecretCiphertext = ciphertext
+	}
+	if env.Enable && row.AppSecretCiphertext == "" {
+		return nil, fmt.Errorf(
+			"%w: environment has no app secret to adopt for an enabled module", ErrInvalidDingTalkConfig)
+	}
+
+	operatorID, _ := types.UserIDFromContext(ctx)
+	row.UpdatedBy = operatorID
+	row.ConfigVersion = 1
+	if err := s.dingtalkRepo.SaveSettings(ctx, row); err != nil {
+		return nil, err
+	}
+	s.invalidateDingTalkConfigCache()
+	s.dingTalkAudit(ctx, &types.DingTalkAuthEvent{
+		EventType: types.DingTalkEventConfigUpdate,
+		Detail: fmt.Sprintf("adopted environment configuration (enabled=%t, secret=%t) operator=%s",
+			env.Enable, row.AppSecretCiphertext != "", operatorID),
+	})
+	return s.GetDingTalkAdminConfig(ctx)
 }
 
 func (s *userService) writeDingTalkAdminConfig(
@@ -519,7 +626,7 @@ func (s *userService) TestDingTalkConnection(
 		effective = &config.DingTalkAuthConfig{}
 	}
 	probe := *effective
-	if candidate != nil && s.dingTalkDatabaseManaged() {
+	if candidate != nil && s.dingTalkDatabaseManaged(ctx) {
 		probe.CorpID = dingTalkOverlay(probe.CorpID, strings.TrimSpace(candidate.CorpID))
 		probe.AppKey = dingTalkOverlay(probe.AppKey, strings.TrimSpace(candidate.AppKey))
 		probe.AgentID = dingTalkOverlay(probe.AgentID, strings.TrimSpace(candidate.AgentID))
@@ -574,7 +681,7 @@ func (s *userService) BuildDingTalkAuthorizeURL(
 	ctx context.Context,
 	callbackURL string,
 ) (*types.DingTalkAuthURLResponse, error) {
-	cfg, client, err := s.dingTalkRuntime()
+	cfg, client, err := s.dingTalkRuntime(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -612,7 +719,7 @@ func (s *userService) LoginWithDingTalkCode(
 	if strings.TrimSpace(code) == "" {
 		return nil, errors.New("code is required")
 	}
-	cfg, client, err := s.dingTalkRuntime()
+	cfg, client, err := s.dingTalkRuntime(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -696,7 +803,7 @@ func (s *userService) LoginWithDingTalkAuthCode(
 	if strings.TrimSpace(authCode) == "" {
 		return nil, errors.New("auth_code is required")
 	}
-	cfg, client, err := s.dingTalkRuntime()
+	cfg, client, err := s.dingTalkRuntime(ctx)
 	if err != nil {
 		return nil, err
 	}

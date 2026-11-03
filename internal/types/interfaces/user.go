@@ -55,6 +55,9 @@ type UserService interface {
 	// UpdateDingTalkAdminConfig stores UI-managed DingTalk settings
 	// (database config source only; file-managed deployments are read-only
 	// and get ErrDingTalkConfigFileManaged semantics from the service).
+	// AdoptDingTalkEnvConfig copies the env/YAML configuration (secret
+	// re-sealed) into the settings row, switching to UI management.
+	AdoptDingTalkEnvConfig(ctx context.Context) (*types.DingTalkAdminConfig, error)
 	UpdateDingTalkAdminConfig(
 		ctx context.Context,
 		update *types.DingTalkAdminConfigUpdate,

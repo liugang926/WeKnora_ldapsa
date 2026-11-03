@@ -34,7 +34,11 @@ export default {
       secretFromEnv: '当前密钥来自环境变量；在此保存新密钥后会存入数据库。',
       secretMissing: '尚未配置 AppSecret，启用前必须提供。',
     },
-    actions: { test: '测试连接' },
+    actions: {
+      test: '测试连接',
+      adopt: '从环境配置导入',
+      adoptConfirm: '将当前环境变量中的钉钉配置（含 AppSecret，加密保存）写入本页并转为页面管理。之后可清理 env 中的钉钉配置；设置 DINGTALK_AUTH_CONFIG_SOURCE=file 可随时回退为环境变量管理。确认导入？'
+    },
     messages: {
       testSuccess: '钉钉已接受应用凭据。',
       testFailed: '钉钉连接测试失败。',
@@ -44,6 +48,8 @@ export default {
       saveFailed: '保存钉钉配置失败。',
       required: '启用钉钉登录时 Corp ID 与 AppKey 必填。',
       copyFailed: '复制回调地址失败。',
+      adoptSuccess: '已导入环境配置并转为页面管理。',
+      adoptFailed: '导入环境配置失败。',
     },
   },
 
@@ -2694,9 +2700,7 @@ export default {
       deleted: 'MCP 服务已删除',
       deleteFailed: '删除 MCP 服务失败'
     },
-    actions: {
-      test: '测试连接'
-    }
+    actions: { test: '测试连接' }
   },
   conversationSettings: {
     maxTokens: {

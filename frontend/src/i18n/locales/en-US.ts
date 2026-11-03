@@ -34,7 +34,11 @@ export default {
       secretFromEnv: 'The secret comes from the environment. Saving a new secret here stores it in the database.',
       secretMissing: 'No app secret is configured; enable requires one.',
     },
-    actions: { test: 'Test connection' },
+    actions: {
+      test: 'Test connection',
+      adopt: 'Import from environment',
+      adoptConfirm: 'Copy the current environment DingTalk configuration (app secret stored encrypted) into this page and switch to UI management. The env entries can be cleaned up afterwards; DINGTALK_AUTH_CONFIG_SOURCE=file rolls back to env management at any time. Import now?'
+    },
     messages: {
       testSuccess: 'DingTalk accepted the app credentials.',
       testFailed: 'DingTalk connection test failed.',
@@ -44,6 +48,8 @@ export default {
       saveFailed: 'Failed to save the DingTalk configuration.',
       required: 'Corp ID and app key are required when DingTalk login is enabled.',
       copyFailed: 'Could not copy the redirect URL.',
+      adoptSuccess: 'Environment configuration imported; now managed in this page.',
+      adoptFailed: 'Failed to import the environment configuration.',
     },
   },
 

@@ -34,7 +34,11 @@ export default {
       secretFromEnv: '현재 시크릿은 환경변수에서 왔습니다. 여기에 저장하면 데이터베이스에 저장됩니다.',
       secretMissing: 'AppSecret 이 없습니다. 활성화에 필요합니다.',
     },
-    actions: { test: '연결 테스트' },
+    actions: {
+      test: '연결 테스트',
+      adopt: '환경 설정에서 가져오기',
+      adoptConfirm: '현재 환경 변수의 DingTalk 설정(AppSecret는 암호화하여 저장)을 이 페이지로 가져와 페이지 관리로 전환합니다. 이후 환경 변수 항목을 정리할 수 있으며, DINGTALK_AUTH_CONFIG_SOURCE=file로 언제든 환경 변수 관리로 되돌릴 수 있습니다. 가져오시겠습니까?'
+    },
     messages: {
       testSuccess: 'DingTalk 가 앱 자격 증명을 승인했습니다.',
       testFailed: 'DingTalk 연결 테스트에 실패했습니다.',
@@ -44,6 +48,8 @@ export default {
       saveFailed: 'DingTalk 구성 저장에 실패했습니다.',
       required: 'DingTalk 로그인 활성화에는 Corp ID 와 AppKey 가 필요합니다.',
       copyFailed: '리디렉션 URL 을 복사하지 못했습니다.',
+      adoptSuccess: '환경 설정을 가져와 페이지 관리로 전환했습니다.',
+      adoptFailed: '환경 설정 가져오기에 실패했습니다.',
     },
   },
 

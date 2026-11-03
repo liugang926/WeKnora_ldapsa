@@ -103,8 +103,9 @@ func TestDingTalkMigrationUpDownUpIsRepeatable(t *testing.T) {
 func TestDingTalkEffectiveConfigLoaderMatrix(t *testing.T) {
 	ctx := context.Background()
 
-	t.Run("file mode never consults the settings row", func(t *testing.T) {
-		env := setupDingTalkService(t) // config_source defaults to file
+	t.Run("explicit file mode never consults the settings row", func(t *testing.T) {
+		env := setupDingTalkService(t)
+		env.cfg.ConfigSource = config.DingTalkConfigSourceFile // hard rollback switch
 		env.saveDingTalkSettings(t, &types.DingTalkAuthSettings{
 			Enabled: true, CorpID: "db-corp", AppKey: "db-key",
 		})
@@ -472,10 +473,13 @@ func TestDingTalkAdminConnectionTest(t *testing.T) {
 }
 
 // TestDingTalkFileModeLoginBehaviourUnchanged is the regression red line:
-// with config_source=file (the default and today's production setting), the
-// login path resolves exactly as before even when a settings row exists.
+// with config_source=file — the hard rollback switch (DINGTALK_AUTH_CONFIG_
+// SOURCE=file) — the login path resolves exactly as before even when a
+// settings row exists. (With the source unset, a row now means database
+// management; that path is covered by the adoption tests below.)
 func TestDingTalkFileModeLoginBehaviourUnchanged(t *testing.T) {
 	env := setupDingTalkService(t)
+	env.cfg.ConfigSource = "file"
 	ctx := context.Background()
 	env.createFreshDirectory(t)
 	user := env.createUser(t, "filemode", true)
@@ -501,4 +505,65 @@ func TestDingTalkFileModeLoginBehaviourUnchanged(t *testing.T) {
 	defer func() { env.cfg.Enable = true }()
 	_, err = env.svc.LoginWithDingTalkCode(ctx, "auth-code-1")
 	requireRejection(t, err, types.DingTalkRejectDisabled)
+}
+
+// TestDingTalkAdoptEnvConfigIntoSettings covers the one-click migration from
+// env-managed to UI-managed: unset config source + no row → the env values
+// (including a re-sealed secret) land in the settings row and the module is
+// database-managed from that moment, without a restart.
+func TestDingTalkAdoptEnvConfigIntoSettings(t *testing.T) {
+	t.Setenv("SYSTEM_AES_KEY", dingTalkTestAESKey)
+	env := setupDingTalkService(t)
+	env.cfg.ConfigSource = "" // legacy default: env-managed until a row exists
+	env.cfg.Enable = true
+	env.cfg.CorpID = dingTalkTestCorpID
+	env.cfg.AppKey = "ding-app-key"
+	env.cfg.AppSecret = "ding-app-secret"
+	env.cfg.AgentID = "4620050040"
+	ctx := context.Background()
+
+	view, err := env.svc.AdoptDingTalkEnvConfig(ctx)
+	require.NoError(t, err)
+	require.True(t, view.Success)
+	require.Equal(t, config.DingTalkConfigSourceDatabase, view.ConfigSource)
+	require.True(t, view.Enabled)
+	require.Equal(t, dingTalkTestCorpID, view.CorpID)
+	require.Equal(t, "ding-app-key", view.AppKey)
+	require.True(t, view.HasSecret)
+	require.Equal(t, types.DingTalkSecretSourceDatabase, view.SecretFrom)
+
+	// The row is authoritative immediately: cache invalidated by the adopt.
+	env.cfg.CorpID = "changed-env-corp-after-adopt"
+	fresh, err := env.svc.GetDingTalkAdminConfig(ctx)
+	require.NoError(t, err)
+	require.Equal(t, dingTalkTestCorpID, fresh.CorpID, "database row wins after adoption")
+
+	// A second adoption is refused — the UI already owns the settings.
+	_, err = env.svc.AdoptDingTalkEnvConfig(ctx)
+	require.ErrorIs(t, err, ErrDingTalkConfigAlreadyManaged)
+}
+
+// Adoption must stay impossible while the hard rollback switch
+// (DINGTALK_AUTH_CONFIG_SOURCE=file) is engaged, and an env baseline without
+// corp/app key must not be adoptable.
+func TestDingTalkAdoptEnvConfigRefusals(t *testing.T) {
+	t.Run("explicit file mode refuses adoption", func(t *testing.T) {
+		t.Setenv("SYSTEM_AES_KEY", dingTalkTestAESKey)
+		env := setupDingTalkService(t)
+		env.cfg.ConfigSource = config.DingTalkConfigSourceFile
+		env.cfg.CorpID = dingTalkTestCorpID
+		env.cfg.AppKey = "ding-app-key"
+		_, err := env.svc.AdoptDingTalkEnvConfig(context.Background())
+		require.ErrorIs(t, err, ErrDingTalkConfigFileManaged)
+	})
+
+	t.Run("env without corp/app key refuses adoption", func(t *testing.T) {
+		t.Setenv("SYSTEM_AES_KEY", dingTalkTestAESKey)
+		env := setupDingTalkService(t)
+		env.cfg.ConfigSource = ""
+		env.cfg.CorpID = ""
+		env.cfg.AppKey = ""
+		_, err := env.svc.AdoptDingTalkEnvConfig(context.Background())
+		require.ErrorIs(t, err, ErrInvalidDingTalkConfig)
+	})
 }

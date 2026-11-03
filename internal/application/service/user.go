@@ -130,7 +130,11 @@ type userService struct {
 	dingTalkConfigMu      sync.Mutex
 	dingTalkConfigCached  *config.DingTalkAuthConfig
 	dingTalkConfigExpires time.Time
-	dingTalkNow           func() time.Time
+	// dingTalkRowExists caches the settings-row probe that flips an unset
+	// config source to database management (see dingTalkDatabaseManaged).
+	dingTalkRowExists        *bool
+	dingTalkRowExistsExpires time.Time
+	dingTalkNow              func() time.Time
 }
 
 type directoryIdentityBatchReader interface {
