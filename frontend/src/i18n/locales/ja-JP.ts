@@ -2474,6 +2474,7 @@ export default {
     dingtalkErrors: {
       not_enterprise_member: 'このDingTalkアカウントはこの組織に属していないためログインできません',
       no_ad_match: 'DingTalkの社員番号に一致するアカウントが見つかりません。管理者に連絡してください',
+      identity_link_required: '同名のローカルアカウントが既に存在します。管理者による紐付けが必要です',
       empty_job_number: 'DingTalkアカウントに社員番号がありません。管理者に登録を依頼してください',
       duplicate_job_number: '社員番号が複数のアカウントに一致します。管理者に連絡してください',
       binding_conflict: 'アカウントの関連付けに競合があります。管理者に連絡してください',

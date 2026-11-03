@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	apprepo "github.com/Tencent/WeKnora/internal/application/repository"
@@ -61,6 +62,8 @@ func dingTalkRejectionMessage(reason string) string {
 		return "DingTalk profile has no job number"
 	case types.DingTalkRejectNoADMatch:
 		return "No corporate account matches this job number; contact an administrator"
+	case types.DingTalkRejectIdentityLinkRequired:
+		return "A local account already exists under this name; an administrator must link it"
 	case types.DingTalkRejectDuplicateJobNumber:
 		return "Job number matches multiple corporate accounts"
 	case types.DingTalkRejectBindingConflict:
@@ -880,6 +883,9 @@ func (s *userService) resolveDingTalkLogin(
 
 	var user *types.User
 	var bindingID uint64
+	// Set when this login provisioned the WeKnora account (方案 A); the bind
+	// audit records link_mode=dingtalk_first_login for those cases.
+	provisionedViaDingTalk := false
 	if binding != nil && binding.UserID != nil && strings.TrimSpace(*binding.UserID) != "" {
 		user, err = s.userRepo.GetUserByID(ctx, *binding.UserID)
 		if err != nil || user == nil {
@@ -940,7 +946,7 @@ func (s *userService) resolveDingTalkLogin(
 			return nil, s.rejectDingTalkLogin(ctx, types.DingTalkRejectDuplicateJobNumber, auditBase)
 		}
 		identity := identities[0]
-		if identity == nil || identity.UserID == nil || strings.TrimSpace(*identity.UserID) == "" {
+		if identity == nil {
 			return nil, s.rejectDingTalkLogin(ctx, types.DingTalkRejectNoADMatch, auditBase)
 		}
 		if identity.Status != types.DirectoryObjectActive {
@@ -949,12 +955,40 @@ func (s *userService) resolveDingTalkLogin(
 				Reason: types.DingTalkRejectADOrUserDisabled, Detail: "directory identity not active",
 			})
 		}
-		user, err = s.userRepo.GetUserByID(ctx, *identity.UserID)
-		if err != nil || user == nil || !user.IsActive {
-			return nil, s.rejectDingTalkLogin(ctx, types.DingTalkRejectADOrUserDisabled, types.DingTalkAuthEvent{
-				CorpID: cfg.CorpID, DingTalkUserID: dingTalkUserID, JobNumber: jobNumber,
-				Reason: types.DingTalkRejectADOrUserDisabled, Detail: "linked user missing or disabled",
-			})
+		if identity.UserID == nil || strings.TrimSpace(*identity.UserID) == "" {
+			// First-login provisioning (方案 A): the job number matched a
+			// unique ACTIVE directory identity whose WeKnora account does not
+			// exist yet. Provision it with the exact rules of the LDAP
+			// first-login path instead of sending the employee through AD
+			// once first. Collisions with an existing local account still
+			// refuse with an audited identity_link_required.
+			provisionedUser, perr := s.provisionUserForDirectoryIdentity(ctx, identity)
+			switch {
+			case perr == nil:
+				user = provisionedUser
+				provisionedViaDingTalk = true
+			case errors.Is(perr, ErrDirectoryIdentityLinkRequired):
+				return nil, s.rejectDingTalkLogin(ctx, types.DingTalkRejectIdentityLinkRequired, types.DingTalkAuthEvent{
+					CorpID: cfg.CorpID, DingTalkUserID: dingTalkUserID, JobNumber: jobNumber,
+					Reason: types.DingTalkRejectIdentityLinkRequired,
+					Detail: "local account name collision; administrator must link",
+				})
+			case errors.Is(perr, ErrDirectoryIdentityUnavailable):
+				return nil, s.rejectDingTalkLogin(ctx, types.DingTalkRejectADOrUserDisabled, types.DingTalkAuthEvent{
+					CorpID: cfg.CorpID, DingTalkUserID: dingTalkUserID, JobNumber: jobNumber,
+					Reason: types.DingTalkRejectADOrUserDisabled, Detail: "directory identity unavailable",
+				})
+			default:
+				return nil, fmt.Errorf("failed to provision dingtalk first-login user: %w", perr)
+			}
+		} else {
+			user, err = s.userRepo.GetUserByID(ctx, *identity.UserID)
+			if err != nil || user == nil || !user.IsActive {
+				return nil, s.rejectDingTalkLogin(ctx, types.DingTalkRejectADOrUserDisabled, types.DingTalkAuthEvent{
+					CorpID: cfg.CorpID, DingTalkUserID: dingTalkUserID, JobNumber: jobNumber,
+					Reason: types.DingTalkRejectADOrUserDisabled, Detail: "linked user missing or disabled",
+				})
+			}
 		}
 		// Job-number reuse guard: the matched account must not already have
 		// an active DingTalk binding held by a different DingTalk user.
@@ -994,13 +1028,19 @@ func (s *userService) resolveDingTalkLogin(
 			}
 			created = current
 		} else {
+			bindDetail := "bound via job number match"
+			if provisionedViaDingTalk {
+				bindDetail = fmt.Sprintf(
+					"bound via job number match; link_mode=dingtalk_first_login directory=%s object_guid=%s",
+					identity.DirectoryID, identity.ObjectGUID)
+			}
 			s.dingTalkAudit(ctx, &types.DingTalkAuthEvent{
 				EventType:      types.DingTalkEventBind,
 				CorpID:         cfg.CorpID,
 				DingTalkUserID: dingTalkUserID,
 				JobNumber:      jobNumber,
 				UserID:         user.ID,
-				Detail:         "bound via job number match",
+				Detail:         bindDetail,
 			})
 		}
 		bindingID = created.ID
@@ -1084,4 +1124,84 @@ func (s *userService) UnlinkDingTalkIdentity(ctx context.Context, operatorID, ta
 		Detail:         fmt.Sprintf("operator=%s", operatorID),
 	})
 	return nil
+}
+
+// dingTalkProvisionMu serializes first-login provisioning, mirroring the
+// directory runtime's linkMu: a concurrent login for the same identity must
+// observe the created link instead of racing on the users' unique indexes.
+var dingTalkProvisionMu sync.Mutex
+
+// provisionUserForDirectoryIdentity is the DingTalk first-login variant of
+// the LDAP resolveDirectoryUser auto-provision path: a unique, active,
+// still-unlinked directory identity matched by job number provisions the
+// WeKnora account under the same rules — username from the SAM account
+// name (UPN local-part, then directory-<guid> fallback), the directory
+// email or a <guid>@directory.invalid placeholder, tenantless, with a
+// random placeholder password so directory credentials stay the only
+// password path — then links the identity and returns the user. Collisions
+// with an existing local account surface as ErrDirectoryIdentityLinkRequired.
+func (s *userService) provisionUserForDirectoryIdentity(
+	ctx context.Context,
+	identity *types.DirectoryIdentity,
+) (*types.User, error) {
+	dingTalkProvisionMu.Lock()
+	defer dingTalkProvisionMu.Unlock()
+
+	refreshed, err := s.directoryRepo.GetIdentity(ctx, identity.ID)
+	if err != nil {
+		return nil, err
+	}
+	if refreshed == nil || refreshed.Status != types.DirectoryObjectActive {
+		return nil, ErrDirectoryIdentityUnavailable
+	}
+	if refreshed.UserID != nil && strings.TrimSpace(*refreshed.UserID) != "" {
+		return s.userRepo.GetUserByID(ctx, *refreshed.UserID)
+	}
+	username := strings.TrimSpace(refreshed.SAMAccountName)
+	if username == "" {
+		username = strings.TrimSpace(refreshed.UPN)
+		if at := strings.IndexByte(username, '@'); at > 0 {
+			username = username[:at]
+		}
+	}
+	if username == "" {
+		username = "directory-" + strings.TrimSpace(refreshed.ObjectGUID)
+	}
+	email := strings.TrimSpace(refreshed.Email)
+	if email == "" {
+		email = strings.ToLower(strings.TrimSpace(refreshed.ObjectGUID)) + "@directory.invalid"
+	}
+	if collision, cerr := s.userRepo.FindUserByEmailOrUsernameFold(ctx, email, username); cerr != nil {
+		return nil, cerr
+	} else if collision != nil {
+		return nil, ErrDirectoryIdentityLinkRequired
+	}
+	password, err := randomDirectoryPlaceholderPassword()
+	if err != nil {
+		return nil, err
+	}
+	user, err := s.Register(ctx, &types.RegisterRequest{
+		Username:           username,
+		Email:              email,
+		Password:           password,
+		TenantProvisioning: types.TenantProvisioningTenantless,
+	})
+	if err != nil {
+		if errors.Is(err, ErrUserEmailExists) || errors.Is(err, ErrUserUsernameExists) {
+			return nil, ErrDirectoryIdentityLinkRequired
+		}
+		return nil, err
+	}
+	if err := s.directoryRepo.LinkIdentity(ctx, refreshed.ID, user.ID); err != nil {
+		_ = s.DeleteUser(ctx, user.ID)
+		if errors.Is(err, ErrDirectoryIdentityAlreadyLinked) {
+			if again, rerr := s.directoryRepo.GetIdentity(ctx, refreshed.ID); rerr == nil &&
+				again != nil && again.UserID != nil && strings.TrimSpace(*again.UserID) != "" {
+				return s.userRepo.GetUserByID(ctx, *again.UserID)
+			}
+			return nil, ErrDirectoryIdentityLinkRequired
+		}
+		return nil, fmt.Errorf("link directory identity: %w", err)
+	}
+	return user, nil
 }

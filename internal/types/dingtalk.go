@@ -31,16 +31,17 @@ const (
 // Machine-readable rejection reasons shared by the audit trail and the
 // #dingtalk_error= redirect fragment.
 const (
-	DingTalkRejectDisabled            = "dingtalk_disabled"
-	DingTalkRejectWrongCorp           = "wrong_corp"
-	DingTalkRejectNotEnterpriseMember = "not_enterprise_member"
-	DingTalkRejectUserInactive        = "user_inactive"
-	DingTalkRejectEmptyJobNumber      = "empty_job_number"
-	DingTalkRejectNoADMatch           = "no_ad_match"
-	DingTalkRejectDuplicateJobNumber  = "duplicate_job_number"
-	DingTalkRejectBindingConflict     = "binding_conflict"
-	DingTalkRejectADOrUserDisabled    = "ad_or_user_disabled"
-	DingTalkRejectUnavailable         = "dingtalk_unavailable"
+	DingTalkRejectDisabled             = "dingtalk_disabled"
+	DingTalkRejectWrongCorp            = "wrong_corp"
+	DingTalkRejectNotEnterpriseMember  = "not_enterprise_member"
+	DingTalkRejectUserInactive         = "user_inactive"
+	DingTalkRejectEmptyJobNumber       = "empty_job_number"
+	DingTalkRejectNoADMatch            = "no_ad_match"
+	DingTalkRejectIdentityLinkRequired = "identity_link_required"
+	DingTalkRejectDuplicateJobNumber   = "duplicate_job_number"
+	DingTalkRejectBindingConflict      = "binding_conflict"
+	DingTalkRejectADOrUserDisabled     = "ad_or_user_disabled"
+	DingTalkRejectUnavailable          = "dingtalk_unavailable"
 )
 
 // DingTalkIdentity is the durable link between one DingTalk enterprise user

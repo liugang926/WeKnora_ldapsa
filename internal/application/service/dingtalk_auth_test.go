@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -655,4 +656,69 @@ func TestDingTalkErrorsNeverLeakSecrets(t *testing.T) {
 	requireRejection(t, err, types.DingTalkRejectUnavailable)
 	require.NotContains(t, err.Error(), env.cfg.AppSecret)
 	require.NotContains(t, err.Error(), "auth-code-1")
+}
+
+// First-login provisioning (方案 A): a job number that matches a unique,
+// active, still-UNLINKED directory identity provisions the WeKnora account
+// with the LDAP first-login rules instead of rejecting with no_ad_match.
+func TestDingTalkLoginProvisionsUnlinkedADIdentity(t *testing.T) {
+	env := setupDingTalkService(t)
+	ctx := context.Background()
+	env.createFreshDirectory(t)
+	// No WeKnora user exists; the identity row has no user link yet.
+	identity := env.createADIdentity(t, "00123", "", types.DirectoryObjectActive) // 00123 = mock job number
+
+	resp, err := env.svc.LoginWithDingTalkCode(ctx, "auth-code-1")
+	require.NoError(t, err)
+	require.True(t, resp.Success)
+
+	created := resp.User
+	require.NotNil(t, created)
+	require.Equal(t, "00123", created.Username, "username follows the SAM account name")
+	require.True(t, created.IsActive)
+
+	// The directory identity is now linked to the provisioned user.
+	linked, err := env.svc.userRepo.GetUserByID(ctx, created.ID)
+	require.NoError(t, err)
+	require.NotNil(t, linked)
+
+	// The bind audit records the dingtalk_first_login link mode.
+	var bindEvents []types.DingTalkAuthEvent
+	require.NoError(t, env.db.Where("event_type = ?", types.DingTalkEventBind).Find(&bindEvents).Error)
+	require.Len(t, bindEvents, 1)
+	require.Contains(t, bindEvents[0].Detail, "link_mode=dingtalk_first_login")
+	require.Contains(t, bindEvents[0].Detail, identity.ObjectGUID)
+
+	// A second login resolves the SAME user through the now-linked identity.
+	resp2, err := env.svc.LoginWithDingTalkCode(ctx, "auth-code-2")
+	require.NoError(t, err)
+	require.Equal(t, created.ID, resp2.User.ID)
+}
+
+// A local account colliding on username/email keeps refusing: an
+// administrator must link it (identity_link_required), and no user is created.
+func TestDingTalkLoginProvisionCollisionRequiresAdminLink(t *testing.T) {
+	env := setupDingTalkService(t)
+	ctx := context.Background()
+	env.createFreshDirectory(t)
+	// An unrelated local user already occupies the SAM account name (00123
+	// is the mock client's job number).
+	existing := env.createUser(t, "00123", true)
+	identity := env.createADIdentity(t, "00123", "", types.DirectoryObjectActive)
+	require.NotNil(t, identity.UserID)
+	require.Empty(t, strings.TrimSpace(*identity.UserID))
+
+	_, err := env.svc.LoginWithDingTalkCode(ctx, "auth-code-1")
+	require.Error(t, err)
+	var rejection *DingTalkRejectionError
+	require.ErrorAs(t, err, &rejection)
+	require.Equal(t, types.DingTalkRejectIdentityLinkRequired, rejection.Reason)
+
+	// No binding and no extra user were created.
+	var users int64
+	require.NoError(t, env.db.Model(&types.User{}).Count(&users).Error)
+	require.EqualValues(t, 1, users)
+	binding := env.activeBinding(t, "dt-user-1")
+	require.Nil(t, binding)
+	_ = existing
 }

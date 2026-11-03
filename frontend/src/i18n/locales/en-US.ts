@@ -2474,6 +2474,7 @@ export default {
     dingtalkErrors: {
       not_enterprise_member: 'This DingTalk account does not belong to this organization and cannot sign in',
       no_ad_match: 'No account matches your DingTalk job number. Please contact an administrator',
+      identity_link_required: 'A local account already exists under this name; an administrator must link it',
       empty_job_number: 'Your DingTalk profile is missing a job number. Ask an administrator to add it',
       duplicate_job_number: 'The job number matches multiple accounts. Please contact an administrator',
       binding_conflict: 'Account binding conflict. Please contact an administrator',

@@ -55,6 +55,7 @@ export function hasPendingDingTalkCallback(hash = typeof window !== 'undefined' 
 export const DINGTALK_ERROR_KEYS: Record<string, string> = {
   not_enterprise_member: 'auth.dingtalkErrors.not_enterprise_member',
   no_ad_match: 'auth.dingtalkErrors.no_ad_match',
+  identity_link_required: 'auth.dingtalkErrors.identity_link_required',
   empty_job_number: 'auth.dingtalkErrors.empty_job_number',
   duplicate_job_number: 'auth.dingtalkErrors.duplicate_job_number',
   binding_conflict: 'auth.dingtalkErrors.binding_conflict',

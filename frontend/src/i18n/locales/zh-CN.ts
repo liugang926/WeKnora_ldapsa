@@ -5259,6 +5259,7 @@ export default {
     dingtalkErrors: {
       not_enterprise_member: '该钉钉账号不属于本企业，无法登录',
       no_ad_match: '未找到与钉钉工号匹配的账号，请联系管理员开通',
+      identity_link_required: '该工号已有同名本地账号，请联系管理员完成关联',
       empty_job_number: '钉钉账号缺少工号信息，请联系管理员补录',
       duplicate_job_number: '工号匹配不唯一，请联系管理员处理',
       binding_conflict: '账号关联冲突，请联系管理员处理',

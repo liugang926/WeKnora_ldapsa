@@ -297,8 +297,12 @@ func (r *dingTalkRepository) FindADIdentitiesBySAMAccountName(
 	var identities []*types.DirectoryIdentity
 	// Plain `=` keeps the match byte-exact on PostgreSQL and SQLite; the
 	// value is bound as a parameter so no quoting can mangle leading zeros.
+	// Deliberately NOT filtered on user_id: first-login provisioning (方案 A)
+	// resolves unique ACTIVE-but-unlinked identities through the same query
+	// and lets the service layer decide between loading the linked user and
+	// provisioning the account.
 	err := r.db.WithContext(ctx).
-		Where("sam_account_name = ? AND user_id IS NOT NULL AND user_id <> ''", samAccountName).
+		Where("sam_account_name = ?", samAccountName).
 		Order("directory_id ASC, id ASC").
 		Find(&identities).Error
 	if err != nil {

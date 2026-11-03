@@ -5221,6 +5221,7 @@ export default {
     dingtalkErrors: {
       not_enterprise_member: '이 딩톡 계정은 이 조직에 속하지 않아 로그인할 수 없습니다',
       no_ad_match: '딩톡 사번과 일치하는 계정을 찾을 수 없습니다. 관리자에게 문의하세요',
+      identity_link_required: '같은 이름의 로컬 계정이 이미 있습니다. 관리자가 연결해야 합니다',
       empty_job_number: '딩톡 계정에 사번 정보가 없습니다. 관리자에게 입력을 요청하세요',
       duplicate_job_number: '사번이 여러 계정과 일치합니다. 관리자에게 문의하세요',
       binding_conflict: '계정 연결에 충돌이 있습니다. 관리자에게 문의하세요',
