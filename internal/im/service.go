@@ -2967,8 +2967,11 @@ loop:
 	if finalizeErr != nil && fallbackErr != nil {
 		return errors.Join(finalizeErr, endErr, fallbackErr)
 	}
+	if endErr != nil && !(finalizeErr != nil && fallbackErr == nil) {
+		return endErr
+	}
 	logger.Infof(ctx, "[IM] Stream reply sent: platform=%s user=%s answer_len=%d", msg.Platform, msg.UserID, len(answer))
-	return endErr
+	return nil
 }
 
 // fallbackNonStream is used when streaming initialization fails.

@@ -3,6 +3,7 @@ package dingtalk
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -774,6 +775,11 @@ type streamState struct {
 	outTrackID     string    // non-empty when using AI card streaming
 	lastUpdate     time.Time // for card update throttling
 	createdAt      time.Time // for orphan stream detection
+	ready          chan struct{}
+	receiptDone    chan struct{}
+	ended          bool
+	endDone        chan struct{}
+	endErr         error
 }
 
 const (
@@ -815,35 +821,78 @@ func startStreamReaper() {
 	})
 }
 
+const processingReceiptTimeout = 2 * time.Second
+const processingReceiptText = "收到，正在处理，请稍候。"
+
+// This is reached only after the IM service authorizes and dequeues the request.
+// A receipt is transport feedback, never assistant content or a QA completion.
 func (a *Adapter) StartStream(ctx context.Context, incoming *im.IncomingMessage) (string, error) {
-	sessionWebhook := ""
-	if incoming.Extra != nil {
-		sessionWebhook = incoming.Extra["session_webhook"]
+	if err := ctx.Err(); err != nil {
+		return "", err
 	}
-
-	streamID := fmt.Sprintf("dt:%s:%s", incoming.UserID, incoming.MessageID)
-
-	state := &streamState{
-		sessionWebhook: sessionWebhook,
-		createdAt:      time.Now(),
+	if incoming == nil {
+		return "", fmt.Errorf("missing DingTalk message")
 	}
-
-	// If card template is configured, create an AI card for streaming
+	messageID := incoming.MessageID
+	if messageID == "" {
+		messageID = uuid.NewString()
+	}
+	identity, _ := json.Marshal([]string{a.clientID, incoming.UserID, incoming.ChatID, incoming.ThreadID, messageID})
+	streamID := fmt.Sprintf("dt:%x", sha256.Sum256(identity))
+	streamsMu.Lock()
+	state, exists := dStreams[streamID]
+	if !exists {
+		state = &streamState{createdAt: time.Now(), ready: make(chan struct{})}
+		if incoming.Extra != nil {
+			state.sessionWebhook = incoming.Extra["session_webhook"]
+		}
+		dStreams[streamID] = state
+	}
+	streamsMu.Unlock()
+	if exists {
+		select {
+		case <-state.ready:
+			return streamID, ctx.Err()
+		case <-ctx.Done():
+			return "", ctx.Err()
+		}
+	}
+	defer close(state.ready)
 	if a.cardTemplateID != "" {
 		outTrackID, err := a.createAndDeliverCard(ctx, incoming)
 		if err != nil {
-			logger.Warnf(ctx, "[DingTalk] Failed to create AI card, falling back to sessionWebhook: %v", err)
+			logger.Warn(ctx, "[DingTalk] AI card unavailable; using plain reply")
 		} else {
 			state.outTrackID = outTrackID
 		}
 	}
+	if state.outTrackID == "" && ctx.Err() == nil {
+		a.sendProcessingReceipt(ctx, incoming, state)
+	}
+	logger.Infof(ctx, "[DingTalk] Streaming started: card=%v", state.outTrackID != "")
+	return streamID, ctx.Err()
+}
 
-	streamsMu.Lock()
-	dStreams[streamID] = state
-	streamsMu.Unlock()
-
-	logger.Infof(ctx, "[DingTalk] Streaming started: stream_id=%s, card=%v", streamID, state.outTrackID != "")
-	return streamID, nil
+func (a *Adapter) sendProcessingReceipt(ctx context.Context, incoming *im.IncomingMessage, state *streamState) {
+	receiptCtx, cancel := context.WithTimeout(ctx, processingReceiptTimeout)
+	defer cancel()
+	done := make(chan error, 1)
+	state.receiptDone = make(chan struct{})
+	// Also bound local token-lock/transport setup waiting, not just the HTTP call.
+	go func() {
+		defer close(state.receiptDone)
+		done <- a.SendReply(receiptCtx, incoming, &im.ReplyMessage{Content: processingReceiptText})
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			logger.Warn(ctx, "[DingTalk] Processing receipt failed; QA continues")
+		} else {
+			logger.Info(ctx, "[DingTalk] Processing receipt sent")
+		}
+	case <-receiptCtx.Done():
+		logger.Warn(ctx, "[DingTalk] Processing receipt cancelled or timed out; QA continues")
+	}
 }
 
 func (a *Adapter) UpdateStreamContent(ctx context.Context, incoming *im.IncomingMessage, streamID string, fullContent string) error {
@@ -898,7 +947,8 @@ func (a *Adapter) FinalizeStream(ctx context.Context, incoming *im.IncomingMessa
 
 	if outTrackID != "" {
 		if err := a.streamingUpdateCard(ctx, outTrackID, finalContent, false); err != nil {
-			logger.Warnf(ctx, "[DingTalk] Failed to finalize card stream: %v", err)
+			logger.Warn(ctx, "[DingTalk] Failed to finalize card stream")
+			return streamDeliveryError(ctx)
 		}
 	}
 	return nil
@@ -908,10 +958,9 @@ func (a *Adapter) SendStreamChunk(ctx context.Context, incoming *im.IncomingMess
 	return a.UpdateStreamContent(ctx, incoming, streamID, content)
 }
 
-func (a *Adapter) EndStream(ctx context.Context, incoming *im.IncomingMessage, streamID string) error {
+func (a *Adapter) EndStream(ctx context.Context, incoming *im.IncomingMessage, streamID string) (retErr error) {
 	streamsMu.Lock()
 	state, ok := dStreams[streamID]
-	delete(dStreams, streamID)
 	streamsMu.Unlock()
 
 	if !ok {
@@ -919,25 +968,55 @@ func (a *Adapter) EndStream(ctx context.Context, incoming *im.IncomingMessage, s
 	}
 
 	state.mu.Lock()
+	if state.ended {
+		done := state.endDone
+		state.mu.Unlock()
+		select {
+		case <-done:
+			state.mu.Lock()
+			err := state.endErr
+			state.mu.Unlock()
+			return err
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	state.ended = true
+	state.endDone = make(chan struct{})
+	defer func() { state.mu.Lock(); state.endErr = retErr; close(state.endDone); state.mu.Unlock() }()
 	fullContent := state.content.String()
+	state.content.Reset()
 	outTrackID := state.outTrackID
 	sessionWebhook := state.sessionWebhook
+	state.sessionWebhook = ""
+	state.outTrackID = ""
 	state.mu.Unlock()
 
 	if outTrackID != "" {
 		if err := a.streamingUpdateCard(ctx, outTrackID, fullContent, true); err != nil {
-			logger.Warnf(ctx, "[DingTalk] Failed to finalize card stream: %v", err)
+			logger.Warn(ctx, "[DingTalk] Failed to finalize card stream")
+			return streamDeliveryError(ctx)
 		}
 	} else if sessionWebhook != "" {
 		if err := a.replyViaSessionWebhook(ctx, sessionWebhook, fullContent); err != nil {
-			logger.Warnf(ctx, "[DingTalk] Failed to end stream: %v", err)
+			logger.Warn(ctx, "[DingTalk] Failed to end stream")
+			return streamDeliveryError(ctx)
 		}
 	} else {
 		if err := a.replyViaOpenAPI(ctx, incoming, fullContent); err != nil {
-			logger.Warnf(ctx, "[DingTalk] Failed to end stream via OpenAPI: %v", err)
+			logger.Warn(ctx, "[DingTalk] Failed to end stream via OpenAPI")
+			return streamDeliveryError(ctx)
 		}
 	}
 
-	logger.Infof(ctx, "[DingTalk] Streaming ended: stream_id=%s", streamID)
+	logger.Info(ctx, "[DingTalk] Streaming ended")
 	return nil
+}
+
+// Avoid leaking webhook credentials or provider response bodies through callers' logs.
+func streamDeliveryError(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return fmt.Errorf("dingtalk final stream delivery failed")
 }
