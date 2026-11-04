@@ -275,6 +275,12 @@ func (g *NextcloudSourceLineageGuard) CheckSourceLifecycle(
 	if lineage == nil || len(lineage.Sources) == 0 {
 		return nil
 	}
+	if UseWeKnoraReadAuthority() {
+		// Same opt-in as Check: WeKnora owns read authorization, so the
+		// publication lifecycle stays metadata for sync/withdrawal/GC and is
+		// never a second read ACL for conversations.
+		return nil
+	}
 	if lineage.RequireComplete() != nil {
 		return ErrNextcloudPublicationDenied
 	}

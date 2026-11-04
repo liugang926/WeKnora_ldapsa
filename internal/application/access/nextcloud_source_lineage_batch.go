@@ -57,6 +57,11 @@ func (g *NextcloudSourceLineageGuard) CheckBatch(ctx context.Context, reads []So
 		frozen = append(frozen, SourceLineageRead{Lineage: lineage, Scope: scope})
 	}
 	reads = frozen
+	if UseWeKnoraReadAuthority() {
+		// Same opt-in as Check: skip the directory identity and Nextcloud
+		// snapshot revalidation; WeKnora ACLs are the read authority.
+		return g.recheckCurrentReadActor(ctx)
+	}
 	var initial *types.DirectoryIdentity
 	if len(union.Sources) > 0 {
 		if g.publication == nil || g.snapshots == nil {
