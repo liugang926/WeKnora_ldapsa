@@ -175,7 +175,7 @@ func (c *Connector) ListResources(
 	}
 	resources := make([]types.Resource, 0, len(children))
 	for _, child := range children {
-		if !child.isFolder() && !child.isDocument() {
+		if !child.isFolder() && !child.isDocument() && !child.isBinaryDocument() {
 			continue
 		}
 		if child.WorkspaceID != "" && child.WorkspaceID != parentRef.WorkspaceID {
@@ -242,6 +242,37 @@ func (c *Connector) ResolveResourceAncestors(
 		}
 	}
 	return ancestors, nil
+}
+
+// dingTalkBinaryContentTypes maps the wiki node extensions the connector
+// syncs as raw files onto their MIME types; the ingestion pipeline routes
+// them through the normal document parser (PDF/Office/text alike).
+var dingTalkBinaryContentTypes = map[string]string{
+	"pdf":  "application/pdf",
+	"doc":  "application/msword",
+	"docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+	"ppt":  "application/vnd.ms-powerpoint",
+	"pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+	"xls":  "application/vnd.ms-excel",
+	"xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+	"txt":  "text/plain",
+	"md":   "text/markdown",
+	"csv":  "text/csv",
+}
+
+// isBinaryDocument reports a wiki FILE node carrying a document extension
+// the pipeline can parse (finance folders hold PDF/PPT/Word files alongside
+// the ALIDOC wiki documents; skipping them silently emptied whole sync runs).
+func (n node) isBinaryDocument() bool {
+	if !strings.EqualFold(n.Type, "FILE") || !strings.EqualFold(n.Category, "DOCUMENT") {
+		return false
+	}
+	_, supported := dingTalkBinaryContentTypes[strings.ToLower(strings.TrimSpace(n.Extension))]
+	return supported
+}
+
+func (n node) binaryContentType() string {
+	return dingTalkBinaryContentTypes[strings.ToLower(strings.TrimSpace(n.Extension))]
 }
 
 func sortResources(resources []types.Resource) {
@@ -461,6 +492,28 @@ func (c *Connector) sync(
 			oldRevision, existed := oldRevisions[document.ID]
 			if mode.skipUnchanged && revision != "" && existed && revision == oldRevision {
 				newRevisions[document.ID] = revision
+				continue
+			}
+
+			if document.isBinaryDocument() {
+				body, derr := api.downloadWikiNode(ctx, document.ID)
+				if derr == nil {
+					item := fetchedBinaryDocument(scope.ResourceID, scope.Reference.WorkspaceID, document, body)
+					sealFetchedArtifact(ctx, &item, scope, document, configDigest)
+					items = append(items, item)
+					newRevisions[document.ID] = revision
+					continue
+				}
+				if isContextError(derr) {
+					return nil, nil, derr
+				}
+				items = append(items, failedDocument(
+					scope.ResourceID, scope.Reference.WorkspaceID, document, derr,
+				))
+				failedDocuments++
+				if existed {
+					newRevisions[document.ID] = oldRevision
+				}
 				continue
 			}
 
@@ -721,7 +774,7 @@ func scanWorkspace(
 			if len(seenNodes) > maxTraversalNodes {
 				return nil, fmt.Errorf("DingTalk workspace exceeds %d nodes", maxTraversalNodes)
 			}
-			if child.isDocument() {
+			if child.isDocument() || child.isBinaryDocument() {
 				documents = append(documents, child)
 			}
 			if child.isFolder() || child.HasChildren {
@@ -774,6 +827,42 @@ func fetchedDocument(
 		Content:          []byte(rendered.Markdown),
 		ContentType:      "text/markdown",
 		FileName:         sanitizeFilename(document.title()) + ".md",
+		URL:              documentURL,
+		UpdatedAt:        document.modifiedAt(),
+		Metadata:         metadata,
+		SourceResourceID: sourceResourceID,
+	}
+}
+
+// fetchedBinaryDocument wraps a downloaded wiki FILE node (PDF/Office/
+// text) for ingestion; the pipeline's regular document parser takes over
+// from the content type.
+func fetchedBinaryDocument(
+	sourceResourceID string,
+	workspaceID string,
+	document node,
+	body []byte,
+) types.FetchedItem {
+	metadata := map[string]string{
+		"channel":      types.ChannelDingtalk,
+		"workspace_id": workspaceID,
+		"node_id":      document.ID,
+		"category":     document.Category,
+		"extension":    document.Extension,
+		"sync_kind":    "binary_file",
+	}
+	documentURL := strings.TrimSpace(document.URL)
+	if documentURL == "" {
+		documentURL = "https://alidocs.dingtalk.com/i/nodes/" + url.PathEscape(document.ID)
+	}
+	extension := strings.ToLower(strings.TrimSpace(document.Extension))
+	title := document.title()
+	return types.FetchedItem{
+		ExternalID:       document.ID,
+		Title:            title,
+		Content:          body,
+		ContentType:      document.binaryContentType(),
+		FileName:         sanitizeFilename(title) + "." + extension,
 		URL:              documentURL,
 		UpdatedAt:        document.modifiedAt(),
 		Metadata:         metadata,

@@ -122,6 +122,7 @@ type dingTalkAPI interface {
 	listWorkspaces(context.Context) ([]workspace, error)
 	listNodes(context.Context, string) ([]node, error)
 	documentBlocks(context.Context, string) ([]json.RawMessage, error)
+	downloadWikiNode(context.Context, string) ([]byte, error)
 }
 
 type client struct {
@@ -487,6 +488,75 @@ func parseRetryAfter(value string, fallback time.Duration) time.Duration {
 		return maximum
 	}
 	return delay
+}
+
+// maxWikiNodeDownloadBytes caps wiki file downloads (uploads above the
+// platform limit cannot be ingested anyway).
+const maxWikiNodeDownloadBytes = 100 << 20
+
+// downloadWikiNode fetches the raw bytes of a binary wiki node (PDF, Office
+// documents, plain text): the download-info endpoint yields a short-lived
+// presigned URL, which is then fetched without authentication.
+func (c *client) downloadWikiNode(ctx context.Context, nodeID string) ([]byte, error) {
+	token, err := c.accessToken(ctx)
+	if err != nil {
+		return nil, err
+	}
+	infoURL := c.baseURL + "/v2.0/wiki/nodes/" + url.PathEscape(nodeID) +
+		"/downloadUrl?operatorId=" + url.QueryEscape(c.operator)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, infoURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create DingTalk download request: %w", err)
+	}
+	req.Header.Set("x-acs-dingtalk-access-token", token)
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("execute DingTalk download request: %w", redactRequestError(err))
+	}
+	// The presigned URL travels in the downloadUrl response header; some
+	// gateway versions also mirror it in a JSON body.
+	downloadURL := resp.Header.Get("downloadUrl")
+	body, _ := readBody(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("DingTalk download info status=%d", resp.StatusCode)
+	}
+	if downloadURL == "" {
+		var payload struct {
+			URL       string `json:"downloadUrl"`
+			HeaderURL string `json:"url"`
+		}
+		if json.Unmarshal(body, &payload) == nil {
+			downloadURL = payload.URL
+			if downloadURL == "" {
+				downloadURL = payload.HeaderURL
+			}
+		}
+	}
+	if downloadURL == "" {
+		return nil, errors.New("DingTalk download info returned no url")
+	}
+
+	fileReq, err := http.NewRequestWithContext(ctx, http.MethodGet, downloadURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create DingTalk file request: %w", err)
+	}
+	fileResp, err := c.http.Do(fileReq)
+	if err != nil {
+		return nil, fmt.Errorf("execute DingTalk file request: %w", redactRequestError(err))
+	}
+	defer fileResp.Body.Close()
+	if fileResp.StatusCode < 200 || fileResp.StatusCode >= 300 {
+		return nil, fmt.Errorf("DingTalk file download status=%d", fileResp.StatusCode)
+	}
+	data, err := io.ReadAll(io.LimitReader(fileResp.Body, maxWikiNodeDownloadBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("read DingTalk file body: %w", err)
+	}
+	if len(data) > maxWikiNodeDownloadBytes {
+		return nil, fmt.Errorf("DingTalk file exceeds %d bytes", maxWikiNodeDownloadBytes)
+	}
+	return data, nil
 }
 
 func (c *client) wait(ctx context.Context, delay time.Duration) error {

@@ -12,12 +12,13 @@ import (
 )
 
 type fakeAPI struct {
-	workspaces  []workspace
-	nodes       map[string][]node
-	blocks      map[string][]json.RawMessage
-	nodeErrors  map[string]error
-	blockErrors map[string]error
-	blockCalls  map[string]int
+	workspaces     []workspace
+	nodes          map[string][]node
+	blocks         map[string][]json.RawMessage
+	nodeErrors     map[string]error
+	blockErrors    map[string]error
+	blockCalls     map[string]int
+	downloadErrors map[string]error
 }
 
 func (f *fakeAPI) listWorkspaces(context.Context) ([]workspace, error) {
@@ -29,6 +30,15 @@ func (f *fakeAPI) listNodes(_ context.Context, parentID string) ([]node, error) 
 		return nil, err
 	}
 	return f.nodes[parentID], nil
+}
+
+func (f *fakeAPI) downloadWikiNode(_ context.Context, nodeID string) ([]byte, error) {
+	if f.downloadErrors != nil {
+		if err := f.downloadErrors[nodeID]; err != nil {
+			return nil, err
+		}
+	}
+	return []byte("binary-bytes-" + nodeID), nil
 }
 
 func (f *fakeAPI) documentBlocks(_ context.Context, documentID string) ([]json.RawMessage, error) {
@@ -439,5 +449,67 @@ func TestValidateProbesNodeAndDocumentAccess(t *testing.T) {
 	}
 	if err := testConnector(api).Validate(context.Background(), testConfig()); err == nil {
 		t.Fatal("Validate() error = nil, want node access failure")
+	}
+}
+
+// Binary wiki FILE nodes (PDF/Office) must be scanned, listed and fetched as
+// raw files: the finance folders hold pptx/pdf/docx documents whose absence
+// silently emptied whole sync runs.
+func TestBinaryWikiNodesSync(t *testing.T) {
+	api := &fakeAPI{
+		workspaces: []workspace{{ID: "ws-1", Name: "财务", RootNodeID: "root-1"}},
+		nodes: map[string][]node{
+			"root-1": {
+				{ID: "ppt-1", Type: "FILE", Category: "DOCUMENT", Extension: "pptx", Name: "报销流程.pptx", WorkspaceID: "ws-1"},
+				{ID: "pdf-1", Type: "FILE", Category: "DOCUMENT", Extension: "pdf", Name: "制度.pdf", WorkspaceID: "ws-1"},
+				{ID: "adoc-1", Type: "FILE", Category: "ALIDOC", Extension: "adoc", Name: "说明.adoc", WorkspaceID: "ws-1"},
+				{ID: "unknown-1", Type: "FILE", Category: "DOCUMENT", Extension: "zip", Name: "归档.zip", WorkspaceID: "ws-1"},
+			},
+		},
+		blocks: map[string][]json.RawMessage{"adoc-1": {}},
+	}
+	connector := testConnector(api)
+	config := testConfig("ws-1")
+
+	resources, err := connector.ListResources(context.Background(), config, "ws-1")
+	if err != nil {
+		t.Fatalf("list resources: %v", err)
+	}
+	visible := map[string]bool{}
+	for _, r := range resources {
+		visible[r.ExternalID] = true
+	}
+	pptURI := "dingtalk:v1?node=ppt-1&workspace=ws-1"
+	pdfURI := "dingtalk:v1?node=pdf-1&workspace=ws-1"
+	if !visible[pptURI] || !visible[pdfURI] {
+		t.Fatalf("binary documents must be selectable: %+v", resources)
+	}
+	if visible["dingtalk:v1?node=unknown-1&workspace=ws-1"] {
+		t.Fatalf("unsupported extensions stay hidden: %+v", resources)
+	}
+
+	items, _, err := connector.FetchAllFromCursor(context.Background(), config, []string{"ws-1"}, nil)
+	if err != nil {
+		t.Fatalf("fetch: %v", err)
+	}
+	byID := map[string]types.FetchedItem{}
+	for _, item := range items {
+		byID[item.ExternalID] = item
+	}
+	if len(items) != 3 {
+		t.Fatalf("expected 3 synced documents (2 binary + 1 adoc), got %d: %+v", len(items), items)
+	}
+	ppt := byID["ppt-1"]
+	if ppt.ContentType != "application/vnd.openxmlformats-officedocument.presentationml.presentation" {
+		t.Fatalf("pptx content type = %q", ppt.ContentType)
+	}
+	if string(ppt.Content) != "binary-bytes-ppt-1" {
+		t.Fatalf("pptx body = %q", string(ppt.Content))
+	}
+	if !strings.HasSuffix(ppt.FileName, ".pptx") {
+		t.Fatalf("pptx filename = %q", ppt.FileName)
+	}
+	if byID["pdf-1"].ContentType != "application/pdf" {
+		t.Fatalf("pdf content type = %q", byID["pdf-1"].ContentType)
 	}
 }
