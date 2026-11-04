@@ -110,8 +110,15 @@ func (r *RAGChunkSnapshotReader) HydrateRAGChunkSnapshots(
 				Error; err != nil {
 				return lineageSnapshotReadError(err)
 			}
-			if !request.MetadataOnly &&
-				(knowledge.ParseStatus != types.ParseStatusCompleted || knowledge.EnableStatus != "enabled") {
+			if !request.MetadataOnly && knowledge.EnableStatus != "enabled" {
+				return ErrNextcloudLineageSnapshotDenied
+			}
+			// Under the WeKnora read authority the per-chunk checks below
+			// (enabled, indexed) are the read gate; a document-level
+			// parse_status left mid-flight by a stalled sync pipeline must
+			// not strand its indexed chunks and block conversations.
+			if !request.MetadataOnly && !access.UseWeKnoraReadAuthority() &&
+				knowledge.ParseStatus != types.ParseStatusCompleted {
 				return ErrNextcloudLineageSnapshotDenied
 			}
 			var kb types.KnowledgeBase
