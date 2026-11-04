@@ -307,7 +307,7 @@ func (h *HousekeepingService) completeStrandedFinalizingDocs(ctx context.Context
 		Select("id").
 		Where(`parse_status = ? AND pending_subtasks_count > 0 AND updated_at < ?
 			AND channel <> ?
-			AND NOT EXISTS (SELECT 1 FROM task_pending_ops t WHERE t.scope_id = knowledges.id)`,
+			AND NOT EXISTS (SELECT 1 FROM task_pending_ops t WHERE t.scope_id = knowledges.id AND t.op <> 'settled')`,
 			types.ParseStatusFinalizing, cutoff, types.ConnectorTypeNextcloud).
 		Limit(64).
 		Find(&stranded).Error; err != nil {
@@ -321,7 +321,7 @@ func (h *HousekeepingService) completeStrandedFinalizingDocs(ctx context.Context
 	for _, k := range stranded {
 		res := h.db.WithContext(ctx).Model(&types.Knowledge{}).
 			Where(`id = ? AND parse_status = ? AND pending_subtasks_count > 0 AND updated_at < ?
-				AND NOT EXISTS (SELECT 1 FROM task_pending_ops t WHERE t.scope_id = ?)`,
+				AND NOT EXISTS (SELECT 1 FROM task_pending_ops t WHERE t.scope_id = ? AND t.op <> 'settled')`,
 				k.ID, types.ParseStatusFinalizing, cutoff, k.ID).
 			Updates(map[string]interface{}{
 				"parse_status":           types.ParseStatusCompleted,
