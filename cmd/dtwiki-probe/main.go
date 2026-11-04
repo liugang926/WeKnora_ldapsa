@@ -58,8 +58,14 @@ func main() {
 		ds.ID, ds.Type, target, raw.HasCredentials())
 
 	connector := dingtalk.NewConnector()
-	if rawNodes, nerr := connector.ListRawNodes(context.Background(), raw, strings.TrimPrefix(
-		strings.TrimPrefix(target, "dingtalk:v1?node="), "")); nerr == nil {
+	rawParent := target
+	if idx := strings.Index(rawParent, "node="); idx >= 0 {
+		rawParent = rawParent[idx+len("node="):]
+		if amp := strings.IndexByte(rawParent, '&'); amp >= 0 {
+			rawParent = rawParent[:amp]
+		}
+	}
+	if rawNodes, nerr := connector.ListRawNodes(context.Background(), raw, rawParent); nerr == nil {
 		fmt.Printf("raw children of %s: %d\n", target, len(rawNodes))
 		mix := map[string]int{}
 		for _, n := range rawNodes {
