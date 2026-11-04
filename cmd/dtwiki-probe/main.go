@@ -70,6 +70,9 @@ func main() {
 		for _, n := range rawNodes {
 			fmt.Printf("  node %-40s %s/%s/%s\n", n.ID, n.Type, n.Category, n.Extension)
 		}
+		if op, ok := raw.Credentials["operator_id"].(string); ok {
+			fmt.Printf("operator=%s\n", op)
+		}
 	} else {
 		fmt.Printf("raw listing failed: %v\n", nerr)
 	}
