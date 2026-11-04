@@ -67,13 +67,8 @@ func main() {
 	}
 	if rawNodes, nerr := connector.ListRawNodes(context.Background(), raw, rawParent); nerr == nil {
 		fmt.Printf("raw children of %s: %d\n", target, len(rawNodes))
-		mix := map[string]int{}
 		for _, n := range rawNodes {
-			key := n.Type + "/" + n.Category + "/" + n.Extension
-			mix[key]++
-		}
-		for k, v := range mix {
-			fmt.Printf("  type-mix %-40s x%d\n", k, v)
+			fmt.Printf("  node %-40s %s/%s/%s\n", n.ID, n.Type, n.Category, n.Extension)
 		}
 	} else {
 		fmt.Printf("raw listing failed: %v\n", nerr)
