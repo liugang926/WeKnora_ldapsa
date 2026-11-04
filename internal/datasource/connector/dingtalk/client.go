@@ -122,7 +122,7 @@ type dingTalkAPI interface {
 	listWorkspaces(context.Context) ([]workspace, error)
 	listNodes(context.Context, string) ([]node, error)
 	documentBlocks(context.Context, string) ([]json.RawMessage, error)
-	downloadWikiNode(context.Context, string) ([]byte, error)
+	downloadWikiNode(context.Context, string, string) ([]byte, error)
 }
 
 type client struct {
@@ -497,13 +497,16 @@ const maxWikiNodeDownloadBytes = 100 << 20
 // downloadWikiNode fetches the raw bytes of a binary wiki node (PDF, Office
 // documents, plain text): the download-info endpoint yields a short-lived
 // presigned URL, which is then fetched without authentication.
-func (c *client) downloadWikiNode(ctx context.Context, nodeID string) ([]byte, error) {
+func (c *client) downloadWikiNode(ctx context.Context, workspaceID, nodeID string) ([]byte, error) {
 	token, err := c.accessToken(ctx)
 	if err != nil {
 		return nil, err
 	}
-	infoURL := c.baseURL + "/v2.0/wiki/nodes/" + url.PathEscape(nodeID) +
-		"/downloadUrl?operatorId=" + url.QueryEscape(c.operator)
+	// Wiki FILE nodes are drive dentries of the wiki space; the drive
+	// download-info endpoint is the supported download surface (the wiki
+	// API family has no downloadUrl route).
+	infoURL := c.baseURL + "/v1.0/drive/spaces/" + url.PathEscape(workspaceID) +
+		"/files/" + url.PathEscape(nodeID) + "/downloadInfos?unionId=" + url.QueryEscape(c.operator)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, infoURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("create DingTalk download request: %w", err)
@@ -513,9 +516,15 @@ func (c *client) downloadWikiNode(ctx context.Context, nodeID string) ([]byte, e
 	if err != nil {
 		return nil, fmt.Errorf("execute DingTalk download request: %w", redactRequestError(err))
 	}
-	// The presigned URL travels in the downloadUrl response header; some
-	// gateway versions also mirror it in a JSON body.
-	downloadURL := resp.Header.Get("downloadUrl")
+	// The drive API returns the presigned URL in response headers
+	// (resourceUrl / headerResourceUrl variants across versions).
+	downloadURL := firstNonEmpty(
+		resp.Header.Get("Resource-Url"),
+		resp.Header.Get("resourceUrl"),
+		resp.Header.Get("Header-Resource-Url"),
+		resp.Header.Get("headerResourceUrl"),
+		resp.Header.Get("downloadUrl"),
+	)
 	body, _ := readBody(resp.Body)
 	_ = resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
@@ -523,14 +532,12 @@ func (c *client) downloadWikiNode(ctx context.Context, nodeID string) ([]byte, e
 	}
 	if downloadURL == "" {
 		var payload struct {
-			URL       string `json:"downloadUrl"`
-			HeaderURL string `json:"url"`
+			ResourceURL    string `json:"resourceUrl"`
+			HeaderResource string `json:"headerResourceUrl"`
+			URL            string `json:"url"`
 		}
 		if json.Unmarshal(body, &payload) == nil {
-			downloadURL = payload.URL
-			if downloadURL == "" {
-				downloadURL = payload.HeaderURL
-			}
+			downloadURL = firstNonEmpty(payload.ResourceURL, payload.HeaderResource, payload.URL)
 		}
 	}
 	if downloadURL == "" {
@@ -557,6 +564,15 @@ func (c *client) downloadWikiNode(ctx context.Context, nodeID string) ([]byte, e
 		return nil, fmt.Errorf("DingTalk file exceeds %d bytes", maxWikiNodeDownloadBytes)
 	}
 	return data, nil
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 func (c *client) wait(ctx context.Context, delay time.Duration) error {

@@ -32,7 +32,7 @@ func (f *fakeAPI) listNodes(_ context.Context, parentID string) ([]node, error) 
 	return f.nodes[parentID], nil
 }
 
-func (f *fakeAPI) downloadWikiNode(_ context.Context, nodeID string) ([]byte, error) {
+func (f *fakeAPI) downloadWikiNode(_ context.Context, _, nodeID string) ([]byte, error) {
 	if f.downloadErrors != nil {
 		if err := f.downloadErrors[nodeID]; err != nil {
 			return nil, err

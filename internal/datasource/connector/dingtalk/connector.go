@@ -496,7 +496,7 @@ func (c *Connector) sync(
 			}
 
 			if document.isBinaryDocument() {
-				body, derr := api.downloadWikiNode(ctx, document.ID)
+				body, derr := api.downloadWikiNode(ctx, document.WorkspaceID, document.ID)
 				if derr == nil {
 					item := fetchedBinaryDocument(scope.ResourceID, scope.Reference.WorkspaceID, document, body)
 					sealFetchedArtifact(ctx, &item, scope, document, configDigest)
