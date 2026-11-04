@@ -495,58 +495,80 @@ func parseRetryAfter(value string, fallback time.Duration) time.Duration {
 const maxWikiNodeDownloadBytes = 100 << 20
 
 // downloadWikiNode fetches the raw bytes of a binary wiki node (PDF, Office
-// documents, plain text): the download-info endpoint yields a short-lived
-// presigned URL, which is then fetched without authentication.
+// documents, plain text) through the documented three-step chain, entirely
+// under the already-granted knowledge-base scopes:
+//  1. GET /v2.0/doc/dentries/{uuid}/queryDentryId — wiki uuid to numeric
+//     storage dentryId/spaceId (Document.WorkspaceDocument.Read);
+//  2. POST /v1.0/storage/spaces/{spaceId}/dentries/{dentryId}/downloadInfos/query
+//     — signed URL plus mandatory headers (Storage.DownloadInfo.Read);
+//  3. plain GET of the signed URL with those headers.
 func (c *client) downloadWikiNode(ctx context.Context, workspaceID, nodeID string) ([]byte, error) {
 	token, err := c.accessToken(ctx)
 	if err != nil {
 		return nil, err
 	}
-	// Wiki FILE nodes are drive dentries of the wiki space; the drive
-	// download-info endpoint is the supported download surface (the wiki
-	// API family has no downloadUrl route).
-	infoURL := c.baseURL + "/v1.0/drive/spaces/" + url.PathEscape(workspaceID) +
-		"/files/" + url.PathEscape(nodeID) + "/downloadInfos?unionId=" + url.QueryEscape(c.operator)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, infoURL, nil)
+	_ = workspaceID // the conversion endpoint resolves the space by uuid itself
+
+	convertURL := c.baseURL + "/v2.0/doc/dentries/" + url.PathEscape(nodeID) +
+		"/queryDentryId?operatorId=" + url.QueryEscape(c.operator)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, convertURL, nil)
 	if err != nil {
-		return nil, fmt.Errorf("create DingTalk download request: %w", err)
+		return nil, fmt.Errorf("create DingTalk conversion request: %w", err)
 	}
 	req.Header.Set("x-acs-dingtalk-access-token", token)
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("execute DingTalk download request: %w", redactRequestError(err))
+		return nil, fmt.Errorf("execute DingTalk conversion request: %w", redactRequestError(err))
 	}
-	// The drive API returns the presigned URL in response headers
-	// (resourceUrl / headerResourceUrl variants across versions).
-	downloadURL := firstNonEmpty(
-		resp.Header.Get("Resource-Url"),
-		resp.Header.Get("resourceUrl"),
-		resp.Header.Get("Header-Resource-Url"),
-		resp.Header.Get("headerResourceUrl"),
-		resp.Header.Get("downloadUrl"),
-	)
 	body, _ := readBody(resp.Body)
 	_ = resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("DingTalk download info status=%d", resp.StatusCode)
+		return nil, fmt.Errorf("DingTalk dentry conversion status=%d", resp.StatusCode)
 	}
-	if downloadURL == "" {
-		var payload struct {
-			ResourceURL    string `json:"resourceUrl"`
-			HeaderResource string `json:"headerResourceUrl"`
-			URL            string `json:"url"`
-		}
-		if json.Unmarshal(body, &payload) == nil {
-			downloadURL = firstNonEmpty(payload.ResourceURL, payload.HeaderResource, payload.URL)
-		}
+	var converted struct {
+		DentryID string `json:"dentryId"`
+		SpaceID  string `json:"spaceId"`
 	}
-	if downloadURL == "" {
-		return nil, errors.New("DingTalk download info returned no url")
+	if err := json.Unmarshal(body, &converted); err != nil ||
+		converted.DentryID == "" || converted.SpaceID == "" {
+		return nil, errors.New("DingTalk dentry conversion returned no ids")
 	}
 
-	fileReq, err := http.NewRequestWithContext(ctx, http.MethodGet, downloadURL, nil)
+	infoURL := c.baseURL + "/v1.0/storage/spaces/" + url.PathEscape(converted.SpaceID) +
+		"/dentries/" + url.PathEscape(converted.DentryID) +
+		"/downloadInfos/query?unionId=" + url.QueryEscape(c.operator)
+	infoPayload, _ := json.Marshal(map[string]string{"unionId": c.operator})
+	infoReq, err := http.NewRequestWithContext(ctx, http.MethodPost, infoURL, bytes.NewReader(infoPayload))
+	if err != nil {
+		return nil, fmt.Errorf("create DingTalk download-info request: %w", err)
+	}
+	infoReq.Header.Set("x-acs-dingtalk-access-token", token)
+	infoReq.Header.Set("Content-Type", "application/json")
+	infoResp, err := c.http.Do(infoReq)
+	if err != nil {
+		return nil, fmt.Errorf("execute DingTalk download-info request: %w", redactRequestError(err))
+	}
+	infoBody, _ := readBody(infoResp.Body)
+	_ = infoResp.Body.Close()
+	if infoResp.StatusCode < 200 || infoResp.StatusCode >= 300 {
+		return nil, fmt.Errorf("DingTalk download info status=%d", infoResp.StatusCode)
+	}
+	var info struct {
+		HeaderSignatureInfo struct {
+			ResourceUrls []string          `json:"resourceUrls"`
+			Headers      map[string]string `json:"headers"`
+		} `json:"headerSignatureInfo"`
+	}
+	if err := json.Unmarshal(infoBody, &info); err != nil || len(info.HeaderSignatureInfo.ResourceUrls) == 0 {
+		return nil, errors.New("DingTalk download info returned no resource url")
+	}
+
+	fileReq, err := http.NewRequestWithContext(ctx, http.MethodGet, info.HeaderSignatureInfo.ResourceUrls[0], nil)
 	if err != nil {
 		return nil, fmt.Errorf("create DingTalk file request: %w", err)
+	}
+	for key, value := range info.HeaderSignatureInfo.Headers {
+		fileReq.Header.Set(key, value)
 	}
 	fileResp, err := c.http.Do(fileReq)
 	if err != nil {
@@ -564,15 +586,6 @@ func (c *client) downloadWikiNode(ctx context.Context, workspaceID, nodeID strin
 		return nil, fmt.Errorf("DingTalk file exceeds %d bytes", maxWikiNodeDownloadBytes)
 	}
 	return data, nil
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, v := range values {
-		if strings.TrimSpace(v) != "" {
-			return v
-		}
-	}
-	return ""
 }
 
 func (c *client) wait(ctx context.Context, delay time.Duration) error {
