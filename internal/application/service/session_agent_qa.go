@@ -501,6 +501,11 @@ func (s *sessionService) AgentQA(
 			RefuseMessageMaterialOutputBoundary(ctx)
 		}
 		logger.Errorf(ctx, "Agent execution failed: %v", err)
+		if lineageDiag, ok := engine.(interface{ SourceLineageDiagnostic() string }); ok {
+			if diag := lineageDiag.SourceLineageDiagnostic(); diag != "" {
+				logger.Errorf(ctx, "Agent execution lineage diagnostic: %s", diag)
+			}
+		}
 		// Emit error event to the EventBus used by this agent
 		eventBus.Emit(ctx, event.Event{
 			Type:      event.EventError,

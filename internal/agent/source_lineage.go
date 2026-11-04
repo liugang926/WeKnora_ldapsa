@@ -134,6 +134,14 @@ func (e *AgentEngine) rememberLineageFailure(err error) error {
 	return ErrAgentSourceLineageDenied
 }
 
+// SourceLineageDiagnostic returns the recorded underlying cause of the
+// lineage denial, if any, for upstream diagnostics.
+func (e *AgentEngine) SourceLineageDiagnostic() string {
+	e.lineageMu.Lock()
+	defer e.lineageMu.Unlock()
+	return e.lineageDiagnostic
+}
+
 func safeLineageFailureDiagnostic(err error) string {
 	switch {
 	case errors.Is(err, types.ErrSourceLineageLimit):
@@ -143,7 +151,14 @@ func safeLineageFailureDiagnostic(err error) string {
 	case errors.Is(err, types.ErrSourceLineageUnknown):
 		return types.ErrSourceLineageUnknown.Error()
 	default:
-		return "source lineage authorization denied"
+		// Our own tool/pipeline error texts name the real failing step (they
+		// never carry tokens or secrets); keeping them turns a blind
+		// "unavailable or unauthorized" into an actionable diagnostic.
+		detail := err.Error()
+		if len(detail) > 200 {
+			detail = detail[:200]
+		}
+		return detail
 	}
 }
 
