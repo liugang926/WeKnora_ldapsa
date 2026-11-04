@@ -3078,7 +3078,7 @@ func (s *knowledgeService) ReparseKnowledge(
 	ctx context.Context,
 	knowledgeID string,
 	processOverrides *types.KnowledgeProcessOverrides,
-) (*types.Knowledge, error) {
+) (result *types.Knowledge, retErr error) {
 	logger.Info(ctx, "Start re-parsing knowledge")
 
 	existing, kb, err := loadKnowledgeWrite(ctx, s.repo, s.kbService, knowledgeID)
@@ -3089,12 +3089,38 @@ func (s *knowledgeService) ReparseKnowledge(
 	if err := rejectNextcloudSourceManagedMutation(existing); err != nil {
 		return nil, err
 	}
+	ctx, err = s.prepareRecoveryGate(ctx, existing)
+	if err != nil {
+		return nil, err
+	}
 	originalInput, err := s.admitDingTalkLocalReparseInput(ctx, existing, kb, processOverrides)
 	if err != nil {
 		return nil, err
 	}
 	if originalInput != nil {
 		ctx = repository.WithKnowledgeBuildInputProof(ctx, s.knowledgeInputs, originalInput)
+	}
+	if originalInput != nil {
+		defer func() {
+			if retErr != nil {
+				if store, ok := s.knowledgeInputs.(dingTalkRecoveryStore); ok {
+					failureCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+					defer cancel()
+					if e := store.FailDingTalkRecoveryHandoff(failureCtx, originalInput); e != nil {
+						logger.Warnf(ctx, "[Reparse] failed to record failed recovery handoff: %v", e)
+					}
+				}
+			}
+		}()
+	}
+
+	// An enqueue error can be an acknowledgement loss after the worker has
+	// started. DingTalk recovery must use only the deferred admission-scoped,
+	// still-pending transition above, never save this stale knowledge object.
+	markReparseEnqueueFailed := func() {
+		if existing.Channel != types.ConnectorTypeDingTalk {
+			s.markKnowledgeEnqueueFailed(ctx, existing)
+		}
 	}
 
 	tenantID := existing.TenantID
@@ -3170,7 +3196,7 @@ func (s *knowledgeService) ReparseKnowledge(
 
 		if _, err := s.enqueueManualProcessing(ctx, existing, meta.Content, true); err != nil {
 			logger.Errorf(ctx, "Failed to enqueue manual reparse task: %v", err)
-			s.markKnowledgeEnqueueFailed(ctx, existing)
+			markReparseEnqueueFailed()
 			return existing, werrors.NewInternalServerError("Failed to submit processing task")
 		} else {
 			recordReparseStarted()
@@ -3240,7 +3266,7 @@ func (s *knowledgeService) ReparseKnowledge(
 		payloadBytes, err := json.Marshal(taskPayload)
 		if err != nil {
 			logger.Errorf(ctx, "Failed to marshal reparse task payload: %v", err)
-			s.markKnowledgeEnqueueFailed(ctx, existing)
+			markReparseEnqueueFailed()
 			return existing, werrors.NewInternalServerError("Failed to submit processing task")
 		}
 
@@ -3252,7 +3278,7 @@ func (s *knowledgeService) ReparseKnowledge(
 		info, err := s.task.Enqueue(task)
 		if err != nil {
 			logger.Errorf(ctx, "Failed to enqueue reparse task: %v", err)
-			s.markKnowledgeEnqueueFailed(ctx, existing)
+			markReparseEnqueueFailed()
 			return existing, werrors.NewInternalServerError("Failed to submit processing task")
 		}
 		logger.Infof(ctx, "Enqueued reparse task: id=%s queue=%s knowledge_id=%s", info.ID, info.Queue, existing.ID)
@@ -3305,7 +3331,7 @@ func (s *knowledgeService) ReparseKnowledge(
 		payloadBytes, err := json.Marshal(taskPayload)
 		if err != nil {
 			logger.Errorf(ctx, "Failed to marshal file URL reparse task payload: %v", err)
-			s.markKnowledgeEnqueueFailed(ctx, existing)
+			markReparseEnqueueFailed()
 			return existing, werrors.NewInternalServerError("Failed to submit processing task")
 		}
 
@@ -3317,7 +3343,7 @@ func (s *knowledgeService) ReparseKnowledge(
 		info, err := s.task.Enqueue(task)
 		if err != nil {
 			logger.Errorf(ctx, "Failed to enqueue file URL reparse task: %v", err)
-			s.markKnowledgeEnqueueFailed(ctx, existing)
+			markReparseEnqueueFailed()
 			return existing, werrors.NewInternalServerError("Failed to submit processing task")
 		}
 		logger.Infof(
@@ -3373,7 +3399,7 @@ func (s *knowledgeService) ReparseKnowledge(
 		payloadBytes, err := json.Marshal(taskPayload)
 		if err != nil {
 			logger.Errorf(ctx, "Failed to marshal URL reparse task payload: %v", err)
-			s.markKnowledgeEnqueueFailed(ctx, existing)
+			markReparseEnqueueFailed()
 			return existing, werrors.NewInternalServerError("Failed to submit processing task")
 		}
 
@@ -3385,7 +3411,7 @@ func (s *knowledgeService) ReparseKnowledge(
 		info, err := s.task.Enqueue(task)
 		if err != nil {
 			logger.Errorf(ctx, "Failed to enqueue URL reparse task: %v", err)
-			s.markKnowledgeEnqueueFailed(ctx, existing)
+			markReparseEnqueueFailed()
 			return existing, werrors.NewInternalServerError("Failed to submit processing task")
 		}
 		logger.Infof(ctx, "Enqueued URL reparse task: id=%s queue=%s knowledge_id=%s", info.ID, info.Queue, existing.ID)

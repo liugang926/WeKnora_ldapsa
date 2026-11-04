@@ -28,6 +28,7 @@ import {
   updateKnowledgeTagBatch,
   createKnowledgeFromURL,
   reparseKnowledge,
+  getKnowledgeRecoveryEligibility,
   cancelKnowledgeParse,
   batchDeleteKnowledge,
   batchDownloadKnowledge,
@@ -568,6 +569,21 @@ const awaitBatchReparseReflection = async (ids: string[]) => {
 const confirmBatchReparse = async () => {
   if (batchReparsing.value || batchDeleting.value || batchDownloading.value || selectedIds.value.size === 0) return;
   const allIds = Array.from(selectedIds.value);
+  for (const id of allIds) {
+    const item = cardList.value.find((c) => c.id === id);
+    if (item?.channel === 'dingtalk' && isParseInFlight(item.parse_status)) {
+      try {
+        const eligibility: any = await getKnowledgeRecoveryEligibility(id);
+        MessagePlugin.info(eligibility?.data?.reason || t('knowledgeBase.rebuildFailed'));
+      } catch (error: any) {
+        MessagePlugin.error(error?.message || t('knowledgeBase.rebuildFailed'));
+      }
+      // Use the single-document dialog to bind a recovery to its inspected snapshot.
+      if (allIds.length === 1) {
+        return confirmRebuildKnowledge(cardList.value.indexOf(item), item);
+      }
+    }
+  }
   const ids = allIds.filter((id) => {
     const item = cardList.value.find((c) => c.id === id);
     return !item || !isParseInFlight(item.parse_status);
@@ -1280,6 +1296,7 @@ watch(() => cardList.value, (newValue) => {
 
 }, { deep: true })
 type KnowledgeCard = {
+  channel?: string;
   id: string;
   knowledge_base_id?: string;
   parse_status: string;
@@ -1401,9 +1418,8 @@ const confirmDeleteKnowledge = (index: number, item: KnowledgeCard) => {
 };
 
 const onReparseMenuClick = (index: number, item: KnowledgeCard) => {
-  if (isParseInFlight(item.parse_status)) {
-    MessagePlugin.info(t('knowledgeBase.rebuildInProgress'));
-  }
+  if (item.channel === 'dingtalk') return confirmRebuildKnowledge(index, item);
+  if (isParseInFlight(item.parse_status)) MessagePlugin.info(t('knowledgeBase.rebuildInProgress'));
 };
 
 const handleMoveKnowledge = async (item: KnowledgeCard) => {
@@ -1743,7 +1759,20 @@ const confirmRebuildKnowledge = async (index: number, item: KnowledgeCard) => {
     MessagePlugin.warning(t('knowledgeEditor.messages.missingId'));
     return;
   }
-  if (isParseInFlight(item.parse_status)) {
+  let recoverySnapshot: string | undefined;
+  if (item.channel === 'dingtalk') {
+    try {
+      const eligibility: any = await getKnowledgeRecoveryEligibility(item.id);
+      if (!eligibility?.success || !eligibility.data?.allowed) {
+        MessagePlugin.info(eligibility?.data?.reason || t('knowledgeBase.rebuildFailed'));
+        return;
+      }
+      recoverySnapshot = eligibility.data.snapshot;
+    } catch (error: any) {
+      MessagePlugin.error(error?.message || t('knowledgeBase.rebuildFailed'));
+      return;
+    }
+  } else if (isParseInFlight(item.parse_status)) {
     MessagePlugin.info(t('knowledgeBase.rebuildInProgress'));
     return;
   }
@@ -1752,7 +1781,7 @@ const confirmRebuildKnowledge = async (index: number, item: KnowledgeCard) => {
   // No KB context to seed the dialog defaults — fall back to a direct reparse
   // that reuses the overrides stored at upload time.
   if (!kbInfo.value) {
-    await submitReparse(item.id);
+    await submitReparse(item.id, undefined, recoverySnapshot);
     return;
   }
 
@@ -1778,16 +1807,16 @@ const confirmRebuildKnowledge = async (index: number, item: KnowledgeCard) => {
       reparse: { knowledgeId: item.id, fileName, fileType, processOverrides },
     });
     if (result.mode === 'reparse' && result.reparse) {
-      await submitReparse(result.reparse.knowledgeId, result.processConfig);
+      await submitReparse(result.reparse.knowledgeId, result.processConfig, recoverySnapshot);
     }
   } catch {
     // cancelled
   }
 };
 
-const submitReparse = async (id: string, processConfig?: KnowledgeProcessOverrides) => {
+const submitReparse = async (id: string, processConfig?: KnowledgeProcessOverrides, recoverySnapshot?: string) => {
   try {
-    await reparseKnowledge(id, processConfig ? { process_config: processConfig } : undefined);
+    await reparseKnowledge(id, { process_config: processConfig, recovery_snapshot: recoverySnapshot });
     delete traceAvailableById[id];
     traceAvailableById[id] = true;
     MessagePlugin.success(t('knowledgeBase.rebuildSubmitted'));

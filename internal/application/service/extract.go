@@ -302,6 +302,9 @@ func (s *ChunkExtractService) Handle(ctx context.Context, t *asynq.Task) (return
 		logger.Errorf(ctx, "failed to unmarshal task payload: %v", err)
 		return err
 	}
+	if p.GraphSettlementOnly && p.GraphTaskID == "" {
+		return types.ErrGraphSourceReceiptUnknown
+	}
 	ctx = logger.WithRequestID(ctx, uuid.New().String())
 	ctx = logger.WithField(ctx, "extract", p.ChunkID)
 	ctx = context.WithValue(ctx, types.TenantIDContextKey, p.TenantID)
@@ -317,7 +320,7 @@ func (s *ChunkExtractService) Handle(ctx context.Context, t *asynq.Task) (return
 
 	mainFinalizeRegistered := false
 	defer func() {
-		if !mainFinalizeRegistered && returnErr != nil {
+		if !mainFinalizeRegistered && returnErr != nil && p.GraphTaskID == "" {
 			returnErr = errors.Join(returnErr, finalizeSubtaskDetached(
 				ctx,
 				s.knowledgeRepo,
@@ -366,6 +369,51 @@ func (s *ChunkExtractService) Handle(ctx context.Context, t *asynq.Task) (return
 	}
 	if err := recheckOriginalGraphProof(ctx, s.buildInputs, snapshot.Proof); err != nil {
 		return err
+	}
+
+	var dingLedger dingTalkGraphRepository
+	var preparedGraph *types.GraphData
+	graphPersisted := false
+	graphSkipReason := ""
+	if p.GraphTaskID != "" {
+		if snapshot.Knowledge.Channel != types.ConnectorTypeDingTalk {
+			return types.ErrGraphSourceReceiptUnknown
+		}
+		var ok bool
+		dingLedger, ok = s.knowledgeRepo.(dingTalkGraphRepository)
+		if !ok {
+			return errors.New("DingTalk graph lifecycle unavailable")
+		}
+		ctx = repository.WithDingTalkGraphTask(ctx, p)
+		state, graph, skipReason, err := dingLedger.DingTalkGraphState(ctx, p)
+		if err != nil {
+			return err
+		}
+		if state == "settled" || state == "result_committed" || state == "terminal_failed" || state == "result_skipped" {
+			mainFinalizeRegistered = true
+			var outcomeErr error
+			if state == "result_skipped" {
+				if parent := s.tracker().LookupStage(ctx, p.KnowledgeID, p.Attempt, types.StagePostProcess); parent != nil {
+					span := s.tracker().BeginSubSpan(ctx, parent, fmt.Sprintf("postprocess.graph.chunk[%d]", p.ChunkIndex), types.SpanKindSubSpan, types.JSONMap{"chunk_id": p.ChunkID, "chunk_index": p.ChunkIndex, "model_id": p.ModelID})
+					s.tracker().SkipSpan(ctx, span, skipReason)
+				}
+			}
+			if state == "terminal_failed" {
+				outcomeErr = errors.New("DingTalk graph task terminal failure (durable evidence retained)")
+			}
+			err := finalizeSubtaskDetached(ctx, s.knowledgeRepo, p.KnowledgeID, "dingtalk_graph_settlement", outcomeErr, false, true)
+			if err != nil {
+				return err
+			}
+			if outcomeErr != nil {
+				return fmt.Errorf("%w: %w", outcomeErr, asynq.SkipRetry)
+			}
+			return nil
+		}
+		if p.GraphSettlementOnly {
+			return errors.New("graph settlement-only delivery lacks committed outcome")
+		}
+		preparedGraph = graph
 	}
 
 	graphFailureCode := "graph_extraction_failed"
@@ -457,6 +505,17 @@ func (s *ChunkExtractService) Handle(ctx context.Context, t *asynq.Task) (return
 		if sourcePrivate && safeErr != nil {
 			safeErr = errors.New(graphFailureCode)
 		}
+		if dingLedger != nil && (handleErr == nil || isFinalAsynqAttempt(ctx)) {
+			// The outcome is committed independently BEFORE settlement. If the
+			// completion transaction fails, the next delivery skips the model.
+			rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), finalizeSubtaskDetachedTimeout)
+			err := dingLedger.MarkDingTalkGraphOutcome(rctx, p, graphPersisted, graphFailureCode, graphSkipReason)
+			cancel()
+			if err != nil {
+				returnErr = errors.Join(returnErr, err)
+				return
+			}
+		}
 		if err := finalizeSubtaskDetached(ctx, s.knowledgeRepo, p.KnowledgeID,
 			fmt.Sprintf("graph_chunk[%d]", p.ChunkIndex),
 			safeErr, false, isFinalAsynqAttempt(ctx)); err != nil {
@@ -468,7 +527,9 @@ func (s *ChunkExtractService) Handle(ctx context.Context, t *asynq.Task) (return
 		if gSpan == nil {
 			return
 		}
-		if handleErr != nil {
+		if dingLedger != nil && graphSkipReason != "" {
+			s.tracker().SkipSpan(ctx, gSpan, graphSkipReason)
+		} else if handleErr != nil {
 			if sourcePrivate {
 				s.tracker().FailSpan(ctx, gSpan, graphFailureCode, graphFailureCode, errors.New(graphFailureCode))
 			} else {
@@ -495,6 +556,11 @@ func (s *ChunkExtractService) Handle(ctx context.Context, t *asynq.Task) (return
 		}
 	}
 
+	if dingLedger != nil && strings.ToLower(os.Getenv("NEO4J_ENABLE")) != "true" {
+		graphSkipReason = "graph_backend_disabled"
+		graphOut["skipped"] = "graph_backend_disabled"
+		return nil
+	}
 	chunk := snapshot.Chunks[0]
 	kb := snapshot.KnowledgeBase
 	processOverrides, err := snapshot.Knowledge.ProcessOverrides()
@@ -509,15 +575,12 @@ func (s *ChunkExtractService) Handle(ctx context.Context, t *asynq.Task) (return
 	extractCfg := ResolveProcessConfig(kb, processOverrides).ExtractConfig
 	if !extractCfg.Enabled {
 		logger.Warnf(ctx, "extract config not enabled")
+		graphFailureCode = "extract_disabled"
+		if dingLedger != nil {
+			graphSkipReason = "extract_disabled"
+		}
 		graphOut["skipped"] = "extract_disabled"
 		return nil
-	}
-
-	chatModel, err := s.modelService.GetChatModel(ctx, p.ModelID)
-	if err != nil {
-		logger.Errorf(ctx, "failed to get chat model: %v", err)
-		handleErr = err
-		return err
 	}
 
 	template := &types.PromptTemplateStructured{
@@ -555,18 +618,23 @@ func (s *ChunkExtractService) Handle(ctx context.Context, t *asynq.Task) (return
 		}
 		return nil
 	}
-	extractor := chatpipeline.NewExtractor(chatModel, template)
 	actualConfigDigest := types.GraphDigest(template)
-	graph, err := extractor.ExtractSourceLineage(
-		ctx,
-		chunk.Content,
-		snapshot.Proof.SourceLineage,
-		templateLineage,
-		check,
-	)
-	if err != nil {
-		handleErr = err
-		return err
+	graph := preparedGraph
+	if graph == nil {
+		chatModel, err := s.modelService.GetChatModel(ctx, p.ModelID)
+		if err != nil {
+			handleErr = err
+			return err
+		}
+		extractor := chatpipeline.NewExtractor(chatModel, template)
+		graph, err = extractor.ExtractSourceLineage(ctx, chunk.Content, snapshot.Proof.SourceLineage, templateLineage, check)
+		if err != nil {
+			handleErr = err
+			return err
+		}
+	} else if graph.SourceReceipt == nil || graph.SourceReceipt.ConfigDigest != actualConfigDigest {
+		handleErr = types.ErrGraphSourceReceiptUnknown
+		return handleErr
 	}
 	namespace := types.NameSpace{KnowledgeBase: chunk.KnowledgeBaseID, Knowledge: chunk.KnowledgeID}
 	base := &types.GraphSourceReceipt{
@@ -608,6 +676,13 @@ func (s *ChunkExtractService) Handle(ctx context.Context, t *asynq.Task) (return
 		handleErr = err
 		return err
 	}
+	if dingLedger != nil {
+		graph, err = dingLedger.PrepareDingTalkGraph(ctx, p, graph)
+		if err != nil {
+			handleErr = err
+			return err
+		}
+	}
 	writeCtx := types.WithGraphWriteAuthorization(
 		ctx,
 		func(ctx context.Context, receipt *types.GraphSourceReceipt) error {
@@ -629,6 +704,7 @@ func (s *ChunkExtractService) Handle(ctx context.Context, t *asynq.Task) (return
 		handleErr = err
 		return err
 	}
+	graphPersisted = true
 	graphOut["nodes_added"] = len(graph.Node)
 	graphOut["relations_added"] = len(graph.Relation)
 	// Capture a couple of sample nodes/relations so the trace viewer can

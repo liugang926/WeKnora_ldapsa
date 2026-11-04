@@ -56,6 +56,10 @@ func (s *KnowledgeInputProvenanceStore) AdmitDingTalkLocalReparse(ctx context.Co
 		if want != got {
 			return ErrKnowledgeInputChanged
 		}
+		recovering, err := checkDingTalkRecoveryGate(ctx, tx, &actual)
+		if err != nil {
+			return err
+		}
 		kb, err := loadKnowledgeBuildConfigurationInTx(tx.Clauses(clause.Locking{Strength: "SHARE"}), actual.TenantID, actual.KnowledgeBaseID)
 		if err != nil {
 			return err
@@ -109,6 +113,12 @@ func (s *KnowledgeInputProvenanceStore) AdmitDingTalkLocalReparse(ctx context.Co
 		}
 		// Only explicit parsing overrides are persisted, never a stale object's
 		// status or generated fields. Normal retention callbacks remain in use.
+		if recovering {
+			if err := tx.Model(&actual).Update("parse_status", types.ParseStatusPending).Error; err != nil {
+				return err
+			}
+			actual.ParseStatus = types.ParseStatusPending
+		}
 		actual.Metadata = append(types.JSON(nil), proposed.Metadata...)
 		if err := tx.Model(&types.Knowledge{}).Where("id=? AND tenant_id=?", actual.ID, actual.TenantID).Update("metadata", actual.Metadata).Error; err != nil {
 			return err

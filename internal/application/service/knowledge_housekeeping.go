@@ -25,6 +25,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Tencent/WeKnora/internal/application/repository"
 	"github.com/Tencent/WeKnora/internal/config"
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/types"
@@ -146,7 +147,7 @@ func (h *HousekeepingService) runSweep(ctx context.Context) {
 	// visibly. Housekeeping promotes both states to 'failed' once the
 	// span heartbeat is older than the threshold.
 	var candidates []types.Knowledge
-	if err := h.db.WithContext(ctx).
+	if err := repository.ExcludeDurableDingTalkGraphPlans(h.db.WithContext(ctx)).
 		Where("parse_status IN ? AND updated_at < ?",
 			[]string{types.ParseStatusPending, types.ParseStatusProcessing, types.ParseStatusFinalizing}, cutoff).
 		Find(&candidates).Error; err != nil {
@@ -172,7 +173,7 @@ func (h *HousekeepingService) runSweep(ctx context.Context) {
 		for _, k := range stuck {
 			stuckIDs = append(stuckIDs, k.ID)
 		}
-		res := h.db.WithContext(ctx).Model(&types.Knowledge{}).
+		res := repository.ExcludeDurableDingTalkGraphPlans(h.db.WithContext(ctx).Model(&types.Knowledge{})).
 			Where("id IN ? AND parse_status IN ?", stuckIDs,
 				[]string{types.ParseStatusPending, types.ParseStatusProcessing, types.ParseStatusFinalizing}).
 			Updates(map[string]interface{}{

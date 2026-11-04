@@ -880,6 +880,15 @@ func (r *knowledgeRepository) FinalizeSubtask(
 				return err
 			}
 		}
+		if p, ok := ctx.Value(dingTalkGraphContextKey{}).(types.ExtractChunkPayload); ok {
+			owned, err := settleDingTalkGraphInTx(ctx, tx, p)
+			if err != nil {
+				return err
+			}
+			if !owned {
+				return nil
+			}
+		}
 		if operation, ok := types.GraphWriteOperationFromContext(ctx); ok {
 			var task nextcloudGraphTask
 			if err := tx.Where(
