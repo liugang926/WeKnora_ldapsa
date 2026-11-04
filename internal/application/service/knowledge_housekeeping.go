@@ -119,6 +119,7 @@ func (h *HousekeepingService) Stop() {
 // single sweep without waiting for the cron tick.
 func (h *HousekeepingService) runSweep(ctx context.Context) {
 	now := time.Now().UTC()
+	h.completeStrandedFinalizingDocs(ctx, now)
 	h.recoverStalledNextcloudFinalizing(ctx, now)
 	threshold := h.staleThreshold()
 	cutoff := now.Add(-threshold)
@@ -288,6 +289,60 @@ func (h *HousekeepingService) runSweep(ctx context.Context) {
 // pending-op and queue probes prove no work can advance it. The existing
 // candidate retry path then re-reads authoritative source bytes and creates a
 // fresh generation.
+// completeStrandedFinalizingDocs closes the accounting-lost decrement hole:
+// a finalizing document whose pending_subtasks_count is still positive but
+// that has NO durable pending operation of any kind (graph, wiki, auto-tag)
+// cannot be advanced by anything — the per-minute recovery loop has nothing
+// to redeliver, and the generic sweep would eventually fail the whole
+// document for one lost slot. Graph subtasks already carry their own
+// bounded retries (asynq MaxRetry(3)) and terminal accounting, and the
+// document-level completion tolerates individual subtask failures, so the
+// correct terminal state is COMPLETED — mirroring exactly what the atomic
+// drain promote does when the last real decrement lands. Non-Nextcloud
+// documents only (the Nextcloud ledger has its own stall reaper).
+func (h *HousekeepingService) completeStrandedFinalizingDocs(ctx context.Context, now time.Time) {
+	cutoff := now.Add(-20 * time.Minute)
+	var stranded []types.Knowledge
+	if err := h.db.WithContext(ctx).
+		Select("id").
+		Where(`parse_status = ? AND pending_subtasks_count > 0 AND updated_at < ?
+			AND channel <> ?
+			AND NOT EXISTS (SELECT 1 FROM task_pending_ops t WHERE t.scope_id = knowledges.id)`,
+			types.ParseStatusFinalizing, cutoff, types.ConnectorTypeNextcloud).
+		Limit(64).
+		Find(&stranded).Error; err != nil {
+		logger.Warnf(ctx, "[Housekeeping] stranded finalizing query failed: %v", err)
+		return
+	}
+	if len(stranded) == 0 {
+		return
+	}
+	completed := int64(0)
+	for _, k := range stranded {
+		res := h.db.WithContext(ctx).Model(&types.Knowledge{}).
+			Where(`id = ? AND parse_status = ? AND pending_subtasks_count > 0 AND updated_at < ?
+				AND NOT EXISTS (SELECT 1 FROM task_pending_ops t WHERE t.scope_id = ?)`,
+				k.ID, types.ParseStatusFinalizing, cutoff, k.ID).
+			Updates(map[string]interface{}{
+				"parse_status":           types.ParseStatusCompleted,
+				"pending_subtasks_count": 0,
+				"error_message":          "",
+				"processed_at":           now,
+				"updated_at":             now,
+			})
+		if res.Error != nil {
+			logger.Warnf(ctx, "[Housekeeping] stranded finalizing completion failed for %s: %v", k.ID, res.Error)
+			continue
+		}
+		completed += res.RowsAffected
+	}
+	if completed > 0 {
+		logger.Infof(ctx,
+			"[Housekeeping] completed %d stranded finalizing document(s) (lost decrement, no durable work pending)",
+			completed)
+	}
+}
+
 func (h *HousekeepingService) recoverStalledNextcloudFinalizing(ctx context.Context, now time.Time) {
 	cutoff := now.Add(-nextcloudFinalizingStallThreshold())
 	var candidates []types.Knowledge
