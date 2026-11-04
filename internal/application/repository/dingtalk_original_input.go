@@ -5,6 +5,7 @@ import (
 	"crypto/md5"
 	"encoding/hex"
 	"encoding/json"
+	"path/filepath"
 	"reflect"
 	"strings"
 
@@ -129,7 +130,17 @@ func (s *KnowledgeInputProvenanceStore) BindDingTalkOriginalArtifact(ctx context
 		meta[k] = v
 	}
 	safeName, valid := utils.ValidateInput(item.FileName)
-	if !valid || safeName == "" || !strings.HasSuffix(safeName, ".md") || item.ContentType != "text/markdown" {
+	if !valid || safeName == "" {
+		return ctx, ErrKnowledgeInputChanged
+	}
+	// Rendered ALIDOC documents arrive as markdown; binary wiki FILE nodes
+	// (pdf/office/text) arrive with their real extension and MIME type.
+	extension := strings.ToLower(strings.TrimPrefix(filepath.Ext(safeName), "."))
+	if extension == "md" {
+		if item.ContentType != "text/markdown" {
+			return ctx, ErrKnowledgeInputChanged
+		}
+	} else if dingtalk.BinarySyncContentType(extension) == "" || item.ContentType != dingtalk.BinarySyncContentType(extension) {
 		return ctx, ErrKnowledgeInputChanged
 	}
 	hash := md5.Sum(item.Content) // Matches the existing file producer's deduplication digest.
@@ -158,7 +169,11 @@ func (s *KnowledgeInputProvenanceStore) checkDingTalkOriginalCreation(ctx contex
 	if err != nil {
 		return a, err
 	}
-	if digest != a.InputDigest || k.TenantID != a.Fetch.Tenant || k.KnowledgeBaseID != a.Fetch.KB || k.Channel != types.ConnectorTypeDingTalk || k.Type != "file" || k.FileName != a.FileName || k.Title != a.FileName || k.FileType != "md" || k.FileHash != a.FileHash || k.FileSize != a.Size {
+	expectedType := "md"
+	if expected := strings.ToLower(strings.TrimPrefix(filepath.Ext(a.FileName), ".")); expected != "md" {
+		expectedType = expected
+	}
+	if digest != a.InputDigest || k.TenantID != a.Fetch.Tenant || k.KnowledgeBaseID != a.Fetch.KB || k.Channel != types.ConnectorTypeDingTalk || k.Type != "file" || k.FileName != a.FileName || k.Title != a.FileName || k.FileType != expectedType || k.FileHash != a.FileHash || k.FileSize != a.Size {
 		return a, ErrKnowledgeInputChanged
 	}
 	meta := k.GetMetadata()

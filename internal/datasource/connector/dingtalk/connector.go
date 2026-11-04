@@ -1059,3 +1059,10 @@ func (c *Connector) ListRawNodes(
 	}
 	return out, nil
 }
+
+// BinarySyncContentType reports the MIME type the connector fetches for a
+// binary wiki extension, or "" when the extension is not synced. The
+// provenance binding shares this table to validate fetched artifacts.
+func BinarySyncContentType(extension string) string {
+	return dingTalkBinaryContentTypes[strings.ToLower(strings.TrimSpace(extension))]
+}
