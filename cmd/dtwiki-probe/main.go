@@ -10,6 +10,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/Tencent/WeKnora/internal/datasource/connector/dingtalk"
@@ -57,6 +58,20 @@ func main() {
 		ds.ID, ds.Type, target, raw.HasCredentials())
 
 	connector := dingtalk.NewConnector()
+	if rawNodes, nerr := connector.ListRawNodes(context.Background(), raw, strings.TrimPrefix(
+		strings.TrimPrefix(target, "dingtalk:v1?node="), "")); nerr == nil {
+		fmt.Printf("raw children of %s: %d\n", target, len(rawNodes))
+		mix := map[string]int{}
+		for _, n := range rawNodes {
+			key := n.Type + "/" + n.Category + "/" + n.Extension
+			mix[key]++
+		}
+		for k, v := range mix {
+			fmt.Printf("  type-mix %-40s x%d\n", k, v)
+		}
+	} else {
+		fmt.Printf("raw listing failed: %v\n", nerr)
+	}
 	resources, err := connector.ListResources(context.Background(), raw, target)
 	if err != nil {
 		fatal("list resources: %v", err)

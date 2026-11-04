@@ -932,3 +932,41 @@ func sanitizeFilename(name string) string {
 	}
 	return name
 }
+
+// RawNodeType reports one wiki node's raw classification as the DingTalk
+// API returns it, before any connector filtering. It exists for the
+// dtwiki-probe diagnostics: a folder whose children are all non-adoc types
+// is invisible to both resource browsing and sync, and operators need to
+// see the actual type mix to understand a "synced 0 documents" run.
+type RawNodeType struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Type      string `json:"type"`
+	Category  string `json:"category"`
+	Extension string `json:"extension"`
+}
+
+// ListRawNodes lists the direct children of a wiki node WITHOUT the
+// isFolder/isDocument filter, exposing what the sync walk actually sees.
+func (c *Connector) ListRawNodes(
+	ctx context.Context,
+	dataSourceConfig *types.DataSourceConfig,
+	parentNodeID string,
+) ([]RawNodeType, error) {
+	cfg, err := parseConfig(dataSourceConfig)
+	if err != nil {
+		return nil, err
+	}
+	nodes, err := c.api(cfg).listNodes(ctx, parentNodeID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]RawNodeType, 0, len(nodes))
+	for _, n := range nodes {
+		out = append(out, RawNodeType{
+			ID: n.ID, Name: n.Name, Type: n.Type,
+			Category: n.Category, Extension: n.Extension,
+		})
+	}
+	return out, nil
+}
