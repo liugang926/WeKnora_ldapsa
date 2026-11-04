@@ -1,6 +1,8 @@
 package repository
 
 import (
+	"github.com/Tencent/WeKnora/internal/application/access"
+
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -122,6 +124,17 @@ func (r *RAGChunkSnapshotReader) HydrateRAGChunkSnapshots(
 			controlled, err := ragKnowledgeIsControlled(tx, &knowledge)
 			if err != nil {
 				return err
+			}
+			if access.UseWeKnoraReadAuthority() {
+				// WeKnora owns read authorization
+				// (WEKNORA_NEXTCLOUD_READ_AUTHORITY=weknora): the publication
+				// lineage is lifecycle metadata for the sync pipeline and
+				// never a read prerequisite, matching the guard's Check
+				// short-circuit. Route every document through the ordinary
+				// WeKnora lineage producer instead of the Nextcloud
+				// resolver, so DingTalk/local documents in paired knowledge
+				// bases hydrate without a publication chain.
+				controlled = false
 			}
 			var sourceLineage *types.SourceLineage
 			if controlled {
